@@ -1,0 +1,1274 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>串口控制台 Pro</title>
+<style>
+  :root {
+    --bg-deep: #050810;
+    --bg: #0a0f1c;
+    --bg-panel: #0d1424;
+    --bg-card: #111a2e;
+    --bg-input: #0a1120;
+    --border: #1a2942;
+    --border-glow: #2a4a7a;
+    --fg: #c8d6e8;
+    --fg-bright: #e8f1ff;
+    --muted: #5a6b85;
+    --accent: #00d4ff;
+    --accent-2: #0099cc;
+    --accent-glow: rgba(0, 212, 255, 0.4);
+    --neon-green: #00ff9d;
+    --neon-purple: #b366ff;
+    --neon-orange: #ff9d00;
+    --neon-red: #ff4060;
+    --kernel: #79c0ff;
+    --kernel-err: #ff7b72;
+    --uboot: #d2a8ff;
+    --heop: #a5d6ff;
+    --heop-ok: #56d364;
+    --heop-fail: #ff7b72;
+    --prompt: #00ff9d;
+    --text: #c8d6e8;
+    --input-c: #00d4ff;
+    --shadow-glow: 0 0 20px rgba(0, 212, 255, 0.15);
+    --font-mono: "Cascadia Code", "JetBrains Mono", "Consolas", "Menlo", monospace;
+    --font-ui: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    background: var(--bg-deep);
+    color: var(--fg);
+    font-family: var(--font-ui);
+    font-size: 13px;
+    display: flex;
+    flex-direction: column;
+  }
+  /* 科技风背景网格 */
+  body::before {
+    content: "";
+    position: fixed; inset: 0;
+    background-image:
+      linear-gradient(rgba(0, 212, 255, 0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0, 212, 255, 0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+  body::after {
+    content: "";
+    position: fixed; inset: 0;
+    background: radial-gradient(ellipse at top, rgba(0, 212, 255, 0.06), transparent 60%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* ===== 顶栏 ===== */
+  .topbar {
+    position: relative; z-index: 10;
+    display: flex; align-items: center; gap: 14px;
+    padding: 0 18px; height: 52px;
+    background: linear-gradient(180deg, var(--bg-panel), var(--bg));
+    border-bottom: 1px solid var(--border);
+    box-shadow: 0 2px 20px rgba(0,0,0,0.4);
+    flex-shrink: 0;
+  }
+  .logo {
+    display: flex; align-items: center; gap: 10px;
+    font-weight: 700; font-size: 15px; color: var(--fg-bright);
+    letter-spacing: 0.5px;
+  }
+  .logo .icon {
+    width: 28px; height: 28px; border-radius: 7px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-mono); font-weight: 700; color: #001020; font-size: 15px;
+    box-shadow: 0 0 12px var(--accent-glow);
+  }
+  .logo .ver { color: var(--accent); font-size: 11px; font-weight: 600; }
+  .topbar .divider { width: 1px; height: 24px; background: var(--border); }
+  .topbar .conn-area { display: flex; align-items: center; gap: 8px; }
+  .topbar select, .topbar input {
+    background: var(--bg-input); color: var(--fg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 10px; font-size: 12px; font-family: var(--font-ui);
+    outline: none; transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .topbar select { min-width: 130px; cursor: pointer; }
+  .topbar select:focus, .topbar input:focus {
+    border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow);
+  }
+  .btn {
+    background: var(--bg-card); color: var(--fg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 14px; font-size: 12px; cursor: pointer;
+    font-family: var(--font-ui); transition: all 0.2s; white-space: nowrap;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 8px var(--accent-glow); }
+  .btn.primary {
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: #001020; border: none; font-weight: 600;
+  }
+  .btn.primary:hover { box-shadow: 0 0 14px var(--accent-glow); filter: brightness(1.1); }
+  .btn.danger { color: var(--neon-red); }
+  .btn.danger:hover { border-color: var(--neon-red); box-shadow: 0 0 8px rgba(255,64,96,0.3); }
+  .btn.ghost { background: transparent; }
+  .btn.icon-btn { padding: 6px 8px; min-width: 30px; text-align: center; }
+  .topbar .spacer { flex: 1; }
+  .topbar .status-pill {
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 20px;
+    background: var(--bg-card); border: 1px solid var(--border);
+    font-size: 11px; color: var(--muted);
+  }
+  .topbar .status-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+  .topbar .status-pill .dot.on { background: var(--neon-green); box-shadow: 0 0 6px var(--neon-green); }
+  .topbar .status-pill .dot.rec { background: var(--neon-red); animation: pulse 1.2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  /* ===== 主布局 ===== */
+  .main {
+    flex: 1; display: flex; min-height: 0; position: relative; z-index: 1;
+  }
+
+  /* ===== 左侧串口列表 ===== */
+  .sidebar {
+    width: 220px; flex-shrink: 0;
+    background: var(--bg-panel);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .sidebar-head {
+    padding: 12px 16px 8px;
+    font-size: 11px; font-weight: 600; letter-spacing: 1px;
+    color: var(--muted); text-transform: uppercase;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .sidebar-head .count {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 1px 8px; font-size: 10px; color: var(--accent);
+  }
+  .port-list { flex: 1; overflow-y: auto; padding: 4px 8px; }
+  .port-item {
+    padding: 10px 12px; border-radius: 8px; cursor: pointer;
+    margin-bottom: 4px; transition: all 0.2s;
+    border: 1px solid transparent;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .port-item:hover { background: var(--bg-card); }
+  .port-item.active {
+    background: linear-gradient(135deg, rgba(0,212,255,0.12), rgba(0,153,204,0.05));
+    border-color: var(--border-glow);
+    box-shadow: inset 0 0 10px rgba(0,212,255,0.08);
+  }
+  .port-item .led {
+    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+    background: var(--muted); transition: all 0.3s;
+  }
+  .port-item.connected .led { background: var(--neon-green); box-shadow: 0 0 8px var(--neon-green); }
+  .port-item .info { flex: 1; min-width: 0; }
+  .port-item .name { font-size: 12px; font-weight: 600; color: var(--fg-bright); font-family: var(--font-mono); }
+  .port-item .desc { font-size: 10px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .port-item .baud { font-size: 10px; color: var(--accent); font-family: var(--font-mono); }
+  .port-item .actions { display: none; gap: 4px; }
+  .port-item:hover .actions { display: flex; }
+  .port-item .actions button {
+    background: none; border: none; color: var(--muted); cursor: pointer;
+    font-size: 14px; padding: 0 2px; border-radius: 3px;
+  }
+  .port-item .actions button:hover { color: var(--neon-red); background: rgba(255,64,96,0.1); }
+  .sidebar-foot {
+    padding: 10px 14px; border-top: 1px solid var(--border);
+    font-size: 10px; color: var(--muted); display: flex; justify-content: space-between;
+  }
+
+  /* ===== 中央终端区 ===== */
+  .center { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .tabs {
+    display: flex; align-items: center; gap: 2px;
+    padding: 6px 8px 0; background: var(--bg-panel);
+    border-bottom: 1px solid var(--border); flex-shrink: 0;
+    overflow-x: auto;
+  }
+  .tab {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 14px; border-radius: 7px 7px 0 0;
+    cursor: pointer; font-size: 12px; color: var(--muted);
+    border: 1px solid transparent; border-bottom: none;
+    transition: all 0.2s; white-space: nowrap;
+  }
+  .tab:hover { color: var(--fg); background: var(--bg-card); }
+  .tab.active {
+    color: var(--accent); background: var(--bg);
+    border-color: var(--border); border-bottom-color: var(--bg);
+    position: relative;
+  }
+  .tab.active::after {
+    content: ""; position: absolute; bottom: -1px; left: 0; right: 0; height: 2px;
+    background: linear-gradient(90deg, var(--accent), transparent);
+  }
+  .tab .led { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+  .tab.active .led { background: var(--neon-green); box-shadow: 0 0 6px var(--neon-green); }
+  .tab .close { opacity: 0.4; font-size: 14px; padding: 0 2px; border-radius: 3px; }
+  .tab .close:hover { opacity: 1; color: var(--neon-red); }
+  .tab-bar-actions { margin-left: auto; display: flex; gap: 4px; padding-right: 8px; }
+
+  .term-area { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .term-toolbar {
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 12px; background: var(--bg-panel);
+    border-bottom: 1px solid var(--border); flex-shrink: 0;
+  }
+  .term-toolbar .btn { padding: 4px 10px; font-size: 11px; }
+  .term-toolbar .info { font-size: 11px; color: var(--muted); margin-left: auto; font-family: var(--font-mono); }
+
+  .output-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; background: var(--bg); }
+  .output {
+    flex: 1; min-height: 0; overflow-y: auto;
+    padding: 8px 14px;
+    font-family: var(--font-mono); font-size: 13px; line-height: 1.5;
+    white-space: pre-wrap; word-break: break-all;
+    font-variant-ligatures: none;
+  }
+  .line { padding: 0; }
+  .line .ts { color: #2a3a55; font-size: 10px; margin-right: 8px; user-select: none; font-family: var(--font-mono); }
+  .tag-kernel { color: var(--kernel); }
+  .tag-kernel_err { color: var(--kernel-err); }
+  .tag-uboot { color: var(--uboot); }
+  .tag-heop { color: var(--heop); }
+  .tag-heop_ok { color: var(--heop-ok); }
+  .tag-heop_fail { color: var(--heop-fail); font-weight: 600; }
+  .tag-prompt { color: var(--prompt); }
+  .tag-text { color: var(--text); }
+  .tag-empty { }
+  .tag-input { color: var(--input-c); }
+  .tag-serial-reader, .tag-serial, .tag-ctrl { color: var(--neon-orange); font-style: italic; }
+
+  /* 终端内联输入行 */
+  .term-input-line {
+    flex-shrink: 0; display: flex; align-items: center;
+    padding: 4px 14px 8px; min-height: 26px;
+    font-family: var(--font-mono); font-size: 13px; line-height: 1.5;
+    white-space: pre-wrap; word-break: break-all; color: var(--text);
+    background: var(--bg); border-top: 1px solid var(--border);
+  }
+  .term-input-line .echocmd { color: var(--input-c); }
+  .term-input-line .cursor {
+    display: inline-block; width: 8px; height: 15px;
+    background: var(--accent); vertical-align: middle;
+    animation: blink 1s step-end infinite;
+    box-shadow: 0 0 6px var(--accent-glow);
+  }
+  .term-input-line .cursor.dim { background: var(--border); box-shadow: none; }
+  @keyframes blink { 0%,50%{opacity:1} 51%,100%{opacity:0} }
+
+  /* ===== 右侧 AI 面板 ===== */
+  .ai-panel {
+    width: 340px; flex-shrink: 0;
+    background: var(--bg-panel);
+    border-left: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    transition: width 0.3s;
+  }
+  .ai-panel.collapsed { width: 44px; }
+  .ai-panel.collapsed .ai-body, .ai-panel.collapsed .ai-head-detail { display: none; }
+  .ai-panel.collapsed .ai-head { padding: 12px 0; justify-content: center; }
+  .ai-panel.collapsed #aiToggle { display: none; }
+  .ai-head .ai-icon { cursor: pointer; transition: transform 0.2s; }
+  .ai-head .ai-icon:hover { transform: scale(1.12); }
+  .ai-head {
+    padding: 12px 16px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+  }
+  .ai-head .ai-icon {
+    width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0;
+    background: linear-gradient(135deg, var(--neon-purple), var(--accent));
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; box-shadow: 0 0 12px rgba(179,102,255,0.4);
+  }
+  .ai-head-detail { flex: 1; }
+  .ai-head-detail .title { font-size: 13px; font-weight: 600; color: var(--fg-bright); }
+  .ai-head-detail .sub { font-size: 10px; color: var(--muted); }
+  .ai-head .toggle {
+    background: none; border: 1px solid var(--border); border-radius: 5px;
+    color: var(--muted); cursor: pointer; padding: 3px 7px; font-size: 14px;
+  }
+  .ai-head .toggle:hover { color: var(--accent); border-color: var(--accent); }
+  .ai-body { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .ai-live {
+    padding: 8px 14px; border-bottom: 1px solid var(--border);
+    max-height: 180px; overflow-y: auto; flex-shrink: 0;
+  }
+  .ai-live-head {
+    font-size: 10px; font-weight: 600; letter-spacing: 1px; color: var(--muted);
+    text-transform: uppercase; margin-bottom: 6px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .ai-live-head .live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--neon-green); animation: pulse 1.5s infinite; }
+  .ai-live-line { font-family: var(--font-mono); font-size: 11px; color: var(--text); padding: 1px 0; white-space: pre-wrap; word-break: break-all; }
+  .ai-live-line .port-tag { color: var(--accent); font-size: 9px; margin-right: 4px; }
+  .ai-chat { flex: 1; overflow-y: auto; padding: 12px 14px; }
+  .ai-msg { margin-bottom: 12px; }
+  .ai-msg .role { font-size: 10px; font-weight: 600; letter-spacing: 0.5px; margin-bottom: 3px; }
+  .ai-msg.user .role { color: var(--accent); }
+  .ai-msg.assistant .role { color: var(--neon-purple); }
+  .ai-msg .content { font-size: 12px; line-height: 1.6; color: var(--fg); }
+  .ai-msg .content pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px; margin: 6px 0; overflow-x: auto; font-family: var(--font-mono); font-size: 11px; }
+  .ai-input-area { padding: 10px 14px; border-top: 1px solid var(--border); flex-shrink: 0; }
+  .ai-input-area textarea {
+    width: 100%; background: var(--bg-input); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 10px; font-size: 12px; font-family: var(--font-ui);
+    resize: none; outline: none; height: 60px; transition: border-color 0.2s;
+  }
+  .ai-input-area textarea:focus { border-color: var(--neon-purple); box-shadow: 0 0 0 2px rgba(179,102,255,0.2); }
+  .ai-input-area .actions { display: flex; gap: 6px; margin-top: 6px; }
+  .ai-input-area .hint { font-size: 10px; color: var(--muted); flex: 1; align-self: center; }
+  .ai-input-area .btn { padding: 5px 12px; font-size: 11px; }
+  .ai-input-area .btn.send { background: linear-gradient(135deg, var(--neon-purple), #8844cc); color: #fff; border: none; }
+
+  /* 隐藏输入框（承载焦点） */
+  #cmdInput { position: absolute; left: -9999px; width: 1px; opacity: 0; }
+
+  /* 回放面板 */
+  .replay-panel {
+    display: none; position: absolute; inset: 0;
+    background: var(--bg); z-index: 10; flex-direction: column;
+  }
+  .replay-panel.show { display: flex; }
+  .replay-head { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: var(--bg-panel); border-bottom: 1px solid var(--border); }
+  .replay-body { flex: 1; overflow-y: auto; padding: 8px 14px; font-family: var(--font-mono); font-size: 13px; white-space: pre-wrap; word-break: break-all; }
+  .replay-foot { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: var(--bg-panel); border-top: 1px solid var(--border); }
+  .replay-foot input[type=range] { flex: 1; }
+
+  /* 日志模态框 */
+  .modal {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+    z-index: 100; align-items: center; justify-content: center; backdrop-filter: blur(4px);
+  }
+  .modal.show { display: flex; }
+  .modal .box {
+    background: var(--bg-panel); border: 1px solid var(--border-glow); border-radius: 12px;
+    width: 600px; max-height: 70vh; display: flex; flex-direction: column;
+    box-shadow: 0 0 40px rgba(0,212,255,0.1);
+  }
+  .modal .head { padding: 14px 18px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+  .modal .head strong { color: var(--fg-bright); font-size: 14px; }
+  .modal .list { overflow-y: auto; padding: 8px; }
+  .modal .item { padding: 10px 12px; border-radius: 8px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; transition: all 0.2s; }
+  .modal .item:hover { background: var(--bg-card); border-color: var(--accent); }
+  .modal .item .sz { color: var(--muted); font-size: 11px; }
+
+  /* 连接对话框 */
+  .conn-modal .box { width: 400px; }
+  .conn-form { padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+  .conn-form label { font-size: 11px; color: var(--muted); font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; }
+  .conn-form select, .conn-form input { width: 100%; background: var(--bg-input); color: var(--fg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 13px; outline: none; }
+  .conn-form select:focus, .conn-form input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
+  .conn-form .actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 6px; }
+
+  /* 滚动条 */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--border-glow); }
+
+  /* 横幅通知 */
+  .banner {
+    display: none; padding: 8px 16px;
+    background: linear-gradient(90deg, rgba(0,212,255,0.15), rgba(0,153,204,0.08));
+    border-bottom: 1px solid var(--border-glow); color: var(--accent);
+    font-size: 12px; z-index: 5;
+  }
+  .banner.show { display: block; }
+  .banner.err { background: linear-gradient(90deg, rgba(255,64,96,0.15), rgba(255,64,96,0.08)); border-color: var(--neon-red); color: var(--neon-red); }
+
+  /* 空状态 */
+  .empty-state {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    color: var(--muted); gap: 12px; padding: 40px;
+  }
+  .empty-state .big-icon { font-size: 48px; opacity: 0.3; }
+  .empty-state .title { font-size: 16px; color: var(--fg); }
+  .empty-state .desc { font-size: 12px; text-align: center; max-width: 300px; line-height: 1.6; }
+</style>
+</head>
+<body>
+
+<!-- 顶栏 -->
+<div class="topbar">
+  <div class="logo">
+    <div class="icon">&gt;_</div>
+    <span>串口控制台 <span class="ver">PRO</span></span>
+  </div>
+  <div class="divider"></div>
+  <div class="conn-area">
+    <button class="btn primary" id="btnNewConn">＋ 新建连接</button>
+    <button class="btn ghost icon-btn" id="btnRefreshPorts" title="刷新端口">↻</button>
+  </div>
+  <div class="spacer"></div>
+  <div class="status-pill"><span class="dot" id="globalDot"></span><span id="globalStatus">0 个连接</span></div>
+  <div class="status-pill"><span class="dot rec" id="recDot"></span><span>录制中</span></div>
+  <button class="btn ghost" id="btnLogs">📜 日志库</button>
+  <button class="btn ghost" id="btnAbout">关于</button>
+</div>
+
+<div class="banner" id="banner"></div>
+
+<!-- 主布局 -->
+<div class="main">
+  <!-- 左侧串口列表 -->
+  <div class="sidebar">
+    <div class="sidebar-head">
+      <span>串口连接</span>
+      <span class="count" id="portCount">0</span>
+    </div>
+    <div class="port-list" id="portList">
+      <div class="empty-state" style="padding:30px 10px;">
+        <div class="desc">点击「新建连接」添加串口</div>
+      </div>
+    </div>
+    <div class="sidebar-foot">
+      <span id="logInfo">日志: serial_logs/</span>
+    </div>
+  </div>
+
+  <!-- 中央终端区 -->
+  <div class="center">
+    <div class="tabs" id="tabs">
+      <div class="tab-bar-actions">
+        <button class="btn ghost icon-btn" id="btnPause" title="暂停滚屏">⏸</button>
+        <button class="btn ghost icon-btn" id="btnClear" title="清屏">⊘</button>
+        <button class="btn ghost icon-btn" id="btnNewLog" title="新建日志">＋📋</button>
+        <button class="btn ghost icon-btn" id="btnCtrlC" title="Ctrl-C">^C</button>
+        <button class="btn ghost icon-btn" id="btnCtrlD" title="Ctrl-D">^D</button>
+      </div>
+    </div>
+    <div class="term-area" id="termArea">
+      <div class="empty-state" id="emptyState">
+        <div class="big-icon">📡</div>
+        <div class="title">暂无串口连接</div>
+        <div class="desc">点击顶部「新建连接」选择串口端口和波特率，支持同时监控多个串口。每个串口独立标签页，互不干扰。</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 右侧 AI 面板 -->
+  <div class="ai-panel" id="aiPanel">
+    <div class="ai-head">
+      <div class="ai-icon">✦</div>
+      <div class="ai-head-detail">
+        <div class="title">AI 助手</div>
+        <div class="sub">实时串口感知 · 智能分析</div>
+      </div>
+      <button class="toggle" id="aiToggle" title="折叠/展开">›</button>
+    </div>
+    <div class="ai-body">
+      <div class="ai-live" id="aiLive">
+        <div class="ai-live-head"><span class="live-dot"></span>实时串口流（全部端口）</div>
+        <div id="aiLiveList"></div>
+      </div>
+      <div class="ai-chat" id="aiChat">
+        <div class="ai-msg assistant">
+          <div class="role">✦ AI 助手</div>
+          <div class="content">已就绪。我能实时看到所有串口的数据流。你可以问我：
+            <pre>· "COM1 最近输出了什么？"
+· "帮我发 cat /proc/cpuinfo 到 COM1"
+· "当前所有串口状态"
+· "分析一下最近的内核报错"</pre>
+          </div>
+        </div>
+      </div>
+      <div class="ai-input-area">
+        <textarea id="aiInput" placeholder="向 AI 提问…（它能实时看到串口数据）"></textarea>
+        <div class="actions">
+          <span class="hint">Enter 发送 · Shift+Enter 换行</span>
+          <button class="btn ghost" id="aiClear">清空</button>
+          <button class="btn send" id="aiSend">发送</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 隐藏输入框 -->
+<input type="text" id="cmdInput" autocomplete="off">
+
+<!-- 连接对话框 -->
+<div class="modal conn-modal" id="connModal">
+  <div class="box">
+    <div class="head">
+      <strong>新建串口连接</strong>
+      <button class="btn ghost icon-btn" id="connClose">✕</button>
+    </div>
+    <div class="conn-form">
+      <div>
+        <label>串口端口</label>
+        <select id="connPort" style="margin-top:6px;"></select>
+      </div>
+      <div>
+        <label>波特率</label>
+        <select id="connBaud" style="margin-top:6px;"></select>
+      </div>
+      <div class="actions">
+        <button class="btn ghost" id="connCancel">取消</button>
+        <button class="btn primary" id="connConfirm">连接</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 日志库模态框 -->
+<div class="modal" id="logsModal">
+  <div class="box">
+    <div class="head">
+      <strong>📜 日志库</strong>
+      <button class="btn ghost icon-btn" id="logsClose">✕</button>
+    </div>
+    <div class="list" id="logsList"></div>
+  </div>
+</div>
+
+<!-- 回放面板 -->
+<div class="replay-panel" id="replayPanel">
+  <div class="replay-head">
+    <strong id="replayTitle">回放</strong>
+    <span class="info" id="replayInfo" style="color:var(--muted);font-size:11px;"></span>
+    <span style="flex:1"></span>
+    <button class="btn ghost" id="btnReplayPlay">▶ 播放</button>
+    <button class="btn ghost" id="btnReplayPause">⏸</button>
+    <button class="btn ghost" id="btnReplayClose">✕ 关闭</button>
+  </div>
+  <div class="replay-body" id="replayBody"></div>
+  <div class="replay-foot">
+    <span class="info" id="replayTime" style="color:var(--muted);font-size:11px;font-family:var(--font-mono);">00:00</span>
+    <input type="range" id="replaySeek" min="0" max="100" value="0">
+    <span class="info" id="replayTotal" style="color:var(--muted);font-size:11px;font-family:var(--font-mono);">00:00</span>
+    <select id="replaySpeed" class="btn ghost" style="padding:4px 8px;">
+      <option value="4">4x</option>
+      <option value="2">2x</option>
+      <option value="1" selected>1x</option>
+      <option value="0.5">0.5x</option>
+    </select>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// 全局状态
+// ============================================================
+const $ = id => document.getElementById(id);
+const banner = $('banner');
+const portList = $('portList');
+const tabs = $('tabs');
+const termArea = $('termArea');
+const cmdInput = $('cmdInput');
+
+let connections = {};   // port_id -> { meta, sse, termBuf, tabEl, outputEl, termInputLineEl, ... }
+let activePortId = null;
+let paused = false;
+let autoScroll = true;
+let aiLiveLines = [];
+let aiSse = null;
+
+function showBanner(msg, ms=4000, isErr=false) {
+  banner.textContent = msg;
+  banner.className = 'banner show' + (isErr ? ' err' : '');
+  if (ms) setTimeout(()=>{ if (banner.textContent === msg) banner.className = 'banner'; }, ms);
+}
+function fmtTs(ms) {
+  const d = new Date(ms);
+  return d.toLocaleTimeString('zh-CN', {hour12:false}) + '.' + String(ms % 1000).padStart(3,'0');
+}
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ============================================================
+// 终端标签页 & 输出区管理
+// ============================================================
+// 注：实际终端元素由 buildTerminal() 创建，此处不再保留死代码。
+
+// 重新设计：每个连接有自己的 output 容器
+function buildTerminal(portId, meta) {
+  // 标签
+  const tab = document.createElement('div');
+  tab.className = 'tab';
+  tab.dataset.portId = portId;
+  tab.innerHTML = `<span class="led"></span><span>${esc(portId)}</span><span style="color:var(--muted);font-size:10px;">@${meta.baud}</span> <span class="close" title="关闭">✕</span>`;
+  tab.onclick = (e) => {
+    if (e.target.classList.contains('close')) { e.stopPropagation(); closeConnection(portId); return; }
+    switchTab(portId);
+  };
+  // 终端区
+  const wrap = document.createElement('div');
+  wrap.className = 'term-area';
+  wrap.dataset.portId = portId;
+  wrap.style.display = 'none';
+  wrap.innerHTML = `
+    <div class="term-toolbar">
+      <button class="btn ghost" data-act="pause">⏸ 暂停滚屏</button>
+      <button class="btn ghost" data-act="clear">⊘ 清屏</button>
+      <button class="btn ghost" data-act="newlog">＋ 新日志</button>
+      <button class="btn ghost" data-act="ctrlc">^C</button>
+      <button class="btn ghost" data-act="ctrld">^D</button>
+      <span class="info" data-info="baud">${portId} @ ${meta.baud}</span>
+    </div>
+    <div class="output-wrap">
+      <div class="output" data-output="${portId}">
+        <div class="term-input-line" data-term-input="${portId}" title="点击此处输入命令">
+          <span class="echocmd"></span><span class="cursor"></span>
+        </div>
+      </div>
+    </div>
+  `;
+  // 工具栏事件
+  wrap.querySelector('[data-act=pause]').onclick = function() {
+    conn.paused = !conn.paused;
+    this.textContent = conn.paused ? '▶ 继续' : '⏸ 暂停滚屏';
+    if (!conn.paused) conn.output.scrollTop = conn.output.scrollHeight;
+  };
+  wrap.querySelector('[data-act=clear]').onclick = () => {
+    Array.from(conn.output.querySelectorAll('.line')).forEach(n => n.remove());
+    fetch('/api/clear_buffer', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: portId})});
+  };
+  wrap.querySelector('[data-act=newlog]').onclick = async () => {
+    const r = await fetch('/api/new_log', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: portId})});
+    const j = await r.json();
+    showBanner('已开新日志：' + j.log_path);
+  };
+  wrap.querySelector('[data-act=ctrlc]').onclick = () => termSendRaw(portId, [3]);
+  wrap.querySelector('[data-act=ctrld]').onclick = () => termSendRaw(portId, [4]);
+
+  const conn = {
+    meta, tab, wrap,
+    output: wrap.querySelector(`[data-output="${portId}"]`),
+    termInputLine: wrap.querySelector(`[data-term-input="${portId}"]`),
+    termEcho: wrap.querySelector(`[data-term-input="${portId}"] .echocmd`),
+    termCursor: wrap.querySelector(`[data-term-input="${portId}"] .cursor`),
+    sse: null,
+    termBuf: '',
+    termHistIdx: -1,
+    redrawDeadline: 0,
+    tabCompleted: false,
+    paused: false,
+    autoScroll: true,
+  };
+  // 点击输入行聚焦
+  conn.termInputLine.addEventListener('click', () => { cmdInput.focus(); });
+  // 滚动检测
+  conn.output.addEventListener('scroll', () => {
+    conn.autoScroll = conn.output.scrollHeight - conn.output.scrollTop - conn.output.clientHeight < 40;
+  });
+
+  // 插入 DOM
+  // 先移除空状态
+  const es = termArea.querySelector('.empty-state');
+  if (es) es.remove();
+  tabs.insertBefore(tab, tabs.querySelector('.tab-bar-actions'));
+  termArea.appendChild(wrap);
+
+  // SSE
+  connectSSE(portId, conn);
+
+  // 加载历史缓冲
+  loadBuffer(portId, conn);
+  return conn;
+}
+
+function switchTab(portId) {
+  activePortId = portId;
+  // 标签
+  tabs.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.portId === portId));
+  // 终端区
+  termArea.querySelectorAll('.term-area').forEach(w => w.style.display = w.dataset.portId === portId ? 'flex' : 'none');
+  // 侧边栏
+  portList.querySelectorAll('.port-item').forEach(p => p.classList.toggle('active', p.dataset.portId === portId));
+  // 光标
+  const conn = connections[portId];
+  if (conn) {
+    conn.termCursor.classList.remove('dim');
+    cmdInput.focus();
+  }
+}
+
+function appendLine(portId, item) {
+  const conn = connections[portId];
+  if (!conn || conn.paused) return;
+  // Tab/方向键后设备重绘整行，同步 termBuf
+  if (conn.redrawDeadline && Date.now() < conn.redrawDeadline && (item.text || '').startsWith('# ')) {
+    const t = item.text.replace(/^#\s*/, '').replace(/\s+$/, '');
+    if (t) {
+      conn.termBuf = t;
+      cmdInput.value = t;
+      renderTermInput(conn);
+      conn.redrawDeadline = Date.now() + 1500;
+      conn.tabCompleted = true;
+      return;
+    }
+  }
+  const div = document.createElement('div');
+  div.className = 'line tag-' + (item.tag || 'text');
+  const ts = document.createElement('span');
+  ts.className = 'ts';
+  ts.textContent = item.ts ? fmtTs(item.ts) : '';
+  div.appendChild(ts);
+  if (item.html) {
+    const span = document.createElement('span');
+    span.innerHTML = item.html;
+    div.appendChild(span);
+  } else {
+    div.appendChild(document.createTextNode(item.text));
+  }
+  conn.output.insertBefore(div, conn.termInputLine);
+  if (conn.autoScroll) conn.output.scrollTop = conn.output.scrollHeight;
+  while (conn.output.childNodes.length > 5000) conn.output.removeChild(conn.output.firstChild);
+}
+
+function renderTermInput(conn) {
+  conn.termEcho.textContent = conn.termBuf;
+}
+
+function termSendRaw(portId, bytes) {
+  fetch('/api/send_raw', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: portId, bytes})});
+}
+
+function connectSSE(portId, conn) {
+  conn.sse = new EventSource('/api/stream?port_id=' + encodeURIComponent(portId));
+  conn.sse.onmessage = (e) => {
+    try { appendLine(portId, JSON.parse(e.data)); } catch(err) {}
+  };
+  conn.sse.onerror = () => {
+    conn.sse.close();
+    setTimeout(() => { if (connections[portId]) connectSSE(portId, conn); }, 2000);
+  };
+}
+
+async function loadBuffer(portId, conn) {
+  try {
+    const r = await fetch('/api/buffer?port_id=' + encodeURIComponent(portId) + '&n=500');
+    const j = await r.json();
+    (j.lines || []).forEach(l => appendLine(portId, l));
+  } catch(e) {}
+}
+
+// ============================================================
+// 连接管理
+// ============================================================
+async function loadPorts() {
+  try {
+    const r = await fetch('/api/ports');
+    const j = await r.json();
+    const connPort = $('connPort');
+    connPort.innerHTML = '';
+    if (!j.ports.length) {
+      connPort.innerHTML = '<option value="">（无可用串口）</option>';
+      return;
+    }
+    j.ports.forEach(p => {
+      const o = document.createElement('option');
+      o.value = p.device;
+      o.textContent = `${p.device} — ${p.description}`;
+      connPort.appendChild(o);
+    });
+    const connBaud = $('connBaud');
+    connBaud.innerHTML = '';
+    (j.bauds || [115200]).forEach(b => {
+      const o = document.createElement('option');
+      o.value = b; o.textContent = b;
+      if (b === 115200) o.selected = true;
+      connBaud.appendChild(o);
+    });
+  } catch(e) {}
+}
+
+async function connectPort(port, baud) {
+  try {
+    const r = await fetch('/api/connect', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port, baud})});
+    const j = await r.json();
+    if (j.ok) {
+      showBanner(`已连接 ${port}@${baud}`);
+      const conn = buildTerminal(port, {baud});
+      connections[port] = conn;
+      switchTab(port);
+      refreshSidebar();
+      refreshGlobalStatus();
+    } else {
+      showBanner('连接失败：' + (j.err || '未知错误'), 8000, true);
+    }
+  } catch(e) { showBanner('连接请求失败：' + e, 8000, true); }
+}
+
+function closeConnection(portId) {
+  fetch('/api/disconnect', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: portId})});
+  const conn = connections[portId];
+  if (conn) {
+    if (conn.sse) conn.sse.close();
+    conn.tab.remove();
+    conn.wrap.remove();
+    delete connections[portId];
+  }
+  // 切换到第一个可用标签
+  const remaining = Object.keys(connections);
+  if (remaining.length) {
+    switchTab(remaining[0]);
+  } else {
+    activePortId = null;
+    termArea.innerHTML = '<div class="empty-state"><div class="big-icon">📡</div><div class="title">暂无串口连接</div><div class="desc">点击顶部「新建连接」选择串口端口和波特率，支持同时监控多个串口。每个串口独立标签页，互不干扰。</div></div>';
+  }
+  refreshSidebar();
+  refreshGlobalStatus();
+}
+
+function refreshSidebar() {
+  const ids = Object.keys(connections);
+  $('portCount').textContent = ids.length;
+  if (!ids.length) {
+    portList.innerHTML = '<div class="empty-state" style="padding:30px 10px;"><div class="desc">点击「新建连接」添加串口</div></div>';
+    return;
+  }
+  portList.innerHTML = '';
+  ids.forEach(pid => {
+    const conn = connections[pid];
+    const item = document.createElement('div');
+    item.className = 'port-item connected' + (pid === activePortId ? ' active' : '');
+    item.dataset.portId = pid;
+    item.innerHTML = `
+      <span class="led"></span>
+      <div class="info">
+        <div class="name">${esc(pid)}</div>
+        <div class="desc">${esc(conn.meta.baud || '')} baud · <span class="baud">${conn.output.querySelectorAll('.line').length} 行</span></div>
+      </div>
+      <div class="actions"><button data-close="${pid}" title="断开">✕</button></div>
+    `;
+    item.onclick = (e) => {
+      if (e.target.dataset.close) { e.stopPropagation(); closeConnection(pid); return; }
+      switchTab(pid);
+    };
+    portList.appendChild(item);
+  });
+}
+
+async function refreshGlobalStatus() {
+  try {
+    const r = await fetch('/api/status');
+    const j = await r.json();
+    const n = Object.keys(j.ports || {}).length;
+    $('globalStatus').textContent = n + ' 个连接';
+    $('globalDot').className = 'dot' + (n ? ' on' : '');
+  } catch(e) {}
+}
+
+// ============================================================
+// 键盘输入（MobaXterm 风格内联输入）
+// ============================================================
+cmdInput.addEventListener('input', (e) => {
+  if (!activePortId) return;
+  const conn = connections[activePortId];
+  if (!conn) return;
+  const val = cmdInput.value;
+  if (val.length > conn.termBuf.length && val.startsWith(conn.termBuf)) {
+    const added = val.slice(conn.termBuf.length);
+    const bytes = [];
+    for (let i = 0; i < added.length; i++) {
+      const code = added.charCodeAt(i);
+      if (code < 128) bytes.push(code);
+      else { for (const b of new TextEncoder().encode(added[i])) bytes.push(b); }
+    }
+    if (bytes.length) termSendRaw(activePortId, bytes);
+  } else if (val.length < conn.termBuf.length) {
+    const delCount = conn.termBuf.length - val.length;
+    const bs = []; for (let i = 0; i < delCount; i++) bs.push(127);
+    termSendRaw(activePortId, bs);
+  }
+  conn.termBuf = val;
+  renderTermInput(conn);
+});
+
+cmdInput.addEventListener('keydown', (e) => {
+  if (!activePortId) return;
+  const conn = connections[activePortId];
+  if (!conn) return;
+  const pid = activePortId;
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    termSendRaw(pid, [13]);
+    if (conn.tabCompleted && conn.termBuf) {
+      const div = document.createElement('div');
+      div.className = 'line tag-input';
+      const ts = document.createElement('span'); ts.className='ts'; ts.textContent = fmtTs(Date.now());
+      div.appendChild(ts); div.appendChild(document.createTextNode(conn.termBuf));
+      conn.output.insertBefore(div, conn.termInputLine);
+      if (conn.autoScroll) conn.output.scrollTop = conn.output.scrollHeight;
+    }
+    conn.termBuf = ''; cmdInput.value = ''; renderTermInput(conn);
+    conn.redrawDeadline = 0; conn.tabCompleted = false; conn.termHistIdx = -1;
+    loadHistory(pid);
+    return;
+  }
+  if (e.key === 'ArrowUp') { e.preventDefault(); termSendRaw(pid, [27,91,65]); conn.redrawDeadline = Date.now()+1500; return; }
+  if (e.key === 'ArrowDown') { e.preventDefault(); termSendRaw(pid, [27,91,66]); conn.redrawDeadline = Date.now()+1500; return; }
+  if (e.key === 'ArrowLeft') { e.preventDefault(); termSendRaw(pid, [27,91,68]); return; }
+  if (e.key === 'ArrowRight') { e.preventDefault(); termSendRaw(pid, [27,91,67]); return; }
+  if (e.key === 'Home') { e.preventDefault(); termSendRaw(pid, [27,91,72]); return; }
+  if (e.key === 'End') { e.preventDefault(); termSendRaw(pid, [27,91,70]); return; }
+  if (e.key === 'Delete') { e.preventDefault(); termSendRaw(pid, [27,91,51,126]); return; }
+  if (e.key === 'Tab') { e.preventDefault(); termSendRaw(pid, [9]); conn.redrawDeadline = Date.now()+1500; return; }
+  if (e.ctrlKey && (e.key==='c'||e.key==='C')) { e.preventDefault(); termSendRaw(pid,[3]); conn.termBuf=''; cmdInput.value=''; renderTermInput(conn); conn.redrawDeadline=0; conn.tabCompleted=false; return; }
+  if (e.ctrlKey && (e.key==='d'||e.key==='D')) { e.preventDefault(); termSendRaw(pid,[4]); return; }
+  if (e.ctrlKey && (e.key==='u'||e.key==='U')) { e.preventDefault(); termSendRaw(pid,[21]); conn.termBuf=''; cmdInput.value=''; renderTermInput(conn); conn.redrawDeadline=0; conn.tabCompleted=false; return; }
+  if (e.ctrlKey && (e.key==='l'||e.key==='L')) { e.preventDefault(); termSendRaw(pid,[12]); return; }
+});
+
+async function loadHistory(portId) {
+  try {
+    const r = await fetch('/api/history?port_id=' + encodeURIComponent(portId));
+    const j = await r.json();
+    const conn = connections[portId];
+    if (conn) conn.history = j.history || [];
+  } catch(e) {}
+}
+
+// 点击终端区聚焦输入
+document.addEventListener('click', (e) => {
+  if (activePortId && (e.target.closest('.output-wrap') || e.target.closest('.term-input-line'))) {
+    cmdInput.focus();
+  }
+});
+
+// ============================================================
+// 顶栏按钮
+// ============================================================
+$('btnNewConn').onclick = async () => {
+  await loadPorts();
+  $('connModal').classList.add('show');
+};
+$('connClose').onclick = () => $('connModal').classList.remove('show');
+$('connCancel').onclick = () => $('connModal').classList.remove('show');
+$('connConfirm').onclick = () => {
+  const port = $('connPort').value, baud = $('connBaud').value;
+  if (!port) { showBanner('请选择串口', 3000, true); return; }
+  $('connModal').classList.remove('show');
+  connectPort(port, baud);
+};
+$('btnRefreshPorts').onclick = async () => { await loadPorts(); showBanner('端口列表已刷新'); };
+
+// 顶栏全局按钮（作用于当前活动标签）
+$('btnPause').onclick = () => {
+  if (!activePortId) return;
+  const conn = connections[activePortId];
+  conn.paused = !conn.paused;
+  $('btnPause').textContent = conn.paused ? '▶' : '⏸';
+  if (!conn.paused) conn.output.scrollTop = conn.output.scrollHeight;
+};
+$('btnClear').onclick = () => {
+  if (!activePortId) return;
+  const conn = connections[activePortId];
+  Array.from(conn.output.querySelectorAll('.line')).forEach(n => n.remove());
+  fetch('/api/clear_buffer', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: activePortId})});
+};
+$('btnNewLog').onclick = async () => {
+  if (!activePortId) return;
+  const r = await fetch('/api/new_log', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: activePortId})});
+  showBanner('已开新日志');
+};
+$('btnCtrlC').onclick = () => { if (activePortId) termSendRaw(activePortId, [3]); };
+$('btnCtrlD').onclick = () => { if (activePortId) termSendRaw(activePortId, [4]); };
+$('btnAbout').onclick = () => showBanner('串口控制台 Pro · 多串口监控 + AI 实时感知 · v1.0', 5000);
+
+// ============================================================
+// 日志库
+// ============================================================
+$('btnLogs').onclick = async () => {
+  const modal = $('logsModal'), list = $('logsList');
+  list.innerHTML = '加载中…';
+  modal.classList.add('show');
+  try {
+    const r = await fetch('/api/logs');
+    const j = await r.json();
+    list.innerHTML = '';
+    if (!j.logs.length) { list.innerHTML = '<div style="padding:20px;color:var(--muted);">暂无日志</div>'; return; }
+    j.logs.forEach(l => {
+      const d = document.createElement('div');
+      d.className = 'item';
+      const dt = new Date(l.mtime*1000);
+      d.innerHTML = `<span>${esc(l.name)}<br><span class="sz">${dt.toLocaleString('zh-CN')} · ${(l.size/1024).toFixed(1)} KB</span></span><span style="color:var(--accent)">▶ 回放</span>`;
+      d.onclick = () => { modal.classList.remove('show'); openReplay(l.name); };
+      list.appendChild(d);
+    });
+  } catch(e) { list.innerHTML = '加载失败'; }
+};
+$('logsClose').onclick = () => $('logsModal').classList.remove('show');
+
+// ============================================================
+// 回放
+// ============================================================
+let replayData = null, replayTimer = null, replayIdx = 0, replayStartTs = 0, replayBaseReal = 0;
+async function openReplay(name) {
+  const panel = $('replayPanel');
+  $('replayTitle').textContent = '回放：' + name;
+  const r = await fetch('/api/replay/' + encodeURIComponent(name));
+  const j = await r.json();
+  replayData = j.lines || [];
+  replayIdx = 0;
+  $('replayBody').innerHTML = '';
+  if (!replayData.length) { $('replayInfo').textContent = '空'; panel.classList.add('show'); return; }
+  const first = replayData[0].ts, last = replayData[replayData.length-1].ts;
+  const dur = (last - first)/1000;
+  $('replayTotal').textContent = fmtDur(dur);
+  $('replayInfo').textContent = `${replayData.length} 行 · 时长 ${fmtDur(dur)}`;
+  $('replaySeek').max = Math.max(1, Math.floor(dur));
+  panel.classList.add('show');
+  playReplay();
+}
+function fmtDur(s){ const m=Math.floor(s/60), ss=Math.floor(s%60); return String(m).padStart(2,'0')+':'+String(ss).padStart(2,'0'); }
+function renderReplayLine(item) {
+  const body = $('replayBody');
+  const div = document.createElement('div');
+  div.className = 'line tag-' + (item.tag||'text');
+  const ts = document.createElement('span'); ts.className='ts'; ts.textContent = item.ts?fmtTs(item.ts):'';
+  div.appendChild(ts);
+  div.appendChild(document.createTextNode(item.text));
+  body.appendChild(div);
+  body.scrollTop = body.scrollHeight;
+}
+function playReplay() {
+  if (!replayData || replayTimer) return;
+  const speed = parseFloat($('replaySpeed').value)||1;
+  replayStartTs = replayData[replayIdx]?.ts || 0;
+  replayBaseReal = Date.now();
+  const tick = () => {
+    if (replayIdx >= replayData.length) { stopReplay(); return; }
+    const now = Date.now();
+    const elapsed = (now - replayBaseReal) * speed;
+    const cur = replayStartTs + elapsed;
+    while (replayIdx < replayData.length && replayData[replayIdx].ts <= cur) {
+      renderReplayLine(replayData[replayIdx]); replayIdx++;
+    }
+    $('replaySeek').value = Math.floor((cur - replayData[0].ts)/1000);
+    $('replayTime').textContent = fmtDur((cur - replayData[0].ts)/1000);
+    replayTimer = requestAnimationFrame(tick);
+  };
+  replayTimer = requestAnimationFrame(tick);
+}
+function stopReplay() { if (replayTimer) { cancelAnimationFrame(replayTimer); replayTimer = null; } }
+$('btnReplayPlay').onclick = playReplay;
+$('btnReplayPause').onclick = stopReplay;
+$('btnReplayClose').onclick = () => { stopReplay(); $('replayPanel').classList.remove('show'); };
+$('replaySpeed').onchange = () => { stopReplay(); playReplay(); };
+$('replaySeek').oninput = function() {
+  stopReplay();
+  const v = parseInt(this.value);
+  if (!replayData.length) return;
+  const target = replayData[0].ts + v*1000;
+  replayIdx = 0;
+  $('replayBody').innerHTML = '';
+  while (replayIdx < replayData.length && replayData[replayIdx].ts < target) {
+    renderReplayLine(replayData[replayIdx]); replayIdx++;
+  }
+  $('replayTime').textContent = fmtDur(v);
+};
+
+// ============================================================
+// AI 面板
+// ============================================================
+$('aiToggle').onclick = () => {
+  const p = $('aiPanel');
+  p.classList.toggle('collapsed');
+  $('aiToggle').textContent = p.classList.contains('collapsed') ? '‹' : '›';
+};
+// 折叠后点击图标重新展开
+$('aiPanel').querySelector('.ai-icon').addEventListener('click', () => {
+  const p = $('aiPanel');
+  if (p.classList.contains('collapsed')) {
+    p.classList.remove('collapsed');
+    $('aiToggle').textContent = '›';
+  }
+});
+
+// AI 实时串口流（全局 SSE）
+function connectAiSSE() {
+  aiSse = new EventSource('/api/ai/stream');
+  aiSse.onmessage = (e) => {
+    try {
+      const item = JSON.parse(e.data);
+      aiLiveLines.push(item);
+      if (aiLiveLines.length > 100) aiLiveLines.shift();
+      renderAiLive();
+    } catch(err) {}
+  };
+  aiSse.onerror = () => {
+    aiSse.close();
+    setTimeout(connectAiSSE, 2000);
+  };
+}
+function renderAiLive() {
+  const list = $('aiLiveList');
+  // 只渲染最后 15 行
+  const recent = aiLiveLines.slice(-15);
+  list.innerHTML = recent.map(it =>
+    `<div class="ai-live-line"><span class="port-tag">[${esc(it.port)}]</span>${esc(it.text).slice(0,200)}</div>`
+  ).join('');
+  list.parentElement.scrollTop = list.parentElement.scrollHeight;
+}
+
+// AI 对话
+async function aiSend() {
+  const input = $('aiInput');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  appendAiMsg('user', text);
+  appendAiMsg('assistant', '正在分析…', true);
+
+  // AI 的"大脑"：通过后端 API 获取串口数据，本地分析
+  // 这里实现一个规则引擎：解析用户意图，调用对应 API
+  const result = await aiThink(text);
+  // 替换最后一条 assistant 消息
+  const msgs = $('aiChat').querySelectorAll('.ai-msg.assistant');
+  if (msgs.length) msgs[msgs.length-1].remove();
+  appendAiMsg('assistant', result);
+}
+
+function appendAiMsg(role, content, isPending=false) {
+  const chat = $('aiChat');
+  const div = document.createElement('div');
+  div.className = 'ai-msg ' + role;
+  const label = role === 'user' ? '你' : '✦ AI 助手';
+  // 简单 markdown：代码块
+  let html = esc(content);
+  html = html.replace(/```([\s\S]*?)```/g, (m, c) => `<pre>${esc(c)}</pre>`);
+  html = html.replace(/`([^`]+)`/g, '<code style="background:var(--bg);padding:1px 4px;border-radius:3px;font-family:var(--font-mono);">$1</code>');
+  div.innerHTML = `<div class="role">${label}</div><div class="content">${html}</div>`;
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+async function aiThink(query) {
+  // 规则引擎：解析用户意图
+  const q = query.toLowerCase();
+  try {
+    // 意图1：查所有串口状态
+    if (/状态|status|概览|overview|连接/.test(q) && !/发送|发|send/.test(q)) {
+      const r = await fetch('/api/ai/status');
+      const j = await r.json();
+      const ports = j.ports || {};
+      const ids = Object.keys(ports);
+      if (!ids.length) return '当前没有已连接的串口。点击「新建连接」来添加。';
+      let lines = ['当前串口连接状态：'];
+      for (const pid of ids) {
+        const p = ports[pid];
+        lines.push(`• ${pid} @ ${p.baud} — 缓冲 ${p.buf_lines} 行，录制 ${p.recording ? '中' : '停'}，日志 ${p.cmd_history_count} 条命令历史`);
+      }
+      return lines.join('\n');
+    }
+    // 意图2：查最近输出
+    const portMatch = query.match(/(COM\d+)/i);
+    if (portMatch && (/最近|输出|什么|看看|内容|recent|buffer|显示/.test(q) || /发了什么|输出了什么/.test(q))) {
+      const pid = portMatch[1].toUpperCase();
+      const r = await fetch('/api/ai/buffer?port_id=' + encodeURIComponent(pid) + '&n=30');
+      const j = await r.json();
+      if (!j.ok) return `串口 ${pid} 未连接。`;
+      const lines = j.lines || [];
+      if (!lines.length) return `${pid} 暂无输出数据。`;
+      let out = [`${pid} 最近 ${lines.length} 行输出：`];
+      out.push('```');
+      lines.forEach(l => out.push(l.text));
+      out.push('```');
+      return out.join('\n');
+    }
+    // 意图3：发送命令
+    if (portMatch && (/发送|发|send|执行|运行/.test(q))) {
+      const pid = portMatch[1].toUpperCase();
+      // 提取命令：去掉端口名和"发送/执行"等词
+      let cmd = query.replace(/(COM\d+)/i, '').replace(/帮我?|请?|发送|发|执行|运行|到|给|一下|下/g, '').trim();
+      if (!cmd) return `你想向 ${pid} 发送什么命令？请说明命令内容。`;
+      const r = await fetch('/api/ai/send', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: pid, cmd, wait: 2})});
+      const j = await r.json();
+      if (!j.ok) return `发送失败：${j.err}`;
+      let out = [`已向 ${pid} 发送命令：\`${cmd}\``];
+      const resp = j.response || [];
+      if (resp.length) {
+        out.push('设备返回：');
+        out.push('```');
+        resp.forEach(l => out.push(l.text));
+        out.push('```');
+      } else {
+        out.push('设备无返回。');
+      }
+      return out.join('\n');
+    }
+    // 意图4：分析内核报错
+    if (/报错|错误|error|fail|panic|分析|异常|内核/.test(q)) {
+      const r = await fetch('/api/ai/recent?n=50');
+      const j = await r.json();
+      if (!j.ok) return '无法获取串口数据。';
+      const allLines = [];
+      for (const pid in j.ports) {
+        j.ports[pid].forEach(l => allLines.push({port: pid, ...l}));
+      }
+      const errs = allLines.filter(l => /error|fail|panic|oops|warning|异常/i.test(l.text));
+      if (!errs.length) return '最近所有串口输出中未发现明显的错误/警告信息。';
+      let out = ['发现以下可能的异常（最近 50 行内）：'];
+      errs.slice(0, 10).forEach(l => out.push(`• [${l.port}] ${l.text.slice(0,120)}`));
+      if (errs.length > 10) out.push(`…共 ${errs.length} 条`);
+      return out.join('\n');
+    }
+    // 意图5：所有端口最近输出
+    if (/所有|全部|all|每个|分别/.test(q) && (/最近|输出|recent/.test(q))) {
+      const r = await fetch('/api/ai/recent?n=20');
+      const j = await r.json();
+      let out = ['各串口最近输出：'];
+      for (const pid in j.ports) {
+        const lines = j.ports[pid];
+        out.push(`\n【${pid}】`);
+        lines.slice(-5).forEach(l => out.push(l.text));
+      }
+      return out.join('\n');
+    }
+    // 意图6：可用端口
+    if (/可用|有哪些|列表|available|端口/.test(q) && !/发送|发/.test(q)) {
+      const r = await fetch('/api/ai/ports');
+      const j = await r.json();
+      let out = ['可用串口：'];
+      j.ports.forEach(p => out.push(`• ${p.device} — ${p.description}`));
+      if (j.connected.length) {
+        out.push('\n已连接：' + j.connected.join(', '));
+      } else {
+        out.push('\n当前无连接。');
+      }
+      return out.join('\n');
+    }
+    // 默认
+    const r = await fetch('/api/ai/status');
+    const j = await r.json();
+    const ids = Object.keys(j.ports || {});
+    return `我能实时看到 ${ids.length} 个串口连接${ids.length ? '（' + ids.join(', ') + '）' : ''}。你可以：
+• 查状态："当前串口状态"
+• 看输出："COM1 最近输出了什么"
+• 发命令："帮我发 cat /proc/cpuinfo 到 COM1"
+• 查报错："分析一下最近的内核报错"
+• 查端口："有哪些可用串口"`;
+  } catch(e) {
+    return '分析失败：' + e;
+  }
+}
+
+$('aiSend').onclick = aiSend;
+$('aiInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); aiSend(); }
+});
+$('aiClear').onclick = () => {
+  $('aiChat').innerHTML = '<div class="ai-msg assistant"><div class="role">✦ AI 助手</div><div class="content">对话已清空。继续提问吧。</div></div>';
+};
+
+// ============================================================
+// 初始化
+// ============================================================
+loadPorts();
+refreshGlobalStatus();
+connectAiSSE();
+setInterval(refreshGlobalStatus, 3000);
+setInterval(() => { if (activePortId) refreshSidebar(); }, 5000);
+</script>
+</body>
+</html>

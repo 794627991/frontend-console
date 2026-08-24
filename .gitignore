@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# PyInstaller 构建产物
+build/
+dist/
+*.spec.bak
+
+# 串口日志（运行时生成，不入库）
+serial_logs/
+
+# 运行时状态文件
+endpoint.json
+~/.serialconsole_pro/
+
+# IDE / 系统
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
