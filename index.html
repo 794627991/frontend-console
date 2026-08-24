@@ -406,7 +406,17 @@
     font-family: var(--font-mono); font-size: 13px; line-height: 1.4;
     white-space: pre; padding: 4px 8px;
   }
-  .screen-overlay.show { display: block; }
+  .screen-overlay.show { display: flex; flex-direction: column; }
+  /* 退出全屏提示条 */
+  .screen-hint {
+    flex-shrink: 0; padding: 4px 10px; font-size: 11px; color: var(--muted);
+    background: rgba(0,212,255,0.06); border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .screen-hint .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--neon-green); box-shadow: 0 0 6px var(--neon-green); animation: pulse 1.2s infinite; }
+  .screen-hint .esc { margin-left: auto; color: var(--accent); cursor: pointer; padding: 1px 8px; border: 1px solid var(--border); border-radius: 4px; }
+  .screen-hint .esc:hover { background: rgba(0,212,255,0.12); }
+  .screen-body { flex: 1; min-height: 0; overflow: hidden; }
   .screen-row { white-space: pre; min-height: 1.4em; }
   .screen-cursor { display: inline-block; width: 8px; height: 1em; background: var(--accent); vertical-align: middle; animation: blink 1s step-end infinite; }
 
@@ -877,8 +887,20 @@ function buildTerminal(portId, meta) {
   const overlay = document.createElement('div');
   overlay.className = 'screen-overlay';
   overlay.dataset.screen = portId;
+  overlay.innerHTML = `
+    <div class="screen-hint">
+      <span class="dot"></span><span>全屏模式（top/htop）— 实时刷新中</span>
+      <span class="esc" data-screen-esc="${portId}">退出 ↩</span>
+    </div>
+    <div class="screen-body" data-screen-body="${portId}"></div>
+  `;
   wrap.querySelector('.output-wrap').appendChild(overlay);
   conn.screenOverlay = overlay;
+  conn.screenBody = overlay.querySelector(`[data-screen-body="${portId}"]`);
+  // 退出按钮：发 Ctrl-C 中断 top，并请求退出
+  overlay.querySelector(`[data-screen-esc="${portId}"]`).onclick = () => {
+    termSendRaw(portId, [3]);  // Ctrl-C 中断 top
+  };
   // 跳底悬浮按钮
   const fab = document.createElement('div');
   fab.className = 'jump-bottom-fab';
@@ -1019,7 +1041,7 @@ function connectSSE(portId, conn) {
           const u8 = new Uint8Array(bytes.length);
           for (let i = 0; i < bytes.length; i++) u8[i] = bytes.charCodeAt(i);
           conn.screen.feed(u8);
-          conn.screen.render(conn.screenOverlay);
+          conn.screen.render(conn.screenBody);
         }
         return;
       }
@@ -1041,6 +1063,7 @@ function enterScreen(portId, conn) {
   if (conn.inScreen) return;
   conn.inScreen = true;
   if (!conn.screen) conn.screen = new VT100Screen();
+  else conn.screen.reset();
   conn.screenOverlay.classList.add('show');
   conn.fab.classList.remove('show');
 }
@@ -1049,8 +1072,9 @@ function exitScreen(portId, conn) {
   conn.inScreen = false;
   conn.screenOverlay.classList.remove('show');
   if (conn.screen) { conn.screen.reset(); }
-  // 退出全屏后补载最近缓冲衔接
-  loadBuffer(portId, conn);
+  if (conn.screenBody) conn.screenBody.innerHTML = '';
+  // 退出全屏后清掉旧行并重载最近缓冲，恢复历史翻页与输入行
+  reloadBufferAfterScreen(portId, conn);
 }
 
 // ============================================================
@@ -1302,6 +1326,28 @@ async function loadBuffer(portId, conn) {
       conn.hasMore = false;
     }
     if (conn.autoScroll) conn.output.scrollTop = conn.output.scrollHeight;
+  } catch(e) {}
+}
+
+// 退出全屏后重载缓冲：清掉旧行再拉最近 500 行，保证历史衔接干净
+async function reloadBufferAfterScreen(portId, conn) {
+  try {
+    // 清掉 DOM 中旧行（top 期间残留），保留哨兵与输入行
+    Array.from(conn.output.querySelectorAll('.line')).forEach(n => n.remove());
+    const r = await fetch('/api/buffer?port_id=' + encodeURIComponent(portId) + '&n=500');
+    const j = await r.json();
+    const lines = j.lines || [];
+    const frag = document.createDocumentFragment();
+    lines.forEach(l => frag.appendChild(buildLineDiv(l)));
+    conn.output.insertBefore(frag, conn.sentinel);
+    if (lines.length) {
+      conn.oldestSeq = lines[0].seq;
+      conn.hasMore = j.has_more !== false;
+    } else {
+      conn.hasMore = false;
+    }
+    conn.autoScroll = true;
+    conn.output.scrollTop = conn.output.scrollHeight;
   } catch(e) {}
 }
 

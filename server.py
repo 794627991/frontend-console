@@ -281,7 +281,7 @@ class SerialPort:
                 if chunk:
                     partial += chunk
                 # ---- 全屏模式检测 ----
-                # 强进入信号（2J / ?1049h）出现时切换为帧推送，跳过行切分
+                # 强进入信号（2J / ?1049h / busybox top 的 H+J）出现时切换为帧推送
                 if not self.screen_mode and _SCREEN_STRONG_RE.search(chunk):
                     self.screen_mode = True
                     self.screen_buf = bytearray()
@@ -289,24 +289,33 @@ class SerialPort:
                     self.screen_flush_last = time.time()
                     self._emit_screen_control("enter")
                 if self.screen_mode:
-                    self.screen_buf += chunk
-                    self.screen_last = time.time()
-                    now = time.time()
-                    # 帧边界：距上次 flush 超 60ms，或缓冲超 32KB 即 flush 一帧
-                    if self.screen_buf and (now - self.screen_flush_last > 0.06 or len(self.screen_buf) > 32768):
-                        frame = bytes(self.screen_buf)
-                        self.screen_buf = bytearray()
-                        self.screen_flush_last = now
-                        self._push_screen_frame(base64.b64encode(frame).decode("ascii"), last=True)
-                    # 退出：无新字节超 1.5s
-                    if (now - self.screen_last) > 1.5:
+                    # 主动退出：块含换行但无屏幕控制序列 → top 已退出、shell 提示到来
+                    # （top 每次刷新都带 \x1b[H\x1b[J 等控制序列，不会误触发）
+                    if chunk and b"\n" in chunk and not _SCREEN_ANY_RE.search(chunk):
                         if self.screen_buf:
-                            frame = bytes(self.screen_buf)
+                            self._push_screen_frame(base64.b64encode(bytes(self.screen_buf)).decode("ascii"), last=True)
                             self.screen_buf = bytearray()
-                            self._push_screen_frame(base64.b64encode(frame).decode("ascii"), last=True)
                         self.screen_mode = False
                         self._emit_screen_control("exit")
-                    continue  # 全屏模式不进入行切分
+                        # 落入下方行切分处理本块（不 continue）
+                    else:
+                        if chunk:
+                            self.screen_buf += chunk
+                            self.screen_last = time.time()  # 仅在有新字节时刷新（超时判定的关键）
+                        now = time.time()
+                        # 帧边界：距上次 flush 超 60ms，或缓冲超 32KB 即 flush 一帧
+                        if self.screen_buf and (now - self.screen_flush_last > 0.06 or len(self.screen_buf) > 32768):
+                            self._push_screen_frame(base64.b64encode(bytes(self.screen_buf)).decode("ascii"), last=True)
+                            self.screen_buf = bytearray()
+                            self.screen_flush_last = now
+                        # 长超时兜底退出：12s 无新字节（> top 默认 5s 刷新间隔，避免误退出）
+                        if (now - self.screen_last) > 12:
+                            if self.screen_buf:
+                                self._push_screen_frame(base64.b64encode(bytes(self.screen_buf)).decode("ascii"), last=True)
+                                self.screen_buf = bytearray()
+                            self.screen_mode = False
+                            self._emit_screen_control("exit")
+                        continue  # 全屏模式不进入行切分
                 if len(partial) > 8192:
                     self.append_line(partial.decode("utf-8", errors="replace"))
                     partial = b""
@@ -338,12 +347,11 @@ class SerialPort:
                             self.append_line(before.decode("utf-8", errors="replace"))
                         partial = b""
                 if not chunk:
-                    # 全屏模式超时退出兜底：无新字节超 1.5s 即退出（chunk 为空时也要检查）
-                    if self.screen_mode and (time.time() - self.screen_last) > 1.5:
+                    # 全屏模式长超时退出兜底：无新字节超 12s（chunk 为空时也要检查）
+                    if self.screen_mode and (time.time() - self.screen_last) > 12:
                         if self.screen_buf:
-                            frame = bytes(self.screen_buf)
+                            self._push_screen_frame(base64.b64encode(bytes(self.screen_buf)).decode("ascii"), last=True)
                             self.screen_buf = bytearray()
-                            self._push_screen_frame(base64.b64encode(frame).decode("ascii"), last=True)
                         self.screen_mode = False
                         self._emit_screen_control("exit")
                     time.sleep(0.02)
