@@ -7,7 +7,7 @@
 - AI 接入层：/api/ai/* 系列，AI 可查询任意串口实时数据、发送命令、订阅流
 - 完全继承 web 版的 \r/\x08/ANSI 处理逻辑
 """
-import os, sys, time, threading, json, glob, re, base64
+import os, sys, time, threading, json, glob, re, base64, subprocess, codecs
 from collections import deque
 from datetime import datetime
 from queue import Queue
@@ -18,7 +18,18 @@ import serial.tools.list_ports
 from flask import Flask, Response, request, jsonify, send_from_directory
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-LOG_DIR = os.environ.get("SERIAL_LOG_DIR", os.path.join(BASE_DIR, "serial_logs"))
+# PyInstaller 打包后资源在 _MEIPASS 临时目录；开发时在源码目录
+def _resource_base():
+    return getattr(sys, "_MEIPASS", BASE_DIR)
+RES_DIR = _resource_base()
+# 日志目录：优先环境变量；打包后写到用户目录（避免 _MEIPASS 临时目录随退出被删），
+# 开发时写到源码目录下的 serial_logs/
+if os.environ.get("SERIAL_LOG_DIR"):
+    LOG_DIR = os.environ.get("SERIAL_LOG_DIR")
+elif getattr(sys, "_MEIPASS", None):
+    LOG_DIR = os.path.join(os.path.expanduser("~"), ".serialconsole_pro", "serial_logs")
+else:
+    LOG_DIR = os.path.join(BASE_DIR, "serial_logs")
 COMMON_BAUDS = [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600]
 
 # 全局单调递增序列号：作为分页/搜索的稳定游标（避免 ms 时间戳同值）
@@ -30,7 +41,9 @@ def _next_seq():
         return next(_SEQ_COUNTER)
 
 # 全屏刷新命令检测：top/htop 等用这些序列整屏重绘
-# 强进入信号：清屏 2J、alt-screen ?1049h、或 busybox top 的 H+J 组合（光标回原点+清屏到尾）
+# v0.3.0：改用 xterm.js 后，终端渲染交给前端，后端不再做行切分/全屏帧。
+# 这里只保留一个"是否进入全屏应用"的判定，用于在 buf 里打标记、抑制逐行追加，
+# 避免 top 的整屏重绘序列污染历史缓冲（前端 xterm 仍会如实渲染这些序列）。
 _SCREEN_STRONG_RE = re.compile(rb"\x1b\[\d*2J|\x1b\[\?1049h|\x1b\[H\x1b\[J", re.I)
 _SCREEN_ANY_RE = re.compile(rb"\x1b\[[\d;]*[HJKsu]|\x1b\[\?1049[hl]|\x1b\[\d*2J|\x1b\[[\d;]*r", re.I)
 
@@ -166,7 +179,14 @@ def classify_line(line):
 # 多串口管理
 # ============================================================
 class SerialPort:
-    """单个串口连接：独立读线程、环形缓冲、SSE 客户端、日志。"""
+    """单个串口连接：独立读线程、环形缓冲、SSE 客户端、日志。
+
+    v0.3.0：终端渲染改用前端 xterm.js，后端不再做 \r/\n 行切分。
+    读线程把原始字节流（UTF-8）按块推给前端 SSE（kind=raw），同时把
+    "逻辑行"追加进 buf/日志供历史分页/搜索/分析使用。逻辑行由 \n 切分，
+    行内 \r 视为"本行覆盖重写"——取最后一个 \r 之后的内容，避免 v0.2.2
+    打印快时 \r 被当成新行追加产生大量空行的 bug。
+    """
     def __init__(self, port, baud, port_id):
         self.port = port
         self.baud = baud
@@ -183,12 +203,11 @@ class SerialPort:
         self.log_lock = threading.Lock()
         self.log_path = None
         self.alive = True
-        # 全屏模式（top/htop 等）：检测到整屏重绘序列后切换为帧推送
+        # 全屏应用（top/htop）期间：buf 不追加逐行，但 raw 流照推
         self.screen_mode = False
-        self.screen_buf = bytearray()
-        self.screen_last = 0.0       # 最后收到字节的时间（判退出：1.5s 无字节）
-        self.screen_flush_last = 0.0 # 上次 flush 帧的时间（判帧边界：60ms 间隔）
-        self.screen_frame_seq = 0
+        self.screen_last = 0.0
+        # UTF-8 增量解码器：跨 chunk 的多字节字符（中文等）不会被拆成 �
+        self._raw_dec = codecs.getincrementaldecoder("utf-8")(errors="replace")
         self.reader = threading.Thread(target=self._reader_loop, daemon=True)
         self.reader.start()
         self._start_log()
@@ -202,11 +221,15 @@ class SerialPort:
         self.log_fp.write(f"# 串口日志 {self.port_id} 开始 {datetime.now().isoformat()}\n")
 
     def append_line(self, raw_line, local_echo=False):
+        """把一行逻辑文本追加进 buf/日志。raw_line 为含 ANSI 的原始行文本。
+
+        注意：终端 SSE 走 raw 流（_push_raw），不经过这里；AI 全局流由
+        下方的 _patched_append hook 转发，这里只管 buf + 日志。
+        """
         ts_ms = int(time.time() * 1000)
         clean = strip_ansi(raw_line)
-        html = ansi_to_html(raw_line)
         tag = "input" if local_echo else classify_line(clean)
-        item = {"seq": _next_seq(), "ts": ts_ms, "text": clean, "html": html, "tag": tag, "port": self.port_id}
+        item = {"seq": _next_seq(), "ts": ts_ms, "text": clean, "tag": tag, "port": self.port_id}
         with self.buf_lock:
             self.buf.append(item)
         if self.recording and self.log_fp:
@@ -216,27 +239,11 @@ class SerialPort:
                     self.log_fp.flush()
                 except Exception:
                     pass
-        with self.clients_lock:
-            dead = []
-            for q in self.clients:
-                try:
-                    q.put_nowait(item)
-                except Exception:
-                    dead.append(q)
-            for q in dead:
-                try:
-                    self.clients.remove(q)
-                except Exception:
-                    pass
 
-    def _push_screen_frame(self, data_b64, last=True):
-        """把一帧全屏字节流（base64）推给所有 SSE 客户端，不写 buf。"""
-        self.screen_frame_seq += 1
+    def _push_raw(self, text, last=False):
+        """把一段原始字节流（已 decode 为 str）推给本串口所有 SSE 客户端。"""
         ts_ms = int(time.time() * 1000)
-        item = {
-            "kind": "screen", "port": self.port_id, "ts": ts_ms,
-            "seq": self.screen_frame_seq, "data": data_b64, "last": last,
-        }
+        item = {"kind": "raw", "port": self.port_id, "ts": ts_ms, "data": text, "last": last}
         with self.clients_lock:
             dead = []
             for q in self.clients:
@@ -268,7 +275,7 @@ class SerialPort:
                     pass
 
     def _reader_loop(self):
-        partial = b""
+        partial = b""   # 尚未遇到 \n 的字节累积（行缓冲）
         while self.alive:
             try:
                 with self.lock:
@@ -279,81 +286,50 @@ class SerialPort:
                     n = s.in_waiting or 1
                     chunk = s.read(n)
                 if chunk:
-                    partial += chunk
-                # ---- 全屏模式检测 ----
-                # 强进入信号（2J / ?1049h / busybox top 的 H+J）出现时切换为帧推送
-                if not self.screen_mode and _SCREEN_STRONG_RE.search(chunk):
-                    self.screen_mode = True
-                    self.screen_buf = bytearray()
-                    self.screen_last = time.time()
-                    self.screen_flush_last = time.time()
-                    self._emit_screen_control("enter")
-                if self.screen_mode:
-                    # 主动退出：块含换行但无屏幕控制序列 → top 已退出、shell 提示到来
-                    # （top 每次刷新都带 \x1b[H\x1b[J 等控制序列，不会误触发）
-                    if chunk and b"\n" in chunk and not _SCREEN_ANY_RE.search(chunk):
-                        if self.screen_buf:
-                            self._push_screen_frame(base64.b64encode(bytes(self.screen_buf)).decode("ascii"), last=True)
-                            self.screen_buf = bytearray()
-                        self.screen_mode = False
-                        self._emit_screen_control("exit")
-                        # 落入下方行切分处理本块（不 continue）
-                    else:
-                        if chunk:
-                            self.screen_buf += chunk
-                            self.screen_last = time.time()  # 仅在有新字节时刷新（超时判定的关键）
-                        now = time.time()
-                        # 帧边界：距上次 flush 超 60ms，或缓冲超 32KB 即 flush 一帧
-                        if self.screen_buf and (now - self.screen_flush_last > 0.06 or len(self.screen_buf) > 32768):
-                            self._push_screen_frame(base64.b64encode(bytes(self.screen_buf)).decode("ascii"), last=True)
-                            self.screen_buf = bytearray()
-                            self.screen_flush_last = now
-                        # 长超时兜底退出：12s 无新字节（> top 默认 5s 刷新间隔，避免误退出）
-                        if (now - self.screen_last) > 12:
-                            if self.screen_buf:
-                                self._push_screen_frame(base64.b64encode(bytes(self.screen_buf)).decode("ascii"), last=True)
-                                self.screen_buf = bytearray()
+                    # ---- 全屏应用检测 ----
+                    # 强进入信号出现 → 进入全屏：raw 照推，但 buf 停止逐行追加
+                    if not self.screen_mode and _SCREEN_STRONG_RE.search(chunk):
+                        self.screen_mode = True
+                        self.screen_last = time.time()
+                        self._emit_screen_control("enter")
+                    if self.screen_mode:
+                        self._push_raw(self._raw_dec.decode(chunk))
+                        if chunk and _SCREEN_ANY_RE.search(chunk):
+                            self.screen_last = time.time()
+                        # 主动退出：块含裸 \n 且无屏幕控制序列 → top 退出、shell 回来
+                        if chunk and b"\n" in chunk and not _SCREEN_ANY_RE.search(chunk):
                             self.screen_mode = False
                             self._emit_screen_control("exit")
-                        continue  # 全屏模式不进入行切分
-                if len(partial) > 8192:
-                    self.append_line(partial.decode("utf-8", errors="replace"))
-                    partial = b""
-                # \x08 退格
-                while b"\x08" in partial:
-                    idx = partial.find(b"\x08")
-                    before = partial[:idx]
-                    after = partial[idx+1:]
-                    if before: before = before[:-1]
-                    partial = before + after
-                # \n 切分
-                while b"\n" in partial:
-                    line, partial = partial.split(b"\n", 1)
-                    if b"\r" in line:
-                        if line.endswith(b"\r"): line = line[:-1]
-                        if b"\r" in line: line = line.rsplit(b"\r", 1)[-1]
-                    text = line.decode("utf-8", errors="replace")
-                    self.append_line(text)
-                # \r 重绘
-                while b"\r" in partial:
-                    idx = partial.find(b"\r")
-                    before = partial[:idx]
-                    after = partial[idx+1:]
-                    if after:
-                        self.append_line(after.decode("utf-8", errors="replace"))
+                            partial = b""   # 全屏期间累积的 partial 作废
+                        else:
+                            # 长超时兜底退出（> top 默认 5s 刷新间隔）
+                            if (time.time() - self.screen_last) > 12:
+                                self.screen_mode = False
+                                self._emit_screen_control("exit")
+                                partial = b""
+                            continue
+                    # ---- 普通行模式 ----
+                    # 1) 推原始流给前端 xterm（含 \r \n 等控制序列，xterm 自行渲染）
+                    self._push_raw(self._raw_dec.decode(chunk))
+                    # 2) 行切分入 buf/日志：只在 \n 处断行，\r 视为行内覆盖
+                    partial += chunk
+                    if len(partial) > 65536:
+                        # 超长无换行（如二进制/进度条）：作为一行落盘，避免内存堆积
+                        self.append_line(partial.decode("utf-8", errors="replace"))
                         partial = b""
-                    else:
-                        if before:
-                            self.append_line(before.decode("utf-8", errors="replace"))
-                        partial = b""
-                if not chunk:
-                    # 全屏模式长超时退出兜底：无新字节超 12s（chunk 为空时也要检查）
+                    while b"\n" in partial:
+                        line, partial = partial.split(b"\n", 1)
+                        # \r 处理：行内多个 \r 取最后一个 \r 之后的内容（设备用 \r 覆盖重绘本行）
+                        if b"\r" in line:
+                            line = line.rsplit(b"\r", 1)[-1]
+                        self.append_line(line.decode("utf-8", errors="replace"))
+                    # partial 中剩余的是未结束的行（无 \n），等下次再处理
+                else:
+                    # 无新字节：全屏长超时兜底退出
                     if self.screen_mode and (time.time() - self.screen_last) > 12:
-                        if self.screen_buf:
-                            self._push_screen_frame(base64.b64encode(bytes(self.screen_buf)).decode("ascii"), last=True)
-                            self.screen_buf = bytearray()
                         self.screen_mode = False
                         self._emit_screen_control("exit")
+                        partial = b""
                     time.sleep(0.02)
             except serial.SerialException:
                 self.append_line(f"[serial-reader] 串口异常，尝试重连...")
@@ -532,11 +508,11 @@ def start_background():
 # ============================================================
 @app.route("/")
 def index():
-    return send_from_directory(BASE_DIR, "index.html")
+    return send_from_directory(RES_DIR, "index.html")
 
 @app.route("/<path:fn>")
 def static_files(fn):
-    return send_from_directory(BASE_DIR, fn)
+    return send_from_directory(RES_DIR, fn)
 
 @app.route("/api/ports")
 def api_ports():
@@ -678,6 +654,43 @@ def api_logs():
         for f in sorted(glob.glob(os.path.join(LOG_DIR, "serial_*.log")), reverse=True):
             files.append({"name": os.path.basename(f), "size": os.path.getsize(f), "mtime": int(os.path.getmtime(f))})
     return jsonify({"logs": files, "dir": LOG_DIR})
+
+@app.route("/api/open_log_dir", methods=["POST"])
+def api_open_log_dir():
+    """在系统资源管理器中打开日志目录（Windows 用 explorer.exe，跨平台兜底 os.startfile）。"""
+    try:
+        os.makedirs(LOG_DIR, exist_ok=True)
+        if sys.platform.startswith("win"):
+            # explorer.exe 打开目录并选中无；直接打开目录本身
+            subprocess.Popen(["explorer.exe", LOG_DIR])
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", LOG_DIR])
+        else:
+            subprocess.Popen(["xdg-open", LOG_DIR])
+        return jsonify({"ok": True, "dir": LOG_DIR})
+    except Exception as e:
+        return jsonify({"ok": False, "err": str(e), "dir": LOG_DIR}), 500
+
+@app.route("/api/open_log_file", methods=["POST"])
+def api_open_log_file():
+    """在资源管理器中打开日志目录并选中指定日志文件（仅 Windows 支持 /select）。"""
+    data = request.get_json(force=True)
+    name = data.get("name")
+    if not name:
+        return jsonify({"ok": False, "err": "need name"}), 400
+    path = os.path.join(LOG_DIR, name)
+    try:
+        if not os.path.isfile(path):
+            return jsonify({"ok": False, "err": "not found"}), 404
+        if sys.platform.startswith("win"):
+            subprocess.Popen(["explorer.exe", "/select,", path])
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", "-R", path])
+        else:
+            subprocess.Popen(["xdg-open", LOG_DIR])
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "err": str(e)}), 500
 
 @app.route("/api/log/<name>")
 def api_log_read(name):

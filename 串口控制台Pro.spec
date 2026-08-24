@@ -5,7 +5,7 @@ a = Analysis(
     ['D:/AI/串口控制台Pro/main.py'],
     pathex=[],
     binaries=[],
-    datas=[('index.html', '.'), ('app.ico', '.')],
+    datas=[('index.html', '.'), ('app.ico', '.'), ('vendor', 'vendor')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

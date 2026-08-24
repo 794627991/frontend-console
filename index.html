@@ -224,13 +224,21 @@
   .term-toolbar .info { font-size: 11px; color: var(--muted); margin-left: auto; font-family: var(--font-mono); }
 
   .output-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; background: var(--bg); }
-  .output {
-    flex: 1; min-height: 0; overflow-y: auto;
+  .output { flex: 1; min-height: 0; overflow-y: auto;
     padding: 8px 14px;
     font-family: var(--font-mono); font-size: 13px; line-height: 1.5;
     white-space: pre-wrap; word-break: break-all;
     font-variant-ligatures: none;
   }
+  /* xterm 终端容器 */
+  .xterm-wrap {
+    flex: 1; min-height: 0; position: relative; background: #000;
+    padding: 4px 6px; overflow: hidden;
+  }
+  .xterm-wrap .xterm { height: 100%; }
+  .xterm-wrap .xterm-viewport { overflow-y: auto !important; }
+  /* xterm 行高/字号与原终端一致 */
+  .xterm-wrap .xterm-rows { font-family: var(--font-mono); }
   .line { padding: 0; }
   .line .ts { color: #2a3a55; font-size: 10px; margin-right: 8px; user-select: none; font-family: var(--font-mono); }
   .tag-kernel { color: var(--kernel); }
@@ -245,23 +253,8 @@
   .tag-input { color: var(--input-c); }
   .tag-serial-reader, .tag-serial, .tag-ctrl { color: var(--neon-orange); font-style: italic; }
 
-  /* 终端内联输入行 */
-  .term-input-line {
-    flex-shrink: 0; display: flex; align-items: center;
-    padding: 4px 14px 8px; min-height: 26px;
-    font-family: var(--font-mono); font-size: 13px; line-height: 1.5;
-    white-space: pre-wrap; word-break: break-all; color: var(--text);
-    background: var(--bg); border-top: 1px solid var(--border);
-  }
-  .term-input-line .echocmd { color: var(--input-c); }
-  .term-input-line .cursor {
-    display: inline-block; width: 8px; height: 15px;
-    background: var(--accent); vertical-align: middle;
-    animation: blink 1s step-end infinite;
-    box-shadow: 0 0 6px var(--accent-glow);
-  }
-  .term-input-line .cursor.dim { background: var(--border); box-shadow: none; }
-  @keyframes blink { 0%,50%{opacity:1} 51%,100%{opacity:0} }
+  /* 终端内联输入行（v0.3.0 已弃用，xterm 自带输入；保留样式以防残留引用） */
+  .term-input-line { display: none; }
 
   /* ===== 右侧面板（工具栏 + 标签页） ===== */
   .ai-panel {
@@ -399,26 +392,23 @@
   .cmd-item .del:hover { color: var(--neon-red); }
   .cmd-empty { color: var(--muted); font-size: 11px; padding: 12px; text-align: center; }
 
-  /* 全屏覆盖容器（top 等） */
+  /* 全屏覆盖容器（top 等）—— v0.3.0：xterm 自身处理全屏序列，此 overlay 仅作"全屏模式"提示条 */
   .screen-overlay {
-    position: absolute; inset: 0; display: none;
-    background: var(--bg); z-index: 5; overflow: hidden;
-    font-family: var(--font-mono); font-size: 13px; line-height: 1.4;
-    white-space: pre; padding: 4px 8px;
+    position: absolute; top: 0; left: 0; right: 0; display: none;
+    z-index: 6; pointer-events: none;
   }
   .screen-overlay.show { display: flex; flex-direction: column; }
   /* 退出全屏提示条 */
   .screen-hint {
-    flex-shrink: 0; padding: 4px 10px; font-size: 11px; color: var(--muted);
+    padding: 4px 10px; font-size: 11px; color: var(--muted);
     background: rgba(0,212,255,0.06); border-bottom: 1px solid var(--border);
-    display: flex; align-items: center; gap: 8px;
+    display: flex; align-items: center; gap: 8px; pointer-events: auto;
   }
   .screen-hint .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--neon-green); box-shadow: 0 0 6px var(--neon-green); animation: pulse 1.2s infinite; }
   .screen-hint .esc { margin-left: auto; color: var(--accent); cursor: pointer; padding: 1px 8px; border: 1px solid var(--border); border-radius: 4px; }
   .screen-hint .esc:hover { background: rgba(0,212,255,0.12); }
-  .screen-body { flex: 1; min-height: 0; overflow: hidden; }
-  .screen-row { white-space: pre; min-height: 1.4em; }
-  .screen-cursor { display: inline-block; width: 8px; height: 1em; background: var(--accent); vertical-align: middle; animation: blink 1s step-end infinite; }
+  /* screen-body/screen-row/screen-cursor 已废弃（xterm 接管），样式保留空壳避免引用报错 */
+  .screen-body, .screen-row, .screen-cursor { display: none; }
 
   /* 跳底悬浮按钮 —— 主窗口右下角，科技风 */
   .jump-bottom-fab {
@@ -467,7 +457,7 @@
   .kw-success { color: var(--neon-green); font-weight: 600; }
   .top-sentinel { height: 1px; }
 
-  /* 隐藏输入框（承载焦点） */
+  /* 隐藏输入框（v0.3.0：xterm 自带输入，此框已不再承载焦点；保留以防旧引用） */
   #cmdInput { position: absolute; left: -9999px; width: 1px; opacity: 0; }
 
   /* 回放面板 */
@@ -489,15 +479,28 @@
   .modal.show { display: flex; }
   .modal .box {
     background: var(--bg-panel); border: 1px solid var(--border-glow); border-radius: 12px;
-    width: 600px; max-height: 70vh; display: flex; flex-direction: column;
+    width: 640px; max-height: 78vh; display: flex; flex-direction: column;
     box-shadow: 0 0 40px rgba(0,212,255,0.1);
   }
-  .modal .head { padding: 14px 18px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+  .modal .head { padding: 14px 18px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; gap: 10px; }
   .modal .head strong { color: var(--fg-bright); font-size: 14px; }
+  .modal .head .head-actions { display: flex; gap: 6px; align-items: center; }
+  .modal .dir-bar {
+    padding: 8px 16px; font-size: 11px; color: var(--muted); font-family: var(--font-mono);
+    background: var(--bg-input); border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 8px; word-break: break-all;
+  }
+  .modal .dir-bar .open-btn { color: var(--accent); cursor: pointer; white-space: nowrap; border: 1px solid var(--border); border-radius: 4px; padding: 2px 8px; }
+  .modal .dir-bar .open-btn:hover { background: rgba(0,212,255,0.12); border-color: var(--accent); }
   .modal .list { overflow-y: auto; padding: 8px; }
-  .modal .item { padding: 10px 12px; border-radius: 8px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; transition: all 0.2s; }
+  .modal .item { padding: 10px 12px; border-radius: 8px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; transition: all 0.2s; gap: 8px; }
   .modal .item:hover { background: var(--bg-card); border-color: var(--accent); }
   .modal .item .sz { color: var(--muted); font-size: 11px; }
+  .modal .item .item-actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+  .modal .item .act-btn { font-size: 11px; color: var(--accent); cursor: pointer; border: 1px solid var(--border); border-radius: 4px; padding: 2px 8px; background: var(--bg-card); }
+  .modal .item .act-btn:hover { border-color: var(--accent); background: rgba(0,212,255,0.12); }
+  .modal .item .act-btn.open { color: var(--neon-orange); }
+  .modal .item .act-btn.open:hover { border-color: var(--neon-orange); background: rgba(255,157,0,0.12); }
 
   /* 连接对话框 */
   .conn-modal .box { width: 400px; }
@@ -532,6 +535,11 @@
   .empty-state .title { font-size: 16px; color: var(--fg); }
   .empty-state .desc { font-size: 12px; text-align: center; max-width: 300px; line-height: 1.6; }
 </style>
+<link rel="stylesheet" href="vendor/xterm.min.css">
+<script src="vendor/xterm.min.js"></script>
+<script src="vendor/xterm-addon-fit.min.js"></script>
+<script src="vendor/xterm-addon-search.min.js"></script>
+<script src="vendor/xterm-addon-web-links.min.js"></script>
 </head>
 <body>
 
@@ -550,6 +558,7 @@
   <div class="status-pill"><span class="dot" id="globalDot"></span><span id="globalStatus">0 个连接</span></div>
   <div class="status-pill"><span class="dot rec" id="recDot"></span><span>录制中</span></div>
   <button class="btn ghost" id="btnLogs">📜 日志库</button>
+  <button class="btn ghost" id="btnOpenLogDir" title="在资源管理器中打开日志目录">📁 打开日志目录</button>
   <button class="btn ghost" id="btnAbout">关于</button>
 </div>
 
@@ -661,8 +670,8 @@
   </div>
 </div>
 
-<!-- 隐藏输入框 -->
-<input type="text" id="cmdInput" autocomplete="off">
+<!-- 隐藏输入框（v0.3.0：xterm 自带输入，此框已不再使用，保留以防外部引用） -->
+<input type="text" id="cmdInput" autocomplete="off" style="display:none;">
 
 <!-- 连接对话框 -->
 <div class="modal conn-modal" id="connModal">
@@ -693,7 +702,13 @@
   <div class="box">
     <div class="head">
       <strong>📜 日志库</strong>
-      <button class="btn ghost icon-btn" id="logsClose">✕</button>
+      <div class="head-actions">
+        <button class="btn ghost" id="logsOpenDir" title="在资源管理器中打开日志目录">📁 打开目录</button>
+        <button class="btn ghost icon-btn" id="logsClose">✕</button>
+      </div>
+    </div>
+    <div class="dir-bar" id="logsDirBar">
+      <span id="logsDirPath" style="flex:1;">加载中…</span>
     </div>
     <div class="list" id="logsList"></div>
   </div>
@@ -732,12 +747,9 @@ const banner = $('banner');
 const portList = $('portList');
 const tabs = $('tabs');
 const termArea = $('termArea');
-const cmdInput = $('cmdInput');
 
-let connections = {};   // port_id -> { meta, sse, termBuf, tabEl, outputEl, termInputLineEl, ... }
+let connections = {};   // port_id -> conn（含 term/fit/search/xtermWrap/sse 等）
 let activePortId = null;
-let paused = false;
-let autoScroll = true;
 let aiSse = null;
 
 function showBanner(msg, ms=4000, isErr=false) {
@@ -752,58 +764,18 @@ function fmtTs(ms) {
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
 // ============================================================
-// 关键字高亮（error/warning/info 等，与 ANSI 颜色共存）
+// 关键字高亮（error/warning/info 等）
+// v0.3.0：改用 xterm decoration 实现（见下方 highlightNewKw），
+// 旧的 DOM textNode 高亮函数 highlightKeywords 已废弃移除。
 // ============================================================
-const KW_RULES = [
-  { cls: 'kw-error', re: /\b(error|fail|failed|failure|panic|oops|fatal|denied|refused|abort|crash|segfault|oom|killed)\b/gi },
-  { cls: 'kw-warning', re: /\b(warn|warning|deprecated|timeout|retry|overflow|underrun|stall)\b/gi },
-  { cls: 'kw-info', re: /\b(info|notice|starting|started|stopped|detected|found|loaded|ready|init)\b/gi },
-  { cls: 'kw-success', re: /\b(success|succeed|ok|done|complete|passed|ready)\b/gi },
-];
-// 在纯文本 textNode 上叠加关键字高亮（不破坏父级 ANSI span）
-function highlightKeywords(node) {
-  if (node.nodeType !== 3) return; // 只处理文本节点
-  const text = node.nodeValue;
-  if (!text) return;
-  // 收集所有匹配
-  const hits = [];
-  for (const r of KW_RULES) {
-    r.re.lastIndex = 0;
-    let m;
-    while ((m = r.re.exec(text)) !== null) {
-      hits.push({ start: m.index, end: m.index + m[0].length, cls: r.cls });
-      if (m.index === r.re.lastIndex) r.re.lastIndex++;
-    }
-  }
-  if (!hits.length) return;
-  hits.sort((a, b) => a.start - b.start);
-  // 合并重叠
-  const merged = [];
-  for (const h of hits) {
-    if (merged.length && h.start < merged[merged.length - 1].end) continue;
-    merged.push(h);
-  }
-  // 拆分 textNode
-  const frag = document.createDocumentFragment();
-  let last = 0;
-  for (const h of merged) {
-    if (h.start > last) frag.appendChild(document.createTextNode(text.slice(last, h.start)));
-    const span = document.createElement('span');
-    span.className = h.cls;
-    span.textContent = text.slice(h.start, h.end);
-    frag.appendChild(span);
-    last = h.end;
-  }
-  if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
-  node.parentNode.replaceChild(frag, node);
-}
+// （KW_RULES / KW_COLOR 已移至下方 xterm decoration 区块统一定义）
 
 // ============================================================
 // 终端标签页 & 输出区管理
 // ============================================================
 // 注：实际终端元素由 buildTerminal() 创建，此处不再保留死代码。
 
-// 重新设计：每个连接有自己的 output 容器
+// 重新设计：每个连接有自己的 xterm 终端容器
 function buildTerminal(portId, meta) {
   // 标签
   const tab = document.createElement('div');
@@ -829,21 +801,100 @@ function buildTerminal(portId, meta) {
       <span class="info" data-info="baud">${portId} @ ${meta.baud}</span>
     </div>
     <div class="output-wrap">
-      <div class="output" data-output="${portId}">
-        <div class="term-input-line" data-term-input="${portId}" title="点击此处输入命令">
-          <span class="echocmd"></span><span class="cursor"></span>
-        </div>
-      </div>
+      <div class="xterm-wrap" data-xterm="${portId}"></div>
     </div>
   `;
-  // 工具栏事件
+
+  const conn = {
+    meta, tab, wrap,
+    xtermWrap: wrap.querySelector(`[data-xterm="${portId}"]`),
+    term: null, fit: null, search: null,
+    sse: null,
+    paused: false,
+    autoScroll: true,
+    pendingRaw: '',   // 历史加载期间缓冲的实时 raw，loadBuffer 完成后 flush
+    // 历史分页（基于后端 buf，xterm 滚动到底即实时流；向上翻历史用分页 API）
+    hasMore: true,
+    oldestSeq: null,
+    loadingMore: false,
+    loadingHistory: false,
+    // 全屏模式（top/htop）：仅用于显示提示条 + 抑制跳底 FAB
+    inScreen: false,
+    screenOverlay: null,
+    fab: null,
+    // 关键字常驻高亮：记录已加 decoration 的行范围
+    kwDecorLastRow: 0,
+    kwDecorations: [],
+  };
+
+  // ---- 创建 xterm 实例 ----
+  conn.term = new Terminal({
+    fontFamily: '"Cascadia Code", "JetBrains Mono", "Consolas", "Menlo", monospace',
+    fontSize: 13,
+    lineHeight: 1.3,
+    cursorBlink: true,
+    cursorStyle: 'bar',
+    scrollback: 100000,       // 大回滚缓冲，配合后端分页
+    allowProposedApi: true,
+    convertEol: false,        // 保留原始 \r\n，设备输出原样
+    theme: {
+      background: '#000000',
+      foreground: '#c8d6e8',
+      cursor: '#00d4ff',
+      cursorAccent: '#000000',
+      selectionBackground: 'rgba(0,212,255,0.25)',
+      black: '#0a0f1c', red: '#ff7b72', green: '#56d364', yellow: '#e3b341',
+      blue: '#79c0ff', magenta: '#d2a8ff', cyan: '#39c5cf', white: '#c9d1d9',
+      brightBlack: '#6e7681', brightRed: '#ffa198', brightGreen: '#7ee787',
+      brightYellow: '#f0e07a', brightBlue: '#a5d6ff', brightMagenta: '#d2a8ff',
+      brightCyan: '#56d4dd', brightWhite: '#f0f6fc',
+    },
+  });
+  conn.fit = new FitAddon.FitAddon();
+  conn.search = new SearchAddon.SearchAddon();
+  conn.term.loadAddon(conn.fit);
+  conn.term.loadAddon(conn.search);
+  try { conn.term.loadAddon(new WebLinksAddon.WebLinksAddon()); } catch(e) {}
+  conn.term.open(conn.xtermWrap);
+  try { conn.fit.fit(); } catch(e) {}
+
+  // ---- xterm 输入 → 串口 ----
+  conn.term.onData(data => {
+    if (conn.paused) return;
+    // data 是字符串（已按字符拆分），编码为字节发送
+    const bytes = [];
+    for (let i = 0; i < data.length; i++) {
+      const code = data.charCodeAt(i);
+      if (code < 128) bytes.push(code);
+      else { for (const b of new TextEncoder().encode(data[i])) bytes.push(b); }
+    }
+    if (bytes.length) termSendRaw(portId, bytes);
+  });
+
+  // ---- 滚动检测：到底自动跟实时，翻上去显示跳底 FAB + 触发加载更早历史 ----
+  conn.term.onScroll(() => {
+    const vp = conn.xtermWrap.querySelector('.xterm-viewport');
+    if (!vp) return;
+    const atBottom = vp.scrollHeight - vp.scrollTop - vp.clientHeight < 30;
+    conn.autoScroll = atBottom;
+    conn.fab.classList.toggle('show', !atBottom && !conn.inScreen);
+    // 滚到顶部附近 → 向上加载更早历史
+    if (vp.scrollTop < 40 && conn.hasMore && !conn.loadingMore && !conn.loadingHistory) {
+      loadOlder(portId, conn);
+    }
+  });
+
+  // ---- 工具栏事件 ----
   wrap.querySelector('[data-act=pause]').onclick = function() {
     conn.paused = !conn.paused;
     this.textContent = conn.paused ? '▶ 继续' : '⏸ 暂停滚屏';
-    if (!conn.paused) conn.output.scrollTop = conn.output.scrollHeight;
+    if (!conn.paused) { conn.autoScroll = true; conn.term.scrollToBottom(); }
   };
   wrap.querySelector('[data-act=clear]').onclick = () => {
-    Array.from(conn.output.querySelectorAll('.line')).forEach(n => n.remove());
+    conn.term.clear();
+    conn.kwDecorLastRow = 0;
+    conn.kwDecorations.forEach(d => { try { d.dispose(); } catch(e){} });
+    conn.kwDecorations = [];
     fetch('/api/clear_buffer', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: portId})});
   };
   wrap.querySelector('[data-act=newlog]').onclick = async () => {
@@ -854,36 +905,7 @@ function buildTerminal(portId, meta) {
   wrap.querySelector('[data-act=ctrlc]').onclick = () => termSendRaw(portId, [3]);
   wrap.querySelector('[data-act=ctrld]').onclick = () => termSendRaw(portId, [4]);
 
-  const conn = {
-    meta, tab, wrap,
-    output: wrap.querySelector(`[data-output="${portId}"]`),
-    termInputLine: wrap.querySelector(`[data-term-input="${portId}"]`),
-    termEcho: wrap.querySelector(`[data-term-input="${portId}"] .echocmd`),
-    termCursor: wrap.querySelector(`[data-term-input="${portId}"] .cursor`),
-    sse: null,
-    termBuf: '',
-    termHistIdx: -1,
-    redrawDeadline: 0,
-    tabCompleted: false,
-    paused: false,
-    autoScroll: true,
-    // 历史分页
-    hasMore: true,
-    oldestSeq: null,
-    loadingMore: false,
-    sentinel: null,
-    io: null,
-    // 全屏模式
-    inScreen: false,
-    screen: null,
-    screenOverlay: null,
-  };
-  // 哨兵元素（放在所有行之前，用于无限向上滚动触发）
-  const sentinel = document.createElement('div');
-  sentinel.className = 'top-sentinel';
-  conn.output.insertBefore(sentinel, conn.termInputLine);
-  conn.sentinel = sentinel;
-  // 全屏覆盖容器
+  // ---- 全屏模式提示条（xterm 自身处理全屏序列，这里只显示提示 + 退出按钮） ----
   const overlay = document.createElement('div');
   overlay.className = 'screen-overlay';
   overlay.dataset.screen = portId;
@@ -892,16 +914,14 @@ function buildTerminal(portId, meta) {
       <span class="dot"></span><span>全屏模式（top/htop）— 实时刷新中</span>
       <span class="esc" data-screen-esc="${portId}">退出 ↩</span>
     </div>
-    <div class="screen-body" data-screen-body="${portId}"></div>
   `;
   wrap.querySelector('.output-wrap').appendChild(overlay);
   conn.screenOverlay = overlay;
-  conn.screenBody = overlay.querySelector(`[data-screen-body="${portId}"]`);
-  // 退出按钮：发 Ctrl-C 中断 top，并请求退出
   overlay.querySelector(`[data-screen-esc="${portId}"]`).onclick = () => {
     termSendRaw(portId, [3]);  // Ctrl-C 中断 top
   };
-  // 跳底悬浮按钮
+
+  // ---- 跳底悬浮按钮 ----
   const fab = document.createElement('div');
   fab.className = 'jump-bottom-fab';
   fab.title = '跳到底部 (Ctrl+End)';
@@ -909,25 +929,8 @@ function buildTerminal(portId, meta) {
   fab.onclick = () => jumpToBottom(portId);
   wrap.querySelector('.output-wrap').appendChild(fab);
   conn.fab = fab;
-  // 点击输入行聚焦
-  conn.termInputLine.addEventListener('click', () => { cmdInput.focus(); });
-  // 滚动检测
-  conn.output.addEventListener('scroll', () => {
-    const atBottom = conn.output.scrollHeight - conn.output.scrollTop - conn.output.clientHeight < 40;
-    conn.autoScroll = atBottom;
-    // 翻到历史时显示跳底悬浮按钮
-    conn.fab.classList.toggle('show', !atBottom && !conn.inScreen);
-  });
-  // 无限向上滚动：IntersectionObserver 监测哨兵
-  conn.io = new IntersectionObserver((entries) => {
-    if (entries[0].isIntersecting && conn.hasMore && !conn.loadingMore && conn.oldestSeq != null) {
-      loadOlder(portId, conn);
-    }
-  }, { root: conn.output, rootMargin: '120px 0px 120px 0px' });
-  conn.io.observe(sentinel);
 
   // 插入 DOM
-  // 先移除空状态
   const es = termArea.querySelector('.empty-state');
   if (es) es.remove();
   tabs.insertBefore(tab, tabs.querySelector('.tab-bar-actions'));
@@ -936,7 +939,7 @@ function buildTerminal(portId, meta) {
   // SSE
   connectSSE(portId, conn);
 
-  // 加载历史缓冲
+  // 加载历史缓冲（写入 xterm）
   loadBuffer(portId, conn);
   return conn;
 }
@@ -949,38 +952,40 @@ function switchTab(portId) {
   termArea.querySelectorAll('.term-area').forEach(w => w.style.display = w.dataset.portId === portId ? 'flex' : 'none');
   // 侧边栏
   portList.querySelectorAll('.port-item').forEach(p => p.classList.toggle('active', p.dataset.portId === portId));
-  // 光标
+  // 切换后重新 fit 并聚焦 xterm
   const conn = connections[portId];
   if (conn) {
-    conn.termCursor.classList.remove('dim');
-    cmdInput.focus();
+    setTimeout(() => { try { conn.fit.fit(); } catch(e){} }, 50);
+    try { conn.term.focus(); } catch(e){}
+    // 若分析标签正显示，刷新一次（数据源已切到新连接的 buffer）
+    const activePane = document.querySelector('.panel-tab.active');
+    if (activePane && activePane.dataset.pane === 'analyze') renderAnalyze();
   }
 }
 
-function appendLine(portId, item) {
+// SSE 收到 raw 字节流 → 写入 xterm；screenctl → 切换提示条
+function appendRaw(portId, text) {
   const conn = connections[portId];
   if (!conn || conn.paused) return;
-  // 全屏模式期间不追加行（overlay 覆盖，退出时补载衔接）
+  // 历史还在加载时先缓冲 raw，等历史写完再 flush，避免实时数据插到历史前面/重复
+  if (conn.loadingHistory) { conn.pendingRaw += text; return; }
+  conn.term.write(text);
+  // 关键字常驻高亮：对新写入的行扫描
+  scheduleKwHighlight(conn);
+}
+function enterScreen(portId, conn) {
   if (conn.inScreen) return;
-  // Tab/方向键后设备重绘整行，同步 termBuf
-  if (conn.redrawDeadline && Date.now() < conn.redrawDeadline && (item.text || '').startsWith('# ')) {
-    const t = item.text.replace(/^#\s*/, '').replace(/\s+$/, '');
-    if (t) {
-      conn.termBuf = t;
-      cmdInput.value = t;
-      renderTermInput(conn);
-      conn.redrawDeadline = Date.now() + 1500;
-      conn.tabCompleted = true;
-      return;
-    }
-  }
-  const div = buildLineDiv(item);
-  conn.output.insertBefore(div, conn.sentinel);
-  if (conn.autoScroll) conn.output.scrollTop = conn.output.scrollHeight;
-  trimDom(conn);
+  conn.inScreen = true;
+  conn.screenOverlay.classList.add('show');
+  conn.fab.classList.remove('show');
+}
+function exitScreen(portId, conn) {
+  if (!conn.inScreen) return;
+  conn.inScreen = false;
+  conn.screenOverlay.classList.remove('show');
 }
 
-// 构建一行 DOM（供 appendLine / loadOlder / loadBuffer 复用）
+// 构建一行 DOM（仅回放面板仍用 DOM 行渲染，主终端已改用 xterm）
 function buildLineDiv(item) {
   const div = document.createElement('div');
   div.className = 'line tag-' + (item.tag || 'text');
@@ -989,40 +994,14 @@ function buildLineDiv(item) {
   ts.className = 'ts';
   ts.textContent = item.ts ? fmtTs(item.ts) : '';
   div.appendChild(ts);
-  if (item.html) {
-    const span = document.createElement('span');
-    span.innerHTML = item.html;
-    div.appendChild(span);
-  } else {
-    div.appendChild(document.createTextNode(item.text));
-  }
-  // 关键字高亮：遍历行内所有 textNode 叠加着色
-  const walker = document.createTreeWalker(div, NodeFilter.SHOW_TEXT, null);
-  const textNodes = [];
-  while (walker.nextNode()) textNodes.push(walker.currentNode);
-  // 跳过时间戳 span 的文本
-  for (const tn of textNodes) {
-    if (tn.parentNode && tn.parentNode.classList.contains('ts')) continue;
-    highlightKeywords(tn);
-  }
+  div.appendChild(document.createTextNode(item.text || ''));
   return div;
 }
 
-// DOM 节点上限：方向性裁剪
-function trimDom(conn) {
-  const MAX = 50000;
-  // autoScroll（在底部跟实时）时裁顶部旧行；阅读历史时不裁剪
-  if (!conn.autoScroll) return;
-  while (conn.output.childNodes.length > MAX) {
-    const first = conn.sentinel.nextSibling;
-    if (!first || first === conn.termInputLine) break;
-    first.remove();
-  }
-}
+// DOM 节点上限：方向性裁剪（v0.3.0 已废弃，xterm 自管缓冲；保留空壳避免引用报错）
+function trimDom(conn) {}
 
-function renderTermInput(conn) {
-  conn.termEcho.textContent = conn.termBuf;
-}
+function renderTermInput(conn) {}
 
 function termSendRaw(portId, bytes) {
   fetch('/api/send_raw', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: portId, bytes})});
@@ -1033,16 +1012,8 @@ function connectSSE(portId, conn) {
   conn.sse.onmessage = (e) => {
     try {
       const item = JSON.parse(e.data);
-      // 全屏帧 / 控制事件
-      if (item.kind === 'screen') {
-        enterScreen(portId, conn);
-        if (conn.screen) {
-          const bytes = atob(item.data);
-          const u8 = new Uint8Array(bytes.length);
-          for (let i = 0; i < bytes.length; i++) u8[i] = bytes.charCodeAt(i);
-          conn.screen.feed(u8);
-          conn.screen.render(conn.screenBody);
-        }
+      if (item.kind === 'raw') {
+        appendRaw(portId, item.data);
         return;
       }
       if (item.kind === 'screenctl') {
@@ -1050,7 +1021,6 @@ function connectSSE(portId, conn) {
         else if (item.state === 'enter') enterScreen(portId, conn);
         return;
       }
-      appendLine(portId, item);
     } catch(err) {}
   };
   conn.sse.onerror = () => {
@@ -1059,323 +1029,132 @@ function connectSSE(portId, conn) {
   };
 }
 
-function enterScreen(portId, conn) {
-  if (conn.inScreen) return;
-  conn.inScreen = true;
-  if (!conn.screen) conn.screen = new VT100Screen();
-  else conn.screen.reset();
-  conn.screenOverlay.classList.add('show');
-  conn.fab.classList.remove('show');
+// ============================================================
+// 关键字常驻高亮（xterm decoration）
+// ============================================================
+const KW_RULES = [
+  { cls: 'kw-error', re: /\b(error|fail|failed|failure|panic|oops|fatal|denied|refused|abort|crash|segfault|oom|killed)\b/gi },
+  { cls: 'kw-warning', re: /\b(warn|warning|deprecated|timeout|retry|overflow|underrun|stall)\b/gi },
+  { cls: 'kw-info', re: /\b(info|notice|starting|started|stopped|detected|found|loaded|ready|init)\b/gi },
+  { cls: 'kw-success', re: /\b(success|succeed|ok|done|complete|passed|ready)\b/gi },
+];
+const KW_COLOR = { 'kw-error':'#ff4060', 'kw-warning':'#ff9d00', 'kw-info':'#00d4ff', 'kw-success':'#00ff9d' };
+// 节流：批量扫描新行，避免每个 chunk 都扫全缓冲
+function scheduleKwHighlight(conn) {
+  if (conn._kwTimer) return;
+  conn._kwTimer = setTimeout(() => {
+    conn._kwTimer = null;
+    highlightNewKw(conn);
+  }, 250);
 }
-function exitScreen(portId, conn) {
-  if (!conn.inScreen) return;
-  conn.inScreen = false;
-  conn.screenOverlay.classList.remove('show');
-  if (conn.screen) { conn.screen.reset(); }
-  if (conn.screenBody) conn.screenBody.innerHTML = '';
-  // 退出全屏后清掉旧行并重载最近缓冲，恢复历史翻页与输入行
-  reloadBufferAfterScreen(portId, conn);
+function highlightNewKw(conn) {
+  if (!conn.term || !conn.term.registerDecoration) return;
+  const buf = conn.term.buffer.active;
+  const totalRows = buf.length;
+  const fromRow = Math.max(0, conn.kwDecorLastRow - 1); // 回溯一行防跨行漏扫
+  for (let r = fromRow; r < totalRows; r++) {
+    const line = buf.getLine(r);
+    if (!line) continue;
+    const text = line.translateToString(true);
+    if (!text.trim()) continue;
+    for (const rule of KW_RULES) {
+      rule.re.lastIndex = 0;
+      let m;
+      while ((m = rule.re.exec(text)) !== null) {
+        const start = m.index, end = m.index + m[0].length;
+        try {
+          const dec = conn.term.registerDecoration({
+            marker: conn.term.registerMarker(r),
+            x: start,
+            width: end - start,
+            backgroundColor: KW_COLOR[rule.cls] + '33',
+            foregroundColor: KW_COLOR[rule.cls],
+            layer: 'top',
+          });
+          if (dec) conn.kwDecorations.push(dec);
+        } catch(e) {}
+        if (m.index === rule.re.lastIndex) rule.re.lastIndex++;
+      }
+    }
+  }
+  conn.kwDecorLastRow = totalRows;
+  if (conn.kwDecorations.length > 5000) {
+    const drop = conn.kwDecorations.splice(0, conn.kwDecorations.length - 5000);
+    drop.forEach(d => { try { d.dispose(); } catch(e){} });
+  }
 }
 
 // ============================================================
-// VT100 屏幕缓冲（top/htop 等全屏命令）
+// 历史分页（xterm 滚动到底即实时流；向上翻历史用后端分页 API）
 // ============================================================
-const VT_FG = [null,'#6e7681','#ff7b72','#56d364','#e3b341','#79c0ff','#d2a8ff','#39c5cf','#c9d1d9'];
-function vtColor256(n) {
-  // 简化 256 色映射
-  const std = ['#000000','#aa0000','#00aa00','#aa5500','#0000aa','#aa00aa','#00aaaa','#aaaaaa',
-               '#555555','#ff5555','#55ff55','#ffff55','#5555ff','#ff55ff','#55ffff','#ffffff'];
-  if (n < 16) return std[n];
-  if (n >= 232) { const v = 8 + 10*(n-232); return `#${v.toString(16).padStart(2,'0')}${v.toString(16).padStart(2,'0')}${v.toString(16).padStart(2,'0')}`; }
-  n -= 16; const r = Math.floor(n/36), g = Math.floor((n%36)/6), b = n%6;
-  const lv = [0,95,135,175,215,255];
-  return `#${lv[r].toString(16).padStart(2,'0')}${lv[g].toString(16).padStart(2,'0')}${lv[b].toString(16).padStart(2,'0')}`;
-}
-class VT100Screen {
-  constructor() { this.reset(); }
-  reset() {
-    this.rows = 24; this.cols = 80;
-    this.grid = this._newGrid();
-    this.dirty = new Set();
-    this.curR = 0; this.curC = 0;
-    this.savedR = 0; this.savedC = 0;
-    this.attr = { fg: null, bg: null, bold: false, italic: false, underline: false };
-    this.scrollTop = 0; this.scrollBottom = this.rows - 1;
-    this.cursorVisible = true;
-    this.wrapPending = false;
-  }
-  _newGrid() {
-    const g = [];
-    for (let r = 0; r < this.rows; r++) {
-      const row = [];
-      for (let c = 0; c < this.cols; c++) row.push({ ch: ' ', fg: null, bg: null, bold: false, italic: false, underline: false });
-      g.push(row);
-    }
-    return g;
-  }
-  _resize(rows, cols) {
-    // 简化：保留左上角内容
-    const ng = this._newGrid();
-    for (let r = 0; r < Math.min(rows, this.rows); r++)
-      for (let c = 0; c < Math.min(cols, this.cols); c++)
-        ng[r][c] = this.grid[r][c];
-    this.grid = ng; this.rows = rows; this.cols = cols;
-    this.scrollBottom = rows - 1;
-    for (let r = 0; r < rows; r++) this.dirty.add(r);
-  }
-  _clampRC() {
-    if (this.curR < 0) this.curR = 0;
-    if (this.curR >= this.rows) this.curR = this.rows - 1;
-    if (this.curC < 0) this.curC = 0;
-    if (this.curC >= this.cols) this.curC = this.cols - 1;
-  }
-  _scrollUp(n = 1) {
-    for (let i = 0; i < n; i++) {
-      this.grid.splice(this.scrollTop, 1);
-      const row = [];
-      for (let c = 0; c < this.cols; c++) row.push({ ch: ' ', fg: null, bg: null, bold: false, italic: false, underline: false });
-      this.grid.splice(this.scrollBottom, 0, row);
-    }
-    for (let r = this.scrollTop; r <= this.scrollBottom; r++) this.dirty.add(r);
-  }
-  _putChar(ch) {
-    if (this.wrapPending && this.curC === this.cols - 1) {
-      this.curC = 0; this.curR++;
-      if (this.curR > this.scrollBottom) { this._scrollUp(1); this.curR = this.scrollBottom; }
-    }
-    if (this.curR < 0 || this.curR >= this.rows || this.curC < 0 || this.curC >= this.cols) return;
-    const cell = this.grid[this.curR][this.curC];
-    cell.ch = ch;
-    cell.fg = this.attr.fg; cell.bg = this.attr.bg;
-    cell.bold = this.attr.bold; cell.italic = this.attr.italic; cell.underline = this.attr.underline;
-    this.dirty.add(this.curR);
-    if (this.curC < this.cols - 1) this.curC++;
-    else this.wrapPending = true;
-  }
-  _eraseLine(r, from, to) {
-    for (let c = from; c <= to && c < this.cols; c++) {
-      const cell = this.grid[r][c];
-      cell.ch = ' '; cell.fg = null; cell.bg = null; cell.bold = false; cell.italic = false; cell.underline = false;
-    }
-    this.dirty.add(r);
-  }
-  feed(u8) {
-    let i = 0;
-    const dec = new TextDecoder('utf-8', { fatal: false });
-    while (i < u8.length) {
-      const b = u8[i];
-      if (b === 0x1b) { // ESC
-        if (i + 1 >= u8.length) break;
-        const n = u8[i + 1];
-        if (n === 0x5b) { // CSI [
-          // 找终介字节 @-~ (0x40-0x7e)
-          let j = i + 2; let params = ''; let inter = '';
-          while (j < u8.length) {
-            const c = u8[j];
-            if (c >= 0x30 && c <= 0x3f) params += String.fromCharCode(c); // 0-9 ; : < = > ?
-            else if (c >= 0x20 && c <= 0x2f) inter += String.fromCharCode(c); // 中间
-            else if (c >= 0x40 && c <= 0x7e) { this._csi(params, inter, String.fromCharCode(c)); j++; break; } // 终介
-            else { j++; break; }
-            j++;
-          }
-          i = j;
-        } else if (n === 0x5d) { // OSC ]，吃到 BEL 或 ST
-          let j = i + 2;
-          while (j < u8.length && u8[j] !== 0x07) j++;
-          i = (u8[j] === 0x07) ? j + 1 : j;
-        } else if (n === 0x28 || n === 0x29) { // ( ) 字符集
-          i += 3;
-        } else { i += 2; }
-        this.wrapPending = false;
-      } else if (b === 0x0d) { this.curC = 0; this.wrapPending = false; i++; }
-      else if (b === 0x0a) { this.curR++; if (this.curR > this.scrollBottom) { this._scrollUp(1); this.curR = this.scrollBottom; } this.wrapPending = false; i++; }
-      else if (b === 0x08) { if (this.curC > 0) this.curC--; this.wrapPending = false; i++; }
-      else if (b === 0x09) { let nc = (Math.floor(this.curC / 8) + 1) * 8; if (nc >= this.cols) nc = this.cols - 1; this.curC = nc; i++; }
-      else if (b === 0x07) { i++; } // bell 忽略
-      else if (b < 0x20) { i++; } // 其他控制字符忽略
-      else {
-        // 可打印字符：尝试解码一个完整 UTF-8 字符
-        let j = i;
-        if (b < 0x80) j = i + 1;
-        else if ((b & 0xe0) === 0xc0) j = i + 2;
-        else if ((b & 0xf0) === 0xe0) j = i + 3;
-        else if ((b & 0xf8) === 0xf0) j = i + 4;
-        else j = i + 1;
-        if (j > u8.length) j = u8.length;
-        const ch = dec.decode(u8.slice(i, j));
-        for (const c of ch) this._putChar(c);
-        i = j;
-      }
-    }
-  }
-  _csi(params, inter, final) {
-    // 处理 ? 前缀（私有）
-    const priv = params.startsWith('?');
-    const ps = params.replace(/[?<>=]/g, '').split(';').map(x => x === '' ? 0 : parseInt(x, 10));
-    const p0 = ps[0] || 0;
-    switch (final) {
-      case 'm': this._sgr(ps); break;
-      case 'H': case 'f': this.curR = (ps[0] || 1) - 1; this.curC = (ps[1] || 1) - 1; this._clampRC(); this.wrapPending = false; break;
-      case 'A': this.curR -= (p0 || 1); this._clampRC(); break;
-      case 'B': this.curR += (p0 || 1); this._clampRC(); break;
-      case 'C': this.curC += (p0 || 1); this._clampRC(); break;
-      case 'D': this.curC -= (p0 || 1); this._clampRC(); break;
-      case 'J': this._ed(p0); break;
-      case 'K': this._el(p0); break;
-      case 's': this.savedR = this.curR; this.savedC = this.curC; break;
-      case 'u': this.curR = this.savedR; this.curC = this.savedC; this._clampRC(); break;
-      case 'r': this.scrollTop = (ps[0] || 1) - 1; this.scrollBottom = (ps[1] || this.rows) - 1; break;
-      case 'h': if (priv && (p0 === 1049 || p0 === 47)) { /* alt-screen，已由后端控制 */ } if (p0 === 25) this.cursorVisible = true; break;
-      case 'l': if (p0 === 25) this.cursorVisible = false; break;
-      default: break;
-    }
-  }
-  _sgr(ps) {
-    for (let k = 0; k < ps.length; k++) {
-      const c = ps[k];
-      if (c === 0) this.attr = { fg: null, bg: null, bold: false, italic: false, underline: false };
-      else if (c === 1) this.attr.bold = true;
-      else if (c === 3) this.attr.italic = true;
-      else if (c === 4) this.attr.underline = true;
-      else if (c === 22) this.attr.bold = false;
-      else if (c === 23) this.attr.italic = false;
-      else if (c === 24) this.attr.underline = false;
-      else if (c >= 30 && c <= 37) this.attr.fg = VT_FG[c - 30];
-      else if (c >= 90 && c <= 97) this.attr.fg = VT_FG[c - 90 + 8];
-      else if (c === 38 && ps[k + 1] === 5) { this.attr.fg = vtColor256(ps[k + 2]); k += 2; }
-      else if (c === 39) this.attr.fg = null;
-      else if (c >= 40 && c <= 47) this.attr.bg = VT_FG[c - 40];
-      else if (c === 48 && ps[k + 1] === 5) { this.attr.bg = vtColor256(ps[k + 2]); k += 2; }
-      else if (c === 49) this.attr.bg = null;
-    }
-  }
-  _ed(mode) {
-    if (mode === 0) { this._eraseLine(this.curR, this.curC, this.cols - 1); for (let r = this.curR + 1; r < this.rows; r++) this._eraseLine(r, 0, this.cols - 1); }
-    else if (mode === 1) { for (let r = 0; r < this.curR; r++) this._eraseLine(r, 0, this.cols - 1); this._eraseLine(this.curR, 0, this.curC); }
-    else if (mode === 2 || mode === 3) { for (let r = 0; r < this.rows; r++) this._eraseLine(r, 0, this.cols - 1); }
-  }
-  _el(mode) {
-    if (mode === 0) this._eraseLine(this.curR, this.curC, this.cols - 1);
-    else if (mode === 1) this._eraseLine(this.curR, 0, this.curC);
-    else if (mode === 2) this._eraseLine(this.curR, 0, this.cols - 1);
-  }
-  render(container) {
-    // 只重绘脏行
-    let needRebuild = container.children.length !== this.rows;
-    if (needRebuild) {
-      container.innerHTML = '';
-      for (let r = 0; r < this.rows; r++) {
-        const row = document.createElement('div');
-        row.className = 'screen-row';
-        container.appendChild(row);
-      }
-      for (let r = 0; r < this.rows; r++) this.dirty.add(r);
-    }
-    for (const r of this.dirty) {
-      if (r >= this.rows || r < 0) continue;
-      const rowEl = container.children[r];
-      if (!rowEl) continue;
-      rowEl.innerHTML = this._renderRow(r);
-    }
-    this.dirty.clear();
-  }
-  _renderRow(r) {
-    const row = this.grid[r];
-    let html = '';
-    let cur = null; // 当前属性段
-    let seg = '';
-    const flush = () => {
-      if (!seg) return;
-      const styles = [];
-      if (cur.bold) styles.push('font-weight:700');
-      if (cur.italic) styles.push('font-style:italic');
-      if (cur.underline) styles.push('text-decoration:underline');
-      if (cur.fg) styles.push(`color:${cur.fg}`);
-      if (cur.bg) styles.push(`background:${cur.bg}`);
-      const esc = seg.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/ /g, ' ');
-      if (styles.length) html += `<span style="${styles.join(';')}">${esc}</span>`;
-      else html += esc;
-      seg = '';
-    };
-    for (let c = 0; c < this.cols; c++) {
-      const cell = row[c];
-      const a = { fg: cell.fg, bg: cell.bg, bold: cell.bold, italic: cell.italic, underline: cell.underline };
-      if (!cur || a.fg !== cur.fg || a.bg !== cur.bg || a.bold !== cur.bold || a.italic !== cur.italic || a.underline !== cur.underline) {
-        flush();
-        cur = a;
-      }
-      seg += cell.ch || ' ';
-    }
-    flush();
-    return html || ' ';
-  }
-}
-
 async function loadBuffer(portId, conn) {
+  if (conn.loadingHistory) return;
+  conn.loadingHistory = true;
   try {
     const r = await fetch('/api/buffer?port_id=' + encodeURIComponent(portId) + '&n=500');
     const j = await r.json();
     const lines = j.lines || [];
-    const frag = document.createDocumentFragment();
-    lines.forEach(l => frag.appendChild(buildLineDiv(l)));
-    conn.output.insertBefore(frag, conn.sentinel);
     if (lines.length) {
+      // 历史行是"逻辑行"（后端已按 \n 切分、\r 覆盖处理过），用 \r\n 写入 xterm
+      const text = lines.map(l => l.text || '').join('\r\n');
+      if (text) conn.term.write(text + '\r\n');
       conn.oldestSeq = lines[0].seq;
       conn.hasMore = j.has_more !== false;
     } else {
       conn.hasMore = false;
     }
-    if (conn.autoScroll) conn.output.scrollTop = conn.output.scrollHeight;
-  } catch(e) {}
-}
-
-// 退出全屏后重载缓冲：清掉旧行再拉最近 500 行，保证历史衔接干净
-async function reloadBufferAfterScreen(portId, conn) {
-  try {
-    // 清掉 DOM 中旧行（top 期间残留），保留哨兵与输入行
-    Array.from(conn.output.querySelectorAll('.line')).forEach(n => n.remove());
-    const r = await fetch('/api/buffer?port_id=' + encodeURIComponent(portId) + '&n=500');
-    const j = await r.json();
-    const lines = j.lines || [];
-    const frag = document.createDocumentFragment();
-    lines.forEach(l => frag.appendChild(buildLineDiv(l)));
-    conn.output.insertBefore(frag, conn.sentinel);
-    if (lines.length) {
-      conn.oldestSeq = lines[0].seq;
-      conn.hasMore = j.has_more !== false;
-    } else {
-      conn.hasMore = false;
+    conn.kwDecorLastRow = 0;
+    scheduleKwHighlight(conn);
+    if (conn.autoScroll) conn.term.scrollToBottom();
+    // flush 历史加载期间缓冲的实时数据
+    if (conn.pendingRaw) {
+      const pend = conn.pendingRaw; conn.pendingRaw = '';
+      conn.term.write(pend);
+      scheduleKwHighlight(conn);
+      if (conn.autoScroll) conn.term.scrollToBottom();
     }
-    conn.autoScroll = true;
-    conn.output.scrollTop = conn.output.scrollHeight;
-  } catch(e) {}
+  } catch(e) {} finally {
+    conn.loadingHistory = false;
+  }
 }
 
-// 无限向上加载更早历史
+// 向上加载更早历史：xterm 不支持顶部插入，用 reset 重写（旧行+当前行）
 async function loadOlder(portId, conn) {
-  if (conn.loadingMore || !conn.hasMore || conn.oldestSeq == null) return;
+  if (conn.loadingMore || !conn.hasMore || conn.oldestSeq == null || conn.loadingHistory) return;
   conn.loadingMore = true;
   try {
-    // 记录锚定：当前哨兵后的第一行
-    const anchor = conn.sentinel.nextSibling;
-    const prevScrollTop = conn.output.scrollTop;
-    const prevAnchorTop = anchor ? anchor.offsetTop : 0;
     const r = await fetch('/api/buffer?port_id=' + encodeURIComponent(portId) + '&n=500&before_seq=' + conn.oldestSeq);
     const j = await r.json();
     const lines = j.lines || [];
     if (lines.length) {
-      const frag = document.createDocumentFragment();
-      lines.forEach(l => frag.appendChild(buildLineDiv(l)));
-      conn.output.insertBefore(frag, conn.sentinel);
+      const older = lines.map(l => l.text || '').join('\r\n');
+      const curBuf = conn.term.buffer.active;
+      const curLines = [];
+      for (let r = 0; r < curBuf.length; r++) {
+        const ln = curBuf.getLine(r);
+        if (ln) curLines.push(ln.translateToString(true));
+      }
+      // 记住重写前用户视口顶行对应的行号，重写后恢复到同一逻辑行
+      const vp = conn.xtermWrap.querySelector('.xterm-viewport');
+      let topRowBefore = 0;
+      try {
+        const cellH = conn.term._core._renderService.dimensions.css.cell.height || 17;
+        topRowBefore = conn.term.buffer.active.baseY + Math.round(vp.scrollTop / cellH);
+      } catch(e) {}
+      const allText = older + '\r\n' + curLines.join('\r\n');
+      conn.term.reset();
+      conn.term.write(allText);
+      conn.kwDecorLastRow = 0;
+      conn.kwDecorations.forEach(d => { try { d.dispose(); } catch(e){} });
+      conn.kwDecorations = [];
       conn.oldestSeq = lines[0].seq;
       conn.hasMore = j.has_more !== false;
-      // 补偿 scrollTop 保持视口不跳
-      const delta = (anchor ? anchor.offsetTop : 0) - prevAnchorTop;
-      conn.output.scrollTop = prevScrollTop + delta;
+      scheduleKwHighlight(conn);
+      // 恢复滚动位置：旧行插入后，原视口顶行下移了 lines.length 行
+      try { conn.term.scrollToLine(topRowBefore + lines.length); } catch(e) {}
     } else {
       conn.hasMore = false;
     }
-    if (!conn.hasMore && conn.io) conn.io.disconnect();
   } catch(e) {} finally {
     conn.loadingMore = false;
   }
@@ -1386,9 +1165,9 @@ function jumpToBottom(portId) {
   const conn = connections[portId];
   if (!conn) return;
   conn.autoScroll = true;
-  conn.output.scrollTop = conn.output.scrollHeight;
+  conn.term.scrollToBottom();
   conn.fab.classList.remove('show');
-  cmdInput.focus();
+  try { conn.term.focus(); } catch(e){}
 }
 
 // ============================================================
@@ -1443,6 +1222,7 @@ function closeConnection(portId) {
   const conn = connections[portId];
   if (conn) {
     if (conn.sse) conn.sse.close();
+    if (conn.term) { try { conn.term.dispose(); } catch(e){} }
     conn.tab.remove();
     conn.wrap.remove();
     delete connections[portId];
@@ -1476,7 +1256,7 @@ function refreshSidebar() {
       <span class="led"></span>
       <div class="info">
         <div class="name">${esc(pid)}</div>
-        <div class="desc">${esc(conn.meta.baud || '')} baud · <span class="baud">${conn.output.querySelectorAll('.line').length} 行</span></div>
+        <div class="desc">${esc(conn.meta.baud || '')} baud · <span class="baud">${conn.term ? conn.term.buffer.active.length : 0} 行</span></div>
       </div>
       <div class="actions"><button data-close="${pid}" title="断开">✕</button></div>
     `;
@@ -1499,64 +1279,15 @@ async function refreshGlobalStatus() {
 }
 
 // ============================================================
-// 键盘输入（MobaXterm 风格内联输入）
+// 键盘输入（v0.3.0：xterm 自带输入，cmdInput 隐藏框不再承载焦点；
+// 这里仅保留全局快捷键：Ctrl+End 跳底、Ctrl+L 清屏等）
 // ============================================================
-cmdInput.addEventListener('input', (e) => {
-  if (!activePortId) return;
-  const conn = connections[activePortId];
-  if (!conn) return;
-  const val = cmdInput.value;
-  if (val.length > conn.termBuf.length && val.startsWith(conn.termBuf)) {
-    const added = val.slice(conn.termBuf.length);
-    const bytes = [];
-    for (let i = 0; i < added.length; i++) {
-      const code = added.charCodeAt(i);
-      if (code < 128) bytes.push(code);
-      else { for (const b of new TextEncoder().encode(added[i])) bytes.push(b); }
-    }
-    if (bytes.length) termSendRaw(activePortId, bytes);
-  } else if (val.length < conn.termBuf.length) {
-    const delCount = conn.termBuf.length - val.length;
-    const bs = []; for (let i = 0; i < delCount; i++) bs.push(127);
-    termSendRaw(activePortId, bs);
-  }
-  conn.termBuf = val;
-  renderTermInput(conn);
-});
-
-cmdInput.addEventListener('keydown', (e) => {
+document.addEventListener('keydown', (e) => {
   if (!activePortId) return;
   const conn = connections[activePortId];
   if (!conn) return;
   const pid = activePortId;
-  if (e.key === 'Enter') {
-    e.preventDefault();
-    termSendRaw(pid, [13]);
-    if (conn.tabCompleted && conn.termBuf) {
-      const div = document.createElement('div');
-      div.className = 'line tag-input';
-      const ts = document.createElement('span'); ts.className='ts'; ts.textContent = fmtTs(Date.now());
-      div.appendChild(ts); div.appendChild(document.createTextNode(conn.termBuf));
-      conn.output.insertBefore(div, conn.termInputLine);
-      if (conn.autoScroll) conn.output.scrollTop = conn.output.scrollHeight;
-    }
-    conn.termBuf = ''; cmdInput.value = ''; renderTermInput(conn);
-    conn.redrawDeadline = 0; conn.tabCompleted = false; conn.termHistIdx = -1;
-    loadHistory(pid);
-    return;
-  }
-  if (e.key === 'ArrowUp') { e.preventDefault(); termSendRaw(pid, [27,91,65]); conn.redrawDeadline = Date.now()+1500; return; }
-  if (e.key === 'ArrowDown') { e.preventDefault(); termSendRaw(pid, [27,91,66]); conn.redrawDeadline = Date.now()+1500; return; }
-  if (e.key === 'ArrowLeft') { e.preventDefault(); termSendRaw(pid, [27,91,68]); return; }
-  if (e.key === 'ArrowRight') { e.preventDefault(); termSendRaw(pid, [27,91,67]); return; }
-  if (e.key === 'Home') { e.preventDefault(); termSendRaw(pid, [27,91,72]); return; }
-  if (e.key === 'End') { e.preventDefault(); termSendRaw(pid, [27,91,70]); return; }
-  if (e.key === 'Delete') { e.preventDefault(); termSendRaw(pid, [27,91,51,126]); return; }
-  if (e.key === 'Tab') { e.preventDefault(); termSendRaw(pid, [9]); conn.redrawDeadline = Date.now()+1500; return; }
-  if (e.ctrlKey && (e.key==='c'||e.key==='C')) { e.preventDefault(); termSendRaw(pid,[3]); conn.termBuf=''; cmdInput.value=''; renderTermInput(conn); conn.redrawDeadline=0; conn.tabCompleted=false; return; }
-  if (e.ctrlKey && (e.key==='d'||e.key==='D')) { e.preventDefault(); termSendRaw(pid,[4]); return; }
-  if (e.ctrlKey && (e.key==='u'||e.key==='U')) { e.preventDefault(); termSendRaw(pid,[21]); conn.termBuf=''; cmdInput.value=''; renderTermInput(conn); conn.redrawDeadline=0; conn.tabCompleted=false; return; }
-  if (e.ctrlKey && (e.key==='l'||e.key==='L')) { e.preventDefault(); termSendRaw(pid,[12]); return; }
+  // 只在 xterm 未获焦点时拦截这些全局快捷键，避免与 xterm 输入冲突
   if (e.ctrlKey && e.key === 'End') { e.preventDefault(); jumpToBottom(pid); return; }
 });
 
@@ -1569,10 +1300,11 @@ async function loadHistory(portId) {
   } catch(e) {}
 }
 
-// 点击终端区聚焦输入
+// 点击终端区聚焦 xterm
 document.addEventListener('click', (e) => {
-  if (activePortId && (e.target.closest('.output-wrap') || e.target.closest('.term-input-line'))) {
-    cmdInput.focus();
+  if (activePortId && e.target.closest('.output-wrap')) {
+    const conn = connections[activePortId];
+    if (conn) try { conn.term.focus(); } catch(err){}
   }
 });
 
@@ -1599,27 +1331,57 @@ $('btnPause').onclick = () => {
   const conn = connections[activePortId];
   conn.paused = !conn.paused;
   $('btnPause').textContent = conn.paused ? '▶' : '⏸';
-  if (!conn.paused) conn.output.scrollTop = conn.output.scrollHeight;
+  if (!conn.paused) { conn.autoScroll = true; conn.term.scrollToBottom(); }
 };
 $('btnClear').onclick = () => {
   if (!activePortId) return;
   const conn = connections[activePortId];
-  Array.from(conn.output.querySelectorAll('.line')).forEach(n => n.remove());
+  conn.term.clear();
+  conn.kwDecorLastRow = 0;
+  conn.kwDecorations.forEach(d => { try { d.dispose(); } catch(e){} });
+  conn.kwDecorations = [];
   fetch('/api/clear_buffer', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: activePortId})});
 };
 $('btnNewLog').onclick = async () => {
   if (!activePortId) return;
   const r = await fetch('/api/new_log', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: activePortId})});
-  showBanner('已开新日志');
+  const j = await r.json();
+  showBanner('已开新日志：' + (j.log_path || ''));
 };
 $('btnCtrlC').onclick = () => { if (activePortId) termSendRaw(activePortId, [3]); };
 $('btnCtrlD').onclick = () => { if (activePortId) termSendRaw(activePortId, [4]); };
-$('btnAbout').onclick = () => showBanner('串口控制台 Pro · 多串口监控 + 搜索/感知/分析 · v0.2.0', 5000);
+$('btnAbout').onclick = () => showBanner('串口控制台 Pro · xterm.js 终端 + 搜索/感知/分析 · v0.3.0', 5000);
 $('btnJumpBottom').onclick = () => { if (activePortId) jumpToBottom(activePortId); };
+// 打开日志目录（顶栏快捷入口）
+$('btnOpenLogDir').onclick = async () => {
+  try {
+    const r = await fetch('/api/open_log_dir', {method:'POST', headers:{'Content-Type':'application/json'}});
+    const j = await r.json();
+    if (j.ok) showBanner('已在资源管理器打开日志目录');
+    else showBanner('打开失败：' + (j.err || ''), 6000, true);
+  } catch(e) { showBanner('打开失败：' + e, 6000, true); }
+};
 
 // ============================================================
 // 日志库
 // ============================================================
+let logsDirPath = '';
+async function openLogDir() {
+  try {
+    const r = await fetch('/api/open_log_dir', {method:'POST', headers:{'Content-Type':'application/json'}});
+    const j = await r.json();
+    if (j.ok) showBanner('已在资源管理器打开日志目录');
+    else showBanner('打开失败：' + (j.err || ''), 6000, true);
+  } catch(e) { showBanner('打开失败：' + e, 6000, true); }
+}
+async function openLogFile(name) {
+  try {
+    const r = await fetch('/api/open_log_file', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name})});
+    const j = await r.json();
+    if (j.ok) showBanner('已在资源管理器定位：' + name);
+    else showBanner('打开失败：' + (j.err || ''), 6000, true);
+  } catch(e) { showBanner('打开失败：' + e, 6000, true); }
+}
 $('btnLogs').onclick = async () => {
   const modal = $('logsModal'), list = $('logsList');
   list.innerHTML = '加载中…';
@@ -1627,19 +1389,27 @@ $('btnLogs').onclick = async () => {
   try {
     const r = await fetch('/api/logs');
     const j = await r.json();
+    logsDirPath = j.dir || '';
+    $('logsDirPath').textContent = logsDirPath || '（未知）';
     list.innerHTML = '';
     if (!j.logs.length) { list.innerHTML = '<div style="padding:20px;color:var(--muted);">暂无日志</div>'; return; }
     j.logs.forEach(l => {
       const d = document.createElement('div');
       d.className = 'item';
       const dt = new Date(l.mtime*1000);
-      d.innerHTML = `<span>${esc(l.name)}<br><span class="sz">${dt.toLocaleString('zh-CN')} · ${(l.size/1024).toFixed(1)} KB</span></span><span style="color:var(--accent)">▶ 回放</span>`;
-      d.onclick = () => { modal.classList.remove('show'); openReplay(l.name); };
+      d.innerHTML = `<span>${esc(l.name)}<br><span class="sz">${dt.toLocaleString('zh-CN')} · ${(l.size/1024).toFixed(1)} KB</span></span>
+        <span class="item-actions">
+          <span class="act-btn open" data-open="${esc(l.name)}" title="在资源管理器中定位此文件">📁 定位</span>
+          <span class="act-btn" data-replay="${esc(l.name)}" title="回放此日志">▶ 回放</span>
+        </span>`;
+      d.querySelector('[data-replay]').onclick = (ev) => { ev.stopPropagation(); modal.classList.remove('show'); openReplay(l.name); };
+      d.querySelector('[data-open]').onclick = (ev) => { ev.stopPropagation(); openLogFile(l.name); };
       list.appendChild(d);
     });
   } catch(e) { list.innerHTML = '加载失败'; }
 };
 $('logsClose').onclick = () => $('logsModal').classList.remove('show');
+$('logsOpenDir').onclick = openLogDir;
 
 // ============================================================
 // 回放
@@ -1738,62 +1508,66 @@ document.querySelectorAll('.panel-tab').forEach(tab => {
   };
 });
 
-// ---- 搜索 ----
-let searchState = { q: '', marks: [], idx: -1 };
+// ---- 搜索（v0.3.0：用 xterm SearchAddon + decoration 高亮） ----
+let searchState = { q: '', idx: -1, total: 0 };
+const SEARCH_DECOR = {
+  matchBackground: 'rgba(255,214,102,0.35)',
+  matchOverviewRuler: '#ff9d00',
+  activeMatchBackground: 'rgba(0,212,255,0.45)',
+  activeMatchColor: '#ffffff',
+};
 function clearSearchHighlights() {
-  document.querySelectorAll('mark.hit').forEach(m => {
-    const parent = m.parentNode;
-    parent.replaceChild(document.createTextNode(m.textContent), m);
-    parent.normalize();
-  });
-  searchState.marks = [];
+  // 清掉搜索 decoration（带 class 的）
+  if (activePortId && connections[activePortId] && connections[activePortId].search) {
+    try { connections[activePortId].search.clearDecorations(); } catch(e){}
+  }
   searchState.idx = -1;
+  searchState.total = 0;
   $('searchCount').textContent = '';
 }
 function applySearchHighlights(q) {
   clearSearchHighlights();
   if (!q || !activePortId) return;
   const conn = connections[activePortId];
-  if (!conn) return;
-  const lower = q.toLowerCase();
-  const walker = document.createTreeWalker(conn.output, NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
-      if (!node.nodeValue) return NodeFilter.FILTER_REJECT;
-      if (node.parentNode && node.parentNode.classList.contains('ts')) return NodeFilter.FILTER_REJECT;
-      return node.nodeValue.toLowerCase().includes(lower) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
-    }
-  });
-  const textNodes = [];
-  while (walker.nextNode()) textNodes.push(walker.currentNode);
-  for (const tn of textNodes) {
-    const text = tn.nodeValue;
-    const low = text.toLowerCase();
+  if (!conn || !conn.term || !conn.search) return;
+  // 统计总数：遍历 buffer 行匹配（与 search addon 的大小写设置一致）
+  let total = 0;
+  const buf = conn.term.buffer.active;
+  const low = q.toLowerCase();
+  for (let r = 0; r < buf.length; r++) {
+    const ln = buf.getLine(r);
+    if (!ln) continue;
+    const t = ln.translateToString(true).toLowerCase();
     let pos = 0;
-    const frag = document.createDocumentFragment();
-    let idx;
-    while ((idx = low.indexOf(lower, pos)) !== -1) {
-      if (idx > pos) frag.appendChild(document.createTextNode(text.slice(pos, idx)));
-      const mark = document.createElement('mark');
-      mark.className = 'hit';
-      mark.textContent = text.slice(idx, idx + q.length);
-      frag.appendChild(mark);
-      searchState.marks.push(mark);
-      pos = idx + q.length;
-    }
-    if (pos < text.length) frag.appendChild(document.createTextNode(text.slice(pos)));
-    tn.parentNode.replaceChild(frag, tn);
+    while ((pos = t.indexOf(low, pos)) !== -1) { total++; pos += low.length; }
   }
-  $('searchCount').textContent = searchState.marks.length ? (searchState.marks.length + ' 处') : '无';
-  if (searchState.marks.length) gotoSearchMark(0);
+  searchState.total = total;
+  searchState.idx = total ? 1 : -1;
+  $('searchCount').textContent = total ? (total + ' 处') : '无';
+  if (!total) return;
+  // findNext 会用 SEARCH_DECOR 高亮所有匹配，并定位到第一个
+  conn.search.findNext(q, {
+    caseSensitive: false, wholeWord: false, incremental: false,
+    decorations: SEARCH_DECOR,
+  });
 }
 function gotoSearchMark(idx) {
-  if (!searchState.marks.length) return;
-  searchState.marks.forEach(m => m.classList.remove('active'));
-  const n = searchState.marks.length;
-  searchState.idx = ((idx % n) + n) % n;
-  const m = searchState.marks[searchState.idx];
-  m.classList.add('active');
-  m.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  if (!activePortId) return;
+  const conn = connections[activePortId];
+  if (!conn || !conn.search) return;
+  const q = searchState.q;
+  if (!q) return;
+  const opts = { caseSensitive: false, wholeWord: false, incremental: false, decorations: SEARCH_DECOR };
+  if (idx < 0) {
+    conn.search.findPrevious(q, opts);
+    if (searchState.idx > 1) searchState.idx--;
+    else searchState.idx = searchState.total;
+  } else {
+    conn.search.findNext(q, opts);
+    if (searchState.idx < searchState.total) searchState.idx++;
+    else searchState.idx = 1;
+  }
+  $('searchCount').textContent = searchState.total ? (searchState.idx + '/' + searchState.total) : '无';
 }
 $('searchInput').addEventListener('input', (e) => {
   const q = e.target.value.trim();
@@ -1803,12 +1577,12 @@ $('searchInput').addEventListener('input', (e) => {
 $('searchInput').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
     e.preventDefault();
-    if (e.shiftKey) gotoSearchMark((searchState.idx ?? 0) - 1);
-    else gotoSearchMark((searchState.idx ?? 0) + 1);
+    if (e.shiftKey) gotoSearchMark(-1);
+    else gotoSearchMark(1);
   }
 });
-$('searchPrev').onclick = () => gotoSearchMark((searchState.idx ?? 0) - 1);
-$('searchNext').onclick = () => gotoSearchMark((searchState.idx ?? 0) + 1);
+$('searchPrev').onclick = () => gotoSearchMark(-1);
+$('searchNext').onclick = () => gotoSearchMark(1);
 
 // ---- 感知标签：实时串口流（全局 SSE） ----
 let senseState = { lines: [], filter: 'ALL' };
@@ -1865,13 +1639,14 @@ function renderSense() {
 function renderAnalyze() {
   if (!activePortId) { $('statCards').innerHTML = '<div class="cmd-empty">无活动连接</div>'; return; }
   const conn = connections[activePortId];
-  if (!conn) return;
-  // 统计已加载行
+  if (!conn || !conn.term) return;
+  // 统计已加载行（从 xterm buffer 读取）
   const lines = [];
-  conn.output.querySelectorAll('.line').forEach(div => {
-    const text = div.textContent || '';
-    lines.push(text);
-  });
+  const buf = conn.term.buffer.active;
+  for (let r = 0; r < buf.length; r++) {
+    const ln = buf.getLine(r);
+    if (ln) lines.push(ln.translateToString(true));
+  }
   let err = 0, warn = 0, info = 0, ok = 0;
   const freq = {};
   const KW = ['error', 'fail', 'warning', 'info', 'timeout', 'panic', 'oom', 'denied'];

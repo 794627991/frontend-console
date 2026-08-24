@@ -22,6 +22,7 @@ def build():
         "--name", APP_NAME,
         "--add-data", f"index.html{os.pathsep}.",
         "--add-data", f"app.ico{os.pathsep}.",
+        "--add-data", f"vendor{os.pathsep}vendor",
     ] + icon_arg + [MAIN]
 
     print("打包命令:", " ".join(cmd))
