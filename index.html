@@ -263,7 +263,7 @@
   .term-input-line .cursor.dim { background: var(--border); box-shadow: none; }
   @keyframes blink { 0%,50%{opacity:1} 51%,100%{opacity:0} }
 
-  /* ===== 右侧 AI 面板 ===== */
+  /* ===== 右侧面板（工具栏 + 标签页） ===== */
   .ai-panel {
     width: 340px; flex-shrink: 0;
     background: var(--bg-panel);
@@ -272,7 +272,7 @@
     transition: width 0.3s;
   }
   .ai-panel.collapsed { width: 44px; }
-  .ai-panel.collapsed .ai-body, .ai-panel.collapsed .ai-head-detail { display: none; }
+  .ai-panel.collapsed .panel-body, .ai-panel.collapsed .ai-head-detail { display: none; }
   .ai-panel.collapsed .ai-head { padding: 12px 0; justify-content: center; }
   .ai-panel.collapsed #aiToggle { display: none; }
   .ai-head .ai-icon { cursor: pointer; transition: transform 0.2s; }
@@ -295,38 +295,142 @@
     color: var(--muted); cursor: pointer; padding: 3px 7px; font-size: 14px;
   }
   .ai-head .toggle:hover { color: var(--accent); border-color: var(--accent); }
-  .ai-body { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-  .ai-live {
-    padding: 8px 14px; border-bottom: 1px solid var(--border);
-    max-height: 180px; overflow-y: auto; flex-shrink: 0;
+
+  /* 顶部工具栏：搜索 + 跳底 */
+  .panel-toolbar {
+    display: flex; align-items: center; gap: 6px;
+    padding: 10px 14px; border-bottom: 1px solid var(--border); flex-shrink: 0;
   }
-  .ai-live-head {
+  .panel-toolbar .search-box {
+    flex: 1; display: flex; align-items: center; gap: 4px;
+    background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px;
+    padding: 4px 8px; transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .panel-toolbar .search-box:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
+  .panel-toolbar .search-box input {
+    flex: 1; background: transparent; border: none; outline: none; color: var(--fg);
+    font-size: 12px; font-family: var(--font-ui);
+  }
+  .panel-toolbar .search-box .count { font-size: 10px; color: var(--muted); font-family: var(--font-mono); }
+  .panel-toolbar .nav-btn {
+    background: none; border: 1px solid var(--border); border-radius: 5px;
+    color: var(--muted); cursor: pointer; padding: 3px 6px; font-size: 12px;
+  }
+  .panel-toolbar .nav-btn:hover { color: var(--accent); border-color: var(--accent); }
+  .panel-toolbar .nav-btn:disabled { opacity: 0.3; cursor: default; }
+  .panel-toolbar .jump-btn {
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px;
+    color: var(--accent); cursor: pointer; padding: 4px 10px; font-size: 12px;
+    white-space: nowrap; transition: all 0.2s;
+  }
+  .panel-toolbar .jump-btn:hover { border-color: var(--accent); box-shadow: 0 0 8px var(--accent-glow); }
+
+  /* 标签页 */
+  .panel-tabs {
+    display: flex; gap: 2px; padding: 0 14px; background: var(--bg-panel);
+    border-bottom: 1px solid var(--border); flex-shrink: 0;
+  }
+  .panel-tab {
+    padding: 8px 14px; cursor: pointer; font-size: 12px; color: var(--muted);
+    border-bottom: 2px solid transparent; transition: all 0.2s; white-space: nowrap;
+  }
+  .panel-tab:hover { color: var(--fg); }
+  .panel-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .panel-body { flex: 1; min-height: 0; overflow-y: auto; }
+  .panel-tab-pane { display: none; height: 100%; }
+  .panel-tab-pane.active { display: flex; flex-direction: column; }
+
+  /* 感知标签 */
+  .sense-pane { padding: 8px 14px; overflow-y: auto; }
+  .sense-head {
     font-size: 10px; font-weight: 600; letter-spacing: 1px; color: var(--muted);
     text-transform: uppercase; margin-bottom: 6px;
     display: flex; align-items: center; gap: 6px;
   }
-  .ai-live-head .live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--neon-green); animation: pulse 1.5s infinite; }
-  .ai-live-line { font-family: var(--font-mono); font-size: 11px; color: var(--text); padding: 1px 0; white-space: pre-wrap; word-break: break-all; }
-  .ai-live-line .port-tag { color: var(--accent); font-size: 9px; margin-right: 4px; }
-  .ai-chat { flex: 1; overflow-y: auto; padding: 12px 14px; }
-  .ai-msg { margin-bottom: 12px; }
-  .ai-msg .role { font-size: 10px; font-weight: 600; letter-spacing: 0.5px; margin-bottom: 3px; }
-  .ai-msg.user .role { color: var(--accent); }
-  .ai-msg.assistant .role { color: var(--neon-purple); }
-  .ai-msg .content { font-size: 12px; line-height: 1.6; color: var(--fg); }
-  .ai-msg .content pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px; margin: 6px 0; overflow-x: auto; font-family: var(--font-mono); font-size: 11px; }
-  .ai-input-area { padding: 10px 14px; border-top: 1px solid var(--border); flex-shrink: 0; }
-  .ai-input-area textarea {
-    width: 100%; background: var(--bg-input); color: var(--fg);
-    border: 1px solid var(--border); border-radius: 8px;
-    padding: 8px 10px; font-size: 12px; font-family: var(--font-ui);
-    resize: none; outline: none; height: 60px; transition: border-color 0.2s;
+  .sense-head .live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--neon-green); animation: pulse 1.5s infinite; }
+  .sense-filter { display: flex; gap: 4px; margin-bottom: 8px; flex-wrap: wrap; }
+  .sense-filter .chip {
+    font-size: 10px; padding: 2px 8px; border-radius: 10px; cursor: pointer;
+    background: var(--bg-card); border: 1px solid var(--border); color: var(--muted);
+    font-family: var(--font-mono); transition: all 0.2s;
   }
-  .ai-input-area textarea:focus { border-color: var(--neon-purple); box-shadow: 0 0 0 2px rgba(179,102,255,0.2); }
-  .ai-input-area .actions { display: flex; gap: 6px; margin-top: 6px; }
-  .ai-input-area .hint { font-size: 10px; color: var(--muted); flex: 1; align-self: center; }
-  .ai-input-area .btn { padding: 5px 12px; font-size: 11px; }
-  .ai-input-area .btn.send { background: linear-gradient(135deg, var(--neon-purple), #8844cc); color: #fff; border: none; }
+  .sense-filter .chip:hover { border-color: var(--accent); color: var(--accent); }
+  .sense-filter .chip.active { background: rgba(0,212,255,0.15); border-color: var(--accent); color: var(--accent); }
+  .sense-line { font-family: var(--font-mono); font-size: 11px; color: var(--text); padding: 2px 0; white-space: pre-wrap; word-break: break-all; cursor: pointer; border-radius: 4px; padding-left: 4px; }
+  .sense-line:hover { background: var(--bg-card); }
+  .sense-line .port-tag { color: var(--accent); font-size: 9px; margin-right: 4px; }
+  .sense-line.kw-error { color: var(--neon-red); }
+  .sense-line.kw-warning { color: var(--neon-orange); }
+  .sense-line.kw-info { color: var(--accent); }
+
+  /* 分析标签 */
+  .analyze-pane { padding: 12px 14px; overflow-y: auto; }
+  .stat-cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 14px; }
+  .stat-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
+  .stat-card .label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  .stat-card .value { font-size: 20px; font-weight: 700; font-family: var(--font-mono); margin-top: 2px; }
+  .stat-card.err .value { color: var(--neon-red); }
+  .stat-card.warn .value { color: var(--neon-orange); }
+  .stat-card.info .value { color: var(--accent); }
+  .stat-card.ok .value { color: var(--neon-green); }
+  .analyze-section { margin-bottom: 14px; }
+  .analyze-section .title { font-size: 11px; font-weight: 600; color: var(--muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .freq-bar { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; font-size: 11px; }
+  .freq-bar .name { width: 70px; color: var(--fg); font-family: var(--font-mono); }
+  .freq-bar .bar { flex: 1; height: 8px; background: var(--bg-card); border-radius: 4px; overflow: hidden; }
+  .freq-bar .fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); border-radius: 4px; }
+  .freq-bar .num { width: 30px; text-align: right; color: var(--muted); font-family: var(--font-mono); }
+  .cluster-item { font-size: 11px; color: var(--fg); padding: 4px 8px; background: var(--bg-card); border-radius: 6px; margin-bottom: 4px; border-left: 2px solid var(--neon-red); font-family: var(--font-mono); cursor: pointer; }
+  .cluster-item:hover { background: var(--bg-input); }
+
+  /* 命令标签 */
+  .cmd-pane { padding: 10px 14px; overflow-y: auto; }
+  .cmd-add { display: flex; gap: 6px; margin-bottom: 10px; }
+  .cmd-add input { flex: 1; background: var(--bg-input); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 12px; outline: none; font-family: var(--font-mono); }
+  .cmd-add input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
+  .cmd-add button { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #001020; border: none; border-radius: 6px; padding: 6px 12px; font-size: 12px; cursor: pointer; font-weight: 600; }
+  .cmd-section .title { font-size: 11px; font-weight: 600; color: var(--muted); margin: 10px 0 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .cmd-item { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 4px; transition: all 0.2s; }
+  .cmd-item:hover { border-color: var(--accent); }
+  .cmd-item .text { flex: 1; font-family: var(--font-mono); font-size: 11px; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cmd-item .run { background: none; border: 1px solid var(--border); border-radius: 4px; color: var(--neon-green); cursor: pointer; padding: 2px 8px; font-size: 11px; }
+  .cmd-item .run:hover { border-color: var(--neon-green); background: rgba(0,255,157,0.1); }
+  .cmd-item .del { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 13px; padding: 0 4px; }
+  .cmd-item .del:hover { color: var(--neon-red); }
+  .cmd-empty { color: var(--muted); font-size: 11px; padding: 12px; text-align: center; }
+
+  /* 全屏覆盖容器（top 等） */
+  .screen-overlay {
+    position: absolute; inset: 0; display: none;
+    background: var(--bg); z-index: 5; overflow: hidden;
+    font-family: var(--font-mono); font-size: 13px; line-height: 1.4;
+    white-space: pre; padding: 4px 8px;
+  }
+  .screen-overlay.show { display: block; }
+  .screen-row { white-space: pre; min-height: 1.4em; }
+  .screen-cursor { display: inline-block; width: 8px; height: 1em; background: var(--accent); vertical-align: middle; animation: blink 1s step-end infinite; }
+
+  /* 跳底悬浮按钮 */
+  .jump-bottom-fab {
+    position: absolute; right: 16px; bottom: 16px; z-index: 8;
+    display: none; align-items: center; justify-content: center;
+    width: 36px; height: 36px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: #001020; cursor: pointer; font-size: 18px; font-weight: 700;
+    box-shadow: 0 2px 12px rgba(0,212,255,0.4);
+    transition: transform 0.2s;
+  }
+  .jump-bottom-fab:hover { transform: scale(1.1); }
+  .jump-bottom-fab.show { display: flex; }
+
+  /* 搜索/关键字高亮 */
+  mark.hit { background: rgba(0,212,255,0.18); border-bottom: 2px solid var(--accent); color: inherit; padding: 0 1px; border-radius: 2px; }
+  mark.hit.active { background: rgba(255,157,0,0.35); border-bottom-color: var(--neon-orange); }
+  .kw-error { color: var(--neon-red); font-weight: 600; }
+  .kw-warning { color: var(--neon-orange); font-weight: 600; }
+  .kw-info { color: var(--accent); font-weight: 600; }
+  .kw-success { color: var(--neon-green); font-weight: 600; }
+  .top-sentinel { height: 1px; }
 
   /* 隐藏输入框（承载焦点） */
   #cmdInput { position: absolute; left: -9999px; width: 1px; opacity: 0; }
@@ -454,38 +558,68 @@
     </div>
   </div>
 
-  <!-- 右侧 AI 面板 -->
+  <!-- 右侧工具面板 -->
   <div class="ai-panel" id="aiPanel">
     <div class="ai-head">
       <div class="ai-icon">✦</div>
       <div class="ai-head-detail">
-        <div class="title">AI 助手</div>
-        <div class="sub">实时串口感知 · 智能分析</div>
+        <div class="title">串口助手</div>
+        <div class="sub">搜索 · 感知 · 分析 · 命令</div>
       </div>
       <button class="toggle" id="aiToggle" title="折叠/展开">›</button>
     </div>
-    <div class="ai-body">
-      <div class="ai-live" id="aiLive">
-        <div class="ai-live-head"><span class="live-dot"></span>实时串口流（全部端口）</div>
-        <div id="aiLiveList"></div>
+    <div class="panel-toolbar">
+      <div class="search-box">
+        <input type="text" id="searchInput" placeholder="搜索关键字…" autocomplete="off">
+        <span class="count" id="searchCount"></span>
       </div>
-      <div class="ai-chat" id="aiChat">
-        <div class="ai-msg assistant">
-          <div class="role">✦ AI 助手</div>
-          <div class="content">已就绪。我能实时看到所有串口的数据流。你可以问我：
-            <pre>· "COM1 最近输出了什么？"
-· "帮我发 cat /proc/cpuinfo 到 COM1"
-· "当前所有串口状态"
-· "分析一下最近的内核报错"</pre>
+      <button class="nav-btn" id="searchPrev" title="上一个 (Shift+Enter)">▲</button>
+      <button class="nav-btn" id="searchNext" title="下一个 (Enter)">▼</button>
+      <button class="jump-btn" id="btnJumpBottom" title="跳到底部 (Ctrl+End)">⤓ 跳底</button>
+    </div>
+    <div class="panel-tabs">
+      <div class="panel-tab active" data-pane="sense">● 感知</div>
+      <div class="panel-tab" data-pane="analyze">📊 分析</div>
+      <div class="panel-tab" data-pane="cmd">⌘ 命令</div>
+    </div>
+    <div class="panel-body" id="panelBody">
+      <!-- 感知 -->
+      <div class="panel-tab-pane active" data-pane="sense">
+        <div class="sense-pane" id="sensePane">
+          <div class="sense-head"><span class="live-dot"></span>实时串口流（全部端口）</div>
+          <div class="sense-filter" id="senseFilter"></div>
+          <div id="senseList"></div>
+        </div>
+      </div>
+      <!-- 分析 -->
+      <div class="panel-tab-pane" data-pane="analyze">
+        <div class="analyze-pane" id="analyzePane">
+          <div class="stat-cards" id="statCards"></div>
+          <div class="analyze-section">
+            <div class="title">关键字频率</div>
+            <div id="freqBars"></div>
+          </div>
+          <div class="analyze-section">
+            <div class="title">最近异常</div>
+            <div id="clusterList"><div class="cmd-empty">暂无异常</div></div>
           </div>
         </div>
       </div>
-      <div class="ai-input-area">
-        <textarea id="aiInput" placeholder="向 AI 提问…（它能实时看到串口数据）"></textarea>
-        <div class="actions">
-          <span class="hint">Enter 发送 · Shift+Enter 换行</span>
-          <button class="btn ghost" id="aiClear">清空</button>
-          <button class="btn send" id="aiSend">发送</button>
+      <!-- 命令 -->
+      <div class="panel-tab-pane" data-pane="cmd">
+        <div class="cmd-pane" id="cmdPane">
+          <div class="cmd-add">
+            <input type="text" id="cmdAddInput" placeholder="添加命令片段…" autocomplete="off">
+            <button id="cmdAddBtn">＋</button>
+          </div>
+          <div class="cmd-section">
+            <div class="title">命令库</div>
+            <div id="cmdLibrary"></div>
+          </div>
+          <div class="cmd-section">
+            <div class="title">最近命令</div>
+            <div id="cmdRecent"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -569,7 +703,6 @@ let connections = {};   // port_id -> { meta, sse, termBuf, tabEl, outputEl, ter
 let activePortId = null;
 let paused = false;
 let autoScroll = true;
-let aiLiveLines = [];
 let aiSse = null;
 
 function showBanner(msg, ms=4000, isErr=false) {
@@ -582,6 +715,53 @@ function fmtTs(ms) {
   return d.toLocaleTimeString('zh-CN', {hour12:false}) + '.' + String(ms % 1000).padStart(3,'0');
 }
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ============================================================
+// 关键字高亮（error/warning/info 等，与 ANSI 颜色共存）
+// ============================================================
+const KW_RULES = [
+  { cls: 'kw-error', re: /\b(error|fail|failed|failure|panic|oops|fatal|denied|refused|abort|crash|segfault|oom|killed)\b/gi },
+  { cls: 'kw-warning', re: /\b(warn|warning|deprecated|timeout|retry|overflow|underrun|stall)\b/gi },
+  { cls: 'kw-info', re: /\b(info|notice|starting|started|stopped|detected|found|loaded|ready|init)\b/gi },
+  { cls: 'kw-success', re: /\b(success|succeed|ok|done|complete|passed|ready)\b/gi },
+];
+// 在纯文本 textNode 上叠加关键字高亮（不破坏父级 ANSI span）
+function highlightKeywords(node) {
+  if (node.nodeType !== 3) return; // 只处理文本节点
+  const text = node.nodeValue;
+  if (!text) return;
+  // 收集所有匹配
+  const hits = [];
+  for (const r of KW_RULES) {
+    r.re.lastIndex = 0;
+    let m;
+    while ((m = r.re.exec(text)) !== null) {
+      hits.push({ start: m.index, end: m.index + m[0].length, cls: r.cls });
+      if (m.index === r.re.lastIndex) r.re.lastIndex++;
+    }
+  }
+  if (!hits.length) return;
+  hits.sort((a, b) => a.start - b.start);
+  // 合并重叠
+  const merged = [];
+  for (const h of hits) {
+    if (merged.length && h.start < merged[merged.length - 1].end) continue;
+    merged.push(h);
+  }
+  // 拆分 textNode
+  const frag = document.createDocumentFragment();
+  let last = 0;
+  for (const h of merged) {
+    if (h.start > last) frag.appendChild(document.createTextNode(text.slice(last, h.start)));
+    const span = document.createElement('span');
+    span.className = h.cls;
+    span.textContent = text.slice(h.start, h.end);
+    frag.appendChild(span);
+    last = h.end;
+  }
+  if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+  node.parentNode.replaceChild(frag, node);
+}
 
 // ============================================================
 // 终端标签页 & 输出区管理
@@ -652,13 +832,52 @@ function buildTerminal(portId, meta) {
     tabCompleted: false,
     paused: false,
     autoScroll: true,
+    // 历史分页
+    hasMore: true,
+    oldestSeq: null,
+    loadingMore: false,
+    sentinel: null,
+    io: null,
+    // 全屏模式
+    inScreen: false,
+    screen: null,
+    screenOverlay: null,
   };
+  // 哨兵元素（放在所有行之前，用于无限向上滚动触发）
+  const sentinel = document.createElement('div');
+  sentinel.className = 'top-sentinel';
+  conn.output.insertBefore(sentinel, conn.termInputLine);
+  conn.sentinel = sentinel;
+  // 全屏覆盖容器
+  const overlay = document.createElement('div');
+  overlay.className = 'screen-overlay';
+  overlay.dataset.screen = portId;
+  wrap.querySelector('.output-wrap').appendChild(overlay);
+  conn.screenOverlay = overlay;
+  // 跳底悬浮按钮
+  const fab = document.createElement('div');
+  fab.className = 'jump-bottom-fab';
+  fab.textContent = '↓';
+  fab.title = '跳到底部';
+  fab.onclick = () => jumpToBottom(portId);
+  wrap.querySelector('.output-wrap').appendChild(fab);
+  conn.fab = fab;
   // 点击输入行聚焦
   conn.termInputLine.addEventListener('click', () => { cmdInput.focus(); });
   // 滚动检测
   conn.output.addEventListener('scroll', () => {
-    conn.autoScroll = conn.output.scrollHeight - conn.output.scrollTop - conn.output.clientHeight < 40;
+    const atBottom = conn.output.scrollHeight - conn.output.scrollTop - conn.output.clientHeight < 40;
+    conn.autoScroll = atBottom;
+    // 翻到历史时显示跳底悬浮按钮
+    conn.fab.classList.toggle('show', !atBottom && !conn.inScreen);
   });
+  // 无限向上滚动：IntersectionObserver 监测哨兵
+  conn.io = new IntersectionObserver((entries) => {
+    if (entries[0].isIntersecting && conn.hasMore && !conn.loadingMore && conn.oldestSeq != null) {
+      loadOlder(portId, conn);
+    }
+  }, { root: conn.output, rootMargin: '120px 0px 120px 0px' });
+  conn.io.observe(sentinel);
 
   // 插入 DOM
   // 先移除空状态
@@ -694,6 +913,8 @@ function switchTab(portId) {
 function appendLine(portId, item) {
   const conn = connections[portId];
   if (!conn || conn.paused) return;
+  // 全屏模式期间不追加行（overlay 覆盖，退出时补载衔接）
+  if (conn.inScreen) return;
   // Tab/方向键后设备重绘整行，同步 termBuf
   if (conn.redrawDeadline && Date.now() < conn.redrawDeadline && (item.text || '').startsWith('# ')) {
     const t = item.text.replace(/^#\s*/, '').replace(/\s+$/, '');
@@ -706,8 +927,17 @@ function appendLine(portId, item) {
       return;
     }
   }
+  const div = buildLineDiv(item);
+  conn.output.insertBefore(div, conn.sentinel);
+  if (conn.autoScroll) conn.output.scrollTop = conn.output.scrollHeight;
+  trimDom(conn);
+}
+
+// 构建一行 DOM（供 appendLine / loadOlder / loadBuffer 复用）
+function buildLineDiv(item) {
   const div = document.createElement('div');
   div.className = 'line tag-' + (item.tag || 'text');
+  if (item.seq != null) div.dataset.seq = item.seq;
   const ts = document.createElement('span');
   ts.className = 'ts';
   ts.textContent = item.ts ? fmtTs(item.ts) : '';
@@ -719,9 +949,28 @@ function appendLine(portId, item) {
   } else {
     div.appendChild(document.createTextNode(item.text));
   }
-  conn.output.insertBefore(div, conn.termInputLine);
-  if (conn.autoScroll) conn.output.scrollTop = conn.output.scrollHeight;
-  while (conn.output.childNodes.length > 5000) conn.output.removeChild(conn.output.firstChild);
+  // 关键字高亮：遍历行内所有 textNode 叠加着色
+  const walker = document.createTreeWalker(div, NodeFilter.SHOW_TEXT, null);
+  const textNodes = [];
+  while (walker.nextNode()) textNodes.push(walker.currentNode);
+  // 跳过时间戳 span 的文本
+  for (const tn of textNodes) {
+    if (tn.parentNode && tn.parentNode.classList.contains('ts')) continue;
+    highlightKeywords(tn);
+  }
+  return div;
+}
+
+// DOM 节点上限：方向性裁剪
+function trimDom(conn) {
+  const MAX = 50000;
+  // autoScroll（在底部跟实时）时裁顶部旧行；阅读历史时不裁剪
+  if (!conn.autoScroll) return;
+  while (conn.output.childNodes.length > MAX) {
+    const first = conn.sentinel.nextSibling;
+    if (!first || first === conn.termInputLine) break;
+    first.remove();
+  }
 }
 
 function renderTermInput(conn) {
@@ -735,7 +984,27 @@ function termSendRaw(portId, bytes) {
 function connectSSE(portId, conn) {
   conn.sse = new EventSource('/api/stream?port_id=' + encodeURIComponent(portId));
   conn.sse.onmessage = (e) => {
-    try { appendLine(portId, JSON.parse(e.data)); } catch(err) {}
+    try {
+      const item = JSON.parse(e.data);
+      // 全屏帧 / 控制事件
+      if (item.kind === 'screen') {
+        enterScreen(portId, conn);
+        if (conn.screen) {
+          const bytes = atob(item.data);
+          const u8 = new Uint8Array(bytes.length);
+          for (let i = 0; i < bytes.length; i++) u8[i] = bytes.charCodeAt(i);
+          conn.screen.feed(u8);
+          conn.screen.render(conn.screenOverlay);
+        }
+        return;
+      }
+      if (item.kind === 'screenctl') {
+        if (item.state === 'exit') exitScreen(portId, conn);
+        else if (item.state === 'enter') enterScreen(portId, conn);
+        return;
+      }
+      appendLine(portId, item);
+    } catch(err) {}
   };
   conn.sse.onerror = () => {
     conn.sse.close();
@@ -743,12 +1012,312 @@ function connectSSE(portId, conn) {
   };
 }
 
+function enterScreen(portId, conn) {
+  if (conn.inScreen) return;
+  conn.inScreen = true;
+  if (!conn.screen) conn.screen = new VT100Screen();
+  conn.screenOverlay.classList.add('show');
+  conn.fab.classList.remove('show');
+}
+function exitScreen(portId, conn) {
+  if (!conn.inScreen) return;
+  conn.inScreen = false;
+  conn.screenOverlay.classList.remove('show');
+  if (conn.screen) { conn.screen.reset(); }
+  // 退出全屏后补载最近缓冲衔接
+  loadBuffer(portId, conn);
+}
+
+// ============================================================
+// VT100 屏幕缓冲（top/htop 等全屏命令）
+// ============================================================
+const VT_FG = [null,'#6e7681','#ff7b72','#56d364','#e3b341','#79c0ff','#d2a8ff','#39c5cf','#c9d1d9'];
+function vtColor256(n) {
+  // 简化 256 色映射
+  const std = ['#000000','#aa0000','#00aa00','#aa5500','#0000aa','#aa00aa','#00aaaa','#aaaaaa',
+               '#555555','#ff5555','#55ff55','#ffff55','#5555ff','#ff55ff','#55ffff','#ffffff'];
+  if (n < 16) return std[n];
+  if (n >= 232) { const v = 8 + 10*(n-232); return `#${v.toString(16).padStart(2,'0')}${v.toString(16).padStart(2,'0')}${v.toString(16).padStart(2,'0')}`; }
+  n -= 16; const r = Math.floor(n/36), g = Math.floor((n%36)/6), b = n%6;
+  const lv = [0,95,135,175,215,255];
+  return `#${lv[r].toString(16).padStart(2,'0')}${lv[g].toString(16).padStart(2,'0')}${lv[b].toString(16).padStart(2,'0')}`;
+}
+class VT100Screen {
+  constructor() { this.reset(); }
+  reset() {
+    this.rows = 24; this.cols = 80;
+    this.grid = this._newGrid();
+    this.dirty = new Set();
+    this.curR = 0; this.curC = 0;
+    this.savedR = 0; this.savedC = 0;
+    this.attr = { fg: null, bg: null, bold: false, italic: false, underline: false };
+    this.scrollTop = 0; this.scrollBottom = this.rows - 1;
+    this.cursorVisible = true;
+    this.wrapPending = false;
+  }
+  _newGrid() {
+    const g = [];
+    for (let r = 0; r < this.rows; r++) {
+      const row = [];
+      for (let c = 0; c < this.cols; c++) row.push({ ch: ' ', fg: null, bg: null, bold: false, italic: false, underline: false });
+      g.push(row);
+    }
+    return g;
+  }
+  _resize(rows, cols) {
+    // 简化：保留左上角内容
+    const ng = this._newGrid();
+    for (let r = 0; r < Math.min(rows, this.rows); r++)
+      for (let c = 0; c < Math.min(cols, this.cols); c++)
+        ng[r][c] = this.grid[r][c];
+    this.grid = ng; this.rows = rows; this.cols = cols;
+    this.scrollBottom = rows - 1;
+    for (let r = 0; r < rows; r++) this.dirty.add(r);
+  }
+  _clampRC() {
+    if (this.curR < 0) this.curR = 0;
+    if (this.curR >= this.rows) this.curR = this.rows - 1;
+    if (this.curC < 0) this.curC = 0;
+    if (this.curC >= this.cols) this.curC = this.cols - 1;
+  }
+  _scrollUp(n = 1) {
+    for (let i = 0; i < n; i++) {
+      this.grid.splice(this.scrollTop, 1);
+      const row = [];
+      for (let c = 0; c < this.cols; c++) row.push({ ch: ' ', fg: null, bg: null, bold: false, italic: false, underline: false });
+      this.grid.splice(this.scrollBottom, 0, row);
+    }
+    for (let r = this.scrollTop; r <= this.scrollBottom; r++) this.dirty.add(r);
+  }
+  _putChar(ch) {
+    if (this.wrapPending && this.curC === this.cols - 1) {
+      this.curC = 0; this.curR++;
+      if (this.curR > this.scrollBottom) { this._scrollUp(1); this.curR = this.scrollBottom; }
+    }
+    if (this.curR < 0 || this.curR >= this.rows || this.curC < 0 || this.curC >= this.cols) return;
+    const cell = this.grid[this.curR][this.curC];
+    cell.ch = ch;
+    cell.fg = this.attr.fg; cell.bg = this.attr.bg;
+    cell.bold = this.attr.bold; cell.italic = this.attr.italic; cell.underline = this.attr.underline;
+    this.dirty.add(this.curR);
+    if (this.curC < this.cols - 1) this.curC++;
+    else this.wrapPending = true;
+  }
+  _eraseLine(r, from, to) {
+    for (let c = from; c <= to && c < this.cols; c++) {
+      const cell = this.grid[r][c];
+      cell.ch = ' '; cell.fg = null; cell.bg = null; cell.bold = false; cell.italic = false; cell.underline = false;
+    }
+    this.dirty.add(r);
+  }
+  feed(u8) {
+    let i = 0;
+    const dec = new TextDecoder('utf-8', { fatal: false });
+    while (i < u8.length) {
+      const b = u8[i];
+      if (b === 0x1b) { // ESC
+        if (i + 1 >= u8.length) break;
+        const n = u8[i + 1];
+        if (n === 0x5b) { // CSI [
+          // 找终介字节 @-~ (0x40-0x7e)
+          let j = i + 2; let params = ''; let inter = '';
+          while (j < u8.length) {
+            const c = u8[j];
+            if (c >= 0x30 && c <= 0x3f) params += String.fromCharCode(c); // 0-9 ; : < = > ?
+            else if (c >= 0x20 && c <= 0x2f) inter += String.fromCharCode(c); // 中间
+            else if (c >= 0x40 && c <= 0x7e) { this._csi(params, inter, String.fromCharCode(c)); j++; break; } // 终介
+            else { j++; break; }
+            j++;
+          }
+          i = j;
+        } else if (n === 0x5d) { // OSC ]，吃到 BEL 或 ST
+          let j = i + 2;
+          while (j < u8.length && u8[j] !== 0x07) j++;
+          i = (u8[j] === 0x07) ? j + 1 : j;
+        } else if (n === 0x28 || n === 0x29) { // ( ) 字符集
+          i += 3;
+        } else { i += 2; }
+        this.wrapPending = false;
+      } else if (b === 0x0d) { this.curC = 0; this.wrapPending = false; i++; }
+      else if (b === 0x0a) { this.curR++; if (this.curR > this.scrollBottom) { this._scrollUp(1); this.curR = this.scrollBottom; } this.wrapPending = false; i++; }
+      else if (b === 0x08) { if (this.curC > 0) this.curC--; this.wrapPending = false; i++; }
+      else if (b === 0x09) { let nc = (Math.floor(this.curC / 8) + 1) * 8; if (nc >= this.cols) nc = this.cols - 1; this.curC = nc; i++; }
+      else if (b === 0x07) { i++; } // bell 忽略
+      else if (b < 0x20) { i++; } // 其他控制字符忽略
+      else {
+        // 可打印字符：尝试解码一个完整 UTF-8 字符
+        let j = i;
+        if (b < 0x80) j = i + 1;
+        else if ((b & 0xe0) === 0xc0) j = i + 2;
+        else if ((b & 0xf0) === 0xe0) j = i + 3;
+        else if ((b & 0xf8) === 0xf0) j = i + 4;
+        else j = i + 1;
+        if (j > u8.length) j = u8.length;
+        const ch = dec.decode(u8.slice(i, j));
+        for (const c of ch) this._putChar(c);
+        i = j;
+      }
+    }
+  }
+  _csi(params, inter, final) {
+    // 处理 ? 前缀（私有）
+    const priv = params.startsWith('?');
+    const ps = params.replace(/[?<>=]/g, '').split(';').map(x => x === '' ? 0 : parseInt(x, 10));
+    const p0 = ps[0] || 0;
+    switch (final) {
+      case 'm': this._sgr(ps); break;
+      case 'H': case 'f': this.curR = (ps[0] || 1) - 1; this.curC = (ps[1] || 1) - 1; this._clampRC(); this.wrapPending = false; break;
+      case 'A': this.curR -= (p0 || 1); this._clampRC(); break;
+      case 'B': this.curR += (p0 || 1); this._clampRC(); break;
+      case 'C': this.curC += (p0 || 1); this._clampRC(); break;
+      case 'D': this.curC -= (p0 || 1); this._clampRC(); break;
+      case 'J': this._ed(p0); break;
+      case 'K': this._el(p0); break;
+      case 's': this.savedR = this.curR; this.savedC = this.curC; break;
+      case 'u': this.curR = this.savedR; this.curC = this.savedC; this._clampRC(); break;
+      case 'r': this.scrollTop = (ps[0] || 1) - 1; this.scrollBottom = (ps[1] || this.rows) - 1; break;
+      case 'h': if (priv && (p0 === 1049 || p0 === 47)) { /* alt-screen，已由后端控制 */ } if (p0 === 25) this.cursorVisible = true; break;
+      case 'l': if (p0 === 25) this.cursorVisible = false; break;
+      default: break;
+    }
+  }
+  _sgr(ps) {
+    for (let k = 0; k < ps.length; k++) {
+      const c = ps[k];
+      if (c === 0) this.attr = { fg: null, bg: null, bold: false, italic: false, underline: false };
+      else if (c === 1) this.attr.bold = true;
+      else if (c === 3) this.attr.italic = true;
+      else if (c === 4) this.attr.underline = true;
+      else if (c === 22) this.attr.bold = false;
+      else if (c === 23) this.attr.italic = false;
+      else if (c === 24) this.attr.underline = false;
+      else if (c >= 30 && c <= 37) this.attr.fg = VT_FG[c - 30];
+      else if (c >= 90 && c <= 97) this.attr.fg = VT_FG[c - 90 + 8];
+      else if (c === 38 && ps[k + 1] === 5) { this.attr.fg = vtColor256(ps[k + 2]); k += 2; }
+      else if (c === 39) this.attr.fg = null;
+      else if (c >= 40 && c <= 47) this.attr.bg = VT_FG[c - 40];
+      else if (c === 48 && ps[k + 1] === 5) { this.attr.bg = vtColor256(ps[k + 2]); k += 2; }
+      else if (c === 49) this.attr.bg = null;
+    }
+  }
+  _ed(mode) {
+    if (mode === 0) { this._eraseLine(this.curR, this.curC, this.cols - 1); for (let r = this.curR + 1; r < this.rows; r++) this._eraseLine(r, 0, this.cols - 1); }
+    else if (mode === 1) { for (let r = 0; r < this.curR; r++) this._eraseLine(r, 0, this.cols - 1); this._eraseLine(this.curR, 0, this.curC); }
+    else if (mode === 2 || mode === 3) { for (let r = 0; r < this.rows; r++) this._eraseLine(r, 0, this.cols - 1); }
+  }
+  _el(mode) {
+    if (mode === 0) this._eraseLine(this.curR, this.curC, this.cols - 1);
+    else if (mode === 1) this._eraseLine(this.curR, 0, this.curC);
+    else if (mode === 2) this._eraseLine(this.curR, 0, this.cols - 1);
+  }
+  render(container) {
+    // 只重绘脏行
+    let needRebuild = container.children.length !== this.rows;
+    if (needRebuild) {
+      container.innerHTML = '';
+      for (let r = 0; r < this.rows; r++) {
+        const row = document.createElement('div');
+        row.className = 'screen-row';
+        container.appendChild(row);
+      }
+      for (let r = 0; r < this.rows; r++) this.dirty.add(r);
+    }
+    for (const r of this.dirty) {
+      if (r >= this.rows || r < 0) continue;
+      const rowEl = container.children[r];
+      if (!rowEl) continue;
+      rowEl.innerHTML = this._renderRow(r);
+    }
+    this.dirty.clear();
+  }
+  _renderRow(r) {
+    const row = this.grid[r];
+    let html = '';
+    let cur = null; // 当前属性段
+    let seg = '';
+    const flush = () => {
+      if (!seg) return;
+      const styles = [];
+      if (cur.bold) styles.push('font-weight:700');
+      if (cur.italic) styles.push('font-style:italic');
+      if (cur.underline) styles.push('text-decoration:underline');
+      if (cur.fg) styles.push(`color:${cur.fg}`);
+      if (cur.bg) styles.push(`background:${cur.bg}`);
+      const esc = seg.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/ /g, ' ');
+      if (styles.length) html += `<span style="${styles.join(';')}">${esc}</span>`;
+      else html += esc;
+      seg = '';
+    };
+    for (let c = 0; c < this.cols; c++) {
+      const cell = row[c];
+      const a = { fg: cell.fg, bg: cell.bg, bold: cell.bold, italic: cell.italic, underline: cell.underline };
+      if (!cur || a.fg !== cur.fg || a.bg !== cur.bg || a.bold !== cur.bold || a.italic !== cur.italic || a.underline !== cur.underline) {
+        flush();
+        cur = a;
+      }
+      seg += cell.ch || ' ';
+    }
+    flush();
+    return html || ' ';
+  }
+}
+
 async function loadBuffer(portId, conn) {
   try {
     const r = await fetch('/api/buffer?port_id=' + encodeURIComponent(portId) + '&n=500');
     const j = await r.json();
-    (j.lines || []).forEach(l => appendLine(portId, l));
+    const lines = j.lines || [];
+    const frag = document.createDocumentFragment();
+    lines.forEach(l => frag.appendChild(buildLineDiv(l)));
+    conn.output.insertBefore(frag, conn.sentinel);
+    if (lines.length) {
+      conn.oldestSeq = lines[0].seq;
+      conn.hasMore = j.has_more !== false;
+    } else {
+      conn.hasMore = false;
+    }
+    if (conn.autoScroll) conn.output.scrollTop = conn.output.scrollHeight;
   } catch(e) {}
+}
+
+// 无限向上加载更早历史
+async function loadOlder(portId, conn) {
+  if (conn.loadingMore || !conn.hasMore || conn.oldestSeq == null) return;
+  conn.loadingMore = true;
+  try {
+    // 记录锚定：当前哨兵后的第一行
+    const anchor = conn.sentinel.nextSibling;
+    const prevScrollTop = conn.output.scrollTop;
+    const prevAnchorTop = anchor ? anchor.offsetTop : 0;
+    const r = await fetch('/api/buffer?port_id=' + encodeURIComponent(portId) + '&n=500&before_seq=' + conn.oldestSeq);
+    const j = await r.json();
+    const lines = j.lines || [];
+    if (lines.length) {
+      const frag = document.createDocumentFragment();
+      lines.forEach(l => frag.appendChild(buildLineDiv(l)));
+      conn.output.insertBefore(frag, conn.sentinel);
+      conn.oldestSeq = lines[0].seq;
+      conn.hasMore = j.has_more !== false;
+      // 补偿 scrollTop 保持视口不跳
+      const delta = (anchor ? anchor.offsetTop : 0) - prevAnchorTop;
+      conn.output.scrollTop = prevScrollTop + delta;
+    } else {
+      conn.hasMore = false;
+    }
+    if (!conn.hasMore && conn.io) conn.io.disconnect();
+  } catch(e) {} finally {
+    conn.loadingMore = false;
+  }
+}
+
+// 跳到底部
+function jumpToBottom(portId) {
+  const conn = connections[portId];
+  if (!conn) return;
+  conn.autoScroll = true;
+  conn.output.scrollTop = conn.output.scrollHeight;
+  conn.fab.classList.remove('show');
+  cmdInput.focus();
 }
 
 // ============================================================
@@ -917,6 +1486,7 @@ cmdInput.addEventListener('keydown', (e) => {
   if (e.ctrlKey && (e.key==='d'||e.key==='D')) { e.preventDefault(); termSendRaw(pid,[4]); return; }
   if (e.ctrlKey && (e.key==='u'||e.key==='U')) { e.preventDefault(); termSendRaw(pid,[21]); conn.termBuf=''; cmdInput.value=''; renderTermInput(conn); conn.redrawDeadline=0; conn.tabCompleted=false; return; }
   if (e.ctrlKey && (e.key==='l'||e.key==='L')) { e.preventDefault(); termSendRaw(pid,[12]); return; }
+  if (e.ctrlKey && e.key === 'End') { e.preventDefault(); jumpToBottom(pid); return; }
 });
 
 async function loadHistory(portId) {
@@ -973,7 +1543,8 @@ $('btnNewLog').onclick = async () => {
 };
 $('btnCtrlC').onclick = () => { if (activePortId) termSendRaw(activePortId, [3]); };
 $('btnCtrlD').onclick = () => { if (activePortId) termSendRaw(activePortId, [4]); };
-$('btnAbout').onclick = () => showBanner('串口控制台 Pro · 多串口监控 + AI 实时感知 · v1.0', 5000);
+$('btnAbout').onclick = () => showBanner('串口控制台 Pro · 多串口监控 + 搜索/感知/分析 · v0.2.0', 5000);
+$('btnJumpBottom').onclick = () => { if (activePortId) jumpToBottom(activePortId); };
 
 // ============================================================
 // 日志库
@@ -1069,7 +1640,7 @@ $('replaySeek').oninput = function() {
 };
 
 // ============================================================
-// AI 面板
+// 右侧工具面板（搜索 / 感知 / 分析 / 命令）
 // ============================================================
 $('aiToggle').onclick = () => {
   const p = $('aiPanel');
@@ -1085,15 +1656,100 @@ $('aiPanel').querySelector('.ai-icon').addEventListener('click', () => {
   }
 });
 
-// AI 实时串口流（全局 SSE）
+// ---- 标签页切换 ----
+document.querySelectorAll('.panel-tab').forEach(tab => {
+  tab.onclick = () => {
+    const pane = tab.dataset.pane;
+    document.querySelectorAll('.panel-tab').forEach(t => t.classList.toggle('active', t === tab));
+    document.querySelectorAll('.panel-tab-pane').forEach(p => p.classList.toggle('active', p.dataset.pane === pane));
+    if (pane === 'analyze') renderAnalyze();
+    if (pane === 'cmd') renderCmdPane();
+  };
+});
+
+// ---- 搜索 ----
+let searchState = { q: '', marks: [], idx: -1 };
+function clearSearchHighlights() {
+  document.querySelectorAll('mark.hit').forEach(m => {
+    const parent = m.parentNode;
+    parent.replaceChild(document.createTextNode(m.textContent), m);
+    parent.normalize();
+  });
+  searchState.marks = [];
+  searchState.idx = -1;
+  $('searchCount').textContent = '';
+}
+function applySearchHighlights(q) {
+  clearSearchHighlights();
+  if (!q || !activePortId) return;
+  const conn = connections[activePortId];
+  if (!conn) return;
+  const lower = q.toLowerCase();
+  const walker = document.createTreeWalker(conn.output, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      if (!node.nodeValue) return NodeFilter.FILTER_REJECT;
+      if (node.parentNode && node.parentNode.classList.contains('ts')) return NodeFilter.FILTER_REJECT;
+      return node.nodeValue.toLowerCase().includes(lower) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+    }
+  });
+  const textNodes = [];
+  while (walker.nextNode()) textNodes.push(walker.currentNode);
+  for (const tn of textNodes) {
+    const text = tn.nodeValue;
+    const low = text.toLowerCase();
+    let pos = 0;
+    const frag = document.createDocumentFragment();
+    let idx;
+    while ((idx = low.indexOf(lower, pos)) !== -1) {
+      if (idx > pos) frag.appendChild(document.createTextNode(text.slice(pos, idx)));
+      const mark = document.createElement('mark');
+      mark.className = 'hit';
+      mark.textContent = text.slice(idx, idx + q.length);
+      frag.appendChild(mark);
+      searchState.marks.push(mark);
+      pos = idx + q.length;
+    }
+    if (pos < text.length) frag.appendChild(document.createTextNode(text.slice(pos)));
+    tn.parentNode.replaceChild(frag, tn);
+  }
+  $('searchCount').textContent = searchState.marks.length ? (searchState.marks.length + ' 处') : '无';
+  if (searchState.marks.length) gotoSearchMark(0);
+}
+function gotoSearchMark(idx) {
+  if (!searchState.marks.length) return;
+  searchState.marks.forEach(m => m.classList.remove('active'));
+  const n = searchState.marks.length;
+  searchState.idx = ((idx % n) + n) % n;
+  const m = searchState.marks[searchState.idx];
+  m.classList.add('active');
+  m.scrollIntoView({ block: 'center', behavior: 'smooth' });
+}
+$('searchInput').addEventListener('input', (e) => {
+  const q = e.target.value.trim();
+  searchState.q = q;
+  if (q) applySearchHighlights(q); else clearSearchHighlights();
+});
+$('searchInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    if (e.shiftKey) gotoSearchMark((searchState.idx ?? 0) - 1);
+    else gotoSearchMark((searchState.idx ?? 0) + 1);
+  }
+});
+$('searchPrev').onclick = () => gotoSearchMark((searchState.idx ?? 0) - 1);
+$('searchNext').onclick = () => gotoSearchMark((searchState.idx ?? 0) + 1);
+
+// ---- 感知标签：实时串口流（全局 SSE） ----
+let senseState = { lines: [], filter: 'ALL' };
 function connectAiSSE() {
   aiSse = new EventSource('/api/ai/stream');
   aiSse.onmessage = (e) => {
     try {
       const item = JSON.parse(e.data);
-      aiLiveLines.push(item);
-      if (aiLiveLines.length > 100) aiLiveLines.shift();
-      renderAiLive();
+      if (item.kind) return; // 跳过 screen/screenctl 帧（不进感知流）
+      senseState.lines.push(item);
+      if (senseState.lines.length > 200) senseState.lines.shift();
+      renderSense();
     } catch(err) {}
   };
   aiSse.onerror = () => {
@@ -1101,165 +1757,149 @@ function connectAiSSE() {
     setTimeout(connectAiSSE, 2000);
   };
 }
-function renderAiLive() {
-  const list = $('aiLiveList');
-  // 只渲染最后 15 行
-  const recent = aiLiveLines.slice(-15);
-  list.innerHTML = recent.map(it =>
-    `<div class="ai-live-line"><span class="port-tag">[${esc(it.port)}]</span>${esc(it.text).slice(0,200)}</div>`
+function kwClassOf(text) {
+  const t = text.toLowerCase();
+  if (/\b(error|fail|panic|fatal|denied|refused|abort|crash|oom|killed)\b/.test(t)) return 'kw-error';
+  if (/\b(warn|warning|deprecated|timeout|retry|overflow)\b/.test(t)) return 'kw-warning';
+  if (/\b(info|notice|starting|started|stopped|detected|ready)\b/.test(t)) return 'kw-info';
+  return '';
+}
+function renderSense() {
+  const list = $('senseList');
+  const filter = senseState.filter;
+  // 端口筛选 chip
+  const ports = ['ALL', ...new Set(senseState.lines.map(l => l.port))];
+  const filterEl = $('senseFilter');
+  filterEl.innerHTML = ports.map(p =>
+    `<span class="chip ${p === filter ? 'active' : ''}" data-port="${esc(p)}">${esc(p === 'ALL' ? '全部' : p)}</span>`
   ).join('');
-  list.parentElement.scrollTop = list.parentElement.scrollHeight;
+  filterEl.querySelectorAll('.chip').forEach(c => c.onclick = () => { senseState.filter = c.dataset.port; renderSense(); });
+  // 行
+  let shown = senseState.lines;
+  if (filter !== 'ALL') shown = shown.filter(l => l.port === filter);
+  const recent = shown.slice(-50);
+  list.innerHTML = recent.map(it => {
+    const kc = kwClassOf(it.text || '');
+    return `<div class="sense-line ${kc}" data-port="${esc(it.port)}"><span class="port-tag">[${esc(it.port)}]</span>${esc((it.text || '').slice(0, 200))}</div>`;
+  }).join('');
+  list.scrollTop = list.scrollHeight;
+  // 点击行跳转到该串口标签
+  list.querySelectorAll('.sense-line').forEach(el => el.onclick = () => {
+    const pid = el.dataset.port;
+    if (connections[pid]) switchTab(pid);
+  });
 }
 
-// AI 对话
-async function aiSend() {
-  const input = $('aiInput');
-  const text = input.value.trim();
-  if (!text) return;
-  input.value = '';
-  appendAiMsg('user', text);
-  appendAiMsg('assistant', '正在分析…', true);
-
-  // AI 的"大脑"：通过后端 API 获取串口数据，本地分析
-  // 这里实现一个规则引擎：解析用户意图，调用对应 API
-  const result = await aiThink(text);
-  // 替换最后一条 assistant 消息
-  const msgs = $('aiChat').querySelectorAll('.ai-msg.assistant');
-  if (msgs.length) msgs[msgs.length-1].remove();
-  appendAiMsg('assistant', result);
-}
-
-function appendAiMsg(role, content, isPending=false) {
-  const chat = $('aiChat');
-  const div = document.createElement('div');
-  div.className = 'ai-msg ' + role;
-  const label = role === 'user' ? '你' : '✦ AI 助手';
-  // 简单 markdown：代码块
-  let html = esc(content);
-  html = html.replace(/```([\s\S]*?)```/g, (m, c) => `<pre>${esc(c)}</pre>`);
-  html = html.replace(/`([^`]+)`/g, '<code style="background:var(--bg);padding:1px 4px;border-radius:3px;font-family:var(--font-mono);">$1</code>');
-  div.innerHTML = `<div class="role">${label}</div><div class="content">${html}</div>`;
-  chat.appendChild(div);
-  chat.scrollTop = chat.scrollHeight;
-}
-
-async function aiThink(query) {
-  // 规则引擎：解析用户意图
-  const q = query.toLowerCase();
-  try {
-    // 意图1：查所有串口状态
-    if (/状态|status|概览|overview|连接/.test(q) && !/发送|发|send/.test(q)) {
-      const r = await fetch('/api/ai/status');
-      const j = await r.json();
-      const ports = j.ports || {};
-      const ids = Object.keys(ports);
-      if (!ids.length) return '当前没有已连接的串口。点击「新建连接」来添加。';
-      let lines = ['当前串口连接状态：'];
-      for (const pid of ids) {
-        const p = ports[pid];
-        lines.push(`• ${pid} @ ${p.baud} — 缓冲 ${p.buf_lines} 行，录制 ${p.recording ? '中' : '停'}，日志 ${p.cmd_history_count} 条命令历史`);
-      }
-      return lines.join('\n');
+// ---- 分析标签 ----
+function renderAnalyze() {
+  if (!activePortId) { $('statCards').innerHTML = '<div class="cmd-empty">无活动连接</div>'; return; }
+  const conn = connections[activePortId];
+  if (!conn) return;
+  // 统计已加载行
+  const lines = [];
+  conn.output.querySelectorAll('.line').forEach(div => {
+    const text = div.textContent || '';
+    lines.push(text);
+  });
+  let err = 0, warn = 0, info = 0, ok = 0;
+  const freq = {};
+  const KW = ['error', 'fail', 'warning', 'info', 'timeout', 'panic', 'oom', 'denied'];
+  for (const t of lines) {
+    const low = t.toLowerCase();
+    if (/\b(error|fail|panic|fatal|denied|refused|abort|crash|oom|killed)\b/.test(low)) err++;
+    if (/\b(warn|warning|deprecated|timeout|retry|overflow)\b/.test(low)) warn++;
+    if (/\b(info|notice|starting|started|stopped|detected|ready)\b/.test(low)) info++;
+    if (/\b(success|ok|done|complete|passed)\b/.test(low)) ok++;
+    for (const k of KW) {
+      const m = low.match(new RegExp('\\b' + k + '\\w*\\b', 'g'));
+      if (m) freq[k] = (freq[k] || 0) + m.length;
     }
-    // 意图2：查最近输出
-    const portMatch = query.match(/(COM\d+)/i);
-    if (portMatch && (/最近|输出|什么|看看|内容|recent|buffer|显示/.test(q) || /发了什么|输出了什么/.test(q))) {
-      const pid = portMatch[1].toUpperCase();
-      const r = await fetch('/api/ai/buffer?port_id=' + encodeURIComponent(pid) + '&n=30');
-      const j = await r.json();
-      if (!j.ok) return `串口 ${pid} 未连接。`;
-      const lines = j.lines || [];
-      if (!lines.length) return `${pid} 暂无输出数据。`;
-      let out = [`${pid} 最近 ${lines.length} 行输出：`];
-      out.push('```');
-      lines.forEach(l => out.push(l.text));
-      out.push('```');
-      return out.join('\n');
-    }
-    // 意图3：发送命令
-    if (portMatch && (/发送|发|send|执行|运行/.test(q))) {
-      const pid = portMatch[1].toUpperCase();
-      // 提取命令：去掉端口名和"发送/执行"等词
-      let cmd = query.replace(/(COM\d+)/i, '').replace(/帮我?|请?|发送|发|执行|运行|到|给|一下|下/g, '').trim();
-      if (!cmd) return `你想向 ${pid} 发送什么命令？请说明命令内容。`;
-      const r = await fetch('/api/ai/send', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: pid, cmd, wait: 2})});
-      const j = await r.json();
-      if (!j.ok) return `发送失败：${j.err}`;
-      let out = [`已向 ${pid} 发送命令：\`${cmd}\``];
-      const resp = j.response || [];
-      if (resp.length) {
-        out.push('设备返回：');
-        out.push('```');
-        resp.forEach(l => out.push(l.text));
-        out.push('```');
-      } else {
-        out.push('设备无返回。');
-      }
-      return out.join('\n');
-    }
-    // 意图4：分析内核报错
-    if (/报错|错误|error|fail|panic|分析|异常|内核/.test(q)) {
-      const r = await fetch('/api/ai/recent?n=50');
-      const j = await r.json();
-      if (!j.ok) return '无法获取串口数据。';
-      const allLines = [];
-      for (const pid in j.ports) {
-        j.ports[pid].forEach(l => allLines.push({port: pid, ...l}));
-      }
-      const errs = allLines.filter(l => /error|fail|panic|oops|warning|异常/i.test(l.text));
-      if (!errs.length) return '最近所有串口输出中未发现明显的错误/警告信息。';
-      let out = ['发现以下可能的异常（最近 50 行内）：'];
-      errs.slice(0, 10).forEach(l => out.push(`• [${l.port}] ${l.text.slice(0,120)}`));
-      if (errs.length > 10) out.push(`…共 ${errs.length} 条`);
-      return out.join('\n');
-    }
-    // 意图5：所有端口最近输出
-    if (/所有|全部|all|每个|分别/.test(q) && (/最近|输出|recent/.test(q))) {
-      const r = await fetch('/api/ai/recent?n=20');
-      const j = await r.json();
-      let out = ['各串口最近输出：'];
-      for (const pid in j.ports) {
-        const lines = j.ports[pid];
-        out.push(`\n【${pid}】`);
-        lines.slice(-5).forEach(l => out.push(l.text));
-      }
-      return out.join('\n');
-    }
-    // 意图6：可用端口
-    if (/可用|有哪些|列表|available|端口/.test(q) && !/发送|发/.test(q)) {
-      const r = await fetch('/api/ai/ports');
-      const j = await r.json();
-      let out = ['可用串口：'];
-      j.ports.forEach(p => out.push(`• ${p.device} — ${p.description}`));
-      if (j.connected.length) {
-        out.push('\n已连接：' + j.connected.join(', '));
-      } else {
-        out.push('\n当前无连接。');
-      }
-      return out.join('\n');
-    }
-    // 默认
-    const r = await fetch('/api/ai/status');
-    const j = await r.json();
-    const ids = Object.keys(j.ports || {});
-    return `我能实时看到 ${ids.length} 个串口连接${ids.length ? '（' + ids.join(', ') + '）' : ''}。你可以：
-• 查状态："当前串口状态"
-• 看输出："COM1 最近输出了什么"
-• 发命令："帮我发 cat /proc/cpuinfo 到 COM1"
-• 查报错："分析一下最近的内核报错"
-• 查端口："有哪些可用串口"`;
-  } catch(e) {
-    return '分析失败：' + e;
+  }
+  $('statCards').innerHTML = `
+    <div class="stat-card err"><div class="label">ERROR</div><div class="value">${err}</div></div>
+    <div class="stat-card warn"><div class="label">WARNING</div><div class="value">${warn}</div></div>
+    <div class="stat-card info"><div class="label">INFO</div><div class="value">${info}</div></div>
+    <div class="stat-card ok"><div class="label">SUCCESS</div><div class="value">${ok}</div></div>
+  `;
+  // 频率条
+  const sorted = Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  const max = sorted.length ? sorted[0][1] : 1;
+  $('freqBars').innerHTML = sorted.length ? sorted.map(([k, v]) =>
+    `<div class="freq-bar"><span class="name">${esc(k)}</span><div class="bar"><div class="fill" style="width:${(v / max * 100).toFixed(0)}%"></div></div><span class="num">${v}</span></div>`
+  ).join('') : '<div class="cmd-empty">暂无数据</div>';
+  // 最近异常聚类
+  const errs = [];
+  lines.forEach((t, i) => {
+    if (/\b(error|fail|panic|fatal|denied|refused|abort|crash|oom|killed)\b/i.test(t)) errs.push({ i, t: t.trim().slice(0, 80) });
+  });
+  const cl = $('clusterList');
+  if (!errs.length) {
+    cl.innerHTML = '<div class="cmd-empty">暂无异常</div>';
+  } else {
+    cl.innerHTML = errs.slice(-10).reverse().map(e =>
+      `<div class="cluster-item" title="${esc(e.t)}">${esc(e.t)}</div>`
+    ).join('');
   }
 }
 
-$('aiSend').onclick = aiSend;
-$('aiInput').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); aiSend(); }
-});
-$('aiClear').onclick = () => {
-  $('aiChat').innerHTML = '<div class="ai-msg assistant"><div class="role">✦ AI 助手</div><div class="content">对话已清空。继续提问吧。</div></div>';
+// ---- 命令标签 ----
+const CMD_STORE_KEY = 'serialconsole_pro_cmdlib';
+function loadCmdLib() {
+  try { return JSON.parse(localStorage.getItem(CMD_STORE_KEY) || '[]'); } catch (e) { return []; }
+}
+function saveCmdLib(lib) {
+  try { localStorage.setItem(CMD_STORE_KEY, JSON.stringify(lib)); } catch (e) {}
+}
+function renderCmdPane() {
+  // 命令库
+  const lib = loadCmdLib();
+  const libEl = $('cmdLibrary');
+  if (!lib.length) {
+    libEl.innerHTML = '<div class="cmd-empty">点击上方添加常用命令</div>';
+  } else {
+    libEl.innerHTML = lib.map((c, i) =>
+      `<div class="cmd-item"><span class="text" title="${esc(c)}">${esc(c)}</span><button class="run" data-i="${i}">发送</button><button class="del" data-i="${i}" title="删除">✕</button></div>`
+    ).join('');
+    libEl.querySelectorAll('.run').forEach(b => b.onclick = () => runCmdFromLib(parseInt(b.dataset.i)));
+    libEl.querySelectorAll('.del').forEach(b => b.onclick = () => {
+      const lib2 = loadCmdLib(); lib2.splice(parseInt(b.dataset.i), 1); saveCmdLib(lib2); renderCmdPane();
+    });
+  }
+  // 最近命令
+  if (activePortId) {
+    fetch('/api/history?port_id=' + encodeURIComponent(activePortId))
+      .then(r => r.json()).then(j => {
+        const hist = j.history || [];
+        const rec = $('cmdRecent');
+        if (!hist.length) { rec.innerHTML = '<div class="cmd-empty">暂无历史</div>'; return; }
+        rec.innerHTML = hist.slice(-15).reverse().map(c =>
+          `<div class="cmd-item"><span class="text" title="${esc(c)}">${esc(c)}</span><button class="run" data-cmd="${esc(c)}">重发</button></div>`
+        ).join('');
+        rec.querySelectorAll('.run').forEach(b => b.onclick = () => sendCmd(b.dataset.cmd));
+      }).catch(() => {});
+  } else {
+    $('cmdRecent').innerHTML = '<div class="cmd-empty">无活动连接</div>';
+  }
+}
+function runCmdFromLib(i) {
+  const lib = loadCmdLib();
+  if (lib[i]) sendCmd(lib[i]);
+}
+function sendCmd(cmd) {
+  if (!activePortId) { showBanner('无活动连接', 3000, true); return; }
+  fetch('/api/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ port_id: activePortId, cmd }) });
+  showBanner('已发送：' + cmd);
+}
+$('cmdAddBtn').onclick = () => {
+  const v = $('cmdAddInput').value.trim();
+  if (!v) return;
+  const lib = loadCmdLib();
+  if (!lib.includes(v)) lib.push(v);
+  saveCmdLib(lib);
+  $('cmdAddInput').value = '';
+  renderCmdPane();
 };
+$('cmdAddInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('cmdAddBtn').click(); });
 
 // ============================================================
 // 初始化
@@ -1269,6 +1909,11 @@ refreshGlobalStatus();
 connectAiSSE();
 setInterval(refreshGlobalStatus, 3000);
 setInterval(() => { if (activePortId) refreshSidebar(); }, 5000);
+setInterval(() => {
+  // 感知面板可见时刷新分析（用户停在分析标签）
+  const activePane = document.querySelector('.panel-tab.active');
+  if (activePane && activePane.dataset.pane === 'analyze') renderAnalyze();
+}, 5000);
 </script>
 </body>
 </html>

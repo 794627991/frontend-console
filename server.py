@@ -7,10 +7,11 @@
 - AI 接入层：/api/ai/* 系列，AI 可查询任意串口实时数据、发送命令、订阅流
 - 完全继承 web 版的 \r/\x08/ANSI 处理逻辑
 """
-import os, sys, time, threading, json, glob, re
+import os, sys, time, threading, json, glob, re, base64
 from collections import deque
 from datetime import datetime
 from queue import Queue
+import itertools
 
 import serial
 import serial.tools.list_ports
@@ -19,6 +20,19 @@ from flask import Flask, Response, request, jsonify, send_from_directory
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_DIR = os.environ.get("SERIAL_LOG_DIR", os.path.join(BASE_DIR, "serial_logs"))
 COMMON_BAUDS = [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600]
+
+# 全局单调递增序列号：作为分页/搜索的稳定游标（避免 ms 时间戳同值）
+_SEQ_COUNTER = itertools.count(1)
+_SEQ_LOCK = threading.Lock()
+
+def _next_seq():
+    with _SEQ_LOCK:
+        return next(_SEQ_COUNTER)
+
+# 全屏刷新命令检测：top/htop 等用这些序列整屏重绘
+# 强进入信号：清屏 2J 或 alt-screen ?1049h；弱信号：光标定位 H / 清行 K / 保存恢复光标 s,u
+_SCREEN_STRONG_RE = re.compile(rb"\x1b\[\d*2J|\x1b\[\?1049h", re.I)
+_SCREEN_ANY_RE = re.compile(rb"\x1b\[[\d;]*[HJKsu]|\x1b\[\?1049[hl]|\x1b\[\d*2J|\x1b\[[\d;]*r", re.I)
 
 app = Flask(__name__)
 
@@ -169,6 +183,11 @@ class SerialPort:
         self.log_lock = threading.Lock()
         self.log_path = None
         self.alive = True
+        # 全屏模式（top/htop 等）：检测到整屏重绘序列后切换为帧推送
+        self.screen_mode = False
+        self.screen_buf = bytearray()
+        self.screen_last = 0.0
+        self.screen_frame_seq = 0
         self.reader = threading.Thread(target=self._reader_loop, daemon=True)
         self.reader.start()
         self._start_log()
@@ -186,7 +205,7 @@ class SerialPort:
         clean = strip_ansi(raw_line)
         html = ansi_to_html(raw_line)
         tag = "input" if local_echo else classify_line(clean)
-        item = {"ts": ts_ms, "text": clean, "html": html, "tag": tag, "port": self.port_id}
+        item = {"seq": _next_seq(), "ts": ts_ms, "text": clean, "html": html, "tag": tag, "port": self.port_id}
         with self.buf_lock:
             self.buf.append(item)
         if self.recording and self.log_fp:
@@ -196,6 +215,44 @@ class SerialPort:
                     self.log_fp.flush()
                 except Exception:
                     pass
+        with self.clients_lock:
+            dead = []
+            for q in self.clients:
+                try:
+                    q.put_nowait(item)
+                except Exception:
+                    dead.append(q)
+            for q in dead:
+                try:
+                    self.clients.remove(q)
+                except Exception:
+                    pass
+
+    def _push_screen_frame(self, data_b64, last=True):
+        """把一帧全屏字节流（base64）推给所有 SSE 客户端，不写 buf。"""
+        self.screen_frame_seq += 1
+        ts_ms = int(time.time() * 1000)
+        item = {
+            "kind": "screen", "port": self.port_id, "ts": ts_ms,
+            "seq": self.screen_frame_seq, "data": data_b64, "last": last,
+        }
+        with self.clients_lock:
+            dead = []
+            for q in self.clients:
+                try:
+                    q.put_nowait(item)
+                except Exception:
+                    dead.append(q)
+            for q in dead:
+                try:
+                    self.clients.remove(q)
+                except Exception:
+                    pass
+
+    def _emit_screen_control(self, state):
+        """推全屏模式控制事件（enter/exit）。"""
+        ts_ms = int(time.time() * 1000)
+        item = {"kind": "screenctl", "port": self.port_id, "ts": ts_ms, "state": state}
         with self.clients_lock:
             dead = []
             for q in self.clients:
@@ -222,6 +279,28 @@ class SerialPort:
                     chunk = s.read(n)
                 if chunk:
                     partial += chunk
+                # ---- 全屏模式检测 ----
+                # 强进入信号（2J / ?1049h）出现时切换为帧推送，跳过行切分
+                if not self.screen_mode and _SCREEN_STRONG_RE.search(chunk):
+                    self.screen_mode = True
+                    self.screen_buf = bytearray()
+                    self.screen_last = time.time()
+                    self._emit_screen_control("enter")
+                if self.screen_mode:
+                    self.screen_buf += chunk
+                    self.screen_last = time.time()
+                    # 帧边界：空闲超 60ms 或缓冲超 32KB 即 flush 一帧
+                    now = time.time()
+                    if self.screen_buf and (now - self.screen_last > 0.06 or len(self.screen_buf) > 32768):
+                        frame = bytes(self.screen_buf)
+                        self.screen_buf = bytearray()
+                        self._push_screen_frame(base64.b64encode(frame).decode("ascii"), last=True)
+                    # 退出：无屏幕序列超 1.5s，或检测到普通换行流
+                    if (now - self.screen_last) > 1.5:
+                        self.screen_mode = False
+                        self.screen_buf = bytearray()
+                        self._emit_screen_control("exit")
+                    continue  # 全屏模式不进入行切分
                 if len(partial) > 8192:
                     self.append_line(partial.decode("utf-8", errors="replace"))
                     partial = b""
@@ -253,6 +332,14 @@ class SerialPort:
                             self.append_line(before.decode("utf-8", errors="replace"))
                         partial = b""
                 if not chunk:
+                    # 全屏模式空闲超时退出兜底（chunk 为空时也检查）
+                    if self.screen_mode and (time.time() - self.screen_last) > 1.5:
+                        if self.screen_buf:
+                            frame = bytes(self.screen_buf)
+                            self.screen_buf = bytearray()
+                            self._push_screen_frame(base64.b64encode(frame).decode("ascii"), last=True)
+                        self.screen_mode = False
+                        self._emit_screen_control("exit")
                     time.sleep(0.02)
             except serial.SerialException:
                 self.append_line(f"[serial-reader] 串口异常，尝试重连...")
@@ -298,6 +385,39 @@ class SerialPort:
     def get_buffer(self, n=500):
         with self.buf_lock:
             return list(self.buf)[-n:]
+
+    def get_buffer_before(self, before_seq, n=500):
+        """取 seq < before_seq 的最近 n 行（时间正序），返回 (lines, has_more)。
+        buf 按 seq 单调 append，反向扫描 O(窗口) 级。"""
+        res = []
+        with self.buf_lock:
+            for it in reversed(self.buf):
+                if it["seq"] < before_seq:
+                    res.append(it)
+                    if len(res) >= n:
+                        break
+        res.reverse()
+        # 若取到的行数 < n 且已扫到 buf 头，说明没有更早的历史
+        has_more = len(res) == n
+        return res, has_more
+
+    def search_lines(self, q, limit=200, before_seq=0):
+        """在 buf 全量搜索关键字，返回命中行 + 总数。大小写不敏感。"""
+        if not q:
+            return {"total": 0, "lines": [], "has_more": False}
+        pat = re.compile(re.escape(q), re.IGNORECASE)
+        res = []
+        total = 0
+        with self.buf_lock:
+            for it in self.buf:
+                if it["seq"] < before_seq:
+                    continue
+                if pat.search(it["text"]):
+                    total += 1
+                    if len(res) < limit:
+                        res.append(it)
+        has_more = total > limit
+        return {"total": total, "lines": res, "has_more": has_more}
 
     def get_history(self):
         with self.buf_lock:
@@ -504,11 +624,38 @@ def api_history():
 def api_buffer():
     port_id = request.args.get("port_id")
     n = int(request.args.get("n", 500))
+    before_seq = request.args.get("before_seq")
     with _ports_lock:
         p = _ports.get(port_id)
     if not p:
-        return jsonify({"lines": []})
-    return jsonify({"lines": p.get_buffer(n)})
+        return jsonify({"lines": [], "has_more": False})
+    if before_seq:
+        try:
+            bs = int(before_seq)
+        except ValueError:
+            bs = 0
+        lines, has_more = p.get_buffer_before(bs, n)
+        return jsonify({"lines": lines, "has_more": has_more})
+    return jsonify({"lines": p.get_buffer(n), "has_more": len(p.buf) > n})
+
+@app.route("/api/search")
+def api_search():
+    """在指定串口的 buf 全量搜索关键字。"""
+    port_id = request.args.get("port_id")
+    q = request.args.get("q", "")
+    limit = int(request.args.get("limit", 200))
+    before_seq = request.args.get("before_seq")
+    bs = int(before_seq) if before_seq else 0
+    with _ports_lock:
+        p = _ports.get(port_id)
+    if not p:
+        return jsonify({"ok": False, "err": "串口未连接", "total": 0, "lines": [], "has_more": False})
+    res = p.search_lines(q, limit=limit, before_seq=bs)
+    res["ok"] = True
+    res["port_id"] = port_id
+    # 命中行只回纯文本，省带宽
+    res["lines"] = [{"seq": it["seq"], "ts": it["ts"], "tag": it["tag"], "text": it["text"]} for it in res["lines"]]
+    return jsonify(res)
 
 @app.route("/api/logs")
 def api_logs():
