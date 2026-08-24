@@ -16,6 +16,9 @@ serial_logs/
 endpoint.json
 ~/.serialconsole_pro/
 
+# 临时调试文件
+_debug_raw.log
+
 # IDE / 系统
 .vscode/
 .idea/

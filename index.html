@@ -410,18 +410,43 @@
   .screen-row { white-space: pre; min-height: 1.4em; }
   .screen-cursor { display: inline-block; width: 8px; height: 1em; background: var(--accent); vertical-align: middle; animation: blink 1s step-end infinite; }
 
-  /* 跳底悬浮按钮 */
+  /* 跳底悬浮按钮 —— 主窗口右下角，科技风 */
   .jump-bottom-fab {
-    position: absolute; right: 16px; bottom: 16px; z-index: 8;
+    position: absolute; right: 20px; bottom: 20px; z-index: 8;
     display: none; align-items: center; justify-content: center;
-    width: 36px; height: 36px; border-radius: 50%;
-    background: linear-gradient(135deg, var(--accent), var(--accent-2));
-    color: #001020; cursor: pointer; font-size: 18px; font-weight: 700;
-    box-shadow: 0 2px 12px rgba(0,212,255,0.4);
-    transition: transform 0.2s;
+    width: 44px; height: 44px; border-radius: 14px;
+    background: linear-gradient(135deg, rgba(0,212,255,0.92), rgba(0,153,204,0.88));
+    color: #001020; cursor: pointer;
+    box-shadow: 0 4px 18px rgba(0,212,255,0.45), 0 0 0 1px rgba(0,212,255,0.25) inset;
+    transition: transform 0.25s cubic-bezier(.34,1.56,.64,1), box-shadow 0.25s, opacity 0.25s;
+    opacity: 0.92;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
   }
-  .jump-bottom-fab:hover { transform: scale(1.1); }
-  .jump-bottom-fab.show { display: flex; }
+  .jump-bottom-fab svg { width: 22px; height: 22px; display: block; }
+  .jump-bottom-fab:hover {
+    transform: translateY(-3px) scale(1.06);
+    box-shadow: 0 8px 26px rgba(0,212,255,0.6), 0 0 0 1px rgba(0,212,255,0.4) inset;
+    opacity: 1;
+  }
+  .jump-bottom-fab:active { transform: translateY(-1px) scale(1.02); }
+  .jump-bottom-fab.show { display: flex; animation: fab-in 0.3s ease; }
+  @keyframes fab-in {
+    from { opacity: 0; transform: translateY(8px) scale(0.85); }
+    to   { opacity: 0.92; transform: translateY(0) scale(1); }
+  }
+  /* 持续呼吸提示 */
+  .jump-bottom-fab.show::after {
+    content: ""; position: absolute; inset: -4px; border-radius: 16px;
+    border: 1.5px solid rgba(0,212,255,0.5);
+    animation: fab-pulse 1.8s ease-out infinite;
+    pointer-events: none;
+  }
+  @keyframes fab-pulse {
+    0%   { opacity: 0.6; transform: scale(0.9); }
+    70%  { opacity: 0; transform: scale(1.25); }
+    100% { opacity: 0; transform: scale(1.25); }
+  }
 
   /* 搜索/关键字高亮 */
   mark.hit { background: rgba(0,212,255,0.18); border-bottom: 2px solid var(--accent); color: inherit; padding: 0 1px; border-radius: 2px; }
@@ -857,8 +882,8 @@ function buildTerminal(portId, meta) {
   // 跳底悬浮按钮
   const fab = document.createElement('div');
   fab.className = 'jump-bottom-fab';
-  fab.textContent = '↓';
-  fab.title = '跳到底部';
+  fab.title = '跳到底部 (Ctrl+End)';
+  fab.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v14"/><path d="m6 12 6 6 6-6"/><path d="M5 20h14"/></svg>';
   fab.onclick = () => jumpToBottom(portId);
   wrap.querySelector('.output-wrap').appendChild(fab);
   conn.fab = fab;

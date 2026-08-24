@@ -30,8 +30,8 @@ def _next_seq():
         return next(_SEQ_COUNTER)
 
 # 全屏刷新命令检测：top/htop 等用这些序列整屏重绘
-# 强进入信号：清屏 2J 或 alt-screen ?1049h；弱信号：光标定位 H / 清行 K / 保存恢复光标 s,u
-_SCREEN_STRONG_RE = re.compile(rb"\x1b\[\d*2J|\x1b\[\?1049h", re.I)
+# 强进入信号：清屏 2J、alt-screen ?1049h、或 busybox top 的 H+J 组合（光标回原点+清屏到尾）
+_SCREEN_STRONG_RE = re.compile(rb"\x1b\[\d*2J|\x1b\[\?1049h|\x1b\[H\x1b\[J", re.I)
 _SCREEN_ANY_RE = re.compile(rb"\x1b\[[\d;]*[HJKsu]|\x1b\[\?1049[hl]|\x1b\[\d*2J|\x1b\[[\d;]*r", re.I)
 
 app = Flask(__name__)
@@ -186,7 +186,8 @@ class SerialPort:
         # 全屏模式（top/htop 等）：检测到整屏重绘序列后切换为帧推送
         self.screen_mode = False
         self.screen_buf = bytearray()
-        self.screen_last = 0.0
+        self.screen_last = 0.0       # 最后收到字节的时间（判退出：1.5s 无字节）
+        self.screen_flush_last = 0.0 # 上次 flush 帧的时间（判帧边界：60ms 间隔）
         self.screen_frame_seq = 0
         self.reader = threading.Thread(target=self._reader_loop, daemon=True)
         self.reader.start()
@@ -285,20 +286,25 @@ class SerialPort:
                     self.screen_mode = True
                     self.screen_buf = bytearray()
                     self.screen_last = time.time()
+                    self.screen_flush_last = time.time()
                     self._emit_screen_control("enter")
                 if self.screen_mode:
                     self.screen_buf += chunk
                     self.screen_last = time.time()
-                    # 帧边界：空闲超 60ms 或缓冲超 32KB 即 flush 一帧
                     now = time.time()
-                    if self.screen_buf and (now - self.screen_last > 0.06 or len(self.screen_buf) > 32768):
+                    # 帧边界：距上次 flush 超 60ms，或缓冲超 32KB 即 flush 一帧
+                    if self.screen_buf and (now - self.screen_flush_last > 0.06 or len(self.screen_buf) > 32768):
                         frame = bytes(self.screen_buf)
                         self.screen_buf = bytearray()
+                        self.screen_flush_last = now
                         self._push_screen_frame(base64.b64encode(frame).decode("ascii"), last=True)
-                    # 退出：无屏幕序列超 1.5s，或检测到普通换行流
+                    # 退出：无新字节超 1.5s
                     if (now - self.screen_last) > 1.5:
+                        if self.screen_buf:
+                            frame = bytes(self.screen_buf)
+                            self.screen_buf = bytearray()
+                            self._push_screen_frame(base64.b64encode(frame).decode("ascii"), last=True)
                         self.screen_mode = False
-                        self.screen_buf = bytearray()
                         self._emit_screen_control("exit")
                     continue  # 全屏模式不进入行切分
                 if len(partial) > 8192:
@@ -332,7 +338,7 @@ class SerialPort:
                             self.append_line(before.decode("utf-8", errors="replace"))
                         partial = b""
                 if not chunk:
-                    # 全屏模式空闲超时退出兜底（chunk 为空时也检查）
+                    # 全屏模式超时退出兜底：无新字节超 1.5s 即退出（chunk 为空时也要检查）
                     if self.screen_mode and (time.time() - self.screen_last) > 1.5:
                         if self.screen_buf:
                             frame = bytes(self.screen_buf)

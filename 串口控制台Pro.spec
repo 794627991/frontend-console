@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['C:/Users/gaoyi13/Desktop/串口控制台Pro/main.py'],
+    ['D:/AI/串口控制台Pro/main.py'],
     pathex=[],
     binaries=[],
     datas=[('index.html', '.'), ('app.ico', '.')],
@@ -35,5 +35,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['C:/Users/gaoyi13/Desktop/串口控制台Pro/app.ico'],
+    icon=['D:/AI/串口控制台Pro/app.ico'],
 )
