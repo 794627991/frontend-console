@@ -341,10 +341,26 @@ class SerialPort:
                         partial = b""
                     while b"\n" in partial:
                         line, partial = partial.split(b"\n", 1)
-                        # \r 处理：行内多个 \r 取最后一个 \r 之后的内容（设备用 \r 覆盖重绘本行）
-                        if b"\r" in line:
-                            line = line.rsplit(b"\r", 1)[-1]
+                        # \r 处理（与 v0.2-legacy 一致）：
+                        # 1) 先去掉行尾 \r（\r\n 行尾的 \r，如 "Mem: ...\r"）
+                        # 2) 再处理行内 \r：取最后一个 \r 之后的内容（设备用 \r 覆盖重绘本行）
+                        # 若直接 rsplit 会把 "Mem: ...\r" 吃成空行（top 等输出全是 内容\r\n）
+                        if line.endswith(b"\r"): line = line[:-1]
+                        if b"\r" in line: line = line.rsplit(b"\r", 1)[-1]
                         self.append_line(line.decode("utf-8", errors="replace"))
+                    # \r 重绘入 buf：partial 中含 \r 但无 \n（命令行重绘，如 "\r# cmd"），
+                    # 设备用 \r 回到行首重绘当前命令行，后面不跟 \n（命令还在编辑中）。
+                    # 若不入 buf，AI 调 /api/ai/buffer 就看不到命令行——感知异常。
+                    # 取最后一个 \r 之后的内容作为当前行入 buf（去掉 ANSI 控制序列后）。
+                    # 仅当 \r 不在末尾（后面有内容）时处理；\r 在末尾等下一块数据再判断。
+                    while b"\r" in partial:
+                        idx = partial.rfind(b"\r")
+                        if idx == len(partial) - 1:
+                            break  # \r 在末尾，等下一块数据
+                        after = partial[idx+1:]
+                        if after:
+                            self.append_line(after.decode("utf-8", errors="replace"))
+                        partial = b""
                     # partial 中剩余的是未结束的行（无 \n），等下次再处理
                 else:
                     # 无新字节：全屏长超时兜底退出
