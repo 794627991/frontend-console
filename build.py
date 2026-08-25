@@ -14,16 +14,9 @@ def build():
     else:
         icon_arg = ["--icon", ICON]
 
-    cmd = [
-        sys.executable, "-m", "PyInstaller",
-        "--noconfirm",
-        "--windowed",          # 无控制台黑框
-        "--onefile",           # 单文件
-        "--name", APP_NAME,
-        "--add-data", f"index.html{os.pathsep}.",
-        "--add-data", f"app.ico{os.pathsep}.",
-        "--add-data", f"vendor{os.pathsep}vendor",
-    ] + icon_arg + [MAIN]
+    # 用 spec 文件打包（spec 里配置了 excludes 排除 cryptography 等重依赖以加速启动）
+    spec = os.path.join(BASE, APP_NAME + ".spec")
+    cmd = [sys.executable, "-m", "PyInstaller", "--noconfirm", spec]
 
     print("打包命令:", " ".join(cmd))
     subprocess.check_call(cmd, cwd=BASE)

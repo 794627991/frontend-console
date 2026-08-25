@@ -10,7 +10,13 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    # 排除不需要的重依赖：pywebview 的 ssl extra 拉入 cryptography（17MB），
+    # 但本应用用本地 HTTP 无需 SSL；paramiko/pdfminer/bcrypt/setuptools 也是无关间接依赖。
+    # ssl/libcrypto/libssl 6MB+ 也排除：urllib 只访问 http://127.0.0.1 不需要 https。
+    excludes=[
+        'cryptography', 'bcrypt', 'paramiko', 'pdfminer', 'setuptools',
+        'pkg_resources', 'ssl', '_ssl',
+    ],
     noarchive=False,
     optimize=0,
 )

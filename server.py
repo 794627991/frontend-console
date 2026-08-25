@@ -22,14 +22,37 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 def _resource_base():
     return getattr(sys, "_MEIPASS", BASE_DIR)
 RES_DIR = _resource_base()
-# 日志目录：优先环境变量；打包后写到用户目录（避免 _MEIPASS 临时目录随退出被删），
-# 开发时写到源码目录下的 serial_logs/
-if os.environ.get("SERIAL_LOG_DIR"):
-    LOG_DIR = os.environ.get("SERIAL_LOG_DIR")
-elif getattr(sys, "_MEIPASS", None):
-    LOG_DIR = os.path.join(os.path.expanduser("~"), ".serialconsole_pro", "serial_logs")
-else:
-    LOG_DIR = os.path.join(BASE_DIR, "serial_logs")
+# 日志目录：默认用用户数据目录 ~/.serialconsole_pro/logs（与 endpoint.json 同级），
+# 保证源码运行和 PyInstaller exe 运行都指向同一稳定位置，不受 exe 临时解压目录
+# （_MEIPASS，每次启动不同且关闭即清空）或 exe 所在子目录影响，历史日志可持久读取。
+# 可通过环境变量 SERIAL_LOG_DIR 或配置文件覆盖（见 /api/log_dir）。
+STATE_DIR = os.path.join(os.path.expanduser("~"), ".serialconsole_pro")
+CONFIG_FILE = os.path.join(STATE_DIR, "config.json")
+DEFAULT_LOG_DIR = os.path.join(STATE_DIR, "logs")
+
+
+def _load_config():
+    """读取持久化配置（日志目录等）。"""
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_config(cfg):
+    """保存配置到 ~/.serialconsole_pro/config.json。"""
+    try:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+# 优先级：环境变量 > 配置文件 > 默认值
+_cfg = _load_config()
+LOG_DIR = os.environ.get("SERIAL_LOG_DIR") or _cfg.get("log_dir") or DEFAULT_LOG_DIR
 COMMON_BAUDS = [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600]
 
 # 全局单调递增序列号：作为分页/搜索的稳定游标（避免 ms 时间戳同值）
@@ -41,9 +64,9 @@ def _next_seq():
         return next(_SEQ_COUNTER)
 
 # 全屏刷新命令检测：top/htop 等用这些序列整屏重绘
-# v0.3.0：改用 xterm.js 后，终端渲染交给前端，后端不再做行切分/全屏帧。
-# 这里只保留一个"是否进入全屏应用"的判定，用于在 buf 里打标记、抑制逐行追加，
-# 避免 top 的整屏重绘序列污染历史缓冲（前端 xterm 仍会如实渲染这些序列）。
+# v0.3.1：改用 xterm.js 后，终端渲染交给前端 raw 流。后端 screen_mode 仅控制
+# 前端"全屏模式"提示条的显示/隐藏，不再抑制 buf 逐行追加——这样 AI 通过
+# /api/ai/* 始终能感知串口数据，不会因误进全屏而失明（修复 v0.3.0 感知异常）。
 _SCREEN_STRONG_RE = re.compile(rb"\x1b\[\d*2J|\x1b\[\?1049h|\x1b\[H\x1b\[J", re.I)
 _SCREEN_ANY_RE = re.compile(rb"\x1b\[[\d;]*[HJKsu]|\x1b\[\?1049[hl]|\x1b\[\d*2J|\x1b\[[\d;]*r", re.I)
 
@@ -286,29 +309,28 @@ class SerialPort:
                     n = s.in_waiting or 1
                     chunk = s.read(n)
                 if chunk:
-                    # ---- 全屏应用检测 ----
-                    # 强进入信号出现 → 进入全屏：raw 照推，但 buf 停止逐行追加
+                    # ---- 全屏应用检测（仅控制前端 xterm 提示条，不再抑制 buf）----
+                    # 检测到 top/htop 等全屏应用时通知前端显示"全屏模式"提示条，
+                    # 但 buf/日志照常逐行追加——这样 AI 通过 /api/ai/buffer、
+                    # /api/ai/observe、/api/ai/stream 始终能感知串口数据，
+                    # 不会因误进全屏而"终端开了却获取不到数据"。
+                    # 前端 xterm.js 走 _push_raw 的原始流，全屏渲染不受影响。
                     if not self.screen_mode and _SCREEN_STRONG_RE.search(chunk):
                         self.screen_mode = True
                         self.screen_last = time.time()
                         self._emit_screen_control("enter")
                     if self.screen_mode:
-                        self._push_raw(self._raw_dec.decode(chunk))
-                        if chunk and _SCREEN_ANY_RE.search(chunk):
+                        if _SCREEN_ANY_RE.search(chunk):
                             self.screen_last = time.time()
                         # 主动退出：块含裸 \n 且无屏幕控制序列 → top 退出、shell 回来
-                        if chunk and b"\n" in chunk and not _SCREEN_ANY_RE.search(chunk):
+                        if b"\n" in chunk and not _SCREEN_ANY_RE.search(chunk):
                             self.screen_mode = False
                             self._emit_screen_control("exit")
-                            partial = b""   # 全屏期间累积的 partial 作废
-                        else:
+                        elif (time.time() - self.screen_last) > 12:
                             # 长超时兜底退出（> top 默认 5s 刷新间隔）
-                            if (time.time() - self.screen_last) > 12:
-                                self.screen_mode = False
-                                self._emit_screen_control("exit")
-                                partial = b""
-                            continue
-                    # ---- 普通行模式 ----
+                            self.screen_mode = False
+                            self._emit_screen_control("exit")
+                    # ---- 无论是否全屏：推 raw 给前端 xterm + 切分入 buf/日志 ----
                     # 1) 推原始流给前端 xterm（含 \r \n 等控制序列，xterm 自行渲染）
                     self._push_raw(self._raw_dec.decode(chunk))
                     # 2) 行切分入 buf/日志：只在 \n 处断行，\r 视为行内覆盖
@@ -329,7 +351,6 @@ class SerialPort:
                     if self.screen_mode and (time.time() - self.screen_last) > 12:
                         self.screen_mode = False
                         self._emit_screen_control("exit")
-                        partial = b""
                     time.sleep(0.02)
             except serial.SerialException:
                 self.append_line(f"[serial-reader] 串口异常，尝试重连...")
@@ -655,21 +676,42 @@ def api_logs():
             files.append({"name": os.path.basename(f), "size": os.path.getsize(f), "mtime": int(os.path.getmtime(f))})
     return jsonify({"logs": files, "dir": LOG_DIR})
 
-@app.route("/api/open_log_dir", methods=["POST"])
-def api_open_log_dir():
-    """在系统资源管理器中打开日志目录（Windows 用 explorer.exe，跨平台兜底 os.startfile）。"""
+@app.route("/api/log_dir", methods=["GET", "POST"])
+def api_log_dir():
+    """GET 返回当前日志目录；POST 设置新目录（持久化，立即生效，日志库从此读新目录）。"""
+    global LOG_DIR
+    if request.method == "GET":
+        return jsonify({"ok": True, "dir": LOG_DIR, "default": DEFAULT_LOG_DIR})
+    data = request.get_json(force=True) or {}
+    new_dir = (data.get("dir") or "").strip()
+    # 空字符串表示恢复默认目录
+    if not new_dir:
+        new_dir = DEFAULT_LOG_DIR
+    new_dir = os.path.abspath(new_dir)
     try:
-        os.makedirs(LOG_DIR, exist_ok=True)
-        if sys.platform.startswith("win"):
-            # explorer.exe 打开目录并选中无；直接打开目录本身
-            subprocess.Popen(["explorer.exe", LOG_DIR])
-        elif sys.platform == "darwin":
-            subprocess.Popen(["open", LOG_DIR])
-        else:
-            subprocess.Popen(["xdg-open", LOG_DIR])
-        return jsonify({"ok": True, "dir": LOG_DIR})
+        os.makedirs(new_dir, exist_ok=True)
     except Exception as e:
-        return jsonify({"ok": False, "err": str(e), "dir": LOG_DIR}), 500
+        return jsonify({"ok": False, "err": f"无法创建目录: {e}"}), 400
+    if not os.access(new_dir, os.W_OK):
+        return jsonify({"ok": False, "err": "目录不可写"}), 400
+    LOG_DIR = new_dir
+    _save_config({**_load_config(), "log_dir": new_dir})
+    return jsonify({"ok": True, "dir": LOG_DIR})
+
+
+@app.route("/api/log_dir/open", methods=["POST"])
+def api_log_dir_open():
+    """用系统资源管理器打开日志目录。WebView2 拦截 file:// 协议，必须后端调 os.startfile。"""
+    data = request.get_json(force=True) or {}
+    target = (data.get("dir") or LOG_DIR).strip()
+    if not target:
+        target = LOG_DIR
+    try:
+        os.makedirs(target, exist_ok=True)
+        os.startfile(target)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "err": str(e)}), 400
 
 @app.route("/api/open_log_file", methods=["POST"])
 def api_open_log_file():
