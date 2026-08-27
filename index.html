@@ -104,14 +104,21 @@
   .log-viewer-top .vlist { flex: 1; }
   .log-search-splitter { height: 5px; background: var(--border); cursor: row-resize; flex-shrink: 0; display: none; }
   .log-search-splitter:hover { background: var(--accent); }
-  .log-search-pane { flex-direction: column; min-height: 60px; max-height: 70%; background: var(--bg-card); border-top: 1px solid var(--border); }
-  .log-search-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  .log-search-pane { display: none; flex-direction: column; height: 35%; min-height: 80px; max-height: 70%; background: var(--bg-card); border-top: 1px solid var(--border); flex-shrink: 0; }
+  .log-search-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
   .log-search-head input { flex: 1; background: var(--bg-input); border: 1px solid var(--border); color: var(--fg); border-radius: 4px; padding: 4px 8px; font-size: 12px; }
   .log-search-count { color: var(--muted); font-size: 11px; min-width: 60px; }
-  .log-search-results { flex: 1; overflow-y: auto; position: relative; background: var(--bg-input); }
+  .log-search-results { flex: 1; overflow-y: auto; position: relative; background: var(--bg-input); min-height: 40px; }
   .log-search-results .hline { cursor: pointer; }
   .log-search-results .hline.active { background: var(--accent); color: #001020; }
   .log-search-results .hline.active .hrow, .log-search-results .hline.active .htag { color: #001020; }
+  /* 搜索结果区的 hline 用流式定位（主虚拟列表用 absolute+top，这里覆盖成 static） */
+  .log-search-results .hline { position: static; height: auto; line-height: 1.5; padding: 2px 6px; white-space: pre-wrap; word-break: break-all; }
+  .log-search-results .hline:hover { background: var(--bg-card); }
+  .log-viewer-toolbar { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-bottom: 1px solid var(--border); background: var(--bg-card); flex-shrink: 0; }
+  .log-viewer-toolbar .lv-btn { background: var(--bg-input); border: 1px solid var(--border); color: var(--fg); border-radius: 4px; padding: 3px 10px; font-size: 12px; cursor: pointer; }
+  .log-viewer-toolbar .lv-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .log-viewer-toolbar .lv-info { color: var(--muted); font-size: 11px; margin-left: auto; }
   .log-viewer-status { position: absolute; bottom: 4px; right: 8px; font-size: 10px; color: var(--muted); pointer-events: none; background: rgba(0,0,0,0.4); padding: 2px 6px; border-radius: 3px; }
   .topbar .divider { width: 1px; height: 24px; background: var(--border); }
   .topbar .conn-area { display: flex; align-items: center; gap: 8px; }
@@ -996,10 +1003,15 @@ function buildTerminal(portId, meta) {
   try { conn.fit.fit(); } catch(e) {}
 
   // ---- Ctrl+C 复制选中文字（有选中→复制；无选中→发 ^C 中断）----
+  // ---- Ctrl+F 搜索（xterm 会吞键盘事件，需在此拦截主动触发）----
   conn.term.attachCustomKeyEventHandler(e => {
     if (e.ctrlKey && e.key === 'c' && e.type === 'keydown') {
       const sel = conn.term.getSelection();
       if (sel) { try { navigator.clipboard.writeText(sel); } catch(_){} return false; }
+    }
+    if (e.ctrlKey && (e.key === 'f' || e.key === 'F') && e.type === 'keydown') {
+      $('searchInput').focus(); $('searchInput').select();
+      return false;
     }
     return true;
   });
@@ -1475,6 +1487,16 @@ async function refreshGlobalStatus() {
 // 这里仅保留全局快捷键：Ctrl+End 跳底、Ctrl+L 清屏等）
 // ============================================================
 document.addEventListener('keydown', (e) => {
+  // Ctrl+F：日志 tab → 激活底部查找分栏并聚焦输入框
+  if (e.ctrlKey && (e.key === 'f' || e.key === 'F') && activePortId) {
+    const conn = connections[activePortId];
+    if (conn && conn.meta && conn.meta.kind === 'log') {
+      e.preventDefault();
+      toggleLogSearchPane(conn, true);
+      if (conn.searchInput.value) conn.searchInput.select();
+      return;
+    }
+  }
   if (!activePortId) return;
   const conn = connections[activePortId];
   if (!conn) return;
@@ -2215,26 +2237,12 @@ document.body.addEventListener('dragleave', e => {
   _dragCounter--;
   if (_dragCounter <= 0) { _dragCounter = 0; showDragOverlay(false); }
 });
+// drop 事件由 pywebview 原生处理（main.py 注册，能拿到 File.pywebviewFullPath 绝对路径），
+// 回调里 evaluate_js 调 buildLogViewer。这里仅 preventDefault（阻止 WebView2 导航到文件）
+// 并隐藏遮罩——preventDefault 不影响 pywebview 的 drop_handler 触发。
 document.body.addEventListener('drop', e => {
   e.preventDefault();
   _dragCounter = 0; showDragOverlay(false);
-  if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
-  const f = e.dataTransfer.files[0];
-  // WebView2/Chromium: File.path 是非标准属性，桌面 WebView2 通常不暴露。
-  // 拿不到时调 pywebview js_api 弹原生文件选择对话框（比手动输路径好）。
-  const path = f.path || f.webkitRelativePath || null;
-  if (path) {
-    buildLogViewer(path);
-  } else if (window.pywebview && window.pywebview.api && window.pywebview.api.pick_log) {
-    // fallback：原生文件选择对话框
-    window.pywebview.api.pick_log().then(p => {
-      if (p) buildLogViewer(p);
-    }).catch(() => {
-      alert('无法获取文件路径，请用日志库的「📁打开」按钮输入完整路径。');
-    });
-  } else {
-    alert('当前 WebView 未暴露文件路径，请用日志库的「📁打开」按钮输入完整路径。');
-  }
 });
 
 // 构建日志查看 tab（类似 buildTerminal，但用虚拟列表替代 xterm）
@@ -2260,13 +2268,19 @@ function buildLogViewer(path) {
   wrap.style.display = 'none';
   wrap.innerHTML = `
     <div class="log-viewer">
+      <div class="log-viewer-toolbar">
+        <button class="lv-btn" data-lv-action="search">🔍 搜索</button>
+        <button class="lv-btn" data-lv-action="top" title="跳到开头">⤒ 顶部</button>
+        <button class="lv-btn" data-lv-action="bottom" title="跳到末尾">⤓ 底部</button>
+        <span class="lv-info" data-lv-info></span>
+      </div>
       <div class="log-viewer-top">
         <div class="vlist"><div class="vlist-inner"></div></div>
       </div>
       <div class="log-search-splitter"></div>
-      <div class="log-search-pane" style="display:none">
+      <div class="log-search-pane">
         <div class="log-search-head">
-          <input type="text" class="log-search-input" placeholder="查找关键字…" autocomplete="off">
+          <input type="text" class="log-search-input" placeholder="查找关键字…（回车搜索，再按回车跳下一个）" autocomplete="off">
           <button class="btn ghost log-search-btn">查找全部</button>
           <span class="log-search-count"></span>
           <button class="btn ghost log-search-collapse" title="折叠分栏">▾</button>
@@ -2287,6 +2301,7 @@ function buildLogViewer(path) {
     vlist: wrap.querySelector('.vlist'),
     vlistInner: wrap.querySelector('.vlist-inner'),
     statusEl: wrap.querySelector('.log-viewer-status'),
+    infoEl: wrap.querySelector('[data-lv-info]'),
     searchPane: wrap.querySelector('.log-search-pane'),
     searchInput: wrap.querySelector('.log-search-input'),
     searchResults: wrap.querySelector('.log-search-results'),
@@ -2298,6 +2313,15 @@ function buildLogViewer(path) {
     },
   };
   connections[portId] = conn;
+  // 工具栏按钮
+  wrap.querySelectorAll('.lv-btn').forEach(btn => {
+    btn.onclick = () => {
+      const act = btn.dataset.lvAction;
+      if (act === 'search') { toggleLogSearchPane(conn, true); conn.searchInput.focus(); conn.searchInput.select(); }
+      else if (act === 'top') { conn.vlist.scrollTop = 0; }
+      else if (act === 'bottom') { conn.vlist.scrollTop = conn.vlistInner.offsetHeight; }
+    };
+  });
   // 滚动事件（节流，绑定到本 conn 的 vlist）
   let scrollTimer = null;
   conn.vlist.addEventListener('scroll', () => {
@@ -2309,7 +2333,10 @@ function buildLogViewer(path) {
   // 查找全部按钮
   wrap.querySelector('.log-search-btn').onclick = () => doLogSearch(conn);
   wrap.querySelector('.log-search-input').addEventListener('keydown', e => { if (e.key === 'Enter') doLogSearch(conn); });
-  wrap.querySelector('.log-search-collapse').onclick = () => toggleLogSearchPane(conn, false);
+  wrap.querySelector('.log-search-collapse').onclick = () => {
+    const isShown = conn.searchPane.style.display !== 'none';
+    toggleLogSearchPane(conn, !isShown);
+  };
   // 加载日志
   openLogInViewer(conn);
   switchTab(portId);
@@ -2481,6 +2508,9 @@ function highlightLogSearchResult(conn, idx) {
 function toggleLogSearchPane(conn, show) {
   conn.searchPane.style.display = show ? 'flex' : 'none';
   conn.wrap.querySelector('.log-search-splitter').style.display = show ? 'block' : 'none';
+  // 折叠按钮提示随状态变（▾ 折叠 / ▴ 展开）
+  const collapseBtn = conn.wrap.querySelector('.log-search-collapse');
+  if (collapseBtn) collapseBtn.textContent = show ? '▾' : '▴';
   if (show) { conn.searchInput.focus(); }
 }
 

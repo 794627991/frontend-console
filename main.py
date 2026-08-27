@@ -214,6 +214,30 @@ def main():
 
     window.events.closing += on_closing
 
+    # 窗口加载完成后注册原生拖拽：pywebview 的 WebView2 后端能拿到文件绝对路径
+    # （Chromium 标准 File.path 不暴露，但 pywebview 通过 CoreWebView2File.Path 获取，
+    #   注入 event.dataTransfer.files[i].pywebviewFullPath）。需用 pywebview DOM API
+    #   注册 drop 监听（_dnd_state.num_listeners>0 才捕获路径），回调里 evaluate_js 调前端。
+    def on_loaded():
+        def drop_handler(event):
+            try:
+                files = event.get('dataTransfer', {}).get('files', [])
+                for f in files:
+                    path = f.get('pywebviewFullPath')
+                    if path:
+                        # 调前端 buildLogViewer 开日志 tab（转义防注入）
+                        safe = path.replace('\\', '/').replace("'", "\\'")
+                        window.evaluate_js(f"buildLogViewer('{safe}');")
+                        break
+            except Exception:
+                pass
+        try:
+            window.dom.get_element('body').on('drop', drop_handler)
+        except Exception:
+            pass
+
+    window.events.loaded += on_loaded
+
     # debug=False 避免开发工具干扰；生产可开
     webview.start(debug=False)
 
