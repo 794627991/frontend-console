@@ -126,6 +126,17 @@ def _post(url, path, body, timeout=30):
         return json.loads(r.read().decode("utf-8"))
 
 
+def _args_summary(args, max_len=120):
+    """把工具参数压缩成短摘要，供 MCP 状态面板展示。"""
+    try:
+        s = json.dumps(args, ensure_ascii=False)
+    except Exception:
+        s = str(args)
+    if len(s) > max_len:
+        s = s[:max_len] + "…"
+    return s
+
+
 def _fmt_lines(items, max_text=200):
     """把后端返回的行列表格式化成易读文本。"""
     out = []
@@ -148,14 +159,18 @@ def _fmt_lines(items, max_text=200):
 
 # ---- MCP 工具实现 ----
 def tool_observe(url, n=50):
-    """概览：所有连接状态 + 各连接最近 N 行输出。"""
+    """概览：所有连接状态 + 各连接最近 N 行输出 + 前端已打开的日志。"""
     j = _get(url, "/api/ai/observe", {"n": n})
     if not j.get("ok"):
         return f"后端错误: {j.get('err', '未知')}"
     connected = j.get("connected", [])
-    if not connected:
-        return "当前无活动连接。用 list_ports 查看可用串口，connect_serial 建立连接。"
-    lines = [f"已连接 {len(connected)} 个: {', '.join(connected)}", ""]
+    open_logs = j.get("open_logs", [])
+    lines = []
+    if connected:
+        lines.append(f"已连接 {len(connected)} 个: {', '.join(connected)}")
+    else:
+        lines.append("已连接: 无（用 list_ports 查看可用串口，connect_serial 建立连接）")
+    lines.append("")
     for pid, status in (j.get("status") or {}).items():
         lines.append(f"=== {pid} ===")
         lines.append(f"  端口/主机: {status.get('port', status.get('host', ''))}  波特率: {status.get('baud', '')}")
@@ -166,6 +181,14 @@ def tool_observe(url, n=50):
             for l in _fmt_lines(recent).split("\n"):
                 lines.append("    " + l)
         lines.append("")
+    if open_logs:
+        lines.append(f"前端已打开日志 {len(open_logs)} 个:")
+        for l in open_logs:
+            total = l.get("total", 0)
+            lines.append(f"  📜 {l.get('name', '?')} ({total} 行) — {l.get('path', '')}")
+        lines.append("用 read_log/search_log 分析（path 传文件名或绝对路径）")
+    else:
+        lines.append("前端未打开日志（用户拖放日志到工具或从日志库点击后此处会显示）")
     return "\n".join(lines)
 
 
@@ -212,7 +235,9 @@ def tool_connect_ssh(url, host, username, password=None, key_path=None, port=22)
 
 def tool_send_command(url, port_id, cmd, wait=2.0):
     """向连接发送命令（自动加回车），等待回显秒数后返回新输出。"""
-    j = _post(url, "/api/ai/send", {"port_id": port_id, "cmd": cmd, "wait": wait})
+    # HTTP 超时须 > 后端 sleep(wait) + 余量，否则 wait 较大时 HTTP 先超时
+    j = _post(url, "/api/ai/send", {"port_id": port_id, "cmd": cmd, "wait": wait},
+              timeout=max(30, wait + 10))
     if not j.get("ok"):
         return f"发送失败: {j.get('err', '串口未连接？')}"
     resp = j.get("response", [])
@@ -240,6 +265,24 @@ def tool_get_buffer(url, port_id, n=200):
     return f"=== {port_id} 最近 {len(lines)} 行 ===\n" + _fmt_lines(lines)
 
 
+def tool_list_open_logs(url):
+    """列出前端（桌面 app）当前已打开的日志文件。
+    用户在工具里拖放或从日志库点击打开的日志会出现在这里，让 AI 知道用户当前在看哪个日志。"""
+    j = _get(url, "/api/ai/open_logs")
+    if not j.get("ok"):
+        return f"查询失败: {j.get('err', '未知')}"
+    logs = j.get("logs", [])
+    if not logs:
+        return "前端当前未打开任何日志。（用户拖放日志到工具，或从日志库点击打开后，此处会列出）"
+    out = [f"前端已打开 {len(logs)} 个日志:"]
+    for l in logs:
+        total = l.get("total", 0)
+        out.append(f"  📜 {l.get('name', '?')}  ({total} 行)")
+        out.append(f"      path: {l.get('path', '')}")
+    out.append("用 read_log(path=...) 读取，search_log(path=..., query=...) 搜索。path 可传文件名或绝对路径。")
+    return "\n".join(out)
+
+
 def tool_read_log(url, path, offset=0, limit=200):
     """读取日志文件（支持绝对路径或日志目录内文件名）。
     先返回总行数，再返回指定页的行。"""
@@ -251,6 +294,8 @@ def tool_read_log(url, path, offset=0, limit=200):
     if not jp.get("ok"):
         return f"日志共 {total} 行，但分页读取失败: {jp.get('err', '')}"
     lines = jp.get("lines", [])
+    if not lines:
+        return f"日志: {path}\n共 {total} 行，offset={offset} 处无内容（超出范围或空文件）。"
     body = _fmt_lines(lines)
     return f"日志: {path}\n共 {total} 行，显示 {offset}-{offset + len(lines) - 1}:\n{body}"
 
@@ -261,9 +306,13 @@ def tool_search_log(url, path, query, limit=500):
     if not j.get("ok"):
         return f"搜索失败: {j.get('err', '未知')}"
     lines = j.get("lines", [])
-    if not lines:
+    total = j.get("total", 0)
+    has_more = j.get("has_more", False)
+    if not lines and not total:
         return f"日志 {path} 中未找到「{query}」"
-    out = [f"命中 {len(lines)} 处（{path}）:"]
+    out = [f"命中 {total} 处（{path}），显示前 {len(lines)} 行:"]
+    if has_more:
+        out.append(f"（还有更多，提高 limit 或用 offset 续搜）")
     for l in lines:
         row = l.get("row", "?")
         tag = l.get("tag") or ""
@@ -271,6 +320,58 @@ def tool_search_log(url, path, query, limit=500):
         if len(text) > 200:
             text = text[:200] + "…"
         out.append(f"  L{row}[{tag}] {text}")
+    return "\n".join(out)
+
+
+def tool_diff_logs(url, a, b, mode="summary", context=2):
+    """对比两份日志差异。BSP 常用于对比"正常启动 vs 异常启动"日志。
+    mode=summary（默认）：去重摘要，列出只在某份出现的行 + 出现次数差异，按频次排序。适合找异常日志多了什么报错。
+    mode=line：行级 diff，输出增/减/变化块（带上下文）。适合看启动流程哪里分叉。"""
+    j = _post(url, "/api/ai/diff_logs", {"a": a, "b": b, "mode": mode, "context": context})
+    if not j.get("ok"):
+        return f"对比失败: {j.get('err', '未知')}"
+    a_name = j.get("a", a)
+    b_name = j.get("b", b)
+    a_total = j.get("a_total", 0)
+    b_total = j.get("b_total", 0)
+    header = f"对比: A={a_name}({a_total}行) vs B={b_name}({b_total}行)  模式={j.get('mode')}"
+    if mode == "line":
+        blocks = j.get("diff_blocks", [])
+        if not blocks:
+            return f"{header}\n两份日志内容一致（忽略时间戳后无差异）。"
+        out = [header, f"共 {j.get('diff_count', 0)} 处差异块:", ""]
+        for blk in blocks:
+            op = blk.get("op", "?")
+            ar = blk.get("a_range", [])
+            br = blk.get("b_range", [])
+            out.append(f"--- [{op}] A行{ar[0]}-{ar[1]} / B行{br[0]}-{br[1]} ---")
+            for l in blk.get("a_lines", []):
+                out.append(f"  - A L{l.get('row')}: {l.get('text', '')[:200]}")
+            for l in blk.get("b_lines", []):
+                out.append(f"  + B L{l.get('row')}: {l.get('text', '')[:200]}")
+            out.append("")
+        return "\n".join(out)
+    # summary 模式
+    only_a = j.get("only_a", [])
+    only_b = j.get("only_b", [])
+    diff_cnt = j.get("count_diffs", [])
+    out = [header, f"A唯一行 {j.get('a_unique', 0)} / B唯一行 {j.get('b_unique', 0)}", ""]
+    if only_a:
+        out.append(f"■ 只在 A 出现的行（{j.get('only_a_total', 0)} 类，显示前 {len(only_a)}）:")
+        for l in only_a:
+            out.append(f"  ×{l.get('a_count', 0)}  {l.get('text', '')[:200]}")
+        out.append("")
+    if only_b:
+        out.append(f"■ 只在 B 出现的行（{j.get('only_b_total', 0)} 类，显示前 {len(only_b)}）:")
+        for l in only_b:
+            out.append(f"  ×{l.get('b_count', 0)}  {l.get('text', '')[:200]}")
+        out.append("")
+    if diff_cnt:
+        out.append(f"■ 两边都有但次数差异（{j.get('count_diffs_total', 0)} 类，显示前 {len(diff_cnt)}）:")
+        for l in diff_cnt:
+            out.append(f"  A×{l.get('a_count', 0)} → B×{l.get('b_count', 0)} (Δ{l.get('delta', 0):+d})  {l.get('text', '')[:200]}")
+    if not only_a and not only_b and not diff_cnt:
+        out.append("两份日志内容一致（去重后无差异）。")
     return "\n".join(out)
 
 
@@ -288,7 +389,7 @@ def tool_disconnect(url, port_id):
 _TOOLS = [
     {
         "name": "observe",
-        "description": "概览终端控制台 Pro：列出所有已连接的串口/SSH，并返回每个连接的最近输出。这是最常用的入口，先调它了解当前状态。",
+        "description": "概览终端控制台 Pro：列出所有已连接的串口/SSH，并返回每个连接的最近输出。这是最常用的入口，先调它了解当前状态。重要：本工具与桌面 app 共享同一后端——app 里已连的串口/SSH 会直接出现在这里，port_id 形如 COM1 或 ssh:host:22，可直接用于 send_command/get_buffer，无需也不应再次 connect。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -298,12 +399,12 @@ _TOOLS = [
     },
     {
         "name": "list_ports",
-        "description": "列出系统可用串口 + 当前已连接的连接。建连接前先调它看有哪些串口。",
+        "description": "列出系统可用串口 + 当前已连接的连接。本工具与桌面 app 共享后端，已连接列表即 app 里正在用的串口/SSH。要操作已有连接请直接用 observe 拿 port_id，不要重复 connect。",
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
         "name": "connect_serial",
-        "description": "建立串口连接。需要端口号（如 COM1）和波特率。",
+        "description": "建立串口连接。需要端口号（如 COM1）和波特率。注意：本工具与桌面 app 共享同一后端，若 app 已连该串口，此处会因端口占用而失败——此时应改用 observe 复用已有连接的 port_id，而非重复 connect。仅在确实需要新建连接时调用。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -315,7 +416,7 @@ _TOOLS = [
     },
     {
         "name": "connect_ssh",
-        "description": "建立 SSH 连接。需主机、用户名，密码或密钥路径二选一。",
+        "description": "建立 SSH 连接。需主机、用户名，密码或密钥路径二选一。注意：本工具与桌面 app 共享同一后端，若 app 已连该主机，此处会失败——此时应改用 observe 复用已有连接的 port_id（形如 ssh:host:22），而非重复 connect。仅在确实需要新建连接时调用。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -334,7 +435,7 @@ _TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "port_id": {"type": "string", "description": "连接 ID（COM1 或 ssh:host:22，从 observe 获取）"},
+                "port_id": {"type": "string", "description": "连接 ID，从 observe 获取（COM1 或 ssh:host:22）。本工具与桌面 app 共享后端，app 里已连的连接直接可用，无需再 connect。"},
                 "cmd": {"type": "string", "description": "要发送的命令"},
                 "wait": {"type": "number", "default": 2.0, "description": "等待回显秒数"},
             },
@@ -366,6 +467,11 @@ _TOOLS = [
         },
     },
     {
+        "name": "list_open_logs",
+        "description": "列出前端（桌面 app）当前已打开的日志文件。用户在工具里拖放或从日志库点击打开的日志会出现在这里。分析日志前先调它，拿到 path 再用 read_log/search_log。observe 也会附带此列表。",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "read_log",
         "description": "读取日志文件。支持绝对路径（用户拖进工具的任意日志）或日志目录内文件名。先返回总行数再返回指定页。用于查看用户打开的日志文件。",
         "inputSchema": {
@@ -392,6 +498,20 @@ _TOOLS = [
         },
     },
     {
+        "name": "diff_logs",
+        "description": "对比两份日志差异。BSP 常用于对比'正常启动 vs 异常启动'日志，找异常日志多了什么报错。mode=summary（默认）去重摘要：列出只在某份出现的行 + 出现次数差异，按频次排序，适合找异常多出的报错；mode=line 行级 diff：输出增/减/变化块带上下文，适合看启动流程哪里分叉。a/b 支持文件名或绝对路径。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "a": {"type": "string", "description": "日志 A（基准，如正常启动日志）的文件名或绝对路径"},
+                "b": {"type": "string", "description": "日志 B（对比，如异常启动日志）的文件名或绝对路径"},
+                "mode": {"type": "string", "enum": ["summary", "line"], "default": "summary", "description": "summary=去重摘要按频次差异排序；line=行级 diff 带上下文"},
+                "context": {"type": "integer", "default": 2, "description": "line 模式下差异块上下文行数（0-10）"},
+            },
+            "required": ["a", "b"],
+        },
+    },
+    {
         "name": "disconnect",
         "description": "断开指定连接。",
         "inputSchema": {
@@ -407,27 +527,37 @@ _TOOLS = [
 
 def _dispatch(url, name, args):
     """分发工具调用。返回字符串结果。"""
+    # 缺必填参数时给出明确提示，而非抛 KeyError（AI 偶尔会漏参数）
+    def need(key):
+        v = args.get(key)
+        if v is None:
+            raise ValueError(f"缺少必填参数 '{key}'")
+        return v
     if name == "observe":
         return tool_observe(url, args.get("n", 50))
     if name == "list_ports":
         return tool_list_ports(url)
     if name == "connect_serial":
-        return tool_connect_serial(url, args["port"], args.get("baud", 115200))
+        return tool_connect_serial(url, need("port"), args.get("baud", 115200))
     if name == "connect_ssh":
-        return tool_connect_ssh(url, args["host"], args["username"],
+        return tool_connect_ssh(url, need("host"), need("username"),
                                 args.get("password"), args.get("key_path"), args.get("port", 22))
     if name == "send_command":
-        return tool_send_command(url, args["port_id"], args["cmd"], args.get("wait", 2.0))
+        return tool_send_command(url, need("port_id"), need("cmd"), args.get("wait", 2.0))
     if name == "send_raw":
-        return tool_send_raw(url, args["port_id"], args["bytes"])
+        return tool_send_raw(url, need("port_id"), need("bytes"))
     if name == "get_buffer":
-        return tool_get_buffer(url, args["port_id"], args.get("n", 200))
+        return tool_get_buffer(url, need("port_id"), args.get("n", 200))
+    if name == "list_open_logs":
+        return tool_list_open_logs(url)
     if name == "read_log":
-        return tool_read_log(url, args["path"], args.get("offset", 0), args.get("limit", 200))
+        return tool_read_log(url, need("path"), args.get("offset", 0), args.get("limit", 200))
     if name == "search_log":
-        return tool_search_log(url, args["path"], args["query"], args.get("limit", 500))
+        return tool_search_log(url, need("path"), need("query"), args.get("limit", 500))
+    if name == "diff_logs":
+        return tool_diff_logs(url, need("a"), need("b"), args.get("mode", "summary"), args.get("context", 2))
     if name == "disconnect":
-        return tool_disconnect(url, args["port_id"])
+        return tool_disconnect(url, need("port_id"))
     return f"未知工具: {name}"
 
 
@@ -444,6 +574,13 @@ def _result(text):
 
 def main():
     """MCP stdio 主循环。处理 initialize / tools/list / tools/call。"""
+    # Windows 默认 stdout 为系统 ANSI/GBK 编码，json.dumps(ensure_ascii=False) 遇到
+    # © 等非 GBK 字符会抛 UnicodeEncodeError，导致工具返回值丢失。统一重配为 utf-8。
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
     # 懒发现后端：第一次工具调用时才 ensure，避免 MCP 启动就阻塞
     _url_cache = [None]
 
@@ -476,7 +613,7 @@ def main():
                 "result": {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "serial-console-pro", "version": "0.4.0"},
+                    "serverInfo": {"name": "serial-console-pro", "version": "0.5.0"},
                 },
             })
         elif method == "notifications/initialized":
@@ -486,21 +623,39 @@ def main():
         elif method == "tools/call":
             name = params.get("name")
             args = params.get("arguments") or {}
+            ok = True
+            url = None  # 预初始化，防止 get_url() 抛异常时下方上报引用未定义变量
             try:
                 url = get_url()
                 if not url:
                     _send({"jsonrpc": "2.0", "id": req_id,
                            "result": _result("终端控制台 Pro 未运行，且自动拉起失败。请手动启动工具后重试。")})
                     continue
-                result = _dispatch(url, name, args)
+                try:
+                    result = _dispatch(url, name, args)
+                except urllib.error.URLError:
+                    # 后端可能刚重启/瞬断：失效缓存，重新发现后端并重试一次
+                    _url_cache[0] = None
+                    url = get_url()
+                    if not url:
+                        raise
+                    result = _dispatch(url, name, args)
                 _send({"jsonrpc": "2.0", "id": req_id, "result": _result(result)})
             except urllib.error.URLError as e:
+                ok = False
                 _send({"jsonrpc": "2.0", "id": req_id,
                        "result": _result(f"后端通信失败: {e}（工具可能已关闭，重试会自动拉起）")})
                 _url_cache[0] = None  # 失效缓存，下次重新发现
             except Exception as e:
+                ok = False
                 _send({"jsonrpc": "2.0", "id": req_id,
                        "result": {"content": [{"type": "text", "text": f"工具执行异常: {e}"}], "isError": True}})
+            # 上报调用记录给后端（前端 MCP 状态面板展示），失败不阻塞
+            if url:
+                try:
+                    _post(url, "/api/ai/mcp_report", {"tool": name, "args": _args_summary(args), "ok": ok})
+                except Exception:
+                    pass
         else:
             _send({"jsonrpc": "2.0", "id": req_id,
                    "error": {"code": -32601, "message": f"method not found: {method}"}})

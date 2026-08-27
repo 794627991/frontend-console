@@ -17,11 +17,21 @@ import serial
 import serial.tools.list_ports
 from flask import Flask, Response, request, jsonify, send_from_directory
 
-# SSH 集成（可选依赖：源码运行已装 paramiko；打包需 spec 不排除）
-try:
-    import paramiko
-except ImportError:
-    paramiko = None
+# SSH 集成（可选依赖：延迟导入——纯串口场景不加载 paramiko，省 ~300ms 启动时间）
+# 用到 SSH 时才 import，避免启动时阻塞。paramiko 为 None 表示未安装。
+_paramiko = None  # 懒加载缓存
+def _get_paramiko():
+    """延迟导入 paramiko，首次 SSH 连接时才加载。"""
+    global _paramiko
+    if _paramiko is not None:
+        return _paramiko if _paramiko is not False else None
+    try:
+        import paramiko as _pk
+        _paramiko = _pk
+        return _pk
+    except ImportError:
+        _paramiko = False  # 标记未安装，避免重复尝试
+        return None
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # PyInstaller 打包后资源在 _MEIPASS 临时目录；开发时在源码目录
@@ -233,8 +243,9 @@ class LogIndex:
                         parsed["row"] = i
                         res.append(parsed)
                     else:
-                        next_offset = i
-                        break
+                        # 已满 limit，记录续搜游标，但继续统计 total 以给前端准确计数
+                        if next_offset < 0:
+                            next_offset = i
         has_more = next_offset >= 0
         return {"total": total, "lines": res, "next_offset": next_offset, "has_more": has_more}
 
@@ -504,27 +515,28 @@ class BaseConnection:
         if self.recording and self.log_fp:
             with self.log_lock:
                 try:
-                    self.log_fp.write(f"{ts_ms}\t{tag}\t{raw_line}\n")
+                    # 写 clean（已去 ANSI）而非 raw_line，否则日志回看会带 \x1b[...m 转义码
+                    self.log_fp.write(f"{ts_ms}\t{tag}\t{clean}\n")
                     self.log_fp.flush()
                 except Exception:
                     pass
 
     def _push_raw(self, text, last=False):
-        """把一段原始字节流（已 decode 为 str）推给本连接所有 SSE 客户端。"""
+        """把一段原始字节流（已 decode 为 str）推给本连接所有 SSE 客户端。
+        队列满时丢弃最旧条目腾位（而非移除客户端——客户端仍在消费，只是瞬时积压）。"""
         ts_ms = int(time.time() * 1000)
         item = {"kind": "raw", "port": self.port_id, "ts": ts_ms, "data": text, "last": last}
         with self.clients_lock:
-            dead = []
             for q in self.clients:
                 try:
                     q.put_nowait(item)
                 except Exception:
-                    dead.append(q)
-            for q in dead:
-                try:
-                    self.clients.remove(q)
-                except Exception:
-                    pass
+                    # 队列满：丢最旧一条腾位再塞，保客户端在线不断流
+                    try:
+                        q.get_nowait()
+                        q.put_nowait(item)
+                    except Exception:
+                        pass
 
     def _emit_screen_control(self, state):
         """推全屏模式控制事件（enter/exit）。"""
@@ -580,7 +592,11 @@ class BaseConnection:
                         idx = partial.rfind(b"\r")
                         if idx == len(partial) - 1:
                             break
+                        # \r 前的内容（进度条覆盖的旧行）也保留，\r 后的是新内容
+                        before = partial[:idx]
                         after = partial[idx+1:]
+                        if before:
+                            self.append_line(before.decode("utf-8", errors="replace"))
                         if after:
                             self.append_line(after.decode("utf-8", errors="replace"))
                         partial = b""
@@ -595,6 +611,8 @@ class BaseConnection:
                     break
                 self.append_line(f"[reader] 连接异常: {e}，尝试重连...")
                 time.sleep(2)
+                if not self.alive:
+                    break
                 try:
                     if self._io_reconnect():
                         self.append_line(f"[reader] 重连成功")
@@ -630,6 +648,11 @@ class BaseConnection:
     def get_buffer(self, n=500):
         with self.buf_lock:
             return list(self.buf)[-n:]
+
+    def get_buffer_after(self, after_seq, n=500):
+        """取 seq > after_seq 的所有行（时间正序），用于取某次命令后的新输出。"""
+        with self.buf_lock:
+            return [it for it in self.buf if it["seq"] > after_seq]
 
     def get_buffer_before(self, before_seq, n=500):
         """取 seq < before_seq 的最近 n 行（时间正序），返回 (lines, has_more)。"""
@@ -690,6 +713,11 @@ class BaseConnection:
         time.sleep(0.1)
         try:
             self._io_close()
+        except Exception: pass
+        # join 读线程，避免它在已关的句柄上继续读并触发隐式重连
+        try:
+            if hasattr(self, "reader") and self.reader.is_alive():
+                self.reader.join(timeout=1.0)
         except Exception: pass
         with self.log_lock:
             if self.log_fp:
@@ -767,8 +795,15 @@ class SSHConnection(BaseConnection):
         self.start()
 
     def _io_open(self):
+        paramiko = _get_paramiko()
         if paramiko is None:
             raise RuntimeError("paramiko 未安装，无法建立 SSH 连接")
+        # 停掉旧 keepalive 线程（重连场景），避免多个线程并发 send_ignore
+        self._keepalive_stop = True
+        if getattr(self, "_keepalive", None) and self._keepalive.is_alive():
+            try: self._keepalive.join(timeout=1.0)
+            except Exception: pass
+        self._keepalive_stop = False
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         kwargs = dict(hostname=self.host, port=self.ssh_port, username=self.username,
@@ -832,10 +867,10 @@ class SSHConnection(BaseConnection):
 
     def _keepalive_loop(self):
         """每 30s 发 keepalive，防 NAT/防火墙断连。"""
-        while self.alive and self._client is not None:
+        while self.alive and self._client is not None and not getattr(self, "_keepalive_stop", False):
             try:
                 time.sleep(30)
-                if not self.alive or self._client is None:
+                if not self.alive or self._client is None or getattr(self, "_keepalive_stop", False):
                     break
                 # paramiko 2.10+ 用 send_okay，兼容旧版用 global_request
                 t = self._client.get_transport() if self._client else None
@@ -873,18 +908,30 @@ def close_all_ports():
 _ai_clients = []       # AI SSE Queue 列表
 _ai_clients_lock = threading.Lock()
 
+# 前端已打开的日志文件列表（前端上报，供 MCP/AI 查询"用户当前在看哪个日志"）
+# 每项: {"name": 显示名, "path": 绝对路径或日志目录内文件名, "port_id": 前端 tab id, "total": 行数}
+_open_logs = []
+_open_logs_lock = threading.Lock()
+
+# MCP 最近调用记录（mcp_server.py 通过 /api/ai/mcp_report 上报，前端状态面板展示）
+# 每项: {"ts": 时间戳, "tool": 工具名, "args摘要": 参数摘要, "ok": 是否成功}
+_mcp_calls = []
+_mcp_calls_lock = threading.Lock()
+_MCP_CALLS_MAX = 50
+
 def _broadcast_to_ai(item):
-    """串口有新行时，同时推给所有 AI 订阅者。"""
+    """串口有新行时，同时推给所有 AI 订阅者。
+    队列满时丢最旧腾位，不移除客户端（避免误杀仍在消费的订阅者）。"""
     with _ai_clients_lock:
-        dead = []
         for q in _ai_clients:
             try:
                 q.put_nowait(item)
             except Exception:
-                dead.append(q)
-        for q in dead:
-            try: _ai_clients.remove(q)
-            except Exception: pass
+                try:
+                    q.get_nowait()
+                    q.put_nowait(item)
+                except Exception:
+                    pass
 
 # hook 到 SerialPort.append_line
 _orig_append = SerialPort.append_line
@@ -957,7 +1004,7 @@ def api_connect():
             return jsonify({"ok": False, "err": "need host and username"}), 400
         if not password and not key_path:
             return jsonify({"ok": False, "err": "need password or key_path"}), 400
-        if paramiko is None:
+        if _get_paramiko() is None:
             return jsonify({"ok": False, "err": "paramiko 未安装，无法 SSH 连接"}), 500
         port_id = f"ssh:{host}:{port}"
         with _ports_lock:
@@ -1165,8 +1212,8 @@ def api_log_read(name):
 
 @app.route("/api/replay/<name>")
 def api_replay(name):
-    path = os.path.join(LOG_DIR, name)
-    if not os.path.isfile(path):
+    path = _resolve_log_path(name)
+    if not path:
         return jsonify({"ok": False, "err": "not found"}), 404
     lines = []
     with open(path, "r", encoding="utf-8", errors="replace") as f:
@@ -1174,17 +1221,21 @@ def api_replay(name):
             ln = ln.rstrip("\n")
             if ln.startswith("#"): continue
             parts = ln.split("\t", 2)
-            if len(parts) == 3:
+            if len(parts) == 3 and parts[0].isdigit():
                 lines.append({"ts": int(parts[0]), "tag": parts[1], "text": parts[2], "html": None})
     return jsonify({"lines": lines})
 
 
 # ---- G 级历史翻阅：日志行索引 + 分页 + 搜索 ----
 def _resolve_log_path(name_or_path):
-    """解析日志路径：支持 LOG_DIR 内文件名，也支持外部绝对路径。"""
+    """解析日志路径：支持 LOG_DIR 内文件名，也支持外部绝对路径。
+    防路径穿越：LOG_DIR 内文件名不允许含 .. 逃逸。"""
     if os.path.isabs(name_or_path) and os.path.isfile(name_or_path):
         return name_or_path
-    p = os.path.join(LOG_DIR, name_or_path)
+    # 防穿越：规范化后必须在 LOG_DIR 内
+    p = os.path.normpath(os.path.join(LOG_DIR, name_or_path))
+    if not os.path.realpath(p).startswith(os.path.realpath(LOG_DIR) + os.sep) and os.path.realpath(p) != os.path.realpath(LOG_DIR):
+        return None
     if os.path.isfile(p):
         return p
     return None
@@ -1239,6 +1290,112 @@ def api_log_open_external():
         return jsonify({"ok": False, "err": "文件不存在"}), 400
     return jsonify({"ok": True, "name": p, "size": os.path.getsize(p)})
 
+
+@app.route("/api/ai/diff_logs", methods=["POST"])
+def ai_diff_logs():
+    """对比两份日志，返回差异。BSP 常用于对比"正常启动 vs 异常启动"日志。
+    body: {a: 路径1, b: 路径2, mode: "line"|"summary", context: 上下文行数}
+    - mode=line：行级 diff（基于 text 内容忽略时间戳），输出增/减/变化块
+    - mode=summary：去重摘要，对比两份日志各自唯一行 + 出现次数，按频次差异排序
+    context：line 模式下差异块上下文行数（默认 2）"""
+    import difflib
+    from collections import Counter
+    data = request.get_json(force=True, silent=True) or {}
+    pa = _resolve_log_path(data.get("a", ""))
+    pb = _resolve_log_path(data.get("b", ""))
+    if not pa or not pb:
+        return jsonify({"ok": False, "err": f"日志路径解析失败: a={data.get('a')} b={data.get('b')}"}), 400
+    mode = (data.get("mode") or "summary").strip()
+    ctx = int(data.get("context", 2))
+    ctx = max(0, min(ctx, 10))
+
+    # 读两份日志的 text 行（忽略 ts，只取 tag+text 用于对比；纯外部日志 tag=text）
+    def read_texts(path):
+        idx = _get_log_index(path)
+        if not idx._loaded:
+            idx.build()
+        out = []
+        with open(path, "rb") as f:
+            for i in range(idx.total):
+                f.seek(idx.offsets[i])
+                line = f.readline().decode("utf-8", errors="replace")
+                p = idx._parse_line(line)
+                # 对比键：tag+text（忽略 ts，因为两份日志时间戳必然不同）
+                out.append((p.get("tag", "text"), p.get("text", "")))
+        return out
+
+    try:
+        a_lines = read_texts(pa)
+        b_lines = read_texts(pb)
+    except Exception as e:
+        return jsonify({"ok": False, "err": f"读取日志失败: {e}"}), 500
+
+    a_name = os.path.basename(pa)
+    b_name = os.path.basename(pb)
+
+    if mode == "line":
+        # 行级 diff：用 difflib 对 text 序列做差异比对
+        a_texts = [t for _, t in a_lines]
+        b_texts = [t for _, t in b_lines]
+        sm = difflib.SequenceMatcher(a=a_texts, b=b_texts, autojunk=False)
+        blocks = []
+        for op, i1, i2, j1, j2 in sm.get_opcodes():
+            if op == "equal":
+                continue
+            # 上下文
+            cs = max(0, i1 - ctx)
+            ce = min(len(a_texts), i2 + ctx)
+            block = {
+                "op": op,  # replace / delete / insert
+                "a_range": [i1, i2], "b_range": [j1, j2],
+                "a_ctx": [{"row": cs + k, "text": a_texts[cs + k]} for k in range(ce - cs) if cs + k < len(a_texts)],
+                "b_ctx": [{"row": j1 + k, "text": b_texts[j1 + k]} for k in range(j2 - j1 + ctx) if j1 + k < len(b_texts)],
+            }
+            # 只保留差异行，上下文单独标
+            block["a_lines"] = [{"row": i1 + k, "text": a_texts[i1 + k]} for k in range(i2 - i1)]
+            block["b_lines"] = [{"row": j1 + k, "text": b_texts[j1 + k]} for k in range(j2 - j1)]
+            blocks.append(block)
+        return jsonify({"ok": True, "mode": "line", "a": a_name, "b": b_name,
+                        "a_total": len(a_lines), "b_total": len(b_lines),
+                        "diff_blocks": blocks, "diff_count": len(blocks)})
+
+    # mode=summary：去重摘要，对比唯一行 + 出现次数
+    def count_lines(lines):
+        c = Counter()
+        for tag, text in lines:
+            # 去掉行内可变部分（时间戳已在 text 里就保留，对比时两份日志时间不同但内容同）
+            key = text.strip()
+            if not key:
+                continue
+            c[key] += 1
+        return c
+    a_cnt = count_lines(a_lines)
+    b_cnt = count_lines(b_lines)
+    all_keys = set(a_cnt) | set(b_cnt)
+    only_a = []  # 只在 A 出现
+    only_b = []  # 只在 B 出现
+    diff_cnt = []  # 两边都有但次数差大
+    for k in all_keys:
+        ca = a_cnt.get(k, 0)
+        cb = b_cnt.get(k, 0)
+        if ca and not cb:
+            only_a.append({"text": k, "a_count": ca})
+        elif cb and not ca:
+            only_b.append({"text": k, "b_count": cb})
+        elif abs(ca - cb) > 0:
+            diff_cnt.append({"text": k, "a_count": ca, "b_count": cb, "delta": cb - ca})
+    # 按次数/差异排序
+    only_a.sort(key=lambda x: -x["a_count"])
+    only_b.sort(key=lambda x: -x["b_count"])
+    diff_cnt.sort(key=lambda x: -abs(x["delta"]))
+    return jsonify({"ok": True, "mode": "summary", "a": a_name, "b": b_name,
+                    "a_total": len(a_lines), "b_total": len(b_lines),
+                    "a_unique": len(a_cnt), "b_unique": len(b_cnt),
+                    "only_a": only_a[:100], "only_b": only_b[:100],
+                    "count_diffs": diff_cnt[:100],
+                    "only_a_total": len(only_a), "only_b_total": len(only_b),
+                    "count_diffs_total": len(diff_cnt)})
+
 @app.route("/api/new_log", methods=["POST"])
 def api_new_log():
     data = request.get_json(force=True)
@@ -1268,13 +1425,17 @@ def stream():
         return jsonify({"ok": False, "err": "串口未连接"}), 404
     q = p.add_client()
     def gen():
-        yield "event: hello\ndata: {}\n\n"
-        while True:
-            try:
-                item = q.get(timeout=15)
-                yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
-            except Exception:
-                yield ": ping\n\n"
+        try:
+            yield "event: hello\ndata: {}\n\n"
+            while True:
+                try:
+                    item = q.get(timeout=15)
+                    yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+                except Exception:
+                    yield ": ping\n\n"
+        finally:
+            # 客户端断开时回收队列，避免泄漏（gen 退出 = 连接关闭）
+            p.remove_client(q)
     return Response(gen(), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
@@ -1326,12 +1487,13 @@ def ai_send():
     if not p:
         return jsonify({"ok": False, "err": "串口未连接"})
     try:
-        before = len(p.buf)
+        # 用 seq 游标取命令后的新输出，避免 len 差在并发下取错（别人命令/设备自报混入）
+        with p.buf_lock:
+            before_seq = p.buf[-1]["seq"] if p.buf else -1
         p.send_cmd(cmd, newline=True)
         # 等待设备回显
         time.sleep(wait)
-        after = len(p.buf)
-        new_items = p.get_buffer(max(0, after - before))
+        new_items = p.get_buffer_after(before_seq)
         return jsonify({"ok": True, "port_id": port_id, "sent": cmd,
                         "response": [{"ts": it["ts"], "tag": it["tag"], "text": it["text"]} for it in new_items]})
     except Exception as e:
@@ -1362,13 +1524,21 @@ def ai_stream():
     with _ai_clients_lock:
         _ai_clients.append(q)
     def gen():
-        yield "event: hello\ndata: {}\n\n"
-        while True:
-            try:
-                item = q.get(timeout=15)
-                yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
-            except Exception:
-                yield ": ping\n\n"
+        try:
+            yield "event: hello\ndata: {}\n\n"
+            while True:
+                try:
+                    item = q.get(timeout=15)
+                    yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+                except Exception:
+                    yield ": ping\n\n"
+        finally:
+            # 客户端断开时从 _ai_clients 移除队列，避免泄漏（与 stream() 同模式）
+            with _ai_clients_lock:
+                try:
+                    _ai_clients.remove(q)
+                except ValueError:
+                    pass
     return Response(gen(), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
@@ -1393,8 +1563,117 @@ def ai_observe():
         }
         items = p.get_buffer(n)
         recent[pid] = [{"ts": it["ts"], "tag": it["tag"], "text": it["text"]} for it in items]
+    with _open_logs_lock:
+        open_logs = list(_open_logs)
     return jsonify({"ok": True, "connected": list(_ports.keys()),
-                    "status": status, "recent": recent})
+                    "status": status, "recent": recent, "open_logs": open_logs})
+
+
+# ---- 前端上报已打开的日志（打开/关闭日志 tab 时同步） ----
+@app.route("/api/ai/open_logs", methods=["GET", "POST", "DELETE"])
+def ai_open_logs():
+    """GET 查询当前已打开日志列表；POST 全量覆盖列表；DELETE 清空。
+    前端打开/关闭日志 tab 时 POST 全量同步，让 MCP/AI 能感知用户当前在看哪个日志。"""
+    global _open_logs
+    if request.method == "GET":
+        with _open_logs_lock:
+            return jsonify({"ok": True, "logs": list(_open_logs)})
+    if request.method == "DELETE":
+        with _open_logs_lock:
+            _open_logs = []
+        return jsonify({"ok": True})
+    # POST: 全量覆盖
+    data = request.get_json(force=True, silent=True) or {}
+    logs = data.get("logs")
+    if not isinstance(logs, list):
+        return jsonify({"ok": False, "err": "need logs list"}), 400
+    # 规范化：只保留需要的字段
+    clean = []
+    for l in logs:
+        if not isinstance(l, dict):
+            continue
+        name = str(l.get("name", "")).strip()
+        path = str(l.get("path", "")).strip()
+        if not name or not path:
+            continue
+        clean.append({
+            "name": name,
+            "path": path,
+            "port_id": str(l.get("port_id", "")),
+            "total": int(l.get("total", 0) or 0),
+        })
+    with _open_logs_lock:
+        _open_logs = clean
+    return jsonify({"ok": True, "count": len(clean)})
+
+
+# ---- MCP 状态信息（前端面板展示 + MCP server 上报调用记录） ----
+@app.route("/api/ai/mcp_info")
+def ai_mcp_info():
+    """返回 MCP 相关信息：后端地址、已注册工具列表、最近调用记录。
+    工具列表从 mcp_server.py 静态定义读取（硬编码在此保持一致），调用记录由 mcp_server 上报。"""
+    tools = [
+        {"name": "observe", "desc": "概览所有连接 + 最近输出 + 已打开日志"},
+        {"name": "list_ports", "desc": "列出可用串口 + 已连接"},
+        {"name": "connect_serial", "desc": "建立串口连接"},
+        {"name": "connect_ssh", "desc": "建立 SSH 连接"},
+        {"name": "send_command", "desc": "发命令 + 等回显"},
+        {"name": "send_raw", "desc": "发原始字节（Ctrl-C 等）"},
+        {"name": "get_buffer", "desc": "取连接最近 N 行缓冲"},
+        {"name": "list_open_logs", "desc": "列出前端已打开的日志文件"},
+        {"name": "read_log", "desc": "读日志文件（分页）"},
+        {"name": "search_log", "desc": "日志关键字搜索"},
+        {"name": "diff_logs", "desc": "对比两份日志差异（summary/line）"},
+        {"name": "disconnect", "desc": "断开连接"},
+    ]
+    with _mcp_calls_lock:
+        calls = list(_mcp_calls)
+    # 读 endpoint 信息
+    ep_info = {}
+    try:
+        ep_path = os.path.join(STATE_DIR, "endpoint.json")
+        if os.path.isfile(ep_path):
+            with open(ep_path, "r", encoding="utf-8") as f:
+                ep_info = json.load(f)
+    except Exception:
+        pass
+    return jsonify({
+        "ok": True,
+        "backend_url": ep_info.get("url", ""),
+        "endpoint": ep_info,
+        "tools": tools,
+        "recent_calls": calls,
+    })
+
+
+@app.route("/api/ai/mcp_report", methods=["POST"])
+def ai_mcp_report():
+    """MCP server 每次工具调用后上报记录，前端状态面板展示最近活动。"""
+    data = request.get_json(force=True, silent=True) or {}
+    entry = {
+        "ts": time.time(),
+        "tool": str(data.get("tool", "")),
+        "args": str(data.get("args", ""))[:200],
+        "ok": bool(data.get("ok", True)),
+    }
+    with _mcp_calls_lock:
+        _mcp_calls.append(entry)
+        if len(_mcp_calls) > _MCP_CALLS_MAX:
+            _mcp_calls = _mcp_calls[-_MCP_CALLS_MAX:]
+    return jsonify({"ok": True})
+
+
+# 前端性能计时上报（诊断启动慢）
+_perf_last = {}
+@app.route("/api/ai/perf", methods=["POST", "GET"])
+def ai_perf():
+    """前端上报页面加载各阶段耗时（ms）。GET 返回最近一次。"""
+    global _perf_last
+    if request.method == "GET":
+        return jsonify({"ok": True, "perf": _perf_last})
+    data = request.get_json(force=True, silent=True) or {}
+    _perf_last = {**data, "ts": time.time()}
+    return jsonify({"ok": True})
 
 # ---- 命令库持久化（跨端口/重启保留） ----
 @app.route("/api/cmd_lib")

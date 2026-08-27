@@ -388,6 +388,27 @@
   .sense-line.kw-warning { color: var(--neon-orange); }
   .sense-line.kw-info { color: var(--accent); }
 
+  /* MCP 状态标签 */
+  .mcp-pane { padding: 10px 14px; overflow-y: auto; }
+  .mcp-head { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; margin-bottom: 12px; }
+  .mcp-head .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .mcp-head .dot.on { background: var(--neon-green); box-shadow: 0 0 6px var(--neon-green); }
+  .mcp-section { margin-bottom: 14px; }
+  .mcp-section .title { font-size: 10px; font-weight: 600; letter-spacing: 1px; color: var(--muted); text-transform: uppercase; margin-bottom: 6px; }
+  .mcp-mono { font-family: var(--font-mono); font-size: 11px; color: var(--text); word-break: break-all; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
+  .mcp-tools { display: flex; flex-direction: column; gap: 4px; }
+  .mcp-tool { font-size: 11px; padding: 4px 8px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; }
+  .mcp-tool .tname { font-family: var(--font-mono); color: var(--accent); font-weight: 600; }
+  .mcp-tool .tdesc { color: var(--muted); margin-left: 6px; }
+  .mcp-calls { display: flex; flex-direction: column; gap: 3px; }
+  .mcp-call { font-family: var(--font-mono); font-size: 10px; padding: 3px 6px; border-radius: 4px; background: var(--bg-card); border-left: 2px solid var(--border); }
+  .mcp-call.ok { border-left-color: var(--neon-green); }
+  .mcp-call.fail { border-left-color: var(--neon-red); }
+  .mcp-call .ctime { color: var(--muted); margin-right: 6px; }
+  .mcp-call .ctool { color: var(--accent); font-weight: 600; }
+  .mcp-call .cargs { color: var(--text); opacity: 0.8; }
+  .mcp-empty { color: var(--muted); font-size: 11px; font-style: italic; }
+
   /* 分析标签 */
   .analyze-pane { padding: 12px 14px; overflow-y: auto; }
   .stat-cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 14px; }
@@ -706,6 +727,7 @@
       <div class="panel-tab active" data-pane="sense">● 感知</div>
       <div class="panel-tab" data-pane="analyze">📊 分析</div>
       <div class="panel-tab" data-pane="cmd">⌘ 命令</div>
+      <div class="panel-tab" data-pane="mcp">🔌 MCP</div>
     </div>
     <div class="panel-body" id="panelBody">
       <!-- 感知 -->
@@ -745,6 +767,24 @@
           </div>
           <div class="cmd-sheet-pane" data-sheet="recent">
             <div id="cmdRecent"></div>
+          </div>
+        </div>
+      </div>
+      <!-- MCP 状态 -->
+      <div class="panel-tab-pane" data-pane="mcp">
+        <div class="mcp-pane" id="mcpPane">
+          <div class="mcp-head"><span id="mcpStatusDot" class="dot"></span><span id="mcpStatusText">检测中…</span></div>
+          <div class="mcp-section">
+            <div class="title">后端地址</div>
+            <div id="mcpBackendUrl" class="mcp-mono">—</div>
+          </div>
+          <div class="mcp-section">
+            <div class="title">已注册工具</div>
+            <div id="mcpTools" class="mcp-tools">—</div>
+          </div>
+          <div class="mcp-section">
+            <div class="title">最近调用</div>
+            <div id="mcpCalls" class="mcp-calls">—</div>
           </div>
         </div>
       </div>
@@ -906,7 +946,7 @@ function fmtTs(ms) {
   const d = new Date(ms);
   return d.toLocaleTimeString('zh-CN', {hour12:false}) + '.' + String(ms % 1000).padStart(3,'0');
 }
-function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 // 连接排序：串口[0] < SSH[1] < 日志[2]，同类内按自然序
 function sortKeyFn(pid) {
   const m = /^COM(\d+)$/i.exec(pid);
@@ -1259,6 +1299,8 @@ async function loadBuffer(portId, conn) {
   try {
     const r = await fetch('/api/buffer?port_id=' + encodeURIComponent(portId) + '&n=500');
     const j = await r.json();
+    // await 期间连接可能已关闭，term 已 dispose，校验后再写
+    if (connections[portId] !== conn || !conn.term) return;
     const lines = j.lines || [];
     if (lines.length) {
       // 历史行是"逻辑行"（后端已按 \n 切分、\r 覆盖处理过），用 \r\n 写入 xterm
@@ -1329,7 +1371,7 @@ async function loadOlder(portId, conn) {
 // 跳到底部
 function jumpToBottom(portId) {
   const conn = connections[portId];
-  if (!conn) return;
+  if (!conn || !conn.term) return;
   conn.autoScroll = true;
   conn.term.scrollToBottom();
   conn.fab.classList.remove('show');
@@ -1583,6 +1625,7 @@ $('btnRefreshPorts').onclick = async () => { await loadPorts(); showBanner('端�
 $('btnPause').onclick = () => {
   if (!activePortId) return;
   const conn = connections[activePortId];
+  if (!conn || !conn.term) return;  // 日志 tab 无 term，跳过
   conn.paused = !conn.paused;
   $('btnPause').textContent = conn.paused ? '▶' : '⏸';
   if (!conn.paused) { conn.autoScroll = true; conn.term.scrollToBottom(); }
@@ -1590,6 +1633,7 @@ $('btnPause').onclick = () => {
 $('btnClear').onclick = () => {
   if (!activePortId) return;
   const conn = connections[activePortId];
+  if (!conn || !conn.term) return;  // 日志 tab 无 term，跳过
   conn.term.clear();
   conn.kwDecorLastRow = 0;
   conn.kwDecorations.forEach(d => { try { d.dispose(); } catch(e){} });
@@ -1598,6 +1642,8 @@ $('btnClear').onclick = () => {
 };
 $('btnNewLog').onclick = async () => {
   if (!activePortId) return;
+  const conn = connections[activePortId];
+  if (!conn || !conn.term) return;  // 日志 tab 无 term，跳过
   const r = await fetch('/api/new_log', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: activePortId})});
   const j = await r.json();
   showBanner('已开新日志：' + (j.log_path || ''));
@@ -1605,7 +1651,7 @@ $('btnNewLog').onclick = async () => {
 $('btnCtrlC').onclick = () => { if (activePortId) termSendRaw(activePortId, [3]); };
 $('btnCtrlD').onclick = () => { if (activePortId) termSendRaw(activePortId, [4]); };
 $('btnJumpBottomMain').onclick = () => { if (activePortId) jumpToBottom(activePortId); };
-$('btnAbout').onclick = () => showBanner('终端控制台 Pro · xterm.js 终端 + 搜索/感知/分析 · v0.4.0', 5000);
+$('btnAbout').onclick = () => showBanner('终端控制台 Pro · xterm.js 终端 + 搜索/感知/分析 · v0.5.0', 5000);
 $('btnJumpBottom').onclick = () => { if (activePortId) jumpToBottom(activePortId); };
 // 打开日志目录（顶栏快捷入口）
 $('btnOpenLogDir').onclick = async () => {
@@ -1903,6 +1949,33 @@ function connectAiSSE() {
     aiSse.close();
     setTimeout(connectAiSSE, 2000);
   };
+}
+
+// ---- MCP 状态标签：后端地址 + 已注册工具 + 最近调用 ----
+async function refreshMcpInfo() {
+  try {
+    const r = await fetch('/api/ai/mcp_info');
+    const j = await r.json();
+    if (!j.ok) return;
+    // 状态点：有 backend_url 即后端在跑（MCP server 能否连上由最近调用推断）
+    const dot = $('mcpStatusDot'), txt = $('mcpStatusText');
+    if (j.backend_url) { dot.className = 'dot on'; txt.textContent = 'MCP 后端运行中'; }
+    else { dot.className = 'dot'; txt.textContent = 'MCP 后端未运行'; }
+    $('mcpBackendUrl').textContent = j.backend_url || '—（endpoint.json 未找到）';
+    // 工具列表
+    const tools = j.tools || [];
+    $('mcpTools').innerHTML = tools.length ? tools.map(t =>
+      `<div class="mcp-tool"><span class="tname">${esc(t.name)}</span><span class="tdesc">${esc(t.desc)}</span></div>`).join('') : '<div class="mcp-empty">—</div>';
+    // 最近调用
+    const calls = j.recent_calls || [];
+    const callsEl = $('mcpCalls');
+    if (!calls.length) { callsEl.innerHTML = '<div class="mcp-empty">暂无调用记录（Claude Code 调用 MCP 工具后会显示）</div>'; return; }
+    callsEl.innerHTML = calls.slice(-20).reverse().map(c => {
+      const d = new Date(c.ts * 1000);
+      const ts = d.toTimeString().slice(0, 8);
+      return `<div class="mcp-call ${c.ok ? 'ok' : 'fail'}"><span class="ctime">${ts}</span><span class="ctool">${esc(c.tool)}</span> <span class="cargs">${esc(c.args || '')}</span></div>`;
+    }).join('');
+  } catch(e) {}
 }
 function kwClassOf(text) {
   const t = text.toLowerCase();
@@ -2245,6 +2318,23 @@ document.body.addEventListener('drop', e => {
   _dragCounter = 0; showDragOverlay(false);
 });
 
+// 同步已打开日志列表到后端（打开/关闭日志 tab 时调用，让 MCP/AI 能感知）
+function syncOpenLogs() {
+  const logs = [];
+  for (const pid in connections) {
+    const c = connections[pid];
+    if (c && c.meta && c.meta.kind === 'log') {
+      logs.push({
+        name: c.meta.label,
+        path: c.meta.path,
+        port_id: pid,
+        total: c.logState ? c.logState.total : 0,
+      });
+    }
+  }
+  try { fetch('/api/ai/open_logs', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({logs})}); } catch(e) {}
+}
+
 // 构建日志查看 tab（类似 buildTerminal，但用虚拟列表替代 xterm）
 function buildLogViewer(path) {
   const name = path.split(/[\\\/]/).pop();
@@ -2296,6 +2386,7 @@ function buildLogViewer(path) {
   termArea.appendChild(wrap);
   // conn 对象
   const conn = {
+    portId,  // 用于 await 后校验当前 conn 是否仍存活（防止用户在索引期间关闭/切换日志 tab）
     meta: { kind: 'log', label: name, path },
     tab, wrap,
     vlist: wrap.querySelector('.vlist'),
@@ -2341,6 +2432,7 @@ function buildLogViewer(path) {
   openLogInViewer(conn);
   switchTab(portId);
   refreshSidebar();
+  syncOpenLogs();  // 通知后端已打开此日志（total 索引完后再同步一次）
 }
 
 // 打开日志：建索引 + 初始化虚拟列表
@@ -2355,6 +2447,8 @@ async function openLogInViewer(conn) {
   try {
     const r = await fetch('/api/log_count?name=' + encodeURIComponent(ls.name));
     const j = await r.json();
+    // 索引期间用户可能已关闭此日志 tab 或切到别的 tab，校验当前 conn 仍存活
+    if (connections[conn.portId] !== conn) return;
     if (!j.ok) { conn.statusEl.textContent = '错误：' + (j.err || ''); return; }
     ls.total = j.total;
     const naturalH = ls.total * HIST_ROW_H;
@@ -2363,7 +2457,8 @@ async function openLogInViewer(conn) {
     conn.vlistInner.style.height = Math.min(naturalH, MAX_SCROLL_H) + 'px';
     conn.statusEl.textContent = `共 ${ls.total.toLocaleString()} 行` + (ls.scaled ? ' · 缩放模式' : '');
     renderLogSlice(conn);
-  } catch(e) { conn.statusEl.textContent = '加载失败：' + e; }
+    syncOpenLogs();  // 索引完成，带 total 再同步一次
+  } catch(e) { if (connections[conn.portId] === conn) conn.statusEl.textContent = '加载失败：' + e; }
 }
 
 // scrollTop → 行号（缩放末页可达映射）
@@ -2524,22 +2619,30 @@ function initLogSplitter(conn) {
     dragging = true; startY = e.clientY; startH = pane.offsetHeight;
     document.body.style.cursor = 'row-resize'; e.preventDefault();
   });
-  document.addEventListener('mousemove', e => {
+  // 存到 conn 以便 closeLogViewer 移除，避免 document 级监听器泄漏
+  conn._splitMove = e => {
     if (!dragging) return;
     const dh = e.clientY - startY;
     const newH = Math.max(60, Math.min(startH - dh, conn.wrap.clientHeight - 100));
     pane.style.height = newH + 'px';
     top.style.flex = '1';
-  });
-  document.addEventListener('mouseup', () => {
+  };
+  conn._splitUp = () => {
     if (dragging) { dragging = false; document.body.style.cursor = ''; renderLogSlice(conn); }
-  });
+  };
+  document.addEventListener('mousemove', conn._splitMove);
+  document.addEventListener('mouseup', conn._splitUp);
 }
 
 // 关闭日志 tab
 function closeLogViewer(portId) {
   const conn = connections[portId];
-  if (conn) { conn.tab.remove(); conn.wrap.remove(); delete connections[portId]; }
+  if (conn) {
+    // 移除 document 级拖拽监听器，避免泄漏
+    if (conn._splitMove) document.removeEventListener('mousemove', conn._splitMove);
+    if (conn._splitUp) document.removeEventListener('mouseup', conn._splitUp);
+    conn.tab.remove(); conn.wrap.remove(); delete connections[portId];
+  }
   const remaining = Object.keys(connections).sort(sortKeyFn);
   if (remaining.length) switchTab(remaining[0]);
   else {
@@ -2548,15 +2651,33 @@ function closeLogViewer(portId) {
   }
   refreshSidebar();
   refreshGlobalStatus();
+  syncOpenLogs();  // 通知后端此日志已关闭
 }
 
 // ============================================================
 // 初始化
 // ============================================================
+// 性能计时：页面加载各阶段上报后端（诊断启动慢）
+const _perf = { domStart: performance.now(), initStart: 0, initDone: 0 };
+document.addEventListener('DOMContentLoaded', () => { _perf.domReady = performance.now(); });
+function _reportPerf() {
+  _perf.initDone = performance.now();
+  try {
+    fetch('/api/ai/perf', {method:'POST',headers:{'Content-Type':'application/json'},body: JSON.stringify({
+      dom_start: Math.round(_perf.domStart),
+      dom_ready: Math.round(_perf.domReady || 0),
+      init_done: Math.round(_perf.initDone),
+      load: Math.round(_perf.initDone - _perf.domStart),
+    })});
+  } catch(e) {}
+}
 loadPorts();
 refreshGlobalStatus();
 connectAiSSE();
+refreshMcpInfo();
+_reportPerf();  // 初始化完成，上报计时
 setInterval(refreshGlobalStatus, 3000);
+setInterval(refreshMcpInfo, 5000);  // MCP 状态面板：后端地址/工具/最近调用
 setInterval(() => { if (activePortId) refreshSidebar(); }, 5000);
 setInterval(() => {
   // 感知面板可见时刷新分析（用户停在分析标签）
