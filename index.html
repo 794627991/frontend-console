@@ -98,6 +98,21 @@
     pointer-events: none;
     backdrop-filter: blur(2px);
   }
+  /* 日志查看 tab */
+  .log-viewer { display: flex; flex-direction: column; width: 100%; height: 100%; position: relative; }
+  .log-viewer-top { flex: 1; display: flex; min-height: 0; }
+  .log-viewer-top .vlist { flex: 1; }
+  .log-search-splitter { height: 5px; background: var(--border); cursor: row-resize; flex-shrink: 0; display: none; }
+  .log-search-splitter:hover { background: var(--accent); }
+  .log-search-pane { flex-direction: column; min-height: 60px; max-height: 70%; background: var(--bg-card); border-top: 1px solid var(--border); }
+  .log-search-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  .log-search-head input { flex: 1; background: var(--bg-input); border: 1px solid var(--border); color: var(--fg); border-radius: 4px; padding: 4px 8px; font-size: 12px; }
+  .log-search-count { color: var(--muted); font-size: 11px; min-width: 60px; }
+  .log-search-results { flex: 1; overflow-y: auto; position: relative; background: var(--bg-input); }
+  .log-search-results .hline { cursor: pointer; }
+  .log-search-results .hline.active { background: var(--accent); color: #001020; }
+  .log-search-results .hline.active .hrow, .log-search-results .hline.active .htag { color: #001020; }
+  .log-viewer-status { position: absolute; bottom: 4px; right: 8px; font-size: 10px; color: var(--muted); pointer-events: none; background: rgba(0,0,0,0.4); padding: 2px 6px; border-radius: 3px; }
   .topbar .divider { width: 1px; height: 24px; background: var(--border); }
   .topbar .conn-area { display: flex; align-items: center; gap: 8px; }
   .topbar select, .topbar input {
@@ -627,7 +642,7 @@
   <!-- 左侧串口列表 -->
   <div class="sidebar">
     <div class="sidebar-head">
-      <span>串口连接</span>
+      <span>连接</span>
       <span class="count" id="portCount">0</span>
     </div>
     <div class="port-list" id="portList">
@@ -655,8 +670,8 @@
     <div class="term-area" id="termArea">
       <div class="empty-state" id="emptyState">
         <div class="big-icon">📡</div>
-        <div class="title">暂无串口连接</div>
-        <div class="desc">点击顶部「新建连接」选择串口端口和波特率，支持同时监控多个串口。每个串口独立标签页，互不干扰。</div>
+        <div class="title">暂无连接</div>
+        <div class="desc">点击顶部「新建连接」选择串口或 SSH，支持同时监控多个连接。每个连接独立标签页，互不干扰。</div>
       </div>
     </div>
   </div>
@@ -666,7 +681,7 @@
     <div class="ai-head">
       <div class="ai-icon">✦</div>
       <div class="ai-head-detail">
-        <div class="title">串口助手</div>
+        <div class="title">终端助手</div>
         <div class="sub">搜索 · 感知 · 分析 · 命令</div>
       </div>
       <button class="toggle" id="aiToggle" title="折叠/展开">›</button>
@@ -684,13 +699,12 @@
       <div class="panel-tab active" data-pane="sense">● 感知</div>
       <div class="panel-tab" data-pane="analyze">📊 分析</div>
       <div class="panel-tab" data-pane="cmd">⌘ 命令</div>
-      <div class="panel-tab" data-pane="history">📜 历史</div>
     </div>
     <div class="panel-body" id="panelBody">
       <!-- 感知 -->
       <div class="panel-tab-pane active" data-pane="sense">
         <div class="sense-pane" id="sensePane">
-          <div class="sense-head"><span class="live-dot"></span>实时串口流（全部端口）</div>
+          <div class="sense-head"><span class="live-dot"></span>实时数据流（全部连接）</div>
           <div class="sense-filter" id="senseFilter"></div>
           <div id="senseList"></div>
         </div>
@@ -724,21 +738,6 @@
           </div>
           <div class="cmd-sheet-pane" data-sheet="recent">
             <div id="cmdRecent"></div>
-          </div>
-        </div>
-      </div>
-      <!-- 历史 -->
-      <div class="panel-tab-pane" data-pane="history">
-        <div class="history-pane" id="historyPane">
-          <div class="history-toolbar">
-            <select id="historyLogSelect" title="选择日志文件"></select>
-            <button class="btn ghost" id="btnHistoryOpenExternal" title="打开外部日志文件">📁打开</button>
-            <input type="text" id="historySearchInput" placeholder="搜索…" autocomplete="off">
-            <button class="btn ghost" id="btnHistorySearch">🔍</button>
-          </div>
-          <div class="history-status" id="historyStatus">选择日志文件或打开外部日志</div>
-          <div class="vlist" id="historyVlist">
-            <div class="vlist-inner" id="historyVlistInner"></div>
           </div>
         </div>
       </div>
@@ -901,6 +900,13 @@ function fmtTs(ms) {
   return d.toLocaleTimeString('zh-CN', {hour12:false}) + '.' + String(ms % 1000).padStart(3,'0');
 }
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+// 连接排序：串口[0] < SSH[1] < 日志[2]，同类内按自然序
+function sortKeyFn(pid) {
+  const m = /^COM(\d+)$/i.exec(pid);
+  if (m) return [0, parseInt(m[1], 10)];  // 串口：COM 号数字序
+  if (pid.startsWith('log:')) return [2, pid];  // 日志：字典序
+  return [1, pid];  // SSH：字典序
+}
 
 // ============================================================
 // 关键字高亮（error/warning/info 等）
@@ -989,6 +995,15 @@ function buildTerminal(portId, meta) {
   conn.term.open(conn.xtermWrap);
   try { conn.fit.fit(); } catch(e) {}
 
+  // ---- Ctrl+C 复制选中文字（有选中→复制；无选中→发 ^C 中断）----
+  conn.term.attachCustomKeyEventHandler(e => {
+    if (e.ctrlKey && e.key === 'c' && e.type === 'keydown') {
+      const sel = conn.term.getSelection();
+      if (sel) { try { navigator.clipboard.writeText(sel); } catch(_){} return false; }
+    }
+    return true;
+  });
+
   // ---- xterm 输入 → 串口 ----
   conn.term.onData(data => {
     if (conn.paused) return;
@@ -1073,10 +1088,15 @@ function switchTab(portId) {
   // 切换后重新 fit 并聚焦 xterm（等 display:flex 生效后再 fit，否则算出 0 尺寸）
   const conn = connections[portId];
   if (conn) {
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      try { conn.fit.fit(); } catch(e){}
-      try { conn.term.focus(); } catch(e){}
-    }));
+    if (conn.meta.kind === 'log') {
+      // 日志 tab：重渲染虚拟列表（display:flex 后尺寸才正确）
+      requestAnimationFrame(() => requestAnimationFrame(() => renderLogSlice(conn)));
+    } else {
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        try { conn.fit.fit(); } catch(e){}
+        try { conn.term.focus(); } catch(e){}
+      }));
+    }
     // 若分析标签正显示，刷新一次（数据源已切到新连接的 buffer）
     const activePane = document.querySelector('.panel-tab.active');
     if (activePane && activePane.dataset.pane === 'analyze') renderAnalyze();
@@ -1086,7 +1106,10 @@ function switchTab(portId) {
 // 窗口/面板尺寸变化时重新 fit 活动 xterm
 window.addEventListener('resize', () => {
   const conn = connections[activePortId];
-  if (conn) { try { conn.fit.fit(); } catch(e){} }
+  if (conn) {
+    if (conn.meta.kind === 'log') renderLogSlice(conn);
+    else { try { conn.fit.fit(); } catch(e){} }
+  }
 });
 
 // SSE 收到 raw 字节流 → 写入 xterm；screenctl → 切换提示条
@@ -1376,17 +1399,16 @@ function closeConnection(portId) {
     conn.wrap.remove();
     delete connections[portId];
   }
-  // 切换到第一个可用标签（串口按 COM 号，SSH 排后）
+  // 切换到第一个可用标签（复用全局 sortKeyFn）
   const remaining = Object.keys(connections).sort((a, b) => {
-    const ka = (() => { const m = /^COM(\d+)$/i.exec(a); return m ? [0, +m[1]] : [1, a]; })();
-    const kb = (() => { const m = /^COM(\d+)$/i.exec(b); return m ? [0, +m[1]] : [1, b]; })();
+    const ka = sortKeyFn(a), kb = sortKeyFn(b);
     return ka[0] !== kb[0] ? ka[0] - kb[0] : (ka[1] < kb[1] ? -1 : ka[1] > kb[1] ? 1 : 0);
   });
   if (remaining.length) {
     switchTab(remaining[0]);
   } else {
     activePortId = null;
-    termArea.innerHTML = '<div class="empty-state"><div class="big-icon">📡</div><div class="title">暂无串口连接</div><div class="desc">点击顶部「新建连接」选择串口端口和波特率，支持同时监控多个串口。每个串口独立标签页，互不干扰。</div></div>';
+    termArea.innerHTML = '<div class="empty-state"><div class="big-icon">📡</div><div class="title">暂无连接</div><div class="desc">点击顶部「新建连接」选择串口或 SSH，支持同时监控多个连接。每个连接独立标签页，互不干扰。</div></div>';
   }
   refreshSidebar();
   refreshGlobalStatus();
@@ -1396,18 +1418,13 @@ function refreshSidebar() {
   const ids = Object.keys(connections);
   $('portCount').textContent = ids.length;
   if (!ids.length) {
-    portList.innerHTML = '<div class="empty-state" style="padding:30px 10px;"><div class="desc">点击「新建连接」添加串口</div></div>';
+    portList.innerHTML = '<div class="empty-state" style="padding:30px 10px;"><div class="desc">点击「新建连接」添加连接</div></div>';
     return;
   }
   portList.innerHTML = '';
-  // 排序：串口按 COM 号数字序（COM1, COM2, ..., COM10），SSH 排串口后按 host
-  const sortKey = pid => {
-    const m = /^COM(\d+)$/i.exec(pid);
-    if (m) return [0, parseInt(m[1], 10)];  // 串口：[0, com号]
-    return [1, pid];  // SSH：[1, port_id 字典序]
-  };
+  // 排序：串口[0] < SSH[1] < 日志[2]（sortKeyFn 全局定义，closeConnection/closeLogViewer 复用）
   ids.sort((a, b) => {
-    const ka = sortKey(a), kb = sortKey(b);
+    const ka = sortKeyFn(a), kb = sortKeyFn(b);
     return ka[0] !== kb[0] ? ka[0] - kb[0] : (ka[1] < kb[1] ? -1 : ka[1] > kb[1] ? 1 : 0);
   });
   ids.forEach(pid => {
@@ -1416,30 +1433,27 @@ function refreshSidebar() {
     item.className = 'port-item connected' + (pid === activePortId ? ' active' : '');
     item.dataset.portId = pid;
     const isSSH = conn.meta.kind === 'ssh';
-    const descText = isSSH ? `SSH · ${conn.meta.host || ''}` : `${conn.meta.baud || ''} baud`;
+    const isLog = conn.meta.kind === 'log';
+    const descText = isSSH ? `SSH · ${conn.meta.host || ''}` : isLog ? `📜 日志` : `${conn.meta.baud || ''} baud`;
+    const rowCount = conn.term ? conn.term.buffer.active.length : (conn.logState ? conn.logState.total : 0);
     item.innerHTML = `
       <span class="led"></span>
       <div class="info">
         <div class="name">${esc(conn.meta.label || pid)}</div>
-        <div class="desc">${esc(descText)} · <span class="baud">${conn.term ? conn.term.buffer.active.length : 0} 行</span></div>
+        <div class="desc">${esc(descText)} · <span class="baud">${rowCount} 行</span></div>
       </div>
-      <div class="actions"><button data-close="${pid}" title="断开">✕</button></div>
+      <div class="actions"><button data-close="${pid}" title="${isLog ? '关闭' : '断开'}">✕</button></div>
     `;
     item.onclick = (e) => {
-      if (e.target.dataset.close) { e.stopPropagation(); closeConnection(pid); return; }
+      if (e.target.dataset.close) { e.stopPropagation(); (isLog ? closeLogViewer(pid) : closeConnection(pid)); return; }
       switchTab(pid);
     };
     portList.appendChild(item);
   });
-  // 标签栏同序重排
-  const sortKey2 = pid => {
-    const m = /^COM(\d+)$/i.exec(pid);
-    if (m) return [0, +m[1]];
-    return [1, pid];
-  };
+  // 标签栏同序重排（复用全局 sortKeyFn）
   const tabEls = Array.from(tabs.querySelectorAll('.tab'));
   tabEls.sort((a, b) => {
-    const ka = sortKey2(a.dataset.portId), kb = sortKey2(b.dataset.portId);
+    const ka = sortKeyFn(a.dataset.portId), kb = sortKeyFn(b.dataset.portId);
     return ka[0] !== kb[0] ? ka[0] - kb[0] : (ka[1] < kb[1] ? -1 : ka[1] > kb[1] ? 1 : 0);
   });
   const actions = tabs.querySelector('.tab-bar-actions');
@@ -1769,7 +1783,6 @@ document.querySelectorAll('.panel-tab').forEach(tab => {
     document.querySelectorAll('.panel-tab-pane').forEach(p => p.classList.toggle('active', p.dataset.pane === pane));
     if (pane === 'analyze') renderAnalyze();
     if (pane === 'cmd') renderCmdPane();
-    if (pane === 'history') renderHistoryPane();
   };
 });
 
@@ -1849,7 +1862,7 @@ $('searchInput').addEventListener('keydown', (e) => {
 $('searchPrev').onclick = () => gotoSearchMark(-1);
 $('searchNext').onclick = () => gotoSearchMark(1);
 
-// ---- 感知标签：实时串口流（全局 SSE） ----
+// ---- 感知标签：实时数据流（全局 SSE） ----
 let senseState = { lines: [], filter: 'ALL' };
 function connectAiSSE() {
   aiSse = new EventSource('/api/ai/stream');
@@ -2165,202 +2178,19 @@ document.querySelectorAll('.cmd-sheet-tab').forEach(tab => {
 });
 
 // ============================================================
-// 历史浏览（G 级日志虚拟列表）
+// 日志查看 tab（G 级虚拟列表 + 底部查找分栏）
 // ============================================================
-// 固定行高虚拟列表：只渲染可视区 + 缓冲行，按需从后端分页拉取，G 级也不卡
-const HIST_ROW_H = 18;          // 行高（px，与 CSS .hline height 一致）
-const HIST_BUF = 10;             // 视口外缓冲行数
-const HIST_PAGE = 200;           // 单次后端拉取行数
-const HIST_CACHE_MAX = 5000;   // 行缓存上限，超此清理远离可视区的旧缓存，防 G 级翻阅 OOM
-const MAX_SCROLL_H = 10000000;  // 内层最大滚动高度(10M px)，远低于 Chrome/WebView2 的 scrollHeight 上限(~33.5M=2^25)
-                                 // total*HIST_ROW_H 超 MAX_SCROLL_H 时启用「比例缩放」：scrollTop 按比例换算行号，
-                                 // 行贴近视口顶渲染。这是 G 级(千万行)翻阅的关键——突破浏览器滚动高度上限。
-let histState = {
-  name: '',        // 当前日志名/路径
-  total: 0,        // 总行数
-  scaled: false,   // 是否启用比例缩放（total*行高 > MAX_SCROLL_H）
-  rows: new Map(), // 已加载行缓存：rowIdx -> {ts,tag,text}
-  renderedStart: -1, renderedEnd: -1,  // 当前渲染区间
-  renderSeq: 0,   // 渲染序号，防快速滚动竞态（旧 fetch 完成时丢弃）
-  searchQ: '',     // 搜索关键字
-  searchResults: [],  // 搜索命中行号
-  searchIdx: 0,
-};
-
-// 加载日志列表到下拉框
-async function loadHistoryLogList() {
-  try {
-    const r = await fetch('/api/logs');
-    const j = await r.json();
-    const sel = $('historyLogSelect');
-    sel.innerHTML = '<option value="">— 选择日志 —</option>' +
-      (j.logs || []).map(l => `<option value="${esc(l.name)}">${esc(l.name)} (${(l.size/1024).toFixed(0)}KB)</option>`).join('');
-  } catch(e) {}
-}
-
-// 打开日志：建索引 + 初始化虚拟列表
-async function openHistoryLog(name) {
-  if (!name) { histState.name=''; histState.total=0; histState.scaled=false;
-    $('historyVlistInner').innerHTML = ''; $('historyVlistInner').style.height = '';
-    $('historyStatus').textContent = '选择日志文件或打开外部日志'; return; }
-  histState.name = name;
-  histState.rows = new Map();
-  histState.renderedStart = -1; histState.renderedEnd = -1;
-  histState.searchQ = ''; histState.searchResults = []; histState.searchIdx = 0;
-  $('historySearchInput').value = '';
-  $('historyVlist').scrollTop = 0;
-  $('historyStatus').textContent = '正在索引…';
-  try {
-    const r = await fetch('/api/log_count?name=' + encodeURIComponent(name));
-    const j = await r.json();
-    if (!j.ok) { $('historyStatus').textContent = '错误：' + (j.err || ''); return; }
-    histState.total = j.total;
-    // 决定是否启用比例缩放：总行高超过 MAX_SCROLL_H 才缩放
-    const naturalH = histState.total * HIST_ROW_H;
-    histState.scaled = naturalH > MAX_SCROLL_H;
-    // inner 高度 = min(自然总高, MAX_SCROLL_H)，撑总滚动条
-    $('historyVlistInner').innerHTML = '';
-    $('historyVlistInner').style.height = Math.min(naturalH, MAX_SCROLL_H) + 'px';
-    $('historyStatus').textContent = `共 ${histState.total.toLocaleString()} 行` + (histState.scaled ? ' · 缩放模式' : '');
-    renderHistorySlice();
-  } catch(e) { $('historyStatus').textContent = '加载失败：' + e; }
-}
-
-// scrollTop → 实际行号换算。
-// 缩放模式：scrollTop(0..maxScroll) 线性映射到行号(0..total-viewportRows)，
-//   保证 scrollTop 最大时 startRow=total-viewportRows（末行可达），无不可达尾区。
-// 非缩放：1:1，scrollTop/行高。
-function histScrollToRow(scrollTop) {
-  if (!histState.scaled) return Math.floor(scrollTop / HIST_ROW_H);
-  const innerH = Math.min(histState.total * HIST_ROW_H, MAX_SCROLL_H);
-  const maxScroll = innerH - (window._histViewH || 600);  // 视口高（滚动时传入）
-  const maxRow = Math.max(0, histState.total - Math.ceil((window._histViewH || 600) / HIST_ROW_H));
-  if (maxScroll <= 0) return 0;
-  return Math.min(maxRow, Math.floor(scrollTop / maxScroll * maxRow));
-}
-
-// 实际行号 → 该行在滚动空间中的像素位置（用于 jumpTo 设 scrollTop）。
-// 缩放：row/maxRow*maxScroll。非缩放：row*行高。
-function histRowToScroll(row) {
-  if (!histState.scaled) return row * HIST_ROW_H;
-  const innerH = Math.min(histState.total * HIST_ROW_H, MAX_SCROLL_H);
-  const maxScroll = innerH - (window._histViewH || 600);
-  const maxRow = Math.max(0, histState.total - Math.ceil((window._histViewH || 600) / HIST_ROW_H));
-  if (maxRow <= 0) return 0;
-  return Math.floor(row / maxRow * maxScroll);
-}
-
-// 确保区间 [start, end) 的行已加载到缓存
-async function ensureHistoryRange(start, end) {
-  start = Math.max(0, start); end = Math.min(histState.total, end);
-  // 找出未加载的子区间
-  const missing = [];
-  let i = start;
-  while (i < end) {
-    if (histState.rows.has(i)) { i++; continue; }
-    let j = i;
-    while (j < end && !histState.rows.has(j)) j++;
-    missing.push([i, j]);
-    i = j;
-  }
-  // 并行拉取缺失段（每段最多 HIST_PAGE 行，拆分大段）
-  const fetches = [];
-  for (const [s, e] of missing) {
-    for (let k = s; k < e; k += HIST_PAGE) {
-      const off = k, lim = Math.min(HIST_PAGE, e - k);
-      fetches.push(
-        fetch('/api/log_page?name=' + encodeURIComponent(histState.name) + '&offset=' + off + '&limit=' + lim)
-          .then(r => r.json()).then(j => {
-            if (j.ok) {
-              (j.lines || []).forEach((l, idx) => histState.rows.set(off + idx, l));
-            }
-          }).catch(() => {})
-      );
-    }
-  }
-  if (fetches.length) await Promise.all(fetches);
-}
-
-// 渲染可视区切片（缩放虚拟列表：inner 钳制 MAX_SCROLL_H 撑滚动条，viewport 容器跟随 scrollTop 平移）
-async function renderHistorySlice() {
-  if (!histState.name || !histState.total) return;
-  const vlist = $('historyVlist');
-  const inner = $('historyVlistInner');
-  const scrollTop = vlist.scrollTop;
-  const viewH = vlist.clientHeight;
-  window._histViewH = viewH;  // 供 histScrollToRow/histRowToScroll 计算末页可达映射
-  // scrollTop → 起始行号（严格对应视口顶，无偏移，保证 jumpTo 坐标自洽）
-  const startRow = Math.max(0, histScrollToRow(scrollTop));
-  const viewportRows = Math.ceil(viewH / HIST_ROW_H);
-  // 渲染 [startRow, startRow+viewportRows+BUF)，向下留缓冲防快速滚动露白。
-  // 不向上缓冲：scrollTop 减小触发重渲染补上方行，节流 50ms 内不会露白。
-  const renderStart = startRow;
-  const endRow = Math.min(histState.total, startRow + viewportRows + HIST_BUF);
-  if (renderStart === histState.renderedStart && endRow === histState.renderedEnd) return;
-  // 渲染序号守卫：await 期间用户继续滚动会 ++renderSeq，本帧过期则丢弃，防旧 fetch 覆盖新渲染
-  const mySeq = ++histState.renderSeq;
-
-  await ensureHistoryRange(renderStart, endRow);
-  if (mySeq !== histState.renderSeq) return;  // 已被更新的滚动帧取代
-
-  // 双层结构突破 Chrome 33.5M scrollHeight 上限：
-  //   inner（高=虚拟总高，≤10M）撑总滚动条；viewport（绝对定位）top=scrollTop 贴视口顶，
-  //   行在 viewport 内用实际坐标 top=(r-startRow)*18 排列，startRow 行贴视口顶（屏幕Y=0）。
-  //   缩放时 scrollTop 是虚拟像素，viewport.top=scrollTop 让渲染块贴视口；
-  //   startRow=histScrollToRow(scrollTop) 严格对应视口顶，jumpTo 用 histRowToScroll 反算 scrollTop，
-  //   两者互逆，坐标自洽。非缩放时同理（1:1）。
-  let vp = inner.querySelector('.vlist-viewport');
-  if (!vp) {
-    vp = document.createElement('div');
-    vp.className = 'vlist-viewport';
-    inner.appendChild(vp);
-  }
-  vp.style.top = scrollTop + 'px';
-  let html = '';
-  for (let r = renderStart; r < endRow; r++) {
-    const l = histState.rows.get(r);
-    if (!l) continue;
-    const top = (r - renderStart) * HIST_ROW_H;
-    const kc = l.tag === 'error' ? 'kw-error' : l.tag === 'warning' ? 'kw-warning' : (l.tag === 'info' || l.tag === 'comment') ? 'kw-info' : '';
-    const text = esc(l.text || '');
-    html += `<div class="hline ${kc}" style="top:${top}px" data-row="${r}" title="${text}"><span class="hrow">${r}</span><span class="htag">${esc(l.tag||'')}</span>${text}</div>`;
-  }
-  vp.innerHTML = html;
-  histState.renderedStart = renderStart;
-  histState.renderedEnd = endRow;
-  // 缓存清理：超上限时删远离可视区的行，防 G 级翻阅 rows Map 无限增长 OOM
-  if (histState.rows.size > HIST_CACHE_MAX) {
-    const keepFrom = renderStart - HIST_CACHE_MAX / 2, keepTo = endRow + HIST_CACHE_MAX / 2;
-    for (const k of histState.rows.keys()) {
-      if (k < keepFrom || k > keepTo) histState.rows.delete(k);
-    }
-  }
-  $('historyStatus').textContent = `共 ${histState.total.toLocaleString()} 行 · 显示 ${renderStart}-${endRow-1}` + (histState.scaled ? ' · 缩放' : '');
-}
-
-// 滚动事件（节流）
-let _histScrollTimer = null;
-$('historyVlist').addEventListener('scroll', () => {
-  if (_histScrollTimer) return;
-  _histScrollTimer = setTimeout(() => {
-    _histScrollTimer = null;
-    renderHistorySlice();
-  }, 50);
-});
-
-// 日志选择
-$('historyLogSelect').onchange = () => openHistoryLog($('historyLogSelect').value);
-
-// 打开外部日志
-$('btnHistoryOpenExternal').onclick = () => {
-  const p = prompt('输入日志文件绝对路径：', '');
-  if (!p) return;
-  openHistoryLog(p.trim());
-};
+// 复用 connections[port_id] 模型，kind='log'。每个日志 tab 独立 logState（替代旧全局 histState）。
+// 虚拟列表算法不变：inner 钳制 MAX_SCROLL_H 突破 Chrome 33.5M 上限，viewport 跟随 scrollTop 平移。
+const HIST_ROW_H = 18;
+const HIST_BUF = 10;
+const HIST_PAGE = 200;
+const HIST_CACHE_MAX = 5000;
+const MAX_SCROLL_H = 10000000;
 
 // 拖拽日志文件到窗口任意位置打开（含超大文件，走 G 级虚拟列表）
 let _dragOverlay = null;
-let _dragCounter = 0;  // dragenter/leave 计数，避免子元素触发误隐藏
+let _dragCounter = 0;
 function showDragOverlay(show) {
   if (show && !_dragOverlay) {
     _dragOverlay = document.createElement('div');
@@ -2370,12 +2200,6 @@ function showDragOverlay(show) {
   } else if (!show && _dragOverlay) {
     _dragOverlay.remove(); _dragOverlay = null;
   }
-}
-function switchToHistoryAndOpen(path) {
-  // 切到历史 tab 并打开日志
-  const tab = document.querySelector('.panel-tab[data-pane="history"]');
-  if (tab) tab.click();
-  openHistoryLog(path);
 }
 document.body.addEventListener('dragenter', e => {
   e.preventDefault();
@@ -2394,66 +2218,296 @@ document.body.addEventListener('drop', e => {
   _dragCounter = 0; showDragOverlay(false);
   if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
   const f = e.dataTransfer.files[0];
-  // WebView2/Chromium: File.path 是非标准属性，桌面 WebView2 通常暴露；不可读时 fallback
   const path = f.path || f.webkitRelativePath || null;
   if (path) {
-    switchToHistoryAndOpen(path);
+    buildLogViewer(path);
   } else {
-    // 拿不到绝对路径：用「📁打开」按钮的 prompt 方式让用户手动确认文件名
-    const hint = f.name ? `检测到文件「${f.name}」，但当前 WebView 未暴露绝对路径。\n请用历史 tab 的「📁打开」按钮输入完整路径。` : '当前 WebView 未暴露文件路径，请用「📁打开」按钮输入路径';
+    const hint = f.name ? `检测到文件「${f.name}」，但当前 WebView 未暴露绝对路径。\n请用「📁打开」按钮输入完整路径。` : '当前 WebView 未暴露文件路径，请用「📁打开」按钮输入路径';
     alert(hint);
   }
 });
 
-// 搜索
-$('btnHistorySearch').onclick = doHistorySearch;
-$('historySearchInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') doHistorySearch(); });
-async function doHistorySearch() {
-  const q = $('historySearchInput').value.trim();
-  if (!q || !histState.name) return;
-  // 已有结果且查询未变 → 跳转下一个命中
-  if (histState.searchResults.length && histState.searchQ === q) {
-    histState.searchIdx = (histState.searchIdx + 1) % histState.searchResults.length;
-    jumpToHistoryRow(histState.searchResults[histState.searchIdx]);
-    $('historyStatus').textContent = `命中 ${histState.searchResults.length} 处 · 第 ${histState.searchIdx + 1} 处`;
-    return;
-  }
-  $('historyStatus').textContent = '搜索中…';
-  try {
-    const r = await fetch('/api/log_search?name=' + encodeURIComponent(histState.name) + '&q=' + encodeURIComponent(q) + '&limit=500');
-    const j = await r.json();
-    if (!j.ok) { $('historyStatus').textContent = '搜索失败：' + (j.err || ''); return; }
-    histState.searchResults = (j.lines || []).map(l => l.row);
-    histState.searchQ = q;
-    histState.searchIdx = 0;
-    if (histState.searchResults.length) {
-      jumpToHistoryRow(histState.searchResults[0]);
-      $('historyStatus').textContent = `命中 ${histState.searchResults.length} 处 · 第 1 处（点击🔍下一个）`;
-    } else {
-      $('historyStatus').textContent = '无命中';
+// 构建日志查看 tab（类似 buildTerminal，但用虚拟列表替代 xterm）
+function buildLogViewer(path) {
+  const name = path.split(/[\\\/]/).pop();
+  const portId = 'log:' + name + ':' + Date.now();
+  // 若已打开同名日志，切过去
+  for (const pid in connections) {
+    if (connections[pid].meta && connections[pid].meta.kind === 'log' && connections[pid].meta.path === path) {
+      switchTab(pid); return;
     }
-  } catch(e) { $('historyStatus').textContent = '搜索失败：' + e; }
-}
-// 跳到历史某行（滚动虚拟列表，让目标行落在视口中央）
-function jumpToHistoryRow(row) {
-  const vlist = $('historyVlist');
-  const innerH = Math.min(histState.total * HIST_ROW_H, MAX_SCROLL_H);
-  const viewH = vlist.clientHeight;
-  window._histViewH = viewH;
-  const viewportRows = Math.ceil(viewH / HIST_ROW_H);
-  // 让目标行居中：startRow = target - 半视口行数，再反算 scrollTop。
-  // 缩放/非缩放统一用此法——scrollTop 由 startRow 反算，renderHistorySlice
-  // 用同一 histScrollToRow 还原 startRow，坐标严格自洽，目标行必在视口中央。
-  const startRow = Math.max(0, Math.min(histState.total - viewportRows, row - Math.floor(viewportRows / 2)));
-  vlist.scrollTop = Math.max(0, Math.min(innerH - viewH, histRowToScroll(startRow)));
-  histState.renderedStart = -1; histState.renderedEnd = -1;
-  renderHistorySlice();
+  }
+  // 建 tab
+  const tab = document.createElement('div');
+  tab.className = 'tab';
+  tab.dataset.portId = portId;
+  tab.innerHTML = `<span class="led" style="color:var(--accent)">📜</span><span class="label">${esc(name)}</span><span class="baud"></span><span class="close" title="关闭">✕</span>`;
+  tab.onclick = (e) => { if (e.target.classList.contains('close')) { e.stopPropagation(); closeLogViewer(portId); return; } switchTab(portId); };
+  // 建 wrap（.term-area，内含日志查看器）
+  const wrap = document.createElement('div');
+  wrap.className = 'term-area';
+  wrap.dataset.portId = portId;
+  wrap.style.display = 'none';
+  wrap.innerHTML = `
+    <div class="log-viewer">
+      <div class="log-viewer-top">
+        <div class="vlist"><div class="vlist-inner"></div></div>
+      </div>
+      <div class="log-search-splitter"></div>
+      <div class="log-search-pane" style="display:none">
+        <div class="log-search-head">
+          <input type="text" class="log-search-input" placeholder="查找关键字…" autocomplete="off">
+          <button class="btn ghost log-search-btn">查找全部</button>
+          <span class="log-search-count"></span>
+          <button class="btn ghost log-search-collapse" title="折叠分栏">▾</button>
+        </div>
+        <div class="log-search-results"></div>
+      </div>
+      <div class="log-viewer-status">正在索引…</div>
+    </div>`;
+  // 移除 empty-state，插 tab + wrap
+  const es = termArea.querySelector('.empty-state');
+  if (es) es.remove();
+  tabs.appendChild(tab);
+  termArea.appendChild(wrap);
+  // conn 对象
+  const conn = {
+    meta: { kind: 'log', label: name, path },
+    tab, wrap,
+    vlist: wrap.querySelector('.vlist'),
+    vlistInner: wrap.querySelector('.vlist-inner'),
+    statusEl: wrap.querySelector('.log-viewer-status'),
+    searchPane: wrap.querySelector('.log-search-pane'),
+    searchInput: wrap.querySelector('.log-search-input'),
+    searchResults: wrap.querySelector('.log-search-results'),
+    searchCount: wrap.querySelector('.log-search-count'),
+    logState: {
+      name: path, total: 0, scaled: false, rows: new Map(),
+      renderedStart: -1, renderedEnd: -1, renderSeq: 0,
+      searchQ: '', searchResults: [], searchIdx: 0,
+    },
+  };
+  connections[portId] = conn;
+  // 滚动事件（节流，绑定到本 conn 的 vlist）
+  let scrollTimer = null;
+  conn.vlist.addEventListener('scroll', () => {
+    if (scrollTimer) return;
+    scrollTimer = setTimeout(() => { scrollTimer = null; renderLogSlice(conn); }, 50);
+  });
+  // 查找分栏：拖分隔条调高度
+  initLogSplitter(conn);
+  // 查找全部按钮
+  wrap.querySelector('.log-search-btn').onclick = () => doLogSearch(conn);
+  wrap.querySelector('.log-search-input').addEventListener('keydown', e => { if (e.key === 'Enter') doLogSearch(conn); });
+  wrap.querySelector('.log-search-collapse').onclick = () => toggleLogSearchPane(conn, false);
+  // 加载日志
+  openLogInViewer(conn);
+  switchTab(portId);
+  refreshSidebar();
 }
 
-// 渲染历史面板（切到 history tab 时）
-function renderHistoryPane() {
-  if (!histState.name) loadHistoryLogList();
-  else renderHistorySlice();
+// 打开日志：建索引 + 初始化虚拟列表
+async function openLogInViewer(conn) {
+  const ls = conn.logState;
+  ls.rows = new Map();
+  ls.renderedStart = -1; ls.renderedEnd = -1;
+  ls.searchQ = ''; ls.searchResults = []; ls.searchIdx = 0;
+  conn.searchInput.value = '';
+  conn.vlist.scrollTop = 0;
+  conn.statusEl.textContent = '正在索引…';
+  try {
+    const r = await fetch('/api/log_count?name=' + encodeURIComponent(ls.name));
+    const j = await r.json();
+    if (!j.ok) { conn.statusEl.textContent = '错误：' + (j.err || ''); return; }
+    ls.total = j.total;
+    const naturalH = ls.total * HIST_ROW_H;
+    ls.scaled = naturalH > MAX_SCROLL_H;
+    conn.vlistInner.innerHTML = '';
+    conn.vlistInner.style.height = Math.min(naturalH, MAX_SCROLL_H) + 'px';
+    conn.statusEl.textContent = `共 ${ls.total.toLocaleString()} 行` + (ls.scaled ? ' · 缩放模式' : '');
+    renderLogSlice(conn);
+  } catch(e) { conn.statusEl.textContent = '加载失败：' + e; }
+}
+
+// scrollTop → 行号（缩放末页可达映射）
+function logScrollToRow(conn, scrollTop) {
+  const ls = conn.logState;
+  if (!ls.scaled) return Math.floor(scrollTop / HIST_ROW_H);
+  const innerH = Math.min(ls.total * HIST_ROW_H, MAX_SCROLL_H);
+  const viewH = conn.vlist.clientHeight;
+  const maxScroll = innerH - viewH;
+  const maxRow = Math.max(0, ls.total - Math.ceil(viewH / HIST_ROW_H));
+  if (maxScroll <= 0) return 0;
+  return Math.min(maxRow, Math.floor(scrollTop / maxScroll * maxRow));
+}
+// 行号 → scrollTop
+function logRowToScroll(conn, row) {
+  const ls = conn.logState;
+  if (!ls.scaled) return row * HIST_ROW_H;
+  const innerH = Math.min(ls.total * HIST_ROW_H, MAX_SCROLL_H);
+  const viewH = conn.vlist.clientHeight;
+  const maxScroll = innerH - viewH;
+  const maxRow = Math.max(0, ls.total - Math.ceil(viewH / HIST_ROW_H));
+  if (maxRow <= 0) return 0;
+  return Math.floor(row / maxRow * maxScroll);
+}
+
+// 确保区间已加载
+async function ensureLogRange(conn, start, end) {
+  const ls = conn.logState;
+  start = Math.max(0, start); end = Math.min(ls.total, end);
+  const missing = [];
+  let i = start;
+  while (i < end) {
+    if (ls.rows.has(i)) { i++; continue; }
+    let j = i;
+    while (j < end && !ls.rows.has(j)) j++;
+    missing.push([i, j]); i = j;
+  }
+  const fetches = [];
+  for (const [s, e] of missing) {
+    for (let k = s; k < e; k += HIST_PAGE) {
+      const off = k, lim = Math.min(HIST_PAGE, e - k);
+      fetches.push(
+        fetch('/api/log_page?name=' + encodeURIComponent(ls.name) + '&offset=' + off + '&limit=' + lim)
+          .then(r => r.json()).then(j => {
+            if (j.ok) (j.lines || []).forEach((l, idx) => ls.rows.set(off + idx, l));
+          }).catch(() => {})
+      );
+    }
+  }
+  if (fetches.length) await Promise.all(fetches);
+}
+
+// 渲染可视区切片
+async function renderLogSlice(conn) {
+  const ls = conn.logState;
+  if (!ls.name || !ls.total) return;
+  const vlist = conn.vlist, inner = conn.vlistInner;
+  const scrollTop = vlist.scrollTop;
+  const viewH = vlist.clientHeight;
+  const startRow = Math.max(0, logScrollToRow(conn, scrollTop));
+  const viewportRows = Math.ceil(viewH / HIST_ROW_H);
+  const renderStart = startRow;
+  const endRow = Math.min(ls.total, startRow + viewportRows + HIST_BUF);
+  if (renderStart === ls.renderedStart && endRow === ls.renderedEnd) return;
+  const mySeq = ++ls.renderSeq;
+  await ensureLogRange(conn, renderStart, endRow);
+  if (mySeq !== ls.renderSeq) return;
+  let vp = inner.querySelector('.vlist-viewport');
+  if (!vp) { vp = document.createElement('div'); vp.className = 'vlist-viewport'; inner.appendChild(vp); }
+  vp.style.top = scrollTop + 'px';
+  let html = '';
+  for (let r = renderStart; r < endRow; r++) {
+    const l = ls.rows.get(r);
+    if (!l) continue;
+    const top = (r - renderStart) * HIST_ROW_H;
+    const kc = l.tag === 'error' ? 'kw-error' : l.tag === 'warning' ? 'kw-warning' : (l.tag === 'info' || l.tag === 'comment') ? 'kw-info' : '';
+    const text = esc(l.text || '');
+    html += `<div class="hline ${kc}" style="top:${top}px" data-row="${r}" title="${text}"><span class="hrow">${r}</span><span class="htag">${esc(l.tag||'')}</span>${text}</div>`;
+  }
+  vp.innerHTML = html;
+  ls.renderedStart = renderStart; ls.renderedEnd = endRow;
+  if (ls.rows.size > HIST_CACHE_MAX) {
+    const keepFrom = renderStart - HIST_CACHE_MAX / 2, keepTo = endRow + HIST_CACHE_MAX / 2;
+    for (const k of ls.rows.keys()) { if (k < keepFrom || k > keepTo) ls.rows.delete(k); }
+  }
+  conn.statusEl.textContent = `共 ${ls.total.toLocaleString()} 行 · 显示 ${renderStart}-${endRow-1}` + (ls.scaled ? ' · 缩放' : '');
+}
+
+// 跳到日志某行（居中）
+function jumpToLogRow(conn, row) {
+  const ls = conn.logState;
+  const innerH = Math.min(ls.total * HIST_ROW_H, MAX_SCROLL_H);
+  const viewH = conn.vlist.clientHeight;
+  const viewportRows = Math.ceil(viewH / HIST_ROW_H);
+  const startRow = Math.max(0, Math.min(ls.total - viewportRows, row - Math.floor(viewportRows / 2)));
+  conn.vlist.scrollTop = Math.max(0, Math.min(innerH - viewH, logRowToScroll(conn, startRow)));
+  ls.renderedStart = -1; ls.renderedEnd = -1;
+  renderLogSlice(conn);
+}
+
+// 查找全部 → 底部分栏列命中行
+async function doLogSearch(conn) {
+  const q = conn.searchInput.value.trim();
+  const ls = conn.logState;
+  if (!q || !ls.name) return;
+  // 已有结果且查询未变 → 跳转下一个
+  if (ls.searchResults.length && ls.searchQ === q) {
+    ls.searchIdx = (ls.searchIdx + 1) % ls.searchResults.length;
+    jumpToLogRow(conn, ls.searchResults[ls.searchIdx]);
+    highlightLogSearchResult(conn, ls.searchIdx);
+    return;
+  }
+  toggleLogSearchPane(conn, true);
+  conn.searchCount.textContent = '搜索中…';
+  try {
+    const r = await fetch('/api/log_search?name=' + encodeURIComponent(ls.name) + '&q=' + encodeURIComponent(q) + '&limit=500');
+    const j = await r.json();
+    if (!j.ok) { conn.searchCount.textContent = '失败：' + (j.err || ''); return; }
+    ls.searchResults = (j.lines || []).map(l => l.row);
+    ls.searchQ = q; ls.searchIdx = 0;
+    // 渲染命中行列表
+    conn.searchResults.innerHTML = (j.lines || []).map((l, idx) => {
+      const kc = l.tag === 'error' ? 'kw-error' : l.tag === 'warning' ? 'kw-warning' : (l.tag === 'info' || l.tag === 'comment') ? 'kw-info' : '';
+      const text = esc(l.text || '');
+      return `<div class="hline ${kc}" data-row="${l.row}" data-idx="${idx}" title="${text}"><span class="hrow">${l.row}</span><span class="htag">${esc(l.tag||'')}</span>${text}</div>`;
+    }).join('');
+    conn.searchResults.querySelectorAll('.hline').forEach(el => {
+      el.onclick = () => {
+        const idx = +el.dataset.idx;
+        ls.searchIdx = idx;
+        jumpToLogRow(conn, +el.dataset.row);
+        highlightLogSearchResult(conn, idx);
+      };
+    });
+    conn.searchCount.textContent = `命中 ${ls.searchResults.length} 处`;
+    if (ls.searchResults.length) { jumpToLogRow(conn, ls.searchResults[0]); highlightLogSearchResult(conn, 0); }
+  } catch(e) { conn.searchCount.textContent = '失败：' + e; }
+}
+function highlightLogSearchResult(conn, idx) {
+  conn.searchResults.querySelectorAll('.hline').forEach((el, i) => el.classList.toggle('active', i === idx));
+}
+function toggleLogSearchPane(conn, show) {
+  conn.searchPane.style.display = show ? 'flex' : 'none';
+  conn.wrap.querySelector('.log-search-splitter').style.display = show ? 'block' : 'none';
+  if (show) { conn.searchInput.focus(); }
+}
+
+// 拖分隔条调分栏高度
+function initLogSplitter(conn) {
+  const splitter = conn.wrap.querySelector('.log-search-splitter');
+  const pane = conn.searchPane;
+  const top = conn.wrap.querySelector('.log-viewer-top');
+  let dragging = false, startY = 0, startH = 0;
+  splitter.addEventListener('mousedown', e => {
+    dragging = true; startY = e.clientY; startH = pane.offsetHeight;
+    document.body.style.cursor = 'row-resize'; e.preventDefault();
+  });
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const dh = e.clientY - startY;
+    const newH = Math.max(60, Math.min(startH - dh, conn.wrap.clientHeight - 100));
+    pane.style.height = newH + 'px';
+    top.style.flex = '1';
+  });
+  document.addEventListener('mouseup', () => {
+    if (dragging) { dragging = false; document.body.style.cursor = ''; renderLogSlice(conn); }
+  });
+}
+
+// 关闭日志 tab
+function closeLogViewer(portId) {
+  const conn = connections[portId];
+  if (conn) { conn.tab.remove(); conn.wrap.remove(); delete connections[portId]; }
+  const remaining = Object.keys(connections).sort(sortKeyFn);
+  if (remaining.length) switchTab(remaining[0]);
+  else {
+    activePortId = null;
+    termArea.innerHTML = '<div class="empty-state"><div class="big-icon">📡</div><div class="title">暂无连接</div><div class="desc">点击顶部「新建连接」选择串口或 SSH，支持同时监控多个连接。每个连接独立标签页，互不干扰。</div></div>';
+  }
+  refreshSidebar();
+  refreshGlobalStatus();
 }
 
 // ============================================================
