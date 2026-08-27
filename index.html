@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>串口控制台 Pro</title>
+<title>终端控制台 Pro</title>
 <style>
   :root {
     --bg-deep: #050810;
@@ -84,10 +84,20 @@
     width: 28px; height: 28px; border-radius: 7px;
     background: linear-gradient(135deg, var(--accent), var(--accent-2));
     display: flex; align-items: center; justify-content: center;
-    font-family: var(--font-mono); font-weight: 700; color: #001020; font-size: 15px;
+    font-size: 16px; line-height: 1;
     box-shadow: 0 0 12px var(--accent-glow);
   }
   .logo .ver { color: var(--accent); font-size: 11px; font-weight: 600; }
+  /* 拖拽日志遮罩 */
+  #dragOverlay {
+    position: fixed; inset: 0; z-index: 9999;
+    background: rgba(0, 20, 40, 0.75);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px; font-weight: 600; color: var(--accent);
+    border: 3px dashed var(--accent);
+    pointer-events: none;
+    backdrop-filter: blur(2px);
+  }
   .topbar .divider { width: 1px; height: 24px; background: var(--border); }
   .topbar .conn-area { display: flex; align-items: center; gap: 8px; }
   .topbar select, .topbar input {
@@ -594,8 +604,8 @@
 <!-- 顶栏 -->
 <div class="topbar">
   <div class="logo">
-    <div class="icon">&gt;_</div>
-    <span>串口控制台 <span class="ver">PRO</span></span>
+    <div class="icon">🖥️</div>
+    <span>终端控制台 <span class="ver">PRO</span></span>
   </div>
   <div class="divider"></div>
   <div class="conn-area">
@@ -1559,7 +1569,7 @@ $('btnNewLog').onclick = async () => {
 $('btnCtrlC').onclick = () => { if (activePortId) termSendRaw(activePortId, [3]); };
 $('btnCtrlD').onclick = () => { if (activePortId) termSendRaw(activePortId, [4]); };
 $('btnJumpBottomMain').onclick = () => { if (activePortId) jumpToBottom(activePortId); };
-$('btnAbout').onclick = () => showBanner('串口控制台 Pro · xterm.js 终端 + 搜索/感知/分析 · v0.3.0', 5000);
+$('btnAbout').onclick = () => showBanner('终端控制台 Pro · xterm.js 终端 + 搜索/感知/分析 · v0.4.0', 5000);
 $('btnJumpBottom').onclick = () => { if (activePortId) jumpToBottom(activePortId); };
 // 打开日志目录（顶栏快捷入口）
 $('btnOpenLogDir').onclick = async () => {
@@ -2347,6 +2357,53 @@ $('btnHistoryOpenExternal').onclick = () => {
   if (!p) return;
   openHistoryLog(p.trim());
 };
+
+// 拖拽日志文件到窗口任意位置打开（含超大文件，走 G 级虚拟列表）
+let _dragOverlay = null;
+let _dragCounter = 0;  // dragenter/leave 计数，避免子元素触发误隐藏
+function showDragOverlay(show) {
+  if (show && !_dragOverlay) {
+    _dragOverlay = document.createElement('div');
+    _dragOverlay.id = 'dragOverlay';
+    _dragOverlay.textContent = '📄 松开以打开日志';
+    document.body.appendChild(_dragOverlay);
+  } else if (!show && _dragOverlay) {
+    _dragOverlay.remove(); _dragOverlay = null;
+  }
+}
+function switchToHistoryAndOpen(path) {
+  // 切到历史 tab 并打开日志
+  const tab = document.querySelector('.panel-tab[data-pane="history"]');
+  if (tab) tab.click();
+  openHistoryLog(path);
+}
+document.body.addEventListener('dragenter', e => {
+  e.preventDefault();
+  if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
+    _dragCounter++; showDragOverlay(true);
+  }
+});
+document.body.addEventListener('dragover', e => { e.preventDefault(); });
+document.body.addEventListener('dragleave', e => {
+  e.preventDefault();
+  _dragCounter--;
+  if (_dragCounter <= 0) { _dragCounter = 0; showDragOverlay(false); }
+});
+document.body.addEventListener('drop', e => {
+  e.preventDefault();
+  _dragCounter = 0; showDragOverlay(false);
+  if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
+  const f = e.dataTransfer.files[0];
+  // WebView2/Chromium: File.path 是非标准属性，桌面 WebView2 通常暴露；不可读时 fallback
+  const path = f.path || f.webkitRelativePath || null;
+  if (path) {
+    switchToHistoryAndOpen(path);
+  } else {
+    // 拿不到绝对路径：用「📁打开」按钮的 prompt 方式让用户手动确认文件名
+    const hint = f.name ? `检测到文件「${f.name}」，但当前 WebView 未暴露绝对路径。\n请用历史 tab 的「📁打开」按钮输入完整路径。` : '当前 WebView 未暴露文件路径，请用「📁打开」按钮输入路径';
+    alert(hint);
+  }
+});
 
 // 搜索
 $('btnHistorySearch').onclick = doHistorySearch;
