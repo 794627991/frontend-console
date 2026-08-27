@@ -21,8 +21,7 @@
 import os, sys, json, time, urllib.request, urllib.error, urllib.parse, subprocess
 
 STATE_DIR = os.path.join(os.path.expanduser("~"), ".serialconsole_pro")
-# v0.3 测试版用独立 endpoint 文件，避免与主目录运行中的工具冲突
-ENDPOINT_FILE = os.path.join(STATE_DIR, "endpoint_v3.json")
+ENDPOINT_FILE = os.path.join(STATE_DIR, "endpoint.json")
 
 # 工具 exe 的几个候选位置：D:\AI、桌面、源码目录
 EXE_CANDIDATES = [
