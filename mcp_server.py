@@ -36,12 +36,13 @@ STATE_DIR = os.path.join(os.path.expanduser("~"), ".serialconsole_pro")
 ENDPOINT_FILE = os.path.join(STATE_DIR, "endpoint.json")
 
 # 工具没开时自动拉起的候选入口
+# 优先源码运行（main.py，始终最新），exe 作为后备（exe 可能是旧版本，缺新 API）
 _EXE_CANDIDATES = [
-    r"D:\AI\串口控制台Pro\dist\串口控制台Pro.exe",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "main.py"),  # 源码优先
+    r"D:\AI\串口控制台Pro\dist\串口控制台Pro.exe",                       # exe 后备
     os.path.join(os.path.expanduser("~"), "Desktop", "串口控制台Pro.exe"),
 ]
 _RUN_BAT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "run.bat")
-_MAIN_PY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "main.py")
 
 
 def _find_endpoint():
@@ -71,27 +72,28 @@ def _ensure_backend():
     url, info = _find_endpoint()
     if url and _alive(url):
         return url, info
-    # 拉起工具（优先 run.bat 源码运行，其次 exe）
+    # 拉起工具：优先源码 main.py（始终最新），其次 exe（可能旧版本）
     launched = False
-    for exe in _EXE_CANDIDATES:
-        if os.path.isfile(exe):
-            try:
-                subprocess.Popen([exe], cwd=os.path.dirname(exe),
+    for candidate in _EXE_CANDIDATES:
+        if not os.path.isfile(candidate):
+            continue
+        try:
+            if candidate.endswith(".py"):
+                # 源码：用 pythonw 无黑框运行
+                pyw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+                exe_to_run = pyw if os.path.isfile(pyw) else sys.executable
+                subprocess.Popen([exe_to_run, candidate], cwd=os.path.dirname(candidate),
                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-                launched = True
-                break
-            except Exception:
-                pass
+            else:
+                subprocess.Popen([candidate], cwd=os.path.dirname(candidate),
+                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            launched = True
+            break
+        except Exception:
+            continue
     if not launched and os.path.isfile(_RUN_BAT):
         try:
             subprocess.Popen([_RUN_BAT], cwd=os.path.dirname(_RUN_BAT),
-                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            launched = True
-        except Exception:
-            pass
-    if not launched and os.path.isfile(_MAIN_PY):
-        try:
-            subprocess.Popen([sys.executable, _MAIN_PY], cwd=os.path.dirname(_MAIN_PY),
                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             launched = True
         except Exception:
