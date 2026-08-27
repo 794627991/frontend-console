@@ -946,14 +946,6 @@ def ai_observe():
                     "status": status, "recent": recent})
 
 
-# 临时调试：接收前端 xterm buffer 信息
-@app.route("/api/debug_xterm", methods=["POST"])
-def debug_xterm():
-    data = request.get_json(force=True, silent=True) or {}
-    with open(r"D:\AI\串口控制台Pro\test_result.json", "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    return jsonify({"ok": True})
-
 if __name__ == "__main__":
     start_background()
     app.run(host="127.0.0.1", port=8765, threaded=True, debug=False, use_reloader=False)
