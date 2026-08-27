@@ -178,6 +178,23 @@ def main():
 
     html_url = f"http://127.0.0.1:{port}/"
 
+    # JS API：暴露原生文件选择对话框给前端（拖拽拿不到 File.path 时的 fallback）
+    class FileBridge:
+        def pick_log(self):
+            """弹出原生文件选择对话框，返回选中文件的绝对路径或空字符串。"""
+            try:
+                import webview
+                result = webview.windows[0].create_file_dialog(
+                    webview.OPEN_DIALOG,
+                    allow_multiple=False,
+                    file_types=('Log Files (*.log;*.txt;*.out)', 'All Files (*.*)'),
+                )
+                if result:
+                    return result[0] if isinstance(result, list) else result
+            except Exception as e:
+                return ""
+            return ""
+
     # pywebview 窗口
     window = webview.create_window(
         title="终端控制台 Pro",
@@ -186,6 +203,7 @@ def main():
         height=820,
         min_size=(900, 600),
         text_select=True,
+        js_api=FileBridge(),
     )
 
     # 窗口关闭时清理所有串口

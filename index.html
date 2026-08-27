@@ -1641,11 +1641,13 @@ async function loadLogsList() {
       const dt = new Date(l.mtime*1000);
       d.innerHTML = `<span>${esc(l.name)}<br><span class="sz">${dt.toLocaleString('zh-CN')} · ${(l.size/1024).toFixed(1)} KB</span></span>
         <span class="item-actions">
+          <span class="act-btn open" data-view="${esc(l.name)}" title="在工具内打开此日志">📜 打开</span>
           <span class="act-btn open" data-open="${esc(l.name)}" title="在资源管理器中定位此文件">📁 定位</span>
           <span class="act-btn" data-replay="${esc(l.name)}" title="回放此日志">▶ 回放</span>
         </span>`;
       d.querySelector('[data-replay]').onclick = (ev) => { ev.stopPropagation(); $('logsModal').classList.remove('show'); openReplay(l.name); };
       d.querySelector('[data-open]').onclick = (ev) => { ev.stopPropagation(); openLogFile(l.name); };
+      d.querySelector('[data-view]').onclick = (ev) => { ev.stopPropagation(); $('logsModal').classList.remove('show'); buildLogViewer(l.name); };
       list.appendChild(d);
     });
   } catch(e) { list.innerHTML = '加载失败'; }
@@ -2218,12 +2220,20 @@ document.body.addEventListener('drop', e => {
   _dragCounter = 0; showDragOverlay(false);
   if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
   const f = e.dataTransfer.files[0];
+  // WebView2/Chromium: File.path 是非标准属性，桌面 WebView2 通常不暴露。
+  // 拿不到时调 pywebview js_api 弹原生文件选择对话框（比手动输路径好）。
   const path = f.path || f.webkitRelativePath || null;
   if (path) {
     buildLogViewer(path);
+  } else if (window.pywebview && window.pywebview.api && window.pywebview.api.pick_log) {
+    // fallback：原生文件选择对话框
+    window.pywebview.api.pick_log().then(p => {
+      if (p) buildLogViewer(p);
+    }).catch(() => {
+      alert('无法获取文件路径，请用日志库的「📁打开」按钮输入完整路径。');
+    });
   } else {
-    const hint = f.name ? `检测到文件「${f.name}」，但当前 WebView 未暴露绝对路径。\n请用「📁打开」按钮输入完整路径。` : '当前 WebView 未暴露文件路径，请用「📁打开」按钮输入路径';
-    alert(hint);
+    alert('当前 WebView 未暴露文件路径，请用日志库的「📁打开」按钮输入完整路径。');
   }
 });
 
