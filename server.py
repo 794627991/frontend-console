@@ -17,6 +17,12 @@ import serial
 import serial.tools.list_ports
 from flask import Flask, Response, request, jsonify, send_from_directory
 
+# SSH 集成（可选依赖：源码运行已装 paramiko；打包需 spec 不排除）
+try:
+    import paramiko
+except ImportError:
+    paramiko = None
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # PyInstaller 打包后资源在 _MEIPASS 临时目录；开发时在源码目录
 def _resource_base():
@@ -29,6 +35,219 @@ RES_DIR = _resource_base()
 STATE_DIR = os.path.join(os.path.expanduser("~"), ".serialconsole_pro")
 CONFIG_FILE = os.path.join(STATE_DIR, "config.json")
 DEFAULT_LOG_DIR = os.path.join(STATE_DIR, "logs")
+CMD_LIB_FILE = os.path.join(STATE_DIR, "cmdlib.json")  # 命令库持久化（跨端口/重启保留）
+
+
+def _load_cmd_lib():
+    """读取持久化命令库 [{name, cmd}]。"""
+    try:
+        with open(CMD_LIB_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        # 兼容旧格式：字符串数组 → [{name:'', cmd:旧值}]
+        return [c if isinstance(c, dict) else {"name": "", "cmd": c} for c in data]
+    except Exception:
+        return []
+
+
+def _save_cmd_lib(lib):
+    """保存命令库到 ~/.serialconsole_pro/cmdlib.json。"""
+    try:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        with open(CMD_LIB_FILE, "w", encoding="utf-8") as f:
+            json.dump(lib, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+# ---- 日志行偏移索引（G 级文件随机访问） ----
+# 日志格式：工具自记录 ts\ttag\traw_line\n；外部日志：任意文本行。
+# 索引记录每行起始字节偏移，支持 O(1) seek 到第 N 行。索引缓存到 .idx 文件。
+_log_index_cache = {}  # path -> LogIndex
+_log_index_lock = threading.Lock()
+
+class LogIndex:
+    """日志文件行偏移索引。首次扫描全文件记录每行偏移，缓存到 .idx。
+    支持工具格式（ts\ttag\ttext）和外部纯文本日志。
+    文件追加后按 size 变化增量续扫，避免重扫 G 级文件。"""
+    def __init__(self, path):
+        self.path = path
+        self.idx_path = path + ".idx"
+        self.offsets = []  # 每行起始字节偏移
+        self.total = 0
+        self._loaded = False
+        self._built_size = -1  # 建索引时的文件大小，用于检测追加失效
+
+    def _parse_line(self, raw):
+        """解析一行，返回 {ts, tag, text}。兼容工具格式和外部纯文本。"""
+        raw = raw.rstrip("\n").rstrip("\r")
+        if raw.startswith("#"):
+            return {"ts": 0, "tag": "comment", "text": raw}
+        parts = raw.split("\t", 2)
+        if len(parts) == 3 and parts[0].isdigit():
+            # 工具格式：ts\ttag\ttext
+            try:
+                return {"ts": int(parts[0]), "tag": parts[1], "text": parts[2]}
+            except Exception:
+                pass
+        # 外部纯文本：整行作为 text
+        return {"ts": 0, "tag": "text", "text": raw}
+
+    def build(self):
+        """扫描日志文件建索引。首次 O(n)，结果缓存到 .idx 文件。
+        已加载且文件未追加时直接返回；文件追加时增量续扫。"""
+        cur_size = os.path.getsize(self.path) if os.path.exists(self.path) else 0
+        # 已加载且文件大小未变 → 直接返回
+        if self._loaded and self._built_size == cur_size:
+            return
+        # 已加载但文件追加 → 增量续扫追加部分
+        if self._loaded and self._built_size >= 0 and cur_size > self._built_size:
+            self._append_scan(cur_size)
+            return
+        # 首次：尝试加载 .idx 缓存
+        if not self._loaded:
+            try:
+                if os.path.isfile(self.idx_path) and os.path.getmtime(self.idx_path) >= os.path.getmtime(self.path):
+                    with open(self.idx_path, "rb") as f:
+                        data = f.read()
+                    if len(data) >= 8:
+                        import struct
+                        cached_total = struct.unpack(">Q", data[:8])[0]
+                        count = (len(data) - 8) // 8
+                        # 校验：缓存的总行数与偏移数一致才采用
+                        if count == cached_total:
+                            self.total = cached_total
+                            self.offsets = list(struct.unpack(">" + "Q" * count, data[8:8 + count * 8]))
+                            self.offsets.append(cur_size)  # 追加 EOF 偏移占位
+                            self._loaded = True
+                            # .idx 未存文件大小，用最后一行起点作 _built_size 近似值。
+                            # cur_size 必 >= 最后一行起点（该行有内容）；文件被截断时
+                            # cur_size < 最后一行起点（或 ==0 且缓存非空）→ 缓存失效全重扫。
+                            last_row_start = self.offsets[-2] if len(self.offsets) >= 2 else 0
+                            if cur_size < last_row_start or (cur_size == 0 and cached_total > 0):
+                                # 文件被截断到更小或清空，缓存失效 → 全重扫
+                                self._loaded = False
+                                self.offsets = []
+                                self.total = 0
+                            else:
+                                self._built_size = last_row_start
+                                if cur_size > self._built_size:
+                                    self._append_scan(cur_size)
+                            return
+            except Exception:
+                pass
+        # 全文件扫描
+        self.offsets = [0]
+        with open(self.path, "rb") as f:
+            f.seek(0)
+            while True:
+                line = f.readline()
+                if not line:
+                    break
+                self.offsets.append(f.tell())
+        # 末尾可能有空行偏移，去掉
+        while len(self.offsets) > 1 and self.offsets[-1] == self.offsets[-2]:
+            self.offsets.pop()
+        self.total = len(self.offsets) - 1 if self.offsets else 0
+        if self.offsets and self.offsets[-1] == 0:
+            self.total = 0
+        self._built_size = cur_size
+        self._save_cache()
+
+    def _append_scan(self, cur_size):
+        """增量续扫：从上次索引末尾继续扫描追加部分。
+        offsets 结构：[行0起点, 行1起点, ..., 行N-1起点, EOF]。
+        pop 掉旧 EOF，从最后一行起点重读到新末尾（兼容最后一行未以 \\n 结尾）。"""
+        try:
+            with open(self.path, "rb") as f:
+                if self.offsets:
+                    self.offsets.pop()  # 弹掉旧 EOF
+                if not self.offsets:
+                    self.offsets = [0]  # 空文件起点
+                f.seek(self.offsets[-1])  # 从最后一行起点重读
+                while True:
+                    line = f.readline()
+                    if not line:
+                        break
+                    self.offsets.append(f.tell())
+                while len(self.offsets) > 1 and self.offsets[-1] == self.offsets[-2]:
+                    self.offsets.pop()
+                self.total = len(self.offsets) - 1 if self.offsets else 0
+                if self.offsets and self.offsets[-1] == 0:
+                    self.total = 0
+                # 截断守卫：若扫描期间文件被截断，最后一个偏移可能超文件大小，
+                # 导致后续 get_page seek 到 EOF 外。检测到则丢弃缓存全重扫。
+                if self.offsets and self.offsets[-1] > cur_size:
+                    raise ValueError("offsets past EOF, file truncated during scan")
+            self._built_size = cur_size
+            self._save_cache()
+        except Exception:
+            # 续扫异常（截断等）→ 标记未加载，下次 build 全重扫
+            self._loaded = False
+            self.offsets = []
+            self.total = 0
+
+    def _save_cache(self):
+        """保存索引到 .idx 文件。"""
+        try:
+            import struct
+            with open(self.idx_path, "wb") as f:
+                f.write(struct.pack(">Q", self.total))
+                if self.offsets and self.total > 0:
+                    f.write(struct.pack(">" + "Q" * self.total, *self.offsets[:self.total]))
+        except Exception:
+            pass
+
+    def get_page(self, offset, limit):
+        """读取第 offset 行起的 limit 行（0-based）。返回 [{ts,tag,text}, ...]。"""
+        if not self._loaded:
+            self.build()
+        if offset < 0 or offset >= self.total:
+            return []
+        end = min(offset + limit, self.total)
+        res = []
+        with open(self.path, "rb") as f:
+            for i in range(offset, end):
+                f.seek(self.offsets[i])
+                line = f.readline()
+                res.append(self._parse_line(line.decode("utf-8", errors="replace")))
+        return res
+
+    def search(self, q, limit=200, start_offset=0):
+        """从 start_offset 行起搜索 q（大小写不敏感），返回命中行 + 游标。"""
+        if not self._loaded:
+            self.build()
+        if not q:
+            return {"total": 0, "lines": [], "next_offset": -1, "has_more": False}
+        pat = re.compile(re.escape(q), re.IGNORECASE)
+        res = []
+        total = 0
+        next_offset = -1
+        with open(self.path, "rb") as f:
+            for i in range(start_offset, self.total):
+                f.seek(self.offsets[i])
+                line = f.readline().decode("utf-8", errors="replace")
+                parsed = self._parse_line(line)
+                if pat.search(parsed["text"]):
+                    total += 1
+                    if len(res) < limit:
+                        parsed["row"] = i
+                        res.append(parsed)
+                    else:
+                        next_offset = i
+                        break
+        has_more = next_offset >= 0
+        return {"total": total, "lines": res, "next_offset": next_offset, "has_more": has_more}
+
+
+def _get_log_index(path):
+    """获取/缓存日志索引。每次调用都触发 build()——内部按 _built_size
+    判断文件是否追加，未变则 O(1) 返回，追加则增量续扫。"""
+    with _log_index_lock:
+        if path not in _log_index_cache:
+            _log_index_cache[path] = LogIndex(path)
+        idx = _log_index_cache[path]
+        idx.build()
+        return idx
 
 
 def _load_config():
@@ -214,20 +433,18 @@ def classify_line(line):
 # ============================================================
 # 多串口管理
 # ============================================================
-class SerialPort:
-    """单个串口连接：独立读线程、环形缓冲、SSE 客户端、日志。
-
-    v0.3.0：终端渲染改用前端 xterm.js，后端不再做 \r/\n 行切分。
-    读线程把原始字节流（UTF-8）按块推给前端 SSE（kind=raw），同时把
-    "逻辑行"追加进 buf/日志供历史分页/搜索/分析使用。逻辑行由 \n 切分，
-    行内 \r 视为"本行覆盖重写"——取最后一个 \r 之后的内容，避免 v0.2.2
-    打印快时 \r 被当成新行追加产生大量空行的 bug。
+class BaseConnection:
+    """连接基类：串口/SSH 共用的通用层。
+    IO 层（打开/读/写/关闭/重连）由子类实现 _io_* 方法。通用层负责：
+    环形 buf、SSE 客户端、日志落盘、行切分入 buf、全屏检测、AI 感知挂载点。
+    v0.3.0：终端渲染走前端 xterm.js，后端推 raw 字节流 + 切逻辑行入 buf/日志。
     """
-    def __init__(self, port, baud, port_id):
-        self.port = port
-        self.baud = baud
-        self.port_id = port_id  # 用端口名作 ID
-        self.ser = serial.Serial(port, int(baud), timeout=0.2)
+    kind = "serial"  # 子类覆盖
+
+    def __init__(self, port_id):
+        self.port_id = port_id
+        self.port = port_id
+        self.baud = None
         self.lock = threading.Lock()
         self.buf = deque(maxlen=200000)
         self.buf_lock = threading.Lock()
@@ -244,9 +461,25 @@ class SerialPort:
         self.screen_last = 0.0
         # UTF-8 增量解码器：跨 chunk 的多字节字符（中文等）不会被拆成 �
         self._raw_dec = codecs.getincrementaldecoder("utf-8")(errors="replace")
-        self.reader = threading.Thread(target=self._reader_loop, daemon=True)
-        self.reader.start()
-        self._start_log()
+        # IO 句柄（子类在 _io_open 中设置）
+        self._io_handle = None
+
+    # ---- IO 层：子类实现 ----
+    def _io_open(self):
+        """打开连接，设置 self._io_handle。子类实现。"""
+        raise NotImplementedError
+    def _io_read_chunk(self):
+        """读一块字节，返回 bytes（无数据返回 b''）。子类实现。"""
+        raise NotImplementedError
+    def _io_write(self, data: bytes):
+        """写字节。子类实现。"""
+        raise NotImplementedError
+    def _io_close(self):
+        """关闭连接。子类实现。"""
+        raise NotImplementedError
+    def _io_reconnect(self):
+        """重连。子类实现。返回 True 表示成功。"""
+        raise NotImplementedError
 
     def _start_log(self):
         os.makedirs(LOG_DIR, exist_ok=True)
@@ -277,7 +510,7 @@ class SerialPort:
                     pass
 
     def _push_raw(self, text, last=False):
-        """把一段原始字节流（已 decode 为 str）推给本串口所有 SSE 客户端。"""
+        """把一段原始字节流（已 decode 为 str）推给本连接所有 SSE 客户端。"""
         ts_ms = int(time.time() * 1000)
         item = {"kind": "raw", "port": self.port_id, "ts": ts_ms, "data": text, "last": last}
         with self.clients_lock:
@@ -311,23 +544,14 @@ class SerialPort:
                     pass
 
     def _reader_loop(self):
+        """通用读循环：取字节 → 全屏检测 → 推 raw → 切行入 buf/日志。
+        IO 层由 _io_read_chunk 提供；异常由 _io_reconnect 处理。"""
         partial = b""   # 尚未遇到 \n 的字节累积（行缓冲）
         while self.alive:
             try:
-                with self.lock:
-                    s = self.ser
-                if s is None:
-                    time.sleep(0.1); partial = b""; continue
-                with self.lock:
-                    n = s.in_waiting or 1
-                    chunk = s.read(n)
+                chunk = self._io_read_chunk()
                 if chunk:
                     # ---- 全屏应用检测（仅控制前端 xterm 提示条，不再抑制 buf）----
-                    # 检测到 top/htop 等全屏应用时通知前端显示"全屏模式"提示条，
-                    # 但 buf/日志照常逐行追加——这样 AI 通过 /api/ai/buffer、
-                    # /api/ai/observe、/api/ai/stream 始终能感知串口数据，
-                    # 不会因误进全屏而"终端开了却获取不到数据"。
-                    # 前端 xterm.js 走 _push_raw 的原始流，全屏渲染不受影响。
                     if not self.screen_mode and _SCREEN_STRONG_RE.search(chunk):
                         self.screen_mode = True
                         self.screen_last = time.time()
@@ -335,73 +559,54 @@ class SerialPort:
                     if self.screen_mode:
                         if _SCREEN_ANY_RE.search(chunk):
                             self.screen_last = time.time()
-                        # 主动退出：块含裸 \n 且无屏幕控制序列 → top 退出、shell 回来
                         if b"\n" in chunk and not _SCREEN_ANY_RE.search(chunk):
                             self.screen_mode = False
                             self._emit_screen_control("exit")
                         elif (time.time() - self.screen_last) > 12:
-                            # 长超时兜底退出（> top 默认 5s 刷新间隔）
                             self.screen_mode = False
                             self._emit_screen_control("exit")
-                    # ---- 无论是否全屏：推 raw 给前端 xterm + 切分入 buf/日志 ----
-                    # 1) 推原始流给前端 xterm（含 \r \n 等控制序列，xterm 自行渲染）
+                    # ---- 推 raw 给前端 xterm + 切分入 buf/日志 ----
                     self._push_raw(self._raw_dec.decode(chunk))
-                    # 2) 行切分入 buf/日志：只在 \n 处断行，\r 视为行内覆盖
                     partial += chunk
                     if len(partial) > 65536:
-                        # 超长无换行（如二进制/进度条）：作为一行落盘，避免内存堆积
                         self.append_line(partial.decode("utf-8", errors="replace"))
                         partial = b""
                     while b"\n" in partial:
                         line, partial = partial.split(b"\n", 1)
-                        # \r 处理（与 v0.2-legacy 一致）：
-                        # 1) 先去掉行尾 \r（\r\n 行尾的 \r，如 "Mem: ...\r"）
-                        # 2) 再处理行内 \r：取最后一个 \r 之后的内容（设备用 \r 覆盖重绘本行）
-                        # 若直接 rsplit 会把 "Mem: ...\r" 吃成空行（top 等输出全是 内容\r\n）
                         if line.endswith(b"\r"): line = line[:-1]
                         if b"\r" in line: line = line.rsplit(b"\r", 1)[-1]
                         self.append_line(line.decode("utf-8", errors="replace"))
-                    # \r 重绘入 buf：partial 中含 \r 但无 \n（命令行重绘，如 "\r# cmd"），
-                    # 设备用 \r 回到行首重绘当前命令行，后面不跟 \n（命令还在编辑中）。
-                    # 若不入 buf，AI 调 /api/ai/buffer 就看不到命令行——感知异常。
-                    # 取最后一个 \r 之后的内容作为当前行入 buf（去掉 ANSI 控制序列后）。
-                    # 仅当 \r 不在末尾（后面有内容）时处理；\r 在末尾等下一块数据再判断。
                     while b"\r" in partial:
                         idx = partial.rfind(b"\r")
                         if idx == len(partial) - 1:
-                            break  # \r 在末尾，等下一块数据
+                            break
                         after = partial[idx+1:]
                         if after:
                             self.append_line(after.decode("utf-8", errors="replace"))
                         partial = b""
-                    # partial 中剩余的是未结束的行（无 \n），等下次再处理
                 else:
-                    # 无新字节：全屏长超时兜底退出
                     if self.screen_mode and (time.time() - self.screen_last) > 12:
                         self.screen_mode = False
                         self._emit_screen_control("exit")
                     time.sleep(0.02)
-            except serial.SerialException:
-                self.append_line(f"[serial-reader] 串口异常，尝试重连...")
+            except Exception as e:
+                # IO 异常：尝试重连（仅 alive 时）
+                if not self.alive:
+                    break
+                self.append_line(f"[reader] 连接异常: {e}，尝试重连...")
                 time.sleep(2)
                 try:
-                    with self.lock:
-                        if self.ser:
-                            try: self.ser.close()
-                            except Exception: pass
-                        self.ser = serial.Serial(self.port, self.baud, timeout=0.2)
-                    self.append_line(f"[serial-reader] 重连成功")
-                except Exception as e:
-                    self.append_line(f"[serial-reader] 重连失败: {e}")
+                    if self._io_reconnect():
+                        self.append_line(f"[reader] 重连成功")
+                    else:
+                        self.append_line(f"[reader] 重连失败")
+                        time.sleep(3)
+                except Exception as re:
+                    self.append_line(f"[reader] 重连失败: {re}")
                     time.sleep(3)
-            except Exception as e:
-                self.append_line(f"[serial-reader] 异常: {e}")
-                time.sleep(1)
 
     def send_raw(self, data: bytes):
-        with self.lock:
-            if self.ser is None: raise RuntimeError("串口未连接")
-            self.ser.write(data)
+        self._io_write(data)
 
     def send_cmd(self, cmd, newline=True):
         with self.buf_lock:
@@ -427,8 +632,7 @@ class SerialPort:
             return list(self.buf)[-n:]
 
     def get_buffer_before(self, before_seq, n=500):
-        """取 seq < before_seq 的最近 n 行（时间正序），返回 (lines, has_more)。
-        buf 按 seq 单调 append，反向扫描 O(窗口) 级。"""
+        """取 seq < before_seq 的最近 n 行（时间正序），返回 (lines, has_more)。"""
         res = []
         with self.buf_lock:
             for it in reversed(self.buf):
@@ -437,7 +641,6 @@ class SerialPort:
                     if len(res) >= n:
                         break
         res.reverse()
-        # 若取到的行数 < n 且已扫到 buf 头，说明没有更早的历史
         has_more = len(res) == n
         return res, has_more
 
@@ -475,18 +678,175 @@ class SerialPort:
         self._start_log()
         return self.log_path
 
+    def start(self):
+        """打开 IO + 启动读线程 + 开始日志。子类 __init__ 后调用。"""
+        self._io_open()
+        self.reader = threading.Thread(target=self._reader_loop, daemon=True)
+        self.reader.start()
+        self._start_log()
+
     def close(self):
         self.alive = False
         time.sleep(0.1)
+        try:
+            self._io_close()
+        except Exception: pass
+        with self.log_lock:
+            if self.log_fp:
+                try: self.log_fp.close()
+                except Exception: pass
+
+
+class SerialPort(BaseConnection):
+    """物理串口连接。IO 层用 pyserial。"""
+    kind = "serial"
+
+    def __init__(self, port, baud, port_id):
+        super().__init__(port_id)
+        self.port = port
+        self.baud = baud
+        self.ser = None
+        self.start()
+
+    def _io_open(self):
+        self.ser = serial.Serial(self.port, int(self.baud), timeout=0.2)
+        self._io_handle = self.ser
+
+    def _io_read_chunk(self):
+        with self.lock:
+            s = self.ser
+        if s is None:
+            time.sleep(0.1)
+            return b""
+        with self.lock:
+            n = s.in_waiting or 1
+            chunk = s.read(n)
+        return chunk or b""
+
+    def _io_write(self, data: bytes):
+        with self.lock:
+            if self.ser is None: raise RuntimeError("串口未连接")
+            self.ser.write(data)
+
+    def _io_close(self):
         with self.lock:
             if self.ser:
                 try: self.ser.close()
                 except Exception: pass
                 self.ser = None
-        with self.log_lock:
-            if self.log_fp:
-                try: self.log_fp.close()
+
+    def _io_reconnect(self):
+        with self.lock:
+            if self.ser:
+                try: self.ser.close()
                 except Exception: pass
+            self.ser = serial.Serial(self.port, self.baud, timeout=0.2)
+        return True
+
+
+class SSHConnection(BaseConnection):
+    """SSH 连接。IO 层用 paramiko interactive shell。
+    对前端透明：raw 流推 xterm，xterm 输入转发 channel.sendall。
+    含 keepalive + 断线指数退避重连。"""
+    kind = "ssh"
+
+    def __init__(self, host, port, username, password=None, key_path=None, port_id=None):
+        super().__init__(port_id or f"ssh:{host}:{port}")
+        self.host = host
+        self.ssh_port = int(port) if port else 22
+        self.username = username
+        self.password = password
+        self.key_path = key_path
+        # 兼容 api_status 的 p.port/p.baud 字段
+        self.port = f"{username}@{host}"
+        self.baud = None
+        self._client = None
+        self._channel = None
+        self._keepalive = None
+        self._reconnect_attempts = 0
+        self.start()
+
+    def _io_open(self):
+        if paramiko is None:
+            raise RuntimeError("paramiko 未安装，无法建立 SSH 连接")
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        kwargs = dict(hostname=self.host, port=self.ssh_port, username=self.username,
+                       timeout=10, allow_agent=False, look_for_keys=False)
+        if self.key_path:
+            kwargs["key_filename"] = self.key_path
+        else:
+            kwargs["password"] = self.password
+        client.connect(**kwargs)
+        self._client = client
+        # 交互式 shell（PTY），匹配嵌入式设备 dropbear/uboot-over-ssh 场景
+        chan = client.invoke_shell()
+        self._channel = chan
+        self._io_handle = chan
+        # keepalive 线程
+        self._keepalive = threading.Thread(target=self._keepalive_loop, daemon=True)
+        self._keepalive.start()
+
+    def _io_read_chunk(self):
+        if self._channel is None:
+            time.sleep(0.1)
+            return b""
+        # recv 阻塞至有数据或 timeout；用 select 避免 100% CPU
+        import select
+        r, _, _ = select.select([self._channel], [], [], 0.2)
+        if r:
+            data = self._channel.recv(4096)
+            if not data:
+                # EOF：对端关闭
+                raise EOFError("SSH channel EOF")
+            return data
+        return b""
+
+    def _io_write(self, data: bytes):
+        if self._channel is None: raise RuntimeError("SSH 未连接")
+        self._channel.sendall(data)
+
+    def _io_close(self):
+        with self.lock:
+            if self._channel:
+                try: self._channel.close()
+                except Exception: pass
+                self._channel = None
+            if self._client:
+                try: self._client.close()
+                except Exception: pass
+                self._client = None
+
+    def _io_reconnect(self):
+        """指数退避重连：1s/2s/4s... 上限 60s。手动 disconnect（alive=False）不重连。"""
+        self._reconnect_attempts += 1
+        delay = min(60, 2 ** (self._reconnect_attempts - 1))
+        time.sleep(delay)
+        try:
+            self._io_close()
+            self._io_open()
+            self._reconnect_attempts = 0
+            return True
+        except Exception:
+            return False
+
+    def _keepalive_loop(self):
+        """每 30s 发 keepalive，防 NAT/防火墙断连。"""
+        while self.alive and self._client is not None:
+            try:
+                time.sleep(30)
+                if not self.alive or self._client is None:
+                    break
+                # paramiko 2.10+ 用 send_okay，兼容旧版用 global_request
+                t = self._client.get_transport() if self._client else None
+                if t is not None:
+                    try:
+                        t.send_ignore()
+                    except Exception:
+                        try: t.global_request("keepalive@openssh.com", wait=False)
+                        except Exception: pass
+            except Exception:
+                break
 
 
 # ---- 全局串口表 ----
@@ -577,31 +937,61 @@ def api_status():
                 "port": p.port, "baud": p.baud, "recording": p.recording,
                 "log_path": p.log_path, "buf_lines": len(p.buf),
                 "clients": len(p.clients), "cmd_history_count": len(p.cmd_history),
+                "kind": getattr(p, "kind", "serial"),
+                "host": getattr(p, "host", None), "username": getattr(p, "username", None),
             }
     return jsonify({"ports": info, "log_dir": LOG_DIR})
 
 @app.route("/api/connect", methods=["POST"])
 def api_connect():
     data = request.get_json(force=True)
-    port = data.get("port")
-    baud = data.get("baud")
-    if not port or not baud:
-        return jsonify({"ok": False, "err": "need port and baud"}), 400
-    port_id = port
-    with _ports_lock:
-        if port_id in _ports:
-            return jsonify({"ok": False, "err": f"{port} 已连接"})
+    kind = data.get("kind", "serial")
+    if kind == "ssh":
+        # SSH 连接
+        host = (data.get("host") or "").strip()
+        port = data.get("port") or 22
+        username = (data.get("username") or "").strip()
+        password = data.get("password")
+        key_path = (data.get("key_path") or "").strip() or None
+        if not host or not username:
+            return jsonify({"ok": False, "err": "need host and username"}), 400
+        if not password and not key_path:
+            return jsonify({"ok": False, "err": "need password or key_path"}), 400
+        if paramiko is None:
+            return jsonify({"ok": False, "err": "paramiko 未安装，无法 SSH 连接"}), 500
+        port_id = f"ssh:{host}:{port}"
+        with _ports_lock:
+            if port_id in _ports:
+                return jsonify({"ok": False, "err": f"{port_id} 已连接"})
+            try:
+                p = SSHConnection(host, port, username, password=password, key_path=key_path, port_id=port_id)
+                _ports[port_id] = p
+            except Exception as e:
+                return jsonify({"ok": False, "err": str(e)}), 500
+        # SSH invoke_shell 自带 shell，不主动 send \r
+        return jsonify({"ok": True, "port_id": port_id, "kind": "ssh",
+                        "msg": f"已连接 {username}@{host}:{port}"})
+    else:
+        # 串口连接（默认）
+        port = data.get("port")
+        baud = data.get("baud")
+        if not port or not baud:
+            return jsonify({"ok": False, "err": "need port and baud"}), 400
+        port_id = port
+        with _ports_lock:
+            if port_id in _ports:
+                return jsonify({"ok": False, "err": f"{port} 已连接"})
+            try:
+                p = SerialPort(port, baud, port_id)
+                _ports[port_id] = p
+            except Exception as e:
+                return jsonify({"ok": False, "err": str(e)}), 500
+        # 触发提示符
         try:
-            p = SerialPort(port, baud, port_id)
-            _ports[port_id] = p
-        except Exception as e:
-            return jsonify({"ok": False, "err": str(e)}), 500
-    # 触发提示符
-    try:
-        p.send_raw(b"\r")
-    except Exception:
-        pass
-    return jsonify({"ok": True, "port_id": port_id, "msg": f"已连接 {port}@{baud}"})
+            p.send_raw(b"\r")
+        except Exception:
+            pass
+        return jsonify({"ok": True, "port_id": port_id, "kind": "serial", "msg": f"已连接 {port}@{baud}"})
 
 @app.route("/api/disconnect", methods=["POST"])
 def api_disconnect():
@@ -788,6 +1178,67 @@ def api_replay(name):
                 lines.append({"ts": int(parts[0]), "tag": parts[1], "text": parts[2], "html": None})
     return jsonify({"lines": lines})
 
+
+# ---- G 级历史翻阅：日志行索引 + 分页 + 搜索 ----
+def _resolve_log_path(name_or_path):
+    """解析日志路径：支持 LOG_DIR 内文件名，也支持外部绝对路径。"""
+    if os.path.isabs(name_or_path) and os.path.isfile(name_or_path):
+        return name_or_path
+    p = os.path.join(LOG_DIR, name_or_path)
+    if os.path.isfile(p):
+        return p
+    return None
+
+@app.route("/api/log_count")
+def api_log_count():
+    """返回日志总行数。name=日志名或绝对路径。"""
+    name = request.args.get("name", "")
+    path = _resolve_log_path(name)
+    if not path:
+        return jsonify({"ok": False, "err": "not found"}), 404
+    idx = _get_log_index(path)
+    if not idx._loaded:
+        idx.build()
+    return jsonify({"ok": True, "total": idx.total, "path": path})
+
+@app.route("/api/log_page")
+def api_log_page():
+    """按行号分页读取日志。name=日志名或绝对路径，offset=起始行(0-based)，limit=行数。"""
+    name = request.args.get("name", "")
+    offset = int(request.args.get("offset", 0))
+    limit = int(request.args.get("limit", 100))
+    limit = min(limit, 500)  # 单次上限防大请求
+    path = _resolve_log_path(name)
+    if not path:
+        return jsonify({"ok": False, "err": "not found"}), 404
+    idx = _get_log_index(path)
+    lines = idx.get_page(offset, limit)
+    return jsonify({"ok": True, "lines": lines, "offset": offset, "total": idx.total})
+
+@app.route("/api/log_search")
+def api_log_search():
+    """在日志文件搜索关键字。name=日志名或绝对路径，q=关键字，offset=起始行，limit=命中上限。"""
+    name = request.args.get("name", "")
+    q = request.args.get("q", "")
+    offset = int(request.args.get("offset", 0))
+    limit = int(request.args.get("limit", 200))
+    path = _resolve_log_path(name)
+    if not path:
+        return jsonify({"ok": False, "err": "not found"}), 404
+    idx = _get_log_index(path)
+    res = idx.search(q, limit=limit, start_offset=offset)
+    return jsonify({"ok": True, **res})
+
+@app.route("/api/log_open_external", methods=["POST"])
+def api_log_open_external():
+    """打开外部日志文件（任意路径），返回可用的 name 标识供后续 log_count/page/search 用。
+    body: {path: 绝对路径}。"""
+    data = request.get_json(force=True, silent=True) or {}
+    p = (data.get("path") or "").strip()
+    if not p or not os.path.isfile(p):
+        return jsonify({"ok": False, "err": "文件不存在"}), 400
+    return jsonify({"ok": True, "name": p, "size": os.path.getsize(p)})
+
 @app.route("/api/new_log", methods=["POST"])
 def api_new_log():
     data = request.get_json(force=True)
@@ -944,6 +1395,25 @@ def ai_observe():
         recent[pid] = [{"ts": it["ts"], "tag": it["tag"], "text": it["text"]} for it in items]
     return jsonify({"ok": True, "connected": list(_ports.keys()),
                     "status": status, "recent": recent})
+
+# ---- 命令库持久化（跨端口/重启保留） ----
+@app.route("/api/cmd_lib")
+def cmd_lib_get():
+    """读取命令库 [{name, cmd}]。"""
+    return jsonify({"ok": True, "lib": _load_cmd_lib()})
+
+@app.route("/api/cmd_lib", methods=["POST"])
+def cmd_lib_save():
+    """保存整个命令库（前端全量覆盖）。body: {lib: [{name, cmd}]}"""
+    data = request.get_json(force=True, silent=True) or {}
+    lib = data.get("lib")
+    if not isinstance(lib, list):
+        return jsonify({"ok": False, "err": "need lib list"}), 400
+    # 规范化：只保留 name/cmd 字段，cmd 必填
+    clean = [{"name": str(c.get("name", "")).strip(), "cmd": str(c.get("cmd", "")).strip()}
+             for c in lib if isinstance(c, dict) and str(c.get("cmd", "")).strip()]
+    _save_cmd_lib(clean)
+    return jsonify({"ok": True, "lib": clean})
 
 
 if __name__ == "__main__":

@@ -377,20 +377,56 @@
   .cluster-item:hover { background: var(--bg-input); }
 
   /* 命令标签 */
-  .cmd-pane { padding: 10px 14px; overflow-y: auto; }
-  .cmd-add { display: flex; gap: 6px; margin-bottom: 10px; }
-  .cmd-add input { flex: 1; background: var(--bg-input); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 12px; outline: none; font-family: var(--font-mono); }
+  .cmd-pane { padding: 10px 14px; overflow-y: auto; display: flex; flex-direction: column; }
+  .cmd-add { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+  .cmd-add input { background: var(--bg-input); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 12px; outline: none; font-family: var(--font-mono); width: 100%; }
+  .cmd-add .cmd-add-name { font-family: var(--font-ui); }
+  .cmd-add .cmd-add-row { display: flex; gap: 6px; }
+  .cmd-add .cmd-add-cmd { flex: 1; }
   .cmd-add input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
-  .cmd-add button { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #001020; border: none; border-radius: 6px; padding: 6px 12px; font-size: 12px; cursor: pointer; font-weight: 600; }
+  .cmd-add button { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #001020; border: none; border-radius: 6px; padding: 6px 12px; font-size: 12px; cursor: pointer; font-weight: 600; flex-shrink: 0; }
+  .cmd-sheets { display: flex; gap: 4px; margin-bottom: 8px; border-bottom: 1px solid var(--border); }
+  .cmd-sheet-tab { font-size: 11px; font-weight: 600; color: var(--muted); padding: 4px 10px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; transition: all 0.2s; }
+  .cmd-sheet-tab:hover { color: var(--fg); }
+  .cmd-sheet-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .cmd-sheet-pane { display: none; flex: 1; overflow-y: auto; }
+  .cmd-sheet-pane.active { display: block; }
   .cmd-section .title { font-size: 11px; font-weight: 600; color: var(--muted); margin: 10px 0 6px; text-transform: uppercase; letter-spacing: 0.5px; }
   .cmd-item { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 4px; transition: all 0.2s; }
   .cmd-item:hover { border-color: var(--accent); }
   .cmd-item .text { flex: 1; font-family: var(--font-mono); font-size: 11px; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cmd-item .name { font-family: var(--font-ui); font-weight: 600; color: var(--accent); cursor: pointer; }
+  .cmd-item .cmd-edit-name:hover { text-decoration: underline; }
+  .cmd-item .cmd-no-name { color: var(--muted); font-style: italic; font-size: 10px; font-family: var(--font-ui); }
+  .cmd-item .cmd-no-name:hover { color: var(--accent); }
+  .cmd-item .cmd-sub { font-family: var(--font-mono); font-size: 10px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .cmd-item .run { background: none; border: 1px solid var(--border); border-radius: 4px; color: var(--neon-green); cursor: pointer; padding: 2px 8px; font-size: 11px; }
   .cmd-item .run:hover { border-color: var(--neon-green); background: rgba(0,255,157,0.1); }
+  .cmd-item .edit { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 13px; padding: 0 4px; }
+  .cmd-item .edit:hover { color: var(--accent); }
   .cmd-item .del { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 13px; padding: 0 4px; }
   .cmd-item .del:hover { color: var(--neon-red); }
   .cmd-empty { color: var(--muted); font-size: 11px; padding: 12px; text-align: center; }
+
+  /* 历史浏览（虚拟列表） */
+  .history-pane { padding: 8px 10px; display: flex; flex-direction: column; height: 100%; gap: 6px; }
+  .history-toolbar { display: flex; gap: 6px; align-items: center; }
+  .history-toolbar select, .history-toolbar input { background: var(--bg-input); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font-size: 11px; outline: none; }
+  .history-toolbar select { max-width: 140px; }
+  .history-toolbar input { flex: 1; font-family: var(--font-mono); }
+  .history-toolbar select:focus, .history-toolbar input:focus { border-color: var(--accent); }
+  .history-toolbar .btn { padding: 4px 8px; font-size: 11px; }
+  .history-status { font-size: 10px; color: var(--muted); padding: 2px 4px; }
+  .vlist { flex: 1; overflow-y: auto; position: relative; background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; }
+  .vlist-inner { position: relative; width: 100%; }
+  .vlist-viewport { position: absolute; left: 0; right: 0; top: 0; }  /* 跟随 scrollTop 平移的渲染块，行在其中用实际坐标排列 */
+  .hline { position: absolute; left: 0; right: 0; top: 0; height: 18px; line-height: 18px; padding: 0 6px; font-family: var(--font-mono); font-size: 11px; color: var(--fg); white-space: pre; overflow: hidden; text-overflow: ellipsis; box-sizing: border-box; }
+  .hline:hover { background: var(--bg-card); }
+  .hline.kw-error { color: var(--neon-red); }
+  .hline.kw-warning { color: var(--neon-orange); }
+  .hline.kw-info { color: var(--accent); }
+  .hline .htag { color: var(--muted); font-size: 9px; margin-right: 6px; }
+  .hline .hrow { color: var(--accent); font-size: 9px; margin-right: 6px; min-width: 50px; display: inline-block; }
 
   /* 全屏覆盖容器（top 等）—— v0.3.0：xterm 自身处理全屏序列，此 overlay 仅作"全屏模式"提示条 */
   .screen-overlay {
@@ -513,6 +549,14 @@
   .conn-form select, .conn-form input { width: 100%; background: var(--bg-input); color: var(--fg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 13px; outline: none; }
   .conn-form select:focus, .conn-form input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
   .conn-form .actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 6px; }
+  .conn-type-switch, .conn-auth-switch { display: flex; gap: 6px; }
+  .conn-type-btn, .conn-auth-btn { flex: 1; background: var(--bg-card); color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; font-size: 12px; cursor: pointer; font-weight: 600; transition: all 0.2s; }
+  .conn-type-btn:hover, .conn-auth-btn:hover { color: var(--fg); border-color: var(--accent); }
+  .conn-type-btn.active, .conn-auth-btn.active { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #001020; border-color: transparent; }
+
+  /* 命令编辑对话框 */
+  #cmdEditModal .box { width: 420px; }
+  #cmdEditCmd { font-family: var(--font-mono); }
 
   /* 滚动条 */
   ::-webkit-scrollbar { width: 8px; height: 8px; }
@@ -630,6 +674,7 @@
       <div class="panel-tab active" data-pane="sense">● 感知</div>
       <div class="panel-tab" data-pane="analyze">📊 分析</div>
       <div class="panel-tab" data-pane="cmd">⌘ 命令</div>
+      <div class="panel-tab" data-pane="history">📜 历史</div>
     </div>
     <div class="panel-body" id="panelBody">
       <!-- 感知 -->
@@ -654,16 +699,36 @@
       <div class="panel-tab-pane" data-pane="cmd">
         <div class="cmd-pane" id="cmdPane">
           <div class="cmd-add">
-            <input type="text" id="cmdAddInput" placeholder="添加命令片段…" autocomplete="off">
-            <button id="cmdAddBtn">＋</button>
+            <input type="text" id="cmdAddName" placeholder="备注名（可选，留空则只显示命令）" autocomplete="off" class="cmd-add-name">
+            <div class="cmd-add-row">
+              <input type="text" id="cmdAddInput" placeholder="命令内容…" autocomplete="off" class="cmd-add-cmd">
+              <button id="cmdAddBtn">＋</button>
+            </div>
           </div>
-          <div class="cmd-section">
-            <div class="title">命令库</div>
+          <div class="cmd-sheets">
+            <div class="cmd-sheet-tab active" data-sheet="lib">命令库</div>
+            <div class="cmd-sheet-tab" data-sheet="recent">最近命令</div>
+          </div>
+          <div class="cmd-sheet-pane active" data-sheet="lib">
             <div id="cmdLibrary"></div>
           </div>
-          <div class="cmd-section">
-            <div class="title">最近命令</div>
+          <div class="cmd-sheet-pane" data-sheet="recent">
             <div id="cmdRecent"></div>
+          </div>
+        </div>
+      </div>
+      <!-- 历史 -->
+      <div class="panel-tab-pane" data-pane="history">
+        <div class="history-pane" id="historyPane">
+          <div class="history-toolbar">
+            <select id="historyLogSelect" title="选择日志文件"></select>
+            <button class="btn ghost" id="btnHistoryOpenExternal" title="打开外部日志文件">📁打开</button>
+            <input type="text" id="historySearchInput" placeholder="搜索…" autocomplete="off">
+            <button class="btn ghost" id="btnHistorySearch">🔍</button>
+          </div>
+          <div class="history-status" id="historyStatus">选择日志文件或打开外部日志</div>
+          <div class="vlist" id="historyVlist">
+            <div class="vlist-inner" id="historyVlistInner"></div>
           </div>
         </div>
       </div>
@@ -678,21 +743,81 @@
 <div class="modal conn-modal" id="connModal">
   <div class="box">
     <div class="head">
-      <strong>新建串口连接</strong>
+      <strong>新建连接</strong>
       <button class="btn ghost icon-btn" id="connClose">✕</button>
     </div>
     <div class="conn-form">
-      <div>
-        <label>串口端口</label>
-        <select id="connPort" style="margin-top:6px;"></select>
+      <div class="conn-type-switch">
+        <button class="conn-type-btn active" data-type="serial">串口</button>
+        <button class="conn-type-btn" data-type="ssh">SSH</button>
       </div>
-      <div>
-        <label>波特率</label>
-        <select id="connBaud" style="margin-top:6px;"></select>
+      <!-- 串口字段 -->
+      <div id="connSerialFields">
+        <div>
+          <label>串口端口</label>
+          <select id="connPort" style="margin-top:6px;"></select>
+        </div>
+        <div>
+          <label>波特率</label>
+          <select id="connBaud" style="margin-top:6px;"></select>
+        </div>
+      </div>
+      <!-- SSH 字段 -->
+      <div id="connSSHFields" style="display:none">
+        <div>
+          <label>主机</label>
+          <input type="text" id="connHost" placeholder="如 10.17.97.239" autocomplete="off" style="margin-top:6px;">
+        </div>
+        <div style="display:flex;gap:10px;">
+          <div style="flex:1">
+            <label>端口</label>
+            <input type="number" id="connSshPort" value="22" min="1" max="65535" style="margin-top:6px;">
+          </div>
+          <div style="flex:2">
+            <label>用户名</label>
+            <input type="text" id="connUser" placeholder="如 root" autocomplete="off" style="margin-top:6px;">
+          </div>
+        </div>
+        <div class="conn-auth-switch">
+          <button class="conn-auth-btn active" data-auth="password">密码</button>
+          <button class="conn-auth-btn" data-auth="key">密钥文件</button>
+        </div>
+        <div id="connAuthPassword">
+          <label>密码</label>
+          <input type="password" id="connPass" placeholder="密码" autocomplete="off" style="margin-top:6px;">
+        </div>
+        <div id="connAuthKey" style="display:none">
+          <label>密钥文件路径</label>
+          <input type="text" id="connKeyPath" placeholder="如 C:\\Users\\you\\.ssh\\id_rsa" autocomplete="off" style="margin-top:6px;">
+        </div>
       </div>
       <div class="actions">
         <button class="btn ghost" id="connCancel">取消</button>
         <button class="btn primary" id="connConfirm">连接</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 命令编辑模态框 -->
+<div class="modal" id="cmdEditModal">
+  <div class="box">
+    <div class="head">
+      <strong>编辑命令</strong>
+      <button class="btn ghost icon-btn" id="cmdEditClose">✕</button>
+    </div>
+    <div class="conn-form">
+      <div>
+        <label>备注名（可选）</label>
+        <input type="text" id="cmdEditName" placeholder="留空则只显示命令" autocomplete="off" style="margin-top:6px;">
+      </div>
+      <div>
+        <label>命令内容</label>
+        <input type="text" id="cmdEditCmd" placeholder="命令内容…" autocomplete="off" style="margin-top:6px;">
+      </div>
+      <div class="actions">
+        <button class="btn ghost" id="cmdEditCancel">取消</button>
+        <button class="btn primary" id="cmdEditSave">保存</button>
       </div>
     </div>
   </div>
@@ -785,7 +910,7 @@ function buildTerminal(portId, meta) {
   const tab = document.createElement('div');
   tab.className = 'tab';
   tab.dataset.portId = portId;
-  tab.innerHTML = `<span class="led"></span><span>${esc(portId)}</span><span style="color:var(--muted);font-size:10px;">@${meta.baud}</span> <span class="close" title="关闭">✕</span>`;
+  tab.innerHTML = `<span class="led"></span><span>${esc(meta.label || portId)}</span><span style="color:var(--muted);font-size:10px;">${meta.kind === 'ssh' ? '' : '@'+meta.baud}</span> <span class="close" title="关闭">✕</span>`;
   tab.onclick = (e) => {
     if (e.target.classList.contains('close')) { e.stopPropagation(); closeConnection(portId); return; }
     switchTab(portId);
@@ -867,17 +992,14 @@ function buildTerminal(portId, meta) {
     if (bytes.length) termSendRaw(portId, bytes);
   });
 
-  // ---- 滚动检测：到底自动跟实时，翻上去显示跳底 FAB + 触发加载更早历史 ----
+  // ---- 滚动检测：到底自动跟实时，翻上去显示跳底 FAB ----
+  // 注：深历史翻阅走「📜 历史」tab（虚拟列表，G 级不卡），主 xterm 不再 reset 重写加载更早历史
   conn.term.onScroll(() => {
     const vp = conn.xtermWrap.querySelector('.xterm-viewport');
     if (!vp) return;
     const atBottom = vp.scrollHeight - vp.scrollTop - vp.clientHeight < 30;
     conn.autoScroll = atBottom;
     conn.fab.classList.toggle('show', !atBottom && !conn.inScreen);
-    // 滚到顶部附近 → 向上加载更早历史
-    if (vp.scrollTop < 40 && conn.hasMore && !conn.loadingMore && !conn.loadingHistory) {
-      loadOlder(portId, conn);
-    }
   });
 
   // ---- 全屏模式提示条（xterm 自身处理全屏序列，这里只显示提示 + 退出按钮） ----
@@ -1061,8 +1183,10 @@ function highlightNewKw(conn) {
         const matched = m[grp] || m[0];
         const end = start + matched.length;
         try {
+          // registerMarker(e) 内部: ybase + y + e = 目标行 → e = r - ybase - y（相对偏移，非绝对行号）
+          const offset = Math.round(r - buf.ybase - buf.y);
           const dec = conn.term.registerDecoration({
-            marker: conn.term.registerMarker(r),
+            marker: conn.term.registerMarker(offset),
             x: start,
             width: end - start,
             foregroundColor: KW_COLOR[rule.cls],
@@ -1199,11 +1323,11 @@ async function loadPorts() {
 
 async function connectPort(port, baud) {
   try {
-    const r = await fetch('/api/connect', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port, baud})});
+    const r = await fetch('/api/connect', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({kind:'serial', port, baud})});
     const j = await r.json();
     if (j.ok) {
       showBanner(`已连接 ${port}@${baud}`);
-      const conn = buildTerminal(port, {baud});
+      const conn = buildTerminal(port, {kind:'serial', baud, label:port});
       connections[port] = conn;
       switchTab(port);
       refreshSidebar();
@@ -1212,6 +1336,24 @@ async function connectPort(port, baud) {
       showBanner('连接失败：' + (j.err || '未知错误'), 8000, true);
     }
   } catch(e) { showBanner('连接请求失败：' + e, 8000, true); }
+}
+
+async function connectSSH(host, port, username, password, key_path) {
+  try {
+    const r = await fetch('/api/connect', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({kind:'ssh', host, port, username, password, key_path})});
+    const j = await r.json();
+    if (j.ok) {
+      const port_id = j.port_id;
+      showBanner(`已连接 ${username}@${host}:${port}`);
+      const conn = buildTerminal(port_id, {kind:'ssh', label:`${username}@${host}`, host, user:username});
+      connections[port_id] = conn;
+      switchTab(port_id);
+      refreshSidebar();
+      refreshGlobalStatus();
+    } else {
+      showBanner('SSH 连接失败：' + (j.err || '未知错误'), 8000, true);
+    }
+  } catch(e) { showBanner('SSH 连接请求失败：' + e, 8000, true); }
 }
 
 function closeConnection(portId) {
@@ -1224,10 +1366,11 @@ function closeConnection(portId) {
     conn.wrap.remove();
     delete connections[portId];
   }
-  // 切换到第一个可用标签（按 COM 号排序）
+  // 切换到第一个可用标签（串口按 COM 号，SSH 排后）
   const remaining = Object.keys(connections).sort((a, b) => {
-    const ma = /^COM(\d+)$/i.exec(a), mb = /^COM(\d+)$/i.exec(b);
-    return (ma ? +ma[1] : 9999) - (mb ? +mb[1] : 9999);
+    const ka = (() => { const m = /^COM(\d+)$/i.exec(a); return m ? [0, +m[1]] : [1, a]; })();
+    const kb = (() => { const m = /^COM(\d+)$/i.exec(b); return m ? [0, +m[1]] : [1, b]; })();
+    return ka[0] !== kb[0] ? ka[0] - kb[0] : (ka[1] < kb[1] ? -1 : ka[1] > kb[1] ? 1 : 0);
   });
   if (remaining.length) {
     switchTab(remaining[0]);
@@ -1247,22 +1390,28 @@ function refreshSidebar() {
     return;
   }
   portList.innerHTML = '';
-  // 按 COM 号数字排序：COM1, COM2, ..., COM10（而非插入顺序 COM10 < COM2）
-  const comKey = pid => {
+  // 排序：串口按 COM 号数字序（COM1, COM2, ..., COM10），SSH 排串口后按 host
+  const sortKey = pid => {
     const m = /^COM(\d+)$/i.exec(pid);
-    return m ? parseInt(m[1], 10) : 9999;
+    if (m) return [0, parseInt(m[1], 10)];  // 串口：[0, com号]
+    return [1, pid];  // SSH：[1, port_id 字典序]
   };
-  ids.sort((a, b) => comKey(a) - comKey(b));
+  ids.sort((a, b) => {
+    const ka = sortKey(a), kb = sortKey(b);
+    return ka[0] !== kb[0] ? ka[0] - kb[0] : (ka[1] < kb[1] ? -1 : ka[1] > kb[1] ? 1 : 0);
+  });
   ids.forEach(pid => {
     const conn = connections[pid];
     const item = document.createElement('div');
     item.className = 'port-item connected' + (pid === activePortId ? ' active' : '');
     item.dataset.portId = pid;
+    const isSSH = conn.meta.kind === 'ssh';
+    const descText = isSSH ? `SSH · ${conn.meta.host || ''}` : `${conn.meta.baud || ''} baud`;
     item.innerHTML = `
       <span class="led"></span>
       <div class="info">
-        <div class="name">${esc(pid)}</div>
-        <div class="desc">${esc(conn.meta.baud || '')} baud · <span class="baud">${conn.term ? conn.term.buffer.active.length : 0} 行</span></div>
+        <div class="name">${esc(conn.meta.label || pid)}</div>
+        <div class="desc">${esc(descText)} · <span class="baud">${conn.term ? conn.term.buffer.active.length : 0} 行</span></div>
       </div>
       <div class="actions"><button data-close="${pid}" title="断开">✕</button></div>
     `;
@@ -1272,10 +1421,17 @@ function refreshSidebar() {
     };
     portList.appendChild(item);
   });
-  // 标签栏也按 COM 号排序（重排 DOM 顺序，确保和侧边栏一致）
-  const comKey2 = pid => { const m = /^COM(\d+)$/i.exec(pid); return m ? +m[1] : 9999; };
+  // 标签栏同序重排
+  const sortKey2 = pid => {
+    const m = /^COM(\d+)$/i.exec(pid);
+    if (m) return [0, +m[1]];
+    return [1, pid];
+  };
   const tabEls = Array.from(tabs.querySelectorAll('.tab'));
-  tabEls.sort((a, b) => comKey2(a.dataset.portId) - comKey2(b.dataset.portId));
+  tabEls.sort((a, b) => {
+    const ka = sortKey2(a.dataset.portId), kb = sortKey2(b.dataset.portId);
+    return ka[0] !== kb[0] ? ka[0] - kb[0] : (ka[1] < kb[1] ? -1 : ka[1] > kb[1] ? 1 : 0);
+  });
   const actions = tabs.querySelector('.tab-bar-actions');
   tabEls.forEach(t => tabs.insertBefore(t, actions));
 }
@@ -1325,15 +1481,55 @@ document.addEventListener('click', (e) => {
 // ============================================================
 $('btnNewConn').onclick = async () => {
   await loadPorts();
+  // 每次打开重置为默认（串口 + 密码认证），避免残留上次的 SSH/密钥选择
+  _connType = 'serial'; _sshAuth = 'password';
+  document.querySelectorAll('.conn-type-btn').forEach(b => b.classList.toggle('active', b.dataset.type === 'serial'));
+  document.querySelectorAll('.conn-auth-btn').forEach(b => b.classList.toggle('active', b.dataset.auth === 'password'));
+  $('connSerialFields').style.display = ''; $('connSSHFields').style.display = 'none';
+  $('connAuthPassword').style.display = ''; $('connAuthKey').style.display = 'none';
   $('connModal').classList.add('show');
 };
 $('connClose').onclick = () => $('connModal').classList.remove('show');
 $('connCancel').onclick = () => $('connModal').classList.remove('show');
+
+// 连接类型切换（串口/SSH）
+let _connType = 'serial';
+document.querySelectorAll('.conn-type-btn').forEach(btn => {
+  btn.onclick = () => {
+    _connType = btn.dataset.type;
+    document.querySelectorAll('.conn-type-btn').forEach(b => b.classList.toggle('active', b === btn));
+    $('connSerialFields').style.display = _connType === 'serial' ? '' : 'none';
+    $('connSSHFields').style.display = _connType === 'ssh' ? '' : 'none';
+  };
+});
+// SSH 认证方式切换（密码/密钥）
+let _sshAuth = 'password';
+document.querySelectorAll('.conn-auth-btn').forEach(btn => {
+  btn.onclick = () => {
+    _sshAuth = btn.dataset.auth;
+    document.querySelectorAll('.conn-auth-btn').forEach(b => b.classList.toggle('active', b === btn));
+    $('connAuthPassword').style.display = _sshAuth === 'password' ? '' : 'none';
+    $('connAuthKey').style.display = _sshAuth === 'key' ? '' : 'none';
+  };
+});
+
 $('connConfirm').onclick = () => {
-  const port = $('connPort').value, baud = $('connBaud').value;
-  if (!port) { showBanner('请选择串口', 3000, true); return; }
-  $('connModal').classList.remove('show');
-  connectPort(port, baud);
+  if (_connType === 'ssh') {
+    const host = $('connHost').value.trim();
+    const port = $('connSshPort').value.trim() || '22';
+    const username = $('connUser').value.trim();
+    if (!host || !username) { showBanner('请填主机和用户名', 3000, true); return; }
+    const password = _sshAuth === 'password' ? $('connPass').value : '';
+    const key_path = _sshAuth === 'key' ? $('connKeyPath').value.trim() : '';
+    if (!password && !key_path) { showBanner('请填密码或密钥路径', 3000, true); return; }
+    $('connModal').classList.remove('show');
+    connectSSH(host, port, username, password, key_path);
+  } else {
+    const port = $('connPort').value, baud = $('connBaud').value;
+    if (!port) { showBanner('请选择串口', 3000, true); return; }
+    $('connModal').classList.remove('show');
+    connectPort(port, baud);
+  }
 };
 $('btnRefreshPorts').onclick = async () => { await loadPorts(); showBanner('端口列表已刷新'); };
 
@@ -1563,6 +1759,7 @@ document.querySelectorAll('.panel-tab').forEach(tab => {
     document.querySelectorAll('.panel-tab-pane').forEach(p => p.classList.toggle('active', p.dataset.pane === pane));
     if (pane === 'analyze') renderAnalyze();
     if (pane === 'cmd') renderCmdPane();
+    if (pane === 'history') renderHistoryPane();
   };
 });
 
@@ -1704,26 +1901,54 @@ const ANALYZE_RE = {
 const ANALYZE_LABEL = { error: 'ERROR', warning: 'WARNING', info: 'INFO', success: 'SUCCESS' };
 
 // 点击条目 → 跳到主终端对应行并高亮
+// searchText 优先：在当前 buffer 重新搜索定位，避免行号因 reflow/resize 漂移导致跳错
 function jumpToLine(rowIdx, searchText) {
   if (!activePortId) return;
   const conn = connections[activePortId];
   if (!conn || !conn.term) return;
   try {
     const buf = conn.term.buffer.active;
-    // scrollToLine 参数是绝对行号
-    conn.term.scrollToLine(rowIdx);
+    let target = rowIdx;
+    // 用文本重搜：行号可能因 reflow/resize/新数据流入而漂移，按内容定位最可靠
+    if (searchText) {
+      const needle = searchText.trim();
+      const pref = needle.slice(0, Math.min(40, needle.length));
+      // 从 rowIdx 起向上找最近的匹配行（漂移通常是小幅度，原行就在附近）
+      // 若向上没找到，再从 rowIdx 向下找
+      let found = -1;
+      const match = (t) => t === needle || (t && pref && t.startsWith(pref));
+      for (let r = Math.min(rowIdx, buf.length - 1); r >= 0; r--) {
+        const ln = buf.getLine(r);
+        if (!ln) continue;
+        if (match(ln.translateToString(true).trim())) { found = r; break; }
+      }
+      if (found < 0) {
+        for (let r = rowIdx + 1; r < buf.length; r++) {
+          const ln = buf.getLine(r);
+          if (!ln) continue;
+          if (match(ln.translateToString(true).trim())) { found = r; break; }
+        }
+      }
+      if (found >= 0) target = found;
+    }
+    // 边界保护
+    target = Math.max(0, Math.min(target, buf.length - 1));
+    // scrollToLine 把目标行滚到视图顶部
+    conn.term.scrollToLine(target);
     conn.term.focus();
-    // registerMarker(e) 内部: ybase + y + e = 目标行 → e = rowIdx - ybase - y，必须取整
+    // select 选中整行（蓝底高亮，xterm 内置最稳定）
+    conn.term.select(0, target, conn.term.cols);
+    // registerDecoration 加醒目背景（6 位 hex，不带 alpha）
     if (conn.term.registerDecoration) {
-      const offset = Math.round(rowIdx - buf.ybase - buf.y);
+      const offset = Math.round(target - buf.ybase - buf.y);
       const dec = conn.term.registerDecoration({
         marker: conn.term.registerMarker(offset),
         x: 0,
         width: conn.term.cols,
-        backgroundColor: '#00d4ff55',
+        backgroundColor: '#00d4ff',
         layer: 'top',
       });
-      if (dec) setTimeout(() => { try { dec.dispose(); } catch(e){} }, 2000);
+      if (dec) setTimeout(() => { try { dec.dispose(); } catch(e){} }, 2500);
     }
   } catch(e) {}
 }
@@ -1796,27 +2021,59 @@ function renderAnalyze() {
 }
 
 // ---- 命令标签 ----
-const CMD_STORE_KEY = 'serialconsole_pro_cmdlib';
-function loadCmdLib() {
-  try { return JSON.parse(localStorage.getItem(CMD_STORE_KEY) || '[]'); } catch (e) { return []; }
+// 命令库：后端持久化（~/.serialconsole_pro/cmdlib.json），跨端口/重启保留
+// 内存缓存避免每次渲染都异步拉取
+let _cmdLibCache = null;
+async function loadCmdLib() {
+  if (_cmdLibCache) return _cmdLibCache;
+  try {
+    const r = await fetch('/api/cmd_lib');
+    const j = await r.json();
+    _cmdLibCache = j.lib || [];
+  } catch (e) { _cmdLibCache = []; }
+  return _cmdLibCache;
 }
-function saveCmdLib(lib) {
-  try { localStorage.setItem(CMD_STORE_KEY, JSON.stringify(lib)); } catch (e) {}
+async function saveCmdLib(lib) {
+  _cmdLibCache = lib;
+  try {
+    await fetch('/api/cmd_lib', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lib })
+    });
+  } catch (e) {}
 }
-function renderCmdPane() {
+async function renderCmdPane() {
   // 命令库
-  const lib = loadCmdLib();
+  const lib = await loadCmdLib();
   const libEl = $('cmdLibrary');
   if (!lib.length) {
-    libEl.innerHTML = '<div class="cmd-empty">点击上方添加常用命令</div>';
+    libEl.innerHTML = '<div class="cmd-empty">点击上方添加常用命令（支持备注名）</div>';
   } else {
-    libEl.innerHTML = lib.map((c, i) =>
-      `<div class="cmd-item"><span class="text" title="${esc(c)}">${esc(c)}</span><button class="run" data-i="${i}">发送</button><button class="del" data-i="${i}" title="删除">✕</button></div>`
-    ).join('');
+    libEl.innerHTML = lib.map((c, i) => {
+      const showName = c.name && c.name.trim();
+      const title = (showName ? `【${esc(c.name)}】\n` : '') + esc(c.cmd);
+      // 名称/命令都可点击编辑（弹出模态框）；命令内容只读展示
+      return `<div class="cmd-item" title="${title}">
+        <span class="text cmd-edit-trigger" data-i="${i}" title="点击编辑" style="display:flex;flex-direction:column;line-height:1.3;min-width:0;flex:1;cursor:pointer">
+          ${showName ? `<span class="name">${esc(c.name)}</span><span class="cmd-sub">${esc(c.cmd)}</span>` : `<span class="cmd-no-name">＋ 备注</span><span class="cmd-sub">${esc(c.cmd)}</span>`}
+        </span>
+        <button class="run" data-i="${i}">发送</button>
+        <button class="edit" data-i="${i}" title="编辑">✎</button>
+        <button class="del" data-i="${i}" title="删除">✕</button>
+      </div>`;
+    }).join('');
     libEl.querySelectorAll('.run').forEach(b => b.onclick = () => runCmdFromLib(parseInt(b.dataset.i)));
-    libEl.querySelectorAll('.del').forEach(b => b.onclick = () => {
-      const lib2 = loadCmdLib(); lib2.splice(parseInt(b.dataset.i), 1); saveCmdLib(lib2); renderCmdPane();
+    libEl.querySelectorAll('.del').forEach(b => b.onclick = async () => {
+      const lib2 = await loadCmdLib(); lib2.splice(parseInt(b.dataset.i), 1); await saveCmdLib(lib2); renderCmdPane();
     });
+    // 点击名称区或编辑按钮 → 弹出编辑模态框（名称+命令都可改）
+    const openEdit = async (i) => {
+      const lib2 = await loadCmdLib();
+      if (!lib2[i]) return;
+      openCmdEditModal(i, lib2[i].name || '', lib2[i].cmd);
+    };
+    libEl.querySelectorAll('.cmd-edit-trigger').forEach(el => el.onclick = () => openEdit(parseInt(el.dataset.i)));
+    libEl.querySelectorAll('.edit').forEach(b => b.onclick = () => openEdit(parseInt(b.dataset.i)));
   }
   // 最近命令
   if (activePortId) {
@@ -1834,25 +2091,313 @@ function renderCmdPane() {
     $('cmdRecent').innerHTML = '<div class="cmd-empty">无活动连接</div>';
   }
 }
-function runCmdFromLib(i) {
-  const lib = loadCmdLib();
-  if (lib[i]) sendCmd(lib[i]);
+async function runCmdFromLib(i) {
+  const lib = await loadCmdLib();
+  if (lib[i]) sendCmd(lib[i].cmd);
 }
+// 命令编辑模态框：名称+命令都可改
+let _cmdEditIndex = -1;
+function openCmdEditModal(i, name, cmd) {
+  _cmdEditIndex = i;
+  $('cmdEditName').value = name || '';
+  $('cmdEditCmd').value = cmd || '';
+  $('cmdEditModal').classList.add('show');
+  setTimeout(() => $('cmdEditName').focus(), 50);
+}
+function closeCmdEditModal() { $('cmdEditModal').classList.remove('show'); _cmdEditIndex = -1; }
+$('cmdEditClose').onclick = closeCmdEditModal;
+$('cmdEditCancel').onclick = closeCmdEditModal;
+$('cmdEditModal').onclick = (e) => { if (e.target === $('cmdEditModal')) closeCmdEditModal(); };
+$('cmdEditSave').onclick = async () => {
+  const name = $('cmdEditName').value.trim();
+  const cmd = $('cmdEditCmd').value.trim();
+  if (!cmd) { closeCmdEditModal(); return; }  // 命令不能为空
+  const lib = await loadCmdLib();
+  if (_cmdEditIndex < 0 || !lib[_cmdEditIndex]) { closeCmdEditModal(); return; }
+  lib[_cmdEditIndex].name = name;
+  lib[_cmdEditIndex].cmd = cmd;
+  await saveCmdLib(lib);
+  closeCmdEditModal();
+  renderCmdPane();
+};
+$('cmdEditCmd').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('cmdEditSave').click(); });
+$('cmdEditName').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('cmdEditCmd').focus(); });
 function sendCmd(cmd) {
   if (!activePortId) { showBanner('无活动连接', 3000, true); return; }
   fetch('/api/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ port_id: activePortId, cmd }) });
   showBanner('已发送：' + cmd);
 }
-$('cmdAddBtn').onclick = () => {
-  const v = $('cmdAddInput').value.trim();
-  if (!v) return;
-  const lib = loadCmdLib();
-  if (!lib.includes(v)) lib.push(v);
-  saveCmdLib(lib);
+$('cmdAddBtn').onclick = async () => {
+  const name = $('cmdAddName').value.trim();
+  const cmd = $('cmdAddInput').value.trim();
+  if (!cmd) return;
+  const lib = await loadCmdLib();
+  // 去重：命令内容相同则更新名称（不重复添加）
+  const exist = lib.findIndex(c => c.cmd === cmd);
+  if (exist >= 0) { lib[exist].name = name || lib[exist].name; }
+  else { lib.push({ name, cmd }); }
+  await saveCmdLib(lib);
+  $('cmdAddName').value = '';
   $('cmdAddInput').value = '';
   renderCmdPane();
 };
 $('cmdAddInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('cmdAddBtn').click(); });
+$('cmdAddName').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('cmdAddInput').focus(); });
+
+// 命令库 sheet 切换
+document.querySelectorAll('.cmd-sheet-tab').forEach(tab => {
+  tab.onclick = () => {
+    const sheet = tab.dataset.sheet;
+    document.querySelectorAll('.cmd-sheet-tab').forEach(t => t.classList.toggle('active', t === tab));
+    document.querySelectorAll('.cmd-sheet-pane').forEach(p => p.classList.toggle('active', p.dataset.sheet === sheet));
+    if (sheet === 'recent') renderCmdPane();  // 切到最近命令时刷新
+  };
+});
+
+// ============================================================
+// 历史浏览（G 级日志虚拟列表）
+// ============================================================
+// 固定行高虚拟列表：只渲染可视区 + 缓冲行，按需从后端分页拉取，G 级也不卡
+const HIST_ROW_H = 18;          // 行高（px，与 CSS .hline height 一致）
+const HIST_BUF = 10;             // 视口外缓冲行数
+const HIST_PAGE = 200;           // 单次后端拉取行数
+const HIST_CACHE_MAX = 5000;   // 行缓存上限，超此清理远离可视区的旧缓存，防 G 级翻阅 OOM
+const MAX_SCROLL_H = 10000000;  // 内层最大滚动高度(10M px)，远低于 Chrome/WebView2 的 scrollHeight 上限(~33.5M=2^25)
+                                 // total*HIST_ROW_H 超 MAX_SCROLL_H 时启用「比例缩放」：scrollTop 按比例换算行号，
+                                 // 行贴近视口顶渲染。这是 G 级(千万行)翻阅的关键——突破浏览器滚动高度上限。
+let histState = {
+  name: '',        // 当前日志名/路径
+  total: 0,        // 总行数
+  scaled: false,   // 是否启用比例缩放（total*行高 > MAX_SCROLL_H）
+  rows: new Map(), // 已加载行缓存：rowIdx -> {ts,tag,text}
+  renderedStart: -1, renderedEnd: -1,  // 当前渲染区间
+  renderSeq: 0,   // 渲染序号，防快速滚动竞态（旧 fetch 完成时丢弃）
+  searchQ: '',     // 搜索关键字
+  searchResults: [],  // 搜索命中行号
+  searchIdx: 0,
+};
+
+// 加载日志列表到下拉框
+async function loadHistoryLogList() {
+  try {
+    const r = await fetch('/api/logs');
+    const j = await r.json();
+    const sel = $('historyLogSelect');
+    sel.innerHTML = '<option value="">— 选择日志 —</option>' +
+      (j.logs || []).map(l => `<option value="${esc(l.name)}">${esc(l.name)} (${(l.size/1024).toFixed(0)}KB)</option>`).join('');
+  } catch(e) {}
+}
+
+// 打开日志：建索引 + 初始化虚拟列表
+async function openHistoryLog(name) {
+  if (!name) { histState.name=''; histState.total=0; histState.scaled=false;
+    $('historyVlistInner').innerHTML = ''; $('historyVlistInner').style.height = '';
+    $('historyStatus').textContent = '选择日志文件或打开外部日志'; return; }
+  histState.name = name;
+  histState.rows = new Map();
+  histState.renderedStart = -1; histState.renderedEnd = -1;
+  histState.searchQ = ''; histState.searchResults = []; histState.searchIdx = 0;
+  $('historySearchInput').value = '';
+  $('historyVlist').scrollTop = 0;
+  $('historyStatus').textContent = '正在索引…';
+  try {
+    const r = await fetch('/api/log_count?name=' + encodeURIComponent(name));
+    const j = await r.json();
+    if (!j.ok) { $('historyStatus').textContent = '错误：' + (j.err || ''); return; }
+    histState.total = j.total;
+    // 决定是否启用比例缩放：总行高超过 MAX_SCROLL_H 才缩放
+    const naturalH = histState.total * HIST_ROW_H;
+    histState.scaled = naturalH > MAX_SCROLL_H;
+    // inner 高度 = min(自然总高, MAX_SCROLL_H)，撑总滚动条
+    $('historyVlistInner').innerHTML = '';
+    $('historyVlistInner').style.height = Math.min(naturalH, MAX_SCROLL_H) + 'px';
+    $('historyStatus').textContent = `共 ${histState.total.toLocaleString()} 行` + (histState.scaled ? ' · 缩放模式' : '');
+    renderHistorySlice();
+  } catch(e) { $('historyStatus').textContent = '加载失败：' + e; }
+}
+
+// scrollTop → 实际行号换算。
+// 缩放模式：scrollTop(0..maxScroll) 线性映射到行号(0..total-viewportRows)，
+//   保证 scrollTop 最大时 startRow=total-viewportRows（末行可达），无不可达尾区。
+// 非缩放：1:1，scrollTop/行高。
+function histScrollToRow(scrollTop) {
+  if (!histState.scaled) return Math.floor(scrollTop / HIST_ROW_H);
+  const innerH = Math.min(histState.total * HIST_ROW_H, MAX_SCROLL_H);
+  const maxScroll = innerH - (window._histViewH || 600);  // 视口高（滚动时传入）
+  const maxRow = Math.max(0, histState.total - Math.ceil((window._histViewH || 600) / HIST_ROW_H));
+  if (maxScroll <= 0) return 0;
+  return Math.min(maxRow, Math.floor(scrollTop / maxScroll * maxRow));
+}
+
+// 实际行号 → 该行在滚动空间中的像素位置（用于 jumpTo 设 scrollTop）。
+// 缩放：row/maxRow*maxScroll。非缩放：row*行高。
+function histRowToScroll(row) {
+  if (!histState.scaled) return row * HIST_ROW_H;
+  const innerH = Math.min(histState.total * HIST_ROW_H, MAX_SCROLL_H);
+  const maxScroll = innerH - (window._histViewH || 600);
+  const maxRow = Math.max(0, histState.total - Math.ceil((window._histViewH || 600) / HIST_ROW_H));
+  if (maxRow <= 0) return 0;
+  return Math.floor(row / maxRow * maxScroll);
+}
+
+// 确保区间 [start, end) 的行已加载到缓存
+async function ensureHistoryRange(start, end) {
+  start = Math.max(0, start); end = Math.min(histState.total, end);
+  // 找出未加载的子区间
+  const missing = [];
+  let i = start;
+  while (i < end) {
+    if (histState.rows.has(i)) { i++; continue; }
+    let j = i;
+    while (j < end && !histState.rows.has(j)) j++;
+    missing.push([i, j]);
+    i = j;
+  }
+  // 并行拉取缺失段（每段最多 HIST_PAGE 行，拆分大段）
+  const fetches = [];
+  for (const [s, e] of missing) {
+    for (let k = s; k < e; k += HIST_PAGE) {
+      const off = k, lim = Math.min(HIST_PAGE, e - k);
+      fetches.push(
+        fetch('/api/log_page?name=' + encodeURIComponent(histState.name) + '&offset=' + off + '&limit=' + lim)
+          .then(r => r.json()).then(j => {
+            if (j.ok) {
+              (j.lines || []).forEach((l, idx) => histState.rows.set(off + idx, l));
+            }
+          }).catch(() => {})
+      );
+    }
+  }
+  if (fetches.length) await Promise.all(fetches);
+}
+
+// 渲染可视区切片（缩放虚拟列表：inner 钳制 MAX_SCROLL_H 撑滚动条，viewport 容器跟随 scrollTop 平移）
+async function renderHistorySlice() {
+  if (!histState.name || !histState.total) return;
+  const vlist = $('historyVlist');
+  const inner = $('historyVlistInner');
+  const scrollTop = vlist.scrollTop;
+  const viewH = vlist.clientHeight;
+  window._histViewH = viewH;  // 供 histScrollToRow/histRowToScroll 计算末页可达映射
+  // scrollTop → 起始行号（严格对应视口顶，无偏移，保证 jumpTo 坐标自洽）
+  const startRow = Math.max(0, histScrollToRow(scrollTop));
+  const viewportRows = Math.ceil(viewH / HIST_ROW_H);
+  // 渲染 [startRow, startRow+viewportRows+BUF)，向下留缓冲防快速滚动露白。
+  // 不向上缓冲：scrollTop 减小触发重渲染补上方行，节流 50ms 内不会露白。
+  const renderStart = startRow;
+  const endRow = Math.min(histState.total, startRow + viewportRows + HIST_BUF);
+  if (renderStart === histState.renderedStart && endRow === histState.renderedEnd) return;
+  // 渲染序号守卫：await 期间用户继续滚动会 ++renderSeq，本帧过期则丢弃，防旧 fetch 覆盖新渲染
+  const mySeq = ++histState.renderSeq;
+
+  await ensureHistoryRange(renderStart, endRow);
+  if (mySeq !== histState.renderSeq) return;  // 已被更新的滚动帧取代
+
+  // 双层结构突破 Chrome 33.5M scrollHeight 上限：
+  //   inner（高=虚拟总高，≤10M）撑总滚动条；viewport（绝对定位）top=scrollTop 贴视口顶，
+  //   行在 viewport 内用实际坐标 top=(r-startRow)*18 排列，startRow 行贴视口顶（屏幕Y=0）。
+  //   缩放时 scrollTop 是虚拟像素，viewport.top=scrollTop 让渲染块贴视口；
+  //   startRow=histScrollToRow(scrollTop) 严格对应视口顶，jumpTo 用 histRowToScroll 反算 scrollTop，
+  //   两者互逆，坐标自洽。非缩放时同理（1:1）。
+  let vp = inner.querySelector('.vlist-viewport');
+  if (!vp) {
+    vp = document.createElement('div');
+    vp.className = 'vlist-viewport';
+    inner.appendChild(vp);
+  }
+  vp.style.top = scrollTop + 'px';
+  let html = '';
+  for (let r = renderStart; r < endRow; r++) {
+    const l = histState.rows.get(r);
+    if (!l) continue;
+    const top = (r - renderStart) * HIST_ROW_H;
+    const kc = l.tag === 'error' ? 'kw-error' : l.tag === 'warning' ? 'kw-warning' : (l.tag === 'info' || l.tag === 'comment') ? 'kw-info' : '';
+    const text = esc(l.text || '');
+    html += `<div class="hline ${kc}" style="top:${top}px" data-row="${r}" title="${text}"><span class="hrow">${r}</span><span class="htag">${esc(l.tag||'')}</span>${text}</div>`;
+  }
+  vp.innerHTML = html;
+  histState.renderedStart = renderStart;
+  histState.renderedEnd = endRow;
+  // 缓存清理：超上限时删远离可视区的行，防 G 级翻阅 rows Map 无限增长 OOM
+  if (histState.rows.size > HIST_CACHE_MAX) {
+    const keepFrom = renderStart - HIST_CACHE_MAX / 2, keepTo = endRow + HIST_CACHE_MAX / 2;
+    for (const k of histState.rows.keys()) {
+      if (k < keepFrom || k > keepTo) histState.rows.delete(k);
+    }
+  }
+  $('historyStatus').textContent = `共 ${histState.total.toLocaleString()} 行 · 显示 ${renderStart}-${endRow-1}` + (histState.scaled ? ' · 缩放' : '');
+}
+
+// 滚动事件（节流）
+let _histScrollTimer = null;
+$('historyVlist').addEventListener('scroll', () => {
+  if (_histScrollTimer) return;
+  _histScrollTimer = setTimeout(() => {
+    _histScrollTimer = null;
+    renderHistorySlice();
+  }, 50);
+});
+
+// 日志选择
+$('historyLogSelect').onchange = () => openHistoryLog($('historyLogSelect').value);
+
+// 打开外部日志
+$('btnHistoryOpenExternal').onclick = () => {
+  const p = prompt('输入日志文件绝对路径：', '');
+  if (!p) return;
+  openHistoryLog(p.trim());
+};
+
+// 搜索
+$('btnHistorySearch').onclick = doHistorySearch;
+$('historySearchInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') doHistorySearch(); });
+async function doHistorySearch() {
+  const q = $('historySearchInput').value.trim();
+  if (!q || !histState.name) return;
+  // 已有结果且查询未变 → 跳转下一个命中
+  if (histState.searchResults.length && histState.searchQ === q) {
+    histState.searchIdx = (histState.searchIdx + 1) % histState.searchResults.length;
+    jumpToHistoryRow(histState.searchResults[histState.searchIdx]);
+    $('historyStatus').textContent = `命中 ${histState.searchResults.length} 处 · 第 ${histState.searchIdx + 1} 处`;
+    return;
+  }
+  $('historyStatus').textContent = '搜索中…';
+  try {
+    const r = await fetch('/api/log_search?name=' + encodeURIComponent(histState.name) + '&q=' + encodeURIComponent(q) + '&limit=500');
+    const j = await r.json();
+    if (!j.ok) { $('historyStatus').textContent = '搜索失败：' + (j.err || ''); return; }
+    histState.searchResults = (j.lines || []).map(l => l.row);
+    histState.searchQ = q;
+    histState.searchIdx = 0;
+    if (histState.searchResults.length) {
+      jumpToHistoryRow(histState.searchResults[0]);
+      $('historyStatus').textContent = `命中 ${histState.searchResults.length} 处 · 第 1 处（点击🔍下一个）`;
+    } else {
+      $('historyStatus').textContent = '无命中';
+    }
+  } catch(e) { $('historyStatus').textContent = '搜索失败：' + e; }
+}
+// 跳到历史某行（滚动虚拟列表，让目标行落在视口中央）
+function jumpToHistoryRow(row) {
+  const vlist = $('historyVlist');
+  const innerH = Math.min(histState.total * HIST_ROW_H, MAX_SCROLL_H);
+  const viewH = vlist.clientHeight;
+  window._histViewH = viewH;
+  const viewportRows = Math.ceil(viewH / HIST_ROW_H);
+  // 让目标行居中：startRow = target - 半视口行数，再反算 scrollTop。
+  // 缩放/非缩放统一用此法——scrollTop 由 startRow 反算，renderHistorySlice
+  // 用同一 histScrollToRow 还原 startRow，坐标严格自洽，目标行必在视口中央。
+  const startRow = Math.max(0, Math.min(histState.total - viewportRows, row - Math.floor(viewportRows / 2)));
+  vlist.scrollTop = Math.max(0, Math.min(innerH - viewH, histRowToScroll(startRow)));
+  histState.renderedStart = -1; histState.renderedEnd = -1;
+  renderHistorySlice();
+}
+
+// 渲染历史面板（切到 history tab 时）
+function renderHistoryPane() {
+  if (!histState.name) loadHistoryLogList();
+  else renderHistorySlice();
+}
 
 // ============================================================
 // 初始化

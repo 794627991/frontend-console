@@ -18,6 +18,7 @@ endpoint.json
 
 # 临时调试文件
 _debug_raw.log
+分段版本/
 
 # IDE / 系统
 .vscode/
