@@ -595,6 +595,7 @@
         <button class="btn ghost icon-btn" id="btnNewLog" title="新建日志">＋📋</button>
         <button class="btn ghost icon-btn" id="btnCtrlC" title="Ctrl-C">^C</button>
         <button class="btn ghost icon-btn" id="btnCtrlD" title="Ctrl-D">^D</button>
+        <button class="btn ghost icon-btn" id="btnJumpBottomMain" title="跳到底部 (Ctrl+End)">⤓</button>
       </div>
     </div>
     <div class="term-area" id="termArea">
@@ -643,13 +644,9 @@
       <div class="panel-tab-pane" data-pane="analyze">
         <div class="analyze-pane" id="analyzePane">
           <div class="stat-cards" id="statCards"></div>
-          <div class="analyze-section">
-            <div class="title">关键字频率</div>
-            <div id="freqBars"></div>
-          </div>
-          <div class="analyze-section">
-            <div class="title">最近异常</div>
-            <div id="clusterList"><div class="cmd-empty">暂无异常</div></div>
+          <div class="analyze-section" id="analyzeListSection">
+            <div class="title" id="analyzeListTitle">最近条目（点击上方卡片筛选）</div>
+            <div id="clusterList"><div class="cmd-empty">点击 ERROR/WARNING/INFO/SUCCESS 卡片查看最近条目</div></div>
           </div>
         </div>
       </div>
@@ -799,14 +796,6 @@ function buildTerminal(portId, meta) {
   wrap.dataset.portId = portId;
   wrap.style.display = 'none';
   wrap.innerHTML = `
-    <div class="term-toolbar">
-      <button class="btn ghost" data-act="pause">⏸ 暂停滚屏</button>
-      <button class="btn ghost" data-act="clear">⊘ 清屏</button>
-      <button class="btn ghost" data-act="newlog">＋ 新日志</button>
-      <button class="btn ghost" data-act="ctrlc">^C</button>
-      <button class="btn ghost" data-act="ctrld">^D</button>
-      <span class="info" data-info="baud">${portId} @ ${meta.baud}</span>
-    </div>
     <div class="output-wrap">
       <div class="xterm-wrap" data-xterm="${portId}"></div>
     </div>
@@ -891,27 +880,6 @@ function buildTerminal(portId, meta) {
     }
   });
 
-  // ---- 工具栏事件 ----
-  wrap.querySelector('[data-act=pause]').onclick = function() {
-    conn.paused = !conn.paused;
-    this.textContent = conn.paused ? '▶ 继续' : '⏸ 暂停滚屏';
-    if (!conn.paused) { conn.autoScroll = true; conn.term.scrollToBottom(); }
-  };
-  wrap.querySelector('[data-act=clear]').onclick = () => {
-    conn.term.clear();
-    conn.kwDecorLastRow = 0;
-    conn.kwDecorations.forEach(d => { try { d.dispose(); } catch(e){} });
-    conn.kwDecorations = [];
-    fetch('/api/clear_buffer', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: portId})});
-  };
-  wrap.querySelector('[data-act=newlog]').onclick = async () => {
-    const r = await fetch('/api/new_log', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: portId})});
-    const j = await r.json();
-    showBanner('已开新日志：' + j.log_path);
-  };
-  wrap.querySelector('[data-act=ctrlc]').onclick = () => termSendRaw(portId, [3]);
-  wrap.querySelector('[data-act=ctrld]').onclick = () => termSendRaw(portId, [4]);
-
   // ---- 全屏模式提示条（xterm 自身处理全屏序列，这里只显示提示 + 退出按钮） ----
   const overlay = document.createElement('div');
   overlay.className = 'screen-overlay';
@@ -940,7 +908,18 @@ function buildTerminal(portId, meta) {
   // 插入 DOM
   const es = termArea.querySelector('.empty-state');
   if (es) es.remove();
-  tabs.insertBefore(tab, tabs.querySelector('.tab-bar-actions'));
+  // 标签按 COM 号数字排序插入：找到第一个比当前大的标签，插它前面
+  const _comKey = pid => { const m = /^COM(\d+)$/i.exec(pid); return m ? +m[1] : 9999; };
+  const curKey = _comKey(portId);
+  let inserted = false;
+  for (const t of tabs.querySelectorAll('.tab')) {
+    if (_comKey(t.dataset.portId) > curKey) {
+      tabs.insertBefore(tab, t);
+      inserted = true;
+      break;
+    }
+  }
+  if (!inserted) tabs.insertBefore(tab, tabs.querySelector('.tab-bar-actions'));
   termArea.appendChild(wrap);
 
   // SSE
@@ -959,16 +938,24 @@ function switchTab(portId) {
   termArea.querySelectorAll('.term-area').forEach(w => w.style.display = w.dataset.portId === portId ? 'flex' : 'none');
   // 侧边栏
   portList.querySelectorAll('.port-item').forEach(p => p.classList.toggle('active', p.dataset.portId === portId));
-  // 切换后重新 fit 并聚焦 xterm
+  // 切换后重新 fit 并聚焦 xterm（等 display:flex 生效后再 fit，否则算出 0 尺寸）
   const conn = connections[portId];
   if (conn) {
-    setTimeout(() => { try { conn.fit.fit(); } catch(e){} }, 50);
-    try { conn.term.focus(); } catch(e){}
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      try { conn.fit.fit(); } catch(e){}
+      try { conn.term.focus(); } catch(e){}
+    }));
     // 若分析标签正显示，刷新一次（数据源已切到新连接的 buffer）
     const activePane = document.querySelector('.panel-tab.active');
     if (activePane && activePane.dataset.pane === 'analyze') renderAnalyze();
   }
 }
+
+// 窗口/面板尺寸变化时重新 fit 活动 xterm
+window.addEventListener('resize', () => {
+  const conn = connections[activePortId];
+  if (conn) { try { conn.fit.fit(); } catch(e){} }
+});
 
 // SSE 收到 raw 字节流 → 写入 xterm；screenctl → 切换提示条
 function appendRaw(portId, text) {
@@ -1040,10 +1027,10 @@ function connectSSE(portId, conn) {
 // 关键字常驻高亮（xterm decoration）
 // ============================================================
 const KW_RULES = [
-  { cls: 'kw-error', re: /\b(error|fail|failed|failure|panic|oops|fatal|denied|refused|abort|crash|segfault|oom|killed)\b/gi },
-  { cls: 'kw-warning', re: /\b(warn|warning|deprecated|timeout|retry|overflow|underrun|stall)\b/gi },
-  { cls: 'kw-info', re: /\b(info|notice|starting|started|stopped|detected|found|loaded|ready|init)\b/gi },
-  { cls: 'kw-success', re: /\b(success|succeed|ok|done|complete|passed|ready)\b/gi },
+  { cls: 'kw-error', re: /\b(error|fail|failed|failure|panic|oops|fatal|denied|refused|abort|crash|segfault|oom|killed|segmentation fault|no such file or directory|permission denied|operation not permitted|unable to handle|kernel panic|out of memory|oom-kill|oom killer|call trace|stack trace|core dump|bus error|page fault|null pointer|general protection fault|illegal instruction|division by zero|hung task|soft lockup|hard lockup)\b/gi },
+  { cls: 'kw-warning', re: /\b(warn|warning|deprecated|timeout|retry|overflow|underrun|stall|hung|blocked|deadlock|leak|leaked|corrupt|corrupted|incomplete|missing|not found|not supported|invalid|broken|exhausted|degraded|overrun|underflow|bad blocks|read-only|filesystem corruption)\b/gi },
+  { cls: 'kw-info', re: /\b(info|notice|starting|started|stopped|detected|found|loaded|ready|init|initializing|mounting|mounted|deactivated|booting|probe|probed|register|registered|enabled|disabled|linux version|systemd|udev|freeing|freed|allocated|setting up|configured|bringing up|link is up|link is down)\b/gi },
+  { cls: 'kw-success', re: /\b(success|succeed|succeeded|ok|done|complete|completed|passed|ready)\b/gi },
 ];
 const KW_COLOR = { 'kw-error':'#ff4060', 'kw-warning':'#ff9d00', 'kw-info':'#00d4ff', 'kw-success':'#00ff9d' };
 // 节流：批量扫描新行，避免每个 chunk 都扫全缓冲
@@ -1068,13 +1055,16 @@ function highlightNewKw(conn) {
       rule.re.lastIndex = 0;
       let m;
       while ((m = rule.re.exec(text)) !== null) {
-        const start = m.index, end = m.index + m[0].length;
+        // kw-cmd 用捕获组 2 定位命令名本身，其余用整个匹配
+        const grp = rule.grp || 0;
+        const start = m.index + (m[grp] ? text.slice(m.index).indexOf(m[grp]) : 0);
+        const matched = m[grp] || m[0];
+        const end = start + matched.length;
         try {
           const dec = conn.term.registerDecoration({
             marker: conn.term.registerMarker(r),
             x: start,
             width: end - start,
-            backgroundColor: KW_COLOR[rule.cls] + '33',
             foregroundColor: KW_COLOR[rule.cls],
             layer: 'top',
           });
@@ -1234,8 +1224,11 @@ function closeConnection(portId) {
     conn.wrap.remove();
     delete connections[portId];
   }
-  // 切换到第一个可用标签
-  const remaining = Object.keys(connections);
+  // 切换到第一个可用标签（按 COM 号排序）
+  const remaining = Object.keys(connections).sort((a, b) => {
+    const ma = /^COM(\d+)$/i.exec(a), mb = /^COM(\d+)$/i.exec(b);
+    return (ma ? +ma[1] : 9999) - (mb ? +mb[1] : 9999);
+  });
   if (remaining.length) {
     switchTab(remaining[0]);
   } else {
@@ -1254,6 +1247,12 @@ function refreshSidebar() {
     return;
   }
   portList.innerHTML = '';
+  // 按 COM 号数字排序：COM1, COM2, ..., COM10（而非插入顺序 COM10 < COM2）
+  const comKey = pid => {
+    const m = /^COM(\d+)$/i.exec(pid);
+    return m ? parseInt(m[1], 10) : 9999;
+  };
+  ids.sort((a, b) => comKey(a) - comKey(b));
   ids.forEach(pid => {
     const conn = connections[pid];
     const item = document.createElement('div');
@@ -1273,6 +1272,12 @@ function refreshSidebar() {
     };
     portList.appendChild(item);
   });
+  // 标签栏也按 COM 号排序（重排 DOM 顺序，确保和侧边栏一致）
+  const comKey2 = pid => { const m = /^COM(\d+)$/i.exec(pid); return m ? +m[1] : 9999; };
+  const tabEls = Array.from(tabs.querySelectorAll('.tab'));
+  tabEls.sort((a, b) => comKey2(a.dataset.portId) - comKey2(b.dataset.portId));
+  const actions = tabs.querySelector('.tab-bar-actions');
+  tabEls.forEach(t => tabs.insertBefore(t, actions));
 }
 
 async function refreshGlobalStatus() {
@@ -1357,12 +1362,13 @@ $('btnNewLog').onclick = async () => {
 };
 $('btnCtrlC').onclick = () => { if (activePortId) termSendRaw(activePortId, [3]); };
 $('btnCtrlD').onclick = () => { if (activePortId) termSendRaw(activePortId, [4]); };
+$('btnJumpBottomMain').onclick = () => { if (activePortId) jumpToBottom(activePortId); };
 $('btnAbout').onclick = () => showBanner('串口控制台 Pro · xterm.js 终端 + 搜索/感知/分析 · v0.3.0', 5000);
 $('btnJumpBottom').onclick = () => { if (activePortId) jumpToBottom(activePortId); };
 // 打开日志目录（顶栏快捷入口）
 $('btnOpenLogDir').onclick = async () => {
   try {
-    const r = await fetch('/api/log_dir/open', {method:'POST', headers:{'Content-Type':'application/json'}});
+    const r = await fetch('/api/log_dir/open', {method:'POST', headers:{'Content-Type':'application/json'}, body: '{}'});
     const j = await r.json();
     if (j.ok) showBanner('已在资源管理器打开日志目录');
     else showBanner('打开失败：' + (j.err || ''), 6000, true);
@@ -1386,7 +1392,7 @@ async function loadLogDir() {
 }
 async function openLogDir() {
   try {
-    const r = await fetch('/api/log_dir/open', {method:'POST', headers:{'Content-Type':'application/json'}});
+    const r = await fetch('/api/log_dir/open', {method:'POST', headers:{'Content-Type':'application/json'}, body: '{}'});
     const j = await r.json();
     if (j.ok) showBanner('已在资源管理器打开日志目录');
     else showBanner('打开失败：' + (j.err || ''), 6000, true);
@@ -1688,6 +1694,72 @@ function renderSense() {
 }
 
 // ---- 分析标签 ----
+// 4 类关键字正则
+const ANALYZE_RE = {
+  error:   /\b(error|fail|panic|fatal|denied|refused|abort|crash|oom|killed|segmentation fault|kernel panic|out of memory|call trace|page fault)\b/i,
+  warning: /\b(warn|warning|deprecated|timeout|retry|overflow|hung|deadlock|corrupt|not found|not supported|invalid)\b/i,
+  info:    /\b(info|notice|starting|started|stopped|detected|ready|linux version|systemd|mounting|booting|link is up|link is down)\b/i,
+  success: /\b(success|succeed|succeeded|ok|done|complete|completed|passed)\b/i,
+};
+const ANALYZE_LABEL = { error: 'ERROR', warning: 'WARNING', info: 'INFO', success: 'SUCCESS' };
+
+// 点击条目 → 跳到主终端对应行并高亮
+function jumpToLine(rowIdx, searchText) {
+  if (!activePortId) return;
+  const conn = connections[activePortId];
+  if (!conn || !conn.term) return;
+  try {
+    const buf = conn.term.buffer.active;
+    // scrollToLine 参数是绝对行号
+    conn.term.scrollToLine(rowIdx);
+    conn.term.focus();
+    // registerMarker(e) 内部: ybase + y + e = 目标行 → e = rowIdx - ybase - y，必须取整
+    if (conn.term.registerDecoration) {
+      const offset = Math.round(rowIdx - buf.ybase - buf.y);
+      const dec = conn.term.registerDecoration({
+        marker: conn.term.registerMarker(offset),
+        x: 0,
+        width: conn.term.cols,
+        backgroundColor: '#00d4ff55',
+        layer: 'top',
+      });
+      if (dec) setTimeout(() => { try { dec.dispose(); } catch(e){} }, 2000);
+    }
+  } catch(e) {}
+}
+
+// 点击统计卡片 → 在下方列表显示该类别最近条目
+function showAnalyzeList(kw) {
+  if (!activePortId) return;
+  const conn = connections[activePortId];
+  if (!conn || !conn.term) return;
+  const re = ANALYZE_RE[kw];
+  if (!re) return;
+  const buf = conn.term.buffer.active;
+  const items = [];
+  for (let r = 0; r < buf.length; r++) {
+    const ln = buf.getLine(r);
+    if (!ln) continue;
+    const t = ln.translateToString(true);
+    if (re.test(t)) items.push({ row: r, text: t.trim().slice(0, 100) });
+  }
+  $('analyzeListTitle').textContent = `最近 ${ANALYZE_LABEL[kw]}（${items.length} 条）`;
+  const cl = $('clusterList');
+  if (!items.length) {
+    cl.innerHTML = `<div class="cmd-empty">无 ${ANALYZE_LABEL[kw]} 条目</div>`;
+    return;
+  }
+  // 最近的在前（取最后 30 条倒序）
+  const recent = items.slice(-30).reverse();
+  cl.innerHTML = recent.map((it, i) =>
+    `<div class="cluster-item" data-idx="${i}" title="${esc(it.text)}">${esc(it.text)}</div>`
+  ).join('');
+  // 点击条目 → 跳到对应行并选中高亮
+  cl.querySelectorAll('.cluster-item').forEach((el, i) => {
+    el.onclick = () => jumpToLine(recent[i].row, recent[i].text);
+  });
+}
+
 function renderAnalyze() {
   if (!activePortId) { $('statCards').innerHTML = '<div class="cmd-empty">无活动连接</div>'; return; }
   const conn = connections[activePortId];
@@ -1700,44 +1772,27 @@ function renderAnalyze() {
     if (ln) lines.push(ln.translateToString(true));
   }
   let err = 0, warn = 0, info = 0, ok = 0;
-  const freq = {};
-  const KW = ['error', 'fail', 'warning', 'info', 'timeout', 'panic', 'oom', 'denied'];
   for (const t of lines) {
     const low = t.toLowerCase();
-    if (/\b(error|fail|panic|fatal|denied|refused|abort|crash|oom|killed)\b/.test(low)) err++;
-    if (/\b(warn|warning|deprecated|timeout|retry|overflow)\b/.test(low)) warn++;
-    if (/\b(info|notice|starting|started|stopped|detected|ready)\b/.test(low)) info++;
-    if (/\b(success|ok|done|complete|passed)\b/.test(low)) ok++;
-    for (const k of KW) {
-      const m = low.match(new RegExp('\\b' + k + '\\w*\\b', 'g'));
-      if (m) freq[k] = (freq[k] || 0) + m.length;
-    }
+    if (ANALYZE_RE.error.test(low)) err++;
+    if (ANALYZE_RE.warning.test(low)) warn++;
+    if (ANALYZE_RE.info.test(low)) info++;
+    if (ANALYZE_RE.success.test(low)) ok++;
   }
   $('statCards').innerHTML = `
-    <div class="stat-card err"><div class="label">ERROR</div><div class="value">${err}</div></div>
-    <div class="stat-card warn"><div class="label">WARNING</div><div class="value">${warn}</div></div>
-    <div class="stat-card info"><div class="label">INFO</div><div class="value">${info}</div></div>
-    <div class="stat-card ok"><div class="label">SUCCESS</div><div class="value">${ok}</div></div>
+    <div class="stat-card err" data-kw="error" style="cursor:pointer" title="点击查看最近 ERROR 条目">
+      <div class="label">ERROR</div><div class="value">${err}</div></div>
+    <div class="stat-card warn" data-kw="warning" style="cursor:pointer" title="点击查看最近 WARNING 条目">
+      <div class="label">WARNING</div><div class="value">${warn}</div></div>
+    <div class="stat-card info" data-kw="info" style="cursor:pointer" title="点击查看最近 INFO 条目">
+      <div class="label">INFO</div><div class="value">${info}</div></div>
+    <div class="stat-card ok" data-kw="success" style="cursor:pointer" title="点击查看最近 SUCCESS 条目">
+      <div class="label">SUCCESS</div><div class="value">${ok}</div></div>
   `;
-  // 频率条
-  const sorted = Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 8);
-  const max = sorted.length ? sorted[0][1] : 1;
-  $('freqBars').innerHTML = sorted.length ? sorted.map(([k, v]) =>
-    `<div class="freq-bar"><span class="name">${esc(k)}</span><div class="bar"><div class="fill" style="width:${(v / max * 100).toFixed(0)}%"></div></div><span class="num">${v}</span></div>`
-  ).join('') : '<div class="cmd-empty">暂无数据</div>';
-  // 最近异常聚类
-  const errs = [];
-  lines.forEach((t, i) => {
-    if (/\b(error|fail|panic|fatal|denied|refused|abort|crash|oom|killed)\b/i.test(t)) errs.push({ i, t: t.trim().slice(0, 80) });
+  // 点击统计卡片 → 下方列表显示该类别最近条目（不弹 banner）
+  $('statCards').querySelectorAll('.stat-card').forEach(card => {
+    card.onclick = () => showAnalyzeList(card.dataset.kw);
   });
-  const cl = $('clusterList');
-  if (!errs.length) {
-    cl.innerHTML = '<div class="cmd-empty">暂无异常</div>';
-  } else {
-    cl.innerHTML = errs.slice(-10).reverse().map(e =>
-      `<div class="cluster-item" title="${esc(e.t)}">${esc(e.t)}</div>`
-    ).join('');
-  }
 }
 
 // ---- 命令标签 ----

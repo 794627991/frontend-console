@@ -12,7 +12,7 @@ import urllib.request
 
 # ---- 单实例锁 ----
 import ctypes
-MUTEX_NAME = "Global\\SerialConsolePro_SingleInstance_v3test"
+MUTEX_NAME = "Global\\SerialConsolePro_SingleInstance"
 mutex = None
 
 def acquire_single_instance():
@@ -34,8 +34,7 @@ def resource_path(rel):
 # ---- Claude Code 直连入口：endpoint 文件 ----
 # 工具启动时把本地 HTTP 服务地址写到固定文件，任何 Claude Code 会话读它即可发现服务。
 STATE_DIR = os.path.join(os.path.expanduser("~"), ".serialconsole_pro")
-# v0.3 测试版用独立 endpoint 文件，避免与主目录运行中的工具冲突
-ENDPOINT_FILE = os.path.join(STATE_DIR, "endpoint_v3.json")
+ENDPOINT_FILE = os.path.join(STATE_DIR, "endpoint.json")
 
 def write_endpoint(port):
     """把本地 HTTP 服务地址写到固定文件，供 Claude Code 跨会话发现。"""
@@ -81,7 +80,7 @@ def find_and_focus_existing_window():
         user32.SetForegroundWindow.restype = ctypes.c_bool
         user32.EnumWindows.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
         user32.EnumWindows.restype = ctypes.c_bool
-        target = "串口控制台 Pro [v0.3-test]"
+        target = "串口控制台 Pro"
         found = []
         # 回调签名: BOOL CALLBACK EnumWindowsProc(HWND, LPARAM)，HWND 用 c_void_p 承接 64 位句柄
         @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
@@ -181,7 +180,7 @@ def main():
 
     # pywebview 窗口
     window = webview.create_window(
-        title="串口控制台 Pro [v0.3-test]",
+        title="串口控制台 Pro",
         url=html_url,
         width=1280,
         height=820,

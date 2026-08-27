@@ -72,6 +72,19 @@ _SCREEN_ANY_RE = re.compile(rb"\x1b\[[\d;]*[HJKsu]|\x1b\[\?1049[hl]|\x1b\[\d*2J|
 
 app = Flask(__name__)
 
+# 把未捕获异常的 traceback 写到日志文件，便于 exe（无控制台）模式下排查 500。
+import logging
+if not app.logger.handlers:
+    _err_log_path = os.path.join(STATE_DIR, "server_errors.log")
+    try:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        _h = logging.FileHandler(_err_log_path, encoding="utf-8")
+        _h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        app.logger.addHandler(_h)
+        app.logger.setLevel(logging.ERROR)
+    except Exception:
+        pass
+
 # ============================================================
 # ANSI 处理（从 web 版迁移，保持一致）
 # ============================================================
@@ -717,14 +730,16 @@ def api_log_dir():
 
 @app.route("/api/log_dir/open", methods=["POST"])
 def api_log_dir_open():
-    """用系统资源管理器打开日志目录。WebView2 拦截 file:// 协议，必须后端调 os.startfile。"""
-    data = request.get_json(force=True) or {}
-    target = (data.get("dir") or LOG_DIR).strip()
-    if not target:
-        target = LOG_DIR
+    """用系统资源管理器打开日志目录。WebView2 拦截 file:// 协议，必须后端调 explorer。"""
     try:
+        data = request.get_json(force=True, silent=True) or {}
+        target = (data.get("dir") or LOG_DIR).strip()
+        if not target:
+            target = LOG_DIR
         os.makedirs(target, exist_ok=True)
-        os.startfile(target)
+        # os.startfile 在 pywebview Flask 线程里可能静默失败，改用 explorer.exe 更可靠
+        import subprocess
+        subprocess.Popen(["explorer.exe", target], close_fds=True)
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "err": str(e)}), 400
@@ -930,6 +945,14 @@ def ai_observe():
     return jsonify({"ok": True, "connected": list(_ports.keys()),
                     "status": status, "recent": recent})
 
+
+# 临时调试：接收前端 xterm buffer 信息
+@app.route("/api/debug_xterm", methods=["POST"])
+def debug_xterm():
+    data = request.get_json(force=True, silent=True) or {}
+    with open(r"D:\AI\串口控制台Pro\test_result.json", "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    return jsonify({"ok": True})
 
 if __name__ == "__main__":
     start_background()
