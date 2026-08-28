@@ -2065,13 +2065,16 @@ async function doTermSearch(conn) {
   // 查询未变且有结果 → 跳下一个命中（仿日志交互）
   if (st.results.length && st.q === q) {
     st.idx = (st.idx + 1) % st.results.length;
-    jumpToTermHit(conn, st.results[st.idx]);
+    jumpToTermHit(conn, st.idx);
     highlightTermHit(conn, st.idx);
     return;
   }
   conn.termSearchCount.textContent = '搜索中…';
   try {
-    const r = await fetch('/api/search?port_id=' + encodeURIComponent(conn.portId) + '&q=' + encodeURIComponent(q) + '&limit=500');
+    // before_seq=oldestSeq：只搜 xterm 已加载的范围（seq >= oldestSeq），
+    // 避免命中行在未加载的历史里导致跳转找不到。oldestSeq 为空时搜全量。
+    const bs = conn.oldestSeq || 0;
+    const r = await fetch('/api/search?port_id=' + encodeURIComponent(conn.portId) + '&q=' + encodeURIComponent(q) + '&limit=500' + (bs ? '&before_seq=' + bs : ''));
     const j = await r.json();
     if (!j.ok) { conn.termSearchCount.textContent = '失败：' + (j.err || ''); return; }
     st.q = q; st.results = j.lines || []; st.idx = 0;
@@ -2086,35 +2089,60 @@ async function doTermSearch(conn) {
       el.onclick = () => {
         const idx = +el.dataset.idx;
         st.idx = idx;
-        jumpToTermHit(conn, st.results[idx]);
+        jumpToTermHit(conn, idx);
         highlightTermHit(conn, idx);
       };
     });
     const total = j.total || st.results.length;
     const more = j.has_more ? '（还有更多）' : '';
     conn.termSearchCount.textContent = `命中 ${total} 处${more}`;
-    if (st.results.length) { jumpToTermHit(conn, st.results[0]); highlightTermHit(conn, 0); }
+    if (st.results.length) { jumpToTermHit(conn, 0); highlightTermHit(conn, 0); }
   } catch(e) { conn.termSearchCount.textContent = '失败：' + e; }
 }
-// 用命中行文本在 xterm buffer 重新搜索定位（行号会漂移，按内容定位最可靠）
-function jumpToTermHit(conn, hit) {
-  if (!conn.term || !hit) return;
-  const needle = (hit.text || '').trim();
-  if (!needle) return;
+// 跳到第 idx 个命中：手动遍历 xterm buffer 找第 idx 个匹配行，scrollToLine 定位。
+// 后端 search_lines 按 buf 顺序返回，xterm buffer 行序一致（加了 before_seq=oldestSeq 限定），
+// 所以第 idx 个后端命中 = xterm buffer 第 idx 个匹配。
+function jumpToTermHit(conn, idx) {
+  if (!conn.term || !conn.termSearchState) return;
+  const st = conn.termSearchState;
+  const q = st.q;
+  if (!q) return;
   const buf = conn.term.buffer.active;
-  const pref = needle.slice(0, Math.min(40, needle.length));
-  const match = (t) => t === needle || (t && pref && t.startsWith(pref));
-  // 从底部向上找最近匹配（终端通常看最新输出）
-  let found = -1;
-  for (let r = buf.length - 1; r >= 0; r--) {
+  const low = q.toLowerCase();
+  // 从头遍历找第 idx 个匹配行（idx 从 0 开始）
+  let count = 0, found = -1;
+  for (let r = 0; r < buf.length; r++) {
     const ln = buf.getLine(r);
-    if (ln && match(ln.translateToString(true).trim())) { found = r; break; }
+    if (!ln) continue;
+    const t = ln.translateToString(true).toLowerCase();
+    if (t.indexOf(low) !== -1) {
+      if (count === idx) { found = r; break; }
+      count++;
+    }
   }
-  if (found < 0) return;
+  if (found < 0) {
+    // 命中行可能在未加载的历史里（实时流追加了新行但 xterm 未加载）
+    conn.termSearchCount.textContent = `命中 ${st.results.length} 处（第 ${idx+1} 个不在当前视图）`;
+    return;
+  }
   try {
+    // scrollToLine 把目标行滚到视图顶部；select 选中整行高亮（蓝底，xterm 内置最稳定）
     conn.term.scrollToLine(found);
     conn.term.select(0, found, conn.term.cols);
     conn.term.focus();
+    // registerDecoration 加醒目背景高亮当前命中行（6 位 hex，不带 alpha）
+    if (conn.term.registerDecoration) {
+      const offset = Math.round(found - buf.ybase - buf.y);
+      const dec = conn.term.registerDecoration({
+        marker: conn.term.registerMarker(offset),
+        x: 0,
+        width: conn.term.cols,
+        backgroundColor: '#00d4ff',
+        layer: 'top',
+      });
+      // 3 秒后淡出，避免堆积
+      if (dec) setTimeout(() => { try { dec.dispose(); } catch(_){} }, 3000);
+    }
   } catch(e){}
 }
 function highlightTermHit(conn, idx) {
