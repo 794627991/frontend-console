@@ -265,12 +265,32 @@
   /* xterm 终端容器 */
   .xterm-wrap {
     flex: 1; min-height: 0; position: relative; background: #000;
-    padding: 4px 6px; overflow: hidden;
+    padding: 4px 6px 36px 6px; overflow: hidden;  /* 底部 36px 留白，约 2 行高，避免内容紧贴底边 */
   }
   .xterm-wrap .xterm { height: 100%; }
   .xterm-wrap .xterm-viewport { overflow-y: auto !important; }
   /* xterm 行高/字号与原终端一致 */
   .xterm-wrap .xterm-rows { font-family: var(--font-mono); }
+
+  /* ===== Ctrl+右键上下文菜单 ===== */
+  .ctx-menu { position: fixed; z-index: 9999; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 6px 20px rgba(0,0,0,.45); padding: 4px 0; min-width: 180px; display: none; font-size: 12px; user-select: none; }
+  .ctx-item { padding: 7px 14px; cursor: pointer; display: flex; align-items: center; gap: 8px; color: var(--fg); }
+  .ctx-item:hover { background: var(--accent); color: #001020; }
+  .ctx-item.disabled { color: var(--muted); cursor: default; }
+  .ctx-item.disabled:hover { background: transparent; color: var(--muted); }
+  .ctx-sep { height: 1px; background: var(--border); margin: 4px 0; }
+
+  /* ===== 串口搜索分栏（仿日志查看器 .log-search-*） ===== */
+  .term-search-splitter { height: 5px; background: var(--border); cursor: row-resize; flex-shrink: 0; display: none; }
+  .term-search-splitter:hover { background: var(--accent); }
+  .term-search-pane { display: none; flex-direction: column; height: 35%; min-height: 80px; max-height: 70%; background: var(--bg-card); border-top: 1px solid var(--border); flex-shrink: 0; }
+  .term-search-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .term-search-head input { flex: 1; background: var(--bg-input); border: 1px solid var(--border); color: var(--fg); border-radius: 4px; padding: 4px 8px; font-size: 12px; }
+  .term-search-results { flex: 1; overflow-y: auto; position: relative; background: var(--bg-input); min-height: 40px; }
+  .term-search-results .hline { cursor: pointer; position: static; height: auto; line-height: 1.5; padding: 2px 6px; white-space: pre-wrap; word-break: break-all; }
+  .term-search-results .hline:hover { background: var(--bg-card); }
+  .term-search-results .hline.active { background: var(--accent); color: #001020; }
+
   .line { padding: 0; }
   .line .ts { color: #2a3a55; font-size: 10px; margin-right: 8px; user-select: none; font-family: var(--font-mono); }
   .tag-kernel { color: var(--kernel); }
@@ -470,7 +490,7 @@
   .history-toolbar select:focus, .history-toolbar input:focus { border-color: var(--accent); }
   .history-toolbar .btn { padding: 4px 8px; font-size: 11px; }
   .history-status { font-size: 10px; color: var(--muted); padding: 2px 4px; }
-  .vlist { flex: 1; overflow-y: auto; position: relative; background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; }
+  .vlist { flex: 1; overflow-y: auto; position: relative; background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; padding-bottom: 36px; }  /* 底部留白，与终端一致 */
   .vlist-inner { position: relative; width: 100%; }
   .vlist-viewport { position: absolute; left: 0; right: 0; top: 0; }  /* 跟随 scrollTop 平移的渲染块，行在其中用实际坐标排列 */
   .hline { position: absolute; left: 0; right: 0; top: 0; height: 18px; line-height: 18px; padding: 0 6px; font-family: var(--font-mono); font-size: 11px; color: var(--fg); white-space: pre; overflow: hidden; text-overflow: ellipsis; box-sizing: border-box; }
@@ -923,6 +943,9 @@
   </div>
 </div>
 
+<!-- Ctrl+右键上下文菜单（单例，由 JS 填充内容+定位） -->
+<div id="ctxMenu" class="ctx-menu"></div>
+
 <script>
 // ============================================================
 // 全局状态
@@ -986,10 +1009,20 @@ function buildTerminal(portId, meta) {
   wrap.innerHTML = `
     <div class="output-wrap">
       <div class="xterm-wrap" data-xterm="${portId}"></div>
+      <div class="term-search-splitter"></div>
+      <div class="term-search-pane">
+        <div class="term-search-head">
+          <input type="text" class="term-search-input" placeholder="查找关键字…（回车搜索全部，再按回车跳下一个）" autocomplete="off">
+          <span class="term-search-count"></span>
+          <button class="btn ghost term-search-collapse" title="折叠分栏">▾</button>
+        </div>
+        <div class="term-search-results"></div>
+      </div>
     </div>
   `;
 
   const conn = {
+    portId,  // 用于搜索分栏调 /api/search 时定位连接（不依赖 activePortId）
     meta, tab, wrap,
     xtermWrap: wrap.querySelector(`[data-xterm="${portId}"]`),
     term: null, fit: null, search: null,
@@ -1009,6 +1042,13 @@ function buildTerminal(portId, meta) {
     // 关键字常驻高亮：记录已加 decoration 的行范围
     kwDecorLastRow: 0,
     kwDecorations: [],
+    // 串口搜索分栏（仿日志查看器）
+    termSearchPane: wrap.querySelector('.term-search-pane'),
+    termSearchInput: wrap.querySelector('.term-search-input'),
+    termSearchResults: wrap.querySelector('.term-search-results'),
+    termSearchCount: wrap.querySelector('.term-search-count'),
+    termSearchState: { q: '', results: [], idx: 0 },
+    termSplitMove: null, termSplitUp: null,
   };
 
   // ---- 创建 xterm 实例 ----
@@ -1043,17 +1083,25 @@ function buildTerminal(portId, meta) {
   try { conn.fit.fit(); } catch(e) {}
 
   // ---- Ctrl+C 复制选中文字（有选中→复制；无选中→发 ^C 中断）----
-  // ---- Ctrl+F 搜索（xterm 会吞键盘事件，需在此拦截主动触发）----
+  // ---- Ctrl+F 查找全部（打开串口下方搜索分栏，列出全部命中行）----
   conn.term.attachCustomKeyEventHandler(e => {
     if (e.ctrlKey && e.key === 'c' && e.type === 'keydown') {
       const sel = conn.term.getSelection();
       if (sel) { try { navigator.clipboard.writeText(sel); } catch(_){} return false; }
     }
     if (e.ctrlKey && (e.key === 'f' || e.key === 'F') && e.type === 'keydown') {
-      $('searchInput').focus(); $('searchInput').select();
+      toggleTermSearchPane(conn, true);
+      conn.termSearchInput.focus(); conn.termSearchInput.select();
       return false;
     }
     return true;
+  });
+
+  // ---- Ctrl+右键上下文菜单 ----
+  conn.xtermWrap.addEventListener('contextmenu', e => {
+    if (!e.ctrlKey) return;  // 普通右键保持 xterm 默认行为
+    e.preventDefault();
+    showCtxMenu(e.clientX, e.clientY, conn);
   });
 
   // ---- xterm 输入 → 串口 ----
@@ -1123,6 +1171,14 @@ function buildTerminal(portId, meta) {
 
   // SSE
   connectSSE(portId, conn);
+
+  // 串口搜索分栏：拖分隔条 + 回车搜索 + 折叠按钮
+  initTermSplitter(conn);
+  conn.termSearchInput.addEventListener('keydown', e => { if (e.key === 'Enter') doTermSearch(conn); });
+  wrap.querySelector('.term-search-collapse').onclick = () => {
+    const isShown = conn.termSearchPane.style.display !== 'none';
+    toggleTermSearchPane(conn, !isShown);
+  };
 
   // 加载历史缓冲（写入 xterm）
   loadBuffer(portId, conn);
@@ -1449,6 +1505,9 @@ function closeConnection(portId) {
   if (conn) {
     if (conn.sse) conn.sse.close();
     if (conn.term) { try { conn.term.dispose(); } catch(e){} }
+    // 移除串口搜索分栏的 document 级监听器，避免泄漏
+    if (conn.termSplitMove) document.removeEventListener('mousemove', conn.termSplitMove);
+    if (conn.termSplitUp) document.removeEventListener('mouseup', conn.termSplitUp);
     conn.tab.remove();
     conn.wrap.remove();
     delete connections[portId];
@@ -1931,6 +1990,158 @@ $('searchInput').addEventListener('keydown', (e) => {
 });
 $('searchPrev').onclick = () => gotoSearchMark(-1);
 $('searchNext').onclick = () => gotoSearchMark(1);
+
+// ---- Ctrl+右键上下文菜单 ----
+const _ctxMenu = () => $('ctxMenu');
+function showCtxMenu(x, y, conn) {
+  const m = _ctxMenu();
+  const hasSel = !!(conn.term && conn.term.getSelection());
+  m.innerHTML = [
+    `<div class="ctx-item${hasSel ? '' : ' disabled'}" data-act="copySel">📋 复制选中</div>`,
+    `<div class="ctx-item" data-act="copyAll">📋 复制全部内容</div>`,
+    `<div class="ctx-sep"></div>`,
+    `<div class="ctx-item" data-act="find">🔍 查找（高亮跳转）</div>`,
+    `<div class="ctx-item" data-act="findAll">🔍 查找全部（分栏列表）</div>`,
+    `<div class="ctx-sep"></div>`,
+    `<div class="ctx-item" data-act="clear">⌫ 清屏</div>`,
+    `<div class="ctx-item" data-act="bottom">⤓ 跳到底部</div>`,
+  ].join('');
+  // 定位（防溢出右下边界）
+  m.style.display = 'block';
+  const mw = m.offsetWidth, mh = m.offsetHeight;
+  m.style.left = Math.min(x, window.innerWidth - mw - 4) + 'px';
+  m.style.top = Math.min(y, window.innerHeight - mh - 4) + 'px';
+  // 菜单项点击
+  m.querySelectorAll('.ctx-item').forEach(it => {
+    it.onclick = () => {
+      const act = it.dataset.act;
+      hideCtxMenu();
+      if (act === 'copySel' && hasSel) {
+        try { navigator.clipboard.writeText(conn.term.getSelection()); } catch(_){}
+      } else if (act === 'copyAll') {
+        // 遍历 xterm buffer 全部行，join 成纯文本写剪贴板
+        const buf = conn.term.buffer.active;
+        const lines = [];
+        for (let r = 0; r < buf.length; r++) {
+          const ln = buf.getLine(r);
+          if (ln) lines.push(ln.translateToString(true));
+        }
+        try { navigator.clipboard.writeText(lines.join('\n')); showBanner('已复制全部 ' + lines.length + ' 行'); } catch(_){}
+      } else if (act === 'find') {
+        // 右侧面板搜索（高亮跳转，现有行为）
+        $('searchInput').focus(); $('searchInput').select();
+      } else if (act === 'findAll') {
+        toggleTermSearchPane(conn, true);
+        conn.termSearchInput.focus(); conn.termSearchInput.select();
+      } else if (act === 'clear') {
+        try { conn.term.clear(); } catch(e){}
+      } else if (act === 'bottom') {
+        jumpToBottom(conn.portId);
+        try { conn.term.scrollToBottom(); } catch(e){}
+      }
+    };
+  });
+}
+function hideCtxMenu() { _ctxMenu().style.display = 'none'; }
+// 点击菜单外、滚动、ESC 关闭菜单
+document.addEventListener('click', hideCtxMenu);
+document.addEventListener('scroll', hideCtxMenu, true);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') hideCtxMenu(); });
+
+// ---- 串口搜索分栏（仿日志查看器） ----
+function toggleTermSearchPane(conn, show) {
+  conn.termSearchPane.style.display = show ? 'flex' : 'none';
+  conn.wrap.querySelector('.term-search-splitter').style.display = show ? 'block' : 'none';
+  const collapseBtn = conn.wrap.querySelector('.term-search-collapse');
+  if (collapseBtn) collapseBtn.textContent = show ? '▾' : '▴';
+  // 显示/隐藏后终端高度变化，需重新 fit
+  try { conn.fit.fit(); } catch(e){}
+  if (show) conn.termSearchInput.focus();
+}
+async function doTermSearch(conn) {
+  const q = conn.termSearchInput.value.trim();
+  const st = conn.termSearchState;
+  if (!q || !conn.term) return;
+  // 查询未变且有结果 → 跳下一个命中（仿日志交互）
+  if (st.results.length && st.q === q) {
+    st.idx = (st.idx + 1) % st.results.length;
+    jumpToTermHit(conn, st.results[st.idx]);
+    highlightTermHit(conn, st.idx);
+    return;
+  }
+  conn.termSearchCount.textContent = '搜索中…';
+  try {
+    const r = await fetch('/api/search?port_id=' + encodeURIComponent(conn.portId) + '&q=' + encodeURIComponent(q) + '&limit=500');
+    const j = await r.json();
+    if (!j.ok) { conn.termSearchCount.textContent = '失败：' + (j.err || ''); return; }
+    st.q = q; st.results = j.lines || []; st.idx = 0;
+    // 渲染命中行列表
+    conn.termSearchResults.innerHTML = st.results.map((l, idx) => {
+      const text = esc((l.text || '').replace(/\r/g, ''));
+      const tstr = l.ts ? new Date(l.ts).toTimeString().slice(0,8) : '';
+      const tag = l.tag && l.tag !== 'text' ? `<span class="htag">${esc(l.tag)}</span>` : '';
+      return `<div class="hline" data-idx="${idx}" title="${text}">${tag}<span class="hrow">${tstr}</span> ${text}</div>`;
+    }).join('') || '<div style="padding:10px;color:var(--muted);">无命中</div>';
+    conn.termSearchResults.querySelectorAll('.hline').forEach(el => {
+      el.onclick = () => {
+        const idx = +el.dataset.idx;
+        st.idx = idx;
+        jumpToTermHit(conn, st.results[idx]);
+        highlightTermHit(conn, idx);
+      };
+    });
+    const total = j.total || st.results.length;
+    const more = j.has_more ? '（还有更多）' : '';
+    conn.termSearchCount.textContent = `命中 ${total} 处${more}`;
+    if (st.results.length) { jumpToTermHit(conn, st.results[0]); highlightTermHit(conn, 0); }
+  } catch(e) { conn.termSearchCount.textContent = '失败：' + e; }
+}
+// 用命中行文本在 xterm buffer 重新搜索定位（行号会漂移，按内容定位最可靠）
+function jumpToTermHit(conn, hit) {
+  if (!conn.term || !hit) return;
+  const needle = (hit.text || '').trim();
+  if (!needle) return;
+  const buf = conn.term.buffer.active;
+  const pref = needle.slice(0, Math.min(40, needle.length));
+  const match = (t) => t === needle || (t && pref && t.startsWith(pref));
+  // 从底部向上找最近匹配（终端通常看最新输出）
+  let found = -1;
+  for (let r = buf.length - 1; r >= 0; r--) {
+    const ln = buf.getLine(r);
+    if (ln && match(ln.translateToString(true).trim())) { found = r; break; }
+  }
+  if (found < 0) return;
+  try {
+    conn.term.scrollToLine(found);
+    conn.term.select(0, found, conn.term.cols);
+    conn.term.focus();
+  } catch(e){}
+}
+function highlightTermHit(conn, idx) {
+  conn.termSearchResults.querySelectorAll('.hline').forEach((el, i) => el.classList.toggle('active', i === idx));
+}
+// 拖分隔条调分栏高度（仿 initLogSplitter）
+function initTermSplitter(conn) {
+  const splitter = conn.wrap.querySelector('.term-search-splitter');
+  const pane = conn.termSearchPane;
+  const top = conn.wrap.querySelector('.xterm-wrap');
+  let dragging = false, startY = 0, startH = 0;
+  splitter.addEventListener('mousedown', e => {
+    dragging = true; startY = e.clientY; startH = pane.offsetHeight;
+    document.body.style.cursor = 'row-resize'; e.preventDefault();
+  });
+  conn.termSplitMove = e => {
+    if (!dragging) return;
+    const dh = e.clientY - startY;
+    const newH = Math.max(60, Math.min(startH - dh, conn.wrap.clientHeight - 100));
+    pane.style.height = newH + 'px';
+  };
+  conn.termSplitUp = () => {
+    if (dragging) { dragging = false; document.body.style.cursor = ''; try { conn.fit.fit(); } catch(e){} }
+  };
+  document.addEventListener('mousemove', conn.termSplitMove);
+  document.addEventListener('mouseup', conn.termSplitUp);
+}
 
 // ---- 感知标签：实时数据流（全局 SSE） ----
 let senseState = { lines: [], filter: 'ALL' };
