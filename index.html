@@ -1082,12 +1082,23 @@ function buildTerminal(portId, meta) {
   conn.term.open(conn.xtermWrap);
   try { conn.fit.fit(); } catch(e) {}
 
-  // ---- Ctrl+C 复制选中文字（有选中→复制；无选中→发 ^C 中断）----
+  // ---- Ctrl+C 复制选中（有选中→复制；无选中→发 ^C 中断）----
+  // ---- Ctrl+V 粘贴剪贴板内容到串口 ----
   // ---- Ctrl+F 查找全部（打开串口下方搜索分栏，列出全部命中行）----
   conn.term.attachCustomKeyEventHandler(e => {
     if (e.ctrlKey && e.key === 'c' && e.type === 'keydown') {
       const sel = conn.term.getSelection();
       if (sel) { try { navigator.clipboard.writeText(sel); } catch(_){} return false; }
+    }
+    if (e.ctrlKey && (e.key === 'v' || e.key === 'V') && e.type === 'keydown') {
+      // 异步读剪贴板，拿到文本后编码为字节发给串口
+      navigator.clipboard.readText().then(text => {
+        if (text && connections[conn.portId] === conn) {
+          const bytes = Array.from(new TextEncoder().encode(text));
+          termSendRaw(conn.portId, bytes);
+        }
+      }).catch(() => {});
+      return false;  // 阻止 xterm 默认行为
     }
     if (e.ctrlKey && (e.key === 'f' || e.key === 'F') && e.type === 'keydown') {
       toggleTermSearchPane(conn, true);
@@ -1629,9 +1640,12 @@ async function loadHistory(portId) {
   } catch(e) {}
 }
 
-// 点击终端区聚焦 xterm
+// 点击终端区聚焦 xterm（但点击搜索分栏/输入框时不抢焦点，让用户能正常输入）
 document.addEventListener('click', (e) => {
-  if (activePortId && e.target.closest('.output-wrap')) {
+  if (!activePortId) return;
+  // 点击落在搜索分栏内（输入框/结果列表/分隔条）→ 不抢焦点
+  if (e.target.closest('.term-search-pane') || e.target.closest('.term-search-splitter')) return;
+  if (e.target.closest('.output-wrap')) {
     const conn = connections[activePortId];
     if (conn) try { conn.term.focus(); } catch(err){}
   }
