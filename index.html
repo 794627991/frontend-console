@@ -265,8 +265,9 @@
   /* xterm 终端容器 */
   .xterm-wrap {
     flex: 1; min-height: 0; position: relative; background: #000;
-    padding: 4px 6px 36px 6px; overflow: hidden;  /* 底部 36px 留白，约 2 行高，避免内容紧贴底边 */
+    padding: 4px 6px 0 6px; overflow: hidden;
   }
+  .xterm-bottom-pad { flex-shrink: 0; height: 18px; background: #000; }  /* 底部留白 1 行高，独立 div 不受 xterm 重排影响 */
   .xterm-wrap .xterm { height: 100%; }
   .xterm-wrap .xterm-viewport { overflow-y: auto !important; }
   /* xterm 行高/字号与原终端一致 */
@@ -490,7 +491,7 @@
   .history-toolbar select:focus, .history-toolbar input:focus { border-color: var(--accent); }
   .history-toolbar .btn { padding: 4px 8px; font-size: 11px; }
   .history-status { font-size: 10px; color: var(--muted); padding: 2px 4px; }
-  .vlist { flex: 1; overflow-y: auto; position: relative; background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; padding-bottom: 36px; }  /* 底部留白，与终端一致 */
+  .vlist { flex: 1; overflow-y: auto; position: relative; background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; padding-bottom: 18px; }  /* 底部留白 1 行高，与终端一致 */
   .vlist-inner { position: relative; width: 100%; }
   .vlist-viewport { position: absolute; left: 0; right: 0; top: 0; }  /* 跟随 scrollTop 平移的渲染块，行在其中用实际坐标排列 */
   .hline { position: absolute; left: 0; right: 0; top: 0; height: 18px; line-height: 18px; padding: 0 6px; font-family: var(--font-mono); font-size: 11px; color: var(--fg); white-space: pre; overflow: hidden; text-overflow: ellipsis; box-sizing: border-box; }
@@ -851,7 +852,7 @@
           </div>
           <div style="flex:2">
             <label>用户名</label>
-            <input type="text" id="connUser" placeholder="如 root" autocomplete="off" style="margin-top:6px;">
+            <input type="text" id="connUser" placeholder="如 admin" value="admin" autocomplete="off" style="margin-top:6px;">
           </div>
         </div>
         <div class="conn-auth-switch">
@@ -1009,6 +1010,7 @@ function buildTerminal(portId, meta) {
   wrap.innerHTML = `
     <div class="output-wrap">
       <div class="xterm-wrap" data-xterm="${portId}"></div>
+      <div class="xterm-bottom-pad"></div>
       <div class="term-search-splitter"></div>
       <div class="term-search-pane">
         <div class="term-search-head">
