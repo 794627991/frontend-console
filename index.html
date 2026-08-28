@@ -244,7 +244,23 @@
   .tab.active .led { background: var(--neon-green); box-shadow: 0 0 6px var(--neon-green); }
   .tab .close { opacity: 0.4; font-size: 14px; padding: 0 2px; border-radius: 3px; }
   .tab .close:hover { opacity: 1; color: var(--neon-red); }
-  .tab-bar-actions { margin-left: auto; display: flex; gap: 4px; padding-right: 8px; }
+  .tab-bar-actions { margin-left: auto; display: flex; gap: 5px; padding-right: 8px; align-items: center; }
+  /* 终端快捷按钮组（暂停/清屏/^C/^D/跳底）—— 紧凑科技风 */
+  .tab-bar-actions .icon-btn {
+    padding: 5px 9px; min-width: 28px; font-size: 12px; border-radius: 7px;
+    background: var(--bg-card); border: 1px solid var(--border);
+    color: var(--muted); transition: all 0.18s ease;
+    line-height: 1;
+  }
+  .tab-bar-actions .icon-btn:hover {
+    color: var(--accent); border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent-glow), 0 2px 8px rgba(0,212,255,0.15);
+    transform: translateY(-1px);
+  }
+  .tab-bar-actions .icon-btn:active { transform: translateY(0); }
+  /* ^C ^D 控制键按钮用警示色区分 */
+  .tab-bar-actions .icon-btn#btnCtrlC:hover { color: var(--neon-orange); border-color: var(--neon-orange); box-shadow: 0 0 0 1px rgba(255,165,0,0.25); }
+  .tab-bar-actions .icon-btn#btnCtrlD:hover { color: var(--neon-red); border-color: var(--neon-red); box-shadow: 0 0 0 1px rgba(255,64,96,0.25); }
 
   .term-area { flex: 1; display: flex; flex-direction: column; min-height: 0; }
   .term-toolbar {
@@ -274,23 +290,24 @@
   .xterm-wrap .xterm-rows { font-family: var(--font-mono); }
 
   /* ===== Ctrl+右键上下文菜单 ===== */
-  .ctx-menu { position: fixed; z-index: 9999; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 6px 20px rgba(0,0,0,.45); padding: 4px 0; min-width: 180px; display: none; font-size: 12px; user-select: none; }
-  .ctx-item { padding: 7px 14px; cursor: pointer; display: flex; align-items: center; gap: 8px; color: var(--fg); }
+  .ctx-menu { position: fixed; z-index: 9999; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 28px rgba(0,0,0,.5), 0 0 0 1px rgba(0,212,255,0.08); padding: 5px 0; min-width: 190px; display: none; font-size: 12px; user-select: none; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+  .ctx-item { padding: 8px 16px; cursor: pointer; display: flex; align-items: center; gap: 10px; color: var(--fg); transition: background 0.12s, color 0.12s; }
   .ctx-item:hover { background: var(--accent); color: #001020; }
   .ctx-item.disabled { color: var(--muted); cursor: default; }
   .ctx-item.disabled:hover { background: transparent; color: var(--muted); }
-  .ctx-sep { height: 1px; background: var(--border); margin: 4px 0; }
+  .ctx-sep { height: 1px; background: var(--border); margin: 5px 0; }
 
   /* ===== 串口搜索分栏（仿日志查看器 .log-search-*） ===== */
-  .term-search-splitter { height: 5px; background: var(--border); cursor: row-resize; flex-shrink: 0; display: none; }
+  .term-search-splitter { height: 5px; background: var(--border); cursor: row-resize; flex-shrink: 0; display: none; transition: background 0.15s; }
   .term-search-splitter:hover { background: var(--accent); }
   .term-search-pane { display: none; flex-direction: column; height: 35%; min-height: 80px; max-height: 70%; background: var(--bg-card); border-top: 1px solid var(--border); flex-shrink: 0; }
-  .term-search-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
-  .term-search-head input { flex: 1; background: var(--bg-input); border: 1px solid var(--border); color: var(--fg); border-radius: 4px; padding: 4px 8px; font-size: 12px; }
+  .term-search-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0; background: var(--bg-panel); }
+  .term-search-head input { flex: 1; background: var(--bg-input); border: 1px solid var(--border); color: var(--fg); border-radius: 6px; padding: 5px 10px; font-size: 12px; transition: border-color 0.2s, box-shadow 0.2s; }
+  .term-search-head input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); outline: none; }
   .term-search-results { flex: 1; overflow-y: auto; position: relative; background: var(--bg-input); min-height: 40px; }
-  .term-search-results .hline { cursor: pointer; position: static; height: auto; line-height: 1.5; padding: 2px 6px; white-space: pre-wrap; word-break: break-all; }
-  .term-search-results .hline:hover { background: var(--bg-card); }
-  .term-search-results .hline.active { background: var(--accent); color: #001020; }
+  .term-search-results .hline { cursor: pointer; position: static; height: auto; line-height: 1.5; padding: 3px 10px; white-space: pre-wrap; word-break: break-all; border-left: 2px solid transparent; transition: background 0.12s, border-color 0.12s; }
+  .term-search-results .hline:hover { background: var(--bg-card); border-left-color: var(--accent); }
+  .term-search-results .hline.active { background: rgba(0,212,255,0.12); border-left-color: var(--accent); color: var(--accent); }
 
   .line { padding: 0; }
   .line .ts { color: #2a3a55; font-size: 10px; margin-right: 8px; user-select: none; font-family: var(--font-mono); }
@@ -364,12 +381,6 @@
   }
   .panel-toolbar .nav-btn:hover { color: var(--accent); border-color: var(--accent); }
   .panel-toolbar .nav-btn:disabled { opacity: 0.3; cursor: default; }
-  .panel-toolbar .jump-btn {
-    background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px;
-    color: var(--accent); cursor: pointer; padding: 4px 10px; font-size: 12px;
-    white-space: nowrap; transition: all 0.2s;
-  }
-  .panel-toolbar .jump-btn:hover { border-color: var(--accent); box-shadow: 0 0 8px var(--accent-glow); }
 
   /* 标签页 */
   .panel-tabs {
@@ -519,44 +530,6 @@
   .screen-hint .esc:hover { background: rgba(0,212,255,0.12); }
   /* screen-body/screen-row/screen-cursor 已废弃（xterm 接管），样式保留空壳避免引用报错 */
   .screen-body, .screen-row, .screen-cursor { display: none; }
-
-  /* 跳底悬浮按钮 —— 主窗口右下角，科技风 */
-  .jump-bottom-fab {
-    position: absolute; right: 20px; bottom: 20px; z-index: 8;
-    display: none; align-items: center; justify-content: center;
-    width: 44px; height: 44px; border-radius: 14px;
-    background: linear-gradient(135deg, rgba(0,212,255,0.92), rgba(0,153,204,0.88));
-    color: #001020; cursor: pointer;
-    box-shadow: 0 4px 18px rgba(0,212,255,0.45), 0 0 0 1px rgba(0,212,255,0.25) inset;
-    transition: transform 0.25s cubic-bezier(.34,1.56,.64,1), box-shadow 0.25s, opacity 0.25s;
-    opacity: 0.92;
-    backdrop-filter: blur(6px);
-    -webkit-backdrop-filter: blur(6px);
-  }
-  .jump-bottom-fab svg { width: 22px; height: 22px; display: block; }
-  .jump-bottom-fab:hover {
-    transform: translateY(-3px) scale(1.06);
-    box-shadow: 0 8px 26px rgba(0,212,255,0.6), 0 0 0 1px rgba(0,212,255,0.4) inset;
-    opacity: 1;
-  }
-  .jump-bottom-fab:active { transform: translateY(-1px) scale(1.02); }
-  .jump-bottom-fab.show { display: flex; animation: fab-in 0.3s ease; }
-  @keyframes fab-in {
-    from { opacity: 0; transform: translateY(8px) scale(0.85); }
-    to   { opacity: 0.92; transform: translateY(0) scale(1); }
-  }
-  /* 持续呼吸提示 */
-  .jump-bottom-fab.show::after {
-    content: ""; position: absolute; inset: -4px; border-radius: 16px;
-    border: 1.5px solid rgba(0,212,255,0.5);
-    animation: fab-pulse 1.8s ease-out infinite;
-    pointer-events: none;
-  }
-  @keyframes fab-pulse {
-    0%   { opacity: 0.6; transform: scale(0.9); }
-    70%  { opacity: 0; transform: scale(1.25); }
-    100% { opacity: 0; transform: scale(1.25); }
-  }
 
   /* 搜索/关键字高亮 */
   mark.hit { background: rgba(0,212,255,0.18); border-bottom: 2px solid var(--accent); color: inherit; padding: 0 1px; border-radius: 2px; }
@@ -742,7 +715,6 @@
       </div>
       <button class="nav-btn" id="searchPrev" title="上一个 (Shift+Enter)">▲</button>
       <button class="nav-btn" id="searchNext" title="下一个 (Enter)">▼</button>
-      <button class="jump-btn" id="btnJumpBottom" title="跳到底部 (Ctrl+End)">⤓ 跳底</button>
     </div>
     <div class="panel-tabs">
       <div class="panel-tab active" data-pane="sense">● 感知</div>
@@ -1037,10 +1009,9 @@ function buildTerminal(portId, meta) {
     oldestSeq: null,
     loadingMore: false,
     loadingHistory: false,
-    // 全屏模式（top/htop）：仅用于显示提示条 + 抑制跳底 FAB
+    // 全屏模式（top/htop）：仅用于显示提示条
     inScreen: false,
     screenOverlay: null,
-    fab: null,
     // 关键字常驻高亮：记录已加 decoration 的行范围
     kwDecorLastRow: 0,
     kwDecorations: [],
@@ -1130,14 +1101,13 @@ function buildTerminal(portId, meta) {
     if (bytes.length) termSendRaw(portId, bytes);
   });
 
-  // ---- 滚动检测：到底自动跟实时，翻上去显示跳底 FAB ----
+  // ---- 滚动检测：到底自动跟实时 ----
   // 注：深历史翻阅走「📜 历史」tab（虚拟列表，G 级不卡），主 xterm 不再 reset 重写加载更早历史
   conn.term.onScroll(() => {
     const vp = conn.xtermWrap.querySelector('.xterm-viewport');
     if (!vp) return;
     const atBottom = vp.scrollHeight - vp.scrollTop - vp.clientHeight < 30;
     conn.autoScroll = atBottom;
-    conn.fab.classList.toggle('show', !atBottom && !conn.inScreen);
   });
 
   // ---- 全屏模式提示条（xterm 自身处理全屏序列，这里只显示提示 + 退出按钮） ----
@@ -1155,15 +1125,6 @@ function buildTerminal(portId, meta) {
   overlay.querySelector(`[data-screen-esc="${portId}"]`).onclick = () => {
     termSendRaw(portId, [3]);  // Ctrl-C 中断 top
   };
-
-  // ---- 跳底悬浮按钮 ----
-  const fab = document.createElement('div');
-  fab.className = 'jump-bottom-fab';
-  fab.title = '跳到底部 (Ctrl+End)';
-  fab.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v14"/><path d="m6 12 6 6 6-6"/><path d="M5 20h14"/></svg>';
-  fab.onclick = () => jumpToBottom(portId);
-  wrap.querySelector('.output-wrap').appendChild(fab);
-  conn.fab = fab;
 
   // 插入 DOM
   const es = termArea.querySelector('.empty-state');
@@ -1261,7 +1222,6 @@ function enterScreen(portId, conn) {
   if (conn.inScreen) return;
   conn.inScreen = true;
   conn.screenOverlay.classList.add('show');
-  conn.fab.classList.remove('show');
 }
 function exitScreen(portId, conn) {
   if (!conn.inScreen) return;
@@ -1457,7 +1417,6 @@ function jumpToBottom(portId) {
   if (!conn || !conn.term) return;
   conn.autoScroll = true;
   conn.term.scrollToBottom();
-  conn.fab.classList.remove('show');
   try { conn.term.focus(); } catch(e){}
 }
 
@@ -1741,7 +1700,6 @@ $('btnCtrlC').onclick = () => { if (activePortId) termSendRaw(activePortId, [3])
 $('btnCtrlD').onclick = () => { if (activePortId) termSendRaw(activePortId, [4]); };
 $('btnJumpBottomMain').onclick = () => { if (activePortId) jumpToBottom(activePortId); };
 $('btnAbout').onclick = () => showBanner('终端控制台 Pro · xterm.js 终端 + 搜索/感知/分析 · v0.5.0', 5000);
-$('btnJumpBottom').onclick = () => { if (activePortId) jumpToBottom(activePortId); };
 // 打开日志目录（顶栏快捷入口）
 $('btnOpenLogDir').onclick = async () => {
   try {
@@ -2034,7 +1992,6 @@ function showCtxMenu(x, y, conn) {
     `<div class="ctx-item" data-act="findAll">🔍 查找全部（分栏列表）</div>`,
     `<div class="ctx-sep"></div>`,
     `<div class="ctx-item" data-act="clear">⌫ 清屏</div>`,
-    `<div class="ctx-item" data-act="bottom">⤓ 跳到底部</div>`,
   ].join('');
   // 定位（防溢出右下边界）
   m.style.display = 'block';
@@ -2065,9 +2022,6 @@ function showCtxMenu(x, y, conn) {
         conn.termSearchInput.focus(); conn.termSearchInput.select();
       } else if (act === 'clear') {
         try { conn.term.clear(); } catch(e){}
-      } else if (act === 'bottom') {
-        jumpToBottom(conn.portId);
-        try { conn.term.scrollToBottom(); } catch(e){}
       }
     };
   });
