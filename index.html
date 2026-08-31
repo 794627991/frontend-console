@@ -215,6 +215,65 @@
     font-size: 10px; color: var(--muted); display: flex; justify-content: space-between;
   }
 
+  /* ===== 侧边栏底部 TFTP 面板（占侧边栏 1/3 高）===== */
+  .tftp-pane {
+    height: 33%; flex-shrink: 0;
+    border-top: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    background: var(--bg-panel); overflow: hidden;
+  }
+  .tftp-head {
+    padding: 10px 14px 8px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 11px; font-weight: 600; letter-spacing: 1px;
+    color: var(--muted); text-transform: uppercase;
+  }
+  .tftp-toggle {
+    display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+    font-size: 10px; font-weight: 500; letter-spacing: 0;
+    text-transform: none; padding: 3px 10px; border-radius: 10px;
+    border: 1px solid var(--border); background: var(--bg-card);
+    color: var(--muted); transition: all 0.2s; user-select: none;
+  }
+  .tftp-toggle.on {
+    color: var(--neon-green); border-color: rgba(0,255,136,0.4);
+    background: rgba(0,255,136,0.08);
+    box-shadow: 0 0 8px rgba(0,255,136,0.15);
+  }
+  .tftp-toggle .led { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); transition: all 0.3s; }
+  .tftp-toggle.on .led { background: var(--neon-green); box-shadow: 0 0 6px var(--neon-green); }
+  .tftp-dir {
+    padding: 0 14px 8px; flex-shrink: 0;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .tftp-dir .path {
+    flex: 1; min-width: 0; font-family: var(--font-mono); font-size: 10px;
+    color: var(--fg); background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 5px; padding: 5px 8px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    cursor: pointer; title: '点击选择 TFTP 目录';
+  }
+  .tftp-dir .path:hover { border-color: var(--accent); }
+  .tftp-dir .btn {
+    flex-shrink: 0; font-size: 11px; padding: 4px 8px;
+  }
+  .tftp-list { flex: 1; overflow-y: auto; padding: 0 8px 8px; min-height: 0; }
+  .tftp-item {
+    font-size: 11px; padding: 6px 8px; border-radius: 5px;
+    display: flex; align-items: center; gap: 8px; margin-bottom: 2px;
+    font-family: var(--font-mono); color: var(--muted);
+  }
+  .tftp-item .icon { flex-shrink: 0; font-size: 12px; }
+  .tftp-item .name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--fg); }
+  .tftp-item .size { flex-shrink: 0; font-size: 10px; color: var(--muted); }
+  .tftp-item.done .icon { color: var(--neon-green); }
+  .tftp-item.error .icon { color: var(--neon-red); }
+  .tftp-item.error .name { color: var(--neon-red); }
+  .tftp-empty {
+    padding: 14px 10px; text-align: center; font-size: 11px; color: var(--muted);
+  }
+  .tftp-empty .hint { font-size: 10px; margin-top: 4px; color: var(--muted); opacity: 0.7; }
+
   /* ===== 中央终端区 ===== */
   .center { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   .tabs {
@@ -635,6 +694,7 @@
 <script src="vendor/xterm-addon-fit.min.js"></script>
 <script src="vendor/xterm-addon-search.min.js"></script>
 <script src="vendor/xterm-addon-web-links.min.js"></script>
+<script src="vendor/xterm-addon-webgl.min.js"></script>
 </head>
 <body>
 
@@ -672,6 +732,25 @@
         <div class="desc">点击「新建连接」添加串口</div>
       </div>
     </div>
+    <!-- 侧边栏底部 TFTP 面板（1/3 高）：设备与 PC 互传文件 -->
+    <div class="tftp-pane" id="tftpPane">
+      <div class="tftp-head">
+        <span>TFTP</span>
+        <span class="tftp-toggle" id="tftpToggle" title="启动/停止 TFTP 服务">
+          <span class="led"></span><span id="tftpToggleText">已停止</span>
+        </span>
+      </div>
+      <div class="tftp-dir">
+        <span class="path" id="tftpDirPath" title="点击选择 TFTP 目录">选择目录…</span>
+        <button class="btn ghost" id="tftpPickDir" title="选择 TFTP 目录">📂</button>
+      </div>
+      <div class="tftp-list" id="tftpList">
+        <div class="tftp-empty">
+          <div>暂无传输记录</div>
+          <div class="hint">设备端执行 tftp 命令即可上传/下载</div>
+        </div>
+      </div>
+    </div>
     <div class="sidebar-foot">
       <span id="logInfo">日志: serial_logs/</span>
     </div>
@@ -687,6 +766,7 @@
         <button class="btn ghost icon-btn" id="btnCtrlC" title="Ctrl-C">^C</button>
         <button class="btn ghost icon-btn" id="btnCtrlD" title="Ctrl-D">^D</button>
         <button class="btn ghost icon-btn" id="btnJumpBottomMain" title="跳到底部 (Ctrl+End)">⤓</button>
+        <button class="btn ghost icon-btn" id="btnTs" title="时间戳注入（行首加 [HH:MM:SS.mmm]，排障定位用）">⏱</button>
       </div>
     </div>
     <div class="term-area" id="termArea">
@@ -1053,6 +1133,16 @@ function buildTerminal(portId, meta) {
   conn.term.loadAddon(conn.search);
   try { conn.term.loadAddon(new WebLinksAddon.WebLinksAddon()); } catch(e) {}
   conn.term.open(conn.xtermWrap);
+  // WebGL2 renderer：GPU 加速 glyph 渲染，高吞吐滚动不再卡（Tabby/Windows Terminal 同思路）。
+  // 加载失败（无 WebGL2/驱动异常）自动回退默认 DOM 渲染，不影响功能
+  try {
+    if (window.WebglAddon) {
+      const webgl = new WebglAddon.WebglAddon();
+      webgl.onContextLoss(() => { try { webgl.dispose(); } catch(_){} });
+      conn.term.loadAddon(webgl);
+      conn._webgl = webgl;
+    }
+  } catch(e) {}
   try { conn.fit.fit(); } catch(e) {}
 
   // ---- Ctrl+C 复制选中（有选中→复制；无选中→发 ^C 中断）----
@@ -1064,13 +1154,8 @@ function buildTerminal(portId, meta) {
       if (sel) { try { navigator.clipboard.writeText(sel); } catch(_){} return false; }
     }
     if (e.ctrlKey && (e.key === 'v' || e.key === 'V') && e.type === 'keydown') {
-      // 异步读剪贴板，拿到文本后编码为字节发给串口
-      navigator.clipboard.readText().then(text => {
-        if (text && connections[conn.portId] === conn) {
-          const bytes = Array.from(new TextEncoder().encode(text));
-          termSendRaw(conn.portId, bytes);
-        }
-      }).catch(() => {});
+      // 异步读剪贴板（原生 Win32，无 WebView2 权限弹窗），拿到文本后编码为字节发给串口
+      _pasteToConn(conn);
       return false;  // 阻止 xterm 默认行为
     }
     if (e.ctrlKey && (e.key === 'f' || e.key === 'F') && e.type === 'keydown') {
@@ -1214,9 +1299,56 @@ function appendRaw(portId, text) {
   if (!conn || conn.paused) return;
   // 历史还在加载时先缓冲 raw，等历史写完再 flush，避免实时数据插到历史前面/重复
   if (conn.loadingHistory) { conn.pendingRaw += text; return; }
-  conn.term.write(text);
-  // 关键字常驻高亮：对新写入的行扫描
-  scheduleKwHighlight(conn);
+  // 写合并：多个 SSE chunk 攒一帧再一次性 write，减少 xterm.write 调用次数。
+  // 高吞吐时每次 write 都有同步解析开销，合并后渲染次数 ≈ 帧率（60fps），输入不再卡顿。
+  // flush 调度用 rAF + 500ms setTimeout 双保险：窗口最小化时 rAF 停发，
+  // setTimeout 仍被节流执行（~1s 一次），队列持续消化不会无界堆积
+  conn._writeQueue = (conn._writeQueue || '') + text;
+  if (conn._writeQueue.length > 1048576) {  // 1MB 保险上限：超限同步 flush 防极端堆积
+    const data = conn._writeQueue;
+    conn._writeQueue = '';
+    if (conn._writePending) { clearTimeout(conn._writeFlushTimer); conn._writePending = false; }
+    try { conn.term.write(data); } catch(e) {}
+    return;
+  }
+  if (conn._writePending) return;
+  conn._writePending = true;
+  const flush = () => {
+    if (connections[portId] !== conn) { conn._writeQueue = ''; return; }
+    conn._writePending = false;
+    const data = conn._writeQueue;
+    conn._writeQueue = '';
+    if (data && !conn.paused) {
+      conn.term.write(conn.tsEnabled && !conn.inScreen ? _injectTs(data) : data);
+      // 关键字常驻高亮：对新写入的行扫描
+      scheduleKwHighlight(conn);
+    }
+  };
+  requestAnimationFrame(flush);
+  conn._writeFlushTimer = setTimeout(flush, 500);  // 后台兜底（rAF 停发时最多 500ms 必 flush）
+}
+// 逐行时间戳注入（tio 同款，BSP 排障刚需）：每行行首加 [HH:MM:SS.mmm]。
+// 只处理行式输出：全屏应用（top/htop，inScreen）期间原样透传，不破坏光标控制。
+// 按 \n 切分，每个非首段的行开始处插时间戳（行首 \r 先剥离再放回）。
+// 退格/回车覆盖等字符级控制在行内原样保留。
+function _tsNow() {
+  const d = new Date();
+  return d.toTimeString().slice(0, 8) + '.' + String(d.getMilliseconds()).padStart(3, '0');
+}
+function _injectTs(data) {
+  const parts = data.split('\n');
+  const ts = '\x1b[90m[' + _tsNow() + ']\x1b[0m ';
+  let out = parts[0];
+  for (let i = 1; i < parts.length; i++) {
+    out += '\n';
+    let seg = parts[i];
+    if (seg === '') continue;         // 空段（连续 \n）：不注入
+    let pre = '';
+    if (seg.startsWith('\r')) { pre = '\r'; seg = seg.slice(1); }
+    if (seg === '') { out += pre; continue; }  // 行只有 \r：不注入
+    out += pre + ts + seg;
+  }
+  return out;
 }
 function enterScreen(portId, conn) {
   if (conn.inScreen) return;
@@ -1248,7 +1380,22 @@ function trimDom(conn) {}
 function renderTermInput(conn) {}
 
 function termSendRaw(portId, bytes) {
-  fetch('/api/send_raw', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: portId, bytes})});
+  // 微批合并：连续按键（打字/粘贴）攒 ≤8ms 一批一次 POST。
+  // 之前每键一次 fetch：WebView2 网络栈 + Flask 线程开销叠加，打字时输入明显迟缓。
+  // 8ms < 人感知阈值且不影响交互命令（回车后的命令行完整性由设备端解析）。
+  let b = connections[portId];
+  if (!b) {  // 未知连接（已关闭）：直接发，走原路径
+    fetch('/api/send_raw', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: portId, bytes})});
+    return;
+  }
+  b._sendQ = (b._sendQ || []).concat(bytes);
+  if (b._sendTimer) return;
+  b._sendTimer = setTimeout(() => {
+    b._sendTimer = null;
+    const q = b._sendQ; b._sendQ = [];
+    if (!q.length || connections[portId] !== b) return;
+    fetch('/api/send_raw', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: portId, bytes: q})});
+  }, 8);
 }
 
 function connectSSE(portId, conn) {
@@ -1295,7 +1442,9 @@ function highlightNewKw(conn) {
   if (!conn.term || !conn.term.registerDecoration) return;
   const buf = conn.term.buffer.active;
   const totalRows = buf.length;
-  const fromRow = Math.max(0, conn.kwDecorLastRow - 1); // 回溯一行防跨行漏扫
+  // 增量扫描窗口：只扫自上次以来的新行 + 回溯 1 行防跨行漏扫。
+  // 单次写入超大（如 loadBuffer 500 行）时窗口同样生效——首次从 0 开始全量属正常。
+  const fromRow = Math.max(0, (conn.kwDecorLastRow || 0) - 1);
   for (let r = fromRow; r < totalRows; r++) {
     const line = buf.getLine(r);
     if (!line) continue;
@@ -1327,8 +1476,11 @@ function highlightNewKw(conn) {
     }
   }
   conn.kwDecorLastRow = totalRows;
-  if (conn.kwDecorations.length > 5000) {
-    const drop = conn.kwDecorations.splice(0, conn.kwDecorations.length - 5000);
+  // decoration 数量硬上限：每个 decoration 是一个 DOM overlay，超量是渲染卡顿重灾区。
+  // 3000 折中：错误密集日志（几百行全是 error/warning）不丢高亮，又不至于拖垮渲染。
+  // 超限丢最旧的（滚动出视野的早已无用）
+  if (conn.kwDecorations.length > 3000) {
+    const drop = conn.kwDecorations.splice(0, conn.kwDecorations.length - 3000);
     drop.forEach(d => { try { d.dispose(); } catch(e){} });
   }
 }
@@ -1490,7 +1642,10 @@ function closeConnection(portId) {
   const conn = connections[portId];
   if (conn) {
     if (conn.sse) conn.sse.close();
+    if (conn._webgl) { try { conn._webgl.dispose(); } catch(e){} }  // 释放 GPU 资源
     if (conn.term) { try { conn.term.dispose(); } catch(e){} }
+    // 微批发送的 pending 定时器清理（防关闭后误发）
+    if (conn._sendTimer) { clearTimeout(conn._sendTimer); conn._sendTimer = null; }
     // 移除串口搜索分栏的 document 级监听器，避免泄漏
     if (conn.termSplitMove) document.removeEventListener('mousemove', conn.termSplitMove);
     if (conn.termSplitUp) document.removeEventListener('mouseup', conn.termSplitUp);
@@ -1517,47 +1672,72 @@ function refreshSidebar() {
   const ids = Object.keys(connections);
   $('portCount').textContent = ids.length;
   if (!ids.length) {
-    portList.innerHTML = '<div class="empty-state" style="padding:30px 10px;"><div class="desc">点击「新建连接」添加连接</div></div>';
+    if (_sidebarKey !== 'empty') {
+      _sidebarKey = 'empty';
+      portList.innerHTML = '<div class="empty-state" style="padding:30px 10px;"><div class="desc">点击「新建连接」添加连接</div></div>';
+    }
     return;
   }
-  portList.innerHTML = '';
   // 排序：串口[0] < SSH[1] < 日志[2]（sortKeyFn 全局定义，closeConnection/closeLogViewer 复用）
   ids.sort((a, b) => {
     const ka = sortKeyFn(a), kb = sortKeyFn(b);
     return ka[0] !== kb[0] ? ka[0] - kb[0] : (ka[1] < kb[1] ? -1 : ka[1] > kb[1] ? 1 : 0);
   });
-  ids.forEach(pid => {
-    const conn = connections[pid];
-    const item = document.createElement('div');
-    item.className = 'port-item connected' + (pid === activePortId ? ' active' : '');
-    item.dataset.portId = pid;
-    const isSSH = conn.meta.kind === 'ssh';
-    const isLog = conn.meta.kind === 'log';
-    const descText = isSSH ? `SSH · ${conn.meta.host || ''}` : isLog ? `📜 日志` : `${conn.meta.baud || ''} baud`;
-    const rowCount = conn.term ? conn.term.buffer.active.length : (conn.logState ? conn.logState.total : 0);
-    item.innerHTML = `
-      <span class="led"></span>
-      <div class="info">
-        <div class="name">${esc(conn.meta.label || pid)}</div>
-        <div class="desc">${esc(descText)} · <span class="baud">${rowCount} 行</span></div>
-      </div>
-      <div class="actions"><button data-close="${pid}" title="${isLog ? '关闭' : '断开'}">✕</button></div>
-    `;
-    item.onclick = (e) => {
-      if (e.target.dataset.close) { e.stopPropagation(); (isLog ? closeLogViewer(pid) : closeConnection(pid)); return; }
-      switchTab(pid);
-    };
-    portList.appendChild(item);
-  });
-  // 标签栏同序重排（复用全局 sortKeyFn）
+  // 脏检查：连接集合 + active tab 变化才重建整个列表 DOM；
+  // 行数（每次刷新必变）只更新对应 span 文本，避免 5s 一次全量 innerHTML 重建叠加重排
+  const key = ids.join('|') + '#' + activePortId;
+  if (key !== _sidebarKey) {
+    _sidebarKey = key;
+    portList.innerHTML = '';
+    ids.forEach(pid => {
+      const conn = connections[pid];
+      const item = document.createElement('div');
+      item.className = 'port-item connected' + (pid === activePortId ? ' active' : '');
+      item.dataset.portId = pid;
+      const isSSH = conn.meta.kind === 'ssh';
+      const isLog = conn.meta.kind === 'log';
+      const descText = isSSH ? `SSH · ${conn.meta.host || ''}` : isLog ? `📜 日志` : `${conn.meta.baud || ''} baud`;
+      const rowCount = conn.term ? conn.term.buffer.active.length : (conn.logState ? conn.logState.total : 0);
+      item.innerHTML = `
+        <span class="led"></span>
+        <div class="info">
+          <div class="name">${esc(conn.meta.label || pid)}</div>
+          <div class="desc">${esc(descText)} · <span class="baud" data-rows>${rowCount} 行</span></div>
+        </div>
+        <div class="actions"><button data-close="${pid}" title="${isLog ? '关闭' : '断开'}">✕</button></div>
+      `;
+      item.onclick = (e) => {
+        if (e.target.dataset.close) { e.stopPropagation(); (isLog ? closeLogViewer(pid) : closeConnection(pid)); return; }
+        switchTab(pid);
+      };
+      portList.appendChild(item);
+    });
+  } else {
+    // 只更新行数（轻量：改 textContent，不重建 DOM）
+    ids.forEach(pid => {
+      const el = portList.querySelector(`.port-item[data-port-id="${CSS.escape(pid)}"] [data-rows]`);
+      if (!el) return;
+      const conn = connections[pid];
+      const n = conn.term ? conn.term.buffer.active.length : (conn.logState ? conn.logState.total : 0);
+      const t = n + ' 行';
+      if (el.textContent !== t) el.textContent = t;
+    });
+  }
+  // 标签栏同序重排（复用全局 sortKeyFn）——当前顺序已一致时跳过，不动 DOM
   const tabEls = Array.from(tabs.querySelectorAll('.tab'));
-  tabEls.sort((a, b) => {
-    const ka = sortKeyFn(a.dataset.portId), kb = sortKeyFn(b.dataset.portId);
-    return ka[0] !== kb[0] ? ka[0] - kb[0] : (ka[1] < kb[1] ? -1 : ka[1] > kb[1] ? 1 : 0);
-  });
-  const actions = tabs.querySelector('.tab-bar-actions');
-  tabEls.forEach(t => tabs.insertBefore(t, actions));
+  const curIds = tabEls.map(t => t.dataset.portId);
+  const wantIds = ids.concat(curIds.filter(id => !connections[id]));
+  const needSort = curIds.length !== wantIds.length || curIds.some((id, i) => id !== wantIds[i]);
+  if (needSort) {
+    tabEls.sort((a, b) => {
+      const ka = sortKeyFn(a.dataset.portId), kb = sortKeyFn(b.dataset.portId);
+      return ka[0] !== kb[0] ? ka[0] - kb[0] : (ka[1] < kb[1] ? -1 : kb[1] > kb[1] ? 1 : 0);
+    });
+    const actions = tabs.querySelector('.tab-bar-actions');
+    tabEls.forEach(t => tabs.insertBefore(t, actions));
+  }
 }
+let _sidebarKey = '';
 
 async function refreshGlobalStatus() {
   try {
@@ -1697,6 +1877,14 @@ $('btnNewLog').onclick = async () => {
   showBanner('已开新日志：' + (j.log_path || ''));
 };
 $('btnCtrlC').onclick = () => { if (activePortId) termSendRaw(activePortId, [3]); };
+$('btnTs').onclick = () => {
+  if (!activePortId) return;
+  const conn = connections[activePortId];
+  if (!conn || conn.meta.kind === 'log') return;
+  conn.tsEnabled = !conn.tsEnabled;
+  $('btnTs').classList.toggle('active', conn.tsEnabled);
+  showBanner(conn.tsEnabled ? '已开启时间戳注入（新输出行首加 [HH:MM:SS.mmm]）' : '已关闭时间戳注入');
+};
 $('btnCtrlD').onclick = () => { if (activePortId) termSendRaw(activePortId, [4]); };
 $('btnJumpBottomMain').onclick = () => { if (activePortId) jumpToBottom(activePortId); };
 $('btnAbout').onclick = () => showBanner('终端控制台 Pro · xterm.js 终端 + 搜索/感知/分析 · v0.5.0', 5000);
@@ -1980,6 +2168,39 @@ $('searchPrev').onclick = () => gotoSearchMark(-1);
 $('searchNext').onclick = () => gotoSearchMark(1);
 
 // ---- Ctrl+右键上下文菜单 ----
+// 原生读剪贴板粘贴到连接（Ctrl+V 与菜单「粘贴到终端」共用）。
+// 走 pywebview js_api 的 Win32 读剪贴板，绕开 navigator.clipboard.readText
+// 首次触发的 WebView2「允许粘贴吗」权限弹窗。
+function _pasteToConn(conn, notify) {
+  const doPaste = (text) => {
+    if (!text) { if (notify) showBanner('剪贴板为空'); return; }
+    if (connections[conn.portId] !== conn) return;
+    // 多行粘贴警告（Tabby 同款防误操作）：>1 行或超 500 字符需确认，
+    // 防止误把配置文件/脚本整段灌进设备破坏现场
+    const lines = text.split(/\r?\n/);
+    if (lines.length > 1 || text.length > 500) {
+      const preview = text.length > 60 ? text.slice(0, 60) + '…' : text;
+      const desc = lines.length > 1
+        ? `即将粘贴 ${lines.length} 行 / ${text.length} 字符（首行: ${preview.replace(/\n/g, ' ⏎ ')}）`
+        : `即将粘贴 ${text.length} 字符（${preview}）`;
+      if (!confirm(desc + '\n\n确定粘贴到终端？')) {
+        if (notify) showBanner('已取消粘贴');
+        return;
+      }
+    }
+    const bytes = Array.from(new TextEncoder().encode(text));
+    termSendRaw(conn.portId, bytes);
+    if (notify) showBanner('已粘贴 ' + text.length + ' 字符');
+  };
+  if (window.pywebview && pywebview.api && pywebview.api.read_clipboard) {
+    pywebview.api.read_clipboard().then(doPaste).catch(() => {
+      if (notify) showBanner('读取剪贴板失败');
+    });
+  } else {
+    // pywebview bridge 未就绪（页面加载早期）时兜底走 Web API
+    navigator.clipboard.readText().then(doPaste).catch(() => {});
+  }
+}
 const _ctxMenu = () => $('ctxMenu');
 function showCtxMenu(x, y, conn) {
   const m = _ctxMenu();
@@ -1987,6 +2208,7 @@ function showCtxMenu(x, y, conn) {
   m.innerHTML = [
     `<div class="ctx-item${hasSel ? '' : ' disabled'}" data-act="copySel">📋 复制选中</div>`,
     `<div class="ctx-item" data-act="copyAll">📋 复制全部内容</div>`,
+    `<div class="ctx-item" data-act="paste">📥 粘贴到终端</div>`,
     `<div class="ctx-sep"></div>`,
     `<div class="ctx-item" data-act="find">🔍 查找（高亮跳转）</div>`,
     `<div class="ctx-item" data-act="findAll">🔍 查找全部（分栏列表）</div>`,
@@ -2014,6 +2236,9 @@ function showCtxMenu(x, y, conn) {
           if (ln) lines.push(ln.translateToString(true));
         }
         try { navigator.clipboard.writeText(lines.join('\n')); showBanner('已复制全部 ' + lines.length + ' 行'); } catch(_){}
+      } else if (act === 'paste') {
+        // 原生读剪贴板（无权限弹窗），编码后作为原始字节发到串口/SSH
+        _pasteToConn(conn, true);
       } else if (act === 'find') {
         // 右侧面板搜索（高亮跳转，现有行为）
         $('searchInput').focus(); $('searchInput').select();
@@ -2164,13 +2389,22 @@ async function refreshMcpInfo() {
     if (j.backend_url) { dot.className = 'dot on'; txt.textContent = 'MCP 后端运行中'; }
     else { dot.className = 'dot'; txt.textContent = 'MCP 后端未运行'; }
     $('mcpBackendUrl').textContent = j.backend_url || '—（endpoint.json 未找到）';
-    // 工具列表
+    // 脏检查：工具列表内容没变就跳过 innerHTML 重建（5s 一次全量重建会叠加重排/ GC，输入时感知卡顿）
     const tools = j.tools || [];
-    $('mcpTools').innerHTML = tools.length ? tools.map(t =>
-      `<div class="mcp-tool"><span class="tname">${esc(t.name)}</span><span class="tdesc">${esc(t.desc)}</span></div>`).join('') : '<div class="mcp-empty">—</div>';
+    const toolsKey = tools.map(t => t.name).join(',');
+    if (toolsKey !== _mcpToolsKey) {
+      _mcpToolsKey = toolsKey;
+      $('mcpTools').innerHTML = tools.length ? tools.map(t =>
+        `<div class="mcp-tool"><span class="tname">${esc(t.name)}</span><span class="tdesc">${esc(t.desc)}</span></div>`).join('') : '<div class="mcp-empty">—</div>';
+    }
     // 最近调用
     const calls = j.recent_calls || [];
     const callsEl = $('mcpCalls');
+    // key 用最后一条的 ts+tool+args+总数：秒精度 ts 同秒两次调用 + 封顶 20 条后 len 不变都会撞 key
+    const last = calls[calls.length - 1];
+    const callsKey = last ? `${last.ts}|${last.tool}|${last.args}|${calls.length}` : '0';
+    if (callsKey === _mcpCallsKey) return;  // 无新调用，跳过重建
+    _mcpCallsKey = callsKey;
     if (!calls.length) { callsEl.innerHTML = '<div class="mcp-empty">暂无调用记录（Claude Code 调用 MCP 工具后会显示）</div>'; return; }
     callsEl.innerHTML = calls.slice(-20).reverse().map(c => {
       const d = new Date(c.ts * 1000);
@@ -2179,6 +2413,7 @@ async function refreshMcpInfo() {
     }).join('');
   } catch(e) {}
 }
+let _mcpToolsKey = '', _mcpCallsKey = '';
 function kwClassOf(text) {
   const t = text.toLowerCase();
   if (/\b(error|fail|panic|fatal|denied|refused|abort|crash|oom|killed)\b/.test(t)) return 'kw-error';
@@ -2857,6 +3092,100 @@ function closeLogViewer(portId) {
 }
 
 // ============================================================
+// ============================================================
+// TFTP 面板（侧边栏底部）
+// ============================================================
+let _tftpRunning = false;
+let _tftpListKey = '';
+function _fmtSize(n) {
+  if (n == null) return '';
+  if (n >= 1048576) return (n / 1048576).toFixed(1) + 'MB';
+  if (n >= 1024) return (n / 1024).toFixed(1) + 'KB';
+  return n + 'B';
+}
+async function refreshTftp() {
+  try {
+    const r = await fetch('/api/tftp/status');
+    const j = await r.json();
+    if (!j.ok) return;
+    _tftpRunning = j.running;
+    const tg = $('tftpToggle');
+    tg.classList.toggle('on', j.running);
+    $('tftpToggleText').textContent = j.running ? '运行中' : '已停止';
+    if (j.root_dir) $('tftpDirPath').textContent = j.root_dir;
+    // 渲染传输记录（有记录时），无记录则显示目录文件数提示
+    // 脏检查：状态/目录/记录摘要没变就跳过 innerHTML 重建（3s 轮询全量重建叠加重排）
+    const list = $('tftpList');
+    const tKey = JSON.stringify([j.running, j.root_dir,
+      (j.transfers || []).map(t => [t.status, t.bytes, t.filename]),
+      j.transfers && j.transfers.length ? '' : (j.files || []).length]);
+    if (tKey === _tftpListKey) return;
+    _tftpListKey = tKey;
+    if (j.transfers && j.transfers.length) {
+      list.innerHTML = j.transfers.map(t => {
+        const icon = t.status === 'done' ? '✓' : t.status === 'error' ? '✗' : (t.kind === 'get' ? '⬆' : '⬇');
+        const size = t.status === 'done'
+          ? _fmtSize(t.bytes)
+          : (t.total ? `${_fmtSize(t.bytes)}/${_fmtSize(t.total)}` : _fmtSize(t.bytes));
+        const tip = t.kind === 'get' ? '设备下载' : '设备上传';
+        return `<div class="tftp-item ${t.status}" title="${tip} · ${t.peer}${t.err ? ' · ' + t.err : ''}">
+          <span class="icon">${icon}</span>
+          <span class="name">${t.filename}</span>
+          <span class="size">${size}</span>
+        </div>`;
+      }).join('');
+    } else {
+      const n = (j.files || []).length;
+      list.innerHTML = `<div class="tftp-empty">
+        <div>暂无传输记录${n ? ` · 目录内 ${n} 个文件` : ''}</div>
+        <div class="hint">设备端执行 tftp 命令即可上传/下载</div>
+      </div>`;
+    }
+  } catch(e) {}
+}
+$('tftpToggle').onclick = async () => {
+  try {
+    const r = await fetch(`/api/tftp/${_tftpRunning ? 'stop' : 'start'}`, {method:'POST'});
+    const j = await r.json();
+    if (j.msg) showBanner(j.msg);
+    refreshTftp();
+  } catch(e) { showBanner('TFTP 操作失败', 4000, true); }
+};
+async function pickTftpDir() {
+  // 优先原生对话框（pywebview js_api），拿得到绝对路径
+  try {
+    if (window.pywebview && pywebview.api && pywebview.api.pick_dir) {
+      const dir = await pywebview.api.pick_dir();
+      if (dir) return setTftpDir(dir);
+    }
+  } catch(e) {}
+  // 兜底：手动输入
+  const dir = prompt('TFTP 目录（绝对路径）：', $('tftpDirPath').textContent === '选择目录…' ? '' : $('tftpDirPath').textContent);
+  if (dir) setTftpDir(dir.trim());
+}
+async function setTftpDir(dir) {
+  try {
+    const r = await fetch('/api/tftp/set_dir', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({root_dir: dir})});
+    const j = await r.json();
+    if (j.ok) { showBanner('TFTP 目录已切换: ' + dir); refreshTftp(); }
+    else showBanner(j.err || '目录无效', 4000, true);
+  } catch(e) { showBanner('设置目录失败', 4000, true); }
+}
+$('tftpPickDir').onclick = pickTftpDir;
+$('tftpDirPath').onclick = pickTftpDir;
+refreshTftp();
+// 传输进行中 1s 轮询进度，空闲 10s 兜底（常态零重排）。
+// 进行中 = 列表里有非 done/error 状态的项（refreshTftp 渲染时已排除 done/error class）
+function _tftpHasActive() {
+  const items = $('tftpList').querySelectorAll('.tftp-item');
+  for (const it of items) if (!it.classList.contains('done') && !it.classList.contains('error')) return true;
+  return false;
+}
+setInterval(refreshTftp, 10000);
+setInterval(() => { if (_tftpHasActive()) refreshTftp(); }, 1000);
+
 // 初始化
 // ============================================================
 // 性能计时：页面加载各阶段上报后端（诊断启动慢）
@@ -2878,9 +3207,11 @@ refreshGlobalStatus();
 connectAiSSE();
 refreshMcpInfo();
 _reportPerf();  // 初始化完成，上报计时
-setInterval(refreshGlobalStatus, 3000);
-setInterval(refreshMcpInfo, 5000);  // MCP 状态面板：后端地址/工具/最近调用
-setInterval(() => { if (activePortId) refreshSidebar(); }, 5000);
+// 轮询降载：连接增删时 refreshSidebar/refreshGlobalStatus 已被事件调用处触发，
+// 周期轮询只作兜底，全部放宽（3s→15s / 5s→30s），减少常态 HTTP + 重排叠加（输入卡顿 Contributor）
+setInterval(refreshGlobalStatus, 15000);
+setInterval(refreshMcpInfo, 30000);  // MCP 状态面板：后端地址/工具/最近调用
+setInterval(() => { if (activePortId) refreshSidebar(); }, 30000);
 setInterval(() => {
   // 感知面板可见时刷新分析（用户停在分析标签）
   const activePane = document.querySelector('.panel-tab.active');

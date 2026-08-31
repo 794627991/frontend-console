@@ -383,6 +383,70 @@ def tool_disconnect(url, port_id):
     return f"断开失败: {j.get('err', '未知')}"
 
 
+# ---- TFTP（设备与 PC 互传文件）----
+def _fmt_size(n):
+    if n is None:
+        return "?"
+    if n >= 1048576:
+        return f"{n/1048576:.1f}MB"
+    if n >= 1024:
+        return f"{n/1024:.1f}KB"
+    return f"{n}B"
+
+def tool_tftp_status(url):
+    """TFTP 服务状态：运行中/目录/目录文件列表/最近传输记录。"""
+    j = _get(url, "/api/tftp/status")
+    if not j.get("ok"):
+        return f"查询失败: {j.get('err', '未知')}"
+    out = []
+    out.append(f"TFTP: {'🟢 运行中' if j.get('running') else '🔴 已停止'}")
+    out.append(f"目录: {j.get('root_dir', '?')}")
+    files = j.get("files") or []
+    if files:
+        out.append(f"目录内 {len(files)} 个文件（设备可下载）:")
+        for f in files[:20]:
+            out.append(f"  📄 {f.get('name')}  {_fmt_size(f.get('size'))}")
+    transfers = j.get("transfers") or []
+    if transfers:
+        out.append(f"最近传输 {len(transfers)} 次:")
+        for t in transfers[:10]:
+            kind = "设备下载(get)" if t.get("kind") == "get" else "设备上传(put)"
+            status = t.get("status", "?")
+            size = _fmt_size(t.get("bytes")) + (f"/{_fmt_size(t.get('total'))}" if t.get("total") else "")
+            line = f"  [{status}] {kind} {t.get('filename')} {size} from {t.get('peer', '?')}"
+            if t.get("err"):
+                line += f"  err={t['err']}"
+            out.append(line)
+    else:
+        out.append("暂无传输记录")
+    out.append("设备端用法示例: tftp -g -r 文件名 <PC的IP>  (下载) / tftp -p -l 文件名 <PC的IP>  (上传)")
+    return "\n".join(out)
+
+def tool_tftp_start(url, root_dir=None):
+    """启动 TFTP 服务（UDP 69）。设备端即可上传/下载文件。"""
+    body = {"root_dir": root_dir} if root_dir else {}
+    j = _post(url, "/api/tftp/start", body)
+    if not j.get("ok"):
+        return f"启动失败: {j.get('msg', j.get('err', '未知'))}（UDP 69 端口可能被占用，或需管理员权限）"
+    return f"{j.get('msg', 'TFTP 已启动')}\n目录: {j.get('root_dir', '')}\n设备端: tftp -g -r <文件> <本机IP> 下载 / tftp -p -l <文件> <本机IP> 上传"
+
+def tool_tftp_stop(url):
+    """停止 TFTP 服务。"""
+    j = _post(url, "/api/tftp/stop", {})
+    if j.get("ok"):
+        return j.get("msg", "已停止")
+    return f"停止失败: {j.get('err', '未知')}"
+
+def tool_tftp_set_dir(url, root_dir):
+    """设置/切换 TFTP 根目录（设备上传的文件落在这里，设备下载的文件从这里读）。"""
+    j = _post(url, "/api/tftp/set_dir", {"root_dir": root_dir})
+    if not j.get("ok"):
+        return f"设置失败: {j.get('err', j.get('msg', '未知'))}"
+    files = j.get("files") or []
+    extra = f"，目录内 {len(files)} 个文件" if files else ""
+    return f"TFTP 目录已切换: {j.get('msg', root_dir)}{extra}"
+
+
 # ---- MCP stdio 协议 ----
 # 用最小化 JSON-RPC 实现，避免依赖 mcp SDK（纯标准库即可被 Claude Code 调用）。
 # MCP 协议: https://spec.modelcontextprotocol.io/
@@ -522,6 +586,37 @@ _TOOLS = [
             "required": ["port_id"],
         },
     },
+    {
+        "name": "tftp_status",
+        "description": "查询 TFTP 服务状态：运行中/根目录/目录内文件列表/最近传输记录（设备上传下载历史）。BSP 调试常用 TFTP 给设备传固件/配置文件。",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "tftp_start",
+        "description": "启动 TFTP 服务（UDP 69 端口）。启动后设备端可用 tftp 命令上传/下载文件：tftp -g -r <文件名> <PC的IP>（设备下载），tftp -p -l <文件名> <PC的IP>（设备上传）。注意：Windows 防火墙首次可能弹窗，需允许。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "root_dir": {"type": "string", "description": "TFTP 根目录（可选，不传用当前设置）"},
+            },
+        },
+    },
+    {
+        "name": "tftp_stop",
+        "description": "停止 TFTP 服务。",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "tftp_set_dir",
+        "description": "设置/切换 TFTP 根目录。设备上传的文件落在这里，设备下载的文件从这里读。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "root_dir": {"type": "string", "description": "目录绝对路径"},
+            },
+            "required": ["root_dir"],
+        },
+    },
 ]
 
 
@@ -558,6 +653,14 @@ def _dispatch(url, name, args):
         return tool_diff_logs(url, need("a"), need("b"), args.get("mode", "summary"), args.get("context", 2))
     if name == "disconnect":
         return tool_disconnect(url, need("port_id"))
+    if name == "tftp_status":
+        return tool_tftp_status(url)
+    if name == "tftp_start":
+        return tool_tftp_start(url, args.get("root_dir"))
+    if name == "tftp_stop":
+        return tool_tftp_stop(url)
+    if name == "tftp_set_dir":
+        return tool_tftp_set_dir(url, need("root_dir"))
     return f"未知工具: {name}"
 
 

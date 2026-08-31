@@ -120,7 +120,28 @@ def _old_instance_alive():
         return False
 
 
+def _run_mcp_mode():
+    """MCP stdio 模式：把 mcp_server.py 的逻辑作为子模块运行。
+    PyInstaller --windowed 下 sys.stdin/stdout 可能为 None，用 fd 重新包装。"""
+    # windowed exe 的 sys.stdin/stdout 可能是 None，但 fd 0/1 存在（subprocess pipe）
+    if sys.stdin is None:
+        try: sys.stdin = open(0, 'r', encoding='utf-8')
+        except Exception: pass
+    if sys.stdout is None:
+        try: sys.stdout = open(1, 'w', encoding='utf-8')
+        except Exception: pass
+    # 延迟 import，避免 GUI 模式加载 mcp_server 的依赖
+    import mcp_server
+    mcp_server.main()
+
+
 def main():
+    # --mcp 模式：作为 MCP stdio server 运行（集成进 exe，无需单独 python 脚本）。
+    # PyInstaller --windowed(console=False) 下 sys.stdin/stdout 可能为 None，
+    # 但被 subprocess pipe 启动时 fd 0/1 存在，用 open(fd) 重新包装。
+    if '--mcp' in sys.argv:
+        _run_mcp_mode()
+        return
     if not acquire_single_instance():
         # mutex 提示已有实例。先探活旧实例的 HTTP 服务：
         # 若旧实例正常响应，聚焦其窗口后静默退出；
@@ -226,6 +247,51 @@ def main():
             except Exception as e:
                 return ""
             return ""
+
+        def pick_dir(self):
+            """弹出原生目录选择对话框，返回选中目录的绝对路径或空字符串。"""
+            try:
+                import webview
+                result = webview.windows[0].create_file_dialog(
+                    webview.FOLDER_DIALOG,
+                    allow_multiple=False,
+                )
+                if result:
+                    return result[0] if isinstance(result, list) else result
+            except Exception:
+                return ""
+            return ""
+
+        def read_clipboard(self):
+            """Win32 原生读剪贴板文本。绕开 navigator.clipboard.readText 的
+            WebView2 权限弹窗（首次粘贴会弹"允许粘贴吗"），原生读取无弹窗。"""
+            try:
+                import ctypes
+                from ctypes import wintypes
+                u32 = ctypes.windll.user32
+                k32 = ctypes.windll.kernel32
+                CF_UNICODETEXT = 13
+                GMEM_MOVEABLE = 0x0002
+                if not u32.OpenClipboard(0):
+                    return ""
+                try:
+                    h = u32.GetClipboardData(CF_UNICODETEXT)
+                    if not h:
+                        return ""
+                    k32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+                    k32.GlobalLock.restype = wintypes.LPVOID
+                    k32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+                    ptr = k32.GlobalLock(h)
+                    if not ptr:
+                        return ""
+                    try:
+                        return ctypes.wstring_at(ptr)
+                    finally:
+                        k32.GlobalUnlock(h)
+                finally:
+                    u32.CloseClipboard()
+            except Exception:
+                return ""
 
     # pywebview 窗口
     window = webview.create_window(
