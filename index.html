@@ -1175,10 +1175,10 @@ function buildTerminal(portId, meta) {
     allowProposedApi: true,
     convertEol: false,        // 保留原始 \r\n，设备输出原样
     theme: {
-      // One Dark（atom 经典深色主题）：长时间看舒服，ANSI 16 色对比度均衡，
-      // 适合日志/代码/kernel 输出。前景略偏蓝灰，避免纯白刺眼。
+      // One Dark（atom 经典深色主题）：长时间看舒服，ANSI 16 色对比度均衡。
+      // 前景 #d7d7d7（比原 #abb2bf 更亮，灰白不刺眼但清晰）。
       background: '#1a1f2e',
-      foreground: '#abb2bf',
+      foreground: '#d7d7d7',
       cursor: '#528bff',
       cursorAccent: '#1a1f2e',
       selectionBackground: 'rgba(82,139,255,0.25)',
@@ -1382,7 +1382,10 @@ function appendRaw(portId, text) {
     const data = conn._writeQueue;
     conn._writeQueue = '';
     if (data && !conn.paused) {
-      conn.term.write(conn.tsEnabled && !conn.inScreen ? _injectTs(data) : data);
+      let out = conn.tsEnabled && !conn.inScreen ? _injectTs(data) : data;
+      // 命令行高亮：注入 ANSI 色（比 decoration foregroundColor 可靠，WebGL 100% 支持）
+      if (!conn.inScreen) out = _hlCmd(out, conn);
+      conn.term.write(out);
       // 关键字常驻高亮：对新写入的行扫描
       scheduleKwHighlight(conn);
       // 跟随到底：xterm 只在"精确贴底"时才自动滚，onScroll 的 30px 宽容阈值内
@@ -1415,6 +1418,52 @@ function _injectTs(data) {
     if (seg === '') { out += pre; continue; }  // 行只有 \r：不注入
     out += pre + ts + seg;
   }
+  return out;
+}
+// 命令行 ANSI 高亮：给 # / $ / > 提示符后的命令名/选项/路径注入 ANSI 色。
+// 串口流分 chunk，一行可能跨 chunk，用 conn._hlBuf 缓冲未闭合行（无 \n 的尾段），
+// 等下一次 flush 凑齐再处理。已闭合行（含 \n）立即注入。
+// 比 registerDecoration 的 foregroundColor 可靠（后者在 WebGL renderer 下不渲染）。
+// ANSI 色：提示符 橙95m，命令名 绿92m，选项 黄93m，路径 青96m，末尾 0m 复位。
+const _HL_CMD_NAMES = '\\b(ls|cd|cat|echo|pwd|mkdir|rmdir|rm|mv|cp|ln|chmod|chown|find|grep|egrep|fgrep|sed|awk|head|tail|wc|sort|uniq|tr|cut|tee|xargs|tar|gzip|gunzip|dd|mount|umount|ps|top|kill|killall|free|df|du|uname|hostname|ifconfig|ip|route|ping|tftp|nc|telnet|ssh|scp|reboot|poweroff|halt|sync|date|sleep|env|export|unset|alias|source|exec|eval|test|true|false|read|vi|nano|dmesg|logread|syslog|busybox|ash|sh|bash|flash|nand|mmc|sd|spi|i2c|gpio|devmem|devmem2|reg|md|mw|printenv|setenv|saveenv|run|bootm|tftpboot|upk|go|reset|mdio|ethtool|hexdump|xxd|od|strace|ltrace|gdb|taskset|renice|chrt|ulimit|sysctl|lsmod|insmod|rmmod|modprobe|ifup|ifdown|brctl|iwconfig|wpa|ntpdate|hwclock|rtc|mtd|ubi|ubifs|jffs2|ext4|fat|ntfs|fsck|mkfs|fdisk|parted|losetup|dmsetup|mdadm|lvm|cryptsetup)\\b';
+function _hlCmdLine(line) {
+  // 识别命令行：含 # / $ / > 提示符且后有命令内容
+  const m = line.match(/^(.*?)([#>$])\s+/);
+  if (!m) return line;
+  const prefix = m[1], prompt = m[2], rest = line.slice(m[0].length);
+  if (!rest) return line;
+  let out = '\x1b[95m' + prefix + prompt + '\x1b[0m ';
+  // 命令名（第一个词，已知命令染绿，否则原色）
+  const cm = rest.match(/^([A-Za-z_][\w.-]*)/);
+  let cmdRest = rest;
+  if (cm) {
+    const cmdRe = new RegExp(_HL_CMD_NAMES);
+    const known = cmdRe.test(cm[1]);
+    out += (known ? '\x1b[92m' : '') + cm[1] + (known ? '\x1b[0m' : '');
+    cmdRest = rest.slice(cm[1].length);
+  }
+  // 选项 -x / --xxx 染黄，路径 / . ~ 开头染青，其余原色
+  out += cmdRest.replace(/(\s+)(-{1,2}[A-Za-z][\w-]*)/g, '$1\x1b[93m$2\x1b[0m')
+                .replace(/(\s+)([\/.~][^\s]*)/g, '$1\x1b[96m$2\x1b[0m');
+  return out;
+}
+function _hlCmd(data, conn) {
+  // 行缓冲：上次未闭合的尾段 + 本次 data，按 \n 切分
+  conn._hlBuf = (conn._hlBuf || '') + data;
+  const parts = conn._hlBuf.split('\n');
+  // 最后一段无 \n（未闭合），留作下次缓冲；其余段是完整行
+  conn._hlBuf = parts.pop() || '';
+  if (!parts.length) return data;  // 整段都是未闭合行，原样返回（下次再处理）
+  let out = '';
+  for (let i = 0; i < parts.length; i++) {
+    let line = parts[i];
+    // 保留行首 \r（设备回车控制）
+    let pre = '';
+    if (line.startsWith('\r')) { pre = '\r'; line = line.slice(1); }
+    out += pre + _hlCmdLine(line) + '\n';
+  }
+  // 末尾未闭合段原样追加（已从 parts 弹出存入 _hlBuf）
+  out += conn._hlBuf;
   return out;
 }
 function enterScreen(portId, conn) {
@@ -1496,24 +1545,8 @@ const KW_RULES = [
   { cls: 'kw-info', re: /\b(info|notice|starting|started|stopped|detected|found|loaded|ready|init|initializing|mounting|mounted|deactivated|booting|probe|probed|register|registered|enabled|disabled|linux version|systemd|udev|freeing|freed|allocated|setting up|configured|bringing up|link is up|link is down)\b/gi },
   { cls: 'kw-success', re: /\b(success|succeed|succeeded|ok|done|complete|completed|passed|ready)\b/gi },
 ];
-// 命令行高亮：识别 busybox 提示符行（# / $ / > 开头），给提示符/命令名/选项/路径上色。
-// 仅作用于「提示符后的命令区」，不染日志输出（避免误染以 # 开头的注释/内核符号）。
-// 已知命令染亮绿（可执行感），未知命令名不染；选项 -x/--xxx 染黄；路径 /xx/xx 染青。
-const CMD_NAMES = 'ls|cd|cat|echo|pwd|mkdir|rmdir|rm|mv|cp|ln|chmod|chown|find|grep|egrep|fgrep|sed|awk|head|tail|wc|sort|uniq|tr|cut|tee|xargs|tar|gzip|gunzip|dd|mount|umount|ps|top|kill|killall|free|df|du|uname|hostname|ifconfig|ip|route|ping|tftp|nc|telnet|ssh|scp|reboot|poweroff|halt|sync|date|sleep|env|export|unset|alias|source|exec|eval|test|true|false|read|vi|nano|dmesg|logread|syslog|busybox|ash|sh|bash|flash|nand|mmc|sd|spi|i2c|gpio|devmem|devmem2|reg|md|mw|mw\.l|md\.l|printenv|setenv|saveenv|run|bootm|tftpboot|upk|go|reset|mdio|ethtool|hexdump|xxd|od|strace|ltrace|gdb|perf|taskset|renice|chrt|ulimit|sysctl|lsmod|insmod|rmmod|modprobe|ifup|ifdown|brctl|iwconfig|wpa|ntpdate|date|hwclock|rtc|mtd|ubi|ubifs|jffs2|ext4|fat|ntfs|fsck|mkfs|fdisk|parted|losetup|dmsetup|mdadm|lvm|cryptsetup';
-const CMD_RULES = [
-  // 提示符本身（# / $ / >）：染橙黄，醒目区分命令区与输出区。
-  // 允许提示符前有 user@host:path 前缀（busybox PS1 常见），不限定行首。
-  { cls: 'kw-prompt', re: /[#>$]\s?(?=$|[A-Za-z_\/.~])/g },
-  // 命令名（提示符后第一个词，已知命令染绿）
-  { cls: 'kw-cmd', re: new RegExp('[#>$]\\s?(' + CMD_NAMES + ')\\b', 'g'), grp: 1 },
-  // 选项 -x / --xxx：染黄（命令名后的 - 开头参数；空格后的 - 触发）
-  { cls: 'kw-opt', re: /(?<=\s)(-{1,2}[A-Za-z][\w-]*)/g },
-  // 路径参数（以 / . ~ 开头的参数）：染青
-  { cls: 'kw-path', re: /(?<=\s)([\/.~][^\s]*)/g, grp: 1 },
-];
 const KW_COLOR = {
   'kw-error':'#ff4060', 'kw-warning':'#ff9d00', 'kw-info':'#00d4ff', 'kw-success':'#00ff9d',
-  'kw-prompt':'#ff9d00', 'kw-cmd':'#00ff9d', 'kw-opt':'#e5c07b', 'kw-path':'#56b6c2',
 };
 // 节流：批量扫描新行，避免每个 chunk 都扫全缓冲
 function scheduleKwHighlight(conn) {
@@ -1535,11 +1568,9 @@ function highlightNewKw(conn) {
     if (!line) continue;
     const text = line.translateToString(true);
     if (!text.trim()) continue;
-    // 命令行判定：含 # / $ / > 提示符且其后有命令内容。仅命令行应用 CMD_RULES
-    // （选项/路径），避免误染日志输出里的 -x 错误码、/dev/xxx 路径。
-    // KW_RULES（error/warning 等关键词）对所有行生效。
-    const isCmdLine = /[#>$]\s*[A-Za-z_\/.~]/.test(text);
-    const rules = isCmdLine ? KW_RULES.concat(CMD_RULES) : KW_RULES;
+    // 命令行高亮已改用 ANSI 注入（_hlCmd，比 decoration foregroundColor 可靠），
+    // 这里只做关键词（error/warning）decoration 高亮。
+    const rules = KW_RULES;
     for (const rule of rules) {
       rule.re.lastIndex = 0;
       let m;
