@@ -757,6 +757,10 @@ def ai_mcp_info():
         {"name": "search_log", "desc": "日志关键字搜索"},
         {"name": "diff_logs", "desc": "对比两份日志差异（summary/line）"},
         {"name": "disconnect", "desc": "断开连接"},
+        {"name": "tftp_status", "desc": "TFTP 服务状态：运行中/目录/文件列表/传输记录"},
+        {"name": "tftp_start", "desc": "启动 TFTP 服务（UDP 69），设备可上传/下载文件"},
+        {"name": "tftp_stop", "desc": "停止 TFTP 服务"},
+        {"name": "tftp_set_dir", "desc": "设置/切换 TFTP 根目录"},
     ]
     with _mcp_calls_lock:
         calls = list(_mcp_calls)
