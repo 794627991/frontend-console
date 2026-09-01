@@ -3166,6 +3166,7 @@ function closeLogViewer(portId) {
 let _tftpRunning = false;
 let _tftpTransfersKey = '';  // 传输区脏检查 key（含进度，进行中每秒变）
 let _tftpFilesKey = '';      // 文件区脏检查 key（只在文件集变化时变）
+let _tftpActive = false;     // 有进行中传输（轮询频率切换，不查 DOM）
 function _fmtSize(n) {
   if (n == null) return '';
   if (n >= 1048576) return (n / 1048576).toFixed(1) + 'MB';
@@ -3189,6 +3190,8 @@ async function refreshTftp() {
     const secState0 = (n) => { try { return localStorage.getItem('tftpSec_' + n) !== '0'; } catch(e) { return true; } };
     // 传输区：最近传输在上（5 行滚动），进行中每秒刷新进度
     const transfers = j.transfers || [];
+    // 记录有无进行中传输，供轮询频率切换（不查 DOM，避免冷启动漏掉前几秒进度）
+    _tftpActive = transfers.some(t => t.status !== 'done' && t.status !== 'error');
     const tKey = JSON.stringify([secState0('transfers'),
       transfers.map(t => [t.status, t.bytes, t.total, t.filename, t.err])]);
     if (tKey !== _tftpTransfersKey) {
@@ -3356,15 +3359,11 @@ $('tftpPickDir').onclick = pickTftpDir;
 $('tftpDirPath').onclick = pickTftpDir;
 $('tftpTypeDir').onclick = _tftpInlineDirInput;  // 手动输入（支持 UNC/网络盘/任意路径）
 refreshTftp();
-// 传输进行中 1s 轮询进度，空闲 10s 兜底（常态零重排）。
-// 进行中 = 列表里有非 done/error 状态的项（refreshTftp 渲染时已排除 done/error class）
-function _tftpHasActive() {
-  const items = $('tftpTransfers').querySelectorAll('.tftp-item');
-  for (const it of items) if (!it.classList.contains('done') && !it.classList.contains('error')) return true;
-  return false;
-}
-setInterval(refreshTftp, 10000);
-setInterval(() => { if (_tftpHasActive()) refreshTftp(); }, 1000);
+// 传输进度刷新：空闲 2s 兜底，进行中 0.5s 抓进度。
+// 关键：active 状态用 JS 变量从 status 响应记录，不查 DOM——传输刚启动时 DOM 还没
+// 渲染出 active 项，查 DOM 会漏掉前 10s 进度（设备升完才显示结果的根因）。
+setInterval(() => { if (!_tftpActive) refreshTftp(); }, 2000);       // 空闲兜底
+setInterval(() => { if (_tftpActive) refreshTftp(); }, 500);          // 进行中抓进度
 
 // 初始化
 // ============================================================
