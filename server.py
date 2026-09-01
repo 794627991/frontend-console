@@ -1807,7 +1807,7 @@ class TftpServer:
             return []
 
     # ---- 协议 ----
-    OP_RRQ, OP_WRQ, OP_DATA, OP_ACK, OP_ERROR = 1, 2, 3, 4, 5
+    OP_RRQ, OP_WRQ, OP_DATA, OP_ACK, OP_ERROR, OP_OACK = 1, 2, 3, 4, 5, 6
 
     def _serve(self):
         """主循环：监听 69 端口的 RRQ/WRQ，为每个请求起独立传输线程。"""
@@ -1834,14 +1834,24 @@ class TftpServer:
         if mode and mode != "octet":
             self._send_err(self.sock, peer, 0, "only octet supported")
             return
-        # RFC 2348 blksize 协商：请求里带 blksize 选项则用它
+        # RFC 2348/2349 选项协商：blksize（块大小）、tsize（文件大小）。
+        # 关键：带选项的请求必须回 OACK（opcode=6）确认协商值，否则 RFC 2348 客户端
+        # 会 fallback 到默认 512，而服务端却按协商值切割 → 块大小错位 → 中途协议崩溃。
+        # （tftpy 等成熟实现：只要请求带选项就必发 OACK，绝不偷偷改 blksize 不告知。）
         blksize = 512
+        want_oack = False  # 请求带了任何选项就需 OACK
+        tsize_val = None   # tsize 协商值（RRQ 时填文件大小）
         i = 2
         while i + 1 < len(parts):
-            if parts[i].lower() == b"blksize":
-                try: blksize = min(max(int(parts[i+1]), 8), 65464)
+            opt = parts[i].lower()
+            val = parts[i+1]
+            if opt == b"blksize":
+                try:
+                    blksize = min(max(int(val), 8), 65464)
+                    want_oack = True
                 except ValueError: pass
-                break
+            elif opt == b"tsize":
+                want_oack = True  # tsize 也需 OACK 回应
             i += 2
         # 防路径穿越：只允许 root_dir 下的直接文件名
         if not filename or os.path.basename(filename) != filename or filename in (".", ".."):
@@ -1853,27 +1863,58 @@ class TftpServer:
                 self._send_err(self.sock, peer, 1, "file not found")
                 return
             t = TftpTransfer("get", filename, peer)
+            t.total = os.path.getsize(local)
             with self._lock: self.transfers.insert(0, t)
-            threading.Thread(target=self._send_file, args=(local, t, blksize), daemon=True).start()
+            threading.Thread(target=self._send_file,
+                args=(local, t, blksize, want_oack), daemon=True).start()
         else:  # WRQ
             t = TftpTransfer("put", filename, peer)
             with self._lock: self.transfers.insert(0, t)
-            threading.Thread(target=self._recv_file, args=(local, t, blksize), daemon=True).start()
+            threading.Thread(target=self._recv_file,
+                args=(local, t, blksize, want_oack), daemon=True).start()
 
-    def _send_file(self, path, t, blksize):
+    def _send_file(self, path, t, blksize, want_oack):
         """RRQ：把文件分块发给设备，等 ACK。
-        陈旧/重复 ACK（block 不匹配）静默丢弃继续等——网络抖动会让 ACK 延迟，
-        重传 DATA 又催生重复 ACK，socket 缓冲区积压的陈旧包若被当重传计数，
-        会在数千块后误判「超限」中止（14M 文件传到 5M 处停的根因）。
-        只有真正超时才计一次重传。"""
+
+        协议要点（对照 tftpy / RFC 1350）：
+        1. 设备 RRQ 带选项时先发 OACK，设备回 ACK(0) 后才开始发 DATA；
+           不发 OACK 直接用协商 blksize 会让 RFC 2348 客户端 fallback 到 512，
+           块大小错位 → 中途协议崩溃（大文件传到几 MB 卡死的根因）。
+        2. 文件恰为 blksize 整数倍时，最后补发一个 0 字节 DATA 作为终止块，
+           等其 ACK 才算 done（RFC 1350 强制；否则 PC 自判 done，设备死等）。
+        3. 超时放弃前发 ERROR 包，让设备立即 abort 而非死等 100s+。
+        4. 陈旧/重复 ACK（block 不匹配）静默丢弃继续等，只有真正 timeout 才计重传。
+        """
         ds = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        ds.settimeout(1.0)
+        ds.settimeout(3.0)  # 3s（tftpy 5s×3 对嵌入式太松，1s 太紧，3s×5 折中）
         try:
             with open(path, "rb") as f:
                 payload = f.read()
-            t.total = len(payload)
             block = 1
             off = 0
+            # ---- OACK 握手：设备带选项时先确认协商值，设备回 ACK(0) 再传 DATA ----
+            if want_oack:
+                oack = struct.pack("!H", self.OP_OACK) + \
+                       b"blksize\0" + str(blksize).encode() + b"\0" + \
+                       b"tsize\0" + str(t.total).encode() + b"\0"
+                retries = 0
+                ds.sendto(oack, t.peer)
+                while True:
+                    try:
+                        resp, _ = ds.recvfrom(65536)
+                    except socket.timeout:
+                        retries += 1
+                        if retries > 5:
+                            self._send_err(ds, t.peer, 0, "OACK 超时无响应")
+                            t.status = "error"; t.err = "设备端 OACK 无响应"
+                            return
+                        ds.sendto(oack, t.peer)
+                        continue
+                    if len(resp) >= 4 and struct.unpack("!H", resp[:2])[0] == self.OP_ACK \
+                       and struct.unpack("!H", resp[2:4])[0] == 0:
+                        break  # 设备确认 OACK，开始传 DATA
+                    # 陈旧包静默丢弃
+            # ---- 传数据块 ----
             while off < t.total or (off == 0 and block == 1):  # 空文件也发一个块
                 chunk = payload[off:off + blksize]
                 pkt = struct.pack("!HH", self.OP_DATA, block) + chunk
@@ -1884,51 +1925,100 @@ class TftpServer:
                         resp, _ = ds.recvfrom(65536)
                     except socket.timeout:
                         retries += 1
-                        if retries > 6:
+                        if retries > 5:
+                            self._send_err(ds, t.peer, 0, "设备端超时无响应")
                             t.status = "error"; t.err = "设备端超时无响应"
                             return
                         ds.sendto(pkt, t.peer)  # 超时才重传
                         continue
-                    if len(resp) >= 4 and struct.unpack("!HH", resp[:4])[0] == self.OP_ACK \
+                    if len(resp) >= 4 and struct.unpack("!H", resp[:2])[0] == self.OP_ACK \
                        and struct.unpack("!H", resp[2:4])[0] == block:
                         break  # 正确 ACK，进下一块
                     # 陈旧/重复 ACK：静默丢弃继续等，不计重传
                 off += len(chunk)
                 t.bytes_done = off
                 block = (block + 1) & 0xFFFF
-                if len(chunk) < blksize:  # 最后一块
+                if len(chunk) < blksize:  # 最后一块（短块）已发并 ACK，完成
                     break
+            # ---- 整数倍文件：补发 0 字节终止块，等其 ACK 才算真完成 ----
+            if off >= t.total and (t.total % blksize == 0) and t.total > 0:
+                term_pkt = struct.pack("!HH", self.OP_DATA, block)  # 0 字节数据
+                retries = 0
+                ds.sendto(term_pkt, t.peer)
+                while True:
+                    try:
+                        resp, _ = ds.recvfrom(65536)
+                    except socket.timeout:
+                        retries += 1
+                        if retries > 5:
+                            self._send_err(ds, t.peer, 0, "终止块超时无响应")
+                            t.status = "error"; t.err = "终止块未确认"
+                            return
+                        ds.sendto(term_pkt, t.peer)
+                        continue
+                    if len(resp) >= 4 and struct.unpack("!H", resp[:2])[0] == self.OP_ACK \
+                       and struct.unpack("!H", resp[2:4])[0] == block:
+                        break
             t.status = "done"
         except Exception as e:
             t.status = "error"; t.err = str(e)
         finally:
             ds.close()
 
-    def _recv_file(self, path, t, blksize):
-        """WRQ：收设备数据写入文件。先回 ACK(block=0) 表示就绪。"""
+    def _recv_file(self, path, t, blksize, want_oack):
+        """WRQ：收设备数据写入文件。
+        设备带选项时先发 OACK（设备回 ACK(0) 后开始发 DATA），否则回 ACK(0) 起步。
+        最后一块判定 len(data) < blksize 即终止（RFC 1350 正确，短块/空块即终止）。
+        超时放弃前发 ERROR，让设备立即 abort 而非死等。"""
         ds = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         ds.settimeout(3.0)
         try:
-            ds.sendto(struct.pack("!HH", self.OP_ACK, 0), t.peer)
+            # ---- OACK 握手：设备带选项时确认协商值，设备回 ACK(0) 后才发 DATA ----
+            if want_oack:
+                oack = struct.pack("!H", self.OP_OACK) + \
+                       b"blksize\0" + str(blksize).encode() + b"\0" + \
+                       b"tsize\0" + b"0\0"  # WRQ 时未知文件大小，tsize 回 0
+                ds.sendto(oack, t.peer)
+                # 等设备 ACK(0) 或 DATA(1)（部分实现 OACK 后直接发 DATA）
+                retries = 0
+                first_pkt = None
+                while True:
+                    try:
+                        first_pkt, _ = ds.recvfrom(65536)
+                        break
+                    except socket.timeout:
+                        retries += 1
+                        if retries > 5:
+                            self._send_err(ds, t.peer, 0, "OACK 超时无响应")
+                            t.status = "error"; t.err = "设备端 OACK 无响应"
+                            return
+                        ds.sendto(oack, t.peer)
+            else:
+                ds.sendto(struct.pack("!HH", self.OP_ACK, 0), t.peer)
             block = 1
             tmp = path + ".tftp.part"
             with open(tmp, "wb") as f:
+                # 若 OACK 后设备直接发了 DATA(1)，先处理首包
+                if first_pkt is not None:
+                    _process = True  # 下面循环会先消费 first_pkt
                 while True:
-                    # 等当前 block 的 DATA。超时重发上一 ACK（RFC 1350 丢包恢复机制），
-                    # 让设备重传，而非直接放弃——大文件传到中途遇到一次网络抖动就误判中止。
-                    retries = 0
-                    while True:
-                        try:
-                            resp, _ = ds.recvfrom(65536)
-                            break
-                        except socket.timeout:
-                            retries += 1
-                            if retries > 6:
-                                t.status = "error"; t.err = "设备端超时无响应"
-                                return
-                            # 重发上一 ACK 触发设备重传当前块
-                            ds.sendto(struct.pack("!HH", self.OP_ACK, block - 1 & 0xFFFF), t.peer)
-                            continue
+                    if first_pkt is not None:
+                        resp = first_pkt; first_pkt = None
+                    else:
+                        retries = 0
+                        while True:
+                            try:
+                                resp, _ = ds.recvfrom(65536)
+                                break
+                            except socket.timeout:
+                                retries += 1
+                                if retries > 5:
+                                    self._send_err(ds, t.peer, 0, "设备端超时无响应")
+                                    t.status = "error"; t.err = "设备端超时无响应"
+                                    return
+                                # 重发上一 ACK 触发设备重传当前块
+                                ds.sendto(struct.pack("!HH", self.OP_ACK, (block - 1) & 0xFFFF), t.peer)
+                                continue
                     if len(resp) < 4:
                         continue
                     op, blk = struct.unpack("!HH", resp[:4])
@@ -1936,19 +2026,19 @@ class TftpServer:
                         t.status = "error"; t.err = resp[4:].decode("utf-8", "replace")
                         return
                     if op != self.OP_DATA:
-                        continue  # 非 DATA 包静默丢弃
-                    if blk == block - 1:
+                        continue  # 非 DATA 包（含 OACK 回声等）静默丢弃
+                    if blk == (block - 1) & 0xFFFF:
                         # 重复块（我方 ACK 丢了设备重传）：重发 ACK，不写文件，继续等
-                        ds.sendto(struct.pack("!HH", self.OP_ACK, block - 1), t.peer)
+                        ds.sendto(struct.pack("!HH", self.OP_ACK, (block - 1) & 0xFFFF), t.peer)
                         continue
                     if blk != block:
                         continue  # 陈旧/未来块：静默丢弃继续等
                     f.write(resp[4:])
                     t.bytes_done += len(resp) - 4
                     ds.sendto(struct.pack("!HH", self.OP_ACK, block), t.peer)
-                    if len(resp) - 4 < blksize:  # 最后一块
+                    if len(resp) - 4 < blksize:  # 最后一块（短块/空块即终止）
                         break
-                    block += 1
+                    block = (block + 1) & 0xFFFF
             os.replace(tmp, path)  # 原子替换，避免半截文件
             t.status = "done"
         except Exception as e:
