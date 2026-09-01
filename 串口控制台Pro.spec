@@ -5,8 +5,10 @@ a = Analysis(
     ['D:/AI/串口控制台Pro/main.py'],
     pathex=[],
     binaries=[],
-    datas=[('index.html', '.'), ('app.ico', '.'), ('vendor', 'vendor')],
-    hiddenimports=['paramiko', 'mcp_server'],  # paramiko 延迟导入需显式声明；mcp_server 被 --mcp 模式延迟 import
+    datas=[('index.html', '.'), ('style.css', '.'), ('js', 'js'), ('app.ico', '.'), ('vendor', 'vendor')],
+    hiddenimports=['paramiko', 'mcp_server',
+        'src', 'src.app_state', 'src.ansi_utils', 'src.base_conn',
+        'src.serial_conn', 'src.ssh_conn', 'src.log_index', 'src.tftp'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
