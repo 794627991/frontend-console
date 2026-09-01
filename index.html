@@ -1037,10 +1037,26 @@ let connections = {};   // port_id -> conn（含 term/fit/search/xtermWrap/sse �
 let activePortId = null;
 let aiSse = null;
 
+// banner 显示/消失会改变 .main 高度 → xterm 容器尺寸变化，但 xterm 不自带
+// ResizeObserver，fit 不会自动跑。banner 消失后终端下方必现 ~2 行空白
+//（rows 还是按矮容器算的），故 banner 每次 class 变化后统一重 fit 所有终端。
+function refitAllTerms() {
+  requestAnimationFrame(() => {
+    for (const id in connections) {
+      const c = connections[id];
+      if (c && c.term && c.fit && c.wrap.style.display !== 'none') {
+        try { c.fit.fit(); } catch(e){}
+        // rows 变化后视口相对位置改变，跟随模式补一次贴底
+        if (c.autoScroll && !c.inScreen) { try { c.term.scrollToBottom(); } catch(e){} }
+      }
+    }
+  });
+}
 function showBanner(msg, ms=4000, isErr=false) {
   banner.textContent = msg;
   banner.className = 'banner show' + (isErr ? ' err' : '');
-  if (ms) setTimeout(()=>{ if (banner.textContent === msg) banner.className = 'banner'; }, ms);
+  refitAllTerms();
+  if (ms) setTimeout(()=>{ if (banner.textContent === msg) { banner.className = 'banner'; refitAllTerms(); } }, ms);
 }
 function fmtTs(ms) {
   const d = new Date(ms);
