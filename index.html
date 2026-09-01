@@ -1175,16 +1175,18 @@ function buildTerminal(portId, meta) {
     allowProposedApi: true,
     convertEol: false,        // 保留原始 \r\n，设备输出原样
     theme: {
+      // One Dark（atom 经典深色主题）：长时间看舒服，ANSI 16 色对比度均衡，
+      // 适合日志/代码/kernel 输出。前景略偏蓝灰，避免纯白刺眼。
       background: '#1a1f2e',
-      foreground: '#c8d6e8',
-      cursor: '#00d4ff',
+      foreground: '#abb2bf',
+      cursor: '#528bff',
       cursorAccent: '#1a1f2e',
-      selectionBackground: 'rgba(0,212,255,0.25)',
-      black: '#0a0f1c', red: '#ff7b72', green: '#56d364', yellow: '#e3b341',
-      blue: '#79c0ff', magenta: '#d2a8ff', cyan: '#39c5cf', white: '#c9d1d9',
-      brightBlack: '#6e7681', brightRed: '#ffa198', brightGreen: '#7ee787',
-      brightYellow: '#f0e07a', brightBlue: '#a5d6ff', brightMagenta: '#d2a8ff',
-      brightCyan: '#56d4dd', brightWhite: '#f0f6fc',
+      selectionBackground: 'rgba(82,139,255,0.25)',
+      black: '#1a1f2e', red: '#e06c75', green: '#98c379', yellow: '#e5c07b',
+      blue: '#61afef', magenta: '#c678dd', cyan: '#56b6c2', white: '#abb2bf',
+      brightBlack: '#5c6370', brightRed: '#e06c75', brightGreen: '#98c379',
+      brightYellow: '#e5c07b', brightBlue: '#61afef', brightMagenta: '#c678dd',
+      brightCyan: '#56b6c2', brightWhite: '#ffffff',
     },
   });
   conn.fit = new FitAddon.FitAddon();
