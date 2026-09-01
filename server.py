@@ -1861,7 +1861,11 @@ class TftpServer:
             threading.Thread(target=self._recv_file, args=(local, t, blksize), daemon=True).start()
 
     def _send_file(self, path, t, blksize):
-        """RRQ：把文件分块发给设备，等 ACK。"""
+        """RRQ：把文件分块发给设备，等 ACK。
+        陈旧/重复 ACK（block 不匹配）静默丢弃继续等——网络抖动会让 ACK 延迟，
+        重传 DATA 又催生重复 ACK，socket 缓冲区积压的陈旧包若被当重传计数，
+        会在数千块后误判「超限」中止（14M 文件传到 5M 处停的根因）。
+        只有真正超时才计一次重传。"""
         ds = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         ds.settimeout(1.0)
         try:
@@ -1870,27 +1874,25 @@ class TftpServer:
             t.total = len(payload)
             block = 1
             off = 0
-            retries = 0
-            while off < t.total or block == 1:
+            while off < t.total or (off == 0 and block == 1):  # 空文件也发一个块
                 chunk = payload[off:off + blksize]
                 pkt = struct.pack("!HH", self.OP_DATA, block) + chunk
-                for _ in range(6):  # 最多重传 6 次
+                retries = 0
+                ds.sendto(pkt, t.peer)
+                while True:  # 等当前 block 的 ACK
                     try:
-                        ds.sendto(pkt, t.peer)
                         resp, _ = ds.recvfrom(65536)
                     except socket.timeout:
                         retries += 1
-                        if retries >= 6:
+                        if retries > 6:
                             t.status = "error"; t.err = "设备端超时无响应"
                             return
+                        ds.sendto(pkt, t.peer)  # 超时才重传
                         continue
-                    retries = 0
                     if len(resp) >= 4 and struct.unpack("!HH", resp[:4])[0] == self.OP_ACK \
                        and struct.unpack("!H", resp[2:4])[0] == block:
-                        break
-                else:
-                    t.status = "error"; t.err = "ACK 重传超限"
-                    return
+                        break  # 正确 ACK，进下一块
+                    # 陈旧/重复 ACK：静默丢弃继续等，不计重传
                 off += len(chunk)
                 t.bytes_done = off
                 block = (block + 1) & 0xFFFF
@@ -1912,25 +1914,35 @@ class TftpServer:
             tmp = path + ".tftp.part"
             with open(tmp, "wb") as f:
                 while True:
-                    for _ in range(6):
+                    # 等当前 block 的 DATA。超时重发上一 ACK（RFC 1350 丢包恢复机制），
+                    # 让设备重传，而非直接放弃——大文件传到中途遇到一次网络抖动就误判中止。
+                    retries = 0
+                    while True:
                         try:
                             resp, _ = ds.recvfrom(65536)
                             break
                         except socket.timeout:
+                            retries += 1
+                            if retries > 6:
+                                t.status = "error"; t.err = "设备端超时无响应"
+                                return
+                            # 重发上一 ACK 触发设备重传当前块
+                            ds.sendto(struct.pack("!HH", self.OP_ACK, block - 1 & 0xFFFF), t.peer)
                             continue
-                    else:
-                        t.status = "error"; t.err = "设备端超时无响应"
-                        return
                     if len(resp) < 4:
                         continue
                     op, blk = struct.unpack("!HH", resp[:4])
                     if op == self.OP_ERROR:
                         t.status = "error"; t.err = resp[4:].decode("utf-8", "replace")
                         return
-                    if op != self.OP_DATA or blk != block:
-                        # 重复包（ACK 丢了）：重发上一 ACK
-                        ds.sendto(struct.pack("!HH", self.OP_ACK, blk if blk < block else block - 1), t.peer)
+                    if op != self.OP_DATA:
+                        continue  # 非 DATA 包静默丢弃
+                    if blk == block - 1:
+                        # 重复块（我方 ACK 丢了设备重传）：重发 ACK，不写文件，继续等
+                        ds.sendto(struct.pack("!HH", self.OP_ACK, block - 1), t.peer)
                         continue
+                    if blk != block:
+                        continue  # 陈旧/未来块：静默丢弃继续等
                     f.write(resp[4:])
                     t.bytes_done += len(resp) - 4
                     ds.sendto(struct.pack("!HH", self.OP_ACK, block), t.peer)
