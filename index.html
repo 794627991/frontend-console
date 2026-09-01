@@ -1384,9 +1384,11 @@ function appendRaw(portId, text) {
     const data = conn._writeQueue;
     conn._writeQueue = '';
     if (data && !conn.paused) {
-      let out = conn.tsEnabled && !conn.inScreen ? _injectTs(data) : data;
-      // 命令行流式高亮：# 提示符及之后用户输入逐字符染色（mobaxterm 风格，逐字符流不重写不重复）
+      let out = data;
+      // 命令行流式高亮：先在原始流上识别行首 #/$/> （时间戳会破坏行首判断，故高亮在前）
       if (!conn.inScreen) out = _hlCmdStream(out, conn);
+      // 时间戳注入：在高亮后的行首插时间戳（ts 在 ANSI 高亮码之前，两者共存）
+      if (conn.tsEnabled && !conn.inScreen) out = _injectTs(out, conn);
       conn.term.write(out);
       // 关键字常驻高亮：对新写入的行扫描
       scheduleKwHighlight(conn);
@@ -1407,19 +1409,23 @@ function _tsNow() {
   const d = new Date();
   return d.toTimeString().slice(0, 8) + '.' + String(d.getMilliseconds()).padStart(3, '0');
 }
-function _injectTs(data) {
+function _injectTs(data, conn) {
+  if (conn._tsAtLS === undefined) conn._tsAtLS = true;  // 跨 chunk 行首状态
   const parts = data.split('\n');
   const ts = '\x1b[90m[' + _tsNow() + ']\x1b[0m ';
-  let out = parts[0];
-  for (let i = 1; i < parts.length; i++) {
-    out += '\n';
+  let out = '';
+  for (let i = 0; i < parts.length; i++) {
     let seg = parts[i];
+    const atLS = (i === 0) ? conn._tsAtLS : true;  // 首段沿用跨 chunk 状态，其余段都在行首
+    if (i > 0) out += '\n';
     if (seg === '') continue;         // 空段（连续 \n）：不注入
     let pre = '';
     if (seg.startsWith('\r')) { pre = '\r'; seg = seg.slice(1); }
     if (seg === '') { out += pre; continue; }  // 行只有 \r：不注入
-    out += pre + ts + seg;
+    out += pre + (atLS ? ts : '') + seg;
   }
+  // 最后一段无 \n（未闭合）：保持其行首状态；有 \n：回到行首
+  conn._tsAtLS = parts[parts.length - 1] === '' || data.endsWith('\n');
   return out;
 }
 // 命令行流式高亮（mobaxterm 风格）：# 提示符及之后用户输入逐字符染色。
@@ -1453,8 +1459,8 @@ function _hlCmdStream(data, conn) {
       continue;
     }
     // 行首 # ：进入命令行（紫色提示符 + 绿色后续输入）
-    if (ch === '#' && conn._hlAtLS && !conn.cmdHL) {
-      out += '\x1b[95m#\x1b[92m';
+    if ((ch === '#' || ch === '$' || ch === '>') && conn._hlAtLS && !conn.cmdHL) {
+      out += '\x1b[92m' + ch;
       conn.cmdHL = true;
       conn._hlAtLS = false;
       continue;
