@@ -17,9 +17,11 @@
 - src/tftp.py：TFTP 服务器 + Blueprint 路由
 """
 import os, sys, time, threading, json, glob, re, base64, subprocess
+from queue import Queue
 
 from flask import Flask, Response, request, jsonify, send_from_directory
 
+import src.app_state as _st
 from src.app_state import (
     BASE_DIR, RES_DIR, STATE_DIR, CONFIG_FILE, LOG_DIR, DEFAULT_LOG_DIR, CMD_LIB_FILE,
     COMMON_BAUDS, _load_config, _save_config, _load_cmd_lib, _save_cmd_lib,
@@ -290,6 +292,7 @@ def api_log_dir():
     if not os.access(new_dir, os.W_OK):
         return jsonify({"ok": False, "err": "目录不可写"}), 400
     LOG_DIR = new_dir
+    _st.LOG_DIR = new_dir  # 同步 app_state：base_conn._start_log 读模块属性，改目录对新连接立即生效
     _save_config({**_load_config(), "log_dir": new_dir})
     return jsonify({"ok": True, "dir": LOG_DIR})
 
@@ -709,7 +712,7 @@ def ai_open_logs():
             return jsonify({"ok": True, "logs": list(_open_logs)})
     if request.method == "DELETE":
         with _open_logs_lock:
-            _open_logs = []
+            _open_logs.clear()  # 原地清空，避免重绑使 app_state 的绑定脱节
         return jsonify({"ok": True})
     # POST: 全量覆盖
     data = request.get_json(force=True, silent=True) or {}
@@ -732,7 +735,7 @@ def ai_open_logs():
             "total": int(l.get("total", 0) or 0),
         })
     with _open_logs_lock:
-        _open_logs = clean
+        _open_logs[:] = clean  # 原地替换，避免重绑使 app_state 的绑定脱节
     return jsonify({"ok": True, "count": len(clean)})
 
 
@@ -785,10 +788,11 @@ def ai_mcp_report():
         "args": str(data.get("args", ""))[:200],
         "ok": bool(data.get("ok", True)),
     }
+    global _mcp_calls
     with _mcp_calls_lock:
         _mcp_calls.append(entry)
         if len(_mcp_calls) > _MCP_CALLS_MAX:
-            _mcp_calls = _mcp_calls[-_MCP_CALLS_MAX:]
+            _mcp_calls[:] = _mcp_calls[-_MCP_CALLS_MAX:]  # 原地截断，避免重绑使 app_state 的绑定脱节
     return jsonify({"ok": True})
 
 

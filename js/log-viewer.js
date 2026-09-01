@@ -366,7 +366,11 @@ function closeLogViewer(portId) {
     if (conn._splitUp) document.removeEventListener('mouseup', conn._splitUp);
     conn.tab.remove(); conn.wrap.remove(); delete connections[portId];
   }
-  const remaining = Object.keys(connections).sort(sortKeyFn);
+  const remaining = Object.keys(connections).sort((a, b) => {
+    const ka = sortKeyFn(a), kb = sortKeyFn(b);
+    if (ka[0] !== kb[0]) return ka[0] - kb[0];
+    return ka[1] < kb[1] ? -1 : ka[1] > kb[1] ? 1 : 0;
+  });
   if (remaining.length) switchTab(remaining[0]);
   else {
     activePortId = null;

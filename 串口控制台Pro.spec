@@ -34,7 +34,9 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    # 本机无 UPX 二进制，upx=True 实际不生效；关掉避免装了 UPX 的环境把
+    # cryptography 的 _rust.pyd 压坏（paramiko/SSH 启动失败的已知先例）。
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,

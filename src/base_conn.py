@@ -9,7 +9,8 @@ from collections import deque
 from datetime import datetime
 from queue import Queue
 
-from .app_state import LOG_DIR, _next_seq
+from . import app_state as _st
+from .app_state import _next_seq
 from .ansi_utils import strip_ansi, classify_line, _SCREEN_STRONG_RE, _SCREEN_ANY_RE
 
 class BaseConnection:
@@ -56,10 +57,11 @@ class BaseConnection:
         raise NotImplementedError
 
     def _start_log(self):
-        os.makedirs(LOG_DIR, exist_ok=True)
+        log_dir = _st.LOG_DIR  # 模块属性访问：跟随 api_log_dir 运行时改目录（立即生效）
+        os.makedirs(log_dir, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         safe = re.sub(r"[^a-zA-Z0-9_]", "_", self.port_id)
-        self.log_path = os.path.join(LOG_DIR, f"serial_{safe}_{ts}.log")
+        self.log_path = os.path.join(log_dir, f"serial_{safe}_{ts}.log")
         self.log_fp = open(self.log_path, "w", encoding="utf-8", buffering=1)
         self.log_fp.write(f"# 串口日志 {self.port_id} 开始 {datetime.now().isoformat()}\n")
 

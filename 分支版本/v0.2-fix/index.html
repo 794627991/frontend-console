@@ -1,0 +1,1831 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>串口控制台 Pro</title>
+<style>
+  :root {
+    --bg-deep: #050810;
+    --bg: #0a0f1c;
+    --bg-panel: #0d1424;
+    --bg-card: #111a2e;
+    --bg-input: #0a1120;
+    --border: #1a2942;
+    --border-glow: #2a4a7a;
+    --fg: #c8d6e8;
+    --fg-bright: #e8f1ff;
+    --muted: #5a6b85;
+    --accent: #00d4ff;
+    --accent-2: #0099cc;
+    --accent-glow: rgba(0, 212, 255, 0.4);
+    --neon-green: #00ff9d;
+    --neon-purple: #b366ff;
+    --neon-orange: #ff9d00;
+    --neon-red: #ff4060;
+    --kernel: #79c0ff;
+    --kernel-err: #ff7b72;
+    --uboot: #d2a8ff;
+    --heop: #a5d6ff;
+    --heop-ok: #56d364;
+    --heop-fail: #ff7b72;
+    --prompt: #00ff9d;
+    --text: #c8d6e8;
+    --input-c: #00d4ff;
+    --shadow-glow: 0 0 20px rgba(0, 212, 255, 0.15);
+    --font-mono: "Cascadia Code", "JetBrains Mono", "Consolas", "Menlo", monospace;
+    --font-ui: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    background: var(--bg-deep);
+    color: var(--fg);
+    font-family: var(--font-ui);
+    font-size: 13px;
+    display: flex;
+    flex-direction: column;
+  }
+  /* 科技风背景网格 */
+  body::before {
+    content: "";
+    position: fixed; inset: 0;
+    background-image:
+      linear-gradient(rgba(0, 212, 255, 0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0, 212, 255, 0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+  body::after {
+    content: "";
+    position: fixed; inset: 0;
+    background: radial-gradient(ellipse at top, rgba(0, 212, 255, 0.06), transparent 60%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* ===== 顶栏 ===== */
+  .topbar {
+    position: relative; z-index: 10;
+    display: flex; align-items: center; gap: 14px;
+    padding: 0 18px; height: 52px;
+    background: linear-gradient(180deg, var(--bg-panel), var(--bg));
+    border-bottom: 1px solid var(--border);
+    box-shadow: 0 2px 20px rgba(0,0,0,0.4);
+    flex-shrink: 0;
+  }
+  .logo {
+    display: flex; align-items: center; gap: 10px;
+    font-weight: 700; font-size: 15px; color: var(--fg-bright);
+    letter-spacing: 0.5px;
+  }
+  .logo .icon {
+    width: 28px; height: 28px; border-radius: 7px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-mono); font-weight: 700; color: #001020; font-size: 15px;
+    box-shadow: 0 0 12px var(--accent-glow);
+  }
+  .logo .ver { color: var(--accent); font-size: 11px; font-weight: 600; }
+  .topbar .divider { width: 1px; height: 24px; background: var(--border); }
+  .topbar .conn-area { display: flex; align-items: center; gap: 8px; }
+  .topbar select, .topbar input {
+    background: var(--bg-input); color: var(--fg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 10px; font-size: 12px; font-family: var(--font-ui);
+    outline: none; transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .topbar select { min-width: 130px; cursor: pointer; }
+  .topbar select:focus, .topbar input:focus {
+    border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow);
+  }
+  .btn {
+    background: var(--bg-card); color: var(--fg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 14px; font-size: 12px; cursor: pointer;
+    font-family: var(--font-ui); transition: all 0.2s; white-space: nowrap;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 8px var(--accent-glow); }
+  .btn.primary {
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: #001020; border: none; font-weight: 600;
+  }
+  .btn.primary:hover { box-shadow: 0 0 14px var(--accent-glow); filter: brightness(1.1); }
+  .btn.danger { color: var(--neon-red); }
+  .btn.danger:hover { border-color: var(--neon-red); box-shadow: 0 0 8px rgba(255,64,96,0.3); }
+  .btn.ghost { background: transparent; }
+  .btn.icon-btn { padding: 6px 8px; min-width: 30px; text-align: center; }
+  .topbar .spacer { flex: 1; }
+  .topbar .status-pill {
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 20px;
+    background: var(--bg-card); border: 1px solid var(--border);
+    font-size: 11px; color: var(--muted);
+  }
+  .topbar .status-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+  .topbar .status-pill .dot.on { background: var(--neon-green); box-shadow: 0 0 6px var(--neon-green); }
+  .topbar .status-pill .dot.rec { background: var(--neon-red); animation: pulse 1.2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  /* ===== 主布局 ===== */
+  .main {
+    flex: 1; display: flex; min-height: 0; position: relative; z-index: 1;
+  }
+
+  /* ===== 左侧串口列表 ===== */
+  .sidebar {
+    width: 220px; flex-shrink: 0;
+    background: var(--bg-panel);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .sidebar-head {
+    padding: 12px 16px 8px;
+    font-size: 11px; font-weight: 600; letter-spacing: 1px;
+    color: var(--muted); text-transform: uppercase;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .sidebar-head .count {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 1px 8px; font-size: 10px; color: var(--accent);
+  }
+  .port-list { flex: 1; overflow-y: auto; padding: 4px 8px; }
+  .port-item {
+    padding: 10px 12px; border-radius: 8px; cursor: pointer;
+    margin-bottom: 4px; transition: all 0.2s;
+    border: 1px solid transparent;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .port-item:hover { background: var(--bg-card); }
+  .port-item.active {
+    background: linear-gradient(135deg, rgba(0,212,255,0.12), rgba(0,153,204,0.05));
+    border-color: var(--border-glow);
+    box-shadow: inset 0 0 10px rgba(0,212,255,0.08);
+  }
+  .port-item .led {
+    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+    background: var(--muted); transition: all 0.3s;
+  }
+  .port-item.connected .led { background: var(--neon-green); box-shadow: 0 0 8px var(--neon-green); }
+  .port-item .info { flex: 1; min-width: 0; }
+  .port-item .name { font-size: 12px; font-weight: 600; color: var(--fg-bright); font-family: var(--font-mono); }
+  .port-item .desc { font-size: 10px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .port-item .baud { font-size: 10px; color: var(--accent); font-family: var(--font-mono); }
+  .port-item .actions { display: none; gap: 4px; }
+  .port-item:hover .actions { display: flex; }
+  .port-item .actions button {
+    background: none; border: none; color: var(--muted); cursor: pointer;
+    font-size: 14px; padding: 0 2px; border-radius: 3px;
+  }
+  .port-item .actions button:hover { color: var(--neon-red); background: rgba(255,64,96,0.1); }
+  .sidebar-foot {
+    padding: 10px 14px; border-top: 1px solid var(--border);
+    font-size: 10px; color: var(--muted); display: flex; justify-content: space-between;
+  }
+
+  /* ===== 中央终端区 ===== */
+  .center { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .tabs {
+    display: flex; align-items: center; gap: 2px;
+    padding: 6px 8px 0; background: var(--bg-panel);
+    border-bottom: 1px solid var(--border); flex-shrink: 0;
+    overflow-x: auto;
+  }
+  .tab {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 14px; border-radius: 7px 7px 0 0;
+    cursor: pointer; font-size: 12px; color: var(--muted);
+    border: 1px solid transparent; border-bottom: none;
+    transition: all 0.2s; white-space: nowrap;
+  }
+  .tab:hover { color: var(--fg); background: var(--bg-card); }
+  .tab.active {
+    color: var(--accent); background: var(--bg);
+    border-color: var(--border); border-bottom-color: var(--bg);
+    position: relative;
+  }
+  .tab.active::after {
+    content: ""; position: absolute; bottom: -1px; left: 0; right: 0; height: 2px;
+    background: linear-gradient(90deg, var(--accent), transparent);
+  }
+  .tab .led { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+  .tab.active .led { background: var(--neon-green); box-shadow: 0 0 6px var(--neon-green); }
+  .tab .close { opacity: 0.4; font-size: 14px; padding: 0 2px; border-radius: 3px; }
+  .tab .close:hover { opacity: 1; color: var(--neon-red); }
+  .tab-bar-actions { margin-left: auto; display: flex; gap: 4px; padding-right: 8px; }
+
+  .term-area { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .term-toolbar {
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 12px; background: var(--bg-panel);
+    border-bottom: 1px solid var(--border); flex-shrink: 0;
+  }
+  .term-toolbar .btn { padding: 4px 10px; font-size: 11px; }
+  .term-toolbar .info { font-size: 11px; color: var(--muted); margin-left: auto; font-family: var(--font-mono); }
+
+  .output-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; background: var(--bg); }
+  .output {
+    flex: 1; min-height: 0; overflow-y: auto;
+    padding: 8px 14px;
+    font-family: var(--font-mono); font-size: 13px; line-height: 1.5;
+    white-space: pre-wrap; word-break: break-all;
+    font-variant-ligatures: none;
+  }
+  .line { padding: 0; }
+  .line .ts { color: #2a3a55; font-size: 10px; margin-right: 8px; user-select: none; font-family: var(--font-mono); }
+  .tag-kernel { color: var(--kernel); }
+  .tag-kernel_err { color: var(--kernel-err); }
+  .tag-uboot { color: var(--uboot); }
+  .tag-heop { color: var(--heop); }
+  .tag-heop_ok { color: var(--heop-ok); }
+  .tag-heop_fail { color: var(--heop-fail); font-weight: 600; }
+  .tag-prompt { color: var(--prompt); }
+  .tag-text { color: var(--text); }
+  .tag-empty { }
+  .tag-input { color: var(--input-c); }
+  .tag-serial-reader, .tag-serial, .tag-ctrl { color: var(--neon-orange); font-style: italic; }
+
+  /* 终端内联输入行：固定高度，不随日志多少变化。
+     内容贴底显示（像真终端），高度充足美观，不挤压输出区。 */
+  .term-input-line {
+    flex-shrink: 0; display: flex; align-items: flex-end;
+    min-height: 120px; height: 120px; padding: 10px 16px 12px;
+    font-family: var(--font-mono); font-size: 14px; line-height: 1.6;
+    white-space: pre; overflow-x: auto; overflow-y: hidden;
+    color: var(--text);
+    background: var(--bg); border-top: 1px solid var(--border);
+  }
+  .term-input-line .echocmd, .term-input-line .echocmd-after { color: var(--input-c); flex-shrink: 0; }
+  .term-input-line .cursor {
+    display: inline-block; width: 9px; height: 28px;
+    background: var(--accent); vertical-align: middle;
+    animation: blink 1s step-end infinite;
+    box-shadow: 0 0 6px var(--accent-glow);
+    flex-shrink: 0;
+  }
+  .term-input-line .cursor.dim { background: var(--border); box-shadow: none; }
+  @keyframes blink { 0%,50%{opacity:1} 51%,100%{opacity:0} }
+
+  /* ===== 右侧面板（工具栏 + 标签页） ===== */
+  .ai-panel {
+    width: 340px; flex-shrink: 0;
+    background: var(--bg-panel);
+    border-left: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    transition: width 0.3s;
+  }
+  .ai-panel.collapsed { width: 44px; }
+  .ai-panel.collapsed .panel-body, .ai-panel.collapsed .ai-head-detail { display: none; }
+  .ai-panel.collapsed .ai-head { padding: 12px 0; justify-content: center; }
+  .ai-panel.collapsed #aiToggle { display: none; }
+  .ai-head .ai-icon { cursor: pointer; transition: transform 0.2s; }
+  .ai-head .ai-icon:hover { transform: scale(1.12); }
+  .ai-head {
+    padding: 12px 16px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+  }
+  .ai-head .ai-icon {
+    width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0;
+    background: linear-gradient(135deg, var(--neon-purple), var(--accent));
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; box-shadow: 0 0 12px rgba(179,102,255,0.4);
+  }
+  .ai-head-detail { flex: 1; }
+  .ai-head-detail .title { font-size: 13px; font-weight: 600; color: var(--fg-bright); }
+  .ai-head-detail .sub { font-size: 10px; color: var(--muted); }
+  .ai-head .toggle {
+    background: none; border: 1px solid var(--border); border-radius: 5px;
+    color: var(--muted); cursor: pointer; padding: 3px 7px; font-size: 14px;
+  }
+  .ai-head .toggle:hover { color: var(--accent); border-color: var(--accent); }
+
+  /* 顶部工具栏：搜索 + 跳底 */
+  .panel-toolbar {
+    display: flex; align-items: center; gap: 6px;
+    padding: 10px 14px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+  }
+  .panel-toolbar .search-box {
+    flex: 1; display: flex; align-items: center; gap: 4px;
+    background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px;
+    padding: 4px 8px; transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .panel-toolbar .search-box:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
+  .panel-toolbar .search-box input {
+    flex: 1; background: transparent; border: none; outline: none; color: var(--fg);
+    font-size: 12px; font-family: var(--font-ui);
+  }
+  .panel-toolbar .search-box .count { font-size: 10px; color: var(--muted); font-family: var(--font-mono); }
+  .panel-toolbar .nav-btn {
+    background: none; border: 1px solid var(--border); border-radius: 5px;
+    color: var(--muted); cursor: pointer; padding: 3px 6px; font-size: 12px;
+  }
+  .panel-toolbar .nav-btn:hover { color: var(--accent); border-color: var(--accent); }
+  .panel-toolbar .nav-btn:disabled { opacity: 0.3; cursor: default; }
+  .panel-toolbar .jump-btn {
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px;
+    color: var(--accent); cursor: pointer; padding: 4px 10px; font-size: 12px;
+    white-space: nowrap; transition: all 0.2s;
+  }
+  .panel-toolbar .jump-btn:hover { border-color: var(--accent); box-shadow: 0 0 8px var(--accent-glow); }
+
+  /* 标签页 */
+  .panel-tabs {
+    display: flex; gap: 2px; padding: 0 14px; background: var(--bg-panel);
+    border-bottom: 1px solid var(--border); flex-shrink: 0;
+  }
+  .panel-tab {
+    padding: 8px 14px; cursor: pointer; font-size: 12px; color: var(--muted);
+    border-bottom: 2px solid transparent; transition: all 0.2s; white-space: nowrap;
+  }
+  .panel-tab:hover { color: var(--fg); }
+  .panel-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .panel-body { flex: 1; min-height: 0; overflow-y: auto; }
+  .panel-tab-pane { display: none; height: 100%; }
+  .panel-tab-pane.active { display: flex; flex-direction: column; }
+
+  /* 感知标签 */
+  .sense-pane { padding: 8px 14px; overflow-y: auto; }
+  .sense-head {
+    font-size: 10px; font-weight: 600; letter-spacing: 1px; color: var(--muted);
+    text-transform: uppercase; margin-bottom: 6px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .sense-head .live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--neon-green); animation: pulse 1.5s infinite; }
+  .sense-filter { display: flex; gap: 4px; margin-bottom: 8px; flex-wrap: wrap; }
+  .sense-filter .chip {
+    font-size: 10px; padding: 2px 8px; border-radius: 10px; cursor: pointer;
+    background: var(--bg-card); border: 1px solid var(--border); color: var(--muted);
+    font-family: var(--font-mono); transition: all 0.2s;
+  }
+  .sense-filter .chip:hover { border-color: var(--accent); color: var(--accent); }
+  .sense-filter .chip.active { background: rgba(0,212,255,0.15); border-color: var(--accent); color: var(--accent); }
+  .sense-line { font-family: var(--font-mono); font-size: 11px; color: var(--text); padding: 2px 0; white-space: pre-wrap; word-break: break-all; cursor: pointer; border-radius: 4px; padding-left: 4px; }
+  .sense-line:hover { background: var(--bg-card); }
+  .sense-line .port-tag { color: var(--accent); font-size: 9px; margin-right: 4px; }
+  .sense-line.kw-error { color: var(--neon-red); }
+  .sense-line.kw-warning { color: var(--neon-orange); }
+  .sense-line.kw-info { color: var(--accent); }
+  .sense-line.kw-success { color: var(--neon-green); }
+  .sense-line.kw-cmd { color: var(--neon-purple); }
+
+  /* 分析标签 */
+  .analyze-pane { padding: 12px 14px; overflow-y: auto; }
+  .stat-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 8px; margin-bottom: 14px; }
+  .stat-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
+  .stat-card .label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  .stat-card .value { font-size: 20px; font-weight: 700; font-family: var(--font-mono); margin-top: 2px; }
+  .stat-card.err .value { color: var(--neon-red); }
+  .stat-card.warn .value { color: var(--neon-orange); }
+  .stat-card.info .value { color: var(--accent); }
+  .stat-card.ok .value { color: var(--neon-green); }
+  .analyze-section { margin-bottom: 14px; }
+  .analyze-section .title { font-size: 11px; font-weight: 600; color: var(--muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .freq-bar { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; font-size: 11px; }
+  .freq-bar .name { width: 70px; color: var(--fg); font-family: var(--font-mono); }
+  .freq-bar .bar { flex: 1; height: 8px; background: var(--bg-card); border-radius: 4px; overflow: hidden; }
+  .freq-bar .fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); border-radius: 4px; }
+  .freq-bar .num { width: 30px; text-align: right; color: var(--muted); font-family: var(--font-mono); }
+  .cluster-item { font-size: 11px; color: var(--fg); padding: 4px 8px; background: var(--bg-card); border-radius: 6px; margin-bottom: 4px; border-left: 2px solid var(--neon-red); font-family: var(--font-mono); cursor: pointer; }
+  .cluster-item:hover { background: var(--bg-input); }
+
+  /* 命令标签 */
+  .cmd-pane { padding: 10px 14px; overflow-y: auto; }
+  .cmd-add { display: flex; gap: 6px; margin-bottom: 10px; }
+  .cmd-add input { flex: 1; background: var(--bg-input); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 12px; outline: none; font-family: var(--font-mono); }
+  .cmd-add input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
+  .cmd-add button { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #001020; border: none; border-radius: 6px; padding: 6px 12px; font-size: 12px; cursor: pointer; font-weight: 600; }
+  .cmd-section .title { font-size: 11px; font-weight: 600; color: var(--muted); margin: 10px 0 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .cmd-item { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 4px; transition: all 0.2s; }
+  .cmd-item:hover { border-color: var(--accent); }
+  .cmd-item .text { flex: 1; font-family: var(--font-mono); font-size: 11px; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cmd-item .run { background: none; border: 1px solid var(--border); border-radius: 4px; color: var(--neon-green); cursor: pointer; padding: 2px 8px; font-size: 11px; }
+  .cmd-item .run:hover { border-color: var(--neon-green); background: rgba(0,255,157,0.1); }
+  .cmd-item .del { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 13px; padding: 0 4px; }
+  .cmd-item .del:hover { color: var(--neon-red); }
+  .cmd-empty { color: var(--muted); font-size: 11px; padding: 12px; text-align: center; }
+
+  /* 跳底悬浮按钮 —— 主窗口右下角，科技风 */
+  .jump-bottom-fab {
+    position: absolute; right: 20px; bottom: 20px; z-index: 8;
+    display: none; align-items: center; justify-content: center;
+    width: 44px; height: 44px; border-radius: 14px;
+    background: linear-gradient(135deg, rgba(0,212,255,0.92), rgba(0,153,204,0.88));
+    color: #001020; cursor: pointer;
+    box-shadow: 0 4px 18px rgba(0,212,255,0.45), 0 0 0 1px rgba(0,212,255,0.25) inset;
+    transition: transform 0.25s cubic-bezier(.34,1.56,.64,1), box-shadow 0.25s, opacity 0.25s;
+    opacity: 0.92;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+  }
+  .jump-bottom-fab svg { width: 22px; height: 22px; display: block; }
+  .jump-bottom-fab:hover {
+    transform: translateY(-3px) scale(1.06);
+    box-shadow: 0 8px 26px rgba(0,212,255,0.6), 0 0 0 1px rgba(0,212,255,0.4) inset;
+    opacity: 1;
+  }
+  .jump-bottom-fab:active { transform: translateY(-1px) scale(1.02); }
+  .jump-bottom-fab.show { display: flex; animation: fab-in 0.3s ease; }
+  @keyframes fab-in {
+    from { opacity: 0; transform: translateY(8px) scale(0.85); }
+    to   { opacity: 0.92; transform: translateY(0) scale(1); }
+  }
+  /* 持续呼吸提示 */
+  .jump-bottom-fab.show::after {
+    content: ""; position: absolute; inset: -4px; border-radius: 16px;
+    border: 1.5px solid rgba(0,212,255,0.5);
+    animation: fab-pulse 1.8s ease-out infinite;
+    pointer-events: none;
+  }
+  @keyframes fab-pulse {
+    0%   { opacity: 0.6; transform: scale(0.9); }
+    70%  { opacity: 0; transform: scale(1.25); }
+    100% { opacity: 0; transform: scale(1.25); }
+  }
+
+  /* 搜索/关键字高亮 */
+  mark.hit { background: rgba(0,212,255,0.18); border-bottom: 2px solid var(--accent); color: inherit; padding: 0 1px; border-radius: 2px; }
+  mark.hit.active { background: rgba(255,157,0,0.35); border-bottom-color: var(--neon-orange); }
+  .kw-error { color: var(--neon-red); font-weight: 600; }
+  .kw-warning { color: var(--neon-orange); font-weight: 600; }
+  .kw-info { color: var(--accent); font-weight: 600; }
+  .kw-success { color: var(--neon-green); font-weight: 600; }
+  .kw-cmd { color: var(--neon-purple); font-weight: 600; }
+  .top-sentinel { height: 1px; }
+
+  /* 隐藏输入框（承载焦点） */
+  #cmdInput { position: absolute; left: -9999px; width: 1px; opacity: 0; }
+
+  /* 回放面板 */
+  .replay-panel {
+    display: none; position: absolute; inset: 0;
+    background: var(--bg); z-index: 10; flex-direction: column;
+  }
+  .replay-panel.show { display: flex; }
+  .replay-head { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: var(--bg-panel); border-bottom: 1px solid var(--border); }
+  .replay-body { flex: 1; overflow-y: auto; padding: 8px 14px; font-family: var(--font-mono); font-size: 13px; white-space: pre-wrap; word-break: break-all; }
+  .replay-foot { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: var(--bg-panel); border-top: 1px solid var(--border); }
+  .replay-foot input[type=range] { flex: 1; }
+
+  /* 日志模态框 */
+  .modal {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+    z-index: 100; align-items: center; justify-content: center; backdrop-filter: blur(4px);
+  }
+  .modal.show { display: flex; }
+  .modal .box {
+    background: var(--bg-panel); border: 1px solid var(--border-glow); border-radius: 12px;
+    width: 600px; max-height: 70vh; display: flex; flex-direction: column;
+    box-shadow: 0 0 40px rgba(0,212,255,0.1);
+  }
+  .modal .head { padding: 14px 18px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+  .modal .head strong { color: var(--fg-bright); font-size: 14px; }
+  .modal .list { overflow-y: auto; padding: 8px; }
+  .modal .item { padding: 10px 12px; border-radius: 8px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; transition: all 0.2s; }
+  .modal .item:hover { background: var(--bg-card); border-color: var(--accent); }
+  .modal .item .sz { color: var(--muted); font-size: 11px; }
+  .log-dir-bar { display: flex; align-items: center; gap: 6px; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--bg-card); }
+  .log-dir-bar .lbl { font-size: 11px; color: var(--muted); white-space: nowrap; }
+  .log-dir-input { flex: 1; background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; color: var(--fg); font-family: var(--font-mono); font-size: 11px; outline: none; }
+  .log-dir-input:focus { border-color: var(--accent); }
+
+  /* 连接对话框 */
+  .conn-modal .box { width: 400px; }
+  .conn-form { padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+  .conn-form label { font-size: 11px; color: var(--muted); font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; }
+  .conn-form select, .conn-form input { width: 100%; background: var(--bg-input); color: var(--fg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 13px; outline: none; }
+  .conn-form select:focus, .conn-form input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
+  .conn-form .actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 6px; }
+
+  /* 滚动条 */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--border-glow); }
+
+  /* 横幅通知 */
+  .banner {
+    display: none; padding: 8px 16px;
+    background: linear-gradient(90deg, rgba(0,212,255,0.15), rgba(0,153,204,0.08));
+    border-bottom: 1px solid var(--border-glow); color: var(--accent);
+    font-size: 12px; z-index: 5;
+  }
+  .banner.show { display: block; }
+  .banner.err { background: linear-gradient(90deg, rgba(255,64,96,0.15), rgba(255,64,96,0.08)); border-color: var(--neon-red); color: var(--neon-red); }
+
+  /* 空状态 */
+  .empty-state {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    color: var(--muted); gap: 12px; padding: 40px;
+  }
+  .empty-state .big-icon { font-size: 48px; opacity: 0.3; }
+  .empty-state .title { font-size: 16px; color: var(--fg); }
+  .empty-state .desc { font-size: 12px; text-align: center; max-width: 300px; line-height: 1.6; }
+</style>
+</head>
+<body>
+
+<!-- 顶栏 -->
+<div class="topbar">
+  <div class="logo">
+    <div class="icon">&gt;_</div>
+    <span>串口控制台 <span class="ver">PRO</span></span>
+  </div>
+  <div class="divider"></div>
+  <div class="conn-area">
+    <button class="btn primary" id="btnNewConn">＋ 新建连接</button>
+    <button class="btn ghost icon-btn" id="btnRefreshPorts" title="刷新端口">↻</button>
+  </div>
+  <div class="spacer"></div>
+  <div class="status-pill"><span class="dot" id="globalDot"></span><span id="globalStatus">0 个连接</span></div>
+  <div class="status-pill"><span class="dot rec" id="recDot"></span><span>录制中</span></div>
+  <button class="btn ghost" id="btnLogs">📜 日志库</button>
+  <button class="btn ghost" id="btnAbout">关于</button>
+</div>
+
+<div class="banner" id="banner"></div>
+
+<!-- 主布局 -->
+<div class="main">
+  <!-- 左侧串口列表 -->
+  <div class="sidebar">
+    <div class="sidebar-head">
+      <span>串口连接</span>
+      <span class="count" id="portCount">0</span>
+    </div>
+    <div class="port-list" id="portList">
+      <div class="empty-state" style="padding:30px 10px;">
+        <div class="desc">点击「新建连接」添加串口</div>
+      </div>
+    </div>
+    <div class="sidebar-foot">
+      <span id="logInfo">日志: serial_logs/</span>
+    </div>
+  </div>
+
+  <!-- 中央终端区 -->
+  <div class="center">
+    <div class="tabs" id="tabs">
+      <div class="tab-bar-actions">
+        <button class="btn ghost icon-btn" id="btnPause" title="暂停滚屏">⏸</button>
+        <button class="btn ghost icon-btn" id="btnClear" title="清屏">⊘</button>
+        <button class="btn ghost icon-btn" id="btnNewLog" title="新建日志">＋📋</button>
+        <button class="btn ghost icon-btn" id="btnCtrlC" title="Ctrl-C">^C</button>
+        <button class="btn ghost icon-btn" id="btnCtrlD" title="Ctrl-D">^D</button>
+      </div>
+    </div>
+    <div class="term-area" id="termArea">
+      <div class="empty-state" id="emptyState">
+        <div class="big-icon">📡</div>
+        <div class="title">暂无串口连接</div>
+        <div class="desc">点击顶部「新建连接」选择串口端口和波特率，支持同时监控多个串口。每个串口独立标签页，互不干扰。</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 右侧工具面板 -->
+  <div class="ai-panel" id="aiPanel">
+    <div class="ai-head">
+      <div class="ai-icon">✦</div>
+      <div class="ai-head-detail">
+        <div class="title">串口助手</div>
+        <div class="sub">搜索 · 感知 · 分析 · 命令</div>
+      </div>
+      <button class="toggle" id="aiToggle" title="折叠/展开">›</button>
+    </div>
+    <div class="panel-toolbar">
+      <div class="search-box">
+        <input type="text" id="searchInput" placeholder="搜索关键字…" autocomplete="off">
+        <span class="count" id="searchCount"></span>
+      </div>
+      <button class="nav-btn" id="searchPrev" title="上一个 (Shift+Enter)">▲</button>
+      <button class="nav-btn" id="searchNext" title="下一个 (Enter)">▼</button>
+      <button class="jump-btn" id="btnJumpBottom" title="跳到底部 (Ctrl+End)">⤓ 跳底</button>
+    </div>
+    <div class="panel-tabs">
+      <div class="panel-tab active" data-pane="sense">● 感知</div>
+      <div class="panel-tab" data-pane="analyze">📊 分析</div>
+      <div class="panel-tab" data-pane="cmd">⌘ 命令</div>
+    </div>
+    <div class="panel-body" id="panelBody">
+      <!-- 感知 -->
+      <div class="panel-tab-pane active" data-pane="sense">
+        <div class="sense-pane" id="sensePane">
+          <div class="sense-head"><span class="live-dot"></span>实时串口流（全部端口）</div>
+          <div class="sense-filter" id="senseFilter"></div>
+          <div id="senseList"></div>
+        </div>
+      </div>
+      <!-- 分析 -->
+      <div class="panel-tab-pane" data-pane="analyze">
+        <div class="analyze-pane" id="analyzePane">
+          <div class="stat-cards" id="statCards"></div>
+          <div class="analyze-section">
+            <div class="title">关键字频率</div>
+            <div id="freqBars"></div>
+          </div>
+          <div class="analyze-section">
+            <div class="title">最近异常</div>
+            <div id="clusterList"><div class="cmd-empty">暂无异常</div></div>
+          </div>
+        </div>
+      </div>
+      <!-- 命令 -->
+      <div class="panel-tab-pane" data-pane="cmd">
+        <div class="cmd-pane" id="cmdPane">
+          <div class="cmd-add">
+            <input type="text" id="cmdAddInput" placeholder="添加命令片段…" autocomplete="off">
+            <button id="cmdAddBtn">＋</button>
+          </div>
+          <div class="cmd-section">
+            <div class="title">命令库</div>
+            <div id="cmdLibrary"></div>
+          </div>
+          <div class="cmd-section">
+            <div class="title">最近命令</div>
+            <div id="cmdRecent"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 隐藏输入框 -->
+<input type="text" id="cmdInput" autocomplete="off">
+
+<!-- 连接对话框 -->
+<div class="modal conn-modal" id="connModal">
+  <div class="box">
+    <div class="head">
+      <strong>新建串口连接</strong>
+      <button class="btn ghost icon-btn" id="connClose">✕</button>
+    </div>
+    <div class="conn-form">
+      <div>
+        <label>串口端口</label>
+        <select id="connPort" style="margin-top:6px;"></select>
+      </div>
+      <div>
+        <label>波特率</label>
+        <select id="connBaud" style="margin-top:6px;"></select>
+      </div>
+      <div class="actions">
+        <button class="btn ghost" id="connCancel">取消</button>
+        <button class="btn primary" id="connConfirm">连接</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 日志库模态框 -->
+<div class="modal" id="logsModal">
+  <div class="box">
+    <div class="head">
+      <strong>📜 日志库</strong>
+      <button class="btn ghost icon-btn" id="logsClose">✕</button>
+    </div>
+    <div class="log-dir-bar">
+      <span class="lbl">目录</span>
+      <input type="text" id="logDirInput" class="log-dir-input" spellcheck="false" placeholder="日志保存目录">
+      <button class="btn ghost" id="btnLogDirApply" title="应用新目录（日志库从此目录读取，新日志写到此目录）">应用</button>
+      <button class="btn ghost icon-btn" id="btnLogDirReset" title="恢复默认目录">↺</button>
+      <button class="btn ghost icon-btn" id="btnLogDirOpen" title="在文件资源管理器中打开">📁</button>
+    </div>
+    <div class="list" id="logsList"></div>
+  </div>
+</div>
+
+<!-- 回放面板 -->
+<div class="replay-panel" id="replayPanel">
+  <div class="replay-head">
+    <strong id="replayTitle">回放</strong>
+    <span class="info" id="replayInfo" style="color:var(--muted);font-size:11px;"></span>
+    <span style="flex:1"></span>
+    <button class="btn ghost" id="btnReplayPlay">▶ 播放</button>
+    <button class="btn ghost" id="btnReplayPause">⏸</button>
+    <button class="btn ghost" id="btnReplayClose">✕ 关闭</button>
+  </div>
+  <div class="replay-body" id="replayBody"></div>
+  <div class="replay-foot">
+    <span class="info" id="replayTime" style="color:var(--muted);font-size:11px;font-family:var(--font-mono);">00:00</span>
+    <input type="range" id="replaySeek" min="0" max="100" value="0">
+    <span class="info" id="replayTotal" style="color:var(--muted);font-size:11px;font-family:var(--font-mono);">00:00</span>
+    <select id="replaySpeed" class="btn ghost" style="padding:4px 8px;">
+      <option value="4">4x</option>
+      <option value="2">2x</option>
+      <option value="1" selected>1x</option>
+      <option value="0.5">0.5x</option>
+    </select>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// 全局状态
+// ============================================================
+const $ = id => document.getElementById(id);
+const banner = $('banner');
+const portList = $('portList');
+const tabs = $('tabs');
+const termArea = $('termArea');
+const cmdInput = $('cmdInput');
+
+let connections = {};   // port_id -> { meta, sse, termBuf, tabEl, outputEl, termInputLineEl, ... }
+let activePortId = null;
+let paused = false;
+let autoScroll = true;
+let aiSse = null;
+
+function showBanner(msg, ms=4000, isErr=false) {
+  banner.textContent = msg;
+  banner.className = 'banner show' + (isErr ? ' err' : '');
+  if (ms) setTimeout(()=>{ if (banner.textContent === msg) banner.className = 'banner'; }, ms);
+}
+function fmtTs(ms) {
+  const d = new Date(ms);
+  return d.toLocaleTimeString('zh-CN', {hour12:false}) + '.' + String(ms % 1000).padStart(3,'0');
+}
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ============================================================
+// 关键字高亮（Linux 内核/系统日志 + BusyBox 命令，与 ANSI 颜色共存）
+// ============================================================
+const KW_RULES = [
+  // 错误（红）：通用错误词 + Linux 内核/系统致命短语
+  { cls: 'kw-error', re: /\b(error|fail|failed|failure|panic|oops|fatal|denied|refused|abort|crash|segfault|oom|killed|segmentation fault|no such file or directory|permission denied|operation not permitted|unable to handle|kernel panic|out of memory|oom-kill|oom killer|call trace|stack trace|core dump|bus error|page fault|null pointer|general protection fault|illegal instruction|division by zero|hung task|soft lockup|hard lockup)\b/gi },
+  // 警告（橙）：通用警告词 + Linux 告警词
+  { cls: 'kw-warning', re: /\b(warn|warning|deprecated|timeout|retry|overflow|underrun|stall|hung|blocked|deadlock|leak|leaked|corrupt|corrupted|incomplete|missing|not found|not supported|invalid|broken|exhausted|degraded|overrun|underflow|bad blocks|read-only|filesystem corruption)\b/gi },
+  // 信息（青）：通用状态词 + Linux 启动/初始化短语
+  { cls: 'kw-info', re: /\b(info|notice|starting|started|stopped|detected|found|loaded|ready|init|initializing|mounting|mounted|deactivated|booting|probe|probed|register|registered|enabled|disabled|linux version|systemd|udev|freeing|freed|allocated|setting up|configured|bringing up|link is up|link is down)\b/gi },
+  // 成功（绿）
+  { cls: 'kw-success', re: /\b(success|succeed|succeeded|ok|done|complete|completed|passed|ready)\b/gi },
+  // BusyBox/Shell 命令（紫）：仅在「命令位置」匹配（行首/提示符/管道/分号/重定向后），
+  // 用捕获组 grp:2 定位命令名本身，避免把日志正文里的 ip/cat 等普通词误判为命令。
+  { cls: 'kw-cmd', re: /(^|[|;&>#$]\s*)(ls|ll|cat|echo|grep|egrep|fgrep|awk|sed|find|ps|kill|killall|top|df|du|free|mount|umount|cd|pwd|cp|mv|rm|mkdir|rmdir|touch|chmod|chown|chgrp|head|tail|wc|sort|uniq|cut|tr|tee|xargs|ifconfig|route|ping|netstat|vi|dmesg|uname|uptime|sleep|date|time|env|export|set|unset|alias|history|which|test|true|false|exit|return|printf|expr|seq|basename|dirname|realpath|ln|tar|gzip|gunzip|zcat|dd|mkswap|swapon|swapoff|insmod|rmmod|modprobe|lsmod|ip|ethtool|i2cdetect|i2cget|i2cset|i2cdump|devmem|memtool|reboot|poweroff|halt|sync|md5sum|sha256sum|od|hexdump|stat|file|id|whoami|hostname|fdisk|blkid|lsblk|sysctl|systemctl|taskset|nproc|lscpu|nv|fw_printenv|fw_setenv|nanddump|nandwrite|flashcp|flash_erase|mtdinfo)(?![a-z0-9])/gi, grp: 2 },
+];
+// 在纯文本 textNode 上叠加关键字高亮（不破坏父级 ANSI span）
+function highlightKeywords(node) {
+  if (node.nodeType !== 3) return; // 只处理文本节点
+  const text = node.nodeValue;
+  if (!text) return;
+  // 收集所有匹配
+  const hits = [];
+  for (const r of KW_RULES) {
+    r.re.lastIndex = 0;
+    let m;
+    while ((m = r.re.exec(text)) !== null) {
+      // 支持捕获组定位：grp 指定用第几个捕获组作为高亮片段（用于命令位置规则）
+      let start, len;
+      if (r.grp) {
+        start = m.index + m[0].length - m[r.grp].length;
+        len = m[r.grp].length;
+      } else {
+        start = m.index;
+        len = m[0].length;
+      }
+      hits.push({ start, end: start + len, cls: r.cls });
+      if (m.index === r.re.lastIndex) r.re.lastIndex++;
+    }
+  }
+  if (!hits.length) return;
+  hits.sort((a, b) => a.start - b.start);
+  // 合并重叠
+  const merged = [];
+  for (const h of hits) {
+    if (merged.length && h.start < merged[merged.length - 1].end) continue;
+    merged.push(h);
+  }
+  // 拆分 textNode
+  const frag = document.createDocumentFragment();
+  let last = 0;
+  for (const h of merged) {
+    if (h.start > last) frag.appendChild(document.createTextNode(text.slice(last, h.start)));
+    const span = document.createElement('span');
+    span.className = h.cls;
+    span.textContent = text.slice(h.start, h.end);
+    frag.appendChild(span);
+    last = h.end;
+  }
+  if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+  node.parentNode.replaceChild(frag, node);
+}
+
+// ============================================================
+// 终端标签页 & 输出区管理
+// ============================================================
+// 注：实际终端元素由 buildTerminal() 创建，此处不再保留死代码。
+
+// 重新设计：每个连接有自己的 output 容器
+function buildTerminal(portId, meta) {
+  // 标签
+  const tab = document.createElement('div');
+  tab.className = 'tab';
+  tab.dataset.portId = portId;
+  tab.innerHTML = `<span class="led"></span><span>${esc(portId)}</span><span style="color:var(--muted);font-size:10px;">@${meta.baud}</span> <span class="close" title="关闭">✕</span>`;
+  tab.onclick = (e) => {
+    if (e.target.classList.contains('close')) { e.stopPropagation(); closeConnection(portId); return; }
+    switchTab(portId);
+  };
+  // 终端区
+  const wrap = document.createElement('div');
+  wrap.className = 'term-area';
+  wrap.dataset.portId = portId;
+  wrap.style.display = 'none';
+  wrap.innerHTML = `
+    <div class="term-toolbar">
+      <button class="btn ghost" data-act="pause">⏸ 暂停滚屏</button>
+      <button class="btn ghost" data-act="clear">⊘ 清屏</button>
+      <button class="btn ghost" data-act="newlog">＋ 新日志</button>
+      <button class="btn ghost" data-act="ctrlc">^C</button>
+      <button class="btn ghost" data-act="ctrld">^D</button>
+      <span class="info" data-info="baud">${portId} @ ${meta.baud}</span>
+    </div>
+    <div class="output-wrap">
+      <div class="output" data-output="${portId}">
+      </div>
+      <div class="term-input-line" data-term-input="${portId}" title="点击此处输入命令">
+        <span class="echocmd"></span><span class="cursor"></span><span class="echocmd-after"></span>
+      </div>
+    </div>
+  `;
+  // 工具栏事件
+  wrap.querySelector('[data-act=pause]').onclick = function() {
+    conn.paused = !conn.paused;
+    this.textContent = conn.paused ? '▶ 继续' : '⏸ 暂停滚屏';
+    if (!conn.paused) conn.output.scrollTop = conn.output.scrollHeight;
+  };
+  wrap.querySelector('[data-act=clear]').onclick = () => {
+    Array.from(conn.output.querySelectorAll('.line')).forEach(n => n.remove());
+    fetch('/api/clear_buffer', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: portId})});
+  };
+  wrap.querySelector('[data-act=newlog]').onclick = async () => {
+    const r = await fetch('/api/new_log', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: portId})});
+    const j = await r.json();
+    showBanner('已开新日志：' + j.log_path);
+  };
+  wrap.querySelector('[data-act=ctrlc]').onclick = () => termSendRaw(portId, [3]);
+  wrap.querySelector('[data-act=ctrld]').onclick = () => termSendRaw(portId, [4]);
+
+  const conn = {
+    meta, tab, wrap,
+    output: wrap.querySelector(`[data-output="${portId}"]`),
+    termInputLine: wrap.querySelector(`[data-term-input="${portId}"]`),
+    termEcho: wrap.querySelector(`[data-term-input="${portId}"] .echocmd`),
+    termEchoAfter: wrap.querySelector(`[data-term-input="${portId}"] .echocmd-after`),
+    termCursor: wrap.querySelector(`[data-term-input="${portId}"] .cursor`),
+    sse: null,
+    termBuf: '',
+    termCursorPos: 0,
+    termHistIdx: -1,
+    tabCompleted: false,
+    paused: false,
+    autoScroll: true,
+    // 历史分页
+    hasMore: true,
+    oldestSeq: null,
+    loadingMore: false,
+    sentinel: null,
+    io: null,
+  };
+  // 顶部哨兵元素（output 第一个子元素，用于无限向上滚动触发）
+  const sentinel = document.createElement('div');
+  sentinel.className = 'top-sentinel';
+  conn.output.insertBefore(sentinel, conn.output.firstChild);
+  conn.sentinel = sentinel;
+  // 跳底悬浮按钮
+  const fab = document.createElement('div');
+  fab.className = 'jump-bottom-fab';
+  fab.title = '跳到底部 (Ctrl+End)';
+  fab.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v14"/><path d="m6 12 6 6 6-6"/><path d="M5 20h14"/></svg>';
+  fab.onclick = () => jumpToBottom(portId);
+  wrap.querySelector('.output-wrap').appendChild(fab);
+  conn.fab = fab;
+  // 点击输入行聚焦
+  conn.termInputLine.addEventListener('click', () => { cmdInput.focus(); });
+  // 滚动检测
+  conn.output.addEventListener('scroll', () => {
+    const atBottom = conn.output.scrollHeight - conn.output.scrollTop - conn.output.clientHeight < 40;
+    conn.autoScroll = atBottom;
+    // 翻到历史时显示跳底悬浮按钮
+    conn.fab.classList.toggle('show', !atBottom);
+  });
+  // 无限向上滚动：IntersectionObserver 监测哨兵
+  conn.io = new IntersectionObserver((entries) => {
+    if (entries[0].isIntersecting && conn.hasMore && !conn.loadingMore && conn.oldestSeq != null) {
+      loadOlder(portId, conn);
+    }
+  }, { root: conn.output, rootMargin: '120px 0px 120px 0px' });
+  conn.io.observe(sentinel);
+
+  // 插入 DOM
+  // 先移除空状态
+  const es = termArea.querySelector('.empty-state');
+  if (es) es.remove();
+  tabs.insertBefore(tab, tabs.querySelector('.tab-bar-actions'));
+  termArea.appendChild(wrap);
+
+  // SSE
+  connectSSE(portId, conn);
+
+  // 加载历史缓冲
+  loadBuffer(portId, conn);
+  return conn;
+}
+
+function switchTab(portId) {
+  activePortId = portId;
+  // 标签
+  tabs.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.portId === portId));
+  // 终端区
+  termArea.querySelectorAll('.term-area').forEach(w => w.style.display = w.dataset.portId === portId ? 'flex' : 'none');
+  // 侧边栏
+  portList.querySelectorAll('.port-item').forEach(p => p.classList.toggle('active', p.dataset.portId === portId));
+  // 光标
+  const conn = connections[portId];
+  if (conn) {
+    conn.termCursor.classList.remove('dim');
+    cmdInput.focus();
+  }
+}
+
+function appendLine(portId, item) {
+  const conn = connections[portId];
+  if (!conn || conn.paused) return;
+  // 设备 \r 重绘的命令行（item.redraw=true）：同步 termBuf，不显示到输出区。
+  // 这是 tab 补全/方向键历史后设备重绘的当前命令行，可靠标记（后端 \r 处理时设置），
+  // 取代之前用 redrawDeadline 时间窗口猜测的方式（会误吞提示符/回显行）。
+  if (item.redraw) {
+    const raw = item.text || '';
+    // 识别命令行提示符：行末为 "# " / "$ " / "> " 或裸 "#" / "$" / ">"。
+    // 支持 "root@host:# " / "~/dir # " / "/ # " 等带前缀的提示符。
+    // 提示符后的部分就是当前命令（可能为补全结果，也可能为空）。
+    const m = raw.match(/^(.*?)([#\$>])\s+(.*)$/);   // "前缀# 命令"
+    const m2 = raw.match(/^(.*?)([#\$>])\s*$/);       // "前缀#"（纯提示符，命令为空）
+    if (m) {
+      const t = m[3].replace(/\s+$/, '');
+      conn.termBuf = t;
+      conn.termCursorPos = t.length;
+      cmdInput.value = t;
+      renderTermInput(conn);
+      conn.tabCompleted = true;
+      return;
+    } else if (m2) {
+      // 纯提示符重绘（补全无结果/命令被清空）：同步为空命令行
+      conn.termBuf = '';
+      conn.termCursorPos = 0;
+      cmdInput.value = '';
+      renderTermInput(conn);
+      conn.tabCompleted = true;
+      return;
+    }
+    // 不含提示符特征的 redraw 行（进度条/覆盖刷新等）：当普通行显示，不清 termBuf
+  }
+  const div = buildLineDiv(item);
+  conn.output.appendChild(div);
+  if (conn.autoScroll) conn.output.scrollTop = conn.output.scrollHeight;
+  trimDom(conn);
+}
+
+// 构建一行 DOM（供 appendLine / loadOlder / loadBuffer 复用）
+function buildLineDiv(item) {
+  const div = document.createElement('div');
+  div.className = 'line tag-' + (item.tag || 'text');
+  if (item.seq != null) div.dataset.seq = item.seq;
+  const ts = document.createElement('span');
+  ts.className = 'ts';
+  ts.textContent = item.ts ? fmtTs(item.ts) : '';
+  div.appendChild(ts);
+  if (item.html) {
+    const span = document.createElement('span');
+    span.innerHTML = item.html;
+    div.appendChild(span);
+  } else {
+    div.appendChild(document.createTextNode(item.text));
+  }
+  // 关键字高亮：遍历行内所有 textNode 叠加着色
+  const walker = document.createTreeWalker(div, NodeFilter.SHOW_TEXT, null);
+  const textNodes = [];
+  while (walker.nextNode()) textNodes.push(walker.currentNode);
+  // 跳过时间戳 span 的文本
+  for (const tn of textNodes) {
+    if (tn.parentNode && tn.parentNode.classList.contains('ts')) continue;
+    highlightKeywords(tn);
+  }
+  return div;
+}
+
+// DOM 节点上限：方向性裁剪
+function trimDom(conn) {
+  const MAX = 50000;
+  // autoScroll（在底部跟实时）时裁顶部旧行；阅读历史时不裁剪
+  if (!conn.autoScroll) return;
+  while (conn.output.childNodes.length > MAX) {
+    // sentinel 在顶部，删它后面的第一行（最旧的行）
+    const first = conn.sentinel.nextSibling;
+    if (!first) break;
+    first.remove();
+  }
+}
+
+function renderTermInput(conn) {
+  // 在 termBuf 的光标位置拆分：光标前文本 → echocmd，光标后文本 → echocmd-after
+  // 光标块 .cursor 本身是固定宽闪烁块，夹在中间
+  const pos = Math.max(0, Math.min(conn.termCursorPos, conn.termBuf.length));
+  conn.termEcho.textContent = conn.termBuf.slice(0, pos);
+  conn.termEchoAfter.textContent = conn.termBuf.slice(pos);
+}
+
+function termSendRaw(portId, bytes) {
+  fetch('/api/send_raw', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: portId, bytes})});
+}
+
+function connectSSE(portId, conn) {
+  conn.sse = new EventSource('/api/stream?port_id=' + encodeURIComponent(portId));
+  conn.sse.onmessage = (e) => {
+    try {
+      const item = JSON.parse(e.data);
+      appendLine(portId, item);
+    } catch(err) {}
+  };
+  conn.sse.onerror = () => {
+    conn.sse.close();
+    setTimeout(() => { if (connections[portId]) connectSSE(portId, conn); }, 2000);
+  };
+}
+
+
+async function loadBuffer(portId, conn) {
+  try {
+    const r = await fetch('/api/buffer?port_id=' + encodeURIComponent(portId) + '&n=500');
+    const j = await r.json();
+    const lines = j.lines || [];
+    const frag = document.createDocumentFragment();
+    lines.forEach(l => frag.appendChild(buildLineDiv(l)));
+    conn.output.appendChild(frag);
+    if (lines.length) {
+      conn.oldestSeq = lines[0].seq;
+      conn.hasMore = j.has_more !== false;
+    } else {
+      conn.hasMore = false;
+    }
+    if (conn.autoScroll) conn.output.scrollTop = conn.output.scrollHeight;
+  } catch(e) {}
+}
+
+// 无限向上加载更早历史
+async function loadOlder(portId, conn) {
+  if (conn.loadingMore || !conn.hasMore || conn.oldestSeq == null) return;
+  conn.loadingMore = true;
+  try {
+    // 锚定当前顶部第一行（sentinel 之后第一个，历史行插到它之前，用它补偿 scrollTop）
+    const anchor = conn.sentinel.nextSibling;
+    const prevScrollTop = conn.output.scrollTop;
+    const prevAnchorTop = anchor ? anchor.offsetTop : 0;
+    const r = await fetch('/api/buffer?port_id=' + encodeURIComponent(portId) + '&n=500&before_seq=' + conn.oldestSeq);
+    const j = await r.json();
+    const lines = j.lines || [];
+    if (lines.length) {
+      const frag = document.createDocumentFragment();
+      lines.forEach(l => frag.appendChild(buildLineDiv(l)));
+      // 历史行是更早的，插到顶部哨兵之后（当前第一行之前）
+      conn.output.insertBefore(frag, conn.sentinel.nextSibling);
+      conn.oldestSeq = lines[0].seq;
+      conn.hasMore = j.has_more !== false;
+      // 补偿 scrollTop：anchor 被历史行往下推，scrollTop 同步增加保持视口不跳
+      const delta = (anchor ? anchor.offsetTop : 0) - prevAnchorTop;
+      conn.output.scrollTop = prevScrollTop + delta;
+    } else {
+      conn.hasMore = false;
+    }
+    if (!conn.hasMore && conn.io) conn.io.disconnect();
+  } catch(e) {} finally {
+    conn.loadingMore = false;
+  }
+}
+
+// 跳到底部
+function jumpToBottom(portId) {
+  const conn = connections[portId];
+  if (!conn) return;
+  conn.autoScroll = true;
+  conn.output.scrollTop = conn.output.scrollHeight;
+  conn.fab.classList.remove('show');
+  cmdInput.focus();
+}
+
+// ============================================================
+// 连接管理
+// ============================================================
+async function loadPorts() {
+  try {
+    const r = await fetch('/api/ports');
+    const j = await r.json();
+    const connPort = $('connPort');
+    connPort.innerHTML = '';
+    if (!j.ports.length) {
+      connPort.innerHTML = '<option value="">（无可用串口）</option>';
+      return;
+    }
+    j.ports.forEach(p => {
+      const o = document.createElement('option');
+      o.value = p.device;
+      o.textContent = `${p.device} — ${p.description}`;
+      connPort.appendChild(o);
+    });
+    const connBaud = $('connBaud');
+    connBaud.innerHTML = '';
+    (j.bauds || [115200]).forEach(b => {
+      const o = document.createElement('option');
+      o.value = b; o.textContent = b;
+      if (b === 115200) o.selected = true;
+      connBaud.appendChild(o);
+    });
+  } catch(e) {}
+}
+
+async function connectPort(port, baud) {
+  try {
+    const r = await fetch('/api/connect', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port, baud})});
+    const j = await r.json();
+    if (j.ok) {
+      showBanner(`已连接 ${port}@${baud}`);
+      const conn = buildTerminal(port, {baud});
+      connections[port] = conn;
+      switchTab(port);
+      refreshSidebar();
+      refreshGlobalStatus();
+    } else {
+      showBanner('连接失败：' + (j.err || '未知错误'), 8000, true);
+    }
+  } catch(e) { showBanner('连接请求失败：' + e, 8000, true); }
+}
+
+function closeConnection(portId) {
+  fetch('/api/disconnect', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: portId})});
+  const conn = connections[portId];
+  if (conn) {
+    if (conn.sse) conn.sse.close();
+    conn.tab.remove();
+    conn.wrap.remove();
+    delete connections[portId];
+  }
+  // 切换到第一个可用标签
+  const remaining = Object.keys(connections);
+  if (remaining.length) {
+    switchTab(remaining[0]);
+  } else {
+    activePortId = null;
+    termArea.innerHTML = '<div class="empty-state"><div class="big-icon">📡</div><div class="title">暂无串口连接</div><div class="desc">点击顶部「新建连接」选择串口端口和波特率，支持同时监控多个串口。每个串口独立标签页，互不干扰。</div></div>';
+  }
+  refreshSidebar();
+  refreshGlobalStatus();
+}
+
+function refreshSidebar() {
+  const ids = Object.keys(connections);
+  $('portCount').textContent = ids.length;
+  if (!ids.length) {
+    portList.innerHTML = '<div class="empty-state" style="padding:30px 10px;"><div class="desc">点击「新建连接」添加串口</div></div>';
+    return;
+  }
+  portList.innerHTML = '';
+  ids.forEach(pid => {
+    const conn = connections[pid];
+    const item = document.createElement('div');
+    item.className = 'port-item connected' + (pid === activePortId ? ' active' : '');
+    item.dataset.portId = pid;
+    item.innerHTML = `
+      <span class="led"></span>
+      <div class="info">
+        <div class="name">${esc(pid)}</div>
+        <div class="desc">${esc(conn.meta.baud || '')} baud · <span class="baud">${conn.output.querySelectorAll('.line').length} 行</span></div>
+      </div>
+      <div class="actions"><button data-close="${pid}" title="断开">✕</button></div>
+    `;
+    item.onclick = (e) => {
+      if (e.target.dataset.close) { e.stopPropagation(); closeConnection(pid); return; }
+      switchTab(pid);
+    };
+    portList.appendChild(item);
+  });
+}
+
+async function refreshGlobalStatus() {
+  try {
+    const r = await fetch('/api/status');
+    const j = await r.json();
+    const n = Object.keys(j.ports || {}).length;
+    $('globalStatus').textContent = n + ' 个连接';
+    $('globalDot').className = 'dot' + (n ? ' on' : '');
+  } catch(e) {}
+}
+
+// ============================================================
+// 键盘输入（MobaXterm 风格内联输入）
+// ============================================================
+cmdInput.addEventListener('input', (e) => {
+  if (!activePortId) return;
+  const conn = connections[activePortId];
+  if (!conn) return;
+  const val = cmdInput.value;
+  const sel = (cmdInput.selectionStart != null) ? cmdInput.selectionStart : val.length;
+  // 基于光标位置的精确 diff：比较旧 termBuf 和新 val，找出插入/删除的字符及位置
+  const oldBuf = conn.termBuf;
+  const oldPos = conn.termCursorPos;
+  // 找公共前缀
+  let pre = 0;
+  while (pre < oldBuf.length && pre < val.length && oldBuf[pre] === val[pre]) pre++;
+  // 找公共后缀
+  let suf = 0;
+  while (suf < oldBuf.length - pre && suf < val.length - pre && oldBuf[oldBuf.length - 1 - suf] === val[val.length - 1 - suf]) suf++;
+  const removed = oldBuf.slice(pre, oldBuf.length - suf);  // 被删除的字符
+  const inserted = val.slice(pre, val.length - suf);        // 被插入的字符
+  // 累积所有字节到一个数组，最后一次性发送，保证设备按顺序执行（移动→删除→插入→对齐）
+  const out = [];
+  const emitLeft = (n) => { for (let i = 0; i < n; i++) out.push(27, 91, 68); };
+  const emitRight = (n) => { for (let i = 0; i < n; i++) out.push(27, 91, 67); };
+  // 1. 删除：退格删除光标前字符，把设备光标移到删除段右端 pre+removed.length，再发 removed.length 个退格
+  if (removed.length) {
+    const delEnd = pre + removed.length;
+    const moveLeft = oldPos - delEnd;
+    if (moveLeft > 0) emitLeft(moveLeft); else if (moveLeft < 0) emitRight(-moveLeft);
+    for (let i = 0; i < removed.length; i++) out.push(127);
+  }
+  // 2. 插入：确保设备光标在 pre（删除后已在 pre；纯插入时从 oldPos 移到 pre），再发字符
+  if (inserted.length) {
+    if (!removed.length) {
+      const moveLeft = oldPos - pre;
+      if (moveLeft > 0) emitLeft(moveLeft); else if (moveLeft < 0) emitRight(-moveLeft);
+    }
+    for (let i = 0; i < inserted.length; i++) {
+      const code = inserted.charCodeAt(i);
+      if (code < 128) out.push(code);
+      else { for (const b of new TextEncoder().encode(inserted[i])) out.push(b); }
+    }
+  }
+  // 3. 对齐：插入/删除后设备光标在 pre+inserted.length，若与用户光标 sel 不同则移动
+  if (inserted.length || removed.length) {
+    const cur = pre + inserted.length;
+    const moveLeft = cur - sel;
+    if (moveLeft > 0) emitLeft(moveLeft); else if (moveLeft < 0) emitRight(-moveLeft);
+  }
+  if (out.length) termSendRaw(activePortId, out);
+  // 同步本地状态
+  conn.termBuf = val;
+  conn.termCursorPos = sel;
+  renderTermInput(conn);
+});
+
+cmdInput.addEventListener('keydown', (e) => {
+  if (!activePortId) return;
+  const conn = connections[activePortId];
+  if (!conn) return;
+  const pid = activePortId;
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    termSendRaw(pid, [13]);
+    // 不再手动 append 命令行到输出区：设备收到 \r 后会本地回显完整命令行
+    // （通过 SSE 推回），手动 append 会与设备回显重复显示。补全结果已通过
+    // redraw 同步到 termBuf，设备回显的是同一内容。
+    conn.termBuf = ''; cmdInput.value = ''; conn.termCursorPos = 0; renderTermInput(conn);
+    conn.tabCompleted = false; conn.termHistIdx = -1;
+    loadHistory(pid);
+    return;
+  }
+  if (e.key === 'ArrowUp') { e.preventDefault(); termSendRaw(pid, [27,91,65]); return; }
+  if (e.key === 'ArrowDown') { e.preventDefault(); termSendRaw(pid, [27,91,66]); return; }
+  if (e.key === 'ArrowLeft') {
+    e.preventDefault();
+    termSendRaw(pid, [27,91,68]);
+    conn.termCursorPos = Math.max(0, conn.termCursorPos - 1);
+    renderTermInput(conn);
+    return;
+  }
+  if (e.key === 'ArrowRight') {
+    e.preventDefault();
+    termSendRaw(pid, [27,91,67]);
+    conn.termCursorPos = Math.min(conn.termBuf.length, conn.termCursorPos + 1);
+    renderTermInput(conn);
+    return;
+  }
+  if (e.key === 'Home') {
+    e.preventDefault();
+    termSendRaw(pid, [27,91,72]);
+    conn.termCursorPos = 0;
+    renderTermInput(conn);
+    return;
+  }
+  if (e.key === 'End') {
+    e.preventDefault();
+    termSendRaw(pid, [27,91,70]);
+    conn.termCursorPos = conn.termBuf.length;
+    renderTermInput(conn);
+    return;
+  }
+  if (e.key === 'Delete') { e.preventDefault(); termSendRaw(pid, [27,91,51,126]); return; }
+  if (e.key === 'Tab') { e.preventDefault(); termSendRaw(pid, [9]); return; }
+  if (e.ctrlKey && (e.key==='c'||e.key==='C')) { e.preventDefault(); termSendRaw(pid,[3]); conn.termBuf=''; cmdInput.value=''; conn.termCursorPos=0; renderTermInput(conn); conn.tabCompleted=false; return; }
+  if (e.ctrlKey && (e.key==='d'||e.key==='D')) { e.preventDefault(); termSendRaw(pid,[4]); return; }
+  if (e.ctrlKey && (e.key==='u'||e.key==='U')) { e.preventDefault(); termSendRaw(pid,[21]); conn.termBuf=''; cmdInput.value=''; conn.termCursorPos=0; renderTermInput(conn); conn.tabCompleted=false; return; }
+  if (e.ctrlKey && (e.key==='l'||e.key==='L')) { e.preventDefault(); termSendRaw(pid,[12]); return; }
+  if (e.ctrlKey && e.key === 'End') { e.preventDefault(); jumpToBottom(pid); return; }
+});
+
+async function loadHistory(portId) {
+  try {
+    const r = await fetch('/api/history?port_id=' + encodeURIComponent(portId));
+    const j = await r.json();
+    const conn = connections[portId];
+    if (conn) conn.history = j.history || [];
+  } catch(e) {}
+}
+
+// 点击终端区聚焦输入
+document.addEventListener('click', (e) => {
+  if (activePortId && (e.target.closest('.output-wrap') || e.target.closest('.term-input-line'))) {
+    cmdInput.focus();
+  }
+});
+
+// ============================================================
+// 顶栏按钮
+// ============================================================
+$('btnNewConn').onclick = async () => {
+  await loadPorts();
+  $('connModal').classList.add('show');
+};
+$('connClose').onclick = () => $('connModal').classList.remove('show');
+$('connCancel').onclick = () => $('connModal').classList.remove('show');
+$('connConfirm').onclick = () => {
+  const port = $('connPort').value, baud = $('connBaud').value;
+  if (!port) { showBanner('请选择串口', 3000, true); return; }
+  $('connModal').classList.remove('show');
+  connectPort(port, baud);
+};
+$('btnRefreshPorts').onclick = async () => { await loadPorts(); showBanner('端口列表已刷新'); };
+
+// 顶栏全局按钮（作用于当前活动标签）
+$('btnPause').onclick = () => {
+  if (!activePortId) return;
+  const conn = connections[activePortId];
+  conn.paused = !conn.paused;
+  $('btnPause').textContent = conn.paused ? '▶' : '⏸';
+  if (!conn.paused) conn.output.scrollTop = conn.output.scrollHeight;
+};
+$('btnClear').onclick = () => {
+  if (!activePortId) return;
+  const conn = connections[activePortId];
+  Array.from(conn.output.querySelectorAll('.line')).forEach(n => n.remove());
+  fetch('/api/clear_buffer', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: activePortId})});
+};
+$('btnNewLog').onclick = async () => {
+  if (!activePortId) return;
+  const r = await fetch('/api/new_log', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: activePortId})});
+  showBanner('已开新日志');
+};
+$('btnCtrlC').onclick = () => { if (activePortId) termSendRaw(activePortId, [3]); };
+$('btnCtrlD').onclick = () => { if (activePortId) termSendRaw(activePortId, [4]); };
+$('btnAbout').onclick = () => showBanner('串口控制台 Pro · 多串口监控 + 搜索/感知/分析 · v0.2.0', 5000);
+$('btnJumpBottom').onclick = () => { if (activePortId) jumpToBottom(activePortId); };
+
+// ============================================================
+// 日志库
+// ============================================================
+async function loadLogDir() {
+  // 加载当前日志目录到输入框 + logInfo
+  try {
+    const r = await fetch('/api/log_dir');
+    const j = await r.json();
+    if (j.ok) {
+      $('logDirInput').value = j.dir || '';
+      updateLogInfo(j.dir);
+    }
+  } catch(e) {}
+}
+function updateLogInfo(dir) {
+  // 侧栏底部显示当前日志目录（缩短显示）
+  const short = dir ? dir.replace(/^C:\\Users\\[^\\]+/, '~') : '';
+  $('logInfo').textContent = '日志: ' + (short || 'serial_logs/');
+}
+async function loadLogsList() {
+  const list = $('logsList');
+  list.innerHTML = '加载中…';
+  try {
+    const r = await fetch('/api/logs');
+    const j = await r.json();
+    list.innerHTML = '';
+    if (!j.logs.length) { list.innerHTML = '<div style="padding:20px;color:var(--muted);">暂无日志</div>'; return; }
+    j.logs.forEach(l => {
+      const d = document.createElement('div');
+      d.className = 'item';
+      const dt = new Date(l.mtime*1000);
+      d.innerHTML = `<span>${esc(l.name)}<br><span class="sz">${dt.toLocaleString('zh-CN')} · ${(l.size/1024).toFixed(1)} KB</span></span><span style="color:var(--accent)">▶ 回放</span>`;
+      d.onclick = () => { $('logsModal').classList.remove('show'); openReplay(l.name); };
+      list.appendChild(d);
+    });
+  } catch(e) { list.innerHTML = '加载失败'; }
+}
+$('btnLogs').onclick = async () => {
+  $('logsModal').classList.add('show');
+  await loadLogDir();
+  await loadLogsList();
+};
+$('logsClose').onclick = () => $('logsModal').classList.remove('show');
+$('btnLogDirApply').onclick = async () => {
+  const dir = $('logDirInput').value.trim();
+  if (!dir) { showBanner('目录不能为空', 2000); return; }
+  try {
+    const r = await fetch('/api/log_dir', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({dir})
+    });
+    const j = await r.json();
+    if (j.ok) {
+      updateLogInfo(j.dir);
+      showBanner('日志目录已切换：' + j.dir, 3000);
+      await loadLogsList();
+    } else {
+      showBanner('设置失败：' + (j.err || '未知错误'), 3000);
+    }
+  } catch(e) { showBanner('设置失败：' + e, 3000); }
+};
+$('btnLogDirReset').onclick = async () => {
+  try {
+    const r = await fetch('/api/log_dir', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({dir: ''})
+    });
+    const j = await r.json();
+    if (j.ok) {
+      updateLogInfo(j.dir);
+      $('logDirInput').value = j.dir;
+      showBanner('已恢复默认日志目录', 2000);
+      await loadLogsList();
+    }
+  } catch(e) {}
+};
+$('btnLogDirOpen').onclick = async () => {
+  const dir = $('logDirInput').value.trim();
+  if (!dir) return;
+  try {
+    const r = await fetch('/api/log_dir/open', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({dir})
+    });
+    const j = await r.json();
+    if (!j.ok) showBanner('打开失败：' + (j.err || '未知错误'), 3000);
+  } catch(e) { showBanner('打开失败：' + e, 3000); }
+};
+$('logsClose').onclick = () => $('logsModal').classList.remove('show');
+
+// ============================================================
+// 回放
+// ============================================================
+let replayData = null, replayTimer = null, replayIdx = 0, replayStartTs = 0, replayBaseReal = 0;
+async function openReplay(name) {
+  const panel = $('replayPanel');
+  $('replayTitle').textContent = '回放：' + name;
+  const r = await fetch('/api/replay/' + encodeURIComponent(name));
+  const j = await r.json();
+  replayData = j.lines || [];
+  replayIdx = 0;
+  $('replayBody').innerHTML = '';
+  if (!replayData.length) { $('replayInfo').textContent = '空'; panel.classList.add('show'); return; }
+  const first = replayData[0].ts, last = replayData[replayData.length-1].ts;
+  const dur = (last - first)/1000;
+  $('replayTotal').textContent = fmtDur(dur);
+  $('replayInfo').textContent = `${replayData.length} 行 · 时长 ${fmtDur(dur)}`;
+  $('replaySeek').max = Math.max(1, Math.floor(dur));
+  panel.classList.add('show');
+  playReplay();
+}
+function fmtDur(s){ const m=Math.floor(s/60), ss=Math.floor(s%60); return String(m).padStart(2,'0')+':'+String(ss).padStart(2,'0'); }
+function renderReplayLine(item) {
+  const body = $('replayBody');
+  const div = document.createElement('div');
+  div.className = 'line tag-' + (item.tag||'text');
+  const ts = document.createElement('span'); ts.className='ts'; ts.textContent = item.ts?fmtTs(item.ts):'';
+  div.appendChild(ts);
+  div.appendChild(document.createTextNode(item.text));
+  body.appendChild(div);
+  body.scrollTop = body.scrollHeight;
+}
+function playReplay() {
+  if (!replayData || replayTimer) return;
+  const speed = parseFloat($('replaySpeed').value)||1;
+  replayStartTs = replayData[replayIdx]?.ts || 0;
+  replayBaseReal = Date.now();
+  const tick = () => {
+    if (replayIdx >= replayData.length) { stopReplay(); return; }
+    const now = Date.now();
+    const elapsed = (now - replayBaseReal) * speed;
+    const cur = replayStartTs + elapsed;
+    while (replayIdx < replayData.length && replayData[replayIdx].ts <= cur) {
+      renderReplayLine(replayData[replayIdx]); replayIdx++;
+    }
+    $('replaySeek').value = Math.floor((cur - replayData[0].ts)/1000);
+    $('replayTime').textContent = fmtDur((cur - replayData[0].ts)/1000);
+    replayTimer = requestAnimationFrame(tick);
+  };
+  replayTimer = requestAnimationFrame(tick);
+}
+function stopReplay() { if (replayTimer) { cancelAnimationFrame(replayTimer); replayTimer = null; } }
+$('btnReplayPlay').onclick = playReplay;
+$('btnReplayPause').onclick = stopReplay;
+$('btnReplayClose').onclick = () => { stopReplay(); $('replayPanel').classList.remove('show'); };
+$('replaySpeed').onchange = () => { stopReplay(); playReplay(); };
+$('replaySeek').oninput = function() {
+  stopReplay();
+  const v = parseInt(this.value);
+  if (!replayData.length) return;
+  const target = replayData[0].ts + v*1000;
+  replayIdx = 0;
+  $('replayBody').innerHTML = '';
+  while (replayIdx < replayData.length && replayData[replayIdx].ts < target) {
+    renderReplayLine(replayData[replayIdx]); replayIdx++;
+  }
+  $('replayTime').textContent = fmtDur(v);
+};
+
+// ============================================================
+// 右侧工具面板（搜索 / 感知 / 分析 / 命令）
+// ============================================================
+$('aiToggle').onclick = () => {
+  const p = $('aiPanel');
+  p.classList.toggle('collapsed');
+  $('aiToggle').textContent = p.classList.contains('collapsed') ? '‹' : '›';
+};
+// 折叠后点击图标重新展开
+$('aiPanel').querySelector('.ai-icon').addEventListener('click', () => {
+  const p = $('aiPanel');
+  if (p.classList.contains('collapsed')) {
+    p.classList.remove('collapsed');
+    $('aiToggle').textContent = '›';
+  }
+});
+
+// ---- 标签页切换 ----
+document.querySelectorAll('.panel-tab').forEach(tab => {
+  tab.onclick = () => {
+    const pane = tab.dataset.pane;
+    document.querySelectorAll('.panel-tab').forEach(t => t.classList.toggle('active', t === tab));
+    document.querySelectorAll('.panel-tab-pane').forEach(p => p.classList.toggle('active', p.dataset.pane === pane));
+    if (pane === 'analyze') renderAnalyze();
+    if (pane === 'cmd') renderCmdPane();
+  };
+});
+
+// ---- 搜索 ----
+let searchState = { q: '', marks: [], idx: -1 };
+function clearSearchHighlights() {
+  document.querySelectorAll('mark.hit').forEach(m => {
+    const parent = m.parentNode;
+    parent.replaceChild(document.createTextNode(m.textContent), m);
+    parent.normalize();
+  });
+  searchState.marks = [];
+  searchState.idx = -1;
+  $('searchCount').textContent = '';
+}
+function applySearchHighlights(q) {
+  clearSearchHighlights();
+  if (!q || !activePortId) return;
+  const conn = connections[activePortId];
+  if (!conn) return;
+  const lower = q.toLowerCase();
+  const walker = document.createTreeWalker(conn.output, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      if (!node.nodeValue) return NodeFilter.FILTER_REJECT;
+      if (node.parentNode && node.parentNode.classList.contains('ts')) return NodeFilter.FILTER_REJECT;
+      return node.nodeValue.toLowerCase().includes(lower) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+    }
+  });
+  const textNodes = [];
+  while (walker.nextNode()) textNodes.push(walker.currentNode);
+  for (const tn of textNodes) {
+    const text = tn.nodeValue;
+    const low = text.toLowerCase();
+    let pos = 0;
+    const frag = document.createDocumentFragment();
+    let idx;
+    while ((idx = low.indexOf(lower, pos)) !== -1) {
+      if (idx > pos) frag.appendChild(document.createTextNode(text.slice(pos, idx)));
+      const mark = document.createElement('mark');
+      mark.className = 'hit';
+      mark.textContent = text.slice(idx, idx + q.length);
+      frag.appendChild(mark);
+      searchState.marks.push(mark);
+      pos = idx + q.length;
+    }
+    if (pos < text.length) frag.appendChild(document.createTextNode(text.slice(pos)));
+    tn.parentNode.replaceChild(frag, tn);
+  }
+  $('searchCount').textContent = searchState.marks.length ? (searchState.marks.length + ' 处') : '无';
+  if (searchState.marks.length) gotoSearchMark(0);
+}
+function gotoSearchMark(idx) {
+  if (!searchState.marks.length) return;
+  searchState.marks.forEach(m => m.classList.remove('active'));
+  const n = searchState.marks.length;
+  searchState.idx = ((idx % n) + n) % n;
+  const m = searchState.marks[searchState.idx];
+  m.classList.add('active');
+  m.scrollIntoView({ block: 'center', behavior: 'smooth' });
+}
+$('searchInput').addEventListener('input', (e) => {
+  const q = e.target.value.trim();
+  searchState.q = q;
+  if (q) applySearchHighlights(q); else clearSearchHighlights();
+});
+$('searchInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    if (e.shiftKey) gotoSearchMark((searchState.idx ?? 0) - 1);
+    else gotoSearchMark((searchState.idx ?? 0) + 1);
+  }
+});
+$('searchPrev').onclick = () => gotoSearchMark((searchState.idx ?? 0) - 1);
+$('searchNext').onclick = () => gotoSearchMark((searchState.idx ?? 0) + 1);
+
+// ---- 感知标签：实时串口流（全局 SSE） ----
+let senseState = { lines: [], filter: 'ALL' };
+function connectAiSSE() {
+  aiSse = new EventSource('/api/ai/stream');
+  aiSse.onmessage = (e) => {
+    try {
+      const item = JSON.parse(e.data);
+      senseState.lines.push(item);
+      if (senseState.lines.length > 200) senseState.lines.shift();
+      renderSense();
+    } catch(err) {}
+  };
+  aiSse.onerror = () => {
+    aiSse.close();
+    setTimeout(connectAiSSE, 2000);
+  };
+}
+function kwClassOf(text) {
+  const t = text.toLowerCase();
+  if (/\b(error|fail|panic|fatal|denied|refused|abort|crash|oom|killed|segfault|segmentation fault|kernel panic|out of memory|call trace|page fault|no such file or directory|permission denied)\b/.test(t)) return 'kw-error';
+  if (/\b(warn|warning|deprecated|timeout|retry|overflow|hung|deadlock|corrupt|not found|not supported|invalid)\b/.test(t)) return 'kw-warning';
+  if (/\b(info|notice|starting|started|stopped|detected|ready|linux version|systemd|mounting|initialized|booting)\b/.test(t)) return 'kw-info';
+  if (/\b(success|ok|done|complete|passed)\b/.test(t)) return 'kw-success';
+  if (/(^|[|;&>#$]\s*)(ls|cat|echo|grep|awk|sed|find|ps|kill|top|df|free|mount|cd|cp|mv|rm|ifconfig|ping|reboot|dmesg|ip)(?![a-z0-9])/i.test(t)) return 'kw-cmd';
+  return '';
+}
+function renderSense() {
+  const list = $('senseList');
+  const filter = senseState.filter;
+  // 端口筛选 chip
+  const ports = ['ALL', ...new Set(senseState.lines.map(l => l.port))];
+  const filterEl = $('senseFilter');
+  filterEl.innerHTML = ports.map(p =>
+    `<span class="chip ${p === filter ? 'active' : ''}" data-port="${esc(p)}">${esc(p === 'ALL' ? '全部' : p)}</span>`
+  ).join('');
+  filterEl.querySelectorAll('.chip').forEach(c => c.onclick = () => { senseState.filter = c.dataset.port; renderSense(); });
+  // 行
+  let shown = senseState.lines;
+  if (filter !== 'ALL') shown = shown.filter(l => l.port === filter);
+  const recent = shown.slice(-50);
+  list.innerHTML = recent.map(it => {
+    const kc = kwClassOf(it.text || '');
+    return `<div class="sense-line ${kc}" data-port="${esc(it.port)}"><span class="port-tag">[${esc(it.port)}]</span>${esc((it.text || '').slice(0, 200))}</div>`;
+  }).join('');
+  list.scrollTop = list.scrollHeight;
+  // 点击行跳转到该串口标签
+  list.querySelectorAll('.sense-line').forEach(el => el.onclick = () => {
+    const pid = el.dataset.port;
+    if (connections[pid]) switchTab(pid);
+  });
+}
+
+// ---- 分析标签 ----
+function renderAnalyze() {
+  if (!activePortId) { $('statCards').innerHTML = '<div class="cmd-empty">无活动连接</div>'; return; }
+  const conn = connections[activePortId];
+  if (!conn) return;
+  // 统计已加载行
+  const lines = [];
+  conn.output.querySelectorAll('.line').forEach(div => {
+    const text = div.textContent || '';
+    lines.push(text);
+  });
+  let err = 0, warn = 0, info = 0, ok = 0, cmd = 0;
+  const freq = {};
+  const KW = ['error', 'fail', 'warning', 'info', 'timeout', 'panic', 'oom', 'denied', 'call trace', 'segfault', 'permission denied', 'no such file', 'kernel panic'];
+  for (const t of lines) {
+    const low = t.toLowerCase();
+    if (/\b(error|fail|panic|fatal|denied|refused|abort|crash|oom|killed|segfault|segmentation fault|kernel panic|out of memory|call trace|page fault|no such file or directory|permission denied)\b/.test(low)) err++;
+    if (/\b(warn|warning|deprecated|timeout|retry|overflow|hung|deadlock|corrupt|not found|not supported|invalid)\b/.test(low)) warn++;
+    if (/\b(info|notice|starting|started|stopped|detected|ready|linux version|systemd|mounting|booting)\b/.test(low)) info++;
+    if (/\b(success|ok|done|complete|passed)\b/.test(low)) ok++;
+    if (/(^|[|;&>#$]\s*)(ls|cat|echo|grep|awk|sed|find|ps|kill|top|df|free|mount|cd|cp|mv|rm|ifconfig|ping|reboot|dmesg|ip)(?![a-z0-9])/i.test(low)) cmd++;
+    for (const k of KW) {
+      const m = low.match(new RegExp('\\b' + k.replace(/\s+/g, '\\s+') + '\\w*\\b', 'g'));
+      if (m) freq[k] = (freq[k] || 0) + m.length;
+    }
+  }
+  $('statCards').innerHTML = `
+    <div class="stat-card err"><div class="label">ERROR</div><div class="value">${err}</div></div>
+    <div class="stat-card warn"><div class="label">WARNING</div><div class="value">${warn}</div></div>
+    <div class="stat-card info"><div class="label">INFO</div><div class="value">${info}</div></div>
+    <div class="stat-card ok"><div class="label">SUCCESS</div><div class="value">${ok}</div></div>
+    <div class="stat-card"><div class="label">CMD</div><div class="value" style="color:var(--neon-purple)">${cmd}</div></div>
+  `;
+  // 频率条
+  const sorted = Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  const max = sorted.length ? sorted[0][1] : 1;
+  $('freqBars').innerHTML = sorted.length ? sorted.map(([k, v]) =>
+    `<div class="freq-bar"><span class="name">${esc(k)}</span><div class="bar"><div class="fill" style="width:${(v / max * 100).toFixed(0)}%"></div></div><span class="num">${v}</span></div>`
+  ).join('') : '<div class="cmd-empty">暂无数据</div>';
+  // 最近异常聚类
+  const errs = [];
+  lines.forEach((t, i) => {
+    if (/\b(error|fail|panic|fatal|denied|refused|abort|crash|oom|killed|segfault|segmentation fault|kernel panic|out of memory|call trace|page fault|no such file or directory|permission denied)\b/i.test(t)) errs.push({ i, t: t.trim().slice(0, 80) });
+  });
+  const cl = $('clusterList');
+  if (!errs.length) {
+    cl.innerHTML = '<div class="cmd-empty">暂无异常</div>';
+  } else {
+    cl.innerHTML = errs.slice(-10).reverse().map(e =>
+      `<div class="cluster-item" title="${esc(e.t)}">${esc(e.t)}</div>`
+    ).join('');
+  }
+}
+
+// ---- 命令标签 ----
+const CMD_STORE_KEY = 'serialconsole_pro_cmdlib';
+function loadCmdLib() {
+  try { return JSON.parse(localStorage.getItem(CMD_STORE_KEY) || '[]'); } catch (e) { return []; }
+}
+function saveCmdLib(lib) {
+  try { localStorage.setItem(CMD_STORE_KEY, JSON.stringify(lib)); } catch (e) {}
+}
+function renderCmdPane() {
+  // 命令库
+  const lib = loadCmdLib();
+  const libEl = $('cmdLibrary');
+  if (!lib.length) {
+    libEl.innerHTML = '<div class="cmd-empty">点击上方添加常用命令</div>';
+  } else {
+    libEl.innerHTML = lib.map((c, i) =>
+      `<div class="cmd-item"><span class="text" title="${esc(c)}">${esc(c)}</span><button class="run" data-i="${i}">发送</button><button class="del" data-i="${i}" title="删除">✕</button></div>`
+    ).join('');
+    libEl.querySelectorAll('.run').forEach(b => b.onclick = () => runCmdFromLib(parseInt(b.dataset.i)));
+    libEl.querySelectorAll('.del').forEach(b => b.onclick = () => {
+      const lib2 = loadCmdLib(); lib2.splice(parseInt(b.dataset.i), 1); saveCmdLib(lib2); renderCmdPane();
+    });
+  }
+  // 最近命令
+  if (activePortId) {
+    fetch('/api/history?port_id=' + encodeURIComponent(activePortId))
+      .then(r => r.json()).then(j => {
+        const hist = j.history || [];
+        const rec = $('cmdRecent');
+        if (!hist.length) { rec.innerHTML = '<div class="cmd-empty">暂无历史</div>'; return; }
+        rec.innerHTML = hist.slice(-15).reverse().map(c =>
+          `<div class="cmd-item"><span class="text" title="${esc(c)}">${esc(c)}</span><button class="run" data-cmd="${esc(c)}">重发</button></div>`
+        ).join('');
+        rec.querySelectorAll('.run').forEach(b => b.onclick = () => sendCmd(b.dataset.cmd));
+      }).catch(() => {});
+  } else {
+    $('cmdRecent').innerHTML = '<div class="cmd-empty">无活动连接</div>';
+  }
+}
+function runCmdFromLib(i) {
+  const lib = loadCmdLib();
+  if (lib[i]) sendCmd(lib[i]);
+}
+function sendCmd(cmd) {
+  if (!activePortId) { showBanner('无活动连接', 3000, true); return; }
+  fetch('/api/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ port_id: activePortId, cmd }) });
+  showBanner('已发送：' + cmd);
+}
+$('cmdAddBtn').onclick = () => {
+  const v = $('cmdAddInput').value.trim();
+  if (!v) return;
+  const lib = loadCmdLib();
+  if (!lib.includes(v)) lib.push(v);
+  saveCmdLib(lib);
+  $('cmdAddInput').value = '';
+  renderCmdPane();
+};
+$('cmdAddInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('cmdAddBtn').click(); });
+
+// ============================================================
+// 初始化
+// ============================================================
+loadPorts();
+refreshGlobalStatus();
+loadLogDir();
+connectAiSSE();
+setInterval(refreshGlobalStatus, 3000);
+setInterval(() => { if (activePortId) refreshSidebar(); }, 5000);
+setInterval(() => {
+  // 感知面板可见时刷新分析（用户停在分析标签）
+  const activePane = document.querySelector('.panel-tab.active');
+  if (activePane && activePane.dataset.pane === 'analyze') renderAnalyze();
+}, 5000);
+</script>
+</body>
+</html>
