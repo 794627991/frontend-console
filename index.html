@@ -3137,16 +3137,19 @@ async function refreshTftp() {
     tg.classList.toggle('on', j.running);
     $('tftpToggleText').textContent = j.running ? '运行中' : '已停止';
     if (j.root_dir && !$('tftpDirPath').dataset.editing) $('tftpDirPath').textContent = j.root_dir;
-    // 脏检查：状态/目录/文件集/记录摘要没变就跳过 innerHTML 重建（轮询全量重建叠加重排）
+    // 脏检查：状态/目录/文件集/记录摘要/折叠状态 没变就跳过 innerHTML 重建
+    // （轮询全量重建叠加重排；折叠状态必须纳入 key，否则点击折叠后被脏检查短路不重渲染）
     const list = $('tftpList');
+    const secState0 = (n) => { try { return localStorage.getItem('tftpSec_' + n) !== '0'; } catch(e) { return true; } };
     const tKey = JSON.stringify([j.running, j.root_dir,
+      secState0('files'), secState0('transfers'),
       (j.files || []).map(f => [f.name, f.size]),
       (j.transfers || []).map(t => [t.status, t.bytes, t.filename])]);
     if (tKey === _tftpListKey) return;
     _tftpListKey = tKey;
     let html = '';
     // 分区可点击折叠/展开（状态 localStorage 记忆）：文件多时收起目录文件才能看到最近传输
-    const secState = (n) => { try { return localStorage.getItem('tftpSec_' + n) !== '0'; } catch(e) { return true; } };
+    const secState = secState0;
     const secArrow = (open) => open ? '▾' : '▸';
     // 分区一：目录文件（可滚动，超出面板高度自动出滚动条）
     const files = j.files || [];
