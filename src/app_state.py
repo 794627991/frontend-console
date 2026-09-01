@@ -17,7 +17,10 @@ RES_DIR = _resource_base()
 STATE_DIR = os.path.join(os.path.expanduser("~"), ".serialconsole_pro")
 CONFIG_FILE = os.path.join(STATE_DIR, "config.json")
 DEFAULT_LOG_DIR = os.path.join(STATE_DIR, "logs")
-CMD_LIB_FILE = os.path.join(STATE_DIR, "cmdlib.json")  # 命令库持久化（跨端口/重启保留）
+# 命令库持久化（跨端口/重启保留）——放工具所在目录，不放 C 盘用户目录：
+# 用户要求命令库跟工具走（工具目录可见、备份工具目录即备份命令库）。
+# PyInstaller exe 运行时 BASE_DIR 是 exe 所在目录（源码运行时是项目根目录）。
+CMD_LIB_FILE = os.path.join(BASE_DIR, "cmdlib.json")
 
 # ---- 配置 ----
 def _load_config():
@@ -54,9 +57,8 @@ def _load_cmd_lib():
         return []
 
 def _save_cmd_lib(lib):
-    """保存命令库到 ~/.serialconsole_pro/cmdlib.json。"""
+    """保存命令库到工具目录 cmdlib.json。（用户铁律：外部不得改命令库，仅工具 UI 写）"""
     try:
-        os.makedirs(STATE_DIR, exist_ok=True)
         with open(CMD_LIB_FILE, "w", encoding="utf-8") as f:
             json.dump(lib, f, ensure_ascii=False, indent=2)
     except Exception:
