@@ -224,6 +224,10 @@ function jumpToTermHit(conn, idx) {
   // 行号可能因 reflow/新数据流入而漂移，校验仍在范围内
   if (found < 0 || found >= buf.length) return;
   try {
+    // 跳转即脱离底部：关掉自动跟随（appendRaw 的 scrollToBottom 不再拽回底部），
+    // 否则终端还在刷时每次跳转都被实时流拉回底部，必须先手动上翻才能跳。
+    // 用户重新滚到底时 onScroll 会自动恢复 autoScroll。
+    conn.autoScroll = false;
     // scrollToLine 把目标行滚到视图顶部；select 选中整行高亮（蓝底，xterm 内置最稳定）。
     // 滚动与选区/decoration 同帧触发时，viewport scrollTop 同步（syncScrollArea）与
     // WebGL canvas 重绘存在竞争——偶发"内容只显示上半截、下部空白"（重绘未覆盖新视口）。
@@ -247,20 +251,6 @@ function jumpToTermHit(conn, idx) {
         if (dec) setTimeout(() => { try { dec.dispose(); } catch(_){} }, 3000);
       }
     });
-    // ---- 排障探针（Ctrl+F 显示异常诊断用，正常功能不依赖）----
-    try {
-      const vp = conn.xtermWrap.querySelector('.xterm-viewport');
-      const screen = conn.xtermWrap.querySelector('.xterm-screen');
-      const canvas = screen ? screen.querySelector('canvas') : null;
-      window.__jumpProbe = (window.__jumpProbe || []).slice(-5).concat({
-        t: Date.now() % 100000, found, rows: conn.term.rows,
-        ydisp: conn.term.buffer.active.ydisp, ybase: conn.term.buffer.active.ybase,
-        vpTop: vp ? vp.scrollTop : null, vpH: vp ? vp.clientHeight : null, vpScrollH: vp ? vp.scrollHeight : null,
-        screenH: screen ? screen.offsetHeight : null,
-        canvasCssH: canvas ? canvas.style.height : null, canvasClientH: canvas ? canvas.clientHeight : null,
-        wrapH: conn.xtermWrap.offsetHeight,
-      });
-    } catch(e){}
   } catch(e){}
 }
 function highlightTermHit(conn, idx) {
