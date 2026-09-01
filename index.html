@@ -1184,9 +1184,10 @@ function buildTerminal(portId, meta) {
       selectionBackground: 'rgba(82,139,255,0.25)',
       black: '#1a1f2e', red: '#e06c75', green: '#98c379', yellow: '#e5c07b',
       blue: '#61afef', magenta: '#c678dd', cyan: '#56b6c2', white: '#abb2bf',
-      brightBlack: '#5c6370', brightRed: '#e06c75', brightGreen: '#98c379',
-      brightYellow: '#e5c07b', brightBlue: '#61afef', brightMagenta: '#c678dd',
-      brightCyan: '#56b6c2', brightWhite: '#ffffff',
+      // bright 变体须与基础色不同，否则设备「亮色」输出显示不出对比度
+      brightBlack: '#5c6370', brightRed: '#d19a66', brightGreen: '#b5e890',
+      brightYellow: '#e5c07b', brightBlue: '#82b8ff', brightMagenta: '#d19a66',
+      brightCyan: '#66cccc', brightWhite: '#ffffff',
     },
   });
   conn.fit = new FitAddon.FitAddon();
@@ -1495,7 +1496,25 @@ const KW_RULES = [
   { cls: 'kw-info', re: /\b(info|notice|starting|started|stopped|detected|found|loaded|ready|init|initializing|mounting|mounted|deactivated|booting|probe|probed|register|registered|enabled|disabled|linux version|systemd|udev|freeing|freed|allocated|setting up|configured|bringing up|link is up|link is down)\b/gi },
   { cls: 'kw-success', re: /\b(success|succeed|succeeded|ok|done|complete|completed|passed|ready)\b/gi },
 ];
-const KW_COLOR = { 'kw-error':'#ff4060', 'kw-warning':'#ff9d00', 'kw-info':'#00d4ff', 'kw-success':'#00ff9d' };
+// 命令行高亮：识别 busybox 提示符行（# / $ / > 开头），给提示符/命令名/选项/路径上色。
+// 仅作用于「提示符后的命令区」，不染日志输出（避免误染以 # 开头的注释/内核符号）。
+// 已知命令染亮绿（可执行感），未知命令名不染；选项 -x/--xxx 染黄；路径 /xx/xx 染青。
+const CMD_NAMES = 'ls|cd|cat|echo|pwd|mkdir|rmdir|rm|mv|cp|ln|chmod|chown|find|grep|egrep|fgrep|sed|awk|head|tail|wc|sort|uniq|tr|cut|tee|xargs|tar|gzip|gunzip|dd|mount|umount|ps|top|kill|killall|free|df|du|uname|hostname|ifconfig|ip|route|ping|tftp|nc|telnet|ssh|scp|reboot|poweroff|halt|sync|date|sleep|env|export|unset|alias|source|exec|eval|test|true|false|read|vi|nano|dmesg|logread|syslog|busybox|ash|sh|bash|flash|nand|mmc|sd|spi|i2c|gpio|devmem|devmem2|reg|md|mw|mw\.l|md\.l|printenv|setenv|saveenv|run|bootm|tftpboot|upk|go|reset|mdio|ethtool|hexdump|xxd|od|strace|ltrace|gdb|perf|taskset|renice|chrt|ulimit|sysctl|lsmod|insmod|rmmod|modprobe|ifup|ifdown|brctl|iwconfig|wpa|ntpdate|date|hwclock|rtc|mtd|ubi|ubifs|jffs2|ext4|fat|ntfs|fsck|mkfs|fdisk|parted|losetup|dmsetup|mdadm|lvm|cryptsetup';
+const CMD_RULES = [
+  // 提示符本身（# / $ / >）：染橙黄，醒目区分命令区与输出区。
+  // 允许提示符前有 user@host:path 前缀（busybox PS1 常见），不限定行首。
+  { cls: 'kw-prompt', re: /[#>$]\s?(?=$|[A-Za-z_\/.~])/g },
+  // 命令名（提示符后第一个词，已知命令染绿）
+  { cls: 'kw-cmd', re: new RegExp('[#>$]\\s?(' + CMD_NAMES + ')\\b', 'g'), grp: 1 },
+  // 选项 -x / --xxx：染黄（命令名后的 - 开头参数；空格后的 - 触发）
+  { cls: 'kw-opt', re: /(?<=\s)(-{1,2}[A-Za-z][\w-]*)/g },
+  // 路径参数（以 / . ~ 开头的参数）：染青
+  { cls: 'kw-path', re: /(?<=\s)([\/.~][^\s]*)/g, grp: 1 },
+];
+const KW_COLOR = {
+  'kw-error':'#ff4060', 'kw-warning':'#ff9d00', 'kw-info':'#00d4ff', 'kw-success':'#00ff9d',
+  'kw-prompt':'#ff9d00', 'kw-cmd':'#00ff9d', 'kw-opt':'#e5c07b', 'kw-path':'#56b6c2',
+};
 // 节流：批量扫描新行，避免每个 chunk 都扫全缓冲
 function scheduleKwHighlight(conn) {
   if (conn._kwTimer) return;
@@ -1516,7 +1535,12 @@ function highlightNewKw(conn) {
     if (!line) continue;
     const text = line.translateToString(true);
     if (!text.trim()) continue;
-    for (const rule of KW_RULES) {
+    // 命令行判定：含 # / $ / > 提示符且其后有命令内容。仅命令行应用 CMD_RULES
+    // （选项/路径），避免误染日志输出里的 -x 错误码、/dev/xxx 路径。
+    // KW_RULES（error/warning 等关键词）对所有行生效。
+    const isCmdLine = /[#>$]\s*[A-Za-z_\/.~]/.test(text);
+    const rules = isCmdLine ? KW_RULES.concat(CMD_RULES) : KW_RULES;
+    for (const rule of rules) {
       rule.re.lastIndex = 0;
       let m;
       while ((m = rule.re.exec(text)) !== null) {
