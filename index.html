@@ -223,7 +223,7 @@
     background: var(--accent); color: #001020;
   }
   .tftp-pane {
-    height: 200px; flex-shrink: 0;
+    height: 50%; flex-shrink: 0;  /* 默认占侧边栏一半，拖拽后 JS 用 px 覆盖并记忆 */
     border-top: 1px solid var(--border);
     display: flex; flex-direction: column;
     background: var(--bg-panel); overflow: hidden;
@@ -264,11 +264,25 @@
     flex-shrink: 0; font-size: 11px; padding: 4px 8px;
   }
   .tftp-list { flex: 1; overflow-y: auto; padding: 0 8px 8px; min-height: 0; }
+  /* 两个独立滚动区：最近传输固定上限，目录文件占余下空间 */
+  .tftp-transfers { flex: 0 0 auto; max-height: 150px; overflow-y: auto; padding: 0 8px 8px; min-height: 0; }
+  .tftp-files { flex: 1; overflow-y: auto; padding: 0 8px 8px; min-height: 0; }
   .tftp-item {
-    font-size: 11px; padding: 6px 8px; border-radius: 5px;
+    font-size: 11px; padding: 6px 8px 8px; border-radius: 5px;
     display: flex; align-items: center; gap: 8px; margin-bottom: 2px;
     font-family: var(--font-mono); color: var(--muted);
+    position: relative;  /* 进度条绝对定位到此行底部 */
   }
+  /* 传输进度条：进行中显示，done/error 隐藏（CSS 控制） */
+  .tftp-item .bar {
+    position: absolute; left: 8px; right: 8px; bottom: 2px; height: 2px;
+    background: var(--bg-card); border-radius: 1px; overflow: hidden;
+    display: none;
+  }
+  .tftp-item .bar > i { display: block; height: 100%; width: 0%;
+    background: var(--accent); border-radius: 1px; transition: width 0.3s; }
+  .tftp-item.active .bar { display: block; }  /* 进行中才显示进度条 */
+  .tftp-item.error .bar > i { background: var(--neon-red); }
   /* 分区标题（目录文件 / 最近传输）：sticky 吸顶，长列表滚动时始终可见 */
   .tftp-sec {
     font-size: 10px; letter-spacing: 1px; text-transform: uppercase;
@@ -776,7 +790,8 @@
         <button class="btn ghost" id="tftpTypeDir" title="手动输入目录路径">⌨</button>
       </div>
       <!-- 文件列表：目录内容 + 传输记录 -->
-      <div class="tftp-list" id="tftpList"></div>
+      <div class="tftp-list tftp-transfers" id="tftpTransfers"></div>
+      <div class="tftp-list tftp-files" id="tftpFiles"></div>
     </div>
   </div>
 
@@ -3144,7 +3159,8 @@ function closeLogViewer(portId) {
 // TFTP 面板（侧边栏底部）
 // ============================================================
 let _tftpRunning = false;
-let _tftpListKey = '';
+let _tftpTransfersKey = '';  // 传输区脏检查 key（含进度，进行中每秒变）
+let _tftpFilesKey = '';      // 文件区脏检查 key（只在文件集变化时变）
 function _fmtSize(n) {
   if (n == null) return '';
   if (n >= 1048576) return (n / 1048576).toFixed(1) + 'MB';
@@ -3161,69 +3177,77 @@ async function refreshTftp() {
     tg.classList.toggle('on', j.running);
     $('tftpToggleText').textContent = j.running ? '运行中' : '已停止';
     if (j.root_dir && !$('tftpDirPath').dataset.editing) $('tftpDirPath').textContent = j.root_dir;
-    // 脏检查：状态/目录/文件集/记录摘要/折叠状态 没变就跳过 innerHTML 重建
-    // （轮询全量重建叠加重排；折叠状态必须纳入 key，否则点击折叠后被脏检查短路不重渲染）
-    const list = $('tftpList');
+    // 两个独立容器分别脏检查：传输区含进度（bytes 变化必须刷新进度条），
+    // 文件区只在文件集变化时刷新。分区可折叠，折叠状态纳入脏检查 key。
+    const transfersEl = $('tftpTransfers');
+    const filesEl = $('tftpFiles');
     const secState0 = (n) => { try { return localStorage.getItem('tftpSec_' + n) !== '0'; } catch(e) { return true; } };
-    const tKey = JSON.stringify([j.running, j.root_dir,
-      secState0('files'), secState0('transfers'),
-      (j.files || []).map(f => [f.name, f.size]),
-      (j.transfers || []).map(t => [t.status, t.bytes, t.filename])]);
-    if (tKey === _tftpListKey) return;
-    _tftpListKey = tKey;
-    let html = '';
-    // 分区可点击折叠/展开（状态 localStorage 记忆）：文件多时收起目录文件才能看到最近传输
-    const secState = secState0;
-    const secArrow = (open) => open ? '▾' : '▸';
-    // 分区一：目录文件（可滚动，超出面板高度自动出滚动条）
-    const files = j.files || [];
-    const fOpen = secState('files');
-    html += `<div class="tftp-sec" data-sec="files" title="点击折叠/展开"><span>${secArrow(fOpen)} 目录文件</span><span>${files.length}</span></div>`;
-    if (fOpen) {
-      if (files.length) {
-        html += files.map(f => `
-          <div class="tftp-file" title="${esc(f.name)} · ${_fmtSize(f.size)}">
-            <span class="icon">📄</span>
-            <span class="name">${esc(f.name)}</span>
-            <span class="size">${_fmtSize(f.size)}</span>
-          </div>`).join('');
-      } else {
-        html += `<div class="tftp-empty"><div>目录为空或未选择</div></div>`;
-      }
-    }
-    // 分区二：传输记录
+    // 传输区：最近传输在上（5 行滚动），进行中每秒刷新进度
     const transfers = j.transfers || [];
-    const tOpen = secState('transfers');
-    html += `<div class="tftp-sec" data-sec="transfers" title="点击折叠/展开"><span>${secArrow(tOpen)} 最近传输</span><span>${transfers.length}</span></div>`;
-    if (tOpen) {
-      if (transfers.length) {
-        html += transfers.map(t => {
-        const icon = t.status === 'done' ? '✓' : t.status === 'error' ? '✗' : (t.kind === 'get' ? '⬆' : '⬇');
-        const size = t.status === 'done'
-          ? _fmtSize(t.bytes)
-          : (t.total ? `${_fmtSize(t.bytes)}/${_fmtSize(t.total)}` : _fmtSize(t.bytes));
-        const tip = t.kind === 'get' ? '设备下载' : '设备上传';
-        return `<div class="tftp-item ${t.status}" title="${tip} · ${t.peer}${t.err ? ' · ' + esc(t.err) : ''}">
-          <span class="icon">${icon}</span>
-          <span class="name">${esc(t.filename)}</span>
-          <span class="size">${size}</span>
-        </div>`;
-      }).join('');
-      } else {
-        html += `<div class="tftp-empty"><div>暂无传输</div><div class="hint">设备端执行 tftp 命令即可上传/下载</div></div>`;
+    const tKey = JSON.stringify([secState0('transfers'),
+      transfers.map(t => [t.status, t.bytes, t.total, t.filename, t.err])]);
+    if (tKey !== _tftpTransfersKey) {
+      _tftpTransfersKey = tKey;
+      const tOpen = secState0('transfers');
+      const secArrow = (open) => open ? '▾' : '▸';
+      let thtml = `<div class="tftp-sec" data-sec="transfers" title="点击折叠/展开"><span>${secArrow(tOpen)} 最近传输</span><span>${transfers.length}</span></div>`;
+      if (tOpen) {
+        if (transfers.length) {
+          thtml += transfers.map(t => {
+            const active = t.status !== 'done' && t.status !== 'error';
+            const icon = t.status === 'done' ? '✓' : t.status === 'error' ? '✗' : (t.kind === 'get' ? '⬆' : '⬇');
+            const size = t.status === 'done'
+              ? _fmtSize(t.bytes)
+              : (t.total ? `${_fmtSize(t.bytes)}/${_fmtSize(t.total)}` : _fmtSize(t.bytes));
+            const tip = t.kind === 'get' ? '设备下载' : '设备上传';
+            const pct = (active && t.total) ? Math.min(100, Math.round(t.bytes / t.total * 100)) : 0;
+            return `<div class="tftp-item ${active ? 'active' : t.status}" title="${tip} · ${t.peer}${t.err ? ' · ' + esc(t.err) : ''}">
+              <span class="icon">${icon}</span>
+              <span class="name">${esc(t.filename)}</span>
+              <span class="size">${size}${active && t.total ? ' · ' + pct + '%' : ''}</span>
+              <div class="bar"><i style="width:${pct}%"></i></div>
+            </div>`;
+          }).join('');
+        } else {
+          thtml += `<div class="tftp-empty"><div>暂无传输</div><div class="hint">设备端执行 tftp 命令即可上传/下载</div></div>`;
+        }
       }
+      transfersEl.innerHTML = thtml;
     }
-    list.innerHTML = html;
+    // 文件区：目录文件在下，占余下空间
+    const files = j.files || [];
+    const fKey = JSON.stringify([secState0('files'), files.map(f => [f.name, f.size])]);
+    if (fKey !== _tftpFilesKey) {
+      _tftpFilesKey = fKey;
+      const fOpen = secState0('files');
+      const secArrow = (open) => open ? '▾' : '▸';
+      let fhtml = `<div class="tftp-sec" data-sec="files" title="点击折叠/展开"><span>${secArrow(fOpen)} 目录文件</span><span>${files.length}</span></div>`;
+      if (fOpen) {
+        if (files.length) {
+          fhtml += files.map(f => `
+            <div class="tftp-file" title="${esc(f.name)} · ${_fmtSize(f.size)}">
+              <span class="icon">📄</span>
+              <span class="name">${esc(f.name)}</span>
+              <span class="size">${_fmtSize(f.size)}</span>
+            </div>`).join('');
+        } else {
+          fhtml += `<div class="tftp-empty"><div>目录为空或未选择</div></div>`;
+        }
+      }
+      filesEl.innerHTML = fhtml;
+    }
   } catch(e) {}
 }
-// 分区标题点击折叠/展开（事件委托，一次绑定；状态 localStorage 记忆）
-$('tftpList').addEventListener('click', e => {
-  const sec = e.target.closest('.tftp-sec');
-  if (!sec || !sec.dataset.sec) return;
-  const key = 'tftpSec_' + sec.dataset.sec;
-  const open = (function(){ try { return localStorage.getItem(key) !== '0'; } catch(e){ return true; } })();
-  try { localStorage.setItem(key, open ? '0' : '1'); } catch(e) {}
-  refreshTftp();
+// 分区标题点击折叠/展开（事件委托，绑定到两个容器；状态 localStorage 记忆）
+[$('tftpTransfers'), $('tftpFiles')].forEach(el => {
+  el.addEventListener('click', e => {
+    const sec = e.target.closest('.tftp-sec');
+    if (!sec || !sec.dataset.sec) return;
+    const key = 'tftpSec_' + sec.dataset.sec;
+    const open = (function(){ try { return localStorage.getItem(key) !== '0'; } catch(e){ return true; } })();
+    try { localStorage.setItem(key, open ? '0' : '1'); } catch(e) {}
+    refreshTftp();
+  });
 });
 // TFTP 面板高度拖拽调节 + localStorage 记忆
 (function initTftpResizer() {
@@ -3233,7 +3257,7 @@ $('tftpList').addEventListener('click', e => {
   // 恢复记忆高度（clamp 到合理范围防窗口变小后面板超界）
   try {
     const h = parseInt(localStorage.getItem('tftpPaneH') || '', 10);
-    if (h >= 120 && h <= window.innerHeight - 200) pane.style.height = h + 'px';
+    if (h >= 180 && h <= window.innerHeight - 200) pane.style.height = h + 'px';
   } catch(e) {}
   let dragging = false, startY = 0, startH = 0;
   resizer.addEventListener('mousedown', e => {
@@ -3245,7 +3269,7 @@ $('tftpList').addEventListener('click', e => {
   document.addEventListener('mousemove', e => {
     if (!dragging) return;
     // 向上拖增大：clientY 减小 → 高度增加
-    const h = Math.max(120, Math.min(startH + (startY - e.clientY), window.innerHeight - 200));
+    const h = Math.max(180, Math.min(startH + (startY - e.clientY), window.innerHeight - 200));
     pane.style.height = h + 'px';
   });
   document.addEventListener('mouseup', () => {
@@ -3325,7 +3349,7 @@ refreshTftp();
 // 传输进行中 1s 轮询进度，空闲 10s 兜底（常态零重排）。
 // 进行中 = 列表里有非 done/error 状态的项（refreshTftp 渲染时已排除 done/error class）
 function _tftpHasActive() {
-  const items = $('tftpList').querySelectorAll('.tftp-item');
+  const items = $('tftpTransfers').querySelectorAll('.tftp-item');
   for (const it of items) if (!it.classList.contains('done') && !it.classList.contains('error')) return true;
   return false;
 }
