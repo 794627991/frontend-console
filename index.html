@@ -1345,6 +1345,10 @@ function appendRaw(portId, text) {
       conn.term.write(conn.tsEnabled && !conn.inScreen ? _injectTs(data) : data);
       // 关键字常驻高亮：对新写入的行扫描
       scheduleKwHighlight(conn);
+      // 跟随到底：xterm 只在"精确贴底"时才自动滚，onScroll 的 30px 宽容阈值内
+      // （autoScroll=true 但视口差零点几行）新数据不触发内建滚动，底部空隙随数据
+      // 增长越拉越大——偶现留白 3~4 行的根因。跟随模式下显式贴底纠偏。
+      if (conn.autoScroll && !conn.inScreen) { try { conn.term.scrollToBottom(); } catch(e){} }
     }
   };
   requestAnimationFrame(flush);
