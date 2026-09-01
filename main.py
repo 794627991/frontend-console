@@ -249,15 +249,19 @@ def main():
             return ""
 
         def pick_dir(self):
-            """弹出原生目录选择对话框，返回选中目录的绝对路径或空字符串。"""
+            """弹出原生目录选择对话框，返回选中目录的绝对路径或空字符串。
+            注意：pywebview 返回的是 tuple（非 list），字符串才是单选时的裸返回——
+            三种形态都归一化为 str，前端只拿纯路径。"""
             try:
                 import webview
                 result = webview.windows[0].create_file_dialog(
                     webview.FOLDER_DIALOG,
                     allow_multiple=False,
                 )
-                if result:
-                    return result[0] if isinstance(result, list) else result
+                if isinstance(result, (list, tuple)):
+                    return result[0] if result else ""
+                if isinstance(result, str):
+                    return result
             except Exception:
                 return ""
             return ""

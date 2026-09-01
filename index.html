@@ -3220,7 +3220,9 @@ async function pickTftpDir() {
   // 原生目录对话框（pywebview js_api）。取消（空串）直接中止——不弹输入框
   try {
     if (window.pywebview && pywebview.api && pywebview.api.pick_dir) {
-      const dir = await pywebview.api.pick_dir();
+      let dir = await pywebview.api.pick_dir();
+      // 防御：js bridge 序列化异常时可能拿到数组形态，归一化为字符串
+      if (Array.isArray(dir)) dir = dir[0] || '';
       if (dir) return setTftpDir(dir);
       return;  // 用户取消对话框，什么都不做
     }
