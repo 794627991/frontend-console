@@ -2839,7 +2839,8 @@ function buildLogViewer(path) {
   // 移除 empty-state，插 tab + wrap
   const es = termArea.querySelector('.empty-state');
   if (es) es.remove();
-  tabs.appendChild(tab);
+  // tab 插到 .tab-bar-actions 之前（按钮组左侧）——appendChild 会跑到按钮右边
+  tabs.insertBefore(tab, tabs.querySelector('.tab-bar-actions'));
   termArea.appendChild(wrap);
   // conn 对象
   const conn = {
