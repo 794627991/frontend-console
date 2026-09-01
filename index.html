@@ -742,7 +742,8 @@
       </div>
       <div class="tftp-dir">
         <span class="path" id="tftpDirPath" title="点击选择 TFTP 目录">选择目录…</span>
-        <button class="btn ghost" id="tftpPickDir" title="选择 TFTP 目录">📂</button>
+        <button class="btn ghost" id="tftpPickDir" title="选择 TFTP 目录（原生对话框）">📂</button>
+        <button class="btn ghost" id="tftpTypeDir" title="手动输入目录路径">⌨</button>
       </div>
       <div class="tftp-list" id="tftpList">
         <div class="tftp-empty">
@@ -3152,16 +3153,45 @@ $('tftpToggle').onclick = async () => {
   } catch(e) { showBanner('TFTP 操作失败', 4000, true); }
 };
 async function pickTftpDir() {
-  // 优先原生对话框（pywebview js_api），拿得到绝对路径
+  // 原生目录对话框（pywebview js_api）。取消（空串）直接中止——不弹输入框
   try {
     if (window.pywebview && pywebview.api && pywebview.api.pick_dir) {
       const dir = await pywebview.api.pick_dir();
       if (dir) return setTftpDir(dir);
+      return;  // 用户取消对话框，什么都不做
     }
   } catch(e) {}
-  // 兜底：手动输入
-  const dir = prompt('TFTP 目录（绝对路径）：', $('tftpDirPath').textContent === '选择目录…' ? '' : $('tftpDirPath').textContent);
-  if (dir) setTftpDir(dir.trim());
+  // js bridge 不可用兜底：内联输入（WebView2 可能禁用 window.prompt，不能用）
+  _tftpInlineDirInput();
+}
+function _tftpInlineDirInput() {
+  // 内联路径输入：把路径 span 换成 input，回车提交 / Esc 取消 / 失焦中止
+  const span = $('tftpDirPath');
+  if (span.dataset.editing) return;
+  const old = span.textContent === '选择目录…' ? '' : span.textContent;
+  span.dataset.editing = '1';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = old;
+  input.style.cssText = 'width:100%;font-family:var(--font-mono);font-size:10px;background:var(--bg-input,#111);border:1px solid var(--accent);border-radius:5px;padding:4px 6px;color:var(--fg);outline:none';
+  span.textContent = '';
+  span.appendChild(input);
+  input.focus(); input.select();
+  let done = false;
+  const finish = (apply) => {
+    if (done) return; done = true;
+    delete span.dataset.editing;
+    const v = input.value.trim().replace(/^["']|["']$/g, '');  // 容忍手输时带引号
+    span.textContent = apply && v ? v : (old || '选择目录…');
+    if (apply && v) setTftpDir(v);
+    else refreshTftp();  // 恢复原显示
+  };
+  input.addEventListener('keydown', e => {
+    e.stopPropagation();
+    if (e.key === 'Enter') finish(true);
+    else if (e.key === 'Escape') finish(false);
+  });
+  input.addEventListener('blur', () => finish(true));
 }
 async function setTftpDir(dir) {
   try {
@@ -3175,6 +3205,7 @@ async function setTftpDir(dir) {
 }
 $('tftpPickDir').onclick = pickTftpDir;
 $('tftpDirPath').onclick = pickTftpDir;
+$('tftpTypeDir').onclick = _tftpInlineDirInput;  // 手动输入（支持 UNC/网络盘/任意路径）
 refreshTftp();
 // 传输进行中 1s 轮询进度，空闲 10s 兜底（常态零重排）。
 // 进行中 = 列表里有非 done/error 状态的项（refreshTftp 渲染时已排除 done/error class）

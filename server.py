@@ -1741,7 +1741,9 @@ class TftpServer:
     # ---- 生命周期 ----
     def start(self, root_dir=None):
         if root_dir:
-            self.root_dir = root_dir
+            ok, msg = self.set_dir(root_dir)
+            if not ok:
+                return False, msg
         if self.running:
             return True, "已在运行"
         try:
@@ -1764,8 +1766,14 @@ class TftpServer:
         return True, "已停止"
 
     def set_dir(self, path):
-        """切换 TFTP 根目录（运行中也可切）。"""
-        path = os.path.abspath(os.path.expanduser(path))
+        """切换 TFTP 根目录（运行中也可切）。
+        容错：strip 空格、去首尾引号（手输常见）、末尾反斜杠规范化。"""
+        path = (path or "").strip().strip('"').strip("'")
+        if not path:
+            return False, "目录不能为空"
+        # 绝对路径规范化（末尾反斜杠）；相对路径原样交 isdir 判断，避免误拼 cwd 掩盖错误
+        if os.path.isabs(path):
+            path = os.path.normpath(path)
         if not os.path.isdir(path):
             return False, f"目录不存在: {path}"
         self.root_dir = path
