@@ -276,7 +276,10 @@
     margin: 8px 2px 4px; display: flex; justify-content: space-between;
     position: sticky; top: 0; background: var(--bg-panel);
     padding: 3px 2px; z-index: 1;
+    cursor: pointer; user-select: none;
+    transition: color 0.15s;
   }
+  .tftp-sec:hover { color: var(--fg-bright); }
   .tftp-file {
     font-size: 11px; padding: 5px 8px; border-radius: 5px;
     display: flex; align-items: center; gap: 8px; margin-bottom: 2px;
@@ -3142,24 +3145,32 @@ async function refreshTftp() {
     if (tKey === _tftpListKey) return;
     _tftpListKey = tKey;
     let html = '';
+    // 分区可点击折叠/展开（状态 localStorage 记忆）：文件多时收起目录文件才能看到最近传输
+    const secState = (n) => { try { return localStorage.getItem('tftpSec_' + n) !== '0'; } catch(e) { return true; } };
+    const secArrow = (open) => open ? '▾' : '▸';
     // 分区一：目录文件（可滚动，超出面板高度自动出滚动条）
     const files = j.files || [];
-    html += `<div class="tftp-sec"><span>目录文件</span><span>${files.length}</span></div>`;
-    if (files.length) {
-      html += files.map(f => `
-        <div class="tftp-file" title="${esc(f.name)} · ${_fmtSize(f.size)}">
-          <span class="icon">📄</span>
-          <span class="name">${esc(f.name)}</span>
-          <span class="size">${_fmtSize(f.size)}</span>
-        </div>`).join('');
-    } else {
-      html += `<div class="tftp-empty"><div>目录为空或未选择</div></div>`;
+    const fOpen = secState('files');
+    html += `<div class="tftp-sec" data-sec="files" title="点击折叠/展开"><span>${secArrow(fOpen)} 目录文件</span><span>${files.length}</span></div>`;
+    if (fOpen) {
+      if (files.length) {
+        html += files.map(f => `
+          <div class="tftp-file" title="${esc(f.name)} · ${_fmtSize(f.size)}">
+            <span class="icon">📄</span>
+            <span class="name">${esc(f.name)}</span>
+            <span class="size">${_fmtSize(f.size)}</span>
+          </div>`).join('');
+      } else {
+        html += `<div class="tftp-empty"><div>目录为空或未选择</div></div>`;
+      }
     }
     // 分区二：传输记录
     const transfers = j.transfers || [];
-    html += `<div class="tftp-sec"><span>最近传输</span><span>${transfers.length}</span></div>`;
-    if (transfers.length) {
-      html += transfers.map(t => {
+    const tOpen = secState('transfers');
+    html += `<div class="tftp-sec" data-sec="transfers" title="点击折叠/展开"><span>${secArrow(tOpen)} 最近传输</span><span>${transfers.length}</span></div>`;
+    if (tOpen) {
+      if (transfers.length) {
+        html += transfers.map(t => {
         const icon = t.status === 'done' ? '✓' : t.status === 'error' ? '✗' : (t.kind === 'get' ? '⬆' : '⬇');
         const size = t.status === 'done'
           ? _fmtSize(t.bytes)
@@ -3171,12 +3182,22 @@ async function refreshTftp() {
           <span class="size">${size}</span>
         </div>`;
       }).join('');
-    } else {
-      html += `<div class="tftp-empty"><div>暂无传输</div><div class="hint">设备端执行 tftp 命令即可上传/下载</div></div>`;
+      } else {
+        html += `<div class="tftp-empty"><div>暂无传输</div><div class="hint">设备端执行 tftp 命令即可上传/下载</div></div>`;
+      }
     }
     list.innerHTML = html;
   } catch(e) {}
 }
+// 分区标题点击折叠/展开（事件委托，一次绑定；状态 localStorage 记忆）
+$('tftpList').addEventListener('click', e => {
+  const sec = e.target.closest('.tftp-sec');
+  if (!sec || !sec.dataset.sec) return;
+  const key = 'tftpSec_' + sec.dataset.sec;
+  const open = (function(){ try { return localStorage.getItem(key) !== '0'; } catch(e){ return true; } })();
+  try { localStorage.setItem(key, open ? '0' : '1'); } catch(e) {}
+  refreshTftp();
+});
 // TFTP 面板高度拖拽调节 + localStorage 记忆
 (function initTftpResizer() {
   const resizer = $('tftpResizer');
