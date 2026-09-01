@@ -598,6 +598,7 @@
   .hline.kw-warning { color: var(--neon-orange); }
   .hline.kw-info { color: var(--accent); }
   .hline .htag { color: var(--muted); font-size: 9px; margin-right: 6px; }
+  .hline .hts { color: #2a3a55; font-size: 9px; margin-right: 6px; user-select: none; }  /* 工具日志自带时间戳，展示出来 */
   .hline .hrow { color: var(--accent); font-size: 9px; margin-right: 6px; min-width: 50px; display: inline-block; }
 
   /* 全屏覆盖容器（top 等）—— v0.3.0：xterm 自身处理全屏序列，此 overlay 仅作"全屏模式"提示条 */
@@ -3001,7 +3002,9 @@ async function renderLogSlice(conn) {
     const top = (r - renderStart) * HIST_ROW_H;
     const kc = l.tag === 'error' ? 'kw-error' : l.tag === 'warning' ? 'kw-warning' : (l.tag === 'info' || l.tag === 'comment') ? 'kw-info' : '';
     const text = esc(l.text || '');
-    html += `<div class="hline ${kc}" style="top:${top}px" data-row="${r}" title="${text}"><span class="hrow">${r}</span><span class="htag">${esc(l.tag||'')}</span>${text}</div>`;
+    // 工具日志自带时间戳（外部纯文本 ts=0 不显示）
+    const tsHtml = l.ts ? `<span class="hts">${fmtTs(l.ts)}</span>` : '';
+    html += `<div class="hline ${kc}" style="top:${top}px" data-row="${r}" title="${text}"><span class="hrow">${r}</span>${tsHtml}<span class="htag">${esc(l.tag||'')}</span>${text}</div>`;
   }
   vp.innerHTML = html;
   ls.renderedStart = renderStart; ls.renderedEnd = endRow;
@@ -3048,7 +3051,8 @@ async function doLogSearch(conn) {
     conn.searchResults.innerHTML = (j.lines || []).map((l, idx) => {
       const kc = l.tag === 'error' ? 'kw-error' : l.tag === 'warning' ? 'kw-warning' : (l.tag === 'info' || l.tag === 'comment') ? 'kw-info' : '';
       const text = esc(l.text || '');
-      return `<div class="hline ${kc}" data-row="${l.row}" data-idx="${idx}" title="${text}"><span class="hrow">${l.row}</span><span class="htag">${esc(l.tag||'')}</span>${text}</div>`;
+      const tsHtml = l.ts ? `<span class="hts">${fmtTs(l.ts)}</span>` : '';
+      return `<div class="hline ${kc}" data-row="${l.row}" data-idx="${idx}" title="${text}"><span class="hrow">${l.row}</span>${tsHtml}<span class="htag">${esc(l.tag||'')}</span>${text}</div>`;
     }).join('');
     conn.searchResults.querySelectorAll('.hline').forEach(el => {
       el.onclick = () => {
