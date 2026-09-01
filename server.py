@@ -1862,12 +1862,24 @@ class TftpServer:
             if not os.path.isfile(local):
                 self._send_err(self.sock, peer, 1, "file not found")
                 return
+            # 去重：同文件 + 同设备 IP 的 RRQ 若已有传输在跑，是客户端超时重发 RRQ
+            # （标准重传行为），不新建记录/线程，避免一次下载出现 N 条 error 记录。
+            with self._lock:
+                for ex in self.transfers:
+                    if ex.kind == "get" and ex.filename == filename \
+                       and ex.peer[0] == peer[0] and ex.status == "running":
+                        return  # 已有传输在跑，忽略重发 RRQ
             t = TftpTransfer("get", filename, peer)
             t.total = os.path.getsize(local)
             with self._lock: self.transfers.insert(0, t)
             threading.Thread(target=self._send_file,
                 args=(local, t, blksize, want_oack), daemon=True).start()
         else:  # WRQ
+            with self._lock:
+                for ex in self.transfers:
+                    if ex.kind == "put" and ex.filename == filename \
+                       and ex.peer[0] == peer[0] and ex.status == "running":
+                        return
             t = TftpTransfer("put", filename, peer)
             with self._lock: self.transfers.insert(0, t)
             threading.Thread(target=self._recv_file,
