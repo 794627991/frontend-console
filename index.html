@@ -109,32 +109,14 @@
       <button class="nav-btn" id="searchNext" title="下一个 (Enter)">▼</button>
     </div>
     <div class="panel-tabs">
-      <div class="panel-tab active" data-pane="sense">● 感知</div>
-      <div class="panel-tab" data-pane="analyze">📊 分析</div>
-      <div class="panel-tab" data-pane="cmd">⌘ 命令</div>
+      <div class="panel-tab active" data-pane="cmd">⌘ 命令</div>
+      <div class="panel-tab" data-pane="sense">● 感知</div>
+      <div class="panel-tab" data-pane="analyze">📊 分析</div>  
       <div class="panel-tab" data-pane="mcp">🔌 MCP</div>
     </div>
     <div class="panel-body" id="panelBody">
-      <!-- 感知 -->
-      <div class="panel-tab-pane active" data-pane="sense">
-        <div class="sense-pane" id="sensePane">
-          <div class="sense-head"><span class="live-dot"></span>实时数据流（全部连接）</div>
-          <div class="sense-filter" id="senseFilter"></div>
-          <div id="senseList"></div>
-        </div>
-      </div>
-      <!-- 分析 -->
-      <div class="panel-tab-pane" data-pane="analyze">
-        <div class="analyze-pane" id="analyzePane">
-          <div class="stat-cards" id="statCards"></div>
-          <div class="analyze-section" id="analyzeListSection">
-            <div class="title" id="analyzeListTitle">最近条目（点击上方卡片筛选）</div>
-            <div id="clusterList"><div class="cmd-empty">点击 ERROR/WARNING/INFO/SUCCESS 卡片查看最近条目</div></div>
-          </div>
-        </div>
-      </div>
       <!-- 命令 -->
-      <div class="panel-tab-pane" data-pane="cmd">
+      <div class="panel-tab-pane active" data-pane="cmd">
         <div class="cmd-pane" id="cmdPane">
           <div class="cmd-add">
             <input type="text" id="cmdAddName" placeholder="备注名（可选，留空则只显示命令）" autocomplete="off" class="cmd-add-name">
@@ -155,6 +137,24 @@
           </div>
         </div>
       </div>
+      <!-- 感知 -->
+      <div class="panel-tab-pane" data-pane="sense">
+        <div class="sense-pane" id="sensePane">
+          <div class="sense-head"><span class="live-dot"></span>实时数据流（全部连接）</div>
+          <div class="sense-filter" id="senseFilter"></div>
+          <div id="senseList"></div>
+        </div>
+      </div>
+      <!-- 分析 -->
+      <div class="panel-tab-pane" data-pane="analyze">
+        <div class="analyze-pane" id="analyzePane">
+          <div class="stat-cards" id="statCards"></div>
+          <div class="analyze-section" id="analyzeListSection">
+            <div class="title" id="analyzeListTitle">最近条目（点击上方卡片筛选）</div>
+            <div id="clusterList"><div class="cmd-empty">点击 ERROR/WARNING/INFO/SUCCESS 卡片查看最近条目</div></div>
+          </div>
+        </div>
+      </div>  
       <!-- MCP 状态 -->
       <div class="panel-tab-pane" data-pane="mcp">
         <div class="mcp-pane" id="mcpPane">
@@ -279,6 +279,14 @@
       <button class="btn ghost" id="btnLogDirApply" title="应用新目录（日志库从此目录读取，新日志写到此目录）">应用</button>
       <button class="btn ghost icon-btn" id="btnLogDirReset" title="恢复默认目录">↺</button>
       <button class="btn ghost icon-btn" id="btnLogDirOpen" title="在文件资源管理器中打开">📁</button>
+      <span class="lbl" style="margin-left:8px;">排序</span>
+      <select id="logsSort" class="log-sort-select" title="日志排序方式">
+        <option value="time_desc">时间 ↓ 最新在前</option>
+        <option value="time_asc">时间 ↑ 最早在前</option>
+        <option value="name_asc">名称 ↑ A→Z</option>
+        <option value="name_desc">名称 ↓ Z→A</option>
+        <option value="size_desc">大小 ↓ 最大在前</option>
+      </select>
     </div>
     <div class="list" id="logsList"></div>
   </div>

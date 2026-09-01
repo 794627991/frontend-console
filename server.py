@@ -267,10 +267,17 @@ def api_search():
 
 @app.route("/api/logs")
 def api_logs():
+    """日志库文件列表。sort：time_desc（默认，最新在前）/ time_asc / name_asc / name_desc / size_desc。"""
     files = []
     if os.path.isdir(LOG_DIR):
-        for f in sorted(glob.glob(os.path.join(LOG_DIR, "serial_*.log")), reverse=True):
+        for f in glob.glob(os.path.join(LOG_DIR, "serial_*.log")):
             files.append({"name": os.path.basename(f), "size": os.path.getsize(f), "mtime": int(os.path.getmtime(f))})
+    sort = (request.args.get("sort") or "time_desc").strip()
+    if sort == "time_asc":    files.sort(key=lambda x: x["mtime"])
+    elif sort == "name_asc":  files.sort(key=lambda x: x["name"])
+    elif sort == "name_desc": files.sort(key=lambda x: x["name"], reverse=True)
+    elif sort == "size_desc": files.sort(key=lambda x: x["size"], reverse=True)
+    else:                     files.sort(key=lambda x: x["mtime"], reverse=True)  # time_desc 默认
     return jsonify({"logs": files, "dir": LOG_DIR})
 
 @app.route("/api/log_dir", methods=["GET", "POST"])

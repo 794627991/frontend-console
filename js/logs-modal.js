@@ -30,7 +30,9 @@ async function loadLogsList() {
   const list = $('logsList');
   list.innerHTML = '加载中…';
   try {
-    const r = await fetch('/api/logs');
+    const sortSel = $('logsSort');
+    const sort = sortSel ? sortSel.value : 'time_desc';
+    const r = await fetch('/api/logs?sort=' + encodeURIComponent(sort));
     const j = await r.json();
     logsDirPath = j.dir || '';
     list.innerHTML = '';
@@ -54,8 +56,15 @@ async function loadLogsList() {
 }
 $('btnLogs').onclick = async () => {
   $('logsModal').classList.add('show');
+  // 恢复上次排序选择（默认 time_desc 最新在前）
+  try { const saved = localStorage.getItem('logsSort'); if (saved && $('logsSort')) $('logsSort').value = saved; } catch(e){}
   await loadLogDir();
   await loadLogsList();
+};
+// 切换排序方式立即生效并记住
+if ($('logsSort')) $('logsSort').onchange = () => {
+  try { localStorage.setItem('logsSort', $('logsSort').value); } catch(e){}
+  loadLogsList();
 };
 $('logsClose').onclick = () => $('logsModal').classList.remove('show');
 $('btnLogDirApply').onclick = async () => {

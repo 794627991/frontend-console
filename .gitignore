@@ -27,3 +27,9 @@ _debug_raw.log
 *.swo
 .DS_Store
 Thumbs.db
+
+# 编辑器本地历史快照（VSCode Local History 插件产物）
+.history/
+
+# 用户数据（命令库跟工具目录走，但属用户数据不进版本库）
+cmdlib.json
