@@ -367,10 +367,10 @@
   }
   /* xterm 终端容器 */
   .xterm-wrap {
-    flex: 1; min-height: 0; position: relative; background: #000;
+    flex: 1; min-height: 0; position: relative; background: #1a1f2e;  /* 终端底色：略浅于纯黑，降低对比度护眼 */
     padding: 4px 6px 0 6px; overflow: hidden;
   }
-  .xterm-bottom-pad { flex-shrink: 0; height: 18px; background: #000; }  /* 底部留白 1 行高，独立 div 不受 xterm 重排影响 */
+  .xterm-bottom-pad { flex-shrink: 0; height: 18px; background: #1a1f2e; }  /* 底部留白 1 行高，与终端底色一致 */
   .xterm-wrap .xterm { height: 100%; }
   .xterm-wrap .xterm-viewport { overflow-y: auto !important; }
   /* xterm 行高/字号与原终端一致 */
@@ -1155,10 +1155,10 @@ function buildTerminal(portId, meta) {
     allowProposedApi: true,
     convertEol: false,        // 保留原始 \r\n，设备输出原样
     theme: {
-      background: '#000000',
+      background: '#1a1f2e',
       foreground: '#c8d6e8',
       cursor: '#00d4ff',
-      cursorAccent: '#000000',
+      cursorAccent: '#1a1f2e',
       selectionBackground: 'rgba(0,212,255,0.25)',
       black: '#0a0f1c', red: '#ff7b72', green: '#56d364', yellow: '#e3b341',
       blue: '#79c0ff', magenta: '#d2a8ff', cyan: '#39c5cf', white: '#c9d1d9',
