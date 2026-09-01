@@ -1152,6 +1152,8 @@ function buildTerminal(portId, meta) {
     // 全屏模式（top/htop）：仅用于显示提示条
     inScreen: false,
     screenOverlay: null,
+    // 命令行流式高亮状态：cmdHL=true 表示当前处于命令行（# 之后），逐字符染绿
+    cmdHL: false,
     // 关键字常驻高亮：记录已加 decoration 的行范围
     kwDecorLastRow: 0,
     kwDecorations: [],
@@ -1383,8 +1385,8 @@ function appendRaw(portId, text) {
     conn._writeQueue = '';
     if (data && !conn.paused) {
       let out = conn.tsEnabled && !conn.inScreen ? _injectTs(data) : data;
-      // 命令行高亮：注入 ANSI 色（比 decoration foregroundColor 可靠，WebGL 100% 支持）
-      if (!conn.inScreen) out = _hlCmd(out, conn);
+      // 命令行流式高亮：# 提示符及之后用户输入逐字符染色（mobaxterm 风格，逐字符流不重写不重复）
+      if (!conn.inScreen) out = _hlCmdStream(out, conn);
       conn.term.write(out);
       // 关键字常驻高亮：对新写入的行扫描
       scheduleKwHighlight(conn);
@@ -1420,50 +1422,51 @@ function _injectTs(data) {
   }
   return out;
 }
-// 命令行 ANSI 高亮：给 # / $ / > 提示符后的命令名/选项/路径注入 ANSI 色。
-// 串口流分 chunk，一行可能跨 chunk，用 conn._hlBuf 缓冲未闭合行（无 \n 的尾段），
-// 等下一次 flush 凑齐再处理。已闭合行（含 \n）立即注入。
-// 比 registerDecoration 的 foregroundColor 可靠（后者在 WebGL renderer 下不渲染）。
-// ANSI 色：提示符 橙95m，命令名 绿92m，选项 黄93m，路径 青96m，末尾 0m 复位。
-const _HL_CMD_NAMES = '\\b(ls|cd|cat|echo|pwd|mkdir|rmdir|rm|mv|cp|ln|chmod|chown|find|grep|egrep|fgrep|sed|awk|head|tail|wc|sort|uniq|tr|cut|tee|xargs|tar|gzip|gunzip|dd|mount|umount|ps|top|kill|killall|free|df|du|uname|hostname|ifconfig|ip|route|ping|tftp|nc|telnet|ssh|scp|reboot|poweroff|halt|sync|date|sleep|env|export|unset|alias|source|exec|eval|test|true|false|read|vi|nano|dmesg|logread|syslog|busybox|ash|sh|bash|flash|nand|mmc|sd|spi|i2c|gpio|devmem|devmem2|reg|md|mw|printenv|setenv|saveenv|run|bootm|tftpboot|upk|go|reset|mdio|ethtool|hexdump|xxd|od|strace|ltrace|gdb|taskset|renice|chrt|ulimit|sysctl|lsmod|insmod|rmmod|modprobe|ifup|ifdown|brctl|iwconfig|wpa|ntpdate|hwclock|rtc|mtd|ubi|ubifs|jffs2|ext4|fat|ntfs|fsck|mkfs|fdisk|parted|losetup|dmsetup|mdadm|lvm|cryptsetup)\\b';
-function _hlCmdLine(line) {
-  // 识别命令行：含 # / $ / > 提示符且后有命令内容
-  const m = line.match(/^(.*?)([#>$])\s+/);
-  if (!m) return line;
-  const prefix = m[1], prompt = m[2], rest = line.slice(m[0].length);
-  if (!rest) return line;
-  let out = '\x1b[95m' + prefix + prompt + '\x1b[0m ';
-  // 命令名（第一个词，已知命令染绿，否则原色）
-  const cm = rest.match(/^([A-Za-z_][\w.-]*)/);
-  let cmdRest = rest;
-  if (cm) {
-    const cmdRe = new RegExp(_HL_CMD_NAMES);
-    const known = cmdRe.test(cm[1]);
-    out += (known ? '\x1b[92m' : '') + cm[1] + (known ? '\x1b[0m' : '');
-    cmdRest = rest.slice(cm[1].length);
-  }
-  // 选项 -x / --xxx 染黄，路径 / . ~ 开头染青，其余原色
-  out += cmdRest.replace(/(\s+)(-{1,2}[A-Za-z][\w-]*)/g, '$1\x1b[93m$2\x1b[0m')
-                .replace(/(\s+)([\/.~][^\s]*)/g, '$1\x1b[96m$2\x1b[0m');
-  return out;
-}
-function _hlCmd(data, conn) {
-  // 行缓冲：上次未闭合的尾段 + 本次 data，按 \n 切分
-  conn._hlBuf = (conn._hlBuf || '') + data;
-  const parts = conn._hlBuf.split('\n');
-  // 最后一段无 \n（未闭合），留作下次缓冲；其余段是完整行
-  conn._hlBuf = parts.pop() || '';
-  if (!parts.length) return data;  // 整段都是未闭合行，原样返回（下次再处理）
+// 命令行流式高亮（mobaxterm 风格）：# 提示符及之后用户输入逐字符染色。
+// 关键约束：串口命令是逐字符 echo 的，不能整行缓冲重写（否则 # ls# ls 重复）。
+// 故逐 chunk 扫描，状态 conn.cmdHL 跨 chunk 保持：遇行首 # 进命令行（紫提示符+绿后续），
+// 遇 \n/\r 退出复位；ANSI 控制序列与 \b 等控制符整体透传，不改变高亮状态。
+function _hlCmdStream(data, conn) {
+  if (conn.cmdHL === undefined) conn.cmdHL = false;
+  if (conn._hlAtLS === undefined) conn._hlAtLS = true;  // 是否在行首（未见可见字符）
   let out = '';
-  for (let i = 0; i < parts.length; i++) {
-    let line = parts[i];
-    // 保留行首 \r（设备回车控制）
-    let pre = '';
-    if (line.startsWith('\r')) { pre = '\r'; line = line.slice(1); }
-    out += pre + _hlCmdLine(line) + '\n';
+  for (let i = 0; i < data.length; i++) {
+    const ch = data[i];
+    const code = data.charCodeAt(i);
+    // ANSI 控制序列 \x1b[...letter：整段透传，不影响高亮状态
+    if (ch === '\x1b') {
+      let j = i + 1;
+      if (data[j] === '[') {
+        j++;
+        while (j < data.length && !/[\x40-\x7e]/.test(data[j])) j++;
+        if (j < data.length) j++;
+      } else { j = i + 2; }
+      out += data.slice(i, j);
+      i = j - 1;
+      continue;
+    }
+    // \n / \r：退出命令行，复位色
+    if (ch === '\n' || ch === '\r') {
+      if (conn.cmdHL) { out += '\x1b[0m'; conn.cmdHL = false; }
+      out += ch;
+      conn._hlAtLS = true;
+      continue;
+    }
+    // 行首 # ：进入命令行（紫色提示符 + 绿色后续输入）
+    if (ch === '#' && conn._hlAtLS && !conn.cmdHL) {
+      out += '\x1b[95m#\x1b[92m';
+      conn.cmdHL = true;
+      conn._hlAtLS = false;
+      continue;
+    }
+    // 空格/制表：行首空白不取消行首状态（让  # 仍触发）；命令行内原样
+    if (ch === ' ' || ch === '\t') { out += ch; continue; }
+    // 其他控制符（\b \v \f 等）：透传，不改变行首状态
+    if (code < 0x20) { out += ch; continue; }
+    // 可见字符：命令行内原样（绿色作用中），非命令行原样；取消行首状态
+    out += ch;
+    conn._hlAtLS = false;
   }
-  // 末尾未闭合段原样追加（已从 parts 弹出存入 _hlBuf）
-  out += conn._hlBuf;
   return out;
 }
 function enterScreen(portId, conn) {
@@ -1568,8 +1571,8 @@ function highlightNewKw(conn) {
     if (!line) continue;
     const text = line.translateToString(true);
     if (!text.trim()) continue;
-    // 命令行高亮已改用 ANSI 注入（_hlCmd，比 decoration foregroundColor 可靠），
-    // 这里只做关键词（error/warning）decoration 高亮。
+    // 命令行高亮（# 后命令名）已放弃：ANSI 注入法会在逐字符 echo 流上重复输出（# ls# ls），
+    // decoration foregroundColor 在 WebGL renderer 下不渲染。此处只做关键词（error/warning）高亮。
     const rules = KW_RULES;
     for (const rule of rules) {
       rule.re.lastIndex = 0;
