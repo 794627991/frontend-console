@@ -169,8 +169,12 @@ function toggleTermSearchPane(conn, show) {
   conn.wrap.querySelector('.term-search-splitter').style.display = show ? 'block' : 'none';
   const collapseBtn = conn.wrap.querySelector('.term-search-collapse');
   if (collapseBtn) collapseBtn.textContent = show ? '▾' : '▴';
-  // 显示/隐藏后终端高度变化，需重新 fit
+  // 显示/隐藏后终端高度变化，需重新 fit。
+  // 注意：分栏 35% 高度此刻是同步生效的（display 直接改，布局立刻收缩），
+  // fit 拿到的已是收缩后高度。但 WebGL canvas 的 style 高度更新是异步的
+  // （xterm resize 链内部走 addRefreshCallback），保险起见 fit 后再补一次。
   try { conn.fit.fit(); } catch(e){}
+  requestAnimationFrame(() => { try { conn.fit.fit(); } catch(e){} });
   if (show) conn.termSearchInput.focus();
 }
 async function doTermSearch(conn) {
@@ -220,23 +224,43 @@ function jumpToTermHit(conn, idx) {
   // 行号可能因 reflow/新数据流入而漂移，校验仍在范围内
   if (found < 0 || found >= buf.length) return;
   try {
-    // scrollToLine 把目标行滚到视图顶部；select 选中整行高亮（蓝底，xterm 内置最稳定）
+    // scrollToLine 把目标行滚到视图顶部；select 选中整行高亮（蓝底，xterm 内置最稳定）。
+    // 滚动与选区/decoration 同帧触发时，viewport scrollTop 同步（syncScrollArea）与
+    // WebGL canvas 重绘存在竞争——偶发"内容只显示上半截、下部空白"（重绘未覆盖新视口）。
+    // 拆开：先滚（让 viewport/ydisp 同步完成），下一帧再选区+高亮。
     conn.term.scrollToLine(found);
-    conn.term.select(0, found, conn.term.cols);
-    conn.term.focus();
-    // registerDecoration 加醒目背景高亮当前命中行（6 位 hex，不带 alpha）
-    if (conn.term.registerDecoration) {
-      const offset = Math.round(found - buf.ybase - buf.y);
-      const dec = conn.term.registerDecoration({
-        marker: conn.term.registerMarker(offset),
-        x: 0,
-        width: conn.term.cols,
-        backgroundColor: '#00d4ff',
-        layer: 'top',
+    requestAnimationFrame(() => {
+      if (connections[conn.portId] !== conn || !conn.term) return;
+      try {
+        conn.term.select(0, found, conn.term.cols);
+      } catch(e){}
+      if (conn.term.registerDecoration) {
+        const offset = Math.round(found - conn.term.buffer.active.ybase - conn.term.buffer.active.y);
+        const dec = conn.term.registerDecoration({
+          marker: conn.term.registerMarker(offset),
+          x: 0,
+          width: conn.term.cols,
+          backgroundColor: '#00d4ff',
+          layer: 'top',
+        });
+        // 3 秒后淡出，避免堆积
+        if (dec) setTimeout(() => { try { dec.dispose(); } catch(_){} }, 3000);
+      }
+    });
+    // ---- 排障探针（Ctrl+F 显示异常诊断用，正常功能不依赖）----
+    try {
+      const vp = conn.xtermWrap.querySelector('.xterm-viewport');
+      const screen = conn.xtermWrap.querySelector('.xterm-screen');
+      const canvas = screen ? screen.querySelector('canvas') : null;
+      window.__jumpProbe = (window.__jumpProbe || []).slice(-5).concat({
+        t: Date.now() % 100000, found, rows: conn.term.rows,
+        ydisp: conn.term.buffer.active.ydisp, ybase: conn.term.buffer.active.ybase,
+        vpTop: vp ? vp.scrollTop : null, vpH: vp ? vp.clientHeight : null, vpScrollH: vp ? vp.scrollHeight : null,
+        screenH: screen ? screen.offsetHeight : null,
+        canvasCssH: canvas ? canvas.style.height : null, canvasClientH: canvas ? canvas.clientHeight : null,
+        wrapH: conn.xtermWrap.offsetHeight,
       });
-      // 3 秒后淡出，避免堆积
-      if (dec) setTimeout(() => { try { dec.dispose(); } catch(_){} }, 3000);
-    }
+    } catch(e){}
   } catch(e){}
 }
 function highlightTermHit(conn, idx) {
