@@ -23,12 +23,14 @@
   <div class="divider"></div>
   <div class="conn-area">
     <button class="btn primary" id="btnNewConn">＋ 新建连接</button>
+    <button class="btn primary" id="btnNewFile" title="新建文本文件（files/ 目录）">✎ 新建文件</button>
     <button class="btn ghost icon-btn" id="btnRefreshPorts" title="刷新端口">↻</button>
   </div>
   <div class="spacer"></div>
   <div class="status-pill"><span class="dot" id="globalDot"></span><span id="globalStatus">0 个连接</span></div>
   <div class="status-pill"><span class="dot rec" id="recDot"></span><span>录制中</span></div>
   <button class="btn ghost" id="btnLogs">📜 日志库</button>
+  <button class="btn ghost" id="btnFiles" title="查看/打开已保存的文本文件">📝 文件</button>
   <button class="btn ghost" id="btnOpenLogDir" title="在资源管理器中打开日志目录">📁 打开日志目录</button>
   <button class="btn ghost" id="btnAbout">关于</button>
 </div>
@@ -331,6 +333,7 @@
 <script src="js/analyze.js"></script>
 <script src="js/cmd-lib.js"></script>
 <script src="js/log-viewer.js"></script>
+<script src="js/editor.js"></script>
 <script src="js/tftp.js"></script>
 <script src="js/init.js"></script>
 </body>

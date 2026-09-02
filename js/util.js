@@ -42,6 +42,7 @@ function sortKeyFn(pid) {
   const m = /^COM(\d+)$/i.exec(pid);
   if (m) return [0, parseInt(m[1], 10)];  // 串口：COM 号数字序
   if (pid.startsWith('log:')) return [2, pid];  // 日志：字典序
+  if (pid.startsWith('edit:')) return [3, pid];  // 编辑器：字典序（排在日志后）
   return [1, pid];  // SSH：字典序
 }
 

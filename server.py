@@ -38,6 +38,7 @@ from src.base_conn import BaseConnection
 from src.serial_conn import SerialPort, list_ports
 from src.ssh_conn import SSHConnection, _get_paramiko
 from src.tftp import tftp_bp, _tftp
+from src.editor_files import edit_bp
 
 
 app = Flask(__name__)
@@ -57,6 +58,9 @@ if not app.logger.handlers:
 
 # 注册 TFTP Blueprint（路由 /api/tftp/*）
 app.register_blueprint(tftp_bp)
+
+# 注册文本编辑器 Blueprint（路由 /api/ed/*）
+app.register_blueprint(edit_bp)
 
 # ---- 全局串口表（_ports/_ports_lock 来自 app_state，此处定义 close_all_ports）----
 def close_all_ports():
