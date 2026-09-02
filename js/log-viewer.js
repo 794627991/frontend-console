@@ -375,7 +375,8 @@ function renderLogResults(conn) {
     const tsHtml = l.ts ? '<span class="hts">' + fmtTs(l.ts) + '</span>' : '';
     html += '<div class="hline ' + kc + (i === ls.searchIdx ? ' active' : '') + '" data-i="' + i + '" data-row="' + l.row + '" style="position:absolute;top:' + (i * RES_ROW_H) + 'px" title="' + esc(l.text || '') + '"><span class="hrow">' + l.row + '</span>' + tsHtml + '<span class="htag">' + esc(l.tag||'') + '</span>' + text + '</div>';
   }
-  if (ls.searchNextOffset >= 0) html += '<div class="search-more" data-more style="position:absolute;top:' + (n * RES_ROW_H) + 'px">已显示 ' + n.toLocaleString() + ' 条（共 ' + ls.searchTotal.toLocaleString() + ' 处命中），往下滚动加载更多…</div>';
+  if (n >= RES_MAX_KEEP) html += '<div class="search-more" data-more style="position:absolute;top:' + (n * RES_ROW_H) + 'px">已达列表上限 ' + RES_MAX_KEEP.toLocaleString() + ' 条（共 ' + ls.searchTotal.toLocaleString() + ' 处命中），可输入更精确的关键字缩小范围</div>';
+  else if (ls.searchNextOffset >= 0) html += '<div class="search-more" data-more style="position:absolute;top:' + (n * RES_ROW_H) + 'px">已显示 ' + n.toLocaleString() + ' 条（共 ' + ls.searchTotal.toLocaleString() + ' 处命中），往下滚动加载更多…</div>';
   // 移除旧渲染行（保留 spacer），插入新可视区行
   while (el.children.length > 1) el.children[el.children.length - 1].remove();
   el.insertAdjacentHTML('beforeend', html);
@@ -398,9 +399,17 @@ function initLogResultsEvents(conn) {
   });
 }
 // 滚动到底 → 用 next_offset 续载下 500 条命中（count_total=0 跳过全量计数，毫秒级）
+// 内存保险：resultData 上限 50 万条（~90MB 级），够滚到天荒地老，防止极端日志撑爆堆
+const RES_MAX_KEEP = 500000;
 async function loadMoreLogSearch(conn) {
   const ls = conn.logState;
   if (ls.searchLoadingMore || ls.searchNextOffset < 0 || !ls.searchQ) return;
+  if (ls.resultData.length >= RES_MAX_KEEP) {
+    ls.searchNextOffset = -1;
+    ls.resRenderStart = -1; ls.resRenderEnd = -1;
+    renderLogResults(conn);  // 刷新提示行（显示已达上限）
+    return;
+  }
   ls.searchLoadingMore = true;
   try {
     const r = await fetch('/api/log_search?name=' + encodeURIComponent(ls.name) + '&q=' + encodeURIComponent(ls.searchQ) + '&limit=500&offset=' + ls.searchNextOffset + '&count_total=0');
