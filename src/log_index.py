@@ -152,15 +152,17 @@ class LogIndex:
                 res.append(self._parse_line(line.decode("utf-8", errors="replace")))
         return res
 
-    def search(self, q, limit=200, start_offset=0):
-        """从 start_offset 行起搜索 q（大小写不敏感），返回命中行 + 游标。"""
+    def search(self, q, limit=200, start_offset=0, count_total=True):
+        """从 start_offset 行起搜索 q（大小写不敏感），返回命中行 + 游标。
+        count_total=False 时跳过全量计数（total 返回 -1），扫到 limit 条即停——
+        续载场景前端已知 total，无需每次重扫 G 级文件。"""
         if not self._loaded:
             self.build()
         if not q:
             return {"total": 0, "lines": [], "next_offset": -1, "has_more": False}
         pat = re.compile(re.escape(q), re.IGNORECASE)
         res = []
-        total = 0
+        total = -1
         next_offset = -1
         with open(self.path, "rb") as f:
             for i in range(start_offset, self.total):
@@ -168,13 +170,16 @@ class LogIndex:
                 line = f.readline().decode("utf-8", errors="replace")
                 parsed = self._parse_line(line)
                 if pat.search(parsed["text"]):
-                    total += 1
+                    if count_total:
+                        total += 1
                     if len(res) < limit:
                         parsed["row"] = i
                         res.append(parsed)
                     else:
-                        # 已满 limit，记录续搜游标，但继续统计 total 以给前端准确计数
+                        # 已满 limit，记录续搜游标。count_total=False 时直接停（不重扫全文件）
                         if next_offset < 0:
                             next_offset = i
+                        if not count_total:
+                            break
         has_more = next_offset >= 0
         return {"total": total, "lines": res, "next_offset": next_offset, "has_more": has_more}

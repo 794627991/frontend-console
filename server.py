@@ -407,16 +407,18 @@ def api_log_page():
 
 @app.route("/api/log_search")
 def api_log_search():
-    """在日志文件搜索关键字。name=日志名或绝对路径，q=关键字，offset=起始行，limit=命中上限。"""
+    """在日志文件搜索关键字。name=日志名或绝对路径，q=关键字，offset=起始行，limit=命中上限。
+    count_total=0（续载）时跳过全量计数，只取下一批命中，速度大幅提升。"""
     name = request.args.get("name", "")
     q = request.args.get("q", "")
     offset = int(request.args.get("offset", 0))
     limit = int(request.args.get("limit", 200))
+    count_total = request.args.get("count_total", "1") != "0"
     path = _resolve_log_path(name)
     if not path:
         return jsonify({"ok": False, "err": "not found"}), 404
     idx = _get_log_index(path)
-    res = idx.search(q, limit=limit, start_offset=offset)
+    res = idx.search(q, limit=limit, start_offset=offset, count_total=count_total)
     return jsonify({"ok": True, **res})
 
 @app.route("/api/log_open_external", methods=["POST"])

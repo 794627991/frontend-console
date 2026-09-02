@@ -144,10 +144,10 @@ function buildLogViewer(path) {
   initLogSplitter(conn);
   // 查找全部按钮
   wrap.querySelector('.log-search-btn').onclick = () => doLogSearch(conn);
-  // 结果列表滚动到底 → 续载下 500 条命中
+  // 结果列表滚动到底 → 续载下 500 条命中（600px 提前量，快到底就预载，避免等 3s）
   conn.searchResults.addEventListener('scroll', () => {
     const el = conn.searchResults;
-    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 40) loadMoreLogSearch(conn);
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 600) loadMoreLogSearch(conn);
   });
   wrap.querySelector('.log-search-input').addEventListener('keydown', e => { if (e.key === 'Enter') doLogSearch(conn); });
   // 输入清空时去掉主视图关键字染色（保持与搜索状态一致）
@@ -354,6 +354,7 @@ async function doLogSearch(conn) {
     ls.renderedStart = -1; ls.renderedEnd = -1;
     if (ls.searchResults.length) { jumpToLogRow(conn, ls.searchResults[0], ls.searchResults[0]); highlightLogSearchResult(conn, 0); }
     else renderLogSlice(conn);
+    loadMoreLogSearch(conn);  // 预载第 2 批（首屏通常显示不完 500 条，提前备好）
   } catch(e) { conn.searchCount.textContent = '失败：' + e; }
 }
 // 结果行点击事件统一绑定（初始/续载后复用，dataset.bound 防重复）
@@ -376,7 +377,7 @@ async function loadMoreLogSearch(conn) {
   if (ls.searchLoadingMore || ls.searchNextOffset < 0 || !ls.searchQ) return;
   ls.searchLoadingMore = true;
   try {
-    const r = await fetch('/api/log_search?name=' + encodeURIComponent(ls.name) + '&q=' + encodeURIComponent(ls.searchQ) + '&limit=500&offset=' + ls.searchNextOffset);
+    const r = await fetch('/api/log_search?name=' + encodeURIComponent(ls.name) + '&q=' + encodeURIComponent(ls.searchQ) + '&limit=500&offset=' + ls.searchNextOffset + '&count_total=0');
     const j = await r.json();
     if (!j.ok) return;
     const more = j.lines || [];
