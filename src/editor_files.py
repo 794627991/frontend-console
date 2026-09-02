@@ -36,7 +36,8 @@ def _safe_path(name):
 
 
 def _unique_name(base="新建文本"):
-    """生成不冲突的默认文件名：新建文本.txt / 新建文本2.txt / ..."""
+    """生成不冲突的默认文件名：新建文本.txt / 新建文本2.txt / ...
+    （供另存为/保存默认名提示用；新建草稿本身不落盘）"""
     _ensure_dir()
     candidate = base + ".txt"
     n = 2
@@ -44,6 +45,12 @@ def _unique_name(base="新建文本"):
         candidate = f"{base}{n}.txt"
         n += 1
     return candidate
+
+
+@edit_bp.route("/api/ed/default_name")
+def ed_default_name():
+    """生成一个不冲突的默认文件名（草稿首次保存/另存为时的输入框预填值）。"""
+    return jsonify({"ok": True, "name": _unique_name()})
 
 
 def _read_text(path, max_bytes=20 * 1024 * 1024):
@@ -58,16 +65,6 @@ def _read_text(path, max_bytes=20 * 1024 * 1024):
         except UnicodeDecodeError:
             with open(path, "r", encoding="utf-8", errors="replace") as f2:
                 return f2.read(), None
-
-
-@edit_bp.route("/api/ed/new", methods=["POST"])
-def ed_new():
-    """新建文件：创建空文件（默认 .txt），返回文件名。"""
-    _ensure_dir()
-    name = _unique_name()
-    with open(os.path.join(FILES_DIR, name), "w", encoding="utf-8") as f:
-        f.write("")
-    return jsonify({"ok": True, "name": name})
 
 
 @edit_bp.route("/api/ed/list")
