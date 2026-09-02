@@ -22,6 +22,11 @@ class LogIndex:
         # search_page 按命中序号 O(1) 取段。文件追加后全量重扫时会整体刷新。
         self._hits_by_q = {}
         self._hits_q_state = -1  # 建索引时的 _built_size 快照：追加后视为陈旧
+        # ts 列表缓存（回放用）：array('q')，每行头部 ts（毫秒）。
+        # ts<=0 的行（comment/外部纯文本/脏数据）用相邻有效值填充，保证单调非降可二分。
+        # 与命中索引不同，它跟随 _built_size 一起失效（文件追加后重建）。
+        self._ts_list = None
+        self._ts_state = -1
 
     def _hits_stale(self):
         """命中索引是否已随文件变化而陈旧（需重建）。"""
@@ -155,6 +160,41 @@ class LogIndex:
                     f.write(struct.pack(">" + "Q" * self.total, *self.offsets[:self.total]))
         except Exception:
             pass
+
+    def ts_list(self):
+        """全文件扫描一遍，构建 ts 列表（毫秒，array('q')）。
+        ts 非法（<=0）的行用前一个有效值填充（保证单调非降，可二分），
+        供回放按时间定位行号用。结果跟随 _built_size 失效（与命中索引同策略）。
+        首次调用 O(n)（顺序读，G 级文件 ~秒级），之后 O(1)。"""
+        if self._ts_list is not None and self._ts_state == self._built_size:
+            return self._ts_list
+        ts_arr = array("q", bytes(8 * max(self.total, 1)))
+        last_valid = 0
+        with open(self.path, "rb") as f:
+            for i in range(self.total):
+                f.seek(self.offsets[i])
+                line = f.readline().decode("utf-8", errors="replace")
+                ts_arr[i] = self._parse_line(line).get("ts", 0) or 0
+                if ts_arr[i] > 0:
+                    last_valid = ts_arr[i]
+                else:
+                    ts_arr[i] = last_valid  # 非法行继承前一有效 ts
+        self._ts_list = ts_arr
+        self._ts_state = self._built_size
+        return ts_arr
+
+    def seek_ts(self, ts_ms):
+        """二分定位：第一个 ts >= ts_ms 的行号。ts 列表单调非降（见 ts_list 填充）。
+        用于回放按时间戳 O(log n) 跳行，不逐行扫 G 级文件。"""
+        ts_arr = self.ts_list()
+        lo, hi = 0, len(ts_arr)
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if ts_arr[mid] < ts_ms:
+                lo = mid + 1
+            else:
+                hi = mid
+        return lo
 
     def get_page(self, offset, limit):
         """读取第 offset 行起的 limit 行（0-based）。返回 [{ts,tag,text}, ...]。"""

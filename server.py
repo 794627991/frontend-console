@@ -351,18 +351,57 @@ def api_log_read(name):
 
 @app.route("/api/replay/<name>")
 def api_replay(name):
+    """回放元信息：总行数 + 首末有效时间戳 + 时长。
+    不再把全量行 JSON 拉给前端（G 级日志会几百 MB 且拖拽全量重建 DOM 卡死）。
+    行数据改由 /api/replay_page 按需分页拉取，按时间跳转走 /api/replay_seek。
+    ts<=0 的行（脏数据如 '0\\tinfo\\t'、注释行）不参与首末时间计算——
+    曾经因末尾脏行 ts=0 把时长算成负数（-29804419:-19）。"""
     path = _resolve_log_path(name)
     if not path:
         return jsonify({"ok": False, "err": "not found"}), 404
-    lines = []
-    with open(path, "r", encoding="utf-8", errors="replace") as f:
-        for ln in f:
-            ln = ln.rstrip("\n")
-            if ln.startswith("#"): continue
-            parts = ln.split("\t", 2)
-            if len(parts) == 3 and parts[0].isdigit():
-                lines.append({"ts": int(parts[0]), "tag": parts[1], "text": parts[2], "html": None})
-    return jsonify({"lines": lines})
+    idx = _get_log_index(path)
+    total = idx.total
+    if not total:
+        return jsonify({"ok": True, "total": 0, "first_ts": 0, "last_ts": 0, "dur": 0})
+    ts_arr = idx.ts_list()
+    # ts_list 已把非法行用前值填充；首端无效行填充为 0，扫到第一个 >0 为止
+    first_ts = 0
+    for v in ts_arr:
+        if v > 0:
+            first_ts = v
+            break
+    last_ts = ts_arr[-1]
+    dur = max(0, (last_ts - first_ts) / 1000) if first_ts > 0 and last_ts > 0 else 0
+    return jsonify({"ok": True, "total": total, "first_ts": first_ts, "last_ts": last_ts, "dur": dur})
+
+@app.route("/api/replay_page")
+def api_replay_page():
+    """回放分页取行：name + offset(0-based) + limit。行数据按需拉取，
+    前端永不持有全量行。limit 上限 5000（播放前进一屏足够）。"""
+    name = request.args.get("name", "")
+    offset = int(request.args.get("offset", 0))
+    limit = min(int(request.args.get("limit", 500)), 5000)
+    path = _resolve_log_path(name)
+    if not path:
+        return jsonify({"ok": False, "err": "not found"}), 404
+    idx = _get_log_index(path)
+    lines = idx.get_page(offset, limit)
+    # 回放按 ts 驱动，清掉 ts=0 的脏行（如 '0\\tinfo\\t'），避免播放循环错乱
+    lines = [l for l in lines if l.get("ts", 0) > 0 or l["tag"] == "comment" or l["text"]]
+    return jsonify({"ok": True, "lines": lines, "total": idx.total})
+
+@app.route("/api/replay_seek")
+def api_replay_seek():
+    """按时间戳定位回放起始行号：name + ts(毫秒)。
+    二分 O(log n)，前端拖拽进度条时无需全量扫描。"""
+    name = request.args.get("name", "")
+    ts_ms = int(request.args.get("ts", 0))
+    path = _resolve_log_path(name)
+    if not path:
+        return jsonify({"ok": False, "err": "not found"}), 404
+    idx = _get_log_index(path)
+    row = idx.seek_ts(ts_ms)
+    return jsonify({"ok": True, "row": row, "total": idx.total})
 
 
 # ---- G 级历史翻阅：日志行索引 + 分页 + 搜索 ----
