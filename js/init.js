@@ -16,6 +16,7 @@ loadPorts();
 refreshGlobalStatus();
 connectAiSSE();
 refreshMcpInfo();
+renderCmdPane();  // 命令 tab 是默认激活面板，启动即渲染（否则空面板要切走再切回才刷新）
 _reportPerf();  // 初始化完成，上报计时
 // 轮询降载：连接增删时 refreshSidebar/refreshGlobalStatus 已被事件调用处触发，
 // 周期轮询只作兜底，全部放宽（3s→15s / 5s→30s），减少常态 HTTP + 重排叠加（输入卡顿 Contributor）
