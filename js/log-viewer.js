@@ -533,7 +533,11 @@ function renderLogResults(conn) {
   const naturalH = n * RES_ROW_H;
   const scaled = naturalH > RES_MAX_H;
   const spacerH = Math.min(naturalH, RES_MAX_H);
-  if (!el._spacer) { el.innerHTML = '<div class="res-spacer"></div>'; el._spacer = el.querySelector('.res-spacer'); }
+  if (!el._spacer || !el._spacer.isConnected) {
+    el.innerHTML = '<div class="res-spacer"></div>';
+    el._spacer = el.querySelector('.res-spacer');
+    el._spacerH = null;
+  }
   if (el._spacerH !== spacerH) { el._spacerH = spacerH; el._spacer.style.height = spacerH + 'px'; }
   const st = el.scrollTop, vh = el.clientHeight;
   const startHit = scaled ? resScrollToHit(conn, st) : Math.floor(st / RES_ROW_H);
@@ -546,7 +550,9 @@ function renderLogResults(conn) {
   let html = '';
   for (let i = start; i < end; i++) {
     const l = ls.resultData[i];
-    const topPx = scaled ? resHitToScroll(conn, i) : i * RES_ROW_H;
+    // 行相对 viewport 顶排布（viewport 平移到 scrollTop），缩放/非缩放均正确——
+    // 缩放模式下序号↔scrollTop 非线性，不能用序号换算的内容坐标定位行
+    const topPx = (i - start) * RES_ROW_H;
     if (!l) {
       // 回载在途：占位提示行（数据到了 resFetchRange 会重渲染），不留无解释的空白
       html += '<div class="hline res-loading" style="position:absolute;top:' + topPx + 'px"><span class="spin">✳</span> 加载中…</div>';
@@ -555,12 +561,16 @@ function renderLogResults(conn) {
     const kc = l.tag === 'error' ? 'kw-error' : l.tag === 'warning' ? 'kw-warning' : (l.tag === 'info' || l.tag === 'comment') ? 'kw-info' : '';
     const text = hlSearchText(l.text || '', q);
     const tsHtml = l.ts ? '<span class="hts">' + fmtTs(l.ts) + '</span>' : '';
-    // 内容坐标：非缩放 = 序号×行高；缩放 = 序号经 resHitToScroll 压缩映射
     html += '<div class="hline ' + kc + (i === ls.searchIdx ? ' active' : '') + '" data-i="' + i + '" data-row="' + l.row + '" style="position:absolute;top:' + topPx + 'px" title="' + esc(l.text || '') + '"><span class="hrow">' + l.row + '</span>' + tsHtml + '<span class="htag">' + esc(l.tag||'') + '</span>' + text + '</div>';
   }
-  // 移除旧渲染行（保留 spacer），插入新可视区行
-  while (el.children.length > 1) el.children[el.children.length - 1].remove();
-  if (html) el.insertAdjacentHTML('beforeend', html);
+  // 可视区容器：平移到当前 scrollTop，行相对其顶排布（缩放/非缩放均正确——
+  // 缩放时序号↔scrollTop 非线性，不能用序号换算的内容坐标定位行）
+  let vp = el.querySelector('.res-viewport');
+  if (!vp) { vp = document.createElement('div'); vp.className = 'res-viewport'; el.insertBefore(vp, el.children[1] || null); }
+  vp.style.top = st + 'px';
+  vp.innerHTML = html;
+  // 移除 vp 之后可能残留的旧直接子行（历史版本挂在 el 上的行）
+  while (el.lastElementChild && el.lastElementChild !== vp) el.lastElementChild.remove();
   ls.resRenderStart = start; ls.resRenderEnd = end;
 }
 // 滚动 + 点击（事件委托：虚拟列表 DOM 不断重建，逐行绑定不可行）
