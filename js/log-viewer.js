@@ -3,6 +3,7 @@ const HIST_BUF = 10;
 const HIST_PAGE = 200;
 const HIST_CACHE_MAX = 5000;
 const MAX_SCROLL_H = 10000000;
+const RES_ROW_H = 20;   // 搜索结果列表虚拟行高（单行省略，title 看全文）
 
 // 拖拽日志文件到窗口任意位置打开（含超大文件，走 G 级虚拟列表）
 let _dragOverlay = null;
@@ -120,8 +121,10 @@ function buildLogViewer(path) {
     logState: {
       name: path, total: 0, scaled: false, rows: new Map(),
       renderedStart: -1, renderedEnd: -1, renderSeq: 0,
-      searchQ: '', searchResults: [], searchIdx: 0,
-      searchNextOffset: -1, searchLoadingMore: false, curRow: -1,
+      searchQ: '', searchIdx: 0, curRow: -1,
+      // 搜索结果：数据全留内存（resultData），DOM 虚拟化只渲染可视区（resRenderStart/End）
+      resultData: [], searchNextOffset: -1, searchTotal: 0, searchLoadingMore: false,
+      resRenderStart: -1, resRenderEnd: -1,
     },
   };
   connections[portId] = conn;
@@ -144,11 +147,8 @@ function buildLogViewer(path) {
   initLogSplitter(conn);
   // 查找全部按钮
   wrap.querySelector('.log-search-btn').onclick = () => doLogSearch(conn);
-  // 结果列表滚动到底 → 续载下 500 条命中（600px 提前量，快到底就预载，避免等 3s）
-  conn.searchResults.addEventListener('scroll', () => {
-    const el = conn.searchResults;
-    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 600) loadMoreLogSearch(conn);
-  });
+  // 结果列表：滚动虚拟渲染 + 到底续载 + 点击跳转（事件委托）
+  initLogResultsEvents(conn);
   wrap.querySelector('.log-search-input').addEventListener('keydown', e => { if (e.key === 'Enter') doLogSearch(conn); });
   // 输入清空时去掉主视图关键字染色（保持与搜索状态一致）
   wrap.querySelector('.log-search-input').addEventListener('input', e => {
@@ -156,6 +156,9 @@ function buildLogViewer(path) {
       conn.logState.searchQ = '';
       conn.logState.renderedStart = -1; conn.logState.renderedEnd = -1;
       renderLogSlice(conn);
+      // 结果列表同步去染色（数据保留，仅清关键字高亮态）
+      conn.logState.resRenderStart = -1; conn.logState.resRenderEnd = -1;
+      renderLogResults(conn);
     }
   });
   wrap.querySelector('.log-search-collapse').onclick = () => {
@@ -174,8 +177,9 @@ async function openLogInViewer(conn) {
   const ls = conn.logState;
   ls.rows = new Map();
   ls.renderedStart = -1; ls.renderedEnd = -1;
-  ls.searchQ = ''; ls.searchResults = []; ls.searchIdx = 0;
+  ls.searchQ = ''; ls.resultData = []; ls.searchIdx = 0;
   ls.searchNextOffset = -1; ls.curRow = -1;
+  ls.resRenderStart = -1; ls.resRenderEnd = -1;
   conn.searchInput.value = '';
   conn.vlist.scrollTop = 0;
   conn.statusEl.textContent = '正在索引…';
@@ -315,15 +319,16 @@ function jumpToLogRow(conn, row, curRow) {
   renderLogSlice(conn);
 }
 
-// 查找全部 → 底部分栏列命中行（滚动到底自动续载下 500 条）
+// 查找全部 → 底部分栏列命中行。结果列表虚拟化：数据留内存（resultData），
+// DOM 只渲染可视区约 40 行，加载几十万条滚动都顺滑；滚动到底自动续载下 500 条。
 async function doLogSearch(conn) {
   const q = conn.searchInput.value.trim();
   const ls = conn.logState;
   if (!q || !ls.name) return;
   // 已有结果且查询未变 → 跳转下一个
-  if (ls.searchResults.length && ls.searchQ === q) {
-    ls.searchIdx = (ls.searchIdx + 1) % ls.searchResults.length;
-    jumpToLogRow(conn, ls.searchResults[ls.searchIdx], ls.searchResults[ls.searchIdx]);
+  if (ls.resultData.length && ls.searchQ === q) {
+    ls.searchIdx = (ls.searchIdx + 1) % ls.resultData.length;
+    jumpToLogRow(conn, ls.resultData[ls.searchIdx].row, ls.resultData[ls.searchIdx].row);
     highlightLogSearchResult(conn, ls.searchIdx);
     return;
   }
@@ -333,45 +338,66 @@ async function doLogSearch(conn) {
     const r = await fetch('/api/log_search?name=' + encodeURIComponent(ls.name) + '&q=' + encodeURIComponent(q) + '&limit=500');
     const j = await r.json();
     if (!j.ok) { conn.searchCount.textContent = '失败：' + (j.err || ''); return; }
-    ls.searchResults = (j.lines || []).map(l => l.row);
+    ls.resultData = (j.lines || []).map(l => Object.assign({}, l));
     ls.searchQ = q; ls.searchIdx = 0;
     ls.searchNextOffset = (typeof j.next_offset === 'number') ? j.next_offset : -1;
-    ls.searchTotal = (typeof j.total === 'number') ? j.total : ls.searchResults.length;
-    // total 是后端扫全量的真实命中数；列表初始显示前 500 条，滚动到底续载
-    const total = ls.searchTotal;
-    conn.searchResults.innerHTML = (j.lines || []).map((l, idx) => {
-      const kc = l.tag === 'error' ? 'kw-error' : l.tag === 'warning' ? 'kw-warning' : (l.tag === 'info' || l.tag === 'comment') ? 'kw-info' : '';
-      // 结果列表里关键字也染色（与主视图一致）
-      const text = hlSearchText(l.text || '', q);
-      const tsHtml = l.ts ? `<span class="hts">${fmtTs(l.ts)}</span>` : '';
-      return `<div class="hline ${kc}" data-row="${l.row}" data-idx="${idx}" title="${esc(l.text || '')}"><span class="hrow">${l.row}</span>${tsHtml}<span class="htag">${esc(l.tag||'')}</span>${text}</div>`;
-    }).join('') + (ls.searchNextOffset >= 0
-      ? `<div class="search-more" data-more>已显示前 ${ls.searchResults.length} 条（共 ${total.toLocaleString()} 处命中），往下滚动加载更多…</div>`
-      : '');
-    bindLogSearchResultClicks(conn);
-    conn.searchCount.textContent = `命中 ${total.toLocaleString()} 处`;
+    ls.searchTotal = (typeof j.total === 'number' && j.total >= 0) ? j.total : ls.resultData.length;
+    conn.searchResults.scrollTop = 0;
+    ls.resRenderStart = -1; ls.resRenderEnd = -1;
+    renderLogResults(conn);
+    conn.searchCount.textContent = '命中 ' + ls.searchTotal.toLocaleString() + ' 处';
     // 主视图从此带关键字染色：强制重渲染当前可视区
     ls.renderedStart = -1; ls.renderedEnd = -1;
-    if (ls.searchResults.length) { jumpToLogRow(conn, ls.searchResults[0], ls.searchResults[0]); highlightLogSearchResult(conn, 0); }
+    if (ls.resultData.length) { jumpToLogRow(conn, ls.resultData[0].row, ls.resultData[0].row); highlightLogSearchResult(conn, 0); }
     else renderLogSlice(conn);
     loadMoreLogSearch(conn);  // 预载第 2 批（首屏通常显示不完 500 条，提前备好）
   } catch(e) { conn.searchCount.textContent = '失败：' + e; }
 }
-// 结果行点击事件统一绑定（初始/续载后复用，dataset.bound 防重复）
-function bindLogSearchResultClicks(conn) {
+// 搜索结果虚拟渲染：只渲染可视区 ± 5 行（数据在 ls.resultData，DOM 节点恒定 ~50 个）
+function renderLogResults(conn) {
   const ls = conn.logState;
-  conn.searchResults.querySelectorAll('.hline').forEach(el => {
-    if (el.dataset.bound) return;
-    el.dataset.bound = '1';
-    el.onclick = () => {
-      const idx = +el.dataset.idx;
-      ls.searchIdx = idx;
-      jumpToLogRow(conn, +el.dataset.row, +el.dataset.row);
-      highlightLogSearchResult(conn, idx);
-    };
+  const el = conn.searchResults;
+  const n = ls.resultData.length;
+  // 占位 div 撑起真实滚动高度（续载提示行占 28px）
+  const spacerH = n * RES_ROW_H + (ls.searchNextOffset >= 0 ? 28 : 0);
+  if (!el._spacer) { el.innerHTML = '<div class="res-spacer"></div>'; el._spacer = el.querySelector('.res-spacer'); }
+  if (el._spacerH !== spacerH) { el._spacerH = spacerH; el._spacer.style.height = spacerH + 'px'; }
+  const st = el.scrollTop, vh = el.clientHeight;
+  const start = Math.max(0, Math.floor(st / RES_ROW_H) - 5);
+  const end = Math.min(n, Math.ceil((st + vh) / RES_ROW_H) + 5);
+  if (start === ls.resRenderStart && end === ls.resRenderEnd) return;
+  const q = ls.searchQ;
+  let html = '';
+  for (let i = start; i < end; i++) {
+    const l = ls.resultData[i];
+    const kc = l.tag === 'error' ? 'kw-error' : l.tag === 'warning' ? 'kw-warning' : (l.tag === 'info' || l.tag === 'comment') ? 'kw-info' : '';
+    const text = hlSearchText(l.text || '', q);
+    const tsHtml = l.ts ? '<span class="hts">' + fmtTs(l.ts) + '</span>' : '';
+    html += '<div class="hline ' + kc + (i === ls.searchIdx ? ' active' : '') + '" data-i="' + i + '" data-row="' + l.row + '" style="position:absolute;top:' + (i * RES_ROW_H) + 'px" title="' + esc(l.text || '') + '"><span class="hrow">' + l.row + '</span>' + tsHtml + '<span class="htag">' + esc(l.tag||'') + '</span>' + text + '</div>';
+  }
+  if (ls.searchNextOffset >= 0) html += '<div class="search-more" data-more style="position:absolute;top:' + (n * RES_ROW_H) + 'px">已显示 ' + n.toLocaleString() + ' 条（共 ' + ls.searchTotal.toLocaleString() + ' 处命中），往下滚动加载更多…</div>';
+  // 移除旧渲染行（保留 spacer），插入新可视区行
+  while (el.children.length > 1) el.children[el.children.length - 1].remove();
+  el.insertAdjacentHTML('beforeend', html);
+  ls.resRenderStart = start; ls.resRenderEnd = end;
+}
+// 滚动 + 点击（事件委托：虚拟列表 DOM 不断重建，逐行绑定不可行）
+function initLogResultsEvents(conn) {
+  conn.searchResults.addEventListener('scroll', () => {
+    renderLogResults(conn);
+    if (conn.searchResults.scrollTop + conn.searchResults.clientHeight >= conn.searchResults.scrollHeight - 600) loadMoreLogSearch(conn);
+  });
+  conn.searchResults.addEventListener('click', e => {
+    const line = e.target.closest('.hline[data-i]');
+    if (!line) return;
+    const ls = conn.logState;
+    const idx = +line.dataset.i;
+    ls.searchIdx = idx;
+    jumpToLogRow(conn, +line.dataset.row, +line.dataset.row);
+    highlightLogSearchResult(conn, idx);
   });
 }
-// 滚动到底 → 用 next_offset 续载下 500 条命中
+// 滚动到底 → 用 next_offset 续载下 500 条命中（count_total=0 跳过全量计数，毫秒级）
 async function loadMoreLogSearch(conn) {
   const ls = conn.logState;
   if (ls.searchLoadingMore || ls.searchNextOffset < 0 || !ls.searchQ) return;
@@ -382,29 +408,19 @@ async function loadMoreLogSearch(conn) {
     if (!j.ok) return;
     const more = j.lines || [];
     ls.searchNextOffset = (typeof j.next_offset === 'number') ? j.next_offset : -1;
-    if (!more.length) { ls.searchNextOffset = -1; return; }
-    const q = ls.searchQ;
-    const html = more.map((l, idx) => {
-      const rIdx = ls.searchResults.length + idx;
-      const kc = l.tag === 'error' ? 'kw-error' : l.tag === 'warning' ? 'kw-warning' : (l.tag === 'info' || l.tag === 'comment') ? 'kw-info' : '';
-      const text = hlSearchText(l.text || '', q);
-      const tsHtml = l.ts ? `<span class="hts">${fmtTs(l.ts)}</span>` : '';
-      return `<div class="hline ${kc}" data-row="${l.row}" data-idx="${rIdx}" title="${esc(l.text || '')}"><span class="hrow">${l.row}</span>${tsHtml}<span class="htag">${esc(l.tag||'')}</span>${text}</div>`;
-    }).join('');
-    ls.searchResults.push(...more.map(l => l.row));
-    const tail = conn.searchResults.querySelector('[data-more]');
-    if (tail) tail.remove();
-    conn.searchResults.insertAdjacentHTML('beforeend', html + (ls.searchNextOffset >= 0
-      ? `<div class="search-more" data-more>已显示 ${ls.searchResults.length} 条（共 ${(ls.searchTotal||ls.searchResults.length).toLocaleString()} 处命中），往下滚动加载更多…</div>`
-      : ''));
-    bindLogSearchResultClicks(conn);
+    if (!more.length) { ls.searchNextOffset = -1; renderLogResults(conn); return; }
+    ls.resultData.push(...more.map(l => Object.assign({}, l)));
+    // 插入数据后强制重渲染（新 spacer 高度 + 视口内可能有新行）
+    ls.resRenderStart = -1; ls.resRenderEnd = -1;
+    renderLogResults(conn);
   } catch(e) {
   } finally {
     ls.searchLoadingMore = false;
   }
 }
 function highlightLogSearchResult(conn, idx) {
-  conn.searchResults.querySelectorAll('.hline').forEach((el, i) => el.classList.toggle('active', i === idx));
+  // 虚拟列表：可视区行带 data-i，按序号高亮当前命中（不可见的行渲染时自带 active）
+  conn.searchResults.querySelectorAll('.hline[data-i]').forEach(el => el.classList.toggle('active', +el.dataset.i === idx));
 }
 function toggleLogSearchPane(conn, show) {
   conn.searchPane.style.display = show ? 'flex' : 'none';
