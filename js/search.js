@@ -181,7 +181,7 @@ async function doTermSearch(conn) {
   const q = conn.termSearchInput.value.trim();
   const st = conn.termSearchState;
   if (!q || !conn.term) return;
-  conn.termSearchCount.textContent = '搜索中…';
+  conn.termSearchCount.innerHTML = '<span class="spin">✳</span> 搜索中…';
   // 直接在 xterm buffer 内搜索（用户看到的内容），不调后端 /api/search。
   // 后端 buf 的 \r 处理与 xterm 不同（buf 拆行，xterm 同行覆盖），用后端结果
   // 跳转 xterm 会导致行号错位（"串行"问题）。xterm buffer 是最准确的搜索源。

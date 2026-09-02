@@ -328,7 +328,7 @@ async function doLogSearch(conn) {
     return;
   }
   toggleLogSearchPane(conn, true);
-  conn.searchCount.textContent = '搜索中…';
+  conn.searchCount.innerHTML = '<span class="spin">✳</span> 搜索中…';
   try {
     const r = await fetch('/api/log_search?name=' + encodeURIComponent(ls.name) + '&q=' + encodeURIComponent(q) + '&limit=500');
     const j = await r.json();
