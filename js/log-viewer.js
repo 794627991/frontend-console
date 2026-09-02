@@ -122,8 +122,9 @@ function buildLogViewer(path) {
       name: path, total: 0, scaled: false, rows: new Map(),
       renderedStart: -1, renderedEnd: -1, renderSeq: 0,
       searchQ: '', searchIdx: 0, curRow: -1,
-      // 搜索结果：数据全留内存（resultData），DOM 虚拟化只渲染可视区（resRenderStart/End）
-      resultData: [], searchNextOffset: -1, searchTotal: 0, searchLoadingMore: false,
+      // 搜索结果：稀疏窗口缓存（命中序号→行对象），只留浏览位置附近 RES_WIN 条；
+      // 总数 searchTotal 撑满滚动条，缺口按序号向后端精准回载，无上限无损失
+      resultData: {}, resWinStart: 0, resWinEnd: 0, searchTotal: 0,
       resRenderStart: -1, resRenderEnd: -1,
     },
   };
@@ -156,9 +157,7 @@ function buildLogViewer(path) {
       conn.logState.searchQ = '';
       conn.logState.renderedStart = -1; conn.logState.renderedEnd = -1;
       renderLogSlice(conn);
-      // 结果列表同步去染色（数据保留，仅清关键字高亮态）
-      conn.logState.resRenderStart = -1; conn.logState.resRenderEnd = -1;
-      renderLogResults(conn);
+      // 窗口缓存保留：仅清关键字，滚动渲染仍按 searchTotal/resWin 走
     }
   });
   wrap.querySelector('.log-search-collapse').onclick = () => {
@@ -177,8 +176,8 @@ async function openLogInViewer(conn) {
   const ls = conn.logState;
   ls.rows = new Map();
   ls.renderedStart = -1; ls.renderedEnd = -1;
-  ls.searchQ = ''; ls.resultData = []; ls.searchIdx = 0;
-  ls.searchNextOffset = -1; ls.curRow = -1;
+  ls.searchQ = ''; ls.resultData = {}; ls.searchIdx = 0;
+  ls.searchTotal = 0; ls.resWinStart = 0; ls.resWinEnd = 0; ls.curRow = -1;
   ls.resRenderStart = -1; ls.resRenderEnd = -1;
   conn.searchInput.value = '';
   conn.vlist.scrollTop = 0;
@@ -319,16 +318,31 @@ function jumpToLogRow(conn, row, curRow) {
   renderLogSlice(conn);
 }
 
-// 查找全部 → 底部分栏列命中行。结果列表虚拟化：数据留内存（resultData），
-// DOM 只渲染可视区约 40 行，加载几十万条滚动都顺滑；滚动到底自动续载下 500 条。
+// 查找全部 → 底部分栏列命中行。稀疏窗口缓存 + 虚拟列表：
+// - 总数 searchTotal 撑满滚动条（真实全量计数，分毫不差，无上限）
+// - resultData 是命中序号→行对象的窗口缓存，只保留浏览位置附近 RES_WIN 条，
+//   滚出窗口即丢弃；可视区缺哪段就按命中序号向后端精准回载（O(1) seek 毫秒级）
+// - 上下翻、滚到任意位置都顺滑，内存恒定 ~RES_WIN 条
+const RES_WIN = 100000;   // 窗口缓存条数（约 10-18MB，滚 1/20 个列表才换窗）
 async function doLogSearch(conn) {
   const q = conn.searchInput.value.trim();
   const ls = conn.logState;
   if (!q || !ls.name) return;
-  // 已有结果且查询未变 → 跳转下一个
-  if (ls.resultData.length && ls.searchQ === q) {
-    ls.searchIdx = (ls.searchIdx + 1) % ls.resultData.length;
-    jumpToLogRow(conn, ls.resultData[ls.searchIdx].row, ls.resultData[ls.searchIdx].row);
+  // 已有结果且查询未变 → 跳转下一个（窗口缓存可能未含该序号：先回载再跳）
+  if (ls.searchTotal && ls.searchQ === q) {
+    ls.searchIdx = (ls.searchIdx + 1) % ls.searchTotal;
+    const l = ls.resultData[ls.searchIdx];
+    if (l) {
+      jumpToLogRow(conn, l.row, l.row);
+    } else {
+      // 数据在途：resEnsureRange 发起回载，等 resFetchRange 渲染后手动跳
+      resEnsureRange(conn, ls.searchIdx);
+      const onFill = () => {
+        const d = ls.resultData[ls.searchIdx];
+        if (d && connections[conn.portId] === conn) { jumpToLogRow(conn, d.row, d.row); }
+      };
+      setTimeout(onFill, 120);
+    }
     highlightLogSearchResult(conn, ls.searchIdx);
     return;
   }
@@ -338,45 +352,104 @@ async function doLogSearch(conn) {
     const r = await fetch('/api/log_search?name=' + encodeURIComponent(ls.name) + '&q=' + encodeURIComponent(q) + '&limit=500');
     const j = await r.json();
     if (!j.ok) { conn.searchCount.textContent = '失败：' + (j.err || ''); return; }
-    ls.resultData = (j.lines || []).map(l => Object.assign({}, l));
     ls.searchQ = q; ls.searchIdx = 0;
-    ls.searchNextOffset = (typeof j.next_offset === 'number') ? j.next_offset : -1;
-    ls.searchTotal = (typeof j.total === 'number' && j.total >= 0) ? j.total : ls.resultData.length;
+    ls.searchTotal = (typeof j.total === 'number' && j.total >= 0) ? j.total : (j.lines || []).length;
+    // 窗口缓存初始化：首批 500 条从命中序号 0 开始
+    ls.resultData = {};
+    (j.lines || []).forEach((l, i) => { ls.resultData[i] = Object.assign({ hi: i }, l); });
     conn.searchResults.scrollTop = 0;
     ls.resRenderStart = -1; ls.resRenderEnd = -1;
+    resEnsureRange(conn, 0);
     renderLogResults(conn);
     conn.searchCount.textContent = '命中 ' + ls.searchTotal.toLocaleString() + ' 处';
     // 主视图从此带关键字染色：强制重渲染当前可视区
     ls.renderedStart = -1; ls.renderedEnd = -1;
-    if (ls.resultData.length) { jumpToLogRow(conn, ls.resultData[0].row, ls.resultData[0].row); highlightLogSearchResult(conn, 0); }
+    if (ls.resultData[0]) { jumpToLogRow(conn, ls.resultData[0].row, ls.resultData[0].row); highlightLogSearchResult(conn, 0); }
     else renderLogSlice(conn);
-    loadMoreLogSearch(conn);  // 预载第 2 批（首屏通常显示不完 500 条，提前备好）
   } catch(e) { conn.searchCount.textContent = '失败：' + e; }
 }
-// 搜索结果虚拟渲染：只渲染可视区 ± 5 行（数据在 ls.resultData，DOM 节点恒定 ~50 个）
+// 确保命中序号 [s, s+RES_WIN) 内可视区附近的数据在窗口缓存里；缺段精准回载，
+// 窗口外丢弃（换窗）。scroll 驱动，异步回载后自动重渲染。
+// 换窗带滞回：中心 = floor(hitIdx/RES_WIN)*RES_WIN，浏览点离当前窗口中心
+// 超过 RES_WIN/4 才换窗，避免在窗口边界来回滚时反复丢弃/回载抖动。
+function resEnsureRange(conn, hitIdx) {
+  const ls = conn.logState;
+  if (!ls.searchTotal) return;
+  const center = Math.floor(hitIdx / RES_WIN) * RES_WIN;
+  const wantStart = Math.max(0, center - RES_WIN);
+  const wantEnd = Math.min(ls.searchTotal, wantStart + RES_WIN * 3);
+  const curCenter = (ls.resWinStart + Math.min(ls.resWinEnd, ls.resWinStart + RES_WIN * 3)) / 2;
+  if (ls.resWinStart !== wantStart || ls.resWinEnd !== wantEnd) {
+    // 已有窗口且浏览点仍在窗口内且偏离中心 < 半窗（窗口宽 3×RES_WIN）→ 不换（滞回）
+    const inWin = hitIdx >= ls.resWinStart && hitIdx < ls.resWinEnd;
+    const devi = Math.abs(hitIdx - curCenter);
+    if (!inWin || devi > RES_WIN * 3 / 2 || ls.resWinEnd === 0) {
+      ls.resWinStart = wantStart; ls.resWinEnd = wantEnd;
+      // 丢弃窗口外缓存
+      for (const k of Object.keys(ls.resultData)) {
+        if (+k < wantStart || +k >= wantEnd) delete ls.resultData[k];
+      }
+    }
+  }
+  // 可视区 ± 预载区段
+  const needStart = Math.max(0, hitIdx - 500);
+  const needEnd = Math.min(ls.searchTotal, hitIdx + 2000);
+  const missing = [];
+  let i = needStart;
+  while (i < needEnd) {
+    if (ls.resultData[i] !== undefined) { i++; continue; }
+    let j = i;
+    while (j < needEnd && ls.resultData[j] === undefined) j++;
+    missing.push([i, j]); i = j;
+  }
+  for (const [s, e] of missing) {
+    resFetchRange(conn, s, e - s);
+  }
+}
+// 从后端按命中序号回载 [start, start+count) 到窗口缓存（异步，不阻塞滚动）
+async function resFetchRange(conn, start, count) {
+  const ls = conn.logState;
+  if (!ls.searchQ) return;
+  try {
+    const r = await fetch('/api/log_search_page?name=' + encodeURIComponent(ls.name) + '&q=' + encodeURIComponent(ls.searchQ) + '&hit_start=' + start + '&count=' + count);
+    const j = await r.json();
+    if (!j.ok) return;
+    // fetch 期间可能已换搜索词/换窗：只收下仍在窗口内的行
+    (j.lines || []).forEach((l, i) => {
+      const hi = start + i;
+      if (ls.resWinStart <= hi && hi < ls.resWinEnd) ls.resultData[hi] = Object.assign({ hi }, l);
+    });
+    ls.resRenderStart = -1; ls.resRenderEnd = -1;
+    renderLogResults(conn);
+  } catch(e) {}
+}
+// 搜索结果虚拟渲染：只渲染可视区 ± 5 行（窗口缓存 ls.resultData{命中序号: 行}）
 function renderLogResults(conn) {
   const ls = conn.logState;
   const el = conn.searchResults;
-  const n = ls.resultData.length;
-  // 占位 div 撑起真实滚动高度（续载提示行占 28px）
-  const spacerH = n * RES_ROW_H + (ls.searchNextOffset >= 0 ? 28 : 0);
+  const n = ls.searchTotal;
+  // 占位 div 撑起真实全量滚动高度（200W 命中 → 4000 万 px，滚动条全程真实）
+  const spacerH = n * RES_ROW_H;
   if (!el._spacer) { el.innerHTML = '<div class="res-spacer"></div>'; el._spacer = el.querySelector('.res-spacer'); }
   if (el._spacerH !== spacerH) { el._spacerH = spacerH; el._spacer.style.height = spacerH + 'px'; }
   const st = el.scrollTop, vh = el.clientHeight;
   const start = Math.max(0, Math.floor(st / RES_ROW_H) - 5);
   const end = Math.min(n, Math.ceil((st + vh) / RES_ROW_H) + 5);
+  // 可视区有缺口 → 先触发回载，本次渲染已有数据，缺口行留空（回载到后自动补渲染）
+  resEnsureRange(conn, start);
   if (start === ls.resRenderStart && end === ls.resRenderEnd) return;
   const q = ls.searchQ;
   let html = '';
+  let haveAny = false;
   for (let i = start; i < end; i++) {
     const l = ls.resultData[i];
+    if (!l) continue;  // 回载在途：该行暂不渲染，数据到了 resFetchRange 会重渲染
+    haveAny = true;
     const kc = l.tag === 'error' ? 'kw-error' : l.tag === 'warning' ? 'kw-warning' : (l.tag === 'info' || l.tag === 'comment') ? 'kw-info' : '';
     const text = hlSearchText(l.text || '', q);
     const tsHtml = l.ts ? '<span class="hts">' + fmtTs(l.ts) + '</span>' : '';
     html += '<div class="hline ' + kc + (i === ls.searchIdx ? ' active' : '') + '" data-i="' + i + '" data-row="' + l.row + '" style="position:absolute;top:' + (i * RES_ROW_H) + 'px" title="' + esc(l.text || '') + '"><span class="hrow">' + l.row + '</span>' + tsHtml + '<span class="htag">' + esc(l.tag||'') + '</span>' + text + '</div>';
   }
-  if (n >= RES_MAX_KEEP) html += '<div class="search-more" data-more style="position:absolute;top:' + (n * RES_ROW_H) + 'px">已达列表上限 ' + RES_MAX_KEEP.toLocaleString() + ' 条（共 ' + ls.searchTotal.toLocaleString() + ' 处命中），可输入更精确的关键字缩小范围</div>';
-  else if (ls.searchNextOffset >= 0) html += '<div class="search-more" data-more style="position:absolute;top:' + (n * RES_ROW_H) + 'px">已显示 ' + n.toLocaleString() + ' 条（共 ' + ls.searchTotal.toLocaleString() + ' 处命中），往下滚动加载更多…</div>';
   // 移除旧渲染行（保留 spacer），插入新可视区行
   while (el.children.length > 1) el.children[el.children.length - 1].remove();
   el.insertAdjacentHTML('beforeend', html);
@@ -384,10 +457,7 @@ function renderLogResults(conn) {
 }
 // 滚动 + 点击（事件委托：虚拟列表 DOM 不断重建，逐行绑定不可行）
 function initLogResultsEvents(conn) {
-  conn.searchResults.addEventListener('scroll', () => {
-    renderLogResults(conn);
-    if (conn.searchResults.scrollTop + conn.searchResults.clientHeight >= conn.searchResults.scrollHeight - 600) loadMoreLogSearch(conn);
-  });
+  conn.searchResults.addEventListener('scroll', () => renderLogResults(conn));
   conn.searchResults.addEventListener('click', e => {
     const line = e.target.closest('.hline[data-i]');
     if (!line) return;
@@ -397,35 +467,6 @@ function initLogResultsEvents(conn) {
     jumpToLogRow(conn, +line.dataset.row, +line.dataset.row);
     highlightLogSearchResult(conn, idx);
   });
-}
-// 滚动到底 → 用 next_offset 续载下 500 条命中（count_total=0 跳过全量计数，毫秒级）
-// 内存保险：resultData 上限 50 万条（~90MB 级），够滚到天荒地老，防止极端日志撑爆堆
-const RES_MAX_KEEP = 500000;
-async function loadMoreLogSearch(conn) {
-  const ls = conn.logState;
-  if (ls.searchLoadingMore || ls.searchNextOffset < 0 || !ls.searchQ) return;
-  if (ls.resultData.length >= RES_MAX_KEEP) {
-    ls.searchNextOffset = -1;
-    ls.resRenderStart = -1; ls.resRenderEnd = -1;
-    renderLogResults(conn);  // 刷新提示行（显示已达上限）
-    return;
-  }
-  ls.searchLoadingMore = true;
-  try {
-    const r = await fetch('/api/log_search?name=' + encodeURIComponent(ls.name) + '&q=' + encodeURIComponent(ls.searchQ) + '&limit=500&offset=' + ls.searchNextOffset + '&count_total=0');
-    const j = await r.json();
-    if (!j.ok) return;
-    const more = j.lines || [];
-    ls.searchNextOffset = (typeof j.next_offset === 'number') ? j.next_offset : -1;
-    if (!more.length) { ls.searchNextOffset = -1; renderLogResults(conn); return; }
-    ls.resultData.push(...more.map(l => Object.assign({}, l)));
-    // 插入数据后强制重渲染（新 spacer 高度 + 视口内可能有新行）
-    ls.resRenderStart = -1; ls.resRenderEnd = -1;
-    renderLogResults(conn);
-  } catch(e) {
-  } finally {
-    ls.searchLoadingMore = false;
-  }
 }
 function highlightLogSearchResult(conn, idx) {
   // 虚拟列表：可视区行带 data-i，按序号高亮当前命中（不可见的行渲染时自带 active）

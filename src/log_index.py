@@ -4,6 +4,8 @@
 索引记录每行起始字节偏移，支持 O(1) seek 到第 N 行。索引缓存到 .idx 文件。
 """
 import os, re
+from array import array
+from itertools import islice
 
 class LogIndex:
     """日志文件行偏移索引。首次扫描全文件记录每行偏移，缓存到 .idx。
@@ -16,6 +18,9 @@ class LogIndex:
         self.total = 0
         self._loaded = False
         self._built_size = -1  # 建索引时的文件大小，用于检测追加失效
+        # 命中行号索引缓存：{搜索词: array('Q') 行号}。search 全量扫描时建，
+        # search_page 按命中序号 O(1) 取段。文件追加后全量重扫时会整体刷新。
+        self._hits_by_q = {}
 
     def _parse_line(self, raw):
         """解析一行，返回 {ts, tag, text}。兼容工具格式和外部纯文本。"""
@@ -155,23 +160,31 @@ class LogIndex:
     def search(self, q, limit=200, start_offset=0, count_total=True):
         """从 start_offset 行起搜索 q（大小写不敏感），返回命中行 + 游标。
         count_total=False 时跳过全量计数（total 返回 -1），扫到 limit 条即停——
-        续载场景前端已知 total，无需每次重扫 G 级文件。"""
+        续载场景前端已知 total，无需每次重扫 G 级文件。
+        全量扫描时顺带把所有命中行号收进 _hits_by_q 缓存（每命中仅 8 字节，
+        200W 命中 ~16MB），此后可按命中序号区间 O(1) 取任意段，支持前端
+        稀疏窗口缓存按需回载，内存可控且不设上限。"""
         if not self._loaded:
             self.build()
         if not q:
             return {"total": 0, "lines": [], "next_offset": -1, "has_more": False}
         pat = re.compile(re.escape(q), re.IGNORECASE)
         res = []
-        total = -1
         next_offset = -1
+        # total 与命中索引同源：全量时收集行号直接数长度，杜绝计数/索引错位
+        collect_hits = count_total and start_offset == 0 and limit > 0
+        hits = array("Q") if collect_hits else None
+        total = -1  # -1 = 跳过计数（count_total=False 续载）；全量时由 len(hits) 覆盖
         with open(self.path, "rb") as f:
             for i in range(start_offset, self.total):
                 f.seek(self.offsets[i])
                 line = f.readline().decode("utf-8", errors="replace")
                 parsed = self._parse_line(line)
                 if pat.search(parsed["text"]):
-                    if count_total:
-                        total += 1
+                    if hits is not None:
+                        hits.append(i)  # 全量：进索引，total 由 len(hits) 得出
+                    elif count_total:
+                        total += 1  # collect_hits=False 但要计数的罕见路径（limit<=0）
                     if len(res) < limit:
                         parsed["row"] = i
                         res.append(parsed)
@@ -181,5 +194,31 @@ class LogIndex:
                             next_offset = i
                         if not count_total:
                             break
+        if hits is not None:
+            self._hits_by_q[q] = hits  # 全量命中行号索引（内存 ~8B/命中）
+            total = len(hits)  # total 与索引同源，保证一致
         has_more = next_offset >= 0
         return {"total": total, "lines": res, "next_offset": next_offset, "has_more": has_more}
+
+    def search_page(self, q, hit_start, hit_count):
+        """按命中序号取页：命中列表第 [hit_start, hit_start+hit_count) 条。
+        依赖 search(count_total=True) 建立的 _hits_by_q 命中索引，O(1) seek。
+        前端稀疏窗口缓存滚远回载时用，不重扫不重计。"""
+        hits = self._hits_by_q.get(q)
+        if hits is None:
+            # 命中索引未建（此词从未全量搜过）：补一次全量搜（limit>0 以触发建索引）
+            self.search(q, limit=1, count_total=True)
+            hits = self._hits_by_q.get(q)
+            if hits is None or not len(hits):
+                return []
+        if hit_start < 0 or hit_start >= len(hits):
+            return []
+        res = []
+        with open(self.path, "rb") as f:
+            for i in hits[hit_start:hit_start + hit_count]:
+                f.seek(self.offsets[i])
+                line = f.readline().decode("utf-8", errors="replace")
+                parsed = self._parse_line(line)
+                parsed["row"] = i
+                res.append(parsed)
+        return res

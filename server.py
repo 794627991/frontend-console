@@ -421,6 +421,22 @@ def api_log_search():
     res = idx.search(q, limit=limit, start_offset=offset, count_total=count_total)
     return jsonify({"ok": True, **res})
 
+@app.route("/api/log_search_page")
+def api_log_search_page():
+    """按命中序号取页：第 [hit_start, hit_start+count) 条命中（依赖全量扫描建立的命中索引）。
+    前端稀疏窗口缓存滚远回载时用，O(1) seek 毫秒级，不重扫不重计。"""
+    name = request.args.get("name", "")
+    q = request.args.get("q", "")
+    hit_start = int(request.args.get("hit_start", 0))
+    count = int(request.args.get("count", 500))
+    path = _resolve_log_path(name)
+    if not path:
+        return jsonify({"ok": False, "err": "not found"}), 404
+    idx = _get_log_index(path)
+    lines = idx.search_page(q, hit_start, min(count, 500))
+    total_hits = len(idx._hits_by_q.get(q, ()))  # 命中索引长度即总数（未建则 0）
+    return jsonify({"ok": True, "lines": lines, "hit_start": hit_start, "total_hits": total_hits})
+
 @app.route("/api/log_open_external", methods=["POST"])
 def api_log_open_external():
     """打开外部日志文件（任意路径），返回可用的 name 标识供后续 log_count/page/search 用。
