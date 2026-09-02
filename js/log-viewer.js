@@ -121,6 +121,7 @@ function buildLogViewer(path) {
       name: path, total: 0, scaled: false, rows: new Map(),
       renderedStart: -1, renderedEnd: -1, renderSeq: 0,
       searchQ: '', searchResults: [], searchIdx: 0,
+      searchNextOffset: -1, searchLoadingMore: false, curRow: -1,
     },
   };
   connections[portId] = conn;
@@ -143,6 +144,11 @@ function buildLogViewer(path) {
   initLogSplitter(conn);
   // 查找全部按钮
   wrap.querySelector('.log-search-btn').onclick = () => doLogSearch(conn);
+  // 结果列表滚动到底 → 续载下 500 条命中
+  conn.searchResults.addEventListener('scroll', () => {
+    const el = conn.searchResults;
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 40) loadMoreLogSearch(conn);
+  });
   wrap.querySelector('.log-search-input').addEventListener('keydown', e => { if (e.key === 'Enter') doLogSearch(conn); });
   // 输入清空时去掉主视图关键字染色（保持与搜索状态一致）
   wrap.querySelector('.log-search-input').addEventListener('input', e => {
@@ -169,6 +175,7 @@ async function openLogInViewer(conn) {
   ls.rows = new Map();
   ls.renderedStart = -1; ls.renderedEnd = -1;
   ls.searchQ = ''; ls.searchResults = []; ls.searchIdx = 0;
+  ls.searchNextOffset = -1; ls.curRow = -1;
   conn.searchInput.value = '';
   conn.vlist.scrollTop = 0;
   conn.statusEl.textContent = '正在索引…';
@@ -278,11 +285,11 @@ async function renderLogSlice(conn) {
     if (!l) continue;
     const top = (r - renderStart) * HIST_ROW_H;
     const kc = l.tag === 'error' ? 'kw-error' : l.tag === 'warning' ? 'kw-warning' : (l.tag === 'info' || l.tag === 'comment') ? 'kw-info' : '';
-    // 搜索关键字染色（ls.searchQ 存在时命中词 <mark>）
+    // 搜索关键字染色（ls.searchQ 存在时命中词 <mark>）；当前选中命中行额外高亮（ls.curRow）
     const text = hlSearchText(l.text || '', ls.searchQ || '');
     // 工具日志自带时间戳（外部纯文本 ts=0 不显示）
     const tsHtml = l.ts ? `<span class="hts">${fmtTs(l.ts)}</span>` : '';
-    html += `<div class="hline ${kc}" style="top:${top}px" data-row="${r}" title="${esc(l.text || '')}"><span class="hrow">${r}</span>${tsHtml}<span class="htag">${esc(l.tag||'')}</span>${text}</div>`;
+    html += `<div class="hline ${kc}${r === ls.curRow ? ' cur' : ''}" style="top:${top}px" data-row="${r}" title="${esc(l.text || '')}"><span class="hrow">${r}</span>${tsHtml}<span class="htag">${esc(l.tag||'')}</span>${text}</div>`;
   }
   vp.innerHTML = html;
   ls.renderedStart = renderStart; ls.renderedEnd = endRow;
@@ -293,8 +300,8 @@ async function renderLogSlice(conn) {
   conn.statusEl.textContent = `共 ${ls.total.toLocaleString()} 行 · 显示 ${renderStart}-${endRow-1}` + (ls.scaled ? ' · 缩放' : '');
 }
 
-// 跳到日志某行（居中）
-function jumpToLogRow(conn, row) {
+// 跳到日志某行（居中）。curRow 指定时同时高亮该行（搜索结果点击/跳转用）
+function jumpToLogRow(conn, row, curRow) {
   const ls = conn.logState;
   const innerH = Math.min(ls.total * HIST_ROW_H, MAX_SCROLL_H);
   const viewH = conn.vlist.clientHeight;
@@ -302,10 +309,13 @@ function jumpToLogRow(conn, row) {
   const startRow = Math.max(0, Math.min(ls.total - viewportRows, row - Math.floor(viewportRows / 2)));
   conn.vlist.scrollTop = Math.max(0, Math.min(innerH - viewH, logRowToScroll(conn, startRow)));
   ls.renderedStart = -1; ls.renderedEnd = -1;
+  if (typeof curRow === 'number' && curRow >= 0) {
+    ls.curRow = curRow;
+  }
   renderLogSlice(conn);
 }
 
-// 查找全部 → 底部分栏列命中行
+// 查找全部 → 底部分栏列命中行（滚动到底自动续载下 500 条）
 async function doLogSearch(conn) {
   const q = conn.searchInput.value.trim();
   const ls = conn.logState;
@@ -313,7 +323,7 @@ async function doLogSearch(conn) {
   // 已有结果且查询未变 → 跳转下一个
   if (ls.searchResults.length && ls.searchQ === q) {
     ls.searchIdx = (ls.searchIdx + 1) % ls.searchResults.length;
-    jumpToLogRow(conn, ls.searchResults[ls.searchIdx]);
+    jumpToLogRow(conn, ls.searchResults[ls.searchIdx], ls.searchResults[ls.searchIdx]);
     highlightLogSearchResult(conn, ls.searchIdx);
     return;
   }
@@ -325,32 +335,72 @@ async function doLogSearch(conn) {
     if (!j.ok) { conn.searchCount.textContent = '失败：' + (j.err || ''); return; }
     ls.searchResults = (j.lines || []).map(l => l.row);
     ls.searchQ = q; ls.searchIdx = 0;
-    // total 是后端扫全量的真实命中数；列表只显示前 500 条（next_offset 续搜游标备扩展）
-    const total = (typeof j.total === 'number') ? j.total : ls.searchResults.length;
-    const rendered = (j.lines || []).map((l, idx) => {
+    ls.searchNextOffset = (typeof j.next_offset === 'number') ? j.next_offset : -1;
+    ls.searchTotal = (typeof j.total === 'number') ? j.total : ls.searchResults.length;
+    // total 是后端扫全量的真实命中数；列表初始显示前 500 条，滚动到底续载
+    const total = ls.searchTotal;
+    conn.searchResults.innerHTML = (j.lines || []).map((l, idx) => {
       const kc = l.tag === 'error' ? 'kw-error' : l.tag === 'warning' ? 'kw-warning' : (l.tag === 'info' || l.tag === 'comment') ? 'kw-info' : '';
       // 结果列表里关键字也染色（与主视图一致）
       const text = hlSearchText(l.text || '', q);
       const tsHtml = l.ts ? `<span class="hts">${fmtTs(l.ts)}</span>` : '';
       return `<div class="hline ${kc}" data-row="${l.row}" data-idx="${idx}" title="${esc(l.text || '')}"><span class="hrow">${l.row}</span>${tsHtml}<span class="htag">${esc(l.tag||'')}</span>${text}</div>`;
-    }).join('') + (total > ls.searchResults.length
-      ? `<div style="padding:8px 10px;color:var(--muted);font-size:11px;">已显示前 ${ls.searchResults.length} 条（共 ${total.toLocaleString()} 处命中）</div>`
+    }).join('') + (ls.searchNextOffset >= 0
+      ? `<div class="search-more" data-more>已显示前 ${ls.searchResults.length} 条（共 ${total.toLocaleString()} 处命中），往下滚动加载更多…</div>`
       : '');
-    conn.searchResults.innerHTML = rendered;
-    conn.searchResults.querySelectorAll('.hline').forEach(el => {
-      el.onclick = () => {
-        const idx = +el.dataset.idx;
-        ls.searchIdx = idx;
-        jumpToLogRow(conn, +el.dataset.row);
-        highlightLogSearchResult(conn, idx);
-      };
-    });
+    bindLogSearchResultClicks(conn);
     conn.searchCount.textContent = `命中 ${total.toLocaleString()} 处`;
     // 主视图从此带关键字染色：强制重渲染当前可视区
     ls.renderedStart = -1; ls.renderedEnd = -1;
-    if (ls.searchResults.length) { jumpToLogRow(conn, ls.searchResults[0]); highlightLogSearchResult(conn, 0); }
+    if (ls.searchResults.length) { jumpToLogRow(conn, ls.searchResults[0], ls.searchResults[0]); highlightLogSearchResult(conn, 0); }
     else renderLogSlice(conn);
   } catch(e) { conn.searchCount.textContent = '失败：' + e; }
+}
+// 结果行点击事件统一绑定（初始/续载后复用，dataset.bound 防重复）
+function bindLogSearchResultClicks(conn) {
+  const ls = conn.logState;
+  conn.searchResults.querySelectorAll('.hline').forEach(el => {
+    if (el.dataset.bound) return;
+    el.dataset.bound = '1';
+    el.onclick = () => {
+      const idx = +el.dataset.idx;
+      ls.searchIdx = idx;
+      jumpToLogRow(conn, +el.dataset.row, +el.dataset.row);
+      highlightLogSearchResult(conn, idx);
+    };
+  });
+}
+// 滚动到底 → 用 next_offset 续载下 500 条命中
+async function loadMoreLogSearch(conn) {
+  const ls = conn.logState;
+  if (ls.searchLoadingMore || ls.searchNextOffset < 0 || !ls.searchQ) return;
+  ls.searchLoadingMore = true;
+  try {
+    const r = await fetch('/api/log_search?name=' + encodeURIComponent(ls.name) + '&q=' + encodeURIComponent(ls.searchQ) + '&limit=500&offset=' + ls.searchNextOffset);
+    const j = await r.json();
+    if (!j.ok) return;
+    const more = j.lines || [];
+    ls.searchNextOffset = (typeof j.next_offset === 'number') ? j.next_offset : -1;
+    if (!more.length) { ls.searchNextOffset = -1; return; }
+    const q = ls.searchQ;
+    const html = more.map((l, idx) => {
+      const rIdx = ls.searchResults.length + idx;
+      const kc = l.tag === 'error' ? 'kw-error' : l.tag === 'warning' ? 'kw-warning' : (l.tag === 'info' || l.tag === 'comment') ? 'kw-info' : '';
+      const text = hlSearchText(l.text || '', q);
+      const tsHtml = l.ts ? `<span class="hts">${fmtTs(l.ts)}</span>` : '';
+      return `<div class="hline ${kc}" data-row="${l.row}" data-idx="${rIdx}" title="${esc(l.text || '')}"><span class="hrow">${l.row}</span>${tsHtml}<span class="htag">${esc(l.tag||'')}</span>${text}</div>`;
+    }).join('');
+    ls.searchResults.push(...more.map(l => l.row));
+    const tail = conn.searchResults.querySelector('[data-more]');
+    if (tail) tail.remove();
+    conn.searchResults.insertAdjacentHTML('beforeend', html + (ls.searchNextOffset >= 0
+      ? `<div class="search-more" data-more>已显示 ${ls.searchResults.length} 条（共 ${(ls.searchTotal||ls.searchResults.length).toLocaleString()} 处命中），往下滚动加载更多…</div>`
+      : ''));
+    bindLogSearchResultClicks(conn);
+  } catch(e) {
+  } finally {
+    ls.searchLoadingMore = false;
+  }
 }
 function highlightLogSearchResult(conn, idx) {
   conn.searchResults.querySelectorAll('.hline').forEach((el, i) => el.classList.toggle('active', i === idx));
