@@ -4,6 +4,34 @@ const HIST_PAGE = 200;
 const HIST_CACHE_MAX = 5000;
 const MAX_SCROLL_H = 10000000;
 const RES_ROW_H = 20;   // 搜索结果列表虚拟行高（单行省略，title 看全文）
+// 结果列表滚动高度上限：命中 × 20px 超 Chrome ~33.5M px 时浏览器会钳制滚动条，
+// 尾部命中滚不到、跳转落错位。超限时改用线性缩放映射（同主视图 MAX_SCROLL_H 方案），
+// 滚动条始终可达任意命中，无失真。
+const RES_MAX_H = 10000000;
+// scrollTop → 命中序号（超限缩放：末页可达映射，同 logScrollToRow 语义）
+function resScrollToHit(conn, scrollTop) {
+  const ls = conn.logState;
+  const naturalH = ls.searchTotal * RES_ROW_H;
+  if (naturalH <= RES_MAX_H) return Math.floor(scrollTop / RES_ROW_H);
+  const innerH = RES_MAX_H;
+  const viewH = conn.searchResults.clientHeight;
+  const maxScroll = innerH - viewH;
+  const maxHit = Math.max(0, ls.searchTotal - Math.ceil(viewH / RES_ROW_H));
+  if (maxScroll <= 0) return 0;
+  return Math.min(maxHit, Math.floor(scrollTop / maxScroll * maxHit));
+}
+// 命中序号 → scrollTop（缩放模式末尾 1 屏共享底部：序号钳到 maxHit 再映射，防越界）
+function resHitToScroll(conn, hit) {
+  const ls = conn.logState;
+  const naturalH = ls.searchTotal * RES_ROW_H;
+  if (naturalH <= RES_MAX_H) return hit * RES_ROW_H;
+  const viewH = conn.searchResults.clientHeight;
+  const maxScroll = RES_MAX_H - viewH;
+  const maxHit = Math.max(0, ls.searchTotal - Math.ceil(viewH / RES_ROW_H));
+  const h = Math.min(hit, maxHit);
+  if (maxHit <= 0) return 0;
+  return Math.floor(h / maxHit * maxScroll);
+}
 
 // 拖拽日志文件到窗口任意位置打开（含超大文件，走 G 级虚拟列表）
 let _dragOverlay = null;
@@ -93,7 +121,12 @@ function buildLogViewer(path) {
           <input type="text" class="log-search-input" placeholder="查找关键字…（回车搜索，再按回车跳下一个）" autocomplete="off">
           <button class="btn ghost log-search-btn">查找全部</button>
           <span class="log-search-count"></span>
-          <button class="btn ghost log-search-collapse" title="折叠分栏">▾</button>
+          <span class="log-jump-goto">
+            <span class="log-jump-lbl">跳到第</span>
+            <input type="number" class="log-jump-input" min="1" step="1" placeholder="N" title="跳到第 N 个匹配（回车）">
+            <span class="log-jump-lbl">个</span>
+          </span>
+          <button class="btn ghost icon-btn log-search-collapse" title="折叠分栏">▾</button>
         </div>
         <div class="log-search-results"></div>
       </div>
@@ -118,6 +151,7 @@ function buildLogViewer(path) {
     searchInput: wrap.querySelector('.log-search-input'),
     searchResults: wrap.querySelector('.log-search-results'),
     searchCount: wrap.querySelector('.log-search-count'),
+    jumpInput: wrap.querySelector('.log-jump-input'),
     logState: {
       name: path, total: 0, scaled: false, rows: new Map(),
       renderedStart: -1, renderedEnd: -1, renderSeq: 0,
@@ -148,16 +182,49 @@ function buildLogViewer(path) {
   initLogSplitter(conn);
   // 查找全部按钮
   wrap.querySelector('.log-search-btn').onclick = () => doLogSearch(conn);
+  // 跳到第 N 个匹配：回车/失焦触发，滚结果列表到该序号（resEnsureRange 回载，
+  // 主视图同步跳转高亮）。搜索前输入框禁用态由 doLogSearch 控制。
+  conn.jumpInput.addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const ls = conn.logState;
+    const n = parseInt(conn.jumpInput.value, 10);
+    if (!ls.searchQ || !ls.searchTotal) { showBanner('请先搜索（查找全部）再跳转'); return; }
+    if (ls.searching) { showBanner('搜索进行中，请稍候'); return; }
+    if (!n || n < 1 || n > ls.searchTotal) {
+      showBanner('请输入 1 - ' + ls.searchTotal.toLocaleString() + ' 之间的序号');
+      return;
+    }
+    ls.searchIdx = n - 1;
+    // 结果列表滚到该序号（缩放模式经 resHitToScroll 映射，超 Chrome 上限不失真）
+    conn.searchResults.scrollTop = resHitToScroll(conn, n - 1);
+    ls.resRenderStart = -1; ls.resRenderEnd = -1;
+    renderLogResults(conn);
+    highlightLogSearchResult(conn, ls.searchIdx);
+    // 主视图同步跳转（窗口缓存命中则立即，否则回载后跳）
+    const l = ls.resultData[ls.searchIdx];
+    if (l) jumpToLogRow(conn, l.row, l.row);
+    else {
+      resEnsureRange(conn, ls.searchIdx);
+      waitResHitThenJump(conn, ls.searchIdx);
+    }
+  });
   // 结果列表：滚动虚拟渲染 + 到底续载 + 点击跳转（事件委托）
   initLogResultsEvents(conn);
   wrap.querySelector('.log-search-input').addEventListener('keydown', e => { if (e.key === 'Enter') doLogSearch(conn); });
-  // 输入清空时去掉主视图关键字染色（保持与搜索状态一致）
+  // 输入清空时复位整个搜索状态（染色/列表/计数/高亮/跳转框），保持一致
   wrap.querySelector('.log-search-input').addEventListener('input', e => {
     if (!e.target.value.trim() && conn.logState.searchQ) {
-      conn.logState.searchQ = '';
-      conn.logState.renderedStart = -1; conn.logState.renderedEnd = -1;
+      const ls = conn.logState;
+      ls.searchQ = ''; ls.searchIdx = 0; ls.searchTotal = 0;
+      ls.resultData = {}; ls.resWinStart = 0; ls.resWinEnd = 0;
+      if (ls.resPending) ls.resPending.clear();
+      ls.curRow = -1;
+      ls.resRenderStart = -1; ls.resRenderEnd = -1;
+      conn.searchResults.innerHTML = ''; conn.searchResults._spacer = null; conn.searchResults._spacerH = null;
+      conn.searchCount.textContent = '';
+      ls.renderedStart = -1; ls.renderedEnd = -1;
       renderLogSlice(conn);
-      // 窗口缓存保留：仅清关键字，滚动渲染仍按 searchTotal/resWin 走
     }
   });
   wrap.querySelector('.log-search-collapse').onclick = () => {
@@ -249,19 +316,25 @@ async function ensureLogRange(conn, start, end) {
   if (fetches.length) await Promise.all(fetches);
 }
 
-// 行文本转 HTML：esc 后对当前搜索关键字加 <mark> 高亮（大小写不敏感）
+// 行文本转 HTML：先在原始文本上找命中区间（大小写不敏感），逐段 esc 后拼 mark——
+// 不在 esc 后的文本上匹配，避免用户搜实体片段（如 "lt;"、"amp;"）错切 HTML 实体
 function hlSearchText(text, q) {
   if (!q) return esc(text);
-  // esc 后再匹配：q 也 esc，保持与 esc 后文本同一坐标系
-  const eText = esc(text), eQ = esc(q);
-  const lowText = eText.toLowerCase(), lowQ = eQ.toLowerCase();
-  if (!lowQ) return eText;
-  let out = '', pos = 0, i;
+  const lowText = (text || '').toLowerCase(), lowQ = q.toLowerCase();
+  if (!lowQ) return esc(text);
+  const ranges = [];
+  let pos = 0, i;
   while ((i = lowText.indexOf(lowQ, pos)) !== -1) {
-    out += eText.slice(pos, i) + '<mark class="hl-hit">' + eText.slice(i, i + eQ.length) + '</mark>';
-    pos = i + eQ.length;
+    ranges.push([i, i + q.length]);
+    pos = i + q.length;
   }
-  return out + eText.slice(pos);
+  if (!ranges.length) return esc(text);
+  let out = '', last = 0;
+  for (const [s, e] of ranges) {
+    out += esc(text.slice(last, s)) + '<mark class="hl-hit">' + esc(text.slice(s, e)) + '</mark>';
+    last = e;
+  }
+  return out + esc(text.slice(last));
 }
 
 // 渲染可视区切片
@@ -335,27 +408,31 @@ async function doLogSearch(conn) {
     if (l) {
       jumpToLogRow(conn, l.row, l.row);
     } else {
-      // 数据在途：resEnsureRange 发起回载，等 resFetchRange 渲染后手动跳
+      // 数据在途：发起回载并轮询等待（上限 3s），到货即跳——不静默丢跳
       resEnsureRange(conn, ls.searchIdx);
-      const onFill = () => {
-        const d = ls.resultData[ls.searchIdx];
-        if (d && connections[conn.portId] === conn) { jumpToLogRow(conn, d.row, d.row); }
-      };
-      setTimeout(onFill, 120);
+      waitResHitThenJump(conn, ls.searchIdx);
     }
     highlightLogSearchResult(conn, ls.searchIdx);
     return;
   }
+  // 新搜索进行中（首扫 G 级文件要数秒）：忽略重复回车，防并发重发全量扫描
+  if (ls.searching) return;
+  ls.searching = true;
   toggleLogSearchPane(conn, true);
   conn.searchCount.innerHTML = '<span class="spin">✳</span> 搜索中…';
   try {
     const r = await fetch('/api/log_search?name=' + encodeURIComponent(ls.name) + '&q=' + encodeURIComponent(q) + '&limit=500');
     const j = await r.json();
+    ls.searching = false;
     if (!j.ok) { conn.searchCount.textContent = '失败：' + (j.err || ''); return; }
+    if (connections[conn.portId] !== conn) return;  // 索引期间 tab 已关
     ls.searchQ = q; ls.searchIdx = 0;
+    ls.curRow = -1;  // 换词重搜：清上一词的命中行高亮
     ls.searchTotal = (typeof j.total === 'number' && j.total >= 0) ? j.total : (j.lines || []).length;
     // 窗口缓存初始化：首批 500 条从命中序号 0 开始
     ls.resultData = {};
+    if (ls.resPending) ls.resPending.clear();
+    ls.resWinStart = 0; ls.resWinEnd = 0;
     (j.lines || []).forEach((l, i) => { ls.resultData[i] = Object.assign({ hi: i }, l); });
     conn.searchResults.scrollTop = 0;
     ls.resRenderStart = -1; ls.resRenderEnd = -1;
@@ -366,7 +443,7 @@ async function doLogSearch(conn) {
     ls.renderedStart = -1; ls.renderedEnd = -1;
     if (ls.resultData[0]) { jumpToLogRow(conn, ls.resultData[0].row, ls.resultData[0].row); highlightLogSearchResult(conn, 0); }
     else renderLogSlice(conn);
-  } catch(e) { conn.searchCount.textContent = '失败：' + e; }
+  } catch(e) { ls.searching = false; conn.searchCount.textContent = '失败：' + e; }
 }
 // 确保命中序号 [s, s+RES_WIN) 内可视区附近的数据在窗口缓存里；缺段精准回载，
 // 窗口外丢弃（换窗）。scroll 驱动，异步回载后自动重渲染。
@@ -403,56 +480,87 @@ function resEnsureRange(conn, hitIdx) {
     missing.push([i, j]); i = j;
   }
   for (const [s, e] of missing) {
-    resFetchRange(conn, s, e - s);
+    // 后端单次上限 500：宽缺口按 500 切片；在途去重（resPending 段集合）
+    for (let k = s; k < e; k += 500) {
+      const segStart = k, segEnd = Math.min(e, k + 500);
+      if (ls.resPending && ls.resPending.has(segStart)) continue;
+      resFetchRange(conn, segStart, segEnd - segStart);
+    }
   }
 }
 // 从后端按命中序号回载 [start, start+count) 到窗口缓存（异步，不阻塞滚动）
 async function resFetchRange(conn, start, count) {
   const ls = conn.logState;
   if (!ls.searchQ) return;
+  const myQ = ls.searchQ;  // 代次快照：回写前比对，防在途旧词响应污染新搜索
+  if (!ls.resPending) ls.resPending = new Set();
+  ls.resPending.add(start);  // 在途标记：resEnsureRange 不重复发同段
   try {
-    const r = await fetch('/api/log_search_page?name=' + encodeURIComponent(ls.name) + '&q=' + encodeURIComponent(ls.searchQ) + '&hit_start=' + start + '&count=' + count);
+    const r = await fetch('/api/log_search_page?name=' + encodeURIComponent(ls.name) + '&q=' + encodeURIComponent(myQ) + '&hit_start=' + start + '&count=' + count);
     const j = await r.json();
+    ls.resPending.delete(start);
     if (!j.ok) return;
-    // fetch 期间可能已换搜索词/换窗：只收下仍在窗口内的行
+    if (ls.searchQ !== myQ) return;  // 期间已换搜索词：丢弃（清空路径 searchQ='' 也被此校验挡住）
+    // fetch 期间可能已换窗：只收下仍在窗口内的行
     (j.lines || []).forEach((l, i) => {
       const hi = start + i;
       if (ls.resWinStart <= hi && hi < ls.resWinEnd) ls.resultData[hi] = Object.assign({ hi }, l);
     });
     ls.resRenderStart = -1; ls.resRenderEnd = -1;
     renderLogResults(conn);
-  } catch(e) {}
+  } catch(e) {
+    ls.resPending.delete(start);
+  }
+}
+// 轮询等待某命中序号回载到窗口缓存后跳主视图（上限 3s，60ms 间隔）
+function waitResHitThenJump(conn, hitIdx) {
+  const ls = conn.logState;
+  const t0 = Date.now();
+  const timer = setInterval(() => {
+    if (connections[conn.portId] !== conn) { clearInterval(timer); return; }  // tab 已关
+    const d = ls.resultData[hitIdx];
+    if (d) { clearInterval(timer); jumpToLogRow(conn, d.row, d.row); }
+    else if (Date.now() - t0 > 3000) { clearInterval(timer); showBanner('跳转超时：数据回载未完成'); }
+  }, 60);
 }
 // 搜索结果虚拟渲染：只渲染可视区 ± 5 行（窗口缓存 ls.resultData{命中序号: 行}）
 function renderLogResults(conn) {
   const ls = conn.logState;
   const el = conn.searchResults;
   const n = ls.searchTotal;
-  // 占位 div 撑起真实全量滚动高度（200W 命中 → 4000 万 px，滚动条全程真实）
-  const spacerH = n * RES_ROW_H;
+  // 占位撑滚动高度：命中×20px 超 RES_MAX_H 时钳制（浏览器 ~33.5M px 上限），
+  // 滚动位置经 resScrollToHit 线性映射到命中序号，尾部仍可达、跳转不失真
+  const naturalH = n * RES_ROW_H;
+  const scaled = naturalH > RES_MAX_H;
+  const spacerH = Math.min(naturalH, RES_MAX_H);
   if (!el._spacer) { el.innerHTML = '<div class="res-spacer"></div>'; el._spacer = el.querySelector('.res-spacer'); }
   if (el._spacerH !== spacerH) { el._spacerH = spacerH; el._spacer.style.height = spacerH + 'px'; }
   const st = el.scrollTop, vh = el.clientHeight;
-  const start = Math.max(0, Math.floor(st / RES_ROW_H) - 5);
-  const end = Math.min(n, Math.ceil((st + vh) / RES_ROW_H) + 5);
+  const startHit = scaled ? resScrollToHit(conn, st) : Math.floor(st / RES_ROW_H);
+  const start = Math.max(0, startHit - 5);
+  const end = Math.min(n, startHit + Math.ceil(vh / RES_ROW_H) + 10);
   // 可视区有缺口 → 先触发回载，本次渲染已有数据，缺口行留空（回载到后自动补渲染）
   resEnsureRange(conn, start);
   if (start === ls.resRenderStart && end === ls.resRenderEnd) return;
   const q = ls.searchQ;
   let html = '';
-  let haveAny = false;
   for (let i = start; i < end; i++) {
     const l = ls.resultData[i];
-    if (!l) continue;  // 回载在途：该行暂不渲染，数据到了 resFetchRange 会重渲染
-    haveAny = true;
+    const topPx = scaled ? resHitToScroll(conn, i) : i * RES_ROW_H;
+    if (!l) {
+      // 回载在途：占位提示行（数据到了 resFetchRange 会重渲染），不留无解释的空白
+      html += '<div class="hline res-loading" style="position:absolute;top:' + topPx + 'px"><span class="spin">✳</span> 加载中…</div>';
+      continue;
+    }
     const kc = l.tag === 'error' ? 'kw-error' : l.tag === 'warning' ? 'kw-warning' : (l.tag === 'info' || l.tag === 'comment') ? 'kw-info' : '';
     const text = hlSearchText(l.text || '', q);
     const tsHtml = l.ts ? '<span class="hts">' + fmtTs(l.ts) + '</span>' : '';
-    html += '<div class="hline ' + kc + (i === ls.searchIdx ? ' active' : '') + '" data-i="' + i + '" data-row="' + l.row + '" style="position:absolute;top:' + (i * RES_ROW_H) + 'px" title="' + esc(l.text || '') + '"><span class="hrow">' + l.row + '</span>' + tsHtml + '<span class="htag">' + esc(l.tag||'') + '</span>' + text + '</div>';
+    // 内容坐标：非缩放 = 序号×行高；缩放 = 序号经 resHitToScroll 压缩映射
+    html += '<div class="hline ' + kc + (i === ls.searchIdx ? ' active' : '') + '" data-i="' + i + '" data-row="' + l.row + '" style="position:absolute;top:' + topPx + 'px" title="' + esc(l.text || '') + '"><span class="hrow">' + l.row + '</span>' + tsHtml + '<span class="htag">' + esc(l.tag||'') + '</span>' + text + '</div>';
   }
   // 移除旧渲染行（保留 spacer），插入新可视区行
   while (el.children.length > 1) el.children[el.children.length - 1].remove();
-  el.insertAdjacentHTML('beforeend', html);
+  if (html) el.insertAdjacentHTML('beforeend', html);
   ls.resRenderStart = start; ls.resRenderEnd = end;
 }
 // 滚动 + 点击（事件委托：虚拟列表 DOM 不断重建，逐行绑定不可行）
@@ -478,7 +586,13 @@ function toggleLogSearchPane(conn, show) {
   // 折叠按钮提示随状态变（▾ 折叠 / ▴ 展开）
   const collapseBtn = conn.wrap.querySelector('.log-search-collapse');
   if (collapseBtn) collapseBtn.textContent = show ? '▾' : '▴';
-  if (show) { conn.searchInput.focus(); }
+  if (show) {
+    // 隐藏期间 clientHeight=0 会使虚拟列表渲染窗口算错：展开后强制按新尺寸重渲染
+    const ls = conn.logState;
+    ls.resRenderStart = -1; ls.resRenderEnd = -1;
+    renderLogResults(conn);
+    conn.searchInput.focus();
+  }
 }
 
 // 拖分隔条调分栏高度

@@ -21,6 +21,15 @@ class LogIndex:
         # 命中行号索引缓存：{搜索词: array('Q') 行号}。search 全量扫描时建，
         # search_page 按命中序号 O(1) 取段。文件追加后全量重扫时会整体刷新。
         self._hits_by_q = {}
+        self._hits_q_state = -1  # 建索引时的 _built_size 快照：追加后视为陈旧
+
+    def _hits_stale(self):
+        """命中索引是否已随文件变化而陈旧（需重建）。"""
+        return self._hits_q_state != self._built_size
+
+    def _hits_invalidate(self):
+        self._hits_by_q.clear()
+        self._hits_q_state = self._built_size
 
     def _parse_line(self, raw):
         """解析一行，返回 {ts, tag, text}。兼容工具格式和外部纯文本。"""
@@ -96,12 +105,15 @@ class LogIndex:
         if self.offsets and self.offsets[-1] == 0:
             self.total = 0
         self._built_size = cur_size
+        self._hits_invalidate()  # 全量重扫（首次/缓存失效/截断）：命中索引一并作废
         self._save_cache()
 
     def _append_scan(self, cur_size):
         """增量续扫：从上次索引末尾继续扫描追加部分。
         offsets 结构：[行0起点, 行1起点, ..., 行N-1起点, EOF]。
-        pop 掉旧 EOF，从最后一行起点重读到新末尾（兼容最后一行未以 \\n 结尾）。"""
+        pop 掉旧 EOF，从最后一行起点重读到新末尾（兼容最后一行未以 \\n 结尾）。
+        追加会引入新命中行：旧的 _hits_by_q 命中索引已不完整，全部作废，
+        下次全量 search 时重建（宁慢勿错）。"""
         try:
             with open(self.path, "rb") as f:
                 if self.offsets:
@@ -124,12 +136,14 @@ class LogIndex:
                 if self.offsets and self.offsets[-1] > cur_size:
                     raise ValueError("offsets past EOF, file truncated during scan")
             self._built_size = cur_size
+            self._hits_invalidate()  # 追加引入新命中行：旧命中索引作废，下次全量 search 重建
             self._save_cache()
         except Exception:
             # 续扫异常（截断等）→ 标记未加载，下次 build 全重扫
             self._loaded = False
             self.offsets = []
             self.total = 0
+            self._hits_invalidate()
 
     def _save_cache(self):
         """保存索引到 .idx 文件。"""
@@ -197,6 +211,7 @@ class LogIndex:
         if hits is not None:
             self._hits_by_q[q] = hits  # 全量命中行号索引（内存 ~8B/命中）
             total = len(hits)  # total 与索引同源，保证一致
+            self._hits_q_state = self._built_size  # 索引基于当前文件状态
         has_more = next_offset >= 0
         return {"total": total, "lines": res, "next_offset": next_offset, "has_more": has_more}
 
@@ -205,8 +220,10 @@ class LogIndex:
         依赖 search(count_total=True) 建立的 _hits_by_q 命中索引，O(1) seek。
         前端稀疏窗口缓存滚远回载时用，不重扫不重计。"""
         hits = self._hits_by_q.get(q)
-        if hits is None:
-            # 命中索引未建（此词从未全量搜过）：补一次全量搜（limit>0 以触发建索引）
+        if hits is None or self._hits_stale():
+            # 命中索引未建/已随文件变化陈旧：补一次全量搜重建（limit>0 触发收集）
+            if self._hits_stale():
+                self._hits_invalidate()
             self.search(q, limit=1, count_total=True)
             hits = self._hits_by_q.get(q)
             if hits is None or not len(hits):

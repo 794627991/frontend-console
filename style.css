@@ -112,6 +112,13 @@
   .vlist .hline.cur { background: rgba(0,212,255,0.14); box-shadow: inset 0 0 0 1px rgba(0,212,255,0.55); }
   /* 续载提示行 */
   .search-more { padding: 8px 10px; color: var(--muted); font-size: 11px; text-align: center; }
+  /* 跳到第 N 个匹配 */
+  .log-jump-goto { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+  .log-jump-lbl { color: var(--muted); font-size: 11px; }
+  .log-jump-input { width: 72px; padding: 3px 6px; font-size: 12px; background: var(--bg-input); border: 1px solid var(--border); border-radius: 4px; color: var(--fg); }
+  .log-jump-input::-webkit-outer-spin-button, .log-jump-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  /* 回载在途占位行 */
+  .hline.res-loading { color: var(--muted); font-size: 11px; }
   /* 搜索进行中转圈图标（✳ 旋转） */
   .spin { display: inline-block; animation: spin-rot 0.8s linear infinite; }
   @keyframes spin-rot { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
