@@ -4,6 +4,9 @@
 // 头部旧行——回放只看"最新输出"，裁头不影响体验却保住内存。
 let replayData = null, replayTimer = null, replayIdx = 0, replayStartTs = 0, replayBaseReal = 0;
 let replayName = null, replayMeta = null, replayLoading = false, replayEOF = false;
+let replayPaused = false;         // 暂停态。播放头 = replayStartTs，不随真实时间走。
+let replaySpeedVal = 1;           // 当前生效倍速。onchange 触发时下拉框已是新值，
+                                  // 播放头必须用旧速冻结后才能读新速，故独立存一份。
 const REPLAY_DOM_MAX = 2000;      // replayBody 最大保留节点数
 const REPLAY_PAGE = 2000;         // 单次分页拉取行数
 async function openReplay(name) {
@@ -11,7 +14,8 @@ async function openReplay(name) {
   $('replayTitle').textContent = '回放：' + name;
   stopReplay();
   replayName = name; replayMeta = null; replayIdx = 0; replayEOF = false;
-  replayStartTs = 0; replayBaseReal = 0;
+  replayStartTs = 0; replayBaseReal = 0; replayPaused = false;
+  replaySpeedVal = parseFloat($('replaySpeed').value) || 1;  // 跟随当前下拉框
   $('replayBody').innerHTML = '';
   $('replayInfo').textContent = '加载中…';
   panel.classList.add('show');
@@ -67,10 +71,19 @@ async function _fetchReplayLines() {
     replayIdx += shown;
   } catch(e) {} finally { replayLoading = false; }
 }
+// 冻结播放头到当前真实位置：以当前生效倍速把 elapsed 折算进 replayStartTs，
+// 然后重置基准。换速/暂停/再播放前必须先调，否则播放头会向后跳（表现为
+// 卡住一段时间不翻滚——replayIdx 已在前面，行 ts 全大于倒退后的播放头）。
+function freezeReplayHead() {
+  if (!replayData || !replayBaseReal) return;
+  const elapsed = Date.now() - replayBaseReal;
+  if (elapsed > 0) replayStartTs += elapsed * replaySpeedVal;
+  replayBaseReal = Date.now();
+}
 function replayCurTs() {
   if (!replayData) return -1;
-  const speed = parseFloat($('replaySpeed').value)||1;
-  return replayStartTs + (Date.now() - replayBaseReal) * speed;
+  if (replayPaused) return replayStartTs;  // 暂停时头冻结在 startTs，不吃真实时间
+  return replayStartTs + (Date.now() - replayBaseReal) * replaySpeedVal;
 }
 function playReplay() {
   if (!replayData || replayTimer) return;
@@ -84,15 +97,25 @@ function playReplay() {
   };
   replayTimer = requestAnimationFrame(tick);
 }
-function stopReplay() { if (replayTimer) { cancelAnimationFrame(replayTimer); replayTimer = null; } }
-$('btnReplayPlay').onclick = () => { replayBaseReal = Date.now(); playReplay(); };
+function stopReplay() {
+  freezeReplayHead();  // 暂停：冻结播放头在当前位置，恢复时不再倒退
+  replayPaused = true;
+  if (replayTimer) { cancelAnimationFrame(replayTimer); replayTimer = null; }
+}
+$('btnReplayPlay').onclick = () => {
+  if (!replayData) return;
+  if (replayPaused) {
+    replayPaused = false;
+    replayBaseReal = Date.now();  // 头已冻结在 startTs，重置基准从这继续
+  }
+  playReplay();
+};
 $('btnReplayPause').onclick = stopReplay;
 $('btnReplayClose').onclick = () => { stopReplay(); $('replayPanel').classList.remove('show'); };
 $('replaySpeed').onchange = () => {
-  // 以当前播放头为新起点续播（未开播时不动 replayStartTs）
-  if (replayTimer || replayBaseReal) replayStartTs = replayCurTs();
-  replayBaseReal = Date.now();
-  stopReplay(); playReplay();
+  freezeReplayHead();            // 先用旧速把播放头冻结在当前真实位置
+  replaySpeedVal = parseFloat($('replaySpeed').value) || 1;  // 再切新速
+  playReplay();                   // 已停则启动；播放中 rAF 循环自然用新速
 };
 // 拖拽进度条：input 只更新时间标签（廉价），change（松手）才真正 seek——
 // 旧版 oninput 每帧全量重建 DOM，G 级日志拖几下就卡死。
@@ -114,6 +137,7 @@ $('replaySeek').onchange = async function() {
   } catch(e) {}
   replayStartTs = target;
   replayBaseReal = Date.now();
+  replayPaused = false;
   $('replayTime').textContent = fmtDur(v);
   playReplay();
 };
