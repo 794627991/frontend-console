@@ -144,6 +144,14 @@ function buildLogViewer(path) {
   // 查找全部按钮
   wrap.querySelector('.log-search-btn').onclick = () => doLogSearch(conn);
   wrap.querySelector('.log-search-input').addEventListener('keydown', e => { if (e.key === 'Enter') doLogSearch(conn); });
+  // 输入清空时去掉主视图关键字染色（保持与搜索状态一致）
+  wrap.querySelector('.log-search-input').addEventListener('input', e => {
+    if (!e.target.value.trim() && conn.logState.searchQ) {
+      conn.logState.searchQ = '';
+      conn.logState.renderedStart = -1; conn.logState.renderedEnd = -1;
+      renderLogSlice(conn);
+    }
+  });
   wrap.querySelector('.log-search-collapse').onclick = () => {
     const isShown = conn.searchPane.style.display !== 'none';
     toggleLogSearchPane(conn, !isShown);
@@ -231,6 +239,21 @@ async function ensureLogRange(conn, start, end) {
   if (fetches.length) await Promise.all(fetches);
 }
 
+// 行文本转 HTML：esc 后对当前搜索关键字加 <mark> 高亮（大小写不敏感）
+function hlSearchText(text, q) {
+  if (!q) return esc(text);
+  // esc 后再匹配：q 也 esc，保持与 esc 后文本同一坐标系
+  const eText = esc(text), eQ = esc(q);
+  const lowText = eText.toLowerCase(), lowQ = eQ.toLowerCase();
+  if (!lowQ) return eText;
+  let out = '', pos = 0, i;
+  while ((i = lowText.indexOf(lowQ, pos)) !== -1) {
+    out += eText.slice(pos, i) + '<mark class="hl-hit">' + eText.slice(i, i + eQ.length) + '</mark>';
+    pos = i + eQ.length;
+  }
+  return out + eText.slice(pos);
+}
+
 // 渲染可视区切片
 async function renderLogSlice(conn) {
   const ls = conn.logState;
@@ -255,10 +278,11 @@ async function renderLogSlice(conn) {
     if (!l) continue;
     const top = (r - renderStart) * HIST_ROW_H;
     const kc = l.tag === 'error' ? 'kw-error' : l.tag === 'warning' ? 'kw-warning' : (l.tag === 'info' || l.tag === 'comment') ? 'kw-info' : '';
-    const text = esc(l.text || '');
+    // 搜索关键字染色（ls.searchQ 存在时命中词 <mark>）
+    const text = hlSearchText(l.text || '', ls.searchQ || '');
     // 工具日志自带时间戳（外部纯文本 ts=0 不显示）
     const tsHtml = l.ts ? `<span class="hts">${fmtTs(l.ts)}</span>` : '';
-    html += `<div class="hline ${kc}" style="top:${top}px" data-row="${r}" title="${text}"><span class="hrow">${r}</span>${tsHtml}<span class="htag">${esc(l.tag||'')}</span>${text}</div>`;
+    html += `<div class="hline ${kc}" style="top:${top}px" data-row="${r}" title="${esc(l.text || '')}"><span class="hrow">${r}</span>${tsHtml}<span class="htag">${esc(l.tag||'')}</span>${text}</div>`;
   }
   vp.innerHTML = html;
   ls.renderedStart = renderStart; ls.renderedEnd = endRow;
@@ -301,13 +325,18 @@ async function doLogSearch(conn) {
     if (!j.ok) { conn.searchCount.textContent = '失败：' + (j.err || ''); return; }
     ls.searchResults = (j.lines || []).map(l => l.row);
     ls.searchQ = q; ls.searchIdx = 0;
-    // 渲染命中行列表
-    conn.searchResults.innerHTML = (j.lines || []).map((l, idx) => {
+    // total 是后端扫全量的真实命中数；列表只显示前 500 条（next_offset 续搜游标备扩展）
+    const total = (typeof j.total === 'number') ? j.total : ls.searchResults.length;
+    const rendered = (j.lines || []).map((l, idx) => {
       const kc = l.tag === 'error' ? 'kw-error' : l.tag === 'warning' ? 'kw-warning' : (l.tag === 'info' || l.tag === 'comment') ? 'kw-info' : '';
-      const text = esc(l.text || '');
+      // 结果列表里关键字也染色（与主视图一致）
+      const text = hlSearchText(l.text || '', q);
       const tsHtml = l.ts ? `<span class="hts">${fmtTs(l.ts)}</span>` : '';
-      return `<div class="hline ${kc}" data-row="${l.row}" data-idx="${idx}" title="${text}"><span class="hrow">${l.row}</span>${tsHtml}<span class="htag">${esc(l.tag||'')}</span>${text}</div>`;
-    }).join('');
+      return `<div class="hline ${kc}" data-row="${l.row}" data-idx="${idx}" title="${esc(l.text || '')}"><span class="hrow">${l.row}</span>${tsHtml}<span class="htag">${esc(l.tag||'')}</span>${text}</div>`;
+    }).join('') + (total > ls.searchResults.length
+      ? `<div style="padding:8px 10px;color:var(--muted);font-size:11px;">已显示前 ${ls.searchResults.length} 条（共 ${total.toLocaleString()} 处命中）</div>`
+      : '');
+    conn.searchResults.innerHTML = rendered;
     conn.searchResults.querySelectorAll('.hline').forEach(el => {
       el.onclick = () => {
         const idx = +el.dataset.idx;
@@ -316,8 +345,11 @@ async function doLogSearch(conn) {
         highlightLogSearchResult(conn, idx);
       };
     });
-    conn.searchCount.textContent = `命中 ${ls.searchResults.length} 处`;
+    conn.searchCount.textContent = `命中 ${total.toLocaleString()} 处`;
+    // 主视图从此带关键字染色：强制重渲染当前可视区
+    ls.renderedStart = -1; ls.renderedEnd = -1;
     if (ls.searchResults.length) { jumpToLogRow(conn, ls.searchResults[0]); highlightLogSearchResult(conn, 0); }
+    else renderLogSlice(conn);
   } catch(e) { conn.searchCount.textContent = '失败：' + e; }
 }
 function highlightLogSearchResult(conn, idx) {

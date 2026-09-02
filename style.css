@@ -105,6 +105,9 @@
   .log-search-results .hline { cursor: pointer; }
   .log-search-results .hline.active { background: var(--accent); color: #001020; }
   .log-search-results .hline.active .hrow, .log-search-results .hline.active .htag { color: #001020; }
+  /* 搜索命中关键字染色（主视图 + 结果列表共用） */
+  mark.hl-hit { background: rgba(255,214,102,0.45); color: inherit; border-radius: 2px; padding: 0 1px; }
+  .hline.active mark.hl-hit { background: rgba(255,214,102,0.9); color: #001020; }
   /* 搜索结果区的 hline 用流式定位（主虚拟列表用 absolute+top，这里覆盖成 static） */
   .log-search-results .hline { position: static; height: auto; line-height: 1.5; padding: 2px 6px; white-space: pre-wrap; word-break: break-all; }
   .log-search-results .hline:hover { background: var(--bg-card); }
