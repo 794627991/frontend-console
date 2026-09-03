@@ -18,7 +18,7 @@
 <div class="topbar">
   <div class="logo">
     <div class="icon">🖥️</div>
-    <span>终端控制台 <span class="ver">PRO</span></span>
+    <span>终端控制台 <span class="ver">PRO v0.5.0</span></span>
   </div>
   <div class="divider"></div>
   <div class="conn-area">
@@ -32,7 +32,7 @@
   <button class="btn ghost" id="btnLogs">📜 日志库</button>
   <button class="btn ghost" id="btnFiles" title="查看/打开已保存的文本文件">📝 文件</button>
   <button class="btn ghost" id="btnOpenLogDir" title="在资源管理器中打开日志目录">📁 打开日志目录</button>
-  <button class="btn ghost" id="btnAbout">关于</button>
+  <button class="btn ghost" id="btnTheme" title="切换配色主题">🎨 换肤</button>
 </div>
 
 <div class="banner" id="banner"></div>
@@ -318,6 +318,9 @@
   </div>
 </div>
 
+<!-- 换肤弹层（右上角下拉，列出预设主题） -->
+<div id="themeMenu" class="theme-menu"></div>
+
 <!-- Ctrl+右键上下文菜单（单例，由 JS 填充内容+定位） -->
 <div id="ctxMenu" class="ctx-menu"></div>
 
@@ -332,6 +335,7 @@
 <script src="vendor/editorjs-delimiter.umd.js"></script>
 <script src="vendor/editorjs-inline-code.umd.js"></script>
 <script src="vendor/editorjs-marker.umd.js"></script>
+<script src="js/theme.js"></script>
 <script src="js/util.js"></script>
 <script src="js/terminal-core.js"></script>
 <script src="js/highlight.js"></script>

@@ -70,21 +70,37 @@ function buildTerminal(portId, meta) {
     scrollback: 100000,       // 大回滚缓冲，配合后端分页
     allowProposedApi: true,
     convertEol: false,        // 保留原始 \r\n，设备输出原样
-    theme: {
-      // One Dark（atom 经典深色主题）：长时间看舒服，ANSI 16 色对比度均衡。
-      // 前景 #d7d7d7（比原 #abb2bf 更亮，灰白不刺眼但清晰）。
-      background: '#1a1f2e',
-      foreground: '#d7d7d7',
-      cursor: '#528bff',
-      cursorAccent: '#1a1f2e',
-      selectionBackground: 'rgba(82,139,255,0.25)',
-      black: '#1a1f2e', red: '#e06c75', green: '#98c379', yellow: '#e5c07b',
-      blue: '#61afef', magenta: '#c678dd', cyan: '#56b6c2', white: '#abb2bf',
-      // bright 变体须与基础色不同，否则设备「亮色」输出显示不出对比度
-      brightBlack: '#5c6370', brightRed: '#d19a66', brightGreen: '#b5e890',
-      brightYellow: '#e5c07b', brightBlue: '#82b8ff', brightMagenta: '#d19a66',
-      brightCyan: '#66cccc', brightWhite: '#ffffff',
-    },
+    theme: (() => {
+      // 基础 One Dark（atom 经典）：ANSI 16 色对比度均衡，前景 #d7d7d7 灰白不刺眼。
+      // 背景随换肤主题走（CSS --term-bg/--term-fg，见 style.css 各主题定义），
+      // 深色主题共用 One Dark 16 色；午夜纸浅色主题换浅底深字组。
+      const cs = getComputedStyle(document.documentElement);
+      const termBg = (cs.getPropertyValue('--term-bg') || '#1a1f2e').trim() || '#1a1f2e';
+      const termFg = (cs.getPropertyValue('--term-fg') || '#d7d7d7').trim() || '#d7d7d7';
+      const light = document.documentElement.getAttribute('data-theme') === 'paper';
+      return {
+        background: termBg,
+        foreground: termFg,
+        cursor: light ? '#2a7a9e' : '#528bff',
+        cursorAccent: termBg,
+        selectionBackground: 'rgba(82,139,255,0.25)',
+        ...(light
+          ? { // 午夜纸：浅底深字（ANSI 色压深保对比度）
+              black: '#3a3d40', red: '#b3474f', green: '#4a7c3f', yellow: '#9c6a1f',
+              blue: '#2a6a8f', magenta: '#8a4a9e', cyan: '#2a7a8f', white: '#5a5d60',
+              brightBlack: '#807b6d', brightRed: '#9e3038', brightGreen: '#356a2c',
+              brightYellow: '#7c5215', brightBlue: '#1f5f7c', brightMagenta: '#6a3680',
+              brightCyan: '#1f627c', brightWhite: '#26292c',
+            }
+          : { // 深色主题：One Dark 16 色（bright 变体与基础色不同才有对比度）
+              black: termBg, red: '#e06c75', green: '#98c379', yellow: '#e5c07b',
+              blue: '#61afef', magenta: '#c678dd', cyan: '#56b6c2', white: '#abb2bf',
+              brightBlack: '#5c6370', brightRed: '#d19a66', brightGreen: '#b5e890',
+              brightYellow: '#e5c07b', brightBlue: '#82b8ff', brightMagenta: '#d19a66',
+              brightCyan: '#66cccc', brightWhite: '#ffffff',
+            }),
+      };
+    })(),
   });
   conn.fit = new FitAddon.FitAddon();
   conn.search = new SearchAddon.SearchAddon();

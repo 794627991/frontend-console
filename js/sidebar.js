@@ -314,7 +314,7 @@ $('btnTs').onclick = () => {
 };
 $('btnCtrlD').onclick = () => { if (activePortId) termSendRaw(activePortId, [4]); };
 $('btnJumpBottomMain').onclick = () => { if (activePortId) jumpToBottom(activePortId); };
-$('btnAbout').onclick = () => showBanner('终端控制台 Pro · xterm.js 终端 + 搜索/感知/分析 · v0.5.0', 5000);
+// 关于按钮已改为「换肤」（js/theme.js 接管），版本号常驻标题栏「PRO v0.5.0」
 // 打开日志目录（顶栏快捷入口）
 $('btnOpenLogDir').onclick = async () => {
   try {
