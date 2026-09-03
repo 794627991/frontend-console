@@ -49,9 +49,11 @@ async function renderCmdPane() {
     };
     libEl.querySelectorAll('.cmd-edit-trigger').forEach(el => el.onclick = () => openEdit(parseInt(el.dataset.i)));
     libEl.querySelectorAll('.edit').forEach(b => b.onclick = () => openEdit(parseInt(b.dataset.i)));
-    // ---- 拖拽排序：长按条目拖到目标位置，松手保存新顺序 ----
-    // HTML5 drag：dragstart 记起点，dragover 判落点并实时移动 DOM（所见即所得），
-    // drop 后按 DOM 顺序重建 lib 数组一次保存。拖拽中禁止编辑点击误触。
+    // ---- 拖拽排序 ----
+    // 之前在 dragover 里实时移动 DOM：dragover 高频触发 + 移动被拖元素本身又
+    // 改变鼠标下元素 → 移动-触发-再移动循环，UI 疯狂抖动且最终落点错位。
+    // 正确做法：拖动过程中完全不动 DOM，只高亮当前悬停条目标记落点方向；
+    // drop 时按鼠标位置（条目中线判断前/后）一次性重排数组并保存。
     let dragFrom = -1;
     libEl.querySelectorAll('.cmd-item').forEach((item, i) => {
       item.draggable = true;
@@ -63,37 +65,59 @@ async function renderCmdPane() {
       });
       item.addEventListener('dragend', () => {
         item.classList.remove('dragging');
-        libEl.querySelectorAll('.cmd-item').forEach(el => el.classList.remove('drag-over'));
+        libEl.querySelectorAll('.cmd-item').forEach(el => el.classList.remove('drop-before', 'drop-after'));
         dragFrom = -1;
       });
-      item.addEventListener('dragover', e => {
-        e.preventDefault();  // 允许 drop
-        e.dataTransfer.dropEffect = 'move';
-        if (dragFrom < 0 || dragFrom === i) return;
-        // 实时移动：向下拖插到目标后，向上拖插到目标前（贴合拖动方向直觉）
-        const items = Array.from(libEl.querySelectorAll('.cmd-item'));
-        const fromEl = items[dragFrom], toEl = items[i];
-        if (!fromEl || !toEl || fromEl === toEl) return;
-        libEl.insertBefore(fromEl, dragFrom < i ? toEl.nextSibling : toEl);
-        dragFrom = i;  // 移动后起点索引更新为当前位置
+    });
+    libEl.addEventListener('dragover', e => {
+      e.preventDefault();  // 允许 drop
+      e.dataTransfer.dropEffect = 'move';
+      const items = Array.from(libEl.querySelectorAll('.cmd-item:not(.dragging)'));
+      const target = items.find(el => {
+        const r = el.getBoundingClientRect();
+        return e.clientY >= r.top && e.clientY <= r.bottom;
       });
+      // 清旧标记，给当前悬停条目按鼠标在其上半/下半标前/后
+      libEl.querySelectorAll('.cmd-item').forEach(el => el.classList.remove('drop-before', 'drop-after'));
+      if (!target) return;
+      const r = target.getBoundingClientRect();
+      target.classList.add(e.clientY < r.top + r.height / 2 ? 'drop-before' : 'drop-after');
     });
     libEl.addEventListener('drop', async e => {
       e.preventDefault();
-      if (dragFrom < 0 && e.dataTransfer) {
-        // 外部拖入不处理（只支持库内排序）
-        return;
-    }
-      // 按 DOM 顺序重建 lib：map 原 data-i → 新位置
+      if (dragFrom < 0) return;
+      const items = Array.from(libEl.querySelectorAll('.cmd-item'));
+      const dragEl = items[dragFrom];
+      if (!dragEl) { dragFrom = -1; return; }
+      // 找鼠标悬停的目标条目及前/后
+      let toIdx = -1, before = false;
+      for (let i = 0; i < items.length; i++) {
+        if (items[i] === dragEl) continue;
+        const r = items[i].getBoundingClientRect();
+        if (e.clientY >= r.top && e.clientY <= r.bottom) {
+          toIdx = i; before = e.clientY < r.top + r.height / 2; break;
+        }
+      }
+      if (toIdx < 0) { dragFrom = -1; return; }  // 没落在任何条目上：不换
+      // 数组重排：splice 拿出起点，再按目标索引（扣除起点被移除的影响）插回
       const old = await loadCmdLib();
-      const newLib = Array.from(libEl.querySelectorAll('.cmd-item'))
-        .map(el => old[parseInt(el.dataset.i)])
-        .filter(Boolean);
-      if (newLib.length !== old.length) { renderCmdPane(); return; }  // 异常兜底：重渲染还原
-      await saveCmdLib(newLib);
+      const [moved] = old.splice(dragFrom, 1);
+      if (!moved) { dragFrom = -1; renderCmdPane(); return; }
+      // 计算插入位：目标是 drop 前半 → 插它前；后半 → 插它后。
+      // dragFrom < toIdx 时目标条目在移除后前移了一位，需修正。
+      let insertAt = toIdx + (before ? 0 : 1);
+      if (dragFrom < toIdx) insertAt -= 1;
+      old.splice(insertAt, 0, moved);
+      await saveCmdLib(old);
+      dragFrom = -1;
       renderCmdPane();
     });
-    libEl.addEventListener('dragover', e => e.preventDefault());  // 允许 drop 事件触发
+    libEl.addEventListener('dragleave', e => {
+      // 拖出列表区域：清落点标记（dragleave 会冒泡子元素，仅当真正离开列表时清）
+      if (!libEl.contains(e.relatedTarget)) {
+        libEl.querySelectorAll('.cmd-item').forEach(el => el.classList.remove('drop-before', 'drop-after'));
+      }
+    });
   }
   // 最近命令
   if (activePortId) {

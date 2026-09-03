@@ -674,7 +674,9 @@
   /* 拖拽排序反馈：被拖条目半透明，光标示意可移 */
   .cmd-item[draggable="true"] { cursor: grab; }
   .cmd-item.dragging { opacity: 0.35; border-style: dashed; }
-  .cmd-item.drag-over { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent-glow); }
+  /* 落点指示线：插入位置前/后 2px 亮线（拖动中 DOM 不动，只标落点，无抖动） */
+  .cmd-item.drop-before { box-shadow: 0 -2px 0 0 var(--accent); }
+  .cmd-item.drop-after { box-shadow: 0 2px 0 0 var(--accent); }
   .cmd-item .text { flex: 1; font-family: var(--font-mono); font-size: 11px; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .cmd-item .name { font-family: var(--font-ui); font-weight: 600; color: var(--accent); cursor: pointer; }
   .cmd-item .cmd-edit-name:hover { text-decoration: underline; }
