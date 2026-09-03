@@ -85,13 +85,13 @@ function buildEditorTab(name, content) {
         <span class="lv-info" data-ed-info></span>
       </div>
       <div class="ed-main">
-        <div class="ed-scroll">
-          <div class="ed-holder"></div>
-        </div>
         <div class="ed-outline" style="display:none;">
           <div class="ed-outline-head">大纲</div>
           <div class="ed-outline-list"></div>
           <div class="ed-outline-stats"></div>
+        </div>
+        <div class="ed-scroll">
+          <div class="ed-holder"></div>
         </div>
       </div>
     </div>`;
