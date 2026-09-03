@@ -3,15 +3,22 @@
 // 选择存 localStorage，下次启动自动应用。
 // ============================================================
 const THEMES = [
-  { id: 'deepblue',  name: '深空蓝',   desc: '默认科技蓝 · 壳体深蓝 + 纸感阅读面' },
-  { id: 'warmgray',   name: '暖夜灰',   desc: '暖紫灰壳体 · 更柔和 · 阅读面深一档' },
-  { id: 'darkgreen',  name: '暗调绿',   desc: '经典 CRT 深绿灰 · 老派护眼风' },
-  { id: 'paper',      name: '午夜纸',   desc: '全浅色窗体 · 与笔记/日志完全统一' },
-  { id: 'onedark',    name: '夜暮紫',   desc: 'One Dark Pro 风深紫壳 · 蓝紫 accent' },
-  { id: 'amber',      name: '琥珀暖',   desc: '深棕咖啡壳 + 金橙 · 冬夜暖光感' },
-  { id: 'celadon',    name: '青瓷蓝',   desc: '低饱和海蓝灰 · 柔和商务风' },
-  { id: 'rose',       name: '玫瑰暮',   desc: '深粉紫暮色壳 · 低饱和不腻' },
+  // ---- 暗色系 ----
+  { id: 'deepblue',  name: '深空蓝',   desc: '默认科技蓝 · 壳体深蓝 + 纸感阅读面', group: 'dark' },
+  { id: 'onedark',    name: '夜暮紫',   desc: 'One Dark Pro 风深紫壳 · 蓝紫 accent', group: 'dark' },
+  { id: 'warmgray',   name: '暖夜灰',   desc: '暖紫灰壳体 · 更柔和 · 阅读面深一档', group: 'dark' },
+  { id: 'darkgreen',  name: '暗调绿',   desc: '经典 CRT 深绿灰 · 老派护眼风', group: 'dark' },
+  { id: 'amber',      name: '琥珀暖',   desc: '深棕咖啡壳 + 金橙 · 冬夜暖光感', group: 'dark' },
+  { id: 'celadon',    name: '青瓷蓝',   desc: '低饱和海蓝灰 · 柔和商务风', group: 'dark' },
+  { id: 'rose',       name: '玫瑰暮',   desc: '深粉紫暮色壳 · 低饱和不腻', group: 'dark' },
+  // ---- 亮色系 ----
+  { id: 'paper',      name: '午夜纸',   desc: '暖白纸感壳 · 与笔记/日志完全统一', group: 'light' },
+  { id: 'dawn',       name: '晨雾蓝',   desc: '冷调浅蓝灰 · 清爽办公风', group: 'light' },
+  { id: 'mint',       name: '薄荷青',   desc: '浅青绿 · 淡雅护眼', group: 'light' },
+  { id: 'apricot',    name: '暖杏',     desc: '暖米黄 · 柔和不刺眼', group: 'light' },
 ];
+// 亮色主题表：终端 xterm 换浅底深字 16 色、UI 深字按钮等逻辑共用
+const LIGHT_THEMES = ['paper', 'dawn', 'mint', 'apricot'];
 
 function applyTheme(id) {
   if (!THEMES.some(t => t.id === id)) id = 'deepblue';
@@ -21,7 +28,7 @@ function applyTheme(id) {
   const cs = getComputedStyle(document.documentElement);
   const termBg = (cs.getPropertyValue('--term-bg') || '#1a1f2e').trim() || '#1a1f2e';
   const termFg = (cs.getPropertyValue('--term-fg') || '#d7d7d7').trim() || '#d7d7d7';
-  const light = id === 'paper';
+  const light = LIGHT_THEMES.includes(id);
   const theme = {
     background: termBg, foreground: termFg,
     cursor: light ? '#2a7a9e' : '#528bff', cursorAccent: termBg,
@@ -53,15 +60,22 @@ function applyTheme(id) {
   function renderMenu() {
     const cur = document.documentElement.getAttribute('data-theme') || 'deepblue';
     menu.innerHTML = '';
-    THEMES.forEach(t => {
-      const item = document.createElement('div');
-      item.className = 'theme-item' + (t.id === cur ? ' active' : '');
-      item.innerHTML = `<div class="theme-swatch" data-theme="${t.id}"></div>
-        <div class="theme-info"><div class="name">${t.name}</div><div class="desc">${t.desc}</div></div>
-        ${t.id === cur ? '<span class="theme-check">✓</span>' : ''}`;
-      item.onclick = () => { applyTheme(t.id); renderMenu(); showBanner('已切换主题：' + t.name); };
-      menu.appendChild(item);
-    });
+    // 按暗色/亮色分组渲染
+    for (const [g, label] of [['dark', '暗色系'], ['light', '亮色系']]) {
+      const head = document.createElement('div');
+      head.className = 'theme-group-head';
+      head.textContent = label;
+      menu.appendChild(head);
+      THEMES.filter(t => t.group === g).forEach(t => {
+        const item = document.createElement('div');
+        item.className = 'theme-item' + (t.id === cur ? ' active' : '');
+        item.innerHTML = `<div class="theme-swatch" data-theme="${t.id}"></div>
+          <div class="theme-info"><div class="name">${t.name}</div><div class="desc">${t.desc}</div></div>
+          ${t.id === cur ? '<span class="theme-check">✓</span>' : ''}`;
+        item.onclick = () => { applyTheme(t.id); renderMenu(); showBanner('已切换主题：' + t.name); };
+        menu.appendChild(item);
+      });
+    }
   }
   $('btnTheme').onclick = (e) => {
     e.stopPropagation();

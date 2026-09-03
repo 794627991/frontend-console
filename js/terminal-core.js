@@ -77,7 +77,7 @@ function buildTerminal(portId, meta) {
       const cs = getComputedStyle(document.documentElement);
       const termBg = (cs.getPropertyValue('--term-bg') || '#1a1f2e').trim() || '#1a1f2e';
       const termFg = (cs.getPropertyValue('--term-fg') || '#d7d7d7').trim() || '#d7d7d7';
-      const light = document.documentElement.getAttribute('data-theme') === 'paper';
+      const light = (typeof LIGHT_THEMES !== 'undefined') && LIGHT_THEMES.includes(document.documentElement.getAttribute('data-theme'));
       return {
         background: termBg,
         foreground: termFg,
