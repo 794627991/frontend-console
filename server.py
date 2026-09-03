@@ -106,6 +106,12 @@ def index():
 def static_files(fn):
     return send_from_directory(RES_DIR, fn)
 
+# 第三方库本地托管（Monaco Editor / markdown-it，离线可用，不走 CDN）
+VENDOR_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor")
+@app.route("/vendor/<path:fn>")
+def vendor_files(fn):
+    return send_from_directory(VENDOR_DIR, fn)
+
 @app.route("/api/ports")
 def api_ports():
     return jsonify({"ports": list_ports(), "bauds": COMMON_BAUDS})
@@ -138,7 +144,10 @@ def api_connect():
         if not host or not username:
             return jsonify({"ok": False, "err": "need host and username"}), 400
         if not password and not key_path:
-            return jsonify({"ok": False, "err": "need password or key_path"}), 400
+            # 允许空密码连接：部分设备（dropbear/嵌入设备）空密码可进入，
+            # 或服务端虽要求密码但本次认证尝试即可被接受；若通道内还需密码，
+            # 用户可在终端里交互输入。拒绝时走异常分类返回清晰报错。
+            pass
         if _get_paramiko() is None:
             return jsonify({"ok": False, "err": "paramiko 未安装，无法 SSH 连接"}), 500
         port_id = f"ssh:{host}:{port}"
@@ -149,7 +158,30 @@ def api_connect():
                 p = SSHConnection(host, port, username, password=password, key_path=key_path, port_id=port_id)
                 _ports[port_id] = p
             except Exception as e:
-                return jsonify({"ok": False, "err": str(e)}), 500
+                # 认证失败类异常：转成对用户可读的中文提示（paramiko 原始消息常为空/难懂）
+                msg = str(e) or e.__class__.__name__
+                try:
+                    from paramiko.ssh_exception import (
+                        AuthenticationException, SSHException,
+                        BadHostKeyException, NoValidConnectionsError,
+                    )
+                    import socket
+                    if isinstance(e, AuthenticationException):
+                        msg = "认证失败：用户名或密码/密钥错误。" + (f" {e}" if str(e) else " 请检查后重试。")
+                    elif isinstance(e, BadHostKeyException):
+                        msg = f"主机密钥校验失败：{e}"
+                    elif isinstance(e, NoValidConnectionsError):
+                        host_raw = getattr(e, "host", (host, int(port)))
+                        msg = f"无法连接到 {host_raw[0]}:{host_raw[1]}（网络不通或端口未开放）"
+                    elif isinstance(e, socket.timeout) or isinstance(e, TimeoutError) or "timed out" in msg.lower():
+                        msg = f"连接 {host}:{port} 超时（网络不可达或端口被防火墙拦截）"
+                    elif isinstance(e, socket.gaierror):
+                        msg = f"无法解析主机 {host}：{e}"
+                    elif isinstance(e, SSHException):
+                        msg = f"SSH 协议错误：{e}"
+                except Exception:
+                    pass
+                return jsonify({"ok": False, "err": msg}), 500
         # SSH invoke_shell 自带 shell，不主动 send \r
         return jsonify({"ok": True, "port_id": port_id, "kind": "ssh",
                         "msg": f"已连接 {username}@{host}:{port}"})
@@ -294,6 +326,56 @@ def api_theme():
     theme = (data.get("theme") or "").strip() or "deepblue"
     _save_config({**_load_config(), "theme": theme})
     return jsonify({"ok": True, "theme": theme})
+
+
+# ============================================================
+# 最近打开（SSH/串口/文件 快捷重开列表）
+# ============================================================
+# 存 config.json "recent" 键：[{type, key, label, ts, data{...}}...]，新→旧。
+# key = 去重键（ssh:host:port:user / serial:COM3 / file:路径）；同 key 只留最新一条并置顶。
+_RECENT_MAX = 20  # 列表上限，防无限膨胀
+def _recent_add(item):
+    """记录一条最近打开（去重置顶），返回更新后的列表。"""
+    cfg = _load_config()
+    recent = cfg.get("recent", [])
+    key = item.get("key") or ""
+    recent = [r for r in recent if r.get("key") != key]
+    item["ts"] = int(time.time() * 1000)
+    recent.insert(0, item)
+    recent = recent[:_RECENT_MAX]
+    cfg["recent"] = recent
+    _save_config(cfg)
+    return recent
+
+@app.route("/api/recent", methods=["GET", "POST", "DELETE"])
+def api_recent():
+    """GET 列表；POST 记录一条 {type,key,label,data}（或 {replace:[...]} 整表替换）；DELETE 清空。"""
+    if request.method == "GET":
+        return jsonify({"ok": True, "recent": _load_config().get("recent", [])})
+    if request.method == "DELETE":
+        _save_config({**_load_config(), "recent": []})
+        return jsonify({"ok": True})
+    data = request.get_json(force=True) or {}
+    # 整表替换（前端单条删除后回写剩余列表）
+    if isinstance(data.get("replace"), list):
+        keep = []
+        for it in data["replace"]:
+            t = (it.get("type") or "").strip()
+            if t not in ("ssh", "serial", "file") or not (it.get("key") or "").strip():
+                continue
+            keep.append({"type": t, "key": it["key"], "label": (it.get("label") or "").strip(),
+                         "ts": it.get("ts") or 0, "data": it.get("data") or {}})
+        keep.sort(key=lambda x: -x.get("ts", 0))  # 按 ts 新→旧
+        _save_config({**_load_config(), "recent": keep[:_RECENT_MAX]})
+        return jsonify({"ok": True, "recent": keep[:_RECENT_MAX]})
+    t = (data.get("type") or "").strip()
+    if t not in ("ssh", "serial", "file"):
+        return jsonify({"ok": False, "err": "type 须为 ssh/serial/file"}), 400
+    item = {"type": t, "key": (data.get("key") or "").strip(),
+            "label": (data.get("label") or "").strip(), "data": data.get("data") or {}}
+    if not item["key"]:
+        return jsonify({"ok": False, "err": "key 不能为空"}), 400
+    return jsonify({"ok": True, "recent": _recent_add(item)})
 
 
 @app.route("/api/log_dir", methods=["GET", "POST"])

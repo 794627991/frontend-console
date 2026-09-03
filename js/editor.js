@@ -49,8 +49,9 @@ async function _edUploadImage(file) {
 
 // ---- 编辑器 tab 构建（模式同 buildLogViewer：tab + term-area wrap + connections 表）----
 // name=null 表示未命名草稿（尚未保存到磁盘）
-function buildEditorTab(name, content) {
+function buildEditorTab(name, content, extPath) {
   // content：.note 传 Editor.js JSON 对象；.txt 传字符串；草稿传 null
+  // extPath：外部绝对路径（拖入文件）——保存写回原路径，不走 files/ 目录
   const isNote = name ? name.toLowerCase().endsWith('.note') : true;  // 草稿默认 .note
   // 已打开同名文件 → 切过去
   if (name) {
@@ -67,8 +68,13 @@ function buildEditorTab(name, content) {
   tab.dataset.portId = portId;
   tab.innerHTML = `<span class="led" style="color:var(--accent)">📝</span><span class="label">${esc(name || '未命名')}</span><span class="baud"></span><span class="close" title="关闭">✕</span>`;
   tab.onclick = (e) => { if (e.target.classList.contains('close')) { e.stopPropagation(); closeEditorTab(portId); return; } switchTab(portId); };
-  // 双击 tab 标题 → 快捷改名
-  tab.querySelector('.label').ondblclick = (e) => { e.stopPropagation(); edRenamePrompt(connections[portId]); };
+  // 双击 tab 标题 → 快捷改名（外部文件禁用——保持原路径）
+  tab.querySelector('.label').ondblclick = (e) => {
+    e.stopPropagation();
+    const c = connections[portId];
+    if (c && c.extPath) { showBanner('外部文件不支持重命名（保持原路径）', 3000, true); return; }
+    edRenamePrompt(c);
+  };
   // wrap（.term-area 内含编辑器）
   const wrap = document.createElement('div');
   wrap.className = 'term-area';
@@ -81,6 +87,7 @@ function buildEditorTab(name, content) {
         <button class="lv-btn" data-ed-action="saveas" title="Ctrl+Shift+S">另存为…</button>
         <button class="lv-btn" data-ed-action="rename" title="双击标签页标题可快捷改名">重命名</button>
         <button class="lv-btn" data-ed-action="delete">删除</button>
+        <button class="lv-btn" data-ed-action="search" title="Ctrl+F 全局搜索（支持正则/排除）">🔍 搜索</button>
         <button class="lv-btn" data-ed-action="outline" title="显示/隐藏右侧大纲面板">☰ 大纲</button>
         <span class="lv-info" data-ed-info></span>
       </div>
@@ -93,6 +100,16 @@ function buildEditorTab(name, content) {
         <div class="ed-scroll">
           <div class="ed-holder"></div>
         </div>
+        <div class="ed-md-preview" style="display:none;"><div class="md-preview-body"></div></div>
+      </div>
+      <div class="term-search-pane ed-search-pane" style="display:none">
+        <div class="term-search-head">
+          <input type="text" class="term-search-input ed-search-q" placeholder="查找…（回车搜索，正则支持）" autocomplete="off">
+          <input type="text" class="term-search-exclude ed-search-ex" placeholder="排除（多个用 | 分隔，支持正则）" autocomplete="off">
+          <span class="term-search-count ed-search-count"></span>
+          <button class="btn ghost term-search-collapse ed-search-collapse" title="折叠分栏">▾</button>
+        </div>
+        <div class="term-search-results ed-search-results"></div>
       </div>
     </div>`;
   const es = termArea.querySelector('.empty-state');
@@ -110,22 +127,55 @@ function buildEditorTab(name, content) {
     outlineStats: wrap.querySelector('.ed-outline-stats'),
     isNote,
     editor: null,         // Editor.js 实例（.note）
-    ta: null,             // textarea（.txt，懒建——保底 fallback）
+    monaco: null,         // Monaco 实例（txt/md/code，_edInitContent 建）
+    ta: null,             // textarea（Monaco 失败降级 fallback）
     savedData: null,      // 上次保存/打开的内容（脏检测基准）
     onDisk: !!name,
     dirty: false,
+    extPath: extPath || null,  // 外部绝对路径：保存写回原文件，另存为/重命名禁用
+    // 全局搜索分栏（纯文本；.note 也支持——按块文本搜）
+    edSearchPane: null, edSearchQ: null, edSearchEx: null,
+    edSearchResults: null, edSearchCount: null,
+    edSearchState: { results: [], idx: 0 },
   };
+  // .md 分栏预览：预览列显示 + 工具栏加「预览」开关
+  const _isMd = name ? name.toLowerCase().endsWith('.md') : false;
+  if (_isMd) {
+    wrap.querySelector('.ed-md-preview').style.display = '';
+    const pvBtn = document.createElement('button');
+    pvBtn.className = 'lv-btn';
+    pvBtn.dataset.edAction = 'mdpreview';
+    pvBtn.title = '显示/隐藏 Markdown 预览分栏';
+    pvBtn.textContent = '👁 预览';
+    wrap.querySelector('[data-ed-action="search"]').after(pvBtn);
+  }
   connections[portId] = conn;
   // 初始化编辑区（异步：Editor.js 实例化）
   _edInitContent(conn, content);
+  // 搜索分栏事件：回车搜索（Shift+回车跳下一个）、排除框回车、折叠按钮
+  const qEl = wrap.querySelector('.ed-search-q');
+  qEl.addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    if (e.shiftKey) { const st = conn.edSearchState; if (st.results.length) { st.idx = (st.idx + 1) % st.results.length; edJumpToHit(conn, st.idx); } }
+    else doEdSearch(conn);
+  });
+  wrap.querySelector('.ed-search-ex').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doEdSearch(conn); } });
+  wrap.querySelector('.ed-search-collapse').onclick = () => edToggleSearchPane(conn);
   // 工具栏按钮
   wrap.querySelectorAll('.lv-btn').forEach(btn => {
     btn.onclick = () => {
       const act = btn.dataset.edAction;
       if (act === 'save') edSave(conn);
-      else if (act === 'saveas') edSaveAs(conn);
-      else if (act === 'rename') edRenamePrompt(conn);
-      else if (act === 'delete') edDelete(conn);
+      else if (act === 'search') edToggleSearchPane(conn);
+      else if (act === 'mdpreview') {
+        const pv = conn.wrap.querySelector('.ed-md-preview');
+        pv.style.display = pv.style.display === 'none' ? '' : 'none';
+        if (pv.style.display !== 'none') _mdRenderPreview(conn);
+      }
+      else if (act === 'saveas') { if (conn.extPath) showBanner('外部文件不支持另存为（直接保存到原路径）', 3000, true); else edSaveAs(conn); }
+      else if (act === 'rename') { if (conn.extPath) showBanner('外部文件不支持重命名（保持原路径）', 3000, true); else edRenamePrompt(conn); }
+      else if (act === 'delete') { if (conn.extPath) showBanner('外部文件不提供删除（请到文件管理器操作）', 3000, true); else edDelete(conn); }
       else if (act === 'outline') edToggleOutline(conn);
     };
   });
@@ -136,8 +186,14 @@ function buildEditorTab(name, content) {
     if (activePortId !== portId) return;
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
       e.preventDefault();
-      if (e.shiftKey) edSaveAs(conn);
+      if (e.shiftKey) { if (conn.extPath) showBanner('外部文件不支持另存为（直接保存到原路径）', 3000, true); else edSaveAs(conn); }
       else edSave(conn);
+      return;
+    }
+    // Ctrl+F：编辑器全局搜索分栏（同日志/串口——全局搜索是基础文本能力）
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+      e.preventDefault();
+      edToggleSearchPane(conn, true);
       return;
     }
     // 「/」开块菜单、Ctrl+/ 开块设置：Editor.js 只在编辑区持有焦点时响应
@@ -267,32 +323,62 @@ async function _edInitContent(conn, content) {
     }
   }
   if (!conn.isNote) {
-    conn.ta = document.createElement('textarea');
-    conn.ta.className = 'editor-area';
-    conn.ta.spellcheck = false;
-    conn.ta.value = typeof content === 'string' ? content : '';
-    conn.holder.appendChild(conn.ta);
-    conn.ta.addEventListener('input', () => _edMarkDirty(conn));
-    conn.ta.addEventListener('keyup', () => _edUpdateInfo(conn));
-    conn.ta.addEventListener('click', () => _edUpdateInfo(conn));
-    conn.savedData = conn.ta.value;
+    const isMd = (conn.meta.label || '').toLowerCase().endsWith('.md');
+    if (typeof monacoCreate === 'function' && !isMd) {
+      // Monaco（VSCode 同款内核）：语法高亮/内置查找替换/行号/minimap
+      // 失败自动降级 textarea（vendor 缺失/异常时保可用）
+      try {
+        conn.monaco = await monacoCreate(conn.holder, typeof content === 'string' ? content : '', conn.meta.label);
+        conn.monaco.onDidChangeModelContent(() => _edMarkDirty(conn));
+        conn.monaco.onDidChangeCursorPosition(() => _edUpdateInfo(conn));
+      } catch(e) {
+        showBanner('Monaco 加载失败，已降级纯文本：' + e, 6000, true);
+        conn.monaco = null;
+      }
+    } else if (typeof monacoCreate === 'function' && isMd) {
+      // .md：Monaco 源码编辑 + markdown-it 实时预览分栏
+      try {
+        // 分栏容器：预览列插到 ed-scroll 之后（HTML 已在 buildEditorTab 预置 ed-md-preview）
+        conn.monaco = await monacoCreate(conn.holder, typeof content === 'string' ? content : '', conn.meta.label);
+        conn.monaco.onDidChangeModelContent(() => { _edMarkDirty(conn); _mdRenderPreview(conn); });
+        conn.monaco.onDidChangeCursorPosition(() => _edUpdateInfo(conn));
+        _mdRenderPreview(conn);
+      } catch(e) {
+        showBanner('Monaco 加载失败，已降级纯文本：' + e, 6000, true);
+        conn.monaco = null;
+      }
+    }
+    if (!conn.monaco) {
+      conn.ta = document.createElement('textarea');
+      conn.ta.className = 'editor-area';
+      conn.ta.spellcheck = false;
+      conn.ta.value = typeof content === 'string' ? content : '';
+      conn.holder.appendChild(conn.ta);
+      conn.ta.addEventListener('input', () => _edMarkDirty(conn));
+      conn.ta.addEventListener('keyup', () => _edUpdateInfo(conn));
+      conn.ta.addEventListener('click', () => _edUpdateInfo(conn));
+      if (isMd) _mdRenderPreview(conn);
+    }
+    conn.savedData = conn.monaco ? conn.monaco.getValue() : conn.ta.value;
   }
   _edUpdateInfo(conn);
 }
 
-// ---- 取当前内容（保存用）：.note 返回 JSON 对象，.txt 返回字符串 ----
+// ---- 取当前内容（保存用）：.note 返回 JSON 对象，纯文本返回字符串 ----
 async function _edGetContent(conn) {
   if (conn.isNote && conn.editor) {
     try { return await conn.editor.save(); } catch(e) { return null; }
   }
+  if (conn.monaco) return conn.monaco.getValue();
   return conn.ta ? conn.ta.value : '';
 }
 
 // ---- 脏检测：当前内容 vs 上次保存 ----
 function _edMarkDirty(conn) {
   // .note 的 onChange 即视为脏（比对 JSON 成本高且 await 别扭）；
-  // 保存后 savedData 更新 + dirty 复位。.txt 精确比对字符串。
-  const dirty = conn.isNote ? true : (conn.ta && conn.ta.value !== conn.savedData);
+  // 保存后 savedData 更新 + dirty 复位。纯文本精确比对字符串（Monaco/textarea 同源）。
+  const cur = conn.isNote ? null : (conn.monaco ? conn.monaco.getValue() : (conn.ta ? conn.ta.value : ''));
+  const dirty = conn.isNote ? true : (cur !== conn.savedData);
   if (dirty !== conn.dirty) { conn.dirty = dirty; _edMarkTab(conn); }
   _edUpdateInfo(conn);
 }
@@ -389,6 +475,11 @@ function _edStatText(conn) {
     const blocks = conn.holder ? conn.holder.querySelectorAll('.ce-block').length : 0;
     return `${blocks} 块`;
   }
+  if (conn.monaco) {
+    const pos = conn.monaco.getPosition();      // {line, column}
+    const len = conn.monaco.getModel().getValueLength();
+    return `行 ${pos.line}，列 ${pos.column} · ${len} 字符`;
+  }
   if (conn.ta) {
     const pos = conn.ta.selectionStart;
     const before = conn.ta.value.slice(0, pos);
@@ -402,17 +493,23 @@ function _edStateText(conn) {
   return !conn.onDisk ? ' · 未保存到磁盘' : (conn.dirty ? ' · 未保存' : ' · 已保存');
 }
 
-// ---- 打开已有文件：按后缀分发 ----
-async function openEditorFile(name) {
+// ---- 打开已有文件：files/ 内按 name；外部绝对路径按 path（拖入文件，可编辑）----
+async function openEditorFile(nameOrPath) {
   try {
-    const r = await fetch('/api/ed/open?name=' + encodeURIComponent(name));
+    const isExtPath = /^[a-zA-Z]:[\\/]|\\\\/.test(nameOrPath);  // Windows 绝对路径/UNC
+    const r = await fetch('/api/ed/open?' + (isExtPath
+      ? 'path=' + encodeURIComponent(nameOrPath)
+      : 'name=' + encodeURIComponent(nameOrPath)));
     const j = await r.json();
     if (!j.ok) { showBanner(j.err || '打开失败', 4000, true); return; }
+    const name = j.name || nameOrPath;
     const isNote = name.toLowerCase().endsWith('.note');
     // .note 存 JSON，.txt 存纯文本
     let content = j.text;
     if (isNote) { try { content = JSON.parse(j.text); } catch(e) { content = { blocks: [] }; } }
-    buildEditorTab(name, content);
+    // 记入最近打开（文件类型，快捷重开走编辑器）
+    if (typeof _recentAdd === 'function') _recentAdd({type:'file', key:'file:'+name, label:name, data:{kind:'edit', name:name, path:nameOrPath, extPath: isExtPath ? nameOrPath : ''}});
+    buildEditorTab(name, content, isExtPath ? nameOrPath : null);
   } catch(e) { showBanner('打开失败: ' + e, 4000, true); }
 }
 
@@ -423,12 +520,16 @@ async function edSave(conn) {
   if (content === null) { showBanner('读取内容失败', 4000, true); return; }
   const text = conn.isNote ? JSON.stringify(content) : content;
   try {
-    const r = await fetch('/api/ed/save', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name: conn.meta.label, text})});
+    // 外部文件（拖入）：写回原绝对路径；站内文件：按名写 files/
+    const body = conn.extPath ? {path: conn.extPath, text} : {name: conn.meta.label, text};
+    const r = await fetch('/api/ed/save', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
     const j = await r.json();
     if (!j.ok) { showBanner(j.err || '保存失败', 4000, true); return; }
     conn.savedData = content;
     conn.dirty = false; _edMarkTab(conn); _edUpdateInfo(conn);
-    showBanner('已保存 ' + conn.meta.label, 1500);
+    showBanner('已保存 ' + (conn.extPath || conn.meta.label), 1500);
+    // 保存成功即入最近列表（草稿定名/已有文件覆盖保存都会走到这）
+    if (typeof _recentAdd === 'function') _recentAdd({type:'file', key:'file:'+conn.meta.label, label:conn.meta.label, data:{kind:'edit', name:conn.meta.label, path:conn.meta.label, extPath: conn.extPath || ''}});
   } catch(e) { showBanner('保存失败: ' + e, 4000, true); }
 }
 
@@ -544,6 +645,8 @@ function closeEditorTab(portId) {
 function _edCloseNow(conn) {
   // Editor.js 实例先销毁（停掉内部 mutation 监听，防关 tab 后仍触发 onChange）
   if (conn.editor) { try { conn.editor.destroy(); } catch(e){} }
+  // Monaco 同理（停掉 onDidChangeModelContent，防关 tab 后仍触发脏检测）
+  if (conn.monaco) { try { conn.monaco.dispose(); } catch(e){} }
   conn.tab.remove(); conn.wrap.remove();
   delete connections[conn.portId];
   const remaining = Object.keys(connections).sort((a, b) => {
@@ -612,4 +715,150 @@ async function showFilesModal() {
       listEl.appendChild(d);
     });
   } catch(e) { listEl.innerHTML = '<div style="padding:20px;color:var(--muted);">加载失败: ' + esc(String(e)) + '</div>'; }
+}
+
+// ---- 编辑器全局搜索（纯文本 textarea 为主，.note 按块文本降级支持）----
+// 搜索 + 排除（| 分隔正则）+ 结果列表 + 点击/回车跳转。与日志/串口搜索语法一致。
+function edToggleSearchPane(conn, show) {
+  const pane = conn.wrap.querySelector('.ed-search-pane');
+  const st = !pane.style.display || pane.style.display === 'none';
+  const toShow = show !== undefined ? show : st;
+  pane.style.display = toShow ? 'flex' : 'none';
+  const btn = conn.wrap.querySelector('.ed-search-collapse');
+  if (btn) btn.textContent = toShow ? '▾' : '▴';
+  if (toShow) conn.wrap.querySelector('.ed-search-q').focus();
+}
+async function doEdSearch(conn) {
+  const qEl = conn.wrap.querySelector('.ed-search-q');
+  const exEl = conn.wrap.querySelector('.ed-search-ex');
+  const cntEl = conn.wrap.querySelector('.ed-search-count');
+  const resEl = conn.wrap.querySelector('.ed-search-results');
+  const q = qEl.value.trim();
+  const exRaw = exEl.value.trim();
+  if (!q) { cntEl.textContent = ''; resEl.innerHTML = ''; return; }
+  cntEl.innerHTML = '<span class="spin">✳</span> 搜索中…';
+  // 取文本源：Monaco/textarea 全文；.note 取纯文本拼接（行号近似按块）
+  let lines;
+  if (conn.monaco) lines = conn.monaco.getValue().split('\n');
+  else if (conn.ta) lines = conn.ta.value.split('\n');
+  else if (conn.editor) {
+    try {
+      const data = await conn.editor.save();
+      lines = (data.blocks || []).map(b => {
+        const t = b.data;
+        if (!t) return '';
+        if (typeof t.text === 'string') return t.text;
+        if (Array.isArray(t.items)) return t.items.join(' ');
+        if (Array.isArray(t.content)) return t.content.join(' ');
+        if (typeof t.caption === 'string') return t.caption;
+        return '';
+      });
+    } catch(e) { lines = []; }
+  } else lines = [];
+  // 编译正则（非法降级字面），排除模式同串口搜索语法
+  let re = null;
+  try { re = new RegExp(q, 'i'); } catch(e) {}
+  const matches = t => re ? re.test(t) : t.toLowerCase().includes(q.toLowerCase());
+  const exPats = [];
+  if (exRaw) exRaw.split('|').forEach(seg => {
+    seg = seg.trim(); if (!seg) return;
+    try { exPats.push(new RegExp(seg, 'i')); }
+    catch(e) { exPats.push(new RegExp(seg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')); }
+  });
+  const inEx = t => { for (const p of exPats) if (p.test(t)) return true; return false; };
+  const hits = [];
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i];
+    if (matches(t) && !inEx(t)) hits.push({ line: i + 1, text: t });
+  }
+  const st = conn.edSearchState;
+  st.results = hits; st.idx = 0;
+  resEl.innerHTML = hits.map((l, i) =>
+    `<div class="hline" data-i="${i}" title="${esc(l.text)}"><span class="hrow">${l.line}</span> ${esc(l.text.length > 200 ? l.text.slice(0,200)+'…' : l.text)}</div>`
+  ).join('') || '<div style="padding:10px;color:var(--muted);">无命中</div>';
+  resEl.querySelectorAll('.hline').forEach(el => {
+    el.onclick = () => { st.idx = +el.dataset.i; edJumpToHit(conn, st.idx); };
+  });
+  cntEl.textContent = hits.length ? `命中 ${hits.length} 处` : '无命中';
+  if (hits.length) edJumpToHit(conn, 0);
+}
+function edJumpToHit(conn, idx) {
+  const st = conn.edSearchState;
+  const hit = st.results[idx];
+  if (!hit) return;
+  conn.wrap.querySelectorAll('.ed-search-results .hline').forEach((el, i) => el.classList.toggle('active', i === idx));
+  if (conn.monaco) {
+    // Monaco：滚动定位到命中行 + 选中整行
+    conn.monaco.revealLineNearTop(hit.line);
+    conn.monaco.setPosition({ lineNumber: hit.line, column: 1 });
+    const lineLen = (conn.monaco.getModel().getLineContent(hit.line) || '').length;
+    try { conn.monaco.setSelection({ startLineNumber: hit.line, startColumn: 1, endLineNumber: hit.line, endColumn: lineLen + 1 }); } catch(_) {}
+    conn.monaco.focus();
+  } else if (conn.ta) {
+    // textarea：选中该行并滚到可见。value 定位用 lineStart/End
+    const lines = conn.ta.value.split('\n');
+    let pos = 0;
+    for (let i = 0; i < hit.line - 1; i++) pos += lines[i].length + 1;
+    conn.ta.focus();
+    conn.ta.setSelectionRange(pos, pos + (lines[hit.line - 1] || '').length);
+    // 滚动到选中行：textarea scrollTop 按行高估算
+    const lineH = parseFloat(getComputedStyle(conn.ta).lineHeight) || 20;
+    conn.ta.scrollTop = Math.max(0, (hit.line - 5) * lineH);
+  } else if (conn.editor) {
+    // .note：滚到对应块（块序 = 行号）
+    const blocks = conn.holder.querySelectorAll('.ce-block');
+    const el = blocks[hit.line - 1];
+    if (el) conn.wrap.querySelector('.ed-scroll').scrollTo({ top: el.offsetTop - 40, behavior: 'smooth' });
+  }
+}
+
+// ============================================================
+// .md 实时预览（markdown-it，GitHub 20k+ star 解析器）
+// 左源码右预览分栏：ed-main 内预置 .ed-md-preview 列，编辑时同步渲染。
+// ============================================================
+let _mdIt = null;   // markdown-it 实例单例（延迟建）
+function _mdInstance() {
+  if (_mdIt) return _mdIt;
+  // markdown-it.min.js（vendor，index.html 已引）暴露 window.markdownit
+  _mdIt = window.markdownit ? window.markdownit({ html: false, linkify: true, typographer: false, breaks: false }) : null;
+  return _mdIt;
+}
+function _mdRenderPreview(conn) {
+  const pv = conn.wrap.querySelector('.ed-md-preview');
+  if (!pv) return;
+  const md = _mdInstance();
+  const src = conn.monaco ? conn.monaco.getValue() : (conn.ta ? conn.ta.value : '');
+  if (!md) { pv.innerHTML = '<div class="md-preview-err">markdown-it 未加载（vendor/markdown-it 缺失）</div>'; return; }
+  pv.innerHTML = md.render(src || '');
+  // 锚点链接安全：内部相对链接禁跳（工具内无路由），只留外链新开
+  pv.querySelectorAll('a[href]').forEach(a => {
+    const href = a.getAttribute('href') || '';
+    if (!/^https?:/i.test(href)) { a.addEventListener('click', e => e.preventDefault()); a.title = '工具内不支持跳转内部链接'; }
+  });
+}
+
+
+// .log 特殊：小文件（<20MB）也进编辑器可编辑；超限后端报错自动回落只读查看器。
+// ---- 拖放文件分发：文本类后缀 → 编辑器（可编辑）；其余 → 日志查看器（只读）----
+const _DROP_TEXT_EXT = new Set(['.txt','.note','.md','.json','.csv','.ini','.cfg','.conf','.yaml','.yml',
+  '.c','.h','.cpp','.hpp','.py','.bat','.cmd','.sh','.ps1','.js','.ts','.html','.css','.xml','.sql',
+  '.dts','.dtsi','.mak','.mk','.s','.lds','.te','.fc','.log']);
+async function openDroppedFile(path) {
+  const name = path.split(/[\/]/).pop().toLowerCase();
+  const dot = name.lastIndexOf('.');
+  const ext = dot > 0 ? name.slice(dot) : name;
+  if (_DROP_TEXT_EXT.has(ext) || name === 'makefile' || name === 'readme') {
+    try {
+      const r = await fetch('/api/ed/open?path=' + encodeURIComponent(path));
+      const j = await r.json();
+      if (j.ok) {
+        if (typeof _recentAdd === 'function') _recentAdd({type:'file', key:'file:'+j.name, label:j.name, data:{kind:'edit', name:j.name, path:path, extPath: path}});
+        buildEditorTab(j.name, j.text, path);
+        return;
+      }
+      // .log 超限/异常 → 回落只读查看器；其他文本报错
+      if (ext !== '.log') { showBanner(j.err || '打开失败', 4000, true); return; }
+    } catch(e) { if (ext !== '.log') { showBanner('打开失败: ' + e, 4000, true); return; } }
+  }
+  buildLogViewer(path);   // .log 超限/未知类型：只读日志查看器（G 级虚拟列表）
 }

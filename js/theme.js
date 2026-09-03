@@ -58,6 +58,9 @@ function applyTheme(id, persist) {
     const c = connections[pid];
     if (c && c.term) { try { c.term.options.theme = theme; } catch(_) {} }
   }
+  // Monaco 编辑器同步换深浅主题（未加载时静默，monaco-bridge 自行跳过）
+  if (typeof monacoSyncTheme === 'function') monacoSyncTheme();
+  // MD 预览面同步换肤（markdown-it 渲染走 CSS 变量，无需处理；此钩子留扩展位）
 }
 
 (async function initTheme() {

@@ -87,6 +87,13 @@ function syncOpenLogs() {
 function buildLogViewer(path) {
   const name = path.split(/[\\\/]/).pop();
   const portId = 'log:' + name + ':' + Date.now();
+  // 记入最近打开（文件类型，快捷重开走日志查看器；key 用文件名归一——
+  // 日志库打开传 name、其他入口可能传完整路径，同文件只记一条。
+  // 带 extPath：外部路径时「最近」重开可智能分发到编辑器）
+  if (typeof _recentAdd === 'function') {
+    const isExt = /^[a-zA-Z]:[\\/]|\\\\/.test(path);
+    _recentAdd({type:'file', key:'file:'+name, label:name, data:{kind:'log', name:name, path:path, extPath: isExt ? path : ''}});
+  }
   // 若已打开同名日志，切过去
   for (const pid in connections) {
     if (connections[pid].meta && connections[pid].meta.kind === 'log' && connections[pid].meta.path === path) {

@@ -39,13 +39,21 @@
 <div class="main">
   <!-- 左侧串口列表 -->
   <div class="sidebar">
-    <div class="sidebar-head">
-      <span>打开</span>
-      <span class="count" id="portCount">0</span>
+    <!-- 侧栏双 sheet：打开（活动连接/文件） / 最近（快捷重开，按类型分组） -->
+    <div class="sidebar-sheets">
+      <div class="sidebar-sheet-tab active" data-sheet="open">打开 <span class="count" id="portCount">0</span></div>
+      <div class="sidebar-sheet-tab" data-sheet="recent">最近</div>
     </div>
-    <div class="port-list" id="portList">
-      <div class="empty-state" style="padding:30px 10px;">
-        <div class="desc">点击「新建连接」或「新建文件」添加内容</div>
+    <div class="sidebar-sheet-pane active" data-sheet="open">
+      <div class="port-list" id="portList">
+        <div class="empty-state" style="padding:30px 10px;">
+          <div class="desc">点击「新建连接」或「新建文件」添加内容</div>
+        </div>
+      </div>
+    </div>
+    <div class="sidebar-sheet-pane" data-sheet="recent">
+      <div class="recent-list" id="recentList">
+        <div class="recent-empty">暂无记录<br>连接/打开文件后自动记录</div>
       </div>
     </div>
     <!-- 侧边栏底部 TFTP 面板（高度可拖拽调节）：设备与 PC 互传文件 -->
@@ -84,6 +92,8 @@
 
   <!-- 右侧工具面板 -->
   <div class="ai-panel" id="aiPanel">
+    <!-- 折叠把手：折叠态唯一可见元素，长条无框，仅一个向左箭头（点它展开） -->
+    <button class="ai-rail-handle" id="aiRailHandle" title="展开工具面板">‹</button>
     <div class="ai-head">
       <div class="ai-icon">✦</div>
       <div class="ai-head-detail">
@@ -185,30 +195,30 @@
         <button class="conn-type-btn" data-type="ssh">SSH</button>
       </div>
       <!-- 串口字段 -->
-      <div id="connSerialFields">
+      <div id="connSerialFields" style="flex-direction:column;gap:18px">
         <div>
           <label>串口端口</label>
-          <select id="connPort" style="margin-top:6px;"></select>
+          <select id="connPort" style="margin-top:8px;"></select>
         </div>
         <div>
           <label>波特率</label>
-          <select id="connBaud" style="margin-top:6px;"></select>
+          <select id="connBaud" style="margin-top:8px;"></select>
         </div>
       </div>
-      <!-- SSH 字段 -->
-      <div id="connSSHFields" style="display:none">
+      <!-- SSH 字段（内部各子块间留出呼吸空间） -->
+      <div id="connSSHFields" style="display:none;flex-direction:column;gap:18px">
         <div>
           <label>主机</label>
-          <input type="text" id="connHost" placeholder="如 10.17.97.239" autocomplete="off" style="margin-top:6px;">
+          <input type="text" id="connHost" placeholder="如 10.17.97.239" autocomplete="off" style="margin-top:8px;">
         </div>
         <div style="display:flex;gap:10px;">
           <div style="flex:1">
             <label>端口</label>
-            <input type="number" id="connSshPort" value="22" min="1" max="65535" style="margin-top:6px;">
+            <input type="number" id="connSshPort" value="22" min="1" max="65535" style="margin-top:8px;">
           </div>
           <div style="flex:2">
             <label>用户名</label>
-            <input type="text" id="connUser" placeholder="如 admin" value="admin" autocomplete="off" style="margin-top:6px;">
+            <input type="text" id="connUser" placeholder="如 admin" value="admin" autocomplete="off" style="margin-top:8px;">
           </div>
         </div>
         <div class="conn-auth-switch">
@@ -216,14 +226,15 @@
           <button class="conn-auth-btn" data-auth="key">密钥文件</button>
         </div>
         <div id="connAuthPassword">
-          <label>密码</label>
-          <input type="password" id="connPass" placeholder="密码" autocomplete="off" style="margin-top:6px;">
+          <label>密码 <span style="color:var(--muted);font-weight:normal;">（可留空，连上后若设备提示再输）</span></label>
+          <input type="password" id="connPass" placeholder="密码" autocomplete="off" style="margin-top:8px;">
         </div>
         <div id="connAuthKey" style="display:none">
           <label>密钥文件路径</label>
-          <input type="text" id="connKeyPath" placeholder="如 C:\\Users\\you\\.ssh\\id_rsa" autocomplete="off" style="margin-top:6px;">
+          <input type="text" id="connKeyPath" placeholder="如 C:\\Users\\you\\.ssh\\id_rsa" autocomplete="off" style="margin-top:8px;">
         </div>
       </div>
+      <div class="conn-err" id="connErr"></div>
       <div class="actions">
         <button class="btn ghost" id="connCancel">取消</button>
         <button class="btn primary" id="connConfirm">连接</button>
@@ -242,11 +253,11 @@
     <div class="conn-form">
       <div>
         <label>备注名（可选）</label>
-        <input type="text" id="cmdEditName" placeholder="留空则只显示命令" autocomplete="off" style="margin-top:6px;">
+        <input type="text" id="cmdEditName" placeholder="留空则只显示命令" autocomplete="off" style="margin-top:8px;">
       </div>
       <div>
         <label>命令内容</label>
-        <input type="text" id="cmdEditCmd" placeholder="命令内容…" autocomplete="off" style="margin-top:6px;">
+        <input type="text" id="cmdEditCmd" placeholder="命令内容…" autocomplete="off" style="margin-top:8px;">
       </div>
       <div class="actions">
         <button class="btn ghost" id="cmdEditCancel">取消</button>
@@ -325,6 +336,8 @@
 <script src="vendor/editorjs-delimiter.umd.js"></script>
 <script src="vendor/editorjs-inline-code.umd.js"></script>
 <script src="vendor/editorjs-marker.umd.js"></script>
+<script src="vendor/markdown-it/dist/markdown-it.min.js"></script>
+<script src="js/monaco-bridge.js"></script>
 <script src="js/util.js"></script>
 <script src="js/theme.js"></script>
 <script src="js/terminal-core.js"></script>

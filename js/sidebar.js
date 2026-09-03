@@ -25,6 +25,19 @@ async function loadPorts() {
   } catch(e) {}
 }
 
+// 返回后端 j（{ok, err}）；失败不再右下角弹泡——由连接弹窗内联显示，
+// 成功才由调用方关弹窗。异常统一转 {ok:false, err}。
+async function _recentAdd(item) {
+  // 记录最近打开（失败静默——列表是辅助功能，不能阻塞连接流程）。
+  // 后端响应带去重后的最新列表，直接同步进 _recentList 再渲染——
+  // 之前渲染的是本地旧数组，导致"打开后不显示、重启才显示"。
+  try {
+    const r = await fetch('/api/recent', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(item)});
+    const j = await r.json();
+    if (j.ok && Array.isArray(j.recent)) _recentList = j.recent;
+    renderRecentList();
+  } catch(e) {}
+}
 async function connectPort(port, baud) {
   try {
     const r = await fetch('/api/connect', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({kind:'serial', port, baud})});
@@ -36,10 +49,10 @@ async function connectPort(port, baud) {
       switchTab(port);
       refreshSidebar();
       refreshGlobalStatus();
-    } else {
-      showBanner('连接失败：' + (j.err || '未知错误'), 8000, true);
+      _recentAdd({type:'serial', key:'serial:'+port, label:`${port} @${baud}`, data:{port, baud}});
     }
-  } catch(e) { showBanner('连接请求失败：' + e, 8000, true); }
+    return j;
+  } catch(e) { return {ok: false, err: '连接请求失败：' + e}; }
 }
 
 async function connectSSH(host, port, username, password, key_path) {
@@ -54,10 +67,12 @@ async function connectSSH(host, port, username, password, key_path) {
       switchTab(port_id);
       refreshSidebar();
       refreshGlobalStatus();
-    } else {
-      showBanner('SSH 连接失败：' + (j.err || '未知错误'), 8000, true);
+      // 密码随记录保存（本机工具、用户明确要求保存账号密码），快捷重开免重输
+      _recentAdd({type:'ssh', key:`ssh:${host}:${port}:${username}`, label:`${username}@${host}:${port}`,
+                  data:{host, port, username, password: password || '', key_path: key_path || ''}});
     }
-  } catch(e) { showBanner('SSH 连接请求失败：' + e, 8000, true); }
+    return j;
+  } catch(e) { return {ok: false, err: 'SSH 连接请求失败：' + e}; }
 }
 
 function closeConnection(portId) {
@@ -224,16 +239,21 @@ document.addEventListener('click', (e) => {
 // ============================================================
 $('btnNewConn').onclick = async () => {
   await loadPorts();
+  // 清掉上次连接的内联错误
+  const errEl = $('connErr'); if (errEl) { errEl.classList.remove('show'); errEl.textContent = ''; }
   // 每次打开重置为默认（串口 + 密码认证），避免残留上次的 SSH/密钥选择
   _connType = 'serial'; _sshAuth = 'password';
   document.querySelectorAll('.conn-type-btn').forEach(b => b.classList.toggle('active', b.dataset.type === 'serial'));
   document.querySelectorAll('.conn-auth-btn').forEach(b => b.classList.toggle('active', b.dataset.auth === 'password'));
-  $('connSerialFields').style.display = ''; $('connSSHFields').style.display = 'none';
+  // 注意：显示时必须设 'flex'（而非 ''）——两个字段块是 flex 列布局（gap 撑内部间距），
+  // 设 '' 会回退成默认 block，内部 gap 失效、间距又挤回老样子
+  $('connSerialFields').style.display = 'flex'; $('connSSHFields').style.display = 'none';
   $('connAuthPassword').style.display = ''; $('connAuthKey').style.display = 'none';
   $('connModal').classList.add('show');
 };
 $('connClose').onclick = () => $('connModal').classList.remove('show');
 $('connCancel').onclick = () => $('connModal').classList.remove('show');
+// 密码显隐：用 WebView2 对 type=password 原生的眼睛按钮（框内右缘），不自加
 
 // 连接类型切换（串口/SSH）
 let _connType = 'serial';
@@ -241,8 +261,8 @@ document.querySelectorAll('.conn-type-btn').forEach(btn => {
   btn.onclick = () => {
     _connType = btn.dataset.type;
     document.querySelectorAll('.conn-type-btn').forEach(b => b.classList.toggle('active', b === btn));
-    $('connSerialFields').style.display = _connType === 'serial' ? '' : 'none';
-    $('connSSHFields').style.display = _connType === 'ssh' ? '' : 'none';
+    $('connSerialFields').style.display = _connType === 'serial' ? 'flex' : 'none';
+    $('connSSHFields').style.display = _connType === 'ssh' ? 'flex' : 'none';
   };
 });
 // SSH 认证方式切换（密码/密钥）
@@ -256,22 +276,36 @@ document.querySelectorAll('.conn-auth-btn').forEach(btn => {
   };
 });
 
-$('connConfirm').onclick = () => {
-  if (_connType === 'ssh') {
-    const host = $('connHost').value.trim();
-    const port = $('connSshPort').value.trim() || '22';
-    const username = $('connUser').value.trim();
-    if (!host || !username) { showBanner('请填主机和用户名', 3000, true); return; }
-    const password = _sshAuth === 'password' ? $('connPass').value : '';
-    const key_path = _sshAuth === 'key' ? $('connKeyPath').value.trim() : '';
-    if (!password && !key_path) { showBanner('请填密码或密钥路径', 3000, true); return; }
-    $('connModal').classList.remove('show');
-    connectSSH(host, port, username, password, key_path);
-  } else {
-    const port = $('connPort').value, baud = $('connBaud').value;
-    if (!port) { showBanner('请选择串口', 3000, true); return; }
-    $('connModal').classList.remove('show');
-    connectPort(port, baud);
+// 连接流程全程在弹窗内进行：确认→按钮"连接中…"禁用→失败红字显示在弹窗里
+// （SSH 超时要等 ~10s，之前先关弹窗再右下角弹泡，中间像卡死无响应）；成功才关弹窗。
+$('connConfirm').onclick = async () => {
+  const errEl = $('connErr');
+  errEl.classList.remove('show'); errEl.textContent = '';
+  let j = null;
+  const btn = $('connConfirm'), oldText = btn.textContent;
+  btn.disabled = true;
+  try {
+    if (_connType === 'ssh') {
+      const host = $('connHost').value.trim();
+      const port = $('connSshPort').value.trim() || '22';
+      const username = $('connUser').value.trim();
+      if (!host || !username) { errEl.textContent = '请填主机和用户名'; errEl.classList.add('show'); return; }
+      const password = _sshAuth === 'password' ? $('connPass').value : '';
+      const key_path = _sshAuth === 'key' ? $('connKeyPath').value.trim() : '';
+      if (_sshAuth === 'key' && !key_path) { errEl.textContent = '请填写密钥路径'; errEl.classList.add('show'); return; }
+      // 密码可为空（部分设备空密码可进），后端自动处理
+      btn.textContent = '连接中…';
+      j = await connectSSH(host, port, username, password, key_path);
+    } else {
+      const port = $('connPort').value, baud = $('connBaud').value;
+      if (!port) { errEl.textContent = '请选择串口'; errEl.classList.add('show'); return; }
+      btn.textContent = '连接中…';
+      j = await connectPort(port, baud);
+    }
+    if (j && j.ok) $('connModal').classList.remove('show');
+    else { errEl.textContent = '❌ ' + ((j && j.err) || '未知错误'); errEl.classList.add('show'); }
+  } finally {
+    btn.disabled = false; btn.textContent = oldText;
   }
 };
 $('btnRefreshPorts').onclick = async () => { await loadPorts(); showBanner('端口列表已刷新'); };
@@ -281,6 +315,103 @@ $('btnRefreshPorts').onclick = async () => { await loadPorts(); showBanner('端�
 // tab 栏保持整洁——按钮只作用于所属连接，不再作用于全局活动 tab。
 // 关于按钮已改为「换肤」（js/theme.js 接管），版本号常驻标题栏「PRO v0.5.0」
 // 顶栏「打开日志目录」已移除（日志库弹窗内有同功能入口 btnLogDirOpen）
+
+// ============================================================
+// 最近打开（SSH/串口/文件 快捷重开，后端 config.json 持久化 + 自动去重）
+// ============================================================
+const RECENT_ICON = { ssh: '🔗', serial: '🔌', file: '📄' };  // 类型区分图标
+const RECENT_TYPE_NAME = { ssh: 'SSH', serial: '串口', file: '文件' };
+let _recentList = [];
+
+async function loadRecentList() {
+  try {
+    const r = await fetch('/api/recent');
+    const j = await r.json();
+    if (j.ok) { _recentList = j.recent || []; renderRecentList(); }
+  } catch(e) {}
+}
+
+function renderRecentList() {
+  const el = $('recentList');
+  if (!el) return;
+  if (!_recentList.length) {
+    el.innerHTML = '<div class="recent-empty">暂无记录<br>连接/打开文件后自动记录</div>';
+    return;
+  }
+  // 按类型分组（串口/文件/SSH），组内保持原新→旧顺序
+  const groups = [
+    { type: 'serial', name: '串口' },
+    { type: 'file',   name: '文件' },
+    { type: 'ssh',    name: 'SSH' },
+  ];
+  el.innerHTML = '';
+  groups.forEach(g => {
+    const items = _recentList.map((it, i) => ({it, i})).filter(x => x.it.type === g.type);
+    if (!items.length) return;
+    const gh = document.createElement('div');
+    gh.className = 'recent-group-head t-' + g.type;
+    gh.innerHTML = `${RECENT_ICON[g.type] || '·'} ${g.name} <span class="g-line"></span>`;
+    el.appendChild(gh);
+    items.forEach(({it, i}) => el.appendChild(_recentItemEl(it, i)));
+  });
+}
+
+function _recentItemEl(it, i) {
+  const d = document.createElement('div');
+  d.className = 'recent-item t-' + it.type;
+  d.title = `${RECENT_TYPE_NAME[it.type]} · ${it.label}（点击快速打开）`;
+  d.innerHTML = `
+    <span class="ric">${RECENT_ICON[it.type] || '·'}</span>
+    <div class="info">
+      <div class="name">${esc(it.label)}</div>
+    </div>
+    <div class="actions"><button data-del="${i}" title="从列表移除">✕</button></div>
+  `;
+  d.onclick = (e) => {
+    if (e.target.dataset.del !== undefined) { e.stopPropagation(); removeRecentItem(i); return; }
+    openRecentItem(it);
+  };
+  return d;
+}
+
+async function removeRecentItem(i) {
+  const kept = _recentList.filter((_, idx) => idx !== i);
+  try {
+    await fetch('/api/recent', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({replace: kept})});
+    _recentList = kept;
+    renderRecentList();
+  } catch(e) { showBanner('移除失败', 3000, true); }
+}
+
+function openRecentItem(it) {
+  if (it.type === 'serial') {
+    const d = it.data || {};
+    connectPort(d.port, d.baud || 115200);
+  } else if (it.type === 'ssh') {
+    const d = it.data || {};
+    connectSSH(d.host, d.port || '22', d.username, d.password || '', d.key_path || '');
+  } else if (it.type === 'file') {
+    // 文件分发：外部文件（extPath 绝对路径，含拖入）统一走 openDroppedFile 智能分发
+    // （文本类含小 .log → 编辑器，超大 .log/未知 → 查看器）；
+    // 站内文件（files/ 内 .note/.txt 等，只有 name 无绝对路径）必须走 openEditorFile(name=)——
+    // 之前一律 openDroppedFile 按绝对路径请求，后端拒收相对名 →「不支持的文件类型或文件不存在」。
+    const d = it.data || {};
+    if (d.extPath && typeof openDroppedFile === 'function') openDroppedFile(d.extPath);
+    else if (d.kind === 'log') buildLogViewer(d.name || d.path);
+    else if (typeof openEditorFile === 'function') openEditorFile(d.name || d.path);
+  }
+}
+
+// 侧栏双 sheet 切换（打开 / 最近）
+document.querySelectorAll('.sidebar-sheet-tab').forEach(tab => {
+  tab.onclick = () => {
+    document.querySelectorAll('.sidebar-sheet-tab').forEach(t => t.classList.toggle('active', t === tab));
+    document.querySelectorAll('.sidebar-sheet-pane').forEach(p =>
+      p.classList.toggle('active', p.dataset.sheet === tab.dataset.sheet));
+  };
+});
+
 
 // ============================================================
 // 日志库
