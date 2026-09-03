@@ -167,9 +167,11 @@
   .log-viewer { display: flex; flex-direction: column; width: 100%; height: 100%; position: relative; }
   .log-viewer-top { flex: 1; display: flex; min-height: 0; }
   .log-viewer-top .vlist { flex: 1; }
-  .log-search-splitter { height: 5px; background: var(--border); cursor: row-resize; flex-shrink: 0; display: none; }
+  /* 分栏与主阅读面拉开一档：分栏壳体用中间调（比主视图底深一档、比窗体壳浅），
+     否则上下两块同色混成一片，看不出分栏边界 */
+  .log-search-splitter { height: 5px; background: var(--reader-border); cursor: row-resize; flex-shrink: 0; display: none; }
   .log-search-splitter:hover { background: var(--accent); }
-  .log-search-pane { display: none; flex-direction: column; height: 35%; min-height: 80px; max-height: 70%; background: var(--bg-card); border-top: 1px solid var(--border); flex-shrink: 0; }
+  .log-search-pane { display: none; flex-direction: column; height: 35%; min-height: 80px; max-height: 70%; background: var(--reader-bg-card); border-top: 1px solid var(--reader-border); flex-shrink: 0; }
   .log-search-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
   .log-search-head input { flex: 1; background: var(--bg-input); border: 1px solid var(--border); color: var(--fg); border-radius: 4px; padding: 4px 8px; font-size: 12px; }
   /* 排除框：定宽（flex:1 会让关键字框和排除框平分，主搜索框优先大） */
@@ -178,6 +180,8 @@
   .log-search-count { color: var(--muted); font-size: 11px; min-width: 60px; }
   .log-search-results { flex: 1; overflow-y: auto; position: relative; background: var(--reader-bg); min-height: 40px; }
   .log-search-results .hline { cursor: pointer; }
+  /* 交替行底色：与主视图同底时相邻行挤成一片，隔行用卡片色微区分 */
+  .log-search-results .hline:nth-child(odd) { background: var(--reader-bg-card); }
   .log-search-results .hline.active { background: #2a6a8f; color: #f4f2ec; }
   .log-search-results .hline.active .hrow, .log-search-results .hline.active .htag { color: #f4f2ec; }
   /* 搜索命中关键字染色（主视图 + 结果列表共用） */
@@ -590,7 +594,8 @@
   .term-search-head input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); outline: none; }
   .term-search-results { flex: 1; overflow-y: auto; position: relative; background: var(--bg-input); min-height: 40px; }
   .term-search-results .hline { cursor: pointer; position: static; height: auto; line-height: 1.5; padding: 3px 10px; white-space: pre-wrap; word-break: break-all; border-left: 2px solid transparent; transition: background 0.12s, border-color 0.12s; }
-  .term-search-results .hline:hover { background: var(--bg-card); border-left-color: var(--accent); }
+  .term-search-results .hline:nth-child(odd) { background: var(--bg-card); }  /* 交替行：与底色微区分 */
+  .term-search-results .hline:hover { background: var(--bg-panel); border-left-color: var(--accent); }
   .term-search-results .hline.active { background: rgba(0,212,255,0.12); border-left-color: var(--accent); color: var(--accent); }
 
   .line { padding: 0; }
