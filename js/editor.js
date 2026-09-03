@@ -182,6 +182,7 @@ async function _edInitContent(conn, content) {
         onReady: () => { _edUpdateInfo(conn); },
       });
       conn.savedData = data;
+      _edBindLightbox(conn);   // 图片双击放大灯箱
     } catch(e) {
       // Editor.js 加载失败（vendor 缺失等）→ 降级 textarea 纯文本，保可用
       showBanner('块编辑器加载失败，已降级纯文本：' + e, 6000, true);
@@ -229,6 +230,36 @@ function _edMarkTab(conn) {
   if (item) item.textContent = conn.meta.label;
 }
 
+// ---- 图片双击放大灯箱：点击/Esc 关闭，滚轮缩放 ----
+// 事件委托挂在 conn.holder 上（块增删不丢监听）；灯箱单例挂 body。
+function _edBindLightbox(conn) {
+  conn.holder.addEventListener('dblclick', e => {
+    const img = e.target.closest('.image-tool__image-picture');
+    if (!img) return;
+    e.preventDefault();
+    _edShowLightbox(img.src);
+  });
+}
+function _edShowLightbox(src) {
+  let lb = $('edLightbox');
+  if (!lb) {
+    lb = document.createElement('div');
+    lb.className = 'ed-lightbox';
+    lb.id = 'edLightbox';
+    lb.innerHTML = '<img alt="">';
+    lb.onclick = () => _edHideLightbox();
+    document.body.appendChild(lb);
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') _edHideLightbox();
+    });
+  }
+  lb.querySelector('img').src = src;
+  lb.style.display = 'flex';
+}
+function _edHideLightbox() {
+  const lb = $('edLightbox');
+  if (lb) lb.style.display = 'none';
+}
 // ---- 状态栏：块数/字符数 + 保存态 ----
 function _edUpdateInfo(conn) {
   conn.infoEl.textContent = _edStatText(conn) + _edStateText(conn);
