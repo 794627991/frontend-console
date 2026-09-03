@@ -315,15 +315,7 @@ $('btnTs').onclick = () => {
 $('btnCtrlD').onclick = () => { if (activePortId) termSendRaw(activePortId, [4]); };
 $('btnJumpBottomMain').onclick = () => { if (activePortId) jumpToBottom(activePortId); };
 // 关于按钮已改为「换肤」（js/theme.js 接管），版本号常驻标题栏「PRO v0.5.0」
-// 打开日志目录（顶栏快捷入口）
-$('btnOpenLogDir').onclick = async () => {
-  try {
-    const r = await fetch('/api/log_dir/open', {method:'POST', headers:{'Content-Type':'application/json'}, body: '{}'});
-    const j = await r.json();
-    if (j.ok) showBanner('已在资源管理器打开日志目录');
-    else showBanner('打开失败：' + (j.err || ''), 6000, true);
-  } catch(e) { showBanner('打开失败：' + e, 6000, true); }
-};
+// 顶栏「打开日志目录」已移除（日志库弹窗内有同功能入口 btnLogDirOpen）
 
 // ============================================================
 // 日志库
