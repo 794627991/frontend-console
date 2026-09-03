@@ -284,6 +284,18 @@ def api_logs():
     else:                     files.sort(key=lambda x: x["mtime"], reverse=True)  # time_desc 默认
     return jsonify({"logs": files, "dir": LOG_DIR})
 
+@app.route("/api/theme", methods=["GET", "POST"])
+def api_theme():
+    """主题持久化。localStorage 按 origin（127.0.0.1:端口）隔离，而 Flask 每次
+    启动端口随机 → 换肤记忆永远读不到。走 config.json 跨端口稳定。"""
+    if request.method == "GET":
+        return jsonify({"ok": True, "theme": _load_config().get("theme", "deepblue")})
+    data = request.get_json(force=True) or {}
+    theme = (data.get("theme") or "").strip() or "deepblue"
+    _save_config({**_load_config(), "theme": theme})
+    return jsonify({"ok": True, "theme": theme})
+
+
 @app.route("/api/log_dir", methods=["GET", "POST"])
 def api_log_dir():
     """GET 返回当前日志目录；POST 设置新目录（持久化，立即生效，日志库从此读新目录）。"""

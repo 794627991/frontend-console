@@ -1,6 +1,7 @@
 // ============================================================
 // 换肤：data-theme 挂 <html>，覆盖 CSS 调色板变量实现整窗换色。
-// 选择存 localStorage，下次启动自动应用。
+// 持久化走后端 /api/theme（config.json）——localStorage 按 origin
+// （127.0.0.1:端口）隔离，Flask 每次启动端口随机，永远读不到旧值。
 // ============================================================
 const THEMES = [
   // ---- 暗色系 ----
@@ -20,16 +21,13 @@ const THEMES = [
 // 亮色主题表：终端 xterm 换浅底深字 16 色、UI 深字按钮等逻辑共用
 const LIGHT_THEMES = ['paper', 'dawn', 'mint', 'apricot'];
 
-function applyTheme(id) {
-  if (!THEMES.some(t => t.id === id)) id = 'deepblue';
-  document.documentElement.setAttribute('data-theme', id);
-  try { localStorage.setItem('console_theme', id); } catch(_) {}
-  // 已打开的终端实时换色：按新主题变量重建 xterm 16 色（与 buildTerminal 同源逻辑）
+function _termThemeFor(id) {
+  // 按主题变量重建 xterm 16 色（buildTerminal 与 applyTheme 共用）
   const cs = getComputedStyle(document.documentElement);
   const termBg = (cs.getPropertyValue('--term-bg') || '#1a1f2e').trim() || '#1a1f2e';
   const termFg = (cs.getPropertyValue('--term-fg') || '#d7d7d7').trim() || '#d7d7d7';
   const light = LIGHT_THEMES.includes(id);
-  const theme = {
+  return {
     background: termBg, foreground: termFg,
     cursor: light ? '#2a7a9e' : '#528bff', cursorAccent: termBg,
     selectionBackground: 'rgba(82,139,255,0.25)',
@@ -45,22 +43,37 @@ function applyTheme(id) {
           brightYellow: '#e5c07b', brightBlue: '#82b8ff', brightMagenta: '#d19a66',
           brightCyan: '#66cccc', brightWhite: '#ffffff' }),
   };
+}
+
+function applyTheme(id, persist) {
+  if (!THEMES.some(t => t.id === id)) id = 'deepblue';
+  document.documentElement.setAttribute('data-theme', id);
+  // 持久化走后端（跨端口稳定）；persist=false 用于启动读回，不回写
+  if (persist) {
+    try { fetch('/api/theme', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({theme: id})}); } catch(_) {}
+  }
+  // 已打开的终端实时换色
+  const theme = _termThemeFor(id);
   for (const pid in connections) {
     const c = connections[pid];
     if (c && c.term) { try { c.term.options.theme = theme; } catch(_) {} }
   }
 }
 
-(function initTheme() {
+(async function initTheme() {
+  // 启动：先默认（避免无样式闪烁），再从后端读上次主题
   let saved = 'deepblue';
-  try { saved = localStorage.getItem('console_theme') || 'deepblue'; } catch(_) {}
-  applyTheme(saved);
+  try {
+    const r = await fetch('/api/theme');
+    const j = await r.json();
+    if (j.ok && j.theme) saved = j.theme;
+  } catch(_) {}
+  applyTheme(saved, false);
 
   const menu = $('themeMenu');
   function renderMenu() {
     const cur = document.documentElement.getAttribute('data-theme') || 'deepblue';
     menu.innerHTML = '';
-    // 按暗色/亮色分组渲染
     for (const [g, label] of [['dark', '暗色系'], ['light', '亮色系']]) {
       const head = document.createElement('div');
       head.className = 'theme-group-head';
@@ -72,7 +85,7 @@ function applyTheme(id) {
         item.innerHTML = `<div class="theme-swatch" data-theme="${t.id}"></div>
           <div class="theme-info"><div class="name">${t.name}</div><div class="desc">${t.desc}</div></div>
           ${t.id === cur ? '<span class="theme-check">✓</span>' : ''}`;
-        item.onclick = () => { applyTheme(t.id); renderMenu(); showBanner('已切换主题：' + t.name); };
+        item.onclick = () => { applyTheme(t.id, true); renderMenu(); showBanner('已切换主题：' + t.name); };
         menu.appendChild(item);
       });
     }
