@@ -175,7 +175,13 @@ async function _edInitContent(conn, content) {
             converter: { 'To paragraph': '转段落', 'To heading': '转标题', 'Convert to': '转换为' },
           },
           ui: {
-            'Add a link': '添加链接',
+            // 块左侧工具条 hover 提示（默认 "Click to tune"/"or drag to move"/"Click to delete"）
+            blockTunes: {
+              toggler: { 'Click to tune': '点击调整（Ctrl+/）', 'or drag to move': '或拖动移动' },
+              'delete': { 'Click to delete': '点击删除' },
+            },
+            toolbar: { toolbox: { 'Add': '添加块（/ 或 Ctrl+/）' } },
+            popover: { 'Filter': '筛选', 'Nothing found': '未找到', 'Convert to': '转换为' },
           },
         },
         onChange: () => { _edMarkDirty(conn); },

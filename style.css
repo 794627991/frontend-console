@@ -10,9 +10,13 @@
     --fg-bright: #e8f1ff;
     --muted: #5a6b85;
     --accent: #00d4ff;
-    /* 笔记编辑器专用：比终端浅一档的护眼底色（note 是阅读型内容，不宜用终端深底） */
-    --note-bg: #161d2e;
-    --note-border: #2a3550;
+    /* 笔记编辑器专用：浅色护眼底（note 是阅读型内容——纸感暖白，不反光不刺眼；
+       深色窗体里只这一块变浅，终端等其他区域不受影响） */
+    --note-bg: #f2efe9;
+    --note-bg-card: #e8e4db;
+    --note-border: #d5cfc2;
+    --note-fg: #2f3437;
+    --note-muted: #8a8577;
     --accent-2: #0099cc;
     --accent-glow: rgba(0, 212, 255, 0.4);
     --neon-green: #00ff9d;
@@ -161,38 +165,37 @@
     background: var(--bg); color: var(--fg); font-family: var(--font-mono); font-size: 13px;
     line-height: 1.5; padding: 10px 14px; white-space: pre; overflow: auto; tab-size: 4; }
   .editor-area:focus { outline: none; }
-  /* Editor.js 主题适配（默认亮色 → 工具深色变量） */
-  .codex-editor { color: var(--fg); }
+  /* Editor.js 主题适配：纸感浅底（--note-*）+ 深色字。Editor.js 默认就是亮色系，
+     大部分原生样式直接可用，只覆盖必要项 */
+  .codex-editor { color: var(--note-fg); }
   .codex-editor__redactor { padding-bottom: 40px !important; }
-  .ce-block__content { color: var(--fg); }
-  .ce-toolbar__plus, .ce-toolbar__settings-btn { color: var(--muted); }
-  .ce-toolbar__plus:hover, .ce-toolbar__settings-btn:hover { color: var(--accent); }
-  .ce-inline-toolbar, .ce-toolbar__settings, .ce-conversion-toolbar, .ce-popover,
-  .cdx-button, .ce-toolbar .ce-toolbox__button { background: var(--bg-card) !important; }
-  .ce-inline-toolbar, .ce-conversion-toolbar, .ce-popover { border-color: var(--border) !important; }
-  .ce-inline-tool-input { background: var(--bg-input) !important; color: var(--fg) !important; border-color: var(--border) !important; }
-  .ce-popover__item-icon { background: var(--bg-input) !important; }
-  .ce-popover__item:hover, .ce-conversion-tool:hover, .ce-inline-tool:hover { background: var(--bg-panel) !important; }
-  .codex-editor ::selection { background: rgba(0,212,255,0.25); }
-  .codex-editor .cdx-block, .codex-editor [contenteditable] { color: var(--fg); }
-  .codex-editor__placeholder { color: var(--muted) !important; opacity: 0.6; }
-  /* 表格块（默认亮色 CSS 变量 → 深色覆盖） */
-  .tc-wrap { --color-background: transparent !important; --color-text-secondary: var(--muted) !important; --color-border: var(--border) !important; }
-  .tc-cell { color: var(--fg) !important; }
-  .tc-toolbar__tune-text, .tc-toolbar__tune { background: var(--bg-card) !important; }
+  .ce-block__content { color: var(--note-fg); }
+  .codex-editor .cdx-block, .codex-editor [contenteditable] { color: var(--note-fg); }
+  .codex-editor__placeholder { color: var(--note-muted) !important; }
+  .codex-editor ::selection { background: rgba(0,140,200,0.18); }
+  /* 块工具条按钮（悬浮在浅底上，用中性灰） */
+  .ce-toolbar__plus, .ce-toolbar__settings-btn { color: var(--note-muted); background: transparent; }
+  .ce-toolbar__plus:hover, .ce-toolbar__settings-btn:hover { color: #388ae5; }
+  /* 弹层（块菜单/行内工具条）：白色浮层配浅阴影（Editor.js 默认风格，保留即可） */
+  .ce-inline-toolbar, .ce-toolbar__settings, .ce-conversion-toolbar, .ce-popover { box-shadow: 0 4px 18px rgba(0,0,0,0.18); }
+  .ce-popover__item:hover, .ce-conversion-tool:hover, .ce-inline-tool:hover { background: rgba(56,138,229,0.08) !important; }
+  /* 表格块 */
+  .tc-wrap { --color-background: transparent !important; --color-text-secondary: #7b7e89 !important; --color-border: var(--note-border) !important; }
+  .tc-cell { color: var(--note-fg) !important; }
+  .tc-cell--selected, .tc-cell--highlighted { background: rgba(56,138,229,0.12) !important; }
   /* 图片块 */
-  .cdx-block.image-tool__image { background: var(--bg-card); }
+  .cdx-block.image-tool__image { background: var(--note-bg-card); }
   .image-tool--stretched .image-tool__image { max-height: none; }
   /* Editor.js 默认非拉伸图 max-width:60%——缩略太小看不清。改全宽按原图比例显示 */
   .ed-holder .image-tool:not(.image-tool--stretched) .image-tool__image-picture { max-width: 100%; margin: 0; }
-  .ed-holder .image-tool__image { min-height: auto; border-color: var(--border); background: var(--bg-card); }
+  .ed-holder .image-tool__image { min-height: auto; border-color: var(--note-border); background: var(--note-bg-card); }
   /* 双击图片全屏灯箱：放大看原图 */
   .ed-lightbox { position: fixed; inset: 0; z-index: 999; background: rgba(3,6,12,0.88);
     display: flex; align-items: center; justify-content: center; cursor: zoom-out; }
   .ed-lightbox img { max-width: 92vw; max-height: 92vh; border-radius: 4px;
     box-shadow: 0 8px 40px rgba(0,0,0,0.6); }
-  .ce-header { color: var(--fg-bright) !important; }
-  .ce-paragraph { color: var(--fg); }
+  .ce-header { color: var(--note-fg) !important; }
+  .ce-paragraph { color: var(--note-fg); }
   .topbar .divider { width: 1px; height: 24px; background: var(--border); }
   .topbar .conn-area { display: flex; align-items: center; gap: 8px; }
   .topbar select, .topbar input {
