@@ -370,6 +370,12 @@
   .tab .led { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
   .tab.active .led { background: var(--neon-green); box-shadow: 0 0 6px var(--neon-green); }
   .tab .close { opacity: 0.4; font-size: 14px; padding: 0 2px; border-radius: 3px; }
+  /* 编辑器 tab 原地改名输入框：融入 tab 外观，宽度随内容自适应 */
+  .tab-rename-input {
+    background: var(--bg-input); border: 1px solid var(--accent); border-radius: 4px;
+    color: var(--fg); font-size: 12px; font-family: inherit;
+    padding: 1px 4px; outline: none; min-width: 8ch; max-width: 240px;
+  }
   .tab .close:hover { opacity: 1; color: var(--neon-red); }
   .tab-bar-actions { margin-left: auto; display: flex; gap: 5px; padding-right: 8px; padding-bottom: 6px; align-items: center; }
   /* 终端快捷按钮组（暂停/清屏/^C/^D/跳底）—— 紧凑科技风 */

@@ -98,6 +98,8 @@ function buildEditorTab(name, text) {
 
 // ---- 脏标记：tab 标题加 *（Notepad++ 风格）----
 function _edMarkTab(conn) {
+  // 原地改名中：标题 span 已换成输入框，改名结束后由 _edRenameDone 统一刷新
+  if (conn._renaming) return;
   conn.tab.querySelector('.label').textContent = (conn.dirty ? '*' : '') + conn.meta.label;
 }
 
@@ -121,9 +123,9 @@ async function openEditorFile(name) {
   } catch(e) { showBanner('打开失败: ' + e, true); }
 }
 
-// ---- 保存：草稿/未落盘 → 先问名（同另存为）；已落盘 → 覆盖保存 ----
+// ---- 保存：草稿/未落盘 → tab 标题原地改名（定名即保存）；已落盘 → 覆盖保存 ----
 async function edSave(conn) {
-  if (!conn.onDisk) return edSaveAs(conn);
+  if (!conn.onDisk) { edRenamePrompt(conn); return; }
   try {
     const r = await fetch('/api/ed/save', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name: conn.meta.label, text: conn.ta.value})});
     const j = await r.json();
@@ -134,46 +136,72 @@ async function edSave(conn) {
   } catch(e) { showBanner('保存失败: ' + e, true); }
 }
 
-// ---- 另存为：输入新名（后端生成不冲突默认名预填），保存后 tab 改名并标记已落盘 ----
-async function edSaveAs(conn) {
-  let def = conn.meta.label;
+// ---- 另存为：同样走 tab 原地改名（改名确认后即另存为新文件）----
+function edSaveAs(conn) { edRenamePrompt(conn); }
+
+// ---- 改名入口（工具栏按钮 / 双击 tab 标题共用）：标题原地变输入框 ----
+// 无 prompt 弹窗（原生弹窗与工具风格不符）；Enter 确认 / Esc 取消 / 失焦确认。
+// 草稿（未落盘）：改名 = 定名保存；已落盘：改名 = 磁盘文件重命名。
+function edRenamePrompt(conn) {
+  if (!conn || conn._renaming) return;
+  const label = conn.tab.querySelector('.label');
+  conn._renaming = true;
+  const inp = document.createElement('input');
+  inp.type = 'text';
+  inp.className = 'tab-rename-input';
+  // 宽度跟随内容自适应（ch 单位近似等宽字符宽度）
+  const fit = () => { inp.style.width = Math.max(8, inp.value.length + 2) + 'ch'; };
+  inp.value = conn.onDisk ? conn.meta.label : '新建文本.txt';
   if (!conn.onDisk) {
-    try {
-      const r = await fetch('/api/ed/default_name');
-      const j = await r.json();
-      if (j.ok) def = j.name;
-    } catch(e) {}
+    // 草稿：拉后端不冲突默认名预填（避免保存时 409 重名）
+    fetch('/api/ed/default_name').then(r => r.json()).then(j => {
+      if (j.ok && conn._renaming && document.activeElement === inp) inp.value = j.name;
+      fit();
+    }).catch(() => {});
   }
-  const nn = prompt('文件名（保存到 files/ 目录）：', def);
-  if (!nn) return;
-  try {
-    const r = await fetch('/api/ed/save_as', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({new_name: nn.trim(), text: conn.ta.value})});
-    const j = await r.json();
-    if (!j.ok) { showBanner(j.err || '另存为失败', true); return; }
-    conn.meta.label = j.name;
-    conn.savedText = conn.ta.value;
-    conn.onDisk = true;
-    conn.dirty = false; _edMarkTab(conn); _edUpdateInfo(conn);
-    showBanner('已保存 ' + j.name, false, 1500);
-  } catch(e) { showBanner('另存为失败: ' + e, true); }
-}
-
-// ---- 改名入口（工具栏按钮 / 双击 tab 标题共用）----
-// 草稿：改名 = 直接定名保存（未落盘时这是最自然的路径）
-function edRenamePrompt(conn) { return conn.onDisk ? edRename(conn) : edSaveAs(conn); }
-
-// ---- 重命名已落盘文件（不改内容）----
-async function edRename(conn) {
-  const nn = prompt('重命名文件：', conn.meta.label);
-  if (!nn) return;
-  try {
-    const r = await fetch('/api/ed/rename', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({old: conn.meta.label, new: nn.trim()})});
-    const j = await r.json();
-    if (!j.ok) { showBanner(j.err || '重命名失败', true); return; }
-    conn.meta.label = j.name;
+  label.textContent = '';
+  label.appendChild(inp);
+  inp.focus(); inp.select();
+  fit();
+  inp.addEventListener('input', fit);
+  const finish = async (commit) => {
+    if (!conn._renaming) return;
+    conn._renaming = false;
+    const nn = inp.value.trim();
+    inp.remove();
+    if (!commit || !nn || nn === conn.meta.label) { _edMarkTab(conn); return; }
+    if (!conn.onDisk) {
+      // 草稿：定名保存（含当前内容，保存后才算落盘）
+      try {
+        const r = await fetch('/api/ed/save_as', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({new_name: nn, text: conn.ta.value})});
+        const j = await r.json();
+        if (!j.ok) { showBanner(j.err || '保存失败', true); _edMarkTab(conn); return; }
+        conn.meta.label = j.name;
+        conn.savedText = conn.ta.value;
+        conn.onDisk = true;
+        conn.dirty = false;
+        showBanner('已保存 ' + j.name, false, 1500);
+      } catch(e) { showBanner('保存失败: ' + e, true); }
+    } else {
+      // 已落盘：重命名磁盘文件
+      try {
+        const r = await fetch('/api/ed/rename', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({old: conn.meta.label, new: nn})});
+        const j = await r.json();
+        if (!j.ok) { showBanner(j.err || '重命名失败', true); _edMarkTab(conn); return; }
+        conn.meta.label = j.name;
+        showBanner('已重命名为 ' + j.name, false, 1500);
+      } catch(e) { showBanner('重命名失败: ' + e, true); }
+    }
     _edMarkTab(conn); _edUpdateInfo(conn);
-    showBanner('已重命名为 ' + j.name, false, 1500);
-  } catch(e) { showBanner('重命名失败: ' + e, true); }
+  };
+  inp.addEventListener('keydown', e => {
+    e.stopPropagation();
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+  });
+  inp.addEventListener('blur', () => finish(true));  // 失焦=确认（点别处自然生效）
+  // 输入框上点击不冒泡到 tab（否则触发 switchTab 抢焦点）
+  inp.addEventListener('click', e => e.stopPropagation());
 }
 
 // ---- 删除（已落盘才有东西可删；脏内容一并丢，双重确认）----
