@@ -41,7 +41,7 @@ async function loadLogsList() {
       const d = document.createElement('div');
       d.className = 'item';
       const dt = new Date(l.mtime*1000);
-      d.innerHTML = `<span>${esc(l.name)}<br><span class="sz">${dt.toLocaleString('zh-CN')} · ${(l.size/1024).toFixed(1)} KB</span></span>
+      d.innerHTML = `<span>${esc(l.name)}<br><span class="sz">${dt.toLocaleString('zh-CN')} · ${_fmtSize(l.size)}</span></span>
         <span class="item-actions">
           <span class="act-btn open" data-view="${esc(l.name)}" title="在工具内打开此日志">📜 打开</span>
           <span class="act-btn open" data-open="${esc(l.name)}" title="在资源管理器中定位此文件">📁 定位</span>

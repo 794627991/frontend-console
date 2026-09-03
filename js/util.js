@@ -24,6 +24,14 @@ function fmtTs(ms) {
   return d.toLocaleTimeString('zh-CN', {hour12:false}) + '.' + String(ms % 1000).padStart(3,'0');
 }
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+// 字节数人类可读化：B/KB/MB/GB 自适应（G 级日志别再显示 100 万 KB）
+function _fmtSize(bytes) {
+  if (bytes == null || isNaN(bytes)) return '';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return (bytes/1024).toFixed(1) + ' KB';
+  if (bytes < 1073741824) return (bytes/1048576).toFixed(2) + ' MB';
+  return (bytes/1073741824).toFixed(2) + ' GB';
+}
 // 连接排序：串口[0] < SSH[1] < 日志[2]，同类内按自然序
 function sortKeyFn(pid) {
   const m = /^COM(\d+)$/i.exec(pid);
