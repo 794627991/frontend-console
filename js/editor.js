@@ -129,12 +129,39 @@ function buildEditorTab(name, content) {
       else if (act === 'outline') edToggleOutline(conn);
     };
   });
-  // 快捷键：编辑区内 Ctrl+S / Ctrl+Shift+S
-  wrap.addEventListener('keydown', e => {
+  // 快捷键 Ctrl+S / Ctrl+Shift+S：挂 document 全局生效——
+  // 之前挂 wrap 上，焦点必须落在编辑区（block 内）keydown 才冒泡到 wrap，
+  // 点了工具栏/大纲后按 Ctrl+S 失灵。全局监听只在「当前活动 tab 是本编辑器」时处理。
+  document.addEventListener('keydown', e => {
+    if (activePortId !== portId) return;
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
       e.preventDefault();
       if (e.shiftKey) edSaveAs(conn);
       else edSave(conn);
+      return;
+    }
+    // 「/」开块菜单、Ctrl+/ 开块设置：Editor.js 只在编辑区持有焦点时响应
+    // （slashPressed 检查 e.target 在 UI wrapper 内），点击工具栏/大纲后失焦失灵。
+    // 全局兜底：焦点不在 block 内时，先聚焦最后块再转发给 Editor.js 工具条。
+    if (!conn.isNote || !conn.editor) return;
+    // 焦点在别处输入框（改名框/右侧搜索框等）时按 / 是正常输入，不拦截
+    const ae = document.activeElement;
+    if (ae && ae !== document.body && !conn.holder.contains(ae) &&
+        (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
+    if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      if (!conn.holder.contains(document.activeElement) || !document.activeElement.isContentEditable) {
+        e.preventDefault();
+        try { conn.editor.caret.setToLastBlock('end'); } catch(_) {}
+      }
+      return;  // 焦点在 block 内时 Editor.js 自己处理（空块插 "/" 开菜单）
+    }
+    if (e.code === 'Slash' && (e.ctrlKey || e.metaKey)) {
+      if (!conn.holder.contains(document.activeElement) || !document.activeElement.isContentEditable) {
+        e.preventDefault();
+        try { conn.editor.caret.setToLastBlock('end'); } catch(_) {}
+        setTimeout(() => { try { conn.editor.toolbar.toggleBlockSettings(true); } catch(_) {} }, 0);
+      }
+      return;
     }
   });
   switchTab(portId);

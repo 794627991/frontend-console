@@ -1,22 +1,22 @@
   :root {
-    --bg-deep: #050810;
-    --bg: #0a0f1c;
-    --bg-panel: #0d1424;
-    --bg-card: #111a2e;
-    --bg-input: #0a1120;
-    --border: #1a2942;
+    --bg-deep: #070b14;
+    --bg: #101724;
+    --bg-panel: #141c2e;
+    --bg-card: #182238;
+    --bg-input: #121a2c;
+    --border: #243654;
     --border-glow: #2a4a7a;
     --fg: #c8d6e8;
     --fg-bright: #e8f1ff;
-    --muted: #5a6b85;
+    --muted: #6d7f9d;
     --accent: #00d4ff;
-    /* 笔记编辑器专用：浅色护眼底（note 是阅读型内容——纸感暖白，不反光不刺眼；
-       深色窗体里只这一块变浅，终端等其他区域不受影响） */
-    --note-bg: #f2efe9;
-    --note-bg-card: #e8e4db;
-    --note-border: #d5cfc2;
-    --note-fg: #2f3437;
-    --note-muted: #8a8577;
+    /* 笔记编辑器专用：护眼底色。前一版 #f2efe9 过亮，与暗色窗体放在一起对比
+       过高刺眼——降为暖灰纸感（亮度介于深色壳与白纸间，不发荧光也不显脏） */
+    --note-bg: #e3e0d8;
+    --note-bg-card: #d9d5ca;
+    --note-border: #c3bdae;
+    --note-fg: #33383b;
+    --note-muted: #7d7868;
     --accent-2: #0099cc;
     --accent-glow: rgba(0, 212, 255, 0.4);
     --neon-green: #00ff9d;
