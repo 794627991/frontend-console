@@ -145,23 +145,34 @@ function edSaveAs(conn) { edRenamePrompt(conn); }
 
 // ---- 改名入口（工具栏按钮 / 双击 tab 标题共用）：标题原地变输入框 ----
 // 无 prompt 弹窗（原生弹窗与工具风格不符）；Enter 确认 / Esc 取消 / 失焦确认。
+// 输入框只显主名不带后缀（防止改名把 .txt 弄丢/改错）；提交时自动补回后缀：
+// - 草稿：默认 .txt；已落盘：保留原文件后缀。用户显式输入了后缀（含 .）则尊重。
 // 草稿（未落盘）：改名 = 定名保存；已落盘：改名 = 磁盘文件重命名。
+function _edBaseName(label) {
+  const i = label.lastIndexOf('.');
+  return i > 0 ? label.slice(0, i) : label;   // '.gitignore' 这类点开头整名保留
+}
+function _edExt(label) {
+  const i = label.lastIndexOf('.');
+  return i > 0 ? label.slice(i) : '';
+}
 function edRenamePrompt(conn) {
   if (!conn || conn._renaming) return;
   const label = conn.tab.querySelector('.label');
   conn._renaming = true;
+  const curExt = conn.onDisk ? _edExt(conn.meta.label) : '.txt';  // 后缀：默认 txt，落盘保留原后缀
   const inp = document.createElement('input');
   inp.type = 'text';
   inp.className = 'tab-rename-input';
   // 宽度跟随内容自适应（ch 单位近似等宽字符宽度）
   const fit = () => { inp.style.width = Math.max(8, inp.value.length + 2) + 'ch'; };
-  inp.value = conn.onDisk ? conn.meta.label : '新建文本.txt';
+  inp.value = conn.onDisk ? _edBaseName(conn.meta.label) : '新建文本';
   if (!conn.onDisk) {
-    // 草稿：拉后端不冲突默认名预填（避免保存时 409 重名）。
+    // 草稿：拉后端不冲突默认名预填主名（避免保存时 409 重名）。
     // 用户已动手改过输入则不再覆盖（否则打字被回填冲掉，Enter 后名字不是用户要的）
     fetch('/api/ed/default_name').then(r => r.json()).then(j => {
       if (j.ok && conn._renaming && !inp._userEdited && document.activeElement === inp) {
-        inp.value = j.name; fit();
+        inp.value = _edBaseName(j.name); fit();
       }
     }).catch(() => {});
   }
@@ -173,8 +184,12 @@ function edRenamePrompt(conn) {
   const finish = async (commit) => {
     if (!conn._renaming) return;
     conn._renaming = false;
-    const nn = inp.value.trim();
+    const base = inp.value.trim();
     inp.remove();
+    // 输入只输入了新后缀形式（如 '.md'）→ 主名沿用原值只换后缀
+    let nn = base;
+    if (base.startsWith('.') && conn.onDisk) nn = _edBaseName(conn.meta.label) + base;
+    else if (base && !base.includes('.')) nn = base + curExt;   // 没写后缀 → 补默认
     if (!commit || !nn || nn === conn.meta.label) { _edMarkTab(conn); return; }
     if (!conn.onDisk) {
       // 草稿：定名保存（含当前内容，保存后才算落盘）
