@@ -1,19 +1,51 @@
 // ============================================================
-// 文本编辑器（v0.6.20）：files/ 目录下的多文档 tab 编辑器
-// 设计参考（Notepad++）：多文档 tab、标题 * 脏标记、Ctrl+S 保存、
-// Ctrl+Shift+S 另存为、关闭未保存确认、行列/字数状态栏。
-// 引擎取舍（调研 CodeMirror/Monaco）：纯文本场景 textarea + 原生 undo
-// 已够用，零依赖不引重型编辑器引擎。
+// 块笔记编辑器（Editor.js）：files/ 目录下 .note（块笔记）与 .txt（纯文本）
+// v0.6.21：新建文件默认 .note——块式编辑（类 OneNote/Notion），可粘贴图片、
+// 插表格/清单/代码块/引用，标题/分隔线，行内标记（粗体用内联 tool）。
+// .note 数据 = Editor.js JSON（{time, blocks:[...]}），图片经 /api/ed/upload_img
+// 存 files/images/，渲染走 /api/ed/img/ 静态路由。
+// 引擎 vendor 化（同 xterm 模式，离线可用）：vendor/editorjs*.umd.js
+// 设计参考（Notepad++）：tab * 脏标记、双击标题改名、关闭确认。
 // 后端：src/editor_files.py（/api/ed/*），文件存 <工具目录>/files/
 //
-// 保存模型：新建文件只建草稿 tab（标题「未命名」），不在磁盘落文件；
-// Ctrl+S 时若为草稿/另存为则要求文件名 → 首次保存才真正写盘。
-// （用户要求：创建 ≠ 保存）
+// 保存模型：新建只建草稿 tab（「未命名」），首次保存/双击改名才落盘。
 // ============================================================
+
+// Editor.js 工具集（.note 用）。行内：Marker 高亮 + InlineCode 代码。
+// Image 走 upload_img 上传。/ 键唤出块菜单。
+function _edTools() {
+  return {
+    header: Header,
+    list: EditorjsList,
+    checklist: Checklist,
+    table: Table,
+    image: { class: ImageTool, config: {
+      uploader: { uploadByFile: _edUploadImage, uploadByUrl: null },
+      captionPlaceholder: '图片说明（可空）',
+    }},
+    quote: Quote,
+    code: CodeTool,
+    delimiter: Delimiter,
+    paragraph: { text: { inlineToolbar: ['marker', 'inlineCode', 'bold'] } },
+  };
+}
+async function _edUploadImage(file) {
+  // Editor.js uploader 协议：返回 {success:1, file:{url}} 或 {success:0}
+  try {
+    const fd = new FormData();
+    fd.append('file', file);
+    const r = await fetch('/api/ed/upload_img', {method: 'POST', body: fd});
+    const j = await r.json();
+    if (!j.ok) return { success: 0 };
+    return { success: 1, file: { url: '/api/ed/img/' + j.url.split('/')[1] } };
+  } catch(e) { return { success: 0 }; }
+}
 
 // ---- 编辑器 tab 构建（模式同 buildLogViewer：tab + term-area wrap + connections 表）----
 // name=null 表示未命名草稿（尚未保存到磁盘）
-function buildEditorTab(name, text) {
+function buildEditorTab(name, content) {
+  // content：.note 传 Editor.js JSON 对象；.txt 传字符串；草稿传 null
+  const isNote = name ? name.toLowerCase().endsWith('.note') : true;  // 草稿默认 .note
   // 已打开同名文件 → 切过去
   if (name) {
     for (const pid in connections) {
@@ -29,7 +61,7 @@ function buildEditorTab(name, text) {
   tab.dataset.portId = portId;
   tab.innerHTML = `<span class="led" style="color:var(--accent)">📝</span><span class="label">${esc(name || '未命名')}</span><span class="baud"></span><span class="close" title="关闭">✕</span>`;
   tab.onclick = (e) => { if (e.target.classList.contains('close')) { e.stopPropagation(); closeEditorTab(portId); return; } switchTab(portId); };
-  // 双击 tab 标题 → 快捷改名（Notepad++ 式）
+  // 双击 tab 标题 → 快捷改名
   tab.querySelector('.label').ondblclick = (e) => { e.stopPropagation(); edRenamePrompt(connections[portId]); };
   // wrap（.term-area 内含编辑器）
   const wrap = document.createElement('div');
@@ -45,7 +77,9 @@ function buildEditorTab(name, text) {
         <button class="lv-btn" data-ed-action="delete">删除</button>
         <span class="lv-info" data-ed-info></span>
       </div>
-      <textarea class="editor-area" spellcheck="false" wrap="off"></textarea>
+      <div class="ed-scroll">
+        <div class="ed-holder"></div>
+      </div>
     </div>`;
   const es = termArea.querySelector('.empty-state');
   if (es) es.remove();
@@ -55,32 +89,18 @@ function buildEditorTab(name, text) {
     portId,
     meta: { kind: 'editor', label: name || '未命名' },
     tab, wrap,
-    ta: wrap.querySelector('.editor-area'),
+    holder: wrap.querySelector('.ed-holder'),
     infoEl: wrap.querySelector('[data-ed-info]'),
-    savedText: text,      // 上次保存/打开时的内容（脏检测基准）
-    onDisk: !!name,       // 是否已落盘（草稿 false：关闭即丢弃，改名=另存为）
+    isNote,
+    editor: null,         // Editor.js 实例（.note）
+    ta: null,             // textarea（.txt，懒建——保底 fallback）
+    savedData: null,      // 上次保存/打开的内容（脏检测基准）
+    onDisk: !!name,
     dirty: false,
   };
   connections[portId] = conn;
-  conn.ta.value = text;
-  _edUpdateInfo(conn);
-  // 输入 → 脏标记 + 状态栏刷新
-  conn.ta.addEventListener('input', () => {
-    const dirty = conn.ta.value !== conn.savedText;
-    if (dirty !== conn.dirty) { conn.dirty = dirty; _edMarkTab(conn); }
-    _edUpdateInfo(conn);
-  });
-  // 光标移动 → 行列刷新
-  conn.ta.addEventListener('keyup', () => _edUpdateInfo(conn));
-  conn.ta.addEventListener('click', () => _edUpdateInfo(conn));
-  // 快捷键：Ctrl+S 保存 / Ctrl+Shift+S 另存为（编辑器聚焦时 textarea 的 keydown 捕获）
-  conn.ta.addEventListener('keydown', e => {
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
-      e.preventDefault();
-      if (e.shiftKey) edSaveAs(conn);
-      else edSave(conn);
-    }
-  });
+  // 初始化编辑区（异步：Editor.js 实例化）
+  _edInitContent(conn, content);
   // 工具栏按钮
   wrap.querySelectorAll('.lv-btn').forEach(btn => {
     btn.onclick = () => {
@@ -91,15 +111,74 @@ function buildEditorTab(name, text) {
       else if (act === 'delete') edDelete(conn);
     };
   });
+  // 快捷键：编辑区内 Ctrl+S / Ctrl+Shift+S
+  wrap.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+      e.preventDefault();
+      if (e.shiftKey) edSaveAs(conn);
+      else edSave(conn);
+    }
+  });
   switchTab(portId);
-  conn.ta.focus();
-  refreshSidebar();  // 同步左侧列表（连接/日志/文件 tab 统一在这刷新）
+  refreshSidebar();
   return conn;
+}
+
+// ---- 编辑区初始化：.note 建 Editor.js；.txt 建 textarea ----
+async function _edInitContent(conn, content) {
+  if (conn.isNote) {
+    try {
+      const data = (content && typeof content === 'object' && content.blocks) ? content : { blocks: [] };
+      conn.editor = new EditorJS({
+        holder: conn.holder,
+        tools: _edTools(),
+        data,
+        placeholder: '输入内容，按 / 插入块（标题/图片/表格/清单…），可直接粘贴截图',
+        minHeight: 60,
+        onChange: () => { _edMarkDirty(conn); },
+        onReady: () => { _edUpdateInfo(conn); },
+      });
+      conn.savedData = data;
+    } catch(e) {
+      // Editor.js 加载失败（vendor 缺失等）→ 降级 textarea 纯文本，保可用
+      showBanner('块编辑器加载失败，已降级纯文本：' + e, 6000, true);
+      conn.isNote = false;
+    }
+  }
+  if (!conn.isNote) {
+    conn.ta = document.createElement('textarea');
+    conn.ta.className = 'editor-area';
+    conn.ta.spellcheck = false;
+    conn.ta.value = typeof content === 'string' ? content : '';
+    conn.holder.appendChild(conn.ta);
+    conn.ta.addEventListener('input', () => _edMarkDirty(conn));
+    conn.ta.addEventListener('keyup', () => _edUpdateInfo(conn));
+    conn.ta.addEventListener('click', () => _edUpdateInfo(conn));
+    conn.savedData = conn.ta.value;
+  }
+  _edUpdateInfo(conn);
+}
+
+// ---- 取当前内容（保存用）：.note 返回 JSON 对象，.txt 返回字符串 ----
+async function _edGetContent(conn) {
+  if (conn.isNote && conn.editor) {
+    try { return await conn.editor.save(); } catch(e) { return null; }
+  }
+  return conn.ta ? conn.ta.value : '';
+}
+
+// ---- 脏检测：当前内容 vs 上次保存 ----
+function _edMarkDirty(conn) {
+  // .note 的 onChange 即视为脏（比对 JSON 成本高且 await 别扭）；
+  // 保存后 savedData 更新 + dirty 复位。.txt 精确比对字符串。
+  const dirty = conn.isNote ? true : (conn.ta && conn.ta.value !== conn.savedData);
+  if (dirty !== conn.dirty) { conn.dirty = dirty; _edMarkTab(conn); }
+  _edUpdateInfo(conn);
 }
 
 // ---- 脏标记：tab 标题加 *（Notepad++ 风格）----
 function _edMarkTab(conn) {
-  // 原地改名中：标题 span 已换成输入框，改名结束后由 _edRenameDone 统一刷新
+  // 原地改名中：标题 span 已换成输入框，改名结束后统一刷新
   if (conn._renaming) return;
   conn.tab.querySelector('.label').textContent = (conn.dirty ? '*' : '') + conn.meta.label;
   // 同步左侧列表里的文件名（改名后立即生效，不等 30s 轮询）
@@ -107,34 +186,54 @@ function _edMarkTab(conn) {
   if (item) item.textContent = conn.meta.label;
 }
 
-// ---- 状态栏：行列 + 字符数 ----
+// ---- 状态栏：块数/字符数 + 保存态 ----
 function _edUpdateInfo(conn) {
-  const pos = conn.ta.selectionStart;
-  const before = conn.ta.value.slice(0, pos);
-  const line = before.split('\n').length;
-  const col = pos - (before.lastIndexOf('\n') + 1) + 1;
-  const state = !conn.onDisk ? ' · 未保存到磁盘' : (conn.dirty ? ' · 未保存' : ' · 已保存');
-  conn.infoEl.textContent = `行 ${line}，列 ${col} · ${conn.ta.value.length} 字符${state}`;
+  conn.infoEl.textContent = _edStatText(conn) + _edStateText(conn);
+}
+// 侧边栏与状态栏共用的统计文案（不含保存态）
+function _edStatText(conn) {
+  if (conn.isNote) {
+    const blocks = conn.holder ? conn.holder.querySelectorAll('.ce-block').length : 0;
+    return `${blocks} 块`;
+  }
+  if (conn.ta) {
+    const pos = conn.ta.selectionStart;
+    const before = conn.ta.value.slice(0, pos);
+    const line = before.split('\n').length;
+    const col = pos - (before.lastIndexOf('\n') + 1) + 1;
+    return `行 ${line}，列 ${col} · ${conn.ta.value.length} 字符`;
+  }
+  return '';
+}
+function _edStateText(conn) {
+  return !conn.onDisk ? ' · 未保存到磁盘' : (conn.dirty ? ' · 未保存' : ' · 已保存');
 }
 
-// ---- 打开已有文件 ----
+// ---- 打开已有文件：按后缀分发 ----
 async function openEditorFile(name) {
   try {
     const r = await fetch('/api/ed/open?name=' + encodeURIComponent(name));
     const j = await r.json();
     if (!j.ok) { showBanner(j.err || '打开失败', 4000, true); return; }
-    buildEditorTab(name, j.text);
+    const isNote = name.toLowerCase().endsWith('.note');
+    // .note 存 JSON，.txt 存纯文本
+    let content = j.text;
+    if (isNote) { try { content = JSON.parse(j.text); } catch(e) { content = { blocks: [] }; } }
+    buildEditorTab(name, content);
   } catch(e) { showBanner('打开失败: ' + e, 4000, true); }
 }
 
 // ---- 保存：草稿/未落盘 → tab 标题原地改名（定名即保存）；已落盘 → 覆盖保存 ----
 async function edSave(conn) {
   if (!conn.onDisk) { edRenamePrompt(conn); return; }
+  const content = await _edGetContent(conn);
+  if (content === null) { showBanner('读取内容失败', 4000, true); return; }
+  const text = conn.isNote ? JSON.stringify(content) : content;
   try {
-    const r = await fetch('/api/ed/save', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name: conn.meta.label, text: conn.ta.value})});
+    const r = await fetch('/api/ed/save', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name: conn.meta.label, text})});
     const j = await r.json();
     if (!j.ok) { showBanner(j.err || '保存失败', 4000, true); return; }
-    conn.savedText = conn.ta.value;
+    conn.savedData = content;
     conn.dirty = false; _edMarkTab(conn); _edUpdateInfo(conn);
     showBanner('已保存 ' + conn.meta.label, 1500);
   } catch(e) { showBanner('保存失败: ' + e, 4000, true); }
@@ -144,10 +243,9 @@ async function edSave(conn) {
 function edSaveAs(conn) { edRenamePrompt(conn); }
 
 // ---- 改名入口（工具栏按钮 / 双击 tab 标题共用）：标题原地变输入框 ----
-// 无 prompt 弹窗（原生弹窗与工具风格不符）；Enter 确认 / Esc 取消 / 失焦确认。
-// 输入框只显主名不带后缀（防止改名把 .txt 弄丢/改错）；提交时自动补回后缀：
-// - 草稿：默认 .txt；已落盘：保留原文件后缀。用户显式输入了后缀（含 .）则尊重。
-// 草稿（未落盘）：改名 = 定名保存；已落盘：改名 = 磁盘文件重命名。
+// 无 prompt 弹窗；Enter 确认 / Esc 取消 / 失焦确认。
+// 输入框只显主名不带后缀（防止改名把后缀弄丢/改错）；提交时自动补回后缀：
+// - 草稿：默认 .note；已落盘：保留原文件后缀。用户显式输入了后缀（含 .）则尊重。
 function _edBaseName(label) {
   const i = label.lastIndexOf('.');
   return i > 0 ? label.slice(0, i) : label;   // '.gitignore' 这类点开头整名保留
@@ -160,17 +258,17 @@ function edRenamePrompt(conn) {
   if (!conn || conn._renaming) return;
   const label = conn.tab.querySelector('.label');
   conn._renaming = true;
-  const curExt = conn.onDisk ? _edExt(conn.meta.label) : '.txt';  // 后缀：默认 txt，落盘保留原后缀
+  const curExt = conn.onDisk ? _edExt(conn.meta.label) : '.note';  // 后缀：默认 note，落盘保留原后缀
   const inp = document.createElement('input');
   inp.type = 'text';
   inp.className = 'tab-rename-input';
   // 宽度跟随内容自适应（ch 单位近似等宽字符宽度）
   const fit = () => { inp.style.width = Math.max(8, inp.value.length + 2) + 'ch'; };
-  inp.value = conn.onDisk ? _edBaseName(conn.meta.label) : '新建文本';
+  inp.value = conn.onDisk ? _edBaseName(conn.meta.label) : '新建笔记';
   if (!conn.onDisk) {
-    // 草稿：拉后端不冲突默认名预填主名（避免保存时 409 重名）。
-    // 用户已动手改过输入则不再覆盖（否则打字被回填冲掉，Enter 后名字不是用户要的）
-    fetch('/api/ed/default_name').then(r => r.json()).then(j => {
+    // 草稿：拉后端不冲突默认名预填主名。
+    // 用户已动手改过输入则不再覆盖（否则打字被回填冲掉）
+    fetch('/api/ed/default_name?ext=' + encodeURIComponent(curExt)).then(r => r.json()).then(j => {
       if (j.ok && conn._renaming && !inp._userEdited && document.activeElement === inp) {
         inp.value = _edBaseName(j.name); fit();
       }
@@ -193,12 +291,15 @@ function edRenamePrompt(conn) {
     if (!commit || !nn || nn === conn.meta.label) { _edMarkTab(conn); return; }
     if (!conn.onDisk) {
       // 草稿：定名保存（含当前内容，保存后才算落盘）
+      const content = await _edGetContent(conn);
+      if (content === null) { showBanner('读取内容失败', 4000, true); _edMarkTab(conn); return; }
+      const text = conn.isNote ? JSON.stringify(content) : content;
       try {
-        const r = await fetch('/api/ed/save_as', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({new_name: nn, text: conn.ta.value})});
+        const r = await fetch('/api/ed/save_as', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({new_name: nn, text})});
         const j = await r.json();
         if (!j.ok) { showBanner(j.err || '保存失败', 4000, true); _edMarkTab(conn); return; }
         conn.meta.label = j.name;
-        conn.savedText = conn.ta.value;
+        conn.savedData = content;
         conn.onDisk = true;
         conn.dirty = false;
         showBanner('已保存 ' + j.name, 1500);
@@ -221,7 +322,6 @@ function edRenamePrompt(conn) {
     else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
   });
   inp.addEventListener('blur', () => finish(true));  // 失焦=确认（点别处自然生效）
-  // 输入框上点击不冒泡到 tab（否则触发 switchTab 抢焦点）
   inp.addEventListener('click', e => e.stopPropagation());
 }
 
@@ -249,6 +349,8 @@ function closeEditorTab(portId) {
   _edCloseNow(conn);
 }
 function _edCloseNow(conn) {
+  // Editor.js 实例先销毁（停掉内部 mutation 监听，防关 tab 后仍触发 onChange）
+  if (conn.editor) { try { conn.editor.destroy(); } catch(e){} }
   conn.tab.remove(); conn.wrap.remove();
   delete connections[conn.portId];
   const remaining = Object.keys(connections).sort((a, b) => {
@@ -264,12 +366,12 @@ function _edCloseNow(conn) {
   refreshSidebar();  // 同步左侧列表
 }
 
-// ---- 新建文件：只建草稿 tab，不落盘（首次 Ctrl+S / 双击改名时才写文件）----
+// ---- 新建文件：只建草稿 tab（.note 块笔记），不落盘 ----
 function newEditorFile() {
-  buildEditorTab(null, '');
+  buildEditorTab(null, null);
 }
 
-// ---- files/ 文件列表弹窗：复用日志库 modal 风格（.modal .box + .item/.act-btn）----
+// ---- files/ 文件列表弹窗：复用日志库 modal 风格 ----
 async function showFilesModal() {
   let modal = $('filesModal');
   if (!modal) {
@@ -279,9 +381,9 @@ async function showFilesModal() {
     modal.innerHTML = `
       <div class="box">
         <div class="head">
-          <strong>📝 文本文件</strong>
+          <strong>📝 文件</strong>
           <div class="head-actions">
-            <button class="btn ghost" id="filesNew" title="新建文本（不落盘，保存时才写文件）">＋ 新建文本</button>
+            <button class="btn ghost" id="filesNew" title="新建笔记（不落盘，保存时才写文件）">＋ 新建笔记</button>
             <button class="btn ghost icon-btn" id="filesOpenDir" title="在资源管理器中打开 files/ 目录">📁</button>
             <button class="btn ghost icon-btn" id="filesClose">✕</button>
           </div>
@@ -300,14 +402,15 @@ async function showFilesModal() {
     const r = await fetch('/api/ed/list');
     const j = await r.json();
     if (!j.ok) { listEl.innerHTML = '<div style="padding:20px;color:var(--muted);">加载失败</div>'; return; }
-    if (!j.files.length) { listEl.innerHTML = '<div style="padding:20px;color:var(--muted);">暂无文件，点击「新建文本」创建</div>'; return; }
+    if (!j.files.length) { listEl.innerHTML = '<div style="padding:20px;color:var(--muted);">暂无文件，点击「新建笔记」创建</div>'; return; }
     listEl.innerHTML = '';
     j.files.forEach(f => {
       const d = document.createElement('div');
       d.className = 'item';
       const dt = new Date(f.mtime*1000);
       const kb = f.size >= 1024 ? (f.size/1024).toFixed(1) + ' KB' : f.size + ' B';
-      d.innerHTML = `<span>${esc(f.name)}<br><span class="sz">${dt.toLocaleString('zh-CN')} · ${kb}</span></span>
+      const icon = f.name.toLowerCase().endsWith('.note') ? '📝' : (f.name.toLowerCase().endsWith('.txt') ? '📄' : '📄');
+      d.innerHTML = `<span>${icon} ${esc(f.name)}<br><span class="sz">${dt.toLocaleString('zh-CN')} · ${kb}</span></span>
         <span class="item-actions">
           <span class="act-btn open" data-open="${esc(f.name)}" title="打开编辑此文件">✎ 编辑</span>
         </span>`;

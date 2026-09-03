@@ -232,8 +232,15 @@ function switchTab(portId) {
       // 日志 tab：重渲染虚拟列表（display:flex 后尺寸才正确）
       requestAnimationFrame(() => requestAnimationFrame(() => renderLogSlice(conn)));
     } else if (conn.meta.kind === 'editor') {
-      // 编辑器 tab：textarea 无需 fit，聚焦即可
-      requestAnimationFrame(() => { try { conn.ta.focus(); } catch(e){} });
+      // 编辑器 tab：.note 聚焦 Editor.js 区，.txt 聚焦 textarea
+      requestAnimationFrame(() => {
+        try {
+          if (conn.editor && conn.holder) {
+            const ce = conn.holder.querySelector('.codex-editor [contenteditable]');
+            if (ce) ce.focus();
+          } else if (conn.ta) conn.ta.focus();
+        } catch(e){}
+      });
     } else {
       requestAnimationFrame(() => requestAnimationFrame(() => {
         try { conn.fit.fit(); } catch(e){}

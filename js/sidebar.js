@@ -120,13 +120,13 @@ function refreshSidebar() {
       const isSSH = conn.meta.kind === 'ssh';
       const isLog = conn.meta.kind === 'log';
       const isEdit = conn.meta.kind === 'editor';
-      const descText = isSSH ? `SSH · ${conn.meta.host || ''}` : isLog ? `📜 日志` : isEdit ? `📝 文本` : `${conn.meta.baud || ''} baud`;
-      const rowCount = conn.term ? conn.term.buffer.active.length : (conn.logState ? conn.logState.total : (isEdit ? (conn.ta ? conn.ta.value.length : 0) : 0));
+      const descText = isSSH ? `SSH · ${conn.meta.host || ''}` : isLog ? `📜 日志` : isEdit ? `📝 笔记` : `${conn.meta.baud || ''} baud`;
+      const rowCount = conn.term ? conn.term.buffer.active.length : (conn.logState ? conn.logState.total : (isEdit ? _edStatText(conn) : 0));
       item.innerHTML = `
         <span class="led"></span>
         <div class="info">
           <div class="name">${esc(conn.meta.label || pid)}</div>
-          <div class="desc">${esc(descText)} · <span class="baud" data-rows>${rowCount}${isEdit ? ' 字符' : ' 行'}</span></div>
+          <div class="desc">${esc(descText)} · <span class="baud" data-rows>${isEdit ? rowCount : rowCount + ' 行'}</span></div>
         </div>
         <div class="actions"><button data-close="${pid}" title="${isLog ? '关闭' : '断开'}">✕</button></div>
       `;
@@ -143,10 +143,10 @@ function refreshSidebar() {
       if (!el) return;
       const conn = connections[pid];
       const isEdit = conn.meta && conn.meta.kind === 'editor';
-      const n = isEdit ? (conn.ta ? conn.ta.value.length : 0)
+      const n = isEdit ? _edStatText(conn)
         : conn.term ? conn.term.buffer.active.length
         : (conn.logState ? conn.logState.total : 0);
-      const t = n + (isEdit ? ' 字符' : ' 行');
+      const t = isEdit ? n : n + ' 行';
       if (el.textContent !== t) el.textContent = t;
     });
   }
