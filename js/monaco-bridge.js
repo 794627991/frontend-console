@@ -31,6 +31,9 @@ function monacoLangFor(name) {
 
 // AMD loader：路径指向本地 /vendor/monaco/min/vs（与 npm 包目录结构一致）
 // worker 走 MainThread chunk（Cross-origin 隔离 off 下唯一可行方案）
+// 汉化：官方 zh-cn 语言包（包内自带 vs/nls.messages.zh-cn.js）必须在
+// editor.main 之前加载——它写 globalThis._VSCODE_NLS_MESSAGES/_LANGUAGE，
+// editor.main 初始化时读取并替换全部 UI 字符串（命令面板/查找/右键菜单全量汉化）
 function monacoInit() {
   if (_monacoReady) return _monacoReady;
   _monacoReady = new Promise((resolve, reject) => {
@@ -39,13 +42,18 @@ function monacoInit() {
     s.onload = () => {
       try {
         require.config({ paths: { vs: '/vendor/monaco/min/vs' } });
-        require(['vs/editor/editor.main'], () => {
+        // worker 也读 _VSCODE_NLS_MESSAGES（workerMain.js 内置同款逻辑）：
+        // 前置先加载 zh-cn 语言包写好全局，worker 用 importScripts 方式接力
+        window.MonacoEnvironment = {
+          getWorkerUrl: function() {
+            return `data:text/javascript;charset=utf-8,${encodeURIComponent(
+              `importScripts('/vendor/monaco/min/vs/base/worker/workerMain.js');`
+            )}`;
+          }
+        };
+        require(['vs/nls.messages.zh-cn', 'vs/editor/editor.main'], () => {
           const monaco = window.monaco;
           _monacoApplyTheme(monaco);
-          // worker 故障降级：无 worker 时语法高亮/校验退主线程，编辑不受影响
-          try {
-            monaco.editor.onDidCreateEditor(() => {});
-          } catch(_) {}
           resolve(monaco);
         }, err => reject(err));
       } catch (e) { reject(e); }

@@ -100,6 +100,7 @@ function buildEditorTab(name, content, extPath) {
         <div class="ed-scroll">
           <div class="ed-holder"></div>
         </div>
+        <div class="ed-md-splitter" style="display:none"></div>
         <div class="ed-md-preview" style="display:none;"><div class="md-preview-body"></div></div>
       </div>
       <div class="term-search-pane ed-search-pane" style="display:none">
@@ -142,12 +143,14 @@ function buildEditorTab(name, content, extPath) {
   const _isMd = name ? name.toLowerCase().endsWith('.md') : false;
   if (_isMd) {
     wrap.querySelector('.ed-md-preview').style.display = '';
+    wrap.querySelector('.ed-md-splitter').style.display = '';
     const pvBtn = document.createElement('button');
     pvBtn.className = 'lv-btn';
     pvBtn.dataset.edAction = 'mdpreview';
     pvBtn.title = '显示/隐藏 Markdown 预览分栏';
     pvBtn.textContent = '👁 预览';
     wrap.querySelector('[data-ed-action="search"]').after(pvBtn);
+    _mdBindSplitter(wrap);
   }
   connections[portId] = conn;
   // 初始化编辑区（异步：Editor.js 实例化）
@@ -822,6 +825,37 @@ function _mdInstance() {
   // markdown-it.min.js（vendor，index.html 已引）暴露 window.markdownit
   _mdIt = window.markdownit ? window.markdownit({ html: false, linkify: true, typographer: false, breaks: false }) : null;
   return _mdIt;
+}
+// ---- md 分屏拖拽：分隔条 col-resize，自由调节源码/预览比例 ----
+function _mdBindSplitter(wrap) {
+  const splitter = wrap.querySelector('.ed-md-splitter');
+  const preview = wrap.querySelector('.ed-md-preview');
+  const main = wrap.querySelector('.ed-main');
+  if (!splitter || !preview) return;
+  splitter.addEventListener('mousedown', e => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const total = main.getBoundingClientRect().width;
+    // 拖拽前预览列宽度（比例基准）
+    const startW = preview.getBoundingClientRect().width;
+    let moved = false;
+    const move = ev => {
+      const dx = ev.clientX - startX;
+      if (Math.abs(dx) > 2) moved = true;
+      // 限幅：预览列 15% ~ 85%，源码列始终保留可编辑空间
+      const w = Math.max(total * 0.15, Math.min(total * 0.85, startW + dx));
+      preview.style.width = w + 'px';
+      preview.style.flexShrink = '0';
+      // Monaco 容器宽随分栏变化由 automaticLayout 接管
+    };
+    const up = () => {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+      splitter._dragging = false;
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  });
 }
 function _mdRenderPreview(conn) {
   const pv = conn.wrap.querySelector('.ed-md-preview');
