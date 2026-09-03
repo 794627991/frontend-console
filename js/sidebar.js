@@ -97,7 +97,7 @@ function refreshSidebar() {
   if (!ids.length) {
     if (_sidebarKey !== 'empty') {
       _sidebarKey = 'empty';
-      portList.innerHTML = '<div class="empty-state" style="padding:30px 10px;"><div class="desc">点击「新建连接」添加连接</div></div>';
+      portList.innerHTML = '<div class="empty-state" style="padding:30px 10px;"><div class="desc">点击「新建连接」或「新建文件」添加内容</div></div>';
     }
     return;
   }
@@ -106,9 +106,9 @@ function refreshSidebar() {
     const ka = sortKeyFn(a), kb = sortKeyFn(b);
     return ka[0] !== kb[0] ? ka[0] - kb[0] : (ka[1] < kb[1] ? -1 : ka[1] > kb[1] ? 1 : 0);
   });
-  // 脏检查：连接集合 + active tab 变化才重建整个列表 DOM；
+  // 脏检查：连接集合 + active tab + 各 tab 标题 变化才重建整个列表 DOM；
   // 行数（每次刷新必变）只更新对应 span 文本，避免 5s 一次全量 innerHTML 重建叠加重排
-  const key = ids.join('|') + '#' + activePortId;
+  const key = ids.join('|') + '#' + activePortId + '#' + ids.map(pid => (connections[pid].meta && connections[pid].meta.label) || '').join('|');
   if (key !== _sidebarKey) {
     _sidebarKey = key;
     portList.innerHTML = '';

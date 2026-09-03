@@ -93,6 +93,7 @@ function buildEditorTab(name, text) {
   });
   switchTab(portId);
   conn.ta.focus();
+  refreshSidebar();  // 同步左侧列表（连接/日志/文件 tab 统一在这刷新）
   return conn;
 }
 
@@ -101,6 +102,9 @@ function _edMarkTab(conn) {
   // 原地改名中：标题 span 已换成输入框，改名结束后由 _edRenameDone 统一刷新
   if (conn._renaming) return;
   conn.tab.querySelector('.label').textContent = (conn.dirty ? '*' : '') + conn.meta.label;
+  // 同步左侧列表里的文件名（改名后立即生效，不等 30s 轮询）
+  const item = portList.querySelector(`.port-item[data-port-id="${CSS.escape(conn.portId)}"] .name`);
+  if (item) item.textContent = conn.meta.label;
 }
 
 // ---- 状态栏：行列 + 字符数 ----
@@ -242,6 +246,7 @@ function _edCloseNow(conn) {
     activePortId = null;
     termArea.innerHTML = '<div class="empty-state"><div class="big-icon">📡</div><div class="title">暂无连接</div><div class="desc">点击顶部「新建连接」选择串口或 SSH，支持同时监控多个连接。每个连接独立标签页，互不干扰。</div></div>';
   }
+  refreshSidebar();  // 同步左侧列表
 }
 
 // ---- 新建文件：只建草稿 tab，不落盘（首次 Ctrl+S / 双击改名时才写文件）----
