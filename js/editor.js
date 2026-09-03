@@ -153,35 +153,47 @@ async function _edInitContent(conn, content) {
         data,
         placeholder: '输入内容，按 / 插入块（标题/图片/表格/清单…），可直接粘贴截图',
         minHeight: 60,
-        // 核心与插件 UI 文案汉化（Editor.js 默认英文）
+        // 核心与插件 UI 文案汉化（Editor.js 默认英文）。
+        // 注意：词典必须包在 i18n.messages 里——Editor.js 只读 config.i18n.messages
+        // 喂给 setDictionary，直接放 i18n 下整份词典不生效（曾因此全英文）。
         i18n: {
-          toolNames: { Text: '文本', Heading: '标题', List: '列表', Checklist: '清单',
-            Table: '表格', Image: '图片', Quote: '引用', Code: '代码块', Delimiter: '分隔线' },
-          tools: {
-            header: { '': '文本' },
-            table: { 'With headings': '带表头', 'Without headings': '无表头',
-              'Add row above': '上方插入行', 'Add row below': '下方插入行',
-              'Add column to left': '左侧插入列', 'Add column to right': '右侧插入列',
-              'Delete row': '删除行', 'Delete column': '删除列' },
-            image: { 'Select an Image': '选择图片', 'Caption': '说明',
-              'Stretch image': '拉伸图片', 'With background': '带背景', 'Delete': '删除' },
-          },
-          blockTunes: {
-            'delete': { Delete: '删除' },
-            'moveUp': { 'Move up': '上移' },
-            'moveDown': { 'Move down': '下移' },
-          },
-          inlineToolbar: {
-            converter: { 'To paragraph': '转段落', 'To heading': '转标题', 'Convert to': '转换为' },
-          },
-          ui: {
-            // 块左侧工具条 hover 提示（默认 "Click to tune"/"or drag to move"/"Click to delete"）
-            blockTunes: {
-              toggler: { 'Click to tune': '点击调整（Ctrl+/）', 'or drag to move': '或拖动移动' },
-              'delete': { 'Click to delete': '点击删除' },
+          messages: {
+            toolNames: { Text: '文本', Heading: '标题', List: '列表', Checklist: '清单',
+              Table: '表格', Image: '图片', Quote: '引用', Code: '代码块', Delimiter: '分隔线',
+              Link: '链接', Bold: '粗体', Italic: '斜体', Marker: '高亮' },
+            tools: {
+              table: { 'With headings': '带表头', 'Without headings': '无表头',
+                'Add row above': '上方插入行', 'Add row below': '下方插入行',
+                'Add column to left': '左侧插入列', 'Add column to right': '右侧插入列',
+                'Delete row': '删除行', 'Delete column': '删除列' },
+              image: { 'Select an Image': '选择图片', 'Caption': '说明',
+                'Stretch image': '拉伸图片', 'With background': '带背景',
+                'With border': '带边框', 'With caption': '显示说明',
+                "Couldn't upload image. Please try another.": '上传失败，请换一张试试',
+                'Couldn’t upload image. Please try another.': '上传失败，请换一张试试' },
+              // 行内工具条「转换」弹出层的块类型名走各工具命名空间
+              paragraph: { 'To paragraph': '转段落' },
+              header: { 'To heading': '转标题' },
+              link: { 'Add a link': '添加链接' },
+              stub: { 'The block can not be displayed correctly.': '该块无法正确显示' },
             },
-            toolbar: { toolbox: { 'Add': '添加块（/ 或 Ctrl+/）' } },
-            popover: { 'Filter': '筛选', 'Nothing found': '未找到', 'Convert to': '转换为' },
+            blockTunes: {
+              'delete': { Delete: '删除' },
+              'moveUp': { 'Move up': '上移' },
+              'moveDown': { 'Move down': '下移' },
+            },
+            inlineToolbar: {
+              converter: { 'To paragraph': '转段落', 'To heading': '转标题', 'Convert to': '转换为' },
+            },
+            ui: {
+              // 块左侧工具条 hover 提示（默认 "Click to tune"/"or drag to move"/"Click to delete"）
+              blockTunes: {
+                toggler: { 'Click to tune': '点击调整（Ctrl+/）', 'or drag to move': '或拖动移动' },
+                'delete': { 'Click to delete': '点击删除' },
+              },
+              toolbar: { toolbox: { 'Add': '添加块（/ 或 Ctrl+/）' } },
+              popover: { 'Filter': '筛选', 'Nothing found': '未找到', 'Convert to': '转换为' },
+            },
           },
         },
         onChange: () => { _edMarkDirty(conn); },
