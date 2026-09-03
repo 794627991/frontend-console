@@ -118,9 +118,9 @@ async function openEditorFile(name) {
   try {
     const r = await fetch('/api/ed/open?name=' + encodeURIComponent(name));
     const j = await r.json();
-    if (!j.ok) { showBanner(j.err || '打开失败', true); return; }
+    if (!j.ok) { showBanner(j.err || '打开失败', 4000, true); return; }
     buildEditorTab(name, j.text);
-  } catch(e) { showBanner('打开失败: ' + e, true); }
+  } catch(e) { showBanner('打开失败: ' + e, 4000, true); }
 }
 
 // ---- 保存：草稿/未落盘 → tab 标题原地改名（定名即保存）；已落盘 → 覆盖保存 ----
@@ -129,11 +129,11 @@ async function edSave(conn) {
   try {
     const r = await fetch('/api/ed/save', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name: conn.meta.label, text: conn.ta.value})});
     const j = await r.json();
-    if (!j.ok) { showBanner(j.err || '保存失败', true); return; }
+    if (!j.ok) { showBanner(j.err || '保存失败', 4000, true); return; }
     conn.savedText = conn.ta.value;
     conn.dirty = false; _edMarkTab(conn); _edUpdateInfo(conn);
-    showBanner('已保存 ' + conn.meta.label, false, 1500);
-  } catch(e) { showBanner('保存失败: ' + e, true); }
+    showBanner('已保存 ' + conn.meta.label, 1500);
+  } catch(e) { showBanner('保存失败: ' + e, 4000, true); }
 }
 
 // ---- 另存为：同样走 tab 原地改名（改名确认后即另存为新文件）----
@@ -153,17 +153,19 @@ function edRenamePrompt(conn) {
   const fit = () => { inp.style.width = Math.max(8, inp.value.length + 2) + 'ch'; };
   inp.value = conn.onDisk ? conn.meta.label : '新建文本.txt';
   if (!conn.onDisk) {
-    // 草稿：拉后端不冲突默认名预填（避免保存时 409 重名）
+    // 草稿：拉后端不冲突默认名预填（避免保存时 409 重名）。
+    // 用户已动手改过输入则不再覆盖（否则打字被回填冲掉，Enter 后名字不是用户要的）
     fetch('/api/ed/default_name').then(r => r.json()).then(j => {
-      if (j.ok && conn._renaming && document.activeElement === inp) inp.value = j.name;
-      fit();
+      if (j.ok && conn._renaming && !inp._userEdited && document.activeElement === inp) {
+        inp.value = j.name; fit();
+      }
     }).catch(() => {});
   }
   label.textContent = '';
   label.appendChild(inp);
   inp.focus(); inp.select();
   fit();
-  inp.addEventListener('input', fit);
+  inp.addEventListener('input', () => { inp._userEdited = true; fit(); });
   const finish = async (commit) => {
     if (!conn._renaming) return;
     conn._renaming = false;
@@ -175,22 +177,22 @@ function edRenamePrompt(conn) {
       try {
         const r = await fetch('/api/ed/save_as', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({new_name: nn, text: conn.ta.value})});
         const j = await r.json();
-        if (!j.ok) { showBanner(j.err || '保存失败', true); _edMarkTab(conn); return; }
+        if (!j.ok) { showBanner(j.err || '保存失败', 4000, true); _edMarkTab(conn); return; }
         conn.meta.label = j.name;
         conn.savedText = conn.ta.value;
         conn.onDisk = true;
         conn.dirty = false;
-        showBanner('已保存 ' + j.name, false, 1500);
-      } catch(e) { showBanner('保存失败: ' + e, true); }
+        showBanner('已保存 ' + j.name, 1500);
+      } catch(e) { showBanner('保存失败: ' + e, 4000, true); }
     } else {
       // 已落盘：重命名磁盘文件
       try {
         const r = await fetch('/api/ed/rename', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({old: conn.meta.label, new: nn})});
         const j = await r.json();
-        if (!j.ok) { showBanner(j.err || '重命名失败', true); _edMarkTab(conn); return; }
+        if (!j.ok) { showBanner(j.err || '重命名失败', 4000, true); _edMarkTab(conn); return; }
         conn.meta.label = j.name;
-        showBanner('已重命名为 ' + j.name, false, 1500);
-      } catch(e) { showBanner('重命名失败: ' + e, true); }
+        showBanner('已重命名为 ' + j.name, 1500);
+      } catch(e) { showBanner('重命名失败: ' + e, 4000, true); }
     }
     _edMarkTab(conn); _edUpdateInfo(conn);
   };
@@ -211,11 +213,11 @@ async function edDelete(conn) {
     try {
       const r = await fetch('/api/ed/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name: conn.meta.label})});
       const j = await r.json();
-      if (!j.ok) { showBanner(j.err || '删除失败', true); return; }
-    } catch(e) { showBanner('删除失败: ' + e, true); return; }
+      if (!j.ok) { showBanner(j.err || '删除失败', 4000, true); return; }
+    } catch(e) { showBanner('删除失败: ' + e, 4000, true); return; }
   }
   _edCloseNow(conn);
-  showBanner('已删除', false, 1500);
+  showBanner('已删除', 1500);
 }
 
 // ---- 关闭 tab：脏则确认（确定=丢弃修改直接关，取消=留在编辑器）----
