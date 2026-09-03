@@ -3,7 +3,7 @@
 日志格式：工具自记录 ts\ttag\traw_line\n；外部日志：任意文本行。
 索引记录每行起始字节偏移，支持 O(1) seek 到第 N 行。索引缓存到 .idx 文件。
 """
-import os, re
+import os, re, time
 from array import array
 from itertools import islice
 
@@ -13,7 +13,15 @@ class LogIndex:
     文件追加后按 size 变化增量续扫，避免重扫 G 级文件。"""
     def __init__(self, path):
         self.path = path
-        self.idx_path = path + ".idx"
+        # 索引统一放工具目录 idx/ 下（不再散落日志目录）：
+        # 文件名 = <原名>.<md5(日志绝对路径)>.idx —— 拖拽不同目录同名日志
+        # 不会互相覆盖，绝对路径哈希即映射关系
+        import hashlib
+        from src.app_state import BASE_DIR
+        self.idx_dir = os.path.join(BASE_DIR, "idx")
+        os.makedirs(self.idx_dir, exist_ok=True)
+        key = hashlib.md5(os.path.abspath(path).encode("utf-8")).hexdigest()[:16]
+        self.idx_path = os.path.join(self.idx_dir, f"{os.path.basename(path)}.{key}.idx")
         self.offsets = []  # 每行起始字节偏移
         self.total = 0
         self._loaded = False
@@ -161,6 +169,13 @@ class LogIndex:
         except Exception:
             pass
 
+    def _touch_idx(self):
+        """刷新 .idx 访问时间：3 天未用清理的判定依据。"""
+        try: os.utime(self.idx_path, None)
+        except OSError: pass
+
+
+
     def ts_list(self):
         """全文件扫描一遍，构建 ts 列表（毫秒，array('q')）。
         ts 非法（<=0）的行用前一个有效值填充（保证单调非降，可二分），
@@ -222,6 +237,8 @@ class LogIndex:
         稀疏窗口缓存按需回载，内存可控且不设上限。"""
         if not self._loaded:
             self.build()
+        # 索引命中：刷新访问时间（3 天未用清理的依据）
+        self._touch_idx()
         if not q:
             return {"total": 0, "lines": [], "next_offset": -1, "has_more": False}
         pat = re.compile(re.escape(q), re.IGNORECASE)
@@ -296,3 +313,32 @@ class LogIndex:
                 parsed["row"] = i
                 res.append(parsed)
         return res
+
+
+def cleanup_stale_idx(max_age_days=3):
+    """清理 idx/ 下超过 max_age_days 天未使用的索引文件。
+    在服务启动时调用一次。atime 由 _touch_idx 维护（命中即刷新），
+    未命中的文件 atime 停在建档时间，到期自动删除。"""
+    from src.app_state import BASE_DIR
+    idx_dir = os.path.join(BASE_DIR, "idx")
+    if not os.path.isdir(idx_dir):
+        return 0
+    cutoff = time.time() - max_age_days * 86400
+    removed = 0
+    try:
+        for fn in os.listdir(idx_dir):
+            if not fn.endswith(".idx"):
+                continue
+            p = os.path.join(idx_dir, fn)
+            try:
+                # atime 由 _touch_idx 维护；mtime 是建档时间，两者取大防误删
+                st = os.stat(p)
+                last_use = max(st.st_atime, st.st_mtime)
+                if last_use < cutoff:
+                    os.remove(p)
+                    removed += 1
+            except OSError:
+                pass
+    except OSError:
+        pass
+    return removed

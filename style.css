@@ -411,7 +411,7 @@
   }
   .topbar .status-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
   .topbar .status-pill .dot.on { background: var(--neon-green); box-shadow: 0 0 6px var(--neon-green); }
-  .topbar .status-pill .dot.rec { background: var(--neon-red); animation: pulse 1.2s infinite; }
+  .topbar .status-pill .dot.rec { display: none; }  /* 「录制中」指示器已移除（无实际功能） */
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
 
   /* ===== 主布局 ===== */

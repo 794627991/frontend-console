@@ -33,3 +33,4 @@ Thumbs.db
 
 # 用户数据（命令库跟工具目录走，但属用户数据不进版本库）
 cmdlib.json
+idx/

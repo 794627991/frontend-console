@@ -916,5 +916,13 @@ def cmd_lib_save():
 
 
 if __name__ == "__main__":
+    # 启动清理：idx/ 下超过 3 天未使用的索引文件（atime 由 _touch_idx 维护）
+    try:
+        from src.log_index import cleanup_stale_idx
+        n = cleanup_stale_idx(3)
+        if n:
+            print(f"[idx] 已清理 {n} 个过期索引文件（3 天未使用）")
+    except Exception:
+        pass
     start_background()
     app.run(host="127.0.0.1", port=8765, threaded=True, debug=False, use_reloader=False)
