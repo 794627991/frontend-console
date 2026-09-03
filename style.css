@@ -86,6 +86,62 @@
   }
   html[data-theme="paper"] body::before { opacity: 0.3; }
   html[data-theme="paper"] body::after { display: none; }
+  /* 夜暮紫：One Dark Pro 风深紫壳，accent 蓝紫；终端 One Dark 原味 */
+  html[data-theme="onedark"] {
+    --bg-deep: #0d0d12; --bg: #16161f; --bg-panel: #1b1b26; --bg-card: #20202c;
+    --bg-input: #181824; --border: #34344a; --border-glow: #4a4a6a;
+    --fg: #c6c6e0; --fg-bright: #eaeaf5; --muted: #7a7a95;
+    --accent: #a78bfa; --accent-2: #7c6cd9; --accent-glow: rgba(167,139,250,0.35);
+    --neon-green: #6ee7a0; --neon-purple: #c678dd; --neon-orange: #e5a05b;
+    --neon-red: #e06c75; --kernel: #79c0ff; --kernel-err: #ff7b72; --uboot: #d2a8ff;
+    --heop: #a5d6ff; --heop-ok: #56d364; --heop-fail: #ff7b72; --prompt: #6ee7a0;
+    --text: #c6c6e0; --input-c: #a78bfa;
+    --note-bg: #ddd8e0; --note-bg-card: #d2cdd6; --note-border: #b5aebd;
+    --note-fg: #34303c; --note-muted: #7c7590;
+    --term-bg: #1b1b26; --term-fg: #d5d5e5;
+  }
+  /* 琥珀暖：深棕咖啡壳 + 金橙 accent，冬夜暖光感 */
+  html[data-theme="amber"] {
+    --bg-deep: #0f0b08; --bg: #1a140f; --bg-panel: #201913; --bg-card: #261e17;
+    --bg-input: #1b1410; --border: #3d3025; --border-glow: #5c4936;
+    --fg: #dccfc0; --fg-bright: #f5ece1; --muted: #94826f;
+    --accent: #e8a25b; --accent-2: #c47d3a; --accent-glow: rgba(232,162,91,0.35);
+    --neon-green: #8fd494; --neon-purple: #c69fd6; --neon-orange: #e5a05b;
+    --neon-red: #e07a6d; --kernel: #8fc0d9; --kernel-err: #e07a6d; --uboot: #c69fd6;
+    --heop: #b5d0e0; --heop-ok: #7cba6e; --heop-fail: #e07a6d; --prompt: #8fd494;
+    --text: #dccfc0; --input-c: #e8a25b;
+    --note-bg: #e0d8c8; --note-bg-card: #d5ccba; --note-border: #bdb29c;
+    --note-fg: #3a3128; --note-muted: #8a7d68;
+    --term-bg: #201913; --term-fg: #dccfc0;
+  }
+  /* 青瓷蓝：低饱和海蓝灰壳，柔和商务风，accent 青蓝 */
+  html[data-theme="celadon"] {
+    --bg-deep: #081018; --bg: #0f1a24; --bg-panel: #132130; --bg-card: #182939;
+    --bg-input: #101e29; --border: #274156; --border-glow: #3a5a7a;
+    --fg: #c3d4e0; --fg-bright: #e4f0f8; --muted: #6f8497;
+    --accent: #56b8d9; --accent-2: #3a90b5; --accent-glow: rgba(86,184,217,0.35);
+    --neon-green: #6ed9a5; --neon-purple: #b08cd9; --neon-orange: #e0a56d;
+    --neon-red: #e0727f; --kernel: #8fc0e0; --kernel-err: #e0727f; --uboot: #b08cd9;
+    --heop: #a5cfe5; --heop-ok: #6ec98e; --heop-fail: #e0727f; --prompt: #6ed9a5;
+    --text: #c3d4e0; --input-c: #56b8d9;
+    --note-bg: #d8e0e3; --note-bg-card: #ccd5d9; --note-border: #adbac2;
+    --note-fg: #2e353c; --note-muted: #70808c;
+    --term-bg: #132130; --term-fg: #d0dde8;
+  }
+  /* 玫瑰暮：深粉紫暮色壳，低饱和不腻，accent 玫瑰金 */
+  html[data-theme="rose"] {
+    --bg-deep: #120a0e; --bg: #1e131a; --bg-panel: #241721; --bg-card: #2b1c29;
+    --bg-input: #1c1220; --border: #40293a; --border-glow: #5c3f52;
+    --fg: #dcc8d4; --fg-bright: #f5e5ee; --muted: #957d8b;
+    --accent: #e89ab5; --accent-2: #c4748f; --accent-glow: rgba(232,154,181,0.35);
+    --neon-green: #8fd4a0; --neon-purple: #c69fd6; --neon-orange: #e0a56d;
+    --neon-red: #e06c7d; --kernel: #8fc0d9; --kernel-err: #e06c7d; --uboot: #c69fd6;
+    --heop: #c5a5e0; --heop-ok: #7cba8e; --heop-fail: #e06c7d; --prompt: #8fd4a0;
+    --text: #dcc8d4; --input-c: #e89ab5;
+    --note-bg: #e0d5da; --note-bg-card: #d4c8ce; --note-border: #bcaeb6;
+    --note-fg: #38303a; --note-muted: #8a7a84;
+    --term-bg: #241721; --term-fg: #ddd0d8;
+  }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; overflow: hidden; }
   body {
@@ -540,7 +596,7 @@
   /* ===== 换肤弹层 ===== */
   .theme-menu { position: fixed; top: 46px; right: 12px; z-index: 9998; display: none;
     background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
-    box-shadow: 0 8px 28px rgba(0,0,0,0.5); padding: 5px; min-width: 280px;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.5); padding: 5px; min-width: 280px; max-height: 70vh; overflow-y: auto;
     user-select: none; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
   .theme-menu.show { display: block; }
   .theme-item { display: flex; align-items: center; gap: 10px; padding: 7px 10px;
@@ -559,6 +615,14 @@
   .theme-swatch[data-theme="darkgreen"]::after  { background: #dcdcd2; }
   .theme-swatch[data-theme="paper"]::before     { background: #e6e4dd; }
   .theme-swatch[data-theme="paper"]::after      { background: #f2f0ea; }
+  .theme-swatch[data-theme="onedark"]::before   { background: #1b1b26; }
+  .theme-swatch[data-theme="onedark"]::after    { background: #a78bfa; }
+  .theme-swatch[data-theme="amber"]::before    { background: #201913; }
+  .theme-swatch[data-theme="amber"]::after     { background: #e8a25b; }
+  .theme-swatch[data-theme="celadon"]::before  { background: #132130; }
+  .theme-swatch[data-theme="celadon"]::after   { background: #56b8d9; }
+  .theme-swatch[data-theme="rose"]::before     { background: #241721; }
+  .theme-swatch[data-theme="rose"]::after      { background: #e89ab5; }
   .theme-info { flex: 1; min-width: 0; }
   .theme-info .name { color: var(--fg-bright); font-size: 12px; font-weight: 600; }
   .theme-info .desc { color: var(--muted); font-size: 10px; margin-top: 1px; }

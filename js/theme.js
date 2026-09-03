@@ -7,6 +7,10 @@ const THEMES = [
   { id: 'warmgray',   name: '暖夜灰',   desc: '暖紫灰壳体 · 更柔和 · 阅读面深一档' },
   { id: 'darkgreen',  name: '暗调绿',   desc: '经典 CRT 深绿灰 · 老派护眼风' },
   { id: 'paper',      name: '午夜纸',   desc: '全浅色窗体 · 与笔记/日志完全统一' },
+  { id: 'onedark',    name: '夜暮紫',   desc: 'One Dark Pro 风深紫壳 · 蓝紫 accent' },
+  { id: 'amber',      name: '琥珀暖',   desc: '深棕咖啡壳 + 金橙 · 冬夜暖光感' },
+  { id: 'celadon',    name: '青瓷蓝',   desc: '低饱和海蓝灰 · 柔和商务风' },
+  { id: 'rose',       name: '玫瑰暮',   desc: '深粉紫暮色壳 · 低饱和不腻' },
 ];
 
 function applyTheme(id) {
