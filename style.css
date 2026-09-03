@@ -671,6 +671,10 @@
   .cmd-section .title { font-size: 11px; font-weight: 600; color: var(--muted); margin: 10px 0 6px; text-transform: uppercase; letter-spacing: 0.5px; }
   .cmd-item { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 4px; transition: all 0.2s; }
   .cmd-item:hover { border-color: var(--accent); }
+  /* 拖拽排序反馈：被拖条目半透明，光标示意可移 */
+  .cmd-item[draggable="true"] { cursor: grab; }
+  .cmd-item.dragging { opacity: 0.35; border-style: dashed; }
+  .cmd-item.drag-over { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent-glow); }
   .cmd-item .text { flex: 1; font-family: var(--font-mono); font-size: 11px; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .cmd-item .name { font-family: var(--font-ui); font-weight: 600; color: var(--accent); cursor: pointer; }
   .cmd-item .cmd-edit-name:hover { text-decoration: underline; }

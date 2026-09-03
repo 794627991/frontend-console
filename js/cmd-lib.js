@@ -49,6 +49,51 @@ async function renderCmdPane() {
     };
     libEl.querySelectorAll('.cmd-edit-trigger').forEach(el => el.onclick = () => openEdit(parseInt(el.dataset.i)));
     libEl.querySelectorAll('.edit').forEach(b => b.onclick = () => openEdit(parseInt(b.dataset.i)));
+    // ---- 拖拽排序：长按条目拖到目标位置，松手保存新顺序 ----
+    // HTML5 drag：dragstart 记起点，dragover 判落点并实时移动 DOM（所见即所得），
+    // drop 后按 DOM 顺序重建 lib 数组一次保存。拖拽中禁止编辑点击误触。
+    let dragFrom = -1;
+    libEl.querySelectorAll('.cmd-item').forEach((item, i) => {
+      item.draggable = true;
+      item.addEventListener('dragstart', e => {
+        dragFrom = i;
+        item.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        try { e.dataTransfer.setData('text/plain', String(i)); } catch (_) {}  // Firefox 必需
+      });
+      item.addEventListener('dragend', () => {
+        item.classList.remove('dragging');
+        libEl.querySelectorAll('.cmd-item').forEach(el => el.classList.remove('drag-over'));
+        dragFrom = -1;
+      });
+      item.addEventListener('dragover', e => {
+        e.preventDefault();  // 允许 drop
+        e.dataTransfer.dropEffect = 'move';
+        if (dragFrom < 0 || dragFrom === i) return;
+        // 实时移动：向下拖插到目标后，向上拖插到目标前（贴合拖动方向直觉）
+        const items = Array.from(libEl.querySelectorAll('.cmd-item'));
+        const fromEl = items[dragFrom], toEl = items[i];
+        if (!fromEl || !toEl || fromEl === toEl) return;
+        libEl.insertBefore(fromEl, dragFrom < i ? toEl.nextSibling : toEl);
+        dragFrom = i;  // 移动后起点索引更新为当前位置
+      });
+    });
+    libEl.addEventListener('drop', async e => {
+      e.preventDefault();
+      if (dragFrom < 0 && e.dataTransfer) {
+        // 外部拖入不处理（只支持库内排序）
+        return;
+    }
+      // 按 DOM 顺序重建 lib：map 原 data-i → 新位置
+      const old = await loadCmdLib();
+      const newLib = Array.from(libEl.querySelectorAll('.cmd-item'))
+        .map(el => old[parseInt(el.dataset.i)])
+        .filter(Boolean);
+      if (newLib.length !== old.length) { renderCmdPane(); return; }  // 异常兜底：重渲染还原
+      await saveCmdLib(newLib);
+      renderCmdPane();
+    });
+    libEl.addEventListener('dragover', e => e.preventDefault());  // 允许 drop 事件触发
   }
   // 最近命令
   if (activePortId) {
