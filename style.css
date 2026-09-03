@@ -630,6 +630,12 @@
   .tab-bar-actions .icon-btn#btnCtrlC:hover { color: var(--neon-orange); border-color: var(--neon-orange); box-shadow: 0 0 0 1px rgba(255,165,0,0.25); }
   .tab-bar-actions .icon-btn#btnCtrlD:hover { color: var(--neon-red); border-color: var(--neon-red); box-shadow: 0 0 0 1px rgba(255,64,96,0.25); }
 
+  /* 终端连接工具栏（仿日志 tab 的 log-viewer-toolbar）：串口/SSH 专属功能按钮 */
+  .term-area .term-toolbar { display: flex; align-items: center; gap: 6px; padding: 4px 8px;
+    border-bottom: 1px solid var(--border); background: var(--bg-card); flex-shrink: 0; }
+  .term-toolbar .lv-btn { background: var(--bg-input); border: 1px solid var(--border); color: var(--fg); border-radius: 4px; padding: 3px 10px; font-size: 12px; cursor: pointer; white-space: nowrap; }
+  .term-toolbar .lv-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .term-toolbar .lv-btn.active { border-color: var(--accent); color: var(--accent); background: var(--bg-panel); }
   .term-area { flex: 1; display: flex; flex-direction: column; min-height: 0; }
   .term-toolbar {
     display: flex; align-items: center; gap: 6px;

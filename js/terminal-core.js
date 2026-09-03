@@ -14,6 +14,15 @@ function buildTerminal(portId, meta) {
   wrap.dataset.portId = portId;
   wrap.style.display = 'none';
   wrap.innerHTML = `
+    <div class="term-toolbar">
+      <button class="lv-btn term-tb-pause" title="暂停/恢复滚屏">⏸ 暂停</button>
+      <button class="lv-btn term-tb-clear" title="清屏（只清显示，缓冲历史不丢）">⊘ 清屏</button>
+      <button class="lv-btn term-tb-newlog" title="从此刻起记录到新日志文件">＋📋 新日志</button>
+      <button class="lv-btn term-tb-ctrlc" title="发送 Ctrl-C 中断">^C</button>
+      <button class="lv-btn term-tb-ctrld" title="发送 Ctrl-D (EOF)">^D</button>
+      <button class="lv-btn term-tb-jump" title="跳到底部跟随实时 (Ctrl+End)">⤓ 跳底</button>
+      <button class="lv-btn term-tb-ts" title="时间戳注入：新输出行首加 [HH:MM:SS.mmm]，排障定位用">⏱ 时间戳</button>
+    </div>
     <div class="output-wrap">
       <div class="xterm-wrap" data-xterm="${portId}"></div>
       <div class="xterm-bottom-pad"></div>
@@ -28,6 +37,46 @@ function buildTerminal(portId, meta) {
       </div>
     </div>
   `;
+
+  // 终端工具栏（仿日志 tab 的 log-viewer-toolbar）：串口/SSH 专属功能按钮
+  // 放连接区内，tab 栏保持整洁——按钮只作用于本连接
+  const tb = {
+    pause: wrap.querySelector('.term-tb-pause'),
+    clear: wrap.querySelector('.term-tb-clear'),
+    newlog: wrap.querySelector('.term-tb-newlog'),
+    ctrlc: wrap.querySelector('.term-tb-ctrlc'),
+    ctrld: wrap.querySelector('.term-tb-ctrld'),
+    jump: wrap.querySelector('.term-tb-jump'),
+    ts: wrap.querySelector('.term-tb-ts'),
+  };
+  tb.pause.onclick = () => {
+    conn.paused = !conn.paused;
+    tb.pause.textContent = conn.paused ? '▶ 继续' : '⏸ 暂停';
+    tb.pause.classList.toggle('active', conn.paused);
+    if (!conn.paused) { conn.autoScroll = true; try { conn.term.scrollToBottom(); } catch(e){} }
+  };
+  tb.clear.onclick = () => {
+    try { conn.term.clear(); } catch(e){}
+    conn.kwDecorLastRow = 0;
+    conn.kwDecorations.forEach(d => { try { d.dispose(); } catch(e){} });
+    conn.kwDecorations = [];
+    fetch('/api/clear_buffer', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: portId})});
+  };
+  tb.newlog.onclick = async () => {
+    try {
+      const r = await fetch('/api/new_log', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: portId})});
+      const j = await r.json();
+      showBanner('已开新日志：' + (j.log_path || ''));
+    } catch(e) { showBanner('开新日志失败：' + e, 6000, true); }
+  };
+  tb.ctrlc.onclick = () => termSendRaw(portId, [3]);
+  tb.ctrld.onclick = () => termSendRaw(portId, [4]);
+  tb.jump.onclick = () => jumpToBottom(portId);
+  tb.ts.onclick = () => {
+    conn.tsEnabled = !conn.tsEnabled;
+    tb.ts.classList.toggle('active', conn.tsEnabled);
+    showBanner(conn.tsEnabled ? '已开启时间戳注入（新输出行首加 [HH:MM:SS.mmm]）' : '已关闭时间戳注入');
+  };
 
   const conn = {
     portId,  // 用于搜索分栏调 /api/search 时定位连接（不依赖 activePortId）

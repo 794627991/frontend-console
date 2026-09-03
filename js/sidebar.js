@@ -276,44 +276,9 @@ $('connConfirm').onclick = () => {
 };
 $('btnRefreshPorts').onclick = async () => { await loadPorts(); showBanner('端口列表已刷新'); };
 
-// 顶栏全局按钮（作用于当前活动标签）
-$('btnPause').onclick = () => {
-  if (!activePortId) return;
-  const conn = connections[activePortId];
-  if (!conn || !conn.term) return;  // 日志 tab 无 term，跳过
-  conn.paused = !conn.paused;
-  $('btnPause').textContent = conn.paused ? '▶' : '⏸';
-  if (!conn.paused) { conn.autoScroll = true; conn.term.scrollToBottom(); }
-};
-$('btnClear').onclick = () => {
-  if (!activePortId) return;
-  const conn = connections[activePortId];
-  if (!conn || !conn.term) return;  // 日志 tab 无 term，跳过
-  conn.term.clear();
-  conn.kwDecorLastRow = 0;
-  conn.kwDecorations.forEach(d => { try { d.dispose(); } catch(e){} });
-  conn.kwDecorations = [];
-  fetch('/api/clear_buffer', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: activePortId})});
-};
-$('btnNewLog').onclick = async () => {
-  if (!activePortId) return;
-  const conn = connections[activePortId];
-  if (!conn || !conn.term) return;  // 日志 tab 无 term，跳过
-  const r = await fetch('/api/new_log', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: activePortId})});
-  const j = await r.json();
-  showBanner('已开新日志：' + (j.log_path || ''));
-};
-$('btnCtrlC').onclick = () => { if (activePortId) termSendRaw(activePortId, [3]); };
-$('btnTs').onclick = () => {
-  if (!activePortId) return;
-  const conn = connections[activePortId];
-  if (!conn || conn.meta.kind === 'log') return;
-  conn.tsEnabled = !conn.tsEnabled;
-  $('btnTs').classList.toggle('active', conn.tsEnabled);
-  showBanner(conn.tsEnabled ? '已开启时间戳注入（新输出行首加 [HH:MM:SS.mmm]）' : '已关闭时间戳注入');
-};
-$('btnCtrlD').onclick = () => { if (activePortId) termSendRaw(activePortId, [4]); };
-$('btnJumpBottomMain').onclick = () => { if (activePortId) jumpToBottom(activePortId); };
+// 终端功能按钮（暂停/清屏/^C/^D/时间戳等）已移到各连接区顶部工具栏
+// （terminal-core.js buildTerminal 内，仿日志 tab 的 log-viewer-toolbar），
+// tab 栏保持整洁——按钮只作用于所属连接，不再作用于全局活动 tab。
 // 关于按钮已改为「换肤」（js/theme.js 接管），版本号常驻标题栏「PRO v0.5.0」
 // 顶栏「打开日志目录」已移除（日志库弹窗内有同功能入口 btnLogDirOpen）
 
