@@ -211,10 +211,12 @@ class LogIndex:
                 res.append(self._parse_line(line.decode("utf-8", errors="replace")))
         return res
 
-    def search(self, q, limit=200, start_offset=0, count_total=True):
+    def search(self, q, limit=200, start_offset=0, count_total=True, exclude=""):
         """从 start_offset 行起搜索 q（大小写不敏感），返回命中行 + 游标。
         count_total=False 时跳过全量计数（total 返回 -1），扫到 limit 条即停——
         续载场景前端已知 total，无需每次重扫 G 级文件。
+        exclude：命中行再按排除模式过滤，多个用 | 分隔（bsp.err | ^ 关键字 之类，
+        每段 trim 后为空则忽略；支持正则——直接 re.search，非转义）。命中即剔除。
         全量扫描时顺带把所有命中行号收进 _hits_by_q 缓存（每命中仅 8 字节，
         200W 命中 ~16MB），此后可按命中序号区间 O(1) 取任意段，支持前端
         稀疏窗口缓存按需回载，内存可控且不设上限。"""
@@ -223,6 +225,16 @@ class LogIndex:
         if not q:
             return {"total": 0, "lines": [], "next_offset": -1, "has_more": False}
         pat = re.compile(re.escape(q), re.IGNORECASE)
+        # 排除模式：| 分隔，逐段 trim；正则语法错误时该段降级为字面匹配
+        ex_pats = []
+        for seg in (exclude or "").split("|"):
+            seg = seg.strip()
+            if not seg:
+                continue
+            try:
+                ex_pats.append(re.compile(seg, re.IGNORECASE))
+            except re.error:
+                ex_pats.append(re.compile(re.escape(seg), re.IGNORECASE))
         res = []
         next_offset = -1
         # total 与命中索引同源：全量时收集行号直接数长度，杜绝计数/索引错位
@@ -235,6 +247,9 @@ class LogIndex:
                 line = f.readline().decode("utf-8", errors="replace")
                 parsed = self._parse_line(line)
                 if pat.search(parsed["text"]):
+                    # 排除过滤：命中任一排除模式 → 该行不算命中
+                    if ex_pats and any(p.search(parsed["text"]) for p in ex_pats):
+                        continue
                     if hits is not None:
                         hits.append(i)  # 全量：进索引，total 由 len(hits) 得出
                     elif count_total:
@@ -249,23 +264,25 @@ class LogIndex:
                         if not count_total:
                             break
         if hits is not None:
-            self._hits_by_q[q] = hits  # 全量命中行号索引（内存 ~8B/命中）
+            key = (q, exclude or "")  # 复合键：不同排除条件各自独立索引
+            self._hits_by_q[key] = hits  # 全量命中行号索引（内存 ~8B/命中）
             total = len(hits)  # total 与索引同源，保证一致
             self._hits_q_state = self._built_size  # 索引基于当前文件状态
         has_more = next_offset >= 0
         return {"total": total, "lines": res, "next_offset": next_offset, "has_more": has_more}
 
-    def search_page(self, q, hit_start, hit_count):
+    def search_page(self, q, hit_start, hit_count, exclude=""):
         """按命中序号取页：命中列表第 [hit_start, hit_start+hit_count) 条。
         依赖 search(count_total=True) 建立的 _hits_by_q 命中索引，O(1) seek。
         前端稀疏窗口缓存滚远回载时用，不重扫不重计。"""
-        hits = self._hits_by_q.get(q)
+        key = (q, exclude or "")
+        hits = self._hits_by_q.get(key)
         if hits is None or self._hits_stale():
             # 命中索引未建/已随文件变化陈旧：补一次全量搜重建（limit>0 触发收集）
             if self._hits_stale():
                 self._hits_invalidate()
-            self.search(q, limit=1, count_total=True)
-            hits = self._hits_by_q.get(q)
+            self.search(q, limit=1, count_total=True, exclude=exclude)
+            hits = self._hits_by_q.get(key)
             if hits is None or not len(hits):
                 return []
         if hit_start < 0 or hit_start >= len(hits):

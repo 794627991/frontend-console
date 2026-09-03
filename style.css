@@ -107,6 +107,9 @@
   .log-search-pane { display: none; flex-direction: column; height: 35%; min-height: 80px; max-height: 70%; background: var(--bg-card); border-top: 1px solid var(--border); flex-shrink: 0; }
   .log-search-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
   .log-search-head input { flex: 1; background: var(--bg-input); border: 1px solid var(--border); color: var(--fg); border-radius: 4px; padding: 4px 8px; font-size: 12px; }
+  /* 排除框：定宽（flex:1 会让关键字框和排除框平分，主搜索框优先大） */
+  .log-search-head input.log-search-exclude { flex: 0 0 190px; color: var(--neon-orange); }
+  .log-search-head input.log-search-exclude::placeholder { color: var(--muted); }
   .log-search-count { color: var(--muted); font-size: 11px; min-width: 60px; }
   .log-search-results { flex: 1; overflow-y: auto; position: relative; background: var(--bg-input); min-height: 40px; }
   .log-search-results .hline { cursor: pointer; }
@@ -803,15 +806,18 @@
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
   ::-webkit-scrollbar-thumb:hover { background: var(--border-glow); }
 
-  /* 横幅通知 */
+  /* 横幅通知：右下角冒泡（不占布局空间——之前顶部横幅显示/消失会挤压
+     .main 高度导致 xterm 尺寸跳动、UI 位移观感差，改为 fixed 悬浮） */
   .banner {
-    display: none; padding: 8px 16px;
-    background: linear-gradient(90deg, rgba(0,212,255,0.15), rgba(0,153,204,0.08));
-    border-bottom: 1px solid var(--border-glow); color: var(--accent);
-    font-size: 12px; z-index: 5;
+    position: fixed; right: 16px; bottom: 16px; z-index: 300;
+    display: none; max-width: 420px; padding: 10px 16px;
+    background: var(--bg-card); border: 1px solid var(--accent);
+    border-radius: 8px; color: var(--fg-bright);
+    font-size: 12px; box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+    word-break: break-all;
   }
   .banner.show { display: block; }
-  .banner.err { background: linear-gradient(90deg, rgba(255,64,96,0.15), rgba(255,64,96,0.08)); border-color: var(--neon-red); color: var(--neon-red); }
+  .banner.err { border-color: var(--neon-red); color: var(--neon-red); }
 
   /* 空状态 */
   .empty-state {

@@ -119,6 +119,7 @@ function buildLogViewer(path) {
       <div class="log-search-pane">
         <div class="log-search-head">
           <input type="text" class="log-search-input" placeholder="查找关键字…（回车搜索，再按回车跳下一个）" autocomplete="off">
+          <input type="text" class="log-search-exclude" placeholder="排除（多个用 | 分隔，支持正则）" title="命中行含任一排除模式则剔除。多个用 | 分隔，支持正则。例：bsp.err | timeout" autocomplete="off">
           <button class="btn ghost log-search-btn">查找全部</button>
           <span class="log-search-count"></span>
           <span class="log-jump-goto">
@@ -149,13 +150,14 @@ function buildLogViewer(path) {
     infoEl: wrap.querySelector('[data-lv-info]'),
     searchPane: wrap.querySelector('.log-search-pane'),
     searchInput: wrap.querySelector('.log-search-input'),
+    searchExclude: wrap.querySelector('.log-search-exclude'),
     searchResults: wrap.querySelector('.log-search-results'),
     searchCount: wrap.querySelector('.log-search-count'),
     jumpInput: wrap.querySelector('.log-jump-input'),
     logState: {
       name: path, total: 0, scaled: false, rows: new Map(),
       renderedStart: -1, renderedEnd: -1, renderSeq: 0,
-      searchQ: '', searchIdx: 0, curRow: -1,
+      searchQ: '', searchExcludeQ: '', searchIdx: 0, curRow: -1,
       // 搜索结果：稀疏窗口缓存（命中序号→行对象），只留浏览位置附近 RES_WIN 条；
       // 总数 searchTotal 撑满滚动条，缺口按序号向后端精准回载，无上限无损失
       resultData: {}, resWinStart: 0, resWinEnd: 0, searchTotal: 0,
@@ -212,11 +214,13 @@ function buildLogViewer(path) {
   // 结果列表：滚动虚拟渲染 + 到底续载 + 点击跳转（事件委托）
   initLogResultsEvents(conn);
   wrap.querySelector('.log-search-input').addEventListener('keydown', e => { if (e.key === 'Enter') doLogSearch(conn); });
+  // 排除框回车同样触发搜索；内容变化时也整体复位（与关键字框一致）
+  wrap.querySelector('.log-search-exclude').addEventListener('keydown', e => { if (e.key === 'Enter') doLogSearch(conn); });
   // 输入清空时复位整个搜索状态（染色/列表/计数/高亮/跳转框），保持一致
   wrap.querySelector('.log-search-input').addEventListener('input', e => {
     if (!e.target.value.trim() && conn.logState.searchQ) {
       const ls = conn.logState;
-      ls.searchQ = ''; ls.searchIdx = 0; ls.searchTotal = 0;
+      ls.searchQ = ''; ls.searchExcludeQ = ''; ls.searchIdx = 0; ls.searchTotal = 0;
       ls.resultData = {}; ls.resWinStart = 0; ls.resWinEnd = 0;
       if (ls.resPending) ls.resPending.clear();
       ls.curRow = -1;
@@ -243,7 +247,7 @@ async function openLogInViewer(conn) {
   const ls = conn.logState;
   ls.rows = new Map();
   ls.renderedStart = -1; ls.renderedEnd = -1;
-  ls.searchQ = ''; ls.resultData = {}; ls.searchIdx = 0;
+  ls.searchQ = ''; ls.searchExcludeQ = ''; ls.resultData = {}; ls.searchIdx = 0;
   ls.searchTotal = 0; ls.resWinStart = 0; ls.resWinEnd = 0; ls.curRow = -1;
   ls.resRenderStart = -1; ls.resRenderEnd = -1;
   conn.searchInput.value = '';
@@ -399,10 +403,11 @@ function jumpToLogRow(conn, row, curRow) {
 const RES_WIN = 100000;   // 窗口缓存条数（约 10-18MB，滚 1/20 个列表才换窗）
 async function doLogSearch(conn) {
   const q = conn.searchInput.value.trim();
+  const ex = (conn.searchExclude ? conn.searchExclude.value.trim() : '');
   const ls = conn.logState;
   if (!q || !ls.name) return;
-  // 已有结果且查询未变 → 跳转下一个（窗口缓存可能未含该序号：先回载再跳）
-  if (ls.searchTotal && ls.searchQ === q) {
+  // 已有结果且查询未变（关键字+排除串都一致）→ 跳转下一个（窗口缓存可能未含该序号：先回载再跳）
+  if (ls.searchTotal && ls.searchQ === q && ls.searchExcludeQ === ex) {
     ls.searchIdx = (ls.searchIdx + 1) % ls.searchTotal;
     const l = ls.resultData[ls.searchIdx];
     if (l) {
@@ -421,12 +426,12 @@ async function doLogSearch(conn) {
   toggleLogSearchPane(conn, true);
   conn.searchCount.innerHTML = '<span class="spin">✳</span> 搜索中…';
   try {
-    const r = await fetch('/api/log_search?name=' + encodeURIComponent(ls.name) + '&q=' + encodeURIComponent(q) + '&limit=500');
+    const r = await fetch('/api/log_search?name=' + encodeURIComponent(ls.name) + '&q=' + encodeURIComponent(q) + '&exclude=' + encodeURIComponent(ex) + '&limit=500');
     const j = await r.json();
     ls.searching = false;
     if (!j.ok) { conn.searchCount.textContent = '失败：' + (j.err || ''); return; }
     if (connections[conn.portId] !== conn) return;  // 索引期间 tab 已关
-    ls.searchQ = q; ls.searchIdx = 0;
+    ls.searchQ = q; ls.searchExcludeQ = ex; ls.searchIdx = 0;
     ls.curRow = -1;  // 换词重搜：清上一词的命中行高亮
     ls.searchTotal = (typeof j.total === 'number' && j.total >= 0) ? j.total : (j.lines || []).length;
     // 窗口缓存初始化：首批 500 条从命中序号 0 开始
@@ -493,14 +498,15 @@ async function resFetchRange(conn, start, count) {
   const ls = conn.logState;
   if (!ls.searchQ) return;
   const myQ = ls.searchQ;  // 代次快照：回写前比对，防在途旧词响应污染新搜索
+  const myEx = ls.searchExcludeQ || '';  // 排除串同做代次快照
   if (!ls.resPending) ls.resPending = new Set();
   ls.resPending.add(start);  // 在途标记：resEnsureRange 不重复发同段
   try {
-    const r = await fetch('/api/log_search_page?name=' + encodeURIComponent(ls.name) + '&q=' + encodeURIComponent(myQ) + '&hit_start=' + start + '&count=' + count);
+    const r = await fetch('/api/log_search_page?name=' + encodeURIComponent(ls.name) + '&q=' + encodeURIComponent(myQ) + '&exclude=' + encodeURIComponent(myEx) + '&hit_start=' + start + '&count=' + count);
     const j = await r.json();
     ls.resPending.delete(start);
     if (!j.ok) return;
-    if (ls.searchQ !== myQ) return;  // 期间已换搜索词：丢弃（清空路径 searchQ='' 也被此校验挡住）
+    if (ls.searchQ !== myQ || (ls.searchExcludeQ || '') !== myEx) return;  // 期间已换词/排除：丢弃
     // fetch 期间可能已换窗：只收下仍在窗口内的行
     (j.lines || []).forEach((l, i) => {
       const hi = start + i;

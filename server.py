@@ -451,9 +451,11 @@ def api_log_page():
 @app.route("/api/log_search")
 def api_log_search():
     """在日志文件搜索关键字。name=日志名或绝对路径，q=关键字，offset=起始行，limit=命中上限。
-    count_total=0（续载）时跳过全量计数，只取下一批命中，速度大幅提升。"""
+    count_total=0（续载）时跳过全量计数，只取下一批命中，速度大幅提升。
+    exclude=排除模式，多个用 | 分隔，支持正则；命中任一段则该行剔除。"""
     name = request.args.get("name", "")
     q = request.args.get("q", "")
+    exclude = request.args.get("exclude", "")
     offset = int(request.args.get("offset", 0))
     limit = int(request.args.get("limit", 200))
     count_total = request.args.get("count_total", "1") != "0"
@@ -461,7 +463,7 @@ def api_log_search():
     if not path:
         return jsonify({"ok": False, "err": "not found"}), 404
     idx = _get_log_index(path)
-    res = idx.search(q, limit=limit, start_offset=offset, count_total=count_total)
+    res = idx.search(q, limit=limit, start_offset=offset, count_total=count_total, exclude=exclude)
     return jsonify({"ok": True, **res})
 
 @app.route("/api/log_search_page")
@@ -470,14 +472,15 @@ def api_log_search_page():
     前端稀疏窗口缓存滚远回载时用，O(1) seek 毫秒级，不重扫不重计。"""
     name = request.args.get("name", "")
     q = request.args.get("q", "")
+    exclude = request.args.get("exclude", "")
     hit_start = int(request.args.get("hit_start", 0))
     count = int(request.args.get("count", 500))
     path = _resolve_log_path(name)
     if not path:
         return jsonify({"ok": False, "err": "not found"}), 404
     idx = _get_log_index(path)
-    lines = idx.search_page(q, hit_start, min(count, 500))
-    total_hits = len(idx._hits_by_q.get(q, ()))  # 命中索引长度即总数（未建则 0）
+    lines = idx.search_page(q, hit_start, min(count, 500), exclude=exclude)
+    total_hits = len(idx._hits_by_q.get((q, exclude or ""), ()))  # 复合键取命中索引长度
     return jsonify({"ok": True, "lines": lines, "hit_start": hit_start, "total_hits": total_hits})
 
 @app.route("/api/log_open_external", methods=["POST"])
