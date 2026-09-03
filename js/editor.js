@@ -187,12 +187,20 @@ async function _edInitContent(conn, content) {
           messages: {
             toolNames: { Text: '文本', Heading: '标题', List: '列表', Checklist: '清单',
               Table: '表格', Image: '图片', Quote: '引用', Code: '代码块', Delimiter: '分隔线',
-              Link: '链接', Bold: '粗体', Italic: '斜体', Marker: '高亮' },
+              Link: '链接', Bold: '粗体', Italic: '斜体', Marker: '高亮',
+              'Unordered List': '无序列表', 'Ordered List': '有序列表' },
             tools: {
               table: { 'With headings': '带表头', 'Without headings': '无表头',
                 'Add row above': '上方插入行', 'Add row below': '下方插入行',
                 'Add column to left': '左侧插入列', 'Add column to right': '右侧插入列',
                 'Delete row': '删除行', 'Delete column': '删除列' },
+              // 引用块设置菜单：插件用 api.i18n.t('Align Left') 查 tools.quote 命名空间
+              quote: { 'Align Left': '左对齐', 'Align Center': '居中对齐' },
+              // 列表设置菜单（含有序列表的 Start with / Counter type 子菜单）
+              list: { 'Unordered': '无序列表', 'Ordered': '有序列表', 'Checklist': '清单',
+                'Start with': '起始编号', 'Counter type': '编号样式',
+                'Numeric': '数字', 'Lower Roman': '小写罗马数字', 'Upper Roman': '大写罗马数字',
+                'Lower Alpha': '小写字母', 'Upper Alpha': '大写字母' },
               image: { 'Select an Image': '选择图片', 'Caption': '说明',
                 'Stretch image': '拉伸图片', 'With background': '带背景',
                 'With border': '带边框', 'With caption': '显示说明',
@@ -224,7 +232,31 @@ async function _edInitContent(conn, content) {
           },
         },
         onChange: () => { _edMarkDirty(conn); },
-        onReady: () => { _edUpdateInfo(conn); },
+        onReady: () => {
+          // ---- Quote 对齐补丁（只打一次）----
+          // vendor 版 quote 插件 bug：_toggleTune 只写 data.alignment，render() 从不
+          // 应用 text-align，也不触发块重渲染——点"Align Center"只改数据，外观不动。
+          // 补丁：_toggleTune 里直接对块根元素设 text-align；render 后按已存数据恢复
+          // （刷新/重开文件时对齐样式不丢）。
+          if (!Quote._alignPatched) {
+            Quote._alignPatched = true;
+            const origRender = Quote.prototype.render;
+            const origToggle = Quote.prototype._toggleTune;
+            Quote.prototype.render = function() {
+              const el = origRender.call(this);
+              if (this.data.alignment) el.style.textAlign = this.data.alignment;
+              return el;
+            };
+            Quote.prototype._toggleTune = function(v) {
+              origToggle.call(this, v);
+              try {
+                const holder = this.api.blocks.getById(this.block.id)?.holder;
+                if (holder) holder.style.textAlign = v === 'center' ? 'center' : '';
+              } catch(_) {}
+            };
+          }
+          _edUpdateInfo(conn);
+        },
       });
       conn.savedData = data;
       _edBindLightbox(conn);   // 图片双击放大灯箱
