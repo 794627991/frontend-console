@@ -35,13 +35,6 @@
     --shadow-glow: 0 0 20px rgba(0, 212, 255, 0.15);
     --font-mono: "Cascadia Code", "JetBrains Mono", "Consolas", "Menlo", monospace;
     --font-ui: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
-    /* 阅读面（笔记 + 日志查看器）：与 --note-* 同源。日志也是长时间阅读区，
-       用与笔记一致的纸感浅底，避免深底高亮字刺眼；终端保持暗色不动 */
-    --reader-bg: #e3e0d8;
-    --reader-bg-card: #d9d5ca;
-    --reader-border: #c3bdae;
-    --reader-fg: #33383b;
-    --reader-muted: #7d7868;
     /* 终端色（xterm JS 读取，不直接参与 CSS）：默认 One Dark */
     --term-bg: #1a1f2e;
     --term-fg: #d7d7d7;
@@ -57,8 +50,6 @@
     --accent: #00d4ff; --accent-2: #0099cc; --accent-glow: rgba(0,212,255,0.4);
     --note-bg: #e3e0d8; --note-bg-card: #d9d5ca; --note-border: #c3bdae;
     --note-fg: #33383b; --note-muted: #7d7868;
-    --reader-bg: #e3e0d8; --reader-bg-card: #d9d5ca; --reader-border: #c3bdae;
-    --reader-fg: #33383b; --reader-muted: #7d7868;
     --term-bg: #1a1f2e; --term-fg: #d7d7d7;
   }
   /* 暖夜灰：壳体更暖更柔，亮度略低于深空蓝；阅读面深一档（不反光） */
@@ -69,8 +60,6 @@
     --accent: #7ab8ff; --accent-2: #5a8fd9; --accent-glow: rgba(122,184,255,0.35);
     --note-bg: #ddd9d1; --note-bg-card: #d2cdc3; --note-border: #b5afa2;
     --note-fg: #38343c; --note-muted: #7c766a;
-    --reader-bg: #ddd9d1; --reader-bg-card: #d2cdc3; --reader-border: #b5afa2;
-    --reader-fg: #38343c; --reader-muted: #7c766a;
     --term-bg: #201e28; --term-fg: #d9d4e0;
   }
   /* 暗调绿：经典 CRT/护眼绿壳，深绿灰底；阅读面同步压深 */
@@ -81,8 +70,6 @@
     --accent: #4fd1a1; --accent-2: #35a37c; --accent-glow: rgba(79,209,161,0.35);
     --note-bg: #dcdcd2; --note-bg-card: #d0d0c4; --note-border: #b0b2a4;
     --note-fg: #2f3833; --note-muted: #75786a;
-    --reader-bg: #dcdcd2; --reader-bg-card: #d0d0c4; --reader-border: #b0b2a4;
-    --reader-fg: #2f3833; --reader-muted: #75786a;
     --term-bg: #16211b; --term-fg: #cfdfc8;
   }
   /* 午夜纸（全浅窗体）：整个工具壳也改浅色，与笔记/日志完全统一，
@@ -95,8 +82,6 @@
     --shadow-glow: 0 0 20px rgba(0,0,0,0.08);
     --note-bg: #f2f0ea; --note-bg-card: #e8e4db; --note-border: #c5c0b2;
     --note-fg: #33383b; --note-muted: #8a8577;
-    --reader-bg: #f2f0ea; --reader-bg-card: #e8e4db; --reader-border: #c5c0b2;
-    --reader-fg: #33383b; --reader-muted: #8a8577;
     --term-bg: #efede6; --term-fg: #33383b;
   }
   html[data-theme="paper"] body::before { opacity: 0.3; }
@@ -167,28 +152,27 @@
   .log-viewer { display: flex; flex-direction: column; width: 100%; height: 100%; position: relative; }
   .log-viewer-top { flex: 1; display: flex; min-height: 0; }
   .log-viewer-top .vlist { flex: 1; }
-  /* 分栏与主阅读面拉开一档：分栏壳体用中间调（比主视图底深一档、比窗体壳浅），
-     否则上下两块同色混成一片，看不出分栏边界 */
-  .log-search-splitter { height: 5px; background: var(--reader-border); cursor: row-resize; flex-shrink: 0; display: none; }
+  /* 分栏与主视图同色系但隔行区分：壳体用卡片色，分隔条用边框色（跟随换肤变量） */
+  .log-search-splitter { height: 5px; background: var(--border); cursor: row-resize; flex-shrink: 0; display: none; }
   .log-search-splitter:hover { background: var(--accent); }
-  .log-search-pane { display: none; flex-direction: column; height: 35%; min-height: 80px; max-height: 70%; background: var(--reader-bg-card); border-top: 1px solid var(--reader-border); flex-shrink: 0; }
+  .log-search-pane { display: none; flex-direction: column; height: 35%; min-height: 80px; max-height: 70%; background: var(--bg-card); border-top: 1px solid var(--border); flex-shrink: 0; }
   .log-search-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
   .log-search-head input { flex: 1; background: var(--bg-input); border: 1px solid var(--border); color: var(--fg); border-radius: 4px; padding: 4px 8px; font-size: 12px; }
   /* 排除框：定宽（flex:1 会让关键字框和排除框平分，主搜索框优先大） */
   .log-search-head input.log-search-exclude { flex: 0 0 190px; color: var(--neon-orange); }
   .log-search-head input.log-search-exclude::placeholder { color: var(--muted); }
   .log-search-count { color: var(--muted); font-size: 11px; min-width: 60px; }
-  .log-search-results { flex: 1; overflow-y: auto; position: relative; background: var(--reader-bg); min-height: 40px; }
+  .log-search-results { flex: 1; overflow-y: auto; position: relative; background: var(--bg-input); min-height: 40px; }
   .log-search-results .hline { cursor: pointer; }
   /* 交替行底色：与主视图同底时相邻行挤成一片，隔行用卡片色微区分 */
-  .log-search-results .hline:nth-child(odd) { background: var(--reader-bg-card); }
-  .log-search-results .hline.active { background: #2a6a8f; color: #f4f2ec; }
-  .log-search-results .hline.active .hrow, .log-search-results .hline.active .htag { color: #f4f2ec; }
+  .log-search-results .hline:nth-child(odd) { background: var(--bg-card); }
+  .log-search-results .hline.active { background: var(--accent); color: #001020; }
+  .log-search-results .hline.active .hrow, .log-search-results .hline.active .htag { color: #001020; }
   /* 搜索命中关键字染色（主视图 + 结果列表共用） */
   mark.hl-hit { background: rgba(255,214,102,0.45); color: inherit; border-radius: 2px; padding: 0 1px; }
   .hline.active mark.hl-hit { background: rgba(255,214,102,0.9); color: #001020; }
-  /* 主视图当前选中命中行（点击搜索结果/回车跳转后整行高亮）：浅底阅读面上用深色描边 */
-  .vlist .hline.cur { background: rgba(42,106,143,0.16); box-shadow: inset 0 0 0 1px rgba(42,106,143,0.6); }
+  /* 主视图当前选中命中行（点击搜索结果/回车跳转后整行高亮） */
+  .vlist .hline.cur { background: rgba(0,212,255,0.14); box-shadow: inset 0 0 0 1px rgba(0,212,255,0.55); }
   /* 续载提示行 */
   .search-more { padding: 8px 10px; color: var(--muted); font-size: 11px; text-align: center; }
   /* 跳到第 N 个匹配 */
@@ -797,17 +781,17 @@
   .history-toolbar select:focus, .history-toolbar input:focus { border-color: var(--accent); }
   .history-toolbar .btn { padding: 4px 8px; font-size: 11px; }
   .history-status { font-size: 10px; color: var(--muted); padding: 2px 4px; }
-  .vlist { flex: 1; overflow-y: auto; position: relative; background: var(--reader-bg); border: 1px solid var(--reader-border); border-radius: 6px; padding-bottom: 18px; }  /* 阅读面：与笔记同源纸感浅底（--reader-*） */
+  .vlist { flex: 1; overflow-y: auto; position: relative; background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; padding-bottom: 18px; }  /* 底部留白 1 行高，与终端一致 */
   .vlist-inner { position: relative; width: 100%; }
   .vlist-viewport { position: absolute; left: 0; right: 0; top: 0; }  /* 跟随 scrollTop 平移的渲染块，行在其中用实际坐标排列 */
-  .hline { position: absolute; left: 0; right: 0; top: 0; height: 18px; line-height: 18px; padding: 0 6px; font-family: var(--font-mono); font-size: 11px; color: var(--reader-fg); white-space: pre; overflow: hidden; text-overflow: ellipsis; box-sizing: border-box; }
-  .hline:hover { background: var(--reader-bg-card); }
-  .hline.kw-error { color: #b3474f; }
-  .hline.kw-warning { color: #9c6a1f; }
-  .hline.kw-info { color: #2a6a8f; }
-  .hline .htag { color: var(--reader-muted); font-size: 9px; margin-right: 6px; }
-  .hline .hts { color: var(--reader-muted); font-size: 10px; margin-right: 6px; user-select: none; }  /* 工具日志自带时间戳，展示出来 */
-  .hline .hrow { color: #2a6a8f; font-size: 9px; margin-right: 6px; min-width: 50px; display: inline-block; }
+  .hline { position: absolute; left: 0; right: 0; top: 0; height: 18px; line-height: 18px; padding: 0 6px; font-family: var(--font-mono); font-size: 11px; color: var(--fg); white-space: pre; overflow: hidden; text-overflow: ellipsis; box-sizing: border-box; }
+  .hline:hover { background: var(--bg-card); }
+  .hline.kw-error { color: var(--neon-red); }
+  .hline.kw-warning { color: var(--neon-orange); }
+  .hline.kw-info { color: var(--accent); }
+  .hline .htag { color: var(--muted); font-size: 9px; margin-right: 6px; }
+  .hline .hts { color: #5f7fa6; font-size: 10px; margin-right: 6px; user-select: none; }  /* 工具日志自带时间戳，展示出来 */
+  .hline .hrow { color: var(--accent); font-size: 9px; margin-right: 6px; min-width: 50px; display: inline-block; }
 
   /* 全屏覆盖容器（top 等）—— v0.3.0：xterm 自身处理全屏序列，此 overlay 仅作"全屏模式"提示条 */
   .screen-overlay {
