@@ -48,6 +48,7 @@
     --bg-input: #121a2c; --border: #243654; --border-glow: #2a4a7a;
     --fg: #c8d6e8; --fg-bright: #e8f1ff; --muted: #6d7f9d;
     --accent: #00d4ff; --accent-2: #0099cc; --accent-glow: rgba(0,212,255,0.4);
+    --on-accent: #001020;  /* accent 按钮上的文字色 */
     --note-bg: #e3e0d8; --note-bg-card: #d9d5ca; --note-border: #c3bdae;
     --note-fg: #33383b; --note-muted: #7d7868;
     --term-bg: #1a1f2e; --term-fg: #d7d7d7;
@@ -58,6 +59,7 @@
     --bg-input: #17161f; --border: #33313f; --border-glow: #4a4860;
     --fg: #cfc9d9; --fg-bright: #ede9f5; --muted: #7b7590;
     --accent: #7ab8ff; --accent-2: #5a8fd9; --accent-glow: rgba(122,184,255,0.35);
+    --on-accent: #101820;
     --note-bg: #ddd9d1; --note-bg-card: #d2cdc3; --note-border: #b5afa2;
     --note-fg: #38343c; --note-muted: #7c766a;
     --term-bg: #201e28; --term-fg: #d9d4e0;
@@ -68,6 +70,7 @@
     --bg-input: #101c15; --border: #22382b; --border-glow: #356045;
     --fg: #c2d6c8; --fg-bright: #e0f2e5; --muted: #688274;
     --accent: #4fd1a1; --accent-2: #35a37c; --accent-glow: rgba(79,209,161,0.35);
+    --on-accent: #061510;
     --note-bg: #dcdcd2; --note-bg-card: #d0d0c4; --note-border: #b0b2a4;
     --note-fg: #2f3833; --note-muted: #75786a;
     --term-bg: #16211b; --term-fg: #cfdfc8;
@@ -79,7 +82,12 @@
     --bg-input: #efede6; --border: #b8b3a5; --border-glow: #8a8577;
     --fg: #3a3d40; --fg-bright: #26292c; --muted: #807b6d;
     --accent: #2a7a9e; --accent-2: #1f5f7c; --accent-glow: rgba(42,122,158,0.3);
+    --on-accent: #f4f2ec;
     --shadow-glow: 0 0 20px rgba(0,0,0,0.08);
+    --neon-green: #3a7c52; --neon-purple: #7a4a8e; --neon-orange: #a06a20;
+    --neon-red: #a83848; --kernel: #2a6a8f; --kernel-err: #a83848; --uboot: #7a4a8e;
+    --heop: #2a6a8f; --heop-ok: #3a7c52; --heop-fail: #a83848; --prompt: #3a7c52;
+    --text: #3a3d40; --input-c: #2a7a9e;
     --note-bg: #f2f0ea; --note-bg-card: #e8e4db; --note-border: #c5c0b2;
     --note-fg: #33383b; --note-muted: #8a8577;
     --term-bg: #efede6; --term-fg: #33383b;
@@ -92,6 +100,7 @@
     --bg-input: #181824; --border: #34344a; --border-glow: #4a4a6a;
     --fg: #c6c6e0; --fg-bright: #eaeaf5; --muted: #7a7a95;
     --accent: #a78bfa; --accent-2: #7c6cd9; --accent-glow: rgba(167,139,250,0.35);
+    --on-accent: #16161f;
     --neon-green: #6ee7a0; --neon-purple: #c678dd; --neon-orange: #e5a05b;
     --neon-red: #e06c75; --kernel: #79c0ff; --kernel-err: #ff7b72; --uboot: #d2a8ff;
     --heop: #a5d6ff; --heop-ok: #56d364; --heop-fail: #ff7b72; --prompt: #6ee7a0;
@@ -106,6 +115,7 @@
     --bg-input: #1b1410; --border: #3d3025; --border-glow: #5c4936;
     --fg: #dccfc0; --fg-bright: #f5ece1; --muted: #94826f;
     --accent: #e8a25b; --accent-2: #c47d3a; --accent-glow: rgba(232,162,91,0.35);
+    --on-accent: #1a140f;
     --neon-green: #8fd494; --neon-purple: #c69fd6; --neon-orange: #e5a05b;
     --neon-red: #e07a6d; --kernel: #8fc0d9; --kernel-err: #e07a6d; --uboot: #c69fd6;
     --heop: #b5d0e0; --heop-ok: #7cba6e; --heop-fail: #e07a6d; --prompt: #8fd494;
@@ -120,6 +130,7 @@
     --bg-input: #101e29; --border: #274156; --border-glow: #3a5a7a;
     --fg: #c3d4e0; --fg-bright: #e4f0f8; --muted: #6f8497;
     --accent: #56b8d9; --accent-2: #3a90b5; --accent-glow: rgba(86,184,217,0.35);
+    --on-accent: #0f1a24;
     --neon-green: #6ed9a5; --neon-purple: #b08cd9; --neon-orange: #e0a56d;
     --neon-red: #e0727f; --kernel: #8fc0e0; --kernel-err: #e0727f; --uboot: #b08cd9;
     --heop: #a5cfe5; --heop-ok: #6ec98e; --heop-fail: #e0727f; --prompt: #6ed9a5;
@@ -134,6 +145,7 @@
     --bg-input: #1c1220; --border: #40293a; --border-glow: #5c3f52;
     --fg: #dcc8d4; --fg-bright: #f5e5ee; --muted: #957d8b;
     --accent: #e89ab5; --accent-2: #c4748f; --accent-glow: rgba(232,154,181,0.35);
+    --on-accent: #1e131a;
     --neon-green: #8fd4a0; --neon-purple: #c69fd6; --neon-orange: #e0a56d;
     --neon-red: #e06c7d; --kernel: #8fc0d9; --kernel-err: #e06c7d; --uboot: #c69fd6;
     --heop: #c5a5e0; --heop-ok: #7cba8e; --heop-fail: #e06c7d; --prompt: #8fd4a0;
@@ -222,11 +234,11 @@
   .log-search-results .hline { cursor: pointer; }
   /* 交替行底色：与主视图同底时相邻行挤成一片，隔行用卡片色微区分 */
   .log-search-results .hline:nth-child(odd) { background: var(--bg-card); }
-  .log-search-results .hline.active { background: var(--accent); color: #001020; }
-  .log-search-results .hline.active .hrow, .log-search-results .hline.active .htag { color: #001020; }
+  .log-search-results .hline.active { background: var(--accent); color: var(--on-accent); }
+  .log-search-results .hline.active .hrow, .log-search-results .hline.active .htag { color: var(--on-accent); }
   /* 搜索命中关键字染色（主视图 + 结果列表共用） */
   mark.hl-hit { background: rgba(255,214,102,0.45); color: inherit; border-radius: 2px; padding: 0 1px; }
-  .hline.active mark.hl-hit { background: rgba(255,214,102,0.9); color: #001020; }
+  .hline.active mark.hl-hit { background: rgba(255,214,102,0.9); color: var(--on-accent); }
   /* 主视图当前选中命中行（点击搜索结果/回车跳转后整行高亮） */
   .vlist .hline.cur { background: rgba(0,212,255,0.14); box-shadow: inset 0 0 0 1px rgba(0,212,255,0.55); }
   /* 续载提示行 */
@@ -328,7 +340,7 @@
   .btn:hover { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 8px var(--accent-glow); }
   .btn.primary {
     background: linear-gradient(135deg, var(--accent), var(--accent-2));
-    color: #001020; border: none; font-weight: 600;
+    color: var(--on-accent); border: none; font-weight: 600;
   }
   .btn.primary:hover { box-shadow: 0 0 14px var(--accent-glow); filter: brightness(1.1); }
   .btn.danger { color: var(--neon-red); }
@@ -409,7 +421,7 @@
     user-select: none; transition: background 0.15s, color 0.15s;
   }
   .tftp-resizer:hover, .tftp-resizer.dragging {
-    background: var(--accent); color: #001020;
+    background: var(--accent); color: var(--on-accent);
   }
   .tftp-pane {
     height: 50%; flex-shrink: 0;  /* 默认占侧边栏一半，拖拽后 JS 用 px 覆盖并记忆 */
@@ -579,12 +591,12 @@
     white-space: pre-wrap; word-break: break-all;
     font-variant-ligatures: none;
   }
-  /* xterm 终端容器 */
+  /* xterm 终端容器：底色跟主题走（与 xterm theme.background 同源，避免纸感主题下出现深色圈边） */
   .xterm-wrap {
-    flex: 1; min-height: 0; position: relative; background: #1a1f2e;  /* 终端底色：略浅于纯黑，降低对比度护眼 */
+    flex: 1; min-height: 0; position: relative; background: var(--term-bg);
     padding: 4px 6px 0 6px; overflow: hidden;
   }
-  .xterm-bottom-pad { flex-shrink: 0; height: 18px; background: #1a1f2e; }  /* 底部留白 1 行高，与终端底色一致 */
+  .xterm-bottom-pad { flex-shrink: 0; height: 18px; background: var(--term-bg); }  /* 底部留白 1 行高，与终端底色一致 */
   .xterm-wrap .xterm { height: 100%; }
   .xterm-wrap .xterm-viewport { overflow-y: auto !important; }
   /* xterm 行高/字号与原终端一致 */
@@ -628,7 +640,7 @@
   .theme-info .desc { color: var(--muted); font-size: 10px; margin-top: 1px; }
   .theme-check { color: var(--accent); font-size: 13px; }
   .ctx-item { padding: 8px 16px; cursor: pointer; display: flex; align-items: center; gap: 10px; color: var(--fg); transition: background 0.12s, color 0.12s; }
-  .ctx-item:hover { background: var(--accent); color: #001020; }
+  .ctx-item:hover { background: var(--accent); color: var(--on-accent); }
   .ctx-item.disabled { color: var(--muted); cursor: default; }
   .ctx-item.disabled:hover { background: transparent; color: var(--muted); }
   .ctx-sep { height: 1px; background: var(--border); margin: 5px 0; }
@@ -806,7 +818,7 @@
   .cmd-add .cmd-add-row { display: flex; gap: 6px; }
   .cmd-add .cmd-add-cmd { flex: 1; }
   .cmd-add input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
-  .cmd-add button { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #001020; border: none; border-radius: 6px; padding: 6px 12px; font-size: 12px; cursor: pointer; font-weight: 600; flex-shrink: 0; }
+  .cmd-add button { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: var(--on-accent); border: none; border-radius: 6px; padding: 6px 12px; font-size: 12px; cursor: pointer; font-weight: 600; flex-shrink: 0; }
   .cmd-sheets { display: flex; gap: 4px; margin-bottom: 8px; border-bottom: 1px solid var(--border); }
   .cmd-sheet-tab { font-size: 11px; font-weight: 600; color: var(--muted); padding: 4px 10px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; transition: all 0.2s; }
   .cmd-sheet-tab:hover { color: var(--fg); }
@@ -945,7 +957,7 @@
   .conn-type-switch, .conn-auth-switch { display: flex; gap: 6px; }
   .conn-type-btn, .conn-auth-btn { flex: 1; background: var(--bg-card); color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; font-size: 12px; cursor: pointer; font-weight: 600; transition: all 0.2s; }
   .conn-type-btn:hover, .conn-auth-btn:hover { color: var(--fg); border-color: var(--accent); }
-  .conn-type-btn.active, .conn-auth-btn.active { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #001020; border-color: transparent; }
+  .conn-type-btn.active, .conn-auth-btn.active { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: var(--on-accent); border-color: transparent; }
 
   /* 命令编辑对话框 */
   #cmdEditModal .box { width: 420px; }
