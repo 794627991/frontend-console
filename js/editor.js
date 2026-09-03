@@ -13,19 +13,25 @@
 
 // Editor.js 工具集（.note 用）。行内：Marker 高亮 + InlineCode 代码。
 // Image 走 upload_img 上传。/ 键唤出块菜单。
+// toolbox.title 汉化（Editor.js 默认文案是英文：Heading/List/…）。
 function _edTools() {
   return {
-    header: Header,
-    list: EditorjsList,
-    checklist: Checklist,
-    table: Table,
-    image: { class: ImageTool, config: {
+    header: { class: Header, toolbox: { title: '标题' },
+      config: { placeholder: '输入标题…', levels: [1,2,3], defaultLevel: 2,
+        levelConfig: {'1':'大标题','2':'中标题','3':'小标题'} } },
+    list: { class: EditorjsList, toolbox: { title: '列表' },
+      config: { placeholder: '列表项…' } },
+    checklist: { class: Checklist, toolbox: { title: '清单' },
+      config: { placeholder: '待办事项…' } },
+    table: { class: Table, toolbox: { title: '表格' } },
+    image: { class: ImageTool, toolbox: { title: '图片' }, config: {
       uploader: { uploadByFile: _edUploadImage, uploadByUrl: null },
       captionPlaceholder: '图片说明（可空）',
     }},
-    quote: Quote,
-    code: CodeTool,
-    delimiter: Delimiter,
+    quote: { class: Quote, toolbox: { title: '引用' },
+      config: { captionPlaceholder: '', quotePlaceholder: '引用内容…' } },
+    code: { class: CodeTool, toolbox: { title: '代码块' } },
+    delimiter: { class: Delimiter, toolbox: { title: '分隔线' } },
     paragraph: { text: { inlineToolbar: ['marker', 'inlineCode', 'bold'] } },
   };
 }
@@ -75,10 +81,18 @@ function buildEditorTab(name, content) {
         <button class="lv-btn" data-ed-action="saveas" title="Ctrl+Shift+S">另存为…</button>
         <button class="lv-btn" data-ed-action="rename" title="双击标签页标题可快捷改名">重命名</button>
         <button class="lv-btn" data-ed-action="delete">删除</button>
+        <button class="lv-btn" data-ed-action="outline" title="显示/隐藏右侧大纲面板">☰ 大纲</button>
         <span class="lv-info" data-ed-info></span>
       </div>
-      <div class="ed-scroll">
-        <div class="ed-holder"></div>
+      <div class="ed-main">
+        <div class="ed-scroll">
+          <div class="ed-holder"></div>
+        </div>
+        <div class="ed-outline" style="display:none;">
+          <div class="ed-outline-head">大纲</div>
+          <div class="ed-outline-list"></div>
+          <div class="ed-outline-stats"></div>
+        </div>
       </div>
     </div>`;
   const es = termArea.querySelector('.empty-state');
@@ -91,6 +105,9 @@ function buildEditorTab(name, content) {
     tab, wrap,
     holder: wrap.querySelector('.ed-holder'),
     infoEl: wrap.querySelector('[data-ed-info]'),
+    outline: wrap.querySelector('.ed-outline'),
+    outlineList: wrap.querySelector('.ed-outline-list'),
+    outlineStats: wrap.querySelector('.ed-outline-stats'),
     isNote,
     editor: null,         // Editor.js 实例（.note）
     ta: null,             // textarea（.txt，懒建——保底 fallback）
@@ -109,6 +126,7 @@ function buildEditorTab(name, content) {
       else if (act === 'saveas') edSaveAs(conn);
       else if (act === 'rename') edRenamePrompt(conn);
       else if (act === 'delete') edDelete(conn);
+      else if (act === 'outline') edToggleOutline(conn);
     };
   });
   // 快捷键：编辑区内 Ctrl+S / Ctrl+Shift+S
@@ -135,6 +153,31 @@ async function _edInitContent(conn, content) {
         data,
         placeholder: '输入内容，按 / 插入块（标题/图片/表格/清单…），可直接粘贴截图',
         minHeight: 60,
+        // 核心与插件 UI 文案汉化（Editor.js 默认英文）
+        i18n: {
+          toolNames: { Text: '文本', Heading: '标题', List: '列表', Checklist: '清单',
+            Table: '表格', Image: '图片', Quote: '引用', Code: '代码块', Delimiter: '分隔线' },
+          tools: {
+            header: { '': '文本' },
+            table: { 'With headings': '带表头', 'Without headings': '无表头',
+              'Add row above': '上方插入行', 'Add row below': '下方插入行',
+              'Add column to left': '左侧插入列', 'Add column to right': '右侧插入列',
+              'Delete row': '删除行', 'Delete column': '删除列' },
+            image: { 'Select an Image': '选择图片', 'Caption': '说明',
+              'Stretch image': '拉伸图片', 'With background': '带背景', 'Delete': '删除' },
+          },
+          blockTunes: {
+            'delete': { Delete: '删除' },
+            'moveUp': { 'Move up': '上移' },
+            'moveDown': { 'Move down': '下移' },
+          },
+          inlineToolbar: {
+            converter: { 'To paragraph': '转段落', 'To heading': '转标题', 'Convert to': '转换为' },
+          },
+          ui: {
+            'Add a link': '添加链接',
+          },
+        },
         onChange: () => { _edMarkDirty(conn); },
         onReady: () => { _edUpdateInfo(conn); },
       });
@@ -189,6 +232,48 @@ function _edMarkTab(conn) {
 // ---- 状态栏：块数/字符数 + 保存态 ----
 function _edUpdateInfo(conn) {
   conn.infoEl.textContent = _edStatText(conn) + _edStateText(conn);
+  _edRenderOutline(conn);   // 大纲面板开着时同步刷新（内容/块变化即更新）
+}
+
+// ---- 右侧大纲面板：标题层级导航 + 块类型统计 ----
+function edToggleOutline(conn) {
+  const shown = conn.outline.style.display !== 'none';
+  conn.outline.style.display = shown ? 'none' : 'flex';
+  if (!shown) _edRenderOutline(conn);
+}
+function _edRenderOutline(conn) {
+  if (!conn.isNote || !conn.outline || conn.outline.style.display === 'none') return;
+  const blocks = conn.holder.querySelectorAll('.ce-block');
+  // 大纲：只列标题块（h1/h2/h3 按层级缩进），点击滚动到对应块
+  const entries = [];
+  blocks.forEach((b, i) => {
+    const h = b.querySelector('h1.ce-header, h2.ce-header, h3.ce-header');
+    if (h) entries.push({ level: +h.tagName[1], text: h.textContent.trim(), el: b });
+  });
+  conn.outlineList.innerHTML = entries.length
+    ? entries.map((e, i) =>
+        `<div class="ed-outline-item" data-i="${i}" style="padding-left:${(e.level-1)*12+8}px">${esc(e.text || '(无标题)')}</div>`).join('')
+    : '<div class="ed-outline-empty">暂无标题块<br>用「标题」块组织笔记后在此生成目录</div>';
+  conn.outlineList.querySelectorAll('.ed-outline-item').forEach(item => {
+    item.onclick = () => {
+      const e = entries[+item.dataset.i];
+      if (e && e.el) conn.wrap.querySelector('.ed-scroll').scrollTo({ top: e.el.offsetTop - 40, behavior: 'smooth' });
+    };
+  });
+  // 统计：块类型分布
+  const types = {};
+  blocks.forEach(b => {
+    if (b.querySelector('.ce-header')) types['标题'] = (types['标题']||0) + 1;
+    else if (b.querySelector('.cdx-list')) types['列表'] = (types['列表']||0) + 1;
+    else if (b.querySelector('.cdx-checklist')) types['清单'] = (types['清单']||0) + 1;
+    else if (b.querySelector('.tc-wrap, .tc-table')) types['表格'] = (types['表格']||0) + 1;
+    else if (b.querySelector('.image-tool')) types['图片'] = (types['图片']||0) + 1;
+    else if (b.querySelector('.cdx-quote')) types['引用'] = (types['引用']||0) + 1;
+    else if (b.querySelector('.ce-code')) types['代码'] = (types['代码']||0) + 1;
+    else types['文本'] = (types['文本']||0) + 1;
+  });
+  conn.outlineStats.innerHTML = Object.entries(types)
+    .map(([k, v]) => `<span class="ed-outline-stat">${esc(k)} ${v}</span>`).join('');
 }
 // 侧边栏与状态栏共用的统计文案（不含保存态）
 function _edStatText(conn) {
