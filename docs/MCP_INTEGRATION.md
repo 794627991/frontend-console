@@ -1,13 +1,14 @@
-# 终端控制台 Pro — MCP 集成说明
+# 前端控制台 v1.0.0 — MCP 集成说明
 
 > 让 AI 助手（Claude Code 等任何 MCP 客户端）原生控制串口/SSH 设备、分析日志文件。
 > 配置后，AI 能自动发现并使用本工具的全部能力，无需手动复制粘贴终端输出。
+> 工具本身不含 AI——所有 AI 能力由外部 Claude Code 通过 MCP 提供。
 
 ---
 
 ## 一、这是什么
 
-**终端控制台 Pro** 是面向嵌入式/BSP 开发者的串口/SSH 调试 + 日志分析桌面工具（Windows，pywebview + WebView2）。
+**前端控制台 v1.0.0** 是面向嵌入式/BSP 开发者的串口/SSH 调试 + 日志分析桌面工具（Windows，pywebview + WebView2）。
 
 通过 **MCP（Model Context Protocol）** 集成，AI 助手可以：
 
@@ -26,7 +27,7 @@ AI 操作的是**你正在用的同一个工具**——你在 GUI 里连的串�
 
 - Windows 10/11
 - 已安装 [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)（Win11 自带，Win10 可能需手动装）
-- 拿到 `串口控制台Pro.exe`（单文件，无需 Python 环境）
+- **二选一**：拿到 `前端控制台.exe`（单文件，无需 Python 环境），或用源码运行（需 Python 3.x）
 
 ### Claude Code 配置
 
@@ -35,18 +36,34 @@ AI 操作的是**你正在用的同一个工具**——你在 GUI 里连的串�
 - **用户级**（全局生效）：`~/.claude.json` 的 `mcpServers` 字段
 - **项目级**（仅当前项目）：项目根目录 `.mcp.json`
 
+**exe 分发**（推荐，其他用户无需装 Python）：
+
 ```json
 {
   "mcpServers": {
     "serial-console-pro": {
-      "command": "C:\\path\\to\\串口控制台Pro.exe",
+      "command": "C:\\path\\to\\前端控制台.exe",
       "args": ["--mcp"]
     }
   }
 }
 ```
 
-> 把 `C:\\path\\to\\` 换成 exe 的实际路径。路径中的反斜杠要双写（JSON 转义）。
+**源码运行**（开发机）：
+
+```json
+{
+  "mcpServers": {
+    "serial-console-pro": {
+      "command": "python",
+      "args": ["D:\\AI\\串口控制台Pro\\src\\mcp_server.py"],
+      "env": { "PYTHONIOENCODING": "utf-8" }
+    }
+  }
+}
+```
+
+> 把路径换成实际位置。路径中的反斜杠要双写（JSON 转义）。
 
 配置后重启 Claude Code，输入 `/mcp` 应能看到 `serial-console-pro` 已连接，16 个工具可用。
 

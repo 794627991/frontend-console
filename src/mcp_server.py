@@ -21,6 +21,16 @@ Claude Code 配置（~/.claude.json 或项目 .mcp.json）:
     }
   }
 }
+
+exe 分发（其他用户无需装 Python；exe 内置 MCP server，--mcp 即 stdio 模式）:
+{
+  "mcpServers": {
+    "serial-console-pro": {
+      "command": "C:\\path\\to\\前端控制台.exe",
+      "args": ["--mcp"]
+    }
+  }
+}
 """
 import os
 import sys
@@ -36,12 +46,16 @@ STATE_DIR = os.path.join(os.path.expanduser("~"), ".serialconsole_pro")
 ENDPOINT_FILE = os.path.join(STATE_DIR, "endpoint.json")
 
 # 工具没开时自动拉起的候选入口
-# 优先源码运行（src/main.py，始终最新），exe 作为后备（exe 可能是旧版本，缺新 API）
+# PyInstaller frozen（--mcp 模式）下 sys.executable 就是 exe 自己，放最前；
+# 源码运行时依次找 src/main.py（始终最新）、开发机 dist exe。
+_EXE_CANDIDATES = []
+if getattr(sys, "frozen", False):
+    _EXE_CANDIDATES.append(sys.executable)               # exe 分发：拉起自己（GUI 模式）
 _SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 _ROOT_DIR = os.path.dirname(_SRC_DIR)
-_EXE_CANDIDATES = [
+_EXE_CANDIDATES += [
     os.path.join(_SRC_DIR, "main.py"),                                  # 源码优先
-    r"D:\AI\串口控制台Pro\dist\前端控制台.exe",                       # exe 后备
+    os.path.join(_ROOT_DIR, "dist", "前端控制台.exe"),                 # 开发机 dist 后备
     os.path.join(os.path.expanduser("~"), "Desktop", "前端控制台.exe"),
 ]
 _RUN_BAT = os.path.join(_ROOT_DIR, "run.bat")

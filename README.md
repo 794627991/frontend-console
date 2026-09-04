@@ -21,9 +21,8 @@
 | 日志对比 | 正常 vs 异常启动日志 diff（行级/摘要两模式），BSP 定位利器 |
 | 文本编辑器 | Monaco，C/JSON 大纲树（嵌套折叠）、语法高亮；<20M 编辑，>30M 自动阅读器 |
 | Hex 查看器 | bin/未知文件 16 进制查看/编辑：字节选区、多类型数据检视（Int/Float/LEB128…）、大小端、HxD 式查看方式（hex/十进制 × 8/16/32/64 位分组）、搜索、Intel HEX 解析回写 |
-| AI 助手 | 内置 AI 面板：分析日志、答疑问答，独立于终端会话 |
 | 回放 | 终端输出录制/回放，时序重现 |
-| Claude Code 集成 | MCP server + 命令行桥（见 docs/MCP_INTEGRATION.md） |
+| Claude Code 集成 | **MCP server 内置于工具**：Claude Code 可直接 observe/send_command/read_log 等操作串口与日志（无需任何 AI 配置在工具内，AI 能力完全由外部 Claude Code 通过 MCP 提供）；另有命令行桥 `serial_cli.py`（见 docs/MCP_INTEGRATION.md） |
 
 ## 目录结构
 
@@ -40,8 +39,13 @@
 
 ## 数据目录
 
-`~/.serialconsole_pro/`：endpoint.json（服务发现）、config.json（配置）、logs/（串口日志）。
+`~/.serialconsole_pro/`：endpoint.json（服务发现）、config.json（配置）。串口日志默认也在此的 `logs/`，但可配置到任意目录（日志库界面可改，当前配置指向工具目录 `serial_logs/`，便于随工具备份）。
 
-## Claude Code 直连
+## Claude Code 直连（MCP）
 
-工具运行时任何会话可直接用 MCP 工具（observe/send_command/read_log…）或命令行 `python src\serial_cli.py` 操作串口，详见 `docs/MCP_INTEGRATION.md`。
+工具**内置 MCP server**，两种形态都支持，无需在工具里配置任何 AI：
+
+- **源码运行**：Claude Code 配置 `{"mcpServers": {"serial-console-pro": {"command": "python", "args": ["D:\\AI\\串口控制台Pro\\src\\mcp_server.py"]}}}`
+- **exe 分发**（其他用户无需装 Python）：`{"mcpServers": {"serial-console-pro": {"command": "C:\\path\\to\\前端控制台.exe", "args": ["--mcp"]}}}`
+
+工具没开时 MCP 会自动拉起工具。也可用命令行桥 `python src\serial_cli.py`。详见 `docs/MCP_INTEGRATION.md`。
