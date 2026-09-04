@@ -447,11 +447,12 @@ def api_log_dir_open():
 
 
 # ---- 数据目录管理（顶栏机器人图标点开的设置面板）----
-# 数据目录收纳：logs/（串口日志，唯一日志目录）、files/（笔记）、cmdlib.json（命令库）。
-# webview_cache 不迁（纯缓存，关工具时自动清）。
+# 数据目录收纳：logs/（串口日志，唯一日志目录）、files/（笔记）、cmdlib.json（命令库）、
+# webview_cache/（WebView2 缓存——也迁：新位置缓存连续，不产生旧位置孤儿残留；
+# 被运行中 WebView2 锁定的文件跳过，纯缓存丢了自动重建）。
 # 迁移铁律（用户强调）：迁移前后数据必须都能找到——采用「先复制后切换」而非「先删后搬」：
 # 复制全部内容 → 校验大小一致 → 写 config 切换 → 旧目录完整保留不删（用户自查后手动删）。
-_DATA_SUBDIRS = ["logs", "files"]
+_DATA_SUBDIRS = ["logs", "files", "webview_cache"]
 _DATA_FILES = ["cmdlib.json"]
 
 @app.route("/api/data_dir")
@@ -551,22 +552,32 @@ def api_data_dir_migrate():
             src = os.path.join(DATA_DIR, s)
             if not os.path.isdir(src):
                 continue
+            # webview_cache 特例：运行中 WebView2 锁定部分文件（Cookies/LOCK 等），
+            # 锁定文件跳过不报错（纯缓存，新位置自动重建）；用户数据目录必须严格校验
+            tolerant = (s == "webview_cache")
             dst = os.path.join(target, s)
             os.makedirs(dst, exist_ok=True)
             n = 0
+            skipped = 0
             for root, dirs, files in os.walk(src):
                 rel = os.path.relpath(root, src)
                 droot = dst if rel == "." else os.path.join(dst, rel)
                 os.makedirs(droot, exist_ok=True)
                 for fn in files:
                     sf, df = os.path.join(root, fn), os.path.join(droot, fn)
-                    if not os.path.exists(df):   # 不覆盖目标已有文件（目标可能已有数据）
-                        shutil.copy2(sf, df)
-                    # 校验：大小一致（copy2 保元数据，大小校验足够可靠且快）
-                    if os.path.getsize(sf) != os.path.getsize(df):
-                        raise RuntimeError(f"校验失败: {df} 与源大小不一致")
-                    n += 1
-            copied.append({"name": s, "files": n})
+                    try:
+                        if not os.path.exists(df):   # 不覆盖目标已有文件（目标可能已有数据）
+                            shutil.copy2(sf, df)
+                        # 校验：大小一致（copy2 保元数据，大小校验足够可靠且快）
+                        if os.path.getsize(sf) != os.path.getsize(df):
+                            raise RuntimeError(f"校验失败: {df} 与源大小不一致")
+                        n += 1
+                    except (PermissionError, OSError) as e:
+                        if tolerant:
+                            skipped += 1   # 锁定缓存文件，跳过
+                        else:
+                            raise
+            copied.append({"name": s, "files": n, **({"skipped": skipped} if skipped else {})})
         # 单文件（cmdlib.json）
         for s in _DATA_FILES:
             sf = os.path.join(DATA_DIR, s)
