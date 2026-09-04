@@ -444,29 +444,109 @@ function edToggleOutline(conn) {
   conn.outline.style.display = shown ? 'none' : 'flex';
   if (!shown) _edRenderOutline(conn);
 }
+// ---- 代码文件大纲：按语言语法结构解析（class/def/函数名层级导航）----
+// Monaco basic-languages 只是着色器、没有 symbol provider（那是 LSP 的事），
+// 所以轻量正则解析常见语言的定义行。# 井号规则只用于 md/txt——
+// 代码文件的 # 是注释，曾被整当 md 标题列出 56 条注释（大纲异常）。
+const _CODE_OUTLINE = {
+  // Python：class / def，缩进映射层级（1 级=顶格，2 级=一层缩进内）
+  py: [
+    { re: /^(class)\s+([A-Za-z_]\w*)/, lv: 1, kind: '类' },
+    { re: /^(\s*)def\s+([A-Za-z_]\w*)/, lv: 2, kind: '函数', indent: true },
+  ],
+  // C/C++/Java/JS/TS/C#/Go/Rust… 大括号语言：类型/函数定义行（简化启发式）
+  c: [
+    { re: /^(?:typedef\s+)?struct\s+([A-Za-z_]\w*)/, lv: 1, kind: '结构体' },
+    { re: /^class\s+([A-Za-z_]\w*)/, lv: 1, kind: '类' },
+    { re: /^(?:[A-Za-z_][\w:<>,\s*&]*?\s[*&]?\s*)([A-Za-z_]\w*)\s*\([^;]*$/, lv: 2, kind: '函数' },
+  ],
+};
+const _CODE_OUTLINE_EXT = {
+  // 后缀 → 解析器（py 一族走 py；花括号语言走 c 启发式；其余 null=井号规则）
+  '.py': 'py', '.pyw': 'py', '.pyi': 'py',
+  '.c': 'c', '.h': 'c', '.cpp': 'c', '.hpp': 'c', '.cc': 'c', '.cxx': 'c', '.hh': 'c', '.hxx': 'c',
+  '.java': 'c', '.cs': 'c', '.go': 'c', '.rs': 'c', '.swift': 'c', '.scala': 'c', '.kotlin': 'c',
+  '.js': 'c', '.ts': 'c', '.php': 'c', '.m': 'c', '.mm': 'c',
+};
+function _outlineCodeEntries(src, parserKey) {
+  const rules = _CODE_OUTLINE[parserKey];
+  if (!rules) return null;
+  const lines = src.split('\n');
+  const entries = [];
+  let inBlock = false;   // Python """docstring""" 内不解析
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i];
+    if (parserKey === 'py') {
+      const dq = (t.match(/"""/g) || []).length;
+      if (inBlock) { if (dq) inBlock = false; continue; }
+      if (dq % 2 === 1) { inBlock = true; continue; }
+    } else {
+      // 花括号语言：块注释/字符串行粗跳（单行 // 注释靠行首规则天然不命中）
+      const trimmed = t.trim();
+      if (trimmed.startsWith('*') || trimmed.startsWith('/*')) continue;
+    }
+    for (const r of rules) {
+      const m = r.re.exec(t);
+      if (m) {
+        entries.push({ level: r.lv, text: (r.kind ? r.kind + ' ' : '') + m[2], line: i + 1 });
+        break;
+      }
+    }
+  }
+  return entries;
+}
+
 function _edRenderOutline(conn) {
   if (!conn.outline || conn.outline.style.display === 'none') return;
-  // Monaco（txt/md/code）：解析 # 标题行生成大纲（# 井号层级，md 标准语法）
+  // Monaco/textarea 纯文本：先按后缀选解析器——代码文件走 class/def 结构，
+  // md/txt 才用 # 井号规则（代码的 # 是注释，不能当标题）
   if (conn.monaco || conn.ta) {
     const src = conn.monaco ? conn.monaco.getValue() : conn.ta.value;
+    const label = (conn.meta.label || '').toLowerCase();
+    const ext = label.slice(label.lastIndexOf('.'));
+    const parserKey = _CODE_OUTLINE_EXT[ext] || null;
+    const isMd = ext === '.md';
+    let entries = null;
+    if (parserKey) {
+      entries = _outlineCodeEntries(src, parserKey);
+      if (entries && entries.length) {
+        conn.outlineList.innerHTML = entries.map((e, i) =>
+          `<div class="ed-outline-item" data-i="${i}" style="padding-left:${(e.level-1)*12+8}px">${esc(e.text)}</div>`).join('');
+        conn.outlineList.querySelectorAll('.ed-outline-item').forEach(item => {
+          item.onclick = () => {
+            const e = entries[+item.dataset.i];
+            if (!e) return;
+            if (conn.monaco) { conn.monaco.revealLineInCenter(e.line); conn.monaco.setPosition({ lineNumber: e.line, column: 1 }); }
+          };
+        });
+        const n = entries.length;
+        conn.outlineStats.innerHTML = `<span class="ed-outline-stat">定义 ${n}</span>`;
+        return;
+      }
+      // 代码解析无命中（比如 pyw 全局脚本没 class/def）→ 继续走井号/清空兜底
+    }
     const lines = src.split('\n');
-    const entries = [];
+    if (!entries) entries = [];
     // 统计口径与 .note 版对应：标题/列表/代码/引用按 md 语法粗判
     const types = { '标题': 0, '列表': 0, '代码': 0, '引用': 0 };
     let inCode = false;
+    // 代码文件不再把 # 注释当标题（python # 是注释）——只 md/txt 认井号
+    const hashAsTitle = isMd || ext === '.txt' || !parserKey && !isMd;
     for (let i = 0; i < lines.length; i++) {
       const t = lines[i];
       if (/^\s*```/.test(t)) { inCode = !inCode; types['代码']++; continue; }
       if (inCode) continue;
       const m = /^(#{1,6})\s+(.*)$/.exec(t);
-      if (m) { entries.push({ level: m[1].length, text: m[2].trim(), line: i + 1 }); types['标题']++; }
+      if (m && hashAsTitle) { entries.push({ level: m[1].length, text: m[2].trim(), line: i + 1 }); types['标题']++; }
       else if (/^\s*[-*+]\s/.test(t) || /^\s*\d+\.\s/.test(t)) types['列表']++;
       else if (/^\s*>/.test(t)) types['引用']++;
     }
     conn.outlineList.innerHTML = entries.length
       ? entries.map((e, i) =>
           `<div class="ed-outline-item" data-i="${i}" style="padding-left:${(e.level-1)*12+8}px">${esc(e.text || '(无标题)')}</div>`).join('')
-      : '<div class="ed-outline-empty">暂无标题行<br>用 # 井号标题（md）或标题块组织内容后在此生成目录</div>';
+      : (parserKey
+          ? '<div class="ed-outline-empty">未解析到类/函数定义<br>（代码大纲按 class/def/函数签名生成）</div>'
+          : '<div class="ed-outline-empty">暂无标题行<br>用 # 井号标题（md）或标题块组织内容后在此生成目录</div>');
     conn.outlineList.querySelectorAll('.ed-outline-item').forEach(item => {
       item.onclick = () => {
         const e = entries[+item.dataset.i];
