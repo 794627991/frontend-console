@@ -86,7 +86,6 @@ function buildEditorTab(name, content, extPath) {
         <button class="lv-btn" data-ed-action="save" title="Ctrl+S">💾 保存</button>
         <button class="lv-btn" data-ed-action="saveas" title="Ctrl+Shift+S">另存为…</button>
         <button class="lv-btn" data-ed-action="rename" title="双击标签页标题可快捷改名">重命名</button>
-        <button class="lv-btn" data-ed-action="delete">删除</button>
         <button class="lv-btn" data-ed-action="search" title="Ctrl+F 全局搜索（支持正则/排除）">🔍 搜索</button>
         <button class="lv-btn" data-ed-action="outline" title="显示/隐藏右侧大纲面板">☰ 大纲</button>
         <span class="lv-info" data-ed-info></span>
@@ -184,7 +183,7 @@ function buildEditorTab(name, content, extPath) {
       }
       else if (act === 'saveas') { if (conn.extPath) showBanner('外部文件不支持另存为（直接保存到原路径）', 3000, true); else edSaveAs(conn); }
       else if (act === 'rename') { if (conn.extPath) showBanner('外部文件不支持重命名（保持原路径）', 3000, true); else edRenamePrompt(conn); }
-      else if (act === 'delete') { if (conn.extPath) showBanner('外部文件不提供删除（请到文件管理器操作）', 3000, true); else edDelete(conn); }
+      else if (act === 'delete') { if (conn.extPath) showBanner('外部文件不提供删除（请到文件管理器操作）', 3000, true); else edDelete(conn); }   // 按钮已移除，防御保留
       else if (act === 'outline') edToggleOutline(conn);
     };
   });
@@ -816,6 +815,7 @@ function edRenamePrompt(conn) {
 }
 
 // ---- 删除（已落盘才有东西可删；脏内容一并丢，双重确认）----
+// 工具栏删除按钮已按用户要求移除（误点危险），入口不再存在
 async function edDelete(conn) {
   if (conn.onDisk) {
     if (!confirm(`确定删除「${conn.meta.label}」？此操作不可恢复。`)) return;

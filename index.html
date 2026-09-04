@@ -103,14 +103,8 @@
       </div>
       <button class="toggle" id="aiToggle" title="折叠/展开">›</button>
     </div>
-    <div class="panel-toolbar">
-      <div class="search-box">
-        <input type="text" id="searchInput" placeholder="搜索关键字…" autocomplete="off">
-        <span class="count" id="searchCount"></span>
-      </div>
-      <button class="nav-btn" id="searchPrev" title="上一个 (Shift+Enter)">▲</button>
-      <button class="nav-btn" id="searchNext" title="下一个 (Enter)">▼</button>
-    </div>
+    <!-- 面板搜索框已按用户要求移除（终端分栏搜索是更好的替代，完全冗余）。
+         searchInput/searchCount/searchPrev/searchNext 元素不再存在，search.js 引用已改判空 -->
     <div class="panel-tabs">
       <div class="panel-tab active" data-pane="cmd">⌘ 命令</div>
       <div class="panel-tab" data-pane="sense">● 感知</div>

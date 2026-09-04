@@ -5,6 +5,9 @@ const SEARCH_DECOR = {
   activeMatchBackground: 'rgba(0,212,255,0.45)',
   activeMatchColor: '#ffffff',
 };
+// 面板搜索框已按用户要求移除（终端分栏搜索是更好的替代）。
+// searchInput/searchCount/searchPrev/searchNext 不再存在，所有引用改判空。
+function _srEl(id) { return document.getElementById(id); }
 function clearSearchHighlights() {
   // 清掉搜索 decoration（带 class 的）
   if (activePortId && connections[activePortId] && connections[activePortId].search) {
@@ -12,7 +15,7 @@ function clearSearchHighlights() {
   }
   searchState.idx = -1;
   searchState.total = 0;
-  $('searchCount').textContent = '';
+  const c = _srEl('searchCount'); if (c) c.textContent = '';
 }
 function applySearchHighlights(q) {
   clearSearchHighlights();
@@ -32,7 +35,7 @@ function applySearchHighlights(q) {
   }
   searchState.total = total;
   searchState.idx = total ? 1 : -1;
-  $('searchCount').textContent = total ? (total + ' 处') : '无';
+  const c = _srEl('searchCount'); if (c) c.textContent = total ? (total + ' 处') : '无';
   if (!total) return;
   // findNext 会用 SEARCH_DECOR 高亮所有匹配，并定位到第一个
   conn.search.findNext(q, {
@@ -56,22 +59,9 @@ function gotoSearchMark(idx) {
     if (searchState.idx < searchState.total) searchState.idx++;
     else searchState.idx = 1;
   }
-  $('searchCount').textContent = searchState.total ? (searchState.idx + '/' + searchState.total) : '无';
+  const c = _srEl('searchCount'); if (c) c.textContent = searchState.total ? (searchState.idx + '/' + searchState.total) : '无';
 }
-$('searchInput').addEventListener('input', (e) => {
-  const q = e.target.value.trim();
-  searchState.q = q;
-  if (q) applySearchHighlights(q); else clearSearchHighlights();
-});
-$('searchInput').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
-    e.preventDefault();
-    if (e.shiftKey) gotoSearchMark(-1);
-    else gotoSearchMark(1);
-  }
-});
-$('searchPrev').onclick = () => gotoSearchMark(-1);
-$('searchNext').onclick = () => gotoSearchMark(1);
+// 面板搜索框已移除：input/prev/next 事件绑定全部撤（无元素可绑）
 
 // ---- Ctrl+右键上下文菜单 ----
 // 原生读剪贴板粘贴到连接（Ctrl+V 与菜单「粘贴到终端」共用）。
@@ -146,8 +136,9 @@ function showCtxMenu(x, y, conn) {
         // 原生读剪贴板（无权限弹窗），编码后作为原始字节发到串口/SSH
         _pasteToConn(conn, true);
       } else if (act === 'find') {
-        // 右侧面板搜索（高亮跳转，现有行为）
-        $('searchInput').focus(); $('searchInput').select();
+        // 面板搜索框已移除：统一走分栏搜索（高亮跳转 + 命中列表）
+        toggleTermSearchPane(conn, true);
+        conn.termSearchInput.focus(); conn.termSearchInput.select();
       } else if (act === 'findAll') {
         toggleTermSearchPane(conn, true);
         conn.termSearchInput.focus(); conn.termSearchInput.select();
@@ -179,24 +170,39 @@ function toggleTermSearchPane(conn, show) {
 }
 async function doTermSearch(conn) {
   const q = conn.termSearchInput.value.trim();
+  const exRaw = conn.termSearchExclude ? conn.termSearchExclude.value.trim() : '';
   const st = conn.termSearchState;
   if (!q || !conn.term) return;
   conn.termSearchCount.innerHTML = '<span class="spin">✳</span> 搜索中…';
+  // 编译正则（语法非法降级字面）。规则对齐日志搜索：关键字用正则，排除用 | 分割多段各正则。
+  let mainRe = null;
+  try { mainRe = new RegExp(q, 'i'); }
+  catch (e) { mainRe = null; }  // 非法正则：下面回退字面 indexOf
+  const exPats = [];
+  if (exRaw) {
+    exRaw.split('|').forEach(seg => {
+      seg = seg.trim();
+      if (!seg) return;
+      try { exPats.push(new RegExp(seg, 'i')); }
+      catch (e) { exPats.push(new RegExp(seg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')); }  // 降级字面
+    });
+  }
+  const inExcluded = t => { for (let i = 0; i < exPats.length; i++) if (exPats[i].test(t)) return true; return false; };
+  const matches = t => mainRe ? mainRe.test(t) : t.toLowerCase().includes(q.toLowerCase());
   // 直接在 xterm buffer 内搜索（用户看到的内容），不调后端 /api/search。
   // 后端 buf 的 \r 处理与 xterm 不同（buf 拆行，xterm 同行覆盖），用后端结果
   // 跳转 xterm 会导致行号错位（"串行"问题）。xterm buffer 是最准确的搜索源。
   const buf = conn.term.buffer.active;
-  const low = q.toLowerCase();
   const hits = [];
   for (let r = 0; r < buf.length; r++) {
     const ln = buf.getLine(r);
     if (!ln) continue;
     const t = ln.translateToString(true);
-    if (t.toLowerCase().indexOf(low) !== -1) {
+    if (matches(t) && !inExcluded(t)) {
       hits.push({ row: r, text: t });
     }
   }
-  st.q = q; st.results = hits; st.idx = 0;
+  st.q = q; st.ex = exRaw; st.results = hits; st.idx = 0;
   // 渲染命中行列表
   conn.termSearchResults.innerHTML = hits.map((l, idx) => {
     const text = esc((l.text || '').replace(/\r/g, ''));
