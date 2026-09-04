@@ -434,6 +434,32 @@
     box-shadow: 0 8px 40px rgba(0,0,0,0.6); }
   .ce-header { color: var(--note-fg) !important; }
   .ce-paragraph { color: var(--note-fg); }
+
+  /* ---- 十六进制查看/编辑（类 HxD：偏移蓝 | hex nibble 双色 | ASCII） ---- */
+  .hx-body { flex: 1; display: flex; flex-direction: column; min-height: 0; position: relative; }
+  .hx-goto-bar, .hx-find-bar { display: flex; align-items: center; gap: 6px;
+    padding: 6px 10px; border-bottom: 1px solid var(--border); font-size: 12px; }
+  .hx-goto-bar input, .hx-find-bar input { font-family: var(--font-mono); font-size: 12px;
+    background: var(--bg-input); border: 1px solid var(--border); border-radius: 4px;
+    padding: 3px 8px; color: var(--fg); outline: none; width: 200px; }
+  .hx-goto-bar input:focus, .hx-find-bar input:focus { border-color: var(--accent); }
+  .hx-find-count { font-size: 11px; color: var(--muted); }
+  .hx-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; min-height: 0; }
+  .hx-canvas { position: relative; font-family: var(--font-mono); font-size: 12px; line-height: 1.5; }
+  .hx-row { display: flex; align-items: center; white-space: nowrap; height: 22px; }
+  .hx-off { color: #4f8fff; opacity: 0.85; padding-right: 14px; user-select: none; flex-shrink: 0; }
+  .hx-hexcol { display: flex; gap: 4px; flex-shrink: 0; }
+  .hx-b { display: inline-block; cursor: pointer; border-radius: 3px; padding: 0 1px; }
+  .hx-b .hi { color: #4f8fff; font-style: normal; }   /* 高 4 位蓝（HxD 同款） */
+  .hx-b .lo { color: #b46ef5; font-style: normal; }   /* 低 4 位紫 */
+  .hx-b.cur { background: rgba(0,212,255,0.25); outline: 1px solid var(--accent); }
+  .hx-b.hit { background: rgba(255,214,102,0.3); }
+  .hx-b-empty { display: inline-block; width: 17px; }
+  .hx-ascii { display: flex; padding-left: 14px; flex-shrink: 0; }
+  .hx-a { color: var(--fg); cursor: pointer; }
+  .hx-a.cur { background: rgba(0,212,255,0.25); outline: 1px solid var(--accent); }
+  .hx-a:empty { width: 7px; }
+
   .topbar .divider { width: 1px; height: 24px; background: var(--border); }
   .topbar .conn-area { display: flex; align-items: center; gap: 8px; }
   .topbar select, .topbar input {

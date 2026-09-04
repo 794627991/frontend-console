@@ -1158,12 +1158,13 @@ async function openFileSmart(path, mode) {
   // 决策
   let how = mode || 'auto';
   if (how === 'auto') {
-    if (!isTextSrv) how = 'view';                          // 未知/二进制 → 阅读器
+    if (!isTextSrv) how = 'hex';                                // 二进制 → hex 模式（16 进制查看/编辑）
     else if (MB > 30) how = 'view';                        // >30M 强制阅读器（Monaco 必卡）
     else if (MB > 20) how = await _showOpenModeDialog(path, MB.toFixed(1));  // 20~30M 提示选
     else how = 'edit';                                     // <20M 默认编辑器
     if (!how) return;                                      // 用户关掉了弹窗
   }
+  if (how === 'hex') { buildHexViewerTab(path, name); return; }
   if (how === 'view') { buildLogViewer(path); return; }
   // edit：走编辑器（超 20M 后端会拒——用户明确选了编辑器且 >30M 已拦，
   // 20~30M 选编辑器则放宽后端上限）

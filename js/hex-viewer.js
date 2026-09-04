@@ -1,0 +1,387 @@
+// ============================================================
+// 十六进制查看/编辑器（类 HxD 布局，参考 1.png）
+// 偏移(蓝) | hex 字节(nibble 双色：高4位蓝/低4位紫) | ASCII(不可打印为点)
+// 每行 16 字节；字节点击选中，键盘输入 hex 直接改值；Ctrl+F 搜索(hex/文本)；
+// 跳转偏移（0x 前缀支持）。
+// 大文件分块加载：≤16MB 整读可编辑；>16MB 只读分块（512KB/块，滚动按需拉取）。
+// Intel HEX(.hex/.ihx)：intelHexParse 解析成二进制镜像进同一界面，保存回 hex 文本。
+// tab 体系与编辑器同构：connections + switchTab + closeEditorTab。
+// ============================================================
+
+const HEX_CHUNK = 512 * 1024;      // 分块大小（与后端 /api/hex/read 上限一致）
+const HEX_EDIT_MAX = 16 * 1024 * 1024;  // 可编辑上限，超过只读
+
+async function buildHexViewerTab(path, name) {
+  // 同文件去重：已开则激活
+  for (const pid in connections) {
+    const c = connections[pid];
+    if (c && c.meta && c.meta.kind === 'hex' && c.hexPath === path) { switchTab(pid); return; }
+  }
+  // meta 探测
+  let size = 0, isIhex = false;
+  try {
+    const r = await fetch('/api/hex/meta', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({path})});
+    const j = await r.json();
+    if (!j.ok) { showBanner(j.err || '文件不可读', 4000, true); return; }
+    size = j.size; isIhex = j.ihex;
+  } catch(e) { showBanner('读取文件信息失败: ' + e, 4000, true); return; }
+
+  const portId = 'hex:' + path + ':' + Date.now();
+  const tab = document.createElement('div');
+  tab.className = 'tab';
+  tab.dataset.portId = portId;
+  tab.innerHTML = `<span class="led" style="color:var(--accent)">🔢</span><span class="label">${esc(name)}</span><span class="baud"></span><span class="close" title="关闭">✕</span>`;
+  tab.onclick = (e) => { if (e.target.classList.contains('close')) { e.stopPropagation(); closeEditorTab(portId); return; } switchTab(portId); };
+
+  const wrap = document.createElement('div');
+  wrap.className = 'term-area';
+  wrap.dataset.portId = portId;
+  wrap.style.display = 'none';
+  wrap.innerHTML = `
+    <div class="editor">
+      <div class="log-viewer-toolbar">
+        <button class="lv-btn" data-hx-action="save" title="Ctrl+S">💾 保存</button>
+        <button class="lv-btn" data-hx-action="goto" title="跳转偏移（支持 0x 前缀）">⤓ 跳转</button>
+        <button class="lv-btn" data-hx-action="find" title="Ctrl+F 搜索（hex 字节或文本）">🔍 搜索</button>
+        <span class="lv-info" data-hx-info></span>
+      </div>
+      <div class="hx-body">
+        <div class="hx-goto-bar" style="display:none">
+          <span>偏移(h):</span><input type="text" data-hx-goto-input placeholder="如 0x100 或 256">
+          <button class="lv-btn" data-hx-action="gotoOk">跳转</button>
+          <button class="lv-btn" data-hx-action="gotoCancel">✕</button>
+        </div>
+        <div class="hx-find-bar" style="display:none">
+          <span>查找:</span><input type="text" data-hx-find-input placeholder="hex（如 55 AA）或文本">
+          <button class="lv-btn" data-hx-action="findNext">下一个</button>
+          <button class="lv-btn" data-hx-action="findAll">全部</button>
+          <button class="lv-btn" data-hx-action="findCancel">✕</button>
+          <span class="hx-find-count" data-hx-find-count></span>
+        </div>
+        <div class="hx-scroll" data-hx-scroll tabindex="0">
+          <div class="hx-canvas" data-hx-canvas></div>
+        </div>
+      </div>
+    </div>`;
+  const es = termArea.querySelector('.empty-state');
+  if (es) es.remove();
+  tabs.insertBefore(tab, tabs.querySelector('.tab-bar-actions'));
+  termArea.appendChild(wrap);
+
+  const conn = {
+    portId,
+    meta: { kind: 'hex', label: name },
+    tab, wrap,
+    hexPath: path, size, isIhex,
+    editable: size <= HEX_EDIT_MAX && !isIhex || isIhex,  // ihex 解析后镜像通常远小于文本
+    dirty: false,
+    scroll: wrap.querySelector('[data-hx-scroll]'),
+    canvas: wrap.querySelector('[data-hx-canvas]'),
+    infoEl: wrap.querySelector('[data-hx-info]'),
+    gotoBar: wrap.querySelector('.hx-goto-bar'),
+    gotoInput: wrap.querySelector('[data-hx-goto-input]'),
+    findBar: wrap.querySelector('.hx-find-bar'),
+    findInput: wrap.querySelector('[data-hx-find-input]'),
+    findCount: wrap.querySelector('[data-hx-find-count]'),
+    bytes: null, chunkCache: null, chunkBuf: null, chunkStart: -1,
+    cursor: -1, findHits: [], findIdx: -1, _findQ: null,
+    rowHeight: 22, renderedFrom: -1, renderedTo: -1,
+  };
+  connections[portId] = conn;
+
+  // ---- 数据加载 ----
+  const fetchChunk = async (offset, length) => {
+    const r = await fetch('/api/hex/read', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({path, offset, length})});
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.err || 'read fail');
+    return Uint8Array.from(atob(j.data), c => c.charCodeAt(0));
+  };
+  conn.fetchChunk = fetchChunk;
+
+  try {
+    if (conn.editable) {
+      let raw = await fetchChunk(0, size);
+      if (isIhex) {
+        if (typeof intelHexParse !== 'function') throw new Error('Intel HEX 解析器未加载');
+        const parsed = intelHexParse(new TextDecoder().decode(raw));
+        raw = parsed.data;   // 0xFF 填充空洞的连续镜像
+        conn.size = raw.length;
+      }
+      conn.bytes = raw;
+    } else {
+      conn.chunkCache = new Map();   // 只读窗口模式：当前渲染窗口的字节
+    }
+  } catch(e) {
+    showBanner('hex 模式打开失败: ' + (e.message || e), 5000, true);
+    _edCloseNow(conn);
+    return;
+  }
+
+  // ---- 只读大文件：滚动窗口取块（渲染前确保窗口字节在手） ----
+  conn.ensureWindow = async (fromOff, toOff) => {
+    if (conn.bytes) return;
+    const ci = Math.floor(fromOff / HEX_CHUNK);
+    if (conn.chunkStart !== ci * HEX_CHUNK) {
+      const b = await fetchChunk(ci * HEX_CHUNK, HEX_CHUNK);
+      // 跨块窗口：拼两块
+      if (toOff >= (ci + 1) * HEX_CHUNK && (ci + 1) * HEX_CHUNK < conn.size) {
+        const b2 = await fetchChunk((ci + 1) * HEX_CHUNK, HEX_CHUNK);
+        const merged = new Uint8Array(b.length + b2.length);
+        merged.set(b); merged.set(b2, b.length);
+        conn.chunkBuf = merged;
+      } else conn.chunkBuf = b;
+      conn.chunkStart = ci * HEX_CHUNK;
+    }
+  };
+  conn.byteAt = (i) => {
+    if (conn.bytes) return conn.bytes[i];
+    if (conn.chunkBuf && i >= conn.chunkStart && i < conn.chunkStart + conn.chunkBuf.length)
+      return conn.chunkBuf[i - conn.chunkStart];
+    return 0;   // 窗口外（ensureWindow 已保证不出现）
+  };
+
+  // ---- 渲染 ----
+  const ROW_BYTES = 16;
+  conn.render = () => {
+    const rows = Math.ceil(conn.size / ROW_BYTES);
+    conn.canvas.style.height = (rows * conn.rowHeight) + 'px';
+    const first = Math.floor(conn.scroll.scrollTop / conn.rowHeight);
+    const count = Math.ceil(conn.scroll.clientHeight / conn.rowHeight) + 8;
+    const from = Math.max(0, first - 4), to = Math.min(rows, first + count);
+    _hxRenderRows(conn, from, to);
+  };
+  conn.scroll.addEventListener('scroll', () => {
+    // 只读大文件：先确保窗口字节再画（异步），小文件直接画
+    if (conn.bytes) conn.render();
+    else conn.ensureWindow(fromOff(conn), toOff(conn)).then(() => conn.render()).catch(() => {});
+    function fromOff(c) { return Math.max(0, Math.floor(c.scroll.scrollTop / c.rowHeight) * 16 - 64); }
+    function toOff(c) { const r = Math.ceil((c.scroll.scrollTop + c.scroll.clientHeight) / c.rowHeight); return Math.min(c.size, r * 16 + 64); }
+  });
+
+  // ---- 选中/编辑 ----
+  conn.canvas.addEventListener('click', e => {
+    const cell = e.target.closest('[data-hx-i]');
+    if (!cell) return;
+    conn.cursor = +cell.dataset.hxI;
+    _hxPaintCursor(conn);
+    _hxUpdateInfo(conn);
+    conn.scroll.focus();
+  });
+  conn.scroll.addEventListener('keydown', e => {
+    if (!conn.editable || conn.cursor < 0) return;
+    if (/^[0-9a-fA-F]$/.test(e.key)) {
+      e.preventDefault();
+      const off = conn.cursor;
+      conn._editState = conn._editState || { hi: null };
+      if (conn._editState.hi === null) {
+        conn._editState.hi = parseInt(e.key, 16);
+      } else {
+        const v = (conn._editState.hi << 4) | parseInt(e.key, 16);
+        conn._editState.hi = null;
+        conn.bytes[off] = v;
+        conn.dirty = true;
+        _hxMarkDirty(conn);
+        conn.cursor = Math.min(off + 1, conn.size - 1);
+        _hxRenderRows(conn, conn.renderedFrom, conn.renderedTo, true);
+        _hxPaintCursor(conn);
+        _hxUpdateInfo(conn);
+      }
+    } else if (e.key === 'ArrowRight') { e.preventDefault(); conn.cursor = Math.min(conn.cursor + 1, conn.size - 1); _hxPaintCursor(conn); _hxUpdateInfo(conn); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); conn.cursor = Math.max(conn.cursor - 1, 0); _hxPaintCursor(conn); _hxUpdateInfo(conn); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); conn.cursor = Math.min(conn.cursor + ROW_BYTES, conn.size - 1); _hxPaintCursor(conn); _hxUpdateInfo(conn); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); conn.cursor = Math.max(conn.cursor - ROW_BYTES, 0); _hxPaintCursor(conn); _hxUpdateInfo(conn); }
+  });
+
+  // ---- 工具栏 ----
+  wrap.querySelector('.log-viewer-toolbar').addEventListener('click', async e => {
+    const btn = e.target.closest('[data-hx-action]');
+    if (!btn) return;
+    const act = btn.dataset.hxAction;
+    if (act === 'save') _hxSave(conn);
+    else if (act === 'goto') { conn.gotoBar.style.display = 'flex'; conn.gotoInput.focus(); }
+    else if (act === 'gotoOk') {
+      const v = conn.gotoInput.value.trim();
+      const off = /^0x/i.test(v) ? parseInt(v, 16) : parseInt(v, 10);
+      if (!isNaN(off) && off >= 0 && off < conn.size) { conn.gotoBar.style.display = 'none'; _hxScrollToOffset(conn, off); }
+      else showBanner('偏移无效（0 ~ 0x' + (conn.size - 1).toString(16).toUpperCase() + '）', 3000, true);
+    }
+    else if (act === 'gotoCancel') conn.gotoBar.style.display = 'none';
+    else if (act === 'find') { conn.findBar.style.display = 'flex'; conn.findInput.focus(); }
+    else if (act === 'findNext') _hxFindNext(conn);
+    else if (act === 'findAll') _hxFindAll(conn);
+    else if (act === 'findCancel') { conn.findBar.style.display = 'none'; conn.findHits = []; conn._findQ = null; conn.findCount.textContent = ''; _hxRenderRows(conn, conn.renderedFrom, conn.renderedTo, true); }
+  });
+  conn.gotoInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); conn.gotoInput.blur(); wrap.querySelector('[data-hx-action="gotoOk"]').click(); } });
+  conn.findInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); _hxFindNext(conn); } });
+  wrap.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'f') { e.preventDefault(); conn.findBar.style.display = 'flex'; conn.findInput.focus(); }
+    if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); _hxSave(conn); }
+  });
+
+  switchTab(portId);
+  conn.render();
+  if (typeof _recentAdd === 'function') _recentAdd({type:'file', key:'file:'+name, label:name, data:{kind:'hex', name, path}});
+}
+
+// ---- 渲染行区间：偏移 + hex + ASCII 三栏 ----
+function _hxRenderRows(conn, from, to, force) {
+  if (!force && from === conn.renderedFrom && to === conn.renderedTo && conn.canvas.children.length) return;
+  const frag = document.createDocumentFragment();
+  const hitSet = conn.findHits.length ? new Set(conn.findHits) : null;
+  for (let r = from; r < to; r++) {
+    const off = r * 16;
+    const row = document.createElement('div');
+    row.className = 'hx-row';
+    row.style.top = (r * conn.rowHeight) + 'px';
+    let hexHtml = '', asciiHtml = '';
+    for (let c = 0; c < 16; c++) {
+      const i = off + c;
+      if (i >= conn.size) { hexHtml += '<span class="hx-b hx-b-empty"></span>'; asciiHtml += '<span class="hx-a hx-a-empty"></span>'; continue; }
+      const b = conn.byteAt(i);
+      const hi = (b >> 4).toString(16).toUpperCase();
+      const lo = (b & 15).toString(16).toUpperCase();
+      const isCur = i === conn.cursor;
+      const hit = hitSet && hitSet.has(i);
+      hexHtml += `<span class="hx-b${isCur ? ' cur' : ''}${hit ? ' hit' : ''}" data-hx-i="${i}"><i class="hi">${hi}</i><i class="lo">${lo}</i></span>`;
+      const ch = b >= 32 && b < 127 ? esc(String.fromCharCode(b)) : '.';
+      asciiHtml += `<span class="hx-a${isCur ? ' cur' : ''}${hit ? ' hit' : ''}" data-hx-i="${i}">${ch}</span>`;
+    }
+    row.innerHTML = `<span class="hx-off">${off.toString(16).toUpperCase().padStart(8, '0')}</span>` +
+      `<span class="hx-hexcol">${hexHtml}</span><span class="hx-ascii">${asciiHtml}</span>`;
+    frag.appendChild(row);
+  }
+  conn.canvas.innerHTML = '';
+  conn.canvas.appendChild(frag);
+  conn.renderedFrom = from; conn.renderedTo = to;
+}
+
+// ---- 光标高亮：只切换 class，不重画 ----
+function _hxPaintCursor(conn) {
+  conn.canvas.querySelectorAll('.hx-b.cur, .hx-a.cur').forEach(el => el.classList.remove('cur'));
+  if (conn.cursor < 0) return;
+  conn.canvas.querySelectorAll(`[data-hx-i="${conn.cursor}"]`).forEach(el => el.classList.add('cur'));
+  const y = Math.floor(conn.cursor / 16) * conn.rowHeight;
+  if (y < conn.scroll.scrollTop) conn.scroll.scrollTop = y;
+  else if (y + conn.rowHeight > conn.scroll.scrollTop + conn.scroll.clientHeight)
+    conn.scroll.scrollTop = y + conn.rowHeight - conn.scroll.clientHeight;
+}
+
+function _hxScrollToOffset(conn, off) {
+  conn.scroll.scrollTop = Math.floor(off / 16) * conn.rowHeight;
+  conn.cursor = off;
+  conn.render();
+  _hxPaintCursor(conn);
+  _hxUpdateInfo(conn);
+}
+
+function _hxUpdateInfo(conn) {
+  const cur = conn.cursor >= 0 ? ' · 偏移 0x' + conn.cursor.toString(16).toUpperCase() : '';
+  conn.infoEl.textContent = (conn.editable ? '' : '只读 · ') +
+    conn.size.toLocaleString() + ' 字节' + cur + (conn.dirty ? ' · 未保存' : ' · 已保存');
+}
+
+function _hxMarkDirty(conn) {
+  const lbl = conn.tab.querySelector('.label');
+  if (lbl && !lbl.textContent.startsWith('*')) lbl.textContent = '*' + lbl.textContent;
+}
+
+// ---- 搜索：hex 字节序列（含空格/0x）或 ASCII 文本 ----
+function _hxParseQuery(q) {
+  q = (q || '').trim();
+  if (!q) return null;
+  const hexNorm = q.replace(/0x/gi, '').replace(/[\s,]+/g, '');
+  // hex 判定：全 hex 字符 + 偶数长度 +（带空格/0x 或长度>4 纯 hex 视为字节）
+  if (/^[0-9a-fA-F]+$/.test(hexNorm) && hexNorm.length % 2 === 0 &&
+      (/\s|0x/i.test(q) || hexNorm.length > 4)) {
+    const out = [];
+    for (let i = 0; i < hexNorm.length; i += 2) out.push(parseInt(hexNorm.substr(i, 2), 16));
+    return Uint8Array.from(out);
+  }
+  return new TextEncoder().encode(q);
+}
+function _hxSearchBuf(buf, pat, base, hits) {
+  const first = pat[0], n = pat.length;
+  for (let i = 0; i + n <= buf.length; i++) {
+    if (buf[i] !== first) continue;
+    let ok = true;
+    for (let j = 1; j < n; j++) { if (buf[i + j] !== pat[j]) { ok = false; break; } }
+    if (ok) { hits.push(base + i); if (hits.length > 500) return; }
+  }
+}
+async function _hxSearchAll(conn, pat) {
+  const hits = [];
+  if (conn.bytes) {
+    _hxSearchBuf(conn.bytes, pat, 0, hits);
+  } else {
+    for (let ci = 0; ci * HEX_CHUNK < conn.size; ci++) {
+      const b = await conn.fetchChunk(ci * HEX_CHUNK, HEX_CHUNK);
+      _hxSearchBuf(b, pat, ci * HEX_CHUNK, hits);
+      if (hits.length > 500) break;
+    }
+  }
+  return hits;
+}
+async function _hxFindNext(conn) {
+  const q = conn.findInput.value;
+  const pat = _hxParseQuery(q);
+  if (!pat) { conn.findCount.textContent = ''; return; }
+  if (conn._findQ !== q || !conn.findHits.length) {
+    conn.findHits = await _hxSearchAll(conn, pat);
+    conn._findQ = q; conn.findIdx = -1;
+    _hxRenderRows(conn, conn.renderedFrom, conn.renderedTo, true);
+  }
+  if (!conn.findHits.length) { conn.findCount.textContent = '无命中'; return; }
+  conn.findIdx = (conn.findIdx + 1) % conn.findHits.length;
+  conn.findCount.textContent = (conn.findIdx + 1) + '/' + conn.findHits.length;
+  _hxScrollToOffset(conn, conn.findHits[conn.findIdx]);
+}
+async function _hxFindAll(conn) {
+  const pat = _hxParseQuery(conn.findInput.value);
+  if (!pat) return;
+  conn.findHits = await _hxSearchAll(conn, pat);
+  conn._findQ = conn.findInput.value; conn.findIdx = -1;
+  conn.findCount.textContent = conn.findHits.length ? (conn.findHits.length + ' 处') : '无命中';
+  _hxRenderRows(conn, conn.renderedFrom, conn.renderedTo, true);
+  if (conn.findHits.length) _hxScrollToOffset(conn, conn.findHits[0]);
+}
+
+// ---- 保存 ----
+async function _hxSave(conn) {
+  if (!conn.editable || !conn.bytes) { showBanner('只读模式（超过 16MB），不能保存', 4000, true); return; }
+  try {
+    let b64;
+    if (conn.isIhex) {
+      // Intel HEX：镜像 → hex 文本（16 字节/行，偏移 0 起，含 EOF 记录）
+      let out = '';
+      for (let off = 0; off < conn.bytes.length; off += 16) {
+        const len = Math.min(16, conn.bytes.length - off);
+        let sum = len + ((off >> 8) & 0xFF) + (off & 0xFF);
+        let data = '';
+        for (let i = 0; i < len; i++) { const b = conn.bytes[off + i]; sum += b; data += b.toString(16).toUpperCase().padStart(2, '0'); }
+        const chk = ((0x100 - (sum & 0xFF)) & 0xFF).toString(16).toUpperCase().padStart(2, '0');
+        out += ':' + len.toString(16).toUpperCase().padStart(2, '0') +
+               (off & 0xFFFF).toString(16).toUpperCase().padStart(4, '0') + '00' + data + chk + '\n';
+      }
+      out += ':00000001FF\n';
+      b64 = btoa(out);
+    } else {
+      let s = '';
+      for (let i = 0; i < conn.bytes.length; i += 8192)
+        s += String.fromCharCode.apply(null, conn.bytes.subarray(i, Math.min(i + 8192, conn.bytes.length)));
+      b64 = btoa(s);
+    }
+    const r = await fetch('/api/hex/save', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({path: conn.hexPath, data: b64})});
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.err);
+    conn.dirty = false;
+    const lbl = conn.tab.querySelector('.label');
+    if (lbl && lbl.textContent.startsWith('*')) lbl.textContent = lbl.textContent.slice(1);
+    _hxUpdateInfo(conn);
+    showBanner('已保存 ' + j.size.toLocaleString() + ' 字节');
+  } catch(e) { showBanner('保存失败: ' + (e.message || e), 4000, true); }
+}

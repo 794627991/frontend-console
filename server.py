@@ -40,6 +40,7 @@ from src.ssh_conn import SSHConnection, _get_paramiko
 from src.tftp import tftp_bp, _tftp
 from src.httpfile import httpfile_bp, _hfs, _Handler as _hfs_handler
 from src.editor_files import edit_bp
+from src.hex_files import hex_bp
 
 
 app = Flask(__name__)
@@ -63,6 +64,9 @@ app.register_blueprint(tftp_bp)
 # 注册 HTTP 文件下载 Blueprint（路由 /api/httpfile/*，端口 8081，与 TFTP 同目录联动）
 _hfs_handler.tftp = _tftp  # Handler 注入 TFTP 单例——HTTP 共享 TFTP 的 root_dir
 app.register_blueprint(httpfile_bp)
+
+# 注册二进制 hex 查看/编辑 Blueprint（路由 /api/hex/*）
+app.register_blueprint(hex_bp)
 
 # 注册文本编辑器 Blueprint（路由 /api/ed/*）
 app.register_blueprint(edit_bp)
