@@ -66,6 +66,28 @@ def clear_endpoint():
         pass
 
 
+def _clean_webview_cache():
+    """关闭时清 WebView2 纯缓存（防无限累计——单次打开大文件一条响应就能 37M）。
+    只删随时可重建的缓存子树：HTTP Cache / Code Cache / GPU Shader / 组件更新包；
+    保留用户状态：Local Storage（灰显偏好 hx_zeroGray 存这里）/ Cookies / IndexedDB。
+    删失败静默（下次启动 WebView 自动重建，无数据风险）。"""
+    import shutil
+    try:
+        from src.app_state import DATA_DIR
+        eb = os.path.join(DATA_DIR, "webview_cache", "EBWebView")
+        if not os.path.isdir(eb):
+            return
+        # Default 内的纯缓存（不动 Local Storage/Network/Cookies 等小而有用的）
+        default = os.path.join(eb, "Default")
+        for sub in ("Cache", "Code Cache", "GPUCache", "DawnWebGPUCache", "DawnGraphiteCache"):
+            shutil.rmtree(os.path.join(default, sub), ignore_errors=True)
+        # EBWebView 顶层的可重建缓存
+        for sub in ("GrShaderCache", "ShaderCache", "component_crx_cache", "Subresource Filter"):
+            shutil.rmtree(os.path.join(eb, sub), ignore_errors=True)
+    except Exception:
+        pass
+
+
 def find_and_focus_existing_window():
     """找到已运行的窗口并置前。pywebview 窗口标题固定。"""
     try:
@@ -335,6 +357,7 @@ def main():
         from src.server import close_all_ports
         close_all_ports()
         clear_endpoint()
+        _clean_webview_cache()
 
     window.events.closing += on_closing
 
