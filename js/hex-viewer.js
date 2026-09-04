@@ -297,7 +297,9 @@ function _hxRenderRows(conn, from, to, force) {
       const lo = (b & 15).toString(16).toUpperCase();
       const isCur = i === conn.cursor;
       const hit = hitSet && hitSet.has(i);
-      hexHtml += `<span class="hx-b${isCur ? ' cur' : ''}${hit ? ' hit' : ''}" data-hx-i="${i}"><i class="hi">${hi}</i><i class="lo">${lo}</i></span>`;
+      // ImHex 同款：0x00 字节灰色弱化
+      const z = b === 0 ? ' z' : '';
+      hexHtml += `<span class="hx-b${z}${isCur ? ' cur' : ''}${hit ? ' hit' : ''}" data-hx-i="${i}"><i class="hi">${hi}</i><i class="lo">${lo}</i></span>`;
       const ch = b >= 32 && b < 127 ? esc(String.fromCharCode(b)) : '.';
       asciiHtml += `<span class="hx-a${isCur ? ' cur' : ''}${hit ? ' hit' : ''}" data-hx-i="${i}">${ch}</span>`;
     }
@@ -397,10 +399,16 @@ function _hxRenderInspector(conn) {
   // ASCII：光标处 16 字节的可打印串
   const a16 = n(16).map(b => (b >= 32 && b < 127) ? String.fromCharCode(b) : '.').join('');
   const hex16 = i16.length ? Array.from(n(16)).map(b => b.toString(16).toUpperCase().padStart(2, '0')).join(' ') : '';
+  // 二进制展示：按选区字节数取 8/16/32/64 位（ImHex 同款，选区优先）
+  const selN = hasSel ? conn.selEnd - conn.selStart + 1 : 1;
+  const binBytes = selN >= 8 ? n(8) : selN >= 4 ? n(4) : selN >= 2 ? n(2) : n(1);
+  // 字节序组位串：大端直接拼接，小端字节逆序（高位在前展示）
+  const binArr = be ? binBytes : binBytes.slice().reverse();
+  const binStr = binArr.length ? binArr.map(b => b.toString(2).padStart(8, '0')).join(' ') : null;
   const row = (name, val, title) =>
     `<div class="hx-insp-row" title="${title}"><span class="hx-insp-k">${name}</span><span class="hx-insp-v">${val === null ? '—' : esc(String(val))}</span></div>`;
   el.innerHTML =
-    row('Binary', i8.length ? i8[0].toString(2).padStart(8, '0') : null, '二进制 8 位（ImHex 同款）') +
+    row('Binary', binStr, '二进制 ' + (binArr.length * 8) + ' 位（按选区/字节序）') +
     row('Bool', i8.length ? (i8[0] === 0 ? 'false' : i8[0] === 1 ? 'true' : 'Invalid') : null, '布尔') +
     row('Int8', num(i8, true), '有符号 8 位') +
     row('Uint8', num(i8, false), '无符号 8 位') +

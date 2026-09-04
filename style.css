@@ -462,6 +462,7 @@
   .hx-b { display: inline-block; cursor: pointer; border-radius: 3px; padding: 0 1px; }
   .hx-b .hi, .hx-b .lo { color: var(--fg); font-style: normal; }  /* 数据区单色（HxD 数据也是主色，nibble 双色太花） */
   .hx-b .hi { opacity: 0.95; } .hx-b .lo { opacity: 0.75; }        /* 高低 nibble 仅亮度区分 */
+  .hx-b.z .hi, .hx-b.z .lo { color: var(--muted); opacity: 0.55; }  /* ImHex 同款：0x00 灰色弱化 */
   .hx-b.cur { background: rgba(0,212,255,0.25); outline: 1px solid var(--accent); }
   .hx-b.sel { background: rgba(79,143,255,0.18); }
   .hx-b.hit { background: rgba(255,214,102,0.3); }
