@@ -20,6 +20,9 @@ endpoint.json
 _debug_raw.log
 分段版本/
 
+# 第三方参考资源（ImHex 源码/发行版——本地参考用，不入库）
+参考/
+
 # IDE / 系统
 .vscode/
 .idea/

@@ -325,28 +325,65 @@ function _hxRenderInspector(conn) {
     }
     return v;
   };
-  const i8 = n(1), i16 = n(2), i24 = n(3), i32 = n(4), i64 = n(8);
-  // 浮点：手动按 IEEE754 位模式组 DataView
+  const i8 = n(1), i16 = n(2), i24 = n(3), i32 = n(4), i48 = n(6), i64 = n(8);
+  // 浮点：DataView 按 IEEE754 位模式组（littleEndian 参数 = !be）
+  const f16 = i16.length === 2 ? new DataView(new Uint8Array(i16).buffer).getFloat16 ? new DataView(new Uint8Array(i16).buffer).getFloat16(0, !be) : null : null;
+  const bf16 = i16.length === 2 ? _hxBFloat16(i16, be) : null;
   const f32 = i32.length === 4 ? new DataView(new Uint8Array(i32).buffer).getFloat32(0, !be) : null;
   const f64 = i64.length === 8 ? new DataView(new Uint8Array(i64).buffer).getFloat64(0, !be) : null;
+  // LEB128 变长整数（ImHex 同款）：每字节低 7 位有效，最高位继续标志
+  const leb = (signed) => {
+    let v = 0n, shift = 0n;
+    for (const b of n(10)) {
+      v |= BigInt(b & 0x7F) << shift;
+      shift += 7n;
+      if (!(b & 0x80)) {
+        if (signed && shift < 64n && (b & 0x40)) v -= (1n << shift);   // 符号扩展
+        return v;
+      }
+      if (shift > 70n) break;   // 防御：最多 10 字节
+    }
+    return null;
+  };
+  const u32v = i32.length === 4 ? num(i32, false) : null;
+  const rgba = u32v !== null ? 'R:' + ((Number(u32v) >> 24) & 255) + ' G:' + ((Number(u32v) >> 16) & 255) + ' B:' + ((Number(u32v) >> 8) & 255) + ' A:' + (Number(u32v) & 255) : null;
+  const time32 = u32v !== null && Number(u32v) < 4102444800 ? new Date(Number(u32v) * 1000).toLocaleString() : null;   // 2100 年前视为 unix 秒
   // ASCII：光标处 16 字节的可打印串
   const a16 = n(16).map(b => (b >= 32 && b < 127) ? String.fromCharCode(b) : '.').join('');
   const hex16 = i16.length ? Array.from(n(16)).map(b => b.toString(16).toUpperCase().padStart(2, '0')).join(' ') : '';
   const row = (name, val, title) =>
     `<div class="hx-insp-row" title="${title}"><span class="hx-insp-k">${name}</span><span class="hx-insp-v">${val === null ? '—' : esc(String(val))}</span></div>`;
   el.innerHTML =
+    row('Binary', i8.length ? i8[0].toString(2).padStart(8, '0') : null, '二进制 8 位（ImHex 同款）') +
+    row('Bool', i8.length ? (i8[0] === 0 ? 'false' : i8[0] === 1 ? 'true' : 'Invalid') : null, '布尔') +
     row('Int8', num(i8, true), '有符号 8 位') +
     row('Uint8', num(i8, false), '无符号 8 位') +
     row('Int16', num(i16, true), '有符号 16 位') +
     row('Uint16', num(i16, false), '无符号 16 位') +
+    row('Int24', num(i24, true), '有符号 24 位') +
+    row('Uint24', num(i24, false), '无符号 24 位') +
     row('Int32', num(i32, true), '有符号 32 位') +
     row('Uint32', num(i32, false), '无符号 32 位') +
+    row('Int48', num(i48, true), '有符号 48 位') +
+    row('Uint48', num(i48, false), '无符号 48 位') +
     row('Int64', num(i64, true), '有符号 64 位') +
     row('Uint64', num(i64, false), '无符号 64 位') +
-    row('Float32', f32 === null ? null : (f32.toFixed(6) + (isFinite(f32) ? '' : ' (Inf/NaN)')), 'IEEE754 单精度') +
-    row('Float64', f64 === null ? null : (f64.toPrecision(15)), 'IEEE754 双精度') +
+    row('SLEB128', leb(true), '有符号变长整数') +
+    row('ULEB128', leb(false), '无符号变长整数') +
+    row('Float16', f16 === null ? null : (isFinite(f16) ? f16.toFixed(4) : 'Inf/NaN'), 'IEEE754 半精度') +
+    row('BFloat16', bf16 === null ? null : (isFinite(bf16) ? bf16.toFixed(4) : 'Inf/NaN'), '脑浮点 16') +
+    row('Float32', f32 === null ? null : (isFinite(f32) ? f32.toFixed(6) : 'Inf/NaN'), 'IEEE754 单精度') +
+    row('Float64', f64 === null ? null : (isFinite(f64) ? f64.toPrecision(15) : 'Inf/NaN'), 'IEEE754 双精度') +
+    row('RGBA8', rgba, '32 位颜色（大端 RGBA 排列）') +
+    row('Time32', time32, 'unix 秒时间戳') +
     row('HEX', hex16, '光标起 16 字节') +
     row('ASCII', a16, '光标起 16 字符（不可打印为点）');
+}
+// bfloat16：高 16 位 = float32 的高 16 位（脑浮点，ImHex 同款）
+function _hxBFloat16(bs, be) {
+  const u16 = be ? (bs[0] << 8) | bs[1] : (bs[1] << 8) | bs[0];
+  const f32u = (u16 << 16) >>> 0;
+  return new DataView(new Uint32Array([f32u]).buffer).getFloat32(0, true);
 }
 
 function _hxMarkDirty(conn) {
