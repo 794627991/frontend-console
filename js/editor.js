@@ -337,7 +337,7 @@ async function _edInitContent(conn, content) {
       // 失败自动降级 textarea（vendor 缺失/异常时保可用）
       try {
         conn.monaco = await monacoCreate(conn.holder, typeof content === 'string' ? content : '', conn.meta.label);
-        conn.monaco.onDidChangeModelContent(() => _edMarkDirty(conn));
+        conn.monaco.onDidChangeModelContent(() => { _edMarkDirty(conn); conn._edSrcVer = (conn._edSrcVer || 0) + 1; });
         conn.monaco.onDidChangeCursorPosition(() => _edUpdateInfo(conn));
       } catch(e) {
         showBanner('Monaco 加载失败，已降级纯文本：' + e, 6000, true);
@@ -348,7 +348,7 @@ async function _edInitContent(conn, content) {
       try {
         // 分栏容器：预览列插到 ed-scroll 之后（HTML 已在 buildEditorTab 预置 ed-md-preview）
         conn.monaco = await monacoCreate(conn.holder, typeof content === 'string' ? content : '', conn.meta.label);
-        conn.monaco.onDidChangeModelContent(() => { _edMarkDirty(conn); _mdRenderPreview(conn); });
+        conn.monaco.onDidChangeModelContent(() => { _edMarkDirty(conn); conn._edSrcVer = (conn._edSrcVer || 0) + 1; _mdRenderPreview(conn); });
         conn.monaco.onDidChangeCursorPosition(() => _edUpdateInfo(conn));
         _mdRenderPreview(conn);
       } catch(e) {
@@ -362,7 +362,7 @@ async function _edInitContent(conn, content) {
       conn.ta.spellcheck = false;
       conn.ta.value = typeof content === 'string' ? content : '';
       conn.holder.appendChild(conn.ta);
-      conn.ta.addEventListener('input', () => _edMarkDirty(conn));
+      conn.ta.addEventListener('input', () => { _edMarkDirty(conn); conn._edSrcVer = (conn._edSrcVer || 0) + 1; });
       conn.ta.addEventListener('keyup', () => _edUpdateInfo(conn));
       conn.ta.addEventListener('click', () => _edUpdateInfo(conn));
       if (isMd) _mdRenderPreview(conn);
@@ -502,19 +502,33 @@ function _edRenderOutline(conn) {
   // 失败回落正则启发式；md/txt 用 # 井号规则（代码的 # 是注释，不能当标题）
   if (conn.monaco || conn.ta) {
     const src = conn.monaco ? conn.monaco.getValue() : conn.ta.value;
+    // 内容版本短路：光标移动/保存也触发本函数，但内容未变时跳过重解析
+    // （大 json 全量 tree-sitter parse 昂贵；折叠状态已存 conn._edFold 不怕丢）。
+    // _edSrcVer 由 onDidChangeModelContent/textarea input 递增
+    const ver = conn._edSrcVer || 0;
+    if (conn._edOutlineVer === ver && conn.outlineList.children.length) return;
+    conn._edOutlineVer = ver;
     const label = (conn.meta.label || '').toLowerCase();
     const dotI = label.lastIndexOf('.');
     const ext = dotI > 0 ? label.slice(dotI) : '';
     const isMd = ext === '.md';
+    // 异步渲染代际守卫：tsOutline 异步返回前若又触发了重渲染（光标移动/保存），
+    // 旧 promise 的结果要丢弃——否则旧结果晚到覆盖新渲染（竞态闪烁）
+    const gen = (conn._edOutlineGen = (conn._edOutlineGen || 0) + 1);
     const renderEntries = entries => {
+      if (gen !== conn._edOutlineGen) return false;   // 已被更新的渲染取代
       if (!entries || !entries.length) return false;
       // json 大纲：条目带 kids 字段（tsOutline 递归键标记），按嵌套关系可折叠
       const foldable = entries.some(e => e.kids !== undefined);
       const _actions = conn.outline.querySelector('.ed-outline-actions');
       if (_actions && !foldable) _actions.style.display = 'none';   // 代码/md 大纲无折叠按钮
+      // 折叠状态存 conn（跨渲染保留）：光标移动/保存等会反复触发 _edRenderOutline，
+      // _folded 挂在条目对象上会被重渲染清掉 → 全部折叠后点单项跳转就整树弹开（曾现 bug）
+      if (!conn._edFold) conn._edFold = {};
+      entries.forEach(e => { if (e.kids !== undefined) e._folded = conn._edFold[e.text + '@' + e.line]; });
       conn.outlineList.innerHTML = entries.map((e, i) => {
         const arrow = foldable && e.kids
-          ? `<span class="ed-outline-fold" data-i="${i}">▾</span>` : (foldable ? '<span class="ed-outline-fold" style="visibility:hidden">▾</span>' : '');
+          ? `<span class="ed-outline-fold" data-i="${i}">${e._folded ? '▸' : '▾'}</span>` : (foldable ? '<span class="ed-outline-fold" style="visibility:hidden">▾</span>' : '');
         return `<div class="ed-outline-item${foldable ? ' ed-outline-foldable' : ''}" data-i="${i}" style="padding-left:${(e.level-1)*12+8}px">${arrow}${esc(foldable ? (e.text || '') : (e.kind ? e.kind + ' ' : '') + e.text)}</div>`;
       }).join('');
       // 折叠状态：隐藏所有 depth > 折叠键 depth 的后续条目，直到遇到 depth <= 该值的键
@@ -536,6 +550,7 @@ function _edRenderOutline(conn) {
             const e = entries[+f.dataset.i];
             if (!e) return;
             e._folded = !e._folded;
+            conn._edFold[e.text + '@' + e.line] = e._folded;   // 状态写回 conn，重渲染后还原
             f.textContent = e._folded ? '▸' : '▾';
             applyFold();
           };
@@ -548,7 +563,12 @@ function _edRenderOutline(conn) {
           actions.querySelectorAll('.ed-outline-act').forEach(btn => {
             btn.onclick = () => {
               const collapse = btn.dataset.act === 'collapseAll';
-              entries.forEach(e => { if (e.kids) e._folded = collapse; });
+              entries.forEach(e => {
+                if (e.kids) {
+                  e._folded = collapse;
+                  conn._edFold[e.text + '@' + e.line] = collapse;
+                }
+              });
               conn.outlineList.querySelectorAll('.ed-outline-fold:not([style])').forEach(f => { f.textContent = collapse ? '▸' : '▾'; });
               applyFold();
             };
