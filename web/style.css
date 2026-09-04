@@ -34,6 +34,9 @@
     --text: #c8d6e8;
     --input-c: #00d4ff;
     --shadow-glow: 0 0 20px rgba(0, 212, 255, 0.15);
+    /* hex 0x00 灰显专用色：比 --muted 亮一档（--muted 在深蓝底上肉眼难辨，
+       曾用 muted+0.55 用户反馈「不生效」，实为弱到看不见） */
+    --hx-zero: #55698c;
     --font-mono: "Cascadia Code", "JetBrains Mono", "Consolas", "Menlo", monospace;
     --font-ui: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
     /* 终端色（xterm JS 读取，不直接参与 CSS）：默认 One Dark */
@@ -53,6 +56,7 @@
     --note-bg: #e3e0d8; --note-bg-card: #d9d5ca; --note-border: #c3bdae;
     --note-fg: #33383b; --note-muted: #7d7868;
     --term-bg: #1a1f2e; --term-fg: #d7d7d7;
+    --hx-zero: #55698c;
   }
   /* 暖夜灰：壳体更暖更柔，亮度略低于深空蓝；阅读面深一档（不反光） */
   html[data-theme="warmgray"] {
@@ -64,6 +68,7 @@
     --note-bg: #ddd9d1; --note-bg-card: #d2cdc3; --note-border: #b5afa2;
     --note-fg: #38343c; --note-muted: #7c766a;
     --term-bg: #201e28; --term-fg: #d9d4e0;
+    --hx-zero: #8d86a3;
   }
   /* 暗调绿：经典 CRT/护眼绿壳，深绿灰底；阅读面同步压深 */
   html[data-theme="darkgreen"] {
@@ -75,6 +80,7 @@
     --note-bg: #dcdcd2; --note-bg-card: #d0d0c4; --note-border: #b0b2a4;
     --note-fg: #2f3833; --note-muted: #75786a;
     --term-bg: #16211b; --term-fg: #cfdfc8;
+    --hx-zero: #7e9a8a;
   }
   /* 午夜纸（全浅窗体）：整个工具壳也改浅色，与笔记/日志完全统一，
      对比度问题彻底消失（适合长时间纯阅读/编辑场景） */
@@ -92,6 +98,7 @@
     --note-bg: #f2f0ea; --note-bg-card: #e8e4db; --note-border: #c5c0b2;
     --note-fg: #33383b; --note-muted: #8a8577;
     --term-bg: #efede6; --term-fg: #33383b;
+    --hx-zero: #a09a8e;   /* 亮色底灰显=比正文浅的灰（弱化方向相反） */
   }
   html[data-theme="paper"] body::before { opacity: 0.3; }
   html[data-theme="paper"] body::after { display: none; }
@@ -109,6 +116,7 @@
     --note-bg: #ddd8e0; --note-bg-card: #d2cdd6; --note-border: #b5aebd;
     --note-fg: #34303c; --note-muted: #7c7590;
     --term-bg: #1b1b26; --term-fg: #d5d5e5;
+    --hx-zero: #6f6f8f;
   }
   /* 琥珀暖：深棕咖啡壳 + 金橙 accent，冬夜暖光感 */
   html[data-theme="amber"] {
@@ -124,6 +132,7 @@
     --note-bg: #e0d8c8; --note-bg-card: #d5ccba; --note-border: #bdb29c;
     --note-fg: #3a3128; --note-muted: #8a7d68;
     --term-bg: #201913; --term-fg: #dccfc0;
+    --hx-zero: #a5927c;
   }
   /* 青瓷蓝：低饱和海蓝灰壳，柔和商务风，accent 青蓝 */
   html[data-theme="celadon"] {
@@ -139,6 +148,7 @@
     --note-bg: #d8e0e3; --note-bg-card: #ccd5d9; --note-border: #adbac2;
     --note-fg: #2e353c; --note-muted: #70808c;
     --term-bg: #132130; --term-fg: #d0dde8;
+    --hx-zero: #7d94a8;
   }
   /* 玫瑰暮：深粉紫暮色壳，低饱和不腻，accent 玫瑰金 */
   html[data-theme="rose"] {
@@ -154,6 +164,7 @@
     --note-bg: #e0d5da; --note-bg-card: #d4c8ce; --note-border: #bcaeb6;
     --note-fg: #38303a; --note-muted: #8a7a84;
     --term-bg: #241721; --term-fg: #ddd0d8;
+    --hx-zero: #ab93a2;
   }
   /* ---- 亮色系 ---- */
   /* 晨雾蓝：冷调浅蓝灰壳，清爽办公风 */
@@ -171,6 +182,7 @@
     --note-bg: #e4eaf0; --note-bg-card: #d8dfe6; --note-border: #b7c2cd;
     --note-fg: #2e3a45; --note-muted: #6e7f90;
     --term-bg: #e9eef3; --term-fg: #2e3a45;
+    --hx-zero: #9aa5b0;
   }
   /* 薄荷青：浅青绿壳，淡雅护眼 */
   html[data-theme="mint"] {
@@ -187,6 +199,7 @@
     --note-bg: #e6f0ea; --note-bg-card: #d9e6de; --note-border: #b5cbbf;
     --note-fg: #2b3d35; --note-muted: #67806f;
     --term-bg: #e8f2ec; --term-fg: #2b3d35;
+    --hx-zero: #96aaa0;
   }
   /* 暖杏：暖米黄壳，柔和不刺眼 */
   html[data-theme="apricot"] {
@@ -203,6 +216,7 @@
     --note-bg: #efe8d8; --note-bg-card: #e3dbc8; --note-border: #c2b79e;
     --note-fg: #3d3830; --note-muted: #7f7566;
     --term-bg: #f0ebe0; --term-fg: #3d3830;
+    --hx-zero: #ab9f8c;
   }
   html[data-theme="dawn"] body::before { opacity: 0.3; }
   html[data-theme="dawn"] body::after { display: none; }
@@ -462,8 +476,7 @@
   .hx-b { display: inline-block; cursor: pointer; border-radius: 3px; padding: 0 1px; }
   .hx-b .hi, .hx-b .lo { color: var(--fg); font-style: normal; }  /* 数据区单色（HxD 数据也是主色，nibble 双色太花） */
   .hx-b .hi { opacity: 0.95; } .hx-b .lo { opacity: 0.75; }        /* 高低 nibble 仅亮度区分 */
-  .hx-b.z .hi, .hx-b.z .lo { color: var(--muted); opacity: 0.55; }  /* ImHex 同款：0x00 灰色弱化 */
-  .hx-a.z { color: var(--muted); opacity: 0.55; }                    /* ASCII 列同灰白对照 */
+  .hx-b.z, .hx-a.z { color: var(--hx-zero); }   /* ImHex 同款 0x00 灰显（数据区是纯文本无 .hi/.lo，直接弱化元素） */
   .hx-b.cur { background: rgba(0,212,255,0.25); outline: 1px solid var(--accent); }
   .hx-b.sel { background: rgba(79,143,255,0.18); }
   .hx-b.hit { background: rgba(255,214,102,0.3); }

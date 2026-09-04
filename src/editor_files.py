@@ -105,16 +105,32 @@ def _ext_of(p):
     ext = low[dot:] if dot > 0 else low
     return ext
 
-def _safe_ext_path(path):
-    """校验外部绝对路径：必须是文本后缀白名单内的已存在文件。通过返回绝对路径。"""
+def _safe_ext_path(path, force=False):
+    """校验外部绝对路径：必须是文本后缀白名单内的已存在文件。通过返回绝对路径。
+    force=True（用户在打开方式弹窗明确选了编辑器）：后缀不在白名单时做 NUL 字节探测，
+    开头 8KB 含 NUL 判二进制仍拒，否则按文本放行（去后缀的 json 等曾在此被拒）。"""
     if not path or len(path) < 3 or ":" not in path and not path.startswith("\\\\"):
         return None
     if _ext_of(path) not in _EXT_TEXT:
-        return None
+        if not force:
+            return None
+        p = os.path.abspath(path)
+        if not os.path.isfile(p) or _looks_binary(p):
+            return None
+        return p
     p = os.path.abspath(path)
     if not os.path.isfile(p):
         return None
     return p
+
+
+def _looks_binary(path, probe=8192):
+    """NUL 字节探测（git 同款判法）：开头 probe 字节含 \\x00 判二进制。"""
+    try:
+        with open(path, "rb") as f:
+            return b"\x00" in f.read(probe)
+    except OSError:
+        return True
 
 
 @edit_bp.route("/api/ed/list")
@@ -137,8 +153,9 @@ def ed_open():
     """读文件内容：name=files/ 内文件名；path=外部绝对路径（拖入文件，白名单后缀）。"""
     # 外部绝对路径分支（拖入的任意文本文件）
     ext_path = request.args.get("path", "")
+    force = request.args.get("force") == "1"   # 用户明确选编辑器：无后缀/未知类型按内容探测放行
     if ext_path:
-        p = _safe_ext_path(ext_path)
+        p = _safe_ext_path(ext_path, force)
         if not p:
             return jsonify({"ok": False, "err": "不支持的文件类型或文件不存在"}), 400
         text, err = _read_text(p)
@@ -164,7 +181,8 @@ def ed_save():
     # 外部绝对路径分支：写回原文件（白名单后缀 + 原子替换）
     ext_path = (data.get("path") or "").strip()
     if ext_path:
-        if _ext_of(ext_path) not in _EXT_TEXT:
+        # 打开时按内容探测放行过的文件（无后缀文本），保存也放行（同一文件，内容已在前端展示过）
+        if _ext_of(ext_path) not in _EXT_TEXT and _looks_binary(os.path.abspath(ext_path)):
             return jsonify({"ok": False, "err": "不支持的文件类型"}), 400
         p = os.path.abspath(ext_path)
         tmp = p + ".tmp"

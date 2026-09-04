@@ -1207,16 +1207,22 @@ async function openFileSmart(path, mode) {
   }
   if (how === 'hex') { buildHexViewerTab(path, name); return; }
   if (how === 'view') { buildLogViewer(path); return; }
-  // edit：未知类型用户硬选编辑器——超 20M 后端会拒（大小前提由后端硬上限兜底），拒则降级阅读器
+  // edit：未知类型用户硬选编辑器——超 20M 后端会拒（大小前提由后端硬上限兜底），拒则降级
   try {
-    const r = await fetch('/api/ed/open?path=' + encodeURIComponent(path));
+    // force=1：无后缀/未知类型按内容探测放行（去后缀的 json 等曾直接被白名单拒）
+    const r = await fetch('/api/ed/open?force=1&path=' + encodeURIComponent(path));
     const j = await r.json();
     if (j.ok) {
       if (typeof _recentAdd === 'function') _recentAdd({type:'file', key:'file:'+j.name, label:j.name, data:{kind:'edit', name:j.name, path:path, extPath: path}});
       buildEditorTab(j.name, j.text, path);
       return;
     }
-    // 后端仍拒（用户选编辑器但后端硬上限）：降级阅读器 + 提示
+    // 后端仍拒（真二进制/超限/不存在）：二进制改切 hex（阅读器看乱码没意义），其余降级阅读器
+    if (j.err && /类型|二进制/.test(j.err)) {
+      showBanner('该文件是二进制（含 NUL 字节），已切换 16 进制查看器', 4000, true);
+      buildHexViewerTab(path, name);
+      return;
+    }
     showBanner('编辑器无法打开（' + (j.err || '未知错误') + '），已切换阅读器', 4000, true);
   } catch(e) { showBanner('打开失败: ' + e, 4000, true); return; }
   buildLogViewer(path);
