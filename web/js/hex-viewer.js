@@ -306,8 +306,18 @@ async function buildHexViewerTab(path, name) {
 }
 
 // ---- 列头：随查看方式重建（HxD 同款，分组位宽对齐数据列） ----
-// 十进制模式组值宽度不定（0~255/0~65535…），组 span 定宽右对齐才能列列对齐
+// 列头与数据行组必须用完全相同的 class/宽度规则（曾因两侧宽度类不一致全错位）
 const _HX_DEC_W = {1: 3, 2: 5, 4: 10, 8: 20};   // 每组字节数 → 十进制字符宽
+// 组样式（列头/数据共用）：十进制右对齐 + ch 定宽；hex 左对齐 + 固定 min-width
+function _hxGrpClass(conn) {
+  const bw = conn.viewBytes;
+  if (conn.viewDec) return ' dec hx-dec' + bw;
+  return bw > 1 ? ' hx-b-g' + bw : '';
+}
+function _hxGrpStyle(conn) {
+  if (!conn.viewDec) return '';
+  return ` style="min-width:${_HX_DEC_W[conn.viewBytes] + 1}ch;text-align:right"`;   // +1ch 组间空隙
+}
 function _hxRenderHead(conn) {
   const head = conn.wrap.querySelector('[data-hx-head]');
   if (!head) return;
@@ -315,8 +325,8 @@ function _hxRenderHead(conn) {
   let html = '';
   for (let g = 0; g < 16 / bw; g++) {
     const off = g * bw;
-    const txt = conn.viewDec ? String(off) : off.toString(16).toUpperCase().padStart(bw * 2, '0');
-    html += `<span class="hx-b hx-b-head${bw > 1 ? ' hx-b-g' + bw : ''}">${esc(txt)}</span>`;
+    const txt = conn.viewDec ? String(off).padStart(_HX_DEC_W[bw], ' ') : off.toString(16).toUpperCase().padStart(bw * 2, '0');
+    html += `<span class="hx-b hx-b-head${_hxGrpClass(conn)}"${_hxGrpStyle(conn)}>${esc(txt)}</span>`;
   }
   head.innerHTML = html;
 }
@@ -356,8 +366,7 @@ function _hxRenderRows(conn, from, to, force) {
       else txt = v.toString(16).toUpperCase().padStart(bw * 2, '0');
       const z = v === 0n ? ' z' : '';   // 全 0 组灰色弱化
       // 组内每个字节保留 data-hx-i（点击/选区定位到字节级）——首字节承载展示文本
-      const dc = conn.viewDec ? ' dec' : '';
-      hexHtml += `<span class="hx-b${dc}${bw > 1 ? ' hx-b-g' + bw : ''}${z}" data-hx-i="${i}">${esc(txt)}</span>`;
+      hexHtml += `<span class="hx-b${_hxGrpClass(conn)}${z}"${_hxGrpStyle(conn)} data-hx-i="${i}">${esc(txt)}</span>`;
       for (let k = 0; k < bw; k++) rendered.add(i + k);
       // ASCII 列仍逐字节
       for (let k = 0; k < bw; k++) {

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-终端控制台 Pro —— 多串口/SSH 后端 + AI 接入层
+前端控制台 v1.0.0 —— 多串口/SSH 后端 + AI 接入层
 - 每个串口一个 SerialPort 实例：独立线程读、独立环形缓冲、独立日志
 - API 按串口 ID（端口名）路由
 - AI 接入层：/api/ai/* 系列，AI 可查询任意串口实时数据、发送命令、订阅流
@@ -109,7 +109,11 @@ def start_background():
 # ============================================================
 @app.route("/")
 def index():
-    return send_from_directory(RES_DIR, "index.html")
+    return send_from_directory(RES_DIR, "web/index.html")
+
+@app.route("/web/<path:fn>")
+def web_files(fn):
+    return send_from_directory(os.path.join(RES_DIR, "web"), fn)
 
 @app.route("/<path:fn>")
 def static_files(fn):

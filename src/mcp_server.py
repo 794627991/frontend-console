@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-终端控制台 Pro —— MCP Server (stdio 传输)
+前端控制台 v1.0.0 —— MCP Server (stdio 传输)
 
-让 Claude Code（或任何 MCP 客户端）原生集成终端控制台 Pro 的能力：
+让 Claude Code（或任何 MCP 客户端）原生集成前端控制台 v1.0.0 的能力：
   - 查看串口/SSH 连接状态与输出
   - 发命令、发原始字节（Ctrl-C 等）
   - 读取/搜索日志文件（含拖放进工具的任意路径日志）
@@ -41,8 +41,8 @@ _SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 _ROOT_DIR = os.path.dirname(_SRC_DIR)
 _EXE_CANDIDATES = [
     os.path.join(_SRC_DIR, "main.py"),                                  # 源码优先
-    r"D:\AI\串口控制台Pro\dist\串口控制台Pro.exe",                       # exe 后备
-    os.path.join(os.path.expanduser("~"), "Desktop", "串口控制台Pro.exe"),
+    r"D:\AI\串口控制台Pro\dist\前端控制台.exe",                       # exe 后备
+    os.path.join(os.path.expanduser("~"), "Desktop", "前端控制台.exe"),
 ]
 _RUN_BAT = os.path.join(_ROOT_DIR, "run.bat")
 
@@ -455,7 +455,7 @@ def tool_tftp_set_dir(url, root_dir):
 _TOOLS = [
     {
         "name": "observe",
-        "description": "概览终端控制台 Pro：列出所有已连接的串口/SSH，并返回每个连接的最近输出。这是最常用的入口，先调它了解当前状态。重要：本工具与桌面 app 共享同一后端——app 里已连的串口/SSH 会直接出现在这里，port_id 形如 COM1 或 ssh:host:22，可直接用于 send_command/get_buffer，无需也不应再次 connect。",
+        "description": "概览前端控制台 v1.0.0：列出所有已连接的串口/SSH，并返回每个连接的最近输出。这是最常用的入口，先调它了解当前状态。重要：本工具与桌面 app 共享同一后端——app 里已连的串口/SSH 会直接出现在这里，port_id 形如 COM1 或 ssh:host:22，可直接用于 send_command/get_buffer，无需也不应再次 connect。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -734,7 +734,7 @@ def main():
                 url = get_url()
                 if not url:
                     _send({"jsonrpc": "2.0", "id": req_id,
-                           "result": _result("终端控制台 Pro 未运行，且自动拉起失败。请手动启动工具后重试。")})
+                           "result": _result("前端控制台 v1.0.0 未运行，且自动拉起失败。请手动启动工具后重试。")})
                     continue
                 try:
                     result = _dispatch(url, name, args)

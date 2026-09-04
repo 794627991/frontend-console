@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-终端控制台 Pro —— 桌面应用入口
+前端控制台 v1.0.0 —— 桌面应用入口
 - pywebview 渲染前端（系统 WebView2，无需浏览器）
 - 内嵌 Flask 后端（多串口管理 + AI 接入层）
 - 无控制台黑框：用 pythonw.exe 或 PyInstaller --windowed
@@ -85,7 +85,7 @@ def find_and_focus_existing_window():
         user32.SetForegroundWindow.restype = ctypes.c_bool
         user32.EnumWindows.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
         user32.EnumWindows.restype = ctypes.c_bool
-        target = "终端控制台 Pro"
+        target = "前端控制台 v1.0.0"
         found = []
         # 回调签名: BOOL CALLBACK EnumWindowsProc(HWND, LPARAM)，HWND 用 c_void_p 承接 64 位句柄
         @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
@@ -321,7 +321,7 @@ def main():
 
     # pywebview 窗口
     window = webview.create_window(
-        title="终端控制台 Pro",
+        title="前端控制台 v1.0.0",
         url=f"http://127.0.0.1:{port}/",
         width=1280,
         height=820,

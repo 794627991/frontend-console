@@ -16,7 +16,7 @@
   python src/serial_cli.py watch            # 实时跟随输出（轮询，Ctrl-C 退出）
 
 服务发现：读 ~/.serialconsole_pro/endpoint.json（工具启动时写入）。
-工具没开时提示用户启动桌面上的「串口控制台Pro.exe」。
+工具没开时提示用户启动桌面上的「前端控制台.exe」。
 """
 import os, sys, json, time, urllib.request, urllib.error, urllib.parse, subprocess
 
@@ -25,8 +25,8 @@ ENDPOINT_FILE = os.path.join(STATE_DIR, "endpoint.json")
 
 # 工具 exe 的几个候选位置：dist、桌面
 EXE_CANDIDATES = [
-    r"D:\AI\串口控制台Pro\dist\串口控制台Pro.exe",
-    os.path.join(os.path.expanduser("~"), "Desktop", "串口控制台Pro.exe"),
+    r"D:\AI\串口控制台Pro\dist\前端控制台.exe",
+    os.path.join(os.path.expanduser("~"), "Desktop", "前端控制台.exe"),
 ]
 # 自动启动用 run.bat（源码运行，cd 到项目根后 pythonw src/main.py）
 RUN_BAT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "run.bat")
@@ -78,7 +78,7 @@ def ensure_running(auto_start=True, timeout=25):
             return None
         start_cmd = [exe]
         start_cwd = os.path.dirname(exe)
-    print(f"【串口控制台 Pro v0.3 未运行】正在启动: {start_cmd}", file=sys.stderr)
+    print(f"【前端控制台 v1.0.0 未运行】正在启动: {start_cmd}", file=sys.stderr)
     try:
         # 用 Popen 启动 GUI 进程，不阻塞
         subprocess.Popen(
@@ -129,8 +129,8 @@ def api_post(url, path, body):
         return {"ok": False, "err": str(e)}
 
 def need_running():
-    print("【串口控制台 Pro 未运行】")
-    print("请先双击桌面上的「串口控制台Pro.exe」启动工具，再运行本命令。")
+    print("【前端控制台 v1.0.0 未运行】")
+    print("请先双击桌面上的「前端控制台.exe」启动工具，再运行本命令。")
     sys.exit(1)
     j = api_get(url, "/api/ai/observe?n=30")
     if not j.get("ok"):

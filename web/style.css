@@ -468,11 +468,11 @@
   .hx-b.sel { background: rgba(79,143,255,0.18); }
   .hx-b.hit { background: rgba(255,214,102,0.3); }
   .hx-b-empty { display: inline-block; width: 17px; }
-  /* 查看方式分组（HxD 同款）：hex 模式每组等宽（bw×2 字符 + 2px padding），
-     十进制模式 .dec 用 JS padStart + white-space:pre 保持字符宽对齐 */
-  .hx-b-g2 { min-width: 26px; } .hx-b-g4 { min-width: 50px; } .hx-b-g8 { min-width: 98px; }
+  /* 查看方式分组（HxD 同款）：hex 模式每组等宽（bw×2 hex 字符 + 组间 gap），
+     十进制模式由 JS 内联 min-width(ch)+右对齐（列头/数据共用同一规则才不错位） */
+  .hx-b-g2 { min-width: 4.2ch; } .hx-b-g4 { min-width: 8.2ch; } .hx-b-g8 { min-width: 16.2ch; }
   .hx-b-g2, .hx-b-g4, .hx-b-g8 { text-align: left; }
-  .hx-b.dec { white-space: pre; }   /* 十进制 padStart 空格占位不折叠 */
+  .hx-dec1, .hx-dec2, .hx-dec4, .hx-dec8 { white-space: pre; }   /* 十进制 padStart 空格占位不折叠 */
   .hx-view-sel { font-size: 12px; font-family: var(--font-mono);
     background: var(--bg-input); border: 1px solid var(--border); border-radius: 4px;
     color: var(--fg); padding: 2px 4px; outline: none; }
