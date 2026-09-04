@@ -76,7 +76,10 @@ const _TS_SYM_RULES = {
   },
   c: {
     classes: ['struct_specifier', 'union_specifier', 'enum_specifier', 'type_definition'],
-    functions: ['function_definition'],
+    functions: ['function_definition', 'preproc_function_def'],
+    // 宏/全局变量：大纲导航的次要目标（VSCode C 大纲同款粒度）
+    macros: ['preproc_def', 'preproc_call'],
+    globals: ['declaration'],
     // 类型名：type_identifier 优先（enum 内 enumerator 也是 identifier，递归找会误取）
     className: n => _tsTextOf(n, 'type_identifier') || _tsTextOf(n, 'field_identifier') || _tsTextOf(n, 'identifier'),
     // 函数名：declarator 嵌套层级不定，递归找最深 identifier
@@ -84,12 +87,15 @@ const _TS_SYM_RULES = {
   },
   cpp: {
     classes: ['class_specifier', 'struct_specifier', 'union_specifier', 'enum_specifier'],
-    functions: ['function_definition'],
+    functions: ['function_definition', 'preproc_function_def'],
+    macros: ['preproc_def', 'preproc_call'],
+    globals: ['declaration'],
     className: n => _tsTextOf(n, 'name') || _tsTextOf(n, 'type_identifier'),
     funcName: n => _tsCFuncName(n),
   },
   bash: {
     classes: [], functions: ['function_definition'],
+    globals: ['variable_assignment'],   // 顶层 VAR=value 赋值（不在函数内才列）
     className: n => null, funcName: n => _tsTextOf(n, 'name') || _tsTextOf(n, 'word'),
   },
   json: {
@@ -144,34 +150,69 @@ async function tsOutline(src, ext) {
     parser.setLanguage(lang);
     const tree = parser.parse(src);
     const out = [];
-    // json 特化：顶层键列表（最外层 object 的直接 pair 子节点）
+    // json 特化：递归列出全部键（层级=嵌套深度）。大 json 限深度 8/条目 2000 防爆
     if (langName === 'json') {
-      const walkJson = node => {
+      const keyOf = pair => {
+        const key = pair.firstChild && pair.firstChild.text;
+        return key ? key.replace(/^"|"$/g, '') : null;
+      };
+      const walkJson = (node, depth) => {
+        if (depth > 8 || out.length > 2000) return;
         for (const k of node.namedChildren) {
           if (k.type === 'pair') {
-            const key = k.firstChild && k.firstChild.text;
-            if (key) out.push({ level: 1, text: key.replace(/^"|"$/g, ''), line: k.startPosition.row + 1, kind: '键' });
+            const key = keyOf(k);
+            if (key) out.push({ level: Math.min(depth, 3), text: key, line: k.startPosition.row + 1, kind: depth === 1 ? '键' : '子键' });
+            // pair 的 value 是嵌套 object/array——必须进 pair 内部找（曾只扫顶层直接子，嵌套全丢）
+            for (const v of k.namedChildren) {
+              if (v.type === 'object' || v.type === 'array') walkJson(v, depth + 1);
+            }
           } else if (k.type === 'object' || k.type === 'array') {
-            walkJson(k);
+            walkJson(k, depth + 1);
           }
         }
       };
-      walkJson(tree.rootNode);
+      walkJson(tree.rootNode, 1);
       return out;
     }
-    const walk = (node, depth) => {
+    const walk = (node, depth, inFunc) => {
       if (depth > 30) return;   // 深度限幅防病态嵌套
       if (rules.classes.includes(node.type)) {
-        const name = rules.className(node);
+        // struct/enum 引用（无定义体 field_declaration_list）不列——只列真定义。
+        // 原型 int probe(struct device_ctx *c); 里的类型引用会重复出现
+        const hasBody = node.namedChildren.some(c => c.type === 'field_declaration_list' || c.type === 'enumerator_list' || c.type === 'body');
+        const name = hasBody ? rules.className(node) : null;
         if (name) out.push({ level: 1, text: name, line: node.startPosition.row + 1, kind: '类' });
       } else if (rules.functions.includes(node.type)) {
         const name = rules.funcName(node);
         if (name) out.push({ level: 2, text: name, line: node.startPosition.row + 1, kind: '函数' });
+        inFunc = true;   // 函数体内不再列变量/宏（大纲只管导航粒度，VSCode 同款）
+      } else if (!inFunc) {
+        // 宏定义/全局变量：只在顶层（非函数体内）列出
+        if (rules.macros && rules.macros.includes(node.type)) {
+          // preproc_def → identifier（dump 实测，不是 directive）
+          const name = _tsTextOf(node, 'identifier') || _tsTextOf(node, 'directive');
+          if (name) out.push({ level: 3, text: name, line: node.startPosition.row + 1, kind: '宏' });
+        } else if (rules.globals && rules.globals.includes(node.type)) {
+          if (langName === 'bash') {
+            const name = _tsTextOf(node, 'variable_name');
+            if (name) out.push({ level: 3, text: name, line: node.startPosition.row + 1, kind: '变量' });
+          } else {
+            // C 系 declaration：函数原型（declarator→function_declarator）跳过——
+            // 与函数定义重复导航没意义；包 struct/enum 定义体的也跳过（结构体已单独列）
+            const hasStruct = (() => { let c = node.firstChild; while (c) { if (c.type === 'struct_specifier' || c.type === 'union_specifier' || c.type === 'enum_specifier') return true; c = c.nextSibling; } return false; })();
+            const isProto = (() => { let c = node.firstChild; while (c) { if (c.type === 'function_declarator') return true; c = c.nextSibling; } return false; })();
+            if (!hasStruct && !isProto) {
+              const name = _tsCFuncName(node);
+              if (name) out.push({ level: 3, text: name, line: node.startPosition.row + 1, kind: '变量' });
+            }
+          }
+        }
       }
       let c = node.firstChild;
-      while (c) { walk(c, depth + 1); c = c.nextSibling; }
+      while (c) { walk(c, depth + 1, inFunc); c = c.nextSibling; }
     };
-    walk(tree.rootNode, 0);
+    walk(tree.rootNode, 0, false);
+    if (out.length > 5000) out.length = 5000;   // 大文件防爆
     return out;
   } catch(e) {
     console.error('[大纲] tree-sitter 解析失败:', e);
