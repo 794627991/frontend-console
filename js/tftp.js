@@ -1,7 +1,8 @@
 let _tftpRunning = false;
+let _httpFileRunning = false;  // HTTP 下载（:8081，目录随 TFTP）
 let _tftpTransfersKey = '';  // 传输区脏检查 key（含进度，进行中每秒变）
 let _tftpFilesKey = '';      // 文件区脏检查 key（只在文件集变化时变）
-let _tftpActive = false;     // 有进行中传输（轮询频率切换，不查 DOM）
+let _tftpActive = false;     // 有进行中传输（轮询频率切换，不查 DOM)
 function _fmtSize(n) {
   if (n == null) return '';
   if (n >= 1048576) return (n / 1048576).toFixed(1) + 'MB';
@@ -17,6 +18,16 @@ async function refreshTftp() {
     const tg = $('tftpToggle');
     tg.classList.toggle('on', j.running);
     $('tftpToggleText').textContent = j.running ? '运行中' : '已停止';
+    // HTTP 下载服务状态（与 TFTP 独立开关，目录共享）
+    try {
+      const hr = await fetch('/api/httpfile/status');
+      const hj = await hr.json();
+      if (hj.ok) {
+        _httpFileRunning = hj.running;
+        $('httpFileToggle').classList.toggle('on', hj.running);
+        $('httpFileToggleText').textContent = hj.running ? '运行中' : '已停止';
+      }
+    } catch(e) {}
     if (j.root_dir && !$('tftpDirPath').dataset.editing) $('tftpDirPath').textContent = j.root_dir;
     // 两个独立容器分别脏检查：传输区含进度（bytes 变化必须刷新进度条），
     // 文件区只在文件集变化时刷新。分区可折叠，折叠状态纳入脏检查 key。
@@ -136,6 +147,15 @@ $('tftpToggle').onclick = async () => {
     if (j.msg) showBanner(j.msg);
     refreshTftp();
   } catch(e) { showBanner('TFTP 操作失败', 4000, true); }
+};
+// HTTP 下载服务开关（端口 8081，目录随 TFTP——设备 wget http://<PC_IP>:8081/<文件名>）
+$('httpFileToggle').onclick = async () => {
+  try {
+    const r = await fetch(`/api/httpfile/${_httpFileRunning ? 'stop' : 'start'}`, {method:'POST'});
+    const j = await r.json();
+    if (j.msg) showBanner(j.msg);
+    refreshTftp();
+  } catch(e) { showBanner('HTTP 下载操作失败', 4000, true); }
 };
 async function pickTftpDir() {
   // 原生目录对话框（pywebview js_api）。取消（空串）直接中止——不弹输入框
