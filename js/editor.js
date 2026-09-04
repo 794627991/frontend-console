@@ -527,9 +527,10 @@ function _edStatText(conn) {
     return `${blocks} 块`;
   }
   if (conn.monaco) {
-    const pos = conn.monaco.getPosition() || { line: 1, column: 1 };  // 初始化竞态时可能为空，兜底 1,1
+    // Monaco getPosition() 返回 {lineNumber, column}——字段是 lineNumber 不是 line（曾中招）
+    const pos = conn.monaco.getPosition() || { lineNumber: 1, column: 1 };
     const len = conn.monaco.getModel() ? conn.monaco.getModel().getValueLength() : 0;
-    return `行 ${pos.line}，列 ${pos.column} · ${len} 字符`;
+    return `行 ${pos.lineNumber}，列 ${pos.column} · ${len} 字符`;
   }
   if (conn.ta) {
     const pos = conn.ta.selectionStart;
