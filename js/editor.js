@@ -947,9 +947,16 @@ async function openDroppedFile(path) {
         buildEditorTab(j.name, j.text, path);
         return;
       }
-      // .log 超限/异常 → 回落只读查看器；其他文本报错
-      if (ext !== '.log') { showBanner(j.err || '打开失败', 4000, true); return; }
-    } catch(e) { if (ext !== '.log') { showBanner('打开失败: ' + e, 4000, true); return; } }
+      // 超限（>20MB）→ 回落只读查看器（Monaco 30MB 以上就卡、1G txt 内存墙，
+      // G 级虚拟列表是唯一能扛的方案）。之前只 .log 回落，超大 .txt/.json 直接报错。
+      // 编辑需求：超大文件本来就是"看 + 搜"场景，真要改请切片处理。
+      const oversize = j.err && /20\s*MB|过大|超限/.test(j.err);
+      if (!oversize) { showBanner(j.err || '打开失败', 4000, true); return; }
+    } catch(e) {
+      // fetch 异常（后端炸了等）：也试查看器兜底，比直接报错友好
+      if (typeof buildLogViewer === 'function') { buildLogViewer(path); return; }
+      showBanner('打开失败: ' + e, 4000, true); return;
+    }
   }
-  buildLogViewer(path);   // .log 超限/未知类型：只读日志查看器（G 级虚拟列表）
+  buildLogViewer(path);   // 超限文本/未知类型/.log：只读日志查看器（G 级虚拟列表）
 }
