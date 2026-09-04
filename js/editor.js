@@ -890,8 +890,10 @@ function _mdBindSplitter(wrap) {
     const move = ev => {
       const dx = ev.clientX - startX;
       if (Math.abs(dx) > 2) moved = true;
-      // 限幅：预览列 15% ~ 85%，源码列始终保留可编辑空间
-      const w = Math.max(total * 0.15, Math.min(total * 0.85, startW + dx));
+      // 方向修正：预览列在右侧、随 .ed-scroll(flex:1) 伸缩锚定左缘。
+      // 往左拖鼠标 dx<0，分隔条应左移 dx —— 预览宽变化是位移的相反数（-dx），
+      // 所以这里用 startW - dx。曾用 startW + dx 导致分隔条与鼠标反向跑（往左拖它往右）。
+      const w = Math.max(total * 0.15, Math.min(total * 0.85, startW - dx));
       preview.style.width = w + 'px';
       preview.style.flexShrink = '0';
       // Monaco 容器宽随分栏变化由 automaticLayout 接管
