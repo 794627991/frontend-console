@@ -270,6 +270,40 @@ def tool_send_raw(url, port_id, bytes_list):
     return f"发送失败: {j.get('err', '未知')}"
 
 
+def tool_send_burst(url, port_id, steps):
+    """数据连发：一次调用在后端原子执行整条时间线（延时 + 命令/原始字节序列），
+    返回每步的新输出。用于 AI 自身思考延迟掐不准时间窗口的场景。
+    典型：内核下 reboot 后 uboot 只有 3s 倒计时，需停到 uboot 下——
+    steps=[{cmd:"reboot",wait:1},{delay:3,raw:[21],wait:0.5},...{delay:0.5,raw:[21]}]。
+    每步 delay 是发送前的等待秒数，wait 是发送后收输出的秒数；cmd 与 raw 二选一。"""
+    total = sum(float(s.get("delay", 0)) + float(s.get("wait", 0)) for s in steps)
+    j = _post(url, "/api/ai/burst", {"port_id": port_id, "steps": steps},
+              timeout=max(60, total + 30))
+    if not j.get("ok"):
+        # 部分执行也会带已完成的 steps，一并展示
+        done = j.get("steps") or []
+        head = f"连发失败: {j.get('err', '未知')}"
+        if done:
+            head += f"（前 {len(done)} 步已执行）"
+            return head + "\n" + _fmt_burst_steps(done)
+        return head
+    return _fmt_burst_steps(j.get("steps") or [])
+
+
+def _fmt_burst_steps(results):
+    """把 burst 返回的步骤结果格式化成易读文本。"""
+    out = []
+    for r in results:
+        out.append(f"--- 第 {r.get('step')} 步: {r.get('action')} ---")
+        resp = r.get("response") or []
+        if resp:
+            for l in _fmt_lines(resp).split("\n"):
+                out.append("  " + l)
+        else:
+            out.append("  （无新输出）")
+    return "\n".join(out)
+
+
 def tool_get_buffer(url, port_id, n=200):
     """获取指定连接最近 N 行缓冲。"""
     j = _get(url, "/api/ai/buffer", {"port_id": port_id, "n": n})
@@ -535,6 +569,30 @@ _TOOLS = [
         },
     },
     {
+        "name": "send_burst",
+        "description": "数据连发：一次调用在后端原子执行整条时间线（每步可前置延时 + 发命令或原始字节 + 收输出），返回每步新输出。用于时间敏感、AI 思考延迟掐不准窗口的场景。典型用法：内核下重启进 uboot 只有 3s 倒计时，需停到 uboot——steps=[{'cmd':'reboot','wait':1},{'delay':3,'raw':[21],'wait':0.5},{'delay':0.5,'raw':[21]},{'delay':0.5,'raw':[21],'wait':1}]（21=Ctrl-U）。每步字段：delay=发送前等待秒数（默认0），cmd=命令字符串（与 raw 二选一），raw=字节列表，wait=发送后收输出的秒数（默认0）。总时长上限 120s。比多次 send_command 省往返且时间精确。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "port_id": {"type": "string", "description": "连接 ID，从 observe 获取"},
+                "steps": {
+                    "type": "array",
+                    "description": "时间线步骤，按序执行",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "delay": {"type": "number", "default": 0, "description": "本步骤发送前的等待秒数"},
+                            "cmd": {"type": "string", "description": "要发送的命令（自动加回车，与 raw 二选一）"},
+                            "raw": {"type": "array", "items": {"type": "integer"}, "description": "原始字节列表如 [21]=Ctrl-U（与 cmd 二选一）"},
+                            "wait": {"type": "number", "default": 0, "description": "发送后收集新输出的秒数"},
+                        },
+                    },
+                },
+            },
+            "required": ["port_id", "steps"],
+        },
+    },
+    {
         "name": "get_buffer",
         "description": "获取指定连接最近 N 行缓冲输出。需要看更多历史输出时用。",
         "inputSchema": {
@@ -657,6 +715,8 @@ def _dispatch(url, name, args):
         return tool_send_command(url, need("port_id"), need("cmd"), args.get("wait", 2.0))
     if name == "send_raw":
         return tool_send_raw(url, need("port_id"), need("bytes"))
+    if name == "send_burst":
+        return tool_send_burst(url, need("port_id"), need("steps"))
     if name == "get_buffer":
         return tool_get_buffer(url, need("port_id"), args.get("n", 200))
     if name == "list_open_logs":

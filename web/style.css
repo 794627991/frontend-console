@@ -1291,3 +1291,28 @@
 .hx-zero-toggle { display: flex; align-items: center; gap: 4px;
   font-size: 11px; color: var(--muted); cursor: pointer; user-select: none; }
 .hx-zero-toggle input { cursor: pointer; }
+
+/* ---- 数据目录管理面板（顶栏机器人 logo 点开）---- */
+/* 顶栏 logo 机器人图标即功能按钮：hover 微亮提示可点 */
+.logo .icon { overflow: hidden; transition: filter 0.15s; }
+.logo .icon:hover { filter: brightness(1.25); }
+.logo .icon:active { filter: brightness(0.85); }
+.dd-box { max-width: 560px; }
+.dd-body { padding: 16px 20px 18px; display: flex; flex-direction: column; gap: 16px; }
+.dd-label { font-size: 11px; font-weight: 600; color: var(--fg-bright); margin-bottom: 6px; }
+.dd-path { font-family: var(--font-mono); font-size: 12px; color: var(--fg);
+  background: var(--bg-input); border: 1px solid var(--border); border-radius: 4px;
+  padding: 8px 10px; word-break: break-all; }
+.dd-sub { font-size: 11px; color: var(--muted); margin-top: 6px; }
+.dd-row { display: flex; gap: 8px; }
+.dd-input { flex: 1; font-family: var(--font-mono); font-size: 12px;
+  background: var(--bg-input); border: 1px solid var(--border); border-radius: 4px;
+  padding: 7px 10px; color: var(--fg); outline: none; }
+.dd-input:focus { border-color: var(--accent); }
+.dd-msg { font-size: 11px; margin-top: 8px; min-height: 16px; line-height: 1.6; }
+.dd-msg .dd-ok { color: var(--heop-ok); }
+.dd-msg .dd-err { color: var(--neon-red); }
+.dd-msg .dd-warn { color: var(--neon-orange); margin-top: 4px; }
+.dd-actions { display: flex; gap: 8px; align-items: center; }
+.dd-note { font-size: 11px; color: var(--muted); line-height: 1.6;
+  border-top: 1px solid var(--border); padding-top: 10px; }

@@ -1,0 +1,192 @@
+// ============================================================
+// 数据目录管理：顶栏机器人 logo 即功能按钮，点开设置面板。
+// 面板功能：查看当前数据目录 → 改目录（校验+预览）→ 迁移（进度+结果）。
+// 首次启动（config 无 data_dir）弹引导，默认建议 D:\前端控制台。
+// 迁移铁律：先复制后切换，失败不切换，旧目录保留——数据绝不丢。
+// ============================================================
+
+function _ddFmtSize(n) {
+  if (n >= 1024 * 1024 * 1024) return (n / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+  if (n >= 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + ' MB';
+  if (n >= 1024) return (n / 1024).toFixed(1) + ' KB';
+  return n + ' B';
+}
+
+function _ddModal() {
+  let m = $('dataDirModal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.className = 'modal';
+  m.id = 'dataDirModal';
+  m.innerHTML = `
+    <div class="box dd-box">
+      <div class="head">
+        <strong>📁 数据目录</strong>
+        <div class="head-actions"><button class="btn ghost icon-btn" id="ddClose">✕</button></div>
+      </div>
+      <div class="dd-body">
+        <div class="dd-cur">
+          <div class="dd-label">当前数据目录（日志 / 笔记 / 缓存）</div>
+          <div class="dd-path" id="ddCurPath">—</div>
+          <div class="dd-sub" id="ddCurStat"></div>
+        </div>
+        <div class="dd-form">
+          <div class="dd-label">修改到…</div>
+          <div class="dd-row">
+            <input type="text" id="ddNewPath" class="dd-input" spellcheck="false" placeholder="如 D:\\前端控制台">
+            <button class="btn ghost icon-btn" id="ddPick" title="浏览选择目录">📂</button>
+          </div>
+          <div class="dd-sub">默认建议：<span id="ddDefault" style="font-family:var(--font-mono);"></span>（数据不放 C 盘；endpoint/config 仍留 home）</div>
+          <div id="ddCheckMsg" class="dd-msg"></div>
+        </div>
+        <div class="dd-actions">
+          <button class="btn ghost" id="ddOpenCur">📂 打开当前目录</button>
+          <span style="flex:1"></span>
+          <button class="btn ghost" id="ddCancel">取消</button>
+          <button class="btn primary" id="ddMigrate" disabled>迁移数据…</button>
+        </div>
+        <div class="dd-note" id="ddNote">迁移规则：先完整复制并逐文件校验，全部通过才切换；失败不动原目录；旧目录保留，确认后可手动删。</div>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+  m.querySelector('#ddClose').onclick = m.querySelector('#ddCancel').onclick = () => m.classList.remove('show');
+  m.querySelector('#ddOpenCur').onclick = async () => {
+    try {
+      const r = await fetch('/api/log_dir/open', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({dir: m.dataset.cur})});
+      const j = await r.json();
+      if (!j.ok) showBanner('打开失败: ' + (j.err || ''), 3000, true);
+    } catch(e) { showBanner('打开失败: ' + e, 3000, true); }
+  };
+  m.querySelector('#ddPick').onclick = async () => {
+    try {
+      const dir = await pywebview.api.pick_dir();
+      if (dir) m.querySelector('#ddNewPath').value = dir, m.querySelector('#ddNewPath').dispatchEvent(new Event('change'));
+    } catch(_) { showBanner('目录选择器暂不可用，可直接输入路径', 3000, true); }
+  };
+  // 输入即校验（check API：有效性+预览+告警）
+  const inp = m.querySelector('#ddNewPath');
+  let _ckT = null;
+  inp.addEventListener('input', () => {
+    clearTimeout(_ckT);
+    const btn = m.querySelector('#ddMigrate');
+    btn.disabled = true;
+    _ckT = setTimeout(async () => {
+      const v = inp.value.trim();
+      const msgEl = m.querySelector('#ddCheckMsg');
+      if (!v) { msgEl.innerHTML = ''; return; }
+      try {
+        const r = await fetch('/api/data_dir/check', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({dir: v})});
+        const j = await r.json();
+        if (!j.ok) { msgEl.innerHTML = `<span class="dd-err">✕ ${esc(j.err)}</span>`; return; }
+        const prev = (j.preview || []).map(p => `${p.name} ${p.count} 项`).join(' · ');
+        const warn = (j.warnings || []).length ? `<div class="dd-warn">⚠ ${esc(j.warnings[0])}</div>` : '';
+        msgEl.innerHTML = `<span class="dd-ok">✓ 目录可用</span> 将迁移：${esc(prev)}${warn}`;
+        btn.disabled = false;
+      } catch(e) { msgEl.innerHTML = `<span class="dd-err">✕ 校验失败: ${esc(String(e))}</span>`; }
+    }, 400);
+  });
+  // 迁移：确认弹窗 → 执行 → 结果（大文件多时同步请求会久，按钮先转「迁移中…」）
+  m.querySelector('#ddMigrate').onclick = async () => {
+    const target = inp.value.trim();
+    if (!target) return;
+    const ok = await _ddConfirm('迁移数据目录',
+      `把全部日志与笔记复制到：\n${target}\n\n复制并校验通过后自动切换，旧目录完整保留。继续？`);
+    if (!ok) return;
+    const btn = m.querySelector('#ddMigrate');
+    btn.disabled = true;
+    btn.textContent = '迁移中…（复制+校验，数据量大时会久）';
+    try {
+      const r = await fetch('/api/data_dir/migrate', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({dir: target})});
+      const j = await r.json();
+      if (j.ok) {
+        btn.textContent = '迁移数据…';
+        m.classList.remove('show');
+        const parts = (j.copied || []).map(c => `${c.name}×${c.files}`).join('、');
+        showBanner(`迁移完成（${parts}）。旧目录已保留，确认正常后可手动删除：${j.old_dir}`, 8000);
+        _ddRefreshPanel(m);   // 面板若再开显示新目录
+      } else {
+        btn.textContent = '迁移数据…';
+        showBanner('迁移失败（未切换，数据仍在原处）：' + (j.err || '未知'), 6000, true);
+      }
+    } catch(e) {
+      btn.textContent = '迁移数据…';
+      showBanner('迁移请求失败: ' + e, 5000, true);
+    }
+  };
+  return m;
+}
+
+async function _ddRefreshPanel(m) {
+  try {
+    const r = await fetch('/api/data_dir');
+    const j = await r.json();
+    if (!j.ok) return;
+    m.dataset.cur = j.dir;
+    m.querySelector('#ddCurPath').textContent = j.dir;
+    const subs = Object.entries(j.subdirs || {})
+      .map(([k, v]) => `${k} ${v.count} 项 / ${_ddFmtSize(v.size)}`).join(' · ');
+    m.querySelector('#ddCurStat').textContent = subs + (j.total_size ? ` · 共 ${_ddFmtSize(j.total_size)}` : '');
+    m.querySelector('#ddDefault').textContent = j.default || '';
+  } catch(_) {}
+}
+
+function openDataDirPanel() {
+  const m = _ddModal();
+  _ddRefreshPanel(m);
+  m.classList.add('show');
+}
+
+// 应用风格确认弹窗（与 hex/editor 的 confirm 同款，不用原生 confirm）
+function _ddConfirm(title, msg) {
+  return new Promise(resolve => {
+    let m = $('ddConfirmModal');
+    if (!m) {
+      m = document.createElement('div');
+      m.className = 'modal';
+      m.id = 'ddConfirmModal';
+      m.innerHTML = `
+        <div class="box" style="max-width:400px;">
+          <div class="head"><strong id="ddcTitle"></strong>
+            <div class="head-actions"><button class="btn ghost icon-btn" id="ddcClose">✕</button></div></div>
+          <div style="padding:16px 20px;white-space:pre-wrap;font-size:12px;line-height:1.7;color:var(--fg);" id="ddcMsg"></div>
+          <div class="actions" style="padding:0 20px 18px;">
+            <span style="flex:1"></span>
+            <button class="btn ghost" id="ddcNo">取消</button>
+            <button class="btn primary" id="ddcYes">确定</button>
+          </div>
+        </div>`;
+      document.body.appendChild(m);
+      m.querySelector('#ddcClose').onclick = m.querySelector('#ddcNo').onclick = () => { m.classList.remove('show'); resolve(false); };
+      m.querySelector('#ddcYes').onclick = () => { m.classList.remove('show'); resolve(true); };
+    }
+    m.querySelector('#ddcTitle').textContent = title;
+    m.querySelector('#ddcMsg').textContent = msg;
+    m.classList.add('show');
+  });
+}
+
+// ---- 顶栏机器人 logo 即按钮：点击开数据目录面板 ----
+(function initDataDirButton() {
+  const logoIcon = document.querySelector('.logo .icon');
+  if (logoIcon) {
+    logoIcon.title = '数据目录设置（日志/笔记/缓存的位置与迁移）';
+    logoIcon.style.cursor = 'pointer';
+    logoIcon.addEventListener('click', openDataDirPanel);
+  }
+})();
+
+// ---- 首启引导：config 无 data_dir 时弹一次（用户选择数据目录）----
+(async function initDataDirGuide() {
+  try {
+    const r = await fetch('/api/data_dir');
+    const j = await r.json();
+    if (!j.ok) return;
+    const r2 = await fetch('/api/theme');
+    const cfg = await r2.json();
+    // 主题接口带回 config 是否已设 data_dir：见 /api/theme 扩展字段
+    if (cfg.data_dir_set) return;   // 老用户已配置过，不弹
+    const ok = await _ddConfirm('首次启动 · 选择数据目录',
+      `日志、笔记、缓存等数据默认保存到：\n${j.default}\n\n数据不放 C 盘（endpoint/config 仍留 home）。现在就查看或修改吗？`);
+    if (ok) openDataDirPanel();
+  } catch(_) {}
+})();

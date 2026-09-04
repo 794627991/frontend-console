@@ -11,13 +11,47 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 def _resource_base():
     return getattr(sys, "_MEIPASS", BASE_DIR)
 RES_DIR = _resource_base()
-# 日志目录：默认用用户数据目录 ~/.serialconsole_pro/logs（与 endpoint.json 同级），
-# 保证源码运行和 PyInstaller exe 运行都指向同一稳定位置，不受 exe 临时解压目录
-# （_MEIPASS，每次启动不同且关闭即清空）或 exe 所在子目录影响，历史日志可持久读取。
-# 可通过环境变量 SERIAL_LOG_DIR 或配置文件覆盖（见 /api/log_dir）。
-STATE_DIR = os.path.join(os.path.expanduser("~"), ".serialconsole_pro")
-CONFIG_FILE = os.path.join(STATE_DIR, "config.json")
-DEFAULT_LOG_DIR = os.path.join(STATE_DIR, "logs")
+
+# ---- home 锚点（用户口径：只有这两样放 home）----
+# endpoint.json：MCP 服务发现锚点，路径必须固定（serial_cli/mcp_server 硬编码读它）
+# config.json：配置本体（含 data_dir），也需稳定位置——数据目录本身由它决定，不能随数据目录搬
+HOME_DIR = os.path.join(os.path.expanduser("~"), ".serialconsole_pro")
+CONFIG_FILE = os.path.join(HOME_DIR, "config.json")
+
+def _default_data_dir():
+    """数据目录（日志/笔记/缓存）默认值（用户要求：杜绝 C 盘）。
+    首选 D:\\前端控制台，无 D 盘找 E/Z…第一个非 C 盘；只有 C 盘时才回 C 盘。
+    实际生效值可被 config.json 的 data_dir 覆盖（设置界面可改+迁移）。"""
+    def _ok(d):
+        try:
+            os.makedirs(d, exist_ok=True)
+            return os.access(d, os.W_OK)
+        except Exception:
+            return False
+    for i in list(range(ord("D"), ord("Z") + 1)):
+        cand = chr(i) + ":\\前端控制台"
+        if os.path.isdir(chr(i) + ":\\") and _ok(cand):
+            return cand
+    return os.path.join(HOME_DIR, "data")   # 只有 C 盘的兜底
+
+def _load_home_config():
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+_HOME_CFG = _load_home_config()
+# 数据目录：config 的 data_dir > 默认值（config 里旧的 log_dir 是单独日志目录，继续生效）
+DATA_DIR = _HOME_CFG.get("data_dir") or _default_data_dir()
+try:
+    os.makedirs(DATA_DIR, exist_ok=True)
+except Exception:
+    DATA_DIR = os.path.join(HOME_DIR, "data")
+STATE_DIR = DATA_DIR   # 兼容旧代码引用：STATE_DIR 语义=数据目录（endpoint 写入仍用 HOME_DIR）
+
+# 日志目录：config 旧 log_dir（老用户自定义过）> 数据目录/logs
+DEFAULT_LOG_DIR = os.path.join(DATA_DIR, "logs")
 # 命令库持久化（跨端口/重启保留）——放工具所在目录，不放 C 盘用户目录：
 # 用户要求命令库跟工具走（工具目录可见、备份工具目录即备份命令库）。
 # PyInstaller exe 运行时 BASE_DIR 是 exe 所在目录（源码运行时是项目根目录）。
@@ -25,7 +59,7 @@ CMD_LIB_FILE = os.path.join(BASE_DIR, "cmdlib.json")
 
 # ---- 配置 ----
 def _load_config():
-    """读取持久化配置（日志目录等）。"""
+    """读取持久化配置（home 锚点 config.json：数据目录/日志目录/主题/最近记录）。"""
     try:
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -33,9 +67,9 @@ def _load_config():
         return {}
 
 def _save_config(cfg):
-    """保存配置到 ~/.serialconsole_pro/config.json。"""
+    """保存配置到 home 锚点 config.json（~/.serialconsole_pro/，不随数据目录迁移）。"""
     try:
-        os.makedirs(STATE_DIR, exist_ok=True)
+        os.makedirs(HOME_DIR, exist_ok=True)
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(cfg, f, ensure_ascii=False, indent=2)
     except Exception:

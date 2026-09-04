@@ -9,15 +9,15 @@ I/O——后端不解析内容，格式由前端负责；图片上传存 files/i
 - 脏状态在前端（* 标记），后端只管文件 I/O；UTF-8 统一编码
 - 路径安全：只允许访问 files/ 目录内（防 ../ 穿越）
 """
-import os, re, time, binascii
+import os, re, time, binascii, shutil
 from flask import Blueprint, request, jsonify
 
-from src.app_state import BASE_DIR
+from src.app_state import BASE_DIR, DATA_DIR
 
 edit_bp = Blueprint("editor", __name__)
 
-# 编辑器文件根目录：工具所在目录/files（源码运行=项目根，exe=exe 所在目录）
-FILES_DIR = os.path.join(BASE_DIR, "files")
+# 编辑器文件根目录：数据目录/files（默认 D:\前端控制台\files，随数据目录迁移走）
+FILES_DIR = os.path.join(DATA_DIR, "files")
 # 图片目录：files/images（.note 粘贴/上传的图片落这里，笔记里存相对路径 images/xxx.png）
 IMAGES_DIR = os.path.join(FILES_DIR, "images")
 
@@ -27,6 +27,34 @@ _NAME_RE = re.compile(r'^[^\\/:*?"<>|\x00-\x1f]{1,120}$')
 # 允许的图片扩展名（粘贴上传只收这几类，Content 校验防止伪装脚本）
 _IMG_EXT = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
             ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp"}
+
+
+# 旧版本笔记在 BASE_DIR/files（工具目录）——启动时自动搬进数据目录 files/，
+# 搬完在原位置留一个「已迁移.txt」指路，绝不静默丢。防「迁移了就找不到了」。
+def _migrate_legacy_files():
+    legacy = os.path.join(BASE_DIR, "files")
+    if os.path.normpath(legacy) == os.path.normpath(FILES_DIR) or not os.path.isdir(legacy):
+        return
+    try:
+        os.makedirs(FILES_DIR, exist_ok=True)
+        moved = 0
+        for fn in os.listdir(legacy):
+            src = os.path.join(legacy, fn)
+            dst = os.path.join(FILES_DIR, fn)
+            if os.path.exists(dst):
+                continue   # 新位置已有同名文件（用户已手动处理过）不覆盖
+            if os.path.isfile(src):
+                shutil.copy2(src, dst)
+                moved += 1
+            elif os.path.isdir(src):   # images/ 子目录
+                shutil.copytree(src, dst, dirs_exist_ok=True)
+                moved += 1
+        if moved:
+            shutil.rmtree(legacy, ignore_errors=True)
+    except Exception:
+        pass    # 迁移失败不阻塞启动，旧位置数据仍在
+
+_migrate_legacy_files()
 
 
 def _ensure_dir():

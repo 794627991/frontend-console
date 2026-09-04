@@ -23,7 +23,7 @@ from flask import Flask, Response, request, jsonify, send_from_directory
 
 import src.app_state as _st
 from src.app_state import (
-    BASE_DIR, RES_DIR, STATE_DIR, CONFIG_FILE, LOG_DIR, DEFAULT_LOG_DIR, CMD_LIB_FILE,
+    BASE_DIR, RES_DIR, STATE_DIR, HOME_DIR, DATA_DIR, CONFIG_FILE, LOG_DIR, DEFAULT_LOG_DIR, CMD_LIB_FILE,
     COMMON_BAUDS, _load_config, _save_config, _load_cmd_lib, _save_cmd_lib,
     _next_seq, _ports, _ports_lock, _ai_clients, _ai_clients_lock,
     _open_logs, _open_logs_lock, _mcp_calls, _mcp_calls_lock, _MCP_CALLS_MAX,
@@ -340,7 +340,9 @@ def api_theme():
     """主题持久化。localStorage 按 origin（127.0.0.1:端口）隔离，而 Flask 每次
     启动端口随机 → 换肤记忆永远读不到。走 config.json 跨端口稳定。"""
     if request.method == "GET":
-        return jsonify({"ok": True, "theme": _load_config().get("theme", "deepblue")})
+        # data_dir_set：首启引导判断用（data-dir.js 读它决定是否弹引导）
+        return jsonify({"ok": True, "theme": _load_config().get("theme", "deepblue"),
+                        "data_dir_set": "data_dir" in _load_config()})
     data = request.get_json(force=True) or {}
     theme = (data.get("theme") or "").strip() or "deepblue"
     _save_config({**_load_config(), "theme": theme})
@@ -436,6 +438,141 @@ def api_log_dir_open():
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "err": str(e)}), 400
+
+
+# ---- 数据目录管理（顶栏机器人图标点开的设置面板）----
+# 数据目录收纳：logs/（串口日志）、files/（笔记）、webview_cache/（WebView2 缓存）。
+# 迁移铁律（用户强调）：迁移前后数据必须都能找到——采用「先复制后切换」而非「先删后搬」：
+# 复制全部内容 → 校验计数一致 → 写 config.data_dir 切换 → 旧目录完整保留不删（用户自查后手动删）。
+_DATA_SUBDIRS = ["logs", "files"]   # webview_cache 不迁（浏览器缓存无保留价值，太大了）
+
+@app.route("/api/data_dir")
+def api_data_dir_get():
+    """查询数据目录现状：当前目录、默认建议、各子目录条目数与总大小（迁移面板展示）。"""
+    def _stat(d):
+        try:
+            entries = os.listdir(d)
+        except Exception:
+            return {"exists": False, "count": 0, "size": 0}
+        size = 0
+        for fn in entries:
+            try:
+                size += os.path.getsize(os.path.join(d, fn))
+            except Exception:
+                pass
+        return {"exists": True, "count": len(entries), "size": size}
+    subs = {}
+    total = 0
+    for s in _DATA_SUBDIRS:
+        st_ = _stat(os.path.join(DATA_DIR, s))
+        subs[s] = st_
+        total += st_["size"]
+    return jsonify({"ok": True, "dir": DATA_DIR,
+                    "default": _st._default_data_dir(),
+                    "subdirs": subs, "total_size": total,
+                    "home_anchor": HOME_DIR})
+
+@app.route("/api/data_dir/check", methods=["POST"])
+def api_data_dir_check():
+    """校验候选目录：可创建、可写、不在 C 盘给出提醒但允许（用户自己选的）。
+    返回迁移预览：会迁哪些子目录、各多少条目。"""
+    data = request.get_json(force=True, silent=True) or {}
+    target = (data.get("dir") or "").strip()
+    if not target or len(target) < 3 or ":" not in target:
+        return jsonify({"ok": False, "err": "路径无效（需绝对路径，如 D:\\前端控制台）"}), 400
+    target = os.path.abspath(target)
+    if os.path.abspath(DATA_DIR).lower() == target.lower():
+        return jsonify({"ok": False, "err": "这就是当前数据目录"}), 400
+    try:
+        os.makedirs(target, exist_ok=True)
+    except Exception as e:
+        return jsonify({"ok": False, "err": f"无法创建目录: {e}"}), 400
+    if not os.access(target, os.W_OK):
+        return jsonify({"ok": False, "err": "目录不可写"}), 400
+    warnings = []
+    if target.upper().startswith("C:"):
+        warnings.append("目标在 C 盘（数据默认应放其他盘，确认要放 C 盘吗？）")
+    preview = []
+    for s in _DATA_SUBDIRS:
+        src = os.path.join(DATA_DIR, s)
+        try:
+            n = len(os.listdir(src))
+        except Exception:
+            n = 0
+        preview.append({"name": s, "count": n})
+    return jsonify({"ok": True, "dir": target, "warnings": warnings, "preview": preview})
+
+@app.route("/api/data_dir/migrate", methods=["POST"])
+def api_data_dir_migrate():
+    """迁移数据目录到新位置（先复制后切换，失败不切换——数据绝不丢）：
+    1. 逐子目录复制（merge 到目标，不覆盖目标已有同名文件）；
+    2. 逐文件校验大小一致（校验失败返回 err，不切换）；
+    3. 全部通过后写 config.data_dir + 更新运行时（日志目录/笔记目录立即生效）；
+    4. 旧目录完整保留，由用户确认后手动删（杜绝「迁移了就找不到了」）。
+    webview_cache 不迁：纯浏览器缓存，重启自动重建。"""
+    import shutil
+    data = request.get_json(force=True, silent=True) or {}
+    target = (data.get("dir") or "").strip()
+    if not target or os.path.abspath(target).lower() == os.path.abspath(DATA_DIR).lower():
+        return jsonify({"ok": False, "err": "目标与当前目录相同"}), 400
+    target = os.path.abspath(target)
+    try:
+        os.makedirs(target, exist_ok=True)
+    except Exception as e:
+        return jsonify({"ok": False, "err": f"无法创建目录: {e}"}), 400
+    if not os.access(target, os.W_OK):
+        return jsonify({"ok": False, "err": "目标目录不可写"}), 400
+    copied = []
+    try:
+        for s in _DATA_SUBDIRS:
+            src = os.path.join(DATA_DIR, s)
+            if not os.path.isdir(src):
+                continue
+            dst = os.path.join(target, s)
+            os.makedirs(dst, exist_ok=True)
+            n = 0
+            for root, dirs, files in os.walk(src):
+                rel = os.path.relpath(root, src)
+                droot = dst if rel == "." else os.path.join(dst, rel)
+                os.makedirs(droot, exist_ok=True)
+                for fn in files:
+                    sf, df = os.path.join(root, fn), os.path.join(droot, fn)
+                    if not os.path.exists(df):   # 不覆盖目标已有文件（目标可能已有数据）
+                        shutil.copy2(sf, df)
+                    # 校验：大小一致（copy2 保元数据，大小校验足够可靠且快）
+                    if os.path.getsize(sf) != os.path.getsize(df):
+                        raise RuntimeError(f"校验失败: {df} 与源大小不一致")
+                    n += 1
+            copied.append({"name": s, "files": n})
+    except Exception as e:
+        return jsonify({"ok": False, "err": f"迁移失败（未切换，数据仍在原处）: {e}",
+                        "copied": copied}), 500
+    # 复制校验全过 → 切换运行时 + 持久化
+    old_data_dir = os.path.abspath(DATA_DIR)
+    old_log_cfg = _load_config().get("log_dir") or ""
+    # 用户自定义日志目录在旧数据目录内的 → 随迁移到新 logs；在外部的（用户特意指过）→ 保持
+    if not old_log_cfg or old_log_cfg.lower().startswith(old_data_dir.lower()):
+        new_log_dir = os.path.join(target, "logs")
+    else:
+        new_log_dir = old_log_cfg
+    _st.DATA_DIR = target
+    _st.STATE_DIR = target
+    _st.LOG_DIR = new_log_dir
+    global LOG_DIR
+    LOG_DIR = new_log_dir
+    try:
+        import src.editor_files as _ef
+        _ef.FILES_DIR = os.path.join(target, "files")
+        _ef.IMAGES_DIR = os.path.join(_ef.FILES_DIR, "images")
+    except Exception:
+        pass
+    # 日志索引缓存全部失效（路径已变）
+    with _log_index_lock:
+        _log_index_cache.clear()
+    _save_config({**_load_config(), "data_dir": target, "log_dir": new_log_dir})
+    return jsonify({"ok": True, "dir": target, "copied": copied,
+                    "old_dir": old_data_dir,
+                    "note": "旧目录已完整保留，确认新位置工作正常后可手动删除"})
 
 @app.route("/api/open_log_file", methods=["POST"])
 def api_open_log_file():
@@ -846,6 +983,57 @@ def ai_send_raw():
         return jsonify({"ok": True, "sent": len(payload)})
     except Exception as e:
         return jsonify({"ok": False, "err": str(e)})
+
+@app.route("/api/ai/burst", methods=["POST"])
+def ai_burst():
+    """AI 数据连发：一次调用原子执行整条时间线（延时 + 命令/原始字节序列）。
+    典型场景：内核下 reboot → 等 3s → uboot 倒计时窗口内多次连发 Ctrl-U（间隔 0.5~1s）。
+    AI 自身思考/往返延迟掐不准 3s 窗口，须由后端在单次调用内精确编排。
+    steps: [{delay: 秒(前置等待，默认0), cmd: "命令", 或 raw: [字节列表], wait: 发送后等回显秒数(默认0)}]"""
+    data = request.get_json(force=True)
+    port_id = data.get("port_id")
+    steps = data.get("steps") or []
+    with _ports_lock:
+        p = _ports.get(port_id)
+    if not p:
+        return jsonify({"ok": False, "err": "串口未连接"})
+    if not steps:
+        return jsonify({"ok": False, "err": "steps 为空"})
+    # 总时长上限 120s：防 AI 传错参数把后端线程挂死（HTTP 超时会断但服务线程还在睡）
+    total = sum(float(s.get("delay", 0)) + float(s.get("wait", 0)) for s in steps)
+    if total > 120:
+        return jsonify({"ok": False, "err": f"总时长 {total:.1f}s 超过 120s 上限"})
+    results = []
+    try:
+        with p.buf_lock:
+            before_seq = p.buf[-1]["seq"] if p.buf else -1
+        for i, s in enumerate(steps):
+            delay = float(s.get("delay", 0))
+            if delay > 0:
+                time.sleep(delay)
+            label = ""
+            if s.get("cmd"):
+                p.send_cmd(s["cmd"], newline=True)
+                label = "cmd: " + s["cmd"]
+            elif s.get("raw"):
+                payload = bytes(int(b) & 0xFF for b in s["raw"] if isinstance(b, (int, float)))
+                if payload:
+                    p.send_raw(payload)
+                label = f"raw: {list(payload)}"
+            else:
+                label = "（空步骤，仅延时）"
+            wait = float(s.get("wait", 0))
+            if wait > 0:
+                time.sleep(wait)
+            with p.buf_lock:
+                now_seq = p.buf[-1]["seq"] if p.buf else -1
+            new_items = p.get_buffer_after(before_seq)
+            before_seq = now_seq
+            results.append({"step": i + 1, "action": label,
+                            "response": [{"ts": it["ts"], "tag": it["tag"], "text": it["text"]} for it in new_items]})
+        return jsonify({"ok": True, "port_id": port_id, "steps": results})
+    except Exception as e:
+        return jsonify({"ok": False, "err": str(e), "steps": results})
 
 @app.route("/api/ai/stream")
 def ai_stream():

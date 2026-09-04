@@ -366,8 +366,25 @@ def main():
     # debug=False 避免开发工具干扰；生产可开
     # private_mode=False + 固定 storage_path：让 WebView2 复用缓存目录，
     # 避免每次启动新建临时目录导致冷启动（默认 private_mode=True 要 5s+ 初始化）。
+    # 缓存也是用户数据：放数据目录（默认 D:\前端控制台\webview_cache），不放 C 盘。
+    # 旧版本缓存在 ~/.serialconsole_pro/webview_cache——仅移动目录（同盘 rename O(1)，
+    # 跨盘 copy 后删），失败不阻塞（浏览器缓存丢了自动重建）。
+    from src.app_state import DATA_DIR, HOME_DIR
+    import shutil as _sh
+    try:
+        new_cache = os.path.join(DATA_DIR, "webview_cache")
+        old_cache = os.path.join(HOME_DIR, "webview_cache")
+        if os.path.isdir(old_cache) and not os.path.isdir(new_cache):
+            os.makedirs(os.path.dirname(new_cache), exist_ok=True)
+            try:
+                _sh.move(old_cache, new_cache)
+            except Exception:
+                _sh.copytree(old_cache, new_cache, dirs_exist_ok=True)
+                _sh.rmtree(old_cache, ignore_errors=True)
+    except Exception:
+        pass
     webview.start(debug=False, private_mode=False,
-                  storage_path=os.path.join(STATE_DIR, "webview_cache"))
+                  storage_path=os.path.join(DATA_DIR, "webview_cache"))
 
 
 if __name__ == "__main__":
