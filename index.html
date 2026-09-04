@@ -65,9 +65,8 @@
         <span class="tftp-toggle" id="tftpToggle" title="启动/停止 TFTP 服务">
           <span class="led"></span><span id="tftpToggleText">已停止</span>
         </span>
-        <span style="margin-left:auto;font-size:10px;color:var(--muted)">HTTP下载 :8081</span>
-        <span class="tftp-toggle" id="httpFileToggle" title="启动/停止 HTTP 下载服务（端口 8081，目录随 TFTP）">
-          <span class="led"></span><span id="httpFileToggleText">已停止</span>
+        <span class="tftp-toggle" id="httpFileToggle" title="启动/停止 HFS 服务（目录随 TFTP，端口点击可改）">
+          <span class="led"></span>hfs<span id="httpFilePort" title="点击修改端口" style="cursor:text;text-decoration:underline dotted">:8081</span><span id="httpFileToggleText">未运行</span>
         </span>
       </div>
       <div class="tftp-dir">

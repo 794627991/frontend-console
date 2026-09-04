@@ -18,14 +18,15 @@ async function refreshTftp() {
     const tg = $('tftpToggle');
     tg.classList.toggle('on', j.running);
     $('tftpToggleText').textContent = j.running ? '运行中' : '已停止';
-    // HTTP 下载服务状态（与 TFTP 独立开关，目录共享）
+    // HFS（HTTP 下载）服务状态：一个开关按钮（未运行/已运行 + 端口），与 TFTP 独立、目录共享
     try {
       const hr = await fetch('/api/httpfile/status');
       const hj = await hr.json();
       if (hj.ok) {
         _httpFileRunning = hj.running;
         $('httpFileToggle').classList.toggle('on', hj.running);
-        $('httpFileToggleText').textContent = hj.running ? '运行中' : '已停止';
+        $('httpFileToggleText').textContent = hj.running ? '已运行' : '未运行';
+        if (!$('httpFilePort').dataset.editing) $('httpFilePort').textContent = ':' + hj.port;
       }
     } catch(e) {}
     if (j.root_dir && !$('tftpDirPath').dataset.editing) $('tftpDirPath').textContent = j.root_dir;
@@ -148,15 +149,61 @@ $('tftpToggle').onclick = async () => {
     refreshTftp();
   } catch(e) { showBanner('TFTP 操作失败', 4000, true); }
 };
-// HTTP 下载服务开关（端口 8081，目录随 TFTP——设备 wget http://<PC_IP>:8081/<文件名>）
+// HFS（HTTP 下载）开关（端口默认 8081，目录随 TFTP——设备 wget http://<PC_IP>:<port>/<文件名>）
+// 一个按钮整体：点击=启停；端口 span 点击=内联改端口（运行中改端口会先停再按新端口启动）
 $('httpFileToggle').onclick = async () => {
   try {
-    const r = await fetch(`/api/httpfile/${_httpFileRunning ? 'stop' : 'start'}`, {method:'POST'});
+    const r = await fetch(`/api/httpfile/${_httpFileRunning ? 'stop' : 'start'}`, {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({port: _httpFilePort})});
     const j = await r.json();
     if (j.msg) showBanner(j.msg);
     refreshTftp();
-  } catch(e) { showBanner('HTTP 下载操作失败', 4000, true); }
+  } catch(e) { showBanner('HFS 操作失败', 4000, true); }
 };
+// 端口内联编辑（仿 _tftpInlineDirInput）：回车提交 / Esc 取消 / 失焦中止
+let _httpFilePort = 8081;
+$('httpFilePort').addEventListener('click', e => {
+  e.stopPropagation();
+  const span = $('httpFilePort');
+  if (span.dataset.editing) return;
+  const old = span.textContent.replace(/^:/, '') || '8081';
+  span.dataset.editing = '1';
+  const input = document.createElement('input');
+  input.type = 'text'; input.value = old;
+  input.style.cssText = 'width:52px;font-family:var(--font-mono);font-size:10px;background:var(--bg-input,#111);border:1px solid var(--accent);border-radius:5px;padding:2px 4px;color:var(--fg);outline:none';
+  span.textContent = '';
+  span.appendChild(input);
+  input.focus(); input.select();
+  let done = false;
+  const finish = (apply) => {
+    if (done) return; done = true;
+    delete span.dataset.editing;
+    const v = input.value.trim();
+    if (apply && v && v !== old) {
+      const n = parseInt(v, 10);
+      if (n >= 1 && n <= 65535) {
+        _httpFilePort = n;
+        span.textContent = ':' + n;
+        showBanner('HFS 端口已设为 ' + n + (n !== 8081 ? '' : '') + (_httpFileRunning ? '，重启服务生效' : ''));
+        if (_httpFileRunning) {  // 运行中改端口：停旧起新
+          fetch('/api/httpfile/stop', {method:'POST'}).then(() =>
+            fetch('/api/httpfile/start', {method:'POST',
+              headers:{'Content-Type':'application/json'}, body: JSON.stringify({port: n})})
+          ).then(() => refreshTftp()).catch(() => {});
+        }
+        return;
+      }
+      showBanner('端口号无效（1-65535）', 4000, true);
+    }
+    span.textContent = ':' + old;
+  };
+  input.addEventListener('keydown', ev => {
+    ev.stopPropagation();
+    if (ev.key === 'Enter') finish(true);
+    else if (ev.key === 'Escape') finish(false);
+  });
+  input.addEventListener('blur', () => finish(true));
+});
 async function pickTftpDir() {
   // 原生目录对话框（pywebview js_api）。取消（空串）直接中止——不弹输入框
   try {
