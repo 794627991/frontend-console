@@ -31,7 +31,7 @@ function _ddModal() {
           <div class="dd-sub" id="ddCurStat"></div>
         </div>
         <div class="dd-form">
-          <div class="dd-label">修改到…</div>
+          <div class="dd-label">修改到</div>
           <div class="dd-row">
             <input type="text" id="ddNewPath" class="dd-input" spellcheck="false" placeholder="如 D:\\前端控制台">
             <button class="btn ghost icon-btn" id="ddPick" title="浏览选择目录">📂</button>
@@ -43,7 +43,7 @@ function _ddModal() {
           <button class="btn ghost" id="ddOpenCur">📂 打开当前目录</button>
           <span style="flex:1"></span>
           <button class="btn ghost" id="ddCancel">取消</button>
-          <button class="btn primary" id="ddMigrate" disabled>迁移数据…</button>
+          <button class="btn primary" id="ddMigrate" disabled>迁移数据</button>
         </div>
         <div class="dd-note" id="ddNote">迁移规则：先完整复制并逐文件校验，全部通过才切换；失败不动原目录；旧目录保留，确认后可手动删。</div>
       </div>
@@ -102,7 +102,7 @@ function _ddModal() {
       const r = await fetch('/api/data_dir/migrate', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({dir: target})});
       const j = await r.json();
       prog.hide();
-      btn.textContent = '迁移数据…';
+      btn.textContent = '迁移数据';
       if (j.ok) {
         m.classList.remove('show');
         const parts = (j.copied || []).map(c => `${c.name}×${c.files}`).join('、');
@@ -113,7 +113,7 @@ function _ddModal() {
       }
     } catch(e) {
       prog.hide();
-      btn.textContent = '迁移数据…';
+      btn.textContent = '迁移数据';
       showBanner('迁移请求失败: ' + e, 5000, true);
     }
   };
@@ -151,18 +151,18 @@ function _ddProgress() {
       <div class="box" style="max-width:380px;">
         <div class="dd-prog-body">
           <div class="dd-prog-ring"><div class="dd-prog-dot"></div></div>
-          <div class="dd-prog-title" id="ddProgTitle">正在迁移…</div>
-          <div class="dd-prog-stage" id="ddProgStage">复制文件中…</div>
+          <div class="dd-prog-title" id="ddProgTitle">正在迁移</div>
+          <div class="dd-prog-stage" id="ddProgStage">复制文件中</div>
           <div class="dd-prog-sub">复制并校验通过后自动切换，旧目录保留。请勿关闭窗口。</div>
         </div>
       </div>`;
     document.body.appendChild(m);
   }
-  const stages = ['复制文件中…', '逐文件校验中…', '切换数据目录…'];
+  const stages = ['复制文件中', '逐文件校验中', '切换数据目录'];
   let si = 0, timer = null;
   return {
     show(title) {
-      m.querySelector('#ddProgTitle').textContent = title || '正在迁移…';
+      m.querySelector('#ddProgTitle').textContent = title || '正在迁移';
       m.querySelector('#ddProgStage').textContent = stages[0];
       si = 0;
       m.classList.add('show');
@@ -182,6 +182,9 @@ function _ddProgress() {
 }
 
 // 应用风格确认弹窗（与 hex/editor 的 confirm 同款，不用原生 confirm）
+// 坑（曾点确定无反应）：onclick 只在首次创建时绑定——第二次调用复用旧闭包里的
+// resolve，旧 Promise 已 settled，新 Promise 永远 pending。照 _hxConfirm 抄：
+// 每次调用都重绑，resolve 消费当前这一次的。
 function _ddConfirm(title, msg) {  return new Promise(resolve => {
     let m = $('ddConfirmModal');
     if (!m) {
@@ -193,18 +196,19 @@ function _ddConfirm(title, msg) {  return new Promise(resolve => {
           <div class="head"><strong id="ddcTitle"></strong>
             <div class="head-actions"><button class="btn ghost icon-btn" id="ddcClose">✕</button></div></div>
           <div style="padding:16px 20px;white-space:pre-wrap;font-size:12px;line-height:1.7;color:var(--fg);" id="ddcMsg"></div>
-          <div class="actions" style="padding:0 20px 18px;">
-            <span style="flex:1"></span>
+          <div style="display:flex;gap:10px;justify-content:flex-end;padding:0 20px 18px;">
             <button class="btn ghost" id="ddcNo">取消</button>
             <button class="btn primary" id="ddcYes">确定</button>
           </div>
         </div>`;
       document.body.appendChild(m);
-      m.querySelector('#ddcClose').onclick = m.querySelector('#ddcNo').onclick = () => { m.classList.remove('show'); resolve(false); };
-      m.querySelector('#ddcYes').onclick = () => { m.classList.remove('show'); resolve(true); };
     }
     m.querySelector('#ddcTitle').textContent = title;
     m.querySelector('#ddcMsg').textContent = msg;
+    const finish = v => { m.classList.remove('show'); resolve(v); };
+    m.querySelector('#ddcYes').onclick = () => finish(true);
+    m.querySelector('#ddcNo').onclick = () => finish(false);
+    m.querySelector('#ddcClose').onclick = () => finish(false);
     m.classList.add('show');
   });
 }
