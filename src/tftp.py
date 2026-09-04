@@ -19,6 +19,7 @@ class TftpTransfer:
         self.status = "running"   # running / done / error
         self.err = ""
         self.started_at = time.time()
+        self.via = "tftp"         # 传输来源：tftp / hfs（HTTP 下载复用本类）
 
 class TftpServer:
     """线程化 TFTP 服务器。监听 UDP 69，每个传输在独立线程用独立数据端口收发。
@@ -85,7 +86,7 @@ class TftpServer:
                 "transfers": [{
                     "kind": t.kind, "filename": t.filename, "peer": "%s:%s" % t.peer,
                     "bytes": t.bytes_done, "total": t.total,
-                    "status": t.status, "err": t.err,
+                    "status": t.status, "err": t.err, "via": getattr(t, "via", "tftp"),
                     "elapsed": round(time.time() - t.started_at, 1),
                 } for t in self.transfers[:20]],
             }

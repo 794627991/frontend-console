@@ -7,7 +7,7 @@
 - 只读下载（GET/HEAD），无上传无删除——最小可用面
 - 路径穿越防护：只允许 root_dir 下文件，URL 不带子目录（与 TFTP 同粒度）
 """
-import os, threading, posixpath
+import os, threading, posixpath, time
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import unquote
 
@@ -17,10 +17,44 @@ httpfile_bp = Blueprint("httpfile", __name__)
 
 PORT = 8081  # 用户指定默认端口
 
+# TFTP 传输记录类（TftpTransfer）复用：HFS 下载与 TFTP 传输共用「最近传输」列表，
+# kind='get' 与 TFTP 设备下载一致（前端进度条/图标同一渲染路径）。
+def _make_transfer_cls():
+    # 延迟取 TftpTransfer（避免循环导入）；注入失败退化为 dict 记录
+    try:
+        from src.tftp import TftpTransfer
+        return TftpTransfer
+    except Exception:
+        return None
+
 class _Handler(BaseHTTPRequestHandler):
     """GET/HEAD：按 root_dir 服务文件。目录浏览（/ 或无扩展名 404 页）不支持。"""
     # tftp 单例注入（避免循环导入，启动时由本模块赋值）
     tftp = None
+
+    def _record(self, filename, total):
+        """把 HFS 下载登记进 TFTP 最近传输（kind='get'，peer=HTTP 客户端）。
+        进度实时更新：t.bytes_done 由发送循环递增，前端轮询即见。"""
+        if not self.tftp:
+            return None
+        Transfer = _make_transfer_cls()
+        t = Transfer("get", filename, (self.client_address[0], self.client_address[1])) if Transfer \
+            else None
+        if t is None:
+            return None
+        t.total = total
+        t.via = "hfs"   # 标记来源（区分 TFTP/HTTP，日志用）
+        with self.tftp._lock:
+            self.tftp.transfers.insert(0, t)
+            del self.tftp.transfers[200:]   # 防爆（TFTP 只展示前 20，但别无限涨）
+        return t
+
+    def _finish(self, t, ok, err=""):
+        if not t:
+            return
+        t.status = "done" if ok else "error"
+        if err:
+            t.err = err
 
     def _serve(self, head_only=False):
         # URL 路径 → 文件名：去 /、unquote（%xx）、拒绝子目录与穿越
@@ -34,6 +68,10 @@ class _Handler(BaseHTTPRequestHandler):
         if not os.path.isfile(local):
             self.send_error(404, "file not found")
             return
+        t = None
+        if not head_only:
+            # GET 才记传输（HEAD 是探测，不该刷屏）
+            t = self._record(name, os.path.getsize(local))
         try:
             size = os.path.getsize(local)
             self.send_response(200)
@@ -49,9 +87,13 @@ class _Handler(BaseHTTPRequestHandler):
                     if not chunk:
                         break
                     self.wfile.write(chunk)
+                    if t:
+                        t.bytes_done += len(chunk)
+            self._finish(t, True)
         except (BrokenPipeError, ConnectionResetError):
-            pass  # 设备端中断（wget -c 断点/超时取消），正常现象
+            self._finish(t, False, "设备中断连接")  # wget -c 断点/超时取消，正常现象
         except Exception as e:
+            self._finish(t, False, str(e))
             try: self.send_error(500, str(e))
             except Exception: pass
 

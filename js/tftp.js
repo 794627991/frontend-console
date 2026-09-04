@@ -36,7 +36,7 @@ async function refreshTftp() {
     // 记录有无进行中传输，供轮询频率切换（不查 DOM，避免冷启动漏掉前几秒进度）
     _tftpActive = transfers.some(t => t.status !== 'done' && t.status !== 'error');
     const tKey = JSON.stringify([secState0('transfers'),
-      transfers.map(t => [t.status, t.bytes, t.total, t.filename, t.err])]);
+      transfers.map(t => [t.status, t.bytes, t.total, t.filename, t.err, t.via])]);
     if (tKey !== _tftpTransfersKey) {
       _tftpTransfersKey = tKey;
       const tOpen = secState0('transfers');
@@ -53,12 +53,15 @@ async function refreshTftp() {
             const size = t.status === 'done'
               ? _fmtSize(t.bytes)
               : (hasTotal ? `${_fmtSize(t.bytes)}/${_fmtSize(t.total)} · ${pct}%` : _fmtSize(t.bytes));
-            const tip = t.kind === 'get' ? '设备下载' : '设备上传';
+            const tip = (t.kind === 'get' ? '设备下载' : '设备上传') + (t.via === 'hfs' ? ' · HFS' : ' · TFTP');
+            // 来源标签：区分 TFTP/HFS 传输
+            const viaTag = `<span class="tftp-via ${t.via === 'hfs' ? 'via-hfs' : 'via-tftp'}">${t.via === 'hfs' ? 'HFS' : 'TFTP'}</span>`;
             // 无 total（WRQ 未协商 tsize）时进度条用不确定条纹动画，至少表明在传输
             const barStyle = hasTotal ? `width:${pct}%` : '';
             const barClass = hasTotal ? '' : 'indeterminate';
             return `<div class="tftp-item ${active ? 'active' : t.status}" title="${tip} · ${t.peer}${t.err ? ' · ' + esc(t.err) : ''}">
               <span class="icon">${icon}</span>
+              ${viaTag}
               <span class="name">${esc(t.filename)}</span>
               <span class="size">${size}</span>
               <div class="bar ${barClass}"><i style="${barStyle}"></i></div>
