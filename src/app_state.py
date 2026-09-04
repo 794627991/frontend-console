@@ -57,9 +57,10 @@ CMD_LIB_FILE = os.path.join(DATA_DIR, "cmdlib.json")
 def _migrate_legacy_user_data():
     """旧位置用户数据自动归位到数据目录（防「找不到了」，不阻塞启动）：
     - BASE_DIR/cmdlib.json → DATA_DIR/cmdlib.json
-    - BASE_DIR/serial_logs/ → DATA_DIR/serial_logs/（旧版本日志目录，
-      归位后同步把 config.log_dir 指到新位置——绝不丢日志库读取路径）
-    归位原则：新位置已有同名不覆盖；复制成功才删旧位置文件。"""
+    - 旧日志（BASE_DIR/serial_logs/ 及其历史形态 ~/.serialconsole_pro/logs、
+      旧数据目录 logs）→ 一律并入 DATA_DIR/logs（目录合一：只留一个 logs），
+      并清掉 config.log_dir 让其走默认——日志库从此只认 data/logs。
+    归位原则：新位置已有同名不覆盖；复制成功才删旧文件。"""
     import shutil
     try:
         # cmdlib.json
@@ -69,35 +70,42 @@ def _migrate_legacy_user_data():
                 shutil.copy2(legacy_cmd, CMD_LIB_FILE)
             if os.path.exists(CMD_LIB_FILE):
                 os.remove(legacy_cmd)
-        # serial_logs/（旧日志目录）：复制全部 → 更新 config.log_dir → 删旧目录
-        legacy_logs = os.path.join(BASE_DIR, "serial_logs")
-        dst_logs = os.path.join(DATA_DIR, "serial_logs")
-        if os.path.isdir(legacy_logs) and os.path.normpath(legacy_logs) != os.path.normpath(dst_logs):
-            os.makedirs(dst_logs, exist_ok=True)
-            moved = 0
-            for fn in os.listdir(legacy_logs):
-                s, d = os.path.join(legacy_logs, fn), os.path.join(dst_logs, fn)
+        # 旧日志目录合并入 data/logs
+        final_logs = os.path.join(DATA_DIR, "logs")
+        os.makedirs(final_logs, exist_ok=True)
+        legacy_log_dirs = [
+            os.path.join(BASE_DIR, "serial_logs"),                    # 旧版本工具目录
+            os.path.join(BASE_DIR, "data", "serial_logs"),            # 上一版归位目标
+            os.path.join(DATA_DIR, "serial_logs"),
+        ]
+        merged = 0
+        for legacy in legacy_log_dirs:
+            if not os.path.isdir(legacy) or os.path.normpath(legacy) == os.path.normpath(final_logs):
+                continue
+            for fn in os.listdir(legacy):
+                s, d = os.path.join(legacy, fn), os.path.join(final_logs, fn)
                 if os.path.exists(d):
                     continue
                 try:
                     shutil.copy2(s, d)
-                    moved += 1
+                    merged += 1
                 except Exception:
                     pass
-            if moved:
-                # config.log_dir 指旧位置（或未配置）→ 指到新位置；用户自定义指向别处的不动
-                cfg = _load_config()
-                old_ld = cfg.get("log_dir") or ""
-                if not old_ld or os.path.abspath(old_ld) == os.path.abspath(legacy_logs):
-                    cfg["log_dir"] = dst_logs
-                    _save_config(cfg)
-                shutil.rmtree(legacy_logs, ignore_errors=True)
-                # 模块级 LOG_DIR 已在 import 时定值，同步运行时
+            if merged:
+                shutil.rmtree(legacy, ignore_errors=True)
+        # config.log_dir 指旧位置的 → 清掉走默认（data/logs）；指外部自定义的不动
+        cfg = _load_config()
+        old_ld = cfg.get("log_dir") or ""
+        if old_ld and os.path.abspath(old_ld) != os.path.abspath(final_logs):
+            # 指向的不是最终目录：若在已知旧位置集合内则清除（走默认合一）；
+            # 指向完全外部目录的保留（用户特意自定义）
+            known_old = {os.path.abspath(p) for p in legacy_log_dirs if os.path.isdir(p)}
+            if os.path.abspath(old_ld) in known_old or os.path.abspath(old_ld).endswith("serial_logs"):
+                cfg.pop("log_dir", None)
+                _save_config(cfg)
                 global LOG_DIR
-                if os.environ.get("SERIAL_LOG_DIR"):
-                    pass   # 环境变量优先级最高，不动
-                elif not old_ld or os.path.abspath(old_ld) == os.path.abspath(LOG_DIR):
-                    LOG_DIR = dst_logs
+                if not os.environ.get("SERIAL_LOG_DIR"):
+                    LOG_DIR = final_logs
     except Exception:
         pass
 

@@ -447,11 +447,11 @@ def api_log_dir_open():
 
 
 # ---- 数据目录管理（顶栏机器人图标点开的设置面板）----
-# 数据目录收纳：logs/（串口日志默认目录）、serial_logs/（历史日志）、files/（笔记）、
-# cmdlib.json（命令库）。webview_cache 不迁（纯缓存，关工具时自动清）。
+# 数据目录收纳：logs/（串口日志，唯一日志目录）、files/（笔记）、cmdlib.json（命令库）。
+# webview_cache 不迁（纯缓存，关工具时自动清）。
 # 迁移铁律（用户强调）：迁移前后数据必须都能找到——采用「先复制后切换」而非「先删后搬」：
-# 复制全部内容 → 校验大小一致 → 写 config.data_dir 切换 → 旧目录完整保留不删（用户自查后手动删）。
-_DATA_SUBDIRS = ["logs", "serial_logs", "files"]
+# 复制全部内容 → 校验大小一致 → 写 config 切换 → 旧目录完整保留不删（用户自查后手动删）。
+_DATA_SUBDIRS = ["logs", "files"]
 _DATA_FILES = ["cmdlib.json"]
 
 @app.route("/api/data_dir")
@@ -473,12 +473,16 @@ def api_data_dir_get():
     total = 0
     for s in _DATA_SUBDIRS:
         st_ = _stat(os.path.join(DATA_DIR, s))
+        # 只显示真实使用的（用户要求）：不存在的目录与空目录不出现在统计里，
+        # 避免面板出现「logs 0 项」这类占位噪音
+        if not st_["exists"] or st_["count"] == 0:
+            continue
         subs[s] = st_
         total += st_["size"]
     cmdlib = _stat(CMD_LIB_FILE)
-    subs["cmdlib.json"] = {"exists": cmdlib["exists"], "count": 1 if cmdlib["exists"] else 0,
-                          "size": cmdlib["size"]}
-    total += cmdlib["size"]
+    if cmdlib["exists"]:
+        subs["cmdlib.json"] = {"exists": True, "count": 1, "size": cmdlib["size"]}
+        total += cmdlib["size"]
     return jsonify({"ok": True, "dir": DATA_DIR,
                     "default": _st._default_data_dir(),
                     "subdirs": subs, "total_size": total,
@@ -511,13 +515,14 @@ def api_data_dir_check():
             n = len(os.listdir(src))
         except Exception:
             n = 0
-        preview.append({"name": s, "count": n})
+        if n:   # 与统计口径一致：只列有内容的
+            preview.append({"name": s, "count": n})
     for s in _DATA_FILES:
         try:
-            n = 1 if os.path.isfile(os.path.join(DATA_DIR, s)) else 0
+            if os.path.isfile(os.path.join(DATA_DIR, s)):
+                preview.append({"name": s, "count": 1})
         except Exception:
-            n = 0
-        preview.append({"name": s, "count": n})
+            pass
     return jsonify({"ok": True, "dir": target, "warnings": warnings, "preview": preview})
 
 @app.route("/api/data_dir/migrate", methods=["POST"])
@@ -578,12 +583,8 @@ def api_data_dir_migrate():
                         "copied": copied}), 500
     # 复制校验全过 → 切换运行时 + 持久化
     old_data_dir = os.path.abspath(DATA_DIR)
-    old_log_cfg = _load_config().get("log_dir") or ""
-    # 用户自定义日志目录在旧数据目录内的 → 随迁移到新 logs；在外部的（用户特意指过）→ 保持
-    if not old_log_cfg or old_log_cfg.lower().startswith(old_data_dir.lower()):
-        new_log_dir = os.path.join(target, "logs")
-    else:
-        new_log_dir = old_log_cfg
+    # 日志目录合一：迁移后固定走新 data/logs（清掉旧 log_dir 配置，只留一个 logs）
+    new_log_dir = os.path.join(target, "logs")
     _st.DATA_DIR = target
     _st.STATE_DIR = target
     _st.LOG_DIR = new_log_dir
@@ -599,7 +600,8 @@ def api_data_dir_migrate():
     # 日志索引缓存全部失效（路径已变）
     with _log_index_lock:
         _log_index_cache.clear()
-    _save_config({**_load_config(), "data_dir": target, "log_dir": new_log_dir})
+    cfg = {**_load_config(), "data_dir": target, "log_dir": new_log_dir}
+    _save_config(cfg)
     return jsonify({"ok": True, "dir": target, "copied": copied,
                     "old_dir": old_data_dir,
                     "note": "旧目录已完整保留，确认新位置工作正常后可手动删除"})
