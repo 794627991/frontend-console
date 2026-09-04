@@ -80,6 +80,42 @@ def _read_text(path, max_bytes=20 * 1024 * 1024):
                 return f2.read(), None
 
 
+# ---- 外部文件（拖入的任意文本文件）可编辑支持 ----
+# 仅放行文本类后缀（白名单），防止把 exe/zip 等二进制灌进编辑器。
+_EXT_TEXT = {
+    ".txt", ".note", ".md", ".json", ".log", ".csv", ".ini", ".cfg", ".conf", ".yaml", ".yml",
+    ".c", ".h", ".cpp", ".hpp", ".py", ".bat", ".cmd", ".sh", ".ps1", ".js", ".ts",
+    ".html", ".css", ".xml", ".sql", ".dts", ".dtsi", ".mak", ".mk", ".makefile",
+    ".s", ".lds", ".ko", ".rul", ".te", ".fc", "readme", "makefile",
+    # 补齐常见文本后缀（曾经漏 .pyw 等——白名单是手列的，不是有意排除）
+    ".pyw", ".pyi", ".cc", ".cxx", ".hh", ".hxx", ".java", ".kt", ".kts", ".rs", ".go",
+    ".rb", ".php", ".pl", ".lua", ".tcl", ".awk", ".r", ".jl", ".nim", ".zig",
+    ".m", ".mm", ".cs", ".vb", ".fs", ".fsx", ".scala", ".groovy", ".swift", ".dart",
+    ".v", ".sv", ".svh", ".vhd", ".vhdl", ".asm", ".sln", ".props", ".targets",
+    ".gradle", ".properties", ".toml", ".proto", ".tf", ".tfvars",
+    ".graphql", ".gql", ".ipynb", ".nix",
+    ".editorconfig", ".gitignore", ".gitattributes", ".npmrc",
+    ".bashrc", ".zshrc", ".profile", "dockerfile", ".dockerignore",
+}
+def _ext_of(p):
+    # 特殊无后缀文件名（makefile/readme 等）整名匹配
+    low = os.path.basename(p).lower()
+    dot = low.rfind(".")
+    ext = low[dot:] if dot > 0 else low
+    return ext
+
+def _safe_ext_path(path):
+    """校验外部绝对路径：必须是文本后缀白名单内的已存在文件。通过返回绝对路径。"""
+    if not path or len(path) < 3 or ":" not in path and not path.startswith("\\\\"):
+        return None
+    if _ext_of(path) not in _EXT_TEXT:
+        return None
+    p = os.path.abspath(path)
+    if not os.path.isfile(p):
+        return None
+    return p
+
+
 @edit_bp.route("/api/ed/list")
 def ed_list():
     """列出 files/ 下可编辑文本文件（按修改时间倒序）。"""
@@ -97,7 +133,17 @@ def ed_list():
 
 @edit_bp.route("/api/ed/open")
 def ed_open():
-    """读文件内容：name=files/ 内文件名。"""
+    """读文件内容：name=files/ 内文件名；path=外部绝对路径（拖入文件，白名单后缀）。"""
+    # 外部绝对路径分支（拖入的任意文本文件）
+    ext_path = request.args.get("path", "")
+    if ext_path:
+        p = _safe_ext_path(ext_path)
+        if not p:
+            return jsonify({"ok": False, "err": "不支持的文件类型或文件不存在"}), 400
+        text, err = _read_text(p)
+        if err:
+            return jsonify({"ok": False, "err": err}), 400
+        return jsonify({"ok": True, "name": os.path.basename(p), "path": p, "text": text})
     name = request.args.get("name", "")
     p = _safe_path(name)
     if not p or not os.path.isfile(p):
@@ -110,8 +156,29 @@ def ed_open():
 
 @edit_bp.route("/api/ed/save", methods=["POST"])
 def ed_save():
-    """覆盖保存：{name, text}。前端在关闭前保证已确认脏状态。"""
+    """覆盖保存：{name, text}（files/ 内）或 {path, text}（外部绝对路径，拖入文件）。
+    前端在关闭前保证已确认脏状态。"""
     data = request.get_json(force=True, silent=True) or {}
+    text = data.get("text", "")
+    # 外部绝对路径分支：写回原文件（白名单后缀 + 原子替换）
+    ext_path = (data.get("path") or "").strip()
+    if ext_path:
+        if _ext_of(ext_path) not in _EXT_TEXT:
+            return jsonify({"ok": False, "err": "不支持的文件类型"}), 400
+        p = os.path.abspath(ext_path)
+        tmp = p + ".tmp"
+        try:
+            with open(tmp, "w", encoding="utf-8", newline="") as f:
+                f.write(text)
+            os.replace(tmp, p)
+        except Exception as e:
+            try:
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+            except Exception:
+                pass
+            return jsonify({"ok": False, "err": str(e)}), 500
+        return jsonify({"ok": True, "path": p})
     p = _safe_path(data.get("name", ""))
     if not p:
         return jsonify({"ok": False, "err": "非法文件名"}), 400

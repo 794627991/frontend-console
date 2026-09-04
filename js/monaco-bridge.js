@@ -14,12 +14,23 @@ const MONACO_LANG = {
   '.txt': 'plaintext', '.note': 'plaintext', '.log': 'plaintext', '.md': 'markdown',
   '.json': 'json', '.csv': 'plaintext', '.ini': 'ini', '.cfg': 'ini', '.conf': 'ini',
   '.yaml': 'yaml', '.yml': 'yaml',
-  '.c': 'c', '.h': 'c', '.cpp': 'cpp', '.hpp': 'cpp',
-  '.py': 'python', '.bat': 'bat', '.cmd': 'bat', '.sh': 'shell', '.ps1': 'powershell',
+  '.c': 'c', '.h': 'c', '.cpp': 'cpp', '.hpp': 'cpp', '.cc': 'cpp', '.cxx': 'cpp',
+  '.py': 'python', '.pyw': 'python', '.pyi': 'python',
+  '.bat': 'bat', '.cmd': 'bat', '.sh': 'shell', '.ps1': 'powershell',
   '.js': 'javascript', '.ts': 'typescript', '.html': 'html', '.css': 'css',
   '.xml': 'xml', '.sql': 'sql', '.dts': 'plaintext', '.dtsi': 'plaintext',
   '.mak': 'makefile', '.mk': 'makefile', '.s': 'plaintext', '.lds': 'plaintext',
   '.te': 'plaintext', '.fc': 'plaintext',
+  // 补齐的后缀：Monaco basic-languages 有对应语言才真高亮，其余 plaintext 也可编辑
+  '.java': 'java', '.kt': 'kotlin', '.kts': 'kotlin', '.rs': 'rust', '.go': 'go',
+  '.rb': 'ruby', '.php': 'php', '.pl': 'perl', '.lua': 'lua', '.swift': 'swift',
+  '.cs': 'csharp', '.vb': 'vb', '.fs': 'fsharp', '.fsx': 'fsharp', '.scala': 'scala',
+  '.m': 'objective-c', '.mm': 'cpp', '.tcl': 'plaintext', '.r': 'r', '.jl': 'plaintext',
+  '.nim': 'plaintext', '.zig': 'plaintext', '.v': 'plaintext', '.sv': 'plaintext',
+  '.svh': 'plaintext', '.vhd': 'plaintext', '.vhdl': 'plaintext', '.asm': 'plaintext',
+  '.sln': 'plaintext', '.props': 'xml', '.targets': 'xml', '.gradle': 'plaintext',
+  '.properties': 'ini', '.toml': 'ini', '.proto': 'plaintext', '.tf': 'hcl',
+  '.graphql': 'graphql', '.gql': 'graphql', '.ipynb': 'json', '.nix': 'plaintext',
 };
 
 function monacoLangFor(name) {

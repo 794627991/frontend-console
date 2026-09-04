@@ -874,9 +874,15 @@ function _mdRenderPreview(conn) {
 
 // .log 特殊：小文件（<20MB）也进编辑器可编辑；超限后端报错自动回落只读查看器。
 // ---- 拖放文件分发：文本类后缀 → 编辑器（可编辑）；其余 → 日志查看器（只读）----
+// 后缀白名单与后端 _EXT_TEXT 保持同步（.pyw 等曾漏——手列白名单补齐）
 const _DROP_TEXT_EXT = new Set(['.txt','.note','.md','.json','.csv','.ini','.cfg','.conf','.yaml','.yml',
   '.c','.h','.cpp','.hpp','.py','.bat','.cmd','.sh','.ps1','.js','.ts','.html','.css','.xml','.sql',
-  '.dts','.dtsi','.mak','.mk','.s','.lds','.te','.fc','.log']);
+  '.dts','.dtsi','.mak','.mk','.s','.lds','.te','.fc','.log',
+  '.pyw','.pyi','.cc','.cxx','.hh','.hxx','.java','.kt','.kts','.rs','.go','.rb','.php','.pl','.lua',
+  '.tcl','.awk','.r','.jl','.nim','.zig','.m','.mm','.cs','.vb','.fs','.fsx','.scala','.groovy','.swift','.dart',
+  '.v','.sv','.svh','.vhd','.vhdl','.asm','.sln','.props','.targets','.gradle','.properties','.toml','.proto',
+  '.tf','.tfvars','.graphql','.gql','.ipynb','.nix','.editorconfig','.gitignore','.gitattributes','.npmrc',
+  '.bashrc','.zshrc','.profile','.dockerignore']);
 async function openDroppedFile(path) {
   const name = path.split(/[\/]/).pop().toLowerCase();
   const dot = name.lastIndexOf('.');
