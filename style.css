@@ -362,8 +362,10 @@
   /* ---- .md 分栏预览（markdown-it 渲染列）---- */
   .ed-md-preview { width: 50%; flex-shrink: 0; border-left: 1px solid var(--border);
     overflow-y: auto; background: var(--note-bg); padding: 16px 20px; }
-  /* md 分屏拖拽分隔条：拖动自由调分屏比例（同串口搜索分栏 splitter 交互） */
-  .ed-md-splitter { display: none; width: 5px; flex-shrink: 0; cursor: col-resize;
+  /* md 分屏拖拽分隔条：拖动自由调分屏比例（同串口搜索分栏 splitter 交互）。
+     默认 flex 显示——显隐由 JS 控制 inline display（buildEditorTab 里 .md 才设 ''），
+     CSS 不写 display:none，否则 JS 设 '' 会回落到这里的 none 导致永远不可见（曾中招） */
+  .ed-md-splitter { width: 5px; flex-shrink: 0; cursor: col-resize;
     background: var(--border); transition: background 0.15s; }
   .ed-md-splitter:hover { background: var(--accent); }
   .md-preview-err { color: var(--neon-orange); font-size: 12px; padding: 12px; }

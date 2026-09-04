@@ -143,7 +143,9 @@ function buildEditorTab(name, content, extPath) {
   const _isMd = name ? name.toLowerCase().endsWith('.md') : false;
   if (_isMd) {
     wrap.querySelector('.ed-md-preview').style.display = '';
-    wrap.querySelector('.ed-md-splitter').style.display = '';
+    // 分隔条必须显式设 'block'——inline 起始是 display:none，设 '' 会回落到
+    // inline 的 none（不走 CSS），永远不可见（上一轮拖不动的根因）
+    wrap.querySelector('.ed-md-splitter').style.display = 'block';
     const pvBtn = document.createElement('button');
     pvBtn.className = 'lv-btn';
     pvBtn.dataset.edAction = 'mdpreview';
@@ -173,8 +175,12 @@ function buildEditorTab(name, content, extPath) {
       else if (act === 'search') edToggleSearchPane(conn);
       else if (act === 'mdpreview') {
         const pv = conn.wrap.querySelector('.ed-md-preview');
-        pv.style.display = pv.style.display === 'none' ? '' : 'none';
-        if (pv.style.display !== 'none') _mdRenderPreview(conn);
+        const sp = conn.wrap.querySelector('.ed-md-splitter');
+        const show = pv.style.display === 'none';
+        pv.style.display = show ? '' : 'none';
+        // 分隔条跟预览列同显隐（显式 block/none——设 '' 会回落 inline 的 none）
+        if (sp) sp.style.display = show ? 'block' : 'none';
+        if (show) _mdRenderPreview(conn);
       }
       else if (act === 'saveas') { if (conn.extPath) showBanner('外部文件不支持另存为（直接保存到原路径）', 3000, true); else edSaveAs(conn); }
       else if (act === 'rename') { if (conn.extPath) showBanner('外部文件不支持重命名（保持原路径）', 3000, true); else edRenamePrompt(conn); }
@@ -439,7 +445,49 @@ function edToggleOutline(conn) {
   if (!shown) _edRenderOutline(conn);
 }
 function _edRenderOutline(conn) {
-  if (!conn.isNote || !conn.outline || conn.outline.style.display === 'none') return;
+  if (!conn.outline || conn.outline.style.display === 'none') return;
+  // Monaco（txt/md/code）：解析 # 标题行生成大纲（# 井号层级，md 标准语法）
+  if (conn.monaco || conn.ta) {
+    const src = conn.monaco ? conn.monaco.getValue() : conn.ta.value;
+    const lines = src.split('\n');
+    const entries = [];
+    // 统计口径与 .note 版对应：标题/列表/代码/引用按 md 语法粗判
+    const types = { '标题': 0, '列表': 0, '代码': 0, '引用': 0 };
+    let inCode = false;
+    for (let i = 0; i < lines.length; i++) {
+      const t = lines[i];
+      if (/^\s*```/.test(t)) { inCode = !inCode; types['代码']++; continue; }
+      if (inCode) continue;
+      const m = /^(#{1,6})\s+(.*)$/.exec(t);
+      if (m) { entries.push({ level: m[1].length, text: m[2].trim(), line: i + 1 }); types['标题']++; }
+      else if (/^\s*[-*+]\s/.test(t) || /^\s*\d+\.\s/.test(t)) types['列表']++;
+      else if (/^\s*>/.test(t)) types['引用']++;
+    }
+    conn.outlineList.innerHTML = entries.length
+      ? entries.map((e, i) =>
+          `<div class="ed-outline-item" data-i="${i}" style="padding-left:${(e.level-1)*12+8}px">${esc(e.text || '(无标题)')}</div>`).join('')
+      : '<div class="ed-outline-empty">暂无标题行<br>用 # 井号标题（md）或标题块组织内容后在此生成目录</div>';
+    conn.outlineList.querySelectorAll('.ed-outline-item').forEach(item => {
+      item.onclick = () => {
+        const e = entries[+item.dataset.i];
+        if (!e) return;
+        if (conn.monaco) { conn.monaco.revealLineInCenter(e.line); conn.monaco.setPosition({ lineNumber: e.line, column: 1 }); }
+        else if (conn.ta) {
+          let pos = 0;
+          for (let i = 0; i < e.line - 1; i++) pos += lines[i].length + 1;
+          conn.ta.focus();
+          conn.ta.setSelectionRange(pos, pos);
+          const lineH = parseFloat(getComputedStyle(conn.ta).lineHeight) || 20;
+          conn.ta.scrollTop = Math.max(0, (e.line - 5) * lineH);
+        }
+      };
+    });
+    conn.outlineStats.innerHTML = Object.entries(types)
+      .filter(([, v]) => v)
+      .map(([k, v]) => `<span class="ed-outline-stat">${esc(k)} ${v}</span>`).join('');
+    return;
+  }
+  if (!conn.isNote) return;
   const blocks = conn.holder.querySelectorAll('.ce-block');
   // 大纲：只列标题块（h1/h2/h3 按层级缩进），点击滚动到对应块
   const entries = [];
@@ -479,8 +527,8 @@ function _edStatText(conn) {
     return `${blocks} 块`;
   }
   if (conn.monaco) {
-    const pos = conn.monaco.getPosition();      // {line, column}
-    const len = conn.monaco.getModel().getValueLength();
+    const pos = conn.monaco.getPosition() || { line: 1, column: 1 };  // 初始化竞态时可能为空，兜底 1,1
+    const len = conn.monaco.getModel() ? conn.monaco.getModel().getValueLength() : 0;
     return `行 ${pos.line}，列 ${pos.column} · ${len} 字符`;
   }
   if (conn.ta) {
