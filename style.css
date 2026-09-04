@@ -435,8 +435,16 @@
   .ce-header { color: var(--note-fg) !important; }
   .ce-paragraph { color: var(--note-fg); }
 
-  /* ---- 十六进制查看/编辑（类 HxD：偏移蓝 | hex nibble 双色 | ASCII） ---- */
+  /* ---- 十六进制查看/编辑（类 HxD：偏移蓝 | hex 单色 | ASCII） ---- */
   .hx-body { flex: 1; display: flex; flex-direction: column; min-height: 0; position: relative; }
+  .hx-main { flex: 1; display: flex; min-height: 0; }   /* 左 hex 区 + 右数据检视 */
+  .hx-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; min-height: 0; position: relative; }
+  .hx-head-row { position: sticky; top: 0; z-index: 2; display: flex; align-items: center;
+    background: var(--bg-card); border-bottom: 1px solid var(--border);
+    font-family: var(--font-mono); font-size: 12px; height: 22px; white-space: nowrap; }
+  .hx-col-heads { display: flex; gap: 4px; }
+  .hx-col-h { width: 17px; text-align: center; color: var(--muted); }   /* 与 .hx-b 同宽对齐 */
+  .hx-scroll-inner { position: relative; }
   .hx-goto-bar, .hx-find-bar { display: flex; align-items: center; gap: 6px;
     padding: 6px 10px; border-bottom: 1px solid var(--border); font-size: 12px; }
   .hx-goto-bar input, .hx-find-bar input { font-family: var(--font-mono); font-size: 12px;
@@ -444,14 +452,15 @@
     padding: 3px 8px; color: var(--fg); outline: none; width: 200px; }
   .hx-goto-bar input:focus, .hx-find-bar input:focus { border-color: var(--accent); }
   .hx-find-count { font-size: 11px; color: var(--muted); }
-  .hx-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; min-height: 0; }
   .hx-canvas { position: relative; font-family: var(--font-mono); font-size: 12px; line-height: 1.5; }
-  .hx-row { display: flex; align-items: center; white-space: nowrap; height: 22px; }
-  .hx-off { color: #4f8fff; opacity: 0.85; padding-right: 14px; user-select: none; flex-shrink: 0; }
+  .hx-row { display: flex; align-items: center; white-space: nowrap; height: 22px;
+    position: absolute; left: 0; right: 0; }   /* 绝对定位：row.style.top 定位（滚动窗口渲染） */
+  .hx-off { width: 62px; flex-shrink: 0; color: #4f8fff; opacity: 0.75; padding-right: 14px; user-select: none; }
+  .hx-off-head { width: 62px; padding-right: 14px; box-sizing: content-box; }   /* 与 .hx-off 对齐 */
   .hx-hexcol { display: flex; gap: 4px; flex-shrink: 0; }
   .hx-b { display: inline-block; cursor: pointer; border-radius: 3px; padding: 0 1px; }
-  .hx-b .hi { color: #4f8fff; font-style: normal; }   /* 高 4 位蓝（HxD 同款） */
-  .hx-b .lo { color: #b46ef5; font-style: normal; }   /* 低 4 位紫 */
+  .hx-b .hi, .hx-b .lo { color: var(--fg); font-style: normal; }  /* 数据区单色（HxD 数据也是主色，nibble 双色太花） */
+  .hx-b .hi { opacity: 0.95; } .hx-b .lo { opacity: 0.75; }        /* 高低 nibble 仅亮度区分 */
   .hx-b.cur { background: rgba(0,212,255,0.25); outline: 1px solid var(--accent); }
   .hx-b.hit { background: rgba(255,214,102,0.3); }
   .hx-b-empty { display: inline-block; width: 17px; }
@@ -459,6 +468,21 @@
   .hx-a { color: var(--fg); cursor: pointer; }
   .hx-a.cur { background: rgba(0,212,255,0.25); outline: 1px solid var(--accent); }
   .hx-a:empty { width: 7px; }
+  /* 右侧数据检视面板（HxD「特殊编辑器」）：光标处多类型解释 */
+  .hx-inspector { flex-shrink: 0; width: 230px; border-left: 1px solid var(--border);
+    display: flex; flex-direction: column; overflow-y: auto; background: var(--bg-card); }
+  .hx-insp-title { padding: 10px 12px 6px; font-size: 11px; font-weight: 600;
+    color: var(--fg-bright); border-bottom: 1px solid var(--border); }
+  .hx-insp-grid { padding: 6px 0; }
+  .hx-insp-row { display: flex; align-items: center; gap: 8px; padding: 3px 12px;
+    font-family: var(--font-mono); font-size: 11px; }
+  .hx-insp-row:hover { background: var(--bg); }
+  .hx-insp-k { width: 56px; flex-shrink: 0; color: var(--muted); }
+  .hx-insp-v { color: var(--fg); word-break: break-all; }
+  .hx-insp-empty { padding: 14px 12px; font-size: 11px; color: var(--muted); }
+  .hx-insp-be { padding: 8px 12px; border-top: 1px solid var(--border);
+    display: flex; gap: 12px; font-size: 11px; color: var(--muted); }
+  .hx-insp-be label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
 
   .topbar .divider { width: 1px; height: 24px; background: var(--border); }
   .topbar .conn-area { display: flex; align-items: center; gap: 8px; }

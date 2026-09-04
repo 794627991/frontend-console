@@ -59,8 +59,18 @@ async function buildHexViewerTab(path, name) {
           <button class="lv-btn" data-hx-action="findCancel">✕</button>
           <span class="hx-find-count" data-hx-find-count></span>
         </div>
-        <div class="hx-scroll" data-hx-scroll tabindex="0">
-          <div class="hx-canvas" data-hx-canvas></div>
+        <div class="hx-main">
+          <div class="hx-scroll" data-hx-scroll tabindex="0">
+            <div class="hx-head-row"><span class="hx-off-head"></span><span class="hx-col-heads">${Array.from({length: 16}, (_, i) => `<span class="hx-col-h">${i.toString(16).toUpperCase().padStart(2, '0')}</span>`).join('')}</span><span class="hx-ascii-head"></span></div>
+            <div class="hx-scroll-inner">
+              <div class="hx-canvas" data-hx-canvas></div>
+            </div>
+          </div>
+          <div class="hx-inspector">
+            <div class="hx-insp-title">数据检视</div>
+            <div class="hx-insp-grid" data-hx-insp></div>
+            <div class="hx-insp-be"><label><input type="radio" name="hx-be" value="le" checked> 小端序</label><label><input type="radio" name="hx-be" value="be"> 大端序</label></div>
+          </div>
         </div>
       </div>
     </div>`;
@@ -84,6 +94,8 @@ async function buildHexViewerTab(path, name) {
     findBar: wrap.querySelector('.hx-find-bar'),
     findInput: wrap.querySelector('[data-hx-find-input]'),
     findCount: wrap.querySelector('[data-hx-find-count]'),
+    inspEl: wrap.querySelector('[data-hx-insp]'),
+    bigEndian: false,
     bytes: null, chunkCache: null, chunkBuf: null, chunkStart: -1,
     cursor: -1, findHits: [], findIdx: -1, _findQ: null,
     rowHeight: 22, renderedFrom: -1, renderedTo: -1,
@@ -216,6 +228,10 @@ async function buildHexViewerTab(path, name) {
   });
   conn.gotoInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); conn.gotoInput.blur(); wrap.querySelector('[data-hx-action="gotoOk"]').click(); } });
   conn.findInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); _hxFindNext(conn); } });
+  // 字节序切换（数据检视）
+  wrap.querySelectorAll('input[name="hx-be"]').forEach(r => {
+    r.addEventListener('change', () => { conn.bigEndian = r.value === 'be'; _hxRenderInspector(conn); });
+  });
   wrap.addEventListener('keydown', e => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'f') { e.preventDefault(); conn.findBar.style.display = 'flex'; conn.findInput.focus(); }
     if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); _hxSave(conn); }
@@ -281,6 +297,56 @@ function _hxUpdateInfo(conn) {
   const cur = conn.cursor >= 0 ? ' · 偏移 0x' + conn.cursor.toString(16).toUpperCase() : '';
   conn.infoEl.textContent = (conn.editable ? '' : '只读 · ') +
     conn.size.toLocaleString() + ' 字节' + cur + (conn.dirty ? ' · 未保存' : ' · 已保存');
+  _hxRenderInspector(conn);
+}
+
+// ---- 数据检视（HxD「特殊编辑器」同款）：光标处多类型解释 + 字节序 ----
+function _hxRenderInspector(conn) {
+  const el = conn.inspEl;
+  if (!el) return;
+  if (conn.cursor < 0) { el.innerHTML = '<div class="hx-insp-empty">点击字节查看</div>'; return; }
+  const off = conn.cursor;
+  const n = (bytes) => {   // 取 off 起的 bytes 字节（跨文件尾截断）
+    const out = [];
+    for (let i = 0; i < bytes && off + i < conn.size; i++) out.push(conn.byteAt(off + i));
+    return out;
+  };
+  const be = conn.bigEndian;
+  const num = (bs, signed) => {
+    if (!bs.length) return null;
+    // 字节序：be 原序，le 反序
+    const arr = be ? bs : bs.slice().reverse();
+    let v = 0n;
+    for (const b of arr) v = (v << 8n) | BigInt(b);
+    const bits = BigInt(bs.length * 8);
+    if (signed) {
+      const signBit = 1n << (bits - 1n);
+      if (v >= signBit) v -= (1n << bits);
+    }
+    return v;
+  };
+  const i8 = n(1), i16 = n(2), i24 = n(3), i32 = n(4), i64 = n(8);
+  // 浮点：手动按 IEEE754 位模式组 DataView
+  const f32 = i32.length === 4 ? new DataView(new Uint8Array(i32).buffer).getFloat32(0, !be) : null;
+  const f64 = i64.length === 8 ? new DataView(new Uint8Array(i64).buffer).getFloat64(0, !be) : null;
+  // ASCII：光标处 16 字节的可打印串
+  const a16 = n(16).map(b => (b >= 32 && b < 127) ? String.fromCharCode(b) : '.').join('');
+  const hex16 = i16.length ? Array.from(n(16)).map(b => b.toString(16).toUpperCase().padStart(2, '0')).join(' ') : '';
+  const row = (name, val, title) =>
+    `<div class="hx-insp-row" title="${title}"><span class="hx-insp-k">${name}</span><span class="hx-insp-v">${val === null ? '—' : esc(String(val))}</span></div>`;
+  el.innerHTML =
+    row('Int8', num(i8, true), '有符号 8 位') +
+    row('Uint8', num(i8, false), '无符号 8 位') +
+    row('Int16', num(i16, true), '有符号 16 位') +
+    row('Uint16', num(i16, false), '无符号 16 位') +
+    row('Int32', num(i32, true), '有符号 32 位') +
+    row('Uint32', num(i32, false), '无符号 32 位') +
+    row('Int64', num(i64, true), '有符号 64 位') +
+    row('Uint64', num(i64, false), '无符号 64 位') +
+    row('Float32', f32 === null ? null : (f32.toFixed(6) + (isFinite(f32) ? '' : ' (Inf/NaN)')), 'IEEE754 单精度') +
+    row('Float64', f64 === null ? null : (f64.toPrecision(15)), 'IEEE754 双精度') +
+    row('HEX', hex16, '光标起 16 字节') +
+    row('ASCII', a16, '光标起 16 字符（不可打印为点）');
 }
 
 function _hxMarkDirty(conn) {
