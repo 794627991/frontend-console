@@ -1110,6 +1110,9 @@
     z-index: 100; align-items: center; justify-content: center; backdrop-filter: blur(4px);
   }
   .modal.show { display: flex; }
+  /* 打开方式选择弹窗按钮：纵向两个通栏选项 */
+  #openModeModal .btn { display: flex; align-items: baseline; }
+  #openModeModal .btn small { margin-left: 8px; font-size: 11px; }
   .modal .box {
     background: var(--bg-panel); border: 1px solid var(--border-glow); border-radius: 12px;
     width: 640px; max-height: 78vh; display: flex; flex-direction: column;

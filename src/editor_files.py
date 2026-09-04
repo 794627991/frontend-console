@@ -66,12 +66,13 @@ def ed_default_name():
     return jsonify({"ok": True, "name": _unique_name(ext=ext)})
 
 
-def _read_text(path, max_bytes=20 * 1024 * 1024):
-    """读文本文件。超限拒绝（20MB——textarea 渲染 2000 万字符必卡）。
+def _read_text(path, max_bytes=30 * 1024 * 1024):
+    """读文本文件。超限拒绝（30MB 上限——前端 >30MB 已强制走阅读器，
+    20~30MB 用户在弹窗里明确选了编辑器才到这里，Monaco 还能扛）。
     用 utf-8 读，带 BOM 容错；失败时回退 utf-8 errors=replace 再试（保内容不保格式）。"""
     size = os.path.getsize(path)
     if size > max_bytes:
-        return None, f"文件过大（{size/1024/1024:.1f}MB > 20MB 上限）"
+        return None, f"文件过大（{size/1024/1024:.1f}MB > 30MB 上限）"
     with open(path, "r", encoding="utf-8-sig") as f:
         try:
             return f.read(), None

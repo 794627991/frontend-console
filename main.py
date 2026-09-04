@@ -248,6 +248,23 @@ def main():
                 return ""
             return ""
 
+        def pick_any(self):
+            """打开任意文件（编辑器/阅读器智能分发的文件选择）。不限制类型。"""
+            try:
+                import webview
+                result = webview.windows[0].create_file_dialog(
+                    webview.OPEN_DIALOG,
+                    allow_multiple=False,
+                    file_types=('All Files (*.*)',),
+                )
+                if isinstance(result, (list, tuple)):
+                    return result[0] if result else ""
+                if isinstance(result, str):
+                    return result
+            except Exception:
+                return ""
+            return ""
+
         def pick_dir(self):
             """弹出原生目录选择对话框，返回选中目录的绝对路径或空字符串。
             注意：pywebview 返回的是 tuple（非 list），字符串才是单选时的裸返回——
@@ -327,9 +344,10 @@ def main():
                 for f in files:
                     path = f.get('pywebviewFullPath')
                     if path:
-                        # 调前端 buildLogViewer 开日志 tab（转义防注入）
+                        # 按类型分发（转义防注入）：文本类后缀 → 编辑器（可编辑写回原路径），
+                        # 其余（.log/未知）→ 日志查看器（只读虚拟列表）
                         safe = path.replace('\\', '/').replace("'", "\\'")
-                        window.evaluate_js(f"buildLogViewer('{safe}');")
+                        window.evaluate_js(f"openDroppedFile('{safe}');")
                         break
             except Exception:
                 pass

@@ -588,6 +588,20 @@ def api_log_open_external():
     return jsonify({"ok": True, "name": p, "size": os.path.getsize(p)})
 
 
+@app.route("/api/file_info", methods=["POST"])
+def api_file_info():
+    """轻量文件信息：大小 + 是否文本后缀。前端打开文件前先探测，用于
+    编辑器/阅读器分发决策（>20M 阅读器、20~30M 提示、其余可选）。
+    body: {path: 绝对路径}"""
+    data = request.get_json(force=True, silent=True) or {}
+    p = (data.get("path") or "").strip()
+    if not p or not os.path.isfile(p):
+        return jsonify({"ok": False, "err": "文件不存在"}), 400
+    from src.editor_files import _EXT_TEXT, _ext_of
+    return jsonify({"ok": True, "size": os.path.getsize(p),
+                    "is_text": _ext_of(p) in _EXT_TEXT})
+
+
 @app.route("/api/ai/diff_logs", methods=["POST"])
 def ai_diff_logs():
     """对比两份日志，返回差异。BSP 常用于对比"正常启动 vs 异常启动"日志。

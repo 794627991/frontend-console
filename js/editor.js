@@ -934,29 +934,110 @@ const _DROP_TEXT_EXT = new Set(['.txt','.note','.md','.json','.csv','.ini','.cfg
   '.v','.sv','.svh','.vhd','.vhdl','.asm','.sln','.props','.targets','.gradle','.properties','.toml','.proto',
   '.tf','.tfvars','.graphql','.gql','.ipynb','.nix','.editorconfig','.gitignore','.gitattributes','.npmrc',
   '.bashrc','.zshrc','.profile','.dockerignore']);
-async function openDroppedFile(path) {
+// ---- 文件打开方式选择弹窗（20~30M 提示用；小于 20M 用户主动选阅读器也复用）----
+// mode: 'ask' 弹窗让选；'edit' 直接编辑器；'view' 直接阅读器
+function _showOpenModeDialog(path, sizeMB) {
+  return new Promise(resolve => {
+    let m = $('openModeModal');
+    if (!m) {
+      m = document.createElement('div');
+      m.className = 'modal';
+      m.id = 'openModeModal';
+      m.innerHTML = `
+        <div class="box" style="max-width:420px;">
+          <div class="head"><strong id="openModeTitle">选择打开方式</strong>
+            <div class="head-actions"><button class="btn ghost icon-btn" id="openModeClose">✕</button></div>
+          </div>
+          <div style="padding:18px 20px;">
+            <div id="openModeDesc" style="color:var(--muted);font-size:12px;line-height:1.6;margin-bottom:16px;word-break:break-all;"></div>
+            <div style="display:flex;flex-direction:column;gap:10px;">
+              <button class="btn" id="openModeEdit" style="padding:10px 14px;text-align:left;justify-content:flex-start;">
+                ✏️ 编辑器打开<small style="color:var(--muted);font-weight:400;">　Monaco，可编辑保存</small>
+              </button>
+              <button class="btn" id="openModeView" style="padding:10px 14px;text-align:left;justify-content:flex-start;">
+                📖 阅读器打开<small style="color:var(--muted);font-weight:400;">　虚拟列表，大文件流畅（只读+搜索）</small>
+              </button>
+            </div>
+          </div>
+        </div>`;
+      document.body.appendChild(m);
+      m.querySelector('#openModeClose').onclick = () => { m.classList.remove('show'); resolve(null); };
+    }
+    const finish = v => { m.classList.remove('show'); resolve(v); };
+    m.querySelector('#openModeEdit').onclick = () => finish('edit');
+    m.querySelector('#openModeView').onclick = () => finish('view');
+    m.querySelector('#openModeDesc').textContent =
+      `${path}${sizeMB != null ? `（${sizeMB}MB）` : ''}\n` +
+      (sizeMB != null && sizeMB > 20
+        ? '文件超过 20MB：编辑器打开可能卡顿（Monaco 分词内存约为文件 3~5 倍），建议用阅读器。'
+        : '选择打开方式：');
+    m.classList.add('show');
+  });
+}
+
+// ---- 统一文件打开入口（拖拽/最近/顶栏打开 共用）----
+// mode: 'auto'（默认按大小规则）| 'edit' | 'view'
+// 规则：<20M 编辑器；20~30M 弹窗提示选（默认建议阅读器）；>30M 强制阅读器。
+async function openFileSmart(path, mode) {
   const name = path.split(/[\/]/).pop().toLowerCase();
   const dot = name.lastIndexOf('.');
   const ext = dot > 0 ? name.slice(dot) : name;
-  if (_DROP_TEXT_EXT.has(ext) || name === 'makefile' || name === 'readme') {
-    try {
-      const r = await fetch('/api/ed/open?path=' + encodeURIComponent(path));
-      const j = await r.json();
-      if (j.ok) {
-        if (typeof _recentAdd === 'function') _recentAdd({type:'file', key:'file:'+j.name, label:j.name, data:{kind:'edit', name:j.name, path:path, extPath: path}});
-        buildEditorTab(j.name, j.text, path);
-        return;
-      }
-      // 超限（>20MB）→ 回落只读查看器（Monaco 30MB 以上就卡、1G txt 内存墙，
-      // G 级虚拟列表是唯一能扛的方案）。之前只 .log 回落，超大 .txt/.json 直接报错。
-      // 编辑需求：超大文件本来就是"看 + 搜"场景，真要改请切片处理。
-      const oversize = j.err && /20\s*MB|过大|超限/.test(j.err);
-      if (!oversize) { showBanner(j.err || '打开失败', 4000, true); return; }
-    } catch(e) {
-      // fetch 异常（后端炸了等）：也试查看器兜底，比直接报错友好
-      if (typeof buildLogViewer === 'function') { buildLogViewer(path); return; }
-      showBanner('打开失败: ' + e, 4000, true); return;
-    }
+  const isText = _DROP_TEXT_EXT.has(ext) || name === 'makefile' || name === 'readme';
+  // 探测大小（失败按 0 处理走编辑器尝试）
+  let size = 0, isTextSrv = isText;
+  try {
+    const r = await fetch('/api/file_info', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path})});
+    const j = await r.json();
+    if (j.ok) { size = j.size; isTextSrv = j.is_text; }
+  } catch(e) {}
+  const MB = size / 1024 / 1024;
+  // 决策
+  let how = mode || 'auto';
+  if (how === 'auto') {
+    if (!isTextSrv) how = 'view';                          // 未知/二进制 → 阅读器
+    else if (MB > 30) how = 'view';                        // >30M 强制阅读器（Monaco 必卡）
+    else if (MB > 20) how = await _showOpenModeDialog(path, MB.toFixed(1));  // 20~30M 提示选
+    else how = 'edit';                                     // <20M 默认编辑器
+    if (!how) return;                                      // 用户关掉了弹窗
   }
-  buildLogViewer(path);   // 超限文本/未知类型/.log：只读日志查看器（G 级虚拟列表）
+  if (how === 'view') { buildLogViewer(path); return; }
+  // edit：走编辑器（超 20M 后端会拒——用户明确选了编辑器且 >30M 已拦，
+  // 20~30M 选编辑器则放宽后端上限）
+  try {
+    const r = await fetch('/api/ed/open?path=' + encodeURIComponent(path));
+    const j = await r.json();
+    if (j.ok) {
+      if (typeof _recentAdd === 'function') _recentAdd({type:'file', key:'file:'+j.name, label:j.name, data:{kind:'edit', name:j.name, path:path, extPath: path}});
+      buildEditorTab(j.name, j.text, path);
+      return;
+    }
+    // 后端仍拒（用户选编辑器但后端硬上限）：降级阅读器 + 提示
+    showBanner('编辑器无法打开（' + (j.err || '未知错误') + '），已切换阅读器', 4000, true);
+  } catch(e) { showBanner('打开失败: ' + e, 4000, true); return; }
+  buildLogViewer(path);
+}
+
+async function openDroppedFile(path) {
+  openFileSmart(path, 'auto');
+}
+
+// ---- 顶栏「📂 打开」：原生文件选择框（pywebview 桥 pick_any），选中后智能分发 ----
+// 非 pywebview 环境（纯浏览器调试）降级 input[type=file]，但拿不到绝对路径，
+// 只能走 FileReader 临时内容——此处直接提示不支持。
+const btnOpen = $('btnOpenFile');
+if (btnOpen) {
+  btnOpen.onclick = async () => {
+    try {
+      const path = await pywebview.api.pick_any();
+      if (path && typeof path === 'string') openFileSmart(path, 'auto');
+    } catch(e) {
+      // pywebview 未就绪（页面刚载入 500ms 内）重试一次
+      setTimeout(async () => {
+        try {
+          const path = await pywebview.api.pick_any();
+          if (path && typeof path === 'string') openFileSmart(path, 'auto');
+        } catch(_) { showBanner('文件选择器暂不可用，可把文件拖入窗口', 3000, true); }
+      }, 600);
+    }
+  };
 }
