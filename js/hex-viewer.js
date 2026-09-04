@@ -296,6 +296,9 @@ async function buildHexViewerTab(path, name) {
     if ((e.ctrlKey || e.metaKey) && e.key === 'f') { e.preventDefault(); conn.findBar.style.display = 'flex'; conn.findInput.focus(); }
     if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); _hxSave(conn); }
   });
+  // 关 tab 脏确认（closeEditorTab 调）：应用风格弹窗
+  conn.confirmClose = () => _hxConfirm('未保存的修改',
+    `「${name}」有未保存的修改，关闭将丢失。确定关闭？`);
 
   switchTab(portId);
   conn.render();
@@ -303,6 +306,8 @@ async function buildHexViewerTab(path, name) {
 }
 
 // ---- 列头：随查看方式重建（HxD 同款，分组位宽对齐数据列） ----
+// 十进制模式组值宽度不定（0~255/0~65535…），组 span 定宽右对齐才能列列对齐
+const _HX_DEC_W = {1: 3, 2: 5, 4: 10, 8: 20};   // 每组字节数 → 十进制字符宽
 function _hxRenderHead(conn) {
   const head = conn.wrap.querySelector('[data-hx-head]');
   if (!head) return;
@@ -310,8 +315,8 @@ function _hxRenderHead(conn) {
   let html = '';
   for (let g = 0; g < 16 / bw; g++) {
     const off = g * bw;
-    const pad = conn.viewDec ? String(off).padStart(5, ' ') : off.toString(16).toUpperCase().padStart(bw * 2, '0');
-    html += `<span class="hx-b hx-b-head${bw > 1 ? ' hx-b-g' + bw : ''}">${esc(pad)}</span>`;
+    const txt = conn.viewDec ? String(off) : off.toString(16).toUpperCase().padStart(bw * 2, '0');
+    html += `<span class="hx-b hx-b-head${bw > 1 ? ' hx-b-g' + bw : ''}">${esc(txt)}</span>`;
   }
   head.innerHTML = html;
 }
@@ -346,12 +351,13 @@ function _hxRenderRows(conn, from, to, force) {
       const avail = Math.min(bw, conn.size - i);
       const v = avail === bw ? grpVal(i, bw) : null;   // 尾部残组（不足 bw 字节）不拼值
       let txt;
-      if (v === null) txt = '—'.repeat(conn.viewDec ? 1 : bw * 2);
-      else if (conn.viewDec) txt = v.toString(10);
+      if (v === null) txt = '—'.repeat(1);
+      else if (conn.viewDec) txt = v.toString(10).padStart(_HX_DEC_W[bw], ' ');   // 十进制定宽右对齐（列列对齐关键）
       else txt = v.toString(16).toUpperCase().padStart(bw * 2, '0');
       const z = v === 0n ? ' z' : '';   // 全 0 组灰色弱化
       // 组内每个字节保留 data-hx-i（点击/选区定位到字节级）——首字节承载展示文本
-      hexHtml += `<span class="hx-b hx-b-g${bw}${z}" data-hx-i="${i}">${esc(txt)}</span>`;
+      const dc = conn.viewDec ? ' dec' : '';
+      hexHtml += `<span class="hx-b${dc}${bw > 1 ? ' hx-b-g' + bw : ''}${z}" data-hx-i="${i}">${esc(txt)}</span>`;
       for (let k = 0; k < bw; k++) rendered.add(i + k);
       // ASCII 列仍逐字节
       for (let k = 0; k < bw; k++) {
@@ -519,6 +525,39 @@ function _hxMarkDirty(conn) {
   if (lbl && !lbl.textContent.startsWith('*')) lbl.textContent = '*' + lbl.textContent;
 }
 
+// ---- 应用风格确认弹窗（替代原生 confirm——画风统一） ----
+function _hxConfirm(title, msg) {
+  return new Promise(resolve => {
+    let m = document.getElementById('hxConfirmModal');
+    if (!m) {
+      m = document.createElement('div');
+      m.className = 'modal';
+      m.id = 'hxConfirmModal';
+      m.innerHTML = `
+        <div class="box" style="max-width:380px;">
+          <div class="head"><strong id="hxConfirmTitle">确认</strong>
+            <div class="head-actions"><button class="btn ghost icon-btn" id="hxConfirmClose">✕</button></div>
+          </div>
+          <div style="padding:18px 20px;">
+            <div id="hxConfirmMsg" style="color:var(--muted);font-size:12px;line-height:1.6;margin-bottom:16px;word-break:break-all;"></div>
+            <div style="display:flex;gap:10px;justify-content:flex-end;">
+              <button class="btn ghost" id="hxConfirmNo">取消</button>
+              <button class="btn primary" id="hxConfirmYes">确定</button>
+            </div>
+          </div>
+        </div>`;
+      document.body.appendChild(m);
+    }
+    m.querySelector('#hxConfirmTitle').textContent = title;
+    m.querySelector('#hxConfirmMsg').textContent = msg;
+    const finish = v => { m.classList.remove('show'); resolve(v); };
+    m.querySelector('#hxConfirmYes').onclick = () => finish(true);
+    m.querySelector('#hxConfirmNo').onclick = () => finish(false);
+    m.querySelector('#hxConfirmClose').onclick = () => finish(false);
+    m.classList.add('show');
+  });
+}
+
 // ---- 搜索：hex 字节序列（含空格/0x）或 ASCII 文本 ----
 function _hxParseQuery(q) {
   q = (q || '').trim();
@@ -555,14 +594,28 @@ async function _hxSearchAll(conn, pat) {
   }
   return hits;
 }
-// ---- 搜索命中 → 分组模式下映射到组首下标再打 hit 高亮 ----
+// ---- 搜索命中 → 高亮（多字节命中高亮整个序列；分组模式亮组） ----
 function _hxPaintHits(conn) {
+  const pat = _hxParseQuery(conn._findQ);   // 命中长度 = 搜索模式长度
+  const plen = pat ? pat.length : 1;
   const bw = conn.viewBytes || 1;
   const hitSet = new Set();
-  for (const h of conn.findHits) hitSet.add(bw > 1 ? Math.floor(h / bw) * bw : h);
+  for (const h of conn.findHits) {
+    if (bw > 1) hitSet.add(Math.floor(h / bw) * bw);   // 分组模式：亮整组
+    else for (let k = 0; k < plen; k++) hitSet.add(h + k);   // 单字节模式：高亮整个命中序列
+  }
   conn.canvas.querySelectorAll('[data-hx-i]').forEach(el => {
     el.classList.toggle('hit', hitSet.has(+el.dataset.hxI));
   });
+}
+// 跳到命中：选区 = 命中首字节起的 plen 字节（多字节命中直接可视）
+function _hxJumpHit(conn, off) {
+  const pat = _hxParseQuery(conn._findQ);
+  const plen = pat ? pat.length : 1;
+  _hxScrollToOffset(conn, off);
+  conn.selStart = off; conn.selEnd = Math.min(off + plen - 1, conn.size - 1);
+  _hxPaintSel(conn);
+  _hxUpdateInfo(conn);
 }
 async function _hxFindNext(conn) {
   const q = conn.findInput.value;
@@ -577,7 +630,7 @@ async function _hxFindNext(conn) {
   if (!conn.findHits.length) { conn.findCount.textContent = '无命中'; return; }
   conn.findIdx = (conn.findIdx + 1) % conn.findHits.length;
   conn.findCount.textContent = (conn.findIdx + 1) + '/' + conn.findHits.length;
-  _hxScrollToOffset(conn, conn.findHits[conn.findIdx]);
+  _hxJumpHit(conn, conn.findHits[conn.findIdx]);
 }
 async function _hxFindAll(conn) {
   const pat = _hxParseQuery(conn.findInput.value);
@@ -587,7 +640,7 @@ async function _hxFindAll(conn) {
   conn.findCount.textContent = conn.findHits.length ? (conn.findHits.length + ' 处') : '无命中';
   _hxRenderRows(conn, conn.renderedFrom, conn.renderedTo, true);
   _hxPaintHits(conn);
-  if (conn.findHits.length) _hxScrollToOffset(conn, conn.findHits[0]);
+  if (conn.findHits.length) _hxJumpHit(conn, conn.findHits[0]);
 }
 
 // ---- 保存 ----

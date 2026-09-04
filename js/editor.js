@@ -838,7 +838,7 @@ function edRenamePrompt(conn) {
 // 工具栏删除按钮已按用户要求移除（误点危险），入口不再存在
 async function edDelete(conn) {
   if (conn.onDisk) {
-    if (!confirm(`确定删除「${conn.meta.label}」？此操作不可恢复。`)) return;
+    if (!(await _edConfirm(`确定删除「${conn.meta.label}」？此操作不可恢复。`))) return;
     try {
       const r = await fetch('/api/ed/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name: conn.meta.label})});
       const j = await r.json();
@@ -850,13 +850,48 @@ async function edDelete(conn) {
 }
 
 // ---- 关闭 tab：脏则确认（确定=丢弃修改直接关，取消=留在编辑器）----
-function closeEditorTab(portId) {
+async function closeEditorTab(portId) {
   const conn = connections[portId];
   if (!conn) return;
   if (conn.dirty) {
-    if (!confirm(`「${conn.meta.label}」有未保存的修改，关闭将丢失。确定关闭？`)) return;
+    // 应用风格确认弹窗（原生 confirm 画风不符）；hex tab 的 conn 有 _hxConfirm
+    let ok;
+    if (typeof conn.confirmClose === 'function') ok = await conn.confirmClose();
+    else ok = await _edConfirm(`「${conn.meta.label}」有未保存的修改，关闭将丢失。确定关闭？`);
+    if (!ok) return;
   }
   _edCloseNow(conn);
+}
+// 通用确认弹窗（编辑器 tab 共用；仿 hex-viewer 的 _hxConfirm 画风）
+function _edConfirm(msg) {
+  return new Promise(resolve => {
+    let m = document.getElementById('edConfirmModal');
+    if (!m) {
+      m = document.createElement('div');
+      m.className = 'modal';
+      m.id = 'edConfirmModal';
+      m.innerHTML = `
+        <div class="box" style="max-width:380px;">
+          <div class="head"><strong>确认</strong>
+            <div class="head-actions"><button class="btn ghost icon-btn" id="edConfirmClose">✕</button></div>
+          </div>
+          <div style="padding:18px 20px;">
+            <div id="edConfirmMsg" style="color:var(--muted);font-size:12px;line-height:1.6;margin-bottom:16px;word-break:break-all;"></div>
+            <div style="display:flex;gap:10px;justify-content:flex-end;">
+              <button class="btn ghost" id="edConfirmNo">取消</button>
+              <button class="btn primary" id="edConfirmYes">确定</button>
+            </div>
+          </div>
+        </div>`;
+      document.body.appendChild(m);
+    }
+    m.querySelector('#edConfirmMsg').textContent = msg;
+    const finish = v => { m.classList.remove('show'); resolve(v); };
+    m.querySelector('#edConfirmYes').onclick = () => finish(true);
+    m.querySelector('#edConfirmNo').onclick = () => finish(false);
+    m.querySelector('#edConfirmClose').onclick = () => finish(false);
+    m.classList.add('show');
+  });
 }
 function _edCloseNow(conn) {
   // Editor.js 实例先销毁（停掉内部 mutation 监听，防关 tab 后仍触发 onChange）
@@ -1099,8 +1134,8 @@ const _DROP_TEXT_EXT = new Set(['.txt','.note','.md','.json','.csv','.ini','.cfg
   '.tf','.tfvars','.graphql','.gql','.ipynb','.nix','.editorconfig','.gitignore','.gitattributes','.npmrc',
   '.bashrc','.zshrc','.profile','.dockerignore']);
 // ---- 文件打开方式选择弹窗（20~30M 提示用；小于 20M 用户主动选阅读器也复用）----
-// mode: 'ask' 弹窗让选；'edit' 直接编辑器；'view' 直接阅读器
-function _showOpenModeDialog(path, sizeMB) {
+// mode: 'ask' 弹窗让选（含二进制选项）；'edit' 直接编辑器；'view' 直接阅读器；'hex' 直接二进制
+function _showOpenModeDialog(path, sizeMB, withHex) {
   return new Promise(resolve => {
     let m = $('openModeModal');
     if (!m) {
@@ -1115,11 +1150,14 @@ function _showOpenModeDialog(path, sizeMB) {
           <div style="padding:18px 20px;">
             <div id="openModeDesc" style="color:var(--muted);font-size:12px;line-height:1.6;margin-bottom:16px;word-break:break-all;"></div>
             <div style="display:flex;flex-direction:column;gap:10px;">
-              <button class="btn" id="openModeEdit" style="padding:10px 14px;text-align:left;justify-content:flex-start;">
-                ✏️ 编辑器打开<small style="color:var(--muted);font-weight:400;">　Monaco，可编辑保存</small>
+              <button class="btn" id="openModeHex" style="padding:10px 14px;text-align:left;justify-content:flex-start;">
+                🔢 二进制打开<small style="color:var(--muted);font-weight:400;">　16 进制查看/编辑（任意文件）</small>
               </button>
               <button class="btn" id="openModeView" style="padding:10px 14px;text-align:left;justify-content:flex-start;">
                 📖 阅读器打开<small style="color:var(--muted);font-weight:400;">　虚拟列表，大文件流畅（只读+搜索）</small>
+              </button>
+              <button class="btn" id="openModeEdit" style="padding:10px 14px;text-align:left;justify-content:flex-start;">
+                ✏️ 编辑器打开<small style="color:var(--muted);font-weight:400;">　Monaco，可编辑保存</small>
               </button>
             </div>
           </div>
@@ -1130,18 +1168,21 @@ function _showOpenModeDialog(path, sizeMB) {
     const finish = v => { m.classList.remove('show'); resolve(v); };
     m.querySelector('#openModeEdit').onclick = () => finish('edit');
     m.querySelector('#openModeView').onclick = () => finish('view');
+    m.querySelector('#openModeHex').onclick = () => finish('hex');
+    m.querySelector('#openModeHex').style.display = withHex ? '' : 'none';   // 仅未知/二进制类型显示二进制选项
     m.querySelector('#openModeDesc').textContent =
       `${path}${sizeMB != null ? `（${sizeMB}MB）` : ''}\n` +
       (sizeMB != null && sizeMB > 20
         ? '文件超过 20MB：编辑器打开可能卡顿（Monaco 分词内存约为文件 3~5 倍），建议用阅读器。'
-        : '选择打开方式：');
+        : (withHex ? '未知类型文件，选择打开方式：' : '选择打开方式：'));
     m.classList.add('show');
   });
 }
 
 // ---- 统一文件打开入口（拖拽/最近/顶栏打开 共用）----
-// mode: 'auto'（默认按大小规则）| 'edit' | 'view'
-// 规则：<20M 编辑器；20~30M 弹窗提示选（默认建议阅读器）；>30M 强制阅读器。
+// mode: 'auto'（默认按大小规则）| 'edit' | 'view' | 'hex'
+// 规则：未知/二进制类型 → 弹窗让选（二进制/阅读器/编辑器）；
+//       已知文本：<20M 编辑器；20~30M 弹窗提示选（默认建议阅读器）；>30M 强制阅读器。
 async function openFileSmart(path, mode) {
   const name = path.split(/[\/]/).pop().toLowerCase();
   const dot = name.lastIndexOf('.');
@@ -1158,16 +1199,15 @@ async function openFileSmart(path, mode) {
   // 决策
   let how = mode || 'auto';
   if (how === 'auto') {
-    if (!isTextSrv) how = 'hex';                                // 二进制 → hex 模式（16 进制查看/编辑）
+    if (!isTextSrv) how = await _showOpenModeDialog(path, MB ? MB.toFixed(1) : null, true);  // 未知类型：弹窗选（二进制/阅读器/编辑器）
     else if (MB > 30) how = 'view';                        // >30M 强制阅读器（Monaco 必卡）
-    else if (MB > 20) how = await _showOpenModeDialog(path, MB.toFixed(1));  // 20~30M 提示选
+    else if (MB > 20) how = await _showOpenModeDialog(path, MB.toFixed(1), false);  // 20~30M 提示选
     else how = 'edit';                                     // <20M 默认编辑器
     if (!how) return;                                      // 用户关掉了弹窗
   }
   if (how === 'hex') { buildHexViewerTab(path, name); return; }
   if (how === 'view') { buildLogViewer(path); return; }
-  // edit：走编辑器（超 20M 后端会拒——用户明确选了编辑器且 >30M 已拦，
-  // 20~30M 选编辑器则放宽后端上限）
+  // edit：未知类型用户硬选编辑器——超 20M 后端会拒（大小前提由后端硬上限兜底），拒则降级阅读器
   try {
     const r = await fetch('/api/ed/open?path=' + encodeURIComponent(path));
     const j = await r.json();

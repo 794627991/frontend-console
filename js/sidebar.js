@@ -397,7 +397,8 @@ function openRecentItem(it) {
     // 站内文件（files/ 内 .note/.txt 等，只有 name 无绝对路径）必须走 openEditorFile(name=)——
     // 之前一律 openDroppedFile 按绝对路径请求，后端拒收相对名 →「不支持的文件类型或文件不存在」。
     const d = it.data || {};
-    if (d.extPath && typeof openDroppedFile === 'function') openDroppedFile(d.extPath);
+    if (d.kind === 'hex' && d.path) buildHexViewerTab(d.path, d.name || it.label);   // bin/二进制：hex 模式快速重开
+    else if (d.extPath && typeof openDroppedFile === 'function') openDroppedFile(d.extPath);
     else if (d.kind === 'log') buildLogViewer(d.name || d.path);
     else if (typeof openEditorFile === 'function') openEditorFile(d.name || d.path);
   }

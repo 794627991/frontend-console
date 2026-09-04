@@ -468,9 +468,11 @@
   .hx-b.sel { background: rgba(79,143,255,0.18); }
   .hx-b.hit { background: rgba(255,214,102,0.3); }
   .hx-b-empty { display: inline-block; width: 17px; }
-  /* 查看方式分组（HxD 同款）：每组等宽，组宽 = bw×字节宽 + 组内间隔 */
-  .hx-b-g2 { width: 38px; } .hx-b-g4 { width: 80px; } .hx-b-g8 { width: 164px; }
+  /* 查看方式分组（HxD 同款）：hex 模式每组等宽（bw×2 字符 + 2px padding），
+     十进制模式 .dec 用 JS padStart + white-space:pre 保持字符宽对齐 */
+  .hx-b-g2 { min-width: 26px; } .hx-b-g4 { min-width: 50px; } .hx-b-g8 { min-width: 98px; }
   .hx-b-g2, .hx-b-g4, .hx-b-g8 { text-align: left; }
+  .hx-b.dec { white-space: pre; }   /* 十进制 padStart 空格占位不折叠 */
   .hx-view-sel { font-size: 12px; font-family: var(--font-mono);
     background: var(--bg-input); border: 1px solid var(--border); border-radius: 4px;
     color: var(--fg); padding: 2px 4px; outline: none; }
