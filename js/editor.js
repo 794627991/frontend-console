@@ -509,8 +509,38 @@ function _edRenderOutline(conn) {
     const isMd = ext === '.md';
     const renderEntries = entries => {
       if (!entries || !entries.length) return false;
-      conn.outlineList.innerHTML = entries.map((e, i) =>
-        `<div class="ed-outline-item" data-i="${i}" style="padding-left:${(e.level-1)*12+8}px">${esc((e.kind ? e.kind + ' ' : '') + e.text)}</div>`).join('');
+      // json 大纲：条目带 kids 字段（tsOutline 递归键标记），按嵌套关系可折叠
+      const foldable = entries.some(e => e.kids !== undefined);
+      conn.outlineList.innerHTML = entries.map((e, i) => {
+        const arrow = foldable && e.kids
+          ? `<span class="ed-outline-fold" data-i="${i}">▾</span>` : (foldable ? '<span class="ed-outline-fold" style="visibility:hidden">▾</span>' : '');
+        return `<div class="ed-outline-item${foldable ? ' ed-outline-foldable' : ''}" data-i="${i}" style="padding-left:${(e.level-1)*12+8}px">${arrow}${esc((e.kind ? e.kind + ' ' : '') + e.text)}</div>`;
+      }).join('');
+      // 折叠状态：隐藏所有 depth > 折叠键 depth 的后续条目，直到遇到 depth <= 该值的键
+      const applyFold = () => {
+        const items = conn.outlineList.querySelectorAll('.ed-outline-item');
+        const hidden = new Set();
+        for (let i = 0; i < entries.length; i++) {
+          const e = entries[i];
+          items[i].classList.toggle('ed-outline-hidden', hidden.has(i));
+          if (e.kids && e._folded) {
+            for (let j = i + 1; j < entries.length && entries[j].depth > e.depth; j++) hidden.add(j);
+          }
+        }
+      };
+      if (foldable) {
+        conn.outlineList.querySelectorAll('.ed-outline-fold:not([style])').forEach(f => {
+          f.onclick = ev => {
+            ev.stopPropagation();
+            const e = entries[+f.dataset.i];
+            if (!e) return;
+            e._folded = !e._folded;
+            f.textContent = e._folded ? '▸' : '▾';
+            applyFold();
+          };
+        });
+        applyFold();
+      }
       conn.outlineList.querySelectorAll('.ed-outline-item').forEach(item => {
         item.onclick = () => {
           const e = entries[+item.dataset.i];

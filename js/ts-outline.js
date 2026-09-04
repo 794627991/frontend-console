@@ -161,7 +161,10 @@ async function tsOutline(src, ext) {
         for (const k of node.namedChildren) {
           if (k.type === 'pair') {
             const key = keyOf(k);
-            if (key) out.push({ level: Math.min(depth, 3), text: key, line: k.startPosition.row + 1, kind: depth === 1 ? '键' : '子键' });
+            // kids：pair 的 value 含非空 object/array 且未超深度限——折叠箭头判定用
+            const kids = depth < 8 && k.namedChildren.some(v =>
+              (v.type === 'object' || v.type === 'array') && v.namedChildren.some(x => x.type === 'pair'));
+            if (key) out.push({ level: Math.min(depth, 3), depth, text: key, line: k.startPosition.row + 1, kind: depth === 1 ? '键' : '子键', kids });
             // pair 的 value 是嵌套 object/array——必须进 pair 内部找（曾只扫顶层直接子，嵌套全丢）
             for (const v of k.namedChildren) {
               if (v.type === 'object' || v.type === 'array') walkJson(v, depth + 1);

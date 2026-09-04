@@ -341,6 +341,11 @@
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-left: 2px solid transparent; }
   .ed-outline-item:hover { background: var(--bg-card); color: var(--accent); border-left-color: var(--accent); }
   .ed-outline-item.active { background: var(--bg-card); border-left-color: var(--accent); }
+  /* json 大纲折叠：箭头 + 折叠隐藏（depth 大于折叠键的后续条目整体藏） */
+  .ed-outline-fold { display: inline-block; width: 14px; font-size: 10px; color: var(--muted);
+    cursor: pointer; flex-shrink: 0; }
+  .ed-outline-fold:hover { color: var(--accent); }
+  .ed-outline-hidden { display: none; }
   .ed-outline-empty { padding: 12px; font-size: 11px; color: var(--muted); line-height: 1.6; }
   .ed-outline-stats { padding: 8px 12px; border-top: 1px solid var(--border);
     display: flex; flex-wrap: wrap; gap: 4px; }
