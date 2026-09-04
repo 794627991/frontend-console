@@ -125,6 +125,12 @@ VENDOR_DIR = os.path.join(BASE_DIR, "vendor")
 def vendor_files(fn):
     return send_from_directory(VENDOR_DIR, fn)
 
+# 应用图标（顶栏 logo 用，打包后 ico/ 在 _MEIPASS 下）
+ICO_DIR = os.path.join(RES_DIR, "ico")
+@app.route("/ico/<path:fn>")
+def ico_files(fn):
+    return send_from_directory(ICO_DIR, fn)
+
 @app.route("/api/ports")
 def api_ports():
     return jsonify({"ports": list_ports(), "bauds": COMMON_BAUDS})

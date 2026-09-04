@@ -54,6 +54,9 @@ async function buildHexViewerTab(path, name) {
           <option value="u32">无符号十进制(32 位)</option>
           <option value="u64">无符号十进制(64 位)</option>
         </select>
+        <label class="hx-zero-toggle" title="0x00 字节灰色弱化显示（ImHex 同款），可配置">
+          <input type="checkbox" data-hx-zero> 00 灰显
+        </label>
         <span class="lv-info" data-hx-info></span>
       </div>
       <div class="hx-body">
@@ -108,6 +111,8 @@ async function buildHexViewerTab(path, name) {
     bigEndian: false,
     // HxD「查看方式」：hexN=十六进制 N 位分组，uN=无符号十进制 N 位分组
     viewMode: '8', viewBytes: 1, viewDec: false,
+    // 0x00 灰色弱化开关（可配置，localStorage 持久化）
+    zeroGray: (localStorage.getItem('hx_zeroGray') ?? '1') === '1',
     bytes: null, chunkCache: null, chunkBuf: null, chunkStart: -1,
     cursor: -1, findHits: [], findIdx: -1, _findQ: null,
     rowHeight: 22, renderedFrom: -1, renderedTo: -1,
@@ -292,6 +297,24 @@ async function buildHexViewerTab(path, name) {
     conn.render();
     _hxPaintSel(conn);
   });
+  // 0x00 灰显开关（可配置）：localStorage 持久化 + 全部已开 hex tab 即时生效
+  const zeroCk = wrap.querySelector('[data-hx-zero]');
+  if (zeroCk) {
+    zeroCk.checked = conn.zeroGray;
+    zeroCk.addEventListener('change', () => {
+      try { localStorage.setItem('hx_zeroGray', zeroCk.checked ? '1' : '0'); } catch(e) {}
+      // 同步所有 hex tab（多文件同偏好）
+      for (const pid in connections) {
+        const c = connections[pid];
+        if (!c || !c.meta || c.meta.kind !== 'hex') continue;
+        c.zeroGray = zeroCk.checked;
+        c.renderedFrom = -1;
+        _hxRenderHead(c);
+        c.render();
+        _hxPaintSel(c);
+      }
+    });
+  }
   wrap.addEventListener('keydown', e => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'f') { e.preventDefault(); conn.findBar.style.display = 'flex'; conn.findInput.focus(); }
     if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); _hxSave(conn); }
@@ -364,7 +387,7 @@ function _hxRenderRows(conn, from, to, force) {
       if (v === null) txt = '—'.repeat(1);
       else if (conn.viewDec) txt = v.toString(10).padStart(_HX_DEC_W[bw], ' ');   // 十进制定宽右对齐（列列对齐关键）
       else txt = v.toString(16).toUpperCase().padStart(bw * 2, '0');
-      const z = v === 0n ? ' z' : '';   // 全 0 组灰色弱化
+      const z = (v === 0n && conn.zeroGray) ? ' z' : '';   // 全 0 组灰色弱化（可配置）
       // 组内每个字节保留 data-hx-i（点击/选区定位到字节级）——首字节承载展示文本
       hexHtml += `<span class="hx-b${_hxGrpClass(conn)}${z}"${_hxGrpStyle(conn)} data-hx-i="${i}">${esc(txt)}</span>`;
       for (let k = 0; k < bw; k++) rendered.add(i + k);
@@ -373,7 +396,7 @@ function _hxRenderRows(conn, from, to, force) {
         const ai = i + k;
         if (ai >= conn.size) { asciiHtml += '<span class="hx-a hx-a-empty"></span>'; continue; }
         const b = conn.byteAt(ai);
-        const az = b === 0 ? ' z' : '';
+        const az = (b === 0 && conn.zeroGray) ? ' z' : '';
         const ch = b >= 32 && b < 127 ? esc(String.fromCharCode(b)) : '.';
         asciiHtml += `<span class="hx-a${az}" data-hx-i="${ai}">${ch}</span>`;
       }
