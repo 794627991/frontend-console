@@ -301,7 +301,7 @@ function _hxRenderRows(conn, from, to, force) {
       const z = b === 0 ? ' z' : '';
       hexHtml += `<span class="hx-b${z}${isCur ? ' cur' : ''}${hit ? ' hit' : ''}" data-hx-i="${i}"><i class="hi">${hi}</i><i class="lo">${lo}</i></span>`;
       const ch = b >= 32 && b < 127 ? esc(String.fromCharCode(b)) : '.';
-      asciiHtml += `<span class="hx-a${isCur ? ' cur' : ''}${hit ? ' hit' : ''}" data-hx-i="${i}">${ch}</span>`;
+      asciiHtml += `<span class="hx-a${z}${isCur ? ' cur' : ''}${hit ? ' hit' : ''}" data-hx-i="${i}">${ch}</span>`;
     }
     row.innerHTML = `<span class="hx-off">${off.toString(16).toUpperCase().padStart(8, '0')}</span>` +
       `<span class="hx-hexcol">${hexHtml}</span><span class="hx-ascii">${asciiHtml}</span>`;
