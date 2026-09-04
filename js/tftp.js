@@ -23,7 +23,7 @@ async function refreshTftp() {
     try {
       const hr = await fetch('/api/httpfile/status');
       const hj = await hr.json();
-      if (hj.ok && !$('httpFilePort').dataset.editing) $('httpFilePort').textContent = ': ' + hj.port;
+      if (hj.ok && !$('httpFilePort').dataset.editing) $('httpFilePort').textContent = ' : ' + hj.port;
     } catch(e) {}
     if (j.root_dir && !$('tftpDirPath').dataset.editing) $('tftpDirPath').textContent = j.root_dir;
     // 两个独立容器分别脏检查：传输区含进度（bytes 变化必须刷新进度条），
@@ -180,7 +180,7 @@ $('httpFilePort').addEventListener('click', e => {
       const n = parseInt(v, 10);
       if (n >= 1 && n <= 65535) {
         _httpFilePort = n;
-        span.textContent = ': ' + n;
+        span.textContent = ' : ' + n;
         if (_tftpRunning) {  // 运行中改端口：只重启 HFS（TFTP 不受影响）
           fetch('/api/httpfile/stop', {method:'POST'}).then(() =>
             fetch('/api/httpfile/start', {method:'POST',
@@ -194,7 +194,7 @@ $('httpFilePort').addEventListener('click', e => {
       }
       showBanner('端口号无效（1-65535）', 4000, true);
     }
-    span.textContent = ': ' + old;
+    span.textContent = ' : ' + old;
   };
   input.addEventListener('keydown', ev => {
     ev.stopPropagation();
