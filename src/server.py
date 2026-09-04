@@ -441,10 +441,12 @@ def api_log_dir_open():
 
 
 # ---- 数据目录管理（顶栏机器人图标点开的设置面板）----
-# 数据目录收纳：logs/（串口日志）、files/（笔记）、webview_cache/（WebView2 缓存）。
+# 数据目录收纳：logs/（串口日志默认目录）、serial_logs/（历史日志）、files/（笔记）、
+# cmdlib.json（命令库）。webview_cache 不迁（纯缓存，关工具时自动清）。
 # 迁移铁律（用户强调）：迁移前后数据必须都能找到——采用「先复制后切换」而非「先删后搬」：
-# 复制全部内容 → 校验计数一致 → 写 config.data_dir 切换 → 旧目录完整保留不删（用户自查后手动删）。
-_DATA_SUBDIRS = ["logs", "files"]   # webview_cache 不迁（浏览器缓存无保留价值，太大了）
+# 复制全部内容 → 校验大小一致 → 写 config.data_dir 切换 → 旧目录完整保留不删（用户自查后手动删）。
+_DATA_SUBDIRS = ["logs", "serial_logs", "files"]
+_DATA_FILES = ["cmdlib.json"]
 
 @app.route("/api/data_dir")
 def api_data_dir_get():
@@ -467,6 +469,10 @@ def api_data_dir_get():
         st_ = _stat(os.path.join(DATA_DIR, s))
         subs[s] = st_
         total += st_["size"]
+    cmdlib = _stat(CMD_LIB_FILE)
+    subs["cmdlib.json"] = {"exists": cmdlib["exists"], "count": 1 if cmdlib["exists"] else 0,
+                          "size": cmdlib["size"]}
+    total += cmdlib["size"]
     return jsonify({"ok": True, "dir": DATA_DIR,
                     "default": _st._default_data_dir(),
                     "subdirs": subs, "total_size": total,
@@ -497,6 +503,12 @@ def api_data_dir_check():
         src = os.path.join(DATA_DIR, s)
         try:
             n = len(os.listdir(src))
+        except Exception:
+            n = 0
+        preview.append({"name": s, "count": n})
+    for s in _DATA_FILES:
+        try:
+            n = 1 if os.path.isfile(os.path.join(DATA_DIR, s)) else 0
         except Exception:
             n = 0
         preview.append({"name": s, "count": n})
@@ -544,6 +556,17 @@ def api_data_dir_migrate():
                         raise RuntimeError(f"校验失败: {df} 与源大小不一致")
                     n += 1
             copied.append({"name": s, "files": n})
+        # 单文件（cmdlib.json）
+        for s in _DATA_FILES:
+            sf = os.path.join(DATA_DIR, s)
+            if not os.path.isfile(sf):
+                continue
+            df = os.path.join(target, s)
+            if not os.path.exists(df):
+                shutil.copy2(sf, df)
+            if os.path.getsize(sf) != os.path.getsize(df):
+                raise RuntimeError(f"校验失败: {df} 与源大小不一致")
+            copied.append({"name": s, "files": 1})
     except Exception as e:
         return jsonify({"ok": False, "err": f"迁移失败（未切换，数据仍在原处）: {e}",
                         "copied": copied}), 500
@@ -558,6 +581,7 @@ def api_data_dir_migrate():
     _st.DATA_DIR = target
     _st.STATE_DIR = target
     _st.LOG_DIR = new_log_dir
+    _st.CMD_LIB_FILE = os.path.join(target, "cmdlib.json")
     global LOG_DIR
     LOG_DIR = new_log_dir
     try:

@@ -36,7 +36,7 @@ function _ddModal() {
             <input type="text" id="ddNewPath" class="dd-input" spellcheck="false" placeholder="如 D:\\前端控制台">
             <button class="btn ghost icon-btn" id="ddPick" title="浏览选择目录">📂</button>
           </div>
-          <div class="dd-sub">默认建议：<span id="ddDefault" style="font-family:var(--font-mono);"></span>（数据不放 C 盘；endpoint/config 仍留 home）</div>
+          <div class="dd-sub">默认建议：<span id="ddDefault" style="font-family:var(--font-mono);"></span>（数据跟工具目录走，备份工具目录即备份全部；endpoint/config 留 home）</div>
           <div id="ddCheckMsg" class="dd-msg"></div>
         </div>
         <div class="dd-actions">
@@ -60,7 +60,7 @@ function _ddModal() {
   m.querySelector('#ddPick').onclick = async () => {
     try {
       const dir = await pywebview.api.pick_dir();
-      if (dir) m.querySelector('#ddNewPath').value = dir, m.querySelector('#ddNewPath').dispatchEvent(new Event('change'));
+      if (dir) { m.querySelector('#ddNewPath').value = dir; m.querySelector('#ddNewPath').dispatchEvent(new Event('input')); }
     } catch(_) { showBanner('目录选择器暂不可用，可直接输入路径', 3000, true); }
   };
   // 输入即校验（check API：有效性+预览+告警）
@@ -85,30 +85,34 @@ function _ddModal() {
       } catch(e) { msgEl.innerHTML = `<span class="dd-err">✕ 校验失败: ${esc(String(e))}</span>`; }
     }, 400);
   });
-  // 迁移：确认弹窗 → 执行 → 结果（大文件多时同步请求会久，按钮先转「迁移中…」）
+  // 迁移：确认弹窗 → 进度面板（阶段动画）→ 结果
   m.querySelector('#ddMigrate').onclick = async () => {
     const target = inp.value.trim();
     if (!target) return;
     const ok = await _ddConfirm('迁移数据目录',
-      `把全部日志与笔记复制到：\n${target}\n\n复制并校验通过后自动切换，旧目录完整保留。继续？`);
+      `把全部日志、笔记、命令库复制到：\n${target}\n\n复制并校验通过后自动切换，旧目录完整保留。继续？`);
     if (!ok) return;
+    // 过程 UI：覆盖式进度面板（迁移在同步请求里跑，无法真流式报进度——
+    // 阶段动画按预期节奏推进，请求返回即终态，数据量小时最后一闪而过属正常）
+    const prog = _ddProgress();
+    prog.show(`正在复制到 ${target}`);
     const btn = m.querySelector('#ddMigrate');
     btn.disabled = true;
-    btn.textContent = '迁移中…（复制+校验，数据量大时会久）';
     try {
       const r = await fetch('/api/data_dir/migrate', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({dir: target})});
       const j = await r.json();
+      prog.hide();
+      btn.textContent = '迁移数据…';
       if (j.ok) {
-        btn.textContent = '迁移数据…';
         m.classList.remove('show');
         const parts = (j.copied || []).map(c => `${c.name}×${c.files}`).join('、');
         showBanner(`迁移完成（${parts}）。旧目录已保留，确认正常后可手动删除：${j.old_dir}`, 8000);
         _ddRefreshPanel(m);   // 面板若再开显示新目录
       } else {
-        btn.textContent = '迁移数据…';
         showBanner('迁移失败（未切换，数据仍在原处）：' + (j.err || '未知'), 6000, true);
       }
     } catch(e) {
+      prog.hide();
       btn.textContent = '迁移数据…';
       showBanner('迁移请求失败: ' + e, 5000, true);
     }
@@ -136,9 +140,49 @@ function openDataDirPanel() {
   m.classList.add('show');
 }
 
+// 迁移过程进度面板：环形动画 + 阶段文案（复制→校验→切换），请求返回即终态
+function _ddProgress() {
+  let m = $('ddProgressModal');
+  if (!m) {
+    m = document.createElement('div');
+    m.className = 'modal dd-prog';
+    m.id = 'ddProgressModal';
+    m.innerHTML = `
+      <div class="box" style="max-width:380px;">
+        <div class="dd-prog-body">
+          <div class="dd-prog-ring"><div class="dd-prog-dot"></div></div>
+          <div class="dd-prog-title" id="ddProgTitle">正在迁移…</div>
+          <div class="dd-prog-stage" id="ddProgStage">复制文件中…</div>
+          <div class="dd-prog-sub">复制并校验通过后自动切换，旧目录保留。请勿关闭窗口。</div>
+        </div>
+      </div>`;
+    document.body.appendChild(m);
+  }
+  const stages = ['复制文件中…', '逐文件校验中…', '切换数据目录…'];
+  let si = 0, timer = null;
+  return {
+    show(title) {
+      m.querySelector('#ddProgTitle').textContent = title || '正在迁移…';
+      m.querySelector('#ddProgStage').textContent = stages[0];
+      si = 0;
+      m.classList.add('show');
+      // 阶段文案按典型节奏推进（复制最久、校验次之、切换瞬时）；
+      // 请求返回后 hide() 终止计时器，不依赖动画走完
+      clearInterval(timer);
+      timer = setInterval(() => {
+        si = Math.min(si + 1, stages.length - 1);
+        m.querySelector('#ddProgStage').textContent = stages[si];
+      }, 4000);
+    },
+    hide() {
+      clearInterval(timer);
+      m.classList.remove('show');
+    },
+  };
+}
+
 // 应用风格确认弹窗（与 hex/editor 的 confirm 同款，不用原生 confirm）
-function _ddConfirm(title, msg) {
-  return new Promise(resolve => {
+function _ddConfirm(title, msg) {  return new Promise(resolve => {
     let m = $('ddConfirmModal');
     if (!m) {
       m = document.createElement('div');
@@ -186,7 +230,7 @@ function _ddConfirm(title, msg) {
     // 主题接口带回 config 是否已设 data_dir：见 /api/theme 扩展字段
     if (cfg.data_dir_set) return;   // 老用户已配置过，不弹
     const ok = await _ddConfirm('首次启动 · 选择数据目录',
-      `日志、笔记、缓存等数据默认保存到：\n${j.default}\n\n数据不放 C 盘（endpoint/config 仍留 home）。现在就查看或修改吗？`);
+      `日志、笔记、缓存等数据默认保存到：\n${j.default}\n\n数据跟工具目录走（备份工具目录即备份全部）。现在就查看或修改吗？`);
     if (ok) openDataDirPanel();
   } catch(_) {}
 })();

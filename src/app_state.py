@@ -19,20 +19,18 @@ HOME_DIR = os.path.join(os.path.expanduser("~"), ".serialconsole_pro")
 CONFIG_FILE = os.path.join(HOME_DIR, "config.json")
 
 def _default_data_dir():
-    """数据目录（日志/笔记/缓存）默认值（用户要求：杜绝 C 盘）。
-    首选 D:\\前端控制台，无 D 盘找 E/Z…第一个非 C 盘；只有 C 盘时才回 C 盘。
+    """数据目录（日志/笔记/缓存）默认值（用户口径修正：数据跟工具目录走）。
+    默认 = 工具所在目录\\data（源码运行=项目根\\data，exe=exe 旁\\data）——
+    备份工具目录即备份全部数据。仅当工具目录不可写时才退 C 盘用户目录。
     实际生效值可被 config.json 的 data_dir 覆盖（设置界面可改+迁移）。"""
-    def _ok(d):
-        try:
-            os.makedirs(d, exist_ok=True)
-            return os.access(d, os.W_OK)
-        except Exception:
-            return False
-    for i in list(range(ord("D"), ord("Z") + 1)):
-        cand = chr(i) + ":\\前端控制台"
-        if os.path.isdir(chr(i) + ":\\") and _ok(cand):
+    cand = os.path.join(BASE_DIR, "data")
+    try:
+        os.makedirs(cand, exist_ok=True)
+        if os.access(cand, os.W_OK):
             return cand
-    return os.path.join(HOME_DIR, "data")   # 只有 C 盘的兜底
+    except Exception:
+        pass
+    return os.path.join(HOME_DIR, "data")   # 兜底（工具目录只读等罕见场景）
 
 def _load_home_config():
     try:
@@ -52,10 +50,58 @@ STATE_DIR = DATA_DIR   # 兼容旧代码引用：STATE_DIR 语义=数据目录�
 
 # 日志目录：config 旧 log_dir（老用户自定义过）> 数据目录/logs
 DEFAULT_LOG_DIR = os.path.join(DATA_DIR, "logs")
-# 命令库持久化（跨端口/重启保留）——放工具所在目录，不放 C 盘用户目录：
-# 用户要求命令库跟工具走（工具目录可见、备份工具目录即备份命令库）。
-# PyInstaller exe 运行时 BASE_DIR 是 exe 所在目录（源码运行时是项目根目录）。
-CMD_LIB_FILE = os.path.join(BASE_DIR, "cmdlib.json")
+# 命令库持久化（跨端口/重启保留）——数据目录内（备份数据目录即备份全部用户数据）。
+# 旧版本在 BASE_DIR/cmdlib.json：启动自动归位到数据目录（不覆盖，删旧位置）。
+CMD_LIB_FILE = os.path.join(DATA_DIR, "cmdlib.json")
+
+def _migrate_legacy_user_data():
+    """旧位置用户数据自动归位到数据目录（防「找不到了」，不阻塞启动）：
+    - BASE_DIR/cmdlib.json → DATA_DIR/cmdlib.json
+    - BASE_DIR/serial_logs/ → DATA_DIR/serial_logs/（旧版本日志目录，
+      归位后同步把 config.log_dir 指到新位置——绝不丢日志库读取路径）
+    归位原则：新位置已有同名不覆盖；复制成功才删旧位置文件。"""
+    import shutil
+    try:
+        # cmdlib.json
+        legacy_cmd = os.path.join(BASE_DIR, "cmdlib.json")
+        if os.path.isfile(legacy_cmd) and os.path.normpath(legacy_cmd) != os.path.normpath(CMD_LIB_FILE):
+            if not os.path.exists(CMD_LIB_FILE):
+                shutil.copy2(legacy_cmd, CMD_LIB_FILE)
+            if os.path.exists(CMD_LIB_FILE):
+                os.remove(legacy_cmd)
+        # serial_logs/（旧日志目录）：复制全部 → 更新 config.log_dir → 删旧目录
+        legacy_logs = os.path.join(BASE_DIR, "serial_logs")
+        dst_logs = os.path.join(DATA_DIR, "serial_logs")
+        if os.path.isdir(legacy_logs) and os.path.normpath(legacy_logs) != os.path.normpath(dst_logs):
+            os.makedirs(dst_logs, exist_ok=True)
+            moved = 0
+            for fn in os.listdir(legacy_logs):
+                s, d = os.path.join(legacy_logs, fn), os.path.join(dst_logs, fn)
+                if os.path.exists(d):
+                    continue
+                try:
+                    shutil.copy2(s, d)
+                    moved += 1
+                except Exception:
+                    pass
+            if moved:
+                # config.log_dir 指旧位置（或未配置）→ 指到新位置；用户自定义指向别处的不动
+                cfg = _load_config()
+                old_ld = cfg.get("log_dir") or ""
+                if not old_ld or os.path.abspath(old_ld) == os.path.abspath(legacy_logs):
+                    cfg["log_dir"] = dst_logs
+                    _save_config(cfg)
+                shutil.rmtree(legacy_logs, ignore_errors=True)
+                # 模块级 LOG_DIR 已在 import 时定值，同步运行时
+                global LOG_DIR
+                if os.environ.get("SERIAL_LOG_DIR"):
+                    pass   # 环境变量优先级最高，不动
+                elif not old_ld or os.path.abspath(old_ld) == os.path.abspath(LOG_DIR):
+                    LOG_DIR = dst_logs
+    except Exception:
+        pass
+
+_migrate_legacy_user_data()
 
 # ---- 配置 ----
 def _load_config():
