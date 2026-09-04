@@ -219,7 +219,10 @@ function _ddConfirm(title, msg) {  return new Promise(resolve => {
   }
 })();
 
-// ---- 首启引导：config 无 data_dir 时弹一次（用户选择数据目录）----
+// ---- 首启引导：config 无 data_dir_prompted 时弹一次（用户选择数据目录）----
+// 坑（曾每次启动都弹）：早期拿「data_dir 是否存在」当首启依据——用户点取消/不迁移
+// 就永远不写 data_dir → 每次启动重弹。改用独立标记 data_dir_prompted：
+// 引导展示过一次即写入，与用户是否迁移解耦。
 (async function initDataDirGuide() {
   try {
     const r = await fetch('/api/data_dir');
@@ -227,8 +230,10 @@ function _ddConfirm(title, msg) {  return new Promise(resolve => {
     if (!j.ok) return;
     const r2 = await fetch('/api/theme');
     const cfg = await r2.json();
-    // 主题接口带回 config 是否已设 data_dir：见 /api/theme 扩展字段
-    if (cfg.data_dir_set) return;   // 老用户已配置过，不弹
+    if (cfg.data_dir_prompted) return;   // 引导已展示过，不再弹
+    // 立即标记（在弹窗前写：进程崩溃/用户强关也不会下次重弹）
+    fetch('/api/theme', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({data_dir_prompted: true})});
     const ok = await _ddConfirm('首次启动 · 选择数据目录',
       `日志、笔记、缓存等数据默认保存到：\n${j.default}\n\n数据跟工具目录走（备份工具目录即备份全部）。现在就查看或修改吗？`);
     if (ok) openDataDirPanel();

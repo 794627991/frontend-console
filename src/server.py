@@ -338,15 +338,21 @@ def api_logs():
 @app.route("/api/theme", methods=["GET", "POST"])
 def api_theme():
     """主题持久化。localStorage 按 origin（127.0.0.1:端口）隔离，而 Flask 每次
-    启动端口随机 → 换肤记忆永远读不到。走 config.json 跨端口稳定。"""
+    启动端口随机 → 换肤记忆永远读不到。走 config.json 跨端口稳定。
+    兼职通用小配置读写：GET 带回 data_dir_prompted（首启引导标记）；
+    POST body 含 data_dir_prompted 时写入（与主题字段互不干扰）。"""
     if request.method == "GET":
-        # data_dir_set：首启引导判断用（data-dir.js 读它决定是否弹引导）
-        return jsonify({"ok": True, "theme": _load_config().get("theme", "deepblue"),
-                        "data_dir_set": "data_dir" in _load_config()})
+        cfg = _load_config()
+        return jsonify({"ok": True, "theme": cfg.get("theme", "deepblue"),
+                        "data_dir_prompted": bool(cfg.get("data_dir_prompted"))})
     data = request.get_json(force=True) or {}
-    theme = (data.get("theme") or "").strip() or "deepblue"
-    _save_config({**_load_config(), "theme": theme})
-    return jsonify({"ok": True, "theme": theme})
+    if "data_dir_prompted" in data:
+        # 仅写引导标记的轻请求（不带 theme 字段）
+        _save_config({**_load_config(), "data_dir_prompted": bool(data["data_dir_prompted"])})
+    theme = (data.get("theme") or "").strip()
+    if theme:
+        _save_config({**_load_config(), "theme": theme})
+    return jsonify({"ok": True, "theme": theme or _load_config().get("theme", "deepblue")})
 
 
 # ============================================================
