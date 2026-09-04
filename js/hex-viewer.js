@@ -61,7 +61,7 @@ async function buildHexViewerTab(path, name) {
         </div>
         <div class="hx-main">
           <div class="hx-scroll" data-hx-scroll tabindex="0">
-            <div class="hx-head-row"><span class="hx-off-head"></span><span class="hx-col-heads">${Array.from({length: 16}, (_, i) => `<span class="hx-col-h">${i.toString(16).toUpperCase().padStart(2, '0')}</span>`).join('')}</span><span class="hx-ascii-head"></span></div>
+            <div class="hx-head-row"><span class="hx-off"></span><span class="hx-hexcol">${Array.from({length: 16}, (_, i) => `<span class="hx-b hx-b-head">${i.toString(16).toUpperCase().padStart(2, '0')}</span>`).join('')}</span><span class="hx-ascii"></span></div>
             <div class="hx-scroll-inner">
               <div class="hx-canvas" data-hx-canvas></div>
             </div>
@@ -174,13 +174,47 @@ async function buildHexViewerTab(path, name) {
   });
 
   // ---- 选中/编辑 ----
-  conn.canvas.addEventListener('click', e => {
+  // 选区（ImHex/HxD 同款）：单击=单字节光标；Shift+点击/拖选=多字节范围——
+  // 数据检视按选区解释（如选中 4 字节看 Uint32），而非固定从光标取
+  conn.selStart = -1; conn.selEnd = -1;   // 闭区间；-1 无选区
+  conn.canvas.addEventListener('mousedown', e => {
+    const cell = e.target.closest('[data-hx-i]');
+    if (!cell) return;
+    const i = +cell.dataset.hxI;
+    if (e.shiftKey && conn.cursor >= 0) {
+      conn.selStart = Math.min(conn.cursor, i);
+      conn.selEnd = Math.max(conn.cursor, i);
+    } else {
+      conn.cursor = i;
+      conn.selStart = i; conn.selEnd = i;
+      conn._dragging = true;   // 拖选
+    }
+    _hxPaintSel(conn);
+    _hxUpdateInfo(conn);
+    conn.scroll.focus();
+    e.preventDefault();
+  });
+  conn.canvas.addEventListener('mousemove', e => {
+    if (!conn._dragging) return;
+    const cell = e.target.closest('[data-hx-i]');
+    if (!cell) return;
+    const i = +cell.dataset.hxI;
+    if (i !== conn.selEnd) {
+      conn.selStart = Math.min(conn.cursor, i);
+      conn.selEnd = Math.max(conn.cursor, i);
+      _hxPaintSel(conn);
+      _hxUpdateInfo(conn);
+    }
+  });
+  document.addEventListener('mouseup', () => { conn._dragging = false; });
+  conn.canvas.addEventListener('dblclick', e => {
+    // 双击字节 = 取消选区回单光标
     const cell = e.target.closest('[data-hx-i]');
     if (!cell) return;
     conn.cursor = +cell.dataset.hxI;
-    _hxPaintCursor(conn);
+    conn.selStart = conn.selEnd = -1;
+    _hxPaintSel(conn);
     _hxUpdateInfo(conn);
-    conn.scroll.focus();
   });
   conn.scroll.addEventListener('keydown', e => {
     if (!conn.editable || conn.cursor < 0) return;
@@ -198,17 +232,19 @@ async function buildHexViewerTab(path, name) {
         _hxMarkDirty(conn);
         conn.cursor = Math.min(off + 1, conn.size - 1);
         _hxRenderRows(conn, conn.renderedFrom, conn.renderedTo, true);
-        _hxPaintCursor(conn);
+        _hxPaintSel(conn);
         _hxUpdateInfo(conn);
       }
-    } else if (e.key === 'ArrowRight') { e.preventDefault(); conn.cursor = Math.min(conn.cursor + 1, conn.size - 1); _hxPaintCursor(conn); _hxUpdateInfo(conn); }
-    else if (e.key === 'ArrowLeft') { e.preventDefault(); conn.cursor = Math.max(conn.cursor - 1, 0); _hxPaintCursor(conn); _hxUpdateInfo(conn); }
-    else if (e.key === 'ArrowDown') { e.preventDefault(); conn.cursor = Math.min(conn.cursor + ROW_BYTES, conn.size - 1); _hxPaintCursor(conn); _hxUpdateInfo(conn); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); conn.cursor = Math.max(conn.cursor - ROW_BYTES, 0); _hxPaintCursor(conn); _hxUpdateInfo(conn); }
+    } else if (e.key === 'ArrowRight') { e.preventDefault(); conn.cursor = Math.min(conn.cursor + 1, conn.size - 1); _hxPaintSel(conn); _hxUpdateInfo(conn); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); conn.cursor = Math.max(conn.cursor - 1, 0); _hxPaintSel(conn); _hxUpdateInfo(conn); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); conn.cursor = Math.min(conn.cursor + ROW_BYTES, conn.size - 1); _hxPaintSel(conn); _hxUpdateInfo(conn); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); conn.cursor = Math.max(conn.cursor - ROW_BYTES, 0); _hxPaintSel(conn); _hxUpdateInfo(conn); }
   });
 
   // ---- 工具栏 ----
-  wrap.querySelector('.log-viewer-toolbar').addEventListener('click', async e => {
+  // 工具栏 + 跳转/查找条按钮统一处理（绑 wrap——× 按钮在 gotoBar/findBar 内，
+  // 只绑 toolbar 收不到这些点击，曾导致「× 关不掉」）
+  wrap.addEventListener('click', async e => {
     const btn = e.target.closest('[data-hx-action]');
     if (!btn) return;
     const act = btn.dataset.hxAction;
@@ -274,22 +310,30 @@ function _hxRenderRows(conn, from, to, force) {
   conn.renderedFrom = from; conn.renderedTo = to;
 }
 
-// ---- 光标高亮：只切换 class，不重画 ----
-function _hxPaintCursor(conn) {
-  conn.canvas.querySelectorAll('.hx-b.cur, .hx-a.cur').forEach(el => el.classList.remove('cur'));
-  if (conn.cursor < 0) return;
-  conn.canvas.querySelectorAll(`[data-hx-i="${conn.cursor}"]`).forEach(el => el.classList.add('cur'));
-  const y = Math.floor(conn.cursor / 16) * conn.rowHeight;
-  if (y < conn.scroll.scrollTop) conn.scroll.scrollTop = y;
-  else if (y + conn.rowHeight > conn.scroll.scrollTop + conn.scroll.clientHeight)
-    conn.scroll.scrollTop = y + conn.rowHeight - conn.scroll.clientHeight;
+// ---- 选区高亮：重画当前窗口（含 cur/sel/hit 三态） ----
+function _hxPaintSel(conn) {
+  // 光标与选区分开：光标 cur，选区范围 sel
+  const s = conn.selStart, t = conn.selEnd;
+  const inSel = i => s >= 0 && t >= s && i >= s && i <= t;
+  conn.canvas.querySelectorAll('[data-hx-i]').forEach(el => {
+    const i = +el.dataset.hxI;
+    el.classList.toggle('cur', i === conn.cursor);
+    el.classList.toggle('sel', inSel(i) && (s !== t || s === conn.cursor ? true : false));
+  });
+  // 选区行滚进视图（光标行）
+  if (conn.cursor >= 0) {
+    const y = Math.floor(conn.cursor / 16) * conn.rowHeight;
+    if (y < conn.scroll.scrollTop) conn.scroll.scrollTop = y;
+    else if (y + conn.rowHeight > conn.scroll.scrollTop + conn.scroll.clientHeight)
+      conn.scroll.scrollTop = y + conn.rowHeight - conn.scroll.clientHeight;
+  }
 }
 
 function _hxScrollToOffset(conn, off) {
   conn.scroll.scrollTop = Math.floor(off / 16) * conn.rowHeight;
   conn.cursor = off;
   conn.render();
-  _hxPaintCursor(conn);
+  _hxPaintSel(conn);
   _hxUpdateInfo(conn);
 }
 
@@ -305,7 +349,9 @@ function _hxRenderInspector(conn) {
   const el = conn.inspEl;
   if (!el) return;
   if (conn.cursor < 0) { el.innerHTML = '<div class="hx-insp-empty">点击字节查看</div>'; return; }
-  const off = conn.cursor;
+  // 优先按选区解释：选中多字节时从 selStart 取数（字节范围选择，HxD/ImHex 同款）
+  const hasSel = conn.selStart >= 0 && conn.selEnd > conn.selStart;
+  const off = hasSel ? conn.selStart : conn.cursor;
   const n = (bytes) => {   // 取 off 起的 bytes 字节（跨文件尾截断）
     const out = [];
     for (let i = 0; i < bytes && off + i < conn.size; i++) out.push(conn.byteAt(off + i));
@@ -376,8 +422,14 @@ function _hxRenderInspector(conn) {
     row('Float64', f64 === null ? null : (isFinite(f64) ? f64.toPrecision(15) : 'Inf/NaN'), 'IEEE754 双精度') +
     row('RGBA8', rgba, '32 位颜色（大端 RGBA 排列）') +
     row('Time32', time32, 'unix 秒时间戳') +
-    row('HEX', hex16, '光标起 16 字节') +
-    row('ASCII', a16, '光标起 16 字符（不可打印为点）');
+    row('HEX', hex16, (hasSel ? '选区起' : '光标起') + ' 16 字节') +
+    row('ASCII', a16, (hasSel ? '选区起' : '光标起') + ' 16 字符（不可打印为点）');
+  // 顶部选区范围信息条（有选区时显示）
+  if (hasSel) {
+    const cnt = conn.selEnd - conn.selStart + 1;
+    el.insertAdjacentHTML('afterbegin',
+      `<div class="hx-insp-sel">选区 0x${conn.selStart.toString(16).toUpperCase()} ~ 0x${conn.selEnd.toString(16).toUpperCase()} (${cnt} 字节)</div>`);
+  }
 }
 // bfloat16：高 16 位 = float32 的高 16 位（脑浮点，ImHex 同款）
 function _hxBFloat16(bs, be) {
