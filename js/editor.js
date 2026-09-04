@@ -531,11 +531,20 @@ function _edRenderOutline(conn) {
       }
     };
     // tree-sitter 支持 4 类语言（c/sh/py/json 系）：异步解析，结果回来再渲染
-    if (typeof tsOutline === 'function' && TS_LANG_EXT_HAS(ext)) {
+    if (typeof tsOutline === 'function' && typeof TS_LANG_EXT_HAS === 'function' && TS_LANG_EXT_HAS(ext)) {
       tsOutline(src, ext).then(entries => {
+        if (entries && entries.err) {
+          // 语法树失败：面板显示原因（不再无声回落——上次 Language 导出写错就无声了）
+          conn.outlineList.innerHTML = `<div class="ed-outline-empty">语法树解析失败<br>${esc(entries.err)}</div>`;
+          conn.outlineStats.innerHTML = '';
+          return;
+        }
         if (entries && entries.length) renderEntries(entries);
         else finishCode();
-      }).catch(finishCode);
+      }).catch(e => {
+        conn.outlineList.innerHTML = `<div class="ed-outline-empty">语法树解析失败<br>${esc(String(e))}</div>`;
+        conn.outlineStats.innerHTML = '';
+      });
       return;
     }
     if (_CODE_OUTLINE_EXT[ext]) { finishCode(); return; }

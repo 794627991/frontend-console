@@ -33,13 +33,14 @@ const _tsLoading = {};         // 加载中 promise（防并发重复加载）
 
 // web-tree-sitter 浏览器全局名确认：package.json main 是 tree-sitter.cjs（UMI 不行），
 // tree-sitter.js 是 ESM——script 加载后全局是 Parser？先动态 import ESM 更干净。
-let _tsMod = null;
+let _tsMod = null;             // tree-sitter ESM 模块（命名导出 Parser/Language，无 default）
 async function tsInit() {
   if (_tsParser) return _tsParser;
   if (!_tsMod) {
     _tsMod = await import('/vendor/tree-sitter/package/tree-sitter.js');
   }
-  const Parser = _tsMod.default || _tsMod.Parser;
+  const Parser = _tsMod.Parser;
+  if (!Parser) throw new Error('tree-sitter ESM 未导出 Parser');
   await Parser.init({
     locateFile: () => '/vendor/tree-sitter/package/tree-sitter.wasm',
   });
@@ -53,9 +54,12 @@ async function tsLoadLang(name) {
   const wasmPath = _TS_WASM[name];
   if (!wasmPath) return null;
   _tsLoading[name] = (async () => {
-    const parser = await tsInit();
-    const Parser = _tsMod.default || _tsMod.Parser;
-    const lang = await Parser.Language.load(wasmPath);
+    await tsInit();
+    // Language 是模块的独立命名导出——不是 Parser 的静态属性
+    // （曾写 Parser.Language.load，undefined.load 抛错被吞 → 永远走正则兜底）
+    const Language = _tsMod.Language;
+    if (!Language) throw new Error('tree-sitter ESM 未导出 Language');
+    const lang = await Language.load(wasmPath);
     return lang;
   })();
   const lang = await _tsLoading[name];
@@ -130,7 +134,11 @@ async function tsOutline(src, ext) {
   try {
     lang = await tsLoadLang(langName);
     parser = await tsInit();
-  } catch(e) { return null; }
+  } catch(e) {
+    // 不再静默：加载失败时控制台留痕 + 大纲显示原因（否则永远无声回落正则，无从排查）
+    console.error('[大纲] tree-sitter 初始化失败:', e);
+    return { err: String(e && e.message || e) };
+  }
   if (!lang) return null;
   try {
     parser.setLanguage(lang);
@@ -165,5 +173,8 @@ async function tsOutline(src, ext) {
     };
     walk(tree.rootNode, 0);
     return out;
-  } catch(e) { return null; }
+  } catch(e) {
+    console.error('[大纲] tree-sitter 解析失败:', e);
+    return { err: String(e && e.message || e) };
+  }
 }
