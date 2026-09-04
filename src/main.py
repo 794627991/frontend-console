@@ -10,6 +10,11 @@
 import os, sys, threading, json, time
 import urllib.request
 
+# 所有源码都在 src/ 下，import src.* 需要项目根在 sys.path（python src/main.py 时根不在 path）
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
 # ---- 单实例锁 ----
 import ctypes
 MUTEX_NAME = "Global\\SerialConsolePro_SingleInstance"
@@ -131,7 +136,7 @@ def _run_mcp_mode():
         try: sys.stdout = open(1, 'w', encoding='utf-8')
         except Exception: pass
     # 延迟 import，避免 GUI 模式加载 mcp_server 的依赖
-    import mcp_server
+    from src import mcp_server
     mcp_server.main()
 
 
@@ -169,7 +174,7 @@ def main():
     _server_mod = {}
     def _preload_server():
         try:
-            from server import app, start_background
+            from src.server import app, start_background
             _server_mod["app"] = app
             _server_mod["start_background"] = start_background
         except Exception as e:
@@ -189,7 +194,7 @@ def main():
         raise _server_mod["err"]
     if "app" not in _server_mod:
         # 预导入超时（>10s），直接在主线程同步导入兜底，避免 KeyError 卡死启动
-        from server import app as _app, start_background as _sb
+        from src.server import app as _app, start_background as _sb
         _server_mod["app"] = _app
         _server_mod["start_background"] = _sb
     app = _server_mod["app"]
@@ -327,7 +332,7 @@ def main():
 
     # 窗口关闭时清理所有串口
     def on_closing():
-        from server import close_all_ports
+        from src.server import close_all_ports
         close_all_ports()
         clear_endpoint()
 

@@ -150,6 +150,12 @@ $('aiToggle').onclick = () => {
   p.classList.toggle('collapsed');
   $('aiToggle').textContent = p.classList.contains('collapsed') ? '‹' : '›';
 };
+// 折叠把手：点击展开（折叠态唯一入口）
+$('aiRailHandle').onclick = () => {
+  const p = $('aiPanel');
+  p.classList.remove('collapsed');
+  $('aiToggle').textContent = '›';
+};
 // 折叠后点击图标重新展开
 $('aiPanel').querySelector('.ai-icon').addEventListener('click', () => {
   const p = $('aiPanel');

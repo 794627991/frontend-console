@@ -6,14 +6,14 @@
       并通过它的 HTTP API 实时查看/发送串口数据。
 
 用法：
-  python serial_cli.py                  # 概览：服务地址 + 各串口状态 + 最近输出
-  python serial_cli.py status           # 仅状态
-  python serial_cli.py ports            # 可用串口 + 已连接
-  python serial_cli.py buf COM10 50     # 看指定串口最近 50 行
-  python serial_cli.py recent 80        # 所有串口各取最近 80 行
-  python serial_cli.py send COM10 "cat /proc/cpuinfo"   # 发命令（自动加回车）
-  python serial_cli.py raw  COM10 3     # 发原始字节（如 Ctrl-C=3）
-  python serial_cli.py watch            # 实时跟随输出（轮询，Ctrl-C 退出）
+  python src/serial_cli.py                  # 概览：服务地址 + 各串口状态 + 最近输出
+  python src/serial_cli.py status           # 仅状态
+  python src/serial_cli.py ports            # 可用串口 + 已连接
+  python src/serial_cli.py buf COM10 50     # 看指定串口最近 50 行
+  python src/serial_cli.py recent 80        # 所有串口各取最近 80 行
+  python src/serial_cli.py send COM10 "cat /proc/cpuinfo"   # 发命令（自动加回车）
+  python src/serial_cli.py raw  COM10 3     # 发原始字节（如 Ctrl-C=3）
+  python src/serial_cli.py watch            # 实时跟随输出（轮询，Ctrl-C 退出）
 
 服务发现：读 ~/.serialconsole_pro/endpoint.json（工具启动时写入）。
 工具没开时提示用户启动桌面上的「串口控制台Pro.exe」。
@@ -23,12 +23,13 @@ import os, sys, json, time, urllib.request, urllib.error, urllib.parse, subproce
 STATE_DIR = os.path.join(os.path.expanduser("~"), ".serialconsole_pro")
 ENDPOINT_FILE = os.path.join(STATE_DIR, "endpoint.json")
 
-# 工具 exe 的几个候选位置：D:\AI、桌面、源码目录
+# 工具 exe 的几个候选位置：dist、桌面
 EXE_CANDIDATES = [
     r"D:\AI\串口控制台Pro\dist\串口控制台Pro.exe",
     os.path.join(os.path.expanduser("~"), "Desktop", "串口控制台Pro.exe"),
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "dist", "串口控制台Pro.exe"),
 ]
+# 自动启动用 run.bat（源码运行，cd 到项目根后 pythonw src/main.py）
+RUN_BAT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "run.bat")
 
 def find_endpoint():
     """返回 (url, info) 或 (None, None)。"""
@@ -58,21 +59,31 @@ def find_exe():
 
 def ensure_running(auto_start=True, timeout=25):
     """确保工具后端在运行。返回 url 或 None。
-    auto_start=True 时，若工具未运行则自动启动 exe 并等就绪。"""
+    auto_start=True 时，若工具未运行则自动启动并等就绪。
+    v0.3 测试版优先用 run.bat 启动源码版（而非主目录 exe），避免连错实例。"""
     url, _ = find_endpoint()
     if url:
         return url
     if not auto_start:
         return None
-    exe = find_exe()
-    if not exe:
-        return None
-    print(f"【串口控制台 Pro 未运行】正在启动: {exe}", file=sys.stderr)
+    # 优先用本目录 run.bat 启动 v0.3 源码版
+    start_cmd = None
+    start_cwd = None
+    if os.path.isfile(RUN_BAT):
+        start_cmd = ["cmd", "/c", RUN_BAT]
+        start_cwd = os.path.dirname(RUN_BAT)
+    else:
+        exe = find_exe()
+        if not exe:
+            return None
+        start_cmd = [exe]
+        start_cwd = os.path.dirname(exe)
+    print(f"【串口控制台 Pro v0.3 未运行】正在启动: {start_cmd}", file=sys.stderr)
     try:
         # 用 Popen 启动 GUI 进程，不阻塞
         subprocess.Popen(
-            [exe],
-            cwd=os.path.dirname(exe),
+            start_cmd,
+            cwd=start_cwd,
             close_fds=True,
             creationflags=getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
         )

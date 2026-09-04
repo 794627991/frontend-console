@@ -116,7 +116,7 @@ def static_files(fn):
     return send_from_directory(RES_DIR, fn)
 
 # 第三方库本地托管（Monaco Editor / markdown-it，离线可用，不走 CDN）
-VENDOR_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor")
+VENDOR_DIR = os.path.join(BASE_DIR, "vendor")
 @app.route("/vendor/<path:fn>")
 def vendor_files(fn):
     return send_from_directory(VENDOR_DIR, fn)

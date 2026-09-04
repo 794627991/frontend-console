@@ -2,13 +2,14 @@
 
 
 a = Analysis(
-    ['D:/AI/串口控制台Pro/main.py'],
+    ['D:/AI/串口控制台Pro/src/main.py'],
     pathex=[],
     binaries=[],
     datas=[('index.html', '.'), ('style.css', '.'), ('js', 'js'), ('app.ico', '.'), ('vendor', 'vendor')],
-    hiddenimports=['paramiko', 'mcp_server',
-        'src', 'src.app_state', 'src.ansi_utils', 'src.base_conn',
-        'src.serial_conn', 'src.ssh_conn', 'src.log_index', 'src.tftp'],
+    hiddenimports=['paramiko',
+        'src', 'src.main', 'src.server', 'src.mcp_server', 'src.app_state', 'src.ansi_utils', 'src.base_conn',
+        'src.serial_conn', 'src.ssh_conn', 'src.log_index', 'src.tftp',
+        'src.httpfile', 'src.editor_files', 'src.hex_files'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

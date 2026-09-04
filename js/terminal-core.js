@@ -30,6 +30,7 @@ function buildTerminal(portId, meta) {
       <div class="term-search-pane">
         <div class="term-search-head">
           <input type="text" class="term-search-input" placeholder="查找关键字…（回车搜索全部，Shift+回车跳下一个）" autocomplete="off">
+          <input type="text" class="term-search-exclude" placeholder="排除（多个用 | 分隔，支持正则）" title="命中行含任一排除模式则剔除。多个用 | 分隔，支持正则。例：bsp.err | timeout" autocomplete="off">
           <span class="term-search-count"></span>
           <button class="btn ghost term-search-collapse" title="折叠分栏">▾</button>
         </div>
@@ -103,9 +104,10 @@ function buildTerminal(portId, meta) {
     // 串口搜索分栏（仿日志查看器）
     termSearchPane: wrap.querySelector('.term-search-pane'),
     termSearchInput: wrap.querySelector('.term-search-input'),
+    termSearchExclude: wrap.querySelector('.term-search-exclude'),
     termSearchResults: wrap.querySelector('.term-search-results'),
     termSearchCount: wrap.querySelector('.term-search-count'),
-    termSearchState: { q: '', results: [], idx: 0 },
+    termSearchState: { q: '', ex: '', results: [], idx: 0 },
     termSplitMove: null, termSplitUp: null,
   };
 
@@ -246,6 +248,8 @@ function buildTerminal(portId, meta) {
     const isShown = conn.termSearchPane.style.display !== 'none';
     toggleTermSearchPane(conn, !isShown);
   };
+  // 排除框回车触发搜索（与关键字框一致）；改动时不清空，只等回车重新搜
+  conn.termSearchExclude.addEventListener('keydown', e => { if (e.key === 'Enter') doTermSearch(conn); });
 
   // 加载历史缓冲（写入 xterm）
   loadBuffer(portId, conn);

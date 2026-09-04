@@ -6,6 +6,7 @@
 import os, sys, json, threading, itertools
 
 # ---- 路径常量 ----
+# app_state 在 src/ 下，上溯两层到项目根（server/main 等也从 src/ 以 src.* 引用本模块）
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 def _resource_base():
     return getattr(sys, "_MEIPASS", BASE_DIR)

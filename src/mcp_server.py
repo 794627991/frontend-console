@@ -16,7 +16,7 @@ Claude Code 配置（~/.claude.json 或项目 .mcp.json）:
   "mcpServers": {
     "serial-console-pro": {
       "command": "python",
-      "args": ["D:\\AI\\串口控制台Pro\\mcp_server.py"],
+      "args": ["D:\\AI\\串口控制台Pro\\src\\mcp_server.py"],
       "env": { "PYTHONIOENCODING": "utf-8" }
     }
   }
@@ -36,13 +36,15 @@ STATE_DIR = os.path.join(os.path.expanduser("~"), ".serialconsole_pro")
 ENDPOINT_FILE = os.path.join(STATE_DIR, "endpoint.json")
 
 # 工具没开时自动拉起的候选入口
-# 优先源码运行（main.py，始终最新），exe 作为后备（exe 可能是旧版本，缺新 API）
+# 优先源码运行（src/main.py，始终最新），exe 作为后备（exe 可能是旧版本，缺新 API）
+_SRC_DIR = os.path.dirname(os.path.abspath(__file__))
+_ROOT_DIR = os.path.dirname(_SRC_DIR)
 _EXE_CANDIDATES = [
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "main.py"),  # 源码优先
+    os.path.join(_SRC_DIR, "main.py"),                                  # 源码优先
     r"D:\AI\串口控制台Pro\dist\串口控制台Pro.exe",                       # exe 后备
     os.path.join(os.path.expanduser("~"), "Desktop", "串口控制台Pro.exe"),
 ]
-_RUN_BAT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "run.bat")
+_RUN_BAT = os.path.join(_ROOT_DIR, "run.bat")
 
 
 def _find_endpoint():

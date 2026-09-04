@@ -16,6 +16,7 @@ loadPorts();
 refreshGlobalStatus();
 connectAiSSE();
 refreshMcpInfo();
+loadRecentList();  // 最近打开列表（SSH/串口/文件 快捷重开）
 renderCmdPane();  // 命令 tab 是默认激活面板，启动即渲染（否则空面板要切走再切回才刷新）
 $('btnNewFile').onclick = newEditorFile;  // 新建文本文件（编辑器 tab）
 $('btnFiles').onclick = showFilesModal;  // 文件列表弹窗（打开已有文件）

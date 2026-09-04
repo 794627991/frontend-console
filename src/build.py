@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
-"""PyInstaller 打包脚本：串口控制台 Pro → 单 exe，无黑框。"""
+"""PyInstaller 打包脚本：串口控制台 Pro → 单 exe，无黑框。
+源码整理后入口在 src/main.py，资源（index.html/js/vendor/app.ico/spec）在项目根。"""
 import os, sys, subprocess, shutil
 
-BASE = os.path.dirname(os.path.abspath(__file__))
+BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # 项目根
 APP_NAME = "串口控制台Pro"
-MAIN = os.path.join(BASE, "main.py")
+MAIN = os.path.join(BASE, "src", "main.py")
 ICON = os.path.join(BASE, "app.ico")
 
 def build():

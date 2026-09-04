@@ -61,7 +61,7 @@ class SSHConnection(BaseConnection):
         if self.key_path:
             kwargs["key_filename"] = self.key_path
         else:
-            kwargs["password"] = self.password
+            kwargs["password"] = self.password or None
         client.connect(**kwargs)
         self._client = client
         # 交互式 shell（PTY），匹配嵌入式设备 dropbear/uboot-over-ssh 场景
