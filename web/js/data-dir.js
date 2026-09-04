@@ -45,7 +45,7 @@ function _ddModal() {
           <button class="btn ghost" id="ddCancel">取消</button>
           <button class="btn primary" id="ddMigrate" disabled>迁移数据</button>
         </div>
-        <div class="dd-note" id="ddNote">迁移规则：先完整复制并逐文件校验，全部通过才切换；失败不动原目录；旧目录保留，确认后可手动删。</div>
+        <div class="dd-note" id="ddNote">迁移规则：命令库与笔记逐文件严格校验（不完整即失败不切换）；日志尽力复制；缓存自动重建。完成后自动删除旧目录。</div>
       </div>
     </div>`;
   document.body.appendChild(m);
@@ -90,7 +90,7 @@ function _ddModal() {
     const target = inp.value.trim();
     if (!target) return;
     const ok = await _ddConfirm('迁移数据目录',
-      `把全部日志、笔记、命令库复制到：\n${target}\n\n复制并校验通过后自动切换，旧目录完整保留。继续？`);
+      `把命令库、笔记、日志复制到：\n${target}\n\n命令库与笔记严格校验（必须完整），日志尽力复制；完成后自动切换并删除旧目录。继续？`);
     if (!ok) return;
     // 过程 UI：覆盖式进度面板（迁移在同步请求里跑，无法真流式报进度——
     // 阶段动画按预期节奏推进，请求返回即终态，数据量小时最后一闪而过属正常）
@@ -105,8 +105,8 @@ function _ddModal() {
       btn.textContent = '迁移数据';
       if (j.ok) {
         m.classList.remove('show');
-        const parts = (j.copied || []).map(c => `${c.name}×${c.files}`).join('、');
-        showBanner(`迁移完成（${parts}）。旧目录已保留，确认正常后可手动删除：${j.old_dir}`, 8000);
+        const parts = (j.copied || []).map(c => `${c.name}×${c.files}${c.skipped ? `（跳过${c.skipped}）` : ''}`).join('、');
+        showBanner(`迁移完成（${parts}），旧目录已自动删除`, 6000);
         _ddRefreshPanel(m);   // 面板若再开显示新目录
       } else {
         showBanner('迁移失败（未切换，数据仍在原处）：' + (j.err || '未知'), 6000, true);

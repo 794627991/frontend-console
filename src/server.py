@@ -552,8 +552,9 @@ def api_data_dir_migrate():
             src = os.path.join(DATA_DIR, s)
             if not os.path.isdir(src):
                 continue
-            # webview_cache 特例：运行中 WebView2 锁定部分文件（Cookies/LOCK 等），
-            # 锁定文件跳过不报错（纯缓存，新位置自动重建）；用户数据目录必须严格校验
+            # 分级（用户口径）：cmdlib/笔记 严格校验（必须完整）；logs 尽力复制；
+            # webview_cache 仅搬壳（关工具自动清，不值得复制 300M）
+            strict = (s == "files")
             tolerant = (s == "webview_cache")
             dst = os.path.join(target, s)
             os.makedirs(dst, exist_ok=True)
@@ -572,9 +573,13 @@ def api_data_dir_migrate():
                         if os.path.getsize(sf) != os.path.getsize(df):
                             raise RuntimeError(f"校验失败: {df} 与源大小不一致")
                         n += 1
-                    except (PermissionError, OSError) as e:
-                        if tolerant:
-                            skipped += 1   # 锁定缓存文件，跳过
+                    except RuntimeError:
+                        if strict:
+                            raise   # 笔记内容不一致：迁移失败（用户红线：笔记必须完整）
+                        skipped += 1   # log 单文件异常跳过
+                    except (PermissionError, OSError):
+                        if tolerant or not strict:
+                            skipped += 1
                         else:
                             raise
             copied.append({"name": s, "files": n, **({"skipped": skipped} if skipped else {})})
@@ -613,9 +618,12 @@ def api_data_dir_migrate():
         _log_index_cache.clear()
     cfg = {**_load_config(), "data_dir": target, "log_dir": new_log_dir}
     _save_config(cfg)
+    # ---- 校验已过（cmdlib/笔记严格校验，log 尽力、缓存仅搬壳），直接删旧目录 ----
+    # 用户口径：不要旧目录备份，迁移完自动删。锁定文件残留由关工具自动清。
+    shutil.rmtree(old_data_dir, ignore_errors=True)
     return jsonify({"ok": True, "dir": target, "copied": copied,
-                    "old_dir": old_data_dir,
-                    "note": "旧目录已完整保留，确认新位置工作正常后可手动删除"})
+                    "deleted": True, "residual": 0,
+                    "old_dir": old_data_dir, "note": "旧目录已删除"})
 
 @app.route("/api/open_log_file", methods=["POST"])
 def api_open_log_file():
