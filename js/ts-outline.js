@@ -157,14 +157,21 @@ async function tsOutline(src, ext) {
         return key ? key.replace(/^"|"$/g, '') : null;
       };
       const walkJson = (node, depth) => {
-        if (depth > 8 || out.length > 2000) return;
+        if (depth > 12 || out.length > 2000) return;
         for (const k of node.namedChildren) {
           if (k.type === 'pair') {
             const key = keyOf(k);
+            // 值键显示值（叶子）：pair 结构 key(:) value——value 是最后一个命名子节点
+            let val = null;
+            const named = k.namedChildren.filter(v => v.type !== 'object' && v.type !== 'array');
+            if (named.length > 1) {
+              val = named[named.length - 1].text;
+              if (val && val.length > 24) val = val.slice(0, 24) + '…';
+            }
             // kids：pair 的 value 含非空 object/array 且未超深度限——折叠箭头判定用
-            const kids = depth < 8 && k.namedChildren.some(v =>
+            const kids = depth < 12 && k.namedChildren.some(v =>
               (v.type === 'object' || v.type === 'array') && v.namedChildren.some(x => x.type === 'pair'));
-            if (key) out.push({ level: Math.min(depth, 3), depth, text: key, line: k.startPosition.row + 1, kind: depth === 1 ? '键' : '子键', kids });
+            if (key) out.push({ level: depth, depth, text: val === null ? key : key + '  ' + val, line: k.startPosition.row + 1, kind: depth === 1 ? '键' : '子键', kids });
             // pair 的 value 是嵌套 object/array——必须进 pair 内部找（曾只扫顶层直接子，嵌套全丢）
             for (const v of k.namedChildren) {
               if (v.type === 'object' || v.type === 'array') walkJson(v, depth + 1);

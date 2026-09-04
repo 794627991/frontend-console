@@ -93,7 +93,7 @@ function buildEditorTab(name, content, extPath) {
       </div>
       <div class="ed-main">
         <div class="ed-outline" style="display:none;">
-          <div class="ed-outline-head">大纲</div>
+          <div class="ed-outline-head">大纲<span class="ed-outline-actions" style="display:none;"><span class="ed-outline-act" data-act="collapseAll" title="全部折叠">⤠</span><span class="ed-outline-act" data-act="expandAll" title="全部展开">⤡</span></span></div>
           <div class="ed-outline-list"></div>
           <div class="ed-outline-stats"></div>
         </div>
@@ -511,10 +511,12 @@ function _edRenderOutline(conn) {
       if (!entries || !entries.length) return false;
       // json 大纲：条目带 kids 字段（tsOutline 递归键标记），按嵌套关系可折叠
       const foldable = entries.some(e => e.kids !== undefined);
+      const _actions = conn.outline.querySelector('.ed-outline-actions');
+      if (_actions && !foldable) _actions.style.display = 'none';   // 代码/md 大纲无折叠按钮
       conn.outlineList.innerHTML = entries.map((e, i) => {
         const arrow = foldable && e.kids
           ? `<span class="ed-outline-fold" data-i="${i}">▾</span>` : (foldable ? '<span class="ed-outline-fold" style="visibility:hidden">▾</span>' : '');
-        return `<div class="ed-outline-item${foldable ? ' ed-outline-foldable' : ''}" data-i="${i}" style="padding-left:${(e.level-1)*12+8}px">${arrow}${esc((e.kind ? e.kind + ' ' : '') + e.text)}</div>`;
+        return `<div class="ed-outline-item${foldable ? ' ed-outline-foldable' : ''}" data-i="${i}" style="padding-left:${(e.level-1)*12+8}px">${arrow}${esc(foldable ? (e.text || '') : (e.kind ? e.kind + ' ' : '') + e.text)}</div>`;
       }).join('');
       // 折叠状态：隐藏所有 depth > 折叠键 depth 的后续条目，直到遇到 depth <= 该值的键
       const applyFold = () => {
@@ -540,6 +542,19 @@ function _edRenderOutline(conn) {
           };
         });
         applyFold();
+        // 标题栏「全部折叠/展开」按钮：只对 json 树大纲显示（代码大纲无折叠）
+        const actions = conn.outline.querySelector('.ed-outline-actions');
+        if (actions) {
+          actions.style.display = 'inline-flex';
+          actions.querySelectorAll('.ed-outline-act').forEach(btn => {
+            btn.onclick = () => {
+              const collapse = btn.dataset.act === 'collapseAll';
+              entries.forEach(e => { if (e.kids) e._folded = collapse; });
+              conn.outlineList.querySelectorAll('.ed-outline-fold:not([style])').forEach(f => { f.textContent = collapse ? '▸' : '▾'; });
+              applyFold();
+            };
+          });
+        }
       }
       conn.outlineList.querySelectorAll('.ed-outline-item').forEach(item => {
         item.onclick = () => {
