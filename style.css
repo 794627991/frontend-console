@@ -468,6 +468,12 @@
   .hx-b.sel { background: rgba(79,143,255,0.18); }
   .hx-b.hit { background: rgba(255,214,102,0.3); }
   .hx-b-empty { display: inline-block; width: 17px; }
+  /* 查看方式分组（HxD 同款）：每组等宽，组宽 = bw×字节宽 + 组内间隔 */
+  .hx-b-g2 { width: 38px; } .hx-b-g4 { width: 80px; } .hx-b-g8 { width: 164px; }
+  .hx-b-g2, .hx-b-g4, .hx-b-g8 { text-align: left; }
+  .hx-view-sel { font-size: 12px; font-family: var(--font-mono);
+    background: var(--bg-input); border: 1px solid var(--border); border-radius: 4px;
+    color: var(--fg); padding: 2px 4px; outline: none; }
   .hx-ascii { display: flex; padding-left: 14px; flex-shrink: 0; }
   .hx-a { color: var(--fg); cursor: pointer; }
   .hx-a.cur { background: rgba(0,212,255,0.25); outline: 1px solid var(--accent); }

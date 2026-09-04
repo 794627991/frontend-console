@@ -44,6 +44,16 @@ async function buildHexViewerTab(path, name) {
         <button class="lv-btn" data-hx-action="save" title="Ctrl+S">💾 保存</button>
         <button class="lv-btn" data-hx-action="goto" title="跳转偏移（支持 0x 前缀）">⤓ 跳转</button>
         <button class="lv-btn" data-hx-action="find" title="Ctrl+F 搜索（hex 字节或文本）">🔍 搜索</button>
+        <select class="hx-view-sel" data-hx-view title="查看方式：进制 × 位宽分组（HxD 同款）">
+          <option value="8" selected>十六进制(8 位)</option>
+          <option value="16">十六进制(16 位)</option>
+          <option value="32">十六进制(32 位)</option>
+          <option value="64">十六进制(64 位)</option>
+          <option value="u8">无符号十进制(8 位)</option>
+          <option value="u16">无符号十进制(16 位)</option>
+          <option value="u32">无符号十进制(32 位)</option>
+          <option value="u64">无符号十进制(64 位)</option>
+        </select>
         <span class="lv-info" data-hx-info></span>
       </div>
       <div class="hx-body">
@@ -61,7 +71,7 @@ async function buildHexViewerTab(path, name) {
         </div>
         <div class="hx-main">
           <div class="hx-scroll" data-hx-scroll tabindex="0">
-            <div class="hx-head-row"><span class="hx-off"></span><span class="hx-hexcol">${Array.from({length: 16}, (_, i) => `<span class="hx-b hx-b-head">${i.toString(16).toUpperCase().padStart(2, '0')}</span>`).join('')}</span><span class="hx-ascii"></span></div>
+            <div class="hx-head-row"><span class="hx-off"></span><span class="hx-hexcol" data-hx-head></span><span class="hx-ascii"></span></div>
             <div class="hx-scroll-inner">
               <div class="hx-canvas" data-hx-canvas></div>
             </div>
@@ -96,6 +106,8 @@ async function buildHexViewerTab(path, name) {
     findCount: wrap.querySelector('[data-hx-find-count]'),
     inspEl: wrap.querySelector('[data-hx-insp]'),
     bigEndian: false,
+    // HxD「查看方式」：hexN=十六进制 N 位分组，uN=无符号十进制 N 位分组
+    viewMode: '8', viewBytes: 1, viewDec: false,
     bytes: null, chunkCache: null, chunkBuf: null, chunkStart: -1,
     cursor: -1, findHits: [], findIdx: -1, _findQ: null,
     rowHeight: 22, renderedFrom: -1, renderedTo: -1,
@@ -264,9 +276,21 @@ async function buildHexViewerTab(path, name) {
   });
   conn.gotoInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); conn.gotoInput.blur(); wrap.querySelector('[data-hx-action="gotoOk"]').click(); } });
   conn.findInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); _hxFindNext(conn); } });
-  // 字节序切换（数据检视）
+  // 字节序切换（数据检视 + 分组显示）
   wrap.querySelectorAll('input[name="hx-be"]').forEach(r => {
-    r.addEventListener('change', () => { conn.bigEndian = r.value === 'be'; _hxRenderInspector(conn); });
+    r.addEventListener('change', () => { conn.bigEndian = r.value === 'be'; _hxRenderInspector(conn); _hxRenderRows(conn, conn.renderedFrom, conn.renderedTo, true); _hxPaintSel(conn); });
+  });
+  // 查看方式（HxD 同款）：hex 8/16/32/64 位分组 / 无符号十进制分组
+  const viewSel = wrap.querySelector('[data-hx-view]');
+  if (viewSel) viewSel.addEventListener('change', () => {
+    const v = viewSel.value;
+    conn.viewMode = v;
+    conn.viewDec = v[0] === 'u';
+    conn.viewBytes = parseInt(v.replace('u', ''), 10) / 8;
+    conn.renderedFrom = -1;   // 强制重画
+    _hxRenderHead(conn);
+    conn.render();
+    _hxPaintSel(conn);
   });
   wrap.addEventListener('keydown', e => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'f') { e.preventDefault(); conn.findBar.style.display = 'flex'; conn.findInput.focus(); }
@@ -278,30 +302,66 @@ async function buildHexViewerTab(path, name) {
   if (typeof _recentAdd === 'function') _recentAdd({type:'file', key:'file:'+name, label:name, data:{kind:'hex', name, path}});
 }
 
-// ---- 渲染行区间：偏移 + hex + ASCII 三栏 ----
+// ---- 列头：随查看方式重建（HxD 同款，分组位宽对齐数据列） ----
+function _hxRenderHead(conn) {
+  const head = conn.wrap.querySelector('[data-hx-head]');
+  if (!head) return;
+  const bw = conn.viewBytes;   // 每组字节数
+  let html = '';
+  for (let g = 0; g < 16 / bw; g++) {
+    const off = g * bw;
+    const pad = conn.viewDec ? String(off).padStart(5, ' ') : off.toString(16).toUpperCase().padStart(bw * 2, '0');
+    html += `<span class="hx-b hx-b-head${bw > 1 ? ' hx-b-g' + bw : ''}">${esc(pad)}</span>`;
+  }
+  head.innerHTML = html;
+}
+
+// ---- 渲染行区间：偏移 + 数据区（按查看方式分组）+ ASCII 三栏 ----
 function _hxRenderRows(conn, from, to, force) {
   if (!force && from === conn.renderedFrom && to === conn.renderedTo && conn.canvas.children.length) return;
   const frag = document.createDocumentFragment();
   const hitSet = conn.findHits.length ? new Set(conn.findHits) : null;
+  const bw = conn.viewBytes;   // 分组字节数（1/2/4/8）
+  // 组内字节序：大端原序显示，小端逆序（HxD 小端下 16/32/64 位组内低字节在前）
+  const order = conn.bigEndian ? null : Array.from({length: bw}, (_, i) => bw - 1 - i);
+  const grpVal = (off, len) => {
+    // 取 off 起 len 字节按组内字节序拼值
+    let v = 0n;
+    for (let k = 0; k < len; k++) {
+      const idx = order ? off + order[k] : off + k;
+      v = (v << 8n) | BigInt(conn.byteAt(idx));
+    }
+    return v;
+  };
   for (let r = from; r < to; r++) {
     const off = r * 16;
     const row = document.createElement('div');
     row.className = 'hx-row';
     row.style.top = (r * conn.rowHeight) + 'px';
     let hexHtml = '', asciiHtml = '';
-    for (let c = 0; c < 16; c++) {
+    const rendered = new Set();   // 本行已被分组渲染过的字节下标
+    for (let c = 0; c < 16; c += bw) {
       const i = off + c;
-      if (i >= conn.size) { hexHtml += '<span class="hx-b hx-b-empty"></span>'; asciiHtml += '<span class="hx-a hx-a-empty"></span>'; continue; }
-      const b = conn.byteAt(i);
-      const hi = (b >> 4).toString(16).toUpperCase();
-      const lo = (b & 15).toString(16).toUpperCase();
-      const isCur = i === conn.cursor;
-      const hit = hitSet && hitSet.has(i);
-      // ImHex 同款：0x00 字节灰色弱化
-      const z = b === 0 ? ' z' : '';
-      hexHtml += `<span class="hx-b${z}${isCur ? ' cur' : ''}${hit ? ' hit' : ''}" data-hx-i="${i}"><i class="hi">${hi}</i><i class="lo">${lo}</i></span>`;
-      const ch = b >= 32 && b < 127 ? esc(String.fromCharCode(b)) : '.';
-      asciiHtml += `<span class="hx-a${z}${isCur ? ' cur' : ''}${hit ? ' hit' : ''}" data-hx-i="${i}">${ch}</span>`;
+      if (i >= conn.size) { hexHtml += '<span class="hx-b hx-b-empty"></span>'; for (let k = 0; k < bw && off + c + k < 16; k++) asciiHtml += '<span class="hx-a hx-a-empty"></span>'; continue; }
+      const avail = Math.min(bw, conn.size - i);
+      const v = avail === bw ? grpVal(i, bw) : null;   // 尾部残组（不足 bw 字节）不拼值
+      let txt;
+      if (v === null) txt = '—'.repeat(conn.viewDec ? 1 : bw * 2);
+      else if (conn.viewDec) txt = v.toString(10);
+      else txt = v.toString(16).toUpperCase().padStart(bw * 2, '0');
+      const z = v === 0n ? ' z' : '';   // 全 0 组灰色弱化
+      // 组内每个字节保留 data-hx-i（点击/选区定位到字节级）——首字节承载展示文本
+      hexHtml += `<span class="hx-b hx-b-g${bw}${z}" data-hx-i="${i}">${esc(txt)}</span>`;
+      for (let k = 0; k < bw; k++) rendered.add(i + k);
+      // ASCII 列仍逐字节
+      for (let k = 0; k < bw; k++) {
+        const ai = i + k;
+        if (ai >= conn.size) { asciiHtml += '<span class="hx-a hx-a-empty"></span>'; continue; }
+        const b = conn.byteAt(ai);
+        const az = b === 0 ? ' z' : '';
+        const ch = b >= 32 && b < 127 ? esc(String.fromCharCode(b)) : '.';
+        asciiHtml += `<span class="hx-a${az}" data-hx-i="${ai}">${ch}</span>`;
+      }
     }
     row.innerHTML = `<span class="hx-off">${off.toString(16).toUpperCase().padStart(8, '0')}</span>` +
       `<span class="hx-hexcol">${hexHtml}</span><span class="hx-ascii">${asciiHtml}</span>`;
@@ -312,15 +372,23 @@ function _hxRenderRows(conn, from, to, force) {
   conn.renderedFrom = from; conn.renderedTo = to;
 }
 
-// ---- 选区高亮：重画当前窗口（含 cur/sel/hit 三态） ----
+// ---- 选区高亮：重画当前窗口（含 cur/sel/hit 三态；分组模式下组=选区任命中） ----
 function _hxPaintSel(conn) {
-  // 光标与选区分开：光标 cur，选区范围 sel
   const s = conn.selStart, t = conn.selEnd;
   const inSel = i => s >= 0 && t >= s && i >= s && i <= t;
+  const hits = conn.findHits.length ? new Set(conn.findHits) : null;
+  const hitOf = i => hits && hits.has(i);
+  const grpHit = i => {   // 分组显示时组内任一字节命中搜索则整组高亮
+    const bw = conn.viewBytes || 1;
+    if (bw === 1) return hitOf(i);
+    for (let k = 0; k < bw; k++) if (hitOf(i + k)) return true;
+    return false;
+  };
   conn.canvas.querySelectorAll('[data-hx-i]').forEach(el => {
     const i = +el.dataset.hxI;
     el.classList.toggle('cur', i === conn.cursor);
     el.classList.toggle('sel', inSel(i) && (s !== t || s === conn.cursor ? true : false));
+    el.classList.toggle('hit', grpHit(i));
   });
   // 选区行滚进视图（光标行）
   if (conn.cursor >= 0) {
@@ -487,6 +555,15 @@ async function _hxSearchAll(conn, pat) {
   }
   return hits;
 }
+// ---- 搜索命中 → 分组模式下映射到组首下标再打 hit 高亮 ----
+function _hxPaintHits(conn) {
+  const bw = conn.viewBytes || 1;
+  const hitSet = new Set();
+  for (const h of conn.findHits) hitSet.add(bw > 1 ? Math.floor(h / bw) * bw : h);
+  conn.canvas.querySelectorAll('[data-hx-i]').forEach(el => {
+    el.classList.toggle('hit', hitSet.has(+el.dataset.hxI));
+  });
+}
 async function _hxFindNext(conn) {
   const q = conn.findInput.value;
   const pat = _hxParseQuery(q);
@@ -495,6 +572,7 @@ async function _hxFindNext(conn) {
     conn.findHits = await _hxSearchAll(conn, pat);
     conn._findQ = q; conn.findIdx = -1;
     _hxRenderRows(conn, conn.renderedFrom, conn.renderedTo, true);
+    _hxPaintHits(conn);
   }
   if (!conn.findHits.length) { conn.findCount.textContent = '无命中'; return; }
   conn.findIdx = (conn.findIdx + 1) % conn.findHits.length;
@@ -508,6 +586,7 @@ async function _hxFindAll(conn) {
   conn._findQ = conn.findInput.value; conn.findIdx = -1;
   conn.findCount.textContent = conn.findHits.length ? (conn.findHits.length + ' 处') : '无命中';
   _hxRenderRows(conn, conn.renderedFrom, conn.renderedTo, true);
+  _hxPaintHits(conn);
   if (conn.findHits.length) _hxScrollToOffset(conn, conn.findHits[0]);
 }
 
