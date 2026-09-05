@@ -5,7 +5,7 @@
 
 设计文档：docs/CLAUDE_CODE_INTEGRATION.md（路线 A+C：终端保真 + 旁路状态面板）。
 """
-import os, shutil, threading, tempfile
+import os, shutil, threading, tempfile, time
 
 from .base_conn import BaseConnection
 
@@ -209,16 +209,24 @@ class ClaudeConnection(BaseConnection):
                 pass
 
     def set_light_theme(self, light):
-        """工具壳体换主题时改写本会话的 --settings 临时文件（/api/claude_theme 调用）。
-        Claude 监视 settings 文件热重载，theme 改动对运行中会话立即生效——
-        工具亮暗切换 → 所有活跃 claude 会话跟随，无需重开。"""
-        p = getattr(self, "_theme_settings_path", None)
-        if not p or not os.path.isfile(p):
+        """工具壳体换主题时让运行中的会话自己切(/api/claude_theme 调用)。
+        settings 文件热重载实测无效(2.1.239 改文件无重绘)——改走 TUI 注入:
+        发 /theme 打开菜单 → 方向键移到目标项 → Enter。实测有效。
+        菜单:1.Auto 2.Dark 3.Light 4.Dark-色盲 5.Light-色盲 6.Dark-ANSI 7.Light-ANSI 8.自定义。
+        当前是 light-ansi 时菜单默认选中 7,当前 dark 时选中 2——按差值导航。
+        目标 7=light-ansi(颜色落 ANSI 16 色,由本工具 xterm 亮色调色板解释,代码块可读)。"""
+        if self._proc is None:
             return False
-        val = "light-ansi" if light else "dark"
+        cur_is_light = getattr(self, "_light_theme", False)
+        target = 7 if light else 2
+        cur_sel = 7 if cur_is_light else 2
+        n = (target - cur_sel) % 8
+        arrow = "\x1b[B" * n if n else ""
+        steps = ["/theme\r", arrow, "\r"] if arrow else ["/theme\r", "\r"]
         try:
-            with open(p, "w", encoding="utf-8") as f:
-                f.write('{"theme": "%s"}' % val)
+            for s in steps:
+                self._io_write(s.encode("utf-8"))
+                time.sleep(0.25 * max(1, len(s) // 3))
             self._light_theme = bool(light)
             return True
         except Exception:

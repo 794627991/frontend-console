@@ -1350,12 +1350,20 @@ def claude_skills_list():
 
 @app.route("/api/claude/status")
 def claude_status():
-    """聚合状态：本工具打开的 claude 连接 + 外部活跃会话数。"""
+    """聚合状态：本工具打开的 claude 连接 + 外部活跃会话数。
+    mine 行带 label：resume 会话去 sessions 列表按 session_id 匹配会话名
+    （aiTitle 优先）；新会话没名字，回退 cwd 尾段。"""
     from .claude_sessions import list_sessions
     with _ports_lock:
-        mine = [{"port_id": pid, "cwd": getattr(p, "cwd", ""), "alive": p.alive}
+        mine = [{"port_id": pid, "cwd": getattr(p, "cwd", ""),
+                 "resume": getattr(p, "resume", None), "alive": p.alive}
                 for pid, p in _ports.items() if getattr(p, "kind", "") == "claude"]
     sessions = list_sessions(limit=100)
+    by_id = {s["session_id"]: s for s in sessions}
+    for m in mine:
+        s = by_id.get(m.get("resume") or "")
+        m["label"] = (s and (s.get("title") or s.get("summary"))) or \
+                     ((m.get("cwd") or "").split("\\")[-1].split("/")[-1] or m["port_id"])
     external = [s for s in sessions if s.get("active")]
     return jsonify({"ok": True, "mine": mine, "external_active": len(external)})
 

@@ -87,9 +87,9 @@ async function refreshClaudePanel() {
     if (runKey !== _claudeRunningKey) {
       _claudeRunningKey = runKey;
       const mineRows = (rs.mine || []).map(m =>
-        `<div class="claude-run" data-port="${esc(m.port_id)}">
+        `<div class="claude-run" data-port="${esc(m.port_id)}" title="${esc(m.cwd || '')}">
            <span class="live-dot"></span>
-           <span class="cname">${esc((m.cwd || '').split(/[\\\\/]/).pop() || m.port_id)}</span>
+           <span class="cname">${esc(m.label || (m.cwd || '').split(/[\\\\/]/).pop() || m.port_id)}</span>
            <span class="cstate">${m.alive ? '运行中' : '已退出'}</span>
          </div>`).join('');
       runningEl.innerHTML = mineRows ||
