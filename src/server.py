@@ -107,6 +107,14 @@ def start_background():
 # ============================================================
 # Flask 路由
 # ============================================================
+@app.after_request
+def _no_cache_static(resp):
+    """静态资源(web/ 下的 JS/CSS)禁缓存：开发迭代频繁，WebView2 若缓存旧 JS，
+    重启工具仍加载旧代码，改动"看起来不生效"。HTML/JS/CSS 每次都拉最新。"""
+    if resp.mimetype in ("text/html", "application/javascript", "text/css", "text/javascript"):
+        resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return resp
+
 @app.route("/")
 def index():
     return send_from_directory(RES_DIR, "web/index.html")

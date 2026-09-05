@@ -397,14 +397,20 @@ function _edMarkDirty(conn) {
   _edUpdateInfo(conn);
 }
 
-// ---- 脏标记：tab 标题加 *（Notepad++ 风格）----
+// ---- 脏标记：tab 标题加 *（Notepad++ 风格）+ tab/左栏列表同步未保存类 ----
 function _edMarkTab(conn) {
   // 原地改名中：标题 span 已换成输入框，改名结束后统一刷新
   if (conn._renaming) return;
   conn.tab.querySelector('.label').textContent = (conn.dirty ? '*' : '') + conn.meta.label;
-  // 同步左侧列表里的文件名（改名后立即生效，不等 30s 轮询）
-  const item = portList.querySelector(`.port-item[data-port-id="${CSS.escape(conn.portId)}"] .name`);
-  if (item) item.textContent = conn.meta.label;
+  // tab 未保存视觉态（橙色小点由 CSS 渲染，比纯 * 更显眼）
+  conn.tab.classList.toggle('dirty', !!conn.dirty);
+  // 同步左侧列表：名字带 * + 未保存类（led 变橙），不等 30s 轮询
+  const item = portList.querySelector(`.port-item[data-port-id="${CSS.escape(conn.portId)}"]`);
+  if (item) {
+    item.classList.toggle('dirty', !!conn.dirty);
+    const name = item.querySelector('.name');
+    if (name) name.textContent = (conn.dirty ? '*' : '') + conn.meta.label;
+  }
 }
 
 // ---- 图片双击放大灯箱：点击/Esc 关闭，滚轮缩放 ----

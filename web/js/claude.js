@@ -31,6 +31,12 @@ async function connectClaude(opts = {}) {
     refreshSidebar();
     refreshGlobalStatus();
     showBanner(j.msg || 'claude 已启动');
+    // 新开/恢复 claude 会话后立即聚焦终端：用户打开就是为了输入，不想先点一下
+    // switchTab 里已有 term.focus()，但 claude TUI 启动时 ConPTY 输出会触发
+    // xterm 内部重新渲染/滚动，可能再次夺走焦点——延迟再抢一次，确保落在输入框
+    setTimeout(() => {
+      try { if (connections[portId] === conn) conn.term.focus(); } catch(_){}
+    }, 300);
     // 恢复的会话记入「最近」（key=会话 id 去重置顶）——新会话不记（id 未知，无重开价值）
     if (j.resume && typeof _recentAdd === 'function') {
       const dirName = (j.cwd || '').split(/[\\/]/).pop() || '';

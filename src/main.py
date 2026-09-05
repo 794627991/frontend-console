@@ -428,6 +428,13 @@ def main():
     #   注入 event.dataTransfer.files[i].pywebviewFullPath）。需用 pywebview DOM API
     #   注册 drop 监听（_dnd_state.num_listeners>0 才捕获路径），回调里 evaluate_js 调前端。
     def on_loaded():
+        # 页面加载完成即激活并置前窗口：从托盘/后台/快捷方式启动时窗口可能不在
+        # 前台，用户打开工具就是为了敲命令——不等先点一下
+        try:
+            window.show()
+            window.focus()
+        except Exception:
+            pass
         def drop_handler(event):
             try:
                 files = event.get('dataTransfer', {}).get('files', [])

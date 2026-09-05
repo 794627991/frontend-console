@@ -808,6 +808,12 @@
   .tab.dragging { opacity: 0.45; }
   .tab.drop-before { box-shadow: -2px 0 0 0 var(--accent); }
   .tab.drop-after { box-shadow: 2px 0 0 0 var(--accent); }
+  /* 未保存视觉态（编辑器/笔记/hex tab）：led 变橙色 + 标题着色——比纯 * 更显眼，
+     tab 与左栏列表同一套（.dirty 类由 _edMarkTab / refreshSidebar 同步维护） */
+  .tab.dirty .led { background: var(--neon-orange, #f5a623); box-shadow: 0 0 6px var(--neon-orange, #f5a623); }
+  .tab.dirty .label { color: var(--neon-orange, #f5a623); }
+  .port-item.dirty .led { background: var(--neon-orange, #f5a623); box-shadow: 0 0 8px var(--neon-orange, #f5a623); }
+  .port-item.dirty .name { color: var(--neon-orange, #f5a623); }
   .tab .close { opacity: 0.4; font-size: 14px; padding: 0 2px; border-radius: 3px; }
   /* 编辑器 tab 原地改名输入框：融入 tab 外观，宽度随内容自适应 */
   .tab-rename-input {

@@ -138,14 +138,17 @@ function refreshSidebar() {
       const isClaude = conn.meta.kind === 'claude';
       const descText = isSSH ? `SSH · ${conn.meta.host || ''}` : isLog ? `📜 日志` : isEdit ? (conn.meta.kind === 'hex' ? `🔧 hex` : `📝 笔记`) : isClaude ? `🤖 Claude · ${(conn.meta.cwd || '').split(/[\\\\/]/).pop() || ''}` : `${conn.meta.baud || ''} baud`;
       const rowCount = conn.term ? conn.term.buffer.active.length : (conn.logState ? conn.logState.total : (isEdit ? _edStatText(conn) : 0));
+      // 编辑器类 tab：未保存时名字带 * + dirty 类（led 橙色，与 _edMarkTab 同步）
+      const isDirty = isEdit && conn.dirty;
       item.innerHTML = `
         <span class="led"></span>
         <div class="info">
-          <div class="name">${esc(conn.meta.label || pid)}</div>
+          <div class="name">${(isDirty ? '*' : '') + esc(conn.meta.label || pid)}</div>
           <div class="desc">${esc(descText)} · <span class="baud" data-rows>${isEdit ? rowCount : rowCount + ' 行'}</span></div>
         </div>
         <div class="actions"><button data-close="${pid}" title="${isLog ? '关闭' : '断开'}">✕</button></div>
       `;
+      if (isDirty) item.classList.add('dirty');
       item.onclick = (e) => {
         // hex 走 closeEditorTab（有脏确认）：落 closeConnection 会绕过
         // dirty 检查直接丢修改，还发一个必 404 的 /api/disconnect
