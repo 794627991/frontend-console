@@ -31,4 +31,6 @@ setInterval(() => {
   // 感知面板可见时刷新分析（用户停在分析标签）
   const activePane = document.querySelector('.panel-tab.active');
   if (activePane && activePane.dataset.pane === 'analyze') renderAnalyze();
+  // Claude 面板可见时刷新（运行中/历史会话/技能，照 analyze 模式降载）
+  if (activePane && activePane.dataset.pane === 'claude') refreshClaudePanel();
 }, 5000);

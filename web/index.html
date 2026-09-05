@@ -109,7 +109,8 @@
     <div class="panel-tabs">
       <div class="panel-tab active" data-pane="cmd">⌘ 命令</div>
       <div class="panel-tab" data-pane="sense">● 感知</div>
-      <div class="panel-tab" data-pane="analyze">📊 分析</div>  
+      <div class="panel-tab" data-pane="analyze">📊 分析</div>
+      <div class="panel-tab" data-pane="claude">🤖 Claude</div>
       <div class="panel-tab" data-pane="mcp">🔌 MCP</div>
     </div>
     <div class="panel-body" id="panelBody">
@@ -153,6 +154,24 @@
           </div>
         </div>
       </div>  
+      <!-- Claude 会话/技能（第 2 期：旁路状态面板，设计 docs/CLAUDE_CODE_INTEGRATION.md §3） -->
+      <div class="panel-tab-pane" data-pane="claude">
+        <div class="claude-pane" id="claudePane">
+          <div class="claude-head"><span class="dot" id="claudeStatusDot"></span><span id="claudeStatusText">检测中…</span></div>
+          <div class="claude-section">
+            <div class="title">运行中</div>
+            <div id="claudeRunning">—</div>
+          </div>
+          <div class="claude-section">
+            <div class="title">历史会话（点击恢复）</div>
+            <div id="claudeSessions" class="claude-sessions">—</div>
+          </div>
+          <div class="claude-section">
+            <div class="title">技能</div>
+            <div id="claudeSkills" class="claude-skills">—</div>
+          </div>
+        </div>
+      </div>
       <!-- MCP 状态 -->
       <div class="panel-tab-pane" data-pane="mcp">
         <div class="mcp-pane" id="mcpPane">

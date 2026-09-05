@@ -1091,6 +1091,31 @@
   .mcp-call .cargs { color: var(--text); opacity: 0.8; }
   .mcp-empty { color: var(--muted); font-size: 11px; font-style: italic; }
 
+  /* Claude 会话/技能标签（第 2 期，照 mcp-pane 模式） */
+  .claude-pane { padding: 10px 14px; overflow-y: auto; }
+  .claude-head { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; margin-bottom: 12px; }
+  .claude-head .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .claude-head .dot.on { background: var(--neon-green); box-shadow: 0 0 6px var(--neon-green); }
+  .claude-section { margin-bottom: 14px; }
+  .claude-section .title { font-size: 10px; font-weight: 600; letter-spacing: 1px; color: var(--muted); text-transform: uppercase; margin-bottom: 6px; }
+  .claude-run { display: flex; align-items: center; gap: 6px; font-size: 11px; padding: 4px 8px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; margin-bottom: 4px; }
+  .claude-run:hover { border-color: var(--accent); }
+  .claude-run .cstate { margin-left: auto; color: var(--muted); font-size: 10px; }
+  .claude-sessions { display: flex; flex-direction: column; gap: 4px; }
+  .claude-sess { padding: 5px 8px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
+  .claude-sess:hover { border-color: var(--accent); background: var(--bg-input); }
+  .claude-sess .srow1 { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+  .claude-sess .cdir { font-weight: 600; color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .claude-sess .ctime { margin-left: auto; color: var(--muted); font-size: 10px; flex-shrink: 0; }
+  .claude-sess .srow2 { color: var(--muted); font-size: 10px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .claude-skills { display: flex; flex-direction: column; gap: 4px; }
+  .claude-skill { font-size: 11px; padding: 4px 8px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; }
+  .claude-skill .sk-name { font-family: var(--font-mono); color: var(--accent); font-weight: 600; }
+  .claude-skill .sk-src { margin-left: 6px; font-size: 9px; padding: 1px 5px; border-radius: 3px; border: 1px solid var(--border); color: var(--muted); }
+  .claude-skill .sk-src.src-project { color: var(--neon-green); border-color: var(--neon-green); }
+  .claude-skill .sk-desc { color: var(--muted); margin-top: 2px; }
+  .claude-empty { color: var(--muted); font-size: 11px; font-style: italic; }
+
   /* 分析标签 */
   .analyze-pane { padding: 12px 14px; overflow-y: auto; }
   .stat-cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 14px; }

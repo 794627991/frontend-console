@@ -136,14 +136,18 @@ class ClaudeConnection(BaseConnection):
             argv = [exe]
         if self.resume:
             argv += ["--resume", self.resume]
-        # 工具壳体是亮色主题时，给本会话注入 light 主题（--settings 只作用于
+        # 工具壳体是亮色主题时，给本会话注入 light-ansi 主题（--settings 只作用于
         # 当前进程会话、不写用户配置文件，不影响用户其他终端里的 claude）。
+        # 用 light-ansi 而非 light：代码块颜色由内置语法高亮器固定调色板决定、
+        # 不受 theme 控制（官方 issue #48636/#85821 挂着）——light 下代码块仍是
+        # 白字看不清；light-ansi 走 16 色 ANSI 路线，颜色落到本工具 xterm 已按
+        # 亮色调好的调色板（theme.js LIGHT_THEMES 映射），代码块变深色可读。
         # 必须用临时文件而非内联 JSON：cmd shim 中转时 cmd.exe /c 会剥掉
         # 内联 JSON 的双引号，claude 收到非法 JSON 直接报错；文件路径无此问题。
         if self._light_theme:
             fd, settings_path = tempfile.mkstemp(suffix=".json", prefix="claude_theme_")
             with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write('{"theme": "light"}')
+                f.write('{"theme": "light-ansi"}')
             self._theme_settings_path = settings_path
             argv += ["--settings", settings_path]
         env = dict(os.environ)  # ConPTY 要求完整环境；claude 依赖 PATH/HOME/TERM

@@ -173,6 +173,7 @@ document.querySelectorAll('.panel-tab').forEach(tab => {
     document.querySelectorAll('.panel-tab-pane').forEach(p => p.classList.toggle('active', p.dataset.pane === pane));
     if (pane === 'analyze') renderAnalyze();
     if (pane === 'cmd') renderCmdPane();
+    if (pane === 'claude' && typeof refreshClaudePanel === 'function') refreshClaudePanel();
   };
 });
 
