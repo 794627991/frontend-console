@@ -188,7 +188,11 @@ def list_sessions(limit=50):
             _sess_cache[cache_key] = (st.st_mtime, st.st_size, parsed)
         if not parsed:
             continue
-        parsed["active"] = (now - st.st_mtime) < 60
+        # active：jsonl 15 分钟内有写入视为活跃。会话 idle（等输入/长任务思考）
+        # 时不写文件——60s 窗口把正开着的会话误判成历史（识图会话等图、
+        # 工具里打开的会话等输入都会掉下去）。15min 覆盖一轮正常交互+思考；
+        # 真关掉的会话最迟 15min 后自然归历史。
+        parsed["active"] = (now - st.st_mtime) < 15 * 60
         result.append(parsed)
     result.sort(key=lambda s: -s["mtime"])
     # 缓存收敛

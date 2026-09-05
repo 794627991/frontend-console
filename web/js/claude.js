@@ -72,15 +72,52 @@ function _claudeRelTime(iso) {
 // 脏检查 key：内容没变跳过 innerHTML 重建（照 refreshMcpInfo 模式）
 let _claudeSessionsKey = '', _claudeRunningKey = '', _claudeSkillsKey = '';
 
-// 会话备注：✎ 点击弹输入框，POST /api/claude/note。标题优先级：备注 > aiTitle > 首条消息。
-// 后端写工具 config.json（claude_notes 键），不动 claude 的 jsonl。
+// 会话备注：✎ 点击弹模态框（项目 modal 风格，不用原生 prompt），POST /api/claude/note。
+// 标题优先级：备注 > aiTitle > 首条消息。后端写工具 config.json（claude_notes 键）。
 function _claudeEditNote(sessionId, curTitle) {
-  const note = prompt('会话备注（留空清除，显示优先于 AI 起的标题）：', curTitle || '');
-  if (note === null) return;   // 取消不改
-  fetch('/api/claude/note', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({session_id: sessionId, note})})
-    .then(() => { _claudeSessionsKey = ''; _claudeRunningKey = ''; refreshClaudePanel(); })
-    .catch(() => showBanner('备注保存失败', 3000, true));
+  let m = $('claudeNoteModal');
+  if (!m) {
+    m = document.createElement('div');
+    m.className = 'modal';
+    m.id = 'claudeNoteModal';
+    m.innerHTML = `
+      <div class="box" style="width:420px;">
+        <div class="head">
+          <strong>会话备注</strong>
+          <div class="head-actions"><button class="btn ghost icon-btn" id="claudeNoteClose">✕</button></div>
+        </div>
+        <div style="padding:18px 20px;display:flex;flex-direction:column;gap:14px;">
+          <input type="text" id="claudeNoteInput" class="note-input" placeholder="备注名（留空清除——显示优先于 AI 标题）" autocomplete="off" maxlength="60">
+          <div id="claudeNoteHint" style="color:var(--muted);font-size:11px;line-height:1.5;"></div>
+        </div>
+        <div class="actions" style="padding:0 20px 18px;display:flex;justify-content:flex-end;gap:8px;">
+          <button class="btn ghost" id="claudeNoteCancel">取消</button>
+          <button class="btn primary" id="claudeNoteSave">保存</button>
+        </div>
+      </div>`;
+    document.body.appendChild(m);
+    const finish = () => m.classList.remove('show');
+    $('claudeNoteClose').onclick = finish;
+    $('claudeNoteCancel').onclick = finish;
+    $('claudeNoteSave').onclick = () => {
+      const note = $('claudeNoteInput').value.trim();
+      fetch('/api/claude/note', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({session_id: m.dataset.sid, note})})
+        .then(() => { finish(); _claudeSessionsKey = ''; _claudeRunningKey = ''; refreshClaudePanel(); })
+        .catch(() => showBanner('备注保存失败', 3000, true));
+    };
+    // 回车保存 / Esc 取消（项目 modal 惯例）
+    $('claudeNoteInput').addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); $('claudeNoteSave').click(); }
+      if (e.key === 'Escape') { e.preventDefault(); finish(); }
+    });
+  }
+  m.dataset.sid = sessionId;
+  $('claudeNoteInput').value = curTitle || '';
+  // 提示行带会话 ID 尾段（识别是哪个会话）
+  $('claudeNoteHint').textContent = '会话 ' + (sessionId || '').slice(0, 8) + ' · 备注只影响本工具内显示';
+  m.classList.add('show');
+  setTimeout(() => { $('claudeNoteInput').focus(); $('claudeNoteInput').select(); }, 50);
 }
 
 // 卡片生成共用：会话行（含 ✎ 备注按钮）+ 点击行为绑定。
