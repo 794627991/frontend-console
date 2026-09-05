@@ -24,12 +24,13 @@ function fmtTs(ms) {
   return d.toLocaleTimeString('zh-CN', {hour12:false}) + '.' + String(ms % 1000).padStart(3,'0');
 }
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
-// 连接排序：串口[0] < SSH[1] < 日志[2]，同类内按自然序
+// 连接排序：串口[0] < SSH[1] < 日志[2] < 编辑器[3] < claude[4]，同类内按自然序
 function sortKeyFn(pid) {
   const m = /^COM(\d+)$/i.exec(pid);
   if (m) return [0, parseInt(m[1], 10)];  // 串口：COM 号数字序
   if (pid.startsWith('log:')) return [2, pid];  // 日志：字典序
   if (pid.startsWith('edit:')) return [3, pid];  // 编辑器：字典序（排在日志后）
+  if (pid.startsWith('claude:')) return [4, pid];  // claude 终端：字典序（排在编辑器后）
   return [1, pid];  // SSH：字典序
 }
 

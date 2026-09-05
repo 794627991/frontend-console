@@ -209,6 +209,36 @@ def api_connect():
         # SSH invoke_shell 自带 shell，不主动 send \r
         return jsonify({"ok": True, "port_id": port_id, "kind": "ssh",
                         "msg": f"已连接 {username}@{host}:{port}"})
+    elif kind == "claude":
+        # Claude Code 本地终端（ConPTY 跑真实 CLI，设计见 docs/CLAUDE_CODE_INTEGRATION.md）
+        from .claude_conn import ClaudeConnection, ClaudeNotFoundError, _humanize_claude_error
+        cwd = (data.get("cwd") or "").strip() or os.path.expanduser("~")
+        resume = (data.get("resume") or "").strip() or None
+        if resume and not os.path.isdir(cwd):
+            return jsonify({"ok": False, "err": f"会话原目录不存在：{cwd}"}), 400
+        with _ports_lock:
+            # port_id 分配：resume 会话带 id 前缀（同会话重复打开去重）；新会话自增
+            if resume:
+                port_id = f"claude:r-{resume[:8]}"
+                if port_id in _ports:
+                    return jsonify({"ok": False, "err": "该会话已在工具内打开，请切换到对应标签页"}), 400
+            else:
+                n = 1
+                while f"claude:{n}" in _ports:
+                    n += 1
+                port_id = f"claude:{n}"
+            try:
+                p = ClaudeConnection(cwd=cwd, resume=resume, port_id=port_id)
+                _ports[port_id] = p
+            except Exception as e:
+                # 构造内 start() 已 spawn PTY+读线程，异常必须 close 兜底（同 SSH/串口模式）
+                _ports.pop(port_id, None)
+                try: p.close()
+                except Exception: pass
+                return jsonify({"ok": False, "err": _humanize_claude_error(e)}), 500
+        return jsonify({"ok": True, "port_id": port_id, "kind": "claude",
+                        "cwd": cwd, "resume": resume,
+                        "msg": f"claude 已启动（{'恢复会话 ' + resume[:8] if resume else '新会话'}）"})
     else:
         # 串口连接（默认）
         port = data.get("port")
@@ -246,6 +276,27 @@ def api_disconnect():
         p.close()
         return jsonify({"ok": True})
     return jsonify({"ok": False, "err": "未找到该串口"}), 404
+
+@app.route("/api/resize", methods=["POST"])
+def api_resize():
+    """PTY 尺寸同步（claude 终端 tab 的 xterm onResize → ConPTY setwinsize）。"""
+    data = request.get_json(force=True)
+    port_id = data.get("port_id")
+    cols = int(data.get("cols") or 0)
+    rows = int(data.get("rows") or 0)
+    with _ports_lock:
+        p = _ports.get(port_id)
+    if not p:
+        return jsonify({"ok": False, "err": "连接不存在"}), 404
+    if not hasattr(p, "resize"):
+        return jsonify({"ok": False, "err": "该连接不支持 resize"}), 400
+    if cols <= 0 or rows <= 0:
+        return jsonify({"ok": False, "err": "尺寸非法"}), 400
+    try:
+        p.resize(rows, cols)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "err": str(e)}), 500
 
 @app.route("/api/send", methods=["POST"])
 def api_send():

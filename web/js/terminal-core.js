@@ -3,7 +3,7 @@ function buildTerminal(portId, meta) {
   const tab = document.createElement('div');
   tab.className = 'tab';
   tab.dataset.portId = portId;
-  tab.innerHTML = `<span class="led"></span><span>${esc(meta.label || portId)}</span><span style="color:var(--muted);font-size:10px;">${meta.kind === 'ssh' ? '' : '@'+meta.baud}</span> <span class="close" title="关闭">✕</span>`;
+  tab.innerHTML = `<span class="led"></span><span>${esc(meta.label || portId)}</span><span style="color:var(--muted);font-size:10px;">${meta.kind === 'ssh' || meta.kind === 'claude' ? '' : '@'+meta.baud}</span> <span class="close" title="关闭">✕</span>`;
   tab.onclick = (e) => {
     if (e.target.classList.contains('close')) { e.stopPropagation(); closeConnection(portId); return; }
     switchTab(portId);
@@ -50,6 +50,8 @@ function buildTerminal(portId, meta) {
     jump: wrap.querySelector('.term-tb-jump'),
     ts: wrap.querySelector('.term-tb-ts'),
   };
+  // claude 终端不落盘日志（Claude 自带 ~/.claude 转写）——隐藏「＋📋 新日志」
+  if (meta.kind === 'claude') tb.newlog.style.display = 'none';
   tb.pause.onclick = () => {
     conn.paused = !conn.paused;
     tb.pause.textContent = conn.paused ? '▶ 继续' : '⏸ 暂停';
@@ -140,6 +142,22 @@ function buildTerminal(portId, meta) {
     }
   } catch(e) {}
   try { conn.fit.fit(); } catch(e) {}
+
+  // ---- PTY 尺寸同步（claude 终端）：xterm onResize → /api/resize → ConPTY setwinsize。
+  // debounce 200ms（拖拽窗口 fit 高频触发）；尺寸未变短路。初始 fit 也会触发一次——
+  // 恰好把真实尺寸同步给 PTY（纠正 spawn 时猜测的 120x30），无害且正确。
+  conn._lastCols = 0; conn._lastRows = 0;
+  conn.term.onResize(({cols, rows}) => {
+    if (!conn.meta || conn.meta.kind !== 'claude') return;
+    clearTimeout(conn._resizeTimer);
+    conn._resizeTimer = setTimeout(() => {
+      if (connections[portId] !== conn) return;
+      if (conn._lastCols === cols && conn._lastRows === rows) return;
+      conn._lastCols = cols; conn._lastRows = rows;
+      fetch('/api/resize', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({port_id: portId, cols, rows})}).catch(() => {});
+    }, 200);
+  });
 
   // ---- Ctrl+C 复制选中（有选中→复制；无选中→发 ^C 中断）----
   // ---- Ctrl+V 粘贴剪贴板内容到串口 ----

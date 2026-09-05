@@ -135,7 +135,8 @@ function refreshSidebar() {
       const isSSH = conn.meta.kind === 'ssh';
       const isLog = conn.meta.kind === 'log';
       const isEdit = conn.meta.kind === 'editor' || conn.meta.kind === 'hex';
-      const descText = isSSH ? `SSH · ${conn.meta.host || ''}` : isLog ? `📜 日志` : isEdit ? (conn.meta.kind === 'hex' ? `🔧 hex` : `📝 笔记`) : `${conn.meta.baud || ''} baud`;
+      const isClaude = conn.meta.kind === 'claude';
+      const descText = isSSH ? `SSH · ${conn.meta.host || ''}` : isLog ? `📜 日志` : isEdit ? (conn.meta.kind === 'hex' ? `🔧 hex` : `📝 笔记`) : isClaude ? `🤖 Claude · ${(conn.meta.cwd || '').split(/[\\\\/]/).pop() || ''}` : `${conn.meta.baud || ''} baud`;
       const rowCount = conn.term ? conn.term.buffer.active.length : (conn.logState ? conn.logState.total : (isEdit ? _edStatText(conn) : 0));
       item.innerHTML = `
         <span class="led"></span>
