@@ -1123,6 +1123,15 @@
   .claude-skill .sk-src.src-project { color: var(--neon-green); border-color: var(--neon-green); }
   .claude-skill .sk-desc { color: var(--muted); margin-top: 2px; }
   .claude-empty { color: var(--muted); font-size: 11px; font-style: italic; }
+  /* Claude 面板子 sheet（活跃/历史/技能）——照 cmd-sheets 模式 */
+  .claude-sheets { display: flex; gap: 4px; margin-bottom: 8px; border-bottom: 1px solid var(--border); }
+  .claude-sheet-tab { font-size: 11px; font-weight: 600; color: var(--muted); padding: 4px 10px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; transition: all 0.2s; }
+  .claude-sheet-tab:hover { color: var(--fg); }
+  .claude-sheet-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .claude-sheet-tab .count { font-size: 9px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 0 5px; margin-left: 3px; color: var(--muted); }
+  .claude-sheet-pane { display: none; }
+  .claude-sheet-pane.active { display: block; }
+  .claude-pane { display: flex; flex-direction: column; }
 
   /* 分析标签 */
   .analyze-pane { padding: 12px 14px; overflow-y: auto; }

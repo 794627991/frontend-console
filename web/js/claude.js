@@ -72,18 +72,40 @@ function _claudeRelTime(iso) {
 // 脏检查 key：内容没变跳过 innerHTML 重建（照 refreshMcpInfo 模式）
 let _claudeSessionsKey = '', _claudeRunningKey = '', _claudeSkillsKey = '';
 
+// 子 sheet 切换（活跃/历史/技能）+ 计数徽标更新
+document.querySelectorAll('.claude-sheet-tab').forEach(tab => {
+  tab.onclick = () => {
+    document.querySelectorAll('.claude-sheet-tab').forEach(t => t.classList.toggle('active', t === tab));
+    document.querySelectorAll('.claude-sheet-pane').forEach(p =>
+      p.classList.toggle('active', p.dataset.sheet === tab.dataset.sheet));
+  };
+});
+function _claudeSetCount(id, n) {
+  const el = $(id);
+  if (el && el.textContent !== String(n)) el.textContent = n;
+}
+
 async function refreshClaudePanel() {
   try {
-    // 运行中（本工具 + 外部活跃）
+    // 状态聚合（本工具连接 + 外部活跃计数）
     const rs = await (await fetch('/api/claude/status')).json();
+    // 活跃 sheet：本工具打开的 + 外部活跃的（历史会话里 active 的那批）
+    const ss = await (await fetch('/api/claude/sessions?limit=50')).json();
+    const sessions = ss.sessions || [];
+    const activeExt = sessions.filter(s => s.active);
     const dot = $('claudeStatusDot'), txt = $('claudeStatusText');
     const nMine = (rs.mine || []).length, nExt = rs.external_active || 0;
     if (nMine) { dot.className = 'dot on'; txt.textContent = `${nMine} 个会话运行中` + (nExt ? ` · 外部活跃 ${nExt}` : ''); }
     else if (nExt) { dot.className = 'dot on'; txt.textContent = `外部活跃 ${nExt} 个会话`; }
     else { dot.className = 'dot'; txt.textContent = '无运行中的会话'; }
+    _claudeSetCount('claudeActiveCount', nMine + nExt);
+    _claudeSetCount('claudeHistoryCount', sessions.length - nExt);
+    _claudeSetCount('claudeSkillCount', -1);   // 占位：技能数到手后覆盖
 
     const runningEl = $('claudeRunning');
-    const runKey = (rs.mine || []).map(m => `${m.port_id}:${m.alive}`).join(',') + '#' + nExt;
+    // key 含 label（重命名/aiTitle 更新生效）与外部活跃集（进出活跃态刷新）
+    const runKey = (rs.mine || []).map(m => `${m.port_id}:${m.label}:${m.alive}`).join(',') + '#' +
+                   activeExt.map(s => s.session_id).join(',');
     if (runKey !== _claudeRunningKey) {
       _claudeRunningKey = runKey;
       const mineRows = (rs.mine || []).map(m =>
@@ -92,29 +114,44 @@ async function refreshClaudePanel() {
            <span class="cname">${esc(m.label || (m.cwd || '').split(/[\\\\/]/).pop() || m.port_id)}</span>
            <span class="cstate">${m.alive ? '运行中' : '已退出'}</span>
          </div>`).join('');
-      runningEl.innerHTML = mineRows ||
-        (nExt ? `<div class="claude-empty">外部进程活跃（本工具未打开）</div>` : '<div class="claude-empty">—</div>');
+      // 外部活跃会话卡片：点击同样恢复进来（与历史一致）
+      const extRows = activeExt.filter(s => !(rs.mine || []).some(m => m.resume === s.session_id)).map(s => {
+        const dirName = (s.cwd || '').split(/[\\\\/]/).pop() || s.project;
+        return `<div class="claude-sess" data-resume="${esc(s.session_id)}" data-cwd="${esc(s.cwd || '')}" data-title="${esc(s.title || s.summary || '')}" title="外部进程正在使用此会话 · ${esc(s.cwd || '')}">
+          <div class="srow1">
+            <span class="live-dot"></span>
+            <span class="cdir">${esc(s.title || s.summary || dirName)}</span>
+            <span class="cstate">外部</span>
+          </div>
+          <div class="srow2">${esc(s.title ? (s.summary || dirName) : dirName)}</div>
+        </div>`;
+      }).join('');
+      runningEl.innerHTML = (mineRows + extRows) || '<div class="claude-empty">无活跃会话</div>';
       runningEl.querySelectorAll('.claude-run').forEach(r =>
         r.onclick = () => switchTab(r.dataset.port));
+      runningEl.querySelectorAll('.claude-sess').forEach(el =>
+        el.onclick = () => {
+          const exist = `claude:r-${(el.dataset.resume || '').slice(0, 8)}`;
+          if (connections[exist]) { switchTab(exist); return; }
+          connectClaude({resume: el.dataset.resume, cwd: el.dataset.cwd, label: el.dataset.title || 'Claude'});
+        });
     }
 
-    // 历史会话（点击恢复）
-    const ss = await (await fetch('/api/claude/sessions?limit=30')).json();
+    // 历史 sheet：非活跃的主体会话（活跃的在「活跃」sheet）
     const sessEl = $('claudeSessions');
-    const sessions = ss.sessions || [];
-    const sessKey = sessions.map(s => `${s.session_id}:${s.mtime}:${s.active ? 1 : 0}`).join(',');
+    const history = sessions.filter(s => !s.active);
+    const sessKey = history.map(s => `${s.session_id}:${s.mtime}:${s.title}`).join(',');
     if (sessKey !== _claudeSessionsKey) {
       _claudeSessionsKey = sessKey;
-      if (!sessions.length) {
-        sessEl.innerHTML = '<div class="claude-empty">暂无会话（~/.claude/projects 为空）</div>';
+      if (!history.length) {
+        sessEl.innerHTML = '<div class="claude-empty">暂无历史会话</div>';
       } else {
-        sessEl.innerHTML = sessions.map(s => {
+        sessEl.innerHTML = history.map(s => {
           const dirName = (s.cwd || '').split(/[\\\\/]/).pop() || s.project;
           // title = aiTitle 优先（后台总览同款会话名），无则首条消息摘要；
           // 目录名降级进 title 属性提示
           return `<div class="claude-sess" data-resume="${esc(s.session_id)}" data-cwd="${esc(s.cwd || '')}" data-title="${esc(s.title || s.summary || '')}" title="${esc((s.title ? dirName + ' · ' : '') + (s.summary || '') + '  @' + (s.cwd || ''))}">
             <div class="srow1">
-              ${s.active ? '<span class="live-dot"></span>' : ''}
               <span class="cdir">${esc(s.title || s.summary || dirName)}</span>
               <span class="ctime">${esc(_claudeRelTime(s.last_ts || s.first_ts))}</span>
             </div>
@@ -133,11 +170,12 @@ async function refreshClaudePanel() {
       }
     }
 
-    // 技能（cwd 取当前 claude tab 的，没有则不带 → 只有 user+plugin）
+    // 技能 sheet（cwd 取当前 claude tab 的，没有则不带 → 只有 user+plugin）
     const curClaude = Object.values(connections).find(c => c.meta && c.meta.kind === 'claude');
     const sk = await (await fetch('/api/claude/skills' + (curClaude && curClaude.meta.cwd ? '?cwd=' + encodeURIComponent(curClaude.meta.cwd) : ''))).json();
     const skillsEl = $('claudeSkills');
     const skills = sk.skills || [];
+    _claudeSetCount('claudeSkillCount', skills.length);
     const skillsKey = skills.map(s => `${s.source}:${s.name}`).join(',');
     if (skillsKey !== _claudeSkillsKey) {
       _claudeSkillsKey = skillsKey;

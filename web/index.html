@@ -154,20 +154,23 @@
           </div>
         </div>
       </div>  
-      <!-- Claude 会话/技能（第 2 期：旁路状态面板，设计 docs/CLAUDE_CODE_INTEGRATION.md §3） -->
+      <!-- Claude 会话/技能（第 2 期：旁路状态面板，设计 docs/CLAUDE_CODE_INTEGRATION.md §3）
+           三个子 sheet（活跃/历史/技能）——单栏塞三段要翻半天，拆开点选 -->
       <div class="panel-tab-pane" data-pane="claude">
         <div class="claude-pane" id="claudePane">
           <div class="claude-head"><span class="dot" id="claudeStatusDot"></span><span id="claudeStatusText">检测中…</span></div>
-          <div class="claude-section">
-            <div class="title">运行中</div>
+          <div class="claude-sheets">
+            <div class="claude-sheet-tab active" data-sheet="active">活跃 <span class="count" id="claudeActiveCount">0</span></div>
+            <div class="claude-sheet-tab" data-sheet="history">历史 <span class="count" id="claudeHistoryCount">0</span></div>
+            <div class="claude-sheet-tab" data-sheet="skills">技能 <span class="count" id="claudeSkillCount">0</span></div>
+          </div>
+          <div class="claude-sheet-pane active" data-sheet="active">
             <div id="claudeRunning">—</div>
           </div>
-          <div class="claude-section">
-            <div class="title">历史会话（点击恢复）</div>
+          <div class="claude-sheet-pane" data-sheet="history">
             <div id="claudeSessions" class="claude-sessions">—</div>
           </div>
-          <div class="claude-section">
-            <div class="title">技能</div>
+          <div class="claude-sheet-pane" data-sheet="skills">
             <div id="claudeSkills" class="claude-skills">—</div>
           </div>
         </div>
