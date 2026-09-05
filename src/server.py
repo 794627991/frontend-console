@@ -219,10 +219,18 @@ def api_connect():
                         "msg": f"已连接 {username}@{host}:{port}"})
     elif kind == "claude":
         # Claude Code 本地终端（ConPTY 跑真实 CLI，设计见 docs/CLAUDE_CODE_INTEGRATION.md）
-        from .claude_conn import ClaudeConnection, ClaudeNotFoundError, _humanize_claude_error
+        from .claude_conn import (ClaudeConnection, ClaudeNotFoundError,
+                                  _humanize_claude_error, _bg_sessions_running)
         cwd = (data.get("cwd") or "").strip() or os.path.expanduser("~")
         resume = (data.get("resume") or "").strip() or None
+        agents = bool(data.get("agents"))   # 显式打开 agents TUI（接管后台会话本体）
         light_theme = bool(data.get("light_theme"))   # 前端壳体为亮色主题时注入 light 主题
+        # resume 的会话正以后台 agent 运行时，--resume 会被 claude 拒绝（红字）。
+        # 官方 attach 路径只有 agents TUI（无 CLI flag）——自动转 agents 视图，
+        # 用户在列表里回车即接管该会话本体。
+        if resume and not agents and resume in _bg_sessions_running():
+            agents = True
+            resume = None
         if resume and not os.path.isdir(cwd):
             return jsonify({"ok": False, "err": f"会话原目录不存在：{cwd}"}), 400
         with _ports_lock:
@@ -237,7 +245,8 @@ def api_connect():
                     n += 1
                 port_id = f"claude:{n}"
             try:
-                p = ClaudeConnection(cwd=cwd, resume=resume, port_id=port_id, light_theme=light_theme)
+                p = ClaudeConnection(cwd=cwd, resume=resume, port_id=port_id,
+                                     light_theme=light_theme, agents=agents)
                 _ports[port_id] = p
             except Exception as e:
                 # 构造内 start() 已 spawn PTY+读线程，异常必须 close 兜底（同 SSH/串口模式）

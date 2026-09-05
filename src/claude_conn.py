@@ -89,6 +89,25 @@ def _humanize_claude_error(e):
     return f"claude 启动失败：{msg}"
 
 
+def _bg_sessions_running():
+    """列出正以后台 agent 运行的 session_id 集合。
+    信号：bg agent 是独立 claude 进程，命令行带 --session-id <uuid>。
+    wmic 扫进程命令行（本机 Windows；失败返回空集——最坏也只是
+    claude 自己再报一次红字）。"""
+    try:
+        import subprocess
+        out = subprocess.run(
+            ["wmic", "process", "where", "commandline like '%--session-id%'",
+             "get", "CommandLine"],
+            capture_output=True, timeout=5).stdout or b""
+        # wmic 输出是本地代码页（GBK）——text=True 用 cp1252/utf8 解会乱，
+        # 拿 bytes 手工按 GBK 解（--session-id <uuid> 是 ASCII，怎么解都不损）
+        txt = out.decode("gbk", errors="replace")
+        return set(re.findall(r"--session-id ([0-9a-f-]{36})", txt))
+    except Exception:
+        return set()
+
+
 class ClaudeConnection(BaseConnection):
     """本地 ConPTY 跑 claude CLI。kind='claude'。
 
@@ -98,10 +117,11 @@ class ClaudeConnection(BaseConnection):
     """
     kind = "claude"
 
-    def __init__(self, cwd=None, resume=None, cols=120, rows=30, port_id=None, light_theme=False):
+    def __init__(self, cwd=None, resume=None, cols=120, rows=30, port_id=None, light_theme=False, agents=False):
         super().__init__(port_id or "claude:1")
         self.cwd = cwd or os.path.expanduser("~")
         self.resume = resume or None
+        self.agents = bool(agents)   # True：打开 claude agents TUI（接管后台会话本体的官方入口）
         self._cols, self._rows = cols, rows
         self._light_theme = bool(light_theme)
         # 兼容 api_status 的 p.port/p.baud 字段
@@ -136,6 +156,10 @@ class ClaudeConnection(BaseConnection):
             argv = [exe]
         if self.resume:
             argv += ["--resume", self.resume]
+        elif self.agents:
+            # claude agents TUI：接管正以后台 agent 运行的会话本体的官方入口
+            # （--resume 后台会话被 claude 拒绝；无 CLI attach flag，TUI 回车即接管）
+            argv += ["agents"]
         # 每个会话都建 --settings 临时文件（不只亮色）：theme 键随工具壳体亮暗写入
         # （亮=light-ansi 走 ANSI 16 色、颜色落到本工具 xterm 调色板；暗=dark 保持
         # 默认观感）。--settings 只作用于当前进程、不写用户配置文件。工具中途换主题
