@@ -1109,18 +1109,25 @@
   .claude-run { display: flex; align-items: center; gap: 6px; font-size: 11px; padding: 4px 8px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; margin-bottom: 4px; }
   .claude-run:hover { border-color: var(--accent); }
   .claude-run .cstate { margin-left: auto; color: var(--muted); font-size: 10px; }
-  .claude-sessions { display: flex; flex-direction: column; gap: 4px; }
-  .claude-sess { padding: 5px 8px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
+  .claude-sessions { display: flex; flex-direction: column; gap: 8px; }
+  .claude-sess { padding: 8px 10px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
   .claude-sess:hover { border-color: var(--accent); background: var(--bg-input); }
   .claude-sess .srow1 { display: flex; align-items: center; gap: 6px; font-size: 11px; }
   .claude-sess .cdir { font-weight: 600; color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .claude-sess .ctime { margin-left: auto; color: var(--muted); font-size: 10px; flex-shrink: 0; }
-  .claude-sess .srow2 { color: var(--muted); font-size: 10px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  /* 会话备注按钮：默认隐形，hover 卡片才现；备注过的会话名字带下划线点标记 */
-  .claude-sess .note-btn { margin-left: auto; opacity: 0; border: none; background: none; color: var(--muted); cursor: pointer; font-size: 11px; padding: 0 3px; flex-shrink: 0; }
+  /* 第二排：摘要 + 行尾会话 id 短码（等宽灰字）——用户要求能看出是哪个会话 */
+  .claude-sess .srow2 { color: var(--muted); font-size: 10px; margin-top: 3px; display: flex; align-items: baseline; gap: 8px; }
+  .claude-sess .srow2 .sum { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+  .claude-sess .srow2 .sid { font-family: var(--font-mono); font-size: 9px; color: var(--muted); opacity: 0.75; flex-shrink: 0; }
+  /* 会话备注按钮：卡片右缘固定、放大可点；hover 卡片才亮色（不 hover 也占位，
+     用户要求固定位置不漂移） */
+  .claude-sess .note-btn { margin-left: auto; border: none; background: none; color: var(--muted); cursor: pointer; font-size: 13px; padding: 2px 4px; flex-shrink: 0; opacity: 0.45; border-radius: 4px; }
   .claude-sess:hover .note-btn { opacity: 1; }
-  .claude-sess .note-btn:hover { color: var(--accent); }
+  .claude-sess .note-btn:hover { color: var(--accent); background: var(--bg-input); }
   .claude-sess .cdir.noted { text-decoration: underline dotted; text-underline-offset: 3px; }
+  /* 备注弹窗输入框：SSH 连接弹窗同款（.conn-form input）——背景/边框/圆角/聚焦光环一致 */
+  #claudeNoteModal input.note-input { width: 100%; background: var(--bg-input); color: var(--fg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 13px; outline: none; }
+  #claudeNoteModal input.note-input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
   .claude-skills { display: flex; flex-direction: column; gap: 4px; }
   .claude-skill { font-size: 11px; padding: 4px 8px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; }
   .claude-skill .sk-name { font-family: var(--font-mono); color: var(--accent); font-weight: 600; }

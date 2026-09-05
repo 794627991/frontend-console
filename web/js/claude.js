@@ -130,10 +130,10 @@ function _claudeSessionCard(s, opts = {}) {
       ${opts.live ? '<span class="live-dot"></span>' : ''}
       <span class="cdir${hasNote ? ' noted' : ''}">${esc(s.title || s.summary || dirName)}</span>
       ${opts.ext ? '<span class="cstate">外部</span>' : ''}
-      <button class="note-btn" data-note="${esc(s.session_id)}" title="改备注（显示优先）">✎</button>
       <span class="ctime">${esc(opts.time || '')}</span>
+      <button class="note-btn" data-note="${esc(s.session_id)}" title="改备注（显示优先）">✎</button>
     </div>
-    <div class="srow2">${esc(s.title ? (s.summary || dirName) : dirName)}</div>
+    <div class="srow2"><span class="sum">${esc(s.title ? (s.summary || dirName) : dirName)}</span><span class="sid">${esc((s.session_id || '').slice(0, 8))}</span></div>
   </div>`;
 }
 function _claudeBindCards(container) {
