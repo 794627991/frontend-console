@@ -96,10 +96,13 @@ def _bg_sessions_running():
     claude 自己再报一次红字）。"""
     try:
         import subprocess
+        # CREATE_NO_WINDOW：工具是 GUI 进程（无控制台），wmic 是控制台程序——
+        # 不加此标志每次点恢复都会闪一个黑色 cmd 窗口
         out = subprocess.run(
             ["wmic", "process", "where", "commandline like '%--session-id%'",
              "get", "CommandLine"],
-            capture_output=True, timeout=5).stdout or b""
+            capture_output=True, timeout=5,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout or b""
         # wmic 输出是本地代码页（GBK）——text=True 用 cp1252/utf8 解会乱，
         # 拿 bytes 手工按 GBK 解（--session-id <uuid> 是 ASCII，怎么解都不损）
         txt = out.decode("gbk", errors="replace")
@@ -232,27 +235,68 @@ class ClaudeConnection(BaseConnection):
             except Exception:
                 pass
 
-    # /theme 菜单选项序号(1~8):1.Auto 2.Dark 3.Light 4.Dark-色盲 5.Light-色盲
-    # 6.Dark-ANSI 7.Light-ANSI 8.自定义
+    # /theme 菜单选项文本(与 buf 清洗行匹配用)。菜单:1.Auto 2.Dark 3.Light
+    # 4.Dark-色盲 5.Light-色盲 6.Dark-ANSI 7.Light-ANSI 8.自定义
     _THEME_MENU_LIGHT = 7   # light-ansi:颜色落 ANSI 16 色,由本工具 xterm 亮色调色板解释
     _THEME_MENU_DARK = 2
+    _THEME_MENU_ITEMS = ["Auto (match terminal)", "Dark mode", "Light mode",
+                         "Dark mode (colorblind-friendly)", "Light mode (colorblind-friendly)",
+                         "Dark mode (ANSI colors only)", "Light mode (ANSI colors only)",
+                         "New custom theme"]
+
+    def _theme_menu_cursor(self, wait_s=2.0):
+        """开 /theme 菜单后,从 buf 尾部清洗行里找 ❯ 光标所在的选项序号(1~8)。
+        菜单渲染是 TUI 重绘流,清洗行文本含 "❯ N. <选项名>"。找不到返回 None。"""
+        deadline = time.time() + wait_s
+        while time.time() < deadline:
+            time.sleep(0.3)
+            for it in reversed(self.get_buffer(40)):
+                s = (it.get("text") or "").strip()
+                if s.startswith("❯"):
+                    for i, name in enumerate(self._THEME_MENU_ITEMS, 1):
+                        if name in s:
+                            return i
+                    return None   # ❯ 行存在但不匹配任何选项(异常状态)
+        return None
 
     def set_light_theme(self, light):
         """工具壳体换主题时让运行中的会话自己切(/api/claude_theme 调用)。
-        settings 文件热重载实测无效(2.1.239 改文件无重绘)——改走 TUI 注入。
-        菜单光标默认定位在"当前生效主题"上(不固定!),导航前先 ↑×7 归一到 1,
-        再 ↓(目标-1) 步到目标项——步数与当前状态无关,任何起点都正确。
-        逐键 0.3s 间隔(一次性连发会被 TUI 吞掉,实测)。"""
+        settings 文件热重载实测无效(2.1.239 改文件无重绘)——走 TUI 菜单注入。
+        菜单光标每次定位在"当前生效主题"上(起点漂移,盲导航必错,实测翻过车),
+        必须闭环:开菜单 → 读 buf 找 ❯ 光标实际位置 → 按差值 ↓ → Enter → 验证。
+        逐键 0.3s 间隔(一次性连发会被 TUI 吞掉)。buf 是行式清洗文本(TUI 重绘
+        切行入库),❯ 行可稳定匹配。"""
         if self._proc is None:
             return False
         target = self._THEME_MENU_LIGHT if light else self._THEME_MENU_DARK
-        steps = ["/theme\r", "\x1b[A" * 7, "\x1b[B" * (target - 1), "\r"]
         try:
-            for s in steps:
-                self._io_write(s.encode("utf-8"))
-                time.sleep(0.3 * max(1, len(s) // 3))
-            self._light_theme = bool(light)
-            return True
+            # 1) 开菜单(记 buf 序号,之后只看新增行做验证)
+            with self.buf_lock:
+                base_seq = self.buf[-1]["seq"] if self.buf else 0
+            self._io_write(b"/theme\r")
+            time.sleep(1.0)
+            cur = self._theme_menu_cursor()
+            if cur is None:
+                # 菜单没开或读不到光标:Esc 兜底关闭,放弃本次(不乱动用户界面)
+                self._io_write(b"\x1b")
+                return False
+            if cur != target:
+                # 2) 按差值走 ↓(菜单循环,差值取模)
+                for _ in range((target - cur) % 8):
+                    self._io_write(b"\x1b[B")
+                    time.sleep(0.3)
+            # 3) Enter 确认
+            self._io_write(b"\r")
+            time.sleep(0.8)
+            # 4) 验证:新增行里找 "Theme set to <dark|light-ansi>"
+            confirm = "light-ansi" if light else "dark"
+            got = [it.get("text") or "" for it in self.get_buffer_after(base_seq, 60)]
+            if any("Theme set to" in t and confirm in t for t in got):
+                self._light_theme = bool(light)
+                return True
+            # 5) 没确认行(Enter 被排队/会话生成中):Esc 关菜单防残留
+            self._io_write(b"\x1b")
+            return False
         except Exception:
             return False
 
