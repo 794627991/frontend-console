@@ -5,7 +5,7 @@
 
 设计文档：docs/CLAUDE_CODE_INTEGRATION.md（路线 A+C：终端保真 + 旁路状态面板）。
 """
-import os, shutil, threading, tempfile, time
+import os, re, shutil, threading, tempfile, time
 
 from .base_conn import BaseConnection
 
