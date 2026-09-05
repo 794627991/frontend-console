@@ -7,7 +7,12 @@
 async function connectClaude(opts = {}) {
   // opts: {cwd, resume, label} —— resume 场景由 Claude 面板调用
   try {
-    const body = {kind: 'claude', cwd: opts.cwd || '', resume: opts.resume || ''};
+    // 工具壳体是亮色主题时，让本会话 claude 也用 light 主题（后端经 --settings
+    // 注入，只作用于该进程，不写配置文件、不影响其他终端的会话）
+    const curTheme = document.documentElement.getAttribute('data-theme') || 'deepblue';
+    const lightTheme = LIGHT_THEMES.includes(curTheme);
+    const body = {kind: 'claude', cwd: opts.cwd || '', resume: opts.resume || '',
+                  light_theme: lightTheme};
     const r = await fetch('/api/connect', {method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify(body)});
     const j = await r.json();

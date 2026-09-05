@@ -380,3 +380,37 @@ def ed_img(fn):
         return jsonify({"ok": False, "err": "图片不存在"}), 404
     from flask import send_file
     return send_file(p, mimetype=_IMG_EXT[ext])
+
+
+@edit_bp.route("/api/ed/proxy_img", methods=["POST"])
+def ed_proxy_img():
+    """外部磁盘图片读取中转：{path: 绝对路径} → 复制进 files/images/，返回相对 url。
+    .note 拖图插入用——WebView2 页面内 fetch('file:///…') 被安全策略拦截，
+    直传 multipart 又拿不到原始 File 对象，只能由后端读文件代劳。
+    校验复用 upload_img 同款：后缀白名单 + 魔数 + 10MB 上限。"""
+    import uuid
+    data = request.get_json(force=True, silent=True) or {}
+    path = data.get("path") or ""
+    ext = os.path.splitext(path)[1].lower()
+    if ext not in _IMG_EXT:
+        return jsonify({"ok": False, "err": f"不支持的图片类型 {ext or '(无后缀)'}"}), 400
+    p = os.path.abspath(path)
+    if not os.path.isfile(p):
+        return jsonify({"ok": False, "err": "文件不存在"}), 404
+    try:
+        with open(p, "rb") as f:
+            head = f.read(12)
+            if not _is_image_head(head, ext):
+                return jsonify({"ok": False, "err": "文件内容与图片后缀不符"}), 400
+            f.seek(0, 2)
+            if f.tell() > 10 * 1024 * 1024:
+                return jsonify({"ok": False, "err": "图片超过 10MB 上限"}), 400
+    except OSError as e:
+        return jsonify({"ok": False, "err": f"读取失败: {e}"}), 400
+    os.makedirs(IMAGES_DIR, exist_ok=True)
+    name = f"img_{int(time.time())}_{uuid.uuid4().hex[:8]}{ext}"
+    try:
+        shutil.copyfile(p, os.path.join(IMAGES_DIR, name))
+    except OSError as e:
+        return jsonify({"ok": False, "err": f"复制失败: {e}"}), 400
+    return jsonify({"ok": True, "url": "images/" + name})

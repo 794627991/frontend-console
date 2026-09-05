@@ -214,6 +214,7 @@ def api_connect():
         from .claude_conn import ClaudeConnection, ClaudeNotFoundError, _humanize_claude_error
         cwd = (data.get("cwd") or "").strip() or os.path.expanduser("~")
         resume = (data.get("resume") or "").strip() or None
+        light_theme = bool(data.get("light_theme"))   # 前端壳体为亮色主题时注入 light 主题
         if resume and not os.path.isdir(cwd):
             return jsonify({"ok": False, "err": f"会话原目录不存在：{cwd}"}), 400
         with _ports_lock:
@@ -228,7 +229,7 @@ def api_connect():
                     n += 1
                 port_id = f"claude:{n}"
             try:
-                p = ClaudeConnection(cwd=cwd, resume=resume, port_id=port_id)
+                p = ClaudeConnection(cwd=cwd, resume=resume, port_id=port_id, light_theme=light_theme)
                 _ports[port_id] = p
             except Exception as e:
                 # 构造内 start() 已 spawn PTY+读线程，异常必须 close 兜底（同 SSH/串口模式）

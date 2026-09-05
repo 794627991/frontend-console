@@ -98,11 +98,12 @@ class ClaudeConnection(BaseConnection):
     """
     kind = "claude"
 
-    def __init__(self, cwd=None, resume=None, cols=120, rows=30, port_id=None):
+    def __init__(self, cwd=None, resume=None, cols=120, rows=30, port_id=None, light_theme=False):
         super().__init__(port_id or "claude:1")
         self.cwd = cwd or os.path.expanduser("~")
         self.resume = resume or None
         self._cols, self._rows = cols, rows
+        self._light_theme = bool(light_theme)
         # 兼容 api_status 的 p.port/p.baud 字段
         base = os.path.basename(os.path.normpath(self.cwd)) or self.cwd
         self.port = f"Claude({base})"
@@ -135,6 +136,10 @@ class ClaudeConnection(BaseConnection):
             argv = [exe]
         if self.resume:
             argv += ["--resume", self.resume]
+        # 工具壳体是亮色主题时，给本会话注入 light 主题（--settings 只作用于
+        # 当前进程会话、不写任何配置文件，不影响用户其他终端里的 claude）
+        if self._light_theme:
+            argv += ["--settings", '{"theme": "light"}']
         env = dict(os.environ)  # ConPTY 要求完整环境；claude 依赖 PATH/HOME/TERM
         env.setdefault("TERM", "xterm-256color")
         env.setdefault("COLORTERM", "truecolor")

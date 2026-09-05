@@ -1237,23 +1237,61 @@ async function openFileSmart(path, mode) {
 }
 
 async function openDroppedFile(path) {
-  // 拖到 claude 终端 tab 上的图片：claude CLI 输入框不吃文件拖拽，靠剪贴板收图——
-  // 写剪贴板 + 提示 Ctrl+V（用户正对着 claude tab 拖，意图明确）。
-  // 非图片文件拖到 claude tab：仍走智能分发（打开日志/编辑器），不打断用户习惯。
+  // 拖到 claude 终端 tab 上的文件：claude 输入框不吃原生拖拽，直接把路径
+  // 当文本"打字"进终端（termSendRaw 走 /api/send_raw，claude 收到路径字符串
+  // 就能读文件——图片也能识图）。用户正对着 claude tab 拖，意图明确，不该弹打开方式。
   if (activePortId && connections[activePortId] &&
       connections[activePortId].meta && connections[activePortId].meta.kind === 'claude') {
-    const ext = (path.split('.').pop() || '').toLowerCase();
-    if (['png','jpg','jpeg','gif','webp','bmp'].includes(ext)) {
-      try {
-        await pywebview.api.copy_image_to_clipboard(path);
-        showBanner('图片已复制到剪贴板，在 Claude 输入框按 Ctrl+V 粘贴发送', 5000);
-      } catch(e) {
-        showBanner('图片进剪贴板失败，请手动复制后 Ctrl+V 粘贴', 5000, true);
+    const safe = path.replace(/\\/g, '/');
+    for (let i = 0; i < safe.length; i++) {
+      const code = safe.charCodeAt(i);
+      if (code < 128) termSendRaw(activePortId, [code]);
+      else { for (const b of new TextEncoder().encode(safe[i])) termSendRaw(activePortId, [b]); }
+    }
+    showBanner('已把路径发给 Claude（回车确认发送）', 3000);
+    return;
+  }
+  // 拖到笔记 tab（.note，Editor.js 在场）：图片直接作为图块插入——
+  // 与 note 内部粘贴图同款体验（上传 files/images/ 后插 image 块），
+  // 不弹"打开方式"。
+  if (activePortId && connections[activePortId] &&
+      connections[activePortId].meta && connections[activePortId].meta.kind === 'editor') {
+    const c = connections[activePortId];
+    if (c.ed && c.ed.save) {   // Editor.js 实例在场（.note；纯 .txt 是 Monaco 不走这）
+      const ext = (path.split('.').pop() || '').toLowerCase();
+      if (['png','jpg','jpeg','gif','webp','bmp'].includes(ext)) {
+        try {
+          const j = await _edInsertImageFromPath(path);
+          if (j) return;
+        } catch(_) {}
       }
-      return;
     }
   }
   openFileSmart(path, 'auto');
+}
+
+// 从磁盘绝对路径把图片插进当前 .note：fetch 转 Blob → 走 /api/ed/upload_img
+// （复用既有上传链：魔数校验 + 落盘 files/images/），成功后插 image 块到编辑器尾部。
+async function _edInsertImageFromPath(path) {
+  let blob;
+  try {
+    const r = await fetch('file:///' + path.replace(/\\/g, '/'));
+    blob = await r.blob();
+  } catch(_) {
+    // WebView2 拦 file:// → 经后端中转
+    const j2 = await (await fetch('/api/ed/proxy_img', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({path})})).json();
+    if (!j2.ok) { showBanner('读取图片失败：' + (j2.err || path), 4000, true); return true; }
+    blob = await (await fetch('/api/ed/img_data/' + j2.url.split('/').pop())).blob();
+  }
+  const ext = (path.split('.').pop() || '').toLowerCase();
+  const file = new File([blob], 'img.' + ext, {type: 'image/' + (ext === 'jpg' ? 'jpeg' : ext)});
+  const up = await _edUploadImage(file);
+  if (!up.success) { showBanner('图片插入失败', 3000, true); return true; }
+  const c = connections[activePortId];
+  const index = c.ed.blocks.getBlocksCount();
+  c.ed.blocks.insert('image', { file: { url: up.file.url } }, undefined, index, false);
+  return true;
 }
 
 // ---- 顶栏「📂 打开」：原生文件选择框（pywebview 桥 pick_any），选中后智能分发 ----

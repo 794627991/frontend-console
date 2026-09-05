@@ -34,14 +34,24 @@ function resHitToScroll(conn, hit) {
 }
 
 // 拖拽日志文件到窗口任意位置打开（含超大文件，走 G 级虚拟列表）
+// 遮罩文案按当前活跃 tab 分发：claude/note 有各自的落点行为，不该说"打开日志"
 let _dragOverlay = null;
 let _dragCounter = 0;
+function _dragOverlayText() {
+  const c = activePortId && connections[activePortId];
+  const kind = c && c.meta && c.meta.kind;
+  if (kind === 'claude') return '🤖 松开把路径发给 Claude';
+  if (kind === 'editor' && c.ed && c.ed.save) return '📝 松开插入到笔记';
+  return '📄 松开以打开日志';
+}
 function showDragOverlay(show) {
   if (show && !_dragOverlay) {
     _dragOverlay = document.createElement('div');
     _dragOverlay.id = 'dragOverlay';
-    _dragOverlay.textContent = '📄 松开以打开日志';
+    _dragOverlay.textContent = _dragOverlayText();
     document.body.appendChild(_dragOverlay);
+  } else if (show && _dragOverlay) {
+    _dragOverlay.textContent = _dragOverlayText();   // 拖着悬停时切了 tab，文案同步
   } else if (!show && _dragOverlay) {
     _dragOverlay.remove(); _dragOverlay = null;
   }
