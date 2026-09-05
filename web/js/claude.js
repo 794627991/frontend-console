@@ -31,6 +31,12 @@ async function connectClaude(opts = {}) {
     refreshSidebar();
     refreshGlobalStatus();
     showBanner(j.msg || 'claude 已启动');
+    // 恢复的会话记入「最近」（key=会话 id 去重置顶）——新会话不记（id 未知，无重开价值）
+    if (j.resume && typeof _recentAdd === 'function') {
+      const dirName = (j.cwd || '').split(/[\\/]/).pop() || '';
+      _recentAdd({type:'claude', key:'claude:' + j.resume, resume: j.resume,
+                  label:`Claude · ${dirName}`, data:{resume: j.resume, cwd: j.cwd}});
+    }
     return j;
   } catch(e) {
     showBanner('claude 启动请求失败: ' + e, 5000, true);

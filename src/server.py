@@ -421,7 +421,7 @@ def api_theme():
 # 最近打开（SSH/串口/文件 快捷重开列表）
 # ============================================================
 # 存 config.json "recent" 键：[{type, key, label, ts, data{...}}...]，新→旧。
-# key = 去重键（ssh:host:port:user / serial:COM3 / file:路径）；同 key 只留最新一条并置顶。
+# key = 去重键（ssh:host:port:user / serial:COM3 / file:路径 / claude:session_id）；同 key 只留最新一条并置顶。
 _RECENT_MAX = 20  # 列表上限，防无限膨胀
 def _recent_add(item):
     """记录一条最近打开（去重置顶），返回更新后的列表。"""
@@ -450,7 +450,7 @@ def api_recent():
         keep = []
         for it in data["replace"]:
             t = (it.get("type") or "").strip()
-            if t not in ("ssh", "serial", "file") or not (it.get("key") or "").strip():
+            if t not in ("ssh", "serial", "file", "claude") or not (it.get("key") or "").strip():
                 continue
             keep.append({"type": t, "key": it["key"], "label": (it.get("label") or "").strip(),
                          "ts": it.get("ts") or 0, "data": it.get("data") or {}})
@@ -458,8 +458,8 @@ def api_recent():
         _save_config({**_load_config(), "recent": keep[:_RECENT_MAX]})
         return jsonify({"ok": True, "recent": keep[:_RECENT_MAX]})
     t = (data.get("type") or "").strip()
-    if t not in ("ssh", "serial", "file"):
-        return jsonify({"ok": False, "err": "type 须为 ssh/serial/file"}), 400
+    if t not in ("ssh", "serial", "file", "claude"):
+        return jsonify({"ok": False, "err": "type 须为 ssh/serial/file/claude"}), 400
     item = {"type": t, "key": (data.get("key") or "").strip(),
             "label": (data.get("label") or "").strip(), "data": data.get("data") or {}}
     if not item["key"]:
@@ -1302,6 +1302,35 @@ def ai_mcp_info():
         "tools": tools,
         "recent_calls": calls,
     })
+
+
+# ---- Claude 会话/技能发现（设计见 docs/CLAUDE_CODE_INTEGRATION.md §3.2） ----
+@app.route("/api/claude/sessions")
+def claude_sessions_list():
+    """历史会话列表（~/.claude/projects 扫描），供「最近」claude 组与 Claude 面板。"""
+    from .claude_sessions import list_sessions
+    limit = request.args.get("limit", 50, type=int)
+    return jsonify({"ok": True, "sessions": list_sessions(limit=min(max(limit, 1), 200))})
+
+
+@app.route("/api/claude/skills")
+def claude_skills_list():
+    """技能三来源列出（user/project/plugin）。"""
+    from .claude_sessions import list_skills
+    cwd = request.args.get("cwd") or None
+    return jsonify({"ok": True, "skills": list_skills(cwd)})
+
+
+@app.route("/api/claude/status")
+def claude_status():
+    """聚合状态：本工具打开的 claude 连接 + 外部活跃会话数。"""
+    from .claude_sessions import list_sessions
+    with _ports_lock:
+        mine = [{"port_id": pid, "cwd": getattr(p, "cwd", ""), "alive": p.alive}
+                for pid, p in _ports.items() if getattr(p, "kind", "") == "claude"]
+    sessions = list_sessions(limit=100)
+    external = [s for s in sessions if s.get("active")]
+    return jsonify({"ok": True, "mine": mine, "external_active": len(external)})
 
 
 @app.route("/api/ai/mcp_report", methods=["POST"])

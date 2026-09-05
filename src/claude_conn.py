@@ -5,7 +5,7 @@
 
 设计文档：docs/CLAUDE_CODE_INTEGRATION.md（路线 A+C：终端保真 + 旁路状态面板）。
 """
-import os, shutil, threading
+import os, shutil, threading, tempfile
 
 from .base_conn import BaseConnection
 
@@ -137,9 +137,15 @@ class ClaudeConnection(BaseConnection):
         if self.resume:
             argv += ["--resume", self.resume]
         # 工具壳体是亮色主题时，给本会话注入 light 主题（--settings 只作用于
-        # 当前进程会话、不写任何配置文件，不影响用户其他终端里的 claude）
+        # 当前进程会话、不写用户配置文件，不影响用户其他终端里的 claude）。
+        # 必须用临时文件而非内联 JSON：cmd shim 中转时 cmd.exe /c 会剥掉
+        # 内联 JSON 的双引号，claude 收到非法 JSON 直接报错；文件路径无此问题。
         if self._light_theme:
-            argv += ["--settings", '{"theme": "light"}']
+            fd, settings_path = tempfile.mkstemp(suffix=".json", prefix="claude_theme_")
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write('{"theme": "light"}')
+            self._theme_settings_path = settings_path
+            argv += ["--settings", settings_path]
         env = dict(os.environ)  # ConPTY 要求完整环境；claude 依赖 PATH/HOME/TERM
         env.setdefault("TERM", "xterm-256color")
         env.setdefault("COLORTERM", "truecolor")
@@ -167,6 +173,7 @@ class ClaudeConnection(BaseConnection):
             self._eof_handled = True
             self.append_line("[claude] 进程已退出，会话结束。可点 ✕ 关闭，或从 Claude 面板恢复。")
         self.alive = False   # 让 _reader_loop 的 while 自行退出
+        self._cleanup_theme_settings()
         try:
             self._io_close()
         except Exception:
@@ -188,6 +195,17 @@ class ClaudeConnection(BaseConnection):
                 proc.terminate(force=True)
         except Exception:
             pass
+        self._cleanup_theme_settings()
+
+    def _cleanup_theme_settings(self):
+        """删除 --settings 临时文件（claude 启动时已读完，进程退出后清理）。"""
+        p = getattr(self, "_theme_settings_path", None)
+        if p:
+            self._theme_settings_path = None
+            try:
+                os.remove(p)
+            except Exception:
+                pass
 
     def _io_reconnect(self):
         # claude 无重连语义（EOF 路径已让 reader 干净退出，不会走到这；保险起见拒绝）

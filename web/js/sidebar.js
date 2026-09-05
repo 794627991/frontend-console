@@ -326,8 +326,8 @@ $('btnRefreshPorts').onclick = async () => { await loadPorts(); showBanner('端�
 // ============================================================
 // 最近打开（SSH/串口/文件 快捷重开，后端 config.json 持久化 + 自动去重）
 // ============================================================
-const RECENT_ICON = { ssh: '🔗', serial: '🔌', file: '📄' };  // 类型区分图标
-const RECENT_TYPE_NAME = { ssh: 'SSH', serial: '串口', file: '文件' };
+const RECENT_ICON = { claude: '🤖', ssh: '🔗', serial: '🔌', file: '📄' };  // 类型区分图标
+const RECENT_TYPE_NAME = { claude: 'Claude 会话', ssh: 'SSH', serial: '串口', file: '文件' };
 let _recentList = [];
 
 async function loadRecentList() {
@@ -345,8 +345,9 @@ function renderRecentList() {
     el.innerHTML = '<div class="recent-empty">暂无记录<br>连接/打开文件后自动记录</div>';
     return;
   }
-  // 按类型分组（串口/文件/SSH），组内保持原新→旧顺序
+  // 按类型分组，claude 排最前（用户高频恢复会话），组内保持原新→旧顺序
   const groups = [
+    { type: 'claude', name: 'Claude 会话' },
     { type: 'serial', name: '串口' },
     { type: 'file',   name: '文件' },
     { type: 'ssh',    name: 'SSH' },
@@ -392,6 +393,14 @@ async function removeRecentItem(i) {
 }
 
 function openRecentItem(it) {
+  if (it.type === 'claude') {
+    // Claude 会话恢复：data 带 resume（会话 id）+ cwd（原工作目录）
+    const d = it.data || {};
+    if (d.resume && typeof connectClaude === 'function') {
+      connectClaude({resume: d.resume, cwd: d.cwd || '', label: it.label});
+    }
+    return;
+  }
   if (it.type === 'serial') {
     const d = it.data || {};
     connectPort(d.port, d.baud || 115200);
