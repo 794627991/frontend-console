@@ -78,15 +78,15 @@ def close_all_ports():
             p.close()
         _ports.clear()
 
-# hook 到 SerialPort.append_line：AI 全局流挂载点（猴子补丁，import serial_conn 后执行）
-# hook 到 SerialPort.append_line
-_orig_append = SerialPort.append_line
+# hook 到 BaseConnection.append_line：AI 全局流挂载点（猴子补丁，import 各连接类后执行）
+# 挂基类而非 SerialPort——SSHConnection 继承基类方法，挂串口类会让 SSH 输出永远不进 /api/ai/stream
+_orig_append = BaseConnection.append_line
 def _patched_append(self, raw_line, local_echo=False):
     _orig_append(self, raw_line, local_echo)
     ts_ms = int(time.time() * 1000)
     clean = strip_ansi(raw_line)
     _broadcast_to_ai({"ts": ts_ms, "text": clean, "port": self.port_id, "tag": classify_line(clean)})
-SerialPort.append_line = _patched_append
+BaseConnection.append_line = _patched_append
 
 def start_background():
     """启动后台维护线程。"""
@@ -177,6 +177,11 @@ def api_connect():
                 p = SSHConnection(host, port, username, password=password, key_path=key_path, port_id=port_id)
                 _ports[port_id] = p
             except Exception as e:
+                # start() 在构造内执行，_start_log 失败或后续步骤异常会留下
+                # 半构造对象（已开 SSH 会话+读线程）——必须 close 兜底，否则幽灵会话泄漏
+                _ports.pop(port_id, None)
+                try: p.close()
+                except Exception: pass
                 # 认证失败类异常：转成对用户可读的中文提示（paramiko 原始消息常为空/难懂）
                 msg = str(e) or e.__class__.__name__
                 try:
@@ -218,6 +223,11 @@ def api_connect():
                 p = SerialPort(port, baud, port_id)
                 _ports[port_id] = p
             except Exception as e:
+                # 构造内 start() 已开串口句柄/读线程，异常必须 close 兜底，
+                # 否则 COM 口被半构造对象占死，再连必 PermissionError
+                _ports.pop(port_id, None)
+                try: p.close()
+                except Exception: pass
                 return jsonify({"ok": False, "err": str(e)}), 500
         # 触发提示符
         try:
@@ -500,6 +510,12 @@ def api_data_dir_check():
     target = os.path.abspath(target)
     if os.path.abspath(DATA_DIR).lower() == target.lower():
         return jsonify({"ok": False, "err": "这就是当前数据目录"}), 400
+    cur = os.path.abspath(DATA_DIR).lower()
+    # 嵌套判定：目标在当前目录内（或反过来）都拒绝——迁移后 rmtree 旧目录
+    # 会把嵌套在内的新副本一起删掉，全量数据丢失
+    tgt = target.lower()
+    if tgt.startswith(cur + os.sep) or cur.startswith(tgt + os.sep):
+        return jsonify({"ok": False, "err": "目标目录不能与当前数据目录互相嵌套（会导致删除旧目录时连带删除新数据）"}), 400
     try:
         os.makedirs(target, exist_ok=True)
     except Exception as e:
@@ -534,12 +550,20 @@ def api_data_dir_migrate():
     3. 全部通过后写 config.data_dir + 更新运行时（日志目录/笔记目录立即生效）；
     4. 旧目录完整保留，由用户确认后手动删（杜绝「迁移了就找不到了」）。
     webview_cache 不迁：纯浏览器缓存，重启自动重建。"""
+    # 迁移切换要更新本模块按值导入的 DATA_DIR/STATE_DIR/CMD_LIB_FILE/LOG_DIR
+    #（改 _st 属性不会同步到 import 绑定），global 声明必须在函数内首次使用前
+    global DATA_DIR, STATE_DIR, CMD_LIB_FILE, LOG_DIR
     import shutil
     data = request.get_json(force=True, silent=True) or {}
     target = (data.get("dir") or "").strip()
     if not target or os.path.abspath(target).lower() == os.path.abspath(DATA_DIR).lower():
         return jsonify({"ok": False, "err": "目标与当前目录相同"}), 400
     target = os.path.abspath(target)
+    cur = os.path.abspath(DATA_DIR).lower()
+    # 嵌套判定：目标嵌套在当前目录内（或当前目录嵌套在目标内）都拒绝——
+    # 迁移完成 rmtree(old_data_dir) 会把嵌套在内的新副本一并删除
+    if target.lower().startswith(cur + os.sep) or cur.startswith(target.lower() + os.sep):
+        return jsonify({"ok": False, "err": "目标目录不能与当前数据目录互相嵌套（会导致删除旧目录时连带删除新数据）"}), 400
     try:
         os.makedirs(target, exist_ok=True)
     except Exception as e:
@@ -605,7 +629,11 @@ def api_data_dir_migrate():
     _st.STATE_DIR = target
     _st.LOG_DIR = new_log_dir
     _st.CMD_LIB_FILE = os.path.join(target, "cmdlib.json")
-    global LOG_DIR
+    # server.py 按值导入了 DATA_DIR/STATE_DIR/CMD_LIB_FILE，import 后再改 _st 属性
+    # 不会同步到本模块绑定——不更新则二次迁移/GET /api/data_dir 仍用已删除的旧目录
+    DATA_DIR = target
+    STATE_DIR = target
+    CMD_LIB_FILE = os.path.join(target, "cmdlib.json")
     LOG_DIR = new_log_dir
     try:
         import src.editor_files as _ef
@@ -648,8 +676,10 @@ def api_open_log_file():
 
 @app.route("/api/log/<name>")
 def api_log_read(name):
-    path = os.path.join(LOG_DIR, name)
-    if not os.path.isfile(path):
+    # 与其他日志路由统一防线：Flask 默认转换器只挡 / 不挡 %5C（解码为 \），
+    # Windows 上反斜杠是合法分隔符，join 后 ..\ 可逐级逃出 LOG_DIR
+    path = _resolve_log_path(name)
+    if not path:
         return jsonify({"ok": False, "err": "not found"}), 404
     with open(path, "r", encoding="utf-8", errors="replace") as f:
         return Response(f.read(), mimetype="text/plain")

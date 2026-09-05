@@ -1,0 +1,299 @@
+{
+  "nodes": [
+    {
+      "id": "file:web/js/theme.js",
+      "type": "file",
+      "name": "theme.js",
+      "filePath": "web/js/theme.js",
+      "summary": "主题换肤模块：定义 11 套主题（暗色 7 + 亮色 4），通过 data-theme 属性切换 CSS 变量实现整窗换色，持久化走后端 /api/theme 接口（Flask 端口随机导致 localStorage 跨端口不可用），并实时同步已打开 xterm 终端与 Monaco 编辑器的配色。",
+      "tags": ["换肤", "主题", "xterm", "ui", "持久化"],
+      "complexity": "moderate",
+      "languageNotes": "纯 script 标签全局函数（无模块化），依赖 util.js 的 connections/$/showBanner 全局；主题持久化刻意绕开 localStorage 而走后端 config.json，因 Flask 每次启动端口随机导致按 origin 隔离的 storage 永远读不到旧值。"
+    },
+    {
+      "id": "function:web/js/theme.js:_termThemeFor",
+      "type": "function",
+      "name": "_termThemeFor",
+      "filePath": "web/js/theme.js",
+      "lineRange": [24, 46],
+      "summary": "按当前 CSS 变量（--term-bg/--term-fg）重建 xterm 16 色主题对象，亮色主题切换为浅底深字配色，供 buildTerminal 与 applyTheme 共用。",
+      "tags": ["xterm", "配色", "utility", "css-variables"],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:web/js/theme.js:applyTheme",
+      "type": "function",
+      "name": "applyTheme",
+      "filePath": "web/js/theme.js",
+      "lineRange": [48, 64],
+      "summary": "校验并应用主题：设置 <html> 的 data-theme 属性、POST 持久化到后端 /api/theme、遍历所有已打开连接的 xterm 实例实时换色，并触发 Monaco 编辑器同步深浅主题。",
+      "tags": ["换肤", "xterm", "event-handler", "持久化"],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:web/js/theme.js:initTheme",
+      "type": "function",
+      "name": "initTheme",
+      "filePath": "web/js/theme.js",
+      "lineRange": [66, 104],
+      "summary": "启动引导（异步 IIFE）：先应用默认主题避免无样式闪烁，再从后端 /api/theme 读回上次主题；渲染主题选择菜单并绑定按钮点击展开、点击外部关闭。",
+      "tags": ["初始化", "event-handler", "换肤", "bootstrap"],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:web/js/theme.js:renderMenu",
+      "type": "function",
+      "name": "renderMenu",
+      "filePath": "web/js/theme.js",
+      "lineRange": [77, 95],
+      "summary": "渲染换肤菜单：按暗色系/亮色系分组列出 THEMES，每项含色板、名称、描述与当前项勾选标记，点击即切换主题、刷新菜单并弹出提示气泡。",
+      "tags": ["ui", "菜单渲染", "event-handler", "换肤"],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:web/js/ts-outline.js",
+      "type": "file",
+      "name": "ts-outline.js",
+      "filePath": "web/js/ts-outline.js",
+      "summary": "web-tree-sitter 代码大纲解析器：vendor 化离线集成（WASM 运行时 + 各语言 grammar），支持 Python/C/C++/bash/JSON 五类语言的语法树解析，提取类/函数/宏/全局变量/JSON 键等定义生成大纲导航列表，加载或解析失败时由调用方回落正则方案。",
+      "tags": ["tree-sitter", "代码大纲", "parser", "wasm", "utility"],
+      "complexity": "complex",
+      "languageNotes": "浏览器端跑 tree-sitter WASM：动态 import ESM 模块（Parser/Language 为命名导出而非静态属性），语言 grammar wasm 按 lang-* 目录懒加载并用 promise 表防并发重复加载；JSON 走特化递归（限深 12/条目 2000），其余语言按每语言的节点类型规则表遍历。"
+    },
+    {
+      "id": "function:web/js/ts-outline.js:TS_LANG_EXT_HAS",
+      "type": "function",
+      "name": "TS_LANG_EXT_HAS",
+      "filePath": "web/js/ts-outline.js",
+      "lineRange": [26, 28],
+      "summary": "判断文件后缀是否在 tree-sitter 支持范围内，供 editor.js 决定走异步语法树大纲还是同步正则大纲。",
+      "tags": ["utility", "代码大纲", "后缀判断"],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:web/js/ts-outline.js:tsInit",
+      "type": "function",
+      "name": "tsInit",
+      "filePath": "web/js/ts-outline.js",
+      "lineRange": [37, 49],
+      "summary": "动态 import tree-sitter ESM 模块并初始化 WASM Parser 单例，locateFile 指向 vendor 目录的 tree-sitter.wasm。",
+      "tags": ["tree-sitter", "初始化", "wasm", "singleton"],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:web/js/ts-outline.js:tsLoadLang",
+      "type": "function",
+      "name": "tsLoadLang",
+      "filePath": "web/js/ts-outline.js",
+      "lineRange": [51, 68],
+      "summary": "按语言名加载 grammar WASM，带已加载缓存与加载中 promise 表防并发重复加载；Language 是模块独立命名导出而非 Parser 静态属性（历史踩坑点）。",
+      "tags": ["tree-sitter", "懒加载", "wasm", "缓存"],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:web/js/ts-outline.js:_tsCFuncName",
+      "type": "function",
+      "name": "_tsCFuncName",
+      "filePath": "web/js/ts-outline.js",
+      "lineRange": [118, 130],
+      "summary": "C 系函数定义取名：从 function_definition 节点递归查找嵌套 declarator 层级中最深的 identifier 作为函数名。",
+      "tags": ["tree-sitter", "c语言", "utility", "递归"],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:web/js/ts-outline.js:tsOutline",
+      "type": "function",
+      "name": "tsOutline",
+      "filePath": "web/js/ts-outline.js",
+      "lineRange": [134, 231],
+      "summary": "大纲解析入口：按后缀映射语言、加载 grammar 并解析源码；JSON 特化为递归列出全部键（含叶子值预览与折叠判定），其余语言按 _TS_SYM_RULES 遍历语法树提取类/函数/宏/全局变量（跳过函数原型与结构体声明重复项，深度限幅 30、结果上限 5000），返回 {level,text,line,kind} 列表或错误对象。",
+      "tags": ["tree-sitter", "代码大纲", "parser", "ast遍历", "核心入口"],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:web/js/util.js",
+      "type": "file",
+      "name": "util.js",
+      "filePath": "web/js/util.js",
+      "summary": "全局状态与小工具集：定义 connections（port_id → 连接对象）、activePortId、aiSse 等跨文件共享的连接状态，以及 DOM 快捷取用 $、右下角冒泡通知 showBanner、时间戳格式化 fmtTs、HTML 转义 esc 与连接排序键 sortKeyFn（串口 < SSH < 日志 < 编辑器）。",
+      "tags": ["全局状态", "utility", "工具函数", "共享"],
+      "complexity": "simple",
+      "languageNotes": "无模块系统的全局单例：所有前端脚本共享此文件声明的全局变量（connections 等），是各 JS 文件间的隐式耦合点。"
+    },
+    {
+      "id": "function:web/js/util.js:showBanner",
+      "type": "function",
+      "name": "showBanner",
+      "filePath": "web/js/util.js",
+      "lineRange": [17, 21],
+      "summary": "右下角悬浮冒泡通知：显示消息 4 秒后自动消失，isErr 时红色描边；fixed 悬浮不占布局空间，避免引发 xterm 尺寸跳动。",
+      "tags": ["通知", "ui", "event-handler", "utility"],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:web/js/util.js:fmtTs",
+      "type": "function",
+      "name": "fmtTs",
+      "filePath": "web/js/util.js",
+      "lineRange": [22, 25],
+      "summary": "毫秒时间戳转本地时间字符串（zh-CN 24 小时制）并附加 3 位毫秒。",
+      "tags": ["utility", "时间格式化", "格式化"],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:web/js/util.js:sortKeyFn",
+      "type": "function",
+      "name": "sortKeyFn",
+      "filePath": "web/js/util.js",
+      "lineRange": [28, 34],
+      "summary": "连接标签排序键：COM 口按数字序排最前，SSH 字典序次之，日志（log:）与编辑器（edit:）标签依次靠后。",
+      "tags": ["排序", "utility", "连接管理"],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:web/style.css",
+      "type": "file",
+      "name": "style.css",
+      "filePath": "web/style.css",
+      "summary": "全局样式表：:root CSS 变量调色板 + 11 套 data-theme 主题覆盖（含终端色 --term-bg/--term-fg，被 theme.js 运行时读取）、科技风网格背景，以及顶栏、侧栏串口列表、TFTP 面板、中央终端区、右侧工具面板（感知/分析/命令/历史）、日志查看器虚拟列表、编辑器（Editor.js/Monaco/md 预览/十六进制查看器）、模态框、回放面板与数据目录管理面板的完整 UI 样式。",
+      "tags": ["样式表", "主题变量", "布局", "ui", "终端"],
+      "complexity": "complex",
+      "languageNotes": "换肤机制：布局与组件样式全部走 CSS 变量，每套主题只覆盖 :root 调色板变量（html[data-theme=...]），JS 换一个属性即整窗换色；终端配色也以变量形式暴露给 xterm.js 在 JS 侧读取。"
+    }
+  ],
+  "edges": [
+    {
+      "source": "file:web/js/theme.js",
+      "target": "function:web/js/theme.js:_termThemeFor",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:web/js/theme.js",
+      "target": "function:web/js/theme.js:applyTheme",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:web/js/theme.js",
+      "target": "function:web/js/theme.js:initTheme",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:web/js/theme.js",
+      "target": "function:web/js/theme.js:renderMenu",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:web/js/ts-outline.js",
+      "target": "function:web/js/ts-outline.js:TS_LANG_EXT_HAS",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:web/js/ts-outline.js",
+      "target": "function:web/js/ts-outline.js:tsInit",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:web/js/ts-outline.js",
+      "target": "function:web/js/ts-outline.js:tsLoadLang",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:web/js/ts-outline.js",
+      "target": "function:web/js/ts-outline.js:_tsCFuncName",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:web/js/ts-outline.js",
+      "target": "function:web/js/ts-outline.js:tsOutline",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:web/js/util.js",
+      "target": "function:web/js/util.js:showBanner",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:web/js/util.js",
+      "target": "function:web/js/util.js:fmtTs",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:web/js/util.js",
+      "target": "function:web/js/util.js:sortKeyFn",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:web/js/theme.js",
+      "target": "file:web/js/util.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:web/js/theme.js",
+      "target": "file:web/style.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "function:web/js/theme.js:renderMenu",
+      "target": "function:web/js/util.js:showBanner",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:web/index.html",
+      "target": "file:web/js/theme.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:web/index.html",
+      "target": "file:web/js/ts-outline.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:web/index.html",
+      "target": "file:web/js/util.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:web/index.html",
+      "target": "file:web/style.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    }
+  ]
+}

@@ -1,0 +1,180 @@
+# 集成 Claude Code 设计方案（路线 A+C）
+
+> 定稿：2026-09-05。路线决策：**内嵌终端跑真实 claude CLI（xterm 保真）+ 旁路状态面板**。
+> 参照项目：claudecodeui ★13.6k（node-pty+xterm 同款技术栈）、ccstatusline ★12.8k（statusline+transcript 状态感知）、claude-run ★670（~/.claude 会话列表 UI）。
+
+## 0. 总体架构
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ 前端 (pywebview/WebView2)                                    │
+│  ├─ 顶栏 [🤖 Claude] → connectClaude() → 新 tab (xterm)      │
+│  ├─ buildTerminal 复用（meta.kind='claude'，前端链路零改动） │
+│  └─ 右面板 pane「🤖 Claude」← 5s 轮询 /api/claude/*           │
+├─────────────────────────────────────────────────────────────┤
+│ Flask 后端                                                    │
+│  ├─ /api/connect kind='claude' → ClaudeConnection            │
+│  ├─ /api/resize（新）→ pty.set_size                           │
+│  ├─ /api/claude/sessions /skills /status（新）                │
+│  ├─ /api/claude/statusline /hook（第 3 期：CC → 后端上报）     │
+│  └─ src/claude_conn.py: pywinpty ConPTY ← 继承 BaseConnection │
+├─────────────────────────────────────────────────────────────┤
+│ claude CLI (真实进程，ConPTY)  ~/.claude/ (jsonl/skills/settings)│
+└─────────────────────────────────────────────────────────────┘
+```
+
+核心原则：
+1. **终端保真**——走既有 xterm→SSE→PTY 链路零改动。BaseConnection 模板方法让 ClaudeConnection 对前端完全透明（前端只认 port_id + meta.kind）。
+2. **状态面板是独立旁路**——读 `~/.claude` 文件系统 + statusline/hook 上报端点，两者仅通过 port_id / session_id 关联。
+3. **不写坏用户配置**——settings.json 修改前必须备份、只增不删、可精确还原。
+
+## 1. ClaudeConnection（src/claude_conn.py，新文件）
+
+### 1.1 claude 可执行解析 `_resolve_claude_exe()`
+
+按序解析（每步 `os.path.isfile` 验证），结果模块级缓存：
+1. 环境变量 `SERIAL_CLAUDE_EXE`（用户覆盖口）
+2. `shutil.which("claude.exe")`（直接命中最理想）
+3. `shutil.which("claude")` 解析到 `claude.CMD` → 推导同目录 `node_modules\@anthropic-ai\claude-code\bin\claude.exe`（npm shim 标准布局，本机实测存在）
+4. 兜底：返回 .CMD 路径 + `_is_cmd_shim=True`，spawn 用 `["cmd.exe", "/c", path]`
+5. 全部落空 → 抛错，中文消息含 `npm i -g @anthropic-ai/claude-code` 安装指引
+
+### 1.2 类设计
+
+```python
+class ClaudeConnection(BaseConnection):
+    kind = "claude"
+    def __init__(self, cwd=None, resume=None, cols=120, rows=30, port_id=None)
+```
+
+- **`_io_open`**：`pywinpty.PtyProcessUnicode.PtyProcess.spawn(argv, dimensions=(rows, cols), cwd, env)`（懒加载）。argv 带 `--resume <id>`（可选）。env 必须完整（ConPTY 要求），`TERM=xterm-256color`、`COLORTERM=truecolor`。**cwd 必须显式传**（默认 `~`），否则会话开在工具目录。
+- **`_io_read_chunk`**：`self._proc.read(8192)` 阻塞读，UTF-8 encode 返回。进程不存活 → `_handle_eof()`。
+- **EOF 语义（与 SSH 最大差异）**：claude 退出是语义事件不是故障——置 `alive=False` 让 reader 自然退出、`append_line` 提示「进程已退出」、`_io_close()`，**不重连**。`_io_reconnect` 恒 `return False`。
+- **`_io_write`**：`self._proc.write(str)`（Unicode 版接 str）。
+- **`_io_close`**：`terminate(force=True)`，幂等（`if self._proc is None: return`）。cmd shim 场景必要时补 `taskkill /T /F`。
+- **`resize(rows, cols)`**：`self._proc.set_size(rows, cols)`（pywinpty 参数序 rows, cols），持锁。
+- **`start()` 覆盖：不落盘**——Claude 自带 `~/.claude` 转写，工具的行式日志存 TUI 重绘流无回看价值；buf 保留（分栏搜索/分析/AI 感知仍工作）。`new_log()` 覆盖防炸；前端 claude tab 不显示「＋📋 新日志」按钮。
+- **port_id**：新会话 `claude:<自增>`；resume `claude:r-<id前8位>`（后端分配，`/api/connect` 内去重）。
+
+### 1.3 /api/connect 分支（src/server.py）
+
+`elif kind == "claude":`——解析 cwd（默认 `~`）/resume，`_ports_lock` 内构造 + 注册 + 异常回收（半构造对象 close，沿用 #9 修复的模式），错误经 `_humanize_claude_error` 转可操作中文。
+
+### 1.4 /api/resize（新端点）
+
+`POST {port_id, cols, rows}` → `p.resize(rows, cols)`；非 claude kind 返回 `{ok:False, err:"该连接不支持"}`。
+
+### 1.5 statusline/hook 上报端点（第 3 期占位）
+
+- `POST /api/claude/statusline`：存 `_claude_status[session_id] = {..., ts}`（app_state 新状态区，照 `_mcp_calls` 模式 + lock）
+- `POST /api/claude/hook`：入 `_claude_events` deque(maxlen=100)
+- 面板靠 ts 超时（>120s 过期）自动判定非活跃，SSE 断开不清。
+
+## 2. 前端 Claude 终端 tab（web/js/claude.js 新文件）
+
+### 2.1 connectClaude——复用 buildTerminal 不复制
+
+```js
+async function connectClaude(opts = {})   // {cwd, resume, label}
+// POST /api/connect kind='claude' → buildTerminal(portId, {kind:'claude', label, cwd, baud:''})
+// → connections[portId] → switchTab → refreshSidebar/refreshGlobalStatus
+```
+
+buildTerminal 仅两处小改（terminal-core.js）：
+- tab 标题 `@baud` 显示：`meta.kind === 'ssh' || 'claude'` 时不显示
+- claude tab 隐藏「＋📋 新日志」按钮
+
+### 2.2 resize 转发
+
+`conn.term.onResize` → debounce 200ms → `POST /api/resize`（尺寸变化短路；初始 fit 触发一次无害且正确——纠正 spawn 时猜测的 120x30）。
+
+### 2.3 关闭兼容——零改动
+
+`closeConnection` 无条件 POST /api/disconnect + 前端清理；后端泛 kind `p.close()` 走基类杀 PTY；EOF 后 alive=False 仍在 `_ports`，✕ 走同路径，close 幂等。
+
+### 2.4 既有文件改动点
+
+| 文件 | 改动 |
+|---|---|
+| util.js sortKeyFn | `claude:` 前缀 → `[4, pid]` 新档（不改会混进 SSH 档） |
+| sidebar.js descText | isClaude 分支：`🤖 Claude · cwd尾段` |
+| index.html 顶栏 | `<button id="btnClaude">🤖 Claude</button>`（换肤左侧） |
+| index.html 脚本 | `<script src="web/js/claude.js">`（init.js 前） |
+
+## 3. Claude 面板（右面板新 pane「🤖 Claude」）
+
+### 3.1 数据源（src/claude_sessions.py，新文件）
+
+**`list_sessions(limit=50)`**：扫 `~/.claude/projects/*/*.jsonl`，按 last_ts 降序返回
+`{session_id, cwd, project_dir_name, first_msg, title, last_ts, first_ts, approx_msgs, size, active}`。
+- **cwd 从 jsonl 首行 `cwd` 字段还原**（目录名如 `D--AI------Pro` 非 ASCII 全塌成 `-`，不可靠——实测首行有 cwd）
+- 每文件只读头 64KB + 尾 128KB 两窗（seek(-tail, 2) 对齐 `\n`），不全文遍历
+- 首条用户消息排除 `<local-command-caveat>`/`<command-name>`/tool_result；`{"type":"ai-title"}` 行优先
+- 消息数 = 尾窗正则近似计数；`active` = mtime < 60s
+- 模块级缓存 `path → (mtime, size, parsed)`，5s 轮询常态成本≈0
+- 半行（claude 写到一半）跳过不抛
+
+**`list_skills(cwd=None)`**：扫 `~/.claude/skills/*/SKILL.md` + `<cwd>/.claude/skills/*/SKILL.md` + `~/.claude/plugins/*/skills/*/SKILL.md`，frontmatter 正则提 name/description（不引 yaml 库），返回含 `source: user|project|plugin`。
+
+**`claude_status()`**：聚合 `{tool_sessions（_ports 中 kind='claude'）, external_active（jsonl 活跃）, statusline（第 3 期）}`。
+
+### 3.2 端点（server.py）
+
+`GET /api/claude/sessions`、`GET /api/claude/skills`、`GET /api/claude/status`。
+
+### 3.3 pane（claude.js）
+
+index.html 加 `.panel-tab data-pane="claude"`（replay.js 通用 forEach 自动接住切换）+ pane 容器三个 section：
+- **运行中会话**：本工具连接（点行 switchTab）+ 外部活跃会话（标「外部进程」）
+- **历史会话（点击恢复）**：时间 · 项目尾段 · 首条消息摘要（60 字）· 活跃点；整行 onclick → `resumeClaudeSession(s)` → `connectClaude({cwd, resume: session_id})`
+- **技能**：名字加粗 + 描述灰字 + source 徽标，只读
+
+轮询照 analyze 模式（init.js）：5s setInterval + pane 可见性判断。
+
+### 3.4 实时状态：MVP 与进阶分层
+
+- **MVP（第 2 期）零配置三层信号**：① `_ports` 本工具连接（进程存活/EOF 全知）；② jsonl mtime<60s 判外部活跃；③ active 会话尾窗最后 5 条 entry 的 type/ts → 「最近在执行工具调用」级粗粒度状态。
+- **进阶（第 3 期）statusline/hook 上报**：拿 model/context 用量/当前工具等细粒度。**本机 settings.json 的 statusLine 已被 statusline.py 占用**——一键配置生成 wrapper 脚本 `~/.serialconsole_pro/cc_statusline.py`（读 stdin → 透传原命令保留原输出 → 异步 POST 后端）；原命令存工具 config.json `claude_statusline_prev` 供还原。hooks 用 **append** 不替换。写前逐字节备份 + 临时文件 os.replace 原子替换。面板显示「已接入 ✓」+「停用」按钮。
+
+## 4. 会话恢复
+
+- sessions 列表每项含恢复所需全部字段（session_id + 从首行还原的 cwd）
+- 点击 → `connectClaude({cwd, resume})` → PTY 内 `claude --resume <id>`；id 不存在时 CLI 自行报错退出 → EOF 提示路径闭环
+- EOF 后 tab 保留（报错可查），✕ 清理；不自动重连/关闭
+
+## 5. 分期实施与验收
+
+### 第 1 期：最小闭环（内嵌终端跑真 claude）
+改动：claude_conn.py、server.py（connect 分支 + /api/resize）、claude.js、index.html、terminal-core.js、util.js、sidebar.js。前置 `pip install pywinpty`。
+**验收**：点「🤖 Claude」新 tab 跑起 CLI 可对话；中文无乱码、ANSI 正常；resize 生效不错位；`/exit` 后「进程已退出」提示、✕ 后无残留进程；未装 claude 得到中文报错（SERIAL_CLAUDE_EXE 指向不存在路径模拟）。
+
+### 第 2 期：会话面板 MVP
+改动：claude_sessions.py、server.py 3 个 GET、claude.js pane 渲染、index.html pane、init.js 轮询。
+**验收**：50 个历史会话字段与 jsonl 实际相符（抽 2 对照）；点历史会话 --resume 回到上下文；技能三来源正确列出；运行中区分本工具/外部；pane 不可见时不发请求（DevTools network 确认）。
+
+### 第 3 期：详细状态接入（statusline wrapper + hooks）
+改动：server.py 上报端点 + app_state 状态区、wrapper/hook 脚本生成、claude.js 接入按钮 + 渲染。
+**验收**：启用前自动备份；用户原 statusline 仍正常；面板 model/context/工具事件与 CLI 一致；停用后 settings.json 与备份 diff 一致恢复。
+
+### 第 4 期：打磨与分发
+EOF 后 tab LED 变灰；终端工具栏「⏵ 恢复上次会话」；MCP 工具暴露 tool_list_claude_sessions / tool_connect_claude；打包 spec hiddenimports 加 src.claude_conn、src.claude_sessions、pywinpty，**exe 冒烟**：spawn→交互→resize→terminate 全通过（DLL 漏收时 spec binaries 显式补 `pywinpty/*.dll`）。
+
+## 6. 风险清单与对策
+
+| # | 风险 | 对策 |
+|---|---|---|
+| 1 | pywinpty 阻塞读 vs Flask 线程 | 一连接一 reader 线程（基类模型），阻塞读零轮询开销；close 时先 terminate 使 read 解除，基类 join(1s) 兜底。ConPTY 需 Win10 1903+（本机 19045 ✓） |
+| 2 | claude 路径解析（cmd shim / PATHEXT / 未装） | 5 级解析 + 缓存 + SERIAL_CLAUDE_EXE 覆盖口；报错含安装指引 |
+| 3 | 写坏用户 settings.json | 逐字节备份 + 只增不删（hooks append）+ 原值存 config.json 精确还原 + os.replace 原子替换 |
+| 4 | jsonl 大文件性能 | 头尾窗口读 + mtime/size 双 key 缓存 + 轮询仅 pane 可见时发生 |
+| 5 | xterm resize 与 PTY 同步 | onResize debounce 200ms + 尺寸短路 + 后端持锁串行 |
+| 6 | pywinpty 打包 | hiddenimports 明列 + exe 冒烟硬验收 + DLL 漏收 spec binaries 补 |
+| 7 | claude CLI 升级改行为 | --resume 是稳定接口；statusline schema 解析全容错（缺字段显示 —） |
+| 8 | 强杀进程残留 | terminate(force=True)；cmd shim 进程树第 4 期实测，必要时 taskkill /T /F |
+| 9 | xterm fidelity 不及 Windows Terminal | 核心体验 100% 可用（VS Code 同架构铁证）；缺内联图片（sixel）等边缘能力；保底升级路径：换 wezterm web 或嵌真 wt.exe |
+
+## 7. 关键文件
+
+- 修改：src/server.py、src/app_state.py（第 3 期状态区）、web/js/terminal-core.js、web/js/util.js、web/js/sidebar.js、web/js/init.js、web/index.html
+- 新增：src/claude_conn.py、src/claude_sessions.py、web/js/claude.js
+- 模板参照：src/base_conn.py（连接契约）、src/ssh_conn.py（活样板）

@@ -53,6 +53,11 @@ function buildEditorTab(name, content, extPath) {
   // content：.note 传 Editor.js JSON 对象；.txt 传字符串；草稿传 null
   // extPath：外部绝对路径（拖入文件）——保存写回原路径，不走 files/ 目录
   const isNote = name ? name.toLowerCase().endsWith('.note') : true;  // 草稿默认 .note
+  // 外部 .note 入口（拖入/最近打开）传的是 /api/ed/open 返回的 JSON 字符串：
+  // 不解析则 _edInitContent 判非对象 → 空块初始化 → Ctrl+S 把原文件覆盖成空笔记
+  if (isNote && typeof content === 'string' && content.trim()) {
+    try { content = JSON.parse(content); } catch (_) { content = null; }
+  }
   // 已打开同名文件 → 切过去
   if (name) {
     for (const pid in connections) {
@@ -488,7 +493,9 @@ function _outlineCodeEntries(src, ext) {
     for (const r of rules) {
       const m = r.re.exec(t);
       if (m) {
-        entries.push({ level: r.lv, text: (r.kind ? r.kind + ' ' : '') + m[2], line: i + 1 });
+        // c 组规则只有 1 个捕获组（py 组有 2 个）：统一取最后一个捕获组，
+        // 否则 c 组取名 m[2]=undefined → 大纲全显「函数 undefined」
+        entries.push({ level: r.lv, text: (r.kind ? r.kind + ' ' : '') + m[m.length - 1], line: i + 1 });
         break;
       }
     }
@@ -928,7 +935,7 @@ async function showFilesModal() {
     modal.innerHTML = `
       <div class="box">
         <div class="head">
-          <strong>📝 文件</strong>
+          <strong>📝 笔记</strong>
           <div class="head-actions">
             <button class="btn ghost" id="filesNew" title="新建笔记（不落盘，保存时才写文件）">＋ 新建笔记</button>
             <button class="btn ghost icon-btn" id="filesOpenDir" title="在资源管理器中打开 files/ 目录">📁</button>
@@ -949,7 +956,7 @@ async function showFilesModal() {
     const r = await fetch('/api/ed/list');
     const j = await r.json();
     if (!j.ok) { listEl.innerHTML = '<div style="padding:20px;color:var(--muted);">加载失败</div>'; return; }
-    if (!j.files.length) { listEl.innerHTML = '<div style="padding:20px;color:var(--muted);">暂无文件，点击「新建笔记」创建</div>'; return; }
+    if (!j.files.length) { listEl.innerHTML = '<div style="padding:20px;color:var(--muted);">暂无笔记，点击「新建笔记」创建</div>'; return; }
     listEl.innerHTML = '';
     j.files.forEach(f => {
       const d = document.createElement('div');

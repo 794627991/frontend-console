@@ -1,0 +1,31 @@
+{
+  "issues": [],
+  "warnings": [
+    "Node 'config:.ua/.understandignore' has no edges (orphan)",
+    "Node 'config:.ua/config.json' has no edges (orphan)",
+    "Node 'file:src/__init__.py' has no edges (orphan)"
+  ],
+  "stats": {
+    "totalNodes": 214,
+    "totalEdges": 433,
+    "totalLayers": 10,
+    "tourSteps": 13,
+    "nodeTypes": {
+      "file": 39,
+      "function": 159,
+      "class": 8,
+      "document": 6,
+      "config": 2
+    },
+    "edgeTypes": {
+      "imports": 39,
+      "contains": 165,
+      "exports": 78,
+      "inherits": 2,
+      "calls": 75,
+      "depends_on": 41,
+      "documents": 28,
+      "related": 5
+    }
+  }
+}

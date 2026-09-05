@@ -779,6 +779,8 @@
     padding: 6px 8px 0; background: var(--bg-panel);
     border-bottom: 1px solid var(--border); flex-shrink: 0;
     overflow-x: auto;
+    overflow-y: hidden;   /* 只写 overflow-x:auto 时 overflow-y 按规范也计算为 auto，
+                            tab 行内容高出 1px 就会冒出一条贴标签栏右缘的竖向滚动条（幽灵灰条 bug） */
   }
   .tab {
     display: flex; align-items: center; gap: 8px;
@@ -1292,12 +1294,38 @@
   font-size: 11px; color: var(--muted); cursor: pointer; user-select: none; }
 .hx-zero-toggle input { cursor: pointer; }
 
-/* ---- 数据目录管理面板（顶栏机器人 logo 点开）---- */
+/* ---- 设置弹窗（顶栏机器人 logo 点开）：数据目录是其中一个分区 ---- */
 /* 顶栏 logo 机器人图标即功能按钮：hover 微亮提示可点 */
 .logo .icon { overflow: hidden; transition: filter 0.15s; }
 .logo .icon:hover { filter: brightness(1.25); }
 .logo .icon:active { filter: brightness(0.85); }
-.dd-box { max-width: 560px; }
+.set-box { max-width: 680px; }
+.set-body { display: flex; min-height: 320px; max-height: 60vh; }
+/* 左导航：分区列表（图标 + 名称 + 说明） */
+.set-nav { width: 190px; flex-shrink: 0; border-right: 1px solid var(--border);
+  padding: 10px 8px; display: flex; flex-direction: column; gap: 4px;
+  overflow-y: auto; }
+.set-nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 10px;
+  border-radius: 8px; cursor: pointer; transition: background 0.12s; }
+.set-nav-item:hover { background: var(--bg-input); }
+.set-nav-item.active { background: var(--bg-input); box-shadow: inset 0 0 0 1px var(--accent-glow); }
+.set-nav-icon { font-size: 16px; flex-shrink: 0; }
+.set-nav-item.active .set-nav-icon { filter: drop-shadow(0 0 4px var(--accent-glow)); }
+.set-nav-txt { min-width: 0; }
+.set-nav-txt .name { color: var(--fg-bright); font-size: 12px; font-weight: 600; }
+.set-nav-item.active .set-nav-txt .name { color: var(--accent); }
+.set-nav-txt .desc { color: var(--muted); font-size: 10px; margin-top: 2px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 右内容区：分区页滚动容器 */
+.set-pane { flex: 1; min-width: 0; overflow-y: auto; }
+/* 主题子页：两列网格（窄窗自动降单列） */
+.set-theme-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 4px; }
+.set-theme-grid .theme-item { padding: 9px 10px; border: 1px solid transparent; }
+.set-theme-grid .theme-item.active { border-color: var(--accent-glow); }
+.set-theme-group { grid-column: 1 / -1; padding: 8px 10px 3px; font-size: 10px;
+  color: var(--muted); font-weight: 600; letter-spacing: 1px; user-select: none; }
+.set-theme-grid .set-theme-group:first-child { padding-top: 4px; }
+/* 数据目录子页沿用 dd-*（原独立面板样式平移进设置弹窗内容区） */
 .dd-body { padding: 16px 20px 18px; display: flex; flex-direction: column; gap: 16px; }
 .dd-label { font-size: 11px; font-weight: 600; color: var(--fg-bright); margin-bottom: 6px; }
 .dd-path { font-family: var(--font-mono); font-size: 12px; color: var(--fg);

@@ -1,0 +1,381 @@
+{
+  "scriptCompleted": true,
+  "filesAnalyzed": 4,
+  "filesSkipped": [],
+  "results": [
+    {
+      "path": "docs/MCP_INTEGRATION.md",
+      "language": "markdown",
+      "fileCategory": "docs",
+      "totalLines": 251,
+      "nonEmptyLines": 174,
+      "sections": [
+        {
+          "heading": "前端控制台 v1.0.0 — MCP 集成说明",
+          "level": 1,
+          "line": 1
+        },
+        {
+          "heading": "一、这是什么",
+          "level": 2,
+          "line": 9
+        },
+        {
+          "heading": "二、配置方法",
+          "level": 2,
+          "line": 24
+        },
+        {
+          "heading": "前置条件",
+          "level": 3,
+          "line": 26
+        },
+        {
+          "heading": "Claude Code 配置",
+          "level": 3,
+          "line": 32
+        },
+        {
+          "heading": "其他 MCP 客户端",
+          "level": 3,
+          "line": 70
+        },
+        {
+          "heading": "三、工具列表（16 个）",
+          "level": 2,
+          "line": 82
+        },
+        {
+          "heading": "🔌 连接管理",
+          "level": 3,
+          "line": 84
+        },
+        {
+          "heading": "⌨️ 设备交互",
+          "level": 3,
+          "line": 94
+        },
+        {
+          "heading": "📜 日志分析",
+          "level": 3,
+          "line": 102
+        },
+        {
+          "heading": "📡 TFTP 文件传输",
+          "level": 3,
+          "line": 111
+        },
+        {
+          "heading": "四、架构说明（AI 必读）",
+          "level": 2,
+          "line": 122
+        },
+        {
+          "heading": "共享后端，不要重复连接",
+          "level": 3,
+          "line": 124
+        },
+        {
+          "heading": "服务发现机制",
+          "level": 3,
+          "line": 134
+        },
+        {
+          "heading": "port_id 格式",
+          "level": 3,
+          "line": 144
+        },
+        {
+          "heading": "五、典型工作流",
+          "level": 2,
+          "line": 151
+        },
+        {
+          "heading": "工作流 1：调试串口设备",
+          "level": 3,
+          "line": 153
+        },
+        {
+          "heading": "工作流 2：分析启动日志",
+          "level": 3,
+          "line": 163
+        },
+        {
+          "heading": "工作流 3：对比正常 vs 异常日志",
+          "level": 3,
+          "line": 172
+        },
+        {
+          "heading": "工作流 4：SSH 调试远程设备",
+          "level": 3,
+          "line": 182
+        },
+        {
+          "heading": "工作流 5：TFTP 传文件（设备 ↔ PC）",
+          "level": 3,
+          "line": 191
+        },
+        {
+          "heading": "六、注意事项",
+          "level": 2,
+          "line": 205
+        },
+        {
+          "heading": "BusyBox 设备",
+          "level": 3,
+          "line": 207
+        },
+        {
+          "heading": "编码",
+          "level": 3,
+          "line": 211
+        },
+        {
+          "heading": "自动拉起失败",
+          "level": 3,
+          "line": 216
+        },
+        {
+          "heading": "并发",
+          "level": 3,
+          "line": 223
+        },
+        {
+          "heading": "七、版本",
+          "level": 2,
+          "line": 230
+        },
+        {
+          "heading": "八、给 AI 的速查卡",
+          "level": 2,
+          "line": 238
+        }
+      ],
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 0,
+        "functionCount": 0,
+        "classCount": 0,
+        "sectionCount": 28
+      }
+    },
+    {
+      "path": "docs/README.md",
+      "language": "markdown",
+      "fileCategory": "docs",
+      "totalLines": 30,
+      "nonEmptyLines": 27,
+      "sections": [
+        {
+          "heading": "文档索引",
+          "level": 1,
+          "line": 1
+        },
+        {
+          "heading": "项目结构（前端控制台 v1.0.0）",
+          "level": 2,
+          "line": 9
+        }
+      ],
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 0,
+        "functionCount": 0,
+        "classCount": 0,
+        "sectionCount": 2
+      }
+    },
+    {
+      "path": "docs/同类工具调研报告.md",
+      "language": "markdown",
+      "fileCategory": "docs",
+      "totalLines": 164,
+      "nonEmptyLines": 136,
+      "sections": [
+        {
+          "heading": "同类工具调研报告",
+          "level": 1,
+          "line": 1
+        },
+        {
+          "heading": "一、工具全景概览",
+          "level": 2,
+          "line": 10
+        },
+        {
+          "heading": "二、各工具详析",
+          "level": 2,
+          "line": 30
+        },
+        {
+          "heading": "1. Tabby（最接近的\"终端体验\"参照系）",
+          "level": 3,
+          "line": 32
+        },
+        {
+          "heading": "2. electerm",
+          "level": 3,
+          "line": 45
+        },
+        {
+          "heading": "3. Windows Terminal",
+          "level": 3,
+          "line": 50
+        },
+        {
+          "heading": "4. Serial Studio（串口数据可视化标杆）",
+          "level": 3,
+          "line": 56
+        },
+        {
+          "heading": "5. PuTTY / KiTTY / ExtraPuTTY（经典 Windows 串口终端族）",
+          "level": 3,
+          "line": 66
+        },
+        {
+          "heading": "6. MobaXterm（功能完整性标杆，闭源）",
+          "level": 3,
+          "line": 72
+        },
+        {
+          "heading": "7. tio / picocom（Linux 串口终端，直接可抄的特性清单）",
+          "level": 3,
+          "line": 76
+        },
+        {
+          "heading": "三、性能优化精华清单",
+          "level": 2,
+          "line": 96
+        },
+        {
+          "heading": "四、值得吸纳的功能 Top 10（按对 BSP 开发者价值排序）",
+          "level": 2,
+          "line": 113
+        },
+        {
+          "heading": "五、终端控制台 Pro：相对优势 / 劣势",
+          "level": 2,
+          "line": 130
+        },
+        {
+          "heading": "相对优势（差异化护城河）",
+          "level": 3,
+          "line": 132
+        },
+        {
+          "heading": "相对劣势 / 可改进点",
+          "level": 3,
+          "line": 139
+        },
+        {
+          "heading": "六、信息来源（真实可查）",
+          "level": 2,
+          "line": 149
+        }
+      ],
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 0,
+        "functionCount": 0,
+        "classCount": 0,
+        "sectionCount": 16
+      }
+    },
+    {
+      "path": "docs/性能优化审计报告.md",
+      "language": "markdown",
+      "fileCategory": "docs",
+      "totalLines": 111,
+      "nonEmptyLines": 79,
+      "sections": [
+        {
+          "heading": "性能优化对抗性审计报告",
+          "level": 1,
+          "line": 1
+        },
+        {
+          "heading": "确认问题列表（按严重度排序）",
+          "level": 2,
+          "line": 9
+        },
+        {
+          "heading": "P1-1｜`appendRaw` rAF 合并：后台整窗时 `_writeQueue` 无界堆积 + 恢复时单次巨量 `term.write` 卡死",
+          "level": 3,
+          "line": 11
+        },
+        {
+          "heading": "P1-2｜`termSendRaw` 微批：关闭连接后积压的按键被静默丢弃（最后一条命令丢失）",
+          "level": 3,
+          "line": 21
+        },
+        {
+          "heading": "P2-1｜rAF flush 丢弃\"入队时未暂停、flush 时已暂停\"的一帧数据",
+          "level": 3,
+          "line": 28
+        },
+        {
+          "heading": "P2-2｜`refreshMcpInfo` 最近调用脏检查：同一秒两次 MCP 调用 + 列表封顶后不刷新",
+          "level": 3,
+          "line": 35
+        },
+        {
+          "heading": "P2-3｜`highlightNewKw` decoration 上限 5000→1500：错误密集长日志的常驻高亮大幅缩水",
+          "level": 3,
+          "line": 40
+        },
+        {
+          "heading": "P3-1｜串口空闲时的 CPU/唤醒频次约 10 倍于旧实现（忙轮询竞态窗口）",
+          "level": 3,
+          "line": 45
+        },
+        {
+          "heading": "P3-2｜`SerialPort._io_reconnect` 仍是 `timeout=0.2`（与新的 0.02 不一致）",
+          "level": 3,
+          "line": 51
+        },
+        {
+          "heading": "P4-1｜注释与实际行为不符：`timeout=0.02` 在判空路径已基本失效",
+          "level": 3,
+          "line": 56
+        },
+        {
+          "heading": "疑似但不确定（SPECULATIVE）",
+          "level": 2,
+          "line": 62
+        },
+        {
+          "heading": "S-1｜`appendRaw` 与 `loadingHistory`/`pendingRaw` 的排序竞态（评估为真实但窗口极窄）",
+          "level": 3,
+          "line": 64
+        },
+        {
+          "heading": "S-2｜`refreshSidebar` 脏检查 key 不含 label/baud/host",
+          "level": 3,
+          "line": 70
+        },
+        {
+          "heading": "S-3｜`_tftp` 传输计数竞态（GIL 保护字段，非崩溃级）",
+          "level": 3,
+          "line": 74
+        },
+        {
+          "heading": "误报澄清（已核查确认没问题）",
+          "level": 2,
+          "line": 79
+        },
+        {
+          "heading": "结论",
+          "level": 2,
+          "line": 107
+        }
+      ],
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 0,
+        "functionCount": 0,
+        "classCount": 0,
+        "sectionCount": 16
+      }
+    }
+  ]
+}

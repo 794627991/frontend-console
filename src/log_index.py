@@ -26,6 +26,7 @@ class LogIndex:
         self.total = 0
         self._loaded = False
         self._built_size = -1  # 建索引时的文件大小，用于检测追加失效
+        self._built_head = None  # 建索引时的首 4KB md5：检测原地替换/轮转（追加不改变头部）
         # 命中行号索引缓存：{搜索词: array('Q') 行号}。search 全量扫描时建，
         # search_page 按命中序号 O(1) 取段。文件追加后全量重扫时会整体刷新。
         self._hits_by_q = {}
@@ -59,11 +60,35 @@ class LogIndex:
         # 外部纯文本：整行作为 text
         return {"ts": 0, "tag": "text", "text": raw}
 
+    def _head_hash(self, size):
+        """文件首 4KB md5：检测原地替换/轮转（追加不改变头部，正常追加不误伤）。
+        只哈希首 4KB——G 级文件全文哈希太慢，头部变化足够区分新旧文件。"""
+        try:
+            import hashlib
+            with open(self.path, "rb") as f:
+                return hashlib.md5(f.read(4096)).hexdigest()
+        except Exception:
+            return None
+
+    def _self_check(self, cur_size, head):
+        """索引与当前文件是否仍自洽：大小一致且头部哈希一致。
+        大小不同是正常追加（走 _append_scan）；头部哈希不同 = 原地替换/轮转
+        穿越旧尺寸，旧偏移全部作废必须全重扫（否则 _append_scan 从旧文件
+        行偏移切入新文件中部，错位被 _save_cache 持久化跨重启存活）。"""
+        return self._built_size == cur_size and self._built_head == head
+
     def build(self):
         """扫描日志文件建索引。首次 O(n)，结果缓存到 .idx 文件。
         已加载且文件未追加时直接返回；文件追加时增量续扫。"""
         cur_size = os.path.getsize(self.path) if os.path.exists(self.path) else 0
-        # 已加载且文件大小未变 → 直接返回
+        head = self._head_hash(cur_size)
+        # 已加载：头部哈希变化 = 原地替换/轮转 → 全重扫；否则按大小走快路径
+        if self._loaded and self._built_head is not None and self._built_head != head:
+            self._loaded = False
+            self.offsets = []
+            self.total = 0
+            self._hits_invalidate()
+        # 已加载且文件大小未变（头部也未变）→ 直接返回
         if self._loaded and self._built_size == cur_size:
             return
         # 已加载但文件追加 → 增量续扫追加部分
@@ -76,30 +101,34 @@ class LogIndex:
                 if os.path.isfile(self.idx_path) and os.path.getmtime(self.idx_path) >= os.path.getmtime(self.path):
                     with open(self.idx_path, "rb") as f:
                         data = f.read()
-                    if len(data) >= 8:
+                    if len(data) >= 40:
+                        # v2 格式：<u64 total><u64 built_size><32B 指纹区><offsets...>
                         import struct
-                        cached_total = struct.unpack(">Q", data[:8])[0]
-                        count = (len(data) - 8) // 8
+                        cached_total, cached_size = struct.unpack(">QQ", data[:16])
+                        cached_head = data[16:48].rstrip(b"\n").decode("utf-8", errors="replace") or None
+                        count = (len(data) - 48) // 8
                         # 校验：缓存的总行数与偏移数一致才采用
                         if count == cached_total:
-                            self.total = cached_total
-                            self.offsets = list(struct.unpack(">" + "Q" * count, data[8:8 + count * 8]))
-                            self.offsets.append(cur_size)  # 追加 EOF 偏移占位
-                            self._loaded = True
-                            # .idx 未存文件大小，用最后一行起点作 _built_size 近似值。
-                            # cur_size 必 >= 最后一行起点（该行有内容）；文件被截断时
-                            # cur_size < 最后一行起点（或 ==0 且缓存非空）→ 缓存失效全重扫。
-                            last_row_start = self.offsets[-2] if len(self.offsets) >= 2 else 0
-                            if cur_size < last_row_start or (cur_size == 0 and cached_total > 0):
-                                # 文件被截断到更小或清空，缓存失效 → 全重扫
-                                self._loaded = False
-                                self.offsets = []
-                                self.total = 0
+                            # 指纹校验：缓存的 built_size 与当前文件大小一致时，
+                            # 首部 md5 必须也一致——同尺寸原地替换（轮转穿越旧尺寸）
+                            # 仅凭 mtime/大小采信会把错位偏移加载进来
+                            if cached_size == cur_size and cached_head and cached_head != head:
+                                pass  # 指纹不符：不采信，落到下方全重扫
                             else:
-                                self._built_size = last_row_start
-                                if cur_size > self._built_size:
+                                self.total = cached_total
+                                self.offsets = list(struct.unpack(">" + "Q" * count, data[48:48 + count * 8]))
+                                self.offsets.append(cur_size)  # 追加 EOF 偏移占位
+                                self._loaded = True
+                                self._built_size = cached_size
+                                self._built_head = cached_head or head
+                                if cur_size < cached_size:
+                                    # 文件被截断到更小：缓存失效 → 全重扫
+                                    self._loaded = False
+                                    self.offsets = []
+                                    self.total = 0
+                                elif cur_size > self._built_size:
                                     self._append_scan(cur_size)
-                            return
+                                return
             except Exception:
                 pass
         # 全文件扫描
@@ -117,7 +146,9 @@ class LogIndex:
         self.total = len(self.offsets) - 1 if self.offsets else 0
         if self.offsets and self.offsets[-1] == 0:
             self.total = 0
+        self._loaded = True  # 此前缺失：全扫后仍 not loaded，下次 build 误走 .idx 加载分支
         self._built_size = cur_size
+        self._built_head = head
         self._hits_invalidate()  # 全量重扫（首次/缓存失效/截断）：命中索引一并作废
         self._save_cache()
 
@@ -149,6 +180,7 @@ class LogIndex:
                 if self.offsets and self.offsets[-1] > cur_size:
                     raise ValueError("offsets past EOF, file truncated during scan")
             self._built_size = cur_size
+            # 追加不改变文件头部，_built_head 保持（build 入口已校验头部一致）
             self._hits_invalidate()  # 追加引入新命中行：旧命中索引作废，下次全量 search 重建
             self._save_cache()
         except Exception:
@@ -159,11 +191,16 @@ class LogIndex:
             self._hits_invalidate()
 
     def _save_cache(self):
-        """保存索引到 .idx 文件。"""
+        """保存索引到 .idx 文件。v2 头部：<u64 total><u64 built_size><32B 指纹区
+        （首 4KB md5 hex + \\n 填充）>，加载时对比指纹，同尺寸原地替换不采信。
+        v1 格式（8B 头）读取时走 except 静默全重扫，自然升级 v2。"""
         try:
             import struct
             with open(self.idx_path, "wb") as f:
-                f.write(struct.pack(">Q", self.total))
+                f.write(struct.pack(">QQ", self.total, max(self._built_size, 0)))
+                fp = (self._built_head or "")
+                f.write(fp.encode("utf-8"))
+                f.write(b"\n" * (32 - len(fp)))  # 32B 指纹定长区
                 if self.offsets and self.total > 0:
                     f.write(struct.pack(">" + "Q" * self.total, *self.offsets[:self.total]))
         except Exception:
@@ -183,11 +220,14 @@ class LogIndex:
         首次调用 O(n)（顺序读，G 级文件 ~秒级），之后 O(1)。"""
         if self._ts_list is not None and self._ts_state == self._built_size:
             return self._ts_list
-        ts_arr = array("q", bytes(8 * max(self.total, 1)))
+        # 局部快照 + 钳制（同 get_page：并发 build 不越界）
+        offsets = self.offsets
+        total = min(self.total, len(offsets) - 1) if offsets else 0
+        ts_arr = array("q", bytes(8 * max(total, 1)))
         last_valid = 0
         with open(self.path, "rb") as f:
-            for i in range(self.total):
-                f.seek(self.offsets[i])
+            for i in range(total):
+                f.seek(offsets[i])
                 line = f.readline().decode("utf-8", errors="replace")
                 ts_arr[i] = self._parse_line(line).get("ts", 0) or 0
                 if ts_arr[i] > 0:
@@ -217,11 +257,18 @@ class LogIndex:
             self.build()
         if offset < 0 or offset >= self.total:
             return []
-        end = min(offset + limit, self.total)
+        # 局部快照：并发 build 重置 offsets（全量重扫先置 [0] 再补 total）时，
+        # 快照可能捕获到 (旧 total, 新 offsets) 交叉状态——快照后按 offsets 实际
+        # 长度钳制 total，自洽不越界（缺的行留给下次读取）。
+        offsets = self.offsets
+        total = min(self.total, len(offsets) - 1) if offsets else 0
+        if offset >= total:
+            return []
+        end = min(offset + limit, total)
         res = []
         with open(self.path, "rb") as f:
             for i in range(offset, end):
-                f.seek(self.offsets[i])
+                f.seek(offsets[i])
                 line = f.readline()
                 res.append(self._parse_line(line.decode("utf-8", errors="replace")))
         return res
@@ -258,9 +305,13 @@ class LogIndex:
         collect_hits = count_total and start_offset == 0 and limit > 0
         hits = array("Q") if collect_hits else None
         total = -1  # -1 = 跳过计数（count_total=False 续载）；全量时由 len(hits) 覆盖
+        # 局部快照（同 get_page：并发 build/_append_scan 异常路径清空 offsets 时，
+        # 快照按 offsets 实际长度钳制，自洽不越界）
+        offsets = self.offsets
+        scan_total = min(self.total, len(offsets) - 1) if offsets else 0
         with open(self.path, "rb") as f:
-            for i in range(start_offset, self.total):
-                f.seek(self.offsets[i])
+            for i in range(start_offset, scan_total):
+                f.seek(offsets[i])
                 line = f.readline().decode("utf-8", errors="replace")
                 parsed = self._parse_line(line)
                 if pat.search(parsed["text"]):
@@ -304,10 +355,14 @@ class LogIndex:
                 return []
         if hit_start < 0 or hit_start >= len(hits):
             return []
+        # 局部快照（同 get_page：并发 build 时不 IndexError）
+        offsets = self.offsets
         res = []
         with open(self.path, "rb") as f:
             for i in hits[hit_start:hit_start + hit_count]:
-                f.seek(self.offsets[i])
+                if i >= len(offsets):
+                    break  # 快照期间文件被截断重扫：越界命中丢弃（下次搜索重建）
+                f.seek(offsets[i])
                 line = f.readline().decode("utf-8", errors="replace")
                 parsed = self._parse_line(line)
                 parsed["row"] = i

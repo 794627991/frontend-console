@@ -112,7 +112,7 @@ function refreshSidebar() {
   if (!ids.length) {
     if (_sidebarKey !== 'empty') {
       _sidebarKey = 'empty';
-      portList.innerHTML = '<div class="empty-state" style="padding:30px 10px;"><div class="desc">点击「新建连接」或「新建文件」添加内容</div></div>';
+      portList.innerHTML = '<div class="empty-state" style="padding:30px 10px;"><div class="desc">点击「新建连接」或「新建笔记」添加内容</div></div>';
     }
     return;
   }
@@ -134,8 +134,8 @@ function refreshSidebar() {
       item.dataset.portId = pid;
       const isSSH = conn.meta.kind === 'ssh';
       const isLog = conn.meta.kind === 'log';
-      const isEdit = conn.meta.kind === 'editor';
-      const descText = isSSH ? `SSH · ${conn.meta.host || ''}` : isLog ? `📜 日志` : isEdit ? `📝 笔记` : `${conn.meta.baud || ''} baud`;
+      const isEdit = conn.meta.kind === 'editor' || conn.meta.kind === 'hex';
+      const descText = isSSH ? `SSH · ${conn.meta.host || ''}` : isLog ? `📜 日志` : isEdit ? (conn.meta.kind === 'hex' ? `🔧 hex` : `📝 笔记`) : `${conn.meta.baud || ''} baud`;
       const rowCount = conn.term ? conn.term.buffer.active.length : (conn.logState ? conn.logState.total : (isEdit ? _edStatText(conn) : 0));
       item.innerHTML = `
         <span class="led"></span>
@@ -146,6 +146,8 @@ function refreshSidebar() {
         <div class="actions"><button data-close="${pid}" title="${isLog ? '关闭' : '断开'}">✕</button></div>
       `;
       item.onclick = (e) => {
+        // hex 走 closeEditorTab（有脏确认）：落 closeConnection 会绕过
+        // dirty 检查直接丢修改，还发一个必 404 的 /api/disconnect
         if (e.target.dataset.close) { e.stopPropagation(); (isLog ? closeLogViewer(pid) : isEdit ? closeEditorTab(pid) : closeConnection(pid)); return; }
         switchTab(pid);
       };

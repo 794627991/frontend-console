@@ -1,0 +1,189 @@
+{
+  "nodes": [
+    {
+      "id": "document:README.md",
+      "type": "document",
+      "name": "README.md",
+      "filePath": "README.md",
+      "summary": "项目主文档：介绍「前端控制台 v1.0.0」——面向嵌入式 BSP/驱动调试的串口 & SSH 终端 + 日志/文件工具（pywebview + Flask，单 exe 无依赖）。覆盖启动方式（run.bat 源码运行 / build.py 打包）、九大核心功能（多串口/SSH、命令库、TFTP/HTTP 文件传输、G 级日志虚拟列表、日志对比、Monaco 编辑器、Hex 查看器、回放、MCP 集成）、目录结构与数据目录布局，以及 Claude Code 经内置 MCP server 直连的两种配置形态。",
+      "tags": ["documentation", "entry-point", "overview", "mcp", "嵌入式调试"],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:run.bat",
+      "type": "file",
+      "name": "run.bat",
+      "filePath": "run.bat",
+      "summary": "源码启动脚本：切换到项目根目录后用 pythonw.exe 后台启动 src/main.py，是 README 推荐的「源码运行」入口。除桌面快捷方式外，这是开发期拉起整窗应用（pywebview 原生窗口 + Flask 后端）的最短路径。",
+      "tags": ["entry-point", "launcher", "batch", "windows"],
+      "complexity": "simple",
+      "languageNotes": "用 start \"\" 分离启动使命令行窗口立即返回；pythonw 避免弹出额外控制台。"
+    },
+    {
+      "id": "document:todo.md",
+      "type": "document",
+      "name": "todo.md",
+      "filePath": "todo.md",
+      "summary": "全量代码审查待办清单（2026-09-04 工作流审查产物：37 个 agent、约 187 万 tokens，候选 31 项、对抗验证确认 25 项）。按严重/中等/轻微三级记录 26 个 bug：8+2 项严重级（数据目录迁移、Hex 查看器截断、Intel HEX 地址回绕等数据丢失/崩溃类）已于 2026-09-05 全部修复并附逐项修复审查记录，12 项中等级（SSH 流补丁、路径穿越、MCP 错误分类等）与 5 项轻微级仍待处理。每项含精确文件行号、失败场景与修法，覆盖 src/ 后端与 web/js/ 前端共 15 个源文件。",
+      "tags": ["documentation", "code-review", "bug-tracking", "technical-debt", "数据丢失"],
+      "complexity": "complex",
+      "languageNotes": "采用「并行找 bug + 反驳式对抗验证」工作流产物结构：位置/问题/失败场景/修法四段式条目，严重组附修复审查表格。"
+    }
+  ],
+  "edges": [
+    {
+      "source": "file:run.bat",
+      "target": "file:src/main.py",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "document:README.md",
+      "target": "file:src/main.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:README.md",
+      "target": "file:src/server.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:README.md",
+      "target": "file:src/build.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:README.md",
+      "target": "file:src/mcp_server.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:README.md",
+      "target": "file:src/serial_cli.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:README.md",
+      "target": "document:docs/MCP_INTEGRATION.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:todo.md",
+      "target": "file:src/server.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:todo.md",
+      "target": "file:src/app_state.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:todo.md",
+      "target": "file:src/hex_files.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:todo.md",
+      "target": "file:src/serial_cli.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:todo.md",
+      "target": "file:src/mcp_server.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:todo.md",
+      "target": "file:src/base_conn.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:todo.md",
+      "target": "file:src/ssh_conn.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:todo.md",
+      "target": "file:src/httpfile.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:todo.md",
+      "target": "file:src/log_index.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:todo.md",
+      "target": "file:src/build.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:todo.md",
+      "target": "file:web/js/hex-viewer.js",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:todo.md",
+      "target": "file:web/js/editor.js",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:todo.md",
+      "target": "file:web/js/log-viewer.js",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:todo.md",
+      "target": "file:web/js/sidebar.js",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:todo.md",
+      "target": "file:web/js/terminal-core.js",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    }
+  ]
+}

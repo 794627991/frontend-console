@@ -70,6 +70,16 @@ def hex_save():
         raw = base64.b64decode(data.get("data") or "")
     except Exception:
         return jsonify({"ok": False, "err": "base64 无效"}), 400
+    # 双保险：二进制镜像长度与磁盘文件不一致一律拒绝——前端读块缺失时曾把
+    # 大文件截断成 512KB 写回，os.replace 无备份直接毁文件。
+    # Intel HEX 例外：写回的是 hex 文本（解析后镜像长度 ≠ 原文本长度），跳过校验
+    if not p.lower().endswith((".hex", ".ihx")):
+        try:
+            if len(raw) != os.path.getsize(p):
+                return jsonify({"ok": False, "err":
+                    f"长度不一致：镜像 {len(raw)} 字节 != 文件 {os.path.getsize(p)} 字节，拒绝写回"}), 400
+        except OSError as e:
+            return jsonify({"ok": False, "err": str(e)}), 400
     tmp = p + ".hexpart"
     try:
         with open(tmp, "wb") as f:

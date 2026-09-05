@@ -1,0 +1,5638 @@
+{
+  "scriptCompleted": true,
+  "filesAnalyzed": 4,
+  "filesSkipped": [],
+  "results": [
+    {
+      "path": "src/hex_files.py",
+      "language": "python",
+      "fileCategory": "code",
+      "totalLines": 92,
+      "nonEmptyLines": 85,
+      "functions": [
+        {
+          "name": "_real_path",
+          "startLine": 18,
+          "endLine": 22,
+          "params": [
+            "path"
+          ]
+        },
+        {
+          "name": "hex_meta",
+          "startLine": 25,
+          "endLine": 37,
+          "params": []
+        },
+        {
+          "name": "hex_read",
+          "startLine": 40,
+          "endLine": 59,
+          "params": []
+        },
+        {
+          "name": "hex_save",
+          "startLine": 62,
+          "endLine": 92,
+          "params": []
+        }
+      ],
+      "exports": [
+        {
+          "name": "_real_path",
+          "line": 18,
+          "isDefault": false
+        },
+        {
+          "name": "hex_meta",
+          "line": 24,
+          "isDefault": false
+        },
+        {
+          "name": "hex_read",
+          "line": 39,
+          "isDefault": false
+        },
+        {
+          "name": "hex_save",
+          "line": 61,
+          "isDefault": false
+        }
+      ],
+      "callGraph": [
+        {
+          "caller": "_real_path",
+          "callee": "os.path.abspath",
+          "lineNumber": 19
+        },
+        {
+          "caller": "_real_path",
+          "callee": "(path or \"\").strip().strip('\"').strip",
+          "lineNumber": 19
+        },
+        {
+          "caller": "_real_path",
+          "callee": "(path or \"\").strip().strip",
+          "lineNumber": 19
+        },
+        {
+          "caller": "_real_path",
+          "callee": "(path or \"\").strip",
+          "lineNumber": 19
+        },
+        {
+          "caller": "_real_path",
+          "callee": "os.path.isfile",
+          "lineNumber": 20
+        },
+        {
+          "caller": "hex_meta",
+          "callee": "request.get_json",
+          "lineNumber": 27
+        },
+        {
+          "caller": "hex_meta",
+          "callee": "_real_path",
+          "lineNumber": 28
+        },
+        {
+          "caller": "hex_meta",
+          "callee": "data.get",
+          "lineNumber": 28
+        },
+        {
+          "caller": "hex_meta",
+          "callee": "jsonify",
+          "lineNumber": 30
+        },
+        {
+          "caller": "hex_meta",
+          "callee": "p.lower",
+          "lineNumber": 31
+        },
+        {
+          "caller": "hex_meta",
+          "callee": "low.endswith",
+          "lineNumber": 32
+        },
+        {
+          "caller": "hex_meta",
+          "callee": "os.path.getsize",
+          "lineNumber": 34
+        },
+        {
+          "caller": "hex_meta",
+          "callee": "jsonify",
+          "lineNumber": 36
+        },
+        {
+          "caller": "hex_meta",
+          "callee": "str",
+          "lineNumber": 36
+        },
+        {
+          "caller": "hex_meta",
+          "callee": "jsonify",
+          "lineNumber": 37
+        },
+        {
+          "caller": "hex_read",
+          "callee": "request.get_json",
+          "lineNumber": 42
+        },
+        {
+          "caller": "hex_read",
+          "callee": "_real_path",
+          "lineNumber": 43
+        },
+        {
+          "caller": "hex_read",
+          "callee": "data.get",
+          "lineNumber": 43
+        },
+        {
+          "caller": "hex_read",
+          "callee": "jsonify",
+          "lineNumber": 45
+        },
+        {
+          "caller": "hex_read",
+          "callee": "max",
+          "lineNumber": 47
+        },
+        {
+          "caller": "hex_read",
+          "callee": "int",
+          "lineNumber": 47
+        },
+        {
+          "caller": "hex_read",
+          "callee": "data.get",
+          "lineNumber": 47
+        },
+        {
+          "caller": "hex_read",
+          "callee": "min",
+          "lineNumber": 48
+        },
+        {
+          "caller": "hex_read",
+          "callee": "int",
+          "lineNumber": 48
+        },
+        {
+          "caller": "hex_read",
+          "callee": "data.get",
+          "lineNumber": 48
+        },
+        {
+          "caller": "hex_read",
+          "callee": "os.path.getsize",
+          "lineNumber": 49
+        },
+        {
+          "caller": "hex_read",
+          "callee": "jsonify",
+          "lineNumber": 51
+        },
+        {
+          "caller": "hex_read",
+          "callee": "jsonify",
+          "lineNumber": 53
+        },
+        {
+          "caller": "hex_read",
+          "callee": "min",
+          "lineNumber": 54
+        },
+        {
+          "caller": "hex_read",
+          "callee": "open",
+          "lineNumber": 55
+        },
+        {
+          "caller": "hex_read",
+          "callee": "f.seek",
+          "lineNumber": 56
+        },
+        {
+          "caller": "hex_read",
+          "callee": "f.read",
+          "lineNumber": 57
+        },
+        {
+          "caller": "hex_read",
+          "callee": "jsonify",
+          "lineNumber": 58
+        },
+        {
+          "caller": "hex_read",
+          "callee": "base64.b64encode(chunk).decode",
+          "lineNumber": 58
+        },
+        {
+          "caller": "hex_read",
+          "callee": "base64.b64encode",
+          "lineNumber": 58
+        },
+        {
+          "caller": "hex_save",
+          "callee": "request.get_json",
+          "lineNumber": 65
+        },
+        {
+          "caller": "hex_save",
+          "callee": "_real_path",
+          "lineNumber": 66
+        },
+        {
+          "caller": "hex_save",
+          "callee": "data.get",
+          "lineNumber": 66
+        },
+        {
+          "caller": "hex_save",
+          "callee": "jsonify",
+          "lineNumber": 68
+        },
+        {
+          "caller": "hex_save",
+          "callee": "base64.b64decode",
+          "lineNumber": 70
+        },
+        {
+          "caller": "hex_save",
+          "callee": "data.get",
+          "lineNumber": 70
+        },
+        {
+          "caller": "hex_save",
+          "callee": "jsonify",
+          "lineNumber": 72
+        },
+        {
+          "caller": "hex_save",
+          "callee": "p.lower().endswith",
+          "lineNumber": 76
+        },
+        {
+          "caller": "hex_save",
+          "callee": "p.lower",
+          "lineNumber": 76
+        },
+        {
+          "caller": "hex_save",
+          "callee": "len",
+          "lineNumber": 78
+        },
+        {
+          "caller": "hex_save",
+          "callee": "os.path.getsize",
+          "lineNumber": 78
+        },
+        {
+          "caller": "hex_save",
+          "callee": "jsonify",
+          "lineNumber": 79
+        },
+        {
+          "caller": "hex_save",
+          "callee": "len",
+          "lineNumber": 80
+        },
+        {
+          "caller": "hex_save",
+          "callee": "os.path.getsize",
+          "lineNumber": 80
+        },
+        {
+          "caller": "hex_save",
+          "callee": "jsonify",
+          "lineNumber": 82
+        },
+        {
+          "caller": "hex_save",
+          "callee": "str",
+          "lineNumber": 82
+        },
+        {
+          "caller": "hex_save",
+          "callee": "open",
+          "lineNumber": 85
+        },
+        {
+          "caller": "hex_save",
+          "callee": "f.write",
+          "lineNumber": 86
+        },
+        {
+          "caller": "hex_save",
+          "callee": "os.replace",
+          "lineNumber": 87
+        },
+        {
+          "caller": "hex_save",
+          "callee": "os.remove",
+          "lineNumber": 89
+        },
+        {
+          "caller": "hex_save",
+          "callee": "jsonify",
+          "lineNumber": 91
+        },
+        {
+          "caller": "hex_save",
+          "callee": "str",
+          "lineNumber": 91
+        },
+        {
+          "caller": "hex_save",
+          "callee": "jsonify",
+          "lineNumber": 92
+        },
+        {
+          "caller": "hex_save",
+          "callee": "len",
+          "lineNumber": 92
+        }
+      ],
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 4,
+        "functionCount": 4,
+        "classCount": 0
+      }
+    },
+    {
+      "path": "src/httpfile.py",
+      "language": "python",
+      "fileCategory": "code",
+      "totalLines": 171,
+      "nonEmptyLines": 150,
+      "functions": [
+        {
+          "name": "_make_transfer_cls",
+          "startLine": 22,
+          "endLine": 28,
+          "params": []
+        },
+        {
+          "name": "httpfile_status",
+          "startLine": 158,
+          "endLine": 159,
+          "params": []
+        },
+        {
+          "name": "httpfile_start",
+          "startLine": 162,
+          "endLine": 166,
+          "params": []
+        },
+        {
+          "name": "httpfile_stop",
+          "startLine": 169,
+          "endLine": 171,
+          "params": []
+        }
+      ],
+      "classes": [
+        {
+          "name": "_Handler",
+          "startLine": 30,
+          "endLine": 107,
+          "methods": [
+            "_record",
+            "_finish",
+            "_serve",
+            "do_GET",
+            "do_HEAD",
+            "log_message"
+          ],
+          "properties": []
+        },
+        {
+          "name": "_ThreadingHTTPServer",
+          "startLine": 109,
+          "endLine": 111,
+          "methods": [],
+          "properties": []
+        },
+        {
+          "name": "HttpFileServer",
+          "startLine": 113,
+          "endLine": 152,
+          "methods": [
+            "__init__",
+            "start",
+            "stop",
+            "status"
+          ],
+          "properties": []
+        }
+      ],
+      "exports": [
+        {
+          "name": "_make_transfer_cls",
+          "line": 22,
+          "isDefault": false
+        },
+        {
+          "name": "_Handler",
+          "line": 30,
+          "isDefault": false
+        },
+        {
+          "name": "_ThreadingHTTPServer",
+          "line": 109,
+          "isDefault": false
+        },
+        {
+          "name": "HttpFileServer",
+          "line": 113,
+          "isDefault": false
+        },
+        {
+          "name": "httpfile_status",
+          "line": 157,
+          "isDefault": false
+        },
+        {
+          "name": "httpfile_start",
+          "line": 161,
+          "isDefault": false
+        },
+        {
+          "name": "httpfile_stop",
+          "line": 168,
+          "isDefault": false
+        }
+      ],
+      "callGraph": [
+        {
+          "caller": "_record",
+          "callee": "_make_transfer_cls",
+          "lineNumber": 40
+        },
+        {
+          "caller": "_record",
+          "callee": "Transfer",
+          "lineNumber": 41
+        },
+        {
+          "caller": "_record",
+          "callee": "self.tftp.transfers.insert",
+          "lineNumber": 48
+        },
+        {
+          "caller": "_serve",
+          "callee": "unquote",
+          "lineNumber": 61
+        },
+        {
+          "caller": "_serve",
+          "callee": "self.path.split",
+          "lineNumber": 61
+        },
+        {
+          "caller": "_serve",
+          "callee": "posixpath.basename",
+          "lineNumber": 62
+        },
+        {
+          "caller": "_serve",
+          "callee": "raw.strip",
+          "lineNumber": 62
+        },
+        {
+          "caller": "_serve",
+          "callee": "self.send_error",
+          "lineNumber": 64
+        },
+        {
+          "caller": "_serve",
+          "callee": "os.path.join",
+          "lineNumber": 67
+        },
+        {
+          "caller": "_serve",
+          "callee": "os.path.isfile",
+          "lineNumber": 68
+        },
+        {
+          "caller": "_serve",
+          "callee": "self.send_error",
+          "lineNumber": 69
+        },
+        {
+          "caller": "_serve",
+          "callee": "self._record",
+          "lineNumber": 74
+        },
+        {
+          "caller": "_serve",
+          "callee": "os.path.getsize",
+          "lineNumber": 74
+        },
+        {
+          "caller": "_serve",
+          "callee": "os.path.getsize",
+          "lineNumber": 76
+        },
+        {
+          "caller": "_serve",
+          "callee": "self.send_response",
+          "lineNumber": 77
+        },
+        {
+          "caller": "_serve",
+          "callee": "self.send_header",
+          "lineNumber": 78
+        },
+        {
+          "caller": "_serve",
+          "callee": "self.send_header",
+          "lineNumber": 79
+        },
+        {
+          "caller": "_serve",
+          "callee": "str",
+          "lineNumber": 79
+        },
+        {
+          "caller": "_serve",
+          "callee": "self.send_header",
+          "lineNumber": 80
+        },
+        {
+          "caller": "_serve",
+          "callee": "self.end_headers",
+          "lineNumber": 81
+        },
+        {
+          "caller": "_serve",
+          "callee": "open",
+          "lineNumber": 84
+        },
+        {
+          "caller": "_serve",
+          "callee": "f.read",
+          "lineNumber": 86
+        },
+        {
+          "caller": "_serve",
+          "callee": "self.wfile.write",
+          "lineNumber": 89
+        },
+        {
+          "caller": "_serve",
+          "callee": "len",
+          "lineNumber": 91
+        },
+        {
+          "caller": "_serve",
+          "callee": "self._finish",
+          "lineNumber": 92
+        },
+        {
+          "caller": "_serve",
+          "callee": "self._finish",
+          "lineNumber": 94
+        },
+        {
+          "caller": "_serve",
+          "callee": "self._finish",
+          "lineNumber": 96
+        },
+        {
+          "caller": "_serve",
+          "callee": "str",
+          "lineNumber": 96
+        },
+        {
+          "caller": "_serve",
+          "callee": "self.send_error",
+          "lineNumber": 97
+        },
+        {
+          "caller": "_serve",
+          "callee": "str",
+          "lineNumber": 97
+        },
+        {
+          "caller": "do_GET",
+          "callee": "self._serve",
+          "lineNumber": 101
+        },
+        {
+          "caller": "do_HEAD",
+          "callee": "self._serve",
+          "lineNumber": 104
+        },
+        {
+          "caller": "start",
+          "callee": "int",
+          "lineNumber": 126
+        },
+        {
+          "caller": "start",
+          "callee": "_ThreadingHTTPServer",
+          "lineNumber": 132
+        },
+        {
+          "caller": "start",
+          "callee": "threading.Thread(target=self.server.serve_forever, daemon=True).start",
+          "lineNumber": 136
+        },
+        {
+          "caller": "start",
+          "callee": "threading.Thread",
+          "lineNumber": 136
+        },
+        {
+          "caller": "stop",
+          "callee": "self.server.shutdown",
+          "lineNumber": 142
+        },
+        {
+          "caller": "stop",
+          "callee": "self.server.server_close",
+          "lineNumber": 144
+        },
+        {
+          "caller": "httpfile_status",
+          "callee": "jsonify",
+          "lineNumber": 159
+        },
+        {
+          "caller": "httpfile_status",
+          "callee": "_hfs.status",
+          "lineNumber": 159
+        },
+        {
+          "caller": "httpfile_start",
+          "callee": "request.get_json",
+          "lineNumber": 164
+        },
+        {
+          "caller": "httpfile_start",
+          "callee": "_hfs.start",
+          "lineNumber": 165
+        },
+        {
+          "caller": "httpfile_start",
+          "callee": "data.get",
+          "lineNumber": 165
+        },
+        {
+          "caller": "httpfile_start",
+          "callee": "jsonify",
+          "lineNumber": 166
+        },
+        {
+          "caller": "httpfile_start",
+          "callee": "_hfs.status",
+          "lineNumber": 166
+        },
+        {
+          "caller": "httpfile_stop",
+          "callee": "_hfs.stop",
+          "lineNumber": 170
+        },
+        {
+          "caller": "httpfile_stop",
+          "callee": "jsonify",
+          "lineNumber": 171
+        },
+        {
+          "caller": "httpfile_stop",
+          "callee": "_hfs.status",
+          "lineNumber": 171
+        }
+      ],
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 7,
+        "functionCount": 4,
+        "classCount": 3
+      }
+    },
+    {
+      "path": "src/server.py",
+      "language": "python",
+      "fileCategory": "code",
+      "totalLines": 1310,
+      "nonEmptyLines": 1223,
+      "functions": [
+        {
+          "name": "close_all_ports",
+          "startLine": 75,
+          "endLine": 79,
+          "params": []
+        },
+        {
+          "name": "_patched_append",
+          "startLine": 84,
+          "endLine": 88,
+          "params": [
+            "raw_line",
+            "local_echo"
+          ]
+        },
+        {
+          "name": "start_background",
+          "startLine": 91,
+          "endLine": 105,
+          "params": []
+        },
+        {
+          "name": "index",
+          "startLine": 111,
+          "endLine": 112,
+          "params": []
+        },
+        {
+          "name": "web_files",
+          "startLine": 115,
+          "endLine": 116,
+          "params": [
+            "fn"
+          ]
+        },
+        {
+          "name": "static_files",
+          "startLine": 119,
+          "endLine": 120,
+          "params": [
+            "fn"
+          ]
+        },
+        {
+          "name": "vendor_files",
+          "startLine": 125,
+          "endLine": 126,
+          "params": [
+            "fn"
+          ]
+        },
+        {
+          "name": "ico_files",
+          "startLine": 131,
+          "endLine": 132,
+          "params": [
+            "fn"
+          ]
+        },
+        {
+          "name": "api_ports",
+          "startLine": 135,
+          "endLine": 136,
+          "params": []
+        },
+        {
+          "name": "api_status",
+          "startLine": 139,
+          "endLine": 150,
+          "params": []
+        },
+        {
+          "name": "api_connect",
+          "startLine": 153,
+          "endLine": 237,
+          "params": []
+        },
+        {
+          "name": "api_disconnect",
+          "startLine": 240,
+          "endLine": 248,
+          "params": []
+        },
+        {
+          "name": "api_send",
+          "startLine": 251,
+          "endLine": 266,
+          "params": []
+        },
+        {
+          "name": "api_send_raw",
+          "startLine": 269,
+          "endLine": 285,
+          "params": []
+        },
+        {
+          "name": "api_history",
+          "startLine": 288,
+          "endLine": 294,
+          "params": []
+        },
+        {
+          "name": "api_buffer",
+          "startLine": 297,
+          "endLine": 312,
+          "params": []
+        },
+        {
+          "name": "api_search",
+          "startLine": 315,
+          "endLine": 331,
+          "params": []
+        },
+        {
+          "name": "api_logs",
+          "startLine": 334,
+          "endLine": 346,
+          "params": []
+        },
+        {
+          "name": "api_theme",
+          "startLine": 349,
+          "endLine": 365,
+          "params": []
+        },
+        {
+          "name": "_recent_add",
+          "startLine": 374,
+          "endLine": 385,
+          "params": [
+            "item"
+          ]
+        },
+        {
+          "name": "api_recent",
+          "startLine": 388,
+          "endLine": 415,
+          "params": []
+        },
+        {
+          "name": "api_log_dir",
+          "startLine": 419,
+          "endLine": 439,
+          "params": []
+        },
+        {
+          "name": "api_log_dir_open",
+          "startLine": 443,
+          "endLine": 456,
+          "params": []
+        },
+        {
+          "name": "api_data_dir_get",
+          "startLine": 469,
+          "endLine": 500,
+          "params": []
+        },
+        {
+          "name": "api_data_dir_check",
+          "startLine": 503,
+          "endLine": 543,
+          "params": []
+        },
+        {
+          "name": "api_data_dir_migrate",
+          "startLine": 546,
+          "endLine": 654,
+          "params": []
+        },
+        {
+          "name": "api_open_log_file",
+          "startLine": 657,
+          "endLine": 675,
+          "params": []
+        },
+        {
+          "name": "api_log_read",
+          "startLine": 678,
+          "endLine": 683,
+          "params": [
+            "name"
+          ]
+        },
+        {
+          "name": "api_replay",
+          "startLine": 686,
+          "endLine": 708,
+          "params": [
+            "name"
+          ]
+        },
+        {
+          "name": "api_replay_page",
+          "startLine": 711,
+          "endLine": 724,
+          "params": []
+        },
+        {
+          "name": "api_replay_seek",
+          "startLine": 727,
+          "endLine": 737,
+          "params": []
+        },
+        {
+          "name": "_resolve_log_path",
+          "startLine": 741,
+          "endLine": 752,
+          "params": [
+            "name_or_path"
+          ]
+        },
+        {
+          "name": "api_log_count",
+          "startLine": 755,
+          "endLine": 764,
+          "params": []
+        },
+        {
+          "name": "api_log_page",
+          "startLine": 767,
+          "endLine": 778,
+          "params": []
+        },
+        {
+          "name": "api_log_search",
+          "startLine": 781,
+          "endLine": 796,
+          "params": []
+        },
+        {
+          "name": "api_log_search_page",
+          "startLine": 799,
+          "endLine": 813,
+          "params": []
+        },
+        {
+          "name": "api_log_open_external",
+          "startLine": 816,
+          "endLine": 823,
+          "params": []
+        },
+        {
+          "name": "api_file_info",
+          "startLine": 827,
+          "endLine": 837,
+          "params": []
+        },
+        {
+          "name": "ai_diff_logs",
+          "startLine": 841,
+          "endLine": 943,
+          "params": []
+        },
+        {
+          "name": "api_new_log",
+          "startLine": 946,
+          "endLine": 953,
+          "params": []
+        },
+        {
+          "name": "api_clear_buffer",
+          "startLine": 956,
+          "endLine": 963,
+          "params": []
+        },
+        {
+          "name": "stream",
+          "startLine": 966,
+          "endLine": 986,
+          "params": []
+        },
+        {
+          "name": "ai_status",
+          "startLine": 993,
+          "endLine": 995,
+          "params": []
+        },
+        {
+          "name": "ai_buffer",
+          "startLine": 998,
+          "endLine": 1010,
+          "params": []
+        },
+        {
+          "name": "ai_recent",
+          "startLine": 1013,
+          "endLine": 1022,
+          "params": []
+        },
+        {
+          "name": "ai_send",
+          "startLine": 1025,
+          "endLine": 1046,
+          "params": []
+        },
+        {
+          "name": "ai_send_raw",
+          "startLine": 1049,
+          "endLine": 1064,
+          "params": []
+        },
+        {
+          "name": "ai_burst",
+          "startLine": 1067,
+          "endLine": 1115,
+          "params": []
+        },
+        {
+          "name": "ai_stream",
+          "startLine": 1118,
+          "endLine": 1140,
+          "params": []
+        },
+        {
+          "name": "ai_ports",
+          "startLine": 1143,
+          "endLine": 1145,
+          "params": []
+        },
+        {
+          "name": "ai_observe",
+          "startLine": 1148,
+          "endLine": 1166,
+          "params": []
+        },
+        {
+          "name": "ai_open_logs",
+          "startLine": 1171,
+          "endLine": 1204,
+          "params": []
+        },
+        {
+          "name": "ai_mcp_info",
+          "startLine": 1209,
+          "endLine": 1247,
+          "params": []
+        },
+        {
+          "name": "ai_mcp_report",
+          "startLine": 1251,
+          "endLine": 1265,
+          "params": []
+        },
+        {
+          "name": "ai_perf",
+          "startLine": 1271,
+          "endLine": 1278,
+          "params": []
+        },
+        {
+          "name": "cmd_lib_get",
+          "startLine": 1282,
+          "endLine": 1284,
+          "params": []
+        },
+        {
+          "name": "cmd_lib_save",
+          "startLine": 1287,
+          "endLine": 1297,
+          "params": []
+        }
+      ],
+      "exports": [
+        {
+          "name": "close_all_ports",
+          "line": 75,
+          "isDefault": false
+        },
+        {
+          "name": "_patched_append",
+          "line": 84,
+          "isDefault": false
+        },
+        {
+          "name": "start_background",
+          "line": 91,
+          "isDefault": false
+        },
+        {
+          "name": "index",
+          "line": 110,
+          "isDefault": false
+        },
+        {
+          "name": "web_files",
+          "line": 114,
+          "isDefault": false
+        },
+        {
+          "name": "static_files",
+          "line": 118,
+          "isDefault": false
+        },
+        {
+          "name": "vendor_files",
+          "line": 124,
+          "isDefault": false
+        },
+        {
+          "name": "ico_files",
+          "line": 130,
+          "isDefault": false
+        },
+        {
+          "name": "api_ports",
+          "line": 134,
+          "isDefault": false
+        },
+        {
+          "name": "api_status",
+          "line": 138,
+          "isDefault": false
+        },
+        {
+          "name": "api_connect",
+          "line": 152,
+          "isDefault": false
+        },
+        {
+          "name": "api_disconnect",
+          "line": 239,
+          "isDefault": false
+        },
+        {
+          "name": "api_send",
+          "line": 250,
+          "isDefault": false
+        },
+        {
+          "name": "api_send_raw",
+          "line": 268,
+          "isDefault": false
+        },
+        {
+          "name": "api_history",
+          "line": 287,
+          "isDefault": false
+        },
+        {
+          "name": "api_buffer",
+          "line": 296,
+          "isDefault": false
+        },
+        {
+          "name": "api_search",
+          "line": 314,
+          "isDefault": false
+        },
+        {
+          "name": "api_logs",
+          "line": 333,
+          "isDefault": false
+        },
+        {
+          "name": "api_theme",
+          "line": 348,
+          "isDefault": false
+        },
+        {
+          "name": "_recent_add",
+          "line": 374,
+          "isDefault": false
+        },
+        {
+          "name": "api_recent",
+          "line": 387,
+          "isDefault": false
+        },
+        {
+          "name": "api_log_dir",
+          "line": 418,
+          "isDefault": false
+        },
+        {
+          "name": "api_log_dir_open",
+          "line": 442,
+          "isDefault": false
+        },
+        {
+          "name": "api_data_dir_get",
+          "line": 468,
+          "isDefault": false
+        },
+        {
+          "name": "api_data_dir_check",
+          "line": 502,
+          "isDefault": false
+        },
+        {
+          "name": "api_data_dir_migrate",
+          "line": 545,
+          "isDefault": false
+        },
+        {
+          "name": "api_open_log_file",
+          "line": 656,
+          "isDefault": false
+        },
+        {
+          "name": "api_log_read",
+          "line": 677,
+          "isDefault": false
+        },
+        {
+          "name": "api_replay",
+          "line": 685,
+          "isDefault": false
+        },
+        {
+          "name": "api_replay_page",
+          "line": 710,
+          "isDefault": false
+        },
+        {
+          "name": "api_replay_seek",
+          "line": 726,
+          "isDefault": false
+        },
+        {
+          "name": "_resolve_log_path",
+          "line": 741,
+          "isDefault": false
+        },
+        {
+          "name": "api_log_count",
+          "line": 754,
+          "isDefault": false
+        },
+        {
+          "name": "api_log_page",
+          "line": 766,
+          "isDefault": false
+        },
+        {
+          "name": "api_log_search",
+          "line": 780,
+          "isDefault": false
+        },
+        {
+          "name": "api_log_search_page",
+          "line": 798,
+          "isDefault": false
+        },
+        {
+          "name": "api_log_open_external",
+          "line": 815,
+          "isDefault": false
+        },
+        {
+          "name": "api_file_info",
+          "line": 826,
+          "isDefault": false
+        },
+        {
+          "name": "ai_diff_logs",
+          "line": 840,
+          "isDefault": false
+        },
+        {
+          "name": "api_new_log",
+          "line": 945,
+          "isDefault": false
+        },
+        {
+          "name": "api_clear_buffer",
+          "line": 955,
+          "isDefault": false
+        },
+        {
+          "name": "stream",
+          "line": 965,
+          "isDefault": false
+        },
+        {
+          "name": "ai_status",
+          "line": 992,
+          "isDefault": false
+        },
+        {
+          "name": "ai_buffer",
+          "line": 997,
+          "isDefault": false
+        },
+        {
+          "name": "ai_recent",
+          "line": 1012,
+          "isDefault": false
+        },
+        {
+          "name": "ai_send",
+          "line": 1024,
+          "isDefault": false
+        },
+        {
+          "name": "ai_send_raw",
+          "line": 1048,
+          "isDefault": false
+        },
+        {
+          "name": "ai_burst",
+          "line": 1066,
+          "isDefault": false
+        },
+        {
+          "name": "ai_stream",
+          "line": 1117,
+          "isDefault": false
+        },
+        {
+          "name": "ai_ports",
+          "line": 1142,
+          "isDefault": false
+        },
+        {
+          "name": "ai_observe",
+          "line": 1147,
+          "isDefault": false
+        },
+        {
+          "name": "ai_open_logs",
+          "line": 1170,
+          "isDefault": false
+        },
+        {
+          "name": "ai_mcp_info",
+          "line": 1208,
+          "isDefault": false
+        },
+        {
+          "name": "ai_mcp_report",
+          "line": 1250,
+          "isDefault": false
+        },
+        {
+          "name": "ai_perf",
+          "line": 1270,
+          "isDefault": false
+        },
+        {
+          "name": "cmd_lib_get",
+          "line": 1281,
+          "isDefault": false
+        },
+        {
+          "name": "cmd_lib_save",
+          "line": 1286,
+          "isDefault": false
+        }
+      ],
+      "callGraph": [
+        {
+          "caller": "close_all_ports",
+          "callee": "list",
+          "lineNumber": 77
+        },
+        {
+          "caller": "close_all_ports",
+          "callee": "_ports.values",
+          "lineNumber": 77
+        },
+        {
+          "caller": "close_all_ports",
+          "callee": "p.close",
+          "lineNumber": 78
+        },
+        {
+          "caller": "close_all_ports",
+          "callee": "_ports.clear",
+          "lineNumber": 79
+        },
+        {
+          "caller": "_patched_append",
+          "callee": "_orig_append",
+          "lineNumber": 85
+        },
+        {
+          "caller": "_patched_append",
+          "callee": "int",
+          "lineNumber": 86
+        },
+        {
+          "caller": "_patched_append",
+          "callee": "time.time",
+          "lineNumber": 86
+        },
+        {
+          "caller": "_patched_append",
+          "callee": "strip_ansi",
+          "lineNumber": 87
+        },
+        {
+          "caller": "_patched_append",
+          "callee": "_broadcast_to_ai",
+          "lineNumber": 88
+        },
+        {
+          "caller": "_patched_append",
+          "callee": "classify_line",
+          "lineNumber": 88
+        },
+        {
+          "caller": "_cleanup",
+          "callee": "time.sleep",
+          "lineNumber": 95
+        },
+        {
+          "caller": "_cleanup",
+          "callee": "time.time",
+          "lineNumber": 98
+        },
+        {
+          "caller": "_cleanup",
+          "callee": "glob.glob",
+          "lineNumber": 99
+        },
+        {
+          "caller": "_cleanup",
+          "callee": "os.path.join",
+          "lineNumber": 99
+        },
+        {
+          "caller": "_cleanup",
+          "callee": "os.path.getmtime",
+          "lineNumber": 100
+        },
+        {
+          "caller": "_cleanup",
+          "callee": "os.remove",
+          "lineNumber": 101
+        },
+        {
+          "caller": "start_background",
+          "callee": "threading.Thread",
+          "lineNumber": 104
+        },
+        {
+          "caller": "start_background",
+          "callee": "t.start",
+          "lineNumber": 105
+        },
+        {
+          "caller": "index",
+          "callee": "send_from_directory",
+          "lineNumber": 112
+        },
+        {
+          "caller": "web_files",
+          "callee": "send_from_directory",
+          "lineNumber": 116
+        },
+        {
+          "caller": "web_files",
+          "callee": "os.path.join",
+          "lineNumber": 116
+        },
+        {
+          "caller": "static_files",
+          "callee": "send_from_directory",
+          "lineNumber": 120
+        },
+        {
+          "caller": "vendor_files",
+          "callee": "send_from_directory",
+          "lineNumber": 126
+        },
+        {
+          "caller": "ico_files",
+          "callee": "send_from_directory",
+          "lineNumber": 132
+        },
+        {
+          "caller": "api_ports",
+          "callee": "jsonify",
+          "lineNumber": 136
+        },
+        {
+          "caller": "api_ports",
+          "callee": "list_ports",
+          "lineNumber": 136
+        },
+        {
+          "caller": "api_status",
+          "callee": "_ports.items",
+          "lineNumber": 142
+        },
+        {
+          "caller": "api_status",
+          "callee": "len",
+          "lineNumber": 145
+        },
+        {
+          "caller": "api_status",
+          "callee": "len",
+          "lineNumber": 146
+        },
+        {
+          "caller": "api_status",
+          "callee": "len",
+          "lineNumber": 146
+        },
+        {
+          "caller": "api_status",
+          "callee": "getattr",
+          "lineNumber": 147
+        },
+        {
+          "caller": "api_status",
+          "callee": "getattr",
+          "lineNumber": 148
+        },
+        {
+          "caller": "api_status",
+          "callee": "getattr",
+          "lineNumber": 148
+        },
+        {
+          "caller": "api_status",
+          "callee": "jsonify",
+          "lineNumber": 150
+        },
+        {
+          "caller": "api_connect",
+          "callee": "request.get_json",
+          "lineNumber": 154
+        },
+        {
+          "caller": "api_connect",
+          "callee": "data.get",
+          "lineNumber": 155
+        },
+        {
+          "caller": "api_connect",
+          "callee": "(data.get(\"host\") or \"\").strip",
+          "lineNumber": 158
+        },
+        {
+          "caller": "api_connect",
+          "callee": "data.get",
+          "lineNumber": 158
+        },
+        {
+          "caller": "api_connect",
+          "callee": "data.get",
+          "lineNumber": 159
+        },
+        {
+          "caller": "api_connect",
+          "callee": "(data.get(\"username\") or \"\").strip",
+          "lineNumber": 160
+        },
+        {
+          "caller": "api_connect",
+          "callee": "data.get",
+          "lineNumber": 160
+        },
+        {
+          "caller": "api_connect",
+          "callee": "data.get",
+          "lineNumber": 161
+        },
+        {
+          "caller": "api_connect",
+          "callee": "(data.get(\"key_path\") or \"\").strip",
+          "lineNumber": 162
+        },
+        {
+          "caller": "api_connect",
+          "callee": "data.get",
+          "lineNumber": 162
+        },
+        {
+          "caller": "api_connect",
+          "callee": "jsonify",
+          "lineNumber": 164
+        },
+        {
+          "caller": "api_connect",
+          "callee": "_get_paramiko",
+          "lineNumber": 170
+        },
+        {
+          "caller": "api_connect",
+          "callee": "jsonify",
+          "lineNumber": 171
+        },
+        {
+          "caller": "api_connect",
+          "callee": "jsonify",
+          "lineNumber": 175
+        },
+        {
+          "caller": "api_connect",
+          "callee": "SSHConnection",
+          "lineNumber": 177
+        },
+        {
+          "caller": "api_connect",
+          "callee": "_ports.pop",
+          "lineNumber": 182
+        },
+        {
+          "caller": "api_connect",
+          "callee": "p.close",
+          "lineNumber": 183
+        },
+        {
+          "caller": "api_connect",
+          "callee": "str",
+          "lineNumber": 186
+        },
+        {
+          "caller": "api_connect",
+          "callee": "isinstance",
+          "lineNumber": 193
+        },
+        {
+          "caller": "api_connect",
+          "callee": "str",
+          "lineNumber": 194
+        },
+        {
+          "caller": "api_connect",
+          "callee": "isinstance",
+          "lineNumber": 195
+        },
+        {
+          "caller": "api_connect",
+          "callee": "isinstance",
+          "lineNumber": 197
+        },
+        {
+          "caller": "api_connect",
+          "callee": "getattr",
+          "lineNumber": 198
+        },
+        {
+          "caller": "api_connect",
+          "callee": "int",
+          "lineNumber": 198
+        },
+        {
+          "caller": "api_connect",
+          "callee": "isinstance",
+          "lineNumber": 200
+        },
+        {
+          "caller": "api_connect",
+          "callee": "isinstance",
+          "lineNumber": 200
+        },
+        {
+          "caller": "api_connect",
+          "callee": "msg.lower",
+          "lineNumber": 200
+        },
+        {
+          "caller": "api_connect",
+          "callee": "isinstance",
+          "lineNumber": 202
+        },
+        {
+          "caller": "api_connect",
+          "callee": "isinstance",
+          "lineNumber": 204
+        },
+        {
+          "caller": "api_connect",
+          "callee": "jsonify",
+          "lineNumber": 208
+        },
+        {
+          "caller": "api_connect",
+          "callee": "jsonify",
+          "lineNumber": 210
+        },
+        {
+          "caller": "api_connect",
+          "callee": "data.get",
+          "lineNumber": 214
+        },
+        {
+          "caller": "api_connect",
+          "callee": "data.get",
+          "lineNumber": 215
+        },
+        {
+          "caller": "api_connect",
+          "callee": "jsonify",
+          "lineNumber": 217
+        },
+        {
+          "caller": "api_connect",
+          "callee": "jsonify",
+          "lineNumber": 221
+        },
+        {
+          "caller": "api_connect",
+          "callee": "SerialPort",
+          "lineNumber": 223
+        },
+        {
+          "caller": "api_connect",
+          "callee": "_ports.pop",
+          "lineNumber": 228
+        },
+        {
+          "caller": "api_connect",
+          "callee": "p.close",
+          "lineNumber": 229
+        },
+        {
+          "caller": "api_connect",
+          "callee": "jsonify",
+          "lineNumber": 231
+        },
+        {
+          "caller": "api_connect",
+          "callee": "str",
+          "lineNumber": 231
+        },
+        {
+          "caller": "api_connect",
+          "callee": "p.send_raw",
+          "lineNumber": 234
+        },
+        {
+          "caller": "api_connect",
+          "callee": "jsonify",
+          "lineNumber": 237
+        },
+        {
+          "caller": "api_disconnect",
+          "callee": "request.get_json",
+          "lineNumber": 241
+        },
+        {
+          "caller": "api_disconnect",
+          "callee": "data.get",
+          "lineNumber": 242
+        },
+        {
+          "caller": "api_disconnect",
+          "callee": "_ports.pop",
+          "lineNumber": 244
+        },
+        {
+          "caller": "api_disconnect",
+          "callee": "p.close",
+          "lineNumber": 246
+        },
+        {
+          "caller": "api_disconnect",
+          "callee": "jsonify",
+          "lineNumber": 247
+        },
+        {
+          "caller": "api_disconnect",
+          "callee": "jsonify",
+          "lineNumber": 248
+        },
+        {
+          "caller": "api_send",
+          "callee": "request.get_json",
+          "lineNumber": 252
+        },
+        {
+          "caller": "api_send",
+          "callee": "data.get",
+          "lineNumber": 253
+        },
+        {
+          "caller": "api_send",
+          "callee": "data.get",
+          "lineNumber": 254
+        },
+        {
+          "caller": "api_send",
+          "callee": "data.get",
+          "lineNumber": 255
+        },
+        {
+          "caller": "api_send",
+          "callee": "_ports.get",
+          "lineNumber": 257
+        },
+        {
+          "caller": "api_send",
+          "callee": "jsonify",
+          "lineNumber": 259
+        },
+        {
+          "caller": "api_send",
+          "callee": "p.send_cmd",
+          "lineNumber": 261
+        },
+        {
+          "caller": "api_send",
+          "callee": "p.append_line",
+          "lineNumber": 263
+        },
+        {
+          "caller": "api_send",
+          "callee": "jsonify",
+          "lineNumber": 264
+        },
+        {
+          "caller": "api_send",
+          "callee": "jsonify",
+          "lineNumber": 266
+        },
+        {
+          "caller": "api_send",
+          "callee": "str",
+          "lineNumber": 266
+        },
+        {
+          "caller": "api_send_raw",
+          "callee": "request.get_json",
+          "lineNumber": 270
+        },
+        {
+          "caller": "api_send_raw",
+          "callee": "data.get",
+          "lineNumber": 271
+        },
+        {
+          "caller": "api_send_raw",
+          "callee": "data.get",
+          "lineNumber": 272
+        },
+        {
+          "caller": "api_send_raw",
+          "callee": "isinstance",
+          "lineNumber": 273
+        },
+        {
+          "caller": "api_send_raw",
+          "callee": "jsonify",
+          "lineNumber": 274
+        },
+        {
+          "caller": "api_send_raw",
+          "callee": "bytes",
+          "lineNumber": 275
+        },
+        {
+          "caller": "api_send_raw",
+          "callee": "int",
+          "lineNumber": 275
+        },
+        {
+          "caller": "api_send_raw",
+          "callee": "isinstance",
+          "lineNumber": 275
+        },
+        {
+          "caller": "api_send_raw",
+          "callee": "_ports.get",
+          "lineNumber": 277
+        },
+        {
+          "caller": "api_send_raw",
+          "callee": "jsonify",
+          "lineNumber": 279
+        },
+        {
+          "caller": "api_send_raw",
+          "callee": "p.send_raw",
+          "lineNumber": 282
+        },
+        {
+          "caller": "api_send_raw",
+          "callee": "jsonify",
+          "lineNumber": 283
+        },
+        {
+          "caller": "api_send_raw",
+          "callee": "len",
+          "lineNumber": 283
+        },
+        {
+          "caller": "api_send_raw",
+          "callee": "jsonify",
+          "lineNumber": 285
+        },
+        {
+          "caller": "api_send_raw",
+          "callee": "str",
+          "lineNumber": 285
+        },
+        {
+          "caller": "api_history",
+          "callee": "request.args.get",
+          "lineNumber": 289
+        },
+        {
+          "caller": "api_history",
+          "callee": "_ports.get",
+          "lineNumber": 291
+        },
+        {
+          "caller": "api_history",
+          "callee": "jsonify",
+          "lineNumber": 293
+        },
+        {
+          "caller": "api_history",
+          "callee": "jsonify",
+          "lineNumber": 294
+        },
+        {
+          "caller": "api_history",
+          "callee": "p.get_history",
+          "lineNumber": 294
+        },
+        {
+          "caller": "api_buffer",
+          "callee": "request.args.get",
+          "lineNumber": 298
+        },
+        {
+          "caller": "api_buffer",
+          "callee": "int",
+          "lineNumber": 299
+        },
+        {
+          "caller": "api_buffer",
+          "callee": "request.args.get",
+          "lineNumber": 299
+        },
+        {
+          "caller": "api_buffer",
+          "callee": "request.args.get",
+          "lineNumber": 300
+        },
+        {
+          "caller": "api_buffer",
+          "callee": "_ports.get",
+          "lineNumber": 302
+        },
+        {
+          "caller": "api_buffer",
+          "callee": "jsonify",
+          "lineNumber": 304
+        },
+        {
+          "caller": "api_buffer",
+          "callee": "int",
+          "lineNumber": 307
+        },
+        {
+          "caller": "api_buffer",
+          "callee": "p.get_buffer_before",
+          "lineNumber": 310
+        },
+        {
+          "caller": "api_buffer",
+          "callee": "jsonify",
+          "lineNumber": 311
+        },
+        {
+          "caller": "api_buffer",
+          "callee": "jsonify",
+          "lineNumber": 312
+        },
+        {
+          "caller": "api_buffer",
+          "callee": "p.get_buffer",
+          "lineNumber": 312
+        },
+        {
+          "caller": "api_buffer",
+          "callee": "len",
+          "lineNumber": 312
+        },
+        {
+          "caller": "api_search",
+          "callee": "request.args.get",
+          "lineNumber": 317
+        },
+        {
+          "caller": "api_search",
+          "callee": "request.args.get",
+          "lineNumber": 318
+        },
+        {
+          "caller": "api_search",
+          "callee": "int",
+          "lineNumber": 319
+        },
+        {
+          "caller": "api_search",
+          "callee": "request.args.get",
+          "lineNumber": 319
+        },
+        {
+          "caller": "api_search",
+          "callee": "request.args.get",
+          "lineNumber": 320
+        },
+        {
+          "caller": "api_search",
+          "callee": "int",
+          "lineNumber": 321
+        },
+        {
+          "caller": "api_search",
+          "callee": "_ports.get",
+          "lineNumber": 323
+        },
+        {
+          "caller": "api_search",
+          "callee": "jsonify",
+          "lineNumber": 325
+        },
+        {
+          "caller": "api_search",
+          "callee": "p.search_lines",
+          "lineNumber": 326
+        },
+        {
+          "caller": "api_search",
+          "callee": "jsonify",
+          "lineNumber": 331
+        },
+        {
+          "caller": "api_logs",
+          "callee": "os.path.isdir",
+          "lineNumber": 337
+        },
+        {
+          "caller": "api_logs",
+          "callee": "glob.glob",
+          "lineNumber": 338
+        },
+        {
+          "caller": "api_logs",
+          "callee": "os.path.join",
+          "lineNumber": 338
+        },
+        {
+          "caller": "api_logs",
+          "callee": "files.append",
+          "lineNumber": 339
+        },
+        {
+          "caller": "api_logs",
+          "callee": "os.path.basename",
+          "lineNumber": 339
+        },
+        {
+          "caller": "api_logs",
+          "callee": "os.path.getsize",
+          "lineNumber": 339
+        },
+        {
+          "caller": "api_logs",
+          "callee": "int",
+          "lineNumber": 339
+        },
+        {
+          "caller": "api_logs",
+          "callee": "os.path.getmtime",
+          "lineNumber": 339
+        },
+        {
+          "caller": "api_logs",
+          "callee": "(request.args.get(\"sort\") or \"time_desc\").strip",
+          "lineNumber": 340
+        },
+        {
+          "caller": "api_logs",
+          "callee": "request.args.get",
+          "lineNumber": 340
+        },
+        {
+          "caller": "api_logs",
+          "callee": "files.sort",
+          "lineNumber": 341
+        },
+        {
+          "caller": "api_logs",
+          "callee": "files.sort",
+          "lineNumber": 342
+        },
+        {
+          "caller": "api_logs",
+          "callee": "files.sort",
+          "lineNumber": 343
+        },
+        {
+          "caller": "api_logs",
+          "callee": "files.sort",
+          "lineNumber": 344
+        },
+        {
+          "caller": "api_logs",
+          "callee": "files.sort",
+          "lineNumber": 345
+        },
+        {
+          "caller": "api_logs",
+          "callee": "jsonify",
+          "lineNumber": 346
+        },
+        {
+          "caller": "api_theme",
+          "callee": "_load_config",
+          "lineNumber": 355
+        },
+        {
+          "caller": "api_theme",
+          "callee": "jsonify",
+          "lineNumber": 356
+        },
+        {
+          "caller": "api_theme",
+          "callee": "cfg.get",
+          "lineNumber": 356
+        },
+        {
+          "caller": "api_theme",
+          "callee": "bool",
+          "lineNumber": 357
+        },
+        {
+          "caller": "api_theme",
+          "callee": "cfg.get",
+          "lineNumber": 357
+        },
+        {
+          "caller": "api_theme",
+          "callee": "request.get_json",
+          "lineNumber": 358
+        },
+        {
+          "caller": "api_theme",
+          "callee": "_save_config",
+          "lineNumber": 361
+        },
+        {
+          "caller": "api_theme",
+          "callee": "_load_config",
+          "lineNumber": 361
+        },
+        {
+          "caller": "api_theme",
+          "callee": "bool",
+          "lineNumber": 361
+        },
+        {
+          "caller": "api_theme",
+          "callee": "(data.get(\"theme\") or \"\").strip",
+          "lineNumber": 362
+        },
+        {
+          "caller": "api_theme",
+          "callee": "data.get",
+          "lineNumber": 362
+        },
+        {
+          "caller": "api_theme",
+          "callee": "_save_config",
+          "lineNumber": 364
+        },
+        {
+          "caller": "api_theme",
+          "callee": "_load_config",
+          "lineNumber": 364
+        },
+        {
+          "caller": "api_theme",
+          "callee": "jsonify",
+          "lineNumber": 365
+        },
+        {
+          "caller": "api_theme",
+          "callee": "_load_config().get",
+          "lineNumber": 365
+        },
+        {
+          "caller": "api_theme",
+          "callee": "_load_config",
+          "lineNumber": 365
+        },
+        {
+          "caller": "_recent_add",
+          "callee": "_load_config",
+          "lineNumber": 376
+        },
+        {
+          "caller": "_recent_add",
+          "callee": "cfg.get",
+          "lineNumber": 377
+        },
+        {
+          "caller": "_recent_add",
+          "callee": "item.get",
+          "lineNumber": 378
+        },
+        {
+          "caller": "_recent_add",
+          "callee": "r.get",
+          "lineNumber": 379
+        },
+        {
+          "caller": "_recent_add",
+          "callee": "int",
+          "lineNumber": 380
+        },
+        {
+          "caller": "_recent_add",
+          "callee": "time.time",
+          "lineNumber": 380
+        },
+        {
+          "caller": "_recent_add",
+          "callee": "recent.insert",
+          "lineNumber": 381
+        },
+        {
+          "caller": "_recent_add",
+          "callee": "_save_config",
+          "lineNumber": 384
+        },
+        {
+          "caller": "api_recent",
+          "callee": "jsonify",
+          "lineNumber": 391
+        },
+        {
+          "caller": "api_recent",
+          "callee": "_load_config().get",
+          "lineNumber": 391
+        },
+        {
+          "caller": "api_recent",
+          "callee": "_load_config",
+          "lineNumber": 391
+        },
+        {
+          "caller": "api_recent",
+          "callee": "_save_config",
+          "lineNumber": 393
+        },
+        {
+          "caller": "api_recent",
+          "callee": "_load_config",
+          "lineNumber": 393
+        },
+        {
+          "caller": "api_recent",
+          "callee": "jsonify",
+          "lineNumber": 394
+        },
+        {
+          "caller": "api_recent",
+          "callee": "request.get_json",
+          "lineNumber": 395
+        },
+        {
+          "caller": "api_recent",
+          "callee": "isinstance",
+          "lineNumber": 397
+        },
+        {
+          "caller": "api_recent",
+          "callee": "data.get",
+          "lineNumber": 397
+        },
+        {
+          "caller": "api_recent",
+          "callee": "(it.get(\"type\") or \"\").strip",
+          "lineNumber": 400
+        },
+        {
+          "caller": "api_recent",
+          "callee": "it.get",
+          "lineNumber": 400
+        },
+        {
+          "caller": "api_recent",
+          "callee": "(it.get(\"key\") or \"\").strip",
+          "lineNumber": 401
+        },
+        {
+          "caller": "api_recent",
+          "callee": "it.get",
+          "lineNumber": 401
+        },
+        {
+          "caller": "api_recent",
+          "callee": "keep.append",
+          "lineNumber": 403
+        },
+        {
+          "caller": "api_recent",
+          "callee": "(it.get(\"label\") or \"\").strip",
+          "lineNumber": 403
+        },
+        {
+          "caller": "api_recent",
+          "callee": "it.get",
+          "lineNumber": 403
+        },
+        {
+          "caller": "api_recent",
+          "callee": "it.get",
+          "lineNumber": 404
+        },
+        {
+          "caller": "api_recent",
+          "callee": "it.get",
+          "lineNumber": 404
+        },
+        {
+          "caller": "api_recent",
+          "callee": "keep.sort",
+          "lineNumber": 405
+        },
+        {
+          "caller": "api_recent",
+          "callee": "x.get",
+          "lineNumber": 405
+        },
+        {
+          "caller": "api_recent",
+          "callee": "_save_config",
+          "lineNumber": 406
+        },
+        {
+          "caller": "api_recent",
+          "callee": "_load_config",
+          "lineNumber": 406
+        },
+        {
+          "caller": "api_recent",
+          "callee": "jsonify",
+          "lineNumber": 407
+        },
+        {
+          "caller": "api_recent",
+          "callee": "(data.get(\"type\") or \"\").strip",
+          "lineNumber": 408
+        },
+        {
+          "caller": "api_recent",
+          "callee": "data.get",
+          "lineNumber": 408
+        },
+        {
+          "caller": "api_recent",
+          "callee": "jsonify",
+          "lineNumber": 410
+        },
+        {
+          "caller": "api_recent",
+          "callee": "(data.get(\"key\") or \"\").strip",
+          "lineNumber": 411
+        },
+        {
+          "caller": "api_recent",
+          "callee": "data.get",
+          "lineNumber": 411
+        },
+        {
+          "caller": "api_recent",
+          "callee": "(data.get(\"label\") or \"\").strip",
+          "lineNumber": 412
+        },
+        {
+          "caller": "api_recent",
+          "callee": "data.get",
+          "lineNumber": 412
+        },
+        {
+          "caller": "api_recent",
+          "callee": "data.get",
+          "lineNumber": 412
+        },
+        {
+          "caller": "api_recent",
+          "callee": "jsonify",
+          "lineNumber": 414
+        },
+        {
+          "caller": "api_recent",
+          "callee": "jsonify",
+          "lineNumber": 415
+        },
+        {
+          "caller": "api_recent",
+          "callee": "_recent_add",
+          "lineNumber": 415
+        },
+        {
+          "caller": "api_log_dir",
+          "callee": "jsonify",
+          "lineNumber": 423
+        },
+        {
+          "caller": "api_log_dir",
+          "callee": "request.get_json",
+          "lineNumber": 424
+        },
+        {
+          "caller": "api_log_dir",
+          "callee": "(data.get(\"dir\") or \"\").strip",
+          "lineNumber": 425
+        },
+        {
+          "caller": "api_log_dir",
+          "callee": "data.get",
+          "lineNumber": 425
+        },
+        {
+          "caller": "api_log_dir",
+          "callee": "os.path.abspath",
+          "lineNumber": 429
+        },
+        {
+          "caller": "api_log_dir",
+          "callee": "os.makedirs",
+          "lineNumber": 431
+        },
+        {
+          "caller": "api_log_dir",
+          "callee": "jsonify",
+          "lineNumber": 433
+        },
+        {
+          "caller": "api_log_dir",
+          "callee": "os.access",
+          "lineNumber": 434
+        },
+        {
+          "caller": "api_log_dir",
+          "callee": "jsonify",
+          "lineNumber": 435
+        },
+        {
+          "caller": "api_log_dir",
+          "callee": "_save_config",
+          "lineNumber": 438
+        },
+        {
+          "caller": "api_log_dir",
+          "callee": "_load_config",
+          "lineNumber": 438
+        },
+        {
+          "caller": "api_log_dir",
+          "callee": "jsonify",
+          "lineNumber": 439
+        },
+        {
+          "caller": "api_log_dir_open",
+          "callee": "request.get_json",
+          "lineNumber": 446
+        },
+        {
+          "caller": "api_log_dir_open",
+          "callee": "(data.get(\"dir\") or LOG_DIR).strip",
+          "lineNumber": 447
+        },
+        {
+          "caller": "api_log_dir_open",
+          "callee": "data.get",
+          "lineNumber": 447
+        },
+        {
+          "caller": "api_log_dir_open",
+          "callee": "os.makedirs",
+          "lineNumber": 450
+        },
+        {
+          "caller": "api_log_dir_open",
+          "callee": "subprocess.Popen",
+          "lineNumber": 453
+        },
+        {
+          "caller": "api_log_dir_open",
+          "callee": "jsonify",
+          "lineNumber": 454
+        },
+        {
+          "caller": "api_log_dir_open",
+          "callee": "jsonify",
+          "lineNumber": 456
+        },
+        {
+          "caller": "api_log_dir_open",
+          "callee": "str",
+          "lineNumber": 456
+        },
+        {
+          "caller": "_stat",
+          "callee": "os.listdir",
+          "lineNumber": 473
+        },
+        {
+          "caller": "_stat",
+          "callee": "os.path.getsize",
+          "lineNumber": 479
+        },
+        {
+          "caller": "_stat",
+          "callee": "os.path.join",
+          "lineNumber": 479
+        },
+        {
+          "caller": "_stat",
+          "callee": "len",
+          "lineNumber": 482
+        },
+        {
+          "caller": "api_data_dir_get",
+          "callee": "_stat",
+          "lineNumber": 486
+        },
+        {
+          "caller": "api_data_dir_get",
+          "callee": "os.path.join",
+          "lineNumber": 486
+        },
+        {
+          "caller": "api_data_dir_get",
+          "callee": "_stat",
+          "lineNumber": 493
+        },
+        {
+          "caller": "api_data_dir_get",
+          "callee": "jsonify",
+          "lineNumber": 497
+        },
+        {
+          "caller": "api_data_dir_get",
+          "callee": "_st._default_data_dir",
+          "lineNumber": 498
+        },
+        {
+          "caller": "api_data_dir_check",
+          "callee": "request.get_json",
+          "lineNumber": 506
+        },
+        {
+          "caller": "api_data_dir_check",
+          "callee": "(data.get(\"dir\") or \"\").strip",
+          "lineNumber": 507
+        },
+        {
+          "caller": "api_data_dir_check",
+          "callee": "data.get",
+          "lineNumber": 507
+        },
+        {
+          "caller": "api_data_dir_check",
+          "callee": "len",
+          "lineNumber": 508
+        },
+        {
+          "caller": "api_data_dir_check",
+          "callee": "jsonify",
+          "lineNumber": 509
+        },
+        {
+          "caller": "api_data_dir_check",
+          "callee": "os.path.abspath",
+          "lineNumber": 510
+        },
+        {
+          "caller": "api_data_dir_check",
+          "callee": "os.path.abspath(DATA_DIR).lower",
+          "lineNumber": 511
+        },
+        {
+          "caller": "api_data_dir_check",
+          "callee": "os.path.abspath",
+          "lineNumber": 511
+        },
+        {
+          "caller": "api_data_dir_check",
+          "callee": "target.lower",
+          "lineNumber": 511
+        },
+        {
+          "caller": "api_data_dir_check",
+          "callee": "jsonify",
+          "lineNumber": 512
+        },
+        {
+          "caller": "api_data_dir_check",
+          "callee": "os.path.abspath(DATA_DIR).lower",
+          "lineNumber": 513
+        },
+        {
+          "caller": "api_data_dir_check",
+          "callee": "os.path.abspath",
+          "lineNumber": 513
+        },
+        {
+          "caller": "api_data_dir_check",
+          "callee": "target.lower",
+          "lineNumber": 516
+        },
+        {
+          "caller": "api_data_dir_check",
+          "callee": "tgt.startswith",
+          "lineNumber": 517
+        },
+        {
+          "caller": "api_data_dir_check",
+          "callee": "cur.startswith",
+          "lineNumber": 517
+        },
+        {
+          "caller": "api_data_dir_check",
+          "callee": "jsonify",
+          "lineNumber": 518
+        },
+        {
+          "caller": "api_data_dir_check",
+          "callee": "os.makedirs",
+          "lineNumber": 520
+        },
+        {
+          "caller": "api_data_dir_check",
+          "callee": "jsonify",
+          "lineNumber": 522
+        },
+        {
+          "caller": "api_data_dir_check",
+          "callee": "os.access",
+          "lineNumber": 523
+        },
+        {
+          "caller": "api_data_dir_check",
+          "callee": "jsonify",
+          "lineNumber": 524
+        },
+        {
+          "caller": "api_data_dir_check",
+          "callee": "target.upper().startswith",
+          "lineNumber": 526
+        },
+        {
+          "caller": "api_data_dir_check",
+          "callee": "target.upper",
+          "lineNumber": 526
+        },
+        {
+          "caller": "api_data_dir_check",
+          "callee": "warnings.append",
+          "lineNumber": 527
+        },
+        {
+          "caller": "api_data_dir_check",
+          "callee": "os.path.join",
+          "lineNumber": 530
+        },
+        {
+          "caller": "api_data_dir_check",
+          "callee": "len",
+          "lineNumber": 532
+        },
+        {
+          "caller": "api_data_dir_check",
+          "callee": "os.listdir",
+          "lineNumber": 532
+        },
+        {
+          "caller": "api_data_dir_check",
+          "callee": "preview.append",
+          "lineNumber": 536
+        },
+        {
+          "caller": "api_data_dir_check",
+          "callee": "os.path.isfile",
+          "lineNumber": 539
+        },
+        {
+          "caller": "api_data_dir_check",
+          "callee": "os.path.join",
+          "lineNumber": 539
+        },
+        {
+          "caller": "api_data_dir_check",
+          "callee": "preview.append",
+          "lineNumber": 540
+        },
+        {
+          "caller": "api_data_dir_check",
+          "callee": "jsonify",
+          "lineNumber": 543
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "request.get_json",
+          "lineNumber": 557
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "(data.get(\"dir\") or \"\").strip",
+          "lineNumber": 558
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "data.get",
+          "lineNumber": 558
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "os.path.abspath(target).lower",
+          "lineNumber": 559
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "os.path.abspath",
+          "lineNumber": 559
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "os.path.abspath(DATA_DIR).lower",
+          "lineNumber": 559
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "os.path.abspath",
+          "lineNumber": 559
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "jsonify",
+          "lineNumber": 560
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "os.path.abspath",
+          "lineNumber": 561
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "os.path.abspath(DATA_DIR).lower",
+          "lineNumber": 562
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "os.path.abspath",
+          "lineNumber": 562
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "target.lower().startswith",
+          "lineNumber": 565
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "target.lower",
+          "lineNumber": 565
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "cur.startswith",
+          "lineNumber": 565
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "target.lower",
+          "lineNumber": 565
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "jsonify",
+          "lineNumber": 566
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "os.makedirs",
+          "lineNumber": 568
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "jsonify",
+          "lineNumber": 570
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "os.access",
+          "lineNumber": 571
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "jsonify",
+          "lineNumber": 572
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "os.path.join",
+          "lineNumber": 576
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "os.path.isdir",
+          "lineNumber": 577
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "os.path.join",
+          "lineNumber": 583
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "os.makedirs",
+          "lineNumber": 584
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "os.walk",
+          "lineNumber": 587
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "os.path.relpath",
+          "lineNumber": 588
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "os.path.join",
+          "lineNumber": 589
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "os.makedirs",
+          "lineNumber": 590
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "os.path.join",
+          "lineNumber": 592
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "os.path.join",
+          "lineNumber": 592
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "os.path.exists",
+          "lineNumber": 594
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "shutil.copy2",
+          "lineNumber": 595
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "os.path.getsize",
+          "lineNumber": 597
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "os.path.getsize",
+          "lineNumber": 597
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "RuntimeError",
+          "lineNumber": 598
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "copied.append",
+          "lineNumber": 609
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "os.path.join",
+          "lineNumber": 612
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "os.path.isfile",
+          "lineNumber": 613
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "os.path.join",
+          "lineNumber": 615
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "os.path.exists",
+          "lineNumber": 616
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "shutil.copy2",
+          "lineNumber": 617
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "os.path.getsize",
+          "lineNumber": 618
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "os.path.getsize",
+          "lineNumber": 618
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "RuntimeError",
+          "lineNumber": 619
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "copied.append",
+          "lineNumber": 620
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "jsonify",
+          "lineNumber": 622
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "os.path.abspath",
+          "lineNumber": 625
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "os.path.join",
+          "lineNumber": 627
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "os.path.join",
+          "lineNumber": 631
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "os.path.join",
+          "lineNumber": 636
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "os.path.join",
+          "lineNumber": 640
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "os.path.join",
+          "lineNumber": 641
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "_log_index_cache.clear",
+          "lineNumber": 646
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "_load_config",
+          "lineNumber": 647
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "_save_config",
+          "lineNumber": 648
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "shutil.rmtree",
+          "lineNumber": 651
+        },
+        {
+          "caller": "api_data_dir_migrate",
+          "callee": "jsonify",
+          "lineNumber": 652
+        },
+        {
+          "caller": "api_open_log_file",
+          "callee": "request.get_json",
+          "lineNumber": 659
+        },
+        {
+          "caller": "api_open_log_file",
+          "callee": "data.get",
+          "lineNumber": 660
+        },
+        {
+          "caller": "api_open_log_file",
+          "callee": "jsonify",
+          "lineNumber": 662
+        },
+        {
+          "caller": "api_open_log_file",
+          "callee": "os.path.join",
+          "lineNumber": 663
+        },
+        {
+          "caller": "api_open_log_file",
+          "callee": "os.path.isfile",
+          "lineNumber": 665
+        },
+        {
+          "caller": "api_open_log_file",
+          "callee": "jsonify",
+          "lineNumber": 666
+        },
+        {
+          "caller": "api_open_log_file",
+          "callee": "sys.platform.startswith",
+          "lineNumber": 667
+        },
+        {
+          "caller": "api_open_log_file",
+          "callee": "subprocess.Popen",
+          "lineNumber": 668
+        },
+        {
+          "caller": "api_open_log_file",
+          "callee": "subprocess.Popen",
+          "lineNumber": 670
+        },
+        {
+          "caller": "api_open_log_file",
+          "callee": "subprocess.Popen",
+          "lineNumber": 672
+        },
+        {
+          "caller": "api_open_log_file",
+          "callee": "jsonify",
+          "lineNumber": 673
+        },
+        {
+          "caller": "api_open_log_file",
+          "callee": "jsonify",
+          "lineNumber": 675
+        },
+        {
+          "caller": "api_open_log_file",
+          "callee": "str",
+          "lineNumber": 675
+        },
+        {
+          "caller": "api_log_read",
+          "callee": "os.path.join",
+          "lineNumber": 679
+        },
+        {
+          "caller": "api_log_read",
+          "callee": "os.path.isfile",
+          "lineNumber": 680
+        },
+        {
+          "caller": "api_log_read",
+          "callee": "jsonify",
+          "lineNumber": 681
+        },
+        {
+          "caller": "api_log_read",
+          "callee": "open",
+          "lineNumber": 682
+        },
+        {
+          "caller": "api_log_read",
+          "callee": "Response",
+          "lineNumber": 683
+        },
+        {
+          "caller": "api_log_read",
+          "callee": "f.read",
+          "lineNumber": 683
+        },
+        {
+          "caller": "api_replay",
+          "callee": "_resolve_log_path",
+          "lineNumber": 692
+        },
+        {
+          "caller": "api_replay",
+          "callee": "jsonify",
+          "lineNumber": 694
+        },
+        {
+          "caller": "api_replay",
+          "callee": "_get_log_index",
+          "lineNumber": 695
+        },
+        {
+          "caller": "api_replay",
+          "callee": "jsonify",
+          "lineNumber": 698
+        },
+        {
+          "caller": "api_replay",
+          "callee": "idx.ts_list",
+          "lineNumber": 699
+        },
+        {
+          "caller": "api_replay",
+          "callee": "max",
+          "lineNumber": 707
+        },
+        {
+          "caller": "api_replay",
+          "callee": "jsonify",
+          "lineNumber": 708
+        },
+        {
+          "caller": "api_replay_page",
+          "callee": "request.args.get",
+          "lineNumber": 714
+        },
+        {
+          "caller": "api_replay_page",
+          "callee": "int",
+          "lineNumber": 715
+        },
+        {
+          "caller": "api_replay_page",
+          "callee": "request.args.get",
+          "lineNumber": 715
+        },
+        {
+          "caller": "api_replay_page",
+          "callee": "min",
+          "lineNumber": 716
+        },
+        {
+          "caller": "api_replay_page",
+          "callee": "int",
+          "lineNumber": 716
+        },
+        {
+          "caller": "api_replay_page",
+          "callee": "request.args.get",
+          "lineNumber": 716
+        },
+        {
+          "caller": "api_replay_page",
+          "callee": "_resolve_log_path",
+          "lineNumber": 717
+        },
+        {
+          "caller": "api_replay_page",
+          "callee": "jsonify",
+          "lineNumber": 719
+        },
+        {
+          "caller": "api_replay_page",
+          "callee": "_get_log_index",
+          "lineNumber": 720
+        },
+        {
+          "caller": "api_replay_page",
+          "callee": "idx.get_page",
+          "lineNumber": 721
+        },
+        {
+          "caller": "api_replay_page",
+          "callee": "l.get",
+          "lineNumber": 723
+        },
+        {
+          "caller": "api_replay_page",
+          "callee": "jsonify",
+          "lineNumber": 724
+        },
+        {
+          "caller": "api_replay_seek",
+          "callee": "request.args.get",
+          "lineNumber": 730
+        },
+        {
+          "caller": "api_replay_seek",
+          "callee": "int",
+          "lineNumber": 731
+        },
+        {
+          "caller": "api_replay_seek",
+          "callee": "request.args.get",
+          "lineNumber": 731
+        },
+        {
+          "caller": "api_replay_seek",
+          "callee": "_resolve_log_path",
+          "lineNumber": 732
+        },
+        {
+          "caller": "api_replay_seek",
+          "callee": "jsonify",
+          "lineNumber": 734
+        },
+        {
+          "caller": "api_replay_seek",
+          "callee": "_get_log_index",
+          "lineNumber": 735
+        },
+        {
+          "caller": "api_replay_seek",
+          "callee": "idx.seek_ts",
+          "lineNumber": 736
+        },
+        {
+          "caller": "api_replay_seek",
+          "callee": "jsonify",
+          "lineNumber": 737
+        },
+        {
+          "caller": "_resolve_log_path",
+          "callee": "os.path.isabs",
+          "lineNumber": 744
+        },
+        {
+          "caller": "_resolve_log_path",
+          "callee": "os.path.isfile",
+          "lineNumber": 744
+        },
+        {
+          "caller": "_resolve_log_path",
+          "callee": "os.path.normpath",
+          "lineNumber": 747
+        },
+        {
+          "caller": "_resolve_log_path",
+          "callee": "os.path.join",
+          "lineNumber": 747
+        },
+        {
+          "caller": "_resolve_log_path",
+          "callee": "os.path.realpath(p).startswith",
+          "lineNumber": 748
+        },
+        {
+          "caller": "_resolve_log_path",
+          "callee": "os.path.realpath",
+          "lineNumber": 748
+        },
+        {
+          "caller": "_resolve_log_path",
+          "callee": "os.path.realpath",
+          "lineNumber": 748
+        },
+        {
+          "caller": "_resolve_log_path",
+          "callee": "os.path.realpath",
+          "lineNumber": 748
+        },
+        {
+          "caller": "_resolve_log_path",
+          "callee": "os.path.realpath",
+          "lineNumber": 748
+        },
+        {
+          "caller": "_resolve_log_path",
+          "callee": "os.path.isfile",
+          "lineNumber": 750
+        },
+        {
+          "caller": "api_log_count",
+          "callee": "request.args.get",
+          "lineNumber": 757
+        },
+        {
+          "caller": "api_log_count",
+          "callee": "_resolve_log_path",
+          "lineNumber": 758
+        },
+        {
+          "caller": "api_log_count",
+          "callee": "jsonify",
+          "lineNumber": 760
+        },
+        {
+          "caller": "api_log_count",
+          "callee": "_get_log_index",
+          "lineNumber": 761
+        },
+        {
+          "caller": "api_log_count",
+          "callee": "idx.build",
+          "lineNumber": 763
+        },
+        {
+          "caller": "api_log_count",
+          "callee": "jsonify",
+          "lineNumber": 764
+        },
+        {
+          "caller": "api_log_page",
+          "callee": "request.args.get",
+          "lineNumber": 769
+        },
+        {
+          "caller": "api_log_page",
+          "callee": "int",
+          "lineNumber": 770
+        },
+        {
+          "caller": "api_log_page",
+          "callee": "request.args.get",
+          "lineNumber": 770
+        },
+        {
+          "caller": "api_log_page",
+          "callee": "int",
+          "lineNumber": 771
+        },
+        {
+          "caller": "api_log_page",
+          "callee": "request.args.get",
+          "lineNumber": 771
+        },
+        {
+          "caller": "api_log_page",
+          "callee": "min",
+          "lineNumber": 772
+        },
+        {
+          "caller": "api_log_page",
+          "callee": "_resolve_log_path",
+          "lineNumber": 773
+        },
+        {
+          "caller": "api_log_page",
+          "callee": "jsonify",
+          "lineNumber": 775
+        },
+        {
+          "caller": "api_log_page",
+          "callee": "_get_log_index",
+          "lineNumber": 776
+        },
+        {
+          "caller": "api_log_page",
+          "callee": "idx.get_page",
+          "lineNumber": 777
+        },
+        {
+          "caller": "api_log_page",
+          "callee": "jsonify",
+          "lineNumber": 778
+        },
+        {
+          "caller": "api_log_search",
+          "callee": "request.args.get",
+          "lineNumber": 785
+        },
+        {
+          "caller": "api_log_search",
+          "callee": "request.args.get",
+          "lineNumber": 786
+        },
+        {
+          "caller": "api_log_search",
+          "callee": "request.args.get",
+          "lineNumber": 787
+        },
+        {
+          "caller": "api_log_search",
+          "callee": "int",
+          "lineNumber": 788
+        },
+        {
+          "caller": "api_log_search",
+          "callee": "request.args.get",
+          "lineNumber": 788
+        },
+        {
+          "caller": "api_log_search",
+          "callee": "int",
+          "lineNumber": 789
+        },
+        {
+          "caller": "api_log_search",
+          "callee": "request.args.get",
+          "lineNumber": 789
+        },
+        {
+          "caller": "api_log_search",
+          "callee": "request.args.get",
+          "lineNumber": 790
+        },
+        {
+          "caller": "api_log_search",
+          "callee": "_resolve_log_path",
+          "lineNumber": 791
+        },
+        {
+          "caller": "api_log_search",
+          "callee": "jsonify",
+          "lineNumber": 793
+        },
+        {
+          "caller": "api_log_search",
+          "callee": "_get_log_index",
+          "lineNumber": 794
+        },
+        {
+          "caller": "api_log_search",
+          "callee": "idx.search",
+          "lineNumber": 795
+        },
+        {
+          "caller": "api_log_search",
+          "callee": "jsonify",
+          "lineNumber": 796
+        },
+        {
+          "caller": "api_log_search_page",
+          "callee": "request.args.get",
+          "lineNumber": 802
+        },
+        {
+          "caller": "api_log_search_page",
+          "callee": "request.args.get",
+          "lineNumber": 803
+        },
+        {
+          "caller": "api_log_search_page",
+          "callee": "request.args.get",
+          "lineNumber": 804
+        },
+        {
+          "caller": "api_log_search_page",
+          "callee": "int",
+          "lineNumber": 805
+        },
+        {
+          "caller": "api_log_search_page",
+          "callee": "request.args.get",
+          "lineNumber": 805
+        },
+        {
+          "caller": "api_log_search_page",
+          "callee": "int",
+          "lineNumber": 806
+        },
+        {
+          "caller": "api_log_search_page",
+          "callee": "request.args.get",
+          "lineNumber": 806
+        },
+        {
+          "caller": "api_log_search_page",
+          "callee": "_resolve_log_path",
+          "lineNumber": 807
+        },
+        {
+          "caller": "api_log_search_page",
+          "callee": "jsonify",
+          "lineNumber": 809
+        },
+        {
+          "caller": "api_log_search_page",
+          "callee": "_get_log_index",
+          "lineNumber": 810
+        },
+        {
+          "caller": "api_log_search_page",
+          "callee": "idx.search_page",
+          "lineNumber": 811
+        },
+        {
+          "caller": "api_log_search_page",
+          "callee": "min",
+          "lineNumber": 811
+        },
+        {
+          "caller": "api_log_search_page",
+          "callee": "len",
+          "lineNumber": 812
+        },
+        {
+          "caller": "api_log_search_page",
+          "callee": "idx._hits_by_q.get",
+          "lineNumber": 812
+        },
+        {
+          "caller": "api_log_search_page",
+          "callee": "jsonify",
+          "lineNumber": 813
+        },
+        {
+          "caller": "api_log_open_external",
+          "callee": "request.get_json",
+          "lineNumber": 819
+        },
+        {
+          "caller": "api_log_open_external",
+          "callee": "(data.get(\"path\") or \"\").strip",
+          "lineNumber": 820
+        },
+        {
+          "caller": "api_log_open_external",
+          "callee": "data.get",
+          "lineNumber": 820
+        },
+        {
+          "caller": "api_log_open_external",
+          "callee": "os.path.isfile",
+          "lineNumber": 821
+        },
+        {
+          "caller": "api_log_open_external",
+          "callee": "jsonify",
+          "lineNumber": 822
+        },
+        {
+          "caller": "api_log_open_external",
+          "callee": "jsonify",
+          "lineNumber": 823
+        },
+        {
+          "caller": "api_log_open_external",
+          "callee": "os.path.getsize",
+          "lineNumber": 823
+        },
+        {
+          "caller": "api_file_info",
+          "callee": "request.get_json",
+          "lineNumber": 831
+        },
+        {
+          "caller": "api_file_info",
+          "callee": "(data.get(\"path\") or \"\").strip",
+          "lineNumber": 832
+        },
+        {
+          "caller": "api_file_info",
+          "callee": "data.get",
+          "lineNumber": 832
+        },
+        {
+          "caller": "api_file_info",
+          "callee": "os.path.isfile",
+          "lineNumber": 833
+        },
+        {
+          "caller": "api_file_info",
+          "callee": "jsonify",
+          "lineNumber": 834
+        },
+        {
+          "caller": "api_file_info",
+          "callee": "jsonify",
+          "lineNumber": 836
+        },
+        {
+          "caller": "api_file_info",
+          "callee": "os.path.getsize",
+          "lineNumber": 836
+        },
+        {
+          "caller": "api_file_info",
+          "callee": "_ext_of",
+          "lineNumber": 837
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "request.get_json",
+          "lineNumber": 849
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "_resolve_log_path",
+          "lineNumber": 850
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "data.get",
+          "lineNumber": 850
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "_resolve_log_path",
+          "lineNumber": 851
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "data.get",
+          "lineNumber": 851
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "jsonify",
+          "lineNumber": 853
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "data.get",
+          "lineNumber": 853
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "data.get",
+          "lineNumber": 853
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "(data.get(\"mode\") or \"summary\").strip",
+          "lineNumber": 854
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "data.get",
+          "lineNumber": 854
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "int",
+          "lineNumber": 855
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "data.get",
+          "lineNumber": 855
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "max",
+          "lineNumber": 856
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "min",
+          "lineNumber": 856
+        },
+        {
+          "caller": "read_texts",
+          "callee": "_get_log_index",
+          "lineNumber": 860
+        },
+        {
+          "caller": "read_texts",
+          "callee": "idx.build",
+          "lineNumber": 862
+        },
+        {
+          "caller": "read_texts",
+          "callee": "open",
+          "lineNumber": 864
+        },
+        {
+          "caller": "read_texts",
+          "callee": "range",
+          "lineNumber": 865
+        },
+        {
+          "caller": "read_texts",
+          "callee": "f.seek",
+          "lineNumber": 866
+        },
+        {
+          "caller": "read_texts",
+          "callee": "f.readline().decode",
+          "lineNumber": 867
+        },
+        {
+          "caller": "read_texts",
+          "callee": "f.readline",
+          "lineNumber": 867
+        },
+        {
+          "caller": "read_texts",
+          "callee": "idx._parse_line",
+          "lineNumber": 868
+        },
+        {
+          "caller": "read_texts",
+          "callee": "out.append",
+          "lineNumber": 870
+        },
+        {
+          "caller": "read_texts",
+          "callee": "p.get",
+          "lineNumber": 870
+        },
+        {
+          "caller": "read_texts",
+          "callee": "p.get",
+          "lineNumber": 870
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "read_texts",
+          "lineNumber": 874
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "read_texts",
+          "lineNumber": 875
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "jsonify",
+          "lineNumber": 877
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "os.path.basename",
+          "lineNumber": 879
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "os.path.basename",
+          "lineNumber": 880
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "difflib.SequenceMatcher",
+          "lineNumber": 886
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "sm.get_opcodes",
+          "lineNumber": 888
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "max",
+          "lineNumber": 892
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "min",
+          "lineNumber": 893
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "len",
+          "lineNumber": 893
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "range",
+          "lineNumber": 897
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "len",
+          "lineNumber": 897
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "range",
+          "lineNumber": 898
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "len",
+          "lineNumber": 898
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "range",
+          "lineNumber": 901
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "range",
+          "lineNumber": 902
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "blocks.append",
+          "lineNumber": 903
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "jsonify",
+          "lineNumber": 904
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "len",
+          "lineNumber": 905
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "len",
+          "lineNumber": 905
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "len",
+          "lineNumber": 906
+        },
+        {
+          "caller": "count_lines",
+          "callee": "Counter",
+          "lineNumber": 910
+        },
+        {
+          "caller": "count_lines",
+          "callee": "text.strip",
+          "lineNumber": 913
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "count_lines",
+          "lineNumber": 918
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "count_lines",
+          "lineNumber": 919
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "set",
+          "lineNumber": 920
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "set",
+          "lineNumber": 920
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "a_cnt.get",
+          "lineNumber": 925
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "b_cnt.get",
+          "lineNumber": 926
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "only_a.append",
+          "lineNumber": 928
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "only_b.append",
+          "lineNumber": 930
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "abs",
+          "lineNumber": 931
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "diff_cnt.append",
+          "lineNumber": 932
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "only_a.sort",
+          "lineNumber": 934
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "only_b.sort",
+          "lineNumber": 935
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "diff_cnt.sort",
+          "lineNumber": 936
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "abs",
+          "lineNumber": 936
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "jsonify",
+          "lineNumber": 937
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "len",
+          "lineNumber": 938
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "len",
+          "lineNumber": 938
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "len",
+          "lineNumber": 939
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "len",
+          "lineNumber": 939
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "len",
+          "lineNumber": 942
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "len",
+          "lineNumber": 942
+        },
+        {
+          "caller": "ai_diff_logs",
+          "callee": "len",
+          "lineNumber": 943
+        },
+        {
+          "caller": "api_new_log",
+          "callee": "request.get_json",
+          "lineNumber": 947
+        },
+        {
+          "caller": "api_new_log",
+          "callee": "data.get",
+          "lineNumber": 948
+        },
+        {
+          "caller": "api_new_log",
+          "callee": "_ports.get",
+          "lineNumber": 950
+        },
+        {
+          "caller": "api_new_log",
+          "callee": "jsonify",
+          "lineNumber": 952
+        },
+        {
+          "caller": "api_new_log",
+          "callee": "jsonify",
+          "lineNumber": 953
+        },
+        {
+          "caller": "api_new_log",
+          "callee": "p.new_log",
+          "lineNumber": 953
+        },
+        {
+          "caller": "api_clear_buffer",
+          "callee": "request.get_json",
+          "lineNumber": 957
+        },
+        {
+          "caller": "api_clear_buffer",
+          "callee": "data.get",
+          "lineNumber": 958
+        },
+        {
+          "caller": "api_clear_buffer",
+          "callee": "_ports.get",
+          "lineNumber": 960
+        },
+        {
+          "caller": "api_clear_buffer",
+          "callee": "p.clear_buffer",
+          "lineNumber": 962
+        },
+        {
+          "caller": "api_clear_buffer",
+          "callee": "jsonify",
+          "lineNumber": 963
+        },
+        {
+          "caller": "stream",
+          "callee": "request.args.get",
+          "lineNumber": 967
+        },
+        {
+          "caller": "stream",
+          "callee": "_ports.get",
+          "lineNumber": 969
+        },
+        {
+          "caller": "stream",
+          "callee": "jsonify",
+          "lineNumber": 971
+        },
+        {
+          "caller": "stream",
+          "callee": "p.add_client",
+          "lineNumber": 972
+        },
+        {
+          "caller": "gen",
+          "callee": "q.get",
+          "lineNumber": 978
+        },
+        {
+          "caller": "gen",
+          "callee": "json.dumps",
+          "lineNumber": 979
+        },
+        {
+          "caller": "gen",
+          "callee": "p.remove_client",
+          "lineNumber": 984
+        },
+        {
+          "caller": "stream",
+          "callee": "Response",
+          "lineNumber": 985
+        },
+        {
+          "caller": "stream",
+          "callee": "gen",
+          "lineNumber": 985
+        },
+        {
+          "caller": "ai_status",
+          "callee": "api_status",
+          "lineNumber": 995
+        },
+        {
+          "caller": "ai_buffer",
+          "callee": "request.args.get",
+          "lineNumber": 1000
+        },
+        {
+          "caller": "ai_buffer",
+          "callee": "int",
+          "lineNumber": 1001
+        },
+        {
+          "caller": "ai_buffer",
+          "callee": "request.args.get",
+          "lineNumber": 1001
+        },
+        {
+          "caller": "ai_buffer",
+          "callee": "_ports.get",
+          "lineNumber": 1003
+        },
+        {
+          "caller": "ai_buffer",
+          "callee": "jsonify",
+          "lineNumber": 1005
+        },
+        {
+          "caller": "ai_buffer",
+          "callee": "p.get_buffer",
+          "lineNumber": 1006
+        },
+        {
+          "caller": "ai_buffer",
+          "callee": "jsonify",
+          "lineNumber": 1008
+        },
+        {
+          "caller": "ai_recent",
+          "callee": "int",
+          "lineNumber": 1015
+        },
+        {
+          "caller": "ai_recent",
+          "callee": "request.args.get",
+          "lineNumber": 1015
+        },
+        {
+          "caller": "ai_recent",
+          "callee": "list",
+          "lineNumber": 1018
+        },
+        {
+          "caller": "ai_recent",
+          "callee": "_ports.items",
+          "lineNumber": 1018
+        },
+        {
+          "caller": "ai_recent",
+          "callee": "p.get_buffer",
+          "lineNumber": 1020
+        },
+        {
+          "caller": "ai_recent",
+          "callee": "jsonify",
+          "lineNumber": 1022
+        },
+        {
+          "caller": "ai_send",
+          "callee": "request.get_json",
+          "lineNumber": 1027
+        },
+        {
+          "caller": "ai_send",
+          "callee": "data.get",
+          "lineNumber": 1028
+        },
+        {
+          "caller": "ai_send",
+          "callee": "data.get",
+          "lineNumber": 1029
+        },
+        {
+          "caller": "ai_send",
+          "callee": "float",
+          "lineNumber": 1030
+        },
+        {
+          "caller": "ai_send",
+          "callee": "data.get",
+          "lineNumber": 1030
+        },
+        {
+          "caller": "ai_send",
+          "callee": "_ports.get",
+          "lineNumber": 1032
+        },
+        {
+          "caller": "ai_send",
+          "callee": "jsonify",
+          "lineNumber": 1034
+        },
+        {
+          "caller": "ai_send",
+          "callee": "p.send_cmd",
+          "lineNumber": 1039
+        },
+        {
+          "caller": "ai_send",
+          "callee": "time.sleep",
+          "lineNumber": 1041
+        },
+        {
+          "caller": "ai_send",
+          "callee": "p.get_buffer_after",
+          "lineNumber": 1042
+        },
+        {
+          "caller": "ai_send",
+          "callee": "jsonify",
+          "lineNumber": 1043
+        },
+        {
+          "caller": "ai_send",
+          "callee": "jsonify",
+          "lineNumber": 1046
+        },
+        {
+          "caller": "ai_send",
+          "callee": "str",
+          "lineNumber": 1046
+        },
+        {
+          "caller": "ai_send_raw",
+          "callee": "request.get_json",
+          "lineNumber": 1051
+        },
+        {
+          "caller": "ai_send_raw",
+          "callee": "data.get",
+          "lineNumber": 1052
+        },
+        {
+          "caller": "ai_send_raw",
+          "callee": "data.get",
+          "lineNumber": 1053
+        },
+        {
+          "caller": "ai_send_raw",
+          "callee": "bytes",
+          "lineNumber": 1054
+        },
+        {
+          "caller": "ai_send_raw",
+          "callee": "int",
+          "lineNumber": 1054
+        },
+        {
+          "caller": "ai_send_raw",
+          "callee": "isinstance",
+          "lineNumber": 1054
+        },
+        {
+          "caller": "ai_send_raw",
+          "callee": "_ports.get",
+          "lineNumber": 1056
+        },
+        {
+          "caller": "ai_send_raw",
+          "callee": "jsonify",
+          "lineNumber": 1058
+        },
+        {
+          "caller": "ai_send_raw",
+          "callee": "p.send_raw",
+          "lineNumber": 1061
+        },
+        {
+          "caller": "ai_send_raw",
+          "callee": "jsonify",
+          "lineNumber": 1062
+        },
+        {
+          "caller": "ai_send_raw",
+          "callee": "len",
+          "lineNumber": 1062
+        },
+        {
+          "caller": "ai_send_raw",
+          "callee": "jsonify",
+          "lineNumber": 1064
+        },
+        {
+          "caller": "ai_send_raw",
+          "callee": "str",
+          "lineNumber": 1064
+        },
+        {
+          "caller": "ai_burst",
+          "callee": "request.get_json",
+          "lineNumber": 1072
+        },
+        {
+          "caller": "ai_burst",
+          "callee": "data.get",
+          "lineNumber": 1073
+        },
+        {
+          "caller": "ai_burst",
+          "callee": "data.get",
+          "lineNumber": 1074
+        },
+        {
+          "caller": "ai_burst",
+          "callee": "_ports.get",
+          "lineNumber": 1076
+        },
+        {
+          "caller": "ai_burst",
+          "callee": "jsonify",
+          "lineNumber": 1078
+        },
+        {
+          "caller": "ai_burst",
+          "callee": "jsonify",
+          "lineNumber": 1080
+        },
+        {
+          "caller": "ai_burst",
+          "callee": "sum",
+          "lineNumber": 1082
+        },
+        {
+          "caller": "ai_burst",
+          "callee": "float",
+          "lineNumber": 1082
+        },
+        {
+          "caller": "ai_burst",
+          "callee": "s.get",
+          "lineNumber": 1082
+        },
+        {
+          "caller": "ai_burst",
+          "callee": "float",
+          "lineNumber": 1082
+        },
+        {
+          "caller": "ai_burst",
+          "callee": "s.get",
+          "lineNumber": 1082
+        },
+        {
+          "caller": "ai_burst",
+          "callee": "jsonify",
+          "lineNumber": 1084
+        },
+        {
+          "caller": "ai_burst",
+          "callee": "enumerate",
+          "lineNumber": 1089
+        },
+        {
+          "caller": "ai_burst",
+          "callee": "float",
+          "lineNumber": 1090
+        },
+        {
+          "caller": "ai_burst",
+          "callee": "s.get",
+          "lineNumber": 1090
+        },
+        {
+          "caller": "ai_burst",
+          "callee": "time.sleep",
+          "lineNumber": 1092
+        },
+        {
+          "caller": "ai_burst",
+          "callee": "s.get",
+          "lineNumber": 1094
+        },
+        {
+          "caller": "ai_burst",
+          "callee": "p.send_cmd",
+          "lineNumber": 1095
+        },
+        {
+          "caller": "ai_burst",
+          "callee": "s.get",
+          "lineNumber": 1097
+        },
+        {
+          "caller": "ai_burst",
+          "callee": "bytes",
+          "lineNumber": 1098
+        },
+        {
+          "caller": "ai_burst",
+          "callee": "int",
+          "lineNumber": 1098
+        },
+        {
+          "caller": "ai_burst",
+          "callee": "isinstance",
+          "lineNumber": 1098
+        },
+        {
+          "caller": "ai_burst",
+          "callee": "p.send_raw",
+          "lineNumber": 1100
+        },
+        {
+          "caller": "ai_burst",
+          "callee": "list",
+          "lineNumber": 1101
+        },
+        {
+          "caller": "ai_burst",
+          "callee": "float",
+          "lineNumber": 1104
+        },
+        {
+          "caller": "ai_burst",
+          "callee": "s.get",
+          "lineNumber": 1104
+        },
+        {
+          "caller": "ai_burst",
+          "callee": "time.sleep",
+          "lineNumber": 1106
+        },
+        {
+          "caller": "ai_burst",
+          "callee": "p.get_buffer_after",
+          "lineNumber": 1109
+        },
+        {
+          "caller": "ai_burst",
+          "callee": "results.append",
+          "lineNumber": 1111
+        },
+        {
+          "caller": "ai_burst",
+          "callee": "jsonify",
+          "lineNumber": 1113
+        },
+        {
+          "caller": "ai_burst",
+          "callee": "jsonify",
+          "lineNumber": 1115
+        },
+        {
+          "caller": "ai_burst",
+          "callee": "str",
+          "lineNumber": 1115
+        },
+        {
+          "caller": "ai_stream",
+          "callee": "Queue",
+          "lineNumber": 1120
+        },
+        {
+          "caller": "ai_stream",
+          "callee": "_ai_clients.append",
+          "lineNumber": 1122
+        },
+        {
+          "caller": "gen",
+          "callee": "q.get",
+          "lineNumber": 1128
+        },
+        {
+          "caller": "gen",
+          "callee": "json.dumps",
+          "lineNumber": 1129
+        },
+        {
+          "caller": "gen",
+          "callee": "_ai_clients.remove",
+          "lineNumber": 1136
+        },
+        {
+          "caller": "ai_stream",
+          "callee": "Response",
+          "lineNumber": 1139
+        },
+        {
+          "caller": "ai_stream",
+          "callee": "gen",
+          "lineNumber": 1139
+        },
+        {
+          "caller": "ai_ports",
+          "callee": "jsonify",
+          "lineNumber": 1145
+        },
+        {
+          "caller": "ai_ports",
+          "callee": "list_ports",
+          "lineNumber": 1145
+        },
+        {
+          "caller": "ai_ports",
+          "callee": "list",
+          "lineNumber": 1145
+        },
+        {
+          "caller": "ai_ports",
+          "callee": "_ports.keys",
+          "lineNumber": 1145
+        },
+        {
+          "caller": "ai_observe",
+          "callee": "int",
+          "lineNumber": 1151
+        },
+        {
+          "caller": "ai_observe",
+          "callee": "request.args.get",
+          "lineNumber": 1151
+        },
+        {
+          "caller": "ai_observe",
+          "callee": "list",
+          "lineNumber": 1153
+        },
+        {
+          "caller": "ai_observe",
+          "callee": "_ports.items",
+          "lineNumber": 1153
+        },
+        {
+          "caller": "ai_observe",
+          "callee": "len",
+          "lineNumber": 1159
+        },
+        {
+          "caller": "ai_observe",
+          "callee": "len",
+          "lineNumber": 1159
+        },
+        {
+          "caller": "ai_observe",
+          "callee": "p.get_buffer",
+          "lineNumber": 1161
+        },
+        {
+          "caller": "ai_observe",
+          "callee": "list",
+          "lineNumber": 1164
+        },
+        {
+          "caller": "ai_observe",
+          "callee": "jsonify",
+          "lineNumber": 1165
+        },
+        {
+          "caller": "ai_observe",
+          "callee": "list",
+          "lineNumber": 1165
+        },
+        {
+          "caller": "ai_observe",
+          "callee": "_ports.keys",
+          "lineNumber": 1165
+        },
+        {
+          "caller": "ai_open_logs",
+          "callee": "jsonify",
+          "lineNumber": 1177
+        },
+        {
+          "caller": "ai_open_logs",
+          "callee": "list",
+          "lineNumber": 1177
+        },
+        {
+          "caller": "ai_open_logs",
+          "callee": "_open_logs.clear",
+          "lineNumber": 1180
+        },
+        {
+          "caller": "ai_open_logs",
+          "callee": "jsonify",
+          "lineNumber": 1181
+        },
+        {
+          "caller": "ai_open_logs",
+          "callee": "request.get_json",
+          "lineNumber": 1183
+        },
+        {
+          "caller": "ai_open_logs",
+          "callee": "data.get",
+          "lineNumber": 1184
+        },
+        {
+          "caller": "ai_open_logs",
+          "callee": "isinstance",
+          "lineNumber": 1185
+        },
+        {
+          "caller": "ai_open_logs",
+          "callee": "jsonify",
+          "lineNumber": 1186
+        },
+        {
+          "caller": "ai_open_logs",
+          "callee": "isinstance",
+          "lineNumber": 1190
+        },
+        {
+          "caller": "ai_open_logs",
+          "callee": "str(l.get(\"name\", \"\")).strip",
+          "lineNumber": 1192
+        },
+        {
+          "caller": "ai_open_logs",
+          "callee": "str",
+          "lineNumber": 1192
+        },
+        {
+          "caller": "ai_open_logs",
+          "callee": "l.get",
+          "lineNumber": 1192
+        },
+        {
+          "caller": "ai_open_logs",
+          "callee": "str(l.get(\"path\", \"\")).strip",
+          "lineNumber": 1193
+        },
+        {
+          "caller": "ai_open_logs",
+          "callee": "str",
+          "lineNumber": 1193
+        },
+        {
+          "caller": "ai_open_logs",
+          "callee": "l.get",
+          "lineNumber": 1193
+        },
+        {
+          "caller": "ai_open_logs",
+          "callee": "clean.append",
+          "lineNumber": 1196
+        },
+        {
+          "caller": "ai_open_logs",
+          "callee": "str",
+          "lineNumber": 1199
+        },
+        {
+          "caller": "ai_open_logs",
+          "callee": "l.get",
+          "lineNumber": 1199
+        },
+        {
+          "caller": "ai_open_logs",
+          "callee": "int",
+          "lineNumber": 1200
+        },
+        {
+          "caller": "ai_open_logs",
+          "callee": "l.get",
+          "lineNumber": 1200
+        },
+        {
+          "caller": "ai_open_logs",
+          "callee": "jsonify",
+          "lineNumber": 1204
+        },
+        {
+          "caller": "ai_open_logs",
+          "callee": "len",
+          "lineNumber": 1204
+        },
+        {
+          "caller": "ai_mcp_info",
+          "callee": "list",
+          "lineNumber": 1231
+        },
+        {
+          "caller": "ai_mcp_info",
+          "callee": "os.path.join",
+          "lineNumber": 1235
+        },
+        {
+          "caller": "ai_mcp_info",
+          "callee": "os.path.isfile",
+          "lineNumber": 1236
+        },
+        {
+          "caller": "ai_mcp_info",
+          "callee": "open",
+          "lineNumber": 1237
+        },
+        {
+          "caller": "ai_mcp_info",
+          "callee": "json.load",
+          "lineNumber": 1238
+        },
+        {
+          "caller": "ai_mcp_info",
+          "callee": "jsonify",
+          "lineNumber": 1241
+        },
+        {
+          "caller": "ai_mcp_info",
+          "callee": "ep_info.get",
+          "lineNumber": 1243
+        },
+        {
+          "caller": "ai_mcp_report",
+          "callee": "request.get_json",
+          "lineNumber": 1253
+        },
+        {
+          "caller": "ai_mcp_report",
+          "callee": "time.time",
+          "lineNumber": 1255
+        },
+        {
+          "caller": "ai_mcp_report",
+          "callee": "str",
+          "lineNumber": 1256
+        },
+        {
+          "caller": "ai_mcp_report",
+          "callee": "data.get",
+          "lineNumber": 1256
+        },
+        {
+          "caller": "ai_mcp_report",
+          "callee": "str",
+          "lineNumber": 1257
+        },
+        {
+          "caller": "ai_mcp_report",
+          "callee": "data.get",
+          "lineNumber": 1257
+        },
+        {
+          "caller": "ai_mcp_report",
+          "callee": "bool",
+          "lineNumber": 1258
+        },
+        {
+          "caller": "ai_mcp_report",
+          "callee": "data.get",
+          "lineNumber": 1258
+        },
+        {
+          "caller": "ai_mcp_report",
+          "callee": "_mcp_calls.append",
+          "lineNumber": 1262
+        },
+        {
+          "caller": "ai_mcp_report",
+          "callee": "len",
+          "lineNumber": 1263
+        },
+        {
+          "caller": "ai_mcp_report",
+          "callee": "jsonify",
+          "lineNumber": 1265
+        },
+        {
+          "caller": "ai_perf",
+          "callee": "jsonify",
+          "lineNumber": 1275
+        },
+        {
+          "caller": "ai_perf",
+          "callee": "request.get_json",
+          "lineNumber": 1276
+        },
+        {
+          "caller": "ai_perf",
+          "callee": "time.time",
+          "lineNumber": 1277
+        },
+        {
+          "caller": "ai_perf",
+          "callee": "jsonify",
+          "lineNumber": 1278
+        },
+        {
+          "caller": "cmd_lib_get",
+          "callee": "jsonify",
+          "lineNumber": 1284
+        },
+        {
+          "caller": "cmd_lib_get",
+          "callee": "_load_cmd_lib",
+          "lineNumber": 1284
+        },
+        {
+          "caller": "cmd_lib_save",
+          "callee": "request.get_json",
+          "lineNumber": 1289
+        },
+        {
+          "caller": "cmd_lib_save",
+          "callee": "data.get",
+          "lineNumber": 1290
+        },
+        {
+          "caller": "cmd_lib_save",
+          "callee": "isinstance",
+          "lineNumber": 1291
+        },
+        {
+          "caller": "cmd_lib_save",
+          "callee": "jsonify",
+          "lineNumber": 1292
+        },
+        {
+          "caller": "cmd_lib_save",
+          "callee": "str(c.get(\"name\", \"\")).strip",
+          "lineNumber": 1294
+        },
+        {
+          "caller": "cmd_lib_save",
+          "callee": "str",
+          "lineNumber": 1294
+        },
+        {
+          "caller": "cmd_lib_save",
+          "callee": "c.get",
+          "lineNumber": 1294
+        },
+        {
+          "caller": "cmd_lib_save",
+          "callee": "str(c.get(\"cmd\", \"\")).strip",
+          "lineNumber": 1294
+        },
+        {
+          "caller": "cmd_lib_save",
+          "callee": "str",
+          "lineNumber": 1294
+        },
+        {
+          "caller": "cmd_lib_save",
+          "callee": "c.get",
+          "lineNumber": 1294
+        },
+        {
+          "caller": "cmd_lib_save",
+          "callee": "isinstance",
+          "lineNumber": 1295
+        },
+        {
+          "caller": "cmd_lib_save",
+          "callee": "str(c.get(\"cmd\", \"\")).strip",
+          "lineNumber": 1295
+        },
+        {
+          "caller": "cmd_lib_save",
+          "callee": "str",
+          "lineNumber": 1295
+        },
+        {
+          "caller": "cmd_lib_save",
+          "callee": "c.get",
+          "lineNumber": 1295
+        },
+        {
+          "caller": "cmd_lib_save",
+          "callee": "_save_cmd_lib",
+          "lineNumber": 1296
+        },
+        {
+          "caller": "cmd_lib_save",
+          "callee": "jsonify",
+          "lineNumber": 1297
+        }
+      ],
+      "metrics": {
+        "importCount": 9,
+        "exportCount": 57,
+        "functionCount": 57,
+        "classCount": 0
+      }
+    },
+    {
+      "path": "src/tftp.py",
+      "language": "python",
+      "fileCategory": "code",
+      "totalLines": 395,
+      "nonEmptyLines": 373,
+      "functions": [
+        {
+          "name": "tftp_status",
+          "startLine": 371,
+          "endLine": 373,
+          "params": []
+        },
+        {
+          "name": "tftp_start",
+          "startLine": 376,
+          "endLine": 380,
+          "params": []
+        },
+        {
+          "name": "tftp_stop",
+          "startLine": 383,
+          "endLine": 385,
+          "params": []
+        },
+        {
+          "name": "tftp_set_dir",
+          "startLine": 388,
+          "endLine": 395,
+          "params": []
+        }
+      ],
+      "classes": [
+        {
+          "name": "TftpTransfer",
+          "startLine": 11,
+          "endLine": 22,
+          "methods": [
+            "__init__"
+          ],
+          "properties": []
+        },
+        {
+          "name": "TftpServer",
+          "startLine": 24,
+          "endLine": 365,
+          "methods": [
+            "__init__",
+            "start",
+            "stop",
+            "set_dir",
+            "status",
+            "_list_files",
+            "_serve",
+            "_handle_request",
+            "_send_file",
+            "_recv_file",
+            "_send_err"
+          ],
+          "properties": []
+        }
+      ],
+      "exports": [
+        {
+          "name": "TftpTransfer",
+          "line": 11,
+          "isDefault": false
+        },
+        {
+          "name": "TftpServer",
+          "line": 24,
+          "isDefault": false
+        },
+        {
+          "name": "tftp_status",
+          "line": 370,
+          "isDefault": false
+        },
+        {
+          "name": "tftp_start",
+          "line": 375,
+          "isDefault": false
+        },
+        {
+          "name": "tftp_stop",
+          "line": 382,
+          "isDefault": false
+        },
+        {
+          "name": "tftp_set_dir",
+          "line": 387,
+          "isDefault": false
+        }
+      ],
+      "callGraph": [
+        {
+          "caller": "__init__",
+          "callee": "time.time",
+          "lineNumber": 21
+        },
+        {
+          "caller": "__init__",
+          "callee": "os.path.join",
+          "lineNumber": 33
+        },
+        {
+          "caller": "__init__",
+          "callee": "os.path.expanduser",
+          "lineNumber": 33
+        },
+        {
+          "caller": "__init__",
+          "callee": "threading.Lock",
+          "lineNumber": 37
+        },
+        {
+          "caller": "start",
+          "callee": "self.set_dir",
+          "lineNumber": 42
+        },
+        {
+          "caller": "start",
+          "callee": "socket.socket",
+          "lineNumber": 48
+        },
+        {
+          "caller": "start",
+          "callee": "s.setsockopt",
+          "lineNumber": 49
+        },
+        {
+          "caller": "start",
+          "callee": "s.bind",
+          "lineNumber": 50
+        },
+        {
+          "caller": "start",
+          "callee": "threading.Thread(target=self._serve, daemon=True).start",
+          "lineNumber": 55
+        },
+        {
+          "caller": "start",
+          "callee": "threading.Thread",
+          "lineNumber": 55
+        },
+        {
+          "caller": "stop",
+          "callee": "self.sock.close",
+          "lineNumber": 61
+        },
+        {
+          "caller": "set_dir",
+          "callee": "(path or \"\").strip().strip('\"').strip",
+          "lineNumber": 69
+        },
+        {
+          "caller": "set_dir",
+          "callee": "(path or \"\").strip().strip",
+          "lineNumber": 69
+        },
+        {
+          "caller": "set_dir",
+          "callee": "(path or \"\").strip",
+          "lineNumber": 69
+        },
+        {
+          "caller": "set_dir",
+          "callee": "os.path.isabs",
+          "lineNumber": 73
+        },
+        {
+          "caller": "set_dir",
+          "callee": "os.path.normpath",
+          "lineNumber": 74
+        },
+        {
+          "caller": "set_dir",
+          "callee": "os.path.isdir",
+          "lineNumber": 75
+        },
+        {
+          "caller": "status",
+          "callee": "self._list_files",
+          "lineNumber": 85
+        },
+        {
+          "caller": "status",
+          "callee": "getattr",
+          "lineNumber": 89
+        },
+        {
+          "caller": "status",
+          "callee": "round",
+          "lineNumber": 90
+        },
+        {
+          "caller": "status",
+          "callee": "time.time",
+          "lineNumber": 90
+        },
+        {
+          "caller": "_list_files",
+          "callee": "sorted",
+          "lineNumber": 98
+        },
+        {
+          "caller": "_list_files",
+          "callee": "os.listdir",
+          "lineNumber": 98
+        },
+        {
+          "caller": "_list_files",
+          "callee": "os.path.join",
+          "lineNumber": 99
+        },
+        {
+          "caller": "_list_files",
+          "callee": "os.path.isfile",
+          "lineNumber": 100
+        },
+        {
+          "caller": "_list_files",
+          "callee": "os.stat",
+          "lineNumber": 101
+        },
+        {
+          "caller": "_list_files",
+          "callee": "out.append",
+          "lineNumber": 102
+        },
+        {
+          "caller": "_list_files",
+          "callee": "int",
+          "lineNumber": 102
+        },
+        {
+          "caller": "_serve",
+          "callee": "self.sock.recvfrom",
+          "lineNumber": 114
+        },
+        {
+          "caller": "_serve",
+          "callee": "self._handle_request",
+          "lineNumber": 118
+        },
+        {
+          "caller": "_handle_request",
+          "callee": "len",
+          "lineNumber": 123
+        },
+        {
+          "caller": "_handle_request",
+          "callee": "struct.unpack",
+          "lineNumber": 125
+        },
+        {
+          "caller": "_handle_request",
+          "callee": "data[2:].split",
+          "lineNumber": 129
+        },
+        {
+          "caller": "_handle_request",
+          "callee": "parts[0].decode",
+          "lineNumber": 130
+        },
+        {
+          "caller": "_handle_request",
+          "callee": "parts[1].decode",
+          "lineNumber": 131
+        },
+        {
+          "caller": "_handle_request",
+          "callee": "len",
+          "lineNumber": 131
+        },
+        {
+          "caller": "_handle_request",
+          "callee": "self._send_err",
+          "lineNumber": 133
+        },
+        {
+          "caller": "_handle_request",
+          "callee": "len",
+          "lineNumber": 143
+        },
+        {
+          "caller": "_handle_request",
+          "callee": "parts[i].lower",
+          "lineNumber": 144
+        },
+        {
+          "caller": "_handle_request",
+          "callee": "min",
+          "lineNumber": 148
+        },
+        {
+          "caller": "_handle_request",
+          "callee": "max",
+          "lineNumber": 148
+        },
+        {
+          "caller": "_handle_request",
+          "callee": "int",
+          "lineNumber": 148
+        },
+        {
+          "caller": "_handle_request",
+          "callee": "os.path.basename",
+          "lineNumber": 155
+        },
+        {
+          "caller": "_handle_request",
+          "callee": "self._send_err",
+          "lineNumber": 156
+        },
+        {
+          "caller": "_handle_request",
+          "callee": "os.path.join",
+          "lineNumber": 158
+        },
+        {
+          "caller": "_handle_request",
+          "callee": "os.path.isfile",
+          "lineNumber": 160
+        },
+        {
+          "caller": "_handle_request",
+          "callee": "self._send_err",
+          "lineNumber": 161
+        },
+        {
+          "caller": "_handle_request",
+          "callee": "TftpTransfer",
+          "lineNumber": 170
+        },
+        {
+          "caller": "_handle_request",
+          "callee": "os.path.getsize",
+          "lineNumber": 171
+        },
+        {
+          "caller": "_handle_request",
+          "callee": "self.transfers.insert",
+          "lineNumber": 172
+        },
+        {
+          "caller": "_handle_request",
+          "callee": "threading.Thread(target=self._send_file,\n                args=(local, t, blksize, want_oack), daemon=True).start",
+          "lineNumber": 173
+        },
+        {
+          "caller": "_handle_request",
+          "callee": "threading.Thread",
+          "lineNumber": 173
+        },
+        {
+          "caller": "_handle_request",
+          "callee": "TftpTransfer",
+          "lineNumber": 181
+        },
+        {
+          "caller": "_handle_request",
+          "callee": "self.transfers.insert",
+          "lineNumber": 182
+        },
+        {
+          "caller": "_handle_request",
+          "callee": "threading.Thread(target=self._recv_file,\n                args=(local, t, blksize, want_oack), daemon=True).start",
+          "lineNumber": 183
+        },
+        {
+          "caller": "_handle_request",
+          "callee": "threading.Thread",
+          "lineNumber": 183
+        },
+        {
+          "caller": "_send_file",
+          "callee": "socket.socket",
+          "lineNumber": 198
+        },
+        {
+          "caller": "_send_file",
+          "callee": "ds.settimeout",
+          "lineNumber": 199
+        },
+        {
+          "caller": "_send_file",
+          "callee": "open",
+          "lineNumber": 201
+        },
+        {
+          "caller": "_send_file",
+          "callee": "f.read",
+          "lineNumber": 202
+        },
+        {
+          "caller": "_send_file",
+          "callee": "struct.pack",
+          "lineNumber": 207
+        },
+        {
+          "caller": "_send_file",
+          "callee": "str(blksize).encode",
+          "lineNumber": 208
+        },
+        {
+          "caller": "_send_file",
+          "callee": "str",
+          "lineNumber": 208
+        },
+        {
+          "caller": "_send_file",
+          "callee": "str(t.total).encode",
+          "lineNumber": 209
+        },
+        {
+          "caller": "_send_file",
+          "callee": "str",
+          "lineNumber": 209
+        },
+        {
+          "caller": "_send_file",
+          "callee": "ds.sendto",
+          "lineNumber": 211
+        },
+        {
+          "caller": "_send_file",
+          "callee": "ds.recvfrom",
+          "lineNumber": 214
+        },
+        {
+          "caller": "_send_file",
+          "callee": "self._send_err",
+          "lineNumber": 218
+        },
+        {
+          "caller": "_send_file",
+          "callee": "ds.sendto",
+          "lineNumber": 221
+        },
+        {
+          "caller": "_send_file",
+          "callee": "len",
+          "lineNumber": 223
+        },
+        {
+          "caller": "_send_file",
+          "callee": "struct.unpack",
+          "lineNumber": 223
+        },
+        {
+          "caller": "_send_file",
+          "callee": "struct.unpack",
+          "lineNumber": 224
+        },
+        {
+          "caller": "_send_file",
+          "callee": "struct.pack",
+          "lineNumber": 230
+        },
+        {
+          "caller": "_send_file",
+          "callee": "ds.sendto",
+          "lineNumber": 232
+        },
+        {
+          "caller": "_send_file",
+          "callee": "ds.recvfrom",
+          "lineNumber": 235
+        },
+        {
+          "caller": "_send_file",
+          "callee": "self._send_err",
+          "lineNumber": 239
+        },
+        {
+          "caller": "_send_file",
+          "callee": "ds.sendto",
+          "lineNumber": 242
+        },
+        {
+          "caller": "_send_file",
+          "callee": "len",
+          "lineNumber": 244
+        },
+        {
+          "caller": "_send_file",
+          "callee": "struct.unpack",
+          "lineNumber": 244
+        },
+        {
+          "caller": "_send_file",
+          "callee": "struct.unpack",
+          "lineNumber": 245
+        },
+        {
+          "caller": "_send_file",
+          "callee": "len",
+          "lineNumber": 248
+        },
+        {
+          "caller": "_send_file",
+          "callee": "len",
+          "lineNumber": 251
+        },
+        {
+          "caller": "_send_file",
+          "callee": "struct.pack",
+          "lineNumber": 255
+        },
+        {
+          "caller": "_send_file",
+          "callee": "ds.sendto",
+          "lineNumber": 257
+        },
+        {
+          "caller": "_send_file",
+          "callee": "ds.recvfrom",
+          "lineNumber": 260
+        },
+        {
+          "caller": "_send_file",
+          "callee": "self._send_err",
+          "lineNumber": 264
+        },
+        {
+          "caller": "_send_file",
+          "callee": "ds.sendto",
+          "lineNumber": 267
+        },
+        {
+          "caller": "_send_file",
+          "callee": "len",
+          "lineNumber": 269
+        },
+        {
+          "caller": "_send_file",
+          "callee": "struct.unpack",
+          "lineNumber": 269
+        },
+        {
+          "caller": "_send_file",
+          "callee": "struct.unpack",
+          "lineNumber": 270
+        },
+        {
+          "caller": "_send_file",
+          "callee": "str",
+          "lineNumber": 274
+        },
+        {
+          "caller": "_send_file",
+          "callee": "ds.close",
+          "lineNumber": 276
+        },
+        {
+          "caller": "_recv_file",
+          "callee": "socket.socket",
+          "lineNumber": 283
+        },
+        {
+          "caller": "_recv_file",
+          "callee": "ds.settimeout",
+          "lineNumber": 284
+        },
+        {
+          "caller": "_recv_file",
+          "callee": "struct.pack",
+          "lineNumber": 288
+        },
+        {
+          "caller": "_recv_file",
+          "callee": "str(blksize).encode",
+          "lineNumber": 289
+        },
+        {
+          "caller": "_recv_file",
+          "callee": "str",
+          "lineNumber": 289
+        },
+        {
+          "caller": "_recv_file",
+          "callee": "ds.sendto",
+          "lineNumber": 291
+        },
+        {
+          "caller": "_recv_file",
+          "callee": "ds.recvfrom",
+          "lineNumber": 297
+        },
+        {
+          "caller": "_recv_file",
+          "callee": "self._send_err",
+          "lineNumber": 302
+        },
+        {
+          "caller": "_recv_file",
+          "callee": "ds.sendto",
+          "lineNumber": 305
+        },
+        {
+          "caller": "_recv_file",
+          "callee": "ds.sendto",
+          "lineNumber": 307
+        },
+        {
+          "caller": "_recv_file",
+          "callee": "struct.pack",
+          "lineNumber": 307
+        },
+        {
+          "caller": "_recv_file",
+          "callee": "open",
+          "lineNumber": 310
+        },
+        {
+          "caller": "_recv_file",
+          "callee": "ds.recvfrom",
+          "lineNumber": 321
+        },
+        {
+          "caller": "_recv_file",
+          "callee": "self._send_err",
+          "lineNumber": 326
+        },
+        {
+          "caller": "_recv_file",
+          "callee": "ds.sendto",
+          "lineNumber": 330
+        },
+        {
+          "caller": "_recv_file",
+          "callee": "struct.pack",
+          "lineNumber": 330
+        },
+        {
+          "caller": "_recv_file",
+          "callee": "len",
+          "lineNumber": 332
+        },
+        {
+          "caller": "_recv_file",
+          "callee": "struct.unpack",
+          "lineNumber": 334
+        },
+        {
+          "caller": "_recv_file",
+          "callee": "resp[4:].decode",
+          "lineNumber": 336
+        },
+        {
+          "caller": "_recv_file",
+          "callee": "ds.sendto",
+          "lineNumber": 342
+        },
+        {
+          "caller": "_recv_file",
+          "callee": "struct.pack",
+          "lineNumber": 342
+        },
+        {
+          "caller": "_recv_file",
+          "callee": "f.write",
+          "lineNumber": 346
+        },
+        {
+          "caller": "_recv_file",
+          "callee": "len",
+          "lineNumber": 347
+        },
+        {
+          "caller": "_recv_file",
+          "callee": "ds.sendto",
+          "lineNumber": 348
+        },
+        {
+          "caller": "_recv_file",
+          "callee": "struct.pack",
+          "lineNumber": 348
+        },
+        {
+          "caller": "_recv_file",
+          "callee": "len",
+          "lineNumber": 349
+        },
+        {
+          "caller": "_recv_file",
+          "callee": "os.replace",
+          "lineNumber": 352
+        },
+        {
+          "caller": "_recv_file",
+          "callee": "str",
+          "lineNumber": 355
+        },
+        {
+          "caller": "_recv_file",
+          "callee": "os.remove",
+          "lineNumber": 356
+        },
+        {
+          "caller": "_recv_file",
+          "callee": "ds.close",
+          "lineNumber": 359
+        },
+        {
+          "caller": "_send_err",
+          "callee": "sock.sendto",
+          "lineNumber": 363
+        },
+        {
+          "caller": "_send_err",
+          "callee": "struct.pack",
+          "lineNumber": 363
+        },
+        {
+          "caller": "_send_err",
+          "callee": "msg.encode",
+          "lineNumber": 363
+        },
+        {
+          "caller": "tftp_status",
+          "callee": "jsonify",
+          "lineNumber": 373
+        },
+        {
+          "caller": "tftp_status",
+          "callee": "_tftp.status",
+          "lineNumber": 373
+        },
+        {
+          "caller": "tftp_start",
+          "callee": "request.get_json",
+          "lineNumber": 378
+        },
+        {
+          "caller": "tftp_start",
+          "callee": "_tftp.start",
+          "lineNumber": 379
+        },
+        {
+          "caller": "tftp_start",
+          "callee": "data.get",
+          "lineNumber": 379
+        },
+        {
+          "caller": "tftp_start",
+          "callee": "jsonify",
+          "lineNumber": 380
+        },
+        {
+          "caller": "tftp_start",
+          "callee": "_tftp.status",
+          "lineNumber": 380
+        },
+        {
+          "caller": "tftp_stop",
+          "callee": "_tftp.stop",
+          "lineNumber": 384
+        },
+        {
+          "caller": "tftp_stop",
+          "callee": "jsonify",
+          "lineNumber": 385
+        },
+        {
+          "caller": "tftp_stop",
+          "callee": "_tftp.status",
+          "lineNumber": 385
+        },
+        {
+          "caller": "tftp_set_dir",
+          "callee": "request.get_json",
+          "lineNumber": 390
+        },
+        {
+          "caller": "tftp_set_dir",
+          "callee": "(data.get(\"root_dir\") or \"\").strip",
+          "lineNumber": 391
+        },
+        {
+          "caller": "tftp_set_dir",
+          "callee": "data.get",
+          "lineNumber": 391
+        },
+        {
+          "caller": "tftp_set_dir",
+          "callee": "jsonify",
+          "lineNumber": 393
+        },
+        {
+          "caller": "tftp_set_dir",
+          "callee": "_tftp.set_dir",
+          "lineNumber": 394
+        },
+        {
+          "caller": "tftp_set_dir",
+          "callee": "jsonify",
+          "lineNumber": 395
+        },
+        {
+          "caller": "tftp_set_dir",
+          "callee": "_tftp.status",
+          "lineNumber": 395
+        }
+      ],
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 6,
+        "functionCount": 4,
+        "classCount": 2
+      }
+    }
+  ]
+}

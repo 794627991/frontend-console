@@ -82,16 +82,29 @@ def _migrate_legacy_user_data():
         for legacy in legacy_log_dirs:
             if not os.path.isdir(legacy) or os.path.normpath(legacy) == os.path.normpath(final_logs):
                 continue
-            for fn in os.listdir(legacy):
-                s, d = os.path.join(legacy, fn), os.path.join(final_logs, fn)
-                if os.path.exists(d):
-                    continue
-                try:
-                    shutil.copy2(s, d)
-                    merged += 1
-                except Exception:
-                    pass
-            if merged:
+            # 递归复制（旧目录里可能有用户手工归档的子目录，顶层 copy2 会
+            # IsADirectoryError 且被吞掉，随后 rmtree 连子目录一起删=数据丢失）
+            merged_this = 0
+            unmerged = []
+            for root, dirs, files in os.walk(legacy):
+                rel = os.path.relpath(root, legacy)
+                droot = final_logs if rel == "." else os.path.join(final_logs, rel)
+                os.makedirs(droot, exist_ok=True)
+                for fn in files:
+                    s, d = os.path.join(root, fn), os.path.join(droot, fn)
+                    if os.path.exists(d):
+                        continue
+                    try:
+                        shutil.copy2(s, d)
+                        merged_this += 1
+                    except Exception:
+                        unmerged.append(fn)
+                for dn in dirs:
+                    if not os.path.isdir(os.path.join(droot, dn)):
+                        unmerged.append(dn + os.sep)
+            merged += merged_this
+            # rmtree 前核对：本目录全部条目已复制成功才删旧目录，否则保留（宁可留旧目录）
+            if merged_this and not unmerged:
                 shutil.rmtree(legacy, ignore_errors=True)
         # config.log_dir 指旧位置的 → 清掉走默认（data/logs）；指外部自定义的不动
         cfg = _load_config()

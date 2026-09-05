@@ -296,7 +296,13 @@ function switchTab(portId) {
 window.addEventListener('resize', () => {
   const conn = connections[activePortId];
   if (conn) {
-    if (conn.meta.kind === 'log') renderLogSlice(conn);
+    if (conn.meta.kind === 'log') {
+      renderLogSlice(conn);
+      // 搜索结果列表同渲染：容器变高不触发 scroll，renderLogResults 的
+      // 相等性短路继续成立 → 底部新增区域空白。复位渲染游标强制重算。
+      const ls = conn.logState;
+      if (ls && ls.searchTotal) { ls.resRenderStart = -1; ls.resRenderEnd = -1; renderLogResults(conn); }
+    }
     else { try { conn.fit.fit(); } catch(e){} }
   }
 });

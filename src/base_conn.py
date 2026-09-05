@@ -269,11 +269,16 @@ class BaseConnection:
         return self.log_path
 
     def start(self):
-        """打开 IO + 启动读线程 + 开始日志。子类 __init__ 后调用。"""
+        """打开 IO + 启动读线程 + 开始日志。子类 __init__ 后调用。
+        _start_log 失败（如 LOG_DIR 指向的网络盘掉线）降级为无日志继续跑——
+        异常逃逸会留下半构造对象（已开句柄+读线程）无人 close，COM 口占死。"""
         self._io_open()
         self.reader = threading.Thread(target=self._reader_loop, daemon=True)
         self.reader.start()
-        self._start_log()
+        try:
+            self._start_log()
+        except Exception:
+            self.log_fp = None
 
     def close(self):
         self.alive = False

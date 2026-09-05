@@ -1,0 +1,10 @@
+{
+  "projectRoot": "D:/AI/串口控制台Pro",
+  "batchFiles": [
+    {"path": "docs/MCP_INTEGRATION.md", "language": "markdown", "sizeLines": 251, "fileCategory": "docs"},
+    {"path": "docs/README.md", "language": "markdown", "sizeLines": 30, "fileCategory": "docs"},
+    {"path": "docs/同类工具调研报告.md", "language": "markdown", "sizeLines": 163, "fileCategory": "docs"},
+    {"path": "docs/性能优化审计报告.md", "language": "markdown", "sizeLines": 110, "fileCategory": "docs"}
+  ],
+  "batchImportData": {"docs/MCP_INTEGRATION.md": [], "docs/README.md": [], "docs/同类工具调研报告.md": [], "docs/性能优化审计报告.md": []}
+}

@@ -1,0 +1,1287 @@
+{
+  "scriptCompleted": true,
+  "filesAnalyzed": 4,
+  "filesSkipped": [],
+  "results": [
+    {
+      "path": "src/ansi_utils.py",
+      "language": "python",
+      "fileCategory": "code",
+      "totalLines": 134,
+      "nonEmptyLines": 128,
+      "functions": [
+        {
+          "name": "_color256",
+          "startLine": 34,
+          "endLine": 51,
+          "params": [
+            "n"
+          ]
+        },
+        {
+          "name": "strip_ansi",
+          "startLine": 53,
+          "endLine": 54,
+          "params": [
+            "text"
+          ]
+        },
+        {
+          "name": "ansi_to_html",
+          "startLine": 56,
+          "endLine": 119,
+          "params": [
+            "text"
+          ]
+        },
+        {
+          "name": "classify_line",
+          "startLine": 121,
+          "endLine": 134,
+          "params": [
+            "line"
+          ]
+        }
+      ],
+      "exports": [
+        {
+          "name": "_color256",
+          "line": 34,
+          "isDefault": false
+        },
+        {
+          "name": "strip_ansi",
+          "line": 53,
+          "isDefault": false
+        },
+        {
+          "name": "ansi_to_html",
+          "line": 56,
+          "isDefault": false
+        },
+        {
+          "name": "classify_line",
+          "line": 121,
+          "isDefault": false
+        }
+      ],
+      "callGraph": [
+        {
+          "caller": "_color256",
+          "callee": "list",
+          "lineNumber": 39
+        },
+        {
+          "caller": "_color256",
+          "callee": "pal.append",
+          "lineNumber": 44
+        },
+        {
+          "caller": "_color256",
+          "callee": "range",
+          "lineNumber": 45
+        },
+        {
+          "caller": "_color256",
+          "callee": "pal.append",
+          "lineNumber": 47
+        },
+        {
+          "caller": "_color256",
+          "callee": "len",
+          "lineNumber": 49
+        },
+        {
+          "caller": "strip_ansi",
+          "callee": "_ANSI_RE.sub",
+          "lineNumber": 54
+        },
+        {
+          "caller": "esc",
+          "callee": "s.replace(\"&\", \"&amp;\").replace(\"<\", \"&lt;\").replace",
+          "lineNumber": 62
+        },
+        {
+          "caller": "esc",
+          "callee": "s.replace(\"&\", \"&amp;\").replace",
+          "lineNumber": 62
+        },
+        {
+          "caller": "esc",
+          "callee": "s.replace",
+          "lineNumber": 62
+        },
+        {
+          "caller": "open_span",
+          "callee": "styles.append",
+          "lineNumber": 65
+        },
+        {
+          "caller": "open_span",
+          "callee": "styles.append",
+          "lineNumber": 66
+        },
+        {
+          "caller": "open_span",
+          "callee": "styles.append",
+          "lineNumber": 67
+        },
+        {
+          "caller": "open_span",
+          "callee": "styles.append",
+          "lineNumber": 68
+        },
+        {
+          "caller": "open_span",
+          "callee": "styles.append",
+          "lineNumber": 69
+        },
+        {
+          "caller": "open_span",
+          "callee": "out.append",
+          "lineNumber": 71
+        },
+        {
+          "caller": "open_span",
+          "callee": "\";\".join",
+          "lineNumber": 71
+        },
+        {
+          "caller": "open_span",
+          "callee": "spans.append",
+          "lineNumber": 72
+        },
+        {
+          "caller": "open_span",
+          "callee": "spans.append",
+          "lineNumber": 74
+        },
+        {
+          "caller": "close_span",
+          "callee": "spans.pop",
+          "lineNumber": 77
+        },
+        {
+          "caller": "close_span",
+          "callee": "out.append",
+          "lineNumber": 78
+        },
+        {
+          "caller": "ansi_to_html",
+          "callee": "len",
+          "lineNumber": 79
+        },
+        {
+          "caller": "ansi_to_html",
+          "callee": "_CSI_RE.match",
+          "lineNumber": 80
+        },
+        {
+          "caller": "ansi_to_html",
+          "callee": "m.group",
+          "lineNumber": 82
+        },
+        {
+          "caller": "ansi_to_html",
+          "callee": "m.group",
+          "lineNumber": 83
+        },
+        {
+          "caller": "ansi_to_html",
+          "callee": "m.end",
+          "lineNumber": 84
+        },
+        {
+          "caller": "ansi_to_html",
+          "callee": "int",
+          "lineNumber": 87
+        },
+        {
+          "caller": "ansi_to_html",
+          "callee": "params.split",
+          "lineNumber": 87
+        },
+        {
+          "caller": "ansi_to_html",
+          "callee": "len",
+          "lineNumber": 90
+        },
+        {
+          "caller": "ansi_to_html",
+          "callee": "_ANSI_COLOR.get",
+          "lineNumber": 100
+        },
+        {
+          "caller": "ansi_to_html",
+          "callee": "_ANSI_BG.get",
+          "lineNumber": 101
+        },
+        {
+          "caller": "ansi_to_html",
+          "callee": "len",
+          "lineNumber": 102
+        },
+        {
+          "caller": "ansi_to_html",
+          "callee": "_color256",
+          "lineNumber": 102
+        },
+        {
+          "caller": "ansi_to_html",
+          "callee": "len",
+          "lineNumber": 103
+        },
+        {
+          "caller": "ansi_to_html",
+          "callee": "_color256",
+          "lineNumber": 103
+        },
+        {
+          "caller": "ansi_to_html",
+          "callee": "close_span",
+          "lineNumber": 108
+        },
+        {
+          "caller": "ansi_to_html",
+          "callee": "open_span",
+          "lineNumber": 108
+        },
+        {
+          "caller": "ansi_to_html",
+          "callee": "len",
+          "lineNumber": 113
+        },
+        {
+          "caller": "ansi_to_html",
+          "callee": "out.append",
+          "lineNumber": 115
+        },
+        {
+          "caller": "ansi_to_html",
+          "callee": "esc",
+          "lineNumber": 115
+        },
+        {
+          "caller": "ansi_to_html",
+          "callee": "close_span",
+          "lineNumber": 118
+        },
+        {
+          "caller": "ansi_to_html",
+          "callee": "\"\".join",
+          "lineNumber": 119
+        },
+        {
+          "caller": "classify_line",
+          "callee": "line.strip",
+          "lineNumber": 122
+        },
+        {
+          "caller": "classify_line",
+          "callee": "s.startswith",
+          "lineNumber": 124
+        },
+        {
+          "caller": "classify_line",
+          "callee": "any",
+          "lineNumber": 124
+        },
+        {
+          "caller": "classify_line",
+          "callee": "c.isdigit",
+          "lineNumber": 124
+        },
+        {
+          "caller": "classify_line",
+          "callee": "s.lower",
+          "lineNumber": 125
+        },
+        {
+          "caller": "classify_line",
+          "callee": "s.lower",
+          "lineNumber": 125
+        },
+        {
+          "caller": "classify_line",
+          "callee": "s.lower",
+          "lineNumber": 125
+        },
+        {
+          "caller": "classify_line",
+          "callee": "s.lower",
+          "lineNumber": 125
+        },
+        {
+          "caller": "classify_line",
+          "callee": "s.startswith",
+          "lineNumber": 128
+        },
+        {
+          "caller": "classify_line",
+          "callee": "s.lower",
+          "lineNumber": 129
+        },
+        {
+          "caller": "classify_line",
+          "callee": "s.lower",
+          "lineNumber": 130
+        },
+        {
+          "caller": "classify_line",
+          "callee": "s.lower",
+          "lineNumber": 131
+        },
+        {
+          "caller": "classify_line",
+          "callee": "s.lower",
+          "lineNumber": 131
+        },
+        {
+          "caller": "classify_line",
+          "callee": "s.endswith",
+          "lineNumber": 133
+        },
+        {
+          "caller": "classify_line",
+          "callee": "s.endswith",
+          "lineNumber": 133
+        },
+        {
+          "caller": "classify_line",
+          "callee": "s.endswith",
+          "lineNumber": 133
+        }
+      ],
+      "metrics": {
+        "importCount": 0,
+        "exportCount": 4,
+        "functionCount": 4,
+        "classCount": 0
+      }
+    },
+    {
+      "path": "src/base_conn.py",
+      "language": "python",
+      "fileCategory": "code",
+      "totalLines": 297,
+      "nonEmptyLines": 274,
+      "classes": [
+        {
+          "name": "BaseConnection",
+          "startLine": 16,
+          "endLine": 297,
+          "methods": [
+            "__init__",
+            "_io_open",
+            "_io_read_chunk",
+            "_io_write",
+            "_io_close",
+            "_io_reconnect",
+            "_start_log",
+            "append_line",
+            "_push_raw",
+            "_emit_screen_control",
+            "_reader_loop",
+            "send_raw",
+            "send_cmd",
+            "add_client",
+            "remove_client",
+            "get_buffer",
+            "get_buffer_after",
+            "get_buffer_before",
+            "search_lines",
+            "get_history",
+            "clear_buffer",
+            "new_log",
+            "start",
+            "close"
+          ],
+          "properties": []
+        }
+      ],
+      "exports": [
+        {
+          "name": "BaseConnection",
+          "line": 16,
+          "isDefault": false
+        }
+      ],
+      "callGraph": [
+        {
+          "caller": "__init__",
+          "callee": "threading.Lock",
+          "lineNumber": 23
+        },
+        {
+          "caller": "__init__",
+          "callee": "deque",
+          "lineNumber": 24
+        },
+        {
+          "caller": "__init__",
+          "callee": "threading.Lock",
+          "lineNumber": 25
+        },
+        {
+          "caller": "__init__",
+          "callee": "threading.Lock",
+          "lineNumber": 27
+        },
+        {
+          "caller": "__init__",
+          "callee": "deque",
+          "lineNumber": 28
+        },
+        {
+          "caller": "__init__",
+          "callee": "threading.Lock",
+          "lineNumber": 31
+        },
+        {
+          "caller": "__init__",
+          "callee": "codecs.getincrementaldecoder",
+          "lineNumber": 38
+        },
+        {
+          "caller": "_start_log",
+          "callee": "os.makedirs",
+          "lineNumber": 61
+        },
+        {
+          "caller": "_start_log",
+          "callee": "datetime.now().strftime",
+          "lineNumber": 62
+        },
+        {
+          "caller": "_start_log",
+          "callee": "datetime.now",
+          "lineNumber": 62
+        },
+        {
+          "caller": "_start_log",
+          "callee": "re.sub",
+          "lineNumber": 63
+        },
+        {
+          "caller": "_start_log",
+          "callee": "os.path.join",
+          "lineNumber": 64
+        },
+        {
+          "caller": "_start_log",
+          "callee": "open",
+          "lineNumber": 65
+        },
+        {
+          "caller": "_start_log",
+          "callee": "self.log_fp.write",
+          "lineNumber": 66
+        },
+        {
+          "caller": "_start_log",
+          "callee": "datetime.now().isoformat",
+          "lineNumber": 66
+        },
+        {
+          "caller": "_start_log",
+          "callee": "datetime.now",
+          "lineNumber": 66
+        },
+        {
+          "caller": "append_line",
+          "callee": "int",
+          "lineNumber": 74
+        },
+        {
+          "caller": "append_line",
+          "callee": "time.time",
+          "lineNumber": 74
+        },
+        {
+          "caller": "append_line",
+          "callee": "strip_ansi",
+          "lineNumber": 75
+        },
+        {
+          "caller": "append_line",
+          "callee": "classify_line",
+          "lineNumber": 76
+        },
+        {
+          "caller": "append_line",
+          "callee": "_next_seq",
+          "lineNumber": 77
+        },
+        {
+          "caller": "append_line",
+          "callee": "self.buf.append",
+          "lineNumber": 79
+        },
+        {
+          "caller": "append_line",
+          "callee": "self.log_fp.write",
+          "lineNumber": 84
+        },
+        {
+          "caller": "append_line",
+          "callee": "self.log_fp.flush",
+          "lineNumber": 85
+        },
+        {
+          "caller": "_push_raw",
+          "callee": "int",
+          "lineNumber": 92
+        },
+        {
+          "caller": "_push_raw",
+          "callee": "time.time",
+          "lineNumber": 92
+        },
+        {
+          "caller": "_push_raw",
+          "callee": "q.put_nowait",
+          "lineNumber": 97
+        },
+        {
+          "caller": "_push_raw",
+          "callee": "q.get_nowait",
+          "lineNumber": 101
+        },
+        {
+          "caller": "_push_raw",
+          "callee": "q.put_nowait",
+          "lineNumber": 102
+        },
+        {
+          "caller": "_emit_screen_control",
+          "callee": "int",
+          "lineNumber": 108
+        },
+        {
+          "caller": "_emit_screen_control",
+          "callee": "time.time",
+          "lineNumber": 108
+        },
+        {
+          "caller": "_emit_screen_control",
+          "callee": "q.put_nowait",
+          "lineNumber": 114
+        },
+        {
+          "caller": "_emit_screen_control",
+          "callee": "dead.append",
+          "lineNumber": 116
+        },
+        {
+          "caller": "_emit_screen_control",
+          "callee": "self.clients.remove",
+          "lineNumber": 119
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "self._io_read_chunk",
+          "lineNumber": 129
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "_SCREEN_STRONG_RE.search",
+          "lineNumber": 132
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "time.time",
+          "lineNumber": 134
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "self._emit_screen_control",
+          "lineNumber": 135
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "_SCREEN_ANY_RE.search",
+          "lineNumber": 137
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "time.time",
+          "lineNumber": 138
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "_SCREEN_ANY_RE.search",
+          "lineNumber": 139
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "self._emit_screen_control",
+          "lineNumber": 141
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "time.time",
+          "lineNumber": 142
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "self._emit_screen_control",
+          "lineNumber": 144
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "self._push_raw",
+          "lineNumber": 146
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "self._raw_dec.decode",
+          "lineNumber": 146
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "len",
+          "lineNumber": 148
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "self.append_line",
+          "lineNumber": 149
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "partial.decode",
+          "lineNumber": 149
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "partial.split",
+          "lineNumber": 152
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "line.endswith",
+          "lineNumber": 153
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "line.rsplit",
+          "lineNumber": 154
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "self.append_line",
+          "lineNumber": 155
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "line.decode",
+          "lineNumber": 155
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "partial.rfind",
+          "lineNumber": 157
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "len",
+          "lineNumber": 158
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "self.append_line",
+          "lineNumber": 164
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "before.decode",
+          "lineNumber": 164
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "self.append_line",
+          "lineNumber": 166
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "after.decode",
+          "lineNumber": 166
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "time.time",
+          "lineNumber": 169
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "self._emit_screen_control",
+          "lineNumber": 171
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "time.sleep",
+          "lineNumber": 174
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "self.append_line",
+          "lineNumber": 179
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "time.sleep",
+          "lineNumber": 180
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "self._io_reconnect",
+          "lineNumber": 184
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "self.append_line",
+          "lineNumber": 185
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "self.append_line",
+          "lineNumber": 187
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "time.sleep",
+          "lineNumber": 188
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "self.append_line",
+          "lineNumber": 190
+        },
+        {
+          "caller": "_reader_loop",
+          "callee": "time.sleep",
+          "lineNumber": 191
+        },
+        {
+          "caller": "send_raw",
+          "callee": "self._io_write",
+          "lineNumber": 194
+        },
+        {
+          "caller": "send_cmd",
+          "callee": "cmd.strip",
+          "lineNumber": 198
+        },
+        {
+          "caller": "send_cmd",
+          "callee": "self.cmd_history.append",
+          "lineNumber": 199
+        },
+        {
+          "caller": "send_cmd",
+          "callee": "cmd.encode",
+          "lineNumber": 200
+        },
+        {
+          "caller": "send_cmd",
+          "callee": "self.send_raw",
+          "lineNumber": 202
+        },
+        {
+          "caller": "add_client",
+          "callee": "Queue",
+          "lineNumber": 205
+        },
+        {
+          "caller": "add_client",
+          "callee": "self.clients.append",
+          "lineNumber": 207
+        },
+        {
+          "caller": "remove_client",
+          "callee": "self.clients.remove",
+          "lineNumber": 212
+        },
+        {
+          "caller": "get_buffer",
+          "callee": "list",
+          "lineNumber": 217
+        },
+        {
+          "caller": "get_buffer_before",
+          "callee": "reversed",
+          "lineNumber": 228
+        },
+        {
+          "caller": "get_buffer_before",
+          "callee": "res.append",
+          "lineNumber": 230
+        },
+        {
+          "caller": "get_buffer_before",
+          "callee": "len",
+          "lineNumber": 231
+        },
+        {
+          "caller": "get_buffer_before",
+          "callee": "res.reverse",
+          "lineNumber": 233
+        },
+        {
+          "caller": "get_buffer_before",
+          "callee": "len",
+          "lineNumber": 234
+        },
+        {
+          "caller": "search_lines",
+          "callee": "re.compile",
+          "lineNumber": 241
+        },
+        {
+          "caller": "search_lines",
+          "callee": "re.escape",
+          "lineNumber": 241
+        },
+        {
+          "caller": "search_lines",
+          "callee": "pat.search",
+          "lineNumber": 248
+        },
+        {
+          "caller": "search_lines",
+          "callee": "len",
+          "lineNumber": 250
+        },
+        {
+          "caller": "search_lines",
+          "callee": "res.append",
+          "lineNumber": 251
+        },
+        {
+          "caller": "get_history",
+          "callee": "list",
+          "lineNumber": 257
+        },
+        {
+          "caller": "clear_buffer",
+          "callee": "self.buf.clear",
+          "lineNumber": 261
+        },
+        {
+          "caller": "new_log",
+          "callee": "self.log_fp.close",
+          "lineNumber": 266
+        },
+        {
+          "caller": "new_log",
+          "callee": "self._start_log",
+          "lineNumber": 268
+        },
+        {
+          "caller": "start",
+          "callee": "self._io_open",
+          "lineNumber": 275
+        },
+        {
+          "caller": "start",
+          "callee": "threading.Thread",
+          "lineNumber": 276
+        },
+        {
+          "caller": "start",
+          "callee": "self.reader.start",
+          "lineNumber": 277
+        },
+        {
+          "caller": "start",
+          "callee": "self._start_log",
+          "lineNumber": 279
+        },
+        {
+          "caller": "close",
+          "callee": "time.sleep",
+          "lineNumber": 285
+        },
+        {
+          "caller": "close",
+          "callee": "self._io_close",
+          "lineNumber": 287
+        },
+        {
+          "caller": "close",
+          "callee": "hasattr",
+          "lineNumber": 291
+        },
+        {
+          "caller": "close",
+          "callee": "self.reader.is_alive",
+          "lineNumber": 291
+        },
+        {
+          "caller": "close",
+          "callee": "self.reader.join",
+          "lineNumber": 292
+        },
+        {
+          "caller": "close",
+          "callee": "self.log_fp.close",
+          "lineNumber": 296
+        }
+      ],
+      "metrics": {
+        "importCount": 2,
+        "exportCount": 1,
+        "functionCount": 0,
+        "classCount": 1
+      }
+    },
+    {
+      "path": "src/serial_conn.py",
+      "language": "python",
+      "fileCategory": "code",
+      "totalLines": 68,
+      "nonEmptyLines": 58,
+      "functions": [
+        {
+          "name": "list_ports",
+          "startLine": 64,
+          "endLine": 68,
+          "params": []
+        }
+      ],
+      "classes": [
+        {
+          "name": "SerialPort",
+          "startLine": 9,
+          "endLine": 61,
+          "methods": [
+            "__init__",
+            "_io_open",
+            "_io_read_chunk",
+            "_io_write",
+            "_io_close",
+            "_io_reconnect"
+          ],
+          "properties": []
+        }
+      ],
+      "exports": [
+        {
+          "name": "SerialPort",
+          "line": 9,
+          "isDefault": false
+        },
+        {
+          "name": "list_ports",
+          "line": 64,
+          "isDefault": false
+        }
+      ],
+      "callGraph": [
+        {
+          "caller": "__init__",
+          "callee": "super().__init__",
+          "lineNumber": 14
+        },
+        {
+          "caller": "__init__",
+          "callee": "super",
+          "lineNumber": 14
+        },
+        {
+          "caller": "__init__",
+          "callee": "self.start",
+          "lineNumber": 18
+        },
+        {
+          "caller": "_io_open",
+          "callee": "serial.Serial",
+          "lineNumber": 23
+        },
+        {
+          "caller": "_io_open",
+          "callee": "int",
+          "lineNumber": 23
+        },
+        {
+          "caller": "_io_read_chunk",
+          "callee": "time.sleep",
+          "lineNumber": 30
+        },
+        {
+          "caller": "_io_read_chunk",
+          "callee": "s.read",
+          "lineNumber": 40
+        },
+        {
+          "caller": "_io_write",
+          "callee": "RuntimeError",
+          "lineNumber": 45
+        },
+        {
+          "caller": "_io_write",
+          "callee": "self.ser.write",
+          "lineNumber": 46
+        },
+        {
+          "caller": "_io_close",
+          "callee": "self.ser.close",
+          "lineNumber": 51
+        },
+        {
+          "caller": "_io_reconnect",
+          "callee": "self.ser.close",
+          "lineNumber": 58
+        },
+        {
+          "caller": "_io_reconnect",
+          "callee": "serial.Serial",
+          "lineNumber": 60
+        },
+        {
+          "caller": "list_ports",
+          "callee": "serial.tools.list_ports.comports",
+          "lineNumber": 66
+        },
+        {
+          "caller": "list_ports",
+          "callee": "ports.append",
+          "lineNumber": 67
+        }
+      ],
+      "metrics": {
+        "importCount": 1,
+        "exportCount": 2,
+        "functionCount": 1,
+        "classCount": 1
+      }
+    },
+    {
+      "path": "src/ssh_conn.py",
+      "language": "python",
+      "fileCategory": "code",
+      "totalLines": 134,
+      "nonEmptyLines": 124,
+      "functions": [
+        {
+          "name": "_get_paramiko",
+          "startLine": 12,
+          "endLine": 23,
+          "params": []
+        }
+      ],
+      "classes": [
+        {
+          "name": "SSHConnection",
+          "startLine": 25,
+          "endLine": 134,
+          "methods": [
+            "__init__",
+            "_io_open",
+            "_io_read_chunk",
+            "_io_write",
+            "_io_close",
+            "_io_reconnect",
+            "_keepalive_loop"
+          ],
+          "properties": []
+        }
+      ],
+      "exports": [
+        {
+          "name": "_get_paramiko",
+          "line": 12,
+          "isDefault": false
+        },
+        {
+          "name": "SSHConnection",
+          "line": 25,
+          "isDefault": false
+        }
+      ],
+      "callGraph": [
+        {
+          "caller": "__init__",
+          "callee": "super().__init__",
+          "lineNumber": 32
+        },
+        {
+          "caller": "__init__",
+          "callee": "super",
+          "lineNumber": 32
+        },
+        {
+          "caller": "__init__",
+          "callee": "int",
+          "lineNumber": 34
+        },
+        {
+          "caller": "__init__",
+          "callee": "self.start",
+          "lineNumber": 45
+        },
+        {
+          "caller": "_io_open",
+          "callee": "_get_paramiko",
+          "lineNumber": 48
+        },
+        {
+          "caller": "_io_open",
+          "callee": "RuntimeError",
+          "lineNumber": 50
+        },
+        {
+          "caller": "_io_open",
+          "callee": "getattr",
+          "lineNumber": 53
+        },
+        {
+          "caller": "_io_open",
+          "callee": "self._keepalive.is_alive",
+          "lineNumber": 53
+        },
+        {
+          "caller": "_io_open",
+          "callee": "self._keepalive.join",
+          "lineNumber": 54
+        },
+        {
+          "caller": "_io_open",
+          "callee": "paramiko.SSHClient",
+          "lineNumber": 57
+        },
+        {
+          "caller": "_io_open",
+          "callee": "client.set_missing_host_key_policy",
+          "lineNumber": 58
+        },
+        {
+          "caller": "_io_open",
+          "callee": "paramiko.AutoAddPolicy",
+          "lineNumber": 58
+        },
+        {
+          "caller": "_io_open",
+          "callee": "dict",
+          "lineNumber": 59
+        },
+        {
+          "caller": "_io_open",
+          "callee": "client.connect",
+          "lineNumber": 65
+        },
+        {
+          "caller": "_io_open",
+          "callee": "client.invoke_shell",
+          "lineNumber": 68
+        },
+        {
+          "caller": "_io_open",
+          "callee": "threading.Thread",
+          "lineNumber": 72
+        },
+        {
+          "caller": "_io_open",
+          "callee": "self._keepalive.start",
+          "lineNumber": 73
+        },
+        {
+          "caller": "_io_read_chunk",
+          "callee": "time.sleep",
+          "lineNumber": 77
+        },
+        {
+          "caller": "_io_read_chunk",
+          "callee": "select.select",
+          "lineNumber": 81
+        },
+        {
+          "caller": "_io_read_chunk",
+          "callee": "self._channel.recv",
+          "lineNumber": 83
+        },
+        {
+          "caller": "_io_read_chunk",
+          "callee": "EOFError",
+          "lineNumber": 86
+        },
+        {
+          "caller": "_io_write",
+          "callee": "RuntimeError",
+          "lineNumber": 91
+        },
+        {
+          "caller": "_io_write",
+          "callee": "self._channel.sendall",
+          "lineNumber": 92
+        },
+        {
+          "caller": "_io_close",
+          "callee": "self._channel.close",
+          "lineNumber": 97
+        },
+        {
+          "caller": "_io_close",
+          "callee": "self._client.close",
+          "lineNumber": 101
+        },
+        {
+          "caller": "_io_reconnect",
+          "callee": "min",
+          "lineNumber": 108
+        },
+        {
+          "caller": "_io_reconnect",
+          "callee": "time.sleep",
+          "lineNumber": 109
+        },
+        {
+          "caller": "_io_reconnect",
+          "callee": "self._io_close",
+          "lineNumber": 111
+        },
+        {
+          "caller": "_io_reconnect",
+          "callee": "self._io_open",
+          "lineNumber": 112
+        },
+        {
+          "caller": "_keepalive_loop",
+          "callee": "getattr",
+          "lineNumber": 120
+        },
+        {
+          "caller": "_keepalive_loop",
+          "callee": "time.sleep",
+          "lineNumber": 122
+        },
+        {
+          "caller": "_keepalive_loop",
+          "callee": "getattr",
+          "lineNumber": 123
+        },
+        {
+          "caller": "_keepalive_loop",
+          "callee": "self._client.get_transport",
+          "lineNumber": 126
+        },
+        {
+          "caller": "_keepalive_loop",
+          "callee": "t.send_ignore",
+          "lineNumber": 129
+        },
+        {
+          "caller": "_keepalive_loop",
+          "callee": "t.global_request",
+          "lineNumber": 131
+        }
+      ],
+      "metrics": {
+        "importCount": 1,
+        "exportCount": 2,
+        "functionCount": 1,
+        "classCount": 1
+      }
+    }
+  ]
+}

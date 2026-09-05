@@ -1,0 +1,16 @@
+{
+  "fixedSectionOk": true,
+  "nodesRecovered": 2,
+  "edgesRestored": 3,
+  "crossBatchEdgesAdded": 3,
+  "typesRemapped": 0,
+  "complexityRemapped": 0,
+  "notes": [
+    "合并脚本报告的 Fixed 部分未附具体计数，仅 Could not fix 4 条：3 条 calls 边 + 1 条 related 边，均为合理体量，无系统性 ID 漂移迹象。",
+    "batch-3 分析 src/app_state.py 时遗漏了 _load_config（源码 128-134 行）与 _save_config（136-143 行）两个函数节点，导致 batch-2 的 3 条 calls 边成为悬空边被丢弃。经核对源码确认两函数真实存在，且 api_theme/_recent_add 对它们的调用真实存在（src/server.py 361-365、391-406 行）。已按源码重建两节点（含准确 lineRange 与摘要，而非占位默认值），恢复 3 条 calls 边（weight 0.8，取自 batch-2 原始数据），并补齐 2 条 file→function 的 contains 边。",
+    "file:web/server.py 为幻觉路径——项目中 server.py 位于 src/ 而非 web/，web/ 下也无任何 Python 文件。该 related 边的正确丢弃已确认，未恢复。",
+    "importMap 交叉校验：9 组 Python imports 边中缺 3 条（main.py/mcp_server.py/serial_cli.py → server.py，均为入口文件引用核心服务，跨 batch 边界遗漏），已按协议补齐（type: imports, direction: forward, weight: 0.7）。web/index.html 的 20 条 script 加载边经 importMap 恢复逻辑已全部存在，无缺口。",
+    "修复后全图校验通过：214 节点（212→214）、433 边（424→433），无重复节点 ID、无重复边键、无悬空边，importMap 中全部 import 关系均有对应边。",
+    "节点类型分布（function 159/file 39/class 8/document 6/config 2）与复杂度分布（simple 94/moderate 62/complex 58）均为合法值，无需重映射。"
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "projectRoot": "D:/AI/串口控制台Pro",
+  "batchFiles": [
+    {"path": "src/hex_files.py", "language": "python", "sizeLines": 92, "fileCategory": "code"},
+    {"path": "src/httpfile.py", "language": "python", "sizeLines": 171, "fileCategory": "code"},
+    {"path": "src/server.py", "language": "python", "sizeLines": 1310, "fileCategory": "code"},
+    {"path": "src/tftp.py", "language": "python", "sizeLines": 395, "fileCategory": "code"}
+  ],
+  "batchImportData": {"src/hex_files.py": [], "src/httpfile.py": [], "src/server.py": ["src/ansi_utils.py", "src/app_state.py", "src/base_conn.py", "src/serial_conn.py", "src/ssh_conn.py", "src/tftp.py", "src/httpfile.py", "src/editor_files.py", "src/hex_files.py"], "src/tftp.py": []}
+}

@@ -143,9 +143,12 @@ def _post(url, path, body, timeout=30):
 
 
 def _args_summary(args, max_len=120):
-    """把工具参数压缩成短摘要，供 MCP 状态面板展示。"""
+    """把工具参数压缩成短摘要，供 MCP 状态面板展示。
+    password/key_path 等敏感参数脱敏——SSH 参数 JSON 通常不足 120 字符截断上限，
+    明文密码会完整保留在状态面板常驻展示，同屏旁观/截屏即泄露。"""
     try:
-        s = json.dumps(args, ensure_ascii=False)
+        safe = {k: ("***" if k in ("password", "key_path") else v) for k, v in (args or {}).items()}
+        s = json.dumps(safe, ensure_ascii=False)
     except Exception:
         s = str(args)
     if len(s) > max_len:
@@ -350,19 +353,23 @@ def tool_read_log(url, path, offset=0, limit=200):
     return f"日志: {path}\n共 {total} 行，显示 {offset}-{offset + len(lines) - 1}:\n{body}"
 
 
-def tool_search_log(url, path, query, limit=500):
-    """在日志中搜索关键字，返回命中行（行号 + 内容）。"""
-    j = _get(url, "/api/log_search", {"name": path, "q": query, "limit": limit})
+def tool_search_log(url, path, query, limit=500, offset=0):
+    """在日志中搜索关键字，返回命中行（行号 + 内容）。
+    offset=上次返回的 next_offset 续搜游标（行偏移，非命中序号），
+    从该行继续向后扫；首搜传 0（省略）。"""
+    j = _get(url, "/api/log_search", {"name": path, "q": query, "limit": limit,
+                                      "offset": offset, "count_total": "0" if offset else "1"})
     if not j.get("ok"):
         return f"搜索失败: {j.get('err', '未知')}"
     lines = j.get("lines", [])
     total = j.get("total", 0)
+    next_offset = j.get("next_offset", -1)
     has_more = j.get("has_more", False)
     if not lines and not total:
         return f"日志 {path} 中未找到「{query}」"
-    out = [f"命中 {total} 处（{path}），显示前 {len(lines)} 行:"]
-    if has_more:
-        out.append(f"（还有更多，提高 limit 或用 offset 续搜）")
+    out = [f"命中 {total} 处（{path}），显示 {len(lines)} 行:"]
+    if has_more and next_offset >= 0:
+        out.append(f"（还有更多，用 offset={next_offset} 续搜）")
     for l in lines:
         row = l.get("row", "?")
         tag = l.get("tag") or ""
@@ -631,6 +638,7 @@ _TOOLS = [
                 "path": {"type": "string", "description": "日志文件绝对路径或文件名"},
                 "query": {"type": "string", "description": "搜索关键字"},
                 "limit": {"type": "integer", "default": 500, "description": "最多返回命中数"},
+                "offset": {"type": "integer", "default": 0, "description": "续搜游标（上次结果返回的 next_offset 行偏移），首搜省略"},
             },
             "required": ["path", "query"],
         },
@@ -724,7 +732,7 @@ def _dispatch(url, name, args):
     if name == "read_log":
         return tool_read_log(url, need("path"), args.get("offset", 0), args.get("limit", 200))
     if name == "search_log":
-        return tool_search_log(url, need("path"), need("query"), args.get("limit", 500))
+        return tool_search_log(url, need("path"), need("query"), args.get("limit", 500), args.get("offset", 0))
     if name == "diff_logs":
         return tool_diff_logs(url, need("a"), need("b"), args.get("mode", "summary"), args.get("context", 2))
     if name == "disconnect":
@@ -751,13 +759,33 @@ def _result(text):
     return {"content": [{"type": "text", "text": str(text)}]}
 
 
+class _BackendError(Exception):
+    """后端明确返回 4xx/5xx（HTTPError）：错误信息直接作为工具结果，不触发瞬断重试。"""
+
+
+def _httperr_msg(e):
+    """从 HTTPError 响应体提取 err 字段（server.py 已做中文错误分类）。"""
+    try:
+        body = e.read().decode("utf-8", errors="replace")
+        try:
+            j = json.loads(body)
+            return j.get("err") or body
+        except Exception:
+            return body
+    except Exception:
+        return str(e)
+
+
 def main():
     """MCP stdio 主循环。处理 initialize / tools/list / tools/call。"""
     # Windows 默认 stdout 为系统 ANSI/GBK 编码，json.dumps(ensure_ascii=False) 遇到
     # © 等非 GBK 字符会抛 UnicodeEncodeError，导致工具返回值丢失。统一重配为 utf-8。
+    # stdin 同理必须重配：Claude Code 按 MCP stdio 规范写 UTF-8 JSON，stdin 保持
+    # GBK 会把中文/emoji 参数解码成乱码+孤立代理字符（\udcad），下游编码必炸。
     try:
         sys.stdout.reconfigure(encoding="utf-8")
         sys.stderr.reconfigure(encoding="utf-8")
+        sys.stdin.reconfigure(encoding="utf-8")
     except Exception:
         pass
     # 懒发现后端：第一次工具调用时才 ensure，避免 MCP 启动就阻塞
@@ -812,14 +840,27 @@ def main():
                     continue
                 try:
                     result = _dispatch(url, name, args)
+                except urllib.error.HTTPError as e:
+                    # 后端明确返回 4xx/5xx（密码错/文件不存在/重复 disconnect 等）：
+                    # 错误信息直接作为工具结果——server.py 已做中文错误分类。
+                    # HTTPError 是 URLError 子类，不能落入下方「瞬断重试」分支：
+                    # 重试会把 connect_ssh 这类非幂等调用重复一次完整握手，
+                    # 且最终误报「工具可能已关闭」误导 AI 去拉起桌面 app。
+                    raise _BackendError(_httperr_msg(e)) from None
                 except urllib.error.URLError:
-                    # 后端可能刚重启/瞬断：失效缓存，重新发现后端并重试一次
+                    # 后端可能刚重启/瞬断（连接拒绝/超时等，非 HTTP 状态错误）：失效缓存，重新发现后端并重试一次
                     _url_cache[0] = None
                     url = get_url()
                     if not url:
                         raise
-                    result = _dispatch(url, name, args)
+                    try:
+                        result = _dispatch(url, name, args)
+                    except urllib.error.HTTPError as e:
+                        raise _BackendError(_httperr_msg(e)) from None
                 _send({"jsonrpc": "2.0", "id": req_id, "result": _result(result)})
+            except _BackendError as e:
+                ok = False
+                _send({"jsonrpc": "2.0", "id": req_id, "result": _result(f"后端返回错误: {e}")})
             except urllib.error.URLError as e:
                 ok = False
                 _send({"jsonrpc": "2.0", "id": req_id,

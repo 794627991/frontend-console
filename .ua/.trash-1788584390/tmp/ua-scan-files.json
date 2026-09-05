@@ -1,0 +1,310 @@
+{
+  "scriptCompleted": true,
+  "files": [
+    {
+      "path": ".ua/.understandignore",
+      "language": "unknown",
+      "sizeLines": 74,
+      "fileCategory": "code"
+    },
+    {
+      "path": ".ua/config.json",
+      "language": "json",
+      "sizeLines": 4,
+      "fileCategory": "config"
+    },
+    {
+      "path": "docs/同类工具调研报告.md",
+      "language": "markdown",
+      "sizeLines": 163,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/性能优化审计报告.md",
+      "language": "markdown",
+      "sizeLines": 110,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/MCP_INTEGRATION.md",
+      "language": "markdown",
+      "sizeLines": 251,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/README.md",
+      "language": "markdown",
+      "sizeLines": 30,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "README.md",
+      "language": "markdown",
+      "sizeLines": 51,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "run.bat",
+      "language": "batch",
+      "sizeLines": 3,
+      "fileCategory": "script"
+    },
+    {
+      "path": "src/__init__.py",
+      "language": "python",
+      "sizeLines": 1,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/ansi_utils.py",
+      "language": "python",
+      "sizeLines": 134,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/app_state.py",
+      "language": "python",
+      "sizeLines": 225,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/base_conn.py",
+      "language": "python",
+      "sizeLines": 297,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/build.py",
+      "language": "python",
+      "sizeLines": 35,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/editor_files.py",
+      "language": "python",
+      "sizeLines": 382,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/hex_files.py",
+      "language": "python",
+      "sizeLines": 92,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/httpfile.py",
+      "language": "python",
+      "sizeLines": 171,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/log_index.py",
+      "language": "python",
+      "sizeLines": 344,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/main.py",
+      "language": "python",
+      "sizeLines": 414,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/mcp_server.py",
+      "language": "python",
+      "sizeLines": 847,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/serial_cli.py",
+      "language": "python",
+      "sizeLines": 282,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/serial_conn.py",
+      "language": "python",
+      "sizeLines": 68,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/server.py",
+      "language": "python",
+      "sizeLines": 1310,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/ssh_conn.py",
+      "language": "python",
+      "sizeLines": 134,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/tftp.py",
+      "language": "python",
+      "sizeLines": 395,
+      "fileCategory": "code"
+    },
+    {
+      "path": "todo.md",
+      "language": "markdown",
+      "sizeLines": 192,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "web/index.html",
+      "language": "html",
+      "sizeLines": 357,
+      "fileCategory": "markup"
+    },
+    {
+      "path": "web/js/analyze.js",
+      "language": "javascript",
+      "sizeLines": 131,
+      "fileCategory": "code"
+    },
+    {
+      "path": "web/js/cmd-lib.js",
+      "language": "javascript",
+      "sizeLines": 205,
+      "fileCategory": "code"
+    },
+    {
+      "path": "web/js/data-dir.js",
+      "language": "javascript",
+      "sizeLines": 245,
+      "fileCategory": "code"
+    },
+    {
+      "path": "web/js/editor.js",
+      "language": "javascript",
+      "sizeLines": 1259,
+      "fileCategory": "code"
+    },
+    {
+      "path": "web/js/hex-viewer.js",
+      "language": "javascript",
+      "sizeLines": 732,
+      "fileCategory": "code"
+    },
+    {
+      "path": "web/js/highlight.js",
+      "language": "javascript",
+      "sizeLines": 70,
+      "fileCategory": "code"
+    },
+    {
+      "path": "web/js/history.js",
+      "language": "javascript",
+      "sizeLines": 87,
+      "fileCategory": "code"
+    },
+    {
+      "path": "web/js/init.js",
+      "language": "javascript",
+      "sizeLines": 33,
+      "fileCategory": "code"
+    },
+    {
+      "path": "web/js/log-viewer.js",
+      "language": "javascript",
+      "sizeLines": 673,
+      "fileCategory": "code"
+    },
+    {
+      "path": "web/js/logs-modal.js",
+      "language": "javascript",
+      "sizeLines": 105,
+      "fileCategory": "code"
+    },
+    {
+      "path": "web/js/monaco-bridge.js",
+      "language": "javascript",
+      "sizeLines": 117,
+      "fileCategory": "code"
+    },
+    {
+      "path": "web/js/replay.js",
+      "language": "javascript",
+      "sizeLines": 179,
+      "fileCategory": "code"
+    },
+    {
+      "path": "web/js/search.js",
+      "language": "javascript",
+      "sizeLines": 288,
+      "fileCategory": "code"
+    },
+    {
+      "path": "web/js/sense.js",
+      "language": "javascript",
+      "sizeLines": 89,
+      "fileCategory": "code"
+    },
+    {
+      "path": "web/js/sidebar.js",
+      "language": "javascript",
+      "sizeLines": 419,
+      "fileCategory": "code"
+    },
+    {
+      "path": "web/js/terminal-core.js",
+      "language": "javascript",
+      "sizeLines": 493,
+      "fileCategory": "code"
+    },
+    {
+      "path": "web/js/tftp.js",
+      "language": "javascript",
+      "sizeLines": 273,
+      "fileCategory": "code"
+    },
+    {
+      "path": "web/js/theme.js",
+      "language": "javascript",
+      "sizeLines": 104,
+      "fileCategory": "code"
+    },
+    {
+      "path": "web/js/ts-outline.js",
+      "language": "javascript",
+      "sizeLines": 231,
+      "fileCategory": "code"
+    },
+    {
+      "path": "web/js/util.js",
+      "language": "javascript",
+      "sizeLines": 48,
+      "fileCategory": "code"
+    },
+    {
+      "path": "web/style.css",
+      "language": "css",
+      "sizeLines": 1334,
+      "fileCategory": "markup"
+    }
+  ],
+  "totalFiles": 47,
+  "filteredByIgnore": 1,
+  "estimatedComplexity": "moderate",
+  "stats": {
+    "filesScanned": 47,
+    "byCategory": {
+      "code": 37,
+      "config": 1,
+      "docs": 6,
+      "script": 1,
+      "markup": 2
+    },
+    "byLanguage": {
+      "unknown": 1,
+      "json": 1,
+      "markdown": 6,
+      "batch": 1,
+      "python": 16,
+      "html": 1,
+      "javascript": 20,
+      "css": 1
+    }
+  }
+}

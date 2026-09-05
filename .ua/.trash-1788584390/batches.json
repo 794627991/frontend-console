@@ -1,0 +1,1132 @@
+{
+  "schemaVersion": 1,
+  "algorithm": "louvain",
+  "totalFiles": 47,
+  "totalBatches": 7,
+  "exportsByPath": {
+    ".ua/.understandignore": [],
+    "src/__init__.py": [],
+    "src/ansi_utils.py": [
+      "_color256",
+      "strip_ansi",
+      "ansi_to_html",
+      "classify_line"
+    ],
+    "src/app_state.py": [
+      "_resource_base",
+      "_default_data_dir",
+      "_load_home_config",
+      "_migrate_legacy_user_data",
+      "_load_config",
+      "_save_config",
+      "_load_cmd_lib",
+      "_save_cmd_lib",
+      "_next_seq",
+      "_get_log_index",
+      "_broadcast_to_ai"
+    ],
+    "src/base_conn.py": [
+      "BaseConnection"
+    ],
+    "src/build.py": [
+      "build"
+    ],
+    "src/editor_files.py": [
+      "_migrate_legacy_files",
+      "_ensure_dir",
+      "_safe_path",
+      "_unique_name",
+      "ed_default_name",
+      "_read_text",
+      "_ext_of",
+      "_safe_ext_path",
+      "_looks_binary",
+      "ed_list",
+      "ed_open",
+      "ed_save",
+      "ed_save_as",
+      "ed_rename",
+      "ed_delete",
+      "ed_open_dir",
+      "ed_upload_img",
+      "_is_image_head",
+      "ed_img"
+    ],
+    "src/hex_files.py": [
+      "_real_path",
+      "hex_meta",
+      "hex_read",
+      "hex_save"
+    ],
+    "src/httpfile.py": [
+      "_make_transfer_cls",
+      "_Handler",
+      "_ThreadingHTTPServer",
+      "HttpFileServer",
+      "httpfile_status",
+      "httpfile_start",
+      "httpfile_stop"
+    ],
+    "src/log_index.py": [
+      "LogIndex",
+      "cleanup_stale_idx"
+    ],
+    "src/main.py": [
+      "acquire_single_instance",
+      "resource_path",
+      "write_endpoint",
+      "clear_endpoint",
+      "_clean_webview_cache",
+      "find_and_focus_existing_window",
+      "_old_instance_alive",
+      "_run_mcp_mode",
+      "main"
+    ],
+    "src/mcp_server.py": [
+      "_find_endpoint",
+      "_alive",
+      "_ensure_backend",
+      "_get",
+      "_post",
+      "_args_summary",
+      "_fmt_lines",
+      "tool_observe",
+      "tool_list_ports",
+      "tool_connect_serial",
+      "tool_connect_ssh",
+      "tool_send_command",
+      "tool_send_raw",
+      "tool_send_burst",
+      "_fmt_burst_steps",
+      "tool_get_buffer",
+      "tool_list_open_logs",
+      "tool_read_log",
+      "tool_search_log",
+      "tool_diff_logs",
+      "tool_disconnect",
+      "_fmt_size",
+      "tool_tftp_status",
+      "tool_tftp_start",
+      "tool_tftp_stop",
+      "tool_tftp_set_dir",
+      "_dispatch",
+      "_send",
+      "_result",
+      "main"
+    ],
+    "src/serial_cli.py": [
+      "find_endpoint",
+      "find_exe",
+      "ensure_running",
+      "api_get",
+      "api_post",
+      "need_running",
+      "cmd_overview",
+      "cmd_status",
+      "cmd_ports",
+      "cmd_buf",
+      "cmd_recent",
+      "cmd_send",
+      "cmd_raw",
+      "cmd_watch",
+      "main"
+    ],
+    "src/serial_conn.py": [
+      "SerialPort",
+      "list_ports"
+    ],
+    "src/server.py": [
+      "close_all_ports",
+      "_patched_append",
+      "start_background",
+      "index",
+      "web_files",
+      "static_files",
+      "vendor_files",
+      "ico_files",
+      "api_ports",
+      "api_status",
+      "api_connect",
+      "api_disconnect",
+      "api_send",
+      "api_send_raw",
+      "api_history",
+      "api_buffer",
+      "api_search",
+      "api_logs",
+      "api_theme",
+      "_recent_add",
+      "api_recent",
+      "api_log_dir",
+      "api_log_dir_open",
+      "api_data_dir_get",
+      "api_data_dir_check",
+      "api_data_dir_migrate",
+      "api_open_log_file",
+      "api_log_read",
+      "api_replay",
+      "api_replay_page",
+      "api_replay_seek",
+      "_resolve_log_path",
+      "api_log_count",
+      "api_log_page",
+      "api_log_search",
+      "api_log_search_page",
+      "api_log_open_external",
+      "api_file_info",
+      "ai_diff_logs",
+      "api_new_log",
+      "api_clear_buffer",
+      "stream",
+      "ai_status",
+      "ai_buffer",
+      "ai_recent",
+      "ai_send",
+      "ai_send_raw",
+      "ai_burst",
+      "ai_stream",
+      "ai_ports",
+      "ai_observe",
+      "ai_open_logs",
+      "ai_mcp_info",
+      "ai_mcp_report",
+      "ai_perf",
+      "cmd_lib_get",
+      "cmd_lib_save"
+    ],
+    "src/ssh_conn.py": [
+      "_get_paramiko",
+      "SSHConnection"
+    ],
+    "src/tftp.py": [
+      "TftpTransfer",
+      "TftpServer",
+      "tftp_status",
+      "tftp_start",
+      "tftp_stop",
+      "tftp_set_dir"
+    ],
+    "web/js/analyze.js": [],
+    "web/js/cmd-lib.js": [],
+    "web/js/data-dir.js": [],
+    "web/js/editor.js": [],
+    "web/js/hex-viewer.js": [],
+    "web/js/highlight.js": [],
+    "web/js/history.js": [],
+    "web/js/init.js": [],
+    "web/js/log-viewer.js": [],
+    "web/js/logs-modal.js": [],
+    "web/js/monaco-bridge.js": [],
+    "web/js/replay.js": [],
+    "web/js/search.js": [],
+    "web/js/sense.js": [],
+    "web/js/sidebar.js": [],
+    "web/js/terminal-core.js": [],
+    "web/js/tftp.js": [],
+    "web/js/theme.js": [],
+    "web/js/ts-outline.js": [],
+    "web/js/util.js": []
+  },
+  "batches": [
+    {
+      "batchIndex": 1,
+      "files": [
+        {
+          "path": "src/ansi_utils.py",
+          "language": "python",
+          "sizeLines": 134,
+          "fileCategory": "code"
+        },
+        {
+          "path": "src/base_conn.py",
+          "language": "python",
+          "sizeLines": 297,
+          "fileCategory": "code"
+        },
+        {
+          "path": "src/serial_conn.py",
+          "language": "python",
+          "sizeLines": 68,
+          "fileCategory": "code"
+        },
+        {
+          "path": "src/ssh_conn.py",
+          "language": "python",
+          "sizeLines": 134,
+          "fileCategory": "code"
+        }
+      ],
+      "batchImportData": {
+        "src/ansi_utils.py": [],
+        "src/base_conn.py": [
+          "src/ansi_utils.py",
+          "src/app_state.py"
+        ],
+        "src/serial_conn.py": [
+          "src/base_conn.py"
+        ],
+        "src/ssh_conn.py": [
+          "src/base_conn.py"
+        ]
+      },
+      "neighborMap": {
+        "src/ansi_utils.py": [
+          {
+            "path": "src/server.py",
+            "batchIndex": 2,
+            "symbols": [
+              "close_all_ports",
+              "_patched_append",
+              "start_background",
+              "index",
+              "web_files",
+              "static_files",
+              "vendor_files",
+              "ico_files",
+              "api_ports",
+              "api_status",
+              "api_connect",
+              "api_disconnect",
+              "api_send",
+              "api_send_raw",
+              "api_history",
+              "api_buffer",
+              "api_search",
+              "api_logs",
+              "api_theme",
+              "_recent_add",
+              "api_recent",
+              "api_log_dir",
+              "api_log_dir_open",
+              "api_data_dir_get",
+              "api_data_dir_check",
+              "api_data_dir_migrate",
+              "api_open_log_file",
+              "api_log_read",
+              "api_replay",
+              "api_replay_page",
+              "api_replay_seek",
+              "_resolve_log_path",
+              "api_log_count",
+              "api_log_page",
+              "api_log_search",
+              "api_log_search_page",
+              "api_log_open_external",
+              "api_file_info",
+              "ai_diff_logs",
+              "api_new_log",
+              "api_clear_buffer",
+              "stream",
+              "ai_status",
+              "ai_buffer",
+              "ai_recent",
+              "ai_send",
+              "ai_send_raw",
+              "ai_burst",
+              "ai_stream",
+              "ai_ports",
+              "ai_observe",
+              "ai_open_logs",
+              "ai_mcp_info",
+              "ai_mcp_report",
+              "ai_perf",
+              "cmd_lib_get",
+              "cmd_lib_save"
+            ]
+          }
+        ],
+        "src/base_conn.py": [
+          {
+            "path": "src/app_state.py",
+            "batchIndex": 3,
+            "symbols": [
+              "_resource_base",
+              "_default_data_dir",
+              "_load_home_config",
+              "_migrate_legacy_user_data",
+              "_load_config",
+              "_save_config",
+              "_load_cmd_lib",
+              "_save_cmd_lib",
+              "_next_seq",
+              "_get_log_index",
+              "_broadcast_to_ai"
+            ]
+          },
+          {
+            "path": "src/server.py",
+            "batchIndex": 2,
+            "symbols": [
+              "close_all_ports",
+              "_patched_append",
+              "start_background",
+              "index",
+              "web_files",
+              "static_files",
+              "vendor_files",
+              "ico_files",
+              "api_ports",
+              "api_status",
+              "api_connect",
+              "api_disconnect",
+              "api_send",
+              "api_send_raw",
+              "api_history",
+              "api_buffer",
+              "api_search",
+              "api_logs",
+              "api_theme",
+              "_recent_add",
+              "api_recent",
+              "api_log_dir",
+              "api_log_dir_open",
+              "api_data_dir_get",
+              "api_data_dir_check",
+              "api_data_dir_migrate",
+              "api_open_log_file",
+              "api_log_read",
+              "api_replay",
+              "api_replay_page",
+              "api_replay_seek",
+              "_resolve_log_path",
+              "api_log_count",
+              "api_log_page",
+              "api_log_search",
+              "api_log_search_page",
+              "api_log_open_external",
+              "api_file_info",
+              "ai_diff_logs",
+              "api_new_log",
+              "api_clear_buffer",
+              "stream",
+              "ai_status",
+              "ai_buffer",
+              "ai_recent",
+              "ai_send",
+              "ai_send_raw",
+              "ai_burst",
+              "ai_stream",
+              "ai_ports",
+              "ai_observe",
+              "ai_open_logs",
+              "ai_mcp_info",
+              "ai_mcp_report",
+              "ai_perf",
+              "cmd_lib_get",
+              "cmd_lib_save"
+            ]
+          }
+        ],
+        "src/serial_conn.py": [
+          {
+            "path": "src/server.py",
+            "batchIndex": 2,
+            "symbols": [
+              "close_all_ports",
+              "_patched_append",
+              "start_background",
+              "index",
+              "web_files",
+              "static_files",
+              "vendor_files",
+              "ico_files",
+              "api_ports",
+              "api_status",
+              "api_connect",
+              "api_disconnect",
+              "api_send",
+              "api_send_raw",
+              "api_history",
+              "api_buffer",
+              "api_search",
+              "api_logs",
+              "api_theme",
+              "_recent_add",
+              "api_recent",
+              "api_log_dir",
+              "api_log_dir_open",
+              "api_data_dir_get",
+              "api_data_dir_check",
+              "api_data_dir_migrate",
+              "api_open_log_file",
+              "api_log_read",
+              "api_replay",
+              "api_replay_page",
+              "api_replay_seek",
+              "_resolve_log_path",
+              "api_log_count",
+              "api_log_page",
+              "api_log_search",
+              "api_log_search_page",
+              "api_log_open_external",
+              "api_file_info",
+              "ai_diff_logs",
+              "api_new_log",
+              "api_clear_buffer",
+              "stream",
+              "ai_status",
+              "ai_buffer",
+              "ai_recent",
+              "ai_send",
+              "ai_send_raw",
+              "ai_burst",
+              "ai_stream",
+              "ai_ports",
+              "ai_observe",
+              "ai_open_logs",
+              "ai_mcp_info",
+              "ai_mcp_report",
+              "ai_perf",
+              "cmd_lib_get",
+              "cmd_lib_save"
+            ]
+          }
+        ],
+        "src/ssh_conn.py": [
+          {
+            "path": "src/server.py",
+            "batchIndex": 2,
+            "symbols": [
+              "close_all_ports",
+              "_patched_append",
+              "start_background",
+              "index",
+              "web_files",
+              "static_files",
+              "vendor_files",
+              "ico_files",
+              "api_ports",
+              "api_status",
+              "api_connect",
+              "api_disconnect",
+              "api_send",
+              "api_send_raw",
+              "api_history",
+              "api_buffer",
+              "api_search",
+              "api_logs",
+              "api_theme",
+              "_recent_add",
+              "api_recent",
+              "api_log_dir",
+              "api_log_dir_open",
+              "api_data_dir_get",
+              "api_data_dir_check",
+              "api_data_dir_migrate",
+              "api_open_log_file",
+              "api_log_read",
+              "api_replay",
+              "api_replay_page",
+              "api_replay_seek",
+              "_resolve_log_path",
+              "api_log_count",
+              "api_log_page",
+              "api_log_search",
+              "api_log_search_page",
+              "api_log_open_external",
+              "api_file_info",
+              "ai_diff_logs",
+              "api_new_log",
+              "api_clear_buffer",
+              "stream",
+              "ai_status",
+              "ai_buffer",
+              "ai_recent",
+              "ai_send",
+              "ai_send_raw",
+              "ai_burst",
+              "ai_stream",
+              "ai_ports",
+              "ai_observe",
+              "ai_open_logs",
+              "ai_mcp_info",
+              "ai_mcp_report",
+              "ai_perf",
+              "cmd_lib_get",
+              "cmd_lib_save"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "batchIndex": 2,
+      "files": [
+        {
+          "path": "src/hex_files.py",
+          "language": "python",
+          "sizeLines": 92,
+          "fileCategory": "code"
+        },
+        {
+          "path": "src/httpfile.py",
+          "language": "python",
+          "sizeLines": 171,
+          "fileCategory": "code"
+        },
+        {
+          "path": "src/server.py",
+          "language": "python",
+          "sizeLines": 1310,
+          "fileCategory": "code"
+        },
+        {
+          "path": "src/tftp.py",
+          "language": "python",
+          "sizeLines": 395,
+          "fileCategory": "code"
+        }
+      ],
+      "batchImportData": {
+        "src/hex_files.py": [],
+        "src/httpfile.py": [],
+        "src/server.py": [
+          "src/ansi_utils.py",
+          "src/app_state.py",
+          "src/base_conn.py",
+          "src/editor_files.py",
+          "src/hex_files.py",
+          "src/httpfile.py",
+          "src/serial_conn.py",
+          "src/ssh_conn.py",
+          "src/tftp.py"
+        ],
+        "src/tftp.py": []
+      },
+      "neighborMap": {
+        "src/server.py": [
+          {
+            "path": "src/ansi_utils.py",
+            "batchIndex": 1,
+            "symbols": [
+              "_color256",
+              "strip_ansi",
+              "ansi_to_html",
+              "classify_line"
+            ]
+          },
+          {
+            "path": "src/app_state.py",
+            "batchIndex": 3,
+            "symbols": [
+              "_resource_base",
+              "_default_data_dir",
+              "_load_home_config",
+              "_migrate_legacy_user_data",
+              "_load_config",
+              "_save_config",
+              "_load_cmd_lib",
+              "_save_cmd_lib",
+              "_next_seq",
+              "_get_log_index",
+              "_broadcast_to_ai"
+            ]
+          },
+          {
+            "path": "src/base_conn.py",
+            "batchIndex": 1,
+            "symbols": [
+              "BaseConnection"
+            ]
+          },
+          {
+            "path": "src/editor_files.py",
+            "batchIndex": 3,
+            "symbols": [
+              "_migrate_legacy_files",
+              "_ensure_dir",
+              "_safe_path",
+              "_unique_name",
+              "ed_default_name",
+              "_read_text",
+              "_ext_of",
+              "_safe_ext_path",
+              "_looks_binary",
+              "ed_list",
+              "ed_open",
+              "ed_save",
+              "ed_save_as",
+              "ed_rename",
+              "ed_delete",
+              "ed_open_dir",
+              "ed_upload_img",
+              "_is_image_head",
+              "ed_img"
+            ]
+          },
+          {
+            "path": "src/serial_conn.py",
+            "batchIndex": 1,
+            "symbols": [
+              "SerialPort",
+              "list_ports"
+            ]
+          },
+          {
+            "path": "src/ssh_conn.py",
+            "batchIndex": 1,
+            "symbols": [
+              "_get_paramiko",
+              "SSHConnection"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "batchIndex": 3,
+      "files": [
+        {
+          "path": "src/app_state.py",
+          "language": "python",
+          "sizeLines": 225,
+          "fileCategory": "code"
+        },
+        {
+          "path": "src/editor_files.py",
+          "language": "python",
+          "sizeLines": 382,
+          "fileCategory": "code"
+        },
+        {
+          "path": "src/log_index.py",
+          "language": "python",
+          "sizeLines": 344,
+          "fileCategory": "code"
+        }
+      ],
+      "batchImportData": {
+        "src/app_state.py": [
+          "src/log_index.py"
+        ],
+        "src/editor_files.py": [
+          "src/app_state.py"
+        ],
+        "src/log_index.py": []
+      },
+      "neighborMap": {
+        "src/app_state.py": [
+          {
+            "path": "src/base_conn.py",
+            "batchIndex": 1,
+            "symbols": [
+              "BaseConnection"
+            ]
+          },
+          {
+            "path": "src/server.py",
+            "batchIndex": 2,
+            "symbols": [
+              "close_all_ports",
+              "_patched_append",
+              "start_background",
+              "index",
+              "web_files",
+              "static_files",
+              "vendor_files",
+              "ico_files",
+              "api_ports",
+              "api_status",
+              "api_connect",
+              "api_disconnect",
+              "api_send",
+              "api_send_raw",
+              "api_history",
+              "api_buffer",
+              "api_search",
+              "api_logs",
+              "api_theme",
+              "_recent_add",
+              "api_recent",
+              "api_log_dir",
+              "api_log_dir_open",
+              "api_data_dir_get",
+              "api_data_dir_check",
+              "api_data_dir_migrate",
+              "api_open_log_file",
+              "api_log_read",
+              "api_replay",
+              "api_replay_page",
+              "api_replay_seek",
+              "_resolve_log_path",
+              "api_log_count",
+              "api_log_page",
+              "api_log_search",
+              "api_log_search_page",
+              "api_log_open_external",
+              "api_file_info",
+              "ai_diff_logs",
+              "api_new_log",
+              "api_clear_buffer",
+              "stream",
+              "ai_status",
+              "ai_buffer",
+              "ai_recent",
+              "ai_send",
+              "ai_send_raw",
+              "ai_burst",
+              "ai_stream",
+              "ai_ports",
+              "ai_observe",
+              "ai_open_logs",
+              "ai_mcp_info",
+              "ai_mcp_report",
+              "ai_perf",
+              "cmd_lib_get",
+              "cmd_lib_save"
+            ]
+          }
+        ],
+        "src/editor_files.py": [
+          {
+            "path": "src/server.py",
+            "batchIndex": 2,
+            "symbols": [
+              "close_all_ports",
+              "_patched_append",
+              "start_background",
+              "index",
+              "web_files",
+              "static_files",
+              "vendor_files",
+              "ico_files",
+              "api_ports",
+              "api_status",
+              "api_connect",
+              "api_disconnect",
+              "api_send",
+              "api_send_raw",
+              "api_history",
+              "api_buffer",
+              "api_search",
+              "api_logs",
+              "api_theme",
+              "_recent_add",
+              "api_recent",
+              "api_log_dir",
+              "api_log_dir_open",
+              "api_data_dir_get",
+              "api_data_dir_check",
+              "api_data_dir_migrate",
+              "api_open_log_file",
+              "api_log_read",
+              "api_replay",
+              "api_replay_page",
+              "api_replay_seek",
+              "_resolve_log_path",
+              "api_log_count",
+              "api_log_page",
+              "api_log_search",
+              "api_log_search_page",
+              "api_log_open_external",
+              "api_file_info",
+              "ai_diff_logs",
+              "api_new_log",
+              "api_clear_buffer",
+              "stream",
+              "ai_status",
+              "ai_buffer",
+              "ai_recent",
+              "ai_send",
+              "ai_send_raw",
+              "ai_burst",
+              "ai_stream",
+              "ai_ports",
+              "ai_observe",
+              "ai_open_logs",
+              "ai_mcp_info",
+              "ai_mcp_report",
+              "ai_perf",
+              "cmd_lib_get",
+              "cmd_lib_save"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "batchIndex": 4,
+      "files": [
+        {
+          "path": "README.md",
+          "language": "markdown",
+          "sizeLines": 51,
+          "fileCategory": "docs"
+        },
+        {
+          "path": "run.bat",
+          "language": "batch",
+          "sizeLines": 3,
+          "fileCategory": "script"
+        },
+        {
+          "path": "todo.md",
+          "language": "markdown",
+          "sizeLines": 192,
+          "fileCategory": "docs"
+        }
+      ],
+      "batchImportData": {
+        "README.md": [],
+        "run.bat": [],
+        "todo.md": []
+      },
+      "neighborMap": {}
+    },
+    {
+      "batchIndex": 5,
+      "files": [
+        {
+          "path": "docs/MCP_INTEGRATION.md",
+          "language": "markdown",
+          "sizeLines": 251,
+          "fileCategory": "docs"
+        },
+        {
+          "path": "docs/README.md",
+          "language": "markdown",
+          "sizeLines": 30,
+          "fileCategory": "docs"
+        },
+        {
+          "path": "docs/同类工具调研报告.md",
+          "language": "markdown",
+          "sizeLines": 163,
+          "fileCategory": "docs"
+        },
+        {
+          "path": "docs/性能优化审计报告.md",
+          "language": "markdown",
+          "sizeLines": 110,
+          "fileCategory": "docs"
+        }
+      ],
+      "batchImportData": {
+        "docs/MCP_INTEGRATION.md": [],
+        "docs/README.md": [],
+        "docs/同类工具调研报告.md": [],
+        "docs/性能优化审计报告.md": []
+      },
+      "neighborMap": {}
+    },
+    {
+      "batchIndex": 6,
+      "files": [
+        {
+          "path": ".ua/.understandignore",
+          "language": "unknown",
+          "sizeLines": 74,
+          "fileCategory": "code"
+        },
+        {
+          "path": ".ua/config.json",
+          "language": "json",
+          "sizeLines": 4,
+          "fileCategory": "config"
+        },
+        {
+          "path": "src/__init__.py",
+          "language": "python",
+          "sizeLines": 1,
+          "fileCategory": "code"
+        },
+        {
+          "path": "src/build.py",
+          "language": "python",
+          "sizeLines": 35,
+          "fileCategory": "code"
+        },
+        {
+          "path": "src/main.py",
+          "language": "python",
+          "sizeLines": 414,
+          "fileCategory": "code"
+        },
+        {
+          "path": "src/mcp_server.py",
+          "language": "python",
+          "sizeLines": 847,
+          "fileCategory": "code"
+        },
+        {
+          "path": "src/serial_cli.py",
+          "language": "python",
+          "sizeLines": 282,
+          "fileCategory": "code"
+        },
+        {
+          "path": "web/index.html",
+          "language": "html",
+          "sizeLines": 357,
+          "fileCategory": "markup"
+        },
+        {
+          "path": "web/js/analyze.js",
+          "language": "javascript",
+          "sizeLines": 131,
+          "fileCategory": "code"
+        },
+        {
+          "path": "web/js/cmd-lib.js",
+          "language": "javascript",
+          "sizeLines": 205,
+          "fileCategory": "code"
+        },
+        {
+          "path": "web/js/data-dir.js",
+          "language": "javascript",
+          "sizeLines": 245,
+          "fileCategory": "code"
+        },
+        {
+          "path": "web/js/editor.js",
+          "language": "javascript",
+          "sizeLines": 1259,
+          "fileCategory": "code"
+        },
+        {
+          "path": "web/js/hex-viewer.js",
+          "language": "javascript",
+          "sizeLines": 732,
+          "fileCategory": "code"
+        },
+        {
+          "path": "web/js/highlight.js",
+          "language": "javascript",
+          "sizeLines": 70,
+          "fileCategory": "code"
+        },
+        {
+          "path": "web/js/history.js",
+          "language": "javascript",
+          "sizeLines": 87,
+          "fileCategory": "code"
+        },
+        {
+          "path": "web/js/init.js",
+          "language": "javascript",
+          "sizeLines": 33,
+          "fileCategory": "code"
+        },
+        {
+          "path": "web/js/log-viewer.js",
+          "language": "javascript",
+          "sizeLines": 673,
+          "fileCategory": "code"
+        },
+        {
+          "path": "web/js/logs-modal.js",
+          "language": "javascript",
+          "sizeLines": 105,
+          "fileCategory": "code"
+        },
+        {
+          "path": "web/js/monaco-bridge.js",
+          "language": "javascript",
+          "sizeLines": 117,
+          "fileCategory": "code"
+        },
+        {
+          "path": "web/js/replay.js",
+          "language": "javascript",
+          "sizeLines": 179,
+          "fileCategory": "code"
+        },
+        {
+          "path": "web/js/search.js",
+          "language": "javascript",
+          "sizeLines": 288,
+          "fileCategory": "code"
+        },
+        {
+          "path": "web/js/sense.js",
+          "language": "javascript",
+          "sizeLines": 89,
+          "fileCategory": "code"
+        },
+        {
+          "path": "web/js/sidebar.js",
+          "language": "javascript",
+          "sizeLines": 419,
+          "fileCategory": "code"
+        },
+        {
+          "path": "web/js/terminal-core.js",
+          "language": "javascript",
+          "sizeLines": 493,
+          "fileCategory": "code"
+        },
+        {
+          "path": "web/js/tftp.js",
+          "language": "javascript",
+          "sizeLines": 273,
+          "fileCategory": "code"
+        }
+      ],
+      "batchImportData": {
+        ".ua/.understandignore": [],
+        ".ua/config.json": [],
+        "src/__init__.py": [],
+        "src/build.py": [],
+        "src/main.py": [],
+        "src/mcp_server.py": [],
+        "src/serial_cli.py": [],
+        "web/index.html": [],
+        "web/js/analyze.js": [],
+        "web/js/cmd-lib.js": [],
+        "web/js/data-dir.js": [],
+        "web/js/editor.js": [],
+        "web/js/hex-viewer.js": [],
+        "web/js/highlight.js": [],
+        "web/js/history.js": [],
+        "web/js/init.js": [],
+        "web/js/log-viewer.js": [],
+        "web/js/logs-modal.js": [],
+        "web/js/monaco-bridge.js": [],
+        "web/js/replay.js": [],
+        "web/js/search.js": [],
+        "web/js/sense.js": [],
+        "web/js/sidebar.js": [],
+        "web/js/terminal-core.js": [],
+        "web/js/tftp.js": []
+      },
+      "neighborMap": {}
+    },
+    {
+      "batchIndex": 7,
+      "files": [
+        {
+          "path": "web/js/theme.js",
+          "language": "javascript",
+          "sizeLines": 104,
+          "fileCategory": "code"
+        },
+        {
+          "path": "web/js/ts-outline.js",
+          "language": "javascript",
+          "sizeLines": 231,
+          "fileCategory": "code"
+        },
+        {
+          "path": "web/js/util.js",
+          "language": "javascript",
+          "sizeLines": 48,
+          "fileCategory": "code"
+        },
+        {
+          "path": "web/style.css",
+          "language": "css",
+          "sizeLines": 1334,
+          "fileCategory": "markup"
+        }
+      ],
+      "batchImportData": {
+        "web/js/theme.js": [],
+        "web/js/ts-outline.js": [],
+        "web/js/util.js": [],
+        "web/style.css": []
+      },
+      "neighborMap": {}
+    }
+  ]
+}

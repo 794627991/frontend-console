@@ -132,6 +132,8 @@ def need_running():
     print("【前端控制台 v1.0.0 未运行】")
     print("请先双击桌面上的「前端控制台.exe」启动工具，再运行本命令。")
     sys.exit(1)
+
+def cmd_overview(url):
     j = api_get(url, "/api/ai/observe?n=30")
     if not j.get("ok"):
         print("获取失败:", j.get("err")); return

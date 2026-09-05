@@ -23,14 +23,14 @@
   <div class="divider"></div>
   <div class="conn-area">
     <button class="btn primary" id="btnNewConn">＋ 新建连接</button>
-    <button class="btn primary" id="btnNewFile" title="新建文本文件（files/ 目录）">✎ 新建文件</button>
+    <button class="btn primary" id="btnNewFile" title="新建笔记（files/ 目录，保存时落盘）">✎ 新建笔记</button>
     <button class="btn primary" id="btnOpenFile" title="打开任意文件（编辑器/阅读器自动分发，>20MB 建议阅读器）">📂 打开</button>
     <button class="btn ghost icon-btn" id="btnRefreshPorts" title="刷新端口">↻</button>
   </div>
   <div class="spacer"></div>
   <div class="status-pill"><span class="dot" id="globalDot"></span><span id="globalStatus">0 个连接</span></div>
   <button class="btn ghost" id="btnLogs">📜 日志库</button>
-  <button class="btn ghost" id="btnFiles" title="查看/打开已保存的文本文件">📝 文件</button>
+  <button class="btn ghost" id="btnFiles" title="查看/打开已保存的笔记">📝 笔记</button>
   <button class="btn ghost" id="btnTheme" title="切换配色主题">🎨 换肤</button>
 </div>
 
@@ -48,7 +48,7 @@
     <div class="sidebar-sheet-pane active" data-sheet="open">
       <div class="port-list" id="portList">
         <div class="empty-state" style="padding:30px 10px;">
-          <div class="desc">点击「新建连接」或「新建文件」添加内容</div>
+          <div class="desc">点击「新建连接」或「新建笔记」添加内容</div>
         </div>
       </div>
     </div>
@@ -350,7 +350,7 @@
 <script src="web/js/ts-outline.js"></script>
 <script src="web/js/hex-viewer.js"></script>
 <script src="web/js/editor.js"></script>
-<script src="web/js/data-dir.js"></script>
+<script src="web/js/settings.js"></script>
 <script src="web/js/tftp.js"></script>
 <script src="web/js/init.js"></script>
 </body>

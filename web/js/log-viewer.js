@@ -227,6 +227,8 @@ function buildLogViewer(path) {
   wrap.querySelector('.log-search-input').addEventListener('input', e => {
     if (!e.target.value.trim() && conn.logState.searchQ) {
       const ls = conn.logState;
+      ls.searchGen = (ls.searchGen || 0) + 1;  // 作废在途全量搜索：响应到达即丢弃，防旧词结果复活
+      ls.searching = false;
       ls.searchQ = ''; ls.searchExcludeQ = ''; ls.searchIdx = 0; ls.searchTotal = 0;
       ls.resultData = {}; ls.resWinStart = 0; ls.resWinEnd = 0;
       if (ls.resPending) ls.resPending.clear();
@@ -256,6 +258,7 @@ async function openLogInViewer(conn) {
   ls.renderedStart = -1; ls.renderedEnd = -1;
   ls.searchQ = ''; ls.searchExcludeQ = ''; ls.resultData = {}; ls.searchIdx = 0;
   ls.searchTotal = 0; ls.resWinStart = 0; ls.resWinEnd = 0; ls.curRow = -1;
+  ls.searchGen = (ls.searchGen || 0) + 1; ls.searching = false;  // 作废在途搜索
   ls.resRenderStart = -1; ls.resRenderEnd = -1;
   conn.searchInput.value = '';
   conn.vlist.scrollTop = 0;
@@ -427,14 +430,27 @@ async function doLogSearch(conn) {
     highlightLogSearchResult(conn, ls.searchIdx);
     return;
   }
-  // 新搜索进行中（首扫 G 级文件要数秒）：忽略重复回车，防并发重发全量扫描
-  if (ls.searching) return;
+  // 新搜索进行中（首扫 G 级文件要数秒）：代次令牌作废在途请求——
+  // 清空输入框复位/换词重搜不能取消 fetch，响应无条件写回会复活旧词结果。
+  if (ls.searching) {
+    // 新词回车：作废旧代次，当前输入成为最新请求，旧响应到达即丢弃
+    if (ls.searchQ !== q || ls.searchExcludeQ !== ex) {
+      ls.searchGen = (ls.searchGen || 0) + 1;
+      ls.searching = false;
+    } else {
+      return;  // 同词重复回车：忽略，防并发重发全量扫描
+    }
+  }
   ls.searching = true;
+  const myGen = (ls.searchGen = (ls.searchGen || 0) + 1);
+  const myInput = conn.searchInput.value.trim();
   toggleLogSearchPane(conn, true);
   conn.searchCount.innerHTML = '<span class="spin">✳</span> 搜索中…';
   try {
     const r = await fetch('/api/log_search?name=' + encodeURIComponent(ls.name) + '&q=' + encodeURIComponent(q) + '&exclude=' + encodeURIComponent(ex) + '&limit=500');
     const j = await r.json();
+    // 代次/输入不一致即丢弃：清空输入复位（gen++）与换词重搜都在此拦下旧响应
+    if (myGen !== ls.searchGen || conn.searchInput.value.trim() !== myInput) { ls.searching = false; return; }
     ls.searching = false;
     if (!j.ok) { conn.searchCount.textContent = '失败：' + (j.err || ''); return; }
     if (connections[conn.portId] !== conn) return;  // 索引期间 tab 已关
@@ -456,6 +472,8 @@ async function doLogSearch(conn) {
     if (ls.resultData[0]) { jumpToLogRow(conn, ls.resultData[0].row, ls.resultData[0].row); highlightLogSearchResult(conn, 0); }
     else renderLogSlice(conn);
   } catch(e) { ls.searching = false; conn.searchCount.textContent = '失败：' + e; }
+  // 注意：清空输入框的复位逻辑（searchInput 的 input/change 事件）需同步
+  // ls.searchGen++ 作废在途搜索，见 initLogSearchEvents。
 }
 // 确保命中序号 [s, s+RES_WIN) 内可视区附近的数据在窗口缓存里；缺段精准回载，
 // 窗口外丢弃（换窗）。scroll 驱动，异步回载后自动重渲染。
@@ -470,9 +488,15 @@ function resEnsureRange(conn, hitIdx) {
   const curCenter = (ls.resWinStart + Math.min(ls.resWinEnd, ls.resWinStart + RES_WIN * 3)) / 2;
   if (ls.resWinStart !== wantStart || ls.resWinEnd !== wantEnd) {
     // 已有窗口且浏览点仍在窗口内且偏离中心 < 半窗（窗口宽 3×RES_WIN）→ 不换（滞回）
+    // 先判强制条件：可视/预载需求已越出窗口边界 → 必须扩窗/换窗，否则
+    // hitIdx 落在 [resWinEnd-5, resWinEnd) 滞回带时回载响应被窗口过滤丢弃，
+    // 渲染再触发回载 → 无限循环，可视区永久「加载中」。
+    const needStart0 = Math.max(0, hitIdx - 500);
+    const needEnd0 = Math.min(ls.searchTotal, hitIdx + 2000);
+    const outOfWin = needStart0 < ls.resWinStart || needEnd0 > ls.resWinEnd;
     const inWin = hitIdx >= ls.resWinStart && hitIdx < ls.resWinEnd;
     const devi = Math.abs(hitIdx - curCenter);
-    if (!inWin || devi > RES_WIN * 3 / 2 || ls.resWinEnd === 0) {
+    if (outOfWin || !inWin || devi > RES_WIN * 3 / 2 || ls.resWinEnd === 0) {
       ls.resWinStart = wantStart; ls.resWinEnd = wantEnd;
       // 丢弃窗口外缓存
       for (const k of Object.keys(ls.resultData)) {
@@ -525,16 +549,25 @@ async function resFetchRange(conn, start, count) {
     ls.resPending.delete(start);
   }
 }
-// 轮询等待某命中序号回载到窗口缓存后跳主视图（上限 3s，60ms 间隔）
+// 轮询等待某命中序号回载到窗口缓存后跳主视图（上限 3s，60ms 间隔）。
+// 代次校验 + 去重：轮询前撤销上一个轮询器（ls._jumpTimer），轮询体校验
+// searchQ/searchIdx 未被改变——3s 窗口内再回车会双轮询，后到者覆盖落点。
 function waitResHitThenJump(conn, hitIdx) {
   const ls = conn.logState;
+  if (ls._jumpTimer) { clearInterval(ls._jumpTimer); ls._jumpTimer = null; }
+  const myQ = ls.searchQ, myEx = ls.searchExcludeQ || '', myIdx = hitIdx;
   const t0 = Date.now();
   const timer = setInterval(() => {
-    if (connections[conn.portId] !== conn) { clearInterval(timer); return; }  // tab 已关
+    if (connections[conn.portId] !== conn) { clearInterval(timer); ls._jumpTimer = null; return; }  // tab 已关
+    // 期间已换词/换序号：本次跳转作废（新调用会带自己的轮询器）
+    if (ls.searchQ !== myQ || (ls.searchExcludeQ || '') !== myEx || ls.searchIdx !== myIdx) {
+      clearInterval(timer); ls._jumpTimer = null; return;
+    }
     const d = ls.resultData[hitIdx];
-    if (d) { clearInterval(timer); jumpToLogRow(conn, d.row, d.row); }
-    else if (Date.now() - t0 > 3000) { clearInterval(timer); showBanner('跳转超时：数据回载未完成'); }
+    if (d) { clearInterval(timer); ls._jumpTimer = null; jumpToLogRow(conn, d.row, d.row); }
+    else if (Date.now() - t0 > 3000) { clearInterval(timer); ls._jumpTimer = null; showBanner('跳转超时：数据回载未完成'); }
   }, 60);
+  ls._jumpTimer = timer;
 }
 // 搜索结果虚拟渲染：只渲染可视区 ± 5 行（窗口缓存 ls.resultData{命中序号: 行}）
 function renderLogResults(conn) {
@@ -637,7 +670,15 @@ function initLogSplitter(conn) {
     top.style.flex = '1';
   };
   conn._splitUp = () => {
-    if (dragging) { dragging = false; document.body.style.cursor = ''; renderLogSlice(conn); }
+    if (dragging) {
+      dragging = false; document.body.style.cursor = '';
+      renderLogSlice(conn);
+      // 分栏高度变化：搜索结果列表可视区变大，renderLogResults 的
+      // 相等性短路（start===resRenderStart && end===resRenderEnd）会跳过
+      // 重渲染 → 底部新增区域空白。复位渲染游标强制重算。
+      const ls = conn.logState;
+      if (ls && ls.searchTotal) { ls.resRenderStart = -1; ls.resRenderEnd = -1; renderLogResults(conn); }
+    }
   };
   document.addEventListener('mousemove', conn._splitMove);
   document.addEventListener('mouseup', conn._splitUp);
@@ -650,6 +691,8 @@ function closeLogViewer(portId) {
     // 移除 document 级拖拽监听器，避免泄漏
     if (conn._splitMove) document.removeEventListener('mousemove', conn._splitMove);
     if (conn._splitUp) document.removeEventListener('mouseup', conn._splitUp);
+    const ls = conn.logState;
+    if (ls && ls._jumpTimer) clearInterval(ls._jumpTimer);  // 防关 tab 后轮询器残留
     conn.tab.remove(); conn.wrap.remove(); delete connections[portId];
   }
   const remaining = Object.keys(connections).sort((a, b) => {

@@ -41,6 +41,7 @@ class SSHConnection(BaseConnection):
         self._client = None
         self._channel = None
         self._keepalive = None
+        self._keepalive_stop = None  # per-thread Event：见 _io_open/_keepalive_loop
         self._reconnect_attempts = 0
         self.start()
 
@@ -48,12 +49,14 @@ class SSHConnection(BaseConnection):
         paramiko = _get_paramiko()
         if paramiko is None:
             raise RuntimeError("paramiko 未安装，无法建立 SSH 连接")
-        # 停掉旧 keepalive 线程（重连场景），避免多个线程并发 send_ignore
-        self._keepalive_stop = True
-        if getattr(self, "_keepalive", None) and self._keepalive.is_alive():
-            try: self._keepalive.join(timeout=1.0)
-            except Exception: pass
-        self._keepalive_stop = False
+        # 停掉旧 keepalive 线程（重连场景），避免多个线程并发 send_ignore。
+        # per-thread Event：旧线程持有旧 Event，醒来即见 set 退出；新线程配新 Event。
+        # 绝不重置标志——旧实现在 join 超时后把共享标志改回 False，阻塞在
+        # sleep(30) 的旧线程醒来把新连接当自己的继续跑，多次闪断后线程净增。
+        if self._keepalive_stop is not None:
+            self._keepalive_stop.set()
+        stop_evt = threading.Event()
+        self._keepalive_stop = stop_evt
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         kwargs = dict(hostname=self.host, port=self.ssh_port, username=self.username,
@@ -69,7 +72,7 @@ class SSHConnection(BaseConnection):
         self._channel = chan
         self._io_handle = chan
         # keepalive 线程
-        self._keepalive = threading.Thread(target=self._keepalive_loop, daemon=True)
+        self._keepalive = threading.Thread(target=self._keepalive_loop, args=(stop_evt,), daemon=True)
         self._keepalive.start()
 
     def _io_read_chunk(self):
@@ -106,21 +109,34 @@ class SSHConnection(BaseConnection):
         """指数退避重连：1s/2s/4s... 上限 60s。手动 disconnect（alive=False）不重连。"""
         self._reconnect_attempts += 1
         delay = min(60, 2 ** (self._reconnect_attempts - 1))
-        time.sleep(delay)
+        # 可中断等待：close() 期间醒来即返回，不在 sleep 里滞留 60s
+        for _ in range(delay):
+            if not self.alive:
+                return False
+            time.sleep(1)
+        # close() 在退避期间到达：放弃重连，避免重连成功后无人关闭的幽灵会话
+        # （占掉嵌入式设备 dropbear 通常限 1~2 个的会话名额）
+        if not self.alive:
+            return False
         try:
             self._io_close()
+            if not self.alive:  # _io_close 期间被 close()：不再开新会话
+                return False
             self._io_open()
+            if not self.alive:  # 极端窗口：_io_open 刚建好会话 close() 才到达
+                self._io_close()  # 立即回收，不留幽灵
+                return False
             self._reconnect_attempts = 0
             return True
         except Exception:
             return False
 
-    def _keepalive_loop(self):
-        """每 30s 发 keepalive，防 NAT/防火墙断连。"""
-        while self.alive and self._client is not None and not getattr(self, "_keepalive_stop", False):
+    def _keepalive_loop(self, stop_evt):
+        """每 30s 发 keepalive，防 NAT/防火墙断连。stop_evt 为本线程专属 Event：
+        换连接时 _io_open 对旧 evt set，本线程在下一个可中断片段退出。"""
+        while self.alive and self._client is not None and not stop_evt.is_set():
             try:
-                time.sleep(30)
-                if not self.alive or self._client is None or getattr(self, "_keepalive_stop", False):
+                if not self.alive or self._client is None or stop_evt.is_set():
                     break
                 # paramiko 2.10+ 用 send_okay，兼容旧版用 global_request
                 t = self._client.get_transport() if self._client else None
@@ -132,3 +148,7 @@ class SSHConnection(BaseConnection):
                         except Exception: pass
             except Exception:
                 break
+            for _ in range(300):  # 30s = 300×0.1s，可中断小段
+                if not self.alive or stop_evt.is_set():
+                    return
+                time.sleep(0.1)

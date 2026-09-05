@@ -60,7 +60,9 @@ class _Handler(BaseHTTPRequestHandler):
         # URL 路径 → 文件名：去 /、unquote（%xx）、拒绝子目录与穿越
         raw = unquote(self.path.split("?")[0])
         name = posixpath.basename(raw.strip("/"))
-        if not name or name in (".", "..") or "/" in name or "\\" in name:
+        # 拒绝盘符相对名（C:xxx）：Windows 上 os.path.join(root,'C:xxx') 直接返回
+        # 'C:xxx' 丢弃 root，可越界读进程 CWD/盘根下平铺文件
+        if not name or name in (".", "..") or "/" in name or "\\" in name or ":" in name:
             self.send_error(403, "bad path")
             return
         root = self.tftp.root_dir if self.tftp else "."

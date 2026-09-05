@@ -132,7 +132,14 @@ async function buildHexViewerTab(path, name) {
 
   try {
     if (conn.editable) {
-      let raw = await fetchChunk(0, size);
+      // 后端 /api/hex/read 单次硬钳 512KB（HEX_CHUNK），必须分块循环读满 size
+      // ——单次整读时 conn.bytes 只有前 512KB 而 size 仍完整：滚动渲染越界
+      // BigInt(undefined) 崩溃，Ctrl+S 把大文件截断成 512KB（数据丢失）
+      let raw = new Uint8Array(size);
+      for (let off = 0; off < size; off += HEX_CHUNK) {
+        const b = await fetchChunk(off, Math.min(HEX_CHUNK, size - off));
+        raw.set(b, off);
+      }
       if (isIhex) {
         if (typeof intelHexParse !== 'function') throw new Error('Intel HEX 解析器未加载');
         const parsed = intelHexParse(new TextDecoder().decode(raw));
@@ -166,7 +173,7 @@ async function buildHexViewerTab(path, name) {
     }
   };
   conn.byteAt = (i) => {
-    if (conn.bytes) return conn.bytes[i];
+    if (conn.bytes) return conn.bytes[i] ?? 0;   // 越界兜底 0，防 BigInt(undefined) 渲染崩溃
     if (conn.chunkBuf && i >= conn.chunkStart && i < conn.chunkStart + conn.chunkBuf.length)
       return conn.chunkBuf[i - conn.chunkStart];
     return 0;   // 窗口外（ensureWindow 已保证不出现）
@@ -681,9 +688,20 @@ async function _hxSave(conn) {
   try {
     let b64;
     if (conn.isIhex) {
-      // Intel HEX：镜像 → hex 文本（16 字节/行，偏移 0 起，含 EOF 记录）
+      // Intel HEX：镜像 → hex 文本（16 字节/行，含 EOF 记录）
+      // 超 64KB 镜像必须发 type 04 扩展线性地址记录——只发 type 00 时
+      // 地址字段 (off & 0xFFFF) 会回绕，后半 64KB 全写到错误地址=固件损坏
       let out = '';
+      let extSeg = -1;   // 当前已输出的扩展段（高 16 位），-1 表示尚未输出任何
+      const emitExt = (seg) => {
+        const sum = (2 + ((seg >> 8) & 0xFF) + (seg & 0xFF)) & 0xFF;
+        const chk = ((0x100 - sum) & 0xFF).toString(16).toUpperCase().padStart(2, '0');
+        out += ':02000004' + seg.toString(16).toUpperCase().padStart(4, '0') + chk + '\n';
+        extSeg = seg;
+      };
       for (let off = 0; off < conn.bytes.length; off += 16) {
+        const seg = (off >> 16) & 0xFFFF;
+        if (seg !== extSeg) emitExt(seg);
         const len = Math.min(16, conn.bytes.length - off);
         let sum = len + ((off >> 8) & 0xFF) + (off & 0xFF);
         let data = '';
