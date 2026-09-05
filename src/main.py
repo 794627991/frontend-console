@@ -341,6 +341,68 @@ def main():
             except Exception:
                 return ""
 
+        def copy_image_to_clipboard(self, path):
+            """把图片文件写入系统剪贴板（CF_DIB）。
+            供 claude 终端收拖拽图片：claude CLI 输入框不吃文件拖拽、靠剪贴板收图，
+            前端拖图到 claude tab 时调这里，再提示用户 Ctrl+V 粘贴。
+            Pillow 解码任意格式（png/jpg/webp/…）→ BMP → 去 14B 文件头即 CF_DIB 载荷。"""
+            try:
+                import ctypes
+                from ctypes import wintypes
+                from PIL import Image
+                import io
+                img = Image.open(path)
+                # RGBA/调色板一律转 RGBA 再 flatten 到白底 BMP（部分应用不认带 alpha 通道的 DIB）
+                if img.mode in ("RGBA", "LA", "P"):
+                    img = img.convert("RGBA")
+                    bg = Image.new("RGB", img.size, (255, 255, 255))
+                    bg.paste(img, mask=img.split()[-1])
+                    img = bg
+                else:
+                    img = img.convert("RGB")
+                buf = io.BytesIO()
+                img.save(buf, format="BMP")
+                blob = buf.getvalue()
+                dib = blob[14:]   # BITMAPFILEHEADER 后 = BITMAPINFO + 像素
+
+                u32 = ctypes.windll.user32
+                k32 = ctypes.windll.kernel32
+                # 64 位下 ctypes 默认 restype 是 32 位 int，句柄/指针会截断——必须显式声明
+                k32.GlobalAlloc.restype = wintypes.HGLOBAL
+                k32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+                k32.GlobalLock.restype = wintypes.LPVOID
+                k32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+                k32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+                k32.GlobalFree.argtypes = [wintypes.HGLOBAL]
+                u32.SetClipboardData.restype = wintypes.HANDLE
+                u32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+                GMEM_MOVEABLE = 0x0002
+                CF_DIB = 8
+                h = k32.GlobalAlloc(GMEM_MOVEABLE, len(dib))
+                if not h:
+                    return False
+                ptr = k32.GlobalLock(h)
+                if not ptr:
+                    k32.GlobalFree(h)
+                    return False
+                try:
+                    ctypes.memmove(ptr, dib, len(dib))
+                finally:
+                    k32.GlobalUnlock(h)
+                if not u32.OpenClipboard(0):
+                    k32.GlobalFree(h)
+                    return False
+                try:
+                    u32.EmptyClipboard()
+                    ok = bool(u32.SetClipboardData(CF_DIB, h))
+                    if not ok:
+                        k32.GlobalFree(h)
+                    return ok
+                finally:
+                    u32.CloseClipboard()
+            except Exception:
+                return False
+
     # pywebview 窗口
     window = webview.create_window(
         title="前端控制台 v1.0.0",

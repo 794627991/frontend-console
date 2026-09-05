@@ -1236,6 +1236,22 @@ async function openFileSmart(path, mode) {
 }
 
 async function openDroppedFile(path) {
+  // 拖到 claude 终端 tab 上的图片：claude CLI 输入框不吃文件拖拽，靠剪贴板收图——
+  // 写剪贴板 + 提示 Ctrl+V（用户正对着 claude tab 拖，意图明确）。
+  // 非图片文件拖到 claude tab：仍走智能分发（打开日志/编辑器），不打断用户习惯。
+  if (activePortId && connections[activePortId] &&
+      connections[activePortId].meta && connections[activePortId].meta.kind === 'claude') {
+    const ext = (path.split('.').pop() || '').toLowerCase();
+    if (['png','jpg','jpeg','gif','webp','bmp'].includes(ext)) {
+      try {
+        await pywebview.api.copy_image_to_clipboard(path);
+        showBanner('图片已复制到剪贴板，在 Claude 输入框按 Ctrl+V 粘贴发送', 5000);
+      } catch(e) {
+        showBanner('图片进剪贴板失败，请手动复制后 Ctrl+V 粘贴', 5000, true);
+      }
+      return;
+    }
+  }
   openFileSmart(path, 'auto');
 }
 

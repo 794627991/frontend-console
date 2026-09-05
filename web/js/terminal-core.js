@@ -51,7 +51,14 @@ function buildTerminal(portId, meta) {
     ts: wrap.querySelector('.term-tb-ts'),
   };
   // claude 终端不落盘日志（Claude 自带 ~/.claude 转写）——隐藏「＋📋 新日志」
-  if (meta.kind === 'claude') tb.newlog.style.display = 'none';
+  if (meta.kind === 'claude') {
+    tb.newlog.style.display = 'none';
+    // 串口/SSH 专属功能对 claude 无意义：清屏（Claude 自管界面）、时间戳注入（破坏 TUI 渲染）、
+    // 暂停滚屏（Claude 非流式滚动输出）——只留 ^C（中断回复生成，常用）、^D、跳底
+    tb.clear.style.display = 'none';
+    tb.ts.style.display = 'none';
+    tb.pause.style.display = 'none';
+  }
   tb.pause.onclick = () => {
     conn.paused = !conn.paused;
     tb.pause.textContent = conn.paused ? '▶ 继续' : '⏸ 暂停';
@@ -180,12 +187,28 @@ function buildTerminal(portId, meta) {
     return true;
   });
 
-  // ---- Ctrl+右键上下文菜单 ----
+  // ---- Ctrl+右键上下文菜单 / Shift+右键直接粘贴（PuTTY 习惯，与 Ctrl+V 同款）----
   conn.xtermWrap.addEventListener('contextmenu', e => {
+    if (e.shiftKey) {  // Shift+右键 = 粘贴剪贴板
+      e.preventDefault();
+      _pasteToConn(conn, true);
+      return;
+    }
     if (!e.ctrlKey) return;  // 普通右键保持 xterm 默认行为
     e.preventDefault();
     showCtxMenu(e.clientX, e.clientY, conn);
   });
+
+  // ---- 备用屏(全屏 TUI)下滚轮 → PgUp/PgDn ----
+  // Claude Code 等全屏程序处于备用屏时，xterm 默认把滚轮翻译成 ↑↓ 发给程序，
+  // 程序收到方向键无法翻历史（提示 "use PgUp/PgDn to scroll"）。
+  // 拦截备用屏下的滚轮，改发 PgUp/PgDn；主屏(普通 shell)滚轮保持原生滚动缓冲。
+  conn.xtermWrap.addEventListener('wheel', e => {
+    if (conn.meta && conn.meta.kind === 'claude' && conn.term.buffer.active.type === 'alternate') {
+      e.preventDefault();
+      conn.term.scrollLines(e.deltaY > 0 ? conn.term.rows : -conn.term.rows);
+    }
+  }, {passive: false});
 
   // ---- xterm 输入 → 串口 ----
   conn.term.onData(data => {
@@ -209,21 +232,25 @@ function buildTerminal(portId, meta) {
     conn.autoScroll = atBottom;
   });
 
-  // ---- 全屏模式提示条（xterm 自身处理全屏序列，这里只显示提示 + 退出按钮） ----
-  const overlay = document.createElement('div');
-  overlay.className = 'screen-overlay';
-  overlay.dataset.screen = portId;
-  overlay.innerHTML = `
-    <div class="screen-hint">
-      <span class="dot"></span><span>全屏模式（top/htop）— 实时刷新中</span>
-      <span class="esc" data-screen-esc="${portId}">退出 ↩</span>
-    </div>
-  `;
-  wrap.querySelector('.output-wrap').appendChild(overlay);
-  conn.screenOverlay = overlay;
-  overlay.querySelector(`[data-screen-esc="${portId}"]`).onclick = () => {
-    termSendRaw(portId, [3]);  // Ctrl-C 中断 top
-  };
+  // ---- 全屏模式提示条（xterm 自身处理全屏序列，这里只显示提示 + 退出按钮）----
+  // claude 终端不建：新版 claude fullscreen renderer 的 TUI 重绘会触发全屏检测误报
+  // （提示条「top/htop」对 claude 完全不适用且遮挡界面）；串口/SSH 场景保持不变
+  if (meta.kind !== 'claude') {
+    const overlay = document.createElement('div');
+    overlay.className = 'screen-overlay';
+    overlay.dataset.screen = portId;
+    overlay.innerHTML = `
+      <div class="screen-hint">
+        <span class="dot"></span><span>全屏模式（top/htop）— 实时刷新中</span>
+        <span class="esc" data-screen-esc="${portId}">退出 ↩</span>
+      </div>
+    `;
+    wrap.querySelector('.output-wrap').appendChild(overlay);
+    conn.screenOverlay = overlay;
+    overlay.querySelector(`[data-screen-esc="${portId}"]`).onclick = () => {
+      termSendRaw(portId, [3]);  // Ctrl-C 中断 top
+    };
+  }
 
   // 插入 DOM
   const es = termArea.querySelector('.empty-state');
@@ -444,13 +471,14 @@ function _hlCmdStream(data, conn) {
 }
 function enterScreen(portId, conn) {
   if (conn.inScreen) return;
+  if (!conn.screenOverlay) return;   // claude tab 不建 overlay（防误报），事件忽略
   conn.inScreen = true;
   conn.screenOverlay.classList.add('show');
 }
 function exitScreen(portId, conn) {
   if (!conn.inScreen) return;
   conn.inScreen = false;
-  conn.screenOverlay.classList.remove('show');
+  if (conn.screenOverlay) conn.screenOverlay.classList.remove('show');
 }
 
 // 构建一行 DOM（仅回放面板仍用 DOM 行渲染，主终端已改用 xterm）
