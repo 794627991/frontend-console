@@ -1348,6 +1348,18 @@ def claude_skills_list():
     return jsonify({"ok": True, "skills": list_skills(cwd)})
 
 
+@app.route("/api/claude/note", methods=["POST"])
+def claude_session_note():
+    """会话备注：{session_id, note}——note 空串清除。备注优先于 aiTitle 显示。"""
+    from .claude_sessions import set_session_note
+    data = request.get_json(force=True, silent=True) or {}
+    sid = (data.get("session_id") or "").strip()
+    if not sid:
+        return jsonify({"ok": False, "err": "session_id 不能为空"}), 400
+    notes = set_session_note(sid, data.get("note") or "")
+    return jsonify({"ok": True, "note": notes.get(sid, ""), "notes": notes})
+
+
 @app.route("/api/claude/status")
 def claude_status():
     """聚合状态：本工具打开的 claude 连接 + 外部活跃会话数。

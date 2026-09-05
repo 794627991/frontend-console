@@ -1116,6 +1116,11 @@
   .claude-sess .cdir { font-weight: 600; color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .claude-sess .ctime { margin-left: auto; color: var(--muted); font-size: 10px; flex-shrink: 0; }
   .claude-sess .srow2 { color: var(--muted); font-size: 10px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 会话备注按钮：默认隐形，hover 卡片才现；备注过的会话名字带下划线点标记 */
+  .claude-sess .note-btn { margin-left: auto; opacity: 0; border: none; background: none; color: var(--muted); cursor: pointer; font-size: 11px; padding: 0 3px; flex-shrink: 0; }
+  .claude-sess:hover .note-btn { opacity: 1; }
+  .claude-sess .note-btn:hover { color: var(--accent); }
+  .claude-sess .cdir.noted { text-decoration: underline dotted; text-underline-offset: 3px; }
   .claude-skills { display: flex; flex-direction: column; gap: 4px; }
   .claude-skill { font-size: 11px; padding: 4px 8px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; }
   .claude-skill .sk-name { font-family: var(--font-mono); color: var(--accent); font-weight: 600; }

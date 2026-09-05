@@ -195,7 +195,45 @@ def list_sessions(limit=50):
     if len(_sess_cache) > _CACHE_MAX:
         for k in list(_sess_cache)[:len(_sess_cache) - _CACHE_MAX]:
             _sess_cache.pop(k, None)
+    # 用户备注优先于 aiTitle：session_id → 备注名（存工具 config.json，不动 claude 的 jsonl——
+    # claude 下次起标题会覆盖自己的 ai-title 行，但不会碰我们的备注）
+    notes = _load_notes()
+    for s in result[:limit]:
+        note = notes.get(s["session_id"])
+        if note:
+            s["note"] = note
+            s["title"] = note   # 显示优先级：备注 > aiTitle > 首条消息
     return result[:limit]
+
+
+def _load_notes():
+    """读会话备注表（存 ~/.serialconsole_pro/config.json 的 claude_notes 键）。"""
+    try:
+        from src.app_state import _load_config
+        return dict(_load_config().get("claude_notes") or {})
+    except Exception:
+        return {}
+
+
+def set_session_note(session_id, note):
+    """写/清一条会话备注。note 空串删除该条。返回更新后的表。"""
+    from src.app_state import _load_config, _save_config
+    cfg = _load_config()
+    notes = dict(cfg.get("claude_notes") or {})
+    sid = (session_id or "").strip()
+    if not sid:
+        return notes
+    note = (note or "").strip()
+    if note:
+        notes[sid] = note
+    else:
+        notes.pop(sid, None)
+    cfg["claude_notes"] = notes
+    _save_config(cfg)
+    # 备注改了要让列表缓存失效（title 已合进 parsed 缓存）
+    global _sess_cache
+    _sess_cache.clear()
+    return notes
 
 
 # ---- 技能（第 2 期只读列出；第 3 期再做管理） ----

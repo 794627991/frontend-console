@@ -72,7 +72,47 @@ function _claudeRelTime(iso) {
 // 脏检查 key：内容没变跳过 innerHTML 重建（照 refreshMcpInfo 模式）
 let _claudeSessionsKey = '', _claudeRunningKey = '', _claudeSkillsKey = '';
 
-// 子 sheet 切换（活跃/历史/技能）+ 计数徽标更新
+// 会话备注：✎ 点击弹输入框，POST /api/claude/note。标题优先级：备注 > aiTitle > 首条消息。
+// 后端写工具 config.json（claude_notes 键），不动 claude 的 jsonl。
+function _claudeEditNote(sessionId, curTitle) {
+  const note = prompt('会话备注（留空清除，显示优先于 AI 起的标题）：', curTitle || '');
+  if (note === null) return;   // 取消不改
+  fetch('/api/claude/note', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({session_id: sessionId, note})})
+    .then(() => { _claudeSessionsKey = ''; _claudeRunningKey = ''; refreshClaudePanel(); })
+    .catch(() => showBanner('备注保存失败', 3000, true));
+}
+
+// 卡片生成共用：会话行（含 ✎ 备注按钮）+ 点击行为绑定。
+// sel 容器、resume 恢复逻辑与历史/活跃两 sheet 一致。
+function _claudeSessionCard(s, opts = {}) {
+  const dirName = (s.cwd || '').split(/[\\\\/]/).pop() || s.project;
+  const hasNote = !!s.note;
+  return `<div class="claude-sess" data-resume="${esc(s.session_id)}" data-cwd="${esc(s.cwd || '')}" data-title="${esc(s.title || s.summary || '')}" data-sid="${esc(s.session_id)}" title="${esc((hasNote ? '备注：' + s.note + ' · ' : '') + (s.title ? dirName + ' · ' : '') + (s.summary || '') + '  @' + (s.cwd || ''))}">
+    <div class="srow1">
+      ${opts.live ? '<span class="live-dot"></span>' : ''}
+      <span class="cdir${hasNote ? ' noted' : ''}">${esc(s.title || s.summary || dirName)}</span>
+      ${opts.ext ? '<span class="cstate">外部</span>' : ''}
+      <button class="note-btn" data-note="${esc(s.session_id)}" title="改备注（显示优先）">✎</button>
+      <span class="ctime">${esc(opts.time || '')}</span>
+    </div>
+    <div class="srow2">${esc(s.title ? (s.summary || dirName) : dirName)}</div>
+  </div>`;
+}
+function _claudeBindCards(container) {
+  container.querySelectorAll('.claude-sess').forEach(el => {
+    el.querySelector('.note-btn').onclick = (e) => {
+      e.stopPropagation();
+      const c = el.querySelector('.cdir');
+      _claudeEditNote(el.dataset.sid, c ? c.textContent : '');
+    };
+    el.onclick = () => {
+      const exist = `claude:r-${(el.dataset.resume || '').slice(0, 8)}`;
+      if (connections[exist]) { switchTab(exist); return; }
+      connectClaude({resume: el.dataset.resume, cwd: el.dataset.cwd, label: el.dataset.title || 'Claude'});
+    };
+  });
+}
 document.querySelectorAll('.claude-sheet-tab').forEach(tab => {
   tab.onclick = () => {
     document.querySelectorAll('.claude-sheet-tab').forEach(t => t.classList.toggle('active', t === tab));
@@ -114,27 +154,13 @@ async function refreshClaudePanel() {
            <span class="cname">${esc(m.label || (m.cwd || '').split(/[\\\\/]/).pop() || m.port_id)}</span>
            <span class="cstate">${m.alive ? '运行中' : '已退出'}</span>
          </div>`).join('');
-      // 外部活跃会话卡片：点击同样恢复进来（与历史一致）
-      const extRows = activeExt.filter(s => !(rs.mine || []).some(m => m.resume === s.session_id)).map(s => {
-        const dirName = (s.cwd || '').split(/[\\\\/]/).pop() || s.project;
-        return `<div class="claude-sess" data-resume="${esc(s.session_id)}" data-cwd="${esc(s.cwd || '')}" data-title="${esc(s.title || s.summary || '')}" title="外部进程正在使用此会话 · ${esc(s.cwd || '')}">
-          <div class="srow1">
-            <span class="live-dot"></span>
-            <span class="cdir">${esc(s.title || s.summary || dirName)}</span>
-            <span class="cstate">外部</span>
-          </div>
-          <div class="srow2">${esc(s.title ? (s.summary || dirName) : dirName)}</div>
-        </div>`;
-      }).join('');
+      // 外部活跃会话卡片：点击同样恢复进来（与历史一致），带 ✎ 备注入口
+      const extRows = activeExt.filter(s => !(rs.mine || []).some(m => m.resume === s.session_id))
+        .map(s => _claudeSessionCard(s, {live: true, ext: true})).join('');
       runningEl.innerHTML = (mineRows + extRows) || '<div class="claude-empty">无活跃会话</div>';
       runningEl.querySelectorAll('.claude-run').forEach(r =>
         r.onclick = () => switchTab(r.dataset.port));
-      runningEl.querySelectorAll('.claude-sess').forEach(el =>
-        el.onclick = () => {
-          const exist = `claude:r-${(el.dataset.resume || '').slice(0, 8)}`;
-          if (connections[exist]) { switchTab(exist); return; }
-          connectClaude({resume: el.dataset.resume, cwd: el.dataset.cwd, label: el.dataset.title || 'Claude'});
-        });
+      _claudeBindCards(runningEl);
     }
 
     // 历史 sheet：非活跃的主体会话（活跃的在「活跃」sheet）
@@ -143,31 +169,10 @@ async function refreshClaudePanel() {
     const sessKey = history.map(s => `${s.session_id}:${s.mtime}:${s.title}`).join(',');
     if (sessKey !== _claudeSessionsKey) {
       _claudeSessionsKey = sessKey;
-      if (!history.length) {
-        sessEl.innerHTML = '<div class="claude-empty">暂无历史会话</div>';
-      } else {
-        sessEl.innerHTML = history.map(s => {
-          const dirName = (s.cwd || '').split(/[\\\\/]/).pop() || s.project;
-          // title = aiTitle 优先（后台总览同款会话名），无则首条消息摘要；
-          // 目录名降级进 title 属性提示
-          return `<div class="claude-sess" data-resume="${esc(s.session_id)}" data-cwd="${esc(s.cwd || '')}" data-title="${esc(s.title || s.summary || '')}" title="${esc((s.title ? dirName + ' · ' : '') + (s.summary || '') + '  @' + (s.cwd || ''))}">
-            <div class="srow1">
-              <span class="cdir">${esc(s.title || s.summary || dirName)}</span>
-              <span class="ctime">${esc(_claudeRelTime(s.last_ts || s.first_ts))}</span>
-            </div>
-            <div class="srow2">${esc(s.title ? (s.summary || dirName) : dirName)}</div>
-          </div>`;
-        }).join('');
-        sessEl.querySelectorAll('.claude-sess').forEach(el =>
-          el.onclick = () => {
-            // 已打开的恢复会话直接切过去（后端按 resume 去重报错，前端先自查）
-            const exist = `claude:r-${(el.dataset.resume || '').slice(0, 8)}`;
-            if (connections[exist]) { switchTab(exist); return; }
-            // tab 标题用会话名（不是「恢复+哈希」——哈希对用户无意义）
-            const label = el.dataset.title || `Claude`;
-            connectClaude({resume: el.dataset.resume, cwd: el.dataset.cwd, label});
-          });
-      }
+      sessEl.innerHTML = history.length
+        ? history.map(s => _claudeSessionCard(s, {time: _claudeRelTime(s.last_ts || s.first_ts)})).join('')
+        : '<div class="claude-empty">暂无历史会话</div>';
+      _claudeBindCards(sessEl);
     }
 
     // 技能 sheet（cwd 取当前 claude tab 的，没有则不带 → 只有 user+plugin）
