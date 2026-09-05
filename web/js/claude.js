@@ -110,13 +110,15 @@ async function refreshClaudePanel() {
       } else {
         sessEl.innerHTML = sessions.map(s => {
           const dirName = (s.cwd || '').split(/[\\\\/]/).pop() || s.project;
-          return `<div class="claude-sess" data-resume="${esc(s.session_id)}" data-cwd="${esc(s.cwd || '')}" title="${esc(s.cwd || '')}">
+          // title = aiTitle 优先（后台总览同款会话名），无则首条消息摘要；
+          // 目录名降级进 title 属性提示
+          return `<div class="claude-sess" data-resume="${esc(s.session_id)}" data-cwd="${esc(s.cwd || '')}" data-title="${esc(s.title || s.summary || '')}" title="${esc((s.title ? dirName + ' · ' : '') + (s.summary || '') + '  @' + (s.cwd || ''))}">
             <div class="srow1">
               ${s.active ? '<span class="live-dot"></span>' : ''}
-              <span class="cdir">${esc(dirName)}</span>
+              <span class="cdir">${esc(s.title || s.summary || dirName)}</span>
               <span class="ctime">${esc(_claudeRelTime(s.last_ts || s.first_ts))}</span>
             </div>
-            <div class="srow2">${esc(s.summary || '')}</div>
+            <div class="srow2">${esc(s.title ? (s.summary || dirName) : dirName)}</div>
           </div>`;
         }).join('');
         sessEl.querySelectorAll('.claude-sess').forEach(el =>
@@ -124,7 +126,9 @@ async function refreshClaudePanel() {
             // 已打开的恢复会话直接切过去（后端按 resume 去重报错，前端先自查）
             const exist = `claude:r-${(el.dataset.resume || '').slice(0, 8)}`;
             if (connections[exist]) { switchTab(exist); return; }
-            connectClaude({resume: el.dataset.resume, cwd: el.dataset.cwd});
+            // tab 标题用会话名（不是「恢复+哈希」——哈希对用户无意义）
+            const label = el.dataset.title || `Claude`;
+            connectClaude({resume: el.dataset.resume, cwd: el.dataset.cwd, label});
           });
       }
     }

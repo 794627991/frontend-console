@@ -136,20 +136,17 @@ class ClaudeConnection(BaseConnection):
             argv = [exe]
         if self.resume:
             argv += ["--resume", self.resume]
-        # 工具壳体是亮色主题时，给本会话注入 light-ansi 主题（--settings 只作用于
-        # 当前进程会话、不写用户配置文件，不影响用户其他终端里的 claude）。
-        # 用 light-ansi 而非 light：代码块颜色由内置语法高亮器固定调色板决定、
-        # 不受 theme 控制（官方 issue #48636/#85821 挂着）——light 下代码块仍是
-        # 白字看不清；light-ansi 走 16 色 ANSI 路线，颜色落到本工具 xterm 已按
-        # 亮色调好的调色板（theme.js LIGHT_THEMES 映射），代码块变深色可读。
+        # 每个会话都建 --settings 临时文件（不只亮色）：theme 键随工具壳体亮暗写入
+        # （亮=light-ansi 走 ANSI 16 色、颜色落到本工具 xterm 调色板；暗=dark 保持
+        # 默认观感）。--settings 只作用于当前进程、不写用户配置文件。工具中途换主题
+        # 时改写此文件即可——Claude 监视 settings 文件热重载，运行中会话立即生效。
         # 必须用临时文件而非内联 JSON：cmd shim 中转时 cmd.exe /c 会剥掉
         # 内联 JSON 的双引号，claude 收到非法 JSON 直接报错；文件路径无此问题。
-        if self._light_theme:
-            fd, settings_path = tempfile.mkstemp(suffix=".json", prefix="claude_theme_")
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write('{"theme": "light-ansi"}')
-            self._theme_settings_path = settings_path
-            argv += ["--settings", settings_path]
+        fd, settings_path = tempfile.mkstemp(suffix=".json", prefix="claude_theme_")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write('{"theme": "%s"}' % ("light-ansi" if self._light_theme else "dark"))
+        self._theme_settings_path = settings_path
+        argv += ["--settings", settings_path]
         env = dict(os.environ)  # ConPTY 要求完整环境；claude 依赖 PATH/HOME/TERM
         env.setdefault("TERM", "xterm-256color")
         env.setdefault("COLORTERM", "truecolor")
@@ -210,6 +207,22 @@ class ClaudeConnection(BaseConnection):
                 os.remove(p)
             except Exception:
                 pass
+
+    def set_light_theme(self, light):
+        """工具壳体换主题时改写本会话的 --settings 临时文件（/api/claude_theme 调用）。
+        Claude 监视 settings 文件热重载，theme 改动对运行中会话立即生效——
+        工具亮暗切换 → 所有活跃 claude 会话跟随，无需重开。"""
+        p = getattr(self, "_theme_settings_path", None)
+        if not p or not os.path.isfile(p):
+            return False
+        val = "light-ansi" if light else "dark"
+        try:
+            with open(p, "w", encoding="utf-8") as f:
+                f.write('{"theme": "%s"}' % val)
+            self._light_theme = bool(light)
+            return True
+        except Exception:
+            return False
 
     def _io_reconnect(self):
         # claude 无重连语义（EOF 路径已让 reader 干净退出，不会走到这；保险起见拒绝）

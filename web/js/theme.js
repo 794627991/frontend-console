@@ -58,6 +58,17 @@ function applyTheme(id, persist) {
     const c = connections[pid];
     if (c && c.term) { try { c.term.options.theme = theme; } catch(_) {} }
   }
+  // 活跃 claude 会话跟随换肤：改写其 --settings 临时文件，Claude 热重载立即重绘
+  // （settings 热重载是官方文档行为；--settings 是会话级注入，不影响其他终端）
+  if (typeof connections !== 'undefined') {
+    const hasClaude = Object.values(connections).some(c => c && c.meta && c.meta.kind === 'claude');
+    if (hasClaude) {
+      try {
+        fetch('/api/claude_theme', {method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({light: LIGHT_THEMES.includes(id)})}).catch(() => {});
+      } catch(_) {}
+    }
+  }
   // Monaco 编辑器同步换深浅主题（未加载时静默，monaco-bridge 自行跳过）
   if (typeof monacoSyncTheme === 'function') monacoSyncTheme();
   // MD 预览面同步换肤（markdown-it 渲染走 CSS 变量，无需处理；此钩子留扩展位）

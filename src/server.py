@@ -307,6 +307,25 @@ def api_resize():
     except Exception as e:
         return jsonify({"ok": False, "err": str(e)}), 500
 
+@app.route("/api/claude_theme", methods=["POST"])
+def api_claude_theme():
+    """工具壳体换主题时同步所有活跃 claude 会话（settings 临时文件热重载）。
+    body: {light: true/false}——对全部 kind='claude' 连接调用 set_light_theme。"""
+    data = request.get_json(force=True)
+    light = bool(data.get("light"))
+    applied, skipped = 0, 0
+    with _ports_lock:
+        conns = [p for p in _ports.values() if getattr(p, "kind", "") == "claude"]
+    for p in conns:
+        try:
+            if p.set_light_theme(light):
+                applied += 1
+            else:
+                skipped += 1
+        except Exception:
+            skipped += 1
+    return jsonify({"ok": True, "applied": applied, "skipped": skipped})
+
 @app.route("/api/send", methods=["POST"])
 def api_send():
     data = request.get_json(force=True)

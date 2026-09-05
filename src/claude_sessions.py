@@ -47,7 +47,15 @@ def _head_tail(path, head=64 * 1024, tail=128 * 1024):
 
 
 def _first_user_summary(head_lines):
-    """从头窗行找首条真实用户消息，返回 (summary, timestamp)。找不到返回 (None, None)。"""
+    """从头窗行找首条【主体会话判定级】真实用户消息（typed + human origin），
+    返回 (summary, timestamp, is_mainline)。is_mainline=False 表示该 jsonl
+    是碎片（后台 sdk 转写 / queue 碎片 / compact 残壳），列表里不显示。
+
+    主体会话判据（实测验证）：user 行 promptSource='typed' 且 origin.kind='human'。
+    —— Claude Code 的「后台会话」（agent 后台 run）转写出来 promptSource='sdk'，
+    /compact 与 queue-operation 碎片没有 typed 消息。用户看到的正是
+    自己 typed 开的对话，与 CLI 自带后台总览（图示 agent 视图）口径一致。"""
+    is_mainline = False
     for raw in head_lines:
         try:
             o = json.loads(raw)
@@ -58,6 +66,9 @@ def _first_user_summary(head_lines):
         # 块式 content（新版本）取第一个 text 块；字符串 content（老版本）直接用
         msg = o.get("message") or {}
         c = msg.get("content")
+        # tool_result（工具回显）不算用户输入
+        if isinstance(c, list) and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in c):
+            continue
         text = None
         if isinstance(c, str):
             text = c
@@ -68,10 +79,33 @@ def _first_user_summary(head_lines):
                     break
         if not text or _SKIP_MSG_RE.match(text.strip()):
             continue
-        # 纯文本化：去 ANSI 转义 + 压缩空白
-        text = re.sub(r"\s+", " ", _ANSI_RE.sub("", text)).strip()
-        return (text[:80], o.get("timestamp"))
-    return (None, None)
+        if o.get("promptSource") == "typed" and (o.get("origin") or {}).get("kind") == "human":
+            is_mainline = True
+            # 纯文本化：去 ANSI 转义 + 压缩空白
+            text = re.sub(r"\s+", " ", _ANSI_RE.sub("", text)).strip()
+            return (text[:80], o.get("timestamp"), True)
+        if not is_mainline:
+            # 记下第一条真实消息备作标题兜底（非 typed 会话也走到这）
+            text_bk = re.sub(r"\s+", " ", _ANSI_RE.sub("", text)).strip()
+            if not _first_user_summary._bk:
+                _first_user_summary._bk = (text_bk[:80], o.get("timestamp"))
+    return (_first_user_summary._bk[0], _first_user_summary._bk[1], is_mainline)
+_first_user_summary._bk = (None, None)   # 单文件解析期临时槽（每次解析前重置）
+
+
+def _title_of(head_lines, fallback_summary):
+    """会话显示名：aiTitle/agentName 行优先（Claude 自起的名字，后台总览同款），
+    无则用首条消息摘要。"""
+    for raw in head_lines:
+        try:
+            o = json.loads(raw)
+        except Exception:
+            continue
+        if o.get("type") in ("ai-title", "agent-name"):
+            t = o.get("aiTitle") or o.get("agentName")
+            if t:
+                return re.sub(r"\s+", " ", t).strip()[:60]
+    return fallback_summary or ""
 
 
 def _cwd_of(head_lines, fallback_name):
@@ -92,14 +126,18 @@ def _cwd_of(head_lines, fallback_name):
 
 
 def _parse_session(path, project_dir_name):
-    """解析单个会话 jsonl → dict。任何异常返回 None（不进列表）。"""
+    """解析单个会话 jsonl → dict。碎片（无 typed 主体消息）返回 None 不进列表。"""
     try:
         h, t = _head_tail(path)
     except OSError:
         return None
     if not h:
         return None
-    summary, first_ts = _first_user_summary(h)
+    _first_user_summary._bk = (None, None)   # 备作标题兜底的槽位
+    summary, first_ts, is_mainline = _first_user_summary(h)
+    if not is_mainline:
+        return None   # 后台 sdk 转写 / queue 碎片 / compact 残壳——用户没在这个文件里 typed 过
+    title = _title_of(h, summary)
     cwd = _cwd_of(h, project_dir_name)
     # 消息数近似：尾窗里 type=user/assistant 的行数（尾窗最多 128KB，几 MB 会话也只数近尾部）
     approx_msgs = 0
@@ -118,6 +156,7 @@ def _parse_session(path, project_dir_name):
         "session_id": os.path.splitext(os.path.basename(path))[0],
         "cwd": cwd,
         "project": project_dir_name,
+        "title": title,          # aiTitle 优先（后台总览同款会话名），否则首条消息
         "summary": summary or "（无文本消息）",
         "first_ts": first_ts or "",
         "last_ts": last_ts or first_ts or "",
