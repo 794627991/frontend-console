@@ -71,7 +71,7 @@ function buildEditorTab(name, content, extPath) {
   const tab = document.createElement('div');
   tab.className = 'tab';
   tab.dataset.portId = portId;
-  tab.innerHTML = `<span class="led" style="color:var(--accent)">📝</span><span class="label">${esc(name || '未命名')}</span><span class="baud"></span><span class="close" title="关闭">✕</span>`;
+  tab.innerHTML = `<span class="led"></span><span class="tab-ico">📝</span><span class="label">${esc(name || '未命名')}</span><span class="baud"></span><span class="close" title="关闭">✕</span>`;
   tab.onclick = (e) => { if (e.target.classList.contains('close')) { e.stopPropagation(); closeEditorTab(portId); return; } switchTab(portId); };
   // 双击 tab 标题 → 快捷改名（外部文件禁用——保持原路径）
   tab.querySelector('.label').ondblclick = (e) => {
@@ -120,6 +120,7 @@ function buildEditorTab(name, content, extPath) {
   const es = termArea.querySelector('.empty-state');
   if (es) es.remove();
   tabs.insertBefore(tab, tabs.querySelector('.tab-bar-actions'));
+  if (typeof _initTabDrag === 'function') _initTabDrag(tab);   // 拖拽排序（tab-drag.js）
   termArea.appendChild(wrap);
   const conn = {
     portId,

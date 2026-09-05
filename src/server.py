@@ -1283,9 +1283,12 @@ def ai_mcp_info():
     with _mcp_calls_lock:
         calls = list(_mcp_calls)
     # 读 endpoint 信息
+    # 注意：endpoint.json 永远在 ~/.serialconsole_pro（main.py 写入端注释「endpoint 写入仍用
+    # HOME_DIR」）——不能用 STATE_DIR：数据目录迁移后 STATE_DIR 被切到数据目录，
+    # 此处就找不到 endpoint 了（MCP 面板误报「后端未运行」）
     ep_info = {}
     try:
-        ep_path = os.path.join(STATE_DIR, "endpoint.json")
+        ep_path = os.path.join(HOME_DIR, ".serialconsole_pro", "endpoint.json")
         if os.path.isfile(ep_path):
             with open(ep_path, "r", encoding="utf-8") as f:
                 ep_info = json.load(f)

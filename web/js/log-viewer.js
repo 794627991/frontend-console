@@ -104,7 +104,7 @@ function buildLogViewer(path) {
   const tab = document.createElement('div');
   tab.className = 'tab';
   tab.dataset.portId = portId;
-  tab.innerHTML = `<span class="led" style="color:var(--accent)">📜</span><span class="label">${esc(name)}</span><span class="baud"></span><span class="close" title="关闭">✕</span>`;
+  tab.innerHTML = `<span class="led"></span><span class="tab-ico">📜</span><span class="label">${esc(name)}</span><span class="baud"></span><span class="close" title="关闭">✕</span>`;
   tab.onclick = (e) => { if (e.target.classList.contains('close')) { e.stopPropagation(); closeLogViewer(portId); return; } switchTab(portId); };
   // 建 wrap（.term-area，内含日志查看器）
   const wrap = document.createElement('div');
@@ -145,6 +145,7 @@ function buildLogViewer(path) {
   if (es) es.remove();
   // tab 插到 .tab-bar-actions 之前（按钮组左侧）——appendChild 会跑到按钮右边
   tabs.insertBefore(tab, tabs.querySelector('.tab-bar-actions'));
+  if (typeof _initTabDrag === 'function') _initTabDrag(tab);   // 拖拽排序（tab-drag.js）
   termArea.appendChild(wrap);
   // conn 对象
   const conn = {

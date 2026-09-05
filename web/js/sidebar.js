@@ -168,7 +168,11 @@ function refreshSidebar() {
       if (el.textContent !== t) el.textContent = t;
     });
   }
-  // 标签栏同序重排（复用全局 sortKeyFn）——当前顺序已一致时跳过，不动 DOM
+  // 标签栏同序重排（复用全局 sortKeyFn）——当前顺序已一致时跳过，不动 DOM。
+  // 用户手动拖过 tab（_tabOrderManual，tab-drag.js）后让位：不再自动重排，
+  // 尊重用户顺序；全部 tab 关闭回到空态时重置（下次恢复默认排序）
+  if (typeof _maybeResetTabOrder === 'function') _maybeResetTabOrder();
+  if (typeof _tabOrderManual !== 'undefined' && _tabOrderManual) return;
   const tabEls = Array.from(tabs.querySelectorAll('.tab'));
   const curIds = tabEls.map(t => t.dataset.portId);
   const wantIds = ids.concat(curIds.filter(id => !connections[id]));
@@ -176,7 +180,7 @@ function refreshSidebar() {
   if (needSort) {
     tabEls.sort((a, b) => {
       const ka = sortKeyFn(a.dataset.portId), kb = sortKeyFn(b.dataset.portId);
-      return ka[0] !== kb[0] ? ka[0] - kb[0] : (ka[1] < kb[1] ? -1 : kb[1] > kb[1] ? 1 : 0);
+      return ka[0] !== kb[0] ? ka[0] - kb[0] : (ka[1] < kb[1] ? -1 : ka[1] > kb[1] ? 1 : 0);
     });
     const actions = tabs.querySelector('.tab-bar-actions');
     tabEls.forEach(t => tabs.insertBefore(t, actions));

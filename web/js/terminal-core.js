@@ -14,6 +14,7 @@ function buildTerminal(portId, meta) {
   wrap.dataset.portId = portId;
   wrap.style.display = 'none';
   wrap.innerHTML = `
+    ${meta.kind === 'claude' ? '' : `
     <div class="term-toolbar">
       <button class="lv-btn term-tb-pause" title="暂停/恢复滚屏">⏸ 暂停</button>
       <button class="lv-btn term-tb-clear" title="清屏（只清显示，缓冲历史不丢）">⊘ 清屏</button>
@@ -22,7 +23,7 @@ function buildTerminal(portId, meta) {
       <button class="lv-btn term-tb-ctrld" title="发送 Ctrl-D (EOF)">^D</button>
       <button class="lv-btn term-tb-jump" title="跳到底部跟随实时 (Ctrl+End)">⤓ 跳底</button>
       <button class="lv-btn term-tb-ts" title="时间戳注入：新输出行首加 [HH:MM:SS.mmm]，排障定位用">⏱ 时间戳</button>
-    </div>
+    </div>`}
     <div class="output-wrap">
       <div class="xterm-wrap" data-xterm="${portId}"></div>
       <div class="xterm-bottom-pad"></div>
@@ -41,7 +42,10 @@ function buildTerminal(portId, meta) {
 
   // 终端工具栏（仿日志 tab 的 log-viewer-toolbar）：串口/SSH 专属功能按钮
   // 放连接区内，tab 栏保持整洁——按钮只作用于本连接
-  const tb = {
+  // claude 终端不渲染工具栏（上面的 innerHTML 已跳过）：串口专属功能（清屏/时间戳/
+  // 暂停滚屏/新日志）对 claude 无意义，^C/^D/跳底也不再要——按需求整栏去掉。
+  const _noTb = meta.kind === 'claude';
+  const tb = _noTb ? {} : {
     pause: wrap.querySelector('.term-tb-pause'),
     clear: wrap.querySelector('.term-tb-clear'),
     newlog: wrap.querySelector('.term-tb-newlog'),
@@ -50,43 +54,36 @@ function buildTerminal(portId, meta) {
     jump: wrap.querySelector('.term-tb-jump'),
     ts: wrap.querySelector('.term-tb-ts'),
   };
-  // claude 终端不落盘日志（Claude 自带 ~/.claude 转写）——隐藏「＋📋 新日志」
-  if (meta.kind === 'claude') {
-    tb.newlog.style.display = 'none';
-    // 串口/SSH 专属功能对 claude 无意义：清屏（Claude 自管界面）、时间戳注入（破坏 TUI 渲染）、
-    // 暂停滚屏（Claude 非流式滚动输出）——只留 ^C（中断回复生成，常用）、^D、跳底
-    tb.clear.style.display = 'none';
-    tb.ts.style.display = 'none';
-    tb.pause.style.display = 'none';
+  if (!_noTb) {
+    tb.pause.onclick = () => {
+      conn.paused = !conn.paused;
+      tb.pause.textContent = conn.paused ? '▶ 继续' : '⏸ 暂停';
+      tb.pause.classList.toggle('active', conn.paused);
+      if (!conn.paused) { conn.autoScroll = true; try { conn.term.scrollToBottom(); } catch(e){} }
+    };
+    tb.clear.onclick = () => {
+      try { conn.term.clear(); } catch(e){}
+      conn.kwDecorLastRow = 0;
+      conn.kwDecorations.forEach(d => { try { d.dispose(); } catch(e){} });
+      conn.kwDecorations = [];
+      fetch('/api/clear_buffer', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: portId})});
+    };
+    tb.newlog.onclick = async () => {
+      try {
+        const r = await fetch('/api/new_log', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: portId})});
+        const j = await r.json();
+        showBanner('已开新日志：' + (j.log_path || ''));
+      } catch(e) { showBanner('开新日志失败：' + e, 6000, true); }
+    };
+    tb.ctrlc.onclick = () => termSendRaw(portId, [3]);
+    tb.ctrld.onclick = () => termSendRaw(portId, [4]);
+    tb.jump.onclick = () => jumpToBottom(portId);
+    tb.ts.onclick = () => {
+      conn.tsEnabled = !conn.tsEnabled;
+      tb.ts.classList.toggle('active', conn.tsEnabled);
+      showBanner(conn.tsEnabled ? '已开启时间戳注入（新输出行首加 [HH:MM:SS.mmm]）' : '已关闭时间戳注入');
+    };
   }
-  tb.pause.onclick = () => {
-    conn.paused = !conn.paused;
-    tb.pause.textContent = conn.paused ? '▶ 继续' : '⏸ 暂停';
-    tb.pause.classList.toggle('active', conn.paused);
-    if (!conn.paused) { conn.autoScroll = true; try { conn.term.scrollToBottom(); } catch(e){} }
-  };
-  tb.clear.onclick = () => {
-    try { conn.term.clear(); } catch(e){}
-    conn.kwDecorLastRow = 0;
-    conn.kwDecorations.forEach(d => { try { d.dispose(); } catch(e){} });
-    conn.kwDecorations = [];
-    fetch('/api/clear_buffer', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: portId})});
-  };
-  tb.newlog.onclick = async () => {
-    try {
-      const r = await fetch('/api/new_log', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: portId})});
-      const j = await r.json();
-      showBanner('已开新日志：' + (j.log_path || ''));
-    } catch(e) { showBanner('开新日志失败：' + e, 6000, true); }
-  };
-  tb.ctrlc.onclick = () => termSendRaw(portId, [3]);
-  tb.ctrld.onclick = () => termSendRaw(portId, [4]);
-  tb.jump.onclick = () => jumpToBottom(portId);
-  tb.ts.onclick = () => {
-    conn.tsEnabled = !conn.tsEnabled;
-    tb.ts.classList.toggle('active', conn.tsEnabled);
-    showBanner(conn.tsEnabled ? '已开启时间戳注入（新输出行首加 [HH:MM:SS.mmm]）' : '已关闭时间戳注入');
-  };
 
   const conn = {
     portId,  // 用于搜索分栏调 /api/search 时定位连接（不依赖 activePortId）
@@ -199,16 +196,20 @@ function buildTerminal(portId, meta) {
     showCtxMenu(e.clientX, e.clientY, conn);
   });
 
-  // ---- 备用屏(全屏 TUI)下滚轮 → PgUp/PgDn ----
-  // Claude Code 等全屏程序处于备用屏时，xterm 默认把滚轮翻译成 ↑↓ 发给程序，
-  // 程序收到方向键无法翻历史（提示 "use PgUp/PgDn to scroll"）。
-  // 拦截备用屏下的滚轮，改发 PgUp/PgDn；主屏(普通 shell)滚轮保持原生滚动缓冲。
+  // ---- claude TUI 滚轮 → PgUp/PgDn ----
+  // Claude Code 行内渲染（不切备用屏），且其 TUI 开启鼠标上报，xterm 会把滚轮
+  // 转成方向键/鼠标序列发给程序，Claude 收到无法翻历史（提示 "use PgUp/PgDn"）。
+  // 必须在捕获阶段拦截 + stopPropagation，阻止 xterm 内部滚轮监听器收到事件
+  // （preventDefault 只挡浏览器默认行为，挡不住 xterm 已绑定的 handler）。
   conn.xtermWrap.addEventListener('wheel', e => {
-    if (conn.meta && conn.meta.kind === 'claude' && conn.term.buffer.active.type === 'alternate') {
-      e.preventDefault();
-      conn.term.scrollLines(e.deltaY > 0 ? conn.term.rows : -conn.term.rows);
-    }
-  }, {passive: false});
+    if (!(conn.meta && conn.meta.kind === 'claude')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const seq = e.deltaY > 0 ? '\x1b[6~' : '\x1b[5~';   // PgDn / PgUp
+    const bytes = [];
+    for (let i = 0; i < seq.length; i++) bytes.push(seq.charCodeAt(i));
+    termSendRaw(portId, bytes);
+  }, {capture: true, passive: false});
 
   // ---- xterm 输入 → 串口 ----
   conn.term.onData(data => {
@@ -268,6 +269,8 @@ function buildTerminal(portId, meta) {
   }
   if (!inserted) tabs.insertBefore(tab, tabs.querySelector('.tab-bar-actions'));
   termArea.appendChild(wrap);
+  // 拖拽排序（所有 tab 类型通用，见 tab-drag.js）
+  if (typeof _initTabDrag === 'function') _initTabDrag(tab);
 
   // SSE
   connectSSE(portId, conn);

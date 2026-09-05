@@ -799,8 +799,15 @@
     content: ""; position: absolute; bottom: -1px; left: 0; right: 0; height: 2px;
     background: linear-gradient(90deg, var(--accent), transparent);
   }
-  .tab .led { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+  .tab .led { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
   .tab.active .led { background: var(--neon-green); box-shadow: 0 0 6px var(--neon-green); }
+  /* tab 图标（📝/📜/🔢）：独立于 led——旧版把 emoji 塞进 .led 里，撑满圆点位置
+     挡住状态灯；拆开后 led 恢复圆点语义 */
+  .tab .tab-ico { font-size: 12px; flex-shrink: 0; line-height: 1; }
+  /* tab 拖拽排序视觉态（tab-drag.js）：拖动中半透明，落点前/后指示线 */
+  .tab.dragging { opacity: 0.45; }
+  .tab.drop-before { box-shadow: -2px 0 0 0 var(--accent); }
+  .tab.drop-after { box-shadow: 2px 0 0 0 var(--accent); }
   .tab .close { opacity: 0.4; font-size: 14px; padding: 0 2px; border-radius: 3px; }
   /* 编辑器 tab 原地改名输入框：融入 tab 外观，宽度随内容自适应 */
   .tab-rename-input {

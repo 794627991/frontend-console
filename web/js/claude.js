@@ -13,8 +13,14 @@ async function connectClaude(opts = {}) {
     const j = await r.json();
     if (!j.ok) { showBanner(j.err || 'claude 启动失败', 6000, true); return j; }
     const portId = j.port_id;
-    const label = opts.label || (j.resume ? `🤖 恢复 ${j.resume.slice(0,8)}` : '🤖 Claude');
+    // tab 结构与其他类型统一：led（进程状态灯）+ 图标 + 文字；emoji 不再塞 label
+    const label = opts.label || (j.resume ? `恢复 ${j.resume.slice(0,8)}` : 'Claude');
     const conn = buildTerminal(portId, {kind:'claude', label, cwd: j.cwd, baud: ''});
+    // buildTerminal 的 tab 无图标位——claude tab 补一个（🤖），插在 led 后
+    const ico = document.createElement('span');
+    ico.className = 'tab-ico';
+    ico.textContent = '🤖';
+    conn.tab.insertBefore(ico, conn.tab.querySelector('span:nth-child(2)'));
     connections[portId] = conn;
     switchTab(portId);
     refreshSidebar();
