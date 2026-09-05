@@ -41,7 +41,7 @@ function _dragOverlayText() {
   const c = activePortId && connections[activePortId];
   const kind = c && c.meta && c.meta.kind;
   if (kind === 'claude') return '🤖 松开把路径发给 Claude';
-  if (kind === 'editor' && c.ed && c.ed.save) return '📝 松开插入到笔记';
+  if (kind === 'editor' && c.isNote && c.editor) return '📝 松开插入到笔记';
   return '📄 松开以打开日志';
 }
 function showDragOverlay(show) {

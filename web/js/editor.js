@@ -1257,7 +1257,7 @@ async function openDroppedFile(path) {
   if (activePortId && connections[activePortId] &&
       connections[activePortId].meta && connections[activePortId].meta.kind === 'editor') {
     const c = connections[activePortId];
-    if (c.ed && c.ed.save) {   // Editor.js 实例在场（.note；纯 .txt 是 Monaco 不走这）
+    if (c.isNote && c.editor) {   // .note 的 Editor.js 实例（.txt 是 Monaco 不走这）
       const ext = (path.split('.').pop() || '').toLowerCase();
       if (['png','jpg','jpeg','gif','webp','bmp'].includes(ext)) {
         try {
@@ -1289,8 +1289,8 @@ async function _edInsertImageFromPath(path) {
   const up = await _edUploadImage(file);
   if (!up.success) { showBanner('图片插入失败', 3000, true); return true; }
   const c = connections[activePortId];
-  const index = c.ed.blocks.getBlocksCount();
-  c.ed.blocks.insert('image', { file: { url: up.file.url } }, undefined, index, false);
+  const index = c.editor.blocks.getBlocksCount();
+  c.editor.blocks.insert('image', { file: { url: up.file.url } }, undefined, index, false);
   return true;
 }
 

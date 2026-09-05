@@ -196,18 +196,32 @@ function buildTerminal(portId, meta) {
     showCtxMenu(e.clientX, e.clientY, conn);
   });
 
-  // ---- claude TUI 滚轮 → PgUp/PgDn ----
+  // ---- claude TUI 滚轮 → 逐行滚动（SGR 鼠标滚轮序列）----
   // Claude Code 行内渲染（不切备用屏），且其 TUI 开启鼠标上报，xterm 会把滚轮
-  // 转成方向键/鼠标序列发给程序，Claude 收到无法翻历史（提示 "use PgUp/PgDn"）。
-  // 必须在捕获阶段拦截 + stopPropagation，阻止 xterm 内部滚轮监听器收到事件
-  // （preventDefault 只挡浏览器默认行为，挡不住 xterm 已绑定的 handler）。
+  // 转成方向键/鼠标序列发给程序（提示 "use PgUp/PgDn"）。
+  // 在捕获阶段拦截（preventDefault 挡不住 xterm 已绑定的 handler，须 stopPropagation）。
+  // 连续手感：deltaY 累积折算行数，逐行发 SGR 鼠标滚轮序列——Claude 的 TUI
+  // 开了鼠标上报，会解析 ESC[<64;x;yM(上)/ESC[<65;x;yM(下)，一行一条，
+  // 原生逐行滚动（同真终端里滚轮事件）。格 Δ≈100 → ~2 行，滑动越快滚越多。
+  conn._wheelAcc = 0;
   conn.xtermWrap.addEventListener('wheel', e => {
     if (!(conn.meta && conn.meta.kind === 'claude')) return;
     e.preventDefault();
     e.stopPropagation();
-    const seq = e.deltaY > 0 ? '\x1b[6~' : '\x1b[5~';   // PgDn / PgUp
+    const dir = e.deltaY > 0 ? 1 : -1;
+    if (Math.sign(conn._wheelAcc) !== dir) conn._wheelAcc = 0;   // 反向时丢半截累积，防抖
+    conn._wheelAcc += e.deltaY;
+    const lines = Math.trunc(conn._wheelAcc / 40);   // 40 Δ/行：一格滚轮 ≈ 2 行
+    if (!lines) return;
+    conn._wheelAcc -= lines * 40;
+    // 坐标用视口中心；Claude 只取按钮码，坐标基本不影响滚动语义
+    const cx = Math.max(1, Math.floor(conn.term.cols / 2));
+    const cy = Math.max(1, Math.floor(conn.term.rows / 2));
+    const btn = lines > 0 ? 65 : 64;   // 65=滚轮下 64=滚轮上
+    let s = '';
+    for (let i = 0, n = Math.min(Math.abs(lines), 30); i < n; i++) s += `\x1b[<${btn};${cx};${cy}M`;
     const bytes = [];
-    for (let i = 0; i < seq.length; i++) bytes.push(seq.charCodeAt(i));
+    for (let i = 0; i < s.length; i++) bytes.push(s.charCodeAt(i));
     termSendRaw(portId, bytes);
   }, {capture: true, passive: false});
 
