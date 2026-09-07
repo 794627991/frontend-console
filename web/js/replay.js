@@ -174,7 +174,6 @@ document.querySelectorAll('.panel-tab').forEach(tab => {
     if (pane === 'analyze') renderAnalyze();
     if (pane === 'cmd') renderCmdPane();
     if (pane === 'claude' && typeof refreshClaudePanel === 'function') refreshClaudePanel();
-    if (pane === 'mcp' && typeof refreshMcpInfo === 'function') refreshMcpInfo();
   };
 });
 

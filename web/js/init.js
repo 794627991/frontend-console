@@ -36,8 +36,6 @@ setInterval(() => {
   // 感知面板可见时刷新分析（用户停在分析标签）
   const activePane = document.querySelector('.panel-tab.active');
   if (activePane && activePane.dataset.pane === 'analyze') renderAnalyze();
-  // Claude 面板可见时刷新（运行中/历史会话/技能，照 analyze 模式降载）
-  if (activePane && activePane.dataset.pane === 'claude') refreshClaudePanel();
-  // MCP 面板可见时刷新（工具/后端 + 最近调用两个子 sheet）
-  if (activePane && activePane.dataset.pane === 'mcp') refreshMcpInfo();
+  // Claude 面板可见时刷新（运行中/历史会话/技能 + MCP 子 sheet，照 analyze 模式降载）
+  if (activePane && activePane.dataset.pane === 'claude') { refreshClaudePanel(); refreshMcpInfo(); }
 }, 5000);

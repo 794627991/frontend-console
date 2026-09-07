@@ -152,8 +152,13 @@ function _claudeBindCards(container) {
 }
 document.querySelectorAll('.claude-sheet-tab').forEach(tab => {
   tab.onclick = () => {
-    document.querySelectorAll('.claude-sheet-tab').forEach(t => t.classList.toggle('active', t === tab));
-    document.querySelectorAll('.claude-sheet-pane').forEach(p =>
+    // 按父容器分组切换：MCP 子 sheet 内嵌第二级页签（工具/最近调用），
+    // 与一级（活跃/历史/技能/MCP）互不干扰——全局切换会互相误关。
+    // 结构约定：.claude-sheets（页签行）与 .claude-sheet-pane（内容）是兄弟，
+    // 都挂在同一个父容器下——切换只动本容器内的 pane。
+    const sheetsRow = tab.parentElement;
+    sheetsRow.querySelectorAll('.claude-sheet-tab').forEach(t => t.classList.toggle('active', t === tab));
+    sheetsRow.parentElement.querySelectorAll(':scope > .claude-sheet-pane').forEach(p =>
       p.classList.toggle('active', p.dataset.sheet === tab.dataset.sheet));
   };
 });
