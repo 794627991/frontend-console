@@ -125,6 +125,38 @@ def _cwd_of(head_lines, fallback_name):
     return fallback_name
 
 
+def _last_user_message(tail_lines):
+    """从尾窗行找最后一条真实用户消息（typed/human 的纯文本），作卡片摘要。
+    显示会话当前进展——首条消息（"你好"）挂在那没有信息量。尾窗最多 128KB，
+    大会话也只覆盖近尾部；全被 tool_result/系统行占据时返回 None（前端回退首条）。"""
+    for raw in reversed(tail_lines):
+        try:
+            o = json.loads(raw)
+        except Exception:
+            continue
+        if o.get("type") != "user":
+            continue
+        # 后台 agent 转写里 sdk 消息也可能进尾窗——只认 typed+human（与主体判定同口径）
+        if o.get("promptSource") != "typed" or (o.get("origin") or {}).get("kind") != "human":
+            continue
+        msg = o.get("message") or {}
+        c = msg.get("content")
+        if isinstance(c, list) and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in c):
+            continue
+        text = None
+        if isinstance(c, str):
+            text = c
+        elif isinstance(c, list):
+            for blk in c:
+                if isinstance(blk, dict) and blk.get("type") in _TEXT_TYPES and blk.get("text"):
+                    text = blk["text"]
+                    break
+        if not text or _SKIP_MSG_RE.match(text.strip()):
+            continue
+        return re.sub(r"\s+", " ", _ANSI_RE.sub("", text)).strip()[:80]
+    return None
+
+
 def _parse_session(path, project_dir_name):
     """解析单个会话 jsonl → dict。碎片（无 typed 主体消息）返回 None 不进列表。"""
     try:
@@ -152,12 +184,15 @@ def _parse_session(path, project_dir_name):
         if m:
             last_ts = m.group(1).decode("utf-8", "replace")
             break
+    # 摘要：最后一条用户消息（反映会话当前进展——首条"你好"没有信息量）；
+    # 尾窗没有 typed 消息时回退首条
+    last_summary = _last_user_message(t)
     return {
         "session_id": os.path.splitext(os.path.basename(path))[0],
         "cwd": cwd,
         "project": project_dir_name,
         "title": title,          # aiTitle 优先（后台总览同款会话名），否则首条消息
-        "summary": summary or "（无文本消息）",
+        "summary": last_summary or summary or "（无文本消息）",
         "first_ts": first_ts or "",
         "last_ts": last_ts or first_ts or "",
         "approx_msgs": approx_msgs,
