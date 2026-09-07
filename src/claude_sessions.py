@@ -125,10 +125,29 @@ def _cwd_of(head_lines, fallback_name):
     return fallback_name
 
 
+def _user_text_of(o):
+    """从解析后的 user 行提取真实文本。返回 None 表示非文本/需跳过。"""
+    msg = o.get("message") or {}
+    c = msg.get("content")
+    if isinstance(c, list) and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in c):
+        return None
+    text = None
+    if isinstance(c, str):
+        text = c
+    elif isinstance(c, list):
+        for blk in c:
+            if isinstance(blk, dict) and blk.get("type") in _TEXT_TYPES and blk.get("text"):
+                text = blk["text"]
+                break
+    if not text or _SKIP_MSG_RE.match(text.strip()):
+        return None
+    return re.sub(r"\s+", " ", _ANSI_RE.sub("", text)).strip()[:80]
+
+
 def _last_user_message(tail_lines):
     """从尾窗行找最后一条真实用户消息（typed/human 的纯文本），作卡片摘要。
     显示会话当前进展——首条消息（"你好"）挂在那没有信息量。尾窗最多 128KB，
-    大会话也只覆盖近尾部；全被 tool_result/系统行占据时返回 None（前端回退首条）。"""
+    大会话也只覆盖近尾部；全被 tool_result/系统行占据时返回 None。"""
     for raw in reversed(tail_lines):
         try:
             o = json.loads(raw)
@@ -139,22 +158,61 @@ def _last_user_message(tail_lines):
         # 后台 agent 转写里 sdk 消息也可能进尾窗——只认 typed+human（与主体判定同口径）
         if o.get("promptSource") != "typed" or (o.get("origin") or {}).get("kind") != "human":
             continue
-        msg = o.get("message") or {}
-        c = msg.get("content")
-        if isinstance(c, list) and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in c):
-            continue
-        text = None
-        if isinstance(c, str):
-            text = c
-        elif isinstance(c, list):
-            for blk in c:
-                if isinstance(blk, dict) and blk.get("type") in _TEXT_TYPES and blk.get("text"):
-                    text = blk["text"]
-                    break
-        if not text or _SKIP_MSG_RE.match(text.strip()):
-            continue
-        return re.sub(r"\s+", " ", _ANSI_RE.sub("", text)).strip()[:80]
+        text = _user_text_of(o)
+        if text:
+            return text
     return None
+
+
+# 反向扫描的总量上限：长会话末尾全是 tool_result 时尾窗（128KB）找不到
+# typed 消息，需往更早翻；但 G 级文件不能全文解析——封顶 64MB 内找。
+_LAST_SCAN_MAX = 64 * 1024 * 1024
+
+def _last_user_message_scan(path):
+    """尾窗没找到时的兜底：从文件末尾反向分块找最后一条 typed 用户消息。
+    行级快速前缀探测（b'"promptSource":"typed"'）过滤，不逐行 json.loads。"""
+    try:
+        size = os.path.getsize(path)
+        if size <= 0:
+            return None
+        chunk = 512 * 1024
+        scanned = 0
+        tail_lines = []   # 跨块的行拼接（行可能被块边界切开）
+        with open(path, "rb") as f:
+            pos = size
+            while pos > 0 and scanned < _LAST_SCAN_MAX:
+                read_n = min(chunk, pos)
+                pos -= read_n
+                f.seek(pos)
+                data = f.read(read_n)
+                scanned += read_n
+                # 与上一块遗留的行尾拼接：data + tail_lines（后面的是更早内容，
+                # data 的最后一行可能不完整，留到下一轮与更早块拼接）
+                lines = (data.split(b"\n"))
+                carry = lines.pop() if data and not data.endswith(b"\n") else None
+                # data 首行与上一轮 carry 拼成完整行
+                if tail_lines:
+                    lines[-1] = lines[-1] + tail_lines[0] if lines else tail_lines[0]
+                    lines.extend(tail_lines[1:])
+                # 倒序探测
+                for raw in reversed(lines):
+                    raw = raw.strip()
+                    if not raw or b'"promptSource":"typed"' not in raw:
+                        continue
+                    try:
+                        o = json.loads(raw)
+                    except Exception:
+                        continue
+                    if o.get("type") == "user" and \
+                       (o.get("origin") or {}).get("kind") == "human":
+                        text = _user_text_of(o)
+                        if text:
+                            return text
+                # carry（data 末尾不完整行）留给下一轮拼
+                tail_lines = [carry] if carry else []
+        return None
+    except Exception:
+        return None
 
 
 def _parse_session(path, project_dir_name):
@@ -184,9 +242,10 @@ def _parse_session(path, project_dir_name):
         if m:
             last_ts = m.group(1).decode("utf-8", "replace")
             break
-    # 摘要：最后一条用户消息（反映会话当前进展——首条"你好"没有信息量）；
-    # 尾窗没有 typed 消息时回退首条
-    last_summary = _last_user_message(t)
+    # 摘要：最后一条用户消息（反映会话当前进展——首条"你好"没有信息量）。
+    # 尾窗（128KB）末尾常见全是 tool_result——真实用户消息在更早处，
+    # 找不到时反向分块扫描兜底（封顶 64MB），再没有才回退首条
+    last_summary = _last_user_message(t) or _last_user_message_scan(path)
     return {
         "session_id": os.path.splitext(os.path.basename(path))[0],
         "cwd": cwd,
