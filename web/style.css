@@ -1036,14 +1036,9 @@
   .panel-tabs {
     display: flex; gap: 2px; padding: 0 14px; background: var(--bg-panel);
     border-bottom: 1px solid var(--border); flex-shrink: 0;
-    overflow-x: auto;
+    /* MCP 档并入 Claude 后只剩 4 档，窄窗也放得下——横向滚动与滚动条样式一并移除 */
+    overflow-x: visible;
   }
-  /* 面板标签滚动条：贴合 UI 的极细样式（原生灰条太突兀）——
-     高度 3px 半嵌在底边里，thumb 用主题 border 色，hover 才亮 */
-  .panel-tabs::-webkit-scrollbar { height: 3px; }
-  .panel-tabs::-webkit-scrollbar-track { background: transparent; }
-  .panel-tabs::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-  .panel-tabs::-webkit-scrollbar-thumb:hover { background: var(--accent); }
   .panel-tab {
     padding: 8px 12px; cursor: pointer; font-size: 12px; color: var(--muted);
     border-bottom: 2px solid transparent; transition: all 0.2s; white-space: nowrap;
