@@ -29,6 +29,9 @@ async function refreshMcpInfo() {
     $('mcpBackendUrl').textContent = j.backend_url || '—（endpoint.json 未找到）';
     // 脏检查：工具列表内容没变就跳过 innerHTML 重建（5s 一次全量重建会叠加重排/ GC，输入时感知卡顿）
     const tools = j.tools || [];
+    // 子 sheet 计数徽章（MCP 已并入 Claude 面板）：工具数
+    const mc = document.querySelector('.claude-sheet-tab[data-sheet="mcp"] .count');
+    if (mc && mc.textContent !== String(tools.length)) mc.textContent = tools.length;
     const toolsKey = tools.map(t => t.name).join(',');
     if (toolsKey !== _mcpToolsKey) {
       _mcpToolsKey = toolsKey;
@@ -38,6 +41,9 @@ async function refreshMcpInfo() {
     // 最近调用
     const calls = j.recent_calls || [];
     const callsEl = $('mcpCalls');
+    // 子 sheet 计数徽章：最近调用数
+    const cc = document.querySelector('.claude-sheet-tab[data-sheet="calls"] .count');
+    if (cc && cc.textContent !== String(calls.length)) cc.textContent = calls.length;
     // key 用最后一条的 ts+tool+args+总数：秒精度 ts 同秒两次调用 + 封顶 20 条后 len 不变都会撞 key
     const last = calls[calls.length - 1];
     const callsKey = last ? `${last.ts}|${last.tool}|${last.args}|${calls.length}` : '0';

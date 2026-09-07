@@ -111,7 +111,6 @@
       <div class="panel-tab" data-pane="sense">● 感知</div>
       <div class="panel-tab" data-pane="analyze">📊 分析</div>
       <div class="panel-tab" data-pane="claude">🤖 Claude</div>
-      <div class="panel-tab" data-pane="mcp">🔌 MCP</div>
     </div>
     <div class="panel-body" id="panelBody">
       <!-- 命令 -->
@@ -163,6 +162,8 @@
             <div class="claude-sheet-tab active" data-sheet="active">活跃 <span class="count" id="claudeActiveCount">0</span></div>
             <div class="claude-sheet-tab" data-sheet="history">历史 <span class="count" id="claudeHistoryCount">0</span></div>
             <div class="claude-sheet-tab" data-sheet="skills">技能 <span class="count" id="claudeSkillCount">0</span></div>
+            <div class="claude-sheet-tab" data-sheet="mcp">🔌 MCP <span class="count" id="claudeMcpCount">0</span></div>
+            <div class="claude-sheet-tab" data-sheet="calls">最近调用 <span class="count" id="claudeCallCount">0</span></div>
           </div>
           <div class="claude-sheet-pane active" data-sheet="active">
             <div id="claudeRunning" class="claude-sessions">—</div>
@@ -173,22 +174,18 @@
           <div class="claude-sheet-pane" data-sheet="skills">
             <div id="claudeSkills" class="claude-skills">—</div>
           </div>
-        </div>
-      </div>
-      <!-- MCP 状态 -->
-      <div class="panel-tab-pane" data-pane="mcp">
-        <div class="mcp-pane" id="mcpPane">
-          <div class="mcp-head"><span id="mcpStatusDot" class="dot"></span><span id="mcpStatusText">检测中…</span></div>
-          <div class="mcp-section">
-            <div class="title">后端地址</div>
-            <div id="mcpBackendUrl" class="mcp-mono">—</div>
+          <div class="claude-sheet-pane" data-sheet="mcp">
+            <div class="mcp-head"><span id="mcpStatusDot" class="dot"></span><span id="mcpStatusText">检测中…</span></div>
+            <div class="mcp-section">
+              <div class="title">后端地址</div>
+              <div id="mcpBackendUrl" class="mcp-mono">—</div>
+            </div>
+            <div class="mcp-section">
+              <div class="title">已注册工具</div>
+              <div id="mcpTools" class="mcp-tools">—</div>
+            </div>
           </div>
-          <div class="mcp-section">
-            <div class="title">已注册工具</div>
-            <div id="mcpTools" class="mcp-tools">—</div>
-          </div>
-          <div class="mcp-section">
-            <div class="title">最近调用</div>
+          <div class="claude-sheet-pane" data-sheet="calls">
             <div id="mcpCalls" class="mcp-calls">—</div>
           </div>
         </div>
