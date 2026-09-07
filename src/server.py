@@ -1385,7 +1385,15 @@ def claude_status():
         s = by_id.get(m.get("resume") or "")
         m["label"] = (s and (s.get("title") or s.get("summary"))) or \
                      ((m.get("cwd") or "").split("\\")[-1].split("/")[-1] or m["port_id"])
-    external = [s for s in sessions if s.get("active")]
+        # 带上 summary/session_id：前端运行中卡片渲染成完整会话卡（含摘要/备注入口）
+        if s:
+            m["summary"] = s.get("summary") or ""
+            m["note"] = s.get("note") or ""
+            m["active"] = s.get("active", False)
+    # 外部活跃计数排除本工具已打开的（否则同一会话被数两次：
+    # 状态行「运行中 1 + 外部活跃 1」其实是同一个，徽章虚高）
+    mine_ids = {m.get("resume") for m in mine if m.get("resume")}
+    external = [s for s in sessions if s.get("active") and s["session_id"] not in mine_ids]
     return jsonify({"ok": True, "mine": mine, "external_active": len(external)})
 
 

@@ -185,19 +185,22 @@ async function refreshClaudePanel() {
                    activeExt.map(s => s.session_id).join(',');
     if (runKey !== _claudeRunningKey) {
       _claudeRunningKey = runKey;
-      const mineRows = (rs.mine || []).map(m =>
-        `<div class="claude-run" data-port="${esc(m.port_id)}" title="${esc(m.cwd || '')}">
-           <span class="live-dot"></span>
-           <span class="cname">${esc(m.label || (m.cwd || '').split(/[\\\\/]/).pop() || m.port_id)}</span>
-           <span class="cstate">${m.alive ? '运行中' : '已退出'}</span>
-         </div>`).join('');
+      // 运行中卡片升级成完整会话卡（含摘要行/✎ 备注/会话 id）——与历史卡同模板，
+      // 只有点击行为不同：切到对应终端 tab 而非再开恢复连接
+      const mineRows = (rs.mine || []).map(m => {
+        const card = _claudeSessionCard(
+          {session_id: m.resume || m.port_id, title: m.label, summary: m.summary || '',
+           cwd: m.cwd, note: m.note},
+          {live: true, time: m.alive ? '运行中' : '已退出'});
+        return card.replace('<div class="claude-sess"', `<div class="claude-sess claude-run" data-port="${esc(m.port_id)}"`);
+      }).join('');
       // 外部活跃会话卡片：点击同样恢复进来（与历史一致），带 ✎ 备注入口
       const extRows = activeExt.filter(s => !(rs.mine || []).some(m => m.resume === s.session_id))
         .map(s => _claudeSessionCard(s, {live: true, ext: true})).join('');
       runningEl.innerHTML = (mineRows + extRows) || '<div class="claude-empty">无活跃会话</div>';
+      _claudeBindCards(runningEl);   // 先绑通用（恢复/备注），再覆盖运行中卡为切 tab
       runningEl.querySelectorAll('.claude-run').forEach(r =>
         r.onclick = () => switchTab(r.dataset.port));
-      _claudeBindCards(runningEl);
     }
 
     // 历史 sheet：非活跃的主体会话（活跃的在「活跃」sheet）
