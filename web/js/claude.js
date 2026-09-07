@@ -173,13 +173,28 @@ function _claudeUpdateTitleMap(sessions) {
   if (typeof renderRecentList === 'function') renderRecentList();
 }
 
+// 重名区分：同名会话卡（aiTitle/首条消息相同——测试会话常见）光看名字分不出来，
+// 给重名卡的名字后面拼上相对时间（"17 分钟前"）区分。三处列表共用。
+function _claudeMarkDupNames(sessions) {
+  const byName = {};
+  (sessions || []).forEach(s => { (byName[s.title] = byName[s.title] || []).push(s); });
+  Object.values(byName).forEach(arr => {
+    if (arr.length > 1) {
+      arr.forEach(s => {
+        s.title = s.title + ' · ' + (_claudeRelTime(s.last_ts || s.first_ts) || s.session_id.slice(0, 8));
+      });
+    }
+  });
+  return sessions;
+}
+
 async function refreshClaudePanel() {
   try {
     // 状态聚合（本工具连接 + 外部活跃计数）
     const rs = await (await fetch('/api/claude/status')).json();
     // 活跃 sheet：本工具打开的 + 外部活跃的（历史会话里 active 的那批）
     const ss = await (await fetch('/api/claude/sessions?limit=50')).json();
-    const sessions = ss.sessions || [];
+    const sessions = _claudeMarkDupNames(ss.sessions || []);
     _claudeUpdateTitleMap(sessions);
     const activeExt = sessions.filter(s => s.active);
     const dot = $('claudeStatusDot'), txt = $('claudeStatusText');
@@ -201,9 +216,12 @@ async function refreshClaudePanel() {
       // 不再挂 claude-run 类（旧单行 flex 样式与两行模板打架把排版挤坏），
       // 点击行为靠 data-port 属性绑定：切到对应终端 tab
       const mineRows = (rs.mine || []).map(m => {
+        // 重名标记后的标题优先（与面板其余卡片口径一致）；无会话数据回退 label
+        const marked = sessions.find(s => s.session_id === m.resume);
         const card = _claudeSessionCard(
-          {session_id: m.resume || m.port_id, title: m.label, summary: m.summary || '',
-           cwd: m.cwd, note: m.note},
+          {session_id: m.resume || m.port_id, title: (marked && marked.title) || m.label,
+           summary: (marked && marked.summary) || m.summary || '',
+           cwd: m.cwd, note: (marked && marked.note) || m.note},
           {live: true, time: m.alive ? '运行中' : '已退出'});
         return card.replace('<div class="claude-sess"', `<div class="claude-sess" data-port="${esc(m.port_id)}"`);
       }).join('');
