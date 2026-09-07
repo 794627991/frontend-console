@@ -34,7 +34,7 @@ async function _recentAdd(item) {
   try {
     const r = await fetch('/api/recent', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(item)});
     const j = await r.json();
-    if (j.ok && Array.isArray(j.recent)) _recentList = j.recent;
+    if (j.ok && Array.isArray(j.recent)) _recentList = j.recent.filter(it => it.type !== 'claude');
     renderRecentList();
   } catch(e) {}
 }
@@ -136,7 +136,7 @@ function refreshSidebar() {
       const isLog = conn.meta.kind === 'log';
       const isEdit = conn.meta.kind === 'editor' || conn.meta.kind === 'hex';
       const isClaude = conn.meta.kind === 'claude';
-      const descText = isSSH ? `SSH · ${conn.meta.host || ''}` : isLog ? `📜 日志` : isEdit ? (conn.meta.kind === 'hex' ? `🔧 hex` : `📝 笔记`) : isClaude ? `🤖 Claude · ${(conn.meta.cwd || '').split(/[\\\\/]/).pop() || ''}` : `${conn.meta.baud || ''} baud`;
+      const descText = isSSH ? `SSH · ${conn.meta.host || ''}` : isLog ? `📜 日志` : isEdit ? (conn.meta.kind === 'hex' ? `🔧 hex` : `📝 笔记`) : isClaude ? `<span class="claude-ico"></span> Claude · ${(conn.meta.cwd || '').split(/[\\\\/]/).pop() || ''}` : `${conn.meta.baud || ''} baud`;
       const rowCount = conn.term ? conn.term.buffer.active.length : (conn.logState ? conn.logState.total : (isEdit ? _edStatText(conn) : 0));
       // 编辑器类 tab：未保存时名字带 * + dirty 类（led 橙色，与 _edMarkTab 同步）
       const isDirty = isEdit && conn.dirty;
@@ -329,7 +329,7 @@ $('btnRefreshPorts').onclick = async () => { await loadPorts(); showBanner('端�
 // ============================================================
 // 最近打开（SSH/串口/文件 快捷重开，后端 config.json 持久化 + 自动去重）
 // ============================================================
-const RECENT_ICON = { claude: '🤖', ssh: '🔗', serial: '🔌', file: '📄' };  // 类型区分图标
+const RECENT_ICON = { claude: '<span class="claude-ico"></span>', ssh: '🔗', serial: '🔌', file: '📄' };  // 类型区分图标（claude 用官方星形标志）
 const RECENT_TYPE_NAME = { claude: 'Claude 会话', ssh: 'SSH', serial: '串口', file: '文件' };
 let _recentList = [];
 
@@ -337,7 +337,8 @@ async function loadRecentList() {
   try {
     const r = await fetch('/api/recent');
     const j = await r.json();
-    if (j.ok) { _recentList = j.recent || []; renderRecentList(); }
+    // claude 会话条目不进「最近」（功能已移除）——历史遗留数据直接过滤掉
+    if (j.ok) { _recentList = (j.recent || []).filter(it => it.type !== 'claude'); renderRecentList(); }
   } catch(e) {}
 }
 
@@ -348,9 +349,9 @@ function renderRecentList() {
     el.innerHTML = '<div class="recent-empty">暂无记录<br>连接/打开文件后自动记录</div>';
     return;
   }
-  // 按类型分组，claude 排最前（用户高频恢复会话），组内保持原新→旧顺序
+  // 按类型分组，组内保持原新→旧顺序（claude 分组已移除——会话恢复改走
+  // claude 自带 /resume 选择界面，不再在工具侧直连）
   const groups = [
-    { type: 'claude', name: 'Claude 会话' },
     { type: 'serial', name: '串口' },
     { type: 'file',   name: '文件' },
     { type: 'ssh',    name: 'SSH' },
@@ -402,11 +403,12 @@ async function removeRecentItem(i) {
 
 function openRecentItem(it) {
   if (it.type === 'claude') {
-    // Claude 会话恢复：data 带 resume（会话 id）+ cwd（原工作目录）
+    // claude 最近会话功能已移除（按用户要求）：不再按会话 id 直连恢复。
+    // 兼容期处理——列表里若有历史遗留的 claude 条目，点击改为发 /resume 让
+    // claude 自己弹会话选择界面，用户手动挑（宁可多一步，不直连会话）
     const d = it.data || {};
-    if (d.resume && typeof connectClaude === 'function') {
-      connectClaude({resume: d.resume, cwd: d.cwd || '',
-                    label: _claudeTitleMap[d.resume] || it.label});
+    if (typeof connectClaude === 'function') {
+      connectClaude({cwd: d.cwd || '', resume: '__picker__'});
     }
     return;
   }
@@ -423,7 +425,7 @@ function openRecentItem(it) {
     // 之前一律 openDroppedFile 按绝对路径请求，后端拒收相对名 →「不支持的文件类型或文件不存在」。
     const d = it.data || {};
     if (d.kind === 'hex' && d.path) buildHexViewerTab(d.path, d.name || it.label);   // bin/二进制：hex 模式快速重开
-    else if (d.extPath && typeof openDroppedFile === 'function') openDroppedFile(d.extPath);
+    else if (d.extPath && typeof openDroppedFile === 'function') openDroppedFile(d.extPath, true);   // true=快捷打开：跳过"活动 tab 是 claude 就灌路径进终端"分支
     else if (d.kind === 'log') buildLogViewer(d.name || d.path);
     else if (typeof openEditorFile === 'function') openEditorFile(d.name || d.path);
   }

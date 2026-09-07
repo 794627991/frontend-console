@@ -313,6 +313,116 @@ def _load_notes():
         return {}
 
 
+# ============================================================
+# 会话转写导出：jsonl → 干净对话文本（历史回看覆盖层数据源）
+# ============================================================
+# 设计约束：覆盖层滚轮要求零卡顿，导出是一次性全量拉取+前端缓存渲染，
+# 后端只管把 jsonl 转成尽量小的行数组。行格式：{role, text}
+#   role: user / assistant / tool（工具调用一行摘要）/ system（compact 等）
+# 文本保留换行（代码块可读），超长块截断到 4000 字符。
+
+def _export_text_of(o):
+    """行级文本提取（user/assistant 通用）：content 字符串或 text 块列表。
+    与卡片摘要不同：不压平换行（覆盖层要按原文展示），tool_use/tool_result
+    返回 None（由 _export_tool_line 单独处理）。"""
+    msg = o.get("message") or {}
+    c = msg.get("content")
+    if isinstance(c, str):
+        t = _ANSI_RE.sub("", c).strip()
+        return t or None
+    if isinstance(c, list):
+        parts = []
+        for b in c:
+            if not isinstance(b, dict):
+                continue
+            if b.get("type") == "text" and b.get("text"):
+                parts.append(_ANSI_RE.sub("", b["text"]))
+        t = "\n".join(parts).strip()
+        return t or None
+    return None
+
+
+def _export_tool_line(o):
+    """工具调用/结果 → 一行摘要（覆盖层里压缩展示，展开看 jsonl 原文没必要）。"""
+    msg = o.get("message") or {}
+    c = msg.get("content")
+    if not isinstance(c, list):
+        return None
+    for b in c:
+        if isinstance(b, dict) and b.get("type") == "tool_use":
+            name = b.get("name") or "tool"
+            inp = b.get("input") or {}
+            hint = ""
+            if isinstance(inp, dict):
+                for k in ("file_path", "path", "command", "url", "pattern", "query", "prompt"):
+                    v = inp.get(k)
+                    if isinstance(v, str) and v:
+                        hint = v[:100]
+                        break
+            return f"⚙ {name} {hint}".strip()[:160]
+    return None
+
+
+def export_session_transcript(session_id):
+    """导出会话对话文本：~/.claude/projects/*/<session_id>.jsonl → 行数组。
+    只挑主干消息（user typed 文本、assistant text、工具摘要），跳过系统行、
+    caveat、命令回显——覆盖层展示的是用户视角的对话流。
+    返回 (lines, cwd)；找不到文件返回 (None, None)。"""
+    sid = (session_id or "").strip()
+    if not re.fullmatch(r"[0-9a-zA-Z_-]{8,64}", sid):
+        return None, None
+    path = None
+    for cand in glob.glob(os.path.join(_projects_dir(), "*", sid + ".jsonl")):
+        path = cand
+        break
+    if not path:
+        return None, None
+    cwd = None
+    lines = []
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            for raw in f:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                # 行级快速前缀：type 不相关直接跳过（不 json.loads，大会话提速）
+                if '"type":"user"' not in raw and '"type":"assistant"' not in raw \
+                   and '"type":"system"' not in raw and '"type":"summary"' not in raw:
+                    continue
+                try:
+                    o = json.loads(raw)
+                except Exception:
+                    continue
+                if not cwd and o.get("cwd"):
+                    cwd = o.get("cwd")
+                typ = o.get("type")
+                if typ == "user":
+                    # 本工具注入的 /theme 等命令回显不展示
+                    msg = o.get("message") or {}
+                    c = msg.get("content")
+                    is_typed = o.get("promptSource") == "typed"
+                    t = _export_text_of(o)
+                    if t and (is_typed or (o.get("origin") or {}).get("kind") == "human") \
+                       and not _SKIP_MSG_RE.match(t):
+                        lines.append({"role": "user", "text": t[:4000]})
+                    # tool_result 不展示（量大且非对话内容）
+                elif typ == "assistant":
+                    t = _export_text_of(o)
+                    if t:
+                        lines.append({"role": "assistant", "text": t[:4000]})
+                    else:
+                        tl = _export_tool_line(o)
+                        if tl:
+                            lines.append({"role": "tool", "text": tl})
+                elif typ == "summary":
+                    t = (o.get("summary") or "").strip()
+                    if t:
+                        lines.append({"role": "system", "text": "会话摘要：" + t[:300]})
+    except OSError:
+        return None, None
+    return lines, cwd
+
+
 def set_session_note(session_id, note):
     """写/清一条会话备注。note 空串删除该条。返回更新后的表。"""
     from src.app_state import _load_config, _save_config

@@ -81,8 +81,39 @@ def close_all_ports():
 # hook 到 BaseConnection.append_line：AI 全局流挂载点（猴子补丁，import 各连接类后执行）
 # 挂基类而非 SerialPort——SSHConnection 继承基类方法，挂串口类会让 SSH 输出永远不进 /api/ai/stream
 _orig_append = BaseConnection.append_line
+def _claude_sense_ok(clean):
+    """claude 连接行进感知流的准入：TUI 重绘流切出的碎片行剔除，保留有语义的文本。
+    剔除规则（按实测 buf 特征）：
+    - 空行 / 纯符号(点线框/spinner 字符)
+    - 状态栏拆行（Model:/Context:/auto mode/agent 组合）
+    - 单字符或 2 字符以下的残片
+    - 纯分隔线(─╌▔ 构成)"""
+    s = clean.strip()
+    if len(s) < 4:
+        return False
+    if not re.search(r"[一-鿿 a-zA-Z0-9]", s):
+        return False   # 纯符号(点线/spinner)
+    if re.fullmatch(r"[─╌▔━┄┈═\s]+", s):
+        return False
+    if "Model:" in s and "Context:" in s:
+        return False   # 状态栏整行
+    if s.startswith("⏵") or "auto mode on" in s or "Effort:" in s:
+        return False
+    return True
+
 def _patched_append(self, raw_line, local_echo=False):
     _orig_append(self, raw_line, local_echo)
+    # claude 连接过滤后进感知流：整行排除会让感知面板在纯 claude 会话期完全空白
+    # （用户依赖它看会话动态）；但 TUI 重绘碎片（状态栏拆行/单字符/分隔线）全量
+    # 灌入无语义且误导——尤其恢复会话启动重绘一次灌 8000+ 行，须过滤
+    if getattr(self, "kind", "") == "claude":
+        clean0 = strip_ansi(raw_line)
+        if not _claude_sense_ok(clean0):
+            return
+        ts_ms = int(time.time() * 1000)
+        _broadcast_to_ai({"ts": ts_ms, "text": clean0, "port": self.port_id,
+                          "tag": classify_line(clean0)})
+        return
     ts_ms = int(time.time() * 1000)
     clean = strip_ansi(raw_line)
     _broadcast_to_ai({"ts": ts_ms, "text": clean, "port": self.port_id, "tag": classify_line(clean)})
@@ -1355,6 +1386,47 @@ def claude_skills_list():
     from .claude_sessions import list_skills
     cwd = request.args.get("cwd") or None
     return jsonify({"ok": True, "skills": list_skills(cwd)})
+
+
+@app.route("/api/claude/transcript")
+def claude_transcript():
+    """会话转写导出（历史回看覆盖层数据源）：jsonl → 干净对话行数组。
+    一次性全量返回，前端缓存渲染——滚轮路径零网络往返（不卡顿的硬前提）。
+    查找顺序：session_id 直查；否则按 port_id 从连接对象取 resume（新会话
+    无 resume 时再从 ~/.claude/projects 取该 cwd 下 mtime 最新的 jsonl）。"""
+    from .claude_sessions import export_session_transcript
+    sid = (request.args.get("session_id") or "").strip()
+    if not sid:
+        pid = (request.args.get("port_id") or "").strip()
+        with _ports_lock:
+            p = _ports.get(pid)
+            resume = getattr(p, "resume", None) if p else None
+            cwd = getattr(p, "cwd", None) if p else None
+        if resume:
+            sid = resume
+        elif cwd:
+            # 新会话：无 resume id。取该 cwd 项目目录下 mtime 最新的 jsonl
+            # （会话开聊即落盘；用户翻的就是当前正在用的这份转写）
+            import glob as _g
+            from .claude_sessions import _projects_dir
+            proj = cwd.replace(":", "-").replace("\\", "/").replace("/", "-").replace(" ", "-")
+            cands = []
+            for f in _g.glob(os.path.join(_projects_dir(), "*", "*.jsonl")):
+                try:
+                    if os.path.basename(os.path.dirname(f)) == proj:
+                        cands.append(f)
+                except Exception:
+                    continue
+            if cands:
+                newest = max(cands, key=os.path.getmtime)
+                sid = os.path.splitext(os.path.basename(newest))[0]
+    if not sid:
+        return jsonify({"ok": False, "err": "session_id 不能为空"}), 400
+    lines, cwd = export_session_transcript(sid)
+    if lines is None:
+        return jsonify({"ok": False, "err": "找不到该会话的转写文件"}), 404
+    return jsonify({"ok": True, "session_id": sid, "cwd": cwd or "",
+                    "lines": lines, "count": len(lines)})
 
 
 @app.route("/api/claude/note", methods=["POST"])

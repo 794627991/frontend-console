@@ -5,13 +5,17 @@
 // ============================================================
 
 async function connectClaude(opts = {}) {
-  // opts: {cwd, resume, label} —— resume 场景由 Claude 面板调用
+  // opts: {cwd, resume, label} —— resume 场景由 Claude 面板调用；
+  // resume='__picker__' 是侧栏兼容哨兵：不带会话 id 启动 claude，进 TUI 后
+  // 自动敲 /resume 让用户在 claude 自带的会话选择界面里挑（不直连具体会话）
+  const pickerMode = opts.resume === '__picker__';
   try {
     // 工具壳体是亮色主题时，让本会话 claude 也用 light 主题（后端经 --settings
     // 注入，只作用于该进程，不写配置文件、不影响其他终端的会话）
     const curTheme = document.documentElement.getAttribute('data-theme') || 'deepblue';
     const lightTheme = LIGHT_THEMES.includes(curTheme);
-    const body = {kind: 'claude', cwd: opts.cwd || '', resume: opts.resume || '',
+    const body = {kind: 'claude', cwd: opts.cwd || '',
+                  resume: pickerMode ? '' : (opts.resume || ''),
                   light_theme: lightTheme};
     const r = await fetch('/api/connect', {method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify(body)});
@@ -21,10 +25,9 @@ async function connectClaude(opts = {}) {
     // tab 结构与其他类型统一：led（进程状态灯）+ 图标 + 文字；emoji 不再塞 label
     const label = opts.label || (j.resume ? `恢复 ${j.resume.slice(0,8)}` : 'Claude');
     const conn = buildTerminal(portId, {kind:'claude', label, cwd: j.cwd, baud: ''});
-    // buildTerminal 的 tab 无图标位——claude tab 补一个（🤖），插在 led 后
+    // buildTerminal 的 tab 无图标位——claude tab 补一个（官方星形标志），插在 led 后
     const ico = document.createElement('span');
-    ico.className = 'tab-ico';
-    ico.textContent = '🤖';
+    ico.className = 'tab-ico claude-ico';
     conn.tab.insertBefore(ico, conn.tab.querySelector('span:nth-child(2)'));
     connections[portId] = conn;
     switchTab(portId);
@@ -37,12 +40,20 @@ async function connectClaude(opts = {}) {
     setTimeout(() => {
       try { if (connections[portId] === conn) conn.term.focus(); } catch(_){}
     }, 300);
-    // 恢复的会话记入「最近」（key=会话 id 去重置顶）——新会话不记（id 未知，无重开价值）
-    if (j.resume && typeof _recentAdd === 'function') {
-      const dirName = (j.cwd || '').split(/[\\/]/).pop() || '';
-      _recentAdd({type:'claude', key:'claude:' + j.resume, resume: j.resume,
-                  label:`Claude · ${dirName}`, data:{resume: j.resume, cwd: j.cwd}});
+    // picker 模式：等 TUI 就绪后自动敲 /resume，弹出 claude 自带会话选择界面
+    if (pickerMode) {
+      setTimeout(() => {
+        try {
+          if (connections[portId] === conn) {
+            const bytes = [];
+            for (const ch of '/resume\r') bytes.push(ch.charCodeAt(0));
+            termSendRaw(portId, bytes);
+          }
+        } catch(_){}
+      }, 1500);
     }
+    // 恢复的会话不再记入「最近」——该功能已按用户要求移除（问题反复，回归
+    // 「自己 /resume 选会话」的原生流程：侧栏/快捷打开不再直连具体会话）
     return j;
   } catch(e) {
     showBanner('claude 启动请求失败: ' + e, 5000, true);

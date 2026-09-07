@@ -269,23 +269,31 @@ class ClaudeConnection(BaseConnection):
     # 4.Dark-色盲 5.Light-色盲 6.Dark-ANSI 7.Light-ANSI 8.自定义
     _THEME_MENU_LIGHT = 7   # light-ansi:颜色落 ANSI 16 色,由本工具 xterm 亮色调色板解释
     _THEME_MENU_DARK = 2
+    # 注意顺序:短名是长名的子串("Dark mode" in "Dark mode (colorblind-friendly)"),
+    # 匹配必须按列表从后往前——否则光标在 4/5/6/7 项时先撞上短名 2/3,序号判错
+    # (实测翻车:反复切主题时 ❯ 行读到 Dark mode 实际在 colorblind 项)
     _THEME_MENU_ITEMS = ["Auto (match terminal)", "Dark mode", "Light mode",
                          "Dark mode (colorblind-friendly)", "Light mode (colorblind-friendly)",
                          "Dark mode (ANSI colors only)", "Light mode (ANSI colors only)",
                          "New custom theme"]
 
     def _theme_menu_cursor(self, base_seq, wait_s=2.0):
-        """开 /theme 菜单后,从 base_seq 之后的新增清洗行里找 ❯ 光标所在选项
-        序号(1~8)。只看新增行:buf 是 TUI 重绘流,上次菜单的旧 ❯ 帧还在尾部,
-        混读会把旧光标当当前位置(实测翻车:落到相邻项)。找不到返回 None。"""
+        """开 /theme 菜单后,找 ❯ 光标所在选项序号(1~8)。
+        ⚠ 不用"只看新增行"——buf 是 TUI 重绘流,claude 对菜单重绘常做光标移动式
+        局部重绘:❯ 行内容原地改写但 seq 不前进(不产生新行),只看新增行会恒拿
+        不到光标 → 调用方误判"键被吞"无限重发 ↓(实测翻车:切主题时屏幕不停按↓)。
+        改为全 buf 从尾往前找最近的 ❯ 行:单菜单只画一个 ❯,尾部最近的必是当前帧。
+        找不到返回 None。"""
         deadline = time.time() + wait_s
         while time.time() < deadline:
             time.sleep(0.3)
-            for it in reversed(self.get_buffer_after(base_seq, 60)):
+            with self.buf_lock:
+                snapshot = list(self.buf)
+            for it in reversed(snapshot):
                 s = (it.get("text") or "").strip()
                 if s.startswith("❯"):
-                    for i, name in enumerate(self._THEME_MENU_ITEMS, 1):
-                        if name in s:
+                    for i in range(len(self._THEME_MENU_ITEMS), 0, -1):
+                        if self._THEME_MENU_ITEMS[i-1] in s:
                             return i
                     return None   # ❯ 行存在但不匹配任何选项(异常状态)
         return None
@@ -299,9 +307,15 @@ class ClaudeConnection(BaseConnection):
         每按一个 ↓ 都回读光标实际位置,没动就重发,到位才 Enter。"""
         if self._proc is None:
             return False
+        # 并发护栏:上一次切换还在导航中时直接拒绝(新的 base_seq 会让上轮的
+        # 验证错乱,且两轮 ↓/Enter 交错会乱选)。theme.js 切换是即点的,连点常见
+        if getattr(self, "_theme_switching", False):
+            return False
+        self._theme_switching = True
         target = self._THEME_MENU_LIGHT if light else self._THEME_MENU_DARK
         try:
-            # 1) 开菜单(记 buf 序号,之后只看新增行——旧菜单帧混读会拿到旧光标)
+            # 1) 开菜单(base_seq 只用于第 4 步验证 "Theme set to" 新增行;
+            #    光标定位已改全 buf 尾部找 ❯——见 _theme_menu_cursor 注释)
             with self.buf_lock:
                 base_seq = self.buf[-1]["seq"] if self.buf else 0
             self._io_write(b"/theme\r")
@@ -311,16 +325,14 @@ class ClaudeConnection(BaseConnection):
                 # 菜单没开或读不到光标:Esc 兜底关闭,放弃本次(不乱动用户界面)
                 self._io_write(b"\x1b")
                 return False
-            # 2) 逐键闭环:每按一个 ↓ 回读光标,没动重发(最多 2 次重试/步)
+            # 2) 逐键闭环:每按一个 ↓ 回读光标,没动重发(最多 16 次重试兜底)
             retries = 0
             while cur != target and retries < 16:
-                last_seq = cur
-                with self.buf_lock:
-                    nav_seq = self.buf[-1]["seq"] if self.buf else 0
+                last_cur = cur
                 self._io_write(b"\x1b[B")
-                nxt = self._theme_menu_cursor(nav_seq, wait_s=1.0)
-                if nxt is None or nxt == last_seq:
-                    retries += 1   # 键被吞:同一步重发(不上限次数,只累计重试)
+                nxt = self._theme_menu_cursor(0, wait_s=1.0)
+                if nxt is None or nxt == last_cur:
+                    retries += 1   # 键被吞:同一步重发
                     continue
                 retries = 0
                 cur = nxt
@@ -340,7 +352,13 @@ class ClaudeConnection(BaseConnection):
             self._io_write(b"\x1b")
             return False
         except Exception:
+            try:
+                self._io_write(b"\x1b")   # 异常也要 Esc,别把菜单留在用户界面上
+            except Exception:
+                pass
             return False
+        finally:
+            self._theme_switching = False
 
     def _io_reconnect(self):
         # claude 无重连语义（EOF 路径已让 reader 干净退出，不会走到这；保险起见拒绝）

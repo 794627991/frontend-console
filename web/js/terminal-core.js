@@ -196,11 +196,12 @@ function buildTerminal(portId, meta) {
     showCtxMenu(e.clientX, e.clientY, conn);
   });
 
-  // ---- claude TUI 滚轮 → PgUp/PgDn（整页，实测有效）----
-  // Claude Code 行内渲染（不切备用屏），且其 TUI 开启鼠标上报，xterm 会把滚轮
-  // 转成方向键/鼠标序列发给程序（提示 "use PgUp/PgDn"）。
-  // 在捕获阶段拦截（preventDefault 挡不住 xterm 已绑定的 handler，须 stopPropagation）。
-  // deltaY 累积折算：小步(触控板)累积到一格才发一次，滚动方向感知连续。
+  // ---- claude TUI 滚轮 → PgUp/PgDn（最初方案，唯一模式）----
+  // claude TUI 只在流式生成中响应 PgUp/PgDn（打开 transcript 滚动视图，只翻内容
+  // 不动输入框），生成结束视图自动关闭；空闲时穷举实测无任何键能开滚动视图。
+  // 滚轮一律转 PgUp/PgDn：生成中即翻即响应；空闲时按键被 TUI 吃掉、无副作用。
+  // （此前几轮的双模式分流/_rawVol 判据方案全部回退——生成中/空闲判据误判导致
+  //  "滚轮不响应"反复翻车，宁可空闲滚轮无效也不牺牲生成中翻阅的可靠性。）
   conn._wheelAcc = 0;
   conn.xtermWrap.addEventListener('wheel', e => {
     if (!(conn.meta && conn.meta.kind === 'claude')) return;
@@ -209,7 +210,7 @@ function buildTerminal(portId, meta) {
     const dir = e.deltaY > 0 ? 1 : -1;
     if (Math.sign(conn._wheelAcc) !== dir) conn._wheelAcc = 0;   // 反向时丢半截累积，防抖
     conn._wheelAcc += e.deltaY;
-    const lines = Math.trunc(conn._wheelAcc / 40);   // 40 Δ/行：一格滚轮 ≈ 2 行
+    const lines = Math.trunc(conn._wheelAcc / 40);   // 40 Δ/行
     if (!lines) return;
     conn._wheelAcc -= lines * 40;
     const seq = lines > 0 ? '\x1b[6~' : '\x1b[5~';   // PgDn / PgUp（实测有效）
@@ -221,6 +222,12 @@ function buildTerminal(portId, meta) {
   // ---- xterm 输入 → 串口 ----
   conn.term.onData(data => {
     if (conn.paused) return;
+    // claude 空闲翻页中开始打字：立刻跳回底部——全翻模式下输入框画在缓冲区
+    // 底部（claude 不切备用屏），翻上去后不可见，不跳回用户会以为输入丢了
+    if (conn.meta && conn.meta.kind === 'claude' && !conn.autoScroll) {
+      conn.autoScroll = true;
+      try { conn.term.scrollToBottom(); } catch(e){}
+    }
     // data 是字符串（已按字符拆分），编码为字节发送
     const bytes = [];
     for (let i = 0; i < data.length; i++) {

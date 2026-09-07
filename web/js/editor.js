@@ -1242,11 +1242,13 @@ async function openFileSmart(path, mode) {
   buildLogViewer(path);
 }
 
-async function openDroppedFile(path) {
+async function openDroppedFile(path, fromRecent) {
   // 拖到 claude 终端 tab 上的文件：claude 输入框不吃原生拖拽，直接把路径
   // 当文本"打字"进终端（termSendRaw 走 /api/send_raw，claude 收到路径字符串
   // 就能读文件——图片也能识图）。用户正对着 claude tab 拖，意图明确，不该弹打开方式。
-  if (activePortId && connections[activePortId] &&
+  // fromRecent=true（「最近」快捷打开）时跳过：点快捷项的意图是打开文件本身，
+  // 若当前活动 tab 恰好是 claude 会话，路径会被灌进对话输入框（"被 claude 拦截"）。
+  if (!fromRecent && activePortId && connections[activePortId] &&
       connections[activePortId].meta && connections[activePortId].meta.kind === 'claude') {
     const safe = path.replace(/\\/g, '/');
     for (let i = 0; i < safe.length; i++) {
