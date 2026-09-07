@@ -1,225 +1,224 @@
-# 全面代码审查 todo（2026-09-04 21:00 工作流审查）
+﻿# 鍏ㄩ潰浠ｇ爜瀹℃煡 todo锛?026-09-04 21:00 宸ヤ綔娴佸鏌ワ級
 
-> 审查方式：6 个子系统并行找 bug → 每项独立对抗验证（反驳式），仅保留验证无法推翻的问题。
-> 37 个 agent、约 187 万 tokens；候选 31 项，确认 28 项，去重后 **25 项**（3 被反驳剔除）。
-> 范围：src/ 后端 + web/js/ 前端，分支 feat/g-level-history-ssh @ c33be1a。
-> 以下仅记录待修项，行号为审查时快照。⚠ 含多个数据丢失级 bug，建议优先处理【严重】组。
-
----
-
-## 🔴 严重（8 项）——数据丢失/崩溃
-
-> ✅ **2026-09-05 全部修复完成**（#1–#9，含 #21 一并处理），审查情况见各项「修复审查」。
-
-### 1. 【✅已修】数据目录二次迁移零拷贝直切空目录（数据丢失）
-- **位置**：`src/server.py:552`（migrate/check/get 多处；fe-interaction 组在 604 行重复报告，同一根因）
-- **问题**：`from src.app_state import DATA_DIR` 按值绑定进 server 模块；迁移成功只写 `_st.DATA_DIR` 和 `global LOG_DIR`，server 自己的 `DATA_DIR` 永远停在 import 时的旧路径。
-- **失败场景**：启动时 DATA_DIR=A，迁移 A→B 成功（A 被自动删除）；**不重启**再迁移到 C：目标校验用陈旧 A 比对通过，`A\logs` 等已不存在 → 全部静默跳过，copied=[] → 照常写 config.data_dir=C 返回成功。真实数据孤立在 B，重启后工具从空 C 启动 = 用户视角数据全丢。且 GET /api/data_dir 一直显示已删除的 A，用户无从发现。
-- **修法**：migrate 切换段补 `global DATA_DIR; DATA_DIR = target`（与 LOG_DIR 同款），或 server.py 全部改经 `_st.DATA_DIR` 属性访问消除双绑定。
-
-### 2. 【✅已修】迁移不拦截「目标嵌套在当前数据目录内」——rmtree 连新副本一起删（数据丢失）
-- **位置**：`src/server.py:501`（check）、`server.py:540`（migrate）
-- **问题**：两处只做 abspath 全等比较，无嵌套/前缀判定；迁移完成后 `rmtree(old_data_dir)`（623 行）会把嵌套在源内的新目标连同刚复制的数据一并删除。
-- **失败场景**：当前 D:\data，用户选 D:\data\新位置（原生对话框允许）→ 复制校验全过 → 写 config → rmtree(D:\data) 连新副本一起删 → 全量数据丢失，重启后 makedirs 重建空目录。选 logs 子目录变体同样成立。
-- **修法**：check 与 migrate 双侧加嵌套判定：`t.startswith(s + os.sep) or s.startswith(t + os.sep)` 即拒绝。
-
-### 3. 【✅已修】启动归位：顶层复制后 rmtree 整个旧日志目录（数据丢失）
-- **位置**：`src/app_state.py:95`（`_migrate_legacy_user_data`）
-- **问题**：legacy 目录只做顶层 listdir + copy2：子目录抛 IsADirectoryError 被裸 except 吞掉、复制失败文件静默跳过；只要 merged>0（跨三个目录共享的计数器）就 rmtree 整个旧目录——未复制的子目录与失败文件连带永久删除，违反 docstring「复制成功才删旧文件」契约。发生在 import 阶段，零日志零提示。
-- **失败场景**：serial_logs 下用户手工归档的子目录 old\（30 个日志）：顶层 20 个文件复制成功 → rmtree → old\ 内 30 个日志随目录被删。
-- **修法**：rmtree 前重新 listdir 核对 final_logs 覆盖了全部条目，未覆盖则保留；子目录递归复制；merged 改为 per-directory 计数。
-
-### 4. 【✅已修】hex 可编辑文件 >512KB：保存即截断整个文件（数据丢失）
-- **位置**：`web/js/hex-viewer.js:135`（log-backend 与 fe-interaction 两组重复确认，同一根因）
-- **问题**：editable 路径单次 `fetchChunk(0, size)` 整读，但后端 `hex_files.py:48` 硬钳 READ_CHUNK=512KB → conn.bytes 只有前 512KB 而 conn.size 仍是完整大小。byteAt 越界返回 undefined → BigInt(undefined) 抛 TypeError，滚动渲染崩溃；_hxSave 按 conn.bytes 写回，后端 os.replace 无长度校验。
-- **失败场景**：打开 2MB .bin 固件（≤16MB 可编辑）→ 滚过 0x80000 界面冻结 → 改一字节 Ctrl+S → 2MB 文件被替换成 512KB，1.5MB 数据永久丢失且无报错。
-- **修法**：前端按 HEX_CHUNK 分块循环 fetchChunk 拼接至 conn.size；hex_save 写回前校验 raw 长度与 meta size 一致，不一致拒绝保存（双保险）。
-
-### 5. 【✅已修】拖入/最近打开外部 .note 文件：打开空白，保存即覆盖毁原文件（数据丢失）
-- **位置**：`web/js/editor.js:1217`（openFileSmart edit 分支）
-- **问题**：`/api/ed/open` 返回 JSON 字符串后直接 buildEditorTab，没像 openEditorFile（724 行）那样先 JSON.parse；_edInitContent 要求对象 → 空块初始化、onDisk=true。
-- **失败场景**：拖入外部 .note 备份笔记 → 编辑器打开为空白 → 随手 Ctrl+S → 原文件被写回 `{"blocks":[]}`，原始笔记永久丢失。「最近打开」extPath 路径同样命中。
-- **修法**：openFileSmart edit 分支对 .note 做 JSON.parse（失败兜底空对象），或统一在 buildEditorTab 入口对 isNote 且 content 为字符串时先解析。
-
-### 6. 【✅已修】Intel HEX 保存超 64KB 地址回绕——保存即毁固件（数据丢失）
-- **位置**：`web/js/hex-viewer.js:693`（_hxSave ihex 回写）
-- **问题**：只发 type 00 数据记录、地址字段 `(off & 0xFFFF)`，从不发 type 04 扩展线性地址记录；镜像超 64KB 后所有记录地址回绕（0x10000→0x0000）。校验和经 &0xFF 掩码恰好与截断地址自洽，文件能静默通过任何校验检查——破坏更隐蔽。
-- **失败场景**：打开 128KB 固件 .hex，改一字节 Ctrl+S → 后半 64KB 数据地址全部回绕，烧录时写到错误地址，固件文件损坏（os.replace 无备份）。
-- **修法**：保存时维护扩展段，off 跨 0x10000 边界先输出 `:02000004 XXXX` 扩展记录；地址与校验统一只用低 16 位。
-
-### 7. 【✅已修】serial_cli 默认命令 cmd_overview 未定义，直接 NameError 崩溃
-- **位置**：`src/serial_cli.py:254`
-- **问题**：main() 默认分支调用 cmd_overview(url)，但全文件无 `def cmd_overview`；need_running() 的 sys.exit(1) 之后（135-158 行）残留一段引用未定义 url 的死代码——正是丢失了函数头的 cmd_overview 函数体。
-- **失败场景**：后端运行时执行 `python src/serial_cli.py`（docstring 第一用法）→ NameError 崩溃，overview/obs/o 三种默认用法全挂。
-- **修法**：把 135-158 行死代码取出恢复为 `def cmd_overview(url):`，删 sys.exit 后残留。
-
-### 8. 【✅已修】MCP stdin 未重配 UTF-8：含中文/emoji 的工具参数全部乱码
-- **位置**：`src/mcp_server.py:759`
-- **问题**：只 reconfigure 了 stdout/stderr，stdin 保持 Windows 管道默认 GBK。Claude Code 按 MCP stdio 规范写 UTF-8 JSON，Python 按 GBK 解码出乱码+孤立代理字符（\udcad）。**验证者已在运行中的工具上实证复现**：`read_log(path="中文…")` 返回 `'utf-8' codec can't encode character '\udcad'…surrogates not allowed`。exe 模式（main.py:155）已包 utf-8 不受影响，源码模式无保护。
-- **失败场景**：本项目路径本身含「串口控制台」——read_log/search_log/diff_logs/send_command（"echo 你好"）凡带中文参数必然失败或发乱码字节给设备。
-- **修法**：758-762 同一 try 块补 `sys.stdin.reconfigure(encoding="utf-8")`。
-
-### 9. 【✅已修】start() 先启动读线程后开日志：_start_log 异常时句柄/线程泄漏，COM 口占死
-- **位置**：`src/base_conn.py:276`（配合 server.py:217-221）
-- **问题**：start() 顺序 _io_open() → 读线程 → _start_log()，后者 makedirs/open 无异常保护；api_connect 在 _ports_lock 里构造失败只转 500，半构造对象（已开串口句柄+读线程+SSH keepalive）无人 close。
-- **失败场景**：LOG_DIR 指向的网络盘掉线后点连接 → 500「连接失败」，但 COM3 已被占用，再连报 PermissionError，泄漏读线程持续空转直到退出工具。SSH 场景泄漏完整活会话。
-- **修法**：start() 内 try/except _start_log 失败降级（log_fp=None 继续跑）不让异常逃逸；或 api_connect except 分支对半构造对象调 close() 再返回 500。
+> 瀹℃煡鏂瑰紡锛? 涓瓙绯荤粺骞惰鎵?bug 鈫?姣忛」鐙珛瀵规姉楠岃瘉锛堝弽椹冲紡锛夛紝浠呬繚鐣欓獙璇佹棤娉曟帹缈荤殑闂銆?
+> 37 涓?agent銆佺害 187 涓?tokens锛涘€欓€?31 椤癸紝纭 28 椤癸紝鍘婚噸鍚?**25 椤?*锛? 琚弽椹冲墧闄わ級銆?
+> 鑼冨洿锛歴rc/ 鍚庣 + web/js/ 鍓嶇锛屽垎鏀?feat/g-level-history-ssh @ c33be1a銆?
+> 浠ヤ笅浠呰褰曞緟淇」锛岃鍙蜂负瀹℃煡鏃跺揩鐓с€傗殸 鍚涓暟鎹涪澶辩骇 bug锛屽缓璁紭鍏堝鐞嗐€愪弗閲嶃€戠粍銆?
 
 ---
 
-## 🟡 中等（12 项）——功能失效/误导/越界
+## 馃敶 涓ラ噸锛? 椤癸級鈥斺€旀暟鎹涪澶?宕╂簝
 
-> ✅ **2026-09-05 全部修复完成**（#10–#21），审查情况见文末「中等+轻微组修复审查记录」。
+> 鉁?**2026-09-05 鍏ㄩ儴淇瀹屾垚**锛?1鈥?9锛屽惈 #21 涓€骞跺鐞嗭級锛屽鏌ユ儏鍐佃鍚勯」銆屼慨澶嶅鏌ャ€嶃€?
 
-### 10. 【✅已修】AI 全局流补丁只挂 SerialPort——SSH 输出永远不进 /api/ai/stream
-- **位置**：`src/server.py:89`（补丁）+ `src/ssh_conn.py:68`（两组独立发现，同一根因）
-- **问题**：`SerialPort.append_line = _patched_append` 只 shadow 了串口类，SSHConnection 继承未打补丁的基类方法；_broadcast_to_ai 唯一调用点就是这个补丁。base_conn.py:71 注释明言设计意图覆盖所有连接。本分支正是 SSH 功能分支。
-- **失败场景**：AI 订阅 /api/ai/stream 后连 SSH 跑命令：一行都不到，误判设备无输出；sense.js 感知面板 SSH 端口连筛选 chip 都不出现，而 observe/get_buffer 直读 buf 正常——极难排查。
-- **修法**：补丁改挂 `BaseConnection.append_line`，serial/ssh 一并覆盖。
+### 1. 銆愨渽宸蹭慨銆戞暟鎹洰褰曚簩娆¤縼绉婚浂鎷疯礉鐩村垏绌虹洰褰曪紙鏁版嵁涓㈠け锛?
+- **浣嶇疆**锛歚src/server.py:552`锛坢igrate/check/get 澶氬锛沠e-interaction 缁勫湪 604 琛岄噸澶嶆姤鍛婏紝鍚屼竴鏍瑰洜锛?
+- **闂**锛歚from src.app_state import DATA_DIR` 鎸夊€肩粦瀹氳繘 server 妯″潡锛涜縼绉绘垚鍔熷彧鍐?`_st.DATA_DIR` 鍜?`global LOG_DIR`锛宻erver 鑷繁鐨?`DATA_DIR` 姘歌繙鍋滃湪 import 鏃剁殑鏃ц矾寰勩€?
+- **澶辫触鍦烘櫙**锛氬惎鍔ㄦ椂 DATA_DIR=A锛岃縼绉?A鈫払 鎴愬姛锛圓 琚嚜鍔ㄥ垹闄わ級锛?*涓嶉噸鍚?*鍐嶈縼绉诲埌 C锛氱洰鏍囨牎楠岀敤闄堟棫 A 姣斿閫氳繃锛宍A\logs` 绛夊凡涓嶅瓨鍦?鈫?鍏ㄩ儴闈欓粯璺宠繃锛宑opied=[] 鈫?鐓у父鍐?config.data_dir=C 杩斿洖鎴愬姛銆傜湡瀹炴暟鎹绔嬪湪 B锛岄噸鍚悗宸ュ叿浠庣┖ C 鍚姩 = 鐢ㄦ埛瑙嗚鏁版嵁鍏ㄤ涪銆備笖 GET /api/data_dir 涓€鐩存樉绀哄凡鍒犻櫎鐨?A锛岀敤鎴锋棤浠庡彂鐜般€?
+- **淇硶**锛歮igrate 鍒囨崲娈佃ˉ `global DATA_DIR; DATA_DIR = target`锛堜笌 LOG_DIR 鍚屾锛夛紝鎴?server.py 鍏ㄩ儴鏀圭粡 `_st.DATA_DIR` 灞炴€ц闂秷闄ゅ弻缁戝畾銆?
 
-### 11. 【✅已修】/api/log/<name> 无路径穿越防护（反斜杠可逃出 LOG_DIR）
-- **位置**：`src/server.py:651`
-- **问题**：唯一没走 _resolve_log_path 的日志路由；Flask 默认转换器只挡 `/` 不挡 `%5C`（解码为 `\`），Windows 上反斜杠是合法分隔符，`..\` 可逐级逃出读数据盘任意文件。
-- **修法**：改 `path = _resolve_log_path(name); if not path: return 404`，与其他 8 个日志路由统一防线。
+### 2. 銆愨渽宸蹭慨銆戣縼绉讳笉鎷︽埅銆岀洰鏍囧祵濂楀湪褰撳墠鏁版嵁鐩綍鍐呫€嶁€斺€攔mtree 杩炴柊鍓湰涓€璧峰垹锛堟暟鎹涪澶憋級
+- **浣嶇疆**锛歚src/server.py:501`锛坈heck锛夈€乣server.py:540`锛坢igrate锛?
+- **闂**锛氫袱澶勫彧鍋?abspath 鍏ㄧ瓑姣旇緝锛屾棤宓屽/鍓嶇紑鍒ゅ畾锛涜縼绉诲畬鎴愬悗 `rmtree(old_data_dir)`锛?23 琛岋級浼氭妸宓屽鍦ㄦ簮鍐呯殑鏂扮洰鏍囪繛鍚屽垰澶嶅埗鐨勬暟鎹竴骞跺垹闄ゃ€?
+- **澶辫触鍦烘櫙**锛氬綋鍓?D:\data锛岀敤鎴烽€?D:\data\鏂颁綅缃紙鍘熺敓瀵硅瘽妗嗗厑璁革級鈫?澶嶅埗鏍￠獙鍏ㄨ繃 鈫?鍐?config 鈫?rmtree(D:\data) 杩炴柊鍓湰涓€璧峰垹 鈫?鍏ㄩ噺鏁版嵁涓㈠け锛岄噸鍚悗 makedirs 閲嶅缓绌虹洰褰曘€傞€?logs 瀛愮洰褰曞彉浣撳悓鏍锋垚绔嬨€?
+- **淇硶**锛歝heck 涓?migrate 鍙屼晶鍔犲祵濂楀垽瀹氾細`t.startswith(s + os.sep) or s.startswith(t + os.sep)` 鍗虫嫆缁濄€?
 
-### 12. 【✅已修】httpfile 下载服务：盘符相对名（C:xxx）绕过 root_dir 限制
-- **位置**：`src/httpfile.py:63`
-- **问题**：校验只拒 /、\、.、..，不拒冒号；`os.path.join(root, 'C:xxx')` 在 Windows 直接返回 'C:xxx' 丢弃 root（已实测确认）；服务绑 0.0.0.0:8081 对局域网设备开放。
-- **失败场景**：局域网任意主机请求 `http://<PC_IP>:8081/C:config.json` → 可越界读进程 CWD/盘根下平铺文件。
-- **修法**：校验追加拒绝含 `:` 的 name，或拼接后 realpath 必须位于 root 之下再放行。
+### 3. 銆愨渽宸蹭慨銆戝惎鍔ㄥ綊浣嶏細椤跺眰澶嶅埗鍚?rmtree 鏁翠釜鏃ф棩蹇楃洰褰曪紙鏁版嵁涓㈠け锛?
+- **浣嶇疆**锛歚src/app_state.py:95`锛坄_migrate_legacy_user_data`锛?
+- **闂**锛歭egacy 鐩綍鍙仛椤跺眰 listdir + copy2锛氬瓙鐩綍鎶?IsADirectoryError 琚８ except 鍚炴帀銆佸鍒跺け璐ユ枃浠堕潤榛樿烦杩囷紱鍙 merged>0锛堣法涓変釜鐩綍鍏变韩鐨勮鏁板櫒锛夊氨 rmtree 鏁翠釜鏃х洰褰曗€斺€旀湭澶嶅埗鐨勫瓙鐩綍涓庡け璐ユ枃浠惰繛甯︽案涔呭垹闄わ紝杩濆弽 docstring銆屽鍒舵垚鍔熸墠鍒犳棫鏂囦欢銆嶅绾︺€傚彂鐢熷湪 import 闃舵锛岄浂鏃ュ織闆舵彁绀恒€?
+- **澶辫触鍦烘櫙**锛歴erial_logs 涓嬬敤鎴锋墜宸ュ綊妗ｇ殑瀛愮洰褰?old\锛?0 涓棩蹇楋級锛氶《灞?20 涓枃浠跺鍒舵垚鍔?鈫?rmtree 鈫?old\ 鍐?30 涓棩蹇楅殢鐩綍琚垹銆?
+- **淇硶**锛歳mtree 鍓嶉噸鏂?listdir 鏍稿 final_logs 瑕嗙洊浜嗗叏閮ㄦ潯鐩紝鏈鐩栧垯淇濈暀锛涘瓙鐩綍閫掑綊澶嶅埗锛沵erged 鏀逛负 per-directory 璁℃暟銆?
 
-### 13. 【✅已修】close() 期间读线程在 _io_reconnect 内部：新 SSH 会话被创建并永久泄漏（幽灵会话）
-- **位置**：`src/ssh_conn.py:109`
-- **问题**：close() join 超时仅 1s，而 _io_reconnect 内部 sleep(1~60s) + connect(timeout=10) 都不检查 self.alive；重连成功后读线程才发现 alive=False 退出，新会话无人关闭。
-- **失败场景**：网络抖动重连期间点断开 → 幽灵会话占掉嵌入式设备（dropbear 通常限 1~2 个会话）名额，之后怎么连都失败直到工具退出。
-- **修法**：_io_reconnect 的 sleep 后、_io_open 前检查 `if not self.alive: return False`；_io_open 成功赋值句柄前再检查一次。
+### 4. 銆愨渽宸蹭慨銆慼ex 鍙紪杈戞枃浠?>512KB锛氫繚瀛樺嵆鎴柇鏁翠釜鏂囦欢锛堟暟鎹涪澶憋級
+- **浣嶇疆**锛歚web/js/hex-viewer.js:135`锛坙og-backend 涓?fe-interaction 涓ょ粍閲嶅纭锛屽悓涓€鏍瑰洜锛?
+- **闂**锛歟ditable 璺緞鍗曟 `fetchChunk(0, size)` 鏁磋锛屼絾鍚庣 `hex_files.py:48` 纭挸 READ_CHUNK=512KB 鈫?conn.bytes 鍙湁鍓?512KB 鑰?conn.size 浠嶆槸瀹屾暣澶у皬銆俠yteAt 瓒婄晫杩斿洖 undefined 鈫?BigInt(undefined) 鎶?TypeError锛屾粴鍔ㄦ覆鏌撳穿婧冿紱_hxSave 鎸?conn.bytes 鍐欏洖锛屽悗绔?os.replace 鏃犻暱搴︽牎楠屻€?
+- **澶辫触鍦烘櫙**锛氭墦寮€ 2MB .bin 鍥轰欢锛堚墹16MB 鍙紪杈戯級鈫?婊氳繃 0x80000 鐣岄潰鍐荤粨 鈫?鏀逛竴瀛楄妭 Ctrl+S 鈫?2MB 鏂囦欢琚浛鎹㈡垚 512KB锛?.5MB 鏁版嵁姘镐箙涓㈠け涓旀棤鎶ラ敊銆?
+- **淇硶**锛氬墠绔寜 HEX_CHUNK 鍒嗗潡寰幆 fetchChunk 鎷兼帴鑷?conn.size锛沨ex_save 鍐欏洖鍓嶆牎楠?raw 闀垮害涓?meta size 涓€鑷达紝涓嶄竴鑷存嫆缁濅繚瀛橈紙鍙屼繚闄╋級銆?
 
-### 14. 【✅已修】MCP：HTTPError 被当 URLError 处理——后端 4xx/5xx 全部误报「工具可能已关闭」
-- **位置**：`src/mcp_server.py:815`
-- **问题**：HTTPError 是 URLError 子类；后端所有 500/404（认证失败/文件不存在/重复 disconnect）都进「后端瞬断重试」分支：清 URL 缓存+原样重发（connect_ssh 场景重复一次完整 SSH 握手，非幂等）+最终上报「后端通信失败…工具可能已关闭」。server.py 精心写的中文错误分类对 MCP 侧是死代码。
-- **失败场景**：connect_ssh 密码错 → AI 收到「工具可能已关闭」，误诊为桌面工具没运行，转去拉起 app。
-- **修法**：URLError 之前先 `except urllib.error.HTTPError`：读响应体 err 字段直接作为工具结果返回，不重试。
+### 5. 銆愨渽宸蹭慨銆戞嫋鍏?鏈€杩戞墦寮€澶栭儴 .note 鏂囦欢锛氭墦寮€绌虹櫧锛屼繚瀛樺嵆瑕嗙洊姣佸師鏂囦欢锛堟暟鎹涪澶憋級
+- **浣嶇疆**锛歚web/js/editor.js:1217`锛坥penFileSmart edit 鍒嗘敮锛?
+- **闂**锛歚/api/ed/open` 杩斿洖 JSON 瀛楃涓插悗鐩存帴 buildEditorTab锛屾病鍍?openEditorFile锛?24 琛岋級閭ｆ牱鍏?JSON.parse锛沖edInitContent 瑕佹眰瀵硅薄 鈫?绌哄潡鍒濆鍖栥€乷nDisk=true銆?
+- **澶辫触鍦烘櫙**锛氭嫋鍏ュ閮?.note 澶囦唤绗旇 鈫?缂栬緫鍣ㄦ墦寮€涓虹┖鐧?鈫?闅忔墜 Ctrl+S 鈫?鍘熸枃浠惰鍐欏洖 `{"blocks":[]}`锛屽師濮嬬瑪璁版案涔呬涪澶便€傘€屾渶杩戞墦寮€銆峞xtPath 璺緞鍚屾牱鍛戒腑銆?
+- **淇硶**锛歰penFileSmart edit 鍒嗘敮瀵?.note 鍋?JSON.parse锛堝け璐ュ厹搴曠┖瀵硅薄锛夛紝鎴栫粺涓€鍦?buildEditorTab 鍏ュ彛瀵?isNote 涓?content 涓哄瓧绗︿覆鏃跺厛瑙ｆ瀽銆?
 
-### 15. 【✅已修】connect_ssh 明文密码经 mcp_report 展示在前端状态面板
-- **位置**：`src/mcp_server.py:835`（_args_summary）
-- **问题**：tools/call 后把完整 args JSON 上报 /api/ai/mcp_report，password/key_path 无脱敏；SSH 参数 JSON 通常不足 120 字符截断上限，密码完整保留；_mcp_calls 常驻 50 条，sense.js 5s 轮询渲染「最近调用」。
-- **失败场景**：AI 连设备后，SSH 密码明文出现在 MCP 状态面板，同屏旁观/截屏即泄露。
-- **修法**：_args_summary 中对 password/key_path 替换为 "***"。
+### 6. 銆愨渽宸蹭慨銆慖ntel HEX 淇濆瓨瓒?64KB 鍦板潃鍥炵粫鈥斺€斾繚瀛樺嵆姣佸浐浠讹紙鏁版嵁涓㈠け锛?
+- **浣嶇疆**锛歚web/js/hex-viewer.js:693`锛坃hxSave ihex 鍥炲啓锛?
+- **闂**锛氬彧鍙?type 00 鏁版嵁璁板綍銆佸湴鍧€瀛楁 `(off & 0xFFFF)`锛屼粠涓嶅彂 type 04 鎵╁睍绾挎€у湴鍧€璁板綍锛涢暅鍍忚秴 64KB 鍚庢墍鏈夎褰曞湴鍧€鍥炵粫锛?x10000鈫?x0000锛夈€傛牎楠屽拰缁?&0xFF 鎺╃爜鎭板ソ涓庢埅鏂湴鍧€鑷唇锛屾枃浠惰兘闈欓粯閫氳繃浠讳綍鏍￠獙妫€鏌モ€斺€旂牬鍧忔洿闅愯斀銆?
+- **澶辫触鍦烘櫙**锛氭墦寮€ 128KB 鍥轰欢 .hex锛屾敼涓€瀛楄妭 Ctrl+S 鈫?鍚庡崐 64KB 鏁版嵁鍦板潃鍏ㄩ儴鍥炵粫锛岀儳褰曟椂鍐欏埌閿欒鍦板潃锛屽浐浠舵枃浠舵崯鍧忥紙os.replace 鏃犲浠斤級銆?
+- **淇硶**锛氫繚瀛樻椂缁存姢鎵╁睍娈碉紝off 璺?0x10000 杈圭晫鍏堣緭鍑?`:02000004 XXXX` 鎵╁睍璁板綍锛涘湴鍧€涓庢牎楠岀粺涓€鍙敤浣?16 浣嶃€?
 
-### 16. 【✅已修】search_log 提示「用 offset 续搜」但工具没有 offset 参数
-- **位置**：`src/mcp_server.py:364`
-- **问题**：has_more 提示用 offset 续搜，但 inputSchema 只有 path/query/limit，_dispatch 忽略未知参数 → AI 按提示续搜拿回与第一次完全相同的命中，误读为续页，永远翻不到 500 名之后。后端 /api/log_search 的 offset+count_total 能力存在但 MCP 层没接。
-- **修法**：给 tool_search_log 加 offset 透传（inputSchema + _get 参数表），或改提示只说提高 limit。
+### 7. 銆愨渽宸蹭慨銆憇erial_cli 榛樿鍛戒护 cmd_overview 鏈畾涔夛紝鐩存帴 NameError 宕╂簝
+- **浣嶇疆**锛歚src/serial_cli.py:254`
+- **闂**锛歮ain() 榛樿鍒嗘敮璋冪敤 cmd_overview(url)锛屼絾鍏ㄦ枃浠舵棤 `def cmd_overview`锛沶eed_running() 鐨?sys.exit(1) 涔嬪悗锛?35-158 琛岋級娈嬬暀涓€娈靛紩鐢ㄦ湭瀹氫箟 url 鐨勬浠ｇ爜鈥斺€旀鏄涪澶变簡鍑芥暟澶寸殑 cmd_overview 鍑芥暟浣撱€?
+- **澶辫触鍦烘櫙**锛氬悗绔繍琛屾椂鎵ц `python src/serial_cli.py`锛坉ocstring 绗竴鐢ㄦ硶锛夆啋 NameError 宕╂簝锛宱verview/obs/o 涓夌榛樿鐢ㄦ硶鍏ㄦ寕銆?
+- **淇硶**锛氭妸 135-158 琛屾浠ｇ爜鍙栧嚭鎭㈠涓?`def cmd_overview(url):`锛屽垹 sys.exit 鍚庢畫鐣欍€?
 
-### 17. 【✅已修】索引共享状态无读保护：并发 build 重置 offsets 时在途 search/get_page 直接 IndexError
-- **位置**：`src/log_index.py:106`（配合 app_state.py:190）
-- **问题**：build() 只在锁内，search/get_page 的读取循环在锁外逐迭代实时读 self.offsets[i]；全量重扫第 106 行 `self.offsets=[0]` 重绑后 total 到 117 行才更新——在途循环按旧 total 索引 1 元素数组 → IndexError → 500。_append_scan 异常路径（154-159 行）清空 offsets 同理。
-- **失败场景**：G 级日志 20s 全量搜索期间日志被外部截断（`type nul > log`）→ 另一 tab 翻页触发重扫 → 搜索线程 IndexError 500。
-- **修法**：循环前把 offsets/total 各取局部快照；半态修复：新 list 构建后整体替换而非原地清空。
+### 8. 銆愨渽宸蹭慨銆慚CP stdin 鏈噸閰?UTF-8锛氬惈涓枃/emoji 鐨勫伐鍏峰弬鏁板叏閮ㄤ贡鐮?
+- **浣嶇疆**锛歚src/mcp_server.py:759`
+- **闂**锛氬彧 reconfigure 浜?stdout/stderr锛宻tdin 淇濇寔 Windows 绠￠亾榛樿 GBK銆侰laude Code 鎸?MCP stdio 瑙勮寖鍐?UTF-8 JSON锛孭ython 鎸?GBK 瑙ｇ爜鍑轰贡鐮?瀛ょ珛浠ｇ悊瀛楃锛圽udcad锛夈€?*楠岃瘉鑰呭凡鍦ㄨ繍琛屼腑鐨勫伐鍏蜂笂瀹炶瘉澶嶇幇**锛歚read_log(path="涓枃鈥?)` 杩斿洖 `'utf-8' codec can't encode character '\udcad'鈥urrogates not allowed`銆俥xe 妯″紡锛坢ain.py:155锛夊凡鍖?utf-8 涓嶅彈褰卞搷锛屾簮鐮佹ā寮忔棤淇濇姢銆?
+- **澶辫触鍦烘櫙**锛氭湰椤圭洰璺緞鏈韩鍚€屼覆鍙ｆ帶鍒跺彴銆嶁€斺€攔ead_log/search_log/diff_logs/send_command锛?echo 浣犲ソ"锛夊嚒甯︿腑鏂囧弬鏁板繀鐒跺け璐ユ垨鍙戜贡鐮佸瓧鑺傜粰璁惧銆?
+- **淇硶**锛?58-762 鍚屼竴 try 鍧楄ˉ `sys.stdin.reconfigure(encoding="utf-8")`銆?
 
-### 18. 【✅已修】搜索稀疏窗口 3×RES_WIN 边界滞回死区：永久「加载中」+ 无限回载循环
-- **位置**：`web/js/log-viewer.js:475`
-- **问题**：resEnsureRange 滞回只看浏览点 hitIdx 是否在窗口内；hitIdx ∈ [resWinEnd-5, resWinEnd) 时 inWin=true 不换窗，但可视/预载区已越过 resWinEnd → 回载响应被窗口过滤全部丢弃 → renderLogResults 再触发 resEnsureRange 发现同段缺失再发 → 无限循环。验证者确认实际影响带比报告更宽（约 2000 命中宽）。
-- **失败场景**：200 万命中下滚动到第 300,000 号附近停下 → 可视区永久「✳ 加载中…」，前端无限循环请求，直到滚过边界。
-- **修法**：滞回判断前先检查 `needEnd > resWinEnd || needStart < resWinStart` 强制扩窗/换窗。
-
-### 19. 【✅已修】doLogSearch 无取消/代次机制：取消的搜索复活 + 新词回车被静默吞掉
-- **位置**：`web/js/log-viewer.js:431`
-- **问题**：全量扫描（G 级数秒）置 searching=true 但无代次令牌；清空输入框复位状态不能取消在途请求，响应到达无条件写回旧词结果并自动跳转；扫描期间新词回车命中 `if (ls.searching) return` 被静默吞掉。讽刺的是 resFetchRange 已实现 myQ 代次比对，唯独全量首扫没有。
-- **失败场景**：搜「foo」扫描中清空输入框 → 数秒后 foo 的结果列表/计数复活、主视图自动跳转，与空输入框自相矛盾；改输「bar」回车 → 无反馈，最终展示 foo 的结果。
-- **修法**：加代次令牌 ls.searchGen++，响应回来比对 gen 与当前输入值不一致即丢弃；清空时同步作废在途搜索。
-
-### 20. 【✅已修】侧栏 ✕ 对 hex 标签走 closeConnection，绕过脏确认
-- **位置**：`web/js/sidebar.js:149`
-- **问题**：关闭分派 isLog?closeLogViewer : isEdit?closeEditorTab : closeConnection——hex（meta.kind==='hex'）落入 closeConnection，不检查 conn.dirty 直接清理并发一个必 404 的 /api/disconnect；标签栏 ✕ 则走 closeEditorTab 有脏确认。同一 tab 两个入口行为不一致。
-- **失败场景**：hex 查看器改了若干字节（标题带 *），点侧栏该项 ✕ → 无确认直接关闭，修改全丢。
-- **修法**：分派补 hex 分支走 closeEditorTab；closeConnection 兜底检查 confirmClose。
-
-### 21. 【✅已修——随 #4 一并】hex 查看器渲染崩溃补充（与 #4 同文件不同路径）
-- **位置**：`web/js/hex-viewer.js:168-173`（byteAt）+ grpVal
-- **问题**：editable 路径 byteAt 对 ≥512KB 偏移返回 undefined，grpVal 的 `BigInt(undefined)` 抛 TypeError 且发生在 canvas.innerHTML 清空前 → 旧行 DOM 原地保留、滚过去空白（只读窗口模式有 return 0 兜底，editable 无）。
-- **修法**：与 #4 一并处理；byteAt 越界返回 0 做防御。
+### 9. 銆愨渽宸蹭慨銆憇tart() 鍏堝惎鍔ㄨ绾跨▼鍚庡紑鏃ュ織锛歘start_log 寮傚父鏃跺彞鏌?绾跨▼娉勬紡锛孋OM 鍙ｅ崰姝?
+- **浣嶇疆**锛歚src/base_conn.py:276`锛堥厤鍚?server.py:217-221锛?
+- **闂**锛歴tart() 椤哄簭 _io_open() 鈫?璇荤嚎绋?鈫?_start_log()锛屽悗鑰?makedirs/open 鏃犲紓甯镐繚鎶わ紱api_connect 鍦?_ports_lock 閲屾瀯閫犲け璐ュ彧杞?500锛屽崐鏋勯€犲璞★紙宸插紑涓插彛鍙ユ焺+璇荤嚎绋?SSH keepalive锛夋棤浜?close銆?
+- **澶辫触鍦烘櫙**锛歀OG_DIR 鎸囧悜鐨勭綉缁滅洏鎺夌嚎鍚庣偣杩炴帴 鈫?500銆岃繛鎺ュけ璐ャ€嶏紝浣?COM3 宸茶鍗犵敤锛屽啀杩炴姤 PermissionError锛屾硠婕忚绾跨▼鎸佺画绌鸿浆鐩村埌閫€鍑哄伐鍏枫€係SH 鍦烘櫙娉勬紡瀹屾暣娲讳細璇濄€?
+- **淇硶**锛歴tart() 鍐?try/except _start_log 澶辫触闄嶇骇锛坙og_fp=None 缁х画璺戯級涓嶈寮傚父閫冮€革紱鎴?api_connect except 鍒嗘敮瀵瑰崐鏋勯€犲璞¤皟 close() 鍐嶈繑鍥?500銆?
 
 ---
 
-## 🟢 轻微（5 项）——体验/累积
+## 馃煛 涓瓑锛?2 椤癸級鈥斺€斿姛鑳藉け鏁?璇/瓒婄晫
 
-> ✅ **2026-09-05 全部修复完成**（#22–#26），审查情况见文末「中等+轻微组修复审查记录」。
+> 鉁?**2026-09-05 鍏ㄩ儴淇瀹屾垚**锛?10鈥?21锛夛紝瀹℃煡鎯呭喌瑙佹枃鏈€屼腑绛?杞诲井缁勪慨澶嶅鏌ヨ褰曘€嶃€?
 
-### 22. 【✅已修】keepalive 停止标志在旧线程醒来前被重置——重连一次净增一个线程
-- **位置**：`src/ssh_conn.py:56`
-- **问题**：重连时 `_keepalive_stop=True` 后 join(timeout=1)，旧线程阻塞在 sleep(30) 必超时；随后标志被重置 False，旧线程醒来把新连接当自己的继续跑——多次闪断后数十个 keepalive 并发 send_ignore。
-- **修法**：改 per-thread threading.Event；sleep(30) 拆成可中断小段轮询；绝不在 join 超时后重置标志。
+### 10. 銆愨渽宸蹭慨銆慉I 鍏ㄥ眬娴佽ˉ涓佸彧鎸?SerialPort鈥斺€擲SH 杈撳嚭姘歌繙涓嶈繘 /api/ai/stream
+- **浣嶇疆**锛歚src/server.py:89`锛堣ˉ涓侊級+ `src/ssh_conn.py:68`锛堜袱缁勭嫭绔嬪彂鐜帮紝鍚屼竴鏍瑰洜锛?
+- **闂**锛歚SerialPort.append_line = _patched_append` 鍙?shadow 浜嗕覆鍙ｇ被锛孲SHConnection 缁ф壙鏈墦琛ヤ竵鐨勫熀绫绘柟娉曪紱_broadcast_to_ai 鍞竴璋冪敤鐐瑰氨鏄繖涓ˉ涓併€俠ase_conn.py:71 娉ㄩ噴鏄庤█璁捐鎰忓浘瑕嗙洊鎵€鏈夎繛鎺ャ€傛湰鍒嗘敮姝ｆ槸 SSH 鍔熻兘鍒嗘敮銆?
+- **澶辫触鍦烘櫙**锛欰I 璁㈤槄 /api/ai/stream 鍚庤繛 SSH 璺戝懡浠わ細涓€琛岄兘涓嶅埌锛岃鍒よ澶囨棤杈撳嚭锛泂ense.js 鎰熺煡闈㈡澘 SSH 绔彛杩炵瓫閫?chip 閮戒笉鍑虹幇锛岃€?observe/get_buffer 鐩磋 buf 姝ｅ父鈥斺€旀瀬闅炬帓鏌ャ€?
+- **淇硶**锛氳ˉ涓佹敼鎸?`BaseConnection.append_line`锛宻erial/ssh 涓€骞惰鐩栥€?
 
-### 23. 【✅已修】文件同尺寸替换/轮转穿越旧尺寸时索引静默错位
-- **位置**：`src/log_index.py:67`
-- **问题**：仅凭 cur_size==_built_size 判「未变」；同路径替换为更大新文件后 _append_scan 从旧文件行偏移切入新文件中部，错位偏移被 _save_cache 持久化跨重启存活，页面持续乱码无报错。.idx 加载仅凭 mtime 采信，同尺寸原地替换不失效。
-- **修法**：.idx 头部记录建索引时文件大小+首 4KB 哈希，加载对比；cur_size==_built_size 时校验文件尾哈希。
+### 11. 銆愨渽宸蹭慨銆?api/log/<name> 鏃犺矾寰勭┛瓒婇槻鎶わ紙鍙嶆枩鏉犲彲閫冨嚭 LOG_DIR锛?
+- **浣嶇疆**锛歚src/server.py:651`
+- **闂**锛氬敮涓€娌¤蛋 _resolve_log_path 鐨勬棩蹇楄矾鐢憋紱Flask 榛樿杞崲鍣ㄥ彧鎸?`/` 涓嶆尅 `%5C`锛堣В鐮佷负 `\`锛夛紝Windows 涓婂弽鏂滄潬鏄悎娉曞垎闅旂锛宍..\` 鍙€愮骇閫冨嚭璇绘暟鎹洏浠绘剰鏂囦欢銆?
+- **淇硶**锛氭敼 `path = _resolve_log_path(name); if not path: return 404`锛屼笌鍏朵粬 8 涓棩蹇楄矾鐢辩粺涓€闃茬嚎銆?
 
-### 24. 【✅已修】分栏拖拽/窗口 resize 不重渲染搜索结果列表
-- **位置**：`web/js/log-viewer.js:640`（_splitUp）+ terminal-core.js:299
-- **问题**：两处只调 renderLogSlice 主视图；容器拉高不触发 scroll，renderLogResults 的相等性短路继续成立 → 底部新增区域空白。作者在 toggleLogSearchPane 已知此问题（展开时复位 resRenderStart），拖拽/resize 是遗漏。
-- **修法**：_splitUp 与 resize 处理对 log 连接同时复位 `ls.resRenderStart=-1` 并调 renderLogResults。
+### 12. 銆愨渽宸蹭慨銆慼ttpfile 涓嬭浇鏈嶅姟锛氱洏绗︾浉瀵瑰悕锛圕:xxx锛夌粫杩?root_dir 闄愬埗
+- **浣嶇疆**锛歚src/httpfile.py:63`
+- **闂**锛氭牎楠屽彧鎷?/銆乗銆?銆?.锛屼笉鎷掑啋鍙凤紱`os.path.join(root, 'C:xxx')` 鍦?Windows 鐩存帴杩斿洖 'C:xxx' 涓㈠純 root锛堝凡瀹炴祴纭锛夛紱鏈嶅姟缁?0.0.0.0:8081 瀵瑰眬鍩熺綉璁惧寮€鏀俱€?
+- **澶辫触鍦烘櫙**锛氬眬鍩熺綉浠绘剰涓绘満璇锋眰 `http://<PC_IP>:8081/C:config.json` 鈫?鍙秺鐣岃杩涚▼ CWD/鐩樻牴涓嬪钩閾烘枃浠躲€?
+- **淇硶**锛氭牎楠岃拷鍔犳嫆缁濆惈 `:` 鐨?name锛屾垨鎷兼帴鍚?realpath 蹇呴』浣嶄簬 root 涔嬩笅鍐嶆斁琛屻€?
 
-### 25. 【✅已修】waitResHitThenJump 无代次校验不去重：并发轮询后到者覆盖落点
-- **位置**：`web/js/log-viewer.js:529`
-- **问题**：轮询器不校验 searchQ/searchIdx 是否已被改变、不撤销前一个轮询器；3s 窗口内再回车「下一个」会双轮询，后完成者覆盖主视图落点，与列表高亮不一致。
-- **修法**：timer 存 ls._jumpTimer，新跳转前 clearInterval；轮询体校验 hitIdx === ls.searchIdx。
+### 13. 銆愨渽宸蹭慨銆慶lose() 鏈熼棿璇荤嚎绋嬪湪 _io_reconnect 鍐呴儴锛氭柊 SSH 浼氳瘽琚垱寤哄苟姘镐箙娉勬紡锛堝菇鐏典細璇濓級
+- **浣嶇疆**锛歚src/ssh_conn.py:109`
+- **闂**锛歝lose() join 瓒呮椂浠?1s锛岃€?_io_reconnect 鍐呴儴 sleep(1~60s) + connect(timeout=10) 閮戒笉妫€鏌?self.alive锛涢噸杩炴垚鍔熷悗璇荤嚎绋嬫墠鍙戠幇 alive=False 閫€鍑猴紝鏂颁細璇濇棤浜哄叧闂€?
+- **澶辫触鍦烘櫙**锛氱綉缁滄姈鍔ㄩ噸杩炴湡闂寸偣鏂紑 鈫?骞界伒浼氳瘽鍗犳帀宓屽叆寮忚澶囷紙dropbear 閫氬父闄?1~2 涓細璇濓級鍚嶉锛屼箣鍚庢€庝箞杩為兘澶辫触鐩村埌宸ュ叿閫€鍑恒€?
+- **淇硶**锛歘io_reconnect 鐨?sleep 鍚庛€乢io_open 鍓嶆鏌?`if not self.alive: return False`锛沖io_open 鎴愬姛璧嬪€煎彞鏌勫墠鍐嶆鏌ヤ竴娆°€?
 
-### 26. 【✅已修】C 系语言正则大纲统一取 m[2]，但 c 组规则只有 1 个捕获组
-- **位置**：`web/js/editor.js:491`
-- **问题**：struct/class/函数三条正则只有 1 个捕获组（名字在 m[1]），统一取 m[2]=undefined → .js/.ts/.java/.go/.rs 等文件大纲全部显示「函数 undefined」「类 undefined」（.c/.cpp 走 tree-sitter 不受影响）。
-- **修法**：c 组正则补第二捕获组，或取名改用 `m[m.length-1]`。
+### 14. 銆愨渽宸蹭慨銆慚CP锛欻TTPError 琚綋 URLError 澶勭悊鈥斺€斿悗绔?4xx/5xx 鍏ㄩ儴璇姤銆屽伐鍏峰彲鑳藉凡鍏抽棴銆?
+- **浣嶇疆**锛歚src/mcp_server.py:815`
+- **闂**锛欻TTPError 鏄?URLError 瀛愮被锛涘悗绔墍鏈?500/404锛堣璇佸け璐?鏂囦欢涓嶅瓨鍦?閲嶅 disconnect锛夐兘杩涖€屽悗绔灛鏂噸璇曘€嶅垎鏀細娓?URL 缂撳瓨+鍘熸牱閲嶅彂锛坈onnect_ssh 鍦烘櫙閲嶅涓€娆″畬鏁?SSH 鎻℃墜锛岄潪骞傜瓑锛?鏈€缁堜笂鎶ャ€屽悗绔€氫俊澶辫触鈥﹀伐鍏峰彲鑳藉凡鍏抽棴銆嶃€俿erver.py 绮惧績鍐欑殑涓枃閿欒鍒嗙被瀵?MCP 渚ф槸姝讳唬鐮併€?
+- **澶辫触鍦烘櫙**锛歝onnect_ssh 瀵嗙爜閿?鈫?AI 鏀跺埌銆屽伐鍏峰彲鑳藉凡鍏抽棴銆嶏紝璇瘖涓烘闈㈠伐鍏锋病杩愯锛岃浆鍘绘媺璧?app銆?
+- **淇硶**锛歎RLError 涔嬪墠鍏?`except urllib.error.HTTPError`锛氳鍝嶅簲浣?err 瀛楁鐩存帴浣滀负宸ュ叿缁撴灉杩斿洖锛屼笉閲嶈瘯銆?
+
+### 15. 銆愨渽宸蹭慨銆慶onnect_ssh 鏄庢枃瀵嗙爜缁?mcp_report 灞曠ず鍦ㄥ墠绔姸鎬侀潰鏉?
+- **浣嶇疆**锛歚src/mcp_server.py:835`锛坃args_summary锛?
+- **闂**锛歵ools/call 鍚庢妸瀹屾暣 args JSON 涓婃姤 /api/ai/mcp_report锛宲assword/key_path 鏃犺劚鏁忥紱SSH 鍙傛暟 JSON 閫氬父涓嶈冻 120 瀛楃鎴柇涓婇檺锛屽瘑鐮佸畬鏁翠繚鐣欙紱_mcp_calls 甯搁┗ 50 鏉★紝sense.js 5s 杞娓叉煋銆屾渶杩戣皟鐢ㄣ€嶃€?
+- **澶辫触鍦烘櫙**锛欰I 杩炶澶囧悗锛孲SH 瀵嗙爜鏄庢枃鍑虹幇鍦?MCP 鐘舵€侀潰鏉匡紝鍚屽睆鏃佽/鎴睆鍗虫硠闇层€?
+- **淇硶**锛歘args_summary 涓 password/key_path 鏇挎崲涓?"***"銆?
+
+### 16. 銆愨渽宸蹭慨銆憇earch_log 鎻愮ず銆岀敤 offset 缁悳銆嶄絾宸ュ叿娌℃湁 offset 鍙傛暟
+- **浣嶇疆**锛歚src/mcp_server.py:364`
+- **闂**锛歨as_more 鎻愮ず鐢?offset 缁悳锛屼絾 inputSchema 鍙湁 path/query/limit锛宊dispatch 蹇界暐鏈煡鍙傛暟 鈫?AI 鎸夋彁绀虹画鎼滄嬁鍥炰笌绗竴娆″畬鍏ㄧ浉鍚岀殑鍛戒腑锛岃璇讳负缁〉锛屾案杩滅炕涓嶅埌 500 鍚嶄箣鍚庛€傚悗绔?/api/log_search 鐨?offset+count_total 鑳藉姏瀛樺湪浣?MCP 灞傛病鎺ャ€?
+- **淇硶**锛氱粰 tool_search_log 鍔?offset 閫忎紶锛坕nputSchema + _get 鍙傛暟琛級锛屾垨鏀规彁绀哄彧璇存彁楂?limit銆?
+
+### 17. 銆愨渽宸蹭慨銆戠储寮曞叡浜姸鎬佹棤璇讳繚鎶わ細骞跺彂 build 閲嶇疆 offsets 鏃跺湪閫?search/get_page 鐩存帴 IndexError
+- **浣嶇疆**锛歚src/log_index.py:106`锛堥厤鍚?app_state.py:190锛?
+- **闂**锛歜uild() 鍙湪閿佸唴锛宻earch/get_page 鐨勮鍙栧惊鐜湪閿佸閫愯凯浠ｅ疄鏃惰 self.offsets[i]锛涘叏閲忛噸鎵 106 琛?`self.offsets=[0]` 閲嶇粦鍚?total 鍒?117 琛屾墠鏇存柊鈥斺€斿湪閫斿惊鐜寜鏃?total 绱㈠紩 1 鍏冪礌鏁扮粍 鈫?IndexError 鈫?500銆俖append_scan 寮傚父璺緞锛?54-159 琛岋級娓呯┖ offsets 鍚岀悊銆?
+- **澶辫触鍦烘櫙**锛欸 绾ф棩蹇?20s 鍏ㄩ噺鎼滅储鏈熼棿鏃ュ織琚閮ㄦ埅鏂紙`type nul > log`锛夆啋 鍙︿竴 tab 缈婚〉瑙﹀彂閲嶆壂 鈫?鎼滅储绾跨▼ IndexError 500銆?
+- **淇硶**锛氬惊鐜墠鎶?offsets/total 鍚勫彇灞€閮ㄥ揩鐓э紱鍗婃€佷慨澶嶏細鏂?list 鏋勫缓鍚庢暣浣撴浛鎹㈣€岄潪鍘熷湴娓呯┖銆?
+
+### 18. 銆愨渽宸蹭慨銆戞悳绱㈢█鐤忕獥鍙?3脳RES_WIN 杈圭晫婊炲洖姝诲尯锛氭案涔呫€屽姞杞戒腑銆? 鏃犻檺鍥炶浇寰幆
+- **浣嶇疆**锛歚web/js/log-viewer.js:475`
+- **闂**锛歳esEnsureRange 婊炲洖鍙湅娴忚鐐?hitIdx 鏄惁鍦ㄧ獥鍙ｅ唴锛沨itIdx 鈭?[resWinEnd-5, resWinEnd) 鏃?inWin=true 涓嶆崲绐楋紝浣嗗彲瑙?棰勮浇鍖哄凡瓒婅繃 resWinEnd 鈫?鍥炶浇鍝嶅簲琚獥鍙ｈ繃婊ゅ叏閮ㄤ涪寮?鈫?renderLogResults 鍐嶈Е鍙?resEnsureRange 鍙戠幇鍚屾缂哄け鍐嶅彂 鈫?鏃犻檺寰幆銆傞獙璇佽€呯‘璁ゅ疄闄呭奖鍝嶅甫姣旀姤鍛婃洿瀹斤紙绾?2000 鍛戒腑瀹斤級銆?
+- **澶辫触鍦烘櫙**锛?00 涓囧懡涓笅婊氬姩鍒扮 300,000 鍙烽檮杩戝仠涓?鈫?鍙鍖烘案涔呫€屸湷 鍔犺浇涓€︺€嶏紝鍓嶇鏃犻檺寰幆璇锋眰锛岀洿鍒版粴杩囪竟鐣屻€?
+- **淇硶**锛氭粸鍥炲垽鏂墠鍏堟鏌?`needEnd > resWinEnd || needStart < resWinStart` 寮哄埗鎵╃獥/鎹㈢獥銆?
+
+### 19. 銆愨渽宸蹭慨銆慸oLogSearch 鏃犲彇娑?浠ｆ鏈哄埗锛氬彇娑堢殑鎼滅储澶嶆椿 + 鏂拌瘝鍥炶溅琚潤榛樺悶鎺?
+- **浣嶇疆**锛歚web/js/log-viewer.js:431`
+- **闂**锛氬叏閲忔壂鎻忥紙G 绾ф暟绉掞級缃?searching=true 浣嗘棤浠ｆ浠ょ墝锛涙竻绌鸿緭鍏ユ澶嶄綅鐘舵€佷笉鑳藉彇娑堝湪閫旇姹傦紝鍝嶅簲鍒拌揪鏃犳潯浠跺啓鍥炴棫璇嶇粨鏋滃苟鑷姩璺宠浆锛涙壂鎻忔湡闂存柊璇嶅洖杞﹀懡涓?`if (ls.searching) return` 琚潤榛樺悶鎺夈€傝鍒虹殑鏄?resFetchRange 宸插疄鐜?myQ 浠ｆ姣斿锛屽敮鐙叏閲忛鎵病鏈夈€?
+- **澶辫触鍦烘櫙**锛氭悳銆宖oo銆嶆壂鎻忎腑娓呯┖杈撳叆妗?鈫?鏁扮鍚?foo 鐨勭粨鏋滃垪琛?璁℃暟澶嶆椿銆佷富瑙嗗浘鑷姩璺宠浆锛屼笌绌鸿緭鍏ユ鑷浉鐭涚浘锛涙敼杈撱€宐ar銆嶅洖杞?鈫?鏃犲弽棣堬紝鏈€缁堝睍绀?foo 鐨勭粨鏋溿€?
+- **淇硶**锛氬姞浠ｆ浠ょ墝 ls.searchGen++锛屽搷搴斿洖鏉ユ瘮瀵?gen 涓庡綋鍓嶈緭鍏ュ€间笉涓€鑷村嵆涓㈠純锛涙竻绌烘椂鍚屾浣滃簾鍦ㄩ€旀悳绱€?
+
+### 20. 銆愨渽宸蹭慨銆戜晶鏍?鉁?瀵?hex 鏍囩璧?closeConnection锛岀粫杩囪剰纭
+- **浣嶇疆**锛歚web/js/sidebar.js:149`
+- **闂**锛氬叧闂垎娲?isLog?closeLogViewer : isEdit?closeEditorTab : closeConnection鈥斺€攈ex锛坢eta.kind==='hex'锛夎惤鍏?closeConnection锛屼笉妫€鏌?conn.dirty 鐩存帴娓呯悊骞跺彂涓€涓繀 404 鐨?/api/disconnect锛涙爣绛炬爮 鉁?鍒欒蛋 closeEditorTab 鏈夎剰纭銆傚悓涓€ tab 涓や釜鍏ュ彛琛屼负涓嶄竴鑷淬€?
+- **澶辫触鍦烘櫙**锛歨ex 鏌ョ湅鍣ㄦ敼浜嗚嫢骞插瓧鑺傦紙鏍囬甯?*锛夛紝鐐逛晶鏍忚椤?鉁?鈫?鏃犵‘璁ょ洿鎺ュ叧闂紝淇敼鍏ㄤ涪銆?
+- **淇硶**锛氬垎娲捐ˉ hex 鍒嗘敮璧?closeEditorTab锛沜loseConnection 鍏滃簳妫€鏌?confirmClose銆?
+
+### 21. 銆愨渽宸蹭慨鈥斺€旈殢 #4 涓€骞躲€慼ex 鏌ョ湅鍣ㄦ覆鏌撳穿婧冭ˉ鍏咃紙涓?#4 鍚屾枃浠朵笉鍚岃矾寰勶級
+- **浣嶇疆**锛歚web/js/hex-viewer.js:168-173`锛坆yteAt锛? grpVal
+- **闂**锛歟ditable 璺緞 byteAt 瀵?鈮?12KB 鍋忕Щ杩斿洖 undefined锛実rpVal 鐨?`BigInt(undefined)` 鎶?TypeError 涓斿彂鐢熷湪 canvas.innerHTML 娓呯┖鍓?鈫?鏃ц DOM 鍘熷湴淇濈暀銆佹粴杩囧幓绌虹櫧锛堝彧璇荤獥鍙ｆā寮忔湁 return 0 鍏滃簳锛宔ditable 鏃狅級銆?
+- **淇硶**锛氫笌 #4 涓€骞跺鐞嗭紱byteAt 瓒婄晫杩斿洖 0 鍋氶槻寰°€?
 
 ---
 
-## 备注
-- 被对抗验证反驳剔除的 3 项未收录（1 项验证 agent 被安全分类器拦截，未定）。
-- 修 #1/#2/#4/#5/#6 时建议顺手补测试：均属「先复制后删除」类路径，改完用假数据目录回归（严禁真实数据当测试对象）。
-- exe 分发需重打包（python src\build.py）才会带上修复。
+## 馃煝 杞诲井锛? 椤癸級鈥斺€斾綋楠?绱Н
 
-## ✅ 严重组修复审查记录（2026-09-05）
+> 鉁?**2026-09-05 鍏ㄩ儴淇瀹屾垚**锛?22鈥?26锛夛紝瀹℃煡鎯呭喌瑙佹枃鏈€屼腑绛?杞诲井缁勪慨澶嶅鏌ヨ褰曘€嶃€?
 
-| # | 修法 | 审查结论 |
+### 22. 銆愨渽宸蹭慨銆慿eepalive 鍋滄鏍囧織鍦ㄦ棫绾跨▼閱掓潵鍓嶈閲嶇疆鈥斺€旈噸杩炰竴娆″噣澧炰竴涓嚎绋?
+- **浣嶇疆**锛歚src/ssh_conn.py:56`
+- **闂**锛氶噸杩炴椂 `_keepalive_stop=True` 鍚?join(timeout=1)锛屾棫绾跨▼闃诲鍦?sleep(30) 蹇呰秴鏃讹紱闅忓悗鏍囧織琚噸缃?False锛屾棫绾跨▼閱掓潵鎶婃柊杩炴帴褰撹嚜宸辩殑缁х画璺戔€斺€斿娆￠棯鏂悗鏁板崄涓?keepalive 骞跺彂 send_ignore銆?
+- **淇硶**锛氭敼 per-thread threading.Event锛泂leep(30) 鎷嗘垚鍙腑鏂皬娈佃疆璇紱缁濅笉鍦?join 瓒呮椂鍚庨噸缃爣蹇椼€?
+
+### 23. 銆愨渽宸蹭慨銆戞枃浠跺悓灏哄鏇挎崲/杞浆绌胯秺鏃у昂瀵告椂绱㈠紩闈欓粯閿欎綅
+- **浣嶇疆**锛歚src/log_index.py:67`
+- **闂**锛氫粎鍑?cur_size==_built_size 鍒ゃ€屾湭鍙樸€嶏紱鍚岃矾寰勬浛鎹负鏇村ぇ鏂版枃浠跺悗 _append_scan 浠庢棫鏂囦欢琛屽亸绉诲垏鍏ユ柊鏂囦欢涓儴锛岄敊浣嶅亸绉昏 _save_cache 鎸佷箙鍖栬法閲嶅惎瀛樻椿锛岄〉闈㈡寔缁贡鐮佹棤鎶ラ敊銆?idx 鍔犺浇浠呭嚟 mtime 閲囦俊锛屽悓灏哄鍘熷湴鏇挎崲涓嶅け鏁堛€?
+- **淇硶**锛?idx 澶撮儴璁板綍寤虹储寮曟椂鏂囦欢澶у皬+棣?4KB 鍝堝笇锛屽姞杞藉姣旓紱cur_size==_built_size 鏃舵牎楠屾枃浠跺熬鍝堝笇銆?
+
+### 24. 銆愨渽宸蹭慨銆戝垎鏍忔嫋鎷?绐楀彛 resize 涓嶉噸娓叉煋鎼滅储缁撴灉鍒楄〃
+- **浣嶇疆**锛歚web/js/log-viewer.js:640`锛坃splitUp锛? terminal-core.js:299
+- **闂**锛氫袱澶勫彧璋?renderLogSlice 涓昏鍥撅紱瀹瑰櫒鎷夐珮涓嶈Е鍙?scroll锛宺enderLogResults 鐨勭浉绛夋€х煭璺户缁垚绔?鈫?搴曢儴鏂板鍖哄煙绌虹櫧銆備綔鑰呭湪 toggleLogSearchPane 宸茬煡姝ら棶棰橈紙灞曞紑鏃跺浣?resRenderStart锛夛紝鎷栨嫿/resize 鏄仐婕忋€?
+- **淇硶**锛歘splitUp 涓?resize 澶勭悊瀵?log 杩炴帴鍚屾椂澶嶄綅 `ls.resRenderStart=-1` 骞惰皟 renderLogResults銆?
+
+### 25. 銆愨渽宸蹭慨銆憌aitResHitThenJump 鏃犱唬娆℃牎楠屼笉鍘婚噸锛氬苟鍙戣疆璇㈠悗鍒拌€呰鐩栬惤鐐?
+- **浣嶇疆**锛歚web/js/log-viewer.js:529`
+- **闂**锛氳疆璇㈠櫒涓嶆牎楠?searchQ/searchIdx 鏄惁宸茶鏀瑰彉銆佷笉鎾ら攢鍓嶄竴涓疆璇㈠櫒锛?s 绐楀彛鍐呭啀鍥炶溅銆屼笅涓€涓€嶄細鍙岃疆璇紝鍚庡畬鎴愯€呰鐩栦富瑙嗗浘钀界偣锛屼笌鍒楄〃楂樹寒涓嶄竴鑷淬€?
+- **淇硶**锛歵imer 瀛?ls._jumpTimer锛屾柊璺宠浆鍓?clearInterval锛涜疆璇綋鏍￠獙 hitIdx === ls.searchIdx銆?
+
+### 26. 銆愨渽宸蹭慨銆慍 绯昏瑷€姝ｅ垯澶х翰缁熶竴鍙?m[2]锛屼絾 c 缁勮鍒欏彧鏈?1 涓崟鑾风粍
+- **浣嶇疆**锛歚web/js/editor.js:491`
+- **闂**锛歴truct/class/鍑芥暟涓夋潯姝ｅ垯鍙湁 1 涓崟鑾风粍锛堝悕瀛楀湪 m[1]锛夛紝缁熶竴鍙?m[2]=undefined 鈫?.js/.ts/.java/.go/.rs 绛夋枃浠跺ぇ绾插叏閮ㄦ樉绀恒€屽嚱鏁?undefined銆嶃€岀被 undefined銆嶏紙.c/.cpp 璧?tree-sitter 涓嶅彈褰卞搷锛夈€?
+- **淇硶**锛歝 缁勬鍒欒ˉ绗簩鎹曡幏缁勶紝鎴栧彇鍚嶆敼鐢?`m[m.length-1]`銆?
+
+---
+
+## 澶囨敞
+- 琚鎶楅獙璇佸弽椹冲墧闄ょ殑 3 椤规湭鏀跺綍锛? 椤归獙璇?agent 琚畨鍏ㄥ垎绫诲櫒鎷︽埅锛屾湭瀹氾級銆?
+- 淇?#1/#2/#4/#5/#6 鏃跺缓璁『鎵嬭ˉ娴嬭瘯锛氬潎灞炪€屽厛澶嶅埗鍚庡垹闄ゃ€嶇被璺緞锛屾敼瀹岀敤鍋囨暟鎹洰褰曞洖褰掞紙涓ョ鐪熷疄鏁版嵁褰撴祴璇曞璞★級銆?
+- exe 鍒嗗彂闇€閲嶆墦鍖咃紙python src\build.py锛夋墠浼氬甫涓婁慨澶嶃€?
+
+## 鉁?涓ラ噸缁勪慨澶嶅鏌ヨ褰曪紙2026-09-05锛?
+
+| # | 淇硶 | 瀹℃煡缁撹 |
 |---|------|---------|
-| 1 | migrate 切换段补 `global DATA_DIR, STATE_DIR, CMD_LIB_FILE`（与 LOG_DIR 同款），函数体首行声明 | 初版 global 放函数中部触发 SyntaxError（used prior to global declaration），已移至函数首；现 server 与 _st 双绑定同步更新 |
-| 2 | check/migrate 双侧加 `tgt.startswith(cur+sep) or cur.startswith(tgt+sep)`（大小写归一） | 初版 check 端漏 lowercase，已补；两侧判定对称 |
-| 3 | os.walk 递归复制 + unmerged 清单，rmtree 前核对全覆盖，计数改 per-directory | 初版 unmerged 未 per-directory 复位，前一目录失败会阻止后一目录删除（保守方向，但已改精确计数） |
-| 4 | 前端分块循环 fetchChunk 拼 Uint8Array(size)；后端 hex_save 长度校验拒绝不一致写回 | 审查发现后端校验会误伤 ihex（文本长度≠镜像长度），已加 .hex/.ihx 例外 |
-| 5 | buildEditorTab 入口统一兜底：isNote 且 content 为字符串先 JSON.parse（失败置 null） | 覆盖拖入与「最近打开」全部入口，比只改 openFileSmart 单点更稳 |
-| 6 | 保存时维护 extSeg，跨 64KB 边界先发 `:02000004 XXXX`，校验和仅低 16 位自洽 | 首块 seg=0 也发扩展记录（合法，个别烧录器更稳）；EOF 记录保持 |
-| 7 | 死代码恢复为 `def cmd_overview(url):`，need_running 内 sys.exit 后残留清除 | overview/obs/o 三种用法恢复可用 |
-| 8 | 758 同一 try 块补 `sys.stdin.reconfigure(encoding="utf-8")` | 源码模式与 exe 模式行为对齐 |
-| 9 | start() 内 try/except _start_log 降级 log_fp=None；api_connect 串口/SSH except 分支均 close() 半构造对象兜底 | 双保险：异常不逃逸 + 逃逸了也回收 |
-| 21 | byteAt editable 分支 `conn.bytes[i] ?? 0` 越界兜底 | 随 #4 分块修复后理论上不再越界，保留防御 |
+| 1 | migrate 鍒囨崲娈佃ˉ `global DATA_DIR, STATE_DIR, CMD_LIB_FILE`锛堜笌 LOG_DIR 鍚屾锛夛紝鍑芥暟浣撻琛屽０鏄?| 鍒濈増 global 鏀惧嚱鏁颁腑閮ㄨЕ鍙?SyntaxError锛坲sed prior to global declaration锛夛紝宸茬Щ鑷冲嚱鏁伴锛涚幇 server 涓?_st 鍙岀粦瀹氬悓姝ユ洿鏂?|
+| 2 | check/migrate 鍙屼晶鍔?`tgt.startswith(cur+sep) or cur.startswith(tgt+sep)`锛堝ぇ灏忓啓褰掍竴锛?| 鍒濈増 check 绔紡 lowercase锛屽凡琛ワ紱涓や晶鍒ゅ畾瀵圭О |
+| 3 | os.walk 閫掑綊澶嶅埗 + unmerged 娓呭崟锛宺mtree 鍓嶆牳瀵瑰叏瑕嗙洊锛岃鏁版敼 per-directory | 鍒濈増 unmerged 鏈?per-directory 澶嶄綅锛屽墠涓€鐩綍澶辫触浼氶樆姝㈠悗涓€鐩綍鍒犻櫎锛堜繚瀹堟柟鍚戯紝浣嗗凡鏀圭簿纭鏁帮級 |
+| 4 | 鍓嶇鍒嗗潡寰幆 fetchChunk 鎷?Uint8Array(size)锛涘悗绔?hex_save 闀垮害鏍￠獙鎷掔粷涓嶄竴鑷村啓鍥?| 瀹℃煡鍙戠幇鍚庣鏍￠獙浼氳浼?ihex锛堟枃鏈暱搴︹墵闀滃儚闀垮害锛夛紝宸插姞 .hex/.ihx 渚嬪 |
+| 5 | buildEditorTab 鍏ュ彛缁熶竴鍏滃簳锛歩sNote 涓?content 涓哄瓧绗︿覆鍏?JSON.parse锛堝け璐ョ疆 null锛?| 瑕嗙洊鎷栧叆涓庛€屾渶杩戞墦寮€銆嶅叏閮ㄥ叆鍙ｏ紝姣斿彧鏀?openFileSmart 鍗曠偣鏇寸ǔ |
+| 6 | 淇濆瓨鏃剁淮鎶?extSeg锛岃法 64KB 杈圭晫鍏堝彂 `:02000004 XXXX`锛屾牎楠屽拰浠呬綆 16 浣嶈嚜娲?| 棣栧潡 seg=0 涔熷彂鎵╁睍璁板綍锛堝悎娉曪紝涓埆鐑у綍鍣ㄦ洿绋筹級锛汦OF 璁板綍淇濇寔 |
+| 7 | 姝讳唬鐮佹仮澶嶄负 `def cmd_overview(url):`锛宯eed_running 鍐?sys.exit 鍚庢畫鐣欐竻闄?| overview/obs/o 涓夌鐢ㄦ硶鎭㈠鍙敤 |
+| 8 | 758 鍚屼竴 try 鍧楄ˉ `sys.stdin.reconfigure(encoding="utf-8")` | 婧愮爜妯″紡涓?exe 妯″紡琛屼负瀵归綈 |
+| 9 | start() 鍐?try/except _start_log 闄嶇骇 log_fp=None锛沘pi_connect 涓插彛/SSH except 鍒嗘敮鍧?close() 鍗婃瀯閫犲璞″厹搴?| 鍙屼繚闄╋細寮傚父涓嶉€冮€?+ 閫冮€镐簡涔熷洖鏀?|
+| 21 | byteAt editable 鍒嗘敮 `conn.bytes[i] ?? 0` 瓒婄晫鍏滃簳 | 闅?#4 鍒嗗潡淇鍚庣悊璁轰笂涓嶅啀瓒婄晫锛屼繚鐣欓槻寰?|
 
-语法校验：py_compile 全过（server/app_state/hex_files/serial_cli/mcp_server/base_conn），node --check 全过（hex-viewer/editor）。未做运行时回归（工具正在运行，改动需重启后端生效）。
+璇硶鏍￠獙锛歱y_compile 鍏ㄨ繃锛坰erver/app_state/hex_files/serial_cli/mcp_server/base_conn锛夛紝node --check 鍏ㄨ繃锛坔ex-viewer/editor锛夈€傛湭鍋氳繍琛屾椂鍥炲綊锛堝伐鍏锋鍦ㄨ繍琛岋紝鏀瑰姩闇€閲嶅惎鍚庣鐢熸晥锛夈€?
 
-## ✅ 中等+轻微组修复审查记录（2026-09-05）
+## 鉁?涓瓑+杞诲井缁勪慨澶嶅鏌ヨ褰曪紙2026-09-05锛?
 
-| # | 修法 | 审查结论 |
+| # | 淇硶 | 瀹℃煡缁撹 |
 |---|------|---------|
-| 10 | 补丁改挂 `BaseConnection.append_line` | SerialPort 未覆盖 append_line（已核实无 `def append_line`），serial/ssh 经基类一并覆盖；补丁在两个子类 import 后执行，绑定安全 |
-| 11 | `/api/log/<name>` 改走 `_resolve_log_path` | 与其余 8 个日志路由统一防线；绝对路径 + LOG_DIR 内规范化双重校验 |
-| 12 | httpfile `_serve` 校验追加拒绝含 `:` 的 name | posixpath.basename 本会剥掉 `C:` 前缀，此校验为纵深防御；`:xxx`（无盘符冒号名）同被拒 |
-| 13 | `_io_reconnect` 退避 sleep 改 1s 可中断循环 + `_io_close`/`_io_open` 前后共 3 处 alive 检查，`_io_open` 后发现已 close 立即 `_io_close` 回收 | 幽灵会话窗口全关闭；退避期间断开最迟 1s 退出 |
-| 14 | 新增 `_BackendError` + `_httperr_msg`；HTTPError 先于 URLError 捕获，读响应体 err 字段直接返回；重试路径的二次 `_dispatch` 也补 HTTPError 捕获 | 审查发现初版内层重试再遇 HTTPError 会落外层 URLError 分支又误报，已补；`from None` 不暴露双层 traceback |
-| 15 | `_args_summary` 对 password/key_path 值替换为 `***`（构造脱敏副本再 dumps） | 原始 args 不动（上报摘要才脱敏）；截断逻辑保持 |
-| 16 | tool_search_log 加 offset 参数（inputSchema+描述+_dispatch 透传），count_total 按 offset 切换，结果提示返回 next_offset 续搜游标 | 审查发现初版把 offset 误描述为「命中序号」——后端 offset 是行偏移游标，已改正确语义并在输出中回传 next_offset |
-| 17 | get_page/search/ts_list/search_page 读路径局部快照 offsets，total 按 `len(offsets)-1` 钳制 | 审行时回归发现纯快照仍会捕获 (旧 total, 新 offsets) 交叉态 IndexError——快照后按 offsets 实际长度钳制才自洽；ts_list/search_page 审查发现同缺陷一并修。并发重扫 3 读者×30 重建压力测试 0 异常 |
-| 18 | `resEnsureRange` 滞回前先判 `needStart/needEnd` 越窗（outOfWin）强制换窗 | 覆盖验证者实测的 ~2000 命中宽影响带；滞回正常路径不受影响 |
-| 19 | doLogSearch 加 `ls.searchGen` 代次令牌：清空输入/换词 gen++ 作废在途响应；同词重复回车仍忽略 | 审查发现初版代次判断含冗余分支，已简化；清空输入的 input 事件处同步 gen++ 作废（含 loadLogViewer 复位处） |
-| 20 | sidebar 分派 isEdit 补 `|| kind==='hex'`；desc 加 hex 标识 | closeEditorTab 走 conn.confirmClose（hex tab 有 _hxConfirm）实现脏确认；_edCloseNow/_edStatText 对 hex conn（无 monaco/ta/isNote）安全降级 |
-| 22 | `_keepalive_stop` 改 per-thread `threading.Event`，`_io_open` set 旧 evt + 配新 evt，绝不重置；sleep(30) 拆 300×0.1s 可中断 | 审查发现初版入口有一段冗余的 300×0.1s 等待循环，已删（改后首个 keepalive 立即发，随后 30s 周期） |
-| 23 | `_head_hash`（首 4KB md5，追加不误伤）+ build 入口哈希校验；.idx 升 v2 头部 `<total><built_size><32B 指纹>`，加载对比 | 初版用末 4KB 哈希——审查发现追加场景文件尾必变会误伤正常追加，改首 4KB；初版 `_append_scan` 引用了 build 作用域的 head 变量 NameError 被 except 吞掉（运行时回归捕获，已改为不重算）；另发现全量扫描路径从未设 `_loaded=True` 的既有 bug（被 .idx 加载路径掩盖），已补。回归 7 场景全过 |
-| 24 | `_splitUp` 与 window resize 对 log 连接复位 `resRenderStart=-1` 并调 renderLogResults | renderLogResults 为全局函数（非模块化脚本），terminal-core.js 可直接调用 |
-| 25 | waitResHitThenJump：timer 存 `ls._jumpTimer` 先 clearInterval 再启新；轮询体校验 searchQ/searchExcludeQ/searchIdx | closeLogViewer 补 clearInterval 清理残留轮询器 |
-| 26 | `_outlineCodeEntries` 取名改 `m[m.length-1]`（py 组 2 捕获组取 m[2]、c 组 1 捕获组取 m[1]） | 未改正则（改正则会牵动 3 条规则的组结构），取最后捕获组对两组统一正确 |
+| 10 | 琛ヤ竵鏀规寕 `BaseConnection.append_line` | SerialPort 鏈鐩?append_line锛堝凡鏍稿疄鏃?`def append_line`锛夛紝serial/ssh 缁忓熀绫讳竴骞惰鐩栵紱琛ヤ竵鍦ㄤ袱涓瓙绫?import 鍚庢墽琛岋紝缁戝畾瀹夊叏 |
+| 11 | `/api/log/<name>` 鏀硅蛋 `_resolve_log_path` | 涓庡叾浣?8 涓棩蹇楄矾鐢辩粺涓€闃茬嚎锛涚粷瀵硅矾寰?+ LOG_DIR 鍐呰鑼冨寲鍙岄噸鏍￠獙 |
+| 12 | httpfile `_serve` 鏍￠獙杩藉姞鎷掔粷鍚?`:` 鐨?name | posixpath.basename 鏈細鍓ユ帀 `C:` 鍓嶇紑锛屾鏍￠獙涓虹旱娣遍槻寰★紱`:xxx`锛堟棤鐩樼鍐掑彿鍚嶏級鍚岃鎷?|
+| 13 | `_io_reconnect` 閫€閬?sleep 鏀?1s 鍙腑鏂惊鐜?+ `_io_close`/`_io_open` 鍓嶅悗鍏?3 澶?alive 妫€鏌ワ紝`_io_open` 鍚庡彂鐜板凡 close 绔嬪嵆 `_io_close` 鍥炴敹 | 骞界伒浼氳瘽绐楀彛鍏ㄥ叧闂紱閫€閬挎湡闂存柇寮€鏈€杩?1s 閫€鍑?|
+| 14 | 鏂板 `_BackendError` + `_httperr_msg`锛汬TTPError 鍏堜簬 URLError 鎹曡幏锛岃鍝嶅簲浣?err 瀛楁鐩存帴杩斿洖锛涢噸璇曡矾寰勭殑浜屾 `_dispatch` 涔熻ˉ HTTPError 鎹曡幏 | 瀹℃煡鍙戠幇鍒濈増鍐呭眰閲嶈瘯鍐嶉亣 HTTPError 浼氳惤澶栧眰 URLError 鍒嗘敮鍙堣鎶ワ紝宸茶ˉ锛沗from None` 涓嶆毚闇插弻灞?traceback |
+| 15 | `_args_summary` 瀵?password/key_path 鍊兼浛鎹负 `***`锛堟瀯閫犺劚鏁忓壇鏈啀 dumps锛?| 鍘熷 args 涓嶅姩锛堜笂鎶ユ憳瑕佹墠鑴辨晱锛夛紱鎴柇閫昏緫淇濇寔 |
+| 16 | tool_search_log 鍔?offset 鍙傛暟锛坕nputSchema+鎻忚堪+_dispatch 閫忎紶锛夛紝count_total 鎸?offset 鍒囨崲锛岀粨鏋滄彁绀鸿繑鍥?next_offset 缁悳娓告爣 | 瀹℃煡鍙戠幇鍒濈増鎶?offset 璇弿杩颁负銆屽懡涓簭鍙枫€嶁€斺€斿悗绔?offset 鏄鍋忕Щ娓告爣锛屽凡鏀规纭涔夊苟鍦ㄨ緭鍑轰腑鍥炰紶 next_offset |
+| 17 | get_page/search/ts_list/search_page 璇昏矾寰勫眬閮ㄥ揩鐓?offsets锛宼otal 鎸?`len(offsets)-1` 閽冲埗 | 瀹¤鏃跺洖褰掑彂鐜扮函蹇収浠嶄細鎹曡幏 (鏃?total, 鏂?offsets) 浜ゅ弶鎬?IndexError鈥斺€斿揩鐓у悗鎸?offsets 瀹為檯闀垮害閽冲埗鎵嶈嚜娲斤紱ts_list/search_page 瀹℃煡鍙戠幇鍚岀己闄蜂竴骞朵慨銆傚苟鍙戦噸鎵?3 璇昏€吤?0 閲嶅缓鍘嬪姏娴嬭瘯 0 寮傚父 |
+| 18 | `resEnsureRange` 婊炲洖鍓嶅厛鍒?`needStart/needEnd` 瓒婄獥锛坥utOfWin锛夊己鍒舵崲绐?| 瑕嗙洊楠岃瘉鑰呭疄娴嬬殑 ~2000 鍛戒腑瀹藉奖鍝嶅甫锛涙粸鍥炴甯歌矾寰勪笉鍙楀奖鍝?|
+| 19 | doLogSearch 鍔?`ls.searchGen` 浠ｆ浠ょ墝锛氭竻绌鸿緭鍏?鎹㈣瘝 gen++ 浣滃簾鍦ㄩ€斿搷搴旓紱鍚岃瘝閲嶅鍥炶溅浠嶅拷鐣?| 瀹℃煡鍙戠幇鍒濈増浠ｆ鍒ゆ柇鍚啑浣欏垎鏀紝宸茬畝鍖栵紱娓呯┖杈撳叆鐨?input 浜嬩欢澶勫悓姝?gen++ 浣滃簾锛堝惈 loadLogViewer 澶嶄綅澶勶級 |
+| 20 | sidebar 鍒嗘淳 isEdit 琛?`|| kind==='hex'`锛沝esc 鍔?hex 鏍囪瘑 | closeEditorTab 璧?conn.confirmClose锛坔ex tab 鏈?_hxConfirm锛夊疄鐜拌剰纭锛沖edCloseNow/_edStatText 瀵?hex conn锛堟棤 monaco/ta/isNote锛夊畨鍏ㄩ檷绾?|
+| 22 | `_keepalive_stop` 鏀?per-thread `threading.Event`锛宍_io_open` set 鏃?evt + 閰嶆柊 evt锛岀粷涓嶉噸缃紱sleep(30) 鎷?300脳0.1s 鍙腑鏂?| 瀹℃煡鍙戠幇鍒濈増鍏ュ彛鏈変竴娈靛啑浣欑殑 300脳0.1s 绛夊緟寰幆锛屽凡鍒狅紙鏀瑰悗棣栦釜 keepalive 绔嬪嵆鍙戯紝闅忓悗 30s 鍛ㄦ湡锛?|
+| 23 | `_head_hash`锛堥 4KB md5锛岃拷鍔犱笉璇激锛? build 鍏ュ彛鍝堝笇鏍￠獙锛?idx 鍗?v2 澶撮儴 `<total><built_size><32B 鎸囩汗>`锛屽姞杞藉姣?| 鍒濈増鐢ㄦ湯 4KB 鍝堝笇鈥斺€斿鏌ュ彂鐜拌拷鍔犲満鏅枃浠跺熬蹇呭彉浼氳浼ゆ甯歌拷鍔狅紝鏀归 4KB锛涘垵鐗?`_append_scan` 寮曠敤浜?build 浣滅敤鍩熺殑 head 鍙橀噺 NameError 琚?except 鍚炴帀锛堣繍琛屾椂鍥炲綊鎹曡幏锛屽凡鏀逛负涓嶉噸绠楋級锛涘彟鍙戠幇鍏ㄩ噺鎵弿璺緞浠庢湭璁?`_loaded=True` 鐨勬棦鏈?bug锛堣 .idx 鍔犺浇璺緞鎺╃洊锛夛紝宸茶ˉ銆傚洖褰?7 鍦烘櫙鍏ㄨ繃 |
+| 24 | `_splitUp` 涓?window resize 瀵?log 杩炴帴澶嶄綅 `resRenderStart=-1` 骞惰皟 renderLogResults | renderLogResults 涓哄叏灞€鍑芥暟锛堥潪妯″潡鍖栬剼鏈級锛宼erminal-core.js 鍙洿鎺ヨ皟鐢?|
+| 25 | waitResHitThenJump锛歵imer 瀛?`ls._jumpTimer` 鍏?clearInterval 鍐嶅惎鏂帮紱杞浣撴牎楠?searchQ/searchExcludeQ/searchIdx | closeLogViewer 琛?clearInterval 娓呯悊娈嬬暀杞鍣?|
+| 26 | `_outlineCodeEntries` 鍙栧悕鏀?`m[m.length-1]`锛坧y 缁?2 鎹曡幏缁勫彇 m[2]銆乧 缁?1 鎹曡幏缁勫彇 m[1]锛?| 鏈敼姝ｅ垯锛堟敼姝ｅ垯浼氱壍鍔?3 鏉¤鍒欑殑缁勭粨鏋勶級锛屽彇鏈€鍚庢崟鑾风粍瀵逛袱缁勭粺涓€姝ｇ‘ |
 
-运行时回归：log_index.py 7 场景全过（建索引/追加续扫/同尺寸替换全重扫/.idx v2 往返/替换后不采信/加载后续扫/并发重扫 0 异常），测试用临时目录假数据。其余文件 py_compile + node --check 全过；前端交互逻辑未做运行时回归（需重启后端+刷新页面验证）。
+杩愯鏃跺洖褰掞細log_index.py 7 鍦烘櫙鍏ㄨ繃锛堝缓绱㈠紩/杩藉姞缁壂/鍚屽昂瀵告浛鎹㈠叏閲嶆壂/.idx v2 寰€杩?鏇挎崲鍚庝笉閲囦俊/鍔犺浇鍚庣画鎵?骞跺彂閲嶆壂 0 寮傚父锛夛紝娴嬭瘯鐢ㄤ复鏃剁洰褰曞亣鏁版嵁銆傚叾浣欐枃浠?py_compile + node --check 鍏ㄨ繃锛涘墠绔氦浜掗€昏緫鏈仛杩愯鏃跺洖褰掞紙闇€閲嶅惎鍚庣+鍒锋柊椤甸潰楠岃瘉锛夈€?
 
-遗留说明：
-- 改动需重启后端进程 + 前端强刷才生效；MCP server 需重启 Claude Code 会话或重连。
-- exe 分发需重打包（python src\build.py）。
-- #17/#23 的锁-free 快照方案为保守正确性（缺行留给下次读取），不追求读到中断瞬间的完美一致。
-
+閬楃暀璇存槑锛?
+- 鏀瑰姩闇€閲嶅惎鍚庣杩涚▼ + 鍓嶇寮哄埛鎵嶇敓鏁堬紱MCP server 闇€閲嶅惎 Claude Code 浼氳瘽鎴栭噸杩炪€?
+- exe 鍒嗗彂闇€閲嶆墦鍖咃紙python src\build.py锛夈€?
+- #17/#23 鐨勯攣-free 蹇収鏂规涓轰繚瀹堟纭€э紙缂鸿鐣欑粰涓嬫璇诲彇锛夛紝涓嶈拷姹傝鍒颁腑鏂灛闂寸殑瀹岀編涓€鑷淬€?
