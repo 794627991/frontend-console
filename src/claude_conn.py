@@ -111,6 +111,34 @@ def _bg_sessions_running():
         return set()
 
 
+def _trust_workspace(cwd):
+    """恢复/打开会话前把 cwd 的信任位写成 true（~/.claude.json projects 段）。
+    用户从本工具面板主动恢复会话 = 用户信任该目录（会话本来就在那开的），
+    不该每次都卡 trust folder 确认。只动这一个目录，锁内写防并发。"""
+    if not cwd or not os.path.isdir(cwd):
+        return
+    try:
+        import json
+        from threading import Lock
+        if not hasattr(_trust_workspace, "_lock"):
+            _trust_workspace._lock = Lock()
+        with _trust_workspace._lock:
+            path = os.path.join(os.path.expanduser("~"), ".claude.json")
+            with open(path, "r", encoding="utf-8") as f:
+                d = json.load(f)
+            projs = d.setdefault("projects", {})
+            key = cwd.replace("\\", "/")
+            ent = projs.setdefault(key, {})
+            if not ent.get("hasTrustDialogAccepted"):
+                ent["hasTrustDialogAccepted"] = True
+                tmp = path + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(d, f, ensure_ascii=False)
+                os.replace(tmp, path)
+    except Exception:
+        pass   # 预信任失败不阻塞启动——大不了弹一次确认，用户手动点 Yes
+
+
 class ClaudeConnection(BaseConnection):
     """本地 ConPTY 跑 claude CLI。kind='claude'。
 
@@ -151,6 +179,8 @@ class ClaudeConnection(BaseConnection):
         pp = _get_pty()
         if pp is None:
             raise RuntimeError("pywinpty 未安装（pip install pywinpty）")
+        # 预信任 cwd：面板恢复/打开 = 用户主动信任，跳过 trust folder 确认
+        _trust_workspace(self.cwd)
         exe, is_shim = _resolve_claude_exe()
         if is_shim:
             # .CMD 不能直接 CreateProcess：经 cmd.exe /c 中转（多一层进程树）
@@ -244,13 +274,14 @@ class ClaudeConnection(BaseConnection):
                          "Dark mode (ANSI colors only)", "Light mode (ANSI colors only)",
                          "New custom theme"]
 
-    def _theme_menu_cursor(self, wait_s=2.0):
-        """开 /theme 菜单后,从 buf 尾部清洗行里找 ❯ 光标所在的选项序号(1~8)。
-        菜单渲染是 TUI 重绘流,清洗行文本含 "❯ N. <选项名>"。找不到返回 None。"""
+    def _theme_menu_cursor(self, base_seq, wait_s=2.0):
+        """开 /theme 菜单后,从 base_seq 之后的新增清洗行里找 ❯ 光标所在选项
+        序号(1~8)。只看新增行:buf 是 TUI 重绘流,上次菜单的旧 ❯ 帧还在尾部,
+        混读会把旧光标当当前位置(实测翻车:落到相邻项)。找不到返回 None。"""
         deadline = time.time() + wait_s
         while time.time() < deadline:
             time.sleep(0.3)
-            for it in reversed(self.get_buffer(40)):
+            for it in reversed(self.get_buffer_after(base_seq, 60)):
                 s = (it.get("text") or "").strip()
                 if s.startswith("❯"):
                     for i, name in enumerate(self._THEME_MENU_ITEMS, 1):
@@ -263,29 +294,40 @@ class ClaudeConnection(BaseConnection):
         """工具壳体换主题时让运行中的会话自己切(/api/claude_theme 调用)。
         settings 文件热重载实测无效(2.1.239 改文件无重绘)——走 TUI 菜单注入。
         菜单光标每次定位在"当前生效主题"上(起点漂移,盲导航必错,实测翻过车),
-        必须闭环:开菜单 → 读 buf 找 ❯ 光标实际位置 → 按差值 ↓ → Enter → 验证。
-        逐键 0.3s 间隔(一次性连发会被 TUI 吞掉)。buf 是行式清洗文本(TUI 重绘
-        切行入库),❯ 行可稳定匹配。"""
+        必须闭环。逐键闭环导航(不是一次性连发 N 键再 Enter——TUI 偶尔吞键,
+        盲发差值会落到相邻项,实测翻车:目标 7 落到 6=dark-ansi):
+        每按一个 ↓ 都回读光标实际位置,没动就重发,到位才 Enter。"""
         if self._proc is None:
             return False
         target = self._THEME_MENU_LIGHT if light else self._THEME_MENU_DARK
         try:
-            # 1) 开菜单(记 buf 序号,之后只看新增行做验证)
+            # 1) 开菜单(记 buf 序号,之后只看新增行——旧菜单帧混读会拿到旧光标)
             with self.buf_lock:
                 base_seq = self.buf[-1]["seq"] if self.buf else 0
             self._io_write(b"/theme\r")
             time.sleep(1.0)
-            cur = self._theme_menu_cursor()
+            cur = self._theme_menu_cursor(base_seq)
             if cur is None:
                 # 菜单没开或读不到光标:Esc 兜底关闭,放弃本次(不乱动用户界面)
                 self._io_write(b"\x1b")
                 return False
+            # 2) 逐键闭环:每按一个 ↓ 回读光标,没动重发(最多 2 次重试/步)
+            retries = 0
+            while cur != target and retries < 16:
+                last_seq = cur
+                with self.buf_lock:
+                    nav_seq = self.buf[-1]["seq"] if self.buf else 0
+                self._io_write(b"\x1b[B")
+                nxt = self._theme_menu_cursor(nav_seq, wait_s=1.0)
+                if nxt is None or nxt == last_seq:
+                    retries += 1   # 键被吞:同一步重发(不上限次数,只累计重试)
+                    continue
+                retries = 0
+                cur = nxt
             if cur != target:
-                # 2) 按差值走 ↓(菜单循环,差值取模)
-                for _ in range((target - cur) % 8):
-                    self._io_write(b"\x1b[B")
-                    time.sleep(0.3)
-            # 3) Enter 确认
+                self._io_write(b"\x1b")
+                return False
+            # 3) Enter 确认(确认后的 "Theme set to" 行不会带 ❯,不影响下轮)
             self._io_write(b"\r")
             time.sleep(0.8)
             # 4) 验证:新增行里找 "Theme set to <dark|light-ansi>"
