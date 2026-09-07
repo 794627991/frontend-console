@@ -1115,7 +1115,8 @@
   .claude-sess { padding: 8px 10px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
   .claude-sess:hover { border-color: var(--accent); background: var(--bg-input); }
   .claude-sess .srow1 { display: flex; align-items: center; gap: 6px; font-size: 11px; }
-  .claude-sess .cdir { font-weight: 600; color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .claude-sess .cdir { font-weight: 600; color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+  .claude-sess .cstate { color: var(--muted); font-size: 10px; flex-shrink: 0; white-space: nowrap; border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; margin-left: 0; }
   .claude-sess .ctime { margin-left: auto; color: var(--muted); font-size: 10px; flex-shrink: 0; }
   /* 第二排：摘要 + 行尾会话 id 短码（等宽灰字）——用户要求能看出是哪个会话 */
   .claude-sess .srow2 { color: var(--muted); font-size: 10px; margin-top: 3px; display: flex; align-items: baseline; gap: 8px; }
