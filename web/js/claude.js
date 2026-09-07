@@ -162,6 +162,17 @@ function _claudeSetCount(id, n) {
   if (el && el.textContent !== String(n)) el.textContent = n;
 }
 
+// 会话标题映射（session_id → 当前显示名，含备注/aiTitle）——供「最近」列表
+// 渲染时替换固化 label：_recentAdd 记的是「Claude · 目录名」，之后改备注/aiTitle
+// 变了旧 label 就全是重名，必须按 id 动态取当前名
+let _claudeTitleMap = {};
+function _claudeUpdateTitleMap(sessions) {
+  const m = {};
+  (sessions || []).forEach(s => { m[s.session_id] = s.title || s.summary || ''; });
+  _claudeTitleMap = m;
+  if (typeof renderRecentList === 'function') renderRecentList();
+}
+
 async function refreshClaudePanel() {
   try {
     // 状态聚合（本工具连接 + 外部活跃计数）
@@ -169,6 +180,7 @@ async function refreshClaudePanel() {
     // 活跃 sheet：本工具打开的 + 外部活跃的（历史会话里 active 的那批）
     const ss = await (await fetch('/api/claude/sessions?limit=50')).json();
     const sessions = ss.sessions || [];
+    _claudeUpdateTitleMap(sessions);
     const activeExt = sessions.filter(s => s.active);
     const dot = $('claudeStatusDot'), txt = $('claudeStatusText');
     const nMine = (rs.mine || []).length, nExt = rs.external_active || 0;

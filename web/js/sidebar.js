@@ -370,11 +370,16 @@ function renderRecentList() {
 function _recentItemEl(it, i) {
   const d = document.createElement('div');
   d.className = 'recent-item t-' + it.type;
-  d.title = `${RECENT_TYPE_NAME[it.type]} · ${it.label}（点击快速打开）`;
+  // claude 条目 label 动态替换：记入时固化的「Claude · 目录名」会重名且不随备注更新，
+  // 按 session_id 从会话数据取当前显示名（备注 > aiTitle > 摘要，_claudeTitleMap）
+  const showLabel = (it.type === 'claude' && it.data && it.data.resume &&
+                    typeof _claudeTitleMap !== 'undefined' &&
+                    _claudeTitleMap[it.data.resume]) || it.label;
+  d.title = `${RECENT_TYPE_NAME[it.type]} · ${showLabel}（点击快速打开）`;
   d.innerHTML = `
     <span class="ric">${RECENT_ICON[it.type] || '·'}</span>
     <div class="info">
-      <div class="name">${esc(it.label)}</div>
+      <div class="name">${esc(showLabel)}</div>
     </div>
     <div class="actions"><button data-del="${i}" title="从列表移除">✕</button></div>
   `;
@@ -400,7 +405,8 @@ function openRecentItem(it) {
     // Claude 会话恢复：data 带 resume（会话 id）+ cwd（原工作目录）
     const d = it.data || {};
     if (d.resume && typeof connectClaude === 'function') {
-      connectClaude({resume: d.resume, cwd: d.cwd || '', label: it.label});
+      connectClaude({resume: d.resume, cwd: d.cwd || '',
+                    label: _claudeTitleMap[d.resume] || it.label});
     }
     return;
   }
