@@ -9,7 +9,11 @@ a = Analysis(
     hiddenimports=['paramiko',
         'src', 'src.main', 'src.server', 'src.mcp_server', 'src.app_state', 'src.ansi_utils', 'src.base_conn',
         'src.serial_conn', 'src.ssh_conn', 'src.log_index', 'src.tftp',
-        'src.httpfile', 'src.editor_files', 'src.hex_files'],
+        'src.httpfile', 'src.editor_files', 'src.hex_files',
+        # Claude 集成（第 1/2 期）：claude_conn 是延迟导入（_get_pty 内 import winpty），
+        # 静态分析扫不到；claude_sessions 被 server 顶格 import 但保险起见也列上。
+        # winpty 的包名与 pip 名不同（pip install pywinpty → import winpty）。
+        'src.claude_conn', 'src.claude_sessions', 'winpty'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

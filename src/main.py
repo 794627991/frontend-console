@@ -190,6 +190,13 @@ def main():
             return
 
     # 延迟导入，避免单实例检查失败时也加载重依赖
+    # ---- 首次启动依赖自检（源码分发场景）----
+    # 缺 pip 库时弹引导窗自动安装（同款 UI + 进度动画），装完 execv 重启进程。
+    # exe 分发时全部库已打进 exe，自检恒通过、零开销（import 探测 <50ms）。
+    from src.deps_bootstrap import bootstrap_if_needed
+    if not bootstrap_if_needed():
+        return
+
     # 并行预导入：server 模块（Flask+serial，~600ms）与 webview（~270ms）并行加载，
     # 在主线程 import webview 的同时，子线程预 import server，省 ~270ms 启动时间。
     _server_ready = threading.Event()
