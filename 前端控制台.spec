@@ -1,11 +1,22 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 
+import os, sysconfig
+# pywinpty 的 ConPTY 兄弟 exe（winpty-agent.exe / OpenConsole.exe）：运行时 winpty.dll
+# 要把它们落盘到临时目录起 agent 进程，PyInstaller 不收集——必须显式 binaries。
+# 按当前解释器的 site-packages 定位（打包者环境与使用者环境无关）。
+_winpty_dir = os.path.join(sysconfig.get_paths()['purelib'], 'winpty')
+_winpty_bins = [
+    (os.path.join(_winpty_dir, f), 'winpty')
+    for f in ('winpty-agent.exe', 'OpenConsole.exe')
+    if os.path.isfile(os.path.join(_winpty_dir, f))
+]
+
 a = Analysis(
     ['D:/AI/串口控制台Pro/src/main.py'],
     pathex=[],
-    binaries=[],
-    datas=[('web', 'web'), ('ico/app.ico', 'ico'), ('vendor', 'vendor')],
+    binaries=_winpty_bins,
+    datas=[('web', 'web'), ('ico', 'ico'), ('vendor', 'vendor')],
     hiddenimports=['paramiko',
         'src', 'src.main', 'src.server', 'src.mcp_server', 'src.app_state', 'src.ansi_utils', 'src.base_conn',
         'src.serial_conn', 'src.ssh_conn', 'src.log_index', 'src.tftp',
