@@ -1109,6 +1109,8 @@
   .claude-run { display: flex; align-items: center; gap: 6px; font-size: 11px; padding: 4px 8px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; margin-bottom: 4px; }
   .claude-run:hover { border-color: var(--accent); }
   .claude-run .cstate { margin-left: auto; color: var(--muted); font-size: 10px; }
+  /* 运行中卡同时挂 claude-sess（两行模板）时，覆盖单行 flex——两排布局由 srow1/srow2 决定 */
+  .claude-sess.claude-run { display: block; margin-bottom: 0; padding: 8px 10px; }
   .claude-sessions { display: flex; flex-direction: column; gap: 8px; }
   .claude-sess { padding: 8px 10px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
   .claude-sess:hover { border-color: var(--accent); background: var(--bg-input); }
