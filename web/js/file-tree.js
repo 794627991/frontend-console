@@ -122,6 +122,8 @@ async function _treeToggle(row, reload) {
     delete row.dataset.open;
     const ar = row.querySelector('.arrow'); if (ar) ar.style.transform = '';
     const ic = row.querySelector('svg'); if (ic) ic.outerHTML = dirIconHtml(false, 14);
+    // 折叠后对焦被折叠的行：深层折叠回浅层时左/上滚回父行（双向对焦）
+    _treeReveal(row);
     return;
   }
   // 展开：容器插到本行正下方（树序 = 行序，天然正确）
@@ -136,8 +138,7 @@ async function _treeToggle(row, reload) {
   ch.innerHTML = '<div class="tree-more">加载中…</div>';
   row.dataset.open = '1';
   const ar = row.querySelector('.arrow'); if (ar) ar.style.transform = 'rotate(90deg)';
-  const ic = row.querySelector('svg'); if (ic) ic.outerHTML = dirIconHtml(true, 14);
-  // 防乱序记在【ch 自己】身上：隐藏开关快速切换/连点展开时旧响应不覆盖新内容。
+  const ic = row.querySelector('svg'); if (ic) ic.outerHTML = dirIconHtml(true, 14);  // 防乱序记在【ch 自己】身上：隐藏开关快速切换/连点展开时旧响应不覆盖新内容。
   // 不能用全局计数——展开 A 目录后展开 B，A 的响应回来就被全局 seq 判"过期"，
   // A 永远停在加载中（用户实锤：根节点一直加载中）。
   ch.dataset.seq = String((+ch.dataset.seq || 0) + 1);
@@ -165,43 +166,51 @@ async function _treeToggle(row, reload) {
   }
   if (j.truncated) html += `<div class="tree-more">…还有 ${Number(j.truncated).toLocaleString()} 项未显示</div>`;
   ch.innerHTML = html;
-  // 自动对焦：新展开的【子行】若右缘超出可视区（深缩进+长名），横滚到子层起点。
-  // 判断必须基于子行——父行本身浅层时在视口内不触发，但子行可能已超右缘
-  // （前版只查父行，实锤"对焦依旧不生效"）。
-  _treeRevealChildren(ch);
+  // 自动对焦：展开后子层若超出可视右缘，横滚到子层起点（详细见 _treeReveal）
+  _treeReveal(ch, true);
 }
 
-// 把新展开的子层滚入横向可视区（只横滚，纵向不动）。
-// 关键：行有 min-width:100%（hover 高亮撑满列宽），border-box 全部从内容原点
-// x≈0 起、缩进藏在 padding 里——量行左缘恒得 0，对焦目标永远是最左（用户实锤
-// "点击深层子菜单对焦跑到最顶层"）。必须量行内【第一个元素】（箭头/图标）的
-// 真实内容左缘。
-function _treeRevealChildren(ch) {
+// 通用对焦：把目标滚入横向+纵向可视区。
+// 关键坑①：行有 min-width:100%（hover 高亮撑满列宽），border-box 全从内容原点
+// x≈0 起、缩进藏在 padding 里——量行左缘恒得 0。必须量行内【第一个元素】
+// （箭头/图标）的真实内容左缘。
+// 关键坑②：对焦是双向的——折叠/点父行回浅层时内容在左缘外，要能【往左】滚；
+// 纵向同理（子层展开后父行可能滚出上下视口）。前版只处理"往右"，用户实锤
+// 回不去父目录、纵向也不动。
+// target=row（对焦该行，折叠/点行时）；target=ch+children 模式（展开时对焦子层）
+function _treeReveal(target, focusChildren) {
   const scroller = $('treeRoots');
-  if (!scroller || !ch || !ch.isConnected) return;
-  const rows = ch.querySelectorAll('.tree-row');
+  if (!scroller || !target || !target.isConnected) return;
+  // 对焦行集合：focusChildren=展开展景取容器里所有子行；否则对焦目标自身
+  const rows = focusChildren && target.querySelectorAll
+    ? Array.from(target.querySelectorAll('.tree-row')) : [target];
   if (!rows.length) return;
   const base = scroller.getBoundingClientRect().left;
-  let maxRight = 0, minLeft = Infinity;
+  let maxRight = 0, minLeft = Infinity, minTop = Infinity, maxBottom = 0;
   for (const r of rows) {
     const rc = r.getBoundingClientRect();
-    const right = rc.right - base + scroller.scrollLeft;
     const first = r.firstElementChild;   // 箭头/图标 span = 内容真实左缘
     const left = (first ? first.getBoundingClientRect().left : rc.left)
                  - base + scroller.scrollLeft;
+    const right = rc.right - base + scroller.scrollLeft;
     if (right > maxRight) maxRight = right;
     if (left < minLeft) minLeft = left;
+    const top = rc.top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+    if (top < minTop) minTop = top;
+    if (top + rc.height > maxBottom) maxBottom = top + rc.height;
   }
-  const viewR = scroller.scrollLeft + scroller.clientWidth;
-  const pad = 24;
-  let target = null;
-  if (maxRight > viewR) {
-    // 子层超右缘：滚到子层内容起点（参考线/父层缩进可见，不顶格）
-    target = Math.max(0, minLeft - pad);
-  }
-  if (target === null || target === scroller.scrollLeft) return;
+  const pad = 24, vpad = 40;
+  // 横向：内容超出任意一侧视口就滚（双向，不是只往右）
+  let hx = scroller.scrollLeft;
+  if (maxRight > scroller.scrollLeft + scroller.clientWidth) hx = Math.max(0, minLeft - pad);
+  else if (minLeft < scroller.scrollLeft) hx = Math.max(0, minLeft - pad);
+  // 纵向：行超出上/下视口就滚入（VSCode reveal 同款，近端对齐）
+  let vy = scroller.scrollTop;
+  if (minTop < scroller.scrollTop) vy = Math.max(0, minTop - vpad);
+  else if (maxBottom > scroller.scrollTop + scroller.clientHeight) vy = Math.max(0, maxBottom - scroller.clientHeight + vpad);
+  if (hx === scroller.scrollLeft && vy === scroller.scrollTop) return;
   // 弱平滑（流畅第一守则：动画短、不挡交互）
-  scroller.scrollTo({ left: target, behavior: 'smooth' });
+  scroller.scrollTo({ left: hx, top: vy, behavior: 'smooth' });
 }
 
 // 属性选择器里的路径转义（data-parent 含引号/反斜杠时的 CSS 转义）
@@ -230,6 +239,7 @@ $('treePane').addEventListener('click', async e => {
     $('treePane').querySelectorAll('.tree-row.active').forEach(el => el.classList.remove('active'));
     row.classList.add('active');
     openFileSmart(row.dataset.path, 'auto');
+    _treeReveal(row);   // 点文件也对焦（深层文件点开时滚入可视区）
   }
 });
 
