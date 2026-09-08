@@ -834,6 +834,11 @@
 
   /* ===== 程序员计算器（仿 Marvell Register Analyzer + 计算器）===== */
   .bc-body { padding: 14px 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+  /* 计算器里的按钮：lv-btn 全局样式限定在 .log-viewer-toolbar 下，此处不继承——
+     裸 lv-btn 是浏览器白底默认样式（铁律2 实锤），补同款暗色描边 */
+  .bc-body .lv-btn, .log-viewer-toolbar.bc-tools .lv-btn { background: var(--bg-input); border: 1px solid var(--border); color: var(--fg); border-radius: 4px; padding: 3px 10px; font-size: 12px; cursor: pointer; font-family: var(--font-mono); }
+  .bc-body .lv-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .bc-body .lv-btn:focus { outline: none; }
   /* 位格区：MSB 在左、按字节分组（组间间隙=分域辨识；奇偶组底色区分） */
   .bc-bits { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
   .bc-bit-group { display: flex; gap: 2px; padding: 4px; border-radius: 6px; }

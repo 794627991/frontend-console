@@ -175,10 +175,12 @@ function buildBitCalcTab() {
       html += '</div>';
     }
     grid.innerHTML = html;
-    // 三进制联动（正在输入的框不动——保光标）
+    // 三进制联动（正在敲的框不动——保光标；activeElement 即焦点框，
+    // 不依赖手动 _bcTyping 状态——状态机卡死时 render 会永久跳过该框，
+    // 造成"HEX 空框其他正常"的不同步，用户实锤）
     const active = document.activeElement;
     inputs.forEach(inp => {
-      if (inp === active && _bcTyping) return;
+      if (inp === active) return;
       inp.value = fmt(conn.value, +inp.dataset.bcV);
     });
     infoEl.textContent = `${conn.bits} 位 · 0x${fmt(conn.value, 16)} · ${conn.value}(dec)`;
@@ -195,11 +197,7 @@ function buildBitCalcTab() {
 
   // 整值输入（任一进制框输入即解析，其他进制联动）。
   // 解析规则：带 0x/0b/0o 前缀按前缀进制；无前缀按框标注进制。
-  // render() 里 inp.value 被覆盖补零——输入中会破坏光标，故仅解析不回写，
-  // 失焦/位格点击/运算时才全量格式化。
-  let _bcTyping = false;
   inputs.forEach(inp => {
-    inp.addEventListener('focus', () => { _bcTyping = true; });
     inp.addEventListener('input', () => {
       const radix = +inp.dataset.bcV;
       const t = inp.value.trim().toLowerCase();
@@ -209,15 +207,21 @@ function buildBitCalcTab() {
         if (/^0x[0-9a-f]+$/.test(t)) v = BigInt(t);
         else if (/^0b[01]+$/.test(t)) v = BigInt(t);
         else if (/^0o[0-7]+$/.test(t)) v = BigInt(t);
-        else if (/^[0-9]+$/.test(t)) v = BigInt(parseInt(t, radix));
-        else return;   // 输入中非法/不完整，保持旧值不动
+        // 无前缀：按框标注进制解析。HEX 框收 [0-9a-f]（'3d' 是合法 hex 值，
+        // 不是"非法输入"——之前 /^0-9+$/ 把 '3d' 当非法 return 保持旧值，
+        // 框里却留着用户敲的字符造成"HEX 空框/不同步"的观感，用户实锤）
+        else if (radix === 16 && /^[0-9a-f]+$/.test(t)) v = BigInt(parseInt(t, 16));
+        else if (radix === 2 && /^[01]+$/.test(t)) v = BigInt(parseInt(t, 2));
+        else if (radix === 8 && /^[0-7]+$/.test(t)) v = BigInt(parseInt(t, 8));
+        else if (radix === 10 && /^[0-9]+$/.test(t)) v = BigInt(t);
+        else return;   // 确实非法（如 DEC 框敲字母），保持旧值
         conn.value = v & MASK();
         // 联动其他进制框（正在输入的框不动——光标位置保不住）
         inputs.forEach(o => { if (o !== inp) o.value = fmt(conn.value, +o.dataset.bcV); });
         infoEl.textContent = `${conn.bits} 位 · 0x${fmt(conn.value, 16)} · ${conn.value}(dec)`;
       } catch (err) { /* 保持旧值 */ }
     });
-    inp.addEventListener('blur', () => { _bcTyping = false; render(); });
+    inp.addEventListener('blur', () => render());   // 失焦全量格式化（补前导零）
   });
 
   // 位宽切换：值截断到新位宽
