@@ -760,7 +760,7 @@
     color: var(--accent); border-color: var(--accent); background: var(--bg-card);
     box-shadow: 0 0 0 1px var(--accent-glow);
   }
-  .tree-roots { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 8px 8px; }
+  .tree-roots { flex: 1; min-height: 0; overflow-y: auto; overflow-x: auto; padding: 4px 8px 8px; }
   .tree-empty { padding: 30px 10px; font-size: 10px; color: var(--muted); text-align: center; line-height: 1.8; }
   .tree-root { margin-bottom: 2px; }
   /* 根行：文件夹名 + hover 删根 ✕（仿 .recent-item .actions 显隐模式） */
@@ -772,29 +772,65 @@
     font-size: 11px; padding: 0 3px; border-radius: 3px; flex-shrink: 0; }
   .tree-root-head:hover .root-x { display: block; }
   .tree-root-head .root-x:hover { color: var(--neon-red); background: rgba(255,64,96,0.1); }
-  /* 树节点行（含根行展开复用同结构）；箭头 ▶ 旋转 90° 成 ▼（transform 免字符切换重排） */
+  /* 树节点行（含根行展开复用同结构）；箭头 ▶ 旋转 90° 成 ▼（transform 免字符切换重排）。
+     white-space:nowrap + 不截断——横向超宽交给 .tree-roots overflow-x 滚动（深层名字
+     完整可见，用户实锤 6~7 层被尾部省略号裁掉） */
   .tree-row { padding: 3px 6px; border-radius: 6px; cursor: pointer; display: flex;
     align-items: center; gap: 5px; font-size: 11px; font-family: var(--font-mono);
-    white-space: nowrap; overflow: hidden; }
+    white-space: nowrap; width: max-content; min-width: 100%; }
   .tree-row:hover { background: var(--bg-card); }
   .tree-row.active { background: linear-gradient(135deg, rgba(0,212,255,0.14), transparent); }
   .tree-row .arrow { width: 10px; flex-shrink: 0; font-size: 8px; color: var(--muted);
     display: inline-flex; align-items: center; justify-content: center;
     transition: transform 0.15s; user-select: none; }
-  .tree-row .t-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .tree-row .t-name { min-width: 0; }
+  .tree-root-head { width: max-content; min-width: 100%; }
   .tree-row svg, .tree-root-head svg { flex-shrink: 0; }
-  .tree-children { }
-  .tree-more { padding: 4px 8px; font-size: 10px; color: var(--muted); font-family: var(--font-mono); }
-  /* 缩进梯度：data-depth 属性选择器（免逐行内联 style；深于 6 层 clamp 封顶——
-     侧栏 220px 宽，深缩进本就该封顶） */
+  .tree-children { display: grid; }
+  .tree-more { padding: 4px 8px; font-size: 10px; color: var(--muted); font-family: var(--font-mono);
+    white-space: nowrap; width: max-content; min-width: 100%; }
+  /* 缩进梯度：data-depth 属性选择器（免逐行内联 style）。
+     不再 6 层封顶——封顶时深层全挤在 88px 分不清父子（用户实锤层级不明）。
+     每层 14px；层级参考线用行内伪元素画在 t-name 左缘，往上是 n 层竖线 */
   .tree-row[data-depth="0"] { padding-left: 6px; }
   .tree-row[data-depth="1"] { padding-left: 20px; }
   .tree-row[data-depth="2"] { padding-left: 34px; }
   .tree-row[data-depth="3"] { padding-left: 48px; }
   .tree-row[data-depth="4"] { padding-left: 62px; }
   .tree-row[data-depth="5"] { padding-left: 76px; }
-  .tree-row[data-depth="6"], .tree-row[data-depth="7"], .tree-row[data-depth="8"],
-  .tree-row[data-depth="9"] { padding-left: 88px; }
+  .tree-row[data-depth="6"] { padding-left: 90px; }
+  .tree-row[data-depth="7"] { padding-left: 104px; }
+  .tree-row[data-depth="8"] { padding-left: 118px; }
+  .tree-row[data-depth="9"] { padding-left: 132px; }
+  .tree-row[data-depth="10"] { padding-left: 146px; }
+  .tree-row[data-depth="11"] { padding-left: 160px; }
+  .tree-row[data-depth="12"] { padding-left: 174px; }
+  .tree-row[data-depth="13"] { padding-left: 188px; }
+  .tree-row[data-depth="14"] { padding-left: 202px; }
+  .tree-row[data-depth="15"] { padding-left: 216px; }
+  .tree-row[data-depth="16"] { padding-left: 230px; }
+  .tree-row[data-depth="17"] { padding-left: 244px; }
+  .tree-row[data-depth="18"] { padding-left: 258px; }
+  .tree-row[data-depth="19"] { padding-left: 272px; }
+  .tree-row[data-depth="20"] { padding-left: 286px; }
+  /* 层级参考线：每条树行在名字左侧画 depth 条竖线（VSCode indent guides 同款语义），
+     10% 亮度不抢焦点，层级归属一眼可辨 */
+  .tree-row[data-depth="1"]::before, .tree-row[data-depth="2"]::before,
+  .tree-row[data-depth="3"]::before, .tree-row[data-depth="4"]::before,
+  .tree-row[data-depth="5"]::before, .tree-row[data-depth="6"]::before,
+  .tree-row[data-depth="7"]::before, .tree-row[data-depth="8"]::before,
+  .tree-row[data-depth="9"]::before, .tree-row[data-depth="10"]::before,
+  .tree-row[data-depth="11"]::before, .tree-row[data-depth="12"]::before,
+  .tree-row[data-depth="13"]::before, .tree-row[data-depth="14"]::before,
+  .tree-row[data-depth="15"]::before, .tree-row[data-depth="16"]::before,
+  .tree-row[data-depth="17"]::before, .tree-row[data-depth="18"]::before,
+  .tree-row[data-depth="19"]::before, .tree-row[data-depth="20"]::before {
+    content: ''; width: 14px; height: 100%; position: absolute; left: 0; top: 0;
+    background: repeating-linear-gradient(to right,
+      var(--border) 0 1px, transparent 1px 14px);
+    pointer-events: none;
+  }
+  .tree-row { position: relative; }
 
   /* ===== 侧边栏底部 TFTP 面板（高度可拖拽）===== */
   .tftp-resizer {

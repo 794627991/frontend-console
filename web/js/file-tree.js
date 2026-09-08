@@ -153,11 +153,13 @@ async function _treeToggle(row, reload) {
   if (!j.entries.length) { ch.innerHTML = '<div class="tree-more">（空目录）</div>'; return; }
   let html = '';
   for (const e of j.entries) {
+    // 超 20 层 CSS 梯度兜不住时行内补缩进（14px/层，与 CSS 梯度同节拍）
+    const dp = depth > 20 ? ` padding-left:${6 + depth * 14}px;` : '';
     if (e.dir) {
-      html += `<div class="tree-row" data-path="${esc(e.path)}" data-dir="1" data-depth="${depth}">
+      html += `<div class="tree-row" data-path="${esc(e.path)}" data-dir="1" data-depth="${depth}"${dp ? ` style="${dp.trim()}"` : ''}>
         <span class="arrow">▶</span>${dirIconHtml(false, 13)}<span class="t-name" title="${esc(e.path)}">${esc(e.name)}</span></div>`;
     } else {
-      html += `<div class="tree-row" data-path="${esc(e.path)}" data-depth="${depth}">
+      html += `<div class="tree-row" data-path="${esc(e.path)}" data-depth="${depth}"${dp ? ` style="${dp.trim()}"` : ''}>
         <span class="arrow"></span>${fileIconHtml(e.name, 13)}<span class="t-name" title="${esc(e.path)}">${esc(e.name)}</span></div>`;
     }
   }
