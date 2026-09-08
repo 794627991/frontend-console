@@ -134,9 +134,14 @@ function refreshSidebar() {
       item.dataset.portId = pid;
       const isSSH = conn.meta.kind === 'ssh';
       const isLog = conn.meta.kind === 'log';
-      const isEdit = conn.meta.kind === 'editor' || conn.meta.kind === 'hex';
+      const isEdit = conn.meta.kind === 'editor' || conn.meta.kind === 'hex' || conn.meta.kind === 'diff' || conn.meta.kind === 'bindiff';
       const isClaude = conn.meta.kind === 'claude';
-      const descText = isSSH ? `SSH · ${conn.meta.host || ''}` : isLog ? `📜 日志` : isEdit ? (conn.meta.kind === 'hex' ? `🔧 hex` : `📝 笔记`) : isClaude ? `<span class="claude-ico"></span> Claude · ${(conn.meta.cwd || '').split(/[\\\\/]/).pop() || ''}` : `${conn.meta.baud || ''} baud`;
+      // 编辑类 tab desc 前缀用后缀专属 SVG 图标（file-icons.js），hex/对比/日志保留 emoji
+      const edIcon = (isEdit && conn.meta.kind === 'editor') ? fileIconHtml(conn.meta.label || '', 12) + ' 笔记'
+                    : conn.meta.kind === 'bindiff' ? '🔀 bin 对比'
+                    : isEdit ? (conn.meta.kind === 'hex' ? '🔧 hex' : '🔀 对比')
+                    : isLog ? '📜 日志' : '';
+      const descText = isSSH ? `SSH · ${conn.meta.host || ''}` : (isEdit || isLog) ? edIcon : isClaude ? `<span class="claude-ico"></span> Claude · ${(conn.meta.cwd || '').split(/[\\\\/]/).pop() || ''}` : `${conn.meta.baud || ''} baud`;
       const rowCount = conn.term ? conn.term.buffer.active.length : (conn.logState ? conn.logState.total : (isEdit ? _edStatText(conn) : 0));
       // 编辑器类 tab：未保存时名字带 * + dirty 类（led 橙色，与 _edMarkTab 同步）
       const isDirty = isEdit && conn.dirty;
@@ -144,7 +149,7 @@ function refreshSidebar() {
         <span class="led"></span>
         <div class="info">
           <div class="name">${(isDirty ? '*' : '') + esc(conn.meta.label || pid)}</div>
-          <div class="desc">${esc(descText)} · <span class="baud" data-rows>${isEdit ? rowCount : rowCount + ' 行'}</span></div>
+          <div class="desc">${((isEdit && conn.meta.kind === 'editor') || isClaude) ? descText : esc(descText)} · <span class="baud" data-rows>${isEdit ? rowCount : rowCount + ' 行'}</span></div>
         </div>
         <div class="actions"><button data-close="${pid}" title="${isLog ? '关闭' : '断开'}">✕</button></div>
       `;
@@ -263,7 +268,24 @@ $('btnNewConn').onclick = async () => {
 };
 $('connClose').onclick = () => $('connModal').classList.remove('show');
 $('connCancel').onclick = () => $('connModal').classList.remove('show');
-// 密码显隐：用 WebView2 对 type=password 原生的眼睛按钮（框内右缘），不自加
+// 密码显隐：白色描边眼睛按钮（框外右侧）。点一下显示密码（眼睛划线），
+// 再点恢复掩码。之前误信 WebView2 会给 type=password 渲染原生眼睛而删过
+// 自加按钮——实际 pywebview/WebView2 默认不显示，导致功能整个消失。
+const _connPassInput = $('connPass'), _connPassToggle = $('connPassToggle');
+if (_connPassInput && _connPassToggle) {
+  // 划线眼睛 SVG（显示密码时切换到它）
+  const EYE_OPEN = _connPassToggle.innerHTML;
+  const EYE_OFF = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+    <line x1="1" y1="1" x2="23" y2="23"></line>
+  </svg>`;
+  _connPassToggle.onclick = () => {
+    const showing = _connPassInput.type === 'text';
+    _connPassInput.type = showing ? 'password' : 'text';
+    _connPassToggle.innerHTML = showing ? EYE_OPEN : EYE_OFF;
+    _connPassToggle.title = showing ? '显示密码' : '隐藏密码';
+  };
+}
 
 // 连接类型切换（串口/SSH）
 let _connType = 'serial';
@@ -329,7 +351,7 @@ $('btnRefreshPorts').onclick = async () => { await loadPorts(); showBanner('端�
 // ============================================================
 // 最近打开（SSH/串口/文件 快捷重开，后端 config.json 持久化 + 自动去重）
 // ============================================================
-const RECENT_ICON = { claude: '<span class="claude-ico"></span>', ssh: '🔗', serial: '🔌', file: '📄' };  // 类型区分图标（claude 用官方星形标志）
+const RECENT_ICON = { claude: '<span class="claude-ico"></span>', ssh: '🔗', serial: '🔌' };  // 类型区分图标（claude 用官方星形标志；file 按后缀动态生成 fileIconHtml）
 const RECENT_TYPE_NAME = { claude: 'Claude 会话', ssh: 'SSH', serial: '串口', file: '文件' };
 let _recentList = [];
 
@@ -377,8 +399,11 @@ function _recentItemEl(it, i) {
                     typeof _claudeTitleMap !== 'undefined' &&
                     _claudeTitleMap[it.data.resume]) || it.label;
   d.title = `${RECENT_TYPE_NAME[it.type]} · ${showLabel}（点击快速打开）`;
+  // file 类型按后缀出专属 SVG 图标（file-icons.js），其余用类型 emoji
+  const ico = it.type === 'file' ? fileIconHtml(it.label || it.data?.name || '', 14)
+                                 : (RECENT_ICON[it.type] || '·');
   d.innerHTML = `
-    <span class="ric">${RECENT_ICON[it.type] || '·'}</span>
+    <span class="ric">${ico}</span>
     <div class="info">
       <div class="name">${esc(showLabel)}</div>
     </div>
@@ -424,7 +449,8 @@ function openRecentItem(it) {
     // 站内文件（files/ 内 .note/.txt 等，只有 name 无绝对路径）必须走 openEditorFile(name=)——
     // 之前一律 openDroppedFile 按绝对路径请求，后端拒收相对名 →「不支持的文件类型或文件不存在」。
     const d = it.data || {};
-    if (d.kind === 'hex' && d.path) buildHexViewerTab(d.path, d.name || it.label);   // bin/二进制：hex 模式快速重开
+    if ((d.kind === 'diff' || d.kind === 'bindiff') && d.a && d.b) buildDiffViewerTab(d.a, d.b);   // 文件对比（文本/二进制）：A/B 两份快速重开
+    else if (d.kind === 'hex' && d.path) buildHexViewerTab(d.path, d.name || it.label);   // bin/二进制：hex 模式快速重开
     else if (d.extPath && typeof openDroppedFile === 'function') openDroppedFile(d.extPath, true);   // true=快捷打开：跳过"活动 tab 是 claude 就灌路径进终端"分支
     else if (d.kind === 'log') buildLogViewer(d.name || d.path);
     else if (typeof openEditorFile === 'function') openEditorFile(d.name || d.path);

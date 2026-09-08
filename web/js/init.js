@@ -24,6 +24,7 @@ if (typeof refreshClaudePanel === 'function') refreshClaudePanel();
 // 5s 轮询只在面板开着时兜底刷新）
 renderCmdPane();  // 命令 tab 是默认激活面板，启动即渲染（否则空面板要切走再切回才刷新）
 $('btnNewFile').onclick = newEditorFile;  // 新建文本文件（编辑器 tab）
+$('btnDiff').onclick = openDiffPicker;  // 文件对比（原生选两份 → DiffEditor tab）
 $('btnFiles').onclick = showFilesModal;  // 文件列表弹窗（打开已有文件）
 $('btnClaude').onclick = () => connectClaude();  // 内嵌终端启动 Claude Code（ConPTY 真实 CLI）
 _reportPerf();  // 初始化完成，上报计时

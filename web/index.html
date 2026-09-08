@@ -1,9 +1,9 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>前端控制台 v1.0.0</title>
+<title>前端控制台 v1.1.0</title>
 <link rel="stylesheet" href="web/style.css">
 <link rel="stylesheet" href="vendor/xterm.min.css">
 <script src="vendor/xterm.min.js"></script>
@@ -18,13 +18,14 @@
 <div class="topbar">
   <div class="logo">
     <div class="icon"><img src="/ico/app.png" alt="logo"></div>
-    <span>前端控制台 <span class="ver">v1.0.0</span></span>
+    <span>前端控制台 <span class="ver">v1.1.0</span></span>
   </div>
   <div class="divider"></div>
   <div class="conn-area">
     <button class="btn primary" id="btnNewConn">＋ 新建连接</button>
     <button class="btn primary" id="btnNewFile" title="新建笔记（files/ 目录，保存时落盘）">✎ 新建笔记</button>
     <button class="btn primary" id="btnOpenFile" title="打开任意文件（编辑器/阅读器自动分发，>20MB 建议阅读器）">📂 打开</button>
+    <button class="btn primary" id="btnDiff" title="文件对比：选两份文件，双栏 diff（VSCode 同款内核）">🔀 对比</button>
     <button class="btn ghost icon-btn" id="btnRefreshPorts" title="刷新端口">↻</button>
   </div>
   <div class="spacer"></div>
@@ -248,7 +249,15 @@
         </div>
         <div id="connAuthPassword">
           <label>密码 <span style="color:var(--muted);font-weight:normal;">（可留空，连上后若设备提示再输）</span></label>
-          <input type="password" id="connPass" placeholder="密码" autocomplete="off" style="margin-top:8px;">
+          <div style="display:flex;align-items:center;gap:6px;margin-top:6px;">
+            <input type="password" id="connPass" placeholder="密码" autocomplete="off" style="flex:1;">
+            <button class="pass-eye" id="connPassToggle" type="button" title="显示/隐藏密码" aria-label="显示或隐藏密码">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
+              </svg>
+            </button>
+          </div>
         </div>
         <div id="connAuthKey" style="display:none">
           <label>密钥文件路径</label>
@@ -361,6 +370,7 @@
 <script src="vendor/intel-hex/intel-hex-web.js"></script>
 <script src="web/js/monaco-bridge.js"></script>
 <script src="web/js/util.js"></script>
+<script src="web/js/file-icons.js"></script>
 <script src="web/js/theme.js"></script>
 <script src="web/js/terminal-core.js"></script>
 <script src="web/js/highlight.js"></script>
@@ -375,6 +385,8 @@
 <script src="web/js/log-viewer.js"></script>
 <script src="web/js/ts-outline.js"></script>
 <script src="web/js/hex-viewer.js"></script>
+<script src="web/js/hex-diff.js"></script>
+<script src="web/js/diff-viewer.js"></script>
 <script src="web/js/editor.js"></script>
 <script src="web/js/tab-drag.js"></script>
 <script src="web/js/claude.js"></script>

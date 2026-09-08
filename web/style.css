@@ -286,6 +286,9 @@
     pointer-events: none;
     backdrop-filter: blur(2px);
   }
+  /* A/B 落点高亮（对比弹窗拖拽）：单一青色亮框 + 轻微发光（落点唯一视觉焦点） */
+  .diff-pick-side.dragover { outline: 2px solid var(--accent); outline-offset: -2px;
+    background: rgba(0, 212, 255, 0.12); box-shadow: 0 0 12px rgba(0, 212, 255, 0.35); }
   /* 日志查看 tab */
   .log-viewer { display: flex; flex-direction: column; width: 100%; height: 100%; position: relative; }
   .log-viewer-top { flex: 1; display: flex; min-height: 0; }
@@ -382,6 +385,57 @@
   /* Monaco 容器（同 textarea 方案：绝对定位铺满，滚动由 Monaco 自管） */
   .ed-holder:has(> .monaco-editor) { position: absolute; inset: 0; padding: 0; }
   .ed-holder > .monaco-editor { position: absolute; inset: 0; }
+  /* ---- 文件对比（Monaco DiffEditor）：diff-holder 铺满 ed-main（同 Monaco 编辑器方案）---- */
+  .diff-holder { flex: 1; position: relative; min-width: 0; }
+  .diff-holder > .monaco-editor { position: absolute; inset: 0; }
+  /* 对比工具栏按钮激活态（内联/折行/折叠开）：accent 高亮，同 term-toolbar .lv-btn.active */
+  .log-viewer-toolbar .lv-btn.active { border-color: var(--accent); color: var(--accent); background: var(--bg-panel); }
+  /* 对比工具栏分组竖分隔（视图操作 | 行显示操作） */
+  .lv-sep { width: 1px; height: 16px; background: var(--border); margin: 0 4px; flex-shrink: 0; }
+  /* 信息栏"无差异"强调态 */
+  .log-viewer-toolbar .lv-info.diff-same { color: var(--accent); }
+  /* ---- 对比文件选择弹窗：左右两栏（A 基准 VS B 对比）---- */
+  .diff-pick-grid { display: flex; gap: 12px; align-items: stretch; }
+  .diff-pick-side { flex: 1; border: 1px dashed var(--border); border-radius: 8px;
+    padding: 10px 12px; cursor: pointer; transition: border-color 0.15s, background 0.15s; }
+  .diff-pick-side:hover { border-color: var(--accent); background: var(--bg-card); }
+  .diff-pick-side.dragover { border-color: var(--accent); background: rgba(0,212,255,0.08); }
+  .diff-pick-side.filled { border-style: solid; }
+  .diff-pick-tag { font-size: 11px; color: var(--muted); margin-bottom: 8px; font-weight: 600; }
+  .diff-pick-side[data-side="a"] .diff-pick-tag { color: var(--neon-red); }
+  .diff-pick-side[data-side="b"] .diff-pick-tag { color: var(--neon-green); }
+  .diff-pick-zone { min-height: 84px; display: flex; align-items: center; justify-content: center; }
+  .diff-pick-empty { color: var(--muted); font-size: 12px; text-align: center; line-height: 1.8; }
+  .diff-pick-file { display: flex; align-items: center; gap: 8px; font-size: 13px;
+    max-width: 100%; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-input); }
+  .diff-pick-file .fname { word-break: break-all; }
+  .diff-pick-file .rm { margin-left: auto; color: var(--muted); cursor: pointer; padding: 0 4px; }
+  .diff-pick-file .rm:hover { color: var(--neon-red); }
+  .diff-pick-vs { align-self: center; font-size: 13px; font-weight: 700; color: var(--muted);
+    letter-spacing: 1px; flex-shrink: 0; }
+  /* ---- 文件关联子页（设置）：后缀列表 接管/还原 ---- */
+  .assoc-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    gap: 6px; margin-top: 12px; max-height: 46vh; overflow-y: auto; }
+  .assoc-item { display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+    border: 1px solid var(--border); border-radius: 6px; background: var(--bg-input); font-size: 12px; }
+  .assoc-item .ext { font-family: var(--font-mono); color: var(--fg-bright); flex: 1; }
+  .assoc-item .st { color: var(--muted); font-size: 11px; }
+  .assoc-item .st.on { color: var(--neon-green); }
+  .assoc-item .assoc-btn { padding: 2px 10px; font-size: 11px; }
+  /* ---- Monaco 折叠占位条 ----
+     教训（两轮翻车记录）：完整折叠条（"隐藏 N 行"所在）是 ViewZone 锚定 UI，
+     vendor 的 ViewZone 高度(24px)、容器 height:0+translateY(-10px)、center
+     height:24px 三者是配套设计。CSS 端动 line-height/条高，或 vendor 改
+     ViewZone 高，都会让文字消失或条错位。此条不加任何覆盖——用原生样式。
+     compact 条（compactMode 才出现，默认不用）ViewZone 12px 写死，中文 11px
+     会被裁：vendor 已补 12→18 给字形留空间。 */
+  .monaco-editor .diff-hidden-lines-compact .text { font-size: 12px; }
+  /* 折叠条文字层水平居中：vendor 的 @others 文字 div 是 flex item 但无 flex:1，
+     宽度收缩为内容宽 → 文字贴着左侧图标（用户红框标注"不是居中"）。
+     补 flex:1 让文字层占满余宽，其内部 justify-content:center 生效。
+     只命中折叠条内部结构，无作用域泄漏（见 .center 教训）。 */
+  .monaco-editor .diff-hidden-lines .center > div:last-child { flex: 1; }
+
   /* ---- .md 分栏预览（markdown-it 渲染列）---- */
   .ed-md-preview { width: 50%; flex-shrink: 0; border-left: 1px solid var(--border);
     overflow-y: auto; background: var(--note-bg); padding: 16px 20px; }
@@ -467,6 +521,13 @@
     background: var(--bg-input); border: 1px solid var(--border); border-radius: 4px;
     padding: 3px 8px; color: var(--fg); outline: none; width: 200px; }
   .hx-goto-bar input:focus, .hx-find-bar input:focus { border-color: var(--accent); }
+  /* 跳转/查找条按钮：条不在 .log-viewer-toolbar/.term-toolbar 内，lv-btn 的
+     暗色样式挂在那两个容器下匹配不到 → 之前是浏览器默认白底（用户截图
+     圈红）。这里补齐同款暗色样式。 */
+  .hx-goto-bar .lv-btn, .hx-find-bar .lv-btn { background: var(--bg-input);
+    border: 1px solid var(--border); color: var(--fg); border-radius: 4px;
+    padding: 3px 10px; font-size: 12px; cursor: pointer; }
+  .hx-goto-bar .lv-btn:hover, .hx-find-bar .lv-btn:hover { border-color: var(--accent); color: var(--accent); }
   .hx-find-count { font-size: 11px; color: var(--muted); }
   .hx-canvas { position: relative; font-family: var(--font-mono); font-size: 12px; line-height: 1.5; }
   .hx-row { display: flex; align-items: center; white-space: nowrap; height: 22px;
@@ -478,7 +539,9 @@
   .hx-b .hi { opacity: 0.95; } .hx-b .lo { opacity: 0.75; }        /* 高低 nibble 仅亮度区分 */
   .hx-b.z, .hx-a.z { color: var(--hx-zero); }   /* ImHex 同款 0x00 灰显（数据区是纯文本无 .hi/.lo，直接弱化元素） */
   .hx-b.cur { background: rgba(0,212,255,0.25); outline: 1px solid var(--accent); }
-  .hx-b.sel { background: rgba(79,143,255,0.18); }
+  /* 选区（多字节拖选）：每字节都有青框（用户要求"像第一个字符一样框选上"）——
+     之前只有淡蓝底色无边框，视觉上像选中态断了。cur 实心框、sel 半透明框区分 */
+  .hx-b.sel { background: rgba(0,212,255,0.16); outline: 1px solid rgba(0,212,255,0.55); }
   .hx-b.hit { background: rgba(255,214,102,0.3); }
   .hx-b-empty { display: inline-block; width: 17px; }
   /* 查看方式分组（HxD 同款）：hex 模式每组等宽（bw×2 hex 字符 + 组间 gap），
@@ -492,7 +555,7 @@
   .hx-ascii { display: flex; padding-left: 14px; flex-shrink: 0; }
   .hx-a { color: var(--fg); cursor: pointer; }
   .hx-a.cur { background: rgba(0,212,255,0.25); outline: 1px solid var(--accent); }
-  .hx-a.sel { background: rgba(79,143,255,0.18); }
+  .hx-a.sel { background: rgba(0,212,255,0.16); outline: 1px solid rgba(0,212,255,0.55); }
   .hx-a:empty { width: 7px; }
   /* 右侧数据检视面板（HxD「特殊编辑器」）：光标处多类型解释 */
   .hx-inspector { flex-shrink: 0; width: 230px; border-left: 1px solid var(--border);
@@ -511,6 +574,31 @@
   .hx-insp-be { padding: 8px 12px; border-top: 1px solid var(--border);
     display: flex; gap: 12px; font-size: 11px; color: var(--muted); }
   .hx-insp-be label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+
+  /* ---- 二进制对比（hex diff）：双栏 .hx-* 行结构复用 + 差异高亮 ---- */
+  .hxd-main { flex: 1; display: flex; min-height: 0; }
+  .hxd-side { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .hxd-side-tag { flex-shrink: 0; padding: 4px 10px; font-family: var(--font-mono); font-size: 11px;
+    color: var(--muted); background: var(--bg-card); border-bottom: 1px solid var(--border);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hxd-gap { flex-shrink: 0; width: 1px; background: var(--border); }
+  .hxd-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; min-height: 0; position: relative; }
+  /* 差异字节：左右分色（用户要求"左绿右红"+亮度反馈"太暗"——提到 0.5+） */
+  .hxd-side[data-hxd-side="a"] .hx-b.d, .hxd-side[data-hxd-side="a"] .hx-a.d
+    { background: rgba(96, 197, 116, 0.52); border-radius: 2px; }
+  .hxd-side[data-hxd-side="b"] .hx-b.d, .hxd-side[data-hxd-side="b"] .hx-a.d
+    { background: rgba(224, 114, 127, 0.55); border-radius: 2px; }
+  .hxd-side[data-hxd-side="a"] .hxd-row-diff .hx-off { color: #60c574; opacity: 1; }
+  .hxd-side[data-hxd-side="b"] .hxd-row-diff .hx-off { color: #e0727f; opacity: 1; }
+  /* 只看差异紧凑重排：地址不连续处插分裂标识行（虚线 + ↕ 字节跳距） */
+  .hxd-break { position: absolute; left: 0; right: 0; height: 22px; display: flex;
+    align-items: center; gap: 6px; padding: 0 10px; font-size: 11px;
+    font-family: var(--font-mono); color: var(--muted);
+    border-top: 1px dashed var(--border); border-bottom: 1px dashed var(--border);
+    background: var(--bg-panel); user-select: none; cursor: default; }
+  .hxd-break::before { content: ''; flex: 1; height: 0; border-top: 1px dashed var(--border); }
+  .hxd-break::after { content: ''; flex: 1; height: 0; border-top: 1px dashed var(--border); }
+  .hxd-break .bx-gap { color: var(--accent); }
 
   .topbar .divider { width: 1px; height: 24px; background: var(--border); }
   .topbar .conn-area { display: flex; align-items: center; gap: 8px; }
@@ -776,7 +864,12 @@
   .tftp-empty .hint { font-size: 10px; margin-top: 4px; color: var(--muted); opacity: 0.7; }
 
   /* ===== 中央终端区 ===== */
-  .center { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  /* 注意选择器作用域：.center 是中央终端区容器，但 Monaco 折叠条内部也有
+     .diff-hidden-lines .center（height:24px 的文字层）——裸 .center 曾把
+     display:flex/flex-direction:column 泄漏进去，文字层被列布局重排，
+     字形下移溢出 24px 盒被 overflow:hidden 裁掉下半截（用户"折叠条文字
+     被裁"两个版本的真凶）。改用 #main .center 限定作用域。 */
+  .main > .center { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   .tabs {
     display: flex; align-items: center; gap: 2px;
     padding: 6px 8px 0; background: var(--bg-panel);
@@ -806,7 +899,9 @@
   .tab.active .led { background: var(--neon-green); box-shadow: 0 0 6px var(--neon-green); }
   /* tab 图标（📝/📜/🔢）：独立于 led——旧版把 emoji 塞进 .led 里，撑满圆点位置
      挡住状态灯；拆开后 led 恢复圆点语义 */
-  .tab .tab-ico { font-size: 12px; flex-shrink: 0; line-height: 1; }
+  .tab .tab-ico { font-size: 12px; flex-shrink: 0; line-height: 1; display: inline-flex; align-items: center; }
+  /* 文件类型 SVG 图标(file-icons.js):随文字基线对齐 */
+  svg.fi { vertical-align: -2px; flex-shrink: 0; }
   /* tab 拖拽排序视觉态（tab-drag.js）：拖动中半透明，落点前/后指示线 */
   .tab.dragging { opacity: 0.45; }
   .tab.drop-before { box-shadow: -2px 0 0 0 var(--accent); }
@@ -1319,6 +1414,15 @@
   .conn-form label { font-size: 11px; color: var(--muted); font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; }
   .conn-form select, .conn-form input { width: 100%; background: var(--bg-input); color: var(--fg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 13px; outline: none; }
   .conn-form select:focus, .conn-form input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
+  /* 密码框眼睛按钮（框外右侧，白描边 SVG 非 emoji）：与输入框同高同边框风格 */
+/* 关掉 Edge/WebView2 原生密码框内眼睛（::-ms-reveal）——新版 WebView2 默认渲染,
+     与框外自绘 pass-eye 眼睛重复（用户红框标注重复）。保留自绘的（风格统一可换线）。 */
+  input[type="password"]::-ms-reveal, input[type="password"]::-ms-clear { display: none; }
+  .pass-eye { flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+    width: 32px; height: 36px; background: var(--bg-input); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 8px; cursor: pointer; transition: all 0.15s; }
+  .pass-eye:hover { border-color: var(--accent); color: var(--fg-bright); }
+  .pass-eye:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
   .conn-form .actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 6px; }
   /* 连接弹窗内联错误：失败直接显示在弹窗里（右下角气泡在长等待后容易被错过） */
   .conn-err { display: none; color: var(--neon-red); font-size: 12px; line-height: 1.5; background: rgba(224,108,117,0.08); border: 1px solid rgba(224,108,117,0.35); border-radius: 6px; padding: 8px 10px; }

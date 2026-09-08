@@ -53,13 +53,20 @@ function monacoInit() {
     s.onload = () => {
       try {
         require.config({ paths: { vs: '/vendor/monaco/min/vs' } });
-        // worker 也读 _VSCODE_NLS_MESSAGES（workerMain.js 内置同款逻辑）：
-        // 前置先加载 zh-cn 语言包写好全局，worker 用 importScripts 方式接力
+        // worker 走 data: URL + 注入绝对 baseUrl：
+        // data: URL 的 worker 里 importScripts('相对路径') 无法解析（非层级 base），
+        // workerMain.js 读 globalThis.MonacoEnvironment.baseUrl（读不到会回落 "../../../"
+        // 相对路径 → loader 加载失败 → diff 计算/editorWorker 永远不就绪——
+        // 曾因此 DiffEditor 一直卡「对比中…」无红绿高亮，普通编辑器不受影响
+        // （着色在主线程，不用 worker）所以一直没暴露）。
+        // 修法：data: 脚本里先写死 MonacoEnvironment.baseUrl 为绝对路径再 importScripts。
+        const WORKER_BOOT = `
+          globalThis.MonacoEnvironment = { baseUrl: '${location.origin}/vendor/monaco/min/' };
+          importScripts('${location.origin}/vendor/monaco/min/vs/base/worker/workerMain.js');
+        `;
         window.MonacoEnvironment = {
           getWorkerUrl: function() {
-            return `data:text/javascript;charset=utf-8,${encodeURIComponent(
-              `importScripts('/vendor/monaco/min/vs/base/worker/workerMain.js');`
-            )}`;
+            return `data:text/javascript;charset=utf-8,${encodeURIComponent(WORKER_BOOT)}`;
           }
         };
         require(['vs/nls.messages.zh-cn', 'vs/editor/editor.main'], () => {

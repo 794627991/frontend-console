@@ -31,7 +31,7 @@ async function buildHexViewerTab(path, name) {
   const tab = document.createElement('div');
   tab.className = 'tab';
   tab.dataset.portId = portId;
-  tab.innerHTML = `<span class="led"></span><span class="tab-ico">🔢</span><span class="label">${esc(name)}</span><span class="baud"></span><span class="close" title="关闭">✕</span>`;
+  tab.innerHTML = `<span class="led"></span><span class="tab-ico">${fileIconHtml(name, 14)}</span><span class="label">${esc(name)}</span><span class="baud"></span><span class="close" title="关闭">✕</span>`;
   tab.onclick = (e) => { if (e.target.classList.contains('close')) { e.stopPropagation(); closeEditorTab(portId); return; } switchTab(portId); };
 
   const wrap = document.createElement('div');

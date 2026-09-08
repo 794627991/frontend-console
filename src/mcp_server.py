@@ -1,9 +1,9 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-前端控制台 v1.0.0 —— MCP Server (stdio 传输)
+前端控制台 v1.1.0 —— MCP Server (stdio 传输)
 
-让 Claude Code（或任何 MCP 客户端）原生集成前端控制台 v1.0.0 的能力：
+让 Claude Code（或任何 MCP 客户端）原生集成前端控制台 v1.1.0 的能力：
   - 查看串口/SSH 连接状态与输出
   - 发命令、发原始字节（Ctrl-C 等）
   - 读取/搜索日志文件（含拖放进工具的任意路径日志）
@@ -380,6 +380,14 @@ def tool_search_log(url, path, query, limit=500, offset=0):
     return "\n".join(out)
 
 
+def tool_compare_files(url, a, b):
+    """让前端打开文件对比 tab（Monaco DiffEditor 双栏 diff）。任意两份文本文件均可。"""
+    j = _post(url, "/api/ai/compare_files", {"a": a, "b": b})
+    if not j.get("ok"):
+        return f"打开对比失败: {j.get('err', '未知')}"
+    return f"已在前端打开对比 tab：A={j.get('a')} ↔ B={j.get('b')}（如未弹出，请确认工具窗口已打开）"
+
+
 def tool_diff_logs(url, a, b, mode="summary", context=2):
     """对比两份日志差异。BSP 常用于对比"正常启动 vs 异常启动"日志。
     mode=summary（默认）：去重摘要，列出只在某份出现的行 + 出现次数差异，按频次排序。适合找异常日志多了什么报错。
@@ -510,7 +518,7 @@ def tool_tftp_set_dir(url, root_dir):
 _TOOLS = [
     {
         "name": "observe",
-        "description": "概览前端控制台 v1.0.0：列出所有已连接的串口/SSH，并返回每个连接的最近输出。这是最常用的入口，先调它了解当前状态。重要：本工具与桌面 app 共享同一后端——app 里已连的串口/SSH 会直接出现在这里，port_id 形如 COM1 或 ssh:host:22，可直接用于 send_command/get_buffer，无需也不应再次 connect。",
+        "description": "概览前端控制台 v1.1.0：列出所有已连接的串口/SSH，并返回每个连接的最近输出。这是最常用的入口，先调它了解当前状态。重要：本工具与桌面 app 共享同一后端——app 里已连的串口/SSH 会直接出现在这里，port_id 形如 COM1 或 ssh:host:22，可直接用于 send_command/get_buffer，无需也不应再次 connect。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -644,6 +652,18 @@ _TOOLS = [
         },
     },
     {
+        "name": "compare_files",
+        "description": "在前端工具中打开两份文件的对比视图（Monaco DiffEditor 双栏 diff，VSCode 同款）。适合用户想直观查看两份日志/配置/源码差异的场景。注意：这是打开界面给用户看，若只要文本形式的 diff 结果（AI 自己分析）用 diff_logs。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "a": {"type": "string", "description": "文件 A（基准，左侧）的文件名或绝对路径"},
+                "b": {"type": "string", "description": "文件 B（对比，右侧）的文件名或绝对路径"},
+            },
+            "required": ["a", "b"],
+        },
+    },
+    {
         "name": "diff_logs",
         "description": "对比两份日志差异。BSP 常用于对比'正常启动 vs 异常启动'日志，找异常日志多了什么报错。mode=summary（默认）去重摘要：列出只在某份出现的行 + 出现次数差异，按频次排序，适合找异常多出的报错；mode=line 行级 diff：输出增/减/变化块带上下文，适合看启动流程哪里分叉。a/b 支持文件名或绝对路径。",
         "inputSchema": {
@@ -733,6 +753,8 @@ def _dispatch(url, name, args):
         return tool_read_log(url, need("path"), args.get("offset", 0), args.get("limit", 200))
     if name == "search_log":
         return tool_search_log(url, need("path"), need("query"), args.get("limit", 500), args.get("offset", 0))
+    if name == "compare_files":
+        return tool_compare_files(url, need("a"), need("b"))
     if name == "diff_logs":
         return tool_diff_logs(url, need("a"), need("b"), args.get("mode", "summary"), args.get("context", 2))
     if name == "disconnect":
@@ -820,7 +842,7 @@ def main():
                 "result": {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "serial-console-pro", "version": "1.0.0"},
+                    "serverInfo": {"name": "serial-console-pro", "version": "1.1.0"},
                 },
             })
         elif method == "notifications/initialized":
@@ -836,7 +858,7 @@ def main():
                 url = get_url()
                 if not url:
                     _send({"jsonrpc": "2.0", "id": req_id,
-                           "result": _result("前端控制台 v1.0.0 未运行，且自动拉起失败。请手动启动工具后重试。")})
+                           "result": _result("前端控制台 v1.1.0 未运行，且自动拉起失败。请手动启动工具后重试。")})
                     continue
                 try:
                     result = _dispatch(url, name, args)

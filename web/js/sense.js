@@ -4,7 +4,17 @@ function connectAiSSE() {
   aiSse.onmessage = (e) => {
     try {
       const item = JSON.parse(e.data);
-      if (item.kind) return; // 跳过 screen/screenctl 帧（不进感知流）
+      if (item.kind) {
+        // ui_action：MCP 后端/双击文件入口指令前端开界面
+        if (item.kind === 'ui_action' && item.action === 'open_diff' && typeof buildDiffViewerTab === 'function') {
+          buildDiffViewerTab(item.a, item.b);
+        }
+        // 双击关联文件（--open-file 已有实例转发）：智能分发（编辑器/阅读器/hex）
+        if (item.kind === 'ui_action' && item.action === 'open_file' && typeof openFileSmart === 'function') {
+          openFileSmart(item.path, 'auto');
+        }
+        return; // 跳过 screen/screenctl/ui_action 帧（不进感知流）
+      }
       senseState.lines.push(item);
       if (senseState.lines.length > 200) senseState.lines.shift();
       renderSense();

@@ -1,7 +1,7 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-前端控制台 v1.0.0 —— 桌面应用入口
+前端控制台 v1.1.0 —— 桌面应用入口
 - pywebview 渲染前端（系统 WebView2，无需浏览器）
 - 内嵌 Flask 后端（多串口管理 + AI 接入层）
 - 无控制台黑框：用 pythonw.exe 或 PyInstaller --windowed
@@ -107,7 +107,7 @@ def find_and_focus_existing_window():
         user32.SetForegroundWindow.restype = ctypes.c_bool
         user32.EnumWindows.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
         user32.EnumWindows.restype = ctypes.c_bool
-        target = "前端控制台 v1.0.0"
+        target = "前端控制台 v1.1.0"
         found = []
         # 回调签名: BOOL CALLBACK EnumWindowsProc(HWND, LPARAM)，HWND 用 c_void_p 承接 64 位句柄
         @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
@@ -162,6 +162,26 @@ def _run_mcp_mode():
     mcp_server.main()
 
 
+def _notify_existing_open_file(path):
+    """--open-file 场景已有活实例：聚焦其窗口并 HTTP 通知打开该文件。
+    通知走 /api/ai/open_file（旧实例广播 SSE ui_action → 前端 openFileSmart）。
+    失败静默（窗口已聚焦，用户可手动拖入）。"""
+    if not _old_instance_alive():
+        return
+    find_and_focus_existing_window()
+    try:
+        ep_path = os.path.join(os.path.expanduser("~"), ".serialconsole_pro", "endpoint.json")
+        with open(ep_path, "r", encoding="utf-8") as f:
+            url = json.load(f).get("url")
+        req = urllib.request.Request(
+            url + "/api/ai/open_file",
+            data=json.dumps({"path": path}).encode(),
+            headers={"Content-Type": "application/json"}, method="POST")
+        urllib.request.urlopen(req, timeout=3)
+    except Exception:
+        pass
+
+
 def main():
     # --mcp 模式：作为 MCP stdio server 运行（集成进 exe，无需单独 python 脚本）。
     # PyInstaller --windowed(console=False) 下 sys.stdin/stdout 可能为 None，
@@ -169,6 +189,15 @@ def main():
     if '--mcp' in sys.argv:
         _run_mcp_mode()
         return
+    # --open-file <path>：文件关联接管后的双击打开入口（file_assoc.py 写的 shell 命令）。
+    # 有活实例 → 聚焦其窗口 + HTTP 通知它打开（SSE ui_action 拉起）。
+    open_file_path = None
+    if '--open-file' in sys.argv:
+        i = sys.argv.index('--open-file')
+        if i + 1 < len(sys.argv):
+            open_file_path = os.path.abspath(sys.argv[i + 1])
+    if open_file_path:
+        _notify_existing_open_file(open_file_path)
     if not acquire_single_instance():
         # mutex 提示已有实例。先探活旧实例的 HTTP 服务：
         # 若旧实例正常响应，聚焦其窗口后静默退出；
@@ -299,6 +328,24 @@ def main():
                 return ""
             return ""
 
+        def pick_two(self):
+            """文件对比：弹出原生文件选择对话框，多选两份（A 基准 + B 对比）。
+            返回路径列表（前端拿前两个）；取消/选一份返回空列表。"""
+            try:
+                import webview
+                result = webview.windows[0].create_file_dialog(
+                    webview.OPEN_DIALOG,
+                    allow_multiple=True,
+                    file_types=('All Files (*.*)',),
+                )
+                if isinstance(result, (list, tuple)):
+                    return [p for p in result if p]
+                if isinstance(result, str) and result:
+                    return [result]
+            except Exception:
+                return []
+            return []
+
         def pick_dir(self):
             """弹出原生目录选择对话框，返回选中目录的绝对路径或空字符串。
             注意：pywebview 返回的是 tuple（非 list），字符串才是单选时的裸返回——
@@ -412,7 +459,7 @@ def main():
 
     # pywebview 窗口
     window = webview.create_window(
-        title="前端控制台 v1.0.0",
+        title="前端控制台 v1.1.0",
         url=f"http://127.0.0.1:{port}/",
         width=1280,
         height=820,
@@ -442,6 +489,13 @@ def main():
             window.focus()
         except Exception:
             pass
+        # --open-file 启动（接管后双击文件、当时无活实例）：窗口就绪后打开该文件
+        if open_file_path:
+            try:
+                safe = open_file_path.replace('\\', '/').replace("'", "\\'")
+                window.evaluate_js(f"openDroppedFile('{safe}', true);")
+            except Exception:
+                pass
         def drop_handler(event):
             try:
                 files = event.get('dataTransfer', {}).get('files', [])

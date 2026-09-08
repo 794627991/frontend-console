@@ -40,22 +40,32 @@ let _dragCounter = 0;
 function _dragOverlayText() {
   const c = activePortId && connections[activePortId];
   const kind = c && c.meta && c.meta.kind;
-  if (kind === 'claude') return '🤖 松开把路径发给 Claude';
+  if (kind === 'claude') return '<span class="claude-ico"></span> 松开把路径发给 Claude';
   if (kind === 'editor' && c.isNote && c.editor) return '📝 松开插入到笔记';
-  return '📄 松开以打开日志';
+  return '📄 松开以打开文件';
 }
 function showDragOverlay(show) {
   if (show && !_dragOverlay) {
     _dragOverlay = document.createElement('div');
     _dragOverlay.id = 'dragOverlay';
-    _dragOverlay.textContent = _dragOverlayText();
+    _dragOverlay.innerHTML = _dragOverlayText();
     document.body.appendChild(_dragOverlay);
   } else if (show && _dragOverlay) {
-    _dragOverlay.textContent = _dragOverlayText();   // 拖着悬停时切了 tab，文案同步
+    _dragOverlay.innerHTML = _dragOverlayText();   // 拖着悬停时切了 tab，文案同步
   } else if (!show && _dragOverlay) {
     _dragOverlay.remove(); _dragOverlay = null;
+    return;
   }
 }
+
+// 对比弹窗开着时拖拽不显示全屏遮罩：A/B 栏位自身 dragover 高亮已是
+// 落点提示（用户反馈：全屏大字水印横跨两栏压内容,还和栏位高亮叠出双框感）。
+const _origShowDragOverlay = showDragOverlay;
+showDragOverlay = function(show) {
+  const dm = $('diffPickModal');
+  if (show && dm && dm.classList.contains('show')) return;   // 弹窗场景：不出遮罩
+  _origShowDragOverlay(show);
+};
 document.body.addEventListener('dragenter', e => {
   e.preventDefault();
   if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
@@ -114,7 +124,7 @@ function buildLogViewer(path) {
   const tab = document.createElement('div');
   tab.className = 'tab';
   tab.dataset.portId = portId;
-  tab.innerHTML = `<span class="led"></span><span class="tab-ico">📜</span><span class="label">${esc(name)}</span><span class="baud"></span><span class="close" title="关闭">✕</span>`;
+  tab.innerHTML = `<span class="led"></span><span class="tab-ico">${fileIconHtml(name, 14)}</span><span class="label">${esc(name)}</span><span class="baud"></span><span class="close" title="关闭">✕</span>`;
   tab.onclick = (e) => { if (e.target.classList.contains('close')) { e.stopPropagation(); closeLogViewer(portId); return; } switchTab(portId); };
   // 建 wrap（.term-area，内含日志查看器）
   const wrap = document.createElement('div');

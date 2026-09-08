@@ -13,12 +13,13 @@ class LogIndex:
     文件追加后按 size 变化增量续扫，避免重扫 G 级文件。"""
     def __init__(self, path):
         self.path = path
-        # 索引统一放工具目录 idx/ 下（不再散落日志目录）：
+        # 索引跟随数据目录：DATA_DIR/logs/idx/（索引是日志的伴生缓存，日志目录
+        # 迁到哪里索引跟到哪里；曾放工具根 idx/ 导致数据目录迁移后索引脱钩）：
         # 文件名 = <原名>.<md5(日志绝对路径)>.idx —— 拖拽不同目录同名日志
         # 不会互相覆盖，绝对路径哈希即映射关系
         import hashlib
-        from src.app_state import BASE_DIR
-        self.idx_dir = os.path.join(BASE_DIR, "idx")
+        from src.app_state import DATA_DIR
+        self.idx_dir = os.path.join(DATA_DIR, "logs", "idx")
         os.makedirs(self.idx_dir, exist_ok=True)
         key = hashlib.md5(os.path.abspath(path).encode("utf-8")).hexdigest()[:16]
         self.idx_path = os.path.join(self.idx_dir, f"{os.path.basename(path)}.{key}.idx")

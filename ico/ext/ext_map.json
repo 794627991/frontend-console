@@ -1,0 +1,22 @@
+{
+ ".txt": "txt",
+ ".log": "log",
+ ".md": "md",
+ ".ini": "ini",
+ ".cfg": "ini",
+ ".conf": "ini",
+ ".json": "json",
+ ".csv": "csv",
+ ".yaml": "yaml",
+ ".yml": "yaml",
+ ".c": "c",
+ ".h": "h",
+ ".cpp": "cpp",
+ ".hpp": "cpp",
+ ".py": "py",
+ ".sh": "sh",
+ ".bat": "sh",
+ ".cmd": "sh",
+ ".ps1": "sh",
+ ".xml": "xml"
+}

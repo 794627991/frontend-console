@@ -71,7 +71,7 @@ function buildEditorTab(name, content, extPath) {
   const tab = document.createElement('div');
   tab.className = 'tab';
   tab.dataset.portId = portId;
-  tab.innerHTML = `<span class="led"></span><span class="tab-ico">📝</span><span class="label">${esc(name || '未命名')}</span><span class="baud"></span><span class="close" title="关闭">✕</span>`;
+  tab.innerHTML = `<span class="led"></span><span class="tab-ico">${fileIconHtml(name || '.note', 14)}</span><span class="label">${esc(name || '未命名')}</span><span class="baud"></span><span class="close" title="关闭">✕</span>`;
   tab.onclick = (e) => { if (e.target.classList.contains('close')) { e.stopPropagation(); closeEditorTab(portId); return; } switchTab(portId); };
   // 双击 tab 标题 → 快捷改名（外部文件禁用——保持原路径）
   tab.querySelector('.label').ondblclick = (e) => {
@@ -912,6 +912,14 @@ function _edCloseNow(conn) {
   if (conn.editor) { try { conn.editor.destroy(); } catch(e){} }
   // Monaco 同理（停掉 onDidChangeModelContent，防关 tab 后仍触发脏检测）
   if (conn.monaco) { try { conn.monaco.dispose(); } catch(e){} }
+  // DiffEditor（diff tab）：编辑器与两侧 model 一并销毁（防泄漏 + 关 tab 后仍触发 onDidUpdateDiff）
+  if (conn.diffEd) {
+    try {
+      const m = conn.diffEd.getModel();
+      conn.diffEd.dispose();
+      if (m) { m.original.dispose(); m.modified.dispose(); }
+    } catch(e){}
+  }
   conn.tab.remove(); conn.wrap.remove();
   delete connections[conn.portId];
   const remaining = Object.keys(connections).sort((a, b) => {
@@ -1243,6 +1251,12 @@ async function openFileSmart(path, mode) {
 }
 
 async function openDroppedFile(path, fromRecent) {
+  // 对比弹窗开着：拖入的文件填 A/B 栏（不打开、不灌 claude/笔记）。
+  // drop_handler 只回调这里（唯一原生路径通道），弹窗在开就归它。
+  const dm = typeof $ === 'function' && $('diffPickModal');
+  if (dm && dm.classList.contains('show') && typeof window._diffPickDrop === 'function') {
+    if (window._diffPickDrop(path)) return;
+  }
   // 拖到 claude 终端 tab 上的文件：claude 输入框不吃原生拖拽，直接把路径
   // 当文本"打字"进终端（termSendRaw 走 /api/send_raw，claude 收到路径字符串
   // 就能读文件——图片也能识图）。用户正对着 claude tab 拖，意图明确，不该弹打开方式。

@@ -1,4 +1,4 @@
-# 前端控制台 v1.0.0 — MCP 集成说明
+﻿# 前端控制台 v1.1.0 — MCP 集成说明
 
 > 让 AI 助手（Claude Code 等任何 MCP 客户端）原生控制串口/SSH 设备、分析日志文件。
 > 配置后，AI 能自动发现并使用本工具的全部能力，无需手动复制粘贴终端输出。
@@ -8,7 +8,7 @@
 
 ## 一、这是什么
 
-**前端控制台 v1.0.0** 是面向嵌入式/BSP 开发者的串口/SSH 调试 + 日志分析桌面工具（Windows，pywebview + WebView2）。
+**前端控制台 v1.1.0** 是面向嵌入式/BSP 开发者的串口/SSH 调试 + 日志分析桌面工具（Windows，pywebview + WebView2）。
 
 通过 **MCP（Model Context Protocol）** 集成，AI 助手可以：
 

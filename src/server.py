@@ -1,7 +1,7 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-前端控制台 v1.0.0 —— 多串口/SSH 后端 + AI 接入层
+前端控制台 v1.1.0 —— 多串口/SSH 后端 + AI 接入层
 - 每个串口一个 SerialPort 实例：独立线程读、独立环形缓冲、独立日志
 - API 按串口 ID（端口名）路由
 - AI 接入层：/api/ai/* 系列，AI 可查询任意串口实时数据、发送命令、订阅流
@@ -70,6 +70,10 @@ app.register_blueprint(hex_bp)
 
 # 注册文本编辑器 Blueprint（路由 /api/ed/*）
 app.register_blueprint(edit_bp)
+
+# 注册文件关联接管/还原 Blueprint（路由 /api/assoc/*，注册表只动 HKCU）
+from src.file_assoc import assoc_bp
+app.register_blueprint(assoc_bp)
 
 # ---- 全局串口表（_ports/_ports_lock 来自 app_state，此处定义 close_all_ports）----
 def close_all_ports():
@@ -1063,6 +1067,24 @@ def ai_diff_logs():
                     "only_a_total": len(only_a), "only_b_total": len(only_b),
                     "count_diffs_total": len(diff_cnt)})
 
+@app.route("/api/read_text")
+def api_read_text():
+    """对比用读文本：q=文件名或绝对路径。
+    日志库内文件名（log tab 的 meta.path 可能是裸名）走 _resolve_log_path 解析；
+    其余绝对路径直接读（对比任意文本都有意义，只挡目录/不存在/超限）。"""
+    q = request.args.get("q", "")
+    path = _resolve_log_path(q)
+    if path is None:
+        return jsonify({"ok": False, "err": "文件不存在或不可读"}), 400
+    try:
+        with open(path, "rb") as f:
+            data = f.read(30 * 1024 * 1024 + 1)
+        if len(data) > 30 * 1024 * 1024:
+            return jsonify({"ok": False, "err": "文件过大（>30MB 上限）"}), 400
+        return jsonify({"ok": True, "name": os.path.basename(path), "text": data.decode("utf-8", errors="replace")})
+    except Exception as e:
+        return jsonify({"ok": False, "err": str(e)}), 400
+
 @app.route("/api/new_log", methods=["POST"])
 def api_new_log():
     data = request.get_json(force=True)
@@ -1141,6 +1163,40 @@ def ai_recent():
         items = p.get_buffer(n)
         result[pid] = [{"ts": it["ts"], "tag": it["tag"], "text": it["text"]} for it in items]
     return jsonify({"ok": True, "ports": result})
+
+@app.route("/api/ai/open_file", methods=["POST"])
+def ai_open_file():
+    """让前端打开指定文件（--open-file 双击入口：已有实例收到新进程的打开请求）。
+    {path}：绝对路径。广播 open_file 事件给前端 SSE，前端走 openFileSmart 智能分发。"""
+    data = request.get_json(force=True, silent=True) or {}
+    path = data.get("path", "")
+    if not path or not os.path.isfile(path):
+        return jsonify({"ok": False, "err": f"文件不存在：{path}"})
+    _broadcast_to_ai({"kind": "ui_action", "action": "open_file", "path": os.path.abspath(path)})
+    return jsonify({"ok": True, "path": os.path.abspath(path)})
+
+
+@app.route("/api/ai/compare_files", methods=["POST"])
+def ai_compare_files():
+    """AI 让前端打开文件对比 tab（Monaco DiffEditor）。
+    {a, b}：两份文件的绝对路径。广播 open_diff 事件给前端 SSE，
+    前端 connectAiSSE 收到后 buildDiffViewerTab。路径先校验存在。"""
+    data = request.get_json(force=True, silent=True) or {}
+    a, b = data.get("a", ""), data.get("b", "")
+    if not a or not b:
+        return jsonify({"ok": False, "err": "需要两个文件路径 a/b"})
+    # 路径校验：日志库内文件名解析成绝对路径（与 diff_logs 同款 _resolve）；
+    # 外部绝对路径必须已存在。复用编辑器白名单太窄（对比任意文本都有意义），
+    # 这里只挡目录/不存在。
+    a_p = _resolve_log_path(a)
+    if not a_p:
+        return jsonify({"ok": False, "err": f"A 文件不存在：{a}"})
+    b_p = _resolve_log_path(b)
+    if not b_p:
+        return jsonify({"ok": False, "err": f"B 文件不存在：{b}"})
+    _broadcast_to_ai({"kind": "ui_action", "action": "open_diff", "a": a_p, "b": b_p})
+    return jsonify({"ok": True, "a": os.path.basename(a_p), "b": os.path.basename(b_p)})
+
 
 @app.route("/api/ai/send", methods=["POST"])
 def ai_send():
@@ -1342,6 +1398,7 @@ def ai_mcp_info():
         {"name": "read_log", "desc": "读日志文件（分页）"},
         {"name": "search_log", "desc": "日志关键字搜索"},
         {"name": "diff_logs", "desc": "对比两份日志差异（summary/line）"},
+        {"name": "compare_files", "desc": "在前端打开两份文件的对比视图（Monaco DiffEditor）"},
         {"name": "disconnect", "desc": "断开连接"},
         {"name": "tftp_status", "desc": "TFTP 服务状态：运行中/目录/文件列表/传输记录"},
         {"name": "tftp_start", "desc": "启动 TFTP 服务（UDP 69），设备可上传/下载文件"},

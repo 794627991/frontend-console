@@ -15,6 +15,7 @@ function _ddFmtSize(n) {
 // ---- 设置弹窗骨架：左导航 + 右内容区（分区懒渲染）----
 const _SET_SECTIONS = [
   { id: 'data',  icon: '📁', name: '数据目录', desc: '日志 / 笔记 / 缓存的位置与迁移' },
+  { id: 'assoc', icon: '🔗', name: '文件关联', desc: '接管/还原 txt 等文本文件的双击打开方式' },
   { id: 'theme', icon: '🎨', name: '外观主题', desc: '整窗配色切换' },
 ];
 
@@ -56,6 +57,7 @@ function _stShowSection(m, sec) {
     el.classList.toggle('active', el.dataset.sec === sec));
   const pane = m.querySelector('#stPane');
   if (sec === 'data') _stRenderDataPane(pane);
+  else if (sec === 'assoc') _stRenderAssocPane(pane);
   else if (sec === 'theme') _stRenderThemePane(pane);
 }
 
@@ -166,6 +168,76 @@ async function _ddRefreshDataPane(pane) {
     pane.querySelector('#ddCurStat').textContent = subs + (j.total_size ? ` · 共 ${_ddFmtSize(j.total_size)}` : '');
     pane.querySelector('#ddDefault').textContent = j.default || '';
   } catch(_) {}
+}
+
+// ---- 文件关联子页：各后缀 接管/还原 状态 + 全选/批量操作 ----
+async function _stRenderAssocPane(pane) {
+  pane.innerHTML = `
+    <div class="dd-body">
+      <div class="dd-label">文件关联接管</div>
+      <div class="dd-sub">「接管」后，双击所选类型文件用本工具打开（编辑器/阅读器自动分发）；「还原」恢复系统原默认（如 txt 还原回记事本）。只改当前用户注册表（HKCU），完全可逆。</div>
+      <div class="assoc-list" id="assocList">加载中…</div>
+      <div class="dd-actions" style="margin-top:14px;">
+        <button class="btn ghost" id="assocAll" disabled>全部接管</button>
+        <button class="btn ghost" id="assocRestoreAll" disabled>全部还原</button>
+        <span class="dd-sub" id="assocHint" style="margin-left:auto;">若双击仍走旧程序：系统「打开方式→选择另一应用→始终」选一次本工具</span>
+      </div>
+      <div class="dd-note">接管时备份各后缀原默认值，还原即恢复；全部还原后自动清理注册的 ProgId（不留残余）。工具升级/移动位置后再次接管即可刷新命令路径。</div>
+    </div>`;
+  const list = pane.querySelector('#assocList');
+  const render = items => {
+    list.innerHTML = items.map(it => `
+      <div class="assoc-item">
+        <span class="ext">${esc(it.ext)}</span>
+        <span class="st ${it.taken ? 'on' : ''}">${it.taken ? '✓ 已接管' : '— 系统默认'}</span>
+        <button class="btn ghost assoc-btn" data-ext="${esc(it.ext)}" data-act="${it.taken ? 'restore' : 'takeover'}">${it.taken ? '还原' : '接管'}</button>
+      </div>`).join('');
+    list.querySelectorAll('.assoc-btn').forEach(btn => {
+      btn.onclick = async () => {
+        btn.disabled = true;
+        try {
+          const r = await fetch('/api/assoc/' + btn.dataset.act, {method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({exts: [btn.dataset.ext]})});
+          const j = await r.json();
+          if (!j.ok) showBanner((btn.dataset.act === 'takeover' ? '接管' : '还原') + '失败：' + (j.err || ''), 4000, true);
+          else showBanner((btn.dataset.act === 'takeover' ? '已接管 ' : '已还原 ') + btn.dataset.ext, 2500);
+        } catch(e) { showBanner('请求失败: ' + e, 4000, true); }
+        _stRefreshAssoc(pane);
+      };
+    });
+    const anyOn = items.some(i => i.taken), anyOff = items.some(i => !i.taken);
+    pane.querySelector('#assocAll').disabled = !anyOff;
+    pane.querySelector('#assocRestoreAll').disabled = !anyOn;
+  };
+  pane._assocRender = render;   // 刷新函数挂 pane（_stRefreshAssoc 复用）
+  _stRefreshAssoc(pane);
+  pane.querySelector('#assocAll').onclick = () => _assocBulk(pane, 'takeover');
+  pane.querySelector('#assocRestoreAll').onclick = () => _assocBulk(pane, 'restore');
+}
+
+async function _stRefreshAssoc(pane) {
+  const list = pane.querySelector('#assocList');
+  if (!list) return;   // 已切到别的分区
+  try {
+    const r = await fetch('/api/assoc/status');
+    const j = await r.json();
+    if (j.ok && pane._assocRender) pane._assocRender(j.items);
+  } catch(_) { list.innerHTML = '<div class="dd-sub">状态读取失败</div>'; }
+}
+
+async function _assocBulk(pane, act) {
+  try {
+    const st = await (await fetch('/api/assoc/status')).json();
+    const exts = (st.items || []).filter(i => act === 'takeover' ? !i.taken : i.taken).map(i => i.ext);
+    if (!exts.length) return;
+    const r = await fetch('/api/assoc/' + act, {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({exts})});
+    const j = await r.json();
+    if (!j.ok) showBanner((act === 'takeover' ? '接管' : '还原') + '失败：' + (j.err || ''), 4000, true);
+    else showBanner((act === 'takeover' ? '已接管 ' : '已还原 ') + exts.join(' '), 3000);
+  } catch(e) { showBanner('请求失败: ' + e, 4000, true); }
+  _stRefreshAssoc(pane);
 }
 
 // ---- 外观主题子页：与顶栏换肤下拉同源（THEMES/applyTheme 由 theme.js 提供）----
