@@ -104,12 +104,17 @@ function applyTheme(id, persist) {
       });
     }
   }
-  $('btnTheme').onclick = (e) => {
-    e.stopPropagation();
-    const show = menu.classList.toggle('show');
-    if (show) renderMenu();
-  };
-  document.addEventListener('click', e => {
-    if (!menu.contains(e.target) && e.target !== $('btnTheme')) menu.classList.remove('show');
-  });
+  // 顶栏「换肤」按钮已按用户要求移除（主题入口走 logo 机器人 → 设置面板「外观主题」）。
+  // renderMenu 保留给潜在调用方；themeMenu DOM 保留无害（display:none）。
+  const btnTheme = $('btnTheme');
+  if (btnTheme) {
+    btnTheme.onclick = (e) => {
+      e.stopPropagation();
+      const show = menu.classList.toggle('show');
+      if (show) renderMenu();
+    };
+    document.addEventListener('click', e => {
+      if (!menu.contains(e.target) && e.target !== btnTheme) menu.classList.remove('show');
+    });
+  }
 })();

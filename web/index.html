@@ -26,15 +26,13 @@
     <button class="btn primary" id="btnNewFile" title="新建笔记（files/ 目录，保存时落盘）">✎ 新建笔记</button>
     <button class="btn primary" id="btnOpenFile" title="打开任意文件（编辑器/阅读器自动分发，>20MB 建议阅读器）">📂 打开</button>
     <button class="btn primary" id="btnDiff" title="文件对比：选两份文件，双栏 diff（VSCode 同款内核）">🔀 对比</button>
-    <button class="btn primary" id="btnBitCalc" title="程序员计算器：8/16/32/64 位寄存器逐位编辑 + 位运算/表达式计算">🧮 计算器</button>
-    <button class="btn ghost icon-btn" id="btnRefreshPorts" title="刷新端口">↻</button>
   </div>
   <div class="spacer"></div>
   <div class="status-pill"><span class="dot" id="globalDot"></span><span id="globalStatus">0 个连接</span></div>
   <button class="btn ghost" id="btnLogs">📜 日志库</button>
   <button class="btn ghost" id="btnFiles" title="查看/打开已保存的笔记">📝 笔记</button>
   <button class="btn ghost" id="btnClaude" title="在内嵌终端启动 Claude Code（真实 CLI，xterm 保真）"><span class="claude-ico"></span> Claude</button>
-  <button class="btn ghost" id="btnTheme" title="切换配色主题">🎨 换肤</button>
+  <button class="btn ghost" id="btnBitCalc" title="程序员计算器：8/16/32/64 位寄存器逐位编辑 + 位运算/表达式计算">🧮 计算器</button>
 </div>
 
 <div class="banner" id="banner"></div>
@@ -278,6 +276,7 @@
       <div class="conn-err" id="connErr"></div>
       <div class="actions">
         <button class="btn ghost" id="connCancel">取消</button>
+        <button class="btn ghost" id="btnRefreshPorts" style="display:none;" title="重新枚举串口端口">↻ 刷新</button>
         <button class="btn primary" id="connConfirm">连接</button>
       </div>
     </div>

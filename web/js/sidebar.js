@@ -263,6 +263,7 @@ $('btnNewConn').onclick = async () => {
   // 注意：显示时必须设 'flex'（而非 ''）——两个字段块是 flex 列布局（gap 撑内部间距），
   // 设 '' 会回退成默认 block，内部 gap 失效、间距又挤回老样子
   $('connSerialFields').style.display = 'flex'; $('connSSHFields').style.display = 'none';
+  $('btnRefreshPorts').style.display = '';   // 刷新按钮只跟串口（SSH 不需要枚举端口）
   $('connAuthPassword').style.display = ''; $('connAuthKey').style.display = 'none';
   $('connModal').classList.add('show');
 };
@@ -301,6 +302,7 @@ document.querySelectorAll('.conn-type-btn').forEach(btn => {
     document.querySelectorAll('.conn-type-btn').forEach(b => b.classList.toggle('active', b === btn));
     $('connSerialFields').style.display = _connType === 'serial' ? 'flex' : 'none';
     $('connSSHFields').style.display = _connType === 'ssh' ? 'flex' : 'none';
+    $('btnRefreshPorts').style.display = _connType === 'serial' ? '' : 'none';
   };
 });
 // SSH 认证方式切换（密码/密钥）
@@ -346,7 +348,7 @@ $('connConfirm').onclick = async () => {
     btn.disabled = false; btn.textContent = oldText;
   }
 };
-$('btnRefreshPorts').onclick = async () => { await loadPorts(); showBanner('端口列表已刷新'); };
+$('btnRefreshPorts').onclick = async () => { await loadPorts(); showBanner('串口端口已刷新'); };
 
 // 终端功能按钮（暂停/清屏/^C/^D/时间戳等）已移到各连接区顶部工具栏
 // （terminal-core.js buildTerminal 内，仿日志 tab 的 log-viewer-toolbar），
