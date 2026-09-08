@@ -181,8 +181,9 @@ function buildEditorTab(name, content, extPath) {
       encSel.title = '当前编码：' + (_ue || '自动探测') + '（切换后按所选编码重新读取原文件；保存始终写 UTF-8）';
       if (_ue === 'gb18030' || _ue === 'gbk') encSel.value = 'gbk';
       encSel.onchange = async () => {
-        if (conn.dirty && !confirm('切换编码会放弃未保存的修改，继续？')) {
-          encSel.value = encSel.dataset.cur || ''; return;
+        if (conn.dirty) {
+          const ok = await _edConfirm('切换编码会放弃未保存的修改，继续？');
+          if (!ok) { encSel.value = encSel.dataset.cur || ''; return; }
         }
         const enc = encSel.value;
         try {

@@ -67,8 +67,8 @@ function gotoSearchMark(idx) {
 // 原生读剪贴板粘贴到连接（Ctrl+V 与菜单「粘贴到终端」共用）。
 // 走 pywebview js_api 的 Win32 读剪贴板，绕开 navigator.clipboard.readText
 // 首次触发的 WebView2「允许粘贴吗」权限弹窗。
-function _pasteToConn(conn, notify) {
-  const doPaste = (text) => {
+async function _pasteToConn(conn, notify) {
+  const doPaste = async (text) => {
     if (!text) { if (notify) showBanner('剪贴板为空'); return; }
     if (connections[conn.portId] !== conn) return;
     // 多行粘贴警告（Tabby 同款防误操作）：>1 行或超 500 字符需确认，
@@ -79,7 +79,7 @@ function _pasteToConn(conn, notify) {
       const desc = lines.length > 1
         ? `即将粘贴 ${lines.length} 行 / ${text.length} 字符（首行: ${preview.replace(/\n/g, ' ⏎ ')}）`
         : `即将粘贴 ${text.length} 字符（${preview}）`;
-      if (!confirm(desc + '\n\n确定粘贴到终端？')) {
+      if (!(await _edConfirm(desc + '\n\n确定粘贴到终端？'))) {
         if (notify) showBanner('已取消粘贴');
         return;
       }
