@@ -175,8 +175,11 @@ async function _treeToggle(row, reload) {
 function _treeRevealRow(row) {
   const scroller = $('treeRoots');
   if (!scroller || !row || !row.isConnected) return;
+  // 不能用 offsetLeft：.tree-row 是 position:relative（参考线用），
+  // offsetParent 成了自己，offsetLeft 恒 0 永不触发滚动（实锤：对焦没生效）。
+  // getBoundingClientRect 差值 + scrollLeft = 行在滚动内容里的真实偏移
+  const left = row.getBoundingClientRect().left - scroller.getBoundingClientRect().left + scroller.scrollLeft;
   const pad = 24;
-  const left = row.offsetLeft;
   let target = null;
   if (left - pad < scroller.scrollLeft) target = Math.max(0, left - pad);
   else if (left + 60 > scroller.scrollLeft + scroller.clientWidth) target = left - pad;
