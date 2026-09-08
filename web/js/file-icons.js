@@ -145,3 +145,18 @@ function fileIconHtml(name, size) {
   const sz = size || 14;
   return `<svg class="fi fi-${key}" width="${sz}" height="${sz}" viewBox="0 0 22 22" aria-hidden="true">${_icons[key]}${_robotBadge}</svg>`;
 }
+
+// 目录图标（文件树面板用，两态：闭合/展开）。着色 var(--accent) 联动主题，
+// 不加机器人角标——角标是"文件"专属品牌元素（VSCode 的目录也不与文件同饰）。
+const _dirClosedSvg = `
+  <path d="M3.5 5.2 h5.2 l1.8 1.9 h7.5 a1.4 1.4 0 0 1 1.4 1.4 v8.2 a1.4 1.4 0 0 1 -1.4 1.4 H3.5 a1.4 1.4 0 0 1 -1.4 -1.4 V6.6 a1.4 1.4 0 0 1 1.4 -1.4 z"
+        fill="var(--accent)" fill-opacity="0.18" stroke="var(--accent)" stroke-width="1.1" stroke-linejoin="round"/>`;
+const _dirOpenSvg = `
+  <path d="M3.5 6.8 h5.2 l1.8 1.9 h7.5 a1.4 1.4 0 0 1 1.4 1.4 v0.6 H2.1 V6.6 a1.4 1.4 0 0 1 1.4 -1.4 z"
+        fill="var(--accent)" fill-opacity="0.1" stroke="var(--accent)" stroke-width="1.1" stroke-linejoin="round"/>
+  <path d="M2.6 9.2 h16.3 a0.8 0.8 0 0 1 0.8 1 l-1.2 6.4 a1.3 1.3 0 0 1 -1.3 1.1 H4.3 a1.3 1.3 0 0 1 -1.3 -1.1 l-1.2 -6.4 a0.8 0.8 0 0 1 0.8 -1 z"
+        fill="var(--accent)" fill-opacity="0.22" stroke="var(--accent)" stroke-width="1.1" stroke-linejoin="round"/>`;
+function dirIconHtml(open, size) {
+  const sz = size || 14;
+  return `<svg class="fi fi-dir${open ? '-open' : ''}" width="${sz}" height="${sz}" viewBox="0 0 22 22" aria-hidden="true">${open ? _dirOpenSvg : _dirClosedSvg}</svg>`;
+}

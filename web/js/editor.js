@@ -93,6 +93,15 @@ function buildEditorTab(name, content, extPath) {
         <button class="lv-btn" data-ed-action="rename" title="双击标签页标题可快捷改名">重命名</button>
         <button class="lv-btn" data-ed-action="search" title="Ctrl+F 全局搜索（支持正则/排除）">🔍 搜索</button>
         <button class="lv-btn" data-ed-action="outline" title="显示/隐藏右侧大纲面板">☰ 大纲</button>
+        <select class="lv-btn ed-enc-sel" data-ed-enc title="文件编码（切换后按所选编码重新读取；保存始终写 UTF-8）" style="display:none;">
+          <option value="">编码：自动</option>
+          <option value="utf-8">UTF-8</option>
+          <option value="gb2312">GB2312</option>
+          <option value="gbk">GBK</option>
+          <option value="gb18030">GB18030</option>
+          <option value="big5">Big5</option>
+          <option value="latin-1">Latin-1</option>
+        </select>
         <span class="lv-info" data-ed-info></span>
       </div>
       <div class="ed-main">
@@ -139,6 +148,7 @@ function buildEditorTab(name, content, extPath) {
     onDisk: !!name,
     dirty: false,
     extPath: extPath || null,  // 外部绝对路径：保存写回原文件，另存为/重命名禁用
+    usedEnc: null,             // 打开文件实际用的编码（编码下拉切换时重读）
     // 全局搜索分栏（纯文本；.note 也支持——按块文本搜）
     edSearchPane: null, edSearchQ: null, edSearchEx: null,
     edSearchResults: null, edSearchCount: null,
@@ -160,6 +170,42 @@ function buildEditorTab(name, content, extPath) {
     _mdBindSplitter(wrap);
   }
   connections[portId] = conn;
+  // 编码下拉（仅外部文件——站内 files/ 永远 UTF-8）：切换 = 脏检查后
+  // 按所选编码重读原文件灌入 Monaco。自动探测报 GB18030 时下拉预选 GBK
+  //（gb18030 是 gbk 超集，用户视角"这就是 GBK 文件"）。
+  if (conn.extPath && !isNote) {
+    const encSel = wrap.querySelector('[data-ed-enc]');
+    if (encSel) {
+      encSel.style.display = '';
+      const _ue = window._edLastUsedEnc || '';
+      encSel.title = '当前编码：' + (_ue || '自动探测') + '（切换后按所选编码重新读取原文件；保存始终写 UTF-8）';
+      if (_ue === 'gb18030' || _ue === 'gbk') encSel.value = 'gbk';
+      encSel.onchange = async () => {
+        if (conn.dirty && !confirm('切换编码会放弃未保存的修改，继续？')) {
+          encSel.value = encSel.dataset.cur || ''; return;
+        }
+        const enc = encSel.value;
+        try {
+          const q = '/api/ed/open?force=1&path=' + encodeURIComponent(conn.extPath) +
+                    (enc ? '&enc=' + encodeURIComponent(enc) : '');
+          const r = await fetch(q);
+          const j = await r.json();
+          if (!j.ok) { showBanner('重读失败：' + (j.err || ''), 4000, true); return; }
+          conn.usedEnc = j.used_enc;
+          window._edLastUsedEnc = j.used_enc;
+          conn.dirty = false;
+          if (conn.monaco) {
+            const pos = conn.monaco.getPosition();
+            conn.monaco.setValue(j.text);
+            try { conn.monaco.setPosition(pos); conn.monaco.revealLineInCenter(pos.lineNumber); } catch (_) {}
+          } else if (conn.ta) conn.ta.value = j.text;
+          conn.savedData = conn.monaco ? conn.monaco.getValue() : (conn.ta ? conn.ta.value : j.text);
+          encSel.dataset.cur = enc;
+          showBanner('已按 ' + (j.used_enc || '自动探测') + ' 重新读取', 2500);
+        } catch(e) { showBanner('重读失败: ' + e, 4000, true); }
+      };
+    }
+  }
   // 初始化编辑区（异步：Editor.js 实例化）
   _edInitContent(conn, content);
   // 搜索分栏事件：回车搜索（Shift+回车跳下一个）、排除框回车、折叠按钮
@@ -738,7 +784,9 @@ async function openEditorFile(nameOrPath) {
     if (isNote) { try { content = JSON.parse(j.text); } catch(e) { content = { blocks: [] }; } }
     // 记入最近打开（文件类型，快捷重开走编辑器）
     if (typeof _recentAdd === 'function') _recentAdd({type:'file', key:'file:'+name, label:name, data:{kind:'edit', name:name, path:nameOrPath, extPath: isExtPath ? nameOrPath : ''}});
-    buildEditorTab(name, content, isExtPath ? nameOrPath : null);
+    window._edLastUsedEnc = isExtPath ? (j.used_enc || null) : null;
+    const _c = buildEditorTab(name, content, isExtPath ? nameOrPath : null);
+    if (_c) _c.usedEnc = j.used_enc || null;
   } catch(e) { showBanner('打开失败: ' + e, 4000, true); }
 }
 
@@ -1235,8 +1283,10 @@ async function openFileSmart(path, mode) {
     const r = await fetch('/api/ed/open?force=1&path=' + encodeURIComponent(path));
     const j = await r.json();
     if (j.ok) {
+      window._edLastUsedEnc = j.used_enc || null;
       if (typeof _recentAdd === 'function') _recentAdd({type:'file', key:'file:'+j.name, label:j.name, data:{kind:'edit', name:j.name, path:path, extPath: path}});
-      buildEditorTab(j.name, j.text, path);
+      const _c = buildEditorTab(j.name, j.text, path);
+      if (_c) _c.usedEnc = j.used_enc || null;
       return;
     }
     // 后端仍拒（真二进制/超限/不存在）：二进制改切 hex（阅读器看乱码没意义），其余降级阅读器
@@ -1257,6 +1307,18 @@ async function openDroppedFile(path, fromRecent) {
   if (dm && dm.classList.contains('show') && typeof window._diffPickDrop === 'function') {
     if (window._diffPickDrop(path)) return;
   }
+  // 拖入的是【文件夹】：设为文件树根（不弹打开方式——之前对目录弹的
+  // "选择打开方式"三种全失败）。is_dir 由 /api/file_info 探测，目录名
+  // 任意后缀不影响判定（isdir 是唯一判据）。
+  try {
+    const r = await fetch('/api/file_info', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({path})});
+    const j = await r.json();
+    if (j.ok && j.is_dir && typeof addTreeRoot === 'function') {
+      if (await addTreeRoot(path)) showBanner('已添加到文件树: ' + path, 3000);
+      return;
+    }
+  } catch(_) {}   // 探测失败（网络等）继续走文件链路
   // 拖到 claude 终端 tab 上的文件：claude 输入框不吃原生拖拽，直接把路径
   // 当文本"打字"进终端（termSendRaw 走 /api/send_raw，claude 收到路径字符串
   // 就能读文件——图片也能识图）。用户正对着 claude tab 拖，意图明确，不该弹打开方式。

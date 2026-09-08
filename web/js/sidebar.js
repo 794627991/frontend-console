@@ -273,18 +273,24 @@ $('connCancel').onclick = () => $('connModal').classList.remove('show');
 // 自加按钮——实际 pywebview/WebView2 默认不显示，导致功能整个消失。
 const _connPassInput = $('connPass'), _connPassToggle = $('connPassToggle');
 if (_connPassInput && _connPassToggle) {
-  // 划线眼睛 SVG（显示密码时切换到它）
-  const EYE_OPEN = _connPassToggle.innerHTML;
-  const EYE_OFF = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  // 眼睛图标语义（用户实锤报反直觉后修正）：图标表示【当前状态】——
+  // 明文可见 = 开眼，掩码隐藏 = 闭眼/划线眼。之前恰好画反（明文配划线、
+  // 掩码配开眼），图2/3 两态都错。
+  const EYE_OPEN_SVG = _connPassToggle.innerHTML;
+  const EYE_OFF_SVG = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
     <line x1="1" y1="1" x2="23" y2="23"></line>
   </svg>`;
-  _connPassToggle.onclick = () => {
+  const _passSyncEye = () => {
     const showing = _connPassInput.type === 'text';
-    _connPassInput.type = showing ? 'password' : 'text';
-    _connPassToggle.innerHTML = showing ? EYE_OPEN : EYE_OFF;
-    _connPassToggle.title = showing ? '显示密码' : '隐藏密码';
+    _connPassToggle.innerHTML = showing ? EYE_OPEN_SVG : EYE_OFF_SVG;
+    _connPassToggle.title = showing ? '密码可见中，点击隐藏' : '密码已隐藏，点击显示';
   };
+  _connPassToggle.onclick = () => {
+    _connPassInput.type = _connPassInput.type === 'text' ? 'password' : 'text';
+    _passSyncEye();
+  };
+  _passSyncEye();   // 初始态同步（之前初始显示也不对）
 }
 
 // 连接类型切换（串口/SSH）

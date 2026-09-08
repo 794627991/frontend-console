@@ -42,10 +42,11 @@
 <div class="main">
   <!-- 左侧串口列表 -->
   <div class="sidebar">
-    <!-- 侧栏双 sheet：打开（活动连接/文件） / 最近（快捷重开，按类型分组） -->
+    <!-- 侧栏三 sheet：打开（活动连接/文件） / 最近（快捷重开） / 文件树（工作区） -->
     <div class="sidebar-sheets">
       <div class="sidebar-sheet-tab active" data-sheet="open">打开 <span class="count" id="portCount">0</span></div>
       <div class="sidebar-sheet-tab" data-sheet="recent">最近</div>
+      <div class="sidebar-sheet-tab" data-sheet="tree">文件树</div>
     </div>
     <div class="sidebar-sheet-pane active" data-sheet="open">
       <div class="port-list" id="portList">
@@ -57,6 +58,14 @@
     <div class="sidebar-sheet-pane" data-sheet="recent">
       <div class="recent-list" id="recentList">
         <div class="recent-empty">暂无记录<br>连接/打开文件后自动记录</div>
+      </div>
+    </div>
+    <div class="sidebar-sheet-pane" data-sheet="tree">
+      <div class="tree-pane" id="treePane">
+        <div class="tree-actions">
+          <button class="btn ghost" id="treeAddRoot" title="选择文件夹加入文件树（也可直接拖文件夹进窗口）">📂 打开文件夹</button>
+        </div>
+        <div class="tree-roots" id="treeRoots"></div>
       </div>
     </div>
     <!-- 侧边栏底部 TFTP 面板（高度可拖拽调节）：设备与 PC 互传文件 -->
@@ -392,6 +401,7 @@
 <script src="web/js/claude.js"></script>
 <script src="web/js/settings.js"></script>
 <script src="web/js/tftp.js"></script>
+<script src="web/js/file-tree.js"></script>
 <script src="web/js/init.js"></script>
 </body>
 </html>

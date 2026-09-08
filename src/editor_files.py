@@ -94,19 +94,40 @@ def ed_default_name():
     return jsonify({"ok": True, "name": _unique_name(ext=ext)})
 
 
-def _read_text(path, max_bytes=30 * 1024 * 1024):
+def _read_text(path, max_bytes=30 * 1024 * 1024, enc=None):
     """读文本文件。超限拒绝（30MB 上限——前端 >30MB 已强制走阅读器，
     20~30MB 用户在弹窗里明确选了编辑器才到这里，Monaco 还能扛）。
-    用 utf-8 读，带 BOM 容错；失败时回退 utf-8 errors=replace 再试（保内容不保格式）。"""
+    enc 指定编码（编辑器编码下拉手动切）时直接用之——用户说了算，不探测。
+    自动探测：utf-8-sig → GB18030 回退（Windows ANSI 中文主流，BSP 常见，
+    GBK 超集，能完整解码无 FFRD 才采纳）→ errors=replace 保底。
+    返回 (text, err, used_enc)。"""
     size = os.path.getsize(path)
     if size > max_bytes:
-        return None, f"文件过大（{size/1024/1024:.1f}MB > 30MB 上限）"
+        return None, f"文件过大（{size/1024/1024:.1f}MB > 30MB 上限）", None
+    if enc:
+        try:
+            # GB2312 在 Python 无独立 codec（gb2312 即 gbk 别名子集），统一升 gb18030 兼容最广
+            real = "gb18030" if enc.lower() in ("gb2312", "gbk", "gb18030") else enc.lower()
+            with open(path, "r", encoding=real, errors="replace") as f:
+                return f.read(), None, real
+        except (LookupError, OSError) as e:
+            return None, f"编码无效：{e}", None
     with open(path, "r", encoding="utf-8-sig") as f:
         try:
-            return f.read(), None
+            return f.read(), None, "utf-8-sig"
         except UnicodeDecodeError:
-            with open(path, "r", encoding="utf-8", errors="replace") as f2:
-                return f2.read(), None
+            pass
+    # GB18030 回退：能完整解码（无替换符）才信任——GBK 误读 utf-8 文件
+    # 也会"成功"但出乱码，FFPD 无是采纳的必要条件
+    try:
+        with open(path, "r", encoding="gb18030", errors="strict") as f:
+            t = f.read()
+        if "�" not in t:
+            return t, None, "gb18030"
+    except (UnicodeDecodeError, ValueError):
+        pass
+    with open(path, "r", encoding="utf-8", errors="replace") as f2:
+        return f2.read(), None, "utf-8(replace)"
 
 
 # ---- 外部文件（拖入的任意文本文件）可编辑支持 ----
@@ -178,7 +199,10 @@ def ed_list():
 
 @edit_bp.route("/api/ed/open")
 def ed_open():
-    """读文件内容：name=files/ 内文件名；path=外部绝对路径（拖入文件，白名单后缀）。"""
+    """读文件内容：name=files/ 内文件名；path=外部绝对路径（拖入文件，白名单后缀）。
+    enc=编码（编码切换下拉传入：utf-8/gb2312/gbk/gb18030/big5/latin-1…，
+    不传走自动探测）。回显 used_enc 供前端显示"当前编码"。"""
+    enc = (request.args.get("enc") or "").strip() or None
     # 外部绝对路径分支（拖入的任意文本文件）
     ext_path = request.args.get("path", "")
     force = request.args.get("force") == "1"   # 用户明确选编辑器：无后缀/未知类型按内容探测放行
@@ -186,18 +210,19 @@ def ed_open():
         p = _safe_ext_path(ext_path, force)
         if not p:
             return jsonify({"ok": False, "err": "不支持的文件类型或文件不存在"}), 400
-        text, err = _read_text(p)
+        text, err, used = _read_text(p, enc=enc)
         if err:
             return jsonify({"ok": False, "err": err}), 400
-        return jsonify({"ok": True, "name": os.path.basename(p), "path": p, "text": text})
+        return jsonify({"ok": True, "name": os.path.basename(p), "path": p,
+                        "text": text, "used_enc": used})
     name = request.args.get("name", "")
     p = _safe_path(name)
     if not p or not os.path.isfile(p):
         return jsonify({"ok": False, "err": "文件不存在"}), 404
-    text, err = _read_text(p)
+    text, err, used = _read_text(p, enc=enc)
     if err:
         return jsonify({"ok": False, "err": err}), 400
-    return jsonify({"ok": True, "name": name, "text": text})
+    return jsonify({"ok": True, "name": name, "text": text, "used_enc": used})
 
 
 @edit_bp.route("/api/ed/save", methods=["POST"])

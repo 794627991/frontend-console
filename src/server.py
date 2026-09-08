@@ -41,6 +41,7 @@ from src.tftp import tftp_bp, _tftp
 from src.httpfile import httpfile_bp, _hfs, _Handler as _hfs_handler
 from src.editor_files import edit_bp
 from src.hex_files import hex_bp
+from src.file_tree import tree_bp
 
 
 app = Flask(__name__)
@@ -74,6 +75,9 @@ app.register_blueprint(edit_bp)
 # 注册文件关联接管/还原 Blueprint（路由 /api/assoc/*，注册表只动 HKCU）
 from src.file_assoc import assoc_bp
 app.register_blueprint(assoc_bp)
+
+# 注册文件树工作区 Blueprint（路由 /api/tree/*，根目录登记制安全模型）
+app.register_blueprint(tree_bp)
 
 # ---- 全局串口表（_ports/_ports_lock 来自 app_state，此处定义 close_all_ports）----
 def close_all_ports():
@@ -952,10 +956,15 @@ def api_log_open_external():
 def api_file_info():
     """轻量文件信息：大小 + 是否文本后缀。前端打开文件前先探测，用于
     编辑器/阅读器分发决策（>20M 阅读器、20~30M 提示、其余可选）。
-    body: {path: 绝对路径}"""
+    body: {path: 绝对路径}。目录返回 {ok, is_dir: true}（拖文件夹进窗口
+    → 设为文件树根，之前对目录返回 err 会误导前端弹"打开方式"窗）。"""
     data = request.get_json(force=True, silent=True) or {}
     p = (data.get("path") or "").strip()
-    if not p or not os.path.isfile(p):
+    if not p:
+        return jsonify({"ok": False, "err": "路径为空"}), 400
+    if os.path.isdir(p):
+        return jsonify({"ok": True, "is_dir": True})
+    if not os.path.isfile(p):
         return jsonify({"ok": False, "err": "文件不存在"}), 400
     from src.editor_files import _EXT_TEXT, _ext_of
     return jsonify({"ok": True, "size": os.path.getsize(p),
