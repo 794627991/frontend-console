@@ -853,20 +853,18 @@
   .bc-bit.on { border-color: var(--accent); background: rgba(0,212,255,0.16);
     box-shadow: 0 0 6px rgba(0,212,255,0.2); }
   .bc-bit.on .bc-bit-v { color: var(--accent); }
-  /* 整值区：HEX/DEC/OCT/BIN 四行，等宽字体 */
-  .bc-values { display: grid; grid-template-columns: 38px 1fr; gap: 6px 8px;
+  /* 整值区：HEX/DEC/OCT/BIN 四行。每行自身是 grid（标签 38px + 输入框 1fr），
+     整行占满外层（1/-1）——之前残留 :first-child{grid-column:1} 把 HEX 行
+     钉死在标签列，框挤成 40px 小框，用户实锤 */
+  .bc-values { display: grid; grid-template-columns: 1fr; gap: 6px 0;
     max-width: 640px; margin: 0 auto; width: 100%; align-items: center; }
-  .bc-vrow { display: contents; }
-  .bc-vrow:first-child { color: var(--accent); font-size: 11px; font-weight: 700;
-    font-family: var(--font-mono); grid-column: 1; }
-  .bc-vrow { font-size: 10px; }
-  .bc-vrow { font-family: var(--font-mono); font-weight: 600; color: var(--muted); }
-  .bc-vrow input { background: var(--bg-input); border: 1px solid var(--border); border-radius: 5px;
+  .bc-vrow { display: grid; grid-template-columns: 38px 1fr; gap: 0 8px; align-items: center;
+    font-size: 10px; font-family: var(--font-mono); font-weight: 600; color: var(--muted); }
+  .bc-vrow input { grid-column: 2; background: var(--bg-input); border: 1px solid var(--border); border-radius: 5px;
     padding: 5px 8px; color: var(--fg-bright); font-family: var(--font-mono); font-size: 12px;
     outline: none; width: 100%; }
   .bc-vrow input:focus { border-color: var(--accent); }
-  .bc-vrow { grid-column: 1 / -1; display: grid; grid-template-columns: 38px 1fr; gap: 0 8px; align-items: center; }
-  .bc-vrow input { grid-column: 2; }
+  .bc-vrow:focus-within { color: var(--accent); }
   /* 运算条：操作数+AND/OR/XOR/NOT/移位 */
   .bc-opbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
   .bc-op2 { background: var(--bg-input); border: 1px solid var(--border); border-radius: 5px;

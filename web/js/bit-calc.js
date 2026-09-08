@@ -208,7 +208,8 @@ function buildBitCalcTab() {
     inp.addEventListener('input', () => {
       const radix = +inp.dataset.bcV;
       const t = inp.value.trim().toLowerCase();
-      if (!t) { conn.value = 0n; return; }
+      if (!t) { conn.value = 0n; render(); return; }   // 清空=归零且必须 render——
+      // 之前只置 0n 就 return，位格/DEC/OCT/BIN 全停在旧值造成不同步，用户实锤
       try {
         let v;
         if (/^0x[0-9a-f]+$/.test(t)) v = BigInt(t);
