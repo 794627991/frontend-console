@@ -172,11 +172,13 @@ async function _treeToggle(row, reload) {
 }
 
 // 把新展开的子层滚入横向可视区（只横滚，纵向不动）。
-// 取子行中最深（最右）一行的右缘判断；目标 scrollLeft 对齐其左缘（留 pad 余量）。
+// 关键：行有 min-width:100%（hover 高亮撑满列宽），border-box 全部从内容原点
+// x≈0 起、缩进藏在 padding 里——量行左缘恒得 0，对焦目标永远是最左（用户实锤
+// "点击深层子菜单对焦跑到最顶层"）。必须量行内【第一个元素】（箭头/图标）的
+// 真实内容左缘。
 function _treeRevealChildren(ch) {
   const scroller = $('treeRoots');
   if (!scroller || !ch || !ch.isConnected) return;
-  // 子行右缘 = 最深行右缘；scrollWidth 兜底（截断行/提示行也算）
   const rows = ch.querySelectorAll('.tree-row');
   if (!rows.length) return;
   const base = scroller.getBoundingClientRect().left;
@@ -184,7 +186,9 @@ function _treeRevealChildren(ch) {
   for (const r of rows) {
     const rc = r.getBoundingClientRect();
     const right = rc.right - base + scroller.scrollLeft;
-    const left = rc.left - base + scroller.scrollLeft;
+    const first = r.firstElementChild;   // 箭头/图标 span = 内容真实左缘
+    const left = (first ? first.getBoundingClientRect().left : rc.left)
+                 - base + scroller.scrollLeft;
     if (right > maxRight) maxRight = right;
     if (left < minLeft) minLeft = left;
   }
@@ -192,7 +196,7 @@ function _treeRevealChildren(ch) {
   const pad = 24;
   let target = null;
   if (maxRight > viewR) {
-    // 子层超右缘：滚到子层起点（缩进层级可见，长名左侧不顶格）
+    // 子层超右缘：滚到子层内容起点（参考线/父层缩进可见，不顶格）
     target = Math.max(0, minLeft - pad);
   }
   if (target === null || target === scroller.scrollLeft) return;
