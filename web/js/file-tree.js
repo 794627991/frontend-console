@@ -243,6 +243,32 @@ $('treePane').addEventListener('click', async e => {
   }
 });
 
+// ---- 树行右键：在资源管理器中定位（文件选中它，目录直接打开）----
+// 复用 search.js 的 #ctxMenu 与 .ctx-item 样式（UI 风格统一，铁律2）
+$('treePane').addEventListener('contextmenu', e => {
+  const row = e.target.closest('[data-path]');
+  if (!row) return;
+  e.preventDefault();
+  const path = row.dataset.path;
+  const isDir = row.dataset.dir === '1';
+  const m = $('ctxMenu');
+  m.innerHTML = `<div class="ctx-item" data-act="reveal">📂 在资源管理器中${isDir ? '打开' : '显示'}</div>`;
+  m.style.display = 'block';
+  m.style.left = Math.min(e.clientX, window.innerWidth - m.offsetWidth - 4) + 'px';
+  m.style.top = Math.min(e.clientY, window.innerHeight - m.offsetHeight - 4) + 'px';
+  m.querySelectorAll('.ctx-item').forEach(it => {
+    it.onclick = async () => {
+      hideCtxMenu();
+      try {
+        const r = await fetch('/api/tree/reveal', {method:'POST',
+          headers:{'Content-Type':'application/json'}, body: JSON.stringify({path})});
+        const j = await r.json();
+        if (!j.ok) showBanner(j.err || '打开失败', 4000, true);
+      } catch(err) { showBanner('打开失败: ' + err, 4000, true); }
+    };
+  });
+});
+
 $('treeAddRoot').onclick = () => pickTreeDir();
 $('treeHidden').onclick = () => _treeToggleHidden();
 _treeSyncHiddenBtn();   // 初始文案（HTML 静态写「显示」，JS 兜底同步）

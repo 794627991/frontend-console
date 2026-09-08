@@ -123,3 +123,26 @@ def tree_list():
         return jsonify({"ok": False, "err": f"读取失败：{err}"}), 400
     return jsonify({"ok": True, "path": p, "entries": entries,
                     "truncated": err if isinstance(err, int) else 0})
+
+
+@tree_bp.route("/api/tree/reveal", methods=["POST"])
+def tree_reveal():
+    """在系统资源管理器中打开并定位到该条目（文件=选中它，目录=打开它）。
+    path 必须在已登记根的子树内（同 list 门卫——explorer /select 是任意路径
+    都能打的洞，不能裸放）。"""
+    import subprocess, sys
+    data = request.get_json(force=True, silent=True) or {}
+    p = _under_roots(data.get("path"))
+    if not p or not os.path.exists(p):
+        return jsonify({"ok": False, "err": "路径不在文件树根目录内或不存在"}), 400
+    try:
+        if sys.platform.startswith("win"):
+            # /select, 定位到文件（目录则直接打开该目录）
+            subprocess.Popen(["explorer.exe", "/select,", p], close_fds=True)
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", "-R", p])
+        else:
+            subprocess.Popen(["xdg-open", os.path.dirname(p)])
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "err": str(e)}), 500
