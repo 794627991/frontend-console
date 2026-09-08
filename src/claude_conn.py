@@ -73,6 +73,23 @@ def _resolve_claude_exe(force=False):
             return _exe_cache
         _exe_cache = (p, False)
         return _exe_cache
+    # 4.5 PATH 之外的兜底：npm 全局 bin 标准目录（%APPDATA%\npm）。
+    # 注册表 PATH 缺 npm 目录时（桌面快捷方式继承 explorer 的 PATH），
+    # which 全空但 CLI 实际装着——用户实锤"用得好好的一夜之间找不到"。
+    # npm 装完全局包默认把 bin 加 PATH，但注册表 PATH 被清理/装时漏写就漏了。
+    appdata = os.environ.get("APPDATA", "")
+    if appdata:
+        npm_bin = os.path.join(appdata, "npm")
+        p = shutil.which("claude", path=npm_bin) if os.path.isdir(npm_bin) else None
+        if p and os.path.isfile(p):
+            inner = os.path.join(npm_bin, "node_modules",
+                                 "@anthropic-ai", "claude-code", "bin", "claude.exe")
+            if os.path.isfile(inner):
+                _exe_cache = (inner, False)
+                return _exe_cache
+            if p.lower().endswith((".cmd", ".bat")):
+                _exe_cache = (p, True)
+                return _exe_cache
     raise ClaudeNotFoundError(
         "未检测到 claude CLI。安装：npm install -g @anthropic-ai/claude-code\n"
         "（若已安装仍提示找不到，重启本工具让它继承最新 PATH，"

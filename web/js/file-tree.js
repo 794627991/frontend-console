@@ -177,17 +177,35 @@ async function _treeToggle(row, reload) {
 // 关键坑②：对焦是双向的——折叠/点父行回浅层时内容在左缘外，要能【往左】滚；
 // 纵向同理（子层展开后父行可能滚出上下视口）。前版只处理"往右"，用户实锤
 // 回不去父目录、纵向也不动。
-// target=row（对焦该行，折叠/点行时）；target=ch+children 模式（展开时对焦子层）
+// target=row（对焦该行，折叠/点行时）；target=ch+children 模式（展开时）
+// 展开时纵向只对焦【父行+子层第一行】——不是整个子层：多文件目录（几百项）
+// 整层对焦会把 maxBottom 推到子层末尾，滚到最底把父行顶出视口（用户实锤
+// "打开很多文件的文件夹极大幅滑动，文件夹本身被顶没了"）。父行必须钉在
+// 可视区内（用户刚点的就是它），子层从第一行露出即达意。
 function _treeReveal(target, focusChildren) {
   const scroller = $('treeRoots');
   if (!scroller || !target || !target.isConnected) return;
-  // 对焦行集合：focusChildren=展开展景取容器里所有子行；否则对焦目标自身
-  const rows = focusChildren && target.querySelectorAll
-    ? Array.from(target.querySelectorAll('.tree-row')) : [target];
-  if (!rows.length) return;
+  let rows;
+  if (focusChildren && target.querySelectorAll) {
+    const kids = target.querySelectorAll('.tree-row');
+    // 纵向目标：父行 + 子层第一行
+    const parentRow = target.classList && target.classList.contains('tree-row')
+      ? target : target.closest('.tree-row');
+    const vRows = [];
+    if (parentRow) vRows.push(parentRow);
+    if (kids.length) vRows.push(kids[0]);
+    // 横向用全部子行算左右极值（深缩进+长名的右缘/左缘判断）
+    return _treeRevealRows(scroller, Array.from(kids), vRows);
+  }
+  rows = [target];
+  return _treeRevealRows(scroller, rows, rows);
+}
+function _treeRevealRows(scroller, hRows, vRows) {
+  if (!hRows.length || !vRows.length) return;
   const base = scroller.getBoundingClientRect().left;
+  const baseY = scroller.getBoundingClientRect().top;
   let maxRight = 0, minLeft = Infinity, minTop = Infinity, maxBottom = 0;
-  for (const r of rows) {
+  for (const r of hRows) {
     const rc = r.getBoundingClientRect();
     const first = r.firstElementChild;   // 箭头/图标 span = 内容真实左缘
     const left = (first ? first.getBoundingClientRect().left : rc.left)
@@ -195,16 +213,19 @@ function _treeReveal(target, focusChildren) {
     const right = rc.right - base + scroller.scrollLeft;
     if (right > maxRight) maxRight = right;
     if (left < minLeft) minLeft = left;
-    const top = rc.top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+  }
+  for (const r of vRows) {
+    const rc = r.getBoundingClientRect();
+    const top = rc.top - baseY + scroller.scrollTop;
     if (top < minTop) minTop = top;
     if (top + rc.height > maxBottom) maxBottom = top + rc.height;
   }
   const pad = 24, vpad = 40;
-  // 横向：内容超出任意一侧视口就滚（双向，不是只往右）
+  // 横向：内容超出任意一侧视口就滚（双向）
   let hx = scroller.scrollLeft;
   if (maxRight > scroller.scrollLeft + scroller.clientWidth) hx = Math.max(0, minLeft - pad);
   else if (minLeft < scroller.scrollLeft) hx = Math.max(0, minLeft - pad);
-  // 纵向：行超出上/下视口就滚入（VSCode reveal 同款，近端对齐）
+  // 纵向：只保证【vRows】（父行+子层第一行）可见——子层其余部分随自然滚动浏览
   let vy = scroller.scrollTop;
   if (minTop < scroller.scrollTop) vy = Math.max(0, minTop - vpad);
   else if (maxBottom > scroller.scrollTop + scroller.clientHeight) vy = Math.max(0, maxBottom - scroller.clientHeight + vpad);
