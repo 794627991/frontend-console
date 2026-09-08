@@ -165,26 +165,38 @@ async function _treeToggle(row, reload) {
   }
   if (j.truncated) html += `<div class="tree-more">…还有 ${Number(j.truncated).toLocaleString()} 项未显示</div>`;
   ch.innerHTML = html;
-  // 自动对焦：深层展开后子行缩进可能超出可视右缘——横向滚动把【展开的父行】
-  // 滚入可见（VSCode 自动 reveal 同款），用户不必手拖滚动条
-  _treeRevealRow(row);
+  // 自动对焦：新展开的【子行】若右缘超出可视区（深缩进+长名），横滚到子层起点。
+  // 判断必须基于子行——父行本身浅层时在视口内不触发，但子行可能已超右缘
+  // （前版只查父行，实锤"对焦依旧不生效"）。
+  _treeRevealChildren(ch);
 }
 
-// 把树行滚入横向可视区（只横滚：深层缩进超右缘时左移到行起点附近，
-// 垂直方向不动——纵向本就在视口内）。左侧留白：行左缘不顶死滚动条。
-function _treeRevealRow(row) {
+// 把新展开的子层滚入横向可视区（只横滚，纵向不动）。
+// 取子行中最深（最右）一行的右缘判断；目标 scrollLeft 对齐其左缘（留 pad 余量）。
+function _treeRevealChildren(ch) {
   const scroller = $('treeRoots');
-  if (!scroller || !row || !row.isConnected) return;
-  // 不能用 offsetLeft：.tree-row 是 position:relative（参考线用），
-  // offsetParent 成了自己，offsetLeft 恒 0 永不触发滚动（实锤：对焦没生效）。
-  // getBoundingClientRect 差值 + scrollLeft = 行在滚动内容里的真实偏移
-  const left = row.getBoundingClientRect().left - scroller.getBoundingClientRect().left + scroller.scrollLeft;
+  if (!scroller || !ch || !ch.isConnected) return;
+  // 子行右缘 = 最深行右缘；scrollWidth 兜底（截断行/提示行也算）
+  const rows = ch.querySelectorAll('.tree-row');
+  if (!rows.length) return;
+  const base = scroller.getBoundingClientRect().left;
+  let maxRight = 0, minLeft = Infinity;
+  for (const r of rows) {
+    const rc = r.getBoundingClientRect();
+    const right = rc.right - base + scroller.scrollLeft;
+    const left = rc.left - base + scroller.scrollLeft;
+    if (right > maxRight) maxRight = right;
+    if (left < minLeft) minLeft = left;
+  }
+  const viewR = scroller.scrollLeft + scroller.clientWidth;
   const pad = 24;
   let target = null;
-  if (left - pad < scroller.scrollLeft) target = Math.max(0, left - pad);
-  else if (left + 60 > scroller.scrollLeft + scroller.clientWidth) target = left - pad;
+  if (maxRight > viewR) {
+    // 子层超右缘：滚到子层起点（缩进层级可见，长名左侧不顶格）
+    target = Math.max(0, minLeft - pad);
+  }
   if (target === null || target === scroller.scrollLeft) return;
-  // 弱平滑 150ms（流畅第一守则：动画短、不挡交互）
+  // 弱平滑（流畅第一守则：动画短、不挡交互）
   scroller.scrollTo({ left: target, behavior: 'smooth' });
 }
 

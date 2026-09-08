@@ -1525,6 +1525,9 @@
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
   ::-webkit-scrollbar-thumb:hover { background: var(--border-glow); }
+  /* 滚动条交角（横/纵交汇的右下角方块）：Chromium 默认白色——文件树加横向
+     滚动后暴露（用户截图实锤"右下角白了一块"），全局补暗底 */
+  ::-webkit-scrollbar-corner { background: transparent; }
 
   /* 横幅通知：右下角冒泡（不占布局空间——之前顶部横幅显示/消失会挤压
      .main 高度导致 xterm 尺寸跳动、UI 位移观感差，改为 fixed 悬浮） */
