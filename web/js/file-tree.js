@@ -165,6 +165,24 @@ async function _treeToggle(row, reload) {
   }
   if (j.truncated) html += `<div class="tree-more">…还有 ${Number(j.truncated).toLocaleString()} 项未显示</div>`;
   ch.innerHTML = html;
+  // 自动对焦：深层展开后子行缩进可能超出可视右缘——横向滚动把【展开的父行】
+  // 滚入可见（VSCode 自动 reveal 同款），用户不必手拖滚动条
+  _treeRevealRow(row);
+}
+
+// 把树行滚入横向可视区（只横滚：深层缩进超右缘时左移到行起点附近，
+// 垂直方向不动——纵向本就在视口内）。左侧留白：行左缘不顶死滚动条。
+function _treeRevealRow(row) {
+  const scroller = $('treeRoots');
+  if (!scroller || !row || !row.isConnected) return;
+  const pad = 24;
+  const left = row.offsetLeft;
+  let target = null;
+  if (left - pad < scroller.scrollLeft) target = Math.max(0, left - pad);
+  else if (left + 60 > scroller.scrollLeft + scroller.clientWidth) target = left - pad;
+  if (target === null || target === scroller.scrollLeft) return;
+  // 弱平滑 150ms（流畅第一守则：动画短、不挡交互）
+  scroller.scrollTo({ left: target, behavior: 'smooth' });
 }
 
 // 属性选择器里的路径转义（data-parent 含引号/反斜杠时的 CSS 转义）
