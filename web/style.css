@@ -832,6 +832,56 @@
   }
   .tree-row { position: relative; }
 
+  /* ===== 程序员计算器（仿 Marvell Register Analyzer + 计算器）===== */
+  .bc-body { padding: 14px 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+  /* 位格区：MSB 在左、按字节分组（组间间隙=分域辨识；奇偶组底色区分） */
+  .bc-bits { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
+  .bc-bit-group { display: flex; gap: 2px; padding: 4px; border-radius: 6px; }
+  .bc-bit-group:nth-child(odd) { background: rgba(255,255,255,0.02); }
+  .bc-bit { width: 34px; height: 42px; border: 1px solid var(--border); border-radius: 5px;
+    cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: var(--bg-input); transition: all 0.12s; user-select: none; }
+  .bc-bit:hover { border-color: var(--accent); }
+  .bc-bit .bc-bit-n { font-size: 8px; color: var(--muted); font-family: var(--font-mono); }
+  .bc-bit .bc-bit-v { font-size: 14px; font-weight: 700; color: var(--muted);
+    font-family: var(--font-mono); line-height: 1.1; }
+  .bc-bit.on { border-color: var(--accent); background: rgba(0,212,255,0.16);
+    box-shadow: 0 0 6px rgba(0,212,255,0.2); }
+  .bc-bit.on .bc-bit-v { color: var(--accent); }
+  /* 整值区：HEX/DEC/OCT/BIN 四行，等宽字体 */
+  .bc-values { display: grid; grid-template-columns: 38px 1fr; gap: 6px 8px;
+    max-width: 640px; margin: 0 auto; width: 100%; align-items: center; }
+  .bc-vrow { display: contents; }
+  .bc-vrow:first-child { color: var(--accent); font-size: 11px; font-weight: 700;
+    font-family: var(--font-mono); grid-column: 1; }
+  .bc-vrow { font-size: 10px; }
+  .bc-vrow { font-family: var(--font-mono); font-weight: 600; color: var(--muted); }
+  .bc-vrow input { background: var(--bg-input); border: 1px solid var(--border); border-radius: 5px;
+    padding: 5px 8px; color: var(--fg-bright); font-family: var(--font-mono); font-size: 12px;
+    outline: none; width: 100%; }
+  .bc-vrow input:focus { border-color: var(--accent); }
+  .bc-vrow { grid-column: 1 / -1; display: grid; grid-template-columns: 38px 1fr; gap: 0 8px; align-items: center; }
+  .bc-vrow input { grid-column: 2; }
+  /* 运算条：操作数+AND/OR/XOR/NOT/移位 */
+  .bc-opbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .bc-op2 { background: var(--bg-input); border: 1px solid var(--border); border-radius: 5px;
+    padding: 5px 8px; color: var(--fg-bright); font-family: var(--font-mono); font-size: 11px;
+    outline: none; width: 160px; }
+  .bc-op2:focus { border-color: var(--accent); }
+  .bc-shift-n { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; color: var(--muted); }
+  .bc-shift-n input { background: var(--bg-input); border: 1px solid var(--border); border-radius: 4px;
+    padding: 3px 4px; color: var(--fg-bright); font-family: var(--font-mono); font-size: 11px; outline: none; }
+  /* 表达式计算器行 */
+  .bc-calc { display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+    border-top: 1px solid var(--border); padding-top: 10px; }
+  .bc-expr { flex: 1; min-width: 260px; background: var(--bg-input); border: 1px solid var(--border);
+    border-radius: 5px; padding: 7px 10px; color: var(--fg-bright); font-family: var(--font-mono);
+    font-size: 12px; outline: none; }
+  .bc-expr:focus { border-color: var(--accent); }
+  .bc-expr-res { font-family: var(--font-mono); font-size: 11px; color: var(--accent);
+    word-break: break-all; max-width: 100%; }
+  .bc-expr-res.err { color: var(--neon-red); }
+
   /* ===== 侧边栏底部 TFTP 面板（高度可拖拽）===== */
   .tftp-resizer {
     flex-shrink: 0; height: 7px; cursor: row-resize;
