@@ -70,6 +70,13 @@ function _bcParseNum(t) {
   throw new Error(t || '(空)');
 }
 
+// 无前缀按进制构造 BigInt：给 '0b'/'0o' 前缀再 BigInt()——按进制构造
+// 不经过浮点（parseInt 是浮点解析，>2^53 丢精度，计算正确性红线）
+function _bcParseRadix(t, radix) {
+  const pre = radix === 16 ? '0x' : radix === 2 ? '0b' : radix === 8 ? '0o' : '';
+  return BigInt(pre + t);
+}
+
 // ---- tab 构建（模式同 hex-viewer：tab + term-area wrap + connections 表）----
 function buildBitCalcTab() {
   // 单例：已开就激活（计算器一个就够，不堆 tab）
@@ -118,8 +125,8 @@ function buildBitCalcTab() {
           <button class="lv-btn" data-bc-op="or">OR</button>
           <button class="lv-btn" data-bc-op="xor">XOR</button>
           <button class="lv-btn" data-bc-op="not">NOT</button>
-          <button class="lv-btn" data-bc-op="shl"><<</button>
-          <button class="lv-btn" data-bc-op="shr">>></button>
+          <button class="lv-btn" data-bc-op="shl" title="左移（右侧「位数」框的位数）"><<</button>
+          <button class="lv-btn" data-bc-op="shr" title="右移（右侧「位数」框的位数）">>></button>
           <span class="bc-shift-n"><input data-bc-shiftn value="1" style="width:34px"> 位</span>
         </div>
         <!-- 表达式计算器：完整运算（+ - * / % & | ^ ~ << >> 括号） -->
@@ -209,10 +216,12 @@ function buildBitCalcTab() {
         else if (/^0o[0-7]+$/.test(t)) v = BigInt(t);
         // 无前缀：按框标注进制解析。HEX 框收 [0-9a-f]（'3d' 是合法 hex 值，
         // 不是"非法输入"——之前 /^0-9+$/ 把 '3d' 当非法 return 保持旧值，
-        // 框里却留着用户敲的字符造成"HEX 空框/不同步"的观感，用户实锤）
-        else if (radix === 16 && /^[0-9a-f]+$/.test(t)) v = BigInt(parseInt(t, 16));
-        else if (radix === 2 && /^[01]+$/.test(t)) v = BigInt(parseInt(t, 2));
-        else if (radix === 8 && /^[0-7]+$/.test(t)) v = BigInt(parseInt(t, 8));
+        // 框里却留着用户敲的字符造成"HEX 空框/不同步"的观感，用户实锤）。
+        // 按进制构造 BigInt（绝不能用 parseInt——浮点解析，64 位满宽输入
+        // 超 2^53 丢精度，计算正确性红线）
+        else if (radix === 16 && /^[0-9a-f]+$/.test(t)) v = _bcParseRadix(t, 16);
+        else if (radix === 2 && /^[01]+$/.test(t)) v = _bcParseRadix(t, 2);
+        else if (radix === 8 && /^[0-7]+$/.test(t)) v = _bcParseRadix(t, 8);
         else if (radix === 10 && /^[0-9]+$/.test(t)) v = BigInt(t);
         else return;   // 确实非法（如 DEC 框敲字母），保持旧值
         conn.value = v & MASK();
@@ -248,9 +257,11 @@ function buildBitCalcTab() {
         } else if (op === 'not') {
           conn.value = ~conn.value & MASK();
         } else if (op === 'shl') {
-          conn.value = (conn.value << (op2raw ? _bcParseNum(op2raw) : shn)) & MASK();
+          // 移位一律用「位数」框——操作数框只归 AND/OR/XOR，
+          // 之前"操作数有值就优先"导致 << 一次跳 N 位不好预期
+          conn.value = (conn.value << shn) & MASK();
         } else if (op === 'shr') {
-          conn.value >>= (op2raw ? _bcParseNum(op2raw) : shn);
+          conn.value >>= shn;
         }
         exprRes.textContent = '';
         render();
