@@ -94,17 +94,12 @@ async function refreshTree() {
 // ---- 显示隐藏文件开关（VSCode files.exclude 同款语义）----
 // 关（默认）：. 开头条目不显示也不算"还有 N 项"；开：全部显示。
 // 切换后重拉所有【已展开】目录——open 态留在 dataset.open 上，重拉即保留展开层级。
-// 按钮 = 描边 SVG 眼睛（与项目图标体系同画风，不用 emoji）：off 虚线圈眼
-// （"遮住"语义）+按钮常规态；on 实心眼 + .primary 青色按下态。
 let _treeShowHidden = false;
-const _treeEyeOnSvg = `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 8s2.4-4 6.5-4 6.5 4 6.5 4-2.4 4-6.5 4-6.5-4-6.5-4z"/><circle cx="8" cy="8" r="2.2" fill="currentColor" stroke="none"/></svg>`;
-const _treeEyeOffSvg = `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="2.5 2"><path d="M1.5 8s2.4-4 6.5-4 6.5 4 6.5 4-2.4 4-6.5 4-6.5-4-6.5-4z"/><circle cx="8" cy="8" r="2.2"/></svg>`;
 function _treeSyncHiddenBtn() {
   const btn = $('treeHidden');
-  btn.style.display = '';
-  btn.innerHTML = _treeShowHidden ? _treeEyeOnSvg : _treeEyeOffSvg;
-  btn.classList.toggle('primary', _treeShowHidden);
-  btn.title = _treeShowHidden ? '隐藏文件显示中，点击关闭' : '显示隐藏文件（. 开头）';
+  btn.textContent = _treeShowHidden ? '隐藏' : '显示';
+  btn.classList.toggle('primary', _treeShowHidden);   // 按下态：青色主按钮
+  btn.title = _treeShowHidden ? '当前显示隐藏文件，点击隐藏 . 开头条目' : '显示 . 开头的隐藏文件';
 }
 function _treeToggleHidden() {
   _treeShowHidden = !_treeShowHidden;
@@ -142,14 +137,18 @@ async function _treeToggle(row, reload) {
   row.dataset.open = '1';
   const ar = row.querySelector('.arrow'); if (ar) ar.style.transform = 'rotate(90deg)';
   const ic = row.querySelector('svg'); if (ic) ic.outerHTML = dirIconHtml(true, 14);
-  const seq = (_treeReqSeq = (_treeReqSeq || 0) + 1);   // 防乱序：隐藏开关快速切换时旧响应不覆盖新内容
+  // 防乱序记在【ch 自己】身上：隐藏开关快速切换/连点展开时旧响应不覆盖新内容。
+  // 不能用全局计数——展开 A 目录后展开 B，A 的响应回来就被全局 seq 判"过期"，
+  // A 永远停在加载中（用户实锤：根节点一直加载中）。
+  ch.dataset.seq = String((+ch.dataset.seq || 0) + 1);
+  const seq = +ch.dataset.seq;
   let j;
   try {
     const r = await fetch('/api/tree/list', {method:'POST',
       headers:{'Content-Type':'application/json'}, body: JSON.stringify({path, hidden: _treeShowHidden})});
     j = await r.json();
-  } catch(e) { if (seq === _treeReqSeq) ch.innerHTML = '<div class="tree-more">读取失败</div>'; return; }
-  if (seq !== _treeReqSeq) return;   // 已有更新的请求，本次结果作废
+  } catch(e) { if (+ch.dataset.seq === seq && ch.isConnected) ch.innerHTML = '<div class="tree-more">读取失败</div>'; return; }
+  if (+ch.dataset.seq !== seq || !ch.isConnected) return;   // 已有更新请求/容器已销毁，本次作废
   if (!j.ok) { ch.innerHTML = `<div class="tree-more">${esc(j.err || '读取失败')}</div>`; return; }
   if (!j.entries.length) { ch.innerHTML = '<div class="tree-more">（空目录）</div>'; return; }
   let html = '';
@@ -197,7 +196,7 @@ $('treePane').addEventListener('click', async e => {
 
 $('treeAddRoot').onclick = () => pickTreeDir();
 $('treeHidden').onclick = () => _treeToggleHidden();
-_treeSyncHiddenBtn();   // 初始注入眼睛图标（HTML 留空防闪烁）
+_treeSyncHiddenBtn();   // 初始文案（HTML 静态写「显示」，JS 兜底同步）
 
 // 启动：拉根列表（DOM 在 index.html 静态存在，config 持久化的根直接恢复）
 refreshTree();
