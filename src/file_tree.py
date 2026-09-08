@@ -53,30 +53,28 @@ def _under_roots(path):
 def _list_dir(path, show_hidden=False):
     """单层扫描：os.scandir 一次拿 entry.is_dir()（不 follow symlink，
     不 stat size/mtime）。目录在前 + 字母序不区分大小写（资源管理器习惯）。
-    超上限截断，返回 (entries, truncated_remaining)。"""
+    隐藏（. 开头）默认滤除；超上限截断，返回 (entries, truncated_remaining)。
+    truncated 只数【可见】条目——隐藏文件不参与截断提示（开关关着时
+    不该冒出"还有 N 项"去诱导用户点开）。"""
     entries = []
     n = 0
     try:
         with os.scandir(path) as it:
             for e in it:
-                n += 1
                 if not show_hidden and e.name.startswith("."):
-                    continue
-                if n > LIST_CAP + 1:      # 只多扫 1 个就知道还有剩余
+                    continue          # 隐藏文件在计数前滤除——不计入 n 也不计入 truncated
+                n += 1
+                if n > LIST_CAP:     # 只多扫 1 个就知道还有剩余
                     continue
                 try:
                     is_dir = e.is_dir(follow_symlinks=False)
                 except OSError:
-                    continue               # 权限/重解析点异常的条目跳过，单条不炸整体
+                    continue         # 权限/重解析点异常的条目跳过，单条不炸整体
                 entries.append({"name": e.name, "path": e.path, "dir": is_dir})
     except OSError as ex:
         return None, str(ex)
     entries.sort(key=lambda x: (not x["dir"], x["name"].lower()))
-    total_visible = sum(1 for e in entries if show_hidden or not e["name"].startswith("."))
-    # truncated：被截断的可见条目数（扫描总量 n 只是计数用，隐藏文件混在里面
-    # 无法精确拆分，用可见数近似——提示行本来就是约数语义）
-    shown = min(len(entries), LIST_CAP)
-    truncated = max(0, n - shown)
+    truncated = max(0, n - len(entries))
     return entries[:LIST_CAP], truncated
 
 

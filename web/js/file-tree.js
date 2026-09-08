@@ -91,10 +91,35 @@ async function refreshTree() {
   host.innerHTML = html;
 }
 
+// ---- 显示隐藏文件开关（VSCode files.exclude 同款语义）----
+// 关（默认）：. 开头条目不显示也不算"还有 N 项"；开：全部显示。
+// 切换后重拉所有【已展开】目录——open 态留在 dataset.open 上，重拉即保留展开层级。
+// 按钮 = 描边 SVG 眼睛（与项目图标体系同画风，不用 emoji）：off 虚线圈眼
+// （"遮住"语义）+按钮常规态；on 实心眼 + .primary 青色按下态。
+let _treeShowHidden = false;
+const _treeEyeOnSvg = `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 8s2.4-4 6.5-4 6.5 4 6.5 4-2.4 4-6.5 4-6.5-4-6.5-4z"/><circle cx="8" cy="8" r="2.2" fill="currentColor" stroke="none"/></svg>`;
+const _treeEyeOffSvg = `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="2.5 2"><path d="M1.5 8s2.4-4 6.5-4 6.5 4 6.5 4-2.4 4-6.5 4-6.5-4-6.5-4z"/><circle cx="8" cy="8" r="2.2"/></svg>`;
+function _treeSyncHiddenBtn() {
+  const btn = $('treeHidden');
+  btn.style.display = '';
+  btn.innerHTML = _treeShowHidden ? _treeEyeOnSvg : _treeEyeOffSvg;
+  btn.classList.toggle('primary', _treeShowHidden);
+  btn.title = _treeShowHidden ? '隐藏文件显示中，点击关闭' : '显示隐藏文件（. 开头）';
+}
+function _treeToggleHidden() {
+  _treeShowHidden = !_treeShowHidden;
+  _treeSyncHiddenBtn();
+  // 展开态收集：所有 data-open=1 的行重新拉子层（children 已存在则直接复用容器）
+  document.querySelectorAll('#treeRoots [data-open="1"]').forEach(row => {
+    delete row.dataset.open;   // 让 _treeToggle 走"展开"分支（reload 语义）
+    _treeToggle(row, true);
+  });
+}
 // ---- 展开目录：children 容器插到【行后】（不是 root 末尾）——
 // 之前 append 到 .tree-root 末尾，多目录展开后 children 按展开时间堆叠，
 // 树序错乱（子项"跑"到别的目录下面，用户实锤报层级反直觉）。
-async function _treeToggle(row) {
+// reload=true（隐藏文件开关切换）：容器已存在直接重拉内容，不动 open/图标态。
+async function _treeToggle(row, reload) {
   const path = row.dataset.path;
   if (row.dataset.open === '1') {   // 折叠：销毁子 DOM（只读视图不缓存）
     const ch = row.parentElement.querySelector(`.tree-children[data-parent="${_cssEsc(path)}"]`);
@@ -117,12 +142,14 @@ async function _treeToggle(row) {
   row.dataset.open = '1';
   const ar = row.querySelector('.arrow'); if (ar) ar.style.transform = 'rotate(90deg)';
   const ic = row.querySelector('svg'); if (ic) ic.outerHTML = dirIconHtml(true, 14);
+  const seq = (_treeReqSeq = (_treeReqSeq || 0) + 1);   // 防乱序：隐藏开关快速切换时旧响应不覆盖新内容
   let j;
   try {
     const r = await fetch('/api/tree/list', {method:'POST',
-      headers:{'Content-Type':'application/json'}, body: JSON.stringify({path})});
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({path, hidden: _treeShowHidden})});
     j = await r.json();
-  } catch(e) { ch.innerHTML = '<div class="tree-more">读取失败</div>'; return; }
+  } catch(e) { if (seq === _treeReqSeq) ch.innerHTML = '<div class="tree-more">读取失败</div>'; return; }
+  if (seq !== _treeReqSeq) return;   // 已有更新的请求，本次结果作废
   if (!j.ok) { ch.innerHTML = `<div class="tree-more">${esc(j.err || '读取失败')}</div>`; return; }
   if (!j.entries.length) { ch.innerHTML = '<div class="tree-more">（空目录）</div>'; return; }
   let html = '';
@@ -169,6 +196,8 @@ $('treePane').addEventListener('click', async e => {
 });
 
 $('treeAddRoot').onclick = () => pickTreeDir();
+$('treeHidden').onclick = () => _treeToggleHidden();
+_treeSyncHiddenBtn();   // 初始注入眼睛图标（HTML 留空防闪烁）
 
 // 启动：拉根列表（DOM 在 index.html 静态存在，config 持久化的根直接恢复）
 refreshTree();
