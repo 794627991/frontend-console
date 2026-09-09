@@ -580,6 +580,40 @@ def _recent_add(item):
     _save_config(cfg)
     return recent
 
+@app.route("/api/hash_file", methods=["POST"])
+def api_hash_file():
+    """文件哈希（程序员计算器的文件哈希面板）。
+    body: {path} —— 一次流式读，同时算 MD5/SHA1/SHA256/SHA512/CRC32。
+    大文件分块（8MB/块）不占内存。路径规则与 hex_files 同款：绝对路径 + 已存在。"""
+    data = request.get_json(force=True, silent=True) or {}
+    p = os.path.abspath((data.get("path") or "").strip().strip('"').strip("'"))
+    if not os.path.isfile(p):
+        return jsonify({"ok": False, "err": "文件不存在"}), 400
+    import hashlib, zlib
+    import binascii
+    md5 = hashlib.md5(); sha1 = hashlib.sha1()
+    sha256 = hashlib.sha256(); sha512 = hashlib.sha512()
+    crc = 0
+    size = 0
+    try:
+        with open(p, "rb") as f:
+            while True:
+                chunk = f.read(8 * 1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                md5.update(chunk); sha1.update(chunk)
+                sha256.update(chunk); sha512.update(chunk)
+                crc = zlib.crc32(chunk, crc)
+    except Exception as e:
+        return jsonify({"ok": False, "err": f"读取失败：{e}"}), 500
+    return jsonify({"ok": True, "path": p, "size": size,
+                    "md5": md5.hexdigest(),
+                    "sha1": sha1.hexdigest(),
+                    "sha256": sha256.hexdigest(),
+                    "sha512": sha512.hexdigest(),
+                    "crc32": format(crc & 0xFFFFFFFF, '08X').lower()})
+
 @app.route("/api/recent", methods=["GET", "POST", "DELETE"])
 def api_recent():
     """GET 列表；POST 记录一条 {type,key,label,data}（或 {replace:[...]} 整表替换）；DELETE 清空。"""

@@ -135,6 +135,18 @@ function buildBitCalcTab() {
           <button class="lv-btn" data-bc-act="eval">=</button>
           <span class="bc-expr-res" data-bc-expr-res></span>
         </div>
+        <!-- 文件哈希：拖入或选择文件 → MD5/SHA1/SHA256/SHA512/CRC32（点值即复制） -->
+        <div class="bc-hash" data-bc-hash
+             style="border:1px dashed var(--border);border-radius:8px;padding:10px 12px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-weight:600;font-size:12px;">🔒 文件哈希</span>
+            <button class="lv-btn" data-bc-hash-pick title="选择文件计算哈希">📂 打开文件</button>
+            <span data-bc-hash-file style="color:var(--muted);font-size:12px;font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">拖入文件到此处，或点「打开文件」</span>
+          </div>
+          <div data-bc-hash-result style="display:none;margin-top:8px;font-family:var(--font-mono);font-size:12px;line-height:1.9;">
+            <div data-bc-hash-rows></div>
+          </div>
+        </div>
       </div>
     </div>`;
   const es = termArea.querySelector('.empty-state');
@@ -304,6 +316,52 @@ function buildBitCalcTab() {
   wrap.querySelector('[data-bc-expr]').addEventListener('keydown', e => {
     if (e.key === 'Enter') { e.preventDefault(); doEval(); }
   });
+
+  // ---- 文件哈希面板：拖入 / 打开 → /api/hash_file → 全套哈希（点值复制） ----
+  const hashBox = wrap.querySelector('[data-bc-hash]');
+  const hashFileEl = wrap.querySelector('[data-bc-hash-file]');
+  const hashRowsEl = wrap.querySelector('[data-bc-hash-rows]');
+  const hashResultEl = wrap.querySelector('[data-bc-hash-result]');
+  const HASH_NAMES = [['md5','MD5'],['sha1','SHA1'],['sha256','SHA256'],['sha512','SHA512'],['crc32','CRC32']];
+  const _hashFmtSize = (n) => n >= 1024*1024*1024 ? (n/1024/1024/1024).toFixed(2)+' GB'
+    : n >= 1024*1024 ? (n/1024/1024).toFixed(1)+' MB' : n >= 1024 ? (n/1024).toFixed(1)+' KB' : n + ' B';
+  async function _hashFile(path) {
+    if (!path) return;
+    hashFileEl.textContent = path.split(/[\\/]/).pop() + '（计算中…）';
+    hashResultEl.style.display = 'none';
+    try {
+      const r = await fetch('/api/hash_file', {method:'POST',
+        headers:{'Content-Type':'application/json'}, body: JSON.stringify({path})});
+      const j = await r.json();
+      if (!j.ok) { hashFileEl.textContent = '❌ ' + (j.err || '计算失败'); return; }
+      hashFileEl.textContent = `${path} （${_hashFmtSize(j.size)}）`;
+      hashRowsEl.innerHTML = HASH_NAMES.map(([k, n]) =>
+        `<div style="display:flex;gap:8px;align-items:baseline;">
+           <span style="color:var(--muted);width:56px;flex-shrink:0;">${n}</span>
+           <span data-bc-hash-v="${j[k]}" style="word-break:break-all;cursor:pointer;" title="点击复制">${esc(j[k])}</span>
+         </div>`).join('');
+      hashResultEl.style.display = '';
+      hashRowsEl.querySelectorAll('[data-bc-hash-v]').forEach(el => {
+        el.onclick = () => {
+          try { navigator.clipboard.writeText(el.dataset.bcHashV); showBanner('已复制 ' + el.textContent.slice(0, 16) + '…'); } catch(_){}
+        };
+      });
+    } catch(e) { hashFileEl.textContent = '❌ 请求失败: ' + e; }
+  }
+  wrap.querySelector('[data-bc-hash-pick]').onclick = async () => {
+    try {
+      const p = await pywebview.api.pick_any();
+      if (p) _hashFile(p);
+    } catch(e) { showBanner('文件选择器不可用: ' + e, 3000, true); }
+  };
+  conn.hashFile = _hashFile;   // 挂到 conn：openDroppedFile 拖到计算器 tab 时分发用
+  // 拖入视觉反馈：dragover 高亮边框。真实路径处理不在这里——WebView2 拖文件
+  // File.path 恒空（安全模型），pywebview 原生全局 drop_handler 独立于 JS 事件
+  // 流（stopPropagation 阻不断），它拿 pywebviewFullPath 转 openDroppedFile，
+  // 计算器 tab 激活时分发回 _hashFile（editor.js 分发头）。
+  hashBox.addEventListener('dragover', e => { e.preventDefault(); e.stopPropagation(); hashBox.style.borderColor = 'var(--accent)'; });
+  hashBox.addEventListener('dragleave', () => { hashBox.style.borderColor = 'var(--border)'; });
+  hashBox.addEventListener('drop', e => { e.preventDefault(); hashBox.style.borderColor = 'var(--border)'; });
 
   render();
   switchTab(portId);
