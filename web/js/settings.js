@@ -15,6 +15,7 @@ function _ddFmtSize(n) {
 // ---- 设置弹窗骨架：左导航 + 右内容区（分区懒渲染）----
 const _SET_SECTIONS = [
   { id: 'api',   icon: '🔑', name: 'API 配置', desc: 'Claude API Token / settings.json' },
+  { id: 'reinstall', icon: '♻', name: 'Claude 重装', desc: '重新安装 / 修复状态栏 / 离线包目录' },
   { id: 'termkeys', icon: '⌨', name: '终端快捷键', desc: '右键行为 / 自动复制' },
   { id: 'data',  icon: '📁', name: '数据目录', desc: '日志 / 笔记 / 缓存的位置与迁移' },
   { id: 'assoc', icon: '🔗', name: '文件关联', desc: '接管/还原 txt 等文本文件的双击打开方式' },
@@ -59,6 +60,7 @@ function _stShowSection(m, sec) {
     el.classList.toggle('active', el.dataset.sec === sec));
   const pane = m.querySelector('#stPane');
   if (sec === 'api') _stRenderApiPane(pane);
+  else if (sec === 'reinstall') _stRenderReinstallPane(pane);
   else if (sec === 'termkeys') _stRenderTermKeysPane(pane);
   else if (sec === 'data') _stRenderDataPane(pane);
   else if (sec === 'assoc') _stRenderAssocPane(pane);
@@ -127,24 +129,25 @@ async function _stRenderTermKeysPane(pane) {
   };
 }
 
-// ---- API 配置子页：Token 唯一可改；BASE_URL 只读显示；快捷打开 settings.json ----
-async function _stRenderApiPane(pane) {
+// ---- Claude 重装子页：重开安装窗 / 修复状态栏 / 离线包目录 ----
+async function _stRenderReinstallPane(pane) {
   pane.innerHTML = `
     <div class="dd-body">
-      <div class="dd-label">Claude API 配置</div>
-      <div class="dd-sub">首次安装 Claude 后必须填入 API Token 才能使用。写入 ~/.claude/settings.json。</div>
+      <div class="dd-label">Claude 重装 / 修复</div>
+      <div class="dd-sub">重新安装 Claude Code（联网/离线包），或修复安装遗留问题。已有配置（Token/settings）不受影响。</div>
       <div class="dd-cur" style="margin-top:12px;">
-        <div class="dd-label">API Token（ANTHROPIC_AUTH_TOKEN）</div>
-        <div class="dd-row" style="display:flex;gap:8px;margin-top:6px;">
-          <input type="text" id="apiTokenInput" class="dd-input" spellcheck="false"
-                 placeholder="sk-…" style="flex:1;">
-          <button class="btn primary" id="apiTokenSave">保存</button>
+        <div class="dd-label">重新安装</div>
+        <div class="dd-actions" style="margin-top:6px;">
+          <button class="btn primary" id="riOpenSetup">⊞ 打开安装引导</button>
         </div>
-        <div class="dd-sub" id="apiTokenState" style="margin-top:6px;"></div>
+        <div class="dd-sub" style="margin-top:4px;">打开 Claude Code 安装窗（联网安装 / 离线包安装 / 制作离线包三通道）。</div>
       </div>
       <div class="dd-cur" style="margin-top:14px;">
-        <div class="dd-label">BASE_URL（内网网关，固定不可改）</div>
-        <div class="dd-path" id="apiBaseUrl" style="user-select:text;">—</div>
+        <div class="dd-label">修复状态栏</div>
+        <div class="dd-actions" style="margin-top:6px;">
+          <button class="btn ghost" id="riFixStatusline">↺ 重配 statusLine</button>
+        </div>
+        <div class="dd-sub" style="margin-top:4px;">状态栏不显示（如 command 指向了无效解释器）时点此：清除坏配置并按本机实际 python 重配；本机无 python 则不配置（无害）。</div>
       </div>
       <div class="dd-cur" style="margin-top:14px;">
         <div class="dd-label">离线安装包目录</div>
@@ -153,31 +156,33 @@ async function _stRenderApiPane(pane) {
           <button class="btn ghost icon-btn" id="apiPkgPick" title="浏览选择目录">📂</button>
           <button class="btn ghost icon-btn" id="apiPkgReset" title="清除自定义，恢复默认（工具目录 offline_pkg）">↺</button>
         </div>
-        <div class="dd-sub" style="margin-top:4px;">Claude 离线安装资源（Git 安装器 / Node MSI / claude-code 包）的搜索目录。默认随工具分发的 offline_pkg；可改指向自己的资源目录（zip 包需先解压，或用安装窗「制作离线包」生成的目录）。</div>
+        <div class="dd-sub" style="margin-top:4px;">Claude 离线安装资源（Git 安装器 / Node / claude-code 包）的搜索目录。默认随工具分发的 offline_pkg；制作离线包也从此目录取资源。</div>
       </div>
-      <div class="dd-actions" style="margin-top:16px;">
-        <button class="btn ghost" id="apiOpenSettings" title="在资源管理器中定位 settings.json">📂 打开 settings.json</button>
-        <button class="btn ghost" id="apiProvision" title="恢复 Claude 默认配置（settings 缺省项补全 + statusline 重铺；已有配置不动，statusline 强制覆盖）">↺ 恢复 Claude 默认配置</button>
-      </div>
-      <div class="dd-note" id="apiNote"></div>
+      <div class="dd-note" id="riNote"></div>
     </div>`;
-  const stateEl = pane.querySelector('#apiTokenState');
   const refresh = async () => {
-    try {
-      const j = await (await fetch('/api/claude/api_config')).json();
-      stateEl.innerHTML = j.has_token
-        ? `<span style="color:var(--neon-green);">✓ 已配置</span> <span style="font-family:var(--font-mono);">${esc(j.token_masked)}</span>`
-        : '<span style="color:var(--neon-red);">✕ 未配置——首次安装后必须填入</span>';
-      pane.querySelector('#apiBaseUrl').textContent = j.base_url || j.default_base_url;
-      pane.querySelector('#apiNote').textContent = 'settings.json 路径：' + j.settings_path;
-    } catch(e) { stateEl.textContent = '读取失败: ' + e; }
     try {
       const st = await (await fetch('/api/claude/setup_status')).json();
       pane.querySelector('#apiPkgDir').textContent = st.offline_pkg_dir || '默认（工具目录 offline_pkg）';
     } catch(_) {}
   };
   refresh();
-  // 离线安装包目录：浏览选择 / 清除自定义
+  pane.querySelector('#riOpenSetup').onclick = () => {
+    $('settingsModal').classList.remove('show');
+    openClaudeSetup();
+  };
+  pane.querySelector('#riFixStatusline').onclick = async () => {
+    const ok = await _ddConfirm('重配 statusLine',
+      '清除 settings.json 中现有 statusLine 配置并按本机 python 重配？找不到 python 时不配置（状态栏不显示，无害）。');
+    if (!ok) return;
+    try {
+      const r = await fetch('/api/claude/provision', {method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({force_statusline: true, reset_statusline: true})});
+      const j = await r.json();
+      showBanner(j.ok ? ('已完成：' + (j.notes || []).join('、')) : '重配失败', 6000, !j.ok);
+    } catch(e) { showBanner('重配失败: ' + e, 4000, true); }
+  };
   pane.querySelector('#apiPkgPick').onclick = async () => {
     try {
       const dir = await pywebview.api.pick_dir();
@@ -198,6 +203,45 @@ async function _stRenderApiPane(pane) {
       refresh();
     } catch(_) {}
   };
+}
+
+// ---- API 配置子页：Token 唯一可改；BASE_URL 只读显示；快捷打开 settings.json ----
+async function _stRenderApiPane(pane) {
+  pane.innerHTML = `
+    <div class="dd-body">
+      <div class="dd-label">Claude API 配置</div>
+      <div class="dd-sub">首次安装 Claude 后必须填入 API Token 才能使用。写入 ~/.claude/settings.json。</div>
+      <div class="dd-cur" style="margin-top:12px;">
+        <div class="dd-label">API Token（ANTHROPIC_AUTH_TOKEN）</div>
+        <div class="dd-row" style="display:flex;gap:8px;margin-top:6px;">
+          <input type="text" id="apiTokenInput" class="dd-input" spellcheck="false"
+                 placeholder="sk-…" style="flex:1;">
+          <button class="btn primary" id="apiTokenSave">保存</button>
+        </div>
+        <div class="dd-sub" id="apiTokenState" style="margin-top:6px;"></div>
+      </div>
+      <div class="dd-cur" style="margin-top:14px;">
+        <div class="dd-label">BASE_URL（内网网关，固定不可改）</div>
+        <div class="dd-path" id="apiBaseUrl" style="user-select:text;">—</div>
+      </div>
+      <div class="dd-actions" style="margin-top:16px;">
+        <button class="btn ghost" id="apiOpenSettings" title="在资源管理器中定位 settings.json">📂 打开 settings.json</button>
+        <button class="btn ghost" id="apiProvision" title="恢复 Claude 默认配置（settings 缺省项补全 + statusline 重铺；已有配置不动，statusline 强制覆盖）">↺ 恢复 Claude 默认配置</button>
+      </div>
+      <div class="dd-note" id="apiNote"></div>
+    </div>`;
+  const stateEl = pane.querySelector('#apiTokenState');
+  const refresh = async () => {
+    try {
+      const j = await (await fetch('/api/claude/api_config')).json();
+      stateEl.innerHTML = j.has_token
+        ? `<span style="color:var(--neon-green);">✓ 已配置</span> <span style="font-family:var(--font-mono);">${esc(j.token_masked)}</span>`
+        : '<span style="color:var(--neon-red);">✕ 未配置——首次安装后必须填入</span>';
+      pane.querySelector('#apiBaseUrl').textContent = j.base_url || j.default_base_url;
+      pane.querySelector('#apiNote').textContent = 'settings.json 路径：' + j.settings_path;
+    } catch(e) { stateEl.textContent = '读取失败: ' + e; }
+  };
+  refresh();
   pane.querySelector('#apiTokenSave').onclick = async () => {
     const t = pane.querySelector('#apiTokenInput').value.trim();
     if (!t) { showBanner('请输入 API Token', 3000, true); return; }

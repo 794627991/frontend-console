@@ -161,7 +161,7 @@ def _write_settings(d):
         json.dump(d, f, ensure_ascii=False, indent=2)
 
 
-def provision_defaults(force_statusline=False):
+def provision_defaults(force_statusline=False, reset_statusline=False):
     """安装完成后铺设默认环境（幂等，可重复调）：
     1. statusline.py 复制到 ~/.claude/（已存在跳过，除非 force）
     2. settings.json 补缺的键（已有键不动——铁律4）：
@@ -171,6 +171,8 @@ def provision_defaults(force_statusline=False):
        - ~/.claude.json onboarding 位 + 全局 bypass 权限确认
     返回 (ok, 铺了什么/告警列表)。
     AUTH_TOKEN 不在铺设范围——留给 API 配置界面（首次打开 claude 前必填）。
+    reset_statusline：先删 statusLine 键再按现状重配——修历史写坏
+    （exe 机器无 python 时 command 曾被写成工具 exe 自身路径）。
     """
     notes = []
     # 1. statusline.py （首次安装时 ~/.claude 可能还不存在——先建目录再写）
@@ -206,15 +208,31 @@ def provision_defaults(force_statusline=False):
             cur[k] = v
             changed = True
     # statusLine：command 指向本机 python + statusline.py
+    # 关键：目标机没装 python 时不能兜底 sys_python()——打包 exe 场景下
+    # sys.executable 是前端控制台.exe 自己，写进 statusLine 会导致
+    # claude 每次拿 exe 当 python 跑 statusline.py → 无输出 → 状态栏消失
+    # （baoziyi 机器实测翻车）。找不到真 python 就不配 statusLine
+    # （claude 无此键不显示状态栏，无害）。
     sl_cmd = cur.get("statusLine", {})
+    if reset_statusline:
+        # 强制重配：清掉历史写坏的 command（含把工具 exe 当 python 的）
+        if isinstance(sl_cmd, dict) and sl_cmd.get("command"):
+            cur.pop("statusLine", None)
+            sl_cmd = {}
+            changed = True
+            notes.append("旧 statusLine 已清除（重配）")
     if not isinstance(sl_cmd, dict) or not sl_cmd.get("command"):
-        py = shutil.which("python.exe") or shutil.which("python") or sys_python()
-        cur["statusLine"] = {
-            "type": "command",
-            "command": f"{py} {sl.replace(os.sep, '/')}",
-        }
-        changed = True
-        notes.append("statusLine 已配置")
+        py = shutil.which("python.exe") or shutil.which("python")
+        if py:
+            cur["statusLine"] = {
+                "type": "command",
+                "command": f"{py} {sl.replace(os.sep, '/')}",
+            }
+            changed = True
+            notes.append("statusLine 已配置")
+        else:
+            notes.append("未找到 python，跳过 statusLine 配置（状态栏不显示，"
+                         "不影响使用；装 python 后点「恢复默认配置」即可补上）")
     if changed:
         _write_settings(cur)
         notes.append("settings.json 已补全缺省项")
@@ -332,7 +350,10 @@ def subprocess_open_select(path):
 
 @claude_default_bp.route("/api/claude/provision", methods=["POST"])
 def claude_provision():
-    """手动触发铺设（设置界面「恢复默认配置」用）。body: {force_statusline?}"""
+    """手动触发铺设（设置界面「恢复默认配置」用）。
+    body: {force_statusline?, reset_statusline?}"""
     data = request.get_json(force=True, silent=True) or {}
-    ok, notes = provision_defaults(force_statusline=bool(data.get("force_statusline")))
+    ok, notes = provision_defaults(
+        force_statusline=bool(data.get("force_statusline")),
+        reset_statusline=bool(data.get("reset_statusline")))
     return jsonify({"ok": ok, "notes": notes})
