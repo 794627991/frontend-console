@@ -1648,6 +1648,13 @@
 .set-theme-grid .set-theme-group:first-child { padding-top: 4px; }
 /* 数据目录子页沿用 dd-*（原独立面板样式平移进设置弹窗内容区） */
 .dd-body { padding: 16px 20px 18px; display: flex; flex-direction: column; gap: 16px; }
+/* dd-cur：设置页统一区块卡。各子页原用内联 margin-top 撑间距（12/14px 混用），
+   与 dd-label 自带 margin-bottom 双向叠加——间距错落不齐。统一规则：
+   区块间间距由 dd-body 的 16px gap 管；内联 margin-top 归零后仍兼容（取大值）。 */
+.dd-cur { margin-top: 0 !important; }
+.dd-cur .dd-label { margin-bottom: 6px; }
+.dd-cur .dd-row { margin-top: 0 !important; }
+.dd-cur .dd-label + .dd-row { margin-top: 6px; }   /* 标题下首个操作行统一 6px */
 .dd-label { font-size: 11px; font-weight: 600; color: var(--fg-bright); margin-bottom: 6px; }
 .dd-path { font-family: var(--font-mono); font-size: 12px; color: var(--fg);
   background: var(--bg-input); border: 1px solid var(--border); border-radius: 4px;

@@ -120,7 +120,7 @@ function buildTerminal(portId, meta) {
   // ---- 创建 xterm 实例 ----
   conn.term = new Terminal({
     fontFamily: '"Cascadia Code", "JetBrains Mono", "Consolas", "Menlo", monospace',
-    fontSize: 13,
+    fontSize: (typeof termFontSize === 'number') ? termFontSize : 13,   // 设置/Ctrl+=/- 全局字号
     lineHeight: 1.3,
     cursorBlink: true,
     cursorStyle: 'bar',
@@ -145,6 +145,7 @@ function buildTerminal(portId, meta) {
       conn._webgl = webgl;
     }
   } catch(e) {}
+  conn._fitTerm = () => { try { conn.fit.fit(); } catch(e) {} };   // 字号热调后重排（theme.js applyFontSettings 用）
   try { conn.fit.fit(); } catch(e) {}
 
   // ---- PTY 尺寸同步（claude 终端）：xterm onResize → /api/resize → ConPTY setwinsize。

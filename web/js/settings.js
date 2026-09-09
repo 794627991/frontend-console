@@ -14,12 +14,12 @@ function _ddFmtSize(n) {
 
 // ---- 设置弹窗骨架：左导航 + 右内容区（分区懒渲染）----
 const _SET_SECTIONS = [
+  { id: 'appearance', icon: '🎨', name: '外观', desc: '换肤 / 界面缩放' },
   { id: 'api',   icon: '🔑', name: 'API 配置', desc: 'Claude API Token / settings.json' },
   { id: 'reinstall', icon: '♻', name: 'Claude 重装', desc: '重新安装 / 修复状态栏 / 离线包目录' },
-  { id: 'termkeys', icon: '⌨', name: '终端快捷键', desc: '右键行为 / 自动复制' },
+  { id: 'term',  icon: '⌨', name: '终端设置', desc: '字号 / 快捷键映射 / 自动复制' },
   { id: 'data',  icon: '📁', name: '数据目录', desc: '日志 / 笔记 / 缓存的位置与迁移' },
   { id: 'assoc', icon: '🔗', name: '文件关联', desc: '接管/还原 txt 等文本文件的双击打开方式' },
-  { id: 'theme', icon: '🎨', name: '外观主题', desc: '整窗配色切换' },
 ];
 
 function _stModal() {
@@ -59,31 +59,95 @@ function _stShowSection(m, sec) {
   m.querySelectorAll('.set-nav-item').forEach(el =>
     el.classList.toggle('active', el.dataset.sec === sec));
   const pane = m.querySelector('#stPane');
-  if (sec === 'api') _stRenderApiPane(pane);
+  if (sec === 'appearance') _stRenderAppearancePane(pane);
+  else if (sec === 'api') _stRenderApiPane(pane);
   else if (sec === 'reinstall') _stRenderReinstallPane(pane);
-  else if (sec === 'termkeys') _stRenderTermKeysPane(pane);
+  else if (sec === 'term') _stRenderTermKeysPane(pane);
   else if (sec === 'data') _stRenderDataPane(pane);
   else if (sec === 'assoc') _stRenderAssocPane(pane);
-  else if (sec === 'theme') _stRenderThemePane(pane);
+  else _stRenderAppearancePane(pane);   // 未知 id 兜底到外观
 }
 
-// ---- 终端快捷键子页：右键行为 + 自动复制（config.json term_keys）----
+// ---- 外观子页：换肤（原 theme 页整块搬入）+ 界面缩放 ----
+function _stRenderAppearancePane(pane) {
+  pane.innerHTML = `<div class="dd-body"><div class="dd-label">配色主题</div><div class="set-theme-grid" id="stThemeGrid"></div>
+    <div class="dd-note">整窗即时换色（终端/编辑器/阅读面同步）；顶栏「🎨 换肤」按钮同样可用。</div>
+    <div class="dd-cur" style="margin-top:8px;">
+      <div class="dd-label">界面缩放</div>
+      <div class="dd-row" style="display:flex;gap:8px;margin-top:6px;align-items:center;">
+        <button class="btn ghost" id="apZoomOut" title="缩小">－</button>
+        <span id="apZoomVal" style="font-family:var(--font-mono);min-width:56px;text-align:center;">100%</span>
+        <button class="btn ghost" id="apZoomIn" title="放大">＋</button>
+        <button class="btn ghost" id="apZoomReset" title="恢复 100%">↺ 重置</button>
+      </div>
+      <div class="dd-sub">整个界面等比缩放（80%–130%）。也可用 Ctrl+= / Ctrl+- 调终端字号，Ctrl+0 全部恢复默认。</div>
+    </div></div>`;
+  const grid = pane.querySelector('#stThemeGrid');
+  const cur = document.documentElement.getAttribute('data-theme') || 'deepblue';
+  const zoomVal = pane.querySelector('#apZoomVal');
+  const syncZoom = () => { zoomVal.textContent = (typeof uiZoom === 'number' ? uiZoom : 100) + '%'; };
+  syncZoom();
+  const doZoom = (d) => {
+    const z = Math.max(80, Math.min(130, (uiZoom || 100) + d));
+    if (z === uiZoom) return;
+    applyFontSettings(termFontSize, z, true);
+    syncZoom();
+  };
+  pane.querySelector('#apZoomOut').onclick = () => doZoom(-5);
+  pane.querySelector('#apZoomIn').onclick = () => doZoom(5);
+  pane.querySelector('#apZoomReset').onclick = () => { applyFontSettings(13, 100, true); syncZoom(); };
+  if (typeof THEMES === 'undefined') {
+    grid.innerHTML = '<div class="dd-sub">主题模块未加载</div>';
+    return;
+  }
+  for (const [g, label] of [['dark', '暗色系'], ['light', '亮色系']]) {
+    const head = document.createElement('div');
+    head.className = 'set-theme-group';
+    head.textContent = label;
+    grid.appendChild(head);
+    THEMES.filter(t => t.group === g).forEach(t => {
+      const item = document.createElement('div');
+      item.className = 'theme-item' + (t.id === cur ? ' active' : '');
+      item.innerHTML = `<div class="theme-swatch" data-theme="${t.id}"></div>
+        <div class="theme-info"><div class="name">${t.name}</div><div class="desc">${t.desc}</div></div>
+        ${t.id === cur ? '<span class="theme-check">✓</span>' : ''}`;
+      item.onclick = () => {
+        applyTheme(t.id, true);
+        showBanner('已切换主题：' + t.name);
+        _stRenderAppearancePane(pane);   // 重渲染刷新选中态
+      };
+      grid.appendChild(item);
+    });
+  }
+}
+
+// ---- 终端设置子页：字号 + 右键行为 + 自动复制（config.json term_keys）----
 const _TK_OPTIONS = [
   { v: 'ctrl_menu',  n: 'Ctrl + 右键 → 弹菜单', d: '默认。普通右键为 xterm 原生行为' },
   { v: 'right_menu', n: '右键 → 直接弹菜单', d: '不需按 Ctrl，单右键即出菜单' },
   { v: 'right_paste', n: '右键 → 直接粘贴', d: '单右键立即粘贴剪贴板（PuTTY 默认风格）' },
 ];
 async function _stRenderTermKeysPane(pane) {
-  let tk = { right_action: 'ctrl_menu', auto_copy: false };
+  let tk = { right_action: 'ctrl_menu', auto_copy: false, term_font_size: 13, ui_zoom: 100 };
   try {
     const j = await (await fetch('/api/theme')).json();
     if (j.ok && j.term_keys) tk = j.term_keys;
   } catch(_) {}
   pane.innerHTML = `
     <div class="dd-body">
-      <div class="dd-label">终端快捷键映射</div>
-      <div class="dd-sub">终端内复制/粘贴/右键行为定制。改动立即生效并持久保存。</div>
-      <div class="dd-cur" style="margin-top:12px;">
+      <div class="dd-label">终端设置</div>
+      <div class="dd-sub">字号与快捷键行为。改动立即生效并持久保存。</div>
+      <div class="dd-cur" style="margin-top:8px;">
+        <div class="dd-label">终端字号</div>
+        <div class="dd-row" style="display:flex;gap:8px;margin-top:6px;align-items:center;">
+          <button class="btn ghost" id="tkFontOut" title="缩小">－</button>
+          <span id="tkFontVal" style="font-family:var(--font-mono);min-width:56px;text-align:center;">${(typeof termFontSize === 'number' ? termFontSize : tk.term_font_size) || 13} px</span>
+          <button class="btn ghost" id="tkFontIn" title="放大">＋</button>
+          <button class="btn ghost" id="tkFontReset" title="恢复 13px">↺ 重置</button>
+        </div>
+        <div class="dd-sub">10–24px，已开终端实时生效。快捷键：Ctrl+= 放大 / Ctrl+- 缩小 / Ctrl+0 恢复默认。</div>
+      </div>
+      <div class="dd-cur" style="margin-top:8px;">
         <div class="dd-label">右键行为</div>
         <div class="dd-row" style="margin-top:6px;display:flex;flex-direction:column;gap:8px;">
           ${_TK_OPTIONS.map(o => `
@@ -93,30 +157,43 @@ async function _stRenderTermKeysPane(pane) {
             </label>`).join('')}
         </div>
       </div>
-      <div class="dd-cur" style="margin-top:14px;">
+      <div class="dd-cur" style="margin-top:8px;">
         <div class="dd-label">选中自动复制</div>
         <label style="display:flex;align-items:center;gap:8px;margin-top:6px;cursor:pointer;">
           <input type="checkbox" id="tkAutoCopy" ${tk.auto_copy ? 'checked' : ''}>
           <span>鼠标选中终端文本后松开即自动复制（PuTTY 风格）</span>
         </label>
       </div>
-      <div class="dd-cur" style="margin-top:14px;">
+      <div class="dd-cur" style="margin-top:8px;">
         <div class="dd-label">固定快捷键（恒可用，不受上面配置影响）</div>
         <div class="dd-sub" style="margin-top:4px;">
           Ctrl+C 复制选中 / 发 ^C 中断　·　Ctrl+V 粘贴　·　Ctrl+F 查找<br>
           Shift+右键 粘贴　·　Ctrl+右键 弹菜单（右键行为=ctrl_menu 时）
         </div>
       </div>
-      <div style="margin-top:16px;">
+      <div style="margin-top:8px;">
         <button class="btn primary" id="tkSave">保存</button>
       </div>
     </div>`;
+  const fontVal = pane.querySelector('#tkFontVal');
+  const syncFont = () => { fontVal.textContent = (termFontSize || 13) + ' px'; };
+  syncFont();
+  const doFont = (d) => {
+    const fs = Math.max(10, Math.min(24, (termFontSize || 13) + d));
+    if (fs === termFontSize) return;
+    applyFontSettings(fs, uiZoom, false);   // 先热调预览（保存时才持久化）
+    syncFont();
+  };
+  pane.querySelector('#tkFontOut').onclick = () => doFont(-1);
+  pane.querySelector('#tkFontIn').onclick = () => doFont(1);
+  pane.querySelector('#tkFontReset').onclick = () => { applyFontSettings(13, uiZoom, false); syncFont(); };
   pane.querySelector('#tkSave').onclick = async () => {
     const ra = pane.querySelector('input[name="tkRight"]:checked');
     const ac = pane.querySelector('#tkAutoCopy').checked;
     try {
       await fetch('/api/theme', {method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({term_keys: {right_action: ra ? ra.value : 'ctrl_menu', auto_copy: ac}})});
+        body: JSON.stringify({term_keys: {right_action: ra ? ra.value : 'ctrl_menu', auto_copy: ac,
+                                          term_font_size: termFontSize, ui_zoom: uiZoom}})});
       // 已开终端连接的配置热更新（下次 contextmenu 读 conn.termKeys）
       Object.values(connections).forEach(c => {
         if (c.termKeys) {
@@ -124,7 +201,7 @@ async function _stRenderTermKeysPane(pane) {
           c.termKeys.auto_copy = ac;
         }
       });
-      showBanner('终端快捷键已保存');
+      showBanner('终端设置已保存');
     } catch(e) { showBanner('保存失败：' + e, 3000, true); }
   };
 }
@@ -455,40 +532,9 @@ async function _assocBulk(pane, act) {
   _stRefreshAssoc(pane);
 }
 
-// ---- 外观主题子页：与顶栏换肤下拉同源（THEMES/applyTheme 由 theme.js 提供）----
-function _stRenderThemePane(pane) {
-  pane.innerHTML = `<div class="dd-body"><div class="dd-label">配色主题</div><div class="set-theme-grid" id="stThemeGrid"></div>
-    <div class="dd-note">整窗即时换色（终端/编辑器/阅读面同步）；顶栏「🎨 换肤」按钮同样可用。</div></div>`;
-  const grid = pane.querySelector('#stThemeGrid');
-  const cur = document.documentElement.getAttribute('data-theme') || 'deepblue';
-  if (typeof THEMES === 'undefined') {
-    grid.innerHTML = '<div class="dd-sub">主题模块未加载</div>';
-    return;
-  }
-  for (const [g, label] of [['dark', '暗色系'], ['light', '亮色系']]) {
-    const head = document.createElement('div');
-    head.className = 'set-theme-group';
-    head.textContent = label;
-    grid.appendChild(head);
-    THEMES.filter(t => t.group === g).forEach(t => {
-      const item = document.createElement('div');
-      item.className = 'theme-item' + (t.id === cur ? ' active' : '');
-      item.innerHTML = `<div class="theme-swatch" data-theme="${t.id}"></div>
-        <div class="theme-info"><div class="name">${t.name}</div><div class="desc">${t.desc}</div></div>
-        ${t.id === cur ? '<span class="theme-check">✓</span>' : ''}`;
-      item.onclick = () => {
-        applyTheme(t.id, true);
-        showBanner('已切换主题：' + t.name);
-        _stRenderThemePane(pane);   // 重渲染刷新选中态
-      };
-      grid.appendChild(item);
-    });
-  }
-}
-
 function openSettingsPanel(section) {
   const m = _stModal();
-  _stShowSection(m, section || 'data');
+  _stShowSection(m, section || 'appearance');
   m.classList.add('show');
 }
 
@@ -571,7 +617,7 @@ function _ddConfirm(title, msg) {  return new Promise(resolve => {
   if (logoIcon) {
     logoIcon.title = '设置（数据目录 / 外观主题）';
     logoIcon.style.cursor = 'pointer';
-    logoIcon.addEventListener('click', () => openSettingsPanel('data'));
+    logoIcon.addEventListener('click', () => openSettingsPanel('appearance'));
   }
 })();
 

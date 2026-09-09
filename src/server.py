@@ -534,6 +534,8 @@ def api_theme():
     终端快捷键映射（term_keys）也在此兼职读写：
       right_action: ctrl_menu / right_menu / right_paste
       auto_copy: bool（选中即自动复制）
+      term_font_size: int 10-24（终端字号，默认 13）
+      ui_zoom: int 80-130（界面缩放百分比，默认 100）
     """
     if request.method == "GET":
         cfg = _load_config()
@@ -543,6 +545,8 @@ def api_theme():
                         "term_keys": {
                             "right_action": tk.get("right_action", "ctrl_menu"),
                             "auto_copy": bool(tk.get("auto_copy", False)),
+                            "term_font_size": int(tk.get("term_font_size", 13)),
+                            "ui_zoom": int(tk.get("ui_zoom", 100)),
                         }})
     data = request.get_json(force=True) or {}
     if "data_dir_prompted" in data:
@@ -550,11 +554,20 @@ def api_theme():
         _save_config({**_load_config(), "data_dir_prompted": bool(data["data_dir_prompted"])})
     if "term_keys" in data and isinstance(data["term_keys"], dict):
         tk = data["term_keys"]
-        # 白名单校验：right_action 只认三个值，防脏配置
+        # 白名单校验：right_action 只认三个值；字号/缩放夹取到安全区间，防脏配置
         ra = tk.get("right_action")
         if ra in ("ctrl_menu", "right_menu", "right_paste"):
+            def _clamp(v, lo, hi, dflt):
+                try:
+                    return max(lo, min(hi, int(v)))
+                except (TypeError, ValueError):
+                    return dflt
             _save_config({**_load_config(), "term_keys": {
-                "right_action": ra, "auto_copy": bool(tk.get("auto_copy", False))}})
+                "right_action": ra,
+                "auto_copy": bool(tk.get("auto_copy", False)),
+                "term_font_size": _clamp(tk.get("term_font_size", 13), 10, 24, 13),
+                "ui_zoom": _clamp(tk.get("ui_zoom", 100), 80, 130, 100),
+            }})
     theme = (data.get("theme") or "").strip()
     if theme:
         _save_config({**_load_config(), "theme": theme})

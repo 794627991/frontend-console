@@ -74,6 +74,28 @@ function applyTheme(id, persist) {
   // MD 预览面同步换肤（markdown-it 渲染走 CSS 变量，无需处理；此钩子留扩展位）
 }
 
+// ---- 字号/缩放（config term_keys）----
+// termFontSize：xterm 终端字号（新开终端用它实例化；已开终端实时热调）
+// uiZoom：界面整体缩放百分比（body.zoom——布局级缩放，px 等比折算零破坏）
+let termFontSize = 13;
+let uiZoom = 100;
+function applyFontSettings(termFs, zoom, persist) {
+  termFontSize = termFs; uiZoom = zoom;
+  try { document.body.style.zoom = zoom + '%'; } catch(_) {}
+  for (const pid in connections) {
+    const c = connections[pid];
+    if (c && c.term) { try { c.term.options.fontSize = termFs; } catch(_) {} }
+    if (c && c.term && typeof c._fitTerm === 'function') { try { c._fitTerm(); } catch(_) {} }
+  }
+  if (persist) {
+    try { fetch('/api/theme', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({term_keys: {
+        right_action: (window._tkRightAction || 'ctrl_menu'),
+        auto_copy: !!window._tkAutoCopy,
+        term_font_size: termFs, ui_zoom: zoom}})}); } catch(_) {}
+  }
+}
+
 (async function initTheme() {
   // 启动：先默认（避免无样式闪烁），再从后端读上次主题
   let saved = 'deepblue';
@@ -81,8 +103,33 @@ function applyTheme(id, persist) {
     const r = await fetch('/api/theme');
     const j = await r.json();
     if (j.ok && j.theme) saved = j.theme;
+    if (j.ok && j.term_keys) {
+      window._tkRightAction = j.term_keys.right_action || 'ctrl_menu';
+      window._tkAutoCopy = !!j.term_keys.auto_copy;
+      // 字号/缩放启动应用（不回写）
+      applyFontSettings(j.term_keys.term_font_size || 13, j.term_keys.ui_zoom || 100, false);
+    }
   } catch(_) {}
   applyTheme(saved, false);
+
+  // Ctrl+= / Ctrl+- （Ctrl+'+'/'-'）调终端字号；Ctrl+0 恢复默认。
+  // 只在无输入焦点劫持（input/textarea/contenteditable）时生效，普通终端/页面通用。
+  document.addEventListener('keydown', e => {
+    if (!e.ctrlKey || e.altKey || e.shiftKey || e.metaKey) return;
+    const ae = document.activeElement;
+    const typing = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' ||
+                          (ae.tagName === 'DIV' && ae.isContentEditable));
+    if (typing) return;   // 输入框里 Ctrl+=/- 可能是编辑意图（且 Monaco/xterm 捕获不到这里）
+    let d = 0;
+    if (e.key === '+' || e.key === '=') d = 1;
+    else if (e.key === '-' || e.key === '_') d = -1;
+    else if (e.key === '0') { applyFontSettings(13, 100, true); e.preventDefault(); return; }
+    else return;
+    const fs = Math.max(10, Math.min(24, termFontSize + d));
+    if (fs === termFontSize) return;
+    applyFontSettings(fs, uiZoom, true);
+    e.preventDefault();
+  });
 
   const menu = $('themeMenu');
   function renderMenu() {
