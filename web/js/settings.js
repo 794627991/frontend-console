@@ -148,8 +148,12 @@ async function _stRenderApiPane(pane) {
     } catch(e) { showBanner('保存失败: ' + e, 4000, true); }
   };
   pane.querySelector('#apiOpenSettings').onclick = async () => {
-    try { await fetch('/api/claude/settings_open', {method:'POST'}); }
-    catch(_) { showBanner('打开失败', 3000, true); }
+    // 工具内打开（Monaco 编辑器），不是资源管理器——用户要直接改
+    try {
+      const j = await (await fetch('/api/claude/api_config')).json();
+      if (j.settings_path) openFileSmart(j.settings_path, 'auto');
+      else showBanner('未获取到 settings.json 路径', 3000, true);
+    } catch(_) { showBanner('打开失败', 3000, true); }
   };
   pane.querySelector('#apiProvision').onclick = async () => {
     const ok = await _ddConfirm('恢复 Claude 默认配置',

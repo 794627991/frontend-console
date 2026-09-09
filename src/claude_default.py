@@ -53,6 +53,10 @@ DEFAULT_SETTINGS = {
         # python 路径安装时替换为本机解释器（statusline.py 依赖 python 运行）
         "command": "",
     },
+    "permissions": {
+        "allow": [],
+        "defaultMode": "auto",
+    },
     "outputStyle": "Concise",
     "language": "简体中文",
     "askUserQuestionTimeout": "never",
@@ -162,6 +166,9 @@ def provision_defaults(force_statusline=False):
     1. statusline.py 复制到 ~/.claude/（已存在跳过，除非 force）
     2. settings.json 补缺的键（已有键不动——铁律4）：
        env 模型映射/上下文窗口、statusLine 指向本机 python+statusline
+    3. 默认授权（用户要求：别的用户不该每次手动选接受）：
+       - settings.json permissions.defaultMode（auto 已是本机同款）
+       - ~/.claude.json onboarding 位 + 全局 bypass 权限确认
     返回 (ok, 铺了什么/告警列表)。
     AUTH_TOKEN 不在铺设范围——留给 API 配置界面（首次打开 claude 前必填）。
     """
@@ -210,7 +217,50 @@ def provision_defaults(force_statusline=False):
     if changed:
         _write_settings(cur)
         notes.append("settings.json 已补全缺省项")
+    # 3. ~/.claude.json 首次确认位（默认授权——别的用户开箱不弹确认）：
+    #    onboarding/主题/信任已见等布尔全部预置 true；新建 projects 条目也带
+    #    hasTrustDialogAccepted（工作区 trust 不再问）。只补缺不覆盖。
+    try:
+        _preaccept_onboarding()
+        notes.append("首次确认已预置（onboarding/信任）")
+    except Exception as e:
+        notes.append(f"首次确认预置失败（不影响使用）：{e}")
     return True, notes
+
+
+def _preaccept_onboarding():
+    """~/.claude.json 首次确认位预置（只补缺不覆盖已有值）。
+    锁内原子写防并发（与 _trust_workspace 同款 tmp+replace）。"""
+    import threading
+    if not hasattr(_preaccept_onboarding, "_lock"):
+        _preaccept_onboarding._lock = threading.Lock()
+    with _preaccept_onboarding._lock:
+        path = os.path.join(os.path.expanduser("~"), ".claude.json")
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                d = json.load(f)
+        except Exception:
+            d = {}
+        changed = False
+        # onboarding/提示类确认位（本机实机 .claude.json 全集——首次启动各弹窗）
+        for k in ("hasCompletedOnboarding", "hasSeenTasksHint",
+                  "hasSeenAutoModeEntryWarning", "hasOpenedAgentsView"):
+            if k not in d:
+                d[k] = True
+                changed = True
+        # 新会话所在目录的 trust 位：claude 每次换目录还会问 trust——
+        # 启动会话时 claude_conn._trust_workspace 已做同样的事，这里兜首启
+        projs = d.setdefault("projects", {})
+        if isinstance(projs, dict):
+            for key, ent in projs.items():
+                if isinstance(ent, dict) and not ent.get("hasTrustDialogAccepted"):
+                    ent["hasTrustDialogAccepted"] = True
+                    changed = True
+        if changed:
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(d, f, ensure_ascii=False)
+            os.replace(tmp, path)
 
 
 def sys_python():

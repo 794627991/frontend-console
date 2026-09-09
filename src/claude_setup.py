@@ -38,11 +38,10 @@ def _log(msg):
 
 # ---- 资源探测 ----
 
-# 离线资源默认搜索位（按优先级）：
-# 1. 用户自定义目录（config.json offline_pkg_dir——设置界面可改）
-# 2. 工具旁 offline_pkg/（随包分发的离线安装资源，dist 打包时带上）
-# 3. D:\AI\安装环境（装机资源目录；换机器时工具所在盘的 \AI\安装环境 也试）
-_ENV_DIRS = [r"D:\AI\安装环境"]
+# 离线资源搜索位（按优先级）：
+# 1. 用户自定义目录（config.json offline_pkg_dir——设置界面/安装窗手动选）
+# 2. 工具同目录 offline_pkg/（随包分发的离线安装资源，dist 打包时带上）
+# 不再写死 D:\AI\安装环境（用户定：那只是本机的资源目录，别的机器没有）。
 
 
 def _app_dir():
@@ -51,7 +50,7 @@ def _app_dir():
 
 
 def _offline_pkg_dirs():
-    """离线资源搜索目录列表（含用户自定义路径，按优先级）。"""
+    """离线资源搜索目录列表（按优先级）。"""
     dirs = []
     # 1. 用户自定义（config.json offline_pkg_dir）
     try:
@@ -61,14 +60,10 @@ def _offline_pkg_dirs():
             dirs.append(custom)
     except Exception:
         pass
-    # 2. 工具旁 offline_pkg/（随包资源，最高可用性——无 config 也有）
+    # 2. 工具同目录 offline_pkg/（随包资源——无 config 也有）
     app_dir = _app_dir()
     dirs.append(os.path.join(app_dir, "offline_pkg"))
     dirs.append(os.path.join(app_dir, "dist", "offline_pkg"))
-    # 3. 装机资源目录（本机 D:\AI\安装环境 + 工具所在盘同路径）
-    dirs.extend(_ENV_DIRS)
-    dirs.append(os.path.join(os.path.splitdrive(app_dir)[0] + os.sep,
-                             "AI", "安装环境"))
     # 去重保序
     seen, out = set(), []
     for d in dirs:
@@ -277,7 +272,7 @@ def _download(url, dst):
 
 
 def _install_node_if_missing(dl_dir):
-    """Node 缺则静默装：先找本地 MSI 资源（安装环境目录），没有且能联网
+    """Node 缺则静默装：先找本地 MSI 资源（离线资源目录），没有且能联网
     就下载官方 MSI。两条安装通道共用。"""
     if shutil.which("node.exe") or shutil.which("node"):
         _log("Node 已存在，跳过安装")
@@ -435,7 +430,7 @@ exit $LASTEXITCODE
 @claude_setup_bp.route("/api/claude/setup_install", methods=["POST"])
 def claude_setup_install():
     """离线静默安装。body: {mode: 'offline'|'online', zip_path?}
-    offline：优先用 zip 包（前端文件选择）；无 zip 则直接用安装环境目录资源。
+    offline：优先用 zip 包（前端文件选择）；无 zip 则用离线资源目录（工具同目录 offline_pkg 或用户指定）。
     online：npm install -g（需要 node/npm 已装）。
     """
     data = request.get_json(force=True, silent=True) or {}
@@ -480,7 +475,7 @@ def claude_setup_install():
                         if not os.path.isdir(pkg_dir):
                             raise RuntimeError("包内无 claude-code 目录")
                     else:
-                        # 无 zip：直接用安装环境目录资源（有啥用啥）
+                        # 无 zip：用离线资源目录（自定义目录 > 工具同目录 offline_pkg）
                         git_setup = _find_installer("Git-*.exe")
                         node_msi = _find_installer("node-v*.msi")
                         pkg_dir = _claude_pkg_dir()
