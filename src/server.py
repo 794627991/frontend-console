@@ -282,20 +282,14 @@ def api_connect():
                         "msg": f"已连接 {username}@{host}:{port}"})
     elif kind == "telnet":
         # Telnet 连接（裸 socket + IAC 协商，零依赖）
-        # 同目标允许多开（设备侧 telnetd 有单会话/多会话之分——busybox 单实例
-        # 时第二个连接无 shell 反馈，但连接失败语义比「已连接」拒绝更直观）。
-        # port_id 冲突自动加 #2/#3 序号，与串口不同设备不同人各用各的。
         host = (data.get("host") or "").strip()
         port = data.get("port") or 23
         if not host:
             return jsonify({"ok": False, "err": "need host"}), 400
-        base_id = f"telnet:{host}:{port}"
+        port_id = f"telnet:{host}:{port}"
         with _ports_lock:
-            port_id = base_id
-            n = 2
-            while port_id in _ports:
-                port_id = f"{base_id}#{n}"
-                n += 1
+            if port_id in _ports:
+                return jsonify({"ok": False, "err": f"{port_id} 已连接"})
             try:
                 from .telnet_conn import TelnetConnection
                 p = TelnetConnection(host, port, port_id=port_id)
