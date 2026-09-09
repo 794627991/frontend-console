@@ -590,7 +590,6 @@ def api_hash_file():
     if not os.path.isfile(p):
         return jsonify({"ok": False, "err": "文件不存在"}), 400
     import hashlib, zlib
-    import binascii
     md5 = hashlib.md5(); sha1 = hashlib.sha1()
     sha256 = hashlib.sha256(); sha512 = hashlib.sha512()
     crc = 0
