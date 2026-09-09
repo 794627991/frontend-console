@@ -349,26 +349,30 @@ function buildBitCalcTab() {
   });
 
   // ---- 点按键盘：按钮插入表达式框光标处（与手动输入共用同一条求值链，零重复逻辑）。
-  // 布局仿 Windows 计算器：数字/字母集中 + 位运算符一列 + 运算符一列 + C/⌫/=。
+  // 排布分区（仿 Windows 程序员计算器，一区一义不混杂）：
+  //   顶行=功能（CE 清表达式 / ⌫ / 括号）
+  //   中行=A–F hex 字母（程序员专属，独立一行与数字分开）
+  //   下方=数字 3×4 标准九宫格（0 在 2 下方），右列四则 + %，左列位运算。
+  //   hex 的 C 与清除撞名 → 清除键用 CE（Clear Entry，只清表达式框）。
   const KEYS = [
-    ['A','B','C','D','E','F','<<','>>','~','C'],
-    ['7','8','9','&','|','^','(',')','⌫','%'],
-    ['4','5','6','*','/','+','-','0','=',''],
-    ['1','2','3','','','','','','',''],
+    ['CE','(',')','','A','B','C','D','E','F'],
+    ['&','|','^','~','<<','>>','7','8','9','%'],
+    ['+','-','*','/','⌫','0','4','5','6','='],
+    ['','','','','','1','2','3',''],
   ];
-  // 全整数计算器（表达式语法无小数点），空槽渲染占位保持网格对齐不塌
+  // ↑ 数字列 7-9/4-6/1-3 对齐在 8/9/10 列，0 在第 7 列顶在 4 下面（九宫格观感）；
+  //   全整数计算器无小数点，空槽渲染占位保持网格不塌。
   const keypad = wrap.querySelector('[data-bc-keypad]');
   keypad.innerHTML = KEYS.flatMap((row, r) => row.map((k, c) => {
     if (!k) return `<div class="bc-key bc-key-dim"></div>`;
-    const eq = k === '=' ? ' data-bc-key-eq="1"' : '';
-    return `<div class="bc-key" data-bc-key="${esc(k)}"${eq} style="grid-row:${r+1};grid-column:${c+1};">${esc(k)}</div>`;
+    return `<div class="bc-key" data-bc-key="${esc(k)}" style="grid-row:${r+1};grid-column:${c+1};">${esc(k)}</div>`;
   }).join('')).join('');
   keypad.addEventListener('click', e => {
     const cell = e.target.closest('[data-bc-key]');
     if (!cell || !cell.dataset.bcKey) return;
     const k = cell.dataset.bcKey;
     exprInp.focus();   // 插入前聚焦：selectionStart 才有效（没焦点时在末尾插）
-    if (k === 'C') { exprInp.value = ''; exprRes.textContent = ''; return; }
+    if (k === 'CE') { exprInp.value = ''; exprRes.textContent = ''; return; }
     if (k === '⌫') {
       const p = exprInp.selectionStart ?? exprInp.value.length;
       // 光标前若是双字符运算符（<< >>）整个删掉，符合按键直觉

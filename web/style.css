@@ -900,7 +900,7 @@
   .bc-key:hover { border-color: var(--accent); color: var(--accent); }
   .bc-key-dim { visibility: hidden; border: none; background: none; padding: 7px 0; }
   .bc-key[data-bc-key="="] { border-color: var(--accent); color: var(--accent); font-weight: 700; }
-  .bc-key[data-bc-key="C"], .bc-key[data-bc-key="⌫"] { color: var(--neon-red); }
+  .bc-key[data-bc-key="CE"], .bc-key[data-bc-key="⌫"] { color: var(--neon-red); }
   .bc-side { flex: 1 1 300px; min-width: 280px; display: flex; flex-direction: column; gap: 10px; }
   .bc-box {
     border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;

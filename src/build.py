@@ -44,6 +44,15 @@ def _sync_offline_pkg(dist_exe):
         print("复制 offline_pkg → dist/（Claude 离线安装资源，几百 MB 需几分钟）…")
         shutil.copytree(src_pkg, dst_pkg)
         print("offline_pkg 已同步到 dist/")
+    # README 也放一份到 dist：帮助按钮在 exe 里读的是 _MEIPASS 内嵌副本（spec datas），
+    # 但旁挂分发目录里放一份让人工翻阅/网盘下载者不打开 exe 也能看到说明书。
+    src_rd = os.path.join(BASE, "README.md")
+    dst_rd = os.path.join(os.path.dirname(dist_exe), "README.md")
+    try:
+        shutil.copy2(src_rd, dst_rd)
+        print("README.md 已同步到 dist/")
+    except OSError as e:
+        print("README 同步失败（不影响 exe）:", e)
 
 if __name__ == "__main__":
     build()
