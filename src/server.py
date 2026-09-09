@@ -280,6 +280,35 @@ def api_connect():
         # SSH invoke_shell 自带 shell，不主动 send \r
         return jsonify({"ok": True, "port_id": port_id, "kind": "ssh",
                         "msg": f"已连接 {username}@{host}:{port}"})
+    elif kind == "telnet":
+        # Telnet 连接（裸 socket + IAC 协商，零依赖）
+        host = (data.get("host") or "").strip()
+        port = data.get("port") or 23
+        if not host:
+            return jsonify({"ok": False, "err": "need host"}), 400
+        port_id = f"telnet:{host}:{port}"
+        with _ports_lock:
+            if port_id in _ports:
+                return jsonify({"ok": False, "err": f"{port_id} 已连接"})
+            try:
+                from .telnet_conn import TelnetConnection
+                p = TelnetConnection(host, port, port_id=port_id)
+                _ports[port_id] = p
+            except Exception as e:
+                _ports.pop(port_id, None)
+                try: p.close()
+                except Exception: pass
+                msg = str(e) or e.__class__.__name__
+                import socket as _socket
+                if isinstance(e, (_socket.timeout, TimeoutError)):
+                    msg = f"连接 {host}:{port} 超时（网络不可达或端口未开放）"
+                elif isinstance(e, _socket.gaierror):
+                    msg = f"无法解析主机 {host}：{e}"
+                elif isinstance(e, ConnectionRefusedError):
+                    msg = f"{host}:{port} 拒绝连接（Telnet 服务未开启）"
+                return jsonify({"ok": False, "err": msg}), 500
+        return jsonify({"ok": True, "port_id": port_id, "kind": "telnet",
+                        "msg": f"已连接 {host}:{port}"})
     elif kind == "claude":
         # Claude Code 本地终端（ConPTY 跑真实 CLI，设计见 docs/CLAUDE_CODE_INTEGRATION.md）
         from .claude_conn import (ClaudeConnection, ClaudeNotFoundError,

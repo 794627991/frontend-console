@@ -75,6 +75,25 @@ async function connectSSH(host, port, username, password, key_path) {
   } catch(e) { return {ok: false, err: 'SSH 连接请求失败：' + e}; }
 }
 
+async function connectTelnet(host, port) {
+  try {
+    const r = await fetch('/api/connect', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({kind:'telnet', host, port})});
+    const j = await r.json();
+    if (j.ok) {
+      const port_id = j.port_id;
+      showBanner(`已连接 ${host}:${port}`);
+      const conn = buildTerminal(port_id, {kind:'telnet', label:`${host}:${port}`, host});
+      connections[port_id] = conn;
+      switchTab(port_id);
+      refreshSidebar();
+      refreshGlobalStatus();
+      _recentAdd({type:'telnet', key:`telnet:${host}:${port}`, label:`${host}:${port}`,
+                  data:{host, port}});
+    }
+    return j;
+  } catch(e) { return {ok: false, err: 'Telnet 连接请求失败：' + e}; }
+}
+
 function closeConnection(portId) {
   fetch('/api/disconnect', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: portId})});
   const conn = connections[portId];
@@ -133,6 +152,7 @@ function refreshSidebar() {
       item.className = 'port-item connected' + (pid === activePortId ? ' active' : '');
       item.dataset.portId = pid;
       const isSSH = conn.meta.kind === 'ssh';
+      const isTelnet = conn.meta.kind === 'telnet';
       const isLog = conn.meta.kind === 'log';
       const isEdit = conn.meta.kind === 'editor' || conn.meta.kind === 'hex' || conn.meta.kind === 'diff' || conn.meta.kind === 'bindiff';
       const isClaude = conn.meta.kind === 'claude';
@@ -141,7 +161,7 @@ function refreshSidebar() {
                     : conn.meta.kind === 'bindiff' ? '🔀 bin 对比'
                     : isEdit ? (conn.meta.kind === 'hex' ? '🔧 hex' : '🔀 对比')
                     : isLog ? '📜 日志' : '';
-      const descText = isSSH ? `SSH · ${conn.meta.host || ''}` : (isEdit || isLog) ? edIcon : isClaude ? `<span class="claude-ico"></span> Claude · ${(conn.meta.cwd || '').split(/[\\\\/]/).pop() || ''}` : `${conn.meta.baud || ''} baud`;
+      const descText = isSSH ? `SSH · ${conn.meta.host || ''}` : isTelnet ? `Telnet · ${conn.meta.host || ''}` : (isEdit || isLog) ? edIcon : isClaude ? `<span class="claude-ico"></span> Claude · ${(conn.meta.cwd || '').split(/[\\\\/]/).pop() || ''}` : `${conn.meta.baud || ''} baud`;
       const rowCount = conn.term ? conn.term.buffer.active.length : (conn.logState ? conn.logState.total : (isEdit ? _edStatText(conn) : 0));
       // 编辑器类 tab：未保存时名字带 * + dirty 类（led 橙色，与 _edMarkTab 同步）
       const isDirty = isEdit && conn.dirty;
@@ -302,6 +322,7 @@ document.querySelectorAll('.conn-type-btn').forEach(btn => {
     document.querySelectorAll('.conn-type-btn').forEach(b => b.classList.toggle('active', b === btn));
     $('connSerialFields').style.display = _connType === 'serial' ? 'flex' : 'none';
     $('connSSHFields').style.display = _connType === 'ssh' ? 'flex' : 'none';
+    $('connTelnetFields').style.display = _connType === 'telnet' ? 'flex' : 'none';
     $('btnRefreshPorts').style.display = _connType === 'serial' ? '' : 'none';
   };
 });
@@ -336,6 +357,12 @@ $('connConfirm').onclick = async () => {
       // 密码可为空（部分设备空密码可进），后端自动处理
       btn.textContent = '连接中…';
       j = await connectSSH(host, port, username, password, key_path);
+    } else if (_connType === 'telnet') {
+      const host = $('connTelnetHost').value.trim();
+      const port = $('connTelnetPort').value.trim() || '23';
+      if (!host) { errEl.textContent = '请填主机地址'; errEl.classList.add('show'); return; }
+      btn.textContent = '连接中…';
+      j = await connectTelnet(host, port);
     } else {
       const port = $('connPort').value, baud = $('connBaud').value;
       if (!port) { errEl.textContent = '请选择串口'; errEl.classList.add('show'); return; }
@@ -359,8 +386,8 @@ $('btnRefreshPorts').onclick = async () => { await loadPorts(); showBanner('串�
 // ============================================================
 // 最近打开（SSH/串口/文件 快捷重开，后端 config.json 持久化 + 自动去重）
 // ============================================================
-const RECENT_ICON = { claude: '<span class="claude-ico"></span>', ssh: '🔗', serial: '🔌' };  // 类型区分图标（claude 用官方星形标志；file 按后缀动态生成 fileIconHtml）
-const RECENT_TYPE_NAME = { claude: 'Claude 会话', ssh: 'SSH', serial: '串口', file: '文件' };
+const RECENT_ICON = { claude: '<span class="claude-ico"></span>', ssh: '🔗', serial: '🔌', telnet: '🖥' };  // 类型区分图标（claude 用官方星形标志；file 按后缀动态生成 fileIconHtml）
+const RECENT_TYPE_NAME = { claude: 'Claude 会话', ssh: 'SSH', serial: '串口', telnet: 'Telnet', file: '文件' };
 let _recentList = [];
 
 async function loadRecentList() {
@@ -385,6 +412,7 @@ function renderRecentList() {
     { type: 'serial', name: '串口' },
     { type: 'file',   name: '文件' },
     { type: 'ssh',    name: 'SSH' },
+    { type: 'telnet', name: 'Telnet' },
   ];
   el.innerHTML = '';
   groups.forEach(g => {
@@ -451,6 +479,9 @@ function openRecentItem(it) {
   } else if (it.type === 'ssh') {
     const d = it.data || {};
     connectSSH(d.host, d.port || '22', d.username, d.password || '', d.key_path || '');
+  } else if (it.type === 'telnet') {
+    const d = it.data || {};
+    connectTelnet(d.host, d.port || '23');
   } else if (it.type === 'file') {
     // 文件分发：外部文件（extPath 绝对路径，含拖入）统一走 openDroppedFile 智能分发
     // （文本类含小 .log → 编辑器，超大 .log/未知 → 查看器）；

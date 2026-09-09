@@ -3,7 +3,7 @@ function buildTerminal(portId, meta) {
   const tab = document.createElement('div');
   tab.className = 'tab';
   tab.dataset.portId = portId;
-  tab.innerHTML = `<span class="led"></span><span>${esc(meta.label || portId)}</span><span style="color:var(--muted);font-size:10px;">${meta.kind === 'ssh' || meta.kind === 'claude' ? '' : '@'+meta.baud}</span> <span class="close" title="关闭">✕</span>`;
+  tab.innerHTML = `<span class="led"></span><span>${esc(meta.label || portId)}</span><span style="color:var(--muted);font-size:10px;">${meta.kind === 'ssh' || meta.kind === 'claude' || meta.kind === 'telnet' ? '' : '@'+meta.baud}</span> <span class="close" title="关闭">✕</span>`;
   tab.onclick = (e) => {
     if (e.target.classList.contains('close')) { e.stopPropagation(); closeConnection(portId); return; }
     switchTab(portId);

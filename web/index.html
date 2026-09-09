@@ -224,6 +224,7 @@
       <div class="conn-type-switch">
         <button class="conn-type-btn active" data-type="serial">串口</button>
         <button class="conn-type-btn" data-type="ssh">SSH</button>
+        <button class="conn-type-btn" data-type="telnet">Telnet</button>
       </div>
       <!-- 串口字段 -->
       <div id="connSerialFields" style="flex-direction:column;gap:18px">
@@ -271,6 +272,17 @@
         <div id="connAuthKey" style="display:none">
           <label>密钥文件路径</label>
           <input type="text" id="connKeyPath" placeholder="如 C:\\Users\\you\\.ssh\\id_rsa" autocomplete="off" style="margin-top:8px;">
+        </div>
+      </div>
+      <!-- Telnet 字段（主机+端口，无认证——设备侧 shell 即进） -->
+      <div id="connTelnetFields" style="display:none;flex-direction:column;gap:18px">
+        <div>
+          <label>主机</label>
+          <input type="text" id="connTelnetHost" placeholder="设备 IP 地址" autocomplete="off" style="margin-top:8px;">
+        </div>
+        <div>
+          <label>端口</label>
+          <input type="number" id="connTelnetPort" value="23" min="1" max="65535" style="margin-top:8px;">
         </div>
       </div>
       <div class="conn-err" id="connErr"></div>
