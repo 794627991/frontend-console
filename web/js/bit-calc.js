@@ -70,6 +70,48 @@ function _bcParseNum(t) {
   throw new Error(t || '(空)');
 }
 
+// ---- 浮点表达式（DEC 科学模式）：小数点、^ 乘方、sqrt/log/ln 函数、0x 前缀 ----
+// 与整数版平行的一条求值链（程序员整数/科学小数分开算，互不掺和）
+function _bcEvalExprF(src) {
+  let i = 0;
+  const s = src.replace(/\s+/g, '');
+  if (!s) throw new Error('空表达式');
+  function parsePrimary() {
+    const rest = s.slice(i);
+    if (rest[0] === '(') { i++; const v = parseAdd(); if (s[i] !== ')') throw new Error('括号不匹配'); i++; return v; }
+    const fn = /^(sqrt|log|ln)\(/.exec(rest);
+    if (fn) {
+      i += fn[0].length;
+      const v = parseAdd();
+      if (s[i] !== ')') throw new Error('括号不匹配'); i++;
+      return fn[1] === 'sqrt' ? Math.sqrt(v) : fn[1] === 'log' ? Math.log10(v) : Math.log(v);
+    }
+    const m = /^(0[xX][0-9a-fA-F]+|0[bB][01]+|0[oO][0-7]+|[0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?)/.exec(rest);
+    if (!m) throw new Error('无法识别: ' + (rest.slice(0, 8) || '(结尾)'));
+    i += m[0].length;
+    return /^0[xXbBoO]/.test(m[0]) ? Number(BigInt(m[0])) : Number(m[0]);
+  }
+  function parseUnary() { if (s[i] === '-') { i++; return -parseUnary(); } if (s[i] === '+') { i++; return parseUnary(); } return parsePrimary(); }
+  function parsePow() { const v = parseUnary(); if (s[i] === '^') { i++; return Math.pow(v, parsePow()); } return v; }   // 乘方右结合
+  function parseMul() {
+    let v = parsePow();
+    while (s[i] === '*' || s[i] === '/' || s[i] === '%') {
+      const op = s[i++]; const r = parsePow();
+      if ((op === '/' || op === '%') && r === 0) throw new Error('除零');
+      v = op === '*' ? v * r : op === '/' ? v / r : v % r;
+    }
+    return v;
+  }
+  function parseAdd() {
+    let v = parseMul();
+    while (s[i] === '+' || s[i] === '-') { const op = s[i++]; const r = parseMul(); v = op === '+' ? v + r : v - r; }
+    return v;
+  }
+  const v = parseAdd();
+  if (i < s.length) throw new Error('多余字符: ' + s.slice(i, i + 8));
+  return v;
+}
+
 // 无前缀按进制构造 BigInt：给 '0b'/'0o' 前缀再 BigInt()——按进制构造
 // 不经过浮点（parseInt 是浮点解析，>2^53 丢精度，计算正确性红线）
 function _bcParseRadix(t, radix) {
@@ -137,8 +179,16 @@ function buildBitCalcTab() {
         </div>
         <!-- 点按键盘 + 时间戳 + 历史（仿 Windows 计算器：不止手动输入、有历史记录） -->
         <div class="bc-extra">
-          <!-- 点按键盘：点击插入表达式框光标处（⌫/C/= 也作用于表达式框），与手动输入完全打通 -->
-          <div class="bc-keypad" data-bc-keypad></div>
+          <!-- 点按键盘：点击插入表达式框光标处（⌫/CE/= 也作用于表达式框），与手动输入完全打通。
+               两模式（Windows 计算器同款分法）：
+               HEX=程序员（A–F/位运算/整数）；DEC=科学（小数点/^ 乘方/函数） -->
+          <div class="bc-keypad-wrap">
+            <div class="bc-kp-modes">
+              <button class="bc-kp-mode active" data-bc-kmode="hex">HEX 程序员</button>
+              <button class="bc-kp-mode" data-bc-kmode="dec">DEC 科学</button>
+            </div>
+            <div class="bc-keypad" data-bc-keypad></div>
+          </div>
           <div class="bc-side">
             <!-- 时间戳换算：Unix 秒/毫秒/0x → 本地+UTC+相对；datetime-local 反向出三形态 -->
             <div class="bc-box">
@@ -327,16 +377,26 @@ function buildBitCalcTab() {
   };
   wrap.querySelector('[data-bc-act="clear"]').onclick = () => { conn.value = 0n; render(); };
 
-  // ---- 表达式计算：结果进当前值（计算器与寄存器视图打通——算完直接看位分布） ----
+  // ---- 表达式计算：HEX 模式结果进当前值（计算器与寄存器视图打通）；
+  // DEC 科学模式走浮点求值器（小数域），结果只显示不进位格——寄存器是整数域
   const exprInp = wrap.querySelector('[data-bc-expr]');
+  let kpMode = 'hex';   // 键盘模式（hex 程序员整数 / dec 科学小数），doEval 与键盘共用
   const doEval = () => {
     const src = exprInp.value.trim();
     if (!src) return;
     try {
-      conn.value = _bcEvalExpr(src, conn.bits);
-      render();
-      exprRes.textContent = '= 0x' + fmt(conn.value, 16) + ' · ' + conn.value;
-      exprRes.classList.remove('err');
+      if (kpMode === 'dec') {
+        const v = _bcEvalExprF(src);
+        if (!isFinite(v)) throw new Error('结果非有限数');
+        // 智能精度：整数结果不带小数尾巴；小数最多 12 位去尾零
+        exprRes.textContent = '= ' + (Number.isInteger(v) ? String(v) : String(Number(v.toPrecision(12))));
+        exprRes.classList.remove('err');
+      } else {
+        conn.value = _bcEvalExpr(src, conn.bits);
+        render();
+        exprRes.textContent = '= 0x' + fmt(conn.value, 16) + ' · ' + conn.value;
+        exprRes.classList.remove('err');
+      }
       histAdd(src, exprRes.textContent);
     } catch (err) {
       exprRes.textContent = err.message;
@@ -349,24 +409,46 @@ function buildBitCalcTab() {
   });
 
   // ---- 点按键盘：按钮插入表达式框光标处（与手动输入共用同一条求值链，零重复逻辑）。
-  // 排布分区（仿 Windows 程序员计算器，一区一义不混杂）：
-  //   顶行=功能（CE 清表达式 / ⌫ / 括号）
-  //   中行=A–F hex 字母（程序员专属，独立一行与数字分开）
-  //   下方=数字 3×4 标准九宫格（0 在 2 下方），右列四则 + %，左列位运算。
-  //   hex 的 C 与清除撞名 → 清除键用 CE（Clear Entry，只清表达式框）。
-  const KEYS = [
-    ['CE','(',')','','A','B','C','D','E','F'],
-    ['&','|','^','~','<<','>>','7','8','9','%'],
-    ['+','-','*','/','⌫','0','4','5','6','='],
-    ['','','','','','1','2','3',''],
-  ];
-  // ↑ 数字列 7-9/4-6/1-3 对齐在 8/9/10 列，0 在第 7 列顶在 4 下面（九宫格观感）；
-  //   全整数计算器无小数点，空槽渲染占位保持网格不塌。
+  // 排布学 Windows 官方计算器（截图 1.png 实测布局）：
+  //   5 列——CE/⌫ 占顶行 | 数字 7/8/9、4/5/6、1/2/3、+/-与0 严格九宫格 | 运算符独占右列
+  // 两模式切换（官方同款 HEX/DEC 分法）：
+  //   HEX 程序员：A–F 独立一行 + 位运算行（& | ^ ~ << >>），整数域
+  //   DEC 科学：小数点 + ^ 乘方 + 函数行（sqrt log ln），小数域
+  const KEYPADS = {
+    hex: [
+      ['CE','⌫','(','','A','B','C','D','E','F'],
+      ['&','|','^','~','<<','>>','%','7','8','9'],
+      ['+','-','*','/','(','','4','5','6',')'],
+      ['=','','','','','1','2','3',''],
+    ],
+    dec: [
+      ['CE','⌫','(','','sqrt','(','','log','ln','('],
+      ['^','','','','%','','','','',''],
+      ['+','-','*','/','(','','4','5','6',')'],
+      ['=','.','','','0','1','2','3',''],
+    ],
+  };
+  // ↑ 数字 7-9 / 4-6 / 1-3 对齐 8/9/10 列，0 顶在 1 下方（官方九宫格观感）；
+  //   函数键带开括号（sqrt( 一按一个），空槽渲染占位保持网格不塌。
   const keypad = wrap.querySelector('[data-bc-keypad]');
-  keypad.innerHTML = KEYS.flatMap((row, r) => row.map((k, c) => {
-    if (!k) return `<div class="bc-key bc-key-dim"></div>`;
-    return `<div class="bc-key" data-bc-key="${esc(k)}" style="grid-row:${r+1};grid-column:${c+1};">${esc(k)}</div>`;
-  }).join('')).join('');
+  const kpRender = () => {
+    keypad.innerHTML = KEYPADS[kpMode].flatMap((row, r) => row.map((k, c) => {
+      if (!k) return `<div class="bc-key bc-key-dim"></div>`;
+      return `<div class="bc-key" data-bc-key="${esc(k)}" style="grid-row:${r+1};grid-column:${c+1};">${esc(k)}</div>`;
+    }).join('')).join('');
+  };
+  kpRender();
+  // 模式切换：键盘换布 + 表达式框提示语同步（求值链 doEval 按 mode 分流）
+  const exprPh = { hex: '表达式：如 (0x1F << 2) | 0b101 / 整数域，支持 0x/0b/0o 前缀、回车计算',
+                   dec: '表达式：如 3.5*1.2+sqrt(2) / 小数域，支持 ^ 乘方、sqrt/log/ln、回车计算' };
+  wrap.querySelectorAll('[data-bc-kmode]').forEach(btn => {
+    btn.onclick = () => {
+      kpMode = btn.dataset.bcKmode;
+      wrap.querySelectorAll('[data-bc-kmode]').forEach(b => b.classList.toggle('active', b === btn));
+      exprInp.placeholder = exprPh[kpMode];
+      exprRes.textContent = '';
+    };
+  });
   keypad.addEventListener('click', e => {
     const cell = e.target.closest('[data-bc-key]');
     if (!cell || !cell.dataset.bcKey) return;
@@ -375,15 +457,16 @@ function buildBitCalcTab() {
     if (k === 'CE') { exprInp.value = ''; exprRes.textContent = ''; return; }
     if (k === '⌫') {
       const p = exprInp.selectionStart ?? exprInp.value.length;
-      // 光标前若是双字符运算符（<< >>）整个删掉，符合按键直觉
-      const two = exprInp.value.slice(p - 2, p);
-      if (two === '<<' || two === '>>') exprInp.setRangeText('', p - 2, p, 'end');
+      // 光标前若是多字符 token（<< >> sqrt( 等）整个删掉，符合按键直觉
+      const before = exprInp.value.slice(0, p);
+      const multi = ['sqrt(', 'log(', 'ln(', '<<', '>>'].find(t => before.endsWith(t));
+      if (multi) exprInp.setRangeText('', p - multi.length, p, 'end');
       else exprInp.setRangeText('', Math.max(0, p - 1), p, 'end');
       return;
     }
     if (k === '=') { doEval(); return; }
-    // 运算符与括号两侧留空格（可读性）；数字/字母直接贴
-    const tok = /[0-9a-fA-F]/.test(k) ? k : (k === '(' || k === ')') ? k : ' ' + k + ' ';
+    // 运算符/函数两侧留空格（可读性）；数字/字母/点/括号直接贴
+    const tok = /[0-9a-fA-F.()]/.test(k) ? k : ' ' + k + ' ';
     const p = exprInp.selectionStart ?? exprInp.value.length;
     exprInp.setRangeText(tok, p, p, 'end');
   });

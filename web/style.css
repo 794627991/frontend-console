@@ -887,6 +887,15 @@
 
   /* ===== 计算器扩展区：点按键盘 + 时间戳 + 历史（仿 Windows 计算器）===== */
   .bc-extra { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+  .bc-keypad-wrap { flex: 1 1 360px; min-width: 320px; display: flex; flex-direction: column; gap: 6px; }
+  .bc-kp-modes { display: flex; gap: 6px; }
+  .bc-kp-mode {
+    border: 1px solid var(--border); border-radius: 5px; background: var(--bg-input);
+    color: var(--muted); font-size: 11px; padding: 4px 12px; cursor: pointer;
+    transition: border-color .1s, color .1s;
+  }
+  .bc-kp-mode:hover { border-color: var(--accent); color: var(--accent); }
+  .bc-kp-mode.active { border-color: var(--accent); color: var(--accent); font-weight: 600; }
   .bc-keypad {
     display: grid; grid-template-columns: repeat(10, 1fr); gap: 4px;
     flex: 1 1 340px; min-width: 300px;
