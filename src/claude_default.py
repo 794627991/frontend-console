@@ -173,9 +173,10 @@ def provision_defaults(force_statusline=False):
     AUTH_TOKEN 不在铺设范围——留给 API 配置界面（首次打开 claude 前必填）。
     """
     notes = []
-    # 1. statusline.py
+    # 1. statusline.py （首次安装时 ~/.claude 可能还不存在——先建目录再写）
     sl = _statusline_path()
     if force_statusline or not os.path.isfile(sl):
+        os.makedirs(os.path.dirname(sl), exist_ok=True)
         with open(sl, "w", encoding="utf-8", newline="\n") as f:
             f.write(STATUSLINE_SRC)
         notes.append("statusline.py 已铺设")

@@ -291,20 +291,32 @@ _GIT_URL = ("https://github.com/git-for-windows/git/releases/download/"
 
 
 def _download(url, dst):
-    """流式下载安装器到 dst，按 MB 打日志。"""
+    """流式下载安装器到 dst，按 MB 打日志。失败给人话（小白定位问题）。"""
     import urllib.request
+    os.makedirs(os.path.dirname(os.path.abspath(dst)), exist_ok=True)
     _log(f"下载 {url}")
-    with urllib.request.urlopen(url, timeout=60) as resp, open(dst, "wb") as f:
-        total = int(resp.headers.get("Content-Length") or 0)
-        got = 0
-        while True:
-            chunk = resp.read(1 << 20)
-            if not chunk:
-                break
-            f.write(chunk)
-            got += len(chunk)
-            if total:
-                _log(f"  已下载 {got // 1024 // 1024}/{total // 1024 // 1024} MB")
+    try:
+        with urllib.request.urlopen(url, timeout=60) as resp, open(dst, "wb") as f:
+            total = int(resp.headers.get("Content-Length") or 0)
+            got = 0
+            while True:
+                chunk = resp.read(1 << 20)
+                if not chunk:
+                    break
+                f.write(chunk)
+                got += len(chunk)
+                if total:
+                    _log(f"  已下载 {got // 1024 // 1024}/{total // 1024 // 1024} MB")
+    except Exception as e:
+        # 下载一半的残片清掉，避免下次误当完整安装器
+        try:
+            if os.path.isfile(dst):
+                os.remove(dst)
+        except OSError:
+            pass
+        raise RuntimeError(
+            f"下载失败（{e}）——请检查网络；"
+            f"无网环境请改用「📂 离线包安装」（选 claude-offline.zip）") from e
     return dst
 
 
