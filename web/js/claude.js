@@ -91,19 +91,15 @@ async function openClaudeSetup() {
           <div id="csLog" class="cs-log" style="display:none;"></div>
         </div>
         <div class="actions" style="padding:0 20px 16px;display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;">
-          <button class="btn ghost" id="csPickPkgDir" style="display:none;" title="工具同目录没有 offline_pkg 时手动指定离线资源目录（Git 安装器 / Node MSI / claude-code 包所在目录）">📂 选择离线资源目录</button>
-          <button class="btn ghost" id="csPack" title="把本机的 Git 安装器 + Node MSI + claude-code 包打成一个 zip，拷到无网机器离线安装">📦 制作离线包</button>
-          <button class="btn ghost" id="csOfflineZip" title="选择已有 claude-offline.zip 静默安装">📂 用离线包安装</button>
-          <button class="btn ghost" id="csOfflineDirect" title="用离线资源目录直接静默安装（无需 zip）">⚡ 离线直装</button>
+          <button class="btn ghost" id="csPack" title="把 Git 安装器 + Node MSI + claude-code 包 + 工具依赖打成一个 zip，拷到无网机器离线安装">📦 制作离线包</button>
+          <button class="btn primary" id="csOfflineZip" title="选择 claude-offline.zip，工具自行解压静默安装（无网机器用这个）">📂 离线包安装</button>
           <button class="btn primary" id="csOnline" title="npm install -g @anthropic-ai/claude-code（需联网 + Node）">🌐 联网安装</button>
         </div>
       </div>`;
     document.body.appendChild(m);
     $('csClose').onclick = () => { _csStopPoll(); m.classList.remove('show'); };
-    $('csPickPkgDir').onclick = () => _csPickPkgDir();
     $('csPack').onclick = () => _csPickPackDir();
     $('csOfflineZip').onclick = () => _csPickZip();
-    $('csOfflineDirect').onclick = () => _csStart('offline');
     $('csOnline').onclick = () => _csStart('online');
   }
   m.classList.add('show');
@@ -120,24 +116,21 @@ async function _csDetectRender() {
     const mb = st.pkg_size ? ` · ${(st.pkg_size/1024/1024).toFixed(0)} MB` : '';
     const res = [];
     if (st.claude) res.push(row('Claude CLI 已安装 —— 无需安装，直接点顶栏 Claude 打开', true));
-    res.push(row('Node.js / npm', st.node && st.npm, st.node ? '' : '离线包/直装会静默安装'));
-    res.push(row('Git', st.git, st.git ? '' : '离线包/直装会静默安装'));
-    const hasOffline = !!(st.pkg_dir || st.git_installer || st.node_installer);
-    res.push(row('离线安装资源', hasOffline,
-      hasOffline ? [st.git_installer, st.node_installer].filter(Boolean).map(p => p.split('\\\\').pop()).join(' + ') +
+    res.push(row('Node.js / npm', st.node && st.npm, st.node ? '' : '离线包安装会静默补装'));
+    res.push(row('Git', st.git, st.git ? '' : '离线包安装会静默补装'));
+    // 离线包（zip 单文件）——本机找得到包源才能制作；安装时用户自选 zip 文件
+    const canPack = !!(st.pkg_dir || st.git_installer || st.node_installer);
+    res.push(row('离线包制作源', canPack,
+      canPack ? [st.git_installer, st.node_installer].filter(Boolean).map(p => p.split('\\\\').pop()).join(' + ') +
         (st.pkg_dir ? (st.git_installer ? ' + ' : '') + 'claude-code' + mb : '')
-      : '未找到——工具同目录 offline_pkg 不存在。请点下方「📂 选择离线资源目录」手动指定'));
-    if (st.offline_pkg_dir) res.push('<div style="color:var(--muted);font-size:11px;">当前离线资源目录：' + esc(st.offline_pkg_dir) + '</div>');
+      : '未找到安装器资源（Git exe / Node MSI）——只能联网安装'));
     el.innerHTML = res.join('');
-    // 联网按钮始终显示：Node/Git 缺了会自动静默补装（下载官方安装器），
-    // 不再把"无 npm"当拦截条件
+    // 联网按钮始终显示：Node/Git 缺了会自动静默补装（下载官方安装器）
     $('csOnline').style.display = '';
-    // 离线按钮：有资源才可用；没资源时给手动选目录入口（用户要求：
-    // 找不到就强制手动选择离线安装包，不许静默失败）
-    $('csOfflineDirect').style.display = hasOffline ? '' : 'none';
-    $('csPack').style.display = st.pkg_dir ? '' : 'none';
-    const pickBtn = $('csPickPkgDir');
-    if (pickBtn) pickBtn.style.display = hasOffline ? 'none' : '';
+    // 离线包安装始终可选（用户自己选 zip 文件，与本机资源无关）
+    $('csOfflineZip').style.display = '';
+    // 制作按钮：本机找得到源才显示
+    $('csPack').style.display = canPack ? '' : 'none';
   } catch (e) {
     el.innerHTML = '<span style="color:var(--neon-red)">检测失败: ' + esc(String(e)) + '</span>';
   }
@@ -149,10 +142,11 @@ function _csStopPoll() {
 
 function _csStart(mode, extra) {
   const api = mode === 'pack' ? '/api/claude/setup_offline_pack' : '/api/claude/setup_install';
-  const body = extra || (mode === 'online' ? {mode:'online'} : {mode:'offline'});  const logEl = $('csLog');
+  const body = extra || (mode === 'online' ? {mode:'online'} : {mode:'offline'});
+  const logEl = $('csLog');
   logEl.style.display = '';
   logEl.innerHTML = '';
-  ['csPack','csOfflineZip','csOfflineDirect','csOnline'].forEach(id => $(id).disabled = true);
+  ['csPack','csOfflineZip','csOnline'].forEach(id => $(id).disabled = true);
   fetch(api, {method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify(body)})
     .then(r => r.json())
@@ -167,7 +161,7 @@ function _csStart(mode, extra) {
           logEl.scrollTop = logEl.scrollHeight;
           if (s.done) {
             _csStopPoll();
-            ['csPack','csOfflineZip','csOfflineDirect','csOnline'].forEach(id => $(id).disabled = false);
+            ['csPack','csOfflineZip','csOnline'].forEach(id => $(id).disabled = false);
             if (s.ok) {
               if (s.need_api) {
                 // 首次安装完成且没填 Token → 弹 API 配置（必填，不直接拉起 claude）
@@ -189,29 +183,9 @@ function _csStart(mode, extra) {
       }, 700);
     })
     .catch(e => {
-      ['csPack','csOfflineZip','csOfflineDirect','csOnline'].forEach(id => $(id).disabled = false);
+      ['csPack','csOfflineZip','csOnline'].forEach(id => $(id).disabled = false);
       $('csErr').style.display = ''; $('csErr').textContent = '请求失败: ' + e;
     });
-}
-
-function _csPickPkgDir() {
-  // 离线资源目录手动指定（找不到随包资源时的强制入口）：
-  // 选完写 config.json offline_pkg_dir，重新检测
-  if (!(window.pywebview && window.pywebview.api && window.pywebview.api.pick_dir)) {
-    showBanner('目录选择器不可用', 3000, true);
-    return;
-  }
-  window.pywebview.api.pick_dir().then(async d => {
-    if (!d) return;
-    try {
-      const r = await fetch('/api/claude/setup_pkg_dir', {method:'POST',
-        headers:{'Content-Type':'application/json'}, body: JSON.stringify({dir: d})});
-      const j = await r.json();
-      if (!j.ok) { showBanner('设置失败: ' + (j.err || ''), 4000, true); return; }
-      showBanner('离线资源目录已设置：' + d);
-      _csDetectRender();
-    } catch(e) { showBanner('请求失败: ' + e, 4000, true); }
-  }).catch(() => showBanner('目录选择失败', 3000, true));
 }
 
 function _csPickPackDir() {  // 打包输出目录：pywebview 原生目录选择（pick_dir 已有），默认桌面

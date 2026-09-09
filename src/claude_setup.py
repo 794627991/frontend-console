@@ -189,13 +189,49 @@ def claude_setup_poll():
 
 # ---- 制作离线整合包 ----
 
+# 工具自身 pip 依赖（与 deps_bootstrap.DEPS 一致）——打进离线包 pydeps/，
+# 无网机器 pip install --no-index --find-links 离线装
+_TOOL_DEPS = ["flask", "pyserial", "pywebview", "paramiko", "pywinpty"]
+
+
+def _pack_pydeps(zf):
+    """把工具自身 pip 依赖打成 wheel 收进 zip（pydeps/）。
+    pip download 拉全套（含传递依赖），几 MB 级。失败不致命——
+    工具依赖只是离线包的可选增强（exe 分发根本不需要）。"""
+    import tempfile
+    import subprocess
+    import sys as _sys
+    d = tempfile.mkdtemp(prefix="pydeps_")
+    try:
+        _log("收集工具依赖 wheel（pip download，约 10MB）…")
+        r = subprocess.run(
+            [_sys.executable, "-m", "pip", "download", "--no-input",
+             "-d", d] + _TOOL_DEPS,
+            capture_output=True, text=True, timeout=300,
+            creationflags=subprocess.CREATE_NO_WINDOW)
+        if r.returncode != 0:
+            _log("依赖 wheel 收集失败（离线包继续制作，只是不含工具依赖）：" +
+                 (r.stderr or "").strip()[:200])
+            return
+        n = 0
+        for f in os.listdir(d):
+            fp = os.path.join(d, f)
+            if os.path.isfile(fp):
+                zf.write(fp, os.path.join("pydeps", f))
+                n += 1
+        _log(f"工具依赖已收 {n} 个包")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 @claude_setup_bp.route("/api/claude/setup_offline_pack", methods=["POST"])
 def claude_setup_offline_pack():
-    """把 Git 安装器 + Node MSI + claude-code 目录打成 zip。
+    """把 Git 安装器 + Node MSI + claude-code 目录 + 工具 py 依赖打成 zip。
     body: {out_dir} —— zip 输出目录（前端弹原生目录选择）。
     包结构：claude-offline.zip
-      ├ Git-*.exe  ├ node-v*.msi
-      └ claude-code/            （npm 包目录原样，含 bin/claude.exe）
+      ├ install/Git.exe  ├ install/node.msi
+      ├ claude-code/            （npm 包目录原样，含 bin/claude.exe）
+      └ pydeps/                （工具自身 pip 依赖 wheel，无网机器补装用）
     """
     data = request.get_json(force=True, silent=True) or {}
     out_dir = (data.get("out_dir") or "").strip() or os.path.join(
@@ -204,14 +240,14 @@ def claude_setup_offline_pack():
         if _setup_state["running"]:
             return jsonify({"ok": False, "err": "已有任务在运行"}), 409
         _setup_state.update(running=True, phase="打包离线资源", log=[], done=False,
-                            ok=False, err="", ts=time.time())
+                            ok=False, err="", ts=time.time(), need_api=False)
     def work():
         try:
             git_setup = _find_installer("Git-*.exe")
             node_msi = _find_installer("node-v*.msi")
             pkg = _claude_pkg_dir()
             if not pkg:
-                raise RuntimeError("本机 npm 全局目录里没有 claude-code 包（无打包源）")
+                raise RuntimeError("没有 claude-code 包（无打包源——本机 npm 或离线资源目录都没有）")
             os.makedirs(out_dir, exist_ok=True)
             zip_path = os.path.join(out_dir, "claude-offline.zip")
             _log(f"输出：{zip_path}")
@@ -234,6 +270,7 @@ def claude_setup_offline_pack():
                         if n % 200 == 0:
                             _log(f"  claude-code 已打包 {n} 个文件…")
                 _log(f"claude-code 打包完成，共 {n} 个文件")
+                _pack_pydeps(zf)
             _setup_state.update(done=True, ok=True, phase="打包完成")
             _log(f"完成：{zip_path}（{os.path.getsize(zip_path)//1024//1024} MB）")
         except Exception as e:
@@ -427,6 +464,56 @@ exit $LASTEXITCODE
     _log(f"npm shim 已生成：{npm_dir}\\claude.cmd")
 
 
+def _install_pydeps(pydeps_dir):
+    """工具自身 pip 依赖离线补装（包内 pydeps/ 的 wheel）。
+    --no-index --find-links：绝不联网，缺哪个装哪个（已装会被 pip 判 satisfied）。
+    目录不存在/为空：静默跳过（老包没带）。"""
+    import sys as _sys
+    if not (pydeps_dir and os.path.isdir(pydeps_dir) and
+            any(f.endswith((".whl", ".tar.gz")) for f in os.listdir(pydeps_dir))):
+        return
+    _log("补装工具自身依赖（离线 wheel，不联网）…")
+    r = subprocess.run(
+        [_sys.executable, "-m", "pip", "install", "--no-index",
+         "--find-links", pydeps_dir, "--no-input"] + _TOOL_DEPS,
+        capture_output=True, text=True, timeout=600,
+        creationflags=subprocess.CREATE_NO_WINDOW)
+    ok = r.returncode == 0
+    tail = ((r.stdout or "") + (r.stderr or "")).strip().splitlines()
+    for line in tail[-5:]:
+        _log("  " + line)
+    _log("工具依赖补装" + ("完成" if ok else "失败（不影响 claude 安装）"))
+    if ok:
+        # 补装成功：写自检通过标记——后续启动不再测/不再弹提醒（用户要求）
+        try:
+            from .deps_bootstrap import mark_selftest_ok
+            mark_selftest_ok()
+            _log("自检标记已写（后续启动不再检测依赖）")
+        except Exception:
+            pass
+    # 新装的库当前进程 import 不到——不打断安装流程，工具重启后自然生效
+
+
+def _verify_claude_runs(exe):
+    """硬验证：真跑一次 claude --version 子进程（能执行才叫装好——
+    比"文件存在"强一档，路径解析成功但二进制跑不起来也能当场暴露）。"""
+    try:
+        r = subprocess.run([exe, "--version"], capture_output=True, text=True,
+                           timeout=60, creationflags=subprocess.CREATE_NO_WINDOW)
+        ver = (r.stdout or r.stderr or "").strip().splitlines()
+        if r.returncode == 0:
+            _log(f"claude --version 通过：{ver[0] if ver else 'ok'}")
+            return True
+        raise RuntimeError(f"claude --version 退出码 {r.returncode}：" +
+                           (ver[0] if ver else "无输出"))
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("claude --version 60 秒无响应")
+    except RuntimeError:
+        raise
+    except Exception as e:
+        raise RuntimeError(f"claude --version 执行失败：{e}")
+
+
 @claude_setup_bp.route("/api/claude/setup_install", methods=["POST"])
 def claude_setup_install():
     """离线静默安装。body: {mode: 'offline'|'online', zip_path?}
@@ -454,45 +541,43 @@ def claude_setup_install():
                     _install_git_if_missing(dl_dir)
                     _npm_install_global()
                 else:
-                    # ---- 离线：解 zip（或直用资源目录）→ 静默装 Node/Git → 铺包 ----
+                    # ---- 离线：只认 zip 压缩包（用户选包，工具自行解压临时目录） ----
+                    # 不再支持裸目录资源——zip 是唯一形式（用户定），确保包完整可分发
+                    if not (zip_path and os.path.isfile(zip_path)):
+                        raise RuntimeError("离线安装必须选择离线包（claude-offline.zip）——"
+                                           "请点「📂 选择离线包」")
+                    if not zipfile.is_zipfile(zip_path):
+                        raise RuntimeError("不是有效的 zip 包")
                     workdir = dl_dir
-                    if zip_path and os.path.isfile(zip_path):
-                        if not zipfile.is_zipfile(zip_path):
-                            raise RuntimeError("不是有效的 zip 包")
-                        _log(f"解包 {zip_path} …")
-                        if os.path.isdir(workdir):
-                            shutil.rmtree(workdir, ignore_errors=True)
-                        os.makedirs(workdir, exist_ok=True)
-                        with zipfile.ZipFile(zip_path) as zf:
-                            total = sum(1 for _ in zf.namelist())
-                            for i, name in enumerate(zf.namelist()):
-                                zf.extract(name, workdir)
-                                if i % 500 == 0:
-                                    _log(f"  已解 {i}/{total} …")
-                        git_setup = os.path.join(workdir, "install", "Git.exe")
-                        node_msi = os.path.join(workdir, "install", "node.msi")
-                        pkg_dir = os.path.join(workdir, "claude-code")
-                        if not os.path.isdir(pkg_dir):
-                            raise RuntimeError("包内无 claude-code 目录")
-                    else:
-                        # 无 zip：用离线资源目录（自定义目录 > 工具同目录 offline_pkg）
-                        git_setup = _find_installer("Git-*.exe")
-                        node_msi = _find_installer("node-v*.msi")
-                        pkg_dir = _claude_pkg_dir()
-                        if not pkg_dir:
-                            raise RuntimeError("既没有离线 zip，本机也没有 claude-code 包可铺")
+                    _log(f"解包 {zip_path} …")
+                    if os.path.isdir(workdir):
+                        shutil.rmtree(workdir, ignore_errors=True)
+                    os.makedirs(workdir, exist_ok=True)
+                    with zipfile.ZipFile(zip_path) as zf:
+                        total = sum(1 for _ in zf.namelist())
+                        for i, name in enumerate(zf.namelist()):
+                            zf.extract(name, workdir)
+                            if i % 500 == 0:
+                                _log(f"  已解 {i}/{total} …")
+                    git_setup = os.path.join(workdir, "install", "Git.exe")
+                    node_msi = os.path.join(workdir, "install", "node.msi")
+                    pkg_dir = os.path.join(workdir, "claude-code")
+                    if not os.path.isdir(pkg_dir):
+                        raise RuntimeError("包内无 claude-code 目录")
 
-                    # Node / Git：缺才静默装（zip 内资源优先于全局资源目录）
+                    # Node / Git：缺才静默装（包内资源）
                     if shutil.which("node.exe") or shutil.which("node"):
                         _log("Node 已存在，跳过安装")
                     else:
-                        _install_node_from(node_msi if (node_msi and os.path.isfile(node_msi))
-                                           else _find_installer("node-v*.msi"))
+                        _install_node_from(node_msi)
                     if _git_ok():
                         _log("Git 已存在，跳过安装")
                     else:
-                        _install_git_from(git_setup if (git_setup and os.path.isfile(git_setup))
-                                          else _find_installer("Git-*.exe"))
+                        _install_git_from(git_setup)
+
+                    # 工具 py 依赖补装（包内 pydeps/ 有 wheel 才装——zip 是
+                    # 无网机器补依赖的唯一来源；--no-index 绝不联网）
+                    _install_pydeps(os.path.join(workdir, "pydeps"))
 
                     # 铺 claude-code 包到 %APPDATA%\npm\node_modules（npm 标准位）
                     dst = os.path.join(appdata, "npm", "node_modules", "@anthropic-ai",
@@ -512,13 +597,14 @@ def claude_setup_install():
                     shutil.rmtree(dl_dir, ignore_errors=True)
                     _log("已清理临时目录")
 
-            # 验证：强制重新解析
+            # 验证：解析 + 硬验证（真跑一次 --version）
             _log("验证 claude CLI …")
             import src.claude_conn as cc
             cc._exe_cache = None
             try:
                 exe, _shim = _resolve_claude_exe(force=True)
-                _log(f"验证通过：{exe}")
+                _log(f"解析通过：{exe}")
+                _verify_claude_runs(exe)   # 文件在 ≠ 能跑——真执行才算装好
                 # 首次安装完成 → 铺设默认 settings/statusline（仅此刻铺，
                 # 日常使用绝不自动碰 ~/.claude——用户要求）。provision 缺啥补啥，
                 # 用户已有配置不动。

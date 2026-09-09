@@ -222,9 +222,13 @@ def main():
     # ---- 首次启动依赖自检（源码分发场景）----
     # 缺 pip 库时弹引导窗自动安装（同款 UI + 进度动画），装完 execv 重启进程。
     # exe 分发时全部库已打进 exe，自检恒通过、零开销（import 探测 <50ms）。
-    from src.deps_bootstrap import bootstrap_if_needed
+    from src.deps_bootstrap import bootstrap_if_needed, selftest_once
     if not bootstrap_if_needed():
         return
+    # 自依赖自检（每机一次）：全通过写标记不再测；有缺失则把清单传给
+    # 前端——每次启动都提醒哪些功能不可用，直到用户用离线包补装
+    # （exe 分发恒通过，标记写过后零开销）
+    _deps_missing = selftest_once()
 
     # 并行预导入：server 模块（Flask+serial，~600ms）与 webview（~270ms）并行加载，
     # 在主线程 import webview 的同时，子线程预 import server，省 ~270ms 启动时间。
@@ -293,6 +297,15 @@ def main():
         return
     # Flask 已就绪，写 endpoint 供 Claude Code 跨会话发现（写早了 MCP 会探活到未就绪的服务）
     write_endpoint(port)
+
+    # 自依赖自检结果给 server（前端 /api/deps_status 拉取弹提醒）
+    try:
+        _ok, _mr, _mo, _skipped = _deps_missing
+        from src import server as _srv
+        if hasattr(_srv, "set_deps_missing"):
+            _srv.set_deps_missing(_mr, _mo, _skipped)
+    except Exception:
+        pass
 
     # JS API：暴露原生文件选择对话框给前端（拖拽拿不到 File.path 时的 fallback）
     class FileBridge:

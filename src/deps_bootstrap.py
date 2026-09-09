@@ -18,6 +18,7 @@ import os
 import sys
 import subprocess
 import importlib
+import time
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
@@ -43,6 +44,58 @@ def check_deps():
         except ImportError:
             (miss_req if required else miss_opt).append((pip_name, desc))
     return miss_req, miss_opt
+
+
+# ---- 启动自检（每机一次）：config 标记 deps_selftest_ok ----
+def _selftest_flag_path():
+    """标记文件与 config.json 同目录（app_state.HOME_DIR）——源码/打包两态同一路径。"""
+    try:
+        from src.app_state import HOME_DIR
+        return os.path.join(HOME_DIR, "deps_selftest.json")
+    except Exception:
+        # app_state 依赖 flask 之外的纯标准库，但保险起见给独立回退
+        return os.path.join(os.path.expanduser("~"), ".serialconsole_pro",
+                            "deps_selftest.json")
+
+
+def selftest_once():
+    """启动早期调用（main.py，在 bootstrap_if_needed 之后）：
+    探测一轮依赖，全通过 → 写标记，此后启动不再测（用户要求：只一次）。
+    有缺失 → 返回缺失清单给调用方弹提醒（每启动都提醒，除非用户用离线包补装）。
+    返回 (ok, miss_req, miss_opt, skipped)。"""
+    flag = _selftest_flag_path()
+    # 标记存在且值 ok → 不再测
+    try:
+        import json
+        with open(flag, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        if d.get("ok"):
+            return True, [], [], True   # skipped：之前测过，直接放行
+    except Exception:
+        pass
+    miss_req, miss_opt = check_deps()
+    if not (miss_req or miss_opt):
+        try:
+            import json
+            os.makedirs(os.path.dirname(flag), exist_ok=True)
+            with open(flag, "w", encoding="utf-8") as f:
+                json.dump({"ok": True, "ts": time.time()}, f)
+        except Exception:
+            pass
+        return True, [], [], False
+    return False, miss_req, miss_opt, False
+
+
+def mark_selftest_ok():
+    """离线包补装依赖成功后调用：写标记，后续启动不再弹提醒。"""
+    try:
+        import json
+        flag = _selftest_flag_path()
+        os.makedirs(os.path.dirname(flag), exist_ok=True)
+        with open(flag, "w", encoding="utf-8") as f:
+            json.dump({"ok": True, "ts": time.time()}, f)
+    except Exception:
+        pass
 
 
 def _install_page_html(missing, base_url_assets=""):

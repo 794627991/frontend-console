@@ -17,6 +17,25 @@ refreshGlobalStatus();
 connectAiSSE();
 refreshMcpInfo();
 loadRecentList();  // 最近打开列表（SSH/串口/文件 快捷重开）
+
+// 自依赖提醒（每启动一次，直到用户用离线包补装）：缺哪个库 → 哪些功能不可用。
+// 后端标记写过后 /api/deps_status 直接 ok——正常机器零打扰。
+(async function depsStartupNotice() {
+  try {
+    const j = await (await fetch('/api/deps_status')).json();
+    if (j.ok) return;
+    const missing = [...(j.missing_req || []), ...(j.missing_opt || [])];
+    if (!missing.length) return;
+    const lines = missing.map(m => `  ✕ ${m[0]} —— ${m[1]}不可用`).join('\n');
+    const ok = await _ddConfirm('部分功能不可用',
+      `检测到缺少运行库：\n${lines}\n\n` +
+      `需${(j.missing_req||[]).length ? '必需' : ''}库缺失会导致对应功能无法使用。\n` +
+      `有离线包（claude-offline.zip）？点「确定」选择离线包补装（含工具依赖）；\n` +
+      `点「取消」本次跳过（下次启动仍会提醒）。`);
+    if (ok) openClaudeSetup();
+  } catch(_) {}
+})();
+
 if (typeof refreshClaudePanel === 'function') refreshClaudePanel();
 // ↑ 启动即拉一次会话数据：_claudeTitleMap（session_id→备注/aiTitle）建好后
 // renderRecentList 才能把「最近」claude 条目显示成备注名——否则启动时 map 为空，

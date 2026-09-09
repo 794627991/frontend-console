@@ -87,6 +87,22 @@ app.register_blueprint(claude_setup_bp)
 from src.claude_default import claude_default_bp
 app.register_blueprint(claude_default_bp)
 
+# ---- 自依赖自检状态（main 启动时注入，前端每次启动拉取弹提醒） ----
+_deps_state = {"missing_req": [], "missing_opt": [], "skipped": False}
+
+
+def set_deps_missing(miss_req, miss_opt, skipped):
+    """main.py 注入自检结果（deps_bootstrap.selftest_once 的返回值）。"""
+    _deps_state.update(missing_req=miss_req, missing_opt=miss_opt, skipped=skipped)
+
+
+@app.route("/api/deps_status")
+def deps_status():
+    """自依赖状态：缺哪些库、各自影响什么功能；以及离线包补装入口是否可用。"""
+    d = dict(_deps_state)
+    d["ok"] = not (d["missing_req"] or d["missing_opt"])
+    return jsonify(d)
+
 # ---- 全局串口表（_ports/_ports_lock 来自 app_state，此处定义 close_all_ports）----
 def close_all_ports():
     with _ports_lock:
