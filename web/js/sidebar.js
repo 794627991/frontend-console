@@ -220,9 +220,14 @@ async function refreshGlobalStatus() {
   try {
     const r = await fetch('/api/status');
     const j = await r.json();
-    const n = Object.keys(j.ports || {}).length;
-    $('globalStatus').textContent = n + ' 个连接';
-    $('globalDot').className = 'dot' + (n ? ' on' : '');
+    // 顶栏「N 个连接」指示器已移除（改为帮助按钮）；此函数仍被
+    // init.js/连接流程调用——保留 /api/status 探活语义，元素不在就静默。
+    const gs = $('globalStatus');
+    if (gs) {
+      const n = Object.keys(j.ports || {}).length;
+      gs.textContent = n + ' 个连接';
+      $('globalDot').className = 'dot' + (n ? ' on' : '');
+    }
   } catch(e) {}
 }
 

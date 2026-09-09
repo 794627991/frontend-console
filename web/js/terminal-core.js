@@ -168,16 +168,35 @@ function buildTerminal(portId, meta) {
   // ---- Ctrl+V 粘贴剪贴板内容到串口 ----
   // ---- Ctrl+F 查找全部（打开串口下方搜索分栏，列出全部命中行）----
   conn.term.attachCustomKeyEventHandler(e => {
-    if (e.ctrlKey && e.key === 'c' && e.type === 'keydown') {
+    if (e.type !== 'keydown') return true;
+    // Ctrl+=/- / 0：字号调节（xterm 捕获键盘，document keydown 收不到——
+    // 必须在 xterm 的自定义处理里接管，否则"终端内快捷键调字号不生效"）
+    if (e.ctrlKey && !e.altKey && !e.shiftKey) {
+      if (e.key === '+' || e.key === '=') {
+        if (typeof applyFontSettings === 'function')
+          applyFontSettings(Math.max(10, Math.min(24, termFontSize + 1)), uiZoom, true);
+        return false;
+      }
+      if (e.key === '-' || e.key === '_') {
+        if (typeof applyFontSettings === 'function')
+          applyFontSettings(Math.max(10, Math.min(24, termFontSize - 1)), uiZoom, true);
+        return false;
+      }
+      if (e.key === '0') {
+        if (typeof applyFontSettings === 'function') applyFontSettings(13, 100, true);
+        return false;
+      }
+    }
+    if (e.ctrlKey && e.key === 'c') {
       const sel = conn.term.getSelection();
       if (sel) { try { navigator.clipboard.writeText(sel); } catch(_){} return false; }
     }
-    if (e.ctrlKey && (e.key === 'v' || e.key === 'V') && e.type === 'keydown') {
+    if (e.ctrlKey && (e.key === 'v' || e.key === 'V')) {
       // 异步读剪贴板（原生 Win32，无 WebView2 权限弹窗），拿到文本后编码为字节发给串口
       _pasteToConn(conn);
       return false;  // 阻止 xterm 默认行为
     }
-    if (e.ctrlKey && (e.key === 'f' || e.key === 'F') && e.type === 'keydown') {
+    if (e.ctrlKey && (e.key === 'f' || e.key === 'F')) {
       toggleTermSearchPane(conn, true);
       conn.termSearchInput.focus(); conn.termSearchInput.select();
       return false;

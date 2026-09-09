@@ -206,6 +206,15 @@ def ico_files(fn):
 def api_ports():
     return jsonify({"ports": list_ports(), "bauds": COMMON_BAUDS})
 
+@app.route("/api/help_readme")
+def api_help_readme():
+    """帮助按钮：返回 README.md 绝对路径（前端 openFileSmart 工具内打开）。
+    源码运行=项目根 README；exe=spec datas 打进 _MEIPASS 的 README.md。"""
+    p = os.path.join(RES_DIR, "README.md")
+    if not os.path.isfile(p):
+        return jsonify({"ok": False, "err": "README.md 不存在"})
+    return jsonify({"ok": True, "path": p})
+
 @app.route("/api/status")
 def api_status():
     with _ports_lock:

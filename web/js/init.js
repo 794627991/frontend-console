@@ -47,6 +47,13 @@ $('btnDiff').onclick = openDiffPicker;  // 文件对比（原生选两份 → Di
 $('btnBitCalc').onclick = buildBitCalcTab;  // 程序员计算器（寄存器位编辑+位运算+表达式）
 $('btnFiles').onclick = showFilesModal;  // 文件列表弹窗（打开已有文件）
 $('btnClaude').onclick = () => connectClaude();  // 内嵌终端启动 Claude Code（ConPTY 真实 CLI）
+// 帮助：工具内打开 README.md（openFileSmart 智能分发，md 走预览/编辑）
+$('btnHelp').onclick = () => {
+  fetch('/api/help_readme').then(r => r.json()).then(j => {
+    if (j.ok && j.path) openFileSmart(j.path, 'auto');
+    else showBanner('未找到 README.md', 3000, true);
+  }).catch(() => showBanner('帮助打开失败', 3000, true));
+};
 _reportPerf();  // 初始化完成，上报计时
 // 轮询降载：连接增删时 refreshSidebar/refreshGlobalStatus 已被事件调用处触发，
 // 周期轮询只作兜底，全部放宽（3s→15s / 5s→30s），减少常态 HTTP + 重排叠加（输入卡顿 Contributor）

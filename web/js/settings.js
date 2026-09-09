@@ -14,10 +14,10 @@ function _ddFmtSize(n) {
 
 // ---- 设置弹窗骨架：左导航 + 右内容区（分区懒渲染）----
 const _SET_SECTIONS = [
+  { id: 'term',  icon: '⌨', name: '终端设置', desc: '字号 / 快捷键映射 / 自动复制' },
   { id: 'appearance', icon: '🎨', name: '外观', desc: '换肤 / 界面缩放' },
   { id: 'api',   icon: '🔑', name: 'API 配置', desc: 'Claude API Token / settings.json' },
   { id: 'reinstall', icon: '♻', name: 'Claude 重装', desc: '重新安装 / 修复状态栏 / 离线包目录' },
-  { id: 'term',  icon: '⌨', name: '终端设置', desc: '字号 / 快捷键映射 / 自动复制' },
   { id: 'data',  icon: '📁', name: '数据目录', desc: '日志 / 笔记 / 缓存的位置与迁移' },
   { id: 'assoc', icon: '🔗', name: '文件关联', desc: '接管/还原 txt 等文本文件的双击打开方式' },
 ];
@@ -534,7 +534,7 @@ async function _assocBulk(pane, act) {
 
 function openSettingsPanel(section) {
   const m = _stModal();
-  _stShowSection(m, section || 'appearance');
+  _stShowSection(m, section || 'term');
   m.classList.add('show');
 }
 
@@ -617,7 +617,7 @@ function _ddConfirm(title, msg) {  return new Promise(resolve => {
   if (logoIcon) {
     logoIcon.title = '设置（数据目录 / 外观主题）';
     logoIcon.style.cursor = 'pointer';
-    logoIcon.addEventListener('click', () => openSettingsPanel('appearance'));
+    logoIcon.addEventListener('click', () => openSettingsPanel('term'));
   }
 })();
 
