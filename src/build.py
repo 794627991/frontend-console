@@ -26,10 +26,24 @@ def build():
     if os.path.exists(dist):
         sz = os.path.getsize(dist) / 1024 / 1024
         print(f"\n打包成功: {dist} ({sz:.1f} MB)")
+        _sync_offline_pkg(dist)
         return dist
     else:
         print("打包失败：未找到 exe")
         return None
+
+
+def _sync_offline_pkg(dist_exe):
+    """确保 dist/offline_pkg 与项目根 offline_pkg 同步（随包离线安装资源：
+    Git 安装器 / Node MSI / claude-code 包，Claude 离线安装用）。
+    PyInstaller 只产单 exe，offline_pkg 是旁挂目录——根目录有而 dist 没有
+    就复制过去（根目录没有则不动 dist 已有的）。"""
+    src_pkg = os.path.join(BASE, "offline_pkg")
+    dst_pkg = os.path.join(os.path.dirname(dist_exe), "offline_pkg")
+    if os.path.isdir(src_pkg) and not os.path.isdir(dst_pkg):
+        print("复制 offline_pkg → dist/（Claude 离线安装资源，几百 MB 需几分钟）…")
+        shutil.copytree(src_pkg, dst_pkg)
+        print("offline_pkg 已同步到 dist/")
 
 if __name__ == "__main__":
     build()

@@ -38,18 +38,50 @@ def _log(msg):
 
 # ---- 资源探测 ----
 
-# 离线资源默认搜索位：D:\\AI\\安装环境（用户装机资源目录）+ 工具旁 offline_pkg/
+# 离线资源默认搜索位（按优先级）：
+# 1. 用户自定义目录（config.json offline_pkg_dir——设置界面可改）
+# 2. 工具旁 offline_pkg/（随包分发的离线安装资源，dist 打包时带上）
+# 3. D:\AI\安装环境（装机资源目录；换机器时工具所在盘的 \AI\安装环境 也试）
 _ENV_DIRS = [r"D:\AI\安装环境"]
+
+
+def _app_dir():
+    """工具根目录（src/ 的上级——打包 exe 场景为 exe 所在目录）。"""
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _offline_pkg_dirs():
+    """离线资源搜索目录列表（含用户自定义路径，按优先级）。"""
+    dirs = []
+    # 1. 用户自定义（config.json offline_pkg_dir）
+    try:
+        from .app_state import _load_config
+        custom = (_load_config().get("offline_pkg_dir") or "").strip()
+        if custom and os.path.isdir(custom):
+            dirs.append(custom)
+    except Exception:
+        pass
+    # 2. 工具旁 offline_pkg/（随包资源，最高可用性——无 config 也有）
+    app_dir = _app_dir()
+    dirs.append(os.path.join(app_dir, "offline_pkg"))
+    dirs.append(os.path.join(app_dir, "dist", "offline_pkg"))
+    # 3. 装机资源目录（本机 D:\AI\安装环境 + 工具所在盘同路径）
+    dirs.extend(_ENV_DIRS)
+    dirs.append(os.path.join(os.path.splitdrive(app_dir)[0] + os.sep,
+                             "AI", "安装环境"))
+    # 去重保序
+    seen, out = set(), []
+    for d in dirs:
+        dl = d.lower()
+        if dl not in seen:
+            seen.add(dl)
+            out.append(d)
+    return out
 
 
 def _find_installer(pattern, extra_dirs=None):
     """按 glob 找安装器（Git exe / Node msi）。返回绝对路径或 None。"""
-    dirs = list(_ENV_DIRS) + list(extra_dirs or [])
-    # 工具所在盘的 \\AI\\安装环境 也试一次（换机器盘符不定）
-    app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    dirs.append(os.path.join(os.path.splitdrive(app_dir)[0] + os.sep,
-                             "AI", "安装环境"))
-    dirs.append(os.path.join(app_dir, "offline_pkg"))
+    dirs = list(_offline_pkg_dirs()) + list(extra_dirs or [])
     for d in dirs:
         if not d or not os.path.isdir(d):
             continue
@@ -60,12 +92,19 @@ def _find_installer(pattern, extra_dirs=None):
 
 
 def _claude_pkg_dir():
-    """本机 npm 全局包里的 claude-code 目录（打包源）。"""
+    """claude-code 包目录（离线直装的包源）。
+    优先随包/自定义离线资源目录里的 claude-code（无网机器没有 npm 包），
+    其次本机 npm 全局包。"""
+    for d in _offline_pkg_dirs():
+        p = os.path.join(d, "claude-code")
+        if os.path.isdir(os.path.join(p, "bin")):
+            return p
     appdata = os.environ.get("APPDATA", "")
-    if not appdata:
-        return None
-    p = os.path.join(appdata, "npm", "node_modules", "@anthropic-ai", "claude-code")
-    return p if os.path.isdir(p) else None
+    if appdata:
+        p = os.path.join(appdata, "npm", "node_modules", "@anthropic-ai", "claude-code")
+        if os.path.isdir(p):
+            return p
+    return None
 
 
 def _node_ok():
@@ -107,6 +146,12 @@ def claude_setup_status():
                     size += os.path.getsize(os.path.join(root, f))
                 except OSError:
                     pass
+    # 用户自定义离线包目录（config）
+    try:
+        from .app_state import _load_config
+        custom_dir = (_load_config().get("offline_pkg_dir") or "").strip()
+    except Exception:
+        custom_dir = ""
     return jsonify({
         "ok": True,
         "claude": claude,
@@ -115,7 +160,28 @@ def claude_setup_status():
         "pkg_dir": pkg or "", "pkg_size": size,
         "git_installer": _find_installer("Git-*.exe") or "",
         "node_installer": _find_installer("node-v*.msi") or "",
+        "offline_pkg_dir": custom_dir,
     })
+
+
+@claude_setup_bp.route("/api/claude/setup_pkg_dir", methods=["POST"])
+def claude_setup_pkg_dir():
+    """设置/查看离线安装包搜索目录。body: {dir?} —— dir 为空串=清除自定义（回随包默认）。
+    存 config.json offline_pkg_dir。目录形式不限制（zip 由「制作离线包」按钮产出，
+    这里管的是解包后的资源目录/安装器目录）。"""
+    data = request.get_json(force=True, silent=True) or {}
+    from .app_state import _load_config, _save_config
+    cfg = _load_config()
+    if "dir" in data:
+        d = (data.get("dir") or "").strip()
+        if d and not os.path.isdir(d):
+            return jsonify({"ok": False, "err": f"目录不存在：{d}"}), 400
+        if d:
+            cfg["offline_pkg_dir"] = d
+        else:
+            cfg.pop("offline_pkg_dir", None)
+        _save_config(cfg)
+    return jsonify({"ok": True, "offline_pkg_dir": cfg.get("offline_pkg_dir", "")})
 
 
 # ---- 状态轮询 ----

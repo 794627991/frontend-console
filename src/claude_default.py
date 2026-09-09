@@ -184,7 +184,9 @@ def provision_defaults(force_statusline=False):
         if k not in env:
             env[k] = v
             changed = True
-    # BASE_URL：缺失才写（用户改过别的网关就尊重——只保证全新机器有正确默认）
+    # BASE_URL 强制写死 lanz 内网网关（用户定：别人机器没有本机代理，
+    # 默认值必须是 lanz 网关才可用——只补缺不覆盖本机自定义值，
+    # 全新机器首装必然拿到 lanz 网关）
     if "ANTHROPIC_BASE_URL" not in env:
         env["ANTHROPIC_BASE_URL"] = DEFAULT_BASE_URL
         changed = True

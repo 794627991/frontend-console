@@ -82,6 +82,15 @@ async function _stRenderApiPane(pane) {
         <div class="dd-label">BASE_URL（内网网关，固定不可改）</div>
         <div class="dd-path" id="apiBaseUrl" style="user-select:text;">—</div>
       </div>
+      <div class="dd-cur" style="margin-top:14px;">
+        <div class="dd-label">离线安装包目录</div>
+        <div class="dd-row" style="display:flex;gap:8px;margin-top:6px;align-items:center;">
+          <div class="dd-path" id="apiPkgDir" style="flex:1;user-select:text;">—</div>
+          <button class="btn ghost icon-btn" id="apiPkgPick" title="浏览选择目录">📂</button>
+          <button class="btn ghost icon-btn" id="apiPkgReset" title="清除自定义，恢复默认（工具目录 offline_pkg）">↺</button>
+        </div>
+        <div class="dd-sub" style="margin-top:4px;">Claude 离线安装资源（Git 安装器 / Node MSI / claude-code 包）的搜索目录。默认随工具分发的 offline_pkg；可改指向自己的资源目录（zip 包需先解压，或用安装窗「制作离线包」生成的目录）。</div>
+      </div>
       <div class="dd-actions" style="margin-top:16px;">
         <button class="btn ghost" id="apiOpenSettings" title="在资源管理器中定位 settings.json">📂 打开 settings.json</button>
         <button class="btn ghost" id="apiProvision" title="恢复 Claude 默认配置（settings 缺省项补全 + statusline 重铺；已有配置不动，statusline 强制覆盖）">↺ 恢复 Claude 默认配置</button>
@@ -98,8 +107,33 @@ async function _stRenderApiPane(pane) {
       pane.querySelector('#apiBaseUrl').textContent = j.base_url || j.default_base_url;
       pane.querySelector('#apiNote').textContent = 'settings.json 路径：' + j.settings_path;
     } catch(e) { stateEl.textContent = '读取失败: ' + e; }
+    try {
+      const st = await (await fetch('/api/claude/setup_status')).json();
+      pane.querySelector('#apiPkgDir').textContent = st.offline_pkg_dir || '默认（工具目录 offline_pkg）';
+    } catch(_) {}
   };
   refresh();
+  // 离线安装包目录：浏览选择 / 清除自定义
+  pane.querySelector('#apiPkgPick').onclick = async () => {
+    try {
+      const dir = await pywebview.api.pick_dir();
+      if (!dir) return;
+      const r = await fetch('/api/claude/setup_pkg_dir', {method:'POST',
+        headers:{'Content-Type':'application/json'}, body: JSON.stringify({dir})});
+      const j = await r.json();
+      if (!j.ok) { showBanner('设置失败: ' + (j.err || ''), 4000, true); return; }
+      showBanner('离线安装包目录已更新');
+      refresh();
+    } catch(e) { showBanner('目录选择器不可用，或请求失败: ' + e, 4000, true); }
+  };
+  pane.querySelector('#apiPkgReset').onclick = async () => {
+    try {
+      await fetch('/api/claude/setup_pkg_dir', {method:'POST',
+        headers:{'Content-Type':'application/json'}, body: JSON.stringify({dir: ''})});
+      showBanner('已恢复默认离线包目录');
+      refresh();
+    } catch(_) {}
+  };
   pane.querySelector('#apiTokenSave').onclick = async () => {
     const t = pane.querySelector('#apiTokenInput').value.trim();
     if (!t) { showBanner('请输入 API Token', 3000, true); return; }
