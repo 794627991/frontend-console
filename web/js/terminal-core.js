@@ -184,6 +184,21 @@ function buildTerminal(portId, meta) {
     return true;
   });
 
+  // ---- 终端快捷键映射（config.json term_keys，设置界面可改）----
+  // right_action: ctrl_menu（Ctrl+右键弹菜单，默认）/ right_menu（右键直接弹菜单）
+  //              / right_paste（右键直接粘贴）；Shift+右键恒为粘贴（PuTTY 习惯）
+  // auto_copy: 选中松开鼠标即自动复制（PuTTY 风格）
+  conn.termKeys = { right_action: 'ctrl_menu', auto_copy: false };
+  fetch('/api/theme').then(r => r.json()).then(j => {
+    if (j.ok && j.term_keys) conn.termKeys = j.term_keys;
+  }).catch(() => {});
+  conn.term.onSelectionChange(() => {
+    if (conn.termKeys && conn.termKeys.auto_copy) {
+      const sel = conn.term.getSelection();
+      if (sel) { try { navigator.clipboard.writeText(sel); } catch(_){} }
+    }
+  });
+
   // ---- Ctrl+右键上下文菜单 / Shift+右键直接粘贴（PuTTY 习惯，与 Ctrl+V 同款）----
   conn.xtermWrap.addEventListener('contextmenu', e => {
     if (e.shiftKey) {  // Shift+右键 = 粘贴剪贴板
@@ -191,7 +206,18 @@ function buildTerminal(portId, meta) {
       _pasteToConn(conn, true);
       return;
     }
-    if (!e.ctrlKey) return;  // 普通右键保持 xterm 默认行为
+    const act = (conn.termKeys && conn.termKeys.right_action) || 'ctrl_menu';
+    if (act === 'right_paste') {  // 右键直接粘贴（不弹菜单）
+      e.preventDefault();
+      _pasteToConn(conn, true);
+      return;
+    }
+    if (act === 'right_menu') {   // 右键直接弹菜单（不需 Ctrl）
+      e.preventDefault();
+      showCtxMenu(e.clientX, e.clientY, conn);
+      return;
+    }
+    if (!e.ctrlKey) return;  // ctrl_menu：普通右键保持 xterm 默认行为
     e.preventDefault();
     showCtxMenu(e.clientX, e.clientY, conn);
   });

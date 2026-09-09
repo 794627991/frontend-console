@@ -15,6 +15,7 @@ function _ddFmtSize(n) {
 // ---- 设置弹窗骨架：左导航 + 右内容区（分区懒渲染）----
 const _SET_SECTIONS = [
   { id: 'api',   icon: '🔑', name: 'API 配置', desc: 'Claude API Token / settings.json' },
+  { id: 'termkeys', icon: '⌨', name: '终端快捷键', desc: '右键行为 / 自动复制' },
   { id: 'data',  icon: '📁', name: '数据目录', desc: '日志 / 笔记 / 缓存的位置与迁移' },
   { id: 'assoc', icon: '🔗', name: '文件关联', desc: '接管/还原 txt 等文本文件的双击打开方式' },
   { id: 'theme', icon: '🎨', name: '外观主题', desc: '整窗配色切换' },
@@ -58,9 +59,72 @@ function _stShowSection(m, sec) {
     el.classList.toggle('active', el.dataset.sec === sec));
   const pane = m.querySelector('#stPane');
   if (sec === 'api') _stRenderApiPane(pane);
+  else if (sec === 'termkeys') _stRenderTermKeysPane(pane);
   else if (sec === 'data') _stRenderDataPane(pane);
   else if (sec === 'assoc') _stRenderAssocPane(pane);
   else if (sec === 'theme') _stRenderThemePane(pane);
+}
+
+// ---- 终端快捷键子页：右键行为 + 自动复制（config.json term_keys）----
+const _TK_OPTIONS = [
+  { v: 'ctrl_menu',  n: 'Ctrl + 右键 → 弹菜单', d: '默认。普通右键为 xterm 原生行为' },
+  { v: 'right_menu', n: '右键 → 直接弹菜单', d: '不需按 Ctrl，单右键即出菜单' },
+  { v: 'right_paste', n: '右键 → 直接粘贴', d: '单右键立即粘贴剪贴板（PuTTY 默认风格）' },
+];
+async function _stRenderTermKeysPane(pane) {
+  let tk = { right_action: 'ctrl_menu', auto_copy: false };
+  try {
+    const j = await (await fetch('/api/theme')).json();
+    if (j.ok && j.term_keys) tk = j.term_keys;
+  } catch(_) {}
+  pane.innerHTML = `
+    <div class="dd-body">
+      <div class="dd-label">终端快捷键映射</div>
+      <div class="dd-sub">终端内复制/粘贴/右键行为定制。改动立即生效并持久保存。</div>
+      <div class="dd-cur" style="margin-top:12px;">
+        <div class="dd-label">右键行为</div>
+        <div class="dd-row" style="margin-top:6px;display:flex;flex-direction:column;gap:8px;">
+          ${_TK_OPTIONS.map(o => `
+            <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;">
+              <input type="radio" name="tkRight" value="${o.v}" ${tk.right_action === o.v ? 'checked' : ''} style="margin-top:3px;">
+              <span><span style="font-weight:600;">${o.n}</span><br><span style="color:var(--muted);font-size:12px;">${o.d}</span></span>
+            </label>`).join('')}
+        </div>
+      </div>
+      <div class="dd-cur" style="margin-top:14px;">
+        <div class="dd-label">选中自动复制</div>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:6px;cursor:pointer;">
+          <input type="checkbox" id="tkAutoCopy" ${tk.auto_copy ? 'checked' : ''}>
+          <span>鼠标选中终端文本后松开即自动复制（PuTTY 风格）</span>
+        </label>
+      </div>
+      <div class="dd-cur" style="margin-top:14px;">
+        <div class="dd-label">固定快捷键（恒可用，不受上面配置影响）</div>
+        <div class="dd-sub" style="margin-top:4px;">
+          Ctrl+C 复制选中 / 发 ^C 中断　·　Ctrl+V 粘贴　·　Ctrl+F 查找<br>
+          Shift+右键 粘贴　·　Ctrl+右键 弹菜单（右键行为=ctrl_menu 时）
+        </div>
+      </div>
+      <div style="margin-top:16px;">
+        <button class="btn primary" id="tkSave">保存</button>
+      </div>
+    </div>`;
+  pane.querySelector('#tkSave').onclick = async () => {
+    const ra = pane.querySelector('input[name="tkRight"]:checked');
+    const ac = pane.querySelector('#tkAutoCopy').checked;
+    try {
+      await fetch('/api/theme', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({term_keys: {right_action: ra ? ra.value : 'ctrl_menu', auto_copy: ac}})});
+      // 已开终端连接的配置热更新（下次 contextmenu 读 conn.termKeys）
+      Object.values(connections).forEach(c => {
+        if (c.termKeys) {
+          c.termKeys.right_action = ra ? ra.value : 'ctrl_menu';
+          c.termKeys.auto_copy = ac;
+        }
+      });
+      showBanner('终端快捷键已保存');
+    } catch(e) { showBanner('保存失败：' + e, 3000, true); }
+  };
 }
 
 // ---- API 配置子页：Token 唯一可改；BASE_URL 只读显示；快捷打开 settings.json ----

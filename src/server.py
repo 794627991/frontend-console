@@ -530,15 +530,31 @@ def api_theme():
     """主题持久化。localStorage 按 origin（127.0.0.1:端口）隔离，而 Flask 每次
     启动端口随机 → 换肤记忆永远读不到。走 config.json 跨端口稳定。
     兼职通用小配置读写：GET 带回 data_dir_prompted（首启引导标记）；
-    POST body 含 data_dir_prompted 时写入（与主题字段互不干扰）。"""
+    POST body 含 data_dir_prompted 时写入（与主题字段互不干扰）。
+    终端快捷键映射（term_keys）也在此兼职读写：
+      right_action: ctrl_menu / right_menu / right_paste
+      auto_copy: bool（选中即自动复制）
+    """
     if request.method == "GET":
         cfg = _load_config()
+        tk = cfg.get("term_keys", {})
         return jsonify({"ok": True, "theme": cfg.get("theme", "deepblue"),
-                        "data_dir_prompted": bool(cfg.get("data_dir_prompted"))})
+                        "data_dir_prompted": bool(cfg.get("data_dir_prompted")),
+                        "term_keys": {
+                            "right_action": tk.get("right_action", "ctrl_menu"),
+                            "auto_copy": bool(tk.get("auto_copy", False)),
+                        }})
     data = request.get_json(force=True) or {}
     if "data_dir_prompted" in data:
         # 仅写引导标记的轻请求（不带 theme 字段）
         _save_config({**_load_config(), "data_dir_prompted": bool(data["data_dir_prompted"])})
+    if "term_keys" in data and isinstance(data["term_keys"], dict):
+        tk = data["term_keys"]
+        # 白名单校验：right_action 只认三个值，防脏配置
+        ra = tk.get("right_action")
+        if ra in ("ctrl_menu", "right_menu", "right_paste"):
+            _save_config({**_load_config(), "term_keys": {
+                "right_action": ra, "auto_copy": bool(tk.get("auto_copy", False))}})
     theme = (data.get("theme") or "").strip()
     if theme:
         _save_config({**_load_config(), "theme": theme})

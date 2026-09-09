@@ -386,7 +386,11 @@ def main():
                 u32 = ctypes.windll.user32
                 k32 = ctypes.windll.kernel32
                 CF_UNICODETEXT = 13
-                GMEM_MOVEABLE = 0x0002
+                # 64 位下 ctypes 默认 restype 是 32 位 int，句柄会截断成负数/
+                # 错值 → GlobalLock 拿 None → 恒空（copy_image_to_clipboard 同款坑，
+                # 这里之前漏了显式声明——"剪贴板总是空的"根因）
+                u32.GetClipboardData.restype = wintypes.HANDLE
+                u32.GetClipboardData.argtypes = [wintypes.UINT]
                 if not u32.OpenClipboard(0):
                     return ""
                 try:
