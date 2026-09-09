@@ -286,8 +286,12 @@ def claude_setup_offline_pack():
 
 # 官方下载位（联网通道资源目录没安装器时用；版本与 D:\AI\安装环境 对齐）
 _NODE_URL = "https://nodejs.org/dist/v24.19.0/node-v24.19.0-x64.msi"
+# 免安装 zip（MSI 提权失败 1603 的兜底，零权限解压即用）
+_NODE_ZIP_URL = "https://nodejs.org/dist/v24.19.0/node-v24.19.0-win-x64.zip"
+# Git for Windows 实测可用地址（tag 命名规则：v主.次.修订.windows.N，资产名 Git-主.次.修订.N）
+# 之前写的 v2.55.0.4.windows.1 不存在 → 404。改地址前务必 curl 实测 200。
 _GIT_URL = ("https://github.com/git-for-windows/git/releases/download/"
-            "v2.55.0.4.windows.1/Git-2.55.0.4-64-bit.exe")
+            "v2.55.0.windows.5/Git-2.55.0.5-64-bit.exe")
 
 
 def _download(url, dst):
@@ -320,9 +324,35 @@ def _download(url, dst):
     return dst
 
 
+def _preflight_urls():
+    """联网安装预检：所有要下载的 URL 先 HEAD 探一遍（小白用户——别等
+    下载到一半才发现 404）。返回 (ok, 消息)。已有本机资源的项跳过对应 URL。"""
+    import urllib.request
+    checks = []
+    if not (shutil.which("node.exe") or shutil.which("node")):
+        checks.append(("Node.js MSI", _NODE_URL))
+        checks.append(("Node.js 免安装包", _NODE_ZIP_URL))
+    if not _git_ok():
+        checks.append(("Git", _GIT_URL))
+    if not checks:
+        _log("Node/Git 本机已有，无需下载")
+        return True, ""
+    _log(f"预检下载地址（{len(checks)} 项）…")
+    for name, url in checks:
+        try:
+            req = urllib.request.Request(url, method="HEAD")
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                if resp.status != 200:
+                    return False, f"{name} 下载地址失效（HTTP {resp.status}）"
+            _log(f"  ✓ {name} 地址正常")
+        except Exception as e:
+            return False, f"{name} 无法访问（{e}）——请检查网络后重试"
+    return True, ""
+
+
 def _install_node_if_missing(dl_dir):
-    """Node 缺则静默装：先找本地 MSI 资源（离线资源目录），没有且能联网
-    就下载官方 MSI。两条安装通道共用。"""
+    """Node 缺则静默装：先本地资源，再下载。MSI 提权装失败（1603 等）自动
+    兜底 zip 免安装版——解压即用零提权，小白机器（无管理员）必走通。"""
     if shutil.which("node.exe") or shutil.which("node"):
         _log("Node 已存在，跳过安装")
         return True
@@ -335,8 +365,40 @@ def _install_node_if_missing(dl_dir):
     return bool(shutil.which("node.exe") or shutil.which("node"))
 
 
+def _install_node_zip(zip_path):
+    """zip 免安装版兜底：解压到 %APPDATA%\\nodejs + 写用户 PATH。
+    零提权零 msiexec——MSI 1603（无管理员）后的可靠退路。"""
+    import zipfile
+    dst_root = os.path.join(os.environ.get("APPDATA", ""), "nodejs")
+    os.makedirs(dst_root, exist_ok=True)
+    _log(f"解压 Node 免安装版 → {dst_root} …")
+    with zipfile.ZipFile(zip_path) as zf:
+        zf.extractall(dst_root)
+    # zip 内层是 node-v24.19.0-win-x64/，node.exe 在其中
+    inner = [d for d in os.listdir(dst_root)
+             if os.path.isdir(os.path.join(dst_root, d))]
+    node_dir = os.path.join(dst_root, inner[0]) if inner else dst_root
+    # 写用户级 PATH（注册表，免提权）
+    import winreg
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment", 0,
+                        winreg.KEY_SET_VALUE) as k:
+        cur = ""
+        try:
+            cur = winreg.QueryValueEx(k, "Path")[0]
+        except OSError:
+            pass
+        if node_dir.lower() not in cur.lower():
+            winreg.SetValueEx(k, "Path", 0, winreg.REG_EXPAND_SZ,
+                              (cur + ";" if cur else "") + node_dir)
+    _log(f"Node PATH 已写入用户注册表：{node_dir}")
+    _refresh_process_path()
+    # 进程内立刻补上，不用等新开终端
+    os.environ["PATH"] = node_dir + os.pathsep + os.environ.get("PATH", "")
+
+
 def _install_node_from(msi):
-    """msiexec 静默装 Node。"""
+    """msiexec 静默装 Node；退出码 1603（无管理员权限）等失败自动转 zip 免安装版。
+    zip 来源优先级：离线包内 install/node-win-x64.zip > 本地资源目录 > 官方下载。"""
     if not (msi and os.path.isfile(msi)):
         _log("警告：无 Node 安装器且本机无 Node——claude.cmd 需要 node.exe")
         return
@@ -345,6 +407,24 @@ def _install_node_from(msi):
                        capture_output=True, timeout=900)
     _log(f"msiexec 退出码 {r.returncode}")
     _refresh_process_path()   # msiexec 写注册表，本进程环境不自动更新
+    if r.returncode != 0 or not (shutil.which("node.exe") or shutil.which("node")):
+        # 1603=通用安装失败（绝大多数是无管理员权限，per-machine MSI 必需）
+        # ——改走 zip 免安装版：解压 %APPDATA%\nodejs + 用户 PATH，零提权
+        _log("MSI 安装失败（多为无管理员权限），改用免安装 zip 版（零提权）…")
+        cand = []
+        # 离线包解压目录的 zip（install/ 里，与 msi 同目录）
+        cand.append(os.path.join(os.path.dirname(msi), "node-win-x64.zip"))
+        cand.append(os.path.join(os.path.dirname(msi), "node-v24.19.0-win-x64.zip"))
+        # 本地资源目录（联网通道）
+        lz = _find_installer("node-v*-win-x64.zip")
+        if lz:
+            cand.append(lz)
+        zpath = next((c for c in cand if c and os.path.isfile(c)), None)
+        if not zpath:
+            # 离线包没带 zip 也无本地资源 → 下载（离线机器会失败，报错说明白）
+            zpath = os.path.join(os.path.dirname(msi), "node-win-x64.zip")
+            _download(_NODE_ZIP_URL, zpath)
+        _install_node_zip(zpath)
 
 
 def _install_git_if_missing(dl_dir):
@@ -549,7 +629,16 @@ def claude_setup_install():
             dl_dir = os.path.join(appdata, ".claude_offline_tmp")
             try:
                 if mode == "online":
+                    # 预检：下载地址先 HEAD 探活（小白体验——别下载到一半 404）
+                    ok, msg = _preflight_urls()
+                    if not ok:
+                        raise RuntimeError(f"预检失败：{msg}")
                     _install_node_if_missing(dl_dir)   # npm 依赖 Node——先补齐
+                    # Node 装完必须真有 node 可用（MSI 1603 无提权已走 zip 兜底，
+                    # 再没有就是彻底失败——中止，不带病继续）
+                    if not (shutil.which("node.exe") or shutil.which("node")):
+                        raise RuntimeError("Node 安装失败——请截图日志反馈，"
+                                           "或改用「📂 离线包安装」")
                     _install_git_if_missing(dl_dir)
                     _npm_install_global()
                 else:
@@ -577,11 +666,15 @@ def claude_setup_install():
                     if not os.path.isdir(pkg_dir):
                         raise RuntimeError("包内无 claude-code 目录")
 
-                    # Node / Git：缺才静默装（包内资源）
+                    # Node / Git：缺才静默装（包内资源）。node.msi 提权失败自动
+                    # 转包内 zip 免安装版（离线机器同样可能无管理员）
                     if shutil.which("node.exe") or shutil.which("node"):
                         _log("Node 已存在，跳过安装")
                     else:
                         _install_node_from(node_msi)
+                    if not (shutil.which("node.exe") or shutil.which("node")):
+                        raise RuntimeError("Node 安装失败（MSI 无权限且包内无 zip）——"
+                                           "请换有管理员的机器或反馈日志")
                     if _git_ok():
                         _log("Git 已存在，跳过安装")
                     else:
