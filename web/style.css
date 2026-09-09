@@ -885,6 +885,44 @@
     word-break: break-all; max-width: 100%; }
   .bc-expr-res.err { color: var(--neon-red); }
 
+  /* ===== 计算器扩展区：点按键盘 + 时间戳 + 历史（仿 Windows 计算器）===== */
+  .bc-extra { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+  .bc-keypad {
+    display: grid; grid-template-columns: repeat(10, 1fr); gap: 4px;
+    flex: 1 1 340px; min-width: 300px;
+  }
+  .bc-key {
+    border: 1px solid var(--border); border-radius: 5px; background: var(--bg-input);
+    color: var(--fg); font-family: var(--font-mono); font-size: 12px;
+    text-align: center; padding: 7px 0; cursor: pointer; user-select: none;
+    transition: border-color .1s, color .1s;
+  }
+  .bc-key:hover { border-color: var(--accent); color: var(--accent); }
+  .bc-key-dim { visibility: hidden; border: none; background: none; padding: 7px 0; }
+  .bc-key[data-bc-key="="] { border-color: var(--accent); color: var(--accent); font-weight: 700; }
+  .bc-key[data-bc-key="C"], .bc-key[data-bc-key="⌫"] { color: var(--neon-red); }
+  .bc-side { flex: 1 1 300px; min-width: 280px; display: flex; flex-direction: column; gap: 10px; }
+  .bc-box {
+    border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
+    background: var(--bg-card);
+  }
+  .bc-box-title { font-weight: 600; font-size: 12px; }
+  .bc-ts-out { margin-top: 8px; font-family: var(--font-mono); line-height: 1.8; }
+  .bc-dt { background: var(--bg-input); border: 1px solid var(--border); border-radius: 5px;
+    color: var(--fg); font-family: var(--font-mono); font-size: 12px; padding: 4px 8px;
+    color-scheme: dark; }
+  .bc-dt:focus { border-color: var(--accent); outline: none; }
+  .bc-hlist { margin-top: 8px; max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+  .bc-hitem {
+    border: 1px solid var(--border); border-radius: 5px; padding: 5px 8px;
+    cursor: pointer; display: flex; flex-direction: column; gap: 1px;
+    transition: border-color .1s;
+  }
+  .bc-hitem:hover { border-color: var(--accent); }
+  .bc-hitem-e { font-family: var(--font-mono); font-size: 11px; color: var(--fg);
+    word-break: break-all; }
+  .bc-hitem-r { font-family: var(--font-mono); font-size: 11px; color: var(--accent); }
+
   /* ===== 侧边栏底部 TFTP 面板（高度可拖拽）===== */
   .tftp-resizer {
     flex-shrink: 0; height: 7px; cursor: row-resize;

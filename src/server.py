@@ -534,6 +534,20 @@ def api_logs():
     else:                     files.sort(key=lambda x: x["mtime"], reverse=True)  # time_desc 默认
     return jsonify({"logs": files, "dir": LOG_DIR})
 
+def _calc_hist_clean(items):
+    """计算器历史清洗：只要 {expr,res} 均为字符串的条目，字符串截断 200 字符，上限 50。"""
+    out = []
+    if not isinstance(items, list):
+        return out
+    for it in items:
+        if (isinstance(it, dict) and isinstance(it.get("expr"), str)
+                and isinstance(it.get("res"), str)):
+            out.append({"expr": it["expr"][:200], "res": it["res"][:200]})
+            if len(out) >= 50:
+                break
+    return out
+
+
 @app.route("/api/theme", methods=["GET", "POST"])
 def api_theme():
     """主题持久化。localStorage 按 origin（127.0.0.1:端口）隔离，而 Flask 每次
@@ -544,6 +558,7 @@ def api_theme():
       right_action: ctrl_menu / right_menu / right_paste
       auto_copy: bool（选中即自动复制）
       term_font_size: int 10-24（终端字号，默认 13）
+    计算器历史（calc_history）也在此兼职读写：[{expr, res}] 上限 50 条。
       ui_zoom: int 80-130（界面缩放百分比，默认 100）
     """
     if request.method == "GET":
@@ -551,6 +566,7 @@ def api_theme():
         tk = cfg.get("term_keys", {})
         return jsonify({"ok": True, "theme": cfg.get("theme", "deepblue"),
                         "data_dir_prompted": bool(cfg.get("data_dir_prompted")),
+                        "calc_history": _calc_hist_clean(cfg.get("calc_history", [])),
                         "term_keys": {
                             "right_action": tk.get("right_action", "ctrl_menu"),
                             "auto_copy": bool(tk.get("auto_copy", False)),
@@ -577,6 +593,9 @@ def api_theme():
                 "term_font_size": _clamp(tk.get("term_font_size", 13), 10, 24, 13),
                 "ui_zoom": _clamp(tk.get("ui_zoom", 100), 80, 130, 100),
             }})
+    if "calc_history" in data and isinstance(data["calc_history"], list):
+        # 计算器历史持久化：[{expr, res}]，字符串白名单 + 上限 50（防 config 膨胀）
+        _save_config({**_load_config(), "calc_history": _calc_hist_clean(data["calc_history"])})
     theme = (data.get("theme") or "").strip()
     if theme:
         _save_config({**_load_config(), "theme": theme})

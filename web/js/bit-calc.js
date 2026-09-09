@@ -135,6 +135,35 @@ function buildBitCalcTab() {
           <button class="lv-btn" data-bc-act="eval">=</button>
           <span class="bc-expr-res" data-bc-expr-res></span>
         </div>
+        <!-- 点按键盘 + 时间戳 + 历史（仿 Windows 计算器：不止手动输入、有历史记录） -->
+        <div class="bc-extra">
+          <!-- 点按键盘：点击插入表达式框光标处（⌫/C/= 也作用于表达式框），与手动输入完全打通 -->
+          <div class="bc-keypad" data-bc-keypad></div>
+          <div class="bc-side">
+            <!-- 时间戳换算：Unix 秒/毫秒/0x → 本地+UTC+相对；datetime-local 反向出三形态 -->
+            <div class="bc-box">
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <span class="bc-box-title">⏱ 时间戳</span>
+                <input class="bc-expr" data-bc-ts-in placeholder="Unix 秒 / 毫秒 / 0x 时间戳" spellcheck="false" style="flex:1;min-width:150px;">
+                <button class="lv-btn" data-bc-ts-now title="取当前时间戳（秒）">现在</button>
+              </div>
+              <div class="bc-ts-out" data-bc-ts-out></div>
+              <div style="display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap;">
+                <span style="color:var(--muted);font-size:11px;">反向</span>
+                <input type="datetime-local" class="bc-dt" data-bc-ts-dt step="1">
+              </div>
+              <div class="bc-ts-out" data-bc-ts-rev></div>
+            </div>
+            <!-- 计算历史：= 成功即记录，点击条目回填表达式（持久化 config，重启不丢） -->
+            <div class="bc-box">
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span class="bc-box-title" style="flex:1;">🕘 历史</span>
+                <button class="lv-btn" data-bc-hist-clear title="清空全部历史">清空</button>
+              </div>
+              <div class="bc-hlist" data-bc-hist-list></div>
+            </div>
+          </div>
+        </div>
         <!-- 文件哈希：拖入或选择文件 → MD5/SHA1/SHA256/SHA512/CRC32（点值即复制） -->
         <div class="bc-hash" data-bc-hash
              style="border:1px dashed var(--border);border-radius:8px;padding:10px 12px;">
@@ -298,24 +327,172 @@ function buildBitCalcTab() {
   };
   wrap.querySelector('[data-bc-act="clear"]').onclick = () => { conn.value = 0n; render(); };
 
-  // 表达式计算：结果进当前值（计算器与寄存器视图打通——算完直接看位分布）
+  // ---- 表达式计算：结果进当前值（计算器与寄存器视图打通——算完直接看位分布） ----
+  const exprInp = wrap.querySelector('[data-bc-expr]');
   const doEval = () => {
-    const src = wrap.querySelector('[data-bc-expr]').value.trim();
+    const src = exprInp.value.trim();
     if (!src) return;
     try {
       conn.value = _bcEvalExpr(src, conn.bits);
       render();
       exprRes.textContent = '= 0x' + fmt(conn.value, 16) + ' · ' + conn.value;
       exprRes.classList.remove('err');
+      histAdd(src, exprRes.textContent);
     } catch (err) {
       exprRes.textContent = err.message;
       exprRes.classList.add('err');
     }
   };
   wrap.querySelector('[data-bc-act="eval"]').onclick = doEval;
-  wrap.querySelector('[data-bc-expr]').addEventListener('keydown', e => {
+  exprInp.addEventListener('keydown', e => {
     if (e.key === 'Enter') { e.preventDefault(); doEval(); }
   });
+
+  // ---- 点按键盘：按钮插入表达式框光标处（与手动输入共用同一条求值链，零重复逻辑）。
+  // 布局仿 Windows 计算器：数字/字母集中 + 位运算符一列 + 运算符一列 + C/⌫/=。
+  const KEYS = [
+    ['A','B','C','D','E','F','<<','>>','~','C'],
+    ['7','8','9','&','|','^','(',')','⌫','%'],
+    ['4','5','6','*','/','+','-','0','=',''],
+    ['1','2','3','','','','','','',''],
+  ];
+  // 全整数计算器（表达式语法无小数点），空槽渲染占位保持网格对齐不塌
+  const keypad = wrap.querySelector('[data-bc-keypad]');
+  keypad.innerHTML = KEYS.flatMap((row, r) => row.map((k, c) => {
+    if (!k) return `<div class="bc-key bc-key-dim"></div>`;
+    const eq = k === '=' ? ' data-bc-key-eq="1"' : '';
+    return `<div class="bc-key" data-bc-key="${esc(k)}"${eq} style="grid-row:${r+1};grid-column:${c+1};">${esc(k)}</div>`;
+  }).join('')).join('');
+  keypad.addEventListener('click', e => {
+    const cell = e.target.closest('[data-bc-key]');
+    if (!cell || !cell.dataset.bcKey) return;
+    const k = cell.dataset.bcKey;
+    exprInp.focus();   // 插入前聚焦：selectionStart 才有效（没焦点时在末尾插）
+    if (k === 'C') { exprInp.value = ''; exprRes.textContent = ''; return; }
+    if (k === '⌫') {
+      const p = exprInp.selectionStart ?? exprInp.value.length;
+      // 光标前若是双字符运算符（<< >>）整个删掉，符合按键直觉
+      const two = exprInp.value.slice(p - 2, p);
+      if (two === '<<' || two === '>>') exprInp.setRangeText('', p - 2, p, 'end');
+      else exprInp.setRangeText('', Math.max(0, p - 1), p, 'end');
+      return;
+    }
+    if (k === '=') { doEval(); return; }
+    // 运算符与括号两侧留空格（可读性）；数字/字母直接贴
+    const tok = /[0-9a-fA-F]/.test(k) ? k : (k === '(' || k === ')') ? k : ' ' + k + ' ';
+    const p = exprInp.selectionStart ?? exprInp.value.length;
+    exprInp.setRangeText(tok, p, p, 'end');
+  });
+
+  // ---- 时间戳换算：程序员向——秒/毫秒/0x 自动识别 → 本地/UTC/相对时间；反向 datetime 出三形态 ----
+  const tsIn = wrap.querySelector('[data-bc-ts-in]');
+  const tsOut = wrap.querySelector('[data-bc-ts-out]');
+  const tsDt = wrap.querySelector('[data-bc-ts-dt]');
+  const tsRev = wrap.querySelector('[data-bc-ts-rev]');
+  const tsNow = wrap.querySelector('[data-bc-ts-now]');
+  const _p2 = (n) => String(n).padStart(2, '0');
+  const _fmtDate = (d) => `${d.getFullYear()}-${_p2(d.getMonth()+1)}-${_p2(d.getDate())} ${_p2(d.getHours())}:${_p2(d.getMinutes())}:${_p2(d.getSeconds())}`;
+  const _rel = (d) => {
+    const diff = (Date.now() - d.getTime()) / 1000;
+    const fut = diff < 0; const a = Math.abs(diff);
+    let s;
+    if (a < 60) s = Math.round(a) + ' 秒';
+    else if (a < 3600) s = Math.round(a/60) + ' 分钟';
+    else if (a < 86400) s = Math.round(a/3600) + ' 小时';
+    else if (a < 86400*365) s = Math.round(a/86400) + ' 天';
+    else s = (a/86400/365).toFixed(1) + ' 年';
+    return fut ? s + '后' : s + '前';
+  };
+  const _tsRow = (lbl, val) =>
+    `<div style="display:flex;gap:8px;align-items:baseline;">
+       <span style="color:var(--muted);width:44px;flex-shrink:0;font-size:11px;">${lbl}</span>
+       <span data-bc-ts-v="${esc(val)}" style="word-break:break-all;cursor:pointer;font-size:12px;" title="点击复制">${esc(val)}</span>
+     </div>`;
+  const _tsRevRender = () => {
+    tsRev.innerHTML = '';
+    if (!tsDt.value) return;
+    const d = new Date(tsDt.value);
+    if (isNaN(d)) return;
+    const sec = Math.floor(d.getTime() / 1000);
+    tsRev.innerHTML = _tsRow('秒', String(sec)) + _tsRow('毫秒', String(d.getTime())) + _tsRow('HEX', '0x' + sec.toString(16).toUpperCase());
+  };
+  // 点值即复制（与哈希面板同交互）
+  [tsOut, tsRev].forEach(box => box.addEventListener('click', e => {
+    const el = e.target.closest('[data-bc-ts-v]');
+    if (!el) return;
+    try { navigator.clipboard.writeText(el.dataset.bcTsV); showBanner('已复制 ' + el.dataset.bcTsV.slice(0, 20)); } catch(_){}
+  }));
+  const tsConvert = () => {
+    const t = tsIn.value.trim().toLowerCase();
+    tsOut.innerHTML = '';
+    if (!t) return;
+    let ms;
+    try {
+      if (/^0x[0-9a-f]+$/.test(t)) ms = Number(BigInt(t)) * 1000;          // 0x 视作秒
+      else if (/^[0-9]{13,}$/.test(t)) ms = Number(t);                    // 13 位以上 → 毫秒
+      else if (/^[0-9]+$/.test(t)) ms = Number(t) * 1000;                 // 常规秒
+      else { tsOut.innerHTML = '<span style="color:var(--neon-red);font-size:11px;">无法识别（支持秒/毫秒/0x）</span>'; return; }
+    } catch(_) { return; }
+    const d = new Date(ms);
+    if (isNaN(d)) { tsOut.innerHTML = '<span style="color:var(--neon-red);font-size:11px;">超出时间范围</span>'; return; }
+    const utc = d.toISOString().replace('T', ' ').replace('.000Z', '');
+    tsOut.innerHTML = _tsRow('本地', _fmtDate(d)) + _tsRow('UTC', utc) +
+      `<div style="display:flex;gap:8px;align-items:baseline;">
+         <span style="color:var(--muted);width:44px;flex-shrink:0;font-size:11px;">相对</span>
+         <span style="font-size:12px;">${_rel(d)}</span>
+       </div>` + _tsRow('HEX', '0x' + Math.floor(ms/1000).toString(16).toUpperCase());
+  };
+  tsIn.addEventListener('input', tsConvert);
+  tsIn.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); tsConvert(); } });
+  tsNow.onclick = () => { tsIn.value = String(Math.floor(Date.now() / 1000)); tsConvert(); };
+  tsDt.addEventListener('change', _tsRevRender);
+  tsDt.addEventListener('input', _tsRevRender);
+
+  // ---- 计算历史：= 成功即记录（表达式→结果），点击条目回填表达式；config 持久化 ----
+  const histList = wrap.querySelector('[data-bc-hist-list]');
+  let histItems = [];   // [{expr, res}] 最新在前，上限 50
+  const HIST_MAX = 50;
+  const histRender = () => {
+    if (!histItems.length) {
+      histList.innerHTML = '<div style="color:var(--muted);font-size:11px;padding:4px 0;">尚无历史记录</div>';
+      return;
+    }
+    histList.innerHTML = histItems.map((h, i) =>
+      `<div class="bc-hitem" data-bc-hi="${i}" title="点击回填到表达式框">
+         <span class="bc-hitem-e">${esc(h.expr)}</span>
+         <span class="bc-hitem-r">${esc(h.res)}</span>
+       </div>`).join('');
+  };
+  const histSave = () => {
+    try { fetch('/api/theme', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({calc_history: histItems})}); } catch(_) {}
+  };
+  const histAdd = (expr, res) => {
+    histItems = [{expr, res}, ...histItems.filter(h => h.expr !== expr)].slice(0, HIST_MAX);
+    histRender(); histSave();
+  };
+  histList.addEventListener('click', e => {
+    const it = e.target.closest('[data-bc-hi]');
+    if (!it) return;
+    exprInp.value = histItems[+it.dataset.bcHi].expr;
+    exprInp.focus();
+  });
+  wrap.querySelector('[data-bc-hist-clear]').onclick = () => {
+    histItems = []; histRender(); histSave();
+  };
+  // 启动拉取历史（config 持久化——Flask 端口随机，localStorage 按 origin 隔离读不回）
+  (async () => {
+    try {
+      const j = await (await fetch('/api/theme')).json();
+      if (Array.isArray(j.calc_history)) {
+        histItems = j.calc_history
+          .filter(h => h && typeof h.expr === 'string' && typeof h.res === 'string')
+          .slice(0, HIST_MAX);
+        histRender();
+      }
+    } catch(_) {}
+  })();
 
   // ---- 文件哈希面板：拖入 / 打开 → /api/hash_file → 全套哈希（点值复制） ----
   const hashBox = wrap.querySelector('[data-bc-hash]');
