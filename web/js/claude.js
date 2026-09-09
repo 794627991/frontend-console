@@ -161,10 +161,17 @@ function _csStart(mode, extra) {
             _csStopPoll();
             ['csPack','csOfflineZip','csOfflineDirect','csOnline'].forEach(id => $(id).disabled = false);
             if (s.ok) {
-              showBanner('Claude Code 安装完成');
-              _csDetectRender();
-              // 装好后直接拉起 claude（用户点安装就是为了用）
-              setTimeout(() => { $('claudeSetupModal').classList.remove('show'); connectClaude(); }, 800);
+              if (s.need_api) {
+                // 首次安装完成且没填 Token → 弹 API 配置（必填，不直接拉起 claude）
+                showBanner('安装完成——请填入 API Token');
+                $('claudeSetupModal').classList.remove('show');
+                setTimeout(() => openSettingsPanel('api'), 400);
+              } else {
+                showBanner('Claude Code 安装完成');
+                _csDetectRender();
+                // 装好后直接拉起 claude（用户点安装就是为了用）
+                setTimeout(() => { $('claudeSetupModal').classList.remove('show'); connectClaude(); }, 800);
+              }
             } else {
               $('csErr').style.display = '';
               $('csErr').textContent = s.err || '安装失败';

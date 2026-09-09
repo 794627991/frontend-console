@@ -83,6 +83,10 @@ app.register_blueprint(tree_bp)
 from src.claude_setup import claude_setup_bp
 app.register_blueprint(claude_setup_bp)
 
+# 注册 Claude 默认环境/ API 配置 Blueprint（settings.json 铺设与 token 读写）
+from src.claude_default import claude_default_bp
+app.register_blueprint(claude_default_bp)
+
 # ---- 全局串口表（_ports/_ports_lock 来自 app_state，此处定义 close_all_ports）----
 def close_all_ports():
     with _ports_lock:

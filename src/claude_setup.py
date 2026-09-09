@@ -27,7 +27,7 @@ claude_setup_bp = Blueprint("claude_setup", __name__)
 # 安装任务状态（单例：同一时刻只允许一个安装/打包任务在跑）
 _setup_lock = threading.Lock()
 _setup_state = {"running": False, "phase": "", "log": [], "done": False, "ok": False,
-                "err": "", "ts": 0}
+                "err": "", "ts": 0, "need_api": False}
 
 
 def _log(msg):
@@ -379,7 +379,7 @@ def claude_setup_install():
         if _setup_state["running"]:
             return jsonify({"ok": False, "err": "已有任务在运行"}), 409
         _setup_state.update(running=True, phase="准备", log=[], done=False,
-                            ok=False, err="", ts=time.time())
+                            ok=False, err="", ts=time.time(), need_api=False)
     def work():
         try:
             appdata = os.environ.get("APPDATA", "")
@@ -458,7 +458,20 @@ def claude_setup_install():
             try:
                 exe, _shim = _resolve_claude_exe(force=True)
                 _log(f"验证通过：{exe}")
-                _setup_state.update(done=True, ok=True, phase="安装完成")
+                # 首次安装完成 → 铺设默认 settings/statusline（仅此刻铺，
+                # 日常使用绝不自动碰 ~/.claude——用户要求）。provision 缺啥补啥，
+                # 用户已有配置不动。
+                from src.claude_default import provision_defaults
+                _ok, notes = provision_defaults()
+                for n in notes:
+                    _log(n)
+                # 还需要填 API token（首装必填）——标记给前端弹配置窗
+                from src.claude_default import _read_settings
+                env = _read_settings().get("env", {}) or {}
+                _setup_state.update(done=True, ok=True, phase="安装完成",
+                                    need_api=not env.get("ANTHROPIC_AUTH_TOKEN"))
+                if not env.get("ANTHROPIC_AUTH_TOKEN"):
+                    _log("下一步：请在弹出的 API 配置界面填入 API Token")
             except ClaudeNotFoundError as e:
                 raise RuntimeError(f"装完仍未检测到 claude：{e}")
         except Exception as e:
