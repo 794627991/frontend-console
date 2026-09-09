@@ -106,8 +106,7 @@ function showCtxMenu(x, y, conn) {
     `<div class="ctx-item" data-act="copyAll">📋 复制全部内容</div>`,
     `<div class="ctx-item" data-act="paste">📥 粘贴到终端</div>`,
     `<div class="ctx-sep"></div>`,
-    `<div class="ctx-item" data-act="find">🔍 查找（高亮跳转）</div>`,
-    `<div class="ctx-item" data-act="findAll">🔍 查找全部（分栏列表）</div>`,
+    `<div class="ctx-item" data-act="findAll">🔍 查找全部（高亮跳转 + 命中列表）</div>`,
     `<div class="ctx-sep"></div>`,
     `<div class="ctx-item" data-act="clear">⌫ 清屏</div>`,
   ].join('');
@@ -135,10 +134,6 @@ function showCtxMenu(x, y, conn) {
       } else if (act === 'paste') {
         // 原生读剪贴板（无权限弹窗），编码后作为原始字节发到串口/SSH
         _pasteToConn(conn, true);
-      } else if (act === 'find') {
-        // 面板搜索框已移除：统一走分栏搜索（高亮跳转 + 命中列表）
-        toggleTermSearchPane(conn, true);
-        conn.termSearchInput.focus(); conn.termSearchInput.select();
       } else if (act === 'findAll') {
         toggleTermSearchPane(conn, true);
         conn.termSearchInput.focus(); conn.termSearchInput.select();
