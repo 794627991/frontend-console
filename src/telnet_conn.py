@@ -82,8 +82,9 @@ class TelnetConnection(BaseConnection):
     def _io_read_chunk(self):
         sock = self._io_handle
         if sock is None:
-            time.sleep(0.1)
-            return b""
+            # 句柄为 None = 重连失败后的空窗：抛异常把 reader 驱回重连退避循环，
+            # 否则静默返回 b"" 会让 reader 空转、永不再重试（老 bug：断开后只报一次就死透）
+            raise EOFError("Telnet 未连接")
         r, _, _ = select.select([sock], [], [], 0.2)
         if not r:
             return b""

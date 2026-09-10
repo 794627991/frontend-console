@@ -77,8 +77,9 @@ class SSHConnection(BaseConnection):
 
     def _io_read_chunk(self):
         if self._channel is None:
-            time.sleep(0.1)
-            return b""
+            # 句柄为 None = 重连失败后的空窗：抛异常把 reader 驱回重连退避循环，
+            # 否则静默返回 b"" 会让 reader 空转、永不再重试（老 bug：EOF 后只报一次就死透）
+            raise EOFError("SSH 未连接")
         # recv 阻塞至有数据或 timeout；用 select 避免 100% CPU
         import select
         r, _, _ = select.select([self._channel], [], [], 0.2)

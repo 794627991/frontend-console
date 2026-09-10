@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """物理串口连接。IO 层用 pyserial。"""
-import time
 import serial
 import serial.tools.list_ports
 
@@ -27,8 +26,9 @@ class SerialPort(BaseConnection):
         with self.lock:
             s = self.ser
         if s is None:
-            time.sleep(0.05)
-            return b""
+            # 句柄为 None = 重连失败后的空窗：抛异常把 reader 驱回重连退避循环，
+            # 否则静默返回 b"" 会让 reader 空转、永不再重试（老 bug：拔线后只报一次就死透）
+            raise EOFError("串口未打开")
         with self.lock:
             # 读尽当前缓冲（in_waiting 字节）——一次循环拿到尽可能多的数据，
             # 高吞吐时合并成大块一次推 SSE（减少前端 term.write 次数，输入卡顿主因之一）。

@@ -38,6 +38,9 @@ class BaseConnection:
         self._raw_dec = codecs.getincrementaldecoder("utf-8")(errors="replace")
         # IO 句柄（子类在 _io_open 中设置）
         self._io_handle = None
+        # 重连节奏控制：首次异常报原因，失败退避 3s 起指数翻倍至 60s
+        self._reconn_first = True
+        self._reconn_backoff = 3
 
     # ---- IO 层：子类实现 ----
     def _io_open(self):
@@ -173,22 +176,30 @@ class BaseConnection:
                     # 空闲唤醒频率 ~20 次/秒，兼顾交互响应与 CPU 占用（之前 0.2s 阻塞读太迟钝）
                     time.sleep(0.05)
             except Exception as e:
-                # IO 异常：尝试重连（仅 alive 时）
+                # IO 异常：持续重连直至成功或手动断开（仅 alive 时）。
+                # 首次异常报原因；后续重试不重复刷「连接异常」原文，只报重连节奏。
                 if not self.alive:
                     break
-                self.append_line(f"[reader] 连接异常: {e}，尝试重连...")
+                if self._reconn_first:
+                    self._reconn_first = False
+                    self.append_line(f"[reader] 连接异常: {e}，开始自动重连...")
                 time.sleep(2)
                 if not self.alive:
                     break
                 try:
                     if self._io_reconnect():
+                        self._reconn_first = True  # 重连成功：下次异常重新报原因
                         self.append_line(f"[reader] 重连成功")
                     else:
-                        self.append_line(f"[reader] 重连失败")
-                        time.sleep(3)
+                        # 子类 _io_reconnect 内部已做指数退避等待；失败后稍歇再进入下一轮，
+                        # 现在读层句柄为 None 会抛 EOFError 驱回这里，重试不再中断
+                        self.append_line(f"[reader] 重连失败，{self._reconn_backoff}s 后重试...")
+                        time.sleep(self._reconn_backoff)
+                        self._reconn_backoff = min(self._reconn_backoff * 2, 60)
                 except Exception as re:
-                    self.append_line(f"[reader] 重连失败: {re}")
-                    time.sleep(3)
+                    self.append_line(f"[reader] 重连失败: {re}，{self._reconn_backoff}s 后重试...")
+                    time.sleep(self._reconn_backoff)
+                    self._reconn_backoff = min(self._reconn_backoff * 2, 60)
 
     def send_raw(self, data: bytes):
         self._io_write(data)
