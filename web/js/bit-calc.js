@@ -13,11 +13,17 @@
 function _bcEvalExpr(src, bits) {
   const MASK = (1n << BigInt(bits)) - 1n;
   let i = 0;
-  const s = src.replace(/\s+/g, '');
+  // 粘贴归一（用户实锤）：Office/网页复制把 - 换成 U+2212 −、* 换 ×、/ 换 ÷，
+  // 键帽 KP_TOK 早有同款映射，手输路径收敛一致
+  const s = src.replace(/\s+/g, '').replace(/−/g, '-').replace(/×/g, '*').replace(/÷/g, '/');
   if (!s) throw new Error('空表达式');
   const peek = () => s[i];
+  const _sx = (v) => BigInt.asIntN(bits, v);   // 补码解读（除法/取模/右移用有符号语义）
   function parsePrimary() {
-    if (peek() === '(') { i++; const v = parseAdd(); if (peek() !== ')') throw new Error('括号不匹配'); i++; return v; }
+    // 括号必须走顶层 parseOr——括号内含 | ^ & << >> 是常态（placeholder 自家
+    // 示例就是 (0x1F << 2) | 0b101）。旧代码调 parseAdd，重排优先级后
+    // parseAdd 不再经过位运算层，括号内位运算全报"括号不匹配"（对抗审查实锤）
+    if (peek() === '(') { i++; const v = parseOr(); if (peek() !== ')') throw new Error('括号不匹配'); i++; return v; }
     if (peek() === '~') { i++; return ~parsePrimary() & MASK; }
     if (peek() === '-' && (i + 1 < s.length)) { i++; return (-parsePrimary()) & MASK; }
     if (peek() === '+' && (i + 1 < s.length)) { i++; return parsePrimary() & MASK; }   // 一元 +（2 + +3 之前崩）
@@ -41,7 +47,10 @@ function _bcEvalExpr(src, bits) {
       const op = s[i++];
       const r = parsePrimary();
       if ((op === '/' || op === '%') && r === 0n) throw new Error('除零');
-      v = op === '*' ? (v * r) & MASK : op === '/' ? v / r : v % r;
+      // 有符号语义（Windows 程序员计算器同款）：-5/3 = -1 不是无符号大数
+      if (op === '*') v = (v * r) & MASK;
+      else if (op === '/') v = BigInt.asUintN(bits, BigInt(_sx(v) / _sx(r)));
+      else v = BigInt.asUintN(bits, BigInt(_sx(v) % _sx(r)));
     }
     return v;
   }
@@ -56,8 +65,20 @@ function _bcEvalExpr(src, bits) {
   }
   function parseShift() {
     let v = parseAdd();
-    while (s[i] === '<' && s[i+1] === '<') { i += 2; const n = parseAdd(); if (n < 0n || n > 1024n) throw new Error('移位位数无效'); v = (v << n) & MASK; }
-    while (s[i] === '>' && s[i+1] === '>') { i += 2; const n = parseAdd(); if (n < 0n || n > 1024n) throw new Error('移位位数无效'); v = v >> n; }
+    // << >> 合成一个循环：旧版两个独立 while，>> 在前时（8>>1<<2）后者
+    // 无人消费报"多余字符"（对抗审查实锤）
+    while ((s[i] === '<' && s[i+1] === '<') || (s[i] === '>' && s[i+1] === '>')) {
+      const right = s[i] === '>';
+      i += 2; const n = parseAdd();
+      if (n < 0n || n > 1024n) throw new Error('移位位数无效');
+      if (n >= BigInt(bits)) { v = 0n; continue; }
+      if (right) {
+        // 算术右移（Windows 程序员计算器同款有符号语义）：负数 wrap 形态
+        // 高位补 1，不是逻辑右移高位补 0（-8>>1 该是 FFFFFFFC 不是 7FFFFFFC）
+        if ((v >> BigInt(bits - 1)) & 1n) v = (v >> n) | (((1n << n) - 1n) << (BigInt(bits) - n));
+        else v >>= n;
+      } else v = (v << n) & MASK;
+    }
     return v;
   }
   function parseAnd() { let v = parseShift(); while (peek() === '&') { i++; v &= parseShift(); } return v; }
@@ -99,12 +120,9 @@ function _bcEvalExprF(src) {
       return fn[1] === 'sqrt' ? Math.sqrt(v) : fn[1] === 'log' ? Math.log10(v)
            : fn[1] === 'abs' ? Math.abs(v) : Math.log(v);
     }
-    if (rest.startsWith('1/(') || rest === '1/') {
-      i += 2;   // 1/x 键插入 '1/'，x 位置接一个括号表达式或数字
-      const v = parseUnary();
-      if (v === 0) throw new Error('除零');
-      return 1 / v;
-    }
+    // 1/x 特判已删：旧 startsWith('1/') 对任意位置的 1/ 生效，连按 1/x
+    // 两次拼出 1/1/2 报"无法识别"（对抗审查实锤）。1/x 键改插 '1/('，
+    // 普通除法链天然处理 1/(...) 与 1/2，零特判
     const m = /^(0[xX][0-9a-fA-F]+|0[bB][01]+|0[oO][0-7]+|[0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?)/.exec(rest);
     if (!m) throw new Error('无法识别: ' + (rest.slice(0, 8) || '(结尾)'));
     i += m[0].length;
@@ -366,9 +384,10 @@ function buildBitCalcTab() {
         if (op === 'and' || op === 'or' || op === 'xor') {
           if (!op2raw) { exprRes.textContent = '需要操作数（左侧输入框）'; exprRes.classList.add('err'); return; }
           const o = _bcParseNum(op2raw);
-          if (op === 'and') conn.value &= o;
-          else if (op === 'or') conn.value |= o;
-          else conn.value ^= o;
+          // 结果必 & MASK：OR/XOR 遇负操作数曾出负 BigInt，HEX 框显示 -0000001 乱码
+          if (op === 'and') conn.value = (conn.value & o) & MASK();
+          else if (op === 'or') conn.value = (conn.value | o) & MASK();
+          else conn.value = (conn.value ^ o) & MASK();
         } else if (op === 'not') {
           conn.value = ~conn.value & MASK();
         } else if (op === 'shl' || op === 'shr') {
@@ -444,7 +463,7 @@ function buildBitCalcTab() {
   //   键帽显示字符与实际插入 token 分离（÷→/ ×→* −→- ±→-），映射表 KP_TOK。
   //   模式切换键盘内容跟着换——不出现"DEC 高亮还摆着 A–F"的错配。
   const KP_TOK = { '÷':'/', '×':'*', '−':'-', '+':'+', '%':'%', '^':'^',
-                   '(':null, ')':null, '.':'.', '1/x':'1/' };   // null=原样插入
+                   '(':null, ')':null, '.':'.', '1/x':'1/(' };   // 1/x 插 '1/(' 带括号（求值器零特判）
   // ± 切换正负（官方行为：不是插符号键，是翻转当前数字符号）。
   // 光标前截取连续数字 token（0x 前缀/数字/字母/小数点），有 - 前缀去掉、没有加上。
   // 跨格键：[列跨度, 行跨度]——0 宽键填底行空洞（官方习惯），= 跨两行撑住右下角
@@ -505,8 +524,9 @@ function buildBitCalcTab() {
     if (k === '⌫') {
       const p = exprInp.selectionStart ?? exprInp.value.length;
       // 光标前若是多字符 token（<< >> sqrt( 等）整个删掉，符合按键直觉
+      // （abs( 曾漏——abs 键删一次只掉一个 (，对抗审查实锤）
       const before = exprInp.value.slice(0, p);
-      const multi = ['sqrt(', 'log(', 'ln(', '<<', '>>'].find(t => before.endsWith(t));
+      const multi = ['sqrt(', 'log(', 'ln(', 'abs(', '<<', '>>'].find(t => before.endsWith(t));
       if (multi) exprInp.setRangeText('', p - multi.length, p, 'end');
       else exprInp.setRangeText('', Math.max(0, p - 1), p, 'end');
       return;
@@ -575,7 +595,11 @@ function buildBitCalcTab() {
     const d = new Date(tsDt.value);
     if (isNaN(d)) return;
     const sec = Math.floor(d.getTime() / 1000);
-    tsRev.innerHTML = _tsRow('秒', String(sec)) + _tsRow('毫秒', String(d.getTime())) + _tsRow('HEX', '0x' + sec.toString(16).toUpperCase());
+    // 1970 前负秒显示 32 位补码 hex（负数 BigInt toString 带 - 号，0x-80000000
+    // 是坏值——对抗审查实锤；程序员时间戳惯例按 32 位补码看）
+    const hex = sec < 0 ? '0x' + BigInt.asUintN(32, BigInt(sec)).toString(16).toUpperCase()
+                        : '0x' + sec.toString(16).toUpperCase();
+    tsRev.innerHTML = _tsRow('秒', String(sec)) + _tsRow('毫秒', String(d.getTime())) + _tsRow('HEX', hex);
   };
   // 点值即复制（与哈希面板同交互）
   [tsOut, tsRev].forEach(box => box.addEventListener('click', e => {
@@ -642,13 +666,17 @@ function buildBitCalcTab() {
   wrap.querySelector('[data-bc-hist-clear]').onclick = () => {
     histItems = []; histRender(); histSave();
   };
-  // 启动拉取历史（config 持久化——Flask 端口随机，localStorage 按 origin 隔离读不回）
+  // 启动拉取历史（config 持久化——Flask 端口随机，localStorage 按 origin 隔离读不回）。
+  // 响应到达时合并而非整体替换：打开 tab 后、GET 返回前先算的条目曾被旧
+  // 数据覆盖，下一次 histSave 再把覆盖后的列表写回——条目永久丢（对抗审查实锤）
   (async () => {
     try {
       const j = await (await fetch('/api/theme')).json();
       if (Array.isArray(j.calc_history)) {
-        histItems = j.calc_history
-          .filter(h => h && typeof h.expr === 'string' && typeof h.res === 'string')
+        const remote = j.calc_history
+          .filter(h => h && typeof h.expr === 'string' && typeof h.res === 'string');
+        const localExprs = new Set(histItems.map(h => h.expr));
+        histItems = [...histItems, ...remote.filter(h => !localExprs.has(h.expr))]
           .slice(0, HIST_MAX);
         histRender();
       }
