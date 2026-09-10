@@ -1851,11 +1851,21 @@
 .px-h-m { min-width: 130px; color: var(--fg-bright); }
 .px-h-i, .px-h-o { color: var(--muted); }
 .px-h-e { margin-left: auto; }
-.px-hr-row { display: flex; flex-direction: column; gap: 8px; }
-.px-hr-row label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
-/* headroom 选项在重试代理未启动时置灰（原版：先起代理才能拉 headroom） */
-.px-hr-row label.px-dis { opacity: .4; cursor: not-allowed; }
-.px-ccr input { accent-color: var(--accent); }
+/* 置灰（headroom 弹窗里不可选的模式卡：代理未跑 / headroom 未装） */
+.px-dis { opacity: .4; pointer-events: none; }
+/* headroom 压缩配置弹窗的模式卡（仿原工具 MODE_CARDS） */
+.px-hr-card { display: grid; grid-template-columns: auto auto 1fr; gap: 2px 8px;
+  align-items: center; padding: 8px 12px; border: 1px solid var(--border);
+  border-radius: 8px; background: var(--bg-card); cursor: pointer; }
+.px-hr-card:hover { border-color: var(--accent); }
+.px-hr-card input[type=radio] { grid-row: 1 / 3; accent-color: var(--accent); margin: 0; }
+.px-hr-card-t { font-size: 12px; font-weight: 600; color: var(--fg-bright); }
+.px-hr-card-sub { font-size: 11px; color: var(--muted); }
+.px-hr-card-d { grid-column: 2 / 4; font-size: 11px; color: var(--muted);
+  white-space: pre-line; line-height: 1.5; }
+.px-hr-ccr { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 12px; }
+.px-hr-ccr input { accent-color: var(--accent); }
+.px-hr-ccr span { font-size: 11px; }
 .px-quota-login { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
 .px-quota-login input { background: var(--bg-input, var(--bg-card)); border: 1px solid var(--border);
   border-radius: 6px; padding: 5px 8px; color: var(--fg); font-size: 12px; }

@@ -62,17 +62,15 @@ function buildProxyTab() {
           <div class="px-hist" data-px-hist><div class="px-hint">代理启动后这里显示每个请求的模型/tokens/耗时（429 重试过的标红）</div></div>
         </div>
 
-        <!-- 压缩模式 + CCR + 压缩统计条 -->
+        <!-- headroom 压缩：一个配置按钮 + 状态条（内联 radio 易误点——
+             改原版弹窗式：点按钮才出模式选择，主界面只读不选） -->
         <div class="px-sec">
           <div class="px-sec-title">headroom 压缩</div>
-          <div class="px-hr-stats" data-px-hr-stats style="font-family:var(--font-mono);font-size:12px;color:var(--muted);margin-bottom:8px;">headroom: 未运行（无压缩，仅重试代理）</div>
-          <div class="px-hr-row" data-px-hr-row>
-            <label><input type="radio" name="px-hr-${portId}" value="full"> 完整压缩（ML + 结构化，省流量最多，吃 ~570MB 内存）</label>
-            <label><input type="radio" name="px-hr-${portId}" value="light"> 轻量压缩（仅结构化，省 ~400MB 内存）</label>
-            <label><input type="radio" name="px-hr-${portId}" value="off"> 关闭压缩（headroom 不启动，直接走重试代理）</label>
-            <label class="px-ccr" title="CCR 流压缩。激进——/compact 可能卡死，不确定就别勾"><input type="checkbox" data-px-ccr> CCR 流压缩（激进·/compact 可能卡死）</label>
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px;">
+            <button class="lv-btn" data-px-hr-cfg style="min-width:170px;">压缩模式：—</button>
+            <span class="px-hr-stats" data-px-hr-stats style="font-family:var(--font-mono);font-size:12px;color:var(--muted);"></span>
           </div>
-          <div class="px-hint">切换立即生效：停旧 headroom → 按新模式拉起（冷启动 10-30s）→ 就绪自动切 base_url。失败自动回退关闭压缩。主模型 Lanz-Auto 带签名 thinking 不可压缩，压缩收益主要来自子代理与工具输出。</div>
+          <div class="px-hint">点「压缩模式」选择策略并立即生效：停旧 headroom → 按新模式拉起（冷启动 10-30s）→ 就绪自动切 base_url。失败自动回退关闭压缩。主模型 Lanz-Auto 带签名 thinking 不可压缩，压缩收益主要来自子代理与工具输出。</div>
         </div>
 
         <!-- Lanz 额度区：登录 + 概览 + 三模型明细 + 模型用量排名（老 GUI 同款布局）-->
@@ -143,6 +141,7 @@ function buildProxyTab() {
   const qLogoutBtn = $p('[data-px-q-logout]');
   const qAutoEl = $p('[data-px-q-auto]');
   const hrStatsEl = $p('[data-px-hr-stats]');
+  const hrCfgBtn = $p('[data-px-hr-cfg]');
 
   const ST_CLS = {
     HEALTHY: 'px-healthy', RETRY: 'px-retry', FAILED: 'px-failed', STOPPED: 'px-stopped',
@@ -322,19 +321,13 @@ function buildProxyTab() {
   }
 
   function _setHrUI(j) {
-    // 原版顺序（用户实锤）：headroom 需要先启动重试代理才可用——
-    // 代理没跑时完整/轻量压缩与 CCR 置灰（后端 apply_hr_mode 同口径拒绝），
-    // 「关闭压缩」保持可点（启动前也能把记忆模式改回 off）
-    const en = !!j.running;
-    wrap.querySelectorAll('[data-px-hr-row] input[type=radio]').forEach(r => {
-      r.checked = (r.value === (j.hr_mode || 'off'));
-      r.disabled = (r.value !== 'off') && !en;
-      r.closest('label').classList.toggle('px-dis', r.disabled);
-    });
-    const ccr = $p('[data-px-ccr]');
-    ccr.checked = !!j.ccr;
-    ccr.disabled = !en;
-    ccr.closest('label').classList.toggle('px-dis', !en);
+    // 主面板不再摆 radio（易误点——用户实锤）：只更新配置按钮文案，
+    // 选择动作全部进弹窗（仿原工具 _hr_mode_dialog）
+    conn.hrState = j;
+    const lab = { full: '完整压缩', light: '轻量压缩', off: '关闭' }[j.hr_mode] || '—';
+    hrCfgBtn.textContent = '压缩模式：' + lab + (j.ccr && j.hr_mode !== 'off' ? ' · CCR' : '');
+    hrCfgBtn.title = j.running ? '选择压缩策略（应用立即生效）'
+      : '重试代理未启动：full/light 需先启动代理才能应用（off 可直接记住）';
   }
 
   async function _poll() {
@@ -404,25 +397,107 @@ function buildProxyTab() {
     };
   });
 
-  wrap.querySelectorAll('[data-px-hr-row] input[type=radio]').forEach(r => {
-    r.onchange = async () => {
-      try {
-        const resp = await fetch('/api/proxy/compression', {method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({mode: r.value})});
-        const j = await resp.json();
-        _msg(j.ok ? '压缩模式切换中（headroom 冷启动 10-30s）' : (j.msg || '切换失败'), !j.ok);
-      } catch(e) { _msg('请求失败: ' + e, true); }
+  // headroom 配置入口：主面板只剩这一个按钮，选择进弹窗（旧内联 radio 易误点）
+  hrCfgBtn.onclick = () => _hrCfgModal();
+
+  // ---- headroom 压缩配置弹窗（仿原工具 _hr_mode_dialog，模式卡+CCR+预览）----
+  // off 永远可选（代理未跑时=只记模式下次启动生效，原工具同款降级）；
+  // full/light 在 headroom 缺失时禁用。应用一次 POST {mode, ccr} 同改。
+  const HR_CARDS = [
+    ['full', '完整压缩', 'ML + 结构化 · ~570MB', '收益: 压缩率最高（文本 Kompress + 结构化全开）\n减益: 内存 ~570MB（ML 模型常驻），冷启动 ~15s'],
+    ['light', '轻量压缩', '仅结构化 · ~150MB', '收益: 内存 ~150MB（省 ~400MB），冷启动快\n减益: 文本类压缩归零，工具/日志/表格压缩保留（实测子代理仍 ~20%+）'],
+    ['off', '关闭压缩', '不启动 headroom', '收益: 零额外内存、零冷启动等待\n减益: 无任何压缩收益，流量原样过重试代理'],
+  ];
+  const HR_NOTE = '注: 主模型 Lanz-Auto 带签名 thinking 块不可压缩，任何模式下主会话压缩都接近 0%；'
+    + '压缩收益主要来自子代理（Lanz-Medium 实测 27%）与工具输出。';
+
+  function _hrCfgModal() {
+    const j = conn.hrState || {};
+    const hasHr = !!j.headroom_exe;
+    let m = $('pxHrModal');
+    if (!m) {
+      m = document.createElement('div');
+      m.className = 'modal';
+      m.id = 'pxHrModal';
+      m.innerHTML = `
+        <div class="box" style="max-width:600px;">
+          <div class="head"><strong>headroom 压缩配置</strong>
+            <div class="head-actions"><button class="btn ghost icon-btn" data-hr-x>✕</button></div></div>
+          <div style="padding:14px 18px 4px;">
+            <div data-hr-warn></div>
+            <div style="display:flex;flex-direction:column;gap:6px;">
+              ${HR_CARDS.map(([k, t, sub, d]) => `
+                <label class="px-hr-card" data-hr-card="${k}">
+                  <input type="radio" name="pxhrmode" value="${k}">
+                  <span class="px-hr-card-t">${t}</span>
+                  <span class="px-hr-card-sub">${sub}</span>
+                  <span class="px-hr-card-d">${esc(d)}</span>
+                </label>`).join('')}
+            </div>
+            <div class="px-hr-ccr">
+              <label><input type="checkbox" data-hr-ccr> CCR 流压缩</label>
+              <span data-hr-ccr-hint></span>
+            </div>
+            <div class="px-hint" style="margin:10px 0 0;">${esc(HR_NOTE)}</div>
+          </div>
+          <div style="display:flex;gap:10px;justify-content:flex-end;padding:12px 18px 16px;">
+            <button class="btn ghost" data-hr-cancel>取消</button>
+            <button class="btn primary" data-hr-apply>应用</button>
+          </div>
+        </div>`;
+      document.body.appendChild(m);
+    }
+    const cards = m.querySelectorAll('[data-hr-card]');
+    const ccrEl = m.querySelector('[data-hr-ccr]');
+    const hintEl = m.querySelector('[data-hr-ccr-hint]');
+    // 初始态：预选当前模式/CCR；full/light 需已装 headroom 且代理在跑
+    // （与后端 apply_hr_mode 拒绝口径一致）；off 永远可选
+    const canFull = hasHr && !!j.running;
+    cards.forEach(lab => {
+      const rb = lab.querySelector('input');
+      rb.checked = rb.value === (j.hr_mode || 'off');
+      lab.classList.toggle('px-dis', !canFull && rb.value !== 'off');
+      rb.disabled = !canFull && rb.value !== 'off';
+    });
+    m.querySelector('[data-hr-warn]').innerHTML = hasHr ? ''
+      : '<div style="color:var(--neon-orange);font-size:12px;margin-bottom:8px;">⚠ 未检测到 headroom.exe（pip install headroom-ai[all]），压缩不可用；重启工具可再试</div>';
+    ccrEl.checked = !!j.ccr;
+    const syncCcr = () => {
+      const mode = (m.querySelector('[data-hr-card] input:checked') || {}).value || 'off';
+      const dis = mode === 'off' || !hasHr;
+      ccrEl.disabled = dis;
+      m.querySelector('.px-hr-ccr').classList.toggle('px-dis', dis);
+      hintEl.textContent = dis ? (mode === 'off' ? '（headroom 不启动，无意义）' : '（未安装 headroom）')
+        : (ccrEl.checked ? '激进压缩 · /compact 可能卡死' : '保守 · 稳定');
+      hintEl.style.color = dis ? 'var(--muted)' : (ccrEl.checked ? 'var(--neon-orange)' : 'var(--muted)');
     };
-  });
-  $p('[data-px-ccr]').onchange = async (e) => {
-    try {
-      await fetch('/api/proxy/ccr', {method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({on: e.target.checked})});
-      _msg(e.target.checked ? 'CCR 已开启（激进模式，/compact 可能卡死）' : 'CCR 已关闭');
-    } catch(err) { _msg('请求失败: ' + err, true); }
-  };
+    // 每次打开重绑（_ddConfirm 同款坑：闭包复用旧 resolve）
+    cards.forEach(lab => { lab.querySelector('input').onchange = syncCcr; });
+    ccrEl.onchange = syncCcr;
+    syncCcr();
+    const close = () => m.classList.remove('show');
+    m.querySelector('[data-hr-x]').onclick = close;
+    m.querySelector('[data-hr-cancel]').onclick = close;
+    m.querySelector('[data-hr-apply]').onclick = async () => {
+      const mode = (m.querySelector('[data-hr-card] input:checked') || {}).value;
+      if (!mode) return;
+      const applyBtn = m.querySelector('[data-hr-apply]');
+      applyBtn.disabled = true;
+      try {
+        const r = await fetch('/api/proxy/compression', {method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({mode, ccr: ccrEl.checked})});
+        const jj = await r.json();
+        _msg(jj.ok ? (mode === 'off' ? '已关闭压缩'
+             : (j.running ? '切换中（headroom 冷启动 10-30s，就绪自动切 8787）'
+                          : '已记住，启动代理后生效（下次启动自动拉起）'))
+             : (jj.msg || '切换失败'), !jj.ok);
+        if (jj.ok) { close(); _poll(); }
+      } catch(e) { _msg('请求失败: ' + e, true); }
+      applyBtn.disabled = false;
+    };
+    m.classList.add('show');
+  }
 
   // 密码明文/密文眼睛切换（SSH 客户端同款）：点击切换 input type，
   // 图标状态用 CSS class 表达（睁眼=password 可切显示，闭眼=明文中）

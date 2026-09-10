@@ -820,11 +820,14 @@ def apply_hr_mode(mode, ccr=None):
     global _headroom_mode, _hr_switching, _ccr, _autoswitched
     if mode not in HEADROOM_MODES:
         return False, "未知压缩模式"
-    # 原版顺序（用户实锤）：先启动重试代理，才允许拉起 headroom——
-    # 链路 Claude Code → 8787(压缩) → 37349(重试)，重试代理不在跑时
-    # headroom 起来也没上游可转发。off（关闭压缩）永远允许。
+    # 原版行为（用户实锤顺序）：headroom 的上游是重试代理，代理没跑时
+    # 拉 headroom 无意义 → 只记模式，下次启动代理时自动拉起（托盘路径）。
+    # off（关闭压缩）永远立即生效。面板弹窗另有 running 门槛防误点。
     if mode != "off" and not _ctl.running:
-        return False, "请先启动重试代理（headroom 需要重试代理做上游）"
+        _headroom_mode = mode
+        save_headroom_mode(mode, remember=True)
+        log.info("压缩模式 -> %s（代理未运行，下次启动生效）", mode)
+        return True, "已记住，下次启动代理时生效"
     if _hr_switching:
         return False, "压缩模式切换进行中，请稍候"
     if ccr is not None:
@@ -946,7 +949,7 @@ def tray_menu_items():
     def _hr_items():
         # 未启动重试代理时压缩项置灰（headroom 需要 37349 做上游）；
         # 关闭压缩永远可点——用于启动前把记忆里的模式改成 off
-        en = has_headroom and _ctl.running
+        en = has_headroom   # 对齐原工具：装了 headroom 即可选，代理未跑=只记模式下次启动生效
         return [
             ("item", "完整压缩", lambda: apply_hr_mode("full"),
              {"radio": True, "checked": lambda: _headroom_mode == "full",
@@ -1228,7 +1231,8 @@ def _api_mode():
 @proxy_bp.route("/api/proxy/compression", methods=["POST"])
 def _api_compression():
     j = request.get_json(silent=True) or {}
-    ok, msg = apply_hr_mode(j.get("mode", ""))
+    # ccr 缺省 None=不改（apply_hr_mode 内部判），配置弹窗一次带 {mode, ccr} 同改
+    ok, msg = apply_hr_mode(j.get("mode", ""), ccr=j.get("ccr"))
     return jsonify({"ok": ok, "msg": msg})
 
 
