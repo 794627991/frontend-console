@@ -79,12 +79,19 @@ function _bcEvalExprF(src) {
   function parsePrimary() {
     const rest = s.slice(i);
     if (rest[0] === '(') { i++; const v = parseAdd(); if (s[i] !== ')') throw new Error('括号不匹配'); i++; return v; }
-    const fn = /^(sqrt|log|ln)\(/.exec(rest);
+    const fn = /^(sqrt|log|ln|abs)\(/.exec(rest);
     if (fn) {
       i += fn[0].length;
       const v = parseAdd();
       if (s[i] !== ')') throw new Error('括号不匹配'); i++;
-      return fn[1] === 'sqrt' ? Math.sqrt(v) : fn[1] === 'log' ? Math.log10(v) : Math.log(v);
+      return fn[1] === 'sqrt' ? Math.sqrt(v) : fn[1] === 'log' ? Math.log10(v)
+           : fn[1] === 'abs' ? Math.abs(v) : Math.log(v);
+    }
+    if (rest.startsWith('1/(') || rest === '1/') {
+      i += 2;   // 1/x 键插入 '1/'，x 位置接一个括号表达式或数字
+      const v = parseUnary();
+      if (v === 0) throw new Error('除零');
+      return 1 / v;
     }
     const m = /^(0[xX][0-9a-fA-F]+|0[bB][01]+|0[oO][0-7]+|[0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?)/.exec(rest);
     if (!m) throw new Error('无法识别: ' + (rest.slice(0, 8) || '(结尾)'));
@@ -416,7 +423,10 @@ function buildBitCalcTab() {
   //   键帽显示字符与实际插入 token 分离（÷→/ ×→* −→- ±→-），映射表 KP_TOK。
   //   模式切换键盘内容跟着换——不出现"DEC 高亮还摆着 A–F"的错配。
   const KP_TOK = { '÷':'/', '×':'*', '−':'-', '+':'+', '%':'%', '^':'^',
-                   '(':null, ')':null, '.':'.', '±':'-' };   // null=原样插入
+                   '(':null, ')':null, '.':'.', '±':'-', '1/x':'1/' };   // null=原样插入
+  // 跨格键：[列跨度, 行跨度]——0 宽键填底行空洞（官方习惯），= 跨两行撑住右下角
+  const KP_SPAN = { hex: { '0': [3, 1], '=': [1, 2] },
+                    dec: { '0': [2, 1], '=': [1, 2] } };
   const KEYPADS = {
     hex: [   // 程序员：行2 字母 A–F 满行；行3-5 左列位运算 + 数字九宫格 + 右列四则
       ['CE','⌫','(',')','%','±'],
@@ -426,22 +436,28 @@ function buildBitCalcTab() {
       ['^','1','2','3','−','='],
       ['~','0','','','+',''],
     ],
-    dec: [   // 科学：行2 换函数（带开括号）；行3-5 左列留空保持数字区不挪位
+    dec: [   // 科学：行2 函数带开括号（与行1 括号去重）；行3-6 左列留空保持数字区不挪位
       ['CE','⌫','(',')','%','±'],
-      ['sqrt(','log(','ln(','(',')','^'],
+      ['sqrt(','log(','ln(','abs(','1/x','^'],
       ['','7','8','9','÷',''],
       ['','4','5','6','×',''],
       ['','1','2','3','−','='],
-      ['','0','.','','+',''],
+      ['','0','','.','+',''],
     ],
   };
   const keypad = wrap.querySelector('[data-bc-keypad]');
   const kpRender = () => {
     keypad.innerHTML = KEYPADS[kpMode].flatMap((row, r) => row.map((k, c) => {
-      if (!k) return `<div class="bc-key bc-key-dim"></div>`;
-      // 键帽显示去尾巴：sqrt( → sqrt；插入仍带开括号（data-bc-key 存原值）
-      const disp = k.endsWith('(') ? k.slice(0, -1) : k;
-      return `<div class="bc-key" data-bc-key="${esc(k)}" title="插入 ${esc(k)}" style="grid-row:${r+1};grid-column:${c+1};">${esc(disp)}</div>`;
+      // 空槽不渲染（跨格键覆盖的格曾渲染 hidden div 与其重叠——v4 实测重叠无害
+      // 但显式跳过更干净，且 dim 占位只为保网格感，跳过后布局依旧对齐）
+      if (!k) return '';
+      // 键帽显示去尾巴：多字符函数键 sqrt( → sqrt（单独的 ( ) 不剥——
+      // v4 bug：endsWith('(') 把裸 ( 键也剥成空串，键帽空白被用户红框实锤）
+      const disp = (k.length > 1 && k.endsWith('(')) ? k.slice(0, -1) : k;
+      const [cs, rs] = KP_SPAN[kpMode][k] || [1, 1];
+      const pos = (cs > 1 ? `grid-column:${c+1} / span ${cs};` : `grid-column:${c+1};`)
+                + (rs > 1 ? `grid-row:${r+1} / span ${rs};` : `grid-row:${r+1};`);
+      return `<div class="bc-key" data-bc-key="${esc(k)}" title="插入 ${esc(k)}" style="${pos}">${esc(disp)}</div>`;
     }).join('')).join('');
   };
   kpRender();

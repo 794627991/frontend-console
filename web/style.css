@@ -901,8 +901,9 @@
   }
   .bc-key {
     border: 1px solid var(--border); border-radius: 5px; background: var(--bg-input);
-    color: var(--fg); font-family: var(--font-mono); font-size: 12px;
+    color: var(--fg); font-family: var(--font-mono); font-size: 13px; font-weight: 600;
     text-align: center; padding: 7px 0; cursor: pointer; user-select: none;
+    display: flex; align-items: center; justify-content: center;
     transition: border-color .1s, color .1s;
   }
   /* 数字/字母键微亮底色——数字区一眼可辨（学官方数字区与功能区分色） */
@@ -915,7 +916,7 @@
     background: var(--bg-card);
   }
   .bc-key:hover { border-color: var(--accent); color: var(--accent); }
-  .bc-key-dim { visibility: hidden; border: none; background: none; padding: 7px 0; }
+  .bc-key-dim { display: none; }
   .bc-key[data-bc-key="="] { border-color: var(--accent); color: var(--accent); font-weight: 700; }
   .bc-key[data-bc-key="CE"], .bc-key[data-bc-key="⌫"] { color: var(--neon-red); }
   .bc-side { flex: 1 1 300px; min-width: 280px; display: flex; flex-direction: column; gap: 10px; }
