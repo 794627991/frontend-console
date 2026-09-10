@@ -247,3 +247,22 @@ claude -p --input-format stream-json --output-format stream-json --verbose --per
 - **回归**：14 条既有路由 test_client 全检零失败；harness 全链路（connect→send→events→disconnect）真机验证，claude 真实回复；JS 8 文件 node --check 通过。
 
 **已知限制（v1）**：不支持中断当前回复（interrupt 预留）；无 --permission-prompt-tool 权限审批 UI（走 permission-mode auto，与用户日常 --dangerously-skip-permissions 习惯一致）；harness 不落 buf（与 claude 终端不同，转写在 ~/.claude 自带）。
+
+
+### 8.6 Harness v2：微信式多会话界面（2026-09-10）
+
+用户反馈 v1「过于丑陋」，要求对齐 ClaudeDesktop 桌面形态（会话列表 + 气泡对话 + 模型选择 + 技能 + 附件/图片上传）。v2 全部落地，v1 单会话聊天 tab 推倒重建（事件渲染分流逻辑保留）。
+
+**后端 src/claude_harness.py 重写**：
+
+- **会话持久化**：~/.serialconsole_pro/claude_harness.json 元数据表（sid/title/model/cwd/session_id，原子写 tmp+replace）——列表跨重启保留；claude 侧真实 session_id 用于 --resume 复活上下文。
+- **进程易耗品化**：闲置 15min GC 杀进程（元数据/事件缓冲保留），任何操作命中死会话自动 revive_if_dead()——铁律1「不用时不占资源」，会话数不设死上限。
+- **中断**：杀进程即停（stream-json 无 stdin 中断通道），下次发送自动复活续上下文。
+- **新路由**：/sessions（列表）、/transcript（历史气泡，解析 ~/.claude jsonl 重建，图片/附件按扩展名归位 chip）、/interrupt、/rename、/delete、/models（读 settings.json env 的 LANZ 映射，无显式默认取首个）、/skills（复用 claude_sessions.list_skills）、/upload（base64→harness_uploads/ 落盘，uuid 前缀防覆盖，20MB 上限）。SSE/connect/send 参数从 port_id 改为 **sid**；v1 的 /disconnect 移除——关 tab 不断会话，进程闲置自回收。
+- **图片实测结论**：内网网关（Lanz 系列）不识图（模型自述看不到内联图片）——image base64 块照常发（协议透传，网关换多模态模型自动生效），同时附件路径以文本附录进消息，文件任何模型都能 Read。
+
+**前端 web/js/claude-harness.js 重写（.hg* 样式族）**：左栏（新建/搜索/会话列表含改名删除 hover 操作）+ 顶栏（标题/cwd/状态）+ 居中限宽气泡流（空会话「你好，我是 Claude」欢迎页）+ 底部圆角输入卡（附件 / 技能 popover 插 /命令 / 模型 popover / 圆形发送钮 busy 变停止）+ 待发附件 chip 行 + 粘贴图片直传。新会话**延迟建连**（发首条消息才 spawn 进程）；前端切会话 DOM 快照缓存免重拉；单例 tab（harness:gui）与顶栏 claude_ui_mode 分派不变。铁律2：改名/删除用自建暗色模态（hgModal），无原生弹窗。
+
+**验证**：后端真机冒烟全链路（connect→带图 send→result 15s→transcript 重建→rename/delete→404 边界×5）通过；13 条既有路由回归零失败；models/skills 正确（Lanz-Auto/Medium/Flash ×30 技能）；node --check + py_compile 通过。
+
+**已知限制（v2）**：模型选择会话级生效（已有对话的会话改模型=新建会话才生效）；harness 会话 cwd 固定 ~（connect 支持 cwd 参数备扩展，UI 暂不选目录）；删除会话只删工具元数据（~/.claude 转写不动）。
