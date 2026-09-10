@@ -87,6 +87,10 @@ app.register_blueprint(claude_setup_bp)
 from src.claude_default import claude_default_bp
 app.register_blueprint(claude_default_bp)
 
+# 注册 Claude Proxy Blueprint（重试代理+headroom 压缩+Lanz 额度，/api/proxy/*）
+from src.proxy import proxy_bp, proxy_module_init
+app.register_blueprint(proxy_bp)
+
 # ---- 自依赖自检状态（main 启动时注入，前端每次启动拉取弹提醒） ----
 _deps_state = {"missing_req": [], "missing_opt": [], "skipped": False}
 
@@ -166,6 +170,12 @@ def start_background():
                 pass
     t = threading.Thread(target=_cleanup, daemon=True)
     t.start()
+    # Claude Proxy 模块初始化（启动自愈+压缩模式记忆+额度 worker；不自动启动代理）
+    try:
+        proxy_module_init()
+    except Exception as e:
+        import logging
+        logging.getLogger("claude_proxy").warning("proxy_module_init 失败: %s", e)
 
 # ============================================================
 # Flask 路由

@@ -508,6 +508,13 @@ def main():
         close_all_ports()
         clear_endpoint()
         _clean_webview_cache()
+        # Claude Proxy 收尾（幂等）：停额度 worker/headroom/重试代理，
+        # autoswitched 时回滚 base_url 直连——不回滚 Claude Code 会连不上
+        try:
+            from src.proxy import proxy_shutdown
+            proxy_shutdown()
+        except Exception:
+            pass   # proxy 模块异常不拖累主工具退出
 
     def on_closing():
         if _real_quit["flag"]:

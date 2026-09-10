@@ -27,6 +27,9 @@ a = Analysis(
         # winpty 的包名与 pip 名不同（pip install pywinpty → import winpty）。
         'src.claude_conn', 'src.claude_sessions', 'winpty',
         'src.telnet_conn', 'src.tray',
+        # Claude Proxy 合入：proxy/lanz_quota 顶格 import；Crypto=pycryptodome
+        # （lanz_quota CAS 登录 RSA+AES 用），静态扫描扫不到子模块需显式列
+        'src.proxy', 'src.proxy_core', 'src.lanz_quota', 'Crypto',
         # 系统托盘（pystray 延迟导入 + PIL 子模块，静态扫描不全）
         'pystray', 'pystray._win32', 'PIL', 'PIL.Image'],
     hookspath=[],
