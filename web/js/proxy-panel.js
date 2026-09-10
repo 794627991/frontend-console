@@ -322,10 +322,19 @@ function buildProxyTab() {
   }
 
   function _setHrUI(j) {
+    // 原版顺序（用户实锤）：headroom 需要先启动重试代理才可用——
+    // 代理没跑时完整/轻量压缩与 CCR 置灰（后端 apply_hr_mode 同口径拒绝），
+    // 「关闭压缩」保持可点（启动前也能把记忆模式改回 off）
+    const en = !!j.running;
     wrap.querySelectorAll('[data-px-hr-row] input[type=radio]').forEach(r => {
       r.checked = (r.value === (j.hr_mode || 'off'));
+      r.disabled = (r.value !== 'off') && !en;
+      r.closest('label').classList.toggle('px-dis', r.disabled);
     });
-    $p('[data-px-ccr]').checked = !!j.ccr;
+    const ccr = $p('[data-px-ccr]');
+    ccr.checked = !!j.ccr;
+    ccr.disabled = !en;
+    ccr.closest('label').classList.toggle('px-dis', !en);
   }
 
   async function _poll() {

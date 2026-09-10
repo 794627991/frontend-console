@@ -820,6 +820,11 @@ def apply_hr_mode(mode, ccr=None):
     global _headroom_mode, _hr_switching, _ccr, _autoswitched
     if mode not in HEADROOM_MODES:
         return False, "未知压缩模式"
+    # 原版顺序（用户实锤）：先启动重试代理，才允许拉起 headroom——
+    # 链路 Claude Code → 8787(压缩) → 37349(重试)，重试代理不在跑时
+    # headroom 起来也没上游可转发。off（关闭压缩）永远允许。
+    if mode != "off" and not _ctl.running:
+        return False, "请先启动重试代理（headroom 需要重试代理做上游）"
     if _hr_switching:
         return False, "压缩模式切换进行中，请稍候"
     if ccr is not None:
@@ -834,9 +839,13 @@ def apply_hr_mode(mode, ccr=None):
             save_headroom_mode(mode, remember=True)
             _hr.stop()
             if mode == "off":
-                _bmgr.apply(RETRY_URL)
-                _autoswitched = True
-                log.info("压缩模式切换 -> off（headroom 已停，直连重试代理）")
+                # 代理在跑才把 base_url 指回 37349；没在跑时只改记忆
+                # ——否则 base_url 指向空端口，Claude Code 直接连不上
+                if _ctl.running:
+                    _bmgr.apply(RETRY_URL)
+                    _autoswitched = True
+                log.info("压缩模式切换 -> off（headroom 已停%s）",
+                         "，直连重试代理" if _ctl.running else "，代理未跑不动 base_url")
                 return
             try:
                 _hr.start(mode, ccr=_ccr)
@@ -935,13 +944,16 @@ def tray_menu_items():
     has_headroom = os.path.exists(HEADROOM_EXE)
 
     def _hr_items():
+        # 未启动重试代理时压缩项置灰（headroom 需要 37349 做上游）；
+        # 关闭压缩永远可点——用于启动前把记忆里的模式改成 off
+        en = has_headroom and _ctl.running
         return [
             ("item", "完整压缩", lambda: apply_hr_mode("full"),
              {"radio": True, "checked": lambda: _headroom_mode == "full",
-              "enabled": has_headroom}),
+              "enabled": en}),
             ("item", "轻量压缩", lambda: apply_hr_mode("light"),
              {"radio": True, "checked": lambda: _headroom_mode == "light",
-              "enabled": has_headroom}),
+              "enabled": en}),
             ("item", "关闭压缩", lambda: apply_hr_mode("off"),
              {"radio": True, "checked": lambda: _headroom_mode == "off"}),
         ]
@@ -965,7 +977,7 @@ def tray_menu_items():
         ("item", "压缩模式", None, {"submenu": _hr_items()}),
         ("item", "CCR 流压缩（激进·/compact 可能卡死）",
          lambda: apply_hr_mode(_headroom_mode, ccr=not _ccr),
-         {"checked": lambda: _ccr, "enabled": has_headroom}),
+         {"checked": lambda: _ccr, "enabled": has_headroom and _ctl.running}),
     ]
 
 

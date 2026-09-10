@@ -1853,6 +1853,8 @@
 .px-h-e { margin-left: auto; }
 .px-hr-row { display: flex; flex-direction: column; gap: 8px; }
 .px-hr-row label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+/* headroom 选项在重试代理未启动时置灰（原版：先起代理才能拉 headroom） */
+.px-hr-row label.px-dis { opacity: .4; cursor: not-allowed; }
 .px-ccr input { accent-color: var(--accent); }
 .px-quota-login { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
 .px-quota-login input { background: var(--bg-input, var(--bg-card)); border: 1px solid var(--border);
