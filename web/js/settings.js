@@ -20,6 +20,7 @@ const _SET_SECTIONS = [
   { id: 'reinstall', icon: '♻', name: 'Claude 重装', desc: '重新安装 / 修复状态栏 / 离线包目录' },
   { id: 'data',  icon: '📁', name: '数据目录', desc: '日志 / 笔记 / 缓存的位置与迁移' },
   { id: 'assoc', icon: '🔗', name: '文件关联', desc: '接管/还原 txt 等文本文件的双击打开方式' },
+  { id: 'help',  icon: '❓', name: '帮助', desc: 'README 使用手册 / 常见问题' },
 ];
 
 function _stModal() {
@@ -65,7 +66,36 @@ function _stShowSection(m, sec) {
   else if (sec === 'term') _stRenderTermKeysPane(pane);
   else if (sec === 'data') _stRenderDataPane(pane);
   else if (sec === 'assoc') _stRenderAssocPane(pane);
+  else if (sec === 'help') _stRenderHelpPane(pane);
   else _stRenderAppearancePane(pane);   // 未知 id 兜底到外观
+}
+
+// ---- 帮助子页（顶栏 ？ 按钮挪来；最底部分区）----
+function _stRenderHelpPane(pane) {
+  pane.innerHTML = `
+    <div class="dd-body">
+      <div class="dd-label">帮助文档</div>
+      <div class="dd-row" style="display:flex;gap:8px;margin-top:6px;">
+        <button class="btn primary" id="hpOpenReadme">📖 打开 README 使用手册</button>
+      </div>
+      <div class="dd-sub">工具内直接打开（markdown 渲染），含快速上手 / 全功能说明 / 常见问题。</div>
+      <div class="dd-cur" style="margin-top:14px;">
+        <div class="dd-label">常见问题速查</div>
+        <div class="dd-sub" style="margin-top:6px;line-height:2;">
+          • 点 ✕ 程序没退出？——默认「关闭到托盘」，单击托盘图标唤出，右键托盘选退出才是真退（设置→终端设置可关）<br>
+          • 粘贴没反应？——任何程序复制的内容都能贴；多行会先弹确认框<br>
+          • 终端字号调不了？——焦点要在终端里，Ctrl + = / Ctrl + -<br>
+          • Telnet 别人连不上？——多数设备 telnet 只支持一个会话，设备固件限制<br>
+          • 日志在哪？——工具目录 serial_logs/（设置→数据目录可查/迁移）
+        </div>
+      </div>
+    </div>`;
+  pane.querySelector('#hpOpenReadme').onclick = () => {
+    fetch('/api/help_readme').then(r => r.json()).then(j => {
+      if (j.ok && j.path) openFileSmart(j.path, 'auto');
+      else showBanner('未找到 README.md', 3000, true);
+    }).catch(() => showBanner('帮助打开失败', 3000, true));
+  };
 }
 
 // ---- 外观子页：换肤（原 theme 页整块搬入）+ 界面缩放 ----

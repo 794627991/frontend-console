@@ -1,0 +1,6 @@
+{
+  "max_attempts": 0,
+  "max_retry_seconds": 0.0,
+  "backoff_enabled": true,
+  "max_backoff_seconds": 3.0
+}
