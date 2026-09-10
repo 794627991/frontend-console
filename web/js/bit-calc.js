@@ -20,6 +20,7 @@ function _bcEvalExpr(src, bits) {
     if (peek() === '(') { i++; const v = parseAdd(); if (peek() !== ')') throw new Error('括号不匹配'); i++; return v; }
     if (peek() === '~') { i++; return ~parsePrimary() & MASK; }
     if (peek() === '-' && (i + 1 < s.length)) { i++; return (-parsePrimary()) & MASK; }
+    if (peek() === '+' && (i + 1 < s.length)) { i++; return parsePrimary() & MASK; }   // 一元 +（2 + +3 之前崩）
     // 裸 hex 字面量（用户实锤）：HEX 模式敲 AA 报"无法识别"——键盘明明摆着
     // A–F 键。含字母的纯字面量按十六进制（程序员计算器惯例）；排在纯数字前
     // （交替顺序，1F 不被截成 1；纯数字仍按十进制）
@@ -30,24 +31,15 @@ function _bcEvalExpr(src, bits) {
     if (/[a-fA-F]/.test(m[0]) && !/^0[xXbBoO]/.test(m[0])) return BigInt('0x' + m[0]) & MASK;
     return BigInt(m[0]) & MASK;
   }
-  // 优先级（低→高）：+ - → * / % → | → ^ → & → << >> → 一元/字面量
-  // （C 语言同款：移位低于加减？不——C 里移位介于加减与比较之间、高于位与。
-  //  这里定：加减最低，乘除次之，位或/异或/与再高，移位最高（程序员直觉：
-  //  1<<3+1 想要 (1<<3)+1 就加括号，默认 1<<(3+1) 不符合 C 但符合 Marvell 工具习惯）
-  function parseShift() {
-    let v = parsePrimary();
-    while (s[i] === '<' && s[i+1] === '<') { i += 2; const n = parsePrimary(); v = (v << n) & MASK; }
-    while (s[i] === '>' && s[i+1] === '>') { i += 2; const n = parsePrimary(); v = v >> n; }
-    return v;
-  }
-  function parseAnd() { let v = parseShift(); while (peek() === '&') { i++; v &= parseShift(); } return v; }
-  function parseXor() { let v = parseAnd(); while (peek() === '^') { i++; v ^= parseAnd(); } return v; }
-  function parseOr() { let v = parseXor(); while (peek() === '|') { i++; v |= parseXor(); } return v; }
+  // 优先级（低→高）：| → ^ → & → << >> → + - → * / % → 一元/字面量
+  // C 语言同款（Windows 程序员计算器同款）。初版把位运算放得比加减还高
+  // ——1&2+3 算成 (1&2)+3=3，C 语义是 1&(2+3)=1，结果错误级别，用户实锤严查。
+  // 1<<3+1 此后按 C 语义 = 1<<(3+1) = 16。
   function parseMul() {
-    let v = parseOr();
+    let v = parsePrimary();
     while (peek() === '*' || peek() === '/' || peek() === '%') {
       const op = s[i++];
-      const r = parseOr();
+      const r = parsePrimary();
       if ((op === '/' || op === '%') && r === 0n) throw new Error('除零');
       v = op === '*' ? (v * r) & MASK : op === '/' ? v / r : v % r;
     }
@@ -62,7 +54,16 @@ function _bcEvalExpr(src, bits) {
     }
     return v;
   }
-  const v = parseAdd();
+  function parseShift() {
+    let v = parseAdd();
+    while (s[i] === '<' && s[i+1] === '<') { i += 2; const n = parseAdd(); if (n < 0n || n > 1024n) throw new Error('移位位数无效'); v = (v << n) & MASK; }
+    while (s[i] === '>' && s[i+1] === '>') { i += 2; const n = parseAdd(); if (n < 0n || n > 1024n) throw new Error('移位位数无效'); v = v >> n; }
+    return v;
+  }
+  function parseAnd() { let v = parseShift(); while (peek() === '&') { i++; v &= parseShift(); } return v; }
+  function parseXor() { let v = parseAnd(); while (peek() === '^') { i++; v ^= parseAnd(); } return v; }
+  function parseOr() { let v = parseXor(); while (peek() === '|') { i++; v |= parseXor(); } return v; }
+  const v = parseOr();
   if (i < s.length) throw new Error('多余字符: ' + s.slice(i, i + 8));
   return v;
 }
@@ -104,10 +105,9 @@ function _bcEvalExprF(src) {
       if (v === 0) throw new Error('除零');
       return 1 / v;
     }
-    const m = /^(0[xX][0-9a-fA-F]+|0[bB][01]+|0[oO][0-7]+|[0-9]*[a-fA-F][0-9a-fA-F]*|[0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?)/.exec(rest);
+    const m = /^(0[xX][0-9a-fA-F]+|0[bB][01]+|0[oO][0-7]+|[0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?)/.exec(rest);
     if (!m) throw new Error('无法识别: ' + (rest.slice(0, 8) || '(结尾)'));
     i += m[0].length;
-    if (/[a-fA-F]/.test(m[0]) && !/^0[xXbBoO]/.test(m[0])) return Number(BigInt('0x' + m[0]));
     return /^0[xXbBoO]/.test(m[0]) ? Number(BigInt(m[0])) : Number(m[0]);
   }
   function parseUnary() { if (s[i] === '-') { i++; return -parseUnary(); } if (s[i] === '+') { i++; return parseUnary(); } return parsePrimary(); }
@@ -357,12 +357,11 @@ function buildBitCalcTab() {
   });
 
   // 运算按钮（对当前值施加）：
-  // AND/OR/XOR 用操作数框；NOT 无参；移位优先用操作数框、空则用位移位数框
+  // AND/OR/XOR 用操作数框；NOT 无参；移位用「位数」框
   wrap.querySelectorAll('[data-bc-op]').forEach(btn => {
     btn.onclick = () => {
       const op = btn.dataset.bcOp;
       const op2raw = wrap.querySelector('[data-bc-op2]').value.trim().toLowerCase();
-      const shn = BigInt(wrap.querySelector('[data-bc-shiftn]').value || '1');
       try {
         if (op === 'and' || op === 'or' || op === 'xor') {
           if (!op2raw) { exprRes.textContent = '需要操作数（左侧输入框）'; exprRes.classList.add('err'); return; }
@@ -372,12 +371,17 @@ function buildBitCalcTab() {
           else conn.value ^= o;
         } else if (op === 'not') {
           conn.value = ~conn.value & MASK();
-        } else if (op === 'shl') {
+        } else if (op === 'shl' || op === 'shr') {
           // 移位一律用「位数」框——操作数框只归 AND/OR/XOR，
-          // 之前"操作数有值就优先"导致 << 一次跳 N 位不好预期
-          conn.value = (conn.value << shn) & MASK();
-        } else if (op === 'shr') {
-          conn.value >>= shn;
+          // 之前"操作数有值就优先"导致 << 一次跳 N 位不好预期。
+          // 位数非法（空/非数字/负数/超大）给中文提示，不抛英文异常
+          const raw = wrap.querySelector('[data-bc-shiftn]').value.trim();
+          if (!/^[0-9]+$/.test(raw)) throw new Error('位数无效: ' + (raw || '(空)'));
+          const shn = BigInt(raw);
+          if (shn > 1024n) throw new Error('位数过大: ' + raw);
+          if (shn >= BigInt(conn.bits)) { conn.value = op === 'shl' ? 0n : (conn.value & 0n); }
+          else if (op === 'shl') conn.value = (conn.value << shn) & MASK();
+          else conn.value >>= shn;
         }
         exprRes.textContent = '';
         render();
