@@ -107,14 +107,14 @@ class SSHConnection(BaseConnection):
                 self._client = None
 
     def _io_reconnect(self):
-        """指数退避重连：1s/2s/4s... 上限 60s。手动 disconnect（alive=False）不重连。"""
+        """指数退避重连：1s/2s/4s... 上限 60s。手动 disconnect（alive=False）不重连。
+        退避等待可被 _reconn_kick 中断（按 R 立即重试）；close() 置 alive=False
+        经下方检查放弃，不留幽灵会话。"""
         self._reconnect_attempts += 1
         delay = min(60, 2 ** (self._reconnect_attempts - 1))
-        # 可中断等待：close() 期间醒来即返回，不在 sleep 里滞留 60s
-        for _ in range(delay):
-            if not self.alive:
-                return False
-            time.sleep(1)
+        # 可中断等待：kick（按 R）或 close()（alive 变 False）都能立即醒
+        self._reconn_kick.wait(delay)
+        self._reconn_kick.clear()
         # close() 在退避期间到达：放弃重连，避免重连成功后无人关闭的幽灵会话
         # （占掉嵌入式设备 dropbear 通常限 1~2 个的会话名额）
         if not self.alive:

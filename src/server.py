@@ -130,18 +130,19 @@ def _acquire_connecting(port_id):
     with _ports_lock:
         if port_id in _ports:   # 已连接：释放占位让调用方走「已连接」路径
             lock.release()
-            _drop_connecting(port_id)
             return False
     return True   # 调用方连接结束后必须 _drop_connecting(port_id)
 
 def _drop_connecting(port_id):
-    """连接结束（无论成败）清占位锁。锁被持有中时只清注册表，锁对象由持有方释放。"""
+    """连接结束（无论成败）释放占位锁。
+    注册表条目永不 pop：锁对象按 port_id 复用——若此处 pop，另一线程
+    setdefault 拿到的可能是「即将被 pop 的旧锁」，pop 后第三个线程建新锁，
+    同一 port 两路并发 connect（锁失效竞态）。数量以连接目标为界，常驻无害。"""
     with _connecting_locks_guard:
         lock = _connecting_locks.get(port_id)
-        if lock is not None:
-            try: lock.release()
-            except Exception: pass
-            _connecting_locks.pop(port_id, None)
+    if lock is not None:
+        try: lock.release()
+        except Exception: pass
 
 # hook 到 BaseConnection.append_line：AI 全局流挂载点（猴子补丁，import 各连接类后执行）
 # 挂基类而非 SerialPort——SSHConnection 继承基类方法，挂串口类会让 SSH 输出永远不进 /api/ai/stream
@@ -296,13 +297,16 @@ def api_connect():
                     return jsonify({"ok": False, "err": f"{port_id} 已连接"}), 400
             return jsonify({"ok": False, "err": f"{port_id} 正在连接中，请稍候"}), 400
         try:
+            p = None   # 预置：构造在 __init__ 内抛异常（DNS 解析失败等）时 p 未绑定，
+                       # 下方 except 里裸 p.close() 会 NameError 被吞——半构造对象无人回收
             try:
                 p = SSHConnection(host, port, username, password=password, key_path=key_path, port_id=port_id)
             except Exception as e:
                 # start() 在构造内执行，_start_log 失败或后续步骤异常会留下
                 # 半构造对象（已开 SSH 会话+读线程）——必须 close 兜底，否则幽灵会话泄漏
-                try: p.close()
-                except Exception: pass
+                if p is not None:
+                    try: p.close()
+                    except Exception: pass
                 # 认证失败类异常：转成对用户可读的中文提示（paramiko 原始消息常为空/难懂）
                 msg = str(e) or e.__class__.__name__
                 try:
@@ -352,12 +356,14 @@ def api_connect():
                     return jsonify({"ok": False, "err": f"{port_id} 已连接"}), 400
             return jsonify({"ok": False, "err": f"{port_id} 正在连接中，请稍候"}), 400
         try:
+            p = None   # 预置防 NameError（同 SSH 分支）
             try:
                 from .telnet_conn import TelnetConnection
                 p = TelnetConnection(host, port, port_id=port_id)
             except Exception as e:
-                try: p.close()
-                except Exception: pass
+                if p is not None:
+                    try: p.close()
+                    except Exception: pass
                 msg = str(e) or e.__class__.__name__
                 import socket as _socket
                 if isinstance(e, (_socket.timeout, TimeoutError)):
@@ -404,6 +410,7 @@ def api_connect():
                 while f"claude:{n}" in _ports:
                     n += 1
                 port_id = f"claude:{n}"
+            p = None   # 预置防 NameError（同 SSH 分支）
             try:
                 p = ClaudeConnection(cwd=cwd, resume=resume, port_id=port_id,
                                      light_theme=light_theme, agents=agents)
@@ -411,8 +418,9 @@ def api_connect():
             except Exception as e:
                 # 构造内 start() 已 spawn PTY+读线程，异常必须 close 兜底（同 SSH/串口模式）
                 _ports.pop(port_id, None)
-                try: p.close()
-                except Exception: pass
+                if p is not None:
+                    try: p.close()
+                    except Exception: pass
                 return jsonify({"ok": False, "err": _humanize_claude_error(e)}), 500
         return jsonify({"ok": True, "port_id": port_id, "kind": "claude",
                         "cwd": cwd, "resume": resume,
@@ -431,13 +439,15 @@ def api_connect():
                     return jsonify({"ok": False, "err": f"{port} 已连接"}), 400
             return jsonify({"ok": False, "err": f"{port} 正在连接中，请稍候"}), 400
         try:
+            p = None   # 预置防 NameError（同 SSH 分支）
             try:
                 p = SerialPort(port, baud, port_id)
             except Exception as e:
                 # 构造内 start() 已开串口句柄/读线程，异常必须 close 兜底，
                 # 否则 COM 口被半构造对象占死，再连必 PermissionError
-                try: p.close()
-                except Exception: pass
+                if p is not None:
+                    try: p.close()
+                    except Exception: pass
                 return jsonify({"ok": False, "err": str(e)}), 500
             with _ports_lock:
                 if port_id in _ports:

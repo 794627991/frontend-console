@@ -109,10 +109,12 @@ class TelnetConnection(BaseConnection):
                 self._io_handle = None
 
     def _io_reconnect(self):
-        """指数退避重连：1s/2s/4s... 上限 60s。手动 disconnect（alive=False）不重连。"""
+        """指数退避重连：1s/2s/4s... 上限 60s。手动 disconnect（alive=False）不重连。
+        退避等待可被 _reconn_kick 中断（按 R 立即重试——与 SSH/基类语义一致）。"""
         self._reconnect_attempts += 1
         delay = min(2 ** self._reconnect_attempts, 60)
-        time.sleep(delay)
+        self._reconn_kick.wait(delay)
+        self._reconn_kick.clear()
         if not self.alive:
             return False
         try:

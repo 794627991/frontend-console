@@ -52,6 +52,14 @@ function _notifyBuild(o) {
 }
 function _notifyMount(d, ms) {
   const stack = _notifyStack();
+  // 栈封顶 6 条：超出丢最旧（FIFO）——连环点 20 个快捷打开时不能让转圈
+  // 通知盖满半屏（铁律①流畅/可用性）。被丢的条若是常驻任务(无 timer)，
+  // 后续 notifyTaskDone 会静默 no-op（DOM 已 remove，_closed 检查兜住）
+  while (stack.children.length >= 6) {
+    const oldest = stack.children[stack.children.length - 1];   // column-reverse: 最旧在最后
+    _notifyDismiss(oldest);
+    if (stack.children.length >= 8) oldest.remove();   // 防御:dismiss 是动画退出,极端时强移
+  }
   stack.appendChild(d);
   // 入场动画（CSS .notify 定义）后自动消失（ms=0 常驻，由任务完成时关闭）
   if (ms) {

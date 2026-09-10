@@ -38,14 +38,16 @@ async function _recentAdd(item) {
     renderRecentList();
   } catch(e) {}
 }
-async function connectPort(port, baud) {
-  // 任务型通知：转圈常驻，结果出来变 ✓/✗（多连接并发时各自一条向上堆叠）
-  const nid = notifyTask({type:'serial', title:`正在连接 ${port}`, detail:`串口 @${baud}`});
+async function connectPort(port, baud, quiet) {
+  // 任务型通知：转圈常驻，结果出来变 ✓/✗（多连接并发时各自一条向上堆叠）。
+  // quiet=true（连接弹窗路径）：弹窗内已有「连接中…」按钮态 + 内联错误，
+  // 通知栈再弹会双份提示（铁律②体验）——静默，失败由弹窗内联展示。
+  const nid = quiet ? null : notifyTask({type:'serial', title:`正在连接 ${port}`, detail:`串口 @${baud}`});
   try {
     const r = await fetch('/api/connect', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({kind:'serial', port, baud})});
     const j = await r.json();
     if (j.ok) {
-      notifyTaskDone(nid, {ok:true, title:`已连接 ${port}`, detail:`串口 @${baud}`});
+      if (nid) notifyTaskDone(nid, {ok:true, title:`已连接 ${port}`, detail:`串口 @${baud}`});
       const conn = buildTerminal(port, {kind:'serial', baud, label:port});
       connections[port] = conn;
       switchTab(port);
@@ -53,21 +55,21 @@ async function connectPort(port, baud) {
       refreshGlobalStatus();
       _recentAdd({type:'serial', key:'serial:'+port, label:`${port} @${baud}`, data:{port, baud}});
     } else {
-      notifyTaskDone(nid, {ok:false, title:`串口连接失败`, detail:j.err || '未知错误', ms:8000});
+      if (nid) notifyTaskDone(nid, {ok:false, title:`串口连接失败`, detail:j.err || '未知错误', ms:8000});
     }
     return j;
-  } catch(e) { notifyTaskDone(nid, {ok:false, title:'串口连接请求失败', detail:String(e), ms:8000}); return {ok: false, err: '连接请求失败：' + e}; }
+  } catch(e) { if (nid) notifyTaskDone(nid, {ok:false, title:'串口连接请求失败', detail:String(e), ms:8000}); return {ok: false, err: '连接请求失败：' + e}; }
 }
 
-async function connectSSH(host, port, username, password, key_path) {
+async function connectSSH(host, port, username, password, key_path, quiet) {
   // SSH 建连最长 10s（TCP 超时）——任务型通知转圈常驻，含 IP/账号，不能让用户干等无反馈
-  const nid = notifyTask({type:'ssh', title:`正在连接 ${username}@${host}:${port}`, detail:'SSH · TCP 超时最长 10s'});
+  const nid = quiet ? null : notifyTask({type:'ssh', title:`正在连接 ${username}@${host}:${port}`, detail:'SSH · TCP 超时最长 10s'});
   try {
     const r = await fetch('/api/connect', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({kind:'ssh', host, port, username, password, key_path})});
     const j = await r.json();
     if (j.ok) {
       const port_id = j.port_id;
-      notifyTaskDone(nid, {ok:true, title:`已连接 ${username}@${host}:${port}`, detail:'SSH'});
+      if (nid) notifyTaskDone(nid, {ok:true, title:`已连接 ${username}@${host}:${port}`, detail:'SSH'});
       const conn = buildTerminal(port_id, {kind:'ssh', label:`${username}@${host}`, host, user:username});
       connections[port_id] = conn;
       switchTab(port_id);
@@ -77,20 +79,20 @@ async function connectSSH(host, port, username, password, key_path) {
       _recentAdd({type:'ssh', key:`ssh:${host}:${port}:${username}`, label:`${username}@${host}:${port}`,
                   data:{host, port, username, password: password || '', key_path: key_path || ''}});
     } else {
-      notifyTaskDone(nid, {ok:false, title:`SSH 连接失败 ${host}:${port}`, detail:j.err || '未知错误', ms:8000});
+      if (nid) notifyTaskDone(nid, {ok:false, title:`SSH 连接失败 ${host}:${port}`, detail:j.err || '未知错误', ms:8000});
     }
     return j;
-  } catch(e) { notifyTaskDone(nid, {ok:false, title:`SSH 连接请求失败 ${host}:${port}`, detail:String(e), ms:8000}); return {ok: false, err: 'SSH 连接请求失败：' + e}; }
+  } catch(e) { if (nid) notifyTaskDone(nid, {ok:false, title:`SSH 连接请求失败 ${host}:${port}`, detail:String(e), ms:8000}); return {ok: false, err: 'SSH 连接请求失败：' + e}; }
 }
 
-async function connectTelnet(host, port) {
-  const nid = notifyTask({type:'telnet', title:`正在连接 ${host}:${port}`, detail:'Telnet'});
+async function connectTelnet(host, port, quiet) {
+  const nid = quiet ? null : notifyTask({type:'telnet', title:`正在连接 ${host}:${port}`, detail:'Telnet'});
   try {
     const r = await fetch('/api/connect', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({kind:'telnet', host, port})});
     const j = await r.json();
     if (j.ok) {
       const port_id = j.port_id;
-      notifyTaskDone(nid, {ok:true, title:`已连接 ${host}:${port}`, detail:'Telnet'});
+      if (nid) notifyTaskDone(nid, {ok:true, title:`已连接 ${host}:${port}`, detail:'Telnet'});
       const conn = buildTerminal(port_id, {kind:'telnet', label:`${host}:${port}`, host});
       connections[port_id] = conn;
       switchTab(port_id);
@@ -99,10 +101,10 @@ async function connectTelnet(host, port) {
       _recentAdd({type:'telnet', key:`telnet:${host}:${port}`, label:`${host}:${port}`,
                   data:{host, port}});
     } else {
-      notifyTaskDone(nid, {ok:false, title:`Telnet 连接失败 ${host}:${port}`, detail:j.err || '未知错误', ms:8000});
+      if (nid) notifyTaskDone(nid, {ok:false, title:`Telnet 连接失败 ${host}:${port}`, detail:j.err || '未知错误', ms:8000});
     }
     return j;
-  } catch(e) { notifyTaskDone(nid, {ok:false, title:`Telnet 连接请求失败 ${host}:${port}`, detail:String(e), ms:8000}); return {ok: false, err: 'Telnet 连接请求失败：' + e}; }
+  } catch(e) { if (nid) notifyTaskDone(nid, {ok:false, title:`Telnet 连接请求失败 ${host}:${port}`, detail:String(e), ms:8000}); return {ok: false, err: 'Telnet 连接请求失败：' + e}; }
 }
 
 function closeConnection(portId) {
@@ -380,18 +382,18 @@ $('connConfirm').onclick = async () => {
       if (_sshAuth === 'key' && !key_path) { errEl.textContent = '请填写密钥路径'; errEl.classList.add('show'); return; }
       // 密码可为空（部分设备空密码可进），后端自动处理
       btn.textContent = '连接中…';
-      j = await connectSSH(host, port, username, password, key_path);
+      j = await connectSSH(host, port, username, password, key_path, true);
     } else if (_connType === 'telnet') {
       const host = $('connTelnetHost').value.trim();
       const port = $('connTelnetPort').value.trim() || '23';
       if (!host) { errEl.textContent = '请填主机地址'; errEl.classList.add('show'); return; }
       btn.textContent = '连接中…';
-      j = await connectTelnet(host, port);
+      j = await connectTelnet(host, port, true);
     } else {
       const port = $('connPort').value, baud = $('connBaud').value;
       if (!port) { errEl.textContent = '请选择串口'; errEl.classList.add('show'); return; }
       btn.textContent = '连接中…';
-      j = await connectPort(port, baud);
+      j = await connectPort(port, baud, true);
     }
     if (j && j.ok) $('connModal').classList.remove('show');
     else { errEl.textContent = '❌ ' + ((j && j.err) || '未知错误'); errEl.classList.add('show'); }

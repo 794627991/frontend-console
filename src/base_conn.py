@@ -378,6 +378,8 @@ class BaseConnection:
 
     def close(self):
         self.alive = False
+        # 唤醒滞留在退避等待的 reader（kick.wait 立即返回，alive=False 让它退出）
+        self._reconn_kick.set()
         time.sleep(0.1)
         try:
             self._io_close()
