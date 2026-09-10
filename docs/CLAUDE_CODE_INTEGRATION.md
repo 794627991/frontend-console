@@ -266,3 +266,28 @@ claude -p --input-format stream-json --output-format stream-json --verbose --per
 **验证**：后端真机冒烟全链路（connect→带图 send→result 15s→transcript 重建→rename/delete→404 边界×5）通过；13 条既有路由回归零失败；models/skills 正确（Lanz-Auto/Medium/Flash ×30 技能）；node --check + py_compile 通过。
 
 **已知限制（v2）**：模型选择会话级生效（已有对话的会话改模型=新建会话才生效）；harness 会话 cwd 固定 ~（connect 支持 cwd 参数备扩展，UI 暂不选目录）；删除会话只删工具元数据（~/.claude 转写不动）。
+
+### 8.7 Harness v2.1：抄作业 claudecodeui 交互细节（2026-09-10）
+
+调研 GitHub 开源 Claude Code GUI（siteboon/claudecodeui，14k★，AGPL）后，按用户要求「把他们有的都转化成我们的」——只借鉴交互设计，代码全部 vanilla 重写，零新依赖（hljs 用宿主 vendor/ 现成文件）。提交 bb58188。
+
+**前端 claude-harness.js 移植清单**：
+
+- **工具调用注册表 `_H_TOOL_CFG`**（源 toolConfigs.ts）：每个工具 one-line（单行）或 collapsible（折叠组）两种渲染；diff/todo/question/agent/plan 分类左边框着色；MCP 名 `mcp__server__tool` 美化为 `tool (server)`；未注册工具走 Default 兜底（按键优先级 command/file_path/pattern/query/url… 抽 80 字符摘要）。
+- **状态徽章 deriveToolStatus**（源 ToolRenderer）：running 蓝「运行中」/ completed 绿「完成」/ error 红「出错」/ denied 橙「拒绝」；`_H_DENIAL` 短语表区分用户拒绝与真错误；isError 结果永不隐藏、自动展开红字。
+- **连续同名工具分组**（源 toolGrouping.ts）：run≥2 折叠为一行 `×N + 前2个preview + +N more`（extraCount 按实际拼出条数）；run 边界=文本/thinking/用户消息/result，**tool_result 事件不打断 run**（源 rendersNothing 思想）；分组成员的结果状态聚合到组头（出错组头标红）。
+- **代码块**（源 Markdown.tsx CodeBlock）：ChatGPT 式标签行（左语言名右复制钮，同底色无分割线）、复制 2s 绿勾、hljs highlightElement 高亮；`normalizeInlineCodeFences` 把单行 ```x``` 折成 `x`。
+- **thinking 折叠**（源 Reasoning.tsx）：流式自动展开、回复文本出现 1s 后自动收起为「思考了 N 秒」，手动点过则不自动收。
+- **@ 文件引用**（源 useFileMentions）：@ 后无空格触发下拉、↑↓ 循环、Tab/Enter 选中、Esc 关；插入完整路径+空格；输入框 overlay 镜像层画路径底色高亮（padding 与 textarea 对齐）；过期 fetch 响应闭包校验。
+- **输入历史**（源 useInputHistory）：localStorage 按会话分桶 100 条/桶、100 桶 LRU；空框 ↑ 回溯、↓ 前进到底恢复 draft。
+- **活动指示条**（源 ActivityIndicator）：输入框上方标签页「动词轮换(4s) + 计时 + 停止⏹」，Esc 同效中断。
+- 小件：输入框自动增高（max 160px）、粘贴 clipboardData.files 直传、图片 Lightbox（Esc/背景/X 三路关）、Bash 行命令复制按钮、hgModal/hgConfirm/hgPrompt 暗色模态（铁律2）。
+
+**后端 claude_harness.py**：
+
+- 新增 `GET /api/harness/files?cwd=&q=`：@ 引用候选，浅层扫描两层深度（60 条截断/返回 30），隐藏文件与 Windows 保留设备名（nul/con/prn/aux）滤除，名字短排前。
+- **修复 transcript 重建丢 user 行**：stdin 注入消息的 `promptSource` 是 `"sdk"` 而非 `"typed"`，判据扩为 (None, "typed", "sdk")。真机验证 8ee97ff3 会话从 `['assistant']` 变为 `['user','assistant']`。
+
+**明确不抄**（调研结论）：多 provider 抽象、WebSocket 网关、Draft DB、Scheduled messages、权限 Banner（auto 模式用不上）、文件树编辑器、i18n、Radix/react-syntax-highlighter/remark 全家桶。
+
+**验证**：node --check + py_compile；13 条既有路由回归零失败；/files 三态（正常/过滤/400）实测；真实对话全链路冒烟 PASS（init→assistant text→result success→transcript 闭环）；缓存快照恢复后按 data-tid 重建 rowById（busy 会话切回不丢挂接）。
