@@ -127,6 +127,7 @@ function sortKeyFn(pid) {
   if (pid.startsWith('diff:')) return [3, 'd' + pid];  // 对比：编辑器组，字典序排最前（log/编辑器都是数字段后缀）
   if (pid.startsWith('edit:')) return [3, pid];  // 编辑器：字典序（排在日志后）
   if (pid.startsWith('claude:')) return [4, pid];  // claude 终端：字典序（排在编辑器后）
+  if (pid.startsWith('harness:')) return [5, pid];  // claude harness 对话：字典序（排在 claude 终端后）
   return [1, pid];  // SSH：字典序
 }
 

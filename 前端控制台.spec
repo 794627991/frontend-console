@@ -26,6 +26,8 @@ a = Analysis(
         # 静态分析扫不到；claude_sessions 被 server 顶格 import 但保险起见也列上。
         # winpty 的包名与 pip 名不同（pip install pywinpty → import winpty）。
         'src.claude_conn', 'src.claude_sessions', 'winpty',
+        # Claude Harness 界面化会话（第 4 期）：stream-json 长驻子进程 + Blueprint
+        'src.claude_harness',
         'src.telnet_conn', 'src.tray',
         # Claude Proxy 合入：proxy/lanz_quota 顶格 import；Crypto=pycryptodome
         # （lanz_quota CAS 登录 RSA+AES 用），静态扫描扫不到子模块需显式列

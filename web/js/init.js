@@ -46,7 +46,7 @@ $('btnNewFile').onclick = newEditorFile;  // 新建文本文件（编辑器 tab�
 $('btnDiff').onclick = openDiffPicker;  // 文件对比（原生选两份 → DiffEditor tab）
 $('btnBitCalc').onclick = buildBitCalcTab;  // 程序员计算器（寄存器位编辑+位运算+表达式）
 $('btnFiles').onclick = showFilesModal;  // 文件列表弹窗（打开已有文件）
-$('btnClaude').onclick = () => connectClaude();  // 内嵌终端启动 Claude Code（ConPTY 真实 CLI）
+$('btnClaude').onclick = claudeButtonAction;  // Claude 入口：按设置分派——默认界面化 harness tab（claude-harness.js），设置可切回 CLI 终端
 // Claude 代理面板（原 D:\AI\proxy 独立工具合入：重试代理+headroom 压缩+额度监控）
 // 帮助已挪设置面板最底部分区（settings.js _stRenderHelpPane）
 $('btnProxy').onclick = buildProxyTab;

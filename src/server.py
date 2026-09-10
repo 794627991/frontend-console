@@ -91,6 +91,11 @@ app.register_blueprint(claude_default_bp)
 from src.proxy import proxy_bp, proxy_module_init
 app.register_blueprint(proxy_bp)
 
+# 注册 Claude Harness Blueprint（stream-json 界面化会话，/api/harness/*）
+# 与 claude 终端（ConPTY TUI）平行的另一条通道，互不影响（铁律4）
+from src.claude_harness import harness_bp
+app.register_blueprint(harness_bp)
+
 # ---- 单实例唤醒通道 ----
 # 二次启动的进程探活旧实例后 POST /api/raise_window，旧实例自弹主窗口
 # （pywebview WinForms 宿主从自身线程 show 才稳，跨进程 SetForegroundWindow
@@ -689,6 +694,7 @@ def api_theme():
                         "calc_history": _calc_hist_clean(cfg.get("calc_history", [])),
                         "close_to_tray": bool(cfg.get("close_to_tray", True)),
                         "tray_prompt_shown": bool(cfg.get("tray_prompt_shown", False)),
+                        "claude_ui_mode": cfg.get("claude_ui_mode", "harness"),
                         "term_keys": {
                             "right_action": tk.get("right_action", "ctrl_menu"),
                             "auto_copy": bool(tk.get("auto_copy", False)),
@@ -724,6 +730,13 @@ def api_theme():
         _tk["close_to_tray"] = bool(data["close_to_tray"])
     if "tray_prompt_shown" in data:
         _tk["tray_prompt_shown"] = bool(data["tray_prompt_shown"])
+    if "claude_ui_mode" in data:
+        # 顶栏 Claude 按钮分派：harness=界面化聊天 tab / cli=内嵌终端（默认 harness）
+        m = str(data["claude_ui_mode"]).strip()
+        if m in ("harness", "cli"):
+            _tk["claude_ui_mode"] = m
+        else:
+            return jsonify({"ok": False, "err": "claude_ui_mode 只认 harness/cli"}), 400
     if _tk:
         _save_config({**_load_config(), **_tk})
     theme = (data.get("theme") or "").strip()

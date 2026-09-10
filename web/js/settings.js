@@ -160,10 +160,12 @@ const _TK_OPTIONS = [
 async function _stRenderTermKeysPane(pane) {
   let tk = { right_action: 'ctrl_menu', auto_copy: false, term_font_size: 13, ui_zoom: 100 };
   let closeToTray = true;
+  let claudeUiMode = 'harness';
   try {
     const j = await (await fetch('/api/theme')).json();
     if (j.ok && j.term_keys) tk = j.term_keys;
     if (j.ok) closeToTray = j.close_to_tray !== false;   // 缺省=开（config 旧版无此键）
+    if (j.ok && j.claude_ui_mode) claudeUiMode = j.claude_ui_mode;   // Claude 入口分派：harness=界面化 / cli=终端
   } catch(_) {}
   pane.innerHTML = `
     <div class="dd-body">
@@ -204,6 +206,20 @@ async function _stRenderTermKeysPane(pane) {
         </div>
       </div>
       <div class="dd-cur" style="margin-top:8px;">
+        <div class="dd-label">Claude 打开方式</div>
+        <div class="dd-row" style="margin-top:6px;display:flex;gap:16px;flex-wrap:wrap;">
+          <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;">
+            <input type="radio" name="cuMode" value="harness" ${claudeUiMode === 'harness' ? 'checked' : ''} style="margin-top:3px;">
+            <span><span style="font-weight:600;">界面化对话</span><br><span style="color:var(--muted);font-size:12px;">点顶栏 Claude 开聊天界面：消息流 + 工具调用可视化（推荐）</span></span>
+          </label>
+          <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;">
+            <input type="radio" name="cuMode" value="cli" ${claudeUiMode === 'cli' ? 'checked' : ''} style="margin-top:3px;">
+            <span><span style="font-weight:600;">内嵌终端</span><br><span style="color:var(--muted);font-size:12px;">原方式：xterm 保真跑真实 CLI（Claude 面板恢复会话仍走终端）</span></span>
+          </label>
+        </div>
+        <div class="dd-sub" style="margin-top:4px;">两种方式可随时切换；Claude 面板「恢复会话」始终走内嵌终端。</div>
+      </div>
+      <div class="dd-cur" style="margin-top:8px;">
         <div class="dd-label">关闭行为</div>
         <label style="display:flex;align-items:center;gap:8px;margin-top:6px;cursor:pointer;">
           <input type="checkbox" id="tkCloseToTray" ${closeToTray ? 'checked' : ''}>
@@ -231,11 +247,15 @@ async function _stRenderTermKeysPane(pane) {
     const ra = pane.querySelector('input[name="tkRight"]:checked');
     const ac = pane.querySelector('#tkAutoCopy').checked;
     const ct = pane.querySelector('#tkCloseToTray').checked;
+    const cu = pane.querySelector('input[name="cuMode"]:checked');
     try {
+      const body = {term_keys: {right_action: ra ? ra.value : 'ctrl_menu', auto_copy: ac,
+                                term_font_size: termFontSize, ui_zoom: uiZoom},
+                    close_to_tray: ct};
+      if (cu) body.claude_ui_mode = cu.value;   // Claude 入口分派（harness/cli）
       await fetch('/api/theme', {method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({term_keys: {right_action: ra ? ra.value : 'ctrl_menu', auto_copy: ac,
-                                          term_font_size: termFontSize, ui_zoom: uiZoom},
-                              close_to_tray: ct})});
+        body: JSON.stringify(body)});
+      if (cu && typeof setClaudeUiMode === 'function') setClaudeUiMode(cu.value);   // 内存缓存同步，立即生效
       // 已开终端连接的配置热更新（下次 contextmenu 读 conn.termKeys）
       Object.values(connections).forEach(c => {
         if (c.termKeys) {

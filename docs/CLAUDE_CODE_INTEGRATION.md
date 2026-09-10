@@ -190,6 +190,7 @@ EOF 后 tab LED 变灰；终端工具栏「⏵ 恢复上次会话」；MCP 工�
 | 第 2 期 会话面板 MVP | ✅ 已实施验收 | sessions/skills/status 三端点 + 右面板四子 sheet（活跃/历史/技能/MCP） |
 | 第 3 期 statusline/hook 上报 | ⬜ 未实施 | 暂无排期 |
 | 第 4 期 打磨与分发 | 🔶 部分 | MCP 工具已并入（observe 即可看 claude 连接）；打包/exe 冒烟未做 |
+| 第 5 期 Harness 界面化对话 | ✅ 已实施验收 | stream-json 聊天 tab（§8.5），顶栏 Claude 按设置分派 harness/CLI |
 
 ### 8.2 体验打磨落地记录（2026-09-07 会话）
 
@@ -225,3 +226,24 @@ EOF 后 tab LED 变灰；终端工具栏「⏵ 恢复上次会话」；MCP 工�
 - **面板结构演进**：Claude 档一级子 sheet 活跃/历史/技能/MCP；**MCP 从独立顶栏档并入**为子 sheet，内嵌二级页签（工具：后端地址+已注册工具 / 最近调用）。panel-tabs 剩 4 档，横向滚动条移除。子 sheet 切换必须按父容器分组（`sheetsRow.parentElement :scope > .claude-sheet-pane`）——全局 querySelector 切换会让两级页签互相关误关。
 - **会话卡**：两行模板（标题+状态标签+✎ / 摘要+id 8 位）；长名 `flex:1; min-width:0` 自己截断（否则把标签挤竖排）；重名卡自动拼相对时间区分；活跃卡与历史卡同模板（弃用旧 claude-run 单行 flex 类——与两行模板叠类挤压排版）；`external_active` 计数排除本工具已开会话（同一会话被数两次虚高）。
 - **「最近」列表 claude 条目动态名**：`_claudeTitleMap`（session_id→备注/aiTitle）渲染时替换固化 label「Claude·目录名」；打开时 tab 名同步。
+
+### 8.5 第 4 期实施：Harness 界面化对话（2026-09-10）
+
+用户要求"增加 claude harness 能力，要界面化"后的完整调研与实施记录。
+
+**调研结论**（动工前完成）：GitHub 上 harness 生态扫描——deepseek-ai/deepseek-harness（~218k★，MIT）确认存在但它是独立 agent 非套壳方案；sugyan/claude-code-webui（MIT，已归档）的"后端薄透传、前端厚渲染"分层是最佳参考；siteboon/claudecodeui（AGPL-3.0）许可证传染不嵌入只借鉴 UI；Agent SDK Python 版本质是 spawn CLI 包装不减少运行时依赖。**选型：路线 A**——现有 spawn 架构升级为 stream-json 长驻会话，零新依赖（内网无 npm 负担）、零影响面（纯增量）。
+
+**协议**（本机 claude 2.1.239 实测验证）：
+```
+claude -p --input-format stream-json --output-format stream-json --verbose --permission-mode auto [--resume <id>]
+```
+进程常驻，stdin 写 `{"type":"user","message":{"role":"user","content":"..."}}` NDJSON 连续多轮；stdout 逐行 NDJSON：`system`（init 带 session_id/model；hook_started/response/thinking_tokens 是杂音）、`assistant`（content 数组：text/thinking/tool_use 块；`parent_tool_use_id` 非空=子代理）、`user`（tool_result 回显，`isSynthetic` 是系统注入）、`result`（subtype/num_turns/total_cost_usd）。
+
+**落地**：
+- **后端 src/claude_harness.py**（新文件，独立 Blueprint `/api/harness/*`）：`ClaudeHarnessSession` 不继承 BaseConnection（raw 字节流模型不适配 JSON 事件流），自建事件缓存（`_EVENTS_MAX=4000` 防膨胀）+ SSE 通道（连接建立先回放 after_seq 增量，断线重连不丢）。claude 解析/错误处理/`_trust_workspace` 复用 claude_conn。会话表 `_harness` 独立于 `_ports`，零侵入现有连接体系。CREATE_NO_WINDOW 防 GUI 闪黑窗；stderr 独立线程排空防管道堵塞死锁。
+- **前端 web/js/claude-harness.js**（新文件）：`buildClaudeHarnessTab()` 单例骨架抄 bit-calc（已开只切换）；SSE → 渲染分流（user_echo 回显/assistant text 走 markdown-it/工具调用紧凑条/子代理缩进弱化/thinking 不渲染保流畅）；发送 busy 拒并发、失败退回输入框；`_harnessClose` 清 SSE + 后端回收进程。
+- **设置**：`claude_ui_mode`（harness/cli，默认 harness）挂 /api/theme 兼职通道白名单校验；设置页「终端设置」区加「Claude 打开方式」单选；`claudeButtonAction`（顶栏 Claude 按钮）按设置分派，内存缓存 `setClaudeUiMode` 保存即生效。CLI 方式完整保留（connectClaude 不动，面板恢复会话仍走终端）。
+- **tab 体系挂载**（每处最小侵入）：sortKeyFn 加 harness: 档位[5]；sidebar kind 分支（图标/描述/关闭走 `_harnessClose`）；switchTab harness 分支聚焦输入框（无 xterm）；spec hiddenimports 补 `src.claude_harness`。
+- **回归**：14 条既有路由 test_client 全检零失败；harness 全链路（connect→send→events→disconnect）真机验证，claude 真实回复；JS 8 文件 node --check 通过。
+
+**已知限制（v1）**：不支持中断当前回复（interrupt 预留）；无 --permission-prompt-tool 权限审批 UI（走 permission-mode auto，与用户日常 --dangerously-skip-permissions 习惯一致）；harness 不落 buf（与 claude 终端不同，转写在 ~/.claude 自带）。

@@ -169,12 +169,13 @@ function refreshSidebar() {
       const isLog = conn.meta.kind === 'log';
       const isEdit = conn.meta.kind === 'editor' || conn.meta.kind === 'hex' || conn.meta.kind === 'diff' || conn.meta.kind === 'bindiff';
       const isClaude = conn.meta.kind === 'claude';
+      const isHarness = conn.meta.kind === 'harness';
       // 编辑类 tab desc 前缀用后缀专属 SVG 图标（file-icons.js），hex/对比/日志保留 emoji
       const edIcon = (isEdit && conn.meta.kind === 'editor') ? fileIconHtml(conn.meta.label || '', 12) + ' 笔记'
                     : conn.meta.kind === 'bindiff' ? '🔀 bin 对比'
                     : isEdit ? (conn.meta.kind === 'hex' ? '🔧 hex' : '🔀 对比')
                     : isLog ? '📜 日志' : '';
-      const descText = isSSH ? `SSH · ${conn.meta.host || ''}` : isTelnet ? `Telnet · ${conn.meta.host || ''}` : (isEdit || isLog) ? edIcon : isClaude ? `<span class="claude-ico"></span> Claude · ${(conn.meta.cwd || '').split(/[\\\\/]/).pop() || ''}` : `${conn.meta.baud || ''} baud`;
+      const descText = isSSH ? `SSH · ${conn.meta.host || ''}` : isTelnet ? `Telnet · ${conn.meta.host || ''}` : (isEdit || isLog) ? edIcon : isClaude ? `<span class="claude-ico"></span> Claude · ${(conn.meta.cwd || '').split(/[\\\\/]/).pop() || ''}` : isHarness ? `<span class="claude-ico"></span> Claude 对话 · ${(conn.meta.cwd || '').split(/[\\\\/]/).pop() || ''}` : `${conn.meta.baud || ''} baud`;
       const rowCount = conn.term ? conn.term.buffer.active.length : (conn.logState ? conn.logState.total : (isEdit ? _edStatText(conn) : 0));
       // 编辑器类 tab：未保存时名字带 * + dirty 类（led 橙色，与 _edMarkTab 同步）
       const isDirty = isEdit && conn.dirty;
@@ -190,7 +191,12 @@ function refreshSidebar() {
       item.onclick = (e) => {
         // hex 走 closeEditorTab（有脏确认）：落 closeConnection 会绕过
         // dirty 检查直接丢修改，还发一个必 404 的 /api/disconnect
-        if (e.target.dataset.close) { e.stopPropagation(); (isLog ? closeLogViewer(pid) : isEdit ? closeEditorTab(pid) : closeConnection(pid)); return; }
+        if (e.target.dataset.close) { e.stopPropagation();
+          if (isLog) closeLogViewer(pid);
+          else if (isEdit) closeEditorTab(pid);
+          else if (isHarness) _harnessClose(pid);   // harness：SSE 清理 + 后端 /api/harness/disconnect
+          else closeConnection(pid);
+          return; }
         switchTab(pid);
       };
       portList.appendChild(item);

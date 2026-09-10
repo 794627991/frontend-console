@@ -420,6 +420,9 @@ function switchTab(portId) {
         try { conn.term.focus(); } catch(e){}
       }));
     }
+    // harness tab：无 xterm（纯 DOM 聊天流），切回时聚焦输入框（claude-harness.js 注入 onResumePoll）
+    if (conn.meta.kind === 'harness' && typeof conn.onResumePoll === 'function')
+      conn.onResumePoll();
     // 若分析标签正显示，刷新一次（数据源已切到新连接的 buffer）
     const activePane = document.querySelector('.panel-tab.active');
     if (activePane && activePane.dataset.pane === 'analyze') renderAnalyze();
