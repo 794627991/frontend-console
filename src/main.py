@@ -488,6 +488,10 @@ def main():
     # 窗口关闭：默认最小化到托盘（config close_to_tray，设置可关）；
     # 托盘「退出」或 close_to_tray=false 才真正退出。
     # closing 事件回调返回 False 即阻止关闭（pywebview Event 语义）。
+    # 坑（曾点 ✕ 直接未响应——死锁实锤）：closing 在 GUI 主线程同步执行，
+    # 回调里调 window.evaluate_js() 会等 JS 返回，而 JS 求值又需要 GUI 消息循环
+    # 处理——消息循环正被 closing 占着 → 死锁。回调里只做判断+返回，
+    # 隐藏/建托盘/弹提示全部挪后台线程（window 方法线程安全，内部 marshal）。
     _real_quit = {"flag": False}   # 托盘退出置位后放行下一次 closing
 
     def _do_real_cleanup():
@@ -513,20 +517,33 @@ def main():
         if not tray_enabled:
             _do_real_cleanup()
             return True
+        # 隐藏到托盘全流程在后台线程做（closing 回调零阻塞）
+        import threading
+        threading.Thread(target=_hide_async, daemon=True).start()
+        return False   # 阻止关闭，窗口稍后由 _hide_async 隐藏
 
-        # 隐藏到托盘（先问前端要不要弹"已最小化"提示——异步 evaluate_js，
-        # 不阻塞 closing 返回 False）
-        try:
-            window.evaluate_js("window._trayNotice && window._trayNotice();")
-        except Exception:
-            pass
+    def _hide_async():
+        import time
+        time.sleep(0.05)   # 让 closing 先返回（防重入）
         from src.tray import hide_to_tray
         ok = hide_to_tray(
             window,
             on_quit=lambda: (_real_quit.update(flag=True),
                               _try_destroy(window)),
         )
-        return not ok   # 托盘没建起来（无托盘环境）→ 返回 True 正常退出
+        if not ok:
+            # 无托盘环境：托盘没建起来就没有唤出入口——只能提示后真退出
+            try:
+                window.evaluate_js(
+                    "window._trayNotice && window._trayNotice();")
+            except Exception:
+                pass
+            return
+        # 首次提示（前端查 config tray_prompt_shown 决定显不显示）
+        try:
+            window.evaluate_js("window._trayNotice && window._trayNotice();")
+        except Exception:
+            pass
 
     def _try_destroy(window):
         """托盘「退出」：触发窗口关闭（closing 放行后走正常清理链）。"""
