@@ -2026,7 +2026,7 @@
 .hg-input-card { max-width: 760px; margin: 0 auto; background: var(--bg-card);
   border: 1px solid var(--border); border-radius: 14px; padding: 8px 10px 6px; }
 .hg-input-card:focus-within { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
-.hg-input { display: block; width: 100%; box-sizing: border-box; border: none; background: transparent;
+.hg-input { display: block; width: 100%; box-sizing: border-box; border: none; background: transparent; padding: 2px 4px;
   color: var(--fg); font-size: 13px; line-height: 1.6; resize: none; outline: none;
   max-height: 160px; font-family: inherit; }
 .hg-card-foot { display: flex; align-items: center; gap: 6px; padding-top: 4px; }
@@ -2069,3 +2069,149 @@
   background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--fg); }
 .hg-modal-body input:focus { outline: none; border-color: var(--accent); }
 .hg-modal-acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+/* ============ harness v2.1：claudecodeui 移植样式 ============ */
+
+/* ---- 工具行通用升级：不再 nowrap，支持徽章+复制按钮 ---- */
+.h-tool { white-space: normal; overflow: visible; text-overflow: clip;
+  display: flex; align-items: center; gap: 6px; max-width: 86%; }
+.h-tool .h-tool-arg { flex: 1 1 auto; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.h-tool .h-tool-sec { flex-shrink: 0; color: var(--muted); opacity: .75; }
+.h-tool-copy { flex-shrink: 0; border: 1px solid var(--border); background: transparent;
+  color: var(--muted); font-size: 10px; border-radius: 4px; padding: 1px 6px; cursor: pointer; }
+.h-tool-copy:hover { color: var(--accent); border-color: var(--accent); }
+
+/* 状态徽章（源 deriveToolStatus：running 蓝 / completed 绿 / error 红 / denied 橙） */
+.h-tslots { flex-shrink: 0; display: inline-flex; align-items: center; gap: 4px; }
+.h-tbadge { font-size: 9.5px; padding: 1px 7px; border-radius: 999px; font-family: inherit; }
+.h-tbadge.b-run { color: #58a6ff; background: rgba(88,166,255,.14); }
+.h-tbadge.b-done { color: #3fb950; background: rgba(63,185,80,.14); }
+.h-tbadge.b-err { color: #e06c75; background: rgba(224,108,117,.14); }
+.h-tbadge.b-deny { color: #d29922; background: rgba(210,153,34,.14); }
+.h-tool.err { border-color: var(--neon-red, #e06c75);
+  border-left-color: var(--neon-red, #e06c75); }
+.h-tool.err .h-tool-arg { color: var(--neon-red, #e06c75); }
+
+/* 分组行（×N 折叠）：折叠体收起，点组头展开成员明细 */
+.h-tool.group { cursor: default; }
+.h-tool.group .h-tool-arg { color: var(--fg); }
+.h-tool.group .h-group-rows { display: none; margin-top: 4px; }
+.h-tool.group.open-group .h-group-rows { display: block; }
+
+/* ---- 折叠组（collapsible 工具：diff/todo/agent/plan）---- */
+.h-tool.col { display: block; padding: 0; }
+.h-tool.col .h-tool-head { display: flex; align-items: center; gap: 6px; width: 100%;
+  border: none; background: transparent; color: var(--muted); font-family: var(--font-mono);
+  font-size: 11px; padding: 5px 10px; cursor: pointer; text-align: left; }
+.h-tool.col .h-tool-head:hover { color: var(--fg); }
+.h-tool.col .h-chev { transition: transform .15s; display: inline-block; }
+.h-tool.col.open .h-chev { transform: rotate(90deg); }
+.h-tool.col .h-tool-name { color: var(--fg); }
+.h-tool.col .h-tool-badge { font-size: 9.5px; color: var(--muted);
+  border: 1px solid var(--border); border-radius: 999px; padding: 0 6px; }
+.h-tool.col { border-left-width: 3px;
+  border-left-color: var(--h-accent, var(--accent)); }
+.h-tool.col .h-tool-coll { display: none; padding: 6px 10px 10px; }
+.h-tool.col.open .h-tool-coll { display: block; }
+.h-tool-body { font-size: 11px; color: var(--fg); line-height: 1.6;
+  font-family: var(--font-mono); white-space: pre-wrap; word-break: break-word;
+  max-height: 320px; overflow-y: auto; }
+.h-tool-out { font-size: 11px; color: var(--muted); line-height: 1.55;
+  font-family: var(--font-mono); white-space: pre-wrap; word-break: break-word;
+  max-height: 260px; overflow-y: auto; margin-top: 6px; border-top: 1px solid var(--border);
+  padding-top: 6px; }
+.h-tool-out.err-txt { color: var(--neon-red, #e06c75); }
+
+/* diff（源 createDiff：绿增红删行） */
+.h-diff { font-size: 11px; font-family: var(--font-mono); line-height: 1.6;
+  max-height: 320px; overflow-y: auto; }
+.h-diff .d-add { color: #3fb950; background: rgba(63,185,80,.08); padding: 0 6px; }
+.h-diff .d-del { color: #e06c75; background: rgba(224,108,117,.08); padding: 0 6px;
+  text-decoration: line-through; }
+.h-diff .d-info { color: var(--muted); }
+
+/* todo / question 清单 */
+.t-item { display: flex; gap: 8px; font-size: 11.5px; color: var(--fg);
+  padding: 2px 0; line-height: 1.5; }
+.t-item .q-opt { display: inline-block; margin-left: 6px; font-size: 10.5px;
+  color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 0 6px; }
+
+/* ---- thinking 折叠（源 Reasoning.tsx：流式展开、结束收起）---- */
+.h-think { align-self: flex-start; width: 86%; font-size: 12px;
+  border: 1px dashed var(--border); border-radius: 8px; overflow: hidden;
+  background: color-mix(in srgb, var(--accent) 4%, transparent); }
+.h-think-head { display: flex; align-items: center; gap: 6px; width: 100%;
+  border: none; background: transparent; color: var(--muted); font-size: 11.5px;
+  padding: 5px 10px; cursor: pointer; }
+.h-think-head:hover { color: var(--fg); }
+.h-think-t { flex: 1; }
+.h-think-chev { transition: transform .15s; }
+.h-think.open .h-think-chev { transform: rotate(180deg); }
+.h-think-body { display: none; padding: 2px 12px 10px; color: var(--muted);
+  line-height: 1.7; font-size: 12px; }
+.h-think.open .h-think-body { display: block; }
+.h-think-body p { margin: .4em 0; }
+
+/* ---- 代码块容器（源 CodeBlock：标签行+复制按钮同底色无分割线）---- */
+.h-bubble pre { margin: .4em 0; }
+.hg-code { border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+  margin: .5em 0; background: #282c34; }
+.hg-code-head { display: flex; align-items: center; justify-content: space-between;
+  padding: 5px 12px 0; }
+.hg-code-head span { font-size: 10.5px; color: #abb2bf; user-select: none;
+  text-transform: lowercase; }
+.hg-code-copy { border: none; background: transparent; color: #828997;
+  font-size: 10.5px; cursor: pointer; padding: 2px 4px; }
+.hg-code-copy:hover { color: #abb2bf; }
+.hg-code-copy.ok { color: #3fb950; }
+.hg-code pre { margin: 0; border: none; background: transparent !important; }
+.hg-code pre code { display: block; padding: 8px 14px 12px; font-size: 12px;
+  line-height: 1.6; font-family: var(--font-mono); overflow-x: auto;
+  background: transparent !important; }
+
+/* ---- 输入框堆叠（textarea + mention 高亮镜像层）---- */
+.hg-input-stack { position: relative; }
+.hg-input-overlay { position: absolute; inset: 0; padding: 2px 4px;
+  font-size: 13px; line-height: 1.6; font-family: inherit; color: transparent;
+  pointer-events: none; white-space: pre-wrap; word-break: break-word;
+  overflow: hidden; }
+.hg-input-overlay .hg-mention-hl { color: transparent; background: rgba(88,166,255,.25);
+  border-radius: 3px; }
+.hg-input { position: relative; z-index: 1; }
+
+/* ---- @ 引用下拉 ---- */
+.hg-mention-drop { position: absolute; bottom: calc(100% + 4px); left: 0; z-index: 35;
+  min-width: 300px; max-width: 480px; max-height: 260px; overflow-y: auto;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 4px; box-shadow: 0 6px 24px rgba(0,0,0,.4); }
+.hg-mention-item { display: flex; flex-direction: column; padding: 6px 10px;
+  border-radius: 6px; cursor: pointer; }
+.hg-mention-item b { font-size: 12px; color: var(--fg); font-weight: 600; }
+.hg-mention-item span { font-size: 10.5px; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hg-mention-item:hover, .hg-mention-item.sel { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.hg-mention-item.sel b { color: var(--accent); }
+
+/* ---- Lightbox ---- */
+.hg-lightbox { position: fixed; inset: 0; z-index: 200; background: rgba(0,0,0,.82);
+  display: flex; align-items: center; justify-content: center; cursor: zoom-out; }
+.hg-lightbox img { max-width: 92vw; max-height: 92vh; border-radius: 4px;
+  box-shadow: 0 8px 48px rgba(0,0,0,.6); }
+.hg-lightbox-x { position: absolute; top: 18px; right: 22px; border: none;
+  background: rgba(255,255,255,.12); color: #fff; font-size: 15px;
+  width: 34px; height: 34px; border-radius: 50%; cursor: pointer; }
+.hg-lightbox-x:hover { background: rgba(255,255,255,.22); }
+
+/* ---- 活动指示条（源 ActivityIndicator：动词轮换+计时+Stop）---- */
+.hg-activity { display: flex; align-items: center; gap: 8px; max-width: 760px;
+  margin: 0 auto 6px; font-size: 11.5px; color: var(--muted);
+  border: 1px solid var(--border); border-radius: 8px 8px 0 0;
+  border-bottom: none; padding: 5px 12px; background: var(--bg-card); }
+.hg-act-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
+  animation: hg-pulse 1.2s ease-in-out infinite; }
+@keyframes hg-pulse { 0%,100% { opacity: .25; transform: scale(.8); } 50% { opacity: 1; transform: scale(1.15); } }
+.hg-act-word { color: var(--accent); font-weight: 600; }
+.hg-act-stop { border: 1px solid var(--border); background: transparent;
+  color: var(--muted); font-size: 10.5px; border-radius: 999px; padding: 2px 10px;
+  cursor: pointer; }
+.hg-act-stop:hover { color: var(--neon-red, #e06c75); border-color: var(--neon-red, #e06c75); }

@@ -1,14 +1,20 @@
 // ============================================================
-// Claude Harness 界面化会话 v2（微信式多会话）。
+// Claude Harness 界面化会话 v2.1（微信式多会话 + claudecodeui 抄作业）。
 // 与内嵌终端（claude.js connectClaude，ConPTY xterm 保真）平行的另一条
 // 通道：后端 src/claude_harness.py spawn `claude -p --input/output-format
-// stream-json`，NDJSON 事件原样透传，本文件负责全部渲染与会话管理
-// （分层照 sugyan/claude-code-webui：后端薄透传、前端厚渲染）。
-// v2 形态（对齐 ClaudeDesktop 截图）：左侧栏（新建/搜索/会话列表）+
-// 中间气泡会话流 + 底部输入卡（附件/技能/模型 chips + 发送/停止）。
-// 单例 tab：顶栏 Claude 只开一个本 tab，内部自由切换多会话；
-// 会话元数据/上下文由后端持久化（~/.serialconsole_pro + --resume）。
-// 设计文档：docs/CLAUDE_CODE_INTEGRATION.md
+// stream-json`，NDJSON 事件原样透传，本文件负责全部渲染与会话管理。
+// v2.1 移植清单（源：siteboon/claudecodeui，仅借鉴交互设计，代码重写）：
+//   - 工具调用配置注册表（toolConfigs）+ 单行/折叠两种渲染 + 状态徽章
+//   - 连续同名工具自动分组折叠（x3 + preview）
+//   - Bash 命令行：$ 前缀 + 输出折叠 + 行数提示
+//   - 代码块：hljs 高亮 + 语言标签 + 复制按钮（ChatGPT 式）
+//   - thinking 折叠展示（流式展开、结束自动收起、计时）
+//   - @ 文件引用（触发下拉/键盘选择/高亮 overlay）
+//   - 输入历史（↑ 回溯 ↓ 前进，localStorage 按会话分桶）
+//   - 图片内联预览 + Lightbox
+//   - 活动指示条（动词轮换 + 计时 + Stop (esc)）
+//   - 单行 ```x``` 折叠成 `x`（normalizeInlineCodeFences）
+// 设计文档：docs/CLAUDE_CODE_INTEGRATION.md §8.6
 // ============================================================
 
 let _harnessMd = null;
@@ -18,22 +24,93 @@ function _harnessMdInstance() {
   return _harnessMd;
 }
 
-// 工具名 → 命令行摘要（tool_use 块的 input 里挑最关键的一个字段显示）
-function _harnessToolSummary(name, input) {
-  const i = input || {};
-  try {
-    if (name === 'Read' || name === 'Write' || name === 'Edit') return i.file_path || '';
-    if (name === 'Bash' || name === 'PowerShell') return i.command || i.cmd || '';
-    if (name === 'Grep' || name === 'Glob') return i.pattern || '';
-    if (name === 'WebFetch' || name === 'WebSearch') return i.url || i.query || '';
-    if (name.startsWith('mcp__')) {
-      for (const k in i) { if (typeof i[k] === 'string' && i[k]) return `${k}=${i[k].slice(0, 60)}`; }
-      return '';
-    }
-    if (typeof i.cmd === 'string') return i.cmd;
-    return '';
-  } catch(_) { return ''; }
+// 单行 ```x``` 折叠成 `x`（防模型输出的伪行内代码破坏渲染；源 chatFormatting.ts）
+function _hgNormalizeFences(text) {
+  if (!text) return text;
+  return text.replace(/```[ \t]*([^\n\r]+?)[ \t]*```/g, '`$1`');
 }
+
+// ---- 工具图标（emoji 版，避免引图标库）----
+const _H_TOOL_ICO = {
+  Read: '📖', Write: '✍️', Edit: '✏️', MultiEdit: '✏️', NotebookEdit: '📓',
+  Bash: '💻', PowerShell: '🖥️', Grep: '🔍', Glob: '📂',
+  WebFetch: '🌐', WebSearch: '🔎', Task: '🤖', Agent: '🤖',
+  TodoWrite: '📝', TodoRead: '📋', AskUserQuestion: '❓',
+  TaskCreate: '📌', TaskUpdate: '📌', TaskList: '📌', TaskGet: '📌',
+  Skill: '🧩', EnterPlanMode: '🗺️', ExitPlanMode: '🗺️', exit_plan_mode: '🗺️',
+};
+function _hToolIco(name) {
+  const n = name || '';
+  if (_H_TOOL_ICO[n]) return _H_TOOL_ICO[n];
+  if (n.indexOf('mcp__') === 0) return '🔌';
+  return '🔧';
+}
+// mcp__server__tool → tool (server)（源 toolConfigs.ts formatToolName；server 名可含 _，取最后一个 __ 切）
+function _hToolLabel(name) {
+  const n = name || '';
+  const i = n.indexOf('mcp__') === 0 ? n.lastIndexOf('__') : -1;
+  return i > 4 ? `${n.slice(i + 2)} (${n.slice(5, i)})` : n;
+}
+
+// ---- 工具调用注册表（源 toolConfigs.ts，vanilla 简化版）----
+// mode: 'one-line'（单行）| 'collapsible'（折叠组）| 'hidden'（不渲染 input）
+// result: 'hide'（成功时藏）| 'inline'（结果并入折叠组）| 'none'（不渲染结果）
+const _H_TOOL_CFG = {
+  Bash:      { mode: 'one-line', kind: 'bash',   get: i => i.command || i.cmd || '' },
+  PowerShell:{ mode: 'one-line', kind: 'bash',   get: i => i.command || i.cmd || '' },
+  Read:      { mode: 'one-line', kind: 'file',   get: i => i.file_path || '', result: 'hide' },
+  Write:     { mode: 'collapsible', kind: 'diff', title: i => (i.file_path || '').split(/[\\/]/).pop() || '文件', badge: '新建', get: i => ({ old: '', neu: i.content || '' }) },
+  Edit:      { mode: 'collapsible', kind: 'diff', title: i => (i.file_path || '').split(/[\\/]/).pop() || '文件', badge: '编辑', get: i => ({ old: i.old_string || '', neu: i.new_string || '' }) },
+  MultiEdit: { mode: 'collapsible', kind: 'diff', title: i => (i.file_path || '').split(/[\\/]/).pop() || '文件', badge: '编辑', get: i => ({ old: (i.edits || []).map(e => e.old_string || '').join('\n'), neu: (i.edits || []).map(e => e.new_string || '').join('\n') }) },
+  NotebookEdit:{ mode: 'one-line', kind: 'file', get: i => i.notebook_path || i.file_path || '' },
+  Grep:      { mode: 'one-line', kind: 'search', get: i => i.pattern || '', sec: i => i.path ? `in ${i.path}` : '' },
+  Glob:      { mode: 'one-line', kind: 'search', get: i => i.pattern || '', sec: i => i.path ? `in ${i.path}` : '' },
+  WebSearch: { mode: 'one-line', kind: 'web',    get: i => i.query || '' },
+  WebFetch:  { mode: 'one-line', kind: 'web',    get: i => i.url || '' },
+  TodoWrite: { mode: 'collapsible', kind: 'todo', title: i => {
+      const todos = Array.isArray(i?.todos) ? i.todos : [];
+      if (!todos.length) return '更新清单';
+      const done = todos.filter(t => t?.status === 'completed').length;
+      const act = todos.find(t => t?.status === 'in_progress');
+      if (act) return `${act.activeForm || act.content} — ${done}/${todos.length}`;
+      return done === todos.length ? `完成 — ${done}/${todos.length}` : `${done}/${todos.length} 完成`;
+    }, get: i => ({ todos: i.todos || [] }), result: 'hide', defaultOpen: true },
+  TodoRead:  { mode: 'one-line', kind: 'todo', get: () => '读取清单' },
+  TaskCreate:{ mode: 'one-line', kind: 'task', get: i => i.subject || '创建任务', result: 'hide' },
+  TaskUpdate:{ mode: 'one-line', kind: 'task', get: i => [i.taskId ? '#' + i.taskId : '', i.status || '', i.subject ? `"${i.subject}"` : ''].filter(Boolean).join(' → ') || '更新任务', result: 'hide' },
+  TaskList:  { mode: 'one-line', kind: 'task', get: () => '列出任务' },
+  TaskGet:   { mode: 'one-line', kind: 'task', get: i => i.taskId ? '#' + i.taskId : '查看任务' },
+  Agent:     { mode: 'collapsible', kind: 'agent', title: i => i.description || i.subagent_type || '子代理', get: i => i.prompt || '', result: 'hide' },
+  Task:      { mode: 'collapsible', kind: 'agent', title: i => `子代理 / ${i.subagent_type || 'Agent'}: ${i.description || ''}`, get: i => i.prompt || '' },
+  AskUserQuestion: { mode: 'collapsible', kind: 'question', title: i => {
+      const qs = Array.isArray(i?.questions) ? i.questions : [];
+      if (qs.length === 1) return `${qs[0]?.header || '问题'}${i?.answers?.[qs[0]?.question] ? ' — ' + i.answers[qs[0].question] : ''}`;
+      return qs.length + ' 个问题';
+    }, get: i => i.questions || [], result: 'hide', defaultOpen: true },
+  ExitPlanMode: { mode: 'collapsible', kind: 'plan', title: () => '实施计划', get: i => String(i?.plan || '').replace(/\\n/g, '\n'), result: 'hide', defaultOpen: true },
+  exit_plan_mode: { mode: 'collapsible', kind: 'plan', title: () => '实施计划', get: i => String(i?.plan || '').replace(/\\n/g, '\n'), result: 'hide', defaultOpen: true },
+  Skill:     { mode: 'one-line', kind: 'skill', get: i => i.skill || '' },
+  // Default：未注册工具走参数摘要（按键优先级抽 80 字符，不千篇一律 Parameters）
+  Default:   { mode: 'collapsible', kind: 'default', title: i => {
+      for (const k of ['command', 'file_path', 'pattern', 'query', 'url', 'path', 'skill', 'name', 'prompt'])
+        if (typeof i?.[k] === 'string' && i[k]) return i[k].slice(0, 80);
+      try { return JSON.stringify(i).slice(0, 80); } catch(_) { return ''; }
+    }, get: i => { try { return JSON.stringify(i, null, 2); } catch(_) { return String(i); } } },
+};
+function _hCfg(name) { return _H_TOOL_CFG[name] || _H_TOOL_CFG.Default; }
+
+// 工具类别 → 折叠组左边框色（源 CollapsibleDisplay borderColorMap）
+const _H_KIND_COLOR = {
+  diff: 'var(--h-amber, #d29922)', bash: 'var(--h-green, #3fb950)',
+  search: 'var(--muted)', web: 'var(--h-sky, #58a6ff)', todo: 'var(--h-violet, #8957e5)',
+  task: 'var(--h-violet, #8957e5)', agent: 'var(--h-purple, #a371f7)',
+  plan: 'var(--h-indigo, #6e7ee8)', question: 'var(--h-sky, #58a6ff)',
+  file: 'var(--muted)', default: 'var(--border)', skill: 'var(--accent)',
+};
+
+// 拒绝语义（源 ToolRenderer deriveToolStatus）：denied 橙 vs error 红
+const _H_DENIAL = ['user denied tool use', 'tool disallowed by settings',
+                   'permission request timed out', 'permission request cancelled'];
 
 function _harnessRelTime(ts) {
   if (!ts) return '';
@@ -48,25 +125,53 @@ function _harnessRelTime(ts) {
 
 const _HARNESS_IMG_EXT = /\.(png|jpe?g|gif|webp|bmp)$/i;
 
-// ---- 组件状态（模块级，tab 关闭即弃；会话本体在后端）----
+// ---- 组件状态 ----
 const _HG = {
-  conn: null,          // connections 里的 harness tab conn
-  sid: null,           // 当前会话 sid（null=欢迎页/未建）
-  dirty: false,        // 当前会话是否已发过消息（模型切换需新会话）
-  model: null,         // 待用模型（新会话生效；空会话可即时换）
-  models: null,        // {models:[], default} 拉取缓存
-  skills: null, skillsCwd: null,
-  sessions: [],        // /sessions 列表缓存
-  seq: 0,              // SSE 游标（当前会话）
-  cache: {},           // sid -> {html, seq} 气泡 DOM 快照（切回免重拉）
+  conn: null, sid: null, dirty: false,
+  model: null, models: null,
+  skills: null,
+  sessions: [],
+  seq: 0,
+  cache: {},            // sid -> {html, seq}（气泡快照）
   sse: null,
   busy: false, alive: false,
-  atts: [],            // 待发附件 [{name,path,size,isImg}]
-  pendingFiles: null,  // 待上传的原生文件对象（file input / paste）
-  pop: null,           // 当前打开的 popover（'skill'|'model'|null）
+  atts: [],
+  pop: null,            // 'skill' | 'model' | 'file' | null
+  rowById: {},          // tool_use_id -> 工具行 DOM（挂结果用）
+  uidN: 0,              // 无 id tool_use 的兜底计数
+  run: null,            // 当前同名工具 run {name, head, rows, pending}（源 toolGrouping：run≥2 折叠）
+  think: null,          // 当前 thinking 折叠 DOM {box, title, start}
+  histNav: null,        // 输入历史导航 {history, index, draft, recalled}
+  mention: null,        // @ 引用状态 {at, files, sel}
+  imgSrv: null,         // 图片服务路径标记（后端 /api/harness/img/<sid>/file）
+  activity: null,       // 活动指示 {start, verbTimer, tickTimer}
+  actStart: 0,
 };
 
-// ---- tab 构建（单例骨架同 bit-calc：已开只切换）----
+// ---- 输入历史（源 useInputHistory.ts：localStorage 按会话分桶，100 条/100 桶 LRU）----
+const _HG_HIST_KEY = 'hg-input-history';
+function _hgHistRead(scope) {
+  if (!scope) return [];
+  try {
+    const store = JSON.parse(localStorage.getItem(_HG_HIST_KEY) || '{}');
+    return Array.isArray(store[scope]) ? store[scope].filter(x => typeof x === 'string') : [];
+  } catch(_) { return []; }
+}
+function _hgHistAppend(scope, text) {
+  if (!scope || !text.trim()) return;
+  try {
+    const store = JSON.parse(localStorage.getItem(_HG_HIST_KEY) || '{}');
+    const entries = (Array.isArray(store[scope]) ? store[scope] : []);
+    if (entries[entries.length - 1] === text) return;
+    delete store[scope];
+    store[scope] = [...entries, text].slice(-100);
+    const keys = Object.keys(store);
+    for (const k of keys.slice(0, Math.max(0, keys.length - 100))) delete store[k];
+    localStorage.setItem(_HG_HIST_KEY, JSON.stringify(store));
+  } catch(_) {}
+}
+
+// ---- tab 构建（单例）----
 function buildClaudeHarnessTab(opts = {}) {
   for (const pid in connections) {
     const c = connections[pid];
@@ -101,9 +206,14 @@ function buildClaudeHarnessTab(opts = {}) {
         </div>
         <div class="hg-flow" data-hg-flow></div>
         <div class="hg-card-wrap">
+          <div class="hg-activity" data-hg-activity style="display:none"></div>
           <div class="hg-atts" data-hg-atts style="display:none"></div>
           <div class="hg-input-card">
-            <textarea class="hg-input" data-hg-input rows="1" placeholder="给 Claude 发消息，Enter 发送 · Shift+Enter 换行 · 可粘贴图片" spellcheck="false"></textarea>
+            <div class="hg-input-stack">
+              <div class="hg-input-overlay" data-hg-overlay aria-hidden="true"></div>
+              <textarea class="hg-input" data-hg-input rows="1" placeholder="给 Claude 发消息…  @ 引用文件 · / 技能 · 粘贴图片" spellcheck="false"></textarea>
+            </div>
+            <div class="hg-mention-drop" data-hg-mention style="display:none"></div>
             <div class="hg-card-foot">
               <button class="hg-chip" data-hg-att title="添加附件（文档会以路径给模型读取）">📎 附件</button>
               <button class="hg-chip" data-hg-skill title="加载技能（插入 /技能名）">⚡ 技能 ▾</button>
@@ -134,22 +244,70 @@ function buildClaudeHarnessTab(opts = {}) {
   _HG.cache = {};
   _HG.atts = [];
   _HG.sid = null;
+  _HG.rowById = {}; _HG.uidN = 0; _HG.run = null;
+  _HG.think = null; _HG.histNav = null; _HG.mention = null;
   switchTab(portId);
 
-  // ---- 元素引用 ----
   const q = (s) => wrap.querySelector(s);
   const flow = q('[data-hg-flow]'), input = q('[data-hg-input]'),
         stateEl = q('[data-hg-state]'), costEl = q('[data-hg-cost]'),
         sendBtn = q('[data-hg-send]'), titleEl = q('[data-hg-title]'),
         cwdEl = q('[data-hg-cwd]'), attsEl = q('[data-hg-atts]'),
         listEl = q('[data-hg-sessions]'), searchEl = q('[data-hg-search]'),
-        fileEl = q('[data-hg-file]');
+        fileEl = q('[data-hg-file]'), overlayEl = q('[data-hg-overlay]'),
+        mentionEl = q('[data-hg-mention]'), actEl = q('[data-hg-activity]');
 
-  // ---- 气泡渲染 ----
+  const scrollBottom = () => { flow.scrollTop = flow.scrollHeight; };
+
+  // ==================== markdown / 代码块 ====================
+  function codeBlockEnhance(container) {
+    // markdown-it 产物里的 pre > code：套 ChatGPT 式容器（语言标签+复制钮）
+    container.querySelectorAll('pre > code').forEach(code => {
+      const pre = code.parentElement;
+      if (pre.parentElement && pre.parentElement.classList.contains('hg-code')) return;  // 已处理
+      const raw = code.textContent.replace(/\n$/, '');
+      const m = /language-(\S+)/.exec(code.className || '');
+      const lang = m ? m[1] : '';
+      const box = document.createElement('div');
+      box.className = 'hg-code';
+      const head = document.createElement('div');
+      head.className = 'hg-code-head';
+      head.innerHTML = `<span>${esc(lang || 'text')}</span>`;
+      const cp = document.createElement('button');
+      cp.className = 'hg-code-copy'; cp.textContent = '复制'; cp.title = '复制代码';
+      cp.onclick = () => {
+        copyText(raw).then(ok => {
+          if (ok) { cp.textContent = '✓ 已复制'; cp.classList.add('ok');
+            setTimeout(() => { cp.textContent = '复制'; cp.classList.remove('ok'); }, 2000); }
+        });
+      };
+      head.appendChild(cp);
+      pre.replaceWith(box);
+      box.appendChild(head);
+      box.appendChild(pre);
+      if (window.hljs && lang && hljs.getLanguage(lang)) {
+        try { hljs.highlightElement(code); code.classList.add('hg-hl'); } catch(_) {}
+      }
+    });
+  }
+  function copyText(t) {
+    return new Promise(res => {
+      let ok = false;
+      try {
+        navigator.clipboard.writeText(t).then(() => res(true)).catch(() => res(false));
+        ok = true;   // async 路径已接管
+      } catch(_) {}
+      if (!ok) {
+        try { const ta = document.createElement('textarea'); ta.value = t;
+          document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); res(true); }
+        catch(_) { res(false); }
+      }
+    });
+  }
   function renderMd(text) {
     const md = _harnessMdInstance();
     if (md) {
-      const html = md.render(text || '');
+      const html = md.render(_hgNormalizeFences(text || ''));
       const t = document.createElement('div');
       t.innerHTML = html;
       t.querySelectorAll('a[href]').forEach(a => {
@@ -160,56 +318,320 @@ function buildClaudeHarnessTab(opts = {}) {
     }
     return '<p>' + esc(text).replace(/\n/g, '<br>') + '</p>';
   }
+  function mdBubble(text) {
+    const b = document.createElement('div');
+    b.className = 'h-bubble';
+    b.innerHTML = renderMd(text);
+    codeBlockEnhance(b);
+    return b;
+  }
+
+  // ==================== 附件 chip / 图片预览 ====================
   function attChipsHtml(images, files) {
     let h = '';
-    (images || []).forEach(p => { h += `<span class="hg-att-mini">🖼 ${esc(String(p).split(/[\\/]/).pop())}</span>`; });
+    (images || []).forEach(p => { h += `<span class="hg-att-mini" data-img="${esc(p)}" title="${esc(p)}">🖼 ${esc(String(p).split(/[\\/]/).pop())}</span>`; });
     (files || []).forEach(p => { h += `<span class="hg-att-mini">📄 ${esc(String(p).split(/[\\/]/).pop())}</span>`; });
     return h;
   }
-  function addBubble(role, inner, cls) {
-    const d = document.createElement('div');
-    d.className = 'h-msg ' + role + (cls ? ' ' + cls : '');
-    d.innerHTML = inner;
-    flow.appendChild(d);
-    flow.scrollTop = flow.scrollHeight;
-    return d;
+  function openLightbox(src) {
+    const ov = document.createElement('div');
+    ov.className = 'hg-lightbox';
+    ov.innerHTML = `<img src="${esc(src)}" alt=""><button class="hg-lightbox-x" title="关闭 (Esc)">✕</button>`;
+    ov.addEventListener('click', (e) => { if (e.target === ov || e.target.classList.contains('hg-lightbox-x')) ov.remove(); });
+    ov.addEventListener('keydown', () => {});
+    const escFn = (e) => { if (e.key === 'Escape') { ov.remove(); document.removeEventListener('keydown', escFn); } };
+    document.addEventListener('keydown', escFn);
+    wrap.appendChild(ov);
   }
-  const renderUser = (text, images, files) => {
-    hideWelcome();
-    addBubble('user', `<div class="h-bubble">${(images?.length || files?.length) ? `<div class="hg-bubble-atts">${attChipsHtml(images, files)}</div>` : ''}${renderMd(text || '')}</div>`);
-  };
-  const renderAsst = (text, isSub) => {
-    if (!text) return;
-    hideWelcome();
-    addBubble('asst', `<div class="h-bubble">${renderMd(text)}</div>`, isSub ? 'sub' : '');
-  };
-  const renderTool = (name, summary, isSub) => {
-    hideWelcome();
-    const d = document.createElement('div');
-    d.className = 'h-tool' + (isSub ? ' sub' : '');
-    d.innerHTML = `<span class="h-tool-name">${esc(name)}</span><span class="h-tool-arg">${esc(summary)}</span>`;
-    flow.appendChild(d);
-    flow.scrollTop = flow.scrollHeight;
-  };
-  const renderRaw = (text) => {
-    const d = document.createElement('div'); d.className = 'h-raw'; d.textContent = text;
-    flow.appendChild(d); flow.scrollTop = flow.scrollHeight;
-  };
-  const renderExit = (text) => {
-    const d = document.createElement('div'); d.className = 'h-exit'; d.textContent = text;
-    flow.appendChild(d); flow.scrollTop = flow.scrollHeight;
-  };
+
+  // ==================== 气泡基元 ====================
   function hideWelcome() {
     const w = flow.querySelector('.hg-welcome');
     if (w) w.remove();
   }
-  function showWelcome() {
-    flow.innerHTML = `
-      <div class="hg-welcome">
-        <div class="hg-welcome-ico"><span class="claude-ico big"></span></div>
-        <div class="hg-welcome-title">你好，我是 Claude</div>
-        <div class="hg-welcome-desc">直接输入开始新对话，或从左侧选择历史会话继续。<br>支持 📎 附件、⚡ 技能（/命令）、🧠 模型切换。</div>
-      </div>`;
+  function addRow(el) {
+    hideWelcome();
+    flow.appendChild(el);
+    scrollBottom();
+    return el;
+  }
+  function renderUser(text, images, files) {
+    const d = document.createElement('div');
+    d.className = 'h-msg user';
+    if (images?.length || files?.length) {
+      const at = document.createElement('div');
+      at.className = 'h-bubble-atts';
+      at.innerHTML = attChipsHtml(images, files);
+      at.querySelectorAll('[data-img]').forEach(ch => ch.onclick = () => openLightbox(ch.dataset.img));
+      d.appendChild(at);
+    }
+    d.appendChild(mdBubble(text || ''));
+    addRow(d);
+  }
+  function renderAsst(text, isSub) {
+    if (!text) return;
+    const d = document.createElement('div');
+    d.className = 'h-msg asst' + (isSub ? ' sub' : '');
+    d.appendChild(mdBubble(text));
+    addRow(d);
+  }
+  function renderRaw(text) {
+    const d = document.createElement('div'); d.className = 'h-raw'; d.textContent = text;
+    addRow(d);
+  }
+  function renderExit(text) {
+    const d = document.createElement('div'); d.className = 'h-exit'; d.textContent = text;
+    addRow(d);
+  }
+
+  // ==================== thinking 折叠（源 Reasoning.tsx）====================
+  function startThinking() {
+    endThinking();
+    const d = document.createElement('div');
+    d.className = 'h-think open';
+    d.innerHTML = `<button class="h-think-head"><span class="h-think-ico">🧠</span><span class="h-think-t">思考中…</span><span class="h-think-chev">▾</span></button><div class="h-think-body"></div>`;
+    d.querySelector('.h-think-head').onclick = () => { d.classList.toggle('open'); d._userToggled = true; };
+    addRow(d);
+    _HG.think = { box: d, start: Date.now(), body: d.querySelector('.h-think-body') };
+  }
+  function appendThinking(text) {
+    if (!_HG.think) startThinking();
+    _HG.think._last = Date.now();
+    _HG.think.body.innerHTML += renderMd(text);   // thinking 块稀疏，整段重渲可接受
+  }
+  function endThinking() {
+    const t = _HG.think;
+    if (!t) return;
+    _HG.think = null;
+    const sec = Math.round((Date.now() - t.start) / 1000);
+    t.box.querySelector('.h-think-t').textContent = `思考了 ${sec >= 1 ? sec + ' 秒' : '片刻'}`;
+    if (!t.box._userToggled) setTimeout(() => t.box.classList.remove('open'), 1000);   // 未手动关过 → 1s 自动收起
+  }
+
+  // ==================== 工具调用渲染（源 toolConfigs + ToolRenderer + BashCommandDisplay）====================
+  function statusBadge(st) {
+    // running 蓝 / completed 绿 / error 红 / denied 橙
+    const map = { running: ['运行中', 'b-run'], completed: ['完成', 'b-done'],
+                  error: ['出错', 'b-err'], denied: ['拒绝', 'b-deny'] };
+    const [txt, cls] = map[st] || ['', ''];
+    return `<span class="h-tbadge ${cls}">${txt}</span>`;
+  }
+  function deriveStatus(res) {
+    if (!res) return 'running';
+    if (res.isError) {
+      const c = String(res.content || '').toLowerCase().trim();
+      return _H_DENIAL.some(m => c.includes(m)) ? 'denied' : 'error';
+    }
+    return 'completed';
+  }
+
+  function resultText(res) {
+    const c = res && res.content;
+    if (typeof c === 'string') return c;
+    if (Array.isArray(c)) return c.filter(b => b && b.type === 'text').map(b => b.text).join('\n');
+    try { return JSON.stringify(c); } catch(_) { return String(c || ''); }
+  }
+
+  function diffHtml(oldS, newS) {
+    // 朴素行 diff（源 createDiff 是 LCS；vanilla 用逐行对比近似：交集着色）
+    const ol = String(oldS || '').split('\n'), nl = String(newS || '').split('\n');
+    let h = '';
+    nl.forEach(l => { if (!ol.includes(l)) h += `<div class="d-add">+ ${esc(l)}</div>`; });
+    ol.forEach(l => { if (!nl.includes(l)) h += `<div class="d-del">- ${esc(l)}</div>`; });
+    return h || '<div class="d-info">(无文本差异)</div>';
+  }
+  function todoHtml(todos) {
+    const ICO = { completed: '✅', in_progress: '🔄', pending: '⬜' };
+    return (todos || []).map(t =>
+      `<div class="t-item"><span>${ICO[t.status] || '⬜'}</span><span>${esc(t.activeForm || t.content || t.subject || '')}</span></div>`).join('');
+  }
+
+  // 连续同名工具分组（源 toolGrouping.ts：run≥2 → 折叠为一行 ×N + preview）。
+  // 流式场景 tool_result 事件只往已有行上挂状态、不新增行，所以 run 的边界
+  // 是"新视觉元素"：文本/thinking 块、异名或折叠类工具、用户消息、result。
+  // 分组成员（第 2 个起）不单独渲染，其结果状态聚合到组头（错误显红）。
+  function closeRun() { _HG.run = null; }
+  function toolRunPush(name, row) {
+    const r = _HG.run;
+    if (r && r.name === name) {
+      r.rows.push(row);
+      row._grouped = true; row._groupHead = r.head;
+      const named = r.rows.slice(0, 2).map(x => x._preview).filter(Boolean);
+      const extra = r.rows.length - named.length;   // 按实际拼出条数计（源 buildGroupPreview）
+      const arg = r.head.querySelector('.h-tool-arg');
+      if (arg) arg.textContent = `×${r.rows.length}  ${named.join(', ')}${extra > 0 ? `, +${extra} more` : ''}`;
+      return true;   // 已并入组，不单独显示
+    }
+    _HG.run = { name, head: row, rows: [row] };
+    return false;
+  }
+
+  function renderToolUse(b, isSub) {
+    const name = b.name || '';
+    const id = b.id || ('anon' + (++_HG.uidN));
+    const cfg = _hCfg(name);
+    const label = _hToolLabel(name);
+    if (cfg.mode === 'hidden') return;
+
+    // 注意：这里不 closeRun——run 的边界是文本/thinking/用户消息/result；
+    // tool_use 本身若是同名工具正是 run 的延续，由 toolRunPush 判定并入组。
+    let row;
+    if (cfg.mode === 'one-line') {
+      row = document.createElement('div');
+      row.className = 'h-tool' + (isSub ? ' sub' : '');
+      const sec = cfg.sec ? cfg.sec(b.input) : '';
+      row.innerHTML =
+        `<span class="h-tool-name">${_hToolIco(name)} ${esc(label)}</span>` +
+        `<span class="h-tool-arg">${esc(cfg.get(b.input) || '')}</span>` +
+        (sec ? `<span class="h-tool-sec">${esc(sec)}</span>` : '') +
+        `<span class="h-tslots"></span>`;
+      // Bash 类：命令可复制（源 action:'copy'）
+      if (cfg.kind === 'bash') {
+        const cp = document.createElement('button');
+        cp.className = 'h-tool-copy'; cp.textContent = '复制'; cp.title = '复制命令';
+        cp.onclick = () => copyText(cfg.get(b.input) || '').then(ok => { if (ok) { cp.textContent = '✓'; setTimeout(() => cp.textContent = '复制', 1500); } });
+        row.appendChild(cp);
+      }
+    } else {
+      // collapsible：折叠组（左边框按类别着色，源 CollapsibleDisplay）
+      row = document.createElement('div');
+      row.className = 'h-tool col' + (isSub ? ' sub' : '') + (cfg.defaultOpen ? ' open' : '');
+      row.style.setProperty('--h-accent', _H_KIND_COLOR[cfg.kind] || 'var(--border)');
+      const title = typeof cfg.title === 'function' ? cfg.title(b.input) : (cfg.title || label);
+      let bodyHtml = '';
+      const v = cfg.get ? cfg.get(b.input) : '';
+      if (cfg.kind === 'diff') bodyHtml = `<div class="h-diff">${diffHtml(v.old, v.neu)}</div>`;
+      else if (cfg.kind === 'todo') bodyHtml = todoHtml(v.todos || v);
+      else if (cfg.kind === 'question') bodyHtml = (v || []).map(q =>
+        `<div class="t-item"><span>❓</span><span><b>${esc(q.header || '')}</b> ${esc(q.question || '')}${(q.options || []).map(o => `<span class="q-opt">${esc(typeof o === 'string' ? o : o.label)}</span>`).join('')}</span></div>`).join('');
+      else bodyHtml = `<div class="h-tool-body">${renderMd(String(v))}</div>`;
+      row.innerHTML =
+        `<button class="h-tool-head"><span class="h-chev">▸</span>` +
+        `<span class="h-tool-name">${_hToolIco(name)} ${esc(title)}</span>` +
+        (cfg.badge ? `<span class="h-tool-badge">${esc(cfg.badge)}</span>` : '') +
+        `<span class="h-tslots"></span></button><div class="h-tool-coll">${bodyHtml}</div>`;
+      row.querySelector('.h-tool-head').onclick = () => row.classList.toggle('open');
+    }
+    row._preview = (cfg.mode === 'one-line' ? cfg.get(b.input) : (typeof cfg.title === 'function' ? cfg.title(b.input) : label)) || '';
+    row._name = name;
+    row._cfg = cfg;
+    row._id = id;
+    row.dataset.tid = id;                 // 快照恢复后重扫挂 rowById 用
+    _HG.rowById[id] = row;
+    // 分组：同名连续 run 第 2 个起并入组头（折叠类工具不参与分组——展开体互不兼容）
+    if (cfg.mode === 'one-line' && toolRunPush(name, row)) return;
+    addRow(row);
+  }
+
+  // 工具结果挂接（源 shouldHideToolResult：成功藏、错误永远显）
+  function renderToolResult(o) {
+    const c = o.message && o.message.content;
+    const blocks = Array.isArray(c) ? c : [];
+    const tr = blocks.find(b => b.type === 'tool_result');
+    if (!tr) return;
+    const row = _HG.rowById[tr.tool_use_id];
+    if (!row) {
+      // 无对应行（transcript 重建的孤立结果）→ 单行摘要
+      const txt = resultText(tr).slice(0, 120);
+      const d = document.createElement('div');
+      d.className = 'h-tool-res';
+      d.textContent = txt ? '↳ ' + txt.replace(/\s+/g, ' ') : '↳ (完成)';
+      addRow(d);
+      return;
+    }
+    const cfg = row._cfg || {};
+    const st = deriveStatus(tr);
+    // 分组成员：结果状态聚合到组头（成功不刷组头徽章避免闪烁，错误标红）
+    const showRow = row._grouped ? row._groupHead : row;
+    const slots = showRow.querySelector('.h-tslots');
+    if (slots && st !== 'completed') slots.innerHTML = statusBadge(st);
+    else if (slots && !row._grouped) slots.innerHTML = statusBadge(st);
+    showRow.classList.toggle('err', st === 'error' || st === 'denied');
+    // 结果折叠体（成功默认藏，错误永远显）
+    const hideOk = cfg.result === 'hide' || cfg.kind === 'bash' || cfg.kind === 'diff';
+    const txt = resultText(tr);
+    if (row._grouped) {
+      // 分组成员：状态已聚合到组头，输出不单独展示（组头 err 红底足够辨识）
+      return;
+    }
+    if (st !== 'completed' && txt) {
+      // 错误：展开显示
+      const body = row.querySelector('.h-tool-coll') || (() => {
+        row.classList.add('col');
+        const h = document.createElement('button'); h.className = 'h-tool-head';
+        h.innerHTML = `<span class="h-chev">▸</span><span class="h-tool-name">输出</span><span class="h-tslots"></span>`;
+        const co = document.createElement('div'); co.className = 'h-tool-coll';
+        row.appendChild(h); row.appendChild(co);
+        h.onclick = () => row.classList.toggle('open');
+        row.style.setProperty('--h-accent', 'var(--neon-red, #e06c75)');
+        return co;
+      })();
+      row.classList.add('open');
+      const pre = document.createElement('div');
+      pre.className = 'h-tool-out err-txt';
+      pre.textContent = txt.slice(0, 4000);
+      body.appendChild(pre);
+    } else if (!hideOk && txt && txt !== '(no content)') {
+      // 成功但有内容（WebFetch/Grep 等配置允许展示）→ 收进折叠体（默认收起）
+      const body = row.querySelector('.h-tool-coll');
+      if (body) {
+        const pre = document.createElement('div');
+        pre.className = 'h-tool-out';
+        const lines = txt.split('\n').length;
+        pre.textContent = txt.length > 8000 ? txt.slice(0, 8000) + '…' : txt;
+        body.appendChild(pre);
+        if (cfg.kind === 'bash') {
+          // 行数提示（源 BashCommandDisplay）
+          row.querySelector('.h-tool-sec') || row.insertAdjacentHTML('beforeend', `<span class="h-tool-sec">${lines} 行输出</span>`);
+        }
+      }
+    } else if (cfg.kind === 'bash' && txt) {
+      // bash 成功输出：折叠体默认收起 + 行数提示
+      const body = row.querySelector('.h-tool-coll') || (() => {
+        row.classList.add('col');
+        const h = document.createElement('button'); h.className = 'h-tool-head';
+        h.innerHTML = `<span class="h-chev">▸</span><span class="h-tool-name">输出</span><span class="h-tslots"></span>`;
+        const co = document.createElement('div'); co.className = 'h-tool-coll';
+        row.appendChild(h); row.appendChild(co);
+        h.onclick = () => row.classList.toggle('open');
+        return co;
+      })();
+      const pre = document.createElement('div');
+      pre.className = 'h-tool-out';
+      pre.textContent = txt.length > 8000 ? txt.slice(0, 8000) + '…' : txt;
+      body.appendChild(pre);
+      row.insertAdjacentHTML('beforeend', `<span class="h-tool-sec">${txt.split('\n').length} 行</span>`);
+    }
+    // tool_result 只挂状态不新增行——不终结 run（源 rendersNothing 不打断连续 run）
+  }
+
+  // ==================== 活动指示条（源 ActivityIndicator）====================
+  const _ACT_WORDS = ['思考中', '处理中', '分析中', '执行中', '检索中', '推理中'];
+  let _actWordIdx = 0;
+  function actStart() {
+    if (_HG.activity) return;
+    _HG.actStart = Date.now();
+    _actWordIdx = 0;
+    actEl.style.display = 'flex';
+    actEl.innerHTML = `<span class="hg-act-dot"></span><span class="hg-act-word" data-hg-aw>思考中</span><span data-hg-act-t>0s</span><span class="hg-flex1"></span><button class="hg-act-stop" data-hg-stop title="停止 (Esc)">停止 ⏹</button>`;
+    actEl.querySelector('[data-hg-stop]').onclick = stopGen;
+    _HG.activity = {
+      verb: setInterval(() => {
+        _actWordIdx = (_actWordIdx + 1) % _ACT_WORDS.length;
+        const w = actEl.querySelector('[data-hg-aw]');
+        if (w) w.textContent = _ACT_WORDS[_actWordIdx];
+      }, 4000),
+      tick: setInterval(() => {
+        const t = actEl.querySelector('[data-hg-act-t]');
+        if (t) t.textContent = Math.round((Date.now() - _HG.actStart) / 1000) + 's';
+      }, 1000),
+    };
+  }
+  function actStop() {
+    if (!_HG.activity) return;
+    clearInterval(_HG.activity.verb); clearInterval(_HG.activity.tick);
+    _HG.activity = null;
+    actEl.style.display = 'none';
   }
 
   function setBusy(b) {
@@ -218,10 +640,11 @@ function buildClaudeHarnessTab(opts = {}) {
     sendBtn.classList.toggle('stop', b);
     sendBtn.textContent = b ? '■' : '➤';
     sendBtn.title = b ? '停止生成' : '发送（Enter）';
-    stateEl.textContent = b ? '思考中…' : (_HG.alive ? '就绪' : '');
+    stateEl.textContent = b ? '' : (_HG.alive ? '就绪' : '');
+    if (b) actStart(); else actStop();
   }
 
-  // ---- CLI 事件 → 渲染（同 v1 分流）----
+  // ==================== CLI 事件 → 渲染 ====================
   function handleEvent(o) {
     const typ = o.type;
     if (typ === 'system') {
@@ -236,27 +659,23 @@ function buildClaudeHarnessTab(opts = {}) {
       const blocks = (o.message || {}).content || [];
       const isSub = !!o.parent_tool_use_id;
       for (const b of blocks) {
-        if (b.type === 'text' && b.text) {
-          if (isSub) renderAsst('[子代理] ' + b.text, true);
-          else renderAsst(b.text);
-        } else if (b.type === 'tool_use') {
-          renderTool(b.name, _harnessToolSummary(b.name, b.input), isSub);
-        }
+        if (b.type === 'thinking' && b.thinking) { closeRun(); appendThinking(b.thinking); }
+        else if (b.type === 'text' && b.text) { endThinking(); closeRun(); renderAsst(b.text, isSub); }
+        else if (b.type === 'tool_use') { endThinking(); renderToolUse(b, isSub); }
       }
-      flow.scrollTop = flow.scrollHeight;
+      scrollBottom();
     } else if (typ === 'user') {
-      if (!o.isSynthetic && o.parent_tool_use_id) {
-        const c = o.message && o.message.content;
-        const txt = Array.isArray(c)
-          ? c.map(x => x && x.type === 'text' ? x.text : '').join('').slice(0, 120)
-          : (typeof c === 'string' ? c.slice(0, 120) : '');
-        const d = document.createElement('div');
-        d.className = 'h-tool-res';
-        d.textContent = txt ? '↳ ' + txt.replace(/\s+/g, ' ').slice(0, 120) : '↳ (完成)';
-        flow.appendChild(d);
-        flow.scrollTop = flow.scrollHeight;
+      const c0 = (o.message || {}).content;
+      // 用户真实消息打断工具 run；工具结果事件不动 run（rendersNothing 思想）
+      if (!Array.isArray(c0) || !c0.some(b => b && b.type === 'tool_result')) closeRun();
+      const hasToolResult = Array.isArray(c0) && c0.some(b => b && b.type === 'tool_result');
+      if (!o.isSynthetic && hasToolResult) {
+        renderToolResult(o);
+        scrollBottom();
       }
     } else if (typ === 'result') {
+      endThinking();
+      closeRun();
       const cost = o.total_cost_usd;
       costEl.textContent = `完成 · ${o.num_turns || 1} 轮${typeof cost === 'number' ? ' · $' + cost.toFixed(4) : ''}`;
       setBusy(false);
@@ -266,7 +685,7 @@ function buildClaudeHarnessTab(opts = {}) {
     }
   }
 
-  // ---- SSE（当前会话唯一一条；切会话先关旧的）----
+  // ==================== SSE ====================
   function openSSE(sid, afterSeq) {
     if (_HG.sse) { try { _HG.sse.close(); } catch(_) {} _HG.sse = null; }
     if (!sid) return;
@@ -282,22 +701,24 @@ function buildClaudeHarnessTab(opts = {}) {
       else if (it.kind === 'interrupted') { renderExit(it.text); setBusy(false); }
       else if (it.kind === 'exit') { _HG.alive = false; renderExit(it.text); setBusy(false); }
     };
-    // onerror：EventSource 自动重连；重连由 after_seq 语义保障不重放已渲染部分
   }
 
-  // ---- 会话切换 ----
+  // ==================== 会话切换 ====================
   function saveCache() {
     if (_HG.sid) _HG.cache[_HG.sid] = { html: flow.innerHTML, seq: _HG.seq };
   }
   async function switchTo(sid, keepInput) {
     if (sid === _HG.sid && flow.querySelector('.h-msg, .hg-welcome')) return;
     saveCache();
-    closePop();
+    closePop(); closeMention();
+    endThinking(); closeRun();
+    _HG.rowById = {}; _HG.uidN = 0; _HG.run = null; _HG.histNav = null;
     _HG.sid = sid; _HG.seq = 0; _HG.alive = false;
-    if (!sid) _HG.dirty = false;   // 欢迎页=新会话，模型可即时切换
+    if (!sid) _HG.dirty = false;
     clearAtts();
     costEl.textContent = '';
-    if (!sid) {   // 欢迎页（未建会话）
+    if (!sid) {
+      flow.innerHTML = '';
       showWelcome();
       openSSE(null); setBusy(false);
       titleEl.textContent = '新会话'; cwdEl.textContent = '';
@@ -308,7 +729,9 @@ function buildClaudeHarnessTab(opts = {}) {
     const c = _HG.cache[sid];
     if (c) {
       flow.innerHTML = c.html; _HG.seq = c.seq;
-      setBusy(false);   // 缓存快照不自带 busy 态；真 busy 由 SSE 回放 result 前事件再点亮
+      // 快照恢复后重建 rowById（busy 会话切回时 tool_result 事件要挂回行）
+      flow.querySelectorAll('[data-tid]').forEach(el => { _HG.rowById[el.dataset.tid] = el; });
+      setBusy(false);
     } else {
       flow.innerHTML = '';
       try {
@@ -320,10 +743,15 @@ function buildClaudeHarnessTab(opts = {}) {
             if (l.role === 'user') {
               const imgs = (l.files || []).filter(p => _HARNESS_IMG_EXT.test(p));
               const files = (l.files || []).filter(p => !_HARNESS_IMG_EXT.test(p));
-              renderUser(l.text, imgs.length ? imgs : (l.images ? Array.from({ length: l.images }, (_, i) => '图片' + (i + 1)) : null), files);
+              renderUser(l.text, imgs, files);
             }
             else if (l.role === 'assistant') renderAsst(l.text);
-            else if (l.role === 'tool') renderTool(l.text, l.summary || '');
+            else if (l.role === 'tool') {   // transcript 的工具行（无 id，简单单行）
+              const d = document.createElement('div');
+              d.className = 'h-tool';
+              d.innerHTML = `<span class="h-tool-name">${_hToolIco(l.text)} ${esc(_hToolLabel(l.text))}</span><span class="h-tool-arg">${esc(l.summary || '')}</span>`;
+              addRow(d);
+            }
           });
           setBusy(!!j.busy);
         }
@@ -341,7 +769,16 @@ function buildClaudeHarnessTab(opts = {}) {
     if (!keepInput) input.focus();
   }
 
-  // ---- 会话列表 ----
+  function showWelcome() {
+    flow.innerHTML = `
+      <div class="hg-welcome">
+        <div class="hg-welcome-ico"><span class="claude-ico big"></span></div>
+        <div class="hg-welcome-title">你好，我是 Claude</div>
+        <div class="hg-welcome-desc">直接输入开始新对话，或从左侧选择历史会话继续。<br>支持 📎 附件、@ 文件引用、⚡ 技能、🧠 模型切换。</div>
+      </div>`;
+  }
+
+  // ==================== 会话列表 ====================
   async function refreshSessions() {
     try {
       const j = await (await fetch('/api/harness/sessions')).json();
@@ -393,11 +830,8 @@ function buildClaudeHarnessTab(opts = {}) {
   });
   searchEl.addEventListener('input', renderList);
 
-  // ---- 新建 / 发送（新会话延迟建连：发出首条消息才 POST connect）----
-  function newChat() {
-    saveCache();
-    switchTo(null);
-  }
+  // ==================== 发送 ====================
+  function newChat() { saveCache(); switchTo(null); }
   q('[data-hg-new]').onclick = newChat;
 
   async function ensureSession() {
@@ -426,7 +860,9 @@ function buildClaudeHarnessTab(opts = {}) {
     const files = _HG.atts.filter(a => !a.isImg).map(a => a.path);
     const sid = await ensureSession();
     if (!sid) return;
-    input.value = ''; input.style.height = 'auto';
+    _hgHistAppend(sid, text);          // 输入历史（记录到真实会话 scope）
+    _HG.histNav = null;
+    input.value = ''; input.style.height = 'auto'; renderOverlay('');
     costEl.textContent = '';
     clearAtts();
     try {
@@ -434,7 +870,7 @@ function buildClaudeHarnessTab(opts = {}) {
         body: JSON.stringify({sid, text, images, files})});
       const j = await r.json();
       if (!j.ok) {
-        input.value = text;   // 失败退回输入框（附件 chip 已清，重试需重选——低概率路径取简单）
+        input.value = text;
         showBanner(j.err || '发送失败', 3000, true);
         return;
       }
@@ -456,21 +892,146 @@ function buildClaudeHarnessTab(opts = {}) {
   }
 
   sendBtn.onclick = () => { _HG.busy ? stopGen() : send(); };
+
+  // ---- 键盘链（源 useChatComposerState：命令菜单 → mention → 历史 → Enter）----
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
+    if (handleMentionKey(e)) return;                    // @ 下拉优先
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      e.preventDefault(); send(); return;
+    }
+    if (handleHistoryKey(e)) return;                     // ↑↓ 历史
+    if (e.key === 'Escape' && _HG.busy) { e.preventDefault(); stopGen(); }
   });
   input.addEventListener('input', () => {
     input.style.height = 'auto';
     input.style.height = Math.min(input.scrollHeight, 160) + 'px';
+    renderOverlay(input.value);
+    updateMention();
   });
 
-  // ---- 附件 ----
+  // ---- 输入历史（源 useInputHistory：空框 ↑ 回溯、到底恢复 draft）----
+  function handleHistoryKey(e) {
+    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return false;
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return false;
+    const value = input.value;
+    const nav = _HG.histNav;
+    const untouched = nav && value === nav.recalled;
+    if (e.key === 'ArrowUp') {
+      if (value !== '' && !untouched) return false;
+      const history = untouched ? nav.history : _hgHistRead(_HG.sid || 'draft');
+      if (!history.length) return false;
+      e.preventDefault();
+      if (untouched && nav.index === 0) return true;
+      const idx = untouched ? nav.index - 1 : history.length - 1;
+      const draft = untouched ? nav.draft : value;
+      _HG.histNav = { history, index: idx, draft, recalled: history[idx] };
+      input.value = history[idx];
+      input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 160) + 'px';
+      renderOverlay(input.value);
+      requestAnimationFrame(() => input.setSelectionRange(input.value.length, input.value.length));
+      return true;
+    }
+    if (!untouched) return false;
+    e.preventDefault();
+    if (nav.index >= nav.history.length - 1) {
+      input.value = nav.draft; _HG.histNav = null;
+      renderOverlay(input.value);
+    } else {
+      _HG.histNav = { history: nav.history, index: nav.index + 1, draft: nav.draft, recalled: nav.history[nav.index + 1] };
+      input.value = _HG.histNav.recalled;
+      renderOverlay(input.value);
+    }
+    return true;
+  }
+
+  // ---- @ 文件引用（源 useFileMentions：触发/下拉/键盘/插入/高亮）----
+  const _HG_MENTION_FILES = [];   // 已引用路径（overlay 高亮用）
+  function closeMention() {
+    mentionEl.style.display = 'none';
+    _HG.mention = null;
+  }
+  function updateMention() {
+    const pos = input.selectionStart;
+    const before = input.value.slice(0, pos);
+    const at = before.lastIndexOf('@');
+    if (at === -1) { closeMention(); return; }
+    const query = before.slice(at + 1);
+    if (query.includes(' ')) { closeMention(); return; }
+    _HG.mention = { at, query, sel: -1, files: null };
+    const cwd = (conn.meta.cwd) || '';
+    fetch(`/api/harness/files?cwd=${encodeURIComponent(cwd)}&q=${encodeURIComponent(query)}`)
+      .then(r => r.json())
+      .then(j => {
+        if (!_HG.mention || _HG.mention.at !== at) return;   // 闭包校验防过期响应
+        _HG.mention.files = (j.ok && j.files) || [];
+        renderMention();
+      }).catch(() => {});
+    renderMention(true);   // 立即显示 loading
+  }
+  function renderMention(loading) {
+    const m = _HG.mention;
+    if (!m) { closeMention(); return; }
+    const files = m.files || [];
+    if (!files.length && !loading) { closeMention(); return; }
+    mentionEl.style.display = 'block';
+    mentionEl.innerHTML = loading && !files.length ? '<div class="hg-pop-empty">搜索文件…</div>'
+      : files.map((f, i) => `<div class="hg-mention-item${i === m.sel ? ' sel' : ''}" data-mi="${i}"><b>${esc(f.name)}</b><span>${esc(f.path)}</span></div>`).join('')
+        || '<div class="hg-pop-empty">无匹配文件</div>';
+  }
+  mentionEl.addEventListener('mousedown', (e) => {
+    const it = e.target.closest('.hg-mention-item');
+    if (it && _HG.mention) { e.preventDefault(); selectMention(_HG.mention.files[+it.dataset.mi]); }
+  });
+  function handleMentionKey(e) {
+    const m = _HG.mention;
+    if (!m || !m.files || !m.files.length) return false;
+    if (e.key === 'ArrowDown') { e.preventDefault(); m.sel = m.sel < m.files.length - 1 ? m.sel + 1 : 0; renderMention(); return true; }
+    if (e.key === 'ArrowUp') { e.preventDefault(); m.sel = m.sel > 0 ? m.sel - 1 : m.files.length - 1; renderMention(); return true; }
+    if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && !e.isComposing)) {
+      e.preventDefault();
+      selectMention(m.files[m.sel >= 0 ? m.sel : 0]);
+      return true;
+    }
+    if (e.key === 'Escape') { e.preventDefault(); closeMention(); return true; }
+    return false;
+  }
+  function selectMention(f) {
+    if (!f) return;
+    const m = _HG.mention;
+    const before = input.value.slice(0, m.at);
+    const rest = input.value.slice(m.at);
+    const sp = rest.indexOf(' ');
+    const after = sp !== -1 ? rest.slice(sp) : '';
+    input.value = `${before}${f.path} ${after}`;
+    const caret = before.length + f.path.length + 1;
+    if (!_HG_MENTION_FILES.includes(f.path)) _HG_MENTION_FILES.push(f.path);
+    closeMention();
+    input.focus();
+    requestAnimationFrame(() => input.setSelectionRange(caret, caret));
+    renderOverlay(input.value);
+  }
+  // 高亮 overlay：与 textarea 同字体同 padding 的镜像层，只画 @ 引用路径的
+  // 底色高亮，文字本身透明；textarea 文字正常显示叠在其上（源 renderInputWithMentions，
+  // 原版是透明文字+镜像层，这里反过来更稳——镜像层透明文字+真文字在上）。
+  function renderOverlay(text) {
+    if (!text || !_HG_MENTION_FILES.length) { overlayEl.innerHTML = ''; return; }
+    const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const sorted = [..._HG_MENTION_FILES].sort((a, b) => b.length - a.length);
+    const re = new RegExp(`(${sorted.map(escRe).join('|')})`, 'g');
+    overlayEl.innerHTML = text.split(re).map(p =>
+      sorted.includes(p) ? `<span class="hg-mention-hl">${esc(p)}</span>` : esc(p)
+    ).join('');
+  }
+  input.addEventListener('scroll', () => { overlayEl.scrollTop = input.scrollTop; overlayEl.scrollLeft = input.scrollLeft; });
+
+  // ==================== 附件 ====================
   function renderAtts() {
     if (!_HG.atts.length) { attsEl.style.display = 'none'; attsEl.innerHTML = ''; return; }
     attsEl.style.display = 'flex';
     attsEl.innerHTML = _HG.atts.map((a, i) => `
-      <span class="hg-att-chip">${a.isImg ? '🖼' : '📄'} ${esc(a.name)}
+      <span class="hg-att-chip">${a.isImg ? `<img class="hg-att-thumb" src="${esc(a.path)}" title="${esc(a.name)}" data-img="${esc(a.path)}">` : '📄'} ${esc(a.name)}
         <button class="hg-att-x" data-i="${i}" title="移除">✕</button></span>`).join('');
+    attsEl.querySelectorAll('[data-img]').forEach(t => t.onclick = () => openLightbox(t.dataset.img));
   }
   function clearAtts() { _HG.atts = []; renderAtts(); }
   attsEl.addEventListener('click', (e) => {
@@ -497,13 +1058,12 @@ function buildClaudeHarnessTab(opts = {}) {
     }
   }
   fileEl.addEventListener('change', () => { uploadFiles([...fileEl.files]); fileEl.value = ''; });
-  // 粘贴图片（textarea 聚焦时；不碰全局拖拽链路，铁律4）
   input.addEventListener('paste', (e) => {
     const fs = [...(e.clipboardData?.files || [])].filter(f => f && f.size);
     if (fs.length) { e.preventDefault(); uploadFiles(fs); }
   });
 
-  // ---- popover（技能/模型）----
+  // ==================== popover（技能/模型）====================
   function closePop() {
     if (_HG.pop) { const p = wrap.querySelector('.hg-pop'); if (p) p.remove(); _HG.pop = null; }
   }
@@ -547,6 +1107,7 @@ function buildClaudeHarnessTab(opts = {}) {
     const si = e.target.closest('[data-skill]');
     if (si) {
       input.value = (input.value ? input.value.replace(/\s*$/, ' ') : '') + '/' + si.dataset.skill + ' ';
+      renderOverlay(input.value);
       closePop(); input.focus(); return;
     }
     const mi = e.target.closest('[data-model]');
@@ -555,8 +1116,7 @@ function buildClaudeHarnessTab(opts = {}) {
       _HG.model = m;
       q('[data-hg-model]').innerHTML = '🧠 ' + esc(m) + ' ▾';
       if (!_HG.dirty) {
-        // 空会话直接重挂：把所选 model 应用到下一次建连（未 connect 则无副作用）
-        if (_HG.sid) {   // 已 connect 的空会话（极少见：connect 后没发过消息）→ 弃用重开
+        if (_HG.sid) {
           fetch('/api/harness/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({sid: _HG.sid})}).catch(() => {});
           switchTo(null);
         }
@@ -570,7 +1130,7 @@ function buildClaudeHarnessTab(opts = {}) {
   });
   if (_HG.model) q('[data-hg-model]').innerHTML = '🧠 ' + esc(_HG.model) + ' ▾';
 
-  // ---- 轻量模态（铁律2：禁原生 confirm/prompt，暗色同款）----
+  // ==================== 轻量模态（铁律2）====================
   function hgModal(title, bodyHtml, buttons) {
     return new Promise((resolve) => {
       const ov = document.createElement('div');
@@ -606,7 +1166,7 @@ function buildClaudeHarnessTab(opts = {}) {
 
   conn.onResumePoll = () => { if (_HG.conn === conn) input.focus(); };
 
-  // ---- 初始：拉会话列表，自动回到最近会话 ----
+  // ==================== 初始 ====================
   showWelcome();
   (async () => {
     await refreshSessions();
@@ -617,12 +1177,13 @@ function buildClaudeHarnessTab(opts = {}) {
   return conn;
 }
 
-// ---- 关闭 tab：只断 SSE（会话本体后端保留，闲置自动回收进程；重开可继续）----
+// ---- 关闭 tab ----
 function _harnessClose(portId) {
   const conn = connections[portId];
   if (!conn) return;
   if (_HG.sse) { try { _HG.sse.close(); } catch(_) {} _HG.sse = null; }
   _HG.conn = null; _HG.sid = null; _HG.cache = {};
+  _HG.rowById = {}; _HG.run = null;
   conn.tab.remove();
   conn.wrap.remove();
   delete connections[portId];
@@ -638,8 +1199,8 @@ function _harnessClose(portId) {
   refreshSidebar();
 }
 
-// ---- 顶栏 Claude 按钮分派（init.js 调用）：按设置走 harness 或 CLI ----
-let _claudeUiMode = null;   // null=未拉取
+// ---- 顶栏 Claude 按钮分派 ----
+let _claudeUiMode = null;
 async function _getClaudeUiMode() {
   if (_claudeUiMode === null) {
     try {
@@ -649,7 +1210,7 @@ async function _getClaudeUiMode() {
   }
   return _claudeUiMode;
 }
-function setClaudeUiMode(m) { _claudeUiMode = m; }   // 设置页保存后同步内存缓存
+function setClaudeUiMode(m) { _claudeUiMode = m; }
 
 async function claudeButtonAction() {
   const mode = await _getClaudeUiMode();
