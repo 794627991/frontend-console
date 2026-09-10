@@ -423,7 +423,9 @@ function buildBitCalcTab() {
   //   键帽显示字符与实际插入 token 分离（÷→/ ×→* −→- ±→-），映射表 KP_TOK。
   //   模式切换键盘内容跟着换——不出现"DEC 高亮还摆着 A–F"的错配。
   const KP_TOK = { '÷':'/', '×':'*', '−':'-', '+':'+', '%':'%', '^':'^',
-                   '(':null, ')':null, '.':'.', '±':'-', '1/x':'1/' };   // null=原样插入
+                   '(':null, ')':null, '.':'.', '1/x':'1/' };   // null=原样插入
+  // ± 切换正负（官方行为：不是插符号键，是翻转当前数字符号）。
+  // 光标前截取连续数字 token（0x 前缀/数字/字母/小数点），有 - 前缀去掉、没有加上。
   // 跨格键：[列跨度, 行跨度]——0 宽键填底行空洞（官方习惯），= 跨两行撑住右下角
   const KP_SPAN = { hex: { '0': [3, 1], '=': [1, 2] },
                     dec: { '0': [2, 1], '=': [1, 2] } };
@@ -489,6 +491,20 @@ function buildBitCalcTab() {
       return;
     }
     if (k === '=') { doEval(); return; }
+    if (k === '±') {
+      // 翻转光标前当前数字的符号（官方 ± 行为）。往左扫数字 token：
+      // 十六进制字母算数字一部分（A–F）；0x/0b/0o 前缀整体算。没数字就插 -。
+      const val = exprInp.value;
+      const p = exprInp.selectionStart ?? val.length;
+      const m = /(0[xXbBoO])?[0-9a-fA-F.]+$/.exec(val.slice(0, p));
+      if (!m) { exprInp.setRangeText('-', p, p, 'end'); return; }
+      const start = p - m[0].length;
+      const seg = val.slice(start, p);
+      // token 前若已有负号则摘掉；没有则在数字前插 -（保持前缀在前）
+      if (val.slice(start - 1, start) === '-') exprInp.setRangeText('', start - 1, start, 'end');
+      else exprInp.setRangeText('-', start, start, 'end');
+      return;
+    }
     // 插入 token：KP_TOK 有映射用映射；括号/点/数字/字母直接贴；其余运算符两侧留空格
     let tok = Object.prototype.hasOwnProperty.call(KP_TOK, k) ? KP_TOK[k] : null;
     if (tok === null) tok = /[0-9a-fA-F.()]/.test(k) ? k : ' ' + k + ' ';
