@@ -788,15 +788,22 @@ def start_proxy():
 
 def stop_proxy():
     """停止代理（GUI stop_proxy 平移）：headroom + 重试代理一起停，
-    autoswitched 时回滚直连。幂等。"""
+    base_url 还指着自家代理（37349/8787）就一律切回直连——含手动
+    「切换为代理模式」的路径（用户实锤：点停止的同时应切直连，
+    之前只在 _autoswitched 时回滚，手动切过代理模式的会停在死端口）。
+    幂等。"""
     global _autoswitched
     _hr.stop()
     _ctl.stop()
-    if _autoswitched:
-        _bmgr.apply(DIRECT_URL)
-        _autoswitched = False
-        log.info("代理停止，已自动切回直连")
-    return True, "已停止"
+    try:
+        cur = _bmgr.read_current_url()
+        if _autoswitched or cur in (PROXY_URL, RETRY_URL):
+            _bmgr.apply(DIRECT_URL)
+            log.info("代理停止，base_url 已切回直连（原: %s）", cur)
+    except Exception as e:
+        log.warning("代理停止后切直连失败: %s", e)
+    _autoswitched = False
+    return True, "已停止（base_url 已切回直连）"
 
 
 def set_mode(mode):
@@ -818,6 +825,9 @@ def apply_hr_mode(mode, ccr=None):
     off：停 headroom 同步切 37349；full/light：停旧拉新，后台线程等就绪切 8787，
     失败回退 off 并同步记忆文件。"""
     global _headroom_mode, _hr_switching, _ccr, _autoswitched
+    if ccr is not None:
+        _ccr = bool(ccr)
+        save_ccr(_ccr)
     if mode not in HEADROOM_MODES:
         return False, "未知压缩模式"
     # 原版行为（用户实锤顺序）：headroom 的上游是重试代理，代理没跑时
@@ -830,9 +840,6 @@ def apply_hr_mode(mode, ccr=None):
         return True, "已记住，下次启动代理时生效"
     if _hr_switching:
         return False, "压缩模式切换进行中，请稍候"
-    if ccr is not None:
-        _ccr = bool(ccr)
-        save_ccr(_ccr)
     _hr_switching = True
 
     def _worker():

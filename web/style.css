@@ -335,6 +335,15 @@
   .res-viewport { position: absolute; left: 0; right: 0; top: 0; height: 0; }
   .search-more { position: absolute; left: 0; right: 0; padding: 4px 10px; color: var(--muted); font-size: 11px; text-align: center; }
   .log-viewer-toolbar { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-bottom: 1px solid var(--border); background: var(--bg-card); flex-shrink: 0; }
+  /* lv-btn 全局基础暗色样式：此前暗色定义全是容器作用域
+     （.log-viewer-toolbar/.bc-body/.term-toolbar .lv-btn），面板区
+     （Proxy 额度按钮、压缩模式按钮等）裸用 .lv-btn 回落成浏览器
+     默认白底——白底黑字落在暗色主题上（用户实锤 UI 风格不一致，铁律②）。
+     容器级规则选择器更具体会覆盖本条，现有各区外观不变。 */
+  .lv-btn { background: var(--bg-input); border: 1px solid var(--border); color: var(--fg);
+    border-radius: 4px; padding: 4px 12px; font-size: 12px; cursor: pointer; white-space: nowrap; }
+  .lv-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .lv-btn:disabled { opacity: .45; cursor: not-allowed; }
   .log-viewer-toolbar .lv-btn { background: var(--bg-input); border: 1px solid var(--border); color: var(--fg); border-radius: 4px; padding: 3px 10px; font-size: 12px; cursor: pointer; }
   .log-viewer-toolbar .lv-btn:hover { border-color: var(--accent); color: var(--accent); }
   .log-viewer-toolbar .lv-info { color: var(--muted); font-size: 11px; margin-left: auto; }

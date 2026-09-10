@@ -153,7 +153,9 @@ function buildProxyTab() {
   }
 
   function _renderStats(snap) {
-    if (!snap) { statsEl.innerHTML = '<div class="px-hint">代理未运行，无统计数据</div>'; return; }
+    // 未运行占位：px-stats 是 108px 小格 grid，hint 直接塞会挤进单格
+    // 导致「无统计数据」换行+右侧全空（用户实锤）——跨满整行
+    if (!snap) { statsEl.innerHTML = '<div class="px-hint" style="grid-column:1/-1;padding:10px 0;">代理未运行，无统计数据</div>'; return; }
     const total = snap.total_requests || 0;
     const succ = snap.total_success || 0;
     const rate = total ? (succ * 100 / total).toFixed(1) : '100.0';
