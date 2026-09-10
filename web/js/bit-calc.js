@@ -20,9 +20,14 @@ function _bcEvalExpr(src, bits) {
     if (peek() === '(') { i++; const v = parseAdd(); if (peek() !== ')') throw new Error('括号不匹配'); i++; return v; }
     if (peek() === '~') { i++; return ~parsePrimary() & MASK; }
     if (peek() === '-' && (i + 1 < s.length)) { i++; return (-parsePrimary()) & MASK; }
-    const m = /^0[xX][0-9a-fA-F]+|^0[bB][01]+|^0[oO][0-7]+|^[0-9]+/.exec(s.slice(i));
+    // 裸 hex 字面量（用户实锤）：HEX 模式敲 AA 报"无法识别"——键盘明明摆着
+    // A–F 键。含字母的纯字面量按十六进制（程序员计算器惯例）；排在纯数字前
+    // （交替顺序，1F 不被截成 1；纯数字仍按十进制）
+    const m = /^0[xX][0-9a-fA-F]+|^0[bB][01]+|^0[oO][0-7]+|^[0-9]*[a-fA-F][0-9a-fA-F]*|^[0-9]+/.exec(s.slice(i));
     if (!m) throw new Error('无法识别: ' + (s.slice(i, i + 8) || '(结尾)'));
     i += m[0].length;
+    // 裸 hex（无 0x 前缀但含字母）补前缀再 BigInt；带前缀/纯数字直接 BigInt
+    if (/[a-fA-F]/.test(m[0]) && !/^0[xXbBoO]/.test(m[0])) return BigInt('0x' + m[0]) & MASK;
     return BigInt(m[0]) & MASK;
   }
   // 优先级（低→高）：+ - → * / % → | → ^ → & → << >> → 一元/字面量
@@ -62,11 +67,17 @@ function _bcEvalExpr(src, bits) {
   return v;
 }
 
-// 单数字面量解析：0x/0b/0o 前缀或纯十进制 → BigInt（操作数框用）
+// 单数字面量解析：0x/0b/0o 前缀、纯十进制、裸 hex（含字母如 AA——键盘 A–F
+// 键按出来就该能算）→ BigInt（操作数框用）
 function _bcParseNum(t) {
   t = String(t).trim().toLowerCase();
   if (/^0x[0-9a-f]+$/.test(t) || /^0b[01]+$/.test(t) || /^0o[0-7]+$/.test(t) || /^-?[0-9]+$/.test(t))
     return BigInt(t);
+  if (/^-?[0-9]*[a-f][0-9a-f]*$/.test(t)) {
+    const neg = t.startsWith('-');
+    const v = BigInt('0x' + (neg ? t.slice(1) : t));
+    return neg ? -v : v;
+  }
   throw new Error(t || '(空)');
 }
 
@@ -93,9 +104,10 @@ function _bcEvalExprF(src) {
       if (v === 0) throw new Error('除零');
       return 1 / v;
     }
-    const m = /^(0[xX][0-9a-fA-F]+|0[bB][01]+|0[oO][0-7]+|[0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?)/.exec(rest);
+    const m = /^(0[xX][0-9a-fA-F]+|0[bB][01]+|0[oO][0-7]+|[0-9]*[a-fA-F][0-9a-fA-F]*|[0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?)/.exec(rest);
     if (!m) throw new Error('无法识别: ' + (rest.slice(0, 8) || '(结尾)'));
     i += m[0].length;
+    if (/[a-fA-F]/.test(m[0]) && !/^0[xXbBoO]/.test(m[0])) return Number(BigInt('0x' + m[0]));
     return /^0[xXbBoO]/.test(m[0]) ? Number(BigInt(m[0])) : Number(m[0]);
   }
   function parseUnary() { if (s[i] === '-') { i++; return -parseUnary(); } if (s[i] === '+') { i++; return parseUnary(); } return parsePrimary(); }
