@@ -309,6 +309,14 @@ def main():
 
     # JS API：暴露原生文件选择对话框给前端（拖拽拿不到 File.path 时的 fallback）
     class FileBridge:
+        def tray_confirm_hide(self):
+            """首次关闭提示框「知道了」后调用：把窗口隐藏到托盘（后端时机控制）。
+            在独立线程 hide——pywebview js_api 调用也在 GUI 线程，hide 本身安全。"""
+            try:
+                webview.windows[0].hide()
+            except Exception:
+                pass
+
         def pick_log(self):
             """弹出原生文件选择对话框，返回选中文件的绝对路径或空字符串。"""
             try:
@@ -517,12 +525,25 @@ def main():
         if not tray_enabled:
             _do_real_cleanup()
             return True
-        # 隐藏到托盘全流程在后台线程做（closing 回调零阻塞）
+        # 关闭到托盘全流程在后台线程做（closing 回调零阻塞）。
+        # 首次（config tray_prompt_shown=false）：先弹提示、窗口保持可见，
+        # 用户点「知道了」后前端回调 pywebview.api.tray_confirm_hide 才隐藏——
+        # 窗口先藏弹窗会跟着消失，用户什么都看不到（用户实锤）。
+        # 之后：直接隐藏（提示已在首次展示过）。
         import threading
-        threading.Thread(target=_hide_async, daemon=True).start()
-        return False   # 阻止关闭，窗口稍后由 _hide_async 隐藏
+        try:
+            from src.app_state import CONFIG_FILE
+            import json as _json
+            with open(CONFIG_FILE, encoding="utf-8") as f:
+                _cfg = _json.load(f)
+            _prompted = bool(_cfg.get("tray_prompt_shown"))
+        except Exception:
+            _prompted = False
+        threading.Thread(target=_hide_async, daemon=True,
+                         kwargs={"prompt": not _prompted}).start()
+        return False   # 阻止关闭：隐藏时机交给 _hide_async/前端确认
 
-    def _hide_async():
+    def _hide_async(prompt):
         import time
         time.sleep(0.05)   # 让 closing 先返回（防重入）
         from src.tray import hide_to_tray
@@ -532,18 +553,23 @@ def main():
                               _try_destroy(window)),
         )
         if not ok:
-            # 无托盘环境：托盘没建起来就没有唤出入口——只能提示后真退出
+            return   # 无托盘环境：closing 已拦但没建起托盘——用户无唤出入口。
+                     # 不硬退（数据要保护），下次启动 close_to_tray 建议用户关掉
+        if prompt:
+            # 首次：窗口留 Visible 弹提示，等前端确认后才隐藏（见 tray_confirm_hide）
             try:
-                window.evaluate_js(
-                    "window._trayNotice && window._trayNotice();")
+                window.evaluate_js("window._trayNotice && window._trayNotice();")
+            except Exception:
+                pass   # 前端不可达（极端）：直接隐藏兜底，别让窗口关不掉
+                try:
+                    window.hide()
+                except Exception:
+                    pass
+        else:
+            try:
+                window.hide()
             except Exception:
                 pass
-            return
-        # 首次提示（前端查 config tray_prompt_shown 决定显不显示）
-        try:
-            window.evaluate_js("window._trayNotice && window._trayNotice();")
-        except Exception:
-            pass
 
     def _try_destroy(window):
         """托盘「退出」：触发窗口关闭（closing 放行后走正常清理链）。"""

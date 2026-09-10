@@ -58,10 +58,6 @@ $('btnHelp').onclick = () => {
 // 暗色模态框（铁律②不用原生弹窗），带「下次不再显示」勾选（写 config tray_prompt_shown）。
 // 注意：窗口即将 hide，弹窗在隐藏前一瞬展示——唤出时仍在（非阻塞展示，用户回来看得见）。
 window._trayNotice = async () => {
-  try {
-    const j = await (await fetch('/api/theme')).json();
-    if (j.ok && j.tray_prompt_shown) return;   // 用户已勾选不再显示
-  } catch(_) {}
   let m = $('trayNoticeModal');
   if (!m) {
     m = document.createElement('div');
@@ -69,28 +65,30 @@ window._trayNotice = async () => {
     m.id = 'trayNoticeModal';
     m.innerHTML = `
       <div class="box" style="max-width:400px;">
-        <div class="head"><strong>已最小化到托盘</strong>
+        <div class="head"><strong>最小化到托盘</strong>
           <div class="head-actions"><button class="btn ghost icon-btn" id="tnClose">✕</button></div></div>
         <div style="padding:16px 20px;font-size:12px;line-height:1.7;color:var(--fg);">
-          程序没有退出——正在后台运行（终端连接 / TFTP / Claude 会话都保持）。
-          <br>单击托盘区的 <b>🤖 图标</b> 可重新打开窗口，右键托盘图标可彻底退出。
+          点「知道了」后程序将最小化到系统托盘（不会退出——终端连接 / TFTP / Claude 会话都保持）。
+          <br>单击托盘区的 <img src="/ico/app.png" alt="logo" style="width:14px;height:14px;vertical-align:-2px;"> <b>图标</b> 可重新打开窗口，右键托盘图标可彻底退出。
         </div>
         <label style="display:flex;align-items:center;gap:8px;padding:0 20px 4px;cursor:pointer;font-size:12px;color:var(--muted);">
-          <input type="checkbox" id="tnDontShow"> 下次不再显示此提示
+          <input type="checkbox" id="tnDontShow"> 下次不再显示此提示（直接最小化）
         </label>
         <div style="display:flex;gap:10px;justify-content:flex-end;padding:10px 20px 16px;">
-          <button class="btn primary" id="tnOk">知道了</button>
+          <button class="btn primary" id="tnOk">知道了，最小化</button>
         </div>
       </div>`;
     document.body.appendChild(m);
-    m.querySelector('#tnClose').onclick = () => m.classList.remove('show');
+    // ✕ 也走确认链（只关弹窗不隐藏会让用户以为取消了最小化，窗口关不掉）
+    m.querySelector('#tnClose').onclick = () => m.querySelector('#tnOk').onclick();
     m.querySelector('#tnOk').onclick = async () => {
+      m.classList.remove('show');
       if (m.querySelector('#tnDontShow').checked) {
         try { await fetch('/api/theme', {method:'POST',
           headers:{'Content-Type':'application/json'},
           body: JSON.stringify({tray_prompt_shown: true})}); } catch(_) {}
       }
-      m.classList.remove('show');
+      try { await pywebview.api.tray_confirm_hide(); } catch(_) {}
     };
   }
   m.classList.add('show');
