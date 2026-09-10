@@ -1876,3 +1876,19 @@
 .px-rank-h { color: var(--muted); border-bottom: 1px solid var(--border); }
 .px-rank-r:nth-child(even) { background: var(--bg-card); border-radius: 4px; }
 .px-rank-m { color: var(--fg-bright); word-break: break-all; }
+
+/* ---- Proxy 额度区：密码眼睛 / 状态行 / 按钮启停（老 GUI 对齐）---- */
+.px-eye-wrap { position: relative; display: inline-flex; }
+.px-eye { position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  border: none; background: transparent; color: var(--muted); cursor: pointer;
+  padding: 2px; display: inline-flex; align-items: center; line-height: 1; }
+.px-eye:hover { color: var(--fg-bright, var(--fg)); }
+.px-eye-on { color: var(--accent); }
+/* 密码框明文显示中（px-eye-on）：睁眼高亮青色；密文态灰眼（ssh 客户端同款语义） */
+.px-quota-login input[data-px-q-pwd] { padding-right: 26px; }
+.px-q-statrow { display: flex; align-items: center; gap: 16px; margin: 0 0 10px 0; min-height: 22px; }
+.px-q-last { font-family: var(--font-mono, monospace); font-size: 12px; color: var(--muted); }
+.px-quota-login .lv-btn:disabled { opacity: .45; cursor: not-allowed; }
+.px-q-auto { display: inline-flex; align-items: center; gap: 4px; font-size: 12px;
+  color: var(--muted); cursor: pointer; user-select: none; }
+.px-q-auto input { accent-color: var(--accent); }

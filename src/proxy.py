@@ -66,12 +66,10 @@ CLAUDE_SETTINGS_PATHS = (
 # 凭据/日志随主工具数据目录（不写进 _MEI 临时目录、不散落）
 LANZ_CRED_PATH = os.path.join(DATA_DIR, "lanz_credentials.json")
 
-HAS_PYSTRAY = True
 try:
-    import pystray
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image, ImageDraw, ImageFont   # 托盘图标绘制（原生 Win32 托盘不吃 PIL，仅保留其他用途）
 except Exception:
-    HAS_PYSTRAY = False
+    pass
 
 HAS_LANZ = True
 try:
@@ -481,6 +479,13 @@ class LanzQuotaWorker:
         self._wake.set()
         return True
 
+    def set_auto(self, on):
+        """自动刷新开关（GUI checkbox 同款）。"""
+        with self._lock:
+            self._auto = bool(on)
+        if on:
+            self._wake.set()   # 开启时唤醒，避免卡在 wait(None)
+
     def stop(self):
         self._stop.set()
         self._wake.set()
@@ -590,7 +595,10 @@ class LanzQuotaWorker:
 _bmgr = BaseUrlManager()
 _ctl = ProxyController()
 _hr = HeadroomController()
-_quota_state = {}       # {"kind":..., "payload":..., "ts":...} 最新一次 emit
+_quota_state = {}       # {"kind":..., "payload":..., "ts":...} 最新一次 emit（msg 提示用）
+_quota_login = None     # 登录态独立槽 {"state": online/logging/error/fetch_err, "user":...}
+                         # （与 _quota_state 分槽：data 事件不再覆盖登录态——
+                         # 用户实锤合槽后前端永远显示「登录中」）
 _quota_ov = {}           # dashboard.overview 缓存（托盘菜单/tooltip 用）
 _quota_rank = []         # dashboard.modelRank 缓存（模型用量排名表）
 _quota_ts = None         # 上次 data 时间戳（前端显示"上次刷新 Ns 前"）
@@ -636,13 +644,28 @@ def _ensure_hr_stats_thread():
 
 def _quota_emit(kind, payload):
     """LanzQuotaWorker emit 回调：直写模块缓存（前端轮询 status 读走，
-    托盘菜单动态行读 _quota_ov）。GUI 版是 root.after 派发 tkinter，这里无 GUI。"""
-    global _quota_ov, _quota_rank, _quota_ts
+    托盘菜单动态行读 _quota_ov）。GUI 版是 root.after 派发 tkinter，这里无 GUI。
+
+    登录状态与最新事件分槽存（用户实锤过合槽 bug：data 事件覆盖 login_ok
+    后前端永远显示「登录中」）——_quota_login 独立记登录态，只被
+    login_ok/login_err/fetch_err/断开 翻转；_quota_state 只给 msg 类提示。"""
+    global _quota_ov, _quota_rank, _quota_ts, _quota_login
     with _quota_lock:
         _quota_state["kind"] = kind
         _quota_state["payload"] = payload
         _quota_state["ts"] = time.time()
-        if kind == "data" and isinstance(payload, dict):
+        if kind == "login_start":
+            _quota_login = {"state": "logging", "user": _quota_login and _quota_login.get("user")}
+        elif kind == "login_ok":
+            _quota_login = {"state": "online", "user": payload}
+        elif kind == "login_err":
+            _quota_login = {"state": "error", "user": None,
+                            "msg": str(payload or "登录失败")}
+        elif kind == "fetch_err":
+            # 查询失败可能意味着会话失效——「在线」是误导（GUI 同款降级）
+            _quota_login = {"state": "fetch_err", "user": _quota_login.get("user") if _quota_login else None,
+                            "msg": str(payload or "查询失败")}
+        elif kind == "data" and isinstance(payload, dict):
             dash = payload.get("dashboard") or {}
             ov = dash.get("overview") or {}
             if ov:
@@ -652,6 +675,16 @@ def _quota_emit(kind, payload):
             if rank:
                 _quota_rank = rank
             _quota_ts = payload.get("ts")
+            # data 到了说明登录成功：兜底恢复（GUI _render_quota_data 同款，
+            # 防 login_ok 事件被面板未打开时错过导致卡「登录中」）
+            if not _quota_login or _quota_login.get("state") != "online":
+                user = None
+                try:
+                    cred = _get_credentials()
+                    user = (cred or {}).get("username")
+                except Exception:
+                    pass
+                _quota_login = {"state": "online", "user": user}
 
 
 def _get_credentials():
@@ -856,15 +889,13 @@ def _quota_tip_suffix():
 
 def _tray_quota_items():
     """托盘菜单顶部额度动态行（GUI:2350-2390 平移）。text 传函数 →
-    每次右键打开菜单重新求值最新缓存，enabled=False 纯展示零网络。"""
+    每次右键打开菜单重新求值最新缓存，cb=None 纯展示零网络。
+    返回原生菜单描述树（tray.py 原生 Win32 托盘格式）。"""
     def _dyn(fn):
-        return pystray.MenuItem(fn, None, enabled=False)
+        return ("item", fn, None, {"enabled": False})
 
-    def _ov():
-        return _quota_ov if HAS_LANZ else None
-
-    def _sum(_item=None):
-        ov = _ov()
+    def _sum():
+        ov = _quota_ov if HAS_LANZ else None
         if not ov:
             return "额度: 未登录/暂无数据"
         return "今日 外 %s/%s  内 %s/%s" % (
@@ -874,8 +905,8 @@ def _tray_quota_items():
             _fnum(ov.get("internalDailyLimit", 0) or 0))
 
     def _mk_model(name, ku, kl):
-        def _text(_item=None):
-            ov = _ov()
+        def _text():
+            ov = _quota_ov if HAS_LANZ else None
             if not ov:
                 return "%s: -" % name
             u = ov.get(ku, 0) or 0
@@ -894,44 +925,44 @@ def _tray_quota_items():
 
 
 def tray_menu_items():
-    """主托盘右键菜单的 Proxy 段（tray.py 调用并入，用户定：托盘合成一个）。
-    text/checked 全传函数 → 打开菜单时求值最新状态；未启动时启停行自动降级。
-    只在 pystray 可用时返回菜单项列表，否则空列表（主托盘正常无此段）。"""
-    if not HAS_PYSTRAY:
-        return []
+    """主托盘右键菜单的 Proxy 段（tray.py 原生 Win32 托盘调用并入）。
+    返回原生菜单描述树（("item", text, cb, opts) / ("sep",)），text/checked
+    可传函数 → 打开菜单时求值最新状态；未启动时启停行自动降级。
+    与 pystray.MenuItem(fn) 签名兼容：函数项被调时收一个 None 参数。"""
     has_headroom = os.path.exists(HEADROOM_EXE)
 
     def _hr_items():
         return [
-            pystray.MenuItem("完整压缩", lambda *a: apply_hr_mode("full"),
-                            radio=True, checked=lambda i: _headroom_mode == "full",
-                            enabled=has_headroom),
-            pystray.MenuItem("轻量压缩", lambda *a: apply_hr_mode("light"),
-                            radio=True, checked=lambda i: _headroom_mode == "light",
-                            enabled=has_headroom),
-            pystray.MenuItem("关闭压缩", lambda *a: apply_hr_mode("off"),
-                            radio=True, checked=lambda i: _headroom_mode == "off"),
+            ("item", "完整压缩", lambda: apply_hr_mode("full"),
+             {"radio": True, "checked": lambda: _headroom_mode == "full",
+              "enabled": has_headroom}),
+            ("item", "轻量压缩", lambda: apply_hr_mode("light"),
+             {"radio": True, "checked": lambda: _headroom_mode == "light",
+              "enabled": has_headroom}),
+            ("item", "关闭压缩", lambda: apply_hr_mode("off"),
+             {"radio": True, "checked": lambda: _headroom_mode == "off"}),
         ]
 
-    def _toggle_text(item):
+    def _toggle_text():
         return "■ 停止 Claude 代理" if _ctl.running else "▶ 启动 Claude 代理"
 
+    def _header_text():
+        return ("Claude Proxy [%s]" % _api_status_text()) if _ctl.running \
+            else "Claude Proxy（未启动）"
+
     return [
-        pystray.Menu.SEPARATOR,
+        ("sep",),
         # Claude Proxy 段头（只读，代理状态随打开刷新）
-        pystray.MenuItem(
-            lambda i: ("Claude Proxy [%s]" % _api_status_text())
-            if _ctl.running else "Claude Proxy（未启动）",
-            None, enabled=False),
+        ("item", _header_text, None, {"enabled": False}),
         *_tray_quota_items(),
-        pystray.MenuItem(_toggle_text, lambda *a: (
-            stop_proxy() if _ctl.running else start_proxy())),
-        pystray.MenuItem("切换为代理模式", lambda *a: set_mode("proxy")),
-        pystray.MenuItem("切换为直连模式", lambda *a: set_mode("direct")),
-        pystray.MenuItem("压缩模式", pystray.Menu(_hr_items())),
-        pystray.MenuItem("CCR 流压缩（激进·/compact 可能卡死）",
-                        lambda *a: apply_hr_mode(_headroom_mode, ccr=not _ccr),
-                        checked=lambda i: _ccr, enabled=has_headroom),
+        ("item", _toggle_text,
+         lambda: stop_proxy() if _ctl.running else start_proxy(), {}),
+        ("item", "切换为代理模式", lambda: set_mode("proxy"), {}),
+        ("item", "切换为直连模式", lambda: set_mode("direct"), {}),
+        ("item", "压缩模式", None, {"submenu": _hr_items()}),
+        ("item", "CCR 流压缩（激进·/compact 可能卡死）",
+         lambda: apply_hr_mode(_headroom_mode, ccr=not _ccr),
+         {"checked": lambda: _ccr, "enabled": has_headroom}),
     ]
 
 
@@ -956,14 +987,12 @@ def _api_status_text():
 def _tray_tip_loop():
     """tooltip 刷新 daemon 线程（GUI:3319-3341 平移）。
     Windows szTip 限 128 字符，额度在前确保完整显示。
-    节流 5s 且值不变不写——1s 无条件 NIM_MODIFY 会与 Explorer 悬停
-    tooltip 查询竞争（用户实锤鼠标一指托盘图标就没了）。
-    代理未启动时线程退出（不占常驻资源），start 时重开。"""
+    节流 5s 且值不变不写——高频 NIM_MODIFY 会与 Explorer 悬停 tooltip
+    查询竞争。代理未启动时线程退出（不占常驻资源），start 时重开。"""
     import src.tray as tray_mod
     last_tip = None
     while not _tip_stop.is_set():
-        icon = tray_mod.get_icon()
-        if icon is None:
+        if not tray_mod.alive():
             time.sleep(2)   # 主托盘还没建（用户没最小化过）：低频等待
             last_tip = None
             continue
@@ -996,7 +1025,7 @@ def _tray_tip_loop():
                     _fnum(snap.get("fee_requests", 0)),
                     core.fmt_uptime(snap["uptime_seconds"]))
             if tip != last_tip:
-                icon.title = tip
+                tray_mod.set_tip(tip)
                 last_tip = tip
         except Exception:
             pass
@@ -1123,6 +1152,7 @@ def _api_status():
     with _quota_lock:
         qkind = _quota_state.get("kind")
         qpayload = _quota_state.get("payload")
+        qlogin = dict(_quota_login) if _quota_login else None
         ov = dict(_quota_ov)
         rank = list(_quota_rank)
         qts = _quota_ts
@@ -1145,13 +1175,13 @@ def _api_status():
         "hr_stats": _hr_stats_cache,
         "quota_kind": qkind,
         "quota_payload": qpayload,
-        "quota_user": None,
+        "quota_login": qlogin,
+        "quota_user": (qlogin or {}).get("user") if qlogin else None,
+        "quota_auto": _quota._auto if _quota is not None else True,
         "has_credentials": cred is not None,
         "quota_username": (cred or {}).get("username"),
         "quota_ts": qts,
     }
-    if HAS_LANZ and qkind == "login_ok":
-        data["quota_user"] = qpayload
     if ov:
         data["quota_overview"] = ov
         data["quota_models"] = _quota_model_rows(ov)
@@ -1199,6 +1229,11 @@ def _api_quota_refresh():
     if not HAS_LANZ or _quota is None:
         return jsonify({"ok": False, "msg": "额度模块不可用（缺 pycryptodome）"})
     j = request.get_json(silent=True) or {}
+    if "auto" in j:
+        # 自动刷新开关（GUI checkbox 平移）：{auto: bool}
+        _quota.set_auto(bool(j.get("auto")))
+        return jsonify({"ok": True, "msg": "自动刷新已开启（10min）" if j.get("auto")
+                        else "自动刷新已关闭"})
     if j.get("force"):
         # 强制重登：丢旧 session 换新 client 全新登录（多天不用后登录失效的自救）。
         # 只动额度查询，重试代理/headroom 链路零触碰。
@@ -1217,9 +1252,15 @@ def _api_credentials():
     if not HAS_LANZ or _quota is None:
         return jsonify({"ok": False, "msg": "额度模块不可用（缺 pycryptodome）"})
     if action == "clear":
+        global _quota_login, _quota_ov, _quota_rank, _quota_ts
         lanz_quota.delete_credentials(LANZ_CRED_PATH)
         _invalidate_cred_cache(None)   # 同步缓存，下轮 status 不再读盘
         _quota.clear_credentials()
+        with _quota_lock:
+            _quota_login = None
+            _quota_ov = {}
+            _quota_rank = []
+            _quota_ts = None
         return jsonify({"ok": True, "msg": "已断开登录"})
     user = (j.get("username") or "").strip()
     pwd = j.get("password") or ""
