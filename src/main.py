@@ -579,16 +579,23 @@ def main():
                 pass
 
     def _try_destroy(window):
-        """托盘「退出」：触发窗口关闭（closing 放行后走正常清理链）。"""
-        try:
-            window.show()   # destroy 对隐藏窗偶发不派发 closing——先显示
-        except Exception:
-            pass
-        try:
-            window.destroy()
-        except Exception:
-            import os
-            os._exit(0)   # 兜底：窗口已死关不掉就硬退（托盘退出必须有出口）
+        """托盘「退出」：不 show（show+destroy 会闪窗，用户实锤）。
+        直接后台线程清理 + destroy——destroy 对隐藏窗同样走 closing，
+        _real_quit 已置位，closing 放行清理链。"""
+        def _quit_async():
+            import time
+            time.sleep(0.05)
+            try:
+                window.destroy()
+            except Exception:
+                # 兜底：窗口已死关不掉就硬退（托盘退出必须有出口）
+                from src.tray import quit_tray
+                quit_tray()
+                _do_real_cleanup()
+                import os
+                os._exit(0)
+        import threading
+        threading.Thread(target=_quit_async, daemon=True).start()
 
     window.events.closing += on_closing
 
