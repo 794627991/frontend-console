@@ -214,7 +214,8 @@ def ed_open():
         if err:
             return jsonify({"ok": False, "err": err}), 400
         return jsonify({"ok": True, "name": os.path.basename(p), "path": p,
-                        "text": text, "used_enc": used})
+                        "text": text, "used_enc": used,
+                        "mtime": os.path.getmtime(p), "size": os.path.getsize(p)})
     name = request.args.get("name", "")
     p = _safe_path(name)
     if not p or not os.path.isfile(p):
@@ -222,7 +223,28 @@ def ed_open():
     text, err, used = _read_text(p, enc=enc)
     if err:
         return jsonify({"ok": False, "err": err}), 400
-    return jsonify({"ok": True, "name": name, "text": text, "used_enc": used})
+    return jsonify({"ok": True, "name": name, "text": text, "used_enc": used,
+                    "mtime": os.path.getmtime(p), "size": os.path.getsize(p)})
+
+
+@edit_bp.route("/api/ed/stat")
+def ed_stat():
+    """轻量查文件状态（mtime+size）：前端编辑器 tab 检测后台进程改动磁盘用。
+    name=files/ 内文件名；path=外部绝对路径。文件不存在 err（被外部删除的场景，
+    前端也该知道）。"""
+    ext_path = (request.args.get("path", "") or "").strip()
+    if ext_path:
+        try:
+            st = os.stat(ext_path)
+            return jsonify({"ok": True, "mtime": st.st_mtime, "size": st.st_size})
+        except OSError as e:
+            return jsonify({"ok": False, "err": "文件不存在或不可访问: %s" % e}), 404
+    name = request.args.get("name", "")
+    p = _safe_path(name)
+    if not p or not os.path.isfile(p):
+        return jsonify({"ok": False, "err": "文件不存在"}), 404
+    st = os.stat(p)
+    return jsonify({"ok": True, "mtime": st.st_mtime, "size": st.st_size})
 
 
 @edit_bp.route("/api/ed/save", methods=["POST"])

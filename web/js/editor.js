@@ -49,9 +49,10 @@ async function _edUploadImage(file) {
 
 // ---- 编辑器 tab 构建（模式同 buildLogViewer：tab + term-area wrap + connections 表）----
 // name=null 表示未命名草稿（尚未保存到磁盘）
-function buildEditorTab(name, content, extPath) {
+function buildEditorTab(name, content, extPath, fileMtime) {
   // content：.note 传 Editor.js JSON 对象；.txt 传字符串；草稿传 null
   // extPath：外部绝对路径（拖入文件）——保存写回原路径，不走 files/ 目录
+  // fileMtime：打开时磁盘 mtime（后台改动检测基准；null=草稿/旧调用不检测）
   const isNote = name ? name.toLowerCase().endsWith('.note') : true;  // 草稿默认 .note
   // 外部 .note 入口（拖入/最近打开）传的是 /api/ed/open 返回的 JSON 字符串：
   // 不解析则 _edInitContent 判非对象 → 空块初始化 → Ctrl+S 把原文件覆盖成空笔记
@@ -149,6 +150,9 @@ function buildEditorTab(name, content, extPath) {
     dirty: false,
     extPath: extPath || null,  // 外部绝对路径：保存写回原文件，另存为/重命名禁用
     usedEnc: null,             // 打开文件实际用的编码（编码下拉切换时重读）
+    fileMtime: fileMtime || null,   // 磁盘 mtime 基准（后台改动检测，_edWatchDisk 用）
+    diskWatchTimer: null,      // 检测定时器（tab 可见才开，切走停——流畅守则）
+    diskWatchAsked: null,      // 已弹窗提醒的 mtime（同一次外部改动不重复弹）
     // 全局搜索分栏（纯文本；.note 也支持——按块文本搜）
     edSearchPane: null, edSearchQ: null, edSearchEx: null,
     edSearchResults: null, edSearchCount: null,
@@ -201,6 +205,7 @@ function buildEditorTab(name, content, extPath) {
             try { conn.monaco.setPosition(pos); conn.monaco.revealLineInCenter(pos.lineNumber); } catch (_) {}
           } else if (conn.ta) conn.ta.value = j.text;
           conn.savedData = conn.monaco ? conn.monaco.getValue() : (conn.ta ? conn.ta.value : j.text);
+          conn.fileMtime = j.mtime || conn.fileMtime;   // 重读了磁盘：基准同步，防误报
           encSel.dataset.cur = enc;
           showBanner('已按 ' + (j.used_enc || '自动探测') + ' 重新读取', 2500);
         } catch(e) { showBanner('重读失败: ' + e, 4000, true); }
@@ -790,7 +795,7 @@ async function openEditorFile(nameOrPath) {
     // 记入最近打开（文件类型，快捷重开走编辑器）
     if (typeof _recentAdd === 'function') _recentAdd({type:'file', key:'file:'+name, label:name, data:{kind:'edit', name:name, path:nameOrPath, extPath: isExtPath ? nameOrPath : ''}});
     window._edLastUsedEnc = isExtPath ? (j.used_enc || null) : null;
-    const _c = buildEditorTab(name, content, isExtPath ? nameOrPath : null);
+    const _c = buildEditorTab(name, content, isExtPath ? nameOrPath : null, j.mtime || null);
     if (_c) _c.usedEnc = j.used_enc || null;
   } catch(e) { notifyTaskDone(nid, {ok:false, title:'打开失败', detail:String(e), ms:5000}); }
 }
@@ -809,14 +814,143 @@ async function edSave(conn) {
     if (!j.ok) { showBanner(j.err || '保存失败', 4000, true); return; }
     conn.savedData = content;
     conn.dirty = false; _edMarkTab(conn); _edUpdateInfo(conn);
+    // 自己刚保存的：刷新 mtime 基准，磁盘检测不误报自己的写入
+    if (conn.fileMtime) {
+      const sq = conn.extPath
+        ? '/api/ed/stat?path=' + encodeURIComponent(conn.extPath)
+        : '/api/ed/stat?name=' + encodeURIComponent(conn.meta.label);
+      fetch(sq).then(r => r.json()).then(sj => {
+        if (sj.ok) { conn.fileMtime = sj.mtime; conn.diskWatchAsked = null; conn._fileGoneWarned = false; }
+      }).catch(() => {});
+    }
     showBanner('已保存 ' + (conn.extPath || conn.meta.label), 1500);
     // 保存成功即入最近列表（草稿定名/已有文件覆盖保存都会走到这）
     if (typeof _recentAdd === 'function') _recentAdd({type:'file', key:'file:'+conn.meta.label, label:conn.meta.label, data:{kind:'edit', name:conn.meta.label, path:conn.meta.label, extPath: conn.extPath || ''}});
   } catch(e) { showBanner('保存失败: ' + e, 4000, true); }
 }
 
+// ---- 后台改动检测：磁盘 mtime ≠ 打开基准 → 暗色弹窗让用户选择 ----
+// 场景：编辑器开着文本文件，后台进程（编译输出/脚本/另一个会话）改了磁盘内容。
+// 三选：重新加载（丢内存）/ 保留内存版（标 dirty，之后可覆盖保存或另存）/ 忽略本次。
+// 轮询：tab 激活时每 5s 查 /api/ed/stat（轻量 mtime+size），切走暂停——流畅守则。
+function _edDiskChangedModal(conn, diskMtime) {
+  return new Promise(resolve => {
+    let m = document.getElementById('edDiskChangedModal');
+    if (m) m.remove();
+    m = document.createElement('div');
+    m.className = 'modal';
+    m.id = 'edDiskChangedModal';
+    m.innerHTML = `
+      <div class="box" style="max-width:440px;">
+        <div class="head"><strong>文件已在磁盘上被修改</strong>
+          <div class="head-actions"><button class="btn ghost icon-btn" id="edDcClose">✕</button></div>
+        </div>
+        <div style="padding:16px 20px;font-size:12px;line-height:1.8;color:var(--fg);">
+          <b>${esc(conn.meta.label)}</b> 被其他程序修改了（后台进程/另一个会话写入）。
+          <br><span style="color:var(--muted);">内存里的内容没有被动过，磁盘上是新版本——两边现在不一致：</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px;padding:4px 20px 8px;">
+          <button class="btn primary" id="edDcReload" style="width:100%;text-align:left;">
+            ↻ 重新加载磁盘版（内存修改将被丢弃）</button>
+          <button class="btn ghost" id="edDcKeep" style="width:100%;text-align:left;">
+            ✎ 保留内存版（标记为有改动，之后可覆盖保存 / 另存为）</button>
+          <button class="btn ghost" id="edDcIgnore" style="width:100%;text-align:left;color:var(--muted);">
+            ⏭ 忽略本次（继续编辑，下次改动再提醒）</button>
+        </div>
+      </div>`;
+    document.body.appendChild(m);
+    const finish = v => { m.classList.remove('show'); setTimeout(() => m.remove(), 200); resolve(v); };
+    m.querySelector('#edDcReload').onclick = () => finish('reload');
+    m.querySelector('#edDcKeep').onclick = () => finish('keep');
+    m.querySelector('#edDcIgnore').onclick = () => finish('ignore');
+    m.querySelector('#edDcClose').onclick = () => finish('ignore');
+    m.classList.add('show');
+  });
+}
+
+async function _edCheckDiskChanged(conn) {
+  if (!conn.onDisk || !conn.fileMtime) return;
+  // 弹窗挂起中不重复查（同一文件弹一次，等用户选完再继续）
+  if (conn._dcAsking) return;
+  try {
+    const q = conn.extPath
+      ? '/api/ed/stat?path=' + encodeURIComponent(conn.extPath)
+      : '/api/ed/stat?name=' + encodeURIComponent(conn.meta.label);
+    const r = await fetch(q);
+    const j = await r.json();
+    if (!j.ok) {
+      // 文件被外部删除/不可访问：一次性提示（不弹选择——没有可重载的东西）
+      if (conn.fileMtime && !conn._fileGoneWarned) {
+        conn._fileGoneWarned = true;
+        showBanner('⚠ ' + conn.meta.label + ' 在磁盘上已不存在（被外部删除？），内存版保留', 5000, true);
+      }
+      return;
+    }
+    // mtime 变了且不是已经弹过这一版（diskWatchAsked 记录弹过的 mtime）
+    if (Math.abs(j.mtime - conn.fileMtime) < 0.001) return;
+    if (conn.diskWatchAsked !== null && Math.abs(j.mtime - conn.diskWatchAsked) < 0.001) return;
+    // 差异仅在毫秒内（自己保存触发的 os.replace 通常 <1ms 内被下一轮查到，
+    // 但保存已更新 fileMtime——走到这说明真不是自己写的）→ 弹
+    conn._dcAsking = true;
+    conn.diskWatchAsked = j.mtime;
+    const choice = await _edDiskChangedModal(conn, j.mtime);
+    conn._dcAsking = false;
+    if (choice === 'reload') {
+      // 重读磁盘（同编码切换链路）：内容/基准/脏标志一起刷新
+      try {
+        const enc = conn.usedEnc || '';
+        const oq = (conn.extPath
+          ? '/api/ed/open?force=1&path=' + encodeURIComponent(conn.extPath)
+          : '/api/ed/open?name=' + encodeURIComponent(conn.meta.label))
+          + (enc ? '&enc=' + encodeURIComponent(enc) : '');
+        const r2 = await fetch(oq);
+        const j2 = await r2.json();
+        if (!j2.ok) { showBanner('重读失败：' + (j2.err || ''), 4000, true); return; }
+        let content = j2.text;
+        if (conn.isNote) { try { content = JSON.parse(j2.text); } catch(_) { content = { blocks: [] }; } }
+        if (conn.editor) { conn.editor.render(content); }
+        else if (conn.monaco) {
+          const pos = conn.monaco.getPosition();
+          conn.monaco.setValue(j2.text);
+          try { conn.monaco.setPosition(pos); conn.monaco.revealLineInCenter(pos.lineNumber); } catch(_) {}
+        } else if (conn.ta) conn.ta.value = j2.text;
+        conn.savedData = content;
+        conn.dirty = false; _edMarkTab(conn); _edUpdateInfo(conn);
+        conn.fileMtime = j2.mtime;
+        conn._fileGoneWarned = false;
+        showBanner('已重新加载 ' + conn.meta.label, 2000);
+      } catch(e) { showBanner('重读失败: ' + e, 4000, true); }
+    } else if (choice === 'keep') {
+      // 保留内存版：标记 dirty（有改动状态），用户之后自行覆盖保存（写回时
+      // mtime 基准更新）或另存为。不动 savedData——脏检测基准仍是打开时内容。
+      conn.dirty = true; _edMarkTab(conn); _edUpdateInfo(conn);
+      showBanner('已保留内存版并标记改动——可「保存」覆盖磁盘或「另存为」保留两版', 4000);
+    }
+    // ignore：什么都不动，diskWatchAsked 已记录本次 mtime，同一改动不再弹
+  } catch(_) {}   // stat 网络失败静默（下轮再查）
+}
+
 // ---- 另存为：同样走 tab 原地改名（改名确认后即另存为新文件）----
 function edSaveAs(conn) { edRenamePrompt(conn); }
+
+// 编辑器 tab 的磁盘检测调度：切到该 tab 时启动 5s 轮询，切走暂停。
+// _edOnSwitchEditor 在 terminal-core.js switchTab 里调（kind==='editor' 分支）。
+function _edStartDiskWatch(conn) {
+  if (!conn.onDisk || !conn.fileMtime) return;
+  if (!conn.diskWatchTimer) {
+    conn.diskWatchTimer = setInterval(() => {
+      if (conn.wrap.style.display === 'none') return;   // 不可见跳过本轮（不清，切回即续）
+      _edCheckDiskChanged(conn);
+    }, 5000);
+  }
+}
+function _edStopDiskWatch(conn) {
+  if (conn.diskWatchTimer) { clearInterval(conn.diskWatchTimer); conn.diskWatchTimer = null; }
+}
+function _edOnSwitchEditor(conn) {
+  if (!conn || !conn.meta || conn.meta.kind !== 'editor' || conn.isDiff) return;
+  if (conn.fileMtime) _edStartDiskWatch(conn);
+}
 
 // ---- 改名入口（工具栏按钮 / 双击 tab 标题共用）：标题原地变输入框 ----
 // 无 prompt 弹窗；Enter 确认 / Esc 取消 / 失焦确认。
@@ -961,6 +1095,8 @@ function _edConfirm(msg) {
   });
 }
 function _edCloseNow(conn) {
+  // 磁盘检测轮询清掉（编辑器 tab 专属；proxy 等面板 tab 的 pollTimer 下一行通用清理）
+  if (conn.diskWatchTimer) { clearInterval(conn.diskWatchTimer); conn.diskWatchTimer = null; }
   // 面板类 tab（proxy 等）带轮询 interval：关 tab 必清（wrap 脱离 DOM 后
   // display 残留 "flex"，面板自己的可见性检测兜不住，不清会空拉到退出）
   if (conn.pollTimer) { clearInterval(conn.pollTimer); conn.pollTimer = null; }
@@ -1293,7 +1429,7 @@ async function openFileSmart(path, mode) {
     if (j.ok) {
       window._edLastUsedEnc = j.used_enc || null;
       if (typeof _recentAdd === 'function') _recentAdd({type:'file', key:'file:'+j.name, label:j.name, data:{kind:'edit', name:j.name, path:path, extPath: path}});
-      const _c = buildEditorTab(j.name, j.text, path);
+      const _c = buildEditorTab(j.name, j.text, path, j.mtime || null);
       if (_c) _c.usedEnc = j.used_enc || null;
       return;
     }

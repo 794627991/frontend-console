@@ -426,6 +426,9 @@ function switchTab(portId) {
     // proxy tab：切回时恢复 1s 轮询（切走时面板自己停；conn.onResumePoll 由 proxy-panel 注入）
     if (conn.meta.kind === 'proxy' && typeof conn.onResumePoll === 'function')
       conn.onResumePoll();
+    // 编辑器 tab：启动磁盘改动检测（5s 轮询 mtime；切走时定时器自惰——不可见跳过）
+    if (conn.meta.kind === 'editor' && typeof _edOnSwitchEditor === 'function')
+      _edOnSwitchEditor(conn);
   }
 }
 
