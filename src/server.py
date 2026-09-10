@@ -1557,26 +1557,33 @@ def ai_open_logs():
 @app.route("/api/ai/mcp_info")
 def ai_mcp_info():
     """返回 MCP 相关信息：后端地址、已注册工具列表、最近调用记录。
-    工具列表从 mcp_server.py 静态定义读取（硬编码在此保持一致），调用记录由 mcp_server 上报。"""
-    tools = [
-        {"name": "observe", "desc": "概览所有连接 + 最近输出 + 已打开日志"},
-        {"name": "list_ports", "desc": "列出可用串口 + 已连接"},
-        {"name": "connect_serial", "desc": "建立串口连接"},
-        {"name": "connect_ssh", "desc": "建立 SSH 连接"},
-        {"name": "send_command", "desc": "发命令 + 等回显"},
-        {"name": "send_raw", "desc": "发原始字节（Ctrl-C 等）"},
-        {"name": "get_buffer", "desc": "取连接最近 N 行缓冲"},
-        {"name": "list_open_logs", "desc": "列出前端已打开的日志文件"},
-        {"name": "read_log", "desc": "读日志文件（分页）"},
-        {"name": "search_log", "desc": "日志关键字搜索"},
-        {"name": "diff_logs", "desc": "对比两份日志差异（summary/line）"},
-        {"name": "compare_files", "desc": "在前端打开两份文件的对比视图（Monaco DiffEditor）"},
-        {"name": "disconnect", "desc": "断开连接"},
-        {"name": "tftp_status", "desc": "TFTP 服务状态：运行中/目录/文件列表/传输记录"},
-        {"name": "tftp_start", "desc": "启动 TFTP 服务（UDP 69），设备可上传/下载文件"},
-        {"name": "tftp_stop", "desc": "停止 TFTP 服务"},
-        {"name": "tftp_set_dir", "desc": "设置/切换 TFTP 根目录"},
-    ]
+    工具列表动态读 mcp_server._TOOLS（单一数据源，加工具不再两边漏同步），调用记录由 mcp_server 上报。"""
+    try:
+        # 懒 import：mcp_server 顶层只有标准库，但保持与 main.py --mcp 相同的延迟习惯
+        from src.mcp_server import _TOOLS
+        tools = [{"name": t["name"], "desc": t["description"].split("。")[0]} for t in _TOOLS]
+    except Exception:
+        # 兜底：mcp_server 不可导入时退回静态列表（老版行为）
+        tools = [
+            {"name": "observe", "desc": "概览所有连接 + 最近输出 + 已打开日志"},
+            {"name": "list_ports", "desc": "列出可用串口 + 已连接"},
+            {"name": "connect_serial", "desc": "建立串口连接"},
+            {"name": "connect_ssh", "desc": "建立 SSH 连接"},
+            {"name": "send_command", "desc": "发命令 + 等回显"},
+            {"name": "send_raw", "desc": "发原始字节（Ctrl-C 等）"},
+            {"name": "send_burst", "desc": "数据连发：原子执行整条时间线（延时+命令/字节序列）"},
+            {"name": "get_buffer", "desc": "取连接最近 N 行缓冲"},
+            {"name": "list_open_logs", "desc": "列出前端已打开的日志文件"},
+            {"name": "read_log", "desc": "读日志文件（分页）"},
+            {"name": "search_log", "desc": "日志关键字搜索"},
+            {"name": "diff_logs", "desc": "对比两份日志差异（summary/line）"},
+            {"name": "compare_files", "desc": "在前端打开两份文件的对比视图（Monaco DiffEditor）"},
+            {"name": "disconnect", "desc": "断开连接"},
+            {"name": "tftp_status", "desc": "TFTP 服务状态：运行中/目录/文件列表/传输记录"},
+            {"name": "tftp_start", "desc": "启动 TFTP 服务（UDP 69），设备可上传/下载文件"},
+            {"name": "tftp_stop", "desc": "停止 TFTP 服务"},
+            {"name": "tftp_set_dir", "desc": "设置/切换 TFTP 根目录"},
+        ]
     with _mcp_calls_lock:
         calls = list(_mcp_calls)
     # 读 endpoint 信息
