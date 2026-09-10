@@ -62,30 +62,32 @@ function buildProxyTab() {
           <div class="px-hist" data-px-hist><div class="px-hint">代理启动后这里显示每个请求的模型/tokens/耗时（429 重试过的标红）</div></div>
         </div>
 
-        <!-- 压缩模式 + CCR -->
+        <!-- 压缩模式 + CCR + 压缩统计条 -->
         <div class="px-sec">
           <div class="px-sec-title">headroom 压缩</div>
+          <div class="px-hr-stats" data-px-hr-stats style="font-family:var(--font-mono);font-size:12px;color:var(--muted);margin-bottom:8px;">headroom: 未运行（无压缩，仅重试代理）</div>
           <div class="px-hr-row" data-px-hr-row>
             <label><input type="radio" name="px-hr-${portId}" value="full"> 完整压缩（ML + 结构化，省流量最多，吃 ~570MB 内存）</label>
             <label><input type="radio" name="px-hr-${portId}" value="light"> 轻量压缩（仅结构化，省 ~400MB 内存）</label>
             <label><input type="radio" name="px-hr-${portId}" value="off"> 关闭压缩（headroom 不启动，直接走重试代理）</label>
             <label class="px-ccr" title="CCR 流压缩。激进——/compact 可能卡死，不确定就别勾"><input type="checkbox" data-px-ccr> CCR 流压缩（激进·/compact 可能卡死）</label>
           </div>
-          <div class="px-hint">切换立即生效：停旧 headroom → 按新模式拉起（冷启动 10-30s）→ 就绪自动切 base_url。失败自动回退关闭压缩。</div>
+          <div class="px-hint">切换立即生效：停旧 headroom → 按新模式拉起（冷启动 10-30s）→ 就绪自动切 base_url。失败自动回退关闭压缩。主模型 Lanz-Auto 带签名 thinking 不可压缩，压缩收益主要来自子代理与工具输出。</div>
         </div>
 
-        <!-- Lanz 额度区：登录 + 概览 + 三模型明细 -->
+        <!-- Lanz 额度区：登录 + 概览 + 三模型明细 + 模型用量排名 -->
         <div class="px-sec">
           <div class="px-sec-title">Lanz 额度</div>
           <div class="px-quota-login" data-px-quota-login>
             <input data-px-q-user placeholder="内网 SSO 用户名" spellcheck="false" style="width:150px;">
-            <input data-px-q-pwd type="password" placeholder="密码（明文存本地 lanz_credentials.json）" style="width:220px;">
+            <input data-px-q-pwd type="text" placeholder="密码（明文存本地 lanz_credentials.json）" spellcheck="false" style="width:220px;">
             <button class="lv-btn" data-px-q-save>登录</button>
             <button class="lv-btn" data-px-q-refresh title="立即刷新额度">刷新</button>
             <button class="lv-btn" data-px-q-logout title="删除本地凭据">断开</button>
-            <span data-px-q-status style="color:var(--muted);font-size:12px;"></span>
+            <span data-px-q-status style="font-size:12px;"></span>
           </div>
           <div data-px-quota-view></div>
+          <div data-px-quota-rank></div>
         </div>
 
         <div class="px-hint">链路：Claude Code → headroom(8787，压缩) → 重试代理(37349，429/5xx 自动重试) → lanz 内网网关。退出工具自动停代理并回滚 base_url；异常退出下次启动自愈。</div>
@@ -114,7 +116,9 @@ function buildProxyTab() {
   const statsEl = $p('[data-px-stats]');
   const histEl = $p('[data-px-hist]');
   const quotaViewEl = $p('[data-px-quota-view]');
+  const quotaRankEl = $p('[data-px-quota-rank]');
   const qStatusEl = $p('[data-px-q-status]');
+  const hrStatsEl = $p('[data-px-hr-stats]');
 
   const ST_CLS = {
     HEALTHY: 'px-healthy', RETRY: 'px-retry', FAILED: 'px-failed', STOPPED: 'px-stopped',
@@ -181,14 +185,22 @@ function buildProxyTab() {
     if (!histEl.children.length) histEl.innerHTML = '<div class="px-hint">暂无请求</div>';
   }
 
+  function _setQStatus(text, cls) {
+    // 状态点统一风格：绿=在线 黄=进行中 红=失败 灰=无（老 GUI 同款语义）
+    qStatusEl.innerHTML = text ? `<span class="px-badge ${cls}">${text}</span>` : '';
+  }
+
   function _renderQuota(j) {
     const kind = j.quota_kind;
     const user = j.quota_user;
-    if (kind === 'login_start') qStatusEl.textContent = '● 登录中…';
-    else if (kind === 'login_ok') qStatusEl.textContent = '● 在线 ' + (user || '');
-    else if (kind === 'login_err') qStatusEl.textContent = '⚠ 登录失败: ' + (j.quota_payload || '');
-    else if (kind === 'fetch_err') qStatusEl.textContent = '⚠ 查询失败: ' + (j.quota_payload || '');
-    else if (!j.has_credentials) qStatusEl.textContent = '';
+    if (kind === 'login_start') _setQStatus('● 登录中…', 'px-retry');
+    else if (kind === 'login_ok') _setQStatus('● 在线 ' + esc(user || ''), 'px-healthy');
+    else if (kind === 'login_err') _setQStatus('⚠ 登录失败', 'px-failed');
+    else if (kind === 'fetch_err') _setQStatus('⚠ 查询失败', 'px-failed');
+    else if (!j.has_credentials) _setQStatus('', '');
+    if (kind === 'login_err' || kind === 'fetch_err')
+      _msg((kind === 'login_err' ? '登录失败: ' : '查询失败: ') + (j.quota_payload || ''), true);
+    else if (kind === 'login_ok') _msg('');
 
     const ov = j.quota_overview;
     // 凭据已存：预填用户名（密码不回传，明文存本地已是既定约定）
@@ -215,6 +227,46 @@ function buildProxyTab() {
       }).join('') + '</div>';
     }
     quotaViewEl.innerHTML = html;
+    // 模型用量排名表（老 GUI q_model_tree 平移：模型/tokens/费用/积分/请求数）
+    const rank = j.quota_rank || [];
+    if (rank.length) {
+      let rhtml = '<div class="px-rank-title">模型用量排名' +
+        (j.quota_ts ? `<span class="px-rank-ago">上次刷新 ${new Date(j.quota_ts * 1000).toLocaleTimeString('zh-CN', {hour12: false})}</span>` : '') +
+        '</div><div class="px-rank">' +
+        '<div class="px-rank-h"><span>模型</span><span>tokens</span><span>费用</span><span>积分</span><span>请求数</span></div>';
+      rank.forEach(m => {
+        rhtml += `<div class="px-rank-r"><span class="px-rank-m">${esc(String(m.finalModel || '?'))}</span>` +
+          `<span>${_pxTok(m.tokens)}</span><span>${(m.cost || 0).toFixed(2)}</span>` +
+          `<span>${(m.credits || 0).toFixed(2)}</span><span>${_pxFnum(m.requestCount)}</span></div>`;
+      });
+      quotaRankEl.innerHTML = rhtml + '</div>';
+    } else {
+      quotaRankEl.innerHTML = '';
+    }
+  }
+
+  function _renderHrStats(j) {
+    // headroom 压缩统计条（老 GUI hr_label 平移：在线 :8787 │ 已处理 N │ 压缩节省 X (Y%)）
+    if (!j.hr_running) {
+      hrStatsEl.textContent = 'headroom: 未运行（无压缩，仅重试代理）';
+      hrStatsEl.style.color = 'var(--muted)';
+      return;
+    }
+    const st = j.hr_stats;
+    if (!st) {
+      hrStatsEl.textContent = 'headroom: 在线 :8787（stats 拉取中/失败）';
+      hrStatsEl.style.color = 'var(--accent)';
+      return;
+    }
+    const agents = (st.agent_usage || {}).agents || [];
+    const ag = agents[0] || {};
+    const saved = ag.tokens_saved || ((st.cost || {}).total_tokens_saved) || 0;
+    const before = ag.before_tokens || 0;
+    const pct = before ? (saved * 100 / before).toFixed(1) + '%' : '-';
+    const modeTxt = j.hr_mode && j.hr_mode !== 'full' ? ` │ 模式 ${j.hr_mode}` : '';
+    const ccrTxt = j.ccr ? ' │ CCR 开' : '';
+    hrStatsEl.textContent = `headroom :8787${modeTxt}${ccrTxt}  │ 已处理 ${_pxFnum(ag.requests || 0)} 请求 │ 压缩节省 ${_pxTok(saved)} token (${pct})`;
+    hrStatsEl.style.color = saved ? 'var(--accent)' : 'var(--muted)';
   }
 
   function _setHrUI(j) {
@@ -239,6 +291,7 @@ function buildProxyTab() {
       _renderStats(j.snapshot);
       _renderHist(j.snapshot);
       _renderQuota(j);
+      _renderHrStats(j);
       _setHrUI(j);
       if (!j.headroom_exe && (j.hr_mode === 'full' || j.hr_mode === 'light')) {
         msgEl.dataset.keep = '1';
@@ -306,20 +359,22 @@ function buildProxyTab() {
   $p('[data-px-q-save]').onclick = async () => {
     const u = $p('[data-px-q-user]').value.trim();
     const p = $p('[data-px-q-pwd]').value;
-    if (!u || !p) { qStatusEl.textContent = '⚠ 用户名/密码不能为空'; return; }
+    if (!u || !p) { _setQStatus('⚠ 用户名/密码不能为空', 'px-failed'); return; }
     try {
       const r = await fetch('/api/proxy/credentials', {method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({username: u, password: p})});
       const j = await r.json();
-      _msg(j.ok ? '凭据已保存，开始登录' : (j.msg || '保存失败'), !j.ok);
+      _setQStatus(j.ok ? '● 登录中…' : '⚠ 保存失败', j.ok ? 'px-retry' : 'px-failed');
+      _msg(j.ok ? '凭据已保存，正在登录…' : (j.msg || '保存失败'), !j.ok);
     } catch(e) { _msg('请求失败: ' + e, true); }
   };
   $p('[data-px-q-refresh]').onclick = async () => {
     try {
       const r = await fetch('/api/proxy/quota', {method: 'POST'});
       const j = await r.json();
-      if (!j.ok) qStatusEl.textContent = '⚠ ' + (j.msg || '刷新失败');
+      if (!j.ok) _setQStatus('⚠ ' + (j.msg || '刷新失败'), 'px-failed');
+      else { _setQStatus('● 刷新中…', 'px-retry'); _msg(''); }
     } catch(e) { _msg('请求失败: ' + e, true); }
   };
   $p('[data-px-q-logout]').onclick = async () => {
@@ -328,7 +383,9 @@ function buildProxyTab() {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({action: 'clear'})});
       quotaViewEl.innerHTML = '<div class="px-hint">已断开。登录后显示额度</div>';
-      qStatusEl.textContent = '已断开登录';
+      quotaRankEl.innerHTML = '';
+      _setQStatus('已断开', 'px-stopped');
+      _msg('已断开登录，本地凭据已删除');
     } catch(e) { _msg('请求失败: ' + e, true); }
   };
 

@@ -397,6 +397,19 @@ class HeadroomController:
         except OSError:
             return ""
 
+    def stats(self):
+        """拉 headroom /stats 拿压缩统计（GUI:677-690 平移）。
+        返回 dict 或 None（不在线/超时），字段随 headroom 版本差异由调用方 .get 兜底。"""
+        if not self.running:
+            return None
+        try:
+            import urllib.request
+            r = urllib.request.urlopen(
+                "http://127.0.0.1:%d/stats" % HEADROOM_PORT, timeout=2)
+            return json.loads(r.read().decode("utf-8"))
+        except Exception:
+            return None
+
     def stop(self):
         with self._lock:
             if self.proc is None:
@@ -563,6 +576,8 @@ _ctl = ProxyController()
 _hr = HeadroomController()
 _quota_state = {}       # {"kind":..., "payload":..., "ts":...} 最新一次 emit
 _quota_ov = {}           # dashboard.overview 缓存（托盘菜单/tooltip 用）
+_quota_rank = []         # dashboard.modelRank 缓存（模型用量排名表）
+_quota_ts = None         # 上次 data 时间戳（前端显示"上次刷新 Ns 前"）
 _quota_lock = threading.Lock()
 _quota = None            # LanzQuotaWorker（HAS_LANZ 且凭据存在时才建）
 _cred_cache = None       # 凭据磁盘缓存（save/clear 时刷新；status 1s 轮询
@@ -576,20 +591,51 @@ _ccr = False
 _tray_tip_thread = None
 _tip_stop = threading.Event()
 _shutdown_done = False
+_hr_stats_cache = None        # headroom /stats 最近一次结果（5s 缓存线程写，
+                              # status 1s 轮询只读——/stats 拉取 2s 超时不能同步做）
+_hr_stats_ts = 0.0
+
+
+def _hr_stats_loop():
+    """headroom 压缩统计缓存线程：代理运行时 5s 拉 /stats（GUI _refresh_headroom
+    平移，但这里是后台循环天然防堆积，不会像 GUI 每秒探测）。"""
+    global _hr_stats_cache, _hr_stats_ts
+    while not _tip_stop.is_set():
+        try:
+            if _ctl.running and _headroom_mode != "off":
+                _hr_stats_cache = _hr.stats()
+                _hr_stats_ts = time.time()
+            else:
+                _hr_stats_cache = None
+        except Exception:
+            pass
+        _tip_stop.wait(5)
+
+
+def _ensure_hr_stats_thread():
+    t = threading.Thread(target=_hr_stats_loop, daemon=True)
+    t.start()
+    return t
 
 
 def _quota_emit(kind, payload):
     """LanzQuotaWorker emit 回调：直写模块缓存（前端轮询 status 读走，
     托盘菜单动态行读 _quota_ov）。GUI 版是 root.after 派发 tkinter，这里无 GUI。"""
-    global _quota_ov
+    global _quota_ov, _quota_rank, _quota_ts
     with _quota_lock:
         _quota_state["kind"] = kind
         _quota_state["payload"] = payload
         _quota_state["ts"] = time.time()
         if kind == "data" and isinstance(payload, dict):
-            ov = (payload.get("dashboard") or {}).get("overview") or {}
+            dash = payload.get("dashboard") or {}
+            ov = dash.get("overview") or {}
             if ov:
                 _quota_ov = ov
+            # 模型用量排名（GUI modelRank 表：模型/tokens/费用/积分/请求数）
+            rank = dash.get("modelRank") or []
+            if rank:
+                _quota_rank = rank
+            _quota_ts = payload.get("ts")
 
 
 def _get_credentials():
@@ -982,6 +1028,8 @@ def proxy_module_init():
         log.warning("启动自愈检查失败: %s", e)
     # 额度 worker（有凭据自动登录；无凭据建了等 POST 唤醒）
     _ensure_quota_worker()
+    # headroom /stats 缓存线程（代理运行时 5s 拉，status 只读缓存）
+    _ensure_hr_stats_thread()
     # atexit 兜底回滚（Ctrl-C/强杀等 proxy_shutdown 没走的路径）
     atexit.register(_atexit_rollback)
 
@@ -1054,6 +1102,8 @@ def _api_status():
         qkind = _quota_state.get("kind")
         qpayload = _quota_state.get("payload")
         ov = dict(_quota_ov)
+        rank = list(_quota_rank)
+        qts = _quota_ts
     cred = _get_credentials()
     data = {
         "ok": True,
@@ -1070,17 +1120,21 @@ def _api_status():
         "hr_switching": _hr_switching,
         "ccr": _ccr,
         "headroom_exe": os.path.exists(HEADROOM_EXE),
+        "hr_stats": _hr_stats_cache,
         "quota_kind": qkind,
         "quota_payload": qpayload,
         "quota_user": None,
         "has_credentials": cred is not None,
         "quota_username": (cred or {}).get("username"),
+        "quota_ts": qts,
     }
     if HAS_LANZ and qkind == "login_ok":
         data["quota_user"] = qpayload
     if ov:
         data["quota_overview"] = ov
         data["quota_models"] = _quota_model_rows(ov)
+    if rank:
+        data["quota_rank"] = rank
     return jsonify(data)
 
 
