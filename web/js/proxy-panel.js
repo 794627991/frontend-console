@@ -82,7 +82,8 @@ function buildProxyTab() {
             <input data-px-q-user placeholder="内网 SSO 用户名" spellcheck="false" style="width:150px;">
             <input data-px-q-pwd type="text" placeholder="密码（明文存本地 lanz_credentials.json）" spellcheck="false" style="width:220px;">
             <button class="lv-btn" data-px-q-save>登录</button>
-            <button class="lv-btn" data-px-q-refresh title="立即刷新额度">刷新</button>
+            <button class="lv-btn" data-px-q-refresh title="立即刷新额度（沿用当前登录）">刷新</button>
+            <button class="lv-btn" data-px-q-relogin title="登录失效（多天不用后获取不到数据）时的自救：丢弃旧会话强制重新登录。只刷新登录状态，代理链路不受影响">强制重登</button>
             <button class="lv-btn" data-px-q-logout title="删除本地凭据">断开</button>
             <span data-px-q-status style="font-size:12px;"></span>
           </div>
@@ -375,6 +376,19 @@ function buildProxyTab() {
       const j = await r.json();
       if (!j.ok) _setQStatus('⚠ ' + (j.msg || '刷新失败'), 'px-failed');
       else { _setQStatus('● 刷新中…', 'px-retry'); _msg(''); }
+    } catch(e) { _msg('请求失败: ' + e, true); }
+  };
+  $p('[data-px-q-relogin]').onclick = async () => {
+    // 强制重登：换新 client 丢旧 session 全新登录（多天不用后登录失效的自救）。
+    // 只动额度查询登录态，重试代理/headroom 链路零触碰。
+    if (!(await _ddConfirm('强制重登', '丢弃当前登录会话，用保存的凭据重新登录拉取额度？\n（代理转发不受任何影响，只刷新额度登录状态）'))) return;
+    try {
+      const r = await fetch('/api/proxy/quota', {method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({force: true})});
+      const j = await r.json();
+      if (!j.ok) _setQStatus('⚠ ' + (j.msg || '触发失败'), 'px-failed');
+      else { _setQStatus('● 重登中…', 'px-retry'); _msg('已触发强制重登，稍候看登录状态'); }
     } catch(e) { _msg('请求失败: ' + e, true); }
   };
   $p('[data-px-q-logout]').onclick = async () => {

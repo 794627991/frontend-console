@@ -469,6 +469,18 @@ class LanzQuotaWorker:
         self._wake.set()
         return True
 
+    def force_relogin(self):
+        """强制重登：丢旧 client（连旧 session cookie 一起），下轮循环换新
+        client 全新登录。多天不用后 session 过期且 _ensure_login 的单次
+        重试救不回来时用（用户实测场景）。代理链路零触碰——只动额度查询。"""
+        with self._lock:
+            if self._cred is None:
+                return False
+            self._login_failed = False
+        self._cur_cred_epoch = (getattr(self, "_cur_cred_epoch", 0) + 1)
+        self._wake.set()
+        return True
+
     def stop(self):
         self._stop.set()
         self._wake.set()
@@ -476,6 +488,7 @@ class LanzQuotaWorker:
     def _run(self):
         client = None
         cur_cred = object()
+        cur_epoch = 0
         while not self._stop.is_set():
             try:
                 with self._lock:
@@ -484,9 +497,12 @@ class LanzQuotaWorker:
                     self._wake.wait(5)
                     self._wake.clear()
                     continue
-                if cred != cur_cred:
+                epoch = getattr(self, "_cur_cred_epoch", 0)
+                if cred != cur_cred or epoch != cur_epoch:
+                    # 换凭据或 force_relogin（epoch++）：换新 client 丢旧 session
                     client = lanz_quota.LanzClient(*cred)
                     cur_cred = cred
+                    cur_epoch = epoch
                 if not self._ensure_login(client, cred):
                     self._wake.wait(self.LOGIN_RETRY_WAIT)
                     self._wake.clear()
@@ -1176,6 +1192,13 @@ def _api_ccr():
 def _api_quota_refresh():
     if not HAS_LANZ or _quota is None:
         return jsonify({"ok": False, "msg": "额度模块不可用（缺 pycryptodome）"})
+    j = request.get_json(silent=True) or {}
+    if j.get("force"):
+        # 强制重登：丢旧 session 换新 client 全新登录（多天不用后登录失效的自救）。
+        # 只动额度查询，重试代理/headroom 链路零触碰。
+        if not _quota.force_relogin():
+            return jsonify({"ok": False, "msg": "未配置凭据"})
+        return jsonify({"ok": True, "msg": "已触发强制重登（丢弃旧会话，重新登录）"})
     if not _quota.refresh_now():
         return jsonify({"ok": False, "msg": "未配置凭据"})
     return jsonify({"ok": True, "msg": "已触发刷新"})

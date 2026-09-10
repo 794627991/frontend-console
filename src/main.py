@@ -89,7 +89,9 @@ def _clean_webview_cache():
 
 
 def find_and_focus_existing_window():
-    """找到已运行的窗口并置前。pywebview 窗口标题固定。"""
+    """找到已运行的窗口并置前。pywebview 窗口标题固定。
+    不过滤可见性——托盘隐藏的窗口 IsWindowVisible=False，照样枚举到后
+    SW_SHOW 唤出（用户：双击快捷方式要打开之前实例，浏览器同款）。"""
     try:
         user32 = ctypes.windll.user32
         # 句柄是 64 位指针，必须显式声明参数/返回类型，否则 ctypes 按 c_int 截断会 OverflowError
@@ -112,22 +114,39 @@ def find_and_focus_existing_window():
         # 回调签名: BOOL CALLBACK EnumWindowsProc(HWND, LPARAM)，HWND 用 c_void_p 承接 64 位句柄
         @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
         def enum_proc(hwnd, _):
-            if user32.IsWindowVisible(hwnd):
-                length = user32.GetWindowTextLengthW(hwnd)
-                if length > 0:
-                    buf = ctypes.create_unicode_buffer(length + 1)
-                    user32.GetWindowTextW(hwnd, buf, length + 1)
-                    if target in buf.value:
-                        found.append(hwnd)
+            # 不看可见性：隐藏（托盘）窗口也要找到并唤出
+            length = user32.GetWindowTextLengthW(hwnd)
+            if length > 0:
+                buf = ctypes.create_unicode_buffer(length + 1)
+                user32.GetWindowTextW(hwnd, buf, length + 1)
+                if target in buf.value:
+                    found.append(hwnd)
             return True
         user32.EnumWindows(enum_proc, 0)
         for hwnd in found:
             if user32.IsIconic(hwnd):
-                user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                user32.ShowWindow(hwnd, 9)  # SW_RESTORE（最小化）
+            else:
+                user32.ShowWindow(hwnd, 5)  # SW_SHOW（隐藏态唤出，托盘场景）
             user32.SetForegroundWindow(hwnd)
         return len(found) > 0
     except Exception:
         return False
+
+
+def _raise_existing_instance():
+    """旧实例活着：HTTP 通知它自唤（托盘隐藏态唯一可靠通道），失败再跨进程置前。"""
+    try:
+        with open(ENDPOINT_FILE, "r", encoding="utf-8") as f:
+            url = json.load(f).get("url")
+        if url:
+            req = urllib.request.Request(url + "/api/raise_window",
+                                         data=b"", method="POST")
+            urllib.request.urlopen(req, timeout=2)
+            return
+    except Exception:
+        pass
+    find_and_focus_existing_window()
 
 
 def _old_instance_alive():
@@ -168,7 +187,7 @@ def _notify_existing_open_file(path):
     失败静默（窗口已聚焦，用户可手动拖入）。"""
     if not _old_instance_alive():
         return
-    find_and_focus_existing_window()
+    _raise_existing_instance()   # HTTP 自唤优先，托盘隐藏态也能弹出
     try:
         ep_path = os.path.join(os.path.expanduser("~"), ".serialconsole_pro", "endpoint.json")
         with open(ep_path, "r", encoding="utf-8") as f:
@@ -204,7 +223,9 @@ def main():
         # 若旧实例已死（进程被强杀但 mutex 残留，或僵尸状态），强制接管——
         # 关闭残留 mutex 句柄，继续启动新实例，避免用户被僵尸实例彻底卡死。
         if _old_instance_alive():
-            find_and_focus_existing_window()
+            # 优先 HTTP 通知旧实例自唤（窗口隐藏在托盘时跨进程 ShowWindow
+            # 对 pywebview WinForms 宿主不可靠）；失败再跨进程置前兜底。
+            _raise_existing_instance()
             return
         # 旧实例已死，释放残留 mutex 句柄后继续
         global mutex
@@ -297,6 +318,25 @@ def main():
         return
     # Flask 已就绪，写 endpoint 供 Claude Code 跨会话发现（写早了 MCP 会探活到未就绪的服务）
     write_endpoint(port)
+
+    # 单实例唤醒通道：二次启动的进程探活旧实例后调这个路由让它自己弹窗。
+    # 旧实例隐藏到托盘时新进程跨进程 ShowWindow 不可靠（pywebview WinForms
+    # 宿主窗口从自身线程 show 才稳），HTTP 通知旧实例自唤是正道。
+    @app.route("/api/raise_window", methods=["POST"])
+    def _raise_window():
+        def _show():
+            try:
+                w = webview.windows[0]
+                w.show()
+                try: w.restore()
+                except Exception: pass
+                try: w.focus()
+                except Exception: pass
+            except Exception:
+                pass
+        threading.Thread(target=_show, daemon=True).start()
+        from flask import jsonify as _jsonify
+        return _jsonify({"ok": True})
 
     # 自依赖自检结果给 server（前端 /api/deps_status 拉取弹提醒）
     try:
