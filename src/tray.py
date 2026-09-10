@@ -7,9 +7,11 @@
   桌面惯例，微信/QQ/VSCode 同款，不违和）
 - 懒建：首次隐藏到托盘才创建（不隐藏永不占托盘位）
 - 幂等：重复调用复用已有 Icon
-- 自愈：watchdog 每 30s 验活——icon 消失/消息循环死（explorer 重启、
-  pystray 内部异常）自动重建。用户实锤过「托盘直接没了」，窗口隐藏后
-  再无唤出入口，宁可重建也不能丢（铁律①）
+- 自愈：watchdog 每 15s 真实验活——pystray 的 mainloop 退出时 finally
+  只 NIM_DELETE 不清 _visible 标志，死图标 visible 仍读 True（用户实锤：
+  残影留在托盘，鼠标一划过即消失，旧 watchdog 被骗过永不重建）。故验活
+  不信 visible，改验消息循环线程活着 + 宿主窗口 IsWindow 双信号；
+  pystray 内部异常同时落日志（DATA_DIR/tray_pystray.log）供下次定位真凶。
 """
 import threading
 
@@ -20,9 +22,48 @@ _on_quit = None       # 同上，重建时传回退出回调
 _watchdog = None
 
 
+def _setup_pystray_log():
+    """pystray 用 logging.getLogger('pystray') 报内部异常（mainloop 崩溃
+    只写日志不抛出）。挂一个 FileHandler 捕获真凶——线程死因下次有据可查。"""
+    try:
+        import logging
+        from src.app_state import DATA_DIR
+        import os
+        lg = logging.getLogger("pystray")
+        if any(isinstance(h, logging.FileHandler) for h in lg.handlers):
+            return
+        lg.setLevel(logging.DEBUG)
+        h = logging.FileHandler(os.path.join(DATA_DIR, "tray_pystray.log"),
+                                encoding="utf-8")
+        h.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)s %(message)s"))
+        lg.addHandler(h)
+    except Exception:
+        pass   # 日志挂不上不拖累托盘
+
+
 def get_icon():
     """当前托盘 Icon（proxy 模块 tooltip 刷新线程读用；未建返回 None）。"""
     return _icon
+
+
+def _icon_alive(icon):
+    """真实验活：消息循环线程活着 + 宿主窗口仍存在。
+    icon.visible 不可信——pystray mainloop 退出（崩溃/explorer 重启窗口被毁）
+    后 _visible 标志不清，残影图标照样读 True。线程未起（_thread 无）时
+    属刚建瞬间的幼体，退回 visible 判断。"""
+    try:
+        t = getattr(icon, "_thread", None)
+        if t is not None and not t.is_alive():
+            return False          # 消息循环线程已死
+        hwnd = getattr(icon, "_hwnd", None)
+        if hwnd:
+            import ctypes
+            if not ctypes.windll.user32.IsWindow(hwnd):
+                return False      # 宿主窗口已被销毁（残影实锤态）
+        return bool(icon.visible)  # 窗口活着但被外部清了 visible：也该重建
+    except Exception:
+        return False
 
 
 def _make_icon(window, on_quit):
@@ -73,9 +114,10 @@ def _rebuild():
         try:
             if _icon is not None:
                 try:
-                    _icon.stop()
+                    _icon.stop()   # 残骸上 stop：向死 hwnd post 失败无害
                 except Exception:
                     pass
+            _setup_pystray_log()
             _icon = _make_icon(_window, _on_quit)
             _icon.run_detached()
         except Exception:
@@ -83,19 +125,17 @@ def _rebuild():
 
 
 def _watchdog_loop():
-    """30s 验活：icon 的消息循环线程死了或 visible 被外部清掉 → 重建。"""
+    """15s 真实验活：消息循环线程死 / 宿主窗口被毁 / visible 被清 → 重建。
+    残影图标（线程已死、窗口已毁）在托盘里存活到鼠标划过才消失——旧逻辑
+    验 visible 永远 True，用户实锤「一指托盘图标就没了」。"""
     import time
     while True:
-        time.sleep(30)
+        time.sleep(15)
         with _lock:
             icon = _icon
         if icon is None:
             continue   # 从未建过（还没隐藏过），不抢建
-        try:
-            alive = icon.visible
-        except Exception:
-            alive = False
-        if not alive:
+        if not _icon_alive(icon):
             _rebuild()
 
 
@@ -106,6 +146,7 @@ def hide_to_tray(window, on_quit):
         _window, _on_quit = window, on_quit   # watchdog 重建要用
         if _icon is None:
             try:
+                _setup_pystray_log()
                 _icon = _make_icon(window, on_quit)
                 _icon.run_detached()   # 后台线程跑消息循环，不阻塞主线程
             except Exception:

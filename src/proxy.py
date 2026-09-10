@@ -954,14 +954,18 @@ def _api_status_text():
 
 
 def _tray_tip_loop():
-    """tooltip 每秒刷新 daemon 线程（GUI:3319-3341 平移）。
+    """tooltip 刷新 daemon 线程（GUI:3319-3341 平移）。
     Windows szTip 限 128 字符，额度在前确保完整显示。
+    节流 5s 且值不变不写——1s 无条件 NIM_MODIFY 会与 Explorer 悬停
+    tooltip 查询竞争（用户实锤鼠标一指托盘图标就没了）。
     代理未启动时线程退出（不占常驻资源），start 时重开。"""
     import src.tray as tray_mod
+    last_tip = None
     while not _tip_stop.is_set():
         icon = tray_mod.get_icon()
         if icon is None:
             time.sleep(2)   # 主托盘还没建（用户没最小化过）：低频等待
+            last_tip = None
             continue
         try:
             snap = _ctl.snapshot()
@@ -991,10 +995,12 @@ def _tray_tip_loop():
                     _fnum(snap.get("free_requests", 0)),
                     _fnum(snap.get("fee_requests", 0)),
                     core.fmt_uptime(snap["uptime_seconds"]))
-            icon.title = tip
+            if tip != last_tip:
+                icon.title = tip
+                last_tip = tip
         except Exception:
             pass
-        time.sleep(1)
+        time.sleep(5)
 
 
 def _ensure_tray():
