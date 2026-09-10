@@ -501,6 +501,7 @@ def main():
     # 处理——消息循环正被 closing 占着 → 死锁。回调里只做判断+返回，
     # 隐藏/建托盘/弹提示全部挪后台线程（window 方法线程安全，内部 marshal）。
     _real_quit = {"flag": False}   # 托盘退出置位后放行下一次 closing
+    _prompt_session = {"shown": False}   # 进程内弹过提示（进程生命周期只弹一次）
 
     def _do_real_cleanup():
         from src.server import close_all_ports
@@ -526,19 +527,24 @@ def main():
             _do_real_cleanup()
             return True
         # 关闭到托盘全流程在后台线程做（closing 回调零阻塞）。
-        # 首次（config tray_prompt_shown=false）：先弹提示、窗口保持可见，
-        # 用户点「知道了」后前端回调 pywebview.api.tray_confirm_hide 才隐藏——
-        # 窗口先藏弹窗会跟着消失，用户什么都看不到（用户实锤）。
-        # 之后：直接隐藏（提示已在首次展示过）。
+        # 弹提示的条件（用户定的节奏）：每次进程活动期间只弹一次——
+        #   进程内已弹过（_prompt_session 置位）→ 直接隐藏；
+        #   没弹过且 config tray_prompt_shown=false（用户没勾"不再显示"）→ 弹，
+        #     用户点「知道了」后置会话标记+隐藏；
+        #   勾过"不再显示"→ 永不弹，直接隐藏。
+        # 彻底退出后下次启动是全新进程，标记归零——首次关闭又会弹一次。
         import threading
-        try:
-            from src.app_state import CONFIG_FILE
-            import json as _json
-            with open(CONFIG_FILE, encoding="utf-8") as f:
-                _cfg = _json.load(f)
-            _prompted = bool(_cfg.get("tray_prompt_shown"))
-        except Exception:
-            _prompted = False
+        if not _prompt_session["shown"]:
+            try:
+                from src.app_state import CONFIG_FILE
+                import json as _json
+                with open(CONFIG_FILE, encoding="utf-8") as f:
+                    _cfg = _json.load(f)
+                _prompted = bool(_cfg.get("tray_prompt_shown"))
+            except Exception:
+                _prompted = False
+        else:
+            _prompted = True   # 本进程已弹过，本次不再弹
         threading.Thread(target=_hide_async, daemon=True,
                          kwargs={"prompt": not _prompted}).start()
         return False   # 阻止关闭：隐藏时机交给 _hide_async/前端确认
@@ -557,6 +563,7 @@ def main():
                      # 不硬退（数据要保护），下次启动 close_to_tray 建议用户关掉
         if prompt:
             # 首次：窗口留 Visible 弹提示，等前端确认后才隐藏（见 tray_confirm_hide）
+            _prompt_session["shown"] = True   # 展示即置位（进程内不再弹）
             try:
                 window.evaluate_js("window._trayNotice && window._trayNotice();")
             except Exception:
