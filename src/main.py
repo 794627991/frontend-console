@@ -319,24 +319,24 @@ def main():
     # Flask 已就绪，写 endpoint 供 Claude Code 跨会话发现（写早了 MCP 会探活到未就绪的服务）
     write_endpoint(port)
 
-    # 单实例唤醒通道：二次启动的进程探活旧实例后调这个路由让它自己弹窗。
-    # 旧实例隐藏到托盘时新进程跨进程 ShowWindow 不可靠（pywebview WinForms
-    # 宿主窗口从自身线程 show 才稳），HTTP 通知旧实例自唤是正道。
-    @app.route("/api/raise_window", methods=["POST"])
-    def _raise_window():
-        def _show():
+    # 单实例唤醒通道：二次启动的进程探活旧实例后调 /api/raise_window 让它自弹。
+    # 路由本体在 server.py 注册（Flask 首请求后禁止加路由——之前把 @app.route
+    # 放这里，app.run 后探活请求已把 setup 锁死，工具直接打不开，用户实锤）。
+    # 这里只注入 show 回调：webview 窗口此刻才存在，闭包捕获。
+    def _show_main_window():
+        # pywebview WinForms 宿主从自身 GUI 线程操作窗口才稳——包 daemon 线程
+        # 里 show/restore/focus，路由线程只负责触发，幂等无副作用。
+        def _do():
             try:
                 w = webview.windows[0]
                 w.show()
-                try: w.restore()
-                except Exception: pass
-                try: w.focus()
-                except Exception: pass
+                w.restore()
+                w.focus()
             except Exception:
                 pass
-        threading.Thread(target=_show, daemon=True).start()
-        from flask import jsonify as _jsonify
-        return _jsonify({"ok": True})
+        threading.Thread(target=_do, daemon=True).start()
+    from src import server as _srv
+    _srv.set_raise_window_callback(_show_main_window)
 
     # 自依赖自检结果给 server（前端 /api/deps_status 拉取弹提醒）
     try:

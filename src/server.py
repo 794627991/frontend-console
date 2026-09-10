@@ -91,6 +91,29 @@ app.register_blueprint(claude_default_bp)
 from src.proxy import proxy_bp, proxy_module_init
 app.register_blueprint(proxy_bp)
 
+# ---- 单实例唤醒通道 ----
+# 二次启动的进程探活旧实例后 POST /api/raise_window，旧实例自弹主窗口
+# （pywebview WinForms 宿主从自身线程 show 才稳，跨进程 SetForegroundWindow
+# 兜底在 main.py）。路由必须在这里注册——Flask 首请求后禁止加路由。
+_raise_window_cb = None
+
+
+def set_raise_window_callback(cb):
+    """main.py 注入 show 回调（webview 窗口建好后调，闭包捕获窗口）。"""
+    global _raise_window_cb
+    _raise_window_cb = cb
+
+
+@app.route("/api/raise_window", methods=["POST"])
+def raise_window():
+    """让本实例弹主窗口（新进程探活后调用）。回调未注入（启动早期）返回 ok=False。"""
+    cb = _raise_window_cb
+    if cb:
+        threading.Thread(target=cb, daemon=True).start()
+        return jsonify({"ok": True})
+    return jsonify({"ok": False}), 503
+
+
 # ---- 自依赖自检状态（main 启动时注入，前端每次启动拉取弹提醒） ----
 _deps_state = {"missing_req": [], "missing_opt": [], "skipped": False}
 
