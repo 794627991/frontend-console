@@ -621,12 +621,15 @@ _hr_stats_ts = 0.0
 
 
 def _hr_stats_loop():
-    """headroom 压缩统计缓存线程：代理运行时 5s 拉 /stats（GUI _refresh_headroom
-    平移，但这里是后台循环天然防堆积，不会像 GUI 每秒探测）。"""
+    """headroom 压缩统计缓存线程：headroom 模式在（非 off）就 5s 拉 /stats
+    （GUI _refresh_headroom 平移，但这里是后台循环天然防堆积，不会像 GUI 每秒探测）。
+    条件不绑 _ctl.running：headroom 可独立于自家重试代理在线（端口 37349 被
+    外部实例占、或 headroom 复用外部实例）——绑死则 stats 永远 null，
+    面板卡「stats 拉取中/失败」（用户实锤）。_hr.stats() 内部自判 running。"""
     global _hr_stats_cache, _hr_stats_ts
     while not _tip_stop.is_set():
         try:
-            if _ctl.running and _headroom_mode != "off":
+            if _headroom_mode != "off":
                 _hr_stats_cache = _hr.stats()
                 _hr_stats_ts = time.time()
             else:
