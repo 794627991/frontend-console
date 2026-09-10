@@ -1914,43 +1914,85 @@
   color: var(--muted); cursor: pointer; user-select: none; }
 .px-q-auto input { accent-color: var(--accent); }
 
-/* ---- Claude Harness 界面化对话 tab（claude-harness.js）：聊天流 + 输入条 ---- */
-.harness { flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--bg); }
-.harness-toolbar { display: flex; align-items: center; gap: 8px; padding: 6px 10px;
-  border-bottom: 1px solid var(--border); flex-wrap: wrap; }
-.harness-cwd { font-family: var(--font-mono); font-size: 11px; color: var(--accent);
-  max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.harness-flow { flex: 1; overflow-y: auto; padding: 14px 18px; display: flex;
-  flex-direction: column; gap: 10px; min-height: 0; }
-.harness-inputbar { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border);
-  align-items: flex-end; }
-.harness-inputbar textarea { flex: 1; resize: none; border: 1px solid var(--border);
-  background: var(--bg-card); color: var(--fg); border-radius: 8px; padding: 8px 10px;
-  font-size: 12px; font-family: var(--font-mono); line-height: 1.5; max-height: 140px;
-  outline: none; }
-.harness-inputbar textarea:focus { border-color: var(--accent); }
-.harness-inputbar .btn { flex-shrink: 0; }
+/* ---- Claude Harness 界面化对话 v2（claude-harness.js）：微信式多会话 ---- */
+/* 布局：左会话栏 + 右会话区（顶栏 / 气泡流 / 输入卡） */
+.hg { flex: 1; display: flex; min-height: 0; background: var(--bg); }
+.hg-flex1 { flex: 1; }
+.hg-side { width: 232px; min-width: 232px; display: flex; flex-direction: column;
+  border-right: 1px solid var(--border); background: var(--bg-card); }
+.hg-side-head { padding: 10px; }
+.hg-new-btn { width: 100%; padding: 7px 10px; border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent);
+  border-radius: 8px; font-size: 13px; cursor: pointer; }
+.hg-new-btn:hover { background: color-mix(in srgb, var(--accent) 24%, transparent); }
+.hg-search-wrap { padding: 0 10px 8px; }
+.hg-search { width: 100%; box-sizing: border-box; padding: 5px 9px; font-size: 12px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--fg); }
+.hg-search:focus { outline: none; border-color: var(--accent); }
+.hg-sessions { flex: 1; overflow-y: auto; padding: 0 6px 8px; }
+.hg-list-empty { padding: 16px 10px; font-size: 12px; color: var(--muted); text-align: center; }
+.hg-item { padding: 7px 9px; border-radius: 8px; cursor: pointer; margin-bottom: 2px; }
+.hg-item:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.hg-item.active { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.hg-item-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.hg-item-title { flex: 1; min-width: 0; font-size: 12.5px; color: var(--fg);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hg-item.active .hg-item-title { color: var(--fg-bright, var(--fg)); font-weight: 600; }
+.hg-item-time { font-size: 10.5px; color: var(--muted); flex-shrink: 0; }
+.hg-item-sub { flex: 1; min-width: 0; font-size: 10.5px; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hg-item-acts { display: none; align-items: center; gap: 2px; flex-shrink: 0; }
+.hg-item:hover .hg-item-acts, .hg-item.active .hg-item-acts { display: inline-flex; }
+.hg-item-busy { color: var(--accent); font-size: 10px; }
+.hg-item-act { border: none; background: transparent; color: var(--muted); cursor: pointer;
+  font-size: 11px; padding: 1px 3px; border-radius: 4px; }
+.hg-item-act:hover { color: var(--fg); background: var(--bg); }
+.hg-item-act.del:hover { color: var(--neon-red, #e06c75); }
 
-/* 消息气泡：user 右对齐、assistant 左对齐（聊天界面惯例） */
+.hg-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.hg-top { display: flex; align-items: center; gap: 8px; padding: 7px 14px;
+  border-bottom: 1px solid var(--border); }
+.hg-title { font-size: 13px; font-weight: 600; color: var(--fg-bright, var(--fg));
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40%; }
+.hg-cwd { font-family: var(--font-mono); font-size: 11px; color: var(--accent);
+  max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hg-top-state { font-size: 11px; color: var(--muted); flex-shrink: 0; }
+
+/* 气泡流：内容居中限宽，微信式左右气泡 */
+.hg-flow { flex: 1; overflow-y: auto; padding: 16px 0; display: flex;
+  flex-direction: column; gap: 8px; align-items: center; }
+.hg-flow > .h-msg { width: min(760px, 92%); }
+.hg-flow > .h-tool, .hg-flow > .h-tool-res { width: min(760px, 92%); max-width: none; }
+.hg-flow > .h-tool-res { padding-left: 10px; }
+.hg-flow > .h-raw { width: min(760px, 92%); }
+.hg-welcome { margin: auto; text-align: center; color: var(--muted); }
+.hg-welcome-ico { margin-bottom: 26px; }
+.hg-welcome-ico .claude-ico.big { display: inline-block; width: 28px; height: 28px; }
+.hg-welcome-title { font-size: 22px; font-weight: 700; color: var(--fg-bright, var(--fg));
+  margin-bottom: 8px; }
+.hg-welcome-desc { font-size: 13px; line-height: 1.8; }
+
 .h-msg { max-width: 86%; }
 .h-msg.user { align-self: flex-end; }
 .h-msg.asst { align-self: flex-start; }
 .h-msg .h-bubble { padding: 8px 12px; border-radius: 10px; font-size: 13px; line-height: 1.65;
-  word-break: break-word; }
+  overflow-x: auto; word-break: break-word; }
 .h-msg.user .h-bubble { background: color-mix(in srgb, var(--accent) 18%, var(--bg-card));
-  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border)); }
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border)); }
 .h-msg.asst .h-bubble { background: var(--bg-card); border: 1px solid var(--border); }
-/* markdown 渲染内容样式（沿用编辑器 md 预览字号体系） */
 .h-bubble p { margin: 0 0 .5em; } .h-bubble p:last-child { margin-bottom: 0; }
 .h-bubble pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
-  padding: 8px 10px; overflow-x: auto; margin: .5em 0; font-size: 12px; }
+  padding: 8px 10px; overflow-x: auto; margin: .4em 0; }
 .h-bubble code { font-family: var(--font-mono); font-size: 12px;
-  background: color-mix(in srgb, var(--accent) 12%, var(--bg)); border-radius: 4px; padding: 1px 5px; }
+  background: var(--bg); padding: 1px 4px; border-radius: 4px; }
 .h-bubble pre code { background: transparent; padding: 0; }
 .h-bubble table { border-collapse: collapse; margin: .5em 0; }
 .h-bubble th, .h-bubble td { border: 1px solid var(--border); padding: 4px 8px; font-size: 12px; }
 .h-bubble a { color: var(--accent); }
 .h-bubble ul, .h-bubble ol { margin: .3em 0; padding-left: 1.4em; }
+.h-bubble-atts { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+.hg-bubble-atts .hg-att-mini { font-size: 11px; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 5px; padding: 1px 6px; color: var(--muted); }
 
 /* 子代理消息：缩进 + 弱化 */
 .h-msg.sub { max-width: 78%; opacity: .85; margin-left: 24px; }
@@ -1972,3 +2014,58 @@
   color: var(--neon-red, #e06c75); padding: 2px 8px; word-break: break-all; }
 .h-exit { align-self: center; font-size: 11px; color: var(--muted);
   border: 1px dashed var(--border); border-radius: 6px; padding: 3px 12px; margin-top: 6px; }
+
+/* ---- 底部输入卡（ClaudeDesktop 式）---- */
+.hg-card-wrap { position: relative; padding: 8px 14px 14px; border-top: 1px solid var(--border); }
+.hg-atts { display: flex; flex-wrap: wrap; gap: 6px; max-width: 760px; margin: 0 auto 6px; }
+.hg-att-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px;
+  padding: 3px 8px; color: var(--fg); max-width: 240px; }
+.hg-att-x { border: none; background: transparent; color: var(--muted); cursor: pointer; padding: 0 2px; }
+.hg-att-x:hover { color: var(--neon-red, #e06c75); }
+.hg-input-card { max-width: 760px; margin: 0 auto; background: var(--bg-card);
+  border: 1px solid var(--border); border-radius: 14px; padding: 8px 10px 6px; }
+.hg-input-card:focus-within { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
+.hg-input { display: block; width: 100%; box-sizing: border-box; border: none; background: transparent;
+  color: var(--fg); font-size: 13px; line-height: 1.6; resize: none; outline: none;
+  max-height: 160px; font-family: inherit; }
+.hg-card-foot { display: flex; align-items: center; gap: 6px; padding-top: 4px; }
+.hg-chip { border: 1px solid var(--border); background: transparent; color: var(--muted);
+  font-size: 11.5px; border-radius: 999px; padding: 3px 10px; cursor: pointer; white-space: nowrap; }
+.hg-chip:hover { color: var(--fg); border-color: var(--accent); }
+.hg-cost { font-size: 10.5px; color: var(--muted); font-family: var(--font-mono);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+.hg-send { width: 30px; height: 30px; flex-shrink: 0; border-radius: 50%;
+  border: none; background: var(--accent); color: #fff; cursor: pointer;
+  font-size: 13px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; }
+.hg-send:hover { filter: brightness(1.12); }
+.hg-send.stop { background: var(--neon-red, #e06c75); }
+
+/* popover（技能/模型下拉） */
+.hg-pop { position: absolute; bottom: calc(100% - 2px); left: 14px; z-index: 30;
+  min-width: 240px; max-height: 300px; overflow-y: auto; background: var(--bg-card);
+  border: 1px solid var(--border); border-radius: 10px; padding: 6px;
+  box-shadow: 0 6px 24px rgba(0,0,0,.35); }
+.hg-pop-title { font-size: 10.5px; color: var(--muted); padding: 4px 8px 6px; }
+.hg-pop-item { display: flex; align-items: baseline; gap: 8px; padding: 6px 8px;
+  border-radius: 6px; cursor: pointer; font-size: 12px; color: var(--fg); }
+.hg-pop-item:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.hg-pop-item.on b { color: var(--accent); }
+.hg-pop-item b { font-weight: 600; flex-shrink: 0; }
+.hg-pop-item span { font-size: 10.5px; color: var(--muted); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.hg-pop-empty { padding: 8px; font-size: 11.5px; color: var(--muted); }
+
+/* 轻量模态（铁律2：禁原生 confirm/prompt，暗色模态框） */
+.hg-modal-ov { position: absolute; inset: 0; z-index: 40; background: rgba(0,0,0,.45);
+  display: flex; align-items: center; justify-content: center; }
+.hg-modal { width: 340px; max-width: 86%; background: var(--bg-card);
+  border: 1px solid var(--border); border-radius: 12px; padding: 16px;
+  box-shadow: 0 10px 40px rgba(0,0,0,.5); }
+.hg-modal-title { font-size: 14px; font-weight: 600; color: var(--fg-bright, var(--fg)); margin-bottom: 10px; }
+.hg-modal-body { font-size: 12.5px; color: var(--fg); line-height: 1.7; }
+.hg-modal-body label { display: block; font-size: 11.5px; color: var(--muted); margin-bottom: 5px; }
+.hg-modal-body input { width: 100%; box-sizing: border-box; padding: 6px 9px; font-size: 12.5px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--fg); }
+.hg-modal-body input:focus { outline: none; border-color: var(--accent); }
+.hg-modal-acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }

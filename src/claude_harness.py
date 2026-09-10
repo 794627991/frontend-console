@@ -1,78 +1,175 @@
 # -*- coding: utf-8 -*-
-"""Claude harness 界面化会话（第 4 期）：spawn claude CLI 的 stream-json 长驻会话。
+"""Claude harness 界面化会话（微信式多会话版）。
 
 与 claude_conn.py（ConPTY 跑 TUI，xterm 保真）平行的另一条通道：
   claude -p --input-format stream-json --output-format stream-json --verbose
 进程常驻，stdin 写 NDJSON user 消息即连续多轮；stdout 逐行 NDJSON 事件
-（system/assistant/user/result），后端原样透传给前端 SSE，渲染全在前端
-（分层照 sugyan/claude-code-webui：后端薄透传、前端厚渲染）。
+（system/assistant/user/result），后端原样透传给前端 SSE，渲染全在前端。
 
-铁律约束：
-- 不动 claude_conn/claude_sessions/claude_setup/claude_default（铁律4 零回归）
-- 不落盘日志（Claude 自写 ~/.claude/projects 转写，与 claude_conn 同策略）
-- 事件缓存有上限（_EVENTS_MAX），翻页加载防内存膨胀（铁律1）
-- UI 全部由前端负责，本模块不弹任何东西
+v2（微信式改造）新增：
+- 会话持久化：~/.serialconsole_pro/claude_harness.json 元数据表——
+  会话列表跨重启保留；切回会话用 --resume <session_id> 复活上下文。
+- 模型选择：connect 时 --model <名>（会话级，改模型=新会话）。
+- 图片/文件附件：消息 content 数组带 image base64 块 + 文件路径文本
+  （实测：内网网关模型不识图时会收到模型「无法识图」自述——协议透传，
+  网关换多模态模型后自动生效）。
+- 闲置回收：活进程闲置 15min 自动 kill（元数据保留），切回会话自动复活
+  ——铁律1「不用时不得占用任何资源」。会话数不设死上限，靠回收兜底。
+- 事件缓冲有上限（_EVENTS_MAX），历史气泡从 ~/.claude 转写重建。
+
+铁律约束：不动 claude_conn/claude_sessions/claude_setup/claude_default；
+不落盘工具日志（Claude 自写 ~/.claude/projects 转写）。
 """
-import os, json, subprocess, threading, time
+import os, json, base64, subprocess, threading, time, uuid
 from queue import Queue, Empty
 
-from .claude_conn import ClaudeNotFoundError, _resolve_claude_exe, _humanize_claude_error
+from flask import Blueprint, request, jsonify, Response
+
+from . import app_state as _st
+from .claude_conn import _resolve_claude_exe, _humanize_claude_error, _trust_workspace
 
 _EVENTS_MAX = 4000          # 每会话事件缓存上限（前端重连回放用）
-_QUEUE_MAX = 2000           # SSE 客户端队列上限（同 base_conn._push_raw 策略）
+_QUEUE_MAX = 2000           # SSE 客户端队列上限
+_IDLE_KILL_S = 15 * 60      # 活进程闲置回收阈值（秒）
+_META_FILE = os.path.join(_st.HOME_DIR, "claude_harness.json")
+_UPLOAD_DIR = os.path.join(_st.HOME_DIR, "harness_uploads")
+_UPLOAD_MAX = 20 * 1024 * 1024
+
+# ---------------------------------------------------------------------------
+# 会话元数据持久化（重启不丢会话列表——"像微信一样"的根基）
+# ---------------------------------------------------------------------------
+_meta = {}                  # sid -> meta dict
+_meta_lock = threading.Lock()
+_meta_loaded = False
 
 
-class ClaudeHarnessSession:
-    """一个 stream-json harness 会话。kind='harness'。
+def _meta_load():
+    global _meta, _meta_loaded
+    if _meta_loaded:
+        return
+    try:
+        with open(_META_FILE, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        if isinstance(d, dict):
+            _meta = {k: v for k, v in d.items() if isinstance(v, dict) and v.get("sid")}
+    except Exception:
+        _meta = {}
+    _meta_loaded = True
 
-    生命周期：__init__ 后端不自动 start，由路由层 start() 后入表；
-    结束：close()（杀进程 + 停线程），不重连（会话退出是语义事件）。
+
+def _meta_save():
+    """原子写（tmp + replace，同 claude_default 模式）。锁内快照防并发撕裂。"""
+    with _meta_lock:
+        _meta_load()
+        data = dict(_meta)
+    try:
+        os.makedirs(os.path.dirname(_META_FILE), exist_ok=True)
+        tmp = _META_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=1)
+        os.replace(tmp, _META_FILE)
+    except Exception:
+        pass
+
+
+# ---- 可选模型列表（读 ~/.claude/settings.json env 的 LANZ 映射，缓存一次）----
+_models_cache = None
+
+
+def available_models():
+    global _models_cache
+    if _models_cache is not None:
+        return _models_cache
+    names, default = [], None
+    try:
+        with open(os.path.join(os.path.expanduser("~"), ".claude", "settings.json"),
+                  "r", encoding="utf-8") as f:
+            env = (json.load(f) or {}).get("env") or {}
+        default = env.get("ANTHROPIC_MODEL") or None
+        for k in ("ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL",
+                  "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+                  "ANTHROPIC_DEFAULT_FLASH_MODEL"):
+            v = env.get(k)
+            if v and v not in names:
+                names.append(v)
+    except Exception:
+        pass
+    if not default and names:
+        default = names[0]   # settings 无显式默认 → 取首个映射（与 CLI 回退语义一致）
+    _models_cache = {"models": names, "default": default}
+    return _models_cache
+
+
+def _model_label(m):
+    """Lanz-Auto → lanz · Lanz-Auto（参考 ClaudeDesktop 的徽章文案风格）。"""
+    return "lanz · %s" % m if m and m.startswith("Lanz") else (m or "")
+
+
+# ---------------------------------------------------------------------------
+# 会话
+# ---------------------------------------------------------------------------
+class HarnessSession:
+    """一个 stream-json harness 会话（kind='harness'）。
+
+    元数据（sid/title/model/cwd/session_id）持久化；进程是易耗品——
+    闲置被回收、切回自动复活（--resume 续上下文）。port_id 稳定 =
+    harness:<sid8>，前端 tab 与后端会话一一对应。
     """
 
     kind = "harness"
 
-    def __init__(self, cwd=None, resume=None, model=None, port_id="harness:1"):
-        self.port_id = port_id
+    def __init__(self, sid, cwd=None, model=None, session_id=None, title=""):
+        self.sid = sid
+        self.port_id = "harness:" + sid[:8]
         self.cwd = cwd or os.path.expanduser("~")
-        self.resume = resume or None
         self.model = model or None
+        self.session_id = session_id or None    # claude 侧真实会话 id（复活用）
+        self.title = title or ""
+        self.created = int(time.time() * 1000)
+        self.last_active = self.created
+        # ---- 运行时（进程相关，不持久化）----
         self._proc = None
         self.alive = False
-        self.session_id = None      # system/init 事件里拿到的真实会话 id
-        self.last_result = None     # 最近一次 result 事件（cost/turns）
-        self.busy = False            # 正在等 claude 回复（result 事件后回 False）
-        # 事件回放缓存：前端断线重连 / 历史回看按 seq 增量拉
+        self.busy = False
         self.events = []
         self.events_lock = threading.Lock()
         self._seq = 0
-        # SSE 客户端队列
         self.clients = []
         self.clients_lock = threading.Lock()
-        # 兼容 api_status/refreshSidebar 读的字段
+        self.last_result = None
         base = os.path.basename(os.path.normpath(self.cwd)) or self.cwd
-        self.port = f"Claude Harness({base})"
+        self.port = "Claude 对话(%s)" % base
         self.baud = None
 
-    # ---- 启动/关闭 ----
+    # ---- 元数据同步 ----
+    def to_meta(self):
+        return {"sid": self.sid, "title": self.title, "model": self.model,
+                "cwd": self.cwd, "session_id": self.session_id,
+                "created": self.created, "last_active": self.last_active}
+
+    def sync_meta(self):
+        with _meta_lock:
+            _meta_load()
+            _meta[self.sid] = self.to_meta()
+        _meta_save()
+
+    # ---- 进程生命周期 ----
     def start(self):
         exe, is_shim = _resolve_claude_exe()
-        if is_shim:
-            # .CMD 不能直接 CreateProcess：经 cmd.exe /c 中转（同 claude_conn 模式）
-            argv = ["cmd.exe", "/c", exe]
-        else:
-            argv = [exe]
+        argv = (["cmd.exe", "/c", exe] if is_shim else [exe])
         argv += ["-p",
                  "--input-format", "stream-json",
                  "--output-format", "stream-json",
                  "--verbose",
                  "--permission-mode", "auto"]
-        if self.resume:
-            argv += ["--resume", self.resume]
+        # 复活：claude 侧已有真实 session_id → --resume 续上下文
+        if self.session_id:
+            argv += ["--resume", self.session_id]
         if self.model:
             argv += ["--model", self.model]
         env = dict(os.environ)
-        env.setdefault("TERM", "dumb")   # 无 TUI，不注入颜色；claude 对 headless 自动切
-        # CREATE_NO_WINDOW：工具是 GUI 进程，不闪黑窗（同 claude_conn wmic 模式）
+        env.setdefault("TERM", "dumb")
+        _trust_workspace(self.cwd)
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         self._proc = subprocess.Popen(
             argv, cwd=self.cwd, env=env,
@@ -80,13 +177,15 @@ class ClaudeHarnessSession:
             creationflags=flags)
         self.alive = True
         self.busy = False
+        self.last_active = int(time.time() * 1000)
         self.reader = threading.Thread(target=self._reader_loop, daemon=True)
         self.reader.start()
-        self._stderr_drain = threading.Thread(target=self._drain_stderr, daemon=True)
-        self._stderr_drain.start()
+        threading.Thread(target=self._drain_stderr, daemon=True).start()
 
-    def close(self):
+    def kill_proc(self):
+        """只杀进程保元数据与事件缓冲（闲置回收/复活前清理用）。"""
         self.alive = False
+        self.busy = False
         proc, self._proc = self._proc, None
         if proc is not None:
             try:
@@ -98,43 +197,97 @@ class ClaudeHarnessSession:
                 proc.wait(timeout=2)
             except Exception:
                 pass
+
+    def close(self):
+        self.kill_proc()
         try:
-            if self.reader and self.reader.is_alive():
+            if getattr(self, "reader", None) and self.reader.is_alive():
                 self.reader.join(timeout=1.0)
         except Exception:
             pass
 
+    def revive_if_dead(self):
+        """已死会话复活（有 claude session_id 才能续上下文）。返回能否用。"""
+        if self.alive:
+            return True
+        if not self.session_id:
+            return False
+        try:
+            self.start()
+            return True
+        except Exception:
+            return False
+
     # ---- 输入 ----
-    def send_message(self, text):
-        """往 stdin 写一条 user 消息（NDJSON）。busy 时拒绝排队以外的并发。"""
+    def send_message(self, text, image_paths=None, file_paths=None):
+        """发消息：文本 + 可选图片（base64 块，实测网关透传）+ 文件路径（文本
+        附录，任何模型都能用 Read 读）。返回 (ok, err)。"""
         if not self._proc or not self.alive:
             return False, "会话进程已退出"
         if self.busy:
             return False, "claude 正在回复中，请稍候"
+        content = []
+        for p in (image_paths or []):
+            try:
+                with open(p, "rb") as f:
+                    data = base64.b64encode(f.read()).decode()
+                ext = os.path.splitext(p)[1].lower().lstrip(".") or "png"
+                media = "image/" + ("jpeg" if ext in ("jpg", "jpeg") else ext)
+                content.append({"type": "image",
+                                "source": {"type": "base64", "media_type": media, "data": data}})
+            except Exception:
+                continue
+        full_text = text or ""
+        att = list(image_paths or []) + list(file_paths or [])
+        if att:
+            att_lines = "\n".join(att)
+            full_text = (full_text + "\n\n" if full_text else "") + \
+                "[附件，可用 Read 工具读取]\n" + att_lines
+        if not full_text and not content:
+            return False, "消息为空"
+        if not full_text and content:
+            full_text = "请查看图片"
+        if content:
+            content.append({"type": "text", "text": full_text})
+        else:
+            content = full_text
         try:
-            payload = {"type": "user",
-                       "message": {"role": "user", "content": text}}
+            payload = {"type": "user", "message": {"role": "user", "content": content}}
             self._proc.stdin.write((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
             self._proc.stdin.flush()
         except Exception as e:
-            return False, f"发送失败：{e}"
+            return False, "发送失败：%s" % e
         self.busy = True
-        # 本地回显（--replay-user-messages 未开：自己记自己发的内容）
-        self.emit({"kind": "user_echo", "text": text})
+        self.last_active = int(time.time() * 1000)
+        # 首条消息定标题（微信式：会话标题=首句）
+        if not self.title and text:
+            self.title = re_title(text)
+            self.sync_meta()
+        self.emit({"kind": "user_echo", "text": text or "",
+                   "images": list(image_paths or []), "files": list(file_paths or [])})
         return True, None
 
     def interrupt(self):
-        """中断当前回合。无 --permission-prompt-tool 通道时退化为杀进程重启会话。
-        v1 先不做（前端按钮预留，返回提示）。"""
-        return False, "暂不支持中断当前回复（后续版本提供）"
+        """中断当前回复：kill 进程（claude 中断语义无 stdin 通道，杀进程即停），
+        事件缓冲保留，下次发送自动复活续上下文。"""
+        if not self.alive or not self.busy:
+            return False, "当前没有进行中的回复"
+        threading.Thread(target=self._interrupt_async, daemon=True).start()
+        return True, None
+
+    def _interrupt_async(self):
+        try:
+            self._proc.stdin.write(b"")   # 探活（不阻塞 stdin 写）
+        except Exception:
+            pass
+        self.kill_proc()
+        self.emit({"kind": "interrupted", "text": "已中断回复"})
 
     # ---- 事件层 ----
     def _reader_loop(self):
-        """逐行读 stdout NDJSON → 原样入缓存 + 推 SSE。"""
         proc = self._proc
         if proc is None or proc.stdout is None:
             return
-        dec_buf = ""
         try:
             for line_b in proc.stdout:
                 if not self.alive:
@@ -142,30 +295,29 @@ class ClaudeHarnessSession:
                 line = line_b.decode("utf-8", errors="replace").strip()
                 if not line:
                     continue
+                self.last_active = int(time.time() * 1000)
                 try:
                     o = json.loads(line)
                 except Exception:
-                    # 非 JSON 行（claude 偶发 stderr 混入/日志）：转成 raw 事件保底
                     self.emit({"kind": "raw", "text": line})
                     continue
                 typ = o.get("type")
-                # 会话 id：system/init 的 session_id 字段
-                if typ == "system" and o.get("session_id") and not self.session_id:
-                    self.session_id = o.get("session_id")
+                if typ == "system" and o.get("session_id") and o.get("subtype") == "init":
+                    if o.get("session_id") != self.session_id:
+                        self.session_id = o.get("session_id")
+                        self.sync_meta()
                 if typ == "result":
                     self.busy = False
                     self.last_result = o
-                # parent_tool_use_id 非空 = 子代理消息，默认也透传（前端可按需折叠）
                 self.emit({"kind": "event", "data": o})
         except Exception:
             pass
         finally:
             self.alive = False
             self.busy = False
-            self.emit({"kind": "exit", "text": "会话进程已退出"})
+            self.emit({"kind": "exit", "text": "会话进程已结束（发送消息将自动恢复）"})
 
     def _drain_stderr(self):
-        """stderr 单独排空防管道堵塞（claude 升级提示等杂音走这里）。"""
         proc = self._proc
         if proc is None or proc.stderr is None:
             return
@@ -180,7 +332,6 @@ class ClaudeHarnessSession:
             pass
 
     def emit(self, item):
-        """事件入缓存（带 seq）+ 推给所有 SSE 客户端。"""
         self._seq += 1
         item = dict(item)
         item["seq"] = self._seq
@@ -195,7 +346,6 @@ class ClaudeHarnessSession:
                 try:
                     q.put_nowait(item)
                 except Exception:
-                    # 队列满：丢最旧腾位（同 base_conn._push_raw 策略）
                     try:
                         q.get_nowait()
                         q.put_nowait(item)
@@ -207,7 +357,7 @@ class ClaudeHarnessSession:
                 except Exception:
                     pass
 
-    # ---- SSE 客户端管理（同 BaseConnection 接口语义）----
+    # ---- SSE ----
     def add_client(self):
         q = Queue(maxsize=_QUEUE_MAX)
         with self.clients_lock:
@@ -222,106 +372,275 @@ class ClaudeHarnessSession:
                 pass
 
     def get_events_after(self, after_seq=0, limit=500):
-        """seq > after_seq 的事件（前端重连增量回放）。"""
         with self.events_lock:
             res = [it for it in self.events if it["seq"] > after_seq]
         return res[-limit:] if limit else res
 
 
-# ============================================================
+def re_title(text):
+    import re as _re
+    t = _re.sub(r"\s+", " ", (text or "").strip())
+    return (t[:24] + "…") if len(t) > 24 else t
+
+
+# ---------------------------------------------------------------------------
+# 会话表 + 闲置回收
+# ---------------------------------------------------------------------------
+_sessions = {}              # sid -> HarnessSession（活/复活中的对象）
+_sessions_lock = threading.Lock()
+_gc_started = False
+
+
+def _get_or_create(sid):
+    """按 sid 取会话对象（内存没有就从元数据重建——复活路径）。"""
+    with _sessions_lock:
+        s = _sessions.get(sid)
+        if s:
+            return s
+        _meta_load()
+        m = _meta.get(sid)
+        if not m:
+            return None
+        s = HarnessSession(m["sid"], cwd=m.get("cwd"), model=m.get("model"),
+                           session_id=m.get("session_id"), title=m.get("title", ""))
+        s.created = m.get("created") or s.created
+        s.last_active = m.get("last_active") or s.last_active
+        _sessions[sid] = s
+        return s
+
+
+def _gc_loop():
+    """闲置回收：活进程闲置超阈 kill（元数据/缓冲保留）。60s 一轮，daemon。"""
+    while True:
+        time.sleep(60)
+        try:
+            now = int(time.time() * 1000)
+            with _sessions_lock:
+                objs = list(_sessions.values())
+            for s in objs:
+                if s.alive and not s.busy and (now - s.last_active) > _IDLE_KILL_S * 1000:
+                    s.kill_proc()
+        except Exception:
+            pass
+
+
+def _ensure_gc():
+    global _gc_started
+    if not _gc_started:
+        _gc_started = True
+        threading.Thread(target=_gc_loop, daemon=True).start()
+
+
+# ---------------------------------------------------------------------------
+# 历史转写重建（切回会话时把历史灌进气泡）
+# ---------------------------------------------------------------------------
+_SKIP_RE = None
+
+
+def transcript_for(s):
+    """sid → 气泡行数组。claude 侧 session_id 的 jsonl 全量解析：
+    user(typed 文本/图片/文件附件) / assistant(文本/工具调用) / tool_result 摘要。
+    返回 None 表示转写不存在（新会话还没聊，气泡本来就空）。"""
+    global _SKIP_RE
+    if _SKIP_RE is None:
+        import re as _re
+        _SKIP_RE = _re.compile(r"^<(local-command-caveat|local-command-stdout|command-name|command-message|command-args|bash-)")
+    sid = s.session_id
+    if not sid:
+        return None
+    import glob as _glob
+    path = None
+    proj = os.path.join(os.path.expanduser("~"), ".claude", "projects")
+    for cand in _glob.glob(os.path.join(proj, "*", sid + ".jsonl")):
+        path = cand
+        break
+    if not path:
+        return None
+    lines = []
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            for raw in f:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                if '"type":"user"' not in raw and '"type":"assistant"' not in raw:
+                    continue
+                try:
+                    o = json.loads(raw)
+                except Exception:
+                    continue
+                typ = o.get("type")
+                if o.get("isSynthetic") or o.get("parent_tool_use_id"):
+                    continue
+                msg = o.get("message") or {}
+                content = msg.get("content")
+                if typ == "user":
+                    if isinstance(content, str):
+                        t = content
+                        # harness 通道从 stdin 注入的 user 消息可能没有 promptSource/
+                        # origin 字段——缺省也收（命令噪音已由 _SKIP_RE 挡掉）
+                        ps_ok = (o.get("promptSource") in (None, "typed")) or \
+                            (o.get("origin") or {}).get("kind") == "human"
+                        if t and ps_ok and not _SKIP_RE.match(t.strip()):
+                            lines.append({"role": "user", "text": t[:8000]})
+                    elif isinstance(content, list):
+                        has_tr = any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content)
+                        if has_tr:
+                            continue
+                        texts, imgs, files = [], 0, []
+                        for b in content:
+                            if not isinstance(b, dict):
+                                continue
+                            if b.get("type") == "text" and b.get("text"):
+                                texts.append(b["text"])
+                            elif b.get("type") == "image":
+                                imgs += 1
+                        t = " ".join(texts)
+                        m_att = _extract_att(t)
+                        if m_att:
+                            files = m_att
+                            t = _strip_att(t)
+                        if (t or imgs) and not _SKIP_RE.match((t or "").strip()):
+                            lines.append({"role": "user", "text": t[:8000], "images": imgs, "files": files})
+                elif typ == "assistant" and isinstance(content, list):
+                    texts, tools = [], []
+                    for b in content:
+                        if not isinstance(b, dict):
+                            continue
+                        if b.get("type") == "text" and b.get("text"):
+                            texts.append(b["text"])
+                        elif b.get("type") == "tool_use":
+                            tools.append({"name": b.get("name", ""),
+                                          "summary": _tool_summary(b.get("name", ""), b.get("input"))})
+                    if texts:
+                        lines.append({"role": "assistant", "text": "\n".join(texts)[:8000]})
+                    for tl in tools:
+                        lines.append({"role": "tool", "text": tl["name"], "summary": tl["summary"]})
+    except OSError:
+        return None
+    return lines
+
+
+def _extract_att(t):
+    """从 user 文本里剥出 [附件，可用 Read 工具读取] 后的路径列表（v2 发送格式回读）。"""
+    if not t or "[附件" not in t:
+        return None
+    idx = t.find("[附件")
+    tail = t[idx:]
+    paths = [l.strip() for l in tail.splitlines()[1:] if l.strip() and (":" in l or l.startswith("\\\\"))]
+    return paths or None
+
+
+def _strip_att(t):
+    idx = t.find("[附件")
+    return (t[:idx] if idx >= 0 else t).strip()
+
+
+def _tool_summary(name, input):
+    i = input or {}
+    try:
+        if name in ("Read", "Write", "Edit"):
+            return i.get("file_path", "")
+        if name in ("Bash", "PowerShell"):
+            return i.get("command", i.get("cmd", ""))
+        if name in ("Grep", "Glob"):
+            return i.get("pattern", "")
+        if name.startswith("mcp__"):
+            for k, v in i.items():
+                if isinstance(v, str) and v:
+                    return "%s=%s" % (k, v[:60])
+        if isinstance(i.get("cmd"), str):
+            return i["cmd"]
+        return ""
+    except Exception:
+        return ""
+
+
+# ---------------------------------------------------------------------------
 # Blueprint 路由（/api/harness/*）
-# ============================================================
-from flask import Blueprint, request, jsonify, Response
-
+# ---------------------------------------------------------------------------
 harness_bp = Blueprint("harness", __name__, url_prefix="/api/harness")
-
-# 会话表：port_id -> ClaudeHarnessSession（独立于 server._ports——不动现有连接体系）
-_harness = {}
-_harness_lock = threading.Lock()
-
-
-def _alloc_port_id(resume=None):
-    """分配 port_id：resume 会话带 id 前缀去重；新会话自增（同 claude 分支模式）。"""
-    if resume:
-        return f"harness:r-{resume[:8]}"
-    n = 1
-    while f"harness:{n}" in _harness:
-        n += 1
-    return f"harness:{n}"
 
 
 @harness_bp.route("/connect", methods=["POST"])
 def harness_connect():
-    """启动 harness 会话。body: {cwd, resume?, model?}。"""
-    from .claude_conn import _trust_workspace
+    """新建/复活会话。body: {sid?, model?, cwd?}。
+    sid 缺省=新会话；带 sid=切回（内存对象复活或从元数据重建）。"""
     data = request.get_json(force=True, silent=True) or {}
-    cwd = (data.get("cwd") or "").strip() or os.path.expanduser("~")
-    resume = (data.get("resume") or "").strip() or None
+    sid = (data.get("sid") or "").strip()
     model = (data.get("model") or "").strip() or None
+    cwd = (data.get("cwd") or "").strip() or os.path.expanduser("~")
     if not os.path.isdir(cwd):
-        return jsonify({"ok": False, "err": f"目录不存在：{cwd}"}), 400
-    with _harness_lock:
-        port_id = _alloc_port_id(resume)
-        if port_id in _harness:
-            return jsonify({"ok": False, "err": "该会话已在工具内打开，请切换到对应标签页"}), 400
-        s = None
-        try:
-            _trust_workspace(cwd)
-            s = ClaudeHarnessSession(cwd=cwd, resume=resume, model=model, port_id=port_id)
-            s.start()
-            _harness[port_id] = s
-        except Exception as e:
-            if s is not None:
-                try:
-                    s.close()
-                except Exception:
-                    pass
-            return jsonify({"ok": False, "err": _humanize_claude_error(e)}), 500
-    return jsonify({"ok": True, "port_id": port_id, "kind": "harness",
-                    "cwd": cwd, "resume": resume,
-                    "msg": f"harness 会话已启动（{'恢复 ' + resume[:8] if resume else '新会话'}）"})
+        return jsonify({"ok": False, "err": "目录不存在：%s" % cwd}), 400
+    _ensure_gc()
+    if sid:
+        s = _get_or_create(sid)
+        if not s:
+            return jsonify({"ok": False, "err": "会话不存在"}), 404
+        if not s.alive and not s.revive_if_dead():
+            return jsonify({"ok": False, "err": "会话已失效（无法恢复上下文）"}), 400
+        return jsonify({"ok": True, "port_id": s.port_id, "sid": s.sid, "kind": "harness",
+                        "cwd": s.cwd, "model": s.model, "title": s.title})
+    # 新会话
+    new_sid = uuid.uuid4().hex
+    s = HarnessSession(new_sid, cwd=cwd, model=model)
+    try:
+        s.start()
+    except Exception as e:
+        return jsonify({"ok": False, "err": _humanize_claude_error(e)}), 500
+    s.sync_meta()
+    with _sessions_lock:
+        _sessions[new_sid] = s
+    return jsonify({"ok": True, "port_id": s.port_id, "sid": s.sid, "kind": "harness",
+                    "cwd": s.cwd, "model": s.model, "title": s.title})
 
 
 @harness_bp.route("/send", methods=["POST"])
 def harness_send():
-    """发消息。body: {port_id, text}。"""
+    """发消息。body: {sid, text, images?, files?}（images/files=upload 返回的绝对路径）。"""
     data = request.get_json(force=True, silent=True) or {}
-    port_id = data.get("port_id") or ""
+    sid = (data.get("sid") or "").strip()
     text = (data.get("text") or "").strip()
-    if not text:
-        return jsonify({"ok": False, "err": "消息不能为空"}), 400
-    with _harness_lock:
-        s = _harness.get(port_id)
+    images = [p for p in (data.get("images") or []) if isinstance(p, str) and p]
+    files = [p for p in (data.get("files") or []) if isinstance(p, str) and p]
+    s = _get_or_create(sid)
     if not s:
         return jsonify({"ok": False, "err": "会话不存在"}), 404
-    if not s.alive:
-        return jsonify({"ok": False, "err": "会话进程已退出，请重新打开"}), 400
-    ok, err = s.send_message(text)
+    if not s.alive and not s.revive_if_dead():
+        return jsonify({"ok": False, "err": "会话已失效，请新建会话"}), 400
+    ok, err = s.send_message(text, images or None, files or None)
     if not ok:
         return jsonify({"ok": False, "err": err}), 400
     return jsonify({"ok": True})
 
 
-@harness_bp.route("/stream")
-def harness_stream():
-    """SSE 事件流。?port_id=。连接建立时先回放 after_seq 之后的事件（断线重连不丢）。"""
-    port_id = request.args.get("port_id") or ""
-    after_seq = request.args.get("after_seq", 0, type=int)
-    with _harness_lock:
-        s = _harness.get(port_id)
+@harness_bp.route("/interrupt", methods=["POST"])
+def harness_interrupt():
+    data = request.get_json(force=True, silent=True) or {}
+    s = _get_or_create((data.get("sid") or "").strip())
     if not s:
         return jsonify({"ok": False, "err": "会话不存在"}), 404
+    ok, err = s.interrupt()
+    return jsonify({"ok": ok, "err": err}) if not ok else jsonify({"ok": True})
+
+
+@harness_bp.route("/stream")
+def harness_stream():
+    """SSE 事件流。?sid=&after_seq=。连接建立先回放增量（重连不丢）。"""
+    s = _get_or_create(request.args.get("sid") or "")
+    if not s:
+        return jsonify({"ok": False, "err": "会话不存在"}), 404
+    after_seq = request.args.get("after_seq", 0, type=int)
     q = s.add_client()
     def gen():
         try:
             yield "event: hello\ndata: {}\n\n"
-            # 先回放缓存（重连增量）
             for it in s.get_events_after(after_seq):
-                yield f"data: {json.dumps(it, ensure_ascii=False)}\n\n"
+                yield "data: %s\n\n" % json.dumps(it, ensure_ascii=False)
             while True:
                 try:
                     item = q.get(timeout=15)
-                    yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+                    yield "data: %s\n\n" % json.dumps(item, ensure_ascii=False)
                 except Empty:
                     yield ": ping\n\n"
         finally:
@@ -330,39 +649,108 @@ def harness_stream():
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+@harness_bp.route("/sessions")
+def harness_sessions():
+    """会话列表（持久化元数据，新→旧）。"""
+    _meta_load()
+    with _sessions_lock:
+        live = {sid: (s.alive, s.busy) for sid, s in _sessions.items()}
+    items = []
+    for sid, m in _meta.items():
+        alive, busy = live.get(sid, (False, False))
+        items.append({"sid": sid, "title": m.get("title") or "新会话",
+                      "model": m.get("model"), "cwd": m.get("cwd", ""),
+                      "session_id": m.get("session_id"), "has_history": bool(m.get("session_id")),
+                      "created": m.get("created", 0), "last_active": m.get("last_active", 0),
+                      "alive": alive, "busy": busy})
+    items.sort(key=lambda x: -x["last_active"])
+    return jsonify({"ok": True, "sessions": items})
+
+
+@harness_bp.route("/transcript")
+def harness_transcript():
+    """切回会话的历史气泡。?sid=。转写不存在返回 lines:[]（新会话空气泡）。"""
+    s = _get_or_create(request.args.get("sid") or "")
+    if not s:
+        return jsonify({"ok": False, "err": "会话不存在"}), 404
+    lines = transcript_for(s)
+    return jsonify({"ok": True, "lines": lines or [], "alive": s.alive,
+                    "busy": s.busy, "model": s.model, "title": s.title, "seq": s._seq})
+
+
 @harness_bp.route("/events")
 def harness_events():
-    """事件缓存快照（一次性拉取，前端首次渲染/刷新用）。?port_id=&after_seq=&limit="""
-    port_id = request.args.get("port_id") or ""
-    after_seq = request.args.get("after_seq", 0, type=int)
-    limit = request.args.get("limit", 500, type=int)
-    with _harness_lock:
-        s = _harness.get(port_id)
+    """事件增量（轮询兜底/断线补齐）。?sid=&after_seq="""
+    s = _get_or_create(request.args.get("sid") or "")
     if not s:
         return jsonify({"ok": False, "err": "会话不存在"}), 404
-    return jsonify({"ok": True, "events": s.get_events_after(after_seq, limit),
-                    "seq": s._seq, "alive": s.alive, "busy": s.busy,
-                    "session_id": s.session_id})
+    return jsonify({"ok": True, "events": s.get_events_after(request.args.get("after_seq", 0, type=int)),
+                    "seq": s._seq, "alive": s.alive, "busy": s.busy})
 
 
-@harness_bp.route("/disconnect", methods=["POST"])
-def harness_disconnect():
-    """关闭会话。body: {port_id}。"""
+@harness_bp.route("/rename", methods=["POST"])
+def harness_rename():
     data = request.get_json(force=True, silent=True) or {}
-    port_id = data.get("port_id") or ""
-    with _harness_lock:
-        s = _harness.pop(port_id, None)
+    sid = (data.get("sid") or "").strip()
+    title = (data.get("title") or "").strip()[:60]
+    s = _get_or_create(sid)
     if not s:
         return jsonify({"ok": False, "err": "会话不存在"}), 404
-    s.close()
+    s.title = title or "新会话"
+    s.sync_meta()
+    return jsonify({"ok": True, "title": s.title})
+
+
+@harness_bp.route("/delete", methods=["POST"])
+def harness_delete():
+    """删会话：杀进程 + 删元数据（~/.claude 转写不动）。body: {sid}。"""
+    data = request.get_json(force=True, silent=True) or {}
+    sid = (data.get("sid") or "").strip()
+    with _sessions_lock:
+        s = _sessions.pop(sid, None)
+    if s:
+        s.close()
+    with _meta_lock:
+        _meta_load()
+        _meta.pop(sid, None)
+    _meta_save()
     return jsonify({"ok": True})
 
 
-@harness_bp.route("/list")
-def harness_list():
-    """本工具打开的 harness 会话列表（设置页/面板展示用）。"""
-    with _harness_lock:
-        items = [{"port_id": pid, "cwd": s.cwd, "resume": s.resume,
-                  "alive": s.alive, "busy": s.busy, "session_id": s.session_id}
-                 for pid, s in _harness.items()]
-    return jsonify({"ok": True, "sessions": items})
+@harness_bp.route("/models")
+def harness_models():
+    return jsonify({"ok": True, **available_models()})
+
+
+@harness_bp.route("/skills")
+def harness_skills():
+    """技能列表（复用 claude_sessions 发现层，harness 上下文 cwd）。"""
+    from .claude_sessions import list_skills
+    cwd = request.args.get("cwd") or None
+    return jsonify({"ok": True, "skills": list_skills(cwd)})
+
+
+@harness_bp.route("/upload", methods=["POST"])
+def harness_upload():
+    """附件上传：{name, data_b64} → 存 harness_uploads/ → 返回绝对路径。
+    图片走消息 image 块；其他文件走路径文本（模型 Read 读取）。"""
+    data = request.get_json(force=True, silent=True) or {}
+    name = os.path.basename((data.get("name") or "file.bin").replace("\\", "/"))[:120]
+    b64 = data.get("data_b64") or ""
+    if not b64:
+        return jsonify({"ok": False, "err": "空文件"}), 400
+    try:
+        raw = base64.b64decode(b64)
+    except Exception:
+        return jsonify({"ok": False, "err": "编码无效"}), 400
+    if len(raw) > _UPLOAD_MAX:
+        return jsonify({"ok": False, "err": "文件过大（>20MB）"}), 400
+    os.makedirs(_UPLOAD_DIR, exist_ok=True)
+    # 防同名覆盖：uuid 前缀
+    path = os.path.join(_UPLOAD_DIR, uuid.uuid4().hex[:8] + "_" + name)
+    try:
+        with open(path, "wb") as f:
+            f.write(raw)
+    except OSError as e:
+        return jsonify({"ok": False, "err": str(e)}), 500
+    return jsonify({"ok": True, "path": path, "name": name, "size": len(raw)})
