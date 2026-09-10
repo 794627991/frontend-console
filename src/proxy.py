@@ -1034,6 +1034,9 @@ def _api_status():
         qkind = _quota_state.get("kind")
         qpayload = _quota_state.get("payload")
         ov = dict(_quota_ov)
+    cred = None
+    if HAS_LANZ:
+        cred = lanz_quota.load_credentials(LANZ_CRED_PATH)
     data = {
         "ok": True,
         "running": snap is not None,
@@ -1052,7 +1055,8 @@ def _api_status():
         "quota_kind": qkind,
         "quota_payload": qpayload,
         "quota_user": None,
-        "has_credentials": HAS_LANZ and lanz_quota.load_credentials(LANZ_CRED_PATH) is not None,
+        "has_credentials": cred is not None,
+        "quota_username": (cred or {}).get("username"),
     }
     if HAS_LANZ and qkind == "login_ok":
         data["quota_user"] = qpayload

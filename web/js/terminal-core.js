@@ -397,6 +397,9 @@ function switchTab(portId) {
     // 若分析标签正显示，刷新一次（数据源已切到新连接的 buffer）
     const activePane = document.querySelector('.panel-tab.active');
     if (activePane && activePane.dataset.pane === 'analyze') renderAnalyze();
+    // proxy tab：切回时恢复 1s 轮询（切走时面板自己停；conn.onResumePoll 由 proxy-panel 注入）
+    if (conn.meta.kind === 'proxy' && typeof conn.onResumePoll === 'function')
+      conn.onResumePoll();
   }
 }
 

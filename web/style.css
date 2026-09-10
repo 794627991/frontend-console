@@ -1754,3 +1754,49 @@
   word-break: break-all; }
 .dd-prog-stage { font-size: 12px; color: var(--accent); }
 .dd-prog-sub { font-size: 11px; color: var(--muted); line-height: 1.6; max-width: 300px; }
+
+/* ============================================================
+   Claude Proxy 面板（proxy-panel.js；原独立工具合入）
+   ============================================================ */
+.px-body { padding: 14px 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; font-size: 12px; }
+.px-badge { display: inline-block; padding: 2px 10px; border-radius: 10px; font-weight: 700;
+  font-size: 11px; letter-spacing: .5px; font-family: var(--font-mono); }
+.px-healthy { background: rgba(0, 200, 120, .15); color: #2fd48a; }
+.px-retry { background: rgba(255, 190, 0, .15); color: #ffbe00; }
+.px-failed { background: rgba(255, 84, 104, .18); color: #ff5468; }
+.px-stopped { background: rgba(128, 138, 150, .18); color: var(--muted); }
+.px-url { color: var(--muted); font-family: var(--font-mono); font-size: 11px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 340px; }
+.px-msg { min-height: 16px; color: var(--muted); font-size: 12px; }
+.px-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(108px, 1fr)); gap: 8px; }
+.px-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 10px; }
+.px-card-k { color: var(--muted); font-size: 11px; margin-bottom: 2px; }
+.px-card-v { color: var(--fg-bright); font-weight: 700; font-family: var(--font-mono); font-size: 14px; }
+.px-sec { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+.px-sec-title { font-weight: 600; font-size: 12px; margin-bottom: 8px; color: var(--fg-bright); }
+.px-hint { color: var(--muted); font-size: 11px; line-height: 1.7; }
+.px-hist { display: flex; flex-direction: column; gap: 2px; max-height: 220px; overflow-y: auto; }
+.px-hrow { display: flex; gap: 14px; align-items: baseline; padding: 3px 6px; border-radius: 6px;
+  font-family: var(--font-mono); font-size: 11px; }
+.px-hrow:hover { background: var(--bg-card); }
+.px-hrow-bad { color: #ffbe00; }
+.px-h-t { color: var(--muted); }
+.px-h-m { min-width: 130px; color: var(--fg-bright); }
+.px-h-i, .px-h-o { color: var(--muted); }
+.px-h-e { margin-left: auto; }
+.px-hr-row { display: flex; flex-direction: column; gap: 8px; }
+.px-hr-row label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.px-ccr input { accent-color: var(--accent); }
+.px-quota-login { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.px-quota-login input { background: var(--bg-input, var(--bg-card)); border: 1px solid var(--border);
+  border-radius: 6px; padding: 5px 8px; color: var(--fg); font-size: 12px; }
+.px-q-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.px-q-k { color: var(--muted); font-size: 11px; }
+.px-q-tile { font-family: var(--font-mono); font-weight: 700; color: var(--fg-bright); }
+.px-q-hot { color: #ff5468; }
+.px-q-models { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+.px-q-model { display: flex; gap: 10px; align-items: baseline; background: var(--bg-card);
+  border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px;
+  font-family: var(--font-mono); font-size: 11px; }
+.px-q-mk { font-weight: 700; color: var(--accent); }

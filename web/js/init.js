@@ -47,13 +47,9 @@ $('btnDiff').onclick = openDiffPicker;  // 文件对比（原生选两份 → Di
 $('btnBitCalc').onclick = buildBitCalcTab;  // 程序员计算器（寄存器位编辑+位运算+表达式）
 $('btnFiles').onclick = showFilesModal;  // 文件列表弹窗（打开已有文件）
 $('btnClaude').onclick = () => connectClaude();  // 内嵌终端启动 Claude Code（ConPTY 真实 CLI）
-// 帮助：工具内打开 README.md（openFileSmart 智能分发，md 走预览/编辑）
-$('btnHelp').onclick = () => {
-  fetch('/api/help_readme').then(r => r.json()).then(j => {
-    if (j.ok && j.path) openFileSmart(j.path, 'auto');
-    else showBanner('未找到 README.md', 3000, true);
-  }).catch(() => showBanner('帮助打开失败', 3000, true));
-};
+// Claude 代理面板（原 D:\AI\proxy 独立工具合入：重试代理+headroom 压缩+额度监控）
+// 帮助已挪设置面板最底部分区（settings.js _stRenderHelpPane）
+$('btnProxy').onclick = buildProxyTab;
 // ---- 关闭到托盘首次提示：后端隐藏窗口前调 window._trayNotice() ----
 // 暗色模态框（铁律②不用原生弹窗），带「下次不再显示」勾选（写 config tray_prompt_shown）。
 // 注意：窗口即将 hide，弹窗在隐藏前一瞬展示——唤出时仍在（非阻塞展示，用户回来看得见）。

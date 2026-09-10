@@ -1,0 +1,343 @@
+// ============================================================
+// Claude Proxy 面板（原 D:\AI\proxy 独立工具合入主窗口）
+// - tab 骨架同 bit-calc（模式 A：单例 + connections 表 + tab/wrap DOM）
+// - 后端 src/proxy.py：/api/proxy/status|start|stop|mode|compression|ccr|quota|credentials
+// - 轮询：tab 激活时 1s（面板可见才轮询，切走停止——流畅守则）
+// - 链路：Claude Code → 8787(headroom 压缩) → 37349(重试代理) → lanz 内网网关
+// ============================================================
+
+function _pxFnum(n) {
+  // 数字缩写（后端 _fnum 同款）：12345 → 12.3k
+  n = Number(n) || 0;
+  if (n >= 1e8) return Math.round(n).toString();
+  if (n >= 1e4) return (n / 1e4).toFixed(1) + 'W';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'k';
+  return Number.isInteger(n) ? n.toString() : n.toFixed(1);
+}
+function _pxTok(n) {
+  // token 缩写：1234567 → 1.23M（后端 core.fmt_tok 同款）
+  n = Number(n) || 0;
+  if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+  if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(2) + 'k';
+  return String(n);
+}
+
+function buildProxyTab() {
+  // 单例：已开就激活
+  for (const pid in connections) {
+    const c = connections[pid];
+    if (c && c.meta && c.meta.kind === 'proxy') { switchTab(pid); return; }
+  }
+  const portId = 'proxy:' + Date.now();
+  const tab = document.createElement('div');
+  tab.className = 'tab';
+  tab.dataset.portId = portId;
+  tab.innerHTML = `<span class="led"></span><span class="tab-ico"><img src="/ico/proxy.png" style="width:14px;height:14px;vertical-align:-2px;" alt=""></span><span class="label">Claude Proxy</span><span class="baud"></span><span class="close" title="关闭">✕</span>`;
+  tab.onclick = (e) => { if (e.target.classList.contains('close')) { e.stopPropagation(); closeEditorTab(portId); return; } switchTab(portId); };
+
+  const wrap = document.createElement('div');
+  wrap.className = 'term-area';
+  wrap.dataset.portId = portId;
+  wrap.style.display = 'none';
+  wrap.innerHTML = `
+    <div class="editor">
+      <div class="log-viewer-toolbar">
+        <span class="px-badge px-stopped" data-px-status-badge>STOPPED</span>
+        <button class="lv-btn" data-px-toggle>▶ 启动代理</button>
+        <span class="px-url" data-px-url title="当前 ANTHROPIC_BASE_URL">-</span>
+        <span style="flex:1"></span>
+        <button class="lv-btn" data-px-mode="proxy" title="base_url 切到代理入口（8787/37349，重启 Claude Code 后生效）">切换为代理模式</button>
+        <button class="lv-btn" data-px-mode="direct" title="base_url 切回内网网关直连">切换为直连模式</button>
+      </div>
+      <div class="px-body">
+        <div class="px-msg" data-px-msg></div>
+
+        <!-- 统计卡行：请求/成功率/重试/失败 + tokens + 免费/收费 -->
+        <div class="px-stats" data-px-stats></div>
+
+        <!-- 最近请求历史表（后端 snapshot req_history，增量插行） -->
+        <div class="px-sec">
+          <div class="px-sec-title">最近请求</div>
+          <div class="px-hist" data-px-hist><div class="px-hint">代理启动后这里显示每个请求的模型/tokens/耗时（429 重试过的标红）</div></div>
+        </div>
+
+        <!-- 压缩模式 + CCR -->
+        <div class="px-sec">
+          <div class="px-sec-title">headroom 压缩</div>
+          <div class="px-hr-row" data-px-hr-row>
+            <label><input type="radio" name="px-hr-${portId}" value="full"> 完整压缩（ML + 结构化，省流量最多，吃 ~570MB 内存）</label>
+            <label><input type="radio" name="px-hr-${portId}" value="light"> 轻量压缩（仅结构化，省 ~400MB 内存）</label>
+            <label><input type="radio" name="px-hr-${portId}" value="off"> 关闭压缩（headroom 不启动，直接走重试代理）</label>
+            <label class="px-ccr" title="CCR 流压缩。激进——/compact 可能卡死，不确定就别勾"><input type="checkbox" data-px-ccr> CCR 流压缩（激进·/compact 可能卡死）</label>
+          </div>
+          <div class="px-hint">切换立即生效：停旧 headroom → 按新模式拉起（冷启动 10-30s）→ 就绪自动切 base_url。失败自动回退关闭压缩。</div>
+        </div>
+
+        <!-- Lanz 额度区：登录 + 概览 + 三模型明细 -->
+        <div class="px-sec">
+          <div class="px-sec-title">Lanz 额度</div>
+          <div class="px-quota-login" data-px-quota-login>
+            <input data-px-q-user placeholder="内网 SSO 用户名" spellcheck="false" style="width:150px;">
+            <input data-px-q-pwd type="password" placeholder="密码（明文存本地 lanz_credentials.json）" style="width:220px;">
+            <button class="lv-btn" data-px-q-save>登录</button>
+            <button class="lv-btn" data-px-q-refresh title="立即刷新额度">刷新</button>
+            <button class="lv-btn" data-px-q-logout title="删除本地凭据">断开</button>
+            <span data-px-q-status style="color:var(--muted);font-size:12px;"></span>
+          </div>
+          <div data-px-quota-view></div>
+        </div>
+
+        <div class="px-hint">链路：Claude Code → headroom(8787，压缩) → 重试代理(37349，429/5xx 自动重试) → lanz 内网网关。退出工具自动停代理并回滚 base_url；异常退出下次启动自愈。</div>
+      </div>
+    </div>`;
+  const es = termArea.querySelector('.empty-state');
+  if (es) es.remove();
+  tabs.insertBefore(tab, tabs.querySelector('.tab-bar-actions'));
+  if (typeof _initTabDrag === 'function') _initTabDrag(tab);
+  termArea.appendChild(wrap);
+
+  const conn = {
+    portId,
+    meta: { kind: 'proxy', label: 'Claude Proxy' },
+    tab, wrap,
+    pollTimer: null,
+    seenHist: 0,     // 历史表增量游标（后端 req_history_total）
+  };
+  connections[portId] = conn;
+
+  const $p = (sel) => wrap.querySelector(sel);
+  const badgeEl = $p('[data-px-status-badge]');
+  const toggleBtn = $p('[data-px-toggle]');
+  const urlEl = $p('[data-px-url]');
+  const msgEl = $p('[data-px-msg]');
+  const statsEl = $p('[data-px-stats]');
+  const histEl = $p('[data-px-hist]');
+  const quotaViewEl = $p('[data-px-quota-view]');
+  const qStatusEl = $p('[data-px-q-status]');
+
+  const ST_CLS = {
+    HEALTHY: 'px-healthy', RETRY: 'px-retry', FAILED: 'px-failed', STOPPED: 'px-stopped',
+  };
+
+  function _msg(text, bad) {
+    msgEl.textContent = text || '';
+    msgEl.style.color = bad ? 'var(--danger,#ff5468)' : 'var(--muted)';
+  }
+
+  function _renderStats(snap) {
+    if (!snap) { statsEl.innerHTML = '<div class="px-hint">代理未运行，无统计数据</div>'; return; }
+    const total = snap.total_requests || 0;
+    const succ = snap.total_success || 0;
+    const rate = total ? (succ * 100 / total).toFixed(1) : '100.0';
+    const fails = (snap.total_giveups || 0) + (snap.total_client_gone || 0);
+    const up = snap.uptime_seconds || 0;
+    const upTxt = up >= 3600 ? `${(up/3600).toFixed(1)}h` : up >= 60 ? `${(up/60).toFixed(0)}m` : `${Math.floor(up)}s`;
+    const cards = [
+      ['总请求', _pxFnum(total)],
+      ['成功率', rate + '%'],
+      ['429/5xx', _pxFnum(snap.total_overloads)],
+      ['重试', _pxFnum(snap.total_retries)],
+      ['失败', _pxFnum(fails)],
+      ['输入 tokens', _pxTok(snap.total_input_tokens)],
+      ['输出 tokens', _pxTok(snap.total_output_tokens)],
+      ['免费/收费', _pxFnum(snap.free_requests) + ' / ' + _pxFnum(snap.fee_requests)],
+      ['运行', upTxt],
+    ];
+    statsEl.innerHTML = cards.map(([k, v]) =>
+      `<div class="px-card"><div class="px-card-k">${k}</div><div class="px-card-v">${v}</div></div>`).join('');
+  }
+
+  function _renderHist(snap) {
+    if (!snap) { histEl.innerHTML = '<div class="px-hint">代理未运行</div>'; conn.seenHist = 0; return; }
+    const hist = snap.req_history || [];
+    const total = snap.req_history_total || 0;
+    const hint = histEl.querySelector('.px-hint');
+    if (hint) hint.remove();
+    // 增量：只插新行到顶部（1s 轮询全量 snapshot，用游标判新）
+    if (total > conn.seenHist && hist.length) {
+      const take = Math.min(total - conn.seenHist, hist.length);
+      const rows = hist.slice(-take);
+      const frag = document.createDocumentFragment();
+      for (const [ts, model, inTok, outTok, brief, elapsed] of rows) {
+        const t = new Date(ts * 1000).toLocaleTimeString('zh-CN', {hour12: false});
+        const isOverload = elapsed > 30 || (inTok === 0 && outTok === 0);
+        const div = document.createElement('div');
+        div.className = 'px-hrow' + (isOverload ? ' px-hrow-bad' : '');
+        div.title = brief || '';
+        div.innerHTML = `<span class="px-h-t">${t}</span><span class="px-h-m">${esc(String(model || '?').slice(0, 24))}</span>` +
+          `<span class="px-h-i">in ${_pxTok(inTok)}</span><span class="px-h-o">out ${_pxTok(outTok)}</span>` +
+          `<span class="px-h-e">${elapsed.toFixed(1)}s</span>`;
+        frag.appendChild(div);
+      }
+      histEl.insertBefore(frag, histEl.firstChild);
+      while (histEl.children.length > 200) histEl.removeChild(histEl.lastChild);
+      conn.seenHist = total;
+    } else if (total < conn.seenHist) {
+      // 代理重启过：清表重画
+      conn.seenHist = 0;
+      histEl.innerHTML = '';
+    }
+    if (!histEl.children.length) histEl.innerHTML = '<div class="px-hint">暂无请求</div>';
+  }
+
+  function _renderQuota(j) {
+    const kind = j.quota_kind;
+    const user = j.quota_user;
+    if (kind === 'login_start') qStatusEl.textContent = '● 登录中…';
+    else if (kind === 'login_ok') qStatusEl.textContent = '● 在线 ' + (user || '');
+    else if (kind === 'login_err') qStatusEl.textContent = '⚠ 登录失败: ' + (j.quota_payload || '');
+    else if (kind === 'fetch_err') qStatusEl.textContent = '⚠ 查询失败: ' + (j.quota_payload || '');
+    else if (!j.has_credentials) qStatusEl.textContent = '';
+
+    const ov = j.quota_overview;
+    // 凭据已存：预填用户名（密码不回传，明文存本地已是既定约定）
+    if (j.quota_username && !$p('[data-px-q-user]').value)
+      $p('[data-px-q-user]').value = j.quota_username;
+    if (!ov) { quotaViewEl.innerHTML = '<div class="px-hint">登录后显示额度（10 分钟自动刷新）</div>'; return; }
+    const tile = (u, l) => {
+      u = u || 0; l = l || 0;
+      const hot = l && u / l >= 0.85;
+      return `<span class="px-q-tile ${hot ? 'px-q-hot' : ''}">${_pxFnum(u)} / ${_pxFnum(l)}</span>`;
+    };
+    let html = `<div class="px-q-row"><span class="px-q-k">今日外部</span>${tile(ov.externalDailyUsed, ov.externalDailyLimit)}<span class="px-q-k">今日内部</span>${tile(ov.internalDailyUsed, ov.internalDailyLimit)}<span class="px-q-k">请求</span><span class="px-q-tile">${_pxFnum(ov.dailyRequestCount)}</span></div>`;
+    if (ov.hasBudget) {
+      const tot = ov.totalCredits || 0;
+      const r = ov.usageRate || 0;
+      html += `<div class="px-q-row"><span class="px-q-k">剩余积分</span><span class="px-q-tile">${Math.round(ov.remainCredit || 0)}</span><span class="px-q-k">总消耗</span><span class="px-q-tile">${Math.round(tot)}${r ? ` (${Math.round(r*100)}%)` : ''}</span></div>`;
+    }
+    const models = j.quota_models || [];
+    if (models.length) {
+      html += '<div class="px-q-models">' + models.map(m => {
+        const hot = m.limit && m.used / m.limit >= 0.85;
+        return `<div class="px-q-model ${hot ? 'px-q-hot' : ''}"><span class="px-q-mk">${m.name}</span>` +
+          `<span>已用 ${_pxFnum(m.used)}</span><span>还剩 ${_pxFnum(m.remain)}</span><span>${m.pct}%</span></div>`;
+      }).join('') + '</div>';
+    }
+    quotaViewEl.innerHTML = html;
+  }
+
+  function _setHrUI(j) {
+    wrap.querySelectorAll('[data-px-hr-row] input[type=radio]').forEach(r => {
+      r.checked = (r.value === (j.hr_mode || 'off'));
+    });
+    $p('[data-px-ccr]').checked = !!j.ccr;
+  }
+
+  async function _poll() {
+    try {
+      const r = await fetch('/api/proxy/status');
+      const j = await r.json();
+      if (!j.ok) return;
+      badgeEl.textContent = j.status;
+      badgeEl.className = 'px-badge ' + (ST_CLS[j.status] || 'px-stopped');
+      urlEl.textContent = 'base_url: ' + (j.base_url || '(未设置)');
+      toggleBtn.textContent = j.running ? '■ 停止代理' : '▶ 启动代理';
+      if (j.already_running) _msg('检测到已有 Claude 代理实例在 37349 端口（原独立工具在跑）——面板仅展示，复用不杀', false);
+      else if (j.port_busy) _msg('端口 37349 被其他程序占用，无法启动', true);
+      else if (!msgEl.dataset.keep) _msg('');
+      _renderStats(j.snapshot);
+      _renderHist(j.snapshot);
+      _renderQuota(j);
+      _setHrUI(j);
+      if (!j.headroom_exe && (j.hr_mode === 'full' || j.hr_mode === 'light')) {
+        msgEl.dataset.keep = '1';
+        _msg('未找到 headroom.exe（pip install headroom-ai[all]），压缩不可用；重试代理不受影响', true);
+      }
+    } catch(_) {}
+  }
+
+  // tab 激活/切走控制轮询（流畅守则：看不见不轮询）。
+  // switchTab 靠 wrap.style.display 切换，无回调可挂——tick 开头检测：
+  // 隐藏即停 interval（下次 switchTab 回来时 startPoll 重建）。
+  function _startPoll() { if (!conn.pollTimer) { conn.pollTimer = setInterval(_tickPoll, 1000); _poll(); } }
+  function _stopPoll() { if (conn.pollTimer) { clearInterval(conn.pollTimer); conn.pollTimer = null; } }
+  async function _tickPoll() {
+    if (wrap.style.display === 'none') { _stopPoll(); return; }
+    await _poll();
+  }
+
+  toggleBtn.onclick = async () => {
+    toggleBtn.disabled = true;
+    try {
+      const running = badgeEl.textContent !== 'STOPPED';
+      const r = await fetch('/api/proxy/' + (running ? 'stop' : 'start'), {method: 'POST'});
+      const j = await r.json();
+      _msg(j.msg || (j.ok ? '完成' : '操作失败'), !j.ok);
+      if (running) conn.seenHist = 0;
+      _poll();
+    } catch(e) { _msg('请求失败: ' + e, true); }
+    toggleBtn.disabled = false;
+  };
+
+  wrap.querySelectorAll('[data-px-mode]').forEach(btn => {
+    btn.onclick = async () => {
+      try {
+        const r = await fetch('/api/proxy/mode', {method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({mode: btn.dataset.pxMode})});
+        const j = await r.json();
+        if (!j.ok) { _msg('切换失败: ' + (j.changed || []).join('; '), true); return; }
+        _msg(j.changed.length ? '已切换，重启 Claude Code / 开新会话后生效' : '已是目标模式，无需切换');
+      } catch(e) { _msg('请求失败: ' + e, true); }
+    };
+  });
+
+  wrap.querySelectorAll('[data-px-hr-row] input[type=radio]').forEach(r => {
+    r.onchange = async () => {
+      try {
+        const resp = await fetch('/api/proxy/compression', {method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({mode: r.value})});
+        const j = await resp.json();
+        _msg(j.ok ? '压缩模式切换中（headroom 冷启动 10-30s）' : (j.msg || '切换失败'), !j.ok);
+      } catch(e) { _msg('请求失败: ' + e, true); }
+    };
+  });
+  $p('[data-px-ccr]').onchange = async (e) => {
+    try {
+      await fetch('/api/proxy/ccr', {method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({on: e.target.checked})});
+      _msg(e.target.checked ? 'CCR 已开启（激进模式，/compact 可能卡死）' : 'CCR 已关闭');
+    } catch(err) { _msg('请求失败: ' + err, true); }
+  };
+
+  $p('[data-px-q-save]').onclick = async () => {
+    const u = $p('[data-px-q-user]').value.trim();
+    const p = $p('[data-px-q-pwd]').value;
+    if (!u || !p) { qStatusEl.textContent = '⚠ 用户名/密码不能为空'; return; }
+    try {
+      const r = await fetch('/api/proxy/credentials', {method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({username: u, password: p})});
+      const j = await r.json();
+      _msg(j.ok ? '凭据已保存，开始登录' : (j.msg || '保存失败'), !j.ok);
+    } catch(e) { _msg('请求失败: ' + e, true); }
+  };
+  $p('[data-px-q-refresh]').onclick = async () => {
+    try {
+      const r = await fetch('/api/proxy/quota', {method: 'POST'});
+      const j = await r.json();
+      if (!j.ok) qStatusEl.textContent = '⚠ ' + (j.msg || '刷新失败');
+    } catch(e) { _msg('请求失败: ' + e, true); }
+  };
+  $p('[data-px-q-logout]').onclick = async () => {
+    try {
+      await fetch('/api/proxy/credentials', {method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({action: 'clear'})});
+      quotaViewEl.innerHTML = '<div class="px-hint">已断开。登录后显示额度</div>';
+      qStatusEl.textContent = '已断开登录';
+    } catch(e) { _msg('请求失败: ' + e, true); }
+  };
+
+  // 初始一次渲染 + 1s 轮询（_tickPoll 内检测 tab 可见性，切走自动停；
+  // 切回时 switchTab 调 conn.onResumePoll 恢复）
+  conn.onResumePoll = _startPoll;
+  _startPoll();
+
+  switchTab(portId);
+  refreshSidebar();
+  return conn;
+}
