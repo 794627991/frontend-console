@@ -897,14 +897,22 @@
   .bc-kp-mode:hover { border-color: var(--accent); color: var(--accent); }
   .bc-kp-mode.active { border-color: var(--accent); color: var(--accent); font-weight: 600; }
   .bc-keypad {
-    display: grid; grid-template-columns: repeat(10, 1fr); gap: 4px;
-    flex: 1 1 340px; min-width: 300px;
+    display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px;
   }
   .bc-key {
     border: 1px solid var(--border); border-radius: 5px; background: var(--bg-input);
     color: var(--fg); font-family: var(--font-mono); font-size: 12px;
     text-align: center; padding: 7px 0; cursor: pointer; user-select: none;
     transition: border-color .1s, color .1s;
+  }
+  /* 数字/字母键微亮底色——数字区一眼可辨（学官方数字区与功能区分色） */
+  .bc-key[data-bc-key="7"], .bc-key[data-bc-key="8"], .bc-key[data-bc-key="9"],
+  .bc-key[data-bc-key="4"], .bc-key[data-bc-key="5"], .bc-key[data-bc-key="6"],
+  .bc-key[data-bc-key="1"], .bc-key[data-bc-key="2"], .bc-key[data-bc-key="3"],
+  .bc-key[data-bc-key="0"], .bc-key[data-bc-key="."],
+  .bc-key[data-bc-key="A"], .bc-key[data-bc-key="B"], .bc-key[data-bc-key="C"],
+  .bc-key[data-bc-key="D"], .bc-key[data-bc-key="E"], .bc-key[data-bc-key="F"] {
+    background: var(--bg-card);
   }
   .bc-key:hover { border-color: var(--accent); color: var(--accent); }
   .bc-key-dim { visibility: hidden; border: none; background: none; padding: 7px 0; }

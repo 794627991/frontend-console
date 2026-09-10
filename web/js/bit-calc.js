@@ -409,32 +409,39 @@ function buildBitCalcTab() {
   });
 
   // ---- 点按键盘：按钮插入表达式框光标处（与手动输入共用同一条求值链，零重复逻辑）。
-  // 排布学 Windows 官方计算器（截图 1.png 实测布局）：
-  //   5 列——CE/⌫ 占顶行 | 数字 7/8/9、4/5/6、1/2/3、+/-与0 严格九宫格 | 运算符独占右列
-  // 两模式切换（官方同款 HEX/DEC 分法）：
-  //   HEX 程序员：A–F 独立一行 + 位运算行（& | ^ ~ << >>），整数域
-  //   DEC 科学：小数点 + ^ 乘方 + 函数行（sqrt log ln），小数域
+  // 排布规则（对照官方计算器实拍修复 v3 的阶梯错位/空槽/缺 0）：
+  //   6 列网格，数字 7-8-9/4-5-6/1-2-3 与 0/. 严格同列对齐（列 3-5，官方九宫格）；
+  //   四则 ÷ × − + 独占右列（列 6）；位运算/函数独占左列（列 1）；
+  //   顶行 CE/⌫/括号/%/±；A–F 独占一行（HEX），DEC 同一行换函数。
+  //   键帽显示字符与实际插入 token 分离（÷→/ ×→* −→- ±→-），映射表 KP_TOK。
+  //   模式切换键盘内容跟着换——不出现"DEC 高亮还摆着 A–F"的错配。
+  const KP_TOK = { '÷':'/', '×':'*', '−':'-', '+':'+', '%':'%', '^':'^',
+                   '(':null, ')':null, '.':'.', '±':'-' };   // null=原样插入
   const KEYPADS = {
-    hex: [
-      ['CE','⌫','(','','A','B','C','D','E','F'],
-      ['&','|','^','~','<<','>>','%','7','8','9'],
-      ['+','-','*','/','(','','4','5','6',')'],
-      ['=','','','','','1','2','3',''],
+    hex: [   // 程序员：行2 字母 A–F 满行；行3-5 左列位运算 + 数字九宫格 + 右列四则
+      ['CE','⌫','(',')','%','±'],
+      ['A','B','C','D','E','F'],
+      ['&','7','8','9','÷','<<'],
+      ['|','4','5','6','×','>>'],
+      ['^','1','2','3','−','='],
+      ['~','0','','','+',''],
     ],
-    dec: [
-      ['CE','⌫','(','','sqrt','(','','log','ln','('],
-      ['^','','','','%','','','','',''],
-      ['+','-','*','/','(','','4','5','6',')'],
-      ['=','.','','','0','1','2','3',''],
+    dec: [   // 科学：行2 换函数（带开括号）；行3-5 左列留空保持数字区不挪位
+      ['CE','⌫','(',')','%','±'],
+      ['sqrt(','log(','ln(','(',')','^'],
+      ['','7','8','9','÷',''],
+      ['','4','5','6','×',''],
+      ['','1','2','3','−','='],
+      ['','0','.','','+',''],
     ],
   };
-  // ↑ 数字 7-9 / 4-6 / 1-3 对齐 8/9/10 列，0 顶在 1 下方（官方九宫格观感）；
-  //   函数键带开括号（sqrt( 一按一个），空槽渲染占位保持网格不塌。
   const keypad = wrap.querySelector('[data-bc-keypad]');
   const kpRender = () => {
     keypad.innerHTML = KEYPADS[kpMode].flatMap((row, r) => row.map((k, c) => {
       if (!k) return `<div class="bc-key bc-key-dim"></div>`;
-      return `<div class="bc-key" data-bc-key="${esc(k)}" style="grid-row:${r+1};grid-column:${c+1};">${esc(k)}</div>`;
+      // 键帽显示去尾巴：sqrt( → sqrt；插入仍带开括号（data-bc-key 存原值）
+      const disp = k.endsWith('(') ? k.slice(0, -1) : k;
+      return `<div class="bc-key" data-bc-key="${esc(k)}" title="插入 ${esc(k)}" style="grid-row:${r+1};grid-column:${c+1};">${esc(disp)}</div>`;
     }).join('')).join('');
   };
   kpRender();
@@ -447,6 +454,7 @@ function buildBitCalcTab() {
       wrap.querySelectorAll('[data-bc-kmode]').forEach(b => b.classList.toggle('active', b === btn));
       exprInp.placeholder = exprPh[kpMode];
       exprRes.textContent = '';
+      kpRender();   // 键盘内容跟模式换（v3 的错配：DEC 高亮还摆着 A–F——实锤）
     };
   });
   keypad.addEventListener('click', e => {
@@ -465,8 +473,9 @@ function buildBitCalcTab() {
       return;
     }
     if (k === '=') { doEval(); return; }
-    // 运算符/函数两侧留空格（可读性）；数字/字母/点/括号直接贴
-    const tok = /[0-9a-fA-F.()]/.test(k) ? k : ' ' + k + ' ';
+    // 插入 token：KP_TOK 有映射用映射；括号/点/数字/字母直接贴；其余运算符两侧留空格
+    let tok = Object.prototype.hasOwnProperty.call(KP_TOK, k) ? KP_TOK[k] : null;
+    if (tok === null) tok = /[0-9a-fA-F.()]/.test(k) ? k : ' ' + k + ' ';
     const p = exprInp.selectionStart ?? exprInp.value.length;
     exprInp.setRangeText(tok, p, p, 'end');
   });
