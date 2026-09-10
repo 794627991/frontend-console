@@ -197,27 +197,32 @@ function buildBitCalcTab() {
             <div class="bc-keypad" data-bc-keypad></div>
           </div>
           <div class="bc-side">
-            <!-- 时间戳换算：Unix 秒/毫秒/0x → 本地+UTC+相对；datetime-local 反向出三形态 -->
+            <!-- 时间戳/历史共用一框双 sheet：同时只显示一个，内容再多也不会
+                 双双拉满把下方文件哈希挤走（用户实锤布局问题） -->
             <div class="bc-box">
-              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                <span class="bc-box-title">⏱ 时间戳</span>
-                <input class="bc-expr" data-bc-ts-in placeholder="Unix 秒 / 毫秒 / 0x 时间戳" spellcheck="false" style="flex:1;min-width:150px;">
-                <button class="lv-btn" data-bc-ts-now title="取当前时间戳（秒）">现在</button>
+              <div class="bc-sheets">
+                <div class="bc-sheet-tab active" data-bcsheet="ts">⏱ 时间戳</div>
+                <div class="bc-sheet-tab" data-bcsheet="hist">🕘 历史</div>
+                <span style="flex:1"></span>
+                <button class="lv-btn" data-bc-hist-clear title="清空全部历史" style="display:none;">清空</button>
               </div>
-              <div class="bc-ts-out" data-bc-ts-out></div>
-              <div style="display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap;">
-                <span style="color:var(--muted);font-size:11px;">反向</span>
-                <input type="datetime-local" class="bc-dt" data-bc-ts-dt step="1">
+              <!-- 时间戳 sheet：Unix 秒/毫秒/0x → 本地+UTC+相对；datetime-local 反向出三形态 -->
+              <div class="bc-sheet-pane active" data-bcsheet-pane="ts">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                  <input class="bc-expr" data-bc-ts-in placeholder="Unix 秒 / 毫秒 / 0x 时间戳" spellcheck="false" style="flex:1;min-width:150px;">
+                  <button class="lv-btn" data-bc-ts-now title="取当前时间戳（秒）">现在</button>
+                </div>
+                <div class="bc-ts-out" data-bc-ts-out></div>
+                <div style="display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap;">
+                  <span style="color:var(--muted);font-size:11px;">反向</span>
+                  <input type="datetime-local" class="bc-dt" data-bc-ts-dt step="1">
+                </div>
+                <div class="bc-ts-out" data-bc-ts-rev></div>
               </div>
-              <div class="bc-ts-out" data-bc-ts-rev></div>
-            </div>
-            <!-- 计算历史：= 成功即记录，点击条目回填表达式（持久化 config，重启不丢） -->
-            <div class="bc-box">
-              <div style="display:flex;align-items:center;gap:8px;">
-                <span class="bc-box-title" style="flex:1;">🕘 历史</span>
-                <button class="lv-btn" data-bc-hist-clear title="清空全部历史">清空</button>
+              <!-- 历史 sheet：= 成功即记录，点击条目回填表达式（持久化 config，重启不丢） -->
+              <div class="bc-sheet-pane" data-bcsheet-pane="hist">
+                <div class="bc-hlist" data-bc-hist-list></div>
               </div>
-              <div class="bc-hlist" data-bc-hist-list></div>
             </div>
           </div>
         </div>
@@ -510,6 +515,18 @@ function buildBitCalcTab() {
     if (tok === null) tok = /[0-9a-fA-F.()]/.test(k) ? k : ' ' + k + ' ';
     const p = exprInp.selectionStart ?? exprInp.value.length;
     exprInp.setRangeText(tok, p, p, 'end');
+  });
+
+  // ---- 时间戳/历史双 sheet 切换（同时只显示一个——两块都拉满曾把文件哈希挤走）----
+  const histClearBtn = wrap.querySelector('[data-bc-hist-clear]');
+  wrap.querySelectorAll('[data-bcsheet]').forEach(tab => {
+    tab.onclick = () => {
+      wrap.querySelectorAll('[data-bcsheet]').forEach(t => t.classList.toggle('active', t === tab));
+      const s = tab.dataset.bcsheet;
+      wrap.querySelectorAll('[data-bcsheet-pane]').forEach(p =>
+        p.classList.toggle('active', p.dataset.bcsheetPane === s));
+      histClearBtn.style.display = s === 'hist' ? '' : 'none';   // 清空按钮只归历史 sheet
+    };
   });
 
   // ---- 时间戳换算：程序员向——秒/毫秒/0x 自动识别 → 本地/UTC/相对时间；反向 datetime 出三形态 ----

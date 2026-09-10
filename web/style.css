@@ -925,6 +925,16 @@
     background: var(--bg-card);
   }
   .bc-box-title { font-weight: 600; font-size: 12px; }
+  .bc-sheets { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
+  .bc-sheet-tab {
+    font-size: 11px; font-weight: 600; color: var(--muted); cursor: pointer;
+    padding: 3px 10px; border-radius: 10px; border: 1px solid transparent;
+    transition: color .1s, border-color .1s;
+  }
+  .bc-sheet-tab:hover { color: var(--accent); }
+  .bc-sheet-tab.active { color: var(--accent); border-color: var(--accent); }
+  .bc-sheet-pane { display: none; }
+  .bc-sheet-pane.active { display: block; }
   .bc-ts-out { margin-top: 8px; font-family: var(--font-mono); line-height: 1.8; }
   .bc-dt { background: var(--bg-input); border: 1px solid var(--border); border-radius: 5px;
     color: var(--fg); font-family: var(--font-mono); font-size: 12px; padding: 4px 8px;
