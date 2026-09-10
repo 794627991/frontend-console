@@ -9,6 +9,8 @@ async function connectClaude(opts = {}) {
   // resume='__picker__' 是侧栏兼容哨兵：不带会话 id 启动 claude，进 TUI 后
   // 自动敲 /resume 让用户在 claude 自带的会话选择界面里挑（不直连具体会话）
   const pickerMode = opts.resume === '__picker__';
+  // 任务型通知：claude 启动有 spawn + ConPTY 初始化等待
+  const nid = notifyTask({type:'claude', title:'正在启动 claude', detail: opts.cwd ? opts.cwd : '新会话'});
   try {
     // 工具壳体是亮色主题时，让本会话 claude 也用 light 主题（后端经 --settings
     // 注入，只作用于该进程，不写配置文件、不影响其他终端的会话）
@@ -22,8 +24,8 @@ async function connectClaude(opts = {}) {
     const j = await r.json();
     if (!j.ok) {
       // claude CLI 缺失 → 弹安装引导窗（联网/离线双通道），不再只弹 banner
-      if (j.err && j.err.includes('未检测到 claude')) { openClaudeSetup(); return j; }
-      showBanner(j.err || 'claude 启动失败', 6000, true); return j;
+      if (j.err && j.err.includes('未检测到 claude')) { notifyTaskDone(nid, {ok:false, title:'claude 未安装', detail:'已弹安装引导'}); openClaudeSetup(); return j; }
+      notifyTaskDone(nid, {ok:false, title:'claude 启动失败', detail:j.err || '未知错误', ms:6000}); return j;
     }
     const portId = j.port_id;
     // tab 结构与其他类型统一：led（进程状态灯）+ 图标 + 文字；emoji 不再塞 label
@@ -38,6 +40,7 @@ async function connectClaude(opts = {}) {
     refreshSidebar();
     refreshGlobalStatus();
     showBanner(j.msg || 'claude 已启动');
+    notifyTaskDone(nid, {ok:true, title:'claude 已启动', detail:label});
     // 新开/恢复 claude 会话后立即聚焦终端：用户打开就是为了输入，不想先点一下
     // switchTab 里已有 term.focus()，但 claude TUI 启动时 ConPTY 输出会触发
     // xterm 内部重新渲染/滚动，可能再次夺走焦点——延迟再抢一次，确保落在输入框
@@ -60,7 +63,7 @@ async function connectClaude(opts = {}) {
     // 「自己 /resume 选会话」的原生流程：侧栏/快捷打开不再直连具体会话）
     return j;
   } catch(e) {
-    showBanner('claude 启动请求失败: ' + e, 5000, true);
+    notifyTaskDone(nid, {ok:false, title:'claude 启动请求失败', detail:String(e), ms:6000});
     return {ok: false};
   }
 }

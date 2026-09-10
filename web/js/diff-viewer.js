@@ -97,10 +97,13 @@ async function buildDiffViewerTab(aPath, bPath) {
       switchTab(pid); return;
     }
   }
+  // 任务型通知：文本对比读文件（两份并行），多任务并发各自一条冒泡
+  const aName0 = aPath.split(/[\\/]/).pop(), bName0 = bPath.split(/[\\/]/).pop();
+  const nid = notifyTask({type:'diff', title:'正在对比', detail:`${aName0} ↔ ${bName0}`});
   // 读取两份（并行）
   const [a, b] = await Promise.all([_diffReadFile(aPath), _diffReadFile(bPath)]);
-  if (a.err) { showBanner('对比失败，A 文件读取：' + a.err, 5000, true); return; }
-  if (b.err) { showBanner('对比失败，B 文件读取：' + b.err, 5000, true); return; }
+  if (a.err) { notifyTaskDone(nid, {ok:false, title:'对比失败', detail:'A 文件读取：' + a.err, ms:6000}); return; }
+  if (b.err) { notifyTaskDone(nid, {ok:false, title:'对比失败', detail:'B 文件读取：' + b.err, ms:6000}); return; }
   const aName = a.name, bName = b.name;
   const label = aName === bName ? `${aName}（对比）` : `${aName} ↔ ${bName}`;
   const portId = 'diff:' + aPath + '|' + bPath + ':' + Date.now();
@@ -159,7 +162,7 @@ async function buildDiffViewerTab(aPath, bPath) {
   try {
     monaco = await monacoInit();
   } catch (e) {
-    showBanner('Monaco 加载失败，无法对比：' + e, 6000, true);
+    notifyTaskDone(nid, {ok:false, title:'对比失败', detail:'Monaco 加载失败：' + e, ms:6000});
     _edCloseNow(conn);
     return;
   }
@@ -260,6 +263,7 @@ async function buildDiffViewerTab(aPath, bPath) {
     }
   });
 
+  notifyTaskDone(nid, {ok:true, title:'对比已打开', detail:label});
   switchTab(portId);
   refreshSidebar();
   // 记入最近打开

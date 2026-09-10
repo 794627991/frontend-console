@@ -14,10 +14,95 @@ let aiSse = null;
 // banner 已改右下角悬浮冒泡，不占布局空间，无需再重 fit 终端。
 // （保留函数引用兼容旧调用点。）
 function refitAllTerms() {}
+
+// ============================================================
+// 通知栈（v1.1.2）：右下角向上堆叠的多条冒泡，支持并发长任务各自一条。
+// 旧 showBanner(msg,ms,isErr) 是单例 DOM，多个并发操作互相覆盖——多个 SSH
+// 同时快捷打开时只剩最后一条。任务型 API：
+//   const nid = notifyTask({icon, title, detail})      → 进行中（转圈）
+//   notifyTaskDone(nid, {ok, title, detail, ms})       → ✓/✗ 后自动消失
+//   notifyPop(msg, ms, isErr)                          → 普通一次性冒泡（等价旧 showBanner）
+// 样式见 style.css .notify-* 区块；栈容器 #notifyStack 动态创建不占布局。
+// ============================================================
+function _notifyStack() {
+  let el = document.getElementById('notifyStack');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'notifyStack';
+    document.body.appendChild(el);
+  }
+  return el;
+}
+const _NOTIFY_ICON = { ssh: '🔗', serial: '🔌', telnet: '🖥', file: '📄', diff: '⚖', hex: '🧮', log: '📜', claude: '🤖', generic: '⚙' };
+
+function _notifyBuild(o) {
+  const d = document.createElement('div');
+  d.className = 'notify' + (o.isErr ? ' err' : '');
+  const icon = o.icon || _NOTIFY_ICON[o.type] || _NOTIFY_ICON.generic;
+  d.innerHTML = `
+    <span class="n-ico">${icon}</span>
+    <div class="n-body">
+      <div class="n-title">${esc(o.title || '')}</div>
+      ${o.detail ? `<div class="n-detail">${esc(o.detail)}</div>` : ''}
+    </div>
+    <span class="n-state"></span>
+    <span class="n-close" title="关闭">✕</span>
+  `;
+  return d;
+}
+function _notifyMount(d, ms) {
+  const stack = _notifyStack();
+  stack.appendChild(d);
+  // 入场动画（CSS .notify 定义）后自动消失（ms=0 常驻，由任务完成时关闭）
+  if (ms) {
+    d._timer = setTimeout(() => _notifyDismiss(d), ms);
+  }
+  return d;
+}
+function _notifyDismiss(d) {
+  if (d._timer) { clearTimeout(d._timer); d._timer = null; }
+  if (d._closed) return;
+  d._closed = true;
+  d.classList.add('out');
+  setTimeout(() => d.remove(), 200);   // 等 slide-out 动画
+}
+
+// 任务型：发起（进行中，转圈）→ 返回 nid
+function notifyTask({type, icon, title, detail}) {
+  const d = _notifyBuild({icon, type, title, detail});
+  d.querySelector('.n-state').innerHTML = '<span class="n-spin"></span>';
+  d.querySelector('.n-close').onclick = () => _notifyDismiss(d);
+  _notifyMount(d, 0);   // 常驻直到 done
+  return d;
+}
+// 任务型：结束（ok=true ✓ 绿 / false ✗ 红），改状态后自动消失
+function notifyTaskDone(nid, {ok, title, detail, ms=5000}) {
+  const d = nid;
+  if (!d || d._closed) return;
+  if (title) d.querySelector('.n-title').textContent = title;
+  if (detail !== undefined) {
+    const det = d.querySelector('.n-detail');
+    if (detail) { if (!det) { const nd = document.createElement('div'); nd.className = 'n-detail'; nd.textContent = detail; d.querySelector('.n-body').appendChild(nd); } else det.textContent = detail; }
+    else if (det) det.remove();
+  }
+  const st = d.querySelector('.n-state');
+  st.innerHTML = ok ? '✓' : '✗';
+  d.classList.toggle('err', !ok);
+  d._timer = setTimeout(() => _notifyDismiss(d), ok ? Math.min(ms, 4000) : ms);
+}
+
+// 一次性冒泡（旧 showBanner 等价，但走堆叠栈不覆盖其他通知）
+function notifyPop(msg, ms=4000, isErr=false, type) {
+  const d = _notifyBuild({title: msg, isErr, type});
+  d.querySelector('.n-state').innerHTML = isErr ? '✗' : '✓';
+  d.querySelector('.n-close').onclick = () => _notifyDismiss(d);
+  _notifyMount(d, ms || 4000);
+  return d;
+}
+
+// 旧 API 兼容层：全部转发到通知栈（153 个既有调用点不动）
 function showBanner(msg, ms=4000, isErr=false) {
-  banner.textContent = msg;
-  banner.className = 'banner show' + (isErr ? ' err' : '');
-  if (ms) setTimeout(()=>{ if (banner.textContent === msg) banner.className = 'banner'; }, ms);
+  notifyPop(msg, ms, isErr);
 }
 function fmtTs(ms) {
   const d = new Date(ms);

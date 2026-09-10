@@ -655,7 +655,8 @@ function handleConnState(portId, conn, item) {
   } else if (item.state === 'up') {
     conn.discRetrying = false;
     conn.discOverlay.classList.remove('show');
-    showBanner(`${portId} ${item.detail || '重连成功'}`);
+    // 重连成功：通知栈一条 ✓（多连接并发重连互不覆盖）
+    notifyPop(`${portId} 重连成功`, 4000, false, 'ssh');
   }
 }
 
@@ -667,7 +668,7 @@ function triggerReconnect(portId, conn) {
   if (btn) { btn.textContent = '⟳ 重连中...'; btn.disabled = true; setTimeout(() => { btn.disabled = false; btn.textContent = '↻ 重连 (R)'; }, 3000); }
   fetch('/api/reconnect', {method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({port_id: portId})}).then(r => r.json()).then(j => {
-    if (!j.ok && j.err) showBanner(j.err, 5000, true);
+    if (!j.ok && j.err) notifyPop(j.err, 5000, true);
   }).catch(() => {});
 }
 

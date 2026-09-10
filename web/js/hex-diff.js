@@ -186,7 +186,8 @@ async function buildHexDiffTab(aPath, bPath) {
   const es0 = termArea.querySelector('.empty-state');
   if (es0) es0.remove();
   tabs.insertBefore(loadTab, tabs.querySelector('.tab-bar-actions'));
-  showBanner('⏳ 正在后台对比（大文件需数秒~十几秒，不影响其他操作）…', 6000);
+  // 任务型通知：二进制对比后台算（100MB 需数秒~十几秒），转圈常驻到结果出来
+  const nid = notifyTask({type:'hex', title:'正在二进制对比', detail:`${aPath.split(/[\\/]/).pop()} ↔ ${bPath.split(/[\\/]/).pop()}（后台计算，不卡其他操作）`});
 
   // 后端字节 diff
   let j;
@@ -194,8 +195,8 @@ async function buildHexDiffTab(aPath, bPath) {
     const r = await fetch('/api/bin/diff', {method:'POST',
       headers:{'Content-Type':'application/json'}, body: JSON.stringify({a: aPath, b: bPath})});
     j = await r.json();
-    if (!j.ok) { loadTab.remove(); showBanner('二进制对比失败：' + (j.err || '未知错误'), 5000, true); return; }
-  } catch(e) { loadTab.remove(); showBanner('二进制对比请求失败: ' + e, 5000, true); return; }
+    if (!j.ok) { loadTab.remove(); notifyTaskDone(nid, {ok:false, title:'二进制对比失败', detail:j.err || '未知错误', ms:6000}); return; }
+  } catch(e) { loadTab.remove(); notifyTaskDone(nid, {ok:false, title:'二进制对比请求失败', detail:String(e), ms:6000}); return; }
   loadTab.remove();   // 计算完成，临时 tab 退场，正式对比 tab 顶上
 
   const aName = (j.a || aPath).split(/[\\/]/).pop();
@@ -446,6 +447,7 @@ async function buildHexDiffTab(aPath, bPath) {
     }
   });
 
+  notifyTaskDone(nid, {ok:true, title:'二进制对比已打开', detail:label});
   switchTab(portId);
   refreshSidebar();
   if (typeof _recentAdd === 'function') _recentAdd({

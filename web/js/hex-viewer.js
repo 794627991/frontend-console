@@ -17,15 +17,17 @@ async function buildHexViewerTab(path, name) {
     const c = connections[pid];
     if (c && c.meta && c.meta.kind === 'hex' && c.hexPath === path) { switchTab(pid); return; }
   }
+  // 任务型通知：hex 打开要 meta 探测 + 首屏分块读取，大文件有等待
+  const nid = notifyTask({type:'hex', title:'正在打开 hex', detail:name});
   // meta 探测
   let size = 0, isIhex = false;
   try {
     const r = await fetch('/api/hex/meta', {method:'POST',
       headers:{'Content-Type':'application/json'}, body: JSON.stringify({path})});
     const j = await r.json();
-    if (!j.ok) { showBanner(j.err || '文件不可读', 4000, true); return; }
+    if (!j.ok) { notifyTaskDone(nid, {ok:false, title:'hex 打开失败', detail:j.err || '文件不可读', ms:5000}); return; }
     size = j.size; isIhex = j.ihex;
-  } catch(e) { showBanner('读取文件信息失败: ' + e, 4000, true); return; }
+  } catch(e) { notifyTaskDone(nid, {ok:false, title:'hex 打开失败', detail:'读取文件信息失败: ' + e, ms:5000}); return; }
 
   const portId = 'hex:' + path + ':' + Date.now();
   const tab = document.createElement('div');
@@ -152,7 +154,7 @@ async function buildHexViewerTab(path, name) {
       conn.chunkCache = new Map();   // 只读窗口模式：当前渲染窗口的字节
     }
   } catch(e) {
-    showBanner('hex 模式打开失败: ' + (e.message || e), 5000, true);
+    notifyTaskDone(nid, {ok:false, title:'hex 打开失败', detail:(e.message || e), ms:6000});
     _edCloseNow(conn);
     return;
   }
@@ -331,6 +333,7 @@ async function buildHexViewerTab(path, name) {
   conn.confirmClose = () => _hxConfirm('未保存的修改',
     `「${name}」有未保存的修改，关闭将丢失。确定关闭？`);
 
+  notifyTaskDone(nid, {ok:true, title:'hex 已打开', detail:name});
   switchTab(portId);
   conn.render();
   if (typeof _recentAdd === 'function') _recentAdd({type:'file', key:'file:'+name, label:name, data:{kind:'hex', name, path}});

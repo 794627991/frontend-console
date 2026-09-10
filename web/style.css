@@ -1691,6 +1691,47 @@
   }
   .banner.show { display: block; }
   .banner.err { border-color: var(--neon-red); color: var(--neon-red); }
+  /* 旧单例 banner 已由通知栈接管（v1.1.2），隐藏防双显示；DOM 保留兼容 index.html 引用 */
+  #banner { display: none !important; }
+
+  /* 通知栈：右下角向上堆叠的多条冒泡。并发长任务（多 SSH 同时打开、大文件
+     对比、hex 分析）各自独立一条，互不覆盖；任务结束该条自身变 ✓/✗ 消失。 */
+  #notifyStack {
+    position: fixed; right: 16px; bottom: 16px; z-index: 320;
+    display: flex; flex-direction: column-reverse; gap: 8px;
+    pointer-events: none;   /* 容器不挡点击，条目自身恢复 */
+    max-width: 420px;
+  }
+  .notify {
+    pointer-events: auto;
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 10px 12px; min-width: 220px; max-width: 420px;
+    background: var(--bg-card); border: 1px solid var(--accent);
+    border-radius: 8px; box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+    animation: notifyIn 0.18s ease-out;
+    position: relative;
+  }
+  @keyframes notifyIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+  .notify.out { opacity: 0; transform: translateX(12px); transition: all 0.18s ease-in; }
+  .notify.err { border-color: var(--neon-red); }
+  .notify .n-ico { font-size: 16px; line-height: 20px; flex: none; }
+  .notify .n-body { flex: 1; min-width: 0; }
+  .notify .n-title { font-size: 12px; color: var(--fg-bright); word-break: break-all; }
+  .notify.err .n-title { color: var(--neon-red); }
+  .notify .n-detail { font-size: 11px; color: var(--muted); margin-top: 2px; word-break: break-all; }
+  .notify .n-state { flex: none; font-size: 13px; line-height: 20px; color: var(--neon-green); }
+  .notify.err .n-state { color: var(--neon-red); }
+  .notify .n-spin {
+    display: inline-block; width: 12px; height: 12px;
+    border: 2px solid var(--border); border-top-color: var(--accent);
+    border-radius: 50%; animation: nspin 0.8s linear infinite;
+  }
+  @keyframes nspin { to { transform: rotate(360deg); } }
+  .notify .n-close {
+    flex: none; cursor: pointer; color: var(--muted);
+    font-size: 11px; line-height: 20px; padding: 0 2px;
+  }
+  .notify .n-close:hover { color: var(--fg-bright); }
 
   /* 空状态 */
   .empty-state {

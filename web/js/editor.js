@@ -771,13 +771,17 @@ function _edStateText(conn) {
 
 // ---- 打开已有文件：files/ 内按 name；外部绝对路径按 path（拖入文件，可编辑）----
 async function openEditorFile(nameOrPath) {
+  // 任务型通知：外部大文件读取有等待（网络盘/大文本），并发打开各自一条
+  const _n = nameOrPath.split(/[\\/]/).pop();
+  const nid = notifyTask({type:'file', title:'正在打开', detail:_n});
   try {
     const isExtPath = /^[a-zA-Z]:[\\/]|\\\\/.test(nameOrPath);  // Windows 绝对路径/UNC
     const r = await fetch('/api/ed/open?' + (isExtPath
       ? 'path=' + encodeURIComponent(nameOrPath)
       : 'name=' + encodeURIComponent(nameOrPath)));
     const j = await r.json();
-    if (!j.ok) { showBanner(j.err || '打开失败', 4000, true); return; }
+    if (!j.ok) { notifyTaskDone(nid, {ok:false, title:'打开失败', detail:j.err || '未知错误', ms:5000}); return; }
+    notifyTaskDone(nid, {ok:true, title:'已打开', detail:_n});
     const name = j.name || nameOrPath;
     const isNote = name.toLowerCase().endsWith('.note');
     // .note 存 JSON，.txt 存纯文本
@@ -788,7 +792,7 @@ async function openEditorFile(nameOrPath) {
     window._edLastUsedEnc = isExtPath ? (j.used_enc || null) : null;
     const _c = buildEditorTab(name, content, isExtPath ? nameOrPath : null);
     if (_c) _c.usedEnc = j.used_enc || null;
-  } catch(e) { showBanner('打开失败: ' + e, 4000, true); }
+  } catch(e) { notifyTaskDone(nid, {ok:false, title:'打开失败', detail:String(e), ms:5000}); }
 }
 
 // ---- 保存：草稿/未落盘 → tab 标题原地改名（定名即保存）；已落盘 → 覆盖保存 ----
