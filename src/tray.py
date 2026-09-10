@@ -14,8 +14,15 @@ _icon = None          # pystray.Icon 单例
 _lock = threading.Lock()
 
 
+def get_icon():
+    """当前托盘 Icon（proxy 模块 tooltip 刷新线程读用；未建返回 None）。"""
+    return _icon
+
+
 def _make_icon(window, on_quit):
-    """建托盘图标。用 app.ico 直接当托盘图标（免 PIL 重绘，ICO 自带多尺寸）。"""
+    """建托盘图标。用 app.ico 直接当托盘图标（免 PIL 重绘，ICO 自带多尺寸）。
+    菜单尾部并入 Claude Proxy 段（proxy.tray_menu_items()：额度行/启停/
+    模式/压缩/CCR，text 全传函数动态求值——启动代理前后无需重建菜单）。"""
     import pystray
     from PIL import Image
     from src.app_state import RES_DIR
@@ -36,8 +43,17 @@ def _make_icon(window, on_quit):
         except Exception:
             pass
 
+    proxy_items = []
+    try:
+        from src import proxy as _proxy
+        proxy_items = _proxy.tray_menu_items()
+    except Exception:
+        pass   # proxy 模块异常不拖累主托盘（拼积木：各段独立可用）
+
     menu = pystray.Menu(
         pystray.MenuItem("显示主窗口", show_main, default=True),   # default=True → 左键单击直接触发
+        pystray.Menu.SEPARATOR,
+        *proxy_items,
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("退出", lambda icon=None, item=None: on_quit()),
     )
