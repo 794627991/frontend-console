@@ -565,6 +565,9 @@ _quota_state = {}       # {"kind":..., "payload":..., "ts":...} 最新一次 emi
 _quota_ov = {}           # dashboard.overview 缓存（托盘菜单/tooltip 用）
 _quota_lock = threading.Lock()
 _quota = None            # LanzQuotaWorker（HAS_LANZ 且凭据存在时才建）
+_cred_cache = None       # 凭据磁盘缓存（save/clear 时刷新；status 1s 轮询
+                         # 不再每秒 load_credentials 读盘+JSON 解析）
+_cred_cached = False     # 缓存是否已初始化（None=无凭据 也是合法值）
 
 _autoswitched = False    # 工具自动改过 base_url → 退出时回滚直连
 _hr_switching = False
@@ -589,12 +592,29 @@ def _quota_emit(kind, payload):
                 _quota_ov = ov
 
 
+def _get_credentials():
+    """凭据读缓存：首次读盘，之后走内存；save/clear 时 _invalidate_cred_cache
+    刷新。status 路由 1s 被前端轮询，不能每次读盘。"""
+    global _cred_cache, _cred_cached
+    if not _cred_cached:
+        _cred_cache = lanz_quota.load_credentials(LANZ_CRED_PATH) if HAS_LANZ else None
+        _cred_cached = True
+    return _cred_cache
+
+
+def _invalidate_cred_cache(cred):
+    """save/clear 后直接写新值（免得下轮 status 又读一次盘）。"""
+    global _cred_cache, _cred_cached
+    _cred_cache = cred
+    _cred_cached = True
+
+
 def _ensure_quota_worker():
     """有凭据才建 worker（懒建，daemon 线程自动开跑）。"""
     global _quota
     if not HAS_LANZ or _quota is not None:
         return
-    cred = lanz_quota.load_credentials(LANZ_CRED_PATH)
+    cred = _get_credentials()
     if cred:
         _quota = LanzQuotaWorker(_quota_emit)
         _quota.submit_credentials(cred["username"], cred["password"])
@@ -1034,9 +1054,7 @@ def _api_status():
         qkind = _quota_state.get("kind")
         qpayload = _quota_state.get("payload")
         ov = dict(_quota_ov)
-    cred = None
-    if HAS_LANZ:
-        cred = lanz_quota.load_credentials(LANZ_CRED_PATH)
+    cred = _get_credentials()
     data = {
         "ok": True,
         "running": snap is not None,
@@ -1117,6 +1135,7 @@ def _api_credentials():
         return jsonify({"ok": False, "msg": "额度模块不可用（缺 pycryptodome）"})
     if action == "clear":
         lanz_quota.delete_credentials(LANZ_CRED_PATH)
+        _invalidate_cred_cache(None)   # 同步缓存，下轮 status 不再读盘
         _quota.clear_credentials()
         return jsonify({"ok": True, "msg": "已断开登录"})
     user = (j.get("username") or "").strip()
@@ -1124,5 +1143,6 @@ def _api_credentials():
     if not user or not pwd:
         return jsonify({"ok": False, "msg": "用户名/密码不能为空"})
     lanz_quota.save_credentials(LANZ_CRED_PATH, user, pwd)
+    _invalidate_cred_cache({"username": user, "password": pwd})
     _quota.submit_credentials(user, pwd)
     return jsonify({"ok": True, "msg": "已保存，开始登录"})

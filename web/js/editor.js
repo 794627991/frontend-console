@@ -957,6 +957,9 @@ function _edConfirm(msg) {
   });
 }
 function _edCloseNow(conn) {
+  // 面板类 tab（proxy 等）带轮询 interval：关 tab 必清（wrap 脱离 DOM 后
+  // display 残留 "flex"，面板自己的可见性检测兜不住，不清会空拉到退出）
+  if (conn.pollTimer) { clearInterval(conn.pollTimer); conn.pollTimer = null; }
   // Editor.js 实例先销毁（停掉内部 mutation 监听，防关 tab 后仍触发 onChange）
   if (conn.editor) { try { conn.editor.destroy(); } catch(e){} }
   // Monaco 同理（停掉 onDidChangeModelContent，防关 tab 后仍触发脏检测）
