@@ -1538,6 +1538,31 @@
     z-index: 6; pointer-events: none;
   }
   .screen-overlay.show { display: flex; flex-direction: column; }
+
+  /* 断连 overlay（类 MobaXterm）：连接掉线盖在终端上，按 R 立即重连 */
+  .disc-overlay {
+    position: absolute; inset: 0; display: none; z-index: 8;
+    align-items: center; justify-content: center;
+    background: rgba(8, 12, 18, 0.82); backdrop-filter: blur(2px);
+  }
+  .disc-overlay.show { display: flex; }
+  .disc-box {
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    padding: 24px 40px; border: 1px solid var(--neon-red); border-radius: 10px;
+    background: var(--bg-card); box-shadow: 0 6px 32px rgba(0,0,0,0.55);
+    animation: discIn 0.18s ease-out;
+  }
+  @keyframes discIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  .disc-icon { font-size: 34px; opacity: 0.85; }
+  .disc-title { font-size: 14px; font-weight: 600; color: var(--neon-red); letter-spacing: 0.5px; }
+  .disc-detail { font-size: 11px; color: var(--muted); max-width: 380px; text-align: center; word-break: break-all; }
+  .disc-retry {
+    margin-top: 6px; padding: 6px 22px; font-size: 12px; cursor: pointer;
+    color: var(--accent); background: transparent;
+    border: 1px solid var(--accent); border-radius: 6px;
+  }
+  .disc-retry:hover { background: rgba(0,212,255,0.12); }
+  .disc-retry:disabled { opacity: 0.5; cursor: default; }
   /* 退出全屏提示条 */
   .screen-hint {
     padding: 4px 10px; font-size: 11px; color: var(--muted);

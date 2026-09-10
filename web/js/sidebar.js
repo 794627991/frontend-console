@@ -39,6 +39,7 @@ async function _recentAdd(item) {
   } catch(e) {}
 }
 async function connectPort(port, baud) {
+  showBanner(`正在连接串口 ${port}@${baud} ...`, 0);   // 0=不自动消失，结果出来再定
   try {
     const r = await fetch('/api/connect', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({kind:'serial', port, baud})});
     const j = await r.json();
@@ -50,12 +51,16 @@ async function connectPort(port, baud) {
       refreshSidebar();
       refreshGlobalStatus();
       _recentAdd({type:'serial', key:'serial:'+port, label:`${port} @${baud}`, data:{port, baud}});
+    } else {
+      showBanner(`串口连接失败：${j.err || '未知错误'}`, 6000, true);
     }
     return j;
-  } catch(e) { return {ok: false, err: '连接请求失败：' + e}; }
+  } catch(e) { showBanner(`串口连接请求失败：${e}`, 6000, true); return {ok: false, err: '连接请求失败：' + e}; }
 }
 
 async function connectSSH(host, port, username, password, key_path) {
+  // SSH 建连最长 10s（TCP 超时）——期间右下角常驻「正在连接」，不能让用户干等无反馈
+  showBanner(`正在连接 ${username}@${host}:${port} ...`, 0);
   try {
     const r = await fetch('/api/connect', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({kind:'ssh', host, port, username, password, key_path})});
     const j = await r.json();
@@ -70,12 +75,15 @@ async function connectSSH(host, port, username, password, key_path) {
       // 密码随记录保存（本机工具、用户明确要求保存账号密码），快捷重开免重输
       _recentAdd({type:'ssh', key:`ssh:${host}:${port}:${username}`, label:`${username}@${host}:${port}`,
                   data:{host, port, username, password: password || '', key_path: key_path || ''}});
+    } else {
+      showBanner(`SSH 连接失败：${j.err || '未知错误'}`, 8000, true);
     }
     return j;
-  } catch(e) { return {ok: false, err: 'SSH 连接请求失败：' + e}; }
+  } catch(e) { showBanner(`SSH 连接请求失败：${e}`, 8000, true); return {ok: false, err: 'SSH 连接请求失败：' + e}; }
 }
 
 async function connectTelnet(host, port) {
+  showBanner(`正在连接 ${host}:${port} ...`, 0);
   try {
     const r = await fetch('/api/connect', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({kind:'telnet', host, port})});
     const j = await r.json();
@@ -89,9 +97,11 @@ async function connectTelnet(host, port) {
       refreshGlobalStatus();
       _recentAdd({type:'telnet', key:`telnet:${host}:${port}`, label:`${host}:${port}`,
                   data:{host, port}});
+    } else {
+      showBanner(`Telnet 连接失败：${j.err || '未知错误'}`, 8000, true);
     }
     return j;
-  } catch(e) { return {ok: false, err: 'Telnet 连接请求失败：' + e}; }
+  } catch(e) { showBanner(`Telnet 连接请求失败：${e}`, 8000, true); return {ok: false, err: 'Telnet 连接请求失败：' + e}; }
 }
 
 function closeConnection(portId) {
@@ -250,6 +260,14 @@ document.addEventListener('keydown', (e) => {
   const conn = connections[activePortId];
   if (!conn) return;
   const pid = activePortId;
+  // 断连 overlay 可见时按 R 立即重连（类 MobaXterm；焦点不在终端时走这里，
+  // 终端内由 xterm attachCustomKeyEventHandler 同款处理——xterm 吞按键，document 收不到）
+  if (!e.ctrlKey && !e.altKey && (e.key === 'r' || e.key === 'R') &&
+      conn.discOverlay && conn.discOverlay.classList.contains('show')) {
+    e.preventDefault();
+    triggerReconnect(pid, conn);
+    return;
+  }
   // 只在 xterm 未获焦点时拦截这些全局快捷键，避免与 xterm 输入冲突
   if (e.ctrlKey && e.key === 'End') { e.preventDefault(); jumpToBottom(pid); return; }
 });

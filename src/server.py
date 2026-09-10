@@ -114,6 +114,35 @@ def close_all_ports():
             p.close()
         _ports.clear()
 
+# ---- 每目标连接锁：防同一目标并发 connect 重入（如 SSH 10s 超时期间连点两次快捷打开）。
+# 绝不能用 _ports_lock 顶替——_ports_lock 保护 _ports 表的瞬时读写（/api/status、
+# disconnect 等都抢它），若在临界区内做阻塞连接，全局所有 API 排队等 SSH 超时，
+# 表现为「点其他快捷打开整个 UI 卡死」（铁律①流畅性事故）。
+_connecting_locks = {}          # port_id -> Lock（连接期间占位）
+_connecting_locks_guard = threading.Lock()
+
+def _acquire_connecting(port_id):
+    """登记连接占位。返回 False 表示同目标已在连接中（或已连接表已有）。"""
+    with _connecting_locks_guard:
+        lock = _connecting_locks.setdefault(port_id, threading.Lock())
+    if not lock.acquire(blocking=False):
+        return False
+    with _ports_lock:
+        if port_id in _ports:   # 已连接：释放占位让调用方走「已连接」路径
+            lock.release()
+            _drop_connecting(port_id)
+            return False
+    return True   # 调用方连接结束后必须 _drop_connecting(port_id)
+
+def _drop_connecting(port_id):
+    """连接结束（无论成败）清占位锁。锁被持有中时只清注册表，锁对象由持有方释放。"""
+    with _connecting_locks_guard:
+        lock = _connecting_locks.get(port_id)
+        if lock is not None:
+            try: lock.release()
+            except Exception: pass
+            _connecting_locks.pop(port_id, None)
+
 # hook 到 BaseConnection.append_line：AI 全局流挂载点（猴子补丁，import 各连接类后执行）
 # 挂基类而非 SerialPort——SSHConnection 继承基类方法，挂串口类会让 SSH 输出永远不进 /api/ai/stream
 _orig_append = BaseConnection.append_line
@@ -260,16 +289,18 @@ def api_connect():
         if _get_paramiko() is None:
             return jsonify({"ok": False, "err": "paramiko 未安装，无法 SSH 连接"}), 500
         port_id = f"ssh:{host}:{port}"
-        with _ports_lock:
-            if port_id in _ports:
-                return jsonify({"ok": False, "err": f"{port_id} 已连接"})
+        # 占位防同目标重入；连接动作在锁外执行（10s 超时不再卡全局 API/其他快捷打开）
+        if not _acquire_connecting(port_id):
+            with _ports_lock:
+                if port_id in _ports:
+                    return jsonify({"ok": False, "err": f"{port_id} 已连接"}), 400
+            return jsonify({"ok": False, "err": f"{port_id} 正在连接中，请稍候"}), 400
+        try:
             try:
                 p = SSHConnection(host, port, username, password=password, key_path=key_path, port_id=port_id)
-                _ports[port_id] = p
             except Exception as e:
                 # start() 在构造内执行，_start_log 失败或后续步骤异常会留下
                 # 半构造对象（已开 SSH 会话+读线程）——必须 close 兜底，否则幽灵会话泄漏
-                _ports.pop(port_id, None)
                 try: p.close()
                 except Exception: pass
                 # 认证失败类异常：转成对用户可读的中文提示（paramiko 原始消息常为空/难懂）
@@ -296,6 +327,14 @@ def api_connect():
                 except Exception:
                     pass
                 return jsonify({"ok": False, "err": msg}), 500
+            with _ports_lock:
+                if port_id in _ports:   # 极端并发：两次同目标连接都成功了，后到者关掉
+                    try: p.close()
+                    except Exception: pass
+                    return jsonify({"ok": False, "err": f"{port_id} 已连接"}), 400
+                _ports[port_id] = p
+        finally:
+            _drop_connecting(port_id)
         # SSH invoke_shell 自带 shell，不主动 send \r
         return jsonify({"ok": True, "port_id": port_id, "kind": "ssh",
                         "msg": f"已连接 {username}@{host}:{port}"})
@@ -306,15 +345,17 @@ def api_connect():
         if not host:
             return jsonify({"ok": False, "err": "need host"}), 400
         port_id = f"telnet:{host}:{port}"
-        with _ports_lock:
-            if port_id in _ports:
-                return jsonify({"ok": False, "err": f"{port_id} 已连接"})
+        # 占位防同目标重入；连接动作在锁外执行（同 SSH，不卡全局 API）
+        if not _acquire_connecting(port_id):
+            with _ports_lock:
+                if port_id in _ports:
+                    return jsonify({"ok": False, "err": f"{port_id} 已连接"}), 400
+            return jsonify({"ok": False, "err": f"{port_id} 正在连接中，请稍候"}), 400
+        try:
             try:
                 from .telnet_conn import TelnetConnection
                 p = TelnetConnection(host, port, port_id=port_id)
-                _ports[port_id] = p
             except Exception as e:
-                _ports.pop(port_id, None)
                 try: p.close()
                 except Exception: pass
                 msg = str(e) or e.__class__.__name__
@@ -326,6 +367,14 @@ def api_connect():
                 elif isinstance(e, ConnectionRefusedError):
                     msg = f"{host}:{port} 拒绝连接（Telnet 服务未开启）"
                 return jsonify({"ok": False, "err": msg}), 500
+            with _ports_lock:
+                if port_id in _ports:
+                    try: p.close()
+                    except Exception: pass
+                    return jsonify({"ok": False, "err": f"{port_id} 已连接"}), 400
+                _ports[port_id] = p
+        finally:
+            _drop_connecting(port_id)
         return jsonify({"ok": True, "port_id": port_id, "kind": "telnet",
                         "msg": f"已连接 {host}:{port}"})
     elif kind == "claude":
@@ -375,19 +424,29 @@ def api_connect():
         if not port or not baud:
             return jsonify({"ok": False, "err": "need port and baud"}), 400
         port_id = port
-        with _ports_lock:
-            if port_id in _ports:
-                return jsonify({"ok": False, "err": f"{port} 已连接"})
+        # 占位防同目标重入；串口 open 也可能阻塞（拔线等待），同样移出全局锁
+        if not _acquire_connecting(port_id):
+            with _ports_lock:
+                if port_id in _ports:
+                    return jsonify({"ok": False, "err": f"{port} 已连接"}), 400
+            return jsonify({"ok": False, "err": f"{port} 正在连接中，请稍候"}), 400
+        try:
             try:
                 p = SerialPort(port, baud, port_id)
-                _ports[port_id] = p
             except Exception as e:
                 # 构造内 start() 已开串口句柄/读线程，异常必须 close 兜底，
                 # 否则 COM 口被半构造对象占死，再连必 PermissionError
-                _ports.pop(port_id, None)
                 try: p.close()
                 except Exception: pass
                 return jsonify({"ok": False, "err": str(e)}), 500
+            with _ports_lock:
+                if port_id in _ports:
+                    try: p.close()
+                    except Exception: pass
+                    return jsonify({"ok": False, "err": f"{port} 已连接"}), 400
+                _ports[port_id] = p
+        finally:
+            _drop_connecting(port_id)
         # 触发提示符
         try:
             p.send_raw(b"\r")
@@ -405,6 +464,24 @@ def api_disconnect():
         p.close()
         return jsonify({"ok": True})
     return jsonify({"ok": False, "err": "未找到该串口"}), 404
+
+@app.route("/api/reconnect", methods=["POST"])
+def api_reconnect():
+    """断连 overlay 按 R：中断当前退避等待，立即触发一次重连。
+    仅对 alive（未手动断开）的连接有效；重连在后台线程执行，
+    本接口立即返回不阻塞（结果经 SSE connstate 事件推给前端）。"""
+    data = request.get_json(force=True)
+    port_id = data.get("port_id")
+    with _ports_lock:
+        p = _ports.get(port_id)
+    if not p:
+        return jsonify({"ok": False, "err": "未找到该连接"}), 404
+    if not getattr(p, "alive", False):
+        return jsonify({"ok": False, "err": "连接已手动断开，请重新建立连接"}), 400
+    triggered = p.reconnect_now() if hasattr(p, "reconnect_now") else False
+    if triggered:
+        return jsonify({"ok": True, "msg": "已触发重连"})
+    return jsonify({"ok": False, "err": "该连接不支持重连"}), 400
 
 @app.route("/api/resize", methods=["POST"])
 def api_resize():

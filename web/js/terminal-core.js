@@ -201,6 +201,13 @@ function buildTerminal(portId, meta) {
       conn.termSearchInput.focus(); conn.termSearchInput.select();
       return false;
     }
+    // 断连 overlay 可见时按 R 立即重连（终端内按键 xterm 吞掉，document 收不到——
+    // 必须在此拦截；无修饰键才触发，避免与终端内正常输入 r 冲突——overlay 只在断连时显示）
+    if (!e.ctrlKey && !e.altKey && !e.shiftKey && (e.key === 'r' || e.key === 'R') &&
+        conn.discOverlay && conn.discOverlay.classList.contains('show')) {
+      triggerReconnect(portId, conn);
+      return false;
+    }
     return true;
   });
 
@@ -311,6 +318,25 @@ function buildTerminal(portId, meta) {
     overlay.querySelector(`[data-screen-esc="${portId}"]`).onclick = () => {
       termSendRaw(portId, [3]);  // Ctrl-C 中断 top
     };
+
+    // ---- 断连 overlay（类 MobaXterm）：连接掉线时盖在终端上，按 R 立即重连 ----
+    // 后端 connstate 事件驱动（down/retrying/up）；R 键在 overlay 可见时全局生效
+    const disc = document.createElement('div');
+    disc.className = 'disc-overlay';
+    disc.innerHTML = `
+      <div class="disc-box">
+        <div class="disc-icon">📴</div>
+        <div class="disc-title">连接已断开</div>
+        <div class="disc-detail" data-disc-detail>—</div>
+        <div class="disc-actions">
+          <button class="disc-retry" data-disc-retry>↻ 重连 (R)</button>
+        </div>
+      </div>
+    `;
+    wrap.querySelector('.output-wrap').appendChild(disc);
+    conn.discOverlay = disc;
+    conn.discRetrying = false;   // retrying 状态：显示「自动重连中」但可按 R 提前
+    disc.querySelector('[data-disc-retry]').onclick = () => triggerReconnect(portId, conn);
   }
 
   // 插入 DOM
@@ -598,12 +624,51 @@ function connectSSE(portId, conn) {
         else if (item.state === 'enter') enterScreen(portId, conn);
         return;
       }
+      if (item.kind === 'connstate') {
+        handleConnState(portId, conn, item);
+        return;
+      }
     } catch(err) {}
   };
   conn.sse.onerror = () => {
     conn.sse.close();
     setTimeout(() => { if (connections[portId]) connectSSE(portId, conn); }, 2000);
   };
+}
+
+// ---- 断连状态处理：down=盖 overlay；retrying=保持盖着显示自动重连节奏；up=撤掉 ----
+function handleConnState(portId, conn, item) {
+  if (!conn.discOverlay) return;   // claude tab 无此 overlay
+  const detail = conn.discOverlay.querySelector('[data-disc-detail]');
+  if (item.state === 'down') {
+    conn.discRetrying = false;
+    conn.discOverlay.classList.add('show');
+    conn.discOverlay.querySelector('.disc-title').textContent = '连接已断开';
+    conn.discOverlay.querySelector('.disc-retry').textContent = '↻ 重连 (R)';
+    if (detail) detail.textContent = (item.detail || '') + ' · 将自动重连，也可按 R 立即重试';
+  } else if (item.state === 'retrying') {
+    // 自动重连失败：overlay 保持，告知继续重试节奏（R 仍可提前触发）
+    conn.discRetrying = true;
+    conn.discOverlay.classList.add('show');
+    conn.discOverlay.querySelector('.disc-title').textContent = '连接已断开（自动重连中）';
+    if (detail) detail.textContent = item.detail || '正在自动重试...';
+  } else if (item.state === 'up') {
+    conn.discRetrying = false;
+    conn.discOverlay.classList.remove('show');
+    showBanner(`${portId} ${item.detail || '重连成功'}`);
+  }
+}
+
+// 按 R / 点按钮触发立即重连（后端中断退避立即重试；结果经 connstate 推回）
+function triggerReconnect(portId, conn) {
+  if (!conn) conn = connections[portId];
+  if (!conn) return;
+  const btn = conn.discOverlay && conn.discOverlay.querySelector('[data-disc-retry]');
+  if (btn) { btn.textContent = '⟳ 重连中...'; btn.disabled = true; setTimeout(() => { btn.disabled = false; btn.textContent = '↻ 重连 (R)'; }, 3000); }
+  fetch('/api/reconnect', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({port_id: portId})}).then(r => r.json()).then(j => {
+    if (!j.ok && j.err) showBanner(j.err, 5000, true);
+  }).catch(() => {});
 }
 
 // ============================================================

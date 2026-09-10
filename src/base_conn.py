@@ -38,9 +38,13 @@ class BaseConnection:
         self._raw_dec = codecs.getincrementaldecoder("utf-8")(errors="replace")
         # IO 句柄（子类在 _io_open 中设置）
         self._io_handle = None
-        # 重连节奏控制：首次异常报原因，失败退避 3s 起指数翻倍至 60s
+        # 重连节奏控制：首次异常报原因，失败退避 3s 起指数翻倍至 60s；
+        # _reconn_kick 被外部（按 R）置位可中断等待立即重试
         self._reconn_first = True
         self._reconn_backoff = 3
+        self._reconn_kick = threading.Event()
+        self._reconn_lock = threading.Lock()
+        self._reconn_inflight = False
 
     # ---- IO 层：子类实现 ----
     def _io_open(self):
@@ -123,6 +127,72 @@ class BaseConnection:
                 except Exception:
                     pass
 
+    def _emit_conn_state(self, state, detail=""):
+        """推连接状态事件给前端（断连 overlay / 重连提示）。
+        state: "down"（断连，overlay 盖终端）/ "retrying"（自动重连中）/
+        "up"（重连成功，撤 overlay）。detail 为人类可读原因。"""
+        ts_ms = int(time.time() * 1000)
+        item = {"kind": "connstate", "port": self.port_id, "ts": ts_ms,
+                "state": state, "detail": detail}
+        with self.clients_lock:
+            for q in self.clients:
+                try:
+                    q.put_nowait(item)
+                except Exception:
+                    try:
+                        q.get_nowait()
+                        q.put_nowait(item)
+                    except Exception:
+                        pass
+
+    def reconnect_now(self):
+        """外部触发立即重连（前端按 R）：置 kick 事件中断当前退避等待，
+        并在独立线程跑一次重连——不阻塞 API 调用方。手动断开(alive=False)时无效。
+        返回 True 表示已触发（alive 且允许重连）。"""
+        if not self.alive:
+            return False
+        # 子类无重连语义（claude_conn 返回 False）时也允许试——统一走 _io_reconnect
+        self._reconn_kick.set()
+        threading.Thread(target=self._reconnect_once, daemon=True).start()
+        return True
+
+    def _reconnect_once(self):
+        """立即重连一次（不占用 reader 的退避节奏）：与 reader 的重连互斥靠
+        _reconn_inflight 标志——两路并发重连会交叉 close/open 同一通道，必炸。
+        reader 侧进入 _io_reconnect 前同样检查该标志（见 _reader_loop）。"""
+        with self._reconn_lock:
+            if self._reconn_inflight:
+                return
+            self._reconn_inflight = True
+        try:
+            try:
+                if self._io_reconnect():
+                    self._reconn_first = True
+                    self._reconn_backoff = 3
+                    self._emit_conn_state("up", "重连成功")
+                else:
+                    self._emit_conn_state("retrying", "重连失败，将继续自动重试")
+            except Exception as re:
+                self._emit_conn_state("retrying", f"重连失败: {re}")
+        finally:
+            self._reconn_inflight = False
+
+    def _reader_reconnect(self):
+        """reader 循环的重连入口：与手动 R 的 _reconnect_once 互斥。
+        手动重连进行中时跳过本轮（手动路径已 emit 状态，不重复）。"""
+        with self._reconn_lock:
+            if self._reconn_inflight:
+                return None   # 手动重连在跑：本轮跳过
+            self._reconn_inflight = True
+        try:
+            try:
+                return self._io_reconnect()
+            finally:
+                self._reconn_inflight = False
+        except Exception:
+            self._reconn_inflight = False
+            raise
+
     def _reader_loop(self):
         """通用读循环：取字节 → 全屏检测 → 推 raw → 切行入 buf/日志。
         IO 层由 _io_read_chunk 提供；异常由 _io_reconnect 处理。"""
@@ -177,28 +247,43 @@ class BaseConnection:
                     time.sleep(0.05)
             except Exception as e:
                 # IO 异常：持续重连直至成功或手动断开（仅 alive 时）。
-                # 首次异常报原因；后续重试不重复刷「连接异常」原文，只报重连节奏。
+                # 首次异常报原因 + 推「断连」状态给前端盖 overlay；后续重试只报节奏。
+                # 按 R 置 _reconn_kick 可随时中断退避等待立即重试。
                 if not self.alive:
                     break
                 if self._reconn_first:
                     self._reconn_first = False
                     self.append_line(f"[reader] 连接异常: {e}，开始自动重连...")
-                time.sleep(2)
+                    self._emit_conn_state("down", str(e))
+                # 可中断等待（kick 置位立即醒）
+                self._reconn_kick.wait(2)
+                self._reconn_kick.clear()
                 if not self.alive:
                     break
                 try:
-                    if self._io_reconnect():
+                    ok = self._reader_reconnect()
+                    if ok is None:
+                        # 手动 R 的重连正在跑：短等它出结果（它成功会 emit up）
+                        self._reconn_kick.wait(1)
+                        self._reconn_kick.clear()
+                    elif ok:
                         self._reconn_first = True  # 重连成功：下次异常重新报原因
+                        self._reconn_backoff = 3
                         self.append_line(f"[reader] 重连成功")
+                        self._emit_conn_state("up", "重连成功")
                     else:
                         # 子类 _io_reconnect 内部已做指数退避等待；失败后稍歇再进入下一轮，
                         # 现在读层句柄为 None 会抛 EOFError 驱回这里，重试不再中断
                         self.append_line(f"[reader] 重连失败，{self._reconn_backoff}s 后重试...")
-                        time.sleep(self._reconn_backoff)
+                        self._emit_conn_state("retrying", f"重连失败，{self._reconn_backoff}s 后自动重试（按 R 立即重连）")
+                        self._reconn_kick.wait(self._reconn_backoff)
+                        self._reconn_kick.clear()
                         self._reconn_backoff = min(self._reconn_backoff * 2, 60)
                 except Exception as re:
                     self.append_line(f"[reader] 重连失败: {re}，{self._reconn_backoff}s 后重试...")
-                    time.sleep(self._reconn_backoff)
+                    self._emit_conn_state("retrying", f"重连失败: {re}（按 R 立即重连）")
+                    self._reconn_kick.wait(self._reconn_backoff)
+                    self._reconn_kick.clear()
                     self._reconn_backoff = min(self._reconn_backoff * 2, 60)
 
     def send_raw(self, data: bytes):
