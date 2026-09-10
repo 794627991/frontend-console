@@ -9,9 +9,9 @@
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │ 前端 (pywebview/WebView2)                                    │
-│  ├─ 顶栏 [🤖 Claude] → connectClaude() → 新 tab (xterm)      │
+│  ├─ 顶栏 [Claude ★] → connectClaude() → 新 tab (xterm)        │
 │  ├─ buildTerminal 复用（meta.kind='claude'，前端链路零改动） │
-│  └─ 右面板 pane「🤖 Claude」← 5s 轮询 /api/claude/*           │
+│  └─ 右面板 pane「Claude ★」← 5s 轮询 /api/claude/*             │
 ├─────────────────────────────────────────────────────────────┤
 │ Flask 后端                                                    │
 │  ├─ /api/connect kind='claude' → ClaudeConnection            │
@@ -98,11 +98,11 @@ buildTerminal 仅两处小改（terminal-core.js）：
 | 文件 | 改动 |
 |---|---|
 | util.js sortKeyFn | `claude:` 前缀 → `[4, pid]` 新档（不改会混进 SSH 档） |
-| sidebar.js descText | isClaude 分支：`🤖 Claude · cwd尾段` |
-| index.html 顶栏 | `<button id="btnClaude">🤖 Claude</button>`（换肤左侧） |
+| sidebar.js descText | isClaude 分支：`.claude-ico`（自绘星形 SVG）+ `Claude · cwd尾段` |
+| index.html 顶栏 | `<button id="btnClaude"><span class="claude-ico"></span> Claude</button>`（换肤左侧） |
 | index.html 脚本 | `<script src="web/js/claude.js">`（init.js 前） |
 
-## 3. Claude 面板（右面板新 pane「🤖 Claude」）
+## 3. Claude 面板（右面板新 pane「Claude ★」）
 
 ### 3.1 数据源（src/claude_sessions.py，新文件）
 
@@ -147,7 +147,7 @@ index.html 加 `.panel-tab data-pane="claude"`（replay.js 通用 forEach 自动
 
 ### 第 1 期：最小闭环（内嵌终端跑真 claude）
 改动：claude_conn.py、server.py（connect 分支 + /api/resize）、claude.js、index.html、terminal-core.js、util.js、sidebar.js。前置 `pip install pywinpty`。
-**验收**：点「🤖 Claude」新 tab 跑起 CLI 可对话；中文无乱码、ANSI 正常；resize 生效不错位；`/exit` 后「进程已退出」提示、✕ 后无残留进程；未装 claude 得到中文报错（SERIAL_CLAUDE_EXE 指向不存在路径模拟）。
+**验收**：点「Claude ★」新 tab 跑起 CLI 可对话；中文无乱码、ANSI 正常；resize 生效不错位；`/exit` 后「进程已退出」提示、✕ 后无残留进程；未装 claude 得到中文报错（SERIAL_CLAUDE_EXE 指向不存在路径模拟）。
 
 ### 第 2 期：会话面板 MVP
 改动：claude_sessions.py、server.py 3 个 GET、claude.js pane 渲染、index.html pane、init.js 轮询。

@@ -33,7 +33,9 @@ function _notifyStack() {
   }
   return el;
 }
-const _NOTIFY_ICON = { ssh: '🔗', serial: '🔌', telnet: '🖥', file: '📄', diff: '⚖', hex: '🧮', log: '📜', claude: '🤖', generic: '⚙' };
+// claude 用自绘星形图标（.claude-ico 内联 SVG，与顶栏按钮/tab 同款），不用 emoji——
+// emoji 在不同系统字体下渲染不一致（Win10 是黑白轮廓），自绘 SVG 才能保品牌色 D97757。
+const _NOTIFY_ICON = { ssh: '🔗', serial: '🔌', telnet: '🖥', file: '📄', diff: '⚖', hex: '🧮', log: '📜', claude: '<span class="claude-ico"></span>', generic: '⚙' };
 
 function _notifyBuild(o) {
   const d = document.createElement('div');
