@@ -485,12 +485,60 @@ def main():
         js_api=FileBridge(),
     )
 
-    # 窗口关闭时清理所有串口
-    def on_closing():
+    # 窗口关闭：默认最小化到托盘（config close_to_tray，设置可关）；
+    # 托盘「退出」或 close_to_tray=false 才真正退出。
+    # closing 事件回调返回 False 即阻止关闭（pywebview Event 语义）。
+    _real_quit = {"flag": False}   # 托盘退出置位后放行下一次 closing
+
+    def _do_real_cleanup():
         from src.server import close_all_ports
         close_all_ports()
         clear_endpoint()
         _clean_webview_cache()
+
+    def on_closing():
+        if _real_quit["flag"]:
+            from src.tray import quit_tray
+            quit_tray()
+            _do_real_cleanup()
+            return True   # 放行：真退出
+        try:
+            from src.app_state import CONFIG_FILE
+            import json as _json
+            with open(CONFIG_FILE, encoding="utf-8") as f:
+                cfg = _json.load(f)
+            tray_enabled = cfg.get("close_to_tray", True)
+        except Exception:
+            tray_enabled = True
+        if not tray_enabled:
+            _do_real_cleanup()
+            return True
+
+        # 隐藏到托盘（先问前端要不要弹"已最小化"提示——异步 evaluate_js，
+        # 不阻塞 closing 返回 False）
+        try:
+            window.evaluate_js("window._trayNotice && window._trayNotice();")
+        except Exception:
+            pass
+        from src.tray import hide_to_tray
+        ok = hide_to_tray(
+            window,
+            on_quit=lambda: (_real_quit.update(flag=True),
+                              _try_destroy(window)),
+        )
+        return not ok   # 托盘没建起来（无托盘环境）→ 返回 True 正常退出
+
+    def _try_destroy(window):
+        """托盘「退出」：触发窗口关闭（closing 放行后走正常清理链）。"""
+        try:
+            window.show()   # destroy 对隐藏窗偶发不派发 closing——先显示
+        except Exception:
+            pass
+        try:
+            window.destroy()
+        except Exception:
+            import os
+            os._exit(0)   # 兜底：窗口已死关不掉就硬退（托盘退出必须有出口）
 
     window.events.closing += on_closing
 

@@ -54,6 +54,48 @@ $('btnHelp').onclick = () => {
     else showBanner('未找到 README.md', 3000, true);
   }).catch(() => showBanner('帮助打开失败', 3000, true));
 };
+// ---- 关闭到托盘首次提示：后端隐藏窗口前调 window._trayNotice() ----
+// 暗色模态框（铁律②不用原生弹窗），带「下次不再显示」勾选（写 config tray_prompt_shown）。
+// 注意：窗口即将 hide，弹窗在隐藏前一瞬展示——唤出时仍在（非阻塞展示，用户回来看得见）。
+window._trayNotice = async () => {
+  try {
+    const j = await (await fetch('/api/theme')).json();
+    if (j.ok && j.tray_prompt_shown) return;   // 用户已勾选不再显示
+  } catch(_) {}
+  let m = $('trayNoticeModal');
+  if (!m) {
+    m = document.createElement('div');
+    m.className = 'modal';
+    m.id = 'trayNoticeModal';
+    m.innerHTML = `
+      <div class="box" style="max-width:400px;">
+        <div class="head"><strong>已最小化到托盘</strong>
+          <div class="head-actions"><button class="btn ghost icon-btn" id="tnClose">✕</button></div></div>
+        <div style="padding:16px 20px;font-size:12px;line-height:1.7;color:var(--fg);">
+          程序没有退出——正在后台运行（终端连接 / TFTP / Claude 会话都保持）。
+          <br>单击托盘区的 <b>🤖 图标</b> 可重新打开窗口，右键托盘图标可彻底退出。
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;padding:0 20px 4px;cursor:pointer;font-size:12px;color:var(--muted);">
+          <input type="checkbox" id="tnDontShow"> 下次不再显示此提示
+        </label>
+        <div style="display:flex;gap:10px;justify-content:flex-end;padding:10px 20px 16px;">
+          <button class="btn primary" id="tnOk">知道了</button>
+        </div>
+      </div>`;
+    document.body.appendChild(m);
+    m.querySelector('#tnClose').onclick = () => m.classList.remove('show');
+    m.querySelector('#tnOk').onclick = async () => {
+      if (m.querySelector('#tnDontShow').checked) {
+        try { await fetch('/api/theme', {method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({tray_prompt_shown: true})}); } catch(_) {}
+      }
+      m.classList.remove('show');
+    };
+  }
+  m.classList.add('show');
+};
+
 _reportPerf();  // 初始化完成，上报计时
 // 轮询降载：连接增删时 refreshSidebar/refreshGlobalStatus 已被事件调用处触发，
 // 周期轮询只作兜底，全部放宽（3s→15s / 5s→30s），减少常态 HTTP + 重排叠加（输入卡顿 Contributor）

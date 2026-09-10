@@ -129,9 +129,11 @@ const _TK_OPTIONS = [
 ];
 async function _stRenderTermKeysPane(pane) {
   let tk = { right_action: 'ctrl_menu', auto_copy: false, term_font_size: 13, ui_zoom: 100 };
+  let closeToTray = true;
   try {
     const j = await (await fetch('/api/theme')).json();
     if (j.ok && j.term_keys) tk = j.term_keys;
+    if (j.ok) closeToTray = j.close_to_tray !== false;   // 缺省=开（config 旧版无此键）
   } catch(_) {}
   pane.innerHTML = `
     <div class="dd-body">
@@ -171,6 +173,14 @@ async function _stRenderTermKeysPane(pane) {
           Shift+右键 粘贴　·　Ctrl+右键 弹菜单（右键行为=ctrl_menu 时）
         </div>
       </div>
+      <div class="dd-cur" style="margin-top:8px;">
+        <div class="dd-label">关闭行为</div>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:6px;cursor:pointer;">
+          <input type="checkbox" id="tkCloseToTray" ${closeToTray ? 'checked' : ''}>
+          <span>点击窗口 ✕ 时最小化到系统托盘（单击托盘图标唤出，右键托盘可退出）</span>
+        </label>
+        <div class="dd-sub" style="margin-top:4px;">取消勾选则点 ✕ 直接退出程序。</div>
+      </div>
       <div style="margin-top:8px;">
         <button class="btn primary" id="tkSave">保存</button>
       </div>
@@ -190,10 +200,12 @@ async function _stRenderTermKeysPane(pane) {
   pane.querySelector('#tkSave').onclick = async () => {
     const ra = pane.querySelector('input[name="tkRight"]:checked');
     const ac = pane.querySelector('#tkAutoCopy').checked;
+    const ct = pane.querySelector('#tkCloseToTray').checked;
     try {
       await fetch('/api/theme', {method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({term_keys: {right_action: ra ? ra.value : 'ctrl_menu', auto_copy: ac,
-                                          term_font_size: termFontSize, ui_zoom: uiZoom}})});
+                                          term_font_size: termFontSize, ui_zoom: uiZoom},
+                              close_to_tray: ct})});
       // 已开终端连接的配置热更新（下次 contextmenu 读 conn.termKeys）
       Object.values(connections).forEach(c => {
         if (c.termKeys) {

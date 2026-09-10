@@ -26,7 +26,9 @@ a = Analysis(
         # 静态分析扫不到；claude_sessions 被 server 顶格 import 但保险起见也列上。
         # winpty 的包名与 pip 名不同（pip install pywinpty → import winpty）。
         'src.claude_conn', 'src.claude_sessions', 'winpty',
-        'src.telnet_conn'],
+        'src.telnet_conn', 'src.tray',
+        # 系统托盘（pystray 延迟导入 + PIL 子模块，静态扫描不全）
+        'pystray', 'pystray._win32', 'PIL', 'PIL.Image'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

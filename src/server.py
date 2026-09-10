@@ -567,6 +567,8 @@ def api_theme():
         return jsonify({"ok": True, "theme": cfg.get("theme", "deepblue"),
                         "data_dir_prompted": bool(cfg.get("data_dir_prompted")),
                         "calc_history": _calc_hist_clean(cfg.get("calc_history", [])),
+                        "close_to_tray": bool(cfg.get("close_to_tray", True)),
+                        "tray_prompt_shown": bool(cfg.get("tray_prompt_shown", False)),
                         "term_keys": {
                             "right_action": tk.get("right_action", "ctrl_menu"),
                             "auto_copy": bool(tk.get("auto_copy", False)),
@@ -596,6 +598,14 @@ def api_theme():
     if "calc_history" in data and isinstance(data["calc_history"], list):
         # 计算器历史持久化：[{expr, res}]，字符串白名单 + 上限 50（防 config 膨胀）
         _save_config({**_load_config(), "calc_history": _calc_hist_clean(data["calc_history"])})
+    # 关闭到托盘（close_to_tray：设置页开关）+ 首次提示已展示标记（tray_prompt_shown）
+    _tk = {}
+    if "close_to_tray" in data:
+        _tk["close_to_tray"] = bool(data["close_to_tray"])
+    if "tray_prompt_shown" in data:
+        _tk["tray_prompt_shown"] = bool(data["tray_prompt_shown"])
+    if _tk:
+        _save_config({**_load_config(), **_tk})
     theme = (data.get("theme") or "").strip()
     if theme:
         _save_config({**_load_config(), "theme": theme})
