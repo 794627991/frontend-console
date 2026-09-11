@@ -408,6 +408,10 @@ async function _edInitContent(conn, content) {
         conn.monaco = await monacoCreate(conn.holder, typeof content === 'string' ? content : '', conn.meta.label);
         conn.monaco.onDidChangeModelContent(() => { _edMarkDirty(conn); conn._edSrcVer = (conn._edSrcVer || 0) + 1; _mdRenderPreview(conn); });
         conn.monaco.onDidChangeCursorPosition(() => _edUpdateInfo(conn));
+        conn.monaco.onDidScrollChange(() => {   // 源码滚动 → 预览跟着滚
+          if (_mdRaf) return;                    // 每帧最多一次，连续滚动不挤压主线程
+          _mdRaf = requestAnimationFrame(() => { _mdRaf = 0; _mdSyncScroll(conn); });
+        });
         _mdRenderPreview(conn);
       } catch(e) {
         showBanner('Monaco 加载失败，已降级纯文本：' + e, 6000, true);
@@ -420,7 +424,11 @@ async function _edInitContent(conn, content) {
       conn.ta.spellcheck = false;
       conn.ta.value = typeof content === 'string' ? content : '';
       conn.holder.appendChild(conn.ta);
-      conn.ta.addEventListener('input', () => { _edMarkDirty(conn); conn._edSrcVer = (conn._edSrcVer || 0) + 1; });
+      conn.ta.addEventListener('input', () => { _edMarkDirty(conn); conn._edSrcVer = (conn._edSrcVer || 0) + 1; _mdRenderPreview(conn); });
+      conn.ta.addEventListener('scroll', () => {
+        if (!isMd || _mdRaf) return;
+        _mdRaf = requestAnimationFrame(() => { _mdRaf = 0; _mdSyncScroll(conn); });
+      }, { passive: true });
       conn.ta.addEventListener('keyup', () => _edUpdateInfo(conn));
       conn.ta.addEventListener('click', () => _edUpdateInfo(conn));
       if (isMd) _mdRenderPreview(conn);
@@ -1283,11 +1291,33 @@ function edJumpToHit(conn, idx) {
 // .md 实时预览（markdown-it，GitHub 20k+ star 解析器）
 // 左源码右预览分栏：ed-main 内预置 .ed-md-preview 列，编辑时同步渲染。
 // ============================================================
+// 预览占位/滚动同步所需的样式随资源域一并注入（不占 index.html 的样式入口）
+const _ED_EXTRA_CSS = `
+.ed-md-preview .md-preview-ph { color: var(--muted); font-size: 12px; padding: 12px 0; }
+`;
+if (!document.getElementById('edExtraStyle')) {
+  const _st = document.createElement('style');
+  _st.id = 'edExtraStyle';
+  _st.textContent = _ED_EXTRA_CSS;
+  document.head.appendChild(_st);
+}
+
 let _mdIt = null;   // markdown-it 实例单例（延迟建）
 function _mdInstance() {
   if (_mdIt) return _mdIt;
   // markdown-it.min.js（vendor，index.html 已引）暴露 window.markdownit
   _mdIt = window.markdownit ? window.markdownit({ html: false, linkify: true, typographer: false, breaks: false }) : null;
+  if (_mdIt) {
+    // 标题挂源码行号（token.map 起始行，转 1-based 对齐 Monaco 行号）：
+    // 滚动同步以此为锚——「源码看到第五章」才能映射成「预览跳到第五章」
+    const _def = _mdIt.renderer.rules.heading_open
+      || ((tokens, idx, opts, env, self) => self.renderToken(tokens, idx, opts));
+    _mdIt.renderer.rules.heading_open = (tokens, idx, opts, env, self) => {
+      const tk = tokens[idx];
+      if (tk.map) tk.attrSet('data-md-line', String(tk.map[0] + 1));
+      return _def(tokens, idx, opts, env, self);
+    };
+  }
   return _mdIt;
 }
 // ---- md 分屏拖拽：分隔条 col-resize，自由调节源码/预览比例 ----
@@ -1326,15 +1356,191 @@ function _mdBindSplitter(wrap) {
 function _mdRenderPreview(conn) {
   const pv = conn.wrap.querySelector('.ed-md-preview');
   if (!pv) return;
-  const md = _mdInstance();
+  _mdBindPvScroll(conn, pv);   // 预览自身滚动 → 源码跟随（只绑一次）
   const src = conn.monaco ? conn.monaco.getValue() : (conn.ta ? conn.ta.value : '');
+  const ps = pv.scrollTop, psL = pv.scrollLeft;   // 重建前的位置：重建后还原，避免预览跳回顶部
+  // 源文本无变化则纯还原滚动（拖分隔条/切大纲都走这里渲染，不该丢阅读位置）
+  if (conn._mdLastSrc === src && pv.firstChild) {
+    pv.scrollTop = ps; pv.scrollLeft = psL;
+    return;
+  }
+  const md = _mdInstance();
   if (!md) { pv.innerHTML = '<div class="md-preview-err">markdown-it 未加载（vendor/markdown-it 缺失）</div>'; return; }
-  pv.innerHTML = md.render(src || '');
-  // 锚点链接安全：内部相对链接禁跳（工具内无路由），只留外链新开
-  pv.querySelectorAll('a[href]').forEach(a => {
-    const href = a.getAttribute('href') || '';
-    if (!/^https?:/i.test(href)) { a.addEventListener('click', e => e.preventDefault()); a.title = '工具内不支持跳转内部链接'; }
+  // 高亮是异步的、图片又无固有尺寸——两者落地都会改变布局，故分两步：
+  // 先只放一行占位（同步返回，输入不卡），下一帧再贴正文并校准滚动
+  // 上一版已高亮的代码块：源码 → 高亮后的 HTML。重建后源码没变的块直接贴回结果。
+  // 原实现把整页 HTML 合成一串再去比单块，永远不相等，等于每次按键全量重高亮。
+  const prevHl = new Map();
+  pv.querySelectorAll('pre code').forEach(el => { if (el.querySelector('span')) prevHl.set(el.textContent, el.innerHTML); });
+  const raw = md.render(src || '');
+  conn._mdLastSrc = src;
+  const body = [];
+  { const t = document.createElement('div'); t.innerHTML = raw; while (t.firstChild) body.push(t.removeChild(t.firstChild)); }
+  const cs = getComputedStyle(pv);
+  const slots = Math.max(1, (src.match(/\n/g) || []).length + 1);
+  const apply = () => {
+    if (conn._mdLastSrc !== src) return;   // 已被更新的渲染取代
+    pv.innerHTML = '';
+    body.forEach(n => pv.appendChild(n));
+    // 锚点链接安全：内部相对链接禁跳（工具内无路由），只留外链新开
+    pv.querySelectorAll('a[href]').forEach(a => {
+      const href = a.getAttribute('href') || '';
+      if (!/^https?:/i.test(href)) { a.addEventListener('click', e => e.preventDefault()); a.title = '工具内不支持跳转内部链接'; }
+    });
+    if (typeof hljs !== 'undefined' && hljs.highlightElement) {
+      pv.querySelectorAll('pre code').forEach(el => {
+        const hit = prevHl.get(el.textContent);
+        if (hit != null) { el.innerHTML = hit; return; }   // 该块源码未变，直接贴回上一版高亮
+        try { hljs.highlightElement(el); } catch(_) {}
+      });
+    }
+    _mdPinBlockImages(pv);   // 图片无固有尺寸：按源码宽高比补占位框，免得读图后整页位移
+    // 内容高度变了，这一帧的同步必须放行（否则会被刚发生的按键同步的静默期挡掉）
+    conn._mdSyncAt = 0;
+    _mdSyncScroll(conn);
+    requestAnimationFrame(() => { conn._mdSyncAt = 0; _mdSyncScroll(conn); });   // 图片/高亮落地后二次校准
+  };
+  // 只有大文档才值得插占位等一帧（重排代价高，先给个接近的高度免得滚动位跳）；
+  // 小文档直接同步贴正文——原来每键都清空闪一次「渲染中…」，输入观感很差。
+  if (slots > 400) {
+    const ph = document.createElement('div');
+    ph.className = 'md-preview-ph';
+    ph.textContent = '渲染中…';
+    pv.innerHTML = '';
+    pv.appendChild(ph);
+    const need = Math.min(1.6, slots * (parseFloat(cs.lineHeight) || 21.5) / Math.max(1, pv.clientHeight));
+    if (need > 1 && pv.clientHeight) ph.style.minHeight = Math.round(pv.clientHeight * need - 24) + 'px';
+    setTimeout(apply, 0);
+  } else {
+    apply();
+  }
+}
+
+// ---- 图片占位：解码前按 width/height 属性或 alt 里 NxN 尺寸补 aspect-ratio ----
+// 设备截图/寄存器图常带尺寸标注；无尺寸的按 16:9 估，解码后自然尺寸接管（不影响最终显示）
+function _mdPinBlockImages(root) {
+  root.querySelectorAll('img').forEach(img => {
+    if (img.closest('a')) return;
+    let w = parseFloat(img.getAttribute('width')) || 0;
+    let h = parseFloat(img.getAttribute('height')) || 0;
+    if (!w || !h) {
+      const m = /(\d{2,4})\s*[x×*]\s*(\d{2,4})/.exec(img.getAttribute('alt') || '');
+      if (m) { w = +m[1]; h = +m[2]; }
+    }
+    img.style.aspectRatio = (w && h) ? (w + ' / ' + h) : '16 / 9';
+    img.style.objectFit = 'contain';
   });
+}
+
+// ---- 源码↔预览滚动同步（双向防回环）----
+// 锚点：源码标题行号（Monaco 行号 / textarea 行号）↔ 预览里对应标题元素，
+// 行号由 _mdInstance 给 heading_open 挂的 data-md-line 提供。锚点区间内线性插值，平滑不跳。
+//
+// 两条硬约束（原实现都踩了）：
+// 1) 位置一律用「相对预览内容顶（含 padding）」的坐标：anchor.offsetTop 依赖
+//    offsetParent，而 .ed-md-preview / .ed-main 都没有 position，offsetParent 会跑到
+//    更外层，算出来根本不是滚动容器的坐标 → 直接换成 clientHeight/scrollTop 自洽的算式。
+// 2) 防回环只在「程序化滚动后的极短窗口」内生效，且两个方向共用同一个窗口时间戳；
+//    原实现把 240ms 的静默期写在同步入口，用户连续滚源码时 240ms 内的滚动全被丢弃，
+//    预览只有 ~4 次/秒 → 这就是「一点不流畅」的来源。
+const _MD_SYNC_GUARD = 80;    // ms：程序化滚动后忽略反向回传的窗口，只够挡住回声，不挡用户手势
+let _mdRaf = 0;               // rAF 节流句柄：源码滚动每帧最多同步一次
+
+// 预览的 padding-top：内容偏移 A（相对内容顶）落到视口顶时，scrollTop = A + pt
+function _mdPvPad(pv) { return parseFloat(getComputedStyle(pv).paddingTop) || 0; }
+// 锚点的内容偏移：相对「预览内容顶（padding 边）」的距离，与 scrollTop 同一坐标系
+function _mdAnchorTop(a, pv, pt) {
+  return a.getBoundingClientRect().top - pv.getBoundingClientRect().top + pv.scrollTop - pt;
+}
+function _mdSyncScroll(conn) {
+  const pv = conn.wrap.querySelector('.ed-md-preview');
+  if (!pv) return;
+  if (conn._mdSyncAt && Date.now() - conn._mdSyncAt < _MD_SYNC_GUARD) return;   // 预览刚被程序化滚动，勿回灌
+  const top = _mdSrcScrollTop(conn);
+  if (top == null) return;
+  const anchors = pv.querySelectorAll('[data-md-line]');
+  const pt = _mdPvPad(pv);
+  const max = Math.max(0, pv.scrollHeight - pv.clientHeight);
+  let want;
+  if (anchors.length) {
+    const line = _mdSrcLineAtTop(conn, top);
+    // 包住当前行的区间：lo = 最后一个不晚于 line 的锚（缺省「第 1 行 / 预览顶部」）
+    let lo = 1, loY = 0, hi = line, hiY = pv.scrollHeight;
+    for (const a of anchors) {
+      const l = +a.dataset.mdLine;
+      const y = _mdAnchorTop(a, pv, pt);
+      if (l <= line) { lo = l; loY = y; }
+      else { hi = l; hiY = y; break; }
+    }
+    const span = hi - lo;
+    const off = span > 0 ? loY + (hiY - loY) * ((line - lo) / span) : loY;
+    want = off + pt;   // 内容偏移 → scrollTop
+  } else {
+    // 无标题文档：无锚点可插值，按「两边总高之比」等比映射，至少不会一滚就到底
+    const sh = _mdSrcScrollHeight(conn);
+    want = (sh > 0 ? top / sh : 0) * max;
+  }
+  const next = Math.max(0, Math.min(want, max));
+  if (Math.abs(pv.scrollTop - next) > 0.5) pv.scrollTop = next;
+  conn._mdSyncAt = Date.now();
+}
+// 源码可见区顶部对应行号。
+// Monaco 直接问可见范围（第一行），比「行高 × 行号」准——wordWrap 开着时
+// 长行占多个视觉行，按行高估会一路累积偏差，滚到文档后半段就越同步越歪。
+function _mdSrcLineAtTop(conn, top) {
+  if (conn.monaco) {
+    try {
+      const r = conn.monaco.getVisibleRanges();
+      if (r && r.length && r[0].startLineNumber) return r[0].startLineNumber;
+    } catch(_) {}
+    try { return top / (conn.monaco.getOption(monaco.editor.EditorOption.lineHeight) || 19) + 1; } catch(_) {}
+  }
+  return top / _mdLineHeight(conn) + 1;
+}
+function _mdSrcScrollTop(conn) {
+  if (conn.monaco) { try { return conn.monaco.getScrollTop(); } catch(_) { return null; } }
+  if (conn.ta) return conn.ta.scrollTop;
+  return null;
+}
+function _mdSrcScrollHeight(conn) {
+  if (conn.monaco) { try { return conn.monaco.getScrollHeight(); } catch(_) { return 0; } }
+  if (conn.ta) return conn.ta.scrollHeight;
+  return 0;
+}
+// textarea 行高：从 computed style 实读（字体/缩放随设置变），只量一次
+function _mdLineHeight(conn) {
+  if (conn._mdLh) return conn._mdLh;
+  let lh = 19;
+  try {
+    const cs = getComputedStyle(conn.ta);
+    lh = parseFloat(cs.lineHeight) || (parseFloat(cs.fontSize) * 1.5) || 19;
+  } catch(_) {}
+  return (conn._mdLh = lh);
+}
+// 预览 → 源码：在预览里滚动，源码跟到对应标题行（看图想改源码的自然诉求）
+function _mdBindPvScroll(conn, pv) {
+  if (conn._mdPvBound) return;
+  conn._mdPvBound = true;
+  let raf = 0;
+  pv.addEventListener('scroll', () => {
+    if (conn._mdSyncAt && Date.now() - conn._mdSyncAt < _MD_SYNC_GUARD) return;   // 程序化滚动回传，忽略
+    if (raf) return;   // 每帧最多定位一次，连续滚动不刷 Monaco
+    raf = requestAnimationFrame(() => {
+      raf = 0;
+      const anchors = pv.querySelectorAll('[data-md-line]');
+      if (!anchors.length) return;
+      const pt = _mdPvPad(pv);
+      let line = +anchors[0].dataset.mdLine;
+      // 视口顶下 8px 视为「已越过」该标题：锚点多为块级元素，顶部带外边距，需留余量
+      for (const a of anchors) {
+        if (_mdAnchorTop(a, pv, pt) <= pv.scrollTop - pt + 8) line = +a.dataset.mdLine;
+        else break;
+      }
+      conn._mdSyncAt = Date.now();
+      if (conn.monaco) { try { conn.monaco.revealLineNearTop(Math.max(1, line - 1), 0); } catch(_) {} }
+      else if (conn.ta) conn.ta.scrollTop = Math.max(0, (line - 2) * _mdLineHeight(conn));
+    });
+  }, { passive: true });
 }
 
 
