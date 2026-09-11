@@ -1921,9 +1921,9 @@
 .hg-side { width: 232px; min-width: 232px; display: flex; flex-direction: column;
   border-right: 1px solid var(--border); background: var(--bg-card); }
 .hg-side-head { padding: 10px; }
-.hg-new-btn { width: 100%; padding: 7px 10px; border: 1px solid var(--accent);
+.hg-new-btn { width: 100%; padding: 8px 10px; border: 1px solid var(--accent);
   background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent);
-  border-radius: 8px; font-size: 13px; cursor: pointer; }
+  border-radius: 10px; font-size: 13px; cursor: pointer; transition: background .15s; }
 .hg-new-btn:hover { background: color-mix(in srgb, var(--accent) 24%, transparent); }
 .hg-search-wrap { padding: 0 10px 8px; }
 .hg-search { width: 100%; box-sizing: border-box; padding: 5px 9px; font-size: 12px;
@@ -1931,7 +1931,7 @@
 .hg-search:focus { outline: none; border-color: var(--accent); }
 .hg-sessions { flex: 1; overflow-y: auto; padding: 0 6px 8px; }
 .hg-list-empty { padding: 16px 10px; font-size: 12px; color: var(--muted); text-align: center; }
-.hg-item { padding: 7px 9px; border-radius: 8px; cursor: pointer; margin-bottom: 2px; }
+.hg-item { padding: 8px 10px; border-radius: 10px; cursor: pointer; margin-bottom: 3px; }
 .hg-item:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .hg-item.active { background: color-mix(in srgb, var(--accent) 16%, transparent); }
 .hg-item-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
@@ -1950,7 +1950,7 @@
 .hg-item-act.del:hover { color: var(--neon-red, #e06c75); }
 
 .hg-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.hg-top { display: flex; align-items: center; gap: 8px; padding: 7px 14px;
+.hg-top { display: flex; align-items: center; gap: 8px; padding: 9px 20px;
   border-bottom: 1px solid var(--border); }
 .hg-title { font-size: 13px; font-weight: 600; color: var(--fg-bright, var(--fg));
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40%; }
@@ -1958,13 +1958,15 @@
   max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hg-top-state { font-size: 11px; color: var(--muted); flex-shrink: 0; }
 
-/* 气泡流：内容居中限宽，微信式左右气泡 */
-.hg-flow { flex: 1; overflow-y: auto; padding: 16px 0; display: flex;
-  flex-direction: column; gap: 8px; align-items: center; }
-.hg-flow > .h-msg { width: min(760px, 92%); }
-.hg-flow > .h-tool, .hg-flow > .h-tool-res { width: min(760px, 92%); max-width: none; }
+/* 气泡流：内容居中限宽，微信式左右气泡。
+   v2.2 美化：加左右留白防贴边（用户反馈「气泡顶到边界」），
+   内容列 760→820px，间距加大呼吸感 */
+.hg-flow { flex: 1; overflow-y: auto; padding: 20px 32px; display: flex;
+  flex-direction: column; gap: 12px; align-items: center; }
+.hg-flow > .h-msg { width: min(820px, 100%); }
+.hg-flow > .h-tool, .hg-flow > .h-tool-res { width: min(820px, 100%); max-width: none; }
 .hg-flow > .h-tool-res { padding-left: 10px; }
-.hg-flow > .h-raw { width: min(760px, 92%); }
+.hg-flow > .h-raw { width: min(820px, 100%); }
 .hg-welcome { margin: auto; text-align: center; color: var(--muted); }
 .hg-welcome-ico { margin-bottom: 26px; }
 .hg-welcome-ico .claude-ico.big { display: inline-block; width: 28px; height: 28px; }
@@ -1972,14 +1974,19 @@
   margin-bottom: 8px; }
 .hg-welcome-desc { font-size: 13px; line-height: 1.8; }
 
-.h-msg { max-width: 86%; }
+/* v2.2 美化：气泡更圆润（非对称大圆角、对话朝向小角），字号 13→13.5，
+   留白加大，用户气泡 accent 渐变淡光 */
+.h-msg { max-width: 88%; }
 .h-msg.user { align-self: flex-end; }
 .h-msg.asst { align-self: flex-start; }
-.h-msg .h-bubble { padding: 8px 12px; border-radius: 10px; font-size: 13px; line-height: 1.65;
+.h-msg .h-bubble { padding: 10px 14px; font-size: 13.5px; line-height: 1.7;
   overflow-x: auto; word-break: break-word; }
-.h-msg.user .h-bubble { background: color-mix(in srgb, var(--accent) 18%, var(--bg-card));
+.h-msg.user .h-bubble { border-radius: 14px 14px 4px 14px;
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg-card));
   border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border)); }
-.h-msg.asst .h-bubble { background: var(--bg-card); border: 1px solid var(--border); }
+.h-msg.asst .h-bubble { border-radius: 14px 14px 14px 4px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  box-shadow: 0 2px 10px rgba(0,0,0,.18); }
 .h-bubble p { margin: 0 0 .5em; } .h-bubble p:last-child { margin-bottom: 0; }
 .h-bubble pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
   padding: 8px 10px; overflow-x: auto; margin: .4em 0; }
@@ -2015,30 +2022,36 @@
 .h-exit { align-self: center; font-size: 11px; color: var(--muted);
   border: 1px dashed var(--border); border-radius: 6px; padding: 3px 12px; margin-top: 6px; }
 
-/* ---- 底部输入卡（ClaudeDesktop 式）---- */
-.hg-card-wrap { position: relative; padding: 8px 14px 14px; border-top: 1px solid var(--border); }
-.hg-atts { display: flex; flex-wrap: wrap; gap: 6px; max-width: 760px; margin: 0 auto 6px; }
+/* ---- 底部输入卡（ClaudeDesktop 式）----
+   v2.2 美化：限宽 760→820 与气泡列对齐；卡片加大留白、聚焦光晕阴影；
+   textarea 最小高度提升（用户反馈「聊天框有点小」） */
+.hg-card-wrap { position: relative; padding: 8px 32px 16px; border-top: 1px solid var(--border); }
+.hg-atts { display: flex; flex-wrap: wrap; gap: 6px; max-width: 820px; margin: 0 auto 8px; }
 .hg-att-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px;
   background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px;
   padding: 3px 8px; color: var(--fg); max-width: 240px; }
 .hg-att-x { border: none; background: transparent; color: var(--muted); cursor: pointer; padding: 0 2px; }
 .hg-att-x:hover { color: var(--neon-red, #e06c75); }
-.hg-input-card { max-width: 760px; margin: 0 auto; background: var(--bg-card);
-  border: 1px solid var(--border); border-radius: 14px; padding: 8px 10px 6px; }
-.hg-input-card:focus-within { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
-.hg-input { display: block; width: 100%; box-sizing: border-box; border: none; background: transparent; padding: 2px 4px;
-  color: var(--fg); font-size: 13px; line-height: 1.6; resize: none; outline: none;
-  max-height: 160px; font-family: inherit; }
-.hg-card-foot { display: flex; align-items: center; gap: 6px; padding-top: 4px; }
+.hg-input-card { max-width: 820px; margin: 0 auto; background: var(--bg-card);
+  border: 1px solid var(--border); border-radius: 16px; padding: 10px 12px 8px;
+  transition: border-color .15s, box-shadow .15s; }
+.hg-input-card:focus-within { border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent); }
+.hg-input { display: block; width: 100%; box-sizing: border-box; border: none; background: transparent; padding: 4px 6px;
+  color: var(--fg); font-size: 13.5px; line-height: 1.6; resize: none; outline: none;
+  min-height: 44px; max-height: 200px; font-family: inherit; }
+.hg-card-foot { display: flex; align-items: center; gap: 8px; padding-top: 6px; }
 .hg-chip { border: 1px solid var(--border); background: transparent; color: var(--muted);
   font-size: 11.5px; border-radius: 999px; padding: 3px 10px; cursor: pointer; white-space: nowrap; }
 .hg-chip:hover { color: var(--fg); border-color: var(--accent); }
 .hg-cost { font-size: 10.5px; color: var(--muted); font-family: var(--font-mono);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
-.hg-send { width: 30px; height: 30px; flex-shrink: 0; border-radius: 50%;
-  border: none; background: var(--accent); color: #fff; cursor: pointer;
-  font-size: 13px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; }
-.hg-send:hover { filter: brightness(1.12); }
+.hg-send { width: 32px; height: 32px; flex-shrink: 0; border-radius: 50%;
+  border: none; background: var(--accent); color: var(--on-accent, #001020); cursor: pointer;
+  font-size: 13px; line-height: 1; display: inline-flex; align-items: center; justify-content: center;
+  transition: filter .15s, transform .15s; }
+.hg-send:hover { filter: brightness(1.12); transform: scale(1.06); }
+.hg-send:active { transform: scale(.96); }
 .hg-send.stop { background: var(--neon-red, #e06c75); }
 
 /* popover（技能/模型下拉） */
@@ -2073,7 +2086,9 @@
 
 /* ---- 工具行通用升级：不再 nowrap，支持徽章+复制按钮 ---- */
 .h-tool { white-space: normal; overflow: visible; text-overflow: clip;
-  display: flex; align-items: center; gap: 6px; max-width: 86%; }
+  display: flex; align-items: center; gap: 6px; max-width: 88%;
+  border-radius: 8px; transition: border-color .15s, background .15s; }
+.h-tool:not(.col):hover { background: color-mix(in srgb, var(--accent) 5%, var(--bg-card)); }
 .h-tool .h-tool-arg { flex: 1 1 auto; min-width: 0; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; }
 .h-tool .h-tool-sec { flex-shrink: 0; color: var(--muted); opacity: .75; }
@@ -2136,9 +2151,10 @@
 .t-item .q-opt { display: inline-block; margin-left: 6px; font-size: 10.5px;
   color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 0 6px; }
 
-/* ---- thinking 折叠（源 Reasoning.tsx：流式展开、结束收起）---- */
-.h-think { align-self: flex-start; width: 86%; font-size: 12px;
-  border: 1px dashed var(--border); border-radius: 8px; overflow: hidden;
+/* ---- thinking 折叠（源 Reasoning.tsx：流式展开、结束收起）----
+   v2.2：宽度与消息列对齐（86%→88%），圆角加大 */
+.h-think { align-self: flex-start; width: 88%; font-size: 12px;
+  border: 1px dashed var(--border); border-radius: 12px; overflow: hidden;
   background: color-mix(in srgb, var(--accent) 4%, transparent); }
 .h-think-head { display: flex; align-items: center; gap: 6px; width: 100%;
   border: none; background: transparent; color: var(--muted); font-size: 11.5px;
@@ -2203,10 +2219,11 @@
 .hg-lightbox-x:hover { background: rgba(255,255,255,.22); }
 
 /* ---- 活动指示条（源 ActivityIndicator：动词轮换+计时+Stop）---- */
-.hg-activity { display: flex; align-items: center; gap: 8px; max-width: 760px;
+.hg-activity { display: flex; align-items: center; gap: 8px; max-width: 820px;
   margin: 0 auto 6px; font-size: 11.5px; color: var(--muted);
-  border: 1px solid var(--border); border-radius: 8px 8px 0 0;
-  border-bottom: none; padding: 5px 12px; background: var(--bg-card); }
+  border: 1px solid var(--border); border-radius: 10px 10px 0 0;
+  border-bottom: none; padding: 5px 12px; background: var(--bg-card);
+  width: calc(min(820px, 100%)); }
 .hg-act-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
   animation: hg-pulse 1.2s ease-in-out infinite; }
 @keyframes hg-pulse { 0%,100% { opacity: .25; transform: scale(.8); } 50% { opacity: 1; transform: scale(1.15); } }

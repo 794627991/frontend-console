@@ -904,7 +904,7 @@ function buildClaudeHarnessTab(opts = {}) {
   });
   input.addEventListener('input', () => {
     input.style.height = 'auto';
-    input.style.height = Math.min(input.scrollHeight, 160) + 'px';
+    input.style.height = Math.min(input.scrollHeight, 200) + 'px';
     renderOverlay(input.value);
     updateMention();
   });
@@ -926,7 +926,7 @@ function buildClaudeHarnessTab(opts = {}) {
       const draft = untouched ? nav.draft : value;
       _HG.histNav = { history, index: idx, draft, recalled: history[idx] };
       input.value = history[idx];
-      input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 160) + 'px';
+      input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 200) + 'px';
       renderOverlay(input.value);
       requestAnimationFrame(() => input.setSelectionRange(input.value.length, input.value.length));
       return true;
