@@ -132,6 +132,7 @@ const _HG = {
   skills: null,
   sessions: [],
   seq: 0,
+  cwd: null,            // v2.7：项目目录（新会话 cwd；null=默认 ~）
   cache: {},            // sid -> {html, seq}（气泡快照）
   sse: null,
   busy: false, alive: false,
@@ -141,12 +142,29 @@ const _HG = {
   uidN: 0,              // 无 id tool_use 的兜底计数
   run: null,            // 当前同名工具 run {name, head, rows, pending}（源 toolGrouping：run≥2 折叠）
   think: null,          // 当前 thinking 折叠 DOM {box, title, start}
+  drawer: null,         // 当前过程抽屉 {box, body, stats, counts, done, userToggled}
   histNav: null,        // 输入历史导航 {history, index, draft, recalled}
   mention: null,        // @ 引用状态 {at, files, sel}
   imgSrv: null,         // 图片服务路径标记（后端 /api/harness/img/<sid>/file）
   activity: null,       // 活动指示 {start, verbTimer, tickTimer}
   actStart: 0,
 };
+
+// ---- 抽屉：工具名 → 展示名（用户口径：bash*n read*m grep*x 编辑*y）----
+const _H_DRAWER_NAME = {
+  Bash: 'Bash', PowerShell: 'Bash',
+  Read: 'Read', Grep: 'Grep', Glob: 'Glob',
+  Edit: '编辑', MultiEdit: '编辑', NotebookEdit: '编辑',
+  Write: '新建', WebSearch: '搜索', WebFetch: '网页',
+  Agent: '子代理', Task: '子代理', Skill: '技能',
+  TodoWrite: '清单', TodoRead: '清单',
+  TaskCreate: '任务', TaskUpdate: '任务', TaskList: '任务', TaskGet: '任务',
+};
+function _hDrawerName(tool) {
+  if (_H_DRAWER_NAME[tool]) return _H_DRAWER_NAME[tool];
+  return (tool || '').indexOf('mcp__') === 0
+    ? (tool.slice(tool.lastIndexOf('__') + 2) || '工具') : (tool || '工具');
+}
 
 // ---- 输入历史（源 useInputHistory.ts：localStorage 按会话分桶，100 条/100 桶 LRU）----
 const _HG_HIST_KEY = 'hg-input-history';
@@ -199,8 +217,8 @@ function buildClaudeHarnessTab(opts = {}) {
       </div>
       <div class="hg-main">
         <div class="hg-top">
+          <span class="hg-cwd lv-btn" data-hg-cwd title="会话项目目录"></span>
           <span class="hg-title" data-hg-title>新会话</span>
-          <span class="hg-cwd lv-btn" data-hg-cwd title="会话工作目录"></span>
           <span class="hg-flex1"></span>
           <span class="hg-top-state" data-hg-state></span>
         </div>
@@ -215,6 +233,7 @@ function buildClaudeHarnessTab(opts = {}) {
             </div>
             <div class="hg-mention-drop" data-hg-mention style="display:none"></div>
             <div class="hg-card-foot">
+              <button class="hg-chip" data-hg-proj title="选择项目目录（新会话直接在该目录下打开）">📁 项目</button>
               <button class="hg-chip" data-hg-att title="添加附件（文档会以路径给模型读取）">📎 附件</button>
               <button class="hg-chip" data-hg-skill title="加载技能（插入 /技能名）">⚡ 技能 ▾</button>
               <button class="hg-chip" data-hg-model title="选择模型（对会话生效）">🧠 模型 ▾</button>
@@ -350,6 +369,49 @@ function buildClaudeHarnessTab(opts = {}) {
     wrap.appendChild(ov);
   }
 
+  // ==================== 过程抽屉（v2.7：非回答过程全部收进一个折叠抽屉）====
+  // 一轮回复里的工具调用（Bash/Read/Grep/编辑…）不再是散落消息流的独立行，
+  // 而是收进一个抽屉：组头「💻 Bash×3 · 📖 Read×5 · ✏️ 编辑×1」，busy 时自动
+  // 展开跟读、回复文本到达自动收起；点开看每条过程，单条再展开看执行详情。
+  function drawerEnsure() {
+    if (_HG.drawer) return _HG.drawer;
+    const box = document.createElement('div');
+    box.className = 'h-drawer open';
+    box.innerHTML = `<button class="h-drawer-head"><span class="h-chev">▸</span>` +
+      `<span class="h-drawer-title">执行过程</span>` +
+      `<span class="h-drawer-stats" data-hg-dstats></span>` +
+      `<span class="h-tslots" data-hg-dslots></span></button>` +
+      `<div class="h-drawer-body"></div>`;
+    const head = box.querySelector('.h-drawer-head');
+    head.onclick = () => { box.classList.toggle('open'); if (_HG.drawer) _HG.drawer.userToggled = true; };
+    addRow(box);
+    _HG.drawer = { box, body: box.querySelector('.h-drawer-body'),
+                   stats: box.querySelector('[data-hg-dstats]'),
+                   slots: box.querySelector('[data-hg-dslots]'),
+                   counts: {}, userToggled: false };
+    return _HG.drawer;
+  }
+  function drawerCount(toolName) {
+    const d = drawerEnsure();
+    const n = _hDrawerName(toolName);
+    d.counts[n] = (d.counts[n] || 0) + 1;
+    d.stats.innerHTML = Object.entries(d.counts)
+      .map(([k, v]) => `<span class="h-drawer-chip">${k}×${v}</span>`).join('');
+    scrollBottom();
+  }
+  function drawerClose(auto) {
+    const d = _HG.drawer;
+    if (!d) return;
+    _HG.drawer = null;
+    d.slots.innerHTML = '<span class="h-tbadge b-done">完成</span>';
+    // 用户手动开过不强制收；自动收只在用户在底部跟读时
+    if (auto && !d.userToggled && isNearBottom()) d.box.classList.remove('open');
+  }
+  function drawerAppend(el) {
+    drawerEnsure().body.appendChild(el);
+    scrollBottom();
+  }
+
   // ==================== 气泡基元 ====================
   function hideWelcome() {
     const w = flow.querySelector('.hg-welcome');
@@ -362,6 +424,8 @@ function buildClaudeHarnessTab(opts = {}) {
     return el;
   }
   function renderUser(text, images, files) {
+    drawerClose(false);                    // v2.7：新一轮对话，旧抽屉定稿
+    endThinking(); closeRun();
     const d = document.createElement('div');
     d.className = 'h-msg user';
     if (images?.length || files?.length) {
@@ -537,9 +601,10 @@ function buildClaudeHarnessTab(opts = {}) {
     row._id = id;
     row.dataset.tid = id;                 // 快照恢复后重扫挂 rowById 用
     _HG.rowById[id] = row;
+    drawerCount(name);                    // v2.7：计数进抽屉组头（Bash×3 · Read×5 …）
     // 分组：同名连续 run 第 2 个起并入组头（折叠类工具不参与分组——展开体互不兼容）
     if (cfg.mode === 'one-line' && toolRunPush(name, row)) return;
-    addRow(row);
+    drawerAppend(row);                    // v2.7：过程行进抽屉（不再散落消息流）
   }
 
   // 工具结果挂接（源 shouldHideToolResult：成功藏、错误永远显）
@@ -550,12 +615,12 @@ function buildClaudeHarnessTab(opts = {}) {
     if (!tr) return;
     const row = _HG.rowById[tr.tool_use_id];
     if (!row) {
-      // 无对应行（transcript 重建的孤立结果）→ 单行摘要
+      // 无对应行（transcript 重建的孤立结果）→ 单行摘要（v2.7：也进抽屉）
       const txt = resultText(tr).slice(0, 120);
       const d = document.createElement('div');
       d.className = 'h-tool-res';
       d.textContent = txt ? '↳ ' + txt.replace(/\s+/g, ' ') : '↳ (完成)';
-      addRow(d);
+      drawerAppend(d);
       return;
     }
     const cfg = row._cfg || {};
@@ -652,6 +717,14 @@ function buildClaudeHarnessTab(opts = {}) {
     _HG.activity = null;
     actEl.style.display = 'none';
   }
+  // v2.7：压缩等特殊状态覆盖活动词（word=null 恢复轮换）
+  function actWord(word) {
+    if (!actEl || actEl.style.display === 'none') return;
+    const w = actEl.querySelector('[data-hg-aw]');
+    if (!w) return;
+    if (word) { w.textContent = word; w.classList.add('hg-act-special'); }
+    else { w.textContent = _ACT_WORDS[_actWordIdx]; w.classList.remove('hg-act-special'); }
+  }
 
   // ==================== 上下文用量环（v2.3 问题4：替代金额显示）====================
   // 口径：result 事件 usage 之和（input+cache_read+cache_creation+output），
@@ -714,10 +787,14 @@ function buildClaudeHarnessTab(opts = {}) {
       const isSub = !!o.parent_tool_use_id;
       for (const b of blocks) {
         if (b.type === 'thinking' && b.thinking) { closeRun(); appendThinking(b.thinking); }
-        else if (b.type === 'text' && b.text) { endThinking(); closeRun(); renderAsst(b.text, isSub); }
+        else if (b.type === 'text' && b.text) { endThinking(); closeRun(); drawerClose(true); renderAsst(b.text, isSub); }
         else if (b.type === 'tool_use') { endThinking(); renderToolUse(b, isSub); }
       }
       scrollBottom();
+    } else if (typ === 'system' && o.subtype === 'status') {
+      // v2.7：压缩状态（实测 CLI 事件：status:"compacting" 开始 / "requesting" 恢复）
+      if (o.status === 'compacting') actWord('正在压缩上下文…');
+      else if (o.status === 'requesting' || !o.status) actWord(null);
     } else if (typ === 'user') {
       const c0 = (o.message || {}).content;
       // 用户真实消息打断工具 run；工具结果事件不动 run（rendersNothing 思想）
@@ -730,6 +807,7 @@ function buildClaudeHarnessTab(opts = {}) {
     } else if (typ === 'result') {
       endThinking();
       closeRun();
+      drawerClose(false);                 // v2.7：回复结束抽屉定稿（不自动收，用户自己看）
       // v2.3 问题4：不显示金额，显示上下文用量环（⭕ 百分比，256K 实窗口径）
       renderCtxRing(o);
       setBusy(false);
@@ -768,7 +846,7 @@ function buildClaudeHarnessTab(opts = {}) {
     saveCache();
     closePop(); closeMention();
     endThinking(); closeRun();
-    _HG.rowById = {}; _HG.uidN = 0; _HG.run = null; _HG.histNav = null;
+    _HG.rowById = {}; _HG.uidN = 0; _HG.run = null; _HG.drawer = null; _HG.histNav = null;
     _HG.sid = sid; _HG.seq = 0; _HG.alive = false;
     if (!sid) _HG.dirty = false;
     clearAtts();
@@ -803,19 +881,24 @@ function buildClaudeHarnessTab(opts = {}) {
             }
             else if (l.role === 'assistant') renderAsst(l.text);
             else if (l.role === 'tool') {   // transcript 的工具行（无 id，简单单行）
+              // v2.7：重建也走抽屉（renderUser 已把旧抽屉收尾，此处 ensureDrawer 开新抽屉；
+              // 下一条 assistant 文本会经 drawerClose 自动收）
               const d = document.createElement('div');
               d.className = 'h-tool';
               d.innerHTML = `<span class="h-tool-name">${_hToolIco(l.text)} ${esc(_hToolLabel(l.text))}</span><span class="h-tool-arg">${esc(l.summary || '')}</span>`;
-              addRow(d);
+              drawerCount(l.text);
+              drawerAppend(d);
             }
           });
+          drawerClose(false);               // transcript 末尾若挂着未收的抽屉 → 定稿收起
           setBusy(!!j.busy);
         }
       } catch(_) {}
     }
     const s = _HG.sessions.find(x => x.sid === sid);
+    // v2.7：项目优先——cwd 目录名在前（accent），claude 会话名在后
+    cwdEl.textContent = s ? (s.cwd || '').split(/[\\/]/).pop() || '~' : '';
     titleEl.textContent = (s && s.title) || '会话';
-    cwdEl.textContent = s ? (s.cwd || '').split(/[\\/]/).pop() : '';
     conn.meta.label = titleEl.textContent;
     conn.meta.cwd = (s && s.cwd) || '';
     conn.tab.querySelector('.label').textContent = titleEl.textContent;
@@ -843,22 +926,29 @@ function buildClaudeHarnessTab(opts = {}) {
   }
   function renderList() {
     const kw = (searchEl.value || '').trim().toLowerCase();
-    const items = _HG.sessions.filter(s => !kw || (s.title || '').toLowerCase().includes(kw));
-    listEl.innerHTML = items.map(s => `
-      <div class="hg-item${s.sid === _HG.sid ? ' active' : ''}" data-sid="${esc(s.sid)}" title="${esc(s.cwd || '')}">
+    const items = _HG.sessions.filter(s => !kw || (s.title || '').toLowerCase().includes(kw)
+      || (s.cwd || '').toLowerCase().includes(kw));
+    // v2.7：项目信息优先——第一行=项目目录名（cwd basename），第二行=claude 会话名 · 模型
+    listEl.innerHTML = items.map(s => {
+      const proj = (s.cwd || '').split(/[\\/]/).pop() || '~';
+      return `
+      <div class="hg-item${s.sid === _HG.sid ? ' active' : ''}" data-sid="${esc(s.sid)}" title="${esc(s.cwd || '')} · ${esc(s.title || '')}">
         <div class="hg-item-row">
-          <span class="hg-item-title">${esc(s.title || '新会话')}</span>
+          <span class="hg-item-proj">${esc(proj)}</span>
           <span class="hg-item-time">${_harnessRelTime(s.last_active)}</span>
         </div>
         <div class="hg-item-row">
-          <span class="hg-item-sub">${esc((s.cwd || '').split(/[\\/]/).pop() || '~')}${s.model ? ' · ' + esc(s.model) : ''}</span>
+          <span class="hg-item-title">${esc(s.title || '新会话')}</span>
           <span class="hg-item-acts">
             ${s.busy ? '<span class="hg-item-busy" title="回复中">●</span>' : ''}
             <button class="hg-item-act" data-act="rename" data-sid="${esc(s.sid)}" title="重命名">✎</button>
             <button class="hg-item-act del" data-act="del" data-sid="${esc(s.sid)}" title="删除会话">✕</button>
           </span>
         </div>
-      </div>`).join('') || '<div class="hg-list-empty">暂无会话</div>';
+        <div class="hg-item-row">
+          <span class="hg-item-sub">${s.model ? esc(s.model) : ''}</span>
+        </div>
+      </div>`;}).join('') || '<div class="hg-list-empty">暂无会话</div>';
   }
   listEl.addEventListener('click', async (e) => {
     const act = e.target.closest('[data-act]');
@@ -893,7 +983,7 @@ function buildClaudeHarnessTab(opts = {}) {
   async function ensureSession() {
     if (_HG.sid) return _HG.sid;
     const r = await fetch('/api/harness/connect', {method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({model: _HG.model || ''})});
+      body: JSON.stringify({model: _HG.model || '', cwd: _HG.cwd || ''})});
     const j = await r.json();
     if (!j.ok) {
       if (j.err && j.err.includes('未检测到 claude')) { openClaudeSetup(); }
@@ -1185,6 +1275,36 @@ function buildClaudeHarnessTab(opts = {}) {
     if (!e.target.closest('.hg-pop') && !e.target.closest('.hg-chip')) closePop();
   });
   if (_HG.model) q('[data-hg-model]').innerHTML = '🧠 ' + esc(_HG.model) + ' ▾';
+
+  // ==================== 项目目录（v2.7：新会话直接开在所选目录）====
+  // 原生目录选择（pywebview pick_dir 已有）；选中后影响下一个新会话——
+  // 当前会话没对话内容时立即重建（同模型 chip 语义），有内容则提示新建后生效。
+  function projChipLabel() {
+    const btn = q('[data-hg-proj]');
+    if (!btn) return;
+    btn.innerHTML = _HG.cwd
+      ? '📁 ' + esc(_HG.cwd.split(/[\\/]/).pop() || _HG.cwd)
+      : '📁 项目';
+  }
+  q('[data-hg-proj]').onclick = async () => {
+    let dir = '';
+    if (window.pywebview && pywebview.api && pywebview.api.pick_dir) {
+      dir = await pywebview.api.pick_dir() || '';
+    }
+    if (!dir) return;                     // 取消选择不动
+    _HG.cwd = dir;
+    projChipLabel();
+    if (!_HG.dirty) {
+      if (_HG.sid) {
+        fetch('/api/harness/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({sid: _HG.sid})}).catch(() => {});
+        switchTo(null);
+      }
+      showBanner('新会话将打开在 ' + dir, 2600);
+    } else {
+      showBanner('当前会话已有对话，新会话将打开在 ' + dir, 3200);
+    }
+  };
+  projChipLabel();
 
   // ==================== 自定义提示词（config.json harness_system_prompt）====
   // 每个会话进程启动时后端 --append-system-prompt 注入（新会话/复活同路径）。

@@ -1935,6 +1935,11 @@
 .hg-item:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .hg-item.active { background: color-mix(in srgb, var(--accent) 16%, transparent); }
 .hg-item-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+/* v2.7：项目名优先（第一行，accent 色），claude 会话名退居第二行 */
+.hg-item-proj { flex: 1; min-width: 0; font-size: 12.5px; font-weight: 600;
+  color: var(--fg-bright, var(--fg)); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.hg-item.active .hg-item-proj { color: var(--accent); }
 .hg-item-title { flex: 1; min-width: 0; font-size: 12.5px; color: var(--fg);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hg-item.active .hg-item-title { color: var(--fg-bright, var(--fg)); font-weight: 600; }
@@ -1970,6 +1975,29 @@
 /* v2.6：思考块入列（此前 width:88% 按 flow 全宽算，1400px 窗下 1176px，
    比 820px 气泡列长一截——用户实测「虚线比气泡长」的根因） */
 .hg-flow > .h-think, .hg-flow > .h-exit { width: min(820px, 100%); }
+/* v2.7 过程抽屉：一轮回复的非回答过程（工具行）收纳容器，消息流只留抽屉组头 */
+.hg-flow > .h-drawer { width: min(820px, 100%); align-self: center; }
+.h-drawer { border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+  background: color-mix(in srgb, var(--bg-card) 60%, transparent); }
+.h-drawer-head { display: flex; align-items: center; gap: 8px; width: 100%;
+  border: none; background: transparent; color: var(--muted); font-family: var(--font-ui);
+  font-size: 12px; padding: 7px 12px; cursor: pointer; text-align: left; }
+.h-drawer-head:hover { color: var(--fg); background: color-mix(in srgb, var(--accent) 5%, transparent); }
+.h-drawer .h-chev { transition: transform .15s; }
+.h-drawer.open .h-chev { transform: rotate(90deg); }
+.h-drawer-title { flex-shrink: 0; font-weight: 600; }
+.h-drawer-stats { flex: 1; display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.h-drawer-chip { font-size: 10.5px; font-family: var(--font-mono); color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+  border-radius: 999px; padding: 1px 7px; white-space: nowrap; }
+.h-drawer-body { padding: 4px 8px 8px;
+  display: none; flex-direction: column; gap: 6px; }
+.h-drawer.open .h-drawer-body { display: flex; }
+.h-drawer-body > .h-tool, .h-drawer-body > .h-tool-res { width: 100%; max-width: none; }
+.h-drawer-body > .h-tool-res { padding-left: 10px; }
+/* 活动词压缩覆盖态（v2.7：正在压缩上下文…高亮） */
+.hg-act-word.hg-act-special { color: var(--neon-orange, #d29922); }
 .hg-welcome { margin: auto; text-align: center; color: var(--muted); }
 .hg-welcome-ico { margin-bottom: 26px; }
 .hg-welcome-ico .claude-ico.big { display: inline-block; width: 28px; height: 28px; }
