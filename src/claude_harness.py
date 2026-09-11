@@ -211,6 +211,7 @@ class HarnessSession:
         self.model = model or None
         self.session_id = session_id or None    # claude 侧真实会话 id（复活用）
         self.title = title or ""
+        self.hidden = False     # 识图后台会话：不进会话列表（不 sync_meta）
         self.created = int(time.time() * 1000)
         self.last_active = self.created
         # ---- 运行时（进程相关，不持久化）----
@@ -234,6 +235,8 @@ class HarnessSession:
                 "created": self.created, "last_active": self.last_active}
 
     def sync_meta(self):
+        if getattr(self, "hidden", False):
+            return          # 识图后台会话不出现在用户会话列表
         with _meta_lock:
             _meta_load()
             _meta[self.sid] = self.to_meta()
@@ -417,8 +420,15 @@ class HarnessSession:
                 if not self.alive:
                     break
                 txt = line.decode("utf-8", errors="replace").strip()
-                if txt:
-                    self.emit({"kind": "raw", "text": txt})
+                if not txt:
+                    continue
+                # v2.13：CLI stderr 良性日志过滤——unrecognized_model 是 CLI
+                # 对非内置名（Lanz-*）的提醒，模型实际回退默认照常跑（实测 rc=0
+                # 输出正常）；原样 emit 成 raw 事件会在界面显示红字，用户实测
+                # 误以为是模型失效。真失效走 API 400（result 事件已有独立提示）。
+                if "unrecognized_model" in txt or "claude-code:" in txt and "warning" in txt.lower():
+                    continue
+                self.emit({"kind": "raw", "text": txt})
         except Exception:
             pass
 
