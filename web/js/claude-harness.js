@@ -258,7 +258,12 @@ function buildClaudeHarnessTab(opts = {}) {
         fileEl = q('[data-hg-file]'), overlayEl = q('[data-hg-overlay]'),
         mentionEl = q('[data-hg-mention]'), actEl = q('[data-hg-activity]');
 
-  const scrollBottom = () => { flow.scrollTop = flow.scrollHeight; };
+  const scrollBottom = () => {
+    flow.scrollTop = flow.scrollHeight;
+    // 布局二次兜底：活动指示条弹出/气泡内图片加载等会在同帧稍后改变 flow 高度，
+    // 下一帧再滚一次，保证"发送后我的消息在底部"（v2.5 用户反馈修复）
+    requestAnimationFrame(() => { flow.scrollTop = flow.scrollHeight; });
+  };
 
   // ==================== markdown / 代码块 ====================
   function codeBlockEnhance(container) {
@@ -742,7 +747,9 @@ function buildClaudeHarnessTab(opts = {}) {
       let it;
       try { it = JSON.parse(ev.data); } catch(_) { return; }
       if (it.seq && it.seq > _HG.seq) _HG.seq = it.seq;
-      if (it.kind === 'user_echo') { renderUser(it.text, it.images, it.files); setBusy(true); }
+      // v2.5：先 setBusy（弹活动指示条，改变 flow 高度）再渲染消息——
+      // 渲染内部 scrollBottom 含 rAF 二次兜底，否则指示条挤出消息导致刚发的消息不在底
+      if (it.kind === 'user_echo') { setBusy(true); renderUser(it.text, it.images, it.files); }
       else if (it.kind === 'event') handleEvent(it.data);
       else if (it.kind === 'raw') renderRaw(it.text);
       else if (it.kind === 'interrupted') { renderExit(it.text); setBusy(false); }
