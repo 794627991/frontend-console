@@ -49,6 +49,278 @@ _PROMPTS_KEY = "harness_prompts"
 _PROMPTS_LEGACY_KEY = "harness_system_prompt"
 
 
+# ---------------------------------------------------------------------------
+# 识图会话配置（v2.14）
+#   harness_vision = {enabled, model, prompt, name}
+#
+#   工具启动 claude 后，后台起一个专用会话（固定模型 + 固定名字）。识图任务
+#   由主会话经 Claude Code 原生 peer 机制（SendMessage/ListAgents）转交，结论
+#   经同通道回传。不走 MCP、不自造管道。
+#
+#   实测确认（v2.14 实现依据）：
+#   - `claude -p --input-format stream-json` 进程自动注册进 peer 网络
+#     （~/.claude/sessions/<pid>.json，带 messagingSocketPath，entrypoint=sdk-cli）
+#   - 无输入时静默待命，不烧轮次；收到 peer 消息自动触发一轮，
+#     无需 notify_when_idle。
+#   - --name 决定寻址名（支持中文），会话存活期稳定；进程退出后注册条目自动清理。
+#
+#   两个作用域各有一份提示词，都不占用户提示词列表的位置，但起同样作用：
+#   - prompt（识图侧）：告诉识图会话它是什么、怎么读图、必须用 SendMessage 回复。
+#   - 主会话侧的转交规则由 vision_bridge_text() 生成，注入每个会话。
+#   用户可改、可改回默认（reset）；留空=用默认。
+# ---------------------------------------------------------------------------
+_VISION_KEY = "harness_vision"
+VISION_DEFAULT_NAME = "识图会话"
+
+# 识图后台会话对象（单例；列表容器便于闭包内赋值）
+_vision_lock = threading.Lock()
+_vision_obj = [None]
+
+VISION_DEFAULT_PROMPT = """你是本机专用的识图会话。你没有串口/SSH 设备控制能力，唯一职责是读图并给出结论。
+
+收到其他 Claude 会话（主会话）发来的识图任务时：
+- 用 Read 工具直接读图片路径。只读图，不要调用串口、日志、TFTP 一类工具。
+- 回答「结论先行」：第一句直接给答案，再给支撑细节。不要复述你看到了什么，除非那是结论的一部分。
+- 客观描述优先于推测。看不清、被遮挡、分辨率不足、图里没有该信息，就直说「看不清 / 图中无此信息」，不要猜。
+- 提到位置时给可复核的坐标或区域描述（如「左上角状态栏第 2 行」「坐标约 (820, 340)」），方便主会话核对。
+- 多张图一起给时，明确标注每张图的结论对应哪个文件，不要把不同图的信息混成一条结论。
+- 需要跨图对比（如「这两张图的差异」）时，逐项列出差异点，不要只给笼统印象。
+- 回复必须用 SendMessage 工具发回给发件人（把来件的 from 属性作为 to）。只用普通文本输出的话，对方看不到。"""
+
+
+def _vision_default_cfg():
+    return {"enabled": False, "model": "", "prompt": VISION_DEFAULT_PROMPT,
+            "name": VISION_DEFAULT_NAME}
+
+
+def _vision_load():
+    """读识图会话配置。缺字段兜默认（老 config 升级不炸）。"""
+    cfg = _vision_default_cfg()
+    try:
+        with open(_st.CONFIG_FILE, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        raw = d.get(_VISION_KEY)
+        if isinstance(raw, dict):
+            cfg["enabled"] = bool(raw.get("enabled", False))
+            cfg["model"] = str(raw.get("model") or "").strip()
+            cfg["prompt"] = str(raw.get("prompt") or "").strip() or VISION_DEFAULT_PROMPT
+            cfg["name"] = str(raw.get("name") or "").strip() or VISION_DEFAULT_NAME
+    except Exception:
+        pass
+    return cfg
+
+
+def _vision_save(cfg):
+    """原子写识图配置（只覆盖 _VISION_KEY，其余字段保留）。"""
+    try:
+        with open(_st.CONFIG_FILE, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        if not isinstance(d, dict):
+            d = {}
+    except Exception:
+        d = {}
+    d[_VISION_KEY] = cfg
+    try:
+        tmp = _st.CONFIG_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False, indent=1)
+        os.replace(tmp, _st.CONFIG_FILE)
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
+def vision_bridge_text():
+    """生成注入每个主会话的「识图转交」引导段（识图未启用则空串）。
+
+    这是问题2 的核心：主会话默认不知道自己有识图同伴，必须显式告知——
+    告知它 peer 名叫什么、什么时候该转交、怎么转交、怎么收回结论。
+    """
+    cfg = _vision_load()
+    if not cfg["enabled"]:
+        return ""
+    name = cfg["name"]
+    return (
+        "【识图转交】\n"
+        "本机有一个专用识图会话（多模态模型），可通过 Claude Code 原生的 "
+        "ListAgents / SendMessage 工具联系，会话名是「%s」（可能带 [ref] 后缀，"
+        "照原样引用即可）。\n"
+        "你自己不具备看图能力，所以凡是需要「看图」的任务都必须转交给它：\n"
+        "- 触发场景：用户发来图片、给出图片路径让你分析、让你看截图/照片/"
+        "截图型日志/UI 截图/寄存器截图，或任何需要读取图像内容的问题。\n"
+        "- 转交方式：SendMessage 给「%s」，消息里附上图片的绝对路径 + "
+        "你想知道的具体问题。一次可以给多张图，要说清每张图各问什么。\n"
+        "- 不要加 notify_when_idle（默认行为就会等它回复）。\n"
+        "- 收回结论：它的回复会自动送达你，直接转述给用户即可，不要自己"
+        "编造图片内容。\n"
+        "- 若 ListAgents 里找不到该名字，说明识图会话没起来，如实告诉用户"
+        "去「📜 提示词 — 识图会话配置」里检查开关，不要假装看过图。\n"
+        "图片本身不需要你读取，读图是它的职责。"
+    ) % (name, name)
+
+
+def _peer_reg_path():
+    return os.path.join(os.path.expanduser("~"), ".claude", "sessions")
+
+
+def _cleanup_peer_reg(pid=None, session_id=None):
+    """清理 claude 的 peer 注册条目（~/.claude/sessions/<pid>.json）。
+
+    为什么需要：kill_proc 是强杀（proc.kill()），claude 来不及自己摘注册，
+    残留条目指向死 pid —— 之后 ListAgents 会列出幽灵会话，主会话可能把
+    识图任务发给一个不存在的 peer。所以要主动摘。
+
+    匹配按 session_id 优先（最可靠），回退按 pid。走 cmd.exe shim 时
+    proc.pid 是 cmd 的 pid、与注册表里的 claude pid 不同，单靠 pid 会漏。
+    删前先确认进程真的死了，避免误删尚在运行的会话注册。
+    """
+    d = _peer_reg_path()
+    if not os.path.isdir(d):
+        return
+    try:
+        names = os.listdir(d)
+    except OSError:
+        return
+    for fn in names:
+        if not fn.endswith(".json"):
+            continue
+        p = os.path.join(d, fn)
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                o = json.load(f)
+        except Exception:
+            continue
+        if not isinstance(o, dict):
+            continue
+        hit = (session_id and o.get("sessionId") == session_id) or \
+              (pid and o.get("pid") == pid)
+        if not hit:
+            continue
+        # 进程还活着就不动（防误删：pid 可能已被系统复用）
+        if _pid_alive(o.get("pid")):
+            continue
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+
+
+def _pid_alive(pid):
+    """跨平台判活（只读探测，不发信号）。pid 无效返回 False。"""
+    if not pid:
+        return False
+    try:
+        pid = int(pid)
+    except Exception:
+        return False
+    if os.name == "nt":
+        import ctypes
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        k32 = ctypes.windll.kernel32
+        h = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not h:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            if k32.GetExitCodeProcess(h, ctypes.byref(code)):
+                return code.value == STILL_ACTIVE
+            return False
+        finally:
+            k32.CloseHandle(h)
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _cleanup_stale_vision_peers(name):
+    """清理「同名且进程已死」的识图会话孤儿注册。
+
+    刻意只清同名条目，不做全表清理——别的条目属于用户其他 Claude 会话，
+    误删会砸掉正在用的会话。同名死条目才是真正会撞车的（新进程起来后
+    同名并存，主会话可能把识图任务发给死的那条）。
+    """
+    if not name:
+        return 0
+    d = _peer_reg_path()
+    if not os.path.isdir(d):
+        return 0
+    n = 0
+    try:
+        names = os.listdir(d)
+    except OSError:
+        return 0
+    for fn in names:
+        if not fn.endswith(".json"):
+            continue
+        p = os.path.join(d, fn)
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                o = json.load(f)
+        except Exception:
+            continue
+        if not isinstance(o, dict) or o.get("name") != name:
+            continue
+        if _pid_alive(o.get("pid")):
+            continue          # 还活着：可能是用户手动开的同名会话，不动
+        try:
+            os.remove(p); n += 1
+        except OSError:
+            pass
+    return n
+
+
+def ensure_vision_session():
+    """取（必要时新建并启动）识图后台会话。返回 HarnessSession 或 None。
+
+    独立 sid，不 sync_meta → 不出现在用户的会话列表里（是后台配角）。
+    """
+    cfg = _vision_load()
+    if not cfg["enabled"]:
+        return None
+    with _vision_lock:
+        s = _vision_obj[0]
+        if s is not None and s.alive:
+            return s
+        if s is not None:
+            try:                     # 死进程先清掉，防同名残留
+                with _sessions_lock:
+                    _sessions.pop(s.sid, None)
+                s.close()
+            except Exception:
+                pass
+        try:
+            s = HarnessSession(uuid.uuid4().hex, cwd=_st.HOME_DIR,
+                               model=cfg["model"] or None,
+                               title="识图会话", name=cfg["name"])
+            s.hidden = True          # 不 sync_meta：不进用户会话列表
+            s.is_vision = True
+            _cleanup_stale_vision_peers(cfg["name"])   # 先扫掉同名孤儿，防撞车
+            s.start()
+        except Exception:
+            _vision_obj[0] = None
+            return None
+        with _sessions_lock:
+            _sessions[s.sid] = s
+        _vision_obj[0] = s
+        return s
+
+
+def stop_vision_session():
+    """关掉识图后台会话（用户关开关/改配置时调）。"""
+    with _vision_lock:
+        s, _vision_obj[0] = _vision_obj[0], None
+    if s is not None:
+        try:
+            with _sessions_lock:
+                _sessions.pop(s.sid, None)
+            s.close()
+        except Exception:
+            pass
+
+
 def _prompts_load():
     """读 config.json 的 harness_prompts 列表。坏数据防御：过滤缺 id/text
     的条目，字段兜默认值。失败返回 []。"""
@@ -204,14 +476,16 @@ class HarnessSession:
 
     kind = "harness"
 
-    def __init__(self, sid, cwd=None, model=None, session_id=None, title=""):
+    def __init__(self, sid, cwd=None, model=None, session_id=None, title="", name=None):
         self.sid = sid
         self.port_id = "harness:" + sid[:8]
         self.cwd = cwd or os.path.expanduser("~")
         self.model = model or None
         self.session_id = session_id or None    # claude 侧真实会话 id（复活用）
         self.title = title or ""
-        self.hidden = False     # 识图后台会话：不进会话列表（不 sync_meta）
+        self.name = name or None    # --name：peer 网络里别人按它寻址
+        self.hidden = False         # 识图后台会话：不进用户会话列表（不 sync_meta）
+        self.is_vision = False      # 识图会话：start() 时用固定的基础提示词
         self.created = int(time.time() * 1000)
         self.last_active = self.created
         # ---- 运行时（进程相关，不持久化）----
@@ -232,6 +506,7 @@ class HarnessSession:
     def to_meta(self):
         return {"sid": self.sid, "title": self.title, "model": self.model,
                 "cwd": self.cwd, "session_id": self.session_id,
+                "name": self.name,
                 "created": self.created, "last_active": self.last_active}
 
     def sync_meta(self):
@@ -251,11 +526,17 @@ class HarnessSession:
                  "--output-format", "stream-json",
                  "--verbose",
                  "--permission-mode", "auto"]
-        # 用户自定义提示词：start() 每次都注入（新会话/复活/闲置回收重建同路径）
-        # v2.8：多条目体系——启用的 global 条目 + cwd 匹配的 project 条目拼接
-        sys_prompt = _collect_system_prompt(self.cwd)
+        # v2.14：识图后台会话用固定基础提示词；普通会话走用户提示词体系 +
+        # 识图转交引导（主会话默认不知道有识图同伴，必须显式告知）。
+        if self.is_vision:
+            sys_prompt = (_vision_load().get("prompt") or "").strip()
+        else:
+            parts = [_collect_system_prompt(self.cwd), vision_bridge_text()]
+            sys_prompt = "\n\n".join(p for p in parts if p)
         if sys_prompt:
             argv += ["--append-system-prompt", sys_prompt]
+        if self.name:
+            argv += ["--name", self.name]     # peer 寻址名（识图会话靠它被找到）
         # 复活：claude 侧已有真实 session_id → --resume 续上下文
         if self.session_id:
             argv += ["--resume", self.session_id]
@@ -277,12 +558,17 @@ class HarnessSession:
         threading.Thread(target=self._drain_stderr, daemon=True).start()
 
     def kill_proc(self):
-        """只杀进程保元数据与事件缓冲（闲置回收/复活前清理用）。"""
+        """只杀进程保元数据与事件缓冲（闲置回收/复活前清理用）。
+        v2.14：强杀会让 claude 来不及清理 peer 注册条目（~/.claude/sessions/
+        <pid>.json），残留条目指向死 pid —— 下次 ListAgents 会看到幽灵会话。
+        所以杀完主动清理自己那条注册。"""
         self.alive = False
         self.busy = False
         proc, self._proc = self._proc, None
         if proc is not None:
+            pid = None
             try:
+                pid = proc.pid
                 if proc.poll() is None:
                     proc.kill()
             except Exception:
@@ -291,6 +577,8 @@ class HarnessSession:
                 proc.wait(timeout=2)
             except Exception:
                 pass
+            if pid or self.session_id:
+                _cleanup_peer_reg(pid, self.session_id)
 
     def close(self):
         self.kill_proc()
@@ -503,7 +791,8 @@ def _get_or_create(sid):
         if not m:
             return None
         s = HarnessSession(m["sid"], cwd=m.get("cwd"), model=m.get("model"),
-                           session_id=m.get("session_id"), title=m.get("title", ""))
+                           session_id=m.get("session_id"), title=m.get("title", ""),
+                           name=m.get("name"))
         s.created = m.get("created") or s.created
         s.last_active = m.get("last_active") or s.last_active
         _sessions[sid] = s
@@ -511,7 +800,9 @@ def _get_or_create(sid):
 
 
 def _gc_loop():
-    """闲置回收：活进程闲置超阈 kill（元数据/缓冲保留）。60s 一轮，daemon。"""
+    """闲置回收：活进程闲置超阈 kill（元数据/缓冲保留）。60s 一轮，daemon。
+    v2.14：识图会话不参与回收——它是常驻配角，被回收后主会话发消息会
+    突然找不到人（peer 名字消失）；顺带这轮把它救活。"""
     while True:
         time.sleep(60)
         try:
@@ -519,8 +810,11 @@ def _gc_loop():
             with _sessions_lock:
                 objs = list(_sessions.values())
             for s in objs:
+                if getattr(s, "is_vision", False) or getattr(s, "hidden", False):
+                    continue
                 if s.alive and not s.busy and (now - s.last_active) > _IDLE_KILL_S * 1000:
                     s.kill_proc()
+            ensure_vision_session()      # 没起/挂了就拉起（配置未启用时是空操作）
         except Exception:
             pass
 
@@ -530,6 +824,17 @@ def _ensure_gc():
     if not _gc_started:
         _gc_started = True
         threading.Thread(target=_gc_loop, daemon=True).start()
+
+
+def ensure_vision_bg():
+    """工具启动 claude 后自动拉起识图会话（放线程里，不阻塞启动）。
+    daemon 线程 + 吞异常：识图起不来不能影响主功能可用。"""
+    def _run():
+        try:
+            ensure_vision_session()
+        except Exception:
+            pass
+    threading.Thread(target=_run, daemon=True).start()
 
 
 # ---------------------------------------------------------------------------
@@ -693,6 +998,7 @@ def harness_connect():
     if not os.path.isdir(cwd):
         return jsonify({"ok": False, "err": "目录不存在：%s" % cwd}), 400
     _ensure_gc()
+    ensure_vision_bg()      # v2.14：启动 claude 会话即后台拉起识图会话
     if sid:
         s = _get_or_create(sid)
         if not s:
@@ -903,6 +1209,60 @@ def harness_set_prompt():
     if not ok:
         return jsonify({"ok": False, "err": err or "写入失败"}), 500
     return jsonify({"ok": True, "count": len(items)})
+
+
+@harness_bp.route("/vision", methods=["GET"])
+def harness_get_vision():
+    """读识图会话配置 + 运行时状态（是否已就绪、实际存活）。
+    附带 defaults 供前端「恢复默认」按钮用。"""
+    cfg = _vision_load()
+    with _vision_lock:
+        s = _vision_obj[0]
+    return jsonify({"ok": True, "vision": cfg,
+                    "defaults": {"prompt": VISION_DEFAULT_PROMPT,
+                                 "name": VISION_DEFAULT_NAME},
+                    "running": bool(s is not None and s.alive),
+                    "models": available_models().get("models", []),
+                    "default_model": available_models().get("default")})
+
+
+@harness_bp.route("/vision", methods=["POST"])
+def harness_set_vision():
+    """写识图会话配置。body: {enabled, model, prompt, name}。
+    改了配置就让旧进程失效（下次 ensure 用新配置重建），
+    避免新旧提示词/模型混用。"""
+    data = request.get_json(force=True, silent=True) or {}
+    old = _vision_load()
+    cfg = {
+        "enabled": bool(data.get("enabled", False)),
+        "model": str(data.get("model") or "").strip(),
+        "prompt": str(data.get("prompt") or "").strip() or VISION_DEFAULT_PROMPT,
+        "name": str(data.get("name") or "").strip() or VISION_DEFAULT_NAME,
+    }
+    ok, err = _vision_save(cfg)
+    if not ok:
+        return jsonify({"ok": False, "err": err or "写入失败"}), 500
+    # 配置有实质变化 → 停掉旧进程（下次 ensure 用新配置重建）
+    if any(old.get(k) != cfg[k] for k in ("enabled", "model", "prompt", "name")):
+        stop_vision_session()
+    return jsonify({"ok": True, "vision": cfg})
+
+
+@harness_bp.route("/vision/start", methods=["POST"])
+def harness_start_vision():
+    """手动拉起识图会话（工具启动时也会自动拉起；这是给用户手动重试用）。"""
+    if not _vision_load()["enabled"]:
+        return jsonify({"ok": False, "err": "识图会话未启用"}), 400
+    s = ensure_vision_session()
+    if s is None:
+        return jsonify({"ok": False, "err": "启动失败（检查 claude 可用性与模型名）"}), 500
+    return jsonify({"ok": True, "sid": s.sid, "name": s.name, "model": s.model})
+
+
+@harness_bp.route("/vision/stop", methods=["POST"])
+def harness_stop_vision():
+    stop_vision_session()
+    return jsonify({"ok": True})
 
 
 @harness_bp.route("/skills")

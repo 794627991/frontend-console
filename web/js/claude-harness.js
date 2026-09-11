@@ -221,6 +221,7 @@ function buildClaudeHarnessTab(opts = {}) {
         </div>
         <div class="hg-search-wrap"><input class="hg-search" data-hg-search placeholder="搜索会话" spellcheck="false"></div>
         <div class="hg-sessions" data-hg-sessions></div>
+        <button class="hg-prompt-btn" data-hg-vision title="识图会话配置（多模态识图，转交主会话的看图任务）">👁 识图会话</button>
         <button class="hg-prompt-btn" data-hg-prompt title="管理自定义提示词（全局/项目，会话启动时注入）">📜 提示词</button>
       </div>
       <div class="hg-main">
@@ -1447,6 +1448,94 @@ function buildClaudeHarnessTab(opts = {}) {
     }
   };
   projChipLabel();
+
+  // ==================== 识图会话配置（v2.14）====================
+  // 后台常驻一个专用识图会话（固定多模态模型 + 固定 peer 名字）。主会话
+  // 不具备看图能力，需要识图时用 Claude Code 原生的 SendMessage 把图片
+  // 路径交给它，结论自动回传——不走 MCP、不自造通道。
+  // 「固定基础提示词」不占提示词列表位置，直接注入识图会话进程。
+  q('[data-hg-vision]').onclick = async () => {
+    let j = null;
+    try { j = await (await fetch('/api/harness/vision')).json(); } catch(_) {}
+    if (!j || !j.ok) { showBanner('读取识图配置失败', 3000, true); return; }
+    const saved = await hgVisionManager(j);
+    if (saved === null) return;                 // 取消不动
+    try {
+      const r = await fetch('/api/harness/vision', {method:'POST',
+        headers:{'Content-Type':'application/json'}, body: JSON.stringify(saved)});
+      const jr = await r.json();
+      if (!jr.ok) { showBanner(jr.err || '保存失败', 3000, true); return; }
+      if (!saved.enabled) { showBanner('识图会话已关闭', 2600); return; }
+      // 保存后立即拉起，省得等下一轮 GC（用户改完就想知道能不能用）
+      const rs = await (await fetch('/api/harness/vision/start', {method:'POST'})).json();
+      if (rs.ok) showBanner(`识图会话已就绪（${rs.name} · ${rs.model || '默认模型'}），新会话即可转交识图`, 3600);
+      else showBanner('配置已存，但识图会话启动失败：' + (rs.err || '未知'), 4200, true);
+    } catch(e) { showBanner('保存失败：' + e, 3000, true); }
+  };
+  // 识图配置界面：开关 + 会话名 + 模型 + 固定基础提示词（可恢复默认）。
+  // 返回对象=保存；null=取消。
+  function hgVisionManager(init) {
+    return new Promise((resolve) => {
+      const ov = document.createElement('div');
+      ov.className = 'hg-modal-ov';
+      const cfg = { ...(init.vision || {}) };
+      const def = init.defaults || {};
+      const models = init.models || [];
+      const curModel = cfg.model || '';
+      const opts = ['<option value=""' + (curModel ? '' : ' selected') + '>默认模型</option>']
+        .concat(models.map(m => `<option value="${esc(m)}"${m === curModel ? ' selected' : ''}>${esc(m)}</option>`))
+        .join('');
+      ov.innerHTML = `<div class="hg-modal hg-modal-vision"><div class="hg-modal-title">👁 识图会话</div>
+        <div class="hg-modal-body hg-vision-hint">后台常驻一个专用会话负责看图，主会话需要识图时经 Claude Code 原生会话通讯把图片交给它，结论自动回传。<b>改了开关/模型/提示词会让旧会话失效，下条消息自动用新配置重启。</b></div>
+        <div class="hg-vision-row">
+          <label class="hg-vision-switch"><input type="checkbox" data-hg-v-on${cfg.enabled ? ' checked' : ''}> 启用识图会话</label>
+          <span class="hg-vision-state" data-hg-v-state></span>
+        </div>
+        <div class="hg-vision-grid">
+          <label>会话名（主会话按它寻找，支持中文）
+            <input data-hg-v-name value="${esc(cfg.name || def.name || '')}" placeholder="${esc(def.name || '')}"></label>
+          <label>识图模型（多模态）
+            <select data-hg-v-model>${opts}</select></label>
+        </div>
+        <label class="hg-vision-prompt-lab">固定基础提示词（注入识图会话，不占提示词列表）
+          <textarea class="hg-vision-prompt" data-hg-v-prompt spellcheck="false"></textarea></label>
+        <div class="hg-modal-acts"></div></div>`;
+      const acts = ov.querySelector('.hg-modal-acts');
+      const close = (v) => { ov.remove(); resolve(v); };
+      const ta = ov.querySelector('[data-hg-v-prompt]');
+      const nameEl = ov.querySelector('[data-hg-v-name]');
+      const modelEl = ov.querySelector('[data-hg-v-model]');
+      const onEl = ov.querySelector('[data-hg-v-on]');
+      ta.value = cfg.prompt || def.prompt || '';
+      const stateEl = ov.querySelector('[data-hg-v-state]');
+      const paint = () => {
+        stateEl.textContent = init.running ? '● 运行中' : (onEl.checked ? '○ 未运行（保存后自动拉起）' : '已关闭');
+        stateEl.className = 'hg-vision-state' + (init.running ? ' on' : '');
+      };
+      onEl.onchange = paint;
+      paint();
+
+      const mkBtn = (label, primary, fn) => {
+        const b = document.createElement('button');
+        b.className = 'btn' + (primary ? ' primary' : '');
+        b.textContent = label; b.onclick = fn;
+        acts.appendChild(b);
+        return b;
+      };
+      mkBtn('取消', false, () => close(null));
+      mkBtn('恢复默认提示词', false, () => { ta.value = def.prompt || ''; ta.focus(); });
+      mkBtn('保存', true, () => close({
+        enabled: onEl.checked,
+        model: modelEl.value.trim(),
+        name: nameEl.value.trim() || (def.name || ''),
+        prompt: ta.value.trim(),
+      }));
+      ov.addEventListener('click', (e) => { if (e.target === ov) close(null); });
+      ov.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(null); });
+      wrap.appendChild(ov);
+      nameEl.focus();
+    });
+  }
 
   // ==================== 自定义提示词（v2.8：多条目 + 全局/项目作用域）====
   // 每个会话进程启动时后端 --append-system-prompt 注入（新会话/复活同路径）：
