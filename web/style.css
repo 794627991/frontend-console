@@ -2046,6 +2046,12 @@
 .hg-chip:hover { color: var(--fg); border-color: var(--accent); }
 .hg-cost { font-size: 10.5px; color: var(--muted); font-family: var(--font-mono);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+/* v2.3 问题4：上下文用量环（⭕ SVG 圆环 + 百分比，替代金额） */
+.hg-cost.hg-ctx, .hg-cost { display: inline-flex; align-items: center; gap: 4px; }
+.hg-ctx-ring { width: 20px; height: 20px; flex-shrink: 0; display: inline-block; }
+.hg-ctx-pct { font-size: 11px; }
+.hg-cost.warn { color: var(--neon-orange, #d29922); }
+.hg-cost.warn .hg-ctx-pct { color: var(--neon-red, #e06c75); font-weight: 600; }
 .hg-send { width: 32px; height: 32px; flex-shrink: 0; border-radius: 50%;
   border: none; background: var(--accent); color: var(--on-accent, #001020); cursor: pointer;
   font-size: 13px; line-height: 1; display: inline-flex; align-items: center; justify-content: center;
@@ -2084,13 +2090,16 @@
 .hg-modal-acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 /* ============ harness v2.1：claudecodeui 移植样式 ============ */
 
-/* ---- 工具行通用升级：不再 nowrap，支持徽章+复制按钮 ---- */
+/* ---- 工具行通用升级：不再 nowrap，支持徽章+复制按钮 ----
+   v2.3 问题2：命令不再单行硬撑（超长命令曾顶爆气泡宽度）——arg 允许换行；
+   行内放不下时 flex-wrap，徽章/复制按钮落到下一行而非溢出 */
 .h-tool { white-space: normal; overflow: visible; text-overflow: clip;
-  display: flex; align-items: center; gap: 6px; max-width: 88%;
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap; max-width: 88%;
   border-radius: 8px; transition: border-color .15s, background .15s; }
 .h-tool:not(.col):hover { background: color-mix(in srgb, var(--accent) 5%, var(--bg-card)); }
-.h-tool .h-tool-arg { flex: 1 1 auto; min-width: 0; overflow: hidden;
-  text-overflow: ellipsis; white-space: nowrap; }
+.h-tool .h-tool-arg { flex: 1 1 auto; min-width: 0; max-width: 100%;
+  overflow-wrap: anywhere; word-break: break-all;
+  white-space: pre-wrap; }
 .h-tool .h-tool-sec { flex-shrink: 0; color: var(--muted); opacity: .75; }
 .h-tool-copy { flex-shrink: 0; border: 1px solid var(--border); background: transparent;
   color: var(--muted); font-size: 10px; border-radius: 4px; padding: 1px 6px; cursor: pointer; }

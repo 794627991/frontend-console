@@ -385,6 +385,11 @@ function buildClaudeHarnessTab(opts = {}) {
   }
 
   // ==================== thinking 折叠（源 Reasoning.tsx）====================
+  // v2.3：不再"结束 1s 后强制整体消失"——收起只藏正文，头部（🧠 思考了 Xs）
+  // 始终留在消息流里可点开；且用户上滚阅读历史时不做任何自动收起。
+  function isNearBottom() {
+    return flow.scrollHeight - flow.scrollTop - flow.clientHeight < 120;
+  }
   function startThinking() {
     endThinking();
     const d = document.createElement('div');
@@ -399,13 +404,21 @@ function buildClaudeHarnessTab(opts = {}) {
     _HG.think._last = Date.now();
     _HG.think.body.innerHTML += renderMd(text);   // thinking 块稀疏，整段重渲可接受
   }
+  function fmtDur(sec) {
+    // v2.3 问题3：h/m/s 分级显示（>1h 用 h m，>1min 用 m s，否则 s）
+    sec = Math.max(0, Math.round(sec));
+    if (sec < 60) return sec + 's';
+    if (sec < 3600) return Math.floor(sec / 60) + 'm' + (sec % 60 ? sec % 60 + 's' : '');
+    return Math.floor(sec / 3600) + 'h' + Math.floor((sec % 3600) / 60) + 'm' + (sec % 60 ? sec % 60 + 's' : '');
+  }
   function endThinking() {
     const t = _HG.think;
     if (!t) return;
     _HG.think = null;
-    const sec = Math.round((Date.now() - t.start) / 1000);
-    t.box.querySelector('.h-think-t').textContent = `思考了 ${sec >= 1 ? sec + ' 秒' : '片刻'}`;
-    if (!t.box._userToggled) setTimeout(() => t.box.classList.remove('open'), 1000);   // 未手动关过 → 1s 自动收起
+    const sec = (Date.now() - t.start) / 1000;
+    t.box.querySelector('.h-think-t').textContent = `思考了 ${fmtDur(sec)}`;
+    // 仅当用户在底部跟读且没手动操作过该块时才自动收起；上滚阅读时不打扰
+    if (!t.box._userToggled && isNearBottom()) setTimeout(() => t.box.classList.remove('open'), 1000);
   }
 
   // ==================== 工具调用渲染（源 toolConfigs + ToolRenderer + BashCommandDisplay）====================
@@ -623,7 +636,7 @@ function buildClaudeHarnessTab(opts = {}) {
       }, 4000),
       tick: setInterval(() => {
         const t = actEl.querySelector('[data-hg-act-t]');
-        if (t) t.textContent = Math.round((Date.now() - _HG.actStart) / 1000) + 's';
+        if (t) t.textContent = fmtDur((Date.now() - _HG.actStart) / 1000);
       }, 1000),
     };
   }
@@ -632,6 +645,39 @@ function buildClaudeHarnessTab(opts = {}) {
     clearInterval(_HG.activity.verb); clearInterval(_HG.activity.tick);
     _HG.activity = null;
     actEl.style.display = 'none';
+  }
+
+  // ==================== 上下文用量环（v2.3 问题4：替代金额显示）====================
+  // 口径：result 事件 usage 之和（input+cache_read+cache_creation+output），
+  // 窗口大小优先取 modelUsage.<model>.contextWindow（CLI 权威值，实测 256000），
+  // 缺失时回退 256K。圆环：底环 border 色，进度环 accent，>80% 橙、>95% 红警示。
+  const _HG_CTX_FALLBACK = 256000;
+  function renderCtxRing(o) {
+    const u = o.usage || {};
+    const used = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) +
+                 (u.cache_creation_input_tokens || 0) + (u.output_tokens || 0);
+    if (typeof used !== 'number' || used <= 0) return;
+    let ctxMax = _HG_CTX_FALLBACK;
+    const mu = o.modelUsage || {};
+    for (const k in mu) {
+      if (mu[k] && typeof mu[k].contextWindow === 'number' && mu[k].contextWindow > 0) {
+        ctxMax = mu[k].contextWindow; break;
+      }
+    }
+    const pct = Math.min(100, used / ctxMax * 100);
+    const R = 9, C = 2 * Math.PI * R;
+    const col = pct >= 95 ? 'var(--neon-red, #e06c75)'
+              : pct >= 80 ? 'var(--neon-orange, #d29922)' : 'var(--accent)';
+    const fmtTok = n => n >= 1000 ? (n / 1000).toFixed(1) + 'K' : n;
+    costEl.innerHTML =
+      `<svg class="hg-ctx-ring" viewBox="0 0 24 24">` +
+      `<circle cx="12" cy="12" r="${R}" fill="none" stroke="var(--border)" stroke-width="3"/>` +
+      `<circle cx="12" cy="12" r="${R}" fill="none" stroke="${col}" stroke-width="3"` +
+      ` stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - pct / 100)}"` +
+      ` stroke-linecap="round" transform="rotate(-90 12 12)"/></svg>` +
+      `<span class="hg-ctx-pct">${Math.round(pct)}%</span>`;
+    costEl.title = `上下文 ${fmtTok(used)} / ${fmtTok(ctxMax)} tokens（${Math.round(pct)}%）`;
+    costEl.classList.toggle('warn', pct >= 80);
   }
 
   function setBusy(b) {
@@ -676,8 +722,8 @@ function buildClaudeHarnessTab(opts = {}) {
     } else if (typ === 'result') {
       endThinking();
       closeRun();
-      const cost = o.total_cost_usd;
-      costEl.textContent = `完成 · ${o.num_turns || 1} 轮${typeof cost === 'number' ? ' · $' + cost.toFixed(4) : ''}`;
+      // v2.3 问题4：不显示金额，显示上下文用量环（⭕ 百分比，256K 实窗口径）
+      renderCtxRing(o);
       setBusy(false);
       if (o.subtype && o.subtype !== 'success')
         renderRaw(`⚠ 回复异常结束：${o.subtype}${o.result ? ' — ' + String(o.result).slice(0, 200) : ''}`);
