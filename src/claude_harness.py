@@ -36,31 +36,55 @@ _UPLOAD_MAX = 20 * 1024 * 1024
 
 
 # ---------------------------------------------------------------------------
-# 用户自定义提示词（config.json harness_system_prompt；start() 每次都注入）
+# 用户自定义提示词（v2.8：多条目体系）
+#   harness_prompts = [ {id, scope, project, note, text, enabled} ]
+#   scope ∈ {"global","project"}；global 对所有会话生效；project 只对
+#   cwd 匹配 project 的会话生效（末段目录名精确匹配，如 "串口控制台Pro"
+#   匹配 D:\AI\串口控制台Pro——比全路径匹配好写好认）。
+#   start() 时收集 启用的 global 条目 + cwd 匹配的启用 project 条目，
+#   按 note 头 / text 体 拼接注入 --append-system-prompt。
+# 旧单条 harness_system_prompt（v2.4）自动迁移为一条 global 条目（一次性）。
 # ---------------------------------------------------------------------------
-def _get_system_prompt():
-    """读 config.json 的 harness_system_prompt（多行自由文本）。
-    读失败/未配置返回 ''（不影响会话启动）。"""
+_PROMPTS_KEY = "harness_prompts"
+_PROMPTS_LEGACY_KEY = "harness_system_prompt"
+
+
+def _prompts_load():
+    """读 config.json 的 harness_prompts 列表。坏数据防御：过滤缺 id/text
+    的条目，字段兜默认值。失败返回 []。"""
     try:
         with open(_st.CONFIG_FILE, "r", encoding="utf-8") as f:
             d = json.load(f)
-        v = d.get("harness_system_prompt")
-        return v.strip() if isinstance(v, str) else ""
+        raw = d.get(_PROMPTS_KEY)
+        if not isinstance(raw, list):
+            return []
+        out = []
+        for it in raw:
+            if not isinstance(it, dict) or not it.get("id") or not it.get("text"):
+                continue
+            out.append({
+                "id": str(it["id"]),
+                "scope": it.get("scope") if it.get("scope") in ("global", "project") else "global",
+                "project": str(it.get("project") or "").strip(),
+                "note": str(it.get("note") or "").strip(),
+                "text": str(it["text"]).strip(),
+                "enabled": bool(it.get("enabled", True)),
+            })
+        return out
     except Exception:
-        return ""
+        return []
 
 
-def _set_system_prompt(text):
-    """原子写 config.json 的 harness_system_prompt。text 非字符串按清空处理。"""
-    text = text.strip() if isinstance(text, str) else ""
+def _prompts_save(items):
+    """原子写 config.json 的 harness_prompts。"""
     try:
         with open(_st.CONFIG_FILE, "r", encoding="utf-8") as f:
             d = json.load(f)
+        if not isinstance(d, dict):
+            d = {}
     except Exception:
         d = {}
-    if not isinstance(d, dict):
-        d = {}
-    d["harness_system_prompt"] = text
+    d[_PROMPTS_KEY] = items
     try:
         tmp = _st.CONFIG_FILE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -69,6 +93,33 @@ def _set_system_prompt(text):
         return True, None
     except Exception as e:
         return False, str(e)
+
+
+def _prompt_matches_project(item, cwd):
+    """项目作用域匹配：cwd 末段目录名（normpath 后）== item.project。
+    project 为空视作不匹配（防误全局）。大小写不敏感（Windows）。"""
+    if item.get("scope") != "project" or not item.get("project") or not cwd:
+        return False
+    try:
+        tail = os.path.basename(os.path.normpath(cwd)) or cwd
+        return tail.lower() == str(item["project"]).strip().lower()
+    except Exception:
+        return False
+
+
+def _collect_system_prompt(cwd):
+    """按 cwd 收集要注入的提示词（start() 用）：
+    启用的 global 条目 + cwd 匹配的启用 project 条目，note 做「」小标题。
+    返回拼接后的单串（空串=不注入）。"""
+    parts = []
+    for it in _prompts_load():
+        if not it.get("enabled", True):
+            continue
+        if it.get("scope") == "project" and not _prompt_matches_project(it, cwd):
+            continue
+        note = it.get("note") or ""
+        parts.append(("【%s】" % note if note else "") + it["text"].strip())
+    return "\n\n".join(parts)
 
 # ---------------------------------------------------------------------------
 # 会话元数据持久化（重启不丢会话列表——"像微信一样"的根基）
@@ -198,7 +249,8 @@ class HarnessSession:
                  "--verbose",
                  "--permission-mode", "auto"]
         # 用户自定义提示词：start() 每次都注入（新会话/复活/闲置回收重建同路径）
-        sys_prompt = _get_system_prompt()
+        # v2.8：多条目体系——启用的 global 条目 + cwd 匹配的 project 条目拼接
+        sys_prompt = _collect_system_prompt(self.cwd)
         if sys_prompt:
             argv += ["--append-system-prompt", sys_prompt]
         # 复活：claude 侧已有真实 session_id → --resume 续上下文
@@ -782,19 +834,65 @@ def harness_models():
 
 @harness_bp.route("/system_prompt", methods=["GET"])
 def harness_get_prompt():
-    """读用户自定义提示词。"""
-    return jsonify({"ok": True, "prompt": _get_system_prompt()})
+    """读用户自定义提示词条目列表（v2.8 多条目；?cwd= 时附带每条 active 计算）。
+    旧单条 harness_system_prompt 自动迁移成一条 global 条目（一次性）。"""
+    items = _prompts_load()
+    if not items:
+        # 旧版单条迁移（一次性）：写过 v2.4 单条提示词的机器升级后无缝接续
+        try:
+            with open(_st.CONFIG_FILE, "r", encoding="utf-8") as f:
+                d = json.load(f)
+            legacy = d.get(_PROMPTS_LEGACY_KEY)
+            if isinstance(legacy, str) and legacy.strip():
+                items = [{"id": "migrated-legacy", "scope": "global", "project": "",
+                          "note": "（v2.4 迁移）", "text": legacy.strip(),
+                          "enabled": True}]
+                _prompts_save(items)
+                d.pop(_PROMPTS_LEGACY_KEY, None)
+                tmp = _st.CONFIG_FILE + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(d, f, ensure_ascii=False, indent=1)
+                os.replace(tmp, _st.CONFIG_FILE)
+        except Exception:
+            pass
+    cwd = (request.args.get("cwd") or "").strip()
+    out = []
+    for it in items:
+        o = dict(it)
+        if cwd:
+            o["active"] = bool(it.get("enabled", True)) and (
+                it.get("scope") != "project"
+                or _prompt_matches_project(it, cwd))
+        out.append(o)
+    return jsonify({"ok": True, "prompts": out})
 
 
 @harness_bp.route("/system_prompt", methods=["POST"])
 def harness_set_prompt():
-    """写用户自定义提示词。body: {prompt}。空串=清除。
+    """写用户自定义提示词（v2.8 多条目整表保存）。
+    body: {prompts: [{id, scope, project, note, text, enabled}]}。
+    整表覆盖（前端管理界面即真相源）；id 缺失的条目自动补 uuid。
     只影响之后启动/复活的会话进程（系统提示词是进程启动参数）。"""
     data = request.get_json(force=True, silent=True) or {}
-    ok, err = _set_system_prompt(data.get("prompt"))
+    raw = data.get("prompts")
+    if not isinstance(raw, list):
+        return jsonify({"ok": False, "err": "prompts 必须是数组"}), 400
+    items = []
+    for it in raw:
+        if not isinstance(it, dict) or not str(it.get("text") or "").strip():
+            continue   # 空文本条目直接丢弃
+        items.append({
+            "id": str(it.get("id") or ("p-" + uuid.uuid4().hex[:8])),
+            "scope": it.get("scope") if it.get("scope") in ("global", "project") else "global",
+            "project": str(it.get("project") or "").strip(),
+            "note": str(it.get("note") or "").strip(),
+            "text": str(it.get("text") or "").strip(),
+            "enabled": bool(it.get("enabled", True)),
+        })
+    ok, err = _prompts_save(items)
     if not ok:
         return jsonify({"ok": False, "err": err or "写入失败"}), 500
-    return jsonify({"ok": True, "prompt": _get_system_prompt()})
+    return jsonify({"ok": True, "count": len(items)})
 
 
 @harness_bp.route("/skills")

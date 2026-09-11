@@ -76,8 +76,13 @@ const _H_TOOL_CFG = {
       return done === todos.length ? `完成 — ${done}/${todos.length}` : `${done}/${todos.length} 完成`;
     }, get: i => ({ todos: i.todos || [] }), result: 'hide', defaultOpen: true },
   TodoRead:  { mode: 'one-line', kind: 'todo', get: () => '读取清单' },
-  TaskCreate:{ mode: 'one-line', kind: 'task', get: i => i.subject || '创建任务', result: 'hide' },
-  TaskUpdate:{ mode: 'one-line', kind: 'task', get: i => [i.taskId ? '#' + i.taskId : '', i.status || '', i.subject ? `"${i.subject}"` : ''].filter(Boolean).join(' → ') || '更新任务', result: 'hide' },
+  TaskCreate:{ mode: 'collapsible', kind: 'task', title: i => i.subject || '创建任务',
+    get: i => [i.description && '描述：' + i.description,
+               i.activeForm && '进行时显示：' + i.activeForm].filter(Boolean).join('\n'),
+    result: 'hide' },
+  TaskUpdate:{ mode: 'collapsible', kind: 'task',
+    title: i => [i.taskId ? '#' + i.taskId : '', i.status || '', i.subject ? `"${i.subject}"` : ''].filter(Boolean).join(' → ') || '更新任务',
+    get: i => i.description || (i.status ? '状态 → ' + i.status : ''), result: 'hide' },
   TaskList:  { mode: 'one-line', kind: 'task', get: () => '列出任务' },
   TaskGet:   { mode: 'one-line', kind: 'task', get: i => i.taskId ? '#' + i.taskId : '查看任务' },
   Agent:     { mode: 'collapsible', kind: 'agent', title: i => i.description || i.subagent_type || '子代理', get: i => i.prompt || '', result: 'hide' },
@@ -214,6 +219,7 @@ function buildClaudeHarnessTab(opts = {}) {
         </div>
         <div class="hg-search-wrap"><input class="hg-search" data-hg-search placeholder="搜索会话" spellcheck="false"></div>
         <div class="hg-sessions" data-hg-sessions></div>
+        <button class="hg-prompt-btn" data-hg-prompt title="管理自定义提示词（全局/项目，会话启动时注入）">📜 提示词</button>
       </div>
       <div class="hg-main">
         <div class="hg-top">
@@ -237,7 +243,6 @@ function buildClaudeHarnessTab(opts = {}) {
               <button class="hg-chip" data-hg-att title="添加附件（文档会以路径给模型读取）">📎 附件</button>
               <button class="hg-chip" data-hg-skill title="加载技能（插入 /技能名）">⚡ 技能 ▾</button>
               <button class="hg-chip" data-hg-model title="选择模型（对会话生效）">🧠 模型 ▾</button>
-              <button class="hg-chip" data-hg-prompt title="自定义系统提示词（每个会话启动时注入）">📜 提示词</button>
               <span class="hg-flex1"></span>
               <span class="hg-cost" data-hg-cost></span>
               <button class="hg-send" data-hg-send title="发送（Enter）">➤</button>
@@ -516,11 +521,68 @@ function buildClaudeHarnessTab(opts = {}) {
   }
 
   function diffHtml(oldS, newS) {
-    // 朴素行 diff（源 createDiff 是 LCS；vanilla 用逐行对比近似：交集着色）
+    // v2.8：真 LCS 行 diff（此前"交集着色"把未变行整段吞掉，大编辑只剩
+    // 一两行——用户实测「咋可能只改了这点」。现在未变行作为上下文暗显，
+    // 折叠展示改动段全貌；改动段外超 3 行的未变区间折叠成「… N 行不变」）
     const ol = String(oldS || '').split('\n'), nl = String(newS || '').split('\n');
+    const n = ol.length, m = nl.length;
+    // LCS 动态规划（O(n*m) 内存；Edit 的 old/new 一般几十行，可承受，
+    // 超大输入（>4000 行）退回旧交集法防卡顿）
+    if (n * m > 4000 * 4000) {
+      let h = '';
+      nl.forEach(l => { if (!ol.includes(l)) h += `<div class="d-add">+ ${esc(l)}</div>`; });
+      ol.forEach(l => { if (!nl.includes(l)) h += `<div class="d-del">- ${esc(l)}</div>`; });
+      return h || '<div class="d-info">(无文本差异)</div>';
+    }
+    const dp = Array.from({length: n + 1}, () => new Uint32Array(m + 1));
+    for (let i = n - 1; i >= 0; i--)
+      for (let j = m - 1; j >= 0; j--)
+        dp[i][j] = ol[i] === nl[j] ? dp[i+1][j+1] + 1 : Math.max(dp[i+1][j], dp[i][j+1]);
+    // 回溯产出 op 序列：'=' 上下文 / '+' 增 / '-' 删
+    const ops = [];
+    let i = 0, j = 0;
+    while (i < n && j < m) {
+      if (ol[i] === nl[j]) { ops.push(['=', ol[i]]); i++; j++; }
+      else if (dp[i+1][j] >= dp[i][j+1]) { ops.push(['-', ol[i]]); i++; }
+      else { ops.push(['+', nl[j]]); j++; }
+    }
+    while (i < n) { ops.push(['-', ol[i++]]); }
+    while (j < m) { ops.push(['+', nl[j++]]); }
+    // 改动段外的长未变区间折叠（≤3 行直显，>3 行收成一行摘要）
     let h = '';
-    nl.forEach(l => { if (!ol.includes(l)) h += `<div class="d-add">+ ${esc(l)}</div>`; });
-    ol.forEach(l => { if (!nl.includes(l)) h += `<div class="d-del">- ${esc(l)}</div>`; });
+    const CTX = 3;
+    let k = 0;
+    const mark = (op, line) => {
+      h += op === '=' ? `<div class="d-ctx">${esc(line)}</div>`
+          : op === '+' ? `<div class="d-add">+ ${esc(line)}</div>`
+          : `<div class="d-del">- ${esc(line)}</div>`;
+    };
+    while (k < ops.length) {
+      // 当前位置往前/后各留 CTX 行上下文；中间的长等值段折叠
+      if (ops[k][0] === '=') {
+        // 量出这段等值长度
+        let e = k;
+        while (e < ops.length && ops[e][0] === '=') e++;
+        const len = e - k;
+        const prevIsChange = k > 0;                      // 前面是改动段 → 头部留 CTX
+        const nextIsChange = e < ops.length;             // 后面是改动段 → 尾部留 CTX
+        let from = k, to = e;
+        if (prevIsChange && nextIsChange && len > CTX * 2) {
+          for (let x = k; x < k + CTX; x++) mark('=', ops[x][1]);
+          h += `<div class="d-info">… ${len - CTX * 2} 行不变 …</div>`;
+          for (let x = e - CTX; x < e; x++) mark('=', ops[x][1]);
+        } else if (prevIsChange && !nextIsChange && len > CTX) {
+          for (let x = k; x < k + CTX; x++) mark('=', ops[x][1]);
+          h += `<div class="d-info">… ${len - CTX} 行不变 …</div>`;
+        } else if (!prevIsChange && nextIsChange && len > CTX) {
+          h += `<div class="d-info">… ${len - CTX} 行不变 …</div>`;
+          for (let x = e - CTX; x < e; x++) mark('=', ops[x][1]);
+        } else {
+          for (let x = k; x < e; x++) mark('=', ops[x][1]);
+        }
+        k = e;
+      } else { mark(ops[k][0], ops[k][1]); k++; }
+    }
     return h || '<div class="d-info">(无文本差异)</div>';
   }
   function todoHtml(todos) {
@@ -602,8 +664,9 @@ function buildClaudeHarnessTab(opts = {}) {
     row.dataset.tid = id;                 // 快照恢复后重扫挂 rowById 用
     _HG.rowById[id] = row;
     drawerCount(name);                    // v2.7：计数进抽屉组头（Bash×3 · Read×5 …）
-    // 分组：同名连续 run 第 2 个起并入组头（折叠类工具不参与分组——展开体互不兼容）
-    if (cfg.mode === 'one-line' && toolRunPush(name, row)) return;
+    // v2.8：抽屉时代不再合并同名 run——每条 Bash/Read/Grep 调用都是独立过程行
+    // （用户明确要能看到每一次执行；组头徽章已承担"×N 汇总"职责）
+    _HG.run = { name, head: row, rows: [row] };
     drawerAppend(row);                    // v2.7：过程行进抽屉（不再散落消息流）
   }
 
@@ -1306,51 +1369,100 @@ function buildClaudeHarnessTab(opts = {}) {
   };
   projChipLabel();
 
-  // ==================== 自定义提示词（config.json harness_system_prompt）====
-  // 每个会话进程启动时后端 --append-system-prompt 注入（新会话/复活同路径）。
+  // ==================== 自定义提示词（v2.8：多条目 + 全局/项目作用域）====
+  // 每个会话进程启动时后端 --append-system-prompt 注入（新会话/复活同路径）：
+  // 启用的全局条目对全部会话生效；项目条目只对 cwd 目录名匹配的会话生效。
+  // 入口在左栏最底部（用户指定位置）；管理界面 = 条目列表 + 每条
+  // 备注/作用域/开关/编辑/删除，整表保存。
   q('[data-hg-prompt]').onclick = async () => {
-    let cur = '';
-    try { cur = (await (await fetch('/api/harness/system_prompt')).json()).prompt || ''; } catch(_) {}
-    const text = await hgPromptDialog(cur);
-    if (text === null) return;   // 取消不动
+    let prompts = [];
+    try { prompts = (await (await fetch('/api/harness/system_prompt?cwd=' + encodeURIComponent(_HG.cwd || ''))).json()).prompts || []; }
+    catch(_) {}
+    const saved = await hgPromptManager(prompts, _HG.cwd || '');
+    if (saved === null) return;   // 取消不动
     try {
       const r = await fetch('/api/harness/system_prompt', {method:'POST',
-        headers:{'Content-Type':'application/json'}, body: JSON.stringify({prompt: text})});
+        headers:{'Content-Type':'application/json'}, body: JSON.stringify({prompts: saved})});
       const j = await r.json();
       if (!j.ok) { showBanner(j.err || '保存失败', 3000, true); return; }
-      showBanner(text ? '提示词已保存，新会话/复活后生效' : '提示词已清除', 2400);
+      showBanner(saved.length ? `已保存 ${saved.length} 条提示词，新会话/复活后生效` : '提示词已清空', 2400);
     } catch(e) { showBanner('保存失败：' + e, 3000, true); }
   };
-  // 多行编辑模态（hgPrompt 是单行输入，这里换 textarea）
-  function hgPromptDialog(cur) {
+  // 提示词管理界面：条目卡片列表（备注入卡片头，正文 textarea 编辑）。
+  // 返回新数组=保存；null=取消。卡片上的状态即时反映到返回值。
+  function hgPromptManager(items, cwd) {
     return new Promise((resolve) => {
       const ov = document.createElement('div');
       ov.className = 'hg-modal-ov';
-      ov.innerHTML = `<div class="hg-modal hg-modal-prompt"><div class="hg-modal-title">自定义系统提示词</div>
-        <div class="hg-modal-body hg-prompt-hint">每次会话启动（新建/复活）都会注入给 Claude。留空保存 = 清除。仅影响之后启动的会话。</div>
-        <textarea class="hg-prompt-ta" spellcheck="false" placeholder="例：回答保持简洁；代码注释用中文；优先使用现有工具…"></textarea>
+      const list = items.map(it => ({ ...it }));   // 工作副本，保存才落库
+      ov.innerHTML = `<div class="hg-modal hg-modal-prompt"><div class="hg-modal-title">📜 自定义提示词</div>
+        <div class="hg-modal-body hg-prompt-hint">会话启动时注入（新建/复活）。🌐 全局对所有会话生效；📁 项目只对目录名匹配的会话生效（填目录名如「串口控制台Pro」）。备注是给自己看的标签。</div>
+        <div class="hg-prompt-list"></div>
         <div class="hg-modal-acts"></div></div>`;
-      const ta = ov.querySelector('.hg-prompt-ta');
-      ta.value = cur;
+      const listEl = ov.querySelector('.hg-prompt-list');
       const acts = ov.querySelector('.hg-modal-acts');
       const close = (v) => { ov.remove(); resolve(v); };
+
+      function render() {
+        listEl.innerHTML = '';
+        list.forEach((it, idx) => {
+          const card = document.createElement('div');
+          card.className = 'hg-prompt-item' + (it.enabled ? '' : ' off');
+          card.innerHTML =
+            `<div class="hg-prompt-item-head">` +
+            `<input class="hg-prompt-note" placeholder="备注（如：中文注释规范）" value="${esc(it.note || '')}">` +
+            `<select class="hg-prompt-scope">` +
+            `<option value="global"${it.scope !== 'project' ? ' selected' : ''}>🌐 全局</option>` +
+            `<option value="project"${it.scope === 'project' ? ' selected' : ''}>📁 项目</option>` +
+            `</select>` +
+            `<input class="hg-prompt-proj" placeholder="目录名" value="${esc(it.project || '')}"${it.scope === 'project' ? '' : ' style="display:none"'}${it.active === false ? ' title="当前项目不匹配（不会注入本会话）"' : ''}>` +
+            `<button class="hg-prompt-onoff" title="启用/停用">${it.enabled ? '🟢' : '⚪'}</button>` +
+            `<button class="hg-prompt-del" title="删除">✕</button></div>` +
+            `<textarea class="hg-prompt-ta" spellcheck="false" placeholder="提示词正文…"></textarea>`;
+          const ta = card.querySelector('.hg-prompt-ta');
+          ta.value = it.text || '';
+          card.querySelector('.hg-prompt-note').oninput = (e) => { it.note = e.target.value; };
+          card.querySelector('.hg-prompt-scope').onchange = (e) => {
+            it.scope = e.target.value;
+            card.querySelector('.hg-prompt-proj').style.display = it.scope === 'project' ? '' : 'none';
+          };
+          card.querySelector('.hg-prompt-proj').oninput = (e) => { it.project = e.target.value.trim(); };
+          card.querySelector('.hg-prompt-onoff').onclick = () => { it.enabled = !it.enabled; render(); };
+          card.querySelector('.hg-prompt-del').onclick = () => { list.splice(idx, 1); render(); };
+          listEl.appendChild(card);
+        });
+        if (!list.length)
+          listEl.innerHTML = '<div class="hg-prompt-empty">还没有提示词条目。点下方「＋ 新增」创建。</div>';
+      }
+
       const mkBtn = (label, primary, fn) => {
         const b = document.createElement('button');
         b.className = 'btn' + (primary ? ' primary' : '');
-        b.textContent = label;
-        b.onclick = fn;
+        b.textContent = label; b.onclick = fn;
         acts.appendChild(b);
+        return b;
       };
       mkBtn('取消', false, () => close(null));
-      mkBtn('清空', false, () => { ta.value = ''; });
-      mkBtn('保存', true, () => close(ta.value));
+      mkBtn('＋ 新增', false, () => {
+        list.push({ id: '', scope: 'global', project: '', note: '', text: '', enabled: true, active: undefined });
+        render();
+        listEl.lastElementChild && listEl.lastElementChild.querySelector('.hg-prompt-ta').focus();
+      });
+      mkBtn('保存', true, () => {
+        // 空正文条目丢弃；scope=project 但目录名为空 → 提示防误伤
+        if (list.some(it => it.scope === 'project' && !it.project)) {
+          showBanner('项目条目必须填目录名（或改回全局）', 3000, true);
+          return;
+        }
+        close(list.filter(it => (it.text || '').trim()));
+      });
       ov.addEventListener('click', (e) => { if (e.target === ov) close(null); });
       ov.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') close(null);
-        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) close(ta.value);
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) close(list.filter(it => (it.text || '').trim()));
       });
       wrap.appendChild(ov);
-      ta.focus();
+      render();
     });
   }
 
