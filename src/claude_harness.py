@@ -27,13 +27,48 @@ from flask import Blueprint, request, jsonify, Response
 
 from . import app_state as _st
 from .claude_conn import _resolve_claude_exe, _humanize_claude_error, _trust_workspace
-
 _EVENTS_MAX = 4000          # 每会话事件缓存上限（前端重连回放用）
 _QUEUE_MAX = 2000           # SSE 客户端队列上限
 _IDLE_KILL_S = 15 * 60      # 活进程闲置回收阈值（秒）
 _META_FILE = os.path.join(_st.HOME_DIR, "claude_harness.json")
 _UPLOAD_DIR = os.path.join(_st.HOME_DIR, "harness_uploads")
 _UPLOAD_MAX = 20 * 1024 * 1024
+
+
+# ---------------------------------------------------------------------------
+# 用户自定义提示词（config.json harness_system_prompt；start() 每次都注入）
+# ---------------------------------------------------------------------------
+def _get_system_prompt():
+    """读 config.json 的 harness_system_prompt（多行自由文本）。
+    读失败/未配置返回 ''（不影响会话启动）。"""
+    try:
+        with open(_st.CONFIG_FILE, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        v = d.get("harness_system_prompt")
+        return v.strip() if isinstance(v, str) else ""
+    except Exception:
+        return ""
+
+
+def _set_system_prompt(text):
+    """原子写 config.json 的 harness_system_prompt。text 非字符串按清空处理。"""
+    text = text.strip() if isinstance(text, str) else ""
+    try:
+        with open(_st.CONFIG_FILE, "r", encoding="utf-8") as f:
+            d = json.load(f)
+    except Exception:
+        d = {}
+    if not isinstance(d, dict):
+        d = {}
+    d["harness_system_prompt"] = text
+    try:
+        tmp = _st.CONFIG_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False, indent=1)
+        os.replace(tmp, _st.CONFIG_FILE)
+        return True, None
+    except Exception as e:
+        return False, str(e)
 
 # ---------------------------------------------------------------------------
 # 会话元数据持久化（重启不丢会话列表——"像微信一样"的根基）
@@ -162,6 +197,10 @@ class HarnessSession:
                  "--output-format", "stream-json",
                  "--verbose",
                  "--permission-mode", "auto"]
+        # 用户自定义提示词：start() 每次都注入（新会话/复活/闲置回收重建同路径）
+        sys_prompt = _get_system_prompt()
+        if sys_prompt:
+            argv += ["--append-system-prompt", sys_prompt]
         # 复活：claude 侧已有真实 session_id → --resume 续上下文
         if self.session_id:
             argv += ["--resume", self.session_id]
@@ -739,6 +778,23 @@ def harness_delete():
 @harness_bp.route("/models")
 def harness_models():
     return jsonify({"ok": True, **available_models()})
+
+
+@harness_bp.route("/system_prompt", methods=["GET"])
+def harness_get_prompt():
+    """读用户自定义提示词。"""
+    return jsonify({"ok": True, "prompt": _get_system_prompt()})
+
+
+@harness_bp.route("/system_prompt", methods=["POST"])
+def harness_set_prompt():
+    """写用户自定义提示词。body: {prompt}。空串=清除。
+    只影响之后启动/复活的会话进程（系统提示词是进程启动参数）。"""
+    data = request.get_json(force=True, silent=True) or {}
+    ok, err = _set_system_prompt(data.get("prompt"))
+    if not ok:
+        return jsonify({"ok": False, "err": err or "写入失败"}), 500
+    return jsonify({"ok": True, "prompt": _get_system_prompt()})
 
 
 @harness_bp.route("/skills")

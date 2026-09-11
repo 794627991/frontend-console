@@ -218,6 +218,7 @@ function buildClaudeHarnessTab(opts = {}) {
               <button class="hg-chip" data-hg-att title="添加附件（文档会以路径给模型读取）">📎 附件</button>
               <button class="hg-chip" data-hg-skill title="加载技能（插入 /技能名）">⚡ 技能 ▾</button>
               <button class="hg-chip" data-hg-model title="选择模型（对会话生效）">🧠 模型 ▾</button>
+              <button class="hg-chip" data-hg-prompt title="自定义系统提示词（每个会话启动时注入）">📜 提示词</button>
               <span class="hg-flex1"></span>
               <span class="hg-cost" data-hg-cost></span>
               <button class="hg-send" data-hg-send title="发送（Enter）">➤</button>
@@ -1175,6 +1176,54 @@ function buildClaudeHarnessTab(opts = {}) {
     if (!e.target.closest('.hg-pop') && !e.target.closest('.hg-chip')) closePop();
   });
   if (_HG.model) q('[data-hg-model]').innerHTML = '🧠 ' + esc(_HG.model) + ' ▾';
+
+  // ==================== 自定义提示词（config.json harness_system_prompt）====
+  // 每个会话进程启动时后端 --append-system-prompt 注入（新会话/复活同路径）。
+  q('[data-hg-prompt]').onclick = async () => {
+    let cur = '';
+    try { cur = (await (await fetch('/api/harness/system_prompt')).json()).prompt || ''; } catch(_) {}
+    const text = await hgPromptDialog(cur);
+    if (text === null) return;   // 取消不动
+    try {
+      const r = await fetch('/api/harness/system_prompt', {method:'POST',
+        headers:{'Content-Type':'application/json'}, body: JSON.stringify({prompt: text})});
+      const j = await r.json();
+      if (!j.ok) { showBanner(j.err || '保存失败', 3000, true); return; }
+      showBanner(text ? '提示词已保存，新会话/复活后生效' : '提示词已清除', 2400);
+    } catch(e) { showBanner('保存失败：' + e, 3000, true); }
+  };
+  // 多行编辑模态（hgPrompt 是单行输入，这里换 textarea）
+  function hgPromptDialog(cur) {
+    return new Promise((resolve) => {
+      const ov = document.createElement('div');
+      ov.className = 'hg-modal-ov';
+      ov.innerHTML = `<div class="hg-modal hg-modal-prompt"><div class="hg-modal-title">自定义系统提示词</div>
+        <div class="hg-modal-body hg-prompt-hint">每次会话启动（新建/复活）都会注入给 Claude。留空保存 = 清除。仅影响之后启动的会话。</div>
+        <textarea class="hg-prompt-ta" spellcheck="false" placeholder="例：回答保持简洁；代码注释用中文；优先使用现有工具…"></textarea>
+        <div class="hg-modal-acts"></div></div>`;
+      const ta = ov.querySelector('.hg-prompt-ta');
+      ta.value = cur;
+      const acts = ov.querySelector('.hg-modal-acts');
+      const close = (v) => { ov.remove(); resolve(v); };
+      const mkBtn = (label, primary, fn) => {
+        const b = document.createElement('button');
+        b.className = 'btn' + (primary ? ' primary' : '');
+        b.textContent = label;
+        b.onclick = fn;
+        acts.appendChild(b);
+      };
+      mkBtn('取消', false, () => close(null));
+      mkBtn('清空', false, () => { ta.value = ''; });
+      mkBtn('保存', true, () => close(ta.value));
+      ov.addEventListener('click', (e) => { if (e.target === ov) close(null); });
+      ov.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') close(null);
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) close(ta.value);
+      });
+      wrap.appendChild(ov);
+      ta.focus();
+    });
+  }
 
   // ==================== 轻量模态（铁律2）====================
   function hgModal(title, bodyHtml, buttons) {
