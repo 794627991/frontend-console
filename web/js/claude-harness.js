@@ -711,7 +711,7 @@ function buildClaudeHarnessTab(opts = {}) {
     g.counts[n] = (g.counts[n] || 0) + 1;
     // chips ≤8 个，超出折叠成「…」——组头收起态必须小（用户：总体只占一小部分）
     const entries = Object.entries(g.counts);
-    const shown = entries.slice(0, 8).map(([k, v]) => `<span class="h-drawer-chip">${k}×${v}</span>`).join('');
+    const shown = entries.slice(0, 8).map(([k, v]) => `<span class="h-drawer-chip">${esc(k)}×${v}</span>`).join('');
     g.exec.stats.innerHTML = shown + (entries.length > 8 ? '<span class="h-drawer-chip">…</span>' : '');
     g.exec.stats.dataset.counts = JSON.stringify(g.counts);   // 快照恢复用
     scrollBottom();
