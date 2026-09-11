@@ -293,6 +293,145 @@ function buildClaudeHarnessTab(opts = {}) {
     requestAnimationFrame(() => { flow.scrollTop = flow.scrollHeight; });
   };
 
+  // ==================== 交互式提问卡片（v2.17）====================
+  // 模型调 mcp__harness__ask_user → 后端 emit kind:'ask' → 这里渲染成可点选项。
+  // 提交后 POST /ask/answer，后端唤醒阻塞中的 MCP 工具调用，模型拿到选择继续。
+  function askRender(it) {
+    if (!it || !it.req_id) return;
+    const old = flow.querySelector(`[data-hg-ask="${CSS.escape(it.req_id)}"]`);
+    if (old) old.remove();
+    const qs = Array.isArray(it.questions) ? it.questions : [];
+    if (!qs.length) return;
+
+    const card = document.createElement('div');
+    card.className = 'h-ask';
+    card.dataset.hgAsk = it.req_id;
+    card.dataset.hgQs = JSON.stringify(qs);   // 问题原文（提交时作 answer 的 key）
+    card.dataset.hgSel = '{}';                // 题号 -> [选中的 label]
+    qs.forEach((q, qi) => {
+      const multi = !!q.multiSelect;
+      const box = document.createElement('div');
+      box.className = 'h-ask-q';
+      box.innerHTML =
+        `<div class="h-ask-head"><span class="h-ask-badge">${esc(q.header || '请选择')}</span>` +
+        `<span class="h-ask-title">${esc(q.question || '')}</span>` +
+        (multi ? '<span class="h-ask-multi">可多选</span>' : '') + '</div>';
+      const opts = document.createElement('div');
+      opts.className = 'h-ask-opts';
+      (q.options || []).forEach((o) => {
+        const label = typeof o === 'string' ? o : (o.label || '');
+        const desc = typeof o === 'string' ? '' : (o.description || '');
+        const b = document.createElement('button');
+        b.className = 'h-ask-opt';
+        b.dataset.hgAskOpt = String(qi);
+        b.dataset.hgAskLabel = label;
+        b.dataset.hgAskMulti = multi ? '1' : '';
+        b.innerHTML = `<span class="h-ask-radio"></span>` +
+          `<span class="h-ask-opt-txt"><b>${esc(label)}</b>` +
+          (desc ? `<span class="h-ask-desc">${esc(desc)}</span>` : '') + `</span>`;
+        opts.appendChild(b);
+      });
+      box.appendChild(opts);
+      card.appendChild(box);
+    });
+    const foot = document.createElement('div');
+    foot.className = 'h-ask-foot';
+    const submit = document.createElement('button');
+    submit.className = 'h-ask-submit';
+    submit.dataset.hgAskSend = it.req_id;
+    submit.textContent = '提交选择';
+    submit.disabled = true;
+    const hint = document.createElement('span');
+    hint.className = 'h-ask-hint';
+    hint.textContent = '选择后提交，AI 会继续';
+    foot.appendChild(submit);
+    foot.appendChild(hint);
+    card.appendChild(foot);
+    flow.appendChild(card);
+    scrollBottom();
+  }
+
+  // 卡片状态存在 dataset 而非 JS 属性：切走再切回走的是 innerHTML 快照路径
+  // （_HG.cache），元素被重建、JS 属性全丢，但 dataset 随 HTML 一起回来。
+  // 这与 v2.12 把抽屉开合委托化是同一个坑。
+  function askQs(card) {
+    try { return JSON.parse(card.dataset.hgQs || '[]'); } catch (_) { return []; }
+  }
+  function askSel(card) {
+    try { return JSON.parse(card.dataset.hgSel || '{}'); } catch (_) { return {}; }
+  }
+  function askSelSet(card, sel) { card.dataset.hgSel = JSON.stringify(sel); }
+
+  // 点击选项（flow 委托调用）：单选置换、多选切换
+  function askPick(btn) {
+    const card = btn.closest('.h-ask');
+    if (!card || card.classList.contains('done')) return;
+    const qi = btn.dataset.hgAskOpt;
+    const multi = !!btn.dataset.hgAskMulti;
+    const sel = askSel(card);
+    if (!sel[qi]) sel[qi] = [];
+    const label = btn.dataset.hgAskLabel || '';
+    if (multi) {
+      const i = sel[qi].indexOf(label);
+      if (i >= 0) sel[qi].splice(i, 1); else sel[qi].push(label);
+      btn.classList.toggle('on', i < 0);
+    } else {
+      sel[qi] = [label];
+      card.querySelectorAll(`[data-hg-ask-opt="${qi}"]`).forEach(b => {
+        b.classList.toggle('on', b === btn);
+      });
+    }
+    askSelSet(card, sel);
+    // 每题都选了才放行提交
+    const need = card.querySelectorAll('.h-ask-q').length;
+    let ok = 0;
+    for (let k = 0; k < need; k++) if ((sel[k] || []).length) ok++;
+    const sb = card.querySelector('.h-ask-submit');
+    if (sb) sb.disabled = ok < need;
+  }
+
+  function askSubmit(reqId) {
+    const card = flow.querySelector(`[data-hg-ask="${CSS.escape(reqId)}"]`);
+    if (!card || card.classList.contains('done')) return;
+    const qs = askQs(card), sel = askSel(card);
+    const answer = {};
+    card.querySelectorAll('.h-ask-q').forEach((box, qi) => {
+      const chosen = (sel[qi] || []).slice();
+      if (!chosen.length) return;
+      const qtext = (qs[qi] && qs[qi].question) || ('问题' + (qi + 1));
+      answer[qtext] = chosen.join(', ');
+    });
+    if (!Object.keys(answer).length) return;
+    const btn = card.querySelector('.h-ask-submit');
+    if (btn) { btn.disabled = true; btn.textContent = '提交中…'; }
+    fetch('/api/harness/ask/answer', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({sid: _HG.sid, req_id: reqId, answer})
+    }).then(r => r.json()).then(j => {
+      if (!j.ok) { if (btn) { btn.disabled = false; btn.textContent = '提交选择'; } renderRaw('⚠ 提交失败：' + (j.err || '')); }
+    }).catch(() => { if (btn) { btn.disabled = false; btn.textContent = '提交选择'; } });
+  }
+
+  // 用户提交后定稿卡片：显示已选、禁用交互
+  function askDone(it) {
+    const card = flow.querySelector(`[data-hg-ask="${CSS.escape(it.req_id || '')}"]`);
+    if (!card) return;
+    card.classList.add('done');
+    card.querySelectorAll('.h-ask-opt').forEach(b => { b.disabled = true; });
+    const ans = it.answer || {};
+    const qs = askQs(card);
+    card.querySelectorAll('.h-ask-q').forEach((box, qi) => {
+      const qtext = (qs[qi] && qs[qi].question) || '';
+      const chosen = ans[qtext];
+      if (!chosen) return;
+      box.querySelectorAll('.h-ask-opt').forEach(b => {
+        b.classList.toggle('on', String(chosen).split(', ').indexOf(b.dataset.hgAskLabel) >= 0);
+      });
+    });
+    const foot = card.querySelector('.h-ask-foot');
+    if (foot) foot.innerHTML = `<span class="h-ask-done">✓ 已提交</span>`;
+  }
+
   // ==================== markdown / 代码块 ====================
   function codeBlockEnhance(container) {
     // markdown-it 产物里的 pre > code：套 ChatGPT 式容器（语言标签+复制钮）
@@ -437,6 +576,11 @@ function buildClaudeHarnessTab(opts = {}) {
   // （v2.12 修「点一个全展开」+「切会话再切回后点不开」——innerHTML 快照恢复
   //   不丢监听器，每行每抽屉独立开合）
   flow.addEventListener('click', (e) => {
+    // 交互提问卡片（v2.17）：选项点击 / 提交
+    const aOpt = e.target.closest('.h-ask-opt');
+    if (aOpt) { askPick(aOpt); return; }
+    const aSend = e.target.closest('.h-ask-submit');
+    if (aSend) { askSubmit(aSend.dataset.hgAskSend); return; }
     const dHead = e.target.closest('.h-drawer-head');
     if (dHead) {
       const box = dHead.closest('.h-drawer');
@@ -1090,6 +1234,8 @@ function buildClaudeHarnessTab(opts = {}) {
       if (it.kind === 'user_echo') { setBusy(true); renderUser(it.text, it.images, it.files); }
       else if (it.kind === 'event') handleEvent(it.data);
       else if (it.kind === 'raw') renderRaw(it.text);
+      else if (it.kind === 'ask') askRender(it);
+      else if (it.kind === 'ask_done') askDone(it);
       else if (it.kind === 'interrupted') {
         renderExit(it.text); setBusy(false);
         // v2.15：通知 stopGen 兜底逻辑「事件到了」，别重复收尾

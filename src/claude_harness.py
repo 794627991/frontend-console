@@ -20,7 +20,7 @@ v2（微信式改造）新增：
 铁律约束：不动 claude_conn/claude_sessions/claude_setup/claude_default；
 不落盘工具日志（Claude 自写 ~/.claude/projects 转写）。
 """
-import os, json, base64, subprocess, threading, time, uuid
+import os, json, base64, sys, subprocess, threading, time, uuid
 from queue import Queue, Empty
 
 from flask import Blueprint, request, jsonify, Response
@@ -128,6 +128,28 @@ def _vision_save(cfg):
         return True, None
     except Exception as e:
         return False, str(e)
+
+
+def ask_bridge_text():
+    """生成注入每个会话的「交互式提问」引导段。
+
+    v2.17：CLI 在 -p 下没有 AskUserQuestion/ExitPlanMode（模型想调也没这个
+    工具），所以「给选项让用户点选」靠我们自建的 MCP 工具 ask_user 实现。
+    模型默认不知道它有这个工具，必须显式告诉它——和识图转交同一个理由。
+    """
+    return (
+        "【交互式提问】\n"
+        "你需要用户在若干方案中拍板、或关键决策需要确认时，用 ask_user 工具"
+        "（一个 MCP 工具，全名 mcp__harness__ask_user）向用户提问，而不是把"
+        "选项写成纯文本让他回复。用户在界面上会看到可点击的选项卡片，点选并"
+        "提交后，ask_user 的返回值就是用户的选择。\n"
+        "- 什么时候用：方案取舍（「用 A 还是 B」）、实现路径分叉、需要用户补充"
+        "偏好或约束、动手前需要授权的高风险操作。\n"
+        "- 什么时候不用：纯知识问答、你自己能查证的事实、无意义的「要不要继续」"
+        "式确认。\n"
+        "- 一个问题的可选项 2-4 个，每个选项配一句说明（用户看说明做判断）。\n"
+        "- 调用后你会停在那里等，不要在同一轮里又自己把方案做了。"
+    )
 
 
 def vision_bridge_text():
@@ -472,8 +494,45 @@ def _model_label(m):
 
 
 # ---------------------------------------------------------------------------
-# 会话
+# 交互式提问（v2.17）
+#   CLI 在 -p 下没有 AskUserQuestion/ExitPlanMode，所以 ask_user 走自建 MCP。
+#   MCP server（src/harness_ask_mcp.py）反过来通过这两个端点找用户要答案，
+#   前端渲染可点卡片 → 用户提交 → 唤醒那边阻塞着的工具调用。
 # ---------------------------------------------------------------------------
+_SRC_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _ask_mcp_cfg_path(sid):
+    """写本会话的 --mcp-config 文件（内容极小，每次 start 覆写）。
+
+    路径用正斜杠：cmd.exe shim 会吞反斜杠转义，JSON 里带 \\ 的 Windows 路径
+    经 shim 传递后解析失败（实测 --mcp-config 内联 JSON 会被引号处理吃掉）。
+    """
+    d = os.path.join(_st.HOME_DIR, "harness_ask")
+    try:
+        os.makedirs(d, exist_ok=True)
+    except Exception:
+        return None
+    # 打包（PyInstaller）下 src 不在磁盘上，改用 exe 自己的 --mcp-ask 模式
+    if getattr(sys, "frozen", False):
+        cmd, args = sys.executable, ["--mcp-ask"]
+    else:
+        script = os.path.join(_SRC_DIR, "harness_ask_mcp.py").replace("\\", "/")
+        cmd, args = (sys.executable or "python"), [script]
+    cfg = {"mcpServers": {"harness": {
+        "command": cmd,
+        "args": args,
+        "env": {"HARNESS_SID": sid},
+    }}}
+    p = os.path.join(d, "%s.json" % sid[:16])
+    try:
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False)
+    except Exception:
+        return None
+    return p.replace("\\", "/")
+
+
 class HarnessSession:
     """一个 stream-json harness 会话（kind='harness'）。
 
@@ -500,6 +559,10 @@ class HarnessSession:
         self._proc = None
         self.alive = False
         self.busy = False
+        # v2.17 交互式提问：MCP 工具调用发起的待答问题
+        #   {req_id, title, questions, answer, done, ts}
+        self.ask = None
+        self.ask_lock = threading.Lock()
         self.events = []
         self.events_lock = threading.Lock()
         self._seq = 0
@@ -534,12 +597,23 @@ class HarnessSession:
                  "--output-format", "stream-json",
                  "--verbose",
                  "--permission-mode", "auto"]
+        # v2.17：注册交互式提问 MCP（ask_user）。--permission-mode auto 下任何
+        # 未预授权的工具都会被权限系统拦下并自动拒绝（headless 没有提示通道），
+        # 所以必须用 --allowedTools 预授权，否则 ask_user 调用直接失败。
+        # --mcp-config 是追加式的（实测：内置 codegraph/headroom 等仍在），
+        # 不会覆盖用户已有的 MCP。
+        if not self.is_vision:
+            _cfg = _ask_mcp_cfg_path(self.sid)
+            if _cfg:
+                argv += ["--mcp-config", _cfg,
+                         "--allowedTools", "mcp__harness__ask_user"]
         # v2.14：识图后台会话用固定基础提示词；普通会话走用户提示词体系 +
         # 识图转交引导（主会话默认不知道有识图同伴，必须显式告知）。
         if self.is_vision:
             sys_prompt = (_vision_load().get("prompt") or "").strip()
         else:
-            parts = [_collect_system_prompt(self.cwd), vision_bridge_text()]
+            parts = [_collect_system_prompt(self.cwd), vision_bridge_text(),
+                     ask_bridge_text()]
             sys_prompt = "\n\n".join(p for p in parts if p)
         if sys_prompt:
             argv += ["--append-system-prompt", sys_prompt]
@@ -572,6 +646,7 @@ class HarnessSession:
         所以杀完主动清理自己那条注册。"""
         self.alive = False
         self.busy = False
+        self.ask_cancel()       # v2.17：别让 MCP 侧的提问继续空转等
         proc, self._proc = self._proc, None
         if proc is not None:
             pid = None
@@ -727,6 +802,50 @@ class HarnessSession:
                 self.emit({"kind": "raw", "text": txt})
         except Exception:
             pass
+
+    # ---- 交互式提问（v2.17）----
+    def ask_open(self, req_id, title, questions):
+        """登记一个待答问题并广播 harness_ask 事件（前端渲染可点卡片）。
+
+        同一会话同时只允许一个待答问题：模型是串行调用的，若旧的还没答
+        又来一个，说明旧的那个已经没意义了（工具调用已被中断等），直接换掉。
+        """
+        with self.ask_lock:
+            self.ask = {"req_id": req_id, "title": title,
+                        "questions": questions, "answer": None,
+                        "done": False, "ts": int(time.time() * 1000)}
+        self.emit({"kind": "ask", "req_id": req_id, "title": title,
+                   "questions": questions})
+        return True
+
+    def ask_answer(self, req_id, answer):
+        """用户提交答案：记下并唤醒长轮询中的 MCP 工具调用。"""
+        with self.ask_lock:
+            a = self.ask
+            if not a or a.get("req_id") != req_id:
+                return False
+            a["answer"] = answer
+            a["done"] = True
+        self.emit({"kind": "ask_done", "req_id": req_id, "answer": answer})
+        return True
+
+    def ask_poll(self, req_id):
+        """MCP 侧长轮询：返回 (found, done, answer)。"""
+        with self.ask_lock:
+            a = self.ask
+            if not a or a.get("req_id") != req_id:
+                return False, False, None
+            return True, bool(a.get("done")), a.get("answer")
+
+    def ask_cancel(self):
+        """会话进程结束/被中断：让还在等的 MCP 调用立刻拿到「用户未作答」，
+        不要继续空转轮询。"""
+        with self.ask_lock:
+            a = self.ask
+            if a and not a.get("done"):
+                a["answer"] = {"_cancelled": True}
+                a["done"] = True
+            self.ask = None
 
     def emit(self, item):
         self._seq += 1
@@ -1037,6 +1156,46 @@ def harness_connect():
         _sessions[new_sid] = s
     return jsonify({"ok": True, "port_id": s.port_id, "sid": s.sid, "kind": "harness",
                     "cwd": s.cwd, "model": s.model, "title": s.title})
+
+
+@harness_bp.route("/ask/reply", methods=["POST"])
+def harness_ask_reply():
+    """MCP 侧发起提问（src/harness_ask_mcp.py 调）。
+    body: {sid, req_id, title, questions}。登记后前端经 SSE 收到 harness_ask
+    事件渲染成可点卡片；用户提交走 /ask/answer。"""
+    data = request.get_json(force=True, silent=True) or {}
+    sid = (data.get("sid") or "").strip()
+    req_id = (data.get("req_id") or "").strip()
+    s = _get_or_create(sid)
+    if not s or not req_id:
+        return jsonify({"ok": False, "err": "会话不存在或缺少 req_id"}), 400
+    s.ask_open(req_id, (data.get("title") or "").strip(), data.get("questions") or [])
+    return jsonify({"ok": True})
+
+
+@harness_bp.route("/ask/poll", methods=["POST"])
+def harness_ask_poll():
+    """MCP 侧长轮询等作答。body: {sid, req_id}。"""
+    data = request.get_json(force=True, silent=True) or {}
+    s = _get_or_create((data.get("sid") or "").strip())
+    if not s:
+        return jsonify({"ok": False, "err": "会话不存在"}), 404
+    found, done, answer = s.ask_poll((data.get("req_id") or "").strip())
+    return jsonify({"ok": True, "found": found, "done": done, "answer": answer})
+
+
+@harness_bp.route("/ask/answer", methods=["POST"])
+def harness_ask_answer():
+    """用户提交答案（前端调）。body: {sid, req_id, answer}。
+    answer 形如 {问题原文: "选项label"}；多选用 ", " 连接。"""
+    data = request.get_json(force=True, silent=True) or {}
+    s = _get_or_create((data.get("sid") or "").strip())
+    if not s:
+        return jsonify({"ok": False, "err": "会话不存在"}), 404
+    req_id = (data.get("req_id") or "").strip()
+    if not s.ask_answer(req_id, data.get("answer") or {}):
+        return jsonify({"ok": False, "err": "该提问已失效（可能已被新提问替换）"}), 409
+    return jsonify({"ok": True})
 
 
 @harness_bp.route("/send", methods=["POST"])
