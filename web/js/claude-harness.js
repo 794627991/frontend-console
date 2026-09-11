@@ -1340,14 +1340,14 @@ function buildClaudeHarnessTab(opts = {}) {
       if (it.kind === 'user_echo') { setBusy(true); renderUser(it.text, it.images, it.files); }
       else if (it.kind === 'event') handleEvent(it.data);
       else if (it.kind === 'raw') renderRaw(it.text);
-      else if (it.kind === 'ask') askRender(it);
+      else if (it.kind === 'ask') { grpFinalize(true); askRender(it); }
       else if (it.kind === 'ask_done') askDone(it);
       else if (it.kind === 'interrupted') {
-        grpFinalize(true); renderExit(it.text); setBusy(false);
+        endThinking(); grpFinalize(true); renderExit(it.text); setBusy(false);
         // v2.15：通知 stopGen 兜底逻辑「事件到了」，别重复收尾
         try { document.dispatchEvent(new CustomEvent('hg-interrupted', {detail: _HG.sid})); } catch(_) {}
       }
-      else if (it.kind === 'exit') { _HG.alive = false; grpFinalize(true); renderExit(it.text); setBusy(false); }
+      else if (it.kind === 'exit') { endThinking(); _HG.alive = false; grpFinalize(true); renderExit(it.text); setBusy(false); }
     };
   }
 
@@ -1374,6 +1374,7 @@ function buildClaudeHarnessTab(opts = {}) {
     saveCache();
     closePop(); closeMention();
     endThinking(); closeRun();
+    if (_HG.grp) phStopTimer(_HG.grp);   // v2.18：防御性清占位 timer（isConnected 自杀是兜底）
     _hgMentionReset();          // v2.15：@ 引用高亮不跨会话残留
     _HG.rowById = {}; _HG.uidN = 0; _HG.run = null; _HG.grp = null; _HG.histNav = null;   // v2.18：组级抽屉
     _HG.think = null; _HG.noScroll = false; _HG.openState = null;   // v2.16：重建态不跨会话残留
@@ -2118,6 +2119,7 @@ function _harnessClose(portId) {
   // 重开后第一次点模型 chip 就可能删掉一条会话。tab 即将销毁，这里只需清
   // 状态，不用走 setBusy 更新界面。
   _HG.dirty = false; _HG.busy = false;
+  if (_HG.grp) phStopTimer(_HG.grp);   // v2.18：防御性清占位 timer（isConnected 自杀是兜底）
   _HG.grp = null; _HG.activity = null;   // v2.18：组级抽屉（旧 drawer 单例已删）
   _HG.think = null; _HG.noScroll = false; _HG.openState = null;
   _HG.skills = null; _HG.models = null;   // 技能/模型映射下次进 tab 重新拉
