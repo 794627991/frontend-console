@@ -170,8 +170,14 @@ def _cleanup_peer_reg(pid=None, session_id=None):
     残留条目指向死 pid —— 之后 ListAgents 会列出幽灵会话，主会话可能把
     识图任务发给一个不存在的 peer。所以要主动摘。
 
-    匹配按 session_id 优先（最可靠），回退按 pid。走 cmd.exe shim 时
-    proc.pid 是 cmd 的 pid、与注册表里的 claude pid 不同，单靠 pid 会漏。
+    匹配规则（v2.15 收紧）：已知 session_id 时只按 session_id 匹配，
+    pid 不能再作为独立命中条件 —— 本机 _resolve_claude_exe() 走的是直连
+    claude.exe（is_shim=False），proc.pid 就是 claude 自己的 pid，而 pid 会
+    被系统复用。旧写法下「新会话恰好拿到刚死会话的 pid」时，新会话关停会把
+    那条 *活着* 的注册删掉（_pid_alive 查的是条目自己的 pid，防不住这个），
+    导致主会话 --resume 时 peer 身份被摘、或子代理结果送不回来。
+    session_id 未知时才退回 pid 匹配（cmd.exe shim 场景），此时本会话注册
+    条目本来也带 pid，能对上。
     删前先确认进程真的死了，避免误删尚在运行的会话注册。
     """
     d = _peer_reg_path()
@@ -192,8 +198,10 @@ def _cleanup_peer_reg(pid=None, session_id=None):
             continue
         if not isinstance(o, dict):
             continue
-        hit = (session_id and o.get("sessionId") == session_id) or \
-              (pid and o.get("pid") == pid)
+        if session_id:
+            hit = o.get("sessionId") == session_id
+        else:
+            hit = bool(pid) and o.get("pid") == pid
         if not hit:
             continue
         # 进程还活着就不动（防误删：pid 可能已被系统复用）
@@ -923,18 +931,28 @@ def transcript_for(s):
                         if (t or imgs) and not _SKIP_RE.match((t or "").strip()):
                             lines.append({"role": "user", "text": t[:8000], "images": imgs, "files": files})
                 elif typ == "assistant" and isinstance(content, list):
-                    texts, tools = [], []
+                    texts, tools, thinks = [], [], []
                     for b in content:
                         if not isinstance(b, dict):
                             continue
                         if b.get("type") == "text" and b.get("text"):
                             texts.append(b["text"])
+                        elif b.get("type") == "thinking" and b.get("thinking"):
+                            thinks.append(b["thinking"])
                         elif b.get("type") == "tool_use":
                             tools.append({"id": b.get("id", ""), "name": b.get("name", ""),
                                           "summary": _tool_summary(b.get("name", ""), b.get("input")),
                                           "input": b.get("input") or {}})
-                    if texts:
-                        lines.append({"role": "assistant", "text": "\n".join(texts)[:8000]})
+                    # 思考先出：一轮里 thinking 在工具调用之前，重建后「思考抽屉」才在
+                    # 「执行抽屉」上方（与流式渲染同序）
+                    if thinks:
+                        lines.append({"role": "thinking", "text": "\n".join(thinks)[:8000]})
+                    # 空白/纯换行的 text 块要丢掉：模型每轮都会吐一个 "\n\n" 占位，
+                    # 落盘后仍是真值 → 重建时每条渲染成一个空白 AI 气泡（历史会话
+                    # 满屏空白圆角条的根因），还把真正的思考/工具行挤出可视区。
+                    t = "\n".join(texts).strip()
+                    if t:
+                        lines.append({"role": "assistant", "text": t[:8000]})
                     for tl in tools:
                         row = {"role": "tool", "text": tl["name"], "summary": tl["summary"],
                                "input": tl["input"], "result": None}

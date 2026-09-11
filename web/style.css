@@ -1967,19 +1967,22 @@
    v2.2 美化：加左右留白防贴边（用户反馈「气泡顶到边界」），
    内容列 760→820px，间距加大呼吸感 */
 .hg-flow { flex: 1; overflow-y: auto; padding: 20px 32px; display: flex;
-  flex-direction: column; gap: 12px; align-items: center;
-  /* v2.10：flow 全部直接子项禁垂直压缩——定高 column flex 子项默认
-     flex-shrink:1，超高内容(长思考块/大抽屉)会被按比例压扁到 ~2px 再被
-     各自 overflow:hidden 裁掉（v2.9 只豁免了抽屉，用户实测思考块仍被压）。
-     禁压缩后按自然高度撑开滚动区，由 flow 滚动承载 */
-  & > * { flex-shrink: 0; } }
+  flex-direction: column; gap: 12px; align-items: center; }
+/* v2.10：flow 全部直接子项禁垂直压缩——定高 column flex 子项默认
+   flex-shrink:1，超高内容(长思考块/大抽屉)会被按比例压扁到 ~2px 再被
+   各自 overflow:hidden 裁掉（v2.9 只豁免了抽屉，用户实测思考块仍被压）。
+   禁压缩后按自然高度撑开滚动区，由 flow 滚动承载。
+   v2.15：原先写在这条规则内部当原生嵌套（`& > *`），是全文唯一一处嵌套；
+   WebView2 的 Chromium 版本低于 120 时整条规则被解析器静默丢弃，等于这条
+   修复从未生效。改成顶层独立选择器，与文件其余写法一致。 */
+.hg-flow > * { flex-shrink: 0; }
 .hg-flow > .h-msg { width: min(820px, 100%); }
 .hg-flow > .h-tool, .hg-flow > .h-tool-res { width: min(820px, 100%); max-width: none; }
 .hg-flow > .h-tool-res { padding-left: 10px; }
 .hg-flow > .h-raw { width: min(820px, 100%); }
 /* v2.6：思考块入列（此前 width:88% 按 flow 全宽算，1400px 窗下 1176px，
    比 820px 气泡列长一截——用户实测「虚线比气泡长」的根因） */
-.hg-flow > .h-think, .hg-flow > .h-exit { width: min(820px, 100%); }
+.hg-flow > .h-exit { width: min(820px, 100%); }
 /* v2.7 过程抽屉：一轮回复的非回答过程（工具行）收纳容器，消息流只留抽屉组头
    （「缩成一团/思考块压扁」根因 flex-shrink 已在 .hg-flow 全局禁压缩处理，见上）
    v2.11：抽屉靠 AI 侧（左）对齐，放 AI 气泡上方，不再居中；
@@ -2265,23 +2268,11 @@
 .t-item .q-opt { display: inline-block; margin-left: 6px; font-size: 10.5px;
   color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 0 6px; }
 
-/* ---- thinking 折叠（源 Reasoning.tsx：流式展开、结束收起）----
-   v2.6：宽度与消息列对齐（入 .hg-flow > .h-think 列宽规则）；
-   头部字号 11.5→12.5、上下留白加大——收起态不再是一条压扁的细虚线 */
-.h-think { align-self: flex-start; max-width: 100%; font-size: 12px;
-  border: 1px dashed var(--border); border-radius: 12px; overflow: hidden;
-  background: color-mix(in srgb, var(--accent) 4%, transparent); }
-.h-think-head { display: flex; align-items: center; gap: 6px; width: 100%;
-  border: none; background: transparent; color: var(--muted); font-size: 12.5px;
-  padding: 8px 12px; cursor: pointer; }
-.h-think-head:hover { color: var(--fg); }
-.h-think-t { flex: 1; }
-.h-think-chev { transition: transform .15s; }
-.h-think.open .h-think-chev { transform: rotate(180deg); }
-.h-think-body { display: none; padding: 2px 12px 10px; color: var(--muted);
-  line-height: 1.7; font-size: 12px; }
-.h-think.open .h-think-body { display: block; }
-.h-think-body p { margin: .4em 0; }
+/* ---- thinking 折叠（源 Reasoning.tsx）----
+   v2.15：整组 `.h-think*` 规则已删除——JS 从 v2.6 起不再创建 `.h-think`
+   元素，思考正文直接流式追加进 `.h-drawer-body > .h-think-holder`（样式见
+   上方那条）。留下的直接危害是 `.h-think-body{display:none}` 会连带命中
+   startThinking() 创建的那个裸 `.h-think-body` 容器，让它恒不可见。 */
 
 /* ---- 代码块容器（源 CodeBlock：标签行+复制按钮同底色无分割线）---- */
 .h-bubble pre { margin: .4em 0; }

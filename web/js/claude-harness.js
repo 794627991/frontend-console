@@ -286,6 +286,7 @@ function buildClaudeHarnessTab(opts = {}) {
         mentionEl = q('[data-hg-mention]'), actEl = q('[data-hg-activity]');
 
   const scrollBottom = () => {
+    if (_HG.noScroll) return;   // v2.16：历史重建期间不滚（几百行逐行 append 会反复重排）
     flow.scrollTop = flow.scrollHeight;
     // 布局二次兜底：活动指示条弹出/气泡内图片加载等会在同帧稍后改变 flow 高度，
     // 下一帧再滚一次，保证"发送后我的消息在底部"（v2.5 用户反馈修复）
@@ -378,6 +379,41 @@ function buildClaudeHarnessTab(opts = {}) {
   // 抽屉组头动画显示「AI 正在思考中…」，回复结束才定稿收尾。
   // v2.12：抽屉开合改为 flow 级事件委托——innerHTML 快照恢复（切会话再切回）
   // 不丢监听器；多个抽屉各自独立开合互不影响。
+  // ==================== 抽屉/工具展开状态的持久化 ====================
+  // 用户诉求：关掉 tab 再打开历史会话，「思考/工具展开情况不能丢」。
+  // 同一 tab 内切走再切回走 innerHTML 快照，DOM 状态本来就保真；关 tab 后
+  // 只能按 transcript 重建，默认值全会复位。这里按「结构路径」（flow 子索引
+  // 逐层下钻）记开合状态到 localStorage——不依赖后端 id，重建后元素位置一致
+  // 即能对上；流式阶段前面的元素不增删，路径同样稳定。
+  function _hgPathKey(el) {
+    const p = [];
+    let n = el;
+    while (n && n !== flow) { p.unshift(Array.prototype.indexOf.call(n.parentNode.children, n)); n = n.parentNode; }
+    return p.join('/');
+  }
+  function _hgLoadOpen(sid) {
+    try { return JSON.parse(localStorage.getItem('hg-open:' + sid) || '{}') || {}; } catch(_) { return {}; }
+  }
+  function _hgSaveOpen(el) {
+    if (!_HG.sid) return;
+    try {
+      const st = _hgLoadOpen(_HG.sid);
+      st[_hgPathKey(el)] = el.classList.contains('open') ? 1 : 0;
+      localStorage.setItem('hg-open:' + _HG.sid, JSON.stringify(st));
+    } catch(_) {}
+  }
+  // 重建期把记下的状态贴回元素（流式期 _HG.openState 为 null，不干预默认值）。
+  // 没有记录时用 defOpen：历史抽屉默认收起（正文可见、过程细节按需展开），
+  // 出错工具行默认展开（错误信息不该藏）。
+  function _hgApplyOpen(el, defOpen) {
+    const st = _HG.openState;
+    if (!st) return;
+    const k = _hgPathKey(el), has = k in st;
+    el.classList.toggle('open', has ? !!st[k] : !!defOpen);
+    // 有记录 = 用户碰过 → 标记住，重建末尾的 drawerCloseAll(true) 不再自动收它
+    if (has) el.dataset.userToggled = '1';
+  }
+
   function drawerEnsure(kind) {
     const key = kind === 'think' ? 'drawerThink' : 'drawer';
     if (_HG[key]) return _HG[key];
@@ -394,6 +430,7 @@ function buildClaudeHarnessTab(opts = {}) {
                  stats: box.querySelector('[data-hg-dstats]'),
                  slots: box.querySelector('[data-hg-dslots]'),
                  counts: {}, userToggled: false, kind };
+    _hgApplyOpen(box, false);               // 重建期：按记录恢复；无记录则默认收起
     return _HG[key];
   }
   // flow 级事件委托：抽屉组头/工具折叠行点击 → 只切自己
@@ -406,13 +443,14 @@ function buildClaudeHarnessTab(opts = {}) {
       if (box) {
         box.classList.toggle('open');
         box.dataset.userToggled = '1';       // 写进 DOM——快照恢复后依然记得用户碰过
+        _hgSaveOpen(box);                    // v2.16：关 tab 后重建也不丢
       }
       return;
     }
     const tHead = e.target.closest('.h-tool-head');
     if (tHead) {
       const row = tHead.closest('.h-tool');
-      if (row) row.classList.toggle('open');
+      if (row) { row.classList.toggle('open'); _hgSaveOpen(row); }
       return;
     }
     // 代码块/Bash 命令复制钮（v2.12 委托化——快照恢复后行内绑定会失活）
@@ -485,7 +523,10 @@ function buildClaudeHarnessTab(opts = {}) {
     addRow(d);
   }
   function renderAsst(text, isSub) {
-    if (!text) return;
+    // v2.16：空白/纯换行的 text 块不渲染。模型每轮都会吐一个 "\n\n" 占位块，
+    // 旧判据 `if (!text)` 挡不住 → 每条渲染成一个空白气泡（历史重建后满屏空白
+    // 圆角条）。重建与流式两条路径都走这里，一并对齐。
+    if (!text || !String(text).trim()) return;
     _HG.asstText = true;                     // v2.11：AI 已输出文本，思考组头切「思考了 Xs」
     const d = document.createElement('div');
     d.className = 'h-msg asst' + (isSub ? ' sub' : '');
@@ -499,6 +540,54 @@ function buildClaudeHarnessTab(opts = {}) {
   function renderExit(text) {
     const d = document.createElement('div'); d.className = 'h-exit'; d.textContent = text;
     addRow(d);
+  }
+
+  // ==================== 历史重建（切回会话时按 transcript 行还原气泡/抽屉）====
+  // v2.16：从 switchTo 里抽出来，并补上 thinking 行——history 里的「思考过程」
+  // 抽屉此前完全丢失（后端 transcript_for 不产出，前端也不认 role='thinking'），
+  // 用户看到的「历史里没有思考/工具展开」就是这个。
+  function renderHistThinking(text) {
+    const d = drawerEnsure('think');
+    // 已有思考正文就追加（一轮多段 thinking 共用一个抽屉，与流式一致）
+    const b = d.body.querySelector('.h-think-holder') || (() => {
+      const x = document.createElement('div');
+      x.className = 'h-think-holder';
+      d.body.appendChild(x);
+      return x;
+    })();
+    b.innerHTML += renderMd(text || '');
+    const title = d.box.querySelector('.h-drawer-title');
+    if (title) title.textContent = '🧠 思考过程';   // 历史条目无时长可显示（不编造）
+    _HG.think = null;                              // 定稿态：后续 appendThinking 会新开抽屉
+  }
+  function renderHistTool(l) {
+    // v2.11：重建也走执行抽屉（renderUser 已收尾旧抽屉）
+    // v2.15：改用与 renderToolUse 的 collapsible 分支同构的结构
+    // （.h-tool.col > .h-tool-head[.h-tslots] + .h-tool-coll），
+    // 并把后端带的 result（输出）与 err（错误标记）补回来。
+    const d = document.createElement('div');
+    d.className = 'h-tool col' + (l.err ? ' err open' : '');
+    const out = l.result ? String(l.result) : '';
+    d.innerHTML =
+      `<button class="h-tool-head"><span class="h-chev">▸</span>` +
+      `<span class="h-tool-name">${_hToolIco(l.text)} ${esc(_hToolLabel(l.text))}</span>` +
+      `<span class="h-tslots">${statusBadge(l.err ? 'error' : 'completed')}</span></button>` +
+      `<div class="h-tool-coll">${l.summary ? `<div class="h-tool-arg">${esc(l.summary)}</div>` : ''}` +
+      (out ? `<div class="h-tool-out${l.err ? ' err-txt' : ''}">${esc(out.length > 4000 ? out.slice(0, 4000) + '…' : out)}</div>` : '') +
+      `</div>`;
+    drawerCount(l.text);
+    drawerAppend(d, 'exec');
+    _hgApplyOpen(d, !!l.err);   // 重建期：恢复上次开合；无记录时错误行默认展开
+  }
+  function renderHistLine(l) {
+    if (l.role === 'user') {
+      const imgs = (l.files || []).filter(p => _HARNESS_IMG_EXT.test(p));
+      const files = (l.files || []).filter(p => !_HARNESS_IMG_EXT.test(p));
+      renderUser(l.text, imgs, files);
+    }
+    else if (l.role === 'assistant') renderAsst(l.text);
+    else if (l.role === 'thinking') renderHistThinking(l.text);
+    else if (l.role === 'tool') renderHistTool(l);
   }
 
   // ==================== thinking 抽屉化（v2.11：思考过程收进「思考抽屉」）====
@@ -548,7 +637,10 @@ function buildClaudeHarnessTab(opts = {}) {
         d.body.appendChild(b);
         return b;
       })();
-      holder.innerHTML += renderMd(text);
+      // v2.15：`innerHTML +=` 会把整个 holder 读回、拼接、重新解析并重建全部
+      // 子节点——每来一片思考就一次，长思考输出下是 O(n²) 且会丢掉已挂事件。
+      // 改为只往末尾追加本次增量（铁律①流畅）。
+      holder.insertAdjacentHTML('beforeend', renderMd(text));
     }
     thinkHeadUpdate();
     scrollBottom();
@@ -582,7 +674,12 @@ function buildClaudeHarnessTab(opts = {}) {
   }
   function deriveStatus(res) {
     if (!res) return 'running';
-    if (res.isError) {
+    // v2.15：字段名修正。这是 SDK 的 tool_result 块，用 snake_case `is_error`
+    // （后端 claude_harness.py 读的也是 is_error，本机 jsonl 里 is_error 出现
+    // 3415 次、isError 0 次）。旧写法读 res.isError 恒为 undefined，deriveStatus
+    // 永远返回 'completed' —— 红色「出错」徽章、row 的 err class、错误输出自动
+    // 展开三条路径全部不可达，工具报错在界面上一直显示为绿色「完成」。
+    if (res.is_error || res.isError) {
       const c = String(res.content || '').toLowerCase().trim();
       return _H_DENIAL.some(m => c.includes(m)) ? 'denied' : 'error';
     }
@@ -748,8 +845,15 @@ function buildClaudeHarnessTab(opts = {}) {
   function renderToolResult(o) {
     const c = o.message && o.message.content;
     const blocks = Array.isArray(c) ? c : [];
-    const tr = blocks.find(b => b.type === 'tool_result');
-    if (!tr) return;
+    // v2.15：一条 user 消息可携带多个 tool_result（并行工具调用一次全回）。
+    // 旧实现用 find() 只取首个 → 其余工具行永远停在「运行中」，结果与错误
+    // 都不显示。后端 transcript_for 也是按 trs 全量遍历的，这里对齐。
+    const trs = blocks.filter(b => b && b.type === 'tool_result');
+    if (!trs.length) return;
+    for (const tr of trs) renderOneToolResult(tr);
+  }
+
+  function renderOneToolResult(tr) {
     const row = _HG.rowById[tr.tool_use_id];
     if (!row) {
       // 无对应行（transcript 重建的孤立结果）→ 单行摘要（v2.7：也进抽屉）
@@ -862,22 +966,24 @@ function buildClaudeHarnessTab(opts = {}) {
   }
 
   // ==================== 上下文用量环（v2.3 问题4：替代金额显示）====================
-  // 口径：result 事件 usage 之和（input+cache_read+cache_creation+output），
-  // 窗口大小优先取 modelUsage.<model>.contextWindow（CLI 权威值，实测 256000），
-  // 缺失时回退 256K。圆环：底环 border 色，进度环 accent，>80% 橙、>95% 红警示。
+  // v2.16 口径修正：旧实现把 result 事件 usage 的 input+cache_read+cache_creation
+  // +output 相加当作「上下文用量」，但那算的是**本轮消耗量**——cache_read 是缓存
+  // 命中的读取量，一轮十几万属正常且便宜，多轮对话里它必然累积撞满窗口，于是
+  // 环恒为满环、橙色警示恒亮（用户实测标题「上下文 5941.0K / 200.0K tokens（100%）」,
+  // 5941K ≈ 本会话 30 轮的 Σ）。一个恒满的指标等于没有指标。
+  // 真正该表达的是「离上限还有多远」= 最近一轮喂进模型的输入总量
+  // （input + cache_read + cache_creation；output 是产出，不占输入窗口）。
+  // 窗口取 modelUsage.<model>.contextWindow（CLI 权威值），缺失回退 256K。
+  // 切回旧会话/重开 tab 时 result 事件不重放，故按 sid 持久化恢复。
   const _HG_CTX_FALLBACK = 256000;
-  function renderCtxRing(o) {
-    const u = o.usage || {};
-    const used = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) +
-                 (u.cache_creation_input_tokens || 0) + (u.output_tokens || 0);
-    if (typeof used !== 'number' || used <= 0) return;
-    let ctxMax = _HG_CTX_FALLBACK;
-    const mu = o.modelUsage || {};
-    for (const k in mu) {
-      if (mu[k] && typeof mu[k].contextWindow === 'number' && mu[k].contextWindow > 0) {
-        ctxMax = mu[k].contextWindow; break;
-      }
-    }
+  function _hgCtxKey(sid) { return 'hg-ctx:' + sid; }
+  function _hgCtxRestore(sid) {
+    let v = null;
+    if (sid) { try { v = JSON.parse(localStorage.getItem(_hgCtxKey(sid)) || 'null'); } catch(_) {} }
+    if (v && v.used > 0) _hgDrawCtxRing(v.used, v.max || _HG_CTX_FALLBACK);
+    else costEl.innerHTML = '';
+  }
+  function _hgDrawCtxRing(used, ctxMax) {
     const pct = Math.min(100, used / ctxMax * 100);
     // v2.6：viewBox 与 CSS 显示尺寸一致（24），r=10 + stroke 3 → 直径 23 < 24 不裁边；
     // 此前 r=9 贴 viewBox 边缘，缩放裁切导致"圆环爆掉"
@@ -892,8 +998,23 @@ function buildClaudeHarnessTab(opts = {}) {
       ` stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - pct / 100)}"` +
       ` stroke-linecap="round" transform="rotate(-90 ${VB / 2} ${VB / 2})"/></svg>` +
       `<span class="hg-ctx-pct">${Math.round(pct)}%</span>`;
-    costEl.title = `上下文 ${fmtTok(used)} / ${fmtTok(ctxMax)} tokens（${Math.round(pct)}%）`;
+    costEl.title = `当前上下文 ${fmtTok(used)} / ${fmtTok(ctxMax)} tokens（${Math.round(pct)}%）`;
     costEl.classList.toggle('warn', pct >= 80);
+  }
+  function renderCtxRing(o) {
+    const u = o.usage || {};
+    const used = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) +
+                 (u.cache_creation_input_tokens || 0);
+    if (typeof used !== 'number' || used <= 0) return;
+    let ctxMax = _HG_CTX_FALLBACK;
+    const mu = o.modelUsage || {};
+    for (const k in mu) {
+      if (mu[k] && typeof mu[k].contextWindow === 'number' && mu[k].contextWindow > 0) {
+        ctxMax = mu[k].contextWindow; break;
+      }
+    }
+    _hgDrawCtxRing(used, ctxMax);
+    if (_HG.sid) { try { localStorage.setItem(_hgCtxKey(_HG.sid), JSON.stringify({used, max: ctxMax})); } catch(_) {} }
   }
 
   function setBusy(b) {
@@ -926,7 +1047,7 @@ function buildClaudeHarnessTab(opts = {}) {
       const isSub = !!o.parent_tool_use_id;
       for (const b of blocks) {
         if (b.type === 'thinking' && b.thinking) { closeRun(); appendThinking(b.thinking); }
-        else if (b.type === 'text' && b.text) { endThinking(); closeRun(); renderAsst(b.text, isSub); }
+        else if (b.type === 'text' && b.text && b.text.trim()) { endThinking(); closeRun(); renderAsst(b.text, isSub); }
         else if (b.type === 'tool_use') { endThinking(); renderToolUse(b, isSub); }
       }
       scrollBottom();
@@ -969,25 +1090,57 @@ function buildClaudeHarnessTab(opts = {}) {
       if (it.kind === 'user_echo') { setBusy(true); renderUser(it.text, it.images, it.files); }
       else if (it.kind === 'event') handleEvent(it.data);
       else if (it.kind === 'raw') renderRaw(it.text);
-      else if (it.kind === 'interrupted') { renderExit(it.text); setBusy(false); }
+      else if (it.kind === 'interrupted') {
+        renderExit(it.text); setBusy(false);
+        // v2.15：通知 stopGen 兜底逻辑「事件到了」，别重复收尾
+        try { document.dispatchEvent(new CustomEvent('hg-interrupted', {detail: _HG.sid})); } catch(_) {}
+      }
       else if (it.kind === 'exit') { _HG.alive = false; renderExit(it.text); setBusy(false); }
     };
   }
 
   // ==================== 会话切换 ====================
+  function _hgHasHistory(sid) {
+    const s = _HG.sessions.find(x => x.sid === sid);
+    return !!(s && s.has_history);
+  }
   function saveCache() {
     if (_HG.sid) _HG.cache[_HG.sid] = { html: flow.innerHTML, seq: _HG.seq };
   }
   async function switchTo(sid, keepInput) {
-    if (sid === _HG.sid && flow.querySelector('.h-msg, .hg-welcome')) return;
+    if (sid === _HG.sid && flow.querySelector('.h-msg, .hg-welcome')) {
+      // v2.15：点的是当前会话 → 早返回。但 busy 卡死时用户正是靠「重点一下
+      // 当前会话」自救，这里不能什么都不做：至少按后端真实值纠偏一次。
+      if (sid) {
+        fetch(`/api/harness/events?sid=${encodeURIComponent(sid)}&after_seq=${_HG.seq}`)
+          .then(r => r.json())
+          .then(j => { if (j.ok && _HG.sid === sid) setBusy(!!j.busy); })
+          .catch(() => { if (_HG.sid === sid) setBusy(false); });
+      }
+      return;
+    }
     saveCache();
     closePop(); closeMention();
     endThinking(); closeRun();
+    _hgMentionReset();          // v2.15：@ 引用高亮不跨会话残留
     _HG.rowById = {}; _HG.uidN = 0; _HG.run = null; _HG.drawer = null; _HG.drawerThink = null; _HG.histNav = null;
+    _HG.think = null; _HG.noScroll = false; _HG.openState = null;   // v2.16：重建态不跨会话残留
     _HG.sid = sid; _HG.seq = 0; _HG.alive = false;
-    if (!sid) _HG.dirty = false;
+    // v2.15：dirty 语义修正。旧实现只在「发送成功」置 true、只在
+    // switchTo(null) 置 false —— 冷启动自动进的是历史会话（has_history），
+    // dirty 仍是 false，于是点一下模型/项目 chip 就会走 `if (!_HG.dirty)`
+    // 分支把这条历史会话 DELETE 掉并杀掉其进程（实测可复现：打开历史会话、
+    // 不发消息、点模型 → 会话从列表消失）。这里改为按「目标会话是否已落盘」
+    // 判定：缓存里有 or 服务端标记 has_history 的会话，都不是可丢弃的新会话。
+    _HG.dirty = !!(sid && (_HG.cache[sid] || _hgHasHistory(sid)));
+    // v2.15：busy 不能跨会话沿用。旧实现只重置 _HG.alive，busy 靠下面那次
+    // events 请求的 .then(setBusy) 纠偏，而 catch 把失败整个吞掉 —— 请求
+    // 失败/非 ok 时 busy 停在 true，发送键恒为 ■、活动条恒计时、send() 被
+    // 拦下，点 ■ 又回到这条死循环。这里先无条件清掉，真实值由 events 回填。
+    setBusy(false);
+    costEl.classList.remove('warn');   // 清文本不清 class 会让空用量环留着橙色警示
     clearAtts();
-    costEl.textContent = '';
+    _hgCtxRestore(sid);                // 切回旧会话：恢复该会话上次的上下文用量（result 不重放）
     if (!sid) {
       flow.innerHTML = '';
       showWelcome();
@@ -1009,7 +1162,7 @@ function buildClaudeHarnessTab(opts = {}) {
       fetch(`/api/harness/events?sid=${encodeURIComponent(sid)}&after_seq=${_HG.seq}`)
         .then(r => r.json())
         .then(j => { if (j.ok && _HG.sid === sid) setBusy(!!j.busy); })
-        .catch(() => {});
+        .catch(() => { if (_HG.sid === sid) setBusy(false); });
     } else {
       flow.innerHTML = '';
       try {
@@ -1017,23 +1170,15 @@ function buildClaudeHarnessTab(opts = {}) {
         if (j.ok && _HG.sid === sid) {
           _HG.seq = j.seq || 0; _HG.alive = !!j.alive;
           if (!j.lines.length) showWelcome();
-          else j.lines.forEach(l => {
-            if (l.role === 'user') {
-              const imgs = (l.files || []).filter(p => _HARNESS_IMG_EXT.test(p));
-              const files = (l.files || []).filter(p => !_HARNESS_IMG_EXT.test(p));
-              renderUser(l.text, imgs, files);
-            }
-            else if (l.role === 'assistant') renderAsst(l.text);
-            else if (l.role === 'tool') {   // transcript 的工具行（无 id，简单单行）
-              // v2.11：重建也走执行抽屉（renderUser 已收尾旧抽屉）
-              const d = document.createElement('div');
-              d.className = 'h-tool';
-              d.innerHTML = `<span class="h-tool-name">${_hToolIco(l.text)} ${esc(_hToolLabel(l.text))}</span><span class="h-tool-arg">${esc(l.summary || '')}</span>`;
-              drawerCount(l.text);
-              drawerAppend(d, 'exec');
-            }
-          });
+          else {
+            // v2.16：重建期间禁自动滚底——几百行逐行 append 会反复触发重排，卡且无意义
+            _HG.noScroll = true;
+            _HG.openState = _hgLoadOpen(sid);   // 上次记录的开合状态（重建期间贴回）
+            try { j.lines.forEach(l => renderHistLine(l)); }
+            finally { _HG.noScroll = false; _HG.openState = null; }
+          }
           drawerCloseAll(true);             // transcript 末尾若挂着未收的抽屉 → 定稿自动收起
+          scrollBottom();
           setBusy(!!j.busy);
         }
       } catch(_) {}
@@ -1103,6 +1248,7 @@ function buildClaudeHarnessTab(opts = {}) {
         if (!ok) return;
         await fetch('/api/harness/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({sid})});
         delete _HG.cache[sid];
+        try { localStorage.removeItem('hg-open:' + sid); localStorage.removeItem('hg-ctx:' + sid); } catch(_) {}   // v2.16：连开合/用量记录一起清
         if (_HG.sid === sid) switchTo(null); else refreshSessions();
       } else if (act.dataset.act === 'rename') {
         const s = _HG.sessions.find(x => x.sid === sid);
@@ -1152,7 +1298,6 @@ function buildClaudeHarnessTab(opts = {}) {
     _hgHistAppend(sid, text);          // 输入历史（记录到真实会话 scope）
     _HG.histNav = null;
     input.value = ''; input.style.height = 'auto'; renderOverlay('');
-    costEl.textContent = '';
     clearAtts();
     try {
       const r = await fetch('/api/harness/send', {method:'POST', headers:{'Content-Type':'application/json'},
@@ -1174,10 +1319,33 @@ function buildClaudeHarnessTab(opts = {}) {
 
   async function stopGen() {
     if (!_HG.sid) return;
+    const sid = _HG.sid;
+    // v2.15：停止必须自带兜底。复位的唯一来源是后端回一条 `interrupted`
+    // 事件，而后端 interrupt() 在「自身 busy 已是 false」时直接返回错误、
+    // 不发任何事件（进程刚退出、事件丢失、会话查无此 sid 都会走到这条）。
+    // 旧实现不看响应也不兜底 → 前端永远停在生成态，输入框被 busy 拦住，
+    // 点 ■ 再走一遍同样的路径，形成死循环。
+    let gotEvent = false;
+    const onInt = (e) => { if (e.detail === sid) gotEvent = true; };
     try {
-      await fetch('/api/harness/interrupt', {method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({sid: _HG.sid})});
-    } catch(_) {}
+      document.addEventListener('hg-interrupted', onInt);
+      const r = await fetch('/api/harness/interrupt', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({sid})});
+      const j = await r.json().catch(() => null);
+      if (!j || !j.ok) {
+        // 后端明确拒绝（没有进行中的回复）→ 前端本就该收工
+        if (_HG.sid === sid) setBusy(false);
+        if (j && j.err) showBanner(j.err, 2500);
+        return;
+      }
+      // 后端已受理：等 interrupted 事件；超时没等到就自行收尾
+      await new Promise(res => setTimeout(res, 1500));
+      if (!gotEvent && _HG.sid === sid) setBusy(false);
+    } catch(_) {
+      if (_HG.sid === sid) setBusy(false);
+    } finally {
+      document.removeEventListener('hg-interrupted', onInt);
+    }
   }
 
   sendBtn.onclick = () => { _HG.busy ? stopGen() : send(); };
@@ -1235,6 +1403,10 @@ function buildClaudeHarnessTab(opts = {}) {
 
   // ---- @ 文件引用（源 useFileMentions：触发/下拉/键盘/插入/高亮）----
   const _HG_MENTION_FILES = [];   // 已引用路径（overlay 高亮用）
+  // v2.15：跨会话要清空。它是闭包常量，switchTo/newChat/_harnessClose 都够不到，
+  // 旧实现下在会话 A 用 @ 引用过文件后切到 cwd 完全不同的会话 B，overlay 的
+  // 路径高亮仍按 A 的路径匹配（串味）。所有切会话/新建入口统一调它。
+  function _hgMentionReset() { _HG_MENTION_FILES.length = 0; }
   function closeMention() {
     mentionEl.style.display = 'none';
     _HG.mention = null;
@@ -1689,6 +1861,14 @@ function _harnessClose(portId) {
   if (_HG.sse) { try { _HG.sse.close(); } catch(_) {} _HG.sse = null; }
   _HG.conn = null; _HG.sid = null; _HG.cache = {};
   _HG.rowById = {}; _HG.run = null;
+  // v2.15：补齐残留态复位。旧实现只清了上面这几个，重开 tab 后 dirty/busy/
+  // activity 等沿用上一轮的值——dirty 漏复位会与「点 chip 删会话」叠加，
+  // 重开后第一次点模型 chip 就可能删掉一条会话。tab 即将销毁，这里只需清
+  // 状态，不用走 setBusy 更新界面。
+  _HG.dirty = false; _HG.busy = false;
+  _HG.drawer = null; _HG.drawerThink = null; _HG.activity = null;
+  _HG.think = null; _HG.noScroll = false; _HG.openState = null;
+  _HG.skills = null; _HG.models = null;   // 技能/模型映射下次进 tab 重新拉
   conn.tab.remove();
   conn.wrap.remove();
   delete connections[portId];
