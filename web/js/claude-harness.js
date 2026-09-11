@@ -842,6 +842,10 @@ function buildClaudeHarnessTab(opts = {}) {
       if (sub === 'init') {
         _HG.alive = true;
         if (!_HG.busy) setBusy(false);
+      } else if (sub === 'status') {
+        // v2.7：压缩状态（实测 CLI 事件：status:"compacting" 开始 / "requesting" 恢复）
+        if (o.status === 'compacting') actWord('正在压缩上下文…');
+        else actWord(null);
       } else if (sub === 'api_error' || sub === 'error') {
         renderRaw('⚠ ' + (o.error ? JSON.stringify(o.error).slice(0, 200) : JSON.stringify(o).slice(0, 200)));
       }
@@ -854,10 +858,6 @@ function buildClaudeHarnessTab(opts = {}) {
         else if (b.type === 'tool_use') { endThinking(); renderToolUse(b, isSub); }
       }
       scrollBottom();
-    } else if (typ === 'system' && o.subtype === 'status') {
-      // v2.7：压缩状态（实测 CLI 事件：status:"compacting" 开始 / "requesting" 恢复）
-      if (o.status === 'compacting') actWord('正在压缩上下文…');
-      else if (o.status === 'requesting' || !o.status) actWord(null);
     } else if (typ === 'user') {
       const c0 = (o.message || {}).content;
       // 用户真实消息打断工具 run；工具结果事件不动 run（rendersNothing 思想）
@@ -928,7 +928,14 @@ function buildClaudeHarnessTab(opts = {}) {
       flow.innerHTML = c.html; _HG.seq = c.seq;
       // 快照恢复后重建 rowById（busy 会话切回时 tool_result 事件要挂回行）
       flow.querySelectorAll('[data-tid]').forEach(el => { _HG.rowById[el.dataset.tid] = el; });
-      setBusy(false);
+      // v2.9：缓存恢复不能盲目清 busy——切走时正在回复的会话，切回后
+      // 事件继续流入但 user_echo 已在 seq 之前（不重放），活动条/停止钮
+      // 再也不弹（用户实测「有实际对话但无计时条、发送键不变■」）。
+      // 后端 events 接口顺带返回真实 busy，按它恢复
+      fetch(`/api/harness/events?sid=${encodeURIComponent(sid)}&after_seq=${_HG.seq}`)
+        .then(r => r.json())
+        .then(j => { if (j.ok && _HG.sid === sid) setBusy(!!j.busy); })
+        .catch(() => {});
     } else {
       flow.innerHTML = '';
       try {

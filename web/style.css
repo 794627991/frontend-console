@@ -1975,8 +1975,11 @@
 /* v2.6：思考块入列（此前 width:88% 按 flow 全宽算，1400px 窗下 1176px，
    比 820px 气泡列长一截——用户实测「虚线比气泡长」的根因） */
 .hg-flow > .h-think, .hg-flow > .h-exit { width: min(820px, 100%); }
-/* v2.7 过程抽屉：一轮回复的非回答过程（工具行）收纳容器，消息流只留抽屉组头 */
-.hg-flow > .h-drawer { width: min(820px, 100%); align-self: center; }
+/* v2.7 过程抽屉：一轮回复的非回答过程（工具行）收纳容器，消息流只留抽屉组头
+   v2.9 修复「抽屉缩成一团」：.hg-flow 是定高 overflow-y:auto 的 column flex，
+   子项默认 flex-shrink:1——抽屉内容(数千 px)超容器时被按比例垂直压缩到 ~2px，
+   overflow:hidden 把内容全裁掉。flex-shrink:0 恢复自然高度，由 flow 滚动承载 */
+.hg-flow > .h-drawer { width: min(820px, 100%); align-self: center; flex-shrink: 0; }
 .h-drawer { border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
   background: color-mix(in srgb, var(--bg-card) 60%, transparent); }
 .h-drawer-head { display: flex; align-items: center; gap: 8px; width: 100%;
