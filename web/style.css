@@ -1981,8 +1981,18 @@
    比 820px 气泡列长一截——用户实测「虚线比气泡长」的根因） */
 .hg-flow > .h-think, .hg-flow > .h-exit { width: min(820px, 100%); }
 /* v2.7 过程抽屉：一轮回复的非回答过程（工具行）收纳容器，消息流只留抽屉组头
-   （「缩成一团/思考块压扁」根因 flex-shrink 已在 .hg-flow 全局禁压缩处理，见上） */
-.hg-flow > .h-drawer { width: min(820px, 100%); align-self: center; }
+   （「缩成一团/思考块压扁」根因 flex-shrink 已在 .hg-flow 全局禁压缩处理，见上）
+   v2.11：抽屉靠 AI 侧（左）对齐，放 AI 气泡上方，不再居中；
+   thinking（.h-drawer.think）与执行（默认）双抽屉 */
+.hg-flow > .h-drawer { width: min(820px, 100%); align-self: stretch; margin-left: max(0px, calc((100% - min(820px, 100%)) / 2)); }
+/* 思考组头动画：AI 未输出文本时「AI 正在思考中…」渐隐循环，直到回复结束 */
+.hg-think-anim { display: inline-block;
+  animation: hg-think-blink 1.4s ease-in-out infinite; }
+@keyframes hg-think-blink { 0%,100% { opacity: .35; } 50% { opacity: 1; } }
+/* 思考抽屉正文（流式 markdown 段落）*/
+.h-drawer-body > .h-think-holder { font-size: 12px; color: var(--muted);
+  line-height: 1.7; padding: 4px 10px; white-space: normal; }
+.h-drawer-body > .h-think-holder p { margin: .4em 0; }
 .h-drawer { border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
   background: color-mix(in srgb, var(--bg-card) 60%, transparent); }
 .h-drawer-head { display: flex; align-items: center; gap: 8px; width: 100%;

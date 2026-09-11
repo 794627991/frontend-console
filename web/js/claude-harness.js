@@ -146,8 +146,10 @@ const _HG = {
   rowById: {},          // tool_use_id -> 工具行 DOM（挂结果用）
   uidN: 0,              // 无 id tool_use 的兜底计数
   run: null,            // 当前同名工具 run {name, head, rows, pending}（源 toolGrouping：run≥2 折叠）
-  think: null,          // 当前 thinking 折叠 DOM {box, title, start}
-  drawer: null,         // 当前过程抽屉 {box, body, stats, counts, done, userToggled}
+  think: null,          // 当前 thinking 抽屉态 {box, drawer, start, body}
+  drawer: null,         // 当前执行抽屉 {box, body, stats, counts, done, userToggled}
+  drawerThink: null,    // 当前思考抽屉（v2.11：与执行抽屉分离）
+  asstText: false,      // 本轮 AI 是否已输出文本（思考组头「正在思考中…」动画判据）
   histNav: null,        // 输入历史导航 {history, index, draft, recalled}
   mention: null,        // @ 引用状态 {at, files, sel}
   imgSrv: null,         // 图片服务路径标记（后端 /api/harness/img/<sid>/file）
@@ -305,12 +307,7 @@ function buildClaudeHarnessTab(opts = {}) {
       head.innerHTML = `<span>${esc(lang || 'text')}</span>`;
       const cp = document.createElement('button');
       cp.className = 'hg-code-copy'; cp.textContent = '复制'; cp.title = '复制代码';
-      cp.onclick = () => {
-        copyText(raw).then(ok => {
-          if (ok) { cp.textContent = '✓ 已复制'; cp.classList.add('ok');
-            setTimeout(() => { cp.textContent = '复制'; cp.classList.remove('ok'); }, 2000); }
-        });
-      };
+      // 点击由 flow 委托处理（v2.12——快照恢复后行内绑定失活）
       head.appendChild(cp);
       pre.replaceWith(box);
       box.appendChild(head);
@@ -374,46 +371,89 @@ function buildClaudeHarnessTab(opts = {}) {
     wrap.appendChild(ov);
   }
 
-  // ==================== 过程抽屉（v2.7：非回答过程全部收进一个折叠抽屉）====
-  // 一轮回复里的工具调用（Bash/Read/Grep/编辑…）不再是散落消息流的独立行，
-  // 而是收进一个抽屉：组头「💻 Bash×3 · 📖 Read×5 · ✏️ 编辑×1」，busy 时自动
-  // 展开跟读、回复文本到达自动收起；点开看每条过程，单条再展开看执行详情。
-  function drawerEnsure() {
-    if (_HG.drawer) return _HG.drawer;
+  // ==================== 过程抽屉（v2.7：非回答过程全部收进折叠抽屉）====
+  // v2.11：双抽屉——「思考」（thinking 段）与「执行」（工具调用）各一个，
+  // 都靠 AI 侧（左）对齐放 AI 气泡上方；busy 且 AI 尚未输出文本时，思考
+  // 抽屉组头动画显示「AI 正在思考中…」，回复结束才定稿收尾。
+  // v2.12：抽屉开合改为 flow 级事件委托——innerHTML 快照恢复（切会话再切回）
+  // 不丢监听器；多个抽屉各自独立开合互不影响。
+  function drawerEnsure(kind) {
+    const key = kind === 'think' ? 'drawerThink' : 'drawer';
+    if (_HG[key]) return _HG[key];
     const box = document.createElement('div');
-    box.className = 'h-drawer open';
+    box.className = 'h-drawer ' + kind + ' open';
+    const title = kind === 'think' ? '思考过程' : '执行过程';
     box.innerHTML = `<button class="h-drawer-head"><span class="h-chev">▸</span>` +
-      `<span class="h-drawer-title">执行过程</span>` +
+      `<span class="h-drawer-title">${kind === 'think' ? '🧠' : '💻'} ${title}</span>` +
       `<span class="h-drawer-stats" data-hg-dstats></span>` +
       `<span class="h-tslots" data-hg-dslots></span></button>` +
       `<div class="h-drawer-body"></div>`;
-    const head = box.querySelector('.h-drawer-head');
-    head.onclick = () => { box.classList.toggle('open'); if (_HG.drawer) _HG.drawer.userToggled = true; };
     addRow(box);
-    _HG.drawer = { box, body: box.querySelector('.h-drawer-body'),
-                   stats: box.querySelector('[data-hg-dstats]'),
-                   slots: box.querySelector('[data-hg-dslots]'),
-                   counts: {}, userToggled: false };
-    return _HG.drawer;
+    _HG[key] = { box, body: box.querySelector('.h-drawer-body'),
+                 stats: box.querySelector('[data-hg-dstats]'),
+                 slots: box.querySelector('[data-hg-dslots]'),
+                 counts: {}, userToggled: false, kind };
+    return _HG[key];
   }
+  // flow 级事件委托：抽屉组头/工具折叠行点击 → 只切自己
+  // （v2.12 修「点一个全展开」+「切会话再切回后点不开」——innerHTML 快照恢复
+  //   不丢监听器，每行每抽屉独立开合）
+  flow.addEventListener('click', (e) => {
+    const dHead = e.target.closest('.h-drawer-head');
+    if (dHead) {
+      const box = dHead.closest('.h-drawer');
+      if (box) {
+        box.classList.toggle('open');
+        box.dataset.userToggled = '1';       // 写进 DOM——快照恢复后依然记得用户碰过
+      }
+      return;
+    }
+    const tHead = e.target.closest('.h-tool-head');
+    if (tHead) {
+      const row = tHead.closest('.h-tool');
+      if (row) row.classList.toggle('open');
+      return;
+    }
+    // 代码块/Bash 命令复制钮（v2.12 委托化——快照恢复后行内绑定会失活）
+    const cp = e.target.closest('.hg-code-copy, .h-tool-copy');
+    if (cp) {
+      // 复制内容就近取：代码块取同容器 pre>code 文本；Bash 行取 .h-tool-arg 文本
+      const codeBox = cp.closest('.hg-code');
+      const txt = codeBox ? codeBox.querySelector('pre > code')?.textContent.replace(/\n$/, '')
+        : cp.closest('.h-tool')?.querySelector('.h-tool-arg')?.textContent;
+      if (txt) copyText(txt).then(ok => {
+        if (ok) { const orig = cp.textContent; cp.textContent = '✓';
+          setTimeout(() => cp.textContent = orig, 1500); }
+      });
+      return;
+    }
+    // 附件图片 chip → Lightbox
+    const img = e.target.closest('[data-img]');
+    if (img) openLightbox(img.dataset.img);
+  });
   function drawerCount(toolName) {
-    const d = drawerEnsure();
+    const d = drawerEnsure('exec');               // 工具计数只进执行抽屉
     const n = _hDrawerName(toolName);
     d.counts[n] = (d.counts[n] || 0) + 1;
     d.stats.innerHTML = Object.entries(d.counts)
       .map(([k, v]) => `<span class="h-drawer-chip">${k}×${v}</span>`).join('');
     scrollBottom();
   }
-  function drawerClose(auto) {
-    const d = _HG.drawer;
+  function drawerClose(auto, kind) {
+    const key = kind === 'think' ? 'drawerThink' : 'drawer';
+    const d = _HG[key];
     if (!d) return;
-    _HG.drawer = null;
+    _HG[key] = null;
     d.slots.innerHTML = '<span class="h-tbadge b-done">完成</span>';
     // 用户手动开过不强制收；自动收只在用户在底部跟读时
-    if (auto && !d.userToggled && isNearBottom()) d.box.classList.remove('open');
+    if (auto && d.box.dataset.userToggled !== '1' && isNearBottom()) d.box.classList.remove('open');
   }
-  function drawerAppend(el) {
-    drawerEnsure().body.appendChild(el);
+  function drawerCloseAll(auto) {
+    drawerClose(auto, 'think');
+    drawerClose(auto, 'exec');
+  }
+  function drawerAppend(el, kind) {
+    drawerEnsure(kind).body.appendChild(el);
     scrollBottom();
   }
 
@@ -429,15 +469,15 @@ function buildClaudeHarnessTab(opts = {}) {
     return el;
   }
   function renderUser(text, images, files) {
-    drawerClose(false);                    // v2.7：新一轮对话，旧抽屉定稿
+    drawerCloseAll(false);                   // v2.11：新一轮对话，双抽屉定稿
+    _HG.asstText = false;                    // 本轮 AI 尚未输出文本（思考组头动画判据）
     endThinking(); closeRun();
     const d = document.createElement('div');
     d.className = 'h-msg user';
     if (images?.length || files?.length) {
       const at = document.createElement('div');
       at.className = 'h-bubble-atts';
-      at.innerHTML = attChipsHtml(images, files);
-      at.querySelectorAll('[data-img]').forEach(ch => ch.onclick = () => openLightbox(ch.dataset.img));
+      at.innerHTML = attChipsHtml(images, files);   // 点击 Lightbox 由 flow 委托（v2.12）
       d.appendChild(at);
     }
     d.appendChild(mdBubble(text || ''));
@@ -445,6 +485,7 @@ function buildClaudeHarnessTab(opts = {}) {
   }
   function renderAsst(text, isSub) {
     if (!text) return;
+    _HG.asstText = true;                     // v2.11：AI 已输出文本，思考组头切「思考了 Xs」
     const d = document.createElement('div');
     d.className = 'h-msg asst' + (isSub ? ' sub' : '');
     d.appendChild(mdBubble(text));
@@ -459,25 +500,57 @@ function buildClaudeHarnessTab(opts = {}) {
     addRow(d);
   }
 
-  // ==================== thinking 折叠（源 Reasoning.tsx）====================
-  // v2.3：不再"结束 1s 后强制整体消失"——收起只藏正文，头部（🧠 思考了 Xs）
-  // 始终留在消息流里可点开；且用户上滚阅读历史时不做任何自动收起。
+  // ==================== thinking 抽屉化（v2.11：思考过程收进「思考抽屉」）====
+  // 源 Reasoning.tsx 思想保留：流式追加正文；v2.11 改为收进独立思考抽屉，
+  // busy 且 AI 尚未输出文本时组头动画「AI 正在思考中…」。
   function isNearBottom() {
     return flow.scrollHeight - flow.scrollTop - flow.clientHeight < 120;
   }
   function startThinking() {
-    endThinking();
-    const d = document.createElement('div');
-    d.className = 'h-think open';
-    d.innerHTML = `<button class="h-think-head"><span class="h-think-ico">🧠</span><span class="h-think-t">思考中…</span><span class="h-think-chev">▾</span></button><div class="h-think-body"></div>`;
-    d.querySelector('.h-think-head').onclick = () => { d.classList.toggle('open'); d._userToggled = true; };
-    addRow(d);
-    _HG.think = { box: d, start: Date.now(), body: d.querySelector('.h-think-body') };
+    if (_HG.think) return;
+    // 当前轮思考抽屉（一轮回复一个；AI 文本到达时 renderAsst 前定稿换新）
+    const d = drawerEnsure('think');
+    _HG.think = { box: d.box, drawer: d, start: Date.now(),
+                  body: d.body.querySelector('.h-think-body') || (() => {
+                    const b = document.createElement('div');
+                    b.className = 'h-think-body';
+                    d.body.appendChild(b);
+                    return b;
+                  })() };
+    // AI 还没输出正文 → 组头动画占位；已输出过则显示用时（appendThinking 更新）
+    thinkHeadUpdate();
+  }
+  // 思考抽屉组头状态：未输出 AI 文本时动画「AI 正在思考中…」，否则「思考了 Xs」
+  function thinkHeadUpdate(final) {
+    const d = _HG.drawerThink;
+    if (!d || !d.box.isConnected) return;
+    const title = d.box.querySelector('.h-drawer-title');
+    if (!title) return;
+    const dur = _HG.think ? fmtDur((Date.now() - _HG.think.start) / 1000) : null;
+    if (!_HG.asstText && !final) {
+      // AI 还没输出对话 → 动画字样（直到回复结束）
+      title.innerHTML = '🧠 <span class="hg-think-anim">AI 正在思考中…</span>';
+    } else if (final || dur) {
+      title.textContent = `🧠 思考了 ${dur || ''}`;
+    }
+    if (final) title.classList.remove('pending');
   }
   function appendThinking(text) {
     if (!_HG.think) startThinking();
     _HG.think._last = Date.now();
-    _HG.think.body.innerHTML += renderMd(text);   // thinking 块稀疏，整段重渲可接受
+    const d = _HG.drawerThink;
+    // 思考抽屉 body 里直接流式追加思考正文（markdown 渲染）
+    if (d) {
+      const holder = d.body.querySelector('.h-think-holder') || (() => {
+        const b = document.createElement('div');
+        b.className = 'h-think-holder';
+        d.body.appendChild(b);
+        return b;
+      })();
+      holder.innerHTML += renderMd(text);
+    }
+    thinkHeadUpdate();
+    scrollBottom();
   }
   function fmtDur(sec) {
     // v2.3 问题3：h/m/s 分级显示（>1h 用 h m，>1min 用 m s，否则 s）
@@ -491,9 +564,11 @@ function buildClaudeHarnessTab(opts = {}) {
     if (!t) return;
     _HG.think = null;
     const sec = (Date.now() - t.start) / 1000;
-    t.box.querySelector('.h-think-t').textContent = `思考了 ${fmtDur(sec)}`;
-    // 仅当用户在底部跟读且没手动操作过该块时才自动收起；上滚阅读时不打扰
-    if (!t.box._userToggled && isNearBottom()) setTimeout(() => t.box.classList.remove('open'), 1000);
+    // 组头定稿：显示总用时
+    const title = t.drawer.box.querySelector('.h-drawer-title');
+    if (title) title.textContent = `🧠 思考了 ${fmtDur(sec)}`;
+    // 仅当用户在底部跟读且没手动操作过时自动收起；上滚阅读时不打扰
+    if (t.drawer.box.dataset.userToggled !== '1' && isNearBottom()) setTimeout(() => t.drawer.box.classList.remove('open'), 1000);
   }
 
   // ==================== 工具调用渲染（源 toolConfigs + ToolRenderer + BashCommandDisplay）====================
@@ -630,11 +705,10 @@ function buildClaudeHarnessTab(opts = {}) {
         `<span class="h-tool-arg">${esc(cfg.get(b.input) || '')}</span>` +
         (sec ? `<span class="h-tool-sec">${esc(sec)}</span>` : '') +
         `<span class="h-tslots"></span>`;
-      // Bash 类：命令可复制（源 action:'copy'）
+      // Bash 类：命令可复制（源 action:'copy'；点击由 flow 委托处理，v2.12）
       if (cfg.kind === 'bash') {
         const cp = document.createElement('button');
         cp.className = 'h-tool-copy'; cp.textContent = '复制'; cp.title = '复制命令';
-        cp.onclick = () => copyText(cfg.get(b.input) || '').then(ok => { if (ok) { cp.textContent = '✓'; setTimeout(() => cp.textContent = '复制', 1500); } });
         row.appendChild(cp);
       }
     } else {
@@ -655,7 +729,6 @@ function buildClaudeHarnessTab(opts = {}) {
         `<span class="h-tool-name">${_hToolIco(name)} ${esc(title)}</span>` +
         (cfg.badge ? `<span class="h-tool-badge">${esc(cfg.badge)}</span>` : '') +
         `<span class="h-tslots"></span></button><div class="h-tool-coll">${bodyHtml}</div>`;
-      row.querySelector('.h-tool-head').onclick = () => row.classList.toggle('open');
     }
     row._preview = (cfg.mode === 'one-line' ? cfg.get(b.input) : (typeof cfg.title === 'function' ? cfg.title(b.input) : label)) || '';
     row._name = name;
@@ -667,7 +740,7 @@ function buildClaudeHarnessTab(opts = {}) {
     // v2.8：抽屉时代不再合并同名 run——每条 Bash/Read/Grep 调用都是独立过程行
     // （用户明确要能看到每一次执行；组头徽章已承担"×N 汇总"职责）
     _HG.run = { name, head: row, rows: [row] };
-    drawerAppend(row);                    // v2.7：过程行进抽屉（不再散落消息流）
+    drawerAppend(row, 'exec');             // v2.11：过程行进执行抽屉（不再散落消息流）
   }
 
   // 工具结果挂接（源 shouldHideToolResult：成功藏、错误永远显）
@@ -683,7 +756,7 @@ function buildClaudeHarnessTab(opts = {}) {
       const d = document.createElement('div');
       d.className = 'h-tool-res';
       d.textContent = txt ? '↳ ' + txt.replace(/\s+/g, ' ') : '↳ (完成)';
-      drawerAppend(d);
+      drawerAppend(d, 'exec');
       return;
     }
     const cfg = row._cfg || {};
@@ -709,7 +782,6 @@ function buildClaudeHarnessTab(opts = {}) {
         h.innerHTML = `<span class="h-chev">▸</span><span class="h-tool-name">输出</span><span class="h-tslots"></span>`;
         const co = document.createElement('div'); co.className = 'h-tool-coll';
         row.appendChild(h); row.appendChild(co);
-        h.onclick = () => row.classList.toggle('open');
         row.style.setProperty('--h-accent', 'var(--neon-red, #e06c75)');
         return co;
       })();
@@ -740,7 +812,6 @@ function buildClaudeHarnessTab(opts = {}) {
         h.innerHTML = `<span class="h-chev">▸</span><span class="h-tool-name">输出</span><span class="h-tslots"></span>`;
         const co = document.createElement('div'); co.className = 'h-tool-coll';
         row.appendChild(h); row.appendChild(co);
-        h.onclick = () => row.classList.toggle('open');
         return co;
       })();
       const pre = document.createElement('div');
@@ -854,7 +925,7 @@ function buildClaudeHarnessTab(opts = {}) {
       const isSub = !!o.parent_tool_use_id;
       for (const b of blocks) {
         if (b.type === 'thinking' && b.thinking) { closeRun(); appendThinking(b.thinking); }
-        else if (b.type === 'text' && b.text) { endThinking(); closeRun(); drawerClose(true); renderAsst(b.text, isSub); }
+        else if (b.type === 'text' && b.text) { endThinking(); closeRun(); renderAsst(b.text, isSub); }
         else if (b.type === 'tool_use') { endThinking(); renderToolUse(b, isSub); }
       }
       scrollBottom();
@@ -870,7 +941,9 @@ function buildClaudeHarnessTab(opts = {}) {
     } else if (typ === 'result') {
       endThinking();
       closeRun();
-      drawerClose(false);                 // v2.7：回复结束抽屉定稿（不自动收，用户自己看）
+      drawerCloseAll(true);                // v2.12：回复结束双抽屉定稿——用户没手动
+                                          // 操作过且在底部跟读时自动收起（想看再点开，
+                                          // 各抽屉独立开合）
       // v2.3 问题4：不显示金额，显示上下文用量环（⭕ 百分比，256K 实窗口径）
       renderCtxRing(o);
       setBusy(false);
@@ -909,7 +982,7 @@ function buildClaudeHarnessTab(opts = {}) {
     saveCache();
     closePop(); closeMention();
     endThinking(); closeRun();
-    _HG.rowById = {}; _HG.uidN = 0; _HG.run = null; _HG.drawer = null; _HG.histNav = null;
+    _HG.rowById = {}; _HG.uidN = 0; _HG.run = null; _HG.drawer = null; _HG.drawerThink = null; _HG.histNav = null;
     _HG.sid = sid; _HG.seq = 0; _HG.alive = false;
     if (!sid) _HG.dirty = false;
     clearAtts();
@@ -951,16 +1024,15 @@ function buildClaudeHarnessTab(opts = {}) {
             }
             else if (l.role === 'assistant') renderAsst(l.text);
             else if (l.role === 'tool') {   // transcript 的工具行（无 id，简单单行）
-              // v2.7：重建也走抽屉（renderUser 已把旧抽屉收尾，此处 ensureDrawer 开新抽屉；
-              // 下一条 assistant 文本会经 drawerClose 自动收）
+              // v2.11：重建也走执行抽屉（renderUser 已收尾旧抽屉）
               const d = document.createElement('div');
               d.className = 'h-tool';
               d.innerHTML = `<span class="h-tool-name">${_hToolIco(l.text)} ${esc(_hToolLabel(l.text))}</span><span class="h-tool-arg">${esc(l.summary || '')}</span>`;
               drawerCount(l.text);
-              drawerAppend(d);
+              drawerAppend(d, 'exec');
             }
           });
-          drawerClose(false);               // transcript 末尾若挂着未收的抽屉 → 定稿收起
+          drawerCloseAll(true);             // transcript 末尾若挂着未收的抽屉 → 定稿自动收起
           setBusy(!!j.busy);
         }
       } catch(_) {}
@@ -1428,6 +1500,7 @@ function buildClaudeHarnessTab(opts = {}) {
             `<textarea class="hg-prompt-ta" spellcheck="false" placeholder="提示词正文…"></textarea>`;
           const ta = card.querySelector('.hg-prompt-ta');
           ta.value = it.text || '';
+          ta.oninput = (e) => { it.text = e.target.value; };
           card.querySelector('.hg-prompt-note').oninput = (e) => { it.note = e.target.value; };
           card.querySelector('.hg-prompt-scope').onchange = (e) => {
             it.scope = e.target.value;
