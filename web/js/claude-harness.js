@@ -671,16 +671,18 @@ function buildClaudeHarnessTab(opts = {}) {
       }
     }
     const pct = Math.min(100, used / ctxMax * 100);
-    const R = 9, C = 2 * Math.PI * R;
+    // v2.6：viewBox 与 CSS 显示尺寸一致（24），r=10 + stroke 3 → 直径 23 < 24 不裁边；
+    // 此前 r=9 贴 viewBox 边缘，缩放裁切导致"圆环爆掉"
+    const VB = 24, R = 10, C = 2 * Math.PI * R;
     const col = pct >= 95 ? 'var(--neon-red, #e06c75)'
               : pct >= 80 ? 'var(--neon-orange, #d29922)' : 'var(--accent)';
     const fmtTok = n => n >= 1000 ? (n / 1000).toFixed(1) + 'K' : n;
     costEl.innerHTML =
-      `<svg class="hg-ctx-ring" viewBox="0 0 24 24">` +
-      `<circle cx="12" cy="12" r="${R}" fill="none" stroke="var(--border)" stroke-width="3"/>` +
-      `<circle cx="12" cy="12" r="${R}" fill="none" stroke="${col}" stroke-width="3"` +
+      `<svg class="hg-ctx-ring" viewBox="0 0 ${VB} ${VB}">` +
+      `<circle cx="${VB / 2}" cy="${VB / 2}" r="${R}" fill="none" stroke="var(--border)" stroke-width="3"/>` +
+      `<circle cx="${VB / 2}" cy="${VB / 2}" r="${R}" fill="none" stroke="${col}" stroke-width="3"` +
       ` stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - pct / 100)}"` +
-      ` stroke-linecap="round" transform="rotate(-90 12 12)"/></svg>` +
+      ` stroke-linecap="round" transform="rotate(-90 ${VB / 2} ${VB / 2})"/></svg>` +
       `<span class="hg-ctx-pct">${Math.round(pct)}%</span>`;
     costEl.title = `上下文 ${fmtTok(used)} / ${fmtTok(ctxMax)} tokens（${Math.round(pct)}%）`;
     costEl.classList.toggle('warn', pct >= 80);

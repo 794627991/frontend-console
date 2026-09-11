@@ -1967,6 +1967,9 @@
 .hg-flow > .h-tool, .hg-flow > .h-tool-res { width: min(820px, 100%); max-width: none; }
 .hg-flow > .h-tool-res { padding-left: 10px; }
 .hg-flow > .h-raw { width: min(820px, 100%); }
+/* v2.6：思考块入列（此前 width:88% 按 flow 全宽算，1400px 窗下 1176px，
+   比 820px 气泡列长一截——用户实测「虚线比气泡长」的根因） */
+.hg-flow > .h-think, .hg-flow > .h-exit { width: min(820px, 100%); }
 .hg-welcome { margin: auto; text-align: center; color: var(--muted); }
 .hg-welcome-ico { margin-bottom: 26px; }
 .hg-welcome-ico .claude-ico.big { display: inline-block; width: 28px; height: 28px; }
@@ -2044,12 +2047,14 @@
 .hg-chip { border: 1px solid var(--border); background: transparent; color: var(--muted);
   font-size: 11.5px; border-radius: 999px; padding: 3px 10px; cursor: pointer; white-space: nowrap; }
 .hg-chip:hover { color: var(--fg); border-color: var(--accent); }
-.hg-cost { font-size: 10.5px; color: var(--muted); font-family: var(--font-mono);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
-/* v2.3 问题4：上下文用量环（⭕ SVG 圆环 + 百分比，替代金额） */
-.hg-cost.hg-ctx, .hg-cost { display: inline-flex; align-items: center; gap: 4px; }
-.hg-ctx-ring { width: 20px; height: 20px; flex-shrink: 0; display: inline-block; }
-.hg-ctx-pct { font-size: 11px; }
+/* v2.3 问题4：上下文用量环（⭕ SVG 圆环 + 百分比，替代金额）
+   v2.6：去掉旧金额样式的 max-width/overflow/ellipsis（flex 收缩曾把环压爆），
+   环和文字定宽不收缩 */
+.hg-cost { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0;
+  font-size: 10.5px; color: var(--muted); font-family: var(--font-mono); }
+.hg-ctx-ring { width: 22px; height: 22px; flex-shrink: 0; display: block;
+  overflow: visible; }
+.hg-ctx-pct { font-size: 11px; white-space: nowrap; }
 .hg-cost.warn { color: var(--neon-orange, #d29922); }
 .hg-cost.warn .hg-ctx-pct { color: var(--neon-red, #e06c75); font-weight: 600; }
 .hg-send { width: 32px; height: 32px; flex-shrink: 0; border-radius: 50%;
@@ -2170,13 +2175,14 @@
   color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 0 6px; }
 
 /* ---- thinking 折叠（源 Reasoning.tsx：流式展开、结束收起）----
-   v2.2：宽度与消息列对齐（86%→88%），圆角加大 */
-.h-think { align-self: flex-start; width: 88%; font-size: 12px;
+   v2.6：宽度与消息列对齐（入 .hg-flow > .h-think 列宽规则）；
+   头部字号 11.5→12.5、上下留白加大——收起态不再是一条压扁的细虚线 */
+.h-think { align-self: flex-start; max-width: 100%; font-size: 12px;
   border: 1px dashed var(--border); border-radius: 12px; overflow: hidden;
   background: color-mix(in srgb, var(--accent) 4%, transparent); }
 .h-think-head { display: flex; align-items: center; gap: 6px; width: 100%;
-  border: none; background: transparent; color: var(--muted); font-size: 11.5px;
-  padding: 5px 10px; cursor: pointer; }
+  border: none; background: transparent; color: var(--muted); font-size: 12.5px;
+  padding: 8px 12px; cursor: pointer; }
 .h-think-head:hover { color: var(--fg); }
 .h-think-t { flex: 1; }
 .h-think-chev { transition: transform .15s; }
