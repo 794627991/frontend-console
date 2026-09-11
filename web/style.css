@@ -773,13 +773,20 @@
   .tree-empty { padding: 30px 10px; font-size: 10px; color: var(--muted); text-align: center; line-height: 1.8; }
   .tree-root { margin-bottom: 2px; }
   /* 根行：文件夹名 + hover 删根 ✕（仿 .recent-item .actions 显隐模式） */
+  /* 不能加 overflow:hidden —— 它会让本行自己成为 sticky 的滚动容器，下面 .root-x 的
+     position:sticky 就再也钉不住了。行宽是 max-content，本来也裁不到任何东西。 */
   .tree-root-head { padding: 5px 6px; border-radius: 6px; cursor: pointer; display: flex;
     align-items: center; gap: 5px; font-size: 11px; font-weight: 600;
-    color: var(--fg-bright); font-family: var(--font-mono); white-space: nowrap; overflow: hidden; }
+    color: var(--fg-bright); font-family: var(--font-mono); white-space: nowrap; }
   .tree-root-head:hover { background: var(--bg-card); }
-  .tree-root-head .root-x { display: none; margin-left: auto; color: var(--muted);
-    font-size: 11px; padding: 0 3px; border-radius: 3px; flex-shrink: 0; }
-  .tree-root-head:hover .root-x { display: block; }
+  /* 删根 ✕：sticky + right 钉在【可视右缘】。
+     根目录名很长时行宽是 max-content，margin-left:auto 会把 ✕ 推到整行最右端，
+     必须横滚到名字末尾才够得着（用户实锤：长名文件夹的删除键够不到）。
+     显隐用 visibility 而非 display：保留占位，hover 时整行不抖。 */
+  .tree-root-head .root-x { visibility: hidden; margin-left: auto; color: var(--muted);
+    font-size: 11px; padding: 3px 6px; border-radius: 4px; flex-shrink: 0; line-height: 1;
+    position: sticky; right: 4px; background: var(--bg-card); }
+  .tree-root-head:hover .root-x { visibility: visible; }
   .tree-root-head .root-x:hover { color: var(--neon-red); background: rgba(255,64,96,0.1); }
   /* 树节点行（含根行展开复用同结构）；箭头 ▶ 旋转 90° 成 ▼（transform 免字符切换重排）。
      white-space:nowrap + 不截断——横向超宽交给 .tree-roots overflow-x 滚动（深层名字

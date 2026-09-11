@@ -81,7 +81,7 @@ async function refreshTree() {
     const name = root.split(/[\\/]/).pop() || root;
     html += `
       <div class="tree-root" data-root="${esc(root)}">
-        <div class="tree-root-head" data-path="${esc(root)}" data-dir="1" data-depth="0">
+        <div class="tree-root-head" data-path="${esc(root)}" data-dir="1" data-depth="0" data-notrunc="1">
           <span class="arrow">▶</span>${dirIconHtml(false, 14)}
           <span class="t-name" title="${esc(root)}">${esc(name)}</span>
           <span class="root-x" title="从文件树移除该文件夹（不删除磁盘文件）">✕</span>
@@ -186,6 +186,10 @@ function _treeReveal(target, focusChildren) {
   const scroller = $('treeRoots');
   if (!scroller || !target || !target.isConnected) return;
   let rows;
+  if (target.dataset && target.dataset.notrunc === '1') {
+    // 非截断行（根行）：行宽已受控，横向不需要对焦，只滚纵向
+    return _treeRevealRows(scroller, [], [target]);
+  }
   if (focusChildren && target.querySelectorAll) {
     const kids = target.querySelectorAll('.tree-row');
     // 纵向目标：父行 + 子层第一行
