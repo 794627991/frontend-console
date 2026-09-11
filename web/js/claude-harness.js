@@ -146,10 +146,9 @@ const _HG = {
   rowById: {},          // tool_use_id -> 工具行 DOM（挂结果用）
   uidN: 0,              // 无 id tool_use 的兜底计数
   run: null,            // 当前同名工具 run {name, head, rows, pending}（源 toolGrouping：run≥2 折叠）
-  think: null,          // 当前 thinking 抽屉态 {box, drawer, start, body}
-  drawer: null,         // 当前执行抽屉 {box, body, stats, counts, done, userToggled}
-  drawerThink: null,    // 当前思考抽屉（v2.11：与执行抽屉分离）
-  asstText: false,      // 本轮 AI 是否已输出文本（思考组头「正在思考中…」动画判据）
+  think: null,          // 当前活动思考段 {seg, grp}（v2.18：分段条目制）
+  grp: null,            // 当前消息组（v2.18：抽屉随组走，替代 drawer/drawerThink 单例）
+  asstText: false,      // 本轮 AI 是否已输出文本（占位动画/思考组头判据）
   histNav: null,        // 输入历史导航 {history, index, draft, recalled}
   mention: null,        // @ 引用状态 {at, files, sel}
   imgSrv: null,         // 图片服务路径标记（后端 /api/harness/img/<sid>/file）
@@ -273,7 +272,7 @@ function buildClaudeHarnessTab(opts = {}) {
   _HG.atts = [];
   _HG.sid = null;
   _HG.rowById = {}; _HG.uidN = 0; _HG.run = null;
-  _HG.think = null; _HG.histNav = null; _HG.mention = null;
+  _HG.think = null; _HG.grp = null; _HG.histNav = null; _HG.mention = null;
   switchTab(portId);
 
   const q = (s) => wrap.querySelector(s);
@@ -549,28 +548,112 @@ function buildClaudeHarnessTab(opts = {}) {
     if (!st) return;
     const k = _hgPathKey(el), has = k in st;
     el.classList.toggle('open', has ? !!st[k] : !!defOpen);
-    // 有记录 = 用户碰过 → 标记住，重建末尾的 drawerCloseAll(true) 不再自动收它
+    // 有记录 = 用户碰过 → 标记住，重建末尾的 grpFinalize(true) 不再自动收它
     if (has) el.dataset.userToggled = '1';
   }
 
-  function drawerEnsure(kind) {
-    const key = kind === 'think' ? 'drawerThink' : 'drawer';
-    if (_HG[key]) return _HG[key];
-    const box = document.createElement('div');
-    box.className = 'h-drawer ' + kind + ' open';
-    const title = kind === 'think' ? '思考过程' : '执行过程';
-    box.innerHTML = `<button class="h-drawer-head"><span class="h-chev">▸</span>` +
-      `<span class="h-drawer-title">${kind === 'think' ? '🧠' : '💻'} ${title}</span>` +
+  // ---- 消息组基元（v2.18）----
+  // 组 = .h-grp{ .h-grp-proc{ .h-drawer.think + .h-drawer.exec } + AI 气泡们 }。
+  // 每轮 renderUser 开新组，思考/工具归属自己的消息组（用户点名：所有思考
+  // 挤一个抽屉里分不清是哪次思考、哪个消息触发的执行）。活状态（counts/
+  // segCount/t0）存 dataset——innerHTML 快照恢复后 JS 属性全丢，dataset 随
+  // HTML 回来（与 v2.12 userToggled 进 dataset 同一个坑的对策）。
+  function grpFromDom(root, thinkBox, execBox) {
+    const g = {
+      root,
+      proc: root.querySelector('.h-grp-proc'),
+      think: { box: thinkBox, body: thinkBox.querySelector('.h-drawer-body'),
+               title: thinkBox.querySelector('.h-drawer-title'),
+               stats: thinkBox.querySelector('[data-hg-dslots]') },
+      exec: { box: execBox, body: execBox.querySelector('.h-drawer-body'),
+              title: execBox.querySelector('.h-drawer-title'),
+              stats: execBox.querySelector('[data-hg-dstats]'),
+              slots: execBox.querySelector('[data-hg-dslots]') },
+      ph: null, phTimer: null, phIdx: 0,
+      counts: null,               // null = 未从 dataset 恢复
+    };
+    if (g.exec.stats) {
+      try { g.counts = JSON.parse(g.exec.stats.dataset.counts || 'null'); } catch(_) { g.counts = null; }
+    }
+    return g;
+  }
+  function grpEnsure(live) {
+    let g = _HG.grp;
+    if (g && g.root && g.root.isConnected) return g;
+    // 快照恢复（切会话切回）后 _HG.grp 失联 → 扫 flow 最后一个组接回来。
+    // 占位动画不重启：正文该到已到才走得到恢复路径。
+    const root = flow.querySelector('.h-grp:last-of-type');
+    if (root) {
+      const thinkBox = root.querySelector('.h-drawer.think');
+      const execBox = root.querySelector('.h-drawer.exec');
+      if (thinkBox && execBox) { _HG.grp = grpFromDom(root, thinkBox, execBox); return _HG.grp; }
+    }
+    // 新建组
+    const nr = document.createElement('div');
+    nr.className = 'h-grp';
+    const proc = document.createElement('div');
+    proc.className = 'h-grp-proc';
+    const thinkBox = document.createElement('div');
+    thinkBox.className = 'h-drawer think';
+    thinkBox.innerHTML =
+      `<button class="h-drawer-head"><span class="h-chev">▸</span>` +
+      `<span class="h-drawer-title">🧠 思考</span>` +
+      `<span class="h-tslots" data-hg-dslots></span></button>` +
+      `<div class="h-drawer-body"></div>`;
+    const execBox = document.createElement('div');
+    execBox.className = 'h-drawer exec';
+    execBox.innerHTML =
+      `<button class="h-drawer-head"><span class="h-chev">▸</span>` +
+      `<span class="h-drawer-title">💻 执行</span>` +
       `<span class="h-drawer-stats" data-hg-dstats></span>` +
       `<span class="h-tslots" data-hg-dslots></span></button>` +
       `<div class="h-drawer-body"></div>`;
-    addRow(box);
-    _HG[key] = { box, body: box.querySelector('.h-drawer-body'),
-                 stats: box.querySelector('[data-hg-dstats]'),
-                 slots: box.querySelector('[data-hg-dslots]'),
-                 counts: {}, userToggled: false, kind };
-    _hgApplyOpen(box, false);               // 重建期：按记录恢复；无记录则默认收起
-    return _HG[key];
+    proc.appendChild(thinkBox);
+    proc.appendChild(execBox);
+    nr.appendChild(proc);
+    addRow(nr);
+    g = grpFromDom(nr, thinkBox, execBox);
+    g.counts = {};                 // 新组才清；恢复组从 dataset 读
+    if (g.think.stats) g.think.stats.dataset.segCount = '0';
+    // 重建期：按记录恢复开合；无记录则默认收起（流式期 openState=null 不干预）
+    _hgApplyOpen(thinkBox, false);
+    _hgApplyOpen(execBox, false);
+    _HG.grp = g;
+    return g;
+  }
+  function thinkSegCount(g) {
+    return +((g.think.stats && g.think.stats.dataset.segCount) || 0) || 0;
+  }
+  function thinkSegCountSet(g, n) {
+    if (g.think.stats) g.think.stats.dataset.segCount = String(n);
+  }
+  // 占位气泡：AI 消息泡未输出内容时的活泼文案轮换（用户明确要求，每轮独立）
+  const _PH_WORDS = ['AI 正在思考中…', 'AI 正在翻阅资料…', 'AI 正在敲代码…',
+    'AI 正在整理思路…', 'AI 正在细细品你的话…', 'AI 正在路上狂奔…',
+    'AI 正在灵光乍现…', 'AI 马上就好了…'];
+  function phStart(g) {
+    if (!g.ph) {
+      const d = document.createElement('div');
+      d.className = 'h-msg asst ph';
+      d.innerHTML = `<div class="h-bubble"><span class="hg-ph-word" data-hg-phw>AI 正在思考中…</span><span class="hg-ph-dots"><i></i><i></i><i></i></span></div>`;
+      g.root.appendChild(d);
+      g.ph = d;
+    }
+    phStopTimer(g);
+    g.phIdx = 0;
+    g.phTimer = setInterval(() => {
+      if (!g.ph || !g.ph.isConnected) { phStopTimer(g); return; }
+      g.phIdx = (g.phIdx + 1) % _PH_WORDS.length;
+      const w = g.ph.querySelector('[data-hg-phw]');
+      if (w) w.textContent = _PH_WORDS[g.phIdx];
+    }, 3500);
+  }
+  function phStopTimer(g) {
+    if (g && g.phTimer) { clearInterval(g.phTimer); g.phTimer = null; }
+  }
+  function phRemove(g) {
+    phStopTimer(g);
+    if (g && g.ph) { g.ph.remove(); g.ph = null; }
   }
   // flow 级事件委托：抽屉组头/工具折叠行点击 → 只切自己
   // （v2.12 修「点一个全展开」+「切会话再切回后点不开」——innerHTML 快照恢复
@@ -589,6 +672,13 @@ function buildClaudeHarnessTab(opts = {}) {
         box.dataset.userToggled = '1';       // 写进 DOM——快照恢复后依然记得用户碰过
         _hgSaveOpen(box);                    // v2.16：关 tab 后重建也不丢
       }
+      return;
+    }
+    // 思考段条目（v2.18）：段头点击 → 只切该段
+    const sHead = e.target.closest('.h-think-seg-head');
+    if (sHead) {
+      const seg = sHead.closest('.h-think-seg');
+      if (seg) { seg.classList.toggle('open'); _hgSaveOpen(seg); }
       return;
     }
     const tHead = e.target.closest('.h-tool-head');
@@ -615,28 +705,34 @@ function buildClaudeHarnessTab(opts = {}) {
     if (img) openLightbox(img.dataset.img);
   });
   function drawerCount(toolName) {
-    const d = drawerEnsure('exec');               // 工具计数只进执行抽屉
+    const g = grpEnsure(true);                  // 计数进当前组执行抽屉
+    if (!g.counts) g.counts = {};
     const n = _hDrawerName(toolName);
-    d.counts[n] = (d.counts[n] || 0) + 1;
-    d.stats.innerHTML = Object.entries(d.counts)
-      .map(([k, v]) => `<span class="h-drawer-chip">${k}×${v}</span>`).join('');
+    g.counts[n] = (g.counts[n] || 0) + 1;
+    // chips ≤8 个，超出折叠成「…」——组头收起态必须小（用户：总体只占一小部分）
+    const entries = Object.entries(g.counts);
+    const shown = entries.slice(0, 8).map(([k, v]) => `<span class="h-drawer-chip">${k}×${v}</span>`).join('');
+    g.exec.stats.innerHTML = shown + (entries.length > 8 ? '<span class="h-drawer-chip">…</span>' : '');
+    g.exec.stats.dataset.counts = JSON.stringify(g.counts);   // 快照恢复用
     scrollBottom();
   }
-  function drawerClose(auto, kind) {
-    const key = kind === 'think' ? 'drawerThink' : 'drawer';
-    const d = _HG[key];
-    if (!d) return;
-    _HG[key] = null;
-    d.slots.innerHTML = '<span class="h-tbadge b-done">完成</span>';
-    // 用户手动开过不强制收；自动收只在用户在底部跟读时
-    if (auto && d.box.dataset.userToggled !== '1' && isNearBottom()) d.box.classList.remove('open');
-  }
-  function drawerCloseAll(auto) {
-    drawerClose(auto, 'think');
-    drawerClose(auto, 'exec');
+  // 组定稿（result / 新一轮 renderUser）：徽章 + 未手动碰过时自动收
+  function grpFinalize(auto) {
+    const g = _HG.grp;
+    if (!g) return;
+    phRemove(g);
+    if (g.think.stats) g.think.stats.innerHTML = '<span class="h-tbadge b-done">完成</span>';
+    if (g.exec.slots) g.exec.slots.innerHTML = '<span class="h-tbadge b-done">完成</span>';
+    // 用户手动开过不强制收；自动收只在用户在底部跟读时（v2.12 判据，按组生效）
+    if (auto) {
+      if (g.think.box.dataset.userToggled !== '1' && isNearBottom()) g.think.box.classList.remove('open');
+      if (g.exec.box.dataset.userToggled !== '1' && isNearBottom()) g.exec.box.classList.remove('open');
+    }
+    _HG.grp = null;      // 下轮 renderUser 开新组
   }
   function drawerAppend(el, kind) {
-    drawerEnsure(kind).body.appendChild(el);
+    const g = grpEnsure(true);
+    (kind === 'think' ? g.think.body : g.exec.body).appendChild(el);
     scrollBottom();
   }
 
@@ -651,10 +747,10 @@ function buildClaudeHarnessTab(opts = {}) {
     scrollBottom();
     return el;
   }
-  function renderUser(text, images, files) {
-    drawerCloseAll(false);                   // v2.11：新一轮对话，双抽屉定稿
-    _HG.asstText = false;                    // 本轮 AI 尚未输出文本（思考组头动画判据）
+  function renderUser(text, images, files, live) {
+    grpFinalize(false);                       // v2.18：上一组定稿，本组接棒
     endThinking(); closeRun();
+    _HG.asstText = false;                     // 本轮 AI 尚未输出文本（占位/组头判据）
     const d = document.createElement('div');
     d.className = 'h-msg user';
     if (images?.length || files?.length) {
@@ -665,17 +761,25 @@ function buildClaudeHarnessTab(opts = {}) {
     }
     d.appendChild(mdBubble(text || ''));
     addRow(d);
+    if (live !== false) {
+      const g = grpEnsure(true);
+      phStart(g);                              // AI 未输出前的活泼占位（每轮独立）
+    }
   }
   function renderAsst(text, isSub) {
     // v2.16：空白/纯换行的 text 块不渲染。模型每轮都会吐一个 "\n\n" 占位块，
     // 旧判据 `if (!text)` 挡不住 → 每条渲染成一个空白气泡（历史重建后满屏空白
     // 圆角条）。重建与流式两条路径都走这里，一并对齐。
     if (!text || !String(text).trim()) return;
-    _HG.asstText = true;                     // v2.11：AI 已输出文本，思考组头切「思考了 Xs」
+    _HG.asstText = true;                       // v2.11：AI 已输出文本
+    // v2.18：正文进当前组（组不存在说明是组外场景——快照恢复等，兜底建组）
+    const g = grpEnsure(true);
+    phRemove(g);                               // 正文接管，占位动画退场
     const d = document.createElement('div');
     d.className = 'h-msg asst' + (isSub ? ' sub' : '');
     d.appendChild(mdBubble(text));
-    addRow(d);
+    g.root.appendChild(d);
+    scrollBottom();
   }
   function renderRaw(text) {
     const d = document.createElement('div'); d.className = 'h-raw'; d.textContent = text;
@@ -688,25 +792,12 @@ function buildClaudeHarnessTab(opts = {}) {
 
   // ==================== 历史重建（切回会话时按 transcript 行还原气泡/抽屉）====
   // v2.16：从 switchTo 里抽出来，并补上 thinking 行——history 里的「思考过程」
-  // 抽屉此前完全丢失（后端 transcript_for 不产出，前端也不认 role='thinking'），
-  // 用户看到的「历史里没有思考/工具展开」就是这个。
-  function renderHistThinking(text) {
-    const d = drawerEnsure('think');
-    // 已有思考正文就追加（一轮多段 thinking 共用一个抽屉，与流式一致）
-    const b = d.body.querySelector('.h-think-holder') || (() => {
-      const x = document.createElement('div');
-      x.className = 'h-think-holder';
-      d.body.appendChild(x);
-      return x;
-    })();
-    b.innerHTML += renderMd(text || '');
-    const title = d.box.querySelector('.h-drawer-title');
-    if (title) title.textContent = '🧠 思考过程';   // 历史条目无时长可显示（不编造）
-    _HG.think = null;                              // 定稿态：后续 appendThinking 会新开抽屉
-  }
+  // 抽屉此前完全丢失（后端 transcript_for 不产出，前端也不认 role='thinking'）。
+  // v2.18：重建与流式走同一条路径（renderUser(live=false) / startThinking /
+  // endThinking / renderHistTool）——旧 renderHistThinking 把一轮多段 thinking
+  // 合并进一个 holder 的分叉删掉，思考分段两条路径一致。
   function renderHistTool(l) {
-    // v2.11：重建也走执行抽屉（renderUser 已收尾旧抽屉）
-    // v2.15：改用与 renderToolUse 的 collapsible 分支同构的结构
+    // v2.15：与 renderToolUse 的 collapsible 分支同构的结构
     // （.h-tool.col > .h-tool-head[.h-tslots] + .h-tool-coll），
     // 并把后端带的 result（输出）与 err（错误标记）补回来。
     const d = document.createElement('div');
@@ -727,65 +818,75 @@ function buildClaudeHarnessTab(opts = {}) {
     if (l.role === 'user') {
       const imgs = (l.files || []).filter(p => _HARNESS_IMG_EXT.test(p));
       const files = (l.files || []).filter(p => !_HARNESS_IMG_EXT.test(p));
-      renderUser(l.text, imgs, files);
+      renderUser(l.text, imgs, files, false);
     }
     else if (l.role === 'assistant') renderAsst(l.text);
-    else if (l.role === 'thinking') renderHistThinking(l.text);
+    else if (l.role === 'thinking') {
+      startThinking(true);                 // 重建路径：段结构同流式，无计时动画
+      appendThinking(l.text);
+      endThinking(true);                   // hist 模式：不显示时长（不编造）、不自动收
+    }
     else if (l.role === 'tool') renderHistTool(l);
   }
 
-  // ==================== thinking 抽屉化（v2.11：思考过程收进「思考抽屉」）====
-  // 源 Reasoning.tsx 思想保留：流式追加正文；v2.11 改为收进独立思考抽屉，
-  // busy 且 AI 尚未输出文本时组头动画「AI 正在思考中…」。
+  // ==================== thinking 分段条目（v2.18：用户点名重写）====
+  // 旧版一轮所有 thinking 挤一个抽屉正文里，分不清哪次思考；
+  // 现在每段 thinking 一个可折叠条目（.h-think-seg），组头统计「思考 N 次」。
+  // 段边界：text / tool_use 块到来（handleEvent 里 endThinking，调用点不变）。
+  // 段起始时间存 seg.dataset.t0——快照恢复后可续算，JS 属性会丢。
   function isNearBottom() {
     return flow.scrollHeight - flow.scrollTop - flow.clientHeight < 120;
   }
-  function startThinking() {
-    if (_HG.think) return;
-    // 当前轮思考抽屉（一轮回复一个；AI 文本到达时 renderAsst 前定稿换新）
-    const d = drawerEnsure('think');
-    _HG.think = { box: d.box, drawer: d, start: Date.now(),
-                  body: d.body.querySelector('.h-think-body') || (() => {
-                    const b = document.createElement('div');
-                    b.className = 'h-think-body';
-                    d.body.appendChild(b);
-                    return b;
-                  })() };
-    // AI 还没输出正文 → 组头动画占位；已输出过则显示用时（appendThinking 更新）
-    thinkHeadUpdate();
-  }
-  // 思考抽屉组头状态：未输出 AI 文本时动画「AI 正在思考中…」，否则「思考了 Xs」
-  function thinkHeadUpdate(final) {
-    const d = _HG.drawerThink;
-    if (!d || !d.box.isConnected) return;
-    const title = d.box.querySelector('.h-drawer-title');
-    if (!title) return;
-    const dur = _HG.think ? fmtDur((Date.now() - _HG.think.start) / 1000) : null;
-    if (!_HG.asstText && !final) {
-      // AI 还没输出对话 → 动画字样（直到回复结束）
-      title.innerHTML = '🧠 <span class="hg-think-anim">AI 正在思考中…</span>';
-    } else if (final || dur) {
-      title.textContent = `🧠 思考了 ${dur || ''}`;
+  function startThinking(hist) {
+    if (_HG.think && _HG.think.seg && _HG.think.seg.isConnected) return;
+    const g = grpEnsure(true);
+    const n = thinkSegCount(g) + 1;
+    thinkSegCountSet(g, n);
+    // 组头：「思考 N 次」；busy 中加脉动点
+    if (g.think.title) g.think.title.innerHTML = '🧠 思考 <span class="hg-think-anim">' + n + ' 次</span>';
+    const seg = document.createElement('div');
+    seg.className = 'h-think-seg open';
+    if (!hist) {
+      seg.dataset.t0 = String(Date.now());   // hist：无真实起始时间，不存不编造
+      seg.dataset.n = String(n);
     }
-    if (final) title.classList.remove('pending');
+    seg.innerHTML =
+      `<button class="h-think-seg-head"><span class="h-chev">▸</span>` +
+      `<span class="h-think-seg-name">第 ${n} 段思考</span>` +
+      `<span class="h-think-seg-t" data-hg-seg-t data-hg-think-t>0s</span></button>` +
+      `<div class="h-think-seg-body"></div>`;
+    g.think.body.appendChild(seg);
+    _HG.think = { seg, grp: g };
+    if (!_HG.asstText) {
+      // AI 还没输出正文 → 抽屉保持展开 + 段计时动画（thinkHeadUpdate 驱动）
+      if (!hist && g.think.box.dataset.userToggled !== '1') g.think.box.classList.add('open');
+      if (!hist) thinkHeadUpdate();
+    } else if (!hist) {
+      segHeadUpdate(seg);
+    }
+  }
+  // 活动思考段组头状态：本轮尚无 AI 正文时脉动「思考中…」，其余实时计时
+  function thinkHeadUpdate() {
+    const t = _HG.think;
+    if (!t || !t.seg.isConnected) return;
+    if (!_HG.asstText) {
+      const te = t.seg.querySelector('[data-hg-think-t]');
+      if (te) { te.innerHTML = '<span class="hg-think-anim">思考中…</span>'; }
+    } else segHeadUpdate(t.seg);
+  }
+  // 段头计时文案（fmtDur）
+  function segHeadUpdate(seg) {
+    const te = seg && seg.querySelector('[data-hg-think-t]');
+    if (!te) return;
+    const t0 = +(seg.dataset.t0 || 0);
+    te.textContent = t0 ? fmtDur((Date.now() - t0) / 1000) : '';
   }
   function appendThinking(text) {
-    if (!_HG.think) startThinking();
-    _HG.think._last = Date.now();
-    const d = _HG.drawerThink;
-    // 思考抽屉 body 里直接流式追加思考正文（markdown 渲染）
-    if (d) {
-      const holder = d.body.querySelector('.h-think-holder') || (() => {
-        const b = document.createElement('div');
-        b.className = 'h-think-holder';
-        d.body.appendChild(b);
-        return b;
-      })();
-      // v2.15：`innerHTML +=` 会把整个 holder 读回、拼接、重新解析并重建全部
-      // 子节点——每来一片思考就一次，长思考输出下是 O(n²) 且会丢掉已挂事件。
-      // 改为只往末尾追加本次增量（铁律①流畅）。
-      holder.insertAdjacentHTML('beforeend', renderMd(text));
-    }
+    if (!_HG.think || !_HG.think.seg.isConnected) startThinking();
+    const seg = _HG.think.seg;
+    const holder = seg.querySelector('.h-think-seg-body');
+    // v2.15：insertAdjacentHTML 只追加增量（innerHTML += 是 O(n²) 且丢事件）
+    holder.insertAdjacentHTML('beforeend', renderMd(text));
     thinkHeadUpdate();
     scrollBottom();
   }
@@ -796,16 +897,21 @@ function buildClaudeHarnessTab(opts = {}) {
     if (sec < 3600) return Math.floor(sec / 60) + 'm' + (sec % 60 ? sec % 60 + 's' : '');
     return Math.floor(sec / 3600) + 'h' + Math.floor((sec % 3600) / 60) + 'm' + (sec % 60 ? sec % 60 + 's' : '');
   }
-  function endThinking() {
+  function endThinking(hist) {
     const t = _HG.think;
     if (!t) return;
     _HG.think = null;
-    const sec = (Date.now() - t.start) / 1000;
-    // 组头定稿：显示总用时
-    const title = t.drawer.box.querySelector('.h-drawer-title');
-    if (title) title.textContent = `🧠 思考了 ${fmtDur(sec)}`;
-    // 仅当用户在底部跟读且没手动操作过时自动收起；上滚阅读时不打扰
-    if (t.drawer.box.dataset.userToggled !== '1' && isNearBottom()) setTimeout(() => t.drawer.box.classList.remove('open'), 1000);
+    const seg = t.seg;
+    const te = seg.querySelector('[data-hg-think-t]');
+    const t0 = +(seg.dataset.t0 || 0);
+    if (hist || !t0) {
+      // 历史重建：无真实起始时间，不编造时长
+      if (te) te.textContent = hist ? '' : te.textContent;
+    } else {
+      if (te) te.textContent = fmtDur((Date.now() - t0) / 1000);
+      // 仅当用户没碰过且在底部跟读时自动收段（正文已在段里，收起只留段头）
+      if (seg.dataset.userToggled !== '1' && isNearBottom()) seg.classList.remove('open');
+    }
   }
 
   // ==================== 工具调用渲染（源 toolConfigs + ToolRenderer + BashCommandDisplay）====================
@@ -1207,7 +1313,7 @@ function buildClaudeHarnessTab(opts = {}) {
     } else if (typ === 'result') {
       endThinking();
       closeRun();
-      drawerCloseAll(true);                // v2.12：回复结束双抽屉定稿——用户没手动
+      grpFinalize(true);                   // v2.18：本轮组定稿——用户没手动
                                           // 操作过且在底部跟读时自动收起（想看再点开，
                                           // 各抽屉独立开合）
       // v2.3 问题4：不显示金额，显示上下文用量环（⭕ 百分比，256K 实窗口径）
@@ -1237,11 +1343,11 @@ function buildClaudeHarnessTab(opts = {}) {
       else if (it.kind === 'ask') askRender(it);
       else if (it.kind === 'ask_done') askDone(it);
       else if (it.kind === 'interrupted') {
-        renderExit(it.text); setBusy(false);
+        grpFinalize(true); renderExit(it.text); setBusy(false);
         // v2.15：通知 stopGen 兜底逻辑「事件到了」，别重复收尾
         try { document.dispatchEvent(new CustomEvent('hg-interrupted', {detail: _HG.sid})); } catch(_) {}
       }
-      else if (it.kind === 'exit') { _HG.alive = false; renderExit(it.text); setBusy(false); }
+      else if (it.kind === 'exit') { _HG.alive = false; grpFinalize(true); renderExit(it.text); setBusy(false); }
     };
   }
 
@@ -1269,7 +1375,7 @@ function buildClaudeHarnessTab(opts = {}) {
     closePop(); closeMention();
     endThinking(); closeRun();
     _hgMentionReset();          // v2.15：@ 引用高亮不跨会话残留
-    _HG.rowById = {}; _HG.uidN = 0; _HG.run = null; _HG.drawer = null; _HG.drawerThink = null; _HG.histNav = null;
+    _HG.rowById = {}; _HG.uidN = 0; _HG.run = null; _HG.grp = null; _HG.histNav = null;   // v2.18：组级抽屉
     _HG.think = null; _HG.noScroll = false; _HG.openState = null;   // v2.16：重建态不跨会话残留
     _HG.sid = sid; _HG.seq = 0; _HG.alive = false;
     // v2.15：dirty 语义修正。旧实现只在「发送成功」置 true、只在
@@ -1323,7 +1429,7 @@ function buildClaudeHarnessTab(opts = {}) {
             try { j.lines.forEach(l => renderHistLine(l)); }
             finally { _HG.noScroll = false; _HG.openState = null; }
           }
-          drawerCloseAll(true);             // transcript 末尾若挂着未收的抽屉 → 定稿自动收起
+          grpFinalize(true);               // transcript 末尾若挂着未收的组 → 定稿自动收起
           scrollBottom();
           setBusy(!!j.busy);
         }
@@ -2012,7 +2118,7 @@ function _harnessClose(portId) {
   // 重开后第一次点模型 chip 就可能删掉一条会话。tab 即将销毁，这里只需清
   // 状态，不用走 setBusy 更新界面。
   _HG.dirty = false; _HG.busy = false;
-  _HG.drawer = null; _HG.drawerThink = null; _HG.activity = null;
+  _HG.grp = null; _HG.activity = null;   // v2.18：组级抽屉（旧 drawer 单例已删）
   _HG.think = null; _HG.noScroll = false; _HG.openState = null;
   _HG.skills = null; _HG.models = null;   // 技能/模型映射下次进 tab 重新拉
   conn.tab.remove();
