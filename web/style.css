@@ -2080,13 +2080,14 @@
    留白加大，用户气泡 accent 渐变淡光 */
 .h-msg { max-width: 88%; }
 .h-msg.user { align-self: flex-end; position: relative; }
-/* v2.22：用户消息一键重发钮（气泡右上角，hover 显示） */
-.h-resend { position: absolute; top: 5px; right: 6px; width: 20px; height: 20px;
-  border-radius: 50%; border: 1px solid var(--border); background: var(--bg-card);
+/* v2.22：用户消息操作钮组（右上角，hover 显示）：↻ 重发 / ✎ 编辑后重发 */
+.h-macts { position: absolute; top: 5px; right: 6px; display: none; gap: 4px; }
+.h-msg.user:hover .h-macts { display: flex; }
+.h-mact { width: 20px; height: 20px; border-radius: 50%;
+  border: 1px solid var(--border); background: var(--bg-card);
   color: var(--muted); font-size: 12px; line-height: 1; cursor: pointer;
-  display: none; align-items: center; justify-content: center; padding: 0; }
-.h-msg.user:hover .h-resend { display: flex; }
-.h-resend:hover { color: var(--accent); border-color: var(--accent); }
+  display: flex; align-items: center; justify-content: center; padding: 0; }
+.h-mact:hover { color: var(--accent); border-color: var(--accent); }
 .h-msg.asst { align-self: flex-start; }
 .h-msg .h-bubble { padding: 10px 14px; font-size: 13.5px; line-height: 1.7;
   overflow-x: auto; word-break: break-word; }

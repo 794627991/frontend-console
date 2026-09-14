@@ -418,6 +418,7 @@ def claude_profiles_get():
         if not isinstance(env, dict):
             env = {}
         out.append({"name": p.get("name", ""),
+                    "legacy": not bool(p.get("settings")),
                     "token_masked": _mask_token(env.get("ANTHROPIC_AUTH_TOKEN", "")),
                     "base_url": env.get("ANTHROPIC_BASE_URL", "")})
     return jsonify({"ok": True, "profiles": out, "active": d.get("active", ""),
@@ -461,7 +462,8 @@ def claude_profiles_apply():
     if isinstance(snap, dict) and snap:
         _write_settings(snap)                     # v2.22：整份替换
     else:
-        # 旧格式：只并入 env 两键
+        # 旧格式：只并入 env 两键。模型映射等不会跟着切（旧方案里没存过），
+        # 必须显式警告——静默回退让用户以为切换完整（A↔B 切来切去模型全乱）
         cur = _read_settings()
         env = cur.setdefault("env", {})
         if not isinstance(env, dict):
@@ -470,6 +472,11 @@ def claude_profiles_apply():
             if v:
                 env[k] = v
         _write_settings(cur)
+        d["active"] = name
+        _write_profiles(d)
+        return jsonify({"ok": True, "warning":
+                        "方案「%s」是旧格式（只存了 Token/网关），模型映射没有切换。"
+                        "请在该网关下配好模型映射后重新「存当前为方案」升级为完整快照。" % name})
     d["active"] = name
     _write_profiles(d)
     return jsonify({"ok": True})

@@ -1598,6 +1598,7 @@ function _showOpenModeDialog(path, sizeMB, withHex) {
         ? '文件超过 20MB：编辑器打开可能卡顿（Monaco 分词内存约为文件 3~5 倍），建议用阅读器。'
         : (withHex ? '未知类型文件，选择打开方式：' : '选择打开方式：'));
     m.classList.add('show');
+    _dropPerf('js-dialog-show');   // 排查埋点：弹窗实际显示时刻
   });
 }
 
@@ -1606,6 +1607,7 @@ function _showOpenModeDialog(path, sizeMB, withHex) {
 // 规则：未知/二进制类型 → 弹窗让选（二进制/阅读器/编辑器）；
 //       已知文本：<20M 编辑器；20~30M 弹窗提示选（默认建议阅读器）；>30M 强制阅读器。
 async function openFileSmart(path, mode) {
+  _dropPerf('js-openFileSmart');   // 排查埋点
   const name = path.split(/[\/]/).pop().toLowerCase();
   const dot = name.lastIndexOf('.');
   const ext = dot > 0 ? name.slice(dot) : name;
@@ -1616,6 +1618,7 @@ async function openFileSmart(path, mode) {
     const r = await fetch('/api/file_info', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path})});
     const j = await r.json();
     if (j.ok) { size = j.size; isTextSrv = j.is_text; }
+    _dropPerf('js-file_info-done');   // 排查埋点
   } catch(e) {}
   const MB = size / 1024 / 1024;
   // 决策
@@ -1653,6 +1656,8 @@ async function openFileSmart(path, mode) {
 }
 
 async function openDroppedFile(path, fromRecent) {
+  _dropPerf('js-openDropped');   // 排查埋点：evaluate_js 到达时刻
+  // 对比弹窗开着：拖入的文件填 A/B 栏（不打开、不灌 claude/笔记）。
   // 对比弹窗开着：拖入的文件填 A/B 栏（不打开、不灌 claude/笔记）。
   // drop_handler 只回调这里（唯一原生路径通道），弹窗在开就归它。
   const dm = typeof $ === 'function' && $('diffPickModal');

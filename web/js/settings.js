@@ -470,9 +470,10 @@ async function _stRenderApiPane(pane) {
       const j = await (await fetch('/api/claude/profiles')).json();
       if (!j.ok) throw new Error(j.err || '');
       profListEl.innerHTML = (j.profiles || []).map(p => `
-        <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--border);border-radius:8px;${p.name === j.active ? 'border-color:var(--neon-green);' : ''}">
+        <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid ${p.legacy ? 'var(--neon-yellow, orange);' : 'var(--border);'}border-radius:8px;${p.name === j.active ? 'border-color:var(--neon-green);' : ''}">
           <b style="flex-shrink:0;">${esc(p.name)}</b>
           <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:11px;">${esc(p.token_masked || '未设 Token')} · ${esc(p.base_url || '默认网关')}</span>
+          ${p.legacy ? '<span style="color:orange;font-size:11px;flex-shrink:0;" title="只存了 Token/网关——切换不会带模型映射，配好后重新『存当前为方案』升级">⚠ 旧格式</span>' : ''}
           ${p.name === j.active
             ? '<span style="color:var(--neon-green);font-size:11px;flex-shrink:0;">● 当前</span>'
             : `<button class="btn ghost" data-prof="${esc(p.name)}" style="flex-shrink:0;">应用</button>`}
@@ -486,7 +487,8 @@ async function _stRenderApiPane(pane) {
               headers:{'Content-Type':'application/json'}, body: JSON.stringify({name: b.dataset.prof})});
             const j2 = await r.json();
             if (!j2.ok) { showBanner('切换失败: ' + (j2.err || ''), 4000, true); return; }
-            showBanner('已切换到「' + b.dataset.prof + '」——新开的 Claude 会话生效', 4500);
+            if (j2.warning) { showBanner('⚠ ' + j2.warning, 9000, true); }
+            else showBanner('已切换到「' + b.dataset.prof + '」——新开的 Claude 会话生效', 4500);
             refresh(); renderProfiles();
           } catch(e) { showBanner('切换失败: ' + e, 4000, true); }
         };

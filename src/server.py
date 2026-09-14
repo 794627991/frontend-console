@@ -1238,6 +1238,26 @@ def api_log_open_external():
     return jsonify({"ok": True, "name": p, "size": os.path.getsize(p)})
 
 
+# ---- 拖放性能埋点（临时排查用）：前端各节点 + main.py drop_handler 各写一行 ----
+_DROP_PERF = os.path.join(STATE_DIR, "drop_perf.log")
+
+def drop_perf_log(tag, extra=""):
+    import time as _t
+    try:
+        with open(_DROP_PERF, "a", encoding="utf-8") as f:
+            f.write("%s %.3f %s\n" % (tag, _t.time(), extra))
+    except Exception:
+        pass
+
+@app.route("/api/_drop_perf", methods=["POST"])
+def api_drop_perf():
+    """body: {tag, perf}——前端拖放链路耗时排查埋点。"""
+    data = request.get_json(force=True, silent=True) or {}
+    drop_perf_log(str(data.get("tag") or "?")[:40],
+                  "perf=%s" % data.get("perf", ""))
+    return jsonify({"ok": True})
+
+
 @app.route("/api/file_info", methods=["POST"])
 def api_file_info():
     """轻量文件信息：大小 + 是否文本后缀。前端打开文件前先探测，用于

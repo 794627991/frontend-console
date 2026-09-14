@@ -686,6 +686,12 @@ def main():
                 pass
         def drop_handler(event):
             try:
+                # 排查埋点：原生桥回调到达时刻（与前端 dragenter/drop 打点对照）
+                try:
+                    from src.server import drop_perf_log
+                    drop_perf_log('py-drop_handler')
+                except Exception:
+                    pass
                 files = event.get('dataTransfer', {}).get('files', [])
                 for f in files:
                     path = f.get('pywebviewFullPath')

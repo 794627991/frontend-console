@@ -11,6 +11,14 @@ let connections = {};   // port_id -> conn（含 term/fit/search/xtermWrap/sse �
 let activePortId = null;
 let aiSse = null;
 
+// 拖放性能埋点（临时排查）：fire-and-forget 打点，后端追加写 drop_perf.log
+function _dropPerf(tag) {
+  try {
+    fetch('/api/_drop_perf', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({tag, perf: Math.round(performance.now())}), keepalive: true}).catch(() => {});
+  } catch(_) {}
+}
+
 // banner 已改右下角悬浮冒泡，不占布局空间，无需再重 fit 终端。
 // （保留函数引用兼容旧调用点。）
 function refitAllTerms() {}

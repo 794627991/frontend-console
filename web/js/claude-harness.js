@@ -803,6 +803,26 @@ function buildClaudeHarnessTab(opts = {}) {
       const text = m?.dataset.rtext || '';
       if (_HG.busy) queuePush({ text, images: atts?.images || [], files: atts?.files || [] });
       else dispatch(text, atts?.images || [], atts?.files || [], true);
+      return;
+    }
+    // v2.22：编辑后重发——原文与附件填回输入框，改完正常发送
+    const eb = e.target.closest('.h-edit');
+    if (eb) {
+      const m = eb.closest('.h-msg.user');
+      let atts = null;
+      try { atts = JSON.parse(m?.dataset.ratts || 'null'); } catch(_) {}
+      input.value = m?.dataset.rtext || '';
+      input.style.height = 'auto';
+      input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+      renderOverlay(input.value);
+      _HG.atts = [];
+      (atts?.images || []).forEach(p => _HG.atts.push(
+        { name: String(p).split(/[\\/]/).pop(), path: p, size: 0, isImg: true }));
+      (atts?.files || []).forEach(p => _HG.atts.push(
+        { name: String(p).split(/[\\/]/).pop(), path: p, size: 0, isImg: false }));
+      renderAtts();
+      input.focus();
+      scrollBottom();
     }
   });
   function drawerCount(toolName) {
@@ -882,15 +902,16 @@ function buildClaudeHarnessTab(opts = {}) {
     // 有附件且无文字时给一行占位文案，气泡不再空壳
     const body = (text && text.trim()) || ((images?.length || files?.length) ? '*（图片/附件，见上方）*' : '');
     d.appendChild(mdBubble(body));
-    // v2.22：一键重发——原始内容存 dataset（属性可随 innerHTML 快照恢复），
-    // 刷新钮 hover 显示，点击走 flow 委托
+    // v2.22：一键重发 + 编辑后重发——原始内容存 dataset（属性可随
+    // innerHTML 快照恢复），钮 hover 显示，点击走 flow 委托
     d.dataset.rtext = text || '';
     d.dataset.ratts = JSON.stringify({ images: images || [], files: files || [] });
-    const rb = document.createElement('button');
-    rb.className = 'h-resend';
-    rb.title = '重发这条消息';
-    rb.textContent = '↻';
-    d.appendChild(rb);
+    const acts = document.createElement('div');
+    acts.className = 'h-macts';
+    acts.innerHTML =
+      '<button class="h-mact h-resend" title="重发这条消息">↻</button>' +
+      '<button class="h-mact h-edit" title="编辑后重发（原文+附件填回输入框）">✎</button>';
+    d.appendChild(acts);
     addRow(d);
     if (live !== false) {
       const g = grpEnsure(true);

@@ -69,6 +69,7 @@ showDragOverlay = function(show) {
 document.body.addEventListener('dragenter', e => {
   e.preventDefault();
   if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
+    _dropPerf('dragenter');   // 排查埋点：拖入悬停的遮罩何时才显示
     _dragCounter++; showDragOverlay(true);
   }
 });
