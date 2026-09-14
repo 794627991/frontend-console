@@ -1238,6 +1238,44 @@ def api_log_open_external():
     return jsonify({"ok": True, "name": p, "size": os.path.getsize(p)})
 
 
+# v2.23 拖放修复：pywebview 的 _dnd_state 引用（由 main.py 主线程注入——
+# Flask 工作线程里 import webview.dom 会拉起 pythonnet/.NET 初始化，
+# 在非 STA 线程上抛异常 → 接口 500 → 前端轮询静默落空，拖放彻底失效）
+_DND_STATE = None
+
+
+@app.route("/api/dnd/paths")
+def api_dnd_paths():
+    """v2.23 拖放修复：前端 drop 后直取文件绝对路径。
+    WebView2 的 pywebviewEventHandler postMessage 在 harness SSE 长连接存在时
+    跨进程延迟 10s+（卡顿根因），但带文件对象的 FilesDropped 消息 12ms 即入
+    webview.dom._dnd_state['paths']。
+    后端长轮询（最长 1.5s）：路径 ~12ms 入库，一次请求必中——前端只发一次
+    fetch、零 setTimeout。绝不能让前端轮询：后台 tab 被 WebView2 冻结/激进
+    节流（timer 降到 1/min），前端 setTimeout(50) 实测等 10~40s（performance
+    时钟跳变 10.6s 为证）。"""
+    try:
+        st = _DND_STATE
+        if st is None:
+            from webview.dom import _dnd_state as st2   # 兜底（多数环境可直接 import）
+            st = st2
+        drop_perf_log("py-dnd-api-enter")                # 诊断：fetch 到达时刻
+        deadline = time.time() + 1.5
+        while True:
+            paths = [p[1] for p in list(st.get('paths', []))]
+            if paths:
+                st['paths'] = []
+                drop_perf_log("py-dnd-api-hit", "n=%d" % len(paths))   # 命中=入库时刻±10ms
+                return jsonify({"ok": True, "paths": paths})
+            if time.time() >= deadline:
+                drop_perf_log("py-dnd-api-empty", "listeners=%s" % st.get('num_listeners', -1))
+                return jsonify({"ok": True, "paths": [],
+                                "listeners": st.get('num_listeners', -1)})
+            time.sleep(0.01)   # 诊断期 10ms 粒度：精确卡入库时刻
+    except Exception as e:
+        return jsonify({"ok": False, "err": repr(e)}), 500
+
+
 # ---- 拖放性能埋点（临时排查用）：前端各节点 + main.py drop_handler 各写一行 ----
 _DROP_PERF = os.path.join(STATE_DIR, "drop_perf.log")
 
@@ -1251,10 +1289,52 @@ def drop_perf_log(tag, extra=""):
 
 @app.route("/api/_drop_perf", methods=["POST"])
 def api_drop_perf():
-    """body: {tag, perf}——前端拖放链路耗时排查埋点。"""
+    """body: {tag, perf, born?, beat?}——前端拖放链路耗时排查埋点。
+    born=事件出生时刻(e.timeStamp)，perf=handler 执行时刻，差=排队延迟；
+    beat=距上一 rAF 帧间隔，大值=JS 主线程刚被长任务卡死。
+    js-body-drop（松手瞬间）附带全线程栈快照——pywebview 桥的 10s 级
+    卡顿发生时，直接看到每个 Python 线程当时卡在哪一行。"""
     data = request.get_json(force=True, silent=True) or {}
-    drop_perf_log(str(data.get("tag") or "?")[:40],
-                  "perf=%s" % data.get("perf", ""))
+    extra = "perf=%s" % data.get("perf", "")
+    if data.get("born") is not None:
+        extra += " queue=%sms" % (int(data.get("perf") or 0) - int(data.get("born") or 0))
+    if data.get("beat") is not None:
+        extra += " beat=%sms" % data.get("beat")
+    if data.get("extra"):
+        extra += " %s" % str(data.get("extra"))[:120]
+    tag = str(data.get("tag") or "?")[:40]
+    drop_perf_log(tag, extra)
+    if tag == "js-body-drop":
+        import sys, threading, traceback as _tb
+
+        def _snap(label):
+            try:
+                frames = sys._current_frames()
+                names = {t.ident: t.name for t in threading.enumerate()}
+                lines = []
+                for ident, frame in frames.items():
+                    st = [_ln.strip() for _ln in _tb.format_stack(frame)]
+                    # 只关心卡顿期活跃线程：栈底 bootstrap/queue-wait 的跳过
+                    busy = not any(("queue.py" in l or "threading.py" in l and "wait" in l
+                                    or "selectors.py" in l or "time.sleep" in l) for l in st[-3:])
+                    if not busy and "Dummy" not in str(names.get(ident, "")) \
+                       and "Main" not in str(names.get(ident, "")):
+                        continue
+                    lines.append("--- thread %s" % names.get(ident, ident))
+                    lines.extend("    " + ln for ln in st[-6:])
+                drop_perf_log(label, "\n".join(lines) or "(all idle)")
+            except Exception as e:
+                drop_perf_log(label + "-err", repr(e))
+
+        _snap("py-stack-t0")
+        # 连续采样：drop 后 12s 内每秒抓一次——pywebview 桥 10s 级卡顿期间
+        # UI 线程/GIL 被谁占着，全程留痕
+        def _loop():
+            import time as _t
+            for i in range(1, 13):
+                _t.sleep(1.0)
+                _snap("py-stack-t+%ds" % i)
+        threading.Thread(target=_loop, daemon=True).start()
     return jsonify({"ok": True})
 
 

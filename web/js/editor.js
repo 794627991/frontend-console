@@ -117,6 +117,7 @@ function buildEditorTab(name, content, extPath, fileMtime) {
         <div class="ed-md-splitter" style="display:none"></div>
         <div class="ed-md-preview" style="display:none;"><div class="md-preview-body"></div></div>
       </div>
+      <div class="term-search-splitter ed-search-splitter" style="display:none" title="拖动调节查找分栏高度"></div>
       <div class="term-search-pane ed-search-pane" style="display:none">
         <div class="term-search-head">
           <input type="text" class="term-search-input ed-search-q" placeholder="查找…（回车搜索，正则支持）" autocomplete="off">
@@ -224,6 +225,7 @@ function buildEditorTab(name, content, extPath, fileMtime) {
   });
   wrap.querySelector('.ed-search-ex').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doEdSearch(conn); } });
   wrap.querySelector('.ed-search-collapse').onclick = () => edToggleSearchPane(conn);
+  initEdSplitter(conn);   // 查找分栏：拖分隔条调高度
   // 工具栏按钮
   wrap.querySelectorAll('.lv-btn').forEach(btn => {
     btn.onclick = () => {
@@ -1114,6 +1116,9 @@ function _edCloseNow(conn) {
   if (conn.editor) { try { conn.editor.destroy(); } catch(e){} }
   // Monaco 同理（停掉 onDidChangeModelContent，防关 tab 后仍触发脏检测）
   if (conn.monaco) { try { conn.monaco.dispose(); } catch(e){} }
+  // 查找分栏 splitter 的 document 级拖拽监听移除（防泄漏，同 closeLogViewer）
+  if (conn._edSplitMove) document.removeEventListener('mousemove', conn._edSplitMove);
+  if (conn._edSplitUp) document.removeEventListener('mouseup', conn._edSplitUp);
   // DiffEditor（diff tab）：编辑器与两侧 model 一并销毁（防泄漏 + 关 tab 后仍触发 onDidUpdateDiff）
   if (conn.diffEd) {
     try {
@@ -1199,9 +1204,35 @@ function edToggleSearchPane(conn, show) {
   const st = !pane.style.display || pane.style.display === 'none';
   const toShow = show !== undefined ? show : st;
   pane.style.display = toShow ? 'flex' : 'none';
+  // splitter 与分栏同开同关（display:none 时不可拖、也不占 5px）
+  const splitter = conn.wrap.querySelector('.ed-search-splitter');
+  if (splitter) splitter.style.display = toShow ? 'block' : 'none';
   const btn = conn.wrap.querySelector('.ed-search-collapse');
   if (btn) btn.textContent = toShow ? '▾' : '▴';
   if (toShow) conn.wrap.querySelector('.ed-search-q').focus();
+}
+// 拖分隔条调查找分栏高度（仿 initLogSplitter；Monaco automaticLayout 自适应免手动 layout）
+function initEdSplitter(conn) {
+  const splitter = conn.wrap.querySelector('.ed-search-splitter');
+  if (!splitter) return;
+  const pane = conn.wrap.querySelector('.ed-search-pane');
+  let dragging = false, startY = 0, startH = 0;
+  splitter.addEventListener('mousedown', e => {
+    dragging = true; startY = e.clientY; startH = pane.offsetHeight;
+    document.body.style.cursor = 'row-resize'; e.preventDefault();
+  });
+  conn._edSplitMove = e => {
+    if (!dragging) return;
+    const dh = e.clientY - startY;
+    // 往上拖（dh<0）pane 变大；钳到 60px ~ 编辑器区高-100
+    const newH = Math.max(60, Math.min(startH - dh, conn.wrap.clientHeight - 100));
+    pane.style.height = newH + 'px';
+  };
+  conn._edSplitUp = () => {
+    if (dragging) { dragging = false; document.body.style.cursor = ''; }
+  };
+  document.addEventListener('mousemove', conn._edSplitMove);
+  document.addEventListener('mouseup', conn._edSplitUp);
 }
 async function doEdSearch(conn) {
   const qEl = conn.wrap.querySelector('.ed-search-q');

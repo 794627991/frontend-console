@@ -10,6 +10,25 @@
 import os, sys, threading, json, time
 import urllib.request
 
+# v2.23 拖放卡顿根治：WebView2/Chromium 对「被遮挡/后台」页面做渲染进程降级
+# （实测开 Claude 会话后整页 JS 停摆 ~12s，fetch 回调/IPC 全延迟；音频保活
+# 也拦不住）。通过 WebView2 官方环境变量注入 Chromium 开关，一次性禁用全部
+# 节流/遮挡判定（桌面工具常驻前台，不需要省电降级）：
+#   CalculateNativeWinOcclusion —— 窗口被遮挡判定（拖放时资源管理器在前，
+#     工具窗口被误判遮挡 → 渲染器降级，与「第一次拖快第二次拖慢」吻合）
+#   IntensiveWakeUpThrottling / TimerThrottling —— 定时器激进节流
+#   backgrounding 系 —— 后台渲染进程降优先级/挂起
+os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = (
+    (os.environ.get("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "") + " " if
+     os.environ.get("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS") else "") +
+    "--disable-features=CalculateNativeWinOcclusion,IntensiveWakeUpThrottling"
+    ",BackgroundOcclusionWindows"
+    " --disable-background-timer-throttling"
+    " --disable-renderer-backgrounding"
+    " --disable-backgrounding-occluded-windows"
+    " --disable-ipc-flooding-protection"
+)
+
 # 所有源码都在 src/ 下，import src.* 需要项目根在 sys.path（python src/main.py 时根不在 path）
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
@@ -408,6 +427,24 @@ def main():
                 return ""
             return ""
 
+        def dnd_paths(self):
+            """v2.23 拖放修复：取走拖入文件的绝对路径（pywebview.api 通道）。
+            走此通道而非 fetch：实测拖放会话期间 WebView2 的 fetch 响应回调被
+            延迟 10s+（「📂 打开」按钮的 pywebview.api 链路同场景流畅，实证
+            该通道免疫），而 fetch 通道被单独拖慢。paths 由 FilesDropped IPC
+            ~12ms 入库，此方法在 js bridge 线程直接读共享 dict，零跨进程开销。
+            返回 [绝对路径,...]（取走即清空；多文件全部返回，前端开第一个）。"""
+            try:
+                from src import server as _srv
+                st = _srv._DND_STATE
+                if not st:
+                    return []
+                paths = [p[1] for p in list(st.get('paths', []))]
+                st['paths'] = []
+                return paths
+            except Exception:
+                return []
+
         def pick_two(self):
             """文件对比：弹出原生文件选择对话框，多选两份（A 基准 + B 对比）。
             返回路径列表（前端拿前两个）；取消/选一份返回空列表。"""
@@ -668,7 +705,15 @@ def main():
     # 窗口加载完成后注册原生拖拽：pywebview 的 WebView2 后端能拿到文件绝对路径
     # （Chromium 标准 File.path 不暴露，但 pywebview 通过 CoreWebView2File.Path 获取，
     #   注入 event.dataTransfer.files[i].pywebviewFullPath）。需用 pywebview DOM API
-    #   注册 drop 监听（_dnd_state.num_listeners>0 才捕获路径），回调里 evaluate_js 调前端。
+    #   注册 drop 监听（_dnd_state.num_listeners>0 才捕获路径）。
+    # v2.23：主线程把 _dnd_state 引用注入 src.server（Flask 线程 import webview.dom
+    #   会触发 pythonnet 初始化，非 STA 线程上抛异常——/api/dnd/paths 曾因此 500）。
+    try:
+        import webview.dom as _wd
+        from src import server as _srv
+        _srv._DND_STATE = _wd._dnd_state
+    except Exception:
+        pass
     def on_loaded():
         # 页面加载完成即激活并置前窗口：从托盘/后台/快捷方式启动时窗口可能不在
         # 前台，用户打开工具就是为了敲命令——不等先点一下
@@ -685,24 +730,14 @@ def main():
             except Exception:
                 pass
         def drop_handler(event):
-            try:
-                # 排查埋点：原生桥回调到达时刻（与前端 dragenter/drop 打点对照）
-                try:
-                    from src.server import drop_perf_log
-                    drop_perf_log('py-drop_handler')
-                except Exception:
-                    pass
-                files = event.get('dataTransfer', {}).get('files', [])
-                for f in files:
-                    path = f.get('pywebviewFullPath')
-                    if path:
-                        # 按类型分发（转义防注入）：文本类后缀 → 编辑器（可编辑写回原路径），
-                        # 其余（.log/未知）→ 日志查看器（只读虚拟列表）
-                        safe = path.replace('\\', '/').replace("'", "\\'")
-                        window.evaluate_js(f"openDroppedFile('{safe}');")
-                        break
-            except Exception:
-                pass
+            # v2.23 拖放卡顿根因（线程栈全程留证）：pywebviewEventHandler 走的
+            # 普通 postMessage 跨进程 IPC 在 harness SSE 长连接存在时延迟 10s+
+            # 才到 .NET（UI 线程期间完全空闲）；而带文件对象的第一条消息
+            # （FilesDropped → webview.dom._dnd_state['paths']）12ms 即达。
+            # 故路径改由前端 drop 后直连 /api/dnd/paths 拉取。此处保留监听
+            # 注册（num_listeners>0 WebView2 才捕获路径），handler 不再做事——
+            # 避免迟到 10s 的 evaluate_js 与新链路重复打开文件。
+            pass
         try:
             window.dom.get_element('body').on('drop', drop_handler)
         except Exception:

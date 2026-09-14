@@ -305,8 +305,7 @@
   .log-search-count { color: var(--muted); font-size: 11px; min-width: 60px; }
   .log-search-results { flex: 1; overflow-y: auto; position: relative; background: var(--bg-input); min-height: 40px; }
   .log-search-results .hline { cursor: pointer; }
-  /* 交替行底色：与主视图同底时相邻行挤成一片，隔行用卡片色微区分 */
-  .log-search-results .hline:nth-child(odd) { background: var(--bg-card); }
+  /* 结果行统一底色（用户反馈颜色错开不好看）：无交替行、无等级染色，仅选中行/命中词高亮 */
   .log-search-results .hline.active { background: var(--accent); color: var(--on-accent); }
   .log-search-results .hline.active .hrow, .log-search-results .hline.active .htag { color: var(--on-accent); }
   /* 搜索命中关键字染色（主视图 + 结果列表共用） */
@@ -1250,6 +1249,11 @@
      用户反馈要跟日志搜索栏一致——默认就有固定高度（35%），不自适应（自适应版太矮） */
   .ed-search-pane { height: 35%; min-height: 80px; max-height: 70%; }
   .ed-search-pane .term-search-results { flex: 1; min-height: 40px; max-height: none; }
+  /* 结果行统一底色（用户反馈颜色错开不好看）：盖掉 term-search 的交替行底色，
+     仅 hover/选中行保留反馈。特异性质 0,4,0 压过后面 0,3,0 的
+     .term-search-results .hline:nth-child(odd)（同权重比位置，必须更高一级），
+     作用域限定 ed-search-results，不影响终端搜索分栏 */
+  .ed-search-pane .ed-search-results .hline:nth-child(odd) { background: transparent; }
   .term-search-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0; background: var(--bg-panel); }
   .term-search-head input { flex: 1; background: var(--bg-input); border: 1px solid var(--border); color: var(--fg); border-radius: 6px; padding: 5px 10px; font-size: 12px; transition: border-color 0.2s, box-shadow 0.2s; }
   .term-search-head input.term-search-exclude { flex: 0 0 200px; color: var(--neon-orange); }

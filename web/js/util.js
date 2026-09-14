@@ -11,11 +11,44 @@ let connections = {};   // port_id -> conn（含 term/fit/search/xtermWrap/sse �
 let activePortId = null;
 let aiSse = null;
 
-// 拖放性能埋点（临时排查）：fire-and-forget 打点，后端追加写 drop_perf.log
-function _dropPerf(tag) {
+// v2.23 防冻结保活：开 Claude 会话后系统内存压力增大，WebView2 运行时会
+// 把渲染进程挂起（实测整页 JS 停摆 ~10s，拖放/请求回调全部延迟；performance
+// 时钟跳变 9.4s 为证）。Chromium 豁免「正在播放音频」的页面——首次用户交互
+// （点击/按键，浏览器要求手势）后启动一个 gain=0 的永续振荡器：不可闻、
+// 不占 CPU，但让页面永远处于「播放中」，杜绝挂起。
+let _antiFreezeOn = false;
+function _antiFreezeStart() {
+  if (_antiFreezeOn) return;
   try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    gain.gain.value = 0;              // 完全静音
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.start();
+    _antiFreezeOn = true;
+  } catch(_) {}
+}
+['pointerdown', 'keydown'].forEach(ev =>
+  document.addEventListener(ev, function once() {
+    _antiFreezeStart();
+    document.removeEventListener(ev, once, {capture: true});
+  }, {once: true, capture: true}));
+
+// 拖放性能埋点（临时排查）：fire-and-forget 打点，后端追加写 drop_perf.log。
+// v2：tag 可带事件出生时间戳（e.timeStamp，页面加载起算）——与 handler 执行
+// 时刻 performance.now() 的差 = 事件在 JS 队列里的排队延迟；另带 rAF 心跳
+// （距上一帧间隔）——>1s 即打点瞬间 JS 主线程被长任务卡死的直接证据。
+let _rafLast = performance.now();
+(function _rafBeat() { requestAnimationFrame(() => { _rafLast = performance.now(); _rafBeat(); }); })();
+function _dropPerf(tag, ev, extra) {
+  try {
+    const now = performance.now();
+    const born = ev && typeof ev.timeStamp === 'number' ? Math.round(ev.timeStamp) : null;
+    const beat = Math.round(now - _rafLast);   // 距上一渲染帧：大 = JS 卡死刚结束
     fetch('/api/_drop_perf', {method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({tag, perf: Math.round(performance.now())}), keepalive: true}).catch(() => {});
+      body: JSON.stringify({tag, perf: Math.round(now), born, beat, extra: extra || ''}),
+      keepalive: true}).catch(() => {});
   } catch(_) {}
 }
 
