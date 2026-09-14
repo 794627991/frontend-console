@@ -1055,31 +1055,12 @@ function buildClaudeHarnessTab(opts = {}) {
     if (l.role === 'user') {
       const imgs = (l.files || []).filter(p => _HARNESS_IMG_EXT.test(p));
       const files = (l.files || []).filter(p => !_HARNESS_IMG_EXT.test(p));
-      // v2.24 气泡壳化：历史消息只建壳（视口内才渲染内容、滚出销毁——用户
-      // 定调「被顶上去的能销毁就销毁」）。附件/正文都在滚入时现填。
-      const d = document.createElement('div');
-      d.className = 'h-msg user';
-      if (hi != null) {
-        d.dataset.hi = String(hi);
-        d.dataset.hgLazy = '1';
-        d.style.height = '52px';        // 初始占位高度（滚入渲染时清掉；滚出按真实高记录）
-        addRow(d);
-        _msgObserve(d);
-      } else renderUser(l.text, imgs, files, false);
+      // v2.24.1 回退气泡壳化：renderUser 承担组管线边界（上一组定稿/开新组），
+      // 壳化绕过管线导致思考/工具挂错组（排序乱，用户实测不可接受）——
+      // 正确性优先，历史气泡恢复全渲染（懒抽屉+懒高亮已覆盖大头开销）。
+      renderUser(l.text, imgs, files, false);
     }
-    else if (l.role === 'assistant') {
-      if (l.text && String(l.text).trim()) {
-        if (hi != null) {
-          const d = document.createElement('div');
-          d.className = 'h-msg asst';
-          d.dataset.hi = String(hi);
-          d.dataset.hgLazy = '1';
-          d.style.height = '52px';      // 同 user：初始占位
-          addRow(d);
-          _msgObserve(d);
-        } else renderAsst(l.text);
-      }
-    }
+    else if (l.role === 'assistant') renderAsst(l.text);
     else if (l.role === 'thinking') {
       // v2.24 懒抽屉：历史思考段只建壳（默认收起），点开才渲染 markdown——
       // 大会话重建的大头就是几十 K 字符的 thinking 渲染
@@ -1093,54 +1074,10 @@ function buildClaudeHarnessTab(opts = {}) {
     else if (l.role === 'tool') renderHistTool(l, hi);
   }
 
-  // ==================== v2.24 气泡视口级渲染/销毁（用户定调：顶上去的能销毁就销毁）====
-  // 历史消息只建壳：滚入视口（±400px）才渲染内容，滚出销毁并按记录高度
-  // 占位（防滚动跳动）。流式消息不参与（正在看/组逻辑依赖 DOM）。
-  let _msgIO = null;
-  function _msgObserve(el) {
-    if (typeof IntersectionObserver === 'undefined') { _histMsgFill(el); return; }
-    if (!_msgIO) {
-      _msgIO = new IntersectionObserver((ents) => {
-        ents.forEach(en => {
-          const el = en.target;
-          if (en.isIntersecting) _histMsgFill(el);
-          else if (el.dataset.hgLazy !== '1') _histMsgDrop(el);
-        });
-      }, { rootMargin: '400px' });   // 缓冲带防抖：视口外 400px 才销毁
-    }
-    _msgIO.observe(el);
-  }
-  function _histMsgFill(el) {
-    if (el.dataset.hgLazy !== '1' || el.dataset.hi == null) return;
-    const l = _HG.histAll && _HG.histAll[+el.dataset.hi];
-    if (!l) return;
-    try {
-      el.style.height = '';             // 清占位高度，回到自然布局
-      if (l.role === 'user') {
-        const imgs = (l.files || []).filter(p => _HARNESS_IMG_EXT.test(p));
-        const files = (l.files || []).filter(p => !_HARNESS_IMG_EXT.test(p));
-        if (imgs.length || files.length) {
-          const at = document.createElement('div');
-          at.className = 'h-bubble-atts';
-          at.innerHTML = attChipsHtml(imgs, files);
-          el.appendChild(at);
-        }
-        const body = (l.text && l.text.trim()) || ((imgs.length || files.length) ? '*（图片/附件，见上方）*' : '');
-        el.appendChild(mdBubble(body));
-      } else {
-        el.appendChild(mdBubble(l.text || ''));
-      }
-      el.dataset.hgLazy = '';
-    } catch(_) {}
-  }
-  function _histMsgDrop(el) {
-    if (el.dataset.hi == null) return;
-    try {
-      el.style.height = el.offsetHeight + 'px';   // 高度占位（防滚动跳）
-      while (el.firstChild) el.removeChild(el.firstChild);
-      el.dataset.hgLazy = '1';
-    } catch(_) {}
-  }
+  // ==================== v2.24.1 气泡视口化（已回退）====================
+  // 曾实现「壳+滚入渲染/滚出销毁」，但 renderUser/renderAsst 承担组管线边界
+  // （定稿/开组/asstText 判定），壳化绕过管线 → 思考/工具挂错组。正确性
+  // 优先回退；未来重做必须保留管线调用、只懒填 bubble 内容。
   // v2.24 懒抽屉：展开时按 dataset.hi 从 _HG.histAll 取原始数据现渲染
   // （快照恢复后 dataset 仍在、histAll 同生命周期在——两条路径都成立）。
   // 用户定调「闭合即丢弃」：收起时清空 body 并重置懒标记——开才消耗、
@@ -1988,16 +1925,27 @@ function buildClaudeHarnessTab(opts = {}) {
     ov._ro = ro;
   }
   function _roLine(l, hi, ro) {
-    if (l.role === 'user' || l.role === 'assistant') {
-      // v2.24 同主层：气泡壳化（视口内渲染/滚出销毁）
-      if (l.role === 'assistant' && (!l.text || !String(l.text).trim())) return;
+    if (l.role === 'user') {
+      // v2.24.1 回退壳化（组管线正确性优先）：直接渲染，靠分段+懒抽屉省
       const d = document.createElement('div');
-      d.className = 'h-msg ' + l.role;
-      d.dataset.hi = String(hi);
-      d.dataset.hgLazy = '1';
-      d.style.height = '52px';         // 同主层：初始占位
+      d.className = 'h-msg user';
+      const imgs = (l.files || []).filter(p => _HARNESS_IMG_EXT.test(p));
+      const files = (l.files || []).filter(p => !_HARNESS_IMG_EXT.test(p));
+      if (imgs.length || files.length) {
+        const at = document.createElement('div');
+        at.className = 'h-bubble-atts';
+        at.innerHTML = attChipsHtml(imgs, files);
+        d.appendChild(at);
+      }
+      const body = (l.text && l.text.trim()) || ((imgs.length || files.length) ? '*（图片/附件）*' : '');
+      d.appendChild(mdBubble(body));
       ro.appendChild(d);
-      _msgObserve(d);
+    } else if (l.role === 'assistant') {
+      if (!l.text || !String(l.text).trim()) return;
+      const d = document.createElement('div');
+      d.className = 'h-msg asst';
+      d.appendChild(mdBubble(l.text));
+      ro.appendChild(d);
     } else if (l.role === 'thinking') {
       const seg = document.createElement('div');
       seg.className = 'h-think-seg';
