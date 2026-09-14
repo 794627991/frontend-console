@@ -161,7 +161,8 @@ const _HG = {
   asstText: false,      // 本轮 AI 是否已输出文本（占位动画/思考组头判据）
   histNav: null,        // 输入历史导航 {history, index, draft, recalled}
   mention: null,        // @ 引用状态 {at, files, sel}
-  HIST_PAGE: 80,        // v2.24 多段式历史：每段渲染条数（大会话 DOM 瘦身）
+  HIST_PAGE: 50,        // v2.24 多段式历史：每段渲染条数（大会话 DOM 瘦身，懒抽屉后再砍一档）
+  HIST_CAP: 300,        // v2.24 正常模式翻阅上限——更早的进「只读禅模式」看
   histAll: null,        // 当前会话全量 transcript 行（多段渲染源）
   histStart: 0,         // 已渲染起点 index（0=全量）
   imgSrv: null,         // 图片服务路径标记（后端 /api/harness/img/<sid>/file）
@@ -525,8 +526,30 @@ function buildClaudeHarnessTab(opts = {}) {
     const b = document.createElement('div');
     b.className = 'h-bubble';
     b.innerHTML = renderMd(text);
-    codeBlockEnhance(b);
+    // v2.24 懒高亮：历史路径（histAll 在场=重建/懒填）延后到可视时才增强+
+    // 高亮（ChatGPT 式容器/复制钮/hljs 都是 CPU 大户，初始 50 条窗口里几十
+    // 个代码块白高亮——默认翻阅根本看不到）。流式路径保持即时（用户正看）。
+    if (_HG.histAll) _codeLazyEnhance(b); else codeBlockEnhance(b);
     return b;
+  }
+  // v2.24 懒高亮：代码块进视口才增强+高亮（IntersectionObserver 单例，滚到
+  // 哪亮到哪；懒抽屉点开时其内容也经此通道——挂在视口内的即刻触发）
+  let _codeIO = null;
+  function _codeLazyEnhance(container) {
+    const codes = container.querySelectorAll('pre > code');
+    if (!codes.length) return;
+    if (typeof IntersectionObserver === 'undefined') { codeBlockEnhance(container); return; }
+    if (!_codeIO) {
+      _codeIO = new IntersectionObserver((ents) => {
+        ents.forEach(en => {
+          if (!en.isIntersecting) return;
+          _codeIO.unobserve(en.target);
+          const pre = en.target.parentElement;
+          if (pre && pre.isConnected) codeBlockEnhance(pre.parentElement || pre);
+        });
+      }, { rootMargin: '200px' });   // 视口外 200px 提前量，滚动时亮得无感
+    }
+    codes.forEach(c => _codeIO.observe(c));
   }
 
   // ==================== 附件 chip / 图片预览 ====================
@@ -764,24 +787,32 @@ function buildClaudeHarnessTab(opts = {}) {
       }
       return;
     }
-    // 思考段条目（v2.18）：段头点击 → 只切该段
+    // 思考段条目（v2.18）：段头点击 → 只切该段（开=懒渲染填 / 合=丢弃清空）
     const sHead = e.target.closest('.h-think-seg-head');
     if (sHead) {
       const seg = sHead.closest('.h-think-seg');
-      if (seg) { seg.classList.toggle('open'); _hgSaveOpen(seg); }
+      if (seg) {
+        const opening = !seg.classList.contains('open');
+        if (opening) _histLazyFill(seg); else _histLazyDrop(seg);
+        seg.classList.toggle('open'); _hgSaveOpen(seg);
+      }
       return;
     }
     // v2.21：段尾右下角「收起 ⌄」→ 收该段（读完整段后原地收，不用滚回顶部）
     const sFold = e.target.closest('.h-think-seg-fold');
     if (sFold) {
       const seg = sFold.closest('.h-think-seg');
-      if (seg) { seg.classList.remove('open'); _hgSaveOpen(seg); }
+      if (seg) { _histLazyDrop(seg); seg.classList.remove('open'); _hgSaveOpen(seg); }
       return;
     }
     const tHead = e.target.closest('.h-tool-head');
     if (tHead) {
       const row = tHead.closest('.h-tool');
-      if (row) { row.classList.toggle('open'); _hgSaveOpen(row); }
+      if (row) {
+        const opening = !row.classList.contains('open');
+        if (opening) _histLazyFill(row); else _histLazyDrop(row);
+        row.classList.toggle('open'); _hgSaveOpen(row);
+      }
       return;
     }
     // 代码块/Bash 命令复制钮（v2.12 委托化——快照恢复后行内绑定会失活）
@@ -996,40 +1027,159 @@ function buildClaudeHarnessTab(opts = {}) {
   // v2.18：重建与流式走同一条路径（renderUser(live=false) / startThinking /
   // endThinking / renderHistTool）——旧 renderHistThinking 把一轮多段 thinking
   // 合并进一个 holder 的分叉删掉，思考分段两条路径一致。
-  function renderHistTool(l) {
+  function renderHistTool(l, hi) {
     // v2.15：与 renderToolUse 的 collapsible 分支同构的结构
-    // （.h-tool.col > .h-tool-head[.h-tslots] + .h-tool-coll），
-    // 并把后端带的 result（输出）与 err（错误标记）补回来。
+    // （.h-tool.col > .h-tool-head[.h-tslots] + .h-tool-coll）。
+    // v2.24 懒抽屉：正常行 body 不渲染（dataset.hi 记行号，点开 _histLazyFill
+    // 现填）；错误行保持立即渲染+默认展开（错误信息不该藏）。
     const d = document.createElement('div');
-    d.className = 'h-tool col' + (l.err ? ' err open' : '');
-    const out = l.result ? String(l.result) : '';
+    const err = !!l.err;
+    d.className = 'h-tool col' + (err ? ' err open' : '');
     // v2.21：历史回放同样带工具徽章（子代理等），与流式路径一致
     const hbc = _H_TOOL_CFG[l.text] || {};
     d.innerHTML =
       `<button class="h-tool-head"><span class="h-chev">▸</span>` +
       `<span class="h-tool-name">${_hToolIco(l.text)} ${esc(_hToolLabel(l.text))}</span>` +
       (hbc.badge ? `<span class="h-tool-badge">${esc(hbc.badge)}</span>` : '') +
-      `<span class="h-tslots">${statusBadge(l.err ? 'error' : 'completed')}</span></button>` +
-      `<div class="h-tool-coll">${l.summary ? `<div class="h-tool-arg">${esc(l.summary)}</div>` : ''}` +
-      (out ? `<div class="h-tool-out${l.err ? ' err-txt' : ''}">${esc(out.length > 4000 ? out.slice(0, 4000) + '…' : out)}</div>` : '') +
-      `</div>`;
+      `<span class="h-tslots">${statusBadge(err ? 'error' : 'completed')}</span></button>` +
+      `<div class="h-tool-coll">${err ? _histToolBodyHtml(l) : ''}</div>`;
+    if (hi != null) {
+      d.dataset.hi = String(hi);
+      d.dataset.hgLazy = err ? '' : '1';   // 错误行已填（hgLazy 空）；收起丢弃后由 Drop 重置
+    }
     drawerCount(l.text);
     drawerAppend(d, 'exec');
     _hgApplyOpen(d, !!l.err);   // 重建期：恢复上次开合；无记录时错误行默认展开
   }
-  function renderHistLine(l) {
+  function renderHistLine(l, hi) {
     if (l.role === 'user') {
       const imgs = (l.files || []).filter(p => _HARNESS_IMG_EXT.test(p));
       const files = (l.files || []).filter(p => !_HARNESS_IMG_EXT.test(p));
-      renderUser(l.text, imgs, files, false);
+      // v2.24 气泡壳化：历史消息只建壳（视口内才渲染内容、滚出销毁——用户
+      // 定调「被顶上去的能销毁就销毁」）。附件/正文都在滚入时现填。
+      const d = document.createElement('div');
+      d.className = 'h-msg user';
+      if (hi != null) {
+        d.dataset.hi = String(hi);
+        d.dataset.hgLazy = '1';
+        d.style.height = '52px';        // 初始占位高度（滚入渲染时清掉；滚出按真实高记录）
+        addRow(d);
+        _msgObserve(d);
+      } else renderUser(l.text, imgs, files, false);
     }
-    else if (l.role === 'assistant') renderAsst(l.text);
+    else if (l.role === 'assistant') {
+      if (l.text && String(l.text).trim()) {
+        if (hi != null) {
+          const d = document.createElement('div');
+          d.className = 'h-msg asst';
+          d.dataset.hi = String(hi);
+          d.dataset.hgLazy = '1';
+          d.style.height = '52px';      // 同 user：初始占位
+          addRow(d);
+          _msgObserve(d);
+        } else renderAsst(l.text);
+      }
+    }
     else if (l.role === 'thinking') {
+      // v2.24 懒抽屉：历史思考段只建壳（默认收起），点开才渲染 markdown——
+      // 大会话重建的大头就是几十 K 字符的 thinking 渲染
       startThinking(true);                 // 重建路径：段结构同流式，无计时动画
-      appendThinking(l.text);
+      if (_HG.think && _HG.think.seg && hi != null) {
+        _HG.think.seg.dataset.hi = String(hi);
+        _HG.think.seg.dataset.hgLazy = '1';
+      } else appendThinking(l.text);       // 兜底：无行号（理论不达）
       endThinking(true);                   // hist 模式：不显示时长（不编造）、不自动收
     }
-    else if (l.role === 'tool') renderHistTool(l);
+    else if (l.role === 'tool') renderHistTool(l, hi);
+  }
+
+  // ==================== v2.24 气泡视口级渲染/销毁（用户定调：顶上去的能销毁就销毁）====
+  // 历史消息只建壳：滚入视口（±400px）才渲染内容，滚出销毁并按记录高度
+  // 占位（防滚动跳动）。流式消息不参与（正在看/组逻辑依赖 DOM）。
+  let _msgIO = null;
+  function _msgObserve(el) {
+    if (typeof IntersectionObserver === 'undefined') { _histMsgFill(el); return; }
+    if (!_msgIO) {
+      _msgIO = new IntersectionObserver((ents) => {
+        ents.forEach(en => {
+          const el = en.target;
+          if (en.isIntersecting) _histMsgFill(el);
+          else if (el.dataset.hgLazy !== '1') _histMsgDrop(el);
+        });
+      }, { rootMargin: '400px' });   // 缓冲带防抖：视口外 400px 才销毁
+    }
+    _msgIO.observe(el);
+  }
+  function _histMsgFill(el) {
+    if (el.dataset.hgLazy !== '1' || el.dataset.hi == null) return;
+    const l = _HG.histAll && _HG.histAll[+el.dataset.hi];
+    if (!l) return;
+    try {
+      el.style.height = '';             // 清占位高度，回到自然布局
+      if (l.role === 'user') {
+        const imgs = (l.files || []).filter(p => _HARNESS_IMG_EXT.test(p));
+        const files = (l.files || []).filter(p => !_HARNESS_IMG_EXT.test(p));
+        if (imgs.length || files.length) {
+          const at = document.createElement('div');
+          at.className = 'h-bubble-atts';
+          at.innerHTML = attChipsHtml(imgs, files);
+          el.appendChild(at);
+        }
+        const body = (l.text && l.text.trim()) || ((imgs.length || files.length) ? '*（图片/附件，见上方）*' : '');
+        el.appendChild(mdBubble(body));
+      } else {
+        el.appendChild(mdBubble(l.text || ''));
+      }
+      el.dataset.hgLazy = '';
+    } catch(_) {}
+  }
+  function _histMsgDrop(el) {
+    if (el.dataset.hi == null) return;
+    try {
+      el.style.height = el.offsetHeight + 'px';   // 高度占位（防滚动跳）
+      while (el.firstChild) el.removeChild(el.firstChild);
+      el.dataset.hgLazy = '1';
+    } catch(_) {}
+  }
+  // v2.24 懒抽屉：展开时按 dataset.hi 从 _HG.histAll 取原始数据现渲染
+  // （快照恢复后 dataset 仍在、histAll 同生命周期在——两条路径都成立）。
+  // 用户定调「闭合即丢弃」：收起时清空 body 并重置懒标记——开才消耗、
+  // 合即零占用（反复开关重渲染单段 markdown ~几十 ms，可接受）。
+  function _histLazyFill(el) {
+    if (!el || el.dataset.hgLazy !== '1' || el.dataset.hi == null) return;
+    const l = _HG.histAll && _HG.histAll[+el.dataset.hi];
+    if (!l) return;
+    try {
+      if (el.classList.contains('h-think-seg')) {
+        const body = el.querySelector('.h-think-seg-body');
+        if (body && !body.children.length) {
+          body.innerHTML = renderMd(l.text || '');
+          _codeLazyEnhance(body);            // v2.24 懒高亮（点开即在视口，即刻触发）
+        }
+      } else if (el.classList.contains('h-tool')) {
+        const coll = el.querySelector('.h-tool-coll');
+        if (coll && !coll.children.length) coll.innerHTML = _histToolBodyHtml(l);
+      }
+      el.dataset.hgLazy = '';
+    } catch(_) {}
+  }
+  function _histLazyDrop(el) {
+    if (!el || el.dataset.hi == null) return;   // 流式内容（无行号）不丢——丢了无法恢复
+    try {
+      if (el.classList.contains('h-think-seg')) {
+        const body = el.querySelector('.h-think-seg-body');
+        if (body) body.innerHTML = '';
+      } else if (el.classList.contains('h-tool')) {
+        const coll = el.querySelector('.h-tool-coll');
+        if (coll) coll.innerHTML = '';
+      }
+      el.dataset.hgLazy = '1';
+    } catch(_) {}
+  }
+  function _histToolBodyHtml(l) {
+    const out = l.result ? String(l.result) : '';
+    return (l.summary ? `<div class="h-tool-arg">${esc(l.summary)}</div>` : '') +
+      (out ? `<div class="h-tool-out${l.err ? ' err-txt' : ''}">${esc(out.length > 4000 ? out.slice(0, 4000) + '…' : out)}</div>` : '');
   }
 
   // ==================== thinking 分段条目（v2.18：用户点名重写）====
@@ -1053,7 +1203,8 @@ function buildClaudeHarnessTab(opts = {}) {
       ? '🧠 思考 ' + n + ' 次'
       : '🧠 思考 <span class="hg-think-anim">' + n + ' 次</span>';
     const seg = document.createElement('div');
-    seg.className = 'h-think-seg open';
+    // v2.24 懒抽屉：历史段默认收起（点开才渲染正文）；流式段保持展开
+    seg.className = 'h-think-seg' + (hist ? '' : ' open');
     if (!hist) {
       seg.dataset.t0 = String(Date.now());   // hist：无真实起始时间，不存不编造
       seg.dataset.n = String(n);
@@ -1708,19 +1859,30 @@ function buildClaudeHarnessTab(opts = {}) {
   // 扩/收都从新起点全量重渲（renderHistLine 顺序敏感：thinking/工具归组依赖
   // 时序，prepend 乱序会组错乱），扩段锚定滚动、收缩回贴底。
   function _histRender(lines, start) {
+    // v2.24 CAP：正常模式渲染起点不得越过 capStart（翻阅上限）——更早的
+    // 历史只能进「只读禅模式」看（_roEnter），保住正常模式的 DOM 省流
+    const capStart = Math.max(0, lines.length - _HG.HIST_CAP);
+    start = Math.max(start, capStart);
     _HG.histAll = lines;
     _HG.histStart = start;
     flow.innerHTML = '';
     if (start > 0) {
       const bar = document.createElement('div');
-      bar.className = 'hg-hist-more';
-      bar.textContent = '⬆ 剩 ' + start + ' 条更早消息——继续上滑加载';
+      bar.className = 'hg-hist-more hg-hist-cap';
+      if (start > capStart) {
+        bar.textContent = '⬆ 剩 ' + start + ' 条更早消息——继续上滑加载';
+      } else {
+        // 翻到上限：归档入口（只读禅模式）
+        bar.className = 'hg-hist-more hg-hist-ro-btn';
+        bar.innerHTML = '📖 更早 ' + start + ' 条已归档 · 进入<b>只读模式</b>查看';
+        bar.onclick = _roEnter;
+      }
       flow.appendChild(bar);
     }
     if (!lines.length) return;
     _HG.noScroll = true;                        // v2.16：逐行 append 不反复重排
     _HG.openState = _hgLoadOpen(_HG.sid);       // 上次开合状态（重建期贴回）
-    try { lines.slice(start).forEach(l => renderHistLine(l)); }
+    try { lines.slice(start).forEach((l, i) => renderHistLine(l, start + i)); }
     finally { _HG.noScroll = false; _HG.openState = null; }
   }
 
@@ -1731,12 +1893,16 @@ function buildClaudeHarnessTab(opts = {}) {
     const distBottom = flow.scrollHeight - flow.scrollTop - flow.clientHeight;
     const shown = _HG.histAll.length - _HG.histStart;
     if (nearTop && _HG.histStart > 0) {
-      // 上滑到顶：自动扩一段，锚定滚动（视觉位置不跳）
-      _histBusy = true;
-      const anchorH = flow.scrollHeight - flow.scrollTop;
-      _histRender(_HG.histAll, Math.max(0, _HG.histStart - _HG.HIST_PAGE));
-      flow.scrollTop = flow.scrollHeight - anchorH;
-      requestAnimationFrame(() => { _histBusy = false; });
+      // 上滑到顶：自动扩一段，锚定滚动（视觉位置不跳）。已到 CAP 上限时
+      // 不扩（顶部已是「只读模式」入口），避免无效重渲
+      const capStart = Math.max(0, _HG.histAll.length - _HG.HIST_CAP);
+      if (_HG.histStart > capStart) {
+        _histBusy = true;
+        const anchorH = flow.scrollHeight - flow.scrollTop;
+        _histRender(_HG.histAll, _HG.histStart - _HG.HIST_PAGE);
+        flow.scrollTop = flow.scrollHeight - anchorH;
+        requestAnimationFrame(() => { _histBusy = false; });
+      }
     } else if (distBottom <= 80 && shown > _HG.HIST_PAGE * 2) {
       // 拉回底部：收缩回尾部一段（DOM 瘦身是常态）
       _histBusy = true;
@@ -1745,6 +1911,127 @@ function buildClaudeHarnessTab(opts = {}) {
       requestAnimationFrame(() => { _histBusy = false; });
     }
   }, { passive: true });
+
+  // ==================== v2.24 只读禅模式（超长会话历史归档查阅）====================
+  // 正常模式翻阅到 HIST_CAP 上限后的全屏查阅层：无侧栏/输入/一切交互入口，
+  // 只有居中的历史流（VSCode 禅模式）。同样滚动分段 + 懒抽屉（开才渲染、
+  // 合即丢弃）——千条会话也只耗一屏 DOM。退出即整层销毁（渲染记录全清）。
+  function _roEnter() {
+    if (!_HG.histAll || !_HG.histAll.length) return;
+    _roExit();                                   // 防重入
+    const total = _HG.histAll.length;
+    const ov = document.createElement('div');
+    ov.className = 'hg-readonly';
+    ov.innerHTML =
+      '<div class="hg-ro-bar">' +
+      '<span class="hg-ro-title">📖 只读模式 · ' + total + ' 条历史</span>' +
+      '<span class="hg-ro-hint">抽屉点开渲染、收起释放；上滑加载更早</span>' +
+      '<button class="hg-ro-exit" title="退出并清空全部渲染">✕ 退出</button></div>' +
+      '<div class="hg-ro-flow"></div>';
+    const ro = ov.querySelector('.hg-ro-flow');
+    ov.querySelector('.hg-ro-exit').onclick = _roExit;
+    wrap.appendChild(ov);
+
+    const roRender = (start) => {
+      start = Math.max(0, start);
+      ro._start = start;
+      ro.innerHTML = '';
+      if (start > 0) {
+        const bar = document.createElement('div');
+        bar.className = 'hg-hist-more';
+        bar.textContent = '⬆ 剩 ' + start + ' 条——继续上滑加载';
+        ro.appendChild(bar);
+      }
+      _HG.histAll.slice(start).forEach((l, i) => _roLine(l, start + i, ro));
+      ro.scrollTop = start > 0 ? ro.scrollHeight : ro.scrollHeight;
+    };
+    ro._busy = false;
+    ro.addEventListener('scroll', () => {
+      if (ro._busy) return;
+      if (ro.scrollTop <= 60 && ro._start > 0) {
+        ro._busy = true;
+        const anchorH = ro.scrollHeight - ro.scrollTop;
+        roRender(ro._start - 100);
+        ro.scrollTop = ro.scrollHeight - anchorH;
+        requestAnimationFrame(() => { ro._busy = false; });
+      }
+    }, { passive: true });
+    // 只读层的抽屉开合/懒填丢弃（class 与主层一致，_histLazyFill/Drop 直接复用）
+    ro.addEventListener('click', (e) => {
+      const sHead = e.target.closest('.h-think-seg-head');
+      if (sHead) {
+        const seg = sHead.closest('.h-think-seg');
+        if (seg) {
+          const opening = !seg.classList.contains('open');
+          if (opening) _histLazyFill(seg); else _histLazyDrop(seg);
+          seg.classList.toggle('open');
+        }
+        return;
+      }
+      const sFold = e.target.closest('.h-think-seg-fold');
+      if (sFold) {
+        const seg = sFold.closest('.h-think-seg');
+        if (seg) { _histLazyDrop(seg); seg.classList.remove('open'); }
+        return;
+      }
+      const tHead = e.target.closest('.h-tool-head');
+      if (tHead) {
+        const row = tHead.closest('.h-tool');
+        if (row) {
+          const opening = !row.classList.contains('open');
+          if (opening) _histLazyFill(row); else _histLazyDrop(row);
+          row.classList.toggle('open');
+        }
+      }
+    });
+    roRender(Math.max(0, total - _HG.HIST_CAP));   // 从归档起点看起
+    ov._ro = ro;
+  }
+  function _roLine(l, hi, ro) {
+    if (l.role === 'user' || l.role === 'assistant') {
+      // v2.24 同主层：气泡壳化（视口内渲染/滚出销毁）
+      if (l.role === 'assistant' && (!l.text || !String(l.text).trim())) return;
+      const d = document.createElement('div');
+      d.className = 'h-msg ' + l.role;
+      d.dataset.hi = String(hi);
+      d.dataset.hgLazy = '1';
+      d.style.height = '52px';         // 同主层：初始占位
+      ro.appendChild(d);
+      _msgObserve(d);
+    } else if (l.role === 'thinking') {
+      const seg = document.createElement('div');
+      seg.className = 'h-think-seg';
+      seg.dataset.hi = String(hi);
+      seg.dataset.hgLazy = '1';
+      const n = (ro._thinkN = (ro._thinkN || 0) + 1);
+      seg.innerHTML =
+        `<button class="h-think-seg-head"><span class="h-chev">▸</span>` +
+        `<span class="h-think-seg-name">第 ${n} 段思考</span>` +
+        `<span class="h-think-seg-t"></span></button>` +
+        `<div class="h-think-seg-body"></div>` +
+        `<i class="h-think-seg-fold" title="收起本段">收起 ⌄</i>`;
+      ro.appendChild(seg);
+    } else if (l.role === 'tool') {
+      const d = document.createElement('div');
+      const err = !!l.err;
+      d.className = 'h-tool col' + (err ? ' err open' : '');
+      const hbc = _H_TOOL_CFG[l.text] || {};
+      d.innerHTML =
+        `<button class="h-tool-head"><span class="h-chev">▸</span>` +
+        `<span class="h-tool-name">${_hToolIco(l.text)} ${esc(_hToolLabel(l.text))}</span>` +
+        (hbc.badge ? `<span class="h-tool-badge">${esc(hbc.badge)}</span>` : '') +
+        `<span class="h-tslots">${statusBadge(err ? 'error' : 'completed')}</span></button>` +
+        `<div class="h-tool-coll">${err ? _histToolBodyHtml(l) : ''}</div>`;
+      d.dataset.hi = String(hi);
+      d.dataset.hgLazy = err ? '' : '1';
+      ro.appendChild(d);
+    }
+  }
+  function _roExit() {
+    const ov = wrap.querySelector('.hg-readonly');
+    if (!ov) return;
+    ov.remove();                                  // 整层销毁——渲染记录全清（GC）
+  }
 
   async function switchTo(sid, keepInput) {
     if (sid === _HG.sid && flow.querySelector('.h-msg, .hg-welcome')) {
