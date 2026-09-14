@@ -2052,6 +2052,11 @@
   display: none; flex-direction: column; gap: 6px; }
 .h-drawer.open .h-drawer-body { display: flex; }
 .h-drawer-body > .h-tool, .h-drawer-body > .h-tool-res { width: 100%; max-width: none; }
+/* v2.18.1：抽屉体子项禁止 flex 压缩——思考段多段时总高超 42vh，
+   flex 默认 shrink:1 会把每段压成几像素细条（2.png「缩成一团」根因：
+   .h-think-seg 自身 overflow:hidden 使 flex 项 min-height:auto 下限失效）。
+   内容超高由 .h-drawer.open .h-drawer-body 的 overflow-y:auto 滚动兜底。 */
+.h-drawer-body > * { flex-shrink: 0; }
 .h-drawer-body > .h-tool-res { padding-left: 10px; }
 /* 活动词压缩覆盖态（v2.7：正在压缩上下文…高亮） */
 .hg-act-word.hg-act-special { color: var(--neon-orange, #d29922); }
@@ -2142,13 +2147,21 @@
 .hg-ctx-pct { font-size: 11px; white-space: nowrap; }
 .hg-cost.warn { color: var(--neon-orange, #d29922); }
 .hg-cost.warn .hg-ctx-pct { color: var(--neon-red, #e06c75); font-weight: 600; }
+/* v2.19：图标换成 SVG（旧的字符 ➤/■ 基线不齐、■ 还是窄长条，用户嫌丑）。
+   两个 svg 常驻 DOM，靠 .stop 切换显隐，避免改 DOM 引起重排。 */
 .hg-send { width: 32px; height: 32px; flex-shrink: 0; border-radius: 50%;
   border: none; background: var(--accent); color: var(--on-accent, #001020); cursor: pointer;
-  font-size: 13px; line-height: 1; display: inline-flex; align-items: center; justify-content: center;
+  display: inline-flex; align-items: center; justify-content: center; padding: 0;
   transition: filter .15s, transform .15s; }
+.hg-send svg { width: 15px; height: 15px; fill: currentColor; display: none; }
+.hg-send .hg-ic-send { display: block; margin-left: 2px; }
+.hg-send .hg-ic-stop { width: 14px; height: 14px; }
+.hg-send.stop { background: var(--neon-red, #e06c75); box-shadow: 0 0 0 3px
+  color-mix(in srgb, var(--neon-red, #e06c75) 22%, transparent); }
+.hg-send.stop .hg-ic-send { display: none; }
+.hg-send.stop .hg-ic-stop { display: block; }
 .hg-send:hover { filter: brightness(1.12); transform: scale(1.06); }
 .hg-send:active { transform: scale(.96); }
-.hg-send.stop { background: var(--neon-red, #e06c75); }
 
 /* popover（技能/模型下拉） */
 .hg-pop { position: absolute; bottom: calc(100% - 2px); left: 14px; z-index: 30;
@@ -2361,20 +2374,16 @@
   width: 34px; height: 34px; border-radius: 50%; cursor: pointer; }
 .hg-lightbox-x:hover { background: rgba(255,255,255,.22); }
 
-/* ---- 活动指示条（源 ActivityIndicator：动词轮换+计时+Stop）---- */
-.hg-activity { display: flex; align-items: center; gap: 8px; max-width: 820px;
-  margin: 0 auto 6px; font-size: 11.5px; color: var(--muted);
-  border: 1px solid var(--border); border-radius: 10px 10px 0 0;
-  border-bottom: none; padding: 5px 12px; background: var(--bg-card);
-  width: calc(min(820px, 100%)); }
-.hg-act-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
-  animation: hg-pulse 1.2s ease-in-out infinite; }
+/* ---- 活动指示（源 ActivityIndicator：动词轮换+计时）
+   v2.19：从输入卡上方的独立横栏（带边框+停止钮）收成底部行内小胶囊，
+   与上下文环并排；停止钮删除（右下角圆钮已承担该动作）。 ---- */
+.hg-activity { display: flex; align-items: center; gap: 5px; flex-shrink: 0;
+  font-size: 11px; color: var(--muted); }
+.hg-act-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+  flex-shrink: 0; animation: hg-pulse 1.2s ease-in-out infinite; }
 @keyframes hg-pulse { 0%,100% { opacity: .25; transform: scale(.8); } 50% { opacity: 1; transform: scale(1.15); } }
 .hg-act-word { color: var(--accent); font-weight: 600; }
-.hg-act-stop { border: 1px solid var(--border); background: transparent;
-  color: var(--muted); font-size: 10.5px; border-radius: 999px; padding: 2px 10px;
-  cursor: pointer; }
-.hg-act-stop:hover { color: var(--neon-red, #e06c75); border-color: var(--neon-red, #e06c75); }
+.hg-act-t { font-family: var(--font-mono); font-size: 10.5px; }
 
 /* ---- 交互式提问卡片（v2.17：mcp__harness__ask_user 的可点选项）----
    模型问用户要选择时，答案不能靠打字——卡片给出选项，点选后提交，
