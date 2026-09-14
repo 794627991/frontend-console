@@ -578,6 +578,15 @@ function buildClaudeHarnessTab(opts = {}) {
     if (g.exec.stats) {
       try { g.counts = JSON.parse(g.exec.stats.dataset.counts || 'null'); } catch(_) { g.counts = null; }
     }
+    // v2.20（2.png 空壳胶囊）：无内容的抽屉整体隐藏。新建组本来就 display:none
+    // （见 grpEnsure），这里按 body 内容推导——快照恢复 inline style 会在、
+    // 回扫接回走现场状态，但旧快照/边界路径没有标记，推导一劳永逸：
+    // 空组什么都不显示（比「思考：无 / 执行：无」更干净）。
+    const thKids = g.think.body ? g.think.body.children.length : 0;
+    const exKids = g.exec.body ? g.exec.body.children.length : 0;
+    const exCnt = g.counts && Object.keys(g.counts).length ? 1 : 0;
+    thinkBox.style.display = thKids ? '' : 'none';
+    execBox.style.display = (exKids || exCnt) ? '' : 'none';
     return g;
   }
   function grpEnsure(live) {
@@ -615,6 +624,11 @@ function buildClaudeHarnessTab(opts = {}) {
       `<div class="h-drawer-body"></div>`;
     proc.appendChild(thinkBox);
     proc.appendChild(execBox);
+    // v2.20（2.png 空壳胶囊）：新组抽屉先隐藏——纯文本回复的组（无思考无工具）
+    // 不再渲染「🧠 思考 / 💻 执行」空壳胶囊+「完成」徽章；有内容时由
+    // startThinking / drawerCount 翻回显示。
+    thinkBox.style.display = 'none';
+    execBox.style.display = 'none';
     nr.appendChild(proc);
     addRow(nr);
     g = grpFromDom(nr, thinkBox, execBox);
@@ -638,11 +652,17 @@ function buildClaudeHarnessTab(opts = {}) {
     'AI 正在灵光乍现…', 'AI 马上就好了…'];
   function phStart(g) {
     if (!g.ph) {
-      const d = document.createElement('div');
-      d.className = 'h-msg asst ph';
-      d.innerHTML = `<div class="h-bubble"><span class="hg-ph-word" data-hg-phw>AI 正在思考中…</span><span class="hg-ph-dots"><i></i><i></i><i></i></span></div>`;
-      g.root.appendChild(d);
-      g.ph = d;
+      // v2.20：先认领快照恢复留下的冻结占位（grpFromDom ph:null 丢了引用），
+      // 认不到再新建——否则 phResume 后会叠出第二个占位气泡
+      const frozen = g.root.querySelector(':scope > .h-msg.asst.ph');
+      if (frozen) g.ph = frozen;
+      else {
+        const d = document.createElement('div');
+        d.className = 'h-msg asst ph';
+        d.innerHTML = `<div class="h-bubble"><span class="hg-ph-word" data-hg-phw>AI 正在思考中…</span><span class="hg-ph-dots"><i></i><i></i><i></i></span></div>`;
+        g.root.appendChild(d);
+        g.ph = d;
+      }
     }
     phStopTimer(g);
     g.phIdx = 0;
@@ -658,7 +678,39 @@ function buildClaudeHarnessTab(opts = {}) {
   }
   function phRemove(g) {
     phStopTimer(g);
-    if (g && g.ph) { g.ph.remove(); g.ph = null; }
+    if (g && g.ph) { g.ph.remove(); g.ph = null; return; }
+    // v2.20：快照恢复的组 ph 引用是 null（grpFromDom 丢引用），但 DOM 里
+    // 可能残留冻结占位——SSE 补放的 assistant 正文渲染时要把物理元素一并清掉，
+    // 否则冻结的「AI 正在思考中…」和真实答案同时挂屏。
+    if (g && g.root) {
+      const frozen = g.root.querySelector(':scope > .h-msg.asst.ph');
+      if (frozen) frozen.remove();
+    }
+  }
+  // v2.20（3.png）：切回 busy 会话后占位气泡复活。快照恢复的 grpFromDom
+  // ph:null 不认 DOM 里的 ph 元素（timer 轮换永久丢失，文案冻结）；transcript
+  // 重建的 renderUser(live=false) 压根不建 ph——两条路径切回「正在回复」的
+  // 会话都看不到「AI 正在思考中…」。恢复条件收紧到尾部未定稿组且尚无正文，
+  // 已有正文/已定稿的会话不补（避免凭空多出气泡）。
+  function phResume() {
+    // 已有活的组对象且占位在屏（从未切走）→ 不用救，重开 timer 反而双计时
+    const root = flow.querySelector('.h-grp:last-of-type:not([data-finalized])');
+    if (_HG.grp && _HG.grp.root === root && _HG.grp.ph && _HG.grp.ph.isConnected) return;
+    if (!root) {
+      // 尾部没有活组 = transcript 重建的 busy 会话末行是 user（renderUser
+      // (live=false) 不建组）——等价于「刚发完消息」：建组 + 占位。
+      // 调用方必须已确认 busy，否则会凭空造出占位气泡。
+      const g = grpEnsure(true);
+      phStart(g);
+      return;
+    }
+    const thinkBox = root.querySelector('.h-drawer.think');
+    const execBox = root.querySelector('.h-drawer.exec');
+    if (!thinkBox || !execBox) return;
+    if (root.querySelector(':scope > .h-msg.asst:not(.ph)')) return;   // 正文已出，不占位
+    const g = grpFromDom(root, thinkBox, execBox);
+    _HG.grp = g;
+    phStart(g);     // 冻结占位由 phStart 认领复用（不新建第二个）
   }
   // flow 级事件委托：抽屉组头/工具折叠行点击 → 只切自己
   // （v2.12 修「点一个全展开」+「切会话再切回后点不开」——innerHTML 快照恢复
@@ -711,6 +763,7 @@ function buildClaudeHarnessTab(opts = {}) {
   });
   function drawerCount(toolName) {
     const g = grpEnsure(true);                  // 计数进当前组执行抽屉
+    g.exec.box.style.display = '';              // v2.20：第一个工具到位，执行抽屉翻回显示
     if (!g.counts) g.counts = {};
     const n = _hDrawerName(toolName);
     g.counts[n] = (g.counts[n] || 0) + 1;
@@ -853,6 +906,7 @@ function buildClaudeHarnessTab(opts = {}) {
   function startThinking(hist) {
     if (_HG.think && _HG.think.seg && _HG.think.seg.isConnected) return;
     const g = grpEnsure(true);
+    g.think.box.style.display = '';             // v2.20：第一段思考到位，思考抽屉翻回显示
     const n = thinkSegCount(g) + 1;
     thinkSegCountSet(g, n);
     // 组头：「思考 N 次」；busy 中加脉动点
@@ -1251,8 +1305,11 @@ function buildClaudeHarnessTab(opts = {}) {
   function _hgCtxRestore(sid) {
     let v = null;
     if (sid) { try { v = JSON.parse(localStorage.getItem(_hgCtxKey(sid)) || 'null'); } catch(_) {} }
-    if (v && v.used > 0) _hgDrawCtxRing(v.used, v.max || _HG_CTX_FALLBACK);
-    else costEl.innerHTML = '';
+    // v2.20：历史残留的坏值（used > max，假 100%）不画——显示空环保守，
+    // 下一轮合法 result 会重写
+    if (v && v.used > 0 && v.used <= (v.max || _HG_CTX_FALLBACK))
+      _hgDrawCtxRing(v.used, v.max || _HG_CTX_FALLBACK);
+    else { costEl.innerHTML = ''; costEl.title = ''; }
   }
   function _hgDrawCtxRing(used, ctxMax) {
     const pct = Math.min(100, used / ctxMax * 100);
@@ -1280,10 +1337,18 @@ function buildClaudeHarnessTab(opts = {}) {
     let ctxMax = _HG_CTX_FALLBACK;
     const mu = o.modelUsage || {};
     for (const k in mu) {
-      if (mu[k] && typeof mu[k].contextWindow === 'number' && mu[k].contextWindow > 0) {
-        ctxMax = mu[k].contextWindow; break;
+      // v2.20（3.png 假 100%）：取全部 entry 的最大窗口，不再见好就收——
+      // 网关可能把子代理/识图等小窗口模型与主模型一起报上来，首个 entry
+      // 若是小窗（如 256K），真实用量被小分母放大成假满环。
+      if (mu[k] && typeof mu[k].contextWindow === 'number' && mu[k].contextWindow > ctxMax) {
+        ctxMax = mu[k].contextWindow;
       }
     }
+    // v2.20（3.png 假 100%）：used > ctxMax = 网关把全会话累计口径塞进了
+    // 单轮 usage（实测 ~20 轮 × ~70K ≈ 1.4M，clamp 后恒显 100%）。单轮真实
+    // 用量物理不可能超窗（超了 API 直接报错，不会有 success result）——
+    // 必是坏数据：丢弃本轮，环保留上一轮合法值。
+    if (used > ctxMax) return;
     _hgDrawCtxRing(used, ctxMax);
     if (_HG.sid) { try { localStorage.setItem(_hgCtxKey(_HG.sid), JSON.stringify({used, max: ctxMax})); } catch(_) {} }
   }
@@ -1387,7 +1452,7 @@ function buildClaudeHarnessTab(opts = {}) {
       if (sid) {
         fetch(`/api/harness/events?sid=${encodeURIComponent(sid)}&after_seq=${_HG.seq}`)
           .then(r => r.json())
-          .then(j => { if (j.ok && _HG.sid === sid) setBusy(!!j.busy); })
+          .then(j => { if (j.ok && _HG.sid === sid) { setBusy(!!j.busy); if (j.busy) phResume(); } })
           .catch(() => { if (_HG.sid === sid) setBusy(false); });
       }
       return;
@@ -1435,7 +1500,7 @@ function buildClaudeHarnessTab(opts = {}) {
       // 后端 events 接口顺带返回真实 busy，按它恢复
       fetch(`/api/harness/events?sid=${encodeURIComponent(sid)}&after_seq=${_HG.seq}`)
         .then(r => r.json())
-        .then(j => { if (j.ok && _HG.sid === sid) setBusy(!!j.busy); })
+        .then(j => { if (j.ok && _HG.sid === sid) { setBusy(!!j.busy); if (j.busy) phResume(); } })   // v2.20（3.png）：快照里的冻结占位复活
         .catch(() => { if (_HG.sid === sid) setBusy(false); });
     } else {
       flow.innerHTML = '';
@@ -1451,7 +1516,11 @@ function buildClaudeHarnessTab(opts = {}) {
             try { j.lines.forEach(l => renderHistLine(l)); }
             finally { _HG.noScroll = false; _HG.openState = null; }
           }
-          grpFinalize(true);               // transcript 末尾若挂着未收的组 → 定稿自动收起
+          // v2.20（3.png）：busy 会话尾部组是「进行中」的组——transcript 只到
+          // 已落盘部分，无条件定稿会把组关死还漏占位气泡。留活 + 补占位，
+          // SSE 续传事件经 grpEnsure 回扫正常接回。
+          if (j.busy) phResume();
+          else grpFinalize(true);          // transcript 末尾若挂着未收的组 → 定稿自动收起
           scrollBottom();
           setBusy(!!j.busy);
         }
@@ -1760,12 +1829,24 @@ function buildClaudeHarnessTab(opts = {}) {
   input.addEventListener('scroll', () => { overlayEl.scrollTop = input.scrollTop; overlayEl.scrollLeft = input.scrollLeft; });
 
   // ==================== 附件 ====================
+  // v2.19：缩略图原来直接拿本地绝对路径当 <img src>（http 页面加载不了盘符路径）
+  // → 破图占位符，且破图时浏览器把文件名当 alt 渲染出来，紧跟着又拼了一遍
+  // a.name，于是显示成「🖼 2.png 2.png」。改走 /api/harness/file 只读路由；
+  // alt 留空、onerror 直接隐藏图片（宁可只剩文件名，也不出破图框）。
+  function _attUrl(a) {
+    return '/api/harness/file?name=' + encodeURIComponent(String(a.path).split(/[\\/]/).pop());
+  }
   function renderAtts() {
     if (!_HG.atts.length) { attsEl.style.display = 'none'; attsEl.innerHTML = ''; return; }
     attsEl.style.display = 'flex';
-    attsEl.innerHTML = _HG.atts.map((a, i) => `
-      <span class="hg-att-chip">${a.isImg ? `<img class="hg-att-thumb" src="${esc(a.path)}" title="${esc(a.name)}" data-img="${esc(a.path)}">` : '📄'} ${esc(a.name)}
-        <button class="hg-att-x" data-i="${i}" title="移除">✕</button></span>`).join('');
+    attsEl.innerHTML = _HG.atts.map((a, i) => {
+      const url = a.isImg ? _attUrl(a) : '';
+      return `<span class="hg-att-chip">` + (a.isImg
+        ? `<img class="hg-att-thumb" src="${esc(url)}" alt="" title="${esc(a.name)}" data-img="${esc(url)}" onerror="this.style.display='none'">`
+        : `<span class="hg-att-ico">📄</span>`) +
+        `<span class="hg-att-name" title="${esc(a.name)}">${esc(a.name)}</span>` +
+        `<button class="hg-att-x" data-i="${i}" title="移除">✕</button></span>`;
+    }).join('');
     attsEl.querySelectorAll('[data-img]').forEach(t => t.onclick = () => openLightbox(t.dataset.img));
   }
   function clearAtts() { _HG.atts = []; renderAtts(); }

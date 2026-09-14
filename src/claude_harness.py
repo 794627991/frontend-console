@@ -23,7 +23,7 @@ v2（微信式改造）新增：
 import os, json, base64, sys, subprocess, threading, time, uuid
 from queue import Queue, Empty
 
-from flask import Blueprint, request, jsonify, Response
+from flask import Blueprint, request, jsonify, Response, send_from_directory
 
 from . import app_state as _st
 from .claude_conn import _resolve_claude_exe, _humanize_claude_error, _trust_workspace
@@ -1524,3 +1524,23 @@ def harness_upload():
     except OSError as e:
         return jsonify({"ok": False, "err": str(e)}), 500
     return jsonify({"ok": True, "path": path, "name": name, "size": len(raw)})
+
+
+@harness_bp.route("/file")
+def harness_file():
+    """附件原件（v2.19）。
+
+    前端 chip 缩略图原先直接拿 upload 返回的**本地绝对路径**当 <img src>——
+    http 页面加载不了 file:// 之外的盘符路径，结果是破图占位符叠一行文件名
+    （用户看到的「🖼 2.png 2.png」）。改成前端用 /api/harness/file?name=，
+    这里只读地回 _UPLOAD_DIR 里的原件。
+
+    防穿越：只取 basename，再校验 realpath 落在 _UPLOAD_DIR 内。
+    """
+    fn = os.path.basename((request.args.get("name") or "").replace("\\", "/"))
+    if not fn:
+        return jsonify({"ok": False, "err": "缺少 name"}), 400
+    if os.path.realpath(os.path.join(_UPLOAD_DIR, fn)).startswith(
+            os.path.realpath(_UPLOAD_DIR) + os.sep):
+        return send_from_directory(_UPLOAD_DIR, fn)
+    return jsonify({"ok": False, "err": "非法路径"}), 403
