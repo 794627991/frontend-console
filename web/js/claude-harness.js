@@ -12,7 +12,7 @@
 //   - @ 文件引用（触发下拉/键盘选择/高亮 overlay）
 //   - 输入历史（↑ 回溯 ↓ 前进，localStorage 按会话分桶）
 //   - 图片内联预览 + Lightbox
-//   - 活动指示条（动词轮换 + 计时 + Stop (esc)）
+//   - 活动指示（v2.19：行内胶囊，动词轮换 + 计时，与上下文环并排）
 //   - 单行 ```x``` 折叠成 `x`（normalizeInlineCodeFences）
 // 设计文档：docs/CLAUDE_CODE_INTEGRATION.md §8.6
 // ============================================================
@@ -232,7 +232,6 @@ function buildClaudeHarnessTab(opts = {}) {
         </div>
         <div class="hg-flow" data-hg-flow></div>
         <div class="hg-card-wrap">
-          <div class="hg-activity" data-hg-activity style="display:none"></div>
           <div class="hg-atts" data-hg-atts style="display:none"></div>
           <div class="hg-input-card">
             <div class="hg-input-stack">
@@ -246,8 +245,12 @@ function buildClaudeHarnessTab(opts = {}) {
               <button class="hg-chip" data-hg-skill title="加载技能（插入 /技能名）">⚡ 技能 ▾</button>
               <button class="hg-chip" data-hg-model title="选择模型（对会话生效）">🧠 模型 ▾</button>
               <span class="hg-flex1"></span>
+              <span class="hg-activity" data-hg-activity style="display:none"></span>
               <span class="hg-cost" data-hg-cost></span>
-              <button class="hg-send" data-hg-send title="发送（Enter）">➤</button>
+              <button class="hg-send" data-hg-send title="发送（Enter）" aria-label="发送">
+                <svg class="hg-ic-send" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.4 21 12 4 4.6v5.5l10.6 1.9L4 13.9z"/></svg>
+                <svg class="hg-ic-stop" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2.4"/></svg>
+              </button>
             </div>
           </div>
         </div>
@@ -582,7 +585,9 @@ function buildClaudeHarnessTab(opts = {}) {
     if (g && g.root && g.root.isConnected) return g;
     // 快照恢复（切会话切回）后 _HG.grp 失联 → 扫 flow 最后一个组接回来。
     // 占位动画不重启：正文该到已到才走得到恢复路径。
-    const root = flow.querySelector('.h-grp:last-of-type');
+    // v2.18.1：已定稿的组（dataset.finalized）不接回——正文切组刚定稿旧组，
+    // 回扫必须放它过去，让下面新建组承接新回复。
+    const root = flow.querySelector('.h-grp:last-of-type:not([data-finalized])');
     if (root) {
       const thinkBox = root.querySelector('.h-drawer.think');
       const execBox = root.querySelector('.h-drawer.exec');
@@ -716,7 +721,7 @@ function buildClaudeHarnessTab(opts = {}) {
     g.exec.stats.dataset.counts = JSON.stringify(g.counts);   // 快照恢复用
     scrollBottom();
   }
-  // 组定稿（result / 新一轮 renderUser）：徽章 + 未手动碰过时自动收
+  // 组定稿（result / 新一轮 renderUser / 正文切组）：徽章 + 未手动碰过时自动收
   function grpFinalize(auto) {
     const g = _HG.grp;
     if (!g) return;
@@ -728,6 +733,7 @@ function buildClaudeHarnessTab(opts = {}) {
       if (g.think.box.dataset.userToggled !== '1' && isNearBottom()) g.think.box.classList.remove('open');
       if (g.exec.box.dataset.userToggled !== '1' && isNearBottom()) g.exec.box.classList.remove('open');
     }
+    g.root.dataset.finalized = '1';   // v2.18.1：已定稿——grpEnsure 回扫不得接回
     _HG.grp = null;      // 下轮 renderUser 开新组
   }
   function drawerAppend(el, kind) {
@@ -771,6 +777,13 @@ function buildClaudeHarnessTab(opts = {}) {
     // 旧判据 `if (!text)` 挡不住 → 每条渲染成一个空白气泡（历史重建后满屏空白
     // 圆角条）。重建与流式两条路径都走这里，一并对齐。
     if (!text || !String(text).trim()) return;
+    // v2.18.1（3.png）：组合制 = 思考+工具+回复，按正文切分。当前组已出过正文
+    // → 后续正文属下一条回复：先定稿，让新组头（思考/工具）落在新正文上方。
+    // 子代理输出（isSub）是父代理工具的产物，归父组不切分。
+    const cur = _HG.grp;
+    if (_HG.asstText && cur && cur.root && cur.root.querySelector(':scope > .h-msg.asst')) {
+      grpFinalize(true);
+    }
     _HG.asstText = true;                       // v2.11：AI 已输出文本
     // v2.18：正文进当前组（组不存在说明是组外场景——快照恢复等，兜底建组）
     const g = grpEnsure(true);
@@ -857,19 +870,24 @@ function buildClaudeHarnessTab(opts = {}) {
       `<div class="h-think-seg-body"></div>`;
     g.think.body.appendChild(seg);
     _HG.think = { seg, grp: g };
-    if (!_HG.asstText) {
-      // AI 还没输出正文 → 抽屉保持展开 + 段计时动画（thinkHeadUpdate 驱动）
+    if (!_grpHasAsst()) {
+      // 本组还没正文 → 抽屉保持展开 + 段计时动画（thinkHeadUpdate 驱动）
       if (!hist && g.think.box.dataset.userToggled !== '1') g.think.box.classList.add('open');
       if (!hist) thinkHeadUpdate();
     } else if (!hist) {
       segHeadUpdate(seg);
     }
   }
-  // 活动思考段组头状态：本轮尚无 AI 正文时脉动「思考中…」，其余实时计时
+  // 活动思考段组头状态：本组尚无 AI 正文时脉动「思考中…」，其余实时计时
+  // v2.18.1：组级判据（全局 asstText 在正文切组后语义漂移——新组思考该重新脉动）
+  function _grpHasAsst() {
+    const g = _HG.grp;
+    return !!(g && g.root && g.root.querySelector(':scope > .h-msg.asst'));
+  }
   function thinkHeadUpdate() {
     const t = _HG.think;
     if (!t || !t.seg.isConnected) return;
-    if (!_HG.asstText) {
+    if (!_grpHasAsst()) {
       const te = t.seg.querySelector('[data-hg-think-t]');
       if (te) { te.innerHTML = '<span class="hg-think-anim">思考中…</span>'; }
     } else segHeadUpdate(t.seg);
@@ -1178,16 +1196,19 @@ function buildClaudeHarnessTab(opts = {}) {
     // tool_result 只挂状态不新增行——不终结 run（源 rendersNothing 不打断连续 run）
   }
 
-  // ==================== 活动指示条（源 ActivityIndicator）====================
+  // ==================== 活动指示（源 ActivityIndicator）====================
+  // v2.19：原来它是一条独立的横栏，杵在输入卡上方（带边框、停止钮），用户
+  // 点名「这个栏不要了」——改成输入卡底部行里的一个小胶囊，和上下文环并排。
+  // 停止钮一并删除：右下角那颗圆钮本就是停止态（setBusy 已切成 ■ + stopGen），
+  // 同一动作两个入口，留着只是噪音。
   const _ACT_WORDS = ['思考中', '处理中', '分析中', '执行中', '检索中', '推理中'];
   let _actWordIdx = 0;
   function actStart() {
     if (_HG.activity) return;
     _HG.actStart = Date.now();
     _actWordIdx = 0;
-    actEl.style.display = 'flex';
-    actEl.innerHTML = `<span class="hg-act-dot"></span><span class="hg-act-word" data-hg-aw>思考中</span><span data-hg-act-t>0s</span><span class="hg-flex1"></span><button class="hg-act-stop" data-hg-stop title="停止 (Esc)">停止 ⏹</button>`;
-    actEl.querySelector('[data-hg-stop]').onclick = stopGen;
+    actEl.style.display = 'inline-flex';
+    actEl.innerHTML = `<span class="hg-act-dot"></span><span class="hg-act-word" data-hg-aw>思考中</span><span class="hg-act-t" data-hg-act-t>0s</span>`;
     _HG.activity = {
       verb: setInterval(() => {
         _actWordIdx = (_actWordIdx + 1) % _ACT_WORDS.length;
@@ -1271,8 +1292,8 @@ function buildClaudeHarnessTab(opts = {}) {
     _HG.busy = b;
     conn.tab.querySelector('.led').classList.toggle('on', b);
     sendBtn.classList.toggle('stop', b);
-    sendBtn.textContent = b ? '■' : '➤';
     sendBtn.title = b ? '停止生成' : '发送（Enter）';
+    sendBtn.setAttribute('aria-label', b ? '停止生成' : '发送');
     stateEl.textContent = b ? '' : (_HG.alive ? '就绪' : '');
     if (b) actStart(); else actStop();
   }
