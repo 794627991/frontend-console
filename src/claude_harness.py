@@ -1595,7 +1595,8 @@ def harness_vision_status():
     out = {"ok": True, "enabled": True, "name": cfg["name"], "model": cfg["model"],
            "alive": bool(s and s.alive), "busy": bool(s and s.busy),
            "needed": _vision_needed(),
-           "last_seq": 0, "recent": [], "busy_since": None}
+           "last_seq": 0, "recent": [], "busy_since": None,
+           "last_done": 0, "last_brief": ""}
     if s:
         out["last_seq"] = s._seq
         with s.events_lock:
@@ -1603,6 +1604,17 @@ def harness_vision_status():
         for e in reversed(evs):
             if e.get("kind") == "user_echo":
                 out["busy_since"] = e.get("ts")
+                break
+        # v2.24.9 完成检测：识图全程可短至几秒，3s 轮询会整个错过 busy 窗口
+        # ——记最近 result 时刻 + 最后一段 assistant 文本摘要，前端按
+        # last_done 变化弹「已返回」冒泡（采样错不过），摘要直接给结论预览
+        for e in reversed(evs):
+            if e.get("kind") == "result":
+                out["last_done"] = e.get("ts") or 0
+                break
+        for e in reversed(evs):
+            if e.get("kind") == "assistant" and (e.get("text") or "").strip():
+                out["last_brief"] = e["text"].strip()[:120]
                 break
         recent = []
         for e in evs:

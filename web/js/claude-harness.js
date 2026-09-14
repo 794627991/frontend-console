@@ -1870,7 +1870,7 @@ function buildClaudeHarnessTab(opts = {}) {
       bar.className = 'hg-hist-more';
       // v2.24.2：上滑到顶一律进只读禅模式（busy 时不能重渲主 flow——会炸掉
       // 流式中的活组；CAP 上限同理）——文案统一，行为一致
-      bar.innerHTML = '⬆ 剩 ' + start + ' 条更早消息——上滑进入<b>只读模式</b>查看';
+      bar.innerHTML = '📖 剩 ' + start + ' 条更早消息——<b>点击进入只读模式</b>查看';
       bar.onclick = _roEnter;
       flow.appendChild(bar);
     }
@@ -1906,9 +1906,9 @@ function buildClaudeHarnessTab(opts = {}) {
     const distBottom = flow.scrollHeight - flow.scrollTop - flow.clientHeight;
     const shown = _HG.histAll.length - _HG.histStart;
     if (nearTop && _HG.histStart > 0) {
-      // 上滑到顶：自动扩一段，锚定滚动（视觉位置不跳）。两种情况不扩、
-      // 直接进只读禅模式（用户定调）：①已到 CAP 上限 ②正在回复（busy——
-      // 重渲会炸掉流式中的活组，只读层独立于主 flow 无此顾忌）
+      // 上滑到顶：自动扩一段，锚定滚动（视觉位置不跳）。到 CAP 上限或
+      // busy 时不再扩也不自动进只读（用户定调 v2.24.8：只读模式仅点击
+      // 提示条进入——上滑自动进在回底部途中误触，烦人）
       const capStart = Math.max(0, _HG.histAll.length - _HG.HIST_CAP);
       if (_HG.histStart > capStart && !_HG.busy) {
         _histBusy = true;
@@ -1916,8 +1916,6 @@ function buildClaudeHarnessTab(opts = {}) {
         _histRender(_HG.histAll, _HG.histStart - _HG.HIST_PAGE);
         flow.scrollTop = flow.scrollHeight - anchorH;
         requestAnimationFrame(() => { _histBusy = false; });
-      } else {
-        _roEnter();
       }
     } else if (distBottom <= 80 && shown > _HG.HIST_PAGE * 2) {
       // 拉回底部：收缩回尾部一段（DOM 瘦身是常态）
@@ -3029,7 +3027,7 @@ function buildClaudeHarnessTab(opts = {}) {
     visBtnEl.innerHTML = _HG_EYE + ' 识图会话 <span class="hg-vstat ' + (cls || 'off') + '">· ' + esc(txt) + '</span>';
   }
   let _visToastTimer = null;
-  function visToast(text) {
+  function visToast(text, ms) {
     let t = wrap.querySelector('.hg-vis-toast');
     if (!t) {
       t = document.createElement('div');
@@ -3039,7 +3037,7 @@ function buildClaudeHarnessTab(opts = {}) {
     t.textContent = text;
     t.classList.add('on');
     clearTimeout(_visToastTimer);
-    _visToastTimer = setTimeout(() => t.classList.remove('on'), 4000);
+    _visToastTimer = setTimeout(() => t.classList.remove('on'), ms || 4000);
   }
   let _visPrev = null;               // {busy, since}
   async function pollVision() {
@@ -3066,11 +3064,18 @@ function buildClaudeHarnessTab(opts = {}) {
     visBtnState(busy ? '识别中 ' + fmtDur((since ? Date.now() - since : 0) / 1000)
       : (j.alive ? '已启动' : (j.needed ? '启动中…' : '多模态直读')),
       busy ? 'busy' : (j.alive ? 'ok' : (j.needed ? 'wait' : 'off')));
+    // v2.24.9 完成冒泡：识图全程可短至几秒，busy 翻转会被 3s 轮询整个错过
+    // ——改按 last_done（后端 result 时刻）变化触发，冒泡直接带结论摘要
+    const lastDone = j.last_done || 0, lastBrief = j.last_brief || '';
     if (_visPrev) {
       if (busy && !_visPrev.busy) visToast('识图会话已收到任务，正在处理…');
-      else if (!busy && _visPrev.busy) visToast('识图会话已返回结论');
+      // 任务到达检测：busy_since（user_echo 时刻）前移（busy 窗口短也不错过）
+      else if (since && _visPrev.since && since > _visPrev.since)
+        visToast('识图会话已收到任务，正在处理…');
+      if (lastDone && _visPrev.lastDone && lastDone > _visPrev.lastDone)
+        visToast('识图会话已返回：' + (lastBrief || '（结论见其会话）'), 9000);
     }
-    _visPrev = {busy, since};
+    _visPrev = {busy, since, lastDone};
   }
   pollVision();
   setInterval(pollVision, 3000);

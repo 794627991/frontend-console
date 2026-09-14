@@ -2127,7 +2127,10 @@
 .h-mact:hover { color: var(--accent); border-color: var(--accent); }
 .h-msg.asst { align-self: flex-start; }
 .h-msg .h-bubble { padding: 10px 14px; font-size: 13.5px; line-height: 1.7;
-  overflow-x: auto; word-break: break-word; position: relative; }
+  /* v2.24.9 去 overflow-x:auto——尾巴伪元素越界被它裁掉（尖没了）还撑出
+     横向滚动条（识图会话读图实锤「多出拖动条/尾巴没了」）。长内容换行
+     由 word-break 兜底，代码块 pre 自带 overflow-x:auto 不受影响 */
+  word-break: break-word; position: relative; }
 /* v2.24.6 气泡尾巴：旋转方块伪元素画真尖角（用户泡朝右下、AI 泡朝左下），
    同底色+同侧边框与泡体无缝衔接，微信式指向感 */
 .h-msg.user .h-bubble { border-radius: 14px 14px 10px 14px;
