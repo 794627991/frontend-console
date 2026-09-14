@@ -2000,6 +2000,10 @@
    v2.18：每消息一组——.h-grp{ .h-grp-proc{ 双抽屉横排 } + AI 气泡 }，
    收起态组头一行极简（用户：默认只占一小部分），展开不超会话一半 */
 .hg-flow > .h-grp { width: min(820px, 100%); }
+/* v2.24 滚动窗口式历史加载：顶部提示条（上滑自动加载，非按钮） */
+.hg-hist-more { align-self: center; width: auto; margin: 4px auto 8px; display: block;
+  font-size: 11.5px; color: var(--muted); background: var(--bg-card);
+  border: 1px dashed var(--border); border-radius: 14px; padding: 5px 16px; }
 .h-grp { display: flex; flex-direction: column; gap: 8px; }
 .h-grp-proc { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; }
 .h-grp-proc > .h-drawer { flex: 0 1 auto; min-width: 120px; max-width: 100%; }

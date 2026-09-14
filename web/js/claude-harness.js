@@ -161,6 +161,9 @@ const _HG = {
   asstText: false,      // 本轮 AI 是否已输出文本（占位动画/思考组头判据）
   histNav: null,        // 输入历史导航 {history, index, draft, recalled}
   mention: null,        // @ 引用状态 {at, files, sel}
+  HIST_PAGE: 80,        // v2.24 多段式历史：每段渲染条数（大会话 DOM 瘦身）
+  histAll: null,        // 当前会话全量 transcript 行（多段渲染源）
+  histStart: 0,         // 已渲染起点 index（0=全量）
   imgSrv: null,         // 图片服务路径标记（后端 /api/harness/img/<sid>/file）
   activity: null,       // 活动指示 {start, verbTimer, tickTimer}
   actStart: 0,
@@ -309,6 +312,9 @@ function buildClaudeHarnessTab(opts = {}) {
         listEl = q('[data-hg-sessions]'), searchEl = q('[data-hg-search]'),
         fileEl = q('[data-hg-file]'), overlayEl = q('[data-hg-overlay]'),
         mentionEl = q('[data-hg-mention]'), actEl = q('[data-hg-activity]');
+  // v2.24 大会话 DOM 卸载（见 _hgFlowUnloadInit）：切走 tab 快照清空、切回恢复
+  _HG.flowEl = flow;
+  _HG.flowSnap = '';
 
   const scrollBottom = (force) => {
     if (_HG.noScroll) return;   // v2.16：历史重建期间不滚（几百行逐行 append 会反复重排）
@@ -1693,6 +1699,53 @@ function buildClaudeHarnessTab(opts = {}) {
   function saveCache() {
     if (_HG.sid) _HG.cache[_HG.sid] = { html: flow.innerHTML, seq: _HG.seq };
   }
+  // ==================== v2.24 滚动窗口式历史加载（大会话 DOM 瘦身）====================
+  // 根因（对照实验闭环）：大会话数千条消息全量渲染 → 数万 DOM 节点，即便
+  // harness tab 切走（display:none）仍拖累渲染进程（内存/GC）——所有拖动
+  // （文件拖入/命令库排序/tab 换位）卡 ~12s；空会话不卡、关 tab 恢复。
+  // 方案（用户定调：省 + 流畅第一）：恢复会话只渲染尾部 HIST_PAGE 条；
+  // 上滑到顶自动扩一段；拉回底部自动收缩回尾部段——DOM 恒定 1~2 段。
+  // 扩/收都从新起点全量重渲（renderHistLine 顺序敏感：thinking/工具归组依赖
+  // 时序，prepend 乱序会组错乱），扩段锚定滚动、收缩回贴底。
+  function _histRender(lines, start) {
+    _HG.histAll = lines;
+    _HG.histStart = start;
+    flow.innerHTML = '';
+    if (start > 0) {
+      const bar = document.createElement('div');
+      bar.className = 'hg-hist-more';
+      bar.textContent = '⬆ 剩 ' + start + ' 条更早消息——继续上滑加载';
+      flow.appendChild(bar);
+    }
+    if (!lines.length) return;
+    _HG.noScroll = true;                        // v2.16：逐行 append 不反复重排
+    _HG.openState = _hgLoadOpen(_HG.sid);       // 上次开合状态（重建期贴回）
+    try { lines.slice(start).forEach(l => renderHistLine(l)); }
+    finally { _HG.noScroll = false; _HG.openState = null; }
+  }
+
+  let _histBusy = false;   // 重渲期间防 scroll 重入
+  flow.addEventListener('scroll', () => {
+    if (!_HG.histAll || _HG.busy || _histBusy) return;
+    const nearTop = flow.scrollTop <= 60;
+    const distBottom = flow.scrollHeight - flow.scrollTop - flow.clientHeight;
+    const shown = _HG.histAll.length - _HG.histStart;
+    if (nearTop && _HG.histStart > 0) {
+      // 上滑到顶：自动扩一段，锚定滚动（视觉位置不跳）
+      _histBusy = true;
+      const anchorH = flow.scrollHeight - flow.scrollTop;
+      _histRender(_HG.histAll, Math.max(0, _HG.histStart - _HG.HIST_PAGE));
+      flow.scrollTop = flow.scrollHeight - anchorH;
+      requestAnimationFrame(() => { _histBusy = false; });
+    } else if (distBottom <= 80 && shown > _HG.HIST_PAGE * 2) {
+      // 拉回底部：收缩回尾部一段（DOM 瘦身是常态）
+      _histBusy = true;
+      _histRender(_HG.histAll, _HG.histAll.length - _HG.HIST_PAGE);
+      flow.scrollTop = flow.scrollHeight;
+      requestAnimationFrame(() => { _histBusy = false; });
+    }
+  }, { passive: true });
+
   async function switchTo(sid, keepInput) {
     if (sid === _HG.sid && flow.querySelector('.h-msg, .hg-welcome')) {
       // v2.15：点的是当前会话 → 早返回。但 busy 卡死时用户正是靠「重点一下
@@ -1711,6 +1764,7 @@ function buildClaudeHarnessTab(opts = {}) {
     if (_HG.grp) phStopTimer(_HG.grp);   // v2.18：防御性清占位 timer（isConnected 自杀是兜底）
     _hgMentionReset();          // v2.15：@ 引用高亮不跨会话残留
     _HG.rowById = {}; _HG.uidN = 0; _HG.run = null; _HG.grp = null; _HG.histNav = null;   // v2.18：组级抽屉
+    _HG.histAll = null; _HG.histStart = 0;   // v2.24：多段历史渲染源不复用（防串会话）
     _HG.think = null; _HG.noScroll = false; _HG.openState = null;   // v2.16：重建态不跨会话残留
     _HG.sid = sid; _HG.seq = 0; _HG.alive = false;
     // v2.15：dirty 语义修正。旧实现只在「发送成功」置 true、只在
@@ -1758,13 +1812,7 @@ function buildClaudeHarnessTab(opts = {}) {
         if (j.ok && _HG.sid === sid) {
           _HG.seq = j.seq || 0; _HG.alive = !!j.alive;
           if (!j.lines.length) showWelcome();
-          else {
-            // v2.16：重建期间禁自动滚底——几百行逐行 append 会反复触发重排，卡且无意义
-            _HG.noScroll = true;
-            _HG.openState = _hgLoadOpen(sid);   // 上次记录的开合状态（重建期间贴回）
-            try { j.lines.forEach(l => renderHistLine(l)); }
-            finally { _HG.noScroll = false; _HG.openState = null; }
-          }
+          else _histRender(j.lines, Math.max(0, j.lines.length - _HG.HIST_PAGE));
           // v2.20（3.png）：busy 会话尾部组是「进行中」的组——transcript 只到
           // 已落盘部分，无条件定稿会把组关死还漏占位气泡。留活 + 补占位，
           // SSE 续传事件经 grpEnsure 回扫正常接回。
@@ -2935,6 +2983,32 @@ function buildClaudeHarnessTab(opts = {}) {
 }
 
 // ---- 关闭 tab ----
+// ==================== v2.24 大会话 DOM 卸载（拖动卡顿根治）====================
+// 现象链（用户对照实验定位）：harness 开大会话 → 所有拖动（文件拖入/命令库
+// 排序/tab 换位，HTML5 与 OLE 两套机制）全卡 ~12s；空会话不卡；关 tab 恢复；
+// /exit 杀进程仍卡；停 ctx/vision 轮询仍卡 → 元凶是大会话消息流的巨大 DOM
+// （数千条消息/数万节点，display:none 仍占内存并拖累渲染进程 GC）。
+// 修复：切走 harness tab 时把 flow innerHTML 快照到内存并清空 DOM，切回
+// 恢复。busy 时不卸载（后台流式 append 依赖 flow 在场，快照覆盖会丢消息）。
+;(function _hgFlowUnloadInit() {
+  const _orig = switchTab;
+  switchTab = function(portId) {
+    try {
+      const isHg = portId === 'harness:gui';
+      const wasHg = activePortId === 'harness:gui';
+      if (wasHg && !isHg && !_HG.busy && _HG.flowEl && _HG.flowEl.innerHTML) {
+        _HG.flowSnap = _HG.flowEl.innerHTML;
+        _HG.flowEl.innerHTML = '';
+      } else if (isHg && !wasHg && _HG.flowSnap && _HG.flowEl) {
+        _HG.flowEl.innerHTML = _HG.flowSnap;
+        _HG.flowSnap = '';
+        _HG.flowEl.scrollTop = _HG.flowEl.scrollHeight;
+      }
+    } catch(_) {}
+    return _orig(portId);
+  };
+})();
+
 function _harnessClose(portId) {
   const conn = connections[portId];
   if (!conn) return;

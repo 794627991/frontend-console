@@ -69,7 +69,6 @@ showDragOverlay = function(show) {
 document.body.addEventListener('dragenter', e => {
   e.preventDefault();
   if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
-    _dropPerf('dragenter', e);   // 排查埋点：拖入悬停的遮罩何时才显示
     _dragCounter++; showDragOverlay(true);
   }
 });
@@ -79,46 +78,14 @@ document.body.addEventListener('dragleave', e => {
   _dragCounter--;
   if (_dragCounter <= 0) { _dragCounter = 0; showDragOverlay(false); }
 });
-// v2.23 拖放卡顿修复：pywebview 的 pywebviewEventHandler postMessage 在 harness
-// SSE 长连接存在时跨进程延迟 10s+（用户实测 11~12s 才弹「打开方式」）；带文件
-// 对象的 FilesDropped 消息 12ms 即达后端 _dnd_state。改为 drop 后直接 HTTP
-// 轮询 /api/dnd/paths 拉绝对路径，自己调 openDroppedFile——完全绕开延迟通道。
-// main.py 侧的 drop 监听保留注册（num_listeners>0 才捕获路径）但不再做事。
-async function _dndTakePaths() {
-  // v2.23 终版：拖放会话期间 WebView2 对 fetch 响应回调延迟 10s+（响应早到
-  // 网络层、JS 回调被拖 12s，py-dnd-api-enter/hit +5ms 实证后端全就绪）；
-  // 而「📂 打开」按钮的 pywebview.api 通道同场景全程流畅（用户实测）——
-  // 改走 pywebview.api.dnd_paths()，fetch 仅作纯浏览器调试环境兜底。
-  const viaApi = async () => {
-    if (!(window.pywebview && pywebview.api && pywebview.api.dnd_paths)) return false;
-    try {
-      const paths = await pywebview.api.dnd_paths();
-      if (Array.isArray(paths) && paths.length) {
-        _dropPerf('js-got-paths');
-        openDroppedFile(String(paths[0]).replace(/\\/g, '/'));
-        return true;
-      }
-    } catch(_) {}
-    return false;
-  };
-  if (await viaApi()) return;
-  // 兜底：非 pywebview 环境（浏览器调试）。后端长轮询 1.5s，零 setTimeout。
-  for (let i = 0; i < 10; i++) {
-    try {
-      const j = await (await fetch('/api/dnd/paths')).json();
-      if (j.ok && j.paths && j.paths.length) {
-        _dropPerf('js-got-paths-fetch');
-        openDroppedFile(j.paths[0].replace(/\\/g, '/'));
-        return;
-      }
-    } catch(_) {}
-  }
-}
+// drop 事件由 pywebview 原生处理（main.py 注册，能拿到 File.pywebviewFullPath 绝对路径），
+// 回调里 evaluate_js 调 openDroppedFile。这里仅 preventDefault（阻止 WebView2 导航到文件）
+// 并隐藏遮罩——preventDefault 不影响 pywebview 的 drop_handler 触发。
+// 注：开 Claude 会话后 WebView2 出站 IPC 有 10s 级延迟（拖放卡顿，已排查多轮
+// 未根治——fetch/pywebview.api/长轮询/Chromium 开关全部试过均无效或更糟），
+// 现保持原生链路（延迟稳定 ~12s、弹窗必出），待 WebView2 Runtime 层解决。
 document.body.addEventListener('drop', e => {
   e.preventDefault();
-  _dropPerf('js-body-drop', e);
-  if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files'))
-    _dndTakePaths();
   _dragCounter = 0; showDragOverlay(false);
 });
 
