@@ -344,24 +344,72 @@ async function _stRenderReinstallPane(pane) {
   };
 }
 
-// ---- API 配置子页：Token 唯一可改；BASE_URL 只读显示；快捷打开 settings.json ----
+// ---- API 配置子页：Token/网关/模型映射/上下文窗口全可改（v2.22）+ 方案快照切换 ----
 async function _stRenderApiPane(pane) {
+  // 模型映射档位（与后端 _MODEL_SLOTS 对应）：slot → 显示名
+  const M_SLOTS = [['main','主模型'],['opus','Opus'],['sonnet','Sonnet'],['haiku','Haiku'],
+                   ['fable','Fable'],['flash','Flash'],['subagent','子代理']];
   pane.innerHTML = `
     <div class="dd-body">
       <div class="dd-label">Claude API 配置</div>
-      <div class="dd-sub">首次安装 Claude 后必须填入 API Token 才能使用。写入 ~/.claude/settings.json。</div>
+      <div class="dd-sub">写入 ~/.claude/settings.json 的 env——留空的项不改动。改动对新开的 Claude 会话生效。</div>
       <div class="dd-cur" style="margin-top:12px;">
         <div class="dd-label">API Token（ANTHROPIC_AUTH_TOKEN）</div>
         <div class="dd-row" style="display:flex;gap:8px;margin-top:6px;">
           <input type="text" id="apiTokenInput" class="dd-input" spellcheck="false"
-                 placeholder="sk-…" style="flex:1;">
-          <button class="btn primary" id="apiTokenSave">保存</button>
+                 placeholder="sk-…（留空保持不变）" style="flex:1;">
         </div>
         <div class="dd-sub" id="apiTokenState" style="margin-top:6px;"></div>
       </div>
+      <div class="dd-cur" style="margin-top:12px;">
+        <div class="dd-label">BASE_URL（网关地址，随方案切换）</div>
+        <div class="dd-row" style="display:flex;gap:8px;margin-top:6px;">
+          <input type="text" id="apiBaseUrl" class="dd-input" spellcheck="false"
+                 placeholder="http://…（留空保持不变）" style="flex:1;">
+        </div>
+      </div>
       <div class="dd-cur" style="margin-top:14px;">
-        <div class="dd-label">BASE_URL（内网网关，固定不可改）</div>
-        <div class="dd-path" id="apiBaseUrl" style="user-select:text;">—</div>
+        <div class="dd-label">模型映射（MODEL 与 _NAME 成对写入，留空不改）</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;margin-top:8px;">
+          ${M_SLOTS.map(([k, n]) => `
+            <label style="display:flex;align-items:center;gap:8px;min-width:0;">
+              <span style="flex-shrink:0;width:58px;font-size:11px;color:var(--muted);">${n}</span>
+              <input type="text" class="dd-input" data-mk="${k}" spellcheck="false"
+                     placeholder="不改" style="flex:1;min-width:0;">
+            </label>`).join('')}
+        </div>
+      </div>
+      <div class="dd-cur" style="margin-top:14px;">
+        <div class="dd-label">上下文窗口与自动压缩</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px 12px;margin-top:8px;">
+          <label style="display:flex;align-items:center;gap:8px;min-width:0;">
+            <span style="flex-shrink:0;font-size:11px;color:var(--muted);">压缩窗口</span>
+            <input type="text" id="apiCtxWindow" class="dd-input" spellcheck="false" placeholder="不改" style="flex:1;min-width:0;">
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;min-width:0;">
+            <span style="flex-shrink:0;font-size:11px;color:var(--muted);">最大上下文</span>
+            <input type="text" id="apiMaxCtx" class="dd-input" spellcheck="false" placeholder="不改" style="flex:1;min-width:0;">
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;min-width:0;">
+            <span style="flex-shrink:0;font-size:11px;color:var(--muted);">压缩阈值%</span>
+            <input type="text" id="apiCompactPct" class="dd-input" spellcheck="false" placeholder="不改" style="flex:1;min-width:0;">
+          </label>
+        </div>
+        <div class="dd-sub" style="margin-top:6px;">压缩窗口/最大上下文 = tokens（如 200000）；压缩阈值 = 用量百分比（如 85）。这三项决定「用到多少 tokens 才自动压缩」。</div>
+      </div>
+      <div class="dd-row" style="display:flex;align-items:center;gap:10px;margin-top:14px;">
+        <button class="btn primary" id="apiSaveAll">💾 保存配置</button>
+        <span class="dd-sub" style="margin:0;">保存后新开的 Claude 会话生效（运行中的会话不变）。</span>
+      </div>
+      <div class="dd-cur" style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border);">
+        <div class="dd-label">配置方案（整套 settings.json 快照一键切换）</div>
+        <div id="profList" style="margin-top:10px;display:flex;flex-direction:column;gap:8px;"></div>
+        <div class="dd-row" style="display:flex;gap:8px;margin-top:10px;">
+          <input type="text" id="profName" class="dd-input" spellcheck="false"
+                 placeholder="方案名，如：配置1 / 智谱 / 中转站" style="flex:1;">
+          <button class="btn ghost" id="profSaveCur" title="把当前 settings.json 整份（含 Token、网关、模型映射等）存为方案">💾 存当前为方案</button>
+        </div>
+        <div class="dd-sub" style="margin-top:8px;">每个方案是 settings.json 的完整快照（网关不同，模型映射也不同）。切换整份替换——已开着的 Claude 会话进程不变，新会话起效。</div>
       </div>
       <div class="dd-actions" style="margin-top:16px;">
         <button class="btn ghost" id="apiOpenSettings" title="在资源管理器中定位 settings.json">📂 打开 settings.json</button>
@@ -375,23 +423,97 @@ async function _stRenderApiPane(pane) {
       const j = await (await fetch('/api/claude/api_config')).json();
       stateEl.innerHTML = j.has_token
         ? `<span style="color:var(--neon-green);">✓ 已配置</span> <span style="font-family:var(--font-mono);">${esc(j.token_masked)}</span>`
-        : '<span style="color:var(--neon-red);">✕ 未配置——首次安装后必须填入</span>';
-      pane.querySelector('#apiBaseUrl').textContent = j.base_url || j.default_base_url;
+        : '<span style="color:var(--neon-red);">✕ 未配置——首次使用前必须填入</span>';
+      pane.querySelector('#apiBaseUrl').value = j.base_url || '';
+      pane.querySelector('#apiBaseUrl').placeholder = (j.base_url || j.default_base_url) + '（当前）';
+      const models = j.models || {};
+      pane.querySelectorAll('[data-mk]').forEach(i => {
+        i.value = models[i.dataset.mk] || '';
+        i.placeholder = (models[i.dataset.mk] ? '当前 ' + models[i.dataset.mk] : '未设置');
+      });
+      pane.querySelector('#apiCtxWindow').value = j.ctx_window || '';
+      pane.querySelector('#apiCtxWindow').placeholder = j.ctx_window ? '当前 ' + j.ctx_window : '未设置';
+      pane.querySelector('#apiMaxCtx').value = j.max_ctx || '';
+      pane.querySelector('#apiMaxCtx').placeholder = j.max_ctx ? '当前 ' + j.max_ctx : '未设置';
+      pane.querySelector('#apiCompactPct').value = j.compact_pct || '';
+      pane.querySelector('#apiCompactPct').placeholder = j.compact_pct ? '当前 ' + j.compact_pct : '未设置';
       pane.querySelector('#apiNote').textContent = 'settings.json 路径：' + j.settings_path;
     } catch(e) { stateEl.textContent = '读取失败: ' + e; }
   };
   refresh();
-  pane.querySelector('#apiTokenSave').onclick = async () => {
-    const t = pane.querySelector('#apiTokenInput').value.trim();
-    if (!t) { showBanner('请输入 API Token', 3000, true); return; }
+  // v2.22：整卡保存——token/base_url/模型映射/上下文窗口一次提交（空串=不改）
+  pane.querySelector('#apiSaveAll').onclick = async () => {
+    const models = {};
+    pane.querySelectorAll('[data-mk]').forEach(i => { models[i.dataset.mk] = i.value.trim(); });
+    const body = {
+      token: pane.querySelector('#apiTokenInput').value.trim(),
+      base_url: pane.querySelector('#apiBaseUrl').value.trim(),
+      models,
+      ctx_window: pane.querySelector('#apiCtxWindow').value.trim(),
+      max_ctx: pane.querySelector('#apiMaxCtx').value.trim(),
+      compact_pct: pane.querySelector('#apiCompactPct').value.trim(),
+    };
     try {
       const r = await fetch('/api/claude/api_config', {method:'POST',
-        headers:{'Content-Type':'application/json'}, body: JSON.stringify({token: t})});
+        headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
       const j = await r.json();
       if (!j.ok) { showBanner('保存失败: ' + (j.err || ''), 4000, true); return; }
-      showBanner('API Token 已保存');
+      showBanner('API 配置已保存——新开的 Claude 会话生效', 4000);
       pane.querySelector('#apiTokenInput').value = '';
       refresh();
+    } catch(e) { showBanner('保存失败: ' + e, 4000, true); }
+  };
+  // ---- 配置方案：多套 TOKEN/BASE_URL 存档一键切换（v2.21）----
+  const profListEl = pane.querySelector('#profList');
+  const renderProfiles = async () => {
+    try {
+      const j = await (await fetch('/api/claude/profiles')).json();
+      if (!j.ok) throw new Error(j.err || '');
+      profListEl.innerHTML = (j.profiles || []).map(p => `
+        <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--border);border-radius:8px;${p.name === j.active ? 'border-color:var(--neon-green);' : ''}">
+          <b style="flex-shrink:0;">${esc(p.name)}</b>
+          <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:11px;">${esc(p.token_masked || '未设 Token')} · ${esc(p.base_url || '默认网关')}</span>
+          ${p.name === j.active
+            ? '<span style="color:var(--neon-green);font-size:11px;flex-shrink:0;">● 当前</span>'
+            : `<button class="btn ghost" data-prof="${esc(p.name)}" style="flex-shrink:0;">应用</button>`}
+          <button class="btn ghost" data-profdel="${esc(p.name)}" title="删除方案（不影响当前 settings.json）" style="flex-shrink:0;">✕</button>
+        </div>`).join('')
+        || '<div class="dd-sub">暂无方案——填好 Token 保存后，点「存当前为方案」留存第一套。</div>';
+      profListEl.querySelectorAll('[data-prof]').forEach(b => {
+        b.onclick = async () => {
+          try {
+            const r = await fetch('/api/claude/profiles/apply', {method:'POST',
+              headers:{'Content-Type':'application/json'}, body: JSON.stringify({name: b.dataset.prof})});
+            const j2 = await r.json();
+            if (!j2.ok) { showBanner('切换失败: ' + (j2.err || ''), 4000, true); return; }
+            showBanner('已切换到「' + b.dataset.prof + '」——新开的 Claude 会话生效', 4500);
+            refresh(); renderProfiles();
+          } catch(e) { showBanner('切换失败: ' + e, 4000, true); }
+        };
+      });
+      profListEl.querySelectorAll('[data-profdel]').forEach(b => {
+        b.onclick = async () => {
+          const ok = await _ddConfirm('删除配置方案', '删除方案「' + b.dataset.profdel + '」？（不影响当前 settings.json）');
+          if (!ok) return;
+          await fetch('/api/claude/profiles/del', {method:'POST',
+            headers:{'Content-Type':'application/json'}, body: JSON.stringify({name: b.dataset.profdel})});
+          renderProfiles();
+        };
+      });
+    } catch(e) { profListEl.textContent = '方案读取失败: ' + e; }
+  };
+  renderProfiles();
+  pane.querySelector('#profSaveCur').onclick = async () => {
+    const name = pane.querySelector('#profName').value.trim();
+    if (!name) { showBanner('请输入方案名', 3000, true); return; }
+    try {
+      const r = await fetch('/api/claude/profiles/save', {method:'POST',
+        headers:{'Content-Type':'application/json'}, body: JSON.stringify({name})});
+      const j = await r.json();
+      if (!j.ok) { showBanner('保存失败: ' + (j.err || ''), 4000, true); return; }
+      showBanner('已存为方案「' + name + '」');
+      pane.querySelector('#profName').value = '';
+      renderProfiles();
     } catch(e) { showBanner('保存失败: ' + e, 4000, true); }
   };
   pane.querySelector('#apiOpenSettings').onclick = async () => {

@@ -85,8 +85,10 @@ const _H_TOOL_CFG = {
     get: i => i.description || (i.status ? '状态 → ' + i.status : ''), result: 'hide' },
   TaskList:  { mode: 'one-line', kind: 'task', get: () => '列出任务' },
   TaskGet:   { mode: 'one-line', kind: 'task', get: i => i.taskId ? '#' + i.taskId : '查看任务' },
-  Agent:     { mode: 'collapsible', kind: 'agent', title: i => i.description || i.subagent_type || '子代理', get: i => i.prompt || '', result: 'hide' },
-  Task:      { mode: 'collapsible', kind: 'agent', title: i => `子代理 / ${i.subagent_type || 'Agent'}: ${i.description || ''}`, get: i => i.prompt || '' },
+  Agent:     { mode: 'collapsible', kind: 'agent', badge: '子代理', title: i => [i.subagent_type || 'Agent', i.description].filter(Boolean).join(' · ') || '子代理', get: i => i.prompt || '', result: 'hide' },
+  // v2.21：派子代理显性化——紫色「子代理」徽章 + 运行秒表 + 完成后报告
+  // 摘要（悬停看更多），报告全文收折叠体（完成有内容自动走 renderOneToolResult）
+  Task:      { mode: 'collapsible', kind: 'agent', badge: '子代理', title: i => [i.subagent_type || 'Agent', i.description].filter(Boolean).join(' · ') || '子代理', get: i => i.prompt || '' },
   AskUserQuestion: { mode: 'collapsible', kind: 'question', title: i => {
       const qs = Array.isArray(i?.questions) ? i.questions : [];
       if (qs.length === 1) return `${qs[0]?.header || '问题'}${i?.answers?.[qs[0]?.question] ? ' — ' + i.answers[qs[0].question] : ''}`;
@@ -130,6 +132,12 @@ function _harnessRelTime(ts) {
 
 const _HARNESS_IMG_EXT = /\.(png|jpe?g|gif|webp|bmp)$/i;
 
+// ---- 多模态标记（v2.20）：描边眼睛 SVG。emoji 👁 随系统字形走，用户嫌丑；
+// SVG 跟随文字色（currentColor），尺寸/粗细可控。 ----
+const _HG_EYE = '<svg class="hg-eye" viewBox="0 0 24 24" aria-hidden="true">' +
+  '<path d="M2.2 12S6 5.6 12 5.6 21.8 12 21.8 12 18 18.4 12 18.4 2.2 12 2.2 12z"/>' +
+  '<circle cx="12" cy="12" r="3.1"/></svg>';
+
 // ---- 组件状态 ----
 const _HG = {
   conn: null, sid: null, dirty: false,
@@ -138,6 +146,8 @@ const _HG = {
   sessions: [],
   seq: 0,
   cwd: null,            // v2.7：项目目录（新会话 cwd；null=默认 ~）
+  perm: 'auto',         // v2.20：权限模式 auto|confirm（新会话 connect 带上）
+  thinkLv: null,        // v2.20：思考等级 null|low|medium|high|max（勿与 think 思考段混淆）
   cache: {},            // sid -> {html, seq}（气泡快照）
   sse: null,
   busy: false, alive: false,
@@ -154,6 +164,13 @@ const _HG = {
   imgSrv: null,         // 图片服务路径标记（后端 /api/harness/img/<sid>/file）
   activity: null,       // 活动指示 {start, verbTimer, tickTimer}
   actStart: 0,
+  echoFast: null,       // v2.20：乐观渲染的 echo 去重窗口 {text}（SSE 回声跳过）
+  queues: {},           // v2.20：消息排队 sid -> [{text, images, files}]
+  qTimer: null,         // 排队泵去抖 timer
+  compacting: false,    // v2.20：压缩进行中（分割线只插一次，恢复时补「完成」）
+  compactT0: 0,         // 压缩开始时刻（动态秒表）
+  compactUsed: 0,       // 压缩开始时的上下文规模（分割线里展示规模用）
+  compactTimer: null,   // 秒表 tick
 };
 
 // ---- 抽屉：工具名 → 展示名（用户口径：bash*n read*m grep*x 编辑*y）----
@@ -228,28 +245,34 @@ function buildClaudeHarnessTab(opts = {}) {
           <span class="hg-cwd lv-btn" data-hg-cwd title="会话项目目录"></span>
           <span class="hg-title" data-hg-title>新会话</span>
           <span class="hg-flex1"></span>
+          <span class="hg-vis-ind" data-hg-visind style="display:none"></span>
           <span class="hg-top-state" data-hg-state></span>
         </div>
         <div class="hg-flow" data-hg-flow></div>
         <div class="hg-card-wrap">
+          <div class="hg-queue" data-hg-queue style="display:none"></div>
           <div class="hg-atts" data-hg-atts style="display:none"></div>
           <div class="hg-input-card">
+            <div class="hg-card-head">
+              <button class="hg-proj" data-hg-proj title="选择项目目录（新会话直接在该目录下打开）">📁 <span data-hg-projname>选择项目</span> ▾</button>
+            </div>
             <div class="hg-input-stack">
               <div class="hg-input-overlay" data-hg-overlay aria-hidden="true"></div>
-              <textarea class="hg-input" data-hg-input rows="1" placeholder="给 Claude 发消息…  @ 引用文件 · / 技能 · 粘贴图片" spellcheck="false"></textarea>
+              <textarea class="hg-input" data-hg-input rows="1" placeholder="给 Claude 发消息，@ 引用文件，/ 选择技能 · 可直接粘贴图片" spellcheck="false"></textarea>
             </div>
             <div class="hg-mention-drop" data-hg-mention style="display:none"></div>
             <div class="hg-card-foot">
-              <button class="hg-chip" data-hg-proj title="选择项目目录（新会话直接在该目录下打开）">📁 项目</button>
-              <button class="hg-chip" data-hg-att title="添加附件（文档会以路径给模型读取）">📎 附件</button>
-              <button class="hg-chip" data-hg-skill title="加载技能（插入 /技能名）">⚡ 技能 ▾</button>
-              <button class="hg-chip" data-hg-model title="选择模型（对会话生效）">🧠 模型 ▾</button>
+              <button class="hg-chip hg-chip-ico" data-hg-att title="添加附件（文档会以路径给模型读取）">＋</button>
+              <button class="hg-chip" data-hg-perm title="工具执行权限（对新会话生效）">🛡 自动执行 ▾</button>
+              <button class="hg-chip hg-chip-ico" data-hg-skill title="加载技能（插入 /技能名）">⚡</button>
               <span class="hg-flex1"></span>
               <span class="hg-activity" data-hg-activity style="display:none"></span>
               <span class="hg-cost" data-hg-cost></span>
+              <button class="hg-chip" data-hg-think title="思考深度（对新会话生效；等级越高思考越充分）">💭 思考 ▾</button>
+              <button class="hg-chip" data-hg-model title="选择模型（对新会话生效）">🧠 模型 ▾</button>
               <button class="hg-send" data-hg-send title="发送（Enter）" aria-label="发送">
                 <svg class="hg-ic-send" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.4 21 12 4 4.6v5.5l10.6 1.9L4 13.9z"/></svg>
-                <svg class="hg-ic-stop" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2.4"/></svg>
+                <svg class="hg-ic-stop" viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="4.5" width="15" height="15" rx="3"/></svg>
               </button>
             </div>
           </div>
@@ -287,8 +310,12 @@ function buildClaudeHarnessTab(opts = {}) {
         fileEl = q('[data-hg-file]'), overlayEl = q('[data-hg-overlay]'),
         mentionEl = q('[data-hg-mention]'), actEl = q('[data-hg-activity]');
 
-  const scrollBottom = () => {
+  const scrollBottom = (force) => {
     if (_HG.noScroll) return;   // v2.16：历史重建期间不滚（几百行逐行 append 会反复重排）
+    // v2.20：用户翻上去看历史时不抢滚动条——距底 >150px 视为在看历史，
+    // 流式新内容到达不再拽到底（用户实测「看之前思考时 AI 一回复就被拉到
+    // 最下面」）。force=true（自己发消息、切会话回底）不受限。
+    if (!force && flow.scrollHeight - flow.scrollTop - flow.clientHeight > 150) return;
     flow.scrollTop = flow.scrollHeight;
     // 布局二次兜底：活动指示条弹出/气泡内图片加载等会在同帧稍后改变 flow 高度，
     // 下一帧再滚一次，保证"发送后我的消息在底部"（v2.5 用户反馈修复）
@@ -738,6 +765,13 @@ function buildClaudeHarnessTab(opts = {}) {
       if (seg) { seg.classList.toggle('open'); _hgSaveOpen(seg); }
       return;
     }
+    // v2.21：段尾右下角「收起 ⌄」→ 收该段（读完整段后原地收，不用滚回顶部）
+    const sFold = e.target.closest('.h-think-seg-fold');
+    if (sFold) {
+      const seg = sFold.closest('.h-think-seg');
+      if (seg) { seg.classList.remove('open'); _hgSaveOpen(seg); }
+      return;
+    }
     const tHead = e.target.closest('.h-tool-head');
     if (tHead) {
       const row = tHead.closest('.h-tool');
@@ -760,6 +794,16 @@ function buildClaudeHarnessTab(opts = {}) {
     // 附件图片 chip → Lightbox
     const img = e.target.closest('[data-img]');
     if (img) openLightbox(img.dataset.img);
+    // v2.22：用户消息重发（气泡右上刷新钮）——同内容再走一遍发送管线
+    const rb = e.target.closest('.h-resend');
+    if (rb) {
+      const m = rb.closest('.h-msg.user');
+      let atts = null;
+      try { atts = JSON.parse(m?.dataset.ratts || 'null'); } catch(_) {}
+      const text = m?.dataset.rtext || '';
+      if (_HG.busy) queuePush({ text, images: atts?.images || [], files: atts?.files || [] });
+      else dispatch(text, atts?.images || [], atts?.files || [], true);
+    }
   });
   function drawerCount(toolName) {
     const g = grpEnsure(true);                  // 计数进当前组执行抽屉
@@ -779,8 +823,24 @@ function buildClaudeHarnessTab(opts = {}) {
     const g = _HG.grp;
     if (!g) return;
     phRemove(g);
+    // v2.20 修复：定稿把组头「思考 N 次」重写为纯文本——流式中带的脉动
+    // 动画（hg-think-anim）此前无人摘，回复结束后还在闪。
+    // 无思考段的组（空壳抽屉）不动，别把初始标题改写成「思考 0 次」。
+    const _segN = thinkSegCount(g);
+    if (g.think.title && _segN > 0)
+      g.think.title.innerHTML = '🧠 思考 ' + _segN + ' 次';
     if (g.think.stats) g.think.stats.innerHTML = '<span class="h-tbadge b-done">完成</span>';
     if (g.exec.slots) g.exec.slots.innerHTML = '<span class="h-tbadge b-done">完成</span>';
+    // v2.21：纯思考/工具组（整组没有正文气泡）定稿时补一行弱提示——
+    // 模型常连跑几十轮工具（text 全是 "\n\n" 占位被过滤），组头下面悬空
+    // 看着像回复丢了（用户实测困惑点）。有正文/空壳组不补。
+    if (!g.root.querySelector(':scope > .h-msg.asst') && !g.root.querySelector(':scope > .h-grp-notext') &&
+        ((_segN > 0) || (g.counts && Object.keys(g.counts).length))) {
+      const tip = document.createElement('div');
+      tip.className = 'h-grp-notext';
+      tip.textContent = '（本轮为思考/工具操作，无文字回复）';
+      g.root.appendChild(tip);
+    }
     // 用户手动开过不强制收；自动收只在用户在底部跟读时（v2.12 判据，按组生效）
     if (auto) {
       if (g.think.box.dataset.userToggled !== '1' && isNearBottom()) g.think.box.classList.remove('open');
@@ -818,12 +878,25 @@ function buildClaudeHarnessTab(opts = {}) {
       at.innerHTML = attChipsHtml(images, files);   // 点击 Lightbox 由 flow 委托（v2.12）
       d.appendChild(at);
     }
-    d.appendChild(mdBubble(text || ''));
+    // v2.20：只发图不带文字 → mdBubble('') 是个空白气泡（用户嫌丑）；
+    // 有附件且无文字时给一行占位文案，气泡不再空壳
+    const body = (text && text.trim()) || ((images?.length || files?.length) ? '*（图片/附件，见上方）*' : '');
+    d.appendChild(mdBubble(body));
+    // v2.22：一键重发——原始内容存 dataset（属性可随 innerHTML 快照恢复），
+    // 刷新钮 hover 显示，点击走 flow 委托
+    d.dataset.rtext = text || '';
+    d.dataset.ratts = JSON.stringify({ images: images || [], files: files || [] });
+    const rb = document.createElement('button');
+    rb.className = 'h-resend';
+    rb.title = '重发这条消息';
+    rb.textContent = '↻';
+    d.appendChild(rb);
     addRow(d);
     if (live !== false) {
       const g = grpEnsure(true);
       phStart(g);                              // AI 未输出前的活泼占位（每轮独立）
     }
+    return d;
   }
   function renderAsst(text, isSub) {
     // v2.16：空白/纯换行的 text 块不渲染。模型每轮都会吐一个 "\n\n" 占位块，
@@ -855,6 +928,40 @@ function buildClaudeHarnessTab(opts = {}) {
     const d = document.createElement('div'); d.className = 'h-exit'; d.textContent = text;
     addRow(d);
   }
+  // v2.20：模型切换分割线（会话内换模型即时生效的可见反馈）
+  function renderSwitch(model) {
+    const d = document.createElement('div'); d.className = 'h-switch';
+    d.innerHTML = '<span></span><i>已切换模型 · ' + esc(model) + '</i><span></span>';
+    addRow(d);
+    scrollBottom();
+  }
+  // v2.20：压缩过程动态分割线。CLI 只给「开始/结束」两个信号，没有进度
+  // 百分比——给真实信息：耗时秒表 + 被压缩的上下文规模，不编假数字。
+  function renderCompaction(done) {
+    let el = flow.querySelector('.h-switch[data-hg-compact]');
+    if (!done && !el) {
+      el = document.createElement('div');
+      el.className = 'h-switch';
+      el.dataset.hgCompact = '1';
+      el.innerHTML = '<span></span><i></i><span></span>';
+      addRow(el);
+    }
+    if (!el) return;
+    const secs = _HG.compactT0 ? fmtDur((Date.now() - _HG.compactT0) / 1000) : '';
+    // v2.21：headless 下压缩只可能是 CLI 自动触发（无手动入口）——明说，
+    // 并带上压缩前规模（用户问过「为啥 150K 就压」，信息透明少猜谜）
+    const scale = _HG.compactUsed ? ' · 压缩前约 ' + (_HG.compactUsed / 1000).toFixed(0) + 'K tokens' : '';
+    el.querySelector('i').textContent = done
+      ? '自动压缩完成' + scale + ' · 用时 ' + secs
+      : '正在自动压缩上下文 · 已 ' + secs + scale;
+    scrollBottom();
+  }
+  function _hgCompactionEnd() {
+    if (!_HG.compacting) return;
+    _HG.compacting = false;
+    clearInterval(_HG.compactTimer);
+    renderCompaction(true);
+  }
 
   // ==================== 历史重建（切回会话时按 transcript 行还原气泡/抽屉）====
   // v2.16：从 switchTo 里抽出来，并补上 thinking 行——history 里的「思考过程」
@@ -869,9 +976,12 @@ function buildClaudeHarnessTab(opts = {}) {
     const d = document.createElement('div');
     d.className = 'h-tool col' + (l.err ? ' err open' : '');
     const out = l.result ? String(l.result) : '';
+    // v2.21：历史回放同样带工具徽章（子代理等），与流式路径一致
+    const hbc = _H_TOOL_CFG[l.text] || {};
     d.innerHTML =
       `<button class="h-tool-head"><span class="h-chev">▸</span>` +
       `<span class="h-tool-name">${_hToolIco(l.text)} ${esc(_hToolLabel(l.text))}</span>` +
+      (hbc.badge ? `<span class="h-tool-badge">${esc(hbc.badge)}</span>` : '') +
       `<span class="h-tslots">${statusBadge(l.err ? 'error' : 'completed')}</span></button>` +
       `<div class="h-tool-coll">${l.summary ? `<div class="h-tool-arg">${esc(l.summary)}</div>` : ''}` +
       (out ? `<div class="h-tool-out${l.err ? ' err-txt' : ''}">${esc(out.length > 4000 ? out.slice(0, 4000) + '…' : out)}</div>` : '') +
@@ -909,8 +1019,12 @@ function buildClaudeHarnessTab(opts = {}) {
     g.think.box.style.display = '';             // v2.20：第一段思考到位，思考抽屉翻回显示
     const n = thinkSegCount(g) + 1;
     thinkSegCountSet(g, n);
-    // 组头：「思考 N 次」；busy 中加脉动点
-    if (g.think.title) g.think.title.innerHTML = '🧠 思考 <span class="hg-think-anim">' + n + ' 次</span>';
+    // 组头：「思考 N 次」；流式中带脉动动画，历史重建（hist）静态——
+    // v2.20 修复：旧代码无条件加 anim，而定稿/重建后没人摘，已完成的会话
+    // 组头还在闪（用户实测）。定稿侧 grpFinalize 也会重写为纯文本兜底。
+    if (g.think.title) g.think.title.innerHTML = hist
+      ? '🧠 思考 ' + n + ' 次'
+      : '🧠 思考 <span class="hg-think-anim">' + n + ' 次</span>';
     const seg = document.createElement('div');
     seg.className = 'h-think-seg open';
     if (!hist) {
@@ -921,7 +1035,9 @@ function buildClaudeHarnessTab(opts = {}) {
       `<button class="h-think-seg-head"><span class="h-chev">▸</span>` +
       `<span class="h-think-seg-name">第 ${n} 段思考</span>` +
       `<span class="h-think-seg-t" data-hg-seg-t data-hg-think-t>0s</span></button>` +
-      `<div class="h-think-seg-body"></div>`;
+      `<div class="h-think-seg-body"></div>` +
+      // v2.21：段尾右下角收起钮——长思考读到尾顺手收，不用滚回顶部点头
+      `<i class="h-think-seg-fold" title="收起本段">收起 ⌄</i>`;
     g.think.body.appendChild(seg);
     _HG.think = { seg, grp: g };
     if (!_grpHasAsst()) {
@@ -1156,6 +1272,16 @@ function buildClaudeHarnessTab(opts = {}) {
     row._id = id;
     row.dataset.tid = id;                 // 快照恢复后重扫挂 rowById 用
     _HG.rowById[id] = row;
+    // v2.21：子代理行运行秒表——子代理一跑几分钟，主流毫无动静，没有
+    // 秒表就像卡死。完成时由 renderOneToolResult 清表。
+    if (cfg.kind === 'agent' && !isSub) {
+      const slot = row.querySelector('.h-tslots');
+      const t0 = Date.now();
+      row._agentTimer = setInterval(() => {
+        if (slot) slot.innerHTML = statusBadge('running') +
+          ' <span class="h-tsec">' + Math.round((Date.now() - t0) / 1000) + 's</span>';
+      }, 1000);
+    }
     drawerCount(name);                    // v2.7：计数进抽屉组头（Bash×3 · Read×5 …）
     // v2.8：抽屉时代不再合并同名 run——每条 Bash/Read/Grep 调用都是独立过程行
     // （用户明确要能看到每一次执行；组头徽章已承担"×N 汇总"职责）
@@ -1188,11 +1314,20 @@ function buildClaudeHarnessTab(opts = {}) {
     }
     const cfg = row._cfg || {};
     const st = deriveStatus(tr);
+    // v2.21：子代理秒表收表（历史重建/分组恢复无 timer，置空无妨）
+    if (row._agentTimer) { clearInterval(row._agentTimer); row._agentTimer = null; }
     // 分组成员：结果状态聚合到组头（成功不刷组头徽章避免闪烁，错误标红）
     const showRow = row._grouped ? row._groupHead : row;
     const slots = showRow.querySelector('.h-tslots');
     if (slots && st !== 'completed') slots.innerHTML = statusBadge(st);
     else if (slots && !row._grouped) slots.innerHTML = statusBadge(st);
+    // v2.21：子代理完成摘要——点开折叠体才见报告太隐身，徽章旁给
+    // 报告首行 60 字（悬浮看前 400 字）；全文仍在折叠体
+    if (cfg.kind === 'agent' && st === 'completed' && !row._grouped && slots) {
+      const full = resultText(tr).replace(/\s+/g, ' ').trim();
+      if (full) slots.innerHTML = statusBadge(st) +
+        ` <span class="h-tagent-brief" title="${esc(full.slice(0, 400))}">${esc(full.slice(0, 60))}${full.length > 60 ? '…' : ''}</span>`;
+    }
     showRow.classList.toggle('err', st === 'error' || st === 'denied');
     // 结果折叠体（成功默认藏，错误永远显）
     const hideOk = cfg.result === 'hide' || cfg.kind === 'bash' || cfg.kind === 'diff';
@@ -1305,13 +1440,24 @@ function buildClaudeHarnessTab(opts = {}) {
   function _hgCtxRestore(sid) {
     let v = null;
     if (sid) { try { v = JSON.parse(localStorage.getItem(_hgCtxKey(sid)) || 'null'); } catch(_) {} }
-    // v2.20：历史残留的坏值（used > max，假 100%）不画——显示空环保守，
-    // 下一轮合法 result 会重写
+    // v2.20：历史残留的坏值（used > max，假 100%）不画恢复值——退回 0% 占位，
+    // 下一轮合法 result 会重写。用户要求上下文环常态显示：无数据也画 0% 环，
+    // 不再整块消失。
     if (v && v.used > 0 && v.used <= (v.max || _HG_CTX_FALLBACK))
       _hgDrawCtxRing(v.used, v.max || _HG_CTX_FALLBACK);
-    else { costEl.innerHTML = ''; costEl.title = ''; }
+    else _hgDrawCtxRing(0, _HG_CTX_FALLBACK);
+    // v2.20：记忆里的 max 可能是旧代码存的 256K 兜底值（1M 模型被压成
+    // /256K、84% 虚报，用户实测）——恢复路径同样按模型名校正窗口并写回，
+    // 别只靠每轮结束的 _hgCtxPoll 纠偏。
+    const s = _HG.sessions.find(x => x.sid === sid);
+    const mname = (s && s.model) || (_HG.models && _HG.models.default) || '';
+    if (/1m/i.test(mname) && ((v && v.max) || 0) < 1000000) {
+      const used = (v && v.used > 0) ? v.used : 0;
+      _hgDrawCtxRing(used, 1000000);
+      try { localStorage.setItem(_hgCtxKey(sid), JSON.stringify({used, max: 1000000})); } catch(_) {}
+    }
   }
-  function _hgDrawCtxRing(used, ctxMax) {
+  function _hgDrawCtxRing(used, ctxMax, note) {
     const pct = Math.min(100, used / ctxMax * 100);
     // v2.6：viewBox 与 CSS 显示尺寸一致（24），r=10 + stroke 3 → 直径 23 < 24 不裁边；
     // 此前 r=9 贴 viewBox 边缘，缩放裁切导致"圆环爆掉"
@@ -1326,7 +1472,11 @@ function buildClaudeHarnessTab(opts = {}) {
       ` stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - pct / 100)}"` +
       ` stroke-linecap="round" transform="rotate(-90 ${VB / 2} ${VB / 2})"/></svg>` +
       `<span class="hg-ctx-pct">${Math.round(pct)}%</span>`;
-    costEl.title = `当前上下文 ${fmtTok(used)} / ${fmtTok(ctxMax)} tokens（${Math.round(pct)}%）`;
+    // v2.20：0 用量（新会话/未统计）不冒充 256K 假窗口，title 直说待统计；
+    // v2.21：note 允许调用方替换占位说明（压缩后待首轮）
+    costEl.title = used > 0
+      ? `当前上下文 ${fmtTok(used)} / ${fmtTok(ctxMax)} tokens（${Math.round(pct)}%）`
+      : (note || '上下文用量：首轮回复后统计');
     costEl.classList.toggle('warn', pct >= 80);
   }
   function renderCtxRing(o) {
@@ -1349,9 +1499,45 @@ function buildClaudeHarnessTab(opts = {}) {
     // 用量物理不可能超窗（超了 API 直接报错，不会有 success result）——
     // 必是坏数据：丢弃本轮，环保留上一轮合法值。
     if (used > ctxMax) return;
+    // v2.20：本事件没带 modelUsage（assistant 事件就不带）→ 沿用该会话上次
+    // 记到的窗口，避免没 result 校准时就退 256K 假分母
+    if (ctxMax === _HG_CTX_FALLBACK && _HG.sid) {
+      try { ctxMax = ((JSON.parse(localStorage.getItem(_hgCtxKey(_HG.sid)) || 'null') || {}).max) || _HG_CTX_FALLBACK; } catch(_) {}
+    }
     _hgDrawCtxRing(used, ctxMax);
     if (_HG.sid) { try { localStorage.setItem(_hgCtxKey(_HG.sid), JSON.stringify({used, max: ctxMax})); } catch(_) {} }
   }
+
+  // v2.20：每轮结束（result/interrupted/exit 任意原因）拉一次真实上下文用量。
+  // v2.21：改为 5s 定时轮询（用户要求实时刷新）——后端 /ctx 是 jsonl 尾部
+  // 1MB 倒扫，单次几毫秒，5s 一次无性能感；生成中 jsonl 也在流式落盘，
+  // 能看到上下文实时增长。页面隐藏时跳过、上一请求未回时不再叠加。
+  let _hgCtxInFlight = false;
+  function _hgCtxPoll() {
+    if (!_HG.sid || _hgCtxInFlight) return;
+    const sid = _HG.sid;
+    _hgCtxInFlight = true;
+    fetch('/api/harness/ctx?sid=' + encodeURIComponent(sid))
+      .then(r => r.json())
+      .then(j => {
+        if (!j || !j.ok || j.sid !== _HG.sid) return;
+        // v2.20：中断轮次没有 result → 接口 window=0 → 前端曾退 256K 假分母
+        // （1M 模型显示成 /256K，84% 虚高）。模型名带窗口线索（glm-5.3[1M]）
+        // 时按名推断，兜住没有任何 result 校准过的会话。
+        let win = j.window || 0;
+        if (!win && /1m/i.test(j.model || (_HG.model || ''))) win = 1000000;
+        // v2.21：压缩后尚未有新轮次 → jsonl 主链读数已归零，环也归零，
+        // 不能继续画压缩前的旧值（用户实测 708K 残留）
+        if (!(j.used > 0)) {
+          if (j.compacted) _hgDrawCtxRing(0, win || _HG_CTX_FALLBACK, '上下文已压缩 · 首轮回复后统计');
+          return;
+        }
+        renderCtxRing({ usage: { input_tokens: j.used },
+                        modelUsage: win ? { _w: { contextWindow: win } } : null });
+      }).catch(() => {})
+      .finally(() => { _hgCtxInFlight = false; });
+  }
+  setInterval(() => { if (!document.hidden) _hgCtxPoll(); }, 5000);
 
   function setBusy(b) {
     _HG.busy = b;
@@ -1360,7 +1546,12 @@ function buildClaudeHarnessTab(opts = {}) {
     sendBtn.title = b ? '停止生成' : '发送（Enter）';
     sendBtn.setAttribute('aria-label', b ? '停止生成' : '发送');
     stateEl.textContent = b ? '' : (_HG.alive ? '就绪' : '');
-    if (b) actStart(); else actStop();
+    // v2.20：busy 时输入语义变成「排队」（ZCode 式）；空闲恢复常规提示
+    input.placeholder = b
+      ? '回复执行中——继续输入将排队，结束后自动发送'
+      : '给 Claude 发消息，@ 引用文件，/ 选择技能 · 可直接粘贴图片';
+    if (b) actStart();
+    else { actStop(); queuePump(); _hgCtxPoll(); }
   }
 
   // ==================== CLI 事件 → 渲染 ====================
@@ -1373,14 +1564,38 @@ function buildClaudeHarnessTab(opts = {}) {
         if (!_HG.busy) setBusy(false);
       } else if (sub === 'status') {
         // v2.7：压缩状态（实测 CLI 事件：status:"compacting" 开始 / "requesting" 恢复）
-        if (o.status === 'compacting') actWord('正在压缩上下文…');
-        else actWord(null);
+        // v2.20：压缩是长动作（几十秒），只在底栏小胶囊提示不够醒目——
+        // 消息流里插动态分割线（耗时秒表 + 压缩对象规模；CLI 不吐进度
+        // 百分比，不编假数字）
+        if (o.status === 'compacting') {
+          if (!_HG.compacting) {
+            _HG.compacting = true;
+            _HG.compactT0 = Date.now();
+            try { _HG.compactUsed = (JSON.parse(localStorage.getItem(_hgCtxKey(_HG.sid)) || 'null') || {}).used || 0; } catch(_) { _HG.compactUsed = 0; }
+            grpFinalize(true);
+            renderCompaction(false);
+            clearInterval(_HG.compactTimer);
+            _HG.compactTimer = setInterval(() => {
+              if (!_HG.compacting) return clearInterval(_HG.compactTimer);
+              renderCompaction(false);
+            }, 1000);
+          }
+          actWord('正在压缩上下文…');
+        } else {
+          if (_HG.compacting) _hgCompactionEnd();
+          actWord(null);
+        }
       } else if (sub === 'api_error' || sub === 'error') {
         renderRaw('⚠ ' + (o.error ? JSON.stringify(o.error).slice(0, 200) : JSON.stringify(o).slice(0, 200)));
       }
     } else if (typ === 'assistant') {
       const blocks = (o.message || {}).content || [];
       const isSub = !!o.parent_tool_use_id;
+      // v2.20：网关下 result 事件的 usage 常缺失（用户实测环恒 0%）——
+      // assistant 事件的 message.usage 同口径（转写实测有值：input+cache_read+
+      // cache_creation），到达即刷环，不依赖 result
+      if (!isSub && (o.message || {}).usage)
+        renderCtxRing({ usage: o.message.usage, modelUsage: o.modelUsage });
       for (const b of blocks) {
         if (b.type === 'thinking' && b.thinking) { closeRun(); appendThinking(b.thinking); }
         else if (b.type === 'text' && b.text && b.text.trim()) { endThinking(); closeRun(); renderAsst(b.text, isSub); }
@@ -1397,6 +1612,7 @@ function buildClaudeHarnessTab(opts = {}) {
         scrollBottom();
       }
     } else if (typ === 'result') {
+      _hgCompactionEnd();                  // v2.20：status 恢复事件若丢，result 兜底收压缩态
       endThinking();
       closeRun();
       grpFinalize(true);                   // v2.18：本轮组定稿——用户没手动
@@ -1423,7 +1639,13 @@ function buildClaudeHarnessTab(opts = {}) {
       if (it.seq && it.seq > _HG.seq) _HG.seq = it.seq;
       // v2.5：先 setBusy（弹活动指示条，改变 flow 高度）再渲染消息——
       // 渲染内部 scrollBottom 含 rAF 二次兜底，否则指示条挤出消息导致刚发的消息不在底
-      if (it.kind === 'user_echo') { setBusy(true); renderUser(it.text, it.images, it.files); }
+      if (it.kind === 'user_echo') {
+        setBusy(true);
+        // v2.20：send() 已乐观渲染 → 同文本 echo 到达即跳过（echoFast 只
+        // 顶一条，连发两条相同文本时第二条照常走事件渲染，不会吞）
+        if (_HG.echoFast && _HG.echoFast.text === (it.text || '')) _HG.echoFast = null;
+        else renderUser(it.text, it.images, it.files);
+      }
       else if (it.kind === 'event') handleEvent(it.data);
       else if (it.kind === 'raw') renderRaw(it.text);
       else if (it.kind === 'ask') { grpFinalize(true); askRender(it); }
@@ -1434,6 +1656,11 @@ function buildClaudeHarnessTab(opts = {}) {
         try { document.dispatchEvent(new CustomEvent('hg-interrupted', {detail: _HG.sid})); } catch(_) {}
       }
       else if (it.kind === 'exit') { endThinking(); _HG.alive = false; grpFinalize(true); renderExit(it.text); setBusy(false); }
+      // v2.20：会话内切模型 → 消息流插一条分割线（「已切换模型 · xxx」）
+      else if (it.kind === 'model_switched') {
+        grpFinalize(true);
+        renderSwitch(it.text || '默认模型');
+      }
     };
   }
 
@@ -1479,13 +1706,14 @@ function buildClaudeHarnessTab(opts = {}) {
     setBusy(false);
     costEl.classList.remove('warn');   // 清文本不清 class 会让空用量环留着橙色警示
     clearAtts();
+    _HG.echoFast = null;               // v2.20：切会话清乐观渲染去重窗口（防串会话吞 echo）
     _hgCtxRestore(sid);                // 切回旧会话：恢复该会话上次的上下文用量（result 不重放）
     if (!sid) {
       flow.innerHTML = '';
       showWelcome();
       openSSE(null); setBusy(false);
       titleEl.textContent = '新会话'; cwdEl.textContent = '';
-      renderList();
+      renderList(); renderQueue();
       input.focus();
       return;
     }
@@ -1521,7 +1749,7 @@ function buildClaudeHarnessTab(opts = {}) {
           // SSE 续传事件经 grpEnsure 回扫正常接回。
           if (j.busy) phResume();
           else grpFinalize(true);          // transcript 末尾若挂着未收的组 → 定稿自动收起
-          scrollBottom();
+          scrollBottom(true);              // 切会话回底（不受翻历史保护限制）
           setBusy(!!j.busy);
         }
       } catch(_) {}
@@ -1529,12 +1757,32 @@ function buildClaudeHarnessTab(opts = {}) {
     const s = _HG.sessions.find(x => x.sid === sid);
     // v2.7：项目优先——cwd 目录名在前（accent），claude 会话名在后
     cwdEl.textContent = s ? (s.cwd || '').split(/[\\/]/).pop() || '~' : '';
+    // v2.19：切回历史会话 → 「新会话将打开的目录」跟随该会话的项目，
+    // 同项目连续开会话不用每轮重选（会话无 cwd 时不动用户手选的值）。
+    if (s && s.cwd && _HG.cwd !== s.cwd) {
+      _HG.cwd = s.cwd; _hgSaveCwd(s.cwd); projChipLabel();
+    }
+    // v2.20：权限/思考等级同理跟随会话恢复显示
+    if (s) {
+      if (s.permission && s.permission !== _HG.perm) { _HG.perm = s.permission; permChipLabel(); }
+      const st = s.think || null;
+      if (st !== _HG.thinkLv) { _HG.thinkLv = st; thinkChipLabel(); }
+      // 模型跟随会话恢复（用户要求：打开历史会话直接显示之前用的模型）。
+      // 元数据 model=None 的会话（从没显式选过）实际跑的是 settings 默认
+      // 模型——显示默认名，别回退成空态「模型」让用户以为丢了。
+      const sm = s.model || (_HG.models && _HG.models.default) || null;
+      if (sm && sm !== _HG.model) {
+        _HG.model = sm;
+        q('[data-hg-model]').innerHTML = '🧠 ' + esc(sm) + ' ▾';
+      }
+    }
     titleEl.textContent = (s && s.title) || '会话';
     conn.meta.label = titleEl.textContent;
     conn.meta.cwd = (s && s.cwd) || '';
     conn.tab.querySelector('.label').textContent = titleEl.textContent;
     openSSE(sid, _HG.seq);
     renderList();
+    renderQueue();                   // v2.20：排队条按会话各自恢复
     refreshSidebar();
     if (!keepInput) input.focus();
   }
@@ -1548,6 +1796,25 @@ function buildClaudeHarnessTab(opts = {}) {
       </div>`;
   }
 
+  // v2.19：多模态判定（口径与后端 /models 的 mm 一致；会话列表打 👁 用）
+  function _hgMm(m) {
+    return !!(_HG.models && (_HG.models.mm || []).includes(m));
+  }
+  fetch('/api/harness/models').then(r => r.json())
+    .then(j => {
+      if (!j || !j.ok) return;
+      _HG.models = j; renderList();
+      // v2.20：预取回来时当前会话若已切入且 model=None（跑的是默认模型），
+      // 补显示默认名——switchTo 时 _HG.models 可能还没到，chip 空过一次
+      const s = _HG.sessions.find(x => x.sid === _HG.sid);
+      const sm = (s && s.model) || j.default;
+      if (sm && !_HG.model) {
+        _HG.model = sm;
+        q('[data-hg-model]').innerHTML = '🧠 ' + esc(sm) + ' ▾';
+      }
+    })
+    .catch(() => {});
+
   // ==================== 会话列表 ====================
   async function refreshSessions() {
     try {
@@ -1555,6 +1822,72 @@ function buildClaudeHarnessTab(opts = {}) {
       if (j.ok) { _HG.sessions = j.sessions || []; renderList(); }
     } catch(_) {}
   }
+
+  // ==================== 消息排队（v2.20，参考 ZCode 交互）====================
+  // 当前回复执行中继续输入 → 不再被「正在回复中」拦下，而是排进队列：
+  // 输入卡上方出现排队条（⠿ 草稿缩略 + ↑立即 / ✎编辑 / 🗑删除），当前
+  // 回复结束（result/interrupted → setBusy(false)）自动依序发送。
+  // 队列按 sid 隔离，切会话各看各的。
+  const queueEl = q('[data-hg-queue]');
+  function _hgQueueKey() { return _HG.sid || '_new'; }
+  function renderQueue() {
+    const list = _HG.queues[_hgQueueKey()] || [];
+    queueEl.style.display = list.length ? 'flex' : 'none';
+    queueEl.innerHTML = list.map((it, i) => {
+      let t = String(it.text || '').replace(/\s+/g, ' ').trim();
+      const nAt = (it.images || []).length + (it.files || []).length;
+      if (nAt) t = (t ? t + ' ' : '') + '📎×' + nAt;
+      if (t.length > 60) t = t.slice(0, 59) + '…';
+      return `<div class="hg-q-item" title="${esc(it.text || '')}">` +
+        `<span class="hg-q-grip" title="排队中：当前回复结束后自动发送">⠿</span>` +
+        `<span class="hg-q-text">${esc(t || '（空）')}</span>` +
+        `<button class="hg-q-act" data-qact="now" data-i="${i}" title="中断当前回复，立即发送这条">↑ 立即</button>` +
+        `<button class="hg-q-act" data-qact="edit" data-i="${i}" title="放回输入框编辑">✎</button>` +
+        `<button class="hg-q-act" data-qact="del" data-i="${i}" title="丢弃">🗑</button>` +
+        `</div>`;
+    }).join('');
+  }
+  function queuePush(it) {
+    const key = _hgQueueKey();
+    (_HG.queues[key] = _HG.queues[key] || []).push(it);
+    renderQueue();
+    showBanner('已排队：当前回复结束后自动发送', 2200);
+  }
+  function queuePump() {
+    // setBusy(false) 的尾巴：600ms 去抖后把队首发出去（dispatch 成功 →
+    // setBusy(true) → 本轮完 → 再次 setBusy(false) → 泵下一条，链式排空）
+    clearTimeout(_HG.qTimer);
+    _HG.qTimer = setTimeout(async () => {
+      if (_HG.busy || !_HG.sid) { renderQueue(); return; }
+      const key = _hgQueueKey(), list = _HG.queues[key] || [];
+      if (!list.length) { renderQueue(); return; }
+      const it = list.shift();
+      _HG.queues[key] = list;
+      renderQueue();
+      await dispatch(it.text || '', it.images || [], it.files || [], false);
+    }, 600);
+  }
+  queueEl.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-qact]');
+    if (!b) return;
+    const key = _hgQueueKey(), arr = _HG.queues[key] || [];
+    const i = +b.dataset.i;
+    if (i >= arr.length) return;
+    if (b.dataset.qact === 'del') {
+      arr.splice(i, 1); renderQueue();
+    } else if (b.dataset.qact === 'edit') {
+      const it = arr.splice(i, 1)[0]; renderQueue();
+      input.value = it.text || '';
+      renderOverlay(input.value);
+      if ((it.images || []).length || (it.files || []).length)
+        showBanner('附件不随草稿返回，请重新添加', 3000, true);
+      input.focus();
+    } else if (b.dataset.qact === 'now') {
+      const it = arr.splice(i, 1)[0];
+      arr.unshift(it); renderQueue();
+      stopGen();               // interrupted → setBusy(false) → 泵先发它
+    }
+  });
   function renderList() {
     const kw = (searchEl.value || '').trim().toLowerCase();
     const items = _HG.sessions.filter(s => !kw || (s.title || '').toLowerCase().includes(kw)
@@ -1577,7 +1910,7 @@ function buildClaudeHarnessTab(opts = {}) {
           </span>
         </div>
         <div class="hg-item-row">
-          <span class="hg-item-sub">${s.model ? esc(s.model) : ''}</span>
+          <span class="hg-item-sub">${s.model ? esc(s.model) + (_hgMm(s.model) ? ' ' + _HG_EYE : '') : ''}</span>
         </div>
       </div>`;}).join('') || '<div class="hg-list-empty">暂无会话</div>';
   }
@@ -1615,9 +1948,17 @@ function buildClaudeHarnessTab(opts = {}) {
   async function ensureSession() {
     if (_HG.sid) return _HG.sid;
     const r = await fetch('/api/harness/connect', {method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({model: _HG.model || '', cwd: _HG.cwd || ''})});
+      body: JSON.stringify({model: _HG.model || '', cwd: _HG.cwd || '',
+                            permission: _HG.perm || 'auto', think: _HG.thinkLv || ''})});
     const j = await r.json();
     if (!j.ok) {
+      // v2.19：恢复的「上次项目目录」已被删/移动 → 清记录回退 ~ 重试一次，
+      // 而不是卡在报错里让用户手动重选。
+      if (j.err && j.err.includes('目录不存在') && _HG.cwd) {
+        showBanner('上次的项目目录已不存在：' + _HG.cwd, 3500, true);
+        _HG.cwd = null; _hgSaveCwd(null); projChipLabel();
+        return ensureSession();
+      }
       if (j.err && j.err.includes('未检测到 claude')) { openClaudeSetup(); }
       showBanner(j.err || '会话创建失败', 3500, true);
       return null;
@@ -1630,34 +1971,236 @@ function buildClaudeHarnessTab(opts = {}) {
     return j.sid;
   }
 
-  async function send() {
-    const text = input.value.trim();
-    if (!text && !_HG.atts.length) return;
-    if (_HG.busy) { showBanner('claude 正在回复中，可点 ■ 停止', 2500, true); return; }
-    const images = _HG.atts.filter(a => a.isImg).map(a => a.path);
-    const files = _HG.atts.filter(a => !a.isImg).map(a => a.path);
+  // v2.20：发送核心从 send() 抽出——排队泵（queuePump）发送队列项走同一
+  // 条路（乐观渲染 + POST + 回滚）。restoreInput=true 时失败把文本放回
+  // 输入框（手动发送场景）；排队项失败只 banner（文本无处可回）。
+  async function dispatch(text, images, files, restoreInput) {
     const sid = await ensureSession();
-    if (!sid) return;
+    if (!sid) return false;
     _hgHistAppend(sid, text);          // 输入历史（记录到真实会话 scope）
     _HG.histNav = null;
-    input.value = ''; input.style.height = 'auto'; renderOverlay('');
-    clearAtts();
+    // v2.20：乐观渲染——connect 一回来就画出自己的气泡。原实现要等 SSE 的
+    // user_echo 绕一圈才显示，新会话冷启动时「发出去半天上面没动静」（用户
+    // 实测）。echoFast 让随后到达的 SSE 同文本 echo 跳过，不双渲染。
+    const el = renderUser(text, images, files);
+    _HG.echoFast = { text: text || '' };
+    scrollBottom(true);                 // 自己发的消息无条件回底
+    setBusy(true);
     try {
       const r = await fetch('/api/harness/send', {method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({sid, text, images, files})});
       const j = await r.json();
       if (!j.ok) {
-        input.value = text;
+        try { el.remove(); } catch(_) {}       // 回滚乐观气泡
+        endThinking(); grpFinalize(false); setBusy(false);
+        if (restoreInput) input.value = text;
         showBanner(j.err || '发送失败', 3000, true);
-        return;
+        return false;
       }
       _HG.dirty = true;
-      setBusy(true);
       refreshSessions();
+      return true;
     } catch(e) {
-      input.value = text;
+      try { el.remove(); } catch(_) {}
+      endThinking(); grpFinalize(false); setBusy(false);
+      if (restoreInput) input.value = text;
       showBanner('发送失败：' + e, 3000, true);
+      return false;
     }
+  }
+  // ==================== 内建斜杠命令（v2.21）====================
+  // harness 跑的是 claude -p headless：CLI 的交互式命令（/resume /clear…）
+  // 到不了进程。输入 / 开头且命中下表 → 前端本地执行（不排队、不发后端，
+  // busy 时也即时生效）；其余 /xxx 照常发送，技能/项目自定义命令不受影响。
+  const HG_SLASH = [
+    ['/help', '内建命令一览'],
+    ['/resume', '切换会话（左侧列表高亮）'],
+    ['/clear', '新建会话（原会话保留可切回）'],
+    ['/model', '打开模型菜单；/model 名 直接切换（模糊匹配）'],
+    ['/status', '会话状态与上下文用量'],
+    ['/compact', '压缩说明（headless 走自动压缩）'],
+    ['/exit', '退出 claude 进程（会话保留，发送自动恢复）'],
+  ];
+  function renderSysCard(title, rows) {
+    const d = document.createElement('div');
+    d.className = 'h-syscard';
+    d.innerHTML = '<div class="h-syscard-t">' + esc(title) + '</div>' +
+      rows.map(r => '<div class="h-syscard-r"><b>' + esc(r[0]) + '</b><span>' + esc(r[1]) + '</span></div>').join('');
+    addRow(d);
+    scrollBottom();
+  }
+  // v2.21：从模型菜单点击分支抽出——/model 名 复用同一条切换路径
+  function applyModel(m) {
+    _HG.model = m;
+    q('[data-hg-model]').innerHTML = '🧠 ' + esc(m) + ' ▾';
+    if (_HG.sid) {
+      fetch('/api/harness/set_model', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({sid: _HG.sid, model: m})})
+        .then(r => r.json())
+        .then(j => { if (!j.ok) showBanner(j.err || '切换模型失败', 3000, true); })
+        .catch(() => showBanner('切换模型失败', 3000, true));
+      refreshSessions();
+    } else showBanner('模型 ' + m + ' 将用于新会话', 2200);
+  }
+  async function execSlash(raw) {
+    const m = raw.match(/^\/([a-z0-9_-]+)(?:\s+([\s\S]*))?$/i);
+    if (!m) return false;
+    const cmd = m[1].toLowerCase(), arg = (m[2] || '').trim();
+    if (!HG_SLASH.some(x => x[0] === '/' + cmd)) return false;
+    if (cmd === 'help') {
+      renderSysCard('内建命令（本地执行，不进入对话）', HG_SLASH);
+    } else if (cmd === 'resume') {
+      const side = wrap.querySelector('.hg-side');
+      if (side) { side.classList.remove('flash'); void side.offsetWidth; side.classList.add('flash'); }
+      searchEl.focus();
+      showBanner('点击左侧会话即可切换', 2200);
+    } else if (cmd === 'clear') {
+      newChat();
+      showBanner('已新建会话', 2000);
+    } else if (cmd === 'model') {
+      if (!arg) { q('[data-hg-model]').click(); return true; }
+      if (!_HG.models) {
+        try { _HG.models = await (await fetch('/api/harness/models')).json(); } catch(_) { _HG.models = {models: []}; }
+      }
+      const kw = arg.toLowerCase();
+      const hits = (_HG.models.models || []).filter(x => x.toLowerCase().includes(kw));
+      if (hits.length === 1) { applyModel(hits[0]); showBanner('已切换模型 · ' + hits[0], 2400); }
+      else if (!hits.length) showBanner('没有匹配「' + arg + '」的模型', 3000, true);
+      else showBanner('匹配到多个：' + hits.join(' / '), 3400, true);
+    } else if (cmd === 'status') {
+      let ctx = null;
+      if (_HG.sid) {
+        try { ctx = await (await fetch('/api/harness/ctx?sid=' + encodeURIComponent(_HG.sid))).json(); } catch(_) {}
+      }
+      const rows = [
+        ['会话', _HG.sid ? _HG.sid.slice(0, 8) + '…' : '未创建'],
+        ['模型', _HG.model || (_HG.models && _HG.models.default) || '默认'],
+        ['项目', _HG.cwd || '未选择'],
+        ['进程', _HG.alive ? (_HG.busy ? '运行中 · 正在生成回复' : '空闲待命') : '未运行（发送消息自动恢复）'],
+        ['权限', _HG_PERMS[_HG.perm] || '自动执行'],
+        ['思考', _HG.thinkLv ? (_HG_THINKS[_HG.thinkLv] || _HG.thinkLv) : '默认'],
+      ];
+      if (ctx && ctx.ok && ctx.window) {
+        const pct = ctx.used ? Math.round(ctx.used / ctx.window * 100) + '%' : '—';
+        const u = ctx.used ? (ctx.used / 1000).toFixed(1) + 'K / ' + (ctx.window / 1000).toFixed(0) + 'K (' + pct + ')' : '';
+        rows.push(['上下文', ctx.compacted ? (u ? u + ' · ' : '') + '压缩后待首轮回复' : (u || '首轮回复后统计')]);
+      }
+      renderSysCard('会话状态', rows);
+    } else if (cmd === 'compact') {
+      renderSysCard('/compact', [
+        ['说明', 'harness 以 claude -p 无头方式运行，没有 CLI 交互式的手动压缩入口'],
+        ['自动', '上下文接近模型窗口上限时 CLI 自动压缩（消息流有压缩分割线与耗时）'],
+        ['替代', '要立即释放上下文可用 /clear 新开会话，原会话保留随时切回'],
+      ]);
+    } else if (cmd === 'exit') {
+      if (!_HG.sid) { showBanner('当前没有活动会话', 2200); return true; }
+      fetch('/api/harness/kill', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({sid: _HG.sid})}).catch(() => {});
+      showBanner('进程退出中，发送消息自动恢复', 2600);
+    }
+    return true;
+  }
+  // 输入 / 前缀即弹 CLI 式命令菜单：内建命令 + 技能一起过滤，↑↓ 选择、
+  // Enter/Tab 执行、Esc 关闭；继续打字收窄，出现空格/其他内容即关
+  function slashMenuUpdate() {
+    const mm = input.value.match(/^\/([a-z0-9_-]*)$/i);
+    if (!mm) { if (_HG.pop === 'slash') closePop(); return; }
+    const kw = mm[1].toLowerCase();
+    const built = HG_SLASH.filter(x => x[0].slice(1).startsWith(kw))
+      .map(x => ({ slash: x[0].slice(1), desc: x[1] }));
+    const sk = (_HG.skills || []).filter(s => (s.name || '').toLowerCase().startsWith(kw))
+      .map(s => ({ skill: s.name, desc: (s.description || '').slice(0, 70) }));
+    const list = built.concat(sk);
+    if (!list.length) { if (_HG.pop === 'slash') closePop(); return; }
+    _HG.slashList = list; _HG.slashSel = 0;
+    const html = '<div class="hg-pop-list">' + list.map((x, i) =>
+      `<div class="hg-pop-item${i === 0 ? ' on' : ''}" data-i="${i}"><b>/${esc(x.slash || x.skill)}</b><span>${esc(x.desc || '')}</span></div>`).join('') +
+      '</div><div class="hg-pop-foot">ⓘ 输入内容以搜索命令、技能</div>';
+    const p = openPop('slash', input, html);
+    // openPop 的 left/bottom 按 card-wrap 坐标系算，而挂载点 .hg-input-stack
+    // 自身是定位元素——照搬会错位（菜单飘进消息区）。这里按 stack 原位
+    // 重定位：与 textarea 同宽、贴其上缘 6px（参考 CLI 的命令面板位置）
+    if (p) {
+      p.style.left = '0';
+      p.style.right = '0';
+      p.style.width = 'auto';
+      p.style.bottom = 'calc(100% + 6px)';
+    }
+    // 技能懒加载：首次敲 / 后台拉一次，到了重弹把技能补进菜单
+    if (!_HG.skills) {
+      _HG.skills = [];
+      fetch('/api/harness/skills').then(r => r.json()).then(j => {
+        _HG.skills = (j.ok && j.skills) || [];
+        if (_HG.pop === 'slash') slashMenuUpdate();
+      }).catch(() => {});
+    }
+  }
+  function slashHighlight() {
+    const p = wrap.querySelector('.hg-pop.slash');
+    if (!p) return;
+    const items = p.querySelectorAll('.hg-pop-item');
+    items.forEach((el, i) => el.classList.toggle('on', i === _HG.slashSel));
+    const cur = items[_HG.slashSel];
+    if (cur) cur.scrollIntoView({ block: 'nearest' });
+  }
+  function handleSlashKey(e) {
+    if (_HG.pop !== 'slash') return false;
+    const list = _HG.slashList || [];
+    if (!list.length) return false;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const n = list.length;
+      _HG.slashSel = e.key === 'ArrowDown' ? (_HG.slashSel + 1) % n : (_HG.slashSel - 1 + n) % n;
+      slashHighlight();
+      return true;
+    }
+    if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && !e.isComposing)) {
+      e.preventDefault();
+      slashPick(list[_HG.slashSel >= 0 ? _HG.slashSel : 0]);
+      return true;
+    }
+    if (e.key === 'Escape') { e.preventDefault(); closePop(); return true; }
+    return false;
+  }
+  function slashPick(x) {
+    if (!x) return;
+    closePop();
+    input.value = ''; input.style.height = 'auto'; renderOverlay('');
+    if (x.slash) {
+      if (x.slash === 'model') q('[data-hg-model]').click();
+      else execSlash('/' + x.slash);
+    } else {
+      input.value = '/' + x.skill + ' ';           // 技能：插入待补参（同⚡按钮行为）
+      renderOverlay(input.value);
+      input.focus();
+    }
+  }
+
+  async function send() {
+    const text = input.value.trim();
+    if (!text && !_HG.atts.length) return;
+    // v2.21：内建斜杠命令本地执行（附件与命令互斥，命令不需要附件）
+    if (!_HG.atts.length && text.startsWith('/')) {
+      const c0 = text.split(/\s/, 1)[0].toLowerCase();
+      if (HG_SLASH.some(x => x[0] === c0)) {
+        input.value = ''; input.style.height = 'auto'; renderOverlay('');
+        execSlash(text);
+        return;
+      }
+    }
+    const images = _HG.atts.filter(a => a.isImg).map(a => a.path);
+    const files = _HG.atts.filter(a => !a.isImg).map(a => a.path);
+    // v2.20：回复执行中不再拦「正在回复中」——排进队列（ZCode 式），
+    // 结束后自动发送；排队条上可 ↑立即 / ✎编辑 / 🗑丢弃
+    if (_HG.busy) {
+      queuePush({ text, images, files });
+      input.value = ''; input.style.height = 'auto'; renderOverlay('');
+      clearAtts();
+      return;
+    }
+    input.value = ''; input.style.height = 'auto'; renderOverlay('');
+    clearAtts();
+    dispatch(text, images, files, true);
   }
 
   async function stopGen() {
@@ -1696,6 +2239,7 @@ function buildClaudeHarnessTab(opts = {}) {
   // ---- 键盘链（源 useChatComposerState：命令菜单 → mention → 历史 → Enter）----
   input.addEventListener('keydown', (e) => {
     if (handleMentionKey(e)) return;                    // @ 下拉优先
+    if (handleSlashKey(e)) return;                      // / 命令菜单次之（v2.21）
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault(); send(); return;
     }
@@ -1707,6 +2251,7 @@ function buildClaudeHarnessTab(opts = {}) {
     input.style.height = Math.min(input.scrollHeight, 200) + 'px';
     renderOverlay(input.value);
     updateMention();
+    slashMenuUpdate();          // v2.21：/ 前缀弹内建命令+技能菜单
   });
 
   // ---- 输入历史（源 useInputHistory：空框 ↑ 回溯、到底恢复 draft）----
@@ -1892,6 +2437,11 @@ function buildClaudeHarnessTab(opts = {}) {
     anchor.parentElement.appendChild(p);
     const ar = anchor.getBoundingClientRect(), wr = wrap.querySelector('.hg-card-wrap').getBoundingClientRect();
     p.style.left = Math.max(6, Math.min(ar.left - wr.left, wr.width - p.offsetWidth - 6)) + 'px';
+    // v2.20：菜单底部贴 anchor 上缘悬浮。原来 CSS 写死 bottom:calc(100% - 2px)
+    // 相对整个 card-wrap——菜单弹到输入区整体的上方（改版后那里直接是聊天流），
+    // 用户反馈「不是悬浮贴着显示，跑上面显示了」。改内联按 anchor 实际位置算。
+    p.style.bottom = (wr.bottom - ar.top + 6) + 'px';
+    return p;
   }
   q('[data-hg-skill]').onclick = async (e) => {
     if (_HG.pop === 'skill') { closePop(); return; }
@@ -1914,56 +2464,106 @@ function buildClaudeHarnessTab(opts = {}) {
       try { _HG.models = await (await fetch('/api/harness/models')).json(); } catch(_) { _HG.models = {models: [], default: null}; }
     }
     const cur = _HG.model || _HG.models.default;
+    // v2.19：多模态模型打 👁——这类模型的会话自己读图，不转交识图会话
+    const mmSet = new Set(_HG.models.mm || []);
     const items = (_HG.models.models || []).map(m =>
-      `<div class="hg-pop-item${m === cur ? ' on' : ''}" data-model="${esc(m)}"><b>${esc(m)}</b>${m === _HG.models.default ? '<span>默认</span>' : ''}</div>`).join('')
+      `<div class="hg-pop-item${m === cur ? ' on' : ''}" data-model="${esc(m)}"><b>${esc(m)}</b>${mmSet.has(m) ? `<span title="多模态：可直接读图，图片不转交识图会话">${_HG_EYE} 多模态</span>` : ''}${m === _HG.models.default ? '<span>默认</span>' : ''}</div>`).join('')
       || '<div class="hg-pop-empty">读取 settings.json 模型映射失败</div>';
     openPop('model', anchor, `<div class="hg-pop-title">模型（有对话的会话需新建才生效）</div>${items}`);
   };
-  wrap.addEventListener('click', (e) => {
+  wrap.addEventListener('click', async (e) => {
+    // v2.21：命令菜单点选（内建命令直接执行，技能插入待补参）
+    const sit = e.target.closest('.hg-pop.slash .hg-pop-item');
+    if (sit) {
+      e.stopPropagation();
+      slashPick((_HG.slashList || [])[+sit.dataset.i]);
+      return;
+    }
     const si = e.target.closest('[data-skill]');
     if (si) {
       input.value = (input.value ? input.value.replace(/\s*$/, ' ') : '') + '/' + si.dataset.skill + ' ';
       renderOverlay(input.value);
       closePop(); input.focus(); return;
     }
-    const mi = e.target.closest('[data-model]');
-    if (mi) {
-      const m = mi.dataset.model;
-      _HG.model = m;
-      q('[data-hg-model]').innerHTML = '🧠 ' + esc(m) + ' ▾';
+    // v2.20：项目目录下拉（最近目录 + 浏览）
+    const di = e.target.closest('[data-dir]');
+    if (di) {
+      const d = di.dataset.dir;
+      closePop();
+      if (d === '__browse__') {
+        let dir = '';
+        if (window.pywebview && pywebview.api && pywebview.api.pick_dir)
+          dir = await pywebview.api.pick_dir() || '';
+        if (dir) setProj(dir);
+      } else if (d) setProj(d);
+      return;
+    }
+    const pe = e.target.closest('[data-perm]');
+    if (pe) {
+      _HG.perm = pe.dataset.perm || 'auto';
+      permChipLabel();
       if (!_HG.dirty) {
         if (_HG.sid) {
           fetch('/api/harness/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({sid: _HG.sid})}).catch(() => {});
           switchTo(null);
         }
-        showBanner('模型 ' + m + ' 将用于当前新会话', 2200);
-      } else {
-        showBanner('当前会话已有对话，' + m + ' 将在新建会话生效', 2800);
-      }
+        showBanner('权限「' + _HG_PERMS[_HG.perm] + '」将用于当前新会话', 2400);
+      } else showBanner('当前会话已有对话，权限将在新建会话生效', 2800);
       closePop(); return;
     }
-    if (!e.target.closest('.hg-pop') && !e.target.closest('.hg-chip')) closePop();
+    const tk = e.target.closest('[data-think]');
+    if (tk) {
+      _HG.thinkLv = tk.dataset.think || null;
+      thinkChipLabel();
+      if (!_HG.dirty) {
+        if (_HG.sid) {
+          fetch('/api/harness/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({sid: _HG.sid})}).catch(() => {});
+          switchTo(null);
+        }
+        showBanner('思考等级「' + (_HG.thinkLv ? _HG_THINKS[_HG.thinkLv] : '默认') + '」将用于当前新会话', 2400);
+      } else showBanner('当前会话已有对话，思考等级将在新建会话生效', 2800);
+      closePop(); return;
+    }
+    const mi = e.target.closest('[data-model]');
+    if (mi) {
+      // v2.20（强需求）：会话内直接换模型——后端 quiet 杀进程 + --resume
+      // 同 session 重启，上下文连续，新模型下次回复即生效；SSE 回
+      // model_switched 事件在消息流里渲染分割线。不再要求新建会话。
+      // v2.21：逻辑抽到 applyModel，/model 名 命令复用同一条路
+      applyModel(mi.dataset.model);
+      closePop(); return;
+    }
+    // v2.20 修复：.hg-proj 也持有自己的 popover（原豁免只认 .hg-chip，
+    // 点项目选择器 → onclick 刚 openPop → 冒泡到这里又 closePop，
+    // 菜单闪一下就没了，表现为「项目下拉无效」）
+    if (!e.target.closest('.hg-pop') && !e.target.closest('.hg-chip')
+        && !e.target.closest('.hg-proj')) closePop();
   });
   if (_HG.model) q('[data-hg-model]').innerHTML = '🧠 ' + esc(_HG.model) + ' ▾';
 
-  // ==================== 项目目录（v2.7：新会话直接开在所选目录）====
-  // 原生目录选择（pywebview pick_dir 已有）；选中后影响下一个新会话——
-  // 当前会话没对话内容时立即重建（同模型 chip 语义），有内容则提示新建后生效。
-  function projChipLabel() {
-    const btn = q('[data-hg-proj]');
-    if (!btn) return;
-    btn.innerHTML = _HG.cwd
-      ? '📁 ' + esc(_HG.cwd.split(/[\\/]/).pop() || _HG.cwd)
-      : '📁 项目';
+  // ==================== 项目目录（v2.7；v2.20 改版）====
+  // 参考 ZCode 布局：选择器挪到输入卡顶部（📁 目录名 ▾），下拉给最近
+  // 目录 + 浏览。持久化 + 最近目录列表（localStorage）；切回历史会话时
+  // cwd 同步过来——同项目连续开会话不必每轮重选。
+  function _hgSaveCwd(dir) {
+    try { dir ? localStorage.setItem('hg-last-cwd', dir)
+             : localStorage.removeItem('hg-last-cwd'); } catch(_) {}
   }
-  q('[data-hg-proj]').onclick = async () => {
-    let dir = '';
-    if (window.pywebview && pywebview.api && pywebview.api.pick_dir) {
-      dir = await pywebview.api.pick_dir() || '';
-    }
-    if (!dir) return;                     // 取消选择不动
-    _HG.cwd = dir;
-    projChipLabel();
+  function _hgCwdHist() {
+    try { return JSON.parse(localStorage.getItem('hg-cwd-hist') || '[]') || []; } catch(_) { return []; }
+  }
+  function _hgCwdPush(dir) {
+    const h = _hgCwdHist().filter(x => x !== dir);
+    h.unshift(dir);
+    try { localStorage.setItem('hg-cwd-hist', JSON.stringify(h.slice(0, 6))); } catch(_) {}
+  }
+  try { _HG.cwd = localStorage.getItem('hg-last-cwd') || null; } catch(_) {}
+  function projChipLabel() {
+    const el = wrap.querySelector('[data-hg-projname]');
+    if (el) el.textContent = _HG.cwd ? (_HG.cwd.split(/[\\/]/).pop() || _HG.cwd) : '选择项目';
+  }
+  function setProj(dir) {
+    _HG.cwd = dir; _hgSaveCwd(dir); _hgCwdPush(dir); projChipLabel();
     if (!_HG.dirty) {
       if (_HG.sid) {
         fetch('/api/harness/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({sid: _HG.sid})}).catch(() => {});
@@ -1973,8 +2573,111 @@ function buildClaudeHarnessTab(opts = {}) {
     } else {
       showBanner('当前会话已有对话，新会话将打开在 ' + dir, 3200);
     }
+  }
+  q('[data-hg-proj]').onclick = (e) => {
+    if (_HG.pop === 'proj') { closePop(); return; }
+    const cur = _HG.cwd;
+    const dirs = (cur ? [cur] : []).concat(_hgCwdHist().filter(d => d !== cur));
+    const items = dirs.map(d =>
+      `<div class="hg-pop-item${d === cur ? ' on' : ''}" data-dir="${esc(d)}"><b>${esc(d.split(/[\\/]/).pop() || d)}</b><span>${esc(d)}</span></div>`).join('')
+      || '<div class="hg-pop-empty">还没有选择过项目目录</div>';
+    openPop('proj', e.currentTarget,
+      `<div class="hg-pop-title">项目目录（新会话打开在此）</div>${items}` +
+      `<div class="hg-pop-item" data-dir="__browse__"><b>📂 浏览其他目录…</b></div>`);
   };
   projChipLabel();
+
+  // ==================== 权限 / 思考等级（v2.20，参考 ZCode）====
+  // 权限：auto=工具直接执行（现状）；confirm=写操作前用 ask_user 卡片确认。
+  // 思考等级：→ 后端 MAX_THINKING_TOKENS。都是新会话参数（同模型 chip 语义）。
+  const _HG_PERMS = {auto: '自动执行', confirm: '变更前确认'};
+  const _HG_THINKS = {low: '低', medium: '中', high: '高', max: '最高'};
+  const _HG_THINK_TOK = {low: '4K', medium: '10K', high: '20K', max: '32K'};
+  function permChipLabel() {
+    const b = q('[data-hg-perm]'); if (b) b.textContent = '🛡 ' + (_HG_PERMS[_HG.perm] || '自动执行') + ' ▾';
+  }
+  function thinkChipLabel() {
+    const b = q('[data-hg-think]'); if (b) b.textContent = '💭 ' + (_HG.thinkLv ? '思考·' + _HG_THINKS[_HG.thinkLv] : '思考') + ' ▾';
+  }
+  q('[data-hg-perm]').onclick = (e) => {
+    if (_HG.pop === 'perm') { closePop(); return; }
+    const items = Object.keys(_HG_PERMS).map(k =>
+      `<div class="hg-pop-item${k === _HG.perm ? ' on' : ''}" data-perm="${k}"><b>${_HG_PERMS[k]}</b><span>${k === 'auto' ? '工具直接执行' : '写文件/改状态前弹卡片确认'}</span></div>`).join('');
+    openPop('perm', e.currentTarget, `<div class="hg-pop-title">权限（对新会话生效）</div>${items}`);
+  };
+  q('[data-hg-think]').onclick = (e) => {
+    if (_HG.pop === 'think') { closePop(); return; }
+    const items = `<div class="hg-pop-item${!_HG.thinkLv ? ' on' : ''}" data-think=""><b>默认</b><span>CLI 自主决定</span></div>` +
+      Object.keys(_HG_THINKS).map(k =>
+        `<div class="hg-pop-item${k === _HG.thinkLv ? ' on' : ''}" data-think="${k}"><b>${_HG_THINKS[k]}</b><span>${_HG_THINK_TOK[k]} tokens</span></div>`).join('');
+    openPop('think', e.currentTarget, `<div class="hg-pop-title">思考等级（对新会话生效）</div>${items}`);
+  };
+  permChipLabel(); thinkChipLabel();
+
+  // ==================== 识图会话工作指示（v2.19）====================
+  // 识图会话是 hidden 后台会话，不进会话列表、前端也没订阅它的 SSE——
+  // 它收没收到任务、干没干完，用户完全看不见。3s 轮询 /vision_status：
+  // 顶栏常驻小指示（空闲 / 处理中+计时 / 未运行），状态跃迁（新任务进来、
+  // 一轮返回）在输入卡上方冒一个小气泡，4s 自灭。1s 本地计时器只刷文本。
+  const visIndEl = q('[data-hg-visind]');
+  const visBtnEl = q('[data-hg-vision]');
+  // v2.21：侧栏按钮状态徽标（用户要求：未启用/已启动/识别中 直接可见）
+  function visBtnState(txt, cls) {
+    visBtnEl.innerHTML = _HG_EYE + ' 识图会话 <span class="hg-vstat ' + (cls || 'off') + '">· ' + esc(txt) + '</span>';
+  }
+  let _visToastTimer = null;
+  function visToast(text) {
+    let t = wrap.querySelector('.hg-vis-toast');
+    if (!t) {
+      t = document.createElement('div');
+      t.className = 'hg-vis-toast';
+      q('.hg-card-wrap').appendChild(t);
+    }
+    t.textContent = text;
+    t.classList.add('on');
+    clearTimeout(_visToastTimer);
+    _visToastTimer = setTimeout(() => t.classList.remove('on'), 4000);
+  }
+  let _visPrev = null;               // {busy, since}
+  async function pollVision() {
+    let j = null;
+    try { j = await (await fetch('/api/harness/vision_status')).json(); } catch(_) {}
+    if (!j || !j.ok) return;          // 拉失败保持现状，别把按钮刷成误导态
+    if (!j.enabled) {
+      visIndEl.style.display = 'none';
+      visBtnState('未启用', 'off');
+      return;
+    }
+    const busy = !!j.busy, since = j.busy_since || null;
+    visIndEl.style.display = '';
+    visIndEl.classList.toggle('busy', busy);
+    visIndEl.title = '识图会话「' + (j.name || '') + '」· ' + (j.model || '默认模型');
+    // v2.20：多模态优先——没有需要识图的会话时指示器改说「多模态直读」，
+    // 不再常驻一句让人困惑的「未运行」。innerHTML 嵌 SVG 眼睛（emoji 嫌丑）
+    visIndEl.innerHTML = _HG_EYE + '<span>' + (busy
+      ? '识图 · 处理中 ' + fmtDur((since ? Date.now() - since : 0) / 1000)
+      : (j.alive ? '识图 · 空闲'
+         : (j.needed ? '识图 · 未运行' : '多模态直读'))) + '</span>';
+    // v2.21：侧栏按钮同步状态——alive=已启动(绿)；busy=识别中(蓝)；
+    // 不在跑但需要=启动中(黄，gc/发送钩子正在自动拉起)；不需要=多模态直读
+    visBtnState(busy ? '识别中 ' + fmtDur((since ? Date.now() - since : 0) / 1000)
+      : (j.alive ? '已启动' : (j.needed ? '启动中…' : '多模态直读')),
+      busy ? 'busy' : (j.alive ? 'ok' : (j.needed ? 'wait' : 'off')));
+    if (_visPrev) {
+      if (busy && !_visPrev.busy) visToast('识图会话已收到任务，正在处理…');
+      else if (!busy && _visPrev.busy) visToast('识图会话已返回结论');
+    }
+    _visPrev = {busy, since};
+  }
+  pollVision();
+  setInterval(pollVision, 3000);
+  setInterval(() => {                 // 计时秒级刷新，不必等下一轮轮询
+    if (_visPrev && _visPrev.busy && _visPrev.since) {
+      const t = '识别中 ' + fmtDur((Date.now() - _visPrev.since) / 1000);
+      visIndEl.innerHTML = _HG_EYE + '<span>识图 · 处理中 ' + fmtDur((Date.now() - _visPrev.since) / 1000) + '</span>';
+      visBtnState(t, 'busy');
+    }
+  }, 1000);
 
   // ==================== 识图会话配置（v2.14）====================
   // 后台常驻一个专用识图会话（固定多模态模型 + 固定 peer 名字）。主会话
@@ -2200,6 +2903,7 @@ function buildClaudeHarnessTab(opts = {}) {
 
   // ==================== 初始 ====================
   showWelcome();
+  _hgDrawCtxRing(0, _HG_CTX_FALLBACK);   // v2.20：上下文环常态显示（0% 占位）
   (async () => {
     await refreshSessions();
     const last = _HG.sessions.find(s => s.has_history);

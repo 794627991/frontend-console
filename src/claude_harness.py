@@ -20,7 +20,7 @@ v2（微信式改造）新增：
 铁律约束：不动 claude_conn/claude_sessions/claude_setup/claude_default；
 不落盘工具日志（Claude 自写 ~/.claude/projects 转写）。
 """
-import os, json, base64, sys, subprocess, threading, time, uuid
+import os, json, base64, re, sys, subprocess, threading, time, uuid
 from queue import Queue, Empty
 
 from flask import Blueprint, request, jsonify, Response, send_from_directory
@@ -90,7 +90,7 @@ VISION_DEFAULT_PROMPT = """你是本机专用的识图会话。你没有串口/S
 
 def _vision_default_cfg():
     return {"enabled": False, "model": "", "prompt": VISION_DEFAULT_PROMPT,
-            "name": VISION_DEFAULT_NAME}
+            "name": VISION_DEFAULT_NAME, "mm_extra": []}
 
 
 def _vision_load():
@@ -105,9 +105,36 @@ def _vision_load():
             cfg["model"] = str(raw.get("model") or "").strip()
             cfg["prompt"] = str(raw.get("prompt") or "").strip() or VISION_DEFAULT_PROMPT
             cfg["name"] = str(raw.get("name") or "").strip() or VISION_DEFAULT_NAME
+            mm = raw.get("mm_extra")
+            if isinstance(mm, list):
+                cfg["mm_extra"] = [str(x).strip() for x in mm if str(x).strip()]
     except Exception:
         pass
     return cfg
+
+
+# ---------------------------------------------------------------------------
+# 多模态模型判定（v2.19）
+#   名字启发式 + 识图配置 mm_extra 名单（正则没覆盖到时用户手补）。
+#   识图会话自身配置的 model 必然多模态，自动并入。
+#   判定影响两处：模型下拉加 👁 标记；start() 时主会话模型已多模态，
+#   注入「直接用 Read 读图」引导，不再教它转交识图会话（用户实测：
+#   明明切了多模态模型，发图还是被引导去找识图会话，不符合逻辑）。
+# ---------------------------------------------------------------------------
+_MM_RE = re.compile(
+    r"vl|vision|omni|multimodal|gpt-4o|gpt-4\.5|gemini"
+    r"|[\d.]v(?:$|[-_.])|^claude",
+    re.I)
+
+
+def _model_is_multimodal(name):
+    name = (name or "").strip()
+    if not name:
+        return False
+    if _MM_RE.search(name):
+        return True
+    cfg = _vision_load()
+    return name in cfg["mm_extra"] or name == cfg["model"]
 
 
 def _vision_save(cfg):
@@ -152,15 +179,43 @@ def ask_bridge_text():
     )
 
 
-def vision_bridge_text():
-    """生成注入每个主会话的「识图转交」引导段（识图未启用则空串）。
+def confirm_bridge_text():
+    """「变更前确认」权限模式的引导段（v2.20）。
+
+    headless -p 下没有原生确认通道，实现落在提示层：要求模型在写操作前
+    用 ask_user（v2.17 的 MCP 卡片）征得同意——和 ZCode 同款「变更前确认」。
+    """
+    return (
+        "【变更前确认】\n"
+        "本会话开启了「变更前确认」权限模式：凡是要产生写入/修改/删除效果的"
+        "操作——Edit/Write/MultiEdit/NotebookEdit、新建或覆盖文件、Bash/"
+        "PowerShell 中会改变文件或系统状态的命令——执行前必须先用 ask_user"
+        "工具（mcp__harness__ask_user）向用户简述将要做的变更（改哪个文件、"
+        "执行什么命令）并征得同意，用户确认后才动手。只读操作（Read/Grep/"
+        "Glob/WebSearch/查看类命令）不需要确认。\n"
+        "用户拒绝或取消时不要绕过：改用只读方式继续，或说明无法继续的原因。"
+    )
+
+
+def vision_bridge_text(model=None):
+    """生成注入每个主会话的识图引导段（识图未启用则空串）。
 
     这是问题2 的核心：主会话默认不知道自己有识图同伴，必须显式告知——
     告知它 peer 名叫什么、什么时候该转交、怎么转交、怎么收回结论。
+    v2.19：主会话模型本身多模态（_model_is_multimodal）→ 反过来注入
+    「直接用 Read 读图」，不再转交——通用转交引导会把能看图的会话
+    也带去麻烦识图会话（用户实测吐槽）。
     """
     cfg = _vision_load()
     if not cfg["enabled"]:
         return ""
+    if model and _model_is_multimodal(model):
+        return (
+            "【识图说明】\n"
+            "本会话使用的模型具备多模态能力：用户发来的图片、截图、照片，"
+            "直接用 Read 工具读取图片路径并分析，自己给出结论，"
+            "不要转交给其他会话处理。"
+        )
     name = cfg["name"]
     return (
         "【识图转交】\n"
@@ -543,7 +598,8 @@ class HarnessSession:
 
     kind = "harness"
 
-    def __init__(self, sid, cwd=None, model=None, session_id=None, title="", name=None):
+    def __init__(self, sid, cwd=None, model=None, session_id=None, title="", name=None,
+                 permission=None, think=None):
         self.sid = sid
         self.port_id = "harness:" + sid[:8]
         self.cwd = cwd or os.path.expanduser("~")
@@ -551,6 +607,11 @@ class HarnessSession:
         self.session_id = session_id or None    # claude 侧真实会话 id（复活用）
         self.title = title or ""
         self.name = name or None    # --name：peer 网络里别人按它寻址
+        # v2.20：权限模式（auto=现状自动执行；confirm=写操作前 ask_user 确认）
+        # 与思考等级（None=CLI 自主；low/medium/high/max → MAX_THINKING_TOKENS）。
+        # 都随会话持久化，新会话 connect 时指定。
+        self.permission = permission if permission in ("auto", "confirm") else "auto"
+        self.think = think if think in ("low", "medium", "high", "max") else None
         self.hidden = False         # 识图后台会话：不进用户会话列表（不 sync_meta）
         self.is_vision = False      # 识图会话：start() 时用固定的基础提示词
         self.created = int(time.time() * 1000)
@@ -578,6 +639,7 @@ class HarnessSession:
         return {"sid": self.sid, "title": self.title, "model": self.model,
                 "cwd": self.cwd, "session_id": self.session_id,
                 "name": self.name,
+                "permission": self.permission, "think": self.think,
                 "created": self.created, "last_active": self.last_active}
 
     def sync_meta(self):
@@ -612,8 +674,14 @@ class HarnessSession:
         if self.is_vision:
             sys_prompt = (_vision_load().get("prompt") or "").strip()
         else:
-            parts = [_collect_system_prompt(self.cwd), vision_bridge_text(),
+            # v2.20：model=None 的会话实际跑 settings 默认模型——多模态判定
+            # 必须按实际模型来，否则默认多模态模型也被教去转交识图会话
+            eff_model = self.model or available_models().get("default")
+            parts = [_collect_system_prompt(self.cwd),
+                     vision_bridge_text(eff_model),
                      ask_bridge_text()]
+            if self.permission == "confirm":
+                parts.append(confirm_bridge_text())
             sys_prompt = "\n\n".join(p for p in parts if p)
         if sys_prompt:
             argv += ["--append-system-prompt", sys_prompt]
@@ -626,6 +694,11 @@ class HarnessSession:
             argv += ["--model", self.model]
         env = dict(os.environ)
         env.setdefault("TERM", "dumb")
+        # v2.20：思考等级 → CLI 的 MAX_THINKING_TOKENS（透传到网关/模型侧
+        # 的 thinking budget；不支持时被忽略，无害）
+        if self.think:
+            env["MAX_THINKING_TOKENS"] = str(
+                {"low": 4096, "medium": 10240, "high": 20480, "max": 31999}[self.think])
         _trust_workspace(self.cwd)
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         self._proc = subprocess.Popen(
@@ -639,13 +712,17 @@ class HarnessSession:
         self.reader.start()
         threading.Thread(target=self._drain_stderr, daemon=True).start()
 
-    def kill_proc(self):
+    def kill_proc(self, quiet=False):
         """只杀进程保元数据与事件缓冲（闲置回收/复活前清理用）。
         v2.14：强杀会让 claude 来不及清理 peer 注册条目（~/.claude/sessions/
         <pid>.json），残留条目指向死 pid —— 下次 ListAgents 会看到幽灵会话。
-        所以杀完主动清理自己那条注册。"""
+        所以杀完主动清理自己那条注册。
+        v2.20：quiet=True 吞掉随之而来的 exit 事件——会话内切模型重启进程
+        是计划内动作，不该弹「会话进程已结束」吓人。"""
         self.alive = False
         self.busy = False
+        if quiet:
+            self._suppress_exit = True
         self.ask_cancel()       # v2.17：别让 MCP 侧的提问继续空转等
         proc, self._proc = self._proc, None
         if proc is not None:
@@ -780,7 +857,12 @@ class HarnessSession:
         finally:
             self.alive = False
             self.busy = False
-            self.emit({"kind": "exit", "text": "会话进程已结束（发送消息将自动恢复）"})
+            # v2.20：计划内重启（会话内切模型）吞掉 exit——只吞一次，
+            # 防止标志位残留吞掉真正的意外退出
+            if getattr(self, "_suppress_exit", False):
+                self._suppress_exit = False
+            else:
+                self.emit({"kind": "exit", "text": "会话进程已结束（发送消息将自动恢复）"})
 
     def _drain_stderr(self):
         proc = self._proc
@@ -919,7 +1001,8 @@ def _get_or_create(sid):
             return None
         s = HarnessSession(m["sid"], cwd=m.get("cwd"), model=m.get("model"),
                            session_id=m.get("session_id"), title=m.get("title", ""),
-                           name=m.get("name"))
+                           name=m.get("name"), permission=m.get("permission"),
+                           think=m.get("think"))
         s.created = m.get("created") or s.created
         s.last_active = m.get("last_active") or s.last_active
         _sessions[sid] = s
@@ -941,7 +1024,16 @@ def _gc_loop():
                     continue
                 if s.alive and not s.busy and (now - s.last_active) > _IDLE_KILL_S * 1000:
                     s.kill_proc()
-            ensure_vision_session()      # 没起/挂了就拉起（配置未启用时是空操作）
+            # v2.20：多模态优先——只有存在「非多模态」的活用户会话才需要识图
+            # 会话兜底；不需要时把闲置的识图会话收掉（不白占一个后台 claude
+            # 进程；正在忙的不动）。配置未启用时 ensure_vision_session 是空操作。
+            if _vision_needed():
+                ensure_vision_session()
+            else:
+                with _vision_lock:
+                    v = _vision_obj[0]
+                if v and v.alive and not v.busy:
+                    v.kill_proc()
         except Exception:
             pass
 
@@ -953,9 +1045,31 @@ def _ensure_gc():
         threading.Thread(target=_gc_loop, daemon=True).start()
 
 
-def ensure_vision_bg():
+def _vision_needed(new_model=None):
+    """当前是否需要识图会话（v2.20：多模态优先）。
+
+    用户口径：模型本身多模态就直接用主会话读图，只有存在「非多模态」的
+    活用户会话（或即将新建的会话模型非多模态）才需要识图会话兜底。
+    """
+    if new_model is not None:
+        return not _model_is_multimodal(new_model)
+    default_model = available_models().get("default")
+    with _sessions_lock:
+        for s in list(_sessions.values()):
+            if getattr(s, "hidden", False) or getattr(s, "is_vision", False):
+                continue
+            # model=None 按 settings 默认模型判（实际跑的就是它）
+            if s.alive and not _model_is_multimodal(s.model or default_model):
+                return True
+    return False
+
+
+def ensure_vision_bg(new_model=None):
     """工具启动 claude 后自动拉起识图会话（放线程里，不阻塞启动）。
-    daemon 线程 + 吞异常：识图起不来不能影响主功能可用。"""
+    daemon 线程 + 吞异常：识图起不来不能影响主功能可用。
+    v2.20：带模型判定——多模态会话不需要识图，不拉（省一个后台 claude 进程）。"""
+    if new_model is not None and _model_is_multimodal(new_model):
+        return
     def _run():
         try:
             ensure_vision_session()
@@ -1135,18 +1249,24 @@ def harness_connect():
     if not os.path.isdir(cwd):
         return jsonify({"ok": False, "err": "目录不存在：%s" % cwd}), 400
     _ensure_gc()
-    ensure_vision_bg()      # v2.14：启动 claude 会话即后台拉起识图会话
     if sid:
         s = _get_or_create(sid)
         if not s:
             return jsonify({"ok": False, "err": "会话不存在"}), 404
         if not s.alive and not s.revive_if_dead():
             return jsonify({"ok": False, "err": "会话已失效（无法恢复上下文）"}), 400
+        # v2.20：多模态会话不拉识图（模型自己能读图）；model=None 按
+        # settings 默认模型判（实际跑的就是它）
+        eff = s.model or available_models().get("default")
+        if not _model_is_multimodal(eff):
+            ensure_vision_bg(eff)
         return jsonify({"ok": True, "port_id": s.port_id, "sid": s.sid, "kind": "harness",
                         "cwd": s.cwd, "model": s.model, "title": s.title})
     # 新会话
     new_sid = uuid.uuid4().hex
-    s = HarnessSession(new_sid, cwd=cwd, model=model)
+    s = HarnessSession(new_sid, cwd=cwd, model=model,
+                       permission=(data.get("permission") or "").strip() or None,
+                       think=(data.get("think") or "").strip() or None)
     try:
         s.start()
     except Exception as e:
@@ -1154,6 +1274,9 @@ def harness_connect():
     s.sync_meta()
     with _sessions_lock:
         _sessions[new_sid] = s
+    # v2.14：启动 claude 会话即后台拉起识图会话；v2.20：多模态优先——
+    # 新会话模型自己能读图就不拉（s.model 空时用 settings 默认模型判）
+    ensure_vision_bg(s.model or available_models().get("default"))
     return jsonify({"ok": True, "port_id": s.port_id, "sid": s.sid, "kind": "harness",
                     "cwd": s.cwd, "model": s.model, "title": s.title})
 
@@ -1214,6 +1337,10 @@ def harness_send():
     ok, err = s.send_message(text, images or None, files or None)
     if not ok:
         return jsonify({"ok": False, "err": err}), 400
+    # v2.21：兜底即时拉起——非多模态会话发消息时若识图会话不在跑，当场
+    # 起一个（异步线程），不等 GC 周期。重复调用是幂等的（已在跑就空操作）
+    if _vision_needed():
+        ensure_vision_bg()
     return jsonify({"ok": True})
 
 
@@ -1225,6 +1352,125 @@ def harness_interrupt():
         return jsonify({"ok": False, "err": "会话不存在"}), 404
     ok, err = s.interrupt()
     return jsonify({"ok": ok, "err": err}) if not ok else jsonify({"ok": True})
+
+
+@harness_bp.route("/kill", methods=["POST"])
+def harness_kill():
+    """手动退出进程（/exit 命令）。会话记录保留，下次发消息自动 --resume。"""
+    data = request.get_json(force=True, silent=True) or {}
+    s = _get_or_create((data.get("sid") or "").strip())
+    if not s:
+        return jsonify({"ok": False, "err": "会话不存在"}), 404
+    if not s.alive:
+        return jsonify({"ok": True, "note": "进程已不在运行"})
+    s.kill_proc(quiet=False)     # 不吞 exit：让前端收到「进程已结束」事件收尾
+    return jsonify({"ok": True})
+
+
+@harness_bp.route("/ctx")
+def harness_ctx():
+    """上下文用量（v2.20 兜底数据源）。
+
+    实测三个数据源的可用性：流式 assistant 事件 usage 恒 0（网关不给）、
+    result 事件 usage 真实但**只有完整结束的轮次才有**（中断=杀进程，CLI
+    来不及发）——习惯性中断/排队的会话环因此常驻 0%（用户实测）。落盘
+    转写 jsonl 里每条 assistant 的 usage 是真实单轮口径。这里取值顺序：
+    本进程记到的 last_result（带 modelUsage 真实窗口）→ jsonl 尾部倒扫
+    最后一条非零 usage。"""
+    s = _get_or_create((request.args.get("sid") or "").strip())
+    if not s:
+        return jsonify({"ok": False, "err": "会话不存在"}), 404
+    if not s.session_id:
+        return jsonify({"ok": True, "used": 0, "window": 0, "sid": s.sid})
+    used, window = 0, 0
+    # last_result 只贡献窗口（它可能过期：压缩前最后一轮的 result 会一直
+    # 占位，后面轮次全被中断时环就卡在旧值）；用量以 jsonl 最新落盘为准
+    lr = getattr(s, "last_result", None) or {}
+    try:
+        mu = lr.get("modelUsage") or {}
+        for k in mu:
+            w = (mu[k] or {}).get("contextWindow") or 0
+            window = max(window, int(w))
+        u = lr.get("usage") or {}
+        used = (u.get("input_tokens") or 0) + (u.get("cache_read_input_tokens") or 0) \
+            + (u.get("cache_creation_input_tokens") or 0)
+    except Exception:
+        used = 0
+    # jsonl 尾部倒扫（优先级最高）：每条 assistant 落盘行都是最新上下文状态，
+    # 跳过子代理行（isSidechain，上下文口径与主链无关）。
+    # 压缩边界（isCompactSummary）：倒扫自新向旧，撞到边界说明边界之后的行
+    # 全扫完了还没找到 assistant —— 即压缩后尚未有新轮次，此时旧值全部过期
+    # （实测 /compact 后 /ctx 仍显示压缩前 708K，真实只有 40K），必须归零。
+    import glob as _glob
+    path = None
+    proj = os.path.join(os.path.expanduser("~"), ".claude", "projects")
+    for cand in _glob.glob(os.path.join(proj, "*", s.session_id + ".jsonl")):
+        path = cand
+        break
+    found = False
+    compacted = False
+    if path:
+        try:
+            with open(path, "rb") as f:
+                f.seek(0, os.SEEK_END)
+                size = f.tell()
+                f.seek(max(0, size - 1048576))     # 尾部 1MB（大行/多附件保险）
+                tail = f.read().decode("utf-8", errors="replace")
+            for raw in reversed(tail.splitlines()):
+                raw = raw.strip()
+                if '"isCompactSummary":true' in raw:
+                    if not found:
+                        compacted = True
+                        used = 0
+                    break
+                if '"type":"assistant"' not in raw or '"usage"' not in raw:
+                    continue
+                if '"isSidechain":true' in raw:
+                    continue
+                try:
+                    o = json.loads(raw)
+                except Exception:
+                    continue          # 块首半行被截断，跳过
+                uu = (o.get("message") or {}).get("usage") or {}
+                v = (uu.get("input_tokens") or 0) + (uu.get("cache_read_input_tokens") or 0) \
+                    + (uu.get("cache_creation_input_tokens") or 0)
+                if isinstance(v, int) and v > 0:
+                    used = v
+                    found = True
+                    break
+        except OSError:
+            pass
+    return jsonify({"ok": True, "used": used, "window": window, "sid": s.sid,
+                    "compacted": compacted,
+                    "model": s.model or available_models().get("default") or ""})
+
+
+@harness_bp.route("/set_model", methods=["POST"])
+def harness_set_model():
+    """会话内切模型（v2.20 强需求：不再要求新建会话）。
+
+    claude 进程的 --model 是启动参数，活进程改不了——做法是 quiet 杀掉 +
+    --resume 同一 session_id 重启：上下文连续，新模型下次回复即生效。
+    引导词随 start() 按新模型重新生成（多模态直读/识图转交口径跟着变）。
+    前端收 model_switched 事件渲染分割线。"""
+    data = request.get_json(force=True, silent=True) or {}
+    sid = (data.get("sid") or "").strip()
+    model = (data.get("model") or "").strip() or None
+    s = _get_or_create(sid)
+    if not s:
+        return jsonify({"ok": False, "err": "会话不存在"}), 404
+    if s.busy:
+        return jsonify({"ok": False, "err": "claude 正在回复中，回复结束后再切模型"}), 409
+    if model == s.model:
+        return jsonify({"ok": True, "model": s.model})
+    s.model = model
+    if s.alive:
+        s.kill_proc(quiet=True)          # 吞 exit：计划内重启不弹「进程已结束」
+    if s.session_id:
+        s.revive_if_dead()               # 失败无妨：下次 send 前仍会 revive
+    s.sync_meta()
+    s.emit({"kind": "model_switched", "text": model or "默认模型"})
+    return jsonify({"ok": True, "model": s.model})
 
 
 @harness_bp.route("/stream")
@@ -1263,6 +1509,8 @@ def harness_sessions():
         alive, busy = live.get(sid, (False, False))
         items.append({"sid": sid, "title": m.get("title") or "新会话",
                       "model": m.get("model"), "cwd": m.get("cwd", ""),
+                      "permission": m.get("permission") or "auto",
+                      "think": m.get("think"),
                       "session_id": m.get("session_id"), "has_history": bool(m.get("session_id")),
                       "created": m.get("created", 0), "last_active": m.get("last_active", 0),
                       "alive": alive, "busy": busy})
@@ -1322,7 +1570,47 @@ def harness_delete():
 
 @harness_bp.route("/models")
 def harness_models():
-    return jsonify({"ok": True, **available_models()})
+    d = available_models()
+    # v2.19：附带多模态名单（前端下拉打 👁 标记；判定口径同 start() 注入）
+    return jsonify({"ok": True, "models": d.get("models", []),
+                    "default": d.get("default"),
+                    "mm": [m for m in d.get("models", []) if _model_is_multimodal(m)]})
+
+
+@harness_bp.route("/vision_status")
+def harness_vision_status():
+    """识图会话工作状态（v2.19 前端指示器/冒泡轮询用）。
+
+    hidden 会话不出现在会话列表、前端也没订阅它的 SSE，状态只能拉：
+    enabled / alive / busy / busy_since（处理计时起点=最近一条
+    user_echo）/ recent（尾部事件摘要，前端据此判定「收到任务」「已返回」
+    的跃迁）。"""
+    cfg = _vision_load()
+    if not cfg["enabled"]:
+        return jsonify({"ok": True, "enabled": False, "needed": False})
+    with _vision_lock:
+        s = _vision_obj[0]
+    out = {"ok": True, "enabled": True, "name": cfg["name"], "model": cfg["model"],
+           "alive": bool(s and s.alive), "busy": bool(s and s.busy),
+           "needed": _vision_needed(),
+           "last_seq": 0, "recent": [], "busy_since": None}
+    if s:
+        out["last_seq"] = s._seq
+        with s.events_lock:
+            evs = list(s.events)[-12:]
+        for e in reversed(evs):
+            if e.get("kind") == "user_echo":
+                out["busy_since"] = e.get("ts")
+                break
+        recent = []
+        for e in evs:
+            brief = e.get("text") or ""
+            if not brief and isinstance(e.get("data"), dict):
+                brief = e.get("data").get("type") or ""
+            recent.append({"ts": e.get("ts"), "kind": e.get("kind"),
+                           "brief": str(brief)[:80]})
+        out["recent"] = recent
+    return jsonify(out)
 
 
 @harness_bp.route("/system_prompt", methods=["GET"])

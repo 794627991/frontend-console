@@ -292,9 +292,27 @@ def sys_python():
 
 # ---- API 配置接口 ----
 
+# UI 管理的模型映射档位 → env 键（v2.22）。MODEL 与 MODEL_NAME 成对的档位
+# 保存时两键同写同值；Flash/子代理只有 MODEL 键。
+_MODEL_SLOTS = [
+    ("main",    "ANTHROPIC_MODEL",                    None),
+    ("opus",    "ANTHROPIC_DEFAULT_OPUS_MODEL",       "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME"),
+    ("sonnet",  "ANTHROPIC_DEFAULT_SONNET_MODEL",     "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME"),
+    ("haiku",   "ANTHROPIC_DEFAULT_HAIKU_MODEL",      "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME"),
+    ("fable",   "ANTHROPIC_DEFAULT_FABLE_MODEL",      "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME"),
+    ("flash",   "ANTHROPIC_DEFAULT_FLASH_MODEL",      "ANTHROPIC_DEFAULT_FLASH_MODEL_NAME"),
+    ("subagent", "CLAUDE_CODE_SUBAGENT_MODEL",        None),
+]
+
+
+def _env_models(env):
+    """读出各模型档位现值（UI 显示用）。"""
+    return {slot: env.get(k, "") for slot, k, _nk in _MODEL_SLOTS}
+
+
 @claude_default_bp.route("/api/claude/api_config")
 def claude_api_config_get():
-    """读当前 API 配置：token（打码显示）、BASE_URL（只读）、settings 路径。"""
+    """读当前 API 配置：token（打码）、BASE_URL、模型映射、上下文窗口/压缩阈值。"""
     cur = _read_settings()
     env = cur.get("env", {}) if isinstance(cur.get("env"), dict) else {}
     token = env.get("ANTHROPIC_AUTH_TOKEN", "")
@@ -305,6 +323,10 @@ def claude_api_config_get():
         "has_token": bool(token),
         "base_url": env.get("ANTHROPIC_BASE_URL", ""),
         "default_base_url": DEFAULT_BASE_URL,
+        "models": _env_models(env),
+        "ctx_window": env.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW", ""),
+        "max_ctx": env.get("CLAUDE_CODE_MAX_CONTEXT_TOKENS", ""),
+        "compact_pct": env.get("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", ""),
         "settings_path": _settings_path(),
         "statusline_path": _statusline_path(),
     })
@@ -312,23 +334,157 @@ def claude_api_config_get():
 
 @claude_default_bp.route("/api/claude/api_config", methods=["POST"])
 def claude_api_config_set():
-    """写 AUTH_TOKEN（唯一可改项）。body: {token}
-    注意：不铺设默认 settings——settings/statusline 只在首次安装完成时
-    铺一次（用户要求），这里只做纯 token 写入。"""
+    """写 API 配置（v2.22：不止 token）。body（全部可选，只写提供的字段）:
+    {token?, base_url?, models?:{main,opus,...,subagent}, ctx_window?, max_ctx?, compact_pct?}
+    空串 = 该项不改。模型档位写 MODEL 键，成对的同时写 _NAME 键（同值）。"""
     data = request.get_json(force=True, silent=True) or {}
-    token = (data.get("token") or "").strip()
-    if not token:
-        return jsonify({"ok": False, "err": "API Token 不能为空"}), 400
     cur = _read_settings()
     env = cur.setdefault("env", {})
     if not isinstance(env, dict):
         env = cur["env"] = {}
-    env["ANTHROPIC_AUTH_TOKEN"] = token
-    # BASE_URL 只补缺不覆盖（用户定）：已有值不动——本机代理/自定义网关
-    # 不受保存 Token 影响；全新机器（首装铺设）拿到 lanz 网关默认值
-    if not env.get("ANTHROPIC_BASE_URL"):
-        env["ANTHROPIC_BASE_URL"] = DEFAULT_BASE_URL
+
+    token = (data.get("token") or "").strip()
+    if token:
+        env["ANTHROPIC_AUTH_TOKEN"] = token
+    base_url = (data.get("base_url") or "").strip()
+    if base_url:
+        env["ANTHROPIC_BASE_URL"] = base_url      # v2.22：网关可改（智谱/lanzi 多网关）
+    models = data.get("models") or {}
+    if isinstance(models, dict):
+        for slot, val in models.items():
+            val = (val or "").strip()
+            if not val:
+                continue                           # 留空 = 不改
+            hit = next((s for s in _MODEL_SLOTS if s[0] == slot), None)
+            if not hit:
+                continue
+            env[hit[1]] = val
+            if hit[2]:
+                env[hit[2]] = val
+    for field, key in (("ctx_window", "CLAUDE_CODE_AUTO_COMPACT_WINDOW"),
+                       ("max_ctx", "CLAUDE_CODE_MAX_CONTEXT_TOKENS"),
+                       ("compact_pct", "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE")):
+        v = (data.get(field) or "").strip()
+        if v:
+            env[key] = v
     _write_settings(cur)
+    return jsonify({"ok": True})
+
+
+# ---- API 配置方案（多套一键切换，设置界面「配置方案」区）----
+# 存 ~/.serialconsole_pro/claude_profiles.json（工具自己的数据目录，与
+# settings.json 分离）。v2.22 快照制：每个方案存整份 settings.json——
+# 不同网关的 TOKEN/BASE_URL/模型映射/上下文窗口都不同，切换时整份写回。
+
+def _profiles_path():
+    d = os.path.join(os.path.expanduser("~"), ".serialconsole_pro")
+    try:
+        os.makedirs(d, exist_ok=True)
+    except OSError:
+        pass
+    return os.path.join(d, "claude_profiles.json")
+
+
+def _read_profiles():
+    try:
+        with open(_profiles_path(), "r", encoding="utf-8") as f:
+            d = json.load(f)
+        if isinstance(d, dict) and isinstance(d.get("profiles"), list):
+            return d
+    except Exception:
+        pass
+    return {"profiles": [], "active": ""}
+
+
+def _write_profiles(d):
+    p = _profiles_path()
+    tmp = p + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(d, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, p)
+
+
+def _mask_token(t):
+    return (t[:8] + "…" + t[-4:]) if len(t) > 16 else ("已设置" if t else "")
+
+
+@claude_default_bp.route("/api/claude/profiles")
+def claude_profiles_get():
+    """方案列表 + 当前激活名（打码显示 token）。"""
+    d = _read_profiles()
+    out = []
+    for p in d["profiles"]:
+        env = (p.get("settings") or {}).get("env") or p.get("env") or {}   # v2.22 快照 / v2.21 旧格式
+        if not isinstance(env, dict):
+            env = {}
+        out.append({"name": p.get("name", ""),
+                    "token_masked": _mask_token(env.get("ANTHROPIC_AUTH_TOKEN", "")),
+                    "base_url": env.get("ANTHROPIC_BASE_URL", "")})
+    return jsonify({"ok": True, "profiles": out, "active": d.get("active", ""),
+                    "settings_path": _settings_path()})
+
+
+@claude_default_bp.route("/api/claude/profiles/save", methods=["POST"])
+def claude_profiles_save():
+    """把当前 settings.json 整份存为一个方案（同名覆盖）。
+    v2.22 快照制——不同网关不止 TOKEN/BASE_URL 不同，模型映射
+    （ANTHROPIC_MODEL / ANTHROPIC_DEFAULT_*_MODEL）也随网关变，
+    只切两键会得到「新网关 + 旧模型名」的废配置（用户实测）。body: {name}"""
+    data = request.get_json(force=True, silent=True) or {}
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify({"ok": False, "err": "方案名不能为空"}), 400
+    prof = {"name": name, "settings": _read_settings()}
+    d = _read_profiles()
+    for i, p in enumerate(d["profiles"]):
+        if p.get("name") == name:
+            d["profiles"][i] = prof
+            break
+    else:
+        d["profiles"].append(prof)
+    _write_profiles(d)
+    return jsonify({"ok": True})
+
+
+@claude_default_bp.route("/api/claude/profiles/apply", methods=["POST"])
+def claude_profiles_apply():
+    """一键切换：方案整份写回 settings.json（v2.22 快照制）。
+    旧格式方案（v2.21 只存 env 两键）退回合并模式。
+    对已运行的 claude 进程不生效——env 是启动时注入的，新会话起效。body: {name}"""
+    data = request.get_json(force=True, silent=True) or {}
+    name = (data.get("name") or "").strip()
+    d = _read_profiles()
+    prof = next((p for p in d["profiles"] if p.get("name") == name), None)
+    if not prof:
+        return jsonify({"ok": False, "err": "方案不存在"}), 404
+    snap = prof.get("settings")
+    if isinstance(snap, dict) and snap:
+        _write_settings(snap)                     # v2.22：整份替换
+    else:
+        # 旧格式：只并入 env 两键
+        cur = _read_settings()
+        env = cur.setdefault("env", {})
+        if not isinstance(env, dict):
+            env = cur["env"] = {}
+        for k, v in (prof.get("env") or {}).items():
+            if v:
+                env[k] = v
+        _write_settings(cur)
+    d["active"] = name
+    _write_profiles(d)
+    return jsonify({"ok": True})
+
+
+@claude_default_bp.route("/api/claude/profiles/del", methods=["POST"])
+def claude_profiles_del():
+    """删除方案（不动 settings.json）。body: {name}"""
+    data = request.get_json(force=True, silent=True) or {}
+    name = (data.get("name") or "").strip()
+    d = _read_profiles()
+    d["profiles"] = [p for p in d["profiles"] if p.get("name") != name]
+    if d.get("active") == name:
+        d["active"] = ""
+    _write_profiles(d)
     return jsonify({"ok": True})
 
 
