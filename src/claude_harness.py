@@ -1130,7 +1130,8 @@ def transcript_for(s):
                         ps_ok = (o.get("promptSource") in (None, "typed", "sdk")) or \
                             (o.get("origin") or {}).get("kind") == "human"
                         if t and ps_ok and not _SKIP_RE.match(t.strip()):
-                            lines.append({"role": "user", "text": t[:8000]})
+                            lines.append({"role": "user", "text": t[:8000],
+                                          "ts": o.get("timestamp") or ""})
                     elif isinstance(content, list):
                         trs = [b for b in content
                                if isinstance(b, dict) and b.get("type") == "tool_result"]
@@ -1162,7 +1163,8 @@ def transcript_for(s):
                             files = m_att
                             t = _strip_att(t)
                         if (t or imgs) and not _SKIP_RE.match((t or "").strip()):
-                            lines.append({"role": "user", "text": t[:8000], "images": imgs, "files": files})
+                            lines.append({"role": "user", "text": t[:8000], "images": imgs, "files": files,
+                                          "ts": o.get("timestamp") or ""})
                 elif typ == "assistant" and isinstance(content, list):
                     texts, tools, thinks = [], [], []
                     for b in content:

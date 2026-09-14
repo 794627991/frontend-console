@@ -162,6 +162,7 @@ const _HG = {
   histNav: null,        // 输入历史导航 {history, index, draft, recalled}
   mention: null,        // @ 引用状态 {at, files, sel}
   HIST_PAGE: 50,        // v2.24 多段式历史：每段渲染条数（大会话 DOM 瘦身，懒抽屉后再砍一档）
+  lastTs: 0,            // v2.24.5 微信式时间条：上一条时间（>5min 才插新条）
   HIST_CAP: 300,        // v2.24 正常模式翻阅上限——更早的进「只读禅模式」看
   histAll: null,        // 当前会话全量 transcript 行（多段渲染源）
   histStart: 0,         // 已渲染起点 index（0=全量）
@@ -956,8 +957,35 @@ function buildClaudeHarnessTab(opts = {}) {
     scrollBottom();
     return el;
   }
-  function renderUser(text, images, files, live) {
+  // ==================== v2.24.5 微信式时间条 ====================
+  // 距上一条时间 >5 分钟才插（微信同款），插在触发消息前；格式分级：
+  // 今天 HH:mm / 昨天 HH:mm / 今年 M月d日 HH:mm / 跨年 yyyy年M月d日。
+  function _timeFmt(ms) {
+    const d = new Date(ms), n = new Date();
+    const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+    const sameDay = (a, b) => a.getFullYear() === b.getFullYear() &&
+      a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    if (sameDay(d, n)) return hm;
+    const yst = new Date(n); yst.setDate(n.getDate() - 1);
+    if (sameDay(d, yst)) return '昨天 ' + hm;
+    const md = (d.getMonth() + 1) + '月' + d.getDate() + '日';
+    return d.getFullYear() === n.getFullYear() ? md + ' ' + hm
+      : d.getFullYear() + '年' + md + ' ' + hm;
+  }
+  function _maybeTimeBar(ms, host) {
+    if (!ms) return;
+    if (ms - (_HG.lastTs || 0) < 5 * 60 * 1000) return;
+    _HG.lastTs = ms;
+    const t = document.createElement('div');
+    t.className = 'h-time';
+    t.dataset.ms = String(ms);
+    t.textContent = _timeFmt(ms);
+    (host || flow).appendChild(t);
+  }
+
+  function renderUser(text, images, files, live, tsMs) {
     grpFinalize(false);                       // v2.18：上一组定稿，本组接棒
+    _maybeTimeBar(tsMs || Date.now());        // v2.24.5 微信式时间条（气泡前）
     endThinking(); closeRun();
     _HG.asstText = false;                     // 本轮 AI 尚未输出文本（占位/组头判据）
     const d = document.createElement('div');
@@ -1091,7 +1119,7 @@ function buildClaudeHarnessTab(opts = {}) {
       // v2.24.1 回退气泡壳化：renderUser 承担组管线边界（上一组定稿/开新组），
       // 壳化绕过管线导致思考/工具挂错组（排序乱，用户实测不可接受）——
       // 正确性优先，历史气泡恢复全渲染（懒抽屉+懒高亮已覆盖大头开销）。
-      renderUser(l.text, imgs, files, false);
+      renderUser(l.text, imgs, files, false, l.ts ? new Date(l.ts).getTime() : 0);
     }
     else if (l.role === 'assistant') renderAsst(l.text);
     else if (l.role === 'thinking') {
@@ -1829,6 +1857,7 @@ function buildClaudeHarnessTab(opts = {}) {
   // 扩/收都从新起点全量重渲（renderHistLine 顺序敏感：thinking/工具归组依赖
   // 时序，prepend 乱序会组错乱），扩段锚定滚动、收缩回贴底。
   function _histRender(lines, start) {
+    _HG.lastTs = 0;   // v2.24.5：重建期时间条从零起算（第一条 user 带时间）
     // v2.24 CAP：正常模式渲染起点不得越过 capStart（翻阅上限）——更早的
     // 历史只能进「只读禅模式」看（_roEnter），保住正常模式的 DOM 省流
     const capStart = Math.max(0, lines.length - _HG.HIST_CAP);
@@ -1985,6 +2014,15 @@ function buildClaudeHarnessTab(opts = {}) {
   }
   function _roLine(l, hi, ro) {
     if (l.role === 'user') {
+      // v2.24.5 只读层同款时间条（ro 自己的间隔状态）
+      const ms = l.ts ? new Date(l.ts).getTime() : 0;
+      if (ms && ms - (ro._lastTs || 0) >= 5 * 60 * 1000) {
+        ro._lastTs = ms;
+        const t = document.createElement('div');
+        t.className = 'h-time';
+        t.textContent = _timeFmt(ms);
+        ro.appendChild(t);
+      }
       // v2.24.1 回退壳化（组管线正确性优先）：直接渲染，靠分段+懒抽屉省
       const d = document.createElement('div');
       d.className = 'h-msg user';
@@ -2089,6 +2127,8 @@ function buildClaudeHarnessTab(opts = {}) {
     const c = _HG.cache[sid];
     if (c) {
       flow.innerHTML = c.html; _HG.seq = c.seq;
+      // v2.24.5：时间条状态从 DOM 恢复（最后一条 .h-time 的 ms）
+      _HG.lastTs = +((([...flow.querySelectorAll('.h-time')].pop() || {}).dataset || {}).ms || 0);
       // 快照恢复后重建 rowById（busy 会话切回时 tool_result 事件要挂回行）
       flow.querySelectorAll('[data-tid]').forEach(el => { _HG.rowById[el.dataset.tid] = el; });
       // v2.9：缓存恢复不能盲目清 busy——切走时正在回复的会话，切回后

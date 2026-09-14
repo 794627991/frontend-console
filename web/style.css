@@ -2430,6 +2430,11 @@
   padding-top: 6px; }
 /* v2.24.4：展开卡内的参数 JSON 限高（识图长 prompt 撑爆卡片）——行内摘要不受影响 */
 .h-tool-coll > .h-tool-arg { max-height: 200px; overflow-y: auto; }
+
+/* v2.24.5 微信式时间条（>5 分钟才插，居中灰字） */
+.h-time { align-self: center; width: auto; margin: 10px auto 2px;
+  font-size: 10.5px; color: var(--muted); background: color-mix(in srgb, var(--bg-card) 70%, transparent);
+  border-radius: 10px; padding: 2px 10px; }
 .h-tool-out.err-txt { color: var(--neon-red, #e06c75); }
 
 /* diff（源 createDiff：绿增红删行；v2.8 上下文行暗显 + 长等值段折叠摘要） */
