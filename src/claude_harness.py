@@ -1595,6 +1595,7 @@ def harness_vision_status():
     out = {"ok": True, "enabled": True, "name": cfg["name"], "model": cfg["model"],
            "alive": bool(s and s.alive), "busy": bool(s and s.busy),
            "needed": _vision_needed(),
+           "sid": (s.sid if s else ""),   # v2.24.10 主会话按此拉全文（结论代传兜底）
            "last_seq": 0, "recent": [], "busy_since": None,
            "last_done": 0, "last_brief": ""}
     if s:
