@@ -977,7 +977,7 @@ def transcript_for(s):
     global _SKIP_RE
     if _SKIP_RE is None:
         import re as _re
-        _SKIP_RE = _re.compile(r"^<(local-command-caveat|local-command-stdout|command-name|command-message|command-args|bash-)")
+        _SKIP_RE = _re.compile(r"^(<local-command-caveat|<local-command-stdout|<command-name|<command-message|<command-args|<bash-|Another Claude session sent a message|<cross-session-message)")
     sid = s.session_id
     if not sid:
         return None
