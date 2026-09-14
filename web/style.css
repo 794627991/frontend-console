@@ -2127,13 +2127,29 @@
 .h-mact:hover { color: var(--accent); border-color: var(--accent); }
 .h-msg.asst { align-self: flex-start; }
 .h-msg .h-bubble { padding: 10px 14px; font-size: 13.5px; line-height: 1.7;
-  overflow-x: auto; word-break: break-word; }
-.h-msg.user .h-bubble { border-radius: 14px 14px 4px 14px;
+  overflow-x: auto; word-break: break-word; position: relative; }
+/* v2.24.6 气泡尾巴：旋转方块伪元素画真尖角（用户泡朝右下、AI 泡朝左下），
+   同底色+同侧边框与泡体无缝衔接，微信式指向感 */
+.h-msg.user .h-bubble { border-radius: 14px 14px 10px 14px;
   background: color-mix(in srgb, var(--accent) 18%, var(--bg-card));
   border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border)); }
-.h-msg.asst .h-bubble { border-radius: 14px 14px 14px 4px;
+.h-msg.user .h-bubble::after {
+  content: ''; position: absolute; right: -5px; bottom: 8px;
+  width: 13px; height: 13px; transform: rotate(45deg);
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg-card));
+  border-right: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border));
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border));
+  border-radius: 0 3px 0 0; z-index: -1; }
+.h-msg.asst .h-bubble { border-radius: 14px 14px 14px 10px;
   background: var(--bg-card); border: 1px solid var(--border);
   box-shadow: 0 2px 10px rgba(0,0,0,.18); }
+.h-msg.asst .h-bubble::after {
+  content: ''; position: absolute; left: -5px; bottom: 8px;
+  width: 13px; height: 13px; transform: rotate(45deg);
+  background: var(--bg-card);
+  border-left: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  border-radius: 3px 0 0 0; z-index: -1; }
 .h-bubble p { margin: 0 0 .5em; } .h-bubble p:last-child { margin-bottom: 0; }
 .h-bubble pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
   padding: 8px 10px; overflow-x: auto; margin: .4em 0; }
