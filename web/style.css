@@ -2005,8 +2005,8 @@
    v2.18：每消息一组——.h-grp{ .h-grp-proc{ 双抽屉横排 } + AI 气泡 }，
    收起态组头一行极简（用户：默认只占一小部分），展开不超会话一半 */
 .hg-flow > .h-grp { width: min(820px, 100%); }
-/* v2.24 滚动窗口式历史加载：顶部提示条（v2.24.2 随列靠左） */
-.hg-hist-more { width: auto; margin: 4px 0 8px; display: inline-block;
+/* v2.24 滚动窗口式历史加载：顶部提示条（v2.24.7 恒居中——列靠左后用户仍要提示条居中） */
+.hg-hist-more { align-self: center; width: auto; margin: 4px auto 8px; display: block;
   font-size: 11.5px; color: var(--muted); background: var(--bg-card);
   border: 1px dashed var(--border); border-radius: 14px; padding: 5px 16px; }
 /* v2.24.2：顶部归档入口统一（上滑/点击都进只读模式） */
