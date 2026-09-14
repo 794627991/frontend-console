@@ -1900,6 +1900,18 @@ function buildClaudeHarnessTab(opts = {}) {
   }
 
   let _histBusy = false;   // 重渲期间防 scroll 重入
+  // v2.24.11 扩/收缩前必须重拉 transcript：histAll 是切会话时拉的快照，
+  // 流式期间的新消息（用户刚发的+AI 回复）不在里面——直接用旧快照重渲会
+  // 把它们从界面上抹掉（用户实测「消息突然没了」；jsonl 完好=纯显示层丢失）
+  async function _histRefresh(sidAt, start) {
+    try {
+      const r = await fetch(`/api/harness/transcript?sid=${encodeURIComponent(sidAt)}`);
+      const j = await r.json();
+      if (!j.ok || _HG.sid !== sidAt) return;   // 会话已切走，弃
+      const lines = j.lines || [];
+      _histRender(lines, start == null ? lines.length - _HG.HIST_PAGE : start);
+    } catch(_) {}
+  }
   flow.addEventListener('scroll', () => {
     if (!_HG.histAll || _HG.busy || _histBusy) return;
     const nearTop = flow.scrollTop <= 60;
@@ -1913,16 +1925,20 @@ function buildClaudeHarnessTab(opts = {}) {
       if (_HG.histStart > capStart && !_HG.busy) {
         _histBusy = true;
         const anchorH = flow.scrollHeight - flow.scrollTop;
-        _histRender(_HG.histAll, _HG.histStart - _HG.HIST_PAGE);
-        flow.scrollTop = flow.scrollHeight - anchorH;
-        requestAnimationFrame(() => { _histBusy = false; });
+        const sidAt = _HG.sid;
+        _histRefresh(sidAt, _HG.histStart - _HG.HIST_PAGE).then(() => {
+          flow.scrollTop = flow.scrollHeight - anchorH;
+          requestAnimationFrame(() => { _histBusy = false; });
+        });
       }
     } else if (distBottom <= 80 && shown > _HG.HIST_PAGE * 2) {
-      // 拉回底部：收缩回尾部一段（DOM 瘦身是常态）
+      // 拉回底部：收缩回尾部一段（DOM 瘦身是常态）——先重拉防新消息丢失
       _histBusy = true;
-      _histRender(_HG.histAll, _HG.histAll.length - _HG.HIST_PAGE);
-      flow.scrollTop = flow.scrollHeight;
-      requestAnimationFrame(() => { _histBusy = false; });
+      const sidAt = _HG.sid;
+      _histRefresh(sidAt).then(() => {
+        flow.scrollTop = flow.scrollHeight;
+        requestAnimationFrame(() => { _histBusy = false; });
+      });
     }
   }, { passive: true });
 
