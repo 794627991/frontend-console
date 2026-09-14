@@ -1974,11 +1974,13 @@
   max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hg-top-state { font-size: 11px; color: var(--muted); flex-shrink: 0; }
 
-/* 气泡流：内容居中限宽，微信式左右气泡。
-   v2.2 美化：加左右留白防贴边（用户反馈「气泡顶到边界」），
-   内容列 760→820px，间距加大呼吸感 */
+/* 气泡流：内容限宽，微信式左右气泡。
+   v2.2：加左右留白防贴边，内容列 760→820px；
+   v2.24.2：align-items center→flex-start——列整体靠左（用户定调「气泡
+   要靠左」：居中在宽窗下左侧大片空白，看着像「跑到中间」；靠左贴合
+   工具型界面的紧凑习惯，右侧留白由 .h-msg max-width 自然形成） */
 .hg-flow { flex: 1; overflow-y: auto; padding: 20px 32px; display: flex;
-  flex-direction: column; gap: 12px; align-items: center; }
+  flex-direction: column; gap: 12px; align-items: flex-start; }
 /* v2.10：flow 全部直接子项禁垂直压缩——定高 column flex 子项默认
    flex-shrink:1，超高内容(长思考块/大抽屉)会被按比例压扁到 ~2px 再被
    各自 overflow:hidden 裁掉（v2.9 只豁免了抽屉，用户实测思考块仍被压）。
@@ -1987,7 +1989,10 @@
    WebView2 的 Chromium 版本低于 120 时整条规则被解析器静默丢弃，等于这条
    修复从未生效。改成顶层独立选择器，与文件其余写法一致。 */
 .hg-flow > * { flex-shrink: 0; }
-.hg-flow > .h-msg { width: min(820px, 100%); }
+/* v2.24.4：flow 直接子项的气泡不再固定 820 宽——按内容自适应（用户定调：
+   「我的消息根本就没这么长」短消息短泡，max-width 88% 限长）。
+   AI 泡都在 .h-grp 内（组内 width:100% 全宽）不受影响。 */
+.hg-flow > .h-msg { max-width: min(820px, 88%); }
 .hg-flow > .h-tool, .hg-flow > .h-tool-res { width: min(820px, 100%); max-width: none; }
 .hg-flow > .h-tool-res { padding-left: 10px; }
 .hg-flow > .h-raw { width: min(820px, 100%); }
@@ -2000,15 +2005,13 @@
    v2.18：每消息一组——.h-grp{ .h-grp-proc{ 双抽屉横排 } + AI 气泡 }，
    收起态组头一行极简（用户：默认只占一小部分），展开不超会话一半 */
 .hg-flow > .h-grp { width: min(820px, 100%); }
-/* v2.24 滚动窗口式历史加载：顶部提示条（上滑自动加载，非按钮） */
-.hg-hist-more { align-self: center; width: auto; margin: 4px auto 8px; display: block;
+/* v2.24 滚动窗口式历史加载：顶部提示条（v2.24.2 随列靠左） */
+.hg-hist-more { width: auto; margin: 4px 0 8px; display: inline-block;
   font-size: 11.5px; color: var(--muted); background: var(--bg-card);
   border: 1px dashed var(--border); border-radius: 14px; padding: 5px 16px; }
-/* 翻阅上限后的「只读模式」入口（v2.24 归档查阅） */
-.hg-hist-ro-btn { cursor: pointer; border-style: solid; color: var(--fg);
-  padding: 8px 20px; }
-.hg-hist-ro-btn b { color: var(--accent); }
-.hg-hist-ro-btn:hover b { text-decoration: underline; }
+/* v2.24.2：顶部归档入口统一（上滑/点击都进只读模式） */
+.hg-hist-more { cursor: pointer; }
+.hg-hist-more b { color: var(--accent); }
 
 /* ==================== v2.24 只读禅模式（超长会话历史归档查阅）====================
    全屏覆盖：无侧栏/输入/一切入口，只剩居中历史流（VSCode 禅模式）。
@@ -2019,13 +2022,14 @@
   padding: 10px 22px; border-bottom: 1px solid var(--border);
   background: var(--bg-panel); }
 .hg-ro-title { font-size: 13px; font-weight: 600; color: var(--fg-bright); }
+.hg-ro-busy { font-size: 11.5px; color: var(--accent); animation: hg-think-blink 1.4s ease-in-out infinite; }
 .hg-ro-hint { flex: 1; font-size: 11px; color: var(--muted); }
 .hg-ro-exit { flex-shrink: 0; font-size: 12px; color: var(--muted);
   background: var(--bg-card); border: 1px solid var(--border); border-radius: 7px;
   padding: 5px 14px; cursor: pointer; }
 .hg-ro-exit:hover { color: var(--neon-red); border-color: var(--neon-red); }
 .hg-ro-flow { flex: 1; overflow-y: auto; padding: 20px 32px; display: flex;
-  flex-direction: column; gap: 12px; align-items: center; }
+  flex-direction: column; gap: 12px; align-items: flex-start; }
 .hg-ro-flow > * { flex-shrink: 0; }
 .hg-ro-flow > .h-msg, .hg-ro-flow > .h-tool { width: min(820px, 100%); }
 .hg-ro-flow > .h-msg { max-width: 88%; }
@@ -2424,6 +2428,8 @@
   font-family: var(--font-mono); white-space: pre-wrap; word-break: break-word;
   max-height: 260px; overflow-y: auto; margin-top: 6px; border-top: 1px solid var(--border);
   padding-top: 6px; }
+/* v2.24.4：展开卡内的参数 JSON 限高（识图长 prompt 撑爆卡片）——行内摘要不受影响 */
+.h-tool-coll > .h-tool-arg { max-height: 200px; overflow-y: auto; }
 .h-tool-out.err-txt { color: var(--neon-red, #e06c75); }
 
 /* diff（源 createDiff：绿增红删行；v2.8 上下文行暗显 + 长等值段折叠摘要） */
@@ -2565,6 +2571,14 @@
 .h-ask-opt-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .h-ask-opt-txt b { font-weight: 600; color: var(--fg-bright); }
 .h-ask-desc { color: var(--muted); font-size: 11.5px; line-height: 1.45; }
+/* v2.24.3：提问卡片自由输入框（选项不够时自己打字，回车提交） */
+.h-ask-extra { margin-top: 6px; }
+.h-ask-x { width: 100%; box-sizing: border-box; font-size: 12px;
+  font-family: inherit; color: var(--fg); background: var(--bg-input);
+  border: 1px dashed var(--border); border-radius: 7px; padding: 6px 10px;
+  outline: none; }
+.h-ask-x:focus { border-color: var(--accent); border-style: solid; }
+.h-ask.done .h-ask-x { display: none; }
 .h-ask-foot { display: flex; align-items: center; gap: 10px; padding: 9px 12px;
   border-top: 1px solid var(--border); background: color-mix(in srgb, var(--bg-card) 60%, transparent); }
 .h-ask-submit { border: 1px solid var(--accent); border-radius: 6px;

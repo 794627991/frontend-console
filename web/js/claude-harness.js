@@ -368,6 +368,13 @@ function buildClaudeHarnessTab(opts = {}) {
         opts.appendChild(b);
       });
       box.appendChild(opts);
+      // v2.24.3：每题自由输入（用户定调「选项不够时要能自己打字」）——
+      // 留空提交=纯选项；只输入不点选也放行（自由作答）
+      const ex = document.createElement('div');
+      ex.className = 'h-ask-extra';
+      ex.innerHTML = `<input class="h-ask-x" data-hg-askx="${qi}" spellcheck="false"
+        placeholder="其他 / 补充说明（可直接输入，回车提交）">`;
+      box.appendChild(ex);
       card.appendChild(box);
     });
     const foot = document.createElement('div');
@@ -398,6 +405,21 @@ function buildClaudeHarnessTab(opts = {}) {
   }
   function askSelSet(card, sel) { card.dataset.hgSel = JSON.stringify(sel); }
 
+  // 每题作答齐备判定：选项选中 or 自由输入有内容（v2.24.3 输入也算作答）
+  function askExtraText(card, qi) {
+    const inp = card.querySelector(`[data-hg-askx="${qi}"]`);
+    return inp ? inp.value.trim() : '';
+  }
+  function askCheckDone(card) {
+    const sel = askSel(card);
+    const need = card.querySelectorAll('.h-ask-q').length;
+    let ok = 0;
+    for (let k = 0; k < need; k++)
+      if ((sel[k] || []).length || askExtraText(card, k)) ok++;
+    const sb = card.querySelector('.h-ask-submit');
+    if (sb) sb.disabled = ok < need;
+  }
+
   // 点击选项（flow 委托调用）：单选置换、多选切换
   function askPick(btn) {
     const card = btn.closest('.h-ask');
@@ -418,12 +440,7 @@ function buildClaudeHarnessTab(opts = {}) {
       });
     }
     askSelSet(card, sel);
-    // 每题都选了才放行提交
-    const need = card.querySelectorAll('.h-ask-q').length;
-    let ok = 0;
-    for (let k = 0; k < need; k++) if ((sel[k] || []).length) ok++;
-    const sb = card.querySelector('.h-ask-submit');
-    if (sb) sb.disabled = ok < need;
+    askCheckDone(card);
   }
 
   function askSubmit(reqId) {
@@ -433,9 +450,10 @@ function buildClaudeHarnessTab(opts = {}) {
     const answer = {};
     card.querySelectorAll('.h-ask-q').forEach((box, qi) => {
       const chosen = (sel[qi] || []).slice();
-      if (!chosen.length) return;
+      const extra = askExtraText(card, qi);       // v2.24.3 自由输入并入作答
+      if (!chosen.length && !extra) return;
       const qtext = (qs[qi] && qs[qi].question) || ('问题' + (qi + 1));
-      answer[qtext] = chosen.join(', ');
+      answer[qtext] = chosen.concat(extra ? ['补充：' + extra] : []).join(', ');
     });
     if (!Object.keys(answer).length) return;
     const btn = card.querySelector('.h-ask-submit');
@@ -771,6 +789,21 @@ function buildClaudeHarnessTab(opts = {}) {
   // flow 级事件委托：抽屉组头/工具折叠行点击 → 只切自己
   // （v2.12 修「点一个全展开」+「切会话再切回后点不开」——innerHTML 快照恢复
   //   不丢监听器，每行每抽屉独立开合）
+  // v2.24.3：提问卡片自由输入——输入即视为该题已作答（放行提交）；回车直接提交
+  flow.addEventListener('input', (e) => {
+    if (e.target.classList && e.target.classList.contains('h-ask-x')) {
+      const card = e.target.closest('.h-ask');
+      if (card) askCheckDone(card);
+    }
+  });
+  flow.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target.classList && e.target.classList.contains('h-ask-x')) {
+      e.preventDefault();
+      const card = e.target.closest('.h-ask');
+      const sb = card && card.querySelector('.h-ask-submit');
+      if (sb && !sb.disabled) askSubmit(card.dataset.hgAsk);
+    }
+  });
   flow.addEventListener('click', (e) => {
     // 交互提问卡片（v2.17）：选项点击 / 提交
     const aOpt = e.target.closest('.h-ask-opt');
@@ -1805,15 +1838,11 @@ function buildClaudeHarnessTab(opts = {}) {
     flow.innerHTML = '';
     if (start > 0) {
       const bar = document.createElement('div');
-      bar.className = 'hg-hist-more hg-hist-cap';
-      if (start > capStart) {
-        bar.textContent = '⬆ 剩 ' + start + ' 条更早消息——继续上滑加载';
-      } else {
-        // 翻到上限：归档入口（只读禅模式）
-        bar.className = 'hg-hist-more hg-hist-ro-btn';
-        bar.innerHTML = '📖 更早 ' + start + ' 条已归档 · 进入<b>只读模式</b>查看';
-        bar.onclick = _roEnter;
-      }
+      bar.className = 'hg-hist-more';
+      // v2.24.2：上滑到顶一律进只读禅模式（busy 时不能重渲主 flow——会炸掉
+      // 流式中的活组；CAP 上限同理）——文案统一，行为一致
+      bar.innerHTML = '⬆ 剩 ' + start + ' 条更早消息——上滑进入<b>只读模式</b>查看';
+      bar.onclick = _roEnter;
       flow.appendChild(bar);
     }
     if (!lines.length) return;
@@ -1821,6 +1850,24 @@ function buildClaudeHarnessTab(opts = {}) {
     _HG.openState = _hgLoadOpen(_HG.sid);       // 上次开合状态（重建期贴回）
     try { lines.slice(start).forEach((l, i) => renderHistLine(l, start + i)); }
     finally { _HG.noScroll = false; _HG.openState = null; }
+    // 临时诊断（组结构乱序排查，用完删）：重建后 flow 子项序列 + 关键 computed style 落盘
+    try {
+      const seq = [...flow.children].slice(0, 20).map(c =>
+        c.tagName + '.' + String(c.className).slice(0, 40));
+      const g = flow.querySelector('.h-grp');
+      const cs = g ? getComputedStyle(g) : null;
+      const gp = flow.querySelector('.h-grp-proc');
+      const cs2 = gp ? getComputedStyle(gp) : null;
+      const am = flow.querySelector('.h-msg.asst');
+      const cs3 = am ? getComputedStyle(am) : null;
+      fetch('/api/_dbg', {method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({t: 'flow children:\n' + seq.join('\n') +
+          '\nh-grp: w=' + (cs && cs.width) + ' align=' + (cs && cs.alignSelf) +
+          ' disp=' + (cs && cs.display) +
+          '\nh-grp-proc: w=' + (cs2 && cs2.width) + ' align=' + (cs2 && cs2.alignSelf) + ' disp=' + (cs2 && cs2.display) +
+          '\nasst: w=' + (cs3 && cs3.width) + ' align=' + (cs3 && cs3.alignSelf) +
+          '\nflowAlign=' + getComputedStyle(flow).alignItems + ' flowW=' + getComputedStyle(flow).width})}).catch(() => {});
+    } catch(_) {}
   }
 
   let _histBusy = false;   // 重渲期间防 scroll 重入
@@ -1830,15 +1877,18 @@ function buildClaudeHarnessTab(opts = {}) {
     const distBottom = flow.scrollHeight - flow.scrollTop - flow.clientHeight;
     const shown = _HG.histAll.length - _HG.histStart;
     if (nearTop && _HG.histStart > 0) {
-      // 上滑到顶：自动扩一段，锚定滚动（视觉位置不跳）。已到 CAP 上限时
-      // 不扩（顶部已是「只读模式」入口），避免无效重渲
+      // 上滑到顶：自动扩一段，锚定滚动（视觉位置不跳）。两种情况不扩、
+      // 直接进只读禅模式（用户定调）：①已到 CAP 上限 ②正在回复（busy——
+      // 重渲会炸掉流式中的活组，只读层独立于主 flow 无此顾忌）
       const capStart = Math.max(0, _HG.histAll.length - _HG.HIST_CAP);
-      if (_HG.histStart > capStart) {
+      if (_HG.histStart > capStart && !_HG.busy) {
         _histBusy = true;
         const anchorH = flow.scrollHeight - flow.scrollTop;
         _histRender(_HG.histAll, _HG.histStart - _HG.HIST_PAGE);
         flow.scrollTop = flow.scrollHeight - anchorH;
         requestAnimationFrame(() => { _histBusy = false; });
+      } else {
+        _roEnter();
       }
     } else if (distBottom <= 80 && shown > _HG.HIST_PAGE * 2) {
       // 拉回底部：收缩回尾部一段（DOM 瘦身是常态）
@@ -1862,6 +1912,7 @@ function buildClaudeHarnessTab(opts = {}) {
     ov.innerHTML =
       '<div class="hg-ro-bar">' +
       '<span class="hg-ro-title">📖 只读模式 · ' + total + ' 条历史</span>' +
+      '<span class="hg-ro-busy" data-ro-busy style="display:none">● 回复后台进行中…（退出后可见）</span>' +
       '<span class="hg-ro-hint">抽屉点开渲染、收起释放；上滑加载更早</span>' +
       '<button class="hg-ro-exit" title="退出并清空全部渲染">✕ 退出</button></div>' +
       '<div class="hg-ro-flow"></div>';
@@ -1921,8 +1972,16 @@ function buildClaudeHarnessTab(opts = {}) {
         }
       }
     });
-    roRender(Math.max(0, total - _HG.HIST_CAP));   // 从归档起点看起
+    // 起点：接在主层当前渲染起点之前 100 条（上下文衔接，可继续上滑到 0）
+    roRender(Math.max(0, (_HG.histStart || total) - 100));
     ov._ro = ro;
+    // 后台回复指示：SSE 照常写主 flow（禅层只是覆盖），用户在此看不到进度
+    // ——顶栏亮指示，避免「以为后台停了」（用户实测困惑点）
+    const busyEl = ov.querySelector('[data-ro-busy]');
+    const busyTimer = setInterval(() => {
+      if (!ov.isConnected) { clearInterval(busyTimer); return; }
+      busyEl.style.display = _HG.busy ? '' : 'none';
+    }, 1000);
   }
   function _roLine(l, hi, ro) {
     if (l.role === 'user') {
