@@ -123,7 +123,11 @@ def _vision_load():
 # ---------------------------------------------------------------------------
 _MM_RE = re.compile(
     r"vl|vision|omni|multimodal|gpt-4o|gpt-4\.5|gemini"
-    r"|[\d.]v(?:$|[-_.])|^claude",
+    r"|[\d.]v(?:$|[-_.])|^claude"
+    # v2.25：独立单字母 V 段（Lanz-Medium-V / Qwen-V 这类「-V」后缀写法）。
+    # 旧式只看「数字或点 + v」的 `[\d.]v`，把 V 前面是连字符的漏判成非多模态
+    # ——用户实测 Lanz-Medium-V 无 👁，且会话仍被引导去转交识图会话。
+    r"|[-_]v(?:$|[-_.])",
     re.I)
 
 
@@ -515,23 +519,30 @@ def _meta_save():
         pass
 
 
-# ---- 可选模型列表（读 ~/.claude/settings.json env 的 LANZ 映射，缓存一次）----
+# ---- 可选模型列表（读 ~/.claude/settings.json env 的 LANZ 映射）----
+# 按文件 mtime 失效缓存：配置方案切换（/api/claude/profiles/apply 整份
+# 写回 settings.json）后必须能立刻看到新模型映射——旧实现进程生命周期内
+# 只读一次，用户实测「切了配置方案模型下拉不刷新，重启工具才生效」。
 _models_cache = None
 
 
 def available_models():
     global _models_cache
-    if _models_cache is not None:
+    path = os.path.join(os.path.expanduser("~"), ".claude", "settings.json")
+    try:
+        mtime = os.stat(path).st_mtime_ns
+    except OSError:
+        mtime = 0
+    if _models_cache is not None and _models_cache.get("_mtime") == mtime:
         return _models_cache
     names, default = [], None
     try:
-        with open(os.path.join(os.path.expanduser("~"), ".claude", "settings.json"),
-                  "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             env = (json.load(f) or {}).get("env") or {}
         default = env.get("ANTHROPIC_MODEL") or None
         for k in ("ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL",
                   "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-                  "ANTHROPIC_DEFAULT_FLASH_MODEL"):
+                  "ANTHROPIC_DEFAULT_FABLE_MODEL", "ANTHROPIC_DEFAULT_FLASH_MODEL"):
             v = env.get(k)
             if v and v not in names:
                 names.append(v)
@@ -539,7 +550,7 @@ def available_models():
         pass
     if not default and names:
         default = names[0]   # settings 无显式默认 → 取首个映射（与 CLI 回退语义一致）
-    _models_cache = {"models": names, "default": default}
+    _models_cache = {"models": names, "default": default, "_mtime": mtime}
     return _models_cache
 
 
@@ -557,9 +568,10 @@ def _model_label(m):
 _SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
-def _ask_mcp_cfg_path(sid):
+def _ask_mcp_cfg_path(sid, perm="auto"):
     """写本会话的 --mcp-config 文件（内容极小，每次 start 覆写）。
 
+    perm：会话权限模式（auto/confirm），经 HARNESS_PERM 传给 ask_user MCP。
     路径用正斜杠：cmd.exe shim 会吞反斜杠转义，JSON 里带 \\ 的 Windows 路径
     经 shim 传递后解析失败（实测 --mcp-config 内联 JSON 会被引号处理吃掉）。
     """
@@ -577,7 +589,10 @@ def _ask_mcp_cfg_path(sid):
     cfg = {"mcpServers": {"harness": {
         "command": cmd,
         "args": args,
-        "env": {"HARNESS_SID": sid},
+        # v2.25 修正：本函数是模块级函数，没有 self——permission 由调用方
+        # （start()）以参数传入，写 getattr(self, ...) 直接 NameError，
+        # 所有会话启动全挂（「claude 启动失败：name 'self' is not defined」）。
+        "env": {"HARNESS_SID": sid, "HARNESS_PERM": perm},
     }}}
     p = os.path.join(d, "%s.json" % sid[:16])
     try:
@@ -665,7 +680,7 @@ class HarnessSession:
         # --mcp-config 是追加式的（实测：内置 codegraph/headroom 等仍在），
         # 不会覆盖用户已有的 MCP。
         if not self.is_vision:
-            _cfg = _ask_mcp_cfg_path(self.sid)
+            _cfg = _ask_mcp_cfg_path(self.sid, self.permission)
             if _cfg:
                 argv += ["--mcp-config", _cfg,
                          "--allowedTools", "mcp__harness__ask_user"]
@@ -718,11 +733,16 @@ class HarnessSession:
         <pid>.json），残留条目指向死 pid —— 下次 ListAgents 会看到幽灵会话。
         所以杀完主动清理自己那条注册。
         v2.20：quiet=True 吞掉随之而来的 exit 事件——会话内切模型重启进程
-        是计划内动作，不该弹「会话进程已结束」吓人。"""
+        是计划内动作，不该弹「会话进程已结束」吓人。
+        v2.25：进程已死透（reader loop 早已收尾）时不设 _suppress_exit——
+        标志位无人消费会残留，吞掉下一次真正的意外退出（两次切模型且
+        中间进程已自然退出的触发链）。"""
         self.alive = False
         self.busy = False
         if quiet:
-            self._suppress_exit = True
+            proc_alive = bool(self._proc and self._proc.poll() is None)
+            if proc_alive:
+                self._suppress_exit = True
         self.ask_cancel()       # v2.17：别让 MCP 侧的提问继续空转等
         proc, self._proc = self._proc, None
         if proc is not None:
@@ -768,6 +788,9 @@ class HarnessSession:
             return False, "会话进程已退出"
         if self.busy:
             return False, "claude 正在回复中，请稍候"
+        # v2.25：先占 busy 再写 stdin——写在后置位时两个并发 /send 都能穿过
+        # 检查，两条 NDJSON 行交叠写进管道。失败路径就地下面的 return 处复位。
+        self.busy = True
         content = []
         for p in (image_paths or []):
             try:
@@ -786,6 +809,7 @@ class HarnessSession:
             full_text = (full_text + "\n\n" if full_text else "") + \
                 "[附件，可用 Read 工具读取]\n" + att_lines
         if not full_text and not content:
+            self.busy = False
             return False, "消息为空"
         if not full_text and content:
             full_text = "请查看图片"
@@ -798,8 +822,8 @@ class HarnessSession:
             self._proc.stdin.write((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
             self._proc.stdin.flush()
         except Exception as e:
+            self.busy = False
             return False, "发送失败：%s" % e
-        self.busy = True
         self.last_active = int(time.time() * 1000)
         # 首条消息定标题（微信式：会话标题=首句）
         if not self.title and text:
@@ -818,10 +842,8 @@ class HarnessSession:
         return True, None
 
     def _interrupt_async(self):
-        try:
-            self._proc.stdin.write(b"")   # 探活（不阻塞 stdin 写）
-        except Exception:
-            pass
+        # v2.25：去掉 stdin 空写探活——0 字节写对部分 CLI 会被当作 EOF/空行
+        # 事件（审计 §三.10），且探活结果无人消费，紧随的 kill 已覆盖停机语义
         self.kill_proc()
         self.emit({"kind": "interrupted", "text": "已中断回复"})
 
