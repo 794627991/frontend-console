@@ -2,7 +2,7 @@
 """TFTP 服务器（RFC 1350，纯标准库实现）+ Flask Blueprint 路由。
 BSP 调试常用：设备端 tftp 命令从 PC 拉固件/配置（下载），或推日志/抓包（上传）。
 """
-import os, time, threading, socket, struct
+import os, json, time, threading, socket, struct
 
 from flask import Blueprint, request, jsonify
 
@@ -30,11 +30,47 @@ class TftpServer:
     - 超时重传 + 最终放弃；blksize 协商（RFC 2348）取设备请求值（默认 512）
     """
     def __init__(self):
-        self.root_dir = os.path.join(os.path.expanduser("~"), "Desktop")
+        # v2.25：默认目录可配置——config.json 的 tftp_default_dir（set_dir 成功
+        # 时自动记住）。启动时默认目录在就用它，不在（被删/移/U盘拔了）才回退
+        # 桌面（用户需求：别每次开机都回到桌面）。
+        self.root_dir = self._resolve_default_dir()
         self.running = False
         self.sock = None
         self.transfers = []       # 最近传输列表（新→旧）
         self._lock = threading.Lock()
+
+    @staticmethod
+    def _resolve_default_dir():
+        try:
+            from . import app_state as _st
+            with open(_st.CONFIG_FILE, "r", encoding="utf-8") as f:
+                d = str((json.load(f) or {}).get("tftp_default_dir") or "")
+            d = d.strip().strip('"').strip("'")
+            if d and os.path.isdir(d):
+                return os.path.normpath(d)
+        except Exception:
+            pass
+        return os.path.join(os.path.expanduser("~"), "Desktop")
+
+    @staticmethod
+    def _remember_default(path):
+        """把 path 记住为默认目录。写失败只影响下次启动的初值，不影响本次切换。"""
+        try:
+            from . import app_state as _st
+            try:
+                with open(_st.CONFIG_FILE, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+                if not isinstance(cfg, dict):
+                    cfg = {}
+            except Exception:
+                cfg = {}
+            cfg["tftp_default_dir"] = path
+            tmp = _st.CONFIG_FILE + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, ensure_ascii=False, indent=1)
+            os.replace(tmp, _st.CONFIG_FILE)
+        except Exception:
+            pass
 
     # ---- 生命周期 ----
     def start(self, root_dir=None):
@@ -75,6 +111,7 @@ class TftpServer:
         if not os.path.isdir(path):
             return False, f"目录不存在: {path}"
         self.root_dir = path
+        self._remember_default(path)   # v2.25：记住为默认，下次启动自动回到这里
         return True, path
 
     def status(self):

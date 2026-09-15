@@ -184,14 +184,23 @@ def _run_mcp_mode():
 def _notify_existing_open_file(path):
     """--open-file 场景已有活实例：聚焦其窗口并 HTTP 通知打开该文件。
     通知走 /api/ai/open_file（旧实例广播 SSE ui_action → 前端 openFileSmart）。
+    同时让旧实例窗口最大化（用户需求：双击关联文件=全屏看文件，热路径同权）。
     失败静默（窗口已聚焦，用户可手动拖入）。"""
     if not _old_instance_alive():
         return
-    _raise_existing_instance()   # HTTP 自唤优先，托盘隐藏态也能弹出
+    # 不单独调 /api/raise_window：它与 maximize 各起各的 daemon 线程，并发下
+    # maximize 先完成、raise 的 restore 后执行会把最大化窗口还原成普通尺寸
+    # （用户实锤「双击打开还是窗口的」）。/api/window/maximize 内部已含
+    # show+restore+focus，唤出（含托盘隐藏态）+最大化一个线程顺序完成。
     try:
         ep_path = os.path.join(os.path.expanduser("~"), ".serialconsole_pro", "endpoint.json")
         with open(ep_path, "r", encoding="utf-8") as f:
             url = json.load(f).get("url")
+        try:
+            req = urllib.request.Request(url + "/api/window/maximize", data=b"{}", method="POST")
+            urllib.request.urlopen(req, timeout=3)
+        except Exception:
+            pass
         req = urllib.request.Request(
             url + "/api/ai/open_file",
             data=json.dumps({"path": path}).encode(),
@@ -234,8 +243,10 @@ def main():
         i = sys.argv.index('--open-file')
         if i + 1 < len(sys.argv):
             open_file_path = os.path.abspath(sys.argv[i + 1])
+    notified_existing = False
     if open_file_path:
         _notify_existing_open_file(open_file_path)
+        notified_existing = True
     if not acquire_single_instance():
         # mutex 提示已有实例。先探活旧实例的 HTTP 服务：
         # 若旧实例正常响应，聚焦其窗口后静默退出；
@@ -244,7 +255,10 @@ def main():
         if _old_instance_alive():
             # 优先 HTTP 通知旧实例自唤（窗口隐藏在托盘时跨进程 ShowWindow
             # 对 pywebview WinForms 宿主不可靠）；失败再跨进程置前兜底。
-            _raise_existing_instance()
+            # 双击文件场景跳过：上面已通知过（含最大化），这里再 raise 的
+            # restore 会把刚做好的最大化还原（用户实锤「双击打开还是窗口的」）。
+            if not notified_existing:
+                _raise_existing_instance()
             return
         # 旧实例已死，释放残留 mutex 句柄后继续
         global mutex
@@ -303,6 +317,27 @@ def main():
     start_background = _server_mod["start_background"]
     # 启动后台线程（日志、清理等）
     start_background()
+
+    # --open-file 热路径：新实例通知旧实例（HTTP）→ 旧实例窗口最大化后打开文件。
+    # 注册必须在 app.run 之前——Flask 处理过第一个请求后 setup 方法全部封禁
+    # （v2.25 踩坑：注册放 window 创建后被探活请求抢先，启动即 AssertionError）。
+    # window 此刻还不存在没关系：处理时运行时取 main._win。
+    @app.route("/api/window/maximize", methods=["POST"])
+    def _api_window_maximize():
+        w = getattr(main, "_win", None)
+        if w is not None:
+            # WinForms 宿主必须从 GUI 线程操作窗口（_show_main_window 同款）：
+            # 路由线程直接调会被静默忽略；且最小化态 maximize 不生效——先 restore
+            def _do():
+                try:
+                    w.show()
+                    w.restore()
+                    w.maximize()
+                    w.focus()
+                except Exception:
+                    pass
+            threading.Thread(target=_do, daemon=True).start()
+        return '{"ok": true}', 200, {"Content-Type": "application/json"}
 
     # Flask 用空闲端口，避免冲突
     import socket
@@ -542,15 +577,19 @@ def main():
                 return False
 
     # pywebview 窗口
+    # maximized：--open-file 冷启动直接以最大化开局（原生初始态，不靠回调时机）。
+    # 双击关联文件=全屏看文件（用户需求）；普通快捷方式启动维持 1280×820。
     window = webview.create_window(
         title="前端控制台 v1.1.0",
         url=f"http://127.0.0.1:{port}/",
         width=1280,
         height=820,
         min_size=(900, 600),
+        maximized=bool(open_file_path),
         text_select=True,
         js_api=FileBridge(),
     )
+    main._win = window   # /api/window/maximize 路由用（--open-file 热路径让活实例最大化）
 
     # 窗口关闭：默认最小化到托盘（config close_to_tray，设置可关）；
     # 托盘「退出」或 close_to_tray=false 才真正退出。
@@ -679,6 +718,10 @@ def main():
             pass
         # --open-file 启动（接管后双击文件、当时无活实例）：窗口就绪后打开该文件
         if open_file_path:
+            try:
+                window.maximize()   # v2.25：关联打开默认最大化（用户需求：别用默认小窗看文件）
+            except Exception:
+                pass
             try:
                 safe = open_file_path.replace('\\', '/').replace("'", "\\'")
                 window.evaluate_js(f"openDroppedFile('{safe}', true);")

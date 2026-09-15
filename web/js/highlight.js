@@ -7,6 +7,17 @@ const KW_RULES = [
 const KW_COLOR = {
   'kw-error':'#ff4060', 'kw-warning':'#ff9d00', 'kw-info':'#00d4ff', 'kw-success':'#00ff9d',
 };
+// 亮暗兼容（v2.26）：色值随主题变量走（--h-err/--h-warn/--h-sky/--h-ok，
+// 亮色系主题已覆盖为压暗版）——写死的亮绿/亮青在浅色终端底上看不清。
+// 每次扫描时现读 CSS 变量，主题切换后新行即用新色。
+const KW_VAR = { 'kw-error':'--h-err', 'kw-warning':'--h-warn', 'kw-info':'--h-sky', 'kw-success':'--h-ok' };
+function kwColor(cls) {
+  try {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(KW_VAR[cls]).trim();
+    if (v) return v;
+  } catch(e) {}
+  return KW_COLOR[cls];
+}
 // 节流：批量扫描新行，避免每个 chunk 都扫全缓冲
 function scheduleKwHighlight(conn) {
   if (conn._kwTimer) return;
@@ -46,7 +57,7 @@ function highlightNewKw(conn) {
             marker: conn.term.registerMarker(offset),
             x: start,
             width: end - start,
-            foregroundColor: KW_COLOR[rule.cls],
+            foregroundColor: kwColor(rule.cls),
             layer: 'top',
           });
           if (dec) conn.kwDecorations.push(dec);

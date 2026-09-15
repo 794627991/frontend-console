@@ -411,6 +411,10 @@ async function _edInitContent(conn, content) {
         conn.monaco.onDidChangeModelContent(() => { _edMarkDirty(conn); conn._edSrcVer = (conn._edSrcVer || 0) + 1; _mdRenderPreview(conn); });
         conn.monaco.onDidChangeCursorPosition(() => _edUpdateInfo(conn));
         conn.monaco.onDidScrollChange(() => {   // 源码滚动 → 预览跟着滚
+          // v2.25：这次源码滚动若是「预览→源码」同步自己写的，别再回灌预览——
+          // 回灌按标题锚点定位，会把用户在两锚之间的自由位置拽回锚点顶
+          // （用户实测：预览里往下翻一些就被拽回来。预览端才是主阅口）
+          if (conn._mdPvDriven && Date.now() - conn._mdPvDriven < 150) return;
           if (_mdRaf) return;                    // 每帧最多一次，连续滚动不挤压主线程
           _mdRaf = requestAnimationFrame(() => { _mdRaf = 0; _mdSyncScroll(conn); });
         });
@@ -429,6 +433,7 @@ async function _edInitContent(conn, content) {
       conn.ta.addEventListener('input', () => { _edMarkDirty(conn); conn._edSrcVer = (conn._edSrcVer || 0) + 1; _mdRenderPreview(conn); });
       conn.ta.addEventListener('scroll', () => {
         if (!isMd || _mdRaf) return;
+        if (conn._mdPvDriven && Date.now() - conn._mdPvDriven < 150) return;   // v2.25：预览驱动的滚动勿回灌
         _mdRaf = requestAnimationFrame(() => { _mdRaf = 0; _mdSyncScroll(conn); });
       }, { passive: true });
       conn.ta.addEventListener('keyup', () => _edUpdateInfo(conn));
@@ -1548,7 +1553,64 @@ function _mdLineHeight(conn) {
   } catch(_) {}
   return (conn._mdLh = lh);
 }
-// 预览 → 源码：在预览里滚动，源码跟到对应标题行（看图想改源码的自然诉求）
+// 预览 → 源码：连续插值跟随（v2.25 重写）。旧实现「吸附最近标题行」——
+// 锚点之间/尾部区间全靠猜，预览拉到底源码还差十几行（用户实测「已经拉到
+// 底部了」源码没跟上）。现在与「源码→预览」对称：找包住预览视口顶的锚
+// 区间，按比例插值源码 scrollTop；区间端点天然对齐（预览顶=源码顶、
+// 预览底=源码底），到底/到顶严格同步。
+function _mdSrcViewportH(conn) {
+  if (conn.monaco) { try { return conn.monaco.getDomNode().clientHeight || 300; } catch(_) { return 300; } }
+  return conn.ta ? conn.ta.clientHeight : 300;
+}
+function _mdSrcTotalLines(conn) {
+  if (conn.monaco) { try { return conn.monaco.getModel().getLineCount(); } catch(_) { return 1; } }
+  return conn.ta ? (conn.ta.value.split('\n').length || 1) : 1;
+}
+function _mdSyncFromPv(conn, pv) {
+  const anchors = Array.from(pv.querySelectorAll('[data-md-line]'));
+  const pt = _mdPvPad(pv);
+  const pvTop = pv.scrollTop;
+  const srcMax = Math.max(0, _mdSrcScrollHeight(conn) - _mdSrcViewportH(conn));
+  const lh = conn.monaco
+    ? (function () { try { return conn.monaco.getOption(monaco.editor.EditorOption.lineHeight) || 19; } catch(_) { return 19; } })()
+    : _mdLineHeight(conn);
+  // v2.25 关键修：Monaco 开 wordWrap 时「逻辑行 × 行高」与实际 y 系统性偏差
+  // （长段落折成多个视觉行，越往后偏得越多——预览 85% 源码 55% 即此）。
+  // getTopForLineNumber 返回折行后的真实 y，必须用它。
+  const srcYof = (ln) => {
+    if (conn.monaco) {
+      try { const y = conn.monaco.getTopForLineNumber(Math.max(1, ln)); if (typeof y === 'number' && isFinite(y)) return y; } catch(_) {}
+    }
+    return (ln - 1) * lh;
+  };
+  let srcWant;
+  if (anchors.length) {
+    // 包住预览视口顶的锚区间；无下锚=文档顶（y=0,行1），无上锚=文档底
+    let loLine = 1, loY = 0, hiLine = null, hiY = 0;
+    for (const a of anchors) {
+      const y = _mdAnchorTop(a, pv, pt);
+      if (y <= pvTop - pt) { loLine = +a.dataset.mdLine; loY = y; }
+      else { hiLine = +a.dataset.mdLine; hiY = y; break; }
+    }
+    let loSrc = srcYof(loLine), hiSrc, hiYv;
+    if (hiLine == null) {
+      hiLine = _mdSrcTotalLines(conn);
+      hiSrc = srcMax;
+      hiYv = Math.max(0, pv.scrollHeight - pv.clientHeight - pt);
+    } else {
+      hiSrc = srcYof(hiLine); hiYv = hiY;
+    }
+    const spanY = hiYv - loY;
+    const ratio = spanY > 0 ? Math.max(0, Math.min(1, (pvTop - pt - loY) / spanY)) : 0;
+    srcWant = loSrc + (hiSrc - loSrc) * ratio;
+  } else {
+    const pvMax = Math.max(0, pv.scrollHeight - pv.clientHeight);
+    srcWant = pvMax > 0 ? (pvTop / pvMax) * srcMax : 0;
+  }
+  if (conn.monaco) { try { conn.monaco.setScrollTop(Math.max(0, srcWant)); } catch(_) {} }
+  else if (conn.ta) conn.ta.scrollTop = Math.max(0, srcWant);
+}
+// 预览 → 源码：在预览里滚动，源码跟到对应位置（看图想改源码的自然诉求）
 function _mdBindPvScroll(conn, pv) {
   if (conn._mdPvBound) return;
   conn._mdPvBound = true;
@@ -1558,18 +1620,8 @@ function _mdBindPvScroll(conn, pv) {
     if (raf) return;   // 每帧最多定位一次，连续滚动不刷 Monaco
     raf = requestAnimationFrame(() => {
       raf = 0;
-      const anchors = pv.querySelectorAll('[data-md-line]');
-      if (!anchors.length) return;
-      const pt = _mdPvPad(pv);
-      let line = +anchors[0].dataset.mdLine;
-      // 视口顶下 8px 视为「已越过」该标题：锚点多为块级元素，顶部带外边距，需留余量
-      for (const a of anchors) {
-        if (_mdAnchorTop(a, pv, pt) <= pv.scrollTop - pt + 8) line = +a.dataset.mdLine;
-        else break;
-      }
-      conn._mdSyncAt = Date.now();
-      if (conn.monaco) { try { conn.monaco.revealLineNearTop(Math.max(1, line - 1), 0); } catch(_) {} }
-      else if (conn.ta) conn.ta.scrollTop = Math.max(0, (line - 2) * _mdLineHeight(conn));
+      conn._mdPvDriven = Date.now();   // v2.25：标方向——下面的源码滚动是预览引起的，禁止回灌预览
+      _mdSyncFromPv(conn, pv);
     });
   }, { passive: true });
 }

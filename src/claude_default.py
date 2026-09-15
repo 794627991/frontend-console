@@ -11,7 +11,10 @@
 """
 import json
 import os
+import re
 import shutil
+import urllib.error
+import urllib.request
 
 from flask import Blueprint, jsonify, request
 
@@ -320,6 +323,9 @@ def claude_api_config_get():
     return jsonify({
         "ok": True,
         "token_masked": masked,
+        # v2.25：完整 token 一并返回——前端「眼睛显示」与「按 base_url+token
+        # 获取模型列表」都要用。本机单用户工具，settings.json 本就在本机明文。
+        "token": token,
         "has_token": bool(token),
         "base_url": env.get("ANTHROPIC_BASE_URL", ""),
         "default_base_url": DEFAULT_BASE_URL,
@@ -369,6 +375,49 @@ def claude_api_config_set():
             env[key] = v
     _write_settings(cur)
     return jsonify({"ok": True})
+
+
+@claude_default_bp.route("/api/claude/models_probe", methods=["POST"])
+def claude_models_probe():
+    """按 base_url + token 探测网关可用模型列表（设置页「🔍 获取模型」）。
+    GET {base}/v1/models——OpenAI 兼容与 Anthropic 兼容网关返回格式一致
+    （{"data":[{"id":…}]}），鉴权头两种都试（Bearer / x-api-key）。
+    base_url 末段形态各异（…/anthropic、…/v3、…/v1），无 /v数字 结尾时
+    先试补 /v1，再试原样拼接。body: {base_url, token}"""
+    data = request.get_json(force=True, silent=True) or {}
+    base = (data.get("base_url") or "").strip().rstrip("/")
+    token = (data.get("token") or "").strip()
+    if not base or not token:
+        return jsonify({"ok": False, "err": "需要 BASE_URL 和 Token 都已填写"})
+    cands = [] if re.search(r"/v\d+$", base) else [base + "/v1"]
+    cands += [base]
+    auths = [{"Authorization": "Bearer " + token},                      # OpenAI 兼容
+             {"x-api-key": token, "anthropic-version": "2023-06-01"}]   # Anthropic
+    last_err = ""
+    for stem in cands:
+        url = stem + "/models"
+        for h in auths:
+            try:
+                req = urllib.request.Request(url, headers=h)
+                with urllib.request.urlopen(req, timeout=8) as r:
+                    j = json.loads(r.read().decode("utf-8", "replace") or "{}")
+                items = j.get("data") if isinstance(j.get("data"), list) else j.get("models")
+                ids = []
+                for m in items or []:
+                    if isinstance(m, dict):
+                        mid = str(m.get("id") or m.get("name") or "").strip()
+                        if mid:
+                            ids.append(mid)
+                    elif isinstance(m, str) and m.strip():
+                        ids.append(m.strip())
+                if ids:
+                    return jsonify({"ok": True, "models": ids, "url": url})
+                last_err = "响应里没有模型列表 @ " + url
+            except urllib.error.HTTPError as e:
+                last_err = "HTTP %s @ %s" % (e.code, url)
+            except Exception as e:
+                last_err = "%s @ %s" % (e, url)
+    return jsonify({"ok": False, "err": last_err or "探测失败"})
 
 
 # ---- API 配置方案（多套一键切换，设置界面「配置方案」区）----

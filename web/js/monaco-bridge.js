@@ -86,6 +86,11 @@ function monacoInit() {
 const MONACO_LIGHT_THEMES = new Set(['paper', 'dawn', 'mint', 'apricot']);
 function _monacoThemeName() {
   const t = document.documentElement.getAttribute('data-theme') || 'deepblue';
+  // v2.25：custom 跟随自定义主题的亮暗标志（theme.js _isLight 同源数据）
+  if (t === 'custom') {
+    const d = (typeof _customData !== 'undefined' && _customData) || {};
+    return d.light ? 'vs' : 'vs-dark';
+  }
   return MONACO_LIGHT_THEMES.has(t) ? 'vs' : 'vs-dark';
 }
 function _monacoApplyTheme(monaco) {

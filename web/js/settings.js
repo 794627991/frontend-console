@@ -130,23 +130,53 @@ function _stRenderAppearancePane(pane) {
     grid.innerHTML = '<div class="dd-sub">主题模块未加载</div>';
     return;
   }
+  // v2.25：两系并列 + 逐行对齐（grid 显式行定位，与换肤弹层同布局）
+  const cols = document.createElement('div');
+  cols.className = 'set-theme-cols';
+  grid.appendChild(cols);
+  const put = (el, row, colIdx) => {
+    el.style.gridRow = String(row);
+    el.style.gridColumn = colIdx === 0 ? '1' : '2';
+    cols.appendChild(el);
+  };
+  // 自定义两入口沉底并肩：两列项数不同（暗 8 / 亮 9），按各自序号排会把
+  // 暗色自定义留在倒数第二行、底部空一格（用户误读「暗色自定义没了」）
+  const customRow = Math.max(
+    THEMES.filter(t => t.group === 'dark').length,
+    THEMES.filter(t => t.group === 'light').length) + 2;
   for (const [g, label] of [['dark', '暗色系'], ['light', '亮色系']]) {
+    const colIdx = g === 'dark' ? 0 : 1;
     const head = document.createElement('div');
     head.className = 'set-theme-group';
     head.textContent = label;
-    grid.appendChild(head);
-    THEMES.filter(t => t.group === g).forEach(t => {
+    put(head, 1, colIdx);
+    // active 判定：custom 家族按 light 标志归列（与换肤弹层同逻辑）
+    const isCur = (t) => {
+      if (cur === 'custom') {
+        const lt = typeof _isLight === 'function' && _isLight('custom');
+        return t.id === 'custom' ? !lt : t.id === 'custom-light' && lt;
+      }
+      return t.id === cur;
+    };
+    THEMES.filter(t => t.group === g).forEach((t, i) => {
+      const isCustomEntry = t.id === 'custom' || t.id === 'custom-light';
       const item = document.createElement('div');
-      item.className = 'theme-item' + (t.id === cur ? ' active' : '');
+      item.className = 'theme-item' + (isCur(t) ? ' active' : '');
       item.innerHTML = `<div class="theme-swatch" data-theme="${t.id}"></div>
         <div class="theme-info"><div class="name">${t.name}</div><div class="desc">${t.desc}</div></div>
-        ${t.id === cur ? '<span class="theme-check">✓</span>' : ''}`;
+        ${isCur(t) ? '<span class="theme-check">✓</span>' : ''}`;
       item.onclick = () => {
+        if (isCustomEntry) {
+          applyTheme('custom', true);
+          if (typeof _openCustomPanel === 'function') _openCustomPanel(t.id === 'custom-light');
+          _stRenderAppearancePane(pane);
+          return;
+        }
         applyTheme(t.id, true);
         showBanner('已切换主题：' + t.name);
         _stRenderAppearancePane(pane);   // 重渲染刷新选中态
       };
-      grid.appendChild(item);
+      put(item, isCustomEntry ? customRow : i + 2, colIdx);
     });
   }
 }
@@ -344,53 +374,85 @@ async function _stRenderReinstallPane(pane) {
   };
 }
 
-// ---- API 配置子页：Token/网关/模型映射/上下文窗口全可改（v2.22）+ 方案快照切换 ----
+// ---- API 配置子页（v2.25 重排）：配置方案最前（最常用）→ API 配置表单 → 底部操作 ----
+// 新建配置模式：表单全空白，保存=写 settings.json + 存为新方案一步完成。
+// 获取模型：按 base_url+token 探测网关模型列表，成功后模型映射各档变可下拉。
+let _stApiNewMode = false;
+let _stApiModels = null;      // 探测到的模型 id 列表（datalist 下拉源）
 async function _stRenderApiPane(pane) {
-  // 模型映射档位（与后端映射键对应）：slot → 显示名 → 悬停说明
+  // 模型映射档位（v2.25 对齐 cc_switch：5 角色档 + 默认兜底，砍 Flash 档）。
   // 档位是「模型别名」：Claude Code 按档位名请求模型，这里填的是该档位在本
   // 网关下真正对应的模型名。名字与型号无关（网关没有 Opus，就把最强模型填
   // 在 Opus 档），所以每一档都要写清「什么时候会用到它」，否则配置者填不对。
+  // Flash 键（ANTHROPIC_DEFAULT_FLASH_MODEL）不再在 UI 出现，但后端兼容保留
+  // ——settings/旧方案快照里已有的值照常生效，UI 不显示不修改。
   const M_SLOTS = [
-    ['main','主模型','不带档位时的默认模型（ANTHROPIC_MODEL）。新开的会话默认用它，也是本工具模型下拉里显示的那一项。'],
-    ['opus','Opus','最强推理档。任务点名 opus 时（/model 选 Opus、子代理指定 opus）实际调到这里填的模型。'],
     ['sonnet','Sonnet','日常主力档。点名 sonnet 时映射到这里，适合大部分普通任务。'],
+    ['opus','Opus','最强推理档。任务点名 opus 时（/model 选 Opus、子代理指定 opus）实际调到这里填的模型。'],
+    ['fable','Fable','网关侧档位。点名 fable 时映射到这里；不清楚填什么就留空。'],
     ['haiku','Haiku','快速轻量档。生成标题、摘要等后台小任务常走这档，填个便宜快的模型即可。'],
-    ['fable','Fable','网关侧新增档位。点名 fable 时映射到这里，用途与上面各档一致；不清楚填什么就留空。'],
-    ['flash','Flash','轻量快速档。点名 flash 时映射到这里；不清楚填什么就留空。'],
     ['subagent','子代理','Task 子代理会话默认使用的模型（子代理不单独指定档位时用这个）。']];
+  const NEW = !!_stApiNewMode;
   pane.innerHTML = `
     <div class="dd-body">
-      <div class="dd-label">Claude API 配置</div>
-      <div class="dd-sub">写入 ~/.claude/settings.json 的 env——留空的项不改动。改动对新开的 Claude 会话生效。</div>
-      <div class="dd-cur" style="margin-top:12px;">
-        <div class="dd-label">API Token（ANTHROPIC_AUTH_TOKEN）</div>
-        <div class="dd-row" style="display:flex;gap:8px;margin-top:6px;">
-          <input type="text" id="apiTokenInput" class="dd-input" spellcheck="false"
-                 placeholder="sk-…（留空保持不变）" style="flex:1;">
+      <div class="dd-cur">
+        <div class="dd-label" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+          <span>配置方案（整套 settings.json 快照一键切换）</span>
+          <button class="btn ghost" id="profNew" title="新建一套配置：下方表单清空，填好保存即成新方案"
+                  style="padding:3px 10px;font-size:11px;flex-shrink:0;${NEW ? 'display:none;' : ''}">＋ 新建配置</button>
         </div>
-        <div class="dd-sub" id="apiTokenState" style="margin-top:6px;"></div>
+        <div id="profList" style="margin-top:10px;margin-bottom:4px;display:flex;flex-direction:column;gap:8px;"></div>
+        <div class="dd-row" style="display:flex;gap:8px;margin-top:14px;">
+          <input type="text" id="profName" class="dd-input" spellcheck="false"
+                 placeholder="${NEW ? '必填——新配置将保存为这个方案名' : '方案名，如：配置1 / 智谱 / 中转站'}" style="flex:1;${NEW ? 'border-color:var(--accent);' : ''}">
+          <button class="btn ghost" id="profSaveCur" title="把当前 settings.json 整份（含 Token、网关、模型映射等）存为方案"
+                  style="${NEW ? 'display:none;' : ''}">💾 存当前为方案</button>
+        </div>
+        <div class="dd-sub" style="margin-top:8px;">每个方案是 settings.json 的完整快照（网关不同，模型映射也不同）。切换整份替换——已开着的 Claude 会话进程不变，新会话起效。</div>
       </div>
-      <div class="dd-cur" style="margin-top:12px;">
-        <div class="dd-label">BASE_URL（网关地址，随方案切换）</div>
+      <div class="dd-cur" style="padding-top:14px;border-top:1px solid var(--border);">
+        <div class="dd-label">Claude API 配置${NEW ? '<span style="color:var(--accent);">（新建中——下方已清空，填好后点「保存为新方案」）</span>' : ''}</div>
+        <div class="dd-sub">写入 ~/.claude/settings.json 的 env——留空的项不改动。改动对新开的 Claude 会话生效。</div>
+        <div class="dd-label" style="margin-top:12px;">API Token（ANTHROPIC_AUTH_TOKEN）</div>
+        <div class="dd-row" style="display:flex;gap:6px;margin-top:6px;">
+          <input type="text" id="apiTokenInput" class="dd-input" spellcheck="false" autocomplete="off"
+                 placeholder="${NEW ? 'sk-…（新方案的 Token）' : 'sk-…（留空保持不变）'}" style="flex:1;">
+          <button class="pass-eye" id="apiTokenEye" type="button" title="显示/隐藏完整 Token"
+                  style="width:32px;height:32px;flex-shrink:0;">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+              <circle cx="12" cy="12" r="3"></circle>
+            </svg>
+          </button>
+        </div>
+        <div class="dd-label" style="margin-top:12px;">BASE_URL（网关地址，随方案切换）</div>
         <div class="dd-row" style="display:flex;gap:8px;margin-top:6px;">
           <input type="text" id="apiBaseUrl" class="dd-input" spellcheck="false"
                  placeholder="http://…（留空保持不变）" style="flex:1;">
+          <button class="btn ghost" id="apiProbe" title="按上面的 BASE_URL + Token 向网关拉取可用模型列表"
+                  style="flex-shrink:0;white-space:nowrap;">🔍 获取模型</button>
         </div>
-      </div>
-      <div class="dd-cur" style="margin-top:14px;">
-        <div class="dd-label">模型映射（MODEL 与 _NAME 成对写入，留空不改）</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;margin-top:8px;">
+        <div class="dd-sub" id="apiProbeOut" style="margin-top:6px;">${_stApiModels ? '已获取 ' + _stApiModels.length + ' 个模型——模型映射框可下拉选择' : '获取模型后，模型映射框可直接下拉选择'}</div>
+        <div class="dd-label" style="margin-top:12px;">模型映射（MODEL 与 _NAME 成对写入，留空不改）</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;margin-top:8px;">
           ${M_SLOTS.map(([k, n, tip]) => `
-            <label title="${tip}" style="display:flex;align-items:center;gap:8px;min-width:0;cursor:help;">
-              <span style="flex-shrink:0;width:58px;font-size:11px;color:var(--muted);">${n}</span>
+            <label title="${tip}" style="display:flex;align-items:center;gap:6px;min-width:0;cursor:help;">
+              <span style="flex-shrink:0;width:50px;font-size:11px;color:var(--muted);">${n}</span>
               <input type="text" class="dd-input" data-mk="${k}" spellcheck="false"
                      placeholder="不改" style="flex:1;min-width:0;">
+              <button type="button" class="btn ghost" data-mk1m="${k}" title="声明支持 1M：给模型名加/去 [1M] 后缀（网关按此后缀提供百万级上下文）"
+                      style="flex-shrink:0;padding:2px 7px;font-size:10px;">1M</button>
             </label>`).join('')}
+          <label title="默认兜底模型（ANTHROPIC_MODEL）：未明确落到上面 5 个角色档的请求都用它。新开的会话默认用它，也是本工具模型下拉里显示的那一项。" style="display:flex;align-items:center;gap:6px;min-width:0;cursor:help;">
+            <span style="flex-shrink:0;width:50px;font-size:11px;color:var(--muted);">兜底</span>
+            <input type="text" class="dd-input" data-mk="main" spellcheck="false"
+                   placeholder="不改" style="flex:1;min-width:0;">
+            <button type="button" class="btn ghost" data-mk1m="main" title="声明支持 1M：给模型名加/去 [1M] 后缀"
+                    style="flex-shrink:0;padding:2px 7px;font-size:10px;">1M</button>
+          </label>
         </div>
-        <div class="dd-sub" style="margin-top:8px;">档位是「模型别名」：名字不代表型号（网关没有 Opus，就把最强模型填进 Opus 档）。鼠标悬停每档看它什么时候被用到。</div>
-      </div>
-      <div class="dd-cur" style="margin-top:14px;">
-        <div class="dd-label">上下文窗口与自动压缩</div>
+        <div class="dd-sub" style="margin-top:8px;">档位是「模型别名」：名字不代表型号（网关没有 Opus，就把最强模型填进 Opus 档）。鼠标悬停每档看它什么时候被用到。<b>1M</b> 按钮 = 声明该档用百万级上下文版本（模型名加/去 <b>[1M]</b> 后缀）。</div>
+        <div class="dd-label" style="margin-top:14px;">上下文窗口与自动压缩</div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px 12px;margin-top:8px;">
           <label style="display:flex;align-items:center;gap:8px;min-width:0;">
             <span style="flex-shrink:0;font-size:11px;color:var(--muted);">压缩窗口</span>
@@ -408,70 +470,210 @@ async function _stRenderApiPane(pane) {
         <div class="dd-sub" style="margin-top:6px;">压缩窗口/最大上下文 = tokens（如 200000）；压缩阈值 = 用量百分比（如 85）。这三项决定「用到多少 tokens 才自动压缩」。</div>
       </div>
       <div class="dd-row" style="display:flex;align-items:center;gap:10px;margin-top:14px;">
-        <button class="btn primary" id="apiSaveAll">💾 保存配置</button>
+        <button class="btn primary" id="apiSaveAll">${NEW ? '💾 保存为新方案' : '💾 保存配置'}</button>
+        ${NEW ? '<button class="btn ghost" id="apiNewCancel">取消新建</button>' : ''}
         <span class="dd-sub" style="margin:0;">保存后新开的 Claude 会话生效（运行中的会话不变）。</span>
       </div>
-      <div class="dd-cur" style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border);">
-        <div class="dd-label">配置方案（整套 settings.json 快照一键切换）</div>
-        <div id="profList" style="margin-top:10px;margin-bottom:4px;display:flex;flex-direction:column;gap:8px;"></div>
-        <div class="dd-row" style="display:flex;gap:8px;margin-top:34px;">
-          <input type="text" id="profName" class="dd-input" spellcheck="false"
-                 placeholder="方案名，如：配置1 / 智谱 / 中转站" style="flex:1;">
-          <button class="btn ghost" id="profSaveCur" title="把当前 settings.json 整份（含 Token、网关、模型映射等）存为方案">💾 存当前为方案</button>
-        </div>
-        <div class="dd-sub" style="margin-top:8px;">每个方案是 settings.json 的完整快照（网关不同，模型映射也不同）。切换整份替换——已开着的 Claude 会话进程不变，新会话起效。</div>
-      </div>
       <div class="dd-actions" style="margin-top:16px;">
-        <button class="btn ghost" id="apiOpenSettings" title="在资源管理器中定位 settings.json">📂 打开 settings.json</button>
+        <button class="btn ghost" id="apiOpenSettings" title="在工具内打开 settings.json（Monaco 编辑）">📂 打开 settings.json</button>
         <button class="btn ghost" id="apiProvision" title="恢复 Claude 默认配置（settings 缺省项补全 + statusline 重铺；已有配置不动，statusline 强制覆盖）">↺ 恢复 Claude 默认配置</button>
       </div>
       <div class="dd-note" id="apiNote"></div>
     </div>`;
-  const stateEl = pane.querySelector('#apiTokenState');
+  const tokEl = pane.querySelector('#apiTokenInput');
+  const eyeEl = pane.querySelector('#apiTokenEye');
+  // 眼睛图标随状态切换（SSH 密码框同款语义：明文可见=开眼，掩码/隐藏=划线眼）
+  const EYE_OPEN_SVG = eyeEl.innerHTML;
+  const EYE_OFF_SVG = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+      <line x1="1" y1="1" x2="23" y2="23"></line>
+    </svg>`;
+  const syncEye = () => {
+    const showing = tokEl.dataset.mode === 'full' || tokEl.dataset.mode === 'edit';
+    eyeEl.innerHTML = showing ? EYE_OPEN_SVG : EYE_OFF_SVG;
+    eyeEl.title = showing ? 'Token 可见中，点击隐藏' : 'Token 已隐藏，点击显示';
+  };
+  let tokenFull = '';        // 完整 token（GET 拿到；眼睛显示 / 获取模型用）
+  const setTokMasked = () => {
+    if (!tokenFull) { tokEl.value = ''; tokEl.dataset.mode = 'empty'; syncEye(); return; }
+    const masked = tokenFull.length > 16 ? tokenFull.slice(0, 8) + '…' + tokenFull.slice(-4) : '已设置';
+    tokEl.value = masked; tokEl.dataset.mode = 'masked'; tokEl.style.color = 'var(--muted)';
+    syncEye();
+  };
+  const setTokFull = () => {
+    tokEl.value = tokenFull; tokEl.dataset.mode = 'full'; tokEl.style.color = '';
+    syncEye();
+  };
   const refresh = async () => {
     try {
       const j = await (await fetch('/api/claude/api_config')).json();
-      stateEl.innerHTML = j.has_token
-        ? `<span style="color:var(--neon-green);">✓ 已配置</span> <span style="font-family:var(--font-mono);">${esc(j.token_masked)}</span>`
-        : '<span style="color:var(--neon-red);">✕ 未配置——首次使用前必须填入</span>';
-      pane.querySelector('#apiBaseUrl').value = j.base_url || '';
-      pane.querySelector('#apiBaseUrl').placeholder = (j.base_url || j.default_base_url) + '（当前）';
-      const models = j.models || {};
+      tokenFull = j.token || '';
+      if (!NEW) {
+        if (j.has_token) setTokMasked();
+        else { tokEl.value = ''; tokEl.dataset.mode = 'empty'; tokEl.style.color = ''; }
+      } else { tokEl.dataset.mode = 'edit'; }
+      pane.querySelector('#apiBaseUrl').value = NEW ? '' : (j.base_url || '');
+      pane.querySelector('#apiBaseUrl').placeholder = NEW ? 'http://…（新方案的网关地址）'
+        : ((j.base_url || j.default_base_url) + '（当前）');
+      const models = NEW ? {} : (j.models || {});
       pane.querySelectorAll('[data-mk]').forEach(i => {
         i.value = models[i.dataset.mk] || '';
-        i.placeholder = (models[i.dataset.mk] ? '当前 ' + models[i.dataset.mk] : '未设置');
+        i.placeholder = NEW ? '新方案的模型' : (models[i.dataset.mk] ? '当前 ' + models[i.dataset.mk] : '未设置');
       });
-      pane.querySelector('#apiCtxWindow').value = j.ctx_window || '';
-      pane.querySelector('#apiCtxWindow').placeholder = j.ctx_window ? '当前 ' + j.ctx_window : '未设置';
-      pane.querySelector('#apiMaxCtx').value = j.max_ctx || '';
-      pane.querySelector('#apiMaxCtx').placeholder = j.max_ctx ? '当前 ' + j.max_ctx : '未设置';
-      pane.querySelector('#apiCompactPct').value = j.compact_pct || '';
-      pane.querySelector('#apiCompactPct').placeholder = j.compact_pct ? '当前 ' + j.compact_pct : '未设置';
+      const fill = (sel, v) => {
+        const el = pane.querySelector(sel);
+        el.value = NEW ? '' : (v || '');
+        el.placeholder = NEW ? '新方案的值' : (v ? '当前 ' + v : '未设置');
+      };
+      fill('#apiCtxWindow', j.ctx_window); fill('#apiMaxCtx', j.max_ctx); fill('#apiCompactPct', j.compact_pct);
       pane.querySelector('#apiNote').textContent = 'settings.json 路径：' + j.settings_path;
-    } catch(e) { stateEl.textContent = '读取失败: ' + e; }
+    } catch(e) { tokEl.placeholder = '读取失败: ' + e; }
+    invalidateModels();   // 重渲/切方案后 base_url 已换人，旧列表一律作废，须重新获取
+  };
+  // ---- 模型下拉浮层（v2.25）：原生 datalist 交互太弱（箭头悬停才出现、
+  // 匹配行为怪，用户实测「下拉不生效」）——自绘浮层，点击输入框即弹列表 ----
+  let mdlPop = null;
+  const closeMdlPop = () => { if (mdlPop) { mdlPop.remove(); mdlPop = null; } };
+  // 列表有效性只归「获取模型」按钮管：成功才有列表，失败/改地址即作废（浮层
+  // 每次弹出时现读 _stApiModels，所以作废只需清变量 + 收浮层 + 刷提示文案）
+  const invalidateModels = () => {
+    if (!_stApiModels) return;
+    _stApiModels = null;
+    closeMdlPop();
+    const out = pane.querySelector('#apiProbeOut');
+    if (out) out.textContent = '获取模型后，模型映射框可直接下拉选择';
+  };
+  const openMdlPop = (inp) => {
+    closeMdlPop();
+    if (!_stApiModels || !_stApiModels.length) return;
+    mdlPop = document.createElement('div');
+    mdlPop.className = 'mdl-pop';
+    const r = inp.getBoundingClientRect();
+    mdlPop.style.left = r.left + 'px';
+    mdlPop.style.top = (r.bottom + 4) + 'px';
+    mdlPop.style.minWidth = Math.max(r.width, 230) + 'px';
+    mdlPop.innerHTML = _stApiModels.map(m =>
+      `<div class="mdl-pop-item" data-v="${esc(m)}">${esc(m)}</div>`).join('');
+    document.body.appendChild(mdlPop);
+    mdlPop.querySelectorAll('.mdl-pop-item').forEach(it => {
+      it.onclick = () => {
+        inp.value = it.dataset.v;
+        sync1mState();
+        closeMdlPop();
+      };
+    });
+  };
+  pane.querySelectorAll('[data-mk]').forEach(inp => {
+    inp.addEventListener('focus', () => openMdlPop(inp));
+    inp.addEventListener('input', sync1mState);
+  });
+  // 改了 BASE_URL 或 Token，上次拉到的列表就是别的网关的了——立即作废
+  pane.querySelector('#apiBaseUrl').addEventListener('input', invalidateModels);
+  tokEl.addEventListener('input', invalidateModels);
+  document.addEventListener('click', (e) => {
+    if (!mdlPop) return;
+    if (mdlPop.contains(e.target)) return;                              // 点列表项：选择逻辑自己处理
+    if (e.target.closest && e.target.closest('[data-mk]')) return;      // 点另一个框：focus 已重开浮层
+    closeMdlPop();
+  });
+  // ---- [1M] 开关：给该档模型名加/去 [1M] 后缀（网关按此后缀给百万级上下文）----
+  function sync1mState() {
+    pane.querySelectorAll('[data-mk1m]').forEach(btn => {
+      const inp = pane.querySelector(`[data-mk="${btn.dataset.mk1m}"]`);
+      const on = /\[1M\]\s*$/i.test(inp.value || '');
+      btn.style.color = on ? 'var(--accent)' : '';
+      btn.style.borderColor = on ? 'var(--accent)' : '';
+    });
+  }
+  pane.querySelectorAll('[data-mk1m]').forEach(btn => {
+    btn.onclick = (e) => {
+      e.preventDefault();
+      const inp = pane.querySelector(`[data-mk="${btn.dataset.mk1m}"]`);
+      const has = /\[1M\]\s*$/i.test(inp.value || '');
+      const base = (inp.value || '').replace(/\s*\[1M\]\s*$/i, '');
+      inp.value = has ? base : base + '[1M]';
+      sync1mState();
+    };
+  });
+  sync1mState();
+  // Token 眼睛：掩码 ↔ 完整值切换（用户手输新 token 时不动值，只提示）
+  eyeEl.onclick = () => {
+    const m = tokEl.dataset.mode;
+    if (m === 'masked') setTokFull();
+    else if (m === 'full') setTokMasked();
+    else showBanner(m === 'edit' ? '正在输入新 Token——保存时以此为准' : '当前没有已配置的 Token', 2600);
+  };
+  tokEl.addEventListener('input', () => { tokEl.dataset.mode = 'edit'; tokEl.style.color = ''; syncEye(); });
+  syncEye();   // 初始态图标（掩码=划线眼）
+  // 获取模型：base_url + token 拉网关模型列表 → datalist 下拉
+  pane.querySelector('#apiProbe').onclick = async () => {
+    const probeBtn = pane.querySelector('#apiProbe');
+    const out = pane.querySelector('#apiProbeOut');
+    const base = pane.querySelector('#apiBaseUrl').value.trim();
+    const tok = tokEl.dataset.mode === 'edit' ? tokEl.value.trim() : tokenFull;
+    if (!base || !tok) { showBanner('获取模型需要 BASE_URL 和 Token 都已填写', 3500, true); return; }
+    probeBtn.disabled = true;
+    out.textContent = '探测中——正在向网关拉取模型列表…';
+    try {
+      const r = await fetch('/api/claude/models_probe', {method:'POST',
+        headers:{'Content-Type':'application/json'}, body: JSON.stringify({base_url: base, token: tok})});
+      const j = await r.json();
+      if (j.ok && (j.models || []).length) {
+        _stApiModels = j.models;
+        out.textContent = '✓ 获取到 ' + j.models.length + ' 个模型——模型映射框已可下拉选择';
+      } else {
+        invalidateModels();
+        out.textContent = '✗ 获取失败：' + (j.err || '网关未返回模型列表') + '——模型映射框不可下拉';
+      }
+    } catch(e) { invalidateModels(); out.textContent = '✗ 获取失败：' + e + '——模型映射框不可下拉'; }
+    probeBtn.disabled = false;
   };
   refresh();
   // v2.22：整卡保存——token/base_url/模型映射/上下文窗口一次提交（空串=不改）
+  // v2.25 新建模式：保存=写 settings.json + 按方案名存为新方案，一步完成
   pane.querySelector('#apiSaveAll').onclick = async () => {
     const models = {};
     pane.querySelectorAll('[data-mk]').forEach(i => { models[i.dataset.mk] = i.value.trim(); });
     const body = {
-      token: pane.querySelector('#apiTokenInput').value.trim(),
+      token: tokEl.dataset.mode === 'edit' ? tokEl.value.trim() : '',
       base_url: pane.querySelector('#apiBaseUrl').value.trim(),
       models,
       ctx_window: pane.querySelector('#apiCtxWindow').value.trim(),
       max_ctx: pane.querySelector('#apiMaxCtx').value.trim(),
       compact_pct: pane.querySelector('#apiCompactPct').value.trim(),
     };
+    if (NEW) {
+      const name = pane.querySelector('#profName').value.trim();
+      if (!name) { showBanner('请先填写方案名——新配置将保存为该方案', 4000, true); return; }
+      if (!body.token && !tokenFull) { showBanner('新方案需要填写 Token', 4000, true); return; }
+      if (!body.base_url) { showBanner('新方案需要填写 BASE_URL', 4000, true); return; }
+      try {
+        const r = await fetch('/api/claude/api_config', {method:'POST',
+          headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+        const j = await r.json();
+        if (!j.ok) { showBanner('保存失败: ' + (j.err || ''), 4000, true); return; }
+        const r2 = await fetch('/api/claude/profiles/save', {method:'POST',
+          headers:{'Content-Type':'application/json'}, body: JSON.stringify({name})});
+        const j2 = await r2.json();
+        if (!j2.ok) { showBanner('配置已写入 settings.json，但存方案失败: ' + (j2.err || ''), 6000, true); return; }
+        _stApiNewMode = false;
+        showBanner('新方案「' + name + '」已保存并写入 settings.json——新开的会话生效', 5000);
+        _stRenderApiPane(pane);
+      } catch(e) { showBanner('保存失败: ' + e, 4000, true); }
+      return;
+    }
     try {
       const r = await fetch('/api/claude/api_config', {method:'POST',
         headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
       const j = await r.json();
       if (!j.ok) { showBanner('保存失败: ' + (j.err || ''), 4000, true); return; }
       showBanner('API 配置已保存——新开的 Claude 会话生效', 4000);
-      pane.querySelector('#apiTokenInput').value = '';
+      setTokMasked();
       refresh();
     } catch(e) { showBanner('保存失败: ' + e, 4000, true); }
+  };
+  if (NEW) pane.querySelector('#apiNewCancel').onclick = () => {
+    _stApiNewMode = false; _stRenderApiPane(pane);
   };
   // ---- 配置方案：多套 TOKEN/BASE_URL 存档一键切换（v2.21）----
   const profListEl = pane.querySelector('#profList');
@@ -499,6 +701,7 @@ async function _stRenderApiPane(pane) {
             if (!j2.ok) { showBanner('切换失败: ' + (j2.err || ''), 4000, true); return; }
             if (j2.warning) { showBanner('⚠ ' + j2.warning, 9000, true); }
             else showBanner('已切换到「' + b.dataset.prof + '」——新开的 Claude 会话生效', 4500);
+            _stApiNewMode = false;   // 应用方案 = 退出新建模式
             refresh(); renderProfiles();
           } catch(e) { showBanner('切换失败: ' + e, 4000, true); }
         };
@@ -515,6 +718,13 @@ async function _stRenderApiPane(pane) {
     } catch(e) { profListEl.textContent = '方案读取失败: ' + e; }
   };
   renderProfiles();
+  pane.querySelector('#profNew').onclick = () => {
+    _stApiNewMode = true;
+    _stRenderApiPane(pane);   // 重渲：表单清空进入新建模式
+    const nav = document.getElementById('stPane');
+    if (nav) nav.scrollTop = 0;
+    showBanner('新建配置：下方表单已清空，填好后点「保存为新方案」', 4200);
+  };
   pane.querySelector('#profSaveCur').onclick = async () => {
     const name = pane.querySelector('#profName').value.trim();
     if (!name) { showBanner('请输入方案名', 3000, true); return; }

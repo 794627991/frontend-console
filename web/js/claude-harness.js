@@ -1152,21 +1152,32 @@ function buildClaudeHarnessTab(opts = {}) {
   // 合即零占用（反复开关重渲染单段 markdown ~几十 ms，可接受）。
   function _histLazyFill(el) {
     if (!el || el.dataset.hgLazy !== '1' || el.dataset.hi == null) return;
-    const l = _HG.histAll && _HG.histAll[+el.dataset.hi];
-    if (!l) return;
-    try {
-      if (el.classList.contains('h-think-seg')) {
-        const body = el.querySelector('.h-think-seg-body');
-        if (body && !body.children.length) {
-          body.innerHTML = renderMd(l.text || '');
-          _codeLazyEnhance(body);            // v2.24 懒高亮（点开即在视口，即刻触发）
+    const fill = () => {
+      const l = _HG.histAll && _HG.histAll[+el.dataset.hi];
+      if (!l) return;
+      try {
+        if (el.classList.contains('h-think-seg')) {
+          const body = el.querySelector('.h-think-seg-body');
+          if (body && !body.children.length) {
+            body.innerHTML = renderMd(l.text || '');
+            _codeLazyEnhance(body);            // v2.24 懒高亮（点开即在视口，即刻触发）
+          }
+        } else if (el.classList.contains('h-tool')) {
+          const coll = el.querySelector('.h-tool-coll');
+          if (coll && !coll.children.length) coll.innerHTML = _histToolBodyHtml(l);
         }
-      } else if (el.classList.contains('h-tool')) {
-        const coll = el.querySelector('.h-tool-coll');
-        if (coll && !coll.children.length) coll.innerHTML = _histToolBodyHtml(l);
-      }
-      el.dataset.hgLazy = '';
-    } catch(_) {}
+        el.dataset.hgLazy = '';
+      } catch(_) {}
+    };
+    if (!_HG.histAll) {
+      // v2.25：快照恢复路径 histAll 为空（switchTo 切会话时清掉防串会话，
+      // 而快照恢复不拉 transcript）——先拉数据再填。否则「已点开的段」切回
+      // 来展开永远空白，点了也填不上（用户实测：早起会话的历史思考点不开）
+      const sidAt = _HG.sid;
+      _histFetch(sidAt).then(ok => { if (ok && _HG.sid === sidAt) fill(); });
+      return;
+    }
+    fill();
   }
   function _histLazyDrop(el) {
     if (!el || el.dataset.hi == null) return;   // 流式内容（无行号）不丢——丢了无法恢复
@@ -1575,9 +1586,11 @@ function buildClaudeHarnessTab(opts = {}) {
   // 同一动作两个入口，留着只是噪音。
   const _ACT_WORDS = ['思考中', '处理中', '分析中', '执行中', '检索中', '推理中'];
   let _actWordIdx = 0;
-  function actStart() {
+  function actStart(sinceMs) {
     if (_HG.activity) return;
-    _HG.actStart = Date.now();
+    // v2.26：计时起点优先用后端的 busy_since——切会话回来/自愈纠偏时
+    // 不能从「现在」重新计时（用户实锤：执行中切走再切回，计时被清 0）
+    _HG.actStart = sinceMs || Date.now();
     _actWordIdx = 0;
     actEl.style.display = 'inline-flex';
     actEl.innerHTML = `<span class="hg-act-dot"></span><span class="hg-act-word" data-hg-aw>思考中</span><span class="hg-act-t" data-hg-act-t>0s</span>`;
@@ -1722,7 +1735,7 @@ function buildClaudeHarnessTab(opts = {}) {
   }
   setInterval(() => { if (!document.hidden) _hgCtxPoll(); }, 5000);
 
-  function setBusy(b) {
+  function setBusy(b, sinceMs) {
     _HG.busy = b;
     conn.tab.querySelector('.led').classList.toggle('on', b);
     sendBtn.classList.toggle('stop', b);
@@ -1733,9 +1746,21 @@ function buildClaudeHarnessTab(opts = {}) {
     input.placeholder = b
       ? '回复执行中——继续输入将排队，结束后自动发送'
       : '给 Claude 发消息，@ 引用文件，/ 选择技能 · 可直接粘贴图片';
-    if (b) actStart();
+    if (b) actStart(sinceMs);
     else { actStop(); queuePump(); _hgCtxPoll(); }
   }
+  // v2.26:busy 状态自愈——SSE 事件丢失/断线重连竞态会让前端 _HG.busy 与
+  // 后端真实状态脱节(用户实锤「AI 在工作但显示未在应答」,活动指示器消失)。
+  // 5s 轮询会话列表纠偏,指示器永远反映后端真实 busy;计时起点同步用
+  // busy_since(切会话回来不清零,用户实锤)。
+  setInterval(() => {
+    if (document.hidden || !_HG.sid || !_HG.sse) return;
+    fetch('/api/harness/sessions').then(r => r.json()).then(j => {
+      if (!j || !j.ok) return;
+      const s = (j.sessions || []).find(x => x.sid === _HG.sid);
+      if (s && !!s.busy !== _HG.busy) setBusy(!!s.busy, s.busy_since);
+    }).catch(() => {});
+  }, 5000);
 
   // ==================== CLI 事件 → 渲染 ====================
   function handleEvent(o) {
@@ -1890,7 +1915,8 @@ function buildClaudeHarnessTab(opts = {}) {
       // v2.24.2：上滑到顶一律进只读禅模式（busy 时不能重渲主 flow——会炸掉
       // 流式中的活组；CAP 上限同理）——文案统一，行为一致
       bar.innerHTML = '📖 剩 ' + start + ' 条更早消息——<b>点击进入只读模式</b>查看';
-      bar.onclick = _roEnter;
+      // 点击走 flow 级事件委托（下方绑定一次）：bar 在扩/收/重渲中反复重建，
+      // 直绑 onclick 一旦在某次重建竞态中丢失就永久点不动（用户实锤「又不好使了」）
       flow.appendChild(bar);
     }
     if (!lines.length) return;
@@ -1901,6 +1927,17 @@ function buildClaudeHarnessTab(opts = {}) {
   }
 
   let _histBusy = false;   // 重渲期间防 scroll 重入
+  // v2.25：只拉 transcript 存 histAll、不重渲——快照恢复路径补数据用
+  // （切会话时 histAll 被清防串会话，快照里「已点开」的懒段要补填就得有数据）
+  async function _histFetch(sidAt) {
+    try {
+      const r = await fetch(`/api/harness/transcript?sid=${encodeURIComponent(sidAt)}`);
+      const j = await r.json();
+      if (!j.ok || _HG.sid !== sidAt) return false;
+      _HG.histAll = j.lines || [];
+      return true;
+    } catch(_) { return false; }
+  }
   // v2.24.11 扩/收缩前必须重拉 transcript：histAll 是切会话时拉的快照，
   // 流式期间的新消息（用户刚发的+AI 回复）不在里面——直接用旧快照重渲会
   // 把它们从界面上抹掉（用户实测「消息突然没了」；jsonl 完好=纯显示层丢失）
@@ -1913,6 +1950,11 @@ function buildClaudeHarnessTab(opts = {}) {
       _histRender(lines, start == null ? lines.length - _HG.HIST_PAGE : start);
     } catch(_) {}
   }
+  // 主层「进入只读模式」提示条：事件委托（绑一次永在，bar 重建不丢点击）
+  flow.addEventListener('click', (e) => {
+    const bar = e.target.closest('.hg-hist-more');
+    if (bar && flow.contains(bar)) { e.stopPropagation(); _roEnter(); }
+  });
   flow.addEventListener('scroll', () => {
     if (!_HG.histAll || _HG.busy || _histBusy) return;
     const nearTop = flow.scrollTop <= 60;
@@ -1948,7 +1990,37 @@ function buildClaudeHarnessTab(opts = {}) {
   // 只有居中的历史流（VSCode 禅模式）。同样滚动分段 + 懒抽屉（开才渲染、
   // 合即丢弃）——千条会话也只耗一屏 DOM。退出即整层销毁（渲染记录全清）。
   function _roEnter() {
-    if (!_HG.histAll || !_HG.histAll.length) return;
+    // 主层「进入只读」提示条入口改事件委托（见 flow click 绑定处），此处
+    // 保留为直接调用入口。失败/异常必须上屏——静默会让用户以为按钮坏了。
+    try {
+      _roEnterInner();
+    } catch (e) {
+      console.error('[只读模式]', e);
+      const bar = flow.querySelector('.hg-hist-more');
+      if (bar) bar.innerHTML = '⚠ 只读模式打开失败: ' + esc(String(e)) + '（点击重试）';
+    }
+  }
+
+  function _roEnterInner() {
+    if (!_HG.histAll || !_HG.histAll.length) {
+      // v2.25：快照恢复路径 histAll 为空（切会话清掉防串会话，快照恢复不拉
+      // transcript）——「📖 剩 N 条更早消息」点了静默没反应（用户实测）。先
+      // 拉数据再进入；拉完重入此函数时 histAll 已在场。
+      const sidAt = _HG.sid;
+      if (!sidAt) return;
+      if (_HG._roFetching) return;
+      _HG._roFetching = true;
+      _histFetch(sidAt).then(ok => {
+        _HG._roFetching = false;
+        if (_HG.sid !== sidAt) return;
+        if (ok) _roEnter();
+        else {
+          const bar = flow.querySelector('.hg-hist-more');
+          if (bar) bar.innerHTML = '⚠ 历史拉取失败——<b>点击重试</b>';
+        }
+      });
+      return;
+    }
     _roExit();                                   // 防重入
     const total = _HG.histAll.length;
     const ov = document.createElement('div');
@@ -2100,7 +2172,7 @@ function buildClaudeHarnessTab(opts = {}) {
       if (sid) {
         fetch(`/api/harness/events?sid=${encodeURIComponent(sid)}&after_seq=${_HG.seq}`)
           .then(r => r.json())
-          .then(j => { if (j.ok && _HG.sid === sid) { setBusy(!!j.busy); if (j.busy) phResume(); } })
+          .then(j => { if (j.ok && _HG.sid === sid) { setBusy(!!j.busy, j.busy_since); if (j.busy) phResume(); } })
           .catch(() => { if (_HG.sid === sid) setBusy(false); });
       }
       return;
@@ -2144,6 +2216,15 @@ function buildClaudeHarnessTab(opts = {}) {
       flow.innerHTML = c.html; _HG.seq = c.seq;
       scrollBottom(true);              // v2.25：快照恢复也回底——与 _histRender 路径
                                        // 一致（用户实测「新建会话再切回，焦点不在最下面」）
+      // v2.25：快照里「已点开」的懒段/懒工具，切回来必须显示内容——histAll
+      // 已被切会话清空，先拉 transcript 再补填（否则展开=空白壳，用户实测
+      // 「早起会话的历史思考点不开了」）
+      const lazyOpen = flow.querySelectorAll('.h-think-seg.open[data-hg-lazy="1"], .h-tool[data-hg-lazy="1"]');
+      if (lazyOpen.length && !_HG.histAll) {
+        _histFetch(sid).then(ok => {
+          if (ok && _HG.sid === sid) lazyOpen.forEach(el => _histLazyFill(el));
+        });
+      }
       // v2.24.5：时间条状态从 DOM 恢复（最后一条 .h-time 的 ms）
       _HG.lastTs = +((([...flow.querySelectorAll('.h-time')].pop() || {}).dataset || {}).ms || 0);
       // 快照恢复后重建 rowById（busy 会话切回时 tool_result 事件要挂回行）
@@ -2154,7 +2235,7 @@ function buildClaudeHarnessTab(opts = {}) {
       // 后端 events 接口顺带返回真实 busy，按它恢复
       fetch(`/api/harness/events?sid=${encodeURIComponent(sid)}&after_seq=${_HG.seq}`)
         .then(r => r.json())
-        .then(j => { if (j.ok && _HG.sid === sid) { setBusy(!!j.busy); if (j.busy) phResume(); } })   // v2.20（3.png）：快照里的冻结占位复活
+        .then(j => { if (j.ok && _HG.sid === sid) { setBusy(!!j.busy, j.busy_since); if (j.busy) phResume(); } })   // v2.20（3.png）：快照里的冻结占位复活
         .catch(() => { if (_HG.sid === sid) setBusy(false); });
     } else {
       flow.innerHTML = '';
@@ -2170,7 +2251,7 @@ function buildClaudeHarnessTab(opts = {}) {
           if (j.busy) phResume();
           else grpFinalize(true);          // transcript 末尾若挂着未收的组 → 定稿自动收起
           scrollBottom(true);              // 切会话回底（不受翻历史保护限制）
-          setBusy(!!j.busy);
+          setBusy(!!j.busy, j.busy_since);   // v2.26：计时起点带后端 busy_since（切回来不清零）
         }
       } catch(_) {}
     }
@@ -2256,7 +2337,14 @@ function buildClaudeHarnessTab(opts = {}) {
   function renderQueue() {
     if (qDrag) return;            // 拖拽中不重建，松手后统一重渲
     const list = _HG.queues[_hgQueueKey()] || [];
+    const lenChanged = queueEl._lastLen !== list.length;
     queueEl.style.display = list.length ? 'flex' : 'none';
+    queueEl._lastLen = list.length;
+    // v2.25：排队条顶高/收起会改变消息流视口高——原本在底部跟读时自动回底，
+    // 不用用户手动翻页（用户需求）。翻阅历史中（不在底部）不打扰。
+    if (lenChanged && typeof isNearBottom === 'function' && isNearBottom()) {
+      requestAnimationFrame(() => scrollBottom());
+    }
     queueEl.innerHTML = list.map((it, i) => {
       let t = String(it.text || '').replace(/\s+/g, ' ').trim();
       const nAt = (it.images || []).length + (it.files || []).length;
