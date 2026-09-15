@@ -120,11 +120,14 @@ def get_pc_code():
 
 
 def encrypt_password(pc_code, password):
-    """RSA_NO_PADDING(pcCode+'\\u200b'+明文) → base64（256 字节右对齐）。"""
+    """RSA_NO_PADDING(pcCode+'\\u200b'+明文) → base64（256 字节右对齐）。
+    分隔符 U+200B 必须按 UTF-8（3 字节 E2 80 8B）参与加密——HiClaw 原实现
+    是 Buffer.from(str)（UTF-8）；此前 encode("ascii","ignore") 把它丢了，
+    密文与服务端期望不符 → 登录恒报「请求参数不正常」。"""
     from Crypto.PublicKey import RSA
     from Crypto.Util.number import bytes_to_long, long_to_bytes
     key = RSA.import_key(RSA_PUB)
-    raw = (pc_code + "​" + password).encode("ascii", "ignore")
+    raw = (pc_code + "​" + password).encode("utf-8")
     m = bytes_to_long(raw)
     sig = pow(m, key.e, key.n)
     out = long_to_bytes(sig, 256)
