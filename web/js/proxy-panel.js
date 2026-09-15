@@ -50,7 +50,11 @@ function buildProxyTab() {
         <button class="lv-btn" data-px-mode="proxy" title="base_url 切到代理入口（8787/37349，重启 Claude Code 后生效）">切换为代理模式</button>
         <button class="lv-btn" data-px-mode="direct" title="base_url 切回内网网关直连">切换为直连模式</button>
       </div>
-      <div class="px-body">
+      <div class="px-tabs">
+        <button class="px-tab px-tab-act" data-px-tab="main">概览</button>
+        <button class="px-tab" data-px-tab="usage">用量统计</button>
+      </div>
+      <div class="px-body" data-px-page="main">
         <div class="px-msg" data-px-msg></div>
 
         <!-- 统计卡行：请求/成功率/重试/失败 + tokens + 免费/收费 -->
@@ -101,7 +105,30 @@ function buildProxyTab() {
           <div data-px-quota-rank></div>
         </div>
 
-        <div class="px-hint">链路：Claude Code → headroom(8787，压缩) → 重试代理(37349，429/5xx 自动重试) → lanz 内网网关。退出工具自动停代理并回滚 base_url；异常退出下次启动自愈。</div>
+        <div class="px-hint" data-px-chain>链路：Claude Code → headroom(8787，压缩) → 重试代理(37349，429/5xx 自动重试) → 上游网关。退出工具自动停代理并回滚 base_url；异常退出下次启动自愈。</div>
+      </div>
+
+      <!-- 用量统计页：日×小时×模型聚合（180 天内），纯 CSS 堆叠柱状图 -->
+      <div class="px-body" data-px-page="usage" style="display:none;">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <div class="px-tabs" style="margin:0;">
+            <button class="px-tab px-tab-act" data-px-u-range="hour">当日按小时</button>
+            <button class="px-tab" data-px-u-range="7d">近 7 日</button>
+            <button class="px-tab" data-px-u-range="30d">近 30 日</button>
+          </div>
+          <span class="px-hint">按模型堆叠；保留最近 <span data-px-u-keep>180</span> 天</span>
+        </div>
+        <div class="px-stats" data-px-u-total></div>
+        <div class="px-sec">
+          <div class="px-sec-title" data-px-u-title>Token 用量（输入+输出）</div>
+          <div class="px-usage-chart" data-px-u-chart></div>
+          <div class="px-usage-x" data-px-u-x></div>
+          <div class="px-legend" data-px-u-legend></div>
+        </div>
+        <div class="px-sec">
+          <div class="px-sec-title">模型明细</div>
+          <div data-px-u-table></div>
+        </div>
       </div>
     </div>`;
   const es = termArea.querySelector('.empty-state');
@@ -142,6 +169,20 @@ function buildProxyTab() {
   const qAutoEl = $p('[data-px-q-auto]');
   const hrStatsEl = $p('[data-px-hr-stats]');
   const hrCfgBtn = $p('[data-px-hr-cfg]');
+  // ---- 面板内部 tab（概览/用量统计）：仅挂载点——用量逻辑全在
+  // proxy-usage.js（独立积木），宿主文件不承载任何用量实现 ----
+  const uPage = $p('[data-px-page="usage"]');
+  const mainPage = $p('[data-px-page="main"]');
+  wrap.querySelectorAll('[data-px-tab]').forEach(btn => {
+    btn.onclick = () => {
+      const page = btn.dataset.pxTab;
+      wrap.querySelectorAll('[data-px-tab]').forEach(b => b.classList.toggle('px-tab-act', b === btn));
+      mainPage.style.display = page === 'main' ? '' : 'none';
+      uPage.style.display = page === 'usage' ? '' : 'none';
+      if (page === 'usage' && window.pxUsageLoad) pxUsageLoad(wrap);
+    };
+  });
+  if (window.pxUsageInit) pxUsageInit(wrap);
 
   const ST_CLS = {
     HEALTHY: 'px-healthy', RETRY: 'px-retry', FAILED: 'px-failed', STOPPED: 'px-stopped',
@@ -150,6 +191,7 @@ function buildProxyTab() {
   function _msg(text, bad) {
     msgEl.textContent = text || '';
     msgEl.style.color = bad ? 'var(--danger,#ff5468)' : 'var(--muted)';
+    msgEl.style.display = text ? '' : 'none';   // 空态不占位（min-height+gap 会空出一条）
   }
 
   function _renderStats(snap) {
@@ -195,6 +237,7 @@ function buildProxyTab() {
         div.className = 'px-hrow' + (isOverload ? ' px-hrow-bad' : '');
         div.title = brief || '';
         div.innerHTML = `<span class="px-h-t">${t}</span><span class="px-h-m">${esc(String(model || '?').slice(0, 24))}</span>` +
+          `<span class="px-h-b">${esc(String(brief || ''))}</span>` +
           `<span class="px-h-i">in ${_pxTok(inTok)}</span><span class="px-h-o">out ${_pxTok(outTok)}</span>` +
           `<span class="px-h-e">${elapsed.toFixed(1)}s</span>`;
         frag.appendChild(div);
@@ -336,10 +379,18 @@ function buildProxyTab() {
     try {
       const r = await fetch('/api/proxy/status');
       const j = await r.json();
-      if (!j.ok) return;
+      if (!j.ok) {
+        // 后端降级返回（status_err）——面板冻结假 STOPPED 比报错更误导
+        if (!conn._pollErrShown) { conn._pollErrShown = true; _msg('状态获取失败: ' + (j.status_err || '未知'), true); }
+        return;
+      }
+      conn._pollErrShown = false;
       badgeEl.textContent = j.status;
       badgeEl.className = 'px-badge ' + (ST_CLS[j.status] || 'px-stopped');
       urlEl.textContent = 'base_url: ' + (j.base_url || '(未设置)');
+      // 链路说明尾段动态显示真实上游（不再写死 lanz）
+      const chain = wrap.querySelector('[data-px-chain]');
+      if (chain && j.upstream) chain.textContent = chain.textContent.replace(/→ .*。退出/, '→ ' + j.upstream + '。退出');
       toggleBtn.textContent = j.running ? '■ 停止代理' : '▶ 启动代理';
       if (j.already_running) _msg('检测到已有 Claude 代理实例在 37349 端口（原独立工具在跑）——面板仅展示，复用不杀', false);
       else if (j.port_busy) _msg('端口 37349 被其他程序占用，无法启动', true);
@@ -353,7 +404,10 @@ function buildProxyTab() {
         msgEl.dataset.keep = '1';
         _msg('未找到 headroom.exe（pip install headroom-ai[all]），压缩不可用；重试代理不受影响', true);
       }
-    } catch(_) {}
+    } catch(e) {
+      // 网络/解析失败同样不静默——连不上的原因要上屏
+      if (!conn._pollErrShown) { conn._pollErrShown = true; _msg('状态轮询失败: ' + e, true); }
+    }
   }
 
   // tab 激活/切走控制轮询（流畅守则：看不见不轮询）。

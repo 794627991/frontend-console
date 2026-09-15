@@ -771,6 +771,12 @@ class RetryProxyHandler(http.server.BaseHTTPRequestHandler):
             if key.lower() in HOP_BY_HOP:
                 continue
             out_headers[key] = self.headers[key]
+        # Host 头是本地代理入口（127.0.0.1:37349）——按域名路由的网关会 404。
+        # 重写为上游地址（默认端口不带上，与直连时客户端构造的 Host 一致）。
+        _uh = self.server.upstream_host
+        if (self.server.upstream_scheme, self.server.upstream_port) not in (("http", 80), ("https", 443)):
+            _uh = "%s:%d" % (_uh, self.server.upstream_port)
+        out_headers["Host"] = _uh
 
         path = self.path
         attempt = 0
@@ -795,7 +801,10 @@ class RetryProxyHandler(http.server.BaseHTTPRequestHandler):
                                   # 否则新连接 request/getresponse 失败会被误判为"响应后
                                   # 异常"不重试→回放 502→Claude Code 双层重试→烧额度
             try:
-                conn = http.client.HTTPConnection(
+                conn_cls = (http.client.HTTPSConnection
+                            if getattr(self.server, "upstream_scheme", "http") == "https"
+                            else http.client.HTTPConnection)
+                conn = conn_cls(
                     self.server.upstream_host, self.server.upstream_port, timeout=600)
                 conn.request(self.command, path, body=body, headers=out_headers)
                 resp = conn.getresponse()
@@ -1193,14 +1202,19 @@ def parse_upstream(s):
 def create_server(host="127.0.0.1", port=37349, upstream="lanz.hikvision.com:80"):
     """组装一个带好上游/stats/stop_event 的代理 server。
 
+    upstream 传 "host:port" 字符串（http）或 (host, port, scheme) 三元组
+    （v2.26：上游随用户配置的直连 base_url 动态推导，支持 https）。
     返回 (server, stats, stop_event)。默认 host=127.0.0.1（桌面机无需 LAN 暴露）。
     调用方拿到后用 server_thread_start() 起线程，stop() 时 stop_event.set() + shutdown。
     """
-    upstream_host, upstream_port = parse_upstream(upstream)
+    if isinstance(upstream, str):
+        upstream = (*parse_upstream(upstream), "http")
+    upstream_host, upstream_port, upstream_scheme = upstream
     stats = Stats()
     server = ThreadingHTTPServer((host, port), RetryProxyHandler)
     server.upstream_host = upstream_host
     server.upstream_port = upstream_port
+    server.upstream_scheme = (upstream_scheme or "http").lower()
     server.stats = stats
     stop_event = threading.Event()
     server.stop_event = stop_event  # 供 /__proxy/shutdown 接口唤醒用

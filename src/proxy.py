@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """Claude Proxy 合入模块（原 D:/AI/proxy 独立工具，tkinter 版去 GUI 平移）。
 
 链路：Claude Code → 8787(headroom 压缩) → 37349(重试代理) → lanz.hikvision.com
@@ -25,6 +25,7 @@ import socket
 import subprocess
 import threading
 import time
+from urllib.parse import urlsplit
 
 from flask import Blueprint, jsonify, request
 
@@ -35,15 +36,17 @@ from src.app_state import BASE_DIR, DATA_DIR
 log = logging.getLogger("claude_proxy")
 
 # ---- 常量（GUI:73-233 平移）----
+# v2.26 去写死：直连地址/转发上游不再是常量——真源是用户 API 配置的 BASE_URL
+# （settings.json env.ANTHROPIC_BASE_URL 的非代理值）。切代理前记忆并持久化到
+# proxy_state.json，停止/退出/启动自愈恢复记忆值；代理入口 = 本地端口 + 直连
+# 地址的路径（转发路径原样透传，只换 host:port，两边天然对齐）。
+# DEFAULT_DIRECT_URL 仅在记忆与当前值都拿不到时兜底。
 PROXY_URL = "http://127.0.0.1:8787"
-DIRECT_URL = "http://lanz.hikvision.com/v3/anthropic/model"
+DEFAULT_DIRECT_URL = "http://lanz.hikvision.com/v3/anthropic/model"
 LISTEN_HOST = "127.0.0.1"
 LISTEN_PORT = 37349
-RETRY_URL = "http://127.0.0.1:%d/v3/anthropic/model" % LISTEN_PORT
-UPSTREAM = "lanz.hikvision.com:80"
 
 HEADROOM_PORT = 8787
-HEADROOM_UPSTREAM = RETRY_URL
 HEADROOM_ENV_EXTRA = {"HEADROOM_RETRY_MAX_ATTEMPTS": "1",
                       "HEADROOM_MODE": "token",
                       "HEADROOM_NO_CCR": "1"}
@@ -153,6 +156,99 @@ class BaseUrlManager:
         return changed, skipped
 
 
+# ---- 直连地址：记忆 / 求值（v2.26 去写死核心）---------------------------
+PROXY_STATE_PATH = os.path.join(DATA_DIR, "proxy_state.json")
+_OWN_PROXY_PREFIXES = ("http://127.0.0.1:37349", "http://127.0.0.1:8787")
+
+
+def _is_own_proxy_url(url):
+    """base_url 是否指向自家代理入口（37349 重试代理 / 8787 headroom）。"""
+    return bool(url) and str(url).startswith(_OWN_PROXY_PREFIXES)
+
+
+_saved_direct = None    # proxy_state.json 的进程内镜像（None=未读过盘）
+
+
+def _load_saved_direct():
+    global _saved_direct
+    if _saved_direct is None:
+        try:
+            with open(PROXY_STATE_PATH, encoding="utf-8") as f:
+                u = (json.load(f) or {}).get("direct_url") or None
+            if _is_own_proxy_url(u):
+                u = None   # 脏数据防御：记忆里存了代理入口会让自愈写回代理地址
+            _saved_direct = u
+        except (ValueError, OSError):
+            _saved_direct = None
+    return _saved_direct
+
+
+def _remember_direct(url):
+    """切代理前记忆直连地址（持久化——异常退出后重启仍能恢复真值）。"""
+    global _saved_direct
+    if not url or _is_own_proxy_url(url):
+        return
+    _saved_direct = url
+    try:
+        with open(PROXY_STATE_PATH, "w", encoding="utf-8") as f:
+            json.dump({"direct_url": url}, f, ensure_ascii=False, indent=2)
+    except OSError as e:
+        log.warning("记忆直连地址失败: %s", e)
+
+
+def _profile_direct_url():
+    """active 配置方案快照里的 base_url（claude_profiles.json，settings 整份
+    快照制）。base_url 卡在代理地址且无 proxy_state 记忆时（旧版切的代理）
+    的可靠真源——方案快照是用户显式保存的直连配置，比 DEFAULT 兜底可信。"""
+    try:
+        p = os.path.join(os.path.expanduser("~"), ".serialconsole_pro",
+                         "claude_profiles.json")
+        with open(p, encoding="utf-8") as f:
+            d = json.load(f)
+        name = d.get("active") or ""
+        for prof in d.get("profiles") or []:
+            if prof.get("name") == name:
+                env = (prof.get("settings") or {}).get("env") or {}
+                if isinstance(env, dict):
+                    return env.get("ANTHROPIC_BASE_URL") or None
+    except (ValueError, OSError, AttributeError):
+        pass
+    return None
+
+
+def _direct_url():
+    """应恢复/展示的直连 base_url，优先级从新到旧：
+    ① settings 当前非代理值（最新——覆盖「代理运行中用户改了 BASE_URL」）
+    ② proxy_state.json 记忆（切代理前落盘）
+    ③ active 配置方案快照的 base_url（①② 都断时的真源，旧版残留场景）
+    ④ DEFAULT 兜底（连方案都没有——首次使用）"""
+    cur = _bmgr.read_current_url()
+    if cur and not _is_own_proxy_url(cur):
+        return cur
+    u = _load_saved_direct()
+    if u:
+        return u
+    u = _profile_direct_url()
+    if u and not _is_own_proxy_url(u):
+        return u
+    return DEFAULT_DIRECT_URL
+
+
+def _retry_url():
+    """重试代理入口 base_url：本地端口 + 直连地址的路径。
+    转发路径原样透传（proxy_core 只换 host:port），因此入口带上同样路径，
+    Claude Code 拼出的请求落到上游正好等价于直连时的请求。"""
+    return "http://127.0.0.1:%d%s" % (LISTEN_PORT, urlsplit(_direct_url()).path or "/")
+
+
+def _upstream_of(url):
+    """从直连 url 解析转发上游 (host, port, scheme)。"""
+    sp = urlsplit(url)
+    scheme = (sp.scheme or "http").lower()
+    port = sp.port or (443 if scheme == "https" else 80)
+    return sp.hostname or urlsplit(DEFAULT_DIRECT_URL).hostname, port, scheme
+
+
 # ---- ProxyController（GUI:400-464 平移，本来就纯线程零 tkinter）---------
 class ProxyController:
     def __init__(self):
@@ -183,27 +279,41 @@ class ProxyController:
 
     @property
     def running(self):
-        return self.server is not None and not self.stop_event.is_set()
+        # 三件套判活：stop() 会整套清空，半残状态只可能来自旧版本/异常路径，
+        # 任一缺失都按未启动算（此前 stop_event=None 时这里直接 AttributeError）
+        return (self.server is not None and self.stop_event is not None
+                and not self.stop_event.is_set())
 
-    def start(self, host=LISTEN_HOST, port=LISTEN_PORT, upstream=UPSTREAM):
+    def start(self, host=LISTEN_HOST, port=LISTEN_PORT, upstream=None):
         with self._lock:
             if self.running:
                 return
             if self.port_in_use(host, port):
                 raise RuntimeError("端口 %d 已被占用" % port)
-            self.server, self.stats, self.stop_event = core.create_server(
-                host, port, upstream)
+            try:
+                server, stats, stop_event = core.create_server(
+                    host, port, upstream or _upstream_of(_direct_url()))
+            except OSError as e:
+                # 绑定失败（被占用/Win 保留端口段/权限）——包装成可读消息，
+                # 之前裸 OSError 冒到 Flask 变 500，前端只看得到「请求失败」
+                raise RuntimeError(
+                    "端口 %d 无法绑定（被占用或被系统保留）: %s" % (port, e))
+            self.server, self.stats, self.stop_event = server, stats, stop_event
             self.thread = core.server_thread_start(self.server, self.stop_event)
-            log.info("代理已启动 %s:%d -> %s", host, port, upstream)
+            log.info("代理已启动 %s:%d -> %s:%s (%s)", host, port,
+                     server.upstream_host, server.upstream_port,
+                     server.upstream_scheme)
 
     def stop(self):
         with self._lock:
-            if not self.running:
-                self.server = None
-                return
             srv, ev = self.server, self.stop_event
+            # 三件套一起清（此前漏了 stats：停止后 snapshot() 仍拿旧快照，
+            # 面板假 HEALTHY/假运行，状态机与 start_proxy 的判定对不上）
             self.server = None
+            self.stats = None
             self.stop_event = None
+        if srv is None or ev is None:
+            return
         t = threading.Thread(target=core.stop_server, args=(srv, ev), daemon=True)
         t.start()
         log.info("代理已停止")
@@ -367,7 +477,7 @@ class HeadroomController:
                 raise RuntimeError("未找到 headroom.exe（%s）\n"
                                    "pip install %s 后重试" % (HEADROOM_EXE, PIP_PKG_SPEC))
             env = dict(os.environ)
-            env["ANTHROPIC_TARGET_API_URL"] = HEADROOM_UPSTREAM
+            env["ANTHROPIC_TARGET_API_URL"] = _retry_url()
             env.update(HEADROOM_ENV_EXTRA)
             if ccr:
                 env.pop("HEADROOM_NO_CCR", None)
@@ -384,7 +494,7 @@ class HeadroomController:
                 env=env, creationflags=creationflags,
                 stdout=self._out_file, stderr=self._err_file)
             log.info("headroom 已拉起 pid=%s 模式=%s 上游=%s",
-                     self.proc.pid, mode, HEADROOM_UPSTREAM)
+                     self.proc.pid, mode, env["ANTHROPIC_TARGET_API_URL"])
 
     def startup_error(self):
         """读 stderr 尾部（启动失败诊断，前端展示）。"""
@@ -695,7 +805,10 @@ def _get_credentials():
     刷新。status 路由 1s 被前端轮询，不能每次读盘。"""
     global _cred_cache, _cred_cached
     if not _cred_cached:
-        _cred_cache = lanz_quota.load_credentials(LANZ_CRED_PATH) if HAS_LANZ else None
+        try:
+            _cred_cache = lanz_quota.load_credentials(LANZ_CRED_PATH) if HAS_LANZ else None
+        except Exception:
+            _cred_cache = None   # 凭据文件损坏/编码异常不拖死 status 轮询
         _cred_cached = True
     return _cred_cache
 
@@ -740,7 +853,7 @@ def _wait_headroom_ready(timeout=HEADROOM_READY_TIMEOUT):
 def _proxy_mode_url():
     """代理模式目标 base_url：off→37349 直连重试代理；压缩在跑→8787（GUI:2694）。"""
     if _headroom_mode == "off" or not _hr.ping_existing():
-        return RETRY_URL
+        return _retry_url()
     return PROXY_URL
 
 
@@ -757,16 +870,22 @@ def start_proxy():
         return False, "端口 %d 被其他程序占用，无法启动" % LISTEN_PORT
     try:
         _ctl.start()
-    except RuntimeError as e:
+    except Exception as e:   # 绑定失败等——给面板可读消息，别让 Flask 吞成 500
         return False, str(e)
     _hr_switching = True
 
     def _worker():
         global _hr_switching
         try:
-            # 先切 37349 直连（不等 headroom，会话立即可用）
-            target = RETRY_URL
+            # 先记忆当前直连地址（非代理值才记——恢复的真源），再切 37349
+            # 直连重试代理（不等 headroom，会话立即可用）
             cur = _bmgr.read_current_url()
+            _remember_direct(cur)
+            if _is_own_proxy_url(cur) and not _load_saved_direct():
+                # base_url 卡在代理地址且无记忆（旧版切的代理）——从配置
+                # 方案快照找回真源并落盘，此后恢复不再依赖方案文件
+                _remember_direct(_direct_url())
+            target = _retry_url()
             if cur != target:
                 _bmgr.apply(target)
                 _autoswitched = True
@@ -797,8 +916,8 @@ def stop_proxy():
     _ctl.stop()
     try:
         cur = _bmgr.read_current_url()
-        if _autoswitched or cur in (PROXY_URL, RETRY_URL):
-            _bmgr.apply(DIRECT_URL)
+        if _autoswitched or _is_own_proxy_url(cur):
+            _bmgr.apply(_direct_url())
             log.info("代理停止，base_url 已切回直连（原: %s）", cur)
     except Exception as e:
         log.warning("代理停止后切直连失败: %s", e)
@@ -812,7 +931,11 @@ def set_mode(mode):
     global _autoswitched
     if mode not in ("proxy", "direct"):
         return False, ["未知模式"]
-    target = _proxy_mode_url() if mode == "proxy" else DIRECT_URL
+    if mode == "proxy":
+        # 切代理前必记忆原值——用户只点「切换为代理模式」不点启动的路径
+        # 也要覆盖，否则强杀后自愈拿不到记忆，只能恢复默认兜底
+        _remember_direct(_bmgr.read_current_url())
+    target = _proxy_mode_url() if mode == "proxy" else _direct_url()
     changed, skipped = _bmgr.apply(target)
     if changed:
         _autoswitched = False
@@ -852,7 +975,7 @@ def apply_hr_mode(mode, ccr=None):
                 # 代理在跑才把 base_url 指回 37349；没在跑时只改记忆
                 # ——否则 base_url 指向空端口，Claude Code 直接连不上
                 if _ctl.running:
-                    _bmgr.apply(RETRY_URL)
+                    _bmgr.apply(_retry_url())
                     _autoswitched = True
                 log.info("压缩模式切换 -> off（headroom 已停%s）",
                          "，直连重试代理" if _ctl.running else "，代理未跑不动 base_url")
@@ -869,7 +992,7 @@ def apply_hr_mode(mode, ccr=None):
                 _headroom_mode = "off"
                 save_headroom_mode("off", remember=True)
                 log.warning("切换到 %s 失败，回退直连: %s", mode, e)
-                _bmgr.apply(RETRY_URL)
+                _bmgr.apply(_retry_url())
                 _autoswitched = True
         finally:
             _hr_switching = False
@@ -1084,6 +1207,30 @@ def _quota_model_rows(ov):
 
 
 # ---- 模块生命周期 -------------------------------------------------------
+def ensure_direct_if_proxy_down(origin="startup"):
+    """base_url 指向自家代理但对应入口没在跑 → 立即恢复直连。
+
+    工具启动自愈与 claude 会话启动前（claude_harness HarnessSession.start）
+    共用：强杀后 base_url 卡在 127.0.0.1:37349/8787，用户不点「启动代理」
+    直接开 Claude 会话时，claude 进程读到的就是死端口——起进程前先修好。
+    按 base_url 实际指向的端口验活（此前任一入口活着就跳过，8787 活着会
+    漏修指向 37349 死端口的场景）。幂等；直连 base_url 时零开销直接返回。
+    """
+    try:
+        cur = _bmgr.read_current_url()
+        if not _is_own_proxy_url(cur):
+            return False
+        alive = _hr.ping_existing() if ":8787" in cur else _ctl.ping_existing()
+        if alive:
+            return False
+        changed, _ = _bmgr.apply(_direct_url())
+        log.info("自愈(%s): base_url 指向未运行的代理，已恢复直连: %s", origin, changed)
+        return True
+    except Exception as e:
+        log.warning("自愈(%s)检查失败: %s", origin, e)
+        return False
+
+
 def proxy_module_init():
     """server.py start_background 时调（不自动启动代理——按需启动）：
     读记忆的压缩模式/CCR；启动自愈；建额度 worker。"""
@@ -1091,17 +1238,9 @@ def proxy_module_init():
     m = load_headroom_mode()
     _headroom_mode = m if m else "light"   # 无记忆默认 light（省内存版）
     _ccr = load_ccr()
-    # ---- 启动自愈（GUI:2489-2507 平移）----
-    # 上次被任务管理器杀/崩溃，_quit 没执行 → base_url 卡代理地址，
-    # Claude Code 连不上。发现指向代理但代理没在跑，先切回直连。
-    try:
-        cur = _bmgr.read_current_url()
-        if cur in (PROXY_URL, RETRY_URL) and not (
-                _ctl.ping_existing() or _hr.ping_existing()):
-            changed, _ = _bmgr.apply(DIRECT_URL)
-            log.info("启动自愈: base_url 指向代理但未运行，已切回直连: %s", changed)
-    except Exception as e:
-        log.warning("启动自愈检查失败: %s", e)
+    # v2.26：启动自愈已移除（用户定）——自愈只发生在「启动 claude 会话前」
+    # （HarnessSession.start → ensure_direct_if_proxy_down），且以代理实际
+    # ping 不通为前提；工具启动不代劳，避免误判用户刻意的 base_url 状态。
     # 额度 worker（有凭据自动登录；无凭据建了等 POST 唤醒）
     _ensure_quota_worker()
     # headroom /stats 缓存线程（代理运行时 5s 拉，status 只读缓存）
@@ -1114,9 +1253,9 @@ def _atexit_rollback():
     """atexit 兜底：进程退出时若 base_url 还指着自家代理 → 回直连。"""
     try:
         cur = _bmgr.read_current_url()
-        if cur in (PROXY_URL, RETRY_URL):
+        if _is_own_proxy_url(cur):
             if not (_ctl.ping_existing() or _hr.ping_existing()):
-                _bmgr.apply(DIRECT_URL)
+                _bmgr.apply(_direct_url())
                 log.info("atexit 兜底: 已切回直连")
     except Exception:
         pass
@@ -1146,7 +1285,7 @@ def proxy_shutdown(force_rollback=False):
             _ctl.stop_event = None
             core.stop_server(srv, ev)
         if force_rollback or _autoswitched:
-            _bmgr.apply(DIRECT_URL)
+            _bmgr.apply(_direct_url())
             _autoswitched = False
             log.info("退出时已切回直连 (force=%s)" % force_rollback)
     except Exception as e:
@@ -1159,7 +1298,19 @@ proxy_bp = Blueprint("proxy", __name__)
 
 @proxy_bp.route("/api/proxy/status")
 def _api_status():
-    snap = _ctl.snapshot()
+    # 状态接口是面板命脉（前端 1s 轮询）——任何异常都不能 500：500 会让
+    # 前端 _poll 整轮静默跳过，面板冻结在初始 STOPPED（用户实锤：代理实际
+    # 在跑、settings.json 都切过去了，面板却毫无变化）。降级返回错误字段。
+    try:
+        return jsonify(_status_payload())
+    except Exception as e:
+        log.exception("status 组装失败")
+        return jsonify({"ok": False, "status_err": str(e),
+                        "status": "ERR", "running": _ctl.running})
+
+
+def _status_payload():
+    snap = _ctl.snapshot() if _ctl.running else None   # 判活与 start_proxy 同源
     now = time.time()
     st = "STOPPED"
     if snap is not None:
@@ -1184,14 +1335,16 @@ def _api_status():
     cred = _get_credentials()
     data = {
         "ok": True,
-        "running": snap is not None,
-        "already_running": (snap is None and _ctl.port_in_use()
+        "running": _ctl.running,
+        "already_running": (not _ctl.running and _ctl.port_in_use()
                             and _ctl.ping_existing()),
-        "port_busy": (snap is None and _ctl.port_in_use()
+        "port_busy": (not _ctl.running and _ctl.port_in_use()
                       and not _ctl.ping_existing()),
         "status": st,
         "snapshot": snap,
         "base_url": _bmgr.read_current_url(),
+        "direct_url": _direct_url(),
+        "upstream": "%s:%d" % _upstream_of(_direct_url())[:2],
         "hr_mode": _headroom_mode,
         "hr_running": _hr.running if _headroom_mode != "off" else False,
         "hr_switching": _hr_switching,
@@ -1209,10 +1362,15 @@ def _api_status():
     }
     if ov:
         data["quota_overview"] = ov
-        data["quota_models"] = _quota_model_rows(ov)
+        try:
+            data["quota_models"] = _quota_model_rows(ov)
+        except Exception:
+            pass   # 额度明细格式异常不拖死整个 status
     if rank:
         data["quota_rank"] = rank
-    return jsonify(data)
+    return data
+
+
 
 
 @proxy_bp.route("/api/proxy/start", methods=["POST"])
