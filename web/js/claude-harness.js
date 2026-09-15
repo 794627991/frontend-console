@@ -306,6 +306,9 @@ function buildClaudeHarnessTab(opts = {}) {
   tabs.insertBefore(tab, tabs.querySelector('.tab-bar-actions'));
   if (typeof _initTabDrag === 'function') _initTabDrag(tab);
   termArea.appendChild(wrap);
+  // 登录条 DOM 随 tab 创建——创建后立刻拉一次登录态（页面加载时的首轮
+  // 渲染发生在 DOM 存在之前，会扑空停在「未登录」默认态）
+  if (typeof hgLoginRefresh === 'function') setTimeout(hgLoginRefresh, 150);
 
   const conn = {
     portId,
