@@ -667,7 +667,7 @@ class HikLinkBotController:
                 return s
         new_sid = uuid.uuid4().hex
         s = ch.HarnessSession(new_sid, cwd=os.path.expanduser("~"),
-                              title="🤖 小助理（HikLink）")
+                              title="🤖 前端小助手（HikLink）")
         try:
             s.start()
         except Exception as e:
@@ -695,6 +695,11 @@ class HikLinkBotController:
         except (ValueError, OSError):
             pass
         num, secret = d.get("robot_num"), d.get("app_secret")
+        if num and secret and d.get("robot_name") != BOT_NAME:
+            # 缓存凭据属于旧名字的机器人（改名重建场景）→ 作废，按新名重注册
+            log.info("缓存凭据是旧机器人（%s ≠ %s），重新注册",
+                     d.get("robot_name"), BOT_NAME)
+            num = secret = None
         if not (num and secret):
             try:
                 his = _his()
@@ -705,14 +710,14 @@ class HikLinkBotController:
                 if not (num and secret):
                     return False, msg2 or "机器人注册失败"
                 d.update({"uid": u, "password": p, "robot_num": num,
-                          "app_secret": secret})
+                          "app_secret": secret, "robot_name": BOT_NAME})
                 with open(SESSION_PATH, "w", encoding="utf-8") as f:
                     json.dump(d, f, ensure_ascii=False, indent=2)
             except Exception as e:
                 return False, "登录/注册失败: %s" % e
         self.bot = HikLinkBot(num, secret)
         self.bot.welcome_text = welcome or (
-            "🤖 前端控制台小助理已上线！直接发消息即可下达指令，"
+            "🤖 前端小助手已上线！直接发消息即可下达指令，"
             "回复会自动推回。/stop 停止当前任务。")
         self.bot.on_command = self._on_command
         ok, msg3 = self.bot.start()
