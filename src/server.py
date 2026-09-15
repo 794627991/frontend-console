@@ -1900,6 +1900,27 @@ def cmd_lib_save():
     return jsonify({"ok": True, "lib": clean})
 
 
+# ---- HikLink 机器人：统一登录状态聚合 + 激活门控（机器人与登录绑定） ----
+@app.route("/api/hiklink/status")
+def hiklink_status():
+    """统一登录 UI 轮询：登录名 + 机器人运行态。"""
+    try:
+        return jsonify({"ok": True, **hiklink_bot.status_snapshot()})
+    except Exception as e:
+        return jsonify({"ok": False, "msg": str(e)})
+
+
+@app.route("/api/hiklink/activate", methods=["POST"])
+def hiklink_activate():
+    """激活/停用机器人（幂等）。未登录（无统一凭据）时激活会被拒绝。"""
+    j = request.get_json(silent=True) or {}
+    if j.get("stop"):
+        ok, msg = hiklink_bot.ensure_stopped()
+    else:
+        ok, msg = hiklink_bot.ensure_started()
+    return jsonify({"ok": ok, "msg": msg})
+
+
 if __name__ == "__main__":
     # 启动清理：idx/ 下超过 3 天未使用的索引文件（atime 由 _touch_idx 维护）
     try:

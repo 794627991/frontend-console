@@ -994,4 +994,38 @@ def controller():
     return _controller
 
 
+def ensure_started():
+    """统一登录后激活机器人（幂等）：有统一凭据才起，运行中直接返回。
+    未登录（无凭据）→ 明确不激活——机器人与登录绑定。"""
+    global _controller
+    if _controller is None:
+        _controller = HikLinkBotController()
+    u, p = _controller._creds()
+    if not (u and p):
+        return False, "未登录（无统一凭据），机器人不激活"
+    if _controller.status().get("running"):
+        return True, "机器人已在运行"
+    return _controller.start()
+
+
+def ensure_stopped():
+    """登出时停用机器人（幂等）——登录与机器人绑定，登出即停。"""
+    if _controller and _controller.bot:
+        return _controller.stop()
+    return True, "机器人未在运行"
+
+
+def status_snapshot():
+    """统一登录 UI 的状态聚合：登录名 + 机器人运行态。"""
+    username = None
+    st = {}
+    if _controller:
+        username, _ = _controller._creds()
+        if _controller.bot:
+            st = _controller.bot.status()
+    return {"username": username, "running": bool(st.get("running")),
+            "connected": bool(st.get("connected")),
+            "robot_num": st.get("robot_num")}
+
+
 _autostart()

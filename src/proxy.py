@@ -1445,7 +1445,12 @@ def _api_credentials():
             _quota_ov = {}
             _quota_rank = []
             _quota_ts = None
-        return jsonify({"ok": True, "msg": "已断开登录"})
+        try:   # 统一登录绑定：登出即停用机器人
+            from src import hiklink_bot
+            hiklink_bot.ensure_stopped()
+        except Exception:
+            pass
+        return jsonify({"ok": True, "msg": "已断开登录（机器人已停用）"})
     user = (j.get("username") or "").strip()
     pwd = j.get("password") or ""
     if not user or not pwd:
@@ -1453,4 +1458,9 @@ def _api_credentials():
     lanz_quota.save_credentials(LANZ_CRED_PATH, user, pwd)
     _invalidate_cred_cache({"username": user, "password": pwd})
     _quota.submit_credentials(user, pwd)
-    return jsonify({"ok": True, "msg": "已保存，开始登录"})
+    try:   # 统一登录绑定：凭据就位即激活机器人（幂等，无凭据不会被激活）
+        from src import hiklink_bot
+        hiklink_bot.ensure_started()
+    except Exception:
+        pass
+    return jsonify({"ok": True, "msg": "已保存，开始登录（机器人已激活）"})

@@ -281,6 +281,22 @@ function buildClaudeHarnessTab(opts = {}) {
               </button>
             </div>
           </div>
+          <div class="hg-login-bar" data-hg-login>
+            <div class="hg-login-row" data-hg-login-off>
+              <span class="hg-login-dot off"></span>
+              <span class="hg-login-text">未登录 · 机器人未激活</span>
+              <input class="hg-login-inp" data-hg-login-user placeholder="用户名" spellcheck="false" autocomplete="username">
+              <input class="hg-login-inp" data-hg-login-pwd type="password" placeholder="密码" autocomplete="current-password">
+              <button class="hg-chip" data-hg-login-btn>登录</button>
+            </div>
+            <div class="hg-login-row" data-hg-login-on style="display:none">
+              <span class="hg-login-dot on"></span>
+              <span class="hg-login-text" data-hg-login-name>已登录</span>
+              <span class="hg-login-bot" data-hg-login-bot></span>
+              <span class="hg-flex1"></span>
+              <button class="hg-chip" data-hg-logout-btn title="登出并停用机器人">登出</button>
+            </div>
+          </div>
         </div>
       </div>
       <input type="file" data-hg-file multiple style="display:none">
@@ -3662,3 +3678,65 @@ async function claudeButtonAction() {
   if (mode === 'cli') connectClaude();
   else buildClaudeHarnessTab({});
 }
+
+// ---- 统一登录条（输入卡下方左下角）：代理/额度/机器人一次登录全通 ----
+// 登录走共用接口 /api/proxy/credentials（单一事实源 lanz_credentials.json）；
+// 凭据就位后端自动激活机器人（幂等），登出自动停用。未登录机器人不激活。
+function hgLoginRender(st) {
+  document.querySelectorAll('[data-hg-login]').forEach(bar => {
+    const off = bar.querySelector('[data-hg-login-off]');
+    const on = bar.querySelector('[data-hg-login-on]');
+    if (!off || !on) return;
+    if (st.username) {
+      off.style.display = 'none'; on.style.display = '';
+      const name = bar.querySelector('[data-hg-login-name]');
+      if (name) name.textContent = st.username + ' 已登录';
+      const bot = bar.querySelector('[data-hg-login-bot]');
+      if (bot) bot.textContent = st.running
+        ? (st.connected ? '机器人：在线' : '机器人：连接中…') : '机器人：未运行';
+    } else {
+      off.style.display = ''; on.style.display = 'none';
+    }
+  });
+}
+async function hgLoginRefresh() {
+  try {
+    const r = await fetch('/api/hiklink/status');
+    const j = await r.json();
+    if (j && j.ok) hgLoginRender(j);
+  } catch (_) {}
+}
+document.addEventListener('click', async ev => {
+  const loginBtn = ev.target.closest('[data-hg-login-btn]');
+  if (loginBtn) {
+    const bar = loginBtn.closest('[data-hg-login]');
+    const uEl = bar.querySelector('[data-hg-login-user]');
+    const pEl = bar.querySelector('[data-hg-login-pwd]');
+    const u = (uEl.value || '').trim(), p = pEl.value || '';
+    if (!u || !p) { (u ? pEl : uEl).focus(); return; }
+    loginBtn.disabled = true; const old = loginBtn.textContent;
+    loginBtn.textContent = '登录中…';
+    try {
+      await fetch('/api/proxy/credentials', { method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'save', username: u, password: p }) });
+      // 凭据就位后端已自动激活；再显式触发一次（幂等），并即时回显登录态
+      await fetch('/api/hiklink/activate', { method: 'POST',
+        headers: { 'Content-Type': 'application/json' }, body: '{}' }).catch(() => {});
+      hgLoginRender({ username: u, running: true, connected: false });
+      pEl.value = '';
+      setTimeout(hgLoginRefresh, 1500);
+    } catch (_) {}
+    loginBtn.disabled = false; loginBtn.textContent = old;
+    return;
+  }
+  const outBtn = ev.target.closest('[data-hg-logout-btn]');
+  if (outBtn) {
+    try { await fetch('/api/proxy/credentials', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{"action":"clear"}' }); } catch (_) {}
+    hgLoginRefresh();
+  }
+});
+setInterval(hgLoginRefresh, 30000);   // 低频保活（登录态/机器人在线显示）
+hgLoginRefresh();
