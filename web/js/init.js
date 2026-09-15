@@ -49,7 +49,8 @@ $('btnFiles').onclick = showFilesModal;  // 文件列表弹窗（打开已有文
 $('btnClaude').onclick = claudeButtonAction;  // Claude 入口：按设置分派——默认界面化 harness tab（claude-harness.js），设置可切回 CLI 终端
 // Claude 代理面板（原 D:\AI\proxy 独立工具合入：重试代理+headroom 压缩+额度监控）
 // 帮助已挪设置面板最底部分区（settings.js _stRenderHelpPane）
-$('btnProxy').onclick = buildProxyTab;
+// Proxy 顶部按钮已移入 Claude 对话页输入卡上方（hg-proxy-btn，带运行状态）；
+// buildProxyTab 由 claude-harness.js 的事件委托触发，此处不再绑定。
 // ---- 关闭到托盘首次提示：后端隐藏窗口前调 window._trayNotice() ----
 // 暗色模态框（铁律②不用原生弹窗），带「下次不再显示」勾选（写 config tray_prompt_shown）。
 // 注意：窗口即将 hide，弹窗在隐藏前一瞬展示——唤出时仍在（非阻塞展示，用户回来看得见）。

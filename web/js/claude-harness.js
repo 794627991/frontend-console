@@ -255,6 +255,12 @@ function buildClaudeHarnessTab(opts = {}) {
         </div>
         <div class="hg-flow" data-hg-flow></div>
         <div class="hg-card-wrap">
+          <div class="hg-proxy-bar">
+            <button class="hg-chip hg-proxy-btn" data-hg-proxy-btn title="Claude 代理：重试代理（429/5xx 自动重试）+ 用量统计。点开代理面板">
+              <img src="/ico/proxy.png" alt="proxy" style="width:14px;height:14px;vertical-align:-2px;"> Proxy
+              <span class="hg-proxy-state" data-hg-proxy-state>检测中…</span>
+            </button>
+          </div>
           <div class="hg-queue" data-hg-queue style="display:none"></div>
           <div class="hg-atts" data-hg-atts style="display:none"></div>
           <div class="hg-input-card">
@@ -309,6 +315,12 @@ function buildClaudeHarnessTab(opts = {}) {
   // 登录条 DOM 随 tab 创建——创建后立刻拉一次登录态（页面加载时的首轮
   // 渲染发生在 DOM 存在之前，会扑空停在「未登录」默认态）
   if (typeof hgLoginRefresh === 'function') setTimeout(hgLoginRefresh, 150);
+  // 开启 Claude 联动：确保重试代理在跑（无则后台拉起无 headroom 的轻量
+  // 代理，30s 未就绪自动回退直连）。fire-and-forget，不阻塞 tab 打开。
+  fetch('/api/proxy/ensure', { method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{"for_claude":true}' }).catch(() => {});
+  if (typeof hgProxyRefreshState === 'function') setTimeout(hgProxyRefreshState, 300);
 
   const conn = {
     portId,
@@ -3743,3 +3755,32 @@ document.addEventListener('click', async ev => {
 });
 setInterval(hgLoginRefresh, 30000);   // 低频保活（登录态/机器人在线显示）
 hgLoginRefresh();
+
+// ---- Proxy 状态按钮（输入卡上方，原顶部按钮迁入）：显示运行态+端口，点击开代理面板 ----
+function hgProxyRefreshState() {
+  const fetchIt = async () => {
+    try {
+      const r = await fetch('/api/proxy/status');
+      const j = await r.json();
+      let txt = '· 未运行', cls = ' off';
+      if (j.already_running || j.running) {
+        txt = '· 37349 运行中';
+        cls = ' on';
+        if (j.running && j.snapshot && j.snapshot.in_flight_retries > 0) txt += '（重试中）';
+      } else if (j.port_busy) {
+        txt = '· 端口被占'; cls = ' err';
+      }
+      document.querySelectorAll('[data-hg-proxy-state]').forEach(el => {
+        el.textContent = txt;
+        el.className = 'hg-proxy-state' + cls;
+      });
+    } catch (_) {}
+  };
+  fetchIt();
+}
+document.addEventListener('click', ev => {
+  const btn = ev.target.closest('[data-hg-proxy-btn]');
+  if (btn && typeof buildProxyTab === 'function') buildProxyTab();
+});
+setInterval(hgProxyRefreshState, 30000);   // 与登录条同频的低频保活
+hgProxyRefreshState();

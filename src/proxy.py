@@ -857,11 +857,13 @@ def _proxy_mode_url():
     return PROXY_URL
 
 
-def start_proxy():
+def start_proxy(hr_mode=None):
     """启动重试代理 + headroom（按模式）+ 切 base_url（GUI _on_toggle 平移）。
+    hr_mode=None 用当前记忆模式；显式传 "off" 可本次跳过 headroom（省内存）。
     headroom 冷启动慢 → 后台线程等就绪再补切 8787，期间先切 37349 会话不中断。
     返回 (ok, msg)。"""
     global _autoswitched, _hr_switching
+    mode = _headroom_mode if hr_mode is None else hr_mode
     if _ctl.running:
         return True, "已在运行"
     if _ctl.port_in_use():
@@ -889,9 +891,9 @@ def start_proxy():
             if cur != target:
                 _bmgr.apply(target)
                 _autoswitched = True
-            if _headroom_mode != "off":
+            if mode != "off":
                 try:
-                    _hr.start(_headroom_mode, ccr=_ccr)
+                    _hr.start(mode, ccr=_ccr)
                     _wait_headroom_ready()
                     if _bmgr.read_current_url() != PROXY_URL:
                         _bmgr.apply(PROXY_URL)
@@ -903,6 +905,36 @@ def start_proxy():
     threading.Thread(target=_worker, daemon=True).start()
     _ensure_tray()
     return True, "启动中（headroom 冷启动可达 10-30s）"
+
+
+def ensure_proxy_for_claude():
+    """开启 Claude 联动：重试代理没跑就后台拉起——本次不带 headroom（省内存），
+    只起 37349 重试代理（价值：用量统计 + 429/5xx 重试）。30s 内没就绪则
+    停掉并把 base_url 切回直连，绝不卡死会话。幂等，后台线程执行。"""
+    def _worker():
+        if _ctl.running or _ctl.ping_existing():
+            return   # 已在跑（含外部自家实例）：直接复用
+        ok, msg = start_proxy(hr_mode="off")
+        if not ok:
+            # 端口被占等失败：确保 base_url 没卡在自家代理端口上
+            try:
+                cur = _bmgr.read_current_url()
+                if _is_own_proxy_url(cur):
+                    _bmgr.apply(_direct_url())
+            except Exception:
+                pass
+            log.warning("Claude 联动拉代理失败: %s", msg)
+            return
+        end = time.time() + 30
+        while time.time() < end:
+            if _ctl.running and _ctl.ping_existing():
+                log.info("Claude 联动：重试代理已就绪（%d，无 headroom）",
+                         LISTEN_PORT)
+                return
+            time.sleep(1)
+        log.warning("Claude 联动：代理 30s 未就绪，停用并切回直连")
+        stop_proxy()
+    threading.Thread(target=_worker, daemon=True).start()
 
 
 def stop_proxy():
@@ -1294,6 +1326,17 @@ def proxy_shutdown(force_rollback=False):
 
 # ---- Flask 蓝图 ---------------------------------------------------------
 proxy_bp = Blueprint("proxy", __name__)
+
+
+@proxy_bp.route("/api/proxy/ensure", methods=["POST"])
+def _api_proxy_ensure():
+    """开启 Claude 联动：确保重试代理在跑（无则后台拉起，无 headroom，
+    30s 未就绪自动回退直连）。fire-and-forget，立即返回。"""
+    try:
+        ensure_proxy_for_claude()
+    except Exception as e:
+        log.warning("ensure 代理失败: %s", e)
+    return jsonify({"ok": True, "msg": "已确保代理（后台）"})
 
 
 @proxy_bp.route("/api/proxy/status")
