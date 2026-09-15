@@ -208,8 +208,11 @@ def ensure_robot(token, name=BOT_NAME):
                 parts.append(("--%s\r\nContent-Disposition: form-data; name=\"file\"; "
                               "filename=\"icon.png\"\r\nContent-Type: image/png\r\n\r\n"
                               % boundary))
-                body = ("\r\n".join(parts) + "\r\n--%s--\r\n" % boundary).encode() \
-                    + png + ("\r\n--%s--\r\n" % boundary).encode()
+                # multipart 拼接：file 头之后紧跟字节流，最后才收边界——
+                # 此前误把 png 拼在结束边界之后，服务端收到的请求没有文件，
+                # 头像永远是默认灰图（图标改动"不生效"的根因）
+                body = "\r\n".join(parts).encode() + png \
+                    + ("\r\n--%s--\r\n" % boundary).encode()
                 from urllib.request import Request
                 req = _mk_req(base + "/moarestapi/robot/openclaw/create", token,
                               data=body, headers={
