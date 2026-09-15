@@ -33,6 +33,9 @@ ENDPOINT_FILE = os.path.join(STATE_DIR, "endpoint.json")
 # 后端地址与 sid：env 优先（--mcp-config 注入），endpoint.json 兜底
 SID = (os.environ.get("HARNESS_SID") or "").strip()
 URL_OVERRIDE = (os.environ.get("HARNESS_BACKEND") or "").strip()
+# 会话权限模式（confirm=变更前确认）：超时文案按模式区分——confirm 下
+# 未获确认不得引导模型自行执行写操作，否则权限模式形同虚设
+PERM = (os.environ.get("HARNESS_PERM") or "auto").strip()
 
 # 单次提问的最长等待（秒）。超过则返回「用户未作答」让模型自行决定，
 # 不把整轮回复永久挂死。
@@ -115,6 +118,12 @@ def _ask(args):
             continue
         if rr.get("done"):
             return _result(json.dumps(rr.get("answer") or {}, ensure_ascii=False))
+    # 超时文案按权限模式区分：confirm 下绝不能引导模型「自行继续」执行
+    # 本该确认的写操作（审计 §一.3）
+    if PERM == "confirm":
+        return _result("用户长时间未作答，未获得确认。不要执行任何会产生写入/修改/"
+                       "删除效果的操作；改为说明需要用户确认什么，等待用户回复。",
+                       is_error=False)
     return _result("用户长时间未作答，请自行按最优方案继续，并在回复中说明你的选择。",
                    is_error=False)
 

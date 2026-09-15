@@ -138,11 +138,20 @@ def _model_is_multimodal(name):
     if _MM_RE.search(name):
         return True
     cfg = _vision_load()
-    return name in cfg["mm_extra"] or name == cfg["model"]
+    if name == cfg["model"]:
+        return True
+    for item in cfg["mm_extra"]:
+        # v2.25：前缀匹配——填「glm-5.3 flash」同时覆盖「glm-5.3 flash[1M]」
+        # 这类同模型不同上下文窗口后缀的变体，用户不必逐个枚举（用户点名）
+        if name == item or name.startswith(item):
+            return True
+    return False
 
 
 def _vision_save(cfg):
-    """原子写识图配置（只覆盖 _VISION_KEY，其余字段保留）。"""
+    """原子写识图配置。v2.25 改 merge 语义：cfg 里的键覆盖 _VISION_KEY 同名键，
+    其余键（如 mm_probed 探测缓存）原样保留——旧实现整键替换，调用方没带
+    的字段会被静默抹掉。"""
     try:
         with open(_st.CONFIG_FILE, "r", encoding="utf-8") as f:
             d = json.load(f)
@@ -150,7 +159,82 @@ def _vision_save(cfg):
             d = {}
     except Exception:
         d = {}
-    d[_VISION_KEY] = cfg
+    cur = d.get(_VISION_KEY)
+    if not isinstance(cur, dict):
+        cur = {}
+    cur.update(cfg)
+    d[_VISION_KEY] = cur
+    try:
+        tmp = _st.CONFIG_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False, indent=1)
+        os.replace(tmp, _st.CONFIG_FILE)
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
+# ---------------------------------------------------------------------------
+# 多模态运行时探测（v2.25）
+#   名字启发式靠猜、名单靠用户记——都不如直接问模型本身：起一次性 headless
+#   claude，发一张已知颜色的测试图让它 Read，答对颜色即为多模态。结果按
+#   模型名缓存在识图配置的 mm_probed（config.json，不进 ~/.claude/settings），
+#   探测一次终身受用；通过者自动并入 mm_extra 名单。
+# ---------------------------------------------------------------------------
+_MM_PROBE_LOCK = threading.Lock()
+
+
+def _mm_probe_png_bytes():
+    """生成 8x8 纯红 PNG（标准库手搓，无 PIL 依赖）。"""
+    import struct, zlib
+    w = h = 8
+    raw = b"".join(b"\x00" + b"\xff\x00\x00" * w for _ in range(h))
+    def chunk(typ, data):
+        return (struct.pack(">I", len(data)) + typ + data
+                + struct.pack(">I", zlib.crc32(typ + data) & 0xffffffff))
+    ihdr = struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)  # 8bit RGB
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr)
+            + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+
+def _mm_probe_model(model):
+    """探测 model 是否真能读图。返回 (multimodal, msg)。"""
+    probe_path = os.path.join(_st.STATE_DIR, "mm_probe.png")
+    try:
+        with open(probe_path, "wb") as f:
+            f.write(_mm_probe_png_bytes())
+    except Exception as e:
+        return False, "写测试图失败：%s" % e
+    exe, is_shim = _resolve_claude_exe()
+    argv = (["cmd.exe", "/c", exe] if is_shim else [exe])
+    argv += ["-p",
+             "用 Read 工具读取这张图片：" + probe_path +
+             "。它是纯色图，只回答颜色的中文名（例如：红色），不要解释。",
+             "--model", model, "--permission-mode", "auto",
+             "--allowedTools", "Read"]
+    try:
+        r = subprocess.run(argv, capture_output=True, timeout=90,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except subprocess.TimeoutExpired:
+        return False, "探测超时（90s）——模型无响应或网关过慢"
+    except Exception as e:
+        return False, str(e)
+    out = ((r.stdout or b"") + (r.stderr or b"")).decode("utf-8", errors="replace")
+    if "红" in out or re.search(r"\bred\b", out, re.I):
+        return True, "模型答出颜色——多模态 ✔"
+    return False, "模型没答出颜色——判定非多模态（回复片段：" + out.strip()[:80] + "）"
+
+
+def _mm_probed_load():
+    try:
+        with open(_st.CONFIG_FILE, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        p = (d.get(_VISION_KEY) or {}).get("mm_probed")
+        if isinstance(p, dict):
+            return p
+    except Exception:
+        pass
+    return {}
     try:
         tmp = _st.CONFIG_FILE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -641,6 +725,10 @@ class HarnessSession:
         self.ask_lock = threading.Lock()
         self.events = []
         self.events_lock = threading.Lock()
+        # v2.25：识图完成状态持久化（最近 result 时刻 + 结论摘要）。/vision_status
+        # 原从事件窗口尾部 12 条里回扫，识图轮次密集时 result/assistant 被新事件
+        # 挤出窗口 → last_done 归 0，前端「已返回」冒泡整个漏掉（用户多次反馈）
+        self.vision_done = {"ts": 0, "brief": ""}
         self._seq = 0
         self.clients = []
         self.clients_lock = threading.Lock()
@@ -960,6 +1048,15 @@ class HarnessSession:
             self.events.append(item)
             if len(self.events) > _EVENTS_MAX:
                 del self.events[:len(self.events) - _EVENTS_MAX]
+            # v2.25：识图完成即落字段（见 __init__ vision_done 注释）——窗口
+            # 滑动不再影响；brief 此刻回扫必然扫得到（assistant 刚发生）
+            if item.get("kind") == "result" and getattr(self, "is_vision", False):
+                brief = ""
+                for e in reversed(self.events):
+                    if e.get("kind") == "assistant" and (e.get("text") or "").strip():
+                        brief = e["text"].strip()[:120]
+                        break
+                self.vision_done = {"ts": item.get("ts") or 0, "brief": brief}
         with self.clients_lock:
             dead = []
             for q in self.clients:
@@ -1601,6 +1698,28 @@ def harness_models():
                     "mm": [m for m in d.get("models", []) if _model_is_multimodal(m)]})
 
 
+@harness_bp.route("/mcp_list")
+def harness_mcp_list():
+    """/mcp 命令的数据源。headless(-p) 会话没有 CLI 的交互式 MCP 面板，
+    这里代跑 `claude mcp list` 拿真实的 server 清单与连接健康状态，
+    原文返给前端按行渲染（CLI 的输出格式随版本变，不硬解析）。"""
+    exe, is_shim = _resolve_claude_exe()
+    argv = (["cmd.exe", "/c", exe] if is_shim else [exe]) + ["mcp", "list"]
+    try:
+        r = subprocess.run(
+            argv, capture_output=True, timeout=45,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        out = (r.stdout or b"").decode("utf-8", errors="replace")
+        err = (r.stderr or b"").decode("utf-8", errors="replace").strip()
+        if err:
+            out += ("\n" + err)
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "err": "claude mcp list 超时（45s）——可能有 server 健康检查卡住"})
+    except Exception as e:
+        return jsonify({"ok": False, "err": str(e)})
+    return jsonify({"ok": True, "output": out.strip()})
+
+
 @harness_bp.route("/vision_status")
 def harness_vision_status():
     """识图会话工作状态（v2.19 前端指示器/冒泡轮询用）。
@@ -1628,17 +1747,12 @@ def harness_vision_status():
             if e.get("kind") == "user_echo":
                 out["busy_since"] = e.get("ts")
                 break
-        # v2.24.9 完成检测：识图全程可短至几秒，3s 轮询会整个错过 busy 窗口
-        # ——记最近 result 时刻 + 最后一段 assistant 文本摘要，前端按
-        # last_done 变化弹「已返回」冒泡（采样错不过），摘要直接给结论预览
-        for e in reversed(evs):
-            if e.get("kind") == "result":
-                out["last_done"] = e.get("ts") or 0
-                break
-        for e in reversed(evs):
-            if e.get("kind") == "assistant" and (e.get("text") or "").strip():
-                out["last_brief"] = e["text"].strip()[:120]
-                break
+        # v2.25：完成时刻/摘要改读持久字段（emit 时落盘）——原从尾部 12 条
+        # 事件回扫，识图轮次密集时 result 被挤出窗口，last_done 归 0，前端
+        # 冒泡整个漏掉（v2.24.9 修复不彻底，用户继续反馈「冒泡还是异常」）
+        vd = getattr(s, "vision_done", None) or {}
+        out["last_done"] = vd.get("ts") or 0
+        out["last_brief"] = vd.get("brief") or ""
         recent = []
         for e in evs:
             brief = e.get("text") or ""
@@ -1713,6 +1827,54 @@ def harness_set_prompt():
     return jsonify({"ok": True, "count": len(items)})
 
 
+@harness_bp.route("/mm_probe", methods=["POST"])
+def harness_mm_probe():
+    """运行时探测一个模型是否多模态。body: {model}。
+    结果缓存进识图配置 mm_probed；通过者自动并入 mm_extra 名单（前缀匹配，
+    连带覆盖 [1M] 等变体），模型下拉的 👁 即刻可见。"""
+    data = request.get_json(force=True, silent=True) or {}
+    model = str(data.get("model") or "").strip()
+    if not model:
+        return jsonify({"ok": False, "err": "need model"})
+    cached = _mm_probed_load().get(model)
+    if cached is not None:
+        return jsonify({"ok": True, "model": model, "multimodal": bool(cached),
+                        "cached": True,
+                        "msg": "缓存结果：" + ("多模态" if cached else "非多模态")})
+    with _MM_PROBE_LOCK:          # 探测要起子进程，同时只跑一个
+        ok, msg = _mm_probe_model(model)
+    # merge 落盘（不整键替换，别把并发写进来的其他字段冲掉）
+    try:
+        with open(_st.CONFIG_FILE, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        if not isinstance(d, dict):
+            d = {}
+    except Exception:
+        d = {}
+    v = d.get(_VISION_KEY)
+    if not isinstance(v, dict):
+        v = {}
+    p = v.get("mm_probed")
+    if not isinstance(p, dict):
+        p = {}
+    p[model] = bool(ok)
+    v["mm_probed"] = p
+    d[_VISION_KEY] = v
+    try:
+        tmp = _st.CONFIG_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False, indent=1)
+        os.replace(tmp, _st.CONFIG_FILE)
+    except Exception:
+        pass
+    if ok:
+        cfg = _vision_load()
+        if not any(model == x or model.startswith(x) for x in cfg["mm_extra"]):
+            cfg["mm_extra"] = list(cfg["mm_extra"]) + [model]
+            _vision_save(cfg)
+    return jsonify({"ok": True, "model": model, "multimodal": ok, "msg": msg})
+
+
 @harness_bp.route("/vision", methods=["GET"])
 def harness_get_vision():
     """读识图会话配置 + 运行时状态（是否已就绪、实际存活）。
@@ -1741,6 +1903,13 @@ def harness_set_vision():
         "prompt": str(data.get("prompt") or "").strip() or VISION_DEFAULT_PROMPT,
         "name": str(data.get("name") or "").strip() or VISION_DEFAULT_NAME,
     }
+    # v2.25：mm_extra（多模态手补名单）随保存一起落盘——旧实现重建 cfg 时
+    # 没带这个字段，_vision_save 整体覆盖后用户配过的名单被静默清空
+    mm = data.get("mm_extra")
+    if isinstance(mm, list):
+        cfg["mm_extra"] = [str(x).strip() for x in mm if str(x).strip()]
+    else:
+        cfg["mm_extra"] = list(old.get("mm_extra") or [])
     ok, err = _vision_save(cfg)
     if not ok:
         return jsonify({"ok": False, "err": err or "写入失败"}), 500

@@ -713,6 +713,13 @@ function buildClaudeHarnessTab(opts = {}) {
     _hgApplyOpen(thinkBox, false);
     _hgApplyOpen(execBox, false);
     _HG.grp = g;
+    // v2.25：压缩开始会把进行中的组定稿（grpFinalize→phRemove 连占位气泡
+    // 一起摘掉），压缩后模型继续推理 → startThinking/renderToolUse 在这里
+    // 起新组——本轮不是新用户消息，renderUser 的 phStart 不会再触发 →
+    // 「自动压缩完成」分割线到首条正文之间一片空白（用户截图红箭头：
+    // 自动压缩完成后的提示/气泡又没了）。本轮仍在跑且尚无正文时补回占位，
+    // 正文到达 renderAsst 会 phRemove 让位。
+    if (_HG.busy && !_HG.asstText) phStart(g);
     return g;
   }
   function thinkSegCount(g) {
@@ -1812,7 +1819,14 @@ function buildClaudeHarnessTab(opts = {}) {
     es2.onmessage = (ev) => {
       let it;
       try { it = JSON.parse(ev.data); } catch(_) { return; }
-      if (it.seq && it.seq > _HG.seq) _HG.seq = it.seq;
+      // v2.25：防重放——EventSource 断线自动重连用的还是创建时的旧
+      // after_seq，后端把缓冲事件从旧位置重发一遍：user_echo 重放 × 乐观
+      // 去重窗口已被首次消费清空 → 用户消息画出两条（用户实测「蹦出来
+      // 两条我发的命令」）。同一会话内 seq 严格递增，≤当前值的一律是重放。
+      if (it.seq) {
+        if (it.seq <= _HG.seq) return;
+        _HG.seq = it.seq;
+      }
       // v2.5：先 setBusy（弹活动指示条，改变 flow 高度）再渲染消息——
       // 渲染内部 scrollBottom 含 rAF 二次兜底，否则指示条挤出消息导致刚发的消息不在底
       if (it.kind === 'user_echo') {
@@ -1846,7 +1860,12 @@ function buildClaudeHarnessTab(opts = {}) {
     return !!(s && s.has_history);
   }
   function saveCache() {
-    if (_HG.sid) _HG.cache[_HG.sid] = { html: flow.innerHTML, seq: _HG.seq };
+    if (!_HG.sid) return;
+    _HG.cache[_HG.sid] = { html: flow.innerHTML, seq: _HG.seq };
+    // v2.25：快照 LRU 上限 10——大会话 innerHTML 每份可达数十 MB，无上限
+    // 来回切会话会攒爆内存（审计 §三.8）
+    const keys = Object.keys(_HG.cache);
+    for (const k of keys.slice(0, Math.max(0, keys.length - 10))) delete _HG.cache[k];
   }
   // ==================== v2.24 滚动窗口式历史加载（大会话 DOM 瘦身）====================
   // 根因（对照实验闭环）：大会话数千条消息全量渲染 → 数万 DOM 节点，即便
@@ -1879,24 +1898,6 @@ function buildClaudeHarnessTab(opts = {}) {
     _HG.openState = _hgLoadOpen(_HG.sid);       // 上次开合状态（重建期贴回）
     try { lines.slice(start).forEach((l, i) => renderHistLine(l, start + i)); }
     finally { _HG.noScroll = false; _HG.openState = null; }
-    // 临时诊断（组结构乱序排查，用完删）：重建后 flow 子项序列 + 关键 computed style 落盘
-    try {
-      const seq = [...flow.children].slice(0, 20).map(c =>
-        c.tagName + '.' + String(c.className).slice(0, 40));
-      const g = flow.querySelector('.h-grp');
-      const cs = g ? getComputedStyle(g) : null;
-      const gp = flow.querySelector('.h-grp-proc');
-      const cs2 = gp ? getComputedStyle(gp) : null;
-      const am = flow.querySelector('.h-msg.asst');
-      const cs3 = am ? getComputedStyle(am) : null;
-      fetch('/api/_dbg', {method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({t: 'flow children:\n' + seq.join('\n') +
-          '\nh-grp: w=' + (cs && cs.width) + ' align=' + (cs && cs.alignSelf) +
-          ' disp=' + (cs && cs.display) +
-          '\nh-grp-proc: w=' + (cs2 && cs2.width) + ' align=' + (cs2 && cs2.alignSelf) + ' disp=' + (cs2 && cs2.display) +
-          '\nasst: w=' + (cs3 && cs3.width) + ' align=' + (cs3 && cs3.alignSelf) +
-          '\nflowAlign=' + getComputedStyle(flow).alignItems + ' flowW=' + getComputedStyle(flow).width})}).catch(() => {});
-    } catch(_) {}
   }
 
   let _histBusy = false;   // 重渲期间防 scroll 重入
@@ -2141,6 +2142,8 @@ function buildClaudeHarnessTab(opts = {}) {
     const c = _HG.cache[sid];
     if (c) {
       flow.innerHTML = c.html; _HG.seq = c.seq;
+      scrollBottom(true);              // v2.25：快照恢复也回底——与 _histRender 路径
+                                       // 一致（用户实测「新建会话再切回，焦点不在最下面」）
       // v2.24.5：时间条状态从 DOM 恢复（最后一条 .h-time 的 ms）
       _HG.lastTs = +((([...flow.querySelectorAll('.h-time')].pop() || {}).dataset || {}).ms || 0);
       // 快照恢复后重建 rowById（busy 会话切回时 tool_result 事件要挂回行）
@@ -2247,7 +2250,11 @@ function buildClaudeHarnessTab(opts = {}) {
   // 队列按 sid 隔离，切会话各看各的。
   const queueEl = q('[data-hg-queue]');
   function _hgQueueKey() { return _HG.sid || '_new'; }
+  // v2.25：拖动排序状态。拖拽中挂起 renderQueue 重建——重建会把被抓住的
+  // 元素从文档摘下，pointer capture 随之失效，拖到一半掉链子。
+  let qDrag = null;               // {from, i, after, item}
   function renderQueue() {
+    if (qDrag) return;            // 拖拽中不重建，松手后统一重渲
     const list = _HG.queues[_hgQueueKey()] || [];
     queueEl.style.display = list.length ? 'flex' : 'none';
     queueEl.innerHTML = list.map((it, i) => {
@@ -2255,8 +2262,8 @@ function buildClaudeHarnessTab(opts = {}) {
       const nAt = (it.images || []).length + (it.files || []).length;
       if (nAt) t = (t ? t + ' ' : '') + '📎×' + nAt;
       if (t.length > 60) t = t.slice(0, 59) + '…';
-      return `<div class="hg-q-item" title="${esc(it.text || '')}">` +
-        `<span class="hg-q-grip" title="排队中：当前回复结束后自动发送">⠿</span>` +
+      return `<div class="hg-q-item" data-i="${i}" title="${esc(it.text || '')}">` +
+        `<span class="hg-q-grip" data-i="${i}" title="拖动排序（按住抓手上下拖）">⠿</span>` +
         `<span class="hg-q-text">${esc(t || '（空）')}</span>` +
         `<button class="hg-q-act" data-qact="now" data-i="${i}" title="中断当前回复，立即发送这条">↑ 立即</button>` +
         `<button class="hg-q-act" data-qact="edit" data-i="${i}" title="放回输入框编辑">✎</button>` +
@@ -2284,6 +2291,57 @@ function buildClaudeHarnessTab(opts = {}) {
       await dispatch(it.text || '', it.images || [], it.files || [], false);
     }, 600);
   }
+  // v2.25：排队条拖动排序。用 pointer 事件而非 HTML5 dnd——dnd 在 WebView2
+  // 里要额外处理 drop 目标判定，pointer 直接按行中线算落点更稳。
+  // 抓手是唯一拖动入口（data-i 标在抓手上，不靠 closest 反查，避免点到
+  // 按钮时误判）。
+  function qEndDrag(commit) {
+    if (!qDrag) return;
+    const d = qDrag;
+    qDrag = null;
+    d.item.classList.remove('dragging');
+    queueEl.querySelectorAll('.drop-before,.drop-after')
+      .forEach(x => x.classList.remove('drop-before', 'drop-after'));
+    const key = _hgQueueKey();
+    const list = (_HG.queues[key] || []).slice();
+    if (commit && d.target != null && list.length > 1 && d.i < list.length) {
+      const it = list.splice(d.i, 1)[0];
+      let to = d.target - (d.target > d.i ? 1 : 0);   // 移除后目标下标左移
+      to = Math.max(0, Math.min(list.length, to));
+      list.splice(to, 0, it);
+      _HG.queues[key] = list;
+    }
+    renderQueue();
+  }
+  queueEl.addEventListener('pointerdown', (e) => {
+    const grip = e.target.closest('.hg-q-grip');
+    if (!grip || e.button !== 0) return;
+    const item = grip.closest('.hg-q-item');
+    if (!item) return;
+    e.preventDefault();
+    qDrag = { i: +grip.dataset.i, target: null, item };
+    item.classList.add('dragging');
+    grip.setPointerCapture(e.pointerId);
+  });
+  queueEl.addEventListener('pointermove', (e) => {
+    if (!qDrag) return;
+    const items = Array.from(queueEl.querySelectorAll('.hg-q-item'));
+    let target = items.length;            // 默认落到末尾
+    let after = false;
+    for (let k = 0; k < items.length; k++) {
+      const r = items[k].getBoundingClientRect();
+      if (e.clientY < r.top + r.height / 2) { target = k; after = false; break; }
+      target = k + 1; after = true;
+    }
+    if (target === qDrag.target && after === qDrag.after) return;
+    qDrag.target = target;
+    qDrag.after = after;
+    items.forEach(x => x.classList.remove('drop-before', 'drop-after'));
+    const ref = items[target];
+    if (ref) ref.classList.add(after ? 'drop-after' : 'drop-before');
+  });
+  queueEl.addEventListener('pointerup', () => qEndDrag(true));
+  queueEl.addEventListener('pointercancel', () => qEndDrag(false));
   queueEl.addEventListener('click', (e) => {
     const b = e.target.closest('[data-qact]');
     if (!b) return;
@@ -2341,6 +2399,7 @@ function buildClaudeHarnessTab(opts = {}) {
         if (!ok) return;
         await fetch('/api/harness/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({sid})});
         delete _HG.cache[sid];
+        delete _HG.queues[sid];   // v2.25：排队草稿随会话清（审计 §三.9）
         try { localStorage.removeItem('hg-open:' + sid); localStorage.removeItem('hg-ctx:' + sid); } catch(_) {}   // v2.16：连开合/用量记录一起清
         if (_HG.sid === sid) switchTo(null); else refreshSessions();
       } else if (act.dataset.act === 'rename') {
@@ -2359,7 +2418,14 @@ function buildClaudeHarnessTab(opts = {}) {
   searchEl.addEventListener('input', renderList);
 
   // ==================== 发送 ====================
-  function newChat() { saveCache(); switchTo(null); }
+  function newChat() {
+    saveCache(); switchTo(null);
+    // v2.25：新建 = 无工程默认状态——上个会话的项目目录不再继承（用户实测
+    // 「点新建会话，打开的还是串口控制台Pro，不对」）。发消息时 cwd 为空
+    // 即开在默认 ~；chip 回显「选择项目」。切回历史会话仍跟随恢复该会话的
+    // 项目（v2.19）；localStorage 的 hg-last-cwd 不动，留给下次启动恢复。
+    if (_HG.cwd) { _HG.cwd = null; projChipLabel(); }
+  }
   q('[data-hg-new]').onclick = newChat;
 
   async function ensureSession() {
@@ -2436,7 +2502,36 @@ function buildClaudeHarnessTab(opts = {}) {
     ['/model', '打开模型菜单；/model 名 直接切换（模糊匹配）'],
     ['/status', '会话状态与上下文用量'],
     ['/compact', '压缩说明（headless 走自动压缩）'],
+    ['/mcp', 'MCP 服务器列表与连接状态（代跑 claude mcp list）'],
     ['/exit', '退出 claude 进程（会话保留，发送自动恢复）'],
+  ];
+  // v2.25：CLI 纯交互命令——harness 跑的是 claude -p（headless 无 TTY），
+  // 这些命令进去没有渲染面，直接发送只会被模型当普通文本白白消费一轮
+  // 回复。本地拦下说明去向，不进对话。
+  const HG_SLASH_DEAD = [
+    ['/ide', '连接 IDE（headless 无此通道，用终端交互模式操作）'],
+    ['/vim', 'vim 编辑模式（交互 TUI 专属）'],
+    ['/terminal-setup', '终端按键配置（交互 TUI 专属）'],
+    ['/statusline', '状态栏定制（交互 TUI 专属）'],
+    ['/login', '账号登录（交互流程，headless 无法弹授权页）'],
+    ['/logout', '账号登出（同上，在终端交互模式里操作）'],
+    ['/doctor', '安装诊断（交互 TUI 专属）'],
+    ['/install-github-app', 'GitHub App 引导（需浏览器授权流程）'],
+    ['/migrate-installer', '安装迁移（交互 TUI 专属）'],
+    ['/release-notes', '版本说明（交互 TUI 专属）'],
+    ['/privacy-settings', '隐私设置（交互 TUI 专属）'],
+    ['/config', '设置面板（headless 下改配置用本工具 设置 → API 配置）'],
+    ['/permissions', '权限面板（会话级权限在工具栏「权限」切换）'],
+    ['/hooks', 'Hooks 管理（直接改 ~/.claude/settings.json）'],
+    ['/memory', '记忆文件（直接编辑 CLAUDE.md / 项目 memory）'],
+    ['/add-dir', '追加工作目录（本工具按会话指定 cwd，无需追加）'],
+    ['/context', '上下文明细（/status 已展示用量环）'],
+    ['/cost', '费用统计（v2.3 起不显示金额，用量见 /status）'],
+    ['/agents', '子代理面板（对话流里可看子代理过程抽屉）'],
+    ['/plugins', '插件管理（直接改 ~/.claude 配置）'],
+    ['/rewind', '回退检查点（交互 TUI 专属）'],
+    ['/todos', '任务列表（模型回复中会展示任务进度）'],
+    ['/export', '导出对话（暂不支持，可在 ~/.claude/projects 找转写）'],
   ];
   function renderSysCard(title, rows) {
     const d = document.createElement('div');
@@ -2463,9 +2558,32 @@ function buildClaudeHarnessTab(opts = {}) {
     const m = raw.match(/^\/([a-z0-9_-]+)(?:\s+([\s\S]*))?$/i);
     if (!m) return false;
     const cmd = m[1].toLowerCase(), arg = (m[2] || '').trim();
-    if (!HG_SLASH.some(x => x[0] === '/' + cmd)) return false;
+    if (!HG_SLASH.some(x => x[0] === '/' + cmd) && !HG_SLASH_DEAD.some(x => x[0] === '/' + cmd)) return false;
+    // v2.25：CLI 纯交互命令——本地拦下说明去向，不进对话
+    const dead = HG_SLASH_DEAD.find(x => x[0] === '/' + cmd);
+    if (dead && cmd !== 'help') {
+      renderSysCard('CLI 交互命令（headless 不可用）', [[dead[0], dead[1]]]);
+      return true;
+    }
     if (cmd === 'help') {
       renderSysCard('内建命令（本地执行，不进入对话）', HG_SLASH);
+      renderSysCard('CLI 交互命令（headless 不可用，已本地拦截）', HG_SLASH_DEAD);
+    } else if (cmd === 'mcp') {
+      // v2.25：headless 没有 CLI 的 MCP 面板——后端代跑 claude mcp list，
+      // 原文按行渲染（server 名拆到左列，其余含连接状态在右列）
+      (async () => {
+        let j = null;
+        try { j = await (await fetch('/api/harness/mcp_list')).json(); } catch(_) {}
+        if (!j || !j.ok) {
+          renderSysCard('MCP 服务器', [['查询失败', (j && j.err) || '网络错误']]);
+          return;
+        }
+        const rows = String(j.output || '').split(/\r?\n/).filter(s => s.trim()).map(s => {
+          const i = s.indexOf(':');
+          return (i > 0 && i < 40) ? [s.slice(0, i).trim(), s.slice(i + 1).trim()] : ['', s.trim()];
+        });
+        renderSysCard('MCP 服务器（claude mcp list 实时状态）', rows.length ? rows : [['（空）', '没有配置任何 MCP 服务器']]);
+      })();
     } else if (cmd === 'resume') {
       const side = wrap.querySelector('.hg-side');
       if (side) { side.classList.remove('flash'); void side.offsetWidth; side.classList.add('flash'); }
@@ -2476,9 +2594,7 @@ function buildClaudeHarnessTab(opts = {}) {
       showBanner('已新建会话', 2000);
     } else if (cmd === 'model') {
       if (!arg) { q('[data-hg-model]').click(); return true; }
-      if (!_HG.models) {
-        try { _HG.models = await (await fetch('/api/harness/models')).json(); } catch(_) { _HG.models = {models: []}; }
-      }
+      await fetchModels();      // v2.25：每次重新拉（配置方案切换后模型映射变了）
       const kw = arg.toLowerCase();
       const hits = (_HG.models.models || []).filter(x => x.toLowerCase().includes(kw));
       if (hits.length === 1) { applyModel(hits[0]); showBanner('已切换模型 · ' + hits[0], 2400); }
@@ -2599,7 +2715,8 @@ function buildClaudeHarnessTab(opts = {}) {
     // v2.21：内建斜杠命令本地执行（附件与命令互斥，命令不需要附件）
     if (!_HG.atts.length && text.startsWith('/')) {
       const c0 = text.split(/\s/, 1)[0].toLowerCase();
-      if (HG_SLASH.some(x => x[0] === c0)) {
+      // v2.25：DEAD 表命中也本地执行（拦下 CLI 交互命令，不发后端白耗一轮）
+      if (HG_SLASH.some(x => x[0] === c0) || HG_SLASH_DEAD.some(x => x[0] === c0)) {
         input.value = ''; input.style.height = 'auto'; renderOverlay('');
         execSlash(text);
         return;
@@ -2874,19 +2991,25 @@ function buildClaudeHarnessTab(opts = {}) {
       : '<div class="hg-pop-empty">未发现技能（~/.claude/skills 或项目 .claude/skills）</div>';
     openPop('skill', anchor, `<div class="hg-pop-title">技能</div>${items}`);
   };
+  // v2.25：每次打开都重拉——配置方案切换会改 settings.json 的模型映射，
+  // 旧实现只在 tab 存续期拉一次，切方案后模型下拉仍显示旧网关的模型
+  // （后端已按 settings.json mtime 失效缓存，这里配合即时拉新）。
+  function fetchModels() {
+    return fetch('/api/harness/models').then(r => r.json())
+      .then(j => { if (j && j.ok) { _HG.models = j; renderList(); } return _HG.models; })
+      .catch(() => _HG.models || {models: [], default: null});
+  }
   q('[data-hg-model]').onclick = async (e) => {
     if (_HG.pop === 'model') { closePop(); return; }
     const anchor = e.currentTarget;
-    if (!_HG.models) {
-      try { _HG.models = await (await fetch('/api/harness/models')).json(); } catch(_) { _HG.models = {models: [], default: null}; }
-    }
+    await fetchModels();
     const cur = _HG.model || _HG.models.default;
     // v2.19：多模态模型打 👁——这类模型的会话自己读图，不转交识图会话
     const mmSet = new Set(_HG.models.mm || []);
     const items = (_HG.models.models || []).map(m =>
       `<div class="hg-pop-item${m === cur ? ' on' : ''}" data-model="${esc(m)}"><b>${esc(m)}</b>${mmSet.has(m) ? `<span title="多模态：可直接读图，图片不转交识图会话">${_HG_EYE} 多模态</span>` : ''}${m === _HG.models.default ? '<span>默认</span>' : ''}</div>`).join('')
       || '<div class="hg-pop-empty">读取 settings.json 模型映射失败</div>';
-    openPop('model', anchor, `<div class="hg-pop-title">模型（有对话的会话需新建才生效）</div>${items}`);
+    openPop('model', anchor, `<div class="hg-pop-title">模型（会话内切换即时生效，上下文保留）</div>${items}`);
   };
   wrap.addEventListener('click', async (e) => {
     // v2.21：命令菜单点选（内建命令直接执行，技能插入待补参）
@@ -3088,7 +3211,9 @@ function buildClaudeHarnessTab(opts = {}) {
       // 任务到达检测：busy_since（user_echo 时刻）前移（busy 窗口短也不错过）
       else if (since && _visPrev.since && since > _visPrev.since)
         visToast('识图会话已收到任务，正在处理…');
-      if (lastDone && _visPrev.lastDone && lastDone > _visPrev.lastDone)
+      // v2.25：右值兜 0——旧条件要求 _visPrev.lastDone 非 0，页面打开后
+      // 识图的第一次完成（前值还是 undefined/0）永远不弹（冒泡「还是异常」）
+      if (lastDone && lastDone > (_visPrev.lastDone || 0))
         visToast('识图会话已返回：' + (lastBrief || '（结论见其会话）'), 9000);
     }
     _visPrev = {busy, since, lastDone};
@@ -3151,6 +3276,14 @@ function buildClaudeHarnessTab(opts = {}) {
           <label>识图模型（多模态）
             <select data-hg-v-model>${opts}</select></label>
         </div>
+        <label class="hg-vision-prompt-lab">多模态模型名单（逗号分隔，模型下拉的 👁 标记以此为准）
+          <input class="hg-vision-mm" data-hg-v-mm spellcheck="false"
+                 value="${esc((cfg.mm_extra || []).join(', '))}"
+                 placeholder="如：glm-5.3 flash, Lanz-Medium-V（前缀匹配，填一个即可覆盖其 [1M] 变体）"></label>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:4px;">
+          <button class="btn ghost" data-hg-v-probe style="font-size:11px;">🔍 检测识图模型能否读图</button>
+          <span data-hg-v-probe-out style="font-size:11px;color:var(--muted);"></span>
+        </div>
         <label class="hg-vision-prompt-lab">固定基础提示词（注入识图会话，不占提示词列表）
           <textarea class="hg-vision-prompt" data-hg-v-prompt spellcheck="false"></textarea></label>
         <div class="hg-modal-acts"></div></div>`;
@@ -3160,7 +3293,33 @@ function buildClaudeHarnessTab(opts = {}) {
       const nameEl = ov.querySelector('[data-hg-v-name]');
       const modelEl = ov.querySelector('[data-hg-v-model]');
       const onEl = ov.querySelector('[data-hg-v-on]');
+      const mmEl = ov.querySelector('[data-hg-v-mm]');
       ta.value = cfg.prompt || def.prompt || '';
+      // v2.25：运行时探测——发张纯红测试图让该模型 Read，答对即多模态并
+      // 自动并入名单（后端缓存，二次点秒回）。拿不准网关模型名是什么能力
+      // 时点一下就行，不用猜也不用记。
+      const probeBtn = ov.querySelector('[data-hg-v-probe]');
+      const probeOut = ov.querySelector('[data-hg-v-probe-out]');
+      probeBtn.onclick = async () => {
+        const m = modelEl.value.trim() || init.default_model || '';
+        if (!m) { probeOut.textContent = '请先在上方选择识图模型'; return; }
+        probeBtn.disabled = true;
+        probeOut.textContent = '探测中——起一次性 claude 进程读测试图，约 10~60s…';
+        try {
+          const r = await fetch('/api/harness/mm_probe', {method:'POST',
+            headers:{'Content-Type':'application/json'}, body: JSON.stringify({model: m})});
+          const j = await r.json();
+          if (j && j.ok) {
+            probeOut.textContent = (j.multimodal ? '✅ ' : '❌ ') + (j.msg || '') + (j.cached ? '（缓存）' : '');
+            if (j.multimodal) {          // 后端已自动并入名单，输入框同步显示
+              const cur = mmEl.value.split(/[,，;；\n]/).map(s => s.trim()).filter(Boolean);
+              if (!cur.some(x => m === x || m.startsWith(x)))
+                mmEl.value = (mmEl.value ? mmEl.value.replace(/\s+$/, '') + ', ' : '') + m;
+            }
+          } else probeOut.textContent = '探测失败：' + ((j && j.err) || '未知');
+        } catch(e) { probeOut.textContent = '探测失败：' + e; }
+        probeBtn.disabled = false;
+      };
       const stateEl = ov.querySelector('[data-hg-v-state]');
       const paint = () => {
         stateEl.textContent = init.running ? '● 运行中' : (onEl.checked ? '○ 未运行（保存后自动拉起）' : '已关闭');
@@ -3183,6 +3342,9 @@ function buildClaudeHarnessTab(opts = {}) {
         model: modelEl.value.trim(),
         name: nameEl.value.trim() || (def.name || ''),
         prompt: ta.value.trim(),
+        // v2.25：多模态手补名单随保存落盘（后端按前缀匹配，覆盖 [1M] 变体）
+        mm_extra: (ov.querySelector('[data-hg-v-mm]').value || '')
+          .split(/[,，;；\n]/).map(s => s.trim()).filter(Boolean),
       }));
       ov.addEventListener('click', (e) => { if (e.target === ov) close(null); });
       ov.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(null); });

@@ -2033,11 +2033,16 @@
 .hg-ro-flow > * { flex-shrink: 0; }
 .hg-ro-flow > .h-msg, .hg-ro-flow > .h-tool { width: min(820px, 100%); }
 .hg-ro-flow > .h-msg { max-width: 88%; }
-.h-grp { display: flex; flex-direction: column; gap: 8px; }
+.h-grp { display: flex; flex-direction: column; gap: 8px;
+  /* v2.25：组宽限到与用户泡同款 820/88%，组内子项不再横向拉伸——
+     用户泡 v2.24.4 已按内容自适应，AI 泡却因 width:100% 拉满组宽，
+     短回复也是一大条（用户实测「我的消息是变长，但是 AI 的不是）。
+     align-items:flex-start 让组内 AI 泡 shrink-to-fit，随文字伸缩 */
+  align-items: flex-start; max-width: min(820px, 100%); }
 .h-grp-proc { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; }
 .h-grp-proc > .h-drawer { flex: 0 1 auto; min-width: 120px; max-width: 100%; }
 .h-grp-proc > .h-drawer.think { flex-shrink: 0; }
-.h-grp > .h-msg { width: 100%; max-width: none; }
+.h-grp > .h-msg { width: auto; max-width: 100%; }   /* v2.25：自适应宽（原 width:100% 拉满组宽） */
 /* v2.21：纯思考/工具组（整组无正文）定稿后的组尾弱提示 */
 .h-grp-notext { font-size: 11px; color: var(--muted); opacity: .7; padding: 0 2px; }
 /* 思考组头动画：活动思考脉动（v2.18 沿用，思考次数/思考中字样挂载） */
@@ -2115,7 +2120,11 @@
 
 /* v2.2 美化：气泡更圆润（非对称大圆角、对话朝向小角），字号 13→13.5，
    留白加大，用户气泡 accent 渐变淡光 */
-.h-msg { max-width: 88%; }
+/* v2.25：z-index:0 给气泡容器建层叠上下文——尾巴伪元素用 z-index:-1 画在
+   泡体之下，缺了这层它会一路逃到根层叠上下文，按绘制顺序落在「块级后代
+   背景」之前，被祖先 .hg 的背景（background: var(--bg)）整块盖掉。用户
+   实测「气泡尾巴修了吗？现在还是圆的」即此：尖角一直在，只是被盖住了 */
+.h-msg { max-width: 88%; position: relative; z-index: 0; }
 .h-msg.user { align-self: flex-end; position: relative; }
 /* v2.22：用户消息操作钮组（右上角，hover 显示）：↻ 重发 / ✎ 编辑后重发 */
 .h-macts { position: absolute; top: 5px; right: 6px; display: none; gap: 4px; }
@@ -2200,7 +2209,8 @@
 .h-syscard-t { font-weight: 600; color: var(--fg-bright); margin-bottom: 6px; font-size: 12px; }
 .h-syscard-r { display: flex; gap: 12px; padding: 2px 0; color: var(--muted); line-height: 1.5; }
 .h-syscard-r b { flex: 0 0 96px; color: var(--accent); font-family: Consolas, monospace; font-weight: 600; }
-.h-syscard-r span { flex: 1; min-width: 0; }
+.h-syscard-r span { flex: 1; min-width: 0;
+  overflow-wrap: anywhere; word-break: break-all; }   /* v2.25：长路径断行，别溢出卡片 */
 /* v2.21：/resume 高亮侧栏 */
 .hg-side.flash { animation: hgSideFlash 1.4s ease 1; }
 @keyframes hgSideFlash { 0%, 55% { box-shadow: inset 0 0 0 2px var(--accent); } 100% { box-shadow: inset 0 0 0 0 transparent; } }
@@ -2226,7 +2236,13 @@
 .hg-q-item { display: flex; align-items: center; gap: 8px; font-size: 11.5px;
   color: var(--muted); background: var(--bg-card); border: 1px dashed var(--border);
   border-radius: 10px; padding: 5px 6px 5px 10px; }
-.hg-q-grip { flex-shrink: 0; color: var(--border); font-size: 12px; cursor: default; }
+.hg-q-grip { flex-shrink: 0; color: var(--border); font-size: 12px;
+  cursor: grab; padding: 0 2px; border-radius: 4px; touch-action: none; }
+.hg-q-grip:hover { color: var(--fg); background: color-mix(in srgb, var(--fg) 8%, transparent); }
+/* v2.25：排队条拖动排序——抓手按住拖；被拖项淡出+虚线框，落点项顶部亮条预告位置 */
+.hg-q-item.dragging { opacity: .45; border-style: solid; border-color: var(--accent); }
+.hg-q-item.drop-before { box-shadow: 0 -2px 0 0 var(--accent); }
+.hg-q-item.drop-after { box-shadow: 0 2px 0 0 var(--accent); }
 .hg-q-text { flex: 1; min-width: 0; color: var(--fg); overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; }
 .hg-q-act { border: none; background: transparent; color: var(--muted); flex-shrink: 0;
@@ -2264,7 +2280,11 @@
 .hg-input { display: block; width: 100%; box-sizing: border-box; border: none; background: transparent; padding: 4px 6px;
   color: var(--fg); font-size: 13.5px; line-height: 1.6; resize: none; outline: none;
   min-height: 44px; max-height: 200px; font-family: inherit; }
-.hg-card-foot { display: flex; align-items: center; gap: 8px; padding-top: 6px; }
+.hg-card-foot { display: flex; align-items: center; gap: 8px; padding-top: 6px;
+  flex-wrap: wrap; }   /* v2.25：窄窗口下 chip 换行，不再溢出输入卡 */
+/* 模型 chip：长模型名先收缩省略（glm-5.3-flash[1M] 窗口化时曾顶破卡片） */
+.hg-chip[data-hg-model] { min-width: 0; max-width: 200px; overflow: hidden;
+  text-overflow: ellipsis; }
 .hg-chip { border: 1px solid var(--border); background: transparent; color: var(--muted);
   font-size: 11.5px; border-radius: 999px; padding: 3px 10px; cursor: pointer; white-space: nowrap; }
 .hg-chip:hover { color: var(--fg); border-color: var(--accent); }
@@ -2386,6 +2406,12 @@
   border: 1px solid var(--border); border-radius: 6px; color: var(--fg); }
 .hg-vision-grid input:focus, .hg-vision-grid select:focus { outline: none; border-color: var(--accent); }
 .hg-vision-prompt-lab { display: block; font-size: 11.5px; color: var(--muted); margin-bottom: 0; }
+/* v2.25：多模态名单是单行输入，别套 hg-vision-prompt（那是提示词 textarea，
+   min-height 200px——用户实测「框太大，有点丑」） */
+.hg-vision-mm { display: block; width: 100%; box-sizing: border-box; margin-top: 5px;
+  padding: 6px 9px; font-size: 12px; background: var(--bg);
+  border: 1px solid var(--border); border-radius: 6px; color: var(--fg); }
+.hg-vision-mm:focus { outline: none; border-color: var(--accent); }
 .hg-vision-prompt { display: block; width: 100%; box-sizing: border-box; margin-top: 5px;
   min-height: 200px; max-height: 42vh; resize: vertical; padding: 8px 10px; font-size: 12px;
   line-height: 1.65; font-family: inherit; background: var(--bg);

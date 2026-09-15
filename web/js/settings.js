@@ -346,9 +346,18 @@ async function _stRenderReinstallPane(pane) {
 
 // ---- API 配置子页：Token/网关/模型映射/上下文窗口全可改（v2.22）+ 方案快照切换 ----
 async function _stRenderApiPane(pane) {
-  // 模型映射档位（与后端 _MODEL_SLOTS 对应）：slot → 显示名
-  const M_SLOTS = [['main','主模型'],['opus','Opus'],['sonnet','Sonnet'],['haiku','Haiku'],
-                   ['fable','Fable'],['flash','Flash'],['subagent','子代理']];
+  // 模型映射档位（与后端映射键对应）：slot → 显示名 → 悬停说明
+  // 档位是「模型别名」：Claude Code 按档位名请求模型，这里填的是该档位在本
+  // 网关下真正对应的模型名。名字与型号无关（网关没有 Opus，就把最强模型填
+  // 在 Opus 档），所以每一档都要写清「什么时候会用到它」，否则配置者填不对。
+  const M_SLOTS = [
+    ['main','主模型','不带档位时的默认模型（ANTHROPIC_MODEL）。新开的会话默认用它，也是本工具模型下拉里显示的那一项。'],
+    ['opus','Opus','最强推理档。任务点名 opus 时（/model 选 Opus、子代理指定 opus）实际调到这里填的模型。'],
+    ['sonnet','Sonnet','日常主力档。点名 sonnet 时映射到这里，适合大部分普通任务。'],
+    ['haiku','Haiku','快速轻量档。生成标题、摘要等后台小任务常走这档，填个便宜快的模型即可。'],
+    ['fable','Fable','网关侧新增档位。点名 fable 时映射到这里，用途与上面各档一致；不清楚填什么就留空。'],
+    ['flash','Flash','轻量快速档。点名 flash 时映射到这里；不清楚填什么就留空。'],
+    ['subagent','子代理','Task 子代理会话默认使用的模型（子代理不单独指定档位时用这个）。']];
   pane.innerHTML = `
     <div class="dd-body">
       <div class="dd-label">Claude API 配置</div>
@@ -371,13 +380,14 @@ async function _stRenderApiPane(pane) {
       <div class="dd-cur" style="margin-top:14px;">
         <div class="dd-label">模型映射（MODEL 与 _NAME 成对写入，留空不改）</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;margin-top:8px;">
-          ${M_SLOTS.map(([k, n]) => `
-            <label style="display:flex;align-items:center;gap:8px;min-width:0;">
+          ${M_SLOTS.map(([k, n, tip]) => `
+            <label title="${tip}" style="display:flex;align-items:center;gap:8px;min-width:0;cursor:help;">
               <span style="flex-shrink:0;width:58px;font-size:11px;color:var(--muted);">${n}</span>
               <input type="text" class="dd-input" data-mk="${k}" spellcheck="false"
                      placeholder="不改" style="flex:1;min-width:0;">
             </label>`).join('')}
         </div>
+        <div class="dd-sub" style="margin-top:8px;">档位是「模型别名」：名字不代表型号（网关没有 Opus，就把最强模型填进 Opus 档）。鼠标悬停每档看它什么时候被用到。</div>
       </div>
       <div class="dd-cur" style="margin-top:14px;">
         <div class="dd-label">上下文窗口与自动压缩</div>
@@ -403,8 +413,8 @@ async function _stRenderApiPane(pane) {
       </div>
       <div class="dd-cur" style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border);">
         <div class="dd-label">配置方案（整套 settings.json 快照一键切换）</div>
-        <div id="profList" style="margin-top:10px;display:flex;flex-direction:column;gap:8px;"></div>
-        <div class="dd-row" style="display:flex;gap:8px;margin-top:10px;">
+        <div id="profList" style="margin-top:10px;margin-bottom:4px;display:flex;flex-direction:column;gap:8px;"></div>
+        <div class="dd-row" style="display:flex;gap:8px;margin-top:34px;">
           <input type="text" id="profName" class="dd-input" spellcheck="false"
                  placeholder="方案名，如：配置1 / 智谱 / 中转站" style="flex:1;">
           <button class="btn ghost" id="profSaveCur" title="把当前 settings.json 整份（含 Token、网关、模型映射等）存为方案">💾 存当前为方案</button>
@@ -470,9 +480,9 @@ async function _stRenderApiPane(pane) {
       const j = await (await fetch('/api/claude/profiles')).json();
       if (!j.ok) throw new Error(j.err || '');
       profListEl.innerHTML = (j.profiles || []).map(p => `
-        <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid ${p.legacy ? 'var(--neon-yellow, orange);' : 'var(--border);'}border-radius:8px;${p.name === j.active ? 'border-color:var(--neon-green);' : ''}">
-          <b style="flex-shrink:0;">${esc(p.name)}</b>
-          <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:11px;">${esc(p.token_masked || '未设 Token')} · ${esc(p.base_url || '默认网关')}</span>
+        <div title="${esc((p.token_masked || '未设 Token') + ' · ' + (p.base_url || '默认网关'))}" style="display:flex;align-items:center;gap:12px;padding:9px 12px;border:1px solid ${p.legacy ? 'var(--neon-yellow, orange);' : 'var(--border);'}border-radius:8px;${p.name === j.active ? 'border-color:var(--neon-green);' : ''}">
+          <b style="flex-shrink:0;max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(p.name)}</b>
+          <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:11px;">${esc(p.base_url || '默认网关')}${p.token_masked ? ' · ' + esc(p.token_masked) : ''}</span>
           ${p.legacy ? '<span style="color:orange;font-size:11px;flex-shrink:0;" title="只存了 Token/网关——切换不会带模型映射，配好后重新『存当前为方案』升级">⚠ 旧格式</span>' : ''}
           ${p.name === j.active
             ? '<span style="color:var(--neon-green);font-size:11px;flex-shrink:0;">● 当前</span>'

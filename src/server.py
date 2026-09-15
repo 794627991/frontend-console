@@ -119,22 +119,6 @@ def raise_window():
     return jsonify({"ok": False}), 503
 
 
-# ---- 临时调试通道（组结构乱序排查，用完删）：前端 POST 任意文本落盘 ----
-_DBG_LOG = os.path.join(STATE_DIR, "harness_dbg.log")
-
-
-@app.route("/api/_dbg", methods=["POST"])
-def api_dbg():
-    d = request.get_json(force=True, silent=True) or {}
-    try:
-        with open(_DBG_LOG, "a", encoding="utf-8") as f:
-            f.write("--- %s\n%s\n" % (time.strftime("%H:%M:%S"),
-                                      str(d.get("t", ""))[:3000]))
-    except Exception:
-        pass
-    return jsonify({"ok": True})
-
-
 # ---- 自依赖自检状态（main 启动时注入，前端每次启动拉取弹提醒） ----
 _deps_state = {"missing_req": [], "missing_opt": [], "skipped": False}
 
