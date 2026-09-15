@@ -49,6 +49,35 @@ def find_tool_pid():
     return None
 
 
+def descendants(root):
+    """BFS 收集 root 的全部后代 PID（杀工具前快照，用于连孤儿一起清）。"""
+    out, frontier, seen = [], [root], {root}
+    while frontier:
+        pid = frontier.pop()
+        try:
+            outp = subprocess.run(
+                ["wmic", "process", "where", "ParentProcessId=%d" % pid,
+                 "get", "ProcessId", "/format:csv"],
+                capture_output=True, text=True, timeout=15).stdout
+        except Exception:
+            continue
+        for line in outp.splitlines():
+            m = re.search(r"(\d+)\s*$", line)
+            if not m:
+                continue
+            c = int(m.group(1))
+            if c not in seen:
+                seen.add(c)
+                out.append(c)
+                frontier.append(c)
+    return out
+
+
+def kill_pid(pid):
+    subprocess.run(["taskkill", "/PID", str(pid), "/F"],
+                   capture_output=True)
+
+
 def wait_auth(since, timeout=AUTH_TIMEOUT):
     """bot 日志 since 之后出现「认证成功」即认定 claude 通道就绪。"""
     end = time.time() + timeout
@@ -71,8 +100,13 @@ def main():
         pid = find_tool_pid()
         note("第 %d/%d 次：工具 PID=%s" % (attempt, ATTEMPTS, pid))
         if pid:
-            subprocess.run(["taskkill", "/PID", str(pid), "/F"],
-                           capture_output=True)
+            tree = descendants(pid)          # 杀前快照后代（claude 等）
+            for c in tree:
+                kill_pid(c)
+            kill_pid(pid)
+            if tree:
+                note("已清理进程树：%s + 后代 %d 个"
+                     % (pid, len(tree)))
             time.sleep(5)
         since = os.path.getsize(BOT_LOG) if os.path.isfile(BOT_LOG) else 0
         try:

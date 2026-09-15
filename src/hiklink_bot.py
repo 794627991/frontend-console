@@ -71,6 +71,27 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "name:HiClawPc;platform:win32;arch:x64;user:%s;")
 
 SESSION_PATH = os.path.join(DATA_DIR, "hiklink_session.json")
+_SESSION_LOCK = threading.Lock()
+
+
+def _update_session_file(mutate):
+    """SESSION_PATH 的原子读改写。多处（reader/任务/主线程）都要更新该文件，
+    裸「读→改→写整文件」并发时会用旧内容洗掉别人刚写的字段；这里锁内完成
+    且经 tmp+os.replace 落盘，读方永远看到完整新旧之一。"""
+    with _SESSION_LOCK:
+        try:
+            d = {}
+            if os.path.exists(SESSION_PATH):
+                with open(SESSION_PATH, encoding="utf-8") as f:
+                    d = json.load(f) or {}
+            mutate(d)
+            tmp = SESSION_PATH + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(d, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, SESSION_PATH)
+            return True
+        except Exception:
+            return False
 BOT_NAME = "前端小助手"   # 改名即新建机器人（旧机器人头像定死无法更新）
 SEG = 1000          # 每段推送字符上限（HikLink 消息友好长度）
 HEARTBEAT = 10      # 秒（实测服务端 ~20s 无有效心跳即断开，30s 档活不过首拍）
@@ -373,18 +394,13 @@ class HikLinkBot:
 
     def _save_last_session(self):
         """持久化最近活跃 session——重启后上线通告靠它找回会话上下文。"""
-        try:
-            d = {}
-            if os.path.exists(SESSION_PATH):
-                with open(SESSION_PATH, encoding="utf-8") as f:
-                    d = json.load(f) or {}
-            if d.get("last_session") == self.session_id:
-                return
-            d["last_session"] = self.session_id
-            with open(SESSION_PATH, "w", encoding="utf-8") as f:
-                json.dump(d, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
+        cur = self.session_id
+
+        def mutate(d):
+            if d.get("last_session") != cur:
+                d["last_session"] = cur
+
+        _update_session_file(mutate)
 
     def _announce_online(self):
         """上线通告：复用上次活跃 session 推一条，重启后让会话「活」过来。
@@ -648,16 +664,12 @@ class HikLinkBotController:
             self._sid = None
 
     def _save_sid(self):
-        try:
-            d = {}
-            if os.path.exists(SESSION_PATH):
-                with open(SESSION_PATH, encoding="utf-8") as f:
-                    d = json.load(f) or {}
-            d["harness_sid"] = self._sid
-            with open(SESSION_PATH, "w", encoding="utf-8") as f:
-                json.dump(d, f, ensure_ascii=False, indent=2)
-        except OSError:
-            pass
+        cur = self._sid
+
+        def mutate(d):
+            d["harness_sid"] = cur
+
+        _update_session_file(mutate)
 
     def _session(self):
         """取/复用小助理专属会话。跨进程也能复用：测试进程/工具重启后内存
@@ -715,10 +727,13 @@ class HikLinkBotController:
                 num, secret, msg2 = his.ensure_robot(token, name=BOT_NAME)
                 if not (num and secret):
                     return False, msg2 or "机器人注册失败"
-                d.update({"uid": u, "password": p, "robot_num": num,
-                          "app_secret": secret, "robot_name": BOT_NAME})
-                with open(SESSION_PATH, "w", encoding="utf-8") as f:
-                    json.dump(d, f, ensure_ascii=False, indent=2)
+                fresh = {"uid": u, "password": p, "robot_num": num,
+                         "app_secret": secret, "robot_name": BOT_NAME}
+
+                def mutate(d):
+                    d.update(fresh)
+
+                _update_session_file(mutate)
             except Exception as e:
                 return False, "登录/注册失败: %s" % e
         self.bot = HikLinkBot(num, secret)
@@ -801,10 +816,10 @@ class HikLinkBotController:
                 if not ok:
                     self.bot.reply("消息发送失败: %s" % (err or ""))
                     return
-            # 等待完成：**只认 assistant 文本出现**，不信任 busy 时序——
-            # revive 后 CLI 初始化 result 帧会迟到误清 busy（重启后首条消息
-            # 必现空回复的根因），进程偶发退出又会拉低 busy。有中间文本但
-            # busy 在跑就继续等最终版；等待中进程死了就复活重发一次。
+            # 等待完成：**只认 result 帧（turn 终止帧）**，不信任 busy——
+            # busy 是 reader 对 result 的下游缓存，时序竞态（迟到/进程退出）
+            # 会让它提前翻转，把中间文本当最终回复或推空。文本只是候选，
+            # 看到 result 才敲定；等待中进程死了就复活重发一次。
             deadline = time.time() + CMD_TIMEOUT
             last_push = 0.0
             answer = ""
@@ -836,8 +851,8 @@ class HikLinkBotController:
                 except Exception:
                     pass
                 answer = self._last_assistant(s, seq0)
-                if answer and not s.busy:
-                    break                       # 有文本且空闲 → 本轮完成
+                if self._saw_result(s, seq0):
+                    break       # result = turn 终止帧，此刻最后文本即最终回复
                 if not s.alive and not answer:
                     log.warning("等待中进程死亡，复活重发: %r", text[:50])
                     if not s.revive_if_dead():
@@ -859,6 +874,18 @@ class HikLinkBotController:
                 nxt = self._queue.pop(0) if self._queue else None
             if nxt:
                 self._on_command(nxt, self.bot._trans())
+
+    @staticmethod
+    def _saw_result(s, after_seq):
+        """after_seq 之后是否已出现 result 帧（turn 的终止标志）。"""
+        try:
+            for e in s.get_events_after(after_seq):
+                if e.get("kind") == "event" \
+                        and (e.get("data") or {}).get("type") == "result":
+                    return True
+        except Exception:
+            pass
+        return False
 
     @staticmethod
     def _tool_brief(d):
