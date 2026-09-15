@@ -151,13 +151,34 @@ def login_pc(uid, password):
 
 # ---- 机器人注册（openclaw）----------------------------------------------
 def _png_1px():
-    """1x1 灰 PNG（注册机器人的图标占位）。"""
+    """1x1 灰 PNG（注册机器人的图标兜底）。"""
     def chunk(tag, payload):
         return (struct.pack(">I", len(payload)) + tag + payload
                 + struct.pack(">I", zlib.crc32(tag + payload) & 0xFFFFFFFF))
     ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 0, 0, 0, 0)
     return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr)
             + chunk(b"IDAT", zlib.compress(b"\x00\x80\x80")) + chunk(b"IEND", b""))
+
+
+def _icon_png():
+    """app 图标 → 256px PNG（机器人头像用真身，接口只收 image/png）。"""
+    try:
+        import io
+        from PIL import Image
+        ico_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ico")
+        for name in ("app.png", "app.ico"):   # png 免转换最快；ico 兜底
+            p = os.path.join(ico_dir, name)
+            if not os.path.isfile(p):
+                continue
+            img = Image.open(p).convert("RGBA")
+            img.thumbnail((256, 256), Image.LANCZOS)
+            buf = io.BytesIO()
+            img.save(buf, "PNG")
+            return buf.getvalue()
+    except Exception as e:
+        log.warning("头像加载失败，退回占位图: %s", e)
+    return _png_1px()
 
 
 def ensure_robot(token, name=BOT_NAME):
@@ -182,7 +203,7 @@ def ensure_robot(token, name=BOT_NAME):
                 for field, val in (("name", name), ("slogan", "前端控制台远程指令通道")):
                     parts.append(("--%s\r\nContent-Disposition: form-data; "
                                   "name=\"%s\"\r\n\r\n%s" % (boundary, field, val)))
-                png = _png_1px()
+                png = _icon_png()
                 parts.append(("--%s\r\nContent-Disposition: form-data; name=\"file\"; "
                               "filename=\"icon.png\"\r\nContent-Type: image/png\r\n\r\n"
                               % boundary))
@@ -381,12 +402,10 @@ class HikLinkBot:
                     log.exception("指令处理异常")
 
     def reply(self, text, finished=1):
-        """回复文本到 HikLink（CLIENT_MSG_PUSH，SEG 字/段）。
+        """回复文本到 HikLink（CLIENT_MSG_PUSH，SEG 字/段，失败重试必达）。
         帧结构照同事实现逐字段还原：业务体 JSON 序列化后放 **msgJson**（字符串）
         ——此前错放 body 对象字段，服务器不解析该字段，send 成功也被静默丢弃
-        （用户实锤「推送成功但 HikLink 收不到」）。
-        断线窗口发送会失败（服务端 20-60s 周期回收连接）——重试 8 次×3s
-        覆盖重连恢复期，确保 AI 的回复必达。"""
+        （用户实锤「推送成功但 HikLink 收不到」）。"""
         text = text or ""
         chunks = [text[i:i + SEG] for i in range(0, len(text), SEG)] or [""]
         for i, seg_text in enumerate(chunks):
@@ -413,6 +432,21 @@ class HikLinkBot:
                             attempt + 1)
                 time.sleep(3)
             time.sleep(0.15)
+
+    def push(self, text):
+        """进度推送：单次发送不重试（丢一条进度无伤大雅，不能因它阻塞
+        事件轮询——最终回复才走带重试的 reply）。"""
+        payload = {
+            "code": 0,
+            "data": {"qaReply": {"credibleQa": {
+                "id": "robot%d" % int(time.time() * 1000),
+                "answerList": [{"type": "text", "text": (text or "")[:SEG]}]}}},
+            "msg": "SUCCESS"}
+        frame = {"appId": self.robot_num, "cmd": "CLIENT_MSG_PUSH",
+                 "finished": 0, "msgJson": json.dumps(payload, ensure_ascii=False),
+                 "msgType": "DEFAULT", "transId": self._trans(),
+                 "version": "1.2.0", "session": self.session_id}
+        self._send(frame)
 
     def status(self):
         return {"running": bool(self._thread and self._thread.is_alive()),
@@ -598,15 +632,33 @@ class HikLinkBotController:
                 self.bot.reply("会话启动失败，请稍后再试")
                 return
             seq0 = s._seq
+            cursor = seq0
             self._t0 = time.time()
             self.bot.reply("已收到，开始处理：%s" % text[:80])
             ok, err = s.send_message(text)
             if not ok:
                 self.bot.reply("消息发送失败: %s" % (err or ""))
                 return
+            # 过程实时推送（用户要求：手机端不能傻等不知道）——盯事件流，
+            # 每次工具调用推一条单行摘要；节流 ≥5s 防刷屏。
             deadline = time.time() + CMD_TIMEOUT
+            last_push = 0.0
             while s.busy and time.time() < deadline:
                 time.sleep(1)
+                now = time.time()
+                try:
+                    for e in s.get_events_after(cursor):
+                        cursor = e.get("seq", cursor)
+                        if e.get("kind") != "event":
+                            continue
+                        d = e.get("data") or {}
+                        if d.get("type") != "tool_use":
+                            continue
+                        if now - last_push >= 5:
+                            self.bot.push("🔧 " + self._tool_brief(d))
+                            last_push = now
+                except Exception:
+                    pass
             answer = self._last_assistant(s, seq0) or "（AI 没有返回文本回复）"
             self.bot.reply(answer)
         except Exception as e:
@@ -621,6 +673,18 @@ class HikLinkBotController:
                 nxt = self._queue.pop(0) if self._queue else None
             if nxt:
                 self._on_command(nxt, self.bot._trans())
+
+    @staticmethod
+    def _tool_brief(d):
+        """工具调用的单行摘要（推给 HikLink 好读）。"""
+        name = d.get("name") or "工具"
+        inp = d.get("input") or {}
+        for k in ("command", "file_path", "path", "pattern", "url", "query",
+                  "description", "prompt"):
+            v = inp.get(k)
+            if v:
+                return "%s: %s" % (name, str(v)[:70].replace("\n", " "))
+        return name
 
     @staticmethod
     def _last_assistant(s, after_seq):
