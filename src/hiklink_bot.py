@@ -786,6 +786,18 @@ class HikLinkBotController:
             if not ok:
                 self.bot.reply("消息发送失败: %s" % (err or ""))
                 return
+            # claude 进程偶发退出时 reader_loop 把 busy/alive 拉成 False 且
+            # 无任何事件——上一条就是被这个吞成「(AI 没有返回文本回复)」的。
+            # 探测到进程已死：复活（resume 续上下文）并重发一次。
+            if not s.alive:
+                log.warning("发送后进程已死，复活重发: %r", text[:50])
+                if not s.revive_if_dead():
+                    self.bot.reply("会话进程退出且复活失败，请重发")
+                    return
+                ok, err = s.send_message(text)
+                if not ok:
+                    self.bot.reply("消息发送失败: %s" % (err or ""))
+                    return
             # 过程实时推送（用户要求：手机端不能傻等不知道）——盯事件流，
             # 每次工具调用推一条单行摘要；节流 ≥5s 防刷屏。
             # ask_user 选择卡片：推 HikLink 编号作答（手机端可决策），期间
@@ -819,8 +831,17 @@ class HikLinkBotController:
                             last_push = now
                 except Exception:
                     pass
-            answer = self._last_assistant(s, seq0) or "（AI 没有返回文本回复）"
-            self.bot.reply(answer)
+            answer = self._last_assistant(s, seq0)
+            if not answer:
+                # busy 翻转常早于文本事件落盘（进程重启/排队消费场景尤甚），
+                # 宽限 30s 等回复出现，别急着宣判「没有返回文本回复」
+                grace_end = time.time() + 30
+                while time.time() < grace_end:
+                    time.sleep(2)
+                    answer = self._last_assistant(s, seq0)
+                    if answer:
+                        break
+            self.bot.reply(answer or "（AI 没有返回文本回复）")
         except Exception as e:
             log.exception("指令执行失败")
             try:
