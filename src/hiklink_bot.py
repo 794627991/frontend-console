@@ -798,14 +798,15 @@ class HikLinkBotController:
                 if not ok:
                     self.bot.reply("消息发送失败: %s" % (err or ""))
                     return
-            # 过程实时推送（用户要求：手机端不能傻等不知道）——盯事件流，
-            # 每次工具调用推一条单行摘要；节流 ≥5s 防刷屏。
-            # ask_user 选择卡片：推 HikLink 编号作答（手机端可决策），期间
-            # 新消息由 _on_command 优先作为答案提交。
+            # 等待完成：**只认 assistant 文本出现**，不信任 busy 时序——
+            # revive 后 CLI 初始化 result 帧会迟到误清 busy（重启后首条消息
+            # 必现空回复的根因），进程偶发退出又会拉低 busy。有中间文本但
+            # busy 在跑就继续等最终版；等待中进程死了就复活重发一次。
             deadline = time.time() + CMD_TIMEOUT
             last_push = 0.0
-            while s.busy and time.time() < deadline:
-                time.sleep(1)
+            answer = ""
+            while time.time() < deadline:
+                time.sleep(2)
                 now = time.time()
                 try:
                     for e in s.get_events_after(cursor):
@@ -831,15 +832,16 @@ class HikLinkBotController:
                             last_push = now
                 except Exception:
                     pass
-            answer = self._last_assistant(s, seq0)
-            if not answer:
-                # busy 翻转常早于文本事件落盘（进程重启/排队消费场景尤甚），
-                # 宽限 30s 等回复出现，别急着宣判「没有返回文本回复」
-                grace_end = time.time() + 30
-                while time.time() < grace_end:
-                    time.sleep(2)
-                    answer = self._last_assistant(s, seq0)
-                    if answer:
+                answer = self._last_assistant(s, seq0)
+                if answer and not s.busy:
+                    break                       # 有文本且空闲 → 本轮完成
+                if not s.alive and not answer:
+                    log.warning("等待中进程死亡，复活重发: %r", text[:50])
+                    if not s.revive_if_dead():
+                        break
+                    ok, err = s.send_message(text)
+                    if not ok:
+                        log.warning("复活重发失败: %s", err)
                         break
             self.bot.reply(answer or "（AI 没有返回文本回复）")
         except Exception as e:
