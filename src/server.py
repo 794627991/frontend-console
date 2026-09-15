@@ -83,6 +83,13 @@ app.register_blueprint(tree_bp)
 from src.claude_setup import claude_setup_bp
 app.register_blueprint(claude_setup_bp)
 
+# 注册代理用量统计积木（路由 /api/usage/*；monkeypatch proxy_core 采集，宿主零侵入）
+from src.proxy_usage import usage_bp
+app.register_blueprint(usage_bp)
+
+# HikLink 机器人积木（独立端口 8766 独立 app；POST /hiklink/robot，宿主零侵入）
+from src import hiklink_bot
+
 # 注册 Claude 默认环境/ API 配置 Blueprint（settings.json 铺设与 token 读写）
 from src.claude_default import claude_default_bp
 app.register_blueprint(claude_default_bp)
@@ -695,6 +702,7 @@ def api_theme():
                         "close_to_tray": bool(cfg.get("close_to_tray", True)),
                         "tray_prompt_shown": bool(cfg.get("tray_prompt_shown", False)),
                         "claude_ui_mode": cfg.get("claude_ui_mode", "harness"),
+                        "custom_theme": cfg.get("custom_theme", {}),
                         "term_keys": {
                             "right_action": tk.get("right_action", "ctrl_menu"),
                             "auto_copy": bool(tk.get("auto_copy", False)),
@@ -739,6 +747,20 @@ def api_theme():
             return jsonify({"ok": False, "err": "claude_ui_mode 只认 harness/cli"}), 400
     if _tk:
         _save_config({**_load_config(), **_tk})
+    if "custom_theme" in data and isinstance(data["custom_theme"], dict):
+        # v2.25 自定义主题调色：键白名单 + 值格式校验（#rgb/#rrgggb、light 布尔），
+        # 防 config 被塞脏数据（与 term_keys 白名单同思路）
+        _CT_KEYS = {"bg-deep", "bg", "bg-panel", "bg-card", "bg-input", "border",
+                    "fg", "fg-bright", "muted", "accent", "accent-2",
+                    "term-bg", "term-fg"}
+        ct = {}
+        for k, v in data["custom_theme"].items():
+            if k == "light":
+                ct["light"] = bool(v)
+            elif k in _CT_KEYS and isinstance(v, str) and \
+                    re.fullmatch(r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})", v or ""):
+                ct[k] = v.lower()
+        _save_config({**_load_config(), "custom_theme": ct})
     theme = (data.get("theme") or "").strip()
     if theme:
         _save_config({**_load_config(), "theme": theme})

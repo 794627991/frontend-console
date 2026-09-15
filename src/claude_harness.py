@@ -719,6 +719,7 @@ class HarnessSession:
         self._proc = None
         self.alive = False
         self.busy = False
+        self.busy_since = None   # 本轮处理计时起点 ms（busy 时有效，供前端恢复计时）
         # v2.17 交互式提问：MCP 工具调用发起的待答问题
         #   {req_id, title, questions, answer, done, ts}
         self.ask = None
@@ -755,6 +756,13 @@ class HarnessSession:
 
     # ---- 进程生命周期 ----
     def start(self):
+        # 起进程前自愈：base_url 若指向自家代理但代理没在跑（上次强杀残留），
+        # claude 读到死端口会全部请求失败——先恢复直连再 Popen（幂等，直连零开销）
+        try:
+            from src.proxy import ensure_direct_if_proxy_down
+            ensure_direct_if_proxy_down("claude_start")
+        except Exception:
+            pass
         exe, is_shim = _resolve_claude_exe()
         argv = (["cmd.exe", "/c", exe] if is_shim else [exe])
         argv += ["-p",
@@ -872,8 +880,22 @@ class HarnessSession:
     def send_message(self, text, image_paths=None, file_paths=None):
         """发消息：文本 + 可选图片（base64 块，实测网关透传）+ 文件路径（文本
         附录，任何模型都能用 Read 读）。返回 (ok, err)。"""
+        # base_url 死代理自愈的第二时机（用户实锤）：start 里的自愈只在起
+        # 进程时跑——claude 启动时代理还活着、之后代理被停，进程不死就永远
+        # 不走 start，消息全打进死端口。发送前发现 base_url 已恢复直连，
+        # 就重启进程换新配置（有 session_id 则复活续上下文，本条照常发）。
+        if self.alive and not self.busy:
+            try:
+                from src.proxy import ensure_direct_if_proxy_down
+                if ensure_direct_if_proxy_down("claude_send"):
+                    self.kill_proc(quiet=True)
+                    if not self.revive_if_dead():
+                        return False, "会话进程已退出（base_url 已恢复直连，请重发）"
+            except Exception:
+                pass
         if not self._proc or not self.alive:
             return False, "会话进程已退出"
+        self.busy_since = int(time.time() * 1000)   # 处理计时起点（前端切会话回来显示真实已跑时长）
         if self.busy:
             return False, "claude 正在回复中，请稍候"
         # v2.25：先占 busy 再写 stdin——写在后置位时两个并发 /send 都能穿过
@@ -1624,17 +1646,19 @@ def harness_sessions():
     """会话列表（持久化元数据，新→旧）。"""
     _meta_load()
     with _sessions_lock:
-        live = {sid: (s.alive, s.busy) for sid, s in _sessions.items()}
+        live = {sid: (s.alive, s.busy, s.busy_since) for sid, s in _sessions.items()}
     items = []
     for sid, m in _meta.items():
-        alive, busy = live.get(sid, (False, False))
+        alive, busy, busy_since = live.get(sid, (False, False, None))
+        if not busy:
+            busy_since = None
         items.append({"sid": sid, "title": m.get("title") or "新会话",
                       "model": m.get("model"), "cwd": m.get("cwd", ""),
                       "permission": m.get("permission") or "auto",
                       "think": m.get("think"),
                       "session_id": m.get("session_id"), "has_history": bool(m.get("session_id")),
                       "created": m.get("created", 0), "last_active": m.get("last_active", 0),
-                      "alive": alive, "busy": busy})
+                      "alive": alive, "busy": busy, "busy_since": busy_since})
     items.sort(key=lambda x: -x["last_active"])
     return jsonify({"ok": True, "sessions": items})
 
@@ -1647,7 +1671,8 @@ def harness_transcript():
         return jsonify({"ok": False, "err": "会话不存在"}), 404
     lines = transcript_for(s)
     return jsonify({"ok": True, "lines": lines or [], "alive": s.alive,
-                    "busy": s.busy, "model": s.model, "title": s.title, "seq": s._seq})
+                    "busy": s.busy, "busy_since": s.busy_since,
+                    "model": s.model, "title": s.title, "seq": s._seq})
 
 
 @harness_bp.route("/events")
@@ -1657,7 +1682,8 @@ def harness_events():
     if not s:
         return jsonify({"ok": False, "err": "会话不存在"}), 404
     return jsonify({"ok": True, "events": s.get_events_after(request.args.get("after_seq", 0, type=int)),
-                    "seq": s._seq, "alive": s.alive, "busy": s.busy})
+                    "seq": s._seq, "alive": s.alive, "busy": s.busy,
+                    "busy_since": s.busy_since})
 
 
 @harness_bp.route("/rename", methods=["POST"])
