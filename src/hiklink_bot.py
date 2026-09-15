@@ -71,7 +71,7 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "name:HiClawPc;platform:win32;arch:x64;user:%s;")
 
 SESSION_PATH = os.path.join(DATA_DIR, "hiklink_session.json")
-BOT_NAME = "前端控制台小助理"
+BOT_NAME = "前端小助手"   # 改名即新建机器人（旧机器人头像定死无法更新）
 SEG = 1000          # 每段推送字符上限（HikLink 消息友好长度）
 HEARTBEAT = 10      # 秒（实测服务端 ~20s 无有效心跳即断开，30s 档活不过首拍）
 CMD_TIMEOUT = 1800  # 单条指令上限（秒）
