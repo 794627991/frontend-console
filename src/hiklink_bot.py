@@ -30,6 +30,7 @@ import subprocess
 import threading
 import time
 import uuid
+import re
 import zlib
 from platform import architecture, node, system
 from urllib.parse import urlencode
@@ -264,6 +265,7 @@ class HikLinkBot:
         self.welcome_text = None
         self.on_command = None
         self.send_heartbeat = True   # False=不发心跳（诊断用）
+        self._announced = False      # 上线通告进程内只推一次，防重连刷屏
         self._stop = threading.Event()
         self._thread = None
         self._lock = threading.Lock()
@@ -363,12 +365,53 @@ class HikLinkBot:
                         "transId": self._trans(), "version": "1.0"})
             time.sleep(HEARTBEAT)
 
+    def _save_last_session(self):
+        """持久化最近活跃 session——重启后上线通告靠它找回会话上下文。"""
+        try:
+            d = {}
+            if os.path.exists(SESSION_PATH):
+                with open(SESSION_PATH, encoding="utf-8") as f:
+                    d = json.load(f) or {}
+            if d.get("last_session") == self.session_id:
+                return
+            d["last_session"] = self.session_id
+            with open(SESSION_PATH, "w", encoding="utf-8") as f:
+                json.dump(d, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    def _announce_online(self):
+        """上线通告：复用上次活跃 session 推一条，重启后让会话「活」过来。
+        实测无 session 的推送服务端 SYSTEM_ACK 但静默不投递（回复语义），
+        且用户把会话关掉后连旧 session 也投不进——那种情况只能靠用户在
+        HikLink 里重新发消息拉起会话，通告做不到无中生有。"""
+        self._stop.wait(3)   # 错开认证瞬间，也给服务端留就绪时间
+        if (self._stop.is_set() or self._announced or not self.authenticated):
+            return
+        if self.session_id:   # 本次已收到过消息，会话本来就在，无需通告
+            return
+        try:
+            with open(SESSION_PATH, encoding="utf-8") as f:
+                last = (json.load(f) or {}).get("last_session")
+        except Exception:
+            last = None
+        if not last:
+            log.info("上线通告跳过：无历史 session（用户首次发消息后建立会话）")
+            return
+        self._announced = True
+        self.session_id = last
+        self.push("前端控制台机器人已上线 ✅")
+        log.info("上线通告已推（复用历史 session %s…）", str(last)[:8])
+
     def _handle(self, msg):
         cmd = msg.get("cmd")
         if cmd == "SERVER_AUTH_REPLY":
             self.authenticated = bool(msg.get("result"))
             log.info("WS 认证%s（uid=%s）", "成功" if self.authenticated else "失败",
                      msg.get("uid"))
+            if self.authenticated:
+                threading.Thread(target=self._announce_online,
+                                 daemon=True).start()
         elif cmd == "HEART_PONG":
             pass
         elif cmd == "KICK_OUT":
@@ -384,6 +427,7 @@ class HikLinkBot:
                 data = {}
             text = (data.get("asrText") or "").strip()
             self.session_id = msg.get("session") or self.session_id
+            self._save_last_session()
             log.info("收到消息: sender=%s text=%r", data.get("sender"),
                      text[:80])
             if not text and self.welcome_text:
@@ -476,7 +520,8 @@ def _his():
 
 class HikLinkBotController:
     """指令入口 → 固定 harness 会话执行 → 分段回推。
-    任务执行中新指令排队并立即回进度；/stop 终止当前任务。"""
+    任务执行中新指令排队并立即回进度；/stop 终止当前任务。
+    ask_user 选择卡片桥接：问题推 HikLink 编号作答（手机端可决策）。"""
 
     def __init__(self, emit_log=None):
         self.bot = None
@@ -487,6 +532,83 @@ class HikLinkBotController:
         self._emit_log = emit_log or (lambda m: log.info(m))
         self._sid = None
         self._load_sid()
+        self._pending_ask = None   # {"req_id", "qmap"} —— 待手机作答的选择卡片
+
+    # ---- ask_user 选择卡片桥接 ----
+    @staticmethod
+    def _format_ask(evt):
+        """harness ask 事件 → (推送文本, qmap)。
+        qmap: {"题号": (问题原文, [(选项号, label)...])}——编号作答依据。"""
+        qs = evt.get("questions") or []
+        title = (evt.get("title") or "").strip()
+        lines = ["❓ " + (title or "需要你确认")]
+        qmap = {}
+        for qi, q in enumerate(qs, 1):
+            if not isinstance(q, dict):
+                continue
+            qtext = (q.get("question") or ("问题%d" % qi)).strip()
+            opts = q.get("options") or []
+            lines.append("%d. %s" % (qi, qtext))
+            omap = []
+            for oi, o in enumerate(opts, 1):
+                label = (o.get("label") if isinstance(o, dict) else str(o)) or ""
+                if not label:
+                    continue
+                lines.append("   %d=%s" % (oi, label))
+                omap.append((oi, label))
+            if q.get("multiSelect"):
+                lines.append("   （可多选：1=2,3）")
+            if omap:
+                qmap[str(qi)] = (qtext, omap)
+        lines.append("—— 回复编号作答，如「1=2」（多选 1=2,3；多题用 ; 分隔）")
+        return "\n".join(lines), qmap
+
+    @staticmethod
+    def _parse_ask_answer(text, qmap):
+        """把 HikLink 文本回复解析成 ask_answer 的 {问题原文: "label[, label]"}。
+        支持：标准「1=2;2=1,3」；单题纯数字「2」；直接发选项文字（包含匹配）。
+        返回 (answer dict or None, 错误说明)。"""
+        text = (text or "").strip()
+        if not text:
+            return None, "回复为空"
+        if len(qmap) == 1 and text.isdigit():
+            qtext, omap = list(qmap.values())[0]
+            hit = next((l for n, l in omap if n == int(text)), None)
+            return ({qtext: hit}, None) if hit else (None, "选项 %s 不存在" % text)
+        for qtext, omap in qmap.values():
+            for _, label in omap:
+                if text == label or (len(text) >= 2 and text in label):
+                    return {qtext: label}, None
+        ans = {}
+        for part in re.split(r"[;；\n]+", text):
+            part = part.strip()
+            if not part:
+                continue
+            m = re.match(r"^(\d+)\s*[=：:—-]\s*(.+)$", part)
+            if not m:
+                return None, "看不懂「%s」——格式如 1=2" % part[:30]
+            qi, ov = m.group(1), m.group(2)
+            ent = qmap.get(qi)
+            if not ent:
+                return None, "题号 %s 不存在" % qi
+            qtext, omap = ent
+            labels = []
+            for piece in re.split(r"[,，、]+", ov):
+                piece = piece.strip()
+                if not piece:
+                    continue
+                hit = None
+                if piece.isdigit():
+                    hit = next((l for n, l in omap if n == int(piece)), None)
+                else:
+                    hit = next((l for _, l in omap if piece in l), None)
+                if not hit:
+                    return None, "题%s的「%s」不是有效选项" % (qi, piece[:20])
+                labels.append(hit)
+            ans[qtext] = ", ".join(labels)
+        if not ans:
+            return None, "未解析出任何作答"
+        return ans, None
 
     # ---- 凭据 ----
     def _creds(self, uid=None, password=None):
@@ -610,6 +732,23 @@ class HikLinkBotController:
     def _on_command(self, text, trans_id):
         if not text:
             return
+        # 待答选择卡片在场：本条消息优先作为答案提交（不进任务队列）——
+        # 手机端无法点桌面 UI 的选择卡片，编号/选项文字作答即回传
+        if self._pending_ask:
+            pa = self._pending_ask
+            ans, err = self._parse_ask_answer(text, pa["qmap"])
+            if ans is None:
+                self.bot.reply("⚠ %s\n重发格式：1=选项号（多选 1=2,3）" % err)
+                return
+            s = self._session()
+            if s and s.ask_answer(pa["req_id"], ans):
+                self._pending_ask = None
+                self.bot.reply("✓ 已提交：" + "; ".join(
+                    "%s → %s" % (k[:24], v[:60]) for k, v in ans.items()))
+            else:
+                self._pending_ask = None
+                self.bot.reply("该提问已失效（可能桌面端已作答），原话将按新指令处理")
+            return
         with self._lock:
             if self._busy_hl:
                 self._queue.append(text)
@@ -641,6 +780,8 @@ class HikLinkBotController:
                 return
             # 过程实时推送（用户要求：手机端不能傻等不知道）——盯事件流，
             # 每次工具调用推一条单行摘要；节流 ≥5s 防刷屏。
+            # ask_user 选择卡片：推 HikLink 编号作答（手机端可决策），期间
+            # 新消息由 _on_command 优先作为答案提交。
             deadline = time.time() + CMD_TIMEOUT
             last_push = 0.0
             while s.busy and time.time() < deadline:
@@ -649,7 +790,18 @@ class HikLinkBotController:
                 try:
                     for e in s.get_events_after(cursor):
                         cursor = e.get("seq", cursor)
-                        if e.get("kind") != "event":
+                        k = e.get("kind")
+                        if k == "ask":
+                            text_, qmap = self._format_ask(e)
+                            self._pending_ask = {"req_id": e.get("req_id"),
+                                                 "qmap": qmap}
+                            self.bot.reply(text_)
+                            last_push = time.time()
+                            continue
+                        if k == "ask_done":
+                            self._pending_ask = None
+                            continue
+                        if k != "event":
                             continue
                         d = e.get("data") or {}
                         if d.get("type") != "tool_use":
