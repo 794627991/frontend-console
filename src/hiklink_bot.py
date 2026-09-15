@@ -25,6 +25,7 @@ import hashlib
 import json
 import logging
 import os
+import shutil
 import ssl
 import subprocess
 import threading
@@ -71,7 +72,24 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "name:HiClawPc;platform:win32;arch:x64;user:%s;")
 
 SESSION_PATH = os.path.join(DATA_DIR, "hiklink_session.json")
+WELCOME_TEXT = ("🤖 前端小助手已上线！直接发消息即可下达指令，"
+                "回复会自动推回。/stop 停止当前任务。")
 _SESSION_LOCK = threading.Lock()
+
+
+def _load_session_file():
+    """读 session 文件，主文件损坏自动回滚 .bak（写盘前总会留上一份）。"""
+    for path in (SESSION_PATH, SESSION_PATH + ".bak"):
+        try:
+            with open(path, encoding="utf-8") as f:
+                d = json.load(f)
+            if isinstance(d, dict):
+                if path != SESSION_PATH:
+                    log.warning("主 session 文件损坏，已回退 .bak")
+                return d
+        except (ValueError, OSError):
+            continue
+    return {}
 
 
 def _update_session_file(mutate):
@@ -82,9 +100,14 @@ def _update_session_file(mutate):
         try:
             d = {}
             if os.path.exists(SESSION_PATH):
-                with open(SESSION_PATH, encoding="utf-8") as f:
-                    d = json.load(f) or {}
+                try:
+                    with open(SESSION_PATH, encoding="utf-8") as f:
+                        d = json.load(f) or {}
+                except (ValueError, OSError):
+                    d = _load_session_file()   # 主文件坏：从 .bak 接着改
             mutate(d)
+            if os.path.exists(SESSION_PATH):   # 写前留底，损坏可回滚
+                shutil.copy2(SESSION_PATH, SESSION_PATH + ".bak")
             tmp = SESSION_PATH + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(d, f, ensure_ascii=False, indent=2)
@@ -291,6 +314,7 @@ class HikLinkBot:
         self.connected = False
         self.welcome_text = None
         self.on_command = None
+        self.on_auth_failed = None   # 认证被拒（凭据失效）→ 上层自愈回调
         self.send_heartbeat = True   # False=不发心跳（诊断用）
         self._announced = False      # 上线通告进程内只推一次，防重连刷屏
         self._stop = threading.Event()
@@ -412,11 +436,7 @@ class HikLinkBot:
             return
         if self.session_id:   # 本次已收到过消息，会话本来就在，无需通告
             return
-        try:
-            with open(SESSION_PATH, encoding="utf-8") as f:
-                last = (json.load(f) or {}).get("last_session")
-        except Exception:
-            last = None
+        last = _load_session_file().get("last_session")
         if not last:
             log.info("上线通告跳过：无历史 session（用户首次发消息后建立会话）")
             return
@@ -433,6 +453,10 @@ class HikLinkBot:
                      msg.get("uid"))
             if self.authenticated:
                 threading.Thread(target=self._announce_online,
+                                 daemon=True).start()
+            elif self.on_auth_failed:
+                # 凭据失效（机器人被删/secret 轮换）——不处理就永久僵死
+                threading.Thread(target=self.on_auth_failed,
                                  daemon=True).start()
         elif cmd == "HEART_PONG":
             pass
@@ -636,15 +660,11 @@ class HikLinkBotController:
     def _creds(self, uid=None, password=None):
         if uid and password:
             return uid, password
-        try:
-            with open(SESSION_PATH, encoding="utf-8") as f:
-                d = json.load(f) or {}
-            if d.get("uid") and d.get("password"):
-                return d["uid"], d["password"]
-            if d.get("uid") and not password:
-                uid = d["uid"]
-        except (ValueError, OSError):
-            pass
+        d = _load_session_file()
+        if d.get("uid") and d.get("password"):
+            return d["uid"], d["password"]
+        if d.get("uid") and not password:
+            uid = d["uid"]
         # 复用 lanz SSO 凭据（同一账号体系）
         try:
             from src.lanz_quota import load_credentials
@@ -657,11 +677,7 @@ class HikLinkBotController:
 
     # ---- 会话 ----
     def _load_sid(self):
-        try:
-            with open(SESSION_PATH, encoding="utf-8") as f:
-                self._sid = (json.load(f) or {}).get("harness_sid")
-        except (ValueError, OSError):
-            self._sid = None
+        self._sid = _load_session_file().get("harness_sid")
 
     def _save_sid(self):
         cur = self._sid
@@ -706,12 +722,7 @@ class HikLinkBotController:
         if not (u and p):
             return False, "需要 SSO 账号密码（首次配置写 hiklink_session.json）"
         # 已有机器人凭据 → 直接连；否则登录 + 注册（登录/注册用同事实现）
-        d = {}
-        try:
-            with open(SESSION_PATH, encoding="utf-8") as f:
-                d = json.load(f) or {}
-        except (ValueError, OSError):
-            pass
+        d = _load_session_file()
         num, secret = d.get("robot_num"), d.get("app_secret")
         if num and secret and d.get("robot_name") != BOT_NAME:
             # 缓存凭据属于旧名字的机器人（改名重建场景）→ 作废，按新名重注册
@@ -737,14 +748,56 @@ class HikLinkBotController:
             except Exception as e:
                 return False, "登录/注册失败: %s" % e
         self.bot = HikLinkBot(num, secret)
-        self.bot.welcome_text = welcome or (
-            "🤖 前端小助手已上线！直接发消息即可下达指令，"
-            "回复会自动推回。/stop 停止当前任务。")
+        self.bot.welcome_text = welcome or WELCOME_TEXT
         self.bot.on_command = self._on_command
+        self.bot.on_auth_failed = self._on_auth_failed
         ok, msg3 = self.bot.start()
         if ok:
             self._emit_log("HikLink 机器人已连接（%s）" % num)
         return ok, msg3
+
+    def _on_auth_failed(self):
+        """WS 认证被拒：凭据失效（机器人被删/secret 轮换）。自动登录 →
+        ensure_robot 同名找回（被删则按名重建，带蓝头像）→ 换新凭据重连。
+        10 分钟防抖，防止服务端反复拒绝时形成风暴。"""
+        now = time.time()
+        if now - getattr(self, "_last_refresh", 0) < 600:
+            log.info("凭据刷新防抖中（10 分钟内已试过），跳过")
+            return
+        self._last_refresh = now
+        log.warning("WS 认证被拒，尝试凭据自愈…")
+        u, p = self._creds()
+        if not (u and p):
+            log.error("无 SSO 凭据，无法自愈")
+            return
+        try:
+            his = _his()
+            token, msg = his.login_pc(u, p)
+            if not token:
+                log.error("自愈登录失败: %s", msg)
+                return
+            num, secret, msg2 = his.ensure_robot(token, name=BOT_NAME)
+            if not (num and secret):
+                log.error("自愈注册失败: %s", msg2)
+                return
+            fresh = {"uid": u, "password": p, "robot_num": num,
+                     "app_secret": secret, "robot_name": BOT_NAME}
+
+            def mutate(d):
+                d.update(fresh)
+
+            _update_session_file(mutate)
+        except Exception:
+            log.exception("凭据自愈异常")
+            return
+        if self.bot:
+            self.bot.stop()
+        self.bot = HikLinkBot(num, secret)
+        self.bot.welcome_text = WELCOME_TEXT
+        self.bot.on_command = self._on_command
+        self.bot.on_auth_failed = self._on_auth_failed
+        ok, msg3 = self.bot.start()
+        self._emit_log("凭据自愈%s（%s）" % ("成功" if ok else "失败", num))
 
     def stop(self):
         if self.bot:
