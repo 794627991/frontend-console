@@ -90,39 +90,51 @@ RETRY_CONFIG_DEFAULTS = {
 
 def load_retry_config():
     """读 retry_config.json。文件不存在/字段缺失/非法 → 用默认值（保持现状行为）。
+    v2.27.1：数据目录（DATA_DIR）优先；旧位置（项目根/exe 目录/src/）命中后
+    自动迁入数据目录（一次性，os.replace）——配置跟数据目录走（用户定调）。
     返回 dict（内部已做类型与范围校验）。"""
     cfg = dict(RETRY_CONFIG_DEFAULTS)
+    data_path = None
+    try:
+        from src.app_state import DATA_DIR
+        data_path = os.path.join(DATA_DIR, "retry_config.json")
+    except Exception:
+        pass
     paths = []
-    # 合入版：项目根（app_state.BASE_DIR）也要读——与 retry_config_file() 写入路径一致
+    if data_path:
+        paths.append(data_path)
+    # 旧位置兜底（历史版本写在程序侧）：项目根 / exe 目录 / src/
     try:
         from src.app_state import BASE_DIR
         paths.append(os.path.join(BASE_DIR, "retry_config.json"))
     except Exception:
         pass
-    try:
-        paths.append(os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "retry_config.json"))
-    except Exception:
-        pass
-    if getattr(sys, "frozen", False):   # PyInstaller exe：exe 所在目录优先
+    if getattr(sys, "frozen", False):
         try:
-            paths.insert(0, os.path.join(
+            paths.append(os.path.join(
                 os.path.dirname(sys.executable), "retry_config.json"))
         except Exception:
             pass
-    for path in paths:
-        if not os.path.exists(path):
-            continue
+    paths.append(os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "retry_config.json"))
+    chosen = next((p for p in paths if os.path.exists(p)), None)
+    if chosen:
         try:
-            with open(path, encoding="utf-8") as f:
+            with open(chosen, encoding="utf-8") as f:
                 d = json.load(f)
             if isinstance(d, dict):
                 # 只收认识的字段，忽略 _ 开头的注释键
                 known = set(RETRY_CONFIG_DEFAULTS)
                 cfg.update({k: v for k, v in d.items() if k in known})
-            break
+            # 命中旧位置 → 一次性迁入数据目录（配置跟数据目录走）
+            if data_path and chosen != data_path:
+                try:
+                    os.replace(chosen, data_path)
+                    log.info("retry_config.json 已迁入数据目录 %s", data_path)
+                except OSError as e:
+                    log.warning("retry_config.json 迁入数据目录失败（不影响使用）: %s", e)
         except (ValueError, OSError) as e:
-            log.warning("读取 %s 失败，用默认重试配置: %s", path, e)
+            log.warning("读取 %s 失败，用默认重试配置: %s", chosen, e)
     # 校验：数值字段非法/负数回默认；布尔强转
     for k in ("max_attempts", "max_retry_seconds", "max_backoff_seconds"):
         try:
@@ -137,19 +149,13 @@ def load_retry_config():
 
 
 def retry_config_file():
-    """返回 retry_config.json 的写入路径。合入串口控制台Pro 后：
-    exe=exe 同目录；源码=项目根（app_state.BASE_DIR，src/ 上一级——
-    源码目录不该放用户配置）。GUI 配置界面写这个文件——与
-    load_retry_config 的读取路径保持一致。"""
-    if getattr(sys, "frozen", False):
-        try:
-            return os.path.join(os.path.dirname(sys.executable),
-                                "retry_config.json")
-        except Exception:
-            pass
+    """返回 retry_config.json 的写入路径。v2.27.1：归数据目录（DATA_DIR，
+    可迁移）——配置属用户数据，跟数据目录走而非跟程序目录（用户定调：
+    软件迁移目录后数据类文件应在新数据目录）。旧位置（项目根/exe 目录/src/）
+    的存量文件由 load_retry_config 首读时自动迁入数据目录。"""
     try:
-        from src.app_state import BASE_DIR
-        return os.path.join(BASE_DIR, "retry_config.json")
+        from src.app_state import DATA_DIR
+        return os.path.join(DATA_DIR, "retry_config.json")
     except Exception:
         return os.path.join(os.path.dirname(os.path.abspath(__file__)),
                             "retry_config.json")
