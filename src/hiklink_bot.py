@@ -447,6 +447,18 @@ class HikLinkBot:
         if not last:
             log.info("上线通告跳过：无历史 session（用户首次发消息后建立会话）")
             return
+        # v2.27.13：通告只推给当前登录账号自己的会话——换账号测试会把
+        # last_session 留成上一个人（实测推给了同事 heqinglong5，本人收不到
+        # 上线通知还以为通知坏了）。session 标识以 uid 起头，按前缀判归属。
+        try:
+            cur_uid = (_load_session_file().get("uid")
+                       or (_controller._creds()[0] if _controller else "")) or ""
+        except Exception:
+            cur_uid = ""
+        if cur_uid and not str(last).lower().startswith(str(cur_uid).lower()):
+            log.info("上线通告跳过：历史 session 属于别的账号（%s… ≠ 当前 %s）",
+                     str(last)[:8], cur_uid)
+            return
         self._announced = True
         self.session_id = last
         self.push("前端控制台机器人已上线 ✅")
