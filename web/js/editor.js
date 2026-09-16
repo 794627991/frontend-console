@@ -49,11 +49,14 @@ async function _edUploadImage(file) {
 
 // ---- 编辑器 tab 构建（模式同 buildLogViewer：tab + term-area wrap + connections 表）----
 // name=null 表示未命名草稿（尚未保存到磁盘）
-function buildEditorTab(name, content, extPath, fileMtime) {
+function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
   // content：.note 传 Editor.js JSON 对象；.txt 传字符串；草稿传 null
   // extPath：外部绝对路径（拖入文件）——保存写回原路径，不走 files/ 目录
   // fileMtime：打开时磁盘 mtime（后台改动检测基准；null=草稿/旧调用不检测）
-  const isNote = name ? name.toLowerCase().endsWith('.note') : true;  // 草稿默认 .note
+  // draftExt：草稿默认后缀（v2.27「新建文件」下拉；'.note'/'.txt'/'.md'/自定义，
+  //           默认 '.note'）——决定块编辑/纯文本形态与首次落盘的默认后缀
+  const isNote = name ? name.toLowerCase().endsWith('.note')
+                      : ((draftExt || '.note').toLowerCase() === '.note');
   // 外部 .note 入口（拖入/最近打开）传的是 /api/ed/open 返回的 JSON 字符串：
   // 不解析则 _edInitContent 判非对象 → 空块初始化 → Ctrl+S 把原文件覆盖成空笔记
   if (isNote && typeof content === 'string' && content.trim()) {
@@ -143,6 +146,7 @@ function buildEditorTab(name, content, extPath, fileMtime) {
     outlineList: wrap.querySelector('.ed-outline-list'),
     outlineStats: wrap.querySelector('.ed-outline-stats'),
     isNote,
+    draftExt: name ? '' : (draftExt || '.note'),  // 草稿默认后缀（落盘定名时补）
     editor: null,         // Editor.js 实例（.note）
     monaco: null,         // Monaco 实例（txt/md/code，_edInitContent 建）
     ta: null,             // textarea（Monaco 失败降级 fallback）
@@ -983,7 +987,7 @@ function edRenamePrompt(conn) {
   if (!conn || conn._renaming) return;
   const label = conn.tab.querySelector('.label');
   conn._renaming = true;
-  const curExt = conn.onDisk ? _edExt(conn.meta.label) : '.note';  // 后缀：默认 note，落盘保留原后缀
+  const curExt = conn.onDisk ? _edExt(conn.meta.label) : (conn.draftExt || '.note');  // 后缀：草稿按「新建文件」所选，落盘保留原后缀
   const inp = document.createElement('input');
   inp.type = 'text';
   inp.className = 'tab-rename-input';
@@ -1150,6 +1154,56 @@ function _edCloseNow(conn) {
 // ---- 新建文件：只建草稿 tab（.note 块笔记），不落盘 ----
 function newEditorFile() {
   buildEditorTab(null, null);
+}
+
+// ---- v2.27「新建文件」下拉：笔记 / .txt / .md / 自定义后缀 ----
+// 草稿只定形态与默认后缀，落盘仍发生在首次保存/改名（原保存模型不动）。
+function newFileMenuShow(anchor) {
+  const old = document.querySelector('.nf-menu');
+  if (old) { old.remove(); return; }
+  const menu = document.createElement('div');
+  menu.className = 'nf-menu';
+  menu.innerHTML = `
+    <div class="nf-item" data-ext=".note"><b>📝 笔记</b><span>块式编辑，可贴图（.note）</span></div>
+    <div class="nf-item" data-ext=".txt"><b>📄 纯文本</b><span>.txt</span></div>
+    <div class="nf-item" data-ext=".md"><b>📝 Markdown</b><span>.md</span></div>
+    <div class="nf-custom">
+      <input class="nf-ext-inp" data-nf-ext placeholder="自定义后缀，如 .log / .csv" spellcheck="false">
+      <button class="btn ghost nf-ext-go" data-nf-go>新建</button>
+    </div>`;
+  menu.style.position = 'fixed';
+  menu.style.left = '0'; menu.style.top = '0';
+  document.body.appendChild(menu);
+  const ar = anchor.getBoundingClientRect();
+  let x = ar.left, y = ar.bottom + 6;
+  if (x + menu.offsetWidth > window.innerWidth - 8) x = window.innerWidth - menu.offsetWidth - 8;
+  if (y + menu.offsetHeight > window.innerHeight - 8) y = ar.top - menu.offsetHeight - 6;
+  menu.style.left = Math.max(6, x) + 'px';
+  menu.style.top = Math.max(6, y) + 'px';
+  const create = (ext) => {
+    menu.remove();
+    buildEditorTab(null, null, null, null, ext);
+  };
+  menu.querySelectorAll('.nf-item').forEach(it => {
+    it.onclick = () => create(it.dataset.ext);
+  });
+  const inp = menu.querySelector('[data-nf-ext]');
+  const go = menu.querySelector('[data-nf-go]');
+  const commitCustom = () => {
+    let ext = inp.value.trim().toLowerCase();
+    if (!ext) { inp.focus(); return; }
+    if (!ext.startsWith('.')) ext = '.' + ext;
+    if (!/^\.[a-z0-9_-]+$/.test(ext)) { inp.value = ''; inp.placeholder = '后缀只能用字母/数字/-_'; inp.focus(); return; }
+    create(ext);
+  };
+  go.onclick = commitCustom;
+  inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); commitCustom(); } });
+  const close = (ev) => {
+    if (menu.contains(ev.target) || anchor.contains(ev.target)) return;
+    menu.remove();
+    document.removeEventListener('mousedown', close, true);
+  };
+  setTimeout(() => document.addEventListener('mousedown', close, true), 0);
 }
 
 // ---- files/ 文件列表弹窗：复用日志库 modal 风格 ----
