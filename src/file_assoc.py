@@ -33,7 +33,7 @@ assoc_bp = Blueprint("assoc", __name__)
 
 PROG_ID = "SerialConsolePro.Text"
 _CLASSES = r"Software\Classes"
-# 后缀 → 图标 design 名（ico/ext/<design>.ico，gen_ext_icons.py 生成）。
+# 后缀 → 图标 design 名（ico/ext/<design>.ico，tools/gen_ext_icons.py 生成）。
 # 桌面/资源管理器图标按后缀区分（用户需求：手绘文件主体+像素机器人角标，
 # 不同后缀不同形）——每后缀独立 ProgId（SerialConsolePro.Text.<design>），
 # 各自 DefaultIcon 指向专属 ico；之前 19 个后缀共用一个 ProgId 一个图标，

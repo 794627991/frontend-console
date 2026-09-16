@@ -6,7 +6,8 @@
 import os
 from PIL import Image, ImageDraw, ImageFont
 
-OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ico", "ext")
+# 输出到项目根 ico/ext/（本脚本在 tools/ 下，上溯一层才是项目根）
+OUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ico", "ext")
 os.makedirs(OUT_DIR, exist_ok=True)
 S = 256  # 画布
 
