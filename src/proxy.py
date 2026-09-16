@@ -1543,6 +1543,7 @@ def _api_credentials():
         try:   # 统一登录绑定：登出即停用机器人
             from src import hiklink_bot
             hiklink_bot.ensure_stopped()
+            hiklink_bot.clear_account()   # v2.27.6：session 文件里的账号凭据一并清——不清则状态仍报已登录，登录表单出不来
         except Exception:
             pass
         return jsonify({"ok": True, "msg": "已断开登录（机器人已停用）"})

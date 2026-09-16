@@ -1015,6 +1015,19 @@ def ensure_stopped():
     return True, "机器人未在运行"
 
 
+def clear_account():
+    """登出清账号凭据（v2.27.6）：hiklink_session.json 里的 uid/password 是
+    机器人首启时复制进去的，且 _creds() 优先读它——登出只删 lanz 凭据时
+    这里仍能读到账号 → 状态接口继续报「已登录」→ 登录表单被藏起，用户
+    卡在「已登录但机器人没跑」的死态（用户实锤）。只清 uid/password，
+    保留机器人凭据（robot_num/app_secret，下次登录同名直连）与
+    harness_sid（小助理会话绑定，丢了会另起新会话）。"""
+    def mutate(d):
+        d.pop("uid", None)
+        d.pop("password", None)
+    return _update_session_file(mutate)
+
+
 def status_snapshot():
     """统一登录 UI 的状态聚合：登录名 + 机器人运行态。"""
     username = None
