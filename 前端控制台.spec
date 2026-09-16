@@ -17,7 +17,11 @@ a = Analysis(
     pathex=[],
     binaries=_winpty_bins,
     datas=[('web', 'web'), ('ico', 'ico'), ('vendor', 'vendor'),
-            ('README.md', '.')],
+            ('README.md', '.'),
+            # HikLink 机器人登录/注册的 marshal 字节码资产（hiklink_bot._his()
+            # 按 __file__ 同目录读）——漏打包时同事的 exe 一登录注册就
+            # FileNotFoundError，机器人永不启动（2026-09-16 实锤）
+            ('src/_hiklink_his.blob', 'src')],
     hiddenimports=['paramiko',
         'src', 'src.main', 'src.server', 'src.mcp_server', 'src.app_state', 'src.ansi_utils', 'src.base_conn',
         'src.serial_conn', 'src.ssh_conn', 'src.log_index', 'src.tftp',
