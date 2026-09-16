@@ -1772,6 +1772,7 @@ def _recover_scan():
             except OSError:
                 continue
             title, cwd = "", ""
+            human = 0
             try:
                 with open(fp, "r", encoding="utf-8", errors="replace") as f:
                     for i, line in enumerate(f):
@@ -1786,25 +1787,35 @@ def _recover_scan():
                             continue
                         if not cwd and o.get("cwd"):
                             cwd = o["cwd"]
-                        if not title and o.get("type") == "summary" and o.get("summary"):
-                            title = str(o["summary"])
-                        if not title and o.get("type") == "user":
-                            c = (o.get("message") or {}).get("content")
-                            txt = ""
-                            if isinstance(c, str):
-                                txt = c
-                            elif isinstance(c, list):
-                                txt = next((b.get("text", "") for b in c
-                                            if isinstance(b, dict) and b.get("type") == "text"), "")
-                            txt = txt.strip()
-                            # 跳过 CLI 注入的命令包装行，那不是人话标题
-                            if txt and not txt.startswith(("<", "Another Claude")):
-                                title = txt
+                        if o.get("type") != "user" or o.get("isSynthetic") or o.get("parent_tool_use_id"):
+                            continue
+                        c = (o.get("message") or {}).get("content")
+                        txt = ""
+                        if isinstance(c, str):
+                            txt = c
+                        elif isinstance(c, list):
+                            if any(isinstance(b, dict) and b.get("type") == "tool_result" for b in c):
+                                continue
+                            txt = next((b.get("text", "") for b in c
+                                        if isinstance(b, dict) and b.get("type") == "text"), "")
+                        txt = txt.strip()
+                        # 跳过 CLI 命令包装/跨会话消息/识图图片转交——都不是人话标题；
+                        # 剩下的才算人工消息。识图/协作从会话一条人工都没有，
+                        # 恢复它们只会让用户点开看到一堆陌生干活记录（2026-09-16
+                        # 实测误导：把识图会话起名"串口控制台会话"恢复，用户点开
+                        # 以为聊天历史全丢）。人工消息为 0 的不列出。
+                        if not txt or txt.startswith(("<", "Another Claude", "[Image:")):
+                            continue
+                        human += 1
+                        if not title:
+                            title = txt
                         if title and cwd:
                             break
             except OSError:
                 continue
-            items.append({"session_id": csid,
+            if not human:
+                continue
+            items.append({"session_id": csid, "human": human,
                           "title": (title or "").replace("\n", " ").strip()[:60] or "（无标题会话）",
                           "cwd": cwd, "size": st.st_size,
                           "last_active": int(st.st_mtime * 1000)})

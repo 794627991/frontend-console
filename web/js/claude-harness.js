@@ -3507,7 +3507,7 @@ function buildClaudeHarnessTab(opts = {}) {
         : `<div class="hg-r-item">
              <div class="hg-r-info">
                <div class="hg-r-title" title="${esc(it.title)}">${esc(it.title)}</div>
-               <div class="hg-r-meta">${_harnessRelTime(it.last_active)} · ${fmtSize(it.size)} · ${esc(shortCwd(it.cwd))}</div>
+               <div class="hg-r-meta">${_harnessRelTime(it.last_active)} · 你的消息×${it.human || 0} · ${fmtSize(it.size)} · ${esc(shortCwd(it.cwd))}</div>
              </div>
              <button class="btn ghost hg-r-btn" data-i="${i}">恢复</button>
            </div>`).join('');
