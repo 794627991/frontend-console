@@ -89,8 +89,11 @@ VISION_DEFAULT_PROMPT = """你是本机专用的识图会话。你没有串口/S
 
 
 def _vision_default_cfg():
+    # v2.27.11：mm_mcp = MCP 识图名单——模型本身看不了图，但可调
+    # mcp__4_5v_mcp__analyze_image（传 Read 拿到的 CDN 链接）识图（用户定调：
+    # 多模态要分类：真多模态 / MCP 服务识图 / 无）。前缀匹配同 mm_extra。
     return {"enabled": False, "model": "", "prompt": VISION_DEFAULT_PROMPT,
-            "name": VISION_DEFAULT_NAME, "mm_extra": []}
+            "name": VISION_DEFAULT_NAME, "mm_extra": [], "mm_mcp": ["glm-5.3"]}
 
 
 def _vision_load():
@@ -108,6 +111,9 @@ def _vision_load():
             mm = raw.get("mm_extra")
             if isinstance(mm, list):
                 cfg["mm_extra"] = [str(x).strip() for x in mm if str(x).strip()]
+            mcp = raw.get("mm_mcp")
+            if isinstance(mcp, list):
+                cfg["mm_mcp"] = [str(x).strip() for x in mcp if str(x).strip()]
     except Exception:
         pass
     return cfg
@@ -167,10 +173,11 @@ def _model_is_multimodal(name):
     if lname == (cfg["model"] or "").strip().lower():
         return True
     for item in cfg["mm_extra"]:
-        # v2.25：前缀匹配——填「glm-5.3 flash」同时覆盖「glm-5.3 flash[1M]」
-        # 这类同模型不同上下文窗口后缀的变体，用户不必逐个枚举（用户点名）
+        # v2.25：前缀匹配覆盖窗口后缀变体；v2.27.11 收窄为 item+'['——
+        # 激进前缀会把同族别的模型吞掉（名单填 glm-5.3 连 glm-5.3-flash
+        # 一起判中，实测踩坑），只覆盖 [1M] 这类上下文窗口后缀
         item = (item or "").strip().lower()
-        if lname == item or lname.startswith(item):
+        if lname == item or lname.startswith(item + "["):
             return True
     return False
 
@@ -312,6 +319,29 @@ def confirm_bridge_text():
     )
 
 
+def _model_vision_mode(name):
+    """v2.27.11：模型识图能力三态分类（用户定调「多模态要分类」）。
+    返回 'inline'（真多模态，内联直读）/ 'mcp'（模型看不了图，但可调
+    analyze_image MCP 识图）/ None（无识图，需转交识图会话）。
+    判定顺序：名字正则 → inline；mm_mcp 名单 → mcp（用户显式分类，
+    优先于探测缓存/mm_extra——探测走 CLI 可能被模型名重映射污染，
+    实测把 glm-5.3[1M] 错标成 inline）；最后缓存/mm_extra 兜 inline。"""
+    name = (name or "").strip()
+    if not name:
+        return None
+    if _MM_RE.search(name.lower()):
+        return "inline"
+    lname = name.lower()
+    for item in (_vision_load().get("mm_mcp") or []):
+        # 同 mm_extra 的收窄规则：相等或仅覆盖 [窗口后缀 变体
+        item = (item or "").strip().lower()
+        if item and (lname == item or lname.startswith(item + "[")):
+            return "mcp"
+    if _model_is_multimodal(name):
+        return "inline"
+    return None
+
+
 def vision_bridge_text(model=None):
     """生成注入每个主会话的识图引导段（识图未启用则空串）。
 
@@ -320,16 +350,31 @@ def vision_bridge_text(model=None):
     v2.19：主会话模型本身多模态（_model_is_multimodal）→ 反过来注入
     「直接用 Read 读图」，不再转交——通用转交引导会把能看图的会话
     也带去麻烦识图会话（用户实测吐槽）。
+    v2.27.11：三态分类——真多模态直读 / MCP 识图（analyze_image）/
+    转交识图会话。
     """
     cfg = _vision_load()
     if not cfg["enabled"]:
         return ""
-    if model and _model_is_multimodal(model):
+    mode = _model_vision_mode(model) if model else None
+    if mode == "inline":
         return (
             "【识图说明】\n"
             "本会话使用的模型具备多模态能力：用户发来的图片、截图、照片，"
             "直接用 Read 工具读取图片路径并分析，自己给出结论，"
             "不要转交给其他会话处理。"
+        )
+    if mode == "mcp":
+        return (
+            "【识图说明（MCP 通道）】\n"
+            "本会话模型自身看不了图片，但可以调识图 MCP 完成看图，不要转交"
+            "其他会话：\n"
+            "1. 先用 Read 工具读图片路径——返回里有一条 CDN 图片链接"
+            "（https://maas-log-prod...png?...），把它取出来。\n"
+            "2. 调用 mcp__4_5v_mcp__analyze_image 工具：imageSource=该链接，"
+            "prompt=你想从图里知道的问题（要求结论先行、给坐标参考）。\n"
+            "3. 用它返回的结论回答用户，不要自己编造图片内容。\n"
+            "多张图逐张处理。MCP 调用失败时再按转交流程交给识图会话。"
         )
     name = cfg["name"]
     return (
@@ -1306,15 +1351,16 @@ def _vision_needed(new_model=None):
     用户口径：模型本身多模态就直接用主会话读图，只有存在「非多模态」的
     活用户会话（或即将新建的会话模型非多模态）才需要识图会话兜底。
     """
+    # v2.27.11：三态分类——inline/mcp 会话自己能识图，不需要识图会话兜底
     if new_model is not None:
-        return not _model_is_multimodal(new_model)
+        return _model_vision_mode(new_model) is None
     default_model = available_models().get("default")
     with _sessions_lock:
         for s in list(_sessions.values()):
             if getattr(s, "hidden", False) or getattr(s, "is_vision", False):
                 continue
             # model=None 按 settings 默认模型判（实际跑的就是它）
-            if s.alive and not _model_is_multimodal(s.model or default_model):
+            if s.alive and _model_vision_mode(s.model or default_model) is None:
                 return True
     return False
 
@@ -1322,8 +1368,9 @@ def _vision_needed(new_model=None):
 def ensure_vision_bg(new_model=None):
     """工具启动 claude 后自动拉起识图会话（放线程里，不阻塞启动）。
     daemon 线程 + 吞异常：识图起不来不能影响主功能可用。
-    v2.20：带模型判定——多模态会话不需要识图，不拉（省一个后台 claude 进程）。"""
-    if new_model is not None and _model_is_multimodal(new_model):
+    v2.20：带模型判定——多模态会话不需要识图，不拉（省一个后台 claude 进程）。
+    v2.27.11：MCP 识图模型同样不需要（自己能调 analyze_image）。"""
+    if new_model is not None and _model_vision_mode(new_model) is not None:
         return
     def _run():
         try:
@@ -1527,8 +1574,9 @@ def harness_connect():
             return jsonify({"ok": False, "err": "会话已失效（无法恢复上下文）"}), 400
         # v2.20：多模态会话不拉识图（模型自己能读图）；model=None 按
         # settings 默认模型判（实际跑的就是它）
+        # v2.27.11：三态——inline/mcp 会话都能自己识图，只有 None 才拉识图会话
         eff = s.model or available_models().get("default")
-        if not _model_is_multimodal(eff):
+        if _model_vision_mode(eff) is None:
             ensure_vision_bg(eff)
         return jsonify({"ok": True, "port_id": s.port_id, "sid": s.sid, "kind": "harness",
                         "cwd": s.cwd, "model": s.model, "title": s.title})
@@ -2006,9 +2054,11 @@ def harness_recover():
 def harness_models():
     d = available_models()
     # v2.19：附带多模态名单（前端下拉打 👁 标记；判定口径同 start() 注入）
+    mm_mcp = [m for m in d.get("models", []) if _model_vision_mode(m) == "mcp"]
     return jsonify({"ok": True, "models": d.get("models", []),
                     "default": d.get("default"),
-                    "mm": [m for m in d.get("models", []) if _model_is_multimodal(m)]})
+                    "mm": [m for m in d.get("models", []) if _model_is_multimodal(m)],
+                    "mm_mcp": mm_mcp})
 
 
 @harness_bp.route("/mcp_list")

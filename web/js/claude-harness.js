@@ -2835,14 +2835,25 @@ function buildClaudeHarnessTab(opts = {}) {
   }
   // v2.21：从模型菜单点击分支抽出——/model 名 复用同一条切换路径
   function applyModel(m) {
+    // v2.27.10：乐观更新失败必须回滚芯片——切模型被拒（回复中 409）时
+    // 芯片已显示新模型而会话实际还是旧模型（用户实锤：以为切到多模态
+    // flash，实际一直跑非多模态 glm-5.3，发图全变 CDN 链接还以为坏了）
+    const prev = _HG.model;
+    const chip = q('[data-hg-model]');
+    const setChip = (mm) => { chip.innerHTML = '🧠 ' + esc(mm || '默认') + ' ▾'; };
     _HG.model = m;
-    q('[data-hg-model]').innerHTML = '🧠 ' + esc(m) + ' ▾';
+    setChip(m);
     if (_HG.sid) {
       fetch('/api/harness/set_model', {method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({sid: _HG.sid, model: m})})
         .then(r => r.json())
-        .then(j => { if (!j.ok) showBanner(j.err || '切换模型失败', 3000, true); })
-        .catch(() => showBanner('切换模型失败', 3000, true));
+        .then(j => {
+          if (!j.ok) {
+            _HG.model = prev; setChip(prev);   // 回滚：芯片如实反映会话模型
+            showBanner((j.err || '切换模型失败') + '（仍用 ' + (prev || '默认') + '）', 3500, true);
+          }
+        })
+        .catch(() => { _HG.model = prev; setChip(prev); showBanner('切换模型失败', 3000, true); });
       refreshSessions();
     } else showBanner('模型 ' + m + ' 将用于新会话', 2200);
   }
@@ -3374,9 +3385,14 @@ function buildClaudeHarnessTab(opts = {}) {
     await fetchModels();
     const cur = _HG.model || _HG.models.default;
     // v2.19：多模态模型打 👁——这类模型的会话自己读图，不转交识图会话
+    // v2.27.11：三态分类——真多模态 👁 / MCP 识图 🔧（调 analyze_image）
     const mmSet = new Set(_HG.models.mm || []);
+    const mcpSet = new Set(_HG.models.mm_mcp || []);
     const items = (_HG.models.models || []).map(m =>
-      `<div class="hg-pop-item${m === cur ? ' on' : ''}" data-model="${esc(m)}"><b>${esc(m)}</b>${mmSet.has(m) ? `<span title="多模态：可直接读图，图片不转交识图会话">${_HG_EYE} 多模态</span>` : ''}${m === _HG.models.default ? '<span>默认</span>' : ''}</div>`).join('')
+      `<div class="hg-pop-item${m === cur ? ' on' : ''}" data-model="${esc(m)}"><b>${esc(m)}</b>${
+        mmSet.has(m) ? `<span title="多模态：可直接读图，图片不转交识图会话">${_HG_EYE} 多模态</span>`
+        : mcpSet.has(m) ? '<span title="MCP 识图：模型自身看不了图，经 analyze_image MCP 识图，不转交识图会话">🔧 MCP识图</span>'
+        : ''}${m === _HG.models.default ? '<span>默认</span>' : ''}</div>`).join('')
       || '<div class="hg-pop-empty">读取 settings.json 模型映射失败</div>';
     openPop('model', anchor, `<div class="hg-pop-title">模型（会话内切换即时生效，上下文保留）</div>${items}`);
   };
@@ -3649,6 +3665,10 @@ function buildClaudeHarnessTab(opts = {}) {
           <input class="hg-vision-mm" data-hg-v-mm spellcheck="false"
                  value="${esc((cfg.mm_extra || []).join(', '))}"
                  placeholder="如：glm-5.3 flash, Lanz-Medium-V（前缀匹配，填一个即可覆盖其 [1M] 变体）"></label>
+        <label class="hg-vision-prompt-lab">MCP 识图模型名单（逗号分隔，打 🔧 标记——模型自身看不了图，经 analyze_image MCP 识图，同样不转交识图会话）
+          <input class="hg-vision-mm" data-hg-v-mcp spellcheck="false"
+                 value="${esc((cfg.mm_mcp || []).join(', '))}"
+                 placeholder="如：glm-5.3, gpt-x（同样覆盖 [1M] 变体）"></label>
         <div style="display:flex;gap:8px;align-items:center;margin-top:4px;">
           <button class="btn ghost" data-hg-v-probe style="font-size:11px;">🔍 检测识图模型能否读图</button>
           <span data-hg-v-probe-out style="font-size:11px;color:var(--muted);"></span>
@@ -3713,6 +3733,9 @@ function buildClaudeHarnessTab(opts = {}) {
         prompt: ta.value.trim(),
         // v2.25：多模态手补名单随保存落盘（后端按前缀匹配，覆盖 [1M] 变体）
         mm_extra: (ov.querySelector('[data-hg-v-mm]').value || '')
+          .split(/[,，;；\n]/).map(s => s.trim()).filter(Boolean),
+        // v2.27.11：MCP 识图名单（三态分类）
+        mm_mcp: (ov.querySelector('[data-hg-v-mcp]').value || '')
           .split(/[,，;；\n]/).map(s => s.trim()).filter(Boolean),
       }));
       ov.addEventListener('click', (e) => { if (e.target === ov) close(null); });
