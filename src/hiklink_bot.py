@@ -603,10 +603,10 @@ class HikLinkBotController:
                 lines.append("   %d=%s" % (oi, label))
                 omap.append((oi, label))
             if q.get("multiSelect"):
-                lines.append("   （可多选：1=2,3）")
+                lines.append("   （本题可多选：多个选项号用逗号分隔，如「2,3」即选第2、3项）")
             if omap:
                 qmap[str(qi)] = (qtext, omap)
-        lines.append("—— 回复编号作答，如「1=2」（多选 1=2,3；多题用 ; 分隔）")
+        lines.append("—— 请按编号作答：单题直接回选项号（如「2」）；多题写「题号=选项号」用;隔开（如「1=2;2=1,3」）；也可直接发选项文字")
         return "\n".join(lines), qmap
 
     @staticmethod
