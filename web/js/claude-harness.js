@@ -1963,6 +1963,7 @@ function buildClaudeHarnessTab(opts = {}) {
         else renderUser(it.text, it.images, it.files);
       }
       else if (it.kind === 'event') handleEvent(it.data);
+      else if (it.kind === 'peer') { grpFinalize(true); renderPeer(it.name, it.text); }
       else if (it.kind === 'raw') renderRaw(it.text);
       else if (it.kind === 'ask') { grpFinalize(true); askRender(it); }
       else if (it.kind === 'ask_done') askDone(it);

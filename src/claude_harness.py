@@ -1005,6 +1005,60 @@ class HarnessSession:
         self.emit({"kind": "interrupted", "text": "已中断回复"})
 
     # ---- 事件层 ----
+    def _check_peer_lines(self):
+        """跨会话回传检测（v2.27.4）：CLI 收到 peer 消息只写转写 jsonl，
+        不往 stdout 流吐 user 事件（实测事件缓冲里 495 条 system 全是
+        thinking_tokens，零 peer 信号）——前端永远看不到回传。这里在回合
+        有输出（assistant/result 事件）时增量扫转写尾部，新出现的 peer
+        行（origin.kind=peer）先于该事件下发 kind:'peer'，前端渲染📥气泡。
+        首次调用只建立偏移基线（跳过历史），之后每次只读新增字节。"""
+        try:
+            if not self.session_id:
+                return
+            if not getattr(self, "_tr_path", None):
+                import glob as _g
+                for cand in _g.glob(os.path.join(os.path.expanduser("~"),
+                                     ".claude", "projects", "*", self.session_id + ".jsonl")):
+                    self._tr_path = cand
+                    break
+            path = getattr(self, "_tr_path", None)
+            if not path:
+                return
+            size = os.path.getsize(path)
+            off = getattr(self, "_tr_off", None)
+            if off is None:            # 基线：从文件末尾起，历史 peer 不重放
+                self._tr_off = size
+                return
+            if size < off:             # 截断/轮转 → 重扫全量
+                off = 0
+            if size == off:
+                return
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                f.seek(off)
+                chunk = f.read()
+                self._tr_off = f.tell()
+            for ln in chunk.splitlines():
+                ln = ln.strip()
+                if not ln or ("Another Claude" not in ln and '"peer"' not in ln):
+                    continue
+                try:
+                    o = json.loads(ln)
+                except Exception:
+                    continue
+                if o.get("type") != "user" or (o.get("origin") or {}).get("kind") != "peer":
+                    continue
+                t = (o.get("message") or {}).get("content")
+                if not isinstance(t, str) or not t.strip().startswith("Another Claude session sent a message"):
+                    continue
+                nm = re.search(r'from-name="([^"]*)"', t)
+                body = re.search(r"<cross-session-message[^>]*>(.*)</cross-session-message>",
+                                 t, re.S)
+                self.emit({"kind": "peer",
+                           "name": nm.group(1) if nm else "其他会话",
+                           "text": ((body.group(1) if body else t).strip())[:8000]})
+        except Exception:
+            pass
+
     def _reader_loop(self):
         proc = self._proc
         if proc is None or proc.stdout is None:
@@ -1030,6 +1084,8 @@ class HarnessSession:
                 if typ == "result":
                     self.busy = False
                     self.last_result = o
+                if typ in ("assistant", "result"):
+                    self._check_peer_lines()   # 回合有输出 → 先补发新到的 peer 回传
                 self.emit({"kind": "event", "data": o})
         except Exception:
             pass
