@@ -112,6 +112,11 @@ class UsageRecorder:
         with self._lock:
             snap = {d: {h: {m: list(v) for m, v in hh.items()} for h, hh in days.items()}
                     for d, days in self._days.items()}
+        # 历史「?」占位（无模型名请求）从查询侧一并滤掉——写入侧已停记，
+        # 落盘 json 里存量条目在这里统一出清（用户定调排除）
+        for days in snap.values():
+            for hh in days.values():
+                hh.pop("?", None)
         now = time.localtime()
         items = []
         if rng == "hour":
@@ -152,17 +157,23 @@ _recorder = UsageRecorder()
 
 def _record_success(self, model, in_tok, out_tok, elapsed, **kw):
     _orig_req_success(self, model, in_tok, out_tok, elapsed, **kw)
-    _recorder.record(model or "?", in_tok or 0, out_tok or 0)
+    # 无模型名的请求（CLI 内部整理/探测等）不进用量统计——此前记成「?」
+    # 在图表上变成一根 0 token 的假柱 + 一行无意义明细（用户定调排除）
+    if model:
+        _recorder.record(model, in_tok or 0, out_tok or 0)
 
 
 def _record_failed(self, reason, path, attempt, status=None, elapsed=None,
                    in_tok=0, out_tok=0, **kw):
     _orig_req_failed(self, reason, path, attempt, status=status, elapsed=elapsed,
                      in_tok=in_tok, out_tok=out_tok, **kw)
-    # 失败但已消耗 token（流中断等）也算真实用量；零消耗不计
-    if in_tok or out_tok:
+    # 失败但已消耗 token（流中断等）也算真实用量；零消耗不计。
+    # 模型名拿不到（brief 缺失）的失败请求同样不计——没法归类的用量没有意义
+    if (in_tok or out_tok):
         brief = kw.get("brief")
-        _recorder.record((brief[2] if brief else "?"), in_tok or 0, out_tok or 0)
+        m = brief[2] if brief else None
+        if m:
+            _recorder.record(m, in_tok or 0, out_tok or 0)
 
 
 # ---- monkeypatch 接入（宿主零改动）：包原方法，只在本积木被导入时生效 ----
