@@ -1103,13 +1103,31 @@ function buildClaudeHarnessTab(opts = {}) {
   // v2.27.3：识图/跨会话协作的过程可见性（用户定调：全程要有反馈）——
   // 转交 = 分割线；回传 = 专属气泡。原实现回传内容直接被丢弃（user 事件
   // 只处理 tool_result），结论"凭空消失"，只有主会话转述才可见。
-  function renderPeerRelay(to) {          // 📤 已转交分割线
+  function renderPeerRelay(to) {          // 📤 已转交分割线（带等待计时）
+    _hgPeerWaitStop();                    // 防重复：新转交接管旧等待
     const d = document.createElement('div'); d.className = 'h-switch';
-    d.innerHTML = '<span></span><i>📤 已转交 ' + esc(to || '其他会话') + ' · 等待结论回传</i><span></span>';
+    d.innerHTML = '<span></span><i>📤 已转交 ' + esc(to || '其他会话') +
+      ' · 等待结论回传 · <b class="hg-peer-t">0s</b></i><span></span>';
     addRow(d);
+    const t0 = Date.now();
+    const tb = d.querySelector('.hg-peer-t');
+    const timer = setInterval(() => {
+      if (!tb.isConnected) { clearInterval(timer); return; }
+      tb.textContent = fmtDur((Date.now() - t0) / 1000);
+    }, 1000);
+    _HG.peerWait = { el: d, t0, timer };
     scrollBottom();
   }
+  function _hgPeerWaitStop(done) {        // 回传到达=定格用时；切会话=静默清理
+    const w = _HG.peerWait; _HG.peerWait = null;
+    if (!w) return;
+    clearInterval(w.timer);
+    const i = w.el.querySelector('i');
+    if (done && i && w.el.isConnected)
+      i.innerHTML = '📤 已转交 · 📥 已回传 · 用时 ' + fmtDur((Date.now() - w.t0) / 1000);
+  }
   function renderPeer(name, text) {       // 📥 回传气泡（区别于 user/AI）
+    _hgPeerWaitStop(true);                // 等待终点：转交线定格「已回传 · 用时 Ns」
     grpFinalize(false);
     endThinking(); closeRun();
     const d = document.createElement('div'); d.className = 'h-peer';
@@ -2282,6 +2300,7 @@ function buildClaudeHarnessTab(opts = {}) {
     saveCache();
     closePop(); closeMention();
     setQuote(null);                     // v2.27：引用属于当前输入草稿，切会话不跨带
+    _hgPeerWaitStop();                  // v2.27.5：转交等待计时器不跨会话残留
     endThinking(); closeRun();
     if (_HG.grp) phStopTimer(_HG.grp);   // v2.18：防御性清占位 timer（isConnected 自杀是兜底）
     _hgMentionReset();          // v2.15：@ 引用高亮不跨会话残留

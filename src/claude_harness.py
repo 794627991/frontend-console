@@ -1053,6 +1053,11 @@ class HarnessSession:
                 nm = re.search(r'from-name="([^"]*)"', t)
                 body = re.search(r"<cross-session-message[^>]*>(.*)</cross-session-message>",
                                  t, re.S)
+                # v2.27.5：peer 消息会触发自动回合，但没走 harness send()——
+                # busy 从未被置起，活动指示条不亮（用户实锤）。这里补置，
+                # result 事件照常回落；前端 5s 轮询据此亮指示条+计时
+                self.busy = True
+                self.busy_since = int(time.time() * 1000)
                 self.emit({"kind": "peer",
                            "name": nm.group(1) if nm else "其他会话",
                            "text": ((body.group(1) if body else t).strip())[:8000]})
