@@ -2007,14 +2007,17 @@
 .px-tab-act { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .px-usage-chart { display: flex; align-items: flex-end; gap: 3px; height: 180px;
   padding: 8px 2px 0; }
-.px-u-col { flex: 1; min-width: 3px; height: 100%; display: flex; flex-direction: column;
+/* 柱限宽居中：数据槽少（24 根只中几根有值）时柱不再平分全宽变成巨条 */
+.px-u-col { flex: 1; min-width: 3px; max-width: 44px; margin: 0 auto; height: 100%;
+  display: flex; flex-direction: column;
   justify-content: flex-end; border-radius: 3px 3px 0 0; overflow: hidden; }
 .px-u-col:hover { outline: 1px solid var(--border-glow, var(--border)); }
 .px-u-seg { width: 100%; }
 .px-u-seg:hover { filter: brightness(1.2); }
 .px-u-empty { height: 2px; background: var(--border); opacity: .5; }
 .px-usage-x { display: flex; gap: 3px; padding: 4px 2px 0; }
-.px-usage-x .px-u-lb { flex: 1; min-width: 3px; text-align: center; font-size: 9.5px;
+.px-usage-x .px-u-lb { flex: 1; min-width: 3px; max-width: 44px; margin: 0 auto;
+  text-align: center; font-size: 9.5px;
   color: var(--muted); font-family: var(--font-mono); white-space: nowrap; overflow: visible; }
 .px-legend { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
 .px-lg-item { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--fg); }
