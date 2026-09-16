@@ -27,6 +27,7 @@ import logging
 import os
 import shutil
 import ssl
+import struct
 import subprocess
 import threading
 import time
