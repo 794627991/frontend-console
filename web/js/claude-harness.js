@@ -2404,7 +2404,11 @@ function buildClaudeHarnessTab(opts = {}) {
   q('[data-hg-quote-x]').onclick = () => setQuote(null);
   // 右键消息气泡 → 迷你菜单（贴鼠标）。只做引用一项，克制。
   flow.addEventListener('contextmenu', (e) => {
-    const m = e.target.closest('.h-msg');
+    // 命中范围：正文气泡(.h-msg)，或右键思考/执行抽屉(.h-drawer)时落到
+    // 所在消息组的 AI 正文——用户视角「右键这条回复」不分抽屉还是正文
+    const m = e.target.closest('.h-msg')
+      || (e.target.closest('.h-grp') || {}).querySelector('.h-msg.asst')
+      || null;
     if (!m || !flow.contains(m)) return;
     e.preventDefault();
     const old = wrap.querySelector('.hg-ctxmenu');
