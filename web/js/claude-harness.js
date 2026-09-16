@@ -1100,6 +1100,29 @@ function buildClaudeHarnessTab(opts = {}) {
     addRow(d);
     scrollBottom();
   }
+  // v2.27.3：识图/跨会话协作的过程可见性（用户定调：全程要有反馈）——
+  // 转交 = 分割线；回传 = 专属气泡。原实现回传内容直接被丢弃（user 事件
+  // 只处理 tool_result），结论"凭空消失"，只有主会话转述才可见。
+  function renderPeerRelay(to) {          // 📤 已转交分割线
+    const d = document.createElement('div'); d.className = 'h-switch';
+    d.innerHTML = '<span></span><i>📤 已转交 ' + esc(to || '其他会话') + ' · 等待结论回传</i><span></span>';
+    addRow(d);
+    scrollBottom();
+  }
+  function renderPeer(name, text) {       // 📥 回传气泡（区别于 user/AI）
+    grpFinalize(false);
+    endThinking(); closeRun();
+    const d = document.createElement('div'); d.className = 'h-peer';
+    const head = document.createElement('div'); head.className = 'h-peer-head';
+    head.textContent = '📥 ' + (name || '其他会话') + ' 回传';
+    d.appendChild(head);
+    const b = document.createElement('div'); b.className = 'h-bubble';
+    b.innerHTML = renderMd(text || '');
+    d.appendChild(b);
+    addRow(d);
+    scrollBottom();
+    return d;
+  }
   // v2.20：压缩过程动态分割线。CLI 只给「开始/结束」两个信号，没有进度
   // 百分比——给真实信息：耗时秒表 + 被压缩的上下文规模，不编假数字。
   function renderCompaction(done) {
@@ -1159,7 +1182,10 @@ function buildClaudeHarnessTab(opts = {}) {
     _hgApplyOpen(d, !!l.err);   // 重建期：恢复上次开合；无记录时错误行默认展开
   }
   function renderHistLine(l, hi) {
-    if (l.role === 'user') {
+    if (l.role === 'peer') {          // v2.27.3：跨会话回传（识图结论）历史回看
+      renderPeer(l.name, l.text);
+    }
+    else if (l.role === 'user') {
       const imgs = (l.files || []).filter(p => _HARNESS_IMG_EXT.test(p));
       const files = (l.files || []).filter(p => !_HARNESS_IMG_EXT.test(p));
       // v2.24.1 回退气泡壳化：renderUser 承担组管线边界（上一组定稿/开新组），
@@ -1862,11 +1888,31 @@ function buildClaudeHarnessTab(opts = {}) {
       for (const b of blocks) {
         if (b.type === 'thinking' && b.thinking) { closeRun(); appendThinking(b.thinking); }
         else if (b.type === 'text' && b.text && b.text.trim()) { endThinking(); closeRun(); renderAsst(b.text, isSub); }
-        else if (b.type === 'tool_use') { endThinking(); renderToolUse(b, isSub); }
+        else if (b.type === 'tool_use') {
+          endThinking(); renderToolUse(b, isSub);
+          // v2.27.3：转交识图/其他会话 = 强过程反馈，分割线比收起的工具行显眼
+          if (!isSub && b.name === 'SendMessage' && b.input && b.input.to)
+            renderPeerRelay(b.input.to);
+        }
       }
       scrollBottom();
     } else if (typ === 'user') {
       const c0 = (o.message || {}).content;
+      // v2.27.3：跨会话回传（识图结论等）——专属气泡，不再凭空消失
+      let peerText = '';
+      if (typeof c0 === 'string' && c0.trim().startsWith('Another Claude session sent a message'))
+        peerText = c0;
+      else if (Array.isArray(c0)) {
+        const tb = c0.find(b => b && b.type === 'text' && typeof b.text === 'string'
+          && b.text.trim().startsWith('Another Claude session sent a message'));
+        if (tb) peerText = tb.text;
+      }
+      if (peerText) {
+        const nm = peerText.match(/from-name="([^"]*)"/);
+        const body = peerText.match(/<cross-session-message[^>]*>([\s\S]*)<\/cross-session-message>/);
+        renderPeer(nm ? nm[1] : '其他会话', (body ? body[1] : peerText).trim());
+        return;
+      }
       // 用户真实消息打断工具 run；工具结果事件不动 run（rendersNothing 思想）
       if (!Array.isArray(c0) || !c0.some(b => b && b.type === 'tool_result')) closeRun();
       const hasToolResult = Array.isArray(c0) && c0.some(b => b && b.type === 'tool_result');

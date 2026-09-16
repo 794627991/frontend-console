@@ -2400,6 +2400,9 @@ html[data-theme="sage"], html[data-theme="sky"] {
   font-size: 11px; white-space: nowrap; }
 .h-switch span { flex: 1; border-top: 1px dashed var(--border); }
 .h-switch i { font-style: normal; color: var(--accent); }
+/* v2.27.3：跨会话回传气泡（识图结论等，区别于 user/AI 消息） */
+.h-peer { align-self: flex-start; width: min(820px, 100%); }
+.h-peer-head { font-size: 11px; color: var(--accent); margin-bottom: 3px; font-weight: 600; }
 /* v2.21：内建斜杠命令的系统卡片（/help /status 等在消息流里的回显） */
 .h-syscard { align-self: center; width: min(560px, 86%); margin: 8px 0 2px;
   border: 1px solid var(--border); border-radius: 10px; background: var(--bg-input);

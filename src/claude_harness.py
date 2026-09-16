@@ -1313,6 +1313,19 @@ def transcript_for(s):
                 if typ == "user":
                     if isinstance(content, str):
                         t = content
+                        # v2.27.3：跨会话消息（识图回传等）不再被 _SKIP_RE 静默吞掉——
+                        # 解析出发件人与正文，产 peer 行让前端渲染专属回传气泡
+                        # （用户定调：识图全程要有可见反馈，回传内容不能凭空消失）
+                        if t.strip().startswith("Another Claude session sent a message"):
+                            nm = _re.search(r'from-name="([^"]*)"', t)
+                            body = _re.search(
+                                r"<cross-session-message[^>]*>(.*)</cross-session-message>",
+                                t, _re.S)
+                            lines.append({"role": "peer",
+                                          "name": (nm.group(1) if nm else "其他会话"),
+                                          "text": ((body.group(1) if body else t).strip())[:8000],
+                                          "ts": o.get("timestamp") or ""})
+                            continue
                         # harness 通道从 stdin 注入，promptSource 是 "sdk"（不是 typed）；
                         # 排除标准是"非用户输入"（工具注入 default）——命令噪音由 _SKIP_RE 挡
                         ps_ok = (o.get("promptSource") in (None, "typed", "sdk")) or \
