@@ -51,10 +51,11 @@ $('btnClaude').onclick = claudeButtonAction;  // Claude 入口：按设置分派
 // claude --version（60s 缓存），拿到就替换 index.html 里的静态描述
 fetch('/api/claude/version').then(r => r.json()).then(j => {
   // claude --version 原文是「2.1.267 (Claude Code)」——只取版本号，
-  // 避免和按钮文案拼成「Claude Code 2.1.267 (Claude Code)」的重复
+  // 避免和按钮文案拼成「Claude Code 2.1.267 (Claude Code)」的重复。
+  // v2.27.1：用户定调只留版本，去掉「（真实 CLI，xterm 保真）」尾巴
   if (j && j.ok && j.version) {
     const v = (j.version.match(/\d+\.\d+\.\d+(?:\.\d+)?/) || [j.version.trim()])[0];
-    $('btnClaude').title = `Claude Code v${v}（真实 CLI，xterm 保真）`;
+    $('btnClaude').title = `Claude Code v${v}`;
   }
 }).catch(() => {});
 // Claude 代理面板（原 D:\AI\proxy 独立工具合入：重试代理+headroom 压缩+额度监控）
