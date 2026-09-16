@@ -701,7 +701,7 @@ class HikLinkBotController:
                 return s
         new_sid = uuid.uuid4().hex
         s = ch.HarnessSession(new_sid, cwd=os.path.expanduser("~"),
-                              title="🤖 前端小助手（HikLink）")
+                              title="前端小助手（HikLink）")
         try:
             s.start()
         except Exception as e:
