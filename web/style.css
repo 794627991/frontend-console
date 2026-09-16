@@ -2879,7 +2879,9 @@ html[data-theme="sage"], html[data-theme="sky"] {
   font-size: 12px; color: var(--fg); }
 .hg-login-pop .hg-login-bot { font-size: 11px; color: var(--muted);
   font-family: var(--font-mono); }
-.hg-login-pop .hg-pop-logout { width: 100%; box-sizing: border-box;
-  display: flex; justify-content: center; align-items: center;
-  text-align: center;
-  color: #e5484d; border-color: color-mix(in srgb, #e5484d 45%, var(--border)); }
+/* v2.27：登出按钮从独立整行搬进「已登录」行右侧（用户要求紧凑），文案缩为「登出」 */
+.hg-login-pop .hg-pop-logout { margin-left: auto; flex-shrink: 0; padding: 2px 10px;
+  font-size: 11px; background: transparent; border: 1px solid
+  color-mix(in srgb, #e5484d 45%, var(--border)); border-radius: 6px; cursor: pointer;
+  color: #e5484d; }
+.hg-login-pop .hg-pop-logout:hover { background: color-mix(in srgb, #e5484d 14%, transparent); }

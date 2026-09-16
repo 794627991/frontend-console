@@ -260,9 +260,8 @@ function buildClaudeHarnessTab(opts = {}) {
             <button class="hg-prompt-btn" data-hg-login-btn>登录</button>
           </div>
           <div data-hg-login-on style="display:none">
-            <div class="hg-pop-row"><span class="hg-login-dot on"></span><span data-hg-login-name>已登录</span></div>
+            <div class="hg-pop-row"><span class="hg-login-dot on"></span><span data-hg-login-name>已登录</span><button class="hg-pop-logout" data-hg-logout-btn title="登出（停用机器人）">登出</button></div>
             <div class="hg-pop-row hg-login-bot" data-hg-login-bot></div>
-            <button class="hg-prompt-btn hg-pop-logout" data-hg-logout-btn>登出（停用机器人）</button>
           </div>
         </div>
       </div>
