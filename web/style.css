@@ -2013,6 +2013,7 @@
   justify-content: flex-end; border-radius: 3px 3px 0 0; overflow: hidden; }
 .px-u-col:hover { outline: 1px solid var(--border-glow, var(--border)); }
 .px-u-seg { width: 100%; }
+.px-u-seg + .px-u-seg { border-top: 1px solid rgba(255,255,255,.55); }  /* v2.27 同柱同色后段间靠描边分界 */
 .px-u-seg:hover { filter: brightness(1.2); }
 .px-u-empty { height: 2px; background: var(--border); opacity: .5; }
 .px-usage-x { display: flex; gap: 3px; padding: 4px 2px 0; }
@@ -2022,6 +2023,9 @@
 .px-legend { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
 .px-lg-item { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--fg); }
 .px-lg-item i, .px-lg-dot { display: inline-block; width: 9px; height: 9px; border-radius: 2px; }
+/* v2.27：用量柱「蓝→红」热度色标条（替代原模型色图例） */
+.px-lg-heat { display: inline-block; width: 140px; height: 10px; border-radius: 5px;
+  border: 1px solid var(--border); }
 .px-u-table { border-collapse: collapse; font-size: 12px; min-width: 320px; }
 .px-u-table th, .px-u-table td { border: 1px solid var(--border); padding: 4px 12px; text-align: right; }
 .px-u-table th { color: var(--muted); font-weight: 600; }
