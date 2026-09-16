@@ -3693,18 +3693,23 @@ function buildClaudeHarnessTab(opts = {}) {
         const m = modelEl.value.trim() || init.default_model || '';
         if (!m) { probeOut.textContent = '请先在上方选择识图模型'; return; }
         probeBtn.disabled = true;
-        probeOut.textContent = '探测中——起一次性 claude 进程读测试图，约 10~60s…';
+        probeOut.textContent = '探测中——两段式：先测直读，失败再测 MCP 通道，约 10~120s…';
+        const mcpEl = ov.querySelector('[data-hg-v-mcp]');
         try {
           const r = await fetch('/api/harness/mm_probe', {method:'POST',
             headers:{'Content-Type':'application/json'}, body: JSON.stringify({model: m})});
           const j = await r.json();
           if (j && j.ok) {
-            probeOut.textContent = (j.multimodal ? '✅ ' : '❌ ') + (j.msg || '') + (j.cached ? '（缓存）' : '');
-            if (j.multimodal) {          // 后端已自动并入名单，输入框同步显示
-              const cur = mmEl.value.split(/[,，;；\n]/).map(s => s.trim()).filter(Boolean);
-              if (!cur.some(x => m === x || m.startsWith(x)))
-                mmEl.value = (mmEl.value ? mmEl.value.replace(/\s+$/, '') + ', ' : '') + m;
-            }
+            // v2.27.12 三态：inline 👁 / mcp 🔧 / None ❌（后端已按结果归入对应名单）
+            const icon = j.mode === 'inline' ? '✅' : (j.mode === 'mcp' ? '🔧' : '❌');
+            probeOut.textContent = icon + ' ' + (j.msg || '') + (j.cached ? '（缓存）' : '');
+            const fitsList = (el) => {
+              const cur = (el.value || '').split(/[,，;；\n]/).map(s => s.trim()).filter(Boolean);
+              if (!cur.some(x => m === x || m.startsWith(x) || x.startsWith(m)))
+                el.value = ((el.value || '').replace(/\s+$/, '') ? el.value.replace(/\s+$/, '') + ', ' : '') + m;
+            };
+            if (j.mode === 'inline') fitsList(mmEl);
+            if (j.mode === 'mcp' && mcpEl) fitsList(mcpEl);
           } else probeOut.textContent = '探测失败：' + ((j && j.err) || '未知');
         } catch(e) { probeOut.textContent = '探测失败：' + e; }
         probeBtn.disabled = false;

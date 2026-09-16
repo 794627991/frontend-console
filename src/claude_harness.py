@@ -232,31 +232,56 @@ def _mm_probe_png_bytes():
 
 
 def _mm_probe_model(model):
-    """探测 model 是否真能读图。返回 (multimodal, msg)。"""
+    """探测 model 识图能力。返回 (mode, msg)：mode ∈ 'inline'/'mcp'/None。
+    v2.27.12 两段式（用户定调：三态结论靠探测自动得出，不靠人工猜）：
+    1) inline——独立进程 Read 红图直接答（模型本身多模态）；
+    2) inline 失败 → mcp——同进程改走 Read 拿 CDN 链接 + 调
+       mcp__4_5v_mcp__analyze_image（模型自身看不了图但 MCP 通道可识图，
+       与本会话实测 glm-5.3 行为一致）；
+    3) 都失败 → None（转交识图会话兜底）。"""
     probe_path = os.path.join(_st.STATE_DIR, "mm_probe.png")
     try:
         with open(probe_path, "wb") as f:
             f.write(_mm_probe_png_bytes())
     except Exception as e:
-        return False, "写测试图失败：%s" % e
+        return None, "写测试图失败：%s" % e
     exe, is_shim = _resolve_claude_exe()
-    argv = (["cmd.exe", "/c", exe] if is_shim else [exe])
-    argv += ["-p",
-             "用 Read 工具读取这张图片：" + probe_path +
-             "。它是纯色图，只回答颜色的中文名（例如：红色），不要解释。",
-             "--model", model, "--permission-mode", "auto",
-             "--allowedTools", "Read"]
-    try:
-        r = subprocess.run(argv, capture_output=True, timeout=90,
-                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    except subprocess.TimeoutExpired:
-        return False, "探测超时（90s）——模型无响应或网关过慢"
-    except Exception as e:
-        return False, str(e)
-    out = ((r.stdout or b"") + (r.stderr or b"")).decode("utf-8", errors="replace")
-    if "红" in out or re.search(r"\bred\b", out, re.I):
-        return True, "模型答出颜色——多模态 ✔"
-    return False, "模型没答出颜色——判定非多模态（回复片段：" + out.strip()[:80] + "）"
+    base = (["cmd.exe", "/c", exe] if is_shim else [exe])
+
+    def _run(prompt, tools):
+        argv = base + ["-p", prompt, "--model", model,
+                       "--permission-mode", "auto", "--allowedTools", tools]
+        try:
+            r = subprocess.run(argv, capture_output=True, timeout=120,
+                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except subprocess.TimeoutExpired:
+            return ""
+        except Exception:
+            return ""
+        return ((r.stdout or b"") + (r.stderr or b"")).decode("utf-8", errors="replace")
+
+    def _red(out):
+        return bool("红" in out or re.search(r"\bred\b", out or "", re.I))
+
+    # 第 1 段：直读
+    out = _run("用 Read 工具读取这张图片：" + probe_path +
+               "。它是纯色图，只回答颜色的中文名（例如：红色），不要解释。",
+               "Read")
+    if _red(out):
+        return "inline", "真多模态 ✔（模型直读答出颜色）"
+    # 第 2 段：MCP 通道（analyze_image 与模型无关，凡会话挂了该 MCP 即可用；
+    # 这里验证的是「模型能正确走完 Read→链接→analyze_image 工具链」）
+    out2 = _run(
+        "严格按步骤执行：1) 用 Read 工具读取图片 " + probe_path +
+        "，从返回文本中取出图片的 CDN 链接（https:// 开头含 .png? 的那条）；"
+        "2) 调用 mcp__4_5v_mcp__analyze_image 工具，imageSource 填该链接，"
+        "prompt 填「这张图是什么颜色?只答颜色中文名」；3) 根据工具返回的结论，"
+        "只回答颜色的中文名。若某步失败，回答「失败」两个字。",
+        "Read mcp__4_5v_mcp__analyze_image")
+    if _red(out2):
+        return "mcp", "MCP 识图 ✔（模型经 analyze_image 答出颜色）"
+    return None, ("两种方式都没答出颜色——无识图能力，走识图会话转交"
+                  "（直读片段：" + (out or "").strip()[:50] + "）")
 
 
 def _mm_probed_load():
@@ -2192,9 +2217,10 @@ def harness_set_prompt():
 
 @harness_bp.route("/mm_probe", methods=["POST"])
 def harness_mm_probe():
-    """运行时探测一个模型是否多模态。body: {model}。
-    结果缓存进识图配置 mm_probed；通过者自动并入 mm_extra 名单（前缀匹配，
-    连带覆盖 [1M] 等变体），模型下拉的 👁 即刻可见。"""
+    """运行时探测一个模型的识图能力（v2.27.12 三态两段式）。body: {model}。
+    inline → 并入 mm_extra（👁）；mcp → 并入 mm_mcp（🔧）；None → 仅记缓存。
+    mm_probed 只存 inline 布尔结论——mcp 不能存 True（_model_is_multimodal
+    会把它误判成直读），mcp 结论由 mm_mcp 名单承载。"""
     data = request.get_json(force=True, silent=True) or {}
     model = str(data.get("model") or "").strip()
     if not model:
@@ -2202,11 +2228,17 @@ def harness_mm_probe():
     pkey = _mm_probe_key(model)     # v2.27.2：按方案签名缓存，切方案自动重探
     cached = _mm_probed_load().get(pkey)
     if cached is not None:
-        return jsonify({"ok": True, "model": model, "multimodal": bool(cached),
-                        "cached": True,
-                        "msg": "缓存结果（当前方案）：" + ("多模态" if cached else "非多模态")})
+        # 缓存只覆盖 inline 判定；mcp 名单命中说明缓存前探测出的就是 mcp
+        cfg0 = _vision_load()
+        on_mcp = any(model.lower() == (x or "").lower()
+                     or model.lower().startswith((x or "").lower() + "[")
+                     for x in cfg0.get("mm_mcp") or [])
+        mode = "inline" if cached else ("mcp" if on_mcp else None)
+        label = {"inline": "真多模态（直读）", "mcp": "MCP 识图", None: "无识图（转交）"}[mode]
+        return jsonify({"ok": True, "model": model, "mode": mode,
+                        "cached": True, "msg": "缓存结果（当前方案）：" + label})
     with _MM_PROBE_LOCK:          # 探测要起子进程，同时只跑一个
-        ok, msg = _mm_probe_model(model)
+        mode, msg = _mm_probe_model(model)
     # merge 落盘（不整键替换，别把并发写进来的其他字段冲掉）
     try:
         with open(_st.CONFIG_FILE, "r", encoding="utf-8") as f:
@@ -2221,7 +2253,7 @@ def harness_mm_probe():
     p = v.get("mm_probed")
     if not isinstance(p, dict):
         p = {}
-    p[pkey] = bool(ok)
+    p[pkey] = (mode == "inline")   # 仅 inline 记 True；mcp 记 False 防误判直读
     v["mm_probed"] = p
     d[_VISION_KEY] = v
     try:
@@ -2231,12 +2263,23 @@ def harness_mm_probe():
         os.replace(tmp, _st.CONFIG_FILE)
     except Exception:
         pass
-    if ok:
-        cfg = _vision_load()
-        if not any(model == x or model.startswith(x) for x in cfg["mm_extra"]):
-            cfg["mm_extra"] = list(cfg["mm_extra"]) + [model]
-            _vision_save(cfg)
-    return jsonify({"ok": True, "model": model, "multimodal": ok, "msg": msg})
+    # 名单归位：inline → mm_extra；mcp → mm_mcp（同名从另一名单移除防双标）
+    cfg = _vision_load()
+    lname = model.lower()
+    def _in(lst):
+        return any(lname == (x or "").lower() or lname.startswith((x or "").lower() + "[")
+                   for x in lst)
+    if mode == "inline" and not _in(cfg["mm_extra"]):
+        cfg["mm_extra"] = list(cfg["mm_extra"]) + [model]
+    elif mode == "mcp" and not _in(cfg.get("mm_mcp") or []):
+        cfg["mm_mcp"] = list(cfg.get("mm_mcp") or []) + [model]
+    if mode in ("inline", "mcp"):
+        other = "mm_mcp" if mode == "inline" else "mm_extra"
+        cfg[other] = [x for x in (cfg.get(other) or [])
+                      if not (lname == (x or "").lower()
+                              or lname.startswith((x or "").lower() + "["))]
+    _vision_save(cfg)
+    return jsonify({"ok": True, "model": model, "mode": mode, "msg": msg})
 
 
 @harness_bp.route("/vision", methods=["GET"])
