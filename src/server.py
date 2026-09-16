@@ -892,13 +892,23 @@ def api_log_dir_open():
 
 
 # ---- 数据目录管理（顶栏机器人图标点开的设置面板）----
-# 数据目录收纳：logs/（串口日志，唯一日志目录）、files/（笔记）、cmdlib.json（命令库）、
+# 数据目录收纳：logs/（串口日志，唯一日志目录）、files/（笔记）、根级 *.json
+# （cmdlib.json/retry_config.json 等关键配置——v2.27.1 起自动全量纳入：凡是
+# 落在数据目录根的 .json 都是关键配置，迁移时严格校验，新增文件不用改这里）、
 # webview_cache/（WebView2 缓存——也迁：新位置缓存连续，不产生旧位置孤儿残留；
 # 被运行中 WebView2 锁定的文件跳过，纯缓存丢了自动重建）。
 # 迁移铁律（用户强调）：迁移前后数据必须都能找到——采用「先复制后切换」而非「先删后搬」：
 # 复制全部内容 → 校验大小一致 → 写 config 切换 → 旧目录完整保留不删（用户自查后手动删）。
 _DATA_SUBDIRS = ["logs", "files", "webview_cache"]
-_DATA_FILES = ["cmdlib.json"]
+
+def _data_root_json_files():
+    """数据目录根级 *.json 清单（关键配置，迁移时严格校验逐个比对大小）。"""
+    try:
+        return [fn for fn in os.listdir(DATA_DIR)
+                if fn.lower().endswith(".json")
+                and os.path.isfile(os.path.join(DATA_DIR, fn))]
+    except Exception:
+        return []
 
 @app.route("/api/data_dir")
 def api_data_dir_get():
@@ -929,6 +939,16 @@ def api_data_dir_get():
     if cmdlib["exists"]:
         subs["cmdlib.json"] = {"exists": True, "count": 1, "size": cmdlib["size"]}
         total += cmdlib["size"]
+    # 根级其他关键配置（retry_config.json 等）一并统计（cmdlib 已列不重复）
+    for fn in _data_root_json_files():
+        if fn == "cmdlib.json":
+            continue
+        try:
+            sz = os.path.getsize(os.path.join(DATA_DIR, fn))
+        except OSError:
+            continue
+        subs[fn] = {"exists": True, "count": 1, "size": sz}
+        total += sz
     return jsonify({"ok": True, "dir": DATA_DIR,
                     "default": _st._default_data_dir(),
                     "subdirs": subs, "total_size": total,
@@ -969,12 +989,8 @@ def api_data_dir_check():
             n = 0
         if n:   # 与统计口径一致：只列有内容的
             preview.append({"name": s, "count": n})
-    for s in _DATA_FILES:
-        try:
-            if os.path.isfile(os.path.join(DATA_DIR, s)):
-                preview.append({"name": s, "count": 1})
-        except Exception:
-            pass
+    for s in _data_root_json_files():
+        preview.append({"name": s, "count": 1})
     return jsonify({"ok": True, "dir": target, "warnings": warnings, "preview": preview})
 
 @app.route("/api/data_dir/migrate", methods=["POST"])
@@ -1042,8 +1058,9 @@ def api_data_dir_migrate():
                         else:
                             raise
             copied.append({"name": s, "files": n, **({"skipped": skipped} if skipped else {})})
-        # 单文件（cmdlib.json）
-        for s in _DATA_FILES:
+        # 根级关键配置（cmdlib.json/retry_config.json 及一切 *.json）：
+        # 严格校验逐个迁——大小不一致直接判迁移失败，不切换
+        for s in _data_root_json_files():
             sf = os.path.join(DATA_DIR, s)
             if not os.path.isfile(sf):
                 continue
