@@ -2182,11 +2182,16 @@ def _skill_zh_save(d):
         pass
 
 
+_llm_cool_until = [0.0]     # 翻译失败冷却：网关故障/方案切换窗口期不反复白发请求
+
+
 def _llm_translate_batch(pairs):
     """用 settings.json 配的模型批量翻译英文技能描述。返回 {原文: 译文}。
 
     走 anthropic 兼容网关（base_url + /v1/messages），失败静默空表——
-    翻译是锦上添花，不该让菜单报错；前端下次触发再试。
+    翻译是锦上添花，不该让菜单报错；冷却 2 分钟后前端下次触发再试。
+    每次调用都实时重读 settings.json：用户切换配置方案（网关/模型/凭据）
+    后自动跟随，无需重启。
     """
     import urllib.request
     env = {}
@@ -2221,7 +2226,9 @@ def _llm_translate_batch(pairs):
             d = json.loads(r.read().decode("utf-8", errors="replace"))
         text = "".join(b.get("text", "") for b in (d.get("content") or [])
                        if isinstance(b, dict))
+        _llm_cool_until[0] = 0.0          # 成功清冷却
     except Exception:
+        _llm_cool_until[0] = time.time() + 120   # 失败冷却 2 分钟再试
         return {}
     out = {}
     keys = list(pairs.keys())
@@ -2252,7 +2259,7 @@ def harness_skill_zh_translate():
             continue
         if desc not in todo:
             todo.append(desc)
-    if todo:
+    if todo and time.time() >= _llm_cool_until[0]:
         translated = _llm_translate_batch({k: k for k in todo})
         for src, zh in translated.items():
             if zh:
