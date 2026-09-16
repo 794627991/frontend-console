@@ -256,12 +256,20 @@ def ensure_robot(token, name=BOT_NAME):
                 robots = robots.get("list") or robots.get("records") or []
             mine = _pick(robots)
             if mine is None:
+                # v2.27.14：头像创建后改不了（平台无更新接口）——图标加载失败
+                # 时【拒绝创建】并明确报错，而不是建出个永远默认头像的机器人
+                # （用户定调：别人设备上要一次推对，没有试错机会）。修好图标
+                # 重试即可，此时什么都没建，零损失。
+                png = _icon_png()
+                if png == _png_1px():
+                    return (None, None,
+                            "机器人图标加载失败，已拒绝创建（头像创建后无法修改）——"
+                            "请检查 ico/app.png 是否随包分发后重试")
                 boundary = uuid.uuid4().hex
                 parts = []
                 for field, val in (("name", name), ("slogan", "前端控制台远程指令通道")):
                     parts.append(("--%s\r\nContent-Disposition: form-data; "
                                   "name=\"%s\"\r\n\r\n%s" % (boundary, field, val)))
-                png = _icon_png()
                 parts.append(("--%s\r\nContent-Disposition: form-data; name=\"file\"; "
                               "filename=\"icon.png\"\r\nContent-Type: image/png\r\n\r\n"
                               % boundary))
