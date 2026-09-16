@@ -2768,6 +2768,45 @@ function buildClaudeHarnessTab(opts = {}) {
   }
   // 输入 / 前缀即弹 CLI 式命令菜单：内建命令 + 技能一起过滤，↑↓ 选择、
   // Enter/Tab 执行、Esc 关闭；继续打字收窄，出现空格/其他内容即关
+  // ==================== 技能中文描述（v2.27「技能需要翻译」）====================
+  // 菜单此前一直空白：后端 /skills 给的是 desc 字段，前端读的却是
+  // s.description——字段名对不上，描述从没渲染出来过。这里顺带给常见
+  // 英文技能配中文一句话说明（命中优先显示；未命中的显示原 desc，
+  // 用户自装的中文技能天然中文）。
+  const SKILL_ZH = {
+    'data-analysis': '数据分析与可视化：查库、报表、表格自动化',
+    'database-operations': '数据库设计/迁移/SQL优化/索引/N+1 治理',
+    'doc-coauthoring': '结构化文档协作撰写（方案/规格/决策文档）',
+    'find-skills': '发现并安装新技能',
+    'hiklink-claw-cli': 'HikLink 企业通讯 CLI：发消息/云文档/日程/会议',
+    'hiklink-cloud-doc-toolkit': '在线云文档（表格编辑器）单元格自动化 CLI',
+    'hikvision-enc-query': '查海康产品加密配置（按物料代码）',
+    'hikvision-spec-query': '查海康产品 SPEC 规格说明书/产品参数',
+    'kernel-weekly': '抓 LWN 周刊生成中文内核周报档案',
+    'log-analyzer': '日志解析/检索/错误模式/堆栈分析',
+    'maas-kb-management': 'MaaS 知识库与文档一站式管理',
+    'mermaid-diagram': '生成 Mermaid 图（流程/架构/时序/脑图）',
+    'office': 'Excel/Word/PPT/Google 文档处理与自动化',
+    'pdf-text-extractor': 'PDF 文本提取（支持 OCR）',
+    'playwright-scraper-skill': 'Playwright 网页抓取（带反爬处理）',
+    'self-improving-agent': '沉淀纠错与经验，持续自我改进',
+    'software-platform-ops': '海康软件平台组件配置表/换包/构建打包',
+    'sso-login': '自动化 SSO 登录，取可复用的会话 cookie',
+    'stop-slop-zh': '去除中文 AI 腔，让文字更自然',
+    'windows-ui-automation': 'Windows GUI 自动化（鼠标/键盘/窗口）',
+    'dataviz': '图表/仪表盘设计系统（配色/可访问性）',
+    'claude-api': 'Claude API/SDK 参考（模型/定价/流式）',
+    'planning-with-files': '文件式任务计划（task_plan/findings/progress）',
+    'code-review': '审查当前 diff/PR 的正确性与可简化点',
+    'simplify': '对当前改动做复用/简化/效率清理并应用',
+    'security-review': '对当前分支改动做安全审查',
+    'init': '生成 CLAUDE.md 项目说明文件',
+    'run': '启动项目应用并驱动验证改动',
+    'loop': '按周期重复运行某个提示词/命令',
+  };
+  function _skillDesc(s) {
+    return SKILL_ZH[(s.name || '').toLowerCase()] || (s.desc || s.description || '');
+  }
   function slashMenuUpdate() {
     const mm = input.value.match(/^\/([a-z0-9_-]*)$/i);
     if (!mm) { if (_HG.pop === 'slash') closePop(); return; }
@@ -2775,7 +2814,7 @@ function buildClaudeHarnessTab(opts = {}) {
     const built = HG_SLASH.filter(x => x[0].slice(1).startsWith(kw))
       .map(x => ({ slash: x[0].slice(1), desc: x[1] }));
     const sk = (_HG.skills || []).filter(s => (s.name || '').toLowerCase().startsWith(kw))
-      .map(s => ({ skill: s.name, desc: (s.description || '').slice(0, 70) }));
+      .map(s => ({ skill: s.name, desc: _skillDesc(s).slice(0, 70) }));
     const list = built.concat(sk);
     if (!list.length) { if (_HG.pop === 'slash') closePop(); return; }
     _HG.slashList = list; _HG.slashSel = 0;
@@ -3120,7 +3159,7 @@ function buildClaudeHarnessTab(opts = {}) {
       } catch(_) { _HG.skills = []; }
     }
     const items = _HG.skills.length
-      ? _HG.skills.map(s => `<div class="hg-pop-item" data-skill="${esc(s.name)}"><b>/${esc(s.name)}</b><span>${esc((s.description || '').slice(0, 60))}</span></div>`).join('')
+      ? _HG.skills.map(s => `<div class="hg-pop-item" data-skill="${esc(s.name)}"><b>/${esc(s.name)}</b><span>${esc(_skillDesc(s).slice(0, 60))}</span></div>`).join('')
       : '<div class="hg-pop-empty">未发现技能（~/.claude/skills 或项目 .claude/skills）</div>';
     openPop('skill', anchor, `<div class="hg-pop-title">技能</div>${items}`);
   };
