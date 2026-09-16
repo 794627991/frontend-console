@@ -131,10 +131,31 @@ _MM_RE = re.compile(
     re.I)
 
 
+def _mm_probe_key(model):
+    """探测缓存的签名键：base_url|model。同一模型名在不同配置方案（智谱直连
+    vs lanz 网关 vs 本地代理）下多模态能力不同——只按名字缓存会把旧方案的
+    结论带到新方案（2026-09-16 实测：glm-5.3-flash[1M] 在旧方案探测通过，
+    切方案后主会话仍被注入「自己读图」，实际读不了，图片也不转交识图会话，
+    两头落空）。旧格式的裸模型名键自然失配，等价于自动失效重探。"""
+    try:
+        p = os.path.join(os.path.expanduser("~"), ".claude", "settings.json")
+        with open(p, "r", encoding="utf-8") as f:
+            env = (json.load(f).get("env") or {})
+        base = (env.get("ANTHROPIC_BASE_URL") or "unknown").rstrip("/").lower()
+    except Exception:
+        base = "unknown"
+    return base + "|" + (model or "")
+
+
 def _model_is_multimodal(name):
     name = (name or "").strip()
     if not name:
         return False
+    # 当前方案下的运行时探测结果最权威（真实链路上验证过能否读图），
+    # 优先于名字启发式与 mm_extra 名单——名单可能是别的方案探测时自动加的
+    cached = _mm_probed_load().get(_mm_probe_key(name))
+    if cached is not None:
+        return bool(cached)
     if _MM_RE.search(name):
         return True
     cfg = _vision_load()
@@ -2048,11 +2069,12 @@ def harness_mm_probe():
     model = str(data.get("model") or "").strip()
     if not model:
         return jsonify({"ok": False, "err": "need model"})
-    cached = _mm_probed_load().get(model)
+    pkey = _mm_probe_key(model)     # v2.27.2：按方案签名缓存，切方案自动重探
+    cached = _mm_probed_load().get(pkey)
     if cached is not None:
         return jsonify({"ok": True, "model": model, "multimodal": bool(cached),
                         "cached": True,
-                        "msg": "缓存结果：" + ("多模态" if cached else "非多模态")})
+                        "msg": "缓存结果（当前方案）：" + ("多模态" if cached else "非多模态")})
     with _MM_PROBE_LOCK:          # 探测要起子进程，同时只跑一个
         ok, msg = _mm_probe_model(model)
     # merge 落盘（不整键替换，别把并发写进来的其他字段冲掉）
@@ -2069,7 +2091,7 @@ def harness_mm_probe():
     p = v.get("mm_probed")
     if not isinstance(p, dict):
         p = {}
-    p[model] = bool(ok)
+    p[pkey] = bool(ok)
     v["mm_probed"] = p
     d[_VISION_KEY] = v
     try:
