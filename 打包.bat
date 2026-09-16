@@ -1,22 +1,32 @@
 @echo off
-chcp 65001 >nul
-rem ä¸€é”®æ‰“åŒ…ï¼šdist\å‰ç«¯æ§åˆ¶å°.exeï¼ˆspec å« web/ico/vendor/blob/README å…¨éƒ¨èµ„æºï¼‰
-rem åŒå‡»å³ç”¨ï¼›é€€å‡ºç é 0 æˆ– exe æœªç”Ÿæˆæ—¶çª—å£åœç•™ä¾›çœ‹æŠ¥é”™
+chcp 936 >nul
+rem Ò»¼ü´ò°ü£ºdist\Ç°¶Ë¿ØÖÆÌ¨.exe£¨spec º¬ web/ico/vendor/blob/README È«²¿×ÊÔ´£©
+rem Ë«»÷¼´ÓÃ£»Ê§°ÜÊ±´°¿ÚÍ£Áô¹©¿´±¨´í
 cd /d "%~dp0"
+rem ½âÎö Python£ºÏÈ PATH£¬ÍË»Ø±¾»ú Python314 ÓÃ»§°²×°Â·¾¶
+set "PY=python.exe"
+where %PY% >nul 2>&1
+if errorlevel 1 set "PY=%LOCALAPPDATA%\Programs\Python\Python314\python.exe"
+if not exist "%PY%" (
+  echo [Ê§°Ü] ÕÒ²»µ½ python.exe£ºÇë°²×° Python »ò¼ÓÈë PATH
+  pause
+  exit /b 1
+)
 echo ==============================================
-echo   å‰ç«¯æ§åˆ¶å° ä¸€é”®æ‰“åŒ…
+echo   Ç°¶Ë¿ØÖÆÌ¨ Ò»¼ü´ò°ü
 echo ==============================================
-python.exe src\build.py
+set PYTHONIOENCODING=gbk
+"%PY%" src\build.py
 if errorlevel 1 goto fail
-if not exist "dist\å‰ç«¯æ§åˆ¶å°.exe" goto fail
-for %%A in ("dist\å‰ç«¯æ§åˆ¶å°.exe") do echo.
-echo [OK] æ‰“åŒ…å®Œæˆ: dist\å‰ç«¯æ§åˆ¶å°.exe (%%~zA å­—èŠ‚)
+if not exist "dist\Ç°¶Ë¿ØÖÆÌ¨.exe" goto fail
+echo.
+echo [OK] ´ò°üÍê³É: dist\Ç°¶Ë¿ØÖÆÌ¨.exe
 echo.
 pause
 exit /b 0
 :fail
 echo.
-echo [å¤±è´¥] æ‰“åŒ…æœªæˆåŠŸï¼Œè¯·çœ‹ä¸Šæ–¹æŠ¥é”™
+echo [Ê§°Ü] ´ò°üÎ´³É¹¦£¬Çë¿´ÉÏ·½±¨´í
 echo.
 pause
 exit /b 1
