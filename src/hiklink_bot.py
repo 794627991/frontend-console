@@ -716,6 +716,24 @@ class HikLinkBotController:
 
     # ---- 生命周期 ----
     def start(self, uid=None, password=None, welcome=None):
+        """启动机器人。v2.27.8：串行化 + 双检——登录接口（credentials save）
+        与前端的 /hiklink/activate 会几乎同时各调一次 ensure_started()，而
+        SSO 登录要几十秒，旧实现无锁：第二次进来时第一个还没连上（running
+        False），又走完整登录注册 → 两个 HikLinkBot 连同一机器人互踢
+        KICK_OUT 死循环（2026-09-16 用户实锤，13s 周期完美匹配）。"""
+        with self._lock:
+            if getattr(self, "_starting", False):
+                return False, "已在启动中（登录/注册进行中）"
+            if self.bot and self.bot.status().get("running"):
+                return False, "已在运行"
+            self._starting = True
+        try:
+            return self._start_locked(uid, password, welcome)
+        finally:
+            with self._lock:
+                self._starting = False
+
+    def _start_locked(self, uid, password, welcome):
         if not HAS_WS:
             return False, "机器人模块缺失（websocket-client 未安装）"
         u, p = self._creds(uid, password)
@@ -753,6 +771,16 @@ class HikLinkBotController:
                 _update_session_file(mutate)
             except Exception as e:
                 return False, "登录/注册失败: %s" % e
+        # v2.27.8：换新 bot 前先停旧的并清孤儿——历史上任何竞态起过多余
+        # bot（同机器人互踢元凶），这里兜底全部收掉，保证进程内机器人唯一
+        with self._lock:
+            old = self.bot
+            self.bot = None
+        if old:
+            try:
+                old.stop()
+            except Exception:
+                pass
         self.bot = HikLinkBot(num, secret)
         self.bot.welcome_text = welcome or WELCOME_TEXT
         self.bot.on_command = self._on_command
