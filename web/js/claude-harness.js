@@ -1235,6 +1235,22 @@ function buildClaudeHarnessTab(opts = {}) {
   function isNearBottom() {
     return flow.scrollHeight - flow.scrollTop - flow.clientHeight < 120;
   }
+  // ==================== v2.27：后台回复后切回，焦点不在最新回复 ====================
+  // 根因：切走 tab 后容器 display:none，后台 SSE 照常收事件渲染，但
+  // display:none 容器里 scrollBottom 全部失效（scrollHeight=0，scrollTop 写
+  // 不进）——切回时视口停在离开瞬间的偏移，而内容已长出一大截。修法：
+  // MutationObserver 盯容器 style（正是 switchTab 翻 display 的位置），
+  // 离开时记下是否贴底，切回时若贴底强制回底一次（双 rAF 等 display:flex
+  // 生效、布局回填后再滚，否则又算出 0 尺寸）。翻历史中切走的不拽底。
+  let _hgLeftNearBottom = false;
+  new MutationObserver(() => {
+    if (wrap.style.display === 'none') {
+      _hgLeftNearBottom = isNearBottom();
+    } else if (_hgLeftNearBottom) {
+      _hgLeftNearBottom = false;
+      requestAnimationFrame(() => requestAnimationFrame(() => scrollBottom(true)));
+    }
+  }).observe(wrap, { attributes: true, attributeFilter: ['style'] });
   function startThinking(hist) {
     if (_HG.think && _HG.think.seg && _HG.think.seg.isConnected) return;
     const g = grpEnsure(true);
