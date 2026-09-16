@@ -136,7 +136,9 @@ def _mm_probe_key(model):
     vs lanz 网关 vs 本地代理）下多模态能力不同——只按名字缓存会把旧方案的
     结论带到新方案（2026-09-16 实测：glm-5.3-flash[1M] 在旧方案探测通过，
     切方案后主会话仍被注入「自己读图」，实际读不了，图片也不转交识图会话，
-    两头落空）。旧格式的裸模型名键自然失配，等价于自动失效重探。"""
+    两头落空）。旧格式的裸模型名键自然失配，等价于自动失效重探。
+    v2.27.5：模型名归一化小写——CLI 侧会把 [1M] 规范成 [1m]，大小写不一致
+    会让签名键/相等比较全部翻车（用户实锤切模型后仍走转交）。"""
     try:
         p = os.path.join(os.path.expanduser("~"), ".claude", "settings.json")
         with open(p, "r", encoding="utf-8") as f:
@@ -144,27 +146,31 @@ def _mm_probe_key(model):
         base = (env.get("ANTHROPIC_BASE_URL") or "unknown").rstrip("/").lower()
     except Exception:
         base = "unknown"
-    return base + "|" + (model or "")
+    return base + "|" + (model or "").strip().lower()
 
 
 def _model_is_multimodal(name):
     name = (name or "").strip()
     if not name:
         return False
+    lname = name.lower()
     # 当前方案下的运行时探测结果最权威（真实链路上验证过能否读图），
     # 优先于名字启发式与 mm_extra 名单——名单可能是别的方案探测时自动加的
     cached = _mm_probed_load().get(_mm_probe_key(name))
     if cached is not None:
         return bool(cached)
-    if _MM_RE.search(name):
+    if _MM_RE.search(lname):
         return True
     cfg = _vision_load()
-    if name == cfg["model"]:
+    # v2.27.5：全部比较用小写——CLI 切模型后上报 [1m] 小写，配置里是 [1M]，
+    # 严格相等永远 False → 多模态模型被误判走转交（用户实锤）
+    if lname == (cfg["model"] or "").strip().lower():
         return True
     for item in cfg["mm_extra"]:
         # v2.25：前缀匹配——填「glm-5.3 flash」同时覆盖「glm-5.3 flash[1M]」
         # 这类同模型不同上下文窗口后缀的变体，用户不必逐个枚举（用户点名）
-        if name == item or name.startswith(item):
+        item = (item or "").strip().lower()
+        if lname == item or lname.startswith(item):
             return True
     return False
 
