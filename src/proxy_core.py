@@ -358,6 +358,10 @@ def parse_request_brief(body_bytes):
             if isinstance(msg, dict) and msg.get("role") == "user":
                 last_user_txt = _text_of(msg.get("content")).strip()
                 break
+        if last_user_txt and last_user_txt.startswith("<transcript>"):
+            # CLI 内部请求（会话恢复/压缩时把 transcript 片段发给模型）——
+            # 不是用户输入，原始片段只会刷屏且困惑（像重复的旧消息）
+            return "⚙ CLI 内部整理（transcript 摘要）"
         if last_user_txt and not _is_noise(last_user_txt):
             return last_user_txt[:120]
         # 2) 最后一条 user 是 tool_result（无文本）→ 取最后一次工具调用，
