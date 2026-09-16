@@ -2862,5 +2862,7 @@ html[data-theme="sage"], html[data-theme="sky"] {
   font-size: 12px; color: var(--fg); }
 .hg-login-pop .hg-login-bot { font-size: 11px; color: var(--muted);
   font-family: var(--font-mono); }
-.hg-login-pop .hg-pop-logout { width: 100%; text-align: center;
+.hg-login-pop .hg-pop-logout { width: 100%; box-sizing: border-box;
+  display: flex; justify-content: center; align-items: center;
+  text-align: center;
   color: #e5484d; border-color: color-mix(in srgb, #e5484d 45%, var(--border)); }
