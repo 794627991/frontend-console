@@ -244,23 +244,24 @@ function buildClaudeHarnessTab(opts = {}) {
         <div class="hg-sessions" data-hg-sessions></div>
         <button class="hg-prompt-btn" data-hg-vision title="识图会话配置（多模态识图，转交主会话的看图任务）">👁 识图会话</button>
         <button class="hg-prompt-btn" data-hg-prompt title="管理自定义提示词（全局/项目，会话启动时注入）">📜 提示词</button>
-        <button class="hg-prompt-btn hg-proxy-side" data-hg-proxy-btn title="Claude 代理：重试代理（429/5xx 自动重试）+ 用量统计。点开代理面板">
+        <button class="hg-prompt-btn" data-hg-proxy-btn title="Claude 代理：重试代理（429/5xx 自动重试）+ 用量统计。点开代理面板">
           <img src="/ico/proxy.png" alt="proxy" style="width:14px;height:14px;vertical-align:-2px;"> Proxy
-          <span data-hg-proxy-state>检测中…</span>
+          <span class="hg-proxy-state" data-hg-proxy-state>检测中…</span>
         </button>
-        <div class="hg-login-bar" data-hg-login>
-          <div class="hg-login-row" data-hg-login-off>
-            <span class="hg-login-dot off"></span>
-            <span class="hg-login-text">未登录 · 机器人未激活</span>
+        <button class="hg-prompt-btn hg-login-side" data-hg-login-toggle title="统一登录（代理/额度/机器人一次登录全通）。点击展开登录/登出">
+          <span class="hg-login-dot off" data-hg-login-dot></span>
+          <span data-hg-login-text>未登录 · 机器人未激活</span>
+        </button>
+        <div class="hg-login-pop" data-hg-login-pop style="display:none">
+          <div data-hg-login-off>
             <input class="hg-login-inp" data-hg-login-user placeholder="用户名" spellcheck="false" autocomplete="username">
             <input class="hg-login-inp" data-hg-login-pwd type="password" placeholder="密码" autocomplete="current-password">
             <button class="hg-prompt-btn" data-hg-login-btn>登录</button>
           </div>
-          <div class="hg-login-row" data-hg-login-on style="display:none">
-            <span class="hg-login-dot on"></span>
-            <span class="hg-login-text" data-hg-login-name>已登录</span>
-            <span class="hg-login-bot" data-hg-login-bot></span>
-            <button class="hg-prompt-btn" data-hg-logout-btn title="登出并停用机器人">登出</button>
+          <div data-hg-login-on style="display:none">
+            <div class="hg-pop-row"><span class="hg-login-dot on"></span><span data-hg-login-name>已登录</span></div>
+            <div class="hg-pop-row hg-login-bot" data-hg-login-bot></div>
+            <button class="hg-prompt-btn hg-pop-logout" data-hg-logout-btn>登出（停用机器人）</button>
           </div>
         </div>
       </div>
@@ -3691,24 +3692,43 @@ async function claudeButtonAction() {
   else buildClaudeHarnessTab({});
 }
 
-// ---- 统一登录条（输入卡下方左下角）：代理/额度/机器人一次登录全通 ----
+// ---- 统一登录胶囊（侧栏底部）：代理/额度/机器人一次登录全通 ----
 // 登录走共用接口 /api/proxy/credentials（单一事实源 lanz_credentials.json）；
 // 凭据就位后端自动激活机器人（幂等），登出自动停用。未登录机器人不激活。
+// 胶囊点击 → 冒泡弹窗（未登录=登录表单；已登录=状态+登出确认）。
 function hgLoginRender(st) {
-  document.querySelectorAll('[data-hg-login]').forEach(bar => {
-    const off = bar.querySelector('[data-hg-login-off]');
-    const on = bar.querySelector('[data-hg-login-on]');
+  document.querySelectorAll('[data-hg-login-toggle]').forEach(tg => {
+    const dot = tg.querySelector('[data-hg-login-dot]');
+    const txt = tg.querySelector('[data-hg-login-text]');
+    if (!txt) return;
+    if (st.username) {
+      if (dot) { dot.className = 'hg-login-dot on'; }
+      txt.textContent = st.username + ' 已登录';
+    } else {
+      if (dot) { dot.className = 'hg-login-dot off'; }
+      txt.textContent = '未登录 · 机器人未激活';
+    }
+  });
+  document.querySelectorAll('[data-hg-login-pop]').forEach(pop => {
+    const off = pop.querySelector('[data-hg-login-off]');
+    const on = pop.querySelector('[data-hg-login-on]');
     if (!off || !on) return;
     if (st.username) {
       off.style.display = 'none'; on.style.display = '';
-      const name = bar.querySelector('[data-hg-login-name]');
+      const name = pop.querySelector('[data-hg-login-name]');
       if (name) name.textContent = st.username + ' 已登录';
-      const bot = bar.querySelector('[data-hg-login-bot]');
+      const bot = pop.querySelector('[data-hg-login-bot]');
       if (bot) bot.textContent = st.running
         ? (st.connected ? '机器人：在线' : '机器人：连接中…') : '机器人：未运行';
     } else {
       off.style.display = ''; on.style.display = 'none';
     }
+  });
+}
+function hgLoginTogglePop(force) {
+  document.querySelectorAll('[data-hg-login-pop]').forEach(pop => {
+    pop.style.display = (force !== undefined ? force
+      : pop.style.display === 'none') ? '' : 'none';
   });
 }
 async function hgLoginRefresh() {
@@ -3719,11 +3739,15 @@ async function hgLoginRefresh() {
   } catch (_) {}
 }
 document.addEventListener('click', async ev => {
+  // 冒泡弹窗开合：点胶囊切换；点弹窗内部不关；点其他区域关闭
+  const toggle = ev.target.closest('[data-hg-login-toggle]');
+  if (toggle) { hgLoginTogglePop(); return; }
+  if (!ev.target.closest('[data-hg-login-pop]')) hgLoginTogglePop(false);
   const loginBtn = ev.target.closest('[data-hg-login-btn]');
   if (loginBtn) {
-    const bar = loginBtn.closest('[data-hg-login]');
-    const uEl = bar.querySelector('[data-hg-login-user]');
-    const pEl = bar.querySelector('[data-hg-login-pwd]');
+    const pop = loginBtn.closest('[data-hg-login-pop]');
+    const uEl = pop.querySelector('[data-hg-login-user]');
+    const pEl = pop.querySelector('[data-hg-login-pwd]');
     const u = (uEl.value || '').trim(), p = pEl.value || '';
     if (!u || !p) { (u ? pEl : uEl).focus(); return; }
     loginBtn.disabled = true; const old = loginBtn.textContent;
