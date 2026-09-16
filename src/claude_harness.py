@@ -1747,9 +1747,27 @@ def _recover_scan():
 
     列表唯一来源是 claude_harness.json，它一旦被清（写入撕裂/多开互相
     覆盖）会话就"看不见"了，但转写还在 ~/.claude/projects/ 下。这里把
-    注册表里没有的 jsonl 全列出来，标题取文件头 summary/首条用户消息，
-    cwd/时间取文件内的真实值。只读文件头，几十 MB 的转写也不会卡。
+    注册表里没有的 jsonl 全列出来，标题取文件头首条人工消息，cwd/时间
+    取文件内的真实值。只读文件头，几十 MB 的转写也不会卡。
+
+    无用会话直接屏蔽（用户定调：只留真正的会话）：
+    - 人工消息为 0 → 识图/跨会话协作的后台从会话，恢复出来只有陌生
+      干活记录；
+    - 首条人工消息命中测试句式（hi/只回复/从1数到/暗号/探测脚本指令
+      等）→ 测代理/测工具留下的垃圾；
+    - 人工消息 ≤1 且文件 <100KB → 一句话探测会话，无实质内容。
     """
+    import re as _re
+    test_re = _re.compile(
+        r"^(你好|hi\b|hello|test|测试|ping|1\+1"
+        r"|只回复|回复(一个字|两个字|ok\b|hi\b|exactly)|reply with|respond with"
+        r"|从\s*1\s*数到|数到\s*\d+"
+        r"|记住暗号|记住你不能识图|你是一个?专门识图|你是识图会话"
+        r"|call the (mcp )?tool|use the \w+ tool|run the bash command"
+        r"|用 (mcp__|read 工具|bash 工具|listagents|sendmessage|ansi)"
+        r"|请(用 bash 工具|直接回答|只回复|深入思考|做两件事|做三件事|调用|输出)"
+        r"|输出一段)",
+        _re.I)
     _meta_load()
     have = {m.get("session_id") for m in _meta.values() if m.get("session_id")}
     proj = os.path.join(os.path.expanduser("~"), ".claude", "projects")
@@ -1773,10 +1791,12 @@ def _recover_scan():
                 continue
             title, cwd = "", ""
             human = 0
+            truncated = False
             try:
                 with open(fp, "r", encoding="utf-8", errors="replace") as f:
                     for i, line in enumerate(f):
                         if i >= 200:
+                            truncated = True
                             break
                         line = line.strip()
                         if not line:
@@ -1809,13 +1829,15 @@ def _recover_scan():
                         human += 1
                         if not title:
                             title = txt
-                        if title and cwd:
-                            break
+                        # 不提前 break：human 要数准（屏蔽判定 + 前端「你的消息×N」都靠它）
             except OSError:
                 continue
-            if not human:
+            # 无用会话屏蔽：从会话 / 测试句式 / 一句话探测（规则详见函数头注释）
+            if (not human
+                    or test_re.match(title or "")
+                    or (human <= 1 and st.st_size < 100 * 1024)):
                 continue
-            items.append({"session_id": csid, "human": human,
+            items.append({"session_id": csid, "human": human, "human_more": truncated,
                           "title": (title or "").replace("\n", " ").strip()[:60] or "（无标题会话）",
                           "cwd": cwd, "size": st.st_size,
                           "last_active": int(st.st_mtime * 1000)})
