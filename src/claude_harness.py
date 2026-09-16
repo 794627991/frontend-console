@@ -572,6 +572,7 @@ def _collect_system_prompt(cwd):
 _meta = {}                  # sid -> meta dict
 _meta_lock = threading.Lock()
 _meta_loaded = False
+_meta_tombstones = set()    # 本进程已删 sid：_meta_save 合并时防从盘面复活
 
 
 def _meta_load():
@@ -583,15 +584,40 @@ def _meta_load():
             d = json.load(f)
         if isinstance(d, dict):
             _meta = {k: v for k, v in d.items() if isinstance(v, dict) and v.get("sid")}
+    except FileNotFoundError:
+        _meta = {}                     # 首次启动无表：正常路径
     except Exception:
+        # 坏文件（写入撕裂/被截断）不能静默当空表——否则下一次 _meta_save
+        # 会用空表全量覆盖，整张会话列表蒸发（2026-09 实测丢过一批）。
+        # 先留档 .bad 供人工找回，再当空表起步。
+        try:
+            os.replace(_META_FILE, _META_FILE + ".bad")
+        except OSError:
+            pass
         _meta = {}
     _meta_loaded = True
 
 
 def _meta_save():
-    """原子写（tmp + replace，同 claude_default 模式）。锁内快照防并发撕裂。"""
+    """原子写（tmp + replace，同 claude_default 模式）。锁内快照防并发撕裂。
+
+    落盘前重读盘面做并集合并：本进程只在首次用表时读一次文件，若期间另
+    有进程（多开/重启窗口期）写入过新条目，拿内存快照直接覆盖会把它们抹
+    掉。口径：盘面有而内存没有的条目补进来；两边都有以内存为准（本进程
+    刚操作过，是最新的）。墓碑排除本进程已删条目，防止合并把刚删的复活。
+    """
     with _meta_lock:
         _meta_load()
+        try:
+            with open(_META_FILE, "r", encoding="utf-8") as f:
+                d = json.load(f)
+        except Exception:
+            d = {}
+        if isinstance(d, dict):
+            for k, v in d.items():
+                if (k not in _meta and k not in _meta_tombstones
+                        and isinstance(v, dict) and v.get("sid")):
+                    _meta[k] = v
         data = dict(_meta)
     try:
         os.makedirs(os.path.dirname(_META_FILE), exist_ok=True)
@@ -1711,8 +1737,135 @@ def harness_delete():
     with _meta_lock:
         _meta_load()
         _meta.pop(sid, None)
+        _meta_tombstones.add(sid)   # 盘面上那条也别让 _meta_save 合并回来
     _meta_save()
     return jsonify({"ok": True})
+
+
+def _recover_scan():
+    """扫描磁盘上没进注册表的会话 jsonl（数据自救：列表的兜底入口）。
+
+    列表唯一来源是 claude_harness.json，它一旦被清（写入撕裂/多开互相
+    覆盖）会话就"看不见"了，但转写还在 ~/.claude/projects/ 下。这里把
+    注册表里没有的 jsonl 全列出来，标题取文件头 summary/首条用户消息，
+    cwd/时间取文件内的真实值。只读文件头，几十 MB 的转写也不会卡。
+    """
+    _meta_load()
+    have = {m.get("session_id") for m in _meta.values() if m.get("session_id")}
+    proj = os.path.join(os.path.expanduser("~"), ".claude", "projects")
+    items = []
+    if not os.path.isdir(proj):
+        return items
+    for d in os.listdir(proj):
+        dd = os.path.join(proj, d)
+        if not os.path.isdir(dd) or d.startswith("."):
+            continue          # 排除 .trash-* 之类人工归档目录，只认项目编码目录
+        for fn in os.listdir(dd):
+            if not fn.endswith(".jsonl"):
+                continue
+            csid = fn[:-len(".jsonl")]
+            if csid in have:
+                continue
+            fp = os.path.join(dd, fn)
+            try:
+                st = os.stat(fp)
+            except OSError:
+                continue
+            title, cwd = "", ""
+            try:
+                with open(fp, "r", encoding="utf-8", errors="replace") as f:
+                    for i, line in enumerate(f):
+                        if i >= 200:
+                            break
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            o = json.loads(line)
+                        except Exception:
+                            continue
+                        if not cwd and o.get("cwd"):
+                            cwd = o["cwd"]
+                        if not title and o.get("type") == "summary" and o.get("summary"):
+                            title = str(o["summary"])
+                        if not title and o.get("type") == "user":
+                            c = (o.get("message") or {}).get("content")
+                            txt = ""
+                            if isinstance(c, str):
+                                txt = c
+                            elif isinstance(c, list):
+                                txt = next((b.get("text", "") for b in c
+                                            if isinstance(b, dict) and b.get("type") == "text"), "")
+                            txt = txt.strip()
+                            # 跳过 CLI 注入的命令包装行，那不是人话标题
+                            if txt and not txt.startswith(("<", "Another Claude")):
+                                title = txt
+                        if title and cwd:
+                            break
+            except OSError:
+                continue
+            items.append({"session_id": csid,
+                          "title": (title or "").replace("\n", " ").strip()[:60] or "（无标题会话）",
+                          "cwd": cwd, "size": st.st_size,
+                          "last_active": int(st.st_mtime * 1000)})
+    items.sort(key=lambda x: -x["last_active"])
+    return items
+
+
+@harness_bp.route("/recoverable")
+def harness_recoverable():
+    """列出可恢复的孤儿会话（盘上有转写、注册表没条目）。"""
+    try:
+        items = _recover_scan()
+    except Exception as e:
+        return jsonify({"ok": False, "err": str(e)}), 500
+    return jsonify({"ok": True, "items": items})
+
+
+@harness_bp.route("/recover", methods=["POST"])
+def harness_recover():
+    """把盘上的孤儿会话找回列表：补注册表条目（不启动进程，发消息才复活）。
+    body: {session_id, title?}。cwd 取转写内的真实值——--resume 必须在
+    原目录跑才能续上旧上下文。"""
+    data = request.get_json(force=True, silent=True) or {}
+    csid = (data.get("session_id") or "").strip()
+    if (not csid or "/" in csid or "\\" in csid or ".." in csid
+            or not all(ch in "0123456789abcdef-" for ch in csid.lower())):
+        return jsonify({"ok": False, "err": "非法 session_id"}), 400
+    proj = os.path.join(os.path.expanduser("~"), ".claude", "projects")
+    hit = None
+    if os.path.isdir(proj):
+        for d in os.listdir(proj):
+            p = os.path.join(proj, d, csid + ".jsonl")
+            if os.path.isfile(p):
+                hit = p
+                break
+    if not hit:
+        return jsonify({"ok": False, "err": "磁盘上没找到该会话记录"}), 404
+    cwd = ""
+    try:
+        with open(hit, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    o = json.loads(line)
+                except Exception:
+                    continue
+                if o.get("cwd"):
+                    cwd = o["cwd"]
+                    break
+    except OSError:
+        pass
+    st = os.stat(hit)
+    s = HarnessSession(uuid.uuid4().hex, cwd=cwd or _st.HOME_DIR,
+                       session_id=csid,
+                       title=(data.get("title") or "").strip()[:60] or "恢复的会话")
+    s.created = int(st.st_mtime * 1000)
+    s.last_active = s.created
+    s.sync_meta()
+    return jsonify({"ok": True, "sid": s.sid})
 
 
 @harness_bp.route("/models")

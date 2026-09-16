@@ -239,6 +239,7 @@ function buildClaudeHarnessTab(opts = {}) {
       <div class="hg-side">
         <div class="hg-side-head">
           <button class="hg-new-btn" data-hg-new title="新建会话">✚ 新建会话</button>
+          <button class="hg-new-btn hg-recover-btn" data-hg-recover title="扫描磁盘上的会话记录，找回列表里消失的会话（异常丢失/误删都可找回）">⟲ 恢复会话</button>
         </div>
         <div class="hg-search-wrap"><input class="hg-search" data-hg-search placeholder="搜索会话" spellcheck="false"></div>
         <div class="hg-sessions" data-hg-sessions></div>
@@ -3474,6 +3475,62 @@ function buildClaudeHarnessTab(opts = {}) {
   // 每个会话进程启动时后端 --append-system-prompt 注入（新会话/复活同路径）：
   // 启用的全局条目对全部会话生效；项目条目只对 cwd 目录名匹配的会话生效。
   // 入口在左栏最底部（用户指定位置）；管理界面 = 条目列表 + 每条
+  // v2.27：恢复会话——列表唯一来源是注册表 claude_harness.json，它一旦被
+  // 清（写入撕裂/多开覆盖）会话就"看不见"了，但转写还在磁盘上。这里扫出
+  // 注册表里没有的 jsonl 让用户手动找回（异常丢失/误删都能自救）。
+  q('[data-hg-recover]').onclick = async () => {
+    showBanner('正在扫描磁盘上的会话记录…', 2000);
+    let items = [];
+    try {
+      const j = await (await fetch('/api/harness/recoverable')).json();
+      if (!j.ok) { showBanner(j.err || '扫描失败', 3000, true); return; }
+      items = j.items || [];
+    } catch(e) { showBanner('扫描失败：' + e, 3000, true); return; }
+    const ov = document.createElement('div');
+    ov.className = 'hg-modal-ov';
+    const fmtSize = (n) => n >= 1048576 ? (n/1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n/1024)) + ' KB';
+    const shortCwd = (c) => String(c || '').replace(/\//g, '\\').split('\\').filter(Boolean).slice(-1)[0] || '未知项目';
+    ov.innerHTML = `<div class="hg-modal hg-modal-recover"><div class="hg-modal-title">⟲ 恢复会话</div>
+      <div class="hg-modal-body hg-recover-hint">以下是磁盘上有记录、但不在当前列表里的会话。恢复只是找回入口，不启动任何进程；点开会话发消息即自动续上原上下文。</div>
+      <div class="hg-recover-list"></div>
+      <div class="hg-modal-acts"><button class="btn ghost" data-hg-r-close>关闭</button></div></div>`;
+    const listEl = ov.querySelector('.hg-recover-list');
+    const close = () => ov.remove();
+    ov.querySelector('[data-hg-r-close]').onclick = close;
+    function render() {
+      if (!items.length) {
+        listEl.innerHTML = '<div class="hg-list-empty">没有可恢复的会话——列表里的会话和磁盘记录是对得上的</div>';
+        return;
+      }
+      listEl.innerHTML = items.map((it, i) => it._done
+        ? `<div class="hg-r-item done"><span class="hg-r-title">✓ ${esc(it.title)}</span><span class="hg-r-meta">已恢复到列表</span></div>`
+        : `<div class="hg-r-item">
+             <div class="hg-r-info">
+               <div class="hg-r-title" title="${esc(it.title)}">${esc(it.title)}</div>
+               <div class="hg-r-meta">${_harnessRelTime(it.last_active)} · ${fmtSize(it.size)} · ${esc(shortCwd(it.cwd))}</div>
+             </div>
+             <button class="btn ghost hg-r-btn" data-i="${i}">恢复</button>
+           </div>`).join('');
+      listEl.querySelectorAll('.hg-r-btn').forEach(btn => {
+        btn.onclick = async () => {
+          const it = items[+btn.dataset.i];
+          btn.disabled = true; btn.textContent = '恢复中…';
+          try {
+            const j = await (await fetch('/api/harness/recover', {method:'POST',
+              headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({session_id: it.session_id, title: it.title})})).json();
+            if (!j.ok) { showBanner(j.err || '恢复失败', 3000, true); btn.disabled = false; btn.textContent = '恢复'; return; }
+            it._done = true;
+            render();
+            refreshSessions();
+            showBanner('已找回：' + it.title, 2400);
+          } catch(e) { showBanner('恢复失败：' + e, 3000, true); btn.disabled = false; btn.textContent = '恢复'; }
+        };
+      });
+    }
+    render();
+    document.body.appendChild(ov);
+  };
   // 备注/作用域/开关/编辑/删除，整表保存。
   q('[data-hg-prompt]').onclick = async () => {
     let prompts = [];

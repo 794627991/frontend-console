@@ -2556,6 +2556,20 @@ html[data-theme="sage"], html[data-theme="sky"] {
   color: var(--muted); cursor: pointer; text-align: center; }
 .hg-prompt-btn:hover { color: var(--fg); border-color: var(--accent); }
 .hg-modal.hg-modal-prompt { width: 620px; max-width: 92%; }
+/* ---- 恢复会话（v2.27：新建会话下方入口，扫描盘上孤儿转写手动找回）---- */
+.hg-recover-btn { margin-top: 6px; border-color: var(--border); background: transparent;
+  color: var(--muted); }
+.hg-recover-btn:hover { color: var(--fg); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.hg-modal.hg-modal-recover { width: 520px; max-width: 92%; }
+.hg-recover-list { margin-top: 10px; max-height: 55vh; overflow-y: auto; }
+.hg-r-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+  border: 1px solid var(--border); border-radius: 8px; margin-bottom: 6px; }
+.hg-r-item.done { opacity: .55; }
+.hg-r-info { flex: 1; min-width: 0; }
+.hg-r-title { font-size: 12.5px; color: var(--fg-bright, var(--fg));
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hg-r-meta { font-size: 10.5px; color: var(--muted); margin-top: 2px; }
+.hg-r-btn { flex-shrink: 0; font-size: 11px; padding: 4px 12px; }
 .hg-prompt-hint { font-size: 11.5px; color: var(--muted); margin-bottom: 8px;
   line-height: 1.6; border: none; }
 .hg-prompt-list { display: flex; flex-direction: column; gap: 10px;
