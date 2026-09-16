@@ -2834,15 +2834,15 @@ html[data-theme="sage"], html[data-theme="sky"] {
 .h-ask-done { color: var(--neon-green, #3fb950); font-weight: 600; font-size: 12px; }
 
 /* ---- 统一登录胶囊 + Proxy 状态（v2.27）：侧栏底部，提示词按钮下面 ---- */
-/* 三者均为 hg-prompt-btn 同款胶囊；登录胶囊点击冒泡弹窗 */
-.hg-proxy-side { display: inline-flex; align-items: center; gap: 6px; }
+/* 三者均为 hg-prompt-btn 同款胶囊（内容居中）；登录胶囊点击冒泡弹窗 */
+.hg-proxy-side { display: inline-flex; align-items: center; gap: 6px;
+  justify-content: center; text-align: center; }
 .hg-proxy-state { font-size: 10.5px; font-family: var(--font-mono);
   color: var(--muted); }
 .hg-proxy-state.on { color: #34c77b; }
 .hg-proxy-state.err { color: #e5484d; }
 .hg-login-side { display: inline-flex; align-items: center; gap: 6px;
-  max-width: 100%; overflow: hidden; white-space: nowrap;
-  text-overflow: ellipsis; }
+  justify-content: center; text-align: center; }
 .hg-login-side [data-hg-login-text] { overflow: hidden;
   text-overflow: ellipsis; }
 .hg-login-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }

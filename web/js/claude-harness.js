@@ -3803,5 +3803,11 @@ document.addEventListener('click', ev => {
   const btn = ev.target.closest('[data-hg-proxy-btn]');
   if (btn && typeof buildProxyTab === 'function') buildProxyTab();
 });
-setInterval(hgProxyRefreshState, 30000);   // 与登录条同频的低频保活
+// 事件通知（不轮询）：后端在代理状态变化点广播 SSE 信号，前端收到即拉一次
+// status 同步显示。连接断开时 EventSource 自动重连；首屏状态由页面加载时
+// 的 hgProxyRefreshState() 拉取。
+try {
+  const hgProxyES = new EventSource('/api/proxy/events');
+  hgProxyES.onmessage = () => hgProxyRefreshState();
+} catch (_) {}
 hgProxyRefreshState();

@@ -27,7 +27,7 @@ import threading
 import time
 from urllib.parse import urlsplit
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, Response
 
 from src import proxy_core as core
 from src import lanz_quota
@@ -902,8 +902,10 @@ def start_proxy(hr_mode=None):
                     log.warning("headroom 启动失败，继续无压缩运行: %s", e)
         finally:
             _hr_switching = False
+            _proxy_notify()   # 状态可能变化（就绪/失败），广播给前端
     threading.Thread(target=_worker, daemon=True).start()
     _ensure_tray()
+    _proxy_notify()
     return True, "启动中（headroom 冷启动可达 10-30s）"
 
 
@@ -912,28 +914,31 @@ def ensure_proxy_for_claude():
     只起 37349 重试代理（价值：用量统计 + 429/5xx 重试）。30s 内没就绪则
     停掉并把 base_url 切回直连，绝不卡死会话。幂等，后台线程执行。"""
     def _worker():
-        if _ctl.running or _ctl.ping_existing():
-            return   # 已在跑（含外部自家实例）：直接复用
-        ok, msg = start_proxy(hr_mode="off")
-        if not ok:
-            # 端口被占等失败：确保 base_url 没卡在自家代理端口上
-            try:
-                cur = _bmgr.read_current_url()
-                if _is_own_proxy_url(cur):
-                    _bmgr.apply(_direct_url())
-            except Exception:
-                pass
-            log.warning("Claude 联动拉代理失败: %s", msg)
-            return
-        end = time.time() + 30
-        while time.time() < end:
-            if _ctl.running and _ctl.ping_existing():
-                log.info("Claude 联动：重试代理已就绪（%d，无 headroom）",
-                         LISTEN_PORT)
+        try:
+            if _ctl.running or _ctl.ping_existing():
+                return   # 已在跑（含外部自家实例）：直接复用
+            ok, msg = start_proxy(hr_mode="off")
+            if not ok:
+                # 端口被占等失败：确保 base_url 没卡在自家代理端口上
+                try:
+                    cur = _bmgr.read_current_url()
+                    if _is_own_proxy_url(cur):
+                        _bmgr.apply(_direct_url())
+                except Exception:
+                    pass
+                log.warning("Claude 联动拉代理失败: %s", msg)
                 return
-            time.sleep(1)
-        log.warning("Claude 联动：代理 30s 未就绪，停用并切回直连")
-        stop_proxy()
+            end = time.time() + 30
+            while time.time() < end:
+                if _ctl.running and _ctl.ping_existing():
+                    log.info("Claude 联动：重试代理已就绪（%d，无 headroom）",
+                             LISTEN_PORT)
+                    return
+                time.sleep(1)
+            log.warning("Claude 联动：代理 30s 未就绪，停用并切回直连")
+            stop_proxy()
+        finally:
+            _proxy_notify()   # 无论结果如何，广播一次让前端同步
     threading.Thread(target=_worker, daemon=True).start()
 
 
@@ -954,6 +959,7 @@ def stop_proxy():
     except Exception as e:
         log.warning("代理停止后切直连失败: %s", e)
     _autoswitched = False
+    _proxy_notify()
     return True, "已停止（base_url 已切回直连）"
 
 
@@ -1337,6 +1343,52 @@ def _api_proxy_ensure():
     except Exception as e:
         log.warning("ensure 代理失败: %s", e)
     return jsonify({"ok": True, "msg": "已确保代理（后台）"})
+
+
+# ---- 代理状态事件推送（SSE）：状态变化点广播信号，前端收到后拉一次
+# /api/proxy/status 同步显示——取代前端轮询（用户定：事件通知不轮询） ----
+_proxy_sse_clients = []          # queue.Queue 列表（每个 SSE 连接一个）
+_proxy_sse_lock = threading.Lock()
+
+
+def _proxy_notify():
+    """向所有 SSE 客户端广播「状态变了」信号（轻量信号，状态本体前端自拉）。"""
+    with _proxy_sse_lock:
+        clients = list(_proxy_sse_clients)
+    for q in clients:
+        try:
+            q.put_nowait({"type": "proxy_state"})
+        except Exception:
+            pass
+
+
+@proxy_bp.route("/api/proxy/events")
+def _api_proxy_events():
+    """SSE：代理状态变化通知流。连接即挂起，15s 心跳注释行防中间层断链。"""
+    from queue import Queue, Empty
+    q = Queue()
+    with _proxy_sse_lock:
+        _proxy_sse_clients.append(q)
+
+    def gen():
+        try:
+            yield "event: hello\ndata: {}\n\n"
+            while True:
+                try:
+                    item = q.get(timeout=15)
+                    yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+                except Empty:
+                    yield ": ping\n\n"
+        finally:
+            with _proxy_sse_lock:
+                try:
+                    _proxy_sse_clients.remove(q)
+                except ValueError:
+                    pass
+
+    return Response(gen(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache",
+                             "X-Accel-Buffering": "no"})
 
 
 @proxy_bp.route("/api/proxy/status")
