@@ -2443,8 +2443,8 @@ html[data-theme="sage"], html[data-theme="sky"] {
   color: var(--muted); cursor: pointer; padding: 2px 6px; border-radius: 5px;
   font-size: 11px; }
 .hg-quote-x:hover { color: var(--fg); background: color-mix(in srgb, var(--fg) 8%, transparent); }
-/* 右键消息的迷你菜单（贴鼠标，消息流内绝对定位） */
-.hg-ctxmenu { position: absolute; z-index: 30; min-width: 120px;
+/* 右键消息的迷你菜单（fixed 贴鼠标挂 body，不受滚动/祖先定位影响） */
+.hg-ctxmenu { position: fixed; z-index: 90; min-width: 120px;
   background: var(--bg-card); border: 1px solid var(--border);
   border-radius: 8px; padding: 4px; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
 .hg-ctx-item { padding: 6px 10px; font-size: 12px; color: var(--fg);

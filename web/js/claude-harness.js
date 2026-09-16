@@ -2430,12 +2430,15 @@ function buildClaudeHarnessTab(opts = {}) {
     const menu = document.createElement('div');
     menu.className = 'hg-ctxmenu';
     menu.innerHTML = `<div class="hg-ctx-item" data-hg-ctx-quote>❝ 引用此消息</div>`;
-    menu.style.left = '0'; menu.style.top = '0';   // 先挂载再定位（要 offsetWidth）
-    flow.appendChild(menu);
-    const wr = flow.getBoundingClientRect();
-    let x = e.clientX - wr.left + flow.scrollLeft, y = e.clientY - wr.top + flow.scrollTop;
-    if (x + menu.offsetWidth > flow.clientWidth - 8) x = flow.clientWidth - menu.offsetWidth - 8;
-    if (y + menu.offsetHeight > flow.clientHeight - 8) y = flow.clientHeight - menu.offsetHeight - 8;
+    // v2.27.2：fixed 定位直接用视口坐标挂 body——之前 absolute 挂 flow 换算
+    // 内容坐标，实测会随滚动/祖先定位飞走（用户截图菜单贴顶）。fixed 永远
+    // 贴鼠标，与滚动无关（微信同款）。
+    menu.style.position = 'fixed';
+    menu.style.left = '0'; menu.style.top = '0';
+    document.body.appendChild(menu);
+    let x = e.clientX, y = e.clientY;
+    if (x + menu.offsetWidth > window.innerWidth - 8) x = window.innerWidth - menu.offsetWidth - 8;
+    if (y + menu.offsetHeight > window.innerHeight - 8) y = window.innerHeight - menu.offsetHeight - 8;
     menu.style.left = Math.max(4, x) + 'px';
     menu.style.top = Math.max(4, y) + 'px';
     menu.querySelector('[data-hg-ctx-quote]').onclick = () => {
@@ -2447,10 +2450,12 @@ function buildClaudeHarnessTab(opts = {}) {
       menu.remove();
       document.removeEventListener('mousedown', close, true);
       flow.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close, true);
     };
     setTimeout(() => {
       document.addEventListener('mousedown', close, true);
       flow.addEventListener('scroll', close, true);
+      window.addEventListener('resize', close, true);
     }, 0);
   });
   function _hgQueueKey() { return _HG.sid || '_new'; }
