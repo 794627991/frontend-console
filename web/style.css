@@ -2177,7 +2177,7 @@ html[data-theme="sage"], html[data-theme="sky"] {
    v2.24.2：align-items center→flex-start——列整体靠左（用户定调「气泡
    要靠左」：居中在宽窗下左侧大片空白，看着像「跑到中间」；靠左贴合
    工具型界面的紧凑习惯，右侧留白由 .h-msg max-width 自然形成） */
-.hg-flow { flex: 1; overflow-y: auto; padding: 20px 32px; display: flex;
+.hg-flow { flex: 1; overflow-y: auto; padding: 20px 32px; display: flex; position: relative;
   flex-direction: column; gap: 12px; align-items: flex-start; }
 /* v2.10：flow 全部直接子项禁垂直压缩——定高 column flex 子项默认
    flex-shrink:1，超高内容(长思考块/大抽屉)会被按比例压扁到 ~2px 再被
@@ -2431,6 +2431,25 @@ html[data-theme="sage"], html[data-theme="sky"] {
 .hg-queue { width: min(820px, 100%); margin: 0 auto 8px;
   display: flex; flex-direction: column; gap: 6px;
   max-height: 240px; overflow-y: auto; }
+/* ---- 引用消息（v2.27：右键消息→引用，微信同款引用条）---- */
+.hg-quote { width: min(820px, 100%); margin: 0 auto 8px; display: flex;
+  align-items: center; gap: 8px; font-size: 11.5px; color: var(--fg);
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-left: 3px solid var(--accent); border-radius: 8px; padding: 6px 8px 6px 10px; }
+.hg-quote-tag { flex-shrink: 0; color: var(--accent); font-weight: 600; }
+.hg-quote-body { flex: 1; min-width: 0; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hg-quote-x { flex-shrink: 0; border: none; background: transparent;
+  color: var(--muted); cursor: pointer; padding: 2px 6px; border-radius: 5px;
+  font-size: 11px; }
+.hg-quote-x:hover { color: var(--fg); background: color-mix(in srgb, var(--fg) 8%, transparent); }
+/* 右键消息的迷你菜单（贴鼠标，消息流内绝对定位） */
+.hg-ctxmenu { position: absolute; z-index: 30; min-width: 120px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 8px; padding: 4px; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+.hg-ctx-item { padding: 6px 10px; font-size: 12px; color: var(--fg);
+  border-radius: 6px; cursor: pointer; }
+.hg-ctx-item:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .hg-q-item { display: flex; align-items: center; gap: 8px; font-size: 11.5px;
   color: var(--muted); background: var(--bg-card); border: 1px dashed var(--border);
   border-radius: 10px; padding: 5px 6px 5px 10px; }

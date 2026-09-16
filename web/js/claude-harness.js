@@ -276,6 +276,11 @@ function buildClaudeHarnessTab(opts = {}) {
         <div class="hg-flow" data-hg-flow></div>
         <div class="hg-card-wrap">
           <div class="hg-queue" data-hg-queue style="display:none"></div>
+          <div class="hg-quote" data-hg-quote style="display:none">
+            <span class="hg-quote-tag">引用</span>
+            <span class="hg-quote-body" data-hg-quote-body></span>
+            <button class="hg-quote-x" data-hg-quote-x title="取消引用">✕</button>
+          </div>
           <div class="hg-atts" data-hg-atts style="display:none"></div>
           <div class="hg-input-card">
             <div class="hg-card-head">
@@ -2229,6 +2234,7 @@ function buildClaudeHarnessTab(opts = {}) {
     }
     saveCache();
     closePop(); closeMention();
+    setQuote(null);                     // v2.27：引用属于当前输入草稿，切会话不跨带
     endThinking(); closeRun();
     if (_HG.grp) phStopTimer(_HG.grp);   // v2.18：防御性清占位 timer（isConnected 自杀是兜底）
     _hgMentionReset();          // v2.15：@ 引用高亮不跨会话残留
@@ -2380,6 +2386,69 @@ function buildClaudeHarnessTab(opts = {}) {
   // 回复结束（result/interrupted → setBusy(false)）自动依序发送。
   // 队列按 sid 隔离，切会话各看各的。
   const queueEl = q('[data-hg-queue]');
+  // ==================== 引用消息（v2.27，微信同款）====================
+  // 右键消息气泡 → 「引用」→ 输入卡上方出引用条（只读，✕ 取消）→ 发送时
+  // 拼成「[引用 xx 的消息]…[我的问题]…」——引用内容随消息落转写，AI 能
+  // 同时看到被引原文和用户新表达，历史回看也完整。
+  const quoteEl = q('[data-hg-quote]');
+  const quoteBodyEl = q('[data-hg-quote-body]');
+  function setQuote(q) {
+    _HG.quote = q || null;
+    if (!_HG.quote) { quoteEl.style.display = 'none'; return; }
+    const brief = _HG.quote.text.replace(/\s+/g, ' ').trim();
+    quoteBodyEl.textContent = `${_HG.quote.who}：${brief.length > 60 ? brief.slice(0, 59) + '…' : brief}`;
+    quoteBodyEl.title = _HG.quote.text;          // 悬浮看全文
+    quoteEl.style.display = 'flex';
+    input.focus();
+  }
+  q('[data-hg-quote-x]').onclick = () => setQuote(null);
+  // 右键消息气泡 → 迷你菜单（贴鼠标）。只做引用一项，克制。
+  flow.addEventListener('contextmenu', (e) => {
+    const m = e.target.closest('.h-msg');
+    if (!m || !flow.contains(m)) return;
+    e.preventDefault();
+    const old = wrap.querySelector('.hg-ctxmenu');
+    if (old) old.remove();
+    const who = m.classList.contains('user') ? '我' : 'AI';
+    // 用户气泡优先 dataset.rtext（发送原文，干净）；AI 气泡取正文——
+    // clone 后剔除 button/抽屉钮等 UI 元素再取文本，避免混入「复制」等字样
+    let text = (m.dataset && m.dataset.rtext) || '';
+    if (!text) {
+      const b = m.querySelector('.h-bubble');
+      if (b) {
+        const c = b.cloneNode(true);
+        c.querySelectorAll('button').forEach(x => x.remove());
+        text = c.innerText || c.textContent || '';
+      }
+    }
+    text = (text || '').trim();
+    if (!text) return;
+    const menu = document.createElement('div');
+    menu.className = 'hg-ctxmenu';
+    menu.innerHTML = `<div class="hg-ctx-item" data-hg-ctx-quote>❝ 引用此消息</div>`;
+    menu.style.left = '0'; menu.style.top = '0';   // 先挂载再定位（要 offsetWidth）
+    flow.appendChild(menu);
+    const wr = flow.getBoundingClientRect();
+    let x = e.clientX - wr.left + flow.scrollLeft, y = e.clientY - wr.top + flow.scrollTop;
+    if (x + menu.offsetWidth > flow.clientWidth - 8) x = flow.clientWidth - menu.offsetWidth - 8;
+    if (y + menu.offsetHeight > flow.clientHeight - 8) y = flow.clientHeight - menu.offsetHeight - 8;
+    menu.style.left = Math.max(4, x) + 'px';
+    menu.style.top = Math.max(4, y) + 'px';
+    menu.querySelector('[data-hg-ctx-quote]').onclick = () => {
+      menu.remove();
+      setQuote({ who, text });
+    };
+    const close = (ev) => {
+      if (menu.contains(ev.target)) return;
+      menu.remove();
+      document.removeEventListener('mousedown', close, true);
+      flow.removeEventListener('scroll', close, true);
+    };
+    setTimeout(() => {
+      document.addEventListener('mousedown', close, true);
+      flow.addEventListener('scroll', close, true);
+    }, 0);
+  });
   function _hgQueueKey() { return _HG.sid || '_new'; }
   // v2.25：拖动排序状态。拖拽中挂起 renderQueue 重建——重建会把被抓住的
   // 元素从文档摘下，pointer capture 随之失效，拖到一半掉链子。
@@ -2598,6 +2667,16 @@ function buildClaudeHarnessTab(opts = {}) {
   async function dispatch(text, images, files, restoreInput) {
     const sid = await ensureSession();
     if (!sid) return false;
+    // v2.27：引用拼装——取出即清（排队泵逐条 dispatch 时只有第一条带引用，
+    // 后续排队项是新输入的独立消息）
+    let out = text || '';
+    if (_HG.quote && out.trim()) {
+      const qt = _HG.quote.text.length > 2000
+        ? _HG.quote.text.slice(0, 2000) + '…（引用已截断）' : _HG.quote.text;
+      out = `[引用 ${_HG.quote.who} 的消息]\n${qt}\n\n[我的问题]\n${text}`;
+      setQuote(null);
+    }
+    text = out;
     _hgHistAppend(sid, text);          // 输入历史（记录到真实会话 scope）
     _HG.histNav = null;
     // v2.20：乐观渲染——connect 一回来就画出自己的气泡。原实现要等 SSE 的
