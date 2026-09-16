@@ -2889,7 +2889,9 @@ function buildClaudeHarnessTab(opts = {}) {
     'loop': '按周期重复运行某个提示词/命令',
   };
   function _skillDesc(s) {
-    const n = (s.name || '').toLowerCase();
+    // 键归一化：技能 name 可能是「Data Analysis」（大写+空格）而映射键是
+    // data-analysis（小写连字符）——统一 lower+空格/下划线转连字符再查
+    const n = (s.name || '').toLowerCase().replace(/[\s_]+/g, '-');
     const d = s.desc || s.description || '';
     return SKILL_ZH[n] || (_HG.skillZh || {})[n] || (_HG.skillZh || {})[d] || d;
   }
@@ -2897,9 +2899,10 @@ function buildClaudeHarnessTab(opts = {}) {
   // desc 由后端调 settings.json 配的模型翻译，落 ~/.serialconsole_pro/
   // skill_zh_cache.json 持久缓存——零人工维护，缓存命中后零延迟。
   function _skillZhSync() {
+    const norm = (n) => (n || '').toLowerCase().replace(/[\s_]+/g, '-');
     const need = (_HG.skills || []).filter(s => {
       const d = (s.desc || '').trim();
-      return d && !/[一-鿿]/.test(d) && !SKILL_ZH[(s.name || '').toLowerCase()];
+      return d && !/[一-鿿]/.test(d) && !SKILL_ZH[norm(s.name)];
     });
     if (!need.length) return;
     fetch('/api/harness/skill_zh/translate', {method: 'POST',
@@ -2908,7 +2911,8 @@ function buildClaudeHarnessTab(opts = {}) {
       .then(r => r.json()).then(j => {
         if (!j.ok || !j.map) return;
         _HG.skillZh = Object.assign({}, _HG.skillZh, j.map);
-        // ⚡ 技能菜单若开着：热替换各项描述，不用关了重开
+        // 菜单若开着：热替换各项描述，不用关了重开（v2.27.1 修：openPop
+        // 此前不带 kind 类，.hg-pop.skill 永远查不到，热替换从未生效）
         const pop = wrap.querySelector('.hg-pop.skill');
         if (pop) pop.querySelectorAll('[data-skill]').forEach(el => {
           const s = (_HG.skills || []).find(x => x.name === el.dataset.skill);
@@ -2916,6 +2920,7 @@ function buildClaudeHarnessTab(opts = {}) {
           const span = el.querySelector('span');
           if (span) span.textContent = _skillDesc(s).slice(0, 60);
         });
+        if (_HG.pop === 'slash') slashMenuUpdate();
       }).catch(() => {});
   }
   function slashMenuUpdate() {
@@ -3251,7 +3256,9 @@ function buildClaudeHarnessTab(opts = {}) {
     closePop();
     _HG.pop = kind;
     const p = document.createElement('div');
-    p.className = 'hg-pop';
+    // v2.27.1：kind 落到 class（.hg-pop.slash 等样式选择器一直依赖它，
+    // 此前漏加导致斜杠菜单紧凑样式从未生效、技能热替换也查不到 .hg-pop.skill）
+    p.className = 'hg-pop ' + kind;
     p.innerHTML = html;
     anchor.parentElement.appendChild(p);
     const ar = anchor.getBoundingClientRect(), wr = wrap.querySelector('.hg-card-wrap').getBoundingClientRect();
