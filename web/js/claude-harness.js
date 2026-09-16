@@ -255,12 +255,6 @@ function buildClaudeHarnessTab(opts = {}) {
         </div>
         <div class="hg-flow" data-hg-flow></div>
         <div class="hg-card-wrap">
-          <div class="hg-proxy-bar">
-            <button class="hg-chip hg-proxy-btn" data-hg-proxy-btn title="Claude 代理：重试代理（429/5xx 自动重试）+ 用量统计。点开代理面板">
-              <img src="/ico/proxy.png" alt="proxy" style="width:14px;height:14px;vertical-align:-2px;"> Proxy
-              <span class="hg-proxy-state" data-hg-proxy-state>检测中…</span>
-            </button>
-          </div>
           <div class="hg-queue" data-hg-queue style="display:none"></div>
           <div class="hg-atts" data-hg-atts style="display:none"></div>
           <div class="hg-input-card">
@@ -286,6 +280,12 @@ function buildClaudeHarnessTab(opts = {}) {
                 <svg class="hg-ic-stop" viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="4.5" width="15" height="15" rx="3"/></svg>
               </button>
             </div>
+          </div>
+          <div class="hg-proxy-bar">
+            <button class="hg-chip hg-proxy-btn" data-hg-proxy-btn title="Claude 代理：重试代理（429/5xx 自动重试）+ 用量统计。点开代理面板">
+              <img src="/ico/proxy.png" alt="proxy" style="width:14px;height:14px;vertical-align:-2px;"> Proxy
+              <span class="hg-proxy-state" data-hg-proxy-state>检测中…</span>
+            </button>
           </div>
           <div class="hg-login-bar" data-hg-login>
             <div class="hg-login-row" data-hg-login-off>
