@@ -231,20 +231,30 @@ def _icon_png():
 
 def ensure_robot(token, name=BOT_NAME):
     """确保存在本工具专用机器人（HiClaw 的机器人被它独占，不能用）。
+    v2.27.9：同名多机器人时按 slogan 优先匹配——账号里常有 ClaudeDesktop
+    建的同名「前端小助手」（slogan 不同），旧的名字优先匹配会把别家工具的
+    机器人抢来连（用户实锤：来回换账号测试后连上 ClaudeDesktop 的机器人，
+    KICK_OUT 互踢 + 消息收不到），本工具 slogan = 前端控制台远程指令通道。
     返回 (robot_num, app_secret, msg)。"""
     bases = [MOAREST_BLUE, MOAREST_RED]
     last_err = ""
+
+    def _pick(robots):
+        same = [r for r in robots if (r.get("name") or "") == name]
+        if not same:
+            return None
+        for r in same:            # 第一优先：本工具建的（slogan 相同）
+            if (r.get("slogan") or "") == "前端控制台远程指令通道":
+                return r
+        return same[0]            # 兜底：同名第一台（老账号兼容）
+
     for base in bases:
         try:
             lst = _get_json(base + "/moarestapi/robot/openclaw", token=token)
             robots = (lst.get("data") or [])
             if isinstance(robots, dict):
                 robots = robots.get("list") or robots.get("records") or []
-            mine = None
-            for r in robots:
-                if (r.get("name") or "") == name:
-                    mine = r
-                    break
+            mine = _pick(robots)
             if mine is None:
                 boundary = uuid.uuid4().hex
                 parts = []
@@ -270,10 +280,7 @@ def ensure_robot(token, name=BOT_NAME):
                 robots = (lst.get("data") or [])
                 if isinstance(robots, dict):
                     robots = robots.get("list") or robots.get("records") or []
-                for r in robots:
-                    if (r.get("name") or "") == name:
-                        mine = r
-                        break
+                mine = _pick(robots)
             if mine is None:
                 last_err = "机器人注册后未出现在列表中"
                 continue
@@ -759,7 +766,7 @@ class HikLinkBotController:
                 token, msg = his.login_pc(u, p)
                 if not token:
                     return False, msg
-                num, secret, msg2 = his.ensure_robot(token, name=BOT_NAME)
+                num, secret, msg2 = ensure_robot(token, name=BOT_NAME)
                 if not (num and secret):
                     return False, msg2 or "机器人注册失败"
                 fresh = {"uid": u, "password": p, "robot_uid": u, "robot_num": num,
@@ -810,7 +817,7 @@ class HikLinkBotController:
             if not token:
                 log.error("自愈登录失败: %s", msg)
                 return
-            num, secret, msg2 = his.ensure_robot(token, name=BOT_NAME)
+            num, secret, msg2 = ensure_robot(token, name=BOT_NAME)
             if not (num and secret):
                 log.error("自愈注册失败: %s", msg2)
                 return
