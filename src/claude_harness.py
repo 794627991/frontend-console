@@ -2150,10 +2150,116 @@ def harness_stop_vision():
 
 @harness_bp.route("/skills")
 def harness_skills():
-    """技能列表（复用 claude_sessions 发现层，harness 上下文 cwd）。"""
+    """技能列表（复用 claude_sessions 发现层，harness 上下文 cwd）。
+    v2.27：附带中文描述缓存（skill_zh_cache.json），前端「技能需要翻译」
+    的持久层——静态映射未命中的英文 desc，由 /skill_zh/translate 落缓存。"""
     from .claude_sessions import list_skills
     cwd = request.args.get("cwd") or None
-    return jsonify({"ok": True, "skills": list_skills(cwd)})
+    return jsonify({"ok": True, "skills": list_skills(cwd),
+                    "zh": _skill_zh_load()})
+
+
+# ---- 技能描述汉化（v2.27：新增技能自动翻译，免长期手工维护映射表）----
+_SKILL_ZH_FILE = os.path.join(_st.HOME_DIR, "skill_zh_cache.json")
+
+
+def _skill_zh_load():
+    try:
+        with open(_SKILL_ZH_FILE, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _skill_zh_save(d):
+    try:
+        tmp = _SKILL_ZH_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False, indent=1)
+        os.replace(tmp, _SKILL_ZH_FILE)
+    except OSError:
+        pass
+
+
+def _llm_translate_batch(pairs):
+    """用 settings.json 配的模型批量翻译英文技能描述。返回 {原文: 译文}。
+
+    走 anthropic 兼容网关（base_url + /v1/messages），失败静默空表——
+    翻译是锦上添花，不该让菜单报错；前端下次触发再试。
+    """
+    import urllib.request
+    env = {}
+    try:
+        p = os.path.join(os.path.expanduser("~"), ".claude", "settings.json")
+        with open(p, "r", encoding="utf-8") as f:
+            env = (json.load(f).get("env") or {})
+    except Exception:
+        return {}
+    base = (env.get("ANTHROPIC_BASE_URL") or "").rstrip("/")
+    token = env.get("ANTHROPIC_AUTH_TOKEN") or ""
+    # settings 里的模型名带 [1M]/[1m] 这类上下文窗口标记（CLI 侧口径），
+    # 网关直调不认——实测 400「模型不存在」，剥掉末尾方括号段再发
+    model = re.sub(r"\[[^\]]+\]$", "", env.get("ANTHROPIC_MODEL") or "")
+    if not base or not token or not model:
+        return {}
+    body = "\n".join("%d. %s" % (i + 1, t) for i, t in enumerate(pairs.values()))
+    prompt = (
+        "把下面的软件技能描述逐条翻译成简洁的简体中文一句话（保留产品名/"
+        "专有名词，不超过40字）。严格按「序号. 中文」逐行输出，不要任何"
+        "解释或多余内容。\n\n" + body)
+    payload = json.dumps({"model": model, "max_tokens": 4000,
+                          "messages": [{"role": "user", "content": prompt}]}).encode()
+    req = urllib.request.Request(
+        base + "/v1/messages", data=payload, method="POST",
+        headers={"Content-Type": "application/json",
+                 "Authorization": "Bearer " + token,
+                 "x-api-key": token,
+                 "anthropic-version": "2023-06-01"})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            d = json.loads(r.read().decode("utf-8", errors="replace"))
+        text = "".join(b.get("text", "") for b in (d.get("content") or [])
+                       if isinstance(b, dict))
+    except Exception:
+        return {}
+    out = {}
+    keys = list(pairs.keys())
+    for line in text.splitlines():
+        m = re.match(r"^\s*(\d+)\.\s*(.+)$", line)
+        if not m:
+            continue
+        i = int(m.group(1)) - 1
+        if 0 <= i < len(keys):
+            out[keys[i]] = m.group(2).strip()[:80]
+    return out
+
+
+@harness_bp.route("/skill_zh/translate", methods=["POST"])
+def harness_skill_zh_translate():
+    """把未汉化的英文技能描述交给 LLM 翻译并入缓存。body: {items:[{name,desc}]}。
+    返回 {ok, map}（本次新增的翻译，含缓存里已有的）。"""
+    data = request.get_json(force=True, silent=True) or {}
+    items = data.get("items") or []
+    cache = _skill_zh_load()
+    # 待翻 = 描述非空、不含中文、且缓存没覆盖的原文（构建时已跳过缓存命中）
+    todo = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        desc = (it.get("desc") or "").strip()
+        if not desc or re.search(r"[一-鿿]", desc) or desc in cache:
+            continue
+        if desc not in todo:
+            todo.append(desc)
+    if todo:
+        translated = _llm_translate_batch({k: k for k in todo})
+        for src, zh in translated.items():
+            if zh:
+                cache[src] = zh
+        if translated:
+            _skill_zh_save(cache)
+    return jsonify({"ok": True, "map": cache})
 
 
 @harness_bp.route("/files")

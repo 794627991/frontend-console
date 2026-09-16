@@ -2805,7 +2805,34 @@ function buildClaudeHarnessTab(opts = {}) {
     'loop': '按周期重复运行某个提示词/命令',
   };
   function _skillDesc(s) {
-    return SKILL_ZH[(s.name || '').toLowerCase()] || (s.desc || s.description || '');
+    const n = (s.name || '').toLowerCase();
+    const d = s.desc || s.description || '';
+    return SKILL_ZH[n] || (_HG.skillZh || {})[n] || (_HG.skillZh || {})[d] || d;
+  }
+  // v2.27「技能需要翻译」长期方案：静态映射兜底常见技能；新装技能的英文
+  // desc 由后端调 settings.json 配的模型翻译，落 ~/.serialconsole_pro/
+  // skill_zh_cache.json 持久缓存——零人工维护，缓存命中后零延迟。
+  function _skillZhSync() {
+    const need = (_HG.skills || []).filter(s => {
+      const d = (s.desc || '').trim();
+      return d && !/[一-鿿]/.test(d) && !SKILL_ZH[(s.name || '').toLowerCase()];
+    });
+    if (!need.length) return;
+    fetch('/api/harness/skill_zh/translate', {method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({items: need.map(s => ({name: s.name, desc: s.desc}))})})
+      .then(r => r.json()).then(j => {
+        if (!j.ok || !j.map) return;
+        _HG.skillZh = Object.assign({}, _HG.skillZh, j.map);
+        // ⚡ 技能菜单若开着：热替换各项描述，不用关了重开
+        const pop = wrap.querySelector('.hg-pop.skill');
+        if (pop) pop.querySelectorAll('[data-skill]').forEach(el => {
+          const s = (_HG.skills || []).find(x => x.name === el.dataset.skill);
+          if (!s) return;
+          const span = el.querySelector('span');
+          if (span) span.textContent = _skillDesc(s).slice(0, 60);
+        });
+      }).catch(() => {});
   }
   function slashMenuUpdate() {
     const mm = input.value.match(/^\/([a-z0-9_-]*)$/i);
@@ -2836,6 +2863,8 @@ function buildClaudeHarnessTab(opts = {}) {
       _HG.skills = [];
       fetch('/api/harness/skills').then(r => r.json()).then(j => {
         _HG.skills = (j.ok && j.skills) || [];
+        _HG.skillZh = (j.ok && j.zh) || {};
+        _skillZhSync();
         if (_HG.pop === 'slash') slashMenuUpdate();
       }).catch(() => {});
     }
@@ -3156,8 +3185,10 @@ function buildClaudeHarnessTab(opts = {}) {
       try {
         const j = await (await fetch('/api/harness/skills')).json();
         _HG.skills = (j.ok && j.skills) || [];
+        _HG.skillZh = (j.ok && j.zh) || {};
       } catch(_) { _HG.skills = []; }
     }
+    _skillZhSync();
     const items = _HG.skills.length
       ? _HG.skills.map(s => `<div class="hg-pop-item" data-skill="${esc(s.name)}"><b>/${esc(s.name)}</b><span>${esc(_skillDesc(s).slice(0, 60))}</span></div>`).join('')
       : '<div class="hg-pop-empty">未发现技能（~/.claude/skills 或项目 .claude/skills）</div>';
