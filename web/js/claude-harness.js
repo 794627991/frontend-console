@@ -421,7 +421,12 @@ function buildClaudeHarnessTab(opts = {}) {
     foot.appendChild(hint);
     card.appendChild(foot);
     flow.appendChild(card);
-    scrollBottom();
+    // v2.27：ask 卡片 = AI 阻塞等作答，必须让用户看见。无 force 的
+    // scrollBottom 在翻历史时被 150px 阈值拦下（用户实锤「弹出时要自己
+    // 翻页找」）。这里无条件把卡片顶部滚进视口：多题卡片从题1看起，
+    // 而不是只露出提交按钮。
+    scrollBottom(true);
+    requestAnimationFrame(() => card.scrollIntoView({ block: 'start' }));
   }
 
   // 卡片状态存在 dataset 而非 JS 属性：切走再切回走的是 innerHTML 快照路径
