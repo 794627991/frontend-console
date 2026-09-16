@@ -1769,6 +1769,30 @@ def claude_skills_list():
     return jsonify({"ok": True, "skills": list_skills(cwd)})
 
 
+# ---- Claude 实时版本（v2.27：Claude 按钮 hover 显示当前 CLI 版本）----
+_claude_ver_cache = {"ver": None, "at": 0.0}
+
+@app.route("/api/claude/version")
+def claude_version():
+    """真跑 `claude --version` 取当前 CLI 版本。缓存 60s——版本不会秒变，
+    但升级/换渠道后最多一分钟内 hover 即见新版本（实时性够且不狂拉子进程）。"""
+    import time as _t
+    from .claude_conn import _resolve_claude_exe
+    if _t.time() - _claude_ver_cache["at"] > 60 or not _claude_ver_cache["ver"]:
+        exe, is_shim = _resolve_claude_exe()
+        argv = (["cmd.exe", "/c", exe] if is_shim else [exe]) + ["--version"]
+        try:
+            r = subprocess.run(argv, capture_output=True, timeout=30,
+                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            out = (r.stdout or r.stderr or "").decode("utf-8", errors="replace").strip()
+            _claude_ver_cache["ver"] = out.splitlines()[0] if out else ""
+            _claude_ver_cache["at"] = _t.time()
+        except Exception:
+            pass
+    return jsonify({"ok": bool(_claude_ver_cache["ver"]),
+                    "version": _claude_ver_cache["ver"] or ""})
+
+
 @app.route("/api/claude/transcript")
 def claude_transcript():
     """会话转写导出（历史回看覆盖层数据源）：jsonl → 干净对话行数组。
