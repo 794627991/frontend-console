@@ -44,9 +44,9 @@ function buildProxyTab() {
     <div class="editor">
       <div class="log-viewer-toolbar">
         <span class="px-badge px-stopped" data-px-status-badge>STOPPED</span>
-        <button class="lv-btn" data-px-toggle>▶ 启动代理</button>
         <span class="px-url" data-px-url title="当前 ANTHROPIC_BASE_URL">-</span>
         <span style="flex:1"></span>
+        <button class="lv-btn" data-px-toggle>▶ 启动代理</button>
         <button class="lv-btn" data-px-mode="proxy" title="base_url 切到代理入口（8787/37349，重启 Claude Code 后生效）">切换为代理模式</button>
         <button class="lv-btn" data-px-mode="direct" title="base_url 切回内网网关直连">切换为直连模式</button>
       </div>
