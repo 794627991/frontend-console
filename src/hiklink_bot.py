@@ -729,6 +729,12 @@ class HikLinkBotController:
             log.info("缓存凭据是旧机器人（%s ≠ %s），重新注册",
                      d.get("robot_name"), BOT_NAME)
             num = secret = None
+        if num and secret and d.get("robot_uid") not in (None, u):
+            # v2.27.7：机器人凭据是账号私有的——缓存属于别的账号（换人登录）
+            # → 作废重注册，否则拿别人的机器人连 WS（用户实锤）
+            log.info("缓存机器人凭据属于账号 %s（当前 %s），重新注册",
+                     d.get("robot_uid"), u)
+            num = secret = None
         if not (num and secret):
             try:
                 his = _his()
@@ -738,7 +744,7 @@ class HikLinkBotController:
                 num, secret, msg2 = his.ensure_robot(token, name=BOT_NAME)
                 if not (num and secret):
                     return False, msg2 or "机器人注册失败"
-                fresh = {"uid": u, "password": p, "robot_num": num,
+                fresh = {"uid": u, "password": p, "robot_uid": u, "robot_num": num,
                          "app_secret": secret, "robot_name": BOT_NAME}
 
                 def mutate(d):
@@ -1016,15 +1022,15 @@ def ensure_stopped():
 
 
 def clear_account():
-    """登出清账号凭据（v2.27.6）：hiklink_session.json 里的 uid/password 是
-    机器人首启时复制进去的，且 _creds() 优先读它——登出只删 lanz 凭据时
-    这里仍能读到账号 → 状态接口继续报「已登录」→ 登录表单被藏起，用户
-    卡在「已登录但机器人没跑」的死态（用户实锤）。只清 uid/password，
-    保留机器人凭据（robot_num/app_secret，下次登录同名直连）与
-    harness_sid（小助理会话绑定，丢了会另起新会话）。"""
+    """登出清账号相关凭据（v2.27.6）：uid/password 不清则状态接口继续报
+    「已登录」藏起登录表单（用户实锤）；robot_num/app_secret 不清则换
+    账号登录时直接拿旧账号的机器人连 WS——机器人身份跟人走（用户实锤：
+    同事登录自己的号，机器人还是别人的）。机器人凭据清了无损失：下次
+    登录 ensure_robot 按账号列同名机器人自动找回。只保留 harness_sid
+    （小助理会话绑定，丢了会另起新会话）。"""
     def mutate(d):
-        d.pop("uid", None)
-        d.pop("password", None)
+        for k in ("uid", "password", "robot_num", "app_secret", "robot_name"):
+            d.pop(k, None)
     return _update_session_file(mutate)
 
 
