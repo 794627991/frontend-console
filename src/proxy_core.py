@@ -2,7 +2,7 @@
 """
 claude_proxy_core.py
 ====================
-Claude Code 重试代理核心（无 curses，Windows/Linux 通吃）。版本随 GUI 定版 V1.1.0。
+Claude Code 重试代理核心（无 curses，Windows/Linux 通吃）。版本随 GUI 定版 V2.0.0。
 
 从 claude_proxy_live.py 摘录的转发核心：透明转发 Claude Code 请求到上游，
 对 429/5xx 阶梯退避重试（1.0s→10s 封顶，带抖动），边转发边解析 SSE usage 统计。
