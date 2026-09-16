@@ -244,6 +244,25 @@ function buildClaudeHarnessTab(opts = {}) {
         <div class="hg-sessions" data-hg-sessions></div>
         <button class="hg-prompt-btn" data-hg-vision title="识图会话配置（多模态识图，转交主会话的看图任务）">👁 识图会话</button>
         <button class="hg-prompt-btn" data-hg-prompt title="管理自定义提示词（全局/项目，会话启动时注入）">📜 提示词</button>
+        <button class="hg-prompt-btn hg-proxy-side" data-hg-proxy-btn title="Claude 代理：重试代理（429/5xx 自动重试）+ 用量统计。点开代理面板">
+          <img src="/ico/proxy.png" alt="proxy" style="width:14px;height:14px;vertical-align:-2px;"> Proxy
+          <span data-hg-proxy-state>检测中…</span>
+        </button>
+        <div class="hg-login-bar" data-hg-login>
+          <div class="hg-login-row" data-hg-login-off>
+            <span class="hg-login-dot off"></span>
+            <span class="hg-login-text">未登录 · 机器人未激活</span>
+            <input class="hg-login-inp" data-hg-login-user placeholder="用户名" spellcheck="false" autocomplete="username">
+            <input class="hg-login-inp" data-hg-login-pwd type="password" placeholder="密码" autocomplete="current-password">
+            <button class="hg-prompt-btn" data-hg-login-btn>登录</button>
+          </div>
+          <div class="hg-login-row" data-hg-login-on style="display:none">
+            <span class="hg-login-dot on"></span>
+            <span class="hg-login-text" data-hg-login-name>已登录</span>
+            <span class="hg-login-bot" data-hg-login-bot></span>
+            <button class="hg-prompt-btn" data-hg-logout-btn title="登出并停用机器人">登出</button>
+          </div>
+        </div>
       </div>
       <div class="hg-main">
         <div class="hg-top">
@@ -279,28 +298,6 @@ function buildClaudeHarnessTab(opts = {}) {
                 <svg class="hg-ic-send" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.4 21 12 4 4.6v5.5l10.6 1.9L4 13.9z"/></svg>
                 <svg class="hg-ic-stop" viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="4.5" width="15" height="15" rx="3"/></svg>
               </button>
-            </div>
-          </div>
-          <div class="hg-proxy-bar">
-            <button class="hg-chip hg-proxy-btn" data-hg-proxy-btn title="Claude 代理：重试代理（429/5xx 自动重试）+ 用量统计。点开代理面板">
-              <img src="/ico/proxy.png" alt="proxy" style="width:14px;height:14px;vertical-align:-2px;"> Proxy
-              <span class="hg-proxy-state" data-hg-proxy-state>检测中…</span>
-            </button>
-          </div>
-          <div class="hg-login-bar" data-hg-login>
-            <div class="hg-login-row" data-hg-login-off>
-              <span class="hg-login-dot off"></span>
-              <span class="hg-login-text">未登录 · 机器人未激活</span>
-              <input class="hg-login-inp" data-hg-login-user placeholder="用户名" spellcheck="false" autocomplete="username">
-              <input class="hg-login-inp" data-hg-login-pwd type="password" placeholder="密码" autocomplete="current-password">
-              <button class="hg-chip" data-hg-login-btn>登录</button>
-            </div>
-            <div class="hg-login-row" data-hg-login-on style="display:none">
-              <span class="hg-login-dot on"></span>
-              <span class="hg-login-text" data-hg-login-name>已登录</span>
-              <span class="hg-login-bot" data-hg-login-bot></span>
-              <span class="hg-flex1"></span>
-              <button class="hg-chip" data-hg-logout-btn title="登出并停用机器人">登出</button>
             </div>
           </div>
         </div>
