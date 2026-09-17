@@ -1,7 +1,7 @@
 ﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-前端控制台 v2.0.0 —— 多串口/SSH 后端 + AI 接入层
+前端控制台 v2.2.0 —— 多串口/SSH 后端 + AI 接入层
 - 每个串口一个 SerialPort 实例：独立线程读、独立环形缓冲、独立日志
 - API 按串口 ID（端口名）路由
 - AI 接入层：/api/ai/* 系列，AI 可查询任意串口实时数据、发送命令、订阅流
@@ -907,6 +907,104 @@ def api_open_url():
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "err": str(e)}), 400
+
+
+# ---- 升级功能（v2.1.0）：客户端检查/应用 + 发布端分发服务控制 ----
+@app.route("/api/update/state")
+def api_update_state():
+    """当前版本 + 升级服务器地址（设置页显示与预填）。"""
+    from src.updater import _cfg_url
+    from src.version import APP_VERSION
+    return jsonify({"ok": True, "current": APP_VERSION,
+                    "url": _cfg_url() or ""})
+
+
+@app.route("/api/update/url", methods=["POST"])
+def api_update_url():
+    data = request.get_json(force=True, silent=True) or {}
+    u = (data.get("url") or "").strip()
+    if u and not u.startswith("http://") and not u.startswith("https://"):
+        return jsonify({"ok": False, "err": "地址需以 http(s):// 开头"}), 400
+    from src.updater import _cfg_url
+    return jsonify({"ok": True, "url": _cfg_url(u)})
+
+
+@app.route("/api/update/check", methods=["POST"])
+def api_update_check():
+    from src.updater import check_update
+    return jsonify(check_update())
+
+
+@app.route("/api/update/apply", methods=["POST"])
+def api_update_apply():
+    """下载+校验+写替换脚本（耗时几秒到几十秒——内网直连，同步等待可接受；
+    进度条是后话，先把闭环跑通）。"""
+    from src.updater import apply_update
+    ok, err = apply_update()
+    return jsonify({"ok": ok, "err": err})
+
+
+@app.route("/api/update/run", methods=["POST"])
+def api_update_run():
+    from src.updater import run_update
+    ok, err = run_update()
+    return jsonify({"ok": ok, "err": err})
+
+
+@app.route("/api/update_server/status")
+def api_update_server_status():
+    from src import update_server
+    return jsonify({"ok": True, **update_server.status()})
+
+
+@app.route("/api/update_server/password", methods=["POST"])
+def api_update_server_password():
+    """门户登录密码（发布者用；空=恢复默认 888888）。"""
+    data = request.get_json(force=True, silent=True) or {}
+    pwd = str(data.get("password") or "").strip()
+    if len(pwd) > 32:
+        return jsonify({"ok": False, "err": "密码过长（≤32 字符）"}), 400
+    from src.update_server import _set_portal_password
+    _set_portal_password(pwd)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/update_server/toggle", methods=["POST"])
+def api_update_server_toggle():
+    """开/关发布端分发服务（发布机自己用；开关持久化 config）。
+    v2.2.1 热同步（用户定调）：每次开关都停旧实例并强制 reload
+    version/updater/update_server 模块链——发布者改了门户/升级器代码后
+    无需重启工具，关-开一次即生效。导入/重载全程包 try：新代码有语法错
+    时把异常亮给前端（而不是 500），改好再开。"""
+    from src.app_state import _load_config, _save_config
+    data = request.get_json(force=True, silent=True) or {}
+    enable = bool(data.get("enabled"))
+    import importlib, sys
+    try:
+        us_old = sys.modules.get("src.update_server")
+        if us_old is not None:
+            us_old.stop()               # 先停旧实例（同步收尾，端口干净）
+            us_old._server = None       # 半途炸时兜底：状态至少是「已停」
+        # 依赖方先重载（version → updater → update_server）；未导入过的
+        # 首次导入也走同一路径（坏代码在 import 阶段就能报出来）
+        for mod in ("src.version", "src.updater", "src.update_server"):
+            m = sys.modules.get(mod)
+            if m is not None:
+                importlib.reload(m)
+            else:
+                importlib.import_module(mod)
+    except Exception as e:
+        return jsonify({"ok": False,
+                        "err": "热加载失败（新代码有语法错误？修复后再开）：%s" % e})
+    from src import update_server as us2   # reload 就地刷新，重取引用
+    if enable:
+        ok, msg = us2.start()
+        if not ok:
+            return jsonify({"ok": False, "err": msg})
+    cfg = _load_config()
+    cfg["update_server_enabled"] = enable
+    _save_config(cfg)
+    return jsonify({"ok": True, **us2.status()})
 
 
 # ---- 数据目录管理（顶栏机器人图标点开的设置面板）----

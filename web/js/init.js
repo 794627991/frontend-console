@@ -42,6 +42,15 @@ if (typeof refreshClaudePanel === 'function') refreshClaudePanel();
 // 全部回退固化 label「Claude · 目录名」，分不清开的是哪个会话（面板可见时的
 // 5s 轮询只在面板开着时兜底刷新）
 renderCmdPane();  // 命令 tab 是默认激活面板，启动即渲染（否则空面板要切走再切回才刷新）
+// v2.2.0：页头版本徽标/页面标题动态取自后端单一源（src/version.py）——
+// 以前硬编码在 index.html，改版必漏（用户实锤页头还是 v2.0.0）
+fetch('/api/update/state').then(r => r.json()).then(j => {
+  if (!j || !j.ok || !j.current) return;
+  document.title = '前端控制台 v' + j.current;
+  document.querySelectorAll('[data-ver-badge]').forEach(el => {
+    el.textContent = 'v' + j.current;
+  });
+}).catch(() => {});
 // ---- v2.27.22 全局链接导航拦截（最后防线，捕获阶段）----
 // WebView 就地导航一旦发生，整个工具被错误页替换且无返回入口（用户实锤：
 // 消息流里 linkify 出的 http://proxy.py 一点就 ERR_NAME_NOT_RESOLVED 占满
@@ -60,6 +69,17 @@ document.addEventListener('click', (e) => {
   }
 }, true);
 $('btnNewFile').onclick = (e) => newFileMenuShow(e.currentTarget);  // v2.27「新建文件」下拉：笔记/.txt/.md/自定义后缀（原一键新建笔记）
+// v2.1.0：启动静默检查更新（配置过升级地址才查；失败/无更新零打扰——
+// 发布机不开机是常态）。有新版只 banner 提示，升级动作进设置页确认。
+setTimeout(() => {
+  fetch('/api/update/state').then(r => r.json()).then(st => {
+    if (!st.ok || !st.url) return;
+    return fetch('/api/update/check', {method: 'POST'}).then(r => r.json());
+  }).then(j => {
+    if (j && j.has_update)
+      showBanner(`✨ 发现新版本 v${j.latest}——设置 → 关于与升级，立即升级`, 8000);
+  }).catch(() => {});
+}, 8000);
 $('btnDiff').onclick = openDiffPicker;  // 文件对比（原生选两份 → DiffEditor tab）
 $('btnBitCalc').onclick = buildBitCalcTab;  // 程序员计算器（寄存器位编辑+位运算+表达式）
 $('btnFiles').onclick = showFilesModal;  // 文件列表弹窗（打开已有文件）

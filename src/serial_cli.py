@@ -78,7 +78,7 @@ def ensure_running(auto_start=True, timeout=25):
             return None
         start_cmd = [exe]
         start_cwd = os.path.dirname(exe)
-    print(f"【前端控制台 v2.0.0 未运行】正在启动: {start_cmd}", file=sys.stderr)
+    print(f"【前端控制台 v2.2.0 未运行】正在启动: {start_cmd}", file=sys.stderr)
     try:
         # 用 Popen 启动 GUI 进程，不阻塞
         subprocess.Popen(
@@ -129,7 +129,7 @@ def api_post(url, path, body):
         return {"ok": False, "err": str(e)}
 
 def need_running():
-    print("【前端控制台 v2.0.0 未运行】")
+    print("【前端控制台 v2.2.0 未运行】")
     print("请先双击桌面上的「前端控制台.exe」启动工具，再运行本命令。")
     sys.exit(1)
 

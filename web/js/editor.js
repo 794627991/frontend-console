@@ -1840,6 +1840,16 @@ async function openDroppedFile(path, fromRecent) {
     showBanner('已把路径发给 Claude（回车确认发送）', 3000);
     return;
   }
+  // v2.2.1：拖到 Claude 对话 tab（界面化 harness）上的文件 → 直接作为对话
+  // 附件（发送时随消息带上，Claude Read 原路径）。此前只有 CLI 终端 tab 有
+  // 分支，harness tab 拖文件掉到 openFileSmart 变"打开文件"（用户实锤回归：
+  // 最开始拖进对话就是给 claude 的）。fromRecent=true 同上跳过。
+  if (!fromRecent && activePortId && connections[activePortId] &&
+      connections[activePortId].meta && connections[activePortId].meta.kind === 'harness' &&
+      typeof window.harnessAddFilesByPath === 'function') {
+    window.harnessAddFilesByPath([path]);
+    return;
+  }
   // 拖到笔记 tab（.note，Editor.js 在场）：图片直接作为图块插入——
   // 与 note 内部粘贴图同款体验（上传 files/images/ 后插 image 块），
   // 不弹"打开方式"。

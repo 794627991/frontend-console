@@ -1356,6 +1356,13 @@ class HarnessSession:
                 if typ == "result":
                     self.busy = False
                     self.last_result = o
+                    # v2.2.1：回合结束落一次盘——last_active 平时只更新内存，
+                    # 重启工具后 meta 停在旧时刻会话排序/时间倒退（回合粒度
+                    # 写盘，频次可接受；每行写则太频）
+                    try:
+                        self.sync_meta()
+                    except Exception:
+                        pass
                 if typ == "assistant":
                     # v2.27.21：记录 CLI 实报模型名——引导词热更/窗口判定
                     # 的第一依据（settings 名会与实跑名错位，见 _eff_model）。
@@ -2117,21 +2124,27 @@ def harness_stream():
 
 @harness_bp.route("/sessions")
 def harness_sessions():
-    """会话列表（持久化元数据，新→旧）。"""
+    """会话列表（持久化元数据，新→旧）。
+    v2.2.1：last_active 取活对象内存值与 meta 的较大者——reader 每行更新
+    内存 last_active 但 sync_meta 只在元数据变更时落盘，纯对话（不改标题
+    不切模型）时 meta 停在上次落盘时刻，列表时间冻结（用户实锤「一直在
+    对话却显示 1 小时前」）。"""
     _meta_load()
     with _sessions_lock:
-        live = {sid: (s.alive, s.busy, s.busy_since) for sid, s in _sessions.items()}
+        live = {sid: (s.alive, s.busy, s.busy_since,
+                      getattr(s, "last_active", 0)) for sid, s in _sessions.items()}
     items = []
     for sid, m in _meta.items():
-        alive, busy, busy_since = live.get(sid, (False, False, None))
+        alive, busy, busy_since, live_la = live.get(sid, (False, False, None, 0))
         if not busy:
             busy_since = None
+        last_active = max(m.get("last_active", 0) or 0, live_la or 0)
         items.append({"sid": sid, "title": m.get("title") or "新会话",
                       "model": m.get("model"), "cwd": m.get("cwd", ""),
                       "permission": m.get("permission") or "auto",
                       "think": m.get("think"),
                       "session_id": m.get("session_id"), "has_history": bool(m.get("session_id")),
-                      "created": m.get("created", 0), "last_active": m.get("last_active", 0),
+                      "created": m.get("created", 0), "last_active": last_active,
                       "alive": alive, "busy": busy, "busy_since": busy_since})
     items.sort(key=lambda x: -x["last_active"])
     return jsonify({"ok": True, "sessions": items})

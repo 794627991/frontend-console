@@ -17,6 +17,7 @@ const _SET_SECTIONS = [
   { id: 'term',  icon: '⌨', name: '终端设置', desc: '字号 / 快捷键映射 / 自动复制' },
   { id: 'appearance', icon: '🎨', name: '外观', desc: '换肤 / 界面缩放' },
   { id: 'api',   icon: '🔑', name: 'API 配置', desc: 'Claude API Token / settings.json' },
+  { id: 'update', icon: '⬆', name: '关于与升级', desc: '版本 / 检查更新 / 升级分发服务' },
   { id: 'reinstall', icon: '♻', name: 'Claude 重装', desc: '重新安装 / 修复状态栏 / 离线包目录' },
   { id: 'data',  icon: '📁', name: '数据目录', desc: '日志 / 笔记 / 缓存的位置与迁移' },
   { id: 'assoc', icon: '🔗', name: '文件关联', desc: '接管/还原 txt 等文本文件的双击打开方式' },
@@ -62,6 +63,7 @@ function _stShowSection(m, sec) {
   const pane = m.querySelector('#stPane');
   if (sec === 'appearance') _stRenderAppearancePane(pane);
   else if (sec === 'api') _stRenderApiPane(pane);
+  else if (sec === 'update') _stRenderUpdatePane(pane);
   else if (sec === 'reinstall') _stRenderReinstallPane(pane);
   else if (sec === 'term') _stRenderTermKeysPane(pane);
   else if (sec === 'data') _stRenderDataPane(pane);
@@ -764,6 +766,135 @@ async function _stRenderApiPane(pane) {
       showBanner(j.ok ? ('已完成：' + (j.notes || []).join('、')) : '恢复失败', 5000, !j.ok);
     } catch(e) { showBanner('恢复失败: ' + e, 4000, true); }
   };
+}
+
+// ---- 关于与升级子页（v2.1.0）：版本显示 / 检查更新 / 一键升级 / 发布机分发服务 ----
+async function _stRenderUpdatePane(pane) {
+  pane.innerHTML = `
+    <div class="dd-body">
+      <div class="dd-cur">
+        <div class="dd-label">当前版本</div>
+        <div class="dd-path" id="upCur">—</div>
+        <div class="dd-sub" id="upSrvState"></div>
+      </div>
+      <div class="dd-form">
+        <div class="dd-label">升级服务器地址（发布者提供）</div>
+        <div class="dd-row">
+          <input type="text" id="upUrl" class="dd-input" spellcheck="false" placeholder="http://发布者内网IP:8765/">
+          <button class="btn ghost" id="upSaveUrl">保存</button>
+          <button class="btn primary" id="upCheck">检查更新</button>
+        </div>
+        <div id="upResult" class="dd-msg"></div>
+      </div>
+      <div class="dd-form">
+        <div class="dd-label">升级分发服务（仅发布者机器开启）</div>
+        <div class="dd-sub" id="upSrvInfo">状态获取中…</div>
+        <div class="dd-actions" style="margin-top:8px;">
+          <button class="btn ghost" id="upSrvToggle">—</button>
+        </div>
+        <div class="dd-sub">开启后本机 8765 端口只读分发 dist/releases/ 下的版本包；首次开启 Windows 防火墙弹窗请允许（勾选专用网络）。把「同事升级地址」发给同事填到他们的这个输入框即可。</div>
+        <div class="dd-row" style="margin-top:10px;">
+          <input type="text" id="upPwd" class="dd-input" spellcheck="false" placeholder="Web 门户登录密码（空=默认 888888）" style="flex:1;">
+          <button class="btn ghost" id="upPwdSave">改密码</button>
+        </div>
+      </div>
+    </div>`;
+  const $p = (id) => pane.querySelector('#' + id);
+
+  // 当前版本 + 地址预填
+  try {
+    const j = await (await fetch('/api/update/state')).json();
+    if (j.ok) { $p('upCur').textContent = 'v' + j.current; $p('upUrl').value = j.url || ''; }
+  } catch(_) {}
+  $p('upSrvState').textContent = '版本号单一来源 src/version.py；升级包经 sha1 校验后自动替换，旧版备份为 .bak 可手动回退。';
+
+  $p('upSaveUrl').onclick = async () => {
+    try {
+      const r = await fetch('/api/update/url', {method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({url: $p('upUrl').value})});
+      const j = await r.json();
+      if (!j.ok) { showBanner(j.err || '保存失败', 3000, true); return; }
+      $p('upUrl').value = j.url;   // 后端规范化（补尾 /）
+      showBanner('升级地址已保存', 2500);
+    } catch(e) { showBanner('保存失败: ' + e, 3000, true); }
+  };
+
+  $p('upCheck').onclick = async () => {
+    const btn = $p('upCheck'), res = $p('upResult');
+    btn.disabled = true; btn.textContent = '检查中…'; res.textContent = '';
+    try {
+      const j = await (await fetch('/api/update/check', {method: 'POST'})).json();
+      if (j.unreachable) {
+        res.innerHTML = '<span style="color:var(--neon-orange);">⚠ 连不上升级服务器（发布者机器可能没开机）</span>';
+      } else if (j.has_update) {
+        const mb = j.size ? ' · ' + (j.size / 1048576).toFixed(1) + ' MB' : '';
+        res.innerHTML = `<div style="margin-bottom:6px;">✨ 发现新版本 <b>v${esc(j.latest)}</b>${mb}${j.date ? ' · ' + esc(j.date) : ''}</div>` +
+          (j.notes ? `<div class="dd-sub" style="max-height:120px;overflow:auto;white-space:pre-wrap;">${esc(j.notes)}</div>` : '') +
+          `<button class="btn primary" id="upApply" style="margin-top:8px;">⬆ 立即升级</button>`;
+        res.querySelector('#upApply').onclick = () => _stDoApply(res);
+      } else if (j.configured) {
+        res.innerHTML = `✅ 已是最新版本（v${esc(j.current)}${j.latest ? '，服务器最新 v' + esc(j.latest) : ''}）`;
+      } else {
+        res.innerHTML = '<span style="color:var(--neon-orange);">⚠ 先填写升级服务器地址</span>';
+      }
+    } catch(e) { res.textContent = '检查失败: ' + e; }
+    btn.disabled = false; btn.textContent = '检查更新';
+  };
+
+  async function _stDoApply(res) {
+    const ok = await _ddConfirm('升级确认', '下载并校验通过后，工具将自动重启完成升级（黑窗一闪属正常）。\n继续？');
+    if (!ok) return;
+    res.innerHTML = '<div class="dd-sub">⬇ 下载并校验中…（内网一般几秒，完成后自动重启）</div>';
+    try {
+      const j = await (await fetch('/api/update/apply', {method: 'POST'})).json();
+      if (!j.ok) { res.innerHTML = '<span style="color:var(--neon-red,var(--neon-orange));">✖ ' + esc(j.err || '升级准备失败') + '</span>'; return; }
+      const j2 = await (await fetch('/api/update/run', {method: 'POST'})).json();
+      if (!j2.ok) res.innerHTML = '<span style="color:var(--neon-red,var(--neon-orange));">✖ ' + esc(j2.err || '启动升级失败') + '</span>';
+      // 成功：本进程即将退出，无需再渲染
+    } catch(e) { res.textContent = '升级失败: ' + e; }
+  }
+
+  // 发布机分发服务状态 + 开关
+  async function _srvRefresh() {
+    try {
+      const j = await (await fetch('/api/update_server/status')).json();
+      if (!j.ok) { $p('upSrvInfo').textContent = '状态获取失败'; return; }
+      const tgl = $p('upSrvToggle');
+      tgl.textContent = j.running ? '■ 停止分发服务' : '▶ 开启分发服务';
+      const ver = j.code_ver ? ` · 代码 v${esc(j.code_ver)}` : '';
+      $p('upSrvInfo').innerHTML = j.running
+        ? `🟢 运行中 · 已发布 <b>${esc(j.published || '（无版本——先跑打包.bat）')}</b>${ver}<br>` +
+          `同事升级地址（发给同事）：<span style="font-family:var(--font-monospace,monospace);user-select:all;">${esc(j.url)}</span>`
+        : `⚪ 未运行 · 分发目录 ${esc(j.dir)}${ver}`;
+    } catch(_) { $p('upSrvInfo').textContent = '状态获取失败'; }
+  }
+  $p('upSrvToggle').onclick = async () => {
+    const tgl = $p('upSrvToggle');
+    tgl.disabled = true;
+    try {
+      const st = await (await fetch('/api/update_server/status')).json();
+      const r = await fetch('/api/update_server/toggle', {method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({enabled: !st.running})});
+      const j = await r.json();
+      if (!j.ok) showBanner(j.err || '操作失败', 4000, true);
+    } catch(e) { showBanner('操作失败: ' + e, 3000, true); }
+    tgl.disabled = false;
+    _srvRefresh();
+  };
+  $p('upPwdSave').onclick = async () => {
+    try {
+      const r = await fetch('/api/update_server/password', {method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({password: $p('upPwd').value})});
+      const j = await r.json();
+      if (!j.ok) { showBanner(j.err || '保存失败', 3000, true); return; }
+      $p('upPwd').value = '';
+      showBanner('门户密码已保存（已登录的浏览器不受影响，新登录用新密码）', 3500);
+    } catch(e) { showBanner('保存失败: ' + e, 3000, true); }
+  };
+  _srvRefresh();
 }
 
 // ---- 数据目录子页：查看当前 → 改目录（校验+预览）→ 迁移（进度+结果）----

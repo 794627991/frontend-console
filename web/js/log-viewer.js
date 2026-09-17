@@ -41,6 +41,8 @@ function _dragOverlayText() {
   const c = activePortId && connections[activePortId];
   const kind = c && c.meta && c.meta.kind;
   if (kind === 'claude') return '<span class="claude-ico"></span> 松开把路径发给 Claude';
+  // v2.2.1：对话 tab 拖入 → 加为对话附件（与 openDroppedFile 分发同步）
+  if (kind === 'harness') return '<span class="claude-ico"></span> 松开添加为 Claude 对话附件';
   if (kind === 'editor' && c.isNote && c.editor) return '📝 松开插入到笔记';
   return '📄 松开以打开文件';
 }

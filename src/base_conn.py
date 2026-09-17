@@ -4,7 +4,7 @@ IO 层（打开/读/写/关闭/重连）由子类实现 _io_* 方法。通用层
 环形 buf、SSE 客户端、日志落盘、行切分入 buf、全屏检测、AI 感知挂载点。
 v0.3.0：终端渲染走前端 xterm.js，后端推 raw 字节流 + 切逻辑行入 buf/日志。
 """
-import os, re, time, threading, codecs
+import os, re, time, threading
 from collections import deque
 from datetime import datetime
 from queue import Queue
@@ -34,8 +34,10 @@ class BaseConnection:
         # 全屏应用（top/htop）期间：buf 不追加逐行，但 raw 流照推
         self.screen_mode = False
         self.screen_last = 0.0
-        # UTF-8 增量解码器：跨 chunk 的多字节字符（中文等）不会被拆成 �
-        self._raw_dec = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        # v2.2.1 智能流式解码缓冲：疑似跨 chunk 的不完整 UTF-8 尾部（见
+        # _smart_decode——替代原 codecs replace 增量解码器，二进制流不再
+        # 把 ASCII 卷进替换字符）
+        self._dec_buf = b""
         # IO 句柄（子类在 _io_open 中设置）
         self._io_handle = None
         # 重连节奏控制：首次异常报原因，失败退避 3s 起指数翻倍至 60s；
@@ -47,6 +49,7 @@ class BaseConnection:
         self._reconn_inflight = False
 
     # ---- IO 层：子类实现 ----
+    # （_smart_decode 为模块级函数，见文件尾）
     def _io_open(self):
         """打开连接，设置 self._io_handle。子类实现。"""
         raise NotImplementedError
@@ -194,9 +197,12 @@ class BaseConnection:
             raise
 
     def _reader_loop(self):
-        """通用读循环：取字节 → 全屏检测 → 推 raw → 切行入 buf/日志。
-        IO 层由 _io_read_chunk 提供；异常由 _io_reconnect 处理。"""
-        partial = b""   # 尚未遇到 \n 的字节累积（行缓冲）
+        """通用读循环：取字节 → 全屏检测 → 解码 → 推 raw → 切行入 buf/日志。
+        IO 层由 _io_read_chunk 提供；异常由 _io_reconnect 处理。
+        v2.2.1：解码改走 _smart_decode（ASCII 永不被吞、非法高位字节输出
+        '.'），行缓冲随之为字符级——cat 二进制分区（如 /dev/part/env 的
+        GBK 内容）不再整屏 � 且 ASCII 全可见（用户实锤）。"""
+        partial = ""   # 尚未遇到 \n 的字符累积（行缓冲，已解码）
         while self.alive:
             try:
                 chunk = self._io_read_chunk()
@@ -215,29 +221,30 @@ class BaseConnection:
                         elif (time.time() - self.screen_last) > 12:
                             self.screen_mode = False
                             self._emit_screen_control("exit")
-                    # ---- 推 raw 给前端 xterm + 切分入 buf/日志 ----
-                    self._push_raw(self._raw_dec.decode(chunk))
-                    partial += chunk
+                    # ---- 解码一次，raw 流与行缓冲共用（同源一致）----
+                    text, self._dec_buf = _smart_decode(self._dec_buf, chunk)
+                    self._push_raw(text)
+                    partial += text
                     if len(partial) > 65536:
-                        self.append_line(partial.decode("utf-8", errors="replace"))
-                        partial = b""
-                    while b"\n" in partial:
-                        line, partial = partial.split(b"\n", 1)
-                        if line.endswith(b"\r"): line = line[:-1]
-                        if b"\r" in line: line = line.rsplit(b"\r", 1)[-1]
-                        self.append_line(line.decode("utf-8", errors="replace"))
-                    while b"\r" in partial:
-                        idx = partial.rfind(b"\r")
+                        self.append_line(partial)
+                        partial = ""
+                    while "\n" in partial:
+                        line, partial = partial.split("\n", 1)
+                        if line.endswith("\r"): line = line[:-1]
+                        if "\r" in line: line = line.rsplit("\r", 1)[-1]
+                        self.append_line(line)
+                    while "\r" in partial:
+                        idx = partial.rfind("\r")
                         if idx == len(partial) - 1:
                             break
                         # \r 前的内容（进度条覆盖的旧行）也保留，\r 后的是新内容
                         before = partial[:idx]
                         after = partial[idx+1:]
                         if before:
-                            self.append_line(before.decode("utf-8", errors="replace"))
+                            self.append_line(before)
                         if after:
-                            self.append_line(after.decode("utf-8", errors="replace"))
-                        partial = b""
+                            self.append_line(after)
+                        partial = ""
                 else:
                     if self.screen_mode and (time.time() - self.screen_last) > 12:
                         self.screen_mode = False
@@ -393,3 +400,43 @@ class BaseConnection:
             if self.log_fp:
                 try: self.log_fp.close()
                 except Exception: pass
+
+
+# ---------------------------------------------------------------------------
+# v2.2.1 智能流式解码：UTF-8 优先、逐字节兜底（用户定调「能显示的 ASCII 全显示」）
+# 替代 codecs utf-8 errors=replace 增量解码：后者遇 GBK 等非 UTF-8 流整屏
+# U+FFFD，且 0xC2+ 起始字节会把后续 ASCII 卷进替换序列吞掉。规则：
+# - ASCII（含 \r\n\t/ESC 等控制字符）逐字节透传——xterm/日志链原有行为不变
+# - 合法 UTF-8 多字节序列（中文等）整段解码原样输出
+# - 非法/孤立高位字节输出 '.'（可见占位，hexdump 观感）；尾部疑似跨 chunk
+#   的不完整序列留缓冲下轮续（上限 8 字节，防乱码流死攒）
+# ---------------------------------------------------------------------------
+def _smart_decode(buf, chunk):
+    """buf=上轮遗留尾部字节，chunk=本轮新字节。返回 (text, rest)。"""
+    data = buf + chunk
+    out = []
+    i, n = 0, len(data)
+    while i < n:
+        b = data[i]
+        if b < 0x80:
+            out.append(chr(b))
+            i += 1
+            continue
+        ln = 2 if b <= 0xDF else 3 if b <= 0xEF else 4 if b <= 0xF7 else 0
+        if ln == 0:
+            out.append(".")     # 0x80-0xBF 孤立续字节 / 0xF8+ 非法起始
+            i += 1
+            continue
+        if i + ln > n:
+            rest = data[i:]
+            if len(rest) > 8:   # 攒超 8B 仍不完整=乱码流，可见化清空
+                out.append("." * len(rest))
+                return "".join(out), b""
+            return "".join(out), rest
+        try:
+            out.append(data[i:i + ln].decode("utf-8"))
+            i += ln
+        except UnicodeDecodeError:   # overlong/非法序列（0xC0 0xC1 0xF5-0xF7 等）
+            out.append(".")
+            i += 1
+    return "".join(out), b""

@@ -1,7 +1,7 @@
 ﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-前端控制台 v2.0.0 —— 桌面应用入口
+前端控制台 v2.2.0 —— 桌面应用入口
 - pywebview 渲染前端（系统 WebView2，无需浏览器）
 - 内嵌 Flask 后端（多串口管理 + AI 接入层）
 - 无控制台黑框：用 pythonw.exe 或 PyInstaller --windowed
@@ -14,6 +14,9 @@ import urllib.request
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
+
+# v2.1.0：版本单一源（窗口标题/单实例匹配/升级比对统一从这取）
+from src.version import APP_VERSION
 
 # ---- 单实例锁 ----
 import ctypes
@@ -109,7 +112,8 @@ def find_and_focus_existing_window():
         user32.SetForegroundWindow.restype = ctypes.c_bool
         user32.EnumWindows.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
         user32.EnumWindows.restype = ctypes.c_bool
-        target = "前端控制台 v2.0.0"
+        # 前缀匹配而非全名：版本号升级后新进程仍能唤出旧版残留实例
+        target = "前端控制台 v"
         found = []
         # 回调签名: BOOL CALLBACK EnumWindowsProc(HWND, LPARAM)，HWND 用 c_void_p 承接 64 位句柄
         @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
@@ -580,7 +584,7 @@ def main():
     # maximized：--open-file 冷启动直接以最大化开局（原生初始态，不靠回调时机）。
     # 双击关联文件=全屏看文件（用户需求）；普通快捷方式启动维持 1280×820。
     window = webview.create_window(
-        title="前端控制台 v2.0.0",
+        title="前端控制台 v%s" % APP_VERSION,
         url=f"http://127.0.0.1:{port}/",
         width=1280,
         height=820,
@@ -600,6 +604,8 @@ def main():
     # 隐藏/建托盘/弹提示全部挪后台线程（window 方法线程安全，内部 marshal）。
     _real_quit = {"flag": False}   # 托盘退出置位后放行下一次 closing
     _prompt_session = {"shown": False}   # 进程内弹过提示（进程生命周期只弹一次）
+    # v2.1.0：升级重启要跨模块触发真退出——挂模块级（updater._request_quit 用）
+    main._real_quit = _real_quit
 
     def _do_real_cleanup():
         from src.server import close_all_ports
@@ -765,6 +771,20 @@ def main():
             except Exception:
                 _sh.copytree(old_cache, new_cache, dirs_exist_ok=True)
                 _sh.rmtree(old_cache, ignore_errors=True)
+    except Exception:
+        pass
+    # 启动期按开关拉起升级分发服务（v2.1.0）：发布机 config
+    # update_server_enabled=true 时后台起 8765 静态服务（同事升级源）。
+    # daemon 线程随主进程走；失败静默（目录没建/端口占用）——设置页
+    # 手动开时才把错误亮出来。
+    try:
+        from src.app_state import CONFIG_FILE
+        import json as _json2
+        with open(CONFIG_FILE, encoding="utf-8") as _f:
+            _cfg = _json2.load(_f)
+        if _cfg.get("update_server_enabled"):
+            from src import update_server
+            update_server.start()
     except Exception:
         pass
     webview.start(debug=False, private_mode=False,

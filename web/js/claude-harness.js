@@ -2714,6 +2714,13 @@ function buildClaudeHarnessTab(opts = {}) {
         </div>
       </div>`;}).join('') || '<div class="hg-list-empty">暂无会话</div>';
   }
+  // v2.2.1：相对时间随钟表 tick 且对话中实时刷新（用户实锤：对话进行中
+  // 列表仍定格旧时间——refreshSessions 只在回复结束才拉，60s 只重渲旧数据
+  // 没用）。这里 60s 真拉一次列表（一个轻 GET）：对话中的会话时间滚动到
+  // 「1分钟前/刚刚」，活跃会话按 last_active 排到最前。
+  setInterval(() => {
+    refreshSessions();
+  }, 60000);
   listEl.addEventListener('click', async (e) => {
     const act = e.target.closest('[data-act]');
     if (act) {
@@ -3376,6 +3383,33 @@ function buildClaudeHarnessTab(opts = {}) {
     const fs = [...(e.clipboardData?.files || [])].filter(f => f && f.size);
     if (fs.length) { e.preventDefault(); uploadFiles(fs); }
   });
+  // v2.2.1：按磁盘路径直接加附件（拖拽进对话 tab 的文件走这——文件已在盘上，
+  // 无需上传复制，Claude 直接 Read 原路径）。图片限 20MB（防撑爆上下文），
+  // 其他类型不限（大日志让 Claude 自己 Read 更合理）。
+  window.harnessAddFilesByPath = async (paths) => {
+    let added = 0;
+    for (const p of (paths || [])) {
+      const name = String(p).split(/[\\/]/).pop() || 'file';
+      const isImg = _HARNESS_IMG_EXT.test(name);
+      if (isImg) {
+        try {
+          const j = await (await fetch('/api/file_info', {method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({path: p})})).json();
+          if (j.ok && j.size > 20 * 1024 * 1024) {
+            showBanner(`「${name}」超过 20MB，跳过`, 3000, true); continue;
+          }
+        } catch(_) {}
+      }
+      _HG.atts.push({name, path: p, size: 0, isImg});
+      added++;
+    }
+    if (added) {
+      renderAtts();
+      showBanner(added === 1 ? '已加为对话附件（发送时随消息带上）' : `已加 ${added} 个附件`, 2500);
+      input.focus();
+    }
+  };
 
   // ==================== popover（技能/模型）====================
   function closePop() {
