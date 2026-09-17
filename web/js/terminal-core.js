@@ -200,6 +200,13 @@ function buildTerminal(portId, meta) {
       _pasteToConn(conn);
       return false;  // 阻止 xterm 默认行为
     }
+    // v2.27.16：Shift+Insert 粘贴也接统一通道（xterm 原生 paste 已被拦截，
+    // 不接管它就彻底失效）
+    if (e.shiftKey && !e.ctrlKey && !e.altKey && e.key === 'Insert') {
+      if (e.repeat) return false;
+      _pasteToConn(conn);
+      return false;
+    }
     if (e.ctrlKey && (e.key === 'f' || e.key === 'F')) {
       toggleTermSearchPane(conn, true);
       conn.termSearchInput.focus(); conn.termSearchInput.select();
@@ -277,6 +284,12 @@ function buildTerminal(portId, meta) {
   }, {capture: true, passive: false});
 
   // ---- xterm 输入 → 串口 ----
+  // v2.27.16：拦掉 xterm 的原生 paste 事件——Ctrl+V 已由 attachCustomKeyEventHandler
+  // 走 _pasteToConn（Win32 剪贴板，免 WebView2 权限弹窗）。此前 keydown 拦截未
+  // preventDefault，浏览器仍向 xterm textarea 派发 paste → onData 又发一遍 →
+  // 一次粘贴内容出现两遍（两份同进 8ms 微批，黏着发出，用户实锤）。拦截后
+  // 粘贴只剩单通道。
+  conn.xtermWrap.addEventListener('paste', e => { e.preventDefault(); e.stopImmediatePropagation(); }, { capture: true });
   conn.term.onData(data => {
     if (conn.paused) return;
     // claude 空闲翻页中开始打字：立刻跳回底部——全翻模式下输入框画在缓冲区
