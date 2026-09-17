@@ -1225,8 +1225,16 @@ class HarnessSession:
         if not self.title and text:
             self.title = re_title(text)
             self.sync_meta()
-        self.emit({"kind": "user_echo", "text": text or "",
-                   "images": list(image_paths or []), "files": list(file_paths or [])})
+        # v2.27.23：超窗续命的 [系统] 历史注入不推原文——几十万 token 刷满
+        # 消息流（用户定调"后台化"）。改推 renew 分割线事件，前端一行带过。
+        if (text or "").lstrip().startswith("[系统] 上一会话上下文已超当前模型窗口"):
+            rounds = sum(1 for _ln in text.splitlines()
+                         if _ln.startswith(("用户：", "助手：")))
+            self.emit({"kind": "renew",
+                       "text": "上下文超窗，已自动重开会话（%d 轮历史已后台迁移）" % rounds})
+        else:
+            self.emit({"kind": "user_echo", "text": text or "",
+                       "images": list(image_paths or []), "files": list(file_paths or [])})
         return True, None
 
     def interrupt(self):
@@ -1692,6 +1700,17 @@ def transcript_for(s):
                                 continue
                             # harness 通道从 stdin 注入，promptSource 是 "sdk"（不是 typed）；
                             # 排除标准是"非用户输入"（工具注入 default）——命令噪音由 _SKIP_RE 挡
+                            # v2.27.23：超窗续命的 [系统] 历史注入不进气泡流——
+                            # 用户定调"后台化，别让我看到"：几十万 token 的历史主干
+                            # 刷满整屏。折叠成一行 renew 分割线，记忆在新会话上下文
+                            # 里完整保留（注入真实发生），只是 UI 不渲染原文。
+                            if t.lstrip().startswith("[系统] 上一会话上下文已超当前模型窗口"):
+                                rounds = sum(1 for _ln in t.splitlines()
+                                             if _ln.startswith(("用户：", "助手：")))
+                                lines.append({"role": "renew",
+                                              "text": "上下文超窗，已自动重开会话（%d 轮历史已后台迁移）" % rounds,
+                                              "ts": o.get("timestamp") or ""})
+                                continue
                             ps_ok = (o.get("promptSource") in (None, "typed", "sdk")) or \
                                 (o.get("origin") or {}).get("kind") == "human"
                             if t and ps_ok and not _SKIP_RE.match(t.strip()):

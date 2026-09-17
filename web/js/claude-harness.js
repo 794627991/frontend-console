@@ -1115,6 +1115,12 @@ function buildClaudeHarnessTab(opts = {}) {
     addRow(d);
     scrollBottom();
   }
+  // v2.27.23：超窗续命分割线——[系统] 历史注入后台化的可见标记（一行带过）
+  function renderRenew(text) {
+    const d = document.createElement('div'); d.className = 'h-switch hg-renew';
+    d.innerHTML = '<span></span><i>♻️ ' + esc(text) + '</i><span></span>';
+    addRow(d);
+  }
   // v2.27.3：识图/跨会话协作的过程可见性（用户定调：全程要有反馈）——
   // 转交 = 分割线；回传 = 专属气泡。原实现回传内容直接被丢弃（user 事件
   // 只处理 tool_result），结论"凭空消失"，只有主会话转述才可见。
@@ -1219,6 +1225,9 @@ function buildClaudeHarnessTab(opts = {}) {
   function renderHistLine(l, hi) {
     if (l.role === 'peer') {          // v2.27.3：跨会话回传（识图结论）历史回看
       renderPeer(l.name, l.text);
+    }
+    else if (l.role === 'renew') {    // v2.27.23：超窗续命注入折叠为一行分割线
+      renderRenew(l.text);
     }
     else if (l.role === 'user') {
       const imgs = (l.files || []).filter(p => _HARNESS_IMG_EXT.test(p));
@@ -2015,6 +2024,7 @@ function buildClaudeHarnessTab(opts = {}) {
       }
       else if (it.kind === 'event') handleEvent(it.data);
       else if (it.kind === 'peer') { grpFinalize(true); renderPeer(it.name, it.text); }
+      else if (it.kind === 'renew') { grpFinalize(true); renderRenew(it.text); }
       else if (it.kind === 'raw') renderRaw(it.text);
       else if (it.kind === 'ask') { grpFinalize(true); askRender(it); }
       else if (it.kind === 'ask_done') askDone(it);
