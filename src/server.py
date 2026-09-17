@@ -241,6 +241,26 @@ def start_background():
     except Exception as e:
         import logging
         logging.getLogger("claude_proxy").warning("proxy_module_init 失败: %s", e)
+    # v2.2.2：机器人重启自恢复——登录凭据持久在 session 文件，重启后状态
+    # 接口照报「已登录」，但 ensure_started 只在登录那一刻被调，bot 不会跟
+    # 着复活（同事机实锤：登录成功机器人注册出来，重启工具后「未运行」且
+    # 平台侧永远离线）。有凭据就后台拉起，幂等且失败只记日志不弹窗。
+    def _bot_restore():
+        time.sleep(8)   # 让端口/网络就绪，避开启动高峰
+        try:
+            from src import hiklink_bot as hb
+            d = hb._load_session_file()
+            if d.get("uid") and d.get("password"):
+                ok, msg = hb.ensure_started()
+                import logging
+                logging.getLogger("hiklink_bot").info(
+                    "启动自恢复机器人: %s (%s)", "成功" if ok else "失败", msg)
+        except Exception as e:
+            import logging
+            logging.getLogger("hiklink_bot").warning(
+                "启动自恢复机器人异常: %s", e)
+    threading.Thread(target=_bot_restore, daemon=True,
+                     name="hiklink-bot-restore").start()
 
 # ============================================================
 # Flask 路由
