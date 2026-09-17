@@ -68,34 +68,46 @@ function gotoSearchMark(idx) {
 // 走 pywebview js_api 的 Win32 读剪贴板，绕开 navigator.clipboard.readText
 // 首次触发的 WebView2「允许粘贴吗」权限弹窗。
 async function _pasteToConn(conn, notify) {
+  // v2.27.15：进行中锁——读剪贴板是异步的，锁内重复触发（连击/自动重复/
+  // 多入口同时点）直接忽略，防止同一段内容叠发多遍（用户实锤偶发重复粘贴）
+  if (conn._pasting) return;
+  conn._pasting = true;
+  const done = () => { conn._pasting = false; };
   const doPaste = async (text) => {
-    if (!text) { if (notify) showBanner('剪贴板为空'); return; }
-    if (connections[conn.portId] !== conn) return;
-    // 多行粘贴警告（Tabby 同款防误操作）：>1 行或超 500 字符需确认，
-    // 防止误把配置文件/脚本整段灌进设备破坏现场
-    const lines = text.split(/\r?\n/);
-    if (lines.length > 1 || text.length > 500) {
-      const preview = text.length > 60 ? text.slice(0, 60) + '…' : text;
-      const desc = lines.length > 1
-        ? `即将粘贴 ${lines.length} 行 / ${text.length} 字符（首行: ${preview.replace(/\n/g, ' ⏎ ')}）`
-        : `即将粘贴 ${text.length} 字符（${preview}）`;
-      if (!(await _edConfirm(desc + '\n\n确定粘贴到终端？'))) {
-        if (notify) showBanner('已取消粘贴');
-        return;
+    try {
+      if (!text) { if (notify) showBanner('剪贴板为空'); return; }
+      if (connections[conn.portId] !== conn) return;
+      // 多行粘贴警告（Tabby 同款防误操作）：>1 行或超 500 字符需确认，
+      // 防止误把配置文件/脚本整段灌进设备破坏现场
+      const lines = text.split(/\r?\n/);
+      if (lines.length > 1 || text.length > 500) {
+        const preview = text.length > 60 ? text.slice(0, 60) + '…' : text;
+        const desc = lines.length > 1
+          ? `即将粘贴 ${lines.length} 行 / ${text.length} 字符（首行: ${preview.replace(/\n/g, ' ⏎ ')}）`
+          : `即将粘贴 ${text.length} 字符（${preview}）`;
+        if (!(await _edConfirm(desc + '\n\n确定粘贴到终端？'))) {
+          if (notify) showBanner('已取消粘贴');
+          return;
+        }
       }
+      const bytes = Array.from(new TextEncoder().encode(text));
+      termSendRaw(conn.portId, bytes);
+      if (notify) showBanner('已粘贴 ' + text.length + ' 字符');
+    } finally {
+      done();
     }
-    const bytes = Array.from(new TextEncoder().encode(text));
-    termSendRaw(conn.portId, bytes);
-    if (notify) showBanner('已粘贴 ' + text.length + ' 字符');
   };
-  if (window.pywebview && pywebview.api && pywebview.api.read_clipboard) {
-    pywebview.api.read_clipboard().then(doPaste).catch(() => {
-      if (notify) showBanner('读取剪贴板失败');
-    });
-  } else {
-    // pywebview bridge 未就绪（页面加载早期）时兜底走 Web API
-    navigator.clipboard.readText().then(doPaste).catch(() => {});
-  }
+  try {
+    if (window.pywebview && pywebview.api && pywebview.api.read_clipboard) {
+      pywebview.api.read_clipboard().then(doPaste).catch(() => {
+        done();
+        if (notify) showBanner('读取剪贴板失败');
+      });
+    } else {
+      // pywebview bridge 未就绪（页面加载早期）时兜底走 Web API
+      navigator.clipboard.readText().then(doPaste).catch(() => { done(); });
+    }
+  } catch (e) { done(); }
 }
 const _ctxMenu = () => $('ctxMenu');
 function showCtxMenu(x, y, conn) {

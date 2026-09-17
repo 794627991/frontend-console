@@ -192,6 +192,10 @@ function buildTerminal(portId, meta) {
       if (sel) { try { navigator.clipboard.writeText(sel); } catch(_){} return false; }
     }
     if (e.ctrlKey && (e.key === 'v' || e.key === 'V')) {
+      // v2.27.15：吞掉按键自动重复（e.repeat）——按住 Ctrl+V 稍久 OS 会重报
+      // keydown，旧实现每次都触发一次粘贴 → 内容发两遍（用户实锤偶发重复）。
+      // _pasteToConn 内另有进行中锁，双保险。
+      if (e.repeat) return false;
       // 异步读剪贴板（原生 Win32，无 WebView2 权限弹窗），拿到文本后编码为字节发给串口
       _pasteToConn(conn);
       return false;  // 阻止 xterm 默认行为
