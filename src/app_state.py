@@ -19,24 +19,28 @@ HOME_DIR = os.path.join(os.path.expanduser("~"), ".serialconsole_pro")
 CONFIG_FILE = os.path.join(HOME_DIR, "config.json")
 
 def _default_data_dir():
-    """数据目录（日志/笔记/缓存）默认值（用户口径修正：数据跟工具目录走）。
-    默认 = 工具所在目录\\data（源码运行=项目根\\data，exe=exe 旁\\data）——
-    备份工具目录即备份全部数据。仅当工具目录不可写时才退 C 盘用户目录。
-    实际生效值可被 config.json 的 data_dir 覆盖（设置界面可改+迁移）。"""
+    """数据目录（日志/笔记/缓存）默认值。用户定调（v2.2.2）：
+    - 未指定路径 → 统一在工具目录下建英文名文件夹 data（源码=项目根\\data，
+      exe=exe 旁\\data），所有数据都进这里，备份工具目录即备份全部数据
+    - 不允许临时目录——工具目录不可写时不偷偷落到别处（凭据会散落两处，
+      同事机实锤踩坑），保持指向工具目录并记录告警：登录等写盘操作会
+      显式报错，引导用户把工具挪到可写目录
+    - 实际生效值可被 config.json 的 data_dir 覆盖（设置界面可改+迁移），
+      迁移后以迁移的为准"""
     cand = os.path.join(BASE_DIR, "data")
     try:
         os.makedirs(cand, exist_ok=True)
-        # v2.2.2：真实写测试替代 os.access——W_OK 在受控目录/网络盘上会
-        # 误报可写（同事机实锤：exe 放受保护目录，data 判可写但写文件
-        # 全失败→凭据/机器人配置落不了盘，每次重启都要重新登录）
+        # 真实写测试替代 os.access——W_OK 在受控目录/网络盘上会误报可写
         probe = os.path.join(cand, ".wprobe")
         with open(probe, "w") as f:
             f.write("ok")
         os.remove(probe)
-        return cand
-    except Exception:
-        pass
-    return os.path.join(HOME_DIR, "data")   # 兜底（工具目录只读等罕见场景）
+    except Exception as e:
+        import logging
+        logging.getLogger("app_state").error(
+            "数据目录不可写：%s（%s）——请把工具移到可写目录后重启，"
+            "登录/凭据等写盘操作将失败", cand, e)
+    return cand
 
 def _load_home_config():
     try:
@@ -47,11 +51,16 @@ def _load_home_config():
 
 _HOME_CFG = _load_home_config()
 # 数据目录：config 的 data_dir > 默认值（config 里旧的 log_dir 是单独日志目录，继续生效）
+# v2.2.2 用户定调：迁移/指定过的 data_dir 以它为准；默认=工具目录\data。
+# makedirs 失败不换临时目录（同 _default_data_dir 口径），保持指向并让
+# 写盘操作显式报错
 DATA_DIR = _HOME_CFG.get("data_dir") or _default_data_dir()
 try:
     os.makedirs(DATA_DIR, exist_ok=True)
-except Exception:
-    DATA_DIR = os.path.join(HOME_DIR, "data")
+except Exception as e:
+    import logging
+    logging.getLogger("app_state").error(
+        "数据目录创建失败：%s（%s）——请检查路径权限", DATA_DIR, e)
 STATE_DIR = DATA_DIR   # 兼容旧代码引用：STATE_DIR 语义=数据目录（endpoint 写入仍用 HOME_DIR）
 
 # 日志目录：config 旧 log_dir（老用户自定义过）> 数据目录/logs
