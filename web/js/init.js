@@ -17,6 +17,7 @@ refreshGlobalStatus();
 connectAiSSE();
 refreshMcpInfo();
 loadRecentList();  // 最近打开列表（SSH/串口/文件 快捷重开）
+if (typeof monacoWarmup === 'function') monacoWarmup();  // v2.2.2：空闲预热编辑器引擎，首开文件不再数秒白屏
 
 // 自依赖提醒（每启动一次，直到用户用离线包补装）：缺哪个库 → 哪些功能不可用。
 // 后端标记写过后 /api/deps_status 直接 ok——正常机器零打扰。

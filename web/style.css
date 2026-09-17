@@ -2927,3 +2927,12 @@ html[data-theme="sage"], html[data-theme="sky"] {
   color-mix(in srgb, #e5484d 45%, var(--border)); border-radius: 6px; cursor: pointer;
   color: #e5484d; }
 .hg-login-pop .hg-pop-logout:hover { background: color-mix(in srgb, #e5484d 14%, transparent); }
+
+/* v2.2.2：Monaco 引擎加载占位（exe 慢机首开数秒，空容器像白屏） */
+.monaco-loading {
+  position: absolute; inset: 0; z-index: 5;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--tx-dim, #8b93a7); font-size: 13px;
+  background: var(--bg-panel, #14171f);
+  pointer-events: none;
+}

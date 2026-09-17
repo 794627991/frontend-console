@@ -104,8 +104,19 @@ function monacoSyncTheme() {
 // ---- 创建编辑器实例（editor.js 调用入口）----
 // holder: 容器 div；返回 monaco editor 实例（调用方存 conn.monaco）
 async function monacoCreate(holder, value, langName) {
-  const monaco = await monacoInit();
-  const ed = monaco.editor.create(holder, {
+  // v2.2.2：引擎未就绪时的加载占位——exe(onefile) 下资源从 TEMP 解压目录
+  // 读，慢机器首开引擎要数秒，空容器看着像白屏（同事机实锤「白屏、切一下
+  // 别处才刷出来」）。占位条明示加载中，加载完自动移除
+  let ph = null;
+  if (!window.monaco) {
+    ph = document.createElement('div');
+    ph.className = 'monaco-loading';
+    ph.textContent = '编辑器引擎加载中…（首次打开稍慢）';
+    holder.appendChild(ph);
+  }
+  try {
+    const monaco = await monacoInit();
+    const ed = monaco.editor.create(holder, {
     value: typeof value === 'string' ? value : '',
     language: monacoLangFor(langName),
     theme: _monacoThemeName(),
@@ -125,5 +136,16 @@ async function monacoCreate(holder, value, langName) {
     scrollbar: { verticalScrollbarSize: 10, horizontalScrollbarSize: 10 },
     padding: { top: 8, bottom: 60 },
   });
-  return ed;
+    return ed;
+  } finally {
+    if (ph) ph.remove();
+  }
+}
+
+// v2.2.2：空闲预热——启动稳定后后台把引擎拉好，用户首次打开文件秒出
+// （不做启动即拉：不抢首屏资源；exe 下 loader+editor.main 合计几 MB，
+// 一次预热后浏览器缓存/内存常驻，后续会话零等待）
+function monacoWarmup() {
+  const idle = window.requestIdleCallback || (cb => setTimeout(cb, 4000));
+  idle(() => { try { monacoInit().catch(() => {}); } catch (_) {} }, { timeout: 15000 });
 }
