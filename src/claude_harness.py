@@ -20,7 +20,7 @@ v2（微信式改造）新增：
 铁律约束：不动 claude_conn/claude_sessions/claude_setup/claude_default；
 不落盘工具日志（Claude 自写 ~/.claude/projects 转写）。
 """
-import os, json, base64, re, sys, subprocess, threading, time, uuid
+import os, json, base64, re, sys, subprocess, threading, time, uuid, hashlib
 from queue import Queue, Empty
 
 from flask import Blueprint, request, jsonify, Response, send_from_directory
@@ -367,6 +367,13 @@ def _model_vision_mode(name):
     return None
 
 
+def _bridge_fp(model):
+    """识图引导词指纹（send 前热更检测用）：内容含三态判定结果，代码升级
+    / mm_mcp 名单调整 / vision 开关都会改变指纹。未启用时空串（有→无也
+    构成变化，同样触发重启换新）。"""
+    return hashlib.md5(vision_bridge_text(model).encode("utf-8")).hexdigest()
+
+
 def vision_bridge_text(model=None):
     """生成注入每个主会话的识图引导段（识图未启用则空串）。
 
@@ -394,12 +401,13 @@ def vision_bridge_text(model=None):
             "【识图说明（MCP 通道）】\n"
             "本会话模型自身看不了图片，但可以调识图 MCP 完成看图，不要转交"
             "其他会话：\n"
-            "1. 先用 Read 工具读图片路径——返回里有一条 CDN 图片链接"
-            "（https://maas-log-prod...png?...），把它取出来。\n"
+            "1. 用户消息里的图片附件自带 CDN 图片链接"
+            "（https://maas-log-prod...png?...），直接取用；没有链接时先用 "
+            "Read 工具读图片路径，从返回里把链接取出来。\n"
             "2. 调用 mcp__4_5v_mcp__analyze_image 工具：imageSource=该链接，"
             "prompt=你想从图里知道的问题（要求结论先行、给坐标参考）。\n"
             "3. 用它返回的结论回答用户，不要自己编造图片内容。\n"
-            "多张图逐张处理。MCP 调用失败时再按转交流程交给识图会话。"
+            "多张图逐张处理。MCP 调用失败时再按转交流程交给识图会话保底。"
         )
     name = cfg["name"]
     return (
@@ -821,12 +829,16 @@ class HarnessSession:
     kind = "harness"
 
     def __init__(self, sid, cwd=None, model=None, session_id=None, title="", name=None,
-                 permission=None, think=None):
+                 permission=None, think=None, lineage=None):
         self.sid = sid
         self.port_id = "harness:" + sid[:8]
         self.cwd = cwd or os.path.expanduser("~")
         self.model = model or None
         self.session_id = session_id or None    # claude 侧真实会话 id（复活用）
+        # v2.27.18 血统链（用户铁律：续命/重开可以，历史回放不能丢）：
+        # 超窗续命等场景换过的新会话 session_id 依序记录。transcript_for
+        # 按链把新旧 jsonl 串起来渲染——用户视角回放永远完整。
+        self.lineage = list(lineage) if lineage else []
         self.title = title or ""
         self.name = name or None    # --name：peer 网络里别人按它寻址
         # v2.20：权限模式（auto=现状自动执行；confirm=写操作前 ask_user 确认）
@@ -843,6 +855,18 @@ class HarnessSession:
         self.alive = False
         self.busy = False
         self.busy_since = None   # 本轮处理计时起点 ms（busy 时有效，供前端恢复计时）
+        self.bridge_fp = None    # 注入时的识图引导词指纹（send 前热更检测，见 start()）
+        self.renewed_at = 0      # v2.27.15：最近一次超窗续命的事件位点（HikLink 等待基准用）
+        # v2.27.21：CLI 实报模型名（assistant 事件 message.model）。引导词/
+        # 窗口判定以它为准——settings 默认名（如 glm-5.3-flash[1M]）与实跑名
+        # （glm-5.3）会错位，三态分类按 settings 名算会把 MCP 类模型判成
+        # inline/转交（用户实锤：切方案后仍转交识图会话，白等 7m44s）
+        self.live_model = None
+        # v2.27.20：peer 回传扫描态。_tr_sid 记路径归属的 session_id（续命/
+        # resume 换代后旧路径作废重找）；_tr_lock 防 reader 线程与回传兜底
+        # 轮询线程并发扫同一文件（偏移竞争会重复 emit peer 气泡）
+        self._tr_sid = None
+        self._tr_lock = threading.Lock()
         # v2.17 交互式提问：MCP 工具调用发起的待答问题
         #   {req_id, title, questions, answer, done, ts}
         self.ask = None
@@ -865,6 +889,7 @@ class HarnessSession:
     def to_meta(self):
         return {"sid": self.sid, "title": self.title, "model": self.model,
                 "cwd": self.cwd, "session_id": self.session_id,
+                "lineage": self.lineage, "live_model": self.live_model,
                 "name": self.name,
                 "permission": self.permission, "think": self.think,
                 "created": self.created, "last_active": self.last_active}
@@ -907,16 +932,23 @@ class HarnessSession:
         # 识图转交引导（主会话默认不知道有识图同伴，必须显式告知）。
         if self.is_vision:
             sys_prompt = (_vision_load().get("prompt") or "").strip()
+            self.bridge_fp = None   # 识图会话自身不参与引导词热更
         else:
             # v2.20：model=None 的会话实际跑 settings 默认模型——多模态判定
             # 必须按实际模型来，否则默认多模态模型也被教去转交识图会话
-            eff_model = self.model or available_models().get("default")
+            # v2.27.21：实报名（live_model）优先——revive 换词重启时按真实
+            # 在跑模型注入（settings 名与实报名错位是转交 bug 的真根因）
+            eff_model = self._eff_model()
             parts = [_collect_system_prompt(self.cwd),
                      vision_bridge_text(eff_model),
                      ask_bridge_text()]
             if self.permission == "confirm":
                 parts.append(confirm_bridge_text())
             sys_prompt = "\n\n".join(p for p in parts if p)
+            # v2.27.13：记注入时的引导词指纹——系统提示是进程启动参数，
+            # 活会话不会因代码升级/名单调整换新词（用户实锤：MCP 类模型
+            # 揣着旧「转交版」绕识图会话白等 1m20s）。send 前对指纹热更。
+            self.bridge_fp = _bridge_fp(eff_model)
         if sys_prompt:
             argv += ["--append-system-prompt", sys_prompt]
         if self.name:
@@ -1000,9 +1032,125 @@ class HarnessSession:
             return False
 
     # ---- 输入 ----
+    def _is_remote_bot_session(self):
+        """本会话是否 HikLink 小助手专属会话（远程通道，无人在场）。
+        判定：hiklink 单例记着的 harness sid 就是本会话（controller 在但
+        sid 对不上=GUI 会话，不能静默换会话）。"""
+        try:
+            from src import hiklink_bot as hb
+            ctl = hb._controller
+            return bool(ctl and ctl._sid and ctl._sid == self.sid)
+        except Exception:
+            return False
+
+    def _eff_model(self):
+        """v2.27.21：有效模型名——CLI 实报（live_model）优先于会话 model
+        优先于 settings 默认。识图三态/上下文窗口判定统一走这里：实报名
+        才是真正在跑的模型（settings 名经网关映射后可能完全不同，实测
+        flash 名义 inline vs 实跑 glm-5.3 应为 mcp，错位导致错误引导词）。"""
+        return self.live_model or self.model or available_models().get("default")
+
+    def _autorenew_on_overflow(self, text, image_paths, file_paths,
+                               used, mwin, eff_model):
+        """超窗自动续命（v2.27.15，仅小助手这类远程无人在场会话）。
+        旧会话上下文已超当前模型窗口（切 API 方案模型变小所致）——拒发的话
+        手机侧永远收不到回复。做法：导出旧对话主干注入新会话首条消息，
+        self 改指新 claude session_id（对外 sid 不变，用户无感），
+        再把本条消息作为正常轮次发出。返回 True=已续命并已发送。
+        失败路径返回 False 走原有拒发提示（别把用户消息吞了）。"""
+        if getattr(self, "is_vision", False):
+            return False   # 识图配角会话不续命
+        try:
+            from src.claude_sessions import export_session_transcript
+            lines, _cwd = export_session_transcript(self.session_id)
+        except Exception:
+            return False
+        if not lines:
+            return False   # 导不出历史（文件没了/空）→ 没有可迁移的东西
+        # 历史注入首条消息：远超窗口的完整历史没法塞，按轮次收尾的对话主干
+        # 足够新会话延续任务记忆。角色对齐精简格式，长块截断防超窗复发。
+        parts = []
+        for ln in lines:
+            role = {"user": "用户", "assistant": "助手",
+                    "tool": "（工具）", "system": "（摘要）"}.get(ln.get("role"), "（其他）")
+            parts.append("%s：%s" % (role, (ln.get("text") or "").strip()))
+        hist = "\n".join(parts)
+        # 旧历史压缩到新窗口的 ~60%（给回复/工具留余量），超长从头截断保最近
+        budget = int(mwin * 0.6)
+        if len(hist) > budget:
+            hist = "……（更早历史已截断）\n" + hist[-budget:]
+        old_title = self.title
+        # 换新 claude 会话：杀旧进程（元数据保留）、清 session_id 全新 start。
+        # 不能走 revive_if_dead——它要求 session_id 非空（--resume 语义），
+        # 这里恰恰是开新会话，必须裸 start。
+        # v2.27.18：旧 session_id 记入血统链——transcript_for 按链串接历代
+        # jsonl，历史回放不丢（用户铁律：重开可以，回放不能丢）。
+        self.kill_proc(quiet=True)
+        if self.session_id:
+            self.lineage = list(getattr(self, "lineage", None) or []) + [self.session_id]
+        self.session_id = None
+        self.title = None           # 让首条真实消息重新定标题
+        try:
+            self.start()
+        except Exception as e:
+            log.warning("超窗续命：新会话启动失败 %s", e)
+            return False
+        seed = ("[系统] 上一会话上下文已超当前模型窗口，自动重开。以下是此前"
+                "对话历史记录，请据此延续原有任务脉络：\n\n%s\n\n[系统] 历史结束。"
+                % hist)
+        ok, err = HarnessSession.send_message(self, seed)
+        if not ok:
+            log.warning("超窗续命：历史注入失败 %s", err)
+            return False
+        # 等注入轮完成再发用户本条（不并发写 stdin）
+        deadline = time.time() + 600
+        while time.time() < deadline and self.busy:
+            time.sleep(1)
+        if self.busy:
+            return False   # 注入轮 10 分钟没跑完，放弃（消息原样走拒发）
+        self.title = old_title or self.title
+        self.sync_meta()
+        # 续命位点：调用方（HikLink _run_cmd）据此把等待基准挪到用户本条
+        # turn——注入轮的 result 不算数，否则推空「没有文本回复」
+        self.renewed_at = self._seq
+        ok, err = HarnessSession.send_message(self, text or "", image_paths, file_paths)
+        if not ok:
+            log.warning("超窗续命：重发用户消息失败 %s", err)
+            return False   # 用户消息没发出去 → 走拒发提示，别静默吞
+        return True
+
     def send_message(self, text, image_paths=None, file_paths=None):
         """发消息：文本 + 可选图片（base64 块，实测网关透传）+ 文件路径（文本
         附录，任何模型都能用 Read 读）。返回 (ok, err)。"""
+        # 上下文超窗拒发（用户定调）：切 API 方案会把模型强制跟着切小窗
+        # （快照带模型映射），1M 会话攒超 256K 后发消息必 400 prompt is
+        # too long（实测 267112 > 262144）——直接拦在发送前并给出路。
+        # 3% 余量：prompt 除历史外还有 system/工具定义等固定开销。
+        # /compact 后 _session_ctx_used 撞压缩边界归零，即可继续发。
+        try:
+            eff_model = self._eff_model()
+            if eff_model and self.session_id:
+                used, _w, _c = _session_ctx_used(self)
+                mwin = _model_ctx_window(eff_model)
+                if used and used >= int(mwin * 0.97):
+                    # v2.27.15：小助手自动续命（用户定调：超窗时自动重开会话
+                    # 并映射旧链接，手机侧无感）。500K 历史塞不进 256K 窗口，
+                    # headless 也无手动 /compact 入口——唯一出路是开新会话：
+                    # 导出旧对话主干 → 首条消息注入历史 → 改 session_id 映射，
+                    # 用户视角「还是那个小助手」。只有远程通道（HikLink 小
+                    # 助手）无人在场才自动续命——GUI 会话有人看着提示即可，
+                    # 静默换会话违背「我不同意方案A」的定调。
+                    if self._is_remote_bot_session() and \
+                            self._autorenew_on_overflow(text, image_paths, file_paths,
+                                                        used, mwin, eff_model):
+                        return True, None
+                    return False, ("当前上下文已约 %dK tokens，超过模型「%s」"
+                                   "的 %dK 窗口（多半是切了 API 方案模型变小）"
+                                   "——请切回大窗口 API 方案，或新建会话"
+                                   % (round(used / 1024), eff_model,
+                                      round(mwin / 1024)))
+        except Exception:
+            pass   # 检测自身失败不拦发送（读不到用量时维持原行为）
         # base_url 死代理自愈的第二时机（用户实锤）：start 里的自愈只在起
         # 进程时跑——claude 启动时代理还活着、之后代理被停，进程不死就永远
         # 不走 start，消息全打进死端口。发送前发现 base_url 已恢复直连，
@@ -1016,6 +1164,19 @@ class HarnessSession:
                         return False, "会话进程已退出（base_url 已恢复直连，请重发）"
             except Exception:
                 pass
+            # v2.27.13：识图引导词过期热更——系统提示是进程启动参数，代码升级
+            # / mm_mcp 名单调整后活会话仍揣旧词（用户实锤：MCP 类模型被旧
+            # 「转交版」带去绕识图会话白等）。指纹变了就 kill+resume 静默换新
+            # （与切模型同款，上下文保留），本条消息照常发。
+            if self.alive and self.bridge_fp is not None:
+                try:
+                    eff_model = self._eff_model()
+                    if _bridge_fp(eff_model) != self.bridge_fp:
+                        self.kill_proc(quiet=True)
+                        if not self.revive_if_dead():
+                            return False, "会话进程已退出（识图引导词已更新，请重发）"
+                except Exception:
+                    pass
         if not self._proc or not self.alive:
             return False, "会话进程已退出"
         self.busy_since = int(time.time() * 1000)   # 处理计时起点（前端切会话回来显示真实已跑时长）
@@ -1091,28 +1252,44 @@ class HarnessSession:
         try:
             if not self.session_id:
                 return
-            if not getattr(self, "_tr_path", None):
-                import glob as _g
-                for cand in _g.glob(os.path.join(os.path.expanduser("~"),
-                                     ".claude", "projects", "*", self.session_id + ".jsonl")):
-                    self._tr_path = cand
-                    break
-            path = getattr(self, "_tr_path", None)
-            if not path:
-                return
-            size = os.path.getsize(path)
-            off = getattr(self, "_tr_off", None)
-            if off is None:            # 基线：从文件末尾起，历史 peer 不重放
-                self._tr_off = size
-                return
-            if size < off:             # 截断/轮转 → 重扫全量
-                off = 0
-            if size == off:
-                return
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
-                f.seek(off)
-                chunk = f.read()
-                self._tr_off = f.tell()
+            # v2.27.20：session_id 变了（超窗续命换代 / resume 分叉）——缓存的
+            # 转写路径还指着旧文件，新文件的 peer 行永远扫不到（换代后回传
+            # "凭空消失"的第二个根因）。归属不符即作废重找、重立基线。
+            if getattr(self, "_tr_sid", None) != self.session_id:
+                self._tr_sid = self.session_id
+                self._tr_path = None
+                self._tr_off = None
+            # v2.27.20：reader 线程与回传兜底轮询线程都会进来——锁住防偏移
+            # 竞争重复 emit（两线程同时读同一段增量，peer 气泡画两份）
+            with self._tr_lock:
+                if not getattr(self, "_tr_path", None):
+                    import glob as _g
+                    for cand in _g.glob(os.path.join(os.path.expanduser("~"),
+                                         ".claude", "projects", "*", self.session_id + ".jsonl")):
+                        self._tr_path = cand
+                        break
+                path = getattr(self, "_tr_path", None)
+                if not path:
+                    return
+                try:
+                    size = os.path.getsize(path)
+                except OSError:
+                    # v2.27.20：转写文件被清理（外部清缓存等）——清缓存下轮
+                    # 重找，别每 5s 抛一次被吞的异常空转
+                    self._tr_path = None
+                    return
+                off = getattr(self, "_tr_off", None)
+                if off is None:            # 基线：从文件末尾起，历史 peer 不重放
+                    self._tr_off = size
+                    return
+                if size < off:             # 截断/轮转 → 重扫全量
+                    off = 0
+                if size == off:
+                    return
+                with open(path, "r", encoding="utf-8", errors="replace") as f:
+                    f.seek(off)
+                    chunk = f.read()
+                    self._tr_off = f.tell()
             for ln in chunk.splitlines():
                 ln = ln.strip()
                 if not ln or ("Another Claude" not in ln and '"peer"' not in ln):
@@ -1131,9 +1308,12 @@ class HarnessSession:
                                  t, re.S)
                 # v2.27.5：peer 消息会触发自动回合，但没走 harness send()——
                 # busy 从未被置起，活动指示条不亮（用户实锤）。这里补置，
-                # result 事件照常回落；前端 5s 轮询据此亮指示条+计时
-                self.busy = True
-                self.busy_since = int(time.time() * 1000)
+                # result 事件照常回落；前端 5s 轮询据此亮指示条+计时。
+                # v2.27.19：只在进程活着时置——死会话（回传兜底轮询扫到的）
+                # 没有 result 来回落，置了会永远挂「回复中」
+                if self.alive:
+                    self.busy = True
+                    self.busy_since = int(time.time() * 1000)
                 self.emit({"kind": "peer",
                            "name": nm.group(1) if nm else "其他会话",
                            "text": ((body.group(1) if body else t).strip())[:8000]})
@@ -1165,6 +1345,15 @@ class HarnessSession:
                 if typ == "result":
                     self.busy = False
                     self.last_result = o
+                if typ == "assistant":
+                    # v2.27.21：记录 CLI 实报模型名——引导词热更/窗口判定
+                    # 的第一依据（settings 名会与实跑名错位，见 _eff_model）。
+                    # 只记录不打断：若与注入词的三态分类不一致，下一次 send
+                    # 前的 bridge_fp 热更自然发现指纹变化并换词重启
+                    lm = (o.get("message") or {}).get("model")
+                    if lm and lm != self.live_model:
+                        self.live_model = lm
+                        self.sync_meta()
                 if typ in ("assistant", "result"):
                     self._check_peer_lines()   # 回合有输出 → 先补发新到的 peer 回传
                 self.emit({"kind": "event", "data": o})
@@ -1327,9 +1516,10 @@ def _get_or_create(sid):
         s = HarnessSession(m["sid"], cwd=m.get("cwd"), model=m.get("model"),
                            session_id=m.get("session_id"), title=m.get("title", ""),
                            name=m.get("name"), permission=m.get("permission"),
-                           think=m.get("think"))
+                           think=m.get("think"), lineage=m.get("lineage"))
         s.created = m.get("created") or s.created
         s.last_active = m.get("last_active") or s.last_active
+        s.live_model = m.get("live_model") or None   # v2.27.21：实报模型跨重启保留
         _sessions[sid] = s
         return s
 
@@ -1368,6 +1558,37 @@ def _ensure_gc():
     if not _gc_started:
         _gc_started = True
         threading.Thread(target=_gc_loop, daemon=True).start()
+        threading.Thread(target=_peer_poll_loop, daemon=True).start()
+
+
+def _peer_poll_loop():
+    """回传兜底轮询（v2.27.19）：_check_peer_lines 只在进程 stdout 有
+    assistant/result 事件时被触发，而 claude -p 进程回完 result 就退出——
+    peer 回传到达时进程多半已死，CLI 只把消息排队写进 jsonl
+    （attachment.type=queued_command），永远没人扫。用户实测：转交线计时
+    13 分钟不落、📥 气泡不出现，回传"凭空消失"。
+    这里 5s 一轮扫全部「前端在看」的会话（有 SSE 客户端），即使进程死了
+    也照常补扫 jsonl 尾部，peer 行照样 emit。不看的会话不扫——不产生
+    事件也就无需实时性，等用户切回来打开 SSE，下一轮自然补上。"""
+    while True:
+        time.sleep(5)
+        try:
+            with _sessions_lock:
+                objs = list(_sessions.values())
+            for s in objs:
+                if getattr(s, "is_vision", False) or getattr(s, "hidden", False):
+                    continue
+                try:
+                    with s.clients_lock:
+                        watching = bool(s.clients)
+                except Exception:
+                    watching = False
+                if not watching:
+                    continue
+                # 有事件缓冲序列号，前端重连时用 after_seq 续传不丢
+                s._check_peer_lines()
+        except Exception:
+            pass
 
 
 def _vision_needed(new_model=None):
@@ -1414,127 +1635,141 @@ _SKIP_RE = None
 def transcript_for(s):
     """sid → 气泡行数组。claude 侧 session_id 的 jsonl 全量解析：
     user(typed 文本/图片/文件附件) / assistant(文本/工具调用) / tool_result 摘要。
-    返回 None 表示转写不存在（新会话还没聊，气泡本来就空）。"""
+    返回 None 表示转写不存在（新会话还没聊，气泡本来就空）。
+    v2.27.18 血统链：会话被续命换过 session_id 时按 lineage 串接历代 jsonl——
+    回放永远完整（用户铁律：重开可以，历史回放不能丢）。"""
     global _SKIP_RE
+    import re as _re   # v2.27.17：无条件导入——原来只在 _SKIP_RE is None 时
+    # 顺带 import，进程预热后再遇跨会话消息行就 UnboundLocalError（实测
+    # /api/harness/transcript 500 → 前端对话流空白，历史看着"全没了"）
     if _SKIP_RE is None:
-        import re as _re
         _SKIP_RE = _re.compile(r"^(<local-command-caveat|<local-command-stdout|<command-name|<command-message|<command-args|<bash-|Another Claude session sent a message|<cross-session-message)")
-    sid = s.session_id
-    if not sid:
-        return None
+    # v2.27.18 血统链：历代 session_id 的 jsonl 依序解析（旧→新，当前在尾）。
+    # call_by_id 跨代共用：新代开头的 tool_result 仍能挂回旧代行。某代文件
+    # 没了（被清理）静默跳过，不丢后代。去重保序防重复解析同一文件。
+    ids = [x for x in (list(getattr(s, "lineage", None) or []) + [s.session_id]) if x]
+    seen = set()
+    ordered = [x for x in ids if not (x in seen or seen.add(x))]
     import glob as _glob
-    path = None
     proj = os.path.join(os.path.expanduser("~"), ".claude", "projects")
-    for cand in _glob.glob(os.path.join(proj, "*", sid + ".jsonl")):
-        path = cand
-        break
-    if not path:
-        return None
-    lines = []
-    call_by_id = {}           # tool_use_id -> 行 dict（把 tool_result 挂回调用行）
-    try:
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            for raw in f:
-                raw = raw.strip()
-                if not raw:
-                    continue
-                if '"type":"user"' not in raw and '"type":"assistant"' not in raw:
-                    continue
-                try:
-                    o = json.loads(raw)
-                except Exception:
-                    continue
-                typ = o.get("type")
-                if o.get("isSynthetic") or o.get("parent_tool_use_id"):
-                    continue
-                msg = o.get("message") or {}
-                content = msg.get("content")
-                if typ == "user":
-                    if isinstance(content, str):
-                        t = content
-                        # v2.27.3：跨会话消息（识图回传等）不再被 _SKIP_RE 静默吞掉——
-                        # 解析出发件人与正文，产 peer 行让前端渲染专属回传气泡
-                        # （用户定调：识图全程要有可见反馈，回传内容不能凭空消失）
-                        if t.strip().startswith("Another Claude session sent a message"):
-                            nm = _re.search(r'from-name="([^"]*)"', t)
-                            body = _re.search(
-                                r"<cross-session-message[^>]*>(.*)</cross-session-message>",
-                                t, _re.S)
-                            lines.append({"role": "peer",
-                                          "name": (nm.group(1) if nm else "其他会话"),
-                                          "text": ((body.group(1) if body else t).strip())[:8000],
-                                          "ts": o.get("timestamp") or ""})
-                            continue
-                        # harness 通道从 stdin 注入，promptSource 是 "sdk"（不是 typed）；
-                        # 排除标准是"非用户输入"（工具注入 default）——命令噪音由 _SKIP_RE 挡
-                        ps_ok = (o.get("promptSource") in (None, "typed", "sdk")) or \
-                            (o.get("origin") or {}).get("kind") == "human"
-                        if t and ps_ok and not _SKIP_RE.match(t.strip()):
-                            lines.append({"role": "user", "text": t[:8000],
-                                          "ts": o.get("timestamp") or ""})
-                    elif isinstance(content, list):
-                        trs = [b for b in content
-                               if isinstance(b, dict) and b.get("type") == "tool_result"]
-                        if trs:
-                            # 执行结果挂回对应 tool_use 行（前端详情弹层用）
-                            for b in trs:
-                                line = call_by_id.get(b.get("tool_use_id"))
-                                if line is None or line.get("result") is not None:
+
+    def _parse_one(path, lines, call_by_id):
+        """解析一个 session 的 jsonl，行追加进 lines。返回是否读到文件。"""
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                for raw in f:
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    if '"type":"user"' not in raw and '"type":"assistant"' not in raw:
+                        continue
+                    try:
+                        o = json.loads(raw)
+                    except Exception:
+                        continue
+                    typ = o.get("type")
+                    if o.get("isSynthetic") or o.get("parent_tool_use_id"):
+                        continue
+                    msg = o.get("message") or {}
+                    content = msg.get("content")
+                    if typ == "user":
+                        if isinstance(content, str):
+                            t = content
+                            # v2.27.3：跨会话消息（识图回传等）不再被 _SKIP_RE 静默吞掉——
+                            # 解析出发件人与正文，产 peer 行让前端渲染专属回传气泡
+                            # （用户定调：识图全程要有可见反馈，回传内容不能凭空消失）
+                            if t.strip().startswith("Another Claude session sent a message"):
+                                nm = _re.search(r'from-name="([^"]*)"', t)
+                                body = _re.search(
+                                    r"<cross-session-message[^>]*>(.*)</cross-session-message>",
+                                    t, _re.S)
+                                lines.append({"role": "peer",
+                                              "name": (nm.group(1) if nm else "其他会话"),
+                                              "text": ((body.group(1) if body else t).strip())[:8000],
+                                              "ts": o.get("timestamp") or ""})
+                                continue
+                            # harness 通道从 stdin 注入，promptSource 是 "sdk"（不是 typed）；
+                            # 排除标准是"非用户输入"（工具注入 default）——命令噪音由 _SKIP_RE 挡
+                            ps_ok = (o.get("promptSource") in (None, "typed", "sdk")) or \
+                                (o.get("origin") or {}).get("kind") == "human"
+                            if t and ps_ok and not _SKIP_RE.match(t.strip()):
+                                lines.append({"role": "user", "text": t[:8000],
+                                              "ts": o.get("timestamp") or ""})
+                        elif isinstance(content, list):
+                            trs = [b for b in content
+                                   if isinstance(b, dict) and b.get("type") == "tool_result"]
+                            if trs:
+                                # 执行结果挂回对应 tool_use 行（前端详情弹层用）
+                                for b in trs:
+                                    line = call_by_id.get(b.get("tool_use_id"))
+                                    if line is None or line.get("result") is not None:
+                                        continue
+                                    rc = b.get("content")
+                                    if isinstance(rc, list):
+                                        rc = chr(10).join(x.get("text", "") for x in rc
+                                                   if isinstance(x, dict) and x.get("type") == "text")
+                                    line["result"] = (rc or "")[:8000]
+                                    if b.get("is_error"):
+                                        line["err"] = True
+                                continue
+                            texts, imgs, files = [], 0, []
+                            for b in content:
+                                if not isinstance(b, dict):
                                     continue
-                                rc = b.get("content")
-                                if isinstance(rc, list):
-                                    rc = chr(10).join(x.get("text", "") for x in rc
-                                               if isinstance(x, dict) and x.get("type") == "text")
-                                line["result"] = (rc or "")[:8000]
-                                if b.get("is_error"):
-                                    line["err"] = True
-                            continue
-                        texts, imgs, files = [], 0, []
+                                if b.get("type") == "text" and b.get("text"):
+                                    texts.append(b["text"])
+                                elif b.get("type") == "image":
+                                    imgs += 1
+                            t = " ".join(texts)
+                            m_att = _extract_att(t)
+                            if m_att:
+                                files = m_att
+                                t = _strip_att(t)
+                            if (t or imgs) and not _SKIP_RE.match((t or "").strip()):
+                                lines.append({"role": "user", "text": t[:8000], "images": imgs, "files": files,
+                                              "ts": o.get("timestamp") or ""})
+                    elif typ == "assistant" and isinstance(content, list):
+                        texts, tools, thinks = [], [], []
                         for b in content:
                             if not isinstance(b, dict):
                                 continue
                             if b.get("type") == "text" and b.get("text"):
                                 texts.append(b["text"])
-                            elif b.get("type") == "image":
-                                imgs += 1
-                        t = " ".join(texts)
-                        m_att = _extract_att(t)
-                        if m_att:
-                            files = m_att
-                            t = _strip_att(t)
-                        if (t or imgs) and not _SKIP_RE.match((t or "").strip()):
-                            lines.append({"role": "user", "text": t[:8000], "images": imgs, "files": files,
-                                          "ts": o.get("timestamp") or ""})
-                elif typ == "assistant" and isinstance(content, list):
-                    texts, tools, thinks = [], [], []
-                    for b in content:
-                        if not isinstance(b, dict):
-                            continue
-                        if b.get("type") == "text" and b.get("text"):
-                            texts.append(b["text"])
-                        elif b.get("type") == "thinking" and b.get("thinking"):
-                            thinks.append(b["thinking"])
-                        elif b.get("type") == "tool_use":
-                            tools.append({"id": b.get("id", ""), "name": b.get("name", ""),
-                                          "summary": _tool_summary(b.get("name", ""), b.get("input")),
-                                          "input": b.get("input") or {}})
-                    # 思考先出：一轮里 thinking 在工具调用之前，重建后「思考抽屉」才在
-                    # 「执行抽屉」上方（与流式渲染同序）
-                    if thinks:
-                        lines.append({"role": "thinking", "text": "\n".join(thinks)[:8000]})
-                    # 空白/纯换行的 text 块要丢掉：模型每轮都会吐一个 "\n\n" 占位，
-                    # 落盘后仍是真值 → 重建时每条渲染成一个空白 AI 气泡（历史会话
-                    # 满屏空白圆角条的根因），还把真正的思考/工具行挤出可视区。
-                    t = "\n".join(texts).strip()
-                    if t:
-                        lines.append({"role": "assistant", "text": t[:8000]})
-                    for tl in tools:
-                        row = {"role": "tool", "text": tl["name"], "summary": tl["summary"],
-                               "input": tl["input"], "result": None}
-                        if tl["id"]:
-                            call_by_id[tl["id"]] = row
-                        lines.append(row)
-    except OSError:
+                            elif b.get("type") == "thinking" and b.get("thinking"):
+                                thinks.append(b["thinking"])
+                            elif b.get("type") == "tool_use":
+                                tools.append({"id": b.get("id", ""), "name": b.get("name", ""),
+                                              "summary": _tool_summary(b.get("name", ""), b.get("input")),
+                                              "input": b.get("input") or {}})
+                        # 思考先出：一轮里 thinking 在工具调用之前，重建后「思考抽屉」才在
+                        # 「执行抽屉」上方（与流式渲染同序）
+                        if thinks:
+                            lines.append({"role": "thinking", "text": "\n".join(thinks)[:8000]})
+                        # 空白/纯换行的 text 块要丢掉：模型每轮都会吐一个 "\n\n" 占位，
+                        # 落盘后仍是真值 → 重建时每条渲染成一个空白 AI 气泡（历史会话
+                        # 满屏空白圆角条的根因），还把真正的思考/工具行挤出可视区。
+                        t = "\n".join(texts).strip()
+                        if t:
+                            lines.append({"role": "assistant", "text": t[:8000]})
+                        for tl in tools:
+                            row = {"role": "tool", "text": tl["name"], "summary": tl["summary"],
+                                   "input": tl["input"], "result": None}
+                            if tl["id"]:
+                                call_by_id[tl["id"]] = row
+                            lines.append(row)
+        except OSError:
+            return False
+        return True
+
+    lines = []
+    call_by_id = {}           # tool_use_id -> 行 dict（把 tool_result 挂回调用行）
+    found_any = False
+    for csid in ordered:
+        for cand in _glob.glob(os.path.join(proj, "*", csid + ".jsonl")):
+            if _parse_one(cand, lines, call_by_id):
+                found_any = True
+            break
+    if not found_any:
         return None
     return lines
 
@@ -1710,24 +1945,12 @@ def harness_kill():
     return jsonify({"ok": True})
 
 
-@harness_bp.route("/ctx")
-def harness_ctx():
-    """上下文用量（v2.20 兜底数据源）。
-
-    实测三个数据源的可用性：流式 assistant 事件 usage 恒 0（网关不给）、
-    result 事件 usage 真实但**只有完整结束的轮次才有**（中断=杀进程，CLI
-    来不及发）——习惯性中断/排队的会话环因此常驻 0%（用户实测）。落盘
-    转写 jsonl 里每条 assistant 的 usage 是真实单轮口径。这里取值顺序：
-    本进程记到的 last_result（带 modelUsage 真实窗口）→ jsonl 尾部倒扫
-    最后一条非零 usage。"""
-    s = _get_or_create((request.args.get("sid") or "").strip())
-    if not s:
-        return jsonify({"ok": False, "err": "会话不存在"}), 404
-    if not s.session_id:
-        return jsonify({"ok": True, "used": 0, "window": 0, "sid": s.sid})
+def _session_ctx_used(s):
+    """会话已用上下文 tokens（/ctx 与 set_model 窗口预检共用）。
+    取值顺序：jsonl 尾部倒扫最新非零 usage（跳过子代理行；撞压缩边界
+    归零——/compact 后旧值全部过期）→ last_result.usage 兜底。
+    last_result 只贡献窗口（contextWindow）。返回 (used, window, compacted)。"""
     used, window = 0, 0
-    # last_result 只贡献窗口（它可能过期：压缩前最后一轮的 result 会一直
-    # 占位，后面轮次全被中断时环就卡在旧值）；用量以 jsonl 最新落盘为准
     lr = getattr(s, "last_result", None) or {}
     try:
         mu = lr.get("modelUsage") or {}
@@ -1739,11 +1962,6 @@ def harness_ctx():
             + (u.get("cache_creation_input_tokens") or 0)
     except Exception:
         used = 0
-    # jsonl 尾部倒扫（优先级最高）：每条 assistant 落盘行都是最新上下文状态，
-    # 跳过子代理行（isSidechain，上下文口径与主链无关）。
-    # 压缩边界（isCompactSummary）：倒扫自新向旧，撞到边界说明边界之后的行
-    # 全扫完了还没找到 assistant —— 即压缩后尚未有新轮次，此时旧值全部过期
-    # （实测 /compact 后 /ctx 仍显示压缩前 708K，真实只有 40K），必须归零。
     import glob as _glob
     path = None
     proj = os.path.join(os.path.expanduser("~"), ".claude", "projects")
@@ -1783,6 +2001,32 @@ def harness_ctx():
                     break
         except OSError:
             pass
+    return used, window, compacted
+
+
+# 网关模型上下文窗口（tokens）：模型名带 [1M] 后缀 = 1M 窗口变体，
+# 其余默认 256K（实测报错原文 maximum context length 262144）。
+_CTX_WINDOW_1M = 1048576
+_CTX_WINDOW_DEFAULT = 262144
+
+
+def _model_ctx_window(model):
+    """按模型名推断网关侧上下文窗口（set_model 预检用）。"""
+    name = (model or "").lower()
+    if "[1m]" in name or name.endswith("1m"):
+        return _CTX_WINDOW_1M
+    return _CTX_WINDOW_DEFAULT
+
+
+@harness_bp.route("/ctx")
+def harness_ctx():
+    """上下文用量（v2.20 兜底数据源）。取值逻辑见 _session_ctx_used。"""
+    s = _get_or_create((request.args.get("sid") or "").strip())
+    if not s:
+        return jsonify({"ok": False, "err": "会话不存在"}), 404
+    if not s.session_id:
+        return jsonify({"ok": True, "used": 0, "window": 0, "sid": s.sid})
+    used, window, compacted = _session_ctx_used(s)
     return jsonify({"ok": True, "used": used, "window": window, "sid": s.sid,
                     "compacted": compacted,
                     "model": s.model or available_models().get("default") or ""})
@@ -1804,9 +2048,12 @@ def harness_set_model():
         return jsonify({"ok": False, "err": "会话不存在"}), 404
     if s.busy:
         return jsonify({"ok": False, "err": "claude 正在回复中，回复结束后再切模型"}), 409
+    # 注：不在此拦「超窗切小模型」——切 API 方案时模型是被快照强制带过去的，
+    # 拦不住；超窗的兜底在 send_message（发了必 400，直接拒发并提示出路）。
     if model == s.model:
         return jsonify({"ok": True, "model": s.model})
     s.model = model
+    s.live_model = None   # v2.27.21：旧实报随模型切换作废，start 按新 model 注入
     if s.alive:
         s.kill_proc(quiet=True)          # 吞 exit：计划内重启不弹「进程已结束」
     if s.session_id:

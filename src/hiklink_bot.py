@@ -919,6 +919,13 @@ class HikLinkBotController:
             if not ok:
                 self.bot.reply("消息发送失败: %s" % (err or ""))
                 return
+            # v2.27.15：超窗自动续命——send_message 内部已把旧历史注入新会话并
+            # 紧接着发出用户本条（两个 turn）。seq0 是注入前的位点，注入轮的
+            # result 会把 _saw_result 提前打满，旧逻辑会把注入轮当最终回复推
+            # 空文本。这里重置基准点：只等用户本条 turn 的 result。
+            if getattr(s, "renewed_at", None) and s.renewed_at > seq0:
+                seq0 = s.renewed_at
+                cursor = seq0
             # claude 进程偶发退出时 reader_loop 把 busy/alive 拉成 False 且
             # 无任何事件——上一条就是被这个吞成「(AI 没有返回文本回复)」的。
             # 探测到进程已死：复活（resume 续上下文）并重发一次。

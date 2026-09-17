@@ -42,6 +42,23 @@ if (typeof refreshClaudePanel === 'function') refreshClaudePanel();
 // 全部回退固化 label「Claude · 目录名」，分不清开的是哪个会话（面板可见时的
 // 5s 轮询只在面板开着时兜底刷新）
 renderCmdPane();  // 命令 tab 是默认激活面板，启动即渲染（否则空面板要切走再切回才刷新）
+// ---- v2.27.22 全局链接导航拦截（最后防线，捕获阶段）----
+// WebView 就地导航一旦发生，整个工具被错误页替换且无返回入口（用户实锤：
+// 消息流里 linkify 出的 http://proxy.py 一点就 ERR_NAME_NOT_RESOLVED 占满
+// 窗口）。无论链接来自哪个模块的渲染，document 捕获阶段一律拦截：
+// http(s) → 后端 /api/open_url 调系统默认浏览器；其余 → 只吞点击。
+document.addEventListener('click', (e) => {
+  const a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+  if (!a) return;
+  const href = a.getAttribute('href') || '';
+  e.preventDefault();
+  e.stopPropagation();
+  if (/^https?:/i.test(href)) {
+    fetch('/api/open_url', {method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({url: href})}).catch(() => {});
+  }
+}, true);
 $('btnNewFile').onclick = (e) => newFileMenuShow(e.currentTarget);  // v2.27「新建文件」下拉：笔记/.txt/.md/自定义后缀（原一键新建笔记）
 $('btnDiff').onclick = openDiffPicker;  // 文件对比（原生选两份 → DiffEditor tab）
 $('btnBitCalc').onclick = buildBitCalcTab;  // 程序员计算器（寄存器位编辑+位运算+表达式）

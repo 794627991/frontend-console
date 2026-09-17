@@ -1395,8 +1395,10 @@ if (!document.getElementById('edExtraStyle')) {
 let _mdIt = null;   // markdown-it 实例单例（延迟建）
 function _mdInstance() {
   if (_mdIt) return _mdIt;
-  // markdown-it.min.js（vendor，index.html 已引）暴露 window.markdownit
-  _mdIt = window.markdownit ? window.markdownit({ html: false, linkify: true, typographer: false, breaks: false }) : null;
+  // markdown-it.min.js（vendor，index.html 已引）暴露 window.markdownit。
+  // v2.27.22：linkify 关闭——裸词（.py/.js 是合法顶级域）会被补成 http://
+  // 外链，预览里点击就把 WebView 导航出工具（同 harness 修复）
+  _mdIt = window.markdownit ? window.markdownit({ html: false, linkify: false, typographer: false, breaks: false }) : null;
   if (_mdIt) {
     // 标题挂源码行号（token.map 起始行，转 1-based 对齐 Monaco 行号）：
     // 滚动同步以此为锚——「源码看到第五章」才能映射成「预览跳到第五章」

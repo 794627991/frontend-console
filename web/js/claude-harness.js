@@ -20,7 +20,11 @@
 let _harnessMd = null;
 function _harnessMdInstance() {
   if (_harnessMd === null)
-    _harnessMd = window.markdownit ? window.markdownit({ html: false, linkify: true, typographer: false, breaks: false }) : false;
+    // v2.27.22：linkify 关闭——linkify-it 把裸词当域名（.py/.js 等都是合法
+    // 顶级域）自动补 http:// 前缀，代码引用 proxy.py 变成可点外链，点击后
+    // WebView 就地导航离开工具页面（ERR_NAME_NOT_RESOLVED 占满窗口，
+    // 用户实锤"退不出去"）。显式 markdown 链接 [x](url) 不受影响
+    _harnessMd = window.markdownit ? window.markdownit({ html: false, linkify: false, typographer: false, breaks: false }) : false;
   return _harnessMd;
 }
 
@@ -572,9 +576,20 @@ function buildClaudeHarnessTab(opts = {}) {
       const html = md.render(_hgNormalizeFences(text || ''));
       const t = document.createElement('div');
       t.innerHTML = html;
+      // v2.27.22：一律拦截就地导航——http(s) 链接转系统浏览器打开（后端
+      // /api/open_url），其余（相对路径/伪协议）只提示。WebView 一旦离开
+      // 应用页面整个工具就被错误页替换且无返回入口（用户实锤）
       t.querySelectorAll('a[href]').forEach(a => {
         const href = a.getAttribute('href') || '';
-        if (!/^https?:/i.test(href)) { a.addEventListener('click', e => e.preventDefault()); a.title = '工具内不支持跳转内部链接'; }
+        a.addEventListener('click', e => {
+          e.preventDefault();
+          if (/^https?:/i.test(href)) {
+            fetch('/api/open_url', {method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({url: href})}).catch(() => {});
+          }
+        });
+        a.title = /^https?:/i.test(href) ? '在系统浏览器中打开' : '工具内不支持跳转内部链接';
       });
       return t.innerHTML;
     }
@@ -1167,6 +1182,8 @@ function buildClaudeHarnessTab(opts = {}) {
     _HG.compacting = false;
     clearInterval(_HG.compactTimer);
     renderCompaction(true);
+    // v2.27.4：status 恢复事件若丢（result 兜底到这里），活动词一并退出特殊态
+    actWord(null);
   }
 
   // ==================== 历史重建（切回会话时按 transcript 行还原气泡/抽屉）====
@@ -1695,9 +1712,12 @@ function buildClaudeHarnessTab(opts = {}) {
     actEl.innerHTML = `<span class="hg-act-dot"></span><span class="hg-act-word" data-hg-aw>思考中</span><span class="hg-act-t" data-hg-act-t>0s</span>`;
     _HG.activity = {
       verb: setInterval(() => {
-        _actWordIdx = (_actWordIdx + 1) % _ACT_WORDS.length;
+        // v2.27.4：压缩等特殊状态（actWord 设的 hg-act-special）词固定不轮换
+        // ——原实现 4s 必换词，把「正在压缩上下文…」顶掉，用户实测只显示一瞬。
         const w = actEl.querySelector('[data-hg-aw]');
-        if (w) w.textContent = _ACT_WORDS[_actWordIdx];
+        if (!w || w.classList.contains('hg-act-special')) return;
+        _actWordIdx = (_actWordIdx + 1) % _ACT_WORDS.length;
+        w.textContent = _ACT_WORDS[_actWordIdx];
       }, 4000),
       tick: setInterval(() => {
         const t = actEl.querySelector('[data-hg-act-t]');
@@ -1735,21 +1755,23 @@ function buildClaudeHarnessTab(opts = {}) {
   function _hgCtxRestore(sid) {
     let v = null;
     if (sid) { try { v = JSON.parse(localStorage.getItem(_hgCtxKey(sid)) || 'null'); } catch(_) {} }
-    // v2.20：历史残留的坏值（used > max，假 100%）不画恢复值——退回 0% 占位，
-    // 下一轮合法 result 会重写。用户要求上下文环常态显示：无数据也画 0% 环，
-    // 不再整块消失。
-    if (v && v.used > 0 && v.used <= (v.max || _HG_CTX_FALLBACK))
+    const s = _HG.sessions.find(x => x.sid === sid);
+    const mname = (s && s.model) || (_HG.models && _HG.models.default) || '';
+    // v2.27.16：记忆窗口带模型归属校验（renderCtxRing 同款）——旧记录无
+    // model 字段或与当前模型不符 → 丢弃窗口值，按模型名重推，防 [1M] 会话
+    // 残留的 1M 分母跟着小窗口模型走（Lanz-Auto 虚报 /1000.0K）。
+    const sameModel = v && mname &&
+      (v.model || '').toLowerCase() === mname.toLowerCase();
+    if (v && v.used > 0 && v.used <= (v.max || _HG_CTX_FALLBACK) && sameModel)
       _hgDrawCtxRing(v.used, v.max || _HG_CTX_FALLBACK);
-    else _hgDrawCtxRing(0, _HG_CTX_FALLBACK);
+    else _hgDrawCtxRing(0, /1m/i.test(mname) ? 1000000 : _HG_CTX_FALLBACK);
     // v2.20：记忆里的 max 可能是旧代码存的 256K 兜底值（1M 模型被压成
     // /256K、84% 虚报，用户实测）——恢复路径同样按模型名校正窗口并写回，
     // 别只靠每轮结束的 _hgCtxPoll 纠偏。
-    const s = _HG.sessions.find(x => x.sid === sid);
-    const mname = (s && s.model) || (_HG.models && _HG.models.default) || '';
     if (/1m/i.test(mname) && ((v && v.max) || 0) < 1000000) {
       const used = (v && v.used > 0) ? v.used : 0;
       _hgDrawCtxRing(used, 1000000);
-      try { localStorage.setItem(_hgCtxKey(sid), JSON.stringify({used, max: 1000000})); } catch(_) {}
+      try { localStorage.setItem(_hgCtxKey(sid), JSON.stringify({used, max: 1000000, model: mname})); } catch(_) {}
     }
   }
   function _hgDrawCtxRing(used, ctxMax, note) {
@@ -1796,11 +1818,22 @@ function buildClaudeHarnessTab(opts = {}) {
     if (used > ctxMax) return;
     // v2.20：本事件没带 modelUsage（assistant 事件就不带）→ 沿用该会话上次
     // 记到的窗口，避免没 result 校准时就退 256K 假分母
+    // v2.27.16：记忆窗口带模型归属。切方案/切模型后旧 max 不可继承——
+    // [1M] 会话残留的 1000000 分母让 Lanz-Auto 虚报 /1000.0K（用户实锤
+    // 85.3K 显示 9%）。归属不符或旧记录无 model 字段 → 按当前模型名重推
+    // （带 [1M]/[1m] → 1M，其余 256K 兜底），下次写入带上模型名自愈。
     if (ctxMax === _HG_CTX_FALLBACK && _HG.sid) {
-      try { ctxMax = ((JSON.parse(localStorage.getItem(_hgCtxKey(_HG.sid)) || 'null') || {}).max) || _HG_CTX_FALLBACK; } catch(_) {}
+      let rec = null;
+      try { rec = JSON.parse(localStorage.getItem(_hgCtxKey(_HG.sid)) || 'null') || {}; } catch(_) { rec = {}; }
+      const cur = (o.model || _HG.model || '').toLowerCase();
+      if (rec.max && cur && (rec.model || '').toLowerCase() === cur) {
+        ctxMax = rec.max;
+      } else {
+        ctxMax = /1m/.test(cur) ? 1000000 : _HG_CTX_FALLBACK;
+      }
     }
     _hgDrawCtxRing(used, ctxMax);
-    if (_HG.sid) { try { localStorage.setItem(_hgCtxKey(_HG.sid), JSON.stringify({used, max: ctxMax})); } catch(_) {} }
+    if (_HG.sid) { try { localStorage.setItem(_hgCtxKey(_HG.sid), JSON.stringify({used, max: ctxMax, model: o.model || _HG.model || ''})); } catch(_) {} }
   }
 
   // v2.20：每轮结束（result/interrupted/exit 任意原因）拉一次真实上下文用量。

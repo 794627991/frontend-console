@@ -190,8 +190,11 @@ def _remember_direct(url):
         return
     _saved_direct = url
     try:
-        with open(PROXY_STATE_PATH, "w", encoding="utf-8") as f:
+        # 原子写（tmp+replace）：与并发读/方案切换链路同跑时不留半截文件
+        tmp = PROXY_STATE_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump({"direct_url": url}, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, PROXY_STATE_PATH)
     except OSError as e:
         log.warning("记忆直连地址失败: %s", e)
 
@@ -949,6 +952,7 @@ def stop_proxy():
     之前只在 _autoswitched 时回滚，手动切过代理模式的会停在死端口）。
     幂等。"""
     global _autoswitched
+    _bump_repoint_epoch()   # 代理都停了：排队中的方案联动不得再动 base_url
     _hr.stop()
     _ctl.stop()
     try:
@@ -969,6 +973,7 @@ def set_mode(mode):
     global _autoswitched
     if mode not in ("proxy", "direct"):
         return False, ["未知模式"]
+    _bump_repoint_epoch()   # 用户手动接管 base_url：排队中的方案联动作废
     if mode == "proxy":
         # 切代理前必记忆原值——用户只点「切换为代理模式」不点启动的路径
         # 也要覆盖，否则强杀后自愈拿不到记忆，只能恢复默认兜底
@@ -979,6 +984,206 @@ def set_mode(mode):
         _autoswitched = False
     log.info("手动切换 base_url -> %s: %s", target, changed)
     return True, changed
+
+
+def saved_direct_url():
+    """记忆中的直连地址（公开读取口——方案切换净化旧方案快照用）。"""
+    return _load_saved_direct()
+
+
+def current_base_url():
+    """settings 当前 ANTHROPIC_BASE_URL（公开读取口——方案切换要在写回
+    settings 前捕获「之前是否代理模式」，写完再读就只剩新方案的直连值）。"""
+    return _bmgr.read_current_url()
+
+
+def proxy_intent_active():
+    """「链路应处于代理模式」判定（方案切换捕获 was_proxy 用，v2.27.2）：
+    base_url 指自家入口，或自动代理模式（_autoswitched）且重试代理在跑。
+    后者覆盖连点切方案的中间态——第一刀已把 base_url 写成新方案直连值，
+    但用户从未退出代理模式，最后一刀必须把 base_url 拉回代理入口。
+    手动「切直连」（set_mode → _autoswitched=False）与停代理后恒 False，
+    不会把用户硬拉回代理。"""
+    cur = _bmgr.read_current_url()
+    if _is_own_proxy_url(cur):
+        return True
+    return bool(_autoswitched and _ctl.running)
+
+
+_repoint_seq = 0
+_switch_lock = threading.RLock()   # 方案切换全临界区互斥锁（见 switch_lock）
+
+
+def switch_lock():
+    """方案切换临界区锁（claude_default.claude_profiles_apply 持它包住
+    「读 settings-净化-写回-写 profiles」整段；后台 re_point worker 与
+    headroom 重拉收尾也拿它——杜绝整份写回与字段级改写交错，否则后写的
+    字段级 base_url 改动会把新方案 token/模型映射整份顶回旧方案）。"""
+    return _switch_lock
+
+
+def _bump_repoint_epoch():
+    """作废所有排队中的后台重指。手动切模式/停代理/自愈回直连后调——
+    这些动作之后，排队 worker 再把 base_url 拉回代理入口就是破坏
+    （代理已停时更是指向死端口）。"""
+    global _repoint_seq
+    _repoint_seq += 1
+
+
+# ---- 方案切换 in-flight 保护（用户定调：后台没稳定前禁止再切方案）----
+# 快速连点切方案时多个 worker 竞态，曾出现「新 token + 旧上游」错配终态
+# （lanz token 打智谱网关 → Claude 卡死）。保护：apply 前查 in-flight，
+# 未稳定一律 409 拒绝；worker 全部收尾（含 headroom 重拉）才放行。
+_switch_busy = {"n": 0, "ts": 0.0}
+_switch_busy_lock = threading.Lock()
+
+
+def profile_switch_in_flight(timeout=60.0):
+    """方案切换是否仍在后台进行（claude_default.apply 与前端按钮共用）。
+    超时强制放行——worker 异常挂死时不能把用户永久锁在外面（epoch 机制
+    仍保证最终一致）。"""
+    with _switch_busy_lock:
+        if _switch_busy["n"] <= 0:
+            return False
+        if time.time() - _switch_busy["ts"] > timeout:
+            _switch_busy["n"] = 0
+            return False
+        return True
+
+
+def _switch_busy_inc():
+    with _switch_busy_lock:
+        _switch_busy["n"] += 1
+        _switch_busy["ts"] = time.time()
+
+
+def _switch_busy_dec():
+    with _switch_busy_lock:
+        _switch_busy["n"] = max(0, _switch_busy["n"] - 1)
+
+
+def queue_re_point(new_direct_url, was_proxy=None):
+    """把 re_point_upstream 排到后台线程执行（claude_profiles_apply 在
+    switch_lock 临界区内调）。秒级同步活全后台，HTTP 接口体感立即。
+    epoch：worker 拿到锁后若发现已排入更新的方案（或被手动切模式作废）
+    直接退出——最终状态永远等于「最后一次动作」。"""
+    global _repoint_seq
+    if not new_direct_url or _is_own_proxy_url(new_direct_url):
+        return
+    _repoint_seq += 1
+    myseq = _repoint_seq
+
+    def _worker():
+        _switch_busy_inc()
+        try:
+            with _switch_lock:
+                if myseq != _repoint_seq:
+                    return   # 排队期间有更新动作：以最后一次为准，本次作废
+                try:
+                    re_point_upstream(new_direct_url, was_proxy=was_proxy,
+                                      _epoch=myseq)
+                except Exception as e:
+                    log.warning("切方案后台重指代理失败: %s", e)
+        finally:
+            _switch_busy_dec()
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def re_point_upstream(new_direct_url, was_proxy=None, notify=True, _epoch=None):
+    """API方案切换后重指代理上游（用户定：立即跟随，不等下次启停代理）。
+    先记忆新直连地址（此后停止/退出恢复的真源），再热改重试代理上游属性
+    （零停机，不 stop/start server）。base_url 此前指代理入口（=代理在链路上）则继续指代理入口
+    只是换了真身；本在直连模式则不动 base_url，只换代理上游。headroom 在
+    跑且新网关路径不同：其上游 env 是启动时烘死的，必须重拉——借
+    apply_hr_mode 整套（停旧拉新+等就绪+切 8787），期间 base_url 先指
+    37349 会话不中断。代理没在跑：只记忆，不动 base_url。返回 (ok, msg)。
+    was_proxy：调用方（profiles/apply）在整份写回 settings **之前**判得的
+    「base_url 是否指代理入口」——传入则优先，不传才现读（调用时 settings
+    已被新方案覆盖，现读必为 False，是 v2.27 首修时的实锤时序坑）。"""
+    if not new_direct_url or _is_own_proxy_url(new_direct_url):
+        return False, "无效的直连地址"
+    if was_proxy is None:
+        was_proxy = _is_own_proxy_url(_bmgr.read_current_url())
+    prev = _load_saved_direct() or _direct_url()
+    old_path = urlsplit(prev).path or "/"   # 记忆此刻还是旧网关（settings
+    _remember_direct(new_direct_url)          # 已被切方案写成新值，不能作旧源）
+    if not _ctl.running:
+        if _ctl.ping_existing():
+            # 外部自家实例在跑（不归本进程管）：上游热切不了，base_url 停在
+            # 代理入口只会打旧上游——退直连自保
+            if was_proxy:
+                _bmgr.apply(new_direct_url)
+            log.warning("方案切换：37349 为外部实例，上游无法热切，已退直连")
+            return False, "外部代理实例无法热切，已切直连"
+        return False, "代理未运行（已记忆新直连地址）"
+    # 热改上游属性而非停/起重试代理：handler 每请求读 server.upstream_*，
+    # 原子换引用即可——零停机、持锁仅纳秒（早期版本 stop+start 同步停
+    # server ~0.3s 且全程持 switch_lock，连点切方案时请求在锁上排队，
+    # 用户实锤「卡死」）。三属性顺序赋值（scheme→host→port），GIL 下单条
+    # 原子；纳秒级中间态最多让个别在途请求连错一次，网络异常重试兜底。
+    h, p, s = _upstream_of(new_direct_url)
+    with _ctl._lock:
+        srv = _ctl.server
+        if srv is not None:
+            srv.upstream_scheme = s
+            srv.upstream_host = h
+            srv.upstream_port = p
+    if srv is None:
+        return False, "代理未运行（已记忆新直连地址）"
+    log.info("方案切换：代理上游热切 -> %s:%d (%s)", h, p, s)
+    global _autoswitched
+    if not was_proxy:
+        # 用户本就在直连模式：settings 里已是新网关直连，只换代理上游
+        # （统计/重试跟对网关），不把用户拉回代理模式
+        log.info("方案切换：代理上游 -> %s（base_url 保持直连）", new_direct_url)
+        if notify:
+            _proxy_notify()
+        return True, "代理上游已跟随切换（base_url 保持直连）"
+    new_path = urlsplit(new_direct_url).path or "/"
+    if (_hr.ping_existing() and _headroom_mode != "off" and new_path != old_path):
+        # headroom 上游含旧网关路径，路径变了不重拉 → 打旧路径上新网关 404。
+        # 先指 37349 保会话；后台重拉 headroom，就绪后**条件**升 8787——
+        # 期间用户又切方案/手动切直连（epoch 变了或 base_url 已非自家入口）
+        # 时不覆盖，由后续动作收尾（apply_hr_mode 的 worker 是无条件
+        # apply(PROXY_URL)，会顶掉手动直连，故此处自写不复用）
+        _bmgr.apply(_retry_url())
+        _autoswitched = True
+        hr_mode_snap = _headroom_mode
+
+        def _hr_worker():
+            global _autoswitched
+            _switch_busy_inc()   # headroom 重拉期间也算「未稳定」，禁止再切
+            try:
+                if _epoch is not None and _epoch != _repoint_seq:
+                    return   # 排队期间有更新动作：重拉作废
+                _hr.stop()
+                _hr.start(hr_mode_snap, ccr=_ccr)
+                _wait_headroom_ready()
+                with _switch_lock:
+                    if _epoch is not None and _epoch != _repoint_seq:
+                        return
+                    # 只有链路仍处于代理意图（base_url=自家入口）才升 8787
+                    if _is_own_proxy_url(_bmgr.read_current_url()):
+                        _bmgr.apply(PROXY_URL)
+                        _autoswitched = True
+                log.info("方案切换：headroom 已按新路径重启")
+            except Exception as e:
+                log.warning("方案切换后重启 headroom 失败，维持重试代理: %s", e)
+            finally:
+                _switch_busy_dec()
+
+        threading.Thread(target=_hr_worker, daemon=True).start()
+        msg = "代理上游已切换，headroom 按新路径重启中"
+    else:
+        target = _proxy_mode_url()
+        _bmgr.apply(target)
+        _autoswitched = True
+        msg = "代理上游已跟随切换"
+    log.info("方案切换：代理上游 -> %s，base_url -> 代理入口", new_direct_url)
+    if notify:
+        _proxy_notify()
+    return True, msg
 
 
 def apply_hr_mode(mode, ccr=None):
@@ -1261,6 +1466,9 @@ def ensure_direct_if_proxy_down(origin="startup"):
         alive = _hr.ping_existing() if ":8787" in cur else _ctl.ping_existing()
         if alive:
             return False
+        # 确认接管（此时才作废排队任务——此检查每次会话启动前都跑，
+        # 无条件作废会误杀刚排队的方案联动 worker）
+        _bump_repoint_epoch()
         changed, _ = _bmgr.apply(_direct_url())
         log.info("自愈(%s): base_url 指向未运行的代理，已恢复直连: %s", origin, changed)
         return True
@@ -1439,11 +1647,20 @@ def _status_payload():
         "snapshot": snap,
         "base_url": _bmgr.read_current_url(),
         "direct_url": _direct_url(),
-        "upstream": "%s:%d" % _upstream_of(_direct_url())[:2],
+        # 链路显示「真正的上游」（用户实锤批注：不能写死）——代理在跑时以
+        # server 实际转发目标为准（启动后上游烘死在 server 里，与 _direct_url
+        # 推导值脱节时显示真实值）；没跑时才用推导值。
+        "upstream": ("%s:%d" % (_ctl.server.upstream_host,
+                                _ctl.server.upstream_port)
+                     if _ctl.running and _ctl.server is not None
+                     else "%s:%d" % _upstream_of(_direct_url())[:2]),
         "hr_mode": _headroom_mode,
         "hr_running": _hr.running if _headroom_mode != "off" else False,
         "hr_switching": _hr_switching,
         "ccr": _ccr,
+        # v2.27.20：重试策略当前值（面板「重试配置」按钮文案用——原独立
+        # 工具有此配置入口，合入面板时漏了，用户实锤「配置接口没了」）
+        "retry_cfg": dict(core.RETRY_CFG),
         "headroom_exe": os.path.exists(HEADROOM_EXE),
         "hr_stats": _hr_stats_cache,
         "quota_kind": qkind,
@@ -1494,6 +1711,49 @@ def _api_compression():
     # ccr 缺省 None=不改（apply_hr_mode 内部判），配置弹窗一次带 {mode, ccr} 同改
     ok, msg = apply_hr_mode(j.get("mode", ""), ccr=j.get("ccr"))
     return jsonify({"ok": ok, "msg": msg})
+
+
+@proxy_bp.route("/api/proxy/retry", methods=["GET", "POST"])
+def _api_retry():
+    """重试策略配置（原独立工具「重试配置」弹窗的能力回归）。
+    GET 读当前值；POST 校验后写 retry_config.json + 热更 RETRY_CFG——
+    core 的 backoff_wait/check_retry_cap 每次调用都读 RETRY_CFG，
+    正在运行的代理立即生效，无需重启。字段缺省=不改该字段。"""
+    if request.method == "GET":
+        return jsonify({"ok": True, "cfg": dict(core.RETRY_CFG),
+                        "file": core.retry_config_file()})
+    j = request.get_json(silent=True) or {}
+    cfg = dict(core.RETRY_CFG)
+    try:
+        if "max_attempts" in j:
+            v = int(j["max_attempts"])
+            if v < 0:
+                raise ValueError("上限次数不能为负")
+            cfg["max_attempts"] = v
+        if "max_retry_seconds" in j:
+            v = float(j["max_retry_seconds"])
+            if v < 0:
+                raise ValueError("最大时长不能为负")
+            cfg["max_retry_seconds"] = v
+        if "max_backoff_seconds" in j:
+            v = float(j["max_backoff_seconds"])
+            if not (0.1 <= v <= 3600):
+                raise ValueError("退避封顶需在 0.1~3600 秒")
+            cfg["max_backoff_seconds"] = v
+        if "backoff_enabled" in j:
+            cfg["backoff_enabled"] = bool(j["backoff_enabled"])
+    except (TypeError, ValueError) as e:
+        return jsonify({"ok": False, "msg": "参数非法：%s" % e})
+    try:
+        path = core.retry_config_file()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+    except OSError as e:
+        return jsonify({"ok": False, "msg": "写入失败：%s" % e})
+    core.RETRY_CFG.update(cfg)   # 热更（与 reload 等价，少一次盘读）
+    log.info("重试策略已更新: %s", cfg)
+    return jsonify({"ok": True, "cfg": dict(core.RETRY_CFG), "file": path})
 
 
 @proxy_bp.route("/api/proxy/ccr", methods=["POST"])

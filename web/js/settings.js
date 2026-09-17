@@ -688,17 +688,18 @@ async function _stRenderApiPane(pane) {
           ${p.legacy ? '<span style="color:orange;font-size:11px;flex-shrink:0;" title="只存了 Token/网关——切换不会带模型映射，配好后重新『存当前为方案』升级">⚠ 旧格式</span>' : ''}
           ${p.name === j.active
             ? '<span style="color:var(--neon-green);font-size:11px;flex-shrink:0;">● 当前</span>'
-            : `<button class="btn ghost" data-prof="${esc(p.name)}" style="flex-shrink:0;">应用</button>`}
+            : `<button class="btn ghost" data-prof="${esc(p.name)}" style="flex-shrink:0;${j.switching ? 'opacity:.5;cursor:not-allowed;' : ''}"${j.switching ? ' disabled' : ''}>${j.switching ? '切换中…' : '应用'}</button>`}
           <button class="btn ghost" data-profdel="${esc(p.name)}" title="删除方案（不影响当前 settings.json）" style="flex-shrink:0;">✕</button>
         </div>`).join('')
         || '<div class="dd-sub">暂无方案——填好 Token 保存后，点「存当前为方案」留存第一套。</div>';
       profListEl.querySelectorAll('[data-prof]').forEach(b => {
         b.onclick = async () => {
+          if (b.disabled) return;
           try {
             const r = await fetch('/api/claude/profiles/apply', {method:'POST',
               headers:{'Content-Type':'application/json'}, body: JSON.stringify({name: b.dataset.prof})});
             const j2 = await r.json();
-            if (!j2.ok) { showBanner('切换失败: ' + (j2.err || ''), 4000, true); return; }
+            if (!j2.ok) { showBanner('切换失败: ' + (j2.err || ''), 4000, true); renderProfiles(); return; }
             if (j2.warning) { showBanner('⚠ ' + j2.warning, 9000, true); }
             else showBanner('已切换到「' + b.dataset.prof + '」——新开的 Claude 会话生效', 4500);
             _stApiNewMode = false;   // 应用方案 = 退出新建模式
@@ -706,6 +707,12 @@ async function _stRenderApiPane(pane) {
           } catch(e) { showBanner('切换失败: ' + e, 4000, true); }
         };
       });
+      // 切换未稳定：按钮全禁用，1s 后自动重查——稳定即自动恢复可点
+      // （后端 409 是最终真相源，这里只是让按钮状态肉眼可见）
+      if (j.switching) {
+        clearTimeout(profListEl._swT);
+        profListEl._swT = setTimeout(renderProfiles, 1000);
+      }
       profListEl.querySelectorAll('[data-profdel]').forEach(b => {
         b.onclick = async () => {
           const ok = await _ddConfirm('删除配置方案', '删除方案「' + b.dataset.profdel + '」？（不影响当前 settings.json）');

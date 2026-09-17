@@ -13,6 +13,7 @@ import json
 import os
 import re
 import shutil
+import threading
 import urllib.error
 import urllib.request
 
@@ -160,8 +161,13 @@ def _read_settings():
 
 def _write_settings(d):
     os.makedirs(_claude_dir(), exist_ok=True)
-    with open(_settings_path(), "w", encoding="utf-8") as f:
+    # 原子写（tmp+replace）：裸 open("w") 与后台代理联动的字段级写并发时，
+    # 会留半截 JSON / 交错覆盖（用户定调：任何情况不能破坏 settings.json）
+    p = _settings_path()
+    tmp = p + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(d, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, p)
 
 
 def provision_defaults(force_statusline=False, reset_statusline=False):
@@ -470,7 +476,14 @@ def claude_profiles_get():
                     "legacy": not bool(p.get("settings")),
                     "token_masked": _mask_token(env.get("ANTHROPIC_AUTH_TOKEN", "")),
                     "base_url": env.get("ANTHROPIC_BASE_URL", "")})
+    switching = False
+    try:
+        from src import proxy as _proxy
+        switching = _proxy.profile_switch_in_flight()
+    except Exception:
+        pass
     return jsonify({"ok": True, "profiles": out, "active": d.get("active", ""),
+                    "switching": switching,   # 切换未稳定：前端禁「应用」按钮
                     "settings_path": _settings_path()})
 
 
@@ -493,42 +506,155 @@ def claude_profiles_save():
     else:
         d["profiles"].append(prof)
     _write_profiles(d)
+    _last_applied_profile["name"] = None   # 覆盖保存后内容已变，清幂等短路
     return jsonify({"ok": True})
+
+
+# 上次成功 apply 的方案名（进程内幂等短路标记：连点同方案直接返回，
+# 不重写 settings/profiles、不起联动 worker——用户实锤连点 7 次排队卡顿）。
+# 「存当前为方案」覆盖同名后必须清（内容已变，不能跳过真正的切换）
+_last_applied_profile = {"name": None}
 
 
 @claude_default_bp.route("/api/claude/profiles/apply", methods=["POST"])
 def claude_profiles_apply():
     """一键切换：方案整份写回 settings.json（v2.22 快照制）。
     旧格式方案（v2.21 只存 env 两键）退回合并模式。
-    对已运行的 claude 进程不生效——env 是启动时注入的，新会话起效。body: {name}"""
+    对已运行的 claude 进程不生效——env 是启动时注入的，新会话起效。body: {name}
+
+    v2.27：代理在跑时切方案 → 同步重指代理上游到方案网关（用户实锤 405：
+    快照制会把代理运行期存的 127.0.0.1 入口整份写回，且重试代理上游
+    仍指旧网关——请求打到旧网关带新 token，405 Not Allowed）。"""
     data = request.get_json(force=True, silent=True) or {}
     name = (data.get("name") or "").strip()
     d = _read_profiles()
     prof = next((p for p in d["profiles"] if p.get("name") == name), None)
     if not prof:
         return jsonify({"ok": False, "err": "方案不存在"}), 404
-    snap = prof.get("settings")
-    if isinstance(snap, dict) and snap:
-        _write_settings(snap)                     # v2.22：整份替换
-    else:
-        # 旧格式：只并入 env 两键。模型映射等不会跟着切（旧方案里没存过），
-        # 必须显式警告——静默回退让用户以为切换完整（A↔B 切来切去模型全乱）
-        cur = _read_settings()
-        env = cur.setdefault("env", {})
-        if not isinstance(env, dict):
-            env = cur["env"] = {}
-        for k, v in (prof.get("env") or {}).items():
-            if v:
-                env[k] = v
-        _write_settings(cur)
+    if _last_applied_profile["name"] == name:
+        return jsonify({"ok": True, "msg": "已是当前方案"})   # 幂等短路
+    from src import proxy as _proxy
+    # 未稳定保护（用户定调）：上一方案的后台联动（上游热切/base_url 回代理
+    # 入口/headroom 重拉）没收尾前，禁止切下一方案——快速连点的竞态窗口
+    # 整个关掉（曾出「新 token+旧上游」错配 → Claude 打错网关卡死）
+    if _proxy.profile_switch_in_flight():
+        return jsonify({"ok": False,
+                        "err": "上一个方案仍在切换中（后台同步代理上游），"
+                               "请稍候几秒再切"}), 409
+    # 全临界区上锁（v2.27.2 竞态收口，用户定调三条铁律：最后一次切换为准 /
+    # 不破坏 settings.json / 最终代理生效且上游=最后方案）：连点切方案时
+    # 各请求的「读-净化-整份写回-写 profiles」串行化，与后台 re_point
+    # worker（同锁）互斥——杜绝整份写回与字段级改写交错覆盖。
+    # 同步段全是毫秒级文件操作，锁不伤「立即返回」体感。
+    with _proxy.switch_lock():
+        _sanitize_prev_profile(d)   # 上一方案快照若存了代理入口 → 换成真实网关
+        # 整份写回前捕获「链路是否应处代理模式」——写完 settings 再读就只剩
+        # 新方案直连值（v2.27.1 时序坑）。连点连切时上一刀已把 base_url 写成
+        # 直连中间态，纯读 settings 会误判直连 → 用 proxy_intent_active
+        # （含 _autoswitched 意图）兜住：最后一刀必须把 base_url 拉回代理入口
+        try:
+            was_proxy = _proxy.proxy_intent_active()
+        except Exception:
+            was_proxy = False
+        snap = prof.get("settings")
+        if isinstance(snap, dict) and snap:
+            # 快照净化：代理运行期保存的方案，base_url 可能是 127.0.0.1 自家
+            # 入口——照写回等于让 Claude 连「指旧网关的代理」，切网关必 405。
+            snap = json.loads(json.dumps(snap))   # 深拷贝——不改动存的方案本体
+            env = snap.get("env")
+            prof_base = env.get("ANTHROPIC_BASE_URL") if isinstance(env, dict) else None
+            if prof_base and str(prof_base).startswith(
+                    ("http://127.0.0.1:37349", "http://127.0.0.1:8787")):
+                env["ANTHROPIC_BASE_URL"] = DEFAULT_BASE_URL   # 脏快照回默认网关
+                prof_base = DEFAULT_BASE_URL
+            _write_settings(snap)                     # v2.22：整份替换
+        else:
+            # 旧格式：只并入 env 两键。模型映射等不会跟着切（旧方案里没存过），
+            # 必须显式警告——静默回退让用户以为切换完整（A↔B 切来切去模型全乱）
+            cur = _read_settings()
+            env = cur.setdefault("env", {})
+            if not isinstance(env, dict):
+                env = cur["env"] = {}
+            for k, v in (prof.get("env") or {}).items():
+                if v:
+                    env[k] = v
+            prof_base = env.get("ANTHROPIC_BASE_URL")
+            _write_settings(cur)
+            d["active"] = name
+            _write_profiles(d)
+            _sync_proxy_upstream(prof_base, was_proxy)
+            return jsonify({"ok": True, "warning":
+                            "方案「%s」是旧格式（只存了 Token/网关），模型映射没有切换。"
+                            "请在该网关下配好模型映射后重新「存当前为方案」升级为完整快照。" % name})
         d["active"] = name
         _write_profiles(d)
-        return jsonify({"ok": True, "warning":
-                        "方案「%s」是旧格式（只存了 Token/网关），模型映射没有切换。"
-                        "请在该网关下配好模型映射后重新「存当前为方案」升级为完整快照。" % name})
-    d["active"] = name
-    _write_profiles(d)
+        _sync_proxy_upstream(prof_base, was_proxy)
+        # v2.27.15：切方案后活 harness 进程仍揣旧 token/模型映射（env 是
+        # 启动时注入的）——代理上游已热切到新网关，旧 token 打新网关必
+        # 401/405。后台静默重启小助手会话（kill + --resume 续上下文），
+        # 新进程读新 settings；GUI 会话不打扰（其引导词/自愈机制会在
+        # 下次发送时按需换新进程）。超窗续命见 send_message 拦截分支。
+        threading.Thread(target=_renew_bot_after_switch, daemon=True).start()
+    _last_applied_profile["name"] = name   # 成功收尾才记（失败下次重做全量）
     return jsonify({"ok": True})
+
+
+def _renew_bot_after_switch():
+    """切 API 方案收尾：小助手 harness 进程 kill+resume 换新 token。
+    任何一步失败静默——续不上的会话在下次发送时由超窗拒发/自愈兜底。"""
+    try:
+        from src import hiklink_bot as hb
+        ctl = hb._controller
+        s = ctl._session() if ctl else None
+        if s and s.alive and not s.busy:
+            s.kill_proc(quiet=True)
+            s.revive_if_dead()
+    except Exception:
+        pass
+
+
+def _sanitize_prev_profile(d):
+    """切走前净化「上一个激活方案」的快照（v2.27）：方案若在代理运行期
+    保存，快照里的 base_url 是 127.0.0.1 自家代理入口——照原样留着，
+    下次切回它就等于整份写回代理地址（上游还指别人网关 → 405）。
+    用 proxy 的直连记忆（切代理前的真源）替换之。"""
+    active = d.get("active")
+    if not active:
+        return
+    try:
+        from src import proxy as _proxy
+        real = _proxy.saved_direct_url()
+    except Exception:
+        return
+    if not real or str(real).startswith(
+            ("http://127.0.0.1:37349", "http://127.0.0.1:8787")):
+        return   # 无记忆或记忆本身是代理地址：无从净化，不动方案
+    for p in d.get("profiles") or []:
+        if p.get("name") != active:
+            continue
+        snap = p.get("settings")
+        env = (snap or {}).get("env")
+        if isinstance(env, dict) and str(
+                env.get("ANTHROPIC_BASE_URL", "")).startswith(
+                ("http://127.0.0.1:37349", "http://127.0.0.1:8787")):
+            env["ANTHROPIC_BASE_URL"] = real
+            _write_profiles(d)
+        break
+
+
+def _sync_proxy_upstream(prof_base, was_proxy=None):
+    """切方案后联动代理（后台执行，接口立即返回——用户定调体感零等待）：
+    重指上游 + base_url 切回代理入口，逻辑在 proxy.queue_re_point。
+    was_proxy=写回 settings 前捕获的「是否代理模式」，见 claude_profiles_apply。"""
+    if not prof_base or str(prof_base).startswith(
+            ("http://127.0.0.1:37349", "http://127.0.0.1:8787")):
+        return   # 旧格式方案没存 base_url 或已净化：拿不到新网关，不联动
+    try:
+        from src import proxy as _proxy
+        _proxy.queue_re_point(str(prof_base), was_proxy=was_proxy)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("切方案联动代理失败: %s", e)
 
 
 @claude_default_bp.route("/api/claude/profiles/del", methods=["POST"])

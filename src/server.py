@@ -891,6 +891,24 @@ def api_log_dir_open():
         return jsonify({"ok": False, "err": str(e)}), 400
 
 
+@app.route("/api/open_url", methods=["POST"])
+def api_open_url():
+    """系统默认浏览器打开外部链接（v2.27.22）。WebView 内点链接若就地导航，
+    整个工具被错误页替换（用户实锤：markdown linkify 把裸词 proxy.py 补成
+    http://proxy.py，点击后 ERR_NAME_NOT_RESOLVED 占满窗口、无返回入口）。
+    前端拦截一切 <a> 点击走这里，WebView 永不离开应用页面。只放行 http(s)。"""
+    data = request.get_json(force=True, silent=True) or {}
+    url = (data.get("url") or "").strip()
+    if not (url.startswith("http://") or url.startswith("https://")):
+        return jsonify({"ok": False, "err": "仅支持 http(s) 链接"}), 400
+    try:
+        import webbrowser
+        webbrowser.open(url)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "err": str(e)}), 400
+
+
 # ---- 数据目录管理（顶栏机器人图标点开的设置面板）----
 # 数据目录收纳：logs/（串口日志，唯一日志目录）、files/（笔记）、根级 *.json
 # （cmdlib.json/retry_config.json 等关键配置——v2.27.1 起自动全量纳入：凡是

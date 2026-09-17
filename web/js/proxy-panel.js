@@ -77,6 +77,16 @@ function buildProxyTab() {
           <div class="px-hint">点「压缩模式」选择策略并立即生效：停旧 headroom → 按新模式拉起（冷启动 10-30s）→ 就绪自动切 base_url。失败自动回退关闭压缩。主模型 Lanz-Auto 带签名 thinking 不可压缩，压缩收益主要来自子代理与工具输出。</div>
         </div>
 
+        <!-- 重试策略：原独立工具「重试配置」弹窗的能力回归（合入时漏带）。
+             一个配置按钮 + 只读说明，编辑进弹窗（与 headroom 同款防误点） -->
+        <div class="px-sec">
+          <div class="px-sec-title">重试策略</div>
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px;">
+            <button class="lv-btn" data-px-retry-cfg style="min-width:170px;">重试配置：—</button>
+          </div>
+          <div class="px-hint">429/5xx/网络异常自动重试（阶梯退避 1s→封顶，带抖动）。点「重试配置」编辑上限次数/最大时长/退避开关/退避封顶，保存即热生效——正在运行的代理立即应用，无需重启。默认无限重试（0=无限）。</div>
+        </div>
+
         <!-- Lanz 额度区：登录 + 概览 + 三模型明细 + 模型用量排名（老 GUI 同款布局）-->
         <div class="px-sec">
           <div class="px-sec-title">Lanz 额度</div>
@@ -106,6 +116,7 @@ function buildProxyTab() {
         </div>
 
         <div class="px-hint" data-px-chain>链路：Claude Code → headroom(8787，压缩) → 重试代理(37349，429/5xx 自动重试) → 上游网关。退出工具自动停代理并回滚 base_url；异常退出下次启动自愈。</div>
+        <div class="px-hint" data-px-direct>原 base_url（直连网关）：-</div>
       </div>
 
       <!-- 用量统计页：日×小时×模型聚合（180 天内），纯 CSS 堆叠柱状图 -->
@@ -169,6 +180,7 @@ function buildProxyTab() {
   const qAutoEl = $p('[data-px-q-auto]');
   const hrStatsEl = $p('[data-px-hr-stats]');
   const hrCfgBtn = $p('[data-px-hr-cfg]');
+  const retryCfgBtn = $p('[data-px-retry-cfg]');
   // ---- 面板内部 tab（概览/用量统计）：仅挂载点——用量逻辑全在
   // proxy-usage.js（独立积木），宿主文件不承载任何用量实现 ----
   const uPage = $p('[data-px-page="usage"]');
@@ -391,6 +403,9 @@ function buildProxyTab() {
       // 链路说明尾段动态显示真实上游（不再写死 lanz）
       const chain = wrap.querySelector('[data-px-chain]');
       if (chain && j.upstream) chain.textContent = chain.textContent.replace(/→ .*。退出/, '→ ' + j.upstream + '。退出');
+      // 原 base_url：当前方案的真实直连网关（切方案后应跟随变化，验证 405 修复的肉眼依据）
+      const direct = wrap.querySelector('[data-px-direct]');
+      if (direct) direct.textContent = '原 base_url（直连网关）：' + (j.direct_url || '(未设置)');
       toggleBtn.textContent = j.running ? '■ 停止代理' : '▶ 启动代理';
       if (j.already_running) _msg('检测到已有 Claude 代理实例在 37349 端口（原独立工具在跑）——面板仅展示，复用不杀', false);
       else if (j.port_busy) _msg('端口 37349 被其他程序占用，无法启动', true);
@@ -400,6 +415,7 @@ function buildProxyTab() {
       _renderQuota(j);
       _renderHrStats(j);
       _setHrUI(j);
+      _setRetryUI(j);
       if (!j.headroom_exe && (j.hr_mode === 'full' || j.hr_mode === 'light')) {
         msgEl.dataset.keep = '1';
         _msg('未找到 headroom.exe（pip install headroom-ai[all]），压缩不可用；重试代理不受影响', true);
@@ -455,6 +471,97 @@ function buildProxyTab() {
 
   // headroom 配置入口：主面板只剩这一个按钮，选择进弹窗（旧内联 radio 易误点）
   hrCfgBtn.onclick = () => _hrCfgModal();
+  // 重试配置入口（同款防误点设计）
+  retryCfgBtn.onclick = () => _retryCfgModal();
+
+  // ---- 重试策略配置弹窗（原独立工具 _retry_dialog 的能力回归）----
+  // 四字段：上限次数/最大时长/退避开关/退避封顶。0=无限（次数/时长）。
+  // 保存 POST /api/proxy/retry → 写 retry_config.json + 热更 RETRY_CFG，
+  // 在跑的代理立即生效（backoff_wait/check_retry_cap 每次调用都读它）。
+  function _retryCfgFmt(c) {
+    if (!c) return '重试配置：—';
+    const n = c.max_attempts > 0 ? c.max_attempts + '次' : '无限';
+    const t = c.max_retry_seconds > 0 ? c.max_retry_seconds + 's' : '无限';
+    const b = c.backoff_enabled === false ? '关' : '开';
+    return `重试配置：上限 ${n} ｜ 时长 ${t} ｜ 退避 ${b} ｜ 封顶 ${c.max_backoff_seconds}s`;
+  }
+  function _setRetryUI(j) {
+    retryCfgBtn.textContent = _retryCfgFmt(j.retry_cfg);
+    retryCfgBtn.title = '编辑 429/5xx 重试策略（保存即热生效，无需重启代理）';
+  }
+  function _retryCfgModal() {
+    let m = $('pxRetryModal');
+    if (!m) {
+      m = document.createElement('div');
+      m.className = 'modal';
+      m.id = 'pxRetryModal';
+      m.innerHTML = `
+        <div class="box" style="max-width:480px;">
+          <div class="head"><strong>重试策略配置</strong>
+            <div class="head-actions"><button class="btn ghost icon-btn" data-rt-x>✕</button></div></div>
+          <div style="padding:14px 18px 4px;display:flex;flex-direction:column;gap:10px;font-size:13px;">
+            <label style="display:flex;align-items:center;gap:10px;">
+              <span style="width:110px;flex-shrink:0;">重试上限次数</span>
+              <input type="number" min="0" step="1" data-rt-attempts style="width:90px;">
+              <span class="px-hint">0 = 无限重试（默认）</span></label>
+            <label style="display:flex;align-items:center;gap:10px;">
+              <span style="width:110px;flex-shrink:0;">最大重试时长（秒）</span>
+              <input type="number" min="0" step="1" data-rt-seconds style="width:90px;">
+              <span class="px-hint">0 = 不限时；超时即放弃并返回错误</span></label>
+            <label style="display:flex;align-items:center;gap:10px;">
+              <span style="width:110px;flex-shrink:0;">阶梯退避</span>
+              <input type="checkbox" data-rt-backoff>
+              <span class="px-hint">关 = 不逐次加长等待（固定最短间隔）</span></label>
+            <label style="display:flex;align-items:center;gap:10px;">
+              <span style="width:110px;flex-shrink:0;">退避封顶（秒）</span>
+              <input type="number" min="0.1" step="0.5" data-rt-cap style="width:90px;">
+              <span class="px-hint">单次等待上限，实际带随机抖动</span></label>
+            <div class="px-hint" style="margin-top:4px;">保存即写 retry_config.json 并热更正在运行的代理，无需重启。命中上限后该请求以最后一次错误返回给客户端。</div>
+          </div>
+          <div style="display:flex;gap:10px;justify-content:flex-end;padding:12px 18px 16px;">
+            <button class="btn ghost" data-rt-cancel>取消</button>
+            <button class="btn primary" data-rt-save>保存</button>
+          </div>
+        </div>`;
+      document.body.appendChild(m);
+    }
+    // 当前值预填（status 轮询带的 retry_cfg；没有则 GET 一次）
+    const c = (conn.hrState && conn.hrState.retry_cfg) || null;
+    const fill = (cfg) => {
+      if (!cfg) return;
+      m.querySelector('[data-rt-attempts]').value = cfg.max_attempts;
+      m.querySelector('[data-rt-seconds]').value = cfg.max_retry_seconds;
+      m.querySelector('[data-rt-backoff]').checked = cfg.backoff_enabled !== false;
+      m.querySelector('[data-rt-cap]').value = cfg.max_backoff_seconds;
+    };
+    if (c) fill(c);
+    else fetch('/api/proxy/retry').then(r => r.json()).then(j => { if (j.ok) fill(j.cfg); }).catch(() => {});
+    const close = () => m.classList.remove('show');
+    m.querySelector('[data-rt-x]').onclick = close;
+    m.querySelector('[data-rt-cancel]').onclick = close;
+    m.querySelector('[data-rt-save]').onclick = async () => {
+      const saveBtn = m.querySelector('[data-rt-save]');
+      saveBtn.disabled = true;
+      try {
+        const r = await fetch('/api/proxy/retry', {method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            max_attempts: parseInt(m.querySelector('[data-rt-attempts]').value, 10) || 0,
+            max_retry_seconds: parseFloat(m.querySelector('[data-rt-seconds]').value) || 0,
+            backoff_enabled: m.querySelector('[data-rt-backoff]').checked,
+            max_backoff_seconds: parseFloat(m.querySelector('[data-rt-cap]').value) || 10,
+          })});
+        const j = await r.json();
+        if (!j.ok) { _msg(j.msg || '保存失败', true); saveBtn.disabled = false; return; }
+        retryCfgBtn.textContent = _retryCfgFmt(j.cfg);
+        if (conn.hrState) conn.hrState.retry_cfg = j.cfg;   // 轮询回来前先自洽
+        _msg('重试策略已保存并热生效', false);
+        close();
+      } catch(e) { _msg('请求失败: ' + e, true); }
+      saveBtn.disabled = false;
+    };
+    m.classList.add('show');
+  }
 
   // ---- headroom 压缩配置弹窗（仿原工具 _hr_mode_dialog，模式卡+CCR+预览）----
   // off 永远可选（代理未跑时=只记模式下次启动生效，原工具同款降级）；
