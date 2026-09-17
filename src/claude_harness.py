@@ -1149,7 +1149,8 @@ class HarnessSession:
                     return False, ("当前上下文已约 %dK tokens，超过模型「%s」"
                                    "的 %dK 窗口（多半是切了 API 方案模型变小）"
                                    "——请切回大窗口 API 方案，或新建会话"
-                                   % (round(used / 1024), eff_model,
+                                   % (round(used / 1024),
+                                      (s.model or eff_model),
                                       round(mwin / 1024)))
         except Exception:
             pass   # 检测自身失败不拦发送（读不到用量时维持原行为）
@@ -2029,14 +2030,6 @@ def _session_ctx_used(s):
 # 其余默认 256K（实测报错原文 maximum context length 262144）。
 _CTX_WINDOW_1M = 1048576
 _CTX_WINDOW_DEFAULT = 262144
-
-
-def _model_ctx_window(model):
-    """按模型名推断网关侧上下文窗口（set_model 预检用）。"""
-    name = (model or "").lower()
-    if "[1m]" in name or name.endswith("1m"):
-        return _CTX_WINDOW_1M
-    return _CTX_WINDOW_DEFAULT
 
 
 def _session_ctx_window(s):
