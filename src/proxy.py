@@ -476,9 +476,10 @@ class HeadroomController:
             if self.port_in_use():
                 raise RuntimeError("端口 %d 已被其他程序占用（非 headroom）"
                                    % HEADROOM_PORT)
-            if not os.path.exists(HEADROOM_EXE):
-                raise RuntimeError("未找到 headroom.exe（%s）\n"
-                                   "pip install %s 后重试" % (HEADROOM_EXE, PIP_PKG_SPEC))
+            if not HEADROOM_EXE or not os.path.exists(HEADROOM_EXE):
+                raise RuntimeError("未找到 headroom.exe（本机未安装）\n"
+                                   "pip install %s 后重试，或把压缩模式设为关闭"
+                                   % PIP_PKG_SPEC)
             env = dict(os.environ)
             env["ANTHROPIC_TARGET_API_URL"] = _retry_url()
             env.update(HEADROOM_ENV_EXTRA)
@@ -1317,7 +1318,7 @@ def tray_menu_items():
     返回原生菜单描述树（("item", text, cb, opts) / ("sep",)），text/checked
     可传函数 → 打开菜单时求值最新状态；未启动时启停行自动降级。
     与 pystray.MenuItem(fn) 签名兼容：函数项被调时收一个 None 参数。"""
-    has_headroom = os.path.exists(HEADROOM_EXE)
+    has_headroom = bool(HEADROOM_EXE) and os.path.exists(HEADROOM_EXE)
 
     def _hr_items():
         # 未启动重试代理时压缩项置灰（headroom 需要 37349 做上游）；
@@ -1661,7 +1662,9 @@ def _status_payload():
         # v2.27.20：重试策略当前值（面板「重试配置」按钮文案用——原独立
         # 工具有此配置入口，合入面板时漏了，用户实锤「配置接口没了」）
         "retry_cfg": dict(core.RETRY_CFG),
-        "headroom_exe": os.path.exists(HEADROOM_EXE),
+        # v2.2.2：同事机无 headroom 时 _detect 返回 None，exists(None) 抛
+        # TypeError 炸掉整个 status（面板「状态获取失败」）——先判 None
+        "headroom_exe": bool(HEADROOM_EXE) and os.path.exists(HEADROOM_EXE),
         "hr_stats": _hr_stats_cache,
         "quota_kind": qkind,
         "quota_payload": qpayload,
