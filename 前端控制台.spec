@@ -56,9 +56,8 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,
     name='前端控制台',
     debug=False,
     bootloader_ignore_signals=False,
@@ -75,4 +74,19 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=['D:/AI/串口控制台Pro/ico/app.ico'],
+)
+
+# v2.3.0 onedir 模式（用户定调，治 exe 卡慢根因）：onefile 每次启动解压
+# 52MB 到 %TEMP%、静态资源全从 TEMP 读，慢机+杀软扫描下启动/首开文件
+# 卡顿数秒（同事机实锤）。onedir 依赖落盘在 exe 旁 _internal/，启动免解压、
+# 资源原地读。分发/升级形态随之变为 zip（build.py 打包即发布 zip，
+# updater 解压替换整个应用目录并保全 data/）。
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name='前端控制台',
 )

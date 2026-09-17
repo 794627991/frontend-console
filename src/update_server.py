@@ -22,7 +22,10 @@ PORT = 8765
 _MAX_AGE = 60          # manifest 缓存友好：发布后同事 1 分钟内必见新版
 _SESSION_TTL = 12 * 3600
 _DEFAULT_PWD = "888888"
-_APP_VER = "2.2.0"
+try:
+    from src.version import APP_VERSION as _APP_VER   # 单一源（version.py）
+except Exception:
+    _APP_VER = "2.3.0"
 
 
 # ---------------------------------------------------------------------------
@@ -32,7 +35,7 @@ def _releases_dir():
     """dist/releases 绝对路径（源码跑=项目根/dist/releases；frozen=exe 旁）。
     发布机是源码形态（要跑打包.bat），frozen 分支只是兜底。"""
     if getattr(sys, "frozen", False):
-        base = os.path.dirname(os.path.dirname(os.path.abspath(sys.executable)))
+        base = os.path.dirname(os.path.abspath(sys.executable))   # onedir: exe 所在应用目录
     else:
         base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base, "dist", "releases")
@@ -125,9 +128,10 @@ def _versions():
     except Exception:
         pass
     for n in names:
-        if not (n.endswith(".exe") and "-v" in n):
+        # v2.3.0：发布形态 zip（onedir 应用目录打包）；旧 .exe 历史包也列出（可下载）
+        if not ((n.endswith(".zip") or n.endswith(".exe")) and "-v" in n):
             continue
-        ver = n.rsplit("-v", 1)[-1][:-4] if n.endswith(".exe") else ""
+        ver = n.rsplit("-v", 1)[-1][:-4]
         p = os.path.join(root, n)
         try:
             st = os.stat(p)
@@ -266,7 +270,7 @@ _PORTAL_HTML = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
   </div>
   <div id="body"><div class="empty">版本加载中…</div></div>
   <div class="tip">
-    <b>整包安装</b>：下载最新版 exe，替换旧文件即可（旁挂 offline_pkg / 数据目录不受影响）。<br>
+    <b>整包安装</b>：下载最新版 zip 解压即用（v2.3.0 起为文件夹形态：exe + 依赖目录一起）。<br>
     <b>工具内热更新</b>：把地址 <b>__URL__</b> 填到工具「设置 → 关于与升级 → 升级服务器地址」，
     以后有新版工具会自动检查、一键升级（旧版自动备份为 .bak 可回退）。
   </div>
@@ -293,7 +297,7 @@ async function load(){
       +(top.notes?'<div class="notes">'+esc(top.notes)+'</div>'
         :'<div class="notes" style="color:var(--muted)">（本版未写更新说明——发布者在项目根 RELEASE_NOTES.md 写好后重新打包，说明会随版本带上）</div>')
       +'<div class="row"><button class="btn" data-dl="'+top.url+'" data-n="'+esc(top.file)+'">⬇ 下载整包</button>'
-      +'<span data-dlst style="font-size:12px;color:var(--muted)">下载后替换旧 exe 即完成升级</span></div></div>';
+      +'<span data-dlst style="font-size:12px;color:var(--muted)">下载后解压即完成安装</span></div></div>';
     const rest=j.items.slice(1);
     if(rest.length){
       h+='<div style="font-size:12px;color:var(--muted);letter-spacing:2px;margin:26px 0 12px">历史版本</div><div class="vlist">';
@@ -398,7 +402,7 @@ class _Handler(BaseHTTPRequestHandler):
                                              else 3600))
             # 浏览器直接打开 → 下载而不是尝试执行；中文文件名走 RFC 5987
             self.send_header("Content-Disposition",
-                             "attachment; filename=download.exe; filename*=UTF-8''%s"
+                             "attachment; filename=download.bin; filename*=UTF-8''%s"
                              % quote(os.path.basename(path)))
             self.end_headers()
             with open(path, "rb") as f:
@@ -459,7 +463,7 @@ class _Handler(BaseHTTPRequestHandler):
 
         # 版本包文件：manifest/整包下载双通道共用，不做登录校验
         # （同事工具无浏览器态；完整性由 manifest sha1 保证）
-        if name.endswith(".exe"):
+        if name.endswith(".zip") or name.endswith(".exe"):
             p = _safe_path(root, name)
             if p and os.path.isfile(p):
                 self._file(p, "application/octet-stream")
