@@ -26,8 +26,14 @@ def _default_data_dir():
     cand = os.path.join(BASE_DIR, "data")
     try:
         os.makedirs(cand, exist_ok=True)
-        if os.access(cand, os.W_OK):
-            return cand
+        # v2.2.2：真实写测试替代 os.access——W_OK 在受控目录/网络盘上会
+        # 误报可写（同事机实锤：exe 放受保护目录，data 判可写但写文件
+        # 全失败→凭据/机器人配置落不了盘，每次重启都要重新登录）
+        probe = os.path.join(cand, ".wprobe")
+        with open(probe, "w") as f:
+            f.write("ok")
+        os.remove(probe)
+        return cand
     except Exception:
         pass
     return os.path.join(HOME_DIR, "data")   # 兜底（工具目录只读等罕见场景）

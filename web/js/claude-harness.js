@@ -4166,9 +4166,13 @@ document.addEventListener('click', async ev => {
     loginBtn.disabled = true; const old = loginBtn.textContent;
     loginBtn.textContent = '登录中…';
     try {
-      await fetch('/api/proxy/credentials', { method: 'POST',
+      const r = await fetch('/api/proxy/credentials', { method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'save', username: u, password: p }) });
+      const sj = await r.json().catch(() => ({}));
+      // v2.2.2：写盘失败如实报错——旧版静默吞 + 乐观渲染「已登录」，
+      // 凭据实际没落盘，重启就得重登（同事机实锤）
+      if (!sj.ok) { showBanner(sj.msg || '登录保存失败', 4000, true); return; }
       // 凭据就位后端已自动激活；再显式触发一次（幂等），并即时回显登录态
       await fetch('/api/hiklink/activate', { method: 'POST',
         headers: { 'Content-Type': 'application/json' }, body: '{}' }).catch(() => {});

@@ -1814,7 +1814,15 @@ def _api_credentials():
     pwd = j.get("password") or ""
     if not user or not pwd:
         return jsonify({"ok": False, "msg": "用户名/密码不能为空"})
-    lanz_quota.save_credentials(LANZ_CRED_PATH, user, pwd)
+    # v2.2.2：写盘失败显式报错——旧版静默 500 + 前端乐观渲染「已登录」，
+    # 实际凭据没落盘，重启就要重登（同事机实锤）。绝不能继续激活机器人。
+    try:
+        lanz_quota.save_credentials(LANZ_CRED_PATH, user, pwd)
+    except Exception as e:
+        log.exception("凭据写入失败")
+        return jsonify({"ok": False,
+                        "msg": "凭据写入失败：%s（数据目录不可写？检查工具"
+                               "所在目录权限，或把 exe 拷到普通目录运行）" % e})
     _invalidate_cred_cache({"username": user, "password": pwd})
     _quota.submit_credentials(user, pwd)
     try:   # 统一登录绑定：凭据就位即激活机器人（幂等，无凭据不会被激活）
