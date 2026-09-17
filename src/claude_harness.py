@@ -1131,7 +1131,9 @@ class HarnessSession:
             eff_model = self._eff_model()
             if eff_model and self.session_id:
                 used, _w, _c = _session_ctx_used(self)
-                mwin = _model_ctx_window(eff_model)
+                # v2.27.22：窗口走候选链（配置名后缀优先）——实报裸名无 [1M]
+                # 信息，单看它 1M 会话会被判成 256K 误拒（用户实锤）
+                mwin = _session_ctx_window(self)
                 if used and used >= int(mwin * 0.97):
                     # v2.27.15：小助手自动续命（用户定调：超窗时自动重开会话
                     # 并映射旧链接，手机侧无感）。500K 历史塞不进 256K 窗口，
@@ -2015,6 +2017,19 @@ def _model_ctx_window(model):
     name = (model or "").lower()
     if "[1m]" in name or name.endswith("1m"):
         return _CTX_WINDOW_1M
+    return _CTX_WINDOW_DEFAULT
+
+
+def _session_ctx_window(s):
+    """v2.27.22：会话上下文窗口——候选链解析 [1M] 后缀：会话配置名 →
+    settings 默认名 → CLI 实报名。实报名（live_model，网关上报）会被
+    剥掉 [1M] 后缀（裸 glm-5.3），单看它会把 1M 会话判成 256K →
+    251K 被误判超窗拒发（用户实锤「严重 bug」）。窗口是用户在配置里
+    显式选的后缀属性，必须从配置名读；实报名只作最后兜底。"""
+    for n in (s.model, available_models().get("default"), s._eff_model()):
+        n = (n or "").lower()
+        if "[1m]" in n or n.endswith("1m"):
+            return _CTX_WINDOW_1M
     return _CTX_WINDOW_DEFAULT
 
 
