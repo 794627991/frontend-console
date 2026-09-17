@@ -12,9 +12,11 @@ def _resource_base():
     return getattr(sys, "_MEIPASS", BASE_DIR)
 RES_DIR = _resource_base()
 
-# ---- home 锚点（用户口径：只有这两样放 home）----
-# endpoint.json：MCP 服务发现锚点，路径必须固定（serial_cli/mcp_server 硬编码读它）
-# config.json：配置本体（含 data_dir），也需稳定位置——数据目录本身由它决定，不能随数据目录搬
+# ---- home 锚点（用户定调：只有这两样放 home，data_dir 只管数据）----
+# endpoint.json：MCP 服务发现锚点，路径必须固定（main/mcp_server/serial_cli/
+#   harness_ask_mcp 各自本地定义 STATE_DIR=HOME_DIR 读写它，不随数据目录走）
+# config.json：配置本体（含 data_dir），也需稳定位置——数据目录本身由它决定，
+#   不能随数据目录搬。用户指定的 data_dir 只是现有数据所在，不含这两样。
 HOME_DIR = os.path.join(os.path.expanduser("~"), ".serialconsole_pro")
 CONFIG_FILE = os.path.join(HOME_DIR, "config.json")
 
@@ -61,7 +63,11 @@ except Exception as e:
     import logging
     logging.getLogger("app_state").error(
         "数据目录创建失败：%s（%s）——请检查路径权限", DATA_DIR, e)
-STATE_DIR = DATA_DIR   # 兼容旧代码引用：STATE_DIR 语义=数据目录（endpoint 写入仍用 HOME_DIR）
+# ⚠ 命名陷阱：本处 STATE_DIR=数据目录（mm_probe/迁移逻辑用）；而 main/
+# mcp_server/serial_cli/harness_ask_mcp 各自本地定义的 STATE_DIR=HOME_DIR
+# （endpoint.json 锚点）。同名不同义，互不相干——endpoint/config 永远固定
+# HOME_DIR，不随 data_dir 迁移（用户定调：指定目录只是数据所在）
+STATE_DIR = DATA_DIR
 
 # 日志目录：config 旧 log_dir（老用户自定义过）> 数据目录/logs
 DEFAULT_LOG_DIR = os.path.join(DATA_DIR, "logs")
