@@ -1349,6 +1349,14 @@ class HarnessSession:
                     self.emit({"kind": "raw", "text": line})
                     continue
                 typ = o.get("type")
+                # v2.3.0：thinking_tokens 进度心跳不转发——CLI 思考期间逐条推
+                # 「已思考约 N tokens」（每秒 1~3 条），前端零消费（活动指示条
+                # 计时是前端自算），但每条都要 SSE 推送+前端 parse+分派再丢弃，
+                # 且刷爆 4000 条事件缓冲把有价值的重放事件挤出去（实测单会话
+                # 缓冲 495 条全是它）。思考内容（thinking 块）/回复文本（text
+                # 块）走完全不同的事件，不受影响。
+                if typ == "system" and o.get("subtype") == "thinking_tokens":
+                    continue
                 if typ == "system" and o.get("session_id") and o.get("subtype") == "init":
                     if o.get("session_id") != self.session_id:
                         self.session_id = o.get("session_id")
