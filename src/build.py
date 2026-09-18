@@ -5,6 +5,8 @@
 import os, sys, subprocess, shutil
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # 项目根
+if BASE not in sys.path:
+    sys.path.insert(0, BASE)   # v2.3.1：tools.encrypt_pkg 在项目根下（py src/build.py 时 path[0]=src/）
 APP_NAME = "前端控制台"
 MAIN = os.path.join(BASE, "src", "main.py")
 ICON = os.path.join(BASE, "ico", "app.ico")
@@ -31,11 +33,81 @@ def build():
                  for r, _, fs in os.walk(app_dir) for f in fs) / 1024 / 1024
         print(f"\n打包成功: {app_dir} ({sz:.1f} MB)")
         _sync_offline_pkg()
+        # v2.3.1 发布前资源加密（web 前端源码/blob → AES-256-GCM 密文，
+        # exe 启动 src/secure_boot.py 自解密；第三方库不碰）
+        try:
+            from tools.encrypt_pkg import encrypt_pkg
+            n = encrypt_pkg(app_dir)
+            if n:
+                print(f"资源加密: {n} 个文件（口令混淆内嵌，首启自解密）")
+        except Exception as e:
+            print("⚠ 资源加密失败（发布 zip 将含明文 web）:", e)
         _publish(app_dir)
         return dist
     else:
         print("打包失败：未找到 exe")
         return None
+
+
+def _git_head():
+    """当前 HEAD 短 hash。git 不可用返回 None。"""
+    try:
+        out = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
+                             cwd=BASE, capture_output=True, text=True,
+                             timeout=10, encoding="utf-8", errors="replace")
+        if out.returncode == 0:
+            return out.stdout.strip()
+    except Exception:
+        pass
+    return None
+
+
+def _git_notes_since_last_publish(rel):
+    """从 git 抽取更新说明：上次发布位点（releases/publish_head.txt）到当前
+    HEAD 的提交标题，一行一条（去 hash、去 Co-Authored 尾巴）。没有位点
+    （首次发布）取最近 20 条。抽取失败返回空串（回退到无说明）。"""
+    import subprocess as sp
+    head = _git_head()
+    if not head:
+        return ""
+    marker = os.path.join(rel, "publish_head.txt")
+    old = ""
+    try:
+        with open(marker, encoding="utf-8") as f:
+            old = f.read().strip()
+    except OSError:
+        pass
+    rng = "%s..HEAD" % old if old else "-20"
+    try:
+        out = sp.run(["git", "log", "--oneline", "--no-color", rng],
+                     cwd=BASE, capture_output=True, text=True, timeout=15,
+                     encoding="utf-8", errors="replace")
+        if out.returncode != 0:
+            return ""
+        lines = []
+        for ln in out.stdout.splitlines():
+            ln = ln.strip()
+            if not ln:
+                continue
+            # 「abc1234 修 xxx：yyy」→ 取 hash 后的标题
+            parts = ln.split(" ", 1)
+            subject = parts[1].strip() if len(parts) == 2 else ln
+            lines.append("· " + subject[:80])
+        return "\n".join(lines[:30])[:1000]   # 上限：30 条/1000 字符
+    except Exception:
+        return ""
+
+
+def _record_publish_head(rel):
+    """记录本次发布对应的 git HEAD（下次发布抽取增量的位点）。"""
+    head = _git_head()
+    if not head:
+        return
+    try:
+        with open(os.path.join(rel, "publish_head.txt"), "w", encoding="utf-8") as f:
+            f.write(head)
+    except OSError:
+        pass
 
 
 def _publish(app_dir):
@@ -67,18 +139,28 @@ def _publish(app_dir):
     with open(dst, "rb") as f:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
+    # 说明三级来源（v2.3.1）：人工 RELEASE_NOTES.md 优先；没有则自动从 git
+    # 抽取「上次发布以来」的提交标题（用户定调：更新内容体现到网页上，
+    # 不想每次手写说明）；git 也不可用则留空。归档 notes-v<ver>.md 供门户
+    # 更新日志逐版展示。
     notes = ""
     notes_path = os.path.join(BASE, "RELEASE_NOTES.md")
     if os.path.exists(notes_path):
         try:
             with open(notes_path, encoding="utf-8") as f:
                 notes = f.read().strip()[:500]
-            # v2.2.1：说明随版本归档——门户历史版本也能显示各自的更新说明
+        except OSError:
+            pass
+    if not notes:
+        notes = _git_notes_since_last_publish(rel)
+    if notes:
+        try:
             with open(os.path.join(rel, "notes-v%s.md" % APP_VERSION),
                       "w", encoding="utf-8") as f:
                 f.write(notes)
         except OSError:
             pass
+    _record_publish_head(rel)
     manifest = {
         "version": APP_VERSION,
         "file": ver_name,

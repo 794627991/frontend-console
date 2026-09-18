@@ -16,6 +16,61 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 # v2.1.0：版本单一源（窗口标题/单实例匹配/升级比对统一从这取）
+# v2.3.1 自举解密（内联，不依赖 src.*——此刻 src 还是密文）：frozen 包内
+# 自有 pyc/web 资产为 AES-GCM 密文（spec excludes src + tools/encrypt_pkg），
+# 这里解密还原后下方 import src.* 才能命中文件系统。dev 模式零动作。
+# 混淆常量与 src/secure_boot.py 必须同步（两处，改口令一起改）。
+def _fc_decrypt():
+    """v2.3.7 修复致命缺陷：web 密文 .enc 永久保留（此前解密后删除 →
+    下次启动无密可解 → 永远白屏，用户抓到）。改为目录扫描式：
+    - _internal/web/**/*.enc → 每次启动解密进内存（.enc 保留，密文无害）
+    - _internal/src/*.enc（blob 等落盘型）→ 解密落盘并删 .enc（一次性）
+    幂等：.enc 在就解，不在就跳过。"""
+    if not getattr(sys, "frozen", False):
+        return {}
+    import os as _os, hashlib as _hl, glob as _gl
+    root = _os.path.join(_os.path.dirname(sys.executable), "_internal")
+    try:
+        from Crypto.Cipher import AES
+        _KX, _KM = 0x5A, [0x6D, 0x6E, 0x6A, 0x6E, 0x6B, 0x6A]
+        _SX, _SM = 0x3C, [0x1C, 0x1D, 0x19, 0x1D, 0x58, 0x59, 0x5D, 0x59,
+                          0x0D, 0x0C, 0x08, 0x0C, 0x49, 0x48, 0x4C, 0x48]
+        key = _hl.pbkdf2_hmac(
+            "sha256", "".join(chr(b ^ _KX) for b in _KM).encode(),
+            bytes(b ^ _SX for b in _SM), 120000)
+        mem_web = {}
+        web_dir = _os.path.join(root, "web")
+        for enc in _gl.glob(_os.path.join(web_dir, "**", "*.enc"), recursive=True):
+            with open(enc, "rb") as f:
+                blob = f.read()
+            if blob[:5] != b"FCEN\x01":
+                continue   # 坏文件跳过不炸启动
+            pt = AES.new(key, AES.MODE_GCM, nonce=blob[5:17]).decrypt_and_verify(
+                blob[33:], blob[17:33])
+            rel = _os.path.relpath(enc, root)[:-4].replace("\\", "/")
+            mem_web[rel] = pt    # .enc 保留——下次启动还要用
+        # blob 等落盘型（src/*.enc）：解密覆盖落盘，.enc 同样永久保留
+        # （用户定调：永远不删——幂等覆盖，下次启动重复解密无害）
+        for enc in _gl.glob(_os.path.join(root, "src", "*.enc")):
+            plain = enc[:-4]
+            with open(enc, "rb") as f:
+                blob = f.read()
+            if blob[:5] != b"FCEN\x01":
+                continue
+            pt = AES.new(key, AES.MODE_GCM, nonce=blob[5:17]).decrypt_and_verify(
+                blob[33:], blob[17:33])
+            with open(plain, "wb") as f:
+                f.write(pt)
+    except Exception as e:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(
+            0, "程序资源校验失败，无法启动：\n%s" % e, "前端控制台", 0x10)
+        sys.exit(1)
+
+# v2.3.6：web 明文挂 sys（server.py 的 / 与 /web/* 路由优先从这 serve，
+# 磁盘永远密文）。挂 sys 而非模块属性——frozen 下入口脚本模块名是 main
+# 不是 src.main，server 里 import src.main 必 ImportError（实测白屏）
+sys.FC_MEM_WEB = _fc_decrypt()
 from src.version import APP_VERSION
 
 # ---- 单实例锁 ----

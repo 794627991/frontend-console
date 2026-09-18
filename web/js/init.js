@@ -70,17 +70,57 @@ document.addEventListener('click', (e) => {
   }
 }, true);
 $('btnNewFile').onclick = (e) => newFileMenuShow(e.currentTarget);  // v2.27「新建文件」下拉：笔记/.txt/.md/自定义后缀（原一键新建笔记）
-// v2.1.0：启动静默检查更新（配置过升级地址才查；失败/无更新零打扰——
-// 发布机不开机是常态）。有新版只 banner 提示，升级动作进设置页确认。
+// v2.3.4 启动升级提示弹窗（用户定调「有新版要收到升级提示」）：
+// 配置过升级地址才查（发布机不开机是常态，失败零打扰）；有新版弹
+// 醒目 modal（版本+说明+[立即升级][稍后]），点立即升级直接走
+// apply→run（下载校验→黑窗一闪→新版起来），无需进设置页。
 setTimeout(() => {
   fetch('/api/update/state').then(r => r.json()).then(st => {
     if (!st.ok || !st.url) return;
     return fetch('/api/update/check', {method: 'POST'}).then(r => r.json());
   }).then(j => {
-    if (j && j.has_update)
-      showBanner(`✨ 发现新版本 v${j.latest}——设置 → 关于与升级，立即升级`, 8000);
+    if (j && j.has_update) _fcUpdateModal(j);
   }).catch(() => {});
-}, 8000);
+}, 6000);
+
+function _fcUpdateModal(j) {
+  let m = document.getElementById('fcUpdateModal');
+  if (m) return;   // 已在
+  m = document.createElement('div');
+  m.className = 'modal';
+  m.id = 'fcUpdateModal';
+  const mb = j.size ? (j.size / 1048576).toFixed(1) + ' MB' : '';
+  m.innerHTML = `
+    <div class="box" style="max-width:440px;">
+      <div class="head"><strong>✨ 发现新版本 v${j.latest}</strong>
+        <div class="head-actions"><button class="btn ghost icon-btn" data-fc-x>✕</button></div></div>
+      <div style="padding:14px 18px 4px;font-size:12.5px;line-height:1.7;color:var(--fg);">
+        <div style="margin-bottom:8px;color:var(--muted);">当前 v${j.current} → 新版 v${j.latest}${mb ? ' · ' + mb : ''}${j.date ? ' · ' + j.date : ''}</div>
+        <div style="max-height:200px;overflow:auto;white-space:pre-wrap;background:var(--dd-bg,rgba(128,128,128,.08));border-radius:8px;padding:10px 12px;font-size:12px;">${(j.notes || '（发布者未写更新说明）').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}</div>
+        <div style="margin-top:10px;color:var(--muted);">升级过程：下载校验（几秒）→ 自动重启换版（黑窗一闪属正常）。旧版自动备份 .bak 可回退。</div>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;padding:12px 18px 16px;">
+        <button class="btn ghost" data-fc-later>稍后提醒</button>
+        <button class="btn primary" data-fc-go>⬆ 立即升级</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+  requestAnimationFrame(() => m.classList.add('show'));
+  const close = () => m.classList.remove('show');
+  m.querySelector('[data-fc-x]').onclick = close;
+  m.querySelector('[data-fc-later]').onclick = close;
+  const go = m.querySelector('[data-fc-go]');
+  go.onclick = async () => {
+    go.disabled = true; go.textContent = '下载校验中…';
+    try {
+      const r = await (await fetch('/api/update/apply', {method: 'POST'})).json();
+      if (!r.ok) { go.textContent = '失败：' + (r.err || '未知'); go.disabled = false; return; }
+      const r2 = await (await fetch('/api/update/run', {method: 'POST'})).json();
+      if (!r2.ok) { go.textContent = '启动失败：' + (r2.err || ''); go.disabled = false; }
+      // 成功：本进程即将退出（update.bat 等待后覆盖重启），弹窗保持
+    } catch(e) { go.textContent = '网络错误：' + e; go.disabled = false; }
+  };
+}
 $('btnDiff').onclick = openDiffPicker;  // 文件对比（原生选两份 → DiffEditor tab）
 $('btnBitCalc').onclick = buildBitCalcTab;  // 程序员计算器（寄存器位编辑+位运算+表达式）
 $('btnFiles').onclick = showFilesModal;  // 文件列表弹窗（打开已有文件）

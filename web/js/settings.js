@@ -786,7 +786,7 @@ async function _stRenderUpdatePane(pane) {
         </div>
         <div id="upResult" class="dd-msg"></div>
       </div>
-      <div class="dd-form">
+      <div class="dd-form" data-fx-srv>
         <div class="dd-label">升级分发服务（仅发布者机器开启）</div>
         <div class="dd-sub" id="upSrvInfo">状态获取中…</div>
         <div class="dd-actions" style="margin-top:8px;">
@@ -805,6 +805,12 @@ async function _stRenderUpdatePane(pane) {
   try {
     const j = await (await fetch('/api/update/state')).json();
     if (j.ok) { $p('upCur').textContent = 'v' + j.current; $p('upUrl').value = j.url || ''; }
+    // v2.3.4：打包版（同事机）隐藏分发服务区块（用户定调：发布版本不能有
+    // 这部分 UI）——发布者跑源码版才显示
+    if (j.frozen) {
+      const srv = pane.querySelector('[data-fx-srv]');
+      if (srv) srv.style.display = 'none';
+    }
   } catch(_) {}
   $p('upSrvState').textContent = '版本号单一来源 src/version.py；升级包经 sha1 校验后自动替换，旧版备份为 .bak 可手动回退。';
 

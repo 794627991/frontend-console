@@ -339,6 +339,7 @@ function buildClaudeHarnessTab(opts = {}) {
   _HG.conn = conn;
   _HG.cache = {};
   _HG.atts = [];
+  _HG.attsBy = {};   // v2.3.0：未发送附件按会话暂存（切走存/切回恢复，用户实锤丢图）
   _HG.sid = null;
   _HG.rowById = {}; _HG.uidN = 0; _HG.run = null;
   _HG.think = null; _HG.grp = null; _HG.histNav = null; _HG.mention = null;
@@ -628,7 +629,13 @@ function buildClaudeHarnessTab(opts = {}) {
   // ==================== 附件 chip / 图片预览 ====================
   function attChipsHtml(images, files) {
     let h = '';
-    (images || []).forEach(p => { h += `<span class="hg-att-mini" data-img="${esc(p)}" title="${esc(p)}">🖼 ${esc(String(p).split(/[\\/]/).pop())}</span>`; });
+    // v2.3.3 data-img 走 /api/harness/file 只读接口——原来直接塞本地绝对路径
+    // （C:\Users\...），WebView 安全策略禁止 http 页面加载本地文件，Lightbox
+    // 弹了也是裂图（用户实锤「无法弹出显示」）。title 保留完整路径供核对。
+    (images || []).forEach(p => {
+      const name = String(p).split(/[\\/]/).pop();
+      h += `<span class="hg-att-mini" data-img="/api/harness/file?name=${encodeURIComponent(name)}" title="${esc(p)}">🖼 ${esc(name)}</span>`;
+    });
     (files || []).forEach(p => { h += `<span class="hg-att-mini">📄 ${esc(String(p).split(/[\\/]/).pop())}</span>`; });
     return h;
   }
@@ -1124,20 +1131,27 @@ function buildClaudeHarnessTab(opts = {}) {
   // v2.27.3：识图/跨会话协作的过程可见性（用户定调：全程要有反馈）——
   // 转交 = 分割线；回传 = 专属气泡。原实现回传内容直接被丢弃（user 事件
   // 只处理 tool_result），结论"凭空消失"，只有主会话转述才可见。
-  function renderPeerRelay(to) {          // 📤 已转交分割线（带等待计时）
+  function renderPeerRelay(to, t0ms) {    // 📤 已转交分割线（带等待计时）
     _hgPeerWaitStop();                    // 防重复：新转交接管旧等待
     const d = document.createElement('div'); d.className = 'h-switch';
     d.innerHTML = '<span></span><i>📤 已转交 ' + esc(to || '其他会话') +
       ' · 等待结论回传 · <b class="hg-peer-t">0s</b></i><span></span>';
     addRow(d);
-    const t0 = Date.now();
+    const t0 = t0ms || Date.now();        // v2.3.2：历史重建传行内 ts（真实起点）
+    d.dataset.t0 = String(t0);            // 快照恢复后重启计时用
+    _hgPeerTimerStart(d, t0);
+    scrollBottom();
+  }
+  // v2.3.2：等待计时器独立函数——快照恢复（switchTo innerHTML 重建）后
+  // 原 interval 已死、计时冻结在快照时刻；恢复路径对未定格线重挂 interval。
+  function _hgPeerTimerStart(d, t0) {
     const tb = d.querySelector('.hg-peer-t');
+    if (!tb) return;
     const timer = setInterval(() => {
       if (!tb.isConnected) { clearInterval(timer); return; }
       tb.textContent = fmtDur((Date.now() - t0) / 1000);
     }, 1000);
     _HG.peerWait = { el: d, t0, timer };
-    scrollBottom();
   }
   function _hgPeerWaitStop(done) {        // 回传到达=定格用时；切会话=静默清理
     const w = _HG.peerWait; _HG.peerWait = null;
@@ -1147,7 +1161,20 @@ function buildClaudeHarnessTab(opts = {}) {
     if (done && i && w.el.isConnected)
       i.innerHTML = '📤 已转交 · 📥 已回传 · 用时 ' + fmtDur((Date.now() - w.t0) / 1000);
   }
-  function renderPeer(name, text) {       // 📥 回传气泡（区别于 user/AI）
+  function renderPeer(name, text, to) {    // 📥 回传气泡（区别于 user/AI）
+    // v2.3.2：代播回传带 to（收件人 peer 名）——只在本会话确有发给该收件人的
+    // 未定格转交线时渲染（识图会话侧代播是按全部会话发的，防串台污染）
+    if (to) {
+      const waiting = [...flow.querySelectorAll('.h-switch')]
+        .some(el => el.textContent.includes('已转交 ' + to) &&
+                    el.textContent.includes('等待结论回传'));
+      if (!waiting) return;
+    }
+    // 去重：主会话自身 jsonl 检测与代播可能双份（空闲期回传两条链都通）
+    const sig = (text || '').slice(0, 120);
+    if (renderPeer._seen && renderPeer._seen.t === sig &&
+        Date.now() - renderPeer._seen.at < 60000) return;
+    renderPeer._seen = { t: sig, at: Date.now() };
     _hgPeerWaitStop(true);                // 等待终点：转交线定格「已回传 · 用时 Ns」
     grpFinalize(false);
     endThinking(); closeRun();
@@ -1248,7 +1275,17 @@ function buildClaudeHarnessTab(opts = {}) {
       } else appendThinking(l.text);       // 兜底：无行号（理论不达）
       endThinking(true);                   // hist 模式：不显示时长（不编造）、不自动收
     }
-    else if (l.role === 'tool') renderHistTool(l, hi);
+    else if (l.role === 'tool') {
+      // v2.3.2：历史重建补画转交等待线——transcript 的工具行此前只画抽屉，
+      // 切回/刷新后转交线凭空消失（用户实锤「绝大多数看不到读秒」）。线的
+      // 起点用行内 ts（后端 v2.3.2 审计 P1 已补）；收件人取 input.to（summary
+      // 对 SendMessage 恒空——审计 P1b）；若后续有 peer 行，renderPeer 定格
+      if (l.text === 'SendMessage' || (l.text || '').startsWith('⚙ SendMessage')) {
+        renderPeerRelay((l.input && l.input.to) || '识图会话',
+                        l.ts ? new Date(l.ts).getTime() : 0);
+      }
+      renderHistTool(l, hi);
+    }
   }
 
   // ==================== v2.24.1 气泡视口化（已回退）====================
@@ -2023,7 +2060,7 @@ function buildClaudeHarnessTab(opts = {}) {
         else renderUser(it.text, it.images, it.files);
       }
       else if (it.kind === 'event') handleEvent(it.data);
-      else if (it.kind === 'peer') { grpFinalize(true); renderPeer(it.name, it.text); }
+      else if (it.kind === 'peer') { grpFinalize(true); renderPeer(it.name, it.text, it.to); }
       else if (it.kind === 'renew') { grpFinalize(true); renderRenew(it.text); }
       else if (it.kind === 'raw') renderRaw(it.text);
       else if (it.kind === 'ask') { grpFinalize(true); askRender(it); }
@@ -2341,6 +2378,7 @@ function buildClaudeHarnessTab(opts = {}) {
       return;
     }
     saveCache();
+    const prevSid = _HG.sid;            // v2.3.0：旧会话 id（未发送附件暂存归属）
     closePop(); closeMention();
     setQuote(null);                     // v2.27：引用属于当前输入草稿，切会话不跨带
     _hgPeerWaitStop();                  // v2.27.5：转交等待计时器不跨会话残留
@@ -2364,7 +2402,12 @@ function buildClaudeHarnessTab(opts = {}) {
     // 拦下，点 ■ 又回到这条死循环。这里先无条件清掉，真实值由 events 回填。
     setBusy(false);
     costEl.classList.remove('warn');   // 清文本不清 class 会让空用量环留着橙色警示
-    clearAtts();
+    // v2.3.0：未发送的附件随会话暂存/恢复——切走时把当前 atts 归档到旧会话
+    // 名下，切回时取回该会话的暂存（原来无条件清空，用户贴的图切一圈回来
+    // 就没了）。发送成功的清空在 send 尾部（清 attsBy），互不干扰。
+    if (prevSid) _HG.attsBy[prevSid] = _HG.atts;
+    _HG.atts = (sid && _HG.attsBy[sid]) || [];
+    renderAtts();
     _HG.echoFast = null;               // v2.20：切会话清乐观渲染去重窗口（防串会话吞 echo）
     _hgCtxRestore(sid);                // 切回旧会话：恢复该会话上次的上下文用量（result 不重放）
     if (!sid) {
@@ -2392,6 +2435,17 @@ function buildClaudeHarnessTab(opts = {}) {
       }
       // v2.24.5：时间条状态从 DOM 恢复（最后一条 .h-time 的 ms）
       _HG.lastTs = +((([...flow.querySelectorAll('.h-time')].pop() || {}).dataset || {}).ms || 0);
+      // v2.3.2：未定格的转交等待线重启计时——快照（innerHTML 字符串）不
+      // 带 interval，恢复后计时冻结在快照时刻（用户实锤「读秒不走」）。
+      // 审计 P4/P5：多条未定格线时取**最后一条**（真正在途的）；旧快照无
+      // data-t0 时也重挂（起点退化为当前时刻——至少回传到达能定格）
+      const relayLines = [...flow.querySelectorAll('.h-switch .hg-peer-t')]
+        .filter(el => el.closest('.h-switch').textContent.includes('等待结论回传'));
+      const relayLine = relayLines[relayLines.length - 1];
+      if (relayLine) {
+        const rl = relayLine.closest('.h-switch');
+        _hgPeerTimerStart(rl, +(rl.dataset.t0 || 0) || Date.now());
+      }
       // 快照恢复后重建 rowById（busy 会话切回时 tool_result 事件要挂回行）
       flow.querySelectorAll('[data-tid]').forEach(el => { _HG.rowById[el.dataset.tid] = el; });
       // v2.9：缓存恢复不能盲目清 busy——切走时正在回复的会话，切回后
@@ -2731,6 +2785,7 @@ function buildClaudeHarnessTab(opts = {}) {
         if (!ok) return;
         await fetch('/api/harness/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({sid})});
         delete _HG.cache[sid];
+        delete _HG.attsBy[sid];   // v2.3.0：暂存附件随会话清
         delete _HG.queues[sid];   // v2.25：排队草稿随会话清（审计 §三.9）
         try { localStorage.removeItem('hg-open:' + sid); localStorage.removeItem('hg-ctx:' + sid); } catch(_) {}   // v2.16：连开合/用量记录一起清
         if (_HG.sid === sid) switchTo(null); else refreshSessions();
@@ -3156,10 +3211,12 @@ function buildClaudeHarnessTab(opts = {}) {
       queuePush({ text, images, files });
       input.value = ''; input.style.height = 'auto'; renderOverlay('');
       clearAtts();
+      if (_HG.sid) delete _HG.attsBy[_HG.sid];   // 已随消息带走，暂存别再还回来
       return;
     }
     input.value = ''; input.style.height = 'auto'; renderOverlay('');
     clearAtts();
+    if (_HG.sid) delete _HG.attsBy[_HG.sid];
     dispatch(text, images, files, true);
   }
 
@@ -3641,9 +3698,12 @@ function buildClaudeHarnessTab(opts = {}) {
     _visToastTimer = setTimeout(() => t.classList.remove('on'), ms || 4000);
   }
   let _visPrev = null;               // {busy, since}
+  let _visSeq = 0;                   // v2.3.2 审计 P6：请求序号——visibilitychange 与 3s 轮询并发时乱序 resolve 的旧响应不得回写 _visPrev（否则假「收到任务」+重复「已返回」）
   async function pollVision() {
+    const my = ++_visSeq;
     let j = null;
     try { j = await (await fetch('/api/harness/vision_status')).json(); } catch(_) {}
+    if (my !== _visSeq) return;       // 已有更新一轮在途/完成——丢弃本次（过期响应）
     if (!j || !j.ok) return;          // 拉失败保持现状，别把按钮刷成误导态
     if (!j.enabled) {
       visIndEl.style.display = 'none';
@@ -3669,10 +3729,14 @@ function buildClaudeHarnessTab(opts = {}) {
     // ——改按 last_done（后端 result 时刻）变化触发，冒泡直接带结论摘要
     const lastDone = j.last_done || 0, lastBrief = j.last_brief || '';
     if (_visPrev) {
-      if (busy && !_visPrev.busy) visToast('识图会话已收到任务，正在处理…');
-      // 任务到达检测：busy_since（user_echo 时刻）前移（busy 窗口短也不错过）
-      else if (since && _visPrev.since && since > _visPrev.since)
-        visToast('识图会话已收到任务，正在处理…');
+      if (busy && !_visPrev.busy) visToast('识图会话已收到任务，正在处理…', 8000);
+      // 任务到达检测：busy_since 前移（busy 窗口短也不错过）。
+      // v2.3.2 修两处死分支：旧条件要求前值 since 非空（null 比较恒假，
+      // 首个任务永远不弹）；且后端 peer 任务无 user_echo 导致 since 恒 null
+      // （已在后端改直读对象字段）——本分支此前从未生效（用户实锤绝大多数
+      // 看不到「收到任务」气泡）
+      else if (since && since > (_visPrev.since || 0))
+        visToast('识图会话已收到任务，正在处理…', 8000);
       // v2.25：右值兜 0——旧条件要求 _visPrev.lastDone 非 0，页面打开后
       // 识图的第一次完成（前值还是 undefined/0）永远不弹（冒泡「还是异常」）
       if (lastDone && lastDone > (_visPrev.lastDone || 0))
@@ -3682,6 +3746,11 @@ function buildClaudeHarnessTab(opts = {}) {
   }
   pollVision();
   setInterval(pollVision, 3000);
+  // v2.3.2：tab 从后台回来立刻拉一次——3s 轮询在 tab 隐藏期照跑但 toast
+  // 4~8s 自灭，用户不在场就错过；回来第一时间对比状态补弹
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) pollVision();
+  });
   setInterval(() => {                 // 计时秒级刷新，不必等下一轮轮询
     if (_visPrev && _visPrev.busy && _visPrev.since) {
       const t = '识别中 ' + fmtDur((Date.now() - _visPrev.since) / 1000);

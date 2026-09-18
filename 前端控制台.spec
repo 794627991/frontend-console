@@ -22,31 +22,40 @@ a = Analysis(
             # 按 __file__ 同目录读）——漏打包时同事的 exe 一登录注册就
             # FileNotFoundError，机器人永不启动（2026-09-16 实锤）
             ('src/_hiklink_his.blob', 'src')],
-    hiddenimports=['paramiko',
-        'src', 'src.main', 'src.server', 'src.mcp_server', 'src.app_state', 'src.ansi_utils', 'src.base_conn',
-        'src.serial_conn', 'src.ssh_conn', 'src.log_index', 'src.tftp',
-        'src.httpfile', 'src.editor_files', 'src.hex_files',
-        # Claude 集成（第 1/2 期）：claude_conn 是延迟导入（_get_pty 内 import winpty），
-        # 静态分析扫不到；claude_sessions 被 server 顶格 import 但保险起见也列上。
-        # winpty 的包名与 pip 名不同（pip install pywinpty → import winpty）。
-        'src.claude_conn', 'src.claude_sessions', 'winpty',
-        # Claude Harness 界面化会话（第 4 期）：stream-json 长驻子进程 + Blueprint
-        'src.claude_harness',
-        'src.telnet_conn', 'src.tray',
-        # Claude Proxy 合入：proxy/lanz_quota 顶格 import；Crypto=pycryptodome
-        # （lanz_quota CAS 登录 RSA+AES 用），静态扫描扫不到子模块需显式列
-        'src.proxy', 'src.proxy_core', 'src.lanz_quota', 'Crypto',
-        # 系统托盘（pystray 延迟导入 + PIL 子模块，静态扫描不全）
-        'pystray', 'pystray._win32', 'PIL', 'PIL.Image'],
+    hiddenimports=[
+        # ---- v2.3.4 关键修正：excludes 'src' 后 src.* 不在模块图里，原先经
+        # src.* 传递引入的第三方库会整批从打包图消失 → 冻结环境 import flask/
+        # serial 失败 → 依赖自检误报缺库卡死（用户实锤「首次启动·安装依赖」）。
+        # 这里显式列全部运行时第三方。
+        'flask', 'serial', 'serial.tools', 'serial.tools.list_ports',
+        'websocket',                      # websocket-client（HikLink 机器人 WS；
+                                          # hiklink_bot try/except 静默吞缺失，
+                                          # 表现=机器人永不运行，用户实锤）
+        'webview',                       # pywebview（WebView2 桌面窗口）
+        'paramiko', 'cryptography', 'nacl',   # SSH 链
+        'winpty',                        # 内嵌 Claude 终端（ConPTY）
+        'Crypto', 'Crypto.Cipher', 'Crypto.PublicKey', 'Crypto.Util.Padding',
+        'Crypto.Util.number',            # pycryptodome（代理 CAS + 资源解密）
+        'PIL', 'PIL.Image', 'PIL.ImageDraw', 'PIL.ImageFont',
+        'numpy',                         # proxy_usage 用量统计
+        'yaml',                          # 配置解析
+        'pystray', 'pystray._win32',     # 托盘历史兼容（现原生 Win32，保留无害）
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     # 排除不需要的重依赖：pdfminer/bcrypt/setuptools 是无关间接依赖。
     # 注意：paramiko/cryptography/ssl 已移出 excludes——SSH 集成需要 paramiko，
     # paramiko 依赖 cryptography + ssl。虽增 ~17MB，但 SSH 功能必需。
+    # v2.3.1 excludes 'src'：自有模块一律不进 exe 内嵌 PYZ（反解包工具
+    # pyinstxtractor+decompyle 可还原 pyc 源码，用户要求 exe 也不可反解）。
+    # 自有 pyc 由 tools/encrypt_pkg.py 编译后以 AES 密文外置 _internal/src/，
+    # exe 启动时 main.py 顶部内联自举解密后再 import——运行时 FrozenImporter
+    # 找不到 src.* 自动回落文件系统加载解密后的平铺 pyc。
     excludes=[
         'pdfminer', 'setuptools',
         'pkg_resources',
+        'src',
     ],
     noarchive=False,
     optimize=0,

@@ -7,7 +7,8 @@ bin/hex/ihx 等二进制文件以前只能走阅读器（文本形式乱码）�
 - /api/hex/save：整文件字节写回（base64）
 安全：仅绝对路径 + 已存在文件；不做站内 files/ 名映射（二进制不在笔记白名单）。
 """
-import os, base64
+import os, base64, difflib   # v2.3.3：difflib 提到模块级——_bin_diff 用了但只在
+                             # 隔壁函数 import 过（运行时 NameError 潜雷，Cython 抓出）
 from flask import Blueprint, request, jsonify
 
 hex_bp = Blueprint("hexfiles", __name__)

@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 串口控制台 Pro —— Claude Code 直连桥
@@ -19,6 +19,14 @@
 工具没开时提示用户启动桌面上的「前端控制台.exe」。
 """
 import os, sys, json, time, urllib.request, urllib.error, urllib.parse, subprocess
+# v2.3.4 版本单一源（同 mcp_server）：文案里的版本号从 src/version.py 取
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+try:
+    from src.version import APP_VERSION
+except Exception:
+    APP_VERSION = "2.3"
 
 STATE_DIR = os.path.join(os.path.expanduser("~"), ".serialconsole_pro")
 ENDPOINT_FILE = os.path.join(STATE_DIR, "endpoint.json")
@@ -78,7 +86,7 @@ def ensure_running(auto_start=True, timeout=25):
             return None
         start_cmd = [exe]
         start_cwd = os.path.dirname(exe)
-    print(f"【前端控制台 v2.2.0 未运行】正在启动: {start_cmd}", file=sys.stderr)
+    print(f"【前端控制台 v{APP_VERSION} 未运行】正在启动: {start_cmd}", file=sys.stderr)
     try:
         # 用 Popen 启动 GUI 进程，不阻塞
         subprocess.Popen(
@@ -129,7 +137,7 @@ def api_post(url, path, body):
         return {"ok": False, "err": str(e)}
 
 def need_running():
-    print("【前端控制台 v2.2.0 未运行】")
+    print(f"【前端控制台 v{APP_VERSION} 未运行】")
     print("请先双击桌面上的「前端控制台.exe」启动工具，再运行本命令。")
     sys.exit(1)
 

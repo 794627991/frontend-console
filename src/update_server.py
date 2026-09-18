@@ -143,6 +143,20 @@ def _versions():
             "url": "/" + quote(n), "latest": ver == latest and bool(latest),
             "notes": notes.get(ver, ""),
         })
+    # v2.3.2：纯说明条目（notes-v<ver>.md 有归档但无安装包的早期版本）也进
+    # 日志——用户定调「过往的历史也要」；无包不可下载，仅展示（前端日志区
+    # 本就不渲染下载按钮）。mtime 用说明文件的。
+    have = {it["version"] for it in items}
+    for ver, note in notes.items():
+        if ver in have or not note:
+            continue
+        nf = os.path.join(root, "notes-v%s.md" % ver)
+        try:
+            mtime = int(os.path.getmtime(nf) * 1000)
+        except OSError:
+            mtime = 0
+        items.append({"file": "", "version": ver, "size": 0, "mtime": mtime,
+                      "url": "", "latest": False, "notes": note})
     items.sort(key=lambda x: _ver_tuple(x["version"]), reverse=True)
     return items
 
@@ -155,79 +169,245 @@ def _esc(s):
 
 
 _CSS = """
+/* ============ 布局骨架（无色彩，皮肤只改变量+特化覆盖） ============ */
 *{margin:0;padding:0;box-sizing:border-box}
-:root{--fg:#e8ecf4;--muted:#8b94a7;--line:rgba(255,255,255,.08);
-  --card:rgba(255,255,255,.04);--accent:#4f8cff;--accent2:#22d3ee}
-body{font-family:system-ui,-apple-system,'Segoe UI','Microsoft YaHei',sans-serif;
-  color:var(--fg);min-height:100vh;background:#0b1020;overflow-x:hidden}
-body::before,body::after{content:'';position:fixed;border-radius:50%;
-  filter:blur(120px);opacity:.32;pointer-events:none;z-index:0}
-body::before{width:560px;height:560px;left:-140px;top:-160px;background:#1d4ed8}
-body::after{width:520px;height:520px;right:-160px;bottom:-140px;background:#0891b2}
+body{font-family:var(--font);color:var(--fg);min-height:100vh;
+  background:var(--bg);overflow-x:hidden;transition:background .35s,color .35s}
 .wrap{position:relative;z-index:1;max-width:880px;margin:0 auto;padding:40px 24px 80px}
-.brand{display:flex;align-items:center;gap:14px;margin-bottom:38px}
-.logo{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;
-  font-size:22px;background:linear-gradient(135deg,var(--accent),var(--accent2));
-  box-shadow:0 6px 24px rgba(79,140,255,.35)}
+.brand{display:flex;align-items:center;gap:14px;margin-bottom:38px;flex-wrap:wrap}
+.logo{width:44px;height:44px;border-radius:var(--rad);display:grid;place-items:center;
+  font-size:22px;background:var(--logoBg);box-shadow:var(--logoShadow)}
 .brand h1{font-size:19px;font-weight:650;letter-spacing:.5px}
 .brand .sub{font-size:12px;color:var(--muted);margin-top:3px}
 .spacer{flex:1}
 .status{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--muted);
   background:var(--card);border:1px solid var(--line);padding:7px 13px;border-radius:99px}
-.dot{width:7px;height:7px;border-radius:50%;background:#34d399;
-  box-shadow:0 0 8px #34d39988;animation:pulse 2.2s infinite}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--ok);
+  box-shadow:0 0 8px var(--okGlow);animation:pulse 2.2s infinite}
 @keyframes pulse{50%{opacity:.45}}
-.card{background:var(--card);border:1px solid var(--line);border-radius:20px;
-  backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radL);
+  backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur)}
 .hero{padding:28px 30px;margin-bottom:28px;position:relative;overflow:hidden}
-.hero::before{content:'';position:absolute;inset:0;
-  background:linear-gradient(120deg,rgba(79,140,255,.10),transparent 55%)}
-.hero .lab{font-size:12px;color:var(--accent2);letter-spacing:2px;margin-bottom:10px}
-.hero h2{font-size:34px;font-weight:750;font-family:ui-monospace,Consolas,monospace}
+.hero::before{content:'';position:absolute;inset:0;pointer-events:none;
+  background:var(--heroGlow)}
+.hero .lab{font-size:12px;color:var(--lab);letter-spacing:2px;margin-bottom:10px}
+.hero h2{font-size:34px;font-weight:750;font-family:var(--fontMono)}
 .hero .meta{display:flex;gap:18px;flex-wrap:wrap;margin-top:12px;font-size:13px;color:var(--muted)}
-.hero .notes{margin-top:16px;font-size:13.5px;line-height:1.75;color:#c3cad9;
+.hero .notes{margin-top:16px;font-size:13.5px;line-height:1.75;color:var(--notes);
   white-space:pre-wrap;max-height:180px;overflow:auto}
-.btn{display:inline-flex;align-items:center;gap:8px;border:none;cursor:pointer;
-  font-size:13.5px;font-weight:600;color:#fff;padding:10px 20px;border-radius:11px;
-  background:linear-gradient(135deg,var(--accent),var(--accent2));
-  box-shadow:0 4px 18px rgba(79,140,255,.30);transition:.18s;text-decoration:none}
-.btn:hover{transform:translateY(-1px);box-shadow:0 8px 26px rgba(79,140,255,.42)}
+.btn{display:inline-flex;align-items:center;gap:8px;cursor:pointer;
+  font-size:13.5px;font-weight:600;color:var(--btnFg);padding:10px 20px;
+  border-radius:var(--rad);border:var(--btnBorder);background:var(--btnBg);
+  box-shadow:var(--btnShadow);transition:.18s;text-decoration:none;font-family:inherit}
+.btn:hover{transform:var(--btnHoverTf);box-shadow:var(--btnHoverShadow);filter:var(--btnHoverFlt)}
 .btn:disabled{opacity:.5;cursor:default;transform:none}
 .btn.ghost{background:var(--card);border:1px solid var(--line);box-shadow:none;color:var(--fg)}
-.btn.ghost:hover{border-color:rgba(255,255,255,.22)}
+.btn.ghost:hover{border-color:var(--lineHover);filter:none;transform:none}
 .hero .row{display:flex;align-items:center;gap:14px;margin-top:22px;flex-wrap:wrap}
 .badge{font-size:10.5px;font-weight:700;letter-spacing:1.5px;padding:4px 11px;
-  border-radius:99px;background:linear-gradient(135deg,#34d399,#22d3ee);color:#04121a}
+  border-radius:var(--badgeRad);background:var(--badgeBg);color:var(--badgeFg)}
 .vlist{display:flex;flex-direction:column;gap:12px}
+/* v2.3.5 鼠标跟随辉光 + 粒子背景（用户要「背景特效，鼠标跟随」） */
+.fx-glow{position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:radial-gradient(560px circle at var(--mx,50%) var(--my,30%),
+    var(--fxGlow,transparent),transparent 62%);opacity:0;transition:opacity .6s}
+body:hover .fx-glow{opacity:1}
+#fxCanvas{position:fixed;inset:0;pointer-events:none;z-index:0}
+body[data-skin=dark]{--fxGlow:rgba(79,140,255,.10)}
+body[data-skin=paper]{--fxGlow:rgba(90,80,60,.07)}
+body[data-skin=term]{--fxGlow:rgba(74,246,38,.05)}
 .vitem{display:flex;align-items:center;gap:18px;padding:18px 22px;transition:.18s}
-.vitem:hover{border-color:rgba(255,255,255,.16);background:rgba(255,255,255,.06)}
+.vitem:hover{border-color:var(--lineHover);background:var(--cardHover)}
 .vmain{flex:1;min-width:0}
-.vname{font-family:ui-monospace,Consolas,monospace;font-size:16.5px;font-weight:650}
+.vname{font-family:var(--fontMono);font-size:16.5px;font-weight:650}
 .vmeta{font-size:12px;color:var(--muted);margin-top:5px;display:flex;gap:14px;flex-wrap:wrap}
-.sha{font-family:ui-monospace,Consolas,monospace}
+.sha{font-family:var(--fontMono)}
 .empty{text-align:center;color:var(--muted);padding:70px 0;font-size:14px}
 .tip{margin-top:26px;font-size:12.5px;color:var(--muted);line-height:1.9;
-  background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 20px}
-.tip b{color:#aab6cc}
-/* 登录页 */
+  background:var(--card);border:1px solid var(--line);border-radius:var(--radL);padding:16px 20px}
+.tip b{color:var(--tipB)}
+/* 换肤按钮（登录页/门户页共用） */
+.skinbtn{position:fixed;right:18px;bottom:18px;z-index:50;font-size:12px;
+  padding:8px 14px}
+.skinbtn::after{display:none}   /* v2.3.6 关扫光——fixed 按钮上光带周期穿过形成残影（用户实锤）*/
 .login-wrap{min-height:100vh;display:grid;place-items:center;position:relative;z-index:1}
 .login{width:min(380px,92vw);padding:38px 34px;text-align:center}
-.login .logo{margin:0 auto 18px;width:56px;height:56px;font-size:28px;border-radius:16px}
+.login .logo{margin:0 auto 18px;width:56px;height:56px;font-size:28px}
 .login h1{font-size:18px;font-weight:680;margin-bottom:6px}
 .login .sub{font-size:12.5px;color:var(--muted);margin-bottom:28px}
 .login input{width:100%;padding:12px 16px;font-size:14px;color:var(--fg);
-  background:rgba(255,255,255,.05);border:1px solid var(--line);border-radius:12px;
-  outline:none;transition:.18s;margin-bottom:14px}
-.login input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(79,140,255,.18)}
+  background:var(--inputBg);border:1px solid var(--line);border-radius:var(--rad);
+  outline:none;transition:.18s;margin-bottom:14px;font-family:inherit}
+.login input:focus{border-color:var(--accent);box-shadow:var(--inputFocus)}
 .login .btn{width:100%;justify-content:center;padding:12px}
-.err{color:#f87171;font-size:12.5px;min-height:18px;margin-bottom:8px}
+.err{color:var(--err);font-size:12.5px;min-height:18px;margin-bottom:8px}
 .shake{animation:shake .4s}
 @keyframes shake{20%,60%{transform:translateX(-6px)}40%,80%{transform:translateX(6px)}}
+
+/* ============ 皮肤一：璃青（深色玻璃，精修） ============ */
+body[data-skin=dark]{
+  --font:system-ui,-apple-system,'Segoe UI','Microsoft YaHei',sans-serif;
+  --fontMono:ui-monospace,Consolas,'Cascadia Mono',monospace;
+  --bg:#0a0f1e;--fg:#eaeffa;--muted:#86909f;--notes:#c5cddd;--tipB:#aab6cc;
+  --card:rgba(255,255,255,.045);--cardHover:rgba(255,255,255,.07);
+  --line:rgba(255,255,255,.09);--lineHover:rgba(255,255,255,.2);
+  --rad:11px;--radL:18px;
+  --accent:#5b9dff;--lab:#39c8d8;--ok:#34d399;--okGlow:#34d39988;--err:#f87171;
+  --btnBg:linear-gradient(135deg,#4f8cff,#2bd4c4);--btnFg:#fff;--btnBorder:none;
+  --btnShadow:0 4px 18px rgba(79,140,255,.28);--btnHoverTf:translateY(-1px);
+  --btnHoverShadow:0 8px 26px rgba(79,140,255,.4);--btnHoverFlt:none;
+  --logoBg:linear-gradient(135deg,#4f8cff,#2bd4c4);--logoShadow:0 6px 22px rgba(79,140,255,.32);
+  --badgeBg:linear-gradient(135deg,#34d399,#22d3ee);--badgeFg:#04121a;--badgeRad:99px;
+  --blur:blur(16px);--heroGlow:linear-gradient(120deg,rgba(79,140,255,.09),transparent 55%);
+  --inputBg:rgba(255,255,255,.05);--inputFocus:0 0 0 3px rgba(79,140,255,.18)}
+body[data-skin=dark]::before,body[data-skin=dark]::after{content:'';position:fixed;
+  border-radius:50%;filter:blur(110px);opacity:.22;pointer-events:none;z-index:0}
+body[data-skin=dark]::before{width:520px;height:520px;left:-150px;top:-170px;background:#1d4ed8}
+body[data-skin=dark]::after{width:480px;height:480px;right:-170px;bottom:-150px;background:#0d9488}
+
+/* ============ 皮肤二：素白（纸感极简，衬线标题） ============ */
+body[data-skin=paper]{
+  --font:system-ui,-apple-system,'Segoe UI','Microsoft YaHei',sans-serif;
+  --fontMono:'SF Mono',ui-monospace,Consolas,monospace;
+  --bg:#f7f5f0;--fg:#1c1a17;--muted:#8a857b;--notes:#3d3a34;--tipB:#1c1a17;
+  --card:#ffffff;--cardHover:#fdfcf9;
+  --line:#e6e2d8;--lineHover:#c9c3b4;
+  --rad:10px;--radL:12px;
+  --accent:#1c1a17;--lab:#9a6b2f;--ok:#3d8b5f;--okGlow:#3d8b5f44;--err:#c0392b;
+  --btnBg:#1c1a17;--btnFg:#f7f5f0;--btnBorder:1px solid #1c1a17;
+  --btnShadow:0 1px 2px rgba(28,26,23,.18);--btnHoverTf:translateY(-1px);
+  --btnHoverShadow:0 3px 10px rgba(28,26,23,.22);--btnHoverFlt:none;
+  --logoBg:#1c1a17;--logoShadow:0 2px 10px rgba(28,26,23,.25);--logoFg:#f7f5f0;
+  --badgeBg:#1c1a17;--badgeFg:#f7f5f0;--badgeRad:3px;
+  --blur:none;--heroGlow:none;
+  --inputBg:#ffffff;--inputFocus:0 0 0 3px rgba(28,26,23,.08)}
+body[data-skin=paper] .logo{color:#f7f5f0}
+body[data-skin=paper]::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:radial-gradient(#d8d2c4 1px,transparent 1px);background-size:26px 26px;
+  opacity:.5}
+body[data-skin=paper] .hero h2{font-family:Georgia,'Times New Roman','STSong','SimSun',serif;
+  font-weight:600;letter-spacing:-.5px}
+body[data-skin=paper] .hero .lab{font-family:Georgia,serif;font-style:italic;
+  letter-spacing:1px;text-transform:none}
+body[data-skin=paper] .card{box-shadow:0 1px 3px rgba(28,26,23,.05)}
+body[data-skin=paper] .vitem:hover{box-shadow:0 2px 8px rgba(28,26,23,.06)}
+
+/* ============ 皮肤三：终端（全等宽荧光绿，扫描线） ============ */
+body[data-skin=term]{
+  --font:ui-monospace,Consolas,'Cascadia Mono','Courier New',monospace;
+  --fontMono:inherit;
+  --bg:#0a0d0a;--fg:#c9f5c9;--muted:#5d7a5d;--notes:#a8e0a8;--tipB:#7dd87d;
+  --card:#0e130e;--cardHover:#121a12;
+  --line:#1d2e1d;--lineHover:#3a5c3a;
+  --rad:0px;--radL:0px;
+  --accent:#4af626;--lab:#4af626;--ok:#4af626;--okGlow:#4af62666;--err:#ff5f5f;
+  --btnBg:transparent;--btnFg:#4af626;--btnBorder:1px solid #4af626;
+  --btnShadow:none;--btnHoverTf:none;--btnHoverShadow:none;
+  --btnHoverFlt:none;
+  --logoBg:transparent;--logoShadow:none;--logoBorder:1px solid #4af626;
+  --badgeBg:#4af626;--badgeFg:#0a0d0a;--badgeRad:0px;
+  --blur:none;--heroGlow:none;
+  --inputBg:#0a0d0a;--inputFocus:0 0 0 1px #4af626}
+body[data-skin=term] .logo{border:1px solid #4af626;color:#4af626;
+  text-shadow:0 0 10px #4af62688}
+body[data-skin=term] .hero h2,body[data-skin=term] .vname,body[data-skin=term] .brand h1{
+  text-shadow:0 0 12px rgba(74,246,38,.35)}
+body[data-skin=term] .btn{font-family:inherit}
+body[data-skin=term] .btn:hover{background:#4af626;color:#0a0d0a;
+  text-shadow:none;box-shadow:0 0 18px rgba(74,246,38,.5)}
+body[data-skin=term] .btn.ghost:hover{background:transparent;color:#4af626;
+  box-shadow:none;border-color:#4af626}
+body[data-skin=term] .hero .lab::before{content:'> '}
+body[data-skin=term] .status{border-radius:0}
+body[data-skin=term]::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:40;
+  background:repeating-linear-gradient(0deg,rgba(0,0,0,.16) 0 1px,transparent 1px 3px)}
+body[data-skin=term] .dot{animation:none}
+
+/* ============ v2.3.3 动效层（三皮肤通用骨架 + 各自风格化） ============ */
+/* 1) 入场编排：卡片依次上浮淡入（stagger） */
+@keyframes fcUp{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:none}}
+.wrap>.brand{animation:fcUp .5s .05s cubic-bezier(.2,.7,.3,1) both}
+.wrap>.tip{animation:fcUp .5s .15s cubic-bezier(.2,.7,.3,1) both}
+.card.hero{animation:fcUp .6s .22s cubic-bezier(.2,.7,.3,1) both}
+.vlist .card{animation:fcUp .5s both}
+.vlist .card:nth-child(1){animation-delay:.32s}
+.vlist .card:nth-child(2){animation-delay:.40s}
+.vlist .card:nth-child(3){animation-delay:.48s}
+.vlist .card:nth-child(4){animation-delay:.56s}
+.vlist .card:nth-child(5){animation-delay:.62s}
+.vlist .card:nth-child(n+6){animation-delay:.68s}
+.card.login{animation:fcUp .55s .1s cubic-bezier(.2,.7,.3,1) both}
+/* 2) 版本号/徽标呼吸 */
+@keyframes fcBreath{0%,100%{transform:scale(1)}50%{transform:scale(1.045)}}
+.hero .badge{animation:fcBreath 2.6s ease-in-out infinite}
+.hero .logo,.login .logo{animation:fcBreath 3.4s ease-in-out infinite}
+/* 3) 状态点涟漪（更立体） */
+.dot{position:relative}
+@keyframes fcPing{from{box-shadow:0 0 0 0 var(--okGlow)}to{box-shadow:0 0 0 9px transparent}}
+.dot{animation:pulse 2.2s infinite,fcPing 2.2s infinite}
+/* 4) 按钮 shimmer 扫光（仅主按钮） */
+.btn:not(.skinbtn){position:relative;overflow:hidden}   /* 不覆盖 skinbtn 的 fixed（用户实锤按钮掉左下）*/
+.btn::after{content:'';position:absolute;top:0;left:-70%;width:45%;height:100%;
+  background:linear-gradient(105deg,transparent,rgba(255,255,255,.28),transparent);
+  transform:skewX(-18deg);animation:fcShimmer 3.6s ease-in-out infinite}
+@keyframes fcShimmer{0%,55%{left:-70%}85%,100%{left:130%}}
+/* 5) 卡片 hover 精修：轻抬 + 亮度 */
+.card.hero,.vlist .card{transition:transform .25s cubic-bezier(.2,.7,.3,1),box-shadow .25s,border-color .25s}
+.card.hero:hover{transform:translateY(-3px)}
+/* 6) 滚动条主题化 */
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:var(--lineHover);border-radius:99px}
+::-webkit-scrollbar-thumb:hover{background:var(--accent)}
+::-webkit-scrollbar-track{background:transparent}
+/* 7) reduced-motion：全套关闭（无障碍/低端机） */
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+}
+
+/* ---- 皮肤一 dark：光斑漂移 + 版本号流光 ---- */
+@keyframes fcDrift1{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(70px,50px) scale(1.12)}}
+@keyframes fcDrift2{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(-60px,-44px) scale(1.08)}}
+body[data-skin=dark]::before{animation:fcDrift1 22s ease-in-out infinite}
+body[data-skin=dark]::after{animation:fcDrift2 27s ease-in-out infinite}
+@keyframes fcFlow{to{background-position:220% 0}}
+body[data-skin=dark] .hero h2{
+  background:linear-gradient(100deg,#eaeffa 20%,#5b9dff 42%,#2bd4c4 58%,#eaeffa 80%);
+  background-size:220% 100%;-webkit-background-clip:text;background-clip:text;
+  -webkit-text-fill-color:transparent;color:transparent;
+  animation:fcFlow 5s linear infinite}
+body[data-skin=dark] .card.hero{border-image:none}
+body[data-skin=dark] .card.hero::after{content:'';position:absolute;inset:-1px;pointer-events:none;
+  border-radius:inherit;padding:1px;
+  background:linear-gradient(120deg,rgba(91,157,255,.55),transparent 30%,transparent 70%,rgba(43,212,196,.5));
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor;mask-composite:exclude;
+  animation:fcBorderGlow 4.5s ease-in-out infinite}
+@keyframes fcBorderGlow{0%,100%{opacity:.35}50%{opacity:1}}
+
+/* ---- 皮肤二 paper：墨迹呼吸 + 卡片提笔感 ---- */
+@keyframes fcInk{0%,100%{letter-spacing:1px}50%{letter-spacing:2.4px}}
+body[data-skin=paper] .hero .lab{animation:fcInk 5s ease-in-out infinite}
+body[data-skin=paper] .hero .badge{animation:fcBreath 3.6s ease-in-out infinite}
+body[data-skin=paper] .vlist .card:hover{transform:translateY(-2px)}
+body[data-skin=paper] .hero h2{transition:letter-spacing .5s}
+body[data-skin=paper] .hero:hover h2{letter-spacing:1.5px}
+
+/* ---- 皮肤三 term：扫描线滚动 + 光标闪烁 + 输入呼吸 ---- */
+@keyframes fcScan{from{background-position:0 0}to{background-position:0 120px}}
+body[data-skin=term]::after{animation:fcScan 9s linear infinite;opacity:.75}
+@keyframes fcBlink{0%,49%{opacity:1}50%,100%{opacity:0}}
+body[data-skin=term] .hero .lab::after{content:'_';animation:fcBlink 1.1s steps(1) infinite;
+  color:#4af626;margin-left:2px}
+body[data-skin=term] .hero h2{animation:fcGlow 3s ease-in-out infinite}
+@keyframes fcGlow{0%,100%{text-shadow:0 0 12px rgba(74,246,38,.3)}50%{text-shadow:0 0 22px rgba(74,246,38,.65)}}
+body[data-skin=term] .btn::after{display:none}
+body[data-skin=term] .vlist .card{animation:fcUp .4s both,fcGlow2 4s ease-in-out infinite}
+@keyframes fcGlow2{0%,100%{border-color:#1d2e1d}50%{border-color:#2a452a}}
 """
 
 _LOGIN_HTML = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>前端控制台 · 发布中心</title><style>__CSS__</style></head><body>
+<title>前端控制台 · 发布中心</title><style>__CSS__</style></head><body data-skin="dark">
 <div class="login-wrap"><div class="card login">
   <div class="logo">⬆</div>
   <h1>前端控制台 · 发布中心</h1>
@@ -237,7 +417,111 @@ _LOGIN_HTML = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
   <button class="btn" id="go">进入</button>
   <div class="sub" style="margin:22px 0 0;">默认密码 __DEFPWD__（发布者可在工具 设置→关于与升级 中修改）</div>
 </div></div>
+<button class="btn ghost skinbtn" id="skin" title="切换界面风格">🎨 换肤</button>
+<canvas id="fxCanvas"></canvas>
+<div class="fx-glow"></div>
 <script>
+// ---- v2.3.6 背景特效（三皮肤差异化，用户定调「不能全是粒子」）----
+// dark 璃青：粒子星野（鼠标推开）+ 辉光跟随
+// paper 素白：墨晕拖尾——鼠标划过宣纸留下淡淡墨痕，慢慢晕开消散
+// term 终端：数据雨——稀疏绿色字符列下落（克制的 Matrix）
+(function(){
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  // 共用：鼠标辉光缓动跟随（三皮肤都有，颜色各异 CSS 已定）
+  var tx=innerWidth/2, ty=innerHeight*0.3, cx=tx, cy=ty;
+  addEventListener('mousemove', function(e){ tx=e.clientX; ty=e.clientY; }, {passive:true});
+  (function glide(){
+    cx += (tx-cx)*0.08; cy += (ty-cy)*0.08;
+    document.documentElement.style.setProperty('--mx', cx+'px');
+    document.documentElement.style.setProperty('--my', cy+'px');
+    requestAnimationFrame(glide);
+  })();
+  var cv = document.getElementById('fxCanvas'), ctx = cv.getContext('2d');
+  function resize(){ cv.width=innerWidth; cv.height=innerHeight; }
+  resize(); addEventListener('resize', resize);
+  var mouse={x:-999,y:-999,lx:-999,ly:-999};
+  addEventListener('mousemove', function(e){ mouse.lx=mouse.x; mouse.ly=mouse.y;
+    mouse.x=e.clientX; mouse.y=e.clientY; }, {passive:true});
+  function skin(){ return document.body.dataset.skin; }
+
+  // ---- 模式一 dark：粒子星野 ----
+  var P=[], N=Math.min(46, Math.floor(innerWidth/30));
+  for (var i=0;i<N;i++) P.push({x:Math.random()*cv.width, y:Math.random()*cv.height,
+    vx:(Math.random()-.5)*.22, vy:(Math.random()-.5)*.22,
+    r:Math.random()*1.6+.5, a:Math.random()*.5+.15});
+  function fxDark(){
+    for (var i=0;i<P.length;i++){ var p=P[i];
+      var dx=p.x-mouse.x, dy=p.y-mouse.y, d2=dx*dx+dy*dy;
+      if (d2<8100){ var d=Math.sqrt(d2)||1, f=(90-d)/90*.6; p.x+=dx/d*f; p.y+=dy/d*f; }
+      p.x+=p.vx; p.y+=p.vy;
+      if (p.x<-9)p.x=cv.width+9; if (p.x>cv.width+9)p.x=-9;
+      if (p.y<-9)p.y=cv.height+9; if (p.y>cv.height+9)p.y=-9;
+      ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,6.283);
+      ctx.fillStyle='rgba(120,160,255,'+p.a+')'; ctx.fill();
+    }
+  }
+
+  // ---- 模式二 paper：墨晕拖尾（鼠标在宣纸上划出墨痕，晕开淡出）----
+  var ink=[];
+  function fxPaper(){
+    // 鼠标移动才产墨点（间距>7px 一个，带随机偏移像笔锋）
+    var mdx=mouse.x-mouse.lx, mdy=mouse.y-mouse.ly;
+    if (mdx*mdx+mdy*mdy>49){
+      ink.push({x:mouse.x+(Math.random()-.5)*6, y:mouse.y+(Math.random()-.5)*6,
+                r:2+Math.random()*3, life:1});
+      mouse.lx=mouse.x; mouse.ly=mouse.y;
+    }
+    for (var i=ink.length-1;i>=0;i--){ var k=ink[i];
+      k.life-=0.006;                       // 慢慢消散
+      k.r+=0.06;                           // 墨在纸里晕开
+      if (k.life<=0){ ink.splice(i,1); continue; }
+      ctx.beginPath(); ctx.arc(k.x,k.y,k.r,0,6.283);
+      ctx.fillStyle='rgba(70,60,45,'+(k.life*0.10).toFixed(3)+')'; ctx.fill();
+    }
+    if (ink.length>140) ink.splice(0, ink.length-140);
+  }
+
+  // ---- 模式三 term：数据雨（稀疏字符列，克制下落）----
+  var CH='01<>/{}[]#$%&*+=?'; 
+  var rain=[];
+  (function mkRain(){ var cols=Math.floor(innerWidth/90);   // 90px 一列，很稀
+    for (var i=0;i<cols;i++) rain.push({x:i*90+20, y:Math.random()*-innerHeight,
+      v:1.2+Math.random()*1.6, len:5+Math.floor(Math.random()*7), t:0});
+  })();
+  function fxTerm(){
+    ctx.font='12px Consolas,monospace';
+    for (var i=0;i<rain.length;i++){ var rp=rain[i];
+      rp.y+=rp.v; rp.t++;
+      for (var j=0;j<rp.len;j++){ var y=rp.y-j*14;
+        if (y<-14||y>cv.height+14) continue;
+        var a=(1-j/rp.len)*(j===0?0.9:0.45);   // 头亮尾淡
+        ctx.fillStyle='rgba(74,246,38,'+a+')';
+        ctx.fillText(CH[(i*7+j*3+rp.t)%CH.length|0], rp.x, y);
+      }
+      if (rp.y-rp.len*14>cv.height){ rp.y=-Math.random()*300; rp.v=1.2+Math.random()*1.6; }
+    }
+  }
+
+  (function loop(){
+    ctx.clearRect(0,0,cv.width,cv.height);
+    var s=skin();
+    if (s==='paper') fxPaper();
+    else if (s==='term') fxTerm();
+    else fxDark();
+    requestAnimationFrame(loop);
+  })();
+})();
+
+// ---- 三套皮肤切换（登录页/门户页共用逻辑，选择存 localStorage）----
+const SKINS=[['dark','璃青'],['paper','素白'],['term','终端']];
+let _fcCur=localStorage.getItem('fc_skin')||'dark';
+if(!SKINS.some(s=>s[0]===_fcCur))_fcCur='dark';
+function _fcSkinApply(){document.body.dataset.skin=_fcCur;
+  const b=document.getElementById('skin');if(b)b.textContent='🎨 '+SKINS.find(s=>s[0]===_fcCur)[1];}
+_fcSkinApply();
+document.getElementById('skin').onclick=()=>{
+  _fcCur=SKINS[(SKINS.findIndex(s=>s[0]===_fcCur)+1)%SKINS.length][0];
+  localStorage.setItem('fc_skin',_fcCur);_fcSkinApply();};
 const go=document.getElementById('go'),pwd=document.getElementById('pwd'),err=document.getElementById('err');
 async function login(){
   go.disabled=true;go.textContent='验证中…';
@@ -258,7 +542,7 @@ go.onclick=login;pwd.addEventListener('keydown',e=>{if(e.key==='Enter')login()})
 
 _PORTAL_HTML = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>前端控制台 · 发布中心</title><style>__CSS__</style></head><body>
+<title>前端控制台 · 发布中心</title><style>__CSS__</style></head><body data-skin="dark">
 <div class="wrap">
   <div class="brand">
     <div class="logo">⬆</div>
@@ -268,14 +552,119 @@ _PORTAL_HTML = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
     <div class="status"><span class="dot"></span>服务在线</div>
     <button class="btn ghost" id="out" style="padding:7px 14px;font-size:12px;">退出</button>
   </div>
-  <div id="body"><div class="empty">版本加载中…</div></div>
+  <!-- v2.3.2 使用说明提到最前（用户定调：一眼看到），原在页尾被日志顶到看不见 -->
   <div class="tip">
     <b>整包安装</b>：下载最新版 zip 解压即用（v2.3.0 起为文件夹形态：exe + 依赖目录一起）。<br>
     <b>工具内热更新</b>：把地址 <b>__URL__</b> 填到工具「设置 → 关于与升级 → 升级服务器地址」，
     以后有新版工具会自动检查、一键升级（旧版自动备份为 .bak 可回退）。
   </div>
+  <div id="body"><div class="empty">版本加载中…</div></div>
 </div>
+<button class="btn ghost skinbtn" id="skin" title="切换界面风格">🎨 换肤</button>
+<canvas id="fxCanvas"></canvas>
+<div class="fx-glow"></div>
 <script>
+// ---- v2.3.6 背景特效（三皮肤差异化，用户定调「不能全是粒子」）----
+// dark 璃青：粒子星野（鼠标推开）+ 辉光跟随
+// paper 素白：墨晕拖尾——鼠标划过宣纸留下淡淡墨痕，慢慢晕开消散
+// term 终端：数据雨——稀疏绿色字符列下落（克制的 Matrix）
+(function(){
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  // 共用：鼠标辉光缓动跟随（三皮肤都有，颜色各异 CSS 已定）
+  var tx=innerWidth/2, ty=innerHeight*0.3, cx=tx, cy=ty;
+  addEventListener('mousemove', function(e){ tx=e.clientX; ty=e.clientY; }, {passive:true});
+  (function glide(){
+    cx += (tx-cx)*0.08; cy += (ty-cy)*0.08;
+    document.documentElement.style.setProperty('--mx', cx+'px');
+    document.documentElement.style.setProperty('--my', cy+'px');
+    requestAnimationFrame(glide);
+  })();
+  var cv = document.getElementById('fxCanvas'), ctx = cv.getContext('2d');
+  function resize(){ cv.width=innerWidth; cv.height=innerHeight; }
+  resize(); addEventListener('resize', resize);
+  var mouse={x:-999,y:-999,lx:-999,ly:-999};
+  addEventListener('mousemove', function(e){ mouse.lx=mouse.x; mouse.ly=mouse.y;
+    mouse.x=e.clientX; mouse.y=e.clientY; }, {passive:true});
+  function skin(){ return document.body.dataset.skin; }
+
+  // ---- 模式一 dark：粒子星野 ----
+  var P=[], N=Math.min(46, Math.floor(innerWidth/30));
+  for (var i=0;i<N;i++) P.push({x:Math.random()*cv.width, y:Math.random()*cv.height,
+    vx:(Math.random()-.5)*.22, vy:(Math.random()-.5)*.22,
+    r:Math.random()*1.6+.5, a:Math.random()*.5+.15});
+  function fxDark(){
+    for (var i=0;i<P.length;i++){ var p=P[i];
+      var dx=p.x-mouse.x, dy=p.y-mouse.y, d2=dx*dx+dy*dy;
+      if (d2<8100){ var d=Math.sqrt(d2)||1, f=(90-d)/90*.6; p.x+=dx/d*f; p.y+=dy/d*f; }
+      p.x+=p.vx; p.y+=p.vy;
+      if (p.x<-9)p.x=cv.width+9; if (p.x>cv.width+9)p.x=-9;
+      if (p.y<-9)p.y=cv.height+9; if (p.y>cv.height+9)p.y=-9;
+      ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,6.283);
+      ctx.fillStyle='rgba(120,160,255,'+p.a+')'; ctx.fill();
+    }
+  }
+
+  // ---- 模式二 paper：墨晕拖尾（鼠标在宣纸上划出墨痕，晕开淡出）----
+  var ink=[];
+  function fxPaper(){
+    // 鼠标移动才产墨点（间距>7px 一个，带随机偏移像笔锋）
+    var mdx=mouse.x-mouse.lx, mdy=mouse.y-mouse.ly;
+    if (mdx*mdx+mdy*mdy>49){
+      ink.push({x:mouse.x+(Math.random()-.5)*6, y:mouse.y+(Math.random()-.5)*6,
+                r:2+Math.random()*3, life:1});
+      mouse.lx=mouse.x; mouse.ly=mouse.y;
+    }
+    for (var i=ink.length-1;i>=0;i--){ var k=ink[i];
+      k.life-=0.006;                       // 慢慢消散
+      k.r+=0.06;                           // 墨在纸里晕开
+      if (k.life<=0){ ink.splice(i,1); continue; }
+      ctx.beginPath(); ctx.arc(k.x,k.y,k.r,0,6.283);
+      ctx.fillStyle='rgba(70,60,45,'+(k.life*0.10).toFixed(3)+')'; ctx.fill();
+    }
+    if (ink.length>140) ink.splice(0, ink.length-140);
+  }
+
+  // ---- 模式三 term：数据雨（稀疏字符列，克制下落）----
+  var CH='01<>/{}[]#$%&*+=?'; 
+  var rain=[];
+  (function mkRain(){ var cols=Math.floor(innerWidth/90);   // 90px 一列，很稀
+    for (var i=0;i<cols;i++) rain.push({x:i*90+20, y:Math.random()*-innerHeight,
+      v:1.2+Math.random()*1.6, len:5+Math.floor(Math.random()*7), t:0});
+  })();
+  function fxTerm(){
+    ctx.font='12px Consolas,monospace';
+    for (var i=0;i<rain.length;i++){ var rp=rain[i];
+      rp.y+=rp.v; rp.t++;
+      for (var j=0;j<rp.len;j++){ var y=rp.y-j*14;
+        if (y<-14||y>cv.height+14) continue;
+        var a=(1-j/rp.len)*(j===0?0.9:0.45);   // 头亮尾淡
+        ctx.fillStyle='rgba(74,246,38,'+a+')';
+        ctx.fillText(CH[(i*7+j*3+rp.t)%CH.length|0], rp.x, y);
+      }
+      if (rp.y-rp.len*14>cv.height){ rp.y=-Math.random()*300; rp.v=1.2+Math.random()*1.6; }
+    }
+  }
+
+  (function loop(){
+    ctx.clearRect(0,0,cv.width,cv.height);
+    var s=skin();
+    if (s==='paper') fxPaper();
+    else if (s==='term') fxTerm();
+    else fxDark();
+    requestAnimationFrame(loop);
+  })();
+})();
+
+// ---- 三套皮肤切换（登录页/门户页共用逻辑，选择存 localStorage）----
+const SKINS=[['dark','璃青'],['paper','素白'],['term','终端']];
+let _fcCur=localStorage.getItem('fc_skin')||'dark';
+if(!SKINS.some(s=>s[0]===_fcCur))_fcCur='dark';
+function _fcSkinApply(){document.body.dataset.skin=_fcCur;
+  const b=document.getElementById('skin');if(b)b.textContent='🎨 '+SKINS.find(s=>s[0]===_fcCur)[1];}
+_fcSkinApply();
+document.getElementById('skin').onclick=()=>{
+  _fcCur=SKINS[(SKINS.findIndex(s=>s[0]===_fcCur)+1)%SKINS.length][0];
+  localStorage.setItem('fc_skin',_fcCur);_fcSkinApply();};
 const fmtSize=n=>n>=1073741824?(n/1073741824).toFixed(2)+' GB'
   :n>=1048576?(n/1048576).toFixed(1)+' MB':(n/1024).toFixed(0)+' KB';
 const fmtTs=ms=>{const d=new Date(ms);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')
@@ -300,13 +689,16 @@ async function load(){
       +'<span data-dlst style="font-size:12px;color:var(--muted)">下载后解压即完成安装</span></div></div>';
     const rest=j.items.slice(1);
     if(rest.length){
-      h+='<div style="font-size:12px;color:var(--muted);letter-spacing:2px;margin:26px 0 12px">历史版本</div><div class="vlist">';
+      h+='<div style="font-size:12px;color:var(--muted);letter-spacing:2px;margin:26px 0 12px">更新日志</div><div class="vlist">';
       for(const it of rest){
-        h+='<div class="card vitem"><div class="vmain"><div class="vname">v'+esc(it.version)+'</div>'
-          +'<div class="vmeta"><span>📅 '+fmtTs(it.mtime)+'</span><span>📦 '+fmtSize(it.size)+'</span></div>'
-          +(it.notes?'<div class="vmeta" style="margin-top:6px;white-space:pre-wrap;color:#c3cad9">'+esc(it.notes.slice(0,200))+(it.notes.length>200?'…':'')+'</div>':'')
-          +'</div>'
-          +'<button class="btn ghost" data-dl="'+it.url+'" data-n="'+esc(it.file)+'">下载</button></div>';
+        h+='<div class="card vitem" style="align-items:flex-start"><div class="vmain">'
+          +'<div class="vname">v'+esc(it.version)
+          +' <span style="font-size:11px;font-weight:400;color:var(--muted);margin-left:6px">'
+          +(it.file?fmtTs(it.mtime):'历史回溯')+'</span></div>'
+          +(it.notes?'<div style="margin-top:8px;font-size:12.5px;line-height:1.8;white-space:pre-wrap;color:var(--notes,inherit)">'
+            +esc(it.notes)+'</div>'
+            :'<div class="vmeta" style="margin-top:6px">（该版无记录说明）</div>')
+          +'</div></div>';
       }
       h+='</div>';
     }
@@ -426,8 +818,10 @@ class _Handler(BaseHTTPRequestHandler):
         name = unquote(raw.lstrip("/"))
 
         if name in ("", "index.html"):
-            url = "http://%s:%d/" % (self.headers.get("Host") or
-                                     ("%s:%d" % (_lan_ip(), PORT)), PORT)
+            # Host 头自带端口（ip:port）——直接用；缺失才自拼（v2.3.2 修
+            # 端口重复 bug：Host 含端口时再拼 :PORT 得出 :8765:8765，用户实锤）
+            host = self.headers.get("Host") or "%s:%d" % (_lan_ip(), PORT)
+            url = "http://%s/" % host
             if self._session_ok():
                 page = _PORTAL_HTML.replace("__CSS__", _CSS).replace("__URL__", _esc(url))
                 self._text(200, page, "text/html; charset=utf-8")

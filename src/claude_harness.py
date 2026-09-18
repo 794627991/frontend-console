@@ -21,6 +21,8 @@ v2（微信式改造）新增：
 不落盘工具日志（Claude 自写 ~/.claude/projects 转写）。
 """
 import os, json, base64, re, sys, subprocess, threading, time, uuid, hashlib
+import logging   # v2.3.3：log 此前从未定义（续命失败分支 log.warning 一走就
+log = logging.getLogger(__name__)   # NameError 吞掉真实异常——Cython 编译抓出的潜雷）
 from queue import Queue, Empty
 
 from flask import Blueprint, request, jsonify, Response, send_from_directory
@@ -367,6 +369,16 @@ def _model_vision_mode(name):
     return None
 
 
+# v2.3.7 全会话铁律（用户定调「浪费 token 极其可耻」）：注入每个会话。
+TOKEN_RULES = (
+    "【铁律：珍惜 token】\n"
+    "1. 结论即停：工具返回已足以回答就直接用，禁止重复调用确认。\n"
+    "2. 单问单调：一次调用覆盖多角度（prompt 里并列），不撒网连发。\n"
+    "3. 言简意赅：回复别废话，先结论后要点；代码注释写清不写长。\n"
+    "4. 不重读：上下文已有的信息（自己刚写/刚读）不重新 Read。"
+)
+
+
 def _bridge_fp(model):
     """识图引导词指纹（send 前热更检测用）：内容含三态判定结果，代码升级
     / mm_mcp 名单调整 / vision 开关都会改变指纹。未启用时空串（有→无也
@@ -407,7 +419,22 @@ def vision_bridge_text(model=None):
             "2. 调用 mcp__4_5v_mcp__analyze_image 工具：imageSource=该链接，"
             "prompt=你想从图里知道的问题（要求结论先行、给坐标参考）。\n"
             "3. 用它返回的结论回答用户，不要自己编造图片内容。\n"
-            "多张图逐张处理。MCP 调用失败时再按转交流程交给识图会话保底。"
+            "【铁律：CDN 链接必须原样带完整 query 签名（?UCloudPublicKey=…"
+            "&Expires=…&Signature=… 一个参数都不能少、不能截断、不能自己"
+            "清洗、不能复制时改动任何字符】——去掉签名或改动一字（如 "
+            "TOKEN 错成 T_TOKEN）都会被 CDN 拒绝（401），MCP 拿到非图片内容"
+            "报 1210「图片输入格式/解析错误」，看起来像服务故障，实际是链接"
+            "错误（实测踩坑）。MCP 报 1210 时先逐字符核对自己传的 URL 与 "
+            "Read 返回原文是否一致，再考虑降级。\n"
+            "【铁律：单图单问、结论即停——一次 analyze_image 返回已足以回答"
+            "问题就直接用它，禁止对同一张图再发第二次调用「确认」；多角度"
+            "需求并进同一次 prompt。多余调用浪费额度还放大手滑概率（实测"
+            "4 连发/2 连发被用户两次质问）】\n"
+            "多张图逐张处理。确认 URL 完整仍失败（4xx/超时）才走保底："
+            "ListAgents 找识图会话，SendMessage 转交（附图片绝对路径+问题）；"
+            "找不到识图会话就如实告诉用户"
+            "「识图服务故障且保底会话未运行，请手动拉起识图会话」，"
+            "不要反复重试失败的 MCP 调用。"
         )
     name = cfg["name"]
     return (
@@ -940,6 +967,7 @@ class HarnessSession:
             # 在跑模型注入（settings 名与实报名错位是转交 bug 的真根因）
             eff_model = self._eff_model()
             parts = [_collect_system_prompt(self.cwd),
+                     TOKEN_RULES,
                      vision_bridge_text(eff_model),
                      ask_bridge_text()]
             if self.permission == "confirm":
@@ -1150,7 +1178,7 @@ class HarnessSession:
                                    "的 %dK 窗口（多半是切了 API 方案模型变小）"
                                    "——请切回大窗口 API 方案，或新建会话"
                                    % (round(used / 1024),
-                                      (s.model or eff_model),
+                                      eff_model,
                                       round(mwin / 1024)))
         except Exception:
             pass   # 检测自身失败不拦发送（读不到用量时维持原行为）
@@ -1263,16 +1291,19 @@ class HarnessSession:
         try:
             if not self.session_id:
                 return
-            # v2.27.20：session_id 变了（超窗续命换代 / resume 分叉）——缓存的
-            # 转写路径还指着旧文件，新文件的 peer 行永远扫不到（换代后回传
-            # "凭空消失"的第二个根因）。归属不符即作废重找、重立基线。
-            if getattr(self, "_tr_sid", None) != self.session_id:
-                self._tr_sid = self.session_id
-                self._tr_path = None
-                self._tr_off = None
             # v2.27.20：reader 线程与回传兜底轮询线程都会进来——锁住防偏移
-            # 竞争重复 emit（两线程同时读同一段增量，peer 气泡画两份）
+            # 竞争重复 emit（两线程同时读同一段增量，peer 气泡画两份）。
+            # v2.3.2 审计 P7：换代重置（_tr_sid 比对+三字段清空）也挪进锁内——
+            # 原在锁外，线程 B 清空 _tr_off 后，锁内读到一半的线程 A 用
+            # f.tell() 把 None 覆写回旧文件偏移，旧偏移对着新文件用（错位/漏行）
             with self._tr_lock:
+                # v2.27.20：session_id 变了（超窗续命换代 / resume 分叉）——缓存
+                # 的转写路径还指着旧文件，新文件的 peer 行永远扫不到（换代后
+                # 回传"凭空消失"的第二个根因）。归属不符即作废重找、重立基线。
+                if getattr(self, "_tr_sid", None) != self.session_id:
+                    self._tr_sid = self.session_id
+                    self._tr_path = None
+                    self._tr_off = None
                 if not getattr(self, "_tr_path", None):
                     import glob as _g
                     for cand in _g.glob(os.path.join(os.path.expanduser("~"),
@@ -1309,11 +1340,29 @@ class HarnessSession:
                     o = json.loads(ln)
                 except Exception:
                     continue
-                if o.get("type") != "user" or (o.get("origin") or {}).get("kind") != "peer":
+                if o.get("type") != "user":
                     continue
                 t = (o.get("message") or {}).get("content")
-                if not isinstance(t, str) or not t.strip().startswith("Another Claude session sent a message"):
+                # v2.3.2 两形态（用户实锤「模型收到了前台没显示」）：
+                # 独立行=空闲期到达，origin.kind=peer、正文以标记开头（原逻辑）；
+                # 内嵌行=busy 期到达被 CLI 排队，回合结束注入进下一轮用户消息
+                # （system-reminder 包装，origin 是 human）——此前检测不到，
+                # 模型收到了但前端永远无气泡。走到这里的含标记 user/str 统一解析
+                # （内嵌型须带 <cross-session-message 标签收窄，防用户手打误报）。
+                if not isinstance(t, str) or \
+                        "Another Claude session sent a message" not in t:
                     continue
+                if (o.get("origin") or {}).get("kind") != "peer" and \
+                        "<cross-session-message" not in t:
+                    continue
+                # v2.3.2 审计 1a 误报收窄：非 peer origin（内嵌型）还须 system-reminder
+                # 壳在标记之前——CLI 排队注入的固定形态；用户手贴回传原文/贴原始
+                # jsonl 排查问题时通常不带这层壳，不再弹假回传气泡
+                _mp = t.find("Another Claude session sent a message")
+                if (o.get("origin") or {}).get("kind") != "peer" and _mp > 0:
+                    if t.find("<system-reminder") < 0 or \
+                            t.find("<system-reminder") > _mp:
+                        continue
                 nm = re.search(r'from-name="([^"]*)"', t)
                 body = re.search(r"<cross-session-message[^>]*>(.*)</cross-session-message>",
                                  t, re.S)
@@ -1328,6 +1377,34 @@ class HarnessSession:
                 self.emit({"kind": "peer",
                            "name": nm.group(1) if nm else "其他会话",
                            "text": ((body.group(1) if body else t).strip())[:8000]})
+        except Exception:
+            pass
+
+    def _relay_vision_reply(self, o):
+        """v2.3.2：识图会话回传代播——它的 assistant 事件流里出现 SendMessage
+        tool_use 时，把结论（input.message）直接广播给所有主会话（emit kind='peer'
+        附 to=收件人 peer 名）。主会话 busy 时 CLI 运行时注入不留 jsonl 痕迹，
+        这是唯一可靠的观测点。前端按转交线收件人名匹配渲染，错发无污染。"""
+        try:
+            blocks = (o.get("message") or {}).get("content") or []
+            if not isinstance(blocks, list):
+                return
+            for b in blocks:
+                if not (isinstance(b, dict) and b.get("type") == "tool_use"
+                        and b.get("name") == "SendMessage"):
+                    continue
+                inp = b.get("input") or {}
+                to = str(inp.get("to") or "")
+                msg = str(inp.get("message") or "").strip()
+                if not msg:
+                    continue
+                name = getattr(self, "name", None) or "识图会话"
+                with _sessions_lock:
+                    targets = [s for s in _sessions.values()
+                               if not getattr(s, "is_vision", False)]
+                for s in targets:
+                    s.emit({"kind": "peer", "name": name, "to": to,
+                            "text": msg[:8000]})
         except Exception:
             pass
 
@@ -1380,6 +1457,14 @@ class HarnessSession:
                     if lm and lm != self.live_model:
                         self.live_model = lm
                         self.sync_meta()
+                    # v2.3.2 第三形态（用户实锤「识图跑完回传没显示」）：目标
+                    # 会话 busy 时，CLI 把回传以运行时通知直接注入其当前回合，
+                    # **jsonl 零痕迹**——主会话侧扫盘永远无解。改在识图会话侧
+                    # 截获：它发出的 SendMessage tool_use（input.to/message 现成）
+                    # → 向全部非 vision 会话广播 kind='peer'（带 to 字段），前端
+                    # 按转交线上的收件人名对号入座渲染，无污染。
+                    if getattr(self, "is_vision", False):
+                        self._relay_vision_reply(o)
                 if typ in ("assistant", "result"):
                     self._check_peer_lines()   # 回合有输出 → 先补发新到的 peer 回传
                 self.emit({"kind": "event", "data": o})
@@ -1471,11 +1556,25 @@ class HarnessSession:
                 del self.events[:len(self.events) - _EVENTS_MAX]
             # v2.25：识图完成即落字段（见 __init__ vision_done 注释）——窗口
             # 滑动不再影响；brief 此刻回扫必然扫得到（assistant 刚发生）
-            if item.get("kind") == "result" and getattr(self, "is_vision", False):
+            # v2.3.2 修真根因：CLI 事件统一包成 kind='event'（result 在 data.type
+            # 里），旧判断只认裸 kind=='result'——从事件结构重构起永不匹配，
+            # last_done 恒 0、「已返回」toast 从未弹过（用户实锤）。
+            _d = item.get("data") if isinstance(item.get("data"), dict) else {}
+            _is_result = (item.get("kind") == "result"
+                          or (item.get("kind") == "event" and _d.get("type") == "result"))
+            if _is_result and getattr(self, "is_vision", False):
                 brief = ""
                 for e in reversed(self.events):
-                    if e.get("kind") == "assistant" and (e.get("text") or "").strip():
-                        brief = e["text"].strip()[:120]
+                    # 同上：assistant 也是 kind='event' 包装（text 块在
+                    # data.message.content 里），旧裸 kind 判断同样扫不到
+                    txt = e.get("text")
+                    if not txt and e.get("kind") == "event":
+                        _c = ((e.get("data") or {}).get("message") or {}).get("content")
+                        if isinstance(_c, list):
+                            txt = "\n".join(b.get("text", "") for b in _c
+                                            if isinstance(b, dict) and b.get("type") == "text")
+                    if (e.get("kind") == "assistant" or txt) and (txt or "").strip():
+                        brief = (txt or "").strip()[:120]
                         break
                 self.vision_done = {"ts": item.get("ts") or 0, "brief": brief}
         with self.clients_lock:
@@ -1622,18 +1721,26 @@ def _vision_needed(new_model=None):
 
     用户口径：模型本身多模态就直接用主会话读图，只有存在「非多模态」的
     活用户会话（或即将新建的会话模型非多模态）才需要识图会话兜底。
+    v2.3.2 保底修正（用户实锤）：MCP 识图类（'mcp'）会话也保留识图会话
+    ——MCP 通道依赖外部服务，会故障（实测 analyze_image 全量 1210），
+    引导词里写的「MCP 失败转交识图会话保底」要求识图会话真的在跑，
+    否则 GC 把它收掉后降级无门，只能用户手动拉起。代价：后台常驻一个
+    识图 claude 进程（有 mcp 会话活跃时），换故障兜底，值。
     """
-    # v2.27.11：三态分类——inline/mcp 会话自己能识图，不需要识图会话兜底
+    # v2.27.11：三态分类——inline 自己能识图；None 无识图；mcp 需保底（v2.3.2）
     if new_model is not None:
-        return _model_vision_mode(new_model) is None
+        mode = _model_vision_mode(new_model)
+        return mode is None or mode == "mcp"
     default_model = available_models().get("default")
     with _sessions_lock:
         for s in list(_sessions.values()):
             if getattr(s, "hidden", False) or getattr(s, "is_vision", False):
                 continue
             # model=None 按 settings 默认模型判（实际跑的就是它）
-            if s.alive and _model_vision_mode(s.model or default_model) is None:
-                return True
+            if s.alive:
+                mode = _model_vision_mode(s.model or default_model)
+                if mode is None or mode == "mcp":
+                    return True
     return False
 
 
@@ -1641,8 +1748,11 @@ def ensure_vision_bg(new_model=None):
     """工具启动 claude 后自动拉起识图会话（放线程里，不阻塞启动）。
     daemon 线程 + 吞异常：识图起不来不能影响主功能可用。
     v2.20：带模型判定——多模态会话不需要识图，不拉（省一个后台 claude 进程）。
-    v2.27.11：MCP 识图模型同样不需要（自己能调 analyze_image）。"""
-    if new_model is not None and _model_vision_mode(new_model) is not None:
+    v2.27.11：MCP 识图模型同样不需要（自己能调 analyze_image）。
+    v2.3.2 审计 P3：mcp 模型也拉——MCP 通道依赖外部服务会故障（analyze_image
+    全量 1210 实测），保底会话要在而不等 60s GC 周期（与 _vision_needed 口径
+    对齐），否则 connect 后一分钟内 MCP 挂掉无兜底。"""
+    if new_model is not None and _model_vision_mode(new_model) == "inline":
         return
     def _run():
         try:
@@ -1704,16 +1814,30 @@ def transcript_for(s):
                             # v2.27.3：跨会话消息（识图回传等）不再被 _SKIP_RE 静默吞掉——
                             # 解析出发件人与正文，产 peer 行让前端渲染专属回传气泡
                             # （用户定调：识图全程要有可见反馈，回传内容不能凭空消失）
-                            if t.strip().startswith("Another Claude session sent a message"):
-                                nm = _re.search(r'from-name="([^"]*)"', t)
+                            # v2.3.2 审计 P2：补第二形态——busy 期回传被 CLI 排队后
+                            # 内嵌注入下一轮用户消息（system-reminder 包装、origin=
+                            # human），此前 startswith 口径识别不到，历史重建把它渲染
+                            # 成带原始 XML 的普通用户气泡，等待线永不定格。
+                            _m_pos = t.find("Another Claude session sent a message")
+                            if _m_pos >= 0 and "<cross-session-message" in t:
+                                _seg = t[_m_pos:]
+                                nm = _re.search(r'from-name="([^"]*)"', _seg)
                                 body = _re.search(
                                     r"<cross-session-message[^>]*>(.*)</cross-session-message>",
-                                    t, _re.S)
+                                    _seg, _re.S)
                                 lines.append({"role": "peer",
                                               "name": (nm.group(1) if nm else "其他会话"),
-                                              "text": ((body.group(1) if body else t).strip())[:8000],
+                                              "text": ((body.group(1) if body else _seg).strip())[:8000],
                                               "ts": o.get("timestamp") or ""})
-                                continue
+                                # 内嵌形态：同一条 user 行还含用户真实输入——剔除整个
+                                # system-reminder 注入块，剩余文本照常出 user 气泡
+                                # （独立形态整行即回传，continue）
+                                if _m_pos == 0 and t.strip().startswith("Another Claude session"):
+                                    continue
+                                t = _re.sub(r"<system-reminder>.*?</system-reminder>",
+                                            "", t, flags=_re.S).strip()
+                                if not t:
+                                    continue
                             # harness 通道从 stdin 注入，promptSource 是 "sdk"（不是 typed）；
                             # 排除标准是"非用户输入"（工具注入 default）——命令噪音由 _SKIP_RE 挡
                             # v2.27.23：超窗续命的 [系统] 历史注入不进气泡流——
@@ -1777,7 +1901,11 @@ def transcript_for(s):
                             elif b.get("type") == "tool_use":
                                 tools.append({"id": b.get("id", ""), "name": b.get("name", ""),
                                               "summary": _tool_summary(b.get("name", ""), b.get("input")),
-                                              "input": b.get("input") or {}})
+                                              "input": b.get("input") or {},
+                                              # v2.3.2：行级 ts——前端历史重建给转交等待线
+                                              # 提供真实起点（此前缺字段，恒传 0 回退 Date.now，
+                                              # 定格「用时」恒 0s——审计 P1）
+                                              "ts": o.get("timestamp") or ""})
                         # 思考先出：一轮里 thinking 在工具调用之前，重建后「思考抽屉」才在
                         # 「执行抽屉」上方（与流式渲染同序）
                         if thinks:
@@ -1790,7 +1918,8 @@ def transcript_for(s):
                             lines.append({"role": "assistant", "text": t[:8000]})
                         for tl in tools:
                             row = {"role": "tool", "text": tl["name"], "summary": tl["summary"],
-                                   "input": tl["input"], "result": None}
+                                   "input": tl["input"], "result": None,
+                                   "ts": tl.get("ts") or ""}
                             if tl["id"]:
                                 call_by_id[tl["id"]] = row
                             lines.append(row)
@@ -1872,8 +2001,10 @@ def harness_connect():
         # v2.20：多模态会话不拉识图（模型自己能读图）；model=None 按
         # settings 默认模型判（实际跑的就是它）
         # v2.27.11：三态——inline/mcp 会话都能自己识图，只有 None 才拉识图会话
+        # v2.3.2 审计 P3：mcp 也拉（MCP 服务故障时的保底，与 _vision_needed
+        # 同口径——否则 connect 后 60s GC 周期前无兜底）
         eff = s.model or available_models().get("default")
-        if _model_vision_mode(eff) is None:
+        if _model_vision_mode(eff) in (None, "mcp"):
             ensure_vision_bg(eff)
         return jsonify({"ok": True, "port_id": s.port_id, "sid": s.sid, "kind": "harness",
                         "cwd": s.cwd, "model": s.model, "title": s.title})
@@ -2424,12 +2555,14 @@ def harness_vision_status():
            "last_done": 0, "last_brief": ""}
     if s:
         out["last_seq"] = s._seq
+        # v2.3.2：busy_since 直读对象字段（busy 被置起时同步设置）——原实现
+        # 回扫尾部 12 条事件的 user_echo，但 peer 消息触发的识图任务不走
+        # harness send、没有 user_echo 事件，busy=True 而 since=None，前端
+        # 顶栏/侧栏徽章恒显 0s（用户实锤「计时冻结」）。
+        if s.busy:
+            out["busy_since"] = s.busy_since
         with s.events_lock:
             evs = list(s.events)[-12:]
-        for e in reversed(evs):
-            if e.get("kind") == "user_echo":
-                out["busy_since"] = e.get("ts")
-                break
         # v2.25：完成时刻/摘要改读持久字段（emit 时落盘）——原从尾部 12 条
         # 事件回扫，识图轮次密集时 result 被挤出窗口，last_done 归 0，前端
         # 冒泡整个漏掉（v2.24.9 修复不彻底，用户继续反馈「冒泡还是异常」）

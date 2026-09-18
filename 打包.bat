@@ -18,7 +18,7 @@ echo ==============================================
 set PYTHONIOENCODING=gbk
 "%PY%" src\build.py
 if errorlevel 1 goto fail
-if not exist "dist\前端控制台.exe" goto fail
+if not exist "dist\前端控制台\前端控制台.exe" goto fail
 echo.
 echo [OK] 打包完成: dist\前端控制台.exe
 echo.

@@ -273,12 +273,46 @@ def _no_cache_static(resp):
         resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     return resp
 
+def _mem_web(rel):
+    """v2.3.6：加密门户的自解密 web 资源（main.FC_MEM_WEB，main 自举时解密
+    进内存）优先——磁盘只有密文，内存 serve 明文给浏览器（不落盘）。
+    dev 模式 dict 空，自动回落 send_from_directory 明文。任何异常回落磁盘
+    （import 桥接失败也不能白屏——用户实锤：frozen 下 from src import
+    secure_boot 抛 ImportError → / 路由 500）。返回 Response 或 None。"""
+    try:
+        # v2.3.6：字典挂 sys（frozen 下入口脚本模块名是 main 非 src.main，
+        # import src.main 必失败——用户实锤白屏）
+        data = getattr(sys, "FC_MEM_WEB", {}).get(rel.replace("\\", "/"))
+    except Exception:
+        return None
+    if data is None:
+        return None
+    import mimetypes
+    mt = mimetypes.guess_type(rel)[0] or "application/octet-stream"
+    resp = Response(data, mimetype=mt)
+    if mt in ("text/html", "text/css", "application/javascript", "text/javascript"):
+        resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return resp
+
+
 @app.route("/")
 def index():
+    try:
+        r = _mem_web("web/index.html")
+    except Exception:
+        r = None
+    if r is not None:
+        return r
     return send_from_directory(RES_DIR, "web/index.html")
 
 @app.route("/web/<path:fn>")
 def web_files(fn):
+    try:
+        r = _mem_web("web/" + fn)
+    except Exception:
+        r = None
+    if r is not None:
+        return r
     return send_from_directory(os.path.join(RES_DIR, "web"), fn)
 
 @app.route("/<path:fn>")
@@ -932,11 +966,14 @@ def api_open_url():
 # ---- 升级功能（v2.1.0）：客户端检查/应用 + 发布端分发服务控制 ----
 @app.route("/api/update/state")
 def api_update_state():
-    """当前版本 + 升级服务器地址（设置页显示与预填）。"""
+    """当前版本 + 升级服务器地址（设置页显示与预填）。
+    frozen=True = 打包版（同事机）——前端据此隐藏「升级分发服务」区块
+    （发布机专用，用户定调：发布版不能有这部分 UI）。"""
     from src.updater import _cfg_url
     from src.version import APP_VERSION
     return jsonify({"ok": True, "current": APP_VERSION,
-                    "url": _cfg_url() or ""})
+                    "url": _cfg_url() or "",
+                    "frozen": bool(getattr(sys, "frozen", False))})
 
 
 @app.route("/api/update/url", methods=["POST"])
