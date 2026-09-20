@@ -2045,6 +2045,9 @@ function buildClaudeHarnessTab(opts = {}) {
       }
       scrollBottom();
     } else if (typ === 'user') {
+      // v2.3.12：/compact 摘要行不渲染——它是模型续命记忆，显示成用户气泡是噪音
+      // （历史重建路径后端已拦成 renew 行，这里挡实时流里漏网的）
+      if (o.isCompactSummary) return;
       const c0 = (o.message || {}).content;
       // v2.28.3：识图 MCP 回传——按 tool_use_id 在 pending 线里对号，
       // 定格它自己的分割线+渲染 📥 气泡（并行多图互不串线）

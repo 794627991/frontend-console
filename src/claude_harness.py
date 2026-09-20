@@ -1752,6 +1752,15 @@ def transcript_for(s):
                     typ = o.get("type")
                     if o.get("isSynthetic") or o.get("parent_tool_use_id"):
                         continue
+                    # v2.3.12：/compact 压缩摘要行（isCompactSummary=true）不进
+                    # 用户气泡——用户手动压缩后界面弹出几十行英文摘要（用户实锤
+                    # 「不应该在我的消息气泡里」）。折叠成 renew 分割线：摘要已
+                    # 并入模型上下文（续命记忆），UI 只留一行标记不渲染原文。
+                    if o.get("isCompactSummary"):
+                        lines.append({"role": "renew",
+                                      "text": "上下文已压缩（/compact 摘要已并入模型记忆）",
+                                      "ts": o.get("timestamp") or ""})
+                        continue
                     msg = o.get("message") or {}
                     content = msg.get("content")
                     if typ == "user":
