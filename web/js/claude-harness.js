@@ -2189,226 +2189,50 @@ function buildClaudeHarnessTab(opts = {}) {
     }
   }, { passive: true });
 
-  // ==================== v2.24 只读禅模式（超长会话历史归档查阅）====================
-  // 正常模式翻阅到 HIST_CAP 上限后的全屏查阅层：无侧栏/输入/一切交互入口，
-  // 只有居中的历史流（VSCode 禅模式）。同样滚动分段 + 懒抽屉（开才渲染、
-  // 合即丢弃）——千条会话也只耗一屏 DOM。退出即整层销毁（渲染记录全清）。
+  // ==================== v2.3.11 只读模式（独立积木 harness-readonly.js）====================
+  // ZCode 方案完整重构：默认只显结论，「已工作 Xs」总开关分级展开过程（思考/
+  // 工具行二级折叠）。实现全部在 web/js/harness-readonly.js（window.HgReadonly），
+  // 这里只做依赖注入薄适配——闭包助手打包传过去，零全局耦合。
+  function _roDeps() {
+    return {
+      _HG, wrap,
+      esc, mdBubble, renderMd, attChipsHtml, statusBadge,
+      toolIco: _hToolIco, toolLabel: _hToolLabel, toolBodyHtml: _histToolBodyHtml,
+      lazyFill: _histLazyFill, lazyDrop: _histLazyDrop,
+      timeFmt: _timeFmt, fmtDur, imgExt: _HARNESS_IMG_EXT,
+      onEmpty: () => { const bar = flow.querySelector('.hg-hist-more');
+                       if (bar) bar.innerHTML = '⚠ 没有可查阅的历史'; }
+    };
+  }
   function _roEnter() {
-    // 主层「进入只读」提示条入口改事件委托（见 flow click 绑定处），此处
-    // 保留为直接调用入口。失败/异常必须上屏——静默会让用户以为按钮坏了。
+    // 主层「进入只读」提示条入口（事件委托绑在 flow click）。失败必须上屏——
+    // 静默会让用户以为按钮坏了。快照恢复路径 histAll 为空时先拉再进（v2.25）。
     try {
-      _roEnterInner();
+      if (!window.HgReadonly) throw new Error('只读模块未加载（harness-readonly.js 缺失）');
+      if (!_HG.histAll || !_HG.histAll.length) {
+        const sidAt = _HG.sid;
+        if (!sidAt || _HG._roFetching) return;
+        _HG._roFetching = true;
+        _histFetch(sidAt).then(ok => {
+          _HG._roFetching = false;
+          if (_HG.sid !== sidAt) return;
+          if (ok) _roEnter();
+          else {
+            const bar = flow.querySelector('.hg-hist-more');
+            if (bar) bar.innerHTML = '⚠ 历史拉取失败——<b>点击重试</b>';
+          }
+        });
+        return;
+      }
+      window.HgReadonly.enter(_roDeps());
     } catch (e) {
       console.error('[只读模式]', e);
       const bar = flow.querySelector('.hg-hist-more');
       if (bar) bar.innerHTML = '⚠ 只读模式打开失败: ' + esc(String(e)) + '（点击重试）';
     }
   }
-
-  function _roEnterInner() {
-    if (!_HG.histAll || !_HG.histAll.length) {
-      // v2.25：快照恢复路径 histAll 为空（切会话清掉防串会话，快照恢复不拉
-      // transcript）——「📖 剩 N 条更早消息」点了静默没反应（用户实测）。先
-      // 拉数据再进入；拉完重入此函数时 histAll 已在场。
-      const sidAt = _HG.sid;
-      if (!sidAt) return;
-      if (_HG._roFetching) return;
-      _HG._roFetching = true;
-      _histFetch(sidAt).then(ok => {
-        _HG._roFetching = false;
-        if (_HG.sid !== sidAt) return;
-        if (ok) _roEnter();
-        else {
-          const bar = flow.querySelector('.hg-hist-more');
-          if (bar) bar.innerHTML = '⚠ 历史拉取失败——<b>点击重试</b>';
-        }
-      });
-      return;
-    }
-    _roExit();                                   // 防重入
-    const total = _HG.histAll.length;
-    const ov = document.createElement('div');
-    ov.className = 'hg-readonly';
-    // v2.3.10 ZCode 式只读大修：加「仅看结论 ⇄ 完整过程」总开关（默认完整
-    // 时间线；结论模式只显用户消息+最终结论——超长会话先看结论再按需展开）
-    ov.innerHTML =
-      '<div class="hg-ro-bar">' +
-      '<span class="hg-ro-title">📖 只读模式 · ' + total + ' 条历史</span>' +
-      '<button class="hg-ro-pill" data-ro-pill title="切换：仅看最终结论 / 完整过程时间线"></button>' +
-      '<span class="hg-ro-busy" data-ro-busy style="display:none">● 回复后台进行中…（退出后可见）</span>' +
-      '<span class="hg-ro-hint">抽屉点开渲染、收起释放；上滑加载更早</span>' +
-      '<button class="hg-ro-exit" title="退出并清空全部渲染">✕ 退出</button></div>' +
-      '<div class="hg-ro-flow"></div>';
-    const ro = ov.querySelector('.hg-ro-flow');
-    ov.querySelector('.hg-ro-exit').onclick = _roExit;
-    const pill = ov.querySelector('[data-ro-pill]');
-    pill.onclick = () => {
-      _HG.roMode = _HG.roMode === 'brief' ? 'line' : 'brief';
-      _roApplyMode();
-    };
-    wrap.appendChild(ov);
-
-    // v2.3.10 模式应用：brief=仅用户消息+最后一段 AI 结论（先看结果）；
-    // line=完整时间线（现行为）。思考/工具在两模式都保持收起单行
-    // （ZCode 同款：过程默认收起，点开看细节）
-    function _roApplyMode() {
-      const brief = _HG.roMode === 'brief';
-      pill.textContent = brief ? '› 仅看结论' : '˅ 完整过程';
-      pill.classList.toggle('brief', brief);
-      ro._lastTs = 0; ro._thinkN = 0;   // 模式切换重置段计数/时间条状态
-      roRender(brief ? 0 : Math.max(0, ro._start || 0));
-    }
-    _HG.roMode = _HG.roMode || 'line';
-
-    const roRender = (start) => {
-      start = Math.max(0, start);
-      ro._start = start;
-      ro.innerHTML = '';
-      if (_HG.roMode === 'brief') {
-        // 结论模式：全部用户消息 + 最后一段有文本的 AI 回复（ZCode 收起态）
-        let lastAsst = null, lastIdx = -1;
-        _HG.histAll.forEach((l, i) => {
-          if (l.role === 'assistant' && l.text && String(l.text).trim()) { lastAsst = l; lastIdx = i; }
-        });
-        _HG.histAll.forEach((l, i) => {
-          if (l.role === 'user') _roLine(l, i, ro);
-          else if (i === lastIdx && lastAsst) _roLine(lastAsst, i, ro);
-        });
-        if (lastAsst) ro.appendChild(Object.assign(document.createElement('div'),
-          { className: 'hg-ro-tailbar', textContent: '—— 以上为最终结论 · 点左上「仅看结论」按钮切回完整过程 ——' }));
-        ro.scrollTop = 0;
-        return;
-      }
-      if (start > 0) {
-        const bar = document.createElement('div');
-        bar.className = 'hg-hist-more';
-        bar.textContent = '⬆ 剩 ' + start + ' 条——继续上滑加载';
-        ro.appendChild(bar);
-      }
-      _HG.histAll.slice(start).forEach((l, i) => _roLine(l, start + i, ro));
-      ro.scrollTop = start > 0 ? ro.scrollHeight : ro.scrollHeight;
-    };
-    ro._busy = false;
-    ro.addEventListener('scroll', () => {
-      if (ro._busy) return;
-      if (ro.scrollTop <= 60 && ro._start > 0) {
-        ro._busy = true;
-        const anchorH = ro.scrollHeight - ro.scrollTop;
-        roRender(ro._start - 100);
-        ro.scrollTop = ro.scrollHeight - anchorH;
-        requestAnimationFrame(() => { ro._busy = false; });
-      }
-    }, { passive: true });
-    // 只读层的抽屉开合/懒填丢弃（class 与主层一致，_histLazyFill/Drop 直接复用）
-    ro.addEventListener('click', (e) => {
-      const sHead = e.target.closest('.h-think-seg-head');
-      if (sHead) {
-        const seg = sHead.closest('.h-think-seg');
-        if (seg) {
-          const opening = !seg.classList.contains('open');
-          if (opening) _histLazyFill(seg); else _histLazyDrop(seg);
-          seg.classList.toggle('open');
-        }
-        return;
-      }
-      const sFold = e.target.closest('.h-think-seg-fold');
-      if (sFold) {
-        const seg = sFold.closest('.h-think-seg');
-        if (seg) { _histLazyDrop(seg); seg.classList.remove('open'); }
-        return;
-      }
-      const tHead = e.target.closest('.h-tool-head');
-      if (tHead) {
-        const row = tHead.closest('.h-tool');
-        if (row) {
-          const opening = !row.classList.contains('open');
-          if (opening) _histLazyFill(row); else _histLazyDrop(row);
-          row.classList.toggle('open');
-        }
-      }
-    });
-    // 起点：接在主层当前渲染起点之前 100 条（上下文衔接，可继续上滑到 0）；
-    // 上次进只读时切过结论模式的保持该模式（会话内记忆，切会话归线）
-    ro._start = Math.max(0, (_HG.histStart || total) - 100);
-    _roApplyMode();
-    ov._ro = ro;
-    // 后台回复指示：SSE 照常写主 flow（禅层只是覆盖），用户在此看不到进度
-    // ——顶栏亮指示，避免「以为后台停了」（用户实测困惑点）
-    const busyEl = ov.querySelector('[data-ro-busy]');
-    const busyTimer = setInterval(() => {
-      if (!ov.isConnected) { clearInterval(busyTimer); return; }
-      busyEl.style.display = _HG.busy ? '' : 'none';
-    }, 1000);
-  }
-  function _roLine(l, hi, ro) {
-    if (l.role === 'user') {
-      // v2.24.5 只读层同款时间条（ro 自己的间隔状态）
-      const ms = l.ts ? new Date(l.ts).getTime() : 0;
-      if (ms && ms - (ro._lastTs || 0) >= 5 * 60 * 1000) {
-        ro._lastTs = ms;
-        const t = document.createElement('div');
-        t.className = 'h-time';
-        t.textContent = _timeFmt(ms);
-        ro.appendChild(t);
-      }
-      // v2.24.1 回退壳化（组管线正确性优先）：直接渲染，靠分段+懒抽屉省
-      const d = document.createElement('div');
-      d.className = 'h-msg user';
-      const imgs = (l.files || []).filter(p => _HARNESS_IMG_EXT.test(p));
-      const files = (l.files || []).filter(p => !_HARNESS_IMG_EXT.test(p));
-      if (imgs.length || files.length) {
-        const at = document.createElement('div');
-        at.className = 'h-bubble-atts';
-        at.innerHTML = attChipsHtml(imgs, files);
-        d.appendChild(at);
-      }
-      const body = (l.text && l.text.trim()) || ((imgs.length || files.length) ? '*（图片/附件）*' : '');
-      d.appendChild(mdBubble(body));
-      ro.appendChild(d);
-    } else if (l.role === 'assistant') {
-      if (!l.text || !String(l.text).trim()) return;
-      const d = document.createElement('div');
-      d.className = 'h-msg asst';
-      d.appendChild(mdBubble(l.text));
-      ro.appendChild(d);
-    } else if (l.role === 'thinking') {
-      const seg = document.createElement('div');
-      seg.className = 'h-think-seg';
-      seg.dataset.hi = String(hi);
-      seg.dataset.hgLazy = '1';
-      const n = (ro._thinkN = (ro._thinkN || 0) + 1);
-      seg.innerHTML =
-        `<button class="h-think-seg-head"><span class="h-chev">▸</span>` +
-        `<span class="h-think-seg-name">第 ${n} 段思考</span>` +
-        `<span class="h-think-seg-t"></span></button>` +
-        `<div class="h-think-seg-body"></div>` +
-        `<i class="h-think-seg-fold" title="收起本段">收起 ⌄</i>`;
-      ro.appendChild(seg);
-    } else if (l.role === 'tool') {
-      const d = document.createElement('div');
-      const err = !!l.err;
-      d.className = 'h-tool col' + (err ? ' err open' : '');
-      const hbc = _H_TOOL_CFG[l.text] || {};
-      // v2.3.10 ZCode 式：收起行内联命令摘要（等宽、超长截断）——不看展开
-      // 也能扫出"这轮跑了什么"；无摘要的工具保持原样
-      const hint = (l.summary || (l.input && (l.input.command || l.input.file_path || l.input.pattern || '')) || '').trim();
-      const hintHtml = hint && !err ? `<span class="h-tool-hint">${esc(hint.slice(0, 72))}${hint.length > 72 ? '…' : ''}</span>` : '';
-      d.innerHTML =
-        `<button class="h-tool-head"><span class="h-chev">▸</span>` +
-        `<span class="h-tool-name">${_hToolIco(l.text)} ${esc(_hToolLabel(l.text))}</span>` +
-        hintHtml +
-        (hbc.badge ? `<span class="h-tool-badge">${esc(hbc.badge)}</span>` : '') +
-        `<span class="h-tslots">${statusBadge(err ? 'error' : 'completed')}</span></button>` +
-        `<div class="h-tool-coll">${err ? _histToolBodyHtml(l) : ''}</div>`;
-      d.dataset.hi = String(hi);
-      d.dataset.hgLazy = err ? '' : '1';
-      ro.appendChild(d);
-    }
-  }
   function _roExit() {
-    const ov = wrap.querySelector('.hg-readonly');
-    if (!ov) return;
-    ov.remove();                                  // 整层销毁——渲染记录全清（GC）
+    if (window.HgReadonly) window.HgReadonly.exit();
   }
 
   async function switchTo(sid, keepInput) {

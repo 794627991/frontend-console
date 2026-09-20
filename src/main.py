@@ -314,10 +314,28 @@ def _run_mcp_ask_mode():
     harness_ask_mcp.main()
 
 
+def _run_mcp_vision_mode():
+    """识图 MCP stdio 模式（v2.28）。
+    打包后 src/harness_vision_mcp.py 不在磁盘上，harness 会话 --mcp-config 里的
+    4_5v_mcp server 指向 `exe --mcp-vision`，就是这里。fd 重包装同 --mcp-ask。"""
+    if sys.stdin is None:
+        try: sys.stdin = open(0, 'r', encoding='utf-8')
+        except Exception: pass
+    if sys.stdout is None:
+        try: sys.stdout = open(1, 'w', encoding='utf-8')
+        except Exception: pass
+    from src import harness_vision_mcp
+    harness_vision_mcp.main()
+
+
 def main():
     # --mcp-ask 模式：交互式提问 MCP server（harness 的 --mcp-config 指过来）
     if '--mcp-ask' in sys.argv:
         _run_mcp_ask_mode()
+        return
+    # --mcp-vision 模式：识图 MCP server（4_5v_mcp，analyze_image）
+    if '--mcp-vision' in sys.argv:
+        _run_mcp_vision_mode()
         return
     # --mcp 模式：作为 MCP stdio server 运行（集成进 exe，无需单独 python 脚本）。
     # PyInstaller --windowed(console=False) 下 sys.stdin/stdout 可能为 None，

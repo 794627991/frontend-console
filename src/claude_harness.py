@@ -822,20 +822,32 @@ def _ask_mcp_cfg_path(sid, perm="auto"):
         os.makedirs(d, exist_ok=True)
     except Exception:
         return None
-    # 打包（PyInstaller）下 src 不在磁盘上，改用 exe 自己的 --mcp-ask 模式
+    # 打包（PyInstaller）下 src 不在磁盘上，改用 exe 自己的 --mcp-ask /
+    # --mcp-vision 模式
     if getattr(sys, "frozen", False):
-        cmd, args = sys.executable, ["--mcp-ask"]
+        ask_cmd, ask_args = sys.executable, ["--mcp-ask"]
+        vis_cmd, vis_args = sys.executable, ["--mcp-vision"]
     else:
-        script = os.path.join(_SRC_DIR, "harness_ask_mcp.py").replace("\\", "/")
-        cmd, args = (sys.executable or "python"), [script]
-    cfg = {"mcpServers": {"harness": {
-        "command": cmd,
-        "args": args,
-        # v2.25 修正：本函数是模块级函数，没有 self——permission 由调用方
-        # （start()）以参数传入，写 getattr(self, ...) 直接 NameError，
-        # 所有会话启动全挂（「claude 启动失败：name 'self' is not defined」）。
-        "env": {"HARNESS_SID": sid, "HARNESS_PERM": perm},
-    }}}
+        ask_cmd = vis_cmd = (sys.executable or "python")
+        ask_args = [os.path.join(_SRC_DIR, "harness_ask_mcp.py").replace("\\", "/")]
+        vis_args = [os.path.join(_SRC_DIR, "harness_vision_mcp.py").replace("\\", "/")]
+    # v2.28：注入两个 server——harness（ask_user）+ 4_5v_mcp（analyze_image）。
+    # 4_5v_mcp 是本地直通版识图：网关服务端注入的那个 mcp__4_5v_mcp__*
+    # 在 claude CLI 链路上拿不到（用户级/项目级/--mcp-config 均无），名字
+    # 对齐引导词里的全名，识图引导词一字不改。PYTHONIOENCODING 防 GBK 控制台
+    # 下中文工具描述乱码（serial-console-pro 自身 MCP 的既有做法）。
+    cfg = {"mcpServers": {
+        "harness": {
+            "command": ask_cmd,
+            "args": ask_args,
+            "env": {"HARNESS_SID": sid, "HARNESS_PERM": perm},
+        },
+        "4_5v_mcp": {
+            "command": vis_cmd,
+            "args": vis_args,
+            "env": {"PYTHONIOENCODING": "utf-8"},
+        },
+    }}
     p = os.path.join(d, "%s.json" % sid[:16])
     try:
         with open(p, "w", encoding="utf-8") as f:
@@ -954,7 +966,8 @@ class HarnessSession:
             _cfg = _ask_mcp_cfg_path(self.sid, self.permission)
             if _cfg:
                 argv += ["--mcp-config", _cfg,
-                         "--allowedTools", "mcp__harness__ask_user"]
+                         "--allowedTools",
+                         "mcp__harness__ask_user,mcp__4_5v_mcp__analyze_image"]
         # v2.14：识图后台会话用固定基础提示词；普通会话走用户提示词体系 +
         # 识图转交引导（主会话默认不知道有识图同伴，必须显式告知）。
         if self.is_vision:

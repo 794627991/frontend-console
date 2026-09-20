@@ -2957,17 +2957,22 @@ html[data-theme="sage"], html[data-theme="sky"] {
   border-radius: 0 10px 10px 0; }
 
 /* v2.3.10 只读模式 ZCode 式大修：模式总开关 pill + 工具行内联命令 */
-.hg-ro-pill { flex-shrink: 0; font-size: 12px; color: var(--fg);
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
-  border-radius: 99px; padding: 4px 13px; cursor: pointer; font-weight: 600;
-  transition: all .15s; }
-.hg-ro-pill:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
-.hg-ro-pill.brief { color: var(--accent); border-color: var(--accent); }
-.hg-ro-tailbar { text-align: center; font-size: 11px; color: var(--muted);
-  padding: 18px 0 8px; opacity: .8; }
 .h-tool-hint { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; font-family: var(--font-mono, monospace); font-size: 11px;
   color: var(--muted); direction: rtl; text-align: left; }
 /* rtl 截断保尾部（命令尾部信息量大：文件名/参数在尾），hover 放大看全 */
 .h-tool-hint:hover { white-space: normal; direction: ltr; text-align: left; }
+
+/* v2.3.11 只读模式 ZCode 重构（harness-readonly.js）：轮总开关 + 轮体 */
+.hg-ro-switch { display: flex; align-items: center; gap: 8px; width: 100%;
+  background: none; border: none; cursor: pointer; padding: 6px 4px;
+  font-size: 13.5px; color: var(--fg); font-weight: 400; text-align: left; }
+.hg-ro-switch:hover { color: var(--fg-bright, var(--fg)); }
+.hg-ro-switch-t { flex: 1; min-width: 0; }
+.hg-ro-switch-a { font-size: 15px; color: var(--muted); flex-shrink: 0;
+  transition: transform .15s; display: inline-block; }
+.hg-ro-switch.open .hg-ro-switch-a { transform: rotate(90deg); }
+.hg-ro-turn { padding-left: 10px; border-left: 1px solid color-mix(in srgb, var(--accent) 16%, transparent);
+  margin: 2px 0 14px 6px; }
+.hg-ro-turn > .h-think-seg, .hg-ro-turn > .h-tool { margin-left: 10px; }
+.h-think-seg-t { color: var(--muted); font-size: 11.5px; }
