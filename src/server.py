@@ -1696,10 +1696,24 @@ def snip_img():
 
 @app.route("/api/snip/grab", methods=["POST"])
 def snip_grab():
-    """抓屏（v2.3.12 主窗内嵌形态）：DPI 子进程全屏截图落 TEMP，
-    前端随后以 image 模式加载 /api/snip/img 在主窗内进入截图态。"""
+    """抓屏（v2.3.12）：DPI 子进程全屏截图落 TEMP（/api/snip/img 的数据源，
+    独立截图窗页面加载用）。"""
     import src.snip as _snip
     return jsonify({"ok": bool(_snip.grab())})
+
+
+@app.route("/api/snip/start", methods=["POST"])
+def snip_start():
+    """起独立全屏截图窗（v2.3.12 最终形态）：DPI 子进程建无边框置顶全屏窗
+    （=物理屏幕，底图 1:1），标注完成收图落 uploads+剪贴板+SEE snip_done。
+    端口取自请求 Host（截图窗页面回连本服务）。"""
+    import src.snip as _snip
+    try:
+        port = int((request.host or "").rsplit(":", 1)[-1])
+    except Exception:
+        port = 80
+    ok, info = _snip.launch_window(port)
+    return jsonify({"ok": ok, "info": info})
 
 
 @app.route("/api/snip/save", methods=["POST"])

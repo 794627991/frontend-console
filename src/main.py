@@ -341,7 +341,15 @@ def main():
     # ImageGrab 全屏——主进程不动 DPI 设置（动了主窗尺寸回归），详见 src/snip.py
     if '--snip-grab' in sys.argv:
         from src import snip
-        snip.grab_main()
+        snip._dpi_aware()
+        snip._grab_only()
+        return
+    # --snip-window <port> 模式：独立全屏截图窗子进程（最终形态——窗=物理
+    # 屏幕，底图 1:1 不缩进工具窗口；DPI 感知下物理像素直达无虚拟化错位）
+    if '--snip-window' in sys.argv:
+        from src import snip
+        i = sys.argv.index('--snip-window')
+        snip.window_main(int(sys.argv[i + 1]) if i + 1 < len(sys.argv) else 80)
         return
     # --mcp 模式：作为 MCP stdio server 运行（集成进 exe，无需单独 python 脚本）。
     # PyInstaller --windowed(console=False) 下 sys.stdin/stdout 可能为 None，
@@ -478,22 +486,17 @@ def main():
     # → SSE snip_hotkey → 前端进入截图态。热键键位读 config.json 的
     # snip_hotkey（默认 ctrl+alt+a，空串禁用），注册失败静默（被占用不抢）。
     def _on_snip_hotkey():
+        # 最终形态：直接起独立全屏截图窗（DPI 子进程，=物理屏幕 1:1），
+        # 主窗不动——工具窗口只是触发器，不参与截图显示
         from src import snip as _snip
-        from src.app_state import _broadcast_to_ai
-        if not _snip.grab():
+        from src.app_state import HOME_DIR
+        try:
+            with open(os.path.join(HOME_DIR, "endpoint.json"), encoding="utf-8") as f:
+                port = int((json.load(f) or {}).get("port") or 0)
+        except Exception:
             return
-        w = getattr(main, "_win", None)
-        if w is not None:
-            def _do():
-                try:
-                    w.show()
-                    w.restore()
-                    w.maximize()   # 先最大化（前端进截图态时自己切全屏）
-                    w.focus()
-                except Exception:
-                    pass
-            threading.Thread(target=_do, daemon=True).start()
-        _broadcast_to_ai({"kind": "ui_action", "action": "snip_hotkey"})
+        if port:
+            _snip.launch_window(port)
 
     try:
         from src.app_state import CONFIG_FILE

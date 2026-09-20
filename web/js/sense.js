@@ -13,10 +13,10 @@ function connectAiSSE() {
         if (item.kind === 'ui_action' && item.action === 'open_file' && typeof openFileSmart === 'function') {
           openFileSmart(item.path, 'auto');
         }
-        // 截图全局热键（v2.3.12）：后端已抓屏+主窗弹前，前端进截图态（全屏路径）
-        if (item.kind === 'ui_action' && item.action === 'snip_hotkey'
-            && typeof window.harnessSnipStart === 'function') {
-          window.harnessSnipStart(true);
+        // 截图完成（v2.3.12 独立窗形态）：主进程收图后广播，前端挂附件
+        if (item.kind === 'ui_action' && item.action === 'snip_done'
+            && typeof window.harnessAddFilesByPath === 'function') {
+          window.harnessAddFilesByPath([item.path]);
         }
         return; // 跳过 screen/screenctl/ui_action 帧（不进感知流）
       }

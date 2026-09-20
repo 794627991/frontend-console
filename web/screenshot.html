@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fc-snip</title>
+<style>
+  /* 截图窗专用页（独立全屏窗=物理屏幕尺寸）：height:100% 必须——插件按
+  body 实测高度建 canvas，无内容时高 0 → 整个界面不可见（历史实锤）。 */
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%;
+               overflow: hidden; background: #000; }
+</style>
+<script src="/vendor/screenShotPlugin.umd.js"></script>
+</head>
+<body>
+<script>
+// ============================================================
+// 独立全屏截图窗（v2.3.12 最终形态）：窗=DPI 子进程按虚拟桌面几何定位=
+// 屏幕尺寸 → 插件 canvas=视口=底图 1:1 原生分辨率（无缩放无适配计算）。
+// showScreenData 必开（底图绘制开关，默认关=黑屏）；writeBase64=false
+// （剪贴板统一主进程 CF_DIB）。Enter 确认/Esc 取消 → js_api → 子进程
+// 写产物退出 → 主进程收图挂附件。
+// ============================================================
+(function () {
+  'use strict';
+  function boot() {
+    new screenShotPlugin({
+      capture: { source: 'image', imageSrc: '/api/snip/img?v=' + Date.now() },
+      writeBase64: false,
+      showScreenData: true,
+      clickCutFullScreen: true,
+      maxUndoNum: 30,
+      completeCallback: function (info) {
+        try { window.pywebview && pywebview.api.snip_done(info.base64); }
+        catch (e) { window.close(); }
+      },
+      closeCallback: function () {
+        try { window.pywebview && pywebview.api.snip_cancel(); }
+        catch (e) { window.close(); }
+      },
+      cancelCallback: function () {
+        try { window.pywebview && pywebview.api.snip_cancel(); }
+        catch (e) { window.close(); }
+      }
+    });
+  }
+  if (document.readyState === 'complete') boot();
+  else window.addEventListener('load', boot);
+})();
+</script>
+</body>
+</html>
