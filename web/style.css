@@ -2936,3 +2936,22 @@ html[data-theme="sage"], html[data-theme="sky"] {
   background: var(--bg-panel, #14171f);
   pointer-events: none;
 }
+
+/* v2.3.9 会话列表项目分组：组头 + 缩进子项 */
+.hg-grp { display: flex; align-items: center; gap: 7px; padding: 7px 10px 5px;
+  border-radius: 8px; cursor: pointer; user-select: none; margin-top: 6px; }
+.hg-grp:first-child { margin-top: 0; }
+.hg-grp:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.hg-grp-chev { font-size: 10px; color: var(--muted); width: 12px; flex-shrink: 0;
+  transition: transform .15s; }
+.hg-grp.closed .hg-grp-chev { transform: rotate(0deg); }
+.hg-grp:not(.closed) .hg-grp-chev { transform: rotate(90deg); }
+.hg-grp-name { flex: 1; min-width: 0; font-size: 12px; font-weight: 700;
+  color: var(--muted); letter-spacing: .3px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hg-grp.active-grp .hg-grp-name { color: var(--accent); }
+.hg-grp-count { font-size: 10px; color: var(--fg); background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-radius: 8px; padding: 1px 7px; flex-shrink: 0; }
+.hg-grp-time { font-size: 10px; color: var(--muted); flex-shrink: 0; opacity: .8; }
+.hg-item.grp-child { margin-left: 14px; border-left: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+  border-radius: 0 10px 10px 0; }

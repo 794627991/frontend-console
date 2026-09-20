@@ -1162,12 +1162,16 @@ function buildClaudeHarnessTab(opts = {}) {
       i.innerHTML = '📤 已转交 · 📥 已回传 · 用时 ' + fmtDur((Date.now() - w.t0) / 1000);
   }
   function renderPeer(name, text, to) {    // 📥 回传气泡（区别于 user/AI）
-    // v2.3.2：代播回传带 to（收件人 peer 名）——只在本会话确有发给该收件人的
-    // 未定格转交线时渲染（识图会话侧代播是按全部会话发的，防串台污染）
+    // v2.3.2：代播回传带 to（收件人 peer 名）——防串台污染。
+    // v2.3.10 修致命错位（用户实锤"回传到了界面没有"）：to 是回信方写的
+    // 收件人名（本会话 CLI 名如 pro-62），而转交线上写的是发信时的收件人
+    // （识图会话）——两个名字方向相反，旧门控拿 to 匹配转交线必失败，
+    // 代播回传被静默丢弃。改为：有任一未定格转交线即收（会话只在自己
+    // 等结论时才会收到代播，且去重已兜双份；名不匹配的极端串台由
+    // name 头标自说明，不再静默吞）
     if (to) {
       const waiting = [...flow.querySelectorAll('.h-switch')]
-        .some(el => el.textContent.includes('已转交 ' + to) &&
-                    el.textContent.includes('等待结论回传'));
+        .some(el => el.textContent.includes('等待结论回传'));
       if (!waiting) return;
     }
     // 去重：主会话自身 jsonl 检测与代播可能双份（空闲期回传两条链都通）
@@ -2746,28 +2750,72 @@ function buildClaudeHarnessTab(opts = {}) {
     const kw = (searchEl.value || '').trim().toLowerCase();
     const items = _HG.sessions.filter(s => !kw || (s.title || '').toLowerCase().includes(kw)
       || (s.cwd || '').toLowerCase().includes(kw));
-    // v2.7：项目信息优先——第一行=项目目录名（cwd basename），第二行=claude 会话名 · 模型
-    listEl.innerHTML = items.map(s => {
+    // v2.3.9 项目分组视图（用户需求：一个项目多个会话归一组查找）：
+    // 按 cwd basename 分组、组按组内最近活跃排序、组内会话按活跃排序。
+    // 单会话项目不折叠直接展示（组头即原来的首行），多会话项目组头带
+    // 计数 + 可折叠（记住开合，localStorage 持久化）。
+    const groups = new Map();   // proj -> {items: [], latest: 0, cwd: ''}
+    for (const s of items) {
       const proj = (s.cwd || '').split(/[\\/]/).pop() || '~';
-      return `
-      <div class="hg-item${s.sid === _HG.sid ? ' active' : ''}" data-sid="${esc(s.sid)}" title="${esc(s.cwd || '')} · ${esc(s.title || '')}">
-        <div class="hg-item-row">
-          <span class="hg-item-proj">${esc(proj)}</span>
-          <span class="hg-item-time">${_harnessRelTime(s.last_active)}</span>
-        </div>
-        <div class="hg-item-row">
-          <span class="hg-item-title">${esc(s.title || '新会话')}</span>
-          <span class="hg-item-acts">
-            ${s.busy ? '<span class="hg-item-busy" title="回复中">●</span>' : ''}
-            <button class="hg-item-act" data-act="rename" data-sid="${esc(s.sid)}" title="重命名">✎</button>
-            <button class="hg-item-act del" data-act="del" data-sid="${esc(s.sid)}" title="删除会话">✕</button>
-          </span>
-        </div>
-        <div class="hg-item-row">
-          <span class="hg-item-sub">${s.model ? esc(s.model) + (_hgMm(s.model) ? ' ' + _HG_EYE : '') : ''}</span>
-        </div>
-      </div>`;}).join('') || '<div class="hg-list-empty">暂无会话</div>';
+      let g = groups.get(proj);
+      if (!g) { g = { items: [], latest: 0, cwd: s.cwd || '' }; groups.set(proj, g); }
+      g.items.push(s);
+      if ((s.last_active || 0) > g.latest) g.latest = s.last_active;
+    }
+    const ordered = [...groups.entries()].sort((a, b) => (b[1].latest || 0) - (a[1].latest || 0));
+    // 折叠态（多会话组）：localStorage hg-grp:<proj>:closed
+    const html = ordered.map(([proj, g]) => {
+      g.items.sort((a, b) => (b.last_active || 0) - (a.last_active || 0));
+      const multi = g.items.length > 1;
+      const closed = multi && (() => { try { return localStorage.getItem('hg-grp:' + proj + ':closed') === '1'; } catch(_) { return false; } })();
+      const anyBusy = g.items.some(s => s.busy);
+      const hasActive = g.items.some(s => s.sid === _HG.sid);
+      let h = '';
+      // 组头（多会话组才有折叠交互；单会话组组头就是列表项本身的一部分）
+      h += `<div class="hg-grp${closed ? ' closed' : ''}${hasActive ? ' active-grp' : ''}"
+             data-grp="${esc(proj)}" ${multi ? '' : 'data-grp-static="1"'}
+             title="${esc(g.cwd)}">
+              <span class="hg-grp-chev">${multi ? '▸' : '·'}</span>
+              <span class="hg-grp-name">${esc(proj)}</span>
+              <span class="hg-grp-count">${multi ? g.items.length : ''}</span>
+              ${anyBusy ? '<span class="hg-item-busy" title="回复中">●</span>' : ''}
+              <span class="hg-grp-time">${_harnessRelTime(g.latest)}</span>
+            </div>`;
+      if (!closed) {
+        h += g.items.map(s => `
+          <div class="hg-item${s.sid === _HG.sid ? ' active' : ''}${multi ? ' grp-child' : ''}" data-sid="${esc(s.sid)}" title="${esc(s.cwd || '')} · ${esc(s.title || '')}">
+            ${multi ? '' : `
+            <div class="hg-item-row">
+              <span class="hg-item-time">${_harnessRelTime(s.last_active)}</span>
+            </div>`}
+            <div class="hg-item-row">
+              <span class="hg-item-title">${esc(s.title || '新会话')}</span>
+              <span class="hg-item-acts">
+                ${s.busy ? '<span class="hg-item-busy" title="回复中">●</span>' : ''}
+                <button class="hg-item-act" data-act="rename" data-sid="${esc(s.sid)}" title="重命名">✎</button>
+                <button class="hg-item-act del" data-act="del" data-sid="${esc(s.sid)}" title="删除会话">✕</button>
+              </span>
+            </div>
+            <div class="hg-item-row">
+              <span class="hg-item-sub">${s.model ? esc(s.model) + (_hgMm(s.model) ? ' ' + _HG_EYE : '') : ''}</span>
+            </div>
+          </div>`).join('');
+      }
+      return h;
+    }).join('');
+    listEl.innerHTML = html || '<div class="hg-list-empty">暂无会话</div>';
   }
+  // v2.3.9 组头点击：折叠/展开（localStorage 记忆），不影响选会话
+  listEl.addEventListener('click', (e) => {
+    const grp = e.target.closest('.hg-grp');
+    if (grp && !grp.dataset.grpStatic) {
+      e.stopPropagation();
+      const key = 'hg-grp:' + grp.dataset.grp + ':closed';
+      const closed = grp.classList.toggle('closed');
+      try { closed ? localStorage.setItem(key, '1') : localStorage.removeItem(key); } catch(_) {}
+      renderList();
+    }
+  });
   // v2.2.1：相对时间随钟表 tick 且对话中实时刷新（用户实锤：对话进行中
   // 列表仍定格旧时间——refreshSessions 只在回复结束才拉，60s 只重渲旧数据
   // 没用）。这里 60s 真拉一次列表（一个轻 GET）：对话中的会话时间滚动到
