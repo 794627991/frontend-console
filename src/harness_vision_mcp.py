@@ -40,10 +40,11 @@ DIRECT_FALLBACK = "https://open.bigmodel.cn/api/anthropic"
 CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".serialconsole_pro",
                            "config.json")
 _VISION_CFG_KEY = "harness_vision"
-# v2.3.12 修兜底识图全链瘫痪：默认 glm-5.3-flash 在 bigmodel 端点不存在
-# （实锤 1211 模型不存在，用户「MCP 识图没生效」的根因）。实测 glm-4.5v
-# 可用（视觉模型）；glm-4v-flash 亦可作免费替代（model_map/env 可覆盖）。
-DEFAULT_MODEL = "glm-4.5v"
+# v2.28.8 恢复默认 glm-5.3-flash（用户定调）：此前会话 AI 误把 [1M] 变体的
+# 1211 当成 flash 不存在（实为窗口后缀不被网关认，v2.28.6 裸名优先已修）。
+# flash 在 bigmodel 一直存在且可用；偶发空回复由 v2.28.7 同模型重试兜住。
+# 若嫌 flash 不稳，实测 glm-4.5v 更稳（识图配置/端点映射可覆盖，不必改这里）。
+DEFAULT_MODEL = "glm-5.3-flash"
 
 # 诊断日志（v2.28.4）：无头进程静默失败难排查（用户实锤两次 HTTP 400 无从
 # 定位入参）——每次调用记 imageSource/端点/模型/结果/耗时，超 512K 截半
@@ -269,38 +270,71 @@ def _model_variants(m):
     return [m]
 
 
+def _model_name_err(info):
+    """错误是否为「模型名不存在/非法」类。对变体重试：这类换名字可能救；
+    对最终报错：是噪音——v2.28.7 实测教训：[1M] 变体的 1211 把真因
+    （flash 偶发空回复）遮住了。"""
+    s = info or ""
+    lo = s.lower()
+    return ("模型不存在" in s) or ("1211" in s) or (
+        "model" in lo and ("not exist" in lo or "unknown" in lo
+                           or "unrecognized" in lo))
+
+
 def _call_vision(b64, media_type, prompt):
-    """调 Anthropic 兼容 /v1/messages 做识图。主端点连不上自动走直连兜底；
-    模型按「本次实际尝试的端点」解析（model_map 命中 lanz 配 Lanz 模型、
-    回落 bigmodel 直连时换回 glm 系）——多方案下模型永远与端点匹配。
-    模型名裸名优先发送（[1M] 后缀 API 不认），后缀形式为降级变体。"""
+    """调 Anthropic 兼容 /v1/messages 做识图。v2.28.7 韧性策略（按实测
+    失败模式设计）：
+    - 模型裸名优先（[1M] 后缀 API 不认）；后缀变体仅在「模型名错误」时
+      才值得试，其余失败换变体纯属浪费还制造报错噪音；
+    - 200 空正文是网关对部分模型的偶发行为（实测 flash 时空时有不空，
+    同图同参直连复测即正常）——同模型补发一次再降级，不当场判死；
+    - 主端点连不上换直连兜底；模型按实际端点解析（model_map 多方案）；
+    - 最终报错优先非模型名错误，不让变体噪音遮真因。"""
     cfg = load_vision_cfg()
     sys_prompt = resolve_prompt(cfg)
-    last_err = "无可用端点"
+    last_err = None
+    real_err = None        # 第一个非模型名错误（最终报错的优先来源）
     for base, key in _endpoints():
+        next_variant = True
         for model in _model_variants(resolve_model(base, cfg)):
-            t0 = time.time()
-            kind, info = _post_vision(base, key, model, sys_prompt,
-                                      b64, media_type, prompt)
-            _log("api %s model=%s -> %s (%.1fs) %s"
-                 % (base, model, kind, time.time() - t0,
-                    info[:120] if kind != "ok" else ""))
-            if kind == "ok":
-                return _result(info)
-            last_err = info
-            if kind == "conn":
-                break          # 端点不可达——换端点（模型变体没意义）
-            # hard（4xx/5xx/无文本）：带 [后缀] 的模型还有裸名变体可试，
-            # 变体循环自然降级；变体耗尽换端点
-    return _result("识图请求失败：%s" % last_err, is_error=True)
+            if not next_variant:
+                break
+            for attempt in (0, 1):        # 第 2 发只留给「空正文」重试
+                t0 = time.time()
+                kind, info = _post_vision(base, key, model, sys_prompt,
+                                          b64, media_type, prompt)
+                _log("api %s model=%s -> %s (%.1fs) %s"
+                     % (base, model, kind, time.time() - t0,
+                        info[:120] if kind != "ok" else ""))
+                if kind == "ok":
+                    return _result(info)
+                last_err = info
+                if real_err is None and not _model_name_err(info):
+                    real_err = info
+                if kind == "conn":
+                    next_variant = False   # 端点不可达，换模型名没意义
+                    break
+                if kind == "empty" and attempt == 0:
+                    time.sleep(1.0)
+                    continue               # 网关偶发空文——同模型补一发
+                # hard / 空文二连：只有模型名问题才值得试下一个变体
+                next_variant = _model_name_err(info)
+                break
+    final = last_err
+    if _model_name_err(final or "") and real_err:
+        final = real_err                   # 1211 噪音不遮真因
+    return _result("识图请求失败：%s" % (final or "无可用端点"), is_error=True)
 
 
 def _post_vision(base, key, model, sys_prompt, b64, media_type, prompt):
-    """单次识图请求。返回 ("ok", text) / ("hard", err)（服务端拒绝或无文本）
-    / ("conn", err)（连接层失败，可换端点）。"""
+    """单次识图请求。返回 ("ok", text) / ("empty", err)（200 但无文本——
+    网关偶发，值得同模型重试）/ ("hard", err)（服务端明确拒绝）/
+    ("conn", err)（连接层失败，可换端点）。"""
     body = json.dumps({
         "model": model,
-        "max_tokens": 2048,
+        # v2.28.9：2048 会被网关的 thinking 全额吃掉（实测 stop=max_tokens、
+        # 块=[thinking]、正文为零——经代理的 flash 尤其饿）→ 8192 给正文留足
+        "max_tokens": 8192,
         "system": sys_prompt,
         "messages": [{"role": "user", "content": [
             {"type": "image",
@@ -324,8 +358,11 @@ def _post_vision(base, key, model, sys_prompt, b64, media_type, prompt):
                  if isinstance(b, dict) and b.get("type") == "text"]
         if texts:
             return "ok", "\n".join(t for t in texts if t)
-        return "hard", ("端点 %s（%s）成功但无文本，响应：%s"
-                        % (base, model, json.dumps(d, ensure_ascii=False)[:200]))
+        blocks = ",".join(str(b.get("type")) for b in (d.get("content") or [])
+                          if isinstance(b, dict)) or "无 content"
+        return "empty", ("端点 %s（%s）返回 200 但正文无文本（stop=%s，块=[%s]）"
+                         "——网关偶发空回复" % (base, model,
+                                                 d.get("stop_reason"), blocks))
     except urllib.error.HTTPError as e:
         detail = ""
         try:

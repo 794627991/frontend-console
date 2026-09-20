@@ -1086,6 +1086,23 @@ function buildClaudeHarnessTab(opts = {}) {
     }
     return d;
   }
+  // v2.28.13：user_echo 兜底去重——快照恢复场景 echoFast 可能已丢（切走时
+  // 清空且旧快照没有该字段），快照里已有乐观气泡，重放的 echo 再画就双份
+  // （用户实锤：A 发消息→切 B→切回 A，出现两条同文同图消息）。与最后一条
+  // 用户气泡同文同附件 → 判定已画过。rtext/ratts 是 dataset 属性，随
+  // innerHTML 快照序列化，跨恢复仍可比。
+  function _hgEchoDup(it) {
+    const us = flow.querySelectorAll('.h-msg.user');
+    const last = us[us.length - 1];
+    if (!last) return false;
+    if ((last.dataset.rtext || '').trim() !== (it.text || '').trim()) return false;
+    try {
+      const ra = JSON.parse(last.dataset.ratts || '{}');
+      if ((ra.images || []).join('\u0001') !== (it.images || []).join('\u0001')) return false;
+      if ((ra.files || []).join('\u0001') !== (it.files || []).join('\u0001')) return false;
+    } catch (_) { return false; }
+    return true;
+  }
   function renderAsst(text, isSub) {
     // v2.16：空白/纯换行的 text 块不渲染。模型每轮都会吐一个 "\n\n" 占位块，
     // 旧判据 `if (!text)` 挡不住 → 每条渲染成一个空白气泡（历史重建后满屏空白
@@ -1105,48 +1122,29 @@ function buildClaudeHarnessTab(opts = {}) {
     const d = document.createElement('div');
     d.className = 'h-msg asst' + (isSub ? ' sub' : '');
     d.appendChild(mdBubble(text));
-    if (!isSub) _hgMsgActs(d, text);   // v2.28.12：最后一条 AI 消息挂操作条
+    if (!isSub) {                          // v2.28.16：回滚按钮（回合边界授予）
+      const bar = document.createElement('div');
+      bar.className = 'hg-msg-acts';
+      bar.innerHTML =
+        '<button class="hg-mact" data-hg-rewind title="回滚到本条所在回合结束：之后的全部丢弃（自动全量备份）">⏪ 回滚到这里</button>';
+      d.appendChild(bar);
+      // 锚点 = 正文前缀（随 dataset 序列化，实时/回放两路同源；后端按它
+      // 定位「这条消息所在回合的 result」做截断）
+      try { d.dataset.rwa = String(text).trim().slice(0, 60); } catch(_) {}
+      _HG.lastAsstEl = d;                  // result 到达时授予 can-rewind
+    }
     g.root.appendChild(d);
     scrollBottom();
   }
-  // v2.28.12：最后一条 AI 消息的操作条（📋 复制 / ⏪ 回滚此处）——参照
-  // ZCode 消息操作栏：消息底部左对齐、ghost 小按钮、悬浮提亮。新的 AI
-  // 正文出现时从旧气泡摘下挂到新气泡（永远只在最后一条上）；历史重建
-  // 路径同经 renderAsst 顺序渲染，自然落在最后一条。回滚 = 后端截断转写
-  // 到本回合后（丢最后 1 个完整回合，自动全量备份），杀进程 resume。
-  function _hgMsgActs(el, text) {
-    if (_HG.lastActs) { try { _HG.lastActs.remove(); } catch(_) {} }
-    const bar = document.createElement('div');
-    bar.className = 'hg-msg-acts';
-    const cp = document.createElement('button');
-    cp.className = 'hg-mact'; cp.title = '复制这条消息的原文';
-    cp.textContent = '📋 复制';
-    cp.onclick = async () => {
-      const ok = await copyText(text);
-      showBanner(ok ? '已复制' : '复制失败（剪贴板权限被拒）', 1600, !ok);
-    };
-    const rw = document.createElement('button');
-    rw.className = 'hg-mact';
-    rw.title = '回滚到这条消息为止：丢弃之后的回合（含本条所在回合之后的全部内容），全量自动备份';
-    rw.textContent = '⏪ 回滚此处';
-    rw.onclick = async () => {
-      if (_HG.busy) { showBanner('AI 正在回复，结束后再回滚', 2400, true); return; }
-      if (!_HG.sid) { showBanner('当前没有活动会话', 2000, true); return; }
-      rw.disabled = true;
-      try {
-        const r = await fetch('/api/harness/rewind', {method:'POST',
-          headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({sid: _HG.sid, turns: 1})});
-        const j = await r.json();
-        if (!j.ok) { showBanner('回滚失败：' + (j.err || '未知'), 3600, true); return; }
-        showBanner('⏪ ' + j.msg + '——已回到此消息', 3600);
-        await _hgReloadFlow();
-      } catch(e) { showBanner('回滚失败：' + e, 3000, true); }
-      rw.disabled = false;
-    };
-    bar.appendChild(cp); bar.appendChild(rw);
-    el.appendChild(bar);
-    _HG.lastActs = bar;
+  // v2.28.16：「回滚」按钮授予（用户定调三连，终版语义）：按钮挂在
+  // 【每个定下来的 AI 回合的最后一条消息】上——回合完成（result）授予，
+  // 之后不摘（每个回合边界都是合法回滚点；生成中的回合没有按钮）。
+  // can-rewind 类随 innerHTML 快照序列化；点击走 flow 级事件委托——
+  // 快照克隆丢 onclick 的既有解法（同 h-macts）。
+  function _hgGrantRewind() {
+    const last = _HG.lastAsstEl
+      || [...flow.querySelectorAll('.h-msg.asst')].filter(el => !el.classList.contains('sub')).pop();
+    if (last && last.isConnected && last.dataset.rwa) last.classList.add('can-rewind');
   }
   // v2.28.12：回滚后重拉转写重建消息流（丢弃的回合从界面消失）
   async function _hgReloadFlow() {
@@ -2166,6 +2164,7 @@ function buildClaudeHarnessTab(opts = {}) {
       grpFinalize(true);                   // v2.18：本轮组定稿——用户没手动
                                           // 操作过且在底部跟读时自动收起（想看再点开，
                                           // 各抽屉独立开合）
+      _hgGrantRewind();                    // v2.28.15：回合定稿——回滚按钮授予最后一条 AI 消息
       // v2.3 问题4：不显示金额，显示上下文用量环（⭕ 百分比，256K 实窗口径）
       renderCtxRing(o);
       setBusy(false);
@@ -2196,10 +2195,10 @@ function buildClaudeHarnessTab(opts = {}) {
       // 渲染内部 scrollBottom 含 rAF 二次兜底，否则指示条挤出消息导致刚发的消息不在底
       if (it.kind === 'user_echo') {
         setBusy(true);
-        // v2.20：send() 已乐观渲染 → 同文本 echo 到达即跳过（echoFast 只
-        // 顶一条，连发两条相同文本时第二条照常走事件渲染，不会吞）
+        // v2.20：乐观渲染 → echo 到达即跳过（echoFast 只顶一条，连发两条
+        // 相同文本时第二条照常走事件渲染，不会吞）
         if (_HG.echoFast && _HG.echoFast.text === (it.text || '')) _HG.echoFast = null;
-        else renderUser(it.text, it.images, it.files);
+        else if (!_hgEchoDup(it)) renderUser(it.text, it.images, it.files);
       }
       else if (it.kind === 'event') handleEvent(it.data);
       else if (it.kind === 'peer') { grpFinalize(true); renderPeer(it.name, it.text, it.to); }
@@ -2228,7 +2227,12 @@ function buildClaudeHarnessTab(opts = {}) {
   }
   function saveCache() {
     if (!_HG.sid) return;
-    _HG.cache[_HG.sid] = { html: flow.innerHTML, seq: _HG.seq };
+    // v2.28.13：echoFast 随快照保存——切走时 2420 行会清空它，但快照 html
+    // 里已经带着乐观渲染的用户气泡；若 user_echo 尚未到达（快速切走），
+    // 切回来重放的 echo 对不上已清空的去重窗口 → 双画（用户实锤 A→B→A
+    // 出两条同文消息）。随快照存取，恢复后重放 echo 仍能命中跳过。
+    _HG.cache[_HG.sid] = { html: flow.innerHTML, seq: _HG.seq,
+                           echoFast: _HG.echoFast || null };
     // v2.25：快照 LRU 上限 10——大会话 innerHTML 每份可达数十 MB，无上限
     // 来回切会话会攒爆内存（审计 §三.8）
     const keys = Object.keys(_HG.cache);
@@ -2264,7 +2268,21 @@ function buildClaudeHarnessTab(opts = {}) {
     if (!lines.length) return;
     _HG.noScroll = true;                        // v2.16：逐行 append 不反复重排
     _HG.openState = _hgLoadOpen(_HG.sid);       // 上次开合状态（重建期贴回）
-    try { lines.slice(start).forEach((l, i) => renderHistLine(l, start + i)); }
+    try {
+      // v2.28.16：边渲染边标回合边界——assistant 行之后的下一条 user 行
+      // 意味着该回合已收尾，最后一条 AI 消息授予回滚按钮；流末尾的回合
+      // （后面没有 user 行）在循环外补授（它就是最新定下的回合）
+      let lastAsst = null;
+      lines.slice(start).forEach((l, i) => {
+        renderHistLine(l, start + i);
+        if (l.role === 'assistant') lastAsst = _HG.lastAsstEl;
+        else if (l.role === 'user' && lastAsst && lastAsst.dataset.rwa) {
+          lastAsst.classList.add('can-rewind');
+          lastAsst = null;
+        }
+      });
+      if (lastAsst && lastAsst.dataset.rwa) lastAsst.classList.add('can-rewind');
+    }
     finally { _HG.noScroll = false; _HG.openState = null; }
   }
 
@@ -2296,6 +2314,30 @@ function buildClaudeHarnessTab(opts = {}) {
   flow.addEventListener('click', (e) => {
     const bar = e.target.closest('.hg-hist-more');
     if (bar && flow.contains(bar)) { e.stopPropagation(); _roEnter(); }
+  });
+  // v2.28.16：回滚按钮事件委托——按消息文本锚点回滚（每个定下的回合边界
+  // 都可回滚到那里）。按钮 innerHTML 随气泡生成/随快照克隆，直绑 onclick
+  // 会丢（同 h-macts 既有解法），flow 级委托一次永在
+  flow.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-hg-rewind]');
+    if (!btn || !flow.contains(btn)) return;
+    e.stopPropagation();
+    if (_HG.busy) { showBanner('AI 正在回复，结束后再回滚', 2400, true); return; }
+    if (!_HG.sid) { showBanner('当前没有活动会话', 2000, true); return; }
+    const host = btn.closest('.h-msg.asst');
+    const anchor = host && host.dataset.rwa;
+    if (!anchor) { showBanner('这条消息没有回滚锚点', 2400, true); return; }
+    btn.disabled = true;
+    try {
+      const r = await fetch('/api/harness/rewind', {method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({sid: _HG.sid, anchor})});
+      const j = await r.json();
+      if (!j.ok) { showBanner('回滚失败：' + (j.err || '未知'), 3600, true); return; }
+      showBanner('⏪ ' + j.msg, 3600);
+      await _hgReloadFlow();
+    } catch(err) { showBanner('回滚失败：' + err, 3000, true); }
+    btn.disabled = false;
   });
   flow.addEventListener('scroll', () => {
     if (!_HG.histAll || _HG.busy || _histBusy) return;
@@ -2431,6 +2473,7 @@ function buildClaudeHarnessTab(opts = {}) {
     const c = _HG.cache[sid];
     if (c) {
       flow.innerHTML = c.html; _HG.seq = c.seq;
+      _HG.echoFast = c.echoFast || null;   // v2.28.13：去重窗口随快照恢复（防重放双画）
       scrollBottom(true);              // v2.25：快照恢复也回底——与 _histRender 路径
                                        // 一致（用户实测「新建会话再切回，焦点不在最下面」）
       // v2.3.13：快照里冻结的压缩分割线——本会话没有仍在进行的压缩就定格成
@@ -2795,12 +2838,11 @@ function buildClaudeHarnessTab(opts = {}) {
               <span class="hg-grp-time">${_harnessRelTime(g.latest)}</span>
             </div>`;
       if (!closed) {
+        // v2.3.13 子项统一 grp-child 分层（缩进+左侧竖线）——单会话组也要
+        // 同款层次（用户实锤「单会话没有像多会话有分层效果」）；时间只在
+        // 组头显示（单会话组头时间即该会话活跃时间，不重复出独立时间行）
         h += g.items.map(s => `
-          <div class="hg-item${s.sid === _HG.sid ? ' active' : ''}${multi ? ' grp-child' : ''}" data-sid="${esc(s.sid)}" title="${esc(s.cwd || '')} · ${esc(s.title || '')}">
-            ${multi ? '' : `
-            <div class="hg-item-row">
-              <span class="hg-item-time">${_harnessRelTime(s.last_active)}</span>
-            </div>`}
+          <div class="hg-item${s.sid === _HG.sid ? ' active' : ''} grp-child" data-sid="${esc(s.sid)}" title="${esc(s.cwd || '')} · ${esc(s.title || '')}">
             <div class="hg-item-row">
               <span class="hg-item-title">${esc(s.title || '新会话')}</span>
               <span class="hg-item-acts">

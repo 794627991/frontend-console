@@ -2980,3 +2980,17 @@ html[data-theme="sage"], html[data-theme="sky"] {
 .hg-ro-turn > .h-think-seg, .hg-ro-turn > .h-tool,
 .hg-ro-turn > .h-msg, .hg-ro-turn > .h-peer { margin-left: 10px; width: min(680px, 100%); }
 .h-think-seg-t { color: var(--muted); font-size: 11.5px; }
+
+/* v2.28.15 回滚按钮——只挂在「最后一个定下来的回合」的 AI 消息上
+   （can-rewind 类由 result 结算/历史重建授予，随 innerHTML 快照存活）；
+   未授予的消息连按钮都不显示，视觉干净 */
+.h-msg.asst .hg-msg-acts { display: none; margin-top: 6px; }
+.h-msg.asst.can-rewind .hg-msg-acts { display: block; opacity: 0.4; transition: opacity 0.15s; }
+.h-msg.asst.can-rewind:hover .hg-msg-acts { opacity: 1; }
+.hg-mact {
+  border: 1px solid var(--bd, #4a4a4a); background: transparent;
+  color: var(--muted, #9a9a9a); font-size: 11px; line-height: 1.4;
+  padding: 2px 9px; border-radius: 10px; cursor: pointer;
+}
+.hg-mact:hover { color: var(--fg, #e6e6e6); border-color: var(--fg, #888); }
+.hg-mact:disabled { opacity: 0.5; cursor: default; }

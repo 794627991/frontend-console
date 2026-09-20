@@ -368,9 +368,11 @@ def _model_vision_mode(name):
     return "mcp"
 
 
-# v2.28：识图 MCP 工具全名（harness_vision_mcp.py 注册，与网关内置同名）——
-# 实时事件流与历史回放解析都按它识别识图调用
-_VISION_TOOL = "mcp__4_5v_mcp__analyze_image"
+# v2.28.5：识图工具名双通道——网关内置名（主通道，服务端执行）+ 本地名
+# （兜底通道，harness_vision_mcp.py 注册，server 名 vision）。同名会被网关
+# 遮蔽（实测 log 零记录、零 tool_use），本地版必须独立名字才可作为真兜底。
+# 实时事件流与历史回放解析按两个名字识别识图调用。
+_VISION_TOOLS = ("mcp__4_5v_mcp__analyze_image", "mcp__vision__analyze_image")
 
 
 def _iso_dur_sec(t0, t1):
@@ -429,30 +431,36 @@ def vision_bridge_text(model=None):
             "本会话模型自身看不了图片，但可以调识图 MCP 完成看图，不要转交"
             "其他会话：\n"
             "1. 用户消息里的图片附件自带 CDN 图片链接"
-            "（https://maas-log-prod...png?...），直接取用；没有链接时先用 "
-            "Read 工具读图片路径，从返回里把链接取出来。"
-            "链接现取现用：只用本轮刚拿到的链接——历史消息里的旧链接"
-            "签名已过期（约 1 小时有效期），复用必失败；隔轮再识图时"
-            "重新 Read 取新链接。\n"
-            "2. 调用 mcp__4_5v_mcp__analyze_image 工具：imageSource=该链接，"
-            "prompt=你想从图里知道的问题（要求结论先行、给坐标参考）。\n"
-            "3. 用它返回的结论回答用户，不要自己编造图片内容。\n"
+            "（https://maas-log-prod...png?...），直接取用。"
+            "没有链接、只有本地路径时【禁止用 Read 读图片取链接——直接走"
+            "第 3 步 (b) 兜底工具传本地路径】。实测教训：MCP 模式会话对图片"
+            "文件 Read 一次，上下文立涨 +680K tokens 直接爆窗。"
+            "链接现取现用、原样完整（200+ 字符一个都不能少——抄坏/截断长链接"
+            "是识图失败头号成因）；历史消息里的旧链接签名已过期（约 1 小时"
+            "有效期），禁止复用。\n"
+            "2. 主通道：调用 mcp__4_5v_mcp__analyze_image 工具，imageSource="
+            "该链接，prompt=你想从图里知道的问题（要求结论先行、给坐标"
+            "参考）。\n"
+            "3. 【兜底阶梯】主通道报错（1210/400/超时）时：直接调 "
+            "mcp__vision__analyze_image（本地兜底工具），imageSource 传图片"
+            "的本地绝对路径（附件消息里就有，该工具直接读盘、不依赖链接、"
+            "不占本会话上下文）——最多试一次；仍失败 → 如实告诉用户「识图"
+            "服务暂时不可用」并附最后的错误信息，不要编造图片内容，也不要"
+            "反复重试。【绝禁止用 SendMessage/ListAgents 转交「识图会话」"
+            "或任何其他会话看图——识图会话已退役不存在，转交出去的图"
+            "永远等不到回传，等于扔进黑洞】\n"
             "【铁律：CDN 链接必须原样带完整 query 签名（?UCloudPublicKey=…"
             "&Expires=…&Signature=… 一个参数都不能少、不能截断、不能自己"
             "清洗、不能复制时改动任何字符】——去掉签名、改动一字（如 "
-            "TOKEN 错成 T_TOKEN）或链接过期，都会被 CDN 拒绝（401），MCP "
+            "TOKEN 错成 T_TOKEN）、截断或链接过期，都会被 CDN 拒绝（400/401），"
             "拿到非图片内容报 1210「图片输入格式/解析错误」，看起来像服务"
-            "故障，实际是链接问题（实测踩坑）。报 1210/4xx 时按序自救、"
-            "每步最多一次：(a) 用的是历史消息里的旧链接 → 重新 Read 原图"
-            "拿新鲜链接重试；(b) 链接逐字符核对无误仍失败 → 改传图片的"
-            "本地绝对路径重试（本地兜底通道）；仍失败按下面的说明收场。\n"
+            "故障，实际是链接问题（实测踩坑）。\n"
             "【铁律：单图单问、结论即停——一次 analyze_image 返回已足以回答"
             "问题就直接用它，禁止对同一张图再发第二次调用「确认」；多角度"
             "需求并进同一次 prompt。多余调用浪费额度还放大手滑概率（实测"
-            "4 连发/2 连发被用户两次质问）】\n"
-            "多张图逐张处理。上面的自救两步（重取链接/改传本地路径）都失败"
-            "（4xx/超时）时，如实告诉用户「识图服务暂时不可用」并附最后一次"
-            "的错误信息，不要反复重试失败的调用，也不要编造图片内容。"
+            "4 连发/2 连发被用户两次质问）。注意：兜底阶梯里的重试不算违例，"
+            "那是失败后的自救】\n"
+            "多张图逐张处理。兜底阶梯走完仍失败时按第 3 步 (c) 收场。"
         )
     # v2.28：转交识图会话分支退役——_model_vision_mode 已无 None 态
     # （全部并入 mcp），本地 analyze_image 是唯一识图通道。防御性返回空串。
@@ -808,21 +816,19 @@ def _ask_mcp_cfg_path(sid, perm="auto"):
         ask_cmd = vis_cmd = (sys.executable or "python")
         ask_args = [os.path.join(_SRC_DIR, "harness_ask_mcp.py").replace("\\", "/")]
         vis_args = [os.path.join(_SRC_DIR, "harness_vision_mcp.py").replace("\\", "/")]
-    # v2.28：注入两个 server——harness（ask_user）+ 4_5v_mcp（analyze_image）。
-    # v2.28.3：4_5v_mcp 随识图开关门控——关闭识图时不注入工具也不预授权，
-    # 与引导词开关（vision_bridge_text 同受 enabled 门控）语义对齐；否则
-    # 关了开关模型手里还揣着无引导的识图工具，行为不可控。
-    # 4_5v_mcp 是本地直通版识图：网关服务端注入的那个 mcp__4_5v_mcp__*
-    # 在 claude CLI 链路上拿不到（用户级/项目级/--mcp-config 均无），名字
-    # 对齐引导词里的全名，识图引导词一字不改。PYTHONIOENCODING 防 GBK 控制台
-    # 下中文工具描述乱码（serial-console-pro 自身 MCP 的既有做法）。
+    # v2.28.5：注入两个 server——harness（ask_user）+ vision（本地兜底
+    # 识图 analyze_image）。网关内置的 mcp__4_5v_mcp__analyze_image 是主通道
+    # （服务端执行，无需本地配置）；本地版用独立名字 mcp__vision__analyze_image
+    # 做兜底——同名会被网关遮蔽成影子工具（实测），改名后网关失败时模型
+    # 才真正有第二条路可走。随识图开关门控（与引导词开关同步）。
+    # PYTHONIOENCODING 防 GBK 控制台下中文工具描述乱码。
     servers = {"harness": {
         "command": ask_cmd,
         "args": ask_args,
         "env": {"HARNESS_SID": sid, "HARNESS_PERM": perm},
     }}
     if _vision_load()["enabled"]:
-        servers["4_5v_mcp"] = {
+        servers["vision"] = {
             "command": vis_cmd,
             "args": vis_args,
             "env": {"PYTHONIOENCODING": "utf-8"},
@@ -946,10 +952,12 @@ class HarnessSession:
             _cfg = _ask_mcp_cfg_path(self.sid, self.permission)
             if _cfg:
                 argv += ["--mcp-config", _cfg]
-                # v2.28.3：识图工具随开关门控（与 --mcp-config 内容同步）
+                # v2.28.5：本地兜底识图工具随开关门控（与 --mcp-config 同步）；
+                # 网关主通道名也保留预授权（个别链路网关不拦截时可客户端执行）
                 _tools = ["mcp__harness__ask_user"]
                 if _vision_load()["enabled"]:
-                    _tools.append("mcp__4_5v_mcp__analyze_image")
+                    _tools += ["mcp__4_5v_mcp__analyze_image",
+                               "mcp__vision__analyze_image"]
                 argv += ["--allowedTools", ",".join(_tools)]
         # v2.14：识图后台会话用固定基础提示词；普通会话走用户提示词体系 +
         # 识图转交引导（主会话默认不知道有识图同伴，必须显式告知）。
@@ -1170,12 +1178,19 @@ class HarnessSession:
                             self._autorenew_on_overflow(text, image_paths, file_paths,
                                                         used, mwin, eff_model):
                         return True, None
-                    return False, ("当前上下文已约 %dK tokens，超过模型「%s」"
-                                   "的 %dK 窗口（多半是切了 API 方案模型变小）"
-                                   "——请切回大窗口 API 方案，或新建会话"
-                                   % (round(used / 1024),
-                                      eff_model,
-                                      round(mwin / 1024)))
+                    # v2.28.10：/compact 是超窗的解药，守卫必须放行——否则满窗
+                    # 时唯一出口被自己锁死（用户实锤：手动压缩发不出去，红条
+                    # 就是拒发语）。压缩后 _session_ctx_used 撞压缩边界归零。
+                    # v2.28.11：爆死态（单轮巨量注入，如 Read 大图）连 /compact
+                    # 都压不动（压缩请求自身超窗）——/rewind 回退是终极逃生门。
+                    if not (text or "").lstrip().startswith("/compact"):
+                        return False, ("当前上下文已约 %dK tokens，超过模型「%s」"
+                                       "的 %dK 窗口——可 /rewind 回退上一回合"
+                                       "（强烈推荐，立即恢复），或 /compact 压缩"
+                                       "（爆死态可能压不动），或新建会话"
+                                       % (round(used / 1024),
+                                          eff_model,
+                                          round(mwin / 1024)))
         except Exception:
             pass   # 检测自身失败不拦发送（读不到用量时维持原行为）
         # base_url 死代理自愈的第二时机（用户实锤）：start 里的自愈只在起
@@ -1891,7 +1906,7 @@ def transcript_for(s):
                             lines.append({"role": "assistant", "text": t[:8000],
                                           "ts": o.get("timestamp") or ""})
                         for tl in tools:
-                            if tl["name"] == _VISION_TOOL:
+                            if tl["name"] in _VISION_TOOLS:
                                 # v2.28：识图 MCP = vision_relay 分割线行（前端 📤
                                 # 转交线+秒表），不出普通工具卡；结果由 tool_result
                                 # 分支挂回成 peer 行（📥 回传气泡）
@@ -2081,6 +2096,164 @@ def harness_kill():
         return jsonify({"ok": True, "note": "进程已不在运行"})
     s.kill_proc(quiet=False)     # 不吞 exit：让前端收到「进程已结束」事件收尾
     return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# v2.28.11 会话回退（/rewind）——爆窗/坏回合的逃生门。
+# 背景（2026-09-20 实锤）：一次 Read 截图把上下文从 340K 打到 1024K 满窗，
+# 此时 /compact 自身也要发全量历史去压缩、请求直接超窗——会话被砖死。
+# 回退 = 把转写截断到「最后第 N 个完整回合」（result 行）之后，备份保全量，
+# 杀进程，下次发消息 --resume 按截断后的转写续上下文（CLI 原生语义）。
+# ---------------------------------------------------------------------------
+def _jsonl_path_for(session_id):
+    import glob as _glob
+    for cand in _glob.glob(os.path.join(os.path.expanduser("~"), ".claude",
+                                        "projects", "*", session_id + ".jsonl")):
+        return cand
+    return None
+
+
+def _rewind_jsonl(session_id, turns=1):
+    """截断转写：保留到最后第 turns 个 result 行（含）。返回 (ok, msg)。"""
+    p = _jsonl_path_for(session_id)
+    if not p:
+        return False, "找不到会话转写文件"
+    with open(p, "r", encoding="utf-8", errors="replace") as f:
+        lines = f.readlines()
+    idxs = [i for i, L in enumerate(lines)
+            if '"type":"result"' in L]
+    if not idxs:
+        return False, "转写里没有完整回合可回退"
+    # 丢弃最后 turns 个完整回合（未完成的尾部行随之丢弃）；最多退到只剩
+    # 首回合（全退空转写 resume 语义不明，不做）
+    turns = max(1, min(turns, len(idxs) - 1)) if len(idxs) > 1 else 1
+    cut = idxs[len(idxs) - 1 - turns]
+    keep = lines[:cut + 1]
+    if len(keep) == len(lines):
+        return False, "转写尾部没有可丢弃的回合"
+    return _rewind_write(p, lines, keep, "已回退 %d 个完整回合" % turns)
+
+
+def _rewind_jsonl_ts(session_id, ts):
+    """锚点截断（v2.28.14 消息级回滚）：保留到 ts 所属回合的 result 为止
+    ——找第一个 timestamp >= ts 的 result 行，截到它（含）。ts 是该 AI 消息
+    事件的 ISO 时间戳（前端从回放行带入 dataset）。"""
+    p = _jsonl_path_for(session_id)
+    if not p:
+        return False, "找不到会话转写文件"
+    with open(p, "r", encoding="utf-8", errors="replace") as f:
+        lines = f.readlines()
+    cut = None
+    for i, L in enumerate(lines):
+        if '"type":"result"' not in L:
+            continue
+        try:
+            o = json.loads(L)
+        except Exception:
+            continue
+        if str(o.get("timestamp") or "") >= ts:
+            cut = i
+            break
+    if cut is None:
+        return False, "锚点消息之后没有完整回合"
+    keep = lines[:cut + 1]
+    if len(keep) == len(lines):
+        return False, "已在锚点位置，没有可回退的内容"
+    return _rewind_write(p, lines, keep, "已回滚到指定消息")
+
+
+def _rewind_jsonl_anchor(session_id, anchor):
+    """文本锚点截断（v2.28.16 消息级回滚主路径）：锚点 = 某条 AI 消息正文的
+    前缀（前端从气泡带入，实时/回放两路都有文本）。从尾部找首条匹配的
+    assistant 行，截到它之后的第一个 result 行（该回合收尾）——「回滚到
+    这条消息所在回合结束」。"""
+    p = _jsonl_path_for(session_id)
+    if not p:
+        return False, "找不到会话转写文件"
+    a = (anchor or "").strip()[:60]
+    if not a:
+        return False, "缺少回滚锚点"
+    with open(p, "r", encoding="utf-8", errors="replace") as f:
+        lines = f.readlines()
+    hit = None
+    for i in range(len(lines) - 1, -1, -1):
+        if '"type":"assistant"' not in lines[i]:
+            continue
+        try:
+            o = json.loads(lines[i])
+        except Exception:
+            continue
+        c = (o.get("message") or {}).get("content")
+        if isinstance(c, str):
+            txt = c
+        elif isinstance(c, list):
+            txt = "".join(b.get("text", "") for b in c
+                          if isinstance(b, dict) and b.get("type") == "text")
+        else:
+            txt = ""
+        if txt.strip().startswith(a):
+            hit = i
+            break
+    if hit is None:
+        return False, "锚点消息不在会话记录里"
+    cut = None
+    for i in range(hit, len(lines)):
+        if '"type":"result"' in lines[i]:
+            cut = i
+            break
+    if cut is None:
+        return False, "锚点所在回合没有完整收尾"
+    keep = lines[:cut + 1]
+    if len(keep) == len(lines):
+        return False, "锚点之后没有可回退的内容"
+    return _rewind_write(p, lines, keep, "已回滚到指定消息")
+
+
+def _rewind_write(p, lines, keep, brief):
+    """备份全量并原子写截断结果。返回 (ok, msg)。"""
+    import shutil
+    bak = p + ".bak-" + time.strftime("%Y%m%d-%H%M%S")
+    shutil.copy2(p, bak)                     # 全量备份——历史永不丢
+    tmp = p + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.writelines(keep)
+    os.replace(tmp, p)
+    return True, ("%s（丢弃 %d 行；全量备份 %s）"
+                  % (brief, len(lines) - len(keep), os.path.basename(bak)))
+
+
+@harness_bp.route("/rewind", methods=["POST"])
+def harness_rewind():
+    """/rewind [n]：回退最近 n 个完整回合（默认 1）。杀进程，下次发消息
+    自动 --resume 续上回退后的上下文。爆窗（含 /compact 也压不动的砖死态）
+    与「刚才那轮搞砸了」两个场景的统一逃生门。"""
+    data = request.get_json(force=True, silent=True) or {}
+    s = _get_or_create((data.get("sid") or "").strip())
+    if not s:
+        return jsonify({"ok": False, "err": "会话不存在"}), 404
+    if not s.session_id:
+        return jsonify({"ok": False, "err": "会话还没有内容可回退"}), 400
+    anchor = str(data.get("anchor") or "").strip()
+    ts = str(data.get("ts") or "").strip()
+    if anchor:
+        # v2.28.16 消息级回滚主路径：文本锚点（气泡正文前缀）
+        ok, msg = _rewind_jsonl_anchor(s.session_id, anchor)
+    elif ts:
+        # v2.28.14 时间戳锚点（备用）
+        ok, msg = _rewind_jsonl_ts(s.session_id, ts)
+    else:
+        try:
+            turns = int(data.get("turns") or 1)
+        except Exception:
+            turns = 1
+        ok, msg = _rewind_jsonl(s.session_id, turns)
+    if not ok:
+        return jsonify({"ok": False, "err": msg}), 400
+    # 进程必须杀：内存里的历史还是旧的，resume 才会按截断后的转写重建
+    s.kill_proc(quiet=True)
+    s.last_result = None                     # 用量缓存失效（守卫/窗口判定重算）
+    s.emit({"kind": "raw", "text": "⏪ " + msg + "——发送消息即续上回退后的上下文"})
+    return jsonify({"ok": True, "msg": msg})
 
 
 def _session_ctx_used(s):
