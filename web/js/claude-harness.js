@@ -3408,82 +3408,10 @@ function buildClaudeHarnessTab(opts = {}) {
     if (x) { _HG.atts.splice(+x.dataset.i, 1); renderAtts(); }
   });
   q('[data-hg-att]').onclick = () => fileEl.click();
-  // v2.3.12 内置截图标注（主窗内嵌形态，用户定调「不额外弹窗直接截」）：
-  // 先 DPI 子进程抓屏 → 主窗临时全屏（视口=屏幕=底图原尺寸，插件 drawImage
-  // 1:1 无变形、原生分辨率导出——修「截图坍缩」：非全屏时底图 16:9 被非等比
-  // 拉伸进主窗视口，比例失真）→ 全屏遮罩盖住 UI 即截图态 → 确认后 base64
-  // 交后端落盘+剪贴板 → 恢复窗口 → 直接挂附件
-  // v2.3.12 截图公共入口：fs=false（📷 按钮路径——不切窗口，canvas 等比适配
-  // 视口零闪烁）/ fs=true（全局热键路径——主窗切全屏后视口=屏幕=底图尺寸，
-  // 等比 canvas 自动 1:1 原生分辨率；结束 toggle 恢复+后端 maximize 兜底）
-  window.harnessSnipStart = async (fs) => {
-    let j;
-    try { j = await (await fetch('/api/snip/grab', {method: 'POST'})).json(); }
-    catch (e) { showBanner('抓屏失败：' + e, 3000, true); return; }
-    if (!j.ok) { showBanner('抓屏失败（子进程未产出截图）', 3000, true); return; }
-    if (typeof window.screenShotPlugin !== 'function') { showBanner('截图组件未加载', 3000, true); return; }
-    if (window.__snip && window.__snip.destroyComponents) { try { window.__snip.destroyComponents(); } catch (_) {} window.__snip = null; }
-    if (fs) {
-      try { await fetch('/api/window/fullscreen', {method: 'POST',
-        headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'enter'})}); } catch (_) {}
-      await new Promise(r => setTimeout(r, 350));   // 等全屏切换布局完成再量视口
-    }
-    // 防变形（v2.3.12 定案）：canvasWidth/Height=底图等比适配视口（无头实测
-    // canvas 1400x788 + 导出与拖框同尺寸同比例 = 零变形）。
-    let iw = 1920, ih = 1080;
-    const imgURL = '/api/snip/img?v=' + Date.now();
-    try {
-      const probe = await new Promise((res) => {
-        const im = new Image();
-        im.onload = () => res(im); im.onerror = () => res(null);
-        im.src = imgURL;
-      });
-      if (probe) { iw = probe.naturalWidth || iw; ih = probe.naturalHeight || ih; }
-    } catch (_) {}
-    const vw = document.documentElement.clientWidth || 1280;
-    const vh = document.documentElement.clientHeight || 800;
-    const k = Math.min(vw / iw, vh / ih);
-    const cw = Math.max(1, Math.round(iw * k)), ch = Math.max(1, Math.round(ih * k));
-    // 等比后 canvas 可能小于视口（如宽屏图在窄窗）：露缝区加临时黑罩兜底视觉
-    const veil = document.createElement('div');
-    veil.style.cssText = 'position:fixed;inset:0;background:#000;z-index:99998';
-    document.body.appendChild(veil);
-    const _snipExit = () => {
-      try { veil.remove(); } catch (_) {}
-      if (fs) { try { fetch('/api/window/fullscreen', {method: 'POST',
-        headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'exit'})}); } catch (_) {} }
-    };
-    window.__snip = new screenShotPlugin({
-      capture: { source: 'image', imageSrc: imgURL },
-      writeBase64: false,        // 剪贴板统一走 Python CF_DIB（更稳）
-      showScreenData: true,      // 必开：底图绘制被它把门，默认关=黑屏
-      canvasWidth: cw, canvasHeight: ch,   // 底图等比适配——drawImage 1:1 无变形
-      clickCutFullScreen: true,
-      maxUndoNum: 30,
-      level: 99999,              // 盖住主 UI 全部层（黑罩 99998 在其下）
-      completeCallback: async (info) => {
-        const inst = window.__snip;
-        window.__snip = null;
-        try { inst && inst.destroyComponents && inst.destroyComponents(); } catch (_) {}
-        _snipExit();
-        try {
-          const sv = await (await fetch('/api/snip/save', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ data_url: info.base64 })
-          })).json();
-          if (sv.ok && window.harnessAddFilesByPath) window.harnessAddFilesByPath([sv.path]);
-          else showBanner(sv.err || '截图保存失败', 3000, true);
-        } catch (e) { showBanner('截图保存失败：' + e, 3000, true); }
-      },
-      closeCallback: () => {
-        const inst = window.__snip;
-        window.__snip = null;
-        try { inst && inst.destroyComponents && inst.destroyComponents(); } catch (_) {}
-        _snipExit();
-      }
-    });
-  };
-  q('[data-hg-snip]').onclick = () => window.harnessSnipStart(false);
+  // v2.3.12 内置截图：公共入口 window.harnessSnipStart 已升级为工具级模块
+  // web/js/snip.js（用户定调：截图不局限 Claude——确认后复制剪贴板必有，
+  // Claude 对话在场才顺带挂附件）。📷 按钮走等比适配路径（不切窗口）。
+  q('[data-hg-snip]').onclick = () => window.harnessSnipStart && window.harnessSnipStart(false);
   async function uploadFiles(list) {
     for (const f of list) {
       if (f.size > 20 * 1024 * 1024) { showBanner(`「${f.name}」超过 20MB，跳过`, 3000, true); continue; }

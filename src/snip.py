@@ -124,7 +124,9 @@ _MODS = {"ctrl": 0x2, "alt": 0x1, "shift": 0x4, "win": 0x8}
 
 
 def _parse_hotkey(s):
-    """'ctrl+alt+a' → (mods, vk)。键位支持 a-z/0-9/f1-f12；非法返回 None。"""
+    """'ctrl+alt+a' / 'f1' → (mods, vk)。
+    f1-f12 允许无修饰单键（功能键不干扰打字，用户要 F1 直接截）；
+    字母/数字单键必须带修饰键（裸键会全局吞输入）。非法返回 None。"""
     parts = [p.strip().lower() for p in str(s or "").split("+") if p.strip()]
     if not parts:
         return None
@@ -134,11 +136,14 @@ def _parse_hotkey(s):
             mods |= _MODS[p]
         else:
             key = p
-    if not key or not mods:
+    if not key:
         return None
+    is_fn = key.startswith("f") and key[1:].isdigit() and 1 <= int(key[1:]) <= 12
     if len(key) == 1 and key.isalnum():
+        if not mods:
+            return None          # 裸字母/数字：全局吞输入，拒绝
         vk = ord(key.upper())
-    elif key.startswith("f") and key[1:].isdigit() and 1 <= int(key[1:]) <= 12:
+    elif is_fn:
         vk = 0x70 + int(key[1:]) - 1
     else:
         return None
