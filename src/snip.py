@@ -30,6 +30,13 @@ _TMP_PNG = os.path.join(os.environ.get("TEMP", "."), "fc_snip.png")
 _TMP_BMP = os.path.join(os.environ.get("TEMP", "."), "fc_snip.bmp")   # BMP 免编码
 _TMP_GEO = _TMP_PNG + ".geo.json"
 _TMP_OUT = os.path.join(os.environ.get("TEMP", "."), "fc_snip_out.png")
+# 常驻窗生命标记：ALIVE=子进程每次页面加载成功后写（port+时间），主进程
+# 探活以此为准——窗口标题探活分不清「哪个主实例的窗」：工具重启后端口随机，
+# 上一实例遗留的孤儿窗仍叫 fc-snip，命中它会让它 reload 旧端口 → WebView2
+# 弹「无法连接 127.0.0.1」错误页（用户实锤）。SPAWN=spawn 防抖标记（热键
+# 与 prewarm 竞态双窗）。
+_TMP_ALIVE = os.path.join(os.environ.get("TEMP", "."), "fc_snip_alive.json")
+_TMP_SPAWN = os.path.join(os.environ.get("TEMP", "."), "fc_snip_spawn.marker")
 
 
 # ---------------------------------------------------------------------------
@@ -178,16 +185,39 @@ def window_main(port, armed=False):
                     # 实测调用即 TypeError 炸线程），聚焦改走 Win32
                     if hwnd:
                         u32.SetForegroundWindow(hwnd)
+                # 页面加载成功=连上本实例 Flask：写生命标记（主进程探活凭据）
+                try:
+                    with open(_TMP_ALIVE, "w", encoding="utf-8") as f:
+                        json.dump({"port": int(port), "t": time.time()}, f)
+                except Exception:
+                    pass
             except Exception:
                 pass
         threading.Thread(target=_do, daemon=True).start()
 
+    def _flask_ok():
+        """探活本实例 Flask：reload 前必须确认——主实例已退出（端口随机重换）
+        时 reload 旧端口 = WebView2「无法连接」错误页挂在屏上（用户实锤）。"""
+        import urllib.request
+        try:
+            urllib.request.urlopen(
+                "http://127.0.0.1:%s/api/status" % port, timeout=0.8)
+            return True
+        except Exception:
+            return False
+
     def _arm_loop():
-        """待命哨兵：主进程抓屏落 BMP（mtime 更新）→ reload 新底图弹出。"""
+        """待命哨兵：主进程抓屏落 BMP（mtime 更新）→ reload 新底图弹出。
+        Flask 连不通（孤儿窗）直接自杀，绝不让错误页见人。"""
         last = os.path.getmtime(_TMP_BMP) if os.path.isfile(_TMP_BMP) else 0
         idle_since = time.time()
+        last_probe = 0.0
         while True:
             time.sleep(0.15)
+            if time.time() - last_probe > 2:      # Flask 探活 2s 一次足够
+                last_probe = time.time()
+                if not _flask_ok():
+                    os._exit(0)   # 主实例没了：静默退，下一次启动重新拉起
             try:
                 m = os.path.getmtime(_TMP_BMP) if os.path.isfile(_TMP_BMP) else 0
             except OSError:
@@ -291,19 +321,53 @@ def prewarm(port):
     def _go():
         time.sleep(10)          # 避开启动高峰（主窗渲染/依赖自检）
         try:
-            if not snip_window_alive():
-                subprocess.Popen(_self_exe_mode("--snip-window", port),
-                                 creationflags=getattr(
-                                     subprocess, "CREATE_NO_WINDOW", 0))
+            if not snip_window_alive(port):
+                _spawn_window(port, armed=False)   # 内含 8s 防抖
         except Exception:
             pass
     threading.Thread(target=_go, daemon=True, name="snip-prewarm").start()
 
 
-def snip_window_alive():
-    """常驻截图窗探活：FindWindowW 按标题（fc-snip），hidden 待命也找得到。"""
+def snip_window_alive(port):
+    """常驻截图窗探活（凭 ALIVE 标记）：port 匹配本实例 + 660s 内有心跳。
+    只按窗口标题探活分不清实例——上一实例遗留的孤儿窗也叫 fc-snip，
+    命中它会 reload 旧端口弹「无法连接」错误页（用户实锤）。"""
+    try:
+        with open(_TMP_ALIVE, "r", encoding="utf-8") as f:
+            m = json.load(f)
+        return (int(m.get("port") or 0) == int(port)
+                and time.time() - float(m.get("t") or 0) < 660)
+    except Exception:
+        return False
+
+
+def _spawn_window(port, armed):
+    """拉起截图窗子进程（带 8s 防抖：热键冷启动与 prewarm 竞态双窗实锤位）。
+    armed=True 首载即显（热键路径）；False 预热待命。"""
+    if os.path.isfile(_TMP_SPAWN) and \
+            time.time() - os.path.getmtime(_TMP_SPAWN) < 8:
+        return True, "spawning"
+    try:
+        with open(_TMP_SPAWN, "w") as f:
+            f.write("1")
+        subprocess.Popen(_self_exe_mode(
+            "--snip-window", port, extra=(["armed"] if armed else [])),
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        return True, "ok"
+    except Exception as e:
+        return False, str(e)
+
+
+def kill_snip_windows():
+    """主进程退出时收编孤儿窗：给所有 fc-snip 窗发 WM_CLOSE。正常退出路径
+    （✕/托盘退出）调；异常崩溃兜底靠子进程 _arm_loop 的 Flask 探活自杀。"""
     u32 = ctypes.windll.user32
-    return bool(u32.FindWindowW(None, "fc-snip"))
+    for _ in range(4):
+        hwnd = u32.FindWindowW(None, "fc-snip")
+        if not hwnd:
+            return
+        u32.PostMessageW(hwnd, 0x0010, 0, 0)   # WM_CLOSE
+        time.sleep(0.15)
 
 
 def launch_window(port):
@@ -312,13 +376,10 @@ def launch_window(port):
     if os.path.isfile(_TMP_OUT):
         os.remove(_TMP_OUT)
     grab()                       # 抓屏落 BMP（mtime 更新驱动常驻窗 reload）
-    if not snip_window_alive():
-        try:
-            subprocess.Popen(_self_exe_mode("--snip-window", port,
-                                            extra=["armed"]),
-                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        except Exception as e:
-            return False, "截图窗启动失败：%s" % e
+    if not snip_window_alive(port):
+        ok, info = _spawn_window(port, armed=True)
+        if not ok:
+            return False, "截图窗启动失败：%s" % info
 
     def _collect():
         deadline = time.time() + 180

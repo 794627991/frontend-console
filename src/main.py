@@ -544,6 +544,11 @@ def main():
 
     # 预热常驻截图窗（延时 10s 拉起，首载 hidden 待命）：第一次热键即 <1s 弹出
     _snip_mod.prewarm(port)
+    # 退出时收编孤儿截图窗（它是独立进程不随主进程退；端口下次随机重换，
+    # 孤儿窗 reload 旧端口=「无法连接」错误页，用户实锤）。异常崩溃兜底
+    # 靠子进程自身 Flask 探活自杀。
+    import atexit as _atexit
+    _atexit.register(_snip_mod.kill_snip_windows)
 
     # 单实例唤醒通道：二次启动的进程探活旧实例后调 /api/raise_window 让它自弹。
     # 路由本体在 server.py 注册（Flask 首请求后禁止加路由——之前把 @app.route
