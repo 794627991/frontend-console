@@ -65,40 +65,52 @@ def _grab_only():
 # ---------------------------------------------------------------------------
 # 子进程：截图窗（--snip-window <port>）
 # ---------------------------------------------------------------------------
-def window_main(port):
-    """DPI 感知 → 抓屏（与 pywebview 启动并行）→ 无边框置顶全屏窗
-    （TOOLWINDOW 无任务栏图标）→ 等待标注结果写 _TMP_OUT → 退出。
-    抓屏异步化：CLR/WebView2 冷启动 ~2s 与抓屏落盘重叠，总延迟省 ~0.5s。"""
+def window_main(port, armed=False):
+    """常驻截图窗子进程：DPI 感知 → 无边框置顶全屏窗（hidden）待命。
+    生命周期：主进程热键时抓屏（--grab 落 BMP）→ 本进程 _arm_loop 感知
+    BMP mtime 变化 → reload 页面拿新底图 → loaded 钉物理几何 → show；
+    完成/取消 → hide 待命（不 destroy：销毁闪屏 + 下次冷启动 2s 双输）。
+    armed=True：热键触发的冷启动，主进程已抓好屏，首载后直接 show。
+    空闲 10 分钟自退（WebView2 常驻 ~100-150MB，不用时归零）。"""
     _dpi_aware()
     geo = _virt_geo()          # 几何不依赖抓屏文件，立即可用
-    threading.Thread(target=_grab_only, daemon=True).start()
+    if not os.path.isfile(_TMP_BMP):
+        _grab_only()           # 预热拉起时先抓一张供首载（旧图即可）
     if os.path.isfile(_TMP_OUT):
         os.remove(_TMP_OUT)
 
     import webview
 
+    state = {"armed": armed, "showing": False}
+
+    def _page_url():
+        g = _virt_geo()        # reload 时现取：换分辨率/显示器自适应
+        return ("http://127.0.0.1:%s/web/screenshot.html?w=%d&h=%d&v=%d"
+                % (port, g["w"], g["h"], int(time.time() * 1000)))
+
     class SnipWin:
         def snip_done(self, data_url):
-            """标注完成：base64 → 落盘 → 退出子进程。"""
+            """标注完成：base64 → 落盘 → 隐藏待命。"""
             try:
                 import base64
                 with open(_TMP_OUT, "wb") as f:
                     f.write(base64.b64decode((data_url or "").split(",", 1)[-1]))
             except Exception:
                 pass
-            threading.Thread(target=_quit, daemon=True).start()
+            threading.Thread(target=_hide, daemon=True).start()
             return True
 
         def snip_cancel(self):
-            threading.Thread(target=_quit, daemon=True).start()
+            threading.Thread(target=_hide, daemon=True).start()
             return True
 
-    def _quit():
+    def _hide():
         time.sleep(0.2)
         try:
-            webview.windows[0].destroy()
+            win.hide()
+            state["showing"] = False
         except Exception:
-            os._exit(0)
+            pass
 
     # easy_drag=False 必须显式关：pywebview 6.x 默认 True——frameless 窗注入
     # customize.js 监听 window.mousedown，页面任意处按住拖动=拖走整个窗口
@@ -106,13 +118,8 @@ def window_main(port):
     # shadow=False 同理：默认 True 会 ExtendFrameIntoClientArea 给无边框窗
     # 补 DWM 玻璃边框——顶部一圈条带观感像「多出一排菜单栏的最大化窗口」
     # （用户实锤），关掉才是 Snipaste 式纯桌面覆盖。
-    # URL 带物理宽高：前端 boot 前轮询 innerWidth/innerHeight 到位才初始化
-    # 插件（canvas 按视口建，hidden 期窗口还是被钳小的 1904x1041，load 即
-    # boot 会把 canvas 建小 → 底图缩放+框选坐标错位，双实锤）。
     win = webview.create_window(
-        "fc-snip",
-        "http://127.0.0.1:%s/web/screenshot.html?w=%d&h=%d"
-        % (port, int(geo.get("w", 0)), int(geo.get("h", 0))),
+        "fc-snip", _page_url(),
         js_api=SnipWin(),
         x=int(geo.get("x", 0)), y=int(geo.get("y", 0)),
         width=int(geo.get("w", 1280)), height=int(geo.get("h", 800)),
@@ -140,9 +147,10 @@ def window_main(port):
                 # （实测 1920x1080 屏被钳到 1904x1041，raw SetWindowPos 钉完
                 # 被 WM_WINDOWPOSCHANGING 弹回）→ 遮罩差 16x39 盖不满屏，
                 # 右侧竖条+底部露出真任务栏=「两排任务栏」实锤。Invoke 到
-                # GUI 线程设，Form 缓存同步更新。
-                gx, gy = int(geo.get("x", 0)), int(geo.get("y", 0))
-                gw, gh = int(geo.get("w", 0)), int(geo.get("h", 0))
+                # GUI 线程设，Form 缓存同步更新。每次 loaded 现取几何：
+                # 分辨率/显示器热切换后 reload 自动归位。
+                g = _virt_geo()
+                gx, gy, gw, gh = g["x"], g["y"], g["w"], g["h"]
                 try:
                     from System import Func, Type
                     from System.Drawing import Point, Size
@@ -160,21 +168,45 @@ def window_main(port):
                     # 置顶+样式刷新（NOSIZE|NOMOVE 只刷框架）
                     u32.SetWindowPos(hwnd, -1, 0, 0, 0, 0,
                                      0x0001 | 0x0002 | 0x0040)
-                win.show()
-                # pywebview 6.x 的 window.focus 是 bool 属性不是方法（诊断实测
-                # 调用即 TypeError 炸线程），聚焦改走 Win32
-                if hwnd:
-                    u32.SetForegroundWindow(hwnd)
-            except Exception:
-                try:
+                # armed=热键冷启动（主进程已抓好屏）或 reload 弹出时才 show；
+                # 预热首载（旧底图待命）保持 hidden。
+                if state["armed"] or state["showing"]:
+                    state["armed"] = False
                     win.show()
-                except Exception:
-                    pass
+                    # pywebview 6.x 的 window.focus 是 bool 属性不是方法（诊断
+                    # 实测调用即 TypeError 炸线程），聚焦改走 Win32
+                    if hwnd:
+                        u32.SetForegroundWindow(hwnd)
+            except Exception:
+                pass
         threading.Thread(target=_do, daemon=True).start()
 
+    def _arm_loop():
+        """待命哨兵：主进程抓屏落 BMP（mtime 更新）→ reload 新底图弹出。"""
+        last = os.path.getmtime(_TMP_BMP) if os.path.isfile(_TMP_BMP) else 0
+        idle_since = time.time()
+        while True:
+            time.sleep(0.15)
+            try:
+                m = os.path.getmtime(_TMP_BMP) if os.path.isfile(_TMP_BMP) else 0
+            except OSError:
+                continue
+            if m > last:
+                last = m
+                state["showing"] = True      # _on_loaded 里 show
+                try:
+                    win.load_url(_page_url())
+                except Exception:
+                    pass
+                idle_since = time.time()
+            elif state["showing"]:
+                idle_since = time.time()
+            elif time.time() - idle_since > 600:
+                os._exit(0)   # 空闲 10 分钟自退：内存归零，下次热键冷启动
+    threading.Thread(target=_arm_loop, daemon=True).start()
+
     win.events.loaded += _on_loaded
-    webview.start()          # 子进程消息循环，destroy 后返回
-    time.sleep(0.3)
+    webview.start()          # 子进程消息循环，常驻直到 os._exit
 
 
 # ---------------------------------------------------------------------------
@@ -233,12 +265,12 @@ def copy_png_to_clipboard(png_path):
         return False
 
 
-def _self_exe_mode(flag, port=None):
+def _self_exe_mode(flag, port=None, extra=()):
+    args = [flag] + ([str(port)] if port is not None else []) + list(extra)
     if getattr(sys, "frozen", False):
-        return [sys.executable, flag] + ([str(port)] if port is not None else [])
+        return [sys.executable] + args
     return [sys.executable, os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "snip.py"), flag] + (
-        [str(port)] if port is not None else [])
+        os.path.dirname(os.path.abspath(__file__)), "snip.py")] + args
 
 
 def grab():
@@ -253,16 +285,39 @@ def grab():
     return os.path.isfile(_TMP_BMP) and os.path.getmtime(_TMP_BMP) > t0
 
 
+def prewarm(port):
+    """主进程启动预热：延时拉起常驻截图窗（首载不弹窗）。第一次热键即 <1s。"""
+    def _go():
+        time.sleep(10)          # 避开启动高峰（主窗渲染/依赖自检）
+        try:
+            if not snip_window_alive():
+                subprocess.Popen(_self_exe_mode("--snip-window", port),
+                                 creationflags=getattr(
+                                     subprocess, "CREATE_NO_WINDOW", 0))
+        except Exception:
+            pass
+    threading.Thread(target=_go, daemon=True, name="snip-prewarm").start()
+
+
+def snip_window_alive():
+    """常驻截图窗探活：FindWindowW 按标题（fc-snip），hidden 待命也找得到。"""
+    u32 = ctypes.windll.user32
+    return bool(u32.FindWindowW(None, "fc-snip"))
+
+
 def launch_window(port):
-    """主进程入口：起截图窗子进程 → 轮询收图 → 落 uploads + 剪贴板 + 广播。
-    立即返回（窗是异步生命周期），收图在 daemon 线程。"""
+    """主进程热键路径：先抓屏 → 常驻窗活着则它感知 BMP 更新自弹（<1s）；
+    死了则 armed 冷启动（首载即显）。轮询收图逻辑不变。"""
     if os.path.isfile(_TMP_OUT):
         os.remove(_TMP_OUT)
-    try:
-        subprocess.Popen(_self_exe_mode("--snip-window", port),
-                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    except Exception as e:
-        return False, "截图窗启动失败：%s" % e
+    grab()                       # 抓屏落 BMP（mtime 更新驱动常驻窗 reload）
+    if not snip_window_alive():
+        try:
+            subprocess.Popen(_self_exe_mode("--snip-window", port,
+                                            extra=["armed"]),
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except Exception as e:
+            return False, "截图窗启动失败：%s" % e
 
     def _collect():
         deadline = time.time() + 180
@@ -433,4 +488,4 @@ if __name__ == "__main__":
     elif "--snip-window" in sys.argv:
         i = sys.argv.index("--snip-window")
         port = sys.argv[i + 1] if i + 1 < len(sys.argv) else "80"
-        window_main(port)
+        window_main(port, armed="armed" in sys.argv)

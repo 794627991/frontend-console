@@ -349,7 +349,8 @@ def main():
     if '--snip-window' in sys.argv:
         from src import snip
         i = sys.argv.index('--snip-window')
-        snip.window_main(int(sys.argv[i + 1]) if i + 1 < len(sys.argv) else 80)
+        snip.window_main(int(sys.argv[i + 1]) if i + 1 < len(sys.argv) else 80,
+                         armed='armed' in sys.argv)
         return
     # --mcp 模式：作为 MCP stdio server 运行（集成进 exe，无需单独 python 脚本）。
     # PyInstaller --windowed(console=False) 下 sys.stdin/stdout 可能为 None，
@@ -540,6 +541,9 @@ def main():
         return
     # Flask 已就绪，写 endpoint 供 Claude Code 跨会话发现（写早了 MCP 会探活到未就绪的服务）
     write_endpoint(port)
+
+    # 预热常驻截图窗（延时 10s 拉起，首载 hidden 待命）：第一次热键即 <1s 弹出
+    _snip_mod.prewarm(port)
 
     # 单实例唤醒通道：二次启动的进程探活旧实例后调 /api/raise_window 让它自弹。
     # 路由本体在 server.py 注册（Flask 首请求后禁止加路由——之前把 @app.route
