@@ -5,8 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>截图</title>
 <style>
-  /* 截图专用页：铺满窗体零滚动（窗体本身=虚拟桌面尺寸，由 snip.py 定位） */
-  html, body { margin: 0; padding: 0; overflow: hidden; background: #000; }
+  /* 截图专用页：铺满窗体零滚动（窗体本身=虚拟桌面尺寸，由 snip.py 定位）。
+  height:100% 必须——插件按 body 实测高度建 canvas，body 无内容时高 0，
+  canvas height=0 → 整个截图界面不可见（黑屏+无框选，用户实锤）。 */
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%;
+               overflow: hidden; background: #000; }
 </style>
 <script src="/vendor/screenShotPlugin.umd.js"></script>
 </head>
@@ -25,6 +28,7 @@
     new screenShotPlugin({
       capture: { source: 'image', imageSrc: '/api/snip/img?v=' + Date.now() },
       writeBase64: false,
+      showScreenData: true,   // 黑屏根因：底图绘制被此开关把门，默认关=只画黑蒙层
       clickCutFullScreen: true,
       maxUndoNum: 30,
       completeCallback: function (info) {
