@@ -452,6 +452,22 @@ def main():
             threading.Thread(target=_do, daemon=True).start()
         return '{"ok": true}', 200, {"Content-Type": "application/json"}
 
+    # v2.3.12 内置截图：进入截图态时主窗临时全屏（视口=屏幕=底图原尺寸，
+    # 插件 drawImage 1:1 无变形、原生分辨率导出——修「截图坍缩」）；
+    # 退出截图态再调一次 toggle 恢复原窗口状态。GUI 线程 marshal 同上。
+    @app.route("/api/window/fullscreen", methods=["POST"])
+    def _api_window_fullscreen():
+        w = getattr(main, "_win", None)
+        if w is not None:
+            def _do():
+                try:
+                    w.toggle_fullscreen()
+                    w.focus()
+                except Exception:
+                    pass
+            threading.Thread(target=_do, daemon=True).start()
+        return '{"ok": true}', 200, {"Content-Type": "application/json"}
+
     # Flask 用空闲端口，避免冲突
     import socket
     def free_port():

@@ -3407,8 +3407,10 @@ function buildClaudeHarnessTab(opts = {}) {
   });
   q('[data-hg-att]').onclick = () => fileEl.click();
   // v2.3.12 内置截图标注（主窗内嵌形态，用户定调「不额外弹窗直接截」）：
-  // 先 DPI 子进程抓屏 → 主窗内 new screenShotPlugin（全屏遮罩盖住 UI 即截图态，
-  // 框选/标注/确认全在主窗完成）→ 确认后 base64 交后端落盘+剪贴板 → 直接挂附件
+  // 先 DPI 子进程抓屏 → 主窗临时全屏（视口=屏幕=底图原尺寸，插件 drawImage
+  // 1:1 无变形、原生分辨率导出——修「截图坍缩」：非全屏时底图 16:9 被非等比
+  // 拉伸进主窗视口，比例失真）→ 全屏遮罩盖住 UI 即截图态 → 确认后 base64
+  // 交后端落盘+剪贴板 → 恢复窗口 → 直接挂附件
   q('[data-hg-snip]').onclick = async () => {
     let j;
     try { j = await (await fetch('/api/snip/grab', {method: 'POST'})).json(); }
@@ -3416,6 +3418,9 @@ function buildClaudeHarnessTab(opts = {}) {
     if (!j.ok) { showBanner('抓屏失败（子进程未产出截图）', 3000, true); return; }
     if (typeof window.screenShotPlugin !== 'function') { showBanner('截图组件未加载', 3000, true); return; }
     if (window.__snip && window.__snip.destroyComponents) { try { window.__snip.destroyComponents(); } catch (_) {} window.__snip = null; }
+    try { await fetch('/api/window/fullscreen', {method: 'POST'}); } catch (_) {}
+    await new Promise(r => setTimeout(r, 350));   // 等全屏切换动画完成再量视口
+    const _snipExit = () => { try { fetch('/api/window/fullscreen', {method: 'POST'}); } catch (_) {} };
     window.__snip = new screenShotPlugin({
       capture: { source: 'image', imageSrc: '/api/snip/img?v=' + Date.now() },
       writeBase64: false,        // 剪贴板统一走 Python CF_DIB（更稳）
@@ -3427,6 +3432,7 @@ function buildClaudeHarnessTab(opts = {}) {
         const inst = window.__snip;
         window.__snip = null;
         try { inst && inst.destroyComponents && inst.destroyComponents(); } catch (_) {}
+        _snipExit();
         try {
           const sv = await (await fetch('/api/snip/save', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -3440,6 +3446,7 @@ function buildClaudeHarnessTab(opts = {}) {
         const inst = window.__snip;
         window.__snip = null;
         try { inst && inst.destroyComponents && inst.destroyComponents(); } catch (_) {}
+        _snipExit();
       }
     });
   };
