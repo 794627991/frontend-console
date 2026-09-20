@@ -27,11 +27,17 @@ import sys
 import urllib.error
 import urllib.request
 
-# 可调项（--mcp-config 的 env 传入；缺省走 claude settings 同源配置）
-MODEL = (os.environ.get("HARNESS_VISION_MODEL") or "").strip() or "glm-5.3-flash"
+# 可调项（env 覆盖，最高优先级；常规配置走 ~/.serialconsole_pro/config.json
+# 的 harness_vision 节——设置面板「识图配置」写的正是那里）
 BASE_OVERRIDE = (os.environ.get("HARNESS_VISION_BASE_URL") or "").strip()
 KEY_OVERRIDE = (os.environ.get("HARNESS_VISION_KEY") or "").strip()
 DIRECT_FALLBACK = "https://open.bigmodel.cn/api/anthropic"
+
+# 识图配置文件（与主程序同源：HOME_DIR/config.json 的 harness_vision 节）
+CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".serialconsole_pro",
+                           "config.json")
+_VISION_CFG_KEY = "harness_vision"
+DEFAULT_MODEL = "glm-5.3-flash"
 
 _DL_TIMEOUT = 25          # 图片下载超时（秒）
 _DL_MAX = 15 * 1024 * 1024  # 图片大小上限（15MB，超限直接报错不硬扛）
@@ -48,6 +54,7 @@ _VISION_SYSTEM = (
     "- 提到位置时给可复核的坐标或区域描述（如「左上角状态栏第 2 行」）。\n"
     "- 言简意赅，不废话。"
 )
+MCP_DEFAULT_SYSTEM = _VISION_SYSTEM
 
 
 def _send(obj):
@@ -74,6 +81,66 @@ def _claude_env():
         return "", ""
 
 
+def load_vision_cfg():
+    """读识图配置（config.json 的 harness_vision 节）。每次调用时读——
+    设置面板改完即刻生效，无需重启会话/MCP 进程。"""
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        v = d.get(_VISION_CFG_KEY)
+        return v if isinstance(v, dict) else {}
+    except Exception:
+        return {}
+
+
+def normalize_model_map(raw):
+    """归一化端点模型映射：接受 {关键字: 模型} 或 ["关键字=模型"] 行。
+    关键字小写（匹配时对 base_url 做 contains，大小写不敏感）。"""
+    out = {}
+    if isinstance(raw, dict):
+        items = raw.items()
+    elif isinstance(raw, list):
+        items = (tuple(str(x).split("=", 1)) for x in raw if "=" in str(x))
+    else:
+        return out
+    for k, v in items:
+        k = str(k).strip().lower()
+        v = str(v).strip()
+        if k and v:
+            out[k] = v
+    return out
+
+
+def resolve_model(base_url, cfg=None):
+    """按端点解析识图模型：env 覆盖 → model_map 最长关键字命中 → 配置
+    model → 默认。多方案适配的关键——lanz 端点配 Lanz-Medium-V、
+    bigmodel 端点配 glm-5.3-flash，切方案自动跟着走。"""
+    env = (os.environ.get("HARNESS_VISION_MODEL") or "").strip()
+    if env:
+        return env
+    cfg = cfg if cfg is not None else load_vision_cfg()
+    url = (base_url or "").lower()
+    best_k, best_m = "", None
+    for k, m in normalize_model_map(cfg.get("model_map")).items():
+        if k in url and len(k) > len(best_k):
+            best_k, best_m = k, m
+    if best_m:
+        return best_m
+    m = str(cfg.get("model") or "").strip()
+    return m or DEFAULT_MODEL
+
+
+def resolve_prompt(cfg=None):
+    """识图 system 提示词：env 覆盖 → 配置 mcp_prompt → 内置默认。
+    注意不读旧会话时代的 prompt 键（内含 SendMessage 回传指令，对 MCP
+    上下文是错误指令）。"""
+    env = (os.environ.get("HARNESS_VISION_PROMPT") or "").strip()
+    if env:
+        return env
+    cfg = cfg if cfg is not None else load_vision_cfg()
+    return str(cfg.get("mcp_prompt") or "").strip() or MCP_DEFAULT_SYSTEM
+
+
 def _endpoints():
     """候选 (base_url, key) 列表：主端点在前，智谱直连兜底在后。"""
     s_base, s_key = _claude_env()
@@ -96,7 +163,7 @@ def _sniff_media_type(data):
     if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         return "image/webp"
     if data[:2] == b"BM":
-        return "image/bmp"
+        return "image/bmp"       # 调用方明确拒绝（API 不收 BMP）
     return None
 
 
@@ -110,6 +177,10 @@ def _load_image(source):
         try:
             head, b64 = source.split(",", 1)
             mt = head[5:].split(";")[0] or "image/png"
+            # v2.28.3：非 image/* 的 data: URL 提前拒绝——放过去只会在
+            # API 侧得到一个费解的 400（审计项）
+            if not mt.lower().startswith("image/"):
+                return None, "data: URL 媒体类型不是图片：%s" % mt
             return base64.b64decode(b64), mt
         except Exception:
             return None, "data: URL 解析失败（base64 段不完整）"
@@ -120,7 +191,14 @@ def _load_image(source):
                 data = f.read(_DL_MAX + 1)
             if len(data) > _DL_MAX:
                 return None, "图片超过 15MB 上限"
-            return data, _sniff_media_type(data) or "image/png"
+            # v2.28.3：魔数校验本地文件——非图片明确拒绝（原实现兜
+            # "image/png" 把任意文件送进 API，只换来费解的 400）；BMP 同拒
+            mt = _sniff_media_type(data)
+            if mt == "image/bmp":
+                return None, "暂不支持 BMP 图片（请用 PNG/JPEG/GIF/WebP）"
+            if not mt:
+                return None, "该文件不是图片（魔数校验未通过）"
+            return data, mt
         return None, "imageSource 既不是 http(s) 链接也不是存在的本地文件：%s" % source[:200]
     # http(s)：下载。带 UA——部分 CDN（含识图 CDN）对无 UA 请求回 403/非图片内容
     try:
@@ -135,20 +213,56 @@ def _load_image(source):
     if len(data) > _DL_MAX:
         return None, "图片超过 15MB 上限"
     # 内容不是图片（CDN 401 的 XML 错误页就是这形态）→ 明确告知，别让模型
-    # 误以为服务故障瞎重试（旧 1210 的本地版语义）
+    # 误以为服务故障瞎重试（旧 1210 的本地版语义）。BMP 同拒——视觉 API
+    # 只收 jpeg/png/gif/webp，放过去只是换个地方 400（v2.28.3 审计项）
     mt = ct if ct.startswith("image/") else _sniff_media_type(data)
+    if mt == "image/bmp":
+        return None, "暂不支持 BMP 图片（请用 PNG/JPEG/GIF/WebP）"
     if not mt:
         return None, ("下载到的不是图片（Content-Type: %s），"
                       "链接可能已过期/签名失效/被截断" % (ct or "未知"))
     return data, mt
 
 
+def _model_variants(m):
+    """模型名变体：带 [窗口后缀]（如 glm-5.3-flash[1M]——lanz 网关认，
+    bigmodel 直连不认）时补一个去后缀的裸名，400 时降级重试用。"""
+    if "[" in m and m.endswith("]"):
+        base = m[:m.rindex("[")].strip()
+        if base and base != m:
+            return [m, base]
+    return [m]
+
+
 def _call_vision(b64, media_type, prompt):
-    """调 Anthropic 兼容 /v1/messages 做识图。主端点连不上自动走直连兜底。"""
+    """调 Anthropic 兼容 /v1/messages 做识图。主端点连不上自动走直连兜底；
+    模型按「本次实际尝试的端点」解析（model_map 命中 lanz 配 Lanz 模型、
+    回落 bigmodel 直连时换回 glm 系）——多方案下模型永远与端点匹配。
+    [1M] 类窗口后缀在部分端点 400 → 自动降级裸名重试一次。"""
+    cfg = load_vision_cfg()
+    sys_prompt = resolve_prompt(cfg)
+    last_err = "无可用端点"
+    for base, key in _endpoints():
+        for model in _model_variants(resolve_model(base, cfg)):
+            kind, info = _post_vision(base, key, model, sys_prompt,
+                                      b64, media_type, prompt)
+            if kind == "ok":
+                return _result(info)
+            last_err = info
+            if kind == "conn":
+                break          # 端点不可达——换端点（模型变体没意义）
+            # hard（4xx/5xx/无文本）：带 [后缀] 的模型还有裸名变体可试，
+            # 变体循环自然降级；变体耗尽换端点
+    return _result("识图请求失败：%s" % last_err, is_error=True)
+
+
+def _post_vision(base, key, model, sys_prompt, b64, media_type, prompt):
+    """单次识图请求。返回 ("ok", text) / ("hard", err)（服务端拒绝或无文本）
+    / ("conn", err)（连接层失败，可换端点）。"""
     body = json.dumps({
-        "model": MODEL,
+        "model": model,
         "max_tokens": 2048,
-        "system": _VISION_SYSTEM,
+        "system": sys_prompt,
         "messages": [{"role": "user", "content": [
             {"type": "image",
              "source": {"type": "base64", "media_type": media_type,
@@ -156,37 +270,36 @@ def _call_vision(b64, media_type, prompt):
             {"type": "text", "text": prompt},
         ]}],
     }, ensure_ascii=False).encode("utf-8")
-    last_err = "无可用端点"
-    for base, key in _endpoints():
-        req = urllib.request.Request(
-            base.rstrip("/") + "/v1/messages", data=body, method="POST",
-            headers={"Content-Type": "application/json",
-                     "User-Agent": _UA,
-                     "anthropic-version": "2023-06-01",
-                     # 两种鉴权头都带：claude 系网关认 x-api-key，
-                     # anthropic 兼容层多认 Bearer，冗余无害
-                     "x-api-key": key, "authorization": "Bearer " + key})
+    req = urllib.request.Request(
+        base.rstrip("/") + "/v1/messages", data=body, method="POST",
+        headers={"Content-Type": "application/json",
+                 "User-Agent": _UA,
+                 "anthropic-version": "2023-06-01",
+                 # 两种鉴权头都带：claude 系网关认 x-api-key，
+                 # anthropic 兼容层多认 Bearer，冗余无害
+                 "x-api-key": key, "authorization": "Bearer " + key})
+    try:
+        with urllib.request.urlopen(req, timeout=_API_TIMEOUT) as r:
+            d = json.loads(r.read().decode("utf-8", "replace") or "{}")
+        texts = [b.get("text", "") for b in (d.get("content") or [])
+                 if isinstance(b, dict) and b.get("type") == "text"]
+        if texts:
+            return "ok", "\n".join(t for t in texts if t)
+        return "hard", ("端点 %s（%s）成功但无文本，响应：%s"
+                        % (base, model, json.dumps(d, ensure_ascii=False)[:200]))
+    except urllib.error.HTTPError as e:
+        detail = ""
         try:
-            with urllib.request.urlopen(req, timeout=_API_TIMEOUT) as r:
-                d = json.loads(r.read().decode("utf-8", "replace") or "{}")
-            texts = [b.get("text", "") for b in (d.get("content") or [])
-                     if isinstance(b, dict) and b.get("type") == "text"]
-            if texts:
-                return _result("\n".join(t for t in texts if t))
-            return _result("视觉模型未返回文本（响应：%s）"
-                           % json.dumps(d, ensure_ascii=False)[:300], is_error=True)
-        except urllib.error.HTTPError as e:
-            detail = ""
-            try:
-                detail = e.read().decode("utf-8", "replace")[:300]
-            except Exception:
-                pass
-            last_err = "端点 %s 返回 HTTP %d：%s" % (base, e.code, detail)
-        except Exception as e:
-            # 连接层失败（代理没跑/断网）→ 换下一个端点；HTTP 4xx/5xx 是
-            # 服务端明确拒绝，重试别的端点大概率同样拒绝，直接报错
-            last_err = "端点 %s 连接失败：%s" % (base, e)
-    return _result("识图请求失败：%s" % last_err, is_error=True)
+            detail = e.read().decode("utf-8", "replace")[:300]
+        except Exception:
+            pass
+        # 4xx/5xx 是服务端明确拒绝——可能是 [1M] 类窗口后缀不被端点认
+        # （调用方会降级裸名变体重试），也可能是鉴权/模型不存在等换端点
+        # 也解不了的问题，错误详情如实带回
+        return "hard", "端点 %s（%s）返回 HTTP %d：%s" % (base, model, e.code, detail)
+    except Exception as e:
+        # 连接层失败（代理没跑/断网）→ 可换端点
+        return "conn", "端点 %s 连接失败：%s" % (base, e)
 
 
 def _analyze(args):

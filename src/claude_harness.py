@@ -91,11 +91,13 @@ VISION_DEFAULT_PROMPT = """你是本机专用的识图会话。你没有串口/S
 
 
 def _vision_default_cfg():
-    # v2.27.11：mm_mcp = MCP 识图名单——模型本身看不了图，但可调
-    # mcp__4_5v_mcp__analyze_image（传 Read 拿到的 CDN 链接）识图（用户定调：
-    # 多模态要分类：真多模态 / MCP 服务识图 / 无）。前缀匹配同 mm_extra。
+    # v2.28.1：mm_mcp 名单退役——分类只剩两态（真多模态 inline / 其余全部
+    # MCP），非 inline 即 MCP，无需名单。旧 config 里的 mm_mcp 键自然闲置。
+    # v2.28.2：model_map 端点模型映射 + mcp_prompt——识图配置（MCP 后端）
+    # 多方案适配：lanz 端点配 Lanz 系、bigmodel 端点配 glm 系。
     return {"enabled": False, "model": "", "prompt": VISION_DEFAULT_PROMPT,
-            "name": VISION_DEFAULT_NAME, "mm_extra": [], "mm_mcp": ["glm-5.3"]}
+            "name": VISION_DEFAULT_NAME, "mm_extra": [], "model_map": {},
+            "mcp_prompt": ""}
 
 
 def _vision_load():
@@ -113,9 +115,24 @@ def _vision_load():
             mm = raw.get("mm_extra")
             if isinstance(mm, list):
                 cfg["mm_extra"] = [str(x).strip() for x in mm if str(x).strip()]
-            mcp = raw.get("mm_mcp")
-            if isinstance(mcp, list):
-                cfg["mm_mcp"] = [str(x).strip() for x in mcp if str(x).strip()]
+            # v2.28.2：端点模型映射（dict 或 "关键字=模型" 行列表均收）+
+            # MCP 识图提示词
+            mmap_raw = raw.get("model_map")
+            mmap = {}
+            if isinstance(mmap_raw, dict):
+                mmap = {str(k).strip().lower(): str(v).strip()
+                        for k, v in mmap_raw.items()
+                        if str(k).strip() and str(v).strip()}
+            elif isinstance(mmap_raw, list):
+                for line in mmap_raw:
+                    kv = str(line).split("=", 1)
+                    if len(kv) == 2 and kv[0].strip() and kv[1].strip():
+                        mmap[kv[0].strip().lower()] = kv[1].strip()
+            if mmap:
+                cfg["model_map"] = mmap
+            mp = str(raw.get("mcp_prompt") or "").strip()
+            if mp:
+                cfg["mcp_prompt"] = mp
     except Exception:
         pass
     return cfg
@@ -265,25 +282,17 @@ def _mm_probe_model(model):
     def _red(out):
         return bool("红" in out or re.search(r"\bred\b", out or "", re.I))
 
-    # 第 1 段：直读
+    # 第 1 段（也是唯一一段，v2.28.1）：直读测真多模态。原第 2 段（测 MCP
+    # 工具链）退役——本地 analyze_image 注入所有会话，MCP 通道无需探测；
+    # 答不出颜色即非真多模态，分类自动落 mcp（默认通道）。
     out = _run("用 Read 工具读取这张图片：" + probe_path +
                "。它是纯色图，只回答颜色的中文名（例如：红色），不要解释。",
                "Read")
     if _red(out):
         return "inline", "真多模态 ✔（模型直读答出颜色）"
-    # 第 2 段：MCP 通道（analyze_image 与模型无关，凡会话挂了该 MCP 即可用；
-    # 这里验证的是「模型能正确走完 Read→链接→analyze_image 工具链」）
-    out2 = _run(
-        "严格按步骤执行：1) 用 Read 工具读取图片 " + probe_path +
-        "，从返回文本中取出图片的 CDN 链接（https:// 开头含 .png? 的那条）；"
-        "2) 调用 mcp__4_5v_mcp__analyze_image 工具，imageSource 填该链接，"
-        "prompt 填「这张图是什么颜色?只答颜色中文名」；3) 根据工具返回的结论，"
-        "只回答颜色的中文名。若某步失败，回答「失败」两个字。",
-        "Read mcp__4_5v_mcp__analyze_image")
-    if _red(out2):
-        return "mcp", "MCP 识图 ✔（模型经 analyze_image 答出颜色）"
-    return None, ("两种方式都没答出颜色——无识图能力，走识图会话转交"
-                  "（直读片段：" + (out or "").strip()[:50] + "）")
+    return "mcp", ("非真多模态——直读未答出颜色，默认走 MCP 通道"
+                   "（本地 analyze_image），无需配置（直读片段："
+                   + (out or "").strip()[:50] + "）")
 
 
 def _mm_probed_load():
@@ -347,26 +356,32 @@ def confirm_bridge_text():
 
 
 def _model_vision_mode(name):
-    """v2.27.11：模型识图能力三态分类（用户定调「多模态要分类」）。
-    返回 'inline'（真多模态，内联直读）/ 'mcp'（模型看不了图，但可调
-    analyze_image MCP 识图）/ None（无识图，需转交识图会话）。
-    判定顺序：名字正则 → inline；mm_mcp 名单 → mcp（用户显式分类，
-    优先于探测缓存/mm_extra——探测走 CLI 可能被模型名重映射污染，
-    实测把 glm-5.3[1M] 错标成 inline）；最后缓存/mm_extra 兜 inline。"""
+    """v2.28.1：两态分类（用户定调：只保留真多模态，其余全部走 MCP）。
+    返回 'inline'（真多模态，内联直读）或 'mcp'（本地 analyze_image 通道）。
+    inline 判定 = 名字正则 / 探测缓存（mm_probed）/ mm_extra 名单；
+    mm_mcp 第三态名单已退役——非 inline 一律 MCP，无需枚举。"""
     name = (name or "").strip()
     if not name:
+        return "mcp"
+    if _model_is_multimodal(name):     # 内部顺序：缓存 → 正则 → mm_extra
+        return "inline"
+    return "mcp"
+
+
+# v2.28：识图 MCP 工具全名（harness_vision_mcp.py 注册，与网关内置同名）——
+# 实时事件流与历史回放解析都按它识别识图调用
+_VISION_TOOL = "mcp__4_5v_mcp__analyze_image"
+
+
+def _iso_dur_sec(t0, t1):
+    """两个 ISO 时间串的差（秒，1 位小数）。解析失败返回 None。"""
+    try:
+        from datetime import datetime
+        a = datetime.fromisoformat(str(t0).replace("Z", "+00:00"))
+        b = datetime.fromisoformat(str(t1).replace("Z", "+00:00"))
+        return round((b - a).total_seconds(), 1)
+    except Exception:
         return None
-    if _MM_RE.search(name.lower()):
-        return "inline"
-    lname = name.lower()
-    for item in (_vision_load().get("mm_mcp") or []):
-        # 同 mm_extra 的收窄规则：相等或仅覆盖 [窗口后缀 变体
-        item = (item or "").strip().lower()
-        if item and (lname == item or lname.startswith(item + "[")):
-            return "mcp"
-    if _model_is_multimodal(name):
-        return "inline"
-    return None
 
 
 # v2.3.7 全会话铁律（用户定调「浪费 token 极其可耻」）：注入每个会话。
@@ -394,8 +409,8 @@ def vision_bridge_text(model=None):
     v2.19：主会话模型本身多模态（_model_is_multimodal）→ 反过来注入
     「直接用 Read 读图」，不再转交——通用转交引导会把能看图的会话
     也带去麻烦识图会话（用户实测吐槽）。
-    v2.27.11：三态分类——真多模态直读 / MCP 识图（analyze_image）/
-    转交识图会话。
+    v2.28：两态——inline 直读 / 其余全部走 MCP 通道（本地 analyze_image
+    全面接管，识图会话与转交引导退役）。
     """
     cfg = _vision_load()
     if not cfg["enabled"]:
@@ -408,52 +423,39 @@ def vision_bridge_text(model=None):
             "直接用 Read 工具读取图片路径并分析，自己给出结论，"
             "不要转交给其他会话处理。"
         )
-    if mode == "mcp":
-        return (
-            "【识图说明（MCP 通道）】\n"
+    # v2.28：非 inline（含并入的原 None 态）一律走 MCP 通道
+    return (
+        "【识图说明（MCP 通道）】\n"
             "本会话模型自身看不了图片，但可以调识图 MCP 完成看图，不要转交"
             "其他会话：\n"
             "1. 用户消息里的图片附件自带 CDN 图片链接"
             "（https://maas-log-prod...png?...），直接取用；没有链接时先用 "
-            "Read 工具读图片路径，从返回里把链接取出来。\n"
+            "Read 工具读图片路径，从返回里把链接取出来。"
+            "链接现取现用：只用本轮刚拿到的链接——历史消息里的旧链接"
+            "签名已过期（约 1 小时有效期），复用必失败；隔轮再识图时"
+            "重新 Read 取新链接。\n"
             "2. 调用 mcp__4_5v_mcp__analyze_image 工具：imageSource=该链接，"
             "prompt=你想从图里知道的问题（要求结论先行、给坐标参考）。\n"
             "3. 用它返回的结论回答用户，不要自己编造图片内容。\n"
             "【铁律：CDN 链接必须原样带完整 query 签名（?UCloudPublicKey=…"
             "&Expires=…&Signature=… 一个参数都不能少、不能截断、不能自己"
-            "清洗、不能复制时改动任何字符】——去掉签名或改动一字（如 "
-            "TOKEN 错成 T_TOKEN）都会被 CDN 拒绝（401），MCP 拿到非图片内容"
-            "报 1210「图片输入格式/解析错误」，看起来像服务故障，实际是链接"
-            "错误（实测踩坑）。MCP 报 1210 时先逐字符核对自己传的 URL 与 "
-            "Read 返回原文是否一致，再考虑降级。\n"
+            "清洗、不能复制时改动任何字符】——去掉签名、改动一字（如 "
+            "TOKEN 错成 T_TOKEN）或链接过期，都会被 CDN 拒绝（401），MCP "
+            "拿到非图片内容报 1210「图片输入格式/解析错误」，看起来像服务"
+            "故障，实际是链接问题（实测踩坑）。报 1210/4xx 时按序自救、"
+            "每步最多一次：(a) 用的是历史消息里的旧链接 → 重新 Read 原图"
+            "拿新鲜链接重试；(b) 链接逐字符核对无误仍失败 → 改传图片的"
+            "本地绝对路径重试（本地兜底通道）；仍失败按下面的说明收场。\n"
             "【铁律：单图单问、结论即停——一次 analyze_image 返回已足以回答"
             "问题就直接用它，禁止对同一张图再发第二次调用「确认」；多角度"
             "需求并进同一次 prompt。多余调用浪费额度还放大手滑概率（实测"
             "4 连发/2 连发被用户两次质问）】\n"
-            "多张图逐张处理。确认 URL 完整仍失败（4xx/超时）才走保底："
-            "ListAgents 找识图会话，SendMessage 转交（附图片绝对路径+问题）；"
-            "找不到识图会话就如实告诉用户"
-            "「识图服务故障且保底会话未运行，请手动拉起识图会话」，"
-            "不要反复重试失败的 MCP 调用。"
+            "多张图逐张处理。上面的自救两步（重取链接/改传本地路径）都失败"
+            "（4xx/超时）时，如实告诉用户「识图服务暂时不可用」并附最后一次"
+            "的错误信息，不要反复重试失败的调用，也不要编造图片内容。"
         )
-    name = cfg["name"]
-    return (
-        "【识图转交】\n"
-        "本机有一个专用识图会话（多模态模型），可通过 Claude Code 原生的 "
-        "ListAgents / SendMessage 工具联系，会话名是「%s」（可能带 [ref] 后缀，"
-        "照原样引用即可）。\n"
-        "你自己不具备看图能力，所以凡是需要「看图」的任务都必须转交给它：\n"
-        "- 触发场景：用户发来图片、给出图片路径让你分析、让你看截图/照片/"
-        "截图型日志/UI 截图/寄存器截图，或任何需要读取图像内容的问题。\n"
-        "- 转交方式：SendMessage 给「%s」，消息里附上图片的绝对路径 + "
-        "你想知道的具体问题。一次可以给多张图，要说清每张图各问什么。\n"
-        "- 不要加 notify_when_idle（默认行为就会等它回复）。\n"
-        "- 收回结论：它的回复会自动送达你，直接转述给用户即可，不要自己"
-        "编造图片内容。\n"
-        "- 若 ListAgents 里找不到该名字，说明识图会话没起来，如实告诉用户"
-        "去「📜 提示词 — 识图会话配置」里检查开关，不要假装看过图。\n"
-        "图片本身不需要你读取，读图是它的职责。"
-    ) % (name, name)
+    # v2.28：转交识图会话分支退役——_model_vision_mode 已无 None 态
+    # （全部并入 mcp），本地 analyze_image 是唯一识图通道。防御性返回空串。
 
 
 def _peer_reg_path():
@@ -578,39 +580,14 @@ def _cleanup_stale_vision_peers(name):
 
 
 def ensure_vision_session():
-    """取（必要时新建并启动）识图后台会话。返回 HarnessSession 或 None。
+    """v2.28：识图会话退役——MCP 通道（mcp__4_5v_mcp__analyze_image）全面接管。
 
-    独立 sid，不 sync_meta → 不出现在用户的会话列表里（是后台配角）。
+    原职责（养一个多模态后台会话做转交识图）已被本地 analyze_image 取代：
+    速度 5.6 倍（一次推理 vs agent 两轮+轮询回传）、无常驻进程、无跨会话
+    复杂度。保留函数签名做空操作：调用方（GC/connect 路径）零改动；遗留
+    的旧识图会话由 GC 的 kill 分支自然收走，不再新拉。
     """
-    cfg = _vision_load()
-    if not cfg["enabled"]:
-        return None
-    with _vision_lock:
-        s = _vision_obj[0]
-        if s is not None and s.alive:
-            return s
-        if s is not None:
-            try:                     # 死进程先清掉，防同名残留
-                with _sessions_lock:
-                    _sessions.pop(s.sid, None)
-                s.close()
-            except Exception:
-                pass
-        try:
-            s = HarnessSession(uuid.uuid4().hex, cwd=_st.HOME_DIR,
-                               model=cfg["model"] or None,
-                               title="识图会话", name=cfg["name"])
-            s.hidden = True          # 不 sync_meta：不进用户会话列表
-            s.is_vision = True
-            _cleanup_stale_vision_peers(cfg["name"])   # 先扫掉同名孤儿，防撞车
-            s.start()
-        except Exception:
-            _vision_obj[0] = None
-            return None
-        with _sessions_lock:
-            _sessions[s.sid] = s
-        _vision_obj[0] = s
-        return s
+    return None
 
 
 def stop_vision_session():
@@ -832,22 +809,25 @@ def _ask_mcp_cfg_path(sid, perm="auto"):
         ask_args = [os.path.join(_SRC_DIR, "harness_ask_mcp.py").replace("\\", "/")]
         vis_args = [os.path.join(_SRC_DIR, "harness_vision_mcp.py").replace("\\", "/")]
     # v2.28：注入两个 server——harness（ask_user）+ 4_5v_mcp（analyze_image）。
+    # v2.28.3：4_5v_mcp 随识图开关门控——关闭识图时不注入工具也不预授权，
+    # 与引导词开关（vision_bridge_text 同受 enabled 门控）语义对齐；否则
+    # 关了开关模型手里还揣着无引导的识图工具，行为不可控。
     # 4_5v_mcp 是本地直通版识图：网关服务端注入的那个 mcp__4_5v_mcp__*
     # 在 claude CLI 链路上拿不到（用户级/项目级/--mcp-config 均无），名字
     # 对齐引导词里的全名，识图引导词一字不改。PYTHONIOENCODING 防 GBK 控制台
     # 下中文工具描述乱码（serial-console-pro 自身 MCP 的既有做法）。
-    cfg = {"mcpServers": {
-        "harness": {
-            "command": ask_cmd,
-            "args": ask_args,
-            "env": {"HARNESS_SID": sid, "HARNESS_PERM": perm},
-        },
-        "4_5v_mcp": {
+    servers = {"harness": {
+        "command": ask_cmd,
+        "args": ask_args,
+        "env": {"HARNESS_SID": sid, "HARNESS_PERM": perm},
+    }}
+    if _vision_load()["enabled"]:
+        servers["4_5v_mcp"] = {
             "command": vis_cmd,
             "args": vis_args,
             "env": {"PYTHONIOENCODING": "utf-8"},
-        },
-    }}
+        }
+    cfg = {"mcpServers": servers}
     p = os.path.join(d, "%s.json" % sid[:16])
     try:
         with open(p, "w", encoding="utf-8") as f:
@@ -965,9 +945,12 @@ class HarnessSession:
         if not self.is_vision:
             _cfg = _ask_mcp_cfg_path(self.sid, self.permission)
             if _cfg:
-                argv += ["--mcp-config", _cfg,
-                         "--allowedTools",
-                         "mcp__harness__ask_user,mcp__4_5v_mcp__analyze_image"]
+                argv += ["--mcp-config", _cfg]
+                # v2.28.3：识图工具随开关门控（与 --mcp-config 内容同步）
+                _tools = ["mcp__harness__ask_user"]
+                if _vision_load()["enabled"]:
+                    _tools.append("mcp__4_5v_mcp__analyze_image")
+                argv += ["--allowedTools", ",".join(_tools)]
         # v2.14：识图后台会话用固定基础提示词；普通会话走用户提示词体系 +
         # 识图转交引导（主会话默认不知道有识图同伴，必须显式告知）。
         if self.is_vision:
@@ -1677,16 +1660,12 @@ def _gc_loop():
                     continue
                 if s.alive and not s.busy and (now - s.last_active) > _IDLE_KILL_S * 1000:
                     s.kill_proc()
-            # v2.20：多模态优先——只有存在「非多模态」的活用户会话才需要识图
-            # 会话兜底；不需要时把闲置的识图会话收掉（不白占一个后台 claude
-            # 进程；正在忙的不动）。配置未启用时 ensure_vision_session 是空操作。
-            if _vision_needed():
-                ensure_vision_session()
-            else:
-                with _vision_lock:
-                    v = _vision_obj[0]
-                if v and v.alive and not v.busy:
-                    v.kill_proc()
+            # v2.28：识图会话退役——GC 不再保活/拉起；升级前实例里的遗留
+            # 识图会话（若有）闲置即收
+            with _vision_lock:
+                v = _vision_obj[0]
+            if v and v.alive and not v.busy:
+                v.kill_proc()
         except Exception:
             pass
 
@@ -1727,52 +1706,6 @@ def _peer_poll_loop():
                 s._check_peer_lines()
         except Exception:
             pass
-
-
-def _vision_needed(new_model=None):
-    """当前是否需要识图会话（v2.20：多模态优先）。
-
-    用户口径：模型本身多模态就直接用主会话读图，只有存在「非多模态」的
-    活用户会话（或即将新建的会话模型非多模态）才需要识图会话兜底。
-    v2.3.2 保底修正（用户实锤）：MCP 识图类（'mcp'）会话也保留识图会话
-    ——MCP 通道依赖外部服务，会故障（实测 analyze_image 全量 1210），
-    引导词里写的「MCP 失败转交识图会话保底」要求识图会话真的在跑，
-    否则 GC 把它收掉后降级无门，只能用户手动拉起。代价：后台常驻一个
-    识图 claude 进程（有 mcp 会话活跃时），换故障兜底，值。
-    """
-    # v2.27.11：三态分类——inline 自己能识图；None 无识图；mcp 需保底（v2.3.2）
-    if new_model is not None:
-        mode = _model_vision_mode(new_model)
-        return mode is None or mode == "mcp"
-    default_model = available_models().get("default")
-    with _sessions_lock:
-        for s in list(_sessions.values()):
-            if getattr(s, "hidden", False) or getattr(s, "is_vision", False):
-                continue
-            # model=None 按 settings 默认模型判（实际跑的就是它）
-            if s.alive:
-                mode = _model_vision_mode(s.model or default_model)
-                if mode is None or mode == "mcp":
-                    return True
-    return False
-
-
-def ensure_vision_bg(new_model=None):
-    """工具启动 claude 后自动拉起识图会话（放线程里，不阻塞启动）。
-    daemon 线程 + 吞异常：识图起不来不能影响主功能可用。
-    v2.20：带模型判定——多模态会话不需要识图，不拉（省一个后台 claude 进程）。
-    v2.27.11：MCP 识图模型同样不需要（自己能调 analyze_image）。
-    v2.3.2 审计 P3：mcp 模型也拉——MCP 通道依赖外部服务会故障（analyze_image
-    全量 1210 实测），保底会话要在而不等 60s GC 周期（与 _vision_needed 口径
-    对齐），否则 connect 后一分钟内 MCP 挂掉无兜底。"""
-    if new_model is not None and _model_vision_mode(new_model) == "inline":
-        return
-    def _run():
-        try:
-            ensure_vision_session()
-        except Exception:
-            pass
-    threading.Thread(target=_run, daemon=True).start()
 
 
 # ---------------------------------------------------------------------------
@@ -1876,6 +1809,20 @@ def transcript_for(s):
                                 # 执行结果挂回对应 tool_use 行（前端详情弹层用）
                                 for b in trs:
                                     line = call_by_id.get(b.get("tool_use_id"))
+                                    # v2.28：识图 MCP 调用——结果落 peer 行（前端
+                                    # 📥 回传气泡），对应 vision_relay 分割线定格用时
+                                    if isinstance(line, dict) and "_vr" in line:
+                                        rc = b.get("content")
+                                        if isinstance(rc, list):
+                                            rc = chr(10).join(x.get("text", "") for x in rc
+                                                              if isinstance(x, dict) and x.get("type") == "text")
+                                        vrow = line["_vr"]
+                                        vrow["dur"] = _iso_dur_sec(vrow.get("ts"), o.get("timestamp"))
+                                        vrow["err"] = bool(b.get("is_error"))
+                                        lines.append({"role": "peer", "name": "识图",
+                                                      "text": (rc or "（识图失败，无返回内容）")[:8000],
+                                                      "ts": o.get("timestamp") or ""})
+                                        continue
                                     if line is None or line.get("result") is not None:
                                         continue
                                     rc = b.get("content")
@@ -1930,6 +1877,16 @@ def transcript_for(s):
                         if t:
                             lines.append({"role": "assistant", "text": t[:8000]})
                         for tl in tools:
+                            if tl["name"] == _VISION_TOOL:
+                                # v2.28：识图 MCP = vision_relay 分割线行（前端 📤
+                                # 转交线+秒表），不出普通工具卡；结果由 tool_result
+                                # 分支挂回成 peer 行（📥 回传气泡）
+                                row = {"role": "vision_relay", "dur": None,
+                                       "ts": tl.get("ts") or ""}
+                                lines.append(row)
+                                if tl["id"]:
+                                    call_by_id[tl["id"]] = {"_vr": row}
+                                continue
                             row = {"role": "tool", "text": tl["name"], "summary": tl["summary"],
                                    "input": tl["input"], "result": None,
                                    "ts": tl.get("ts") or ""}
@@ -2011,14 +1968,7 @@ def harness_connect():
             return jsonify({"ok": False, "err": "会话不存在"}), 404
         if not s.alive and not s.revive_if_dead():
             return jsonify({"ok": False, "err": "会话已失效（无法恢复上下文）"}), 400
-        # v2.20：多模态会话不拉识图（模型自己能读图）；model=None 按
-        # settings 默认模型判（实际跑的就是它）
-        # v2.27.11：三态——inline/mcp 会话都能自己识图，只有 None 才拉识图会话
-        # v2.3.2 审计 P3：mcp 也拉（MCP 服务故障时的保底，与 _vision_needed
-        # 同口径——否则 connect 后 60s GC 周期前无兜底）
-        eff = s.model or available_models().get("default")
-        if _model_vision_mode(eff) in (None, "mcp"):
-            ensure_vision_bg(eff)
+        # v2.28：识图走 MCP 通道（注入所有会话），连接时不再拉识图会话
         return jsonify({"ok": True, "port_id": s.port_id, "sid": s.sid, "kind": "harness",
                         "cwd": s.cwd, "model": s.model, "title": s.title})
     # 新会话
@@ -2033,9 +1983,6 @@ def harness_connect():
     s.sync_meta()
     with _sessions_lock:
         _sessions[new_sid] = s
-    # v2.14：启动 claude 会话即后台拉起识图会话；v2.20：多模态优先——
-    # 新会话模型自己能读图就不拉（s.model 空时用 settings 默认模型判）
-    ensure_vision_bg(s.model or available_models().get("default"))
     return jsonify({"ok": True, "port_id": s.port_id, "sid": s.sid, "kind": "harness",
                     "cwd": s.cwd, "model": s.model, "title": s.title})
 
@@ -2096,10 +2043,6 @@ def harness_send():
     ok, err = s.send_message(text, images or None, files or None)
     if not ok:
         return jsonify({"ok": False, "err": err}), 400
-    # v2.21：兜底即时拉起——非多模态会话发消息时若识图会话不在跑，当场
-    # 起一个（异步线程），不等 GC 周期。重复调用是幂等的（已在跑就空操作）
-    if _vision_needed():
-        ensure_vision_bg()
     return jsonify({"ok": True})
 
 
@@ -2518,11 +2461,10 @@ def harness_recover():
 def harness_models():
     d = available_models()
     # v2.19：附带多模态名单（前端下拉打 👁 标记；判定口径同 start() 注入）
-    mm_mcp = [m for m in d.get("models", []) if _model_vision_mode(m) == "mcp"]
+    # v2.28.1：mm_mcp 字段退役——非真多模态一律走 MCP（默认态），无需枚举
     return jsonify({"ok": True, "models": d.get("models", []),
                     "default": d.get("default"),
-                    "mm": [m for m in d.get("models", []) if _model_is_multimodal(m)],
-                    "mm_mcp": mm_mcp})
+                    "mm": [m for m in d.get("models", []) if _model_is_multimodal(m)]})
 
 
 @harness_bp.route("/mcp_list")
@@ -2549,48 +2491,15 @@ def harness_mcp_list():
 
 @harness_bp.route("/vision_status")
 def harness_vision_status():
-    """识图会话工作状态（v2.19 前端指示器/冒泡轮询用）。
-
-    hidden 会话不出现在会话列表、前端也没订阅它的 SSE，状态只能拉：
-    enabled / alive / busy / busy_since（处理计时起点=最近一条
-    user_echo）/ recent（尾部事件摘要，前端据此判定「收到任务」「已返回」
-    的跃迁）。"""
+    """v2.28：识图会话退役——状态 API 只回静态退役形态。前端徽章按
+    needed=false + alive=false 显示「多模态直读/关闭」，不再有会话态。
+    保留端点是为兼容旧前端轮询（改字段会 JS 报错）。"""
     cfg = _vision_load()
-    if not cfg["enabled"]:
-        return jsonify({"ok": True, "enabled": False, "needed": False})
-    with _vision_lock:
-        s = _vision_obj[0]
-    out = {"ok": True, "enabled": True, "name": cfg["name"], "model": cfg["model"],
-           "alive": bool(s and s.alive), "busy": bool(s and s.busy),
-           "needed": _vision_needed(),
-           "sid": (s.sid if s else ""),   # v2.24.10 主会话按此拉全文（结论代传兜底）
-           "last_seq": 0, "recent": [], "busy_since": None,
-           "last_done": 0, "last_brief": ""}
-    if s:
-        out["last_seq"] = s._seq
-        # v2.3.2：busy_since 直读对象字段（busy 被置起时同步设置）——原实现
-        # 回扫尾部 12 条事件的 user_echo，但 peer 消息触发的识图任务不走
-        # harness send、没有 user_echo 事件，busy=True 而 since=None，前端
-        # 顶栏/侧栏徽章恒显 0s（用户实锤「计时冻结」）。
-        if s.busy:
-            out["busy_since"] = s.busy_since
-        with s.events_lock:
-            evs = list(s.events)[-12:]
-        # v2.25：完成时刻/摘要改读持久字段（emit 时落盘）——原从尾部 12 条
-        # 事件回扫，识图轮次密集时 result 被挤出窗口，last_done 归 0，前端
-        # 冒泡整个漏掉（v2.24.9 修复不彻底，用户继续反馈「冒泡还是异常」）
-        vd = getattr(s, "vision_done", None) or {}
-        out["last_done"] = vd.get("ts") or 0
-        out["last_brief"] = vd.get("brief") or ""
-        recent = []
-        for e in evs:
-            brief = e.get("text") or ""
-            if not brief and isinstance(e.get("data"), dict):
-                brief = e.get("data").get("type") or ""
-            recent.append({"ts": e.get("ts"), "kind": e.get("kind"),
-                           "brief": str(brief)[:80]})
-        out["recent"] = recent
-    return jsonify(out)
+    return jsonify({"ok": True, "enabled": bool(cfg["enabled"]),
+                    "name": cfg["name"], "model": cfg["model"],
+                    "alive": False, "busy": False, "needed": False,
+                    "sid": "", "last_seq": 0, "recent": [], "busy_since": None,
+                    "last_done": 0, "last_brief": ""})
 
 
 @harness_bp.route("/system_prompt", methods=["GET"])
@@ -2658,10 +2567,9 @@ def harness_set_prompt():
 
 @harness_bp.route("/mm_probe", methods=["POST"])
 def harness_mm_probe():
-    """运行时探测一个模型的识图能力（v2.27.12 三态两段式）。body: {model}。
-    inline → 并入 mm_extra（👁）；mcp → 并入 mm_mcp（🔧）；None → 仅记缓存。
-    mm_probed 只存 inline 布尔结论——mcp 不能存 True（_model_is_multimodal
-    会把它误判成直读），mcp 结论由 mm_mcp 名单承载。"""
+    """运行时探测一个模型的识图能力（v2.28.1 单段式：只测真多模态直读）。
+    body: {model}。inline → 并入 mm_extra（👁）并记缓存 True；非 inline →
+    记缓存 False，分类自动落 mcp（默认通道，无需名单）。"""
     data = request.get_json(force=True, silent=True) or {}
     model = str(data.get("model") or "").strip()
     if not model:
@@ -2669,13 +2577,8 @@ def harness_mm_probe():
     pkey = _mm_probe_key(model)     # v2.27.2：按方案签名缓存，切方案自动重探
     cached = _mm_probed_load().get(pkey)
     if cached is not None:
-        # 缓存只覆盖 inline 判定；mcp 名单命中说明缓存前探测出的就是 mcp
-        cfg0 = _vision_load()
-        on_mcp = any(model.lower() == (x or "").lower()
-                     or model.lower().startswith((x or "").lower() + "[")
-                     for x in cfg0.get("mm_mcp") or [])
-        mode = "inline" if cached else ("mcp" if on_mcp else None)
-        label = {"inline": "真多模态（直读）", "mcp": "MCP 识图", None: "无识图（转交）"}[mode]
+        mode = "inline" if cached else "mcp"
+        label = "真多模态（直读）" if cached else "非真多模态（走 MCP 通道）"
         return jsonify({"ok": True, "model": model, "mode": mode,
                         "cached": True, "msg": "缓存结果（当前方案）：" + label})
     with _MM_PROBE_LOCK:          # 探测要起子进程，同时只跑一个
@@ -2694,7 +2597,7 @@ def harness_mm_probe():
     p = v.get("mm_probed")
     if not isinstance(p, dict):
         p = {}
-    p[pkey] = (mode == "inline")   # 仅 inline 记 True；mcp 记 False 防误判直读
+    p[pkey] = (mode == "inline")   # 仅 inline 记 True；False = 走 MCP 通道
     v["mm_probed"] = p
     d[_VISION_KEY] = v
     try:
@@ -2704,52 +2607,42 @@ def harness_mm_probe():
         os.replace(tmp, _st.CONFIG_FILE)
     except Exception:
         pass
-    # 名单归位：inline → mm_extra；mcp → mm_mcp（同名从另一名单移除防双标）
-    cfg = _vision_load()
-    lname = model.lower()
-    def _in(lst):
-        return any(lname == (x or "").lower() or lname.startswith((x or "").lower() + "[")
-                   for x in lst)
-    if mode == "inline" and not _in(cfg["mm_extra"]):
-        cfg["mm_extra"] = list(cfg["mm_extra"]) + [model]
-    elif mode == "mcp" and not _in(cfg.get("mm_mcp") or []):
-        cfg["mm_mcp"] = list(cfg.get("mm_mcp") or []) + [model]
-    if mode in ("inline", "mcp"):
-        other = "mm_mcp" if mode == "inline" else "mm_extra"
-        cfg[other] = [x for x in (cfg.get(other) or [])
-                      if not (lname == (x or "").lower()
-                              or lname.startswith((x or "").lower() + "["))]
-    _vision_save(cfg)
+    # 名单归位：inline → mm_extra（真多模态 👁 名单）；mcp 无需名单（默认态）
+    if mode == "inline":
+        cfg = _vision_load()
+        lname = model.lower()
+        if not any(lname == (x or "").lower() or lname.startswith((x or "").lower() + "[")
+                   for x in cfg["mm_extra"]):
+            cfg["mm_extra"] = list(cfg["mm_extra"]) + [model]
+            _vision_save(cfg)
     return jsonify({"ok": True, "model": model, "mode": mode, "msg": msg})
 
 
 @harness_bp.route("/vision", methods=["GET"])
 def harness_get_vision():
-    """读识图会话配置 + 运行时状态（是否已就绪、实际存活）。
-    附带 defaults 供前端「恢复默认」按钮用。"""
+    """读识图配置（v2.28.2：MCP 后端配置——模型/端点映射/提示词）。
+    附带 defaults 供前端「恢复默认」按钮用（mcp_prompt 缺省取 MCP 内置）。"""
+    from .harness_vision_mcp import MCP_DEFAULT_SYSTEM
     cfg = _vision_load()
-    with _vision_lock:
-        s = _vision_obj[0]
     return jsonify({"ok": True, "vision": cfg,
-                    "defaults": {"prompt": VISION_DEFAULT_PROMPT,
-                                 "name": VISION_DEFAULT_NAME},
-                    "running": bool(s is not None and s.alive),
+                    "defaults": {"mcp_prompt": MCP_DEFAULT_SYSTEM,
+                                 "model_map": {}},
+                    "running": False,
                     "models": available_models().get("models", []),
                     "default_model": available_models().get("default")})
 
 
 @harness_bp.route("/vision", methods=["POST"])
 def harness_set_vision():
-    """写识图会话配置。body: {enabled, model, prompt, name}。
-    改了配置就让旧进程失效（下次 ensure 用新配置重建），
-    避免新旧提示词/模型混用。"""
+    """写识图配置。body: {enabled, model, mcp_prompt?, model_map?, mm_extra?}。
+    v2.28.2：配置即 MCP 行为——MCP 每次调用时读盘，改完即刻生效，无需
+    重启会话。旧键 prompt/name（会话时代）不再写入，存量值自然闲置。"""
     data = request.get_json(force=True, silent=True) or {}
     old = _vision_load()
     cfg = {
         "enabled": bool(data.get("enabled", False)),
         "model": str(data.get("model") or "").strip(),
-        "prompt": str(data.get("prompt") or "").strip() or VISION_DEFAULT_PROMPT,
-        "name": str(data.get("name") or "").strip() or VISION_DEFAULT_NAME,
+        "mcp_prompt": str(data.get("mcp_prompt") or "").strip(),
     }
     # v2.25：mm_extra（多模态手补名单）随保存一起落盘——旧实现重建 cfg 时
     # 没带这个字段，_vision_save 整体覆盖后用户配过的名单被静默清空
@@ -2758,24 +2651,35 @@ def harness_set_vision():
         cfg["mm_extra"] = [str(x).strip() for x in mm if str(x).strip()]
     else:
         cfg["mm_extra"] = list(old.get("mm_extra") or [])
+    # v2.28.2：端点模型映射——dict 或 "关键字=模型" 行列表均收，未提交保旧值
+    mmap_raw = data.get("model_map")
+    if isinstance(mmap_raw, dict) or isinstance(mmap_raw, list):
+        mmap = {}
+        if isinstance(mmap_raw, dict):
+            for k, v in mmap_raw.items():
+                if str(k).strip() and str(v).strip():
+                    mmap[str(k).strip().lower()] = str(v).strip()
+        else:
+            for line in mmap_raw:
+                kv = str(line).split("=", 1)
+                if len(kv) == 2 and kv[0].strip() and kv[1].strip():
+                    mmap[kv[0].strip().lower()] = kv[1].strip()
+        cfg["model_map"] = mmap
+    else:
+        cfg["model_map"] = dict(old.get("model_map") or {})
     ok, err = _vision_save(cfg)
     if not ok:
         return jsonify({"ok": False, "err": err or "写入失败"}), 500
-    # 配置有实质变化 → 停掉旧进程（下次 ensure 用新配置重建）
-    if any(old.get(k) != cfg[k] for k in ("enabled", "model", "prompt", "name")):
-        stop_vision_session()
     return jsonify({"ok": True, "vision": cfg})
 
 
 @harness_bp.route("/vision/start", methods=["POST"])
 def harness_start_vision():
-    """手动拉起识图会话（工具启动时也会自动拉起；这是给用户手动重试用）。"""
-    if not _vision_load()["enabled"]:
-        return jsonify({"ok": False, "err": "识图会话未启用"}), 400
-    s = ensure_vision_session()
-    if s is None:
-        return jsonify({"ok": False, "err": "启动失败（检查 claude 可用性与模型名）"}), 500
-    return jsonify({"ok": True, "sid": s.sid, "name": s.name, "model": s.model})
+    """v2.28：识图会话退役——手动拉起端点改为返回退役说明（前端重试按钮
+    不再拉起后台会话；识图走 MCP 通道，无需预热）。"""
+    return jsonify({"ok": False,
+                    "err": "识图会话已退役：识图改走 MCP 通道"
+                           "（mcp__4_5v_mcp__analyze_image），无需手动拉起"}), 400
 
 
 @harness_bp.route("/vision/stop", methods=["POST"])

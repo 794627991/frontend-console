@@ -247,7 +247,7 @@ function buildClaudeHarnessTab(opts = {}) {
         </div>
         <div class="hg-search-wrap"><input class="hg-search" data-hg-search placeholder="搜索会话" spellcheck="false"></div>
         <div class="hg-sessions" data-hg-sessions></div>
-        <button class="hg-prompt-btn" data-hg-vision title="识图会话配置（多模态识图，转交主会话的看图任务）">👁 识图会话</button>
+        <button class="hg-prompt-btn" data-hg-vision title="识图配置（MCP 识图模型/端点映射/提示词）">👁 识图配置</button>
         <button class="hg-prompt-btn" data-hg-prompt title="管理自定义提示词（全局/项目，会话启动时注入）">📜 提示词</button>
         <button class="hg-prompt-btn" data-hg-proxy-btn title="Claude 代理：重试代理（429/5xx 自动重试）+ 用量统计。点开代理面板">
           <img src="/ico/proxy.png" alt="proxy" style="width:14px;height:14px;vertical-align:-2px;"> Proxy
@@ -1131,6 +1131,39 @@ function buildClaudeHarnessTab(opts = {}) {
   // v2.27.3：识图/跨会话协作的过程可见性（用户定调：全程要有反馈）——
   // 转交 = 分割线；回传 = 专属气泡。原实现回传内容直接被丢弃（user 事件
   // 只处理 tool_result），结论"凭空消失"，只有主会话转述才可见。
+  // v2.28.3：定格指定识图分割线（多调用并发时 peerWait 单槽不够用——
+  // 每条线按 tool_use_id 对应自己的元素，各自定格互不干扰）
+  function _hgVisionFreeze(el, err) {
+    if (!el || !el.isConnected) return;
+    const i = el.querySelector('i');
+    if (!i) return;
+    const dur = fmtDur((Date.now() - (+(el.dataset.t0 || 0))) / 1000);
+    i.innerHTML = err
+      ? '📤 已转交 · ⚠ 识图失败 · 用时 ' + dur
+      : '📤 已转交 · 📥 已回传 · 用时 ' + dur;
+  }
+  // v2.28.3：回合终结（result/中断/进程退出）仍未回传的识图线——停表并
+  // 标注，不让秒表空转到天荒地老
+  function _hgVisionSweep(dead) {
+    const vc = _HG.visionCalls;
+    if (!vc) return;
+    for (const id in vc) {
+      const el = vc[id];
+      const i = el && el.querySelector('i');
+      if (i) i.innerHTML = '📤 已转交 · 等待结论回传' + (dead ? '（回合已结束）' : '（历史未完成）');
+      if (_HG.peerWait && _HG.peerWait.el === el) _hgPeerWaitStop();
+    }
+    _HG.visionCalls = null;
+  }
+  // v2.28：识图 MCP 转交线历史回看——静态渲染（后端已算好 dur），无计时器
+  function renderVisionRelayHist(l) {
+    const d = document.createElement('div'); d.className = 'h-switch';
+    d.innerHTML = l.dur != null
+      ? '<span></span><i>' + (l.err ? '📤 已转交 · ⚠ 识图失败' : '📤 已转交 · 📥 已回传')
+        + ' · 用时 ' + esc(fmtDur(l.dur)) + '</i><span></span>'
+      : '<span></span><i>📤 已转交 识图 · 等待结论回传（历史未完成）</i><span></span>';
+    addRow(d);
+  }
   function renderPeerRelay(to, t0ms) {    // 📤 已转交分割线（带等待计时）
     _hgPeerWaitStop();                    // 防重复：新转交接管旧等待
     const d = document.createElement('div'); d.className = 'h-switch';
@@ -1141,6 +1174,7 @@ function buildClaudeHarnessTab(opts = {}) {
     d.dataset.t0 = String(t0);            // 快照恢复后重启计时用
     _hgPeerTimerStart(d, t0);
     scrollBottom();
+    return d;                             // v2.28.3：识图多调用并发时按 id 对线
   }
   // v2.3.2：等待计时器独立函数——快照恢复（switchTo innerHTML 重建）后
   // 原 interval 已死、计时冻结在快照时刻；恢复路径对未定格线重挂 interval。
@@ -1206,12 +1240,13 @@ function buildClaudeHarnessTab(opts = {}) {
     }
     if (!el) return;
     const secs = _HG.compactT0 ? fmtDur((Date.now() - _HG.compactT0) / 1000) : '';
-    // v2.21：headless 下压缩只可能是 CLI 自动触发（无手动入口）——明说，
-    // 并带上压缩前规模（用户问过「为啥 150K 就压」，信息透明少猜谜）
+    // v2.28.4：压缩来源两途——窗口临近自动触发，或 /compact 手动触发
+    // （CLI 2.1.267 实测 headless 下斜杠命令真实执行），分割线统一渲染，
+    // 带上压缩前规模（用户问过「为啥 150K 就压」，信息透明少猜谜）
     const scale = _HG.compactUsed ? ' · 压缩前约 ' + (_HG.compactUsed / 1000).toFixed(0) + 'K tokens' : '';
     el.querySelector('i').textContent = done
-      ? '自动压缩完成' + scale + ' · 用时 ' + secs
-      : '正在自动压缩上下文 · 已 ' + secs + scale;
+      ? '上下文压缩完成' + scale + ' · 用时 ' + secs
+      : '正在压缩上下文 · 已 ' + secs + scale;
     scrollBottom();
   }
   function _hgCompactionEnd() {
@@ -1256,6 +1291,9 @@ function buildClaudeHarnessTab(opts = {}) {
   function renderHistLine(l, hi) {
     if (l.role === 'peer') {          // v2.27.3：跨会话回传（识图结论）历史回看
       renderPeer(l.name, l.text);
+    }
+    else if (l.role === 'vision_relay') {  // v2.28：识图 MCP 转交线（历史回看）
+      renderVisionRelayHist(l);
     }
     else if (l.role === 'renew') {    // v2.27.23：超窗续命注入折叠为一行分割线
       renderRenew(l.text);
@@ -1990,15 +2028,46 @@ function buildClaudeHarnessTab(opts = {}) {
         if (b.type === 'thinking' && b.thinking) { closeRun(); appendThinking(b.thinking); }
         else if (b.type === 'text' && b.text && b.text.trim()) { endThinking(); closeRun(); renderAsst(b.text, isSub); }
         else if (b.type === 'tool_use') {
-          endThinking(); renderToolUse(b, isSub);
-          // v2.27.3：转交识图/其他会话 = 强过程反馈，分割线比收起的工具行显眼
-          if (!isSub && b.name === 'SendMessage' && b.input && b.input.to)
-            renderPeerRelay(b.input.to);
+          endThinking();
+          // v2.28：识图 MCP 全面接管——📤 转交线+秒表替代普通工具卡；
+          // tool_result 到达时定格对应转交线并渲染 📥 回传气泡。
+          // v2.28.3：按 id 记线（map），一轮多图并行调用各对各的线
+          if (!isSub && b.name === 'mcp__4_5v_mcp__analyze_image') {
+            const el = renderPeerRelay('识图');
+            (_HG.visionCalls || (_HG.visionCalls = {}))[b.id] = el;
+          } else {
+            renderToolUse(b, isSub);
+            // v2.27.3：转交识图/其他会话 = 强过程反馈，分割线比收起的工具行显眼
+            if (!isSub && b.name === 'SendMessage' && b.input && b.input.to)
+              renderPeerRelay(b.input.to);
+          }
         }
       }
       scrollBottom();
     } else if (typ === 'user') {
       const c0 = (o.message || {}).content;
+      // v2.28.3：识图 MCP 回传——按 tool_use_id 在 pending 线里对号，
+      // 定格它自己的分割线+渲染 📥 气泡（并行多图互不串线）
+      if (Array.isArray(c0) && _HG.visionCalls) {
+        const tr = c0.find(b => b && b.type === 'tool_result'
+          && _HG.visionCalls[b.tool_use_id]);
+        if (tr) {
+          const el = _HG.visionCalls[tr.tool_use_id];
+          delete _HG.visionCalls[tr.tool_use_id];
+          const vtxt = Array.isArray(tr.content)
+            ? tr.content.filter(x => x && x.type === 'text').map(x => x.text).join('\n')
+            : String(tr.content || '');
+          // 先定格本线；peerWait 若指向别的还在等待的线，摘开画完气泡再还
+          // 回去（renderPeer 内部会定格 peerWait 指向的线——不能让它冻错）
+          const pw = _HG.peerWait;
+          _HG.peerWait = null;
+          _hgVisionFreeze(el, !!tr.is_error);
+          renderPeer('识图', vtxt.trim() || '（识图失败，无返回内容）');
+          if (pw && pw.el !== el) _HG.peerWait = pw;   // 他线还在等，还回去继续计时
+          scrollBottom();
+          return;
+        }
+      }
       // v2.27.3：跨会话回传（识图结论等）——专属气泡，不再凭空消失
       let peerText = '';
       if (typeof c0 === 'string' && c0.trim().startsWith('Another Claude session sent a message'))
@@ -2025,6 +2094,7 @@ function buildClaudeHarnessTab(opts = {}) {
       _hgCompactionEnd();                  // v2.20：status 恢复事件若丢，result 兜底收压缩态
       endThinking();
       closeRun();
+      _hgVisionSweep(true);                // v2.28.3：回合终结算清未回传的识图线
       grpFinalize(true);                   // v2.18：本轮组定稿——用户没手动
                                           // 操作过且在底部跟读时自动收起（想看再点开，
                                           // 各抽屉独立开合）
@@ -2070,11 +2140,11 @@ function buildClaudeHarnessTab(opts = {}) {
       else if (it.kind === 'ask') { grpFinalize(true); askRender(it); }
       else if (it.kind === 'ask_done') askDone(it);
       else if (it.kind === 'interrupted') {
-        endThinking(); grpFinalize(true); renderExit(it.text); setBusy(false);
+        endThinking(); _hgVisionSweep(true); grpFinalize(true); renderExit(it.text); setBusy(false);
         // v2.15：通知 stopGen 兜底逻辑「事件到了」，别重复收尾
         try { document.dispatchEvent(new CustomEvent('hg-interrupted', {detail: _HG.sid})); } catch(_) {}
       }
-      else if (it.kind === 'exit') { endThinking(); _HG.alive = false; grpFinalize(true); renderExit(it.text); setBusy(false); }
+      else if (it.kind === 'exit') { endThinking(); _hgVisionSweep(true); _HG.alive = false; grpFinalize(true); renderExit(it.text); setBusy(false); }
       // v2.20：会话内切模型 → 消息流插一条分割线（「已切换模型 · xxx」）
       else if (it.kind === 'model_switched') {
         grpFinalize(true);
@@ -2812,7 +2882,7 @@ function buildClaudeHarnessTab(opts = {}) {
     ['/clear', '新建会话（原会话保留可切回）'],
     ['/model', '打开模型菜单；/model 名 直接切换（模糊匹配）'],
     ['/status', '会话状态与上下文用量'],
-    ['/compact', '压缩说明（headless 走自动压缩）'],
+    ['/compact', '手动压缩上下文（可附保留要点：/compact 保留串口配置等）'],
     ['/mcp', 'MCP 服务器列表与连接状态（代跑 claude mcp list）'],
     ['/exit', '退出 claude 进程（会话保留，发送自动恢复）'],
   ];
@@ -2942,11 +3012,11 @@ function buildClaudeHarnessTab(opts = {}) {
       }
       renderSysCard('会话状态', rows);
     } else if (cmd === 'compact') {
-      renderSysCard('/compact', [
-        ['说明', 'harness 以 claude -p 无头方式运行，没有 CLI 交互式的手动压缩入口'],
-        ['自动', '上下文接近模型窗口上限时 CLI 自动压缩（消息流有压缩分割线与耗时）'],
-        ['替代', '要立即释放上下文可用 /clear 新开会话，原会话保留随时切回'],
-      ]);
+      // v2.28.4：实测 CLI 2.1.267 headless（stream-json stdin）下，用户消息
+      // 里的斜杠命令会被真实执行——发 /compact 触发 compacting 状态事件
+      // →压缩→重新 init（事件流 v2.20 已有分割线渲染）。走正常发送管线，
+      // 压缩过程与耗时照常显示；arg 作为保留要点附给 CLI。
+      await dispatch('/compact' + (arg ? ' ' + arg : ''), null, null, false);
     } else if (cmd === 'exit') {
       if (!_HG.sid) { showBanner('当前没有活动会话', 2200); return true; }
       fetch('/api/harness/kill', {method:'POST', headers:{'Content-Type':'application/json'},
@@ -3432,14 +3502,12 @@ function buildClaudeHarnessTab(opts = {}) {
     const anchor = e.currentTarget;
     await fetchModels();
     const cur = _HG.model || _HG.models.default;
-    // v2.19：多模态模型打 👁——这类模型的会话自己读图，不转交识图会话
-    // v2.27.11：三态分类——真多模态 👁 / MCP 识图 🔧（调 analyze_image）
+    // v2.19：多模态模型打 👁——这类模型的会话自己读图
+    // v2.28.1：两态——真多模态 👁 / 其余全部走 MCP 通道（无需标记）
     const mmSet = new Set(_HG.models.mm || []);
-    const mcpSet = new Set(_HG.models.mm_mcp || []);
     const items = (_HG.models.models || []).map(m =>
       `<div class="hg-pop-item${m === cur ? ' on' : ''}" data-model="${esc(m)}"><b>${esc(m)}</b>${
-        mmSet.has(m) ? `<span title="多模态：可直接读图，图片不转交识图会话">${_HG_EYE} 多模态</span>`
-        : mcpSet.has(m) ? '<span title="MCP 识图：模型自身看不了图，经 analyze_image MCP 识图，不转交识图会话">🔧 MCP识图</span>'
+        mmSet.has(m) ? `<span title="多模态：可直接读图">${_HG_EYE} 多模态</span>`
         : ''}${m === _HG.models.default ? '<span>默认</span>' : ''}</div>`).join('')
       || '<div class="hg-pop-empty">读取 settings.json 模型映射失败</div>';
     openPop('model', anchor, `<div class="hg-pop-title">模型（会话内切换即时生效，上下文保留）</div>${items}`);
@@ -3587,97 +3655,29 @@ function buildClaudeHarnessTab(opts = {}) {
   };
   permChipLabel(); thinkChipLabel();
 
-  // ==================== 识图会话工作指示（v2.19）====================
-  // 识图会话是 hidden 后台会话，不进会话列表、前端也没订阅它的 SSE——
-  // 它收没收到任务、干没干完，用户完全看不见。3s 轮询 /vision_status：
-  // 顶栏常驻小指示（空闲 / 处理中+计时 / 未运行），状态跃迁（新任务进来、
-  // 一轮返回）在输入卡上方冒一个小气泡，4s 自灭。1s 本地计时器只刷文本。
+  // ==================== 识图状态指示（v2.28.2 简化）====================
+  // 识图会话退役、MCP 接管后，识图过程直接显示在对话流里（📤 转交线+秒表 →
+  // 📥 回传气泡），无需 3s 轮询/冒泡/状态机——按钮只静态反映开关态。
   const visIndEl = q('[data-hg-visind]');
   const visBtnEl = q('[data-hg-vision]');
-  // v2.21：侧栏按钮状态徽标（用户要求：未启用/已启动/识别中 直接可见）
-  function visBtnState(txt, cls) {
-    visBtnEl.innerHTML = _HG_EYE + ' 识图会话 <span class="hg-vstat ' + (cls || 'off') + '">· ' + esc(txt) + '</span>';
-  }
-  let _visToastTimer = null;
-  function visToast(text, ms) {
-    let t = wrap.querySelector('.hg-vis-toast');
-    if (!t) {
-      t = document.createElement('div');
-      t.className = 'hg-vis-toast';
-      q('.hg-card-wrap').appendChild(t);
-    }
-    t.textContent = text;
-    t.classList.add('on');
-    clearTimeout(_visToastTimer);
-    _visToastTimer = setTimeout(() => t.classList.remove('on'), ms || 4000);
-  }
-  let _visPrev = null;               // {busy, since}
-  let _visSeq = 0;                   // v2.3.2 审计 P6：请求序号——visibilitychange 与 3s 轮询并发时乱序 resolve 的旧响应不得回写 _visPrev（否则假「收到任务」+重复「已返回」）
-  async function pollVision() {
-    const my = ++_visSeq;
+  if (visIndEl) visIndEl.style.display = 'none';   // 顶栏指示器退役
+  async function paintVisionBtn() {
     let j = null;
     try { j = await (await fetch('/api/harness/vision_status')).json(); } catch(_) {}
-    if (my !== _visSeq) return;       // 已有更新一轮在途/完成——丢弃本次（过期响应）
-    if (!j || !j.ok) return;          // 拉失败保持现状，别把按钮刷成误导态
-    if (!j.enabled) {
-      visIndEl.style.display = 'none';
-      visBtnState('未启用', 'off');
-      return;
-    }
-    const busy = !!j.busy, since = j.busy_since || null;
-    visIndEl.style.display = '';
-    visIndEl.classList.toggle('busy', busy);
-    visIndEl.title = '识图会话「' + (j.name || '') + '」· ' + (j.model || '默认模型');
-    // v2.20：多模态优先——没有需要识图的会话时指示器改说「多模态直读」，
-    // 不再常驻一句让人困惑的「未运行」。innerHTML 嵌 SVG 眼睛（emoji 嫌丑）
-    visIndEl.innerHTML = _HG_EYE + '<span>' + (busy
-      ? '识图 · 处理中 ' + fmtDur((since ? Date.now() - since : 0) / 1000)
-      : (j.alive ? '识图 · 空闲'
-         : (j.needed ? '识图 · 未运行' : '多模态直读'))) + '</span>';
-    // v2.21：侧栏按钮同步状态——alive=已启动(绿)；busy=识别中(蓝)；
-    // 不在跑但需要=启动中(黄，gc/发送钩子正在自动拉起)；不需要=多模态直读
-    visBtnState(busy ? '识别中 ' + fmtDur((since ? Date.now() - since : 0) / 1000)
-      : (j.alive ? '已启动' : (j.needed ? '启动中…' : '多模态直读')),
-      busy ? 'busy' : (j.alive ? 'ok' : (j.needed ? 'wait' : 'off')));
-    // v2.24.9 完成冒泡：识图全程可短至几秒，busy 翻转会被 3s 轮询整个错过
-    // ——改按 last_done（后端 result 时刻）变化触发，冒泡直接带结论摘要
-    const lastDone = j.last_done || 0, lastBrief = j.last_brief || '';
-    if (_visPrev) {
-      if (busy && !_visPrev.busy) visToast('识图会话已收到任务，正在处理…', 8000);
-      // 任务到达检测：busy_since 前移（busy 窗口短也不错过）。
-      // v2.3.2 修两处死分支：旧条件要求前值 since 非空（null 比较恒假，
-      // 首个任务永远不弹）；且后端 peer 任务无 user_echo 导致 since 恒 null
-      // （已在后端改直读对象字段）——本分支此前从未生效（用户实锤绝大多数
-      // 看不到「收到任务」气泡）
-      else if (since && since > (_visPrev.since || 0))
-        visToast('识图会话已收到任务，正在处理…', 8000);
-      // v2.25：右值兜 0——旧条件要求 _visPrev.lastDone 非 0，页面打开后
-      // 识图的第一次完成（前值还是 undefined/0）永远不弹（冒泡「还是异常」）
-      if (lastDone && lastDone > (_visPrev.lastDone || 0))
-        visToast('识图会话已返回：' + (lastBrief || '（结论见其会话）'), 9000);
-    }
-    _visPrev = {busy, since, lastDone};
+    if (!visBtnEl) return;
+    visBtnEl.innerHTML = _HG_EYE + ' 识图配置 <span class="hg-vstat ' +
+      (j && j.ok && j.enabled ? 'ok' : 'off') + '">· ' +
+      ((j && j.ok && j.enabled) ? '已启用（MCP）' : '未启用') + '</span>';
   }
-  pollVision();
-  setInterval(pollVision, 3000);
-  // v2.3.2：tab 从后台回来立刻拉一次——3s 轮询在 tab 隐藏期照跑但 toast
-  // 4~8s 自灭，用户不在场就错过；回来第一时间对比状态补弹
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) pollVision();
-  });
-  setInterval(() => {                 // 计时秒级刷新，不必等下一轮轮询
-    if (_visPrev && _visPrev.busy && _visPrev.since) {
-      const t = '识别中 ' + fmtDur((Date.now() - _visPrev.since) / 1000);
-      visIndEl.innerHTML = _HG_EYE + '<span>识图 · 处理中 ' + fmtDur((Date.now() - _visPrev.since) / 1000) + '</span>';
-      visBtnState(t, 'busy');
-    }
-  }, 1000);
+  paintVisionBtn();
+  // 保存/开关变化后由面板流程刷新——简单起见每 30s 兜底刷一次
+  setInterval(paintVisionBtn, 30000);
 
-  // ==================== 识图会话配置（v2.14）====================
-  // 后台常驻一个专用识图会话（固定多模态模型 + 固定 peer 名字）。主会话
-  // 不具备看图能力，需要识图时用 Claude Code 原生的 SendMessage 把图片
-  // 路径交给它，结论自动回传——不走 MCP、不自造通道。
-  // 「固定基础提示词」不占提示词列表位置，直接注入识图会话进程。
+  // ==================== 识图配置（v2.28.2：MCP 后端）====================
+  // 识图走 MCP 通道（mcp__4_5v_mcp__analyze_image，本地 harness_vision_mcp）。
+  // 这里配置 MCP 的识图模型/端点映射/提示词——多方案适配：不同 base_url
+  // 方案可各配各的识图模型（lanz 配 Lanz 系、bigmodel 配 glm 系）。
+  // 配置即行为：MCP 每次调用时读盘，改完即刻生效，无需重启会话。
   q('[data-hg-vision]').onclick = async () => {
     let j = null;
     try { j = await (await fetch('/api/harness/vision')).json(); } catch(_) {}
@@ -3689,15 +3689,11 @@ function buildClaudeHarnessTab(opts = {}) {
         headers:{'Content-Type':'application/json'}, body: JSON.stringify(saved)});
       const jr = await r.json();
       if (!jr.ok) { showBanner(jr.err || '保存失败', 3000, true); return; }
-      if (!saved.enabled) { showBanner('识图会话已关闭', 2600); return; }
-      // 保存后立即拉起，省得等下一轮 GC（用户改完就想知道能不能用）
-      const rs = await (await fetch('/api/harness/vision/start', {method:'POST'})).json();
-      if (rs.ok) showBanner(`识图会话已就绪（${rs.name} · ${rs.model || '默认模型'}），新会话即可转交识图`, 3600);
-      else showBanner('配置已存，但识图会话启动失败：' + (rs.err || '未知'), 4200, true);
+      showBanner(saved.enabled ? '识图配置已保存（MCP 通道，即刻生效）' : '识图已关闭', 3000);
     } catch(e) { showBanner('保存失败：' + e, 3000, true); }
   };
-  // 识图配置界面：开关 + 会话名 + 模型 + 固定基础提示词（可恢复默认）。
-  // 返回对象=保存；null=取消。
+  // 识图配置界面（v2.28.2）：开关 + MCP 识图模型 + 端点映射 + 提示词 +
+  // 真多模态名单（可恢复默认）。返回对象=保存；null=取消。
   function hgVisionManager(init) {
     return new Promise((resolve) => {
       const ov = document.createElement('div');
@@ -3706,44 +3702,43 @@ function buildClaudeHarnessTab(opts = {}) {
       const def = init.defaults || {};
       const models = init.models || [];
       const curModel = cfg.model || '';
-      const opts = ['<option value=""' + (curModel ? '' : ' selected') + '>默认模型</option>']
+      const opts = ['<option value=""' + (curModel ? '' : ' selected') + '>默认（' + 'glm-5.3-flash）</option>']
         .concat(models.map(m => `<option value="${esc(m)}"${m === curModel ? ' selected' : ''}>${esc(m)}</option>`))
         .join('');
-      ov.innerHTML = `<div class="hg-modal hg-modal-vision"><div class="hg-modal-title">👁 识图会话</div>
-        <div class="hg-modal-body hg-vision-hint">后台常驻一个专用会话负责看图，主会话需要识图时经 Claude Code 原生会话通讯把图片交给它，结论自动回传。<b>改了开关/模型/提示词会让旧会话失效，下条消息自动用新配置重启。</b></div>
+      const mapText = Object.entries(cfg.model_map || {})
+        .map(([k, v]) => `${k}=${v}`).sort().join('\n');
+      ov.innerHTML = `<div class="hg-modal hg-modal-vision"><div class="hg-modal-title">👁 识图配置</div>
+        <div class="hg-modal-body hg-vision-hint">识图走 MCP 通道（analyze_image 工具，随会话常备，无后台进程）。此处配置 MCP 调用的识图模型与提示词，<b>保存即生效</b>。主会话模型是真多模态则直读，不经过这里。</div>
         <div class="hg-vision-row">
-          <label class="hg-vision-switch"><input type="checkbox" data-hg-v-on${cfg.enabled ? ' checked' : ''}> 启用识图会话</label>
-          <span class="hg-vision-state" data-hg-v-state></span>
+          <label class="hg-vision-switch"><input type="checkbox" data-hg-v-on${cfg.enabled ? ' checked' : ''}> 启用识图</label>
+          <span class="hg-vision-state" style="font-size:11px;color:var(--muted);">MCP 通道 · 无后台进程</span>
         </div>
         <div class="hg-vision-grid">
-          <label>会话名（主会话按它寻找，支持中文）
-            <input data-hg-v-name value="${esc(cfg.name || def.name || '')}" placeholder="${esc(def.name || '')}"></label>
-          <label>识图模型（多模态）
+          <label>识图模型（MCP 后端，需多模态；当前方案未命中下方映射时用此项）
             <select data-hg-v-model>${opts}</select></label>
         </div>
-        <label class="hg-vision-prompt-lab">多模态模型名单（逗号分隔，模型下拉的 👁 标记以此为准）
+        <label class="hg-vision-prompt-lab">端点模型映射（每行一条：端点关键字=模型名——多方案适配，按当前 base_url 匹配，最长关键字命中优先）
+          <textarea class="hg-vision-mm" data-hg-v-map spellcheck="false" style="height:56px;font-family:var(--font-mono);"
+            placeholder="open.bigmodel.cn=glm-5.3-flash&#10;lanz.hikvision.com=Lanz-Medium-V">${esc(mapText)}</textarea></label>
+        <label class="hg-vision-prompt-lab">多模态模型名单（逗号分隔，模型下拉的 👁 标记以此为准；名单外的模型一律走 MCP 识图通道）
           <input class="hg-vision-mm" data-hg-v-mm spellcheck="false"
                  value="${esc((cfg.mm_extra || []).join(', '))}"
                  placeholder="如：glm-5.3 flash, Lanz-Medium-V（前缀匹配，填一个即可覆盖其 [1M] 变体）"></label>
-        <label class="hg-vision-prompt-lab">MCP 识图模型名单（逗号分隔，打 🔧 标记——模型自身看不了图，经 analyze_image MCP 识图，同样不转交识图会话）
-          <input class="hg-vision-mm" data-hg-v-mcp spellcheck="false"
-                 value="${esc((cfg.mm_mcp || []).join(', '))}"
-                 placeholder="如：glm-5.3, gpt-x（同样覆盖 [1M] 变体）"></label>
         <div style="display:flex;gap:8px;align-items:center;margin-top:4px;">
           <button class="btn ghost" data-hg-v-probe style="font-size:11px;">🔍 检测识图模型能否读图</button>
           <span data-hg-v-probe-out style="font-size:11px;color:var(--muted);"></span>
         </div>
-        <label class="hg-vision-prompt-lab">固定基础提示词（注入识图会话，不占提示词列表）
+        <label class="hg-vision-prompt-lab">识图提示词（作为识图请求的 system）
           <textarea class="hg-vision-prompt" data-hg-v-prompt spellcheck="false"></textarea></label>
         <div class="hg-modal-acts"></div></div>`;
       const acts = ov.querySelector('.hg-modal-acts');
       const close = (v) => { ov.remove(); resolve(v); };
       const ta = ov.querySelector('[data-hg-v-prompt]');
-      const nameEl = ov.querySelector('[data-hg-v-name]');
+      const mapEl = ov.querySelector('[data-hg-v-map]');
       const modelEl = ov.querySelector('[data-hg-v-model]');
       const onEl = ov.querySelector('[data-hg-v-on]');
       const mmEl = ov.querySelector('[data-hg-v-mm]');
-      ta.value = cfg.prompt || def.prompt || '';
+      ta.value = cfg.mcp_prompt || def.mcp_prompt || '';
       // v2.25：运行时探测——发张纯红测试图让该模型 Read，答对即多模态并
       // 自动并入名单（后端缓存，二次点秒回）。拿不准网关模型名是什么能力
       // 时点一下就行，不用猜也不用记。
@@ -3753,35 +3748,24 @@ function buildClaudeHarnessTab(opts = {}) {
         const m = modelEl.value.trim() || init.default_model || '';
         if (!m) { probeOut.textContent = '请先在上方选择识图模型'; return; }
         probeBtn.disabled = true;
-        probeOut.textContent = '探测中——两段式：先测直读，失败再测 MCP 通道，约 10~120s…';
-        const mcpEl = ov.querySelector('[data-hg-v-mcp]');
+        probeOut.textContent = '探测中——直读测试（真多模态检测），约 5~60s…';
         try {
           const r = await fetch('/api/harness/mm_probe', {method:'POST',
             headers:{'Content-Type':'application/json'}, body: JSON.stringify({model: m})});
           const j = await r.json();
           if (j && j.ok) {
-            // v2.27.12 三态：inline 👁 / mcp 🔧 / None ❌（后端已按结果归入对应名单）
-            const icon = j.mode === 'inline' ? '✅' : (j.mode === 'mcp' ? '🔧' : '❌');
+            // v2.28.1 两态：inline ✅ 真多模态 / mcp 🔧 走 MCP 通道（默认）
+            const icon = j.mode === 'inline' ? '✅' : '🔧';
             probeOut.textContent = icon + ' ' + (j.msg || '') + (j.cached ? '（缓存）' : '');
-            const fitsList = (el) => {
-              const cur = (el.value || '').split(/[,，;；\n]/).map(s => s.trim()).filter(Boolean);
+            if (j.mode === 'inline') {
+              const cur = (mmEl.value || '').split(/[,，;；\n]/).map(s => s.trim()).filter(Boolean);
               if (!cur.some(x => m === x || m.startsWith(x) || x.startsWith(m)))
-                el.value = ((el.value || '').replace(/\s+$/, '') ? el.value.replace(/\s+$/, '') + ', ' : '') + m;
-            };
-            if (j.mode === 'inline') fitsList(mmEl);
-            if (j.mode === 'mcp' && mcpEl) fitsList(mcpEl);
+                mmEl.value = ((mmEl.value || '').replace(/\s+$/, '') ? mmEl.value.replace(/\s+$/, '') + ', ' : '') + m;
+            }
           } else probeOut.textContent = '探测失败：' + ((j && j.err) || '未知');
         } catch(e) { probeOut.textContent = '探测失败：' + e; }
         probeBtn.disabled = false;
       };
-      const stateEl = ov.querySelector('[data-hg-v-state]');
-      const paint = () => {
-        stateEl.textContent = init.running ? '● 运行中' : (onEl.checked ? '○ 未运行（保存后自动拉起）' : '已关闭');
-        stateEl.className = 'hg-vision-state' + (init.running ? ' on' : '');
-      };
-      onEl.onchange = paint;
-      paint();
-
       const mkBtn = (label, primary, fn) => {
         const b = document.createElement('button');
         b.className = 'btn' + (primary ? ' primary' : '');
@@ -3790,23 +3774,23 @@ function buildClaudeHarnessTab(opts = {}) {
         return b;
       };
       mkBtn('取消', false, () => close(null));
-      mkBtn('恢复默认提示词', false, () => { ta.value = def.prompt || ''; ta.focus(); });
+      mkBtn('恢复默认提示词', false, () => { ta.value = def.mcp_prompt || ''; ta.focus(); });
       mkBtn('保存', true, () => close({
         enabled: onEl.checked,
         model: modelEl.value.trim(),
-        name: nameEl.value.trim() || (def.name || ''),
-        prompt: ta.value.trim(),
+        mcp_prompt: ta.value.trim(),
         // v2.25：多模态手补名单随保存落盘（后端按前缀匹配，覆盖 [1M] 变体）
         mm_extra: (ov.querySelector('[data-hg-v-mm]').value || '')
           .split(/[,，;；\n]/).map(s => s.trim()).filter(Boolean),
-        // v2.27.11：MCP 识图名单（三态分类）
-        mm_mcp: (ov.querySelector('[data-hg-v-mcp]').value || '')
-          .split(/[,，;；\n]/).map(s => s.trim()).filter(Boolean),
+        // v2.28.3：端点模型映射——发 "端点关键字=模型名" 字符串行（后端按此
+        // 解析；此前误发 [k,v] 元组数组，后端 str() 后无 '=' 被静默丢弃）
+        model_map: (mapEl.value || '').split(/\n+/).map(s => s.trim())
+          .filter(x => x.includes('=')),
       }));
       ov.addEventListener('click', (e) => { if (e.target === ov) close(null); });
       ov.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(null); });
       wrap.appendChild(ov);
-      nameEl.focus();
+      modelEl.focus();
     });
   }
 
