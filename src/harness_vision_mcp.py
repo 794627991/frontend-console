@@ -1,29 +1,32 @@
 # -*- coding: utf-8 -*-
-"""识图 MCP server（harness 会话内，stdio）——本地直通版 analyze_image。
+"""识图 MCP server（harness 会话内，stdio）——本地兜底通道 analyze_image。
 
-背景（2026-09-20 诊断定案）：主会话模型 glm-5.3 是纯文本模型（ZCode provider
-配置 modalities=["text"]、harness 双段探测也判 false），识图靠 mcp 通道。但
-`mcp__4_5v_mcp__analyze_image` 是 BigModel 网关在服务端注入的能力，claude CLI
-这条链路上拿不到（用户级/项目级/--mcp-config 三处都没有该 server，zcode.cjs
-bundle 里连字符串都搜不到）——模型按引导词去调，每次都死在执行层。
+架构（v2.28.5 双通道定案）：识图主通道是 BigModel 网关在服务端注入的
+mcp__4_5v_mcp__analyze_image（同名本地工具会被网关遮蔽成影子——实测 log
+零记录、零 tool_use）；但它依赖模型逐字复制长签名 CDN 链接，抄坏/截断/
+过期即 400/1210，且服务端黑盒不可观测不可配置。
 
-本文件就是补上这个洞：注册成名为 4_5v_mcp 的 MCP server，暴露 analyze_image
-工具，全名恰好是 mcp__4_5v_mcp__analyze_image——harness 引导词一字不用改。
+本文件是兜底通道：注册为名为 vision 的 MCP server，工具全名
+mcp__vision__analyze_image——独立名字不被网关遮蔽，主通道失败后模型
+按引导词兜底阶梯改调它，imageSource 直接传图片本地绝对路径（本工具
+直接读盘，不依赖链接，从结构上绕开抄 URL 这一失败类）。每次调用落
+vision_mcp.log 诊断日志。
 
-链路：模型传图片 URL（识图 CDN 链接 / 任意 http(s) 链接 / data: URL / 本地
-路径均可）→ 本进程下载转 base64 → 调 Anthropic 兼容 /v1/messages，模型用
-glm-5.3-flash（多模态，modalities=["text","image"]，探测缓存 inline=true）
-→ 结论作为工具返回值交回主会话。不依赖网关注入，直接通。
+链路：模型传图片（本地路径 / http(s) 链接 / data: URL 均可）→ 本进程
+取图转 base64 → 调 Anthropic 兼容 /v1/messages，模型按识图配置解析
+（端点映射 model_map 多方案自适应，[1M] 后缀自动降级裸名）→ 结论作为
+工具返回值交回主会话。
 
-端点与密钥解析顺序：env（HARNESS_VISION_BASE_URL/HARNESS_VISION_KEY，留空
-禁用该项）→ ~/.claude/settings.json 的 env.ANTHROPIC_BASE_URL /
-ANTHROPIC_AUTH_TOKEN（与主会话同源，代理挂着就走代理）→ 兜底智谱直连。
-主端点连不上（代理没跑）时自动改走直连重试一次，识图不因代理缺席而断。
+端点与密钥解析顺序：env（HARNESS_VISION_BASE_URL/HARNESS_VISION_KEY）→
+~/.claude/settings.json 的 env.ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN
+（与主会话同源，代理挂着就走代理）→ 兜底智谱直连。主端点连不上自动改走
+直连重试，识图不因代理缺席而断。
 """
 import base64
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -37,7 +40,36 @@ DIRECT_FALLBACK = "https://open.bigmodel.cn/api/anthropic"
 CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".serialconsole_pro",
                            "config.json")
 _VISION_CFG_KEY = "harness_vision"
-DEFAULT_MODEL = "glm-5.3-flash"
+# v2.3.12 修兜底识图全链瘫痪：默认 glm-5.3-flash 在 bigmodel 端点不存在
+# （实锤 1211 模型不存在，用户「MCP 识图没生效」的根因）。实测 glm-4.5v
+# 可用（视觉模型）；glm-4v-flash 亦可作免费替代（model_map/env 可覆盖）。
+DEFAULT_MODEL = "glm-4.5v"
+
+# 诊断日志（v2.28.4）：无头进程静默失败难排查（用户实锤两次 HTTP 400 无从
+# 定位入参）——每次调用记 imageSource/端点/模型/结果/耗时，超 512K 截半
+LOG_FILE = os.path.join(os.path.expanduser("~"), ".serialconsole_pro",
+                        "vision_mcp.log")
+
+
+def _log(msg):
+    try:
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + msg + "\n")
+        if os.path.getsize(LOG_FILE) > 512 * 1024:
+            with open(LOG_FILE, "r", encoding="utf-8") as f:
+                tail = f.read()[256 * 1024:]
+            tmp = LOG_FILE + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(tail)
+            os.replace(tmp, LOG_FILE)
+    except Exception:
+        pass
+
+
+def _src_brief(s):
+    """imageSource 日志形态：掐头去尾留中间签名段，可判截断不泄全链。"""
+    s = str(s or "")
+    return (s[:60] + " …[" + str(len(s)) + " chars]… " + s[-40:]) if len(s) > 120 else s
 
 _DL_TIMEOUT = 25          # 图片下载超时（秒）
 _DL_MAX = 15 * 1024 * 1024  # 图片大小上限（15MB，超限直接报错不硬扛）
@@ -225,12 +257,15 @@ def _load_image(source):
 
 
 def _model_variants(m):
-    """模型名变体：带 [窗口后缀]（如 glm-5.3-flash[1M]——lanz 网关认，
-    bigmodel 直连不认）时补一个去后缀的裸名，400 时降级重试用。"""
+    """API 请求模型名变体（裸名优先，v2.28.6）：[1M] 类窗口后缀是 CLI/
+    settings 层的上下文窗口选择器，网关 /v1/messages 不认——实测带后缀
+    400、claude CLI 自己也报 unrecognized_model 后改发别名。识图请求上下文
+    极小、窗口无意义，一律先发去后缀的裸名（配置带不带 [1M] 都正常）；
+    原始带后缀形式保留为次选变体，兜需要精确名的 exotic 网关。"""
     if "[" in m and m.endswith("]"):
         base = m[:m.rindex("[")].strip()
         if base and base != m:
-            return [m, base]
+            return [base, m]
     return [m]
 
 
@@ -238,14 +273,18 @@ def _call_vision(b64, media_type, prompt):
     """调 Anthropic 兼容 /v1/messages 做识图。主端点连不上自动走直连兜底；
     模型按「本次实际尝试的端点」解析（model_map 命中 lanz 配 Lanz 模型、
     回落 bigmodel 直连时换回 glm 系）——多方案下模型永远与端点匹配。
-    [1M] 类窗口后缀在部分端点 400 → 自动降级裸名重试一次。"""
+    模型名裸名优先发送（[1M] 后缀 API 不认），后缀形式为降级变体。"""
     cfg = load_vision_cfg()
     sys_prompt = resolve_prompt(cfg)
     last_err = "无可用端点"
     for base, key in _endpoints():
         for model in _model_variants(resolve_model(base, cfg)):
+            t0 = time.time()
             kind, info = _post_vision(base, key, model, sys_prompt,
                                       b64, media_type, prompt)
+            _log("api %s model=%s -> %s (%.1fs) %s"
+                 % (base, model, kind, time.time() - t0,
+                    info[:120] if kind != "ok" else ""))
             if kind == "ok":
                 return _result(info)
             last_err = info
@@ -306,24 +345,30 @@ def _analyze(args):
     source = str(args.get("imageSource") or "").strip()
     prompt = str(args.get("prompt") or "").strip()
     if not source:
-        return _result("imageSource 必填（图片的 http(s) 链接 / data: URL / 本地路径）",
+        return _result("imageSource 必填（图片的本地路径 / http(s) 链接 / data: URL）",
                        is_error=True)
     if not prompt:
         return _result("prompt 必填（想从图里知道什么，要求结论先行）", is_error=True)
+    t0 = time.time()
+    _log("call src=%s prompt=%r" % (_src_brief(source), prompt[:60]))
     data, mt = _load_image(source)
     if data is None:
+        _log("load FAIL (%.1fs): %s" % (time.time() - t0, mt))
         return _result(mt, is_error=True)   # _load_image 失败时 mt 装的是错误文案
-    return _call_vision(base64.b64encode(data).decode("ascii"), mt, prompt)
+    r = _call_vision(base64.b64encode(data).decode("ascii"), mt, prompt)
+    _log("done (%.1fs) err=%s" % (time.time() - t0,
+                                  bool(r.get("isError"))))
+    return r
 
 
 _TOOLS = [{
     "name": "analyze_image",
     "description": (
-        "分析一张图片并回答问题（本会话模型看不了图，识图靠本工具）。\n"
-        "imageSource 支持：http(s) 图片直链（识图 CDN 链接须原样保留完整 query "
-        "签名，一个参数都不能少、不能截断）、data: URL、本地文件路径。\n"
-        "prompt 写清楚想从图里知道什么；返回结论先行、位置带坐标参考。\n"
-        "链接过期/签名失效时工具会明确报错，此时可让用户重新提供图片。"
+        "本地兜底识图工具——主通道 mcp__4_5v_mcp__analyze_image 报错"
+        "（1210/400/超时）后才使用本工具。\n"
+        "imageSource 首选图片的本地绝对路径（用户附件消息里就有，本工具直接"
+        "读盘，不依赖 CDN 链接）；也支持 http(s) 直链与 data: URL。\n"
+        "prompt 写清楚想从图里知道什么；返回结论先行、位置带坐标参考。"
     ),
     "inputSchema": {
         "type": "object",
@@ -365,7 +410,7 @@ def main():
             _send({"jsonrpc": "2.0", "id": req_id, "result": {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "4_5v_mcp", "version": "1.0.0"}}})
+                "serverInfo": {"name": "vision", "version": "1.0.0"}}})
         elif method == "tools/list":
             _send({"jsonrpc": "2.0", "id": req_id, "result": {"tools": _TOOLS}})
         elif method == "tools/call":

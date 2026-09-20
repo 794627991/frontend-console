@@ -203,8 +203,12 @@ def _start_hk_thread(on_trigger):
     def _loop():
         from ctypes import wintypes
         u32 = ctypes.windll.user32
-        u32.GetCurrentThreadId.restype = wintypes.DWORD
-        _hk["tid"] = u32.GetCurrentThreadId()
+        # GetCurrentThreadId 在 kernel32（user32 里没有——此前写错库，线程
+        # 启动即 AttributeError 崩掉，热键从未注册成功：用户实锤「快捷键
+        # 不生效」的真根因，独立进程合成 F1 按键零触发抓到）
+        k32 = ctypes.windll.kernel32
+        k32.GetCurrentThreadId.restype = wintypes.DWORD
+        _hk["tid"] = k32.GetCurrentThreadId()
         HOTKEY_ID = 0xFC1
         current = None
         msg = wintypes.MSG()
