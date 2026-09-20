@@ -98,12 +98,19 @@ def window_main(port):
         except Exception:
             os._exit(0)
 
+    # easy_drag=False 必须显式关：pywebview 6.x 默认 True——frameless 窗注入
+    # customize.js 监听 window.mousedown，页面任意处按住拖动=拖走整个窗口
+    # （用户实锤「框选时窗口能被拖走」，插件的框选拖动拦不住它）。
+    # shadow=False 同理：默认 True 会 ExtendFrameIntoClientArea 给无边框窗
+    # 补 DWM 玻璃边框——顶部一圈条带观感像「多出一排菜单栏的最大化窗口」
+    # （用户实锤），关掉才是 Snipaste 式纯桌面覆盖。
     win = webview.create_window(
         "fc-snip", "http://127.0.0.1:%s/web/screenshot.html" % port,
         js_api=SnipWin(),
         x=int(geo.get("x", 0)), y=int(geo.get("y", 0)),
         width=int(geo.get("w", 1280)), height=int(geo.get("h", 800)),
-        frameless=True, on_top=True, resizable=False, hidden=True)
+        frameless=True, on_top=True, resizable=False, hidden=True,
+        easy_drag=False, shadow=False)
 
     def _on_loaded():
         # 去任务栏图标 + 置顶样式刷新（SWP_FRAMECHANGED 让 EXSTYLE 立即生效）
@@ -116,7 +123,19 @@ def window_main(port):
                     GWL_EXSTYLE = -20
                     style = u32.GetWindowLongW(hwnd, GWL_EXSTYLE)
                     u32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | 0x80)  # WS_EX_TOOLWINDOW
-                    u32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040)
+                    # 双保险：清标题栏/可调边框样式残留（配合 SWP_FRAMECHANGED
+                    # 生效），确保遮罩是纯无边框覆盖、无任何边框条带。
+                    GWL_STYLE = -16
+                    style2 = u32.GetWindowLongW(hwnd, GWL_STYLE)
+                    u32.SetWindowLongW(hwnd, GWL_STYLE,
+                                       style2 & ~0x00C40000)  # 去 WS_CAPTION|WS_THICKFRAME
+                    # 钉死窗口=虚拟屏幕物理矩形：pywebview 建 Window 时把
+                    # width/height 乘了 DPI scale（非 100% 缩放下窗口会放大
+                    # 超屏），这里用抓屏时的物理几何归位，双保险 1:1。
+                    u32.SetWindowPos(hwnd, -1,
+                                     int(geo.get("x", 0)), int(geo.get("y", 0)),
+                                     int(geo.get("w", 0)), int(geo.get("h", 0)),
+                                     0x0040)  # SWP_FRAMECHANGED
                 win.show()
                 win.focus()
             except Exception:
