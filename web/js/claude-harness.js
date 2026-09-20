@@ -2030,10 +2030,12 @@ function buildClaudeHarnessTab(opts = {}) {
         else if (b.type === 'text' && b.text && b.text.trim()) { endThinking(); closeRun(); renderAsst(b.text, isSub); }
         else if (b.type === 'tool_use') {
           endThinking();
-          // v2.28：识图 MCP 全面接管——📤 转交线+秒表替代普通工具卡；
-          // tool_result 到达时定格对应转交线并渲染 📥 回传气泡。
-          // v2.28.3：按 id 记线（map），一轮多图并行调用各对各的线
-          if (!isSub && b.name === 'mcp__4_5v_mcp__analyze_image') {
+          // v2.28.5：识图双通道——网关名（主通道，服务端执行无本地事件）与
+          // 本地名 mcp__vision__analyze_image（兜底，客户端执行）。客户端执行
+          // 的识图调用出 📤 转交线+秒表（替代工具卡），tool_result 到达时
+          // 定格对应线并渲染 📥 回传气泡；按 id 记线，并行多图各对各的线
+          if (!isSub && (b.name === 'mcp__vision__analyze_image'
+                         || b.name === 'mcp__4_5v_mcp__analyze_image')) {
             const el = renderPeerRelay('识图');
             (_HG.visionCalls || (_HG.visionCalls = {}))[b.id] = el;
           } else {
@@ -3418,16 +3420,37 @@ function buildClaudeHarnessTab(opts = {}) {
     if (!j.ok) { showBanner('抓屏失败（子进程未产出截图）', 3000, true); return; }
     if (typeof window.screenShotPlugin !== 'function') { showBanner('截图组件未加载', 3000, true); return; }
     if (window.__snip && window.__snip.destroyComponents) { try { window.__snip.destroyComponents(); } catch (_) {} window.__snip = null; }
-    try { await fetch('/api/window/fullscreen', {method: 'POST'}); } catch (_) {}
-    await new Promise(r => setTimeout(r, 350));   // 等全屏切换动画完成再量视口
-    const _snipExit = () => { try { fetch('/api/window/fullscreen', {method: 'POST'}); } catch (_) {} };
+    // 防变形（v2.3.12 定案）：曾试过主窗临时全屏（toggle_fullscreen），但进出各
+    // 一次窗口模式跳变（用户嫌「一闪而过的分辨率变化」）且退出后任务栏被盖不
+    // 恢复。改为 canvasWidth/Height=底图等比适配视口（无头实测 canvas 1400x788
+    // + 导出与拖框同尺寸同比例 = 零变形），完全不切窗口、零闪烁零恢复问题。
+    let iw = 1920, ih = 1080;
+    const imgURL = '/api/snip/img?v=' + Date.now();
+    try {
+      const probe = await new Promise((res) => {
+        const im = new Image();
+        im.onload = () => res(im); im.onerror = () => res(null);
+        im.src = imgURL;
+      });
+      if (probe) { iw = probe.naturalWidth || iw; ih = probe.naturalHeight || ih; }
+    } catch (_) {}
+    const vw = document.documentElement.clientWidth || 1280;
+    const vh = document.documentElement.clientHeight || 800;
+    const k = Math.min(vw / iw, vh / ih);
+    const cw = Math.max(1, Math.round(iw * k)), ch = Math.max(1, Math.round(ih * k));
+    // 等比后 canvas 可能小于视口（如宽屏图在窄窗）：露缝区加临时黑罩兜底视觉
+    const veil = document.createElement('div');
+    veil.style.cssText = 'position:fixed;inset:0;background:#000;z-index:99998';
+    document.body.appendChild(veil);
+    const _snipExit = () => { try { veil.remove(); } catch (_) {} };
     window.__snip = new screenShotPlugin({
-      capture: { source: 'image', imageSrc: '/api/snip/img?v=' + Date.now() },
+      capture: { source: 'image', imageSrc: imgURL },
       writeBase64: false,        // 剪贴板统一走 Python CF_DIB（更稳）
       showScreenData: true,      // 必开：底图绘制被它把门，默认关=黑屏
+      canvasWidth: cw, canvasHeight: ch,   // 底图等比适配——drawImage 1:1 无变形
       clickCutFullScreen: true,
       maxUndoNum: 30,
-      level: 99999,              // 盖住主 UI 全部层
+      level: 99999,              // 盖住主 UI 全部层（黑罩 99998 在其下）
       completeCallback: async (info) => {
         const inst = window.__snip;
         window.__snip = null;
@@ -3723,7 +3746,9 @@ function buildClaudeHarnessTab(opts = {}) {
   setInterval(paintVisionBtn, 30000);
 
   // ==================== 识图配置（v2.28.2：MCP 后端）====================
-  // 识图走 MCP 通道（mcp__4_5v_mcp__analyze_image，本地 harness_vision_mcp）。
+  // 识图双通道（v2.28.5）：主通道=网关内置 mcp__4_5v_mcp__analyze_image
+  // （服务端执行）；兜底=本地 mcp__vision__analyze_image（harness_vision_mcp，
+  // 主通道失败后传本地路径）。此处配置的是兜底通道的模型/端点映射/提示词。
   // 这里配置 MCP 的识图模型/端点映射/提示词——多方案适配：不同 base_url
   // 方案可各配各的识图模型（lanz 配 Lanz 系、bigmodel 配 glm 系）。
   // 配置即行为：MCP 每次调用时读盘，改完即刻生效，无需重启会话。
