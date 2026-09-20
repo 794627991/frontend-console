@@ -10,6 +10,10 @@
   html, body { margin: 0; padding: 0; width: 100%; height: 100%;
                overflow: hidden; background: #000; }
 </style>
+<script>window.__FC_SNIP__ = true;   // 页面真伪标记：Python 侧 loaded 后验证，
+// ERR_CONNECTION_REFUSED 等错误页也会触发 loaded 事件——没这标记的错误页
+// 不 show 不写心跳，静默重试（用户实锤：错误页全屏弹出）。
+</script>
 <script src="/vendor/screenShotPlugin.umd.js"></script>
 </head>
 <body>

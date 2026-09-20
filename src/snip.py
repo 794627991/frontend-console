@@ -139,6 +139,25 @@ def window_main(port, armed=False):
         def _do():
             try:
                 time.sleep(0.25)
+                # 页面真伪验证：WebView2 初始化竞态下加载失败
+                # （ERR_CONNECTION_REFUSED，与主窗 WebView2 同时冷启实锤）也会
+                # 触发 loaded——错误页绝不 show、绝不写心跳。验证失败静默
+                # reload 重试 3 次，仍败自退（下次热键重新拉起）。
+                try:
+                    _ok = win.evaluate_js("window.__FC_SNIP__===true")
+                except Exception:
+                    _ok = None
+                if _ok is not True:
+                    state["fails"] = state.get("fails", 0) + 1
+                    if state["fails"] > 3:
+                        os._exit(0)
+                    try:
+                        time.sleep(1)          # 给 WebView2 一拍喘息再重试
+                        win.load_url(_page_url())
+                    except Exception:
+                        pass
+                    return
+                state["fails"] = 0
                 u32 = ctypes.windll.user32
                 hwnd = u32.FindWindowW(None, "fc-snip")
                 if hwnd:
