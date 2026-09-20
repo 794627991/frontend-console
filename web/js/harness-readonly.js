@@ -149,6 +149,10 @@
   }
 
   // 一轮（L1 总开关 + 轮体）
+  // v2.3.12 修复：总开关点击无效——旧实现 sw.closest('[data-ro-turn]') 找轮
+  // 容器，但 sw 与容器是兄弟节点（同挂 roFlow 下），closest 恒 null → 点击即
+  // TypeError 静默失败（用户实锤「点不开，不能展开」）。改为 holder 提前创建、
+  // onclick 闭包直接捕获。
   function renderTurn(lines, t, expanded) {
     const frag = document.createDocumentFragment();
     // 时间条（跨轮 >5min）
@@ -162,6 +166,10 @@
     }
     if (t.user) frag.appendChild(renderUserLine(t.user));
 
+    const holder = document.createElement('div');
+    holder.className = 'hg-ro-turn' + (expanded ? ' open' : '');
+    holder.dataset.roTurn = '1';
+
     const steps = t.steps.length;
     const durTxt = t.durMs ? D.fmtDur(t.durMs / 1000) : (steps ? steps + ' 个步骤' : '');
     // 总开关（ZCode「已工作 1 分 34 秒」）：无步骤/无结论的空轮不显示开关
@@ -174,8 +182,7 @@
       sw.title = expanded ? '收起过程，只看结论' : '展开完整过程（思考/工具/中间结论）';
       sw.onclick = () => {
         t._open = !t._open;
-        // 只重渲染该轮（轮 DOM 包在容器里）
-        const holder = sw.closest('[data-ro-turn]');
+        // 只重渲染该轮，并保持视口锚定（展开/收起不跳屏）
         const at = holder.getBoundingClientRect().top;
         renderTurnInto(holder, lines, t, t._open);
         roFlow.scrollTop += holder.getBoundingClientRect().top - at;
@@ -183,9 +190,6 @@
       frag.appendChild(sw);
     }
 
-    const holder = document.createElement('div');
-    holder.className = 'hg-ro-turn' + (expanded ? ' open' : '');
-    holder.dataset.roTurn = '1';
     frag.appendChild(holder);
     renderTurnInto(holder, lines, t, expanded);
     return frag;
@@ -227,6 +231,10 @@
 
   // ---- 二级折叠委托（思考/工具行，与主层同款懒填/懒丢） ----
   function onFlowClick(e) {
+    // v2.3.12：附件图片 chip → Lightbox（主层 flow 有同款委托，只读层此前
+    // 漏接——chip 点击无任何反应，用户实锤「图片点了也没预览」）
+    const img = e.target.closest('[data-img]');
+    if (img) { D.openLightbox && D.openLightbox(img.dataset.img); return; }
     const sHead = e.target.closest('.h-think-seg-head');
     if (sHead) {
       const seg = sHead.closest('.h-think-seg');
