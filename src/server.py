@@ -762,7 +762,8 @@ def api_theme():
                             "auto_copy": bool(tk.get("auto_copy", False)),
                             "term_font_size": int(tk.get("term_font_size", 13)),
                             "ui_zoom": int(tk.get("ui_zoom", 100)),
-                        }})
+                        },
+                        "snip_hotkey": cfg.get("snip_hotkey", "ctrl+alt+a")})
     data = request.get_json(force=True) or {}
     if "data_dir_prompted" in data:
         # 仅写引导标记的轻请求（不带 theme 字段）
@@ -801,6 +802,15 @@ def api_theme():
             return jsonify({"ok": False, "err": "claude_ui_mode 只认 harness/cli"}), 400
     if _tk:
         _save_config({**_load_config(), **_tk})
+    # 截图全局热键（v2.3.12 设置页配置项）：值形如 'f1'/'ctrl+alt+a'/''（禁用）。
+    # 先热替换注册（同步探测占用给前端即时反馈），成功才落 config。
+    if "snip_hotkey" in data:
+        import src.snip as _snip
+        val = str(data["snip_hotkey"] or "").strip().lower()
+        ok, err = _snip.set_hotkey(val)
+        if not ok:
+            return jsonify({"ok": False, "err": err}), 400
+        _save_config({**_load_config(), "snip_hotkey": val})
     if "custom_theme" in data and isinstance(data["custom_theme"], dict):
         # v2.25 自定义主题调色：键白名单 + 值格式校验（#rgb/#rrgggb、light 布尔），
         # 防 config 被塞脏数据（与 term_keys 白名单同思路）

@@ -193,11 +193,13 @@ async function _stRenderTermKeysPane(pane) {
   let tk = { right_action: 'ctrl_menu', auto_copy: false, term_font_size: 13, ui_zoom: 100 };
   let closeToTray = true;
   let claudeUiMode = 'harness';
+  let snipHk = 'ctrl+alt+a';
   try {
     const j = await (await fetch('/api/theme')).json();
     if (j.ok && j.term_keys) tk = j.term_keys;
     if (j.ok) closeToTray = j.close_to_tray !== false;   // 缺省=开（config 旧版无此键）
     if (j.ok && j.claude_ui_mode) claudeUiMode = j.claude_ui_mode;   // Claude 入口分派：harness=界面化 / cli=终端
+    if (j.ok && typeof j.snip_hotkey === 'string') snipHk = j.snip_hotkey || '';
   } catch(_) {}
   pane.innerHTML = `
     <div class="dd-body">
@@ -236,6 +238,15 @@ async function _stRenderTermKeysPane(pane) {
           Ctrl+C 复制选中 / 发 ^C 中断　·　Ctrl+V 粘贴　·　Ctrl+F 查找<br>
           Shift+右键 粘贴　·　Ctrl+右键 弹菜单（右键行为=ctrl_menu 时）
         </div>
+      </div>
+      <div class="dd-cur" style="margin-top:8px;">
+        <div class="dd-label">截图快捷键（全局）</div>
+        <div class="dd-row" style="display:flex;gap:8px;margin-top:6px;align-items:center;">
+          <input type="text" id="snipHk" value="${snipHk}" spellcheck="false" placeholder="f1 / ctrl+alt+a / 留空禁用"
+                 style="flex:1;font-family:var(--font-mono);padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-input);color:var(--fg);">
+          <button class="btn primary" id="snipHkSave">应用</button>
+        </div>
+        <div class="dd-sub" style="margin-top:4px;">任意应用前台按键即截当时屏幕（框选+标注+自动复制剪贴板）。功能键 F1–F12 可单键；字母/数字键需带修饰（ctrl/alt/shift/win）。改动即刻生效。</div>
       </div>
       <div class="dd-cur" style="margin-top:8px;">
         <div class="dd-label">Claude 打开方式</div>
@@ -297,6 +308,18 @@ async function _stRenderTermKeysPane(pane) {
       });
       showBanner('终端设置已保存');
     } catch(e) { showBanner('保存失败：' + e, 3000, true); }
+  };
+  // v2.3.12 截图快捷键：独立应用按钮（即刻热替换注册，成功才落盘）
+  const _hkBtn = pane.querySelector('#snipHkSave');
+  if (_hkBtn) _hkBtn.onclick = async () => {
+    const val = (pane.querySelector('#snipHk').value || '').trim();
+    try {
+      const r = await fetch('/api/theme', {method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({snip_hotkey: val})});
+      const j = await r.json();
+      if (j.ok) showBanner(val ? `截图快捷键已应用：${val}` : '截图快捷键已禁用');
+      else showBanner(j.err || '快捷键无效', 3000, true);
+    } catch (e) { showBanner('应用失败：' + e, 3000, true); }
   };
 }
 

@@ -13,6 +13,7 @@ import os
 import io
 import json
 import ctypes
+import threading
 import subprocess
 import sys
 
@@ -151,30 +152,85 @@ def _parse_hotkey(s):
 
 
 def start_hotkey(hotkey_str, on_trigger):
-    """注册全局热键（daemon 消息循环线程）。失败静默返回 False。
-    hotkey_str 形如 'ctrl+alt+a'（config.json 的 snip_hotkey，空/非法=不注册）。"""
-    hk = _parse_hotkey(hotkey_str)
+    """启动全局热键（daemon 消息循环线程）并应用初始键位。
+    之后任意时刻可 set_hotkey() 热更新（设置页保存即调，无需重启工具）。
+    RegisterHotKey 绑定注册线程的消息队列——注册/注销必须在热键线程内做，
+    主线程只投递待应用键位 + PostThreadMessage 唤醒。"""
+    _start_hk_thread(on_trigger)
+    if str(hotkey_str or "").strip():
+        return set_hotkey(hotkey_str)
+    return True, None
+
+
+def set_hotkey(hotkey_str):
+    """热更新键位：'f1'/'ctrl+alt+a'/''（空=注销禁用）。返回 (ok, err)。
+    主线程先试探注册（同步探测占用，给设置页即时反馈）再让热键线程正式接管。"""
+    u32 = ctypes.windll.user32
+    s = str(hotkey_str or "").strip().lower()
+    if not s:
+        with _hk["lock"]:
+            _hk["pending"] = None
+            _hk["disabled"] = True
+        _wake_hk_thread()
+        return True, None
+    hk = _parse_hotkey(s)
     if not hk:
-        return False
+        return False, "格式无效（示例 f1 / ctrl+alt+a；字母数字键需带修饰键）"
+    if not u32.RegisterHotKey(None, 0xFC2, hk[0], hk[1]):
+        return False, "热键被其他程序占用"
+    u32.UnregisterHotKey(None, 0xFC2)   # 试探完立刻让位，热键线程正式注册
+    with _hk["lock"]:
+        _hk["pending"] = hk
+        _hk["disabled"] = False
+    _wake_hk_thread()
+    return True, None
+
+
+_hk = {"tid": 0, "pending": "UNSET", "disabled": False, "lock": threading.Lock()}
+_WM_APP_SNIP = 0x8000 + 1
+
+
+def _wake_hk_thread():
+    if _hk["tid"]:
+        ctypes.windll.user32.PostThreadMessageW(_hk["tid"], _WM_APP_SNIP, 0, 0)
+
+
+def _start_hk_thread(on_trigger):
+    if _hk.get("started"):
+        return
+    _hk["started"] = True
 
     def _loop():
         from ctypes import wintypes
         u32 = ctypes.windll.user32
-        mods, vk = hk
+        u32.GetCurrentThreadId.restype = wintypes.DWORD
+        _hk["tid"] = u32.GetCurrentThreadId()
         HOTKEY_ID = 0xFC1
-        if not u32.RegisterHotKey(None, HOTKEY_ID, mods, vk):
-            return   # 被其他程序占用（Snipaste 等同款热键）——不抢，静默
+        current = None
         msg = wintypes.MSG()
-        while u32.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
+        while True:
+            with _hk["lock"]:
+                pend = _hk["pending"]
+                disabled = _hk["disabled"]
+                _hk["pending"] = "UNSET"
+            if pend != "UNSET" or disabled:
+                if current is not None:
+                    u32.UnregisterHotKey(None, HOTKEY_ID)
+                    current = None
+                if not disabled and pend not in ("UNSET", None) and pend:
+                    if u32.RegisterHotKey(None, HOTKEY_ID, pend[0], pend[1]):
+                        current = pend
+            r = u32.GetMessageW(ctypes.byref(msg), None, 0, 0)
+            if r <= 0:
+                break   # WM_QUIT
             if msg.message == 0x0312 and msg.wParam == HOTKEY_ID:   # WM_HOTKEY
                 try:
                     threading.Thread(target=on_trigger, daemon=True).start()
                 except Exception:
                     pass
+            # _WM_APP_SNIP 唤醒消息：回循环顶应用 pending
 
-    import threading
     threading.Thread(target=_loop, daemon=True).start()
-    return True
 
 
 # ---------------------------------------------------------------------------
