@@ -386,6 +386,13 @@ def _iso_dur_sec(t0, t1):
         return None
 
 
+# v2.29.1 三角色设计：角色定义内置于 src/harness_roles.py（随工具分发，
+# 会话启动自动安装到 ~/.claude/agents/，别的机器零手工配置）；决策者
+# 引导词/结构禁权/配置开关都在那个模块里。
+from .harness_roles import (ROLE_DISALLOW as _ROLE_DISALLOW,
+                            install_roles_agents, roles_bridge_text)
+
+
 # v2.3.7 全会话铁律（用户定调「浪费 token 极其可耻」）：注入每个会话。
 TOKEN_RULES = (
     "【铁律：珍惜 token】\n"
@@ -399,8 +406,10 @@ TOKEN_RULES = (
 def _bridge_fp(model):
     """识图引导词指纹（send 前热更检测用）：内容含三态判定结果，代码升级
     / mm_mcp 名单调整 / vision 开关都会改变指纹。未启用时空串（有→无也
-    构成变化，同样触发重启换新）。"""
-    return hashlib.md5(vision_bridge_text(model).encode("utf-8")).hexdigest()
+    构成变化，同样触发重启换新）。v2.29：三角色引导词并入指纹——角色
+    开关/词改动同样触发活会话热更换词。"""
+    return hashlib.md5((vision_bridge_text(model) + "\x00"
+                        + roles_bridge_text(model)).encode("utf-8")).hexdigest()
 
 
 def vision_bridge_text(model=None):
@@ -970,8 +979,14 @@ class HarnessSession:
             # v2.27.21：实报名（live_model）优先——revive 换词重启时按真实
             # 在跑模型注入（settings 名与实报名错位是转交 bug 的真根因）
             eff_model = self._eff_model()
+            roles_txt = roles_bridge_text(eff_model)
+            if roles_txt:
+                # 角色定义随工具分发：起会话前把 executor/coder 安装到
+                # ~/.claude/agents/（幂等）——别的机器零手工配置
+                install_roles_agents()
             parts = [_collect_system_prompt(self.cwd),
                      TOKEN_RULES,
+                     roles_txt,
                      vision_bridge_text(eff_model),
                      ask_bridge_text()]
             if self.permission == "confirm":
@@ -983,6 +998,11 @@ class HarnessSession:
             self.bridge_fp = _bridge_fp(eff_model)
         if sys_prompt:
             argv += ["--append-system-prompt", sys_prompt]
+        # v2.29 三角色：决策者结构性禁权——干活工具全禁（Bash/Edit/Write/
+        # WebFetch/WebSearch），逼着它走 Task 派发给 executor/coder；保留
+        # Read/Grep/Glob 供审核代码用。子代理有自己的工具表不受影响。
+        if roles_txt:
+            argv += ["--disallowedTools", _ROLE_DISALLOW]
         if self.name:
             argv += ["--name", self.name]     # peer 寻址名（识图会话靠它被找到）
         # 复活：claude 侧已有真实 session_id → --resume 续上下文
@@ -2873,6 +2893,29 @@ def harness_start_vision():
 def harness_stop_vision():
     stop_vision_session()
     return jsonify({"ok": True})
+
+
+@harness_bp.route("/roles")
+def harness_roles_info():
+    """v2.29.2：三角色设计说明（/roles 命令数据源）。resolved 是按当前
+    API 方案解析出的实际模型（换方案自动适配）。"""
+    from .harness_roles import resolve_role_models, roles_cfg
+    ex, co = resolve_role_models()
+    return jsonify({"ok": True, "roles": roles_cfg(),
+                    "resolved": {"executor": ex, "coder": co}})
+
+
+@harness_bp.route("/roles", methods=["POST"])
+def harness_set_roles():
+    """v2.29.3：三角色开关。body {enabled:bool}。改完即生效——角色词在
+    引导词指纹里，下条消息发送前的指纹热更自动换词重启（含/不含结构
+    禁权），已有会话也无需重建。"""
+    from .harness_roles import set_roles_enabled
+    data = request.get_json(force=True, silent=True) or {}
+    ok, err = set_roles_enabled(bool(data.get("enabled")))
+    if not ok:
+        return jsonify({"ok": False, "err": err or "写入失败"}), 500
+    return jsonify({"ok": True, "enabled": bool(data.get("enabled"))})
 
 
 @harness_bp.route("/skills")

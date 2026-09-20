@@ -246,8 +246,10 @@ function buildClaudeHarnessTab(opts = {}) {
           <button class="hg-new-btn hg-recover-btn" data-hg-recover title="扫描磁盘上的会话记录，找回列表里消失的会话（异常丢失/误删都可找回）">⟲ 恢复会话</button>
         </div>
         <div class="hg-search-wrap"><input class="hg-search" data-hg-search placeholder="搜索会话" spellcheck="false"></div>
+        <div class="hg-side-dyn" data-hg-dyn style="display:none"></div>
         <div class="hg-sessions" data-hg-sessions></div>
         <button class="hg-prompt-btn" data-hg-vision title="识图配置（MCP 识图模型/端点映射/提示词）">👁 识图配置</button>
+        <button class="hg-prompt-btn" data-hg-roles title="三角色设计开关（决策者/执行者/编程者；切换后下条消息生效）">👥 三角色</button>
         <button class="hg-prompt-btn" data-hg-prompt title="管理自定义提示词（全局/项目，会话启动时注入）">📜 提示词</button>
         <button class="hg-prompt-btn" data-hg-proxy-btn title="Claude 代理：重试代理（429/5xx 自动重试）+ 用量统计。点开代理面板">
           <img src="/ico/proxy.png" alt="proxy" style="width:14px;height:14px;vertical-align:-2px;"> Proxy
@@ -2090,6 +2092,18 @@ function buildClaudeHarnessTab(opts = {}) {
         else if (b.type === 'text' && b.text && b.text.trim()) { endThinking(); closeRun(); renderAsst(b.text, isSub); }
         else if (b.type === 'tool_use') {
           endThinking();
+          // v2.30 侧栏会话动态：TodoWrite 更新任务清单；Task/Agent 记子代理起跑
+          if (b.name === 'TodoWrite' && b.input && Array.isArray(b.input.todos)) {
+            _HG.todos = b.input.todos;
+            renderSideStatus();
+          }
+          if ((b.name === 'Task' || b.name === 'Agent') && b.id && !isSub) {
+            (_HG.agents || (_HG.agents = {}))[b.id] = {
+              type: (b.input && (b.input.subagent_type || b.input.agent_type)) || b.name,
+              desc: (b.input && b.input.description) || '',
+              t0: Date.now(), done: false, doneAt: 0 };
+            renderSideStatus();
+          }
           // v2.28.5：识图双通道——网关名（主通道，服务端执行无本地事件）与
           // 本地名 mcp__vision__analyze_image（兜底，客户端执行）。客户端执行
           // 的识图调用出 📤 转交线+秒表（替代工具卡），tool_result 到达时
@@ -2112,6 +2126,19 @@ function buildClaudeHarnessTab(opts = {}) {
       // （历史重建路径后端已拦成 renew 行，这里挡实时流里漏网的）
       if (o.isCompactSummary) return;
       const c0 = (o.message || {}).content;
+      // v2.30 侧栏会话动态：子代理回场——tool_result 对上在跑的 Task 即完成
+      if (Array.isArray(c0) && _HG.agents) {
+        let hitAgent = false;
+        for (const b of c0) {
+          if (b && b.type === 'tool_result' && _HG.agents[b.tool_use_id]
+              && !_HG.agents[b.tool_use_id].done) {
+            _HG.agents[b.tool_use_id].done = true;
+            _HG.agents[b.tool_use_id].doneAt = Date.now();
+            hitAgent = true;
+          }
+        }
+        if (hitAgent) renderSideStatus();
+      }
       // v2.28.3：识图 MCP 回传——按 tool_use_id 在 pending 线里对号，
       // 定格它自己的分割线+渲染 📥 气泡（并行多图互不串线）
       if (Array.isArray(c0) && _HG.visionCalls) {
@@ -2161,6 +2188,14 @@ function buildClaudeHarnessTab(opts = {}) {
       endThinking();
       closeRun();
       _hgVisionSweep(true);                // v2.28.3：回合终结算清未回传的识图线
+      // v2.30：回合终结——还在跑的子代理标记收尾（中断/异常时 Task 没有
+      // tool_result，不收会永远显示"运行中"）
+      if (_HG.agents) {
+        let swept = false;
+        for (const id in _HG.agents)
+          if (!_HG.agents[id].done) { _HG.agents[id].done = true; _HG.agents[id].doneAt = Date.now(); swept = true; }
+        if (swept) renderSideStatus();
+      }
       grpFinalize(true);                   // v2.18：本轮组定稿——用户没手动
                                           // 操作过且在底部跟读时自动收起（想看再点开，
                                           // 各抽屉独立开合）
@@ -2275,6 +2310,9 @@ function buildClaudeHarnessTab(opts = {}) {
       let lastAsst = null;
       lines.slice(start).forEach((l, i) => {
         renderHistLine(l, start + i);
+        // v2.30：回放恢复最新任务清单（TodoWrite 的 input 里有 todos）
+        if (l.role === 'tool' && l.text === 'TodoWrite'
+            && l.input && Array.isArray(l.input.todos)) _HG.todos = l.input.todos;
         if (l.role === 'assistant') lastAsst = _HG.lastAsstEl;
         else if (l.role === 'user' && lastAsst && lastAsst.dataset.rwa) {
           lastAsst.classList.add('can-rewind');
@@ -2282,6 +2320,7 @@ function buildClaudeHarnessTab(opts = {}) {
         }
       });
       if (lastAsst && lastAsst.dataset.rwa) lastAsst.classList.add('can-rewind');
+      renderSideStatus();     // v2.30：回放后刷新侧栏动态（todos 已从工具行重建）
     }
     finally { _HG.noScroll = false; _HG.openState = null; }
   }
@@ -2438,6 +2477,7 @@ function buildClaudeHarnessTab(opts = {}) {
     _hgMentionReset();          // v2.15：@ 引用高亮不跨会话残留
     _HG.rowById = {}; _HG.uidN = 0; _HG.run = null; _HG.grp = null; _HG.histNav = null;   // v2.18：组级抽屉
     _HG.histAll = null; _HG.histStart = 0;   // v2.24：多段历史渲染源不复用（防串会话）
+    _HG.todos = null; _HG.agents = null;     // v2.30：会话动态随会话切换重置（todos 由回放重建）
     _HG.think = null; _HG.noScroll = false; _HG.openState = null;   // v2.16：重建态不跨会话残留
     _HG.sid = sid; _HG.seq = 0; _HG.alive = false;
     // v2.15：dirty 语义修正。旧实现只在「发送成功」置 true、只在
@@ -2802,6 +2842,57 @@ function buildClaudeHarnessTab(opts = {}) {
       stopGen();               // interrupted → setBusy(false) → 泵先发它
     }
   });
+  // ==================== v2.30 侧栏会话动态（任务进度 + 子代理实况）====================
+  // 数据全部来自现有事件流（TodoWrite/Task 的 tool_use 与 tool_result），不
+  // 动后端。参照 ZCode 任务面板形态：任务 N/M 绿 pill + 勾选删除线清单 +
+  // 子代理运行计时（三角色下 executor/coder 跑没跑一眼可见）。无内容整块隐藏。
+  const dynEl = q('[data-hg-dyn]');
+  const _AGENT_LABEL = { executor: '执行者', coder: '编程者', 'general-purpose': '通用子代理' };
+  function renderSideStatus() {
+    if (!dynEl) return;
+    const todos = _HG.todos || [];
+    const done = todos.filter(t => (t.status || '') === 'completed').length;
+    const agents = Object.values(_HG.agents || {});
+    const running = agents.filter(a => !a.done);
+    const finished = agents.filter(a => a.done && Date.now() - a.doneAt < 60000).slice(-3);
+    if (!todos.length && !running.length && !finished.length) {
+      dynEl.style.display = 'none'; dynEl.innerHTML = ''; return;
+    }
+    let h = '';
+    if (todos.length) {
+      h += `<div class="hg-dyn-head"><span class="hg-dyn-pill">任务 ${done}/${todos.length}</span></div>`;
+      h += '<div class="hg-dyn-todos">' + todos.map(t => {
+        const st = t.status || 'pending';
+        const txt = (st === 'in_progress' && t.activeForm) ? t.activeForm : t.content;
+        return `<div class="hg-dyn-todo ${st}" title="${esc(t.content || '')}">` +
+          `<span class="hg-dyn-ck">${st === 'completed' ? '✓' : st === 'in_progress' ? '◐' : '○'}</span>` +
+          `<span class="hg-dyn-tt">${esc(txt || '')}</span></div>`;
+      }).join('') + '</div>';
+    }
+    if (running.length || finished.length) {
+      h += '<div class="hg-dyn-agents">'
+        + running.map(a =>
+          `<div class="hg-dyn-agent run"><span class="hg-dyn-adot"></span>` +
+          `<span class="hg-dyn-at">${esc(_AGENT_LABEL[a.type] || a.type)}</span>` +
+          (a.desc ? `<span class="hg-dyn-desc">${esc(String(a.desc).slice(0, 18))}</span>` : '') +
+          `<b class="hg-dyn-el" data-t0="${a.t0}">0s</b></div>`).join('')
+        + finished.map(a =>
+          `<div class="hg-dyn-agent done"><span class="hg-dyn-adot"></span>` +
+          `<span class="hg-dyn-at">${esc(_AGENT_LABEL[a.type] || a.type)}</span>` +
+          `<span class="hg-dyn-el">完成</span></div>`).join('')
+        + '</div>';
+    }
+    dynEl.innerHTML = h;
+    dynEl.style.display = '';
+  }
+  // 秒级计时：面板可见时才跑（agent 运行时长实时跳）
+  setInterval(() => {
+    if (!dynEl || dynEl.style.display === 'none') return;
+    dynEl.querySelectorAll('.hg-dyn-el[data-t0]').forEach(el => {
+      el.textContent = fmtDur((Date.now() - +(el.dataset.t0 || 0)) / 1000);
+    });
+  }, 1000);
+
   function renderList() {
     const kw = (searchEl.value || '').trim().toLowerCase();
     const items = _HG.sessions.filter(s => !kw || (s.title || '').toLowerCase().includes(kw)
@@ -3003,6 +3094,7 @@ function buildClaudeHarnessTab(opts = {}) {
     ['/status', '会话状态与上下文用量'],
     ['/compact', '手动压缩上下文（可附保留要点：/compact 保留串口配置等）'],
     ['/rewind', '回退最近 N 个完整回合，默认 1（爆窗/坏回合逃生门；历史自动备份）'],
+    ['/roles', '三角色设计说明（决策者/执行者/编程者与当前配置）'],
     ['/mcp', 'MCP 服务器列表与连接状态（代跑 claude mcp list）'],
     ['/exit', '退出 claude 进程（会话保留，发送自动恢复）'],
   ];
@@ -3152,6 +3244,21 @@ function buildClaudeHarnessTab(opts = {}) {
         showBanner(j.ok ? ('⏪ ' + j.msg + '——发送消息即续上')
                         : ('回退失败：' + (j.err || '未知')), 4600, !j.ok);
       } catch(e) { showBanner('回退失败：' + e, 3000, true); }
+    } else if (cmd === 'roles') {
+      // v2.29.2：三角色设计说明——含按当前 API 方案解析出的实际模型
+      (async () => {
+        let j = null;
+        try { j = await (await fetch('/api/harness/roles')).json(); } catch(_) {}
+        const r = (j && j.roles) || {};
+        const rs = (j && j.resolved) || {};
+        renderSysCard('三角色设计', [
+          ['决策者', '主会话本身（高级模型）——承接需求、拆解派发、审核代码、汇总答复；不下场干活（干活工具已结构性禁用）'],
+          ['执行者', `executor 代理（${rs.executor || '按当前方案自动识别'}）——信息收集/查日志/排查/跑命令/debug/杂活`],
+          ['编程者', `coder 代理（${rs.coder || '按当前方案自动识别'}）——编码攻坚，改完自测再交`],
+          ['状态', r.enabled === false ? '已关闭（config.json harness_roles.enabled）' : '已启用'],
+          ['模型解析', '端点映射（harness_roles.model_map）→ 当前方案模型表自动识别（轻快模型→执行者）→ 配置兜底；换 API 方案自动适配'],
+        ]);
+      })();
     } else if (cmd === 'exit') {
       if (!_HG.sid) { showBanner('当前没有活动会话', 2200); return true; }
       fetch('/api/harness/kill', {method:'POST', headers:{'Content-Type':'application/json'},
@@ -3811,6 +3918,36 @@ function buildClaudeHarnessTab(opts = {}) {
   paintVisionBtn();
   // 保存/开关变化后由面板流程刷新——简单起见每 30s 兜底刷一次
   setInterval(paintVisionBtn, 30000);
+
+  // ==================== 三角色开关（v2.29.3）====================
+  // 点击即切（POST /roles），下条消息经引导词指纹热更自动生效（换系统
+  // 提示 + 结构禁权），已有会话无需重建。默认关闭（用户定调）。
+  const rolesBtnEl = q('[data-hg-roles]');
+  async function paintRolesBtn() {
+    let j = null;
+    try { j = await (await fetch('/api/harness/roles')).json(); } catch(_) {}
+    if (!rolesBtnEl) return;
+    const on = !!(j && j.ok && j.roles && j.roles.enabled);
+    rolesBtnEl.innerHTML = '👥 三角色 <span class="hg-vstat ' + (on ? 'ok' : 'off') +
+      '">· ' + (on ? '已开启' : '未开启') + '</span>';
+    return on;
+  }
+  if (rolesBtnEl) rolesBtnEl.onclick = async () => {
+    try {
+      const cur = await (await fetch('/api/harness/roles')).json();
+      const target = !(cur && cur.ok && cur.roles && cur.roles.enabled);
+      const r = await fetch('/api/harness/roles', {method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({enabled: target})});
+      const j = await r.json();
+      if (!j.ok) { showBanner(j.err || '切换失败', 3000, true); return; }
+      showBanner(target
+        ? '👥 三角色已开启——下条消息起本会话按决策者模式运行（派发执行者/编程者）'
+        : '👥 三角色已关闭——下条消息起恢复直连干活', 3600);
+      paintRolesBtn();
+    } catch(e) { showBanner('切换失败：' + e, 3000, true); }
+  };
+  paintRolesBtn();
 
   // ==================== 识图配置（v2.28.2：MCP 后端）====================
   // 识图双通道（v2.28.5）：主通道=网关内置 mcp__4_5v_mcp__analyze_image
