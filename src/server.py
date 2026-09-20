@@ -1671,6 +1671,28 @@ def ai_recent():
         result[pid] = [{"ts": it["ts"], "tag": it["tag"], "text": it["text"]} for it in items]
     return jsonify({"ok": True, "ports": result})
 
+@app.route("/api/snip/img")
+def snip_img():
+    """内置截图底图（v2.3.12）：TEMP 一次性文件，DPI 子进程抓屏产出。
+    no-store：每次截图都是新图，绝不能吃缓存。"""
+    import src.snip as _snip
+    if os.path.isfile(_snip._TMP_PNG):
+        with open(_snip._TMP_PNG, "rb") as f:
+            data = f.read()
+        return data, 200, {"Content-Type": "image/png",
+                           "Cache-Control": "no-store, max-age=0"}
+    return "no image", 404
+
+
+@app.route("/api/snip/start", methods=["POST"])
+def snip_start():
+    """拉起内置截图标注窗（对话输入卡 📷 按钮 / 未来热键）。
+    snip.start_snip 内部：DPI 子进程抓屏 → pywebview 无边框置顶全屏窗。"""
+    import src.snip as _snip
+    ok, info = _snip.start_snip()
+    return jsonify({"ok": ok, "info": info})
+
+
 @app.route("/api/ai/open_file", methods=["POST"])
 def ai_open_file():
     """让前端打开指定文件（--open-file 双击入口：已有实例收到新进程的打开请求）。

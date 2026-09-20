@@ -297,6 +297,7 @@ function buildClaudeHarnessTab(opts = {}) {
             <div class="hg-mention-drop" data-hg-mention style="display:none"></div>
             <div class="hg-card-foot">
               <button class="hg-chip hg-chip-ico" data-hg-att title="添加附件（文档会以路径给模型读取）">＋</button>
+              <button class="hg-chip hg-chip-ico" data-hg-snip title="截图并标注（Snipaste 式框选/箭头/马赛克/文字；确认后自动挂为附件并复制剪贴板）">📷</button>
               <button class="hg-chip" data-hg-perm title="工具执行权限（对新会话生效）">🛡 自动执行 ▾</button>
               <button class="hg-chip hg-chip-ico" data-hg-skill title="加载技能（插入 /技能名）">⚡</button>
               <span class="hg-flex1"></span>
@@ -3405,6 +3406,15 @@ function buildClaudeHarnessTab(opts = {}) {
     if (x) { _HG.atts.splice(+x.dataset.i, 1); renderAtts(); }
   });
   q('[data-hg-att]').onclick = () => fileEl.click();
+  // v2.3.12 内置截图标注：拉起全屏截图窗（DPI 无损抓屏 + vendor
+  // js-web-screen-shot 标注），确认后 Python 侧落 uploads + 复制剪贴板 +
+  // SSE snip_done → sense.js 调 harnessAddFilesByPath 挂附件
+  q('[data-hg-snip]').onclick = async () => {
+    try {
+      const j = await (await fetch('/api/snip/start', {method: 'POST'})).json();
+      if (!j.ok) showBanner(j.info || '截图启动失败', 3000, true);
+    } catch (e) { showBanner('截图启动失败：' + e, 3000, true); }
+  };
   async function uploadFiles(list) {
     for (const f of list) {
       if (f.size > 20 * 1024 * 1024) { showBanner(`「${f.name}」超过 20MB，跳过`, 3000, true); continue; }

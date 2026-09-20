@@ -337,6 +337,12 @@ def main():
     if '--mcp-vision' in sys.argv:
         _run_mcp_vision_mode()
         return
+    # --snip-grab 模式：截图子进程（v2.3.12 内置截图）。独立进程开 DPI 感知后
+    # ImageGrab 全屏——主进程不动 DPI 设置（动了主窗尺寸回归），详见 src/snip.py
+    if '--snip-grab' in sys.argv:
+        from src import snip
+        snip.grab_main()
+        return
     # --mcp 模式：作为 MCP stdio server 运行（集成进 exe，无需单独 python 脚本）。
     # PyInstaller --windowed(console=False) 下 sys.stdin/stdout 可能为 None，
     # 但被 subprocess pipe 启动时 fd 0/1 存在，用 open(fd) 重新包装。

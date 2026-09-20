@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>截图</title>
+<style>
+  /* 截图专用页：铺满窗体零滚动（窗体本身=虚拟桌面尺寸，由 snip.py 定位） */
+  html, body { margin: 0; padding: 0; overflow: hidden; background: #000; }
+</style>
+<script src="/vendor/screenShotPlugin.umd.js"></script>
+</head>
+<body>
+<script>
+// ============================================================
+// 内置截图标注（v2.3.12）：vendor js-web-screen-shot（MIT，ikaia/js-screen-shot）
+// image 模式——底图由 Python 子进程 DPI 无损抓屏落 TEMP，经 /api/snip/img 取回；
+// 确认（Enter/✓）→ completeCallback → pywebview.api.snip_done：
+// Python 侧落 harness_uploads + 写 CF_DIB 剪贴板 + SSE 挂 Claude 对话附件。
+// Esc/✕ → snip_cancel 关窗。writeBase64=false：剪贴板统一走 Python（更稳）。
+// ============================================================
+(function () {
+  'use strict';
+  function boot() {
+    new screenShotPlugin({
+      capture: { source: 'image', imageSrc: '/api/snip/img?v=' + Date.now() },
+      writeBase64: false,
+      clickCutFullScreen: true,
+      maxUndoNum: 30,
+      completeCallback: function (info) {
+        try { window.pywebview && pywebview.api.snip_done(info.base64, 'attach'); }
+        catch (e) { window.close(); }
+      },
+      closeCallback: function () {
+        try { window.pywebview && pywebview.api.snip_cancel(); } catch (e) {}
+      },
+      cancelCallback: function () {
+        try { window.pywebview && pywebview.api.snip_cancel(); } catch (e) {}
+      }
+    });
+  }
+  if (document.readyState === 'complete') boot();
+  else window.addEventListener('load', boot);
+})();
+</script>
+</body>
+</html>
