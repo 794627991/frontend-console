@@ -1684,13 +1684,22 @@ def snip_img():
     return "no image", 404
 
 
-@app.route("/api/snip/start", methods=["POST"])
-def snip_start():
-    """拉起内置截图标注窗（对话输入卡 📷 按钮 / 未来热键）。
-    snip.start_snip 内部：DPI 子进程抓屏 → pywebview 无边框置顶全屏窗。"""
+@app.route("/api/snip/grab", methods=["POST"])
+def snip_grab():
+    """抓屏（v2.3.12 主窗内嵌形态）：DPI 子进程全屏截图落 TEMP，
+    前端随后以 image 模式加载 /api/snip/img 在主窗内进入截图态。"""
     import src.snip as _snip
-    ok, info = _snip.start_snip()
-    return jsonify({"ok": ok, "info": info})
+    return jsonify({"ok": bool(_snip.grab())})
+
+
+@app.route("/api/snip/save", methods=["POST"])
+def snip_save():
+    """标注完成（v2.3.12）：{data_url} → 落 harness_uploads + 复制剪贴板，
+    返回 path 供前端直接挂对话附件（同页调用，不走 SSE 广播）。"""
+    import src.snip as _snip
+    data = request.get_json(force=True, silent=True) or {}
+    ok, r = _snip.save_png(data.get("data_url") or "")
+    return jsonify({"ok": ok, "path": r if ok else None, "err": None if ok else r})
 
 
 @app.route("/api/ai/open_file", methods=["POST"])

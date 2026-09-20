@@ -13,11 +13,6 @@ function connectAiSSE() {
         if (item.kind === 'ui_action' && item.action === 'open_file' && typeof openFileSmart === 'function') {
           openFileSmart(item.path, 'auto');
         }
-        // 内置截图完成（v2.3.12）：标注图落 uploads 后自动挂 Claude 对话附件
-        if (item.kind === 'ui_action' && item.action === 'snip_done'
-            && typeof window.harnessAddFilesByPath === 'function') {
-          window.harnessAddFilesByPath([item.path]);
-        }
         return; // 跳过 screen/screenctl/ui_action 帧（不进感知流）
       }
       senseState.lines.push(item);

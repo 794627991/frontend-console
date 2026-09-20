@@ -3406,14 +3406,42 @@ function buildClaudeHarnessTab(opts = {}) {
     if (x) { _HG.atts.splice(+x.dataset.i, 1); renderAtts(); }
   });
   q('[data-hg-att]').onclick = () => fileEl.click();
-  // v2.3.12 内置截图标注：拉起全屏截图窗（DPI 无损抓屏 + vendor
-  // js-web-screen-shot 标注），确认后 Python 侧落 uploads + 复制剪贴板 +
-  // SSE snip_done → sense.js 调 harnessAddFilesByPath 挂附件
+  // v2.3.12 内置截图标注（主窗内嵌形态，用户定调「不额外弹窗直接截」）：
+  // 先 DPI 子进程抓屏 → 主窗内 new screenShotPlugin（全屏遮罩盖住 UI 即截图态，
+  // 框选/标注/确认全在主窗完成）→ 确认后 base64 交后端落盘+剪贴板 → 直接挂附件
   q('[data-hg-snip]').onclick = async () => {
-    try {
-      const j = await (await fetch('/api/snip/start', {method: 'POST'})).json();
-      if (!j.ok) showBanner(j.info || '截图启动失败', 3000, true);
-    } catch (e) { showBanner('截图启动失败：' + e, 3000, true); }
+    let j;
+    try { j = await (await fetch('/api/snip/grab', {method: 'POST'})).json(); }
+    catch (e) { showBanner('抓屏失败：' + e, 3000, true); return; }
+    if (!j.ok) { showBanner('抓屏失败（子进程未产出截图）', 3000, true); return; }
+    if (typeof window.screenShotPlugin !== 'function') { showBanner('截图组件未加载', 3000, true); return; }
+    if (window.__snip && window.__snip.destroyComponents) { try { window.__snip.destroyComponents(); } catch (_) {} window.__snip = null; }
+    window.__snip = new screenShotPlugin({
+      capture: { source: 'image', imageSrc: '/api/snip/img?v=' + Date.now() },
+      writeBase64: false,        // 剪贴板统一走 Python CF_DIB（更稳）
+      showScreenData: true,      // 必开：底图绘制被它把门，默认关=黑屏
+      clickCutFullScreen: true,
+      maxUndoNum: 30,
+      level: 99999,              // 盖住主 UI 全部层
+      completeCallback: async (info) => {
+        const inst = window.__snip;
+        window.__snip = null;
+        try { inst && inst.destroyComponents && inst.destroyComponents(); } catch (_) {}
+        try {
+          const sv = await (await fetch('/api/snip/save', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ data_url: info.base64 })
+          })).json();
+          if (sv.ok && window.harnessAddFilesByPath) window.harnessAddFilesByPath([sv.path]);
+          else showBanner(sv.err || '截图保存失败', 3000, true);
+        } catch (e) { showBanner('截图保存失败：' + e, 3000, true); }
+      },
+      closeCallback: () => {
+        const inst = window.__snip;
+        window.__snip = null;
+        try { inst && inst.destroyComponents && inst.destroyComponents(); } catch (_) {}
+      }
+    });
   };
   async function uploadFiles(list) {
     for (const f of list) {
