@@ -26,9 +26,10 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-_TMP_PNG = os.path.join(os.environ.get("TEMP", "."), "fc_snip.png")
 _TMP_BMP = os.path.join(os.environ.get("TEMP", "."), "fc_snip.bmp")   # BMP 免编码
-_TMP_GEO = _TMP_PNG + ".geo.json"
+# 抓屏几何伴生文件（--grab 与 BMP 同批落盘）：底图已改 BMP、PNG 产物不复存在，
+# 故独立定义路径，不再借废弃的 PNG 底图名拼接，避免误导读者以为还有 PNG 落盘
+_TMP_GEO = os.path.join(os.environ.get("TEMP", "."), "fc_snip.bmp.geo.json")
 _TMP_OUT = os.path.join(os.environ.get("TEMP", "."), "fc_snip_out.png")
 # 常驻窗生命标记：ALIVE=子进程每次页面加载成功后写（port+时间），主进程
 # 探活以此为准——窗口标题探活分不清「哪个主实例的窗」：工具重启后端口随机，
