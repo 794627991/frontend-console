@@ -1683,13 +1683,19 @@ def ai_recent():
 
 @app.route("/api/snip/img")
 def snip_img():
-    """内置截图底图（v2.3.12）：TEMP 一次性文件，DPI 子进程抓屏产出。
+    """内置截图底图（v2.3.12）：TEMP 一次性文件，DPI 子进程抓屏产出（BMP
+    免编码）。抓屏与截图窗冷启动并行，这里等文件就绪（最多 3s）。
     no-store：每次截图都是新图，绝不能吃缓存。"""
     import src.snip as _snip
-    if os.path.isfile(_snip._TMP_PNG):
-        with open(_snip._TMP_PNG, "rb") as f:
+    import time as _t
+    for _ in range(15):
+        if os.path.isfile(_snip._TMP_BMP):
+            break
+        _t.sleep(0.2)
+    if os.path.isfile(_snip._TMP_BMP):
+        with open(_snip._TMP_BMP, "rb") as f:
             data = f.read()
-        return data, 200, {"Content-Type": "image/png",
+        return data, 200, {"Content-Type": "image/bmp",
                            "Cache-Control": "no-store, max-age=0"}
     return "no image", 404
 

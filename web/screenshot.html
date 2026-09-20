@@ -44,8 +44,23 @@
       }
     });
   }
-  if (document.readyState === 'complete') boot();
-  else window.addEventListener('load', boot);
+  // boot 闸门：等视口=物理屏幕宽高（子进程 loaded 后才把 WinForms
+  // ClientSize 钉到物理矩形，此前窗口是创建期被钳小的尺寸）。插件 canvas
+  // 按当时视口建且不重建，早 boot=canvas 偏小→底图缩放+框选错位。3s 超时
+  // 兜底强启（钉尺寸万一失败，缩小跑总比黑屏好）。
+  var qs = new URLSearchParams(location.search);
+  var W = +qs.get('w') || 0, H = +qs.get('h') || 0;
+  var t0 = Date.now();
+  function gate() {
+    if ((W && window.innerWidth === W && window.innerHeight === H)
+        || Date.now() - t0 > 3000) {
+      if (document.readyState === 'complete') boot();
+      else window.addEventListener('load', boot);
+      return;
+    }
+    setTimeout(gate, 50);
+  }
+  gate();
 })();
 </script>
 </body>

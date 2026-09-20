@@ -27,6 +27,7 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 _TMP_PNG = os.path.join(os.environ.get("TEMP", "."), "fc_snip.png")
+_TMP_BMP = os.path.join(os.environ.get("TEMP", "."), "fc_snip.bmp")   # BMP 免编码
 _TMP_GEO = _TMP_PNG + ".geo.json"
 _TMP_OUT = os.path.join(os.environ.get("TEMP", "."), "fc_snip_out.png")
 
@@ -44,34 +45,35 @@ def _dpi_aware():
             pass
 
 
+def _virt_geo():
+    """虚拟桌面物理矩形（调用方须已 DPI 感知）。"""
+    u32 = ctypes.windll.user32
+    return {"x": u32.GetSystemMetrics(76), "y": u32.GetSystemMetrics(77),
+            "w": u32.GetSystemMetrics(78), "h": u32.GetSystemMetrics(79)}
+
+
 def _grab_only():
-    """--grab：抓屏 → PNG + 几何 json。"""
+    """--grab：抓屏 → BMP（PNG 编码 1920x1080 要 ~0.4s，BMP 免压缩 ~0.05s，
+    localhost 传输不差这点体积）+ 几何 json。"""
     from PIL import ImageGrab
     img = ImageGrab.grab(all_screens=True)
-    img.save(_TMP_PNG)
-    u32 = ctypes.windll.user32
-    geo = {"x": u32.GetSystemMetrics(76), "y": u32.GetSystemMetrics(77),
-           "w": u32.GetSystemMetrics(78), "h": u32.GetSystemMetrics(79)}
+    img.save(_TMP_BMP)
     with open(_TMP_GEO, "w", encoding="utf-8") as f:
-        json.dump(geo, f)
+        json.dump(_virt_geo(), f)
 
 
 # ---------------------------------------------------------------------------
 # 子进程：截图窗（--snip-window <port>）
 # ---------------------------------------------------------------------------
 def window_main(port):
-    """DPI 感知 → 抓屏 → 无边框置顶全屏窗（TOOLWINDOW 无任务栏图标）→
-    等待标注结果写 _TMP_OUT → 退出。"""
+    """DPI 感知 → 抓屏（与 pywebview 启动并行）→ 无边框置顶全屏窗
+    （TOOLWINDOW 无任务栏图标）→ 等待标注结果写 _TMP_OUT → 退出。
+    抓屏异步化：CLR/WebView2 冷启动 ~2s 与抓屏落盘重叠，总延迟省 ~0.5s。"""
     _dpi_aware()
-    _grab_only()
+    geo = _virt_geo()          # 几何不依赖抓屏文件，立即可用
+    threading.Thread(target=_grab_only, daemon=True).start()
     if os.path.isfile(_TMP_OUT):
         os.remove(_TMP_OUT)
-    geo = {}
-    try:
-        with open(_TMP_GEO, "r", encoding="utf-8") as f:
-            geo = json.load(f)
-    except Exception:
-        geo = {"x": 0, "y": 0, "w": 1280, "h": 800}
 
     import webview
 
@@ -104,8 +106,13 @@ def window_main(port):
     # shadow=False 同理：默认 True 会 ExtendFrameIntoClientArea 给无边框窗
     # 补 DWM 玻璃边框——顶部一圈条带观感像「多出一排菜单栏的最大化窗口」
     # （用户实锤），关掉才是 Snipaste 式纯桌面覆盖。
+    # URL 带物理宽高：前端 boot 前轮询 innerWidth/innerHeight 到位才初始化
+    # 插件（canvas 按视口建，hidden 期窗口还是被钳小的 1904x1041，load 即
+    # boot 会把 canvas 建小 → 底图缩放+框选坐标错位，双实锤）。
     win = webview.create_window(
-        "fc-snip", "http://127.0.0.1:%s/web/screenshot.html" % port,
+        "fc-snip",
+        "http://127.0.0.1:%s/web/screenshot.html?w=%d&h=%d"
+        % (port, int(geo.get("w", 0)), int(geo.get("h", 0))),
         js_api=SnipWin(),
         x=int(geo.get("x", 0)), y=int(geo.get("y", 0)),
         width=int(geo.get("w", 1280)), height=int(geo.get("h", 800)),
@@ -243,7 +250,7 @@ def grab():
                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except Exception:
         pass
-    return os.path.isfile(_TMP_PNG) and os.path.getmtime(_TMP_PNG) > t0
+    return os.path.isfile(_TMP_BMP) and os.path.getmtime(_TMP_BMP) > t0
 
 
 def launch_window(port):
