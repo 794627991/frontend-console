@@ -19,14 +19,8 @@ set PYTHONIOENCODING=gbk
 "%PY%" src\build.py
 if errorlevel 1 goto fail
 if not exist "dist\前端控制台\前端控制台.exe" goto fail
-echo.
-echo [OK] 打包完成: dist\前端控制台.exe
-echo.
-pause
-exit /b 0
-:fail
-echo.
-echo [失败] 打包未成功，请看上方报错
-echo.
-pause
-exit /b 1
+
+rem v2.3.8 自检（解密+全依赖 import，不碰单实例锁）
+"dist\前端控制台\前端控制台.exe" --selftest
+type "dist\前端控制台\selftest_result.txt"
+findstr /C:"selftest FAIL" "dist\前端控制台\selftest_result.txt" >nul && goto fail

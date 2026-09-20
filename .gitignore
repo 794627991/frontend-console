@@ -46,3 +46,6 @@ data/
 参考/
 .data/
 _engine_stdio_ext/
+
+# 第三方参考代码（375MB，含他人 api_key 等——绝不入库）
+参考/

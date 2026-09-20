@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 前端控制台 v2.2.0 —— 桌面应用入口
@@ -30,6 +30,19 @@ def _fc_decrypt():
         return {}
     import os as _os, hashlib as _hl, glob as _gl
     root = _os.path.join(_os.path.dirname(sys.executable), "_internal")
+    # v2.3.8 诊断：解密各阶段落盘（exe 条数 0 排查用，确认后移除）
+    try:
+        with open(_os.path.join(root, "_fc_debug.txt"), "w", encoding="utf-8") as _f:
+            _f.write("root=%r\nweb_dir=%r\nmf=%r\nmf存在=%r\n" % (
+                root, _os.path.join(root, "web"),
+                _os.path.join(root, ".fcenc"),
+                _os.path.isfile(_os.path.join(root, ".fcenc"))))
+    except Exception as _e:
+        try:
+            with open(_os.path.join(root, "_fc_debug.txt"), "w", encoding="utf-8") as _f:
+                _f.write("诊断自身失败: %r" % _e)
+        except Exception:
+            pass
     try:
         from Crypto.Cipher import AES
         _KX, _KM = 0x5A, [0x6D, 0x6E, 0x6A, 0x6E, 0x6B, 0x6A]
@@ -40,7 +53,13 @@ def _fc_decrypt():
             bytes(b ^ _SX for b in _SM), 120000)
         mem_web = {}
         web_dir = _os.path.join(root, "web")
-        for enc in _gl.glob(_os.path.join(web_dir, "**", "*.enc"), recursive=True):
+        _enc_hits = _gl.glob(_os.path.join(web_dir, "**", "*.enc"), recursive=True)
+        try:
+            with open(_os.path.join(root, "_fc_debug.txt"), "a", encoding="utf-8") as _f:
+                _f.write("glob命中=%d\n" % len(_enc_hits))
+        except Exception:
+            pass
+        for enc in _enc_hits:
             with open(enc, "rb") as f:
                 blob = f.read()
             if blob[:5] != b"FCEN\x01":
@@ -66,12 +85,23 @@ def _fc_decrypt():
         ctypes.windll.user32.MessageBoxW(
             0, "程序资源校验失败，无法启动：\n%s" % e, "前端控制台", 0x10)
         sys.exit(1)
+    # v2.3.8 致命修复：此前版本丢失了 return——函数隐式返回 None →
+    # 前端资源全 404 白屏（用户实锤）。glob 解密循环已填 mem_web，必须返回。
+    return mem_web
 
 # v2.3.6：web 明文挂 sys（server.py 的 / 与 /web/* 路由优先从这 serve，
 # 磁盘永远密文）。挂 sys 而非模块属性——frozen 下入口脚本模块名是 main
 # 不是 src.main，server 里 import src.main 必 ImportError（实测白屏）
 sys.FC_MEM_WEB = _fc_decrypt()
 from src.version import APP_VERSION
+
+# v2.3.8 argv 诊断落盘（selftest 分支未生效排查；确认后移除）
+try:
+    with open(os.path.join(os.path.dirname(sys.executable),
+                           "argv_debug.txt"), "w", encoding="utf-8") as _f:
+        _f.write("argv=%r\nfrozen=%r\nname=%r\n" % (sys.argv, getattr(sys, "frozen", False), __name__))
+except OSError:
+    pass
 
 # ---- 单实例锁 ----
 import ctypes
@@ -846,5 +876,57 @@ def main():
                   storage_path=os.path.join(DATA_DIR, "webview_cache"))
 
 
+def _selftest():
+    """--selftest 打包自检（v2.3.8）：验证解密+全依赖 import 链，写
+    dist/selftest_result.txt 后退出——**不碰单实例锁、不起 webview**，
+    开发版运行时也能测发布包。打包.bat 末尾自动调用，异常在打包期暴露，
+    不再让用户当端到端测试员。"""
+    import io, traceback
+    out = io.StringIO()
+    ok = True
+    res_path = os.path.join(os.path.dirname(sys.executable), "selftest_result.txt")
+    def _flush(final=None):
+        try:
+            with open(res_path, "w", encoding="utf-8") as f:
+                f.write("selftest %s\n" % (final or ("RUN" if ok else "PART")) +
+                        "argv=%r\n" % (sys.argv,) + out.getvalue())
+        except OSError:
+            pass
+    def _t(label, fn):
+        nonlocal ok
+        try:
+            fn()
+            print(f"  ✓ {label}", file=out)
+        except Exception as e:
+            ok = False
+            print(f"  ✗ {label}: {type(e).__name__}: {str(e)[:160]}", file=out)
+            print(traceback.format_exc()[-400:], file=out)
+        _flush()
+    print("FC_MEM_WEB 条数: %d" % len(getattr(sys, "FC_MEM_WEB", {}) or {}), file=out)
+    try:
+        with open(os.path.join(os.path.dirname(sys.executable), "_selftest_diag.txt"), "w", encoding="utf-8") as _df:
+            _df.write("selftest读时 sys.FC_MEM_WEB=%r modules含main=%r\n" % (
+                getattr(sys, "FC_MEM_WEB", "MISSING"), "main" in sys.modules))
+    except Exception:
+        pass
+    def _imp(name):
+        import importlib
+        importlib.import_module(name)
+    for mod in ("src.version", "src.app_state", "src.server", "src.serial_conn",
+                "src.tftp", "src.tray", "flask", "serial",
+                "serial.tools.list_ports", "websocket", "webview",
+                "Crypto.Cipher.AES", "Crypto.Cipher.PKCS1_v1_5", "Crypto.PublicKey.RSA", "PIL.Image"):
+        _t("import " + mod, lambda n=mod: _imp(n))
+    _t("web 内存 serve 抽查", lambda: (
+        None if getattr(sys, "FC_MEM_WEB", {}) else (_ for _ in ()).throw(AssertionError("内存字典为空")),
+        list(getattr(sys, "FC_MEM_WEB", {}))[:1]))
+    header = "selftest %s @ %s\n" % ("PASS" if ok else "FAIL", sys.executable)
+    out.write("argv=%r\n" % (sys.argv,))
+    _flush(final=header.split(" @ ")[0])
+    sys.exit(0 if ok else 1)   # 自检完即退，绝不掉进 main()（否则起主界面永不返回）
+
+
 if __name__ == "__main__":
+    if "--selftest" in sys.argv:
+        _selftest()
     main()

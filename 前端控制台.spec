@@ -35,7 +35,9 @@ a = Analysis(
         'paramiko', 'cryptography', 'nacl',   # SSH 链
         'winpty',                        # 内嵌 Claude 终端（ConPTY）
         'Crypto', 'Crypto.Cipher', 'Crypto.PublicKey', 'Crypto.Util.Padding',
-        'Crypto.Util.number',            # pycryptodome（代理 CAS + 资源解密）
+        'Crypto.Util.number', 'Crypto.Cipher.PKCS1_v1_5',  # CAS 登录 RSA 加密
+        'Crypto.Cipher.AES', 'Crypto.PublicKey.RSA',
+        'Crypto.Hash.HMAC', 'Crypto.Signature.PKCS1_v1_5',            # pycryptodome（代理 CAS + 资源解密）
         'PIL', 'PIL.Image', 'PIL.ImageDraw', 'PIL.ImageFont',
         'numpy',                         # proxy_usage 用量统计
         'yaml',                          # 配置解析

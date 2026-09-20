@@ -407,9 +407,11 @@ body[data-skin=term] .vlist .card{animation:fcUp .4s both,fcGlow2 4s ease-in-out
 
 _LOGIN_HTML = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>前端控制台 · 发布中心</title><style>__CSS__</style></head><body data-skin="dark">
+<title>前端控制台 · 发布中心</title>
+<link rel="icon" type="image/png" href="__ICON__">
+<style>__CSS__</style></head><body data-skin="dark">
 <div class="login-wrap"><div class="card login">
-  <div class="logo">⬆</div>
+  <div class="logo"><img src="__ICON__" style="width:36px;height:36px;" alt=""></div>
   <h1>前端控制台 · 发布中心</h1>
   <div class="sub">版本下发与升级门户 · 仅限内网</div>
   <div class="err" id="err"></div>
@@ -540,12 +542,29 @@ async function login(){
 go.onclick=login;pwd.addEventListener('keydown',e=>{if(e.key==='Enter')login()});
 </script></body></html>"""
 
+def _app_icon_b64():
+    """工具图标 base64（ico/app.png，发布机源码运行必有）——门户 favicon
+    与页内 logo 用真图标替换 emoji（用户定调：和工具相同图标）。"""
+    import base64
+    for p in (os.path.join(os.path.dirname(os.path.dirname(
+                    os.path.abspath(__file__))), "ico", "app.png"),
+              os.path.join(_releases_dir(), "..", "..", "ico", "app.png")):
+        try:
+            with open(p, "rb") as f:
+                return base64.b64encode(f.read()).decode()
+        except OSError:
+            continue
+    return ""
+
+
 _PORTAL_HTML = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>前端控制台 · 发布中心</title><style>__CSS__</style></head><body data-skin="dark">
+<title>前端控制台 · 发布中心</title>
+<link rel="icon" type="image/png" href="__ICON__">
+<style>__CSS__</style></head><body data-skin="dark">
 <div class="wrap">
   <div class="brand">
-    <div class="logo">⬆</div>
+    <div class="logo"><img src="__ICON__" style="width:30px;height:30px;" alt=""></div>
     <div><h1>前端控制台 · 发布中心</h1>
       <div class="sub">__URL__ · 发布目录只读分发</div></div>
     <div class="spacer"></div>
@@ -554,7 +573,7 @@ _PORTAL_HTML = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
   </div>
   <!-- v2.3.2 使用说明提到最前（用户定调：一眼看到），原在页尾被日志顶到看不见 -->
   <div class="tip">
-    <b>整包安装</b>：下载最新版 zip 解压即用（v2.3.0 起为文件夹形态：exe + 依赖目录一起）。<br>
+    <b>整包安装</b>：下载最新版 zip 解压即用。<br>
     <b>工具内热更新</b>：把地址 <b>__URL__</b> 填到工具「设置 → 关于与升级 → 升级服务器地址」，
     以后有新版工具会自动检查、一键升级（旧版自动备份为 .bak 可回退）。
   </div>
@@ -822,11 +841,16 @@ class _Handler(BaseHTTPRequestHandler):
             # 端口重复 bug：Host 含端口时再拼 :PORT 得出 :8765:8765，用户实锤）
             host = self.headers.get("Host") or "%s:%d" % (_lan_ip(), PORT)
             url = "http://%s/" % host
+            icon = "data:image/png;base64," + _app_icon_b64()
             if self._session_ok():
-                page = _PORTAL_HTML.replace("__CSS__", _CSS).replace("__URL__", _esc(url))
+                page = (_PORTAL_HTML.replace("__CSS__", _CSS)
+                        .replace("__URL__", _esc(url))
+                        .replace("__ICON__", icon))
                 self._text(200, page, "text/html; charset=utf-8")
             else:
-                page = _LOGIN_HTML.replace("__CSS__", _CSS).replace("__DEFPWD__", _DEFAULT_PWD)
+                page = (_LOGIN_HTML.replace("__CSS__", _CSS)
+                        .replace("__DEFPWD__", _DEFAULT_PWD)
+                        .replace("__ICON__", icon))
                 self._text(200, page, "text/html; charset=utf-8")
             return
 
