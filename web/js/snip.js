@@ -2,15 +2,16 @@
 // 内置截图标注 v2.3.12（工具级，不绑 Claude）：
 // vendor js-web-screen-shot（MIT）主窗内嵌形态 + DPI 子进程抓屏。
 // 确认后：复制剪贴板（必有）+ Claude 对话在场时顺带挂附件（harnessAdd
-// FilesByPath 不存在则自然跳过）。两条入口：
-//   📷 按钮（claude-harness.js 绑定）→ harnessSnipStart(false)：不切窗口，
-//     canvas 等比适配视口（零闪烁零变形）
-//   全局热键（后端 RegisterHotKey → SSE snip_hotkey → sense.js）→
-//     harnessSnipStart(true)：主窗切全屏，视口=屏幕=底图尺寸，1:1 原生分辨率
+// FilesByPath 不存在则自然跳过）。两条入口统一路径（v2.3.12 定案）：
+//   📷 按钮 / 全局热键（fs 参数保留兼容，全屏分支已撤）——都不切窗口，
+//   canvas 等比适配视口。曾试热键路径切全屏（1:1 原生分辨率），但全屏
+//   切换与前端量视口存在时序竞态：canvas 按中间态尺寸建 → 遮罩只盖
+//   左上部分右下露原界面（用户实锤）；退出后还有黑屏残留——全撤。
+//   主窗最大化时等比缩放仅 ~4%，肉眼无损。
 // ============================================================
 (function () {
   'use strict';
-  window.harnessSnipStart = async function (fs) {
+  window.harnessSnipStart = async function (_fs) {
     let j;
     try { j = await (await fetch('/api/snip/grab', {method: 'POST'})).json(); }
     catch (e) { showBanner('抓屏失败：' + e, 3000, true); return; }
@@ -19,13 +20,6 @@
     if (window.__snip && window.__snip.destroyComponents) {
       try { window.__snip.destroyComponents(); } catch (_) {}
       window.__snip = null;
-    }
-    if (fs) {
-      try {
-        await fetch('/api/window/fullscreen', {method: 'POST',
-          headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'enter'})});
-      } catch (_) {}
-      await new Promise(r => setTimeout(r, 350));   // 等全屏切换布局完成再量视口
     }
     // 防变形：canvasWidth/Height = 底图等比适配视口（无头实测导出与拖框
     // 同尺寸同比例 = 零变形）；全屏路径 k=1 即原生 1:1。
@@ -47,15 +41,7 @@
     const veil = document.createElement('div');
     veil.style.cssText = 'position:fixed;inset:0;background:#000;z-index:99998';
     document.body.appendChild(veil);
-    const _snipExit = () => {
-      try { veil.remove(); } catch (_) {}
-      if (fs) {
-        try {
-          fetch('/api/window/fullscreen', {method: 'POST',
-            headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'exit'})});
-        } catch (_) {}
-      }
-    };
+    const _snipExit = () => { try { veil.remove(); } catch (_) {} };
     window.__snip = new screenShotPlugin({
       capture: { source: 'image', imageSrc: imgURL },
       writeBase64: false,        // 剪贴板统一走后端 CF_DIB（更稳）
