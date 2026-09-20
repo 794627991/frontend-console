@@ -148,6 +148,15 @@
     return d;
   }
 
+  // 识图 MCP 转交线（简版）：📤 转交识图 · 用时 Xs
+  function renderRelayLine(l) {
+    const d = document.createElement('div');
+    d.className = 'h-switch';
+    const dur = (l.dur || 0) > 0 ? ' · 用时 ' + D.fmtDur(l.dur) : '';
+    d.innerHTML = '<span></span><i>📤 转交识图' + D.esc(dur) + '</i><span></span>';
+    return d;
+  }
+
   // 一轮（L1 总开关 + 轮体）
   // v2.3.12 修复：总开关点击无效——旧实现 sw.closest('[data-ro-turn]') 找轮
   // 容器，但 sw 与容器是兄弟节点（同挂 roFlow 下），closest 恒 null → 点击即
@@ -171,7 +180,11 @@
     holder.dataset.roTurn = '1';
 
     const steps = t.steps.length;
-    const durTxt = t.durMs ? D.fmtDur(t.durMs / 1000) : (steps ? steps + ' 个步骤' : '');
+    // v2.3.12：时长 + 步数一起给（此前缺 ts 恒 fallback「N 个步骤」，根因在
+    // transcript_for 的 assistant/thinking 行漏带 ts，已修）
+    const durTxt = t.durMs
+      ? D.fmtDur(t.durMs / 1000) + (steps ? ' · ' + steps + ' 步' : '')
+      : (steps ? steps + ' 个步骤' : '');
     // 总开关（ZCode「已工作 1 分 34 秒」）：无步骤/无结论的空轮不显示开关
     const hasProcess = steps > 0 || t.finalIdx >= 0;
     if (hasProcess) {
@@ -205,12 +218,17 @@
     }
     t.idx.forEach(i => {
       const l = lines[i];
-      if (i === t.finalIdx) holder.appendChild(renderAsstLine(l.text));
-      else if (l.role === 'thinking') holder.appendChild(renderThinkRow(lines, i));
+      // v2.3.12：中间 assistant 文本不再是空块跳过——穿插在思考/工具间的
+      // 中间结论照常渲染（用户实锤「中间应答输出没了，是穿插在思考和工具
+      // 之间的」）。后端已滤空白占位，这里非空即显；finalIdx 同路径。
+      if (l.role === 'thinking') holder.appendChild(renderThinkRow(lines, i));
       else if (l.role === 'tool') holder.appendChild(renderToolRow(l, i));
-      else if (l.role === 'assistant') { /* 空文本块跳过 */ }
+      else if (l.role === 'assistant') {
+        if (l.text && String(l.text).trim()) holder.appendChild(renderAsstLine(l.text));
+      }
       else if (l.role === 'peer') holder.appendChild(renderPeerLine(l));
       else if (l.role === 'renew') holder.appendChild(renderRenewLine(l));
+      else if (l.role === 'vision_relay') holder.appendChild(renderRelayLine(l));
     });
   }
 

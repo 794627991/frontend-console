@@ -2974,5 +2974,9 @@ html[data-theme="sage"], html[data-theme="sky"] {
 .hg-ro-switch.open .hg-ro-switch-a { transform: rotate(90deg); }
 .hg-ro-turn { padding-left: 10px; border-left: 1px solid color-mix(in srgb, var(--accent) 16%, transparent);
   margin: 2px 0 14px 6px; }
-.hg-ro-turn > .h-think-seg, .hg-ro-turn > .h-tool { margin-left: 10px; }
+/* v2.3.12 轮内行限宽：旧规则 .hg-ro-flow > .h-tool 只命中 roFlow 直接子级，
+   展开轮体（.hg-ro-turn）里的行是孙级不命中 → 通栏拉满（用户嫌「边框太长」）。
+   内容行统一 680px 紧凑条（贴 ZCode），h-switch 分割线保持通栏。 */
+.hg-ro-turn > .h-think-seg, .hg-ro-turn > .h-tool,
+.hg-ro-turn > .h-msg, .hg-ro-turn > .h-peer { margin-left: 10px; width: min(680px, 100%); }
 .h-think-seg-t { color: var(--muted); font-size: 11.5px; }

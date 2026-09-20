@@ -1878,13 +1878,18 @@ def transcript_for(s):
                         # 思考先出：一轮里 thinking 在工具调用之前，重建后「思考抽屉」才在
                         # 「执行抽屉」上方（与流式渲染同序）
                         if thinks:
-                            lines.append({"role": "thinking", "text": "\n".join(thinks)[:8000]})
+                            # v2.3.12 补 ts：此前 thinking/assistant 行不带 ts →
+                            # 只读模式轮时长恒 0（「已工作 N 个步骤」出不来时间）、
+                            # 思考段时长恒「持续了几秒」无法给精确值（用户实锤）
+                            lines.append({"role": "thinking", "text": "\n".join(thinks)[:8000],
+                                          "ts": o.get("timestamp") or ""})
                         # 空白/纯换行的 text 块要丢掉：模型每轮都会吐一个 "\n\n" 占位，
                         # 落盘后仍是真值 → 重建时每条渲染成一个空白 AI 气泡（历史会话
                         # 满屏空白圆角条的根因），还把真正的思考/工具行挤出可视区。
                         t = "\n".join(texts).strip()
                         if t:
-                            lines.append({"role": "assistant", "text": t[:8000]})
+                            lines.append({"role": "assistant", "text": t[:8000],
+                                          "ts": o.get("timestamp") or ""})
                         for tl in tools:
                             if tl["name"] == _VISION_TOOL:
                                 # v2.28：识图 MCP = vision_relay 分割线行（前端 📤
