@@ -1105,8 +1105,64 @@ function buildClaudeHarnessTab(opts = {}) {
     const d = document.createElement('div');
     d.className = 'h-msg asst' + (isSub ? ' sub' : '');
     d.appendChild(mdBubble(text));
+    if (!isSub) _hgMsgActs(d, text);   // v2.28.12：最后一条 AI 消息挂操作条
     g.root.appendChild(d);
     scrollBottom();
+  }
+  // v2.28.12：最后一条 AI 消息的操作条（📋 复制 / ⏪ 回滚此处）——参照
+  // ZCode 消息操作栏：消息底部左对齐、ghost 小按钮、悬浮提亮。新的 AI
+  // 正文出现时从旧气泡摘下挂到新气泡（永远只在最后一条上）；历史重建
+  // 路径同经 renderAsst 顺序渲染，自然落在最后一条。回滚 = 后端截断转写
+  // 到本回合后（丢最后 1 个完整回合，自动全量备份），杀进程 resume。
+  function _hgMsgActs(el, text) {
+    if (_HG.lastActs) { try { _HG.lastActs.remove(); } catch(_) {} }
+    const bar = document.createElement('div');
+    bar.className = 'hg-msg-acts';
+    const cp = document.createElement('button');
+    cp.className = 'hg-mact'; cp.title = '复制这条消息的原文';
+    cp.textContent = '📋 复制';
+    cp.onclick = async () => {
+      const ok = await copyText(text);
+      showBanner(ok ? '已复制' : '复制失败（剪贴板权限被拒）', 1600, !ok);
+    };
+    const rw = document.createElement('button');
+    rw.className = 'hg-mact';
+    rw.title = '回滚到这条消息为止：丢弃之后的回合（含本条所在回合之后的全部内容），全量自动备份';
+    rw.textContent = '⏪ 回滚此处';
+    rw.onclick = async () => {
+      if (_HG.busy) { showBanner('AI 正在回复，结束后再回滚', 2400, true); return; }
+      if (!_HG.sid) { showBanner('当前没有活动会话', 2000, true); return; }
+      rw.disabled = true;
+      try {
+        const r = await fetch('/api/harness/rewind', {method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({sid: _HG.sid, turns: 1})});
+        const j = await r.json();
+        if (!j.ok) { showBanner('回滚失败：' + (j.err || '未知'), 3600, true); return; }
+        showBanner('⏪ ' + j.msg + '——已回到此消息', 3600);
+        await _hgReloadFlow();
+      } catch(e) { showBanner('回滚失败：' + e, 3000, true); }
+      rw.disabled = false;
+    };
+    bar.appendChild(cp); bar.appendChild(rw);
+    el.appendChild(bar);
+    _HG.lastActs = bar;
+  }
+  // v2.28.12：回滚后重拉转写重建消息流（丢弃的回合从界面消失）
+  async function _hgReloadFlow() {
+    const sid = _HG.sid;
+    if (!sid) return;
+    try {
+      const j = await (await fetch('/api/harness/transcript?sid=' + encodeURIComponent(sid))).json();
+      if (!j.ok || _HG.sid !== sid) return;
+      _HG.seq = j.seq || 0; _HG.alive = !!j.alive;
+      _HG.visionCalls = null; _HG.peerWait = null;
+      if (!j.lines.length) { flow.innerHTML = ''; showWelcome(); }
+      else _histRender(j.lines, Math.max(0, j.lines.length - _HG.HIST_PAGE));
+      setBusy(false);
+      refreshSessions();
+      scrollBottom(true);
+    } catch(_) {}
   }
   function renderRaw(text) {
     const d = document.createElement('div'); d.className = 'h-raw'; d.textContent = text;
@@ -1233,6 +1289,10 @@ function buildClaudeHarnessTab(opts = {}) {
   function renderCompaction(done) {
     let el = flow.querySelector('.h-switch[data-hg-compact]');
     if (!done && !el) {
+      // v2.3.13：压缩分割线只归发起压缩的会话。压缩中切到别的会话，1s 计时器
+      // 仍在跑，会在「当前打开的 flow」（=别的会话消息流）里新建「正在压缩」
+      // 线并冻进它的快照（用户实锤「当前会话压缩，另一个会话也出现压缩显示」）。
+      if (_HG.compactSid && _HG.compactSid !== _HG.sid) return;
       el = document.createElement('div');
       el.className = 'h-switch';
       el.dataset.hgCompact = '1';
@@ -1253,6 +1313,7 @@ function buildClaudeHarnessTab(opts = {}) {
   function _hgCompactionEnd() {
     if (!_HG.compacting) return;
     _HG.compacting = false;
+    _HG.compactSid = null;
     clearInterval(_HG.compactTimer);
     renderCompaction(true);
     // v2.27.4：status 恢复事件若丢（result 兜底到这里），活动词一并退出特殊态
@@ -1999,6 +2060,7 @@ function buildClaudeHarnessTab(opts = {}) {
         if (o.status === 'compacting') {
           if (!_HG.compacting) {
             _HG.compacting = true;
+            _HG.compactSid = _HG.sid;   // v2.3.13：归属会话——计时器不许把线画进别的会话
             _HG.compactT0 = Date.now();
             try { _HG.compactUsed = (JSON.parse(localStorage.getItem(_hgCtxKey(_HG.sid)) || 'null') || {}).used || 0; } catch(_) { _HG.compactUsed = 0; }
             grpFinalize(true);
@@ -2371,6 +2433,14 @@ function buildClaudeHarnessTab(opts = {}) {
       flow.innerHTML = c.html; _HG.seq = c.seq;
       scrollBottom(true);              // v2.25：快照恢复也回底——与 _histRender 路径
                                        // 一致（用户实测「新建会话再切回，焦点不在最下面」）
+      // v2.3.13：快照里冻结的压缩分割线——本会话没有仍在进行的压缩就定格成
+      // 完成态（压缩结束事件只在原会话 SSE 里到达，切走期间错过时这里兜底），
+      // 不让「正在压缩 · 已 X」冻死在消息流里
+      const cdiv = flow.querySelector('.h-switch[data-hg-compact]');
+      if (cdiv && !(_HG.compacting && _HG.compactSid === sid)) {
+        const ci = cdiv.querySelector('i');
+        if (ci && !ci.textContent.includes('完成')) ci.textContent = '上下文压缩完成';
+      }
       // v2.25：快照里「已点开」的懒段/懒工具，切回来必须显示内容——histAll
       // 已被切会话清空，先拉 transcript 再补填（否则展开=空白壳，用户实测
       // 「早起会话的历史思考点不开了」）
@@ -2695,8 +2765,8 @@ function buildClaudeHarnessTab(opts = {}) {
       || (s.cwd || '').toLowerCase().includes(kw));
     // v2.3.9 项目分组视图（用户需求：一个项目多个会话归一组查找）：
     // 按 cwd basename 分组、组按组内最近活跃排序、组内会话按活跃排序。
-    // 单会话项目不折叠直接展示（组头即原来的首行），多会话项目组头带
-    // 计数 + 可折叠（记住开合，localStorage 持久化）。
+    // v2.3.13 单会话组同样可折叠（用户实锤「单会话不能收缩」）——组头带
+    // chev、点击开合，多会话组额外有计数徽章；开合 localStorage 持久化。
     const groups = new Map();   // proj -> {items: [], latest: 0, cwd: ''}
     for (const s of items) {
       const proj = (s.cwd || '').split(/[\\/]/).pop() || '~';
@@ -2706,19 +2776,19 @@ function buildClaudeHarnessTab(opts = {}) {
       if ((s.last_active || 0) > g.latest) g.latest = s.last_active;
     }
     const ordered = [...groups.entries()].sort((a, b) => (b[1].latest || 0) - (a[1].latest || 0));
-    // 折叠态（多会话组）：localStorage hg-grp:<proj>:closed
+    // 折叠态：localStorage hg-grp:<proj>:closed（单会话组同权可折）
     const html = ordered.map(([proj, g]) => {
       g.items.sort((a, b) => (b.last_active || 0) - (a.last_active || 0));
       const multi = g.items.length > 1;
-      const closed = multi && (() => { try { return localStorage.getItem('hg-grp:' + proj + ':closed') === '1'; } catch(_) { return false; } })();
+      const closed = (() => { try { return localStorage.getItem('hg-grp:' + proj + ':closed') === '1'; } catch(_) { return false; } })();
       const anyBusy = g.items.some(s => s.busy);
       const hasActive = g.items.some(s => s.sid === _HG.sid);
       let h = '';
-      // 组头（多会话组才有折叠交互；单会话组组头就是列表项本身的一部分）
+      // 组头（所有组可折叠；多会话组带计数徽章）
       h += `<div class="hg-grp${closed ? ' closed' : ''}${hasActive ? ' active-grp' : ''}"
-             data-grp="${esc(proj)}" ${multi ? '' : 'data-grp-static="1"'}
+             data-grp="${esc(proj)}"
              title="${esc(g.cwd)}">
-              <span class="hg-grp-chev">${multi ? '▸' : '·'}</span>
+              <span class="hg-grp-chev">▸</span>
               <span class="hg-grp-name">${esc(proj)}</span>
               <span class="hg-grp-count">${multi ? g.items.length : ''}</span>
               ${anyBusy ? '<span class="hg-item-busy" title="回复中">●</span>' : ''}
@@ -2751,7 +2821,7 @@ function buildClaudeHarnessTab(opts = {}) {
   // v2.3.9 组头点击：折叠/展开（localStorage 记忆），不影响选会话
   listEl.addEventListener('click', (e) => {
     const grp = e.target.closest('.hg-grp');
-    if (grp && !grp.dataset.grpStatic) {
+    if (grp) {
       e.stopPropagation();
       const key = 'hg-grp:' + grp.dataset.grp + ':closed';
       const closed = grp.classList.toggle('closed');
@@ -2890,6 +2960,7 @@ function buildClaudeHarnessTab(opts = {}) {
     ['/model', '打开模型菜单；/model 名 直接切换（模糊匹配）'],
     ['/status', '会话状态与上下文用量'],
     ['/compact', '手动压缩上下文（可附保留要点：/compact 保留串口配置等）'],
+    ['/rewind', '回退最近 N 个完整回合，默认 1（爆窗/坏回合逃生门；历史自动备份）'],
     ['/mcp', 'MCP 服务器列表与连接状态（代跑 claude mcp list）'],
     ['/exit', '退出 claude 进程（会话保留，发送自动恢复）'],
   ];
@@ -3023,7 +3094,22 @@ function buildClaudeHarnessTab(opts = {}) {
       // 里的斜杠命令会被真实执行——发 /compact 触发 compacting 状态事件
       // →压缩→重新 init（事件流 v2.20 已有分割线渲染）。走正常发送管线，
       // 压缩过程与耗时照常显示；arg 作为保留要点附给 CLI。
+      // v2.28.10：后端超窗守卫已放行 /compact（拒发锁死出口的实锤修复）。
       await dispatch('/compact' + (arg ? ' ' + arg : ''), null, null, false);
+    } else if (cmd === 'rewind') {
+      // v2.28.11：会话回退——截断转写到最后第 N 个完整回合（备份保全量），
+      // 杀进程，下次发消息 --resume 续上回退后的上下文。爆死态（/compact
+      // 都压不动）与「上一轮搞砸了」的统一逃生门。
+      if (!_HG.sid) { showBanner('当前没有活动会话', 2200); return true; }
+      const n = Math.max(1, Math.min(50, parseInt(arg, 10) || 1));
+      try {
+        const r = await fetch('/api/harness/rewind', {method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({sid: _HG.sid, turns: n})});
+        const j = await r.json();
+        showBanner(j.ok ? ('⏪ ' + j.msg + '——发送消息即续上')
+                        : ('回退失败：' + (j.err || '未知')), 4600, !j.ok);
+      } catch(e) { showBanner('回退失败：' + e, 3000, true); }
     } else if (cmd === 'exit') {
       if (!_HG.sid) { showBanner('当前没有活动会话', 2200); return true; }
       fetch('/api/harness/kill', {method:'POST', headers:{'Content-Type':'application/json'},
