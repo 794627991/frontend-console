@@ -112,7 +112,19 @@ def window_main(port, armed=False):
                         dlg.InitialDirectory = buf.value
                 except Exception:
                     pass
-                if dlg.ShowDialog() == 1:      # DialogResult.OK
+                # owner=截图窗（同进程）：不挂 owner 时对话框 z 序在全屏置顶
+                # 截图窗之下（用户实锤「弹出来但看不见、卡死只能强关」）；
+                # 模态挂 owner 后系统强制对话框显示在 owner 之上。
+                owner = None
+                try:
+                    from System import IntPtr
+                    from System.Windows.Forms import Control
+                    hwnd = ctypes.windll.user32.FindWindowW(None, "fc-snip")
+                    if hwnd:
+                        owner = Control.FromHandle(IntPtr(hwnd))
+                except Exception:
+                    owner = None
+                if dlg.ShowDialog(owner) == 1:      # DialogResult.OK
                     result["path"] = dlg.FileName
             except Exception:
                 pass
