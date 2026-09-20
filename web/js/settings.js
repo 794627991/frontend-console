@@ -242,11 +242,12 @@ async function _stRenderTermKeysPane(pane) {
       <div class="dd-cur" style="margin-top:8px;">
         <div class="dd-label">截图快捷键（全局）</div>
         <div class="dd-row" style="display:flex;gap:8px;margin-top:6px;align-items:center;">
-          <input type="text" id="snipHk" value="${snipHk}" spellcheck="false" placeholder="f1 / ctrl+alt+a / 留空禁用"
-                 style="flex:1;font-family:var(--font-mono);padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-input);color:var(--fg);">
-          <button class="btn primary" id="snipHkSave">应用</button>
+          <input type="text" id="snipHk" value="${snipHk}" spellcheck="false" readonly
+                 placeholder="点击录制按键…"
+                 style="flex:1;font-family:var(--font-mono);padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-input);color:var(--fg);cursor:pointer;">
+          <button class="btn ghost" id="snipHkClear" title="清空=禁用全局快捷键">清除</button>
         </div>
-        <div class="dd-sub" style="margin-top:4px;">任意应用前台按键即截当时屏幕（框选+标注+自动复制剪贴板）。功能键 F1–F12 可单键；字母/数字键需带修饰（ctrl/alt/shift/win）。改动即刻生效。</div>
+        <div class="dd-sub" style="margin-top:4px;">点击输入框后直接按想要的组合键即录制并生效（Esc 取消）。功能键 F1–F12 可单键；字母/数字键需带修饰（Ctrl/Alt/Shift/Win）。点「清除」禁用。</div>
       </div>
       <div class="dd-cur" style="margin-top:8px;">
         <div class="dd-label">Claude 打开方式</div>
@@ -309,18 +310,66 @@ async function _stRenderTermKeysPane(pane) {
       showBanner('终端设置已保存');
     } catch(e) { showBanner('保存失败：' + e, 3000, true); }
   };
-  // v2.3.12 截图快捷键：独立应用按钮（即刻热替换注册，成功才落盘）
-  const _hkBtn = pane.querySelector('#snipHkSave');
-  if (_hkBtn) _hkBtn.onclick = async () => {
-    const val = (pane.querySelector('#snipHk').value || '').trim();
+  // v2.3.12 截图快捷键：录制式（点输入框 → 按组合键 → 即刻热替换注册，
+  // 成功才落盘）。旧版手输 text 改 readonly——键名拼错/顺序不对全靠人肉，
+  // 用户要求直接录按键。
+  const _hkInput = pane.querySelector('#snipHk');
+  const _hkApply = async (val) => {
     try {
       const r = await fetch('/api/theme', {method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({snip_hotkey: val})});
       const j = await r.json();
-      if (j.ok) showBanner(val ? `截图快捷键已应用：${val}` : '截图快捷键已禁用');
-      else showBanner(j.err || '快捷键无效', 3000, true);
-    } catch (e) { showBanner('应用失败：' + e, 3000, true); }
+      if (j.ok) { snipHk = val; showBanner(val ? `截图快捷键已应用：${val}` : '截图快捷键已禁用'); }
+      else { showBanner(j.err || '快捷键无效', 3000, true); _hkInput.value = snipHk; }
+    } catch (e) { showBanner('应用失败：' + e, 3000, true); _hkInput.value = snipHk; }
   };
+  if (_hkInput) {
+    let _rec = false;
+    const _setRec = (on) => {
+      _rec = on;
+      _hkInput.placeholder = on ? '按下组合键…（Esc 取消）' : '点击录制按键…';
+      _hkInput.style.borderColor = on ? 'var(--accent, #4a9eff)' : 'var(--border)';
+    };
+    _hkInput.addEventListener('click', () => {
+      if (_rec) return;
+      _hkInput.value = '';
+      _setRec(true);
+      _hkInput.focus();
+    });
+    _hkInput.addEventListener('keydown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === 'Escape') { _hkInput.value = snipHk; _setRec(false); return; }
+      const mod = [];
+      if (e.ctrlKey) mod.push('ctrl');
+      if (e.altKey) mod.push('alt');
+      if (e.shiftKey) mod.push('shift');
+      if (e.metaKey) mod.push('win');
+      const k = (e.key || '').toLowerCase();
+      const isFn = /^f([1-9]|1[0-2])$/.test(k);
+      const isAlnum = /^[a-z0-9]$/.test(k);
+      if (!isFn && !isAlnum) return;          // 只按修饰键/其他键：继续等
+      if (isAlnum && !mod.length) {           // 裸字母/数字：提示后继续录
+        _hkInput.value = '';
+        _hkInput.placeholder = '字母/数字需搭配 Ctrl/Alt/Shift/Win…';
+        return;
+      }
+      const combo = mod.concat([k]).join('+');
+      _hkInput.value = combo;
+      _setRec(false);
+      _hkApply(combo);                        // 录到即用，无需再点按钮
+    });
+    _hkInput.addEventListener('blur', () => {
+      if (_rec) { _hkInput.value = snipHk; _setRec(false); }
+    });
+    const _hkClear = pane.querySelector('#snipHkClear');
+    if (_hkClear) _hkClear.onclick = () => {
+      _hkInput.value = '';
+      snipHk = '';
+      _setRec(false);
+      _hkApply('');                           // 空串=禁用
+    };
+  }
 }
 
 // ---- Claude 重装子页：重开安装窗 / 修复状态栏 / 离线包目录 ----
