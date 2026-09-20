@@ -39,10 +39,10 @@
       showScreenData: true,
       clickCutFullScreen: true,
       maxUndoNum: 30,
-      // 「保存」按钮插件默认只回调+destroyDom（黑屏挂死实锤）——引到与 √
-      // 相同的完成路径：落盘+剪贴板+广播+hide。dataUrl 在第 3 参。
+      // 「保存」按钮=另存为 PNG 文件（区别于 √=附加到对话，用户定调）。
+      // dataUrl 在第 3 参；插件回调后即 destroyDom，对话框由 Python 侧弹。
       saveCallback: function (idx, msg, dataUrl) {
-        try { window.pywebview && pywebview.api.snip_done(dataUrl); }
+        try { window.pywebview && pywebview.api.snip_save_as(dataUrl); }
         catch (e) { window.close(); }
       },
       completeCallback: function (info) {

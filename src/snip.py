@@ -88,6 +88,41 @@ def window_main(port, armed=False):
 
     import webview
 
+    def _save_dialog():
+        """另存为对话框（WinForms 必须 STA 线程跑）。默认图片库+时间戳文件名。"""
+        try:
+            import clr
+            clr.AddReference("System.Windows.Forms")
+            from System.Windows.Forms import SaveFileDialog
+            from System.Threading import Thread, ThreadStart, ApartmentState
+        except Exception:
+            return None
+        result = {}
+
+        def _run():
+            try:
+                dlg = SaveFileDialog()
+                dlg.Filter = "PNG 图片 (*.png)|*.png"
+                dlg.FileName = time.strftime("snip_%Y%m%d_%H%M%S.png")
+                try:
+                    buf = ctypes.create_unicode_buffer(260)
+                    # CSIDL_MYPICTURES=0x27：默认打开「图片」目录
+                    ctypes.windll.shell32.SHGetFolderPathW(None, 0x27, None, 0, buf)
+                    if buf.value:
+                        dlg.InitialDirectory = buf.value
+                except Exception:
+                    pass
+                if dlg.ShowDialog() == 1:      # DialogResult.OK
+                    result["path"] = dlg.FileName
+            except Exception:
+                pass
+
+        t = Thread(ThreadStart(_run))
+        t.SetApartmentState(ApartmentState.STA)
+        t.Start()
+        t.Join()
+        return result.get("path")
+
     state = {"armed": armed, "showing": False}
 
     def _page_url():
@@ -97,7 +132,7 @@ def window_main(port, armed=False):
 
     class SnipWin:
         def snip_done(self, data_url):
-            """标注完成：base64 → 落盘 → 隐藏待命。"""
+            """√ 确认：base64 → 落盘 → 隐藏待命。"""
             try:
                 import base64
                 with open(_TMP_OUT, "wb") as f:
@@ -105,6 +140,27 @@ def window_main(port, armed=False):
             except Exception:
                 pass
             _hide()
+            return True
+
+        def snip_save_as(self, data_url):
+            """「保存」按钮：另存为对话框存 PNG 文件（区别于 √=附加到对话，
+            用户定调：保存就是保存）。取消对话框=放弃当次，同样收起。"""
+            try:
+                import base64
+                raw = base64.b64decode((data_url or "").split(",", 1)[-1])
+            except Exception:
+                raw = b""
+
+            def _ask():
+                path = _save_dialog()
+                if path:
+                    try:
+                        with open(path, "wb") as f:
+                            f.write(raw)
+                    except Exception:
+                        pass
+                _hide()
+            threading.Thread(target=_ask, daemon=True).start()
             return True
 
         def snip_cancel(self):
