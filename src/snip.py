@@ -88,6 +88,16 @@ def window_main(port, armed=False):
 
     import webview
 
+    def _save_log(msg):
+        """保存链路日志（TEMP）：间歇性失败要能事后定位。"""
+        try:
+            with open(os.path.join(os.environ.get("TEMP", "."),
+                                   "fc_snip_save.log"), "a",
+                      encoding="utf-8") as f:
+                f.write("%s %s\n" % (time.strftime("%H:%M:%S"), msg))
+        except Exception:
+            pass
+
     def _save_dialog():
         """另存为对话框（WinForms 必须 STA 线程跑）。默认图片库+时间戳文件名。"""
         try:
@@ -124,7 +134,18 @@ def window_main(port, armed=False):
                         owner = Control.FromHandle(IntPtr(hwnd))
                 except Exception:
                     owner = None
-                if dlg.ShowDialog(owner) == 1:      # DialogResult.OK
+                # DialogResult 是 pythonnet 枚举：coreclr 运行时下与 int 的
+                # == 比较不可靠（恒 False → 「确认」被当取消，一个都存不下
+                # 的实锤位）。str 判为主、int 兜底（转换也可能炸，再包一层）。
+                res = dlg.ShowDialog(owner)
+                _save_log("ShowDialog 返回: %r" % res)
+                _ok = str(res) == "OK"
+                if not _ok:
+                    try:
+                        _ok = int(res) == 1
+                    except Exception:
+                        pass
+                if _ok:
                     result["path"] = dlg.FileName
             except Exception:
                 pass
@@ -156,21 +177,26 @@ def window_main(port, armed=False):
 
         def snip_save_as(self, data_url):
             """「保存」按钮：另存为对话框存 PNG 文件（区别于 √=附加到对话，
-            用户定调：保存就是保存）。取消对话框=放弃当次，同样收起。"""
+            用户定调：保存就是保存）。取消对话框=放弃当次，同样收起。
+            全程写 TEMP 日志：间歇失败要能定位（用户实锤「多次一个没存下」）。"""
             try:
                 import base64
                 raw = base64.b64decode((data_url or "").split(",", 1)[-1])
-            except Exception:
+            except Exception as e:
                 raw = b""
+                _save_log("decode 失败: %r" % e)
+            _save_log("snip_save_as 收图 %d bytes" % len(raw))
 
             def _ask():
                 path = _save_dialog()
-                if path:
+                _save_log("对话框结果: %r" % path)
+                if path and raw:
                     try:
                         with open(path, "wb") as f:
                             f.write(raw)
-                    except Exception:
-                        pass
+                        _save_log("已写入 %s (%d bytes)" % (path, len(raw)))
+                    except Exception as e:
+                        _save_log("写入失败 %s: %r" % (path, e))
                 _hide()
             threading.Thread(target=_ask, daemon=True).start()
             return True
