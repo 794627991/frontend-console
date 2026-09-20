@@ -123,21 +123,41 @@ def window_main(port):
                     GWL_EXSTYLE = -20
                     style = u32.GetWindowLongW(hwnd, GWL_EXSTYLE)
                     u32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | 0x80)  # WS_EX_TOOLWINDOW
-                    # 双保险：清标题栏/可调边框样式残留（配合 SWP_FRAMECHANGED
-                    # 生效），确保遮罩是纯无边框覆盖、无任何边框条带。
                     GWL_STYLE = -16
                     style2 = u32.GetWindowLongW(hwnd, GWL_STYLE)
                     u32.SetWindowLongW(hwnd, GWL_STYLE,
-                                       style2 & ~0x00C40000)  # 去 WS_CAPTION|WS_THICKFRAME
-                    # 钉死窗口=虚拟屏幕物理矩形：pywebview 建 Window 时把
-                    # width/height 乘了 DPI scale（非 100% 缩放下窗口会放大
-                    # 超屏），这里用抓屏时的物理几何归位，双保险 1:1。
-                    u32.SetWindowPos(hwnd, -1,
-                                     int(geo.get("x", 0)), int(geo.get("y", 0)),
-                                     int(geo.get("w", 0)), int(geo.get("h", 0)),
-                                     0x0040)  # SWP_FRAMECHANGED
+                                       style2 & ~0x00C40000)  # 去边框样式残留
+                # 钉死窗口=虚拟屏幕物理矩形。必须走 WinForms 自己的
+                # ClientSize/Location：pywebview 建窗先设 Size 再改 frameless，
+                # Form 缓存的 ClientSize 是按带边框样式算的「屏-边框-标题栏」
+                # （实测 1920x1080 屏被钳到 1904x1041，raw SetWindowPos 钉完
+                # 被 WM_WINDOWPOSCHANGING 弹回）→ 遮罩差 16x39 盖不满屏，
+                # 右侧竖条+底部露出真任务栏=「两排任务栏」实锤。Invoke 到
+                # GUI 线程设，Form 缓存同步更新。
+                gx, gy = int(geo.get("x", 0)), int(geo.get("y", 0))
+                gw, gh = int(geo.get("w", 0)), int(geo.get("h", 0))
+                try:
+                    from System import Func, Type
+                    from System.Drawing import Point, Size
+                    native = win.native
+
+                    def _fix():
+                        native.ClientSize = Size(gw, gh)
+                        native.Location = Point(gx, gy)
+                    native.Invoke(Func[Type](_fix))
+                except Exception:
+                    # CLR 不可用兜底：raw 钉（会被弹回但聊胜于无）
+                    if hwnd:
+                        u32.SetWindowPos(hwnd, -1, gx, gy, gw, gh, 0x0040)
+                if hwnd:
+                    # 置顶+样式刷新（NOSIZE|NOMOVE 只刷框架）
+                    u32.SetWindowPos(hwnd, -1, 0, 0, 0, 0,
+                                     0x0001 | 0x0002 | 0x0040)
                 win.show()
-                win.focus()
+                # pywebview 6.x 的 window.focus 是 bool 属性不是方法（诊断实测
+                # 调用即 TypeError 炸线程），聚焦改走 Win32
+                if hwnd:
+                    u32.SetForegroundWindow(hwnd)
             except Exception:
                 try:
                     win.show()
