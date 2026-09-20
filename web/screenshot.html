@@ -24,12 +24,23 @@
 (function () {
   'use strict';
   function boot() {
+    var img = '/api/snip/img?v=' + Date.now();
+    // 收尾防黑闪：插件 √/×/保存 都会 destroyDom 销毁界面，露出 body 背景
+    // （原 #000=黑屏闪烁/保存键黑屏挂死双实锤）。背景换成底图原图：
+    // 销毁瞬间只丢遮罩变亮，不再黑，配合 Python 侧即刻 hide 基本无感。
+    document.body.style.background = '#000 url(' + img + ') center/100% 100% no-repeat';
     new screenShotPlugin({
-      capture: { source: 'image', imageSrc: '/api/snip/img?v=' + Date.now() },
+      capture: { source: 'image', imageSrc: img },
       writeBase64: false,
       showScreenData: true,
       clickCutFullScreen: true,
       maxUndoNum: 30,
+      // 「保存」按钮插件默认只回调+destroyDom（黑屏挂死实锤）——引到与 √
+      // 相同的完成路径：落盘+剪贴板+广播+hide。dataUrl 在第 3 参。
+      saveCallback: function (idx, msg, dataUrl) {
+        try { window.pywebview && pywebview.api.snip_done(dataUrl); }
+        catch (e) { window.close(); }
+      },
       completeCallback: function (info) {
         try { window.pywebview && pywebview.api.snip_done(info.base64); }
         catch (e) { window.close(); }

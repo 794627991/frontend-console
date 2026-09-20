@@ -97,15 +97,16 @@ def window_main(port, armed=False):
                     f.write(base64.b64decode((data_url or "").split(",", 1)[-1]))
             except Exception:
                 pass
-            threading.Thread(target=_hide, daemon=True).start()
+            _hide()
             return True
 
         def snip_cancel(self):
-            threading.Thread(target=_hide, daemon=True).start()
+            _hide()
             return True
 
     def _hide():
-        time.sleep(0.2)
+        # 即刻 hide（旧版 sleep 0.2 给了插件 destroyDom 黑帧 200ms 展示时间，
+        # 黑屏闪烁实锤）；跨进程调用+Invoke 全程 ~20ms，抢在视觉感知前摘窗
         try:
             win.hide()
             state["showing"] = False
