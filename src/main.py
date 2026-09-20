@@ -452,6 +452,59 @@ def main():
             threading.Thread(target=_do, daemon=True).start()
         return '{"ok": true}', 200, {"Content-Type": "application/json"}
 
+    # v2.3.12 内置截图热键路径：进入=toggle 全屏（视口=屏幕=底图尺寸，前端
+    # 等比 canvas 自动 1:1 原生分辨率）；退出=toggle 恢复+maximize 兜底
+    # （pywebview 退出全屏回 Normal 不回之前的最大化态——上次「任务栏没了」
+    # 的实锤根因，此处显式拉回）。GUI 线程 marshal 同 maximize。
+    @app.route("/api/window/fullscreen", methods=["POST"])
+    def _api_window_fullscreen():
+        act = (request.get_json(force=True, silent=True) or {}).get("action", "enter")
+        w = getattr(main, "_win", None)
+        if w is not None:
+            def _do():
+                try:
+                    w.show()
+                    w.toggle_fullscreen()
+                    if act == "exit":
+                        import time as _t
+                        _t.sleep(0.15)          # 等全屏退出布局完成再拉最大化
+                        w.maximize()
+                    w.focus()
+                except Exception:
+                    pass
+            threading.Thread(target=_do, daemon=True).start()
+        return '{"ok": true}', 200, {"Content-Type": "application/json"}
+
+    # v2.3.12 截图全局热键：任意应用前台按键 → 截当时真实屏幕 → 主窗弹前
+    # → SSE snip_hotkey → 前端进入截图态。热键键位读 config.json 的
+    # snip_hotkey（默认 ctrl+alt+a，空串禁用），注册失败静默（被占用不抢）。
+    def _on_snip_hotkey():
+        from src import snip as _snip
+        from src.app_state import _broadcast_to_ai
+        if not _snip.grab():
+            return
+        w = getattr(main, "_win", None)
+        if w is not None:
+            def _do():
+                try:
+                    w.show()
+                    w.restore()
+                    w.maximize()   # 先最大化（前端进截图态时自己切全屏）
+                    w.focus()
+                except Exception:
+                    pass
+            threading.Thread(target=_do, daemon=True).start()
+        _broadcast_to_ai({"kind": "ui_action", "action": "snip_hotkey"})
+
+    try:
+        from src.app_state import CONFIG_FILE
+        with open(CONFIG_FILE, encoding="utf-8") as _f:
+            _snip_hk = (json.load(_f).get("snip_hotkey") or "ctrl+alt+a")
+    except Exception:
+        _snip_hk = "ctrl+alt+a"
+    from src import snip as _snip_mod
+    _snip_mod.start_hotkey(_snip_hk, _on_snip_hotkey)
+
     # Flask 用空闲端口，避免冲突
     import socket
     def free_port():

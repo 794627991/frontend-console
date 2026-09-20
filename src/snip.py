@@ -117,6 +117,62 @@ def copy_png_to_clipboard(png_path):
 
 
 # ---------------------------------------------------------------------------
+# 全局热键（v2.3.12）：任意应用前台按热键 → 截当前真实屏幕 → 工具弹前进入
+# 截图态（Snipaste 核心体验；按钮入口截到的是工具最大化时盖住一切的自己）
+# ---------------------------------------------------------------------------
+_MODS = {"ctrl": 0x2, "alt": 0x1, "shift": 0x4, "win": 0x8}
+
+
+def _parse_hotkey(s):
+    """'ctrl+alt+a' → (mods, vk)。键位支持 a-z/0-9/f1-f12；非法返回 None。"""
+    parts = [p.strip().lower() for p in str(s or "").split("+") if p.strip()]
+    if not parts:
+        return None
+    mods, key = 0, ""
+    for p in parts:
+        if p in _MODS:
+            mods |= _MODS[p]
+        else:
+            key = p
+    if not key or not mods:
+        return None
+    if len(key) == 1 and key.isalnum():
+        vk = ord(key.upper())
+    elif key.startswith("f") and key[1:].isdigit() and 1 <= int(key[1:]) <= 12:
+        vk = 0x70 + int(key[1:]) - 1
+    else:
+        return None
+    return mods, vk
+
+
+def start_hotkey(hotkey_str, on_trigger):
+    """注册全局热键（daemon 消息循环线程）。失败静默返回 False。
+    hotkey_str 形如 'ctrl+alt+a'（config.json 的 snip_hotkey，空/非法=不注册）。"""
+    hk = _parse_hotkey(hotkey_str)
+    if not hk:
+        return False
+
+    def _loop():
+        from ctypes import wintypes
+        u32 = ctypes.windll.user32
+        mods, vk = hk
+        HOTKEY_ID = 0xFC1
+        if not u32.RegisterHotKey(None, HOTKEY_ID, mods, vk):
+            return   # 被其他程序占用（Snipaste 等同款热键）——不抢，静默
+        msg = wintypes.MSG()
+        while u32.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
+            if msg.message == 0x0312 and msg.wParam == HOTKEY_ID:   # WM_HOTKEY
+                try:
+                    threading.Thread(target=on_trigger, daemon=True).start()
+                except Exception:
+                    pass
+
+    import threading
+    threading.Thread(target=_loop, daemon=True).start()
+    return True
+
+
+# ---------------------------------------------------------------------------
 # 出口：base64 → uploads + 剪贴板
 # ---------------------------------------------------------------------------
 def save_png(data_url):

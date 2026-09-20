@@ -3413,17 +3413,23 @@ function buildClaudeHarnessTab(opts = {}) {
   // 1:1 无变形、原生分辨率导出——修「截图坍缩」：非全屏时底图 16:9 被非等比
   // 拉伸进主窗视口，比例失真）→ 全屏遮罩盖住 UI 即截图态 → 确认后 base64
   // 交后端落盘+剪贴板 → 恢复窗口 → 直接挂附件
-  q('[data-hg-snip]').onclick = async () => {
+  // v2.3.12 截图公共入口：fs=false（📷 按钮路径——不切窗口，canvas 等比适配
+  // 视口零闪烁）/ fs=true（全局热键路径——主窗切全屏后视口=屏幕=底图尺寸，
+  // 等比 canvas 自动 1:1 原生分辨率；结束 toggle 恢复+后端 maximize 兜底）
+  window.harnessSnipStart = async (fs) => {
     let j;
     try { j = await (await fetch('/api/snip/grab', {method: 'POST'})).json(); }
     catch (e) { showBanner('抓屏失败：' + e, 3000, true); return; }
     if (!j.ok) { showBanner('抓屏失败（子进程未产出截图）', 3000, true); return; }
     if (typeof window.screenShotPlugin !== 'function') { showBanner('截图组件未加载', 3000, true); return; }
     if (window.__snip && window.__snip.destroyComponents) { try { window.__snip.destroyComponents(); } catch (_) {} window.__snip = null; }
-    // 防变形（v2.3.12 定案）：曾试过主窗临时全屏（toggle_fullscreen），但进出各
-    // 一次窗口模式跳变（用户嫌「一闪而过的分辨率变化」）且退出后任务栏被盖不
-    // 恢复。改为 canvasWidth/Height=底图等比适配视口（无头实测 canvas 1400x788
-    // + 导出与拖框同尺寸同比例 = 零变形），完全不切窗口、零闪烁零恢复问题。
+    if (fs) {
+      try { await fetch('/api/window/fullscreen', {method: 'POST',
+        headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'enter'})}); } catch (_) {}
+      await new Promise(r => setTimeout(r, 350));   // 等全屏切换布局完成再量视口
+    }
+    // 防变形（v2.3.12 定案）：canvasWidth/Height=底图等比适配视口（无头实测
+    // canvas 1400x788 + 导出与拖框同尺寸同比例 = 零变形）。
     let iw = 1920, ih = 1080;
     const imgURL = '/api/snip/img?v=' + Date.now();
     try {
@@ -3442,7 +3448,11 @@ function buildClaudeHarnessTab(opts = {}) {
     const veil = document.createElement('div');
     veil.style.cssText = 'position:fixed;inset:0;background:#000;z-index:99998';
     document.body.appendChild(veil);
-    const _snipExit = () => { try { veil.remove(); } catch (_) {} };
+    const _snipExit = () => {
+      try { veil.remove(); } catch (_) {}
+      if (fs) { try { fetch('/api/window/fullscreen', {method: 'POST',
+        headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'exit'})}); } catch (_) {} }
+    };
     window.__snip = new screenShotPlugin({
       capture: { source: 'image', imageSrc: imgURL },
       writeBase64: false,        // 剪贴板统一走 Python CF_DIB（更稳）
@@ -3473,6 +3483,7 @@ function buildClaudeHarnessTab(opts = {}) {
       }
     });
   };
+  q('[data-hg-snip]').onclick = () => window.harnessSnipStart(false);
   async function uploadFiles(list) {
     for (const f of list) {
       if (f.size > 20 * 1024 * 1024) { showBanner(`「${f.name}」超过 20MB，跳过`, 3000, true); continue; }
