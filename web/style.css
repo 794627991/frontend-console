@@ -2955,3 +2955,19 @@ html[data-theme="sage"], html[data-theme="sky"] {
 .hg-grp-time { font-size: 10px; color: var(--muted); flex-shrink: 0; opacity: .8; }
 .hg-item.grp-child { margin-left: 14px; border-left: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
   border-radius: 0 10px 10px 0; }
+
+/* v2.3.10 只读模式 ZCode 式大修：模式总开关 pill + 工具行内联命令 */
+.hg-ro-pill { flex-shrink: 0; font-size: 12px; color: var(--fg);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: 99px; padding: 4px 13px; cursor: pointer; font-weight: 600;
+  transition: all .15s; }
+.hg-ro-pill:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.hg-ro-pill.brief { color: var(--accent); border-color: var(--accent); }
+.hg-ro-tailbar { text-align: center; font-size: 11px; color: var(--muted);
+  padding: 18px 0 8px; opacity: .8; }
+.h-tool-hint { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; font-family: var(--font-mono, monospace); font-size: 11px;
+  color: var(--muted); direction: rtl; text-align: left; }
+/* rtl 截断保尾部（命令尾部信息量大：文件名/参数在尾），hover 放大看全 */
+.h-tool-hint:hover { white-space: normal; direction: ltr; text-align: left; }

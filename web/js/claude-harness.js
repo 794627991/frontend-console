@@ -2229,21 +2229,56 @@ function buildClaudeHarnessTab(opts = {}) {
     const total = _HG.histAll.length;
     const ov = document.createElement('div');
     ov.className = 'hg-readonly';
+    // v2.3.10 ZCode 式只读大修：加「仅看结论 ⇄ 完整过程」总开关（默认完整
+    // 时间线；结论模式只显用户消息+最终结论——超长会话先看结论再按需展开）
     ov.innerHTML =
       '<div class="hg-ro-bar">' +
       '<span class="hg-ro-title">📖 只读模式 · ' + total + ' 条历史</span>' +
+      '<button class="hg-ro-pill" data-ro-pill title="切换：仅看最终结论 / 完整过程时间线"></button>' +
       '<span class="hg-ro-busy" data-ro-busy style="display:none">● 回复后台进行中…（退出后可见）</span>' +
       '<span class="hg-ro-hint">抽屉点开渲染、收起释放；上滑加载更早</span>' +
       '<button class="hg-ro-exit" title="退出并清空全部渲染">✕ 退出</button></div>' +
       '<div class="hg-ro-flow"></div>';
     const ro = ov.querySelector('.hg-ro-flow');
     ov.querySelector('.hg-ro-exit').onclick = _roExit;
+    const pill = ov.querySelector('[data-ro-pill]');
+    pill.onclick = () => {
+      _HG.roMode = _HG.roMode === 'brief' ? 'line' : 'brief';
+      _roApplyMode();
+    };
     wrap.appendChild(ov);
+
+    // v2.3.10 模式应用：brief=仅用户消息+最后一段 AI 结论（先看结果）；
+    // line=完整时间线（现行为）。思考/工具在两模式都保持收起单行
+    // （ZCode 同款：过程默认收起，点开看细节）
+    function _roApplyMode() {
+      const brief = _HG.roMode === 'brief';
+      pill.textContent = brief ? '› 仅看结论' : '˅ 完整过程';
+      pill.classList.toggle('brief', brief);
+      ro._lastTs = 0; ro._thinkN = 0;   // 模式切换重置段计数/时间条状态
+      roRender(brief ? 0 : Math.max(0, ro._start || 0));
+    }
+    _HG.roMode = _HG.roMode || 'line';
 
     const roRender = (start) => {
       start = Math.max(0, start);
       ro._start = start;
       ro.innerHTML = '';
+      if (_HG.roMode === 'brief') {
+        // 结论模式：全部用户消息 + 最后一段有文本的 AI 回复（ZCode 收起态）
+        let lastAsst = null, lastIdx = -1;
+        _HG.histAll.forEach((l, i) => {
+          if (l.role === 'assistant' && l.text && String(l.text).trim()) { lastAsst = l; lastIdx = i; }
+        });
+        _HG.histAll.forEach((l, i) => {
+          if (l.role === 'user') _roLine(l, i, ro);
+          else if (i === lastIdx && lastAsst) _roLine(lastAsst, i, ro);
+        });
+        if (lastAsst) ro.appendChild(Object.assign(document.createElement('div'),
+          { className: 'hg-ro-tailbar', textContent: '—— 以上为最终结论 · 点左上「仅看结论」按钮切回完整过程 ——' }));
+        ro.scrollTop = 0;
+        return;
+      }
       if (start > 0) {
         const bar = document.createElement('div');
         bar.className = 'hg-hist-more';
@@ -2292,8 +2327,10 @@ function buildClaudeHarnessTab(opts = {}) {
         }
       }
     });
-    // 起点：接在主层当前渲染起点之前 100 条（上下文衔接，可继续上滑到 0）
-    roRender(Math.max(0, (_HG.histStart || total) - 100));
+    // 起点：接在主层当前渲染起点之前 100 条（上下文衔接，可继续上滑到 0）；
+    // 上次进只读时切过结论模式的保持该模式（会话内记忆，切会话归线）
+    ro._start = Math.max(0, (_HG.histStart || total) - 100);
+    _roApplyMode();
     ov._ro = ro;
     // 后台回复指示：SSE 照常写主 flow（禅层只是覆盖），用户在此看不到进度
     // ——顶栏亮指示，避免「以为后台停了」（用户实测困惑点）
@@ -2352,9 +2389,14 @@ function buildClaudeHarnessTab(opts = {}) {
       const err = !!l.err;
       d.className = 'h-tool col' + (err ? ' err open' : '');
       const hbc = _H_TOOL_CFG[l.text] || {};
+      // v2.3.10 ZCode 式：收起行内联命令摘要（等宽、超长截断）——不看展开
+      // 也能扫出"这轮跑了什么"；无摘要的工具保持原样
+      const hint = (l.summary || (l.input && (l.input.command || l.input.file_path || l.input.pattern || '')) || '').trim();
+      const hintHtml = hint && !err ? `<span class="h-tool-hint">${esc(hint.slice(0, 72))}${hint.length > 72 ? '…' : ''}</span>` : '';
       d.innerHTML =
         `<button class="h-tool-head"><span class="h-chev">▸</span>` +
         `<span class="h-tool-name">${_hToolIco(l.text)} ${esc(_hToolLabel(l.text))}</span>` +
+        hintHtml +
         (hbc.badge ? `<span class="h-tool-badge">${esc(hbc.badge)}</span>` : '') +
         `<span class="h-tslots">${statusBadge(err ? 'error' : 'completed')}</span></button>` +
         `<div class="h-tool-coll">${err ? _histToolBodyHtml(l) : ''}</div>`;
