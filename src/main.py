@@ -452,6 +452,28 @@ def main():
             threading.Thread(target=_do, daemon=True).start()
         return '{"ok": true}', 200, {"Content-Type": "application/json"}
 
+    # v2.3.12 内置截图全屏路径（第三次恢复，这次配前端视口就绪轮询）：
+    # enter=toggle 全屏；exit=toggle 恢复 + maximize 兜底（pywebview 退出
+    # 全屏回 Normal 不回之前的最大化态——任务栏消失实锤的根因，显式拉回）。
+    @app.route("/api/window/fullscreen", methods=["POST"])
+    def _api_window_fullscreen():
+        act = (request.get_json(force=True, silent=True) or {}).get("action", "enter")
+        w = getattr(main, "_win", None)
+        if w is not None:
+            def _do():
+                try:
+                    w.show()
+                    w.toggle_fullscreen()
+                    if act == "exit":
+                        import time as _t
+                        _t.sleep(0.15)          # 等全屏退出布局完成再拉最大化
+                        w.maximize()
+                    w.focus()
+                except Exception:
+                    pass
+            threading.Thread(target=_do, daemon=True).start()
+        return '{"ok": true}', 200, {"Content-Type": "application/json"}
+
     # v2.3.12 截图全局热键：任意应用前台按键 → 截当时真实屏幕 → 主窗弹前
     # → SSE snip_hotkey → 前端进入截图态。热键键位读 config.json 的
     # snip_hotkey（默认 ctrl+alt+a，空串禁用），注册失败静默（被占用不抢）。
