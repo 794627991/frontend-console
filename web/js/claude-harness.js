@@ -765,10 +765,19 @@ function buildClaudeHarnessTab(opts = {}) {
     nr.className = 'h-grp';
     const proc = document.createElement('div');
     proc.className = 'h-grp-proc';
+    // v2.39（dev）：组头归属标识（头像+「轻主力 · 模型」徽章）——用户实锤
+    // 胶囊只有数字统计看不出这组活是谁干的。与子代理消息行（renderAsst
+    // isSub）同款视觉语言。建在 head 按钮内 chev 之后：实时/历史重建都走
+    // 本新建分支自动生效；快照恢复回扫（grpFromDom）不重建 head，标识随
+    // innerHTML 序列化自动携带；grpFinalize/startThinking/drawerCount 只
+    // 重写 title/stats span，不碰标识。两抽屉头各一份——纯思考组/纯工具组
+    // 单抽屉显示时归属也在。
+    const owner = _hgOwnerBadge();
     const thinkBox = document.createElement('div');
     thinkBox.className = 'h-drawer think';
     thinkBox.innerHTML =
       `<button class="h-drawer-head"><span class="h-chev">▸</span>` +
+      owner +
       `<span class="h-drawer-title">🧠 思考</span>` +
       `<span class="h-tslots" data-hg-dslots></span></button>` +
       `<div class="h-drawer-body"></div>`;
@@ -776,6 +785,7 @@ function buildClaudeHarnessTab(opts = {}) {
     execBox.className = 'h-drawer exec';
     execBox.innerHTML =
       `<button class="h-drawer-head"><span class="h-chev">▸</span>` +
+      owner +
       `<span class="h-drawer-title">💻 执行</span>` +
       `<span class="h-drawer-stats" data-hg-dstats></span>` +
       `<span class="h-tslots" data-hg-dslots></span></button>` +
@@ -1148,6 +1158,24 @@ function buildClaudeHarnessTab(opts = {}) {
   function _hgAvaCls(name) {
     const c = (String(name || '?').charCodeAt(0) || 63) % 5;
     return 'h-ava-' + c;
+  }
+  // v2.39（dev）：主会话组头归属标识 HTML——与子代理消息行同款「小头像+
+  // 角色徽章」视觉语言。模型取 _HG.model 剥 [1M]（同 renderAsst 的 bare
+  // 规则）；形态名从 _hgRolesCache 判 light/strong（判据同 renderAsst 角色
+  // 徽章，roles 关/缓存未到只显模型名，不编造）；双空返回 ''（会话没选过
+  // 模型且缓存未到——组头保持原样，不抛错不占位）。头像取色字符模型名
+  // 优先（与 renderAsst 主分支一致：主会话头像色随模型变）。
+  function _hgOwnerBadge() {
+    const bare = String(_HG.model || '').split('[')[0].trim();
+    const rj = _hgRolesCache;
+    const role = (rj && rj.ok && rj.roles && rj.roles.enabled)
+      ? (rj.mode === 'light' ? '轻主力' : '决策者') : '';
+    if (!bare && !role) return '';
+    const ac = bare || role;
+    const txt = role && bare ? role + ' · ' + bare : (role || bare);
+    return `<span class="h-drawer-owner">` +
+      `<span class="h-ava ${_hgAvaCls(ac)}" style="width:12px;height:12px;font-size:8px;">${esc(ac.charAt(0).toUpperCase())}</span>` +
+      `<span class="h-mmodel" title="本组思考/工具归属：主会话${bare ? '，模型 ' + esc(bare) : ''}">${esc(txt)}</span></span>`;
   }
   function renderAsst(text, isSub, subId, model) {
     // v2.16：空白/纯换行的 text 块不渲染。模型每轮都会吐一个 "\n\n" 占位块，

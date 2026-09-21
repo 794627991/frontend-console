@@ -2296,6 +2296,10 @@ html {
 .h-drawer .h-chev { transition: transform .15s; }
 .h-drawer.open .h-chev { transform: rotate(90deg); }
 .h-drawer-title { flex-shrink: 0; font-weight: 600; }
+/* v2.39：组头归属标识块（小头像+徽章，与子代理消息行 renderAsst isSub
+   视觉语言统一）——头像 12px 级内联缩放同 isSub 写法；.h-ava 自带
+   margin-right:4px + 本块 gap:4px，与组头 gap:8px 协调不挤 */
+.h-drawer-owner { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; }
 /* v2.20：思考抽屉「一键折叠」钮（组头最右，点击收抽屉+收全部思考段） */
 /* v2.21：思考段右下角「收起 ⌄」钮（组头右上角的 ⌃ 已删——位置丑且语义重复） */
 .h-think-seg-fold { display: block; text-align: right; font-style: normal;
