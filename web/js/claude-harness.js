@@ -89,7 +89,11 @@ const _H_TOOL_CFG = {
     get: i => i.description || (i.status ? '状态 → ' + i.status : ''), result: 'hide' },
   TaskList:  { mode: 'one-line', kind: 'task', get: () => '列出任务' },
   TaskGet:   { mode: 'one-line', kind: 'task', get: i => i.taskId ? '#' + i.taskId : '查看任务' },
-  Agent:     { mode: 'collapsible', kind: 'agent', badge: '子代理', title: i => [i.subagent_type || 'Agent', i.description].filter(Boolean).join(' · ') || '子代理', get: i => i.prompt || '', result: 'hide' },
+  // v2.39：CLI 新版（2.1.267+）把子代理工具 Task 改名 Agent——此前照抄旧
+  // Task 配置时多了 result:'hide'，完成报告被隐藏，主窗口看不到回传摘要
+  // （旧 CLI 的 Task 路径正常，用户实锤「另一台电脑完全不一样」）。与 Task
+  // 对齐：完成后报告摘要直显、全文收折叠体。
+  Agent:     { mode: 'collapsible', kind: 'agent', badge: '子代理', title: i => [i.subagent_type || 'Agent', i.description].filter(Boolean).join(' · ') || '子代理', get: i => i.prompt || '' },
   // v2.21：派子代理显性化——紫色「子代理」徽章 + 运行秒表 + 完成后报告
   // 摘要（悬停看更多），报告全文收折叠体（完成有内容自动走 renderOneToolResult）
   Task:      { mode: 'collapsible', kind: 'agent', badge: '子代理', title: i => [i.subagent_type || 'Agent', i.description].filter(Boolean).join(' · ') || '子代理', get: i => i.prompt || '' },
