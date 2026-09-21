@@ -4154,14 +4154,23 @@ function buildClaudeHarnessTab(opts = {}) {
             const bare = String(row.model || '').split('[')[0] || row.model || '未知';
             _subAppend(sc2, `<div class="hg-sub-msg"><span class="h-ava ${_hgAvaCls(bare)}">${esc(bare.charAt(0).toUpperCase())}</span>` +
               `<span class="h-mmodel">${esc(bare)}</span></div>`, true);
-            _subAppend(sc2, `<div class="hg-sub-msg">${esc(row.text)}</div>`, true);
+            // 窗格重设计 P1-3：正文升级 md 渲染（懒高亮）——回放一次灌几十条，
+            // 即时增强必卡，IO 挂上滚到哪亮到哪
+            _subAppendEl(sc2, _subMdRow(row.text), true);
           } else if (row.k === 'note') {
             _subAppend(sc2, `<div class="hg-sub-replay-note">${esc(row.text)}</div>`, true);
           } else if (row.k === 'tool') {
-            _subAppend(sc2, `<div class="hg-sub-tool">${esc(_hDrawerName(row.name || ''))}` +
+            // 窗格重设计 P2-7：回放行直接定格 done（历史已完结）；转写无
+            // tool_use_id，不做配对
+            _subAppend(sc2, `<div class="hg-sub-tool done"><span class="hg-sub-tdot"></span>${esc(_hDrawerName(row.name || ''))}` +
               (row.hint ? ` · ${esc(row.hint)}` : '') + '</div>', true);
           } else if (row.k === 'result') {
-            _subAppend(sc2, `<div class="hg-sub-res${row.err ? ' err' : ''}">↳ ${esc(row.text || '完成')}</div>`, true);
+            // 窗格重设计 P2-8：同实况结果行——超 120 字可点击展开全文
+            const rfull = String(row.text || '');
+            const rtxt = rfull.replace(/\s+/g, ' ').trim().slice(0, 120);
+            _subAppend(sc2, `<div class="hg-sub-res${row.err ? ' err' : ''}"` +
+              (rfull.trim().length > 120 ? ` data-hg-subfull="${esc(rfull)}" title="点击展开全文"` : '') +
+              `>↳ ${esc(rtxt || '完成')}</div>`, true);
           }
         }
         _subScroll(tid);
@@ -4198,12 +4207,38 @@ function buildClaudeHarnessTab(opts = {}) {
         ` data-hg-subtab="${esc(t)}" title="${esc(ttip)}">` +
         `<span class="hg-sub-dot"></span>${esc(tb.label)}` +
         (tb.replay ? `<span class="hg-sub-rp">回放</span>` : '') +
-        (mdlShort ? `<span class="hg-sub-mdl">${esc(mdlShort)}</span>` : '') + `</div>`;
+        (mdlShort ? `<span class="hg-sub-mdl">${esc(mdlShort)}</span>` : '') +
+        // 窗格重设计 P1-1：单-tab ✕——hover 才浮现（CSS 控制），运行中的 tab
+        // 提示「任务继续后台跑」防误触焦虑；点击走 _subDrop（tab 条委托分支）
+        `<span class="hg-sub-x2" data-hg-subclose="${esc(t)}" title="${esc(tb.run ? '关闭视图（任务继续在后台跑）' : '关闭该 tab')}">✕</span></div>`;
     }).join('');
   }
   function _subScroll(tid) {
     const sc = _sub.tabs[tid] && _sub.tabs[tid].sc;
     if (sc) sc.scrollTop = sc.scrollHeight;
+  }
+  // 窗格重设计 P1-4：cap 删首不再静默——首删插「⬆ 已省略 N 行」提示条占住
+  // 头部，其后每删一条只累进计数（不重复插）；提示条自身占 1 个行名额。
+  // 回放路径 noCap 绕过本函数，语义不变
+  function _subCap(sc) {
+    while (sc.children.length > 200) {
+      const first = sc.firstElementChild;
+      if (!first) break;
+      if (first.classList.contains('hg-sub-omit')) {
+        first.dataset.omitted = String((+first.dataset.omitted || 0) + 1);
+        first.textContent = `⬆ 已省略 ${first.dataset.omitted} 行`;
+        // 提示条已是首条：真正该删的是它后面那条内容行
+        const victim = first.nextElementSibling;
+        if (victim) victim.remove(); else first.remove();
+      } else {
+        const om = document.createElement('div');
+        om.className = 'hg-sub-omit';
+        om.dataset.omitted = '1';
+        om.textContent = '⬆ 已省略 1 行';
+        sc.insertBefore(om, first);
+        first.remove();
+      }
+    }
   }
   function _subAppend(sc, html, noCap) {   // 上限 200 条/子代理，溢出删首条
     const d = document.createElement('div');
@@ -4212,11 +4247,34 @@ function buildClaudeHarnessTab(opts = {}) {
     // v2.37R3（复审A）：noCap=true=回放路径——回放 201~202 行（含头部 note）
     // 会被 200 上限削掉头部 note 和领命首行、「已截断」告知自身也保不住，
     // 故整段绕过 cap；实时 tab 的 200 上限语义不变
-    if (!noCap) while (sc.children.length > 200) sc.removeChild(sc.firstChild);
+    if (!noCap) _subCap(sc);
+  }
+  // 窗格重设计 P1-3：元素直挂版——md 渲染产物必须整元素进 DOM：renderMd 的
+  // 链接拦截是 addEventListener 直绑、懒高亮是 IO observe 元素实例，经
+  // outerHTML→innerHTML 序列化往返全丢（只剩静态壳）。窗格不进快照（无
+  // innerHTML 重建），这些绑定随元素存活到 tab 关闭，安全
+  function _subAppendEl(sc, el, noCap) {
+    sc.appendChild(el);
+    if (!noCap) _subCap(sc);
+  }
+  // 窗格重设计 P1-3：窗格 md 行工厂——renderMd 内核 + 复用 .h-bubble 全局
+  // 排版规则（p/pre/code/ul），窗格窄列字号由 .hg-sub-msgmd 收敛（.h-msg
+  // 作用域的气泡 padding 不命中本行）；高亮走懒增强——子代理长代码白高亮
+  // 是 CPU 大户，滚到视口才亮
+  function _subMdRow(text) {
+    const d = document.createElement('div');
+    d.className = 'h-bubble hg-sub-msgmd';
+    d.innerHTML = renderMd(text);
+    _codeLazyEnhance(d);
+    return d;
   }
   function _subFeed(parentId, blocks) {
     if (!_sub.tabs[parentId]) return;
     const sc = _sub.tabs[parentId].sc;
+    // 窗格重设计 P1-5：贴底跟随判定——必须在 append 之前测距底（append 后
+    // scrollHeight 被新内容撑大，测出来恒不贴底）；≤80px=用户正跟读最新输出，
+    // 才跟随滚动，上翻查看历史时不拽人
+    const stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight <= 80;
     // v2.35：回合终结定格过的 tab，若对应代理其实还在跑（后台 Task 跨回合
     // 续跑），事件继续流入时恢复绿点脉冲——别让冻结态骗人
     const _ag = (_HG.agents || {})[parentId];
@@ -4224,25 +4282,74 @@ function buildClaudeHarnessTab(opts = {}) {
       _sub.tabs[parentId].run = true;
       _subTabsPaint();
     }
+    // 窗格重设计 P2-9：实况补头像+模型徽章行（对齐回放形态，消除两套不一致）。
+    // 仅插一次（dataset 标记）；模型取实跑值（档案最新）优先、tab 建档快照兜底，
+    // 都无（内置代理跑主链模型）用 tab 名——不编造，至少有头像色标
+    if (!sc.dataset.avabadge) {
+      sc.dataset.avabadge = '1';
+      const mdl = (_ag && _ag.model) || _sub.tabs[parentId].model || _sub.tabs[parentId].label || '';
+      const bare = String(mdl).split('[')[0] || mdl;
+      const av = document.createElement('div');
+      av.className = 'hg-sub-msg';
+      av.innerHTML = `<span class="h-ava ${_hgAvaCls(bare)}">${esc(bare.charAt(0).toUpperCase())}</span>` +
+        `<span class="h-mmodel">${esc(bare)}</span>`;
+      sc.insertBefore(av, sc.firstElementChild);
+    }
     for (const b of blocks) {
+      // 窗格重设计 P1-3：文本行从裸 esc 升级 md 渲染（markdown-it + 懒高亮，
+      // 元素直挂保链接拦截/IO 绑定）——子代理中间结论是 markdown，渲染质量
+      // 对齐主 flow
       if (b.type === 'text' && b.text && b.text.trim())
-        _subAppend(sc, `<div class="hg-sub-msg">${esc(b.text)}</div>`);
+        _subAppendEl(sc, _subMdRow(b.text));
+      else if (b.type === 'thinking' && b.thinking) {
+        // 窗格重设计 P2-6：thinking 进窗格——块粒度一行（不合并段），默认
+        // 收起防淹；全文存 dataset，首次展开才 renderMd（懒渲染，量大不卡）。
+        // 行内交互全走窗格体级委托（_subBodyEl onclick）
+        const th = document.createElement('div');
+        th.className = 'hg-sub-think';
+        th.dataset.raw = b.thinking;
+        th.innerHTML = '<button class="hg-sub-think-head" title="点击展开/收起思考过程">' +
+          '<span>💭 思考</span><span class="hg-sub-think-chev">›</span></button>' +
+          '<div class="hg-sub-think-body"></div>';
+        _subAppendEl(sc, th);
+      }
       else if (b.type === 'tool_use') {
         const inp = b.input || {};
         const hint = inp.command || inp.file_path || inp.path || inp.pattern ||
                      inp.query || inp.description || inp.subject || inp.prompt || '';
-        _subAppend(sc, `<div class="hg-sub-tool">${esc(_hDrawerName(b.name || ''))}` +
+        // 窗格重设计 P2-7：工具行带状态点（灰=进行中）+ data-tuid——tool_result
+        // 到达时按 tool_use_id 精确回点变绿（SSE 里 tool_use.id 与
+        // tool_result.tool_use_id 同源恒可配对，并行工具交错不错标）
+        _subAppend(sc, `<div class="hg-sub-tool" data-tuid="${esc(b.id || '')}">` +
+          `<span class="hg-sub-tdot"></span>${esc(_hDrawerName(b.name || ''))}` +
           (hint ? ` · ${esc(String(hint).slice(0, 80))}` : '') + '</div>');
       }
     }
-    _subScroll(parentId);
+    if (stick) _subScroll(parentId);
   }
   function _subResult(parentId, tr) {
     if (!_sub.tabs[parentId]) return;
     const sc = _sub.tabs[parentId].sc;
-    const txt = resultText(tr).replace(/\s+/g, ' ').trim().slice(0, 120);
-    _subAppend(sc, `<div class="hg-sub-res${tr.is_error ? ' err' : ''}">↳ ${esc(txt || '完成')}</div>`);
-    _subScroll(parentId);
+    const stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight <= 80;   // P1-5：append 前测（同 _subFeed）
+    const full = resultText(tr).trim();
+    const txt = full.replace(/\s+/g, ' ').trim().slice(0, 120);
+    // 窗格重设计 P2-7：结果到达回点对应工具行——data-tuid 精确配对优先；
+    // miss（id 缺失/行已被 cap 裁掉）回退从尾往前找第一条未定格的工具行
+    // （SSE 流序下 tool_result 紧跟 tool_use；已 done 的行说明配对过别的
+    // 结果，跳过——并行交错时也能落到真正没收到结果的那条上）
+    let toolRow = tr.tool_use_id
+      ? sc.querySelector(`.hg-sub-tool[data-tuid="${CSS.escape(tr.tool_use_id)}"]`) : null;
+    if (!toolRow)
+      for (let el = sc.lastElementChild; el; el = el.previousElementSibling) {
+        if (el.classList.contains('hg-sub-tool') && !el.classList.contains('done')) { toolRow = el; break; }
+      }
+    if (toolRow && !toolRow.classList.contains('done')) toolRow.classList.add('done');
+    // 窗格重设计 P2-8：超 120 字的结果行不再截死——全文存 dataset，点击
+    // 委托展开/收起
+    _subAppend(sc, `<div class="hg-sub-res${tr.is_error ? ' err' : ''}"` +
+      (full.length > 120 ? ` data-hg-subfull="${esc(full)}" title="点击展开全文"` : '') +
+      `>↳ ${esc(txt || '完成')}</div>`);
+    if (stick) _subScroll(parentId);
   }
   function _subClose(tid, err) {
     const tb = _sub.tabs[tid];
@@ -4259,8 +4366,63 @@ function buildClaudeHarnessTab(opts = {}) {
     if (_subPaneEl && !_sub.manual) _subPaneEl.style.display = 'none';
   }
   if (_subTabsEl) _subTabsEl.onclick = (e) => {
+    // 窗格重设计 P1-1/P1-2：单-tab ✕——✕ 在 [data-hg-subtab] 容器内部，
+    // 分支必须放在激活分支之前并 return（否则点 ✕ 变切 tab）。运行态要在
+    // drop 之前取（drop 后 tab 档案即散）；运行中给去向 toast——任务在后台
+    // 继续，面板子代理区/主 flow 子代理行随时可重开（_subReopen）
+    const xc = e.target.closest('[data-hg-subclose]');
+    if (xc) {
+      e.stopPropagation();
+      const tid = xc.dataset.hgSubclose;
+      const wasRun = !!(_sub.tabs[tid] && _sub.tabs[tid].run);
+      _subDrop(tid);
+      if (wasRun) showBanner('已关闭视图——任务继续后台运行，可在面板子代理区重新打开', 3200);
+      return;
+    }
     const t = e.target.closest('[data-hg-subtab]');
     if (t) _subActivate(t.dataset.hgSubtab);
+  };
+  // 窗格重设计：窗格体行内交互全走 body 级事件委托——行是流式动态 append +
+  // cap 删首，逐行直绑不可维护且 innerHTML 重建即丢（主 flow v2.12 的坑）。
+  // md 代码块复制钮本在 flow 委托里，但窗格在 flow 外够不着，此处补一条
+  // 同款分支。onclick 覆盖式绑定（闭包随 harness tab 重开重执行）
+  if (_subBodyEl) _subBodyEl.onclick = (e) => {
+    // md 代码块复制钮（就近取同容器 pre>code 文本）
+    const cp = e.target.closest('.hg-code-copy');
+    if (cp) {
+      const codeBox = cp.closest('.hg-code');
+      const code = codeBox && codeBox.querySelector('pre > code');
+      if (code) copyText(code.textContent.replace(/\n$/, '')).then(ok => {
+        if (ok) { const orig = cp.textContent; cp.textContent = '✓';
+          setTimeout(() => cp.textContent = orig, 1500); }
+      });
+      return;
+    }
+    // P2-6：thinking 折叠行——首展懒渲染（dataset.raw → renderMd），再点收起
+    const thHead = e.target.closest('.hg-sub-think-head');
+    if (thHead) {
+      const row = thHead.closest('.hg-sub-think');
+      const body = row && row.querySelector('.hg-sub-think-body');
+      if (row && body) {
+        if (!row.classList.contains('open') && body.dataset.filled !== '1') {
+          body.innerHTML = renderMd(row.dataset.raw || '');
+          _codeLazyEnhance(body);
+          body.dataset.filled = '1';
+        }
+        row.classList.toggle('open');
+      }
+      return;
+    }
+    // P2-8：结果行点击展开全文（data-hg-subfull 只在超 120 字的行上，短行不可
+    // 点；dataset 键按浏览器规则转驼峰：data-hg-subfull → hgSubfull。属性名
+    // 刻意避开拖宽条已有的 data-hg-subres 钩子，防全局选择器歧义）
+    const resRow = e.target.closest('[data-hg-subfull]');
+    if (resRow) {
+      const full = resRow.dataset.hgSubfull || '';
+      if (resRow.classList.toggle('open')) resRow.textContent = '↳ ' + full;
+      else resRow.textContent = '↳ ' + full.replace(/\s+/g, ' ').trim().slice(0, 120);
+      return;
+    }
   };
   const _subRes = q('[data-hg-subres]');
   if (_subRes) _subRes.addEventListener('mousedown', (e) => {

@@ -3306,6 +3306,50 @@ html {
   border-radius: 3px; padding: 0 3px; }
 .hg-sub-replay-note { font-size: 10.5px; color: var(--muted);
   padding: 3px 6px; border-left: 2px solid var(--border); opacity: .9; }
+
+/* ---- 窗格重设计（docs/子代理窗格UI重设计.md P1+P2）---- */
+/* P1-1 单-tab ✕：默认隐形，hover 整个 tab 才浮现（运行中防误触）；✕ 自身
+   hover 提亮成可点按钮。子元素自带 title，悬浮文案优先于 tab 整体 title */
+.hg-sub-x2 { flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; margin-right: -5px; border-radius: 4px;
+  font-size: 10px; line-height: 1; color: var(--muted); opacity: 0;
+  transition: opacity .12s, background-color .12s, color .12s; }
+.hg-sub-tab:hover .hg-sub-x2 { opacity: .8; }
+.hg-sub-x2:hover { opacity: 1; color: var(--fg-bright);
+  background: color-mix(in srgb, var(--fg) 14%, transparent); }
+/* P1-3 md 行：复用 .h-bubble 全局排版（p/pre/code/ul 的规则都在 .h-bubble
+   类下），窗格窄列只收敛字号/断行；.h-msg 作用域的气泡 padding 不命中 */
+.hg-sub-msgmd { font-size: 12px; line-height: 1.6; color: var(--fg);
+  max-width: 100%; overflow-wrap: anywhere; }
+.hg-sub-msgmd pre { max-width: 100%; }
+/* P1-4 裁剪提示条：居中小字，替代静默删首 */
+.hg-sub-omit { flex: none; text-align: center; font-size: 10px; color: var(--muted);
+  padding: 2px 0; opacity: .85; user-select: none; }
+/* P2-6 thinking 折叠行：head 按钮 + 隐藏 body，.open 展开；chev 旋转指路 */
+.hg-sub-think {
+  padding-left: 8px;
+  border-left: 2px solid color-mix(in srgb, var(--accent) 35%, transparent); }
+.hg-sub-think-head { display: flex; align-items: center; gap: 5px; width: 100%;
+  border: none; background: none; cursor: pointer; padding: 1px 0;
+  font-size: 10.5px; color: var(--muted); font-family: inherit; text-align: left; }
+.hg-sub-think-head:hover { color: var(--fg); }
+.hg-sub-think-chev { display: inline-block; transition: transform .15s; }
+.hg-sub-think.open .hg-sub-think-chev { transform: rotate(90deg); }
+.hg-sub-think-body { display: none; font-size: 11.5px; line-height: 1.6;
+  color: var(--muted); padding: 4px 0 2px; }
+.hg-sub-think.open .hg-sub-think-body { display: block; }
+/* P2-7 工具行状态点：进行中灰点脉冲（与 tab 绿点脉冲同节奏），结果回点
+   变绿定格 */
+.hg-sub-tdot { display: inline-block; flex: none; width: 6px; height: 6px;
+  border-radius: 50%; margin-right: 5px; vertical-align: 1px;
+  background: var(--muted); animation: hgDynPulse 1.6s ease-in-out infinite; }
+.hg-sub-tool.done .hg-sub-tdot { background: var(--hgd-done); animation: none; }
+/* P2-8 结果行可点击展开全文：仅超 120 字的行带 data-hg-subfull（手型+hover
+   提亮，属性名避开拖宽条的 data-hg-subres 钩子）；展开态放开单行省略约束，
+   pre-wrap 保留原文换行 */
+.hg-sub-res[data-hg-subfull] { cursor: pointer; }
+.hg-sub-res[data-hg-subfull]:hover { color: var(--fg); }
+.hg-sub-res.open { white-space: pre-wrap; overflow: visible; text-overflow: clip; }
 .hg-dyn-replay-btn {
   display: block; width: 100%; margin-top: 6px; padding: 3px 6px;
   font-size: 10.5px; cursor: pointer; border-radius: 5px;
