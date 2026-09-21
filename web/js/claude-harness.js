@@ -3820,8 +3820,13 @@ function buildClaudeHarnessTab(opts = {}) {
     const running = list.filter(a => !a.done).sort((x, y) => x.t0 - y.t0);
     const finished = list.filter(a => a.done && Date.now() - a.doneAt < 60000).slice(-5);
     const rplAll = (_HG.dyn && _HG.dyn.agentsRpl) || [];
-    const rpl = rplAll.slice(-3)
-      .map((a, i) => Object.assign({ rid: 'rpl' + (rplAll.length - rpl.length + i) }, a));
+    // v2.39 修 TDZ：旧写法 map 回调里引用了正在初始化的 rpl 自身（rpl.length）
+    // ——回调同步执行时 const 未赋值，「Cannot access 'rpl' before
+    // initialization」实锤。此前 agentsRpl 恒空、回调不执行埋着不炸；v2.38
+    // 历史回放填充后面板 C 区必炸降级。tail 中转替代自引用，rid 编号语义不变。
+    const rplTail = rplAll.slice(-3);
+    const rpl = rplTail
+      .map((a, i) => Object.assign({ rid: 'rpl' + (rplAll.length - rplTail.length + i) }, a));
     // v2.35（P1-5）：协作代理（SendMessage 转交的独立会话/识图转交）——从
     // 消息流「已转交」线派生（dataset.peer/t0/done/psum 随快照序列化），
     // 带「协作」徽章与 Task 子代理视觉区分：peer 无实况事件流，点击只跳线
