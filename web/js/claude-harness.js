@@ -2348,9 +2348,10 @@ function buildClaudeHarnessTab(opts = {}) {
           }
         }
         // v2.37（P1-F②）：协作包装的完成通知——严格按名配对定格对应转交线
-        // （task_id 即 SendMessage to 的 agentId，实测同源；不命中不兜底，
-        // 防误冻无关在途线）。对有档案的真实子代理同样尝试（它们无转交线，
-        // strict 不命中即 no-op）
+        // （不命中不兜底，防误冻无关在途线）。对有档案的真实子代理同样尝试
+        // （它们无转交线，strict 不命中即 no-op）
+        // v2.39 勘误：旧注释称「task_id 即 to 的 agentId 实测同源」——实为
+        // CLI 包装新 id 与 to 恒不相等（回传气泡不显示的根因，见下）
         if (sub === 'task_notification') {
           const sum = String(o.summary || '').trim().slice(0, 120);
           // v2.39：SendMessage 续派的包装任务——task_id 是 CLI 包装新 id，
