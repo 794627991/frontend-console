@@ -9,10 +9,19 @@
   1. check_deps() 逐库 importlib 探测 → (缺的必需库, 缺的可选库)
   2. 缺库时起一个原生 pywebview 引导窗口（同款深色 UI + 进度动画），
      js_api 把 pip 安装进度实时推给页面
-  3. 装完用户点「继续启动」→ 窗口关闭，main 正常往下走
-     （需要重启进程让新装的库可 import——直接 os.execv 重启自己最干净）
+  3. 装完用户点「继续启动」→ 关窗，延迟拉起新进程重新走 main
+     （新装的库必须重新 import——同进程补 import 不可靠，重启最干净）
 
-pip 网络失败兜底：页面展示手动安装命令，用户装完再继续。
+pip 兜底链（每库独立走，任何一级成功即停）：
+  离线 wheel（pydeps/，离线包带的）→ 默认源 → 清华镜像
+pywebview 自身缺失时：先静默 pip 补装再 execv 重启进引导；彻底失败用
+Win32 MessageBox 弹手动安装命令（pythonw 无控制台，print 根本看不见）。
+
+翻车记录（v2.30 修复）：on_loaded 里 win.focus() —— pywebview 6.x 的
+Window.focus 是 bool 属性不是方法（snip.py 同款坑），调用即 TypeError，
+而事件线程吞异常 + pythonw 日志进 nul → install_all 永远不跑 → 界面恒
+「待安装 0%」、pip 一次不执行，只能关窗 execv 重启再卡，死循环。
+教训：loaded 处理器里除 install_all 外的任何步骤都必须 try 包住。
 """
 import os
 import sys
@@ -34,6 +43,11 @@ DEPS = [
     ("pywinpty",  ("winpty",   False, "内嵌 Claude 终端（ConPTY）")),
 ]
 
+# 清华镜像（默认源失败时兜底：无网/超时/被墙设备常见）
+_MIRROR_ARGS = ["-i", "https://pypi.tuna.tsinghua.edu.cn/simple"]
+
+_pip_checked = False   # ensurepip 只补一次
+
 
 def check_deps():
     """逐库探测。返回 (missing_required, missing_optional)——元素是 (pip名, 用途)。"""
@@ -44,6 +58,74 @@ def check_deps():
         except ImportError:
             (miss_req if required else miss_opt).append((pip_name, desc))
     return miss_req, miss_opt
+
+
+# ---- pip 安装（带回退链）----
+
+def _subprocess_hidden(cmd, timeout=600):
+    """跑子进程但不闪控制台黑框（pythonw 源码分发场景）。"""
+    return subprocess.run(
+        cmd, capture_output=True, text=True, timeout=timeout,
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+
+
+def _ensure_pip():
+    """python -m pip 可用性兜底：极简 Python 无 pip 时 ensurepip 补一次。"""
+    global _pip_checked
+    if _pip_checked:
+        return True
+    _pip_checked = True
+    try:
+        if _subprocess_hidden([sys.executable, "-m", "pip", "--version"], 60).returncode == 0:
+            return True
+    except Exception:
+        return False
+    try:
+        _subprocess_hidden([sys.executable, "-m", "ensurepip", "--upgrade"], 300)
+        return _subprocess_hidden([sys.executable, "-m", "pip", "--version"], 60).returncode == 0
+    except Exception:
+        return False
+
+
+def _wheels_dir():
+    """离线 wheel 目录：离线整合包（claude_setup._pack_pydeps）解包后的 pydeps/。
+    存在且含 wheel 才返回，否则 None。"""
+    d = os.path.join(_ROOT, "pydeps")
+    try:
+        if os.path.isdir(d) and any(
+                f.endswith((".whl", ".tar.gz")) for f in os.listdir(d)):
+            return d
+    except Exception:
+        pass
+    return None
+
+
+def _pip_install(pip_name):
+    """单库安装，回退链：离线 wheel（若有）→ 默认源 → 清华镜像。
+    返回 (ok, 尾行消息)——失败消息给页面日志区展示。"""
+    if not _ensure_pip():
+        return False, "pip 不可用且 ensurepip 补装失败"
+    attempts = []
+    wd = _wheels_dir()
+    if wd:
+        attempts.append(["--no-index", "--find-links", wd])
+    attempts.append([])
+    attempts.append(list(_MIRROR_ARGS))
+    last_msg = ""
+    for extra in attempts:
+        try:
+            r = _subprocess_hidden(
+                [sys.executable, "-m", "pip", "install", "--no-input",
+                 "--timeout", "30"] + extra + [pip_name])
+        except Exception as e:
+            last_msg = f"pip 异常: {e}"
+            continue
+        if r.returncode == 0:
+            return True, ""
+        tail = (r.stderr or r.stdout or "").strip().splitlines()
+        last_msg = tail[-1][:200] if tail else f"pip 返回码 {r.returncode}"
+    return False, last_msg
 
 
 # ---- 启动自检（每机一次）：config 标记 deps_selftest_ok ----
@@ -225,44 +307,51 @@ class _BootstrapAPI:
         self._missing = missing
         self.done_evt = None              # main 注入
 
-    def _push(self, pip, ok, msg):
-        import html as _h
+    def _js(self, code):
+        """evaluate_js 包装：任何异常吞掉。进度推送绝不能反过来打断安装线程。"""
         w = self._holder.get("win")
         if not w:
             return
         try:
-            w.evaluate_js(f"_onProgress({_h.escape(pip) and pip!r}, {str(ok).lower()}, {msg!r})")
+            w.evaluate_js(code)
         except Exception:
             pass
+
+    def _push(self, pip, ok, msg):
+        """一个库安装完成：更新该行状态 + 计数进进度条。"""
+        self._js(f"_onProgress({pip!r}, {str(ok).lower()}, {msg!r})")
+
+    def _mark(self, pip):
+        """一个库开始安装：仅置「…安装中」样式，不计进度（此前误推 done
+        会把没装的库标成 ✓ 并虚增进度，页面就永远停在假完成态）。"""
+        self._js(f"setDep({pip!r}, 'installing')")
 
     def install_all(self):
         """逐库 pip install（线程里跑）。必须先装必需库；失败继续装后面的（用户能看到全部结果）。"""
         import threading
-        import html as _h
         def worker():
             for pip_name, _desc in self._missing:
-                self._push(pip_name, True, "")   # 占位先清空
-                try:
-                    # --no-input：绝不交互挂起；pip 自带超时与重试
-                    r = subprocess.run(
-                        [sys.executable, "-m", "pip", "install", "--no-input", pip_name],
-                        capture_output=True, text=True, timeout=600,
-                        creationflags=subprocess.CREATE_NO_WINDOW,
-                    )
-                    ok = r.returncode == 0
-                    tail = (r.stderr or r.stdout or "").strip().splitlines()
-                    msg = tail[-1][:200] if tail else ""
-                    self._push(pip_name, ok, msg)
-                except Exception as e:
-                    self._push(pip_name, False, f"pip 异常: {e}")
+                self._mark(pip_name)
+                ok, msg = _pip_install(pip_name)
+                self._push(pip_name, ok, msg)
             if self.done_evt:
                 self.done_evt.set()
         threading.Thread(target=worker, daemon=True).start()
 
     def finish(self):
-        """用户点「继续启动」：置完成事件（无论装没装成功——让主流程自己再探测）。"""
+        """用户点「继续启动」：关窗（webview.start 返回 → main execv 重启）。
+        done_evt 仅留作状态探针——main 阻塞在 webview.start()，没人等它。"""
         if self.done_evt:
             self.done_evt.set()
+        w = self._holder.get("win")
+        if w:
+            try:
+                w.close()
+            except Exception:
+                try:
+                    w.destroy()
+                except Exception:
+                    pass
         return True
 
 
@@ -285,8 +374,13 @@ def run_bootstrap(missing):
     api.done_evt = threading.Event()
 
     def on_loaded():
-        win.show()
-        win.focus()
+        # show/focus 这类窗口操作任何一步失败都不能挡住安装线程
+        # （翻车记录见文件头注释——focus 在 pywebview 6 是 bool 属性）。
+        # 窗口本身 focus=True 创建时已聚焦，无需额外置前。
+        try:
+            win.show()
+        except Exception:
+            pass
         api.install_all()
 
     win.events.loaded += on_loaded
@@ -294,6 +388,34 @@ def run_bootstrap(missing):
     webview.start()
     # 窗口关闭（用户点继续或直接关窗）→ 主流程继续
     return True
+
+
+def _message_box(text):
+    """pythonw 下唯一可见的原生 UI（无任何第三方依赖，仅 Win32）。"""
+    try:
+        import ctypes
+        # MB_ICONWARNING | MB_SETFOREGROUND | MB_TOPMOST
+        ctypes.windll.user32.MessageBoxW(0, text, "前端控制台 · 依赖安装", 0x50040)
+    except Exception:
+        pass
+
+
+def _restart_process():
+    """延迟 1.5s 拉起新进程替代 os.execv：execv 的子进程可能抢在父进程
+    完全退出前启动，撞上父进程还握着的单实例 mutex → 走「聚焦旧实例」
+    分支静默自灭（实测踩过：pythonw 下重启后进程凭空消失）。延迟到爹
+    死透了再起，mutex 已释放，干净接管。"""
+    code = ("import subprocess,sys,time;time.sleep(1.5);"
+            "subprocess.Popen(sys.argv[1:])")
+    try:
+        subprocess.Popen(
+            [sys.executable, "-c", code, sys.executable] + sys.argv,
+            cwd=os.getcwd(),
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        return True
+    except Exception:
+        return False
 
 
 def bootstrap_if_needed():
@@ -304,33 +426,32 @@ def bootstrap_if_needed():
     if not missing:
         return True
 
-    # pywebview 自身缺失时无法弹窗——退化为控制台提示（源码分发者至少有终端）
+    # pywebview 自身缺失时无法弹 GUI：静默 pip 补装 → 重启进正常引导。
+    # （旧版只 print + input()——pythonw 下无控制台，用户看到的就是双击后毫无反应）
     try:
         importlib.import_module("webview")
     except ImportError:
+        ok, msg = _pip_install("pywebview")
+        if ok and _restart_process():
+            return False
         pip_cmd = "pip install " + " ".join(p for p, _ in missing)
+        text = ("依赖自动安装失败（%s）。请手动在命令行执行后重新启动本工具：\n\n    %s"
+                % (msg or "网络不通/需要代理", pip_cmd))
         print("=" * 56)
-        print("检测到缺少运行库，请在当前 Python 环境执行：")
-        print("  " + pip_cmd)
-        print("装完后重新启动本工具。")
+        print(text)
         print("=" * 56)
-        try:
-            input("按回车退出…")
-        except Exception:
-            pass
+        _message_box(text)
         return False
 
     run_bootstrap(missing)
-    # 窗口关闭后重启进程：新装的库必须重新 import（已加载的模块表里没有它们）。
-    # os.execv 原位重启，不额外产生父子进程层级。
+    # 窗口关闭（用户点继续或直接关窗）后重启进程：新装的库必须重新 import
+    # （已加载的模块表里没有它们）。
+    if _restart_process():
+        return False
+    # 重启失败（极少见）——退化为提示重启
+    print("依赖安装流程结束，请重新启动本工具。")
     try:
-        os.execv(sys.executable, [sys.executable] + sys.argv)
-        return False
+        input("按回车退出…")
     except Exception:
-        # execv 失败（极少见）——退化为提示重启
-        print("依赖安装流程结束，请重新启动本工具。")
-        try:
-            input("按回车退出…")
-        except Exception:
-            pass
-        return False
+        pass
+    return False
