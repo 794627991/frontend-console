@@ -4,9 +4,11 @@ __pycache__/
 *.pyo
 *.pyd
 
-# PyInstaller 构建产物
-build/
-dist/
+# PyInstaller 构建产物（锚定根目录——裸 dist/ 会把 vendor/**/dist 前端
+# 构建产物一并吞掉，markdown-it.min.js 因此从未入库，源码 clone 下来
+# md 预览必 404，用户实锤）
+/build/
+/dist/
 *.spec.bak
 
 # 串口日志（运行时生成，不入库）
@@ -49,3 +51,6 @@ _engine_stdio_ext/
 
 # 第三方参考代码（375MB，含他人 api_key 等——绝不入库）
 参考/
+
+# 本地工作截图（会话用图，不入库）
+png/

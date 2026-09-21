@@ -2162,6 +2162,17 @@ html[data-theme="sage"], html[data-theme="sky"] {
   --h-violet: #8250df; --h-indigo: #6639ba; --h-purple: #9146c9;
   --h-run: #0969da; --h-ok: #1a7f37; --h-err: #cf222e; --h-warn: #9a6700;
 }
+/* ---- v2.36 会话动态状态语义色（六分区面板徽章/窗格 tab 点/输入框状态/秒表
+   全套共用）：运行=绿 · 完成=灰 · 失败=红 · 中断=橙 · 等待=蓝。
+   值全部引用 v2.26 的 --h-* 语义族与 --muted，随全部主题自动换肤——替换
+   v2.32 面板写死的 #22A55F（该绿不跟主题，亮色下与卡片对比生硬） ---- */
+html {
+  --hgd-run: var(--h-ok);
+  --hgd-done: var(--muted);
+  --hgd-fail: var(--h-err);
+  --hgd-halt: var(--h-warn);
+  --hgd-wait: var(--h-run);
+}
 
 .hg-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .hg-top { display: flex; align-items: center; gap: 8px; padding: 9px 20px;
@@ -2400,9 +2411,33 @@ html[data-theme="sage"], html[data-theme="sky"] {
   font-size: 11px; white-space: nowrap; }
 .h-switch span { flex: 1; border-top: 1px dashed var(--border); }
 .h-switch i { font-style: normal; color: var(--accent); }
+/* v2.34：审计警示卡——light 形态回合结算违规（直改超线/跳过 reviewer）。
+   红边红字居中卡片：区别于用户/AI 气泡（这是 harness 的裁决）与 h-raw
+   噪音行（那条更小更轻）；warn 档唯一出口，auto 档续发前先出这条。 */
+.h-audit { align-self: center; width: min(680px, 92%); margin: 8px 0 2px;
+  border: 1px solid rgba(224, 108, 117, 0.55); background: rgba(224, 108, 117, 0.08);
+  color: var(--neon-red, #e06c75); border-radius: 8px; padding: 6px 12px;
+  font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
 /* v2.27.3：跨会话回传气泡（识图结论等，区别于 user/AI 消息） */
 .h-peer { align-self: flex-start; width: min(820px, 100%); }
 .h-peer-head { font-size: 11px; color: var(--accent); margin-bottom: 3px; font-weight: 600; }
+
+/* ---- v2.37（P1-C）模型标识与头像徽标 ----
+   色板全走主题/语义变量（--hgd-* 与 --accent），零写死色；头像=首字母圆标，
+   按名字符哈希取色（同名恒同色）。纯 class 结构，随 innerHTML 快照序列化 */
+.h-mmeta { display: flex; align-items: center; gap: 5px; margin-top: 3px; padding-left: 2px; }
+.h-mmodel { font-size: 10px; color: var(--muted); font-family: var(--font-mono); }
+.h-ava {
+  flex: none; width: 15px; height: 15px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 9px; font-weight: 700; line-height: 1; color: var(--bg-card);
+  vertical-align: -3px; margin-right: 4px;
+}
+.h-ava-0 { background: var(--hgd-run); }
+.h-ava-1 { background: var(--hgd-fail); }
+.h-ava-2 { background: var(--hgd-halt); }
+.h-ava-3 { background: var(--hgd-wait); }
+.h-ava-4 { background: var(--accent); }
 .h-switch .hg-peer-t { font-weight: 400; font-variant-numeric: tabular-nums; }
 /* v2.21：内建斜杠命令的系统卡片（/help /status 等在消息流里的回显） */
 .h-syscard { align-self: center; width: min(560px, 86%); margin: 8px 0 2px;
@@ -2531,7 +2566,8 @@ html[data-theme="sage"], html[data-theme="sky"] {
    v2.6：去掉旧金额样式的 max-width/overflow/ellipsis（flex 收缩曾把环压爆），
    环和文字定宽不收缩 */
 .hg-cost { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0;
-  font-size: 10.5px; color: var(--muted); font-family: var(--font-mono); }
+  font-size: 10.5px; color: var(--muted); font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums; }   /* v2.36：上下文 % 数字等宽跳动不抖 */
 .hg-ctx-ring { width: 22px; height: 22px; flex-shrink: 0; display: block;
   overflow: visible; }
 .hg-ctx-pct { font-size: 11px; white-space: nowrap; }
@@ -2807,14 +2843,16 @@ html[data-theme="sage"], html[data-theme="sky"] {
 
 /* ---- 活动指示（源 ActivityIndicator：动词轮换+计时）
    v2.19：从输入卡上方的独立横栏（带边框+停止钮）收成底部行内小胶囊，
-   与上下文环并排；停止钮删除（右下角圆钮已承担该动作）。 ---- */
+   与上下文环并排；停止钮删除（右下角圆钮已承担该动作）。
+   v2.36 与面板状态徽章同语言：运行=绿点脉冲 + 状态词提亮 + 绿色等宽秒表
+   （原 accent 青点青字仅此处独用，与面板「运行绿」语义脱节） ---- */
 .hg-activity { display: flex; align-items: center; gap: 5px; flex-shrink: 0;
-  font-size: 11px; color: var(--muted); }
-.hg-act-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+  font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.hg-act-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--hgd-run);
   flex-shrink: 0; animation: hg-pulse 1.2s ease-in-out infinite; }
 @keyframes hg-pulse { 0%,100% { opacity: .25; transform: scale(.8); } 50% { opacity: 1; transform: scale(1.15); } }
-.hg-act-word { color: var(--accent); font-weight: 600; }
-.hg-act-t { font-family: var(--font-mono); font-size: 10.5px; }
+.hg-act-word { color: var(--fg-bright); font-weight: 600; }
+.hg-act-t { font-family: var(--font-mono); font-size: 10.5px; color: var(--hgd-run); }
 
 /* ---- 识图会话工作指示（v2.19：顶栏常驻 + 跃迁冒泡）
    v2.20：眼睛图标换描边 SVG（emoji 随系统字形，用户嫌丑） ---- */
@@ -2995,37 +3033,284 @@ html[data-theme="sage"], html[data-theme="sky"] {
 .hg-mact:hover { color: var(--fg, #e6e6e6); border-color: var(--fg, #888); }
 .hg-mact:disabled { opacity: 0.5; cursor: default; }
 
-/* v2.30 侧栏会话动态（任务进度 + 子代理实况）——贴 ZCode 任务面板：
-   绿 pill 计数、勾选删除线清单、子代理绿点脉冲+实时计时 */
-.hg-side-dyn {
-  margin: 0 8px 8px; border: 1px solid var(--bd, #e2e5ea);
-  border-radius: 10px; padding: 8px 10px; background: var(--bg2, #f7f8fa);
+/* v2.32 右侧工具面板 harness 换装（设计 docs/设计_2026-09-20_右侧会话动态面板.md）：
+   Claude 对话 tab 激活时整面板切到会话动态六分区（会话状态/任务进度/子代理
+   实况/最近工具/回合历史/当前文件）——原页签对 harness 全无用，藏掉并换标题 */
+.ai-panel.hg-mode .panel-tabs,
+.ai-panel.hg-mode .panel-tab-pane { display: none !important; }
+/* v2.36 IDE 风大修（VS Code / Linear 参考）：面板六分区/窗格/输入状态区统一
+   视觉语言——①状态色全部走 --hgd-* 语义变量（运行绿/完成灰/失败红/中断橙/
+   等待蓝，见文件上方 html 块），替换写死的 #22A55F；②计时/计数继承
+   tabular-nums（秒表跳动不再抖布局）；③层次靠 bg-panel→bg-card→hover 微染
+   分层，边框降为发丝级；④可点行 hover 淡染 + 150ms 过渡。
+   间距节奏：面板 12/14 · 卡片 10/12 · 分区头下 8 · 行距 1~2。 */
+.hg-dyn-pane { display: none; flex-direction: column; gap: 8px; padding: 12px 14px;
+  overflow-y: auto; font-variant-numeric: tabular-nums; }
+.ai-panel.hg-mode .hg-dyn-pane { display: flex; }
+
+/* ---- 分区卡片骨架 ---- */
+.hg-dyn-sec {
+  background: var(--bg-card);
+  border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  border-radius: 10px; padding: 10px 12px; flex: none;
 }
-.hg-dyn-head { display: flex; align-items: center; margin-bottom: 6px; }
+.hg-dyn-sec-head {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 10.5px; font-weight: 600; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .6px;
+  padding-bottom: 6px; margin-bottom: 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 45%, transparent);
+}
+.hg-dyn-sec-head .hg-dyn-pill { margin-left: auto; }
+.hg-dyn-sec-head .hg-dyn-sub { margin-left: auto; font-size: 10px; font-weight: 400; letter-spacing: 0; text-transform: none; }
+/* v2.36 pill：绿底白字 → 语义淡染胶囊。计数 pill 中性灰；进度/运行 pill 绿染；
+   运行 pill 的闪烁收进 ::before 前缀点（不再整块呼吸压文字） */
 .hg-dyn-pill {
-  background: #22A55F; color: #fff; font-size: 11px;
-  padding: 1px 8px; border-radius: 999px; font-weight: 600;
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10.5px; padding: 1px 8px; border-radius: 999px; font-weight: 600;
+  color: var(--muted); background: color-mix(in srgb, var(--fg) 8%, transparent);
 }
-.hg-dyn-todos { display: flex; flex-direction: column; gap: 3px; }
-.hg-dyn-todo { display: flex; gap: 6px; font-size: 11.5px; line-height: 1.45; align-items: baseline; }
+.hg-dyn-pill[data-hg-d-tdone], .hg-dyn-pill.run {
+  color: var(--hgd-run); background: color-mix(in srgb, var(--hgd-run) 13%, transparent);
+}
+.hg-dyn-pill.run::before { content: ''; width: 5px; height: 5px; border-radius: 50%;
+  background: var(--hgd-run); animation: hgDynPulse 1.6s ease-in-out infinite; }
+
+/* ---- A 会话状态 ---- */
+.hg-dyn-strow { display: flex; align-items: center; gap: 7px; font-size: 12px;
+  padding-bottom: 8px; margin-bottom: 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 45%, transparent); }
+.hg-dyn-strow .hg-dyn-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
+/* v2.36 修正既有失配：run/wait 类由 JS 挂在分区(section)上，旧选择器
+   .hg-dyn-strow.run 永不命中——状态点一直是灰的。改为分区作用域，
+   并细分「等待蓝」（仅协作等待、非 busy 时 JS 加 wait 类；wait 规则置于
+   run 之后，同类名并存时 wait 胜出） */
+.hg-dyn-sec.run .hg-dyn-dot { background: var(--hgd-run);
+  animation: hgDynPulse 1.6s ease-in-out infinite; }
+.hg-dyn-sec.wait .hg-dyn-dot { background: var(--hgd-wait);
+  animation: hgDynPulse 1.6s ease-in-out infinite; }
+.hg-dyn-stlabel { color: var(--fg-bright); font-weight: 600; }
+.hg-dyn-dur { margin-left: auto; color: var(--muted); font-family: var(--font-mono);
+  font-size: 11px; font-weight: 500; }
+.hg-dyn-sec.run .hg-dyn-dur { color: var(--hgd-run); }
+.hg-dyn-sec.wait .hg-dyn-dur { color: var(--hgd-wait); }
+.hg-dyn-kv { display: flex; gap: 8px; font-size: 11.5px; line-height: 1.55;
+  align-items: baseline; padding: 1.5px 0; }
+.hg-dyn-kv .k { flex: none; width: 44px; color: var(--muted); }
+/* v2.36：值列补 flex:1+min-width:0——无 min-width 的 nowrap flex 子项按
+   全文字宽撑开，超长模型名/路径曾把卡片顶破（ellipsis 不生效） */
+.hg-dyn-kv .v { flex: 1; min-width: 0; color: var(--fg); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.hg-dyn-kv .v.act { cursor: pointer; transition: color .15s; }
+.hg-dyn-kv .v.act:hover { color: var(--accent); }
+.hg-dyn-kv .v.mono { font-family: var(--font-mono); cursor: copy; color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+.hg-dyn-kv.ctx .v { color: var(--accent); font-family: var(--font-mono); }
+.hg-dyn-kv.ctx.warn .v { color: var(--h-warn); font-weight: 600; }
+
+/* ---- B 任务进度 ---- */
+.hg-dyn-bar { height: 3px; border-radius: 2px;
+  background: color-mix(in srgb, var(--border) 70%, transparent);
+  overflow: hidden; margin: 2px 0 8px; }
+.hg-dyn-bar i { display: block; height: 100%; width: 0; background: var(--hgd-run);
+  border-radius: 2px; transition: width .4s ease; }
+.hg-dyn-todos { display: flex; flex-direction: column; gap: 1px; max-height: 180px; overflow-y: auto; }
+.hg-dyn-todo { display: flex; gap: 6px; font-size: 11.5px; line-height: 1.45;
+  align-items: baseline; cursor: pointer; border-radius: 5px; padding: 2px 5px;
+  transition: background-color .15s; }
+.hg-dyn-todo:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
 .hg-dyn-todo .hg-dyn-ck { flex: none; width: 12px; text-align: center; }
-.hg-dyn-todo.completed .hg-dyn-tt { text-decoration: line-through; color: var(--muted, #9aa0a6); }
-.hg-dyn-todo.completed .hg-dyn-ck { color: #22A55F; }
-.hg-dyn-todo.in_progress .hg-dyn-ck { color: #f59e0b; }
-.hg-dyn-todo.in_progress .hg-dyn-tt { color: var(--fg, #1f2937); }
-.hg-dyn-todo.pending .hg-dyn-ck { color: var(--muted, #9aa0a6); }
-.hg-dyn-tt { color: var(--fg2, #4b5563); word-break: break-all; }
-.hg-dyn-agents {
-  margin-top: 6px; border-top: 1px dashed var(--bd, #e2e5ea);
-  padding-top: 6px; display: flex; flex-direction: column; gap: 3px;
+.hg-dyn-todo .hg-dyn-ts { flex: none; margin-left: auto; font-size: 10px; color: var(--muted); font-family: var(--font-mono); }
+.hg-dyn-todo.completed .hg-dyn-tt { text-decoration: line-through; color: var(--muted); }
+.hg-dyn-todo.completed .hg-dyn-ck { color: var(--hgd-run); }
+.hg-dyn-todo.in_progress .hg-dyn-ck { color: var(--h-warn); }
+.hg-dyn-todo.in_progress .hg-dyn-tt { color: var(--fg-bright); }
+.hg-dyn-todo.pending .hg-dyn-ck { color: var(--muted); }
+/* v2.36：任务文本 flex:1——时间戳贴右缘对齐成列（原随文本长度漂移） */
+.hg-dyn-tt { flex: 1; min-width: 0; color: var(--fg); word-break: break-all; }
+
+/* ---- C 子代理实况（E 工具行共用 adot/at/desc/el 内层类，状态色规则两处同写；
+   完成=灰点灰耗时——IDE 式「过去了就安静」，运行/失败/中断各自着色） ---- */
+.hg-dyn-agent { display: flex; align-items: center; gap: 6px; font-size: 11.5px;
+  cursor: pointer; border-radius: 5px; padding: 2px 5px;
+  transition: background-color .15s; }
+.hg-dyn-agent:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.hg-dyn-agent + .hg-dyn-agent { margin-top: 2px; }
+.hg-dyn-agent.run .hg-dyn-at { color: var(--fg-bright); font-weight: 600; }
+/* v2.36：描述列 flex:1+min-width:0——耗时/状态词贴右缘对齐成列 */
+.hg-dyn-agent .hg-dyn-desc { flex: 1; min-width: 0; color: var(--muted); overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.hg-dyn-adot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--hgd-done); }
+.hg-dyn-agent.run .hg-dyn-adot, .hg-dyn-act.run .hg-dyn-adot { background: var(--hgd-run);
+  animation: hgDynPulse 1.6s ease-in-out infinite; }
+.hg-dyn-agent.done, .hg-dyn-agent.hist { color: var(--muted); }
+.hg-dyn-agent.done .hg-dyn-adot, .hg-dyn-agent.hist .hg-dyn-adot { background: var(--hgd-done); }
+.hg-dyn-agent.fail .hg-dyn-adot, .hg-dyn-act.fail .hg-dyn-adot { background: var(--hgd-fail); }
+.hg-dyn-agent.halt .hg-dyn-adot { background: var(--hgd-halt); }
+.hg-dyn-agent.fail .hg-dyn-at { color: var(--hgd-fail); }
+.hg-dyn-agent.halt .hg-dyn-at { color: var(--hgd-halt); }
+.hg-dyn-el { margin-left: auto; flex: none; color: var(--hgd-done); font-size: 11px;
+  font-weight: 500; font-family: var(--font-mono); }
+.hg-dyn-agent.run .hg-dyn-el, .hg-dyn-act.run .hg-dyn-el { color: var(--hgd-run); font-weight: 600; }
+.hg-dyn-agent.done .hg-dyn-el, .hg-dyn-agent.hist .hg-dyn-el,
+.hg-dyn-act.done .hg-dyn-el { color: var(--muted); font-weight: 400; }
+.hg-dyn-agent.fail .hg-dyn-el, .hg-dyn-act.fail .hg-dyn-el { color: var(--hgd-fail); }
+.hg-dyn-agent.halt .hg-dyn-el { color: var(--hgd-halt); }
+/* v2.36 详情卡：半透 inset 底 + accent 调左缘线；结果摘要等宽小字（机器
+   输出用 mono，与面板等宽场景统一） */
+.hg-dyn-agdetail {
+  margin: 4px 0 6px 13px; padding: 7px 9px;
+  border-left: 2px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: 0 6px 6px 0;
+  background: color-mix(in srgb, var(--bg-panel) 55%, transparent);
+  font-size: 11px; color: var(--fg);
 }
-.hg-dyn-agent { display: flex; align-items: center; gap: 6px; font-size: 11.5px; }
-.hg-dyn-agent.run .hg-dyn-at { color: var(--fg, #1f2937); font-weight: 600; }
-.hg-dyn-agent .hg-dyn-desc { color: var(--muted, #9aa0a6); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.hg-dyn-adot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: #22A55F; }
-.hg-dyn-agent.run .hg-dyn-adot { animation: hgDynPulse 1.2s infinite; }
-.hg-dyn-agent.done { color: var(--muted, #9aa0a6); }
-.hg-dyn-agent.done .hg-dyn-adot { background: var(--muted, #9aa0a6); }
-.hg-dyn-el { margin-left: auto; color: #22A55F; font-size: 11px; font-weight: 600; }
-.hg-dyn-agent.done .hg-dyn-el { color: var(--muted, #9aa0a6); font-weight: 400; }
-@keyframes hgDynPulse { 50% { opacity: .3; } }
+.hg-dyn-agres { max-height: 120px; overflow-y: auto; white-space: pre-wrap;
+  word-break: break-all; margin-top: 5px; color: var(--muted);
+  font-family: var(--font-mono); font-size: 10.5px; line-height: 1.6; }
+
+/* ---- E 最近工具（唯一限高滚动列表；完成=灰点灰耗时，运行=绿点脉冲，
+   失败=红——原完成态沿用绿底基色永绿，是状态语义漏洞） ---- */
+.hg-dyn-acts { display: flex; flex-direction: column; gap: 1px; max-height: 200px; overflow-y: auto; }
+.hg-dyn-act { display: flex; gap: 6px; font-size: 11px; align-items: baseline;
+  padding: 2px 5px; border-radius: 5px; cursor: pointer;
+  transition: background-color .15s; }
+.hg-dyn-act:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.hg-dyn-act .hg-dyn-at { flex: none; color: var(--fg); font-weight: 500; }
+.hg-dyn-act .hg-dyn-desc { flex: 1; min-width: 0; color: var(--muted); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.hg-dyn-act.fail .hg-dyn-at { color: var(--hgd-fail); }
+.hg-dyn-actcp { flex: none; border: none; background: none; color: var(--muted);
+  cursor: pointer; font-size: 11px; padding: 0 2px; border-radius: 3px;
+  transition: color .15s; }
+.hg-dyn-actcp:hover { color: var(--accent); }
+
+/* ---- F 回合历史 / G 当前文件 ---- */
+.hg-dyn-turns, .hg-dyn-files { display: flex; flex-direction: column; gap: 2px; }
+.hg-dyn-turn { display: flex; gap: 8px; font-size: 11px; align-items: baseline;
+  color: var(--fg); padding: 1px 2px; }
+.hg-dyn-turn .hg-dyn-tk { flex: none; width: 14px; text-align: center; }
+/* v2.36 语义拆分：✓ 绿 / ✗ 红（旧版与中断同为橙，失败不辨）/ ⏹ 中断橙 / ⏻ 灰 */
+.hg-dyn-turn.ok .hg-dyn-tk { color: var(--hgd-run); }
+.hg-dyn-turn.error .hg-dyn-tk { color: var(--hgd-fail); }
+.hg-dyn-turn.interrupt .hg-dyn-tk { color: var(--hgd-halt); }
+.hg-dyn-turn.exit .hg-dyn-tk { color: var(--muted); }
+.hg-dyn-turn .hg-dyn-tn { color: var(--muted); font-family: var(--font-mono); }
+.hg-dyn-turn .hg-dyn-td { font-family: var(--font-mono); }
+.hg-dyn-turn .hg-dyn-tt2 { margin-left: auto; color: var(--muted); font-size: 10.5px; }
+.hg-dyn-file { font-size: 11px; font-family: var(--font-mono); color: var(--fg);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 1px 2px; }
+
+/* ---- 跳转高亮（消息流目标行）：v2.36 改 outline 渐隐——旧版把行背景动画到
+   transparent，移除类时回跳 bg-card 会闪一下；outline 不占布局不盖底色，
+   随行圆角走 ---- */
+.hg-dyn-jump { animation: hgDynJump 1.5s ease-out; }
+@keyframes hgDynJump {
+  0% { outline: 2px solid color-mix(in srgb, var(--accent) 75%, transparent); outline-offset: -2px; }
+  55% { outline: 2px solid color-mix(in srgb, var(--accent) 30%, transparent); outline-offset: -2px; }
+  100% { outline: 2px solid transparent; outline-offset: -2px; }
+}
+
+/* v2.36 脉冲精修：补全首尾帧并放缓到 1.6s + ease（旧 1.2s 无首帧略突兀） */
+@keyframes hgDynPulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+
+/* v2.36 面板/窗格内滚动条收细一档（全局 8px → 6px），与信息密度协调 */
+.hg-dyn-pane::-webkit-scrollbar, .hg-dyn-pane ::-webkit-scrollbar,
+.hg-subpane::-webkit-scrollbar, .hg-subpane ::-webkit-scrollbar { width: 6px; height: 6px; }
+
+/* ---- v2.33 子代理实时窗格（聊天区右侧，可拖拽调宽）----
+   定位：临时实时镜像视图——主 flow 灰色 sub 行保留，回合终结窗格收起
+   v2.36 IDE 化：tab 从描边芯片改「平时透明 + hover 淡染 + 激活浮起（顶缘
+   accent 条 + bg-card 抬升）」，状态点/计时与面板同语言；resizer 悬停改
+   淡染细条；计时数字继承 tabular-nums */
+.hg-subpane {
+  display: none; flex-direction: row; flex: none;
+  width: 320px; min-width: 220px; max-width: 640px;
+  border-left: 1px solid var(--border); background: var(--bg-panel);
+  min-height: 0; font-variant-numeric: tabular-nums;
+}
+.hg-sub-resizer { width: 5px; flex: none; cursor: col-resize; background: transparent;
+  transition: background .15s; }
+.hg-sub-resizer:hover { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+.hg-sub-wrap { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.hg-sub-head {
+  display: flex; align-items: center; gap: 4px; padding: 5px 6px 5px 9px;
+  border-bottom: 1px solid var(--border); overflow-x: auto; flex-shrink: 0;
+}
+.hg-sub-tabs { display: flex; gap: 3px; align-items: center; }
+.hg-sub-tab {
+  display: flex; align-items: center; gap: 5px; font-size: 11px;
+  padding: 3px 9px; border-radius: 6px; cursor: pointer; white-space: nowrap;
+  color: var(--muted); background: transparent; border: 1px solid transparent;
+  transition: background-color .15s, color .15s, border-color .15s;
+}
+.hg-sub-tab:hover { color: var(--fg); background: color-mix(in srgb, var(--fg) 6%, transparent); }
+.hg-sub-tab.active { color: var(--fg-bright); font-weight: 600;
+  background: var(--bg-card);
+  border-color: color-mix(in srgb, var(--border) 70%, transparent);
+  box-shadow: inset 0 2px 0 var(--accent); }
+.hg-sub-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--hgd-done); }
+.hg-sub-tab.run .hg-sub-dot { background: var(--hgd-run); animation: hgDynPulse 1.6s ease-in-out infinite; }
+.hg-sub-tab.err .hg-sub-dot { background: var(--hgd-fail); }
+.hg-sub-x {
+  margin-left: auto; flex: none; border: none; background: none; cursor: pointer;
+  color: var(--muted); font-size: 12px; padding: 3px 6px; border-radius: 5px;
+  transition: color .15s, background-color .15s;
+}
+.hg-sub-x:hover { color: var(--fg-bright); background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.hg-sub-body { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 12px; }
+.hg-sub-msgs { display: flex; flex-direction: column; gap: 8px; }
+.hg-sub-msg { font-size: 12px; line-height: 1.65; color: var(--fg); white-space: pre-wrap; word-break: break-word; }
+.hg-sub-tool {
+  font-size: 10.5px; color: var(--muted); font-family: var(--font-mono);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 1px 0 1px 8px; border-left: 2px solid color-mix(in srgb, var(--border) 80%, transparent);
+}
+.hg-sub-res {
+  font-size: 10.5px; color: var(--muted); font-family: var(--font-mono);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 1px 0 1px 8px; border-left: 2px solid color-mix(in srgb, var(--border) 80%, transparent);
+}
+.hg-sub-res.err { color: var(--hgd-fail); border-left-color: var(--hgd-fail); }
+
+/* ---- v2.35 子代理模型角标（tab 内，悬浮看全名）/ 重开入口可点击提示 ----
+   v2.36：角标描边框改淡染底胶囊（与面板 amdl 同款），去掉压灰的 opacity */
+.hg-sub-mdl { font-size: 9.5px; color: var(--muted); max-width: 90px;
+  overflow: hidden; text-overflow: ellipsis;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  border-radius: 3px; padding: 0 4px; }
+.hg-dyn-amdl { flex: none; font-size: 9.5px; color: var(--muted);
+  padding: 0 4px; border-radius: 3px;
+  background: color-mix(in srgb, var(--fg) 6%, transparent); }
+/* P1-5：协作代理行（SendMessage peer/识图转交）——「协作」徽章（accent 标
+   种类）+ 等待蓝点（标状态，与面板/输入框等待语义一致；完成后回灰） */
+.hg-dyn-pbadge { flex: none; font-size: 9px; color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 3px; padding: 0 3px; opacity: .9; }
+.hg-dyn-agent.peer .hg-dyn-adot { background: var(--hgd-wait); }
+.hg-dyn-agent.peer.done .hg-dyn-adot { background: var(--hgd-done); }
+.hg-dyn-agent.peer.run .hg-dyn-adot { animation: hgDynPulse 1.6s ease-in-out infinite; }
+.hg-dyn-agent.peer.run .hg-dyn-el { color: var(--hgd-wait); }
+/* P0-2：子代理消息行/工具行、已转交线——点击重开窗格/说明，给手型提示
+   v2.36：hover 虚线框提亮为 accent 调（可点性更明显） */
+.h-msg.asst.sub[data-hg-sub], .h-tool.sub[data-hg-sub] { cursor: pointer; }
+.h-msg.asst.sub[data-hg-sub]:hover { outline: 1px dashed color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 3px; border-radius: 8px; }
+.h-switch[data-peer] { cursor: pointer; }
+
+/* ---- v2.38 历史子代理回放窗格：tab 置灰+「回放」徽章、加载/缺失说明、
+   详情卡回放按钮。色板全走主题/语义变量 ---- */
+.hg-sub-tab.replay { opacity: .78; }
+.hg-sub-tab.replay .hg-sub-dot { background: var(--hgd-done); animation: none; }
+.hg-sub-rp { flex: none; font-size: 9px; color: var(--muted);
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 3px; padding: 0 3px; }
+.hg-sub-replay-note { font-size: 10.5px; color: var(--muted);
+  padding: 3px 6px; border-left: 2px solid var(--border); opacity: .9; }
+.hg-dyn-replay-btn {
+  display: block; width: 100%; margin-top: 6px; padding: 3px 6px;
+  font-size: 10.5px; cursor: pointer; border-radius: 5px;
+  color: var(--fg); background: color-mix(in srgb, var(--fg) 6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+}
+.hg-dyn-replay-btn:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+

@@ -372,7 +372,10 @@ def claude_api_config_set():
                 continue
             env[hit[1]] = val
             if hit[2]:
-                env[hit[2]] = val
+                # _NAME 是显示名：剥掉 [1M] 窗口后缀。MODEL 键带 [1M] 是
+                # Claude Code 自己的 1M 上下文开关（CLI 发请求前剥掉，网关
+                # 不认后缀），显示名带后缀纯属噪音，还会误导「模型不认」排查。
+                env[hit[2]] = re.sub(r"\s*\[1m\]\s*$", "", val, flags=re.I)
     for field, key in (("ctx_window", "CLAUDE_CODE_AUTO_COMPACT_WINDOW"),
                        ("max_ctx", "CLAUDE_CODE_MAX_CONTEXT_TOKENS"),
                        ("compact_pct", "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE")):

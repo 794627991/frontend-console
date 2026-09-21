@@ -170,6 +170,7 @@ const _HG = {
   HIST_CAP: 300,        // v2.24 正常模式翻阅上限——更早的进「只读禅模式」看
   histAll: null,        // 当前会话全量 transcript 行（多段渲染源）
   histStart: 0,         // 已渲染起点 index（0=全量）
+  histLive: false,      // v2.35.2：histAll 是否经窗口渲染建立 DOM 对应（快照恢复的懒填不算——滚动扩收的放行门）
   imgSrv: null,         // 图片服务路径标记（后端 /api/harness/img/<sid>/file）
   activity: null,       // 活动指示 {start, verbTimer, tickTimer}
   actStart: 0,
@@ -180,6 +181,10 @@ const _HG = {
   compactT0: 0,         // 压缩开始时刻（动态秒表）
   compactUsed: 0,       // 压缩开始时的上下文规模（分割线里展示规模用）
   compactTimer: null,   // 秒表 tick
+  dyn: null,            // v2.32 右侧面板派生态 {acts,turns,turnN,turnTools,todoSeen,todoRowId}（_hgDyn 惰建，切会话/关 tab 置 null）
+  initN: 0,             // v2.35：本 SSE 流已见的 system/init 数——第 2 个起=CLI 自发新回合（后台任务通知/协作回传），前端即时亮运行态
+  agentModels: null,    // v2.35：/agent_models 缓存 {类型: 模型名}（Task 起跑时预显示子代理模型；实跑模型以子代理事件 message.model 覆盖）
+  peerNames: {},        // v2.37（P1-F①）：task_id/原始名 → 友好名映射（task_started 的 subagent_type 翻译；协作行显示用，完整 id 收 title）
 };
 
 // ---- 抽屉：工具名 → 展示名（用户口径：bash*n read*m grep*x 编辑*y）----
@@ -246,10 +251,10 @@ function buildClaudeHarnessTab(opts = {}) {
           <button class="hg-new-btn hg-recover-btn" data-hg-recover title="扫描磁盘上的会话记录，找回列表里消失的会话（异常丢失/误删都可找回）">⟲ 恢复会话</button>
         </div>
         <div class="hg-search-wrap"><input class="hg-search" data-hg-search placeholder="搜索会话" spellcheck="false"></div>
-        <div class="hg-side-dyn" data-hg-dyn style="display:none"></div>
         <div class="hg-sessions" data-hg-sessions></div>
         <button class="hg-prompt-btn" data-hg-vision title="识图配置（MCP 识图模型/端点映射/提示词）">👁 识图配置</button>
-        <button class="hg-prompt-btn" data-hg-roles title="三角色设计开关（决策者/执行者/编程者；切换后下条消息生效）">👥 三角色</button>
+        <button class="hg-prompt-btn" data-hg-roles title="三角色设计开关（双形态：轻快主模型=轻主力+designer 设计代理；高级主模型=决策者+executor/coder；切换后下条消息生效）">👥 三角色</button>
+        <button class="hg-prompt-btn" data-hg-roles-cfg title="三角色配置：模型槽/端点角色映射/审计模式与免审线（保存后下条消息热更生效）">👥 三角色配置</button>
         <button class="hg-prompt-btn" data-hg-prompt title="管理自定义提示词（全局/项目，会话启动时注入）">📜 提示词</button>
         <button class="hg-prompt-btn" data-hg-proxy-btn title="Claude 代理：重试代理（429/5xx 自动重试）+ 用量统计。点开代理面板">
           <img src="/ico/proxy.png" alt="proxy" style="width:14px;height:14px;vertical-align:-2px;"> Proxy
@@ -313,6 +318,16 @@ function buildClaudeHarnessTab(opts = {}) {
               </button>
             </div>
           </div>
+        </div>
+      </div>
+      <div class="hg-subpane" data-hg-subpane style="display:none">
+        <div class="hg-sub-resizer" data-hg-subres title="拖拽调宽"></div>
+        <div class="hg-sub-wrap">
+          <div class="hg-sub-head">
+            <div class="hg-sub-tabs" data-hg-subtabs></div>
+            <button class="hg-sub-x" data-hg-subx title="收起窗格（手动打开的窗格回合结束不自动收起；收起后点消息流子代理行或面板条目可重开）">✕</button>
+          </div>
+          <div class="hg-sub-body" data-hg-subbody></div>
         </div>
       </div>
       <input type="file" data-hg-file multiple style="display:none">
@@ -877,6 +892,25 @@ function buildClaudeHarnessTab(opts = {}) {
     }
   });
   flow.addEventListener('click', (e) => {
+    // v2.35（P0-2）：子代理消息行/工具行点击 → 重开实时窗格并切到对应
+    // tab（✕ 收起后同一子代理还在跑时的重开入口；窗格已开=切 tab）
+    // v2.35.1（F1/F7）：行内交互子元素放行——折叠头(.h-tool-head 展开/收起)、
+    // 复制钮(.h-tool-copy 与气泡内 .hg-code-copy)、折叠体(.h-tool-coll)是
+    // 既有交互（v2.12 起委托在此链后段），不得被整行重开劫持
+    const subRow = e.target.closest('[data-hg-sub]');
+    if (subRow && !e.target.closest('.h-tool-head, .h-tool-copy, .h-tool-coll, .hg-code-copy')) {
+      _subReopen(subRow.dataset.hgSub); return;
+    }
+    // v2.35（P1-5）：「已转交」线点击 → 说明（协作代理是独立会话，无实况
+    // 事件流可看，不伪装成能点开实况；回传以 📥 气泡呈现）
+    if (e.target.closest('.h-switch[data-peer]')) {
+      // v2.37R6：stale 线点击给核实口径
+      const swp = e.target.closest('.h-switch[data-peer]');
+      showBanner(swp.dataset.stale === '1'
+        ? '该等待线超 30 分钟未回传，疑似残留——回传若到达会自动定格'
+        : '协作代理是独立会话，无实时窗格——回传到达会以 📥 气泡呈现', 3200);
+      return;
+    }
     // 交互提问卡片（v2.17）：选项点击 / 提交
     const aOpt = e.target.closest('.h-ask-opt');
     if (aOpt) { askPick(aOpt); return; }
@@ -1105,7 +1139,13 @@ function buildClaudeHarnessTab(opts = {}) {
     } catch (_) { return false; }
     return true;
   }
-  function renderAsst(text, isSub) {
+  // v2.37（P1-C）：头像色板哈希——纯 CSS 语义变量（--hgd-*/--accent），零写死
+  // 色零外部资源；同名恒同色（按首字符 charCode 取模）
+  function _hgAvaCls(name) {
+    const c = (String(name || '?').charCodeAt(0) || 63) % 5;
+    return 'h-ava-' + c;
+  }
+  function renderAsst(text, isSub, subId, model) {
     // v2.16：空白/纯换行的 text 块不渲染。模型每轮都会吐一个 "\n\n" 占位块，
     // 旧判据 `if (!text)` 挡不住 → 每条渲染成一个空白气泡（历史重建后满屏空白
     // 圆角条）。重建与流式两条路径都走这里，一并对齐。
@@ -1123,7 +1163,22 @@ function buildClaudeHarnessTab(opts = {}) {
     phRemove(g);                               // 正文接管，占位动画退场
     const d = document.createElement('div');
     d.className = 'h-msg asst' + (isSub ? ' sub' : '');
+    // v2.35：子代理消息行挂 parent id——点击重开实时窗格并切到对应 tab
+    // （P0-2：✕ 收起后同一子代理还在跑时，消息流行就是重开入口）
+    if (isSub && subId) d.dataset.hgSub = subId;
     d.appendChild(mdBubble(text));
+    // v2.37（P1-C）+ v2.37R6（徽章间歇缺失）：任何路径的 AI 气泡都至少有
+    // 头像——实跑 model 可得（实时事件自带 message.model，缺省回退会话模型）
+    // 必带徽章；历史旧数据无 model 只画头像不画徽章（不编造归属）。
+    // 徽章/头像均为纯 class+dataset，随 innerHTML 快照序列化
+    if (!isSub) {
+      const bare = model ? String(model).split('[')[0] : '';
+      const meta = document.createElement('div');
+      meta.className = 'h-mmeta';
+      meta.innerHTML = `<span class="h-ava ${_hgAvaCls(bare || 'AI')}">${esc((bare || 'AI').charAt(0).toUpperCase())}</span>` +
+        (bare ? `<span class="h-mmodel" title="本条回复的实跑模型">${esc(bare)}</span>` : '');
+      d.appendChild(meta);
+    }
     if (!isSub) {                          // v2.28.16：回滚按钮（回合边界授予）
       const bar = document.createElement('div');
       bar.className = 'hg-msg-acts';
@@ -1185,11 +1240,23 @@ function buildClaudeHarnessTab(opts = {}) {
     d.innerHTML = '<span></span><i>♻️ ' + esc(text) + '</i><span></span>';
     addRow(d);
   }
+  // v2.34：审计警示气泡——light 形态回合结算审计的可见出口（warn 档唯一
+  // 动作；auto 档续发补审指令时也先出这条）。红色居中卡片，区别于用户/
+  // AI 气泡与灰色 raw 行：这是 harness 的裁决信息，用户必须知情。回放路径
+  // （role='audit' 行）与实时（kind='audit' 事件）共用，切会话形态一致。
+  function renderAudit(text) {
+    const d = document.createElement('div');
+    d.className = 'h-audit';
+    d.textContent = text;
+    addRow(d);
+  }
   // v2.27.3：识图/跨会话协作的过程可见性（用户定调：全程要有反馈）——
   // 转交 = 分割线；回传 = 专属气泡。原实现回传内容直接被丢弃（user 事件
   // 只处理 tool_result），结论"凭空消失"，只有主会话转述才可见。
   // v2.28.3：定格指定识图分割线（多调用并发时 peerWait 单槽不够用——
   // 每条线按 tool_use_id 对应自己的元素，各自定格互不干扰）
+  // v2.35：定格时落 data-done（epoch ms）——面板「协作代理」行与输入框
+  // 「等待协作回传」态都从线的 dataset 派生，随 innerHTML 快照序列化
   function _hgVisionFreeze(el, err) {
     if (!el || !el.isConnected) return;
     const i = el.querySelector('i');
@@ -1198,6 +1265,8 @@ function buildClaudeHarnessTab(opts = {}) {
     i.innerHTML = err
       ? '📤 已转交 · ⚠ 识图失败 · 用时 ' + dur
       : '📤 已转交 · 📥 已回传 · 用时 ' + dur;
+    el.dataset.done = String(Date.now());
+    _hgPeerLineStop(el);                  // v2.35.2（P1 多槽）：停该线自己的计时器
   }
   // v2.28.3：回合终结（result/中断/进程退出）仍未回传的识图线——停表并
   // 标注，不让秒表空转到天荒地老
@@ -1208,13 +1277,26 @@ function buildClaudeHarnessTab(opts = {}) {
       const el = vc[id];
       const i = el && el.querySelector('i');
       if (i) i.innerHTML = '📤 已转交 · 等待结论回传' + (dead ? '（回合已结束）' : '（历史未完成）');
-      if (_HG.peerWait && _HG.peerWait.el === el) _hgPeerWaitStop();
+      if (el) el.dataset.done = String(Date.now());   // v2.35：未回传也定格（面板协作行收口）
+      _hgPeerLineStop(el);              // v2.35.2（P1 多槽）：各线停各的计时器
     }
     _HG.visionCalls = null;
   }
   // v2.28：识图 MCP 转交线历史回看——静态渲染（后端已算好 dur），无计时器
+  // v2.35.1（观察项补齐）：与实时线同构落 dataset（peer/t0/done/psum）——面板
+  // 「协作」行与输入框等待态对两条路径一致。历史行一律定格：dur 有值用真实
+  // 完成时刻（t0+dur，60s 窗自然滤掉旧行）；无值=历史未完成，不冒充在等
   function renderVisionRelayHist(l) {
     const d = document.createElement('div'); d.className = 'h-switch';
+    const t0 = l.ts ? (Date.parse(l.ts) || 0) : 0;
+    d.dataset.peer = '识图';
+    if (t0) d.dataset.t0 = String(t0);
+    if (l.dur != null) {
+      d.dataset.done = String(t0 + Math.max(0, l.dur) * 1000);
+    } else {
+      d.dataset.done = String(t0 || Date.now());
+      d.dataset.psum = '历史未完成（未回传）';
+    }
     d.innerHTML = l.dur != null
       ? '<span></span><i>' + (l.err ? '📤 已转交 · ⚠ 识图失败' : '📤 已转交 · 📥 已回传')
         + ' · 用时 ' + esc(fmtDur(l.dur)) + '</i><span></span>'
@@ -1222,60 +1304,184 @@ function buildClaudeHarnessTab(opts = {}) {
     addRow(d);
   }
   function renderPeerRelay(to, t0ms) {    // 📤 已转交分割线（带等待计时）
-    _hgPeerWaitStop();                    // 防重复：新转交接管旧等待
+    // v2.35.2（P1 多槽）：不再「新转交接管旧等待」——每条线自己的计时器自己
+    // 走（此前新线会停掉旧线的表，旧线读秒冻死在半途；并发转交各对各的线）
     const d = document.createElement('div'); d.className = 'h-switch';
     d.innerHTML = '<span></span><i>📤 已转交 ' + esc(to || '其他会话') +
       ' · 等待结论回传 · <b class="hg-peer-t">0s</b></i><span></span>';
     addRow(d);
     const t0 = t0ms || Date.now();        // v2.3.2：历史重建传行内 ts（真实起点）
     d.dataset.t0 = String(t0);            // 快照恢复后重启计时用
+    d.dataset.peer = to || '其他会话';     // v2.35：协作方名进 dataset——面板协作行/等待态派生 + 快照序列化
+    renderSideStatus();                   // v2.35：面板协作行 + 输入框等待态跟随
     _hgPeerTimerStart(d, t0);
     scrollBottom();
     return d;                             // v2.28.3：识图多调用并发时按 id 对线
   }
   // v2.3.2：等待计时器独立函数——快照恢复（switchTo innerHTML 重建）后
   // 原 interval 已死、计时冻结在快照时刻；恢复路径对未定格线重挂 interval。
+  // v2.35.2（P1 多槽）：计时器挂线元素（d._peerTimer）——每条线独立停/走，
+  // 重挂防叠（快照恢复连点/重复恢复场景）；_HG.peerWait 仍指向最新一条
+  //（识图 sweep 等旧调用方的兼容单槽）。
   function _hgPeerTimerStart(d, t0) {
     const tb = d.querySelector('.hg-peer-t');
     if (!tb) return;
+    if (d._peerTimer) clearInterval(d._peerTimer);
     const timer = setInterval(() => {
       if (!tb.isConnected) { clearInterval(timer); return; }
       tb.textContent = fmtDur((Date.now() - t0) / 1000);
     }, 1000);
+    d._peerTimer = timer;
     _HG.peerWait = { el: d, t0, timer };
+  }
+  // v2.35.2（P1 多槽）：停单条线的计时器（并释放指向它的 peerWait 单槽）
+  function _hgPeerLineStop(el) {
+    if (el && el._peerTimer) { clearInterval(el._peerTimer); el._peerTimer = null; }
+    if (_HG.peerWait && _HG.peerWait.el === el) _HG.peerWait = null;
+  }
+  // v2.35.2（P1 多槽）：定格单条转交线（文案/耗时/dataset，面板与等待态收口）
+  function _hgPeerLineFreeze(el, psum) {
+    if (!el || !el.isConnected) return;
+    _hgPeerLineStop(el);
+    const i = el.querySelector('i');
+    const dur = fmtDur((Date.now() - (+(el.dataset.t0 || 0) || Date.now())) / 1000);
+    if (i) i.innerHTML = '📤 已转交 · 📥 已回传 · 用时 ' + dur;
+    el.dataset.done = String(Date.now());
+    if (psum) el.dataset.psum = String(psum).replace(/\s+/g, ' ').trim().slice(0, 120);
+    renderSideStatus();
+  }
+  // v2.35.2（P1 多槽）：回传到达按**协作方名**配对定格——回传事件只有发信方
+  // 名（renderPeer 的 name / 代播的 from-name），与转交线的 data-peer（收信
+  // 方名）同名对上；同名多条按 FIFO 取最早未定格；无匹配退最早未定格
+  //（与旧单槽行为等价的兜底）。交错时序（relay1,relay2,peer1,peer2）自此
+  // 各对各的线，不再串。
+  function _hgPeerFreezeByName(name, text, strict) {
+    // v2.35.2（R1）：排除仍被识图链路跟踪的线——并行多图各线 data-peer 同为
+    // 「识图」，按名配对会误冻还在跑的兄弟线；本线 result 到达时已从
+    // visionCalls delete（:2353），自身定格不受影响
+    const lines = _hgPeerLines().filter(el => !el.dataset.done
+        && !(_HG.visionCalls && Object.values(_HG.visionCalls).includes(el)));
+    if (!lines.length) return null;
+    const hit = name && lines.find(el => (el.dataset.peer || '') === name);
+    if (!hit) {
+      // v2.37（P1-F②）：strict 只许按名精确配对——协作包装的 task_notification
+      // 用；不命中不许误冻无关在途线
+      if (strict) return null;
+      _hgPeerLineFreeze(lines[0], text);
+      return lines[0];
+    }
+    _hgPeerLineFreeze(hit, text);
+    return hit;
+  }
+  // v2.37R6（陈旧 pending 自愈）：①兜底复核——回合终结时对仍 pending 的
+  // 线批量核实其 peer 转写是否存在 final result：有=定格「已回传」，无=
+  // 标「状态未知」而非永久「等待中」；②显示上限——pending 超 30 分钟在
+  // 秒表 tick 里标 stale（疑似残留），停表防无限秒表误导。均落 dataset
+  //（随快照序列化，切会话往返不复发）。
+  function _hgPeerVerifyPending() {
+    const pend = _hgPeerLines().filter(el => !el.dataset.done);
+    if (!pend.length || !_HG.sid) return;
+    // R6 复审 C：核实上限 10 条显式化——超出部分标「未核实」（≠「状态未知」，
+    // 没查过不许冒充查过）
+    const checked = pend.slice(0, 10);
+    const rest = pend.slice(10);
+    const sidAt = _HG.sid;
+    const sinces = checked.map(el => el.dataset.t0 || 0);
+    fetch(`/api/harness/peer_result_check?sid=${encodeURIComponent(sidAt)}&peers=${encodeURIComponent(checked.map(el => el.dataset.peer).join(','))}&sinces=${encodeURIComponent(sinces.join(','))}`)
+      .then(r => r.json())
+      .then(j => {
+        if (!j || !j.ok || _HG.sid !== sidAt) return;
+        let changed = false;
+        // R6 复审 B：端点只认 timestamp ≥ 线起点的 result（旧回合不算）——
+        // found=True 才定格「已回传（转写核实补记）」；其余标「状态未知」，
+        // unknown 一并清 stale（G：先 stale 后 verify 两处口径统一）
+        for (const el of checked) {
+          if (el.dataset.done || !el.isConnected) continue;
+          if (j.results && j.results[el.dataset.peer]) {
+            el.dataset.done = String(Date.now());
+            delete el.dataset.stale;
+            _hgPeerLineStop(el);
+            const i0 = el.querySelector('i');
+            if (i0) i0.innerHTML = '📤 已转交 · 📥 已回传（转写核实补记）';
+            el.dataset.psum = '（转写核实补记：回传已发生）';
+          } else {
+            el.dataset.unknown = '1';
+            delete el.dataset.stale;
+            _hgPeerLineStop(el);
+            const i1 = el.querySelector('i');
+            if (i1) i1.innerHTML = '📤 已转交 · 状态未知（回合已结束，回传未在转写中确认）';
+          }
+          changed = true;
+        }
+        for (const el of rest) {
+          if (el.dataset.done || !el.isConnected) continue;
+          el.dataset.unverified = '1';   // 没查过：独立标记，不冒充状态未知
+          changed = true;
+        }
+        if (changed) renderSideStatus();
+      }).catch(() => {});
+  }
+  const _PEER_STALE_MS = 30 * 60 * 1000;   // 30 分钟显示上限
+  function _hgPeerStaleSweep() {           // 秒表 tick 内逐秒巡检（cheap）
+    flow.querySelectorAll('.h-switch[data-peer]:not([data-done]):not([data-stale])').forEach(el => {
+      const t0 = +(el.dataset.t0 || 0);
+      if (t0 && Date.now() - t0 > _PEER_STALE_MS) {
+        el.dataset.stale = '1';
+        if (el._peerTimer) { clearInterval(el._peerTimer); el._peerTimer = null; }
+        const i = el.querySelector('i');
+        if (i) {
+          const nm = el.dataset.peer || '其他会话';
+          i.innerHTML = '📤 已转交 ' + esc(nm) + ' · 疑似残留，点击核实（等待超 30 分钟）';
+        }
+      }
+    });
   }
   function _hgPeerWaitStop(done) {        // 回传到达=定格用时；切会话=静默清理
     const w = _HG.peerWait; _HG.peerWait = null;
     if (!w) return;
     clearInterval(w.timer);
-    const i = w.el.querySelector('i');
-    if (done && i && w.el.isConnected)
-      i.innerHTML = '📤 已转交 · 📥 已回传 · 用时 ' + fmtDur((Date.now() - w.t0) / 1000);
+    if (w.el) w.el._peerTimer = null;
+    if (done && w.el && w.el.isConnected)
+      _hgPeerLineFreeze(w.el);            // 单槽兼容路径（不携带摘要——摘要走按名配对）
   }
-  function renderPeer(name, text, to) {    // 📥 回传气泡（区别于 user/AI）
+  function renderPeer(name, text, to, noDedup) {  // 📥 回传气泡（区别于 user/AI）
     // v2.3.2：代播回传带 to（收件人 peer 名）——防串台污染。
     // v2.3.10 修致命错位（用户实锤"回传到了界面没有"）：to 是回信方写的
     // 收件人名（本会话 CLI 名如 pro-62），而转交线上写的是发信时的收件人
     // （识图会话）——两个名字方向相反，旧门控拿 to 匹配转交线必失败，
     // 代播回传被静默丢弃。改为：有任一未定格转交线即收（会话只在自己
     // 等结论时才会收到代播，且去重已兜双份；名不匹配的极端串台由
-    // name 头标自说明，不再静默吞）
+    // name 头标自说明，不再静默吞）。
+    // R6 复审 H：门控补 unknown 线——「状态未知」文案替换掉「等待结论回传」
+    // 后，to 门控按文本找会丢；迟到的真实回传仍要能被接收渲染。
     if (to) {
-      const waiting = [...flow.querySelectorAll('.h-switch')]
-        .some(el => el.textContent.includes('等待结论回传'));
+      const waiting = [...flow.querySelectorAll('.h-switch[data-peer]')]
+        .some(el => !el.dataset.done
+          && (el.textContent.includes('等待结论回传') || el.dataset.unknown === '1'
+            || el.dataset.stale === '1'));
       if (!waiting) return;
     }
-    // 去重：主会话自身 jsonl 检测与代播可能双份（空闲期回传两条链都通）
-    const sig = (text || '').slice(0, 120);
-    if (renderPeer._seen && renderPeer._seen.t === sig &&
-        Date.now() - renderPeer._seen.at < 60000) return;
-    renderPeer._seen = { t: sig, at: Date.now() };
-    _hgPeerWaitStop(true);                // 等待终点：转交线定格「已回传 · 用时 Ns」
+    // 去重：主会话自身 jsonl 检测与代播可能双份（空闲期回传两条链都通）。
+    // R6 复审 F：历史回放路径跳过 60s 窗判重——连续多条历史回传内容相近时
+    // 会被误吞（转写里每一行都是独立事实，不存双发歧义）
+    if (!noDedup) {
+      const sig = (text || '').slice(0, 120);
+      if (renderPeer._seen && renderPeer._seen.t === sig &&
+          Date.now() - renderPeer._seen.at < 60000) return;
+      renderPeer._seen = { t: sig, at: Date.now() };
+    }
+    // v2.35.2（P1 多槽）：回传按协作方名配对定格对应转交线——并发转交/
+    // 交错回传（relay1,relay2,peer1,peer2）各对各的线不串；摘要随定格写入
+    // dataset（面板协作行「已回传」展示用，随快照序列化切会话可派生）
+    _hgPeerFreezeByName(name, text);
     grpFinalize(false);
     endThinking(); closeRun();
     const d = document.createElement('div'); d.className = 'h-peer';
     const head = document.createElement('div'); head.className = 'h-peer-head';
-    head.textContent = '📥 ' + (name || '其他会话') + ' 回传';
+    // v2.37（P1-C）：回传方头像徽标（首字母圆形色标，与模型标识同色板哈希）
+    const _pn = name || '其他会话';
+    head.innerHTML = `<span class="h-ava ${_hgAvaCls(_pn)}">${esc(_pn.charAt(0).toUpperCase())}</span>` +
+      `📥 ${esc(_pn)} 回传`;
     d.appendChild(head);
     const b = document.createElement('div'); b.className = 'h-bubble';
     b.innerHTML = renderMd(text || '');
@@ -1352,13 +1558,17 @@ function buildClaudeHarnessTab(opts = {}) {
   }
   function renderHistLine(l, hi) {
     if (l.role === 'peer') {          // v2.27.3：跨会话回传（识图结论）历史回看
-      renderPeer(l.name, l.text);
+      renderPeer(l.name, l.text, null, true);   // R6 复审 F：历史路径跳过 60s 判重
     }
     else if (l.role === 'vision_relay') {  // v2.28：识图 MCP 转交线（历史回看）
       renderVisionRelayHist(l);
     }
     else if (l.role === 'renew') {    // v2.27.23：超窗续命注入折叠为一行分割线
       renderRenew(l.text);
+    }
+    else if (l.role === 'audit') {    // v2.34：审计警示卡回放（v2.34.1 与实时同文本，
+      grpFinalize(true);              // 由 audit log 并入；对齐实时分支先定稿上一组，
+      renderAudit(l.text);            // 否则纯工具收尾回合的补审卡会挂错进前组）
     }
     else if (l.role === 'user') {
       const imgs = (l.files || []).filter(p => _HARNESS_IMG_EXT.test(p));
@@ -1682,7 +1892,7 @@ function buildClaudeHarnessTab(opts = {}) {
     return false;
   }
 
-  function renderToolUse(b, isSub) {
+  function renderToolUse(b, isSub, subId) {
     const name = b.name || '';
     const id = b.id || ('anon' + (++_HG.uidN));
     const cfg = _hCfg(name);
@@ -1731,6 +1941,8 @@ function buildClaudeHarnessTab(opts = {}) {
     row._cfg = cfg;
     row._id = id;
     row.dataset.tid = id;                 // 快照恢复后重扫挂 rowById 用
+    // v2.35：子代理内部工具行挂 parent id——点击重开实时窗格（P0-2）
+    if (isSub && subId) row.dataset.hgSub = subId;
     _HG.rowById[id] = row;
     // v2.21：子代理行运行秒表——子代理一跑几分钟，主流毫无动静，没有
     // 秒表就像卡死。完成时由 renderOneToolResult 清表。
@@ -1747,6 +1959,9 @@ function buildClaudeHarnessTab(opts = {}) {
     // （用户明确要能看到每一次执行；组头徽章已承担"×N 汇总"职责）
     _HG.run = { name, head: row, rows: [row] };
     drawerAppend(row, 'exec');             // v2.11：过程行进执行抽屉（不再散落消息流）
+    // v2.32 面板：活动流记录（ring buffer 20 条；历史回放不记只看实时）
+    if (!_HG.openState)
+      _hgActPush({ tid: id, name, label, preview: row._preview || '', kind: cfg.kind, t0: Date.now() });
   }
 
   // 工具结果挂接（源 shouldHideToolResult：成功藏、错误永远显）
@@ -1774,6 +1989,7 @@ function buildClaudeHarnessTab(opts = {}) {
     }
     const cfg = row._cfg || {};
     const st = deriveStatus(tr);
+    if (!_HG.openState) _hgActDone(tr.tool_use_id, st);   // v2.32 面板：活动流定格
     // v2.21：子代理秒表收表（历史重建/分组恢复无 timer，置空无妨）
     if (row._agentTimer) { clearInterval(row._agentTimer); row._agentTimer = null; }
     // 分组成员：结果状态聚合到组头（成功不刷组头徽章避免闪烁，错误标红）
@@ -1945,6 +2161,7 @@ function buildClaudeHarnessTab(opts = {}) {
       ? `当前上下文 ${fmtTok(used)} / ${fmtTok(ctxMax)} tokens（${Math.round(pct)}%）`
       : (note || '上下文用量：首轮回复后统计');
     costEl.classList.toggle('warn', pct >= 80);
+    _hgDynDirty();   // v2.32 面板：上下文行跟随（localStorage 即数据总线，零新轮询）
   }
   function renderCtxRing(o) {
     const u = o.usage || {};
@@ -2024,12 +2241,10 @@ function buildClaudeHarnessTab(opts = {}) {
     sendBtn.title = b ? '停止生成' : '发送（Enter）';
     sendBtn.setAttribute('aria-label', b ? '停止生成' : '发送');
     stateEl.textContent = b ? '' : (_HG.alive ? '就绪' : '');
-    // v2.20：busy 时输入语义变成「排队」（ZCode 式）；空闲恢复常规提示
-    input.placeholder = b
-      ? '回复执行中——继续输入将排队，结束后自动发送'
-      : '给 Claude 发消息，@ 引用文件，/ 选择技能 · 可直接粘贴图片';
+    _hgInputState();   // v2.35：输入框提示按运行态/子代理/协作等待派生（P0-1②③；空闲文案同 v2.20）
     if (b) actStart(sinceMs);
     else { actStop(); queuePump(); _hgCtxPoll(); }
+    _hgDynDirty();   // v2.32 面板：状态区运行态徽章/计时跟随
   }
   // v2.26:busy 状态自愈——SSE 事件丢失/断线重连竞态会让前端 _HG.busy 与
   // 后端真实状态脱节(用户实锤「AI 在工作但显示未在应答」,活动指示器消失)。
@@ -2051,7 +2266,98 @@ function buildClaudeHarnessTab(opts = {}) {
       const sub = o.subtype;
       if (sub === 'init') {
         _HG.alive = true;
-        if (!_HG.busy) setBusy(false);
+        // v2.35（P0-1）：stream-json 每回合起跑都发一条 system/init（stdin 开着
+        // 实测）——第 2 个起=CLI 自发新回合（后台任务完成通知/协作回传续跑）。
+        // 后端同规则已补置 busy（会话列表 5s 自愈轮询的方向源头），前端这里
+        // 即时亮运行态不等轮询；revive 重启的新进程首 init 不在此列（闭包级
+        // 计数跨 revive 连续，靠后端 send() 占位的路径不受影响）。
+        _HG.initN = (_HG.initN || 0) + 1;
+        if (_HG.initN > 1 && !_HG.busy) setBusy(true);
+        else if (!_HG.busy) setBusy(false);
+      } else if (sub === 'task_started' || sub === 'task_progress'
+                 || sub === 'task_notification') {
+        // v2.35（P1-4/P0-1②）：Task 生命周期系统事件（主链事件、不带
+        // parent_tool_use_id，但带 tool_use_id 指回 Task 调用）——
+        // · task_started：is_backgrounded 标记后台代理（主回合 result 不收
+        //   掉它，收尾等 task_notification）；tool_use 事件丢失时兜底建行
+        // · task_progress/task_notification：CLI 侧计的子代理用量
+        //   （total_tokens/tool_uses/duration_ms）——assistant.message.usage
+        //   被网关置零（实测 input/output 恒 0），这是唯一可靠用量源
+        const tid = o.tool_use_id;
+        // v2.37（P1-F①）：task_id → 友好名映射（协作行显示「审核·#2」这类，
+        // 裸 id 收 title）
+        if (o.task_id) {
+          const lb = _AGENT_LABEL[o.subagent_type] || o.subagent_type || '';
+          if (lb) _HG.peerNames[o.task_id] = lb;
+        }
+        // v2.37（P1-E）：协作包装（后台+非角色类型）——不开窗格（旧版本误开
+        // 的空白 tab 就地清掉），但建 collab 档案供面板 C 区协作行展示；
+        // 回传定格走下方严格配对（task_notification 无档案分支同款）
+        if (sub === 'task_started'
+            && _isCollabWrap(o.subagent_type, o.is_backgrounded)) {
+          _subDrop(tid);
+          if (tid) {
+            (_HG.agents || (_HG.agents = {}))[tid] = {
+              type: o.subagent_type || 'Task', desc: o.description || '',
+              t0: Date.now(), done: false, doneAt: 0,
+              collab: true, bg: true, taskId: o.task_id || '' };
+            renderSideStatus();
+          }
+        } else if (tid) {
+          if (!_HG.agents && sub === 'task_started') _HG.agents = {};
+          let a = _HG.agents && _HG.agents[tid];
+          if (!a && _HG.agents && sub === 'task_started') {
+            // 兜底建档（Task tool_use 已建档时零改动）：t0 用当下近似
+            a = _HG.agents[tid] = {
+              type: o.subagent_type || 'Task', desc: o.description || '',
+              t0: Date.now(), done: false, doneAt: 0 };
+          }
+          if (a) {
+            if (sub === 'task_started') {
+              a.bg = !!o.is_backgrounded;
+              a.taskId = o.task_id || '';
+            } else {
+              // v2.35.1（F3）：用量与收尾解耦——task_notification 是完成信号，
+              // usage 缺失（失败态通知常见）也必须收档，否则面板/输入框永久
+              // 卡「运行中」；有 usage 才记 tokens/工具数
+              if (o.usage) {
+                a.tokens = o.usage.total_tokens || 0;
+                a.toolN = o.usage.tool_uses || 0;
+              }
+              if (sub === 'task_notification' && !a.done) {
+                a.done = true; a.doneAt = Date.now();
+                a.err = !!(o.status && o.status !== 'completed'
+                           && o.status !== 'success');
+                a.result = String(o.summary || '').trim().slice(0, 400) || a.result;
+                _subClose(tid, a.err);
+              }
+            }
+            renderSideStatus();
+          }
+        }
+        // v2.37（P1-F②）：协作包装的完成通知——严格按名配对定格对应转交线
+        // （task_id 即 SendMessage to 的 agentId，实测同源；不命中不兜底，
+        // 防误冻无关在途线）。对有档案的真实子代理同样尝试（它们无转交线，
+        // strict 不命中即 no-op）
+        if (sub === 'task_notification') {
+          const sum = String(o.summary || '').trim().slice(0, 120);
+          const _hit = _hgPeerFreezeByName(o.task_id, sum, true)
+              || _hgPeerFreezeByName(o.subagent_type, sum, true);
+          if (_hit) renderSideStatus();
+          // v2.37R3（复审C）：仅协作语境上报（该 task 是 collab 档案，或本
+          // 会话存在 pending 转交线）——普通 Task 子代理完成不记，防
+          // paired=false 淹没取证信号；同源假设失效案例仍全落日志
+          const _rec = tid ? ((_HG.agents || {})[tid] || {}) : {};
+          if (_rec.collab || _hgPeerPending()) {
+            try {
+              fetch('/api/harness/peer_pair_log', { method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sid: _HG.sid, task: o.task_id || '',
+                                       name: (_hit && _hit.dataset.peer) || '', ok: !!_hit }) })
+                .catch(() => {});
+            } catch(_) {}
+          }
+        }
       } else if (sub === 'status') {
         // v2.7：压缩状态（实测 CLI 事件：status:"compacting" 开始 / "requesting" 恢复）
         // v2.20：压缩是长动作（几十秒），只在底栏小胶囊提示不够醒目——
@@ -2082,28 +2388,70 @@ function buildClaudeHarnessTab(opts = {}) {
     } else if (typ === 'assistant') {
       const blocks = (o.message || {}).content || [];
       const isSub = !!o.parent_tool_use_id;
+      // v2.35（P0-1 兜底）：主链 assistant 事件到达而前端还认为空闲 = 一条
+      // 没观察到起点的回合正在跑（后端同规则已置 busy，这里即时亮，不等
+      // 5s 自愈轮询——轮询间隔内徽章空窗正是用户看到的「运行状态消失」）
+      if (!isSub && !_HG.busy && _HG.sid) setBusy(true);
       // v2.20：网关下 result 事件的 usage 常缺失（用户实测环恒 0%）——
       // assistant 事件的 message.usage 同口径（转写实测有值：input+cache_read+
       // cache_creation），到达即刷环，不依赖 result
       if (!isSub && (o.message || {}).usage)
         renderCtxRing({ usage: o.message.usage, modelUsage: o.modelUsage });
+      // v2.35（P1-4）：子代理实跑模型——assistant 事件自带 message.model
+      // （网关映射后的真名，优先于 frontmatter 预显示），首见即记入档案
+      if (isSub && o.parent_tool_use_id && (o.message || {}).model
+          && _HG.agents && _HG.agents[o.parent_tool_use_id]) {
+        const _sa = _HG.agents[o.parent_tool_use_id];
+        if (_sa.model !== o.message.model) {
+          _sa.model = o.message.model;
+          if (_sub.tabs[o.parent_tool_use_id]
+              && _sub.tabs[o.parent_tool_use_id].model !== o.message.model) {
+            _sub.tabs[o.parent_tool_use_id].model = o.message.model;
+            _subTabsPaint();
+          }
+          renderSideStatus();
+        }
+      }
       for (const b of blocks) {
         if (b.type === 'thinking' && b.thinking) { closeRun(); appendThinking(b.thinking); }
-        else if (b.type === 'text' && b.text && b.text.trim()) { endThinking(); closeRun(); renderAsst(b.text, isSub); }
+        else if (b.type === 'text' && b.text && b.text.trim()) { endThinking(); closeRun(); renderAsst(b.text, isSub, o.parent_tool_use_id, isSub ? null : ((o.message || {}).model || _HG.model || '')); }
         else if (b.type === 'tool_use') {
           endThinking();
-          // v2.30 侧栏会话动态：TodoWrite 更新任务清单；Task/Agent 记子代理起跑
+          // v2.32 面板：TodoWrite 更新任务清单 + 首见时刻打标（事件无时间戳，
+          // 近似值）+ 记最近清单行 id（点任务项跳消息流用）
           if (b.name === 'TodoWrite' && b.input && Array.isArray(b.input.todos)) {
             _HG.todos = b.input.todos;
+            const d = _hgDyn(), now = Date.now();
+            if (b.id) d.todoRowId = b.id;
+            for (const t of _HG.todos) {
+              const key = t.content || '';
+              if (!(key in d.todoSeen)) d.todoSeen[key] = now;
+            }
             renderSideStatus();
           }
           if ((b.name === 'Task' || b.name === 'Agent') && b.id && !isSub) {
-            (_HG.agents || (_HG.agents = {}))[b.id] = {
-              type: (b.input && (b.input.subagent_type || b.input.agent_type)) || b.name,
-              desc: (b.input && b.input.description) || '',
-              t0: Date.now(), done: false, doneAt: 0 };
+            // v2.37（P1-E）：协作包装（后台+非角色类型）——SendMessage 委托的
+            // 独立会话被 CLI 包装成后台 Task：无本会话事件流，开实况 tab 必
+            // 空白。不开 tab、不建代理档（C 区协作行由同委派的转交线派生，
+            // 数据源单一不重复）；旧版本已开的空白 tab 就地清掉
+            const _ty = (b.input && (b.input.subagent_type || b.input.agent_type)) || b.name;
+            if (_isCollabWrap(_ty, b.input && b.input.run_in_background)) {
+              _subDrop(b.id);
+            } else {
+              (_HG.agents || (_HG.agents = {}))[b.id] = {
+                type: _ty,
+                desc: (b.input && b.input.description) || '',
+                t0: Date.now(), done: false, doneAt: 0,
+                // v2.35（P1-4）：起跑即预显模型——~/.claude/agents frontmatter
+                // （_hgAgentModels 惰拉缓存）；子代理事件到达后以实跑
+                // message.model 覆盖。读不到（内置代理 Explore/Plan 等）标「主链模型」
+                model: _hgAgentModelPre(_ty) };
+              _subOpen(b.id, _HG.agents[b.id].type, _HG.agents[b.id].desc);   // v2.33：窗格开 tab
+            }
             renderSideStatus();
           }
+          // v2.32 面板：回合内工具计数（主流工具；子代理内部调用不算）
+          if (!isSub && b.name !== 'TodoWrite') _hgDyn().turnTools++;
           // v2.28.5：识图双通道——网关名（主通道，服务端执行无本地事件）与
           // 本地名 mcp__vision__analyze_image（兜底，客户端执行）。客户端执行
           // 的识图调用出 📤 转交线+秒表（替代工具卡），tool_result 到达时
@@ -2113,27 +2461,46 @@ function buildClaudeHarnessTab(opts = {}) {
             const el = renderPeerRelay('识图');
             (_HG.visionCalls || (_HG.visionCalls = {}))[b.id] = el;
           } else {
-            renderToolUse(b, isSub);
+            renderToolUse(b, isSub, o.parent_tool_use_id);
             // v2.27.3：转交识图/其他会话 = 强过程反馈，分割线比收起的工具行显眼
             if (!isSub && b.name === 'SendMessage' && b.input && b.input.to)
               renderPeerRelay(b.input.to);
           }
         }
       }
+      // v2.33：子代理消息分流进实时窗格（主 flow 照旧画灰色 sub 行，双处显示）
+      if (isSub) _subFeed(o.parent_tool_use_id, blocks);
       scrollBottom();
     } else if (typ === 'user') {
       // v2.3.12：/compact 摘要行不渲染——它是模型续命记忆，显示成用户气泡是噪音
       // （历史重建路径后端已拦成 renew 行，这里挡实时流里漏网的）
       if (o.isCompactSummary) return;
       const c0 = (o.message || {}).content;
-      // v2.30 侧栏会话动态：子代理回场——tool_result 对上在跑的 Task 即完成
+      // v2.33：子代理内部的 tool_result 也分流进窗格（user 事件同带
+      // parent_tool_use_id；不属于已跟踪 tab 的忽略）
+      if (Array.isArray(c0) && o.parent_tool_use_id && _sub.tabs[o.parent_tool_use_id])
+        for (const b of c0)
+          if (b && b.type === 'tool_result') _subResult(o.parent_tool_use_id, b);
+      // v2.32 面板：子代理回场——tool_result 对上在跑的 Task 即完成，
+      // 顺手存结果摘要/失败标志（面板完成行展示用，纯前端两行）
+      // v2.35：后台 Task（run_in_background）的 tool_result 只是「已派出」
+      // 确认——代理还在跑，收尾等 task_notification（bg 标记来自 task_started）
       if (Array.isArray(c0) && _HG.agents) {
         let hitAgent = false;
         for (const b of c0) {
           if (b && b.type === 'tool_result' && _HG.agents[b.tool_use_id]
-              && !_HG.agents[b.tool_use_id].done) {
-            _HG.agents[b.tool_use_id].done = true;
-            _HG.agents[b.tool_use_id].doneAt = Date.now();
+              && !_HG.agents[b.tool_use_id].done
+              && !_HG.agents[b.tool_use_id].bg) {
+            const a = _HG.agents[b.tool_use_id];
+            a.done = true;
+            a.doneAt = Date.now();
+            a.err = !!b.is_error;
+            a.result = resultText(b).slice(0, 400);
+            // v2.38：agentId 落档——Task tool_result 文本自带「agentId: xxx」
+            //（与 task_started 的 task_id 同源），回放窗格靠它定位子代理转写
+            a.agentId = a.taskId
+              || (resultText(b).match(/agentId:\s*([0-9a-zA-Z_-]{8,64})/i) || [])[1] || '';
+            _subClose(b.tool_use_id, a.err);   // v2.33：窗格 tab 定格 ✓/✗
             hitAgent = true;
           }
         }
@@ -2150,8 +2517,9 @@ function buildClaudeHarnessTab(opts = {}) {
           const vtxt = Array.isArray(tr.content)
             ? tr.content.filter(x => x && x.type === 'text').map(x => x.text).join('\n')
             : String(tr.content || '');
-          // 先定格本线；peerWait 若指向别的还在等待的线，摘开画完气泡再还
-          // 回去（renderPeer 内部会定格 peerWait 指向的线——不能让它冻错）
+          // 先定格本线再画气泡。renderPeer 的按名配对已排除识图跟踪中的线
+          // （v2.35.2 R1），不会误冻还在跑的并行兄弟线；下方 pw 摘还仅剩
+          // 单槽兼容兜底路径在用
           const pw = _HG.peerWait;
           _HG.peerWait = null;
           _hgVisionFreeze(el, !!tr.is_error);
@@ -2176,6 +2544,26 @@ function buildClaudeHarnessTab(opts = {}) {
         renderPeer(nm ? nm[1] : '其他会话', (body ? body[1] : peerText).trim());
         return;
       }
+      // v2.37（P1-F②）：agent-message 通知形态的协作回传——CLI 对 agent 会话
+      // （含 SendMessage 委托的独立会话/协作包装 task）回传的另一包装，此前
+      // 不被任何回传路径识别：原始 XML 被当普通 user 气泡渲染、对应转交线
+      // 永远停在「等待结论回传」。识别→提取发信方与正文→renderPeer（内部
+      // 按名配对定格转交线）。v2.37R2（复审5）：必须开闭标签对齐才判——
+      // 用户手打的半个 <agent-message 标签不得误触发
+      let agMsg = '';
+      const _AG_MSG_RE = /<agent-message[^>]*>[\s\S]*<\/agent-message>/;
+      if (typeof c0 === 'string' && _AG_MSG_RE.test(c0)) agMsg = c0;
+      else if (Array.isArray(c0)) {
+        const tb2 = c0.find(b => b && b.type === 'text' && _AG_MSG_RE.test(b.text || ''));
+        if (tb2) agMsg = tb2.text;
+      }
+      if (agMsg) {
+        const anm = agMsg.match(/from-name="([^"]*)"/) || agMsg.match(/\bname="([^"]*)"/);
+        const abody = agMsg.match(/<agent-message[^>]*>([\s\S]*?)<\/agent-message>/);
+        renderPeer(anm ? anm[1] : '协作代理',
+                   (abody ? abody[1] : agMsg.replace(/<[^>]+>/g, '')).trim());
+        return;
+      }
       // 用户真实消息打断工具 run；工具结果事件不动 run（rendersNothing 思想）
       if (!Array.isArray(c0) || !c0.some(b => b && b.type === 'tool_result')) closeRun();
       const hasToolResult = Array.isArray(c0) && c0.some(b => b && b.type === 'tool_result');
@@ -2188,14 +2576,13 @@ function buildClaudeHarnessTab(opts = {}) {
       endThinking();
       closeRun();
       _hgVisionSweep(true);                // v2.28.3：回合终结算清未回传的识图线
-      // v2.30：回合终结——还在跑的子代理标记收尾（中断/异常时 Task 没有
-      // tool_result，不收会永远显示"运行中"）
-      if (_HG.agents) {
-        let swept = false;
-        for (const id in _HG.agents)
-          if (!_HG.agents[id].done) { _HG.agents[id].done = true; _HG.agents[id].doneAt = Date.now(); swept = true; }
-        if (swept) renderSideStatus();
-      }
+      // v2.32：回合终结——还在跑的子代理统一收尾（收不到 tool_result 的
+      // 结束都不标失败；中断/退出的收尾在各自分支标「已中断」）
+      _hgAgentsSweep(false);
+      _subEnd();                           // v2.33：窗格收起（跑完随回合结束消失）
+      _hgPeerVerifyPending();              // v2.37R6（兜底复核②）：pending 线追溯核实
+      _hgTurnEnd(o.subtype === 'success' ? 'ok' : 'error',
+                 typeof o.duration_ms === 'number' ? o.duration_ms : 0);
       grpFinalize(true);                   // v2.18：本轮组定稿——用户没手动
                                           // 操作过且在底部跟读时自动收起（想看再点开，
                                           // 各抽屉独立开合）
@@ -2212,6 +2599,7 @@ function buildClaudeHarnessTab(opts = {}) {
   // ==================== SSE ====================
   function openSSE(sid, afterSeq) {
     if (_HG.sse) { try { _HG.sse.close(); } catch(_) {} _HG.sse = null; }
+    _HG.initN = 0;   // v2.35：init 计数随流重置——新流首个 init=进程待机，不算回合起跑（跨会话/重开 tab 不残留）
     if (!sid) return;
     const es2 = new EventSource(`/api/harness/stream?sid=${encodeURIComponent(sid)}&after_seq=${afterSeq || 0}`);
     _HG.sse = es2;
@@ -2238,15 +2626,25 @@ function buildClaudeHarnessTab(opts = {}) {
       else if (it.kind === 'event') handleEvent(it.data);
       else if (it.kind === 'peer') { grpFinalize(true); renderPeer(it.name, it.text, it.to); }
       else if (it.kind === 'renew') { grpFinalize(true); renderRenew(it.text); }
+      // v2.34：审计警示（light 回合结算违规）——回合已终结，定稿当前组再出红卡
+      else if (it.kind === 'audit') { grpFinalize(true); renderAudit(it.text); scrollBottom(); }
       else if (it.kind === 'raw') renderRaw(it.text);
       else if (it.kind === 'ask') { grpFinalize(true); askRender(it); }
       else if (it.kind === 'ask_done') askDone(it);
       else if (it.kind === 'interrupted') {
         endThinking(); _hgVisionSweep(true); grpFinalize(true); renderExit(it.text); setBusy(false);
+        // v2.32：中断收尾——在跑的子代理标「已中断」（原缺口：只有 result
+        // 分支收尾，点 ■ 停止后子代理假"运行中"+计时狂跳）
+        _hgAgentsSweep(true); _hgTurnEnd('interrupt', 0);
+        _subEnd();                         // v2.33：窗格收起
         // v2.15：通知 stopGen 兜底逻辑「事件到了」，别重复收尾
         try { document.dispatchEvent(new CustomEvent('hg-interrupted', {detail: _HG.sid})); } catch(_) {}
       }
-      else if (it.kind === 'exit') { endThinking(); _hgVisionSweep(true); _HG.alive = false; grpFinalize(true); renderExit(it.text); setBusy(false); }
+      else if (it.kind === 'exit') {
+        endThinking(); _hgVisionSweep(true); _HG.alive = false; grpFinalize(true); renderExit(it.text); setBusy(false);
+        _hgAgentsSweep(true); _hgTurnEnd('exit', 0);   // v2.32：同上，进程退出也收
+        _subEnd();                         // v2.33：窗格收起
+      }
       // v2.20：会话内切模型 → 消息流插一条分割线（「已切换模型 · xxx」）
       else if (it.kind === 'model_switched') {
         grpFinalize(true);
@@ -2266,8 +2664,12 @@ function buildClaudeHarnessTab(opts = {}) {
     // 里已经带着乐观渲染的用户气泡；若 user_echo 尚未到达（快速切走），
     // 切回来重放的 echo 对不上已清空的去重窗口 → 双画（用户实锤 A→B→A
     // 出两条同文消息）。随快照存取，恢复后重放 echo 仍能命中跳过。
+    // v2.37（P0-A）：窗口账目随快照存——恢复路径重建 histStart/histLive，
+    // 使滚动扩收机制在快照态重新成立（此前快照恢复后 histLive=false 且
+    // histStart 丢失，上滑扩段被 v2.35.2 的门拦死，历史够不着）
     _HG.cache[_HG.sid] = { html: flow.innerHTML, seq: _HG.seq,
-                           echoFast: _HG.echoFast || null };
+                           echoFast: _HG.echoFast || null,
+                           histStart: _HG.histStart, histLive: _HG.histLive };
     // v2.25：快照 LRU 上限 10——大会话 innerHTML 每份可达数十 MB，无上限
     // 来回切会话会攒爆内存（审计 §三.8）
     const keys = Object.keys(_HG.cache);
@@ -2287,8 +2689,10 @@ function buildClaudeHarnessTab(opts = {}) {
     // 历史只能进「只读禅模式」看（_roEnter），保住正常模式的 DOM 省流
     const capStart = Math.max(0, lines.length - _HG.HIST_CAP);
     start = Math.max(start, capStart);
+    start = Math.min(start, lines.length);   // v2.37R2（复审4）：上界钳制——账目越界时 slice 为空只剩错误计数
     _HG.histAll = lines;
     _HG.histStart = start;
+    _HG.histLive = true;   // v2.35.2：窗口渲染完成——histAll/DOM 建立对应，滚动扩收自此放行
     flow.innerHTML = '';
     if (start > 0) {
       const bar = document.createElement('div');
@@ -2310,9 +2714,28 @@ function buildClaudeHarnessTab(opts = {}) {
       let lastAsst = null;
       lines.slice(start).forEach((l, i) => {
         renderHistLine(l, start + i);
+        // v2.37R4（DOM 收缩）：行尾戳——每行渲染完后在 flow 最后一个元素上
+        // 记「到此为止已含第 hi 行」。增量收缩按戳定位头部边界（无戳孩子
+        // 属于下一个带戳孩子=同一条线的先导元素），账目与 DOM 恒一致
+        const _last = flow.lastElementChild;
+        if (_last) _last.dataset.hEnd = String(start + i);
         // v2.30：回放恢复最新任务清单（TodoWrite 的 input 里有 todos）
         if (l.role === 'tool' && l.text === 'TodoWrite'
             && l.input && Array.isArray(l.input.todos)) _HG.todos = l.input.todos;
+        // v2.32 面板：回放重建最近的子代理条目（无精确时刻→显示「历史」，
+        // 不参与 sweep；只留最近 5 条防长会话堆积）
+        if (l.role === 'tool' && (l.text === 'Task' || l.text === 'Agent')
+            && l.input && (l.input.description || l.input.subagent_type || l.input.agent_type)) {
+          const d = _hgDyn();
+          d.agentsRpl = d.agentsRpl || [];
+          // v2.38：从结果文本提取 agentId——历史条目的回放窗格靠它定位转写
+          const _aid = (l.result && String(l.result).match(/agentId:\s*([0-9a-zA-Z_-]{8,64})/i) || [])[1] || '';
+          d.agentsRpl.push({
+            type: l.input.subagent_type || l.input.agent_type || 'Task',
+            desc: l.input.description || '', t0: 0, done: true, doneAt: 0, replay: true,
+            agentId: _aid });
+          if (d.agentsRpl.length > 5) d.agentsRpl.shift();
+        }
         if (l.role === 'assistant') lastAsst = _HG.lastAsstEl;
         else if (l.role === 'user' && lastAsst && lastAsst.dataset.rwa) {
           lastAsst.classList.add('can-rewind');
@@ -2326,6 +2749,58 @@ function buildClaudeHarnessTab(opts = {}) {
   }
 
   let _histBusy = false;   // 重渲期间防 scroll 重入
+  // v2.37R4（DOM 收缩）：增量摘头——目标保留尾部 HIST_PAGE 行。按行尾戳
+  // （dataset.hEnd，_histRender 逐行落）划组：无戳孩子属于下一个带戳孩子
+  // （同一条线的先导元素），整组同进退。无任何戳（旧快照 DOM）=安全放弃。
+  // 视口用 scrollHeight 差回锚 scrollTop——可见内容一个像素都不动。
+  // 账目联动：histStart 同步前移（saveCache 存的就是收缩后的窗口值，
+  // rewind 双钳制不受影响）；扩段（上滑）仍走 _histRefresh 全量重渲，
+  // 账目由 _histRender 重建，往复互逆不漂移
+  function _hgShrinkHead() {
+    if (!_HG.histAll || !_HG.histAll.length) return;
+    const keepStart = _HG.histAll.length - _HG.HIST_PAGE;
+    const children = [...flow.children];
+    const before = flow.scrollHeight;
+    let newStart = -1;
+    let i = 0;
+    // v2.37R5（终审·严重）：内层扫戳触底=尾部无戳（实时追加的活动内容），
+    // 视作保留区——带标签 break 出外层，统一落到函数尾收尾。旧实现此处
+    // return 硬退：已摘的组不回滚，而 histStart/入口条/scrollTop 回锚全被
+    // 跳过 → 消息流只剩活动尾、历史无入口、断裂态被 saveCache 存档。
+    // 纯无戳旧快照（一次都没摘，newStart<0）仍走静默放弃。
+    outer: while (i < children.length) {
+      const group = [children[i]];
+      let hEnd = (children[i].dataset && children[i].dataset.hEnd != null)
+        ? +children[i].dataset.hEnd : null;
+      let j = i;
+      while (hEnd == null) {
+        j++;
+        if (j >= children.length) break outer;   // 尾部无戳=保留，收尾
+        group.push(children[j]);
+        if (children[j].dataset && children[j].dataset.hEnd != null) {
+          hEnd = +children[j].dataset.hEnd;
+        }
+      }
+      if (hEnd >= keepStart) break;              // 触到保留区，摘头结束
+      for (const g of group) g.remove();
+      newStart = hEnd + 1;
+      i = j + 1;
+    }
+    if (newStart < 0) return;                    // 纯无戳：零摘除，安全放弃
+    _HG.histStart = newStart;
+    // 视口锚定：scrollTop 减去被移除的高度，无闪屏无跳动
+    // （先按纯摘除量回锚，再插入口条并补偿其高度——v2.37R6：此前锚定在
+    // 插条之后、用「摘除量-条高」的差值，每轮收缩视口净上漂一条高度）
+    flow.scrollTop = Math.max(0, flow.scrollTop - (before - flow.scrollHeight));
+    // 头部若仍有更早历史，重建只读入口条（原条已随头部组摘除）
+    if (newStart > 0 && !flow.querySelector('.hg-hist-more')) {
+      const bar = document.createElement('div');
+      bar.className = 'hg-hist-more';
+      bar.innerHTML = '📖 剩 ' + newStart + ' 条更早消息——<b>点击进入只读模式</b>查看';
+      flow.insertBefore(bar, flow.firstChild);
+      flow.scrollTop += bar.offsetHeight;        // 条插入头部 → 视口同步下移补偿
+    }
+  }
   // v2.25：只拉 transcript 存 histAll、不重渲——快照恢复路径补数据用
   // （切会话时 histAll 被清防串会话，快照里「已点开」的懒段要补填就得有数据）
   async function _histFetch(sidAt) {
@@ -2379,7 +2854,14 @@ function buildClaudeHarnessTab(opts = {}) {
     btn.disabled = false;
   });
   flow.addEventListener('scroll', () => {
-    if (!_HG.histAll || _HG.busy || _histBusy) return;
+    // v2.35.2（P0 切会话信息丢失根因）：histLive 门——histAll 只有在真正的
+    // 窗口渲染（_histRender，含扩/收缩重渲）之后才与 DOM 建立对应关系；
+    // 快照恢复路径的懒段补填（_histFetch）也会填 histAll，但 histStart 停在
+    // 0、DOM 是快照内容——此时滚动窗口判定（shown=全长-0>100 且在底部 →
+    // 收缩重渲）会把刚恢复的消息流整个炸掉重拉转写（用户实锤「切走再切回
+    // 全部重新刷新」）。非窗口态一律不进扩/收缩分支；懒段展开按 hi 索引取
+    // 数据不受影响。
+    if (!_HG.histAll || !_HG.histLive || _HG.busy || _histBusy) return;
     const nearTop = flow.scrollTop <= 60;
     const distBottom = flow.scrollHeight - flow.scrollTop - flow.clientHeight;
     const shown = _HG.histAll.length - _HG.histStart;
@@ -2397,14 +2879,19 @@ function buildClaudeHarnessTab(opts = {}) {
           requestAnimationFrame(() => { _histBusy = false; });
         });
       }
-    } else if (distBottom <= 80 && shown > _HG.HIST_PAGE * 2) {
-      // 拉回底部：收缩回尾部一段（DOM 瘦身是常态）——先重拉防新消息丢失
-      _histBusy = true;
-      const sidAt = _HG.sid;
-      _histRefresh(sidAt).then(() => {
-        flow.scrollTop = flow.scrollHeight;
-        requestAnimationFrame(() => { _histBusy = false; });
-      });
+    } else if (distBottom <= 4 && shown > _HG.HIST_PAGE * 2
+               && Date.now() - (_HG.histRestoredAt || 0) > 400
+               && Date.now() - (_HG.lastShrinkAt || 0) > 500) {
+      // 拉回底部收缩（DOM 瘦身）：v2.37R4 改**增量收缩**——直接摘除头部
+      // 整组节点+histStart 前移，不再 _histRefresh 全量重渲。旧实现重拉
+      // 转写重渲=闪屏（v2.35.2 起被 histLive 门拦死=DOM 无限膨胀），增量
+      // 方案两者兼得：账目与 DOM 恒一致，无闪屏、无网络请求。
+      // v2.37R6（P0 回归收紧）：触发判据从 ≤80px 收到 ≤4px（真正贴底）——
+      // 80px 时长距下行中途即触发，摘头+回锚把用户视口反复上提（📖 条
+      // 插入再叠加 30px 下移偏差），与扩段形成拉锯=「拉不到底」的体感；
+      // 另加 500ms 速率限制兜残余循环
+      _HG.lastShrinkAt = Date.now();
+      _hgShrinkHead();
     }
   }, { passive: true });
 
@@ -2460,6 +2947,14 @@ function buildClaudeHarnessTab(opts = {}) {
       // v2.15：点的是当前会话 → 早返回。但 busy 卡死时用户正是靠「重点一下
       // 当前会话」自救，这里不能什么都不做：至少按后端真实值纠偏一次。
       if (sid) {
+        // v2.35.2（P0 加固）：SSE 归属校验——历史竞态（切换竞速/早返回）可能
+        // 让 _HG.sse 停在别的会话的流上：内容看着正常、事件永远不来。归属
+        // 不符即重开本会话流（after_seq 用当前 seq，不重放已渲染事件）。
+        try {
+          const own = _HG.sse && _HG.sse.url
+            && _HG.sse.url.includes('sid=' + encodeURIComponent(sid));
+          if (!own) openSSE(sid, _HG.seq);
+        } catch(_) {}
         fetch(`/api/harness/events?sid=${encodeURIComponent(sid)}&after_seq=${_HG.seq}`)
           .then(r => r.json())
           .then(j => { if (j.ok && _HG.sid === sid) { setBusy(!!j.busy, j.busy_since); if (j.busy) phResume(); } })
@@ -2476,8 +2971,10 @@ function buildClaudeHarnessTab(opts = {}) {
     if (_HG.grp) phStopTimer(_HG.grp);   // v2.18：防御性清占位 timer（isConnected 自杀是兜底）
     _hgMentionReset();          // v2.15：@ 引用高亮不跨会话残留
     _HG.rowById = {}; _HG.uidN = 0; _HG.run = null; _HG.grp = null; _HG.histNav = null;   // v2.18：组级抽屉
-    _HG.histAll = null; _HG.histStart = 0;   // v2.24：多段历史渲染源不复用（防串会话）
+    _HG.histAll = null; _HG.histStart = 0; _HG.histLive = false;   // v2.24：多段历史渲染源不复用（防串会话）；v2.35.2：histLive 随切重置（快照恢复态不进滚动扩收）
     _HG.todos = null; _HG.agents = null;     // v2.30：会话动态随会话切换重置（todos 由回放重建）
+    _HG.dyn = null;                          // v2.32 面板派生态不跨会话（活动流/回合史/打标全重建）
+    _subReset();                             // v2.33：子代理实时窗格不跨会话
     _HG.think = null; _HG.noScroll = false; _HG.openState = null;   // v2.16：重建态不跨会话残留
     _HG.sid = sid; _HG.seq = 0; _HG.alive = false;
     // v2.15：dirty 语义修正。旧实现只在「发送成功」置 true、只在
@@ -2514,6 +3011,26 @@ function buildClaudeHarnessTab(opts = {}) {
     if (c) {
       flow.innerHTML = c.html; _HG.seq = c.seq;
       _HG.echoFast = c.echoFast || null;   // v2.28.13：去重窗口随快照恢复（防重放双画）
+      // v2.37（P0-A）：窗口账目重建——快照 DOM 是上一次 _histRender 的窗口
+      // （histStart 起的尾部段），账目随快照存取（见 saveCache）。histLive
+      // 置 true 需 histAll 数据在场：拉一次 transcript 只填数据不重渲
+      // （转写只追加，[0..histStart) 前缀稳定，DOM 尾段与 histAll 对应成立，
+      // 上滑扩段自此可用；旧缓存无账目字段 → 维持 v2.35.2 安全态走只读条）。
+      // 还原后 400ms 内不进收缩分支——程序化 scrollBottom 会触发 scroll 事件，
+      // >2 页的快照会被立刻「收段」重渲（观感=又刷了一遍）
+      _HG.histStart = (typeof c.histStart === 'number') ? c.histStart : 0;
+      _HG.histRestoredAt = Date.now();
+      if (c.histLive && !_HG.histAll) {
+        _histFetch(sid).then(ok => {
+          if (ok && _HG.sid === sid) {
+            // v2.37R2（复审4）：账目越界钳制——快照存账后该会话在别窗做过
+            // 回滚（转写被截断），histStart 可能越过现在的行数
+            if (_HG.histStart > _HG.histAll.length) _HG.histStart = _HG.histAll.length;
+            _HG.histLive = true;
+            renderSideStatus();   // 面板 B/C 回放数据此路也会补齐（todos 等）
+          }
+        });
+      }
       scrollBottom(true);              // v2.25：快照恢复也回底——与 _histRender 路径
                                        // 一致（用户实测「新建会话再切回，焦点不在最下面」）
       // v2.3.13：快照里冻结的压缩分割线——本会话没有仍在进行的压缩就定格成
@@ -2537,15 +3054,16 @@ function buildClaudeHarnessTab(opts = {}) {
       _HG.lastTs = +((([...flow.querySelectorAll('.h-time')].pop() || {}).dataset || {}).ms || 0);
       // v2.3.2：未定格的转交等待线重启计时——快照（innerHTML 字符串）不
       // 带 interval，恢复后计时冻结在快照时刻（用户实锤「读秒不走」）。
-      // 审计 P4/P5：多条未定格线时取**最后一条**（真正在途的）；旧快照无
-      // data-t0 时也重挂（起点退化为当前时刻——至少回传到达能定格）
-      const relayLines = [...flow.querySelectorAll('.h-switch .hg-peer-t')]
-        .filter(el => el.closest('.h-switch').textContent.includes('等待结论回传'));
-      const relayLine = relayLines[relayLines.length - 1];
-      if (relayLine) {
-        const rl = relayLine.closest('.h-switch');
-        _hgPeerTimerStart(rl, +(rl.dataset.t0 || 0) || Date.now());
-      }
+      // v2.35.2（P1 多槽）：全部未定格线各重挂各的计时器（此前只挂最后
+      // 一条，更早的线读秒冻死）；peerWait 指向最后一条（兼容识图 sweep）。
+      // 旧快照的线没有 data-peer——按文本兜底识别，一并重挂
+      const relayEls = new Set(flow.querySelectorAll('.h-switch[data-peer]:not([data-done])'));
+      flow.querySelectorAll('.h-switch .hg-peer-t').forEach(tb => {
+        const sw = tb.closest('.h-switch');
+        if (sw && !sw.dataset.peer && !sw.dataset.done
+            && sw.textContent.includes('等待结论回传')) relayEls.add(sw);
+      });
+      relayEls.forEach(rl => _hgPeerTimerStart(rl, +(rl.dataset.t0 || 0) || Date.now()));
       // 快照恢复后重建 rowById（busy 会话切回时 tool_result 事件要挂回行）
       flow.querySelectorAll('[data-tid]').forEach(el => { _HG.rowById[el.dataset.tid] = el; });
       // v2.9：缓存恢复不能盲目清 busy——切走时正在回复的会话，切回后
@@ -2574,6 +3092,11 @@ function buildClaudeHarnessTab(opts = {}) {
         }
       } catch(_) {}
     }
+    // v2.35.2（P0 加固）：transcript 分支有 await——期间用户可能已切去别的
+    // 会话（快切/双击竞速）。此刻本调用已是过期调用：chrome（标题/目录/chip）
+    // 与 openSSE 若照跑，会把「显示 A、事件流却挂 B、标题 C」的错位态焊死，
+    // 且过期流的小 seq 事件全被防重放守卫吞掉，会话从此假死。归属不符即弃。
+    if (_HG.sid !== sid) return;
     const s = _HG.sessions.find(x => x.sid === sid);
     // v2.7：项目优先——cwd 目录名在前（accent），claude 会话名在后
     cwdEl.textContent = s ? (s.cwd || '').split(/[\\/]/).pop() || '~' : '';
@@ -2767,7 +3290,17 @@ function buildClaudeHarnessTab(opts = {}) {
       const it = list.shift();
       _HG.queues[key] = list;
       renderQueue();
-      await dispatch(it.text || '', it.images || [], it.files || [], false);
+      const ok = await dispatch(it.text || '', it.images || [], it.files || [], false);
+      // v2.35.1（F6）：后端「正在回复」拒收（前端误判空闲的窄窗口竞态，如
+      // 切回运行中会话的 events 回填前）——条目回队首不丢；dispatch 已按
+      // 后端真相同步置 busy，泵链靠 fire 时的 busy 检查自然挂起，真回合
+      // 结束（setBusy(false)）再泵。其余失败维持原行为（banner 已示因）
+      if (!ok && /正在回复/.test(dispatch.rej || '')) {
+        const cur = _HG.queues[key] || [];
+        cur.unshift(it);
+        _HG.queues[key] = cur;
+        renderQueue();
+      }
     }, 600);
   }
   // v2.25：排队条拖动排序。用 pointer 事件而非 HTML5 dnd——dnd 在 WebView2
@@ -2842,56 +3375,843 @@ function buildClaudeHarnessTab(opts = {}) {
       stopGen();               // interrupted → setBusy(false) → 泵先发它
     }
   });
-  // ==================== v2.30 侧栏会话动态（任务进度 + 子代理实况）====================
-  // 数据全部来自现有事件流（TodoWrite/Task 的 tool_use 与 tool_result），不
-  // 动后端。参照 ZCode 任务面板形态：任务 N/M 绿 pill + 勾选删除线清单 +
-  // 子代理运行计时（三角色下 executor/coder 跑没跑一眼可见）。无内容整块隐藏。
-  const dynEl = q('[data-hg-dyn]');
-  const _AGENT_LABEL = { executor: '执行者', coder: '编程者', 'general-purpose': '通用子代理' };
-  function renderSideStatus() {
-    if (!dynEl) return;
-    const todos = _HG.todos || [];
-    const done = todos.filter(t => (t.status || '') === 'completed').length;
-    const agents = Object.values(_HG.agents || {});
-    const running = agents.filter(a => !a.done);
-    const finished = agents.filter(a => a.done && Date.now() - a.doneAt < 60000).slice(-3);
-    if (!todos.length && !running.length && !finished.length) {
-      dynEl.style.display = 'none'; dynEl.innerHTML = ''; return;
-    }
-    let h = '';
-    if (todos.length) {
-      h += `<div class="hg-dyn-head"><span class="hg-dyn-pill">任务 ${done}/${todos.length}</span></div>`;
-      h += '<div class="hg-dyn-todos">' + todos.map(t => {
-        const st = t.status || 'pending';
-        const txt = (st === 'in_progress' && t.activeForm) ? t.activeForm : t.content;
-        return `<div class="hg-dyn-todo ${st}" title="${esc(t.content || '')}">` +
-          `<span class="hg-dyn-ck">${st === 'completed' ? '✓' : st === 'in_progress' ? '◐' : '○'}</span>` +
-          `<span class="hg-dyn-tt">${esc(txt || '')}</span></div>`;
-      }).join('') + '</div>';
-    }
-    if (running.length || finished.length) {
-      h += '<div class="hg-dyn-agents">'
-        + running.map(a =>
-          `<div class="hg-dyn-agent run"><span class="hg-dyn-adot"></span>` +
-          `<span class="hg-dyn-at">${esc(_AGENT_LABEL[a.type] || a.type)}</span>` +
-          (a.desc ? `<span class="hg-dyn-desc">${esc(String(a.desc).slice(0, 18))}</span>` : '') +
-          `<b class="hg-dyn-el" data-t0="${a.t0}">0s</b></div>`).join('')
-        + finished.map(a =>
-          `<div class="hg-dyn-agent done"><span class="hg-dyn-adot"></span>` +
-          `<span class="hg-dyn-at">${esc(_AGENT_LABEL[a.type] || a.type)}</span>` +
-          `<span class="hg-dyn-el">完成</span></div>`).join('')
-        + '</div>';
-    }
-    dynEl.innerHTML = h;
-    dynEl.style.display = '';
+  // ==================== v2.32 右侧面板会话动态（六分区监视器）====================
+  // 设计文档 docs/设计_2026-09-20_右侧会话动态面板.md。面板=纯派生监视器：
+  // 不持状态机，一切从 _HG + sessions + localStorage 派生；骨架是 index.html
+  // 静态节点（v2.30 教训：挂 harness wrap 内 q() 扑空=面板永不显示）；事件
+  // 驱动 rAF 合并全量重渲；秒表是全局单例 interval 只改 textContent。
+  let dynEl = document.querySelector('[data-hg-dyn]');   // v2.37（P0-B）：let——面板 DOM 被外层重建时可重联（见 tick 自愈）
+  const _hgAiPanel = document.getElementById('aiPanel');
+  // 面板换装开关 _hgPanelMode 在顶层（闭包外的 switchTab 包装器与 _harnessClose
+  // 都要调它）；本闭包负责给它装「进入面板时拉 roles + 刷一遍」的钩子。
+  let _hgRolesCache = null;   // 最近一次 /roles 响应（面板三角色行与左侧按钮同源）
+  const _AGENT_LABEL = { executor: '执行者', coder: '编程者', designer: '设计者', dev: '开发', reviewer: '审核', 'general-purpose': '通用子代理' };
+
+  // ---- 派生态与入口 ----
+  function _hgDyn() {
+    return _HG.dyn || (_HG.dyn = { acts: [], turns: [], turnN: 0, turnTools: 0,
+      todoSeen: {}, todoRowId: null, agentsRpl: [] });
   }
-  // 秒级计时：面板可见时才跑（agent 运行时长实时跳）
-  setInterval(() => {
-    if (!dynEl || dynEl.style.display === 'none') return;
-    dynEl.querySelectorAll('.hg-dyn-el[data-t0]').forEach(el => {
-      el.textContent = fmtDur((Date.now() - +(el.dataset.t0 || 0)) / 1000);
+  let _dynRaf = 0;
+  function renderSideStatus() {          // 事件驱动刷新入口（旧名保留：事件流调用点零改动）
+    if (!dynEl || _dynRaf) return;
+    _dynRaf = requestAnimationFrame(() => { _dynRaf = 0; _hgDynRender(); });
+  }
+  function _hgDynDirty() { renderSideStatus(); }   // 别名（setBusy/_hgDrawCtxRing 调；function 声明无 TDZ）
+
+  // ==================== v2.35 运行派生态（P0-1②③ / P1-4 / P1-5）====================
+  // 输入框/面板的「等待类」状态全部派生自已有事实（agents 档案 + 转交线
+  // dataset），不另持状态机——快照往返后从 DOM 即可重建，零序列化负担。
+  // v2.37（P1-E）：协作包装判定——CLI 对 SendMessage 委托的独立会话会包装
+  // 成后台 Task（subagent_type 非本工具角色名）。后台 + 非角色类型一律按
+  // 协作对待：不开实况窗格 tab（独立会话事件流不经过本会话，开了必是空白
+  // tab），归面板 C 区协作行。宁可误杀真实后台通用代理的可围观性（罕见，
+  // 主 flow 仍有灰行），不再伪装能点开实况。
+  const _ROLE_AGENTS = new Set(['executor', 'coder', 'dev', 'reviewer', 'designer']);
+  function _isCollabWrap(type, bg) {
+    return !!bg && !_ROLE_AGENTS.has(String(type || ''));
+  }
+  function _hgAgentsRunning() {          // 运行中子代理（Task 已起、未收到完成信号）
+    return Object.values(_HG.agents || {}).some(a => !a.done);
+  }
+  function _hgPeerLines() {              // 协作转交线（已转交/识图转交，dataset 派生）
+    return [...flow.querySelectorAll('.h-switch[data-peer]')];
+  }
+  function _hgPeerPending() {            // 还有未回传的协作等待（任意一条未定格）
+    // v2.37R6：unknown（回合终结复核未检出回传）不算等待——否则输入框/
+    // 面板永久挂「等待协作回传」
+    return _hgPeerLines().some(el => !el.dataset.done && el.dataset.unknown !== '1');
+  }
+  function _hgInputState() {             // 输入框占位文案：运行态/子代理/协作等待联动
+    let ph;
+    if (_HG.busy && _hgAgentsRunning())
+      ph = '子代理执行中——回复进行中，继续输入将排队，结束后自动发送';
+    else if (_HG.busy)
+      ph = '回复执行中——继续输入将排队，结束后自动发送';
+    else if (_hgAgentsRunning())
+      ph = '子代理后台执行中——现在输入将开启新回合（不影响子代理）';
+    else if (_hgPeerPending())
+      ph = '等待协作回传——现在输入将开启新回合（回传到达会以 📥 气泡呈现）';
+    else
+      ph = '给 Claude 发消息，@ 引用文件，/ 选择技能 · 可直接粘贴图片';
+    if (input.placeholder !== ph) input.placeholder = ph;
+  }
+  // ---- P1-4：子代理模型名（起跑预显示；实跑模型由子代理 assistant 事件覆盖）----
+  let _agentModelsTried = false;         // 只拉一次（失败允许重试）
+  function _hgAgentModelsFetch() {
+    if (_agentModelsTried) return;
+    _agentModelsTried = true;
+    fetch('/api/harness/agent_models').then(r => r.json())
+      .then(j => {
+        if (!j || !j.ok) return;
+        _HG.agentModels = j.agents || {};
+        // v2.35.1（F4）：缓存晚到时回填已开 tab——_subOpen 时缓存未就绪的
+        // 条目 model 是空串，不回填则 frontmatter 预显示在 tab 永不出现
+        // （实跑 model 到达的条目不动，仍以实跑为准）
+        for (const t in _sub.tabs) {
+          const tb = _sub.tabs[t];
+          if (!tb.model) {
+            const ty = tb.type || ((_HG.agents || {})[t] || {}).type || '';
+            if (ty && _HG.agentModels[ty]) tb.model = _HG.agentModels[ty];
+          }
+        }
+        renderSideStatus();              // 面板 C 区/详情卡的模型预显示跟随
+        _subTabsPaint();                 // 已开 tab 的模型角标补显
+      }).catch(() => { _agentModelsTried = false; });
+  }
+  function _hgAgentModelPre(type) {
+    _hgAgentModelsFetch();
+    return (_HG.agentModels && _HG.agentModels[type]) || '';
+  }
+  // P0-2：手动重开子代理实时窗格（面板运行中条目 / 消息流子代理行点击入口）
+  // v2.38：已完成且带 agentId 的代理 → 回放窗格（数据源转写，历史也能看）；
+  // 切会话后档案丢失 → 提示语更新为回放口径
+  function _subReopen(tid) {
+    if (!tid) return;
+    if (!_sub.tabs[tid]) {
+      const a = (_HG.agents || {})[tid];
+      if (!a) { showBanner('历史子代理可从面板条目详情卡回放（转写数据源）', 2600); return; }
+      const aid = a.taskId || a.agentId || '';
+      if (a.done && aid) { _subReplay(tid, a.type, a.desc, aid); return; }
+      _subOpen(tid, a.type, a.desc);
+    }
+    _sub.manual = true;                  // P0-3：手动来源——回合终结不自动收起，✕ 才收
+    _subShow();
+    _subActivate(tid);
+  }
+  // v2.37（P1-E）：摘除一个窗格 tab（协作包装误开/超限让位共用）——内容、
+  // 序表、激活态一并清；最后一个 tab 顺带收起窗格
+  function _subDrop(tid) {
+    const tb = _sub.tabs[tid];
+    if (!tb) return;
+    if (tb.sc && tb.sc.parentNode) tb.sc.remove();
+    delete _sub.tabs[tid];
+    _sub.order = _sub.order.filter(t => t !== tid);
+    if (_sub.active === tid) {
+      _sub.active = _sub.order[0] || null;
+      if (_sub.active) {
+        const sc = _sub.tabs[_sub.active] && _sub.tabs[_sub.active].sc;
+        if (sc) sc.style.display = '';
+      }
+    }
+    _subTabsPaint();
+    if (!_sub.order.length && _subPaneEl) _subPaneEl.style.display = 'none';
+  }
+
+  function _hgAgentsSweep(markErr) {     // 回合终结：在跑的子代理统一收尾（防假"运行中"）
+    if (!_HG.agents) return;
+    let swept = false;
+    for (const id in _HG.agents) {
+      const a = _HG.agents[id];
+      // v2.35：后台代理（bg）在主回合 result 时不收——它还在跑，收尾信号是
+      // task_notification；中断/退出（markErr）照收：进程没了，一切皆停
+      if (!a.done && !(a.bg && !markErr)) {
+        a.done = true; a.doneAt = Date.now();
+        if (markErr) { a.err = true; a.interrupted = true; }
+        swept = true;
+      }
+    }
+    if (swept) renderSideStatus();
+  }
+  function _hgTurnEnd(st, durMs) {       // 回合记账 ring（≤10）；dur 优先事件值（网关常缺失→本地差值）
+    const d = _hgDyn();
+    const dur = (durMs > 0) ? durMs : Date.now() - (_HG.actStart || Date.now());
+    d.turns.push({ n: ++d.turnN, dur: Math.max(0, Math.round(dur / 1000)), st, tools: d.turnTools });
+    if (d.turns.length > 10) d.turns.shift();
+    d.turnTools = 0;
+    renderSideStatus();
+  }
+  function _hgActPush(it) {              // 活动流 ring（≤20）；回放路径在调用方排除
+    const d = _hgDyn();
+    d.acts.push(it);
+    if (d.acts.length > 20) d.acts.shift();
+    renderSideStatus();
+  }
+  function _hgActDone(tid, st) {
+    const a = ((_HG.dyn && _HG.dyn.acts) || []).find(x => x.tid === tid && !x.done);
+    if (!a) return;
+    a.done = true; a.doneAt = Date.now();
+    a.err = (st === 'error' || st === 'denied');
+    renderSideStatus();
+  }
+  async function _hgRolesFetch() {       // roles 只读拉取（缓存+刷面板；失败静默）
+    try {
+      const j = await (await fetch('/api/harness/roles')).json();
+      if (j && j.ok) { _hgRolesCache = j; renderSideStatus(); }
+      return j;
+    } catch(_) { return null; }
+  }
+  function _hgCopyText(t) {
+    if (!t) return;
+    const p = navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject();
+    p.then(() => showBanner('已复制', 1600)).catch(() => showBanner('复制失败', 2000, true));
+  }
+  function _hgJumpRow(tid) {             // 跳消息流工具行（只读操作，不碰快照状态机）
+    const row = _HG.rowById[tid];
+    if (!row || !row.isConnected) return;   // 卸载态防御（busy 中切过 tab）
+    row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    row.classList.remove('hg-dyn-jump');
+    void row.offsetWidth;                // 重启动画
+    row.classList.add('hg-dyn-jump');
+    setTimeout(() => row.classList.remove('hg-dyn-jump'), 1600);
+  }
+  function _hgAgentToggle(rowEl) {       // 子代理行展开/收起详情卡（单开，不持久化）
+    const nxt = rowEl.nextElementSibling;
+    if (nxt && nxt.classList.contains('hg-dyn-agdetail')) { nxt.remove(); return; }
+    dynEl.querySelectorAll('.hg-dyn-agdetail').forEach(x => x.remove());
+    const id = rowEl.dataset.hgAg || '';
+    const a = (_HG.agents || {})[id]
+      || ((_HG.dyn && _HG.dyn.agentsRpl) || []).find(x => x.rid === id);
+    if (!a) return;
+    const dur = a.done
+      ? (a.t0 ? fmtDur(Math.max(1, Math.round((a.doneAt - a.t0) / 1000))) : '—')
+      : (a.t0 ? fmtDur((Date.now() - a.t0) / 1000) + '（进行中）' : '—');
+    // v2.35（P1-4）：模型行——实跑 model（子代理 assistant 事件实报）优先，
+    // frontmatter 预显示兜底，都无=内置代理按 CLI 行为跑主链模型
+    const mdl = a.model || (_HG.agentModels && _HG.agentModels[a.type]) || '';
+    // 用量行——task_progress/task_notification 的 CLI 侧计数（total_tokens/
+    // tool_uses）；网关会把 assistant.message.usage 置零（实测），不作为源
+    const usageTxt = a.tokens
+      ? `${(a.tokens / 1000).toFixed(1)}K tokens · ${a.toolN || 0} 次工具`
+      : '';
+    const d = document.createElement('div');
+    d.className = 'hg-dyn-agdetail';
+    d.innerHTML =
+      (id && !a.replay ? `<div class="hg-dyn-kv"><span class="k">ID</span>` +
+        `<span class="v mono" data-hg-copy="${esc(id)}" title="点击复制">${esc(id)}</span></div>` : '') +
+      (a.replay ? '' :
+        `<div class="hg-dyn-kv"><span class="k">模型</span><span class="v" title="${esc(mdl ? '实跑/frontmatter 模型' : '内置或无定义文件代理，按 CLI 行为跑主链模型')}">${esc(mdl || '主链模型')}${a.bg ? ' · 后台' : ''}</span></div>`) +
+      (a.replay || !usageTxt ? '' :
+        `<div class="hg-dyn-kv"><span class="k">用量</span><span class="v">${esc(usageTxt)}</span></div>`) +
+      `<div class="hg-dyn-kv"><span class="k">起止</span><span class="v">` +
+        `${a.t0 ? new Date(a.t0).toTimeString().slice(0, 8) : '—'} → ` +
+        `${a.doneAt ? new Date(a.doneAt).toTimeString().slice(0, 8) : (a.done ? '历史' : '运行中')}</span></div>` +
+      `<div class="hg-dyn-kv"><span class="k">耗时</span><span class="v">${dur}` +
+        `${a.interrupted ? ' · 已中断' : a.err ? ' · 失败' : ''}</span></div>` +
+      (a.desc ? `<div class="hg-dyn-agres">${esc(a.desc)}</div>` : '') +
+      (a.result ? `<div class="hg-dyn-agres">${esc(a.result)}</div>` : '') +
+      // v2.38：回放入口——带 agentId 的已完成代理（含历史条目）可开回放
+      // 窗格（数据源=子代理转写）；协作代理只回看结论
+      (a.done && !a.collab && (a.taskId || a.agentId)
+        ? `<button class="hg-dyn-replay-btn" data-hg-replay="${esc(id)}"` +
+          ` data-hg-replay-aid="${esc(a.taskId || a.agentId || '')}"` +
+          ` data-hg-replay-type="${esc(a.type || '')}">▣ 回放该子代理过程</button>` : '') +
+      (a.collab && a.result
+        ? `<button class="hg-dyn-replay-btn" data-hg-replay="${esc(id)}"` +
+          ` data-hg-replay-collab="1" data-hg-replay-type="${esc(a.type || '')}">▣ 回看协作结论</button>` : '');
+    rowEl.insertAdjacentElement('afterend', d);
+  }
+  // 点击交互（onclick 覆盖式绑定：闭包随 tab 重开重执行，addEventListener 会叠加）
+  if (dynEl) dynEl.onclick = (e) => {
+    const cp = e.target.closest('[data-hg-copy]');
+    if (cp) { e.stopPropagation(); _hgCopyText(cp.dataset.hgCopy); return; }
+    // v2.38：详情卡「回放该子代理过程」→ 回放窗格（转写数据源）
+    const rb = e.target.closest('[data-hg-replay]');
+    if (rb) {
+      e.stopPropagation();
+      const rid = rb.dataset.hgReplay;
+      const a = (_HG.agents || {})[rid]
+        || ((_HG.dyn && _HG.dyn.agentsRpl) || []).find(x => x.rid === rid) || {};
+      if (rb.dataset.hgReplayCollab) {
+        _subReplay(rid, rb.dataset.hgReplayType || a.type || '协作', a.desc || '', '');
+      } else {
+        const aid = rb.dataset.hgReplayAid || a.taskId || a.agentId || '';
+        if (!aid) { showBanner('该子代理没有 agentId 记录，无法回放', 2600); return; }
+        _subReplay(rid, rb.dataset.hgReplayType || a.type || 'Task', a.desc || '', aid);
+      }
+      return;
+    }
+    const acp = e.target.closest('[data-hg-actcp]');
+    if (acp) {
+      e.stopPropagation();
+      const a = ((_HG.dyn || {}).acts || []).find(x => x.tid === acp.dataset.hgActcp);
+      if (a) _hgCopyText(a.preview || '');
+      return;
+    }
+    if (e.target.closest('[data-hg-act]')) { _hgJumpRow(e.target.closest('[data-hg-act]').dataset.hgAct); return; }
+    if (e.target.closest('[data-hg-todo]')) {
+      const rid = (_HG.dyn || {}).todoRowId;
+      if (rid) _hgJumpRow(rid);
+      return;
+    }
+    // v2.35（P0-2/P1-5）：运行中子代理行点击=重开实时窗格并切 tab（窗格已开
+    // =切 tab）；已完成行保持展开详情卡；协作代理行=跳消息流对应转交线
+    const pr = e.target.closest('[data-hg-peer-row]');
+    if (pr) {
+      const lines = _hgPeerLines();
+      const pend = lines.filter(el => !el.dataset.done);
+      const target = (pend.length ? pend : lines).slice(-1)[0];
+      if (target) {
+        target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        target.classList.remove('hg-dyn-jump');
+        void target.offsetWidth;
+        target.classList.add('hg-dyn-jump');
+        setTimeout(() => target.classList.remove('hg-dyn-jump'), 1600);
+      } else {
+        showBanner('该协作没有对应的转交线（无消息流记录）', 2400);
+      }
+      return;
+    }
+    const ag = e.target.closest('[data-hg-ag]');
+    if (ag) {
+      if (ag.classList.contains('run')) { _subReopen(ag.dataset.hgAg); return; }
+      _hgAgentToggle(ag);
+      return;
+    }
+    // v2.37（P1-D）：三角色行点击=打开配置面板（开关进面板管理，防误触；
+    // 旧行为是点击直接切开关，用户明确不要）
+    if (e.target.closest('[data-hg-d-roles]')) { openRolesCfg(); return; }
+  };
+
+  // ---- 渲染（分区独立重建，空区 hidden）----
+  // v2.37（P0-B）：分区隔离——任何一区抛异常不再饿死后续区（旧实现单 rAF
+  // 回调内顺序执行，首区异常=后面全部保持初始 hidden，「面板只剩 A 区」的
+  // 形态）；异常落 console 带 [hg-dyn] 标记供现场取证
+  function _hgDynRender() {
+    if (!dynEl) return;
+    for (const fn of [_dynStat, _dynTodos, _dynAgents, _dynActs, _dynTurns, _dynFiles]) {
+      try { fn(); }
+      catch (e) {
+        // v2.37R6（C 区整栏消失②）：渲染失败降级为可见占位（区分无数据/
+        // 渲染失败），不再只留 console 标记让整栏凭空蒸发
+        try {
+          console.error('[hg-dyn] 分区渲染异常', fn.name, e);
+          if (fn === _dynAgents) {
+            const secA = _sec('agents');
+            if (secA) {
+              secA.hidden = false;
+              const al = secA.querySelector('[data-hg-d-aglist]');
+              if (al) al.innerHTML = '<div class="hg-sub-replay-note">子代理区渲染异常（已降级显示）——详见 console [hg-dyn]</div>';
+            }
+          }
+        } catch(_) {}
+      }
+    }
+    try { _hgInputState(); } catch(_) {}   // v2.35：派生态变化连带输入框提示
+  }
+  function _sec(z) { return dynEl.querySelector(`[data-hg-sec="${z}"]`); }
+  const _THINK_TXT = { low: '低', medium: '中', high: '高', max: '最高' };
+  const _TURN_ICO = { ok: '✓', error: '✗', interrupt: '⏹', exit: '⏻' };
+  const _FILE_TOOLS = ['Read', 'Edit', 'MultiEdit', 'Write', 'NotebookEdit'];
+  const _hhmm = ts => new Date(ts).toTimeString().slice(0, 5);
+  function _dynStat() {                  // A 会话状态：双来源口径——当前会话值(s.*)优先，无会话回退新会话参数(_HG.*)
+    const sec = _sec('stat'); if (!sec) return;
+    const s = _HG.sessions.find(x => x.sid === _HG.sid);
+    const stEl = sec.querySelector('[data-hg-d-st]');
+    const ttEl = sec.querySelector('[data-hg-d-stt]');
+    // v2.35（P0-1②③）：非 busy 的「等待类」状态也算运行态——面板徽章与
+    // 输入框提示同源派生（后台子代理在跑 / 协作回传未到，用户不再误判空闲）
+    const agRun = _hgAgentsRunning(), peerWait = !agRun && _hgPeerPending();
+    sec.classList.toggle('run', !!_HG.busy || agRun || peerWait);
+    // v2.36：纯等待态（非 busy/无子代理、仅协作回传未到）状态点/秒表转「等待蓝」
+    // ——与 C 区协作行/输入框提示同语义（仅类名调整，渲染逻辑零变化）
+    sec.classList.toggle('wait', peerWait && !_HG.busy);
+    let stTxt;
+    if (_HG.compacting) stTxt = '正在压缩上下文';
+    else if (_HG.busy && agRun) stTxt = '子代理执行中';
+    else if (_HG.busy) stTxt = '回复中';
+    else if (agRun) stTxt = '子代理后台执行中';
+    else if (peerWait) stTxt = '等待协作回传';
+    else if (!_HG.sid) stTxt = '新会话';
+    else if (_HG.alive) stTxt = '就绪';
+    else stTxt = '待命';
+    stEl.textContent = stTxt;
+    if (_HG.busy && _HG.actStart) {
+      ttEl.dataset.t0 = _HG.actStart;
+      ttEl.textContent = fmtDur(Math.max(1, Math.round((Date.now() - _HG.actStart) / 1000)));
+    } else if (agRun) {
+      // 非 busy 但子代理在跑（后台 Task）：计最早起跑的代理时长
+      const t0 = Math.min(...Object.values(_HG.agents).filter(a => !a.done).map(a => a.t0 || Date.now()));
+      ttEl.dataset.t0 = t0;
+      ttEl.textContent = fmtDur(Math.max(1, Math.round((Date.now() - t0) / 1000)));
+    } else if (peerWait) {
+      const t0 = Math.min(..._hgPeerLines().filter(el => !el.dataset.done)
+        .map(el => +(el.dataset.t0 || 0) || Date.now()));
+      ttEl.dataset.t0 = t0;
+      ttEl.textContent = fmtDur(Math.max(1, Math.round((Date.now() - t0) / 1000)));
+    } else {
+      delete ttEl.dataset.t0;
+      const lt = (_HG.dyn && _HG.dyn.turns || []).filter(t => t.st === 'ok').pop();
+      ttEl.textContent = lt ? '最近回合 ' + fmtDur(lt.dur) : '';
+    }
+    const model = (s && s.model) || _HG.model || '';
+    const think = (s && s.think) || _HG.thinkLv || null;
+    const perm = (s && s.permission) || _HG.perm || 'auto';
+    const cwd = (s && s.cwd) || _HG.cwd || '';
+    sec.querySelector('[data-hg-d-model]').textContent = model || '—';
+    sec.querySelector('[data-hg-d-model]').title = model ? '当前会话模型（chip 改的是新会话）' : '';
+    sec.querySelector('[data-hg-d-think]').textContent = think ? (_THINK_TXT[think] || think) : '默认';
+    sec.querySelector('[data-hg-d-perm]').textContent = perm === 'confirm' ? '每次确认' : '自动执行';
+    const cw = sec.querySelector('[data-hg-d-cwd]');
+    cw.textContent = cwd ? cwd.split(/[\\/]/).pop() : '~';
+    cw.title = cwd || '';
+    let ctxTxt = '待统计', warn = false;
+    if (_HG.sid) {
+      try {
+        const v = JSON.parse(localStorage.getItem('hg-ctx:' + _HG.sid) || 'null');
+        if (v && v.used > 0) {
+          const mx = v.max || 256000;
+          const pct = Math.round(v.used / mx * 100);
+          ctxTxt = pct + '% · ' + (v.used / 1000).toFixed(1) + 'K/' + (mx / 1000).toFixed(0) + 'K';
+          warn = pct >= 80;
+        }
+      } catch(_) {}
+    }
+    const cx = sec.querySelector('[data-hg-d-ctx]');
+    cx.textContent = ctxTxt;
+    cx.closest('.hg-dyn-kv').classList.toggle('warn', warn);
+    const r = _hgRolesCache && _hgRolesCache.roles;
+    const rEl = sec.querySelector('[data-hg-d-roles]');
+    // v2.37（P1-D）：形态正确 + 模型名可读——旧文案写死「决策者+执行者/编程
+    // 者」且取 r.executor（配置里无此字段→恒「?」）。/roles 响应自带
+    // mode（strong/light）与 resolved（按当前方案解析出的实模型），按形态
+    // 出对应角色行；轻主力=dev+reviewer（共用编程者槽），决策者=执行者/编程者
+    const _mode = _hgRolesCache && _hgRolesCache.mode;
+    const _res = (_hgRolesCache && _hgRolesCache.resolved) || {};
+    if (r) {
+      if (r.enabled) {
+        const light = _mode === 'light';
+        rEl.textContent = light ? '轻主力' : '决策者';
+        rEl.title = light
+          ? `轻主力模式（点击打开配置面板）\ndev: ${_res.coder || '…'}\nreviewer: ${_res.coder || '…'}`
+          : `决策者派发模式（点击打开配置面板）\n执行者: ${_res.executor || '…'}\n编程者: ${_res.coder || '…'}（结构禁权）`;
+      } else {
+        rEl.textContent = '关闭·直连';
+        rEl.title = '直连干活（点击打开配置面板可启用三角色）';
+      }
+    } else rEl.textContent = '…';
+  }
+  function _dynTodos() {                 // B 任务进度：pill + 进度条 + 完整清单 + 首见时刻
+    const sec = _sec('todos');
+    const todos = _HG.todos || [];
+    sec.hidden = !todos.length;
+    if (!todos.length) return;
+    const done = todos.filter(t => t.status === 'completed').length;
+    sec.querySelector('[data-hg-d-tdone]').textContent = done + '/' + todos.length;
+    sec.querySelector('[data-hg-d-tbar]').style.width = (done / todos.length * 100) + '%';
+    const seen = (_HG.dyn && _HG.dyn.todoSeen) || {};
+    sec.querySelector('[data-hg-d-tlist]').innerHTML = todos.map(t => {
+      const st = t.status || 'pending';
+      const txt = (st === 'in_progress' && t.activeForm) ? t.activeForm : t.content;
+      const ts = seen[t.content || ''];
+      return `<div class="hg-dyn-todo ${st}" data-hg-todo title="${esc(t.content || '')}">` +
+        `<span class="hg-dyn-ck">${st === 'completed' ? '✓' : st === 'in_progress' ? '◐' : '○'}</span>` +
+        `<span class="hg-dyn-tt">${esc(txt || '')}</span>` +
+        (ts ? `<span class="hg-dyn-ts">${_hhmm(ts)}</span>` : '') + '</div>';
+    }).join('');
+  }
+  function _dynAgents() {                // C 子代理实况：运行中/60s 内完成/回放历史，点击展开
+    const sec = _sec('agents');
+    const list = Object.entries(_HG.agents || {}).map(([id, a]) => Object.assign({ id }, a));
+    const running = list.filter(a => !a.done).sort((x, y) => x.t0 - y.t0);
+    const finished = list.filter(a => a.done && Date.now() - a.doneAt < 60000).slice(-5);
+    const rplAll = (_HG.dyn && _HG.dyn.agentsRpl) || [];
+    const rpl = rplAll.slice(-3)
+      .map((a, i) => Object.assign({ rid: 'rpl' + (rplAll.length - rpl.length + i) }, a));
+    // v2.35（P1-5）：协作代理（SendMessage 转交的独立会话/识图转交）——从
+    // 消息流「已转交」线派生（dataset.peer/t0/done/psum 随快照序列化），
+    // 带「协作」徽章与 Task 子代理视觉区分：peer 无实况事件流，点击只跳线
+    // v2.37（P1-F①）：显示友好名（task_id→task_started 的 subagent_type 翻译，
+    // 未知类型走 _AGENT_LABEL），裸会话 ID 收 title；同基名多条加委托序号
+    // v2.37（P1-E）：协作包装的 agents 档案（collab 标记）与转交线同源去重
+    // ——同委派已有转交线行的不再出档案行（两套并存会双行打架）
+    const peerLines = _hgPeerLines();
+    const peerIds = new Set(peerLines.map(el => el.dataset.peer));
+    const _pbase = el => (_HG.peerNames && _HG.peerNames[el.dataset.peer])
+      || _AGENT_LABEL[el.dataset.peer] || el.dataset.peer || '其他会话';
+    const peers = peerLines
+      .filter(el => !el.dataset.done || Date.now() - +(el.dataset.done) < 60000)
+      .slice(-4);
+    const list2 = list.filter(a => !(a.collab && a.taskId && peerIds.has(a.taskId)));
+    const running2 = list2.filter(a => !a.done).sort((x, y) => x.t0 - y.t0);
+    const finished2 = list2.filter(a => a.done && Date.now() - a.doneAt < 60000).slice(-5);
+    const show = running2.concat(finished2, rpl);
+    sec.hidden = !show.length && !peers.length;
+    if (sec.hidden) return;
+    const pill = sec.querySelector('[data-hg-d-agrun]');
+    const pendPeers = peers.filter(el => !el.dataset.done && el.dataset.unknown !== '1');   // R6：unknown 不计运行中
+    pill.hidden = !running2.length && !pendPeers.length;
+    pill.textContent = (running2.length + pendPeers.length) + ' 运行中';
+    const _baseCount = {};
+    peers.forEach(el => {
+      const b = _pbase(el);
+      _baseCount[b] = (_baseCount[b] || 0) + 1;
     });
-  }, 1000);
+    sec.querySelector('[data-hg-d-aglist]').innerHTML = show.map(a => {
+      // v2.37（P1-E）：协作包装档案行——协作徽章 + 独立会话标注；无模型角标
+      // （对端模型不可观测）、不进实况窗格；点击走转交线跳转分支
+      if (a.collab) {
+        // 已结束的协作行点击=详情卡（内含「回看协作结论」）；运行中的=跳转交线
+        return `<div class="hg-dyn-agent peer ${a.done ? (a.err ? 'fail' : 'done') : 'run'}"` +
+          ` ${a.done ? `data-hg-ag="${esc(a.id || '')}"` : 'data-hg-peer-row="1"'}` +
+          ` title="${esc('协作代理（独立会话）· ' + (a.taskId || a.id || ''))}` +
+          `${a.done ? ' · 已结束，点击看结论' : ' · 无实况窗格，点击尝试跳转交线'}">` +
+          `<span class="hg-dyn-adot"></span>` +
+          `<span class="hg-dyn-pbadge">协作</span>` +
+          `<span class="hg-dyn-at">${esc(_AGENT_LABEL[a.type] || a.type)}</span>` +
+          (a.desc ? `<span class="hg-dyn-desc" title="${esc(a.desc)}">${esc(a.desc)}</span>` : '') +
+          (!a.done ? `<b class="hg-dyn-el" data-t0="${a.t0}">0s</b>` : '<b class="hg-dyn-el">已结束</b>') +
+          '</div>';
+      }
+      // v2.36：中断态补 halt 修饰类（点/文字/耗时转橙，与失败红区分；仅类名）
+      const cls = a.replay ? 'hist' : !a.done ? 'run'
+        : (a.err ? (a.interrupted ? 'fail halt' : 'fail') : 'done');
+      let el;
+      if (!a.done) el = `<b class="hg-dyn-el" data-t0="${a.t0}">0s</b>`;
+      else if (a.replay) el = '<b class="hg-dyn-el">历史</b>';
+      else if (a.err) el = `<b class="hg-dyn-el">${a.interrupted ? '已中断' : '失败'}</b>`;
+      else el = `<b class="hg-dyn-el">${a.t0 ? fmtDur(Math.max(1, Math.round((a.doneAt - a.t0) / 1000))) : '完成'}</b>`;
+      const key = a.replay ? a.rid : a.id;
+      // v2.35（P1-4）：模型角标——实跑 model 优先，frontmatter 预显示兜底，
+      // 内置代理（无定义文件）标「主链模型」；后台代理加「后台」标
+      const mdl = a.model || (_HG.agentModels && _HG.agentModels[a.type]) || '';
+      const mdlTxt = a.replay ? '' :
+        `<span class="hg-dyn-amdl" title="${esc(mdl ? '子代理模型：' + mdl : '内置/无定义文件代理，按 CLI 行为跑主链模型')}">${esc(mdl || '主链模型')}${a.bg ? ' · 后台' : ''}</span>`;
+      return `<div class="hg-dyn-agent ${cls}" data-hg-ag="${esc(key || '')}"` +
+        (a.tokens ? ` title="用量：${a.tokens} tokens · ${a.toolN || 0} 次工具"` : '') + `>` +
+        `<span class="hg-dyn-adot"></span>` +
+        `<span class="hg-dyn-at">${esc(_AGENT_LABEL[a.type] || a.type)}</span>` +
+        mdlTxt +
+        (a.desc ? `<span class="hg-dyn-desc" title="${esc(a.desc)}">${esc(a.desc)}</span>` : '') +
+        el + '</div>';
+    }).join('') + peers.map(el => {
+      const pend = !el.dataset.done;
+      const t0 = +(el.dataset.t0 || 0) || Date.now();
+      const doneAt = +(el.dataset.done || 0);
+      // v2.37（P1-F①）：友好名 + 同基名委托序号——裸会话/任务 ID 永远收 title
+      const raw = el.dataset.peer || '其他会话';
+      const base = _pbase(el);
+      const sameBase = peers.filter(x => _pbase(x) === base)
+        .sort((a, b) => (+(a.dataset.t0 || 0)) - (+(b.dataset.t0 || 0)));
+      const disp = _baseCount[base] > 1 ? `${base}·#${sameBase.indexOf(el) + 1}` : base;
+      const durTxt = doneAt ? fmtDur(Math.max(1, Math.round((doneAt - t0) / 1000))) : '';
+      const sum = el.dataset.psum || '';
+      // v2.37R6：stale（>30min 疑似残留）/ unknown（核实无回传）不再冒充等待
+      const stale = el.dataset.stale === '1';
+      const unknown = el.dataset.unknown === '1';
+      return `<div class="hg-dyn-agent peer ${pend ? 'run' : 'done'}" data-hg-peer-row="1"` +
+        ` title="${esc(raw !== disp ? raw + '\n' : '')}${pend ? (stale ? '疑似残留（超 30 分钟），点击核实' : '协作中：独立会话无实况窗格，点击跳转交线') : '已回传，点击跳转交线'}">` +
+        `<span class="hg-dyn-adot"></span>` +
+        `<span class="hg-dyn-pbadge">协作</span>` +
+        `<span class="hg-dyn-at">${esc(disp)}</span>` +
+        `<span class="hg-dyn-desc">${esc(pend ? (stale ? '疑似残留，点击核实' : (unknown ? '状态未知（回合已结束）' : '等待结论回传')) : (sum ? sum : '已回传'))}</span>` +
+        (pend && !stale && !unknown ? `<b class="hg-dyn-el" data-t0="${t0}">0s</b>`
+              : `<b class="hg-dyn-el">${stale ? '疑似残留' : (unknown ? '状态未知' : durTxt)}</b>`) + '</div>';
+    }).join('');
+  }
+  function _dynActs() {                  // E 最近工具：ring 20 条倒序，点击跳消息流，Bash 可复制
+    const sec = _sec('acts');
+    const acts = (_HG.dyn && _HG.dyn.acts) || [];
+    sec.hidden = !acts.length;
+    if (!acts.length) return;
+    sec.querySelector('[data-hg-d-acts]').innerHTML = acts.slice().reverse().map(a => {
+      const cls = a.done ? (a.err ? 'fail' : 'done') : 'run';
+      const el = !a.done
+        ? `<b class="hg-dyn-el" data-t0="${a.t0}">0s</b>`
+        : `<b class="hg-dyn-el">${a.err ? '失败' : fmtDur(Math.max(1, Math.round((a.doneAt - a.t0) / 1000)))}</b>`;
+      const cp = a.kind === 'bash' && a.preview
+        ? `<button class="hg-dyn-actcp" data-hg-actcp="${esc(a.tid)}" title="复制命令">⧉</button>` : '';
+      return `<div class="hg-dyn-act ${cls}" data-hg-act="${esc(a.tid)}" title="${esc(a.preview || a.label || '')}">` +
+        `<span class="hg-dyn-adot"></span>` +
+        `<span class="hg-dyn-at">${esc(a.label || a.name)}</span>` +
+        `<span class="hg-dyn-desc">${esc(String(a.preview || '').slice(0, 60))}</span>${cp}${el}</div>`;
+    }).join('');
+  }
+  function _dynTurns() {                 // F 回合历史：ring 10 条倒序 + 累计
+    const sec = _sec('turns');
+    const turns = (_HG.dyn && _HG.dyn.turns) || [];
+    sec.hidden = !turns.length;
+    if (!turns.length) return;
+    const sum = turns.reduce((s2, t) => s2 + t.dur, 0);
+    sec.querySelector('[data-hg-d-tsum]').textContent = '累计 ' + fmtDur(sum);
+    sec.querySelector('[data-hg-d-tlist]').innerHTML = turns.slice().reverse().map(t =>
+      `<div class="hg-dyn-turn ${t.st}"><span class="hg-dyn-tk">${_TURN_ICO[t.st] || '·'}</span>` +
+      `<span class="hg-dyn-tn">#${t.n}</span><span class="hg-dyn-td">${fmtDur(t.dur)}</span>` +
+      (t.tools ? `<span class="hg-dyn-tt2">${t.tools} 工具</span>` : '') + '</div>').join('');
+  }
+  function _dynFiles() {                 // G 当前文件：活动流派生最近 3 个文件路径
+    const sec = _sec('files');
+    const acts = (_HG.dyn && _HG.dyn.acts) || [];
+    const files = [];
+    for (let i = acts.length - 1; i >= 0 && files.length < 3; i--) {
+      const a = acts[i];
+      if (_FILE_TOOLS.includes(a.name) && a.preview && !files.includes(a.preview)) files.push(a.preview);
+    }
+    sec.hidden = !files.length;
+    if (!files.length) return;
+    sec.querySelector('[data-hg-d-flist]').innerHTML = files.map(f =>
+      `<div class="hg-dyn-file" title="${esc(f)}">${esc(f.split(/[\\/]/).pop())}</div>`).join('');
+  }
+  // 秒级计时：全局单例 interval（闭包随 tab 重开重执行，直接 setInterval 会
+  // 叠加）；仅 hg-mode 可见且页面可见才动，且只改 textContent 不重建 DOM。
+  if (!window._hgDynTick) {
+    window._hgDynTick = setInterval(() => {
+      // v2.37（P0-B/F③）：自愈先于 hg-mode 守卫——①面板 DOM 被外层重建后
+      // dynEl 失联（ detached 节点真值仍为真，渲染进死节点=面板只见初始态）
+      // → 重联重渲；②消息流里未定格转交线的秒表计时器丢失（快照恢复遗漏/
+      // 异常路径清掉）→ 按 dataset 重挂。两者都是每秒一次的廉价扫描。
+      try {
+        if (!dynEl || !dynEl.isConnected) {
+          const nd = document.querySelector('[data-hg-dyn]');
+          if (nd && nd !== dynEl) { dynEl = nd; renderSideStatus(); }
+        }
+      } catch(_) {}
+      try {
+        _hgPeerStaleSweep();   // v2.37R6：>30min 标疑似残留并停表
+        flow.querySelectorAll('.h-switch[data-peer]:not([data-done]):not([data-stale]):not([data-unknown])').forEach(rl => {
+          if (!rl._peerTimer) _hgPeerTimerStart(rl, +(rl.dataset.t0 || 0) || Date.now());
+        });
+      } catch(_) {}
+      if (document.hidden || !_hgAiPanel || !_hgAiPanel.classList.contains('hg-mode')) return;
+      dynEl.querySelectorAll('[data-t0]').forEach(el => {
+        el.textContent = fmtDur(Math.max(1, Math.round((Date.now() - +(el.dataset.t0 || 0)) / 1000)));
+      });
+      // 状态区活动词跟随（压缩等特殊词以 actEl 为准，面板同词）
+      if (_HG.busy) {
+        const src = actEl.querySelector('[data-hg-aw]');
+        const stEl = dynEl.querySelector('[data-hg-d-st]');
+        if (stEl && src && src.classList.contains('hg-act-special')) stEl.textContent = src.textContent;
+      }
+    }, 1000);
+  }
+  _hgPanelEnterHook = () => { _hgRolesFetch(); _hgAgentModelsFetch(); renderSideStatus(); };
+  renderSideStatus();                    // 闭包（重）执行完先刷一遍（如重开 tab 恢复现场）
+
+  // ==================== v2.33 子代理实时窗格 ====================
+  // 主会话派 Agent(dev/reviewer/executor…) 时，聊天区右侧自动弹出可调宽窗格，
+  // 按 parent_tool_use_id 精确分流显示各子代理的实时文本/工具调用（并行多开
+  // 分 tab）。定位：临时实时镜像视图——主 flow 的灰色 sub 行照旧保留（历史
+  // 完整性不动），回合终结窗格收起（主 flow 是唯一持久记录处）。
+  const _subPaneEl = q('[data-hg-subpane]');
+  const _subTabsEl = q('[data-hg-subtabs]');
+  const _subBodyEl = q('[data-hg-subbody]');
+  // v2.35（P0-3）：manual=用户手动打开/重开的窗格——回合终结不自动收起，
+  // 只有 ✕ 手动关；自动弹出的窗格（Task 起跑）保持原行为（回合终结收起）。
+  const _sub = { tabs: {}, order: [], active: null, manual: false };
+  function _subReset() {
+    _sub.tabs = {}; _sub.order = []; _sub.active = null; _sub.manual = false;
+    if (_subPaneEl) { _subPaneEl.style.display = 'none'; _subTabsEl.innerHTML = ''; _subBodyEl.innerHTML = ''; }
+  }
+  function _subShow() {
+    if (!_subPaneEl || _subPaneEl.style.display !== 'none') return;
+    let w = 0;
+    try { w = +(localStorage.getItem('hg-subpane-w') || 0); } catch(_) {}
+    _subPaneEl.style.width = (w >= 220 && w <= 640 ? w : 320) + 'px';
+    _subPaneEl.style.display = 'flex';
+  }
+  function _subOpen(tid, type, desc, replay) {
+    if (!_subPaneEl) return;
+    if (!_sub.tabs[tid]) {
+      const sc = document.createElement('div');
+      sc.className = 'hg-sub-msgs'; sc.dataset.tid = tid;
+      // v2.35（P1-4）：tab 带模型角标（frontmatter 预显示；实跑 model 由
+      // 子代理 assistant 事件到达时覆盖并重绘）
+      // v2.35.1（F2）：运行态从档案派生——已完成代理被 tab 上限逐出后经
+      // _subReopen 重建，不得回到「运行中」绿点（档案缺失的兜底才视为运行）
+      // v2.38：replay=true=历史回放 tab（无绿点、置灰、带「回放」徽章）
+      const _ag = (_HG.agents || {})[tid] || {};
+      _sub.tabs[tid] = { label: _AGENT_LABEL[type] || type, type, desc, sc,
+                         run: replay ? false : (!('done' in _ag) || !_ag.done),
+                         err: !!_ag.err, replay: !!replay,
+                         model: _ag.model || '' };
+      _sub.order.push(tid);
+      if (_sub.order.length > 6) {          // 上限 6 个 tab，最旧让位
+        const old = _sub.order.shift();
+        if (_sub.tabs[old] && _sub.tabs[old].sc.parentNode) _sub.tabs[old].sc.remove();
+        delete _sub.tabs[old];
+      }
+      _subBodyEl.appendChild(sc);
+    }
+    _subShow(); _subTabsPaint(); _subActivate(tid);
+  }
+  // v2.38：历史子代理回放窗格——数据源是子代理自己的转写（独立 session
+  // jsonl，经 /subagent_replay 按 agentId 取），不是内存事件流；切会话快照
+  // 往返后内容随 DOM 保留，仍可重开重拉（源在转写，永远可重建）
+  function _subReplay(tid, type, desc, agentId) {
+    if (!_subPaneEl) return;
+    const a = (_HG.agents || {})[tid] || {};
+    // 协作包装（P1-E 边界）：独立会话无本侧可拉的事件流转写——只展示结论
+    if (a.collab) {
+      _subOpen(tid, type, desc, true);
+      const sc0 = _sub.tabs[tid] && _sub.tabs[tid].sc;
+      if (sc0 && !sc0.dataset.collabNote) {
+        sc0.dataset.collabNote = '1';
+        // v2.37R4（终审1）：拆两次 _subAppend——单根 append 语义下双根模板
+        // 的第二个 div（结论正文）会被整体丢弃
+        _subAppend(sc0, `<div class="hg-sub-replay-note">独立会话协作代理——过程不可回看，仅结论可回看</div>`, true);
+        _subAppend(sc0, `<div class="hg-sub-msg">${esc(a.result || '（无结论记录）')}</div>`, true);
+      }
+      _sub.manual = true;
+      return;
+    }
+    if (!agentId) { showBanner('该子代理没有 agentId 记录，无法回放', 2600); return; }
+    _subOpen(tid, type, desc, true);
+    const sc = _sub.tabs[tid] && _sub.tabs[tid].sc;
+    if (!sc) return;
+    if (sc.dataset.replayed === agentId) { _sub.manual = true; return; }   // 已拉过
+    sc.innerHTML = '';
+    sc.dataset.replayed = agentId;
+    _subAppend(sc, `<div class="hg-sub-replay-note">回放加载中…</div>`, true);
+    _sub.manual = true;
+    const sidAt = _HG.sid;
+    fetch(`/api/harness/subagent_replay?sid=${encodeURIComponent(sidAt || '')}&agent=${encodeURIComponent(agentId)}`)
+      .then(r => r.json())
+      .then(j => {
+        // v2.37R2（复审1）：失败路径必须清 replayed 标记并给错误文案——标记
+        // 不清则重点按钮永远早退，唯一恢复=切走重切
+        if (!j || !j.ok || _HG.sid !== sidAt) {
+          const scf = _sub.tabs[tid] && _sub.tabs[tid].sc;
+          if (scf) {
+            delete scf.dataset.replayed;
+            if (_HG.sid === sidAt) {   // 会话已切走的不动现flow（可能已属别会话窗格）
+              scf.innerHTML = '';
+              _subAppend(scf, `<div class="hg-sub-replay-note">${(j && j.err) ? esc('回放读取失败：' + j.err) : '回放读取失败——重新点击「回放该子代理过程」可重试'}</div>`, true);
+            }
+          }
+          return;
+        }
+        const sc2 = _sub.tabs[tid] && _sub.tabs[tid].sc;
+        if (!sc2) return;
+        sc2.innerHTML = '';
+        if (!j.found || !(j.rows || []).length) {
+          _subAppend(sc2, `<div class="hg-sub-replay-note">未找到该子代理的转写（agentId=${esc(agentId)}）——历史回放不可用</div>`, true);
+          return;
+        }
+        _subAppend(sc2, `<div class="hg-sub-replay-note">回放 · ${esc(_AGENT_LABEL[type] || type)} · ${j.rows.length} 条记录</div>`, true);
+        for (const row of j.rows) {
+          if (row.k === 'text') {
+            // 每行带头像+模型徽章（P1-C 体系复用）——标明这句话是谁发的
+            // v2.37R4（终审1）：拆两次 _subAppend——单根 append 下双根模板
+            // 的第二个 div（row.text 正文）会被整体丢弃
+            const bare = String(row.model || '').split('[')[0] || row.model || '未知';
+            _subAppend(sc2, `<div class="hg-sub-msg"><span class="h-ava ${_hgAvaCls(bare)}">${esc(bare.charAt(0).toUpperCase())}</span>` +
+              `<span class="h-mmodel">${esc(bare)}</span></div>`, true);
+            _subAppend(sc2, `<div class="hg-sub-msg">${esc(row.text)}</div>`, true);
+          } else if (row.k === 'note') {
+            _subAppend(sc2, `<div class="hg-sub-replay-note">${esc(row.text)}</div>`, true);
+          } else if (row.k === 'tool') {
+            _subAppend(sc2, `<div class="hg-sub-tool">${esc(_hDrawerName(row.name || ''))}` +
+              (row.hint ? ` · ${esc(row.hint)}` : '') + '</div>', true);
+          } else if (row.k === 'result') {
+            _subAppend(sc2, `<div class="hg-sub-res${row.err ? ' err' : ''}">↳ ${esc(row.text || '完成')}</div>`, true);
+          }
+        }
+        _subScroll(tid);
+      })
+      .catch(() => {
+        const sc3 = _sub.tabs[tid] && _sub.tabs[tid].sc;
+        if (sc3) {
+          delete sc3.dataset.replayed;   // v2.37R2（复审1）：清标记，重点即重拉
+          sc3.innerHTML = ''; _subAppend(sc3, `<div class="hg-sub-replay-note">回放拉取失败（网络）——重新点击「回放该子代理过程」可重试</div>`, true);
+        }
+      });
+    _subScroll(tid);
+  }
+  function _subActivate(tid) {
+    if (!_sub.tabs[tid]) return;
+    _sub.active = tid;
+    _subBodyEl.querySelectorAll('.hg-sub-msgs').forEach(x =>
+      x.style.display = x.dataset.tid === tid ? '' : 'none');
+    _subTabsPaint(); _subScroll(tid);
+  }
+  function _subTabsPaint() {
+    if (!_subTabsEl) return;
+    _subTabsEl.innerHTML = _sub.order.filter(t => _sub.tabs[t]).map(t => {
+      const tb = _sub.tabs[t];
+      // v2.35（P1-4）：模型进 tab（短名+悬浮全名）；tokens 进悬浮（CLI 侧计数）
+      const ag = (_HG.agents || {})[t] || {};
+      const mdlFull = tb.model || '';
+      const mdlShort = mdlFull.length > 14 ? mdlFull.slice(0, 13) + '…' : mdlFull;
+      const ttip = [tb.desc || tb.label,
+                    mdlFull ? '模型：' + mdlFull : '模型：主链模型（内置/无定义文件）',
+                    ag.tokens ? `用量：${ag.tokens} tokens · ${ag.toolN || 0} 次工具` : '']
+        .filter(Boolean).join('\n');
+      return `<div class="hg-sub-tab${t === _sub.active ? ' active' : ''}${tb.run ? ' run' : tb.err ? ' err' : ''}${tb.replay ? ' replay' : ''}"` +
+        ` data-hg-subtab="${esc(t)}" title="${esc(ttip)}">` +
+        `<span class="hg-sub-dot"></span>${esc(tb.label)}` +
+        (tb.replay ? `<span class="hg-sub-rp">回放</span>` : '') +
+        (mdlShort ? `<span class="hg-sub-mdl">${esc(mdlShort)}</span>` : '') + `</div>`;
+    }).join('');
+  }
+  function _subScroll(tid) {
+    const sc = _sub.tabs[tid] && _sub.tabs[tid].sc;
+    if (sc) sc.scrollTop = sc.scrollHeight;
+  }
+  function _subAppend(sc, html, noCap) {   // 上限 200 条/子代理，溢出删首条
+    const d = document.createElement('div');
+    d.innerHTML = html;
+    sc.appendChild(d.firstElementChild || d);
+    // v2.37R3（复审A）：noCap=true=回放路径——回放 201~202 行（含头部 note）
+    // 会被 200 上限削掉头部 note 和领命首行、「已截断」告知自身也保不住，
+    // 故整段绕过 cap；实时 tab 的 200 上限语义不变
+    if (!noCap) while (sc.children.length > 200) sc.removeChild(sc.firstChild);
+  }
+  function _subFeed(parentId, blocks) {
+    if (!_sub.tabs[parentId]) return;
+    const sc = _sub.tabs[parentId].sc;
+    // v2.35：回合终结定格过的 tab，若对应代理其实还在跑（后台 Task 跨回合
+    // 续跑），事件继续流入时恢复绿点脉冲——别让冻结态骗人
+    const _ag = (_HG.agents || {})[parentId];
+    if (_sub.tabs[parentId].run !== true && _ag && !_ag.done) {
+      _sub.tabs[parentId].run = true;
+      _subTabsPaint();
+    }
+    for (const b of blocks) {
+      if (b.type === 'text' && b.text && b.text.trim())
+        _subAppend(sc, `<div class="hg-sub-msg">${esc(b.text)}</div>`);
+      else if (b.type === 'tool_use') {
+        const inp = b.input || {};
+        const hint = inp.command || inp.file_path || inp.path || inp.pattern ||
+                     inp.query || inp.description || inp.subject || inp.prompt || '';
+        _subAppend(sc, `<div class="hg-sub-tool">${esc(_hDrawerName(b.name || ''))}` +
+          (hint ? ` · ${esc(String(hint).slice(0, 80))}` : '') + '</div>');
+      }
+    }
+    _subScroll(parentId);
+  }
+  function _subResult(parentId, tr) {
+    if (!_sub.tabs[parentId]) return;
+    const sc = _sub.tabs[parentId].sc;
+    const txt = resultText(tr).replace(/\s+/g, ' ').trim().slice(0, 120);
+    _subAppend(sc, `<div class="hg-sub-res${tr.is_error ? ' err' : ''}">↳ ${esc(txt || '完成')}</div>`);
+    _subScroll(parentId);
+  }
+  function _subClose(tid, err) {
+    const tb = _sub.tabs[tid];
+    if (!tb) return;
+    tb.run = false; tb.err = !!err;
+    _subTabsPaint();
+  }
+  function _subEnd() {                     // 回合终结：全部定格；自动来源收起窗格
+    let any = false;
+    for (const t in _sub.tabs) { _sub.tabs[t].run = false; any = true; }
+    if (any) _subTabsPaint();
+    // v2.35（P0-3）：用户手动打开的窗格不自动收——用户正在围观，收走就是
+    // 「弹了出来一会又收回去了」；只有 ✕ 手动关。切会话/关 tab 清空不变。
+    if (_subPaneEl && !_sub.manual) _subPaneEl.style.display = 'none';
+  }
+  if (_subTabsEl) _subTabsEl.onclick = (e) => {
+    const t = e.target.closest('[data-hg-subtab]');
+    if (t) _subActivate(t.dataset.hgSubtab);
+  };
+  const _subRes = q('[data-hg-subres]');
+  if (_subRes) _subRes.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    const right = _subPaneEl.getBoundingClientRect().right;
+    const move = (ev) => {
+      const w = Math.min(640, Math.max(220, Math.round(right - ev.clientX)));
+      _subPaneEl.style.width = w + 'px';
+      try { localStorage.setItem('hg-subpane-w', w); } catch(_) {}
+    };
+    const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  });
+  const _subX = q('[data-hg-subx]');
+  if (_subX) _subX.onclick = () => {
+    if (_subPaneEl) _subPaneEl.style.display = 'none';
+    _sub.manual = false;   // v2.35（P0-3）：手动关即退出「回合终结不自动收起」模式
+  };
 
   function renderList() {
     const kw = (searchEl.value || '').trim().toLowerCase();
@@ -3066,15 +4386,30 @@ function buildClaudeHarnessTab(opts = {}) {
       const j = await r.json();
       if (!j.ok) {
         try { el.remove(); } catch(_) {}       // 回滚乐观气泡
-        endThinking(); grpFinalize(false); setBusy(false);
-        if (restoreInput) input.value = text;
+        endThinking(); grpFinalize(false);
+        dispatch.rej = String(j.err || '');    // v2.35.1（F6）：失败原因外显（queuePump 据此判可回队）
+        // v2.35.1（F6）：后端「正在回复」= 后端真忙（前端误判空闲的竞态）——
+        // 同步置 busy 而非清空闲：清空闲会连锁触发泵链把整队消息逐条打进
+        // 拒收丢弃；置 busy 则泵链挂起、排队条目由 queuePump 回队首，真回合
+        // 结束再发。直发（非泵）命中则按排队语义入队，消息不丢。其余失败
+        // 维持原行为（清空闲 + 文本回输入框）
+        if (/正在回复/.test(dispatch.rej)) {
+          setBusy(true);
+          if (restoreInput) queuePush({ text: text || '', images: images || [], files: files || [] });
+        }
+        else {
+          setBusy(false);
+          if (restoreInput) input.value = text;
+        }
         showBanner(j.err || '发送失败', 3000, true);
         return false;
       }
+      dispatch.rej = '';
       _HG.dirty = true;
       refreshSessions();
       return true;
     } catch(e) {
+      dispatch.rej = 'network';
       try { el.remove(); } catch(_) {}
       endThinking(); grpFinalize(false); setBusy(false);
       if (restoreInput) input.value = text;
@@ -3245,18 +4580,40 @@ function buildClaudeHarnessTab(opts = {}) {
                         : ('回退失败：' + (j.err || '未知')), 4600, !j.ok);
       } catch(e) { showBanner('回退失败：' + e, 3000, true); }
     } else if (cmd === 'roles') {
-      // v2.29.2：三角色设计说明——含按当前 API 方案解析出的实际模型
+      // v2.29.2：三角色设计说明——含按当前 API 方案解析出的实际模型。
+      // v2.30.2 双形态：主会话轻快模型 → 轻主力模式（designer 代理），
+      // 强模型 → 决策者模式（executor/coder + 结构禁权）
       (async () => {
         let j = null;
         try { j = await (await fetch('/api/harness/roles')).json(); } catch(_) {}
         const r = (j && j.roles) || {};
         const rs = (j && j.resolved) || {};
-        renderSysCard('三角色设计', [
-          ['决策者', '主会话本身（高级模型）——承接需求、拆解派发、审核代码、汇总答复；不下场干活（干活工具已结构性禁用）'],
+        const light = j && j.mode === 'light';
+        const modeRows = light ? [
+          ['当前形态', '轻主力（主会话是轻快模型）——日常对话/跑腿杂活自己干，攻坚走 dev+reviewer 两个强模型'],
+          ['开发', `dev 代理（${rs.coder || '按当前方案自动识别'}）——编码/debug/方案思考一个上下文打通（designer 已并入），自测通过再交`],
+          ['审核', `reviewer 代理（${rs.coder || '按当前方案自动识别'}）——对抗审核：假定代码有错，专门挑毛病（需求符合性/逻辑/健壮性/安全/一致性），只审不改，PASS/FAIL 二选一`],
+          ['标准流程', 'dev 实现 → reviewer 对抗审核 → FAIL 回 dev 修 → 复审，致命/严重问题清零才收 → 主会话汇总答复'],
+        ] : [
+          ['当前形态', '决策者（主会话是高级模型）——只承接/派发/审核/汇总，干活工具已结构性禁用'],
           ['执行者', `executor 代理（${rs.executor || '按当前方案自动识别'}）——信息收集/查日志/排查/跑命令/debug/杂活`],
           ['编程者', `coder 代理（${rs.coder || '按当前方案自动识别'}）——编码攻坚，改完自测再交`],
+        ];
+        renderSysCard('三角色设计（双形态）', [
+          ...modeRows,
           ['状态', r.enabled === false ? '已关闭（config.json harness_roles.enabled）' : '已启用'],
-          ['模型解析', '端点映射（harness_roles.model_map）→ 当前方案模型表自动识别（轻快模型→执行者）→ 配置兜底；换 API 方案自动适配'],
+          // v2.34：审计信息进 /roles 输出（用户定调：判定用客观事实，配置要看得见）
+          ['审计模式', !r.enabled ? '—（三角色未启用）'
+            : light ? (r.audit_mode === 'off' ? '关闭（audit_mode=off）'
+              : r.audit_mode === 'warn' ? '仅警示（audit_mode=warn）——回合结束盘点工具调用，违规出红色警示不自动续发'
+              : '自动补审（audit_mode=auto，默认）——回合结束盘点工具调用记录，直改超线/跳过 reviewer 自动续发要求补审；连续 3 回合违规降级为仅警示')
+            : '不适用（决策者形态结构禁权已保证，不审计）'],
+          ['免审线', !r.enabled ? '—' : light
+            ? `主会话直改单回合累计 ≤ ${Number.isFinite(parseInt(r.max_free_lines, 10)) ? Math.max(0, parseInt(r.max_free_lines, 10)) : 3} 行免审（max_free_lines，可配，0=任何直改都须派 dev）；超出或多文件改动须派 dev+reviewer`
+            : '—（strong 形态无直改）'],
+          ['推荐配置', '主模型配轻快模型（如 glm-5.3-flash/flashx）——对话与杂活省 token，攻坚/审核走强模型代理，即轻主力形态'],
+          ['模型解析', '端点映射（harness_roles.model_map）→ 当前方案模型表自动识别（轻快模型→执行者档，dev/reviewer 取强模型档）→ 配置兜底；换 API 方案自动适配'],
+          ['形态判定', '主会话模型名带轻快词（flash/turbo/light/mini/air…）= 轻主力形态，否则决策者形态；切模型下条消息自动换形态'],
         ]);
       })();
     } else if (cmd === 'exit') {
@@ -3924,17 +5281,17 @@ function buildClaudeHarnessTab(opts = {}) {
   // 提示 + 结构禁权），已有会话无需重建。默认关闭（用户定调）。
   const rolesBtnEl = q('[data-hg-roles]');
   async function paintRolesBtn() {
-    let j = null;
-    try { j = await (await fetch('/api/harness/roles')).json(); } catch(_) {}
+    const j = await _hgRolesFetch();      // v2.32：与面板三角色行同源缓存
     if (!rolesBtnEl) return;
     const on = !!(j && j.ok && j.roles && j.roles.enabled);
     rolesBtnEl.innerHTML = '👥 三角色 <span class="hg-vstat ' + (on ? 'ok' : 'off') +
       '">· ' + (on ? '已开启' : '未开启') + '</span>';
     return on;
   }
-  if (rolesBtnEl) rolesBtnEl.onclick = async () => {
+  // v2.32：开关主体抽出（左侧按钮与面板三角色行共用）
+  async function rolesToggle() {
     try {
-      const cur = await (await fetch('/api/harness/roles')).json();
+      const cur = _hgRolesCache || await _hgRolesFetch();
       const target = !(cur && cur.ok && cur.roles && cur.roles.enabled);
       const r = await fetch('/api/harness/roles', {method:'POST',
         headers:{'Content-Type':'application/json'},
@@ -3946,7 +5303,8 @@ function buildClaudeHarnessTab(opts = {}) {
         : '👥 三角色已关闭——下条消息起恢复直连干活', 3600);
       paintRolesBtn();
     } catch(e) { showBanner('切换失败：' + e, 3000, true); }
-  };
+  }
+  if (rolesBtnEl) rolesBtnEl.onclick = () => rolesToggle();
   paintRolesBtn();
 
   // ==================== 识图配置（v2.28.2：MCP 后端）====================
@@ -4069,6 +5427,113 @@ function buildClaudeHarnessTab(opts = {}) {
       ov.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(null); });
       wrap.appendChild(ov);
       modelEl.focus();
+    });
+  }
+
+  // ==================== 三角色配置（v2.34）====================
+  // 整节配置入口（此前只能手改 config.json）：模型槽/端点角色映射/审计
+  // 模式/免审线。侧栏「👥 三角色」按钮仍是快捷开关（点击即切），这里是
+  // 完整编辑器——enabled 与开关同一状态（保存后 paintRolesBtn 刷新双向
+  // 同步）。保存走 POST /roles（merge 写盘）：模型槽/免审线在引导词里 →
+  // 指纹热更下条消息换词重启 + agents 重生成；audit_mode 回合结算读盘即
+  // 时生效。模式与识图面板同款（hgVisionManager）。
+  // v2.37（P1-D）：配置面板打开主体抽函数——侧栏按钮与面板 C 区三角色行
+  //（点击行为已从「直接切开关」改为此处，防误触）共用
+  async function openRolesCfg() {
+    let j = null;
+    try { j = await (await fetch('/api/harness/roles')).json(); } catch(_) {}
+    if (!j || !j.ok) { showBanner('读取三角色配置失败', 3000, true); return; }
+    const saved = await hgRolesManager(j);
+    if (saved === null) return;                 // 取消不动
+    try {
+      const r = await fetch('/api/harness/roles', {method:'POST',
+        headers:{'Content-Type':'application/json'}, body: JSON.stringify(saved)});
+      const jr = await r.json();
+      if (!jr.ok) { showBanner(jr.err || '保存失败', 3000, true); return; }
+      showBanner('👥 三角色配置已保存——模型槽/免审线随下条消息热更生效（agents 自动重生成），审计模式立即生效', 4200);
+      _hgRolesFetch();                          // 面板三角色行同源缓存刷新
+      paintRolesBtn();                          // 侧栏开关状态同步
+    } catch(e) { showBanner('保存失败：' + e, 3000, true); }
+  }
+  q('[data-hg-roles-cfg]').onclick = openRolesCfg;
+  // 三角色配置界面（v2.34）：开关 + 形态展示（只读）+ 两模型槽 + 端点
+  // 角色映射 + 审计模式/免审线。返回对象=保存；null=取消。
+  function hgRolesManager(init) {
+    return new Promise((resolve) => {
+      const ov = document.createElement('div');
+      ov.className = 'hg-modal-ov';
+      const cfg = { ...(init.roles || {}) };
+      const models = init.models || [];
+      const light = init.mode === 'light';
+      const dm = init.default_model || '';
+      const mkOpts = (cur) => {
+        const ms = models.slice();
+        if (cur && !ms.includes(cur)) ms.push(cur);   // 配置值不在当前方案表也保留可选项
+        return ['<option value=""' + (cur ? '' : ' selected') + '>默认（按当前方案自动识别）</option>']
+          .concat(ms.map(m => `<option value="${esc(m)}"${m === cur ? ' selected' : ''}>${esc(m)}</option>`))
+          .join('');
+      };
+      const mapText = Object.entries(cfg.model_map || {})
+        .map(([k, v]) => `${k}=${v.executor},${v.coder}`).sort().join('\n');
+      const am = cfg.audit_mode || 'auto';
+      // 0 是合法免审线（任何直改都违规），不能用 || 兜底——那会把 0 变 3
+      const mflDef = parseInt(cfg.max_free_lines, 10);
+      const mflShow = Number.isFinite(mflDef) ? Math.max(0, mflDef) : 3;
+      ov.innerHTML = `<div class="hg-modal hg-modal-vision"><div class="hg-modal-title">👥 三角色配置</div>
+        <div class="hg-modal-body hg-vision-hint">三角色双形态按<b>主会话模型</b>自动二选一（名字带 flash/turbo/light 等轻快词=轻主力，否则=决策者）。保存后模型槽/免审线随下条消息热更生效（agents 自动重生成），审计模式立即生效。</div>
+        <div class="hg-vision-row">
+          <label class="hg-vision-switch"><input type="checkbox" data-hg-r-on${cfg.enabled ? ' checked' : ''}> 启用三角色</label>
+          <span class="hg-vision-state" style="font-size:11px;">当前形态：<b>${light ? '轻主力' : '决策者'}</b>（主模型 ${esc(dm || '未设置')} → ${light ? 'dev + reviewer' : 'executor + coder，结构禁权'}）</span>
+        </div>
+        <div class="hg-vision-grid">
+          <label>执行者模型（轻快槽：strong 形态 executor 用；light 形态主会话即执行者，不装 executor）
+            <select data-hg-r-ex>${mkOpts(cfg.executor_model || '')}</select></label>
+          <label>编程者模型（强模型槽：strong 形态 coder；light 形态 dev/reviewer 共用）
+            <select data-hg-r-co>${mkOpts(cfg.coder_model || '')}</select></label>
+        </div>
+        <label class="hg-vision-prompt-lab">端点角色映射（每行：端点关键字=执行者模型,编程者模型——按当前 base_url 匹配，优先于自动识别；编程者可省略=与执行者同）
+          <textarea class="hg-vision-mm" data-hg-r-map spellcheck="false" style="height:56px;font-family:var(--font-mono);"
+            placeholder="open.bigmodel.cn=glm-5.3-flash,glm-5.3&#10;lanz.hikvision.com=Lanz-Flash,Lanz-Max">${esc(mapText)}</textarea></label>
+        <div class="hg-vision-grid">
+          <label>审计模式（仅 light 形态生效：回合结算盘点工具调用，直改超线/跳过 reviewer 的兜底）
+            <select data-hg-r-am>
+              <option value="auto"${am === 'auto' ? ' selected' : ''}>auto · 违规自动续发补审（默认）</option>
+              <option value="warn"${am === 'warn' ? ' selected' : ''}>warn · 仅红色警示</option>
+              <option value="off"${am === 'off' ? ' selected' : ''}>off · 关闭审计</option>
+            </select></label>
+          <label>直改免审线（行）：light 形态主会话单回合累计直改（Edit/Write）超此线且未派 reviewer 即违规${light ? '' : '（当前 strong 形态不审计）'}
+            <input class="hg-vision-mm" type="number" min="0" max="100000" data-hg-r-mfl
+                   value="${mflShow}"></label>
+        </div>
+        <div class="hg-modal-acts"></div></div>`;
+      const acts = ov.querySelector('.hg-modal-acts');
+      const close = (v) => { ov.remove(); resolve(v); };
+      const mkBtn = (label, primary, fn) => {
+        const b = document.createElement('button');
+        b.className = 'btn' + (primary ? ' primary' : '');
+        b.textContent = label; b.onclick = fn;
+        acts.appendChild(b);
+        return b;
+      };
+      mkBtn('取消', false, () => close(null));
+      mkBtn('保存', true, () => close({
+        enabled: ov.querySelector('[data-hg-r-on]').checked,
+        executor_model: ov.querySelector('[data-hg-r-ex]').value.trim(),
+        coder_model: ov.querySelector('[data-hg-r-co]').value.trim(),
+        // 端点角色映射——发 "关键字=执行者,编程者" 行（后端按行解析，与识图
+        // 面板 model_map 的行式体验一致）
+        model_map: (ov.querySelector('[data-hg-r-map]').value || '')
+          .split(/\n+/).map(s => s.trim()).filter(x => x.includes('=')),
+        audit_mode: ov.querySelector('[data-hg-r-am]').value,
+        // 0 合法（任何直改违规），parseInt 后 Number.isFinite 判非法回 3
+        max_free_lines: (() => { const v = parseInt(
+          ov.querySelector('[data-hg-r-mfl]').value, 10);
+          return Number.isFinite(v) ? Math.max(0, v) : 3; })(),
+      }));
+      ov.addEventListener('click', (e) => { if (e.target === ov) close(null); });
+      ov.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(null); });
+      wrap.appendChild(ov);
+      ov.querySelector('[data-hg-r-ex]').focus();
     });
   }
 
@@ -4285,9 +5750,12 @@ function buildClaudeHarnessTab(opts = {}) {
 ;(function _hgFlowUnloadInit() {
   const _orig = switchTab;
   switchTab = function(portId) {
+    // isHg/wasHg 必须在 try 块外声明（const 块级作用域——曾定义在 try 内、
+    // 块外引用，每次切 tab 必抛 ReferenceError 且真正的切换动作永远不执行，
+    // v2.31 未浏览器实测漏网：用户实锤「Claude 对话没反应/打开 settings 失败」）
+    const isHg = portId === 'harness:gui';
+    const wasHg = activePortId === 'harness:gui';
     try {
-      const isHg = portId === 'harness:gui';
-      const wasHg = activePortId === 'harness:gui';
       if (wasHg && !isHg && !_HG.busy && _HG.flowEl && _HG.flowEl.innerHTML) {
         _HG.flowSnap = _HG.flowEl.innerHTML;
         _HG.flowEl.innerHTML = '';
@@ -4297,9 +5765,29 @@ function buildClaudeHarnessTab(opts = {}) {
         _HG.flowEl.scrollTop = _HG.flowEl.scrollHeight;
       }
     } catch(_) {}
+    // v2.31：harness tab 激活时右侧「终端助手」整面板换装为会话动态
+    if (isHg !== wasHg) _hgPanelMode(isHg);
     return _orig(portId);
   };
 })();
+
+// ---- v2.31 右侧面板换装开关（顶层定义：switchTab 包装器与 _harnessClose
+// 都在闭包外调用它；只依赖 index.html 静态节点 #aiPanel，无闭包状态）----
+// v2.32：进入面板时通过钩子通知闭包（拉 roles + 刷面板）。钩子由
+// buildClaudeHarnessTab 闭包赋值；顶层脚本先于闭包执行，let 已初始化。
+let _hgPanelEnterHook = null;
+function _hgPanelMode(on) {
+  const p = document.getElementById('aiPanel');
+  if (!p) return;
+  p.classList.toggle('hg-mode', !!on);
+  const tt = p.querySelector('.ai-head-detail .title');
+  const ts = p.querySelector('.ai-head-detail .sub');
+  if (tt) tt.textContent = on ? '会话动态' : '终端助手';
+  if (ts) ts.textContent = on ? '会话 · 任务 · 子代理 · 工具 · 回合' : '搜索 · 感知 · 分析 · 命令';
+  if (on && typeof _hgPanelEnterHook === 'function') {
+    try { _hgPanelEnterHook(); } catch(_) {}
+  }
+}
 
 function _harnessClose(portId) {
   const conn = connections[portId];
@@ -4312,6 +5800,8 @@ function _harnessClose(portId) {
   // 重开后第一次点模型 chip 就可能删掉一条会话。tab 即将销毁，这里只需清
   // 状态，不用走 setBusy 更新界面。
   _HG.dirty = false; _HG.busy = false;
+  _HG.initN = 0; _HG.agentModels = null;   // v2.35：init 计数/模型缓存随 tab 销毁（重开 tab 重新拉）
+  _HG.dyn = null; _HG.todos = null; _HG.agents = null;   // v2.32：面板派生态随 tab 销毁
   if (_HG.grp) phStopTimer(_HG.grp);   // v2.18：防御性清占位 timer（isConnected 自杀是兜底）
   _HG.grp = null; _HG.activity = null;   // v2.18：组级抽屉（旧 drawer 单例已删）
   _HG.think = null; _HG.noScroll = false; _HG.openState = null;
@@ -4319,6 +5809,7 @@ function _harnessClose(portId) {
   conn.tab.remove();
   conn.wrap.remove();
   delete connections[portId];
+  _hgPanelMode(false);   // v2.31：关 harness tab 还原右侧工具面板（剩余 tab 的 switchTab 会再兜一次）
   const remaining = Object.keys(connections).sort((a, b) => {
     const ka = sortKeyFn(a), kb = sortKeyFn(b);
     return ka[0] !== kb[0] ? ka[0] - kb[0] : (ka[1] < kb[1] ? -1 : ka[1] > kb[1] ? 1 : 0);

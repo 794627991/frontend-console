@@ -387,10 +387,11 @@ def _iso_dur_sec(t0, t1):
 
 
 # v2.29.1 三角色设计：角色定义内置于 src/harness_roles.py（随工具分发，
-# 会话启动自动安装到 ~/.claude/agents/，别的机器零手工配置）；决策者
-# 引导词/结构禁权/配置开关都在那个模块里。
-from .harness_roles import (ROLE_DISALLOW as _ROLE_DISALLOW,
-                            install_roles_agents, roles_bridge_text)
+# 会话启动自动安装到 ~/.claude/agents/，别的机器零手工配置）；角色引导词/
+# 结构禁权/配置开关都在那个模块里。v2.30.2 双形态：主会话轻快模型 →
+# 轻主力模式（designer 代理，无禁权），强模型 → 决策者模式（结构禁权）。
+from .harness_roles import (roles_bridge_text, roles_disallow,
+                            install_roles_agents)
 
 
 # v2.3.7 全会话铁律（用户定调「浪费 token 极其可耻」）：注入每个会话。
@@ -852,6 +853,107 @@ def _ask_mcp_cfg_path(sid, perm="auto"):
     return p.replace("\\", "/")
 
 
+# ---------------------------------------------------------------------------
+# v2.34 light 形态回合结算审计（三角色强制机制的兜底层）。
+# 背景：light 形态（主会话=轻快模型）下「代码修改必须走 dev+reviewer」纯靠
+# 引导词软约束——失效模式：模型偷懒自己 Edit、把多行改动自判为微调免审、
+# dev 交付后跳过 reviewer 直接答用户、分多次小改切片逃逸。strong 形态有
+# 结构禁权不管；light 主会话要干杂活不能禁工具。审计=用客观事实（stream-json
+# 事件流的工具调用记录）判定，不靠模型自判；纯本地字符串/计数，零 token。
+# ---------------------------------------------------------------------------
+_AUDIT_EDIT_TOOLS = ("Edit", "Write", "NotebookEdit")   # 直改类工具（主会话调用才计）
+
+
+def _audit_nlines(s):
+    """字符串行数（空串=0）——审计行数口径的基础件。"""
+    s = str(s or "")
+    return s.count("\n") + 1 if s else 0
+
+
+def _audit_lines(name, inp):
+    """v2.34 审计行数口径（写死于此，判定要可复现）：
+    - Edit：max(old_string, new_string) 行数——替换影响按两侧较大跨度计。
+      不用行数差：删 30 行补 1 行的「瘦身式大改」差值为负/极小，会逃逸。
+    - Write：新文件全文行数（空 content 至少计 1——整文件清空也是变更）；
+      覆盖写时旧内容事件流里不可得，按全量新增计。
+    - NotebookEdit：new_source（cell 新内容）行数；delete 无内容变更计 0。"""
+    try:
+        if name == "Edit":
+            return max(_audit_nlines(inp.get("old_string")),
+                       _audit_nlines(inp.get("new_string")))
+        if name == "Write":
+            # 空 content 也是实质变更（整文件清空/覆盖写空），至少计 1——
+            # 计 0 会让「把文件写空」逃逸审计
+            return max(1, _audit_nlines(inp.get("content")))
+        if name == "NotebookEdit":
+            return _audit_nlines(inp.get("new_source"))
+    except Exception:
+        pass
+    return 0
+
+
+# v2.34.1：审计警示卡持久化（~/.serialconsole_pro/harness_audit_log.jsonl，
+# 每行 {sid, ts, text}，512K 截半——vision_mcp.log 同款惯例）。背景：warn/
+# 降级/中断档的卡只 emit 进事件缓冲，transcript_for 回放（解析 jsonl）没有
+# 对应行——刷新/切会话即失；auto 档实时卡与续发消息也是两份不同文本。
+# 现统一：卡文本=落盘文本=（auto 档）续发消息文本，同一字符串三处共用；
+# [审计] user 行在 transcript_for 里不再单独出（卡由本 log 回放，无双份）。
+_AUDIT_LOG_MAX = 512 * 1024
+
+# v2.34.2（复审 R1 收口）：审计续发消息的唯一句式前缀。send_message 的
+# 「不画气泡」与 transcript_for 的「跳过不出行」都按它判定，与 _audit_settle
+# 拼消息处三处引用同一常量——防文案漂移导致判定失效。刻意比 "[审计]" 长：
+# 用户手打的以「[审计]」开头的普通消息（质疑机制时引用前缀等）不能被吞，
+# 必须照常画气泡/回放（曾用宽前缀 startswith("[审计]")，用户视角「我发的
+# 话凭空没了」）。warn/中断/exit 档的卡文案不走 send_message，不受影响。
+_AUDIT_MSG_PREFIX = "[审计] 本回合检测到:"
+
+
+def _audit_iso_now():
+    """UTC ISO（Z 后缀，与 CLI 转写 timestamp 同款格式，可直接字符串比较）。"""
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _audit_log_append(sid, text):
+    """审计卡落盘（追加一行；超限截半保后半）。失败静默——回放缺卡不致命。"""
+    try:
+        p = os.path.join(_st.HOME_DIR, "harness_audit_log.jsonl")
+        with open(p, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"sid": sid, "ts": _audit_iso_now(),
+                                "text": str(text or "")[:4000]},
+                               ensure_ascii=False) + "\n")
+        if os.path.getsize(p) > _AUDIT_LOG_MAX:
+            with open(p, "r", encoding="utf-8") as f:
+                lns = f.readlines()
+            with open(p, "w", encoding="utf-8") as f:
+                f.writelines(lns[len(lns) // 2:])
+    except Exception:
+        pass
+
+
+def _audit_log_read(sid):
+    """读该会话的全部审计卡（转写回放合并用）。返回 role='audit' 行列表。"""
+    out = []
+    try:
+        p = os.path.join(_st.HOME_DIR, "harness_audit_log.jsonl")
+        with open(p, "r", encoding="utf-8") as f:
+            for ln in f:
+                ln = ln.strip()
+                if not ln:
+                    continue
+                try:
+                    o = json.loads(ln)
+                except Exception:
+                    continue
+                if o.get("sid") == sid and o.get("text"):
+                    out.append({"role": "audit", "text": str(o["text"])[:4000],
+                                "ts": o.get("ts") or ""})
+    except Exception:
+        pass
+    return out
+
+
 class HarnessSession:
     """一个 stream-json harness 会话（kind='harness'）。
 
@@ -911,6 +1013,11 @@ class HarnessSession:
         # 原从事件窗口尾部 12 条里回扫，识图轮次密集时 result/assistant 被新事件
         # 挤出窗口 → last_done 归 0，前端「已返回」冒泡整个漏掉（用户多次反馈）
         self.vision_done = {"ts": 0, "brief": ""}
+        # v2.34 light 审计回合累计（运行态，不持久化）：lines=本回合主会话
+        # 直改（Edit/Write/NotebookEdit）累计行数；dev/reviewer=本回合 Task
+        # 派发标记；streak=连续违规回合数（防自动补审死循环：连续 3 回合
+        # 违规后降级为仅警示）。回合结算（result/interrupted/exit）清零。
+        self._audit = {"lines": 0, "dev": False, "reviewer": False, "streak": 0}
         self._seq = 0
         self.clients = []
         self.clients_lock = threading.Lock()
@@ -926,7 +1033,12 @@ class HarnessSession:
                 "lineage": self.lineage, "live_model": self.live_model,
                 "name": self.name,
                 "permission": self.permission, "think": self.think,
-                "created": self.created, "last_active": self.last_active}
+                "created": self.created, "last_active": self.last_active,
+                # v2.35.2：事件序号随元数据落盘——会话对象被重建（闲置回收/
+                # 重启后 _get_or_create）时续号。否则 _seq 归零重计，新事件
+                # 序号全部小于前端快照里的旧 seq，被防重放守卫整批吞掉，
+                # 会话看起来活着、事件永远不来（切不活跃会话场景的主害之一）
+                "seq": getattr(self, "_seq", 0) or 0}
 
     def sync_meta(self):
         if getattr(self, "hidden", False):
@@ -981,9 +1093,10 @@ class HarnessSession:
             eff_model = self._eff_model()
             roles_txt = roles_bridge_text(eff_model)
             if roles_txt:
-                # 角色定义随工具分发：起会话前把 executor/coder 安装到
-                # ~/.claude/agents/（幂等）——别的机器零手工配置
-                install_roles_agents()
+                # 角色定义随工具分发：起会话前按当前形态安装到
+                # ~/.claude/agents/（幂等，强模型→executor/coder，
+                # 轻快模型→designer）——别的机器零手工配置
+                install_roles_agents(eff_model)
             parts = [_collect_system_prompt(self.cwd),
                      TOKEN_RULES,
                      roles_txt,
@@ -996,13 +1109,18 @@ class HarnessSession:
             # 活会话不会因代码升级/名单调整换新词（用户实锤：MCP 类模型
             # 揣着旧「转交版」绕识图会话白等 1m20s）。send 前对指纹热更。
             self.bridge_fp = _bridge_fp(eff_model)
+            # v2.29 三角色：决策者结构性禁权——干活工具全禁（Bash/Edit/Write/
+            # WebFetch/WebSearch/Glob/Grep），逼着它走 Task 派发给 executor/
+            # coder；保留 Read 供审核代码用。子代理有自己的工具表不受影响。
+            # v2.30.2：仅决策者形态（主会话强模型）挂禁权；轻主力形态主会话
+            # 要亲自干杂活，工具不能禁（roles_disallow 返回空串）。留在 else
+            # 分支内——eff_model 只在此定义（曾放分支外，识图会话路径直接
+            # NameError；现 is_vision 已退役不可达，防御性归位）。
+            _roles_ban = roles_disallow(eff_model)
+            if _roles_ban:
+                argv += ["--disallowedTools", _roles_ban]
         if sys_prompt:
             argv += ["--append-system-prompt", sys_prompt]
-        # v2.29 三角色：决策者结构性禁权——干活工具全禁（Bash/Edit/Write/
-        # WebFetch/WebSearch），逼着它走 Task 派发给 executor/coder；保留
-        # Read/Grep/Glob 供审核代码用。子代理有自己的工具表不受影响。
-        if roles_txt:
-            argv += ["--disallowedTools", _ROLE_DISALLOW]
         if self.name:
             argv += ["--name", self.name]     # peer 寻址名（识图会话靠它被找到）
         # 复活：claude 侧已有真实 session_id → --resume 续上下文
@@ -1025,6 +1143,9 @@ class HarnessSession:
             creationflags=flags)
         self.alive = True
         self.busy = False
+        # v2.35：本进程实例已见的 init 事件数——第 2 个起是「新回合起跑」
+        # （CLI 自发回合：后台任务完成通知/协作回传续跑），据此补置 busy
+        self._init_n = 0
         self.last_active = int(time.time() * 1000)
         self.reader = threading.Thread(target=self._reader_loop, daemon=True)
         self.reader.start()
@@ -1101,6 +1222,123 @@ class HarnessSession:
         才是真正在跑的模型（settings 名经网关映射后可能完全不同，实测
         flash 名义 inline vs 实跑 glm-5.3 应为 mcp，错位导致错误引导词）。"""
         return self.live_model or self.model or available_models().get("default")
+
+    # ---- v2.34 light 形态回合结算审计 ----
+    def _audit_tally(self, o):
+        """回合内审计累计：只记主会话调用——子代理事件带 parent_tool_use_id
+        一律不算（它们有自己的纪律，主会话的违规才算违规）。纯计数不读
+        配置（每事件零盘 IO），判不判定是 _audit_settle 结算时的事。"""
+        au = self._audit
+        if o.get("parent_tool_use_id"):
+            return
+        blocks = (o.get("message") or {}).get("content")
+        if not isinstance(blocks, list):
+            return
+        for b in blocks:
+            if not (isinstance(b, dict) and b.get("type") == "tool_use"):
+                continue
+            n = str(b.get("name") or "")
+            inp = b.get("input") if isinstance(b.get("input"), dict) else {}
+            if n in _AUDIT_EDIT_TOOLS:
+                au["lines"] += _audit_lines(n, inp)
+            elif n in ("Task", "Agent"):
+                st = str(inp.get("subagent_type") or inp.get("agent_type") or "")
+                if st == "dev":
+                    au["dev"] = True
+                elif st == "reviewer":
+                    au["reviewer"] = True
+
+    def _audit_state(self):
+        """审计现值：(audit_mode, max_free_lines)；不审计返回 None。
+        条件=roles 开 + light 形态（strong 有结构禁权不需要）+ audit_mode
+        != off。结算时读一次盘——配置改动回合间生效。"""
+        try:
+            from .harness_roles import roles_cfg, roles_mode
+            cfg = roles_cfg()
+            mode = str(cfg.get("audit_mode") or "auto")
+            if not cfg.get("enabled") or mode == "off":
+                return None
+            if roles_mode(self._eff_model()) != "light":
+                return None
+            try:
+                # 不用 `or 3` 兜底——那会把合法的 0（最严档：任何直改都
+                # 违规）吞成 3。缺键/None → int() 抛 TypeError 落默认 3
+                mf = int(cfg.get("max_free_lines"))
+            except (TypeError, ValueError):
+                mf = 3
+            return mode, max(0, mf)
+        except Exception:
+            return None
+
+    def _audit_settle(self, reason):
+        """回合结算审计（result/interrupted/exit 三处调用）。盘点本回合：
+        违规两条——① 主会话直改累计行数 > 免审线且无 reviewer 派发；
+        ② 有 dev 派发但无 reviewer 派发。兜底按 audit_mode：auto=回合结束
+        自动续发一条 [审计] user 消息要求补审（复用 send_message 管线，
+        busy/进程/指纹热更检查全继承）；warn=仅聊天流红色警示（前端
+        kind='audit' 事件）。防循环：连续 3 个违规回合后降级仅警示；中断/
+        进程退出只警示不续发（用户主动停/进程已死，续发无意义，且不计入
+        streak）。计数结算后清零（切片逃逸防护：多次小改按回合累计判定）。"""
+        au = self._audit
+        lines, dev, rev = au["lines"], au["dev"], au["reviewer"]
+        au.update({"lines": 0, "dev": False, "reviewer": False})
+        st = self._audit_state()
+        if st is None:
+            au["streak"] = 0
+            return
+        mode, max_free = st
+        viol = []
+        if lines > max_free and not rev:
+            viol.append("主会话直改累计 %d 行超过免审线 %d 行，且本回合未派 "
+                        "reviewer 审核" % (lines, max_free))
+        if dev and not rev:
+            viol.append("已派 dev 交付但未派 reviewer 对抗审核")
+        if not viol:
+            au["streak"] = 0
+            return
+        desc = "；".join(viol)
+        if reason == "result":
+            au["streak"] += 1
+        degraded = au["streak"] >= 3
+        if reason == "result" and mode == "auto" and not degraded:
+            # 自动补审：卡文本与续发消息同一字符串（v2.34.1 统一——实时/
+            # 落盘回放/模型所见三处一致）。续发走后台线程，send_message 与
+            # 用户抢发竞争时返回失败——静默记 log，卡已到位，不重试。
+            text = (_AUDIT_MSG_PREFIX + "%s。已自动续发补审指令——立即用 "
+                    "Task 工具派 reviewer 代理补审上述改动（对抗审核：只审"
+                    "不改，给 PASS/FAIL 结论），按结论处理：FAIL 派 dev 修复"
+                    "后复审，PASS 才算完成，然后再答复用户。不要辩解，直接"
+                    "补审。" % desc)
+            self._audit_card(text)
+            threading.Thread(target=self._audit_send, args=(text,),
+                             daemon=True).start()
+            return
+        why = {"interrupted": "（回合被中断，仅记录不自动补审）",
+               "exit": "（会话进程已退出，仅记录不自动补审）"}.get(reason, "")
+        tail = ("已连续 %d 个回合违规，自动补审已降级为仅警示（防循环烧 "
+                "token），请人工介入。" % au["streak"]) if degraded else \
+               ("审计模式为 %s，仅警示不自动续发——请手动派 reviewer 补审。"
+                % mode)
+        self._audit_card(_AUDIT_MSG_PREFIX + "%s。%s%s" % (desc, tail, why))
+
+    def _audit_card(self, text):
+        """审计警示卡：emit（实时 SSE 红卡）+ 落盘 audit log（回放持久）。
+        v2.34.1 前只 emit——warn/降级/中断档的卡不落转写，刷新/切会话即失。"""
+        self.emit({"kind": "audit", "text": text[:4000]})
+        _audit_log_append(self.sid, text)
+
+    def _audit_send(self, text):
+        """审计自动续发：补审指令作为 user 消息发回本会话（模型视角=用户
+        要求补审），走正常 send_message 管线。text 以 _AUDIT_MSG_PREFIX
+        开头 → send_message 里不画用户气泡（警示事件已由 _audit_settle 先行
+        emit）。失败静默（log）——用户抢先发消息/进程退出属正常竞争，不重试
+        不阻塞。"""
+        try:
+            ok, err = self.send_message(text)
+            if not ok:
+                log.warning("[审计] 补审续发未发出：%s", err)
+        except Exception as e:
+            log.warning("[审计] 补审续发异常：%s", e)
 
     def _autorenew_on_overflow(self, text, image_paths, file_paths,
                                used, mwin, eff_model):
@@ -1239,6 +1477,20 @@ class HarnessSession:
                             return False, "会话进程已退出（识图引导词已更新，请重发）"
                 except Exception:
                     pass
+            # v2.37（P0+）派发前自愈：Task/SendMessage 派发前确保本形态角色
+            # 定义在位（幂等重装，几毫秒）——兜住一切上游删除路径（旧版互清/
+            # 测试误清/人工误删）。发生过缺失自愈时红卡告警：此前派发可能
+            # 已回落主链轻模型，用户须知情。仅角色开关启用时介入。
+            try:
+                from .harness_roles import ensure_roles_ready
+                _miss = ensure_roles_ready(self._eff_model())
+                if _miss:
+                    self.emit({"kind": "audit",
+                               "text": "检测到角色定义缺失（%s）已自动恢复——"
+                                       "此前派发可能回落主链模型，建议重发该任务"
+                                       % "、".join(m[:-3] for m in _miss)})
+            except Exception:
+                pass
         if not self._proc or not self.alive:
             return False, "会话进程已退出"
         self.busy_since = int(time.time() * 1000)   # 处理计时起点（前端切会话回来显示真实已跑时长）
@@ -1281,13 +1533,20 @@ class HarnessSession:
             self.busy = False
             return False, "发送失败：%s" % e
         self.last_active = int(time.time() * 1000)
+        # v2.34.2（R1）：判定收窄到 _AUDIT_MSG_PREFIX（_audit_settle 续发
+        # 消息的唯一句式开头）——不定标题、不画用户气泡（警示已由
+        # _audit_settle 的 kind='audit' 事件先行呈现）。用户手打「[审计]…」
+        # 开头的普通消息不命中，照常走 user_echo 画气泡。
+        _audit_msg = (text or "").lstrip().startswith(_AUDIT_MSG_PREFIX)
         # 首条消息定标题（微信式：会话标题=首句）
-        if not self.title and text:
+        if not self.title and text and not _audit_msg:
             self.title = re_title(text)
             self.sync_meta()
         # v2.27.23：超窗续命的 [系统] 历史注入不推原文——几十万 token 刷满
         # 消息流（用户定调"后台化"）。改推 renew 分割线事件，前端一行带过。
-        if (text or "").lstrip().startswith("[系统] 上一会话上下文已超当前模型窗口"):
+        if _audit_msg:
+            pass
+        elif (text or "").lstrip().startswith("[系统] 上一会话上下文已超当前模型窗口"):
             rounds = sum(1 for _ln in text.splitlines()
                          if _ln.startswith(("用户：", "助手：")))
             self.emit({"kind": "renew",
@@ -1309,6 +1568,13 @@ class HarnessSession:
         # v2.25：去掉 stdin 空写探活——0 字节写对部分 CLI 会被当作 EOF/空行
         # 事件（审计 §三.10），且探活结果无人消费，紧随的 kill 已覆盖停机语义
         self.kill_proc()
+        # v2.34：中断也结算审计——直改半截/审核跳过同样算违规记录（仅警示
+        # 不续发：用户主动停，续发违背意图）。须在 emit interrupted 前调，
+        # 警示先于「已中断」行出现。
+        try:
+            self._audit_settle("interrupted")
+        except Exception:
+            pass
         self.emit({"kind": "interrupted", "text": "已中断回复"})
 
     # ---- 事件层 ----
@@ -1469,6 +1735,28 @@ class HarnessSession:
                     if o.get("session_id") != self.session_id:
                         self.session_id = o.get("session_id")
                         self.sync_meta()
+                    # v2.35（P0-1 根因修复）：CLI 自发回合（后台任务完成通知、
+                    # 协作回传续跑等）不经 send()，busy 从未被置起——事件流里
+                    # 模型在干活、会话列表却报空闲，前端 5s 自愈轮询据此把运行
+                    # 态徽章摘掉（用户实锤「AI 还在执行运行状态没了」），排队泵
+                    # 还会提前把队列消息打进正在跑的回合。stream-json 实测
+                    # （stdin 保持打开）：每回合起跑都发一条 system/init，首个
+                    # init 是进程待机（不能置，否则空转进程永远挂「回复中」），
+                    # 第 2 个起即新回合——此刻补置 busy，回合终结的 result 照常
+                    # 回落。revive/热更重启的「新进程首 init」不置：该路径随后
+                    # 必有 send() 占位，不靠这里。
+                    self._init_n = getattr(self, "_init_n", 0) + 1
+                    if self._init_n > 1 and self.alive and not self.busy:
+                        self.busy = True
+                        self.busy_since = int(time.time() * 1000)
+                # v2.35（P0-1 兜底）：主链 assistant 事件到达而 busy 仍 False =
+                # 一条我们没观察到起点的回合正在跑（init 丢失/旧版 CLI 无续
+                # init）——同样补置。子代理事件（带 parent_tool_use_id）不算：
+                # 后台子代理跑活时主会话本就空闲、可以收新消息。
+                if typ == "assistant" and not o.get("parent_tool_use_id") \
+                        and self.alive and not self.busy:
+                    self.busy = True
+                    self.busy_since = int(time.time() * 1000)
                 if typ == "result":
                     self.busy = False
                     self.last_result = o
@@ -1496,12 +1784,23 @@ class HarnessSession:
                     # 按转交线上的收件人名对号入座渲染，无污染。
                     if getattr(self, "is_vision", False):
                         self._relay_vision_reply(o)
+                    # v2.34：回合内审计累计（纯计数零盘 IO；子代理事件内部
+                    # 自行排除，见 _audit_tally）
+                    self._audit_tally(o)
                 if typ in ("assistant", "result"):
                     self._check_peer_lines()   # 回合有输出 → 先补发新到的 peer 回传
                 self.emit({"kind": "event", "data": o})
+                # v2.34：result 即回合终点——结算审计（light 形态违规兜底，
+                # 事件已 emit，前端先收 result 收尾再收审计警示，顺序自然）
+                if typ == "result":
+                    try:
+                        self._audit_settle("result")
+                    except Exception:
+                        pass
         except Exception:
             pass
         finally:
+            was_busy = self.busy    # v2.34：进程死时回合是否仍在进行（下方结算用）
             self.alive = False
             self.busy = False
             # v2.20：计划内重启（会话内切模型）吞掉 exit——只吞一次，
@@ -1509,6 +1808,14 @@ class HarnessSession:
             if getattr(self, "_suppress_exit", False):
                 self._suppress_exit = False
             else:
+                # v2.34：回合进行中进程死掉（崩溃/被杀）——结算审计只警示
+                # 不续发（进程已死）。was_busy 在 busy 复位前取：kill_proc
+                # 会先把 busy 清掉，正常 result 后的进程退出不算「回合中断」。
+                if was_busy:
+                    try:
+                        self._audit_settle("exit")
+                    except Exception:
+                        pass
                 self.emit({"kind": "exit", "text": "会话进程已结束（发送消息将自动恢复）"})
 
     def _drain_stderr(self):
@@ -1676,6 +1983,7 @@ def _get_or_create(sid):
         s.created = m.get("created") or s.created
         s.last_active = m.get("last_active") or s.last_active
         s.live_model = m.get("live_model") or None   # v2.27.21：实报模型跨重启保留
+        s._seq = int(m.get("seq") or 0)              # v2.35.2：事件序号续号（见 to_meta 注释）
         _sessions[sid] = s
         return s
 
@@ -1828,6 +2136,21 @@ def transcript_for(s):
                                             "", t, flags=_re.S).strip()
                                 if not t:
                                     continue
+                            # v2.37R6（载入自愈①）：agent-message 通知形态回传
+                            # 入回放——此前只在实时流被识别（R2 补的 SSE 分支），
+                            # 转写重建不产出 → 载入后对应转交线成假等待残留
+                            # （用户实测 4 条 18m+ 秒表狂走）。有完整开闭标签
+                            # 才判（与实时口径一致），产 peer 行走前端既有按名
+                            # 配对定格
+                            _am = _re.search(r"<agent-message[^>]*>[\s\S]*?</agent-message>", t)
+                            if _am:
+                                _anm = _re.search(r'from-name="([^"]*)"', t) \
+                                    or _re.search(r"\bname=\"([^\"]*)\"", t)
+                                lines.append({"role": "peer",
+                                              "name": (_anm.group(1) if _anm else "协作代理"),
+                                              "text": _am.group(0).strip()[:8000],
+                                              "ts": o.get("timestamp") or ""})
+                                continue
                             # harness 通道从 stdin 注入，promptSource 是 "sdk"（不是 typed）；
                             # 排除标准是"非用户输入"（工具注入 default）——命令噪音由 _SKIP_RE 挡
                             # v2.27.23：超窗续命的 [系统] 历史注入不进气泡流——
@@ -1841,12 +2164,37 @@ def transcript_for(s):
                                               "text": "上下文超窗，已自动重开会话（%d 轮历史已后台迁移）" % rounds,
                                               "ts": o.get("timestamp") or ""})
                                 continue
+                            # v2.34.2（R1）：续发消息行按唯一句式前缀跳过
+                            # 不出——警示卡由 harness_audit_log 回放（文本与
+                            # 续发消息同一字符串，出两份就是双卡）。判定用
+                            # _AUDIT_MSG_PREFIX 而非宽 "[审计]"：用户手打以
+                            # [审计] 开头的普通消息必须照常出 user 行回放。
+                            if t.lstrip().startswith(_AUDIT_MSG_PREFIX):
+                                continue
                             ps_ok = (o.get("promptSource") in (None, "typed", "sdk")) or \
                                 (o.get("origin") or {}).get("kind") == "human"
                             if t and ps_ok and not _SKIP_RE.match(t.strip()):
                                 lines.append({"role": "user", "text": t[:8000],
                                               "ts": o.get("timestamp") or ""})
                         elif isinstance(content, list):
+                            # v2.37R6（载入自愈①）：list 内容的 text 块里的
+                            # agent-message 回传同样入回放（str 分支同款口径）
+                            _am_skip = None
+                            for _tb in content:
+                                if not (isinstance(_tb, dict)
+                                        and _tb.get("type") == "text"):
+                                    continue
+                                _tx = _tb.get("text") or ""
+                                _am = _re.search(r"<agent-message[^>]*>[\s\S]*?</agent-message>", _tx)
+                                if _am:
+                                    _anm = _re.search(r'from-name="([^"]*)"', _tx) \
+                                        or _re.search(r"\bname=\"([^\"]*)\"", _tx)
+                                    lines.append({"role": "peer",
+                                                  "name": (_anm.group(1) if _anm else "协作代理"),
+                                                  "text": _am.group(0).strip()[:8000],
+                                                  "ts": o.get("timestamp") or ""})
+                                    _am_skip = id(_tb)
+                                    break
                             trs = [b for b in content
                                    if isinstance(b, dict) and b.get("type") == "tool_result"]
                             if trs:
@@ -1880,6 +2228,9 @@ def transcript_for(s):
                             texts, imgs, files = [], 0, []
                             for b in content:
                                 if not isinstance(b, dict):
+                                    continue
+                                # R6 复审 E：agent-message 块已产 peer 行，不进 user 气泡
+                                if _am_skip is not None and id(b) == _am_skip:
                                     continue
                                 if b.get("type") == "text" and b.get("text"):
                                     texts.append(b["text"])
@@ -1956,6 +2307,30 @@ def transcript_for(s):
             break
     if not found_any:
         return None
+    # v2.34.1：审计警示卡（audit log）按 ts 并入回放——warn/降级/中断档的
+    # 卡此前只在实时事件流，jsonl 里没有对应行，刷新即失。卡落在本会话
+    # sid 维度（跨血统链全量），按时间戳稳定排序插回各回合 result 之后。
+    try:
+        arows = _audit_log_read(s.sid)
+        if arows:
+            from datetime import datetime as _dt, timezone as _tz
+
+            def _tk(ln):
+                try:
+                    return _dt.fromisoformat(
+                        str(ln.get("ts") or "").replace("Z", "+00:00"))
+                except Exception:
+                    return _dt.min.replace(tzinfo=_tz.utc)
+            for ln in lines:
+                ln["_k"] = _tk(ln)
+            for a in arows:
+                a["_k"] = _tk(a)
+            lines = lines + arows
+            lines.sort(key=lambda x: x["_k"])   # 稳定排序：同刻保持原相对序
+            for ln in lines:
+                ln.pop("_k", None)
+    except Exception:
+        pass
     return lines
 
 
@@ -2464,6 +2839,207 @@ def harness_transcript():
                     "model": s.model, "title": s.title, "seq": s._seq})
 
 
+@harness_bp.route("/subagent_replay")
+def harness_subagent_replay():
+    """v2.38：历史子代理回放数据源。?sid=&agent=<agentId(=task_started 的
+    task_id)>。子代理是独立 session，事件不在主会话 jsonl 里（实测主链
+    转写零 top-level parent_tool_use_id 行），但有自己的 jsonl 且与主会话
+    同目录（projects/<proj>/<agentId>.jsonl）。按 id 读它、抽文本/工具调
+    用/结果序列供前端回放窗格重建。found=False = 转写不存在（旧会话/已被
+    CLI 清理/独立协作会话）。"""
+    s = _get_or_create(request.args.get("sid") or "")
+    if not s:
+        return jsonify({"ok": False, "err": "会话不存在"}), 404
+    agent = (request.args.get("agent") or "").strip()
+    if not agent or not re.match(r"^[0-9a-zA-Z_-]{8,64}$", agent):
+        return jsonify({"ok": False, "err": "agent 参数非法"}), 400
+    # 主会话 jsonl 定位（与 _check_peer_lines 同源逻辑：按 lineage+当前 id 找）
+    main_dir = None
+    import glob as _g
+    for csid in [x for x in (list(getattr(s, "lineage", None) or [])
+                             + [s.session_id]) if x]:
+        for cand in _g.glob(os.path.join(os.path.expanduser("~"), ".claude",
+                                         "projects", "*", csid + ".jsonl")):
+            main_dir = os.path.dirname(cand)
+            break
+        if main_dir:
+            break
+    if not main_dir:
+        return jsonify({"ok": True, "found": False, "rows": []})
+    sub_path = os.path.join(main_dir, agent + ".jsonl")
+    if not os.path.isfile(sub_path):
+        return jsonify({"ok": True, "found": False, "rows": []})
+    rows = []
+    # v2.37R3（复审B）：流式「保头 150 + 滚动尾 50」——O(1) 内存全量扫描，
+    # 无硬帽：尾部恒为真实最后 50 行（最终交付报告不会丢），省略数精确
+    from collections import deque
+    _tail = deque(maxlen=50)
+    _total = 0
+
+    def _push(row):
+        """rows 满 200 后新行溢出进滚动尾窗（list.pop(200) 对 ≤201 长度是常数代价）。"""
+        nonlocal _total
+        _total += 1
+        rows.append(row)
+        if len(rows) > 200:
+            _tail.append(rows.pop(200))
+
+    def _txt(content):
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return "\n".join(b.get("text", "") for b in content
+                             if isinstance(b, dict) and b.get("type") == "text")
+        return ""
+
+    try:
+        with open(sub_path, "r", encoding="utf-8", errors="replace") as f:
+            for raw in f:
+                raw = raw.strip()
+                # v2.37R2（复审2/R3）：全量扫描无硬帽——rows 满 200 后新行
+                # 溢出进 _tail 滚动窗（见 _push），尾部恒为真实最后 50 行
+                if not raw:
+                    continue
+                try:
+                    o = json.loads(raw)
+                except Exception:
+                    continue
+                typ = o.get("type")
+                if typ not in ("assistant", "user"):
+                    continue
+                m = o.get("message") or {}
+                content = m.get("content")
+                blocks = content if isinstance(content, list) else []
+                if typ == "assistant":
+                    model = m.get("model") or ""
+                    for b in blocks:
+                        if not isinstance(b, dict):
+                            continue
+                        if b.get("type") == "text" and (b.get("text") or "").strip():
+                            _push({"k": "text", "text": b["text"][:2000],
+                                         "model": model})
+                        elif b.get("type") == "tool_use":
+                            inp = b.get("input") or {}
+                            hint = (inp.get("command") or inp.get("file_path")
+                                    or inp.get("path") or inp.get("pattern")
+                                    or inp.get("query") or inp.get("description")
+                                    or inp.get("subject") or inp.get("prompt") or "")
+                            _push({"k": "tool", "name": b.get("name") or "",
+                                         "hint": str(hint)[:120]})
+                else:
+                    for b in blocks:
+                        if isinstance(b, dict) and b.get("type") == "tool_result":
+                            _push({"k": "result",
+                                         "text": _txt(b.get("content"))[:200],
+                                         "err": bool(b.get("is_error"))})
+    except OSError:
+        return jsonify({"ok": True, "found": False, "rows": []})
+    # v2.37R2/R4：头 150 + 省略标注 + 真实尾 50——rows 恒持前 200，
+    # rows[150:]（50 行）与 _tail 拼接后取尾 50 = 真实最后 50 行
+    # （终审2：旧式仅拼 _tail 会丢 rows[150:200] 区间，[201,249] 全错）
+    if _total > 200:
+        rows = (rows[:150]
+                + [{"k": "note", "text": "…中间已省略 %d 条（详情见完整转写）…" % (_total - 200)}]
+                + (rows[150:] + list(_tail))[-50:])
+    return jsonify({"ok": True, "found": True, "rows": rows})
+
+
+@harness_bp.route("/peer_pair_log", methods=["POST"])
+def harness_peer_pair_log():
+    """v2.37R2（复审6）：协作回传配对结果落审计日志——task_id=SendMessage to
+    同源假设的事后取证点（命中与否都记，和 agents_dir_audit 同通道）。
+    fire-and-forget，前端不等响应，失败静默。"""
+    data = request.get_json(force=True, silent=True) or {}
+    try:
+        from .harness_roles import _agents_dir_audit
+        _agents_dir_audit("peer-pair", "sid=%s task=%s peer=%s paired=%s" % (
+            str(data.get("sid") or "")[:20], str(data.get("task") or "-")[:64],
+            str(data.get("name") or "-")[:64], bool(data.get("ok"))))
+    except Exception:
+        pass
+    return jsonify({"ok": True})
+
+
+@harness_bp.route("/peer_result_check")
+def harness_peer_result_check():
+    """v2.37R6（追溯自愈②）：回合终结时对仍 pending 的转交线做轻量存在性
+    检查——peer 名即 agentId/会话 id（SendMessage to 同源），其转写 jsonl
+    与主会话同目录；文件尾部含**时间戳 ≥ since** 的 result 行=对端在转交
+    之后确有完成回合 → 前端定格「已回传（转写核实补记）」。?sid=&peers=
+    &sinces=（两列 csv 按下标对齐，since=线起点 epoch ms；缺省 0=不过滤）。
+    R6 复审 A：peer 白名单（无路径分隔符/无 ../无控制符/≤64，中文名放行）；
+    B：since 判定防旧回合 result 误定格；C：上限 10 条（前端对超出部分标
+    「未核实」）。轻量：每 peer 只读尾部 64KB。"""
+    s = _get_or_create(request.args.get("sid") or "")
+    if not s:
+        return jsonify({"ok": False, "err": "会话不存在"}), 404
+
+    def _ok_name(p):
+        # R6 复审 A：路径穿越探测封死——禁分隔符/..、控制符，≤64（中文名放行）
+        if not p or len(p) > 64:
+            return False
+        if any(c in p for c in ("/", "\\", "..", ",")):
+            return False
+        return not any(ord(c) < 32 for c in p)
+
+    peers = [p.strip() for p in (request.args.get("peers") or "").split(",")
+             if _ok_name(p.strip())][:10]
+    sinces = [x for x in (request.args.get("sinces") or "").split(",")]
+    if not peers:
+        return jsonify({"ok": True, "results": {}})
+    main_dir = None
+    import glob as _g
+    for csid in [x for x in (list(getattr(s, "lineage", None) or [])
+                             + [s.session_id]) if x]:
+        for cand in _g.glob(os.path.join(os.path.expanduser("~"), ".claude",
+                                         "projects", "*", csid + ".jsonl")):
+            main_dir = os.path.dirname(cand)
+            break
+        if main_dir:
+            break
+    results = {}
+    for idx, p in enumerate(peers):
+        found = False
+        try:
+            since = int(sinces[idx] or 0)
+        except (ValueError, TypeError):
+            since = 0
+        if main_dir:
+            pf = os.path.join(main_dir, p + ".jsonl")
+            if os.path.isfile(pf):
+                try:
+                    size = os.path.getsize(pf)
+                    with open(pf, "rb") as f:
+                        if size > 65536:
+                            f.seek(size - 65536)
+                        tail = f.read().decode("utf-8", errors="replace")
+                    # R6 复审 B：只认 timestamp ≥ since 的 result 行——对端旧
+                    # 回合的 result 不算本次委托的回传
+                    for ln in tail.splitlines():
+                        if '"type":"result"' not in ln and '"type": "result"' not in ln:
+                            continue
+                        if since <= 0:
+                            found = True
+                            break
+                        mt = re.search(r'"timestamp":"([^"]+)"', ln)
+                        if not mt:
+                            found = True   # 行无时间戳：宁可信其有（不掩盖真实回传）
+                            break
+                        try:
+                            from datetime import datetime
+                            dt = datetime.fromisoformat(mt.group(1).replace("Z", "+00:00"))
+                            if dt.timestamp() * 1000 >= since:
+                                found = True
+                                break
+                        except ValueError:
+                            found = True
+                            break
+                except OSError:
+                    found = False
+        results[p] = found
+    return jsonify({"ok": True, "results": results})
+
+
 @harness_bp.route("/events")
 def harness_events():
     """事件增量（轮询兜底/断线补齐）。?sid=&after_seq="""
@@ -2898,24 +3474,122 @@ def harness_stop_vision():
 @harness_bp.route("/roles")
 def harness_roles_info():
     """v2.29.2：三角色设计说明（/roles 命令数据源）。resolved 是按当前
-    API 方案解析出的实际模型（换方案自动适配）。"""
-    from .harness_roles import resolve_role_models, roles_cfg
+    API 方案解析出的实际模型（换方案自动适配）。v2.30.2 带 mode——按
+    settings 默认模型判定的当前形态（strong 决策者 / light 轻主力）。
+    v2.34：roles 含 audit_mode/max_free_lines（defaults 兜底）；附
+    models/default_model 供配置面板下拉用。"""
+    from .harness_roles import (resolve_role_models, roles_cfg,
+                                roles_mode)
     ex, co = resolve_role_models()
-    return jsonify({"ok": True, "roles": roles_cfg(),
-                    "resolved": {"executor": ex, "coder": co}})
+    try:
+        mode = roles_mode(available_models().get("default"))
+    except Exception:
+        mode = "strong"
+    return jsonify({"ok": True, "roles": roles_cfg(), "mode": mode,
+                    "resolved": {"executor": ex, "coder": co,
+                                 "designer": co},
+                    "models": available_models().get("models", []),
+                    "default_model": available_models().get("default")})
+
+
+@harness_bp.route("/agent_models")
+def harness_agent_models():
+    """v2.35（P1-4）：子代理类型 → 模型名映射。扫 ~/.claude/agents/*.md 的
+    frontmatter（name/model 字段，同 harness_roles 的安装格式），供前端在
+    Task 起跑时显示子代理用什么模型。读不到 model 的条目不出现在映射里
+    （内置代理 Explore/Plan 等没有定义文件——前端标注「主链模型」）。
+    实跑模型以子代理 assistant 事件的 message.model 为准（网关映射后可能与
+    frontmatter 不同），本接口只管起跑时的预显示。只读、无缓存（目录极小）。"""
+    agents = {}
+    try:
+        import glob as _g
+        d = os.path.join(os.path.expanduser("~"), ".claude", "agents")
+        for p in _g.glob(os.path.join(d, "*.md")):
+            try:
+                with open(p, "r", encoding="utf-8", errors="replace") as f:
+                    head = f.read(4096)
+            except Exception:
+                continue
+            if not head.lstrip().startswith("---"):
+                continue
+            parts = head.split("---")
+            if len(parts) < 3:
+                continue
+            fm = parts[1]
+            m_name = re.search(r"^name:\s*(.+?)\s*$", fm, re.M)
+            m_model = re.search(r"^model:\s*(.+?)\s*$", fm, re.M)
+            if not m_model:
+                continue
+            name = (m_name.group(1) if m_name else "").strip().strip('"\'') \
+                or os.path.splitext(os.path.basename(p))[0]
+            model = m_model.group(1).strip().strip('"\'')
+            if name and model:
+                agents[name] = model
+    except Exception:
+        pass
+    return jsonify({"ok": True, "agents": agents})
 
 
 @harness_bp.route("/roles", methods=["POST"])
 def harness_set_roles():
-    """v2.29.3：三角色开关。body {enabled:bool}。改完即生效——角色词在
-    引导词指纹里，下条消息发送前的指纹热更自动换词重启（含/不含结构
-    禁权），已有会话也无需重建。"""
-    from .harness_roles import set_roles_enabled
+    """v2.29.3 开关；v2.34 扩成整节配置（merge 写盘，只动出现的键）。
+    body 可含 {enabled, executor_model, coder_model, model_map,
+    audit_mode, max_free_lines}。生效路径与开关一致：模型槽/免审线出现在
+    引导词里 → 指纹热更下条消息换词重启 + agents 重生成；audit_mode 在
+    回合结算时读盘，即时生效。model_map 行式 "端点关键字=执行者,编程者"
+    （编程者可省=与执行者同）或 dict {关键字:{executor,coder}}。"""
+    from .harness_roles import update_roles_cfg
     data = request.get_json(force=True, silent=True) or {}
-    ok, err = set_roles_enabled(bool(data.get("enabled")))
+    patch = {}
+    if "enabled" in data:
+        patch["enabled"] = bool(data.get("enabled"))
+    for k in ("executor_model", "coder_model"):
+        if k in data:
+            patch[k] = str(data.get(k) or "").strip()
+    if "audit_mode" in data:
+        # v2.34.1：出现但不合法 → 400（与 max_free_lines 口径一致——静默
+        # 跳过会让调用方假成功，配置面板显示的与实际生效的不符）
+        if data.get("audit_mode") not in ("auto", "warn", "off"):
+            return jsonify({"ok": False,
+                            "err": "audit_mode 须为 auto/warn/off"}), 400
+        patch["audit_mode"] = data.get("audit_mode")
+    if "max_free_lines" in data:
+        try:
+            patch["max_free_lines"] = max(0, min(100000,
+                                                 int(data.get("max_free_lines"))))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "err": "免审线须为数字"}), 400
+    mmap_raw = data.get("model_map")
+    if isinstance(mmap_raw, (dict, list)):
+        mmap = {}
+        if isinstance(mmap_raw, dict):
+            for k, v in mmap_raw.items():
+                if not str(k).strip() or not isinstance(v, dict):
+                    continue
+                ex = str(v.get("executor") or "").strip()
+                co = str(v.get("coder") or "").strip()
+                if ex and co:
+                    mmap[str(k).strip().lower()] = {"executor": ex, "coder": co}
+        else:
+            for line in mmap_raw:
+                kv = str(line).split("=", 1)
+                if len(kv) != 2 or not kv[0].strip():
+                    continue
+                rhs = [x.strip() for x in kv[1].split(",") if x.strip()]
+                if not rhs:
+                    continue
+                mmap[kv[0].strip().lower()] = {
+                    "executor": rhs[0],
+                    "coder": rhs[1] if len(rhs) > 1 else rhs[0]}
+        patch["model_map"] = mmap
+    if not patch:
+        return jsonify({"ok": False, "err": "没有可写入的配置项"}), 400
+    ok, err = update_roles_cfg(patch)
     if not ok:
         return jsonify({"ok": False, "err": err or "写入失败"}), 500
-    return jsonify({"ok": True, "enabled": bool(data.get("enabled"))})
+    resp = {"ok": True}
+    resp.update(patch)
+    return jsonify(resp)
 
 
 @harness_bp.route("/skills")
