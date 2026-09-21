@@ -983,7 +983,19 @@ def main():
             update_server.start()
     except Exception:
         pass
-    webview.start(debug=False, private_mode=False,
+    # 开发调试口（config.json 加 "webview_debug": true 开启）：WebView2
+    # devtools 右键菜单 + CDP 远程调试端口 9222（DOM/内存实测取证用，
+    # 开发机常开；生产机不加该键即关闭）
+    _wv_debug = False
+    try:
+        with open(CONFIG_FILE, encoding="utf-8") as _f:
+            _wv_debug = bool(json.load(_f).get("webview_debug"))
+    except Exception:
+        pass
+    if _wv_debug:
+        os.environ.setdefault("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+                              "--remote-debugging-port=9222")
+    webview.start(debug=_wv_debug, private_mode=False,
                   storage_path=os.path.join(DATA_DIR, "webview_cache"))
 
 
