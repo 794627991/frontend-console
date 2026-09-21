@@ -11,6 +11,11 @@
 
   const TURNS_PAGE = 12;          // 初始渲染轮数；上滑 +8
   const TURNS_MORE = 8;
+  // v2.39 对称窗口上限：DOM 里同时存在的轮数恒有界。旧实现上滑只增不减——
+  // Chromium scrollHeight 硬上限 33,554,432px，触顶后高度被钳制，最新消息
+  // 落在可滚区之外=「翻完历史往下永远滚不回底」（另一台设备修过没修成：
+  // 旧方案只控初始渲染量，没控上滑累积总量）。
+  const WIN_MAX = TURNS_PAGE + TURNS_MORE * 2;
 
   let D = null;                   // deps：esc/mdBubble/attChipsHtml/statusBadge/
                                   // toolIco/toolLabel/toolBodyHtml/lazyFill/lazyDrop/
@@ -232,19 +237,88 @@
     });
   }
 
-  // ---- 分轮分页 ----
-  function renderAll(turns, start) {
-    roFlow._start = Math.max(0, start);
-    roFlow._lastTs = 0;
-    roFlow.innerHTML = '';
-    if (roFlow._start > 0) {
+  // ---- 分轮分页（v2.39 对称窗口）----
+  // 窗口状态 [roWinS, roWinE)：DOM 只保有这段轮次。上滑加载更早=头部扩充+
+  // 摘尾部；下滑加载更新=尾部扩充+摘头部。scrollHeight 恒有界，永不触
+  // Chromium 33.5M 钳制。turn 的 _open 展开态存 turns 对象上，摘除重挂不丢。
+  let roWinS = 0, roWinE = 0;
+
+  function renderBars(turns) {
+    roFlow.querySelectorAll(':scope > .hg-hist-more').forEach(b => b.remove());
+    if (roWinS > 0) {
       const bar = document.createElement('div');
       bar.className = 'hg-hist-more';
-      bar.textContent = '⬆ 剩 ' + roFlow._start + ' 轮——继续上滑加载';
+      bar.textContent = '⬆ 剩 ' + roWinS + ' 轮——继续上滑加载';
+      roFlow.insertBefore(bar, roFlow.firstChild);
+    }
+    if (roWinE < turns.length) {
+      const bar = document.createElement('div');
+      bar.className = 'hg-hist-more hg-hist-more-btm';
+      bar.textContent = '⬇ 剩 ' + (turns.length - roWinE) + ' 轮——下滑加载';
       roFlow.appendChild(bar);
     }
-    turns.slice(roFlow._start).forEach(t => roFlow.appendChild(renderTurn(D._HG.histAll, t, !!t._open)));
+  }
+
+  function renderWindow(turns, s, e) {
+    roWinS = Math.max(0, s);
+    roWinE = Math.min(turns.length, e);
+    roFlow._lastTs = 0;
+    roFlow.innerHTML = '';
+    for (let i = roWinS; i < roWinE; i++) {
+      const f = renderTurn(D._HG.histAll, turns[i], !!turns[i]._open);
+      turns[i]._el = f;
+      roFlow.appendChild(f);
+    }
+    renderBars(turns);
     roFlow.scrollTop = roFlow.scrollHeight;
+  }
+
+  // 上滑到顶：头部补 TURNS_MORE 轮（锚定视口），窗口超限摘尾部（视口在
+  // 顶部，摘视口下方内容不动视口，无需锚定补偿）
+  function loadOlder(turns) {
+    if (roWinS <= 0) return;
+    const s2 = Math.max(0, roWinS - TURNS_MORE);
+    const anchorH = roFlow.scrollHeight - roFlow.scrollTop;
+    const frag = document.createDocumentFragment();
+    for (let i = s2; i < roWinS; i++) {
+      const f = renderTurn(D._HG.histAll, turns[i], !!turns[i]._open);
+      turns[i]._el = f;
+      frag.appendChild(f);
+    }
+    roFlow.insertBefore(frag, roFlow.querySelector('.hg-hist-more'));
+    roWinS = s2;
+    roFlow.scrollTop = roFlow.scrollHeight - anchorH;
+    const maxE = roWinS + WIN_MAX;
+    for (let i = maxE; i < roWinE; i++) {
+      if (turns[i]._el) turns[i]._el.remove();
+    }
+    if (roWinE > maxE) roWinE = maxE;
+    renderBars(turns);
+  }
+
+  // 下滑到底：尾部补 TURNS_MORE 轮，窗口超限摘头部（锚定视口不跳屏）。
+  // 旧版没有这条路径——翻完历史后只能靠滚轮硬爬，触顶即永久回不了底。
+  function loadNewer(turns) {
+    if (roWinE >= turns.length) return;
+    const e2 = Math.min(turns.length, roWinE + TURNS_MORE);
+    const s2 = Math.max(0, e2 - WIN_MAX);
+    for (let i = roWinS; i < s2; i++) {
+      if (turns[i]._el) turns[i]._el.remove();
+    }
+    const afterHead = roFlow.scrollHeight;      // 摘头后测（s2==roWinS 时不变）
+    const anchorH = afterHead - roFlow.scrollTop;
+    const frag = document.createDocumentFragment();
+    for (let i = roWinE; i < e2; i++) {
+      const f = renderTurn(D._HG.histAll, turns[i], !!turns[i]._open);
+      turns[i]._el = f;
+      frag.appendChild(f);
+    }
+    const btmBar = roFlow.querySelector('.hg-hist-more-btm');
+    if (btmBar) roFlow.insertBefore(frag, btmBar);
+    else roFlow.appendChild(frag);
+    roWinS = s2; roWinE = e2;
+    roFlow.scrollTop = roFlow.scrollHeight - anchorH;
+    renderBars(turns);
   }
 
   // ---- 二级折叠委托（思考/工具行，与主层同款懒填/懒丢） ----
@@ -301,18 +375,21 @@
     roFlow = ov.querySelector('.hg-ro-flow');
     ov.querySelector('.hg-ro-exit').onclick = exit;
     roFlow.addEventListener('click', onFlowClick);
-    // 上滑分页
+    // 双向分页（v2.39 对称窗口）：上滑加载更早 / 下滑加载更新
     roFlow.addEventListener('scroll', () => {
-      if (roFlow._busy || roFlow._start <= 0) return;
-      if (roFlow.scrollTop <= 60) {
+      if (roFlow._busy) return;
+      if (roFlow.scrollTop <= 60 && roWinS > 0) {
         roFlow._busy = true;
-        const anchorH = roFlow.scrollHeight - roFlow.scrollTop;
-        renderAll(turns, roFlow._start - TURNS_MORE);
-        roFlow.scrollTop = roFlow.scrollHeight - anchorH;
+        loadOlder(turns);
+        requestAnimationFrame(() => { roFlow._busy = false; });
+      } else if (roFlow.scrollHeight - roFlow.scrollTop - roFlow.clientHeight <= 60
+                 && roWinE < turns.length) {
+        roFlow._busy = true;
+        loadNewer(turns);
         requestAnimationFrame(() => { roFlow._busy = false; });
       }
     }, { passive: true });
-    renderAll(turns, Math.max(0, turns.length - TURNS_PAGE));
+    renderWindow(turns, Math.max(0, turns.length - TURNS_PAGE), turns.length);
     // 后台回复指示（禅层盖住主 flow，SSE 进度看不到——顶栏亮指示防误判卡死）
     const busyEl = ov.querySelector('[data-ro-busy]');
     const busyTimer = setInterval(() => {
