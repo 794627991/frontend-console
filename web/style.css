@@ -2744,6 +2744,9 @@ html {
 .h-tool .h-tool-sec { flex-shrink: 0; color: var(--muted); opacity: .75; }
 .h-tool-copy { flex-shrink: 0; border: 1px solid var(--border); background: transparent;
   color: var(--muted); font-size: 10px; border-radius: 4px; padding: 1px 6px; cursor: pointer; }
+/* v2.44R：段内抽屉头的复制钮是 head <button> 内的 span（嵌套 button 非法）
+   ——补行内块布局，样式复用上方 .h-tool-copy */
+.h-tool-head .h-tool-copy { display: inline-block; }
 .h-tool-copy:hover { color: var(--accent); border-color: var(--accent); }
 
 /* 状态徽章（源 deriveToolStatus：running 蓝 / completed 绿 / error 红 / denied 橙） */
@@ -2787,6 +2790,11 @@ html {
   padding-top: 6px; }
 /* v2.24.4：展开卡内的参数 JSON 限高（识图长 prompt 撑爆卡片）——行内摘要不受影响 */
 .h-tool-coll > .h-tool-arg { max-height: 200px; overflow-y: auto; }
+/* v2.44 段内/抽屉头摘要：单行省略——「默认收起一行」的承诺不能被长命令/长
+   路径换行破坏（主链行内工具行保持可换行，仅限 col 抽屉头）；全文靠 title
+   悬浮与展开体 */
+.h-tool.col .h-tool-head .h-tool-arg { flex: 1 1 auto; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; word-break: normal; }
 
 /* v2.24.5 微信式时间条（>5 分钟才插，居中灰字） */
 .h-time { align-self: center; width: auto; margin: 10px auto 2px;
