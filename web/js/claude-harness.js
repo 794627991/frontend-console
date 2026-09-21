@@ -3683,12 +3683,15 @@ function buildClaudeHarnessTab(opts = {}) {
         // 渲染失败），不再只留 console 标记让整栏凭空蒸发
         try {
           console.error('[hg-dyn] 分区渲染异常', fn.name, e);
+          // v2.39：错误文本直接上屏——WebView2 用户开不了 console，降级占位
+          // 只说「详见 console」等于没有诊断信息（用户实锤无法反馈根因）
+          const msg = esc(String((e && e.message) || e || '未知错误')).slice(0, 200);
           if (fn === _dynAgents) {
             const secA = _sec('agents');
             if (secA) {
               secA.hidden = false;
               const al = secA.querySelector('[data-hg-d-aglist]');
-              if (al) al.innerHTML = '<div class="hg-sub-replay-note">子代理区渲染异常（已降级显示）——详见 console [hg-dyn]</div>';
+              if (al) al.innerHTML = '<div class="hg-sub-replay-note">子代理区渲染异常（已降级显示）：<b>' + msg + '</b></div>';
             }
           }
         } catch(_) {}

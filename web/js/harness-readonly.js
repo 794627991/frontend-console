@@ -58,6 +58,10 @@
   }
 
   function tsAt(lines, i) { return Date.parse((lines[i] || {}).ts || '') || 0; }
+  // 轮末行 ts（idx 空时回退轮首 user 行）：loadOlder 头部扩前预置时间条基准用
+  function turnEndTs(lines, t) {
+    return tsAt(lines, t.idx.length ? t.idx[t.idx.length - 1] : t.ui);
+  }
   // 行时长：该行 ts → 同轮下一行 ts 的差（缺失返回 0）
   function stepDurMs(lines, i) {
     const a = tsAt(lines, i);
@@ -243,6 +247,21 @@
   // Chromium 33.5M 钳制。turn 的 _open 展开态存 turns 对象上，摘除重挂不丢。
   let roWinS = 0, roWinE = 0;
 
+  // 挂载助手（P1 修复）：renderTurn 返回 DocumentFragment，而 fragment 挂载时
+  // 子节点散开、自身不进 DOM——旧实现把 fragment 存进 _el，摘除循环对它调
+  // .remove() 直接 TypeError（remove 定义在 ChildNode mixin，只混入 Element/
+  // CharacterData/DocumentType，fragment 没有），窗口摘除全废=「DOM 恒有界」
+  // 核心机制没生效，且异常中断留下半更新状态（scroll 处理器里 _busy 永远
+  // 复位不了，后续翻页全卡死）。挂载前快照 fragment 的真实子节点数组存 _el，
+  // 摘除按数组逐个 remove。
+  function mountTurn(turns, i, before) {
+    const f = renderTurn(D._HG.histAll, turns[i], !!turns[i]._open);
+    // 必须挂载前抓：挂载后子节点散开，fragment.children 立即变空
+    const els = Array.prototype.slice.call(f.children);
+    if (before) roFlow.insertBefore(f, before); else roFlow.appendChild(f);
+    turns[i]._el = els;          // 统一存真实 DOM 元素数组（三个挂载点类型一致）
+  }
+
   function renderBars(turns) {
     roFlow.querySelectorAll(':scope > .hg-hist-more').forEach(b => b.remove());
     if (roWinS > 0) {
@@ -264,11 +283,7 @@
     roWinE = Math.min(turns.length, e);
     roFlow._lastTs = 0;
     roFlow.innerHTML = '';
-    for (let i = roWinS; i < roWinE; i++) {
-      const f = renderTurn(D._HG.histAll, turns[i], !!turns[i]._open);
-      turns[i]._el = f;
-      roFlow.appendChild(f);
-    }
+    for (let i = roWinS; i < roWinE; i++) mountTurn(turns, i, null);
     renderBars(turns);
     roFlow.scrollTop = roFlow.scrollHeight;
   }
@@ -279,18 +294,20 @@
     if (roWinS <= 0) return;
     const s2 = Math.max(0, roWinS - TURNS_MORE);
     const anchorH = roFlow.scrollHeight - roFlow.scrollTop;
-    const frag = document.createDocumentFragment();
-    for (let i = s2; i < roWinS; i++) {
-      const f = renderTurn(D._HG.histAll, turns[i], !!turns[i]._open);
-      turns[i]._el = f;
-      frag.appendChild(f);
-    }
-    roFlow.insertBefore(frag, roFlow.querySelector('.hg-hist-more'));
+    // 时间条基准预置（P2 修复）：_lastTs 保留的是窗口内较新轮的时间戳，
+    // 头部扩的轮次 ms - _lastTs 恒为负 → 上滑加载的轮次时间条恒不显示。
+    // 预置为窗口外前一轮的末行 ts（s2==0 时归 0，与 renderWindow 全量渲染
+    // 起点同口径），渲染循环内随时间条出现自动前推，判定与顺着时间线渲染
+    // 完全一致。
+    roFlow._lastTs = s2 > 0 ? turnEndTs(D._HG.histAll, turns[s2 - 1]) : 0;
+    const topBar = roFlow.querySelector('.hg-hist-more');  // 顶部「继续上滑」条，逐轮插它前面保持顺序
+    for (let i = s2; i < roWinS; i++) mountTurn(turns, i, topBar);
     roWinS = s2;
     roFlow.scrollTop = roFlow.scrollHeight - anchorH;
     const maxE = roWinS + WIN_MAX;
     for (let i = maxE; i < roWinE; i++) {
-      if (turns[i]._el) turns[i]._el.remove();
+      const els = turns[i]._el;
+      if (els) els.forEach(el => { if (el.isConnected) el.remove(); });
     }
     if (roWinE > maxE) roWinE = maxE;
     renderBars(turns);
@@ -303,19 +320,13 @@
     const e2 = Math.min(turns.length, roWinE + TURNS_MORE);
     const s2 = Math.max(0, e2 - WIN_MAX);
     for (let i = roWinS; i < s2; i++) {
-      if (turns[i]._el) turns[i]._el.remove();
+      const els = turns[i]._el;
+      if (els) els.forEach(el => { if (el.isConnected) el.remove(); });
     }
     const afterHead = roFlow.scrollHeight;      // 摘头后测（s2==roWinS 时不变）
     const anchorH = afterHead - roFlow.scrollTop;
-    const frag = document.createDocumentFragment();
-    for (let i = roWinE; i < e2; i++) {
-      const f = renderTurn(D._HG.histAll, turns[i], !!turns[i]._open);
-      turns[i]._el = f;
-      frag.appendChild(f);
-    }
     const btmBar = roFlow.querySelector('.hg-hist-more-btm');
-    if (btmBar) roFlow.insertBefore(frag, btmBar);
-    else roFlow.appendChild(frag);
+    for (let i = roWinE; i < e2; i++) mountTurn(turns, i, btmBar);
     roWinS = s2; roWinE = e2;
     roFlow.scrollTop = roFlow.scrollHeight - anchorH;
     renderBars(turns);
