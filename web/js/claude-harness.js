@@ -4249,10 +4249,13 @@ function buildClaudeHarnessTab(opts = {}) {
     // 故整段绕过 cap；实时 tab 的 200 上限语义不变
     if (!noCap) _subCap(sc);
   }
-  // 窗格重设计 P1-3：元素直挂版——md 渲染产物必须整元素进 DOM：renderMd 的
-  // 链接拦截是 addEventListener 直绑、懒高亮是 IO observe 元素实例，经
-  // outerHTML→innerHTML 序列化往返全丢（只剩静态壳）。窗格不进快照（无
-  // innerHTML 重建），这些绑定随元素存活到 tab 关闭，安全
+  // 窗格重设计 P1-3（复审勘误）：元素直挂的必要性只在懒高亮——
+  // _codeLazyEnhance 的 IO observe 的是元素实例，字符串通道（outerHTML→
+  // innerHTML 克隆）进 DOM 的新节点永不被 observe、永不增强。链接拦截不
+  // 构成理由：renderMd 自身就 return t.innerHTML，直绑监听器每次渲染必丢
+  // （与通道无关），窗格链接点击实际由 init.js 的 document 捕获阶段全局
+  // 拦截器兜底。窗格不进快照（无 innerHTML 重建），IO 绑定随元素存活到
+  // tab 关闭
   function _subAppendEl(sc, el, noCap) {
     sc.appendChild(el);
     if (!noCap) _subCap(sc);
@@ -4296,9 +4299,9 @@ function buildClaudeHarnessTab(opts = {}) {
       sc.insertBefore(av, sc.firstElementChild);
     }
     for (const b of blocks) {
-      // 窗格重设计 P1-3：文本行从裸 esc 升级 md 渲染（markdown-it + 懒高亮，
-      // 元素直挂保链接拦截/IO 绑定）——子代理中间结论是 markdown，渲染质量
-      // 对齐主 flow
+      // 窗格重设计 P1-3：文本行从裸 esc 升级 md 渲染（markdown-it + 懒高亮；
+      // 元素直挂保懒高亮 IO 绑定，链接拦截由 init.js 全局捕获兜底）——
+      // 子代理中间结论是 markdown，渲染质量对齐主 flow
       if (b.type === 'text' && b.text && b.text.trim())
         _subAppendEl(sc, _subMdRow(b.text));
       else if (b.type === 'thinking' && b.thinking) {
