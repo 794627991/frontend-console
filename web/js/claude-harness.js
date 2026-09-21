@@ -3638,44 +3638,6 @@ function buildClaudeHarnessTab(opts = {}) {
     if (_HG.dyn) _HG.dyn.agentDetailOpen = id;
     rowEl.insertAdjacentElement('afterend', _hgAgentDetailEl(id, a));
   }
-    const dur = a.done
-      ? (a.t0 ? fmtDur(Math.max(1, Math.round((a.doneAt - a.t0) / 1000))) : '—')
-      : (a.t0 ? fmtDur((Date.now() - a.t0) / 1000) + '（进行中）' : '—');
-    // v2.35（P1-4）：模型行——实跑 model（子代理 assistant 事件实报）优先，
-    // frontmatter 预显示兜底，都无=内置代理按 CLI 行为跑主链模型
-    const mdl = a.model || (_HG.agentModels && _HG.agentModels[a.type]) || '';
-    // 用量行——task_progress/task_notification 的 CLI 侧计数（total_tokens/
-    // tool_uses）；网关会把 assistant.message.usage 置零（实测），不作为源
-    const usageTxt = a.tokens
-      ? `${(a.tokens / 1000).toFixed(1)}K tokens · ${a.toolN || 0} 次工具`
-      : '';
-    const d = document.createElement('div');
-    d.className = 'hg-dyn-agdetail';
-    d.innerHTML =
-      (id && !a.replay ? `<div class="hg-dyn-kv"><span class="k">ID</span>` +
-        `<span class="v mono" data-hg-copy="${esc(id)}" title="点击复制">${esc(id)}</span></div>` : '') +
-      (a.replay ? '' :
-        `<div class="hg-dyn-kv"><span class="k">模型</span><span class="v" title="${esc(mdl ? '实跑/frontmatter 模型' : '内置或无定义文件代理，按 CLI 行为跑主链模型')}">${esc(mdl || '主链模型')}${a.bg ? ' · 后台' : ''}</span></div>`) +
-      (a.replay || !usageTxt ? '' :
-        `<div class="hg-dyn-kv"><span class="k">用量</span><span class="v">${esc(usageTxt)}</span></div>`) +
-      `<div class="hg-dyn-kv"><span class="k">起止</span><span class="v">` +
-        `${a.t0 ? new Date(a.t0).toTimeString().slice(0, 8) : '—'} → ` +
-        `${a.doneAt ? new Date(a.doneAt).toTimeString().slice(0, 8) : (a.done ? '历史' : '运行中')}</span></div>` +
-      `<div class="hg-dyn-kv"><span class="k">耗时</span><span class="v">${dur}` +
-        `${a.interrupted ? ' · 已中断' : a.err ? ' · 失败' : ''}</span></div>` +
-      (a.desc ? `<div class="hg-dyn-agres">${esc(a.desc)}</div>` : '') +
-      (a.result ? `<div class="hg-dyn-agres">${esc(a.result)}</div>` : '') +
-      // v2.38：回放入口——带 agentId 的已完成代理（含历史条目）可开回放
-      // 窗格（数据源=子代理转写）；协作代理只回看结论
-      (a.done && !a.collab && (a.taskId || a.agentId)
-        ? `<button class="hg-dyn-replay-btn" data-hg-replay="${esc(id)}"` +
-          ` data-hg-replay-aid="${esc(a.taskId || a.agentId || '')}"` +
-          ` data-hg-replay-type="${esc(a.type || '')}">▣ 回放该子代理过程</button>` : '') +
-      (a.collab && a.result
-        ? `<button class="hg-dyn-replay-btn" data-hg-replay="${esc(id)}"` +
-          ` data-hg-replay-collab="1" data-hg-replay-type="${esc(a.type || '')}">▣ 回看协作结论</button>` : '');
-    rowEl.insertAdjacentElement('afterend', d);
-  }
   // 点击交互（onclick 覆盖式绑定：闭包随 tab 重开重执行，addEventListener 会叠加）
   if (dynEl) dynEl.onclick = (e) => {
     const cp = e.target.closest('[data-hg-copy]');
