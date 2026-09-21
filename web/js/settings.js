@@ -58,6 +58,9 @@ function _stModal() {
 }
 
 function _stShowSection(m, sec) {
+  // 记住分区：重开设置弹窗时回到上次所在处（曾每次重开都落到终端设置，
+  // 用户在 API 面板配到一半被打断，回来要重新找入口，实锤「莫名跳转」）
+  try { localStorage.setItem('fc_st_sec', sec); } catch(_) {}
   m.querySelectorAll('.set-nav-item').forEach(el =>
     el.classList.toggle('active', el.dataset.sec === sec));
   const pane = m.querySelector('#stPane');
@@ -508,7 +511,7 @@ async function _stRenderApiPane(pane) {
         </div>
         <div class="dd-sub" id="apiProbeOut" style="margin-top:6px;">${_stApiModels ? '已获取 ' + _stApiModels.length + ' 个模型——模型映射框可下拉选择' : '获取模型后，模型映射框可直接下拉选择'}</div>
         <div class="dd-label" style="margin-top:12px;">模型映射（MODEL 与 _NAME 成对写入，留空不改）</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;margin-top:8px;">
+        <div style="display:grid;grid-template-columns:1fr;gap:8px;margin-top:8px;">
           ${M_SLOTS.map(([k, n, tip]) => `
             <label title="${tip}" style="display:flex;align-items:center;gap:6px;min-width:0;cursor:help;">
               <span style="flex-shrink:0;width:50px;font-size:11px;color:var(--muted);">${n}</span>
@@ -1156,7 +1159,8 @@ async function _assocBulk(pane, act) {
 
 function openSettingsPanel(section) {
   const m = _stModal();
-  _stShowSection(m, section || 'term');
+  // 不指定分区 → 回到上次所在处（首次打开落终端设置，原默认不变）
+  _stShowSection(m, section || localStorage.getItem('fc_st_sec') || 'term');
   m.classList.add('show');
 }
 
@@ -1239,7 +1243,9 @@ function _ddConfirm(title, msg) {  return new Promise(resolve => {
   if (logoIcon) {
     logoIcon.title = '设置（数据目录 / 外观主题）';
     logoIcon.style.cursor = 'pointer';
-    logoIcon.addEventListener('click', () => openSettingsPanel('term'));
+    // 不传分区：回到上次所在分区（曾硬编码 'term'——每次点开设置都被
+    // 拉回终端设置，在 API 面板配置的用户实测「莫名跳转」）
+    logoIcon.addEventListener('click', () => openSettingsPanel());
   }
 })();
 
