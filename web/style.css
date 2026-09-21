@@ -3264,6 +3264,10 @@ html {
    tab 共享，方案 a 前只有一份滚动位置） */
 .hg-sub-body { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 10px 12px; }
 .hg-sub-msgs { display: flex; flex-direction: column; gap: 8px; flex: 1; min-height: 0; overflow-y: auto; }
+/* 窗格重设计 P1-5 补课：msgs 成滚动容器后子项默认 flex-shrink:1——内容超窗
+   时每行被压扁挤成一团（用户实锤「数据一多就缩一起」）。主 flow/只读层同款
+   坑已修过两次（3d22ecc/b4b7b7c），子项禁垂直压缩，内容自然撑开走滚动。 */
+.hg-sub-msgs > * { flex-shrink: 0; }
 .hg-sub-msg { font-size: 12px; line-height: 1.65; color: var(--fg); white-space: pre-wrap; word-break: break-word; }
 .hg-sub-tool {
   font-size: 10.5px; color: var(--muted); font-family: var(--font-mono);
