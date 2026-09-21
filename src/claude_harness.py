@@ -2366,8 +2366,11 @@ def transcript_for(s):
     lines = []
     call_by_id = {}           # tool_use_id -> 行 dict（把 tool_result 挂回调用行）
     found_any = False
+    main_dir = None           # v2.43：主会话 jsonl 所在项目目录（子代理转写定位用，与回放接口同源）
     for csid in ordered:
         for cand in _glob.glob(os.path.join(proj, "*", csid + ".jsonl")):
+            if main_dir is None:
+                main_dir = os.path.dirname(cand)
             if _parse_one(cand, lines, call_by_id):
                 found_any = True
             break
@@ -2395,6 +2398,15 @@ def transcript_for(s):
             lines.sort(key=lambda x: x["_k"])   # 稳定排序：同刻保持原相对序
             for ln in lines:
                 ln.pop("_k", None)
+    except Exception:
+        pass
+    # v2.43：子代理会话主 flow 化——Agent/Task 派发行后注入子代理过程段行
+    # （sub_open + sub_text/sub_think/sub_tool/sub_result/sub_note 序列，前端
+    # 聚段渲染）。数据源与回放接口同源（_subagent_rows_for 双源），容量护栏
+    # 见 _inject_subagent_blocks 头注释。异常吞掉——注入失败退化为原有形态
+    # （Agent 卡+result），绝不影响主链回放。
+    try:
+        lines = _inject_subagent_blocks(lines, ordered, main_dir)
     except Exception:
         pass
     return lines
@@ -3004,6 +3016,12 @@ def _subagent_rows_from_jsonl(path):
                         if b.get("type") == "text" and (b.get("text") or "").strip():
                             _push({"k": "text", "text": b["text"][:2000],
                                    "model": model})
+                        elif b.get("type") == "thinking" and (b.get("thinking") or "").strip():
+                            # v2.43：thinking 入 rows——子代理会话主 flow 化要
+                            # 「有思考」（用户原话）；回放窗格同渲染（hg-sub-think
+                            # 折叠行）。旧行为只 text/tool_use，think 块被丢弃。
+                            _push({"k": "think", "text": b["thinking"][:2000],
+                                   "model": model})
                         elif b.get("type") == "tool_use":
                             inp = b.get("input") or {}
                             hint = (inp.get("command") or inp.get("file_path")
@@ -3028,6 +3046,136 @@ def _subagent_rows_from_jsonl(path):
                 + [{"k": "note", "text": "…中间已省略 %d 条（详情见完整转写）…" % (_total - 200)}]
                 + (rows[150:] + list(_tail))[-50:])
     return rows
+
+
+def _subagent_transcript_candidates(main_dir, csids, agent):
+    """v2.43（内部共用）：agentId → 子代理转写候选路径（按优先级序）。
+    ① projects 主会话同目录 <agent>.jsonl（旧版 CLI）；② 新版 CLI（2.1.267+）
+    tasks 目录 %LOCALAPPDATA%\\Temp\\claude\\<项目转码名>\\<主会话id>\\tasks\\
+    <agent>.output——项目转码名即 main_dir 的 basename，lineage 全链逐会话试
+    （task_id 全局唯一，多目录存在也不歧义）。回放接口与 transcript_for 段
+    注入共用本查找。"""
+    out = []
+    if main_dir:
+        out.append(os.path.join(main_dir, agent + ".jsonl"))
+    la = os.environ.get("LOCALAPPDATA")
+    if la and main_dir:
+        for csid in csids or []:
+            out.append(os.path.join(la, "Temp", "claude",
+                                    os.path.basename(main_dir), csid,
+                                    "tasks", agent + ".output"))
+    return out
+
+
+def _subagent_rows_for(main_dir, csids, agent):
+    """v2.43（内部共用）：候选路径依序解析（isfile 才读；读失败 None 时试
+    下一候选），返回首个可读结果；None=两源均未命中。"""
+    for p in _subagent_transcript_candidates(main_dir, csids, agent):
+        if os.path.isfile(p):
+            rows = _subagent_rows_from_jsonl(p)
+            if rows is not None:
+                return rows
+    return None
+
+
+# v2.43：transcript_for 注入全量过程行的段数上限——更早的段只出 stub 段头
+# （点击段头走回放窗格看全程）。3 = 每次切会话至多 3 次转写读+解析的
+# 性能护栏（数百 KB 级 JSONL，实测每段数十 ms；无子代理会话零开销）。
+_SUBAGENT_BLK_FULL = 3
+
+
+def _inject_subagent_blocks(lines, csids, main_dir):
+    """v2.43：transcript_for 尾段——Agent/Task 派发行后插入子代理过程行，
+    前端聚成主 flow 里的子代理段（与实时路径同构）。行型：
+    sub_open（段头数据：agent/type/desc/model/err[/stub]）/ sub_text /
+    sub_think / sub_tool（result 就近挂回）/ sub_result（孤儿结果）/ sub_note。
+    容量护栏：每段沿用回放「头150+尾50」窗口（_subagent_rows_from_jsonl）；
+    仅最近 _SUBAGENT_BLK_FULL 个段拉全量，更早段 stub=True 只出段头。
+    无转写（旧会话/未完成回合/已被清理/空转写）不出段——退化为原有形态
+    （Agent 卡+result），不报错（老会话兼容铁律）。"""
+    if not main_dir:
+        return lines
+    ag_rows = [i for i, ln in enumerate(lines)
+               if isinstance(ln, dict) and ln.get("role") == "tool"
+               and ln.get("text") in ("Task", "Agent")]
+    if not ag_rows:
+        return lines
+    parsed = []
+    for i in ag_rows:
+        m = re.search(r"agentId:\s*([0-9a-zA-Z_-]{8,64})",
+                      str((lines[i] or {}).get("result") or ""))
+        if m:
+            parsed.append((i, m.group(1)))
+    if not parsed:
+        return lines
+    full = set(aid for _, aid in parsed[-_SUBAGENT_BLK_FULL:])
+    out = []
+    for i, ln in enumerate(lines):
+        out.append(ln)
+        hit = next((p for p in parsed if p[0] == i), None)
+        if not hit:
+            continue
+        _, aid = hit
+        inp = ln.get("input") or {}
+        head = {"role": "sub_open", "agent": aid,
+                "type": inp.get("subagent_type") or inp.get("agent_type") or "Task",
+                "desc": str(inp.get("description") or "")[:200],
+                "model": "", "err": bool(ln.get("err"))}
+        if aid not in full:
+            head["stub"] = True
+            out.append(head)
+            continue
+        rows = _subagent_rows_for(main_dir, csids, aid)
+        if not rows:
+            continue           # 无转写/空转写：不出段（老会话兼容退化）
+        head["model"] = next((r.get("model") for r in rows
+                              if r.get("k") == "text" and r.get("model")), "")
+        blk = _map_subagent_rows(aid, rows)
+        if not blk:
+            continue
+        out.append(head)
+        out.extend(blk)
+    return out
+
+
+def _map_subagent_rows(agent, rows):
+    """v2.43（内部共用）：回放 rows → 主 flow 段行序列。tool_result 就近
+    挂回 sub_tool 行（FIFO 配对——转写无 tool_use_id，CLI 流序下 result 恒
+    跟在其 tool_use 之后，并行多工具按到达序回填；孤儿结果独立 sub_result
+    行）。sub_tool 行带 summary/input/result/err——前端懒抽屉 _histToolBodyHtml
+    直接可用。"""
+    out, pend = [], []
+    for r in rows:
+        k = r.get("k")
+        if k == "text":
+            out.append({"role": "sub_text", "agent": agent,
+                        "text": r.get("text") or "",
+                        "model": r.get("model") or ""})
+        elif k == "note":
+            out.append({"role": "sub_note", "agent": agent,
+                        "text": r.get("text") or ""})
+        elif k == "tool":
+            row = {"role": "sub_tool", "agent": agent, "text": r.get("name") or "",
+                   "summary": r.get("hint") or "", "input": {}, "result": None,
+                   "ts": ""}
+            if r.get("err"):
+                row["err"] = True
+            out.append(row)
+            pend.append(row)
+        elif k == "think":
+            out.append({"role": "sub_think", "agent": agent,
+                        "text": r.get("text") or ""})
+        elif k == "result":
+            if pend:
+                t = pend.pop(0)
+                t["result"] = r.get("text") or ""
+                if r.get("err"):
+                    t["err"] = True
+            else:
+                out.append({"role": "sub_result", "agent": agent,
+                            "text": r.get("text") or "",
+                            "err": bool(r.get("err"))})
+    return out
 
 
 @harness_bp.route("/subagent_replay")
@@ -3061,26 +3209,10 @@ def harness_subagent_replay():
             break
     if not main_dir:
         return jsonify({"ok": True, "found": False, "rows": []})
-    rows = None
-    # 源①（优先，旧版 CLI）：主会话同目录的子代理独立 jsonl
-    sub_path = os.path.join(main_dir, agent + ".jsonl")
-    if os.path.isfile(sub_path):
-        rows = _subagent_rows_from_jsonl(sub_path)
-    # 源②（兜底，新版 CLI 子代理转写迁移）：tasks 目录挂在
-    # %LOCALAPPDATA%\\Temp\\claude\\<项目转码名>\\<主会话id>\\tasks\\ 下——
-    # 项目转码名即 main_dir 的 basename（projects 与 Temp\\claude 同码，
-    # 样例 D--AI------Pro）；lineage 全链逐会话试：续聊链上任一会话启动的
-    # task 都能命中（task_id 全局唯一，多目录存在也不歧义）
-    if rows is None:
-        la = os.environ.get("LOCALAPPDATA")
-        if la:
-            for csid in csids:
-                tpath = os.path.join(la, "Temp", "claude",
-                                     os.path.basename(main_dir), csid,
-                                     "tasks", agent + ".output")
-                if os.path.isfile(tpath):
-                    rows = _subagent_rows_from_jsonl(tpath)
-                    break
+    # v2.43：双源查找抽共用 _subagent_rows_for（transcript_for 的子代理段
+    # 注入同源复用；语义不变：①projects 同目录优先 ②新版 CLI tasks 目录按
+    # lineage 全链兜底，读失败继续试下一候选）
+    rows = _subagent_rows_for(main_dir, csids, agent)
     if rows is None:
         return jsonify({"ok": True, "found": False, "rows": []})
     return jsonify({"ok": True, "found": True, "rows": rows})

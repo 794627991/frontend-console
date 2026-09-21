@@ -2398,6 +2398,32 @@ html {
   border-left: 2px solid var(--accent); border-radius: 6px; padding: 4px 10px;
   max-width: 86%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .h-tool.sub { margin-left: 24px; }
+
+/* v2.43 子代理会话段：子代理过程在主 flow 的结构化容器——段头（头像+
+   「角色 · 模型」+状态点）+ 段体（思考/工具/气泡，与主会话同构）。左缘紫
+   （与思考段同色系但弱一档）+ 浅底延续 sub 弱化语言；段内行不再重复缩进 */
+.h-subblock { display: flex; flex-direction: column; gap: 6px; margin: 2px 0 2px 16px;
+  max-width: 100%; padding: 8px 10px 10px; border-radius: 8px;
+  border: 1px solid var(--border);
+  border-left: 3px solid color-mix(in srgb, var(--h-violet, #8957e5) 55%, var(--border));
+  background: color-mix(in srgb, var(--bg-card) 55%, transparent); }
+.h-subblock.err { border-left-color: var(--neon-red, #e06c75); }
+.h-subblock-head { display: flex; align-items: center; gap: 7px; width: 100%;
+  background: transparent; border: none; padding: 0; cursor: pointer;
+  font: inherit; color: var(--fg); text-align: left; border-radius: 4px; }
+.h-subblock-head:hover .h-subblock-name { color: var(--accent); }
+.h-subblock-name { font-size: 12px; font-weight: 600; }
+.h-subblock-state { font-size: 10.5px; font-family: var(--font-mono); color: var(--muted); }
+.h-subblock-state.run { color: var(--h-ok); animation: hg-sub-pulse 1.2s ease-in-out infinite; }
+.h-subblock-state.ok { color: var(--h-ok); }
+.h-subblock-state.err { color: var(--h-err); }
+@keyframes hg-sub-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+.h-subblock-body { display: flex; flex-direction: column; gap: 6px; }
+/* 段已整体弱化（浅底+左缘），段内行撤掉旧 sub 行的双重缩进/降透明度 */
+.h-subblock-body > .h-msg.sub { margin-left: 0; opacity: 1; max-width: 94%; }
+.h-subblock-body > .h-tool.sub { margin-left: 0; }
+.h-subblock-body > .h-think-seg.sub { font-size: 12px; }
+.h-subblock-note { font-size: 11px; color: var(--muted); font-style: italic; padding: 0 2px; }
 .h-tool-name { color: var(--accent); font-weight: 600; margin-right: 6px; }
 .h-tool-arg { opacity: .8; }
 .h-tool-res { align-self: flex-start; font-family: var(--font-mono); font-size: 11px;

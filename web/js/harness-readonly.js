@@ -30,6 +30,9 @@
     let cur = null;
     lines.forEach((l, i) => {
       const role = l.role;
+      // v2.43.1（R-次要④）：子代理段行（sub_*）只读层不渲染（下方角色链无
+      // 分支），也不入轮 steps——计入会把「N 个步骤」虚高
+      if (typeof role === 'string' && role.indexOf('sub_') === 0) return;
       if (role === 'user') {
         cur = { idx: [], user: l, ui: i };
         turns.push(cur);
