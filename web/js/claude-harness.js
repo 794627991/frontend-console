@@ -189,6 +189,7 @@ const _HG = {
   initN: 0,             // v2.35：本 SSE 流已见的 system/init 数——第 2 个起=CLI 自发新回合（后台任务通知/协作回传），前端即时亮运行态
   agentModels: null,    // v2.35：/agent_models 缓存 {类型: 模型名}（Task 起跑时预显示子代理模型；实跑模型以子代理事件 message.model 覆盖）
   peerNames: {},        // v2.37（P1-F①）：task_id/原始名 → 友好名映射（task_started 的 subagent_type 翻译；协作行显示用，完整 id 收 title）
+  peerSent: null,       // v2.39：SendMessage tool_use_id → to 映射（task_notification 按 tool_use_id 反查原转交线名，修回传气泡配不上线）
 };
 
 // ---- 抽屉：工具名 → 展示名（用户口径：bash*n read*m grep*x 编辑*y）----
@@ -2352,7 +2353,12 @@ function buildClaudeHarnessTab(opts = {}) {
         // strict 不命中即 no-op）
         if (sub === 'task_notification') {
           const sum = String(o.summary || '').trim().slice(0, 120);
-          const _hit = _hgPeerFreezeByName(o.task_id, sum, true)
+          // v2.39：SendMessage 续派的包装任务——task_id 是 CLI 包装新 id，
+          // 先按建线时记的 tool_use_id→to 映射反查原线名（peerSent），命中
+          // 即原线精确配对；原有 task_id/subagent_type 两级兜底不变。
+          const sentTo = (_HG.peerSent || {})[o.tool_use_id];
+          const _hit = _hgPeerFreezeByName(sentTo, sum, true)
+              || _hgPeerFreezeByName(o.task_id, sum, true)
               || _hgPeerFreezeByName(o.subagent_type, sum, true);
           if (_hit) renderSideStatus();
           // v2.37R3（复审C）：仅协作语境上报（该 task 是 collab 档案，或本
@@ -2474,8 +2480,15 @@ function buildClaudeHarnessTab(opts = {}) {
           } else {
             renderToolUse(b, isSub, o.parent_tool_use_id);
             // v2.27.3：转交识图/其他会话 = 强过程反馈，分割线比收起的工具行显眼
-            if (!isSub && b.name === 'SendMessage' && b.input && b.input.to)
+            // v2.39：记 tool_use_id → to 映射——SendMessage 续派后台代理时 CLI
+            // 包装成新 Task，task_notification.task_id 是包装后的新 id，与线的
+            // data.peer(=input.to) 永不相等 → strict 配对恒 miss → 线被标「状态
+            // 未知」回传气泡不显示（用户实锤）。notification 时按 tool_use_id
+            // 反查此映射即命中原线。
+            if (!isSub && b.name === 'SendMessage' && b.input && b.input.to) {
+              (_HG.peerSent || (_HG.peerSent = {}))[b.id] = b.input.to;
               renderPeerRelay(b.input.to);
+            }
           }
         }
       }
@@ -3825,8 +3838,20 @@ function buildClaudeHarnessTab(opts = {}) {
     // initialization」实锤。此前 agentsRpl 恒空、回调不执行埋着不炸；v2.38
     // 历史回放填充后面板 C 区必炸降级。tail 中转替代自引用，rid 编号语义不变。
     const rplTail = rplAll.slice(-3);
-    const rpl = rplTail
-      .map((a, i) => Object.assign({ rid: 'rpl' + (rplAll.length - rplTail.length + i) }, a));
+    // v2.40 修断链：rid 必须写回存档对象。旧写法只把 rid 合进渲染副本
+    // （Object.assign({rid...}, a)），存档条目本身没有 rid——条目点击走
+    // _hgAgentToggle 时按 data-hg-ag 里的 rid 去 agentsRpl.find(x =>
+    // x.rid === id)，存档无 rid 恒 miss → if(!a) return 静默无反应，详情
+    // 卡（含「回放该子代理过程」按钮）整链不可达：副本上的 rid 是无根之
+    // 木。这里给无 rid 的存档条目补发持久 rid 并写回存档（mutate 的是我
+    // 们自己的数据对象，安全）：_HG.rplSeq 模块内自增发号，唯一且跨渲染
+    // 稳定（数组 shift 后同条目 rid 不漂移），已有 rid 不重发；渲染副本
+    // 改 Object.assign({}, a) 平移继承，rid 语义从「数组位置」变「持久
+    // 序号」，rid 值本身无展示/无持久化消费，语义安全。
+    rplTail.forEach(a => {
+      if (!a.rid) a.rid = 'rpl' + ((_HG.rplSeq = (_HG.rplSeq || 0) + 1));
+    });
+    const rpl = rplTail.map(a => Object.assign({}, a));
     // v2.35（P1-5）：协作代理（SendMessage 转交的独立会话/识图转交）——从
     // 消息流「已转交」线派生（dataset.peer/t0/done/psum 随快照序列化），
     // 带「协作」徽章与 Task 子代理视觉区分：peer 无实况事件流，点击只跳线
