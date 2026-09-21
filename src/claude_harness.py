@@ -2274,8 +2274,11 @@ def transcript_for(s):
                         # 满屏空白圆角条的根因），还把真正的思考/工具行挤出可视区。
                         t = "\n".join(texts).strip()
                         if t:
+                            # v2.38 带 model：前端历史重建气泡的模型徽章数据源
+                            # （此前不落 → 旧会话气泡只剩头像字母没模型名，用户实锤）
                             lines.append({"role": "assistant", "text": t[:8000],
-                                          "ts": o.get("timestamp") or ""})
+                                          "ts": o.get("timestamp") or "",
+                                          "model": (o.get("message") or {}).get("model") or ""})
                         for tl in tools:
                             if tl["name"] in _VISION_TOOLS:
                                 # v2.28：识图 MCP = vision_relay 分割线行（前端 📤

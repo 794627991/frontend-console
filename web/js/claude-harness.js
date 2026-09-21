@@ -253,8 +253,7 @@ function buildClaudeHarnessTab(opts = {}) {
         <div class="hg-search-wrap"><input class="hg-search" data-hg-search placeholder="搜索会话" spellcheck="false"></div>
         <div class="hg-sessions" data-hg-sessions></div>
         <button class="hg-prompt-btn" data-hg-vision title="识图配置（MCP 识图模型/端点映射/提示词）">👁 识图配置</button>
-        <button class="hg-prompt-btn" data-hg-roles title="三角色设计开关（双形态：轻快主模型=轻主力+designer 设计代理；高级主模型=决策者+executor/coder；切换后下条消息生效）">👥 三角色</button>
-        <button class="hg-prompt-btn" data-hg-roles-cfg title="三角色配置：模型槽/端点角色映射/审计模式与免审线（保存后下条消息热更生效）">👥 三角色配置</button>
+        <button class="hg-prompt-btn" data-hg-roles-cfg title="三角色配置：开关/模型槽/端点角色映射/审计模式与免审线（保存后下条消息热更生效）。双形态：轻快主模型=轻主力+designer；高级主模型=决策者+executor/coder">👥 三角色</button>
         <button class="hg-prompt-btn" data-hg-prompt title="管理自定义提示词（全局/项目，会话启动时注入）">📜 提示词</button>
         <button class="hg-prompt-btn" data-hg-proxy-btn title="Claude 代理：重试代理（429/5xx 自动重试）+ 用量统计。点开代理面板">
           <img src="/ico/proxy.png" alt="proxy" style="width:14px;height:14px;vertical-align:-2px;"> Proxy
@@ -1175,7 +1174,15 @@ function buildClaudeHarnessTab(opts = {}) {
       const bare = model ? String(model).split('[')[0] : '';
       const meta = document.createElement('div');
       meta.className = 'h-mmeta';
+      // v2.38 角色徽章：三角色开启时按形态标主会话角色（strong=决策者/
+      // light=轻主力）。缓存未拉到不标——不编造归属。样式复用 h-mmodel，
+      // 加右距与模型徽章隔开。
+      const rj = _hgRolesCache;
+      const roleB = (rj && rj.ok && rj.roles && rj.roles.enabled)
+        ? `<span class="h-mmodel" style="margin-right:6px;" title="三角色形态下的主会话角色">${rj.mode === 'light' ? '轻主力' : '决策者'}</span>`
+        : '';
       meta.innerHTML = `<span class="h-ava ${_hgAvaCls(bare || 'AI')}">${esc((bare || 'AI').charAt(0).toUpperCase())}</span>` +
+        roleB +
         (bare ? `<span class="h-mmodel" title="本条回复的实跑模型">${esc(bare)}</span>` : '');
       d.appendChild(meta);
     }
@@ -1578,7 +1585,7 @@ function buildClaudeHarnessTab(opts = {}) {
       // 正确性优先，历史气泡恢复全渲染（懒抽屉+懒高亮已覆盖大头开销）。
       renderUser(l.text, imgs, files, false, l.ts ? new Date(l.ts).getTime() : 0);
     }
-    else if (l.role === 'assistant') renderAsst(l.text);
+    else if (l.role === 'assistant') renderAsst(l.text, false, null, l.model || _HG.model || '');
     else if (l.role === 'thinking') {
       // v2.24 懒抽屉：历史思考段只建壳（默认收起），点开才渲染 markdown——
       // 大会话重建的大头就是几十 K 字符的 thinking 渲染
@@ -5276,36 +5283,12 @@ function buildClaudeHarnessTab(opts = {}) {
   // 保存/开关变化后由面板流程刷新——简单起见每 30s 兜底刷一次
   setInterval(paintVisionBtn, 30000);
 
-  // ==================== 三角色开关（v2.29.3）====================
-  // 点击即切（POST /roles），下条消息经引导词指纹热更自动生效（换系统
-  // 提示 + 结构禁权），已有会话无需重建。默认关闭（用户定调）。
-  const rolesBtnEl = q('[data-hg-roles]');
-  async function paintRolesBtn() {
-    const j = await _hgRolesFetch();      // v2.32：与面板三角色行同源缓存
-    if (!rolesBtnEl) return;
-    const on = !!(j && j.ok && j.roles && j.roles.enabled);
-    rolesBtnEl.innerHTML = '👥 三角色 <span class="hg-vstat ' + (on ? 'ok' : 'off') +
-      '">· ' + (on ? '已开启' : '未开启') + '</span>';
-    return on;
-  }
-  // v2.32：开关主体抽出（左侧按钮与面板三角色行共用）
-  async function rolesToggle() {
-    try {
-      const cur = _hgRolesCache || await _hgRolesFetch();
-      const target = !(cur && cur.ok && cur.roles && cur.roles.enabled);
-      const r = await fetch('/api/harness/roles', {method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({enabled: target})});
-      const j = await r.json();
-      if (!j.ok) { showBanner(j.err || '切换失败', 3000, true); return; }
-      showBanner(target
-        ? '👥 三角色已开启——下条消息起本会话按决策者模式运行（派发执行者/编程者）'
-        : '👥 三角色已关闭——下条消息起恢复直连干活', 3600);
-      paintRolesBtn();
-    } catch(e) { showBanner('切换失败：' + e, 3000, true); }
-  }
-  if (rolesBtnEl) rolesBtnEl.onclick = () => rolesToggle();
-  paintRolesBtn();
+  // ==================== 三角色（v2.38 整合）====================
+  // v2.38：「三角色」快捷开关按钮删除（与配置面板重复，用户实锤「这俩
+  // 配置重复了」）——启用/停用统一走「三角色」配置面板里的开关（保存
+  // POST /roles 全量含 enabled）。这里只做启动缓存预热：主气泡的角色
+  // 徽章（决策者/轻主力）渲染要读 _hgRolesCache。
+  _hgRolesFetch();
 
   // ==================== 识图配置（v2.28.2：MCP 后端）====================
   // 识图双通道（v2.28.5）：主通道=网关内置 mcp__4_5v_mcp__analyze_image
@@ -5431,14 +5414,12 @@ function buildClaudeHarnessTab(opts = {}) {
   }
 
   // ==================== 三角色配置（v2.34）====================
-  // 整节配置入口（此前只能手改 config.json）：模型槽/端点角色映射/审计
-  // 模式/免审线。侧栏「👥 三角色」按钮仍是快捷开关（点击即切），这里是
-  // 完整编辑器——enabled 与开关同一状态（保存后 paintRolesBtn 刷新双向
-  // 同步）。保存走 POST /roles（merge 写盘）：模型槽/免审线在引导词里 →
+  // 整节配置入口（此前只能手改 config.json）：开关/模型槽/端点角色映射/
+  // 审计模式/免审线。v2.38 起唯一入口（快捷开关按钮已删，开关在面板里）。
+  // 保存走 POST /roles（merge 写盘）：模型槽/免审线在引导词里 →
   // 指纹热更下条消息换词重启 + agents 重生成；audit_mode 回合结算读盘即
   // 时生效。模式与识图面板同款（hgVisionManager）。
-  // v2.37（P1-D）：配置面板打开主体抽函数——侧栏按钮与面板 C 区三角色行
-  //（点击行为已从「直接切开关」改为此处，防误触）共用
+  // v2.37（P1-D）：配置面板打开主体抽函数——按钮与面板 C 区三角色行共用
   async function openRolesCfg() {
     let j = null;
     try { j = await (await fetch('/api/harness/roles')).json(); } catch(_) {}
@@ -5451,8 +5432,7 @@ function buildClaudeHarnessTab(opts = {}) {
       const jr = await r.json();
       if (!jr.ok) { showBanner(jr.err || '保存失败', 3000, true); return; }
       showBanner('👥 三角色配置已保存——模型槽/免审线随下条消息热更生效（agents 自动重生成），审计模式立即生效', 4200);
-      _hgRolesFetch();                          // 面板三角色行同源缓存刷新
-      paintRolesBtn();                          // 侧栏开关状态同步
+      _hgRolesFetch();                          // 缓存刷新（气泡角色徽章同源）
     } catch(e) { showBanner('保存失败：' + e, 3000, true); }
   }
   q('[data-hg-roles-cfg]').onclick = openRolesCfg;
