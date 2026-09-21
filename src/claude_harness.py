@@ -2944,39 +2944,20 @@ def harness_audit_gate():
     return jsonify({"ok": True, "gate": gate})
 
 
-@harness_bp.route("/subagent_replay")
-def harness_subagent_replay():
-    """v2.38：历史子代理回放数据源。?sid=&agent=<agentId(=task_started 的
-    task_id)>。子代理是独立 session，事件不在主会话 jsonl 里（实测主链
-    转写零 top-level parent_tool_use_id 行），但有自己的 jsonl 且与主会话
-    同目录（projects/<proj>/<agentId>.jsonl）。按 id 读它、抽文本/工具调
-    用/结果序列供前端回放窗格重建。found=False = 转写不存在（旧会话/已被
-    CLI 清理/独立协作会话）。"""
-    s = _get_or_create(request.args.get("sid") or "")
-    if not s:
-        return jsonify({"ok": False, "err": "会话不存在"}), 404
-    agent = (request.args.get("agent") or "").strip()
-    if not agent or not re.match(r"^[0-9a-zA-Z_-]{8,64}$", agent):
-        return jsonify({"ok": False, "err": "agent 参数非法"}), 400
-    # 主会话 jsonl 定位（与 _check_peer_lines 同源逻辑：按 lineage+当前 id 找）
-    main_dir = None
-    import glob as _g
-    for csid in [x for x in (list(getattr(s, "lineage", None) or [])
-                             + [s.session_id]) if x]:
-        for cand in _g.glob(os.path.join(os.path.expanduser("~"), ".claude",
-                                         "projects", "*", csid + ".jsonl")):
-            main_dir = os.path.dirname(cand)
-            break
-        if main_dir:
-            break
-    if not main_dir:
-        return jsonify({"ok": True, "found": False, "rows": []})
-    sub_path = os.path.join(main_dir, agent + ".jsonl")
-    if not os.path.isfile(sub_path):
-        return jsonify({"ok": True, "found": False, "rows": []})
+def _subagent_rows_from_jsonl(path):
+    """v2.42（内部共用）：解析子代理转写 jsonl → 回放 rows。返回 None=文件
+    不可读（miss，调用方继续试兜底源）；list=解析结果（可为空——文件存在
+    但无有效行，如实返回空让前端走「转写存在但无可回放内容」分支）。
+    抽出共用的原因：新版 CLI（2.1.267+ Agent 工具）的子代理转写迁移到
+    %LOCALAPPDATA%\\Temp\\claude\\<项目转码名>\\<主会话id>\\tasks\\<taskId>.output，
+    实测行结构与 projects/<proj>/<agentId>.jsonl 同构（assistant 行
+    message.content 含 text/tool_use/thinking 块且带 model 字段，user 行
+    tool_result 块同构；多出的 attachment/system 行被 type 过滤跳过，
+    thinking 块本就不提取——回放不需要），两源走同一解析避免复制。
+    容量护栏沿用 v2.37R3 流式「保头 150 + 滚动尾 50」——O(1) 内存全量
+    扫描，无硬帽：尾部恒为真实最后 50 行（最终交付报告不会丢），省略数
+    精确。"""
     rows = []
-    # v2.37R3（复审B）：流式「保头 150 + 滚动尾 50」——O(1) 内存全量扫描，
-    # 无硬帽：尾部恒为真实最后 50 行（最终交付报告不会丢），省略数精确
     from collections import deque
     _tail = deque(maxlen=50)
     _total = 0
@@ -2998,10 +2979,10 @@ def harness_subagent_replay():
         return ""
 
     try:
-        with open(sub_path, "r", encoding="utf-8", errors="replace") as f:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
             for raw in f:
                 raw = raw.strip()
-                # v2.37R2（复审2/R3）：全量扫描无硬帽——rows 满 200 后新行
+                # v2.37R2/R3（复审2/R3）：全量扫描无硬帽——rows 满 200 后新行
                 # 溢出进 _tail 滚动窗（见 _push），尾部恒为真实最后 50 行
                 if not raw:
                     continue
@@ -3022,7 +3003,7 @@ def harness_subagent_replay():
                             continue
                         if b.get("type") == "text" and (b.get("text") or "").strip():
                             _push({"k": "text", "text": b["text"][:2000],
-                                         "model": model})
+                                   "model": model})
                         elif b.get("type") == "tool_use":
                             inp = b.get("input") or {}
                             hint = (inp.get("command") or inp.get("file_path")
@@ -3030,15 +3011,15 @@ def harness_subagent_replay():
                                     or inp.get("query") or inp.get("description")
                                     or inp.get("subject") or inp.get("prompt") or "")
                             _push({"k": "tool", "name": b.get("name") or "",
-                                         "hint": str(hint)[:120]})
+                                   "hint": str(hint)[:120]})
                 else:
                     for b in blocks:
                         if isinstance(b, dict) and b.get("type") == "tool_result":
                             _push({"k": "result",
-                                         "text": _txt(b.get("content"))[:200],
-                                         "err": bool(b.get("is_error"))})
+                                   "text": _txt(b.get("content"))[:200],
+                                   "err": bool(b.get("is_error"))})
     except OSError:
-        return jsonify({"ok": True, "found": False, "rows": []})
+        return None
     # v2.37R2/R4：头 150 + 省略标注 + 真实尾 50——rows 恒持前 200，
     # rows[150:]（50 行）与 _tail 拼接后取尾 50 = 真实最后 50 行
     # （终审2：旧式仅拼 _tail 会丢 rows[150:200] 区间，[201,249] 全错）
@@ -3046,6 +3027,62 @@ def harness_subagent_replay():
         rows = (rows[:150]
                 + [{"k": "note", "text": "…中间已省略 %d 条（详情见完整转写）…" % (_total - 200)}]
                 + (rows[150:] + list(_tail))[-50:])
+    return rows
+
+
+@harness_bp.route("/subagent_replay")
+def harness_subagent_replay():
+    """v2.38：历史子代理回放数据源。?sid=&agent=<agentId(=task_started 的
+    task_id)>。子代理是独立 session，事件不在主会话 jsonl 里（实测主链
+    转写零 top-level parent_tool_use_id 行）。按 id 读转写、抽文本/工具调
+    用/结果序列供前端回放窗格重建。v2.42 双源：源①（优先）旧版 CLI 落
+    projects/<proj>/<agentId>.jsonl（与主会话同目录）；源②（兜底）新版
+    CLI（2.1.267+）Agent 工具的子代理转写迁移到 %LOCALAPPDATA%\\Temp\\
+    claude\\<项目转码名>\\<主会话id>\\tasks\\<taskId>.output（JSONL=完整
+    子代理会话，行结构与①同构——真实样例实测验证）。found=False = 两源
+    均未命中（旧会话/已被 CLI 清理/跨会话协作）。"""
+    s = _get_or_create(request.args.get("sid") or "")
+    if not s:
+        return jsonify({"ok": False, "err": "会话不存在"}), 404
+    agent = (request.args.get("agent") or "").strip()
+    if not agent or not re.match(r"^[0-9a-zA-Z_-]{8,64}$", agent):
+        return jsonify({"ok": False, "err": "agent 参数非法"}), 400
+    # 主会话 jsonl 定位（与 _check_peer_lines 同源逻辑：按 lineage+当前 id 找）
+    import glob as _g
+    csids = [x for x in (list(getattr(s, "lineage", None) or [])
+                         + [s.session_id]) if x]
+    main_dir = None
+    for csid in csids:
+        for cand in _g.glob(os.path.join(os.path.expanduser("~"), ".claude",
+                                         "projects", "*", csid + ".jsonl")):
+            main_dir = os.path.dirname(cand)
+            break
+        if main_dir:
+            break
+    if not main_dir:
+        return jsonify({"ok": True, "found": False, "rows": []})
+    rows = None
+    # 源①（优先，旧版 CLI）：主会话同目录的子代理独立 jsonl
+    sub_path = os.path.join(main_dir, agent + ".jsonl")
+    if os.path.isfile(sub_path):
+        rows = _subagent_rows_from_jsonl(sub_path)
+    # 源②（兜底，新版 CLI 子代理转写迁移）：tasks 目录挂在
+    # %LOCALAPPDATA%\\Temp\\claude\\<项目转码名>\\<主会话id>\\tasks\\ 下——
+    # 项目转码名即 main_dir 的 basename（projects 与 Temp\\claude 同码，
+    # 样例 D--AI------Pro）；lineage 全链逐会话试：续聊链上任一会话启动的
+    # task 都能命中（task_id 全局唯一，多目录存在也不歧义）
+    if rows is None:
+        la = os.environ.get("LOCALAPPDATA")
+        if la:
+            for csid in csids:
+                tpath = os.path.join(la, "Temp", "claude",
+                                     os.path.basename(main_dir), csid,
+                                     "tasks", agent + ".output")
+                if os.path.isfile(tpath):
+                    rows = _subagent_rows_from_jsonl(tpath)
+                    break
+    if rows is None:
+        return jsonify({"ok": True, "found": False, "rows": []})
     return jsonify({"ok": True, "found": True, "rows": rows})
 
 

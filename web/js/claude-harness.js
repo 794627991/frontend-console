@@ -1378,6 +1378,11 @@ function buildClaudeHarnessTab(opts = {}) {
     const dur = fmtDur((Date.now() - (+(el.dataset.t0 || 0) || Date.now())) / 1000);
     if (i) i.innerHTML = '📤 已转交 · 📥 已回传 · 用时 ' + dur;
     el.dataset.done = String(Date.now());
+    // v2.41：定格即已回传——清 unknown/stale 残留标记。不清则迟到的真实
+    // 回传打在 unknown 线上后标记滞留：面板 C 区过滤（不显 unknown/stale 线）
+    // 会把「已回传」误埋掉，协作行行尾也错显「状态未知」而非用时
+    delete el.dataset.unknown;
+    delete el.dataset.stale;
     if (psum) el.dataset.psum = String(psum).replace(/\s+/g, ' ').trim().slice(0, 120);
     renderSideStatus();
   }
@@ -1430,6 +1435,11 @@ function buildClaudeHarnessTab(opts = {}) {
           if (el.dataset.done || !el.isConnected) continue;
           if (j.results && j.results[el.dataset.peer]) {
             el.dataset.done = String(Date.now());
+            // v2.41R2：unknown 必须一并清——上一回合标过 unknown 的线本次核
+            // 实命中补记 done 时，若残留 unknown 会被面板 C 区过滤（不显
+            // unknown/stale 线）误埋，「已回传（转写核实补记）」行消失。与
+            // _hgPeerLineFreeze 的清标记保持同一不变量：定格即清残留标记
+            delete el.dataset.unknown;
             delete el.dataset.stale;
             _hgPeerLineStop(el);
             const i0 = el.querySelector('i');
@@ -3464,7 +3474,10 @@ function buildClaudeHarnessTab(opts = {}) {
   function _hgPeerPending() {            // 还有未回传的协作等待（任意一条未定格）
     // v2.37R6：unknown（回合终结复核未检出回传）不算等待——否则输入框/
     // 面板永久挂「等待协作回传」
-    return _hgPeerLines().some(el => !el.dataset.done && el.dataset.unknown !== '1');
+    // v2.41R2：stale（>30min 疑似残留）同步排除——与面板 C 区过滤/pill 口径
+    // 统一为「stale/unknown 都不算等待」，防输入框提示与 pill 对同一状态相反
+    return _hgPeerLines().some(el => !el.dataset.done
+      && el.dataset.unknown !== '1' && el.dataset.stale !== '1');
   }
   function _hgInputState() {             // 输入框占位文案：运行态/子代理/协作等待联动
     let ph;
@@ -3896,7 +3909,13 @@ function buildClaudeHarnessTab(opts = {}) {
     const _pbase = el => (_HG.peerNames && _HG.peerNames[el.dataset.peer])
       || _AGENT_LABEL[el.dataset.peer] || el.dataset.peer || '其他会话';
     const peers = peerLines
-      .filter(el => !el.dataset.done || Date.now() - +(el.dataset.done) < 60000)
+      // v2.41：unknown/stale 残留线不再派生面板协作行（用户实锤「一堆疑似
+      // 残留永久挂着」）——它们没有 done 标记，旧过滤拦不住，重启后还随快照
+      // 恢复回来。主 flow 转交线保留作历史记录；迟到的真实回传到达时
+      // _hgPeerLineFreeze 定格（清 unknown/stale + 记 done）后按 60s 完成
+      // 窗正常回面板。连带（正向）：stale 线不再计入「N 运行中」pill。
+      .filter(el => el.dataset.unknown !== '1' && el.dataset.stale !== '1'
+        && (!el.dataset.done || Date.now() - +(el.dataset.done) < 60000))
       .slice(-4);
     const list2 = list.filter(a => !(a.collab && a.taskId && peerIds.has(a.taskId)));
     const running2 = list2.filter(a => !a.done).sort((x, y) => x.t0 - y.t0);
@@ -3905,7 +3924,7 @@ function buildClaudeHarnessTab(opts = {}) {
     sec.hidden = !show.length && !peers.length;
     if (sec.hidden) return;
     const pill = sec.querySelector('[data-hg-d-agrun]');
-    const pendPeers = peers.filter(el => !el.dataset.done && el.dataset.unknown !== '1');   // R6：unknown 不计运行中
+    const pendPeers = peers.filter(el => !el.dataset.done);   // v2.41：unknown/stale 已在过滤头排除（R6 判定前移）
     pill.hidden = !running2.length && !pendPeers.length;
     pill.textContent = (running2.length + pendPeers.length) + ' 运行中';
     const _baseCount = {};
@@ -3962,17 +3981,16 @@ function buildClaudeHarnessTab(opts = {}) {
       const disp = _baseCount[base] > 1 ? `${base}·#${sameBase.indexOf(el) + 1}` : base;
       const durTxt = doneAt ? fmtDur(Math.max(1, Math.round((doneAt - t0) / 1000))) : '';
       const sum = el.dataset.psum || '';
-      // v2.37R6：stale（>30min 疑似残留）/ unknown（核实无回传）不再冒充等待
-      const stale = el.dataset.stale === '1';
-      const unknown = el.dataset.unknown === '1';
+      // v2.41R2：过滤头已排除 unknown/stale 线（不上面板），此处 stale/unknown
+      // 恒 false，「疑似残留/状态未知」分支全不可达，摘除死代码；标记逻辑本身
+      // 保留在 dataset 派生层，供 _hgPeerPending/迟回传定格/verify 等消费
       return `<div class="hg-dyn-agent peer ${pend ? 'run' : 'done'}" data-hg-peer-row="1"` +
-        ` title="${esc(raw !== disp ? raw + '\n' : '')}${pend ? (stale ? '疑似残留（超 30 分钟），点击核实' : '协作中：独立会话无实况窗格，点击跳转交线') : '已回传，点击跳转交线'}">` +
+        ` title="${esc(raw !== disp ? raw + '\n' : '')}${pend ? '协作中：独立会话无实况窗格，点击跳转交线' : '已回传，点击跳转交线'}">` +
         `<span class="hg-dyn-adot"></span>` +
         `<span class="hg-dyn-pbadge">协作</span>` +
         `<span class="hg-dyn-at">${esc(disp)}</span>` +
-        `<span class="hg-dyn-desc">${esc(pend ? (stale ? '疑似残留，点击核实' : (unknown ? '状态未知（回合已结束）' : '等待结论回传')) : (sum ? sum : '已回传'))}</span>` +
-        (pend && !stale && !unknown ? `<b class="hg-dyn-el" data-t0="${t0}">0s</b>`
-              : `<b class="hg-dyn-el">${stale ? '疑似残留' : (unknown ? '状态未知' : durTxt)}</b>`) + '</div>';
+        `<span class="hg-dyn-desc">${esc(pend ? '等待结论回传' : (sum ? sum : '已回传'))}</span>` +
+        (pend ? `<b class="hg-dyn-el" data-t0="${t0}">0s</b>` : `<b class="hg-dyn-el">${durTxt}</b>`) + '</div>';
     }).join('');
     // v2.39：重渲恢复已展开的详情卡——上面 innerHTML 全量覆盖会把插在行后
     // 的详情卡冲掉（用户实锤「点击展开后不一会又缩回去」）。条目已滚出列表
@@ -4114,6 +4132,16 @@ function buildClaudeHarnessTab(opts = {}) {
   // v2.38：历史子代理回放窗格——数据源是子代理自己的转写（独立 session
   // jsonl，经 /subagent_replay 按 agentId 取），不是内存事件流；切会话快照
   // 往返后内容随 DOM 保留，仍可重开重拉（源在转写，永远可重建）
+  // v2.41：不可回放结论记忆（agentId 全局唯一作键）——found=false 即转写
+  // 文件不存在（旧会话/被清理/跨会话协作），重拉永远同结果；记入本集后
+  // 再点「回放该子代理过程」直接出示结论不发请求。同 tab 防重由既有
+  // sc.dataset.replayed 承担（fetch 前写入、found=false 不清除即早退），本集
+  // 补 tab 被上限逐出/_subDrop 后重开的场景（新 sc 无标记，否则会重拉）。
+  // v2.42：后端已加新版 CLI tasks 转写兜底源，found=false 场景收窄但仍有
+  // （转写被清理等），文案同步改中性不再断言具体原因
+  const _subNoreplay = new Set();
+  const _subNoReplayNote = () =>
+    '<div class="hg-sub-replay-note">未找到该子代理的转写记录，历史过程不可回放</div>';
   function _subReplay(tid, type, desc, agentId) {
     if (!_subPaneEl) return;
     const a = (_HG.agents || {})[tid] || {};
@@ -4136,6 +4164,13 @@ function buildClaudeHarnessTab(opts = {}) {
     const sc = _sub.tabs[tid] && _sub.tabs[tid].sc;
     if (!sc) return;
     if (sc.dataset.replayed === agentId) { _sub.manual = true; return; }   // 已拉过
+    if (_subNoreplay.has(agentId)) {      // v2.41：已判定不可回放——直接出示结论，不再发请求
+      sc.innerHTML = '';
+      sc.dataset.replayed = agentId;
+      _subAppend(sc, _subNoReplayNote(), true);
+      _sub.manual = true;
+      return;
+    }
     sc.innerHTML = '';
     sc.dataset.replayed = agentId;
     _subAppend(sc, `<div class="hg-sub-replay-note">回放加载中…</div>`, true);
@@ -4160,8 +4195,17 @@ function buildClaudeHarnessTab(opts = {}) {
         const sc2 = _sub.tabs[tid] && _sub.tabs[tid].sc;
         if (!sc2) return;
         sc2.innerHTML = '';
-        if (!j.found || !(j.rows || []).length) {
-          _subAppend(sc2, `<div class="hg-sub-replay-note">未找到该子代理的转写（agentId=${esc(agentId)}）——历史回放不可用</div>`, true);
+        if (!j.found) {
+          // v2.42：后端双源（projects 旧源+新版 CLI tasks 兜底）均未命中——
+          // 文件不存在是持久事实，重拉永远同结果；记住结论，重点/重开不再发请求
+          _subNoreplay.add(agentId);
+          _subAppend(sc2, _subNoReplayNote(), true);
+          return;
+        }
+        if (!(j.rows || []).length) {
+          // v2.41R2：转写存在但无可渲染行——与「没有独立转写」是两回事，给中性
+          // 文案且不进 noreplay 集（tab 重开后可重试，防误判永久锁死回放入口）
+          _subAppend(sc2, '<div class="hg-sub-replay-note">转写存在但无可回放内容</div>', true);
           return;
         }
         _subAppend(sc2, `<div class="hg-sub-replay-note">回放 · ${esc(_AGENT_LABEL[type] || type)} · ${j.rows.length} 条记录</div>`, true);
