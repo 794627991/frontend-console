@@ -3580,14 +3580,64 @@ function buildClaudeHarnessTab(opts = {}) {
     row.classList.add('hg-dyn-jump');
     setTimeout(() => row.classList.remove('hg-dyn-jump'), 1600);
   }
-  function _hgAgentToggle(rowEl) {       // 子代理行展开/收起详情卡（单开，不持久化）
+  // v2.39：详情卡构建抽纯函数——_dynAgents 重渲（秒表 tick/SSE 都触发
+  // renderSideStatus）是 innerHTML 全量覆盖，插入在行后的详情卡每次都被
+  // 冲掉（用户实锤「点击展开后不一会又缩回去」）。展开态记 dyn.agentDetailOpen，
+  // _dynAgents 重建后按 id 恢复插回。
+  function _hgAgentDetailEl(id, a) {
+    const dur = a.done
+      ? (a.t0 ? fmtDur(Math.max(1, Math.round((a.doneAt - a.t0) / 1000))) : '—')
+      : (a.t0 ? fmtDur((Date.now() - a.t0) / 1000) + '（进行中）' : '—');
+    // v2.35（P1-4）：模型行——实跑 model（子代理 assistant 事件实报）优先，
+    // frontmatter 预显示兜底，都无=内置代理按 CLI 行为跑主链模型
+    const mdl = a.model || (_HG.agentModels && _HG.agentModels[a.type]) || '';
+    // 用量行——task_progress/task_notification 的 CLI 侧计数（total_tokens/
+    // tool_uses）；网关会把 assistant.message.usage 置零（实测），不作为源
+    const usageTxt = a.tokens
+      ? `${(a.tokens / 1000).toFixed(1)}K tokens · ${a.toolN || 0} 次工具`
+      : '';
+    const d = document.createElement('div');
+    d.className = 'hg-dyn-agdetail';
+    d.innerHTML =
+      (id && !a.replay ? `<div class="hg-dyn-kv"><span class="k">ID</span>` +
+        `<span class="v mono" data-hg-copy="${esc(id)}" title="点击复制">${esc(id)}</span></div>` : '') +
+      (a.replay ? '' :
+        `<div class="hg-dyn-kv"><span class="k">模型</span><span class="v" title="${esc(mdl ? '实跑/frontmatter 模型' : '内置或无定义文件代理，按 CLI 行为跑主链模型')}">${esc(mdl || '主链模型')}${a.bg ? ' · 后台' : ''}</span></div>`) +
+      (a.replay || !usageTxt ? '' :
+        `<div class="hg-dyn-kv"><span class="k">用量</span><span class="v">${esc(usageTxt)}</span></div>`) +
+      `<div class="hg-dyn-kv"><span class="k">起止</span><span class="v">` +
+        `${a.t0 ? new Date(a.t0).toTimeString().slice(0, 8) : '—'} → ` +
+        `${a.doneAt ? new Date(a.doneAt).toTimeString().slice(0, 8) : (a.done ? '历史' : '运行中')}</span></div>` +
+      `<div class="hg-dyn-kv"><span class="k">耗时</span><span class="v">${dur}` +
+        `${a.interrupted ? ' · 已中断' : a.err ? ' · 失败' : ''}</span></div>` +
+      (a.desc ? `<div class="hg-dyn-agres">${esc(a.desc)}</div>` : '') +
+      (a.result ? `<div class="hg-dyn-agres">${esc(a.result)}</div>` : '') +
+      // v2.38：回放入口——带 agentId 的已完成代理（含历史条目）可开回放
+      // 窗格（数据源=子代理转写）；协作代理只回看结论
+      (a.done && !a.collab && (a.taskId || a.agentId)
+        ? `<button class="hg-dyn-replay-btn" data-hg-replay="${esc(id)}"` +
+          ` data-hg-replay-aid="${esc(a.taskId || a.agentId || '')}"` +
+          ` data-hg-replay-type="${esc(a.type || '')}">▣ 回放该子代理过程</button>` : '') +
+      (a.collab && a.result
+        ? `<button class="hg-dyn-replay-btn" data-hg-replay="${esc(id)}"` +
+          ` data-hg-replay-collab="1" data-hg-replay-type="${esc(a.type || '')}">▣ 回看协作结论</button>` : '');
+    return d;
+  }
+  function _hgAgentToggle(rowEl) {       // 子代理行展开/收起详情卡（单开）
     const nxt = rowEl.nextElementSibling;
-    if (nxt && nxt.classList.contains('hg-dyn-agdetail')) { nxt.remove(); return; }
+    if (nxt && nxt.classList.contains('hg-dyn-agdetail')) {
+      nxt.remove();
+      if (_HG.dyn) _HG.dyn.agentDetailOpen = null;
+      return;
+    }
     dynEl.querySelectorAll('.hg-dyn-agdetail').forEach(x => x.remove());
     const id = rowEl.dataset.hgAg || '';
     const a = (_HG.agents || {})[id]
       || ((_HG.dyn && _HG.dyn.agentsRpl) || []).find(x => x.rid === id);
     if (!a) return;
+    if (_HG.dyn) _HG.dyn.agentDetailOpen = id;
+    rowEl.insertAdjacentElement('afterend', _hgAgentDetailEl(id, a));
+  }
     const dur = a.done
       ? (a.t0 ? fmtDur(Math.max(1, Math.round((a.doneAt - a.t0) / 1000))) : '—')
       : (a.t0 ? fmtDur((Date.now() - a.t0) / 1000) + '（进行中）' : '—');
@@ -3943,6 +3993,17 @@ function buildClaudeHarnessTab(opts = {}) {
         (pend && !stale && !unknown ? `<b class="hg-dyn-el" data-t0="${t0}">0s</b>`
               : `<b class="hg-dyn-el">${stale ? '疑似残留' : (unknown ? '状态未知' : durTxt)}</b>`) + '</div>';
     }).join('');
+    // v2.39：重渲恢复已展开的详情卡——上面 innerHTML 全量覆盖会把插在行后
+    // 的详情卡冲掉（用户实锤「点击展开后不一会又缩回去」）。条目已滚出列表
+    // （60s 完成窗口/上限 5）则清展开态，不复活孤儿卡。
+    const openId = (_HG.dyn || {}).agentDetailOpen;
+    if (openId) {
+      const row = sec.querySelector(`[data-hg-d-aglist] [data-hg-ag="${CSS.escape(openId)}"]`);
+      const a = (_HG.agents || {})[openId]
+        || ((_HG.dyn && _HG.dyn.agentsRpl) || []).find(x => x.rid === openId);
+      if (row && a) row.insertAdjacentElement('afterend', _hgAgentDetailEl(openId, a));
+      else if (_HG.dyn) _HG.dyn.agentDetailOpen = null;
+    }
   }
   function _dynActs() {                  // E 最近工具：ring 20 条倒序，点击跳消息流，Bash 可复制
     const sec = _sec('acts');
