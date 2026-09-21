@@ -328,6 +328,23 @@ def _run_mcp_vision_mode():
     harness_vision_mcp.main()
 
 
+def _run_audit_hook_mode():
+    """light 形态直改免审线的事中闸 hook 模式（v2.40）。
+    PreToolUse hook：CLI 在每次 Edit/Write/MultiEdit/NotebookEdit 前调起本
+    进程，查后端 /api/harness/audit_gate——本回合直改达免审线则 exit 2 拦下
+    （stderr 提示模型改派 dev），否则/任何异常 exit 0 放行（闸失效不阻塞）。
+    打包后走 `exe --audit-hook`（与 --mcp-ask 同模式：src 不在盘上）；windowed
+    下 stdin/stderr 可能为 None，fd 重包装同款。逻辑在 harness_audit_hook。"""
+    if sys.stdin is None:
+        try: sys.stdin = open(0, 'r', encoding='utf-8')
+        except Exception: pass
+    if sys.stderr is None:
+        try: sys.stderr = open(2, 'w', encoding='utf-8')
+        except Exception: pass
+    from src import harness_audit_hook
+    harness_audit_hook.main()
+
+
 def main():
     # --mcp-ask 模式：交互式提问 MCP server（harness 的 --mcp-config 指过来）
     if '--mcp-ask' in sys.argv:
@@ -336,6 +353,12 @@ def main():
     # --mcp-vision 模式：识图 MCP server（4_5v_mcp，analyze_image）
     if '--mcp-vision' in sys.argv:
         _run_mcp_vision_mode()
+        return
+    # --audit-hook 模式：light 形态直改免审线 PreToolUse 事中闸（见
+    # harness_audit_hook.py）。必须在单实例锁之前返回——hook 是主实例派生
+    # 的短命子进程（每次直改类工具调用起一个），不该去抢主实例的 mutex。
+    if '--audit-hook' in sys.argv:
+        _run_audit_hook_mode()
         return
     # --snip-grab 模式：截图子进程（v2.3.12 内置截图）。独立进程开 DPI 感知后
     # ImageGrab 全屏——主进程不动 DPI 设置（动了主窗尺寸回归），详见 src/snip.py

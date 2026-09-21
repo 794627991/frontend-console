@@ -20,7 +20,7 @@ v2（微信式改造）新增：
 铁律约束：不动 claude_conn/claude_sessions/claude_setup/claude_default；
 不落盘工具日志（Claude 自写 ~/.claude/projects 转写）。
 """
-import os, json, base64, re, sys, subprocess, threading, time, uuid, hashlib
+import os, json, base64, re, sys, subprocess, threading, time, uuid, hashlib, tempfile
 import logging   # v2.3.3：log 此前从未定义（续命失败分支 log.warning 一走就
 log = logging.getLogger(__name__)   # NameError 吞掉真实异常——Cython 编译抓出的潜雷）
 from queue import Queue, Empty
@@ -892,6 +892,37 @@ def _audit_lines(name, inp):
     return 0
 
 
+def _audit_hook_settings_path():
+    """写 light 形态会话的 --settings 临时文件（v2.40 直改免审线事中闸注入）。
+
+    内容只有 hooks 键：Edit/Write/MultiEdit/NotebookEdit 的 PreToolUse 指向
+    `--audit-hook` 子命令（它查 /audit_gate 决定放行/拦截，见
+    harness_audit_hook.py）。双形态命令与 _ask_mcp_cfg_path 同构：源码=
+    python main.py，打包=exe 自身（src 不在盘上）。
+
+    返回 settings 路径；任何失败返回 None（注入失败不阻塞会话启动——
+    铁律：闸是增强不是依赖，回合结算审计仍在兜底）。"""
+    try:
+        if getattr(sys, "frozen", False):
+            parts = [sys.executable, "--audit-hook"]
+        else:
+            # 路径正斜杠：cmd shim 会吞反斜杠转义（_ask_mcp_cfg_path 实测坑）
+            parts = [sys.executable or "python",
+                     os.path.join(_SRC_DIR, "main.py").replace("\\", "/"),
+                     "--audit-hook"]
+        # 每段双引号：解释器装在 Program Files 等带空格路径时裸拼会断
+        cmd = " ".join('"%s"' % p for p in parts)
+        cfg = {"hooks": {"PreToolUse": [{
+            "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+            "hooks": [{"type": "command", "command": cmd}]}]}}
+        fd, p = tempfile.mkstemp(suffix=".json", prefix="claude_audit_")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False)
+        return p
+    except Exception:
+        return None
+
+
 # v2.34.1：审计警示卡持久化（~/.serialconsole_pro/harness_audit_log.jsonl，
 # 每行 {sid, ts, text}，512K 截半——vision_mcp.log 同款惯例）。背景：warn/
 # 降级/中断档的卡只 emit 进事件缓冲，transcript_for 回放（解析 jsonl）没有
@@ -1018,6 +1049,9 @@ class HarnessSession:
         # 派发标记；streak=连续违规回合数（防自动补审死循环：连续 3 回合
         # 违规后降级为仅警示）。回合结算（result/interrupted/exit）清零。
         self._audit = {"lines": 0, "dev": False, "reviewer": False, "streak": 0}
+        # v2.40：light 形态事中闸的 --settings 临时文件路径（kill 时清理；
+        # revive 重启由 start() 重建——hooks 是进程启动参数，活进程不热更）
+        self._audit_settings_path = None
         self._seq = 0
         self.clients = []
         self.clients_lock = threading.Lock()
@@ -1119,6 +1153,18 @@ class HarnessSession:
             _roles_ban = roles_disallow(eff_model)
             if _roles_ban:
                 argv += ["--disallowedTools", _roles_ban]
+            elif self._audit_state() is not None:
+                # v2.40 light 形态事中闸：直改免审线硬拦截。与 strong 禁权
+                # 互斥共存（strong 全禁了 Edit 根本到不了闸；light 不禁工具
+                # ——主会话要干杂活，改用 PreToolUse hook 在直改累计达线时
+                # exit 2 拦下。回合结算审计只能事后补审，这里把超线掐灭在
+                # 发生前，双层）。_audit_state 非 None=roles 开+light+
+                # audit_mode!=off，与结算审计同源判定（audit_mode=off 时
+                # 闸与审计同步关）；注入失败照常启动（闸失效不阻塞工作）。
+                _p = _audit_hook_settings_path()
+                if _p:
+                    self._audit_settings_path = _p
+                    argv += ["--settings", _p]
         if sys_prompt:
             argv += ["--append-system-prompt", sys_prompt]
         if self.name:
@@ -1151,6 +1197,19 @@ class HarnessSession:
         self.reader.start()
         threading.Thread(target=self._drain_stderr, daemon=True).start()
 
+    def _audit_settings_cleanup(self):
+        """v2.40：删事中闸 --settings 临时文件并清引用（claude 启动时已读
+        完；revive 重启会重建新文件）。kill_proc 与 reader loop 自然死亡
+        路径（finally 不走 kill_proc）都要调——漏后者的话 revive 的 start()
+        覆盖 _audit_settings_path，旧文件每次死亡-复活泄漏一个到 %TEMP%。"""
+        _p = getattr(self, "_audit_settings_path", None)
+        if _p:
+            self._audit_settings_path = None
+            try:
+                os.remove(_p)
+            except Exception:
+                pass
+
     def kill_proc(self, quiet=False):
         """只杀进程保元数据与事件缓冲（闲置回收/复活前清理用）。
         v2.14：强杀会让 claude 来不及清理 peer 注册条目（~/.claude/sessions/
@@ -1163,6 +1222,7 @@ class HarnessSession:
         中间进程已自然退出的触发链）。"""
         self.alive = False
         self.busy = False
+        self._audit_settings_cleanup()
         if quiet:
             proc_alive = bool(self._proc and self._proc.poll() is None)
             if proc_alive:
@@ -1803,6 +1863,9 @@ class HarnessSession:
             was_busy = self.busy    # v2.34：进程死时回合是否仍在进行（下方结算用）
             self.alive = False
             self.busy = False
+            # v2.40：自然死亡不走 kill_proc——事中闸 settings 临时文件在这
+            # 条路径也要清（否则 revive 覆盖引用后旧文件泄漏，见方法注释）
+            self._audit_settings_cleanup()
             # v2.20：计划内重启（会话内切模型）吞掉 exit——只吞一次，
             # 防止标志位残留吞掉真正的意外退出
             if getattr(self, "_suppress_exit", False):
@@ -2840,6 +2903,45 @@ def harness_transcript():
     return jsonify({"ok": True, "lines": lines or [], "alive": s.alive,
                     "busy": s.busy, "busy_since": s.busy_since,
                     "model": s.model, "title": s.title, "seq": s._seq})
+
+
+@harness_bp.route("/audit_gate")
+def harness_audit_gate():
+    """v2.40 light 形态直改免审线事中闸查询端点（PreToolUse hook 在每次
+    Edit/Write/MultiEdit/NotebookEdit 前来问）。?session_id=<CLI 侧会话 id>。
+    返回 {ok, gate}；gate.block=true=本回合主会话直改累计已达免审线，hook
+    exit 2 拦下（msg 随行给模型）。
+
+    口径与 _audit_settle 同源：_audit_state 判启用（roles 开+light+
+    audit_mode!=off；读一次小配置文件，改配置即时生效），used 取会话
+    _audit 的本回合 lines 累计。block 判定用 >=（达到即拦下一次）而非
+    结算的 >（超线追责）——事中闸的职责是让超线根本不发生，事后审计
+    只兜闸失效的漏网。
+
+    查不到会话（session_id 不在 _sessions：别的实例/已换代）一律放行。
+    注意子代理与主会话同 session_id（官方 hooks 文档+本机 CLI 2.1.278
+    实证：hook stdin 无独立 id，子代理标记是 agent_id/agent_type 字段）
+    ——dev 直改的放行判定在 hook 脚本侧做（agent_id/agent_type 有值即
+    exit 0，不发起本查询），拦它等于闸自锁。本接口纯内存读（配置文件
+    除外），每次直改都调，无磁盘扫描。"""
+    csid = (request.args.get("session_id") or "").strip()
+    gate = {"block": False}
+    if csid:
+        with _sessions_lock:
+            s = next((x for x in _sessions.values()
+                      if x.session_id == csid), None)
+        if s is not None:
+            st = s._audit_state()
+            if st is not None:
+                _, max_free = st
+                used = int((s._audit or {}).get("lines") or 0)
+                if used >= max_free:
+                    gate = {"block": True, "used": used, "max_free": max_free,
+                            "msg": ("本回合直改已 %d 行，达到免审线 %d——按轻"
+                                    "主力分工请用 Task 工具派 dev 代理实施本"
+                                    "改动；确需继续直改可在设置里调整免审线。"
+                                    % (used, max_free))}
+    return jsonify({"ok": True, "gate": gate})
 
 
 @harness_bp.route("/subagent_replay")

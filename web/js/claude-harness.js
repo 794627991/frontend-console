@@ -1190,6 +1190,25 @@ function buildClaudeHarnessTab(opts = {}) {
         roleB +
         (bare ? `<span class="h-mmodel" title="本条回复的实跑模型">${esc(bare)}</span>` : '');
       d.appendChild(meta);
+    } else {
+      // v2.39（dev）：子代理灰行归属标识——用户实锤：子代理中间输出文本行
+      // 无任何归属，不知道是谁说的。数据源 _sub.tabs[subId]（Task 派单时
+      // _subOpen 建档，label 已是 _AGENT_LABEL 翻译名；model 为实跑模型，
+      // 随子代理 assistant 事件到达覆盖）。注意 renderAsst 的 model 参数对
+      // isSub 恒 null（调用处 isSub ? null : ...，主链专用），isSub 分支只能
+      // 自取档案。tab 被上限逐出/极端时序缺档 → 退「子代理」不抛错。历史
+      // 重建路径不产生 sub 行（后端转写滤掉带 parent_tool_use_id 的行，
+      // src/claude_harness.py），空档兜底已覆盖全部可达场景。
+      const tab = _sub.tabs[subId] || {};
+      const label = tab.label || '子代理';
+      const bare = tab.model ? String(tab.model).split('[')[0] : '';
+      const ac = tab.type || bare || label;   // 头像取色字符：类型优先（同型恒同色）
+      const meta = document.createElement('div');
+      meta.className = 'h-mmeta';
+      meta.innerHTML =
+        `<span class="h-ava ${_hgAvaCls(ac)}" style="width:12px;height:12px;font-size:8px;">${esc(ac.charAt(0).toUpperCase())}</span>` +
+        `<span class="h-mmodel" title="子代理：${esc(label)}${bare ? '，实跑模型 ' + esc(bare) : ''}">${esc(bare ? label + ' · ' + bare : label)}</span>`;
+      d.appendChild(meta);
     }
     if (!isSub) {                          // v2.28.16：回滚按钮（回合边界授予）
       const bar = document.createElement('div');
