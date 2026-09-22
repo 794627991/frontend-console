@@ -329,10 +329,11 @@ def _run_mcp_vision_mode():
 
 
 def _run_audit_hook_mode():
-    """light 形态直改免审线的事中闸 hook 模式（v2.40）。
+    """light 形态直改轻审线的事中闸 hook 模式。
     PreToolUse hook：CLI 在每次 Edit/Write/MultiEdit/NotebookEdit 前调起本
-    进程，查后端 /api/harness/audit_gate——本回合直改达免审线则 exit 2 拦下
-    （stderr 提示模型改派 dev），否则/任何异常 exit 0 放行（闸失效不阻塞）。
+    进程，查后端 /api/harness/audit_gate——本回合直改达轻审线上限且尚未派过
+    reviewer 则 exit 2 拦下（stderr 指路送审，审过即开闸），否则/任何异常
+    exit 0 放行（闸失效不阻塞）。
     打包后走 `exe --audit-hook`（与 --mcp-ask 同模式：src 不在盘上）；windowed
     下 stdin/stderr 可能为 None，fd 重包装同款。逻辑在 harness_audit_hook。"""
     if sys.stdin is None:
@@ -354,7 +355,7 @@ def main():
     if '--mcp-vision' in sys.argv:
         _run_mcp_vision_mode()
         return
-    # --audit-hook 模式：light 形态直改免审线 PreToolUse 事中闸（见
+    # --audit-hook 模式：light 形态直改轻审线 PreToolUse 事中闸（见
     # harness_audit_hook.py）。必须在单实例锁之前返回——hook 是主实例派生
     # 的短命子进程（每次直改类工具调用起一个），不该去抢主实例的 mutex。
     if '--audit-hook' in sys.argv:

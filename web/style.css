@@ -3383,6 +3383,14 @@ html {
 .hg-dyn-pbadge { flex: none; font-size: 9px; color: var(--accent);
   border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
   border-radius: 3px; padding: 0 3px; opacity: .9; }
+/* 重模型角色角标（designer/reviewer）：与「协作」徽章同款式、暖色区分
+   （轻主会话直干 vs 重模型代理一眼可辨）；子代理段头同款 .hg-sub-hv */
+.hg-dyn-hbadge { flex: none; font-size: 9px; color: var(--hgd-halt);
+  border: 1px solid color-mix(in srgb, var(--hgd-halt) 45%, transparent);
+  border-radius: 3px; padding: 0 3px; opacity: .9; }
+.hg-sub-hv { display: inline-block; font-size: 9px; color: var(--hgd-halt);
+  border: 1px solid color-mix(in srgb, var(--hgd-halt) 45%, transparent);
+  border-radius: 3px; padding: 0 2px; margin-left: 4px; line-height: 1.3; }
 .hg-dyn-agent.peer .hg-dyn-adot { background: var(--hgd-wait); }
 .hg-dyn-agent.peer.done .hg-dyn-adot { background: var(--hgd-done); }
 .hg-dyn-agent.peer.run .hg-dyn-adot { animation: hgDynPulse 1.6s ease-in-out infinite; }

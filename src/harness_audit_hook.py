@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
-"""light 形态直改免审线的事中闸（Claude Code PreToolUse hook 进程）。
+"""light 形态直改轻审线的事中闸（Claude Code PreToolUse hook 进程）。
 
-v2.34 的回合结算审计（_audit_settle）是事后兜底——违规已发生只能补审；
-本模块补事中硬拦截：light（轻主力）形态会话启动时把本进程注册为
-PreToolUse hook（--settings 临时文件的 hooks 键，见 claude_harness.
+回合结算审计（_audit_settle）是事后兜底——违规已发生只能补审；本模块补
+事中拦截：light（轻主力）形态会话启动时把本进程注册为 PreToolUse hook
+（--settings 临时文件的 hooks 键，见 claude_harness.
 _audit_hook_settings_path），CLI 在每次 Edit/Write/MultiEdit/NotebookEdit
-前调起本进程，它查后端 /api/harness/audit_gate 拿本回合直改累计——达到
-免审线就 exit 2（block，stderr 文案引导模型改派 dev），未超/未启用 exit 0。
+前调起本进程，它查后端 /api/harness/audit_gate 拿本回合直改累计——达线
+且本回合尚未派过 reviewer 就 exit 2（block，stderr 文案指路送审：派
+reviewer 审已完成的改动，审过即开闸），未超/已送审/未启用 exit 0。
 
 铁律：闸是增强不是依赖——后端不在/超时/输入畸形/任何异常一律 exit 0
 放行，绝不因闸自身故障阻塞工作（回合结算审计仍在，双层兜底）。
@@ -55,11 +56,11 @@ def main():
         data = json.loads(sys.stdin.read() or "{}") or {}
     except Exception:
         sys.exit(0)                       # 输入畸形：没有可判依据，放行
-    # 子代理直改放行（官方 hooks 文档+本机 CLI 2.1.278 实证）：hooks 在
-    # Task 子代理内同样触发，且 stdin 的 session_id 与主会话相同——子代理
-    # 标记是 agent_id/agent_type 字段。没有这层判定，主会话达线被拦后按
-    # 提示派 dev，dev 的 Edit 带同一 session_id 仍超线被拦死（闸自锁，
-    # 把自己指出的逃生门堵死）。dev 本来就是被派来干活的，放行。
+    # 子代理直改放行（官方 hooks 文档+本机 CLI 实证）：hooks 在 Task 子
+    # 代理内同样触发，且 stdin 的 session_id 与主会话相同——子代理标记是
+    # agent_id/agent_type 字段。没有这层判定，子代理工具触发本闸时会被
+    # 主会话的累计误拦（闸自锁）。当前子代理（designer 只读/reviewer 只审
+    # 不改）工具集本无编辑类，此判定是防将来扩展的安全层。
     # 注意：agent_type 仅在会话带 --agent 启动时主链也会携带——当前 start()
     # 的 argv 无 --agent，判 agent_id or agent_type 安全；将来引入 --agent
     # 启动需收紧为仅判 agent_id。
@@ -81,10 +82,10 @@ def main():
             resp = json.loads(r.read().decode("utf-8", "replace") or "{}") or {}
         gate = (resp or {}).get("gate") or {}
         if gate.get("block"):
-            # exit 2 = block：stderr 文案回给模型，指路派 dev——这正是轻主力
-            # 分工的本意（主会话超线直改该转派发，而非继续手改）
+            # exit 2 = block：stderr 文案回给模型，指路送审——派 reviewer
+            # 审已完成的改动，审过即开闸（直干是常态，闸只逼送审不逼停工）
             msg = str(gate.get("msg") or "").strip() \
-                or "本回合直改已达免审线，请用 Task 工具派 dev 代理实施本改动。"
+                or "本回合直改已达轻审线上限，请先用 Task 工具派 reviewer 代理审已完成的改动，审过即可继续。"
             sys.stderr.write(msg + "\n")
             sys.stderr.flush()
             sys.exit(2)
