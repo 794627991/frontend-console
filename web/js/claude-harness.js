@@ -261,7 +261,7 @@ function buildClaudeHarnessTab(opts = {}) {
         <div class="hg-search-wrap"><input class="hg-search" data-hg-search placeholder="搜索会话" spellcheck="false"></div>
         <div class="hg-sessions" data-hg-sessions></div>
         <button class="hg-prompt-btn" data-hg-vision title="识图配置（MCP 识图模型/端点映射/提示词）">👁 识图配置</button>
-        <button class="hg-prompt-btn" data-hg-roles-cfg title="三角色配置：开关/模型槽/端点角色映射/审计模式与免审线（保存后下条消息热更生效）。双形态：轻快主模型=轻主力+designer；高级主模型=决策者+executor/coder">👥 三角色</button>
+        <button class="hg-prompt-btn" data-hg-roles-cfg title="三角色配置：开关/模型槽（主会话/执行者/编程者）/端点角色映射/审计模式与分级线（保存后下条消息热更生效）。双形态：轻快主模型=轻主力（L0-L4 分级路由）；重模型=主会话直干（无派发分工，超线审计兜底）">👥 三角色</button>
         <button class="hg-prompt-btn" data-hg-prompt title="管理自定义提示词（全局/项目，会话启动时注入）">📜 提示词</button>
         <button class="hg-prompt-btn" data-hg-proxy-btn title="Claude 代理：重试代理（429/5xx 自动重试）+ 用量统计。点开代理面板">
           <img src="/ico/proxy.png" alt="proxy" style="width:14px;height:14px;vertical-align:-2px;"> Proxy
@@ -1247,12 +1247,12 @@ function buildClaudeHarnessTab(opts = {}) {
     const bare = model ? String(model).split('[')[0] : '';
     const meta = document.createElement('div');
     meta.className = 'h-mmeta';
-    // v2.38 角色徽章：三角色开启时按形态标主会话角色（strong=决策者/
-    // light=轻主力）。缓存未拉到不标——不编造归属。样式复用 h-mmodel，
-    // 加右距与模型徽章隔开。
+    // v2.38 角色徽章：三角色开启时按形态标主会话角色（v2.50：strong=
+    // 重主力直干/light=轻主力）。缓存未拉到不标——不编造归属。样式复用
+    // h-mmodel，加右距与模型徽章隔开。
     const rj = _hgRolesCache;
     const roleB = (rj && rj.ok && rj.roles && rj.roles.enabled)
-      ? `<span class="h-mmodel" style="margin-right:6px;" title="三角色形态下的主会话角色">${rj.mode === 'light' ? '轻主力' : '决策者'}</span>`
+      ? `<span class="h-mmodel" style="margin-right:6px;" title="三角色形态下的主会话角色">${rj.mode === 'light' ? '轻主力' : '重主力'}</span>`
       : '';
     meta.innerHTML = `<span class="h-ava ${_hgAvaCls(bare || 'AI')}">${esc((bare || 'AI').charAt(0).toUpperCase())}</span>` +
       roleB +
@@ -4880,19 +4880,19 @@ function buildClaudeHarnessTab(opts = {}) {
     cx.closest('.hg-dyn-kv').classList.toggle('warn', warn);
     const r = _hgRolesCache && _hgRolesCache.roles;
     const rEl = sec.querySelector('[data-hg-d-roles]');
-    // v2.37（P1-D）：形态正确 + 模型名可读——旧文案写死「决策者+执行者/编程
-    // 者」且取 r.executor（配置里无此字段→恒「?」）。/roles 响应自带
-    // mode（strong/light）与 resolved（按当前方案解析出的实模型），按形态
-    // 出对应角色行；轻主力=dev+reviewer（共用编程者槽），决策者=执行者/编程者
+    // v2.37（P1-D）：形态正确 + 模型名可读。/roles 响应自带 mode
+    // （strong/light）与 resolved（按当前方案解析出的实模型），按形态出
+    // 对应角色行；轻主力=dev+reviewer（共用编程者槽），重主力=v2.50 起
+    // 主会话直干（无派发分工，超审计线结算自查兜底）
     const _mode = _hgRolesCache && _hgRolesCache.mode;
     const _res = (_hgRolesCache && _hgRolesCache.resolved) || {};
     if (r) {
       if (r.enabled) {
         const light = _mode === 'light';
-        rEl.textContent = light ? '轻主力' : '决策者';
+        rEl.textContent = light ? '轻主力' : '重主力';
         rEl.title = light
           ? `轻主力模式（点击打开配置面板）\ndev: ${_res.coder || '…'}\nreviewer: ${_res.coder || '…'}`
-          : `决策者派发模式（点击打开配置面板）\n执行者: ${_res.executor || '…'}\n编程者: ${_res.coder || '…'}（结构禁权）`;
+          : `重模型直干模式（点击打开配置面板）\n主会话自己干所有活（编码/杂活），不派发子代理\n审计兜底：回合直改超分级线触发结算自查复核`;
       } else {
         rEl.textContent = '关闭·直连';
         rEl.title = '直连干活（点击打开配置面板可启用三角色）';
@@ -6113,7 +6113,7 @@ function buildClaudeHarnessTab(opts = {}) {
     ['/status', '会话状态与上下文用量'],
     ['/compact', '手动压缩上下文（可附保留要点：/compact 保留串口配置等）'],
     ['/rewind', '回退最近 N 个完整回合，默认 1（爆窗/坏回合逃生门；历史自动备份）'],
-    ['/roles', '三角色设计说明（决策者/执行者/编程者与当前配置）'],
+    ['/roles', '三角色设计说明（轻主力分级路由/重模型直干与当前配置）'],
     ['/mcp', 'MCP 服务器列表与连接状态（代跑 claude mcp list）'],
     ['/exit', '退出 claude 进程（会话保留，发送自动恢复）'],
   ];
@@ -6265,39 +6265,43 @@ function buildClaudeHarnessTab(opts = {}) {
       } catch(e) { showBanner('回退失败：' + e, 3000, true); }
     } else if (cmd === 'roles') {
       // v2.29.2：三角色设计说明——含按当前 API 方案解析出的实际模型。
-      // v2.30.2 双形态：主会话轻快模型 → 轻主力模式（designer 代理），
-      // 强模型 → 决策者模式（executor/coder + 结构禁权）
+      // v2.30.2 双形态；v2.50：轻主力=任务分级路由（L0-L4），重模型=
+      // 主会话直干（砍派发分工，超审计线结算自查兜底）
       (async () => {
         let j = null;
         try { j = await (await fetch('/api/harness/roles')).json(); } catch(_) {}
         const r = (j && j.roles) || {};
         const rs = (j && j.resolved) || {};
         const light = j && j.mode === 'light';
+        const numOr = (k, d) => { const n = parseInt(r[k], 10);
+          return Number.isFinite(n) ? Math.max(0, n) : d; };
         const modeRows = light ? [
-          ['当前形态', '轻主力（主会话是轻快模型）——日常对话/跑腿杂活自己干，攻坚走 dev+reviewer 两个强模型'],
+          ['当前形态', '轻主力（主会话是轻快模型）——任务分级路由：L0/L1 直干、L2 直改+轻审、L3 派 dev 攻坚、L4 高风险必审+用户确认'],
           ['开发', `dev 代理（${rs.coder || '按当前方案自动识别'}）——编码/debug/方案思考一个上下文打通（designer 已并入），自测通过再交`],
           ['审核', `reviewer 代理（${rs.coder || '按当前方案自动识别'}）——对抗审核：假定代码有错，专门挑毛病（需求符合性/逻辑/健壮性/安全/一致性），只审不改，PASS/FAIL 二选一`],
-          ['标准流程', 'dev 实现 → reviewer 对抗审核 → FAIL 回 dev 修 → 复审，致命/严重问题清零才收 → 主会话汇总答复'],
+          ['标准流程', 'L2 主会话改完 → reviewer 轻审；L3 dev 实现 → reviewer 全审 → FAIL 回炉 → 致命/严重问题清零才收 → 主会话汇总答复'],
         ] : [
-          ['当前形态', '决策者（主会话是高级模型）——只承接/派发/审核/汇总，干活工具已结构性禁用'],
-          ['执行者', `executor 代理（${rs.executor || '按当前方案自动识别'}）——信息收集/查日志/排查/跑命令/debug/杂活`],
-          ['编程者', `coder 代理（${rs.coder || '按当前方案自动识别'}）——编码攻坚，改完自测再交`],
+          ['当前形态', '重模型直干（主会话是高级模型）——需求承接/编码/debug/杂活全部自己干，不派发子代理（v2.50 起砍决策者/executor/coder 分工）'],
+          ['质量纪律', '复杂改动先列方案要点再实施，改完自测通过再交；回合累计直改超审计线由结算审计兜底（自查复核）'],
         ];
         renderSysCard('三角色设计（双形态）', [
           ...modeRows,
           ['状态', r.enabled === false ? '已关闭（config.json harness_roles.enabled）' : '已启用'],
           // v2.34：审计信息进 /roles 输出（用户定调：判定用客观事实，配置要看得见）
+          // v2.50：strong 形态也审计（超线未自查），不再「不适用」
           ['审计模式', !r.enabled ? '—（三角色未启用）'
             : light ? (r.audit_mode === 'off' ? '关闭（audit_mode=off）'
               : r.audit_mode === 'warn' ? '仅警示（audit_mode=warn）——回合结束盘点工具调用，违规出红色警示不自动续发'
               : '自动补审（audit_mode=auto，默认）——回合结束盘点工具调用记录，直改超线/跳过 reviewer 自动续发要求补审；连续 3 回合违规降级为仅警示')
-            : '不适用（决策者形态结构禁权已保证，不审计）'],
+            : (r.audit_mode === 'off' ? '关闭（audit_mode=off）'
+              : r.audit_mode === 'warn' ? '仅警示（audit_mode=warn）——回合结束盘点直改量，超线出红色警示不自动续发'
+              : '自动自查（audit_mode=auto，默认）——回合结束盘点直改量，超审计线自动续发要求自查复核；连续 3 回合违规降级为仅警示')],
           ['分级线', !r.enabled ? '—' : light
-            ? `L1 免审：单文件 ≤ ${Number.isFinite(parseInt(r.l1_max_lines, 10)) ? Math.max(0, parseInt(r.l1_max_lines, 10)) : 100} 行；L2 轻审：≤ ${Number.isFinite(parseInt(r.l2_max_files, 10)) ? Math.max(0, parseInt(r.l2_max_files, 10)) : 3} 文件且回合累计 ≤ ${Number.isFinite(parseInt(r.l2_max_lines, 10)) ? Math.max(0, parseInt(r.l2_max_lines, 10)) : 200} 行（主会话直改 + reviewer 轻审）；超 L2 属 L3——须派 dev 攻坚 + reviewer 全审（0=最严档）`
-            : '—（strong 形态无直改）'],
+            ? `L1 免审：单文件 ≤ ${numOr('l1_max_lines', 100)} 行；L2 轻审：≤ ${numOr('l2_max_files', 3)} 文件且回合累计 ≤ ${numOr('l2_max_lines', 200)} 行（主会话直改 + reviewer 轻审）；超 L2 属 L3——须派 dev 攻坚 + reviewer 全审（0=最严档）`
+            : `审计线：≤ ${numOr('l2_max_files', 3)} 文件且回合累计 ≤ ${numOr('l2_max_lines', 200)} 行——超线触发结算审计（自查复核；0=最严档）`],
           ['推荐配置', '主模型配轻快模型（如 glm-5.3-flash/flashx）——对话与杂活省 token，攻坚/审核走强模型代理，即轻主力形态'],
           ['模型解析', '端点映射（harness_roles.model_map）→ 当前方案模型表自动识别（轻快模型→执行者档，dev/reviewer 取强模型档）→ 配置兜底；换 API 方案自动适配'],
-          ['形态判定', '主会话模型名带轻快词（flash/turbo/light/mini/air…）= 轻主力形态，否则决策者形态；切模型下条消息自动换形态'],
+          ['形态判定', r.main_model ? `主会话模型槽已显式配置（harness_roles.main_model=${r.main_model}）——按此名识别形态` : '主会话模型槽未配置——按实跑模型名自动识别（带 flash/turbo/light/mini/air… 轻快词=轻主力，否则重模型直干）；切模型/改配置下条消息自动换形态'],
         ]);
       })();
     } else if (cmd === 'exit') {
@@ -6964,7 +6968,7 @@ function buildClaudeHarnessTab(opts = {}) {
   // v2.38：「三角色」快捷开关按钮删除（与配置面板重复，用户实锤「这俩
   // 配置重复了」）——启用/停用统一走「三角色」配置面板里的开关（保存
   // POST /roles 全量含 enabled）。这里只做启动缓存预热：主气泡的角色
-  // 徽章（决策者/轻主力）渲染要读 _hgRolesCache。
+  // 徽章（重主力/轻主力）渲染要读 _hgRolesCache。
   _hgRolesFetch();
 
   // ==================== 识图配置（v2.28.2：MCP 后端）====================
@@ -7091,11 +7095,11 @@ function buildClaudeHarnessTab(opts = {}) {
   }
 
   // ==================== 三角色配置（v2.34）====================
-  // 整节配置入口（此前只能手改 config.json）：开关/模型槽/端点角色映射/
-  // 审计模式/免审线。v2.38 起唯一入口（快捷开关按钮已删，开关在面板里）。
-  // 保存走 POST /roles（merge 写盘）：模型槽/免审线在引导词里 →
-  // 指纹热更下条消息换词重启 + agents 重生成；audit_mode 回合结算读盘即
-  // 时生效。模式与识图面板同款（hgVisionManager）。
+  // 整节配置入口（此前只能手改 config.json）：开关/模型槽（v2.50 起三槽：
+  // 主会话/执行者/编程者）/端点角色映射/审计模式/分级线。v2.38 起唯一入口
+  // （快捷开关按钮已删，开关在面板里）。保存走 POST /roles（merge 写盘）：
+  // 模型槽/分级线在引导词里 → 指纹热更下条消息换词重启 + agents 重生成；
+  // audit_mode 回合结算读盘即时生效。模式与识图面板同款（hgVisionManager）。
   // v2.37（P1-D）：配置面板打开主体抽函数——按钮与面板 C 区三角色行共用
   async function openRolesCfg() {
     let j = null;
@@ -7141,36 +7145,38 @@ function buildClaudeHarnessTab(opts = {}) {
       const l2f = numOr(cfg.l2_max_files, 3);
       const l2l = numOr(cfg.l2_max_lines, 200);
       ov.innerHTML = `<div class="hg-modal hg-modal-vision"><div class="hg-modal-title">👥 三角色配置</div>
-        <div class="hg-modal-body hg-vision-hint">三角色双形态按<b>主会话模型</b>自动二选一（名字带 flash/turbo/light 等轻快词=轻主力，否则=决策者）。轻主力形态按任务分级路由：L0/L1 主会话直干、L2 直改+轻审、L3 派 dev 攻坚+全审、L4 高风险必审+用户确认。保存后模型槽/分级线随下条消息热更生效（agents 自动重生成），审计模式立即生效。</div>
+        <div class="hg-modal-body hg-vision-hint">双形态按<b>主会话模型</b>二选一：<b>主会话模型槽显式配置优先</b>（按配置名识别），未配置按实跑模型名自动识别（带 flash/turbo/light 等轻快词=轻主力，否则=重模型直干）。轻主力按任务分级路由：L0/L1 主会话直干、L2 直改+轻审、L3 派 dev 攻坚+全审、L4 高风险必审+用户确认；重模型直干=主会话自己干所有活不派发，超审计线由回合结算审计兜底（自查复核）。保存后模型槽/分级线随下条消息热更生效（agents 自动重生成），审计模式立即生效。</div>
         <div class="hg-vision-row">
           <label class="hg-vision-switch"><input type="checkbox" data-hg-r-on${cfg.enabled ? ' checked' : ''}> 启用三角色</label>
-          <span class="hg-vision-state" style="font-size:11px;">当前形态：<b>${light ? '轻主力' : '决策者'}</b>（主模型 ${esc(dm || '未设置')} → ${light ? 'dev + reviewer' : 'executor + coder，结构禁权'}）</span>
+          <span class="hg-vision-state" style="font-size:11px;">当前形态：<b>${light ? '轻主力' : '重模型直干'}</b>（${cfg.main_model ? `主会话槽 ${esc(cfg.main_model)}` : `主模型 ${esc(dm || '未设置')}`} → ${light ? 'dev + reviewer' : '无派发分工，超线审计兜底'}）</span>
         </div>
         <div class="hg-vision-grid">
-          <label>执行者模型（轻快槽：strong 形态 executor 用；light 形态主会话即执行者，不装 executor）
+          <label>主会话模型（形态判定：显式配置优先——按此名识别轻主力/直干；留空=按实跑模型名自动识别）
+            <select data-hg-r-main>${mkOpts(cfg.main_model || '')}</select></label>
+          <label>执行者模型（轻快槽：端点映射与旧版兼容保留——v2.50 起两形态都不再装 executor 代理）
             <select data-hg-r-ex>${mkOpts(cfg.executor_model || '')}</select></label>
-          <label>编程者模型（强模型槽：strong 形态 coder；light 形态 dev/reviewer 共用）
+          <label>编程者模型（强模型槽：light 形态 dev/reviewer 共用）
             <select data-hg-r-co>${mkOpts(cfg.coder_model || '')}</select></label>
         </div>
         <label class="hg-vision-prompt-lab">端点角色映射（每行：端点关键字=执行者模型,编程者模型——按当前 base_url 匹配，优先于自动识别；编程者可省略=与执行者同）
           <textarea class="hg-vision-mm" data-hg-r-map spellcheck="false" style="height:56px;font-family:var(--font-mono);"
             placeholder="open.bigmodel.cn=glm-5.3-flash,glm-5.3&#10;lanz.hikvision.com=Lanz-Flash,Lanz-Max">${esc(mapText)}</textarea></label>
         <div class="hg-vision-grid">
-          <label>审计模式（仅 light 形态生效：回合结算盘点工具调用，超分级线未审/跳过 reviewer 的兜底）
+          <label>审计模式（回合结算兜底：light 盘点直改超线未审/跳过 reviewer，strong 盘点直改超线未自查）
             <select data-hg-r-am>
-              <option value="auto"${am === 'auto' ? ' selected' : ''}>auto · 违规自动续发补审（默认）</option>
+              <option value="auto"${am === 'auto' ? ' selected' : ''}>auto · 违规自动续发补审/自查（默认）</option>
               <option value="warn"${am === 'warn' ? ' selected' : ''}>warn · 仅红色警示</option>
               <option value="off"${am === 'off' ? ' selected' : ''}>off · 关闭审计</option>
             </select></label>
-          <label>L1 免审线（行）：单文件且回合累计 ≤ 此行数的小改（配置/常量/文案/注释级）主会话直改免审${light ? '' : '（当前 strong 形态不审计）'}
+          <label>L1 免审线（行）：单文件且回合累计 ≤ 此行数的小改（配置/常量/文案/注释级）主会话直改免审
             <input class="hg-vision-mm" type="number" min="0" max="100000" data-hg-r-l1
                    value="${l1}"></label>
         </div>
         <div class="hg-vision-grid">
-          <label>L2 轻审线（文件数）：回合内直改文件数上限，不超则主会话直改 + reviewer 轻审（只审 diff）
+          <label>L2 轻审线（文件数）：回合内直改文件数上限，不超则主会话直改 + reviewer 轻审（只审 diff）；重模型形态即审计线（文件数档）
             <input class="hg-vision-mm" type="number" min="0" max="1000" data-hg-r-l2f
                    value="${l2f}"></label>
-          <label>L2 轻审线（回合累计行）：直改行数上限；文件数或行数任一超线即 L3——须派 dev 攻坚 + reviewer 全审（0=最严档）
+          <label>L2 轻审线（回合累计行）：直改行数上限；light 形态任一超线即 L3 须派 dev 攻坚+reviewer 全审，重模型形态即审计线（0=最严档）
             <input class="hg-vision-mm" type="number" min="0" max="100000" data-hg-r-l2l
                    value="${l2l}"></label>
         </div>
@@ -7187,6 +7193,8 @@ function buildClaudeHarnessTab(opts = {}) {
       mkBtn('取消', false, () => close(null));
       mkBtn('保存', true, () => close({
         enabled: ov.querySelector('[data-hg-r-on]').checked,
+        // v2.50 ③：主会话模型槽（空串=清除，回落名字自动识别）
+        main_model: ov.querySelector('[data-hg-r-main]').value.trim(),
         executor_model: ov.querySelector('[data-hg-r-ex]').value.trim(),
         coder_model: ov.querySelector('[data-hg-r-co]').value.trim(),
         // 端点角色映射——发 "关键字=执行者,编程者" 行（后端按行解析，与识图
@@ -7209,7 +7217,7 @@ function buildClaudeHarnessTab(opts = {}) {
       ov.addEventListener('click', (e) => { if (e.target === ov) close(null); });
       ov.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(null); });
       wrap.appendChild(ov);
-      ov.querySelector('[data-hg-r-ex]').focus();
+      ov.querySelector('[data-hg-r-main]').focus();
     });
   }
 

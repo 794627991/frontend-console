@@ -1,15 +1,14 @@
 # -*- coding: utf-8 -*-
-"""三角色设计——harness 内置定义（v2.49）。
+"""三角色设计——harness 内置定义（v2.50）。
 
 角色定义是 harness 的一部分，不是用户手工放的 ~/.claude/agents/*.md：
-会话启动时自动把 executor（执行者）/coder（编程者）两个子代理定义安装
-到 claude 的 agents 目录（幂等：内容有变才写，配置改了模型会同步重生成）。
-任何人装了本工具即得三角色，零手工配置。
+会话启动时自动把子代理定义安装到 claude 的 agents 目录（幂等：内容有变
+才写，配置改了模型会同步重生成）。任何人装了本工具即得，零手工配置。
 
 模型名存 config.json 的 harness_roles 节（executor_model / coder_model /
-enabled / model_map；v2.34 增 audit_mode；v2.49 增 l1_max_lines /
-l2_max_files / l2_max_lines——任务分级路由的两档可数线），换 API 方案改
-配置即可，不用动代码。
+main_model / enabled / model_map；v2.34 增 audit_mode；v2.49 增
+l1_max_lines / l2_max_files / l2_max_lines——任务分级路由的两档可数线），
+换 API 方案改配置即可，不用动代码。
 
 v2.49（2026-09-22）任务分级路由重构（用户拍板，不翻案）：轻主力形态从
 「按角色二分」改为按任务复杂度五档路由——
@@ -29,6 +28,38 @@ audit_verdict / audit_gate_check，claude_harness 的回合结算与事中闸共
 
 实测要点：agent 文件的 model 字段必须写【显式模型 ID】——别名
 （opus/haiku）在这条链路上会被无视（子代理跑主链模型）。
+
+v2.50（2026-09-22）二次大改（六项，用户五需求 + 上轮遗留）：
+① 子代理禁派子代理：_TOOLS_FULL 去掉 Task——嵌套派发浪费且失控。
+  SendMessage 保留：续派回报链路要用——主会话经 SendMessage 续派子代理
+  会话（接收不依赖子代理自己的工具表），子代理向主会话回话也走它；
+② 子代理禁 git 提交：executor/coder/dev body 加铁律条「改动一律留在
+  工作区，commit/push 由主会话执行」。不做 hook 拦截——git 走 Bash 工具，
+  工具级无法只拦 commit 不拦其它命令（拦整个 Bash 掐死一切命令执行；
+  PreToolUse 按命令文本匹配误伤 git status/log 等合法用法），body 纪律
+  条 + 说明即可；
+③ 三槽全可配：配置面板/POST /roles 增第三槽 main_model（主会话模型）。
+  形态判定（light/strong）改为显式配置优先——配置了 main_model 就按
+  配置名过轻快词识别（实测名/settings 名错位时兜正形态），未配置回落
+  实跑模型名自动识别（v2.49 原行为）；
+④ strong 砍三角色分工流程（本次核心）：重模型主会话不再有
+  executor/coder 派发分工——自己干所有活（编码/杂活），引导词重写为
+  「你=干活者，直接改，超线会被审计」（无派发路由词、无免审线词）；
+  只保留审计兜底：回合累计直改超审计线（沿用 l2_max_files/
+  l2_max_lines）触发既有 auto/warn 结算审计（audit_verdict 增 strong
+  形态分支：超线未自查=违规，补救=自查复核而非派 reviewer——strong
+  不装任何角色文件，旧装 executor/coder 一次性迁移清理）。light 形态
+  L0-L4 路由与引导词原样不动；
+⑤ 工具限制收窄到审计角色：ROLE_DISALLOW/roles_disallow（strong 主会话
+  结构禁权）废除——strong 主会话现在是干活者，干活角色全工具（除①的
+  Task）；reviewer 只读限制原样保留（_TOOLS_REVIEW 不动）；
+⑥ 上轮 reviewer 遗留：P2——POST /roles 增 l1_max_lines ≤ l2_max_lines
+  交叉校验（clamp_role_limits 纯函数，超线 clamp 到 l2 并回显原因；
+  选 clamp 不选 400——面板一次存三键，400 会把整次保存打回）；P1——
+  SendMessage 续派计派发标记（claude_harness._audit_dispatch_role：按
+  input.to 名字/带[ref]/agentId 映射三形态识别，agentId 映射由 Task
+  结果回填；「worker [ref]」无名形态与跨进程 agentId 仍匹配不到，缺口
+  记录在 _audit_dispatch_role docstring）。
 """
 import json
 import os
@@ -38,7 +69,10 @@ import time
 import src.app_state as _st
 
 _ROLES_KEY = "harness_roles"
-ROLE_DISALLOW = "Bash,Edit,Write,WebFetch,WebSearch,Glob,Grep"
+# v2.50 ⑤：ROLE_DISALLOW（"Bash,Edit,Write,WebFetch,WebSearch,Glob,Grep"）
+# 与 roles_disallow() 已废除——它只作用于 strong 主会话（结构禁权逼派发），
+# v2.50 起 strong 主会话=干活者要亲自干活，禁权失去意义；reviewer 的只读
+# 限制走 _TOOLS_REVIEW（agent 级），与此常量无关，原样保留。
 
 # v2.37（P0+ 根治 c）：目录必须函数化——模块级常量硬指向真实 HOME，测试
 # monkeypatch config 路径清的却是真目录（v2.34 犯过，2026-09-21 00:33 又犯：
@@ -85,6 +119,9 @@ _LIGHT_RE = re.compile(r"flash|turbo|light|mini|fast|air|speed|lite", re.I)
 _DEFAULTS = {"enabled": False,          # v2.29.3 默认关闭（用户定调：开关开启才生效）
              "executor_model": "glm-5.3-flash",
              "coder_model": "glm-5.3",
+             # v2.50 ③：主会话模型槽——显式声明主会话用什么模型，形态判定
+             # （light/strong）据此名过轻快词识别；空串=按实跑模型名自动识别
+             "main_model": "",
              "model_map": {},
              # v2.34 light 形态审计（回合结算盘点工具调用记录，零 token）：
              "audit_mode": "auto",      # 兜底档：auto=违规自动续发补审 / warn=仅警示 / off=关
@@ -120,6 +157,10 @@ _EXECUTOR_BODY = """你是「执行者」——三角色设计里的干活担当
 - 结论先行：返回第一句就是答案/结果，再给证据（文件:行号、命令输出摘要）
 - 只报告事实与执行结果，不做方案决策
 - 线索不足就列出你的理解请派发者确认，不瞎猜着干
+
+铁律（v2.50）：改动一律留在工作区——git commit/push 由主会话执行，你没有
+提交权（不要跑 git commit / git push；git 经 Bash 执行，工具级拦不住，靠
+本条纪律）。
 """
 
 _CODER_BODY = """你是「编程者」——三角色设计里的攻坚担当（高级模型）。
@@ -132,6 +173,10 @@ _CODER_BODY = """你是「编程者」——三角色设计里的攻坚担当（
 工作方式：
 - 交付时返回：改动摘要（文件+要点）、关键决策及理由、自测结果
 - 不改需求边界；发现需求矛盾停下来向派发者说明，不自行拍板
+
+铁律（v2.50）：改动一律留在工作区——git commit/push 由主会话执行，你没有
+提交权（不要跑 git commit / git push；git 经 Bash 执行，工具级拦不住，靠
+本条纪律）。
 """
 
 _DESIGNER_BODY = """你是「设计者」——轻主力形态里的设计担当（高级模型）。
@@ -168,6 +213,10 @@ _DEV_BODY = """你是「开发」——轻主力形态的攻坚担当（高级�
   续派到本会话——跨任务记住读过的代码与已定决策，不重复冷启动重读；
   收到续派先对照上文判断是延续还是换了领域，新领域任务如实说明并建议
   派发方另开新会话
+
+铁律（v2.50）：改动一律留在工作区——git commit/push 由主会话执行，你没有
+提交权（不要跑 git commit / git push；git 经 Bash 执行，工具级拦不住，靠
+本条纪律）。
 """
 
 _REVIEWER_BODY = """你是「审核」——对抗性代码审核员（高级模型）。唯一职责：证明这份改动有问题。
@@ -201,8 +250,9 @@ FAIL —— 每个问题一条：文件:行号、问题描述、严重级（致�
 
 def update_roles_cfg(patch):
     """v2.34：merge 写角色配置（只动 patch 里出现的键，其余键保留）。返回
-    (ok, err)。生效路径与开关一致：模型槽/分级线（l1_max_lines 等，v2.49
-    取代 max_free_lines）出现在引导词里 → 下条消息前的指纹热更自动换词
+    (ok, err)。生效路径与开关一致：模型槽（v2.50 起含 main_model 主会话
+    槽——形态翻转即换词）/分级线（l1_max_lines 等，v2.49 取代
+    max_free_lines）出现在引导词里 → 下条消息前的指纹热更自动换词
     重启 + agents 重生成；audit_mode 在回合结算时读盘，即时生效。enabled
     关闭即清理 agents（残留定义会被 CLI 自动发现）。"""
     try:
@@ -301,10 +351,18 @@ def resolve_role_models(base_url=None, models=None, default=None):
 
 
 def roles_mode(model=None):
-    """主会话形态（v2.30.2 双形态）：模型名带轻快词（flash/turbo/…）→
-    "light"——轻主力模式：主会话自己干杂活+日常对话，强模型挂 designer
-    代理承接需求分析/方案设计；其余 → "strong"——决策者模式：主会话只
-    派发审核，executor/coder 干活（结构禁权）。"""
+    """主会话形态（v2.30.2 双形态；v2.50 判定源改造）：① harness_roles.
+    main_model 显式配置优先——按配置名过轻快词识别（用户声明主会话模型
+    是什么，实测名/settings 名错位时兜正形态）；② 未配置回落实跑模型名
+    自动识别。带轻快词（flash/turbo/…）→ "light" 轻主力——L0-L4 任务
+    分级路由（v2.49，原样）；其余 → "strong" 重模型直干（v2.50：主会话
+    自己干所有活不派发，超审计线由回合结算审计兜底）。"""
+    try:
+        m = str(roles_cfg().get("main_model") or "").strip()
+    except Exception:
+        m = ""
+    if m:
+        model = m
     if model and _LIGHT_RE.search(str(model).lower()):
         return "light"
     return "strong"
@@ -321,33 +379,29 @@ def _agent_md(name, description, model, body, tools=None):
             % (name, description, model, t, body))
 
 
-# 角色工具清单：dev/coder/executor 全集（含编辑——它们的核心职责就是改
-# 代码）；reviewer 定位「只审不改」——排除 Write/Edit/MultiEdit/NotebookEdit
+# 角色工具清单：干活角色（dev/coder/executor）全集（含编辑——改代码是
+# 它们的核心职责）。v2.50 ①：去掉 Task——子代理禁派子代理（嵌套派发
+# 浪费且失控）；SendMessage 保留——续派回报链路要用（主会话经它续派本
+# 会话，接收不依赖本表；子代理向主会话回话也走它）。
+# reviewer 定位「只审不改」——排除 Write/Edit/MultiEdit/NotebookEdit
+# （v2.50 ⑤：此只读限制原样保留，Task 也在 reviewer 清单里保留不动）。
 _TOOLS_FULL = ("Read, Write, Edit, MultiEdit, NotebookEdit, Bash, Glob, "
-               "Grep, WebFetch, WebSearch, Task, TodoWrite, SendMessage, "
+               "Grep, WebFetch, WebSearch, TodoWrite, SendMessage, "
                "AskUserQuestion")
 _TOOLS_REVIEW = ("Read, Bash, Glob, Grep, WebFetch, WebSearch, Task, "
                  "TodoWrite, SendMessage, AskUserQuestion")
 
 
-def _agent_files(ex_model, co_model):
-    return {
-        "executor.md": _agent_md(
-            "executor",
-            "执行者：信息收集、搜代码查日志、环境排查、跑命令、debug 定位、"
-            "机械杂活。决策者派发的执行类任务一律用此代理。",
-            ex_model, _EXECUTOR_BODY, tools=_TOOLS_FULL),
-        "coder.md": _agent_md(
-            "coder",
-            "编程者（高级模型）：编码攻坚——复杂功能实现、架构改动、疑难 "
-            "bug 修复。高难度开发任务用此代理。",
-            co_model, _CODER_BODY, tools=_TOOLS_FULL),
-    }
+# v2.50 ④：_agent_files（executor/coder 两个 agent 文件的生成器）已删——
+# strong 砍分工后两形态都不再装这两个代理（executor/coder 正文 body 保留
+# 在上方仅供历史版本已装文件的对照，不再生成）。
 
 
 _SELF_AGENTS = ("executor.md", "coder.md", "designer.md",
                 "dev.md", "reviewer.md")   # 本工具管理的角色文件（designer 已并
-                                           # 入 dev，保留在清单里只为清理旧装）
+                                           # 入 dev；executor/coder 随 strong 分工
+                                           # 一起于 v2.50 退役——都保留在清单里
+                                           # 只为清理旧装）
 
 
 def _uninstall_roles_agents():
@@ -372,20 +426,18 @@ def _uninstall_roles_agents():
 
 def install_roles_agents(model=None):
     """按当前形态安装/更新角色子代理定义到 ~/.claude/agents/（幂等：内容
-    有变才写）。strong → executor+coder；light → dev+reviewer（v2.30.4：
-    designer 并入 dev 一个上下文打通，新增 reviewer 对抗审核——用户定调
-    「设计实施分离的交接损耗大于收益，但对抗审核很关键」）。开关关闭 →
-    全部清理（残留的 agent 定义会被 CLI 自动发现，模型在关闭后仍可能
-    自发派发）。失败静默（不拖垮会话启动）。
+    有变才写）。light → dev+reviewer（v2.30.4：designer 并入 dev 一个上下
+    文打通，新增 reviewer 对抗审核）；strong → 不装任何角色（v2.50 ④：
+    重模型主会话自己干所有活，砍派发分工）。开关关闭 → 全部清理（残留的
+    agent 定义会被 CLI 自动发现，模型在关闭后仍可能自发派发）。失败静默
+    （不拖垮会话启动）。
 
     v2.37（P0+ 根治 a）【多形态并存与目录共享】：agents 目录是**全局共享**
-    的（CLI 按文件名发现，与本工具会话无关），而强/轻模型会话在用户环境
-    常并存——旧实现「按本会话形态互斥清理」会删掉并存会话正需要的另一套
-    角色文件（实测：任一会话启动/热更后，另一形态会话派发找不到
-    subagent_type 定义 → CLI 回落通用代理跑主链轻模型，强模型分级整个
-    落空）。新语义：**只确保本形态所需文件存在且内容最新，绝不动其他形态
-    的文件**（executor/coder/dev/reviewer 四名不冲突，允许共存）；唯一例外
-    是废弃名 designer.md（一次性迁移清理，v2.30.4 并入 dev）。"""
+    的（CLI 按文件名发现，与本工具会话无关）——**只确保本形态所需文件存在
+    且内容最新，绝不动其他形态的在用文件**（dev/reviewer）。v2.50 起
+    executor/coder 两形态都不再使用（strong 砍分工、light 本就不装）——与
+    designer.md 同款一次性迁移清理（残留会被 CLI 发现、诱导已无分工设计的
+    strong 主会话自发派发）。"""
     cfg = roles_cfg()
     if not cfg["enabled"]:
         _uninstall_roles_agents()
@@ -395,8 +447,11 @@ def install_roles_agents(model=None):
         os.makedirs(d, exist_ok=True)
     except Exception:
         return
+    # 废弃名：一次性迁移清理（与形态无关）——designer 并入 dev（v2.30.4）；
+    # executor/coder 随 strong 分工一起退役（v2.50 ④，无任何形态在用）
+    _obsolete = ("designer.md", "executor.md", "coder.md")
     if roles_mode(model) == "light":
-        ex_model, co_model = resolve_role_models()
+        _ex_model, co_model = resolve_role_models()
         # 轻主力形态：dev 设计+编码+debug 打通、reviewer 对抗审核——都配
         # 强模型（coder 槽）；杂活由主会话自己干，executor 不装（主会话即是）。
         wanted = {
@@ -413,22 +468,20 @@ def install_roles_agents(model=None):
                 co_model, _REVIEWER_BODY, tools=_TOOLS_REVIEW),
         }
     else:
-        ex_model, co_model = resolve_role_models()
-        wanted = _agent_files(ex_model, co_model)
+        wanted = {}     # v2.50 ④：strong 主会话直干，不装角色
     wrote = []
     for fn in _SELF_AGENTS:
         p = os.path.join(d, fn)
-        if fn == "designer.md":
-            # 废弃名：一次性迁移清理（并入 dev），与形态无关
+        if fn in _obsolete:
             try:
                 if os.path.isfile(p):
                     os.remove(p)
-                    wrote.append("designer.md(已废弃,删)")
+                    wrote.append("%s(已退役,删)" % fn)
             except Exception:
                 pass
             continue
         if fn not in wanted:
-            # 另一形态的文件——共存不清理（v2.37 P0+ 根因修复点）
+            # 另一形态的在用文件——共存不清理（v2.37 P0+ 根因修复点）
             continue
         try:
             cur = None
@@ -451,26 +504,20 @@ def ensure_roles_ready(model=None):
     角色定义（install 有变才写，成本可忽略），兜住一切上游删除路径（旧版
     互清/测试误清/人工误删），保证派发瞬间定义必在。返回安装前**缺失**的
     期望文件名清单——非空=发生过自愈，调用方应红卡告警（陈旧内容由 install
-    静默修复，审计日志可查）。"""
+    静默修复，审计日志可查）。v2.50 ④：strong 形态无角色定义可自愈——
+    空转返回 []（退役文件的清理由 install 的一次性迁移做）。"""
     if not roles_cfg()["enabled"]:
         return []
+    if roles_mode(model) != "light":
+        return []
     d = _agents_dir_guard(_agents_dir())
-    need = ["dev.md", "reviewer.md"] if roles_mode(model) == "light" \
-        else ["executor.md", "coder.md"]
+    need = ["dev.md", "reviewer.md"]
     missing = [fn for fn in need if not os.path.isfile(os.path.join(d, fn))]
     install_roles_agents(model)
     if missing:
         _agents_dir_audit("self-heal(派发前自愈)",
                           "model=%s dir=%s healed=%s" % (model or "-", d, ",".join(missing)))
     return missing
-
-
-def roles_disallow(model=None):
-    """结构禁权表：仅决策者形态（strong）返回禁权清单——逼主会话派发；
-    轻主力形态（light）返回空串——轻模型要亲自干杂活，工具不能禁。"""
-    if not roles_cfg()["enabled"]:
-        return ""
-    return ROLE_DISALLOW if roles_mode(model) == "strong" else ""
 
 
 def audit_limits(cfg=None):
@@ -490,7 +537,7 @@ def audit_limits(cfg=None):
             _int("l2_max_lines", 200))
 
 
-def audit_verdict(lines, files, dev, rev, cfg=None):
+def audit_verdict(lines, files, dev, rev, cfg=None, strong=False):
     """v2.49 回合结算违规判定（纯函数，claude_harness._audit_settle 调用）：
     入参为本回合累计——lines=直改行数、files=直改涉及文件数、dev/rev=是否
     派发过 dev/reviewer。返回违规描述列表（空=干净）；描述自带档位与可数
@@ -500,10 +547,18 @@ def audit_verdict(lines, files, dev, rev, cfg=None):
     - 超 L2 → 属 L3 攻坚（应派 dev 实施+reviewer 全审），主会话直改且
       未派审=违规（已派 reviewer 视作审过，不重复追责——提示性兜底）；
     - dev 已派但无 reviewer → 违规（v2.34 原规则保留）。
+    v2.50 ④：strong=True 走 strong 形态分支——主会话直干是设计常态，只守
+    L2 审计线（超线须自查复核，无 reviewer 轻审义务、dev 派发不追责）。
     兜底是提示性的：本函数只判不拦，处置（警示/续发补审）归调用方按
     audit_mode 决定。"""
     l1, l2f, l2l = audit_limits(cfg)
     viol = []
+    if strong:
+        if not rev and (files > l2f or lines > l2l):
+            viol.append(
+                "主会话直改 %d 行/%d 个文件，超过审计线（≤%d 个文件、回合"
+                "累计 ≤%d 行），本回合未自查复核" % (lines, files, l2f, l2l))
+        return viol
     if not rev and (files > 1 or lines > l1):
         if files <= l2f and lines <= l2l:
             viol.append(
@@ -518,6 +573,36 @@ def audit_verdict(lines, files, dev, rev, cfg=None):
     if dev and not rev:
         viol.append("已派 dev 交付但未派 reviewer 对抗审核")
     return viol
+
+
+def clamp_role_limits(patch, cfg=None):
+    """v2.50（P2）l1_max_lines ≤ l2_max_lines 交叉校验（clamp 档）。
+    返回 (new_patch, notes)：new_patch 在 patch 基础上补上被钳的键（原键
+    值替换），notes 为 [{"key","from","to","reason"}]（空=无需钳）。
+    选 clamp 不选 400：配置面板一次保存三键，用户单调 l2 低于 l1 时 400
+    会把整次保存打回（其它合法键也白存），clamp + 回显原因更可用——
+    POST /roles 把 notes 原样带回前端提示。
+    只向下钳 l1 不动 l2：l2 是审计主线（闸与结算都守它），l1 只是免审区
+    上沿，语义上 l1 ≤ l2l 恒成立（L1 区是 L2 区的子集）。未出现在 patch
+    里的键取现值（cfg）参与比较——单独调低 l2 也会把现存 l1 带下来写进
+    new_patch。非数字输入不在此处理（端点既有的 400 校验负责）。"""
+    c = cfg if cfg is not None else roles_cfg()
+    l1_cur, _l2f, l2l_cur = audit_limits(c)
+    out = dict(patch)
+    notes = []
+    try:
+        l1 = int(out.get("l1_max_lines", l1_cur))
+        l2l = int(out.get("l2_max_lines", l2l_cur))
+    except (TypeError, ValueError):
+        return out, notes
+    if l1 > l2l:
+        out["l1_max_lines"] = l2l
+        notes.append({
+            "key": "l1_max_lines", "from": l1, "to": l2l,
+            "reason": ("l1_max_lines 不得超过 l2_max_lines（免审线高于轻审"
+                       "线会让 L1 免审区吞掉 L2 轻审区），已自动收紧至 "
+                       "l2_max_lines=%d" % l2l)})
+    return out, notes
 
 
 def audit_gate_check(used_lines, used_files, cfg=None):
@@ -538,13 +623,15 @@ def audit_gate_check(used_lines, used_files, cfg=None):
 
 
 def roles_bridge_text(model=None):
-    """角色引导词（v2.30.2 双形态）：主会话强模型 → 决策者词（只派发审核，
-    配结构禁权）；轻快模型 → 轻主力词。开关关闭一律空串。model 参数参与
-    形态判定并进引导词指纹（切模型自动换形态热更）。v2.49：light 词从
-    「二分分工」改为任务分级路由（L0-L4，用户拍板）——大部分中小编码回到
-    持有上下文的主会话直改，dev 只接 L3 攻坚且同领域续派复用会话；两档
-    上限（audit_limits）以可数数字嵌进词里，改配置即变词（指纹热更），
-    并明示回合结算审计——威慑前置（事前引导词 + 事后审计兜底，用户定调）。"""
+    """角色引导词（v2.30.2 双形态）：轻快模型 → 轻主力词；重模型 →
+    v2.50 起为「主会话直干」词（干活者+审计兜底，砍掉决策者/派发分工与
+    结构禁权）。开关关闭一律空串。model 参数参与形态判定并进引导词指纹
+    （切模型/改 main_model 配置自动换形态热更）。v2.49：light 词为任务
+    分级路由（L0-L4，用户拍板）——大部分中小编码回到持有上下文的主会话
+    直改，dev 只接 L3 攻坚且同领域续派复用会话；两档上限（audit_limits）
+    以可数数字嵌进词里，改配置即变词（指纹热更），并明示回合结算审计——
+    威慑前置（事前引导词 + 事后审计兜底，用户定调）。v2.50：strong 词
+    同样嵌审计线数字（改配置即热更），但无派发路由词、无免审线词。"""
     if not roles_cfg()["enabled"]:
         return ""
     if roles_mode(model) == "light":
@@ -598,24 +685,32 @@ def roles_bridge_text(model=None):
             "代理的过程，静默结束回合=交付没完成。\n"
             % (l1, l2f, l2l, dev_model, dev_model, audit_note)
         )
-    ex_model, co_model = resolve_role_models()
+    # v2.50 ④：strong 分支重写——重模型主会话=干活者，砍掉 v2.29 以来的
+    # 决策者/executor/coder 派发分工（嵌套派发浪费且失控）。只保留审计
+    # 兜底：回合累计直改超审计线（audit_limits 的 L2 档，数字嵌词热更）
+    # 触发回合结算审计（audit_verdict strong 分支：超线未自查=违规）。
+    # 无派发路由词、无免审线词（设计常态就是直接改）。
+    cfg = roles_cfg()
+    _l1, l2f, l2l = audit_limits(cfg)
+    if str(cfg.get("audit_mode") or "auto") != "off":
+        audit_note = ("harness 会在回合结束时审计你的直改量（行数/文件数按"
+                      "回合累计，切片拆小也会累计）——超过审计线会被自动查出"
+                      "并要求自查复核后重新汇总")
+    else:
+        audit_note = "大改不做自查复核就答复用户属重大流程违规"
     return (
-        "【三角色分工（你=决策者）】\n"
-        "本会话你是「决策者」：面向用户的唯一对接人，只做四件事——\n"
-        "1. 承接：理解用户需求，含糊就用 ask_user 澄清，然后拆解成子任务。\n"
-        "2. 派发（Task 工具）：\n"
-        "   - 信息收集/查日志/环境排查/跑命令/debug 定位/机械杂活 → "
-        "executor 代理（%s，快省）\n"
-        "   - 编码攻坚（功能实现/架构改动/疑难修复）→ coder 代理（%s）\n"
-        "3. 审核：coder 的产出必须亲自 Read 看它交付报告里列出的改动文件、"
-        "把关质量，不过关打回重做并写明问题。\n"
-        "4. 汇总：结论先行答复用户，附关键证据。\n"
-        "纪律：你不下场干活——查文件/数数/收集信息/搜索这类事都算活，一律派 "
-        "executor（实测你会拿 Glob/Grep 自己数数偷懒，这些已结构性禁止）。"
-        "你只保留 Read：用于审核 coder 交付报告里列出的改动文件；审核也可"
-        "再派 executor 取证（如查引用、跑验证命令）。纯知识问答直接回答"
-        "不必派发；子代理结论要消化后再答，不要原样转发一大坨。\n"
-        "回合终点纪律：提交/实施完成后，最后一条消息必须是给用户的结论汇总"
-        "（做了什么、审核结论、提交号、用户需要做什么），不得静默结束回合。"
-        % (ex_model, co_model)
+        "【主会话直干（你=干活者）】\n"
+        "本会话用重模型直接干活：需求承接、方案、编码、debug、杂活全部由你"
+        "亲自完成——不要用工具起子代理干活，也不要把活转给别的会话（嵌套"
+        "派发浪费且失控）。\n"
+        "质量纪律：\n"
+        "- 动手前先想清楚：需求边界、实现路径、风险点；复杂改动先在回复里"
+        "列出方案要点再实施。\n"
+        "- 审计兜底（%s）：回合累计直改超过审计线（≤%d 个文件、累计 ≤%d 行）"
+        "即触发审计——须自查复核：逐文件核对逻辑/边界/一致性，能跑的验证"
+        "（命令/测试/编译）实际跑，再给用户汇总自查结论。\n"
+        "- 改完自测通过再交；遵守项目既有代码风格与约定。\n"
+        "- 回合终点纪律：完成后，最后一条消息必须是给用户的结论汇总（做了"
+        "什么、自测与自查结果、用户需要做什么），不得静默结束回合。\n"
+        % (audit_note, l2f, l2l)
     )

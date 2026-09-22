@@ -388,11 +388,11 @@ def _iso_dur_sec(t0, t1):
 
 # v2.29.1 三角色设计：角色定义内置于 src/harness_roles.py（随工具分发，
 # 会话启动自动安装到 ~/.claude/agents/，别的机器零手工配置）；角色引导词/
-# 结构禁权/配置开关都在那个模块里。v2.30.2 双形态：主会话轻快模型 →
-# 轻主力模式（designer 代理，无禁权），强模型 → 决策者模式（结构禁权）。
-from .harness_roles import (roles_bridge_text, roles_disallow,
-                            install_roles_agents, audit_verdict,
-                            audit_gate_check)
+# 配置开关都在那个模块里。v2.30.2 双形态：主会话轻快模型 → 轻主力模式
+# （L0-L4 分级路由）；v2.50 起强模型 → 主会话直干（干活者+审计兜底，
+# 决策者结构禁权/roles_disallow 已废除）。
+from .harness_roles import (roles_bridge_text, install_roles_agents,
+                            audit_verdict, audit_gate_check)
 
 
 # v2.3.7 全会话铁律（用户定调「浪费 token 极其可耻」）：注入每个会话。
@@ -913,6 +913,30 @@ def _audit_file_key(inp):
     return os.path.normcase(p.replace("\\", "/")) if p else ""
 
 
+def _audit_dispatch_role(n, inp, ids=None):
+    """v2.50（P1，上轮 reviewer 遗留）主会话派发/续派 dev|reviewer 的识别
+    （纯函数，_audit_tally 调用）：返回 "dev"/"reviewer"/None。
+    - Task/Agent：按 subagent_type（v2.34 原口径）；
+    - SendMessage 续派：按 input.to 识别——三形态：裸名（"dev"）、带
+      [ref]（"dev [3fa9c1]"）、裸 agentId（查 ids 映射——由 Task 结果
+      回填，见 _audit_tally_result）。
+    已知缺口（做不了硬匹配，如实记录）：①「worker [ref]」/「worker
+    agentId」形态——to 里只有通用名+引用，无角色名可判（ids 映射键是
+    agentId 不含 ref 短码，两者无法稳定互推）；②跨进程/跨实例的 agentId
+    ——本会话 _audit 只见本进程的 Task 结果，别处派的 id 查不到。两类
+    续派在结算里仍不计派发标记（保守漏计，不误计）。"""
+    if n in ("Task", "Agent"):
+        st = str(inp.get("subagent_type") or inp.get("agent_type") or "")
+        return st if st in ("dev", "reviewer") else None
+    if n == "SendMessage":
+        to = str(inp.get("to") or "").strip()
+        base = to.split("[")[0].strip()
+        if base in ("dev", "reviewer"):
+            return base
+        return (ids or {}).get(to)
+    return None
+
+
 def _audit_hook_settings_path():
     """写 light 形态会话的 --settings 临时文件（v2.40 直改事中闸注入；
     v2.49 起闸守 L2 轻审线上限，判定见 harness_roles.audit_gate_check）。
@@ -1069,10 +1093,13 @@ class HarnessSession:
         # v2.34 light 审计回合累计（运行态，不持久化）：lines=本回合主会话
         # 直改（Edit/Write/MultiEdit/NotebookEdit）累计行数；files=涉及文件
         # 归一键列表（v2.49 L2 文件数口径）；dev/reviewer=本回合 Task 派发
-        # 标记；streak=连续违规回合数（防自动补审死循环：连续 3 回合违规后
-        # 降级为仅警示）。回合结算（result/interrupted/exit）清零。
+        # 标记（v2.50 P1 起 SendMessage 续派也计入）；streak=连续违规回合数
+        # （防自动补审死循环：连续 3 回合违规后降级为仅警示）。回合结算
+        # （result/interrupted/exit）清零。ids/pending 跨回合保留——
+        # agentId→角色映射（Task 结果回填）与在飞派发表，续派常发生在
+        # 派发后的后续回合（v2.50 P1）。
         self._audit = {"lines": 0, "files": [], "dev": False, "reviewer": False,
-                       "streak": 0}
+                       "streak": 0, "ids": {}, "pending": {}}
         # v2.40：light 形态事中闸的 --settings 临时文件路径（kill 时清理；
         # revive 重启由 start() 重建——hooks 是进程启动参数，活进程不热更）
         self._audit_settings_path = None
@@ -1152,8 +1179,8 @@ class HarnessSession:
             roles_txt = roles_bridge_text(eff_model)
             if roles_txt:
                 # 角色定义随工具分发：起会话前按当前形态安装到
-                # ~/.claude/agents/（幂等，强模型→executor/coder，
-                # 轻快模型→designer）——别的机器零手工配置
+                # ~/.claude/agents/（幂等，轻快模型→dev+reviewer；v2.50 起
+                # 强模型不装任何角色——主会话直干，旧装退役文件顺带清理）
                 install_roles_agents(eff_model)
             parts = [_collect_system_prompt(self.cwd),
                      TOKEN_RULES,
@@ -1167,26 +1194,18 @@ class HarnessSession:
             # 活会话不会因代码升级/名单调整换新词（用户实锤：MCP 类模型
             # 揣着旧「转交版」绕识图会话白等 1m20s）。send 前对指纹热更。
             self.bridge_fp = _bridge_fp(eff_model)
-            # v2.29 三角色：决策者结构性禁权——干活工具全禁（Bash/Edit/Write/
-            # WebFetch/WebSearch/Glob/Grep），逼着它走 Task 派发给 executor/
-            # coder；保留 Read 供审核代码用。子代理有自己的工具表不受影响。
-            # v2.30.2：仅决策者形态（主会话强模型）挂禁权；轻主力形态主会话
-            # 要亲自干杂活，工具不能禁（roles_disallow 返回空串）。留在 else
-            # 分支内——eff_model 只在此定义（曾放分支外，识图会话路径直接
-            # NameError；现 is_vision 已退役不可达，防御性归位）。
-            _roles_ban = roles_disallow(eff_model)
-            if _roles_ban:
-                argv += ["--disallowedTools", _roles_ban]
-            elif self._audit_state() is not None:
-                # v2.40 light 形态事中闸：直改硬拦截（v2.49 起守 L2 轻审线
-                # 上限——分级路由下 L1/L2 直改是主体放行，只在行数/文件数
-                # 达 L2 上限时拦下指路派 dev）。与 strong 禁权互斥共存
-                # （strong 全禁了 Edit 根本到不了闸；light 不禁工具——主会话
-                # 要干杂活，改用 PreToolUse hook 在直改累计达线时 exit 2
-                # 拦下。回合结算审计只能事后补审，这里把超线掐灭在发生前，
-                # 双层）。_audit_state 非 None=roles 开+light+audit_mode!=off，
-                # 与结算审计同源判定（audit_mode=off 时闸与审计同步关）；
-                # 注入失败照常启动（闸失效不阻塞工作）。
+            # v2.29~v2.49 的决策者结构禁权（--disallowedTools 全禁干活工具
+            # 逼派发）已于 v2.50 废除——strong 主会话=干活者要亲自干活，
+            # 禁权失去意义（roles_disallow/ROLE_DISALLOW 一并移除）。
+            # v2.40 light 形态事中闸：直改硬拦截（v2.49 起守 L2 轻审线
+            # 上限——分级路由下 L1/L2 直改是主体放行，只在行数/文件数
+            # 达 L2 上限时拦下指路派 dev）。v2.50 起 strong 不入闸——直改
+            # 是设计常态、闸的「转派 dev」指路对 strong 无意义，strong 只
+            # 有回合结算审计兜底（_audit_state 第三位 strong 旗分流）。
+            # 闸与结算同源判定（audit_mode=off 时闸与审计同步关）；注入
+            # 失败照常启动（闸失效不阻塞工作）。
+            _st_audit = self._audit_state()
+            if _st_audit is not None and not _st_audit[2]:
                 _p = _audit_hook_settings_path()
                 if _p:
                     self._audit_settings_path = _p
@@ -1309,12 +1328,16 @@ class HarnessSession:
         flash 名义 inline vs 实跑 glm-5.3 应为 mcp，错位导致错误引导词）。"""
         return self.live_model or self.model or available_models().get("default")
 
-    # ---- v2.34 light 形态回合结算审计 ----
+    # ---- v2.34 light 形态回合结算审计（v2.50 起 strong 形态也结算）----
     def _audit_tally(self, o):
         """回合内审计累计：只记主会话调用——子代理事件带 parent_tool_use_id
         一律不算（它们有自己的纪律，主会话的违规才算违规）。纯计数不读
         配置（每事件零盘 IO），判不判定是 _audit_settle 结算时的事。v2.49
-        增 files 累计（直改目标文件去重列表——L2 文件数口径）。"""
+        增 files 累计（直改目标文件去重列表——L2 文件数口径）；v2.50（P1）
+        增 SendMessage 续派口径——主会话经 SendMessage 续派 dev/reviewer
+        此前不计派发标记（结算失明：直改+续派 dev 干活的回合被误判
+        「未派 dev」），现经 _audit_dispatch_role 按 input.to 识别，并在
+        Task/Agent 派发时记 pending（等 result 回填 agentId→角色映射）。"""
         au = self._audit
         if o.get("parent_tool_use_id"):
             return
@@ -1331,28 +1354,70 @@ class HarnessSession:
                 k = _audit_file_key(inp)
                 if k and k not in au["files"]:
                     au["files"].append(k)
-            elif n in ("Task", "Agent"):
-                st = str(inp.get("subagent_type") or inp.get("agent_type") or "")
-                if st == "dev":
-                    au["dev"] = True
-                elif st == "reviewer":
-                    au["reviewer"] = True
+                continue
+            role = _audit_dispatch_role(n, inp, au.get("ids") or {})
+            if not role:
+                continue
+            au[role] = True
+            tu_id = str(b.get("id") or "")
+            if n in ("Task", "Agent") and tu_id:
+                # 记在飞派发：result 到达时回填 agentId→role（SendMessage 用
+                # 裸 agentId 寻址的续派可判角色，见 _audit_tally_result）
+                au.setdefault("pending", {})[tu_id] = role
+
+    def _audit_tally_result(self, o):
+        """v2.50（P1）：user 事件侧的审计累计——Task/Agent 派发的 result
+        到达时回填 agentId→角色映射（续派 SendMessage 用裸 agentId 寻址时，
+        _audit_dispatch_role 查本映射判角色）。agentId 提取复用 v2.46R 的
+        宽容正则（JSON \"agentId\":\"x\" 与裸文本 agentId: x 两形态）。
+        失败静默——映射缺了只是那类续派计不上派发标记（保守漏计），
+        不致命。"""
+        if o.get("parent_tool_use_id"):
+            return
+        au = self._audit
+        pend = au.get("pending") or {}
+        if not pend:
+            return
+        blocks = (o.get("message") or {}).get("content")
+        if not isinstance(blocks, list):
+            return
+        for b in blocks:
+            if not (isinstance(b, dict) and b.get("type") == "tool_result"):
+                continue
+            role = pend.pop(str(b.get("tool_use_id") or ""), None)
+            if role is None:
+                continue
+            txt = b.get("content")
+            if isinstance(txt, list):
+                txt = " ".join(str(x.get("text") or "") for x in txt
+                               if isinstance(x, dict))
+            m = re.search(
+                r"(?<![a-zA-Z])agentId[\"\':\s]+([0-9a-zA-Z_-]{8,64})",
+                str(txt or ""))
+            if m:
+                ids = au.setdefault("ids", {})
+                ids[m.group(1)] = role
+                if len(ids) > 256:   # 防无界增长：淘汰最旧（续派大概率用最近的）
+                    ids.pop(next(iter(ids)))
 
     def _audit_state(self):
-        """审计现值：(audit_mode, (l1, l2f, l2l) 两档线)；不审计返回 None。
-        条件=roles 开 + light 形态（strong 有结构禁权不需要）+ audit_mode
-        != off。结算时读一次盘——配置改动回合间生效。线值统一出自
-        harness_roles.audit_limits（与引导词同源，词里一套数字审计另一套
-        是 v2.34 就防的坑）。"""
+        """审计现值：(audit_mode, (l1, l2f, l2l) 两档线, strong)；不审计
+        返回 None。条件=roles 开 + audit_mode != off。v2.50 起两形态都结算
+        审计（strong 砍派发分工后主会话直干，超线自查兜底；light 原样），
+        strong 旗仅供调用方分流：违规文案/续发指令分形态（audit_verdict
+        的 strong 分支、_audit_settle 的自查版续发词），事中闸（/audit_gate
+        与 start 的 hook 注入）仍仅 light——strong 直改是设计常态，闸的
+        「转派 dev」指路对 strong 无意义。结算时读一次盘——配置改动回合间
+        生效。线值统一出自 harness_roles.audit_limits（与引导词同源，词里
+        一套数字审计另一套是 v2.34 就防的坑）。"""
         try:
             from .harness_roles import roles_cfg, roles_mode, audit_limits
             cfg = roles_cfg()
             mode = str(cfg.get("audit_mode") or "auto")
             if not cfg.get("enabled") or mode == "off":
                 return None
-            if roles_mode(self._eff_model()) != "light":
-                return None
-            return mode, audit_limits(cfg)
+            strong = roles_mode(self._eff_model()) != "light"
+            return mode, audit_limits(cfg), strong
         except Exception:
             return None
 
@@ -1361,13 +1426,16 @@ class HarnessSession:
         判定走 harness_roles.audit_verdict（纯函数，与引导词两档线同源）：
         ① 超 L1 免审线（单文件/行数）未派 reviewer 轻审——L2 档违规；
         ② 超 L2 轻审线（文件数/行数）属 L3 却主会话直改且未派审——L3 档
-        违规；③ 有 dev 派发但无 reviewer 派发（原规则保留）。兜底按
-        audit_mode：auto=回合结束自动续发一条 [审计] user 消息要求补审
-        （复用 send_message 管线，busy/进程/指纹热更检查全继承）；warn=仅
-        聊天流红色警示（前端 kind='audit' 事件）——提示性兜底，不阻断。
-        防循环：连续 3 个违规回合后降级仅警示；中断/进程退出只警示不续发
-        （用户主动停/进程已死，续发无意义，且不计入 streak）。计数结算后
-        清零（切片逃逸防护：多次小改按回合累计判定）。"""
+        违规；③ 有 dev 派发但无 reviewer 派发（原规则保留）。v2.50 起
+        strong 形态也结算（verdict strong 分支：超审计线未自查复核），
+        续发指令分形态——light 要求派 reviewer 补审、strong 要求自查复核
+        （不装任何角色文件，派发词对它无意义）。兜底按 audit_mode：
+        auto=回合结束自动续发一条 [审计] user 消息（复用 send_message
+        管线，busy/进程/指纹热更检查全继承）；warn=仅聊天流红色警示（前端
+        kind='audit' 事件）——提示性兜底，不阻断。防循环：连续 3 个违规
+        回合后降级仅警示；中断/进程退出只警示不续发（用户主动停/进程已死，
+        续发无意义，且不计入 streak）。计数结算后清零（切片逃逸防护：多次
+        小改按回合累计判定）。"""
         au = self._audit
         lines, files = au["lines"], list(au["files"])
         dev, rev = au["dev"], au["reviewer"]
@@ -1376,8 +1444,8 @@ class HarnessSession:
         if st is None:
             au["streak"] = 0
             return
-        mode, _limits = st
-        viol = audit_verdict(lines, len(files), dev, rev)
+        mode, _limits, strong = st
+        viol = audit_verdict(lines, len(files), dev, rev, strong=strong)
         if not viol:
             au["streak"] = 0
             return
@@ -1389,21 +1457,28 @@ class HarnessSession:
             # 自动补审：卡文本与续发消息同一字符串（v2.34.1 统一——实时/
             # 落盘回放/模型所见三处一致）。续发走后台线程，send_message 与
             # 用户抢发竞争时返回失败——静默记 log，卡已到位，不重试。
-            text = (_AUDIT_MSG_PREFIX + "%s。已自动续发补审指令——立即用 "
-                    "Task 工具派 reviewer 代理补审上述改动（对抗审核：只审"
-                    "不改，给 PASS/FAIL 结论），按结论处理：FAIL 派 dev 修复"
-                    "后复审，PASS 才算完成，然后再答复用户。不要辩解，直接"
-                    "补审。" % desc)
+            if strong:
+                text = (_AUDIT_MSG_PREFIX + "%s。已自动续发自查指令——立即"
+                        "自查复核上述改动：逐文件核对需求符合性/逻辑正确性"
+                        "/边界条件/一致性，能跑的验证（命令/测试）实际跑，"
+                        "然后给用户汇总自查结论。不要辩解，直接自查。" % desc)
+            else:
+                text = (_AUDIT_MSG_PREFIX + "%s。已自动续发补审指令——立即用 "
+                        "Task 工具派 reviewer 代理补审上述改动（对抗审核：只审"
+                        "不改，给 PASS/FAIL 结论），按结论处理：FAIL 派 dev 修复"
+                        "后复审，PASS 才算完成，然后再答复用户。不要辩解，直接"
+                        "补审。" % desc)
             self._audit_card(text)
             threading.Thread(target=self._audit_send, args=(text,),
                              daemon=True).start()
             return
-        why = {"interrupted": "（回合被中断，仅记录不自动补审）",
-               "exit": "（会话进程已退出，仅记录不自动补审）"}.get(reason, "")
-        tail = ("已连续 %d 个回合违规，自动补审已降级为仅警示（防循环烧 "
+        why = {"interrupted": "（回合被中断，仅记录不自动续发）",
+               "exit": "（会话进程已退出，仅记录不自动续发）"}.get(reason, "")
+        tail = ("已连续 %d 个回合违规，自动续发已降级为仅警示（防循环烧 "
                 "token），请人工介入。" % au["streak"]) if degraded else \
-               ("审计模式为 %s，仅警示不自动续发——请手动派 reviewer 补审。"
-                % mode)
+               (("审计模式为 %s，仅警示不自动续发——请手动%s。"
+                 % (mode, "自查复核上述改动" if strong
+                    else "派 reviewer 补审")))
         self._audit_card(_AUDIT_MSG_PREFIX + "%s。%s%s" % (desc, tail, why))
 
     def _audit_card(self, text):
@@ -1850,6 +1925,13 @@ class HarnessSession:
                     # 写盘，频次可接受；每行写则太频）
                     try:
                         self.sync_meta()
+                    except Exception:
+                        pass
+                if typ == "user":
+                    # v2.50（P1）：Task 派发的 result 到达时回填 agentId→
+                    # 角色映射（SendMessage 续派按裸 agentId 寻址的结算口径）
+                    try:
+                        self._audit_tally_result(o)
                     except Exception:
                         pass
                 if typ == "assistant":
@@ -2950,8 +3032,10 @@ def harness_audit_gate():
     （v2.49 前是 3 行免审线——分级路由后 L1/L2 直改是主体，闸改守 L2 上限：
     行数或文件数任一达线即拦下一次），hook exit 2 拦下（msg 随行给模型）。
 
-    口径与 _audit_settle 同源：_audit_state 判启用（roles 开+light+
-    audit_mode!=off；读一次小配置文件，改配置即时生效），used 取会话
+    口径与 _audit_settle 同源：_audit_state 判启用（roles 开+
+    audit_mode!=off；v2.50 起两形态都结算审计，但闸仍仅 light——strong
+    直干是设计常态，「转派 dev」指路对它无意义，_audit_state 第三位
+    strong 旗在此分流；读一次小配置文件，改配置即时生效），used 取会话
     _audit 的本回合 lines/files 累计，判定走 harness_roles.audit_gate_check
     （达线 >= 即拦下一次）而非结算的超线追责——事中闸的职责是让超线根本
     不发生，事后审计只兜闸失效的漏网。
@@ -2970,7 +3054,11 @@ def harness_audit_gate():
                       if x.session_id == csid), None)
         if s is not None:
             st = s._audit_state()
-            if st is not None:
+            # v2.50：闸仍仅 light 形态——strong 主会话直干是设计常态，闸的
+            # 「转派 dev」指路对它无意义（strong 走回合结算审计兜底，
+            # _audit_state 第三位 strong 旗分流；旧 strong 会话升级前注入的
+            # hook 再来问也在这里被挡下）
+            if st is not None and not st[2]:
                 au = s._audit or {}
                 used_l = int(au.get("lines") or 0)
                 used_f = len(au.get("files") or [])
@@ -3872,11 +3960,12 @@ def harness_stop_vision():
 @harness_bp.route("/roles")
 def harness_roles_info():
     """v2.29.2：三角色设计说明（/roles 命令数据源）。resolved 是按当前
-    API 方案解析出的实际模型（换方案自动适配）。v2.30.2 带 mode——按
-    settings 默认模型判定的当前形态（strong 决策者 / light 轻主力）。
-    v2.34：roles 含 audit_mode；v2.49 分级线三键（l1_max_lines/
-    l2_max_files/l2_max_lines，defaults 兜底）取代 max_free_lines；附
-    models/default_model 供配置面板下拉用。"""
+    API 方案解析出的实际模型（换方案自动适配）。v2.30.2 带 mode——当前
+    形态（v2.50：main_model 显式配置优先，未配置按 settings 默认模型名
+    自动识别；light 轻主力 / strong 重模型直干）。v2.34：roles 含
+    audit_mode；v2.49 分级线三键（l1_max_lines/l2_max_files/
+    l2_max_lines，defaults 兜底）；v2.50 增 main_model（主会话模型槽）；
+    附 models/default_model 供配置面板下拉用。"""
     from .harness_roles import (resolve_role_models, roles_cfg,
                                 roles_mode)
     ex, co = resolve_role_models()
@@ -3932,19 +4021,22 @@ def harness_agent_models():
 @harness_bp.route("/roles", methods=["POST"])
 def harness_set_roles():
     """v2.29.3 开关；v2.34 扩成整节配置（merge 写盘，只动出现的键）。
-    body 可含 {enabled, executor_model, coder_model, model_map,
-    audit_mode, l1_max_lines, l2_max_files, l2_max_lines}（v2.49 分级线
-    三键取代 max_free_lines，旧键忽略）。生效路径与开关一致：模型槽/分级
-    线出现在引导词里 → 指纹热更下条消息换词重启 + agents 重生成；
-    audit_mode 在回合结算时读盘，即时生效。model_map 行式 "端点关键字=
+    body 可含 {enabled, executor_model, coder_model, main_model,
+    model_map, audit_mode, l1_max_lines, l2_max_files, l2_max_lines}
+    （v2.49 分级线三键取代 max_free_lines，旧键忽略；v2.50 增 main_model
+    主会话模型槽——形态判定显式配置优先）。生效路径与开关一致：模型槽/
+    分级线出现在引导词里 → 指纹热更下条消息换词重启 + agents 重生成；
+    audit_mode 在回合结算时读盘，即时生效。v2.50（P2）：写盘前过
+    clamp_role_limits 交叉校验 l1_max_lines ≤ l2_max_lines（超线 clamp
+    到 l2，不 400——回显在响应 clamped 键）。model_map 行式 "端点关键字=
     执行者,编程者"（编程者可省=与执行者同）或 dict {关键字:{executor,
     coder}}。"""
-    from .harness_roles import update_roles_cfg
+    from .harness_roles import update_roles_cfg, clamp_role_limits, roles_cfg
     data = request.get_json(force=True, silent=True) or {}
     patch = {}
     if "enabled" in data:
         patch["enabled"] = bool(data.get("enabled"))
-    for k in ("executor_model", "coder_model"):
+    for k in ("executor_model", "coder_model", "main_model"):
         if k in data:
             patch[k] = str(data.get(k) or "").strip()
     if "audit_mode" in data:
@@ -3988,11 +4080,18 @@ def harness_set_roles():
         patch["model_map"] = mmap
     if not patch:
         return jsonify({"ok": False, "err": "没有可写入的配置项"}), 400
+    # v2.50（P2）：l1 ≤ l2l 交叉校验（clamp 档）——只对本次涉及的键生效，
+    # 未涉及的键取盘上现值参与比较（单独调低 l2 也会把现存 l1 带下来）。
+    # 放在 update_roles_cfg 之前钳 patch，响应回显的就是实际写盘值（配置
+    # 面板显示的与实际生效的必须一致——v2.34 就防的坑）。
+    patch, clamped = clamp_role_limits(patch, roles_cfg())
     ok, err = update_roles_cfg(patch)
     if not ok:
         return jsonify({"ok": False, "err": err or "写入失败"}), 500
     resp = {"ok": True}
     resp.update(patch)
+    if clamped:
+        resp["clamped"] = clamped
     return jsonify(resp)
 
 

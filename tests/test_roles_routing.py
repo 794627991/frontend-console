@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""最小自测：任务分级路由重构（v2.49）——引导词生成 + 审计兜底判定。
+"""最小自测：任务分级路由（v2.49）+ 三角色二次大改（v2.50）。
 
-覆盖验收四条：
+v2.49 覆盖四条：
 1. light 引导词含 L0-L4 五档路由 / dev 同领域续派（SendMessage）/
    四要素上下文包协议 / 审核分级（免审/轻审/全审）/ 上限数字嵌词。
 2. 审计兜底两档线判定（audit_verdict：L1 免审区干净、L2 未轻审违规、
@@ -11,13 +11,28 @@
    （light↔strong）引导词/指纹变；开关关 → 空串。
 4. 配置默认值/0 合法档/MultiEdit 行数口径/文件归一键。
 
-隔离：CONFIG_FILE 重定向临时文件（不碰用户真 config.json）；不装 agents
-（不触真实 ~/.claude/agents）。直接 `python tests/test_roles_routing.py` 运行。
+v2.50 六项新增断言：
+① 子代理 tools 无 Task（SendMessage 保留）、reviewer 工具集原样；
+② 干活角色 body 含 git 禁提交条、reviewer body 无；
+③ main_model 主会话槽：显式配置优先定形态、未配置回落名字识别、配置往返；
+④ strong 引导词=干活者+审计兜底（无决策者/免审/档位词）+ 审计线数字嵌词
+   + 指纹热更；audit_verdict strong 分支（超线未自查违规/线内干净/dev 不
+   追责）；
+⑤ P2 clamp_role_limits：l1>l2l 钳到 l2l、只调低 l2 带下现存 l1、相等不钳；
+⑥ P1 派发/续派识别 _audit_dispatch_role（Task 名/SendMessage 裸名/带
+   [ref]/agentId 映射/缺口形态 None）+ _audit_tally SendMessage 计旗 +
+   strong 安装不装角色/退役文件清理/ensure_roles_ready 空。
+
+隔离：CONFIG_FILE 重定向临时文件（不碰用户真 config.json）；HARNESS_AGENTS_DIR
+重定向临时目录（不触真实 ~/.claude/agents）。直接 `py tests/test_roles_routing.py`
+运行。
 """
 import json
 import os
+import re
 import sys
 import tempfile
+import types
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -84,7 +99,14 @@ check("audit_mode=off 威慑句切换", "重大流程违规" in g_off and "会�
 # ============ 3. 形态切换与开关 ============
 print("[3] 形态切换")
 gs = hr.roles_bridge_text(STRONG_MODEL)
-check("strong 词含决策者", "决策者" in gs)
+# v2.50 ④：strong=主会话直干（干活者+审计兜底），决策者/派发分工已砍
+check("strong 词=干活者直干", "干活者" in gs and "亲自完成" in gs)
+check("strong 词无派发分工词",
+      all(w not in gs for w in ("决策者", "executor", "coder", "路由")))
+check("strong 词无免审/档位词",
+      all(w not in gs for w in ("免审", "L1", "L2", "L3", "L4")))
+check("strong 词含审计兜底与线数字",
+      "审计线" in gs and "自查" in gs and "≤3 个文件" in gs and "≤200 行" in gs)
 check("light/strong 词不同", g != gs)
 write_cfg(enabled=False)
 check("开关关 → 空串", hr.roles_bridge_text(LIGHT_MODEL) == "")
@@ -164,6 +186,162 @@ check("写后线值生效", hr.audit_limits() == (5, 1, 9), str(hr.audit_limits(
 check("线值进引导词", "≤5 行" in hr.roles_bridge_text(LIGHT_MODEL))
 check("收紧后判定跟着变", V(5, 1, False, False) == []
       and len(V(6, 1, False, False)) == 1)
+
+# ============ 9. 主会话模型槽（v2.50 ③） ============
+print("[9] 主会话模型槽")
+check("main_model 默认空（回落自动识别）", hr.roles_cfg().get("main_model") == "")
+write_cfg(enabled=True, main_model=STRONG_MODEL)
+check("显式配置优先：实跑 flash 判 strong", hr.roles_mode(LIGHT_MODEL) == "strong")
+check("形态随配置翻转 → 引导词同 strong",
+      hr.roles_bridge_text(LIGHT_MODEL) == hr.roles_bridge_text(STRONG_MODEL))
+write_cfg(enabled=True, main_model=LIGHT_MODEL)
+check("配置 flash → 实跑 strong 判 light", hr.roles_mode(STRONG_MODEL) == "light")
+ok, err = hr.update_roles_cfg({"main_model": ""})
+check("清空回落名字自动识别", hr.roles_mode(LIGHT_MODEL) == "light"
+      and hr.roles_mode(STRONG_MODEL) == "strong")
+ok, err = hr.update_roles_cfg({"main_model": "glm-5.3-flash"})
+check("配置往返 merge 保留", hr.roles_cfg().get("main_model") == "glm-5.3-flash")
+hr.update_roles_cfg({"main_model": ""})
+
+# ============ 10. strong 审计分支与指纹热更（v2.50 ④） ============
+print("[10] strong 审计")
+VS = hr.audit_verdict
+check("strong 超线未自查 → 违规指明审计线",
+      len(VS(250, 2, False, False, strong=True)) == 1
+      and "审计线" in VS(250, 2, False, False, strong=True)[0]
+      and "自查" in VS(250, 2, False, False, strong=True)[0])
+check("strong 线内干净（直干是常态）",
+      VS(150, 1, False, False, strong=True) == []
+      and VS(100, 3, False, False, strong=True) == [])
+check("strong 文件数超线也违规",
+      len(VS(100, 4, False, False, strong=True)) == 1)
+check("strong dev 派发不追责（无审派义务）",
+      VS(50, 1, True, False, strong=True) == [])
+check("strong 已派 reviewer 视作审过", VS(250, 2, False, True, strong=True) == [])
+fp_s1 = _bridge_fp(STRONG_MODEL)
+write_cfg(enabled=True, l2_max_lines=150)
+check("strong 改审计线 → 词变+指纹变（热更）",
+      "≤150 行" in hr.roles_bridge_text(STRONG_MODEL)
+      and _bridge_fp(STRONG_MODEL) != fp_s1)
+write_cfg(enabled=True)
+
+# ============ 11. agent md：Task 移除 / git 禁提交 / reviewer 原样（v2.50 ①②） ============
+print("[11] agent md（临时目录安装）")
+
+
+def _tools_line(md):
+    m = re.search(r"^tools: (.+)$", md, re.M)
+    return m.group(1).strip() if m else ""
+
+
+ad = hr._agents_dir()
+for fn in ("executor.md", "coder.md", "designer.md", "dev.md", "reviewer.md"):
+    p = os.path.join(ad, fn)
+    if os.path.exists(p):
+        os.remove(p)
+# 预置 v2.49 旧版 strong 套装 → 验证一次性退役清理
+for fn in ("executor.md", "coder.md", "designer.md"):
+    with open(os.path.join(ad, fn), "w", encoding="utf-8") as f:
+        f.write("---\nname: %s\n---\nold" % fn[:-3])
+hr.install_roles_agents(STRONG_MODEL)
+check("strong 不装任何角色（含退役清理）",
+      not any(os.path.exists(os.path.join(ad, fn)) for fn in
+              ("executor.md", "coder.md", "designer.md", "dev.md", "reviewer.md")))
+check("strong ensure_roles_ready 空（无定义可自愈）",
+      hr.ensure_roles_ready(STRONG_MODEL) == [])
+hr.install_roles_agents(LIGHT_MODEL)
+check("light 装 dev+reviewer", os.path.exists(os.path.join(ad, "dev.md"))
+      and os.path.exists(os.path.join(ad, "reviewer.md")))
+with open(os.path.join(ad, "dev.md"), encoding="utf-8") as f:
+    dev_md = f.read()
+with open(os.path.join(ad, "reviewer.md"), encoding="utf-8") as f:
+    rev_md = f.read()
+tl = _tools_line(dev_md).split(", ")
+check("dev tools 无 Task（子代理禁派子代理）", "Task" not in tl)
+check("dev tools 保留 SendMessage（续派回报链路）", "SendMessage" in tl)
+check("dev tools 干活全集（含编辑类）",
+      all(t in tl for t in ("Edit", "Write", "MultiEdit", "NotebookEdit", "Bash")))
+rtl = _tools_line(rev_md).split(", ")
+check("reviewer tools 原样（Task 保留）", "Task" in rtl)
+check("reviewer tools 只读（无编辑类）",
+      not any(t in rtl for t in ("Edit", "Write", "MultiEdit", "NotebookEdit")))
+check("dev body 含 git 禁提交铁律",
+      "git commit" in hr._DEV_BODY and "留在工作区" in hr._DEV_BODY)
+check("executor/coder body 含 git 禁提交铁律",
+      "git commit" in hr._EXECUTOR_BODY and "git commit" in hr._CODER_BODY)
+check("reviewer body 无 git 条（原样）", "git commit" not in hr._REVIEWER_BODY)
+
+# ============ 12. P2 clamp：l1_max_lines ≤ l2_max_lines（v2.50 ⑥） ============
+print("[12] P2 clamp")
+C = hr.clamp_role_limits
+p, n = C({"l1_max_lines": 300, "l2_max_lines": 200})
+check("l1>l2l → clamp 到 l2l 并给原因",
+      p["l1_max_lines"] == 200 and len(n) == 1 and n[0]["to"] == 200
+      and "reason" in n[0])
+p, n = C({"l2_max_lines": 50}, cfg={"l1_max_lines": 100, "l2_max_lines": 200})
+check("只调低 l2 → 现存 l1 跟着钳（补进 patch）",
+      p.get("l1_max_lines") == 50 and p["l2_max_lines"] == 50)
+p, n = C({"l1_max_lines": 200, "l2_max_lines": 200})
+check("相等合法不钳", not n and p["l1_max_lines"] == 200)
+p, n = C({"l1_max_lines": 50})
+check("l1<l2l 不钳", not n and p["l1_max_lines"] == 50)
+p, n = C({"enabled": True})
+check("不含线键的 patch 不动", p == {"enabled": True} and not n)
+
+# ============ 13. P1 派发/续派识别（v2.50 ⑥） ============
+print("[13] P1 派发/续派识别")
+from src.claude_harness import _audit_dispatch_role as D
+check("Task 按名计 dev", D("Task", {"subagent_type": "dev"}) == "dev")
+check("Agent 按名计 reviewer", D("Agent", {"subagent_type": "reviewer"}) == "reviewer")
+check("Task 其他代理不计", D("Task", {"subagent_type": "Explore"}) is None)
+check("SendMessage 裸名续派计 dev", D("SendMessage", {"to": "dev"}) == "dev")
+check("SendMessage 带 [ref] 计 reviewer",
+      D("SendMessage", {"to": "reviewer [3fa9c1]"}) == "reviewer")
+check("SendMessage 裸 agentId 查映射",
+      D("SendMessage", {"to": "a1b2c3d4-9f0e"}, {"a1b2c3d4-9f0e": "dev"}) == "dev")
+check("worker 无名形态 → None（缺口如实，见 docstring）",
+      D("SendMessage", {"to": "worker [3fa9c1]"}) is None)
+check("发 main 不计", D("SendMessage", {"to": "main"}) is None)
+check("无关工具不计", D("Edit", {"file_path": "x"}) is None)
+
+# _audit_tally 集成：SendMessage 续派 + Task 记 pending + result 回填映射
+from src.claude_harness import HarnessSession as _HS
+_fake = types.SimpleNamespace(_audit={"lines": 0, "files": [], "dev": False,
+                                      "reviewer": False, "streak": 0,
+                                      "ids": {}, "pending": {}})
+
+
+def _ev(blocks, parent=None):
+    o = {"message": {"content": blocks}}
+    if parent:
+        o["parent_tool_use_id"] = parent
+    return o
+
+
+_HS._audit_tally(_fake, _ev([
+    {"type": "tool_use", "id": "tu1", "name": "Task",
+     "input": {"subagent_type": "dev", "prompt": "x"}}]))
+check("tally：Task dev 记旗+pending", _fake._audit["dev"]
+      and "tu1" in _fake._audit["pending"])
+_HS._audit_tally(_fake, _ev([
+    {"type": "tool_use", "id": "tu2", "name": "SendMessage",
+     "input": {"to": "dev [abc]", "message": "续"}}]))
+check("tally：SendMessage 名字续派计旗（不再失明）", _fake._audit["dev"])
+_HS._audit_tally_result(_fake, _ev([
+    {"type": "tool_result", "tool_use_id": "tu1",
+     "content": [{"type": "text",
+                  "text": '{"agentId": "a11b22c33-d44e", "ok": true}'}]}]))
+check("result 回填 agentId→dev 映射",
+      _fake._audit["ids"].get("a11b22c33-d44e") == "dev"
+      and not _fake._audit["pending"])
+_HS._audit_tally(_fake, _ev([
+    {"type": "tool_use", "id": "tu3", "name": "SendMessage",
+     "input": {"to": "a11b22c33-d44e", "message": "再续"}}]))
+check("tally：裸 agentId 续派经映射计旗", _fake._audit["dev"])
+_sub = _ev([{"type": "tool_use", "id": "tu9", "name": "Task",
+             "input": {"subagent_type": "reviewer"}}], parent="p1")
+_HS._audit_tally(_fake, _sub)
+check("子代理事件（parent_tool_use_id）不计", not _fake._audit["reviewer"])
 
 print()
 print("=" * 56)
