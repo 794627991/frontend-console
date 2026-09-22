@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""三角色设计——harness 内置定义（v2.29.1）。
+"""三角色设计——harness 内置定义（v2.49）。
 
 角色定义是 harness 的一部分，不是用户手工放的 ~/.claude/agents/*.md：
 会话启动时自动把 executor（执行者）/coder（编程者）两个子代理定义安装
@@ -7,8 +7,25 @@
 任何人装了本工具即得三角色，零手工配置。
 
 模型名存 config.json 的 harness_roles 节（executor_model / coder_model /
-enabled / model_map；v2.34 增 audit_mode / max_free_lines——light 形态
-回合结算审计的兜底档与直改免审线），换 API 方案改配置即可，不用动代码。
+enabled / model_map；v2.34 增 audit_mode；v2.49 增 l1_max_lines /
+l2_max_files / l2_max_lines——任务分级路由的两档可数线），换 API 方案改
+配置即可，不用动代码。
+
+v2.49（2026-09-22）任务分级路由重构（用户拍板，不翻案）：轻主力形态从
+「按角色二分」改为按任务复杂度五档路由——
+- L0 杂活（问答/查文件/跑命令/信息收集）主会话直接干，不派发；
+- L1 小改：单文件 ≤l1_max_lines 行的配置/常量/文案/注释级 → 主会话直改
+  免审（原 max_free_lines=3 的「微调免审」档放大成可用的 L1）；
+- L2 中改：≤l2_max_files 文件且回合累计 ≤l2_max_lines 行真代码 → 主会话
+  直改 + 派 reviewer 轻审（只审 diff：逻辑/边界/一致性）；
+- L3 攻坚：超 L2 上限/多文件重构/架构/疑难 bug → 派 dev 全权攻坚 +
+  reviewer 取证级全审（原标准流程）；
+- L4 高风险：删数据/发布/外发/碰铁律文件 → 无论谁实施必审 + 用户显式确认。
+dev 同领域（同项目/模块）优先 SendMessage 续派复用会话（不冷启动）；派
+dev/reviewer 固定四要素上下文包（目标/文件+行号/已定决策/验收标准）。
+旧键 max_free_lines 废弃（三键取代）；审计判定抽纯函数 audit_limits /
+audit_verdict / audit_gate_check，claude_harness 的回合结算与事中闸共用
+同一口径（引导词 / 结算 / 闸三处数字同源）。
 
 实测要点：agent 文件的 model 字段必须写【显式模型 ID】——别名
 （opus/haiku）在这条链路上会被无视（子代理跑主链模型）。
@@ -71,7 +88,10 @@ _DEFAULTS = {"enabled": False,          # v2.29.3 默认关闭（用户定调：
              "model_map": {},
              # v2.34 light 形态审计（回合结算盘点工具调用记录，零 token）：
              "audit_mode": "auto",      # 兜底档：auto=违规自动续发补审 / warn=仅警示 / off=关
-             "max_free_lines": 3}       # 直改免审线：主会话单回合累计 Edit/Write 行数上限
+             # v2.49 任务分级路由两档可数线（旧 max_free_lines=3 废弃，三键取代）：
+             "l1_max_lines": 100,       # L1 免审线：单文件且回合累计 ≤ 此行数免审
+             "l2_max_files": 3,         # L2 轻审线：≤ 此文件数（且行数不超线）直改+轻审
+             "l2_max_lines": 200}       # L2 轻审线：回合累计 ≤ 此行数；超任一即 L3 派 dev
 
 
 def roles_cfg():
@@ -144,6 +164,10 @@ _DEV_BODY = """你是「开发」——轻主力形态的攻坚担当（高级�
 - 实施中发现方案有硬伤：就地调整并在交付说明里讲清，不硬掰原方案
 - 不改需求边界；发现需求矛盾停下来向派发者说明，不自行拍板
 - 遵守项目既有代码风格与约定
+- 续派协作（v2.49）：同领域（同项目/同模块）的后续任务会经 SendMessage
+  续派到本会话——跨任务记住读过的代码与已定决策，不重复冷启动重读；
+  收到续派先对照上文判断是延续还是换了领域，新领域任务如实说明并建议
+  派发方另开新会话
 """
 
 _REVIEWER_BODY = """你是「审核」——对抗性代码审核员（高级模型）。唯一职责：证明这份改动有问题。
@@ -151,20 +175,25 @@ _REVIEWER_BODY = """你是「审核」——对抗性代码审核员（高级模
 立场：假定代码是错的。你的价值在于找出问题，不在于肯定代码。真找不到
 问题时必须说清查过什么、怎么取证的，不许敷衍放行。
 
-审查维度（对每处改动逐一过）：
+审档两形（v2.49，派发方在任务里声明；未声明按全审）：
+- 轻审（L2 中改）：只审 diff——逻辑正确性、边界条件、与周边代码一致性
+  三个维度，不重建全项目上下文，快速给结论（同样只审不改）。
+- 全审（L3 攻坚）：取证级——下方全部维度逐一过。
+
+审查维度（对每处改动逐一过；轻审只取带☆的三项）：
 - 需求符合性：对照任务描述逐条核对——漏做、做偏、做多了都算问题
-- 逻辑正确性：边界条件、空值/越界、错误默认值、分支遗漏
+- 逻辑正确性☆：边界条件、空值/越界、错误默认值、分支遗漏
 - 健壮性：异常路径、失败处理、资源泄漏、并发/竞态
 - 安全性：注入、路径拼接、越权、敏感信息泄露
-- 一致性：与项目既有风格约定冲突、重复造轮子、破坏既有行为
+- 一致性☆：与项目既有风格约定冲突、重复造轮子、破坏既有行为
 
-取证纪律：
+取证纪律（全审全额执行；轻审可缩至 diff 相关文件的对应段落）：
 - 必须 Read 相关文件核对实际代码，不能只信交付报告的自述
 - 能跑的验证（命令/测试/编译）要实际跑，跑不了的注明原因
-- 只审不改：发现问题报告，不动手修（修复归 dev）
+- 只审不改：发现问题报告，不动手修（修复归 dev 或主会话自查）
 
 结论格式（严格二选一）：
-PASS —— 仅当穷尽上述维度仍未发现问题；列出已查维度与取证动作
+PASS —— 仅当穷尽该档维度仍未发现问题；列出已查维度与取证动作
 FAIL —— 每个问题一条：文件:行号、问题描述、严重级（致命/严重/一般）、
         修复建议；致命/严重问题未解决前不许改口 PASS
 """
@@ -172,9 +201,10 @@ FAIL —— 每个问题一条：文件:行号、问题描述、严重级（致�
 
 def update_roles_cfg(patch):
     """v2.34：merge 写角色配置（只动 patch 里出现的键，其余键保留）。返回
-    (ok, err)。生效路径与开关一致：模型槽/免审线出现在引导词里 → 下条消息
-    前的指纹热更自动换词重启 + agents 重生成；audit_mode 在回合结算时读盘，
-    即时生效。enabled 关闭即清理 agents（残留定义会被 CLI 自动发现）。"""
+    (ok, err)。生效路径与开关一致：模型槽/分级线（l1_max_lines 等，v2.49
+    取代 max_free_lines）出现在引导词里 → 下条消息前的指纹热更自动换词
+    重启 + agents 重生成；audit_mode 在回合结算时读盘，即时生效。enabled
+    关闭即清理 agents（残留定义会被 CLI 自动发现）。"""
     try:
         with open(_st.CONFIG_FILE, "r", encoding="utf-8") as f:
             d = json.load(f)
@@ -377,9 +407,9 @@ def install_roles_agents(model=None):
                 co_model, _DEV_BODY, tools=_TOOLS_FULL),
             "reviewer.md": _agent_md(
                 "reviewer",
-                "对抗审核（高级模型）：开发交付后必须派此代理审改动——专门"
-                "挑毛病（需求符合性/逻辑/健壮性/安全/一致性），只审不改，"
-                "PASS/FAIL 二选一。",
+                "对抗审核（高级模型）：改动交付后派此代理审——分两档：L2 中"
+                "改轻审（只审 diff）／L3 攻坚全审（取证级，需求符合性/逻辑/"
+                "健壮性/安全/一致性）。只审不改，PASS/FAIL 二选一。",
                 co_model, _REVIEWER_BODY, tools=_TOOLS_REVIEW),
         }
     else:
@@ -443,54 +473,130 @@ def roles_disallow(model=None):
     return ROLE_DISALLOW if roles_mode(model) == "strong" else ""
 
 
+def audit_limits(cfg=None):
+    """v2.49 审计两档线现值：(l1_max_lines, l2_max_files, l2_max_lines)。
+    引导词 / 回合结算 / 事中闸三处共用本函数——数字同源，不会词里一套
+    审计另一套。0 合法（最严档：l1=0 任何直改都须轻审；l2=0 任何直改都
+    属 L3 须派 dev），缺键/非法回默认。纯函数不落盘（cfg 缺省读盘一次）。"""
+    c = cfg if cfg is not None else roles_cfg()
+
+    def _int(key, dflt):
+        try:
+            # 不用 ` or dflt` 兜底——那会把合法的 0 吞成默认
+            return max(0, int(c.get(key)))
+        except (TypeError, ValueError):
+            return dflt
+    return (_int("l1_max_lines", 100), _int("l2_max_files", 3),
+            _int("l2_max_lines", 200))
+
+
+def audit_verdict(lines, files, dev, rev, cfg=None):
+    """v2.49 回合结算违规判定（纯函数，claude_harness._audit_settle 调用）：
+    入参为本回合累计——lines=直改行数、files=直改涉及文件数、dev/rev=是否
+    派发过 dev/reviewer。返回违规描述列表（空=干净）；描述自带档位与可数
+    依据，供警示卡/补审指令直用。判定与引导词同源（audit_limits）：
+    - L1 免审区（单文件且 lines≤l1）→ 无需审；
+    - L2 轻审区（files≤l2f 且 lines≤l2l）→ 须 reviewer 轻审，未派=违规；
+    - 超 L2 → 属 L3 攻坚（应派 dev 实施+reviewer 全审），主会话直改且
+      未派审=违规（已派 reviewer 视作审过，不重复追责——提示性兜底）；
+    - dev 已派但无 reviewer → 违规（v2.34 原规则保留）。
+    兜底是提示性的：本函数只判不拦，处置（警示/续发补审）归调用方按
+    audit_mode 决定。"""
+    l1, l2f, l2l = audit_limits(cfg)
+    viol = []
+    if not rev and (files > 1 or lines > l1):
+        if files <= l2f and lines <= l2l:
+            viol.append(
+                "主会话直改 %d 行/%d 个文件，超过免审线（单文件 ≤%d 行）属 "
+                "L2 中改，本回合未派 reviewer 轻审（只审 diff）"
+                % (lines, files, l1))
+        else:
+            viol.append(
+                "主会话直改 %d 行/%d 个文件，超过轻审线（≤%d 个文件、回合"
+                "累计 ≤%d 行）属 L3 攻坚——应派 dev 实施+reviewer 取证级全审，"
+                "却由主会话直改且未派审" % (lines, files, l2f, l2l))
+    if dev and not rev:
+        viol.append("已派 dev 交付但未派 reviewer 对抗审核")
+    return viol
+
+
+def audit_gate_check(used_lines, used_files, cfg=None):
+    """v2.49 事中闸判定（纯函数，claude_harness /audit_gate 调用）：
+    (block, msg)。主会话直改累计**达到**轻审线上限（行或文件任一达线）→
+    拦下一次直改并指路派 dev——继续手改就属 L3 攻坚，该转派发。口径用
+    >=（达线即拦下一次），与结算的「超线追责」（>，audit_verdict）互补：
+    事中闸让超线根本不发生，事后审计只兜闸失效的漏网。L1/L2 内的直改
+    （新路由的主体）一律放行——闸只守 L2 上限，不再掐 3 行微调。"""
+    _l1, l2f, l2l = audit_limits(cfg)   # 闸只守 L2 上限，l1 不参与
+    if used_lines >= l2l or used_files >= l2f:
+        return True, ("本回合直改已 %d 行/%d 个文件，达到轻审线上限（≤%d "
+                      "个文件、累计 ≤%d 行）——再继续手改属 L3 攻坚，请用 "
+                      "Task 工具派 dev 代理实施；已完成的 L2 改动交付前记得"
+                      "派 reviewer 轻审。确需放宽可在三角色配置里调整分级线。"
+                      % (used_lines, used_files, l2f, l2l))
+    return False, None
+
+
 def roles_bridge_text(model=None):
     """角色引导词（v2.30.2 双形态）：主会话强模型 → 决策者词（只派发审核，
-    配结构禁权）；轻快模型 → 轻主力词（杂活/日常对话自己干，设计类思考派
-    designer 强模型代理，无禁权）。开关关闭一律空串。model 参数参与形态
-    判定并进引导词指纹（切模型自动换形态热更）。v2.34：light 词的免审判据
-    从「一行级微调」改为可数规则（≤max_free_lines 行），并明示回合结算
-    审计——威慑前置（事前引导词 + 事后审计兜底，用户定调）。"""
+    配结构禁权）；轻快模型 → 轻主力词。开关关闭一律空串。model 参数参与
+    形态判定并进引导词指纹（切模型自动换形态热更）。v2.49：light 词从
+    「二分分工」改为任务分级路由（L0-L4，用户拍板）——大部分中小编码回到
+    持有上下文的主会话直改，dev 只接 L3 攻坚且同领域续派复用会话；两档
+    上限（audit_limits）以可数数字嵌进词里，改配置即变词（指纹热更），
+    并明示回合结算审计——威慑前置（事前引导词 + 事后审计兜底，用户定调）。"""
     if not roles_cfg()["enabled"]:
         return ""
     if roles_mode(model) == "light":
         cfg = roles_cfg()
-        try:
-            # 不用 `or 3` 兜底——0 是合法免审线（最严档：任何直改都违规）
-            max_free = max(0, int(cfg.get("max_free_lines")))
-        except (TypeError, ValueError):
-            max_free = 3
+        l1, l2f, l2l = audit_limits(cfg)
         # 威慑句按 audit_mode 生成——off 档不宣称「会审计」（空头威胁，
         # 模型被抓过一次空头支票后纪律反而松动）
         if str(cfg.get("audit_mode") or "auto") != "off":
             audit_note = ("harness 会在回合结束时审计你的工具调用记录——直改"
-                          "行数按回合累计，切片拆小也会累计超线；超线或跳审"
-                          "会被自动查出并要求补审")
+                          "行数/文件数按回合累计，切片拆小也会累计超线；超免"
+                          "审线未轻审、超轻审线未走 dev 会被自动查出并要求"
+                          "补审")
         else:
-            audit_note = "dev 交付后不审核就答复用户属重大流程违规"
+            audit_note = "跳过应做的审核（轻审/全审）就答复用户属重大流程违规"
         dev_model = resolve_role_models()[1]
         return (
-            "【轻主力分工（你=轻快主力）】\n"
-            "本会话是日常对话与执行的轻快主力：问答闲聊直接答；查文件、跑"
-            "命令、环境排查、信息收集这类跑腿杂活直接干——这些都不要派发。\n"
-            "攻坚必须走两个强模型代理（都用 Task 工具）：\n"
-            "1. dev 代理（%s）：编码/debug/方案思考一个上下文打通——功能"
-            "实现、多文件改动、bug 修复一律派它，不要自己写。\n"
-            "2. reviewer 代理（%s）：对抗审核——dev 交付后必须派它审改动，"
-            "它专门挑毛病（只审不改，给 PASS/FAIL 结论）。\n"
-            "标准流程：dev 实现 → reviewer 对抗审核 → 判 FAIL 就回 dev 修"
-            "→ 复审，致命/严重问题清零才收 → 你消化双方结论后汇总答复用户。\n"
-            "纪律（免审线是可数规则；%s）：\n"
-            "- 允许你直接改且免审的唯一情形：只动一个文件、本回合累计不超过 "
-            "%d 行（配置值/常量/文案/注释级微调）。\n"
-            "- 其余任何代码修改一律派 dev——不要自行把改动判成「微调」就"
-            "自己上手。\n"
-            "- dev 交付后必须派 reviewer 审核再答复用户，无例外。\n"
+            "【任务分级路由（你=轻快主力）】\n"
+            "本会话是面向用户的轻快主力：日常对话直接答；任务按复杂度分级"
+            "路由——大部分中小编码由持有上下文的你直接做，不派发（省 token "
+            "且快）。分档上限可数，按本回合累计：\n"
+            "· L0 杂活：问答、查文件、跑命令、环境排查、信息收集 → 你直接"
+            "干，不派发。\n"
+            "· L1 小改（免审）：单文件且本回合累计 ≤%d 行的配置/常量/文案/"
+            "注释级改动 → 你直接改，不需审核。\n"
+            "· L2 中改（轻审）：≤%d 个文件且本回合累计 ≤%d 行的真代码改动 "
+            "→ 你直接改，交付前派 reviewer 轻审（只审 diff：逻辑/边界/一致"
+            "性，不重建全项目上下文）。\n"
+            "· L3 攻坚（全审）：超 L2 上限、多文件重构、架构改动、疑难 bug、"
+            "需大量试错跑测试 → 用 Task 派 dev 全权攻坚，交付后 reviewer 取"
+            "证级全审。\n"
+            "· L4 高风险：删数据、发布、外发、碰铁律文件（如 cmdlib.json）"
+            "→ 无论谁实施（你或 dev）都必须审核，且动手前先向用户显式确认"
+            "拿到同意。\n"
+            "dev 续派策略：同领域（同项目/同模块）的后续任务优先用 "
+            "SendMessage 续派同一 dev 会话——它记得读过的代码与已定决策，不"
+            "冷启动；换了任务领域才用 Task 新开。\n"
+            "派 dev/reviewer 的上下文包固定四要素：①目标（做什么/为什么）"
+            "②涉及文件+行号 ③已定决策（禁翻案项）④验收标准。\n"
+            "两个强模型代理：dev（%s）攻坚、reviewer（%s）对抗审核（只审不"
+            "改，PASS/FAIL 二选一）。\n"
+            "流程：L2 你改完 → reviewer 轻审 → FAIL 自己修再送审；L3 dev "
+            "实现 → reviewer 全审 → FAIL 回 dev 修 → 复审，致命/严重问题"
+            "清零才收 → 你消化双方结论后汇总答复用户。\n"
+            "纪律（%s）：\n"
+            "- 不要自行把改动判小逃审：超 L1 就必须轻审、超 L2 就必须走 "
+            "dev。\n"
             "- reviewer 判 FAIL 必须回炉重修；两边的报告都要消化后再答，"
             "不要原样转发一大坨。\n"
             "- 回合终点纪律：提交/实施完成后，你的最后一条消息必须是给用户的结论"
             "汇总（做了什么、审核结论、提交号、用户需要做什么）——用户看不到后台"
             "代理的过程，静默结束回合=交付没完成。\n"
-            % (dev_model, dev_model, audit_note, max_free)
+            % (l1, l2f, l2l, dev_model, dev_model, audit_note)
         )
     ex_model, co_model = resolve_role_models()
     return (

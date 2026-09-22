@@ -391,7 +391,8 @@ def _iso_dur_sec(t0, t1):
 # 结构禁权/配置开关都在那个模块里。v2.30.2 双形态：主会话轻快模型 →
 # 轻主力模式（designer 代理，无禁权），强模型 → 决策者模式（结构禁权）。
 from .harness_roles import (roles_bridge_text, roles_disallow,
-                            install_roles_agents)
+                            install_roles_agents, audit_verdict,
+                            audit_gate_check)
 
 
 # v2.3.7 全会话铁律（用户定调「浪费 token 极其可耻」）：注入每个会话。
@@ -861,7 +862,8 @@ def _ask_mcp_cfg_path(sid, perm="auto"):
 # 结构禁权不管；light 主会话要干杂活不能禁工具。审计=用客观事实（stream-json
 # 事件流的工具调用记录）判定，不靠模型自判；纯本地字符串/计数，零 token。
 # ---------------------------------------------------------------------------
-_AUDIT_EDIT_TOOLS = ("Edit", "Write", "NotebookEdit")   # 直改类工具（主会话调用才计）
+_AUDIT_EDIT_TOOLS = ("Edit", "Write", "MultiEdit",
+                     "NotebookEdit")   # 直改类工具（主会话调用才计）
 
 
 def _audit_nlines(s):
@@ -871,11 +873,14 @@ def _audit_nlines(s):
 
 
 def _audit_lines(name, inp):
-    """v2.34 审计行数口径（写死于此，判定要可复现）：
+    """v2.34 审计行数口径（写死于此，判定要可复现）；v2.49 补 MultiEdit：
     - Edit：max(old_string, new_string) 行数——替换影响按两侧较大跨度计。
       不用行数差：删 30 行补 1 行的「瘦身式大改」差值为负/极小，会逃逸。
     - Write：新文件全文行数（空 content 至少计 1——整文件清空也是变更）；
       覆盖写时旧内容事件流里不可得，按全量新增计。
+    - MultiEdit（v2.49）：各编辑块按 Edit 口径（max(old,new)）求和——原先
+      不在 _AUDIT_EDIT_TOOLS 里整类计 0，是行数口径的逃逸口（分级路由的
+      上限放大到百行级后必须堵上）。
     - NotebookEdit：new_source（cell 新内容）行数；delete 无内容变更计 0。"""
     try:
         if name == "Edit":
@@ -885,6 +890,13 @@ def _audit_lines(name, inp):
             # 空 content 也是实质变更（整文件清空/覆盖写空），至少计 1——
             # 计 0 会让「把文件写空」逃逸审计
             return max(1, _audit_nlines(inp.get("content")))
+        if name == "MultiEdit":
+            total = 0
+            for e in inp.get("edits") or []:
+                if isinstance(e, dict):
+                    total += max(_audit_nlines(e.get("old_string")),
+                                 _audit_nlines(e.get("new_string")))
+            return total
         if name == "NotebookEdit":
             return _audit_nlines(inp.get("new_source"))
     except Exception:
@@ -892,8 +904,18 @@ def _audit_lines(name, inp):
     return 0
 
 
+def _audit_file_key(inp):
+    """v2.49 直改目标文件归一键（L2 文件数口径）：file_path/notebook_path
+    归一（normcase+正斜杠——Windows 同文件不同写法不重复计）。取不到返回
+    ""（畸形输入不计文件数，行数口径仍独立生效）。"""
+    p = str(inp.get("file_path") or inp.get("notebook_path")
+            or inp.get("notebook_nb_path") or "").strip()
+    return os.path.normcase(p.replace("\\", "/")) if p else ""
+
+
 def _audit_hook_settings_path():
-    """写 light 形态会话的 --settings 临时文件（v2.40 直改免审线事中闸注入）。
+    """写 light 形态会话的 --settings 临时文件（v2.40 直改事中闸注入；
+    v2.49 起闸守 L2 轻审线上限，判定见 harness_roles.audit_gate_check）。
 
     内容只有 hooks 键：Edit/Write/MultiEdit/NotebookEdit 的 PreToolUse 指向
     `--audit-hook` 子命令（它查 /audit_gate 决定放行/拦截，见
@@ -1045,10 +1067,12 @@ class HarnessSession:
         # 挤出窗口 → last_done 归 0，前端「已返回」冒泡整个漏掉（用户多次反馈）
         self.vision_done = {"ts": 0, "brief": ""}
         # v2.34 light 审计回合累计（运行态，不持久化）：lines=本回合主会话
-        # 直改（Edit/Write/NotebookEdit）累计行数；dev/reviewer=本回合 Task
-        # 派发标记；streak=连续违规回合数（防自动补审死循环：连续 3 回合
-        # 违规后降级为仅警示）。回合结算（result/interrupted/exit）清零。
-        self._audit = {"lines": 0, "dev": False, "reviewer": False, "streak": 0}
+        # 直改（Edit/Write/MultiEdit/NotebookEdit）累计行数；files=涉及文件
+        # 归一键列表（v2.49 L2 文件数口径）；dev/reviewer=本回合 Task 派发
+        # 标记；streak=连续违规回合数（防自动补审死循环：连续 3 回合违规后
+        # 降级为仅警示）。回合结算（result/interrupted/exit）清零。
+        self._audit = {"lines": 0, "files": [], "dev": False, "reviewer": False,
+                       "streak": 0}
         # v2.40：light 形态事中闸的 --settings 临时文件路径（kill 时清理；
         # revive 重启由 start() 重建——hooks 是进程启动参数，活进程不热更）
         self._audit_settings_path = None
@@ -1154,13 +1178,15 @@ class HarnessSession:
             if _roles_ban:
                 argv += ["--disallowedTools", _roles_ban]
             elif self._audit_state() is not None:
-                # v2.40 light 形态事中闸：直改免审线硬拦截。与 strong 禁权
-                # 互斥共存（strong 全禁了 Edit 根本到不了闸；light 不禁工具
-                # ——主会话要干杂活，改用 PreToolUse hook 在直改累计达线时
-                # exit 2 拦下。回合结算审计只能事后补审，这里把超线掐灭在
-                # 发生前，双层）。_audit_state 非 None=roles 开+light+
-                # audit_mode!=off，与结算审计同源判定（audit_mode=off 时
-                # 闸与审计同步关）；注入失败照常启动（闸失效不阻塞工作）。
+                # v2.40 light 形态事中闸：直改硬拦截（v2.49 起守 L2 轻审线
+                # 上限——分级路由下 L1/L2 直改是主体放行，只在行数/文件数
+                # 达 L2 上限时拦下指路派 dev）。与 strong 禁权互斥共存
+                # （strong 全禁了 Edit 根本到不了闸；light 不禁工具——主会话
+                # 要干杂活，改用 PreToolUse hook 在直改累计达线时 exit 2
+                # 拦下。回合结算审计只能事后补审，这里把超线掐灭在发生前，
+                # 双层）。_audit_state 非 None=roles 开+light+audit_mode!=off，
+                # 与结算审计同源判定（audit_mode=off 时闸与审计同步关）；
+                # 注入失败照常启动（闸失效不阻塞工作）。
                 _p = _audit_hook_settings_path()
                 if _p:
                     self._audit_settings_path = _p
@@ -1287,7 +1313,8 @@ class HarnessSession:
     def _audit_tally(self, o):
         """回合内审计累计：只记主会话调用——子代理事件带 parent_tool_use_id
         一律不算（它们有自己的纪律，主会话的违规才算违规）。纯计数不读
-        配置（每事件零盘 IO），判不判定是 _audit_settle 结算时的事。"""
+        配置（每事件零盘 IO），判不判定是 _audit_settle 结算时的事。v2.49
+        增 files 累计（直改目标文件去重列表——L2 文件数口径）。"""
         au = self._audit
         if o.get("parent_tool_use_id"):
             return
@@ -1301,6 +1328,9 @@ class HarnessSession:
             inp = b.get("input") if isinstance(b.get("input"), dict) else {}
             if n in _AUDIT_EDIT_TOOLS:
                 au["lines"] += _audit_lines(n, inp)
+                k = _audit_file_key(inp)
+                if k and k not in au["files"]:
+                    au["files"].append(k)
             elif n in ("Task", "Agent"):
                 st = str(inp.get("subagent_type") or inp.get("agent_type") or "")
                 if st == "dev":
@@ -1309,50 +1339,45 @@ class HarnessSession:
                     au["reviewer"] = True
 
     def _audit_state(self):
-        """审计现值：(audit_mode, max_free_lines)；不审计返回 None。
+        """审计现值：(audit_mode, (l1, l2f, l2l) 两档线)；不审计返回 None。
         条件=roles 开 + light 形态（strong 有结构禁权不需要）+ audit_mode
-        != off。结算时读一次盘——配置改动回合间生效。"""
+        != off。结算时读一次盘——配置改动回合间生效。线值统一出自
+        harness_roles.audit_limits（与引导词同源，词里一套数字审计另一套
+        是 v2.34 就防的坑）。"""
         try:
-            from .harness_roles import roles_cfg, roles_mode
+            from .harness_roles import roles_cfg, roles_mode, audit_limits
             cfg = roles_cfg()
             mode = str(cfg.get("audit_mode") or "auto")
             if not cfg.get("enabled") or mode == "off":
                 return None
             if roles_mode(self._eff_model()) != "light":
                 return None
-            try:
-                # 不用 `or 3` 兜底——那会把合法的 0（最严档：任何直改都
-                # 违规）吞成 3。缺键/None → int() 抛 TypeError 落默认 3
-                mf = int(cfg.get("max_free_lines"))
-            except (TypeError, ValueError):
-                mf = 3
-            return mode, max(0, mf)
+            return mode, audit_limits(cfg)
         except Exception:
             return None
 
     def _audit_settle(self, reason):
-        """回合结算审计（result/interrupted/exit 三处调用）。盘点本回合：
-        违规两条——① 主会话直改累计行数 > 免审线且无 reviewer 派发；
-        ② 有 dev 派发但无 reviewer 派发。兜底按 audit_mode：auto=回合结束
-        自动续发一条 [审计] user 消息要求补审（复用 send_message 管线，
-        busy/进程/指纹热更检查全继承）；warn=仅聊天流红色警示（前端
-        kind='audit' 事件）。防循环：连续 3 个违规回合后降级仅警示；中断/
-        进程退出只警示不续发（用户主动停/进程已死，续发无意义，且不计入
-        streak）。计数结算后清零（切片逃逸防护：多次小改按回合累计判定）。"""
+        """回合结算审计（result/interrupted/exit 三处调用）。v2.49 起违规
+        判定走 harness_roles.audit_verdict（纯函数，与引导词两档线同源）：
+        ① 超 L1 免审线（单文件/行数）未派 reviewer 轻审——L2 档违规；
+        ② 超 L2 轻审线（文件数/行数）属 L3 却主会话直改且未派审——L3 档
+        违规；③ 有 dev 派发但无 reviewer 派发（原规则保留）。兜底按
+        audit_mode：auto=回合结束自动续发一条 [审计] user 消息要求补审
+        （复用 send_message 管线，busy/进程/指纹热更检查全继承）；warn=仅
+        聊天流红色警示（前端 kind='audit' 事件）——提示性兜底，不阻断。
+        防循环：连续 3 个违规回合后降级仅警示；中断/进程退出只警示不续发
+        （用户主动停/进程已死，续发无意义，且不计入 streak）。计数结算后
+        清零（切片逃逸防护：多次小改按回合累计判定）。"""
         au = self._audit
-        lines, dev, rev = au["lines"], au["dev"], au["reviewer"]
-        au.update({"lines": 0, "dev": False, "reviewer": False})
+        lines, files = au["lines"], list(au["files"])
+        dev, rev = au["dev"], au["reviewer"]
+        au.update({"lines": 0, "files": [], "dev": False, "reviewer": False})
         st = self._audit_state()
         if st is None:
             au["streak"] = 0
             return
-        mode, max_free = st
-        viol = []
-        if lines > max_free and not rev:
-            viol.append("主会话直改累计 %d 行超过免审线 %d 行，且本回合未派 "
-                        "reviewer 审核" % (lines, max_free))
-        if dev and not rev:
-            viol.append("已派 dev 交付但未派 reviewer 对抗审核")
+        mode, _limits = st
+        viol = audit_verdict(lines, len(files), dev, rev)
         if not viol:
             au["streak"] = 0
             return
@@ -2919,16 +2944,17 @@ def harness_transcript():
 
 @harness_bp.route("/audit_gate")
 def harness_audit_gate():
-    """v2.40 light 形态直改免审线事中闸查询端点（PreToolUse hook 在每次
+    """v2.40 light 形态直改事中闸查询端点（PreToolUse hook 在每次
     Edit/Write/MultiEdit/NotebookEdit 前来问）。?session_id=<CLI 侧会话 id>。
-    返回 {ok, gate}；gate.block=true=本回合主会话直改累计已达免审线，hook
-    exit 2 拦下（msg 随行给模型）。
+    返回 {ok, gate}；gate.block=true=本回合主会话直改累计已达轻审线上限
+    （v2.49 前是 3 行免审线——分级路由后 L1/L2 直改是主体，闸改守 L2 上限：
+    行数或文件数任一达线即拦下一次），hook exit 2 拦下（msg 随行给模型）。
 
     口径与 _audit_settle 同源：_audit_state 判启用（roles 开+light+
     audit_mode!=off；读一次小配置文件，改配置即时生效），used 取会话
-    _audit 的本回合 lines 累计。block 判定用 >=（达到即拦下一次）而非
-    结算的 >（超线追责）——事中闸的职责是让超线根本不发生，事后审计
-    只兜闸失效的漏网。
+    _audit 的本回合 lines/files 累计，判定走 harness_roles.audit_gate_check
+    （达线 >= 即拦下一次）而非结算的超线追责——事中闸的职责是让超线根本
+    不发生，事后审计只兜闸失效的漏网。
 
     查不到会话（session_id 不在 _sessions：别的实例/已换代）一律放行。
     注意子代理与主会话同 session_id（官方 hooks 文档+本机 CLI 2.1.278
@@ -2945,14 +2971,13 @@ def harness_audit_gate():
         if s is not None:
             st = s._audit_state()
             if st is not None:
-                _, max_free = st
-                used = int((s._audit or {}).get("lines") or 0)
-                if used >= max_free:
-                    gate = {"block": True, "used": used, "max_free": max_free,
-                            "msg": ("本回合直改已 %d 行，达到免审线 %d——按轻"
-                                    "主力分工请用 Task 工具派 dev 代理实施本"
-                                    "改动；确需继续直改可在设置里调整免审线。"
-                                    % (used, max_free))}
+                au = s._audit or {}
+                used_l = int(au.get("lines") or 0)
+                used_f = len(au.get("files") or [])
+                block, msg = audit_gate_check(used_l, used_f)
+                if block:
+                    gate = {"block": True, "used": used_l, "files": used_f,
+                            "msg": msg}
     return jsonify({"ok": True, "gate": gate})
 
 
@@ -3849,7 +3874,8 @@ def harness_roles_info():
     """v2.29.2：三角色设计说明（/roles 命令数据源）。resolved 是按当前
     API 方案解析出的实际模型（换方案自动适配）。v2.30.2 带 mode——按
     settings 默认模型判定的当前形态（strong 决策者 / light 轻主力）。
-    v2.34：roles 含 audit_mode/max_free_lines（defaults 兜底）；附
+    v2.34：roles 含 audit_mode；v2.49 分级线三键（l1_max_lines/
+    l2_max_files/l2_max_lines，defaults 兜底）取代 max_free_lines；附
     models/default_model 供配置面板下拉用。"""
     from .harness_roles import (resolve_role_models, roles_cfg,
                                 roles_mode)
@@ -3907,10 +3933,12 @@ def harness_agent_models():
 def harness_set_roles():
     """v2.29.3 开关；v2.34 扩成整节配置（merge 写盘，只动出现的键）。
     body 可含 {enabled, executor_model, coder_model, model_map,
-    audit_mode, max_free_lines}。生效路径与开关一致：模型槽/免审线出现在
-    引导词里 → 指纹热更下条消息换词重启 + agents 重生成；audit_mode 在
-    回合结算时读盘，即时生效。model_map 行式 "端点关键字=执行者,编程者"
-    （编程者可省=与执行者同）或 dict {关键字:{executor,coder}}。"""
+    audit_mode, l1_max_lines, l2_max_files, l2_max_lines}（v2.49 分级线
+    三键取代 max_free_lines，旧键忽略）。生效路径与开关一致：模型槽/分级
+    线出现在引导词里 → 指纹热更下条消息换词重启 + agents 重生成；
+    audit_mode 在回合结算时读盘，即时生效。model_map 行式 "端点关键字=
+    执行者,编程者"（编程者可省=与执行者同）或 dict {关键字:{executor,
+    coder}}。"""
     from .harness_roles import update_roles_cfg
     data = request.get_json(force=True, silent=True) or {}
     patch = {}
@@ -3920,18 +3948,21 @@ def harness_set_roles():
         if k in data:
             patch[k] = str(data.get(k) or "").strip()
     if "audit_mode" in data:
-        # v2.34.1：出现但不合法 → 400（与 max_free_lines 口径一致——静默
+        # v2.34.1：出现但不合法 → 400（与分级线口径一致——静默
         # 跳过会让调用方假成功，配置面板显示的与实际生效的不符）
         if data.get("audit_mode") not in ("auto", "warn", "off"):
             return jsonify({"ok": False,
                             "err": "audit_mode 须为 auto/warn/off"}), 400
         patch["audit_mode"] = data.get("audit_mode")
-    if "max_free_lines" in data:
-        try:
-            patch["max_free_lines"] = max(0, min(100000,
-                                                 int(data.get("max_free_lines"))))
-        except (TypeError, ValueError):
-            return jsonify({"ok": False, "err": "免审线须为数字"}), 400
+    # v2.49 分级线三键（取代 max_free_lines）：0 合法（最严档），非法 → 400
+    for _k, _hi in (("l1_max_lines", 100000), ("l2_max_files", 1000),
+                    ("l2_max_lines", 100000)):
+        if _k in data:
+            try:
+                patch[_k] = max(0, min(_hi, int(data.get(_k))))
+            except (TypeError, ValueError):
+                return jsonify({"ok": False,
+                                "err": "%s 须为数字" % _k}), 400
     mmap_raw = data.get("model_map")
     if isinstance(mmap_raw, (dict, list)):
         mmap = {}

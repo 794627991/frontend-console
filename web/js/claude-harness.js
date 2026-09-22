@@ -6292,8 +6292,8 @@ function buildClaudeHarnessTab(opts = {}) {
               : r.audit_mode === 'warn' ? '仅警示（audit_mode=warn）——回合结束盘点工具调用，违规出红色警示不自动续发'
               : '自动补审（audit_mode=auto，默认）——回合结束盘点工具调用记录，直改超线/跳过 reviewer 自动续发要求补审；连续 3 回合违规降级为仅警示')
             : '不适用（决策者形态结构禁权已保证，不审计）'],
-          ['免审线', !r.enabled ? '—' : light
-            ? `主会话直改单回合累计 ≤ ${Number.isFinite(parseInt(r.max_free_lines, 10)) ? Math.max(0, parseInt(r.max_free_lines, 10)) : 3} 行免审（max_free_lines，可配，0=任何直改都须派 dev）；超出或多文件改动须派 dev+reviewer`
+          ['分级线', !r.enabled ? '—' : light
+            ? `L1 免审：单文件 ≤ ${Number.isFinite(parseInt(r.l1_max_lines, 10)) ? Math.max(0, parseInt(r.l1_max_lines, 10)) : 100} 行；L2 轻审：≤ ${Number.isFinite(parseInt(r.l2_max_files, 10)) ? Math.max(0, parseInt(r.l2_max_files, 10)) : 3} 文件且回合累计 ≤ ${Number.isFinite(parseInt(r.l2_max_lines, 10)) ? Math.max(0, parseInt(r.l2_max_lines, 10)) : 200} 行（主会话直改 + reviewer 轻审）；超 L2 属 L3——须派 dev 攻坚 + reviewer 全审（0=最严档）`
             : '—（strong 形态无直改）'],
           ['推荐配置', '主模型配轻快模型（如 glm-5.3-flash/flashx）——对话与杂活省 token，攻坚/审核走强模型代理，即轻主力形态'],
           ['模型解析', '端点映射（harness_roles.model_map）→ 当前方案模型表自动识别（轻快模型→执行者档，dev/reviewer 取强模型档）→ 配置兜底；换 API 方案自动适配'],
@@ -7108,7 +7108,7 @@ function buildClaudeHarnessTab(opts = {}) {
         headers:{'Content-Type':'application/json'}, body: JSON.stringify(saved)});
       const jr = await r.json();
       if (!jr.ok) { showBanner(jr.err || '保存失败', 3000, true); return; }
-      showBanner('👥 三角色配置已保存——模型槽/免审线随下条消息热更生效（agents 自动重生成），审计模式立即生效', 4200);
+      showBanner('👥 三角色配置已保存——模型槽/分级线随下条消息热更生效（agents 自动重生成），审计模式立即生效', 4200);
       _hgRolesFetch();                          // 缓存刷新（气泡角色徽章同源）
     } catch(e) { showBanner('保存失败：' + e, 3000, true); }
   }
@@ -7133,11 +7133,15 @@ function buildClaudeHarnessTab(opts = {}) {
       const mapText = Object.entries(cfg.model_map || {})
         .map(([k, v]) => `${k}=${v.executor},${v.coder}`).sort().join('\n');
       const am = cfg.audit_mode || 'auto';
-      // 0 是合法免审线（任何直改都违规），不能用 || 兜底——那会把 0 变 3
-      const mflDef = parseInt(cfg.max_free_lines, 10);
-      const mflShow = Number.isFinite(mflDef) ? Math.max(0, mflDef) : 3;
+      // v2.49 分级线三键（取代 max_free_lines）：0 合法（最严档），不能用
+      // || 兜底；缺键/非法回默认 100/3/200（与后端 defaults 同源）
+      const numOr = (v, d) => { const n = parseInt(v, 10);
+        return Number.isFinite(n) ? Math.max(0, n) : d; };
+      const l1 = numOr(cfg.l1_max_lines, 100);
+      const l2f = numOr(cfg.l2_max_files, 3);
+      const l2l = numOr(cfg.l2_max_lines, 200);
       ov.innerHTML = `<div class="hg-modal hg-modal-vision"><div class="hg-modal-title">👥 三角色配置</div>
-        <div class="hg-modal-body hg-vision-hint">三角色双形态按<b>主会话模型</b>自动二选一（名字带 flash/turbo/light 等轻快词=轻主力，否则=决策者）。保存后模型槽/免审线随下条消息热更生效（agents 自动重生成），审计模式立即生效。</div>
+        <div class="hg-modal-body hg-vision-hint">三角色双形态按<b>主会话模型</b>自动二选一（名字带 flash/turbo/light 等轻快词=轻主力，否则=决策者）。轻主力形态按任务分级路由：L0/L1 主会话直干、L2 直改+轻审、L3 派 dev 攻坚+全审、L4 高风险必审+用户确认。保存后模型槽/分级线随下条消息热更生效（agents 自动重生成），审计模式立即生效。</div>
         <div class="hg-vision-row">
           <label class="hg-vision-switch"><input type="checkbox" data-hg-r-on${cfg.enabled ? ' checked' : ''}> 启用三角色</label>
           <span class="hg-vision-state" style="font-size:11px;">当前形态：<b>${light ? '轻主力' : '决策者'}</b>（主模型 ${esc(dm || '未设置')} → ${light ? 'dev + reviewer' : 'executor + coder，结构禁权'}）</span>
@@ -7152,15 +7156,23 @@ function buildClaudeHarnessTab(opts = {}) {
           <textarea class="hg-vision-mm" data-hg-r-map spellcheck="false" style="height:56px;font-family:var(--font-mono);"
             placeholder="open.bigmodel.cn=glm-5.3-flash,glm-5.3&#10;lanz.hikvision.com=Lanz-Flash,Lanz-Max">${esc(mapText)}</textarea></label>
         <div class="hg-vision-grid">
-          <label>审计模式（仅 light 形态生效：回合结算盘点工具调用，直改超线/跳过 reviewer 的兜底）
+          <label>审计模式（仅 light 形态生效：回合结算盘点工具调用，超分级线未审/跳过 reviewer 的兜底）
             <select data-hg-r-am>
               <option value="auto"${am === 'auto' ? ' selected' : ''}>auto · 违规自动续发补审（默认）</option>
               <option value="warn"${am === 'warn' ? ' selected' : ''}>warn · 仅红色警示</option>
               <option value="off"${am === 'off' ? ' selected' : ''}>off · 关闭审计</option>
             </select></label>
-          <label>直改免审线（行）：light 形态主会话单回合累计直改（Edit/Write）超此线且未派 reviewer 即违规${light ? '' : '（当前 strong 形态不审计）'}
-            <input class="hg-vision-mm" type="number" min="0" max="100000" data-hg-r-mfl
-                   value="${mflShow}"></label>
+          <label>L1 免审线（行）：单文件且回合累计 ≤ 此行数的小改（配置/常量/文案/注释级）主会话直改免审${light ? '' : '（当前 strong 形态不审计）'}
+            <input class="hg-vision-mm" type="number" min="0" max="100000" data-hg-r-l1
+                   value="${l1}"></label>
+        </div>
+        <div class="hg-vision-grid">
+          <label>L2 轻审线（文件数）：回合内直改文件数上限，不超则主会话直改 + reviewer 轻审（只审 diff）
+            <input class="hg-vision-mm" type="number" min="0" max="1000" data-hg-r-l2f
+                   value="${l2f}"></label>
+          <label>L2 轻审线（回合累计行）：直改行数上限；文件数或行数任一超线即 L3——须派 dev 攻坚 + reviewer 全审（0=最严档）
+            <input class="hg-vision-mm" type="number" min="0" max="100000" data-hg-r-l2l
+                   value="${l2l}"></label>
         </div>
         <div class="hg-modal-acts"></div></div>`;
       const acts = ov.querySelector('.hg-modal-acts');
@@ -7182,10 +7194,17 @@ function buildClaudeHarnessTab(opts = {}) {
         model_map: (ov.querySelector('[data-hg-r-map]').value || '')
           .split(/\n+/).map(s => s.trim()).filter(x => x.includes('=')),
         audit_mode: ov.querySelector('[data-hg-r-am]').value,
-        // 0 合法（任何直改违规），parseInt 后 Number.isFinite 判非法回 3
-        max_free_lines: (() => { const v = parseInt(
-          ov.querySelector('[data-hg-r-mfl]').value, 10);
+        // v2.49 分级线三键（0 合法=最严档），parseInt 后 Number.isFinite
+        // 判非法回默认（与后端 defaults 同源 100/3/200）
+        l1_max_lines: (() => { const v = parseInt(
+          ov.querySelector('[data-hg-r-l1]').value, 10);
+          return Number.isFinite(v) ? Math.max(0, v) : 100; })(),
+        l2_max_files: (() => { const v = parseInt(
+          ov.querySelector('[data-hg-r-l2f]').value, 10);
           return Number.isFinite(v) ? Math.max(0, v) : 3; })(),
+        l2_max_lines: (() => { const v = parseInt(
+          ov.querySelector('[data-hg-r-l2l]').value, 10);
+          return Number.isFinite(v) ? Math.max(0, v) : 200; })(),
       }));
       ov.addEventListener('click', (e) => { if (e.target === ov) close(null); });
       ov.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(null); });
