@@ -369,11 +369,12 @@ def _agent_md(name, description, model, body, tools=None):
 # 用户拍板：除审计者只读外全部角色全工具）；SendMessage 保留（向主会话
 # 回话链路要用，接收不依赖本表）。
 # reviewer 定位「只审不改」——排除 Write/Edit/MultiEdit/NotebookEdit（此
-# 只读限制不动）；Bash 保留（取证纪律要求能跑的验证实际跑）。
+# 只读限制不动）与 Task（禁派子代理，与 designer 同规）；Bash 保留（取证
+# 纪律要求能跑的验证实际跑）。
 _TOOLS_DESIGN = ("Read, Write, Edit, MultiEdit, NotebookEdit, Bash, Glob, "
                  "Grep, WebFetch, WebSearch, TodoWrite, SendMessage, "
                  "AskUserQuestion")
-_TOOLS_REVIEW = ("Read, Bash, Glob, Grep, WebFetch, WebSearch, Task, "
+_TOOLS_REVIEW = ("Read, Bash, Glob, Grep, WebFetch, WebSearch, "
                  "TodoWrite, SendMessage, AskUserQuestion")
 
 

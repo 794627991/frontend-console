@@ -373,7 +373,8 @@ check("designer tools 全集（有 Write/Edit/Bash）且无 Task（禁派子代�
                             "SendMessage"))
       and "Task" not in tl)
 rtl = _tools_line(rmd).split(", ")
-check("reviewer tools 原样（Task 保留）", "Task" in rtl and "SendMessage" in rtl)
+check("reviewer tools 无 Task（禁派子代理）且保留 Bash/SendMessage",
+      "Task" not in rtl and "Bash" in rtl and "SendMessage" in rtl)
 check("reviewer tools 只读（无编辑类）",
       not any(t in rtl for t in ("Edit", "Write", "MultiEdit", "NotebookEdit")))
 check("designer body「只设计绝不干活」",
