@@ -280,9 +280,24 @@ def roles_mode(model=None):
     return "strong"
 
 
-def _agent_md(name, description, model, body):
-    return ("---\nname: %s\ndescription: %s\nmodel: %s\n---\n%s"
-            % (name, description, model, body))
+def _agent_md(name, description, model, body, tools=None):
+    """v2.46：显式声明 tools 清单——实测省略时新版 CLI（2.1.278）给子代理
+    的默认工具集**不含文件编辑类**（dev 实锤「Edit 不在可调用清单」，被迫
+    用 Bash 脚本绕行改文件）。角色按定位显式给全，防默认集变动再翻车。
+    tools 接受逗号串（_TOOLS_* 常量）或列表。"""
+    t = ("\ntools: %s" % (", ".join(tools) if not isinstance(tools, str)
+                          else tools)) if tools else ""
+    return ("---\nname: %s\ndescription: %s\nmodel: %s%s\n---\n%s"
+            % (name, description, model, t, body))
+
+
+# 角色工具清单：dev/coder/executor 全集（含编辑——它们的核心职责就是改
+# 代码）；reviewer 定位「只审不改」——排除 Write/Edit/MultiEdit/NotebookEdit
+_TOOLS_FULL = ("Read, Write, Edit, MultiEdit, NotebookEdit, Bash, Glob, "
+               "Grep, WebFetch, WebSearch, Task, TodoWrite, SendMessage, "
+               "AskUserQuestion")
+_TOOLS_REVIEW = ("Read, Bash, Glob, Grep, WebFetch, WebSearch, Task, "
+                 "TodoWrite, SendMessage, AskUserQuestion")
 
 
 def _agent_files(ex_model, co_model):
@@ -291,12 +306,12 @@ def _agent_files(ex_model, co_model):
             "executor",
             "执行者：信息收集、搜代码查日志、环境排查、跑命令、debug 定位、"
             "机械杂活。决策者派发的执行类任务一律用此代理。",
-            ex_model, _EXECUTOR_BODY),
+            ex_model, _EXECUTOR_BODY, tools=_TOOLS_FULL),
         "coder.md": _agent_md(
             "coder",
             "编程者（高级模型）：编码攻坚——复杂功能实现、架构改动、疑难 "
             "bug 修复。高难度开发任务用此代理。",
-            co_model, _CODER_BODY),
+            co_model, _CODER_BODY, tools=_TOOLS_FULL),
     }
 
 
@@ -359,13 +374,13 @@ def install_roles_agents(model=None):
                 "dev",
                 "开发（高级模型）：编码/debug/方案思考一个上下文打通——功能"
                 "实现、多文件改动、bug 修复都派此代理，自测通过再交。",
-                co_model, _DEV_BODY),
+                co_model, _DEV_BODY, tools=_TOOLS_FULL),
             "reviewer.md": _agent_md(
                 "reviewer",
                 "对抗审核（高级模型）：开发交付后必须派此代理审改动——专门"
                 "挑毛病（需求符合性/逻辑/健壮性/安全/一致性），只审不改，"
                 "PASS/FAIL 二选一。",
-                co_model, _REVIEWER_BODY),
+                co_model, _REVIEWER_BODY, tools=_TOOLS_REVIEW),
         }
     else:
         ex_model, co_model = resolve_role_models()
