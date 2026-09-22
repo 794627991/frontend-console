@@ -5,8 +5,8 @@
 事中拦截：light（轻主力）形态会话启动时把本进程注册为 PreToolUse hook
 （--settings 临时文件的 hooks 键，见 claude_harness.
 _audit_hook_settings_path），CLI 在每次 Edit/Write/MultiEdit/NotebookEdit
-前调起本进程，它查后端 /api/harness/audit_gate 拿本回合直改累计——达线
-且本回合尚未派过 reviewer 就 exit 2（block，stderr 文案指路送审：派
+前调起本进程，它查后端 /api/harness/audit_gate 拿本回合单次直改最大行数
+——达线且本回合尚未派过 reviewer 就 exit 2（block，stderr 文案指路送审：派
 reviewer 审已完成的改动，审过即开闸），未超/已送审/未启用 exit 0。
 
 铁律：闸是增强不是依赖——后端不在/超时/输入畸形/任何异常一律 exit 0
@@ -85,7 +85,7 @@ def main():
             # exit 2 = block：stderr 文案回给模型，指路送审——派 reviewer
             # 审已完成的改动，审过即开闸（直干是常态，闸只逼送审不逼停工）
             msg = str(gate.get("msg") or "").strip() \
-                or "本回合直改已达轻审线上限，请先用 Task 工具派 reviewer 代理审已完成的改动，审过即可继续。"
+                or "本回合已有单次直改达到轻审线上限，请先派 reviewer 代理审已完成的改动，审过即可继续。"
             sys.stderr.write(msg + "\n")
             sys.stderr.flush()
             sys.exit(2)

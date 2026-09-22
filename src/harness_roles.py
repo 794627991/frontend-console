@@ -54,17 +54,19 @@ strong 重模型直干，其余 → light 轻主力；名字不可得兜 strong�
 → 重池，仅在对应新键为空时参与，新键优先。
 
 审计（与 claude_harness 共用纯函数，引导词/结算/闸三处同源）：
-- audit_limits：两档线现值 (l1, l2f, l2l)——l1 免审线；l2f/l2l 轻审线
-  （文件数/回合累计行数）。0 合法（最严档），缺键/非法回默认；
-- audit_verdict(lines, files, rev, strong)：light——超免审线未轻审=
-  违规、超轻审线属大改须全审未派=违规（已派视作审过，不重复追责）；
-  strong——超审计线未派 reviewer=违规（直干是常态，无轻审义务）；
-  designer 派发不计入判定（设计不产生直改、不触发审计线、也不算
-  「已审」）；
-- audit_gate_check(used_lines, used_files, reviewed)：事中闸（仅 light
-  注入 hook）——直改达线且本回合尚未派过 reviewer 时拦下一次并指路
-  送审；已派 reviewer 即放行（审过开闸：直干是常态，闸只逼送审不逼
-  停工——没有可转派的干活代理，硬拦到底会死锁）；
+- audit_limits：两档线现值 (l1, l2f, l2l)——l1 免审线；l2l 轻审线
+  （单次直改总行数）；l2f 键保留兼容但 v2.52 起不参与任何判定
+  （用户拍板：只看单次直改总行数，不计文件数、不做回合累计）。
+  0 合法（最严档），缺键/非法回默认；
+- audit_verdict(lines, rev, strong)：light——单次超免审线未轻审=
+  违规、单次超轻审线属大改须全审未派=违规（已派视作审过，不重复
+  追责）；strong——单次超审计线未派 reviewer=违规（直干是常态，
+  无轻审义务）；designer 派发不计入判定（设计不产生直改、不触发
+  审计线、也不算「已审」）；
+- audit_gate_check(used_lines, reviewed)：事中闸（仅 light 注入
+  hook）——单次直改行数达线且本回合尚未派过 reviewer 时拦下一次
+  并指路送审；已派 reviewer 即放行（审过开闸：直干是常态，闸只逼
+  送审不逼停工——没有可转派的干活代理，硬拦到底会死锁）；
 - clamp_role_limits：l1 ≤ l2l 交叉校验（clamp 档，回显原因）。
 
 实测要点：agent 文件的 model 字段必须写【显式模型 ID】——别名
@@ -148,10 +150,11 @@ _DEFAULTS = {"enabled": False,          # 默认关闭（用户定调：开关�
              "model_map": {},
              # light 形态审计（回合结算盘点工具调用记录，零 token）：
              "audit_mode": "auto",      # 兜底档：auto=违规自动续发补审 / warn=仅警示 / off=关
-             # 分级线两档（旧 max_free_lines=3 已废，三键取代）：
-             "l1_max_lines": 100,       # 免审线：单文件且回合累计 ≤ 此行数免审
-             "l2_max_files": 3,         # 轻审线：≤ 此文件数（且行数不超线）直改+轻审
-             "l2_max_lines": 200}       # 轻审线：回合累计 ≤ 此行数；超任一即大改须全审
+             # 分级线两档（旧 max_free_lines=3 已废；v2.52 只看单次直改
+             # 总行数，不计文件数、不做回合累计）：
+             "l1_max_lines": 100,       # 免审线：单次直改总计 ≤ 此行数免审
+             "l2_max_files": 3,         # 已退役不参与判定（键保留兼容旧配置）
+             "l2_max_lines": 200}       # 轻审线：单次直改总计 ≤ 此行数；超线属大改须全审
 
 
 def roles_cfg():
@@ -505,7 +508,10 @@ def audit_limits(cfg=None):
     """审计两档线现值：(l1_max_lines, l2_max_files, l2_max_lines)。
     引导词 / 回合结算 / 事中闸三处共用本函数——数字同源，不会词里一套
     审计另一套。0 合法（最严档：l1=0 任何直改都须轻审；l2=0 任何直改都
-    属大改须全审），缺键/非法回默认。纯函数不落盘（cfg 缺省读盘一次）。"""
+    属大改须全审），缺键/非法回默认。纯函数不落盘（cfg 缺省读盘一次）。
+    v2.52 用户拍板：判定只看单次直改总行数——l2_max_files 不再参与任何
+    判定（键与返回形状保留兼容旧配置/旧调用方；clamp_role_limits 仅解包
+    弃值不消费它）。"""
     c = cfg if cfg is not None else roles_cfg()
 
     def _int(key, dflt):
@@ -518,40 +524,39 @@ def audit_limits(cfg=None):
             _int("l2_max_lines", 200))
 
 
-def audit_verdict(lines, files, rev, cfg=None, strong=False):
+def audit_verdict(lines, rev, cfg=None, strong=False):
     """回合结算违规判定（纯函数，claude_harness._audit_settle 调用）：
-    入参为本回合累计——lines=直改行数、files=直改涉及文件数、rev=是否
-    派发过 reviewer。返回违规描述列表（空=干净）；描述自带档位与可数
-    依据，供警示卡/补审指令直用。判定与引导词同源（audit_limits）：
-    - light：免审区（单文件且 lines≤l1）干净；轻审区（files≤l2f 且
-      lines≤l2l）须 reviewer 轻审，未派=违规；超轻审线属大改——直改须
-      reviewer 取证级全审，未派=违规（已派视作审过，不重复追责——
-      提示性兜底）；
-    - strong：只守审计线（超 l2 任一且未派 reviewer=违规；直干是设计
+    入参 lines=本回合单次直改的最大行数、rev=是否派发过 reviewer
+    （v2.52 用户拍板：判定只看单次直改总行数——不计文件数、不做回合
+    累计，切片拆小不追责；只有一次性改超才审计）。返回违规描述列表
+    （空=干净）；描述自带档位与可数依据，供警示卡/补审指令直用。判定
+    与引导词同源（audit_limits）：
+    - light：免审区（lines≤l1）干净；轻审区（l1<lines≤l2l）须 reviewer
+      轻审，未派=违规；lines>l2l 属大改——直改须 reviewer 取证级全审，
+      未派=违规（已派视作审过，不重复追责——提示性兜底）；
+    - strong：只守审计线（lines>l2l 且未派 reviewer=违规；直干是设计
       常态，无轻审义务）；
     - designer 派发不计入判定：设计不产生直改、不触发审计线、也不算
       「已审」。
     兜底是提示性的：本函数只判不拦，处置（警示/续发补审）归调用方按
     audit_mode 决定。"""
-    l1, l2f, l2l = audit_limits(cfg)
+    l1, _l2f, l2l = audit_limits(cfg)
     viol = []
     if strong:
-        if not rev and (files > l2f or lines > l2l):
+        if not rev and lines > l2l:
             viol.append(
-                "主会话直改 %d 行/%d 个文件，超过审计线（≤%d 个文件、回合"
-                "累计 ≤%d 行），本回合未派 reviewer 审计" % (lines, files, l2f, l2l))
+                "主会话单次直改 %d 行，超过审计线（单次总计 ≤%d 行），"
+                "本回合未派 reviewer 审计" % (lines, l2l))
         return viol
-    if not rev and (files > 1 or lines > l1):
-        if files <= l2f and lines <= l2l:
+    if not rev and lines > l1:
+        if lines <= l2l:
             viol.append(
-                "主会话直改 %d 行/%d 个文件，超过免审线（单文件 ≤%d 行）属"
-                "中改，本回合未派 reviewer 轻审（只审 diff）"
-                % (lines, files, l1))
+                "主会话单次直改 %d 行，超过免审线（单次总计 ≤%d 行）属"
+                "中改，本回合未派 reviewer 轻审（只审 diff）" % (lines, l1))
         else:
             viol.append(
-                "主会话直改 %d 行/%d 个文件，超过轻审线（≤%d 个文件、回合"
-                "累计 ≤%d 行）属大改——须 reviewer 取证级全审，本回合未派审"
-                % (lines, files, l2f, l2l))
+                "主会话单次直改 %d 行，超过轻审线（单次总计 ≤%d 行）属"
+                "大改——须 reviewer 取证级全审，本回合未派审" % (lines, l2l))
     return viol
 
 
@@ -585,25 +590,25 @@ def clamp_role_limits(patch, cfg=None):
     return out, notes
 
 
-def audit_gate_check(used_lines, used_files, cfg=None, reviewed=False):
+def audit_gate_check(used_lines, cfg=None, reviewed=False):
     """事中闸判定（纯函数，claude_harness /audit_gate 调用）：
-    (block, msg)。主会话直改累计**达到**轻审线上限（行或文件任一达线）
-    且本回合尚未派过 reviewer → 拦下一次直改并指路送审；已派 reviewer
-    即放行（审过开闸——直干是常态，闸只逼送审不逼停工：没有可转派的
-    干活代理，硬拦到底会把唯一干活者锁死）。口径用 >=（达线即拦下一次），
-    与结算的超线追责（>，audit_verdict）互补：事中闸让「超线且全程未
-    送审」尽量不发生，事后审计只兜闸失效的漏网。免审/轻审区内的直改
-    一律放行。"""
-    _l1, l2f, l2l = audit_limits(cfg)   # 闸只守轻审线上限，l1 不参与
+    (block, msg)。主会话单次直改最大行数**达到**轻审线上限且本回合尚未
+    派过 reviewer → 拦下一次直改并指路送审；已派 reviewer 即放行（审过
+    开闸——直干是常态，闸只逼送审不逼停工：没有可转派的干活代理，硬拦
+    到底会把唯一干活者锁死）。口径用 >=（达线即拦下一次），与结算的超线
+    追责（>，audit_verdict）互补：事中闸让「超线且全程未送审」尽量不
+    发生，事后审计只兜闸失效的漏网。免审/轻审区内的直改一律放行。
+    v2.52 用户拍板：只看单次直改行数——文件数与回合累计不参与。"""
+    _l1, _l2f, l2l = audit_limits(cfg)   # 闸只守轻审行数线，l1 不参与
     if reviewed:
         return False, None
-    if used_lines >= l2l or used_files >= l2f:
-        return True, ("本回合直改已 %d 行/%d 个文件，达到轻审线上限（≤%d "
-                      "个文件、累计 ≤%d 行）——请先用 Task 工具派 reviewer "
-                      "代理审已完成的改动（对抗审核：只审不改，PASS/FAIL），"
-                      "审过即可继续直改；需要方案支持可派 designer（带上全部"
-                      "已知上下文）。确需放宽可在三角色配置里调整分级线。"
-                      % (used_lines, used_files, l2f, l2l))
+    if used_lines >= l2l:
+        return True, ("本回合已有单次直改 %d 行，达到轻审线上限（单次总计 "
+                      "≤%d 行）——请先派 reviewer 代理审已完成的改动（对抗"
+                      "审核：只审不改，PASS/FAIL），审过即可继续直改；需要"
+                      "方案支持可派 designer（带上全部已知上下文）。确需放宽"
+                      "可在三角色配置里调整分级线。"
+                      % (used_lines, l2l))
     return False, None
 
 
@@ -619,14 +624,14 @@ def roles_bridge_text(model=None):
         return ""
     if roles_mode(model) == "light":
         cfg = roles_cfg()
-        l1, l2f, l2l = audit_limits(cfg)
+        l1, _l2f, l2l = audit_limits(cfg)
         # 威慑句按 audit_mode 生成——off 档不宣称「会审计」（空头威胁，
         # 模型被抓过一次空头支票后纪律反而松动）
         if str(cfg.get("audit_mode") or "auto") != "off":
-            audit_note = ("harness 会在回合结束时审计你的工具调用记录——直改"
-                          "行数/文件数按回合累计，切片拆小也会累计超线；超免"
-                          "审线未轻审、超轻审线未全审会被自动查出并要求"
-                          "补审")
+            audit_note = ("harness 会在回合结束时审计你的工具调用记录——按"
+                          "单次直改总计行数判定，不计文件数、不做回合累计"
+                          "（切片拆小不追责）；单次超免审线未轻审、单次超轻"
+                          "审线未全审会被自动查出并要求补审")
         else:
             audit_note = "跳过应做的审核（轻审/全审）就答复用户属重大流程违规"
         heavy_model = resolve_role_models()[1]
@@ -634,15 +639,17 @@ def roles_bridge_text(model=None):
             "【任务分级（你=轻快主力，直干所有活）】\n"
             "本会话是面向用户的轻快主力：日常对话直接答；编码、执行、调试"
             "全部由你亲自完成，不派干活子代理（省 token 且快）。分档上限"
-            "可数，按本回合累计：\n"
+            "可数，按单次直改总计行数判定（不计文件数、不做回合累计——"
+            "只有一次性改超才审计）：\n"
             "· 杂活：问答、查文件、跑命令、环境排查、信息收集 → 你直接"
             "干。\n"
-            "· 小改（免审）：单文件且本回合累计 ≤%d 行的配置/常量/文案/"
+            "· 小改（免审）：单次直改总计 ≤%d 行的配置/常量/文案/"
             "注释级 → 你直接改，免审。\n"
-            "· 中改（轻审）：≤%d 个文件且本回合累计 ≤%d 行的真代码改动 → "
+            "· 中改（轻审）：单次直改总计 ≤%d 行的真代码改动 → "
             "你直接改，交付前派 reviewer 轻审（只审 diff：逻辑/边界/一致"
             "性）。\n"
-            "· 大改（全审）：超以上上限、多文件重构、架构改动、疑难 bug → "
+            "· 大改（全审）：单次直改超轻审线、多文件重构、架构改动、疑难"
+            " bug → "
             "仍由你实施，交付前 reviewer 取证级全审；方案没把握先派 "
             "designer 出框架方案。\n"
             "· 高风险：删数据、发布、外发、碰铁律文件（如 cmdlib.json）"
@@ -659,24 +666,24 @@ def roles_bridge_text(model=None):
             "实施 → reviewer 全审 → FAIL 自己修再送审，致命/严重问题清零"
             "才收 → 你消化双方结论后汇总答复用户。\n"
             "纪律（%s）：\n"
-            "- 不要自行把改动判小逃审：超免审线就必须轻审、超轻审线就必须"
-            "全审。\n"
+            "- 不要把该审的改动刻意拆小逃审：单次改动超免审线就必须轻审、"
+            "超轻审线就必须全审。\n"
             "- reviewer 判 FAIL 必须回炉重修；两边的报告都要消化后再答，"
             "不要原样转发一大坨。\n"
             "- 回合终点纪律：提交/实施完成后，你的最后一条消息必须是给用户的结论"
             "汇总（做了什么、审核结论、提交号、用户需要做什么）——用户看不到后台"
             "代理的过程，静默结束回合=交付没完成。\n"
-            % (l1, l2f, l2l, heavy_model, heavy_model, audit_note)
+            % (l1, l2l, heavy_model, heavy_model, audit_note)
         )
     # strong 分支：重模型主会话=干活者，自己干所有活，不派干活子代理；
-    # 只保留审计兜底——回合累计直改超审计线（数字嵌词热更）触发回合
+    # 只保留审计兜底——单次直改超审计线（数字嵌词热更）触发回合
     # 结算审计（audit_verdict strong 分支：超线未派 reviewer=违规）。
     cfg = roles_cfg()
-    _l1, l2f, l2l = audit_limits(cfg)
+    _l1, _l2f, l2l = audit_limits(cfg)
     if str(cfg.get("audit_mode") or "auto") != "off":
-        audit_note = ("harness 会在回合结束时审计你的直改量（行数/文件数按"
-                      "回合累计，切片拆小也会累计）——超过审计线会被自动查出"
-                      "并要求派 reviewer 补审后重新汇总")
+        audit_note = ("harness 会在回合结束时审计你的直改量（按单次直改总计"
+                      "行数，不计文件数、不做回合累计）——超过审计线会被自动"
+                      "查出并要求派 reviewer 补审后重新汇总")
     else:
         audit_note = "大改不派 reviewer 审计就答复用户属重大流程违规"
     return (
@@ -687,11 +694,11 @@ def roles_bridge_text(model=None):
         "质量纪律：\n"
         "- 动手前先想清楚：需求边界、实现路径、风险点；复杂改动先在回复里"
         "列出方案要点再实施。\n"
-        "- 审计兜底（%s）：回合累计直改超过审计线（≤%d 个文件、累计 ≤%d 行）"
+        "- 审计兜底（%s）：单次直改超过审计线（单次总计 ≤%d 行）"
         "即触发审计——须派 reviewer 对抗审计（只审不改，PASS/FAIL），FAIL "
         "自己修复后复审再答复用户。\n"
         "- 改完自测通过再交；遵守项目既有代码风格与约定。\n"
         "- 回合终点纪律：完成后，最后一条消息必须是给用户的结论汇总（做了"
         "什么、自测与审核结果、用户需要做什么），不得静默结束回合。\n"
-        % (audit_note, l2f, l2l)
+        % (audit_note, l2l)
     )

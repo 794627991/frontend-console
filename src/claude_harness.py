@@ -905,13 +905,8 @@ def _audit_lines(name, inp):
     return 0
 
 
-def _audit_file_key(inp):
-    """v2.49 直改目标文件归一键（L2 文件数口径）：file_path/notebook_path
-    归一（normcase+正斜杠——Windows 同文件不同写法不重复计）。取不到返回
-    ""（畸形输入不计文件数，行数口径仍独立生效）。"""
-    p = str(inp.get("file_path") or inp.get("notebook_path")
-            or inp.get("notebook_nb_path") or "").strip()
-    return os.path.normcase(p.replace("\\", "/")) if p else ""
+# v2.52：_audit_file_key（v2.49 文件数口径归一键）随文件数判定一起删除
+# ——判定只看单次直改行数，无文件数消费方（tests 同步引用已清）。
 
 
 # 角色集合（v2.51）：designer 只设计（无直改、不触发审计线、不算已审
@@ -1099,9 +1094,10 @@ class HarnessSession:
         # 原从事件窗口尾部 12 条里回扫，识图轮次密集时 result/assistant 被新事件
         # 挤出窗口 → last_done 归 0，前端「已返回」冒泡整个漏掉（用户多次反馈）
         self.vision_done = {"ts": 0, "brief": ""}
-        # v2.34 light 审计回合累计（运行态，不持久化）：lines=本回合主会话
-        # 直改（Edit/Write/MultiEdit/NotebookEdit）累计行数；files=涉及文件
-        # 归一键列表（L2 文件数口径）；designer/reviewer=本回合 Task 派发
+        # v2.34 light 审计记账（运行态，不持久化）：lines=本回合主会话
+        # 单次直改（Edit/Write/MultiEdit/NotebookEdit）最大行数（v2.52 起
+        # max 记账，回合累计口径废除）；files=空列表仅兼容保留（文件数
+        # 口径已退役，不再记账）；designer/reviewer=本回合 Task 派发
         # 标记（SendMessage 续派也计入）——designer 只作派发统计（不计入
         # 违规判定），reviewer 是唯一「审过」信号（结算追责与事中闸开闸
         # 都看它）；streak=连续违规回合数（防自动补审死循环：连续 3 回合
@@ -1339,13 +1335,15 @@ class HarnessSession:
 
     # ---- light 形态回合结算审计（strong 形态也结算）----
     def _audit_tally(self, o):
-        """回合内审计累计：只记主会话调用——子代理事件带 parent_tool_use_id
+        """回合内审计记账：只记主会话调用——子代理事件带 parent_tool_use_id
         一律不算（它们有自己的纪律，主会话的违规才算违规）。纯计数不读
-        配置（每事件零盘 IO），判不判定是 _audit_settle 结算时的事。files
-        累计=直改目标文件去重列表（L2 文件数口径）；SendMessage 续派口径
-        ——主会话经 SendMessage 续派 designer/reviewer 也计派发标记（经
-        _audit_dispatch_role 按 input.to 识别），并在 Task/Agent 派发时记
-        pending（等 result 回填 agentId→角色映射）。"""
+        配置（每事件零盘 IO），判不判定是 _audit_settle 结算时的事。
+        v2.52 用户拍板：lines 记**单次直改的最大行数**（原为回合累计——
+        累计口径废除，切片拆小不追责，只有一次性改超才审计）；files 列表
+        不再有判定消费方，不再记账（键保留兼容旧结构）。SendMessage 续派
+        口径——主会话经 SendMessage 续派 designer/reviewer 也计派发标记
+        （经 _audit_dispatch_role 按 input.to 识别），并在 Task/Agent 派发
+        时记 pending（等 result 回填 agentId→角色映射）。"""
         au = self._audit
         if o.get("parent_tool_use_id"):
             return
@@ -1358,10 +1356,7 @@ class HarnessSession:
             n = str(b.get("name") or "")
             inp = b.get("input") if isinstance(b.get("input"), dict) else {}
             if n in _AUDIT_EDIT_TOOLS:
-                au["lines"] += _audit_lines(n, inp)
-                k = _audit_file_key(inp)
-                if k and k not in au["files"]:
-                    au["files"].append(k)
+                au["lines"] = max(au.get("lines") or 0, _audit_lines(n, inp))
                 continue
             role = _audit_dispatch_role(n, inp, au.get("ids") or {})
             if not role:
@@ -1431,19 +1426,20 @@ class HarnessSession:
     def _audit_settle(self, reason):
         """回合结算审计（result/interrupted/exit 三处调用）。违规判定走
         harness_roles.audit_verdict（纯函数，与引导词两档线同源）：
-        ① light：超免审线（单文件/行数）未派 reviewer 轻审——中改档
-        违规；超轻审线（文件数/行数）属大改须取证级全审却未派审——大改
-        档违规；② strong：超审计线未派 reviewer 审计——违规。designer
-        派发不计入（设计不产生直改、不算已审）。两形态补救统一为派
-        reviewer 补审（不再分形态——reviewer 两形态都装）。
+        ① light：单次直改超免审线未派 reviewer 轻审——中改档违规；
+        单次超轻审线属大改须取证级全审却未派审——大改档违规；② strong：
+        单次超审计线未派 reviewer 审计——违规。判定只看单次直改总行数
+        （v2.52 用户拍板：不计文件数、不做回合累计，切片拆小不追责）。
+        designer 派发不计入（设计不产生直改、不算已审）。两形态补救统一
+        为派 reviewer 补审（不再分形态——reviewer 两形态都装）。
         兜底按 audit_mode：auto=回合结束自动续发一条 [审计] user 消息
         （复用 send_message 管线，busy/进程/指纹热更检查全继承）；warn=
         仅聊天流红色警示（前端 kind='audit' 事件）——提示性兜底，不阻断。
         防循环：连续 3 个违规回合后降级仅警示；中断/进程退出只警示不续发
         （用户主动停/进程已死，续发无意义，且不计入 streak）。计数结算后
-        清零（切片逃逸防护：多次小改按回合累计判定）。"""
+        清零。"""
         au = self._audit
-        lines, files = au["lines"], list(au["files"])
+        lines = au["lines"]
         rev = au["reviewer"]
         au.update({"lines": 0, "files": [], "designer": False,
                    "reviewer": False})
@@ -1452,7 +1448,7 @@ class HarnessSession:
             au["streak"] = 0
             return
         mode, _limits, strong = st
-        viol = audit_verdict(lines, len(files), rev, strong=strong)
+        viol = audit_verdict(lines, rev, strong=strong)
         if not viol:
             au["streak"] = 0
             return
@@ -1464,8 +1460,10 @@ class HarnessSession:
             # 自动补审：卡文本与续发消息同一字符串（v2.34.1 统一——实时/
             # 落盘回放/模型所见三处一致）。续发走后台线程，send_message 与
             # 用户抢发竞争时返回失败——静默记 log，卡已到位，不重试。
-            text = (_AUDIT_MSG_PREFIX + "%s。已自动续发补审指令——立即用 "
-                    "Task 工具派 reviewer 代理补审上述改动（对抗审核：只审"
+            # v2.52：文案去「Task 工具」——工具名随 CLI 版本变（Task→Agent），
+            # 只说派 reviewer，派发方式模型自己知道。
+            text = (_AUDIT_MSG_PREFIX + "%s。已自动续发补审指令——立即派 "
+                    "reviewer 代理补审上述改动（对抗审核：只审"
                     "不改，给 PASS/FAIL 结论），按结论处理：FAIL 自己修复"
                     "后复审，PASS 才算完成，然后再答复用户。不要辩解，直接"
                     "补审。" % desc)
@@ -3028,19 +3026,19 @@ def harness_transcript():
 def harness_audit_gate():
     """light 形态直改事中闸查询端点（PreToolUse hook 在每次
     Edit/Write/MultiEdit/NotebookEdit 前来问）。?session_id=<CLI 侧会话 id>。
-    返回 {ok, gate}；gate.block=true=本回合主会话直改累计已达轻审线上限
-    （行数或文件数任一达线）**且本回合尚未派过 reviewer**——拦下一次并
-    指路送审（hook exit 2，msg 随行给模型）；已派 reviewer 即放行（审过
-    开闸：直干是常态，闸只逼送审不逼停工——没有可转派的干活代理，硬拦
-    到底会把唯一干活者锁死）。
+    返回 {ok, gate}；gate.block=true=本回合主会话已有单次直改达轻审线
+    上限（单次直改最大行数达线，v2.52 不计文件数）**且本回合尚未派过
+    reviewer**——拦下一次并指路送审（hook exit 2，msg 随行给模型）；已派
+    reviewer 即放行（审过开闸：直干是常态，闸只逼送审不逼停工——没有
+    可转派的干活代理，硬拦到底会把唯一干活者锁死）。
 
     口径与 _audit_settle 同源：_audit_state 判启用（roles 开+
     audit_mode!=off；两形态都结算审计，但闸仅 light——strong 直改是设计
     常态，_audit_state 第三位 strong 旗在此分流；读一次小配置文件，改配置
-    即时生效），used/reviewed 取会话 _audit 的本回合累计与 reviewer 旗，
-    判定走 harness_roles.audit_gate_check（达线 >= 即拦下一次）而非结算的
-    超线追责——事中闸的职责是让「超线且全程未送审」尽量不发生，事后
-    审计只兜闸失效的漏网。
+    即时生效），used/reviewed 取会话 _audit 的单次直改最大行数与 reviewer
+    旗，判定走 harness_roles.audit_gate_check（达线 >= 即拦下一次）而非
+    结算的超线追责——事中闸的职责是让「超线且全程未送审」尽量不发生，
+    事后审计只兜闸失效的漏网。
 
     查不到会话（session_id 不在 _sessions：别的实例/已换代）一律放行。
     注意子代理与主会话同 session_id（官方 hooks 文档+本机 CLI 实证：hook
@@ -3062,12 +3060,10 @@ def harness_audit_gate():
             if st is not None and not st[2]:
                 au = s._audit or {}
                 used_l = int(au.get("lines") or 0)
-                used_f = len(au.get("files") or [])
                 block, msg = audit_gate_check(
-                    used_l, used_f, reviewed=bool(au.get("reviewer")))
+                    used_l, reviewed=bool(au.get("reviewer")))
                 if block:
-                    gate = {"block": True, "used": used_l, "files": used_f,
-                            "msg": msg}
+                    gate = {"block": True, "used": used_l, "msg": msg}
     return jsonify({"ok": True, "gate": gate})
 
 
@@ -3407,12 +3403,18 @@ def harness_subagent_tail():
             break
     if not main_dir:
         return jsonify({"ok": True, "found": False, "text": "", "offset": offset})
-    # 候选路径依序试（与回放/段注入同源）；文件出现即读
+    # 候选路径依序试（与回放/段注入同源）；跳过 0 字节文件——现行 CLI 会
+    # 预建空的 tasks\<id>.output（v2.52 实证恒 0 字节不写），isfile 命中
+    # 即返回会把有数据的 subagents jsonl（第三源）永久堵死：运行中轮询
+    # 与完成回填都只能看到空转写=思考全程断供。size 读取在 try 内（含
+    # 0 字节判定）——isfile 通过后文件被删的竞态也不裸抛
     for p in _subagent_transcript_candidates(main_dir, csids, agent):
         if not os.path.isfile(p):
             continue
         try:
             size = os.path.getsize(p)
+            if size <= 0:
+                continue
             if size <= offset:
                 # 无新增（半行也暂不吐）——offset 原样返回
                 return jsonify({"ok": True, "found": True, "text": "", "offset": offset})

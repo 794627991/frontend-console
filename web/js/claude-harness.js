@@ -4900,7 +4900,7 @@ function buildClaudeHarnessTab(opts = {}) {
         rEl.textContent = light ? '轻主力' : '重主力';
         rEl.title = light
           ? `轻主力模式（主会话直干所有活，点击打开配置面板）\ndesigner（只设计，不写代码不改文件）: ${_res.heavy || '…'}\nreviewer（只读对抗审核，PASS/FAIL）: ${_res.heavy || '…'}`
-          : `重模型直干模式（主会话直干所有活，点击打开配置面板）\n审计兜底：回合直改超分级线自动派 reviewer 对抗审计\nreviewer: ${_res.heavy || '…'}`;
+          : `重模型直干模式（主会话直干所有活，点击打开配置面板）\n审计兜底：单次直改超分级线自动派 reviewer 对抗审计\nreviewer: ${_res.heavy || '…'}`;
       } else {
         rEl.textContent = '关闭·直连';
         rEl.title = '直连干活（点击打开配置面板可启用三角色）';
@@ -6292,7 +6292,7 @@ function buildClaudeHarnessTab(opts = {}) {
           ['标准流程', '中改主会话改完 → reviewer 轻审；大改先 designer 出方案 → 主会话实施 → reviewer 全审 → FAIL 回炉 → 致命/严重问题清零才收 → 主会话汇总答复'],
         ] : [
           ['当前形态', '重模型直干（主会话是重模型）——需求承接/方案/编码/debug/杂活全部自己干，不派干活子代理'],
-          ['审核兜底', `reviewer 代理（${heavy}）——回合直改超审计线由结算审计兜底（自动续发要求派 reviewer 补审，PASS/FAIL；FAIL 自己修复后复审）`],
+          ['审核兜底', `reviewer 代理（${heavy}）——单次直改超审计线由结算审计兜底（自动续发要求派 reviewer 补审，PASS/FAIL；FAIL 自己修复后复审）`],
         ];
         renderSysCard('角色设计（双形态直干）', [
           ...modeRows,
@@ -6306,8 +6306,8 @@ function buildClaudeHarnessTab(opts = {}) {
               : r.audit_mode === 'warn' ? '仅警示（audit_mode=warn）——回合结束盘点直改量，超线出红色警示不自动续发'
               : '自动补审（audit_mode=auto，默认）——回合结束盘点直改量，超审计线自动续发要求派 reviewer 补审；连续 3 回合违规降级为仅警示')],
           ['分级线', !r.enabled ? '—' : light
-            ? `免审：单文件 ≤ ${numOr('l1_max_lines', 100)} 行；轻审：≤ ${numOr('l2_max_files', 3)} 文件且回合累计 ≤ ${numOr('l2_max_lines', 200)} 行（主会话直改 + reviewer 轻审）；超线属大改——须 reviewer 取证级全审（0=最严档）`
-            : `审计线：≤ ${numOr('l2_max_files', 3)} 文件且回合累计 ≤ ${numOr('l2_max_lines', 200)} 行——超线触发结算审计（派 reviewer 补审；0=最严档）`],
+            ? `免审：单次直改 ≤ ${numOr('l1_max_lines', 100)} 行；轻审：单次直改 ≤ ${numOr('l2_max_lines', 200)} 行（主会话直改 + reviewer 轻审）；超线属大改——须 reviewer 取证级全审（不计文件数、不做回合累计；0=最严档）`
+            : `审计线：单次直改 ≤ ${numOr('l2_max_lines', 200)} 行——超线触发结算审计（派 reviewer 补审；不计文件数、不做回合累计；0=最严档）`],
           ['推荐配置', '主会话配轻模型（如 glm-5.3-flash）——直干省 token，方案/审核走重模型代理，即轻主力形态'],
           ['模型池', `轻池 ${rs.light || '自动识别'} / 重池 ${rs.heavy || '自动识别'}——designer/reviewer 取重池；显式配置优先，其余按「名字含 opus=重，其余=轻」自动分类`],
           ['模型解析', '端点映射（harness_roles.model_map）→ 显式池配置（light_model/heavy_model；旧键 executor_model/coder_model 兼容降级）→ 方案模型表自动分类 → 默认；换 API 方案自动适配'],
@@ -7160,7 +7160,6 @@ function buildClaudeHarnessTab(opts = {}) {
       const numOr = (v, d) => { const n = parseInt(v, 10);
         return Number.isFinite(n) ? Math.max(0, n) : d; };
       const l1 = numOr(cfg.l1_max_lines, 100);
-      const l2f = numOr(cfg.l2_max_files, 3);
       const l2l = numOr(cfg.l2_max_lines, 200);
       ov.innerHTML = `<div class="hg-modal hg-modal-vision"><div class="hg-modal-title">👥 三角色配置</div>
         <div class="hg-modal-body hg-vision-hint">双形态都<b>主会话直干所有活</b>（编码/执行/调试不派干活子代理）：<b>轻主模型</b>=轻主力——配 designer（只设计）+ reviewer（只读审核）两个重模型代理；<b>重模型</b>=直干+审核兜底。模型轻重默认按「名字含 opus=重，其余=轻」自动分类，<b>显式配置优先</b>；主会话模型槽显式配置优先参与形态判定。保存后模型池/分级线随下条消息热更生效（agents 自动重生成），审计模式立即生效。</div>
@@ -7178,7 +7177,7 @@ function buildClaudeHarnessTab(opts = {}) {
         </div>
         <label class="hg-vision-prompt-lab">端点角色映射（每行：端点关键字=轻模型,重模型——按当前 base_url 匹配，优先于自动识别；重模型可省略=与轻模型同）
           <textarea class="hg-vision-mm" data-hg-r-map spellcheck="false" style="height:56px;font-family:var(--font-mono);"
-            placeholder="open.bigmodel.cn=glm-5.3-flash,glm-5.3&#10;lanz.hikvision.com=Lanz-Flash,Lanz-Max">${esc(mapText)}</textarea></label>
+            placeholder="open.bigmodel.cn=glm-5.3-flash,glm-5.3&#10;lanz.hikvision.com=Lanz-Flash,Lanz-Atuo">${esc(mapText)}</textarea></label>
         <div class="hg-vision-grid">
           <label>审计模式（回合结算兜底：盘点直改超线未派 reviewer，auto 自动续发要求补审）
             <select data-hg-r-am>
@@ -7186,15 +7185,12 @@ function buildClaudeHarnessTab(opts = {}) {
               <option value="warn"${am === 'warn' ? ' selected' : ''}>warn · 仅红色警示</option>
               <option value="off"${am === 'off' ? ' selected' : ''}>off · 关闭审计</option>
             </select></label>
-          <label>免审线（行）：单文件且回合累计 ≤ 此行数的小改（配置/常量/文案/注释级）主会话直改免审
+          <label>免审线（行）：单次直改总计 ≤ 此行数的小改（配置/常量/文案/注释级）主会话直改免审（不计文件数）
             <input class="hg-vision-mm" type="number" min="0" max="100000" data-hg-r-l1
                    value="${l1}"></label>
         </div>
         <div class="hg-vision-grid">
-          <label>轻审线（文件数）：回合内直改文件数上限，不超则主会话直改 + reviewer 轻审（只审 diff）；重模型形态即审计线（文件数档）
-            <input class="hg-vision-mm" type="number" min="0" max="1000" data-hg-r-l2f
-                   value="${l2f}"></label>
-          <label>轻审线（回合累计行）：直改行数上限；任一超线即大改须 reviewer 取证级全审，重模型形态即审计线（0=最严档）
+          <label>轻审线（单次行）：单次直改行数上限；超线即大改须 reviewer 取证级全审，重模型形态即审计线（不计文件数、不做回合累计；0=最严档）
             <input class="hg-vision-mm" type="number" min="0" max="100000" data-hg-r-l2l
                    value="${l2l}"></label>
         </div>
@@ -7225,9 +7221,8 @@ function buildClaudeHarnessTab(opts = {}) {
         l1_max_lines: (() => { const v = parseInt(
           ov.querySelector('[data-hg-r-l1]').value, 10);
           return Number.isFinite(v) ? Math.max(0, v) : 100; })(),
-        l2_max_files: (() => { const v = parseInt(
-          ov.querySelector('[data-hg-r-l2f]').value, 10);
-          return Number.isFinite(v) ? Math.max(0, v) : 3; })(),
+        // v2.52：l2_max_files 不再提交——判定只看单次行数，文件数档退役
+        //（盘上旧值保留无害，后端 clamp 仍读它兜底）
         l2_max_lines: (() => { const v = parseInt(
           ov.querySelector('[data-hg-r-l2l]').value, 10);
           return Number.isFinite(v) ? Math.max(0, v) : 200; })(),

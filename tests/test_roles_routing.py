@@ -18,11 +18,12 @@
    designer 全集除 Task、reviewer 原样（含 Task 无编辑）；两
    body 与两 md 无版本代号；ensure_roles_ready 分形态清单。
 5. 审计判定：audit_verdict（免审区干净/超免审未轻审/超轻审属大改须全审
-   /已派不追责/strong 超审计线未派审/designer 派发不计）；0 合法最严档。
-6. 事中闸：audit_gate_check 达线拦（行/文件任一、>= 口径）+ 指路送审
+   /已派不追责/strong 超审计线未派审/designer 派发不计；v2.52 只看单次
+   直改行数——文件数与回合累计退役）；0 合法最严档。
+6. 事中闸：audit_gate_check 达线拦（单次行数、>= 口径）+ 指路送审
    （不提 dev）+ 已派 reviewer 开闸 + 线内放行。
 7. 指纹热更：改分级线/切形态 → 引导词与 _bridge_fp 变；口径基础件
-   （MultiEdit 求和/文件归一）；clamp 五态。
+   （MultiEdit 求和）；clamp 五态。
 8. 派发识别：_audit_dispatch_role（designer/reviewer 三形态；dev 已退役
    不计）+ _audit_tally/_audit_tally_result 集成（记旗/pending/映射回填/
    子代理事件不计）+ POST /roles 端到端（两池落盘 + clamp 回显 + GET
@@ -164,8 +165,9 @@ for kw, label in [
         ("文件+行号", "上下文含文件行号"),
         ("cmdlib.json", "高风险铁律文件"),
         ("PASS/FAIL", "审核结论二选一"),
-        ("≤100 行", "免审线数字嵌词"), ("≤3 个文件", "轻审线文件数嵌词"),
+        ("≤100 行", "免审线数字嵌词"),
         ("≤200 行", "轻审线行数嵌词"),
+        ("单次直改", "单次口径嵌词"),
         (POOL_HEAVY, "重池模型名嵌词"),
         ("回合终点纪律", "终点纪律保留"),
         ("审计", "审计威慑保留")]:
@@ -191,7 +193,7 @@ check("strong 词无免审/档位词",
       all(w not in gs for w in ("免审", "L1", "L2", "L3", "L4")))
 check("strong 词无 designer（不用设计代理）", "designer" not in gs)
 check("strong 词含 reviewer 审计兜底与线数字",
-      "审计线" in gs and "reviewer" in gs and "≤3 个文件" in gs
+      "审计线" in gs and "reviewer" in gs and "单次直改" in gs
       and "≤200 行" in gs)
 check("strong 词无版本代号", "v2." not in gs)
 check("light/strong 词不同", g != gs)
@@ -201,7 +203,7 @@ write_cfg(enabled=True, light_model=POOL_LIGHT, heavy_model=POOL_HEAVY)
 
 # ============ 6. 指纹热更 ============
 print("[6] 指纹热更")
-from src.claude_harness import _bridge_fp, _audit_lines, _audit_file_key
+from src.claude_harness import _bridge_fp, _audit_lines
 fp1 = _bridge_fp(LIGHT_MODEL)
 write_cfg(enabled=True, light_model=POOL_LIGHT, heavy_model=POOL_HEAVY,
           l2_max_lines=150)
@@ -219,37 +221,32 @@ write_cfg(enabled=True, light_model=POOL_LIGHT, heavy_model=POOL_HEAVY)
 # ============ 7. 审计判定（audit_verdict） ============
 print("[7] audit_verdict")
 V = hr.audit_verdict
-check("免审区（50 行/1 文件）干净", V(50, 1, False) == [])
-check("免审区边界（100 行/1 文件）干净", V(100, 1, False) == [])
-v = V(150, 1, False)
+check("免审区（50 行）干净", V(50, False) == [])
+check("免审线边界（100 行）干净", V(100, False) == [])
+v = V(150, False)
 check("超免审未轻审 → 违规指明轻审", len(v) == 1 and "轻审" in v[0], str(v))
-check("超免审已轻审 → 干净", V(150, 1, True) == [])
-check("2 文件小行数 → 须轻审",
-      len(V(50, 2, False)) == 1 and "轻审" in V(50, 2, False)[0])
-v = V(250, 2, False)
+check("超免审已轻审 → 干净", V(150, True) == [])
+v = V(250, False)
 check("超轻审线 → 大改须全审（不提 dev）",
       len(v) == 1 and "全审" in v[0] and "dev" not in v[0], str(v))
-v = V(150, 4, False)
-check("文件数超线 → 大改须全审", len(v) == 1 and "全审" in v[0])
-check("超线但已派审 → 不追责（提示性兜底）", V(250, 2, True) == [])
+check("多文件小行数 → 不追责（文件数口径退役）", V(50, False) == [])
+check("超线但已派审 → 不追责（提示性兜底）", V(250, True) == [])
 check("designer 派发不豁免（不算已审）",
-      len(V(250, 2, False, cfg={"l1_max_lines": 100, "l2_max_files": 3,
-                                "l2_max_lines": 200})) == 1)
+      len(V(250, False, cfg={"l1_max_lines": 100, "l2_max_lines": 200})) == 1)
 print("[7b] 0 合法最严档")
 write_cfg(enabled=True, light_model=POOL_LIGHT, heavy_model=POOL_HEAVY,
-          l1_max_lines=0, l2_max_files=0, l2_max_lines=0)
-v01 = V(1, 1, False)
+          l1_max_lines=0, l2_max_lines=0)
+v01 = V(1, False)
 check("全 0 线：1 行直改即属大改须全审", len(v01) == 1 and "全审" in v01[0])
 write_cfg(enabled=True, light_model=POOL_LIGHT, heavy_model=POOL_HEAVY)
 print("[7c] strong 分支")
 VS = hr.audit_verdict
-vs = VS(250, 2, False, strong=True)
+vs = VS(250, False, strong=True)
 check("strong 超线未派审 → 违规指明审计线与 reviewer",
       len(vs) == 1 and "审计线" in vs[0] and "reviewer" in vs[0], str(vs))
 check("strong 线内干净（直干是常态）",
-      VS(150, 1, False, strong=True) == [] and VS(100, 3, False, strong=True) == [])
-check("strong 文件数超线也违规", len(VS(100, 4, False, strong=True)) == 1)
-check("strong 已派 reviewer 视作审过", VS(250, 2, True, strong=True) == [])
+      VS(150, False, strong=True) == [] and VS(100, False, strong=True) == [])
+check("strong 已派 reviewer 视作审过", VS(250, True, strong=True) == [])
 fp_s1 = _bridge_fp(HEAVY_MODEL)
 write_cfg(enabled=True, light_model=POOL_LIGHT, heavy_model=POOL_HEAVY,
           l2_max_lines=150)
@@ -261,20 +258,18 @@ write_cfg(enabled=True, light_model=POOL_LIGHT, heavy_model=POOL_HEAVY)
 # ============ 8. 事中闸（审过开闸） ============
 print("[8] audit_gate_check")
 G = hr.audit_gate_check
-check("轻审线内（150 行/1 文件）放行", G(150, 1) == (False, None))
-check("轻审线内（100 行/2 文件）放行", G(100, 2) == (False, None))
-b, m = G(200, 1)
+check("轻审线内（150 行）放行", G(150) == (False, None))
+check("轻审线内（100 行）放行", G(100) == (False, None))
+b, m = G(200)
 check("行数达线 → 拦（>= 口径）", b and "reviewer" in m, m or "")
-b, m = G(100, 3)
-check("文件数达线 → 拦", b and "reviewer" in m)
-b, m = G(250, 2)
+b, m = G(250)
 check("拦下文案指路送审不提 dev",
       b and "派 dev" not in m and "designer" in m, m or "")
 check("已派 reviewer → 开闸（直干不停工）",
-      G(250, 2, reviewed=True) == (False, None))
-check("未达线时 reviewed 不影响放行", G(10, 1, reviewed=False) == (False, None))
+      G(250, reviewed=True) == (False, None))
+check("未达线时 reviewed 不影响放行", G(10, reviewed=False) == (False, None))
 check("免审/小改不拦（旧 3 行微调口径废除沿用）",
-      G(3, 1) == (False, None) and G(99, 1) == (False, None))
+      G(3) == (False, None) and G(99) == (False, None))
 
 # ============ 9. 口径基础件 ============
 print("[9] 口径基础件")
@@ -284,10 +279,6 @@ n = _audit_lines("MultiEdit", {"edits": [
 check("MultiEdit 按块求和 max(old,new)", n == 5, str(n))
 check("Edit 口径 max(old,new)=3",
       _audit_lines("Edit", {"old_string": "a\nb\nc", "new_string": "x"}) == 3)
-k1 = _audit_file_key({"file_path": r"D:\AI\Proj\src\A.py"})
-k2 = _audit_file_key({"file_path": "d:/ai/proj/src/a.py"})
-check("文件归一（大小写/斜杠同文件同键）", k1 == k2 and k1 != "")
-check("畸形输入不计文件", _audit_file_key({}) == "")
 
 # ============ 10. 配置往返（update_roles_cfg merge） ============
 print("[10] 配置往返")
