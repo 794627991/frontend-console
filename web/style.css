@@ -2423,18 +2423,21 @@ html {
 .h-subblock-body .h-think-seg.sub { font-size: 12px; }
 .h-subblock-note { font-size: 11px; color: var(--muted); font-style: italic; padding: 0 2px; }
 /* v2.45 第一层：完成段默认折叠——段体收起、结论行露出。折叠态全部由
-   .collapsed 类驱动（innerHTML 快照随身携带，恢复即保持，无 JS 重建逻辑） */
+   .collapsed 类驱动（innerHTML 快照随身携带，恢复即保持，无 JS 重建逻辑）。
+   v2.47（需求1）：运行段也可手动收起（长任务收起平铺干别的，后台继续跑，
+   折叠态下实时追加照常落 DOM），同一类驱动零分叉 */
 .h-subblock.collapsed > .h-subblock-body { display: none; }
 .h-subblock-sum { display: none; font-size: 11.5px; color: var(--muted);
   padding: 0 2px 0 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   cursor: pointer; }
 .h-subblock.collapsed > .h-subblock-sum:not(:empty) { display: block; }
-/* 段头折叠箭头：仅完成段显示（运行段点击=开窗格，无折叠语义） */
-.h-subblock .h-sub-chev { display: none; font-size: 10px; color: var(--muted);
+/* 段头折叠箭头：v2.47（需求1）所有段都显示（原仅完成段——运行段点击已从
+   开实况窗格改为折叠/展开，窗格入口挪到段头「⧉ 窗格」钮）；展开态旋转 90° */
+.h-subblock .h-sub-chev { display: inline-block; font-size: 10px; color: var(--muted);
   transition: transform .15s; }
-.h-subblock.done .h-sub-chev { display: inline-block; }
-.h-subblock.done:not(.collapsed) .h-sub-chev { transform: rotate(90deg); }
-/* 段头右侧动作钮（完成段：▣ 回放 / ⧉ 窗格）——span+role 避开 button 嵌套 */
+.h-subblock:not(.collapsed) .h-sub-chev { transform: rotate(90deg); }
+/* 段头右侧动作钮（v2.47：不限完成段——运行段「⧉ 窗格」、协作段运行中即可
+   「▣ 回放」）——span+role 避开 button 嵌套 */
 .h-subblock-acts { margin-left: auto; display: flex; gap: 4px; flex-shrink: 0; }
 .h-sub-act { font-size: 10.5px; color: var(--muted); border: 1px solid var(--border);
   border-radius: 4px; padding: 1px 7px; cursor: pointer; user-select: none;
