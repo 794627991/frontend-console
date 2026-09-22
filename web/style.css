@@ -2480,6 +2480,12 @@ html {
 /* v2.27.3：跨会话回传气泡（识图结论等，区别于 user/AI 消息） */
 .h-peer { align-self: flex-start; width: min(820px, 100%); }
 .h-peer-head { font-size: 11px; color: var(--accent); margin-bottom: 3px; font-weight: 600; }
+/* v2.49：协作段内回传全文（SendMessage 协作归一——回传入段替代独立气泡；
+   识图回传仍走 .h-peer 原形态）。嵌套在段体里非 body 直子，重置 .h-msg.sub
+   的缩进/弱化（与 .h-subblock-body > .h-msg.sub 同语义） */
+.h-peer-in { display: flex; flex-direction: column; gap: 3px; max-width: 94%; }
+.h-peer-in-tag { font-size: 11px; color: var(--accent); font-weight: 600; padding-left: 2px; }
+.h-peer-in .h-msg.sub { margin-left: 0; opacity: 1; max-width: 100%; }
 
 /* ---- v2.37（P1-C）模型标识与头像徽标 ----
    色板全走主题/语义变量（--hgd-* 与 --accent），零写死色；头像=首字母圆标，

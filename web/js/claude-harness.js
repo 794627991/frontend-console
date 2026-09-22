@@ -978,7 +978,7 @@ function buildClaudeHarnessTab(opts = {}) {
       const swp = e.target.closest('.h-switch[data-peer]');
       showBanner(swp.dataset.stale === '1'
         ? '该等待线超 30 分钟未回传，疑似残留——回传若到达会自动定格'
-        : '此线只标记转交——协作过程聚在下方「协作」段（段头「▣ 回放」可围观），回传到达会以 📥 气泡呈现', 3200);
+        : '此线只标记转交——协作过程聚在下方「协作」段（段头「▣ 回放」可围观），回传到达将归入其协作段', 3200);
       return;
     }
     // 交互提问卡片（v2.17）：选项点击 / 提交
@@ -2087,6 +2087,11 @@ function buildClaudeHarnessTab(opts = {}) {
     _hgPeerFreezeByName(name, text);
     grpFinalize(false);
     endThinking(); closeRun();
+    // v2.49：协作归一——SendMessage 协作回传全文入对应子代理段（替代独立
+    // 回传气泡）；段定位失败（段缺失/识图名）自然落入下方原气泡代码=回退
+    // 不丢内容
+    const _pSeg = _hgCollabSegFind(name);
+    if (_pSeg) { _hgPeerToSeg(_pSeg, name, text); scrollBottom(); return; }
     const d = document.createElement('div'); d.className = 'h-peer';
     const head = document.createElement('div'); head.className = 'h-peer-head';
     // v2.37（P1-C）：回传方头像徽标（首字母圆形色标，与模型标识同色板哈希）
@@ -2100,6 +2105,94 @@ function buildClaudeHarnessTab(opts = {}) {
     addRow(d);
     scrollBottom();
     return d;
+  }
+  // v2.49：协作段定位——回传全文入段的第一步。四锚合并（SendMessage 续派的
+  // 段 pid 有两个键域：实时段=CLI 包装 tool_use_id、历史段（后端
+  // _inject_subagent_blocks 经 resumedAgentId 注入）=真实 agentId——单查必漏，
+  // 必须双源）：
+  // ① 段头 data-hg-subr===name：实时协作段建段即落（peerSent 反查真实 id）、
+  //    完成段 _subBlkFinish 补落、历史段恒落——三路同键（真实 agentId）
+  // ② peerSent 映射反查：to===name 的键=包装 tool_use_id → 段 data-hg-subblock
+  //    （实时键域，快照恢复后 peerSent 已丢但段 DOM 在，由①③④兜）
+  // ③ pid 直配 .h-subblock[data-hg-subblock=name]（历史键域：name=真实
+  //    agentId 时命中后端注入段）
+  // ④ .h-subblock[data-hg-collab] 段名文案全等 '协作 · '+name 前 24 字
+  //    （名字形态——实时建段 label 用 to 原文，name 与 to 同名即中）
+  // 识图名显式 return null——识图转交/回传形态原样保留（需求唯一例外）。
+  // 多候选取舍：未完成（运行中段优先承接）> data-hg-collab > DOM 序
+  function _hgCollabSegFind(name) {
+    const nm = String(name || '').trim();
+    if (!nm || nm.includes('识图')) return null;
+    const cands = [];
+    const push = r => { if (r && r.isConnected && !cands.includes(r)) cands.push(r); };
+    flow.querySelectorAll('.h-subblock-head[data-hg-subr="' + CSS.escape(nm) + '"]')
+      .forEach(h => push(h.closest('.h-subblock')));
+    const ps = _HG.peerSent || {};
+    for (const tid in ps)
+      if (ps[tid] === nm)
+        push(flow.querySelector('.h-subblock[data-hg-subblock="' + CSS.escape(tid) + '"]'));
+    push(flow.querySelector('.h-subblock[data-hg-subblock="' + CSS.escape(nm) + '"]'));
+    flow.querySelectorAll('.h-subblock[data-hg-collab]').forEach(r => {
+      const ne = r.querySelector('.h-subblock-name');
+      if (ne && ne.textContent === '协作 · ' + nm.slice(0, 24)) push(r);
+    });
+    if (!cands.length) return null;
+    const rank = r => (r.classList.contains('done') ? 0 : 2) + (r.dataset.hgCollab ? 1 : 0);
+    // v2.49R1（复审3）：rank 平局取 DOM 最晚段——同名二次续派各建一段，
+    // 迟到的回传语义上属于最新一续派（取最早段会入错段）；次序优先级
+    //（未完成 > data-hg-collab）不变，仅平局兜底方向翻转
+    return cands.slice().sort((a, b) => (rank(b) - rank(a))
+      || ((a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) ? 1 : -1))[0];
+  }
+  // v2.49：回传全文落段体尾——结论行覆写「📥 回传：…」（与 _subText 同截断
+  // 口径：前 120 字 + title 400；折叠态段体不可见时回传摘要仍露在段头下），
+  // 段体尾追加 tag 行 + md 气泡。全程 textContent/mdBubble，无 innerHTML 拼
+  // 接用户串（回传正文是对端会话产物，按不可信输入处理）
+  // v2.49R1（复审2）：fullFeed 段（SendMessage 续派全喂持久标记）完成 drain
+  // 会把转写全部 text 喂进段——含对端最后一条 text，它与本路回传正文同源
+  // 同文；直接追加=同文双份。入段前比对段体尾最后一个 .h-msg.sub（renderMd
+  // 确定性渲染，两路 textContent 归一后等价即同文）——等价则原位包裹复用
+  // 该气泡（不追加第二份，保留其一）；不等价照常追加
+  function _hgPeerToSeg(seg, name, text) {
+    const t = String(text || '').replace(/\s+/g, ' ').trim();
+    const sum = seg.querySelector(':scope > .h-subblock-sum');
+    if (sum && t) {
+      sum.textContent = '📥 回传：' + t.slice(0, 120) + (t.length > 120 ? '…' : '');
+      sum.title = '📥 回传：' + t.slice(0, 400);
+    }
+    const body = seg.querySelector(':scope > .h-subblock-body');
+    if (!body) return;
+    const tag = document.createElement('div');
+    tag.className = 'h-peer-in-tag';
+    tag.textContent = '📥 ' + (String(name || '其他会话')) + ' 回传';
+    // 同文去重：探针走 renderMd（与 fullFeed 那条同为渲染后文本，md 语法符
+    // 号差异归零）再归一空白比对；空正文不参与（防空对空误判）
+    let reuse = null;
+    const probe = document.createElement('div');
+    probe.innerHTML = renderMd(text || '');
+    const norm = s => String(s || '').replace(/\s+/g, '');
+    const want = norm(probe.textContent);
+    const lastMsgs = body.querySelectorAll('.h-msg.sub');
+    if (want && lastMsgs.length) {
+      const last = lastMsgs[lastMsgs.length - 1];
+      if (norm(last.textContent) === want) reuse = last;
+    }
+    if (reuse) {
+      const wrap = document.createElement('div');
+      wrap.className = 'h-peer-in';
+      wrap.appendChild(tag);
+      reuse.parentNode.insertBefore(wrap, reuse);   // 原位包裹（不动渲染好的正文）
+      wrap.appendChild(reuse);
+      return;
+    }
+    const wrap = document.createElement('div');
+    wrap.className = 'h-peer-in';
+    wrap.appendChild(tag);
+    const m = document.createElement('div');
+    m.className = 'h-msg asst sub';
+    m.appendChild(mdBubble(text || ''));
+    wrap.appendChild(m);
+    body.appendChild(wrap);
   }
   // v2.20：压缩过程动态分割线。CLI 只给「开始/结束」两个信号，没有进度
   // 百分比——给真实信息：耗时秒表 + 被压缩的上下文规模，不编假数字。
@@ -2206,8 +2299,24 @@ function buildClaudeHarnessTab(opts = {}) {
       // 起点用行内 ts（后端 v2.3.2 审计 P1 已补）；收件人取 input.to（summary
       // 对 SendMessage 恒空——审计 P1b）；若后续有 peer 行，renderPeer 定格
       if (l.text === 'SendMessage' || (l.text || '').startsWith('⚙ SendMessage')) {
-        renderPeerRelay((l.input && l.input.to) || '识图会话',
+        // v2.49：历史重建同样隐藏 SendMessage 转交线（快照恢复走本分支——
+        // 不藏则刷新/切回后线复活）。to 缺席的回退名「识图会话」=旧版识图
+        // 链路，保持可见（识图例外）；to 在场但含「识图」同样保留
+        // v2.49R1（复审1）：按行序回填 peerSent[真实agentId→to]——名字形态
+        //（to='dev' 等）回传定位在历史重建态四锚 otherwise 全 miss：peerSent
+        // 仅实时 tool_use 事件写入、历史段 hgSubr/pid 恒真实 agentId、无
+        // data-hg-collab。键=行 result 提取的 resumedAgentId（与后端
+        // _inject_subagent_blocks 注入 sub_open 段的 pid 同源同值）——回传
+        // renderPeer 时锚②反查 to===name 即命中该段；id 形态（to 即
+        // agentId）本有锚③兜，回填无害
+        const _raid = String(l.result || '')
+          .match(/resumedAgentId["':\s]+([0-9a-zA-Z_-]{8,64})/);
+        if (_raid && l.input && l.input.to)
+          (_HG.peerSent || (_HG.peerSent = {}))[_raid[1]] = l.input.to;
+        const _rElH = renderPeerRelay((l.input && l.input.to) || '识图会话',
                         l.ts ? new Date(l.ts).getTime() : 0);
+        if (_rElH && l.input && l.input.to && !String(l.input.to).includes('识图'))
+          _rElH.style.display = 'none';
       }
       renderHistTool(l, hi);
     }
@@ -3308,7 +3417,12 @@ function buildClaudeHarnessTab(opts = {}) {
             // 反查此映射即命中原线。
             if (!isSub && b.name === 'SendMessage' && b.input && b.input.to) {
               (_HG.peerSent || (_HG.peerSent = {}))[b.id] = b.input.to;
-              renderPeerRelay(b.input.to);
+              // v2.49：协作归一子代理段——SendMessage 转交线隐藏（数据锚全保留：
+              // dataset.t0/peer/done/psum 照写，面板协作行/定格配对/快照序列化
+              // 链路不动），识图转交原形态保留（唯一例外）
+              const _rEl = renderPeerRelay(b.input.to);
+              if (_rEl && !String(b.input.to).includes('识图'))
+                _rEl.style.display = 'none';
             }
           }
         }
@@ -4393,7 +4507,7 @@ function buildClaudeHarnessTab(opts = {}) {
     else if (_hgAgentsRunning())
       ph = '子代理后台执行中——现在输入将开启新回合（不影响子代理）';
     else if (_hgPeerPending())
-      ph = '等待协作回传——现在输入将开启新回合（回传到达会以 📥 气泡呈现）';
+      ph = '等待协作回传——现在输入将开启新回合（回传到达将归入其协作段）';
     else
       ph = '给 Claude 发消息，@ 引用文件，/ 选择技能 · 可直接粘贴图片';
     if (input.placeholder !== ph) input.placeholder = ph;
@@ -4627,6 +4741,21 @@ function buildClaudeHarnessTab(opts = {}) {
       const lines = _hgPeerLines();
       const pend = lines.filter(el => !el.dataset.done);
       const target = (pend.length ? pend : lines).slice(-1)[0];
+      // v2.49：线被隐藏（SendMessage 协作归一段形态）——跳转目标改协作段
+      // 本体：展开（含折叠态记忆）+居中+高亮；段不存在回落原线跳转
+      if (target && target.style.display === 'none') {
+        const seg = _hgCollabSegFind(target.dataset.peer);
+        if (seg) {
+          seg.classList.remove('collapsed');
+          _hgSubSaveOpen(seg, true);
+          seg.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          seg.classList.remove('hg-dyn-jump');
+          void seg.offsetWidth;
+          seg.classList.add('hg-dyn-jump');
+          setTimeout(() => seg.classList.remove('hg-dyn-jump'), 1600);
+          return;
+        }
+      }
       if (target) {
         target.scrollIntoView({ block: 'center', behavior: 'smooth' });
         target.classList.remove('hg-dyn-jump');
