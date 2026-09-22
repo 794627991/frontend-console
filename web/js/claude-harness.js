@@ -718,6 +718,21 @@ function buildClaudeHarnessTab(opts = {}) {
     // 有记录 = 用户碰过 → 标记住，重建末尾的 grpFinalize(true) 不再自动收它
     if (has) el.dataset.userToggled = '1';
   }
+  // v2.46：子代理段折叠态记忆——键用 sub:<agentId>（agentId 稳定，不受扩段/
+  // 收缩重渲的行号漂移影响；_hgPathKey 的位置键重渲后必错位，不可用）。
+  // 动机：扩段/收缩是全量重渲，renderHistSub 建段恒默认折叠，用户已展开的
+  // 段被收回——不只是观感，段区高度突变直接破坏扩段锚定精度（Playwright
+  // 实测：展开态 8858px 重渲后自行收回 5931px，锚定落点漂 2900+px）。
+  // 与 _hgSaveOpen 同仓（hg-open:<sid>），重建期由 renderHistSub 读取恢复。
+  function _hgSubSaveOpen(blk, isOpen) {
+    const aid = blk && blk.dataset && blk.dataset.hgSubblock;
+    if (!_HG.sid || !aid) return;
+    try {
+      const st = _hgLoadOpen(_HG.sid);
+      st['sub:' + aid] = isOpen ? 1 : 0;
+      localStorage.setItem('hg-open:' + _HG.sid, JSON.stringify(st));
+    } catch(_) {}
+  }
 
   // ---- 消息组基元（v2.18）----
   // 组 = .h-grp{ .h-grp-proc{ .h-drawer.think + .h-drawer.exec } + AI 气泡们 }。
@@ -916,6 +931,7 @@ function buildClaudeHarnessTab(opts = {}) {
       const blk = sbSum.closest('.h-subblock');
       if (blk && blk.classList.contains('done')) {
         blk.classList.toggle('collapsed');
+        _hgSubSaveOpen(blk, !blk.classList.contains('collapsed'));   // v2.46：折叠态记忆
         if (blk.classList.contains('collapsed') && isNearBottom()) scrollBottom();
       }
       return;
@@ -935,6 +951,7 @@ function buildClaudeHarnessTab(opts = {}) {
       }
       if (done) {
         blk.classList.toggle('collapsed');
+        _hgSubSaveOpen(blk, !blk.classList.contains('collapsed'));   // v2.46：折叠态记忆
         // 收起时若用户在底部跟读，flow 底部随内容收缩上移——贴底别丢
         if (blk.classList.contains('collapsed') && isNearBottom()) scrollBottom();
         return;
@@ -2124,6 +2141,12 @@ function buildClaudeHarnessTab(opts = {}) {
       const b = _subBlkGet(pid, { agent: pid, type: l.type, desc: l.desc || '',
         label: _AGENT_LABEL[l.type] || l.type || '子代理', model: l.model || '',
         done: true, err: !!l.err, hist: true });   // v2.44：hist——段头显「历史」不算假用时
+      if (b) {
+        // v2.46：折叠态按记忆恢复（重建期 openState 在场；无记录=默认折叠不
+        // 动）——用户展开过的段不随扩段/收缩重渲收回（高度突变破坏锚定）
+        const _ost = _HG.openState;
+        if (_ost && _ost['sub:' + pid] === 1) b.root.classList.remove('collapsed');
+      }
       if (b && l.stub) {
         const n = document.createElement('div');
         n.className = 'h-subblock-note';
@@ -2956,7 +2979,14 @@ function buildClaudeHarnessTab(opts = {}) {
           if (a) {
             if (sub === 'task_started') {
               a.bg = !!o.is_backgrounded;
-              a.taskId = o.task_id || '';
+              // v2.46R（P4）：SendMessage 续派的包装任务 task_id 是 CLI 包装
+              // 新 id（peer-pair 审计实证异形 id 无转写），轮询/回填要的是
+              // 真实 agentId——SendMessage tool_use 建线时已记
+              // peerSent[tid]=input.to（8faf 会话实证 to=真实 id，与
+              // subagents/agent-<id>.jsonl 同名），命中即用真实 id
+              const _realTo = (_HG.peerSent || {})[tid];
+              a.taskId = (_realTo && /^[0-9a-zA-Z_-]{8,64}$/.test(String(_realTo)))
+                ? String(_realTo) : (o.task_id || '');
             } else {
               // v2.35.1（F3）：用量与收尾解耦——task_notification 是完成信号，
               // usage 缺失（失败态通知常见）也必须收档，否则面板/输入框永久
@@ -3188,13 +3218,13 @@ function buildClaudeHarnessTab(opts = {}) {
             // v2.38：agentId 落档——Task tool_result 文本自带「agentId: xxx」
             //（与 task_started 的 task_id 同源），回放窗格靠它定位子代理转写
             a.agentId = a.taskId
-              || (resultText(b).match(/agentId:\s*([0-9a-zA-Z_-]{8,64})/i) || [])[1] || '';
+              || (resultText(b).match(/(?<![a-zA-Z])agentId[:"':\s]+([0-9a-zA-Z_-]{8,64})/i) || [])[1] || '';
             _subClose(b.tool_use_id, a.err);   // v2.33：窗格 tab 定格 ✓/✗
             hitAgent = true;
           } else if (!a) {
             const ab = _subBlkAdopt(b.tool_use_id);
             if (ab && !ab.root.classList.contains('done')) {
-              const _aid = (resultText(b).match(/agentId:\s*([0-9a-zA-Z_-]{8,64})/i) || [])[1] || '';
+              const _aid = (resultText(b).match(/(?<![a-zA-Z])agentId[:"':\s]+([0-9a-zA-Z_-]{8,64})/i) || [])[1] || '';
               _subBlkFinish(b.tool_use_id, !!b.is_error, _aid);
               hitAgent = true;
             }
@@ -3474,7 +3504,7 @@ function buildClaudeHarnessTab(opts = {}) {
           const d = _hgDyn();
           d.agentsRpl = d.agentsRpl || [];
           // v2.38：从结果文本提取 agentId——历史条目的回放窗格靠它定位转写
-          const _aid = (l.result && String(l.result).match(/agentId:\s*([0-9a-zA-Z_-]{8,64})/i) || [])[1] || '';
+          const _aid = (l.result && String(l.result).match(/(?<![a-zA-Z])agentId[:"':\s]+([0-9a-zA-Z_-]{8,64})/i) || [])[1] || '';
           d.agentsRpl.push({
             type: l.input.subagent_type || l.input.agent_type || 'Task',
             desc: l.input.description || '', t0: 0, done: true, doneAt: 0, replay: true,
@@ -3506,6 +3536,7 @@ function buildClaudeHarnessTab(opts = {}) {
     const keepStart = _HG.histAll.length - _HG.HIST_PAGE;
     const children = [...flow.children];
     const before = flow.scrollHeight;
+    const top0 = flow.scrollTop;      // v2.46：摘除前的 scrollTop（锚定基准）
     let newStart = -1;
     let i = 0;
     // v2.37R5（终审·严重）：内层扫戳触底=尾部无戳（实时追加的活动内容），
@@ -3533,10 +3564,20 @@ function buildClaudeHarnessTab(opts = {}) {
     }
     if (newStart < 0) return;                    // 纯无戳：零摘除，安全放弃
     _HG.histStart = newStart;
-    // 视口锚定：scrollTop 减去被移除的高度，无闪屏无跳动
-    // （先按纯摘除量回锚，再插入口条并补偿其高度——v2.37R6：此前锚定在
-    // 插条之后、用「摘除量-条高」的差值，每轮收缩视口净上漂一条高度）
-    flow.scrollTop = Math.max(0, flow.scrollTop - (before - flow.scrollHeight));
+    // 视口锚定（v2.46 修「翻不下来」回归——CDP+Playwright 真实布局实证）：
+    // 摘除头部内容后 scrollHeight 缩小，浏览器会对越界的 scrollTop 做钳制
+    // （读取 scrollHeight 强制布局时生效）——钳制本身就是正确的视觉锚定
+    // （视口落在同一批内容上）。旧实现不区分钳制与否，一律再减
+    // 「摘除量」：贴底收缩时 scrollTop 已被钳到新上限，再减一次=双重补偿
+    // → 视口飞到顶部 → 触发 nearTop 扩段把刚收掉的行重渲回来 → 锚定又
+    // 落在中途（distBottom 卡 2000+px），用户再滚到底再触发——无限拉锯，
+    // 即「滚动条翻不下来」。v2.43 对照实测同款翻车（v2.37R4 起潜伏，
+    // R6 只收了触发条件没修锚定；v2.43 子代理行注入膨胀行数使其高频可达）。
+    // 修法：摘除后再读一次 scrollTop，比 top0 小=浏览器已钳制（不动）；
+    // 未钳制（用户在保留区中部，摘除不越过视口）才手动减摘除量。
+    const removed = before - flow.scrollHeight;
+    const top1 = flow.scrollTop;
+    if (top1 >= top0) flow.scrollTop = Math.max(0, top1 - removed);
     // 头部若仍有更早历史，重建只读入口条（原条已随头部组摘除）
     // v2.43.2（R2-N2）：计数与渲染路径同口径（visN，剔除 sub_* 行）——
     // 否则收缩后条上数字比渲染路径虚高回跳
@@ -3624,7 +3665,10 @@ function buildClaudeHarnessTab(opts = {}) {
         const anchorH = flow.scrollHeight - flow.scrollTop;
         const sidAt = _HG.sid;
         _histRefresh(sidAt, _HG.histStart - _HG.HIST_PAGE).then(() => {
-          flow.scrollTop = flow.scrollHeight - anchorH;
+          // v2.46：Math.max 钳非负——重渲后子代理段折叠态高度缩水时
+          // scrollHeight 可能小于 anchorH，负值赋给 scrollTop 虽被浏览器
+          // 钳到 0，显式钳制防未来语义变化（且可读）
+          flow.scrollTop = Math.max(0, flow.scrollHeight - anchorH);
           requestAnimationFrame(() => { _histBusy = false; });
         });
       }
@@ -3723,6 +3767,7 @@ function buildClaudeHarnessTab(opts = {}) {
     // v2.43：子代理段随会话切换重置（段计时器停掉；段 DOM 随 flow 重建，内存档不跨会话残留）
     Object.values(_HG.subBlk || {}).forEach(b => { if (b && b.timer) clearInterval(b.timer); });
     _HG.subRows = {}; _HG.subBlk = {};
+    _HG.subTail = {};   // v2.46：实时思考轮询 offset 随会话切换重置（防串会话读错文件位）
     _HG.histAll = null; _HG.histStart = 0; _HG.histLive = false;   // v2.24：多段历史渲染源不复用（防串会话）；v2.35.2：histLive 随切重置（快照恢复态不进滚动扩收）
     _HG.histStale = false;   // v2.43.2（R2-缺口A）：降级标记随切会话重置（恢复时按快照 histFp 重新判定）
     _HG.todos = null; _HG.agents = null;     // v2.30：会话动态随会话切换重置（todos 由回放重建）
@@ -5183,7 +5228,10 @@ function buildClaudeHarnessTab(opts = {}) {
     if (!_subBlkAdopt(tid)) return;    // 段不在（无过程行的代理/协作包装）——无事可做
     _subBlkState(tid, err);
     const _a = (_HG.agents || {})[tid] || {};
-    const _aid = aidForce || _a.taskId || _a.agentId || '';
+    // v2.46R（P4）：档案 taskId 优先——续派形态下它是 peerSent 反查的真实
+    // agentId，aidForce（notification.task_id）是 CLI 包装新 id；常规 Agent
+    // 两者同值（v2.44 实证同源），顺序翻转零影响
+    const _aid = _a.taskId || aidForce || _a.agentId || '';
     const _b = _HG.subBlk && _HG.subBlk[tid];
     if (_b && _b.head && _aid && !_b.head.dataset.hgSubr) {
       _b.head.dataset.hgSubr = _aid;
@@ -5197,9 +5245,14 @@ function buildClaudeHarnessTab(opts = {}) {
     // agentId 在手时按转写把思考行补进段内——与历史路径同数据源（回放接口
     // _subagent_rows_for 双源），完成即完整。hgBackfill 标记防重入（多次
     // 完成信号/收尾 sweep 不会重复拉取）；段不在/无 aid 静默跳过
+    // v2.46R（P2）：定格先 drain 尾部再回填——轮询已停（tick 跳过 done 段），
+    // 最后一次轮询与完成信号之间新落盘的 thinking 若不补读，「段内有思考
+    // 即整体跳过」的回填守卫会把它永久丢了（最后一轮 thinking 落在完成前
+    // 0-2s 概率极高）。drain 到无推进后回填：轮询插过→守卫拦重复；没插过
+    // →回填全量，两不误
     if (_b && _b.root && _b.body && _aid && !_b.root.dataset.hgBackfill) {
       _b.root.dataset.hgBackfill = '1';
-      _subBlkBackfill(tid, _aid);
+      _subTailDrainThenBackfill(tid, _aid);
     }
   }
   // 思考回填取数：subagent_replay 端点（与段头回放窗格/历史注入同源）。会话
@@ -5329,6 +5382,83 @@ function buildClaudeHarnessTab(opts = {}) {
       else b.body.appendChild(seg);
     });
   }
+  // ==================== v2.46 运行中实时思考（.output 增量轮询） ====================
+  // 背景（v2.44 实证）：CLI stream-json 不转发子代理 thinking（112 事件 0 块），
+  // 但 tasks\<agentId>.output 实时落盘含全部思考块——运行期从后端
+  // /subagent_tail 增量读（offset 只读新增字节，按行边界切防截断半行/多字节），
+  // 解析新增 thinking 块插段内思考折叠行（_subThink，与历史/回填三路同构）。
+  // 性能：2s 单例轮询；仅 busy 且有「运行中 + taskId 在手 + 段在场」的代理
+  // 才发请求（每会话常态 0-2 个），单次增量几 KB——代理完成（段 done）/
+  // 切会话（subBlk 清）自然停。与完成回填（_subBlkMergeThinks）的防重：
+  // 回填守卫「段内已有思考整体跳过」已覆盖两套布局（b.body 后代查询）。
+  // 注：轮询插的思考行无 dataset.hi/raw（增量流式内容，快照/lazyDrop 语义
+  // 下不可复原也不可丢——_histLazyDrop 对无标记行不动，一致）。
+  _HG.subTail = {};        // agentId → 已消费字节 offset
+  const _subTailBusy = {}; // agentId → 拉取在途标记（防 2s 内重入叠请求）
+  function _subThinkPollTick() {
+    if (!_HG.sid || !_HG.busy) return;
+    const ag = _HG.agents || {};
+    for (const tid in ag) {
+      const a = ag[tid];
+      if (!a || a.done || a.collab || !a.taskId) continue;   // 协作包装无独立落盘
+      const b = _HG.subBlk && _HG.subBlk[tid];
+      if (!b || !b.root || !b.root.isConnected || b.root.classList.contains('done')) continue;
+      _subTailFetch(tid, a.taskId);
+    }
+  }
+  async function _subTailFetch(tid, aid) {
+    if (_subTailBusy[aid]) return;
+    _subTailBusy[aid] = true;
+    const sidAt = _HG.sid;
+    try {
+      const off = _HG.subTail[aid] || 0;
+      const r = await fetch('/api/harness/subagent_tail?sid=' + encodeURIComponent(sidAt)
+        + '&agent=' + encodeURIComponent(aid) + '&offset=' + off);
+      const j = await r.json();
+      if (_HG.sid !== sidAt || !j.ok || !j.found) return;   // 切走/无转写：下轮再试
+      if (typeof j.offset === 'number') _HG.subTail[aid] = j.offset;
+      const txt = j.text || '';
+      if (!txt) return;
+      // 解析新增完整行里的 thinking 块（工具/文本实时事件流已覆盖——只补思考）
+      const lines = txt.split('\n');
+      for (const ln of lines) {
+        const s = ln.trim();
+        if (!s) continue;
+        let o; try { o = JSON.parse(s); } catch(_) { continue; }
+        const blocks = o && o.message && o.message.content;
+        if (!Array.isArray(blocks)) continue;
+        for (const blk of blocks) {
+          if (blk && blk.type === 'thinking' && String(blk.thinking || '').trim())
+            _subThink(tid, blk.thinking);
+        }
+      }
+    } catch(_) {}
+    finally { _subTailBusy[aid] = false; }
+  }
+  // v2.46R（P2）：定格 drain——等在途拉取收敛（定格前 tick 的最后一发）后
+  // 连拉到文件尾无推进为止（≤6 轮防异常循环），随后回填。完成兜底：轮询
+  // 从未插过思考（subTail 无档）时 drain 空转、回填照常全量
+  async function _subTailDrainThenBackfill(tid, aid) {
+    const sidAt = _HG.sid;
+    try {
+      for (let k = 0; k < 6; k++) {
+        let wait = 0;
+        while (_subTailBusy[aid] && wait < 3000) {
+          await new Promise(r => setTimeout(r, 120)); wait += 120;
+        }
+        if (_HG.sid !== sidAt) return;   // 会话已切走：段随快照冻结，回填也弃
+        const off0 = _HG.subTail[aid] || 0;
+        await _subTailFetch(tid, aid);
+        if ((_HG.subTail[aid] || 0) <= off0) break;   // 无推进=已到文件尾
+      }
+    } catch(_) {}
+    _subBlkBackfill(tid, aid);
+  }
+  // v2.46R（P5）：单例防护——关-开 tab 重建会叠加 interval（N 倍请求+并发
+  // 同 offset 双份插入，_hgDynTick 同款教训先例）；重建时先清旧的再挂当前
+  // 闭包的（只保最新的，防旧闭包 flow 引用已脱离 DOM 的元素）
+  if (window._hgSubTailTick) clearInterval(window._hgSubTailTick);
+  window._hgSubTailTick = setInterval(_subThinkPollTick, 2000);
   function _subEnd() {                     // 回合终结：全部定格；自动来源收起窗格
     let any = false;
     for (const t in _sub.tabs) { _sub.tabs[t].run = false; any = true; }
@@ -6980,7 +7110,15 @@ function _harnessClose(portId) {
   _HG.dirty = false; _HG.busy = false;
   _HG.initN = 0; _HG.agentModels = null;   // v2.35：init 计数/模型缓存随 tab 销毁（重开 tab 重新拉）
   _HG.dyn = null; _HG.todos = null; _HG.agents = null;   // v2.32：面板派生态随 tab 销毁
-  if (_HG.grp) phStopTimer(_HG.grp);   // v2.18：防御性清占位 timer（isConnected 自杀是兜底）
+  // v2.46R（P5 测试挖出的潜伏 bug）：phStopTimer 是闭包私有函数，顶层
+  // _harnessClose 引用它 → 组在场（回合进行中）关 tab 必抛 ReferenceError，
+  // close 中途夭折：tab/wrap 不摘、connections 残留 → 再点按钮走「已存在即
+  // switchTab」早退，留下 SSE 已死的僵尸 tab。改为内联同款清理（clearInterval
+  // + 置空），不依赖闭包名
+  if (_HG.grp && _HG.grp.phTimer) {
+    try { clearInterval(_HG.grp.phTimer); } catch(_) {}
+    _HG.grp.phTimer = null;
+  }
   _HG.grp = null; _HG.activity = null;   // v2.18：组级抽屉（旧 drawer 单例已删）
   _HG.think = null; _HG.noScroll = false; _HG.openState = null;
   _HG.skills = null; _HG.models = null;   // 技能/模型映射下次进 tab 重新拉

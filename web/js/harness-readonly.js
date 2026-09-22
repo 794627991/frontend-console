@@ -25,14 +25,16 @@
   // ---- 数据模型：histAll lines → 轮（turn）数组 ----
   // 一轮 = user 行开头 + 后续所有非 user 行（peer/renew 顶层独立渲染不入轮；
   // 轮未结束遇到下一个 user 则开新轮）。peer/renew 出现在轮内时间线位置直显。
+  // v2.46：子代理段行（sub_*）入轮——只读层是 busy 会话重开后唯一的历史入口
+  // （主 flow 扩段被 busy 门拦死），此前硬跳过=「看不到 agent 历史数据」的
+  // 一路根因。渲染轻量化：段头一行（角色/说明/状态/计数）+ 文本气泡，过程行
+  // （sub_tool/sub_think/sub_result）并入段头计数不逐行渲——只读层面对的是
+  // 海量会话，逐行会破坏「DOM 恒有界」。
   function buildTurns(lines) {
     const turns = [];
     let cur = null;
     lines.forEach((l, i) => {
       const role = l.role;
-      // v2.43.1（R-次要④）：子代理段行（sub_*）只读层不渲染（下方角色链无
-      // 分支），也不入轮 steps——计入会把「N 个步骤」虚高
-      if (typeof role === 'string' && role.indexOf('sub_') === 0) return;
       if (role === 'user') {
         cur = { idx: [], user: l, ui: i };
         turns.push(cur);
@@ -45,7 +47,8 @@
       cur.idx.push(i);
     });
     // 每轮派生：steps（思考/工具/中间文本行号）、finalIdx（最后一段非空 AI 文本）、
-    // durMs（轮首尾 ts 差）
+    // durMs（轮首尾 ts 差）。steps 剔除 sub_* 行——段在渲染层自成一块，
+    // 计入会把「N 步」虚高（v2.43.1 的口径保留）
     turns.forEach(t => {
       t.finalIdx = -1;
       t.idx.forEach(i => {
@@ -55,7 +58,8 @@
       const firstTs = t.user && t.user.ts ? Date.parse(t.user.ts) : 0;
       const lastTs = t.idx.length ? Date.parse(lines[t.idx[t.idx.length - 1]].ts || '') || 0 : 0;
       t.durMs = (firstTs && lastTs && lastTs > firstTs) ? lastTs - firstTs : 0;
-      t.steps = t.idx.filter(i => i !== t.finalIdx);
+      t.steps = t.idx.filter(i => i !== t.finalIdx
+        && !String((lines[i] || {}).role || '').startsWith('sub_'));
     });
     return turns;
   }
@@ -169,6 +173,37 @@
     return d;
   }
 
+  // v2.46：子代理段头（只读层轻量形态）——分割线一行带角色/说明/状态/计数。
+  // 计数从 sub_open 行向后扫同 agent 的连续 sub_* 行（O(段长)，段 ≤200 行）
+  function renderSubHead(lines, hi) {
+    const l = lines[hi];
+    let think = 0, tool = 0, text = 0;
+    for (let j = hi + 1; j < lines.length; j++) {
+      const r = lines[j];
+      if (!r || String(r.role || '').indexOf('sub_') !== 0 || r.agent !== l.agent) break;
+      if (r.role === 'sub_think') think++;
+      else if (r.role === 'sub_tool' || r.role === 'sub_result') tool++;
+      else if (r.role === 'sub_text') text++;
+    }
+    const d = document.createElement('div');
+    d.className = 'hg-ro-sub' + (l.err ? ' err' : '');
+    const desc = String(l.desc || '').trim();
+    const st = l.err ? '✗ 失败' : '✓';
+    d.innerHTML = '<span class="hg-ro-sub-ava">' + D.esc(String(l.type || '?').charAt(0).toUpperCase()) + '</span>' +
+      '<b>' + D.esc(l.type || 'Task') + '</b>' +
+      (desc ? '<span class="hg-ro-sub-desc" title="' + D.esc(desc.slice(0, 160)) + '">' + D.esc(desc.slice(0, 60)) + (desc.length > 60 ? '…' : '') + '</span>' : '') +
+      '<span class="hg-ro-sub-stat">' + st +
+      (tool || think ? ' · ' + tool + ' 工具' + (think ? ' · ' + think + ' 思考' : '') : '') + '</span>';
+    return d;
+  }
+  // v2.46：子代理正文气泡（结论直显——只读层口径「默认只看结论」）
+  function renderSubTextLine(l) {
+    const d = document.createElement('div');
+    d.className = 'h-msg asst sub';
+    d.appendChild(D.mdBubble(l.text || ''));
+    return d;
+  }
+
   // 一轮（L1 总开关 + 轮体）
   // v2.3.12 修复：总开关点击无效——旧实现 sw.closest('[data-ro-turn]') 找轮
   // 容器，但 sw 与容器是兄弟节点（同挂 roFlow 下），closest 恒 null → 点击即
@@ -192,13 +227,15 @@
     holder.dataset.roTurn = '1';
 
     const steps = t.steps.length;
+    // v2.46：段在轮内（steps 已剔 sub_*）——纯子代理轮也给展开开关
+    const hasSub = t.idx.some(i => (lines[i] || {}).role === 'sub_open');
     // v2.3.12：时长 + 步数一起给（此前缺 ts 恒 fallback「N 个步骤」，根因在
     // transcript_for 的 assistant/thinking 行漏带 ts，已修）
     const durTxt = t.durMs
       ? D.fmtDur(t.durMs / 1000) + (steps ? ' · ' + steps + ' 步' : '')
       : (steps ? steps + ' 个步骤' : '');
     // 总开关（ZCode「已工作 1 分 34 秒」）：无步骤/无结论的空轮不显示开关
-    const hasProcess = steps > 0 || t.finalIdx >= 0;
+    const hasProcess = steps > 0 || t.finalIdx >= 0 || hasSub;
     if (hasProcess) {
       const sw = document.createElement('button');
       sw.className = 'hg-ro-switch' + (expanded ? ' open' : '');
@@ -220,11 +257,16 @@
     return frag;
   }
 
-  // 轮体渲染：收起=仅最终结论；展开=时间线（L2 折叠行懒填）
+  // 轮体渲染：收起=结论（+子代理段头行——v2.46：段头是一行轻量元素，
+  // 收起态也露出——否则「这轮派了哪些代理」要展开才知道，重开后只读层
+  // 看不出 agent 痕迹）；展开=时间线（L2 折叠行懒填）
   function renderTurnInto(holder, lines, t, expanded) {
     holder.className = 'hg-ro-turn' + (expanded ? ' open' : '');
     holder.innerHTML = '';
     if (!expanded) {
+      t.idx.forEach(i => {
+        if ((lines[i] || {}).role === 'sub_open') holder.appendChild(renderSubHead(lines, i));
+      });
       if (t.finalIdx >= 0) holder.appendChild(renderAsstLine(lines[t.finalIdx].text));
       return;
     }
@@ -241,6 +283,11 @@
       else if (l.role === 'peer') holder.appendChild(renderPeerLine(l));
       else if (l.role === 'renew') holder.appendChild(renderRenewLine(l));
       else if (l.role === 'vision_relay') holder.appendChild(renderRelayLine(l));
+      // v2.46：子代理段——段头一行 + 文本气泡；过程行并入段头计数不逐行渲
+      else if (l.role === 'sub_open') holder.appendChild(renderSubHead(lines, i));
+      else if (l.role === 'sub_text') {
+        if (l.text && String(l.text).trim()) holder.appendChild(renderSubTextLine(l));
+      }
     });
   }
 

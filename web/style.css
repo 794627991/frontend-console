@@ -3078,6 +3078,21 @@ html {
 .hg-ro-turn > .h-think-seg, .hg-ro-turn > .h-tool,
 .hg-ro-turn > .h-msg, .hg-ro-turn > .h-peer { margin-left: 10px; width: min(680px, 100%); }
 .h-think-seg-t { color: var(--muted); font-size: 11.5px; }
+/* v2.46 只读层子代理段：段头一行（头像字符+角色+说明+状态计数）——
+   busy 会话重开后只读层是唯一历史入口，段可见但保持轻量（过程行
+   并入计数不逐行渲，守住海量会话 DOM 有界）；正文气泡走 .h-msg.asst.sub */
+.hg-ro-sub { display: flex; align-items: center; gap: 8px; margin: 6px 0 4px 10px;
+  width: min(680px, 100%); font-size: 11.5px; color: var(--muted);
+  border: 1px dashed var(--border); border-radius: 8px; padding: 4px 10px; }
+.hg-ro-sub-ava { flex-shrink: 0; width: 16px; height: 16px; border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--accent); font-size: 10px; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center; }
+.hg-ro-sub b { color: var(--fg); font-size: 11.5px; }
+.hg-ro-sub-desc { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hg-ro-sub-stat { margin-left: auto; flex-shrink: 0; font-family: var(--font-mono); font-size: 10.5px; }
+.hg-ro-sub.err b, .hg-ro-sub.err .hg-ro-sub-stat { color: var(--h-err); }
+.hg-ro-turn > .h-msg.asst.sub { margin-left: 10px; width: min(640px, 100%); opacity: .94; }
 
 /* v2.28.15 回滚按钮——只挂在「最后一个定下来的回合」的 AI 消息上
    （can-rewind 类由 result 结算/历史重建授予，随 innerHTML 快照存活）；

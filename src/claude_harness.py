@@ -3053,8 +3053,12 @@ def _subagent_transcript_candidates(main_dir, csids, agent):
     ① projects 主会话同目录 <agent>.jsonl（旧版 CLI）；② 新版 CLI（2.1.267+）
     tasks 目录 %LOCALAPPDATA%\\Temp\\claude\\<项目转码名>\\<主会话id>\\tasks\\
     <agent>.output——项目转码名即 main_dir 的 basename，lineage 全链逐会话试
-    （task_id 全局唯一，多目录存在也不歧义）。回放接口与 transcript_for 段
-    注入共用本查找。"""
+    （task_id 全局唯一，多目录存在也不歧义）；③ v2.46R（P3）：第三形态
+    projects/<主会话id>/subagents/agent-<agentId>.jsonl——真实实证（8faf 会话
+    9/21）：该形态下 tasks 目录不存在、projects 同名 jsonl 也不存在，只有
+    subagents 目录在（SendMessage 续派会话的现行 CLI 落盘形态），缺此源则
+    双源全 miss=历史/回放/实时思考全断。回放接口、transcript_for 段注入与
+    subagent_tail 轮询共用本查找。"""
     out = []
     if main_dir:
         out.append(os.path.join(main_dir, agent + ".jsonl"))
@@ -3064,6 +3068,10 @@ def _subagent_transcript_candidates(main_dir, csids, agent):
             out.append(os.path.join(la, "Temp", "claude",
                                     os.path.basename(main_dir), csid,
                                     "tasks", agent + ".output"))
+    if main_dir:
+        for csid in csids or []:
+            out.append(os.path.join(main_dir, csid, "subagents",
+                                    "agent-" + agent + ".jsonl"))
     return out
 
 
@@ -3098,14 +3106,38 @@ def _inject_subagent_blocks(lines, csids, main_dir):
     ag_rows = [i for i, ln in enumerate(lines)
                if isinstance(ln, dict) and ln.get("role") == "tool"
                and ln.get("text") in ("Task", "Agent")]
-    if not ag_rows:
-        return lines
+    # v2.46R（P1）：不做「无 Agent 行即早退」——纯续派会话（重启后第一步就
+    # SendMessage 续派，全程无 Task/Agent 工具行）也要走下面的 resumedAgentId
+    # 补段循环；循环自然空转，由末尾 `if not parsed` 兜底
     parsed = []
     for i in ag_rows:
-        m = re.search(r"agentId:\s*([0-9a-zA-Z_-]{8,64})",
+        # v2.46R（P7）：宽容形态——裸文本 `agentId: x` 与 JSON `"agentId":"x"`
+        # 都命中（另一设备实测 JSON 形态全漏=重开看不到 agent 历史的主因之
+        # 一）；(?<![a-zA-Z]) 防误吞 resumedAgentId 尾段（那是续派循环的职责）
+        m = re.search(r"(?<![a-zA-Z])agentId[\"\':\s]+([0-9a-zA-Z_-]{8,64})",
                       str((lines[i] or {}).get("result") or ""))
         if m:
             parsed.append((i, m.group(1)))
+    # v2.46：SendMessage 续派补段——今天的子代理多为 SendMessage 续派（真实
+    # 转写实证：55 个派发/续派 result 里 Agent 37 个带裸 agentId: 文本、
+    # SendMessage 17 个全是 JSON 形态只带 resumedAgentId，旧正则全漏）。跨会话
+    # 续派的代理在本会话没有 Agent 派发行 → 永远不出段（重启后 agent 历史
+    # 「消失」的一路根因）。从 SendMessage 行 result 提取 resumedAgentId，
+    # 首次出现且尚未建段的 agentId 在该行后注入段（同代理与 Agent 派发行
+    # 去重；JSON/裸文本两种形态都匹配）。
+    _seen = set(aid for _, aid in parsed)
+    for i, ln in enumerate(lines):
+        if not (isinstance(ln, dict) and ln.get("role") == "tool"
+                and ln.get("text") == "SendMessage"):
+            continue
+        m = re.search(r"resumedAgentId[\"\':\s]+([0-9a-zA-Z_-]{8,64})",
+                      str(ln.get("result") or ""))
+        aid = m.group(1) if m else ""
+        if not aid or aid in _seen:
+            continue
+        _seen.add(aid)
+        parsed.append((i, aid))
+    parsed.sort(key=lambda p: p[0])
     if not parsed:
         return lines
     full = set(aid for _, aid in parsed[-_SUBAGENT_BLK_FULL:])
@@ -3117,9 +3149,16 @@ def _inject_subagent_blocks(lines, csids, main_dir):
             continue
         _, aid = hit
         inp = ln.get("input") or {}
+        # v2.46：SendMessage 行无 description/subagent_type——desc 回退收件人+
+        # 消息头（段头悬浮说明有内容可看），type 维持 Task（.output 转写里才有
+        # 真实角色，rows 首个 model 行同源补模型）
+        _desc = inp.get("description")
+        if not _desc and ln.get("text") == "SendMessage":
+            _msg = str(inp.get("message") or "").strip()
+            _desc = "续派" + ((" → " + _msg[:60]) if _msg else "")
         head = {"role": "sub_open", "agent": aid,
                 "type": inp.get("subagent_type") or inp.get("agent_type") or "Task",
-                "desc": str(inp.get("description") or "")[:200],
+                "desc": str(_desc or "")[:200],
                 "model": "", "err": bool(ln.get("err"))}
         if aid not in full:
             head["stub"] = True
@@ -3216,6 +3255,66 @@ def harness_subagent_replay():
     if rows is None:
         return jsonify({"ok": True, "found": False, "rows": []})
     return jsonify({"ok": True, "found": True, "rows": rows})
+
+
+@harness_bp.route("/subagent_tail")
+def harness_subagent_tail():
+    """v2.46：子代理转写增量尾读——运行中段实时思考的数据源。
+    ?sid=&agent=<agentId>&offset=<n> → {ok, found, text, offset}。
+    背景：CLI stream-json 不转发子代理（sidechain）thinking 块（v2.44 实证
+    112 事件 0 块 vs 转写落盘 146 块），而 tasks\\<id>.output 实时落盘含全部
+    思考。前端对运行中段 2s 轮询本接口：从 offset 读到文件尾，只消费到最后
+    一个行边界（半行留待下次——JSONL 行边界切不会截断 UTF-8 多字节序列），
+    返回新增完整行的原文与消费后的新 offset。found=False = 转写不存在
+    （协作包装/旧会话/尚未落盘）——前端静默跳过下轮再试。"""
+    s = _get_or_create(request.args.get("sid") or "")
+    if not s:
+        return jsonify({"ok": False, "err": "会话不存在"}), 404
+    agent = (request.args.get("agent") or "").strip()
+    if not agent or not re.match(r"^[0-9a-zA-Z_-]{8,64}$", agent):
+        return jsonify({"ok": False, "err": "agent 参数非法"}), 400
+    try:
+        offset = max(0, int(request.args.get("offset") or 0))
+    except (TypeError, ValueError):
+        # v2.46R（P6）：非数字与「非法 400」口径一致——静默回 0 会重读全文件
+        # 把已消费的思考块再吐一遍（前端 offset 账目被破坏）
+        return jsonify({"ok": False, "err": "offset 参数非法"}), 400
+    import glob as _g
+    csids = [x for x in (list(getattr(s, "lineage", None) or [])
+                         + [s.session_id]) if x]
+    main_dir = None
+    for csid in csids:
+        for cand in _g.glob(os.path.join(os.path.expanduser("~"), ".claude",
+                                         "projects", "*", csid + ".jsonl")):
+            main_dir = os.path.dirname(cand)
+            break
+        if main_dir:
+            break
+    if not main_dir:
+        return jsonify({"ok": True, "found": False, "text": "", "offset": offset})
+    # 候选路径依序试（与回放/段注入同源）；文件出现即读
+    for p in _subagent_transcript_candidates(main_dir, csids, agent):
+        if not os.path.isfile(p):
+            continue
+        try:
+            size = os.path.getsize(p)
+            if size <= offset:
+                # 无新增（半行也暂不吐）——offset 原样返回
+                return jsonify({"ok": True, "found": True, "text": "", "offset": offset})
+            with open(p, "rb") as f:
+                f.seek(offset)
+                chunk = f.read()
+            # 只消费到最后一个行边界（含换行字节）；无完整行（还在写半行）不消费
+            cut = chunk.rfind(b"\n")
+            if cut < 0:
+                return jsonify({"ok": True, "found": True, "text": "", "offset": offset})
+            consumed = chunk[:cut + 1]
+            return jsonify({"ok": True, "found": True,
+                            "text": consumed.decode("utf-8", errors="replace"),
+                            "offset": offset + cut + 1})
+        except OSError:
+            continue
+    return jsonify({"ok": True, "found": False, "text": "", "offset": offset})
 
 
 @harness_bp.route("/peer_pair_log", methods=["POST"])
