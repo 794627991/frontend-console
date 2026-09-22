@@ -902,17 +902,44 @@ function buildClaudeHarnessTab(opts = {}) {
     }
   });
   flow.addEventListener('click', (e) => {
-    // v2.43：子代理段头点击——运行态段（.h-subblock 无 done）重开实时窗格
-    // （data-hg-sub=parent tool_use_id）；已完成段按 agentId 开回放窗格
-    // （data-hg-subr，_subClose/后端注入都落此入口，与面板回放同源——快照
-    // 恢复后实时档案丢失也能开）。段头是段级唯一入口，段内行交互（折叠头/
-    // 复制/收起钮）由后续既有分支照常处理
+    // v2.43：子代理段头点击。v2.45 两层收纳改型：完成段点击=toggle 折叠
+    // （.collapsed 类 + CSS，快照随身携带）；原窗格动作移到段头右侧小按钮
+    // （「▣ 回放」hgSubr /「⧉ 窗格」hgSub，span+role 防 button 嵌套）。运行
+    // 态段（无 done）不折叠——点击仍开实时窗格（原行为）。段内行交互（抽屉
+    // 头/工具折叠头/复制/收起钮）不受影响——它们不在 .h-subblock-head 里，
+    // 后续既有分支照常处理
+    // v2.45R：折叠段的结论行（.h-subblock-sum）与段头构成视觉整体，点击
+    // 同样 toggle 折叠——CSS 标了 cursor:pointer 却没有处理分支就是死点击
+    //（reviewer 实锤）。done 段限定，收起时贴底补偿与段头分支同款。
+    const sbSum = e.target.closest('.h-subblock-sum');
+    if (sbSum) {
+      const blk = sbSum.closest('.h-subblock');
+      if (blk && blk.classList.contains('done')) {
+        blk.classList.toggle('collapsed');
+        if (blk.classList.contains('collapsed') && isNearBottom()) scrollBottom();
+      }
+      return;
+    }
     const sbHead = e.target.closest('.h-subblock-head');
     if (sbHead) {
-      const done = sbHead.closest('.h-subblock').classList.contains('done');
-      if (done && sbHead.dataset.hgSubr) _subReplay(sbHead.dataset.hgSubr,
-        sbHead.dataset.hgSubType || 'Task', sbHead.dataset.hgSubDesc || '', sbHead.dataset.hgSubr);
-      else if (sbHead.dataset.hgSub) _subReopen(sbHead.dataset.hgSub);
+      const blk = sbHead.closest('.h-subblock');
+      const done = blk && blk.classList.contains('done');
+      const act = done && e.target.closest('.h-sub-act');
+      if (act) {
+        if (act.dataset.hgAct === 'replay' && sbHead.dataset.hgSubr)
+          _subReplay(sbHead.dataset.hgSubr, sbHead.dataset.hgSubType || 'Task',
+            sbHead.dataset.hgSubDesc || '', sbHead.dataset.hgSubr);
+        else if (act.dataset.hgAct === 'pane' && sbHead.dataset.hgSub)
+          _subReopen(sbHead.dataset.hgSub);
+        return;
+      }
+      if (done) {
+        blk.classList.toggle('collapsed');
+        // 收起时若用户在底部跟读，flow 底部随内容收缩上移——贴底别丢
+        if (blk.classList.contains('collapsed') && isNearBottom()) scrollBottom();
+        return;
+      }
+      if (sbHead.dataset.hgSub) _subReopen(sbHead.dataset.hgSub);
       else if (sbHead.dataset.hgSubr) _subReplay(sbHead.dataset.hgSubr,
         sbHead.dataset.hgSubType || 'Task', sbHead.dataset.hgSubDesc || '', sbHead.dataset.hgSubr);
       return;
@@ -1294,12 +1321,21 @@ function buildClaudeHarnessTab(opts = {}) {
       head.dataset.hgSubType = info.type || 'Task';
       head.dataset.hgSubDesc = String(info.desc || '').slice(0, 120);
     }
-    head.innerHTML = '<span class="h-subblock-ava h-ava"></span>' +
+    // v2.45：行首折叠箭头（完成段显示，CSS 按 .done/.collapsed 驱动开合指向）
+    // + 行尾动作钮容器（_subBlkActsPaint 填「▣ 回放」「⧉ 窗格」，span+role
+    // 防 button 嵌套——与 .h-tool-copy 同法）
+    head.innerHTML = '<span class="h-chev h-sub-chev" aria-hidden="true">▸</span>' +
+      '<span class="h-subblock-ava h-ava"></span>' +
       '<span class="h-subblock-name"></span>' +
-      '<span class="h-subblock-state"></span>';
+      '<span class="h-subblock-state"></span>' +
+      '<span class="h-subblock-acts"></span>';
     const body = document.createElement('div');
     body.className = 'h-subblock-body';
-    root.appendChild(head); root.appendChild(body);
+    // v2.45 结论行：建段即在位（空=零高度不可见）——运行期 _subText 到达即
+    // 覆写（终值=最后一条 text），不能等完成聚合才建（运行期文本会丢结论）
+    const sum = document.createElement('div');
+    sum.className = 'h-subblock-sum';
+    root.appendChild(head); root.appendChild(sum); root.appendChild(body);
     grpEnsure(true).root.appendChild(root);
     // v2.44：hist 标记历史段（renderHistSub 传入）——历史段无真实起跑时刻，
     // t0 置 0 防止 _subBlkState 拿「重建时刻」算出假 0s 用时。
@@ -1333,7 +1369,114 @@ function buildClaudeHarnessTab(opts = {}) {
     if (nm) nm.textContent = bare ? label + ' · ' + bare : label;
     b.head.title = '子代理：' + label + (bare ? '，实跑模型 ' + bare : '')
       + ((info && info.desc) ? '\n' + String(info.desc).slice(0, 160) : '')
-      + '\n点击打开过程窗格';
+      + '\n点击段头：完成段=展开/收起，运行段=实况窗格';
+  }
+  // ==================== v2.45 子代理段两层收纳 ====================
+  // 用户实测（CDP）：主 flow 2419 节点中两个子代理段占 1788（74%），每轮协作
+  // +800~1000 节点线性涨；段内「思考/Bash/思考/Bash…」交替平铺不像主会话的
+  // 「思考+工具收纳」。两层收纳：
+  //   第一层：完成段默认折叠——段体（head 以下）收起，只留段头 + 结论行
+  //   （.h-subblock-sum，最后一条 text 前 120 字灰小结）；点段头 toggle，
+  //   展开态段头右侧「▣ 回放」「⧉ 窗格」小按钮走原窗格动作；运行中段不
+  //   折叠（实时围观），点击仍开实况窗格。
+  //   第二层：段体不逐行平铺——聚合为「💭 思考 N 次」「⚡ 工具 N 次」两抽屉
+  //   （复用主链 .h-drawer 样式语言）+ 文本气泡独立。简化口径：全部 thinking
+  //   进一个思考抽屉、全部 tool/result 进一个工具抽屉（不按连续段细分），
+  //   类聚本身已牺牲精确交错序，换实现与快照的简单——抽屉内保持到达序。
+  // 铁律：段 DOM 是唯一持久源——聚合结构（抽屉节点）与折叠态（.collapsed
+  // 类 + CSS）都随 innerHTML 快照携带，恢复即保持；运行中段保持平铺不聚合，
+  // _subBlkState（done 语义唯一入口）一次性聚合 + 折叠，此后追加走
+  // _subBodyPut 落点路由进抽屉（display:none 不影响 DOM 操作）。
+  function _subAggrBodies(b) {
+    if (!b || !b.body) return null;
+    const tb = b.body.querySelector(':scope > .h-drawer.sub.think > .h-drawer-body');
+    const eb = b.body.querySelector(':scope > .h-drawer.sub.exec > .h-drawer-body');
+    return (tb && eb) ? { think: tb, exec: eb } : null;
+  }
+  // 抽屉计数徽章 + 空抽屉隐藏（与主链 grpFromDom「空壳胶囊不显示」同语义）
+  function _subAggrCount(b) {
+    const ag = _subAggrBodies(b);
+    if (!ag) return;
+    const nT = ag.think.querySelectorAll(':scope > .h-think-seg').length;
+    const nE = ag.exec.children.length;   // .h-tool + .h-tool-res 都算工具次
+    const dT = ag.think.closest('.h-drawer'), dE = ag.exec.closest('.h-drawer');
+    const tT = dT && dT.querySelector('.h-drawer-title');
+    const tE = dE && dE.querySelector('.h-drawer-title');
+    if (tT) tT.textContent = nT ? `💭 思考 ${nT} 次` : '💭 思考';
+    if (tE) tE.textContent = nE ? `⚡ 工具 ${nE} 次` : '⚡ 工具';
+    if (dT) dT.style.display = nT ? '' : 'none';
+    if (dE) dE.style.display = nE ? '' : 'none';
+  }
+  // 段头右侧动作钮（完成段专用；数据源=段头 dataset：hgSubr=回放、hgSub=实况
+  // 窗格）。hgSubr 在实时路径由 _subBlkFinish 后补——补后需重画（幂等）
+  function _subBlkActsPaint(b) {
+    if (!b || !b.head || !b.root.classList.contains('done')) return;
+    const acts = b.head.querySelector('.h-subblock-acts');
+    if (!acts) return;
+    let html = '';
+    if (b.head.dataset.hgSubr)
+      html += '<span class="h-sub-act" role="button" data-hg-act="replay" ' +
+        'title="回放该子代理完整过程（独立窗格）">▣ 回放</span>';
+    if (b.head.dataset.hgSub)
+      html += '<span class="h-sub-act" role="button" data-hg-act="pane" ' +
+        'title="查看实时过程窗格">⧉ 窗格</span>';
+    acts.innerHTML = html;
+  }
+  // 聚合态落点路由：完成段聚合后，各路追加（实时 _subThink/_subBlkAppendTool、
+  // 历史 renderHistSub、回填 _subBlkMergeThinks）都要落对抽屉并刷新计数；
+  // 未聚合段（运行中平铺）原样落 body。text/note 永远落 body 末尾（聚合后
+  // body 子序=两抽屉在前、文本气泡按到达序在后，追加天然保序）
+  function _subBodyPut(b, el, kind) {
+    const ag = _subAggrBodies(b);
+    if (ag && kind === 'think') { ag.think.appendChild(el); _subAggrCount(b); }
+    else if (ag && kind === 'tool') { ag.exec.appendChild(el); _subAggrCount(b); }
+    else b.body.appendChild(el);
+  }
+  // 段体聚合（幂等）：确保 结论行 + 段头动作钮 + 思考/工具两抽屉 在位，把
+  // 平铺期的存量行搬进抽屉（搬家只在首次聚合发生——此后追加走 _subBodyPut
+  // 路由，body 里不会再出现裸思考/工具行；旧快照恢复的段缺什么补什么）
+  function _subBlkAggregate(b) {
+    if (!b || !b.body || !b.head) return;
+    if (!b.root.querySelector(':scope > .h-subblock-sum')) {
+      const sum = document.createElement('div');
+      sum.className = 'h-subblock-sum';
+      b.root.insertBefore(sum, b.body);
+    }
+    // 旧快照（v2.44 前的段结构）恢复后完成：段头缺箭头/动作钮容器——就地
+    // 补齐（缺件补件，不假设结构完整）
+    if (!b.head.querySelector(':scope > .h-sub-chev'))
+      b.head.insertAdjacentHTML('afterbegin',
+        '<span class="h-chev h-sub-chev" aria-hidden="true">▸</span>');
+    if (!b.head.querySelector(':scope > .h-subblock-acts')) {
+      const a = document.createElement('span');
+      a.className = 'h-subblock-acts';
+      b.head.appendChild(a);
+    }
+    let ag = _subAggrBodies(b);
+    if (!ag) {
+      const mkDrawer = (cls, title) => {
+        const d = document.createElement('div');
+        d.className = 'h-drawer sub ' + cls;
+        d.innerHTML = '<button class="h-drawer-head"><span class="h-chev">▸</span>' +
+          `<span class="h-drawer-title">${title}</span></button>` +
+          '<div class="h-drawer-body"></div>';
+        return d;
+      };
+      const ed = mkDrawer('exec', '⚡ 工具');
+      const td = mkDrawer('think', '💭 思考');
+      b.body.insertBefore(ed, b.body.firstChild);
+      b.body.insertBefore(td, ed);
+      ag = _subAggrBodies(b);
+    }
+    if (ag) {
+      [...b.body.children].forEach(el => {
+        if (el.classList.contains('h-think-seg')) { ag.think.appendChild(el); return; }
+        if (el.classList.contains('h-tool') || el.classList.contains('h-tool-res'))
+          ag.exec.appendChild(el);
+      });
+      _subAggrCount(b);
+    }
+    _subBlkActsPaint(b);
   }
   // 段头运行态 + 秒表（子代理一跑几分钟，主流不动——秒表是「还活着」的判据；
   // 与主链 Agent 派发卡的秒表同源职责）。计时器自守：段 DOM 脱离 flow 即停
@@ -1380,6 +1523,15 @@ function buildClaudeHarnessTab(opts = {}) {
       else if (b.t0) txt += ' · 用时 ' + fmtDur((Date.now() - b.t0) / 1000);
       st.textContent = txt;
     }
+    // v2.45 两层收纳：完成定格即聚合段体 + 默认折叠。历史段同路——
+    // _subBlkGet 对 done 信息也走这里（建段即聚合），行随后按 _subBodyPut
+    // 路由落位；回填思考（_subBlkMergeThinks）发生在折叠后，DOM 操作不受
+    // display:none 影响
+    _subBlkAggregate(b);
+    b.root.classList.add('collapsed');
+    // v2.45R（reviewer）：折叠使段体（可能数百行）瞬间收缩——用户在底部
+    // 跟读时位置跳变，与点击收起路径（:927 区）同款贴底补偿对齐
+    if (isNearBottom()) scrollBottom();
   }
   // 段内活动思考段收口（时长定格）。段边界=段内下一条非思考行（与主链
   // endThinking 的调用点对偶，但只关段内自己的段，不碰主链 _HG.think）
@@ -1472,7 +1624,7 @@ function buildClaudeHarnessTab(opts = {}) {
     if (!(b.seg && b.seg.isConnected)) {
       const seg = _subThinkShell(true);
       seg.dataset.t0 = String(Date.now());
-      b.body.appendChild(seg);
+      _subBodyPut(b, seg, 'think');   // v2.45：聚合段落思考抽屉（运行中平铺=body）
       b.seg = seg;
     }
     b.seg.querySelector('.h-think-seg-body').insertAdjacentHTML('beforeend', renderMd(text));
@@ -1492,6 +1644,16 @@ function buildClaudeHarnessTab(opts = {}) {
     d.className = 'h-msg asst sub';
     d.appendChild(mdBubble(text));
     b.body.appendChild(d);
+    // v2.45 结论行：折叠态段体不可见，最后一条 text 的前 120 字作为灰小结
+    // 露在段头下——每条 text 到达即覆写（终值=最后一条；全文进 title 悬浮）
+    const sum = b.root.querySelector(':scope > .h-subblock-sum');
+    if (sum) {
+      const t = String(text).replace(/\s+/g, ' ').trim();
+      if (t) {
+        sum.textContent = t.slice(0, 120) + (t.length > 120 ? '…' : '');
+        sum.title = t.slice(0, 400);
+      }
+    }
     scrollBottom();
   }
   // 工具行入段（renderToolUse 的 isSub 分支调用——行本体仍由 renderToolUse
@@ -1499,7 +1661,7 @@ function buildClaudeHarnessTab(opts = {}) {
   function _subBlkAppendTool(pid, row) {
     const b = _subBlkGet(pid); if (!b) return;
     _subSegEnd(b);
-    b.body.appendChild(row);
+    _subBodyPut(b, row, 'tool');   // v2.45：聚合段落工具抽屉（运行中平铺=body）
     scrollBottom();
   }
   // 段内工具结果：徽章+耗时进头部，结果全文进折叠体（成功默认藏、错误自动
@@ -1965,7 +2127,7 @@ function buildClaudeHarnessTab(opts = {}) {
       if (b && l.stub) {
         const n = document.createElement('div');
         n.className = 'h-subblock-note';
-        n.textContent = '（较早期的子代理段——过程行已折叠，点击段头可回放完整过程）';
+        n.textContent = '（较早期的子代理段——过程行已折叠；完整过程点段头右侧「▣ 回放」）';
         b.body.appendChild(n);
       }
       return;
@@ -1984,7 +2146,7 @@ function buildClaudeHarnessTab(opts = {}) {
       _subSegEnd(b);
       const seg = _subThinkShell(false);
       if (hi != null) { seg.dataset.hi = String(hi); seg.dataset.hgLazy = '1'; }
-      b.body.appendChild(seg);
+      _subBodyPut(b, seg, 'think');   // v2.45：历史段建段即聚合——落思考抽屉
     } else if (l.role === 'sub_tool') {
       // 与 renderHistTool 同构（懒抽屉/错误行即时渲染），但落点=段体且不进
       // 主链抽屉计数（drawerCount/drawerAppend 都不走）。v2.44 头部走段内
@@ -2004,7 +2166,7 @@ function buildClaudeHarnessTab(opts = {}) {
         d.dataset.hi = String(hi);
         d.dataset.hgLazy = err ? '' : '1';   // 错误行已填；收起丢弃后由 Drop 重置
       }
-      b.body.appendChild(d);
+      _subBodyPut(b, d, 'tool');   // v2.45：历史段建段即聚合——落工具抽屉
       _hgApplyOpen(d, !!err);   // 挂载后才可（_hgPathKey 沿 parentNode 上溯，先 apply 会空引用）
     } else if (l.role === 'sub_result') {
       // 孤儿结果（无配对工具行——转写截断窗口的边界）独立成行
@@ -2012,7 +2174,7 @@ function buildClaudeHarnessTab(opts = {}) {
       const d = document.createElement('div');
       d.className = 'h-tool-res' + (l.err ? ' err-txt' : '');
       d.textContent = '↳ ' + String(l.text || '').replace(/\s+/g, ' ').trim().slice(0, 200);
-      b.body.appendChild(d);
+      _subBodyPut(b, d, 'tool');   // v2.45：孤儿结果同入工具抽屉（计数口径一致）
     }
   }
 
@@ -5027,6 +5189,7 @@ function buildClaudeHarnessTab(opts = {}) {
       _b.head.dataset.hgSubr = _aid;
       _b.head.dataset.hgSubType = _a.type || 'Task';
       _b.head.dataset.hgSubDesc = String(_a.desc || '').slice(0, 120);
+      _subBlkActsPaint(_b);   // v2.45：hgSubr 后到——「▣ 回放」钮此时才具备数据
     }
     // v2.44：思考回填——CLI 不向 stream-json 转发子代理（sidechain）thinking
     // 块（实测铁证：本会话事件缓冲主链 thinking 10/10 到达、子代理 0/146，
@@ -5063,8 +5226,31 @@ function buildClaudeHarnessTab(opts = {}) {
     const thinkN = rows.filter(r => r && r.k === 'think' && String(r.text || '').trim()).length;
     if (!thinkN) return;
     // 段内已有任何思考段（未来 CLI 直转 thinking 的场景）——假设「全有或全无」
-    // 直接跳过，不做混合对账（混合态插重复比缺思考更糟）
-    if (b.body.querySelectorAll(':scope > .h-think-seg').length) return;
+    // 直接跳过，不做混合对账（混合态插重复比缺思考更糟）。v2.45：聚合后思考
+    // 段在抽屉体内（非 body 直子），查询放宽到后代——两套布局同守此门
+    if (b.body.querySelectorAll('.h-think-seg').length) return;
+    // v2.45 聚合态（完成段折叠后回填的常态路径）：全部思考进思考抽屉（与聚合
+    // 简化口径一致——类聚已不保交错序，分桶定位算法无从谈起），note 落段尾，
+    // 计数刷新。display:none 只是视觉折叠，DOM 操作照常
+    const agThink = b.body.querySelector(':scope > .h-drawer.sub.think > .h-drawer-body');
+    if (agThink) {
+      rows.forEach(r => {
+        if (!r || r.k !== 'think' || !String(r.text || '').trim()) return;
+        const seg = _subThinkShell(false);
+        seg.dataset.raw = String(r.text);
+        seg.dataset.hgLazy = '1';
+        agThink.appendChild(seg);
+      });
+      const noteA = rows.findIndex(r => r && r.k === 'note');
+      if (noteA >= 0 && rows[noteA] && rows[noteA].text) {
+        const nEl = document.createElement('div');
+        nEl.className = 'h-subblock-note';
+        nEl.textContent = String(rows[noteA].text);
+        b.body.appendChild(nEl);
+      }
+      _subAggrCount(b);
+      return;
+    }
     // 段内可定位行（顺序快照）：工具行按名分桶（桶内保持段内顺序；_name 由
     // renderToolUse 落，快照恢复丢失——丢名的行进 '' 桶永不被匹配，思考落
     // 段尾），文本气泡单名天然一桶

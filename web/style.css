@@ -2417,9 +2417,35 @@ html {
 .h-subblock-body { display: flex; flex-direction: column; gap: 6px; }
 /* 段已整体弱化（浅底+左缘），段内行撤掉旧 sub 行的双重缩进/降透明度 */
 .h-subblock-body > .h-msg.sub { margin-left: 0; opacity: 1; max-width: 94%; }
-.h-subblock-body > .h-tool.sub { margin-left: 0; }
-.h-subblock-body > .h-think-seg.sub { font-size: 12px; }
+/* v2.45 两层收纳：思考段/工具行聚合进抽屉后不再是 body 直子——选择器放宽到
+   后代（抽屉内 .h-drawer-body 的规则接管宽度/布局，这里只管段内字号缩进） */
+.h-subblock-body .h-tool.sub { margin-left: 0; }
+.h-subblock-body .h-think-seg.sub { font-size: 12px; }
 .h-subblock-note { font-size: 11px; color: var(--muted); font-style: italic; padding: 0 2px; }
+/* v2.45 第一层：完成段默认折叠——段体收起、结论行露出。折叠态全部由
+   .collapsed 类驱动（innerHTML 快照随身携带，恢复即保持，无 JS 重建逻辑） */
+.h-subblock.collapsed > .h-subblock-body { display: none; }
+.h-subblock-sum { display: none; font-size: 11.5px; color: var(--muted);
+  padding: 0 2px 0 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  cursor: pointer; }
+.h-subblock.collapsed > .h-subblock-sum:not(:empty) { display: block; }
+/* 段头折叠箭头：仅完成段显示（运行段点击=开窗格，无折叠语义） */
+.h-subblock .h-sub-chev { display: none; font-size: 10px; color: var(--muted);
+  transition: transform .15s; }
+.h-subblock.done .h-sub-chev { display: inline-block; }
+.h-subblock.done:not(.collapsed) .h-sub-chev { transform: rotate(90deg); }
+/* 段头右侧动作钮（完成段：▣ 回放 / ⧉ 窗格）——span+role 避开 button 嵌套 */
+.h-subblock-acts { margin-left: auto; display: flex; gap: 4px; flex-shrink: 0; }
+.h-sub-act { font-size: 10.5px; color: var(--muted); border: 1px solid var(--border);
+  border-radius: 4px; padding: 1px 7px; cursor: pointer; user-select: none;
+  white-space: nowrap; font-family: var(--font-ui); }
+.h-sub-act:hover { color: var(--accent); border-color: var(--accent); }
+/* v2.45 第二层：段内聚合抽屉（复用主链 .h-drawer 语言，段内轻量变体——
+   字号/内距收敛、展开上限比主链矮一档） */
+.h-subblock-body > .h-drawer.sub { font-size: 11.5px; }
+.h-subblock-body > .h-drawer.sub .h-drawer-head { padding: 4px 8px; font-size: 11.5px; gap: 6px; }
+.h-subblock-body > .h-drawer.sub .h-drawer-body { padding: 2px 4px 4px; gap: 4px; }
+.h-subblock-body > .h-drawer.sub.open .h-drawer-body { max-height: 34vh; }
 .h-tool-name { color: var(--accent); font-weight: 600; margin-right: 6px; }
 .h-tool-arg { opacity: .8; }
 .h-tool-res { align-self: flex-start; font-family: var(--font-mono); font-size: 11px;
