@@ -2443,12 +2443,16 @@ html {
   border-radius: 4px; padding: 1px 7px; cursor: pointer; user-select: none;
   white-space: nowrap; font-family: var(--font-ui); }
 .h-sub-act:hover { color: var(--accent); border-color: var(--accent); }
+/* v2.48 时序节：段体按时序切节（text 气泡=节边界），节内思考/工具两抽屉
+   并列（思考在前）。节自身只是无皮的纵向容器——间距沿用 body 的 gap */
+.h-subsec { display: flex; flex-direction: column; gap: 6px; }
 /* v2.45 第二层：段内聚合抽屉（复用主链 .h-drawer 语言，段内轻量变体——
-   字号/内距收敛、展开上限比主链矮一档） */
-.h-subblock-body > .h-drawer.sub { font-size: 11.5px; }
-.h-subblock-body > .h-drawer.sub .h-drawer-head { padding: 4px 8px; font-size: 11.5px; gap: 6px; }
-.h-subblock-body > .h-drawer.sub .h-drawer-body { padding: 2px 4px 4px; gap: 4px; }
-.h-subblock-body > .h-drawer.sub.open .h-drawer-body { max-height: 34vh; }
+   字号/内距收敛、展开上限比主链矮一档）。v2.48 抽屉挂进 .h-subsec（后代
+   选择器——旧 v2.45 快照恢复未归一时的 body 直子抽屉同吃本规则） */
+.h-subblock-body .h-drawer.sub { font-size: 11.5px; }
+.h-subblock-body .h-drawer.sub .h-drawer-head { padding: 4px 8px; font-size: 11.5px; gap: 6px; }
+.h-subblock-body .h-drawer.sub .h-drawer-body { padding: 2px 4px 4px; gap: 4px; }
+.h-subblock-body .h-drawer.sub.open .h-drawer-body { max-height: 34vh; }
 .h-tool-name { color: var(--accent); font-weight: 600; margin-right: 6px; }
 .h-tool-arg { opacity: .8; }
 .h-tool-res { align-self: flex-start; font-family: var(--font-mono); font-size: 11px;
