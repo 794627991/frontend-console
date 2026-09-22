@@ -15,7 +15,7 @@
 4. agent md：light 装 designer+reviewer、strong 只 reviewer、designer 在
    strong 下共存不删；executor/coder/dev 退役清理；strong↔light 往返
    幂等；designer body「只设计绝不干活」、reviewer body 只读强化；tools：
-   designer 无编辑无 Bash 无 Task、reviewer 原样（含 Task 无编辑）；两
+   designer 全集除 Task、reviewer 原样（含 Task 无编辑）；两
    body 与两 md 无版本代号；ensure_roles_ready 分形态清单。
 5. 审计判定：audit_verdict（免审区干净/超免审未轻审/超轻审属大改须全审
    /已派不追责/strong 超审计线未派审/designer 派发不计）；0 合法最严档。
@@ -159,7 +159,6 @@ for kw, label in [
         ("免审", "免审字样"), ("轻审", "轻审字样"), ("全审", "全审字样"),
         ("designer", "设计者代理"), ("reviewer", "审核者代理"),
         ("只设计不干活", "designer 只设计"),
-        ("不写代码不改文件", "designer 不实施"),
         ("已试方案", "派发纪律带已试方案"),
         ("验收标准", "上下文含验收标准"),
         ("文件+行号", "上下文含文件行号"),
@@ -368,11 +367,11 @@ check("designer md 取重池模型",
       "model: %s" % POOL_HEAVY in dmd and "name: designer" in dmd)
 check("reviewer md 取重池模型", "model: %s" % POOL_HEAVY in rmd)
 tl = _tools_line(dmd).split(", ")
-check("designer tools 无编辑类/无 Bash/无 Task（只设计不跑实现）",
-      not any(t in tl for t in ("Edit", "Write", "MultiEdit", "NotebookEdit",
-                                "Bash", "Task")))
-check("designer tools 只读+检索集",
-      all(t in tl for t in ("Read", "Glob", "Grep", "WebFetch", "WebSearch")))
+check("designer tools 全集（有 Write/Edit/Bash）且无 Task（禁派子代理）",
+      all(t in tl for t in ("Read", "Write", "Edit", "MultiEdit",
+                            "NotebookEdit", "Bash", "Glob", "Grep",
+                            "SendMessage"))
+      and "Task" not in tl)
 rtl = _tools_line(rmd).split(", ")
 check("reviewer tools 原样（Task 保留）", "Task" in rtl and "SendMessage" in rtl)
 check("reviewer tools 只读（无编辑类）",

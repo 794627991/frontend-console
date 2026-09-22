@@ -18,7 +18,9 @@ strong 重模型直干，其余 → light 轻主力；名字不可得兜 strong�
 子代理；超线由回合结算审计兜底（auto=自动续发派 reviewer 补审 / warn=
 仅警示 / off=关）。子代理只留两个，都取重模型（heavy_model）：
 - designer 设计者：只设计，绝不干活——输出架构/模块划分/关键决策/风险/
-  依赖顺序的框架方案，不写代码不改文件不跑实现；light 形态常驻安装
+  依赖顺序的框架方案；工具全集（除 Task——禁派子代理），用权限核实代码
+  现状/跑验证确认可行性，方案有必要时可输出设计文档（*.md）辅助交付；
+  light 形态常驻安装
   （派发纪律：主会话必须把已知上下文尽可能带上——目标/背景与约束/已试
   方案/相关文件+行号/验收标准）；
 - reviewer 审核者：只读——工具集无编辑类，body 明文强化「不允许修改
@@ -176,7 +178,10 @@ _DESIGNER_BODY = """你是「设计者」——只设计，绝不干活（重模
 - 疑难诊断：bug 根因方向分析、技术选型比较、架构权衡
 
 铁律——你不实施：
-- 不写代码、不改文件、不跑实现、不交付可运行改动
+- 不交付代码改动：动手实施的是派发方（主会话），不是你
+- 你有完整工具（除派发子代理）：用来核实代码现状、跑只读检查与测试
+  验证可行性——让方案建立在事实上而非猜测上；方案有必要时输出设计
+  文档（*.md）辅助交付
 - 产出是方案本身：结论先行 → 架构与模块划分 → 关键决策及理由 →
   实施步骤与依赖顺序 → 风险与验证方法
 - 派发方（主会话）按你的方案实施——方案要细到可照做，动手的是它不是你
@@ -359,13 +364,15 @@ def _agent_md(name, description, model, body, tools=None):
 
 
 # 角色工具清单：
-# designer 定位「只设计不干活」——只读代码三类 + 检索，无编辑类、无 Bash
-# （不跑实现）、无 Task（禁止派发子代理）；SendMessage 保留（向主会话
+# designer 定位「只设计不干活」——工具全集（除 Task：禁派子代理），
+# 权限用于核实现状/验证可行性/输出设计文档，不交付代码改动（body 纪律，
+# 用户拍板：除审计者只读外全部角色全工具）；SendMessage 保留（向主会话
 # 回话链路要用，接收不依赖本表）。
 # reviewer 定位「只审不改」——排除 Write/Edit/MultiEdit/NotebookEdit（此
 # 只读限制不动）；Bash 保留（取证纪律要求能跑的验证实际跑）。
-_TOOLS_DESIGN = ("Read, Glob, Grep, WebFetch, WebSearch, TodoWrite, "
-                 "SendMessage, AskUserQuestion")
+_TOOLS_DESIGN = ("Read, Write, Edit, MultiEdit, NotebookEdit, Bash, Glob, "
+                 "Grep, WebFetch, WebSearch, TodoWrite, SendMessage, "
+                 "AskUserQuestion")
 _TOOLS_REVIEW = ("Read, Bash, Glob, Grep, WebFetch, WebSearch, Task, "
                  "TodoWrite, SendMessage, AskUserQuestion")
 
@@ -640,7 +647,7 @@ def roles_bridge_text(model=None):
             "· 高风险：删数据、发布、外发、碰铁律文件（如 cmdlib.json）"
             "→ 无论谁实施都必须审核，且动手前先向用户显式确认拿到同意。\n"
             "派 designer 的纪律（它只设计不干活：输出架构/模块划分/关键决"
-            "策/风险/依赖顺序，不写代码不改文件不跑实现）：把已知上下文尽"
+            "策/风险/依赖顺序）：把已知上下文尽"
             "可能带上——①目标（做什么/为什么）②背景与约束 ③已试方案及为"
             "何不行 ④相关文件+行号 ⑤验收标准。上下文给足，方案才可用。\n"
             "派 reviewer 的上下文包四要素：①目标 ②涉及文件+行号 ③已定决"
