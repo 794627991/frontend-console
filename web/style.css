@@ -854,6 +854,9 @@
   .tree-actions .btn { flex: 1; font-size: 11px; }
   /* 显示/隐藏开关：比「打开文件夹」小一档（flex 收缩 + 小字号），不占 flex:1 */
   .tree-actions .btn#treeHidden { flex: 0 0 auto; padding: 6px 8px; font-size: 10px; }
+  /* v2.59：刷新纯图标钮——更小一档，不吃 flex:1（用户实锤太大） */
+  .tree-actions .btn#treeRefresh { flex: 0 0 auto; padding: 6px 7px; font-size: 10px;
+    line-height: 1; }
   /* 按下态（隐藏文件显示中）：accent 描边+青字高亮，不用 .primary 青底——
      青底配 on-accent 深字小字号下看不清（用户实锤） */
   .tree-actions .btn#treeHidden.primary {
