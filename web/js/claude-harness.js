@@ -970,10 +970,14 @@ function buildClaudeHarnessTab(opts = {}) {
         if (act.dataset.hgAct === 'replay' && sbHead.dataset.hgSubr)
           _subReplay(sbHead.dataset.hgSubr, sbHead.dataset.hgSubType || 'Task',
             sbHead.dataset.hgSubDesc || '', sbHead.dataset.hgSubr);
-        else if (act.dataset.hgAct === 'pane' &&
-                 (sbHead.dataset.hgSub ||
-                  (blk && blk.dataset.hgCollab === '1' && sbHead.dataset.hgSubr)))
-          _subReopen(sbHead.dataset.hgSub || blk.dataset.hgSubblock);
+        else if (act.dataset.hgAct === 'pane' && sbHead.dataset.hgSub)
+          _subReopen(sbHead.dataset.hgSub);
+        // v2.57：协作段「⧉ 窗格」=全量回放+force 重拉（途中关闭再打开也有
+        // 数据；打开后轮询增量经镜像实时续——t.replay 在 fetch 完成后放行）
+        else if (act.dataset.hgAct === 'pane' && blk && blk.dataset.hgCollab === '1'
+                 && sbHead.dataset.hgSubr)
+          _subReplay(blk.dataset.hgSubblock, sbHead.dataset.hgSubType || 'SendMessage',
+                     sbHead.dataset.hgSubDesc || '', sbHead.dataset.hgSubr, true);
         return;
       }
       if (blk) {
@@ -1425,9 +1429,11 @@ function buildClaudeHarnessTab(opts = {}) {
     _subBlkActsPaint(b);   // v2.47（需求1）：建段即画动作钮——运行段「⧉ 窗格」（段头点击已改折叠）；协作段此时 hgSubr 未落则空，落档后调方重画
     if (info.done) _subBlkState(pid, info.err);
     else if (info.live) _subBlkRun(pid);
-    // v2.55：协作段默认折叠（用户定调：主窗口消息框默认收起，内容优先看
-    // 侧窗——窗格钮/「▣ 回放」在段头上，点段头仍可人为展开）
-    if (info.fold) root.classList.add('collapsed');
+    // v2.57：运行态建段一律默认折叠（用户实锤「主窗的没有默认收起来」——
+    // 上版只给协作段 fold，前台 Agent 派发段由首个子代理事件兜底建段、无
+    // fold 参数，漏网）。主窗只露段头+结论行，内容优先看侧窗；点段头展开，
+    // 展开态记忆（openState）优先于本折叠
+    if (info.fold || (!info.done && !info.hist)) root.classList.add('collapsed');
     scrollBottom();
     return b;
   }
@@ -1765,6 +1771,20 @@ function buildClaudeHarnessTab(opts = {}) {
       '<div class="hg-sub-think-body"></div>';
     return th;
   }
+  // v2.57R：窗格工具行工厂——折叠气泡（头行=状态点+工具名+摘要，点开才
+  // 显示输入/结果详情，与思考行同交互）；tuid 供结果回点、done 定格
+  function _subPaneToolRow(name, hint, tuid, done) {
+    const d = document.createElement('div');
+    d.className = 'hg-sub-tool' + (done ? ' done' : '');
+    if (tuid) d.dataset.tuid = tuid;
+    d.innerHTML = '<button class="hg-sub-tool-head" title="点击展开/收起详情">' +
+      '<span class="hg-sub-tdot"></span>' +
+      '<span class="hg-sub-tool-name">' + esc(_hDrawerName(name || '')) + '</span>' +
+      (hint ? '<span class="hg-sub-tool-hint">' + esc(String(hint).slice(0, 80)) + '</span>' : '') +
+      '<span class="hg-sub-tool-chev">›</span></button>' +
+      '<div class="hg-sub-tool-body"></div>';
+    return d;
+  }
   // v2.55：轮询喂入的思考/文本同步镜像到实况窗格 tab（tab 存在才镜像）——
   // SSE 不转发子代理 thinking/text，旧窗格只剩工具行（用户实锤「窗格只有
   // 工具」）；协作段窗格钮放开后此处是窗格全量数据的增量来源
@@ -1774,13 +1794,36 @@ function buildClaudeHarnessTab(opts = {}) {
     if (t.replay) return;   // v2.55R：回放 tab 由 fetch 全量自建，镜像增量不得污染
     const sc = t.sc;
     const stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight <= 80;
-    if (kind === 'think')
+    // v2.57R：过渡查重——全量回放 fetch 读到 T1、轮询游标落后在 C，放行后
+    // (C,T1] 的行会被下一轮 tick 重投镜像。只比对**铺底行**（fetch 铺底打
+    // data-hg-rp 标记）尾 8 行——免疫镜像行挤窗的级联失效（8 行=2s tick 约
+    // 4 个周期的重叠量，超出部分残余重复可忽略）。rp.raw / rp.textContent 均
+    // 是后端 2000 字截断前缀（claude_harness.py 护栏值，需同步维护），统一
+    // 前缀对齐比对；相邻真实内容逐字同文概率极低，误伤可忽略。
+    const rp = [...sc.children].filter(el => el.dataset.hgRp === '1').slice(-8);
+    const norm = s => String(s || '').replace(/\s+/g, '');
+    if (kind === 'think') {
+      // 单向前缀比对（镜像=全文、rp=截断前缀）：反向 startsWith 无真阳性收益
+      // 只扩大误杀面。md 截断边界落在行内标记时前缀性质可破——启发式容差。
+      if (rp.some(el => {
+        const a = norm(el.dataset.raw || '');
+        return !!a && norm(text).startsWith(a);
+      }))
+        return;
       _subAppendEl(sc, _subPaneThinkRow(text));
-    else
-      _subAppendEl(sc, _subMdRow(text));
+    } else {
+      const row = _subMdRow(text);
+      const want = norm(row.textContent);
+      if (want && rp.some(el => {
+        const got = norm(el.textContent);
+        return !!got && want.startsWith(got);   // 同上：单向、启发式容差
+      }))
+        return;
+      _subAppendEl(sc, row);
+    }
     if (stick) _subScroll(pid);
   }
-  function _subThink(pid, text) {
+  function _subThink(pid, text, fromPoll) {
     const b = _subBlkGet(pid); if (!b) return;
     if (!(b.seg && b.seg.isConnected)) {
       const seg = _subThinkShell(true);
@@ -1794,11 +1837,13 @@ function buildClaudeHarnessTab(opts = {}) {
     const _te = b.seg.querySelector('[data-hg-think-t]');
     const _tt0 = +(b.seg.dataset.t0 || 0);
     if (_te && _tt0) _te.textContent = fmtDur((Date.now() - _tt0) / 1000);
-    _subPaneMirror(pid, 'think', text);
+    // v2.57：仅轮询源镜像窗格——SSE 自带 _subFeed、重渲历史行不得重复进
+    // （fromPoll 区分数据来源，防回放 tab 完成后被重渲污染）
+    if (fromPoll) _subPaneMirror(pid, 'think', text);
     scrollBottom();
   }
   // 文本：段内 md 气泡（归属已在段头，行内不再重复头像/徽章）
-  function _subText(pid, text) {
+  function _subText(pid, text, fromPoll) {
     if (!text || !String(text).trim()) return;
     const b = _subBlkGet(pid); if (!b) return;
     _subSegEnd(b);
@@ -1826,7 +1871,7 @@ function buildClaudeHarnessTab(opts = {}) {
         sum.title = t.slice(0, 400);
       }
     }
-    _subPaneMirror(pid, 'text', text);
+    if (fromPoll) _subPaneMirror(pid, 'text', text);
     scrollBottom();
   }
   // 工具行入段（renderToolUse 的 isSub 分支调用——行本体仍由 renderToolUse
@@ -1837,16 +1882,30 @@ function buildClaudeHarnessTab(opts = {}) {
     _subBodyPut(b, row, 'tool');   // v2.48：进当前节的工具抽屉（节随行成形）
     // v2.55R：窗格镜像——本函数是 SSE 与 fullFeed 轮询的共同通路，镜像前按
     // data-tuid 查重（SSE 路径 _subFeed 也会插同名行，双源不查重=每条工具
-    // 双份、第二份永远灰点）
+    // 双份、第二份永远灰点）。v2.57R：折叠气泡工厂 + 重叠窗口指纹查重——
+    // 回放铺底的工具行（rp 标、无 tuid）与重投镜像按「渲染名+摘要」指纹比对
+    //（局限：同文件同摘要的连续调用可能漏显一条，概率极低）
     const t = _sub.tabs[pid];
     if (t && row && row.dataset.tid &&
         !t.sc.querySelector(`.hg-sub-tool[data-tuid="${CSS.escape(row.dataset.tid)}"]`)) {
       const sc = t.sc;
       const stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight <= 80;
-      _subAppend(sc, `<div class="hg-sub-tool" data-tuid="${esc(row.dataset.tid)}">` +
-        `<span class="hg-sub-tdot"></span>${esc(_hDrawerName(row._name || ''))}` +
-        (row._preview ? ` · ${esc(String(row._preview).slice(0, 80))}` : '') + '</div>');
-      if (stick) _subScroll(pid);
+      const fpName = _hDrawerName(row._name || '');
+      const fpHint = String(row._rawHint || '').slice(0, 80);
+      const rpTools = [...sc.children]
+        .filter(el => el.dataset.hgRp === '1' && el.classList.contains('hg-sub-tool'))
+        .slice(-8);
+      const dup = rpTools.some(el => {
+        const n = el.querySelector('.hg-sub-tool-name');
+        const h = el.querySelector('.hg-sub-tool-hint');
+        return (n ? n.textContent : '') === fpName &&
+               (h ? h.textContent : '') === fpHint;
+      });
+      if (!dup) {
+        _subAppendEl(sc, _subPaneToolRow(row._name || '', row._preview || '',
+                                         row.dataset.tid, false));
+        if (stick) _subScroll(pid);
+      }
     }
     scrollBottom();
   }
@@ -2883,6 +2942,13 @@ function buildClaudeHarnessTab(opts = {}) {
     const cfg = _hCfg(name);
     const label = _hToolLabel(name);
     if (cfg.mode === 'hidden') return;
+    // v2.57R：后端同序原始摘要（command→file_path→path→pattern→query→…，与
+    // _subFeed 提取式一致）——窗格工具指纹查重的镜像侧数据源（row._preview
+    // 是前端 cfg 格式化值，与回放侧原始字段系统性不相等，不能做指纹）
+    const _rinp = b.input || {};
+    const _rawHint = String(_rinp.command || _rinp.file_path || _rinp.path ||
+                            _rinp.pattern || _rinp.query || _rinp.description ||
+                            _rinp.subject || _rinp.prompt || '');
 
     // 注意：这里不 closeRun——run 的边界是文本/thinking/用户消息/result；
     // tool_use 本身若是同名工具正是 run 的延续，由 toolRunPush 判定并入组。
@@ -2921,6 +2987,7 @@ function buildClaudeHarnessTab(opts = {}) {
     }
     row._preview = row._preview !== undefined ? row._preview
       : (cfg.mode === 'one-line' ? cfg.get(b.input) : (typeof cfg.title === 'function' ? cfg.title(b.input) : label)) || '';
+    row._rawHint = _rawHint;   // v2.57R：后端同序原始摘要（窗格指纹查重用）
     row._name = name;
     row._cfg = cfg;
     row._id = id;
@@ -5329,11 +5396,15 @@ function buildClaudeHarnessTab(opts = {}) {
   const _subNoreplay = new Set();
   const _subNoReplayNote = () =>
     '<div class="hg-sub-replay-note">未找到该子代理的转写记录，历史过程不可回放</div>';
-  function _subReplay(tid, type, desc, agentId) {
+  // force=true：协作段「⧉ 窗格」路径——每次点击强制重拉全量（清防重标记），
+  // 关掉再打开都有数据（用户实锤：途中关掉再开就空了）
+  function _subReplay(tid, type, desc, agentId, force) {
     if (!_subPaneEl) return;
     const a = (_HG.agents || {})[tid] || {};
-    // 协作包装（P1-E 边界）：独立会话无本侧可拉的事件流转写——只展示结论
-    if (a.collab) {
+    // v2.57：协作档案有 taskId（=真实 agentId，v2.52 修复转写源后可拉全量）
+    // ——不再走「过程不可回看」占位（过时判定，用户实锤途中关闭再开啥也没有）；
+    // 无 taskId（连真实 id 都没反查到）才维持占位
+    if (a.collab && !a.taskId && !agentId) {
       _subOpen(tid, type, desc, true);
       const sc0 = _sub.tabs[tid] && _sub.tabs[tid].sc;
       if (sc0 && !sc0.dataset.collabNote) {
@@ -5346,11 +5417,12 @@ function buildClaudeHarnessTab(opts = {}) {
       _sub.manual = true;
       return;
     }
+    agentId = agentId || a.taskId || a.agentId || '';
     if (!agentId) { showBanner('该子代理没有 agentId 记录，无法回放', 2600); return; }
     _subOpen(tid, type, desc, true);
     const sc = _sub.tabs[tid] && _sub.tabs[tid].sc;
     if (!sc) return;
-    if (sc.dataset.replayed === agentId) { _sub.manual = true; return; }   // 已拉过
+    if (sc.dataset.replayed === agentId && !force) { _sub.manual = true; return; }   // 已拉过
     if (_subNoreplay.has(agentId)) {      // v2.41：已判定不可回放——直接出示结论，不再发请求
       sc.innerHTML = '';
       sc.dataset.replayed = agentId;
@@ -5362,12 +5434,15 @@ function buildClaudeHarnessTab(opts = {}) {
     sc.dataset.replayed = agentId;
     _subAppend(sc, `<div class="hg-sub-replay-note">回放加载中…</div>`, true);
     _sub.manual = true;
+    if (_sub.tabs[tid]) _sub.tabs[tid].replay = true;   // v2.57：fetch 期间挡镜像增量（防污染），完成后放行
     const sidAt = _HG.sid;
     fetch(`/api/harness/subagent_replay?sid=${encodeURIComponent(sidAt || '')}&agent=${encodeURIComponent(agentId)}`)
       .then(r => r.json())
       .then(j => {
         // v2.37R2（复审1）：失败路径必须清 replayed 标记并给错误文案——标记
         // 不清则重点按钮永远早退，唯一恢复=切走重切
+        const _tf = _sub.tabs[tid];
+        if (_tf) _tf.replay = false;   // v2.57：fetch 已收敛——放行镜像增量
         if (!j || !j.ok || _HG.sid !== sidAt) {
           const scf = _sub.tabs[tid] && _sub.tabs[tid].sc;
           if (scf) {
@@ -5396,6 +5471,7 @@ function buildClaudeHarnessTab(opts = {}) {
           return;
         }
         _subAppend(sc2, `<div class="hg-sub-replay-note">回放 · ${esc(_AGENT_LABEL[type] || type)} · ${j.rows.length} 条记录</div>`, true);
+        let lastToolBody = null;   // v2.57R：回放 result 并入最近工具行 body
         for (const row of j.rows) {
           if (row.k === 'text') {
             // 每行带头像+模型徽章（P1-C 体系复用）——标明这句话是谁发的
@@ -5404,29 +5480,38 @@ function buildClaudeHarnessTab(opts = {}) {
             const bare = String(row.model || '').split('[')[0] || row.model || '未知';
             _subAppend(sc2, `<div class="hg-sub-msg"><span class="h-ava ${_hgAvaCls(bare)}">${esc(bare.charAt(0).toUpperCase())}</span>` +
               `<span class="h-mmodel">${esc(bare)}</span></div>`, true);
-            // 窗格重设计 P1-3：正文升级 md 渲染（懒高亮）——回放一次灌几十条，
-            // 即时增强必卡，IO 挂上滚到哪亮到哪
-            _subAppendEl(sc2, _subMdRow(row.text), true);
+            // 窗格重设计 P1-3：正文升级 md 渲染（懒高亮）。v2.57R：打 rp 铺底
+            // 标记——镜像过渡查重的比对锚（防 fetch/轮询重叠窗口双份）
+            const mrow = _subMdRow(row.text);
+            mrow.dataset.hgRp = '1';
+            _subAppendEl(sc2, mrow, true);
           } else if (row.k === 'note') {
             _subAppend(sc2, `<div class="hg-sub-replay-note">${esc(row.text)}</div>`, true);
           } else if (row.k === 'think') {
-            // v2.43：思考行入回放（与实况窗格同款折叠行——全文存 dataset，
-            // 首次展开才 renderMd；展开交互走 _subBodyEl 级委托）
-            const th = document.createElement('div');
-            th.className = 'hg-sub-think';
-            th.dataset.raw = row.text || '';
-            th.innerHTML = '<button class="hg-sub-think-head" title="点击展开/收起思考过程">' +
-              '<span>💭 思考</span><span class="hg-sub-think-chev">›</span></button>' +
-              '<div class="hg-sub-think-body"></div>';
+            // v2.43：思考行入回放（工厂复用 v2.57R；rp 标记同 text——查重锚）
+            const th = _subPaneThinkRow(row.text || '');
+            th.dataset.hgRp = '1';
             _subAppendEl(sc2, th, true);
           } else if (row.k === 'tool') {
-            // 窗格重设计 P2-7：回放行直接定格 done（历史已完结）；转写无
-            // tool_use_id，不做配对
-            _subAppend(sc2, `<div class="hg-sub-tool done"><span class="hg-sub-tdot"></span>${esc(_hDrawerName(row.name || ''))}` +
-              (row.hint ? ` · ${esc(row.hint)}` : '') + '</div>', true);
+            // v2.57R：折叠气泡工厂（点开展开详情）；回放直接定格 done；转写无
+            // tool_use_id 不做配对。result 行并入最近工具行 body。rp 标记=镜像
+            // 指纹查重锚（重叠窗口防双份工具行）
+            const tw = _subPaneToolRow(row.name || '', row.hint || '', '', true);
+            tw.dataset.hgRp = '1';
+            lastToolBody = tw.querySelector('.hg-sub-tool-body');
+            _subAppendEl(sc2, tw, true);
           } else if (row.k === 'result') {
-            // 窗格重设计 P2-8：同实况结果行——超 120 字可点击展开全文
+            // v2.57R：结果并入最近工具行 body（折叠可见性同详情）；无前置工
+            // 具行（转写截断窗口边界）才独立成行
             const rfull = String(row.text || '');
+            if (lastToolBody && !lastToolBody.dataset.filled) {
+              lastToolBody.dataset.filled = '1';
+              const d = document.createElement('div');
+              d.className = 'hg-sub-tool-out' + (row.err ? ' err' : '');
+              d.textContent = rfull || '完成';
+              lastToolBody.appendChild(d);
+              continue;
+            }
             const rtxt = rfull.replace(/\s+/g, ' ').trim().slice(0, 120);
             _subAppend(sc2, `<div class="hg-sub-res${row.err ? ' err' : ''}"` +
               (rfull.trim().length > 120 ? ` data-hg-subfull="${esc(rfull)}" title="点击展开全文"` : '') +
@@ -5436,6 +5521,8 @@ function buildClaudeHarnessTab(opts = {}) {
         _subScroll(tid);
       })
       .catch(() => {
+        const _tc = _sub.tabs[tid];
+        if (_tc) _tc.replay = false;   // v2.57R：网络失败路径也放行镜像（与 .then 同口径）
         const sc3 = _sub.tabs[tid] && _sub.tabs[tid].sc;
         if (sc3) {
           delete sc3.dataset.replayed;   // v2.37R2（复审1）：清标记，重点即重拉
@@ -5578,12 +5665,9 @@ function buildClaudeHarnessTab(opts = {}) {
         const inp = b.input || {};
         const hint = inp.command || inp.file_path || inp.path || inp.pattern ||
                      inp.query || inp.description || inp.subject || inp.prompt || '';
-        // 窗格重设计 P2-7：工具行带状态点（灰=进行中）+ data-tuid——tool_result
-        // 到达时按 tool_use_id 精确回点变绿（SSE 里 tool_use.id 与
-        // tool_result.tool_use_id 同源恒可配对，并行工具交错不错标）
-        _subAppend(sc, `<div class="hg-sub-tool" data-tuid="${esc(b.id || '')}">` +
-          `<span class="hg-sub-tdot"></span>${esc(_hDrawerName(b.name || ''))}` +
-          (hint ? ` · ${esc(String(hint).slice(0, 80))}` : '') + '</div>');
+        // 窗格重设计 P2-7：折叠气泡工厂（状态点灰=进行中，data-tuid 供结果
+        // 回点；SSE 里 tool_use.id 与 tool_result.tool_use_id 同源恒可配对）
+        _subAppendEl(sc, _subPaneToolRow(b.name || '', hint, b.id || '', false));
       }
     }
     if (stick) _subScroll(parentId);
@@ -5592,13 +5676,7 @@ function buildClaudeHarnessTab(opts = {}) {
     if (!_sub.tabs[parentId]) return;
     const sc = _sub.tabs[parentId].sc;
     const stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight <= 80;   // P1-5：append 前测（同 _subFeed）
-    // v2.55R：防重——同一 tool_use_id 的结果行只落一次（调用方已收口为
-    // _subToolResult 单路，此处仍设防：未来再添调用点不会双份结果行）
-    if (tr.tool_use_id &&
-        sc.querySelector(`.hg-sub-res[data-rtuid="${CSS.escape(tr.tool_use_id)}"]`))
-      return;
     const full = resultText(tr).trim();
-    const txt = full.replace(/\s+/g, ' ').trim().slice(0, 120);
     // 窗格重设计 P2-7：结果到达回点对应工具行——data-tuid 精确配对优先；
     // miss（id 缺失/行已被 cap 裁掉）回退从尾往前找第一条未定格的工具行
     // （SSE 流序下 tool_result 紧跟 tool_use；已 done 的行说明配对过别的
@@ -5609,13 +5687,34 @@ function buildClaudeHarnessTab(opts = {}) {
       for (let el = sc.lastElementChild; el; el = el.previousElementSibling) {
         if (el.classList.contains('hg-sub-tool') && !el.classList.contains('done')) { toolRow = el; break; }
       }
-    if (toolRow && !toolRow.classList.contains('done')) toolRow.classList.add('done');
-    // 窗格重设计 P2-8：超 120 字的结果行不再截死——全文存 dataset，点击
-    // 委托展开/收起
-    _subAppend(sc, `<div class="hg-sub-res${tr.is_error ? ' err' : ''}"` +
-      (tr.tool_use_id ? ` data-rtuid="${esc(tr.tool_use_id)}"` : '') +
-      (full.length > 120 ? ` data-hg-subfull="${esc(full)}" title="点击展开全文"` : '') +
-      `>↳ ${esc(txt || '完成')}</div>`);
+    if (!toolRow) {
+      // v2.57R：全 miss（回放铺底行全 done 且 tuid 不匹配）——回退独立 ↳ 行
+      //（与回放路径「无前置工具行」兜底对称），结果不丢；rtuid/subfull 属性
+      // 与旧版独立行同款（防未来双源双份 + 超长点击展开）
+      const d = document.createElement('div');
+      d.className = 'hg-sub-res' + (tr.is_error ? ' err' : '');
+      if (tr.tool_use_id) d.dataset.rtuid = tr.tool_use_id;
+      if (full.length > 120) {
+        d.dataset.hgSubfull = full;
+        d.title = '点击展开全文';
+      }
+      d.textContent = '↳ ' + (full.replace(/\s+/g, ' ').slice(0, 120) || '完成');
+      sc.appendChild(d);
+      if (stick) _subScroll(parentId);
+      return;
+    }
+    // v2.57R：防重+结果进工具行 body（折叠气泡——点开才显示，不再平铺 ↳ 行）
+    if (toolRow.classList.contains('done')) return;
+    toolRow.classList.add('done');
+    if (tr.is_error) toolRow.classList.add('err', 'open');   // 错误自动展开
+    const body = toolRow.querySelector('.hg-sub-tool-body');
+    if (body && !body.dataset.filled) {
+      body.dataset.filled = '1';
+      const d = document.createElement('div');
+      d.className = 'hg-sub-tool-out' + (tr.is_error ? ' err' : '');
+      d.textContent = full || '完成';
+      body.appendChild(d);
+    }
     if (stick) _subScroll(parentId);
   }
   function _subClose(tid, err) {
@@ -5938,9 +6037,9 @@ function buildClaudeHarnessTab(opts = {}) {
         for (const blk of blocks) {
           if (!blk) continue;
           if (blk.type === 'thinking' && String(blk.thinking || '').trim())
-            _subThink(tid, blk.thinking);
+            _subThink(tid, blk.thinking, true);
           else if (blk.type === 'text' && String(blk.text || '').trim())
-            _subText(tid, blk.text);
+            _subText(tid, blk.text, true);
           else if (fullFeed && blk.type === 'tool_use' && blk.name)
             renderToolUse(blk, true, tid);
           else if (fullFeed && blk.type === 'tool_result' && blk.tool_use_id)
@@ -6031,6 +6130,13 @@ function buildClaudeHarnessTab(opts = {}) {
         }
         row.classList.toggle('open');
       }
+      return;
+    }
+    // v2.57R：工具折叠气泡——结果实时填 body（textContent），点开直接切换
+    const toolHead = e.target.closest('.hg-sub-tool-head');
+    if (toolHead) {
+      const trow = toolHead.closest('.hg-sub-tool');
+      if (trow) trow.classList.toggle('open');
       return;
     }
     // P2-8：结果行点击展开全文（data-hg-subfull 只在超 120 字的行上，短行不可

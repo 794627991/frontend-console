@@ -3478,6 +3478,30 @@ html {
 .hg-sub-think-body { display: none; font-size: 11.5px; line-height: 1.6;
   color: var(--muted); padding: 4px 0 2px; }
 .hg-sub-think.open .hg-sub-think-body { display: block; }
+/* ---- v2.57R：工具行折叠气泡（与思考行同交互——头行点开才显示输入/结果
+   详情；覆盖旧 .hg-sub-tool 一行式 nowrap 定义）---- */
+.hg-sub-tool { white-space: normal; overflow: visible; text-overflow: clip;
+  padding-left: 8px; }
+.hg-sub-tool.done { border-left-color: color-mix(in srgb, #4ade80 45%, transparent); }
+.hg-sub-tool.err { border-left-color: var(--hgd-fail); }
+.hg-sub-tool-head { display: flex; align-items: center; gap: 0; width: 100%;
+  border: none; background: none; cursor: pointer; padding: 1px 0;
+  font-size: 10.5px; color: var(--muted); font-family: var(--font-mono);
+  text-align: left; }
+.hg-sub-tool-head:hover { color: var(--fg); }
+.hg-sub-tool-head .hg-sub-tdot { margin-right: 5px; }
+.hg-sub-tool.err .hg-sub-tdot { background: var(--hgd-fail); }
+.hg-sub-tool-name { flex: none; margin-right: 5px; }
+.hg-sub-tool-hint { flex: 1 1 auto; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.hg-sub-tool-chev { display: inline-block; margin-left: auto; flex: none;
+  transition: transform .15s; }
+.hg-sub-tool.open .hg-sub-tool-chev { transform: rotate(90deg); }
+.hg-sub-tool-body { display: none; font-size: 11px; line-height: 1.55;
+  color: var(--muted); padding: 4px 0 2px; white-space: pre-wrap;
+  word-break: break-word; max-height: 200px; overflow: auto; }
+.hg-sub-tool.open .hg-sub-tool-body { display: block; }
+.hg-sub-tool-out.err { color: var(--hgd-fail); }
 /* P2-7 工具行状态点：进行中灰点脉冲（与 tab 绿点脉冲同节奏），结果回点
    变绿定格 */
 .hg-sub-tdot { display: inline-block; flex: none; width: 6px; height: 6px;
