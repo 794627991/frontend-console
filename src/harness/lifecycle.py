@@ -7,23 +7,7 @@ log = logging.getLogger(__name__)
 from .consts import _IDLE_KILL_S, _sessions, _sessions_lock
 from .meta import _meta, _meta_load
 from .session import HarnessSession
-from .vision import _vision_lock, _vision_obj
 
-
-# ---- from claude_harness.py:611 (stop_vision_session) ----
-
-
-def stop_vision_session():
-    """关掉识图后台会话（用户关开关/改配置时调）。"""
-    with _vision_lock:
-        s, _vision_obj[0] = _vision_obj[0], None
-    if s is not None:
-        try:
-            with _sessions_lock:
-                _sessions.pop(s.sid, None)
-            s.close()
-        except Exception:
-            pass
 
 # ---- from claude_harness.py:2141 (_gc_started) ----
 _gc_started = False
@@ -70,12 +54,6 @@ def _gc_loop():
                     continue
                 if s.alive and not s.busy and (now - s.last_active) > _IDLE_KILL_S * 1000:
                     s.kill_proc()
-            # v2.28：识图会话退役——GC 不再保活/拉起；升级前实例里的遗留
-            # 识图会话（若有）闲置即收
-            with _vision_lock:
-                v = _vision_obj[0]
-            if v and v.alive and not v.busy:
-                v.kill_proc()
         except Exception:
             pass
 

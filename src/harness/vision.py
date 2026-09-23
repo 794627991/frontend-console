@@ -36,29 +36,9 @@ from ..claude_conn import _resolve_claude_exe
 # ---------------------------------------------------------------------------
 _VISION_KEY = "harness_vision"
 
-# ---- from claude_harness.py:75 (VISION_DEFAULT_NAME) ----
-VISION_DEFAULT_NAME = "识图会话"
 
-# ---- from claude_harness.py:76 (_vision_lock) ----
 
-# 识图后台会话对象（单例；列表容器便于闭包内赋值）
-_vision_lock = threading.Lock()
 
-# ---- from claude_harness.py:79 (_vision_obj) ----
-_vision_obj = [None]
-
-# ---- from claude_harness.py:80 (VISION_DEFAULT_PROMPT) ----
-
-VISION_DEFAULT_PROMPT = """你是本机专用的识图会话。你没有串口/SSH 设备控制能力，唯一职责是读图并给出结论。
-
-收到其他 Claude 会话（主会话）发来的识图任务时：
-- 用 Read 工具直接读图片路径。只读图，不要调用串口、日志、TFTP 一类工具。
-- 回答「结论先行」：第一句直接给答案，再给支撑细节。不要复述你看到了什么，除非那是结论的一部分。
-- 客观描述优先于推测。看不清、被遮挡、分辨率不足、图里没有该信息，就直说「看不清 / 图中无此信息」，不要猜。
-- 提到位置时给可复核的坐标或区域描述（如「左上角状态栏第 2 行」「坐标约 (820, 340)」），方便主会话核对。
-- 多张图一起给时，明确标注每张图的结论对应哪个文件，不要把不同图的信息混成一条结论。
-- 需要跨图对比（如「这两张图的差异」）时，逐项列出差异点，不要只给笼统印象。
-- 回复必须用 SendMessage 工具发回给发件人（把来件的 from 属性作为 to）。只用普通文本输出的话，对方看不到。"""
 
 # ---- from claude_harness.py:91 (_vision_default_cfg) ----
 
@@ -68,9 +48,8 @@ def _vision_default_cfg():
     # MCP），非 inline 即 MCP，无需名单。旧 config 里的 mm_mcp 键自然闲置。
     # v2.28.2：model_map 端点模型映射 + mcp_prompt——识图配置（MCP 后端）
     # 多方案适配：lanz 端点配 Lanz 系、bigmodel 端点配 glm 系。
-    return {"enabled": False, "model": "", "prompt": VISION_DEFAULT_PROMPT,
-            "name": VISION_DEFAULT_NAME, "mm_extra": [], "model_map": {},
-            "mcp_prompt": ""}
+    return {"enabled": False, "model": "", "prompt": "", "name": "",
+            "mm_extra": [], "model_map": {}, "mcp_prompt": ""}
 
 # ---- from claude_harness.py:101 (_vision_load) ----
 
@@ -85,8 +64,6 @@ def _vision_load():
         if isinstance(raw, dict):
             cfg["enabled"] = bool(raw.get("enabled", False))
             cfg["model"] = str(raw.get("model") or "").strip()
-            cfg["prompt"] = str(raw.get("prompt") or "").strip() or VISION_DEFAULT_PROMPT
-            cfg["name"] = str(raw.get("name") or "").strip() or VISION_DEFAULT_NAME
             mm = raw.get("mm_extra")
             if isinstance(mm, list):
                 cfg["mm_extra"] = [str(x).strip() for x in mm if str(x).strip()]
@@ -434,54 +411,4 @@ def _pid_alive(pid):
     except OSError:
         return False
 
-# ---- from claude_harness.py:563 (_cleanup_stale_vision_peers) ----
 
-
-def _cleanup_stale_vision_peers(name):
-    """清理「同名且进程已死」的识图会话孤儿注册。
-
-    刻意只清同名条目，不做全表清理——别的条目属于用户其他 Claude 会话，
-    误删会砸掉正在用的会话。同名死条目才是真正会撞车的（新进程起来后
-    同名并存，主会话可能把识图任务发给死的那条）。
-    """
-    if not name:
-        return 0
-    d = _peer_reg_path()
-    if not os.path.isdir(d):
-        return 0
-    n = 0
-    try:
-        names = os.listdir(d)
-    except OSError:
-        return 0
-    for fn in names:
-        if not fn.endswith(".json"):
-            continue
-        p = os.path.join(d, fn)
-        try:
-            with open(p, "r", encoding="utf-8") as f:
-                o = json.load(f)
-        except Exception:
-            continue
-        if not isinstance(o, dict) or o.get("name") != name:
-            continue
-        if _pid_alive(o.get("pid")):
-            continue          # 还活着：可能是用户手动开的同名会话，不动
-        try:
-            os.remove(p); n += 1
-        except OSError:
-            pass
-    return n
-
-# ---- from claude_harness.py:600 (ensure_vision_session) ----
-
-
-def ensure_vision_session():
-    """v2.28：识图会话退役——MCP 通道（mcp__4_5v_mcp__analyze_image）全面接管。
-
-    原职责（养一个多模态后台会话做转交识图）已被本地 analyze_image 取代：
-    速度 5.6 倍（一次推理 vs agent 两轮+轮询回传）、无常驻进程、无跨会话
-    复杂度。保留函数签名做空操作：调用方（GC/connect 路径）零改动；遗留
-    的旧识图会话由 GC 的 kill 分支自然收走，不再新拉。
-    """
-    return None

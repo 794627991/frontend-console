@@ -301,7 +301,7 @@ def _notify_existing_open_file(path):
 
 def _run_mcp_ask_mode():
     """交互式提问 MCP stdio 模式（v2.17）。
-    打包（PyInstaller --windowed）后 src/harness_ask_mcp.py 不在磁盘上，harness
+    打包（PyInstaller --windowed）后 src/harness/ask_mcp.py 不在磁盘上，harness
     会话的 --mcp-config 会改指 `exe --mcp-ask`，就是这里。与 --mcp 同样的
     fd 重包装：windowed 下 sys.stdin/stdout 可能是 None。"""
     if sys.stdin is None:
@@ -310,13 +310,13 @@ def _run_mcp_ask_mode():
     if sys.stdout is None:
         try: sys.stdout = open(1, 'w', encoding='utf-8')
         except Exception: pass
-    from src import harness_ask_mcp
+    from src.harness import ask_mcp as harness_ask_mcp
     harness_ask_mcp.main()
 
 
 def _run_mcp_vision_mode():
     """识图 MCP stdio 模式（v2.28）。
-    打包后 src/harness_vision_mcp.py 不在磁盘上，harness 会话 --mcp-config 里的
+    打包后 src/harness/vision_mcp.py 不在磁盘上，harness 会话 --mcp-config 里的
     4_5v_mcp server 指向 `exe --mcp-vision`，就是这里。fd 重包装同 --mcp-ask。"""
     if sys.stdin is None:
         try: sys.stdin = open(0, 'r', encoding='utf-8')
@@ -324,7 +324,7 @@ def _run_mcp_vision_mode():
     if sys.stdout is None:
         try: sys.stdout = open(1, 'w', encoding='utf-8')
         except Exception: pass
-    from src import harness_vision_mcp
+    from src.harness import vision_mcp as harness_vision_mcp
     harness_vision_mcp.main()
 
 
@@ -342,7 +342,7 @@ def _run_audit_hook_mode():
     if sys.stderr is None:
         try: sys.stderr = open(2, 'w', encoding='utf-8')
         except Exception: pass
-    from src import harness_audit_hook
+    from src.harness import audit_hook as harness_audit_hook
     harness_audit_hook.main()
 
 

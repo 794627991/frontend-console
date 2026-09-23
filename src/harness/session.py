@@ -11,7 +11,7 @@ from queue import Queue
 import logging
 log = logging.getLogger(__name__)
 from ..claude_conn import _resolve_claude_exe, _trust_workspace
-from ..harness_roles import audit_verdict, install_roles_agents, roles_bridge_text
+from .roles import audit_verdict, install_roles_agents, roles_bridge_text
 from .askmcp import _ask_mcp_cfg_path
 from .audit import _AUDIT_EDIT_TOOLS, _AUDIT_MSG_PREFIX, _audit_dispatch_role, _audit_hook_settings_path, _audit_lines, _audit_log_append
 from .bridges import TOKEN_RULES, _bridge_fp, ask_bridge_text, confirm_bridge_text, vision_bridge_text
@@ -404,7 +404,7 @@ class HarnessSession:
         ——配置改动回合间生效。线值统一出自 harness_roles.audit_limits
         （与引导词同源，词里一套数字审计另一套是 v2.34 就防的坑）。"""
         try:
-            from ..harness_roles import roles_cfg, roles_mode, audit_limits
+            from .roles import roles_cfg, roles_mode, audit_limits
             cfg = roles_cfg()
             mode = str(cfg.get("audit_mode") or "auto")
             if not cfg.get("enabled") or mode == "off":
@@ -638,7 +638,7 @@ class HarnessSession:
             # 测试误清/人工误删）。发生过缺失自愈时红卡告警：此前派发可能
             # 已回落主链轻模型，用户须知情。仅角色开关启用时介入。
             try:
-                from ..harness_roles import ensure_roles_ready
+                from .roles import ensure_roles_ready
                 _miss = ensure_roles_ready(self._eff_model())
                 if _miss:
                     self.emit({"kind": "audit",

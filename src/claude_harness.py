@@ -61,14 +61,11 @@ from src.harness.prompts import (  # noqa: F401
     log,
 )
 from src.harness.vision import (  # noqa: F401
-    VISION_DEFAULT_NAME,
-    VISION_DEFAULT_PROMPT,
     _MM_PROBE_LOCK,
     _MM_RE,
     _VISION_KEY,
     _VISION_TOOLS,
     _cleanup_peer_reg,
-    _cleanup_stale_vision_peers,
     _iso_dur_sec,
     _mm_probe_key,
     _mm_probe_model,
@@ -80,10 +77,7 @@ from src.harness.vision import (  # noqa: F401
     _pid_alive,
     _vision_default_cfg,
     _vision_load,
-    _vision_lock,
-    _vision_obj,
     _vision_save,
-    ensure_vision_session,
     log,
 )
 from src.harness.bridges import (  # noqa: F401
@@ -124,7 +118,6 @@ from src.harness.lifecycle import (  # noqa: F401
     _get_or_create,
     _peer_poll_loop,
     log,
-    stop_vision_session,
 )
 from src.harness.transcript import (  # noqa: F401
     _SKIP_RE,
@@ -186,8 +179,6 @@ from src.harness.routes import (  # noqa: F401
     harness_set_vision,
     harness_skill_zh_translate,
     harness_skills,
-    harness_start_vision,
-    harness_stop_vision,
     harness_stream,
     harness_subagent_replay,
     harness_subagent_tail,

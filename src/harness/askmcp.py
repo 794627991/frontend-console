@@ -32,8 +32,8 @@ def _ask_mcp_cfg_path(sid, perm="auto"):
         vis_cmd, vis_args = sys.executable, ["--mcp-vision"]
     else:
         ask_cmd = vis_cmd = (sys.executable or "python")
-        ask_args = [os.path.join(_SRC_DIR, "harness_ask_mcp.py").replace("\\", "/")]
-        vis_args = [os.path.join(_SRC_DIR, "harness_vision_mcp.py").replace("\\", "/")]
+        ask_args = [os.path.join(_SRC_DIR, "harness", "ask_mcp.py").replace("\\", "/")]
+        vis_args = [os.path.join(_SRC_DIR, "harness", "vision_mcp.py").replace("\\", "/")]
     # v2.28.5：注入两个 server——harness（ask_user）+ vision（本地兜底
     # 识图 analyze_image）。网关内置的 mcp__4_5v_mcp__analyze_image 是主通道
     # （服务端执行，无需本地配置）；本地版用独立名字 mcp__vision__analyze_image

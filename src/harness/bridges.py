@@ -59,7 +59,7 @@ def confirm_bridge_text():
 # 活，不派干活子代理；子代理只留 designer（只设计）+ reviewer（只读
 # 审核）两个代理——light 装两个、strong 只装 reviewer 作审计
 # 兜底（旧决策者结构禁权/roles_disallow 已废除）。
-from ..harness_roles import (roles_bridge_text, install_roles_agents,
+from .roles import (roles_bridge_text, install_roles_agents,
                             audit_verdict, audit_gate_check)
 
 

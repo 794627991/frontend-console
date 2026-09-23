@@ -13,9 +13,8 @@ import logging
 log = logging.getLogger(__name__)
 from .. import app_state as _st
 from ..claude_conn import _humanize_claude_error, _resolve_claude_exe
-from ..harness_roles import audit_gate_check
+from .roles import audit_gate_check
 from .consts import _PROMPTS_LEGACY_KEY, _SKILL_ZH_FILE, _UPLOAD_DIR, _UPLOAD_MAX, _sessions, _sessions_lock
-from .lifecycle import _ensure_gc, _get_or_create, stop_vision_session
 from .meta import _meta, _meta_load, _meta_lock, _meta_save, _meta_tombstones
 from .models import available_models
 from .prompts import _prompt_matches_project, _prompts_load, _prompts_save
@@ -624,7 +623,7 @@ def harness_peer_pair_log():
     fire-and-forget，前端不等响应，失败静默。"""
     data = request.get_json(force=True, silent=True) or {}
     try:
-        from ..harness_roles import _agents_dir_audit
+        from .roles import _agents_dir_audit
         _agents_dir_audit("peer-pair", "sid=%s task=%s peer=%s paired=%s" % (
             str(data.get("sid") or "")[:20], str(data.get("task") or "-")[:64],
             str(data.get("name") or "-")[:64], bool(data.get("ok"))))
@@ -1106,7 +1105,7 @@ def harness_mm_probe():
 def harness_get_vision():
     """读识图配置（v2.28.2：MCP 后端配置——模型/端点映射/提示词）。
     附带 defaults 供前端「恢复默认」按钮用（mcp_prompt 缺省取 MCP 内置）。"""
-    from ..harness_vision_mcp import MCP_DEFAULT_SYSTEM
+    from .vision_mcp import MCP_DEFAULT_SYSTEM
     cfg = _vision_load()
     return jsonify({"ok": True, "vision": cfg,
                     "defaults": {"mcp_prompt": MCP_DEFAULT_SYSTEM,
@@ -1158,24 +1157,7 @@ def harness_set_vision():
         return jsonify({"ok": False, "err": err or "写入失败"}), 500
     return jsonify({"ok": True, "vision": cfg})
 
-# ---- from claude_harness.py:3957 (harness_start_vision) ----
 
-
-@harness_bp.route("/vision/start", methods=["POST"])
-def harness_start_vision():
-    """v2.28：识图会话退役——手动拉起端点改为返回退役说明（前端重试按钮
-    不再拉起后台会话；识图走 MCP 通道，无需预热）。"""
-    return jsonify({"ok": False,
-                    "err": "识图会话已退役：识图改走 MCP 通道"
-                           "（mcp__4_5v_mcp__analyze_image），无需手动拉起"}), 400
-
-# ---- from claude_harness.py:3966 (harness_stop_vision) ----
-
-
-@harness_bp.route("/vision/stop", methods=["POST"])
-def harness_stop_vision():
-    stop_vision_session()
-    return jsonify({"ok": True})
 
 # ---- from claude_harness.py:3972 (harness_roles_info) ----
 
@@ -1190,7 +1172,7 @@ def harness_roles_info():
     默认模型名过「除 Opus 皆轻」识别；light 轻主力直干+双代理 / strong
     重模型直干+审核兜底）。roles 为配置全量（含遗留键透传）；附 models/
     default_model 供配置面板下拉用。"""
-    from ..harness_roles import (resolve_role_models, resolve_agent_models,
+    from .roles import (resolve_role_models, resolve_agent_models,
                                 roles_cfg, roles_mode)
     li, hv = resolve_role_models()
     dmr, rmr = resolve_agent_models()
@@ -1261,7 +1243,7 @@ def harness_set_roles():
     到 l2，不 400——回显在响应 clamped 键）。model_map 行式 "端点关键
     字=轻,重"（重可省=与轻同）或 dict {关键字:{executor,coder}}（旧键
     名照收，light/heavy 新键名亦可）。"""
-    from ..harness_roles import update_roles_cfg, clamp_role_limits, roles_cfg
+    from .roles import update_roles_cfg, clamp_role_limits, roles_cfg
     data = request.get_json(force=True, silent=True) or {}
     patch = {}
     if "enabled" in data:
