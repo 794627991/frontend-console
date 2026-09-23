@@ -334,9 +334,80 @@ def harness_rewind():
     # 旧 seq 空间即刻作废；换代后再 emit 提示行（落在新时代里）。客户端
     # 持旧 epoch 重连 → ack(mode=reset) → transcript 重建。
     s.log.bump_epoch()
+    # v3.1（#14）：分支世代 +1——旧代排队输入作废（回退后的世界线里失去
+    # 意义），input_discarded 事件显式通知前端清队列
+    try:
+        s.bump_generation(reason="rewind")
+    except Exception:
+        pass
     s.sync_meta()
     s.emit({"kind": "raw", "text": "⏪ " + msg + "——发送消息即续上回退后的上下文"})
     return jsonify({"ok": True, "msg": msg, "epoch": s.log.epoch})
+
+# ---- v3.1（#10）：durable 输入账本路由 ----
+
+
+@harness_bp.route("/queue", methods=["GET", "POST"])
+def harness_queue():
+    """排队输入的服务端真源。GET 列表（切会话/重连初始化队列用）；POST
+    入队（busy 期前端替 send 调它——排队语义从「前端本地数组」升级为
+    「跨设备/跨重启可见的服务端账本」，回合终结由后端自动泵真发）。"""
+    if request.method == "GET":
+        s = _get_or_create((request.args.get("sid") or "").strip())
+        if not s:
+            return jsonify({"ok": False, "err": "会话不存在"}), 404
+        return jsonify({"ok": True, "queue": s.queue_list(),
+                        "gen": s._gen, "busy": s.busy})
+    data = request.get_json(force=True, silent=True) or {}
+    s = _get_or_create((data.get("sid") or "").strip())
+    if not s:
+        return jsonify({"ok": False, "err": "会话不存在"}), 404
+    text = str(data.get("text") or "")
+    if not text.strip() and not (data.get("images") or data.get("files")):
+        return jsonify({"ok": False, "err": "消息为空"}), 400
+    # v3.1：客户端预生成 id 直接采用（SSE 事件与 POST 响应赛跑的防双画锚点，
+    # 合法性在 queue_admit 内校验）
+    qid = s.queue_admit(text, data.get("images"), data.get("files"),
+                        eid=str(data.get("id") or "").strip() or None)
+    return jsonify({"ok": True, "id": qid, "gen": s._gen})
+
+
+@harness_bp.route("/queue_act", methods=["POST"])
+def harness_queue_act():
+    """队列条目操作：now=提到队首并中断当前回合（回合终结泵自然先发它）；
+    del=作废（编辑回收走 del——前端把文本放回输入框后调它）。"""
+    data = request.get_json(force=True, silent=True) or {}
+    s = _get_or_create((data.get("sid") or "").strip())
+    if not s:
+        return jsonify({"ok": False, "err": "会话不存在"}), 404
+    eid = str(data.get("id") or "").strip()
+    act = str(data.get("act") or "").strip()
+    if not eid:
+        return jsonify({"ok": False, "err": "缺少条目 id"}), 400
+    if act == "now":
+        if not s.queue_to_head(eid):
+            return jsonify({"ok": False, "err": "条目不存在"}), 404
+        if s.busy:
+            s.interrupt()          # 异步：kill → 回合终结 → 800ms 后泵发队首
+        else:
+            try:
+                s._queue_pump()
+            except Exception:
+                pass
+        return jsonify({"ok": True})
+    if act == "del":
+        return jsonify({"ok": s.queue_discard(eid, reason="user")})
+    if act == "order":
+        # v3.1：前端拖拽排序上报——按 ids 重排账本；未列出的条目（并发新
+        # 入队）按原顺序追加尾部，不丢
+        ids = [str(x) for x in (data.get("ids") or []) if x]
+        by = {e.get("id"): e for e in s._inbox}
+        new_order = [by[i] for i in ids if i in by]
+        seen = set(ids)
+        new_order += [e for e in s._inbox if e.get("id") not in seen]
+        s._inbox = new_order
+        return jsonify({"ok": True})
+    return jsonify({"ok": False, "err": "未知操作"}), 400
 
 # ---- from claude_harness.py:2920 (harness_ctx) ----
 
@@ -739,7 +810,11 @@ def harness_events():
     return jsonify({"ok": True, "events": s.get_events_after(request.args.get("after_seq", 0, type=int)),
                     "seq": s._seq, "epoch": s.log.epoch, "mode": mode,
                     "alive": s.alive, "busy": s.busy,
-                    "busy_since": s.busy_since})
+                    "busy_since": s.busy_since,
+                    # v3.1：投影随增量下发——前端 reducer 种子（切会话/重连后
+                    # 进程面板不必从零重放就能对齐服务端真相）
+                    "proj": s.log.store.projection,
+                    "queue": s.queue_list()})
 
 # ---- from claude_harness.py:3552 (harness_rename) ----
 

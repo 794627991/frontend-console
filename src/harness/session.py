@@ -84,6 +84,12 @@ class HarnessSession:
         #  src/eventlog/）。旧属性 _seq 保留为只读属性（to_meta/续命位点读）。
         self.log = SessionEventLog(self.sid)
         self._turn_id = None       # 当前回合 id（turn_* 事件与信封 turn 字段用）
+        # v3.1（#10/#14）durable 输入账本：busy 期排队输入的服务端真源（此前
+        # 纯前端本地队列，刷新即丢）。条目带世代 gen——/rewind 换代即作废旧
+        # 代条目（回退后的世界线里它们失去意义）。随 meta 落盘跨重启/回收。
+        self._inbox = []
+        self._gen = 0
+        self._pump_timer = None    # 回合终结自动泵的延迟器（防重入）
         # v2.25：识图完成状态持久化（最近 result 时刻 + 结论摘要）。/vision_status
         # 原从事件窗口尾部 12 条里回扫，识图轮次密集时 result/assistant 被新事件
         # 挤出窗口 → last_done 归 0，前端「已返回」冒泡整个漏掉（用户多次反馈）
@@ -128,7 +134,11 @@ class HarnessSession:
                 "seq": self.log.last_seq,
                 # v3.0：日志代际随元数据落盘——GC 重建沿用（可 resume），
                 # /rewind 换代（客户端旧水位作废，只能 reset 重建）
-                "epoch": self.log.epoch}
+                "epoch": self.log.epoch,
+                # v3.1（#10/#14）：durable 输入账本 + 世代号——重启/闲置回收
+                # 后队列不丢；gen 让 /rewind 后作废旧代条目的判定可跨重启
+                "inbox": [dict(e) for e in self._inbox],
+                "gen": self._gen}
 
     def sync_meta(self):
         if getattr(self, "hidden", False):
@@ -745,6 +755,122 @@ class HarnessSession:
         self.emit({"kind": "interrupted", "text": "已中断回复"})
         self._turn_end(err=True)
 
+    # ---- durable 输入账本（#10/#14，v3.1）----
+    def queue_admit(self, text, image_paths=None, file_paths=None, eid=None):
+        """busy 期输入入队（服务端真源）。事件流同步 input_admitted，前端
+        队列 UI 与本地状态由事件驱动——连接在别的设备也能看到同一条队列。
+        eid：客户端预生成 id（POST 与 SSE 事件赛跑的防双画锚点），合法即
+        采用；缺省/非法由服务端发号。"""
+        import uuid as _uuid
+        if not (isinstance(eid, str) and 6 <= len(eid) <= 32
+                and all(c in "0123456789abcdefghijklmnopqrstuvwxyz"
+                        for c in eid.lower())):
+            eid = _uuid.uuid4().hex[:12]
+        entry = {"id": eid,
+                 "text": text or "",
+                 "images": [str(p) for p in (image_paths or [])],
+                 "files": [str(p) for p in (file_paths or [])],
+                 "gen": self._gen, "ts": int(time.time() * 1000)}
+        self._inbox.append(entry)
+        self.emit({"kind": "input_admitted", "id": entry["id"],
+                   "text": (text or "")[:200], "gen": self._gen,
+                   "att": len(entry["images"]) + len(entry["files"])})
+        self.sync_meta()
+        return entry["id"]
+
+    def queue_list(self):
+        return [dict(e) for e in self._inbox]
+
+    def queue_discard(self, eid, reason="user"):
+        for i, e in enumerate(self._inbox):
+            if e.get("id") == eid:
+                self._inbox.pop(i)
+                self.emit({"kind": "input_discarded", "id": eid,
+                           "reason": reason})
+                self.sync_meta()
+                return True
+        return False
+
+    def queue_to_head(self, eid):
+        """「立即发送」：条目提到队首，随后中断当前回合 → 回合终结泵自然
+        先发它。条目不存在返回 False。"""
+        for i, e in enumerate(self._inbox):
+            if e.get("id") == eid:
+                if i:
+                    self._inbox.insert(0, self._inbox.pop(i))
+                return True
+        return False
+
+    def bump_generation(self, reason="rewind"):
+        """#14 分支世代：/rewind 后调用。旧代排队输入全部作废（事件显式通
+        知，前端队列同步清空），世代号自增——此后入队条目都挂新代。"""
+        self._gen += 1
+        stale = [e for e in self._inbox if e.get("gen") != self._gen]
+        if stale:
+            self._inbox = [e for e in self._inbox if e.get("gen") == self._gen]
+            for e in stale:
+                self.emit({"kind": "input_discarded", "id": e.get("id"),
+                           "reason": reason, "gen": e.get("gen")})
+        self.sync_meta()
+        return len(stale)
+
+    def _queue_pump(self):
+        """回合终结自动泵（#10）：800ms 延迟给 result 收尾/用户中断留窗
+        口，再把当前世代队首真发（复用 send_message 全套守卫）。发送失败
+        的条目作废并事件通知，不静默吞。"""
+        if self._pump_timer:
+            return
+
+        def _run():
+            self._pump_timer = None
+            try:
+                if self.busy or not self._inbox:
+                    return
+                idx = next((i for i, e in enumerate(self._inbox)
+                            if e.get("gen") == self._gen), None)
+                if idx is None:
+                    return
+                e = self._inbox.pop(idx)
+                self.emit({"kind": "input_promoted", "id": e.get("id")})
+                ok, err = self.send_message(e.get("text") or "",
+                                            e.get("images"), e.get("files"))
+                if not ok:
+                    self.emit({"kind": "input_discarded", "id": e.get("id"),
+                               "reason": "发送失败：" + str(err or "")[:120]})
+                self.sync_meta()
+            except Exception:
+                pass
+
+        t = threading.Timer(0.8, _run)
+        t.daemon = True
+        t.start()
+        self._pump_timer = t
+
+    # ---- 子代理镜像事件（#12，v3.1）----
+    def _emit_task_mirror(self, o):
+        """CLI 杂讯 → 干净生命周期事件。前端 handleEvent 的 20 段 Task
+        解析（协作包装/转交线/段壳）保持不动——镜像事件只喂 reducer 投影
+        （新进程面板与回合摘要行），live/重放共用同一份干净契约。"""
+        sub = o.get("subtype")
+        tid = str(o.get("tool_use_id") or "")
+        if not tid:
+            return
+        if sub == "task_started":
+            self.emit({"kind": "subagent_started", "tid": tid,
+                       "agent_type": o.get("subagent_type") or "Task",
+                       "desc": str(o.get("description") or "")[:200],
+                       "bg": bool(o.get("is_backgrounded")),
+                       "task_id": str(o.get("task_id") or "")})
+        elif sub == "task_notification":
+            usage = o.get("usage") or {}
+            st = str(o.get("status") or "")
+            self.emit({"kind": "subagent_result", "tid": tid,
+                       "ok": st in ("", "completed", "success"),
+                       "brief": str(o.get("summary") or "")[:200],
+                       "tokens": usage.get("total_tokens") or 0,
+                       "tool_n": usage.get("tool_uses") or 0,
+                       "task_id": str(o.get("task_id") or "")})
+
     # ---- 事件层 ----
     def _check_peer_lines(self):
         """跨会话回传检测（v2.27.4）：CLI 收到 peer 消息只写转写 jsonl，
@@ -967,6 +1093,13 @@ class HarnessSession:
                     self._audit_tally(o)
                 if typ in ("assistant", "result"):
                     self._check_peer_lines()   # 回合有输出 → 先补发新到的 peer 回传
+                # v3.1（#12）：Task 生命周期系统事件 → 干净镜像事件（reducer/新面板用）
+                if typ == "system" and o.get("subtype") in ("task_started",
+                                                            "task_notification"):
+                    try:
+                        self._emit_task_mirror(o)
+                    except Exception:
+                        pass
                 self.emit({"kind": "event", "data": o})
                 # v2.34：result 即回合终点——结算审计（light 形态违规兜底，
                 # 事件已 emit，前端先收 result 收尾再收审计警示，顺序自然）
@@ -1084,6 +1217,11 @@ class HarnessSession:
         self.emit({"kind": "turn_error" if err else "turn_complete",
                    "text": "回合异常收尾" if err else ""})
         self._turn_id = None
+        # v3.1（#10）：回合终结 → 自动泵排队输入（延迟 800ms，见 _queue_pump）
+        try:
+            self._queue_pump()
+        except Exception:
+            pass
 
     def emit(self, item):
         """事件唯一出口：截断→锁内盖章→落 store→广播（对照 ZCode「先落

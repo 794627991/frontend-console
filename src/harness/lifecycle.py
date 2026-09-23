@@ -36,6 +36,11 @@ def _get_or_create(sid):
         # epoch 不变，前端旧 base 仍可 resume；无 epoch 的旧 meta（升级前
         # 落盘）→ restore 内部换新代，前端旧水位作废走一次 snapshot 重建
         s.log.restore(m.get("epoch"), m.get("seq"))
+        # v3.1（#10/#14）：durable 输入账本跨 GC/重启恢复——挂起条目在新对象
+        # 里续命，回合终结泵自然接手；世代号一并续（rewind 作废判定不因重建
+        # 失忆）。条目结构向后兼容（无 id 的旧数据丢弃）
+        s._inbox = [dict(e) for e in (m.get("inbox") or []) if isinstance(e, dict)]
+        s._gen = int(m.get("gen") or 0)
         _sessions[sid] = s
         return s
 
