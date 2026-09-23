@@ -76,24 +76,58 @@ data: {"reason":"slow-subscriber"}
 
 | 项 | 结果 |
 |---|---|
-| `tests/test_eventlog.py`（新增，44 check） | 44/44 |
+| `tests/test_eventlog.py`（v3.0 44 check → v3.1 增至 60） | 60/60 |
+| `tests/test_ledger.py`（v3.1 新增：账本/世代/泵/镜像 17 check） | 17/17 |
 | `tests/test_roles_routing.py`（既有 155 check） | 155/155 |
+| `tests/test_route_smoke.py`（42 路由 43 方法，含 /queue /queue_act） | 全健康 |
 | `compileall src` | OK |
-| 前端主链 stub 冒烟（tools/_chain_smoke.js） | 全过 |
-| 前端未定义引用（_undef_check.js 改动前后对比） | 140→140（零新增） |
+| 前端主链 stub 冒烟（tools/_chain_smoke.js，含 23-reducer） | 全过 |
+| 前端未定义引用（_undef_check.js） | 23-reducer 零命中 |
 | state 对账（_state_audit.js） | 38/38 |
 | Flask test client 集成冒烟（stream 三态/events/transcript/tool_full/meta/GC 重建） | 全过 |
+| 真机启动 + 浏览器视觉验收（进程面板/思考头/徽标/diff/摘要行/spinner） | 全过 |
 | run.bat 真机启动 | 窗口正常 |
 
-## 三、未落项与迁移路线（笔记 9-14 的余量）
+## 三、v3.1 第二期落地（原迁移路线 1-5、7 → 已全部落地或收窄）
 
-1. **前端 handleEvent → reducer handler 迁移**：信封已统一（type 字段），500 行 if/else 分派可逐块搬运成 reducer 投影——搬运不是重构，每块独立可验。
-2. **durable 输入账本**（admitted→promoted 两步同事务）：当前排队纯前端内存（`_HG.queues`），刷新即丢；send 路径记录账本 + 崩溃恢复时明确标 discarded。
-3. **子代理镜像投影**（tool-event-mirror）：子代理事件归自己的流、主时间线只收摘要镜像——当前 `_subFeed`/`_subBlk` 双处显示是它的雏形。
-4. **两级 compaction**：管理 claude 长会话时在控制台侧模拟 microcompact 语义（折叠已结束的 Read/Bash 结果）。
-5. **append-only 分支游标**（branchCut/branchGeneration）：做「编辑重发/回退」时照抄，避免删除竞态；与本期 epoch 换代机制同源可复用。
-6. **delta 流式**：CLI 开 `--include-partial-messages` 后，流式类型进 `TRANSIENT_SESSION_EVENT_TYPES` 即激活回收机制（机制已预埋）。
-7. **前端 keep-warm 会话层**（Map<sid,{dom,refCount,timer}> + 30s 延迟销毁）：当前 innerHTML 快照缓存（LRU 10）+ 滚动记忆已达成 UX 目标；全 DOM keep-warm 需重写 switchTo，收益/风险比暂不划算。
+原「未落项」清账（对照 ZCode 截图三张定调：进程跟踪 UI + DOM 节省全套）：
+
+1. **✅ 前端 reducer 起步**（原路线 1 收窄落地）：新增 `web/js/harness/23-reducer.js`
+   ——`_HG.proj` 只由事件信封归约（SSE 每帧先过 `_hgProjEvent` 再走 legacy
+   分派），/events 响应带 `proj` 种子。本期投影驱动「进程」面板与回合摘要行；
+   handleEvent 的 500 行分派迁移仍按块推进（搬运不是重构）。
+2. **✅ durable 输入账本**（原路线 2，#10）：`session._inbox` 服务端真源，
+   `queue_admit/queue_discard/queue_to_head/bump_generation/_queue_pump`；
+   POST /queue（客户端预生成 id 防事件/响应双画）、GET /queue（切会话种子）、
+   /queue_act（now/del/order）。事件 `input_admitted/promoted/discarded`，
+   随 meta 落盘（`inbox`/`gen` 字段），GC/重启由 lifecycle 恢复；回合终结
+   800ms 延迟自动泵，失败条目作废不静默。前端 `_HG.queues` 退化为渲染缓存。
+3. **✅ 子代理镜像事件**（原路线 3，#12）：reader 循环把 CLI
+   task_started/task_notification 合成 `subagent_started/subagent_result`
+   干净生命周期事件（tid/agent_type/desc/bg/task_id/ok/brief/tokens/tool_n），
+   reducer 落 `proj.agents`；前端既有 20 段 Task 解析（协作包装/转交线/段壳）
+   不动——消费端不同不冲突。
+4. **✅ microcompact**（原路线 4，#13）：store 增保留窗字节计数，新回合
+   开跑且总量超 1.5MB 时，把旧回合 >4KB 的 cli_stream 正文/工具输出就地折叠
+   （头尾各 200 字符 + `已折叠 N 字节` 标记 + `_folded` 元数据）。live 已
+   广播流零影响——只利好 replay/慢订阅补发与内存。
+5. **✅ 分支世代**（原路线 5，#14）：`_gen` 世代号随 meta 持久，/rewind 在
+   bump_epoch 同时 `bump_generation()`——旧代排队输入全部作废并事件通知。
+6. **✅ 前端 keep-warm**（原路线 7 收窄落地）：快照 LRU 10 超限时不再即时
+   delete，保温 30s（`_HG.cacheWarm` 定时器，切回即取消）——A→B→A 快切
+   命中热快照零重建，稳态内存不变。加 `content-visibility:auto +
+   contain-intrinsic-size`（.h-msg/.h-tool/.h-think-seg/.h-subblock/.h-peer）
+   离屏行跳过布局/绘制（对照 ZCode DOM 节省）。
+7. **✅ 进程跟踪 UI 重做**（对照截图定调）：右侧面板 B 区「任务进度」→
+   「进程」——ZCode 式分组清单（进行中 → / 待处理 N 项 ○ / 已完成 N 项 ✓，
+   两组可折叠）+ 本回合实时工具计数行（投影驱动）。主流程：思考段头
+   「思考 · 持续了 N 秒」；工具行挂文件类型色块徽标（js/py/css…）与
+   `+N -N` diff 计数（前后缀裁剪 O(n) 逼近，LCS 留给抽屉全文）；失败行
+   「执行失败」点状下划线标记；回合终结插「🔍 查阅 · N 搜索 · N 文件」
+   摘要胶囊；流底 spinner「正在执行…」。
+
+仍未落（有意保留）：delta 流式（等 CLI `--include-partial-messages`）、
+回放路径的回合摘要行补齐（转写重建无事件流，新回合起自然稠密）。
 
 ## 四、纪律（与 ZCode AGENTS.md 同款，本项目既有约定重申）
 
