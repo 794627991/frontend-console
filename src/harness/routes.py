@@ -7,7 +7,6 @@ import re
 import subprocess
 import time
 import uuid
-from queue import Empty
 from flask import Blueprint, Response, jsonify, request, send_from_directory
 import logging
 log = logging.getLogger(__name__)
@@ -331,8 +330,13 @@ def harness_rewind():
     # 进程必须杀：内存里的历史还是旧的，resume 才会按截断后的转写重建
     s.kill_proc(quiet=True)
     s.last_result = None                     # 用量缓存失效（守卫/窗口判定重算）
+    # v3.0：日志重写即换代（ZCode logEpoch 语义）——转写被截断，事件流的
+    # 旧 seq 空间即刻作废；换代后再 emit 提示行（落在新时代里）。客户端
+    # 持旧 epoch 重连 → ack(mode=reset) → transcript 重建。
+    s.log.bump_epoch()
+    s.sync_meta()
     s.emit({"kind": "raw", "text": "⏪ " + msg + "——发送消息即续上回退后的上下文"})
-    return jsonify({"ok": True, "msg": msg})
+    return jsonify({"ok": True, "msg": msg, "epoch": s.log.epoch})
 
 # ---- from claude_harness.py:2920 (harness_ctx) ----
 
@@ -388,25 +392,26 @@ def harness_set_model():
 
 @harness_bp.route("/stream")
 def harness_stream():
-    """SSE 事件流。?sid=&after_seq=。连接建立先回放增量（重连不丢）。"""
+    """SSE 事件流（v3.0 subscribe(base) 协议）。?sid=&epoch=&after_seq=。
+
+    连接先发 event:ack 三态判定（对照 ZCode transport.ts subscribeParams）：
+      resume   base={epoch,seq} 有效 → 回放 (seq, last] 增量
+      snapshot base 无效/缺失 → 客户端清场后重放保留窗
+      reset    epoch 不匹配（/rewind 换代）→ 客户端走 transcript 重建
+    帧序防丢防重：先注册订阅队列→快照回放→live 段按 seq 去重（bus 实现）。
+    空闲 5s 发 event:ka 心跳（前端 20s 无帧判死重连）。"""
     s = _get_or_create(request.args.get("sid") or "")
     if not s:
         return jsonify({"ok": False, "err": "会话不存在"}), 404
-    after_seq = request.args.get("after_seq", 0, type=int)
-    q = s.add_client()
+    base_epoch = (request.args.get("epoch") or "").strip()
+    base_seq = request.args.get("after_seq", 0, type=int)
+    sub, mode, replay = s.log.subscribe(base_epoch=base_epoch, base_seq=base_seq)
     def gen():
         try:
-            yield "event: hello\ndata: {}\n\n"
-            for it in s.get_events_after(after_seq):
-                yield "data: %s\n\n" % json.dumps(it, ensure_ascii=False)
-            while True:
-                try:
-                    item = q.get(timeout=15)
-                    yield "data: %s\n\n" % json.dumps(item, ensure_ascii=False)
-                except Empty:
-                    yield ": ping\n\n"
+            for frame in s.log.frames(sub, mode, replay):
+                yield frame
         finally:
-            s.remove_client(q)
+            s.log.unsubscribe(sub)
     return Response(gen(), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
@@ -452,7 +457,8 @@ def harness_transcript():
     lines = transcript_for(s)
     return jsonify({"ok": True, "lines": lines or [], "alive": s.alive,
                     "busy": s.busy, "busy_since": s.busy_since,
-                    "model": s.model, "title": s.title, "seq": s._seq})
+                    "model": s.model, "title": s.title, "seq": s._seq,
+                    "epoch": s.log.epoch})
 
 # ---- from claude_harness.py:3030 (harness_audit_gate) ----
 
@@ -719,15 +725,38 @@ def harness_peer_result_check():
 
 @harness_bp.route("/events")
 def harness_events():
-    """事件增量（轮询兜底/断线补齐）。?sid=&after_seq="""
+    """事件增量（轮询兜底/断线补齐）。?sid=&after_seq=&epoch=
+
+    v3.0：响应带 epoch——轮询方发现 epoch 与自己水位不符即走 reset 重建
+    （与 SSE ack(mode=reset) 同语义，轮询路径不再只有 seq 单字段）。"""
     s = _get_or_create(request.args.get("sid") or "")
     if not s:
         return jsonify({"ok": False, "err": "会话不存在"}), 404
+    req_epoch = (request.args.get("epoch") or "").strip()
+    mode = s.log.store.resume_mode(req_epoch or None,
+                                   request.args.get("after_seq", 0, type=int)) \
+        if req_epoch else "snapshot"
     return jsonify({"ok": True, "events": s.get_events_after(request.args.get("after_seq", 0, type=int)),
-                    "seq": s._seq, "alive": s.alive, "busy": s.busy,
+                    "seq": s._seq, "epoch": s.log.epoch, "mode": mode,
+                    "alive": s.alive, "busy": s.busy,
                     "busy_since": s.busy_since})
 
 # ---- from claude_harness.py:3552 (harness_rename) ----
+
+
+@harness_bp.route("/tool_full")
+def harness_tool_full():
+    """截断工具输出的全文按需拉取（v3.0，对照 ZCode truncated.ref 句柄）。
+    ?sid=&ref=——ref 来自事件里 tool_result 块的 _truncated.ref。stash 是
+    LRU（32 条/4MB），被逐出返回 404（截断标记文本仍在，只是全文没了）。"""
+    s = _get_or_create(request.args.get("sid") or "")
+    if not s:
+        return jsonify({"ok": False, "err": "会话不存在"}), 404
+    ref = (request.args.get("ref") or "").strip()
+    text = s.log.full_output(ref) if ref else None
+    if text is None:
+        return jsonify({"ok": False, "err": "全文缓存已过期（LRU 逐出）"}), 404
+    return jsonify({"ok": True, "text": text})
 
 
 @harness_bp.route("/rename", methods=["POST"])

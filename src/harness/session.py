@@ -7,7 +7,6 @@ import re
 import subprocess
 import threading
 import time
-from queue import Queue
 import logging
 log = logging.getLogger(__name__)
 from ..claude_conn import _resolve_claude_exe, _trust_workspace
@@ -15,7 +14,8 @@ from .roles import audit_verdict, install_roles_agents, roles_bridge_text
 from .askmcp import _ask_mcp_cfg_path
 from .audit import _AUDIT_EDIT_TOOLS, _AUDIT_MSG_PREFIX, _audit_dispatch_role, _audit_hook_settings_path, _audit_lines, _audit_log_append
 from .bridges import TOKEN_RULES, _bridge_fp, ask_bridge_text, confirm_bridge_text, vision_bridge_text
-from .consts import _EVENTS_MAX, _QUEUE_MAX, _sessions, _sessions_lock
+from .consts import _sessions, _sessions_lock
+from ..eventlog import SessionEventLog, new_turn_id
 from .meta import _meta, _meta_load, _meta_lock, _meta_save
 from .models import available_models
 from .prompts import _collect_system_prompt
@@ -79,8 +79,11 @@ class HarnessSession:
         #   {req_id, title, questions, answer, done, ts}
         self.ask = None
         self.ask_lock = threading.Lock()
-        self.events = []
-        self.events_lock = threading.Lock()
+        # v3.0 事件溯源：events/_seq/clients 三件套收编为 SessionEventLog
+        #（信封注入/锁内 seq/epoch 断点续传/协议截断/投影归约，见
+        #  src/eventlog/）。旧属性 _seq 保留为只读属性（to_meta/续命位点读）。
+        self.log = SessionEventLog(self.sid)
+        self._turn_id = None       # 当前回合 id（turn_* 事件与信封 turn 字段用）
         # v2.25：识图完成状态持久化（最近 result 时刻 + 结论摘要）。/vision_status
         # 原从事件窗口尾部 12 条里回扫，识图轮次密集时 result/assistant 被新事件
         # 挤出窗口 → last_done 归 0，前端「已返回」冒泡整个漏掉（用户多次反馈）
@@ -100,15 +103,17 @@ class HarnessSession:
         # v2.40：light 形态事中闸的 --settings 临时文件路径（kill 时清理；
         # revive 重启由 start() 重建——hooks 是进程启动参数，活进程不热更）
         self._audit_settings_path = None
-        self._seq = 0
-        self.clients = []
-        self.clients_lock = threading.Lock()
         self.last_result = None
         base = os.path.basename(os.path.normpath(self.cwd)) or self.cwd
         self.port = "Claude 对话(%s)" % base
         self.baud = None
 
     # ---- 元数据同步 ----
+    @property
+    def _seq(self):
+        """只读兼容属性：事件序号真源在 log.store（分配在锁内）。"""
+        return self.log.last_seq
+
     def to_meta(self):
         return {"sid": self.sid, "title": self.title, "model": self.model,
                 "cwd": self.cwd, "session_id": self.session_id,
@@ -120,7 +125,10 @@ class HarnessSession:
                 # 重启后 _get_or_create）时续号。否则 _seq 归零重计，新事件
                 # 序号全部小于前端快照里的旧 seq，被防重放守卫整批吞掉，
                 # 会话看起来活着、事件永远不来（切不活跃会话场景的主害之一）
-                "seq": getattr(self, "_seq", 0) or 0}
+                "seq": self.log.last_seq,
+                # v3.0：日志代际随元数据落盘——GC 重建沿用（可 resume），
+                # /rewind 换代（客户端旧水位作废，只能 reset 重建）
+                "epoch": self.log.epoch}
 
     def sync_meta(self):
         if getattr(self, "hidden", False):
@@ -689,6 +697,9 @@ class HarnessSession:
             self.busy = False
             return False, "发送失败：%s" % e
         self.last_active = int(time.time() * 1000)
+        # v3.0：stdin 写成功即回合起跑（turn_started 先于 user_echo/renew，
+        # 信封 turn 字段从本回合第一条事件起生效）
+        self._turn_start()
         # v2.34.2（R1）：判定收窄到 _AUDIT_MSG_PREFIX（_audit_settle 续发
         # 消息的唯一句式开头）——不定标题、不画用户气泡（警示已由
         # _audit_settle 的 kind='audit' 事件先行呈现）。用户手打「[审计]…」
@@ -732,6 +743,7 @@ class HarnessSession:
         except Exception:
             pass
         self.emit({"kind": "interrupted", "text": "已中断回复"})
+        self._turn_end(err=True)
 
     # ---- 事件层 ----
     def _check_peer_lines(self):
@@ -827,6 +839,7 @@ class HarnessSession:
                 if self.alive:
                     self.busy = True
                     self.busy_since = int(time.time() * 1000)
+                    self._turn_start()
                 self.emit({"kind": "peer",
                            "name": nm.group(1) if nm else "其他会话",
                            "text": ((body.group(1) if body else t).strip())[:8000]})
@@ -905,6 +918,7 @@ class HarnessSession:
                     if self._init_n > 1 and self.alive and not self.busy:
                         self.busy = True
                         self.busy_since = int(time.time() * 1000)
+                        self._turn_start()
                 # v2.35（P0-1 兜底）：主链 assistant 事件到达而 busy 仍 False =
                 # 一条我们没观察到起点的回合正在跑（init 丢失/旧版 CLI 无续
                 # init）——同样补置。子代理事件（带 parent_tool_use_id）不算：
@@ -913,6 +927,7 @@ class HarnessSession:
                         and self.alive and not self.busy:
                     self.busy = True
                     self.busy_since = int(time.time() * 1000)
+                    self._turn_start()
                 if typ == "result":
                     self.busy = False
                     self.last_result = o
@@ -960,6 +975,7 @@ class HarnessSession:
                         self._audit_settle("result")
                     except Exception:
                         pass
+                    self._turn_end()
         except Exception:
             pass
         finally:
@@ -982,6 +998,7 @@ class HarnessSession:
                         self._audit_settle("exit")
                     except Exception:
                         pass
+                    self._turn_end(err=True)
                 self.emit({"kind": "exit", "text": "会话进程已结束（发送消息将自动恢复）"})
 
     def _drain_stderr(self):
@@ -1049,73 +1066,65 @@ class HarnessSession:
                 a["done"] = True
             self.ask = None
 
+    # ---- v3.0 回合边界 ----
+    # turn 的显式化：此前回合边界靠 data.type=='result' 隐式判定（前端
+    # _hgTurnEnd / 后端 busy 旗各自补），是「事件不完整导致的补丁」典型。
+    # 现在起跑（send 占位/CLI 自发回合/peer 续跑）与收尾（result/中断/退出）
+    # 都发 turn_* 事件；信封 turn 字段随行。前端本期忽略（未知类型静默跳过），
+    # reducer 已消费。
+    def _turn_start(self):
+        if self._turn_id:
+            return
+        self._turn_id = new_turn_id()
+        self.emit({"kind": "turn_started"})
+
+    def _turn_end(self, err=False):
+        if not self._turn_id:
+            return
+        self.emit({"kind": "turn_error" if err else "turn_complete",
+                   "text": "回合异常收尾" if err else ""})
+        self._turn_id = None
+
     def emit(self, item):
-        self._seq += 1
-        item = dict(item)
-        item["seq"] = self._seq
-        item["ts"] = int(time.time() * 1000)
-        with self.events_lock:
-            self.events.append(item)
-            if len(self.events) > _EVENTS_MAX:
-                del self.events[:len(self.events) - _EVENTS_MAX]
-            # v2.25：识图完成即落字段（见 __init__ vision_done 注释）——窗口
-            # 滑动不再影响；brief 此刻回扫必然扫得到（assistant 刚发生）
-            # v2.3.2 修真根因：CLI 事件统一包成 kind='event'（result 在 data.type
-            # 里），旧判断只认裸 kind=='result'——从事件结构重构起永不匹配，
-            # last_done 恒 0、「已返回」toast 从未弹过（用户实锤）。
-            _d = item.get("data") if isinstance(item.get("data"), dict) else {}
-            _is_result = (item.get("kind") == "result"
-                          or (item.get("kind") == "event" and _d.get("type") == "result"))
-            if _is_result and getattr(self, "is_vision", False):
-                brief = ""
-                for e in reversed(self.events):
-                    # 同上：assistant 也是 kind='event' 包装（text 块在
-                    # data.message.content 里），旧裸 kind 判断同样扫不到
-                    txt = e.get("text")
-                    if not txt and e.get("kind") == "event":
-                        _c = ((e.get("data") or {}).get("message") or {}).get("content")
-                        if isinstance(_c, list):
-                            txt = "\n".join(b.get("text", "") for b in _c
-                                            if isinstance(b, dict) and b.get("type") == "text")
-                    if (e.get("kind") == "assistant" or txt) and (txt or "").strip():
-                        brief = (txt or "").strip()[:120]
-                        break
-                self.vision_done = {"ts": item.get("ts") or 0, "brief": brief}
-        with self.clients_lock:
-            dead = []
-            for q in self.clients:
-                try:
-                    q.put_nowait(item)
-                except Exception:
-                    try:
-                        q.get_nowait()
-                        q.put_nowait(item)
-                    except Exception:
-                        dead.append(q)
-            for q in dead:
-                try:
-                    self.clients.remove(q)
-                except Exception:
-                    pass
+        """事件唯一出口：截断→锁内盖章→落 store→广播（对照 ZCode「先落
+        eventStore 再广播 eventSinks」）。seq 分配在 store 锁内——修 v2.x
+        reader/HTTP/peer 轮询并发 emit 的同号乱序竞态。"""
+        item = self.log.emit(item, turn=self._turn_id)
+        # v2.25：识图完成即落字段（见 __init__ vision_done 注释）——窗口
+        # 滑动不再影响；brief 此刻回扫必然扫得到（assistant 刚发生）
+        # v2.3.2 修真根因：CLI 事件统一包成 kind='event'（result 在 data.type
+        # 里），旧判断只认裸 kind=='result'——从事件结构重构起永不匹配，
+        # last_done 恒 0、「已返回」toast 从未弹过（用户实锤）。
+        _d = item.get("data") if isinstance(item.get("data"), dict) else {}
+        _is_result = (item.get("kind") == "result"
+                      or (item.get("kind") == "event" and _d.get("type") == "result"))
+        if _is_result and getattr(self, "is_vision", False):
+            brief = ""
+            for e in reversed(self.log.store.snapshot()):
+                # 同上：assistant 也是 kind='event' 包装（text 块在
+                # data.message.content 里），旧裸 kind 判断同样扫不到
+                txt = e.get("text")
+                if not txt and e.get("kind") == "event":
+                    _c = ((e.get("data") or {}).get("message") or {}).get("content")
+                    if isinstance(_c, list):
+                        txt = "\n".join(b.get("text", "") for b in _c
+                                        if isinstance(b, dict) and b.get("type") == "text")
+                if (e.get("kind") == "assistant" or txt) and (txt or "").strip():
+                    brief = (txt or "").strip()[:120]
+                    break
+            self.vision_done = {"ts": item.get("ts") or 0, "brief": brief}
+        return item
 
-    # ---- SSE ----
+    # ---- SSE（v3.0：兼容薄层；stream 路由直连 log.subscribe）----
     def add_client(self):
-        q = Queue(maxsize=_QUEUE_MAX)
-        with self.clients_lock:
-            self.clients.append(q)
-        return q
+        sub, _, _ = self.log.subscribe()
+        return sub
 
-    def remove_client(self, q):
-        with self.clients_lock:
-            try:
-                self.clients.remove(q)
-            except Exception:
-                pass
+    def remove_client(self, sub):
+        self.log.unsubscribe(sub)
 
     def get_events_after(self, after_seq=0, limit=500):
-        with self.events_lock:
-            res = [it for it in self.events if it["seq"] > after_seq]
-        return res[-limit:] if limit else res
+        return self.log.events_after(after_seq, limit=limit)
 
 # ---- from claude_harness.py:2842 (_session_ctx_used) ----
 

@@ -32,7 +32,10 @@ def _get_or_create(sid):
         s.created = m.get("created") or s.created
         s.last_active = m.get("last_active") or s.last_active
         s.live_model = m.get("live_model") or None   # v2.27.21：实报模型跨重启保留
-        s._seq = int(m.get("seq") or 0)              # v2.35.2：事件序号续号（见 to_meta 注释）
+        # v2.35.2：事件序号续号；v3.0 连代际一起续——GC 重建不是日志重写，
+        # epoch 不变，前端旧 base 仍可 resume；无 epoch 的旧 meta（升级前
+        # 落盘）→ restore 内部换新代，前端旧水位作废走一次 snapshot 重建
+        s.log.restore(m.get("epoch"), m.get("seq"))
         _sessions[sid] = s
         return s
 
