@@ -3294,6 +3294,87 @@ html {
 /* v2.36：任务文本 flex:1——时间戳贴右缘对齐成列（原随文本长度漂移） */
 .hg-dyn-tt { flex: 1; min-width: 0; color: var(--fg); word-break: break-all; }
 
+/* ---- v3.1 进程面板（B 区 ZCode 式重做）：✓/→/○ 三态分组清单 ----
+   视觉对照 ZCode 截图：状态图标列 16px + 悬挂缩进文本（两行内省略）；
+   分组头可折叠（‹ 旋钮），已完成=绿✓灰文、进行中=蓝→亮文、待处理=灰○ */
+.hg-proc-row { display: flex; gap: 7px; align-items: baseline; font-size: var(--fs-cap);
+  line-height: 1.5; padding: 2px 5px 2px 7px; border-radius: 5px; cursor: pointer; }
+.hg-proc-row:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.hg-proc-ico { flex: none; width: 14px; text-align: center; font-weight: 600; }
+.hg-proc-tt { flex: 1; min-width: 0; color: var(--fg);
+  overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical; word-break: break-word; }
+.hg-proc-ts { flex: none; margin-left: 4px; font-size: var(--fs-2xs);
+  color: var(--muted); font-family: var(--font-mono); align-self: center; }
+.hg-proc-row.completed .hg-proc-ico { color: var(--h-ok); }
+.hg-proc-row.completed .hg-proc-tt { color: var(--muted); }
+.hg-proc-row.in_progress .hg-proc-ico { color: var(--h-run); font-weight: 700; }
+.hg-proc-row.in_progress .hg-proc-tt { color: var(--fg-bright, var(--fg)); }
+.hg-proc-row.pending .hg-proc-ico { color: var(--muted); }
+.hg-proc-row.pending .hg-proc-tt { color: var(--muted); }
+.hg-proc-grp { display: flex; align-items: center; gap: 5px; width: 100%;
+  border: none; background: transparent; color: var(--muted); font-family: var(--font-ui);
+  font-size: var(--fs-2xs); padding: 4px 5px 2px 7px; cursor: pointer; text-align: left; }
+.hg-proc-grp:hover { color: var(--fg); }
+.hg-proc-grp .h-chev { display: inline-block; transition: transform .15s;
+  font-size: 10px; transform: rotate(-90deg); }
+.hg-proc-grp .h-chev.open { transform: rotate(0deg); }
+.hg-proc-grp-name { font-weight: 600; letter-spacing: .02em; }
+.hg-proc-turn { display: flex; align-items: center; gap: 6px; margin: 1px 5px 3px;
+  font-size: var(--fs-2xs); color: var(--muted); font-family: var(--font-mono); }
+.hg-proc-live { width: 6px; height: 6px; border-radius: 50%; background: var(--h-run);
+  animation: hg-proc-pulse 1.2s ease-in-out infinite; }
+@keyframes hg-proc-pulse { 50% { opacity: .35; } }
+
+/* ---- v3.1 ZCode 式回合摘要行（「🔍 查阅 · 1 搜索 · 1 文件」）+ 流底 spinner ---- */
+.h-turnsum { display: flex; justify-content: center; padding: 4px 0 2px; }
+.h-turnsum-pill { font-size: var(--fs-2xs); color: var(--muted);
+  border: 1px solid var(--border); border-radius: 999px; padding: 2px 12px;
+  background: color-mix(in srgb, var(--bg-card) 60%, transparent);
+  user-select: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 90%; }
+.hg-spin-row { display: flex; align-items: center; gap: 8px; justify-content: center;
+  padding: 10px 0 6px; color: var(--muted); font-size: var(--fs-xs); }
+.hg-spin { width: 12px; height: 12px; border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--muted) 35%, transparent);
+  border-top-color: var(--accent); animation: hg-spin-rot .8s linear infinite; }
+@keyframes hg-spin-rot { to { transform: rotate(360deg); } }
+
+/* ---- v3.1 工具行徽标：文件类型色块 + diff 增删计数 + 失败标记 ---- */
+.hg-file-badge { flex: none; display: inline-block; min-width: 26px; text-align: center;
+  font-size: 9px; font-weight: 700; letter-spacing: .04em; line-height: 14px;
+  border-radius: 3px; padding: 0 3px; margin: 0 2px; vertical-align: middle;
+  background: color-mix(in srgb, var(--muted) 22%, transparent); color: var(--fg);
+  font-family: var(--font-mono); text-transform: uppercase; }
+.hg-file-badge.ext-js { background: rgba(241, 224, 90, .18); color: #f1e05a; }
+.hg-file-badge.ext-ts { background: rgba(49, 120, 198, .22); color: #3178c6; }
+.hg-file-badge.ext-py { background: rgba(53, 114, 165, .22); color: #3572a5; }
+.hg-file-badge.ext-md { background: rgba(8, 63, 167, .25); color: #083fa1; filter: invert(.35) hue-rotate(180deg); }
+.hg-file-badge.ext-json { background: rgba(223, 78, 43, .18); color: #df4e2f; }
+.hg-file-badge.ext-css { background: rgba(86, 61, 124, .28); color: #563d7c; filter: brightness(1.6); }
+.hg-file-badge.ext-html { background: rgba(227, 76, 38, .18); color: #e34c26; }
+.hg-file-badge.ext-yml { background: rgba(203, 118, 48, .2); color: #cb171e; filter: hue-rotate(-25deg); }
+.hg-file-badge.ext-c { background: rgba(85, 85, 85, .35); color: #aaa; }
+.hg-file-badge.ext-sh { background: rgba(137, 179, 79, .18); color: #89e051; }
+.hg-file-badge.ext-go { background: rgba(0, 173, 216, .18); color: #00add8; }
+.hg-file-badge.ext-rs { background: rgba(222, 136, 26, .18); color: #de8c26; }
+.hg-file-badge.ext-java { background: rgba(176, 114, 25, .22); color: #b07219; }
+.hg-diffstat { flex: none; font-family: var(--font-mono); font-size: 10px;
+  margin: 0 2px; vertical-align: middle; }
+.hg-diffstat .add { color: var(--h-ok); font-style: normal; font-weight: 600; }
+.hg-diffstat .del { color: var(--h-err); font-style: normal; font-weight: 600; }
+.h-tool-failmark { flex: none; font-size: var(--fs-2xs); color: var(--h-err);
+  border-bottom: 1px dotted var(--h-err); padding-bottom: 1px; margin-left: 4px; }
+
+/* ---- v3.1 DOM 节省（对照 ZCode）：离屏内容跳过渲染 ----
+   content-visibility:auto 让滚出视口的行级块跳过布局/绘制，占位高度由
+   contain-intrinsic-size 兜底（滚动条稳定）；贴底流式行天然在视口内不受
+   影响。覆盖：气泡/工具行/思考段/子代理段/回传气泡。 */
+.h-msg, .h-tool, .h-think-seg, .h-subblock, .h-peer {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 72px;
+}
+
 /* ---- C 子代理实况（E 工具行共用 adot/at/desc/el 内层类，状态色规则两处同写；
    完成=灰点灰耗时——IDE 式「过去了就安静」，运行/失败/中断各自着色） ---- */
 .hg-dyn-agent { display: flex; align-items: center; gap: 6px; font-size: var(--fs-cap);

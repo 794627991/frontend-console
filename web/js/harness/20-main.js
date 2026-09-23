@@ -931,19 +931,35 @@ function buildClaudeHarnessTab(opts = {}) {
     const key = _hgQueueKey(), arr = _HG.queues[key] || [];
     const i = +b.dataset.i;
     if (i >= arr.length) return;
+    // v3.1（#10）：队列条目操作全部走服务端账本（本地删只是乐观 UI，
+    // input_discarded/input_promoted 事件会按 id 对账；无 id=POST 未返回
+    // 的窄窗口，本地直接删，后端账本里它还在——事件晚到再对齐）
+    const _qact = (act, extra) => {
+      const it = arr[i];
+      if (it && it.id) {
+        fetch('/api/harness/queue_act', { method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(Object.assign({ sid: _HG.sid, id: it.id, act }, extra || {}))
+        }).catch(() => {});
+      }
+    };
     if (b.dataset.qact === 'del') {
       arr.splice(i, 1); renderQueue();
+      _qact('del');
     } else if (b.dataset.qact === 'edit') {
       const it = arr.splice(i, 1)[0]; renderQueue();
+      _qact('del');
       _hgInput.value = it.text || '';
       renderOverlay(_hgInput.value);
       if ((it.images || []).length || (it.files || []).length)
         showBanner('附件不随草稿返回，请重新添加', 3000, true);
       _hgInput.focus();
     } else if (b.dataset.qact === 'now') {
+      // v3.1：立即发送=提到队首+中断当前回合（后端回合终结泵自然先发它）
       const it = arr.splice(i, 1)[0];
       arr.unshift(it); renderQueue();
-      stopGen();               // interrupted → setBusy(false) → 泵先发它
+      _qact('now');
+      stopGen();               // interrupted → 后端 _turn_end → 800ms 泵发队首
     }
   });
   // ==================== v2.32 右侧面板会话动态（六分区监视器）====================
@@ -985,6 +1001,16 @@ function buildClaudeHarnessTab(opts = {}) {
   if (dynEl) dynEl.onclick = (e) => {
     const cp = e.target.closest('[data-hg-copy]');
     if (cp) { e.stopPropagation(); _hgCopyText(cp.dataset.hgCopy); return; }
+    // v3.1：进程面板分组头折叠开关（已完成/待处理两组，状态存 _HG.dyn）
+    const pt = e.target.closest('[data-hg-proc-tgl]');
+    if (pt) {
+      e.stopPropagation();
+      const d = _hgDyn();
+      d[pt.dataset.hgProcTgl === 'done' ? 'procDoneOpen' : 'procPendOpen']
+        = !(d[pt.dataset.hgProcTgl === 'done' ? 'procDoneOpen' : 'procPendOpen']);
+      renderSideStatus();
+      return;
+    }
     // v2.38：详情卡「回放该子代理过程」→ 回放窗格（转写数据源）
     const rb = e.target.closest('[data-hg-replay]');
     if (rb) {

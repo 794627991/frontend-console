@@ -34,6 +34,7 @@
     _HG.histStale = false;   // v2.43.2（R2-缺口A）：降级标记随切会话重置（恢复时按快照 histFp 重新判定）
     _HG.todos = null; _HG.agents = null;     // v2.30：会话动态随会话切换重置（todos 由回放重建）
     _HG.dyn = null;                          // v2.32 面板派生态不跨会话（活动流/回合史/打标全重建）
+    _HG.proj = null;                         // v3.1：前端投影不跨会话（/events 种子重建）
     _subReset();                             // v2.33：子代理实时窗格不跨会话
     _HG.think = null; _HG.noScroll = false; _HG.openState = null;   // v2.16：重建态不跨会话残留
     _HG.sid = sid; _HG.seq = 0; _HG.epoch = null; _HG.alive = false;
@@ -58,6 +59,7 @@
     renderAtts();
     _HG.echoFast = null;               // v2.20：切会话清乐观渲染去重窗口（防串会话吞 echo）
     _hgCtxRestore(sid);                // 切回旧会话：恢复该会话上次的上下文用量（result 不重放）
+    _hgQueueSeed(sid);                 // v3.1：durable 队列从服务端账本初始化（#10）
     if (!sid) {
       _hgFlow.innerHTML = '';
       showWelcome();
@@ -69,6 +71,12 @@
     }
     const c = _HG.cache[sid];
     if (c) {
+      // v3.1：keep-warm 命中——取消该快照的延迟销毁（saveCache 排程的 30s
+      // 定时器），热快照继续作为 LRU 一员存活
+      if (_HG.cacheWarm && _HG.cacheWarm[sid]) {
+        clearTimeout(_HG.cacheWarm[sid]);
+        delete _HG.cacheWarm[sid];
+      }
       _hgFlow.innerHTML = c.html; _HG.seq = c.seq;
       _HG.epoch = c.epoch || null;     // v3.0：代际水位随快照存取（与 seq 同进退）
       _HG.echoFast = c.echoFast || null;   // v2.28.13：去重窗口随快照恢复（防重放双画）
@@ -265,7 +273,8 @@
     }
     queueEl.innerHTML = list.map((it, i) => {
       let t = String(it.text || '').replace(/\s+/g, ' ').trim();
-      const nAt = (it.images || []).length + (it.files || []).length;
+      // v3.1：事件路径入列的条目只有 att 附件计数（POST 乐观条目有完整数组）
+      const nAt = ((it.images || []).length + (it.files || []).length) || (it.att || 0);
       if (nAt) t = (t ? t + ' ' : '') + '📎×' + nAt;
       if (t.length > 60) t = t.slice(0, 59) + '…';
       return `<div class="hg-q-item" data-i="${i}" title="${esc(it.text || '')}">` +
@@ -278,34 +287,44 @@
     }).join('');
   }
   function queuePush(it) {
+    // v3.1（#10）：排队输入升级为服务端 durable 账本——POST /queue 入队
+    //（跨设备/跨重启可见，回合终结由后端自动泵真发）。id 客户端预生成并
+    // 随 POST 提交（服务端直接采用）——SSE input_admitted 事件常先于 POST
+    // 响应到达，同 id 去重是防双画的锚点；本地数组只是渲染缓存
+    if (!it.id) it.id = 'q' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
     const key = _hgQueueKey();
-    (_HG.queues[key] = _HG.queues[key] || []).push(it);
+    const arr = _HG.queues[key] = _HG.queues[key] || [];
+    arr.push(it);
     renderQueue();
     showBanner('已排队：当前回复结束后自动发送', 2200);
+    fetch('/api/harness/queue', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sid: _HG.sid, id: it.id, text: it.text || '',
+                             images: it.images || [], files: it.files || [] })
+    }).then(r => r.json()).then(j => {
+      if (j && j.ok) {
+        renderQueue();
+      } else {
+        // 入队失败（会话不在等）：回滚本地条目
+        const cur = _HG.queues[key] || [];
+        const i = cur.indexOf(it);
+        if (i >= 0) cur.splice(i, 1);
+        renderQueue();
+        showBanner('排队失败：' + ((j && j.err) || '未知错误'), 2600, true);
+      }
+    }).catch(() => {
+      const cur = _HG.queues[key] || [];
+      const i = cur.indexOf(it);
+      if (i >= 0) cur.splice(i, 1);
+      renderQueue();
+      showBanner('排队失败：网络错误', 2400, true);
+    });
   }
   function queuePump() {
-    // setBusy(false) 的尾巴：600ms 去抖后把队首发出去（dispatch 成功 →
-    // setBusy(true) → 本轮完 → 再次 setBusy(false) → 泵下一条，链式排空）
-    clearTimeout(_HG.qTimer);
-    _HG.qTimer = setTimeout(async () => {
-      if (_HG.busy || !_HG.sid) { renderQueue(); return; }
-      const key = _hgQueueKey(), list = _HG.queues[key] || [];
-      if (!list.length) { renderQueue(); return; }
-      const it = list.shift();
-      _HG.queues[key] = list;
-      renderQueue();
-      const ok = await dispatch(it.text || '', it.images || [], it.files || [], false);
-      // v2.35.1（F6）：后端「正在回复」拒收（前端误判空闲的窄窗口竞态，如
-      // 切回运行中会话的 events 回填前）——条目回队首不丢；dispatch 已按
-      // 后端真相同步置 busy，泵链靠 fire 时的 busy 检查自然挂起，真回合
-      // 结束（setBusy(false)）再泵。其余失败维持原行为（banner 已示因）
-      if (!ok && /正在回复/.test(dispatch.rej || '')) {
-        const cur = _HG.queues[key] || [];
-        cur.unshift(it);
-        _HG.queues[key] = cur;
-        renderQueue();
-      }
-    }, 600);
+    // v3.1（#10）：泵已上移服务端（回合终结 _queue_pump 真发 + input_promoted
+    // 事件通知）——前端只负责把队列条目按服务端事件同步渲染。此函数保留
+    // 是 setBusy(false) 的既有调用点，职责退化为纯重渲
+    renderQueue();
   }
   function qEndDrag(commit) {
     if (!qDrag) return;
@@ -322,6 +341,14 @@
       to = Math.max(0, Math.min(list.length, to));
       list.splice(to, 0, it);
       _HG.queues[key] = list;
+      // v3.1（#10）：新顺序上报服务端账本（后端泵按账本顺序出队；无 id
+      // 的乐观条目——POST 未返回——由后续事件对齐，这里只发已有 id 的）
+      const ids = list.map(x => x.id).filter(Boolean);
+      if (ids.length)
+        fetch('/api/harness/queue_act', { method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sid: _HG.sid, act: 'order', ids })
+        }).catch(() => {});
     }
     renderQueue();
   }

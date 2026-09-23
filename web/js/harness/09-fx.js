@@ -154,6 +154,7 @@
     _hgSendBtn.setAttribute('aria-label', b ? '停止生成' : '发送');
     _hgStateEl.textContent = b ? '' : (_HG.alive ? '就绪' : '');
     _hgInputState();   // v2.35：输入框提示按运行态/子代理/协作等待派生（P0-1②③；空闲文案同 v2.20）
+    _hgSpinShow(b);    // v3.1：消息流底 ZCode 式 spinner 行（正在执行…）
     if (b) actStart(sinceMs);
     else { actStop(); queuePump(); _hgCtxPoll(); }
     _hgDynDirty();   // v2.32 面板：状态区运行态徽章/计时跟随

@@ -155,6 +155,8 @@ const _HG = {
   seq: 0,
   epoch: null,          // v3.0：日志代际水位（/rewind 换代即失效，SSE/轮询双通道校验）
   lastFrameAt: 0,       // v3.0：最近一帧（含 ka 心跳）到达时刻——20s 无帧看门狗强制重连
+  proj: null,           // v3.1：前端事件投影（23-reducer 维护，进程面板/回合摘要的状态源）
+  cacheWarm: {},        // v3.1：keep-warm 延迟销毁定时器（sid -> timer，切回即取消）
   cwd: null,            // v2.7：项目目录（新会话 cwd；null=默认 ~）
   perm: 'auto',         // v2.20：权限模式 auto|confirm（新会话 connect 带上）
   thinkLv: null,        // v2.20：思考等级 null|low|medium|high|max（勿与 think 思考段混淆）

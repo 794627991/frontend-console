@@ -276,7 +276,7 @@
     }
     seg.innerHTML =
       `<button class="h-think-seg-head"><span class="h-chev">▸</span>` +
-      `<span class="h-think-seg-name">第 ${n} 段思考</span>` +
+      `<span class="h-think-seg-name">思考</span>` +
       `<span class="h-think-seg-t" data-hg-seg-t data-hg-think-t>0s</span></button>` +
       `<div class="h-think-seg-body"></div>` +
       // v2.21：段尾右下角收起钮——长思考读到尾顺手收，不用滚回顶部点头
@@ -351,7 +351,8 @@
       // 历史重建：无真实起始时间，不编造时长
       if (te) te.textContent = hist ? '' : te.textContent;
     } else {
-      if (te) te.textContent = _hgFmtDur((Date.now() - t0) / 1000);
+      // v3.1：定稿文案对齐 ZCode（「思考 · 持续了 7 秒」）——计数态 Ns → 持续了 Ns
+      if (te) te.textContent = '持续了 ' + _hgFmtDur((Date.now() - t0) / 1000);
       // 仅当用户没碰过且在底部跟读时自动收段（正文已在段里，收起只留段头）
       if (seg.dataset.userToggled !== '1' && isNearBottom()) seg.classList.remove('open');
     }

@@ -334,24 +334,61 @@
       }
     } else rEl.textContent = '…';
   }
-  function _dynTodos() {                 // B 任务进度：pill + 进度条 + 完整清单 + 首见时刻
+  function _dynTodos() {                 // B 进程（v3.1 ZCode 式重做）：分组清单——进行中 → / 待处理 ○ / 已完成 ✓，两组可折叠
     const sec = _sec('todos');
     const todos = _HG.todos || [];
-    sec.hidden = !todos.length;
-    if (!todos.length) return;
-    const done = todos.filter(t => t.status === 'completed').length;
-    sec.querySelector('[data-hg-d-tdone]').textContent = done + '/' + todos.length;
-    sec.querySelector('[data-hg-d-tbar]').style.width = (done / todos.length * 100) + '%';
-    const seen = (_HG.dyn && _HG.dyn.todoSeen) || {};
-    sec.querySelector('[data-hg-d-tlist]').innerHTML = todos.map(t => {
-      const st = t.status || 'pending';
-      const txt = (st === 'in_progress' && t.activeForm) ? t.activeForm : t.content;
-      const ts = seen[t.content || ''];
-      return `<div class="hg-dyn-todo ${st}" data-hg-todo title="${esc(t.content || '')}">` +
-        `<span class="hg-dyn-ck">${st === 'completed' ? '✓' : st === 'in_progress' ? '◐' : '○'}</span>` +
-        `<span class="hg-dyn-tt">${esc(txt || '')}</span>` +
-        (ts ? `<span class="hg-dyn-ts">${_hhmm(ts)}</span>` : '') + '</div>';
-    }).join('');
+    // v3.1：数据面扩容——todo 清单缺席但投影有活（回合计数/子代理）也出区
+    //（「进程」的语义从 TodoWrite 清单扩为回合过程总览）
+    const P = _HG.proj;
+    const tt = (P && (P.status === 'running' ? P.turnTools : P.lastTurnTools)) || null;
+    sec.hidden = !todos.length && !tt;
+    if (sec.hidden) return;
+    const d = _hgDyn();
+    let html = '';
+    // ---- 本回合活动计数行（投影 turnTools：N 工具 · N 搜索 · N 文件 …）----
+    if (tt && tt.calls) {
+      const bits = [tt.calls + ' 工具'];
+      if (tt.searches) bits.push(tt.searches + ' 搜索');
+      if (tt.reads) bits.push(tt.reads + ' 文件');
+      if (tt.edits) bits.push(tt.edits + ' 编辑');
+      if (tt.agents) bits.push(tt.agents + ' 子代理');
+      html += '<div class="hg-proc-turn" title="'
+        + (P.status === 'running' ? '本回合实时计数' : '上一回合计数') + '">'
+        + (P.status === 'running' ? '<span class="hg-proc-live"></span>' : '')
+        + esc(bits.join(' · ')) + '</div>';
+    }
+    if (todos.length) {
+      const done = todos.filter(t => t.status === 'completed');
+      const prog = todos.filter(t => t.status === 'in_progress');
+      const pend = todos.filter(t => t.status !== 'completed' && t.status !== 'in_progress');
+      const seen = d.todoSeen || {};
+      // 折叠态：默认「已完成」收（有未完项时）、「待处理」开；点分组头切换
+      if (d.procDoneOpen === undefined)
+        d.procDoneOpen = !(pend.length + prog.length);
+      if (d.procPendOpen === undefined) d.procPendOpen = true;
+      const row = (t, st) => {
+        const txt = (st === 'in_progress' && t.activeForm) ? t.activeForm : t.content;
+        const ts = seen[t.content || ''];
+        return `<div class="hg-proc-row ${st}" data-hg-todo title="${esc(t.content || '')}">` +
+          `<span class="hg-proc-ico">${st === 'completed' ? '✓' : st === 'in_progress' ? '→' : '○'}</span>` +
+          `<span class="hg-proc-tt">${esc(txt || '')}</span>` +
+          (ts ? `<span class="hg-proc-ts">${_hhmm(ts)}</span>` : '') + '</div>';
+      };
+      if (prog.length) html += prog.map(t => row(t, 'in_progress')).join('');
+      if (pend.length) html +=
+        `<button class="hg-proc-grp" data-hg-proc-tgl="pend"><span class="h-chev${d.procPendOpen ? ' open' : ''}">‹</span>` +
+        `<span class="hg-proc-grp-name">待处理 ${pend.length} 项</span></button>` +
+        (d.procPendOpen ? pend.map(t => row(t, 'pending')).join('') : '');
+      if (done.length) html +=
+        `<button class="hg-proc-grp" data-hg-proc-tgl="done"><span class="h-chev${d.procDoneOpen ? ' open' : ''}">‹</span>` +
+        `<span class="hg-proc-grp-name">已完成 ${done.length} 项</span></button>` +
+        (d.procDoneOpen ? done.map(t => row(t, 'completed')).join('') : '');
+    }
+    sec.querySelector('[data-hg-d-tdone]').textContent =
+      todos.length ? todos.filter(t => t.status === 'completed').length + '/' + todos.length : '';
+    sec.querySelector('[data-hg-d-tbar]').style.width =
+      todos.length ? (todos.filter(t => t.status === 'completed').length / todos.length * 100) + '%' : '0%';
+    sec.querySelector('[data-hg-d-tlist]').innerHTML = html;
   }
   function _dynAgents() {                // C 子代理实况：运行中/60s 内完成/回放历史，点击展开
     const sec = _sec('agents');

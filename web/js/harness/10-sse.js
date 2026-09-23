@@ -466,6 +466,7 @@
       _hgPeerVerifyPending();              // v2.37R6（兜底复核②）：pending 线追溯核实
       _hgTurnEnd(o.subtype === 'success' ? 'ok' : 'error',
                  typeof o.duration_ms === 'number' ? o.duration_ms : 0);
+      _hgTurnSumRow();                     // v3.1：ZCode 式回合摘要行（查阅 · N 搜索 · N 文件）
       grpFinalize(true);                   // v2.18：本轮组定稿——用户没手动
                                           // 操作过且在底部跟读时自动收起（想看再点开，
                                           // 各抽屉独立开合）
@@ -495,6 +496,7 @@
     _HG.subRows = {}; _HG.subBlk = {}; _HG.subTail = {}; _HG.subTailSeg = {};
     _HG.histAll = null; _HG.histStart = 0; _HG.histLive = false; _HG.histStale = false;
     _HG.todos = null; _HG.agents = null; _HG.dyn = null;
+    _HG.proj = null;   // v3.1：投影随清场作废（snapshot 重放将重建）
     _subReset();
     _HG.think = null; _HG.noScroll = false; _HG.openState = null;
     _HG.echoFast = null; _HG.seq = 0;
@@ -576,6 +578,9 @@
         if (it.seq <= _HG.seq) return;
         _HG.seq = it.seq;
       }
+      // v3.1：信封先过前端投影（turn_*/subagent_*/input_* 与工具计数——
+      // 新进程面板/回合摘要行的单一状态源；legacy 分派不受影响）
+      try { _hgProjEvent(it); } catch(_) {}
       // v2.5：先 setBusy（弹活动指示条，改变 flow 高度）再渲染消息——
       // 渲染内部 scrollBottom 含 rAF 二次兜底，否则指示条挤出消息导致刚发的消息不在底
       if (it.kind === 'user_echo') {
@@ -652,8 +657,18 @@
                                    : (_HG.histAll ? _histPrefixFp(_HG.histAll, _HG.histStart | 0) : null) };
     // v2.25：快照 LRU 上限 10——大会话 innerHTML 每份可达数十 MB，无上限
     // 来回切会话会攒爆内存（审计 §三.8）
+    // v3.1：keep-warm（对照 ZCode 延迟销毁）——超限快照不再即时 delete，
+    // 保温 30s 后销毁；期间切回（A→B→A 快切）直接命中热快照零重建，
+    // 切回动作本身会取消销毁定时器。稳态内存不变（30s 后照删）。
     const keys = Object.keys(_HG.cache);
-    for (const k of keys.slice(0, Math.max(0, keys.length - 10))) delete _HG.cache[k];
+    const warm = _HG.cacheWarm || (_HG.cacheWarm = {});
+    for (const k of keys.slice(0, Math.max(0, keys.length - 10))) {
+      if (warm[k]) continue;               // 已在保温期
+      warm[k] = setTimeout(() => {
+        delete warm[k];
+        delete _HG.cache[k];
+      }, 30000);
+    }
   }
   function _histPrefixFp(lines, n) {
     if (!Array.isArray(lines) || lines.length < n) return 'short';
@@ -675,6 +690,7 @@
       .then(j => {
         if (!j.ok || _HG.sid !== sid) return;
         if (j.epoch && _HG.epoch && j.epoch !== _HG.epoch) { _hgSseRebuild(sid); return; }
+        _hgProjSeed(j);                    // v3.1：投影/队列种子随轮询对齐服务端真相
         setBusy(!!j.busy, j.busy_since);
         if (j.busy) phResume();
       })

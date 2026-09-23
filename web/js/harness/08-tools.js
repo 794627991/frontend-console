@@ -135,8 +135,11 @@
       row = document.createElement('div');
       row.className = 'h-tool';
       const sec = cfg.sec ? cfg.sec(b.input) : '';
+      // v3.1：ZCode 式行内徽标（文件类型色块 + `+N -N` 增删计数）
+      const badges = _hgToolBadges(name, b.input);
       row.innerHTML =
         `<span class="h-tool-name">${_hToolIco(name)} ${esc(label)}</span>` +
+        badges +
         `<span class="h-tool-arg">${esc(cfg.get(b.input) || '')}</span>` +
         (sec ? `<span class="h-tool-sec">${esc(sec)}</span>` : '') +
         `<span class="h-tslots"></span>`;
@@ -153,9 +156,12 @@
       row.style.setProperty('--h-accent', _H_KIND_COLOR[cfg.kind] || 'var(--border)');
       const title = typeof cfg.title === 'function' ? cfg.title(b.input) : (cfg.title || label);
       const v = cfg.get ? cfg.get(b.input) : '';
+      // v3.1：折叠组头同挂徽标（Edit 族的 diff 计数在收起态也要可见）
+      const badges = _hgToolBadges(name, b.input);
       row.innerHTML =
         `<button class="h-tool-head"><span class="h-chev">▸</span>` +
         `<span class="h-tool-name">${_hToolIco(name)} ${esc(title)}</span>` +
+        badges +
         (cfg.badge ? `<span class="h-tool-badge">${esc(cfg.badge)}</span>` : '') +
         `<span class="h-tslots"></span></button><div class="h-tool-coll">${_toolInputBodyHtml(cfg, v)}</div>`;
     }
@@ -240,6 +246,13 @@
         ` <span class="h-tagent-brief" title="${esc(full.slice(0, 400))}">${esc(full.slice(0, 60))}${full.length > 60 ? '…' : ''}</span>`;
     }
     showRow.classList.toggle('err', st === 'error' || st === 'denied');
+    // v3.1：ZCode 式失败标记——行尾红色点状下划线小字（错误=执行失败/拒绝=已拒绝），
+    // one-line 行无状态徽章可挂（成功不亮徽章防噪），失败必须显式可见
+    if (st === 'error' || st === 'denied') {
+      if (!showRow.querySelector('.h-tool-failmark'))
+        showRow.insertAdjacentHTML('beforeend',
+          `<span class="h-tool-failmark">${st === 'denied' ? '已拒绝' : '执行失败'}</span>`);
+    }
     // 结果折叠体（成功默认藏，错误永远显）
     const hideOk = cfg.result === 'hide' || cfg.kind === 'bash' || cfg.kind === 'diff';
     const txt = resultText(tr);
