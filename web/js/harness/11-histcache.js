@@ -171,7 +171,7 @@
     // 主层「进入只读」提示条入口（事件委托绑在 flow click）。失败必须上屏——
     // 静默会让用户以为按钮坏了。快照恢复路径 histAll 为空时先拉再进（v2.25）。
     try {
-      if (!window.HgReadonly) throw new Error('只读模块未加载（harness-readonly.js 缺失）');
+      if (!window.HgReadonly) throw new Error('只读模块未加载（harness/22-readonly.js 缺失）');
       if (!_HG.histAll || !_HG.histAll.length) {
         const sidAt = _HG.sid;
         if (!sidAt || _HG._roFetching) return;
