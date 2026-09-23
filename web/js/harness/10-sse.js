@@ -522,7 +522,7 @@
         _HG.seq = j.seq || 0; _HG.epoch = j.epoch || null; _HG.alive = !!j.alive;
         if (!j.lines.length) showWelcome();
         else _histRender(j.lines, Math.max(0, j.lines.length - _HG.HIST_PAGE));
-        if (j.busy) phResume(); else grpFinalize(true);
+        if (j.busy) phResume(); else grpFinalize(true, { hist: true });   // v3.2R1(P0)：回放尾组不吃时钟
         _hgScrollBottom(true);
         setBusy(!!j.busy, j.busy_since);
         openSSE(sid, _HG.seq);

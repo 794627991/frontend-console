@@ -76,6 +76,9 @@ function _harnessClose(portId) {
     _HG.grp.phTimer = null;
   }
   _HG.grp = null; _HG.activity = null;   // v2.18：组级抽屉（旧 drawer 单例已删）
+  // v3.2R1(P2)：回合秒表随 tab 销毁全收（_turnHeadStop 是闭包私有，inline 同款清理）
+  (_HG.turnTicks || []).forEach(t => { try { clearInterval(t); } catch(_) {} });
+  _HG.turnTicks = [];
   _HG.think = null; _HG.noScroll = false; _HG.openState = null;
   _HG.skills = null; _HG.models = null;   // 技能/模型映射下次进 tab 重新拉
   _hgConn.tab.remove();

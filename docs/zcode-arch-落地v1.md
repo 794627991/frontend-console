@@ -173,3 +173,35 @@ oneclick、目录三态行）+ 五项交互点击（回合头/查阅组头/终�
 + 视觉验收 5/5 PASS（闭合态全景：已工作行+正文+目录 tab）；全量回归
 （eventlog 60 / ledger 17 / roles 155 / 主链冒烟 / state 38 / undef 符号级零新增 /
 架构 0 违规）；版本 2.3.3。
+
+## 六、v3.2 对抗审计循环（三轮全 PASS 收口）
+
+流程：双对抗代理并行（核心渲染/接线目录CSS 两攻击面）→ 修复 → 复审 → 直到双 PASS。
+
+- **R1（双 FAIL）**：1×P0——回放定稿吃当前时钟（4 条路径：transcript 尾组×2、
+  renderAsst 切组、audit 行；「已工作」随墙上时钟增长）；5×P1——diff 折叠区间
+  行号不推进、写命令误判 explore（find -delete/重定向/解释器）、oneclick 输出体
+  点击误收起、「已结束 N」漏计 agentsRpl（与目录内容矛盾）、运行中 collab 目录
+  行开空白实况 tab；另 9×P2（turnTicks 无界增长、_harnessClose 漏收秒表、
+  phResume thinkBox 空崩、fallback diff 无行号、PS/复合命令判定不对称、查阅组
+  开合不持久化、目录重绘不节流+异常静默、rpl 双 banner、目录贴底滚动、
+  CSS 死变量/空规则/新旧规则叠加）。
+- **修复要点**：工时三级事实分级（durMs > endTs−t0 > live 时钟；回放态缺事实
+  显示无数字「已工作」，对照 chat.history.worked）；行号计数器前置消除 TDZ +
+  三个折叠分支照推；explore 写排除补全（对照 ZCode SHELL_REDIRECT_WRITE_RE
+  全集）+ PS 读 cmdlet/复合 git；oneclick 排除输出体；计数与 _subDirRows 同源；
+  collab 运行行跳主 flow 段；秒表摘除+关闭钩子；查阅组/oneclick 开合进
+  hg-open 持久化；目录重绘并入 rAF + console.error；diff 选择器提级显式 padding。
+- **R2（核心 PASS/接线 FAIL）**：11 项全核销，但修复引入 3 新 P2——diff 行号
+  3px 边框补偿被误删（行号列锯齿）、oneclick 劫持 tHead 丢持久化、collab 跳段
+  取段错（漏 tid 直查/取最旧段/缺展开记忆与高亮）。
+- **R3（双 PASS 终审）**：3 项增量修复全部核销（.d-ln 负边距对冲与基线逐字
+  一致；_hgSaveOpen 补入 oneclick 分支；collab 两级定位取 DOM 最晚段 + 三件套
+  对齐 _hgCollabSegFind）；无新增缺陷。
+- **验证**：浏览器结构断言（24h 前回放回合=无数字「已工作」、live 432100ms=
+  「已工作 7 分 12 秒」冻结、python -c 独立行、rpl-only「已结束 1」、oneclick
+  三态交互 allPass）+ 真源码提取 diffHtml 4 分支用例/22 正则用例 node 实测 +
+  全量回归（60/17/155 + 冒烟 + state 38 + undef 符号级零新增 + 架构 0 违规）。
+- **存档接受项**：重定向子句对引号内 ">" 搜索词保守排除（08-tools 注释）、
+  openState 位置键一次性升级漂移（观感）、toolRunPush 预存死代码、
+  duration_ms 字段依赖 CLI 事实（缺省回退安全）。

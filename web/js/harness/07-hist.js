@@ -19,6 +19,7 @@
       d.dataset.hi = String(hi);
       d.dataset.hgLazy = err ? '' : '1';   // 错误行已填（hgLazy 空）；收起丢弃后由 Drop 重置
     }
+    if (((_H_TOOL_CFG[l.text] || {}).kind) === 'bash') d.classList.add('oneclick');
     drawerCount(l.text);
     _tlPlace(d, l.text, l.input || {});   // v3.2：回放同走内联时间线（查阅聚组与实时一致）
     _hgApplyOpen(d, !!l.err);   // 重建期：恢复上次开合；无记录时错误行默认展开
@@ -35,7 +36,7 @@
       renderRenew(l.text);
     }
     else if (l.role === 'audit') {    // v2.34：审计警示卡回放（v2.34.1 与实时同文本，
-      grpFinalize(true);              // 由 audit log 并入；对齐实时分支先定稿上一组，
+      grpFinalize(true, { hist: true });   // 由 audit log 并入；对齐实时分支先定稿上一组（v3.2R1(P0)：回放不吃时钟）
       renderAudit(l.text);            // 否则纯工具收尾回合的补审卡会挂错进前组）
     }
     else if (l.role === 'user') {

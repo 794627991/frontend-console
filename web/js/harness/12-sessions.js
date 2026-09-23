@@ -191,7 +191,7 @@
           // 已落盘部分，无条件定稿会把组关死还漏占位气泡。留活 + 补占位，
           // SSE 续传事件经 grpEnsure 回扫正常接回。
           if (j.busy) phResume();
-          else grpFinalize(true);          // transcript 末尾若挂着未收的组 → 定稿自动收起
+          else grpFinalize(true, { hist: true });   // transcript 末尾若挂着未收的组 → 定稿（v3.2R1(P0)：回放不吃时钟，缺事实落无数字「已工作」）
           _hgScrollBottom(true);              // 切会话回底（不受翻历史保护限制）
           setBusy(!!j.busy, j.busy_since);   // v2.26：计时起点带后端 busy_since（切回来不清零）
         }

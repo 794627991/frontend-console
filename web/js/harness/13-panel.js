@@ -4,9 +4,14 @@
       todoSeen: {}, todoRowId: null, agentsRpl: [] });
   }
   function renderSideStatus() {          // 事件驱动刷新入口（旧名保留：事件流调用点零改动）
-    try { _subDirPaint(); } catch(_) {}  // v3.2：目录 tab 激活时随事件刷新（非激活态内部自早退）
     if (!dynEl || _dynRaf) return;
-    _dynRaf = requestAnimationFrame(() => { _dynRaf = 0; _hgDynRender(); });
+    _dynRaf = requestAnimationFrame(() => {
+      _dynRaf = 0; _hgDynRender();
+      // v3.2R1(P2)：目录重绘并入同一 rAF——原先每个事件同步全量重建目录
+      // innerHTML，事件密集时 mousedown/mouseup 之间行按钮被替换、点击落空；
+      // 异常记 console（不静默吞）
+      try { _subDirPaint(); } catch (e) { console.error('[hg-sub-dir] 目录刷新异常', e); }
+    });
   }
   function _hgDynDirty() { renderSideStatus(); }   // 别名（setBusy/_hgDrawCtxRing 调；function 声明无 TDZ）
   const _ROLE_AGENTS = new Set(['executor', 'coder', 'dev', 'reviewer', 'designer']);
@@ -445,13 +450,16 @@
     const show = running2.concat(finished2, rpl);
     // v3.2：目录入口——区头「⏱ 已结束 N ›」开子代理目录 tab（ZCode 智能体
     // 区同款入口；有任意档案即可进目录——运行中的也列在目录里）
+    // v3.2R1(P1)：计数与目录同源（_subDirRows 合并 live 档案+回放档案——
+    // 只数 _HG.agents 会在 hist 回放会话上显示「已结束 0」而目录列着 N 条）
     const _dirBtn = sec.querySelector('[data-hg-agdir]');
     if (_dirBtn) {
-      const endedN = list.filter(a => a.done).length;
+      let endedN = 0;
+      try { endedN = _subDirRows().ended.length; } catch(_) {}
       _dirBtn.hidden = false;
       _dirBtn.innerHTML = `⏱ 已结束 ${endedN} ›`;
     }
-    sec.hidden = !show.length && !peers.length && !(_dirBtn && list.length);
+    sec.hidden = !show.length && !peers.length && !(_dirBtn && (list.length || rplAll.length));
     if (sec.hidden) return;
     const pill = sec.querySelector('[data-hg-d-agrun]');
     const pendPeers = peers.filter(el => !el.dataset.done);   // v2.41：unknown/stale 已在过滤头排除（R6 判定前移）

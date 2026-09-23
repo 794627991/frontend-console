@@ -75,13 +75,42 @@
       // 回放档案条目（历史 Task 行派生）：rid 定位存档，agentId 开回放 tab
       const a = ((_HG.dyn && _HG.dyn.agentsRpl) || []).find(x => (x.rid || '') === tid);
       if (!a) return;
-      _subReplay('rpl:' + tid, a.type, a.desc, a.agentId || '');
-      if (!a.agentId) showBanner('该历史子代理无 agentId 记录，无法回放', 2600);
+      // v3.2R1(P2)：无 agentId 本地单 toast 即止——_subReplay('') 内部还会
+      // 弹一条，双 banner 2.6s 内相继覆盖
+      if (!a.agentId) { showBanner('该历史子代理无 agentId 记录，无法回放', 2600); return; }
+      _subReplay('rpl:' + tid, a.type, a.desc, a.agentId);
       return;
     }
     const a = (_HG.agents || {})[tid];
     if (!a) return;
-    if (!a.done) { _subOpen(tid, a.type, a.desc); return; }         // 运行中 → live 实况 tab
+    if (!a.done) {
+      // v3.2R1(P1)+R2(N3)：协作代理无实况窗格（独立会话事件流不经本会话，
+      // 开了必空白——10-sse task_started 对 collab 就是 _subDrop 的）——运行中
+      // 点行跳主 flow 协作段：先按段键（data-hg-subblock=tid，wrapper-only
+      // 形态 hgSubr 未写也能命中）直查自身段；miss 再按 hgSubr（续派同名多段
+      // 取 DOM 最晚=最新轮段，对齐 _hgCollabSegFind 语义）；已结束走下方回放
+      if (a.collab) {
+        const aid = a.taskId || a.agentId || '';
+        let seg = _hgFlow.querySelector(`.h-subblock[data-hg-subblock="${CSS.escape(tid)}"]`);
+        if (!seg && aid) {
+          const hits = [..._hgFlow.querySelectorAll('.h-subblock[data-hg-collab]')]
+            .filter(el => { const hd = el.querySelector('.h-subblock-head'); return hd && hd.dataset.hgSubr === aid; });
+          seg = hits[hits.length - 1] || null;   // DOM 最晚 = 最新轮段（v2.58 切段语义）
+        }
+        if (seg) {
+          seg.classList.remove('collapsed');
+          _hgSubSaveOpen(seg, true);               // 展开记忆（与既有段点击口径一致）
+          seg.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          seg.classList.remove('hg-dyn-jump');
+          void seg.offsetWidth;
+          seg.classList.add('hg-dyn-jump');
+          setTimeout(() => seg.classList.remove('hg-dyn-jump'), 1600);
+        } else showBanner('协作代理过程在主消息流段内展示（暂无可跳转的段）', 2600);
+        return;
+      }
+      _subOpen(tid, a.type, a.desc);               // 运行中 → live 实况 tab
+      return;
+    }
     _subReplay(tid, a.type, a.desc, a.taskId || a.agentId || '');   // 已结束 → 回放 tab（collab 分支内部自理）
   }
   function _subReset() {
@@ -265,7 +294,10 @@
     _sub.active = tid;
     _subBodyEl.querySelectorAll('.hg-sub-msgs').forEach(x =>
       x.style.display = x.dataset.tid === tid ? '' : 'none');
-    _subTabsPaint(); _subScroll(tid);
+    _subTabsPaint();
+    // v3.2R1(P2)：目录不贴底滚动——_subScroll 为聊天流贴底设计，目录的主
+    // 内容（正在运行）在顶部，贴底会直接落到已结束长列表尾
+    if (tid !== _SUB_DIR) _subScroll(tid);
     if (tid === _SUB_DIR) _subDirPaint();   // v3.2：目录激活即重绘（数据最新）
   }
   function _subTabsPaint() {

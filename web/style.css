@@ -3655,7 +3655,6 @@ html {
 .h-turn-head:hover { color: var(--fg); background: color-mix(in srgb, var(--accent) 6%, transparent); }
 .h-turn-head .h-chev { font-size: 10px; color: var(--muted); opacity: .8;
   transition: transform .15s; display: inline-block; }
-.h-turn-body:not(.closed) ~ * .h-chev, .h-grp-proc > .h-turn-head .h-chev { }
 .h-turn-label { color: var(--muted); }
 .h-turn-sub { font-size: var(--fs-2xs); color: var(--muted); opacity: .75;
   font-family: var(--font-mono); }
@@ -3675,9 +3674,12 @@ html {
   width: 1px; background: color-mix(in srgb, var(--border) 90%, transparent); }
 .h-tl > .h-tool, .h-tl > .h-tool-res, .h-tl > .h-tl-grp { position: relative; }
 .h-tl:empty { display: none; }
-/* 时间线里的工具行去掉旧抽屉时代的块状底色——内联行更轻 */
+/* 时间线里的工具行去掉旧抽屉时代的块状底色——内联行更轻；
+   v3.2R1：col 类别色左边框与 err 红边显式恢复（原先写成无人消费的
+   --h-accent-l 死变量，等于把类别色/错误边整体抹透明） */
 .h-tl .h-tool { background: transparent; border-color: transparent; padding-left: 0; }
-.h-tl .h-tool.col { --h-accent-l: 2px; }
+.h-tl .h-tool.col { border-left: 2px solid var(--h-accent, var(--accent)); }
+.h-tl .h-tool.err { border-left: 2px solid var(--neon-red, #e06c75); }
 .h-tl .h-tool .h-tool-coll { margin-left: 0; }
 
 /* ---- 查阅聚组：🔍 查阅 · N 搜索 · M 文件（展开=左竖线+子行树） ---- */
@@ -3697,18 +3699,27 @@ html {
   flex-direction: column; gap: 3px; }
 .h-tl-grp.open > .h-tl-grp-body { display: flex; }
 
-/* ---- diff 行号列（截图1 编辑卡：行号 + 绿底新增 + 竖条） ---- */
-.h-tool-coll .d-ctx, .h-tool-coll .d-add, .h-tool-coll .d-del { display: flex; align-items: baseline; }
+/* ---- diff 行号列（截图1 编辑卡：行号 + 绿底新增 + 竖条）----
+   v3.2R1：选择器提为 .h-tool-coll .h-diff .d-*（真实结构是
+   .h-tool-coll > .h-diff > .d-*）并显式覆盖 padding——与旧 .h-diff .d-*
+   规则（0,2,0）同特异性叠加时旧 padding 6px 残留、行号列整体右移 */
+.h-tool-coll .h-diff .d-ctx, .h-tool-coll .h-diff .d-add, .h-tool-coll .h-diff .d-del,
+.h-tool-coll > .d-ctx, .h-tool-coll > .d-add, .h-tool-coll > .d-del {
+  display: flex; align-items: baseline; padding: 1px 8px 1px 0; }
 .h-tool-coll .d-ln { flex: none; width: 34px; text-align: right; margin-right: 8px;
   font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--muted);
   opacity: .6; user-select: none; }
 .h-tool-coll .d-tx { flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-all; }
-.h-tool-coll .d-add { background: color-mix(in srgb, #2ea043 12%, transparent);
+.h-tool-coll .h-diff .d-add, .h-tool-coll > .d-add {
+  background: color-mix(in srgb, #2ea043 12%, transparent);
   border-left: 3px solid #2ea043; }
-.h-tool-coll .d-del { background: color-mix(in srgb, #e5484d 10%, transparent);
+.h-tool-coll .h-diff .d-del, .h-tool-coll > .d-del {
+  background: color-mix(in srgb, #e5484d 10%, transparent);
   border-left: 3px solid #e5484d; }
-.h-tool-coll .d-add .d-ln { margin-left: -3px; padding-right: 3px; }
-.h-tool-coll .d-del .d-ln { margin-left: -3px; padding-right: 3px; }
+/* v3.2R2(N1)：+/− 行的 3px 左竖条把内容盒右推 3px——行号列负边距对冲，
+   与无边框的 .d-ctx 行号竖列对齐（R1 重写选择器时误删的基线补偿） */
+.h-tool-coll .d-add .d-ln, .h-tool-coll .d-del .d-ln {
+  margin-left: -3px; padding-right: 3px; }
 
 /* ---- oneclick 终端卡（Bash 行点开输出） ---- */
 .h-tool.oneclick { cursor: pointer; }

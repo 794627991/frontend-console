@@ -97,8 +97,12 @@
     addRow(nr);
     g = grpFromDom(nr, thinkBox, null);
     g.counts = {};                 // 新组才清；恢复组从 dataset 读
-    g.t0 = _HG.pendingTurnT0 || Date.now();   // v3.2：回合起点（回放=用户消息 ts；live=当下）
+    // v3.2R1(P0)：回合起点——回放用 user 行 ts（pendingTurnT0）；live 取当下；
+    // 回放无 ts（旧转写缺失）保持 undefined——定稿落无数字「已工作」，
+    // 绝不用当前时钟编造（否则工时随刷新增长）
+    const _pt0 = _HG.pendingTurnT0;
     _HG.pendingTurnT0 = null;
+    g.t0 = (_pt0 > 0) ? _pt0 : (_HG.openState ? undefined : Date.now());
     if (g.think.stats) g.think.stats.dataset.segCount = '0';
     // 重建期：按记录恢复开合；无记录则默认收起（流式期 openState=null 不干预）
     _hgApplyOpen(thinkBox, false);
@@ -172,7 +176,10 @@
     }
     const thinkBox = root.querySelector('.h-drawer.think');
     const execBox = root.querySelector('.h-drawer.exec');
-    if (!thinkBox && !root.querySelector('.h-tl')) return;
+    // v3.2R1(P2)：think 抽屉缺失直接放弃（grpFromDom 对 thinkBox 无条件
+    // 解引用会抛）——认回条件与 grpEnsure 对齐：think 在场 + （旧 exec 或新 tl）
+    if (!thinkBox) return;
+    if (!execBox && !root.querySelector('.h-tl')) return;
     if (root.querySelector(':scope > .h-msg.asst:not(.ph)')) return;   // 正文已出，不占位
     const g = grpFromDom(root, thinkBox, execBox);
     _HG.grp = g;
@@ -237,7 +244,13 @@
     if (!g) return;
     phRemove(g);
     _tlExpFlush();                       // v3.2：定稿先冲查阅聚组（头部定格汇总+自动收）
-    if (g.headTimer) { clearInterval(g.headTimer); g.headTimer = null; }
+    if (g.headTimer) {
+      clearInterval(g.headTimer);
+      // v3.2R1(P2)：同步从 turnTicks 摘除——只清 interval 不摘 id，数组随
+      // 回合数无界增长（_turnHeadStop 对已清 id 的 clearInterval 无害但白挂）
+      if (_HG.turnTicks) _HG.turnTicks = _HG.turnTicks.filter(t => t !== g.headTimer);
+      g.headTimer = null;
+    }
     opt = opt || {};
     // v2.20 修复：定稿把组头「思考 N 次」重写为纯文本——流式中带的脉动
     // 动画（hg-think-anim）此前无人摘，回复结束后还在闪。
@@ -254,12 +267,21 @@
     const _hasWork = (_segN > 0) || !!(g.counts && Object.keys(g.counts).length);
     if (g.head && _hasWork) {
       _turnHeadShow(g, { hist: true });         // 兜底：纯思考组此前没走 drawerCount
-      const _end = (typeof opt.endTs === 'number' && opt.endTs > 0) ? opt.endTs : Date.now();
-      const _dur = (typeof opt.durMs === 'number' && opt.durMs > 0)
-        ? opt.durMs : Math.max(0, _end - (g.t0 || _end));
-      g.head.dataset.dur = String(_dur);
-      if (g.headLabel) g.headLabel.textContent =
-        (opt.interrupted ? '已停止 · ' : '已工作 ') + _hgTurnDurTxt(_dur);
+      // v3.2R1(P0 审计)：工时事实分级——durMs（CLI 冻结）> endTs−t0（回放
+      // 边界差）> live 时钟差；回放态（opt.hist 或重建期 openState 在场）绝
+      // 不吃当前时钟——缺事实时显示无数字的「已工作」（对照 ZCode
+      // chat.history.worked 的无时长形态），否则旧会话刷新后「已工作」
+      // 会随墙上时钟继续增长
+      const _hist = opt.hist === true || !!_HG.openState;
+      let _dur;
+      if (typeof opt.durMs === 'number' && opt.durMs > 0) _dur = opt.durMs;
+      else if (typeof opt.endTs === 'number' && opt.endTs > 0 && g.t0) _dur = Math.max(0, opt.endTs - g.t0);
+      else if (!_hist && g.t0) _dur = Math.max(0, Date.now() - g.t0);
+      g.head.dataset.dur = String(_dur || 0);
+      if (g.headLabel) {
+        const _txt = _dur != null ? (opt.interrupted ? ' · ' : ' ') + _hgTurnDurTxt(_dur) : '';
+        g.headLabel.textContent = (opt.interrupted ? '已停止' : '已工作') + _txt;
+      }
       // 折叠：回放默认收（除非用户开过）；live 自动收只在底部跟读时（同
       // v2.12 判据）；用户点过头（userToggled）永不强制收
       if (g.headBody && g.head.dataset.userToggled !== '1' && (opt.hist || (auto && isNearBottom())))
@@ -339,7 +361,7 @@
     // 时长，对照 workSegments 旧数据时间边界恢复口径）；live 用当下时刻
     grpFinalize(false, { endTs: (live === false && tsMs > 0) ? tsMs : Date.now(),
                          hist: live === false });
-    _HG.pendingTurnT0 = (tsMs > 0 && live === false) ? tsMs : Date.now();   // v3.2：新组回合起点
+    _HG.pendingTurnT0 = (tsMs > 0 && live === false) ? tsMs : 0;   // v3.2R1：live 记 0（grpEnsure 取当下）；回放缺 ts 保持 0→undefined
     _maybeTimeBar(tsMs || Date.now());        // v2.24.5 微信式时间条（气泡前）
     endThinking(); closeRun();
     _HG.asstText = false;                     // 本轮 AI 尚未输出文本（占位/组头判据）

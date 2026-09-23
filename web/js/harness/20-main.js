@@ -373,6 +373,8 @@ function buildClaudeHarnessTab(opts = {}) {
       return;
     }
     // v3.2：查阅聚组头（🔍 查阅 · N 搜索 · M 文件）——切换子行树开合
+    // v3.2R1(P2)：开合进 _hgSaveOpen 持久化（与 .h-drawer/.h-tool 同仓——
+    // transcript 重建后用户展开过的组不再回默认态）
     const expHead = e.target.closest('.h-tl-grp-head');
     if (expHead) {
       const grpEl = expHead.closest('.h-tl-grp');
@@ -380,17 +382,24 @@ function buildClaudeHarnessTab(opts = {}) {
         const opening = !grpEl.classList.contains('open');
         grpEl.classList.toggle('open');
         grpEl.dataset.userToggled = '1';
+        _hgSaveOpen(grpEl);
         if (opening) grpEl.querySelectorAll('.h-tool').forEach(_histLazyFill);
         else grpEl.querySelectorAll('.h-tool').forEach(_histLazyDrop);
       }
       return;
     }
     // v3.2：oneclick 工具行（Bash 终端卡）——整行点击展开/收起输出
+    // v3.2R1(P1)：输出体（.h-tool-coll）内的点击不折叠——展开后用户要在
+    // 输出文本里点选/定位，整行命中会把卡片收起来打断选词
     const ocRow = e.target.closest('.h-tool.oneclick');
-    if (ocRow) {
+    if (ocRow && !e.target.closest('.h-tool-coll')) {
       const opening = !ocRow.classList.contains('open');
       if (opening) _histLazyFill(ocRow); else _histLazyDrop(ocRow);
       ocRow.classList.toggle('open');
+      // v3.2R2(N2)：oneclick 分支先于 tHead——回放 bash 行的 head 点击也走
+      // 这里，补 _hgSaveOpen 使开合同样持久化（否则回放 Bash 卡重建后回默认态，
+      // 与其它历史行口径不一致）
+      _hgSaveOpen(ocRow);
       return;
     }
     const tHead = e.target.closest('.h-tool-head');

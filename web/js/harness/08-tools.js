@@ -31,12 +31,24 @@
     // 折叠展示改动段全貌；改动段外超 3 行的未变区间折叠成「… N 行不变」）
     const ol = String(oldS || '').split('\n'), nl = String(newS || '').split('\n');
     const n = ol.length, m = nl.length;
+    // v3.2R1(P1)：行号计数器与列模板前置（fallback 分支也要用——原实现行号
+    // 声明在 fallback 之后，挪用会 TDZ；折叠未变区间也必须推进计数器，否则
+    // 折叠段之后的行号整体偏小「折叠行数」）
+    let lnOld = 0;
+    let lnNew = 0;
+    const ln = num => `<span class="d-ln">${num || ''}</span>`;
     // LCS 动态规划（O(n*m) 内存；Edit 的 old/new 一般几十行，可承受，
     // 超大输入（>4000 行）退回旧交集法防卡顿）
     if (n * m > 4000 * 4000) {
       let h = '';
-      nl.forEach(l => { if (!ol.includes(l)) h += `<div class="d-add">+ ${esc(l)}</div>`; });
-      ol.forEach(l => { if (!nl.includes(l)) h += `<div class="d-del">- ${esc(l)}</div>`; });
+      nl.forEach(l => {
+        if (!ol.includes(l)) { lnNew++; h += `<div class="d-add">${ln(lnNew)}<span class="d-tx">+ ${esc(l)}</span></div>`; }
+        else lnNew++;
+      });
+      ol.forEach(l => {
+        if (!nl.includes(l)) { lnOld++; h += `<div class="d-del">${ln(lnOld)}<span class="d-tx">- ${esc(l)}</span></div>`; }
+        else lnOld++;
+      });
       return h || '<div class="d-info">(无文本差异)</div>';
     }
     const dp = Array.from({length: n + 1}, () => new Uint32Array(m + 1));
@@ -55,13 +67,11 @@
     while (j < m) { ops.push(['+', nl[j++]]); }
     // 改动段外的长未变区间折叠（≤3 行直显，>3 行收成一行摘要）
     // v3.2：行号列（ZCode 截图1 编辑卡同款）——统一 diff 口径：+/= 显示新文件
-    // 行号，- 显示旧文件行号（GitHub unified 惯例）
+    // 行号，- 显示旧文件行号（GitHub unified 惯例）；折叠段不 emit 行但
+    // 计数器照推（v3.2R1 修复：否则折叠段之后行号整体偏小）
     let h = '';
     const CTX = 3;
     let k = 0;
-    let lnOld = 0;
-    let lnNew = 0;
-    const ln = n => `<span class="d-ln">${n || ''}</span>`;
     const mark = (op, line) => {
       if (op === '=') { lnOld++; lnNew++;
         h += `<div class="d-ctx">${ln(lnNew)}<span class="d-tx">${esc(line)}</span></div>`;
@@ -84,12 +94,15 @@
         if (prevIsChange && nextIsChange && len > CTX * 2) {
           for (let x = k; x < k + CTX; x++) mark('=', ops[x][1]);
           h += `<div class="d-info">… ${len - CTX * 2} 行不变 …</div>`;
+          lnOld += len - CTX * 2; lnNew += len - CTX * 2;   // v3.2R1：折叠段计数器照推
           for (let x = e - CTX; x < e; x++) mark('=', ops[x][1]);
         } else if (prevIsChange && !nextIsChange && len > CTX) {
           for (let x = k; x < k + CTX; x++) mark('=', ops[x][1]);
           h += `<div class="d-info">… ${len - CTX} 行不变 …</div>`;
+          lnOld += len - CTX; lnNew += len - CTX;
         } else if (!prevIsChange && nextIsChange && len > CTX) {
           h += `<div class="d-info">… ${len - CTX} 行不变 …</div>`;
+          lnOld += len - CTX; lnNew += len - CTX;
           for (let x = e - CTX; x < e; x++) mark('=', ops[x][1]);
         } else {
           for (let x = k; x < e; x++) mark('=', ops[x][1]);
@@ -116,10 +129,17 @@
   // Read/Glob/Grep/WebSearch/WebFetch + 只读 Bash（rg/ls/cat/git status…）聚成
   // 一个折叠组「🔍 查阅 · N 搜索 · M 文件」，展开=左竖线+子行树；写类工具/
   // 思考/正文出现即断组（flush）。
+  // v3.2R1(P1 审计)：写能力排除补全——`find -delete`、输出重定向（>/>>/2>/&>）、
+  // 解释器执行（python -c/node -e 等）、PS 写 cmdlet（对照 ZCode
+  // SHELL_REDIRECT_WRITE_RE/EXECUTE_WRITE_COMMAND_RE 全集）；只读判定补 PS
+  // 读 cmdlet 与复合命令中的 git 只读（`cd x && git status`——^git 锚不到）
   const _HG_EXP_READ_RE =
-    /\b(rg|grep|find|ls|cat|head|tail|wc|stat|pwd|which|readlink|tree|sed\s+-n|dir|type|select-string)\b|^git\s+(status|log|show|diff)\b/i;
+    /\b(rg|grep|find|ls|cat|head|tail|wc|stat|pwd|which|readlink|tree|sed\s+-n|dir|type|select-string|get-content|get-childitem|get-location|get-item|gc|gci|sls)\b|(^|[;&]\s*)git\s+(status|log|show|diff)\b/i;
   const _HG_EXP_WRITE_RE =
-    /\b(sed\s+-i|tee|mv|cp|rm|mkdir|touch|chmod|del|erase|out-file|move-item|copy-item)\b|^git\s+(add|commit|rm|mv|checkout|switch|restore|reset|clean|revert|merge|rebase)\b/i;
+    /\b(sed\s+-i|tee|mv|cp|rm|mkdir|touch|chmod|del|erase|out-file|move-item|copy-item|remove-item|set-content|add-content|clear-content|new-item|rename-item)\b|(^|[;&]\s*)git\s+(add|commit|rm|mv|checkout|switch|restore|reset|clean|revert|cherry-pick|merge|rebase)\b|\s-delete\b|(^|\s|;|&|\|)\s*(?:&?>|2?>|>{1,2})\s*\S|\b(python|py|node|perl|ruby|awk)\s+(-c|-e)\b/i;
+  // v3.2R2 审计存档：重定向子句对引号内含 ">" 的搜索词（如 rg "a > b"）会
+  // 误排除出聚组——保守方向（断组为普通行，绝不把写命令聚进查阅组），
+  // 两态不一致可接受；后续如需精确化，把 ">" 前缀限定为左值非引号包裹
   function _hgIsExplore(name, input) {
     const n = name || '';
     if (['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'TodoRead', 'LS'].includes(n)) return true;
@@ -189,6 +209,9 @@
           `<span class="h-tl-grp-sum"></span></button>` +
           `<div class="h-tl-grp-body"></div>`;
         g.tl.appendChild(grpEl);
+        // v3.2R1(P2)：回放建组恢复用户开合记忆（有记录→userToggled 生效，
+        // flush 不再自动收；无记录默认展开与实时一致）
+        if (_HG.openState) _hgApplyOpen(grpEl, true);
         g.exp = { el: grpEl, sum: { search: 0, list: 0, file: 0 } };
       }
       const body = g.exp.el.querySelector('.h-tl-grp-body');
