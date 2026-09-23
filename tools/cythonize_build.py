@@ -73,20 +73,37 @@ def _msvc_env():
     return env, cl
 
 
+def _py_sources():
+    """v3.0：递归收集 src/ 下全部 .py（main.py 与 _EXCLUDE 除外），
+    返回相对 src/ 的路径列表（如 ["__init__.py", "harness\\session.py"]）。
+    镜像目录：产物 .pyd/.c 放 OUT/<相对目录>/，保住包结构（src/harness/ 子包）。"""
+    mods = []
+    for r, _ds, fs in os.walk(SRC):
+        for f in fs:
+            if not f.endswith(".py"):
+                continue
+            rel = os.path.relpath(os.path.join(r, f), SRC)
+            if f == "main.py" or f in _EXCLUDE:
+                continue
+            mods.append(rel)
+    return sorted(mods)
+
+
 def build_all(force=False):
-    """编译 src/*.py（main.py 除外）→ OUT/*.pyd。返回 (成功数, 失败列表)。"""
+    """编译 src/**/*.py（main.py 除外）→ OUT 镜像目录 *.pyd。返回 (成功数, 失败列表)。"""
     env, cl = _msvc_env()
     if not cl:
         raise RuntimeError("未找到 MSVC/SDK 组合（cl.exe 或 Windows Kits）")
     py_inc = sysconfig_include()
     os.makedirs(OUT, exist_ok=True)
-    mods = [f for f in os.listdir(SRC)
-            if f.endswith(".py") and f != "main.py" and f not in _EXCLUDE]
+    mods = _py_sources()
     ok, fails = 0, []
     for i, f in enumerate(mods):
-        stem = os.path.splitext(f)[0]
-        pyd = os.path.abspath(os.path.join(OUT, "%s.%s.pyd" % (stem, _TAG)))
-        cfile = os.path.abspath(os.path.join(OUT, stem + ".c"))
+        stem = os.path.splitext(os.path.basename(f))[0]
+        out_dir = os.path.abspath(os.path.join(OUT, os.path.dirname(f)))
+        os.makedirs(out_dir, exist_ok=True)
+        pyd = os.path.abspath(os.path.join(out_dir, "%s.%s.pyd" % (stem, _TAG)))
+        cfile = os.path.abspath(os.path.join(out_dir, stem + ".c"))
         if not force and os.path.isfile(pyd) and \
                 os.path.getmtime(pyd) >= os.path.getmtime(os.path.abspath(os.path.join(SRC, f))):
             ok += 1
@@ -126,14 +143,13 @@ def sysconfig_include():
 
 
 def staged_pyd_paths():
-    """编译产物清单（encrypt_pkg 摆包用）：OUT 下全部 .pyd 绝对路径。"""
-    return glob.glob(os.path.join(OUT, "*.pyd"))
+    """编译产物清单（encrypt_pkg 摆包用）：OUT 下全部 .pyd 绝对路径（递归）。"""
+    return glob.glob(os.path.join(OUT, "**", "*.pyd"), recursive=True)
 
 
 if __name__ == "__main__":
     n, fails = build_all(force="--force" in sys.argv)
-    print("\n编译完成: %d/%d" % (n, len([f for f in os.listdir(SRC)
-          if f.endswith(".py") and f != "main.py"])))
+    print("\n编译完成: %d/%d" % (n, len(_py_sources())))
     for f, why in fails:
         print("  ✗ %s: %s" % (f, why))
     sys.exit(1 if fails else 0)

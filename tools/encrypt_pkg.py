@@ -20,8 +20,8 @@ _SKIP_NAMES = {"_internal"}         # 目录级排除（src/ 下无子目录场�
 
 def _stage_src_pyd(app_dir, project_root):
     """v2.3.2：自有模块以 Cython .pyd 外置（用户定调治本：pyd 是机器码，
-    磁盘不存在可反编译形态，无需加密）。tools/cythonize_build 产物 → 拷到
-    _internal/src/ 平铺。返回拷入的 pyd 数。"""
+    磁盘不存在可反编译形态，无需加密）。tools/cythonize_build 产物 → 镜像
+    目录拷到 _internal/src/（v3.0 支持 src/harness/ 子包）。返回拷入的 pyd 数。"""
     import shutil
     from tools.cythonize_build import build_all, OUT
     ok, fails = build_all()          # 增量编译（改动过的才重编）
@@ -30,15 +30,27 @@ def _stage_src_pyd(app_dir, project_root):
     dst_root = os.path.join(app_dir, "_internal", "src")
     os.makedirs(dst_root, exist_ok=True)
     n = 0
-    for f in os.listdir(OUT):
-        if f.endswith(".pyd"):
-            shutil.copy2(os.path.join(OUT, f), os.path.join(dst_root, f))
+    for r, _ds, fs in os.walk(OUT):
+        for f in fs:
+            if not f.endswith(".pyd"):
+                continue
+            src_p = os.path.join(r, f)
+            rel = os.path.relpath(r, OUT)
+            dst_dir = dst_root if rel == "." else os.path.join(dst_root, rel)
+            os.makedirs(dst_dir, exist_ok=True)
+            shutil.copy2(src_p, os.path.join(dst_dir, f))
             n += 1
-    # 资源文件（blob 等）随包外置（走加密）
-    for f in os.listdir(os.path.join(project_root, "src")):
-        if os.path.splitext(f)[1].lower() in _TARGET_EXT and f != "main.py":
-            shutil.copy2(os.path.join(project_root, "src", f),
-                         os.path.join(dst_root, f))
+    # 资源文件（blob 等）随包外置（走加密）——递归含子包目录
+    src_root = os.path.join(project_root, "src")
+    for r, _ds, fs in os.walk(src_root):
+        for f in fs:
+            if os.path.splitext(f)[1].lower() not in _TARGET_EXT or f == "main.py":
+                continue
+            src_p = os.path.join(r, f)
+            rel = os.path.relpath(r, src_root)
+            dst_dir = dst_root if rel == "." else os.path.join(dst_root, rel)
+            os.makedirs(dst_dir, exist_ok=True)
+            shutil.copy2(src_p, os.path.join(dst_dir, f))
     return n
 
 
