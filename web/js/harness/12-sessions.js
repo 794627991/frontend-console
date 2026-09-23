@@ -129,7 +129,7 @@
         if (ci && !ci.textContent.includes('完成')) ci.textContent = '上下文压缩完成';
       }
       // v2.24.5：时间条状态从 DOM 恢复（最后一条 .h-time 的 ms）
-      _HG.lastTs = +((([...flow.querySelectorAll('.h-time')].pop() || {}).dataset || {}).ms || 0);
+      _HG.lastTs = +((([..._hgFlow.querySelectorAll('.h-time')].pop() || {}).dataset || {}).ms || 0);
       // v2.3.2：未定格的转交等待线重启计时——快照（innerHTML 字符串）不
       // 带 interval，恢复后计时冻结在快照时刻（用户实锤「读秒不走」）。
       // v2.35.2（P1 多槽）：全部未定格线各重挂各的计时器（此前只挂最后

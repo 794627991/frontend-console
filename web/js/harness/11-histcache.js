@@ -80,7 +80,7 @@
   function _hgShrinkHead() {
     if (!_HG.histAll || !_HG.histAll.length) return;
     const keepStart = _HG.histAll.length - _HG.HIST_PAGE;
-    const children = [...flow.children];
+    const children = [..._hgFlow.children];
     const before = _hgFlow.scrollHeight;
     const top0 = _hgFlow.scrollTop;      // v2.46：摘除前的 scrollTop（锚定基准）
     let newStart = -1;

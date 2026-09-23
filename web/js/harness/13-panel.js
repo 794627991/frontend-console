@@ -16,7 +16,7 @@
     return Object.values(_HG.agents || {}).some(a => !a.done);
   }
   function _hgPeerLines() {              // 协作转交线（已转交/识图转交，dataset 派生）
-    return [...flow.querySelectorAll('.h-switch[data-peer]')];
+    return [..._hgFlow.querySelectorAll('.h-switch[data-peer]')];
   }
   function _hgPeerPending() {            // 还有未回传的协作等待（任意一条未定格）
     // v2.37R6：unknown（回合终结复核未检出回传）不算等待——否则输入框/

@@ -1,7 +1,7 @@
 // harness relay.js (v3.0 自 buildClaudeHarnessTab 拆出,定义体零改动,缩进保持原样)
   function _hgGrantRewind() {
     const last = _HG.lastAsstEl
-      || [...flow.querySelectorAll('.h-msg.asst')].filter(el => !el.classList.contains('sub')).pop();
+      || [..._hgFlow.querySelectorAll('.h-msg.asst')].filter(el => !el.classList.contains('sub')).pop();
     if (last && last.isConnected && last.dataset.rwa) last.classList.add('can-rewind');
   }
   async function _hgReloadFlow() {
@@ -232,7 +232,7 @@
     // R6 复审 H：门控补 unknown 线——「状态未知」文案替换掉「等待结论回传」
     // 后，to 门控按文本找会丢；迟到的真实回传仍要能被接收渲染。
     if (to) {
-      const waiting = [...flow.querySelectorAll('.h-switch[data-peer]')]
+      const waiting = [..._hgFlow.querySelectorAll('.h-switch[data-peer]')]
         .some(el => !el.dataset.done
           && (el.textContent.includes('等待结论回传') || el.dataset.unknown === '1'
             || el.dataset.stale === '1'));
@@ -342,7 +342,7 @@
     // 空候选早退**之前**（无名回传 cands 恒空，放后面永远走不到）。
     // 历史路径（allowDone）不做无名兜底（归最新完成段/平铺）。
     if (!allowDone && (nm === '其他会话' || nm === '协作代理')) {
-      const running = [...flow.querySelectorAll('.h-subblock[data-hg-collab]:not(.done)')]
+      const running = [..._hgFlow.querySelectorAll('.h-subblock[data-hg-collab]:not(.done)')]
         .sort(_byDom);
       if (running.length) return running[running.length - 1];
     }

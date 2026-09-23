@@ -1,9 +1,9 @@
 @echo off
-rem è·Ÿéš bat æ‰€åœ¨ç›®å½•ï¼ˆæºç  zip è§£åŽ‹åˆ°ä»»ä½•æœºå™¨/ä»»ä½•è·¯å¾„éƒ½èƒ½ç›´æŽ¥åŒå‡»ï¼‰
+rem ¸úËæ bat ËùÔÚÄ¿Â¼£¨Ô´Âë zip ½âÑ¹µ½ÈÎºÎ»úÆ÷/ÈÎºÎÂ·¾¶¶¼ÄÜÖ±½ÓË«»÷£©
 cd /d "%~dp0"
-rem å…¥å£ä¼˜å…ˆçº§ï¼špythonwï¼ˆçª—å£åŒ–ï¼‰â†’ pywï¼ˆpy launcher çª—å£åŒ–ï¼Œå®˜ç½‘å®‰è£…é»˜è®¤
-rem åªæœ‰ py/pyw åœ¨ PATHï¼Œpython.exe ä¸åœ¨â€”â€”å®žæµ‹æœºå³æ­¤å½¢æ€ï¼‰â†’ pythonï¼ˆå¸¦
-rem æŽ§åˆ¶å°ï¼ŒæŠ¥é”™è‡³å°‘å¯è§ï¼‰
+rem Èë¿ÚÓÅÏÈ¼¶£ºpythonw£¨´°¿Ú»¯£©¡ú pyw£¨py launcher ´°¿Ú»¯£¬¹ÙÍø°²×°Ä¬ÈÏ
+rem Ö»ÓÐ py/pyw ÔÚ PATH£¬python.exe ²»ÔÚ¡ª¡ªÊµ²â»ú¼´´ËÐÎÌ¬£©¡ú python£¨´ø
+rem ¿ØÖÆÌ¨£¬±¨´íÖÁÉÙ¿É¼û£©
 where pythonw >nul 2>nul
 if %errorlevel%==0 (
   start "" pythonw.exe src\main.py
@@ -19,5 +19,5 @@ if %errorlevel%==0 (
   start "" python.exe src\main.py
   exit /b
 )
-echo æœªæ‰¾åˆ° Pythonï¼šè¯·å®‰è£… Python 3.12+ï¼ˆå‹¾é€‰ py launcherï¼‰ï¼Œæˆ–æŠŠ python.exe åŠ å…¥ PATHã€‚
+echo Î´ÕÒµ½ Python£ºÇë°²×° Python 3.12+£¨¹´Ñ¡ py launcher£©£¬»ò°Ñ python.exe ¼ÓÈë PATH¡£
 pause

@@ -1403,7 +1403,7 @@ function buildClaudeHarnessTab(opts = {}) {
   // web/js/snip.js（用户定调：截图不局限 Claude——确认后复制剪贴板必有，
   // Claude 对话在场才顺带挂附件）。📷 按钮走等比适配路径（不切窗口）。
   _hgQ('[data-hg-snip]').onclick = () => window.harnessSnipStart && window.harnessSnipStart(false);
-  _hgFileEl.addEventListener('change', () => { uploadFiles([...fileEl.files]); _hgFileEl.value = ''; });
+  _hgFileEl.addEventListener('change', () => { uploadFiles([..._hgFileEl.files]); _hgFileEl.value = ''; });
   _hgInput.addEventListener('paste', (e) => {
     const fs = [...(e.clipboardData?.files || [])].filter(f => f && f.size);
     if (fs.length) { e.preventDefault(); uploadFiles(fs); }
