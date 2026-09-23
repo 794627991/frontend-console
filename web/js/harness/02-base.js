@@ -148,7 +148,7 @@ const _HG_EYE = '<svg class="hg-eye" viewBox="0 0 24 24" aria-hidden="true">' +
 
 // ---- 组件状态 ----
 const _HG = {
-  _hgConn: null, sid: null, dirty: false,
+  conn: null, sid: null, dirty: false,
   model: null, models: null,
   skills: null,
   sessions: [],

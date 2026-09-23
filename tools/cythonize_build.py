@@ -5,7 +5,7 @@
 逆向=IDA 级；磁盘上不存在明文/可反编译形态，无需加密无密钥（web 前端源码
 仍走 AES：JS 不是 Python，Cython 管不到——见 encrypt_pkg.py）。
 
-产物：build/_cython/src/<name>.cp314-win_amd64.pyd（包结构平铺，含 __init__），
+产物：build/_cython/src/<相对路径>/<name>.cp314-win_amd64.pyd（v3.0 镜像目录，含子包），
 encrypt_pkg 负责摆到 _internal/src/。main.py 不编译（PyInstaller 入口脚本）。
 
 编译链：cython --3 → cl /O2（vcvars64 环境）→ python314.lib 链接。
