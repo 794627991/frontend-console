@@ -226,6 +226,99 @@ def main():
     check("旧 meta 无 epoch → 各自换新代（前端水位作废走 snapshot）",
           gc3.epoch != gc4.epoch)
 
+    print("== 8. v3.1 新事件：子代理镜像 / 输入账本 / 工具计数 ==")
+    # 镜像事件信封：kind→type 恒等映射，reducer 落 agents 投影
+    log8 = SessionEventLog("s8", retention=100)
+    log8.emit({"kind": "subagent_started", "tid": "tu1",
+               "agent_type": "reviewer", "desc": "审计 harness 拆分",
+               "bg": False, "task_id": "ag1"})
+    p8 = log8.store.projection
+    check("subagent_started 落 agents 投影",
+          p8["agents"].get("tu1", {}).get("type") == "reviewer"
+          and p8["agents"]["tu1"]["done"] is False)
+    log8.emit({"kind": "subagent_result", "tid": "tu1", "ok": False,
+               "brief": "FAIL: 3 处违规", "tokens": 12000, "tool_n": 7})
+    p8 = log8.store.projection
+    a8 = p8["agents"]["tu1"]
+    check("subagent_result 收尾（err/brief/用量）",
+          a8["done"] is True and a8["err"] is True
+          and a8["tokens"] == 12000 and "FAIL" in a8["brief"])
+    # 输入账本投影：admitted → inbox 追加；promoted/discarded → 摘除
+    log8.emit({"kind": "input_admitted", "id": "q1", "text": "继续任务A", "gen": 0})
+    log8.emit({"kind": "input_admitted", "id": "q2", "text": "继续任务B", "gen": 0})
+    check("input_admitted ×2 → inbox 两条",
+          [x["id"] for x in log8.store.projection["inbox"]] == ["q1", "q2"])
+    log8.emit({"kind": "input_promoted", "id": "q1"})
+    check("input_promoted 摘除队首",
+          [x["id"] for x in log8.store.projection["inbox"]] == ["q2"])
+    log8.emit({"kind": "input_discarded", "id": "q2", "reason": "rewind"})
+    check("input_discarded 清空 inbox", log8.store.projection["inbox"] == [])
+    # 工具计数：主链 tool_use 进桶（Read/Grep/Edit/Bash/Task 各归各位），
+    # 子代理事件（parent_tool_use_id）不计
+    log8.emit({"kind": "turn_started"})
+    log8.emit({"kind": "event", "data": {"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "id": "t1", "name": "Read", "input": {}},
+        {"type": "tool_use", "id": "t2", "name": "Grep", "input": {}},
+        {"type": "tool_use", "id": "t3", "name": "Edit", "input": {}},
+        {"type": "tool_use", "id": "t4", "name": "Bash", "input": {}},
+        {"type": "tool_use", "id": "t5", "name": "Task", "input": {}}]}}})
+    log8.emit({"kind": "event", "data": {"type": "assistant",
+               "parent_tool_use_id": "tu1", "message": {"content": [
+        {"type": "tool_use", "id": "t6", "name": "Bash", "input": {}}]}}})
+    tt8 = log8.store.projection["turn_tools"]
+    check("主链 tool_use 计数（1文件/1搜索/1编辑/1命令/1子代理）",
+          tt8["calls"] == 5 and tt8["reads"] == 1 and tt8["searches"] == 1
+          and tt8["edits"] == 1 and tt8["bash"] == 1 and tt8["agents"] == 1)
+    check("子代理内部调用不计主回合计数", tt8["calls"] == 5)
+    log8.emit({"kind": "turn_complete"})
+    p8 = log8.store.projection
+    check("turn_complete 定格 last_turn_tools 摘要",
+          p8["last_turn_tools"]["calls"] == 5 and p8["tools_total"]["calls"] == 5)
+    log8.emit({"kind": "turn_started"})
+    check("新回合开窗清零 turn_tools",
+          log8.store.projection["turn_tools"]["calls"] == 0
+          and log8.store.projection["tools_total"]["calls"] == 5)
+    check("live 增量与 reduce_events 重放一致（8 号段）",
+          reduce_events("s8", log8.store.snapshot()) == log8.store.projection)
+
+    print("== 9. microcompact（旧回合超大负载折叠）==")
+    from src.eventlog.store import COMPACT_BYTES, _fold_text
+    big = "x" * 12000
+    log9 = SessionEventLog("s9", retention=100)
+    log9.emit({"kind": "turn_started"}, turn="t9a")
+    # 真实流里 cli 事件都带回合 id（session.emit 统一注入），折叠按回合归属判定
+    log9.emit({"kind": "event", "data": {"type": "assistant", "message": {"content": [
+        {"type": "text", "text": big}]}}}, turn="t9a")
+    log9.emit({"kind": "turn_complete"}, turn="t9a")
+    folded, dropped = _fold_text(big)
+    check("_fold_text 头尾保留 + 标记",
+          folded.startswith("x" * 200) and folded.endswith("x" * 200)
+          and dropped > 8000 and "已折叠" in folded)
+    small, zero = _fold_text("short")
+    check("小文本零折叠直通", small == "short" and zero == 0)
+    # 保留窗字节未超阈 → 不折叠
+    log9.emit({"kind": "turn_started"})
+    envs = [e for e in log9.store.snapshot() if e.get("type") == "cli_stream"]
+    check("未超阈值不折叠", all(not e.get("_folded") for e in envs))
+    # 直接压 store 层验证：把阈值临时调小触发折叠路径
+    import src.eventlog.store as _st
+    orig = _st.COMPACT_BYTES
+    try:
+        _st.COMPACT_BYTES = 1024
+        st = log9.store
+        st._bytes = orig and (st._bytes + 10 * 1024 * 1024)   # 强制超阈
+        st._maybe_compact("nonexistent-turn")
+        envs2 = [e for e in st.snapshot() if e.get("type") == "cli_stream"]
+        hit = [e for e in envs2 if e.get("_folded")]
+        check("超阈值旧回合大事件被折叠（含 _folded 标记）",
+              len(hit) == 1 and hit[0]["data"]["message"]["content"][0]["text"].startswith("x" * 200))
+        check("stats 暴露 compacted 计数", st.stats()["compacted"] >= 1)
+        # 新回合（当前 turn）与已折叠事件不重复处理
+        st._maybe_compact("nonexistent-turn")
+        check("二次 compact 幂等", st.stats()["compacted"] == len(hit))
+    finally:
+        _st.COMPACT_BYTES = orig
+
     print("=" * 56)
     print("通过 %d / 失败 %d" % (len(_PASS), len(_FAIL)))
     if _FAIL:

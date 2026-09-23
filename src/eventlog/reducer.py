@@ -16,7 +16,35 @@ from .types import SessionEventType, type_for_kind
 def initial_projection(sid):
     import time
     return {"sid": sid, "status": "idle", "turn": None, "turn_count": 0,
-            "last_error": None, "last_seq": 0, "updated_at": int(time.time() * 1000)}
+            "last_error": None, "last_seq": 0, "updated_at": int(time.time() * 1000),
+            # v3.1（#12/#10）：镜像事件与账本事件的投影——live/重放共用
+            "agents": {},            # tid -> {type,desc,bg,done,err,tokens,tool_n}
+            "inbox": [],             # 待发输入（durable 账本投影）
+            "turn_tools": _empty_tools(),   # 当前回合工具计数（回合摘要行用）
+            "tools_total": _empty_tools()}   # 会话累计
+
+
+_TOOL_READ = ("Read", "NotebookEdit")
+_TOOL_SEARCH = ("Grep", "Glob", "WebSearch", "WebFetch", "TodoRead")
+_TOOL_EDIT = ("Edit", "MultiEdit", "Write", "NotebookEdit")
+
+
+def _empty_tools():
+    return {"calls": 0, "reads": 0, "searches": 0, "edits": 0, "bash": 0, "agents": 0}
+
+
+def _tally_tools(bucket, name):
+    bucket["calls"] += 1
+    if name in _TOOL_READ:
+        bucket["reads"] += 1
+    if name in _TOOL_SEARCH:
+        bucket["searches"] += 1
+    if name in _TOOL_EDIT:
+        bucket["edits"] += 1
+    if name in ("Bash",):
+        bucket["bash"] += 1
+    if name in ("Task", "Agent"):
+        bucket["agents"] += 1
 
 
 def apply_event(proj, ev):
@@ -34,13 +62,45 @@ def apply_event(proj, ev):
         p["turn_count"] = p.get("turn_count", 0) + 1
         p["status"] = "running"
         p["last_error"] = None          # 源头清理：新 turn 清旧错误
-    elif t == SessionEventType.TURN_COMPLETE:
+        p["turn_tools"] = _empty_tools()   # 回合计数随回合开窗
+    elif t in (SessionEventType.TURN_COMPLETE, SessionEventType.TURN_ERROR):
         p["turn"] = None
         p["status"] = "idle"
-    elif t == SessionEventType.TURN_ERROR:
-        p["turn"] = None
-        p["status"] = "idle"
-        p["last_error"] = (ev.get("text") or "turn aborted")[:200]
+        if t == SessionEventType.TURN_ERROR:
+            p["last_error"] = (ev.get("text") or "turn aborted")[:200]
+        else:
+            # 摘要定格：上一回合的工具构成随事件快照（面板/摘要行重放可用）
+            p["last_turn_tools"] = dict(p.get("turn_tools") or _empty_tools())
+    elif t == SessionEventType.SUBAGENT_STARTED:
+        ag = dict(p.get("agents") or {})
+        ag[str(ev.get("tid") or "")] = {
+            "type": ev.get("agent_type") or "Task", "desc": ev.get("desc") or "",
+            "bg": bool(ev.get("bg")), "task_id": ev.get("task_id") or "",
+            "done": False, "err": False, "tokens": 0, "tool_n": 0}
+        p["agents"] = ag
+    elif t == SessionEventType.SUBAGENT_RESULT:
+        ag = dict(p.get("agents") or {})
+        cur = ag.get(str(ev.get("tid") or ""))
+        if cur is not None:
+            nxt = dict(cur)
+            nxt.update({"done": True,
+                        "err": not bool(ev.get("ok", True)),   # 镜像事件带 ok（成功语义）
+                        "tokens": ev.get("tokens") or nxt.get("tokens") or 0,
+                        "tool_n": ev.get("tool_n") or nxt.get("tool_n") or 0,
+                        "brief": (ev.get("brief") or "")[:200]})
+            ag[str(ev.get("tid"))] = nxt
+            p["agents"] = ag
+    elif t == SessionEventType.INPUT_ADMITTED:
+        box = list(p.get("inbox") or [])
+        box.append({"id": ev.get("id"), "text": ev.get("text") or "",
+                    "gen": ev.get("gen") or 0})
+        p["inbox"] = box
+    elif t == SessionEventType.INPUT_PROMOTED:
+        _eid = ev.get("id")
+        p["inbox"] = [x for x in (p.get("inbox") or []) if x.get("id") != _eid]
+    elif t == SessionEventType.INPUT_DISCARDED:
+        _eid = ev.get("id")
+        p["inbox"] = [x for x in (p.get("inbox") or []) if x.get("id") != _eid]
     elif t == SessionEventType.USER_ECHO:
         # 老事件流（无 turn_* 事件的存量会话重放）也能归约出 running
         if p["status"] == "idle":
@@ -52,6 +112,19 @@ def apply_event(proj, ev):
             p["status"] = "idle"
         elif d.get("type") == "system" and d.get("subtype") == "api_error":
             p["last_error"] = str(d.get("message") or "api_error")[:200]
+        elif d.get("type") == "assistant" and not d.get("parent_tool_use_id"):
+            # 主链工具调用计数（回合摘要行「查阅 · N 搜索 · N 文件」的数据源；
+            # 子代理内部调用不计——它是子代理自己的过程，不是主回合动作）
+            _c = d.get("message", {}).get("content")
+            if isinstance(_c, list):
+                tt = dict(p.get("turn_tools") or _empty_tools())
+                tot = dict(p.get("tools_total") or _empty_tools())
+                for b in _c:
+                    if isinstance(b, dict) and b.get("type") == "tool_use":
+                        _tally_tools(tt, str(b.get("name") or ""))
+                        _tally_tools(tot, str(b.get("name") or ""))
+                p["turn_tools"] = tt
+                p["tools_total"] = tot
     elif t == SessionEventType.INTERRUPTED:
         p["turn"] = None
         p["status"] = "idle"

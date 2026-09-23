@@ -20,6 +20,24 @@ from .types import (SessionEventType, make_envelope, new_epoch,
 from . import reducer as _reducer
 
 
+# v3.1（#13）microcompact 阈值：保留窗字节总量超过 COMPACT_BYTES 且新回合
+# 已开跑时，把**旧回合**的超大 cli_stream 负载就地折叠（正文/工具输出留
+# 头尾各 200 字符）。只影响后来者（断线重连 replay / 慢订阅者回放）——已
+# 广播出去的 live 流不受影响；live DOM 渲染兜底在持久真源（转写 jsonl）。
+COMPACT_BYTES = 1536 * 1024          # 保留窗字节上限（约 1.5MB）
+COMPACT_EVENT_BYTES = 4096           # 单事件超过该值才算「超大」
+COMPACT_KEEP = 200                   # 折叠保留的头/尾字符数
+
+
+def _fold_text(s, keep=COMPACT_KEEP):
+    """头尾各留 keep 字符，中间替换为折叠标记。返回 (新文本, 折掉的字节数)。"""
+    s = str(s)
+    if len(s) <= keep * 2 + 64:
+        return s, 0
+    marker = "\n…（旧回合输出已折叠 %d 字节，完整内容见消息流/转写）…\n" % len(s.encode("utf-8"))
+    return s[:keep] + marker + s[-keep:], len(s.encode("utf-8"))
+
+
 class SessionEventStore(object):
     """单会话 append-only 事件日志（内存态；持久真源仍是 CLI 转写 jsonl）。"""
 
@@ -33,6 +51,8 @@ class SessionEventStore(object):
         self.epoch = epoch or new_epoch()
         self.retention_policy = TurnWindowRetention()
         self.evicted_events = 0
+        self._bytes = 0                 # v3.1（#13）：保留窗字节估算（append 累加）
+        self.compacted_events = 0       # microcompact 命中计数（stats/测试观测）
         self.projection = _reducer.initial_projection(sid)
 
     # ---- 基本 view ----
@@ -48,7 +68,8 @@ class SessionEventStore(object):
         with self._lock:
             return {"sid": self.sid, "events": len(self._events),
                     "last_seq": self._last_seq, "floor_seq": self._floor_seq,
-                    "epoch": self.epoch, "evicted": self.evicted_events}
+                    "epoch": self.epoch, "evicted": self.evicted_events,
+                    "bytes": self._bytes, "compacted": self.compacted_events}
 
     # ---- 写入 ----
     def append(self, item, turn=None, now_ms=None):
@@ -59,21 +80,95 @@ class SessionEventStore(object):
         已拷贝）。
         """
         import time as _time
+        import json as _json
         now_ms = now_ms if now_ms is not None else int(_time.time() * 1000)
         with self._lock:
             self._last_seq += 1
             env = make_envelope(item, self.sid, self.epoch, turn)
             env["seq"] = self._last_seq
             self._events.append(env)
+            try:
+                self._bytes += len(_json.dumps(env, ensure_ascii=False))
+            except Exception:
+                self._bytes += 256       # 不可序列化事件的粗估兜底
             if len(self._events) == self.retention:
                 # deque 满后再 append 会自动丢最老；这里同步推进 floor
                 self._floor_seq = self._events[0]["seq"] - 1
+            # v3.1（#13）：新回合开跑 = 旧回合定格，此刻判定是否折叠旧负载
+            if env.get("type") == "turn_started":
+                self._maybe_compact(env.get("turn"))
             # turn 窗口瞬态淘汰（本期 TRANSIENT 集合为空，机制预埋）
             evict_turns = self.retention_policy.on_append(env, now_ms)
             if evict_turns:
                 self._evict_transient(set(evict_turns))
             self.projection = _reducer.apply_event(self.projection, env)
             return env
+
+    # ---- microcompact（#13）----
+    def _maybe_compact(self, current_turn):
+        """保留窗字节超阈时折叠**旧回合**的超大 cli_stream 负载。
+
+        就地改 deque 内事件（锁内、单线程安全）：正文/工具输出块留头尾
+        COMPACT_KEEP 字符，标记 _folded 便于消费端识别。live 已广播流零
+        影响——折叠只利好 replay/慢订阅补发与内存占用。
+        """
+        if self._bytes <= COMPACT_BYTES or not current_turn:
+            return
+        import json as _json
+        for env in self._events:
+            if env.get("_folded") or env.get("type") != "cli_stream":
+                continue
+            if env.get("turn") in (None, current_turn):
+                continue
+            try:
+                if len(_json.dumps(env, ensure_ascii=False)) <= COMPACT_EVENT_BYTES:
+                    continue
+            except Exception:
+                continue
+            data = env.get("data")
+            if not isinstance(data, dict):
+                continue
+            msg = data.get("message")
+            if not isinstance(msg, dict):
+                continue
+            content = msg.get("content")
+            blocks = content if isinstance(content, list) else None
+            saved = 0
+            if blocks is not None:
+                for b in blocks:
+                    if not isinstance(b, dict):
+                        continue
+                    if b.get("type") == "text" and isinstance(b.get("text"), str):
+                        new, drop = _fold_text(b["text"])
+                        if drop:
+                            b["text"] = new
+                            saved += drop
+                    elif b.get("type") == "tool_result":
+                        c = b.get("content")
+                        if isinstance(c, str):
+                            new, drop = _fold_text(c)
+                            if drop:
+                                b["content"] = new
+                                saved += drop
+                        elif isinstance(c, list):
+                            for cb in c:
+                                if isinstance(cb, dict) and cb.get("type") == "text" \
+                                        and isinstance(cb.get("text"), str):
+                                    new, drop = _fold_text(cb["text"])
+                                    if drop:
+                                        cb["text"] = new
+                                        saved += drop
+            if isinstance(content, str):
+                new, drop = _fold_text(content)
+                if drop:
+                    msg["content"] = new
+                    saved += drop
+            if saved > 0:
+                env["_folded"] = True
+                env["folded_bytes"] = saved
+                data["_folded"] = True
+                self._bytes = max(0, self._bytes - saved)
+                self.compacted_events += 1
 
     def _evict_transient(self, turn_ids):
         if not self.retention_policy.transient_types:
@@ -130,6 +225,7 @@ class SessionEventStore(object):
         with self._lock:
             self.epoch = epoch or new_epoch()
             self._events.clear()
+            self._bytes = 0                 # 缓冲清空，字节估算归零（#13）
             self._floor_seq = self._last_seq
             self.projection = _reducer.initial_projection(self.sid)
 

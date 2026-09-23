@@ -56,6 +56,15 @@ class SessionEventType(object):
     ASK = "ask"
     ASK_DONE = "ask_done"
 
+    # ---- 子代理镜像（#12：后端从 CLI 杂讯合成干净生命周期，reducer 直用）----
+    SUBAGENT_STARTED = "subagent_started"   # Task 派发起跑（tid/type/desc/bg/task_id）
+    SUBAGENT_RESULT = "subagent_result"     # task_notification 收尾（ok/brief/tokens/tool_n）
+
+    # ---- durable 输入账本（#10：busy 期排队输入的服务端真源）----
+    INPUT_ADMITTED = "input_admitted"       # 入队（id/text/gen）
+    INPUT_PROMOTED = "input_promoted"       # 出队真发（id）
+    INPUT_DISCARDED = "input_discarded"     # 废弃（id/reason：rewind 换代、用户删除、发送失败）
+
 
 # kind → type 映射（emit 入口查表；未知 kind 原样透传，前向兼容）
 _KIND_TO_TYPE = {
@@ -70,6 +79,11 @@ _KIND_TO_TYPE = {
     "model_switched": SessionEventType.MODEL_SWITCHED,
     "ask": SessionEventType.ASK,
     "ask_done": SessionEventType.ASK_DONE,
+    SessionEventType.SUBAGENT_STARTED: SessionEventType.SUBAGENT_STARTED,
+    SessionEventType.SUBAGENT_RESULT: SessionEventType.SUBAGENT_RESULT,
+    SessionEventType.INPUT_ADMITTED: SessionEventType.INPUT_ADMITTED,
+    SessionEventType.INPUT_PROMOTED: SessionEventType.INPUT_PROMOTED,
+    SessionEventType.INPUT_DISCARDED: SessionEventType.INPUT_DISCARDED,
     SessionEventType.TURN_STARTED: SessionEventType.TURN_STARTED,
     SessionEventType.TURN_COMPLETE: SessionEventType.TURN_COMPLETE,
     SessionEventType.TURN_ERROR: SessionEventType.TURN_ERROR,
