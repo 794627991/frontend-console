@@ -296,6 +296,10 @@ $('treePane').addEventListener('contextmenu', e => {
 
 $('treeAddRoot').onclick = () => pickTreeDir();
 $('treeHidden').onclick = () => _treeToggleHidden();
+$('treeRefresh').onclick = () => {   // v2.59：刷新目录——重扫根列表更新状态（收起态一并复位）
+  refreshTree();
+  showBanner('目录已刷新', 1600);
+};
 _treeSyncHiddenBtn();   // 初始文案（HTML 静态写「显示」，JS 兜底同步）
 
 // 启动：拉根列表（DOM 在 index.html 静态存在，config 持久化的根直接恢复）
