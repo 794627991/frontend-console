@@ -261,7 +261,7 @@ function buildClaudeHarnessTab(opts = {}) {
         <div class="hg-search-wrap"><input class="hg-search" data-hg-search placeholder="搜索会话" spellcheck="false"></div>
         <div class="hg-sessions" data-hg-sessions></div>
         <button class="hg-prompt-btn" data-hg-vision title="识图配置（MCP 识图模型/端点映射/提示词）">👁 识图配置</button>
-        <button class="hg-prompt-btn" data-hg-roles-cfg title="三角色配置：开关/模型池（主会话/轻模型/重模型）/端点角色映射/审计模式与分级线（保存后下条消息热更生效）。双形态：轻主模型=主会话直干所有活+设计者/审核者两个重模型代理；重模型=主会话直干+审核者兜底">👥 三角色</button>
+        <button class="hg-prompt-btn" data-hg-roles-cfg title="三角色配置：开关/三槽模型（主会话/设计者/审计者）/端点角色映射/审计模式与分级线（保存后下条消息热更生效）。双形态：轻主模型=主会话直干所有活+设计者+审计者两个代理；重模型=主会话直干+审计者兜底">👥 三角色</button>
         <button class="hg-prompt-btn" data-hg-prompt title="管理自定义提示词（全局/项目，会话启动时注入）">📜 提示词</button>
         <button class="hg-prompt-btn" data-hg-proxy-btn title="Claude 代理：重试代理（429/5xx 自动重试）+ 用量统计。点开代理面板">
           <img src="/ico/proxy.png" alt="proxy" style="width:14px;height:14px;vertical-align:-2px;"> Proxy
@@ -1420,11 +1420,8 @@ function buildClaudeHarnessTab(opts = {}) {
     }
     const nm = b.head.querySelector('.h-subblock-name');
     if (nm) {
+      // textContent 重赋即清旧节点，天然幂等（v2.53：「重」角标已删）
       nm.textContent = bare ? label + ' · ' + bare : label;
-      // 重模型角色（designer/reviewer）段头加「重」角标——textContent 重赋
-      // 即清旧节点，天然幂等
-      if (_HEAVY_AGENTS.has(String((info && info.type) || '')))
-        nm.insertAdjacentHTML('beforeend', ' <span class="hg-sub-hv" title="重模型角色">重</span>');
     }
     b.head.title = '子代理：' + label + (bare ? '，实跑模型 ' + bare : '')
       + ((info && info.desc) ? '\n' + String(info.desc).slice(0, 160) : '')
@@ -4487,8 +4484,7 @@ function buildClaudeHarnessTab(opts = {}) {
   // tab），归面板 C 区协作行。宁可误杀真实后台通用代理的可围观性（罕见，
   // 主 flow 仍有灰行），不再伪装能点开实况。
   const _ROLE_AGENTS = new Set(['executor', 'coder', 'dev', 'reviewer', 'designer']);
-  // 重模型角色（designer/reviewer）——行/段头加「重」角标与轻主会话视觉区分
-  const _HEAVY_AGENTS = new Set(['designer', 'reviewer']);
+  // （v2.53：「重」角标已按用户要求移除，_HEAVY_AGENTS 随之删除）
   function _isCollabWrap(type, bg) {
     return !!bg && !_ROLE_AGENTS.has(String(type || ''));
   }
@@ -4889,9 +4885,9 @@ function buildClaudeHarnessTab(opts = {}) {
     const r = _hgRolesCache && _hgRolesCache.roles;
     const rEl = sec.querySelector('[data-hg-d-roles]');
     // 形态正确 + 模型名可读。/roles 响应自带 mode（strong/light）与
-    // resolved（按当前方案解析出的轻/重池实模型），按形态出对应角色行；
-    // 两形态主会话都直干所有活——轻主力=designer+reviewer 两个重模型
-    // 代理，重主力=只留 reviewer 审计兜底
+    // resolved（v2.53 含 designer/reviewer 各自实模型），按形态出对应角色
+    // 行；两形态主会话都直干所有活——轻主力=设计者+审计者两个代理，
+    // 重主力=只留审计者兜底
     const _mode = _hgRolesCache && _hgRolesCache.mode;
     const _res = (_hgRolesCache && _hgRolesCache.resolved) || {};
     if (r) {
@@ -4899,8 +4895,8 @@ function buildClaudeHarnessTab(opts = {}) {
         const light = _mode === 'light';
         rEl.textContent = light ? '轻主力' : '重主力';
         rEl.title = light
-          ? `轻主力模式（主会话直干所有活，点击打开配置面板）\ndesigner（只设计，不写代码不改文件）: ${_res.heavy || '…'}\nreviewer（只读对抗审核，PASS/FAIL）: ${_res.heavy || '…'}`
-          : `重模型直干模式（主会话直干所有活，点击打开配置面板）\n审计兜底：单次直改超分级线自动派 reviewer 对抗审计\nreviewer: ${_res.heavy || '…'}`;
+          ? `轻主力模式（主会话直干所有活，点击打开配置面板）\n设计者 designer（只设计，不写代码不改文件）: ${_res.designer || _res.heavy || '…'}\n审计者 reviewer（只读对抗审核，PASS/FAIL）: ${_res.reviewer || _res.heavy || '…'}`
+          : `重模型直干模式（主会话直干所有活，点击打开配置面板）\n审计兜底：单次直改超分级线自动派审计者对抗审计\n审计者: ${_res.reviewer || _res.heavy || '…'}`;
       } else {
         rEl.textContent = '关闭·直连';
         rEl.title = '直连干活（点击打开配置面板可启用三角色）';
@@ -5020,7 +5016,6 @@ function buildClaudeHarnessTab(opts = {}) {
         (a.tokens ? ` title="用量：${a.tokens} tokens · ${a.toolN || 0} 次工具"` : '') + `>` +
         `<span class="hg-dyn-adot"></span>` +
         `<span class="hg-dyn-at">${esc(_AGENT_LABEL[a.type] || a.type)}</span>` +
-        (_HEAVY_AGENTS.has(String(a.type || '')) ? '<span class="hg-dyn-hbadge" title="重模型代理">重</span>' : '') +
         mdlTxt +
         (a.desc ? `<span class="hg-dyn-desc" title="${esc(a.desc)}">${esc(a.desc)}</span>` : '') +
         el + '</div>';
@@ -6273,26 +6268,27 @@ function buildClaudeHarnessTab(opts = {}) {
                         : ('回退失败：' + (j.err || '未知')), 4600, !j.ok);
       } catch(e) { showBanner('回退失败：' + e, 3000, true); }
     } else if (cmd === 'roles') {
-      // 角色设计说明——含按当前 API 方案解析出的轻/重池实际模型。双形态
-      // 主会话都直干所有活；子代理只留 designer（只设计）+ reviewer（只
-      // 读审核）两个重模型代理
+      // 角色设计说明——含按当前 API 方案解析出的实际模型（v2.53：设计者/
+      // 审计者各自 resolved）。双形态主会话都直干所有活；子代理只留
+      // designer（只设计）+ reviewer（只读审核）两个代理
       (async () => {
         let j = null;
         try { j = await (await fetch('/api/harness/roles')).json(); } catch(_) {}
         const r = (j && j.roles) || {};
         const rs = (j && j.resolved) || {};
         const light = j && j.mode === 'light';
-        const heavy = rs.heavy || '按当前方案自动识别';
+        const dm = rs.designer || '按当前方案自动识别';
+        const rm = rs.reviewer || '按当前方案自动识别';
         const numOr = (k, d) => { const n = parseInt(r[k], 10);
           return Number.isFinite(n) ? Math.max(0, n) : d; };
         const modeRows = light ? [
           ['当前形态', '轻主力（主会话是轻模型）——直干所有活：编码/执行/调试都自己做，不派干活子代理'],
-          ['设计者', `designer 代理（${heavy}）——只设计绝不干活：架构/模块划分/关键决策/风险/依赖顺序；不写代码不改文件不跑实现。派发必须带全上下文（目标/背景约束/已试方案/文件+行号/验收标准）`],
-          ['审核者', `reviewer 代理（${heavy}）——只读对抗审核：假定代码有错专门挑毛病（需求符合性/逻辑/健壮性/安全/一致性），不允许修改代码/测试用例，PASS/FAIL 二选一`],
+          ['设计者', `designer 代理（${dm}）——只设计绝不干活：架构/模块划分/关键决策/风险/依赖顺序；不写代码不改文件不跑实现。派发必须带全上下文（目标/背景约束/已试方案/文件+行号/验收标准）`],
+          ['审计者', `reviewer 代理（${rm}）——只读对抗审核：假定代码有错专门挑毛病（需求符合性/逻辑/健壮性/安全/一致性），不允许修改代码/测试用例，PASS/FAIL 二选一`],
           ['标准流程', '中改主会话改完 → reviewer 轻审；大改先 designer 出方案 → 主会话实施 → reviewer 全审 → FAIL 回炉 → 致命/严重问题清零才收 → 主会话汇总答复'],
         ] : [
           ['当前形态', '重模型直干（主会话是重模型）——需求承接/方案/编码/debug/杂活全部自己干，不派干活子代理'],
-          ['审核兜底', `reviewer 代理（${heavy}）——单次直改超审计线由结算审计兜底（自动续发要求派 reviewer 补审，PASS/FAIL；FAIL 自己修复后复审）`],
+          ['审计兜底', `reviewer 代理（${rm}）——单次直改超审计线由结算审计兜底（自动续发要求派 reviewer 补审，PASS/FAIL；FAIL 自己修复后复审）`],
         ];
         renderSysCard('角色设计（双形态直干）', [
           ...modeRows,
@@ -6308,9 +6304,8 @@ function buildClaudeHarnessTab(opts = {}) {
           ['分级线', !r.enabled ? '—' : light
             ? `免审：单次直改 ≤ ${numOr('l1_max_lines', 100)} 行；轻审：单次直改 ≤ ${numOr('l2_max_lines', 200)} 行（主会话直改 + reviewer 轻审）；超线属大改——须 reviewer 取证级全审（不计文件数、不做回合累计；0=最严档）`
             : `审计线：单次直改 ≤ ${numOr('l2_max_lines', 200)} 行——超线触发结算审计（派 reviewer 补审；不计文件数、不做回合累计；0=最严档）`],
-          ['推荐配置', '主会话配轻模型（如 glm-5.3-flash）——直干省 token，方案/审核走重模型代理，即轻主力形态'],
-          ['模型池', `轻池 ${rs.light || '自动识别'} / 重池 ${rs.heavy || '自动识别'}——designer/reviewer 取重池；显式配置优先，其余按「名字含 opus=重，其余=轻」自动分类`],
-          ['模型解析', '端点映射（harness_roles.model_map）→ 显式池配置（light_model/heavy_model；旧键 executor_model/coder_model 兼容降级）→ 方案模型表自动分类 → 默认；换 API 方案自动适配'],
+          ['推荐配置', '主会话配轻模型（如 glm-5.3-flash）——直干省 token，方案/审核走设计者/审计者代理，即轻主力形态'],
+          ['模型解析', `设计者 ${rs.designer || '自动识别'} / 审计者 ${rs.reviewer || '自动识别'}——各槽显式配置（designer_model/reviewer_model）优先，留空回退代理池（heavy_model）→ 方案模型表自动分类（名字含 opus=代理池，其余=主会话池）→ 默认；端点映射（model_map）可按 base_url 覆盖；换 API 方案自动适配`],
           ['形态判定', r.main_model ? `主会话模型槽已显式配置（harness_roles.main_model=${r.main_model}）——按此名识别形态` : '主会话模型槽未配置——按实跑模型名自动识别（名字含 opus=重模型直干，其余=轻主力）；切模型/改配置下条消息自动换形态'],
         ]);
       })();
@@ -7131,7 +7126,8 @@ function buildClaudeHarnessTab(opts = {}) {
     } catch(e) { showBanner('保存失败：' + e, 3000, true); }
   }
   q('[data-hg-roles-cfg]').onclick = openRolesCfg;
-  // 三角色配置界面：开关 + 形态展示（只读）+ 三槽（主会话/轻模型/重模型）
+  // 三角色配置界面：开关 + 形态展示（只读）+ 三槽（主会话/设计者/审计者，
+  // v2.53 直白命名——设计者/审计者各自选模型，不再暴露轻/重池概念）
   // + 端点角色映射 + 审计模式/分级线。返回对象=保存；null=取消。
   function hgRolesManager(init) {
     return new Promise((resolve) => {
@@ -7148,10 +7144,11 @@ function buildClaudeHarnessTab(opts = {}) {
           .concat(ms.map(m => `<option value="${esc(m)}"${m === cur ? ' selected' : ''}>${esc(m)}</option>`))
           .join('');
       };
-      // 旧键降级显示：light_model/heavy_model 为空时回落 executor_model/
-      // coder_model（保存即写新键，天然迁移）
-      const lightCfg = cfg.light_model || cfg.executor_model || '';
-      const heavyCfg = cfg.heavy_model || cfg.coder_model || '';
+      // 设计者/审计者槽（v2.53）：读写 designer_model/reviewer_model 新键，
+      // 留空=回退重池（heavy_model→自动）——与后端 resolve_agent_models
+      // 回退链一致；旧 light/heavy 池键不再从面板暴露
+      const designerCfg = cfg.designer_model || '';
+      const reviewerCfg = cfg.reviewer_model || '';
       const mapText = Object.entries(cfg.model_map || {})
         .map(([k, v]) => `${k}=${v.executor},${v.coder}`).sort().join('\n');
       const am = cfg.audit_mode || 'auto';
@@ -7162,20 +7159,20 @@ function buildClaudeHarnessTab(opts = {}) {
       const l1 = numOr(cfg.l1_max_lines, 100);
       const l2l = numOr(cfg.l2_max_lines, 200);
       ov.innerHTML = `<div class="hg-modal hg-modal-vision"><div class="hg-modal-title">👥 三角色配置</div>
-        <div class="hg-modal-body hg-vision-hint">双形态都<b>主会话直干所有活</b>（编码/执行/调试不派干活子代理）：<b>轻主模型</b>=轻主力——配 designer（只设计）+ reviewer（只读审核）两个重模型代理；<b>重模型</b>=直干+审核兜底。模型轻重默认按「名字含 opus=重，其余=轻」自动分类，<b>显式配置优先</b>；主会话模型槽显式配置优先参与形态判定。保存后模型池/分级线随下条消息热更生效（agents 自动重生成），审计模式立即生效。</div>
+        <div class="hg-modal-body hg-vision-hint">双形态都<b>主会话直干所有活</b>（编码/执行/调试不派干活子代理）：主会话是轻模型=轻主力——配<b>设计者</b>（只设计）+ <b>审计者</b>（只读审核）两个代理；主会话是重模型（名字含 opus）=直干+审计兜底。三槽<b>显式配置优先</b>，留空按当前方案自动识别（设计者/审计者留空时共用同一自动识别的代理模型）；主会话模型槽显式配置参与形态判定。保存后模型/分级线随下条消息热更生效（agents 自动重生成），审计模式立即生效。</div>
         <div class="hg-vision-row">
           <label class="hg-vision-switch"><input type="checkbox" data-hg-r-on${cfg.enabled ? ' checked' : ''}> 启用三角色</label>
-          <span class="hg-vision-state" style="font-size:11px;">当前形态：<b>${light ? '轻主力 · 主会话直干+设计者+审核者' : '重模型直干 · 主会话直干+审核者兜底'}</b>（${cfg.main_model ? `主会话槽 ${esc(cfg.main_model)}` : `主模型 ${esc(dm || '未设置')}`}）</span>
+          <span class="hg-vision-state" style="font-size:11px;">当前形态：<b>${light ? '轻主力 · 主会话直干+设计者+审计者' : '重模型直干 · 主会话直干+审计者兜底'}</b>（${cfg.main_model ? `主会话槽 ${esc(cfg.main_model)}` : `主模型 ${esc(dm || '未设置')}`}）</span>
         </div>
         <div class="hg-vision-grid">
           <label>主会话模型（形态判定：显式配置优先；留空=按实跑模型名自动识别——名字含 opus 视为重模型，其余轻）
             <select data-hg-r-main>${mkOpts(cfg.main_model || '')}</select></label>
-          <label>轻模型（轻池：主会话直干用；留空=按当前方案自动识别）
-            <select data-hg-r-light>${mkOpts(lightCfg)}</select></label>
-          <label>重模型（重池：designer/reviewer 共用；留空=按当前方案自动识别）
-            <select data-hg-r-heavy>${mkOpts(heavyCfg)}</select></label>
+          <label>设计者模型（designer：只设计，出方案不干活；留空=回退代理池 heavy_model，再按方案自动识别）
+            <select data-hg-r-designer>${mkOpts(designerCfg)}</select></label>
+          <label>审计者模型（reviewer：只审不改，PASS/FAIL；留空=回退代理池 heavy_model，再按方案自动识别）
+            <select data-hg-r-reviewer>${mkOpts(reviewerCfg)}</select></label>
         </div>
-        <label class="hg-vision-prompt-lab">端点角色映射（每行：端点关键字=轻模型,重模型——按当前 base_url 匹配，优先于自动识别；重模型可省略=与轻模型同）
+        <label class="hg-vision-prompt-lab">端点角色映射（每行：端点关键字=主会话模型,代理模型——按当前 base_url 匹配，优先于自动识别；代理模型可省略=与主会话同）
           <textarea class="hg-vision-mm" data-hg-r-map spellcheck="false" style="height:56px;font-family:var(--font-mono);"
             placeholder="open.bigmodel.cn=glm-5.3-flash,glm-5.3&#10;lanz.hikvision.com=Lanz-Flash,Lanz-Atuo">${esc(mapText)}</textarea></label>
         <div class="hg-vision-grid">
@@ -7209,8 +7206,10 @@ function buildClaudeHarnessTab(opts = {}) {
         enabled: ov.querySelector('[data-hg-r-on]').checked,
         // 三槽（空串=清除，回落自动识别/旧键降级）
         main_model: ov.querySelector('[data-hg-r-main]').value.trim(),
-        light_model: ov.querySelector('[data-hg-r-light]').value.trim(),
-        heavy_model: ov.querySelector('[data-hg-r-heavy]').value.trim(),
+        // 设计者/审计者槽（v2.53 直白命名）：写 designer_model/reviewer_model
+        // 新键，留空=回退重池/自动识别；旧 light/heavy 池键不再从面板写
+        designer_model: ov.querySelector('[data-hg-r-designer]').value.trim(),
+        reviewer_model: ov.querySelector('[data-hg-r-reviewer]').value.trim(),
         // 端点角色映射——发 "关键字=轻,重" 行（后端按行解析，与识图面板
         // model_map 的行式体验一致）
         model_map: (ov.querySelector('[data-hg-r-map]').value || '')

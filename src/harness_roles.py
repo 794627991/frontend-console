@@ -16,7 +16,8 @@ strong 重模型直干，其余 → light 轻主力；名字不可得兜 strong�
 
 双形态共同点：主会话直干所有活（编码/执行/调试都是自己干），不派干活
 子代理；超线由回合结算审计兜底（auto=自动续发派 reviewer 补审 / warn=
-仅警示 / off=关）。子代理只留两个，都取重模型（heavy_model）：
+仅警示 / off=关）。子代理只留两个——设计者/审计者各取
+designer_model/reviewer_model 槽（空=回退重池 heavy_model→自动识别）：
 - designer 设计者：只设计，绝不干活——输出架构/模块划分/关键决策/风险/
   依赖顺序的框架方案；工具全集（除 Task——禁派子代理），用权限核实代码
   现状/跑验证确认可行性，方案有必要时可输出设计文档（*.md）辅助交付；
@@ -173,7 +174,7 @@ def roles_cfg():
     return dict(_DEFAULTS)
 
 
-_DESIGNER_BODY = """你是「设计者」——只设计，绝不干活（重模型）。
+_DESIGNER_BODY = """你是「设计者」——只设计，绝不干活。
 
 职责：
 - 框架方案：架构、模块划分、关键决策及理由、依赖顺序、风险与应对
@@ -195,7 +196,7 @@ _DESIGNER_BODY = """你是「设计者」——只设计，绝不干活（重模
 - 信息不足时明确列出假设，不要含糊带过
 """
 
-_REVIEWER_BODY = """你是「审核」——对抗性代码审核员（重模型）。唯一职责：证明这份改动有问题。
+_REVIEWER_BODY = """你是「审计者」——对抗性代码审核员。唯一职责：证明这份改动有问题。
 
 立场：假定代码是错的。你的价值在于找出问题，不在于肯定代码。真找不到
 问题时必须说清查过什么、怎么取证的，不许敷衍放行。
@@ -337,6 +338,18 @@ def resolve_role_models(base_url=None, models=None, default=None):
             ch or auto_h or "glm-5.3")
 
 
+def resolve_agent_models(base_url=None, models=None, default=None):
+    """解析 (designer 模型, reviewer 模型)——v2.53 用户拍板：面板直白配
+    「设计者/审计者」各自模型（designer_model/reviewer_model 显式优先），
+    缺省回退重池（heavy_model→自动分类→硬默认），即两代理共用重模型的
+    历史行为；只配一槽不影响另一槽回退。"""
+    cfg = roles_cfg()
+    _l, heavy = resolve_role_models(base_url, models, default)
+    cd = str(cfg.get("designer_model") or "").strip()
+    cr = str(cfg.get("reviewer_model") or "").strip()
+    return (cd or heavy, cr or heavy)
+
+
 def roles_mode(model=None):
     """主会话形态：① harness_roles.main_model 显式配置优先——按配置名过
     「除 Opus 皆轻」识别（用户声明主会话模型是什么，实测名/settings 名
@@ -410,7 +423,8 @@ def _uninstall_roles_agents():
 
 def install_roles_agents(model=None):
     """按当前形态安装/更新角色子代理定义到 ~/.claude/agents/（幂等：内容
-    有变才写）。light → designer+reviewer（都取重模型池）；strong → 只
+    有变才写）。light → designer+reviewer（各取 designer_model/
+    reviewer_model 槽，空=回退重池）；strong → 只
     reviewer（审计兜底代理）；executor/coder/dev 无条件退役清理。开关
     关闭 → 全部清理。失败静默（不拖垮会话启动）。
 
@@ -428,31 +442,31 @@ def install_roles_agents(model=None):
     except Exception:
         return
     mode = roles_mode(model)
-    _light_m, heavy_m = resolve_role_models()
+    designer_m, reviewer_m = resolve_agent_models()
     if mode == "light":
         wanted = {
             "designer.md": _agent_md(
                 "designer",
-                "设计者（重模型）：只设计，绝不干活——架构/模块划分/关键决"
+                "设计者：只设计，绝不干活——架构/模块划分/关键决"
                 "策/风险/依赖顺序的框架方案；不写代码不改文件不跑实现。需"
                 "要高水平方案时派此代理，并把已知上下文尽可能带上。",
-                heavy_m, _DESIGNER_BODY, tools=_TOOLS_DESIGN),
+                designer_m, _DESIGNER_BODY, tools=_TOOLS_DESIGN),
             "reviewer.md": _agent_md(
                 "reviewer",
-                "对抗审核（重模型）：改动交付或超审计线时派此代理审——分"
+                "审计者：改动交付或超审计线时派此代理审——分"
                 "两档：轻审（只审 diff）／全审（取证级：需求符合性/逻辑/健"
                 "壮性/安全/一致性）。只读不改，PASS/FAIL 二选一。",
-                heavy_m, _REVIEWER_BODY, tools=_TOOLS_REVIEW),
+                reviewer_m, _REVIEWER_BODY, tools=_TOOLS_REVIEW),
         }
     else:
         # strong：主会话直干，只装审计兜底的 reviewer（designer 共存不清）
         wanted = {
             "reviewer.md": _agent_md(
                 "reviewer",
-                "对抗审核（重模型）：改动交付或超审计线时派此代理审——分"
+                "审计者：改动交付或超审计线时派此代理审——分"
                 "两档：轻审（只审 diff）／全审（取证级：需求符合性/逻辑/健"
                 "壮性/安全/一致性）。只读不改，PASS/FAIL 二选一。",
-                heavy_m, _REVIEWER_BODY, tools=_TOOLS_REVIEW),
+                reviewer_m, _REVIEWER_BODY, tools=_TOOLS_REVIEW),
         }
     wrote = []
     for fn in _SELF_AGENTS:
@@ -634,7 +648,7 @@ def roles_bridge_text(model=None):
                           "审线未全审会被自动查出并要求补审")
         else:
             audit_note = "跳过应做的审核（轻审/全审）就答复用户属重大流程违规"
-        heavy_model = resolve_role_models()[1]
+        designer_m, reviewer_m = resolve_agent_models()
         return (
             "【任务分级（你=轻快主力，直干所有活）】\n"
             "本会话是面向用户的轻快主力：日常对话直接答；编码、执行、调试"
@@ -660,8 +674,8 @@ def roles_bridge_text(model=None):
             "何不行 ④相关文件+行号 ⑤验收标准。上下文给足，方案才可用。\n"
             "派 reviewer 的上下文包四要素：①目标 ②涉及文件+行号 ③已定决"
             "策（禁翻案项）④验收标准。\n"
-            "两个重模型代理：designer（%s）设计、reviewer（%s）对抗审核"
-            "（只审不改，PASS/FAIL 二选一）。\n"
+            "两个专职代理：设计者 designer（%s）只设计、审计者 reviewer"
+            "（%s）对抗审核（只审不改，PASS/FAIL 二选一）。\n"
             "流程：中改你改完 → reviewer 轻审；大改 designer 出方案 → 你"
             "实施 → reviewer 全审 → FAIL 自己修再送审，致命/严重问题清零"
             "才收 → 你消化双方结论后汇总答复用户。\n"
@@ -673,7 +687,7 @@ def roles_bridge_text(model=None):
             "- 回合终点纪律：提交/实施完成后，你的最后一条消息必须是给用户的结论"
             "汇总（做了什么、审核结论、提交号、用户需要做什么）——用户看不到后台"
             "代理的过程，静默结束回合=交付没完成。\n"
-            % (l1, l2l, heavy_model, heavy_model, audit_note)
+            % (l1, l2l, designer_m, reviewer_m, audit_note)
         )
     # strong 分支：重模型主会话=干活者，自己干所有活，不派干活子代理；
     # 只保留审计兜底——单次直改超审计线（数字嵌词热更）触发回合

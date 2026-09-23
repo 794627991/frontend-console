@@ -133,6 +133,22 @@ li, hv = hr.resolve_role_models(models=["glm-5.3-flash", "glm-5.3"],
                                 default="glm-5.3")
 check("方案表无 opus：重池回退 default（用户主模型最强）",
       li == "glm-5.3-flash" and hv == "glm-5.3")
+
+# ---- v2.53 设计者/审计者独立槽（resolve_agent_models）----
+print("[3b] 设计者/审计者模型解析")
+write_cfg(enabled=True, heavy_model=POOL_HEAVY)
+check("两槽全空 → 共用重池（历史行为）",
+      hr.resolve_agent_models() == (POOL_HEAVY, POOL_HEAVY))
+write_cfg(enabled=True, heavy_model=POOL_HEAVY,
+          designer_model="dm-x", reviewer_model="rm-x")
+check("显式两槽优先（各走各的）",
+      hr.resolve_agent_models() == ("dm-x", "rm-x"))
+write_cfg(enabled=True, heavy_model=POOL_HEAVY, designer_model="dm-x")
+check("只配设计者 → 审计者回退重池（互不牵连）",
+      hr.resolve_agent_models() == ("dm-x", POOL_HEAVY))
+# [1M] 用例走「池配置空→方案表自动分类」路径——不预写池配置（write_cfg
+# 是全量重写，上一用例的池配置不会残留）
+write_cfg(enabled=True)
 li, hv = hr.resolve_role_models(
     models=["Opus-X[1M]", "flash-a"], default="Opus-X[1M]")
 check("[1M] 窗口后缀剥离", li == "flash-a" and hv == "Opus-X")
@@ -354,9 +370,20 @@ with open(os.path.join(ad, "designer.md"), encoding="utf-8") as f:
 with open(os.path.join(ad, "reviewer.md"), encoding="utf-8") as f:
     rmd = f.read()
 check("roundtrip 后 designer 内容已刷新（非旧装）", dmd != dmd_old)
-check("designer md 取重池模型",
+check("designer md 取重池模型（槽空回退）",
       "model: %s" % POOL_HEAVY in dmd and "name: designer" in dmd)
-check("reviewer md 取重池模型", "model: %s" % POOL_HEAVY in rmd)
+check("reviewer md 取重池模型（槽空回退）", "model: %s" % POOL_HEAVY in rmd)
+# v2.53：设计者/审计者显式槽 → 各自 md 取各自模型
+write_cfg(enabled=True, light_model=POOL_LIGHT, heavy_model=POOL_HEAVY,
+          designer_model="dm-inst", reviewer_model="rm-inst")
+hr.install_roles_agents(LIGHT_MODEL)
+with open(os.path.join(ad, "designer.md"), encoding="utf-8") as f:
+    dmd2 = f.read()
+with open(os.path.join(ad, "reviewer.md"), encoding="utf-8") as f:
+    rmd2 = f.read()
+check("designer md 取设计者槽模型", "model: dm-inst" in dmd2, dmd2[:80])
+check("reviewer md 取审计者槽模型", "model: rm-inst" in rmd2, rmd2[:80])
+write_cfg(enabled=True, light_model=POOL_LIGHT, heavy_model=POOL_HEAVY)
 tl = _tools_line(dmd).split(", ")
 check("designer tools 全集（有 Write/Edit/Bash）且无 Task（禁派子代理）",
       all(t in tl for t in ("Read", "Write", "Edit", "MultiEdit",
@@ -510,6 +537,19 @@ try:
     jr4 = _c.post("/api/harness/roles", json={"executor_model": "old-keep"})
     check("旧键仍被接受落盘（兼容）",
           jr4.get_json().get("executor_model") == "old-keep")
+    # v2.53：设计者/审计者槽新键端到端（POST 落盘 + resolved 回显）——
+    # 白名单漏键会在此现形（面板保存假成功 bug 的回归测试）
+    jr5 = _c.post("/api/harness/roles", json={"designer_model": "e-dm",
+                                              "reviewer_model": "e-rm"})
+    jr5 = jr5.get_json(silent=True) or {}
+    check("POST 设计者/审计者槽落盘",
+          jr5.get("ok") and jr5.get("designer_model") == "e-dm"
+          and jr5.get("reviewer_model") == "e-rm", str(jr5))
+    gr2 = _c.get("/api/harness/roles").get_json()
+    rs2 = gr2.get("resolved") or {}
+    check("GET resolved 回显设计者/审计者模型",
+          rs2.get("designer") == "e-dm" and rs2.get("reviewer") == "e-rm",
+          str(rs2))
 except ImportError as e:
     check("Flask 不可用，跳过端点段（%s）" % e, True)
 

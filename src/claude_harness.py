@@ -390,7 +390,7 @@ def _iso_dur_sec(t0, t1):
 # 自动安装到 ~/.claude/agents/，别的机器零手工配置）；角色引导词/配置
 # 开关都在那个模块里。双形态（v2.51 重规划）：两形态主会话都直干所有
 # 活，不派干活子代理；子代理只留 designer（只设计）+ reviewer（只读
-# 审核）两个重模型代理——light 装两个、strong 只装 reviewer 作审计
+# 审核）两个代理——light 装两个、strong 只装 reviewer 作审计
 # 兜底（旧决策者结构禁权/roles_disallow 已废除）。
 from .harness_roles import (roles_bridge_text, install_roles_agents,
                             audit_verdict, audit_gate_check)
@@ -3964,20 +3964,24 @@ def harness_stop_vision():
 @harness_bp.route("/roles")
 def harness_roles_info():
     """角色设计说明（/roles 命令数据源）。resolved 是按当前 API 方案解析
-    出的 (轻池, 重池) 实际模型（换方案自动适配；designer/reviewer 取重
-    池）。mode——当前形态（main_model 显式配置优先，未配置按 settings
+    出的实际模型（换方案自动适配）：light/heavy=两池（历史口径），
+    designer/reviewer=设计者/审计者各自实际用的模型（v2.53 直白三槽：
+    designer_model/reviewer_model 显式优先，缺省回退重池）。
+    mode——当前形态（main_model 显式配置优先，未配置按 settings
     默认模型名过「除 Opus 皆轻」识别；light 轻主力直干+双代理 / strong
     重模型直干+审核兜底）。roles 为配置全量（含遗留键透传）；附 models/
     default_model 供配置面板下拉用。"""
-    from .harness_roles import (resolve_role_models, roles_cfg,
-                                roles_mode)
+    from .harness_roles import (resolve_role_models, resolve_agent_models,
+                                roles_cfg, roles_mode)
     li, hv = resolve_role_models()
+    dmr, rmr = resolve_agent_models()
     try:
         mode = roles_mode(available_models().get("default"))
     except Exception:
         mode = "strong"
     return jsonify({"ok": True, "roles": roles_cfg(), "mode": mode,
-                    "resolved": {"light": li, "heavy": hv},
+                    "resolved": {"light": li, "heavy": hv,
+                                 "designer": dmr, "reviewer": rmr},
                     "models": available_models().get("models", []),
                     "default_model": available_models().get("default")})
 
@@ -4023,9 +4027,10 @@ def harness_agent_models():
 @harness_bp.route("/roles", methods=["POST"])
 def harness_set_roles():
     """开关 + 整节配置（merge 写盘，只动出现的键）。body 可含 {enabled,
-    light_model, heavy_model, main_model, model_map, audit_mode,
-    l1_max_lines, l2_max_files, l2_max_lines}（旧键 executor_model/
-    coder_model 仍被接受落盘——读取侧按轻/重池降级兼容）。生效路径与
+    main_model, designer_model, reviewer_model, light_model, heavy_model,
+    model_map, audit_mode, l1_max_lines, l2_max_files, l2_max_lines}
+    （v2.53 设计者/审计者槽新键；旧键 executor_model/coder_model 仍被
+    接受落盘——读取侧按池降级兼容）。生效路径与
     开关一致：模型池/分级线出现在引导词里 → 指纹热更下条消息换词重启
     + agents 重生成；audit_mode 在回合结算时读盘，即时生效。写盘前过
     clamp_role_limits 交叉校验 l1_max_lines ≤ l2_max_lines（超线 clamp
@@ -4037,7 +4042,8 @@ def harness_set_roles():
     patch = {}
     if "enabled" in data:
         patch["enabled"] = bool(data.get("enabled"))
-    for k in ("light_model", "heavy_model", "main_model",
+    for k in ("designer_model", "reviewer_model", "light_model",
+              "heavy_model", "main_model",
               "executor_model", "coder_model"):
         if k in data:
             patch[k] = str(data.get(k) or "").strip()
