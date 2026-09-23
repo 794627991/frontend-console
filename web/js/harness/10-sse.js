@@ -478,13 +478,94 @@
       refreshSessions();
     }
   }
+  // ==================== v3.0 SSE 断点续传客户端（对照 ZCode subscribe(base)）====================
+  // base={epoch,seq} 双字段水位：seq 防重放（原有），epoch 判日志重写
+  // （/rewind 后旧 seq 空间作废，重放毫无意义只能重建）。ack 三态：
+  //   resume   水位有效 → 增量帧直接走正常渲染
+  //   snapshot 水位失效但事件流可表达 → 先清场，保留窗重放帧走正常渲染
+  //   reset    epoch 不匹配 → 弃事件流，transcript 重建后以新水位重开
+  // ka 心跳 5s 一发（命名事件，SSE 注释行 JS 不可见做不了看门狗）；20s
+  // 无帧判死强制重连（对照 persistent-protocol KEEP_ALIVE=5s/ACK_TIMEOUT=20s）。
+  function _hgSseResetLocal() {
+    // 清场：内存态与 DOM 全部作废（switchTo 的重置块同款，供 snapshot/reset 用）
+    endThinking(); closeRun();
+    if (_HG.grp) phStopTimer(_HG.grp);
+    Object.values(_HG.subBlk || {}).forEach(b => { if (b && b.timer) clearInterval(b.timer); });
+    _HG.rowById = {}; _HG.uidN = 0; _HG.run = null; _HG.grp = null; _HG.histNav = null;
+    _HG.subRows = {}; _HG.subBlk = {}; _HG.subTail = {}; _HG.subTailSeg = {};
+    _HG.histAll = null; _HG.histStart = 0; _HG.histLive = false; _HG.histStale = false;
+    _HG.todos = null; _HG.agents = null; _HG.dyn = null;
+    _subReset();
+    _HG.think = null; _HG.noScroll = false; _HG.openState = null;
+    _HG.echoFast = null; _HG.seq = 0;
+    _hgFlow.innerHTML = '';
+  }
+  function _hgSseRebuild(sid) {
+    // reset 语义：事件流已无法表达真源（/rewind 换代）→ 弃快照缓存走
+    // transcript 重建（switchTo 无缓存分支同款），完成后以新水位重开流。
+    if (_HG.sse) { try { _HG.sse.close(); } catch(_) {} _HG.sse = null; }
+    if (!sid || sid !== _HG.sid) return;
+    delete _HG.cache[sid];
+    _hgSseResetLocal();
+    setBusy(false);
+    fetch(`/api/harness/transcript?sid=${encodeURIComponent(sid)}`)
+      .then(r => r.json())
+      .then(j => {
+        if (!j.ok || _HG.sid !== sid) return;
+        _HG.seq = j.seq || 0; _HG.epoch = j.epoch || null; _HG.alive = !!j.alive;
+        if (!j.lines.length) showWelcome();
+        else _histRender(j.lines, Math.max(0, j.lines.length - _HG.HIST_PAGE));
+        if (j.busy) phResume(); else grpFinalize(true);
+        _hgScrollBottom(true);
+        setBusy(!!j.busy, j.busy_since);
+        openSSE(sid, _HG.seq);
+        refreshSessions();
+      })
+      .catch(() => {});
+  }
+  let _hgKaTimer = null;
+  function _hgKaWatchdog() {
+    // 看门狗单例：5s 巡检，20s 无帧（连 ka 都没到=流假死：代理静默断连/
+    // 服务端卡死）强制关流重开——带当前水位续传，缺口由服务端 resume 补
+    if (_hgKaTimer) return;
+    _hgKaTimer = setInterval(() => {
+      if (!_HG.sse || !_HG.sid) return;
+      if (Date.now() - (_HG.lastFrameAt || 0) < 20000) return;
+      const sid = _HG.sid;
+      try { _HG.sse.close(); } catch(_) {}
+      _HG.sse = null;
+      openSSE(sid, _HG.seq);
+    }, 5000);
+  }
   function openSSE(sid, afterSeq) {
     if (_HG.sse) { try { _HG.sse.close(); } catch(_) {} _HG.sse = null; }
     _HG.initN = 0;   // v2.35：init 计数随流重置——新流首个 init=进程待机，不算回合起跑（跨会话/重开 tab 不残留）
+    _HG.lastFrameAt = Date.now();
     if (!sid) return;
-    const es2 = new EventSource(`/api/harness/stream?sid=${encodeURIComponent(sid)}&after_seq=${afterSeq || 0}`);
+    _hgKaWatchdog();
+    // v3.0：epoch 缺省（新会话/重建后首轮）后端按 snapshot 处理
+    const ep = _HG.epoch ? `&epoch=${encodeURIComponent(_HG.epoch)}` : '';
+    const es2 = new EventSource(`/api/harness/stream?sid=${encodeURIComponent(sid)}&after_seq=${afterSeq || 0}${ep}`);
     _HG.sse = es2;
+    es2.addEventListener('ka', () => { _HG.lastFrameAt = Date.now(); });
+    es2.addEventListener('ack', (ev) => {
+      _HG.lastFrameAt = Date.now();
+      let a; try { a = JSON.parse(ev.data); } catch(_) { return; }
+      if (!a || !a.epoch) return;
+      if (a.mode === 'reset') { _HG.epoch = a.epoch; _hgSseRebuild(sid); return; }
+      _HG.epoch = a.epoch;
+      // snapshot：服务端即将重放保留窗——先清场（ack 先于重放帧到达，
+      // 事件顺序保证清场时机正确）
+      if (a.mode === 'snapshot') _hgSseResetLocal();
+    });
+    es2.addEventListener('reset', (ev) => {
+      // mid-stream reset（慢订阅者被服务端显式断开）——同样走转写重建
+      let d = null; try { d = JSON.parse(ev.data); } catch(_) {}
+      if (d && d.epoch) _HG.epoch = d.epoch;
+      _hgSseRebuild(sid);
+    });
     es2.onmessage = (ev) => {
+      _HG.lastFrameAt = Date.now();
       let it;
       try { it = JSON.parse(ev.data); } catch(_) { return; }
       // v2.25：防重放——EventSource 断线自动重连用的还是创建时的旧
@@ -547,6 +628,12 @@
     // 使滚动扩收机制在快照态重新成立（此前快照恢复后 histLive=false 且
     // histStart 丢失，上滑扩段被 v2.35.2 的门拦死，历史够不着）
     _HG.cache[_HG.sid] = { html: _hgFlow.innerHTML, seq: _HG.seq,
+                           epoch: _HG.epoch || null,
+                           // v3.0 滚动记忆（对照 ZCode chatSessionScrollMemory 五元组）：
+                           // 贴底记忆→切回回底（跟读新消息）；否则恢复钳制后的
+                           // scrollTop——翻历史中途切走再切回，视口不再被拽到底
+                           scroll: { top: _hgFlow.scrollTop, h: _hgFlow.scrollHeight,
+                                     ch: _hgFlow.clientHeight, atBottom: isNearBottom() },
                            echoFast: _HG.echoFast || null,
                            histStart: _HG.histStart,
                            // v2.43.2（R3 复审 F-R3）：降级快照 histLive 恒 false
@@ -578,4 +665,18 @@
            + (l.agent ? String(l.agent).length : 0)) | 0;
     }
     return String(h);
+  }
+  // v3.0：轮询兜底通道的 epoch 校验——/events 响应带 epoch，与自己水位
+  // 不符（对端已换代）即走重建（与 SSE ack(reset) 同语义，轮询路径不再
+  // 只有 seq 单字段盲区）。两处调用（switchTo 早返回/快照恢复）共用。
+  function _hgEventsPoll(sid) {
+    fetch(`/api/harness/events?sid=${encodeURIComponent(sid)}&after_seq=${_HG.seq}&epoch=${encodeURIComponent(_HG.epoch || '')}`)
+      .then(r => r.json())
+      .then(j => {
+        if (!j.ok || _HG.sid !== sid) return;
+        if (j.epoch && _HG.epoch && j.epoch !== _HG.epoch) { _hgSseRebuild(sid); return; }
+        setBusy(!!j.busy, j.busy_since);
+        if (j.busy) phResume();
+      })
+      .catch(() => { if (_HG.sid === sid) setBusy(false); });
   }

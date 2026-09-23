@@ -313,8 +313,12 @@
     if (!_HG.think || !_HG.think.seg.isConnected) startThinking();
     const seg = _HG.think.seg;
     const holder = seg.querySelector('.h-think-seg-body');
-    // v2.15：insertAdjacentHTML 只追加增量（innerHTML += 是 O(n²) 且丢事件）
-    holder.insertAdjacentHTML('beforeend', renderMd(text));
+    // v3.0 双渲染路径（对照 ZCode reasoning.tsx:555 注释——thought 流式追加
+    // 时每块跑 Markdown 解析会随字数越来越卡）：流式期间纯文本 textNode
+    // O(1) 追加（.hg-think-plain 的 pre-wrap 保换行），endThinking 定稿时
+    // 一次性 renderMd 升级替换（升级失败 catch 保留纯文本，展示不中断）。
+    holder.classList.add('hg-think-plain');
+    holder.appendChild(document.createTextNode(text));
     thinkHeadUpdate();
     _hgScrollBottom();
   }
@@ -330,6 +334,17 @@
     if (!t) return;
     _HG.think = null;
     const seg = t.seg;
+    // v3.0：定稿升级——流式期间攒的纯文本段一次性渲染成 Markdown（历史
+    // 路径 body 本就是 md，无 plain 类零开销直通；升级失败保留纯文本）
+    const body = seg.querySelector('.h-think-seg-body');
+    if (body && body.classList.contains('hg-think-plain')) {
+      try {
+        const raw = body.textContent;
+        body.classList.remove('hg-think-plain');
+        body.innerHTML = renderMd(raw);
+        if (_HG.histAll) _codeLazyEnhance(body); else codeBlockEnhance(body);
+      } catch(_) {}
+    }
     const te = seg.querySelector('[data-hg-think-t]');
     const t0 = +(seg.dataset.t0 || 0);
     if (hist || !t0) {

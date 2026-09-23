@@ -167,6 +167,17 @@
     const foot = card.querySelector('.h-ask-foot');
     if (foot) foot.innerHTML = `<span class="h-ask-done">✓ 已提交</span>`;
   }
+  // v3.0 高亮缓存池（对照 ZCode shikiHighlighter.ts:56 的指纹 key + 结果
+  // 缓存）：key=语言:长度:首100:尾100（不存全文防 key 本身膨胀）；命中直接
+  // innerHTML 回填跳过 hljs 解析（流式/lazy IO/重渲三路重复高亮同一代码块
+  // 是 CPU 大户）。Map 插入序即 LRU 序，上限 500 逐出最老（ZCode 审计明记
+  // tokensCache 无淘汰是 renderer 内存增长点——这里不重蹈）。
+  const _hlCache = new Map();
+  const _HL_CACHE_MAX = 500;
+  function _hlKey(lang, raw) {
+    return lang + ':' + raw.length + ':' + raw.slice(0, 100)
+           + ':' + (raw.length > 100 ? raw.slice(-100) : '');
+  }
   function codeBlockEnhance(container) {
     // markdown-it 产物里的 pre > code：套 ChatGPT 式容器（语言标签+复制钮）
     container.querySelectorAll('pre > code').forEach(code => {
@@ -188,7 +199,18 @@
       box.appendChild(head);
       box.appendChild(pre);
       if (window.hljs && lang && hljs.getLanguage(lang)) {
-        try { hljs.highlightElement(code); code.classList.add('hg-hl'); } catch(_) {}
+        try {
+          const k = _hlKey(lang, raw);
+          const hit = _hlCache.get(k);
+          if (hit !== undefined) {
+            code.innerHTML = hit; code.classList.add('hg-hl');
+          } else {
+            hljs.highlightElement(code); code.classList.add('hg-hl');
+            _hlCache.set(k, code.innerHTML);
+            if (_hlCache.size > _HL_CACHE_MAX)
+              _hlCache.delete(_hlCache.keys().next().value);
+          }
+        } catch(_) {}
       }
     });
   }

@@ -153,6 +153,8 @@ console.log('— 21 文件加载 OK —');
     handleEvent({type:'assistant', message:{content:[{type:'tool_use',id:'t1',name:'Bash',input:{command:'ls'}}]}, session_id:'cs1'});
     handleEvent({type:'user', message:{content:[{type:'tool_result',tool_use_id:'t1',content:'out'}]}, session_id:'cs1'});
     handleEvent({type:'result', dur_ms:99, session_id:'cs1'});
+    handleEvent({kind:'ask', req_id:'rq1', title:'选择实现方案', questions:[{question:'用A还是B', options:[{label:'A'},{label:'B'}]}]});
+    handleEvent({kind:'ask_done', req_id:'rq1', answer:{'用A还是B':'A'}});
   `, 'handleEvent 事件流(文本/工具/结果)') && ok;
   ok = await run('send()', 'send(排队→dispatch)') && ok;
   console.log(ok ? '\n=== 主链冒烟全部通过 ===' : '\n=== 有失败,见上 ===');

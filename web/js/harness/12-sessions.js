@@ -12,10 +12,7 @@
             && _HG.sse.url.includes('sid=' + encodeURIComponent(sid));
           if (!own) openSSE(sid, _HG.seq);
         } catch(_) {}
-        fetch(`/api/harness/events?sid=${encodeURIComponent(sid)}&after_seq=${_HG.seq}`)
-          .then(r => r.json())
-          .then(j => { if (j.ok && _HG.sid === sid) { setBusy(!!j.busy, j.busy_since); if (j.busy) phResume(); } })
-          .catch(() => { if (_HG.sid === sid) setBusy(false); });
+        _hgEventsPoll(sid);
       }
       return;
     }
@@ -39,7 +36,7 @@
     _HG.dyn = null;                          // v2.32 面板派生态不跨会话（活动流/回合史/打标全重建）
     _subReset();                             // v2.33：子代理实时窗格不跨会话
     _HG.think = null; _HG.noScroll = false; _HG.openState = null;   // v2.16：重建态不跨会话残留
-    _HG.sid = sid; _HG.seq = 0; _HG.alive = false;
+    _HG.sid = sid; _HG.seq = 0; _HG.epoch = null; _HG.alive = false;
     // v2.15：dirty 语义修正。旧实现只在「发送成功」置 true、只在
     // switchTo(null) 置 false —— 冷启动自动进的是历史会话（has_history），
     // dirty 仍是 false，于是点一下模型/项目 chip 就会走 `if (!_HG.dirty)`
@@ -73,6 +70,7 @@
     const c = _HG.cache[sid];
     if (c) {
       _hgFlow.innerHTML = c.html; _HG.seq = c.seq;
+      _HG.epoch = c.epoch || null;     // v3.0：代际水位随快照存取（与 seq 同进退）
       _HG.echoFast = c.echoFast || null;   // v2.28.13：去重窗口随快照恢复（防重放双画）
       // v2.37（P0-A）：窗口账目重建——快照 DOM 是上一次 _histRender 的窗口
       // （histStart 起的尾部段），账目随快照存取（见 saveCache）。histLive
@@ -118,8 +116,20 @@
           if (ok && _HG.sid === sid) lazyOpen.forEach(el => _histLazyFill(el));
         });
       }
-      _hgScrollBottom(true);              // v2.25：快照恢复也回底——与 _histRender 路径
-                                       // 一致（用户实测「新建会话再切回，焦点不在最下面」）
+      // v3.0 滚动记忆恢复（对照 ZCode chatSessionScrollMemory）：离开时贴底
+      // → 回底（继续跟读）；否则恢复钳制后的 scrollTop（clamp 到当前可滚
+      // 范围——DOM 未到齐时恢复值被压小，内容补齐后自然落位）。rAF 等
+      // innerHTML 回填后的布局结算再写 scrollTop（同步写会被旧布局吞掉）。
+      if (c.scroll && !c.scroll.atBottom) {
+        _HG.noScroll = true;           // 恢复写 scrollTop 触发的 scroll 事件不得进扩收分支
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            const max = _hgFlow.scrollHeight - _hgFlow.clientHeight;
+            if (max > 0) _hgFlow.scrollTop = Math.min(Math.max(c.scroll.top, 0), max);
+            _HG.noScroll = false;
+          });
+        });
+      } else _hgScrollBottom(true);
       // v2.3.13：快照里冻结的压缩分割线——本会话没有仍在进行的压缩就定格成
       // 完成态（压缩结束事件只在原会话 SSE 里到达，切走期间错过时这里兜底），
       // 不让「正在压缩 · 已 X」冻死在消息流里
@@ -158,17 +168,14 @@
       // v2.9：缓存恢复不能盲目清 busy——切走时正在回复的会话，切回后
       // 事件继续流入但 user_echo 已在 seq 之前（不重放），活动条/停止钮
       // 再也不弹（用户实测「有实际对话但无计时条、发送键不变■」）。
-      // 后端 events 接口顺带返回真实 busy，按它恢复
-      fetch(`/api/harness/events?sid=${encodeURIComponent(sid)}&after_seq=${_HG.seq}`)
-        .then(r => r.json())
-        .then(j => { if (j.ok && _HG.sid === sid) { setBusy(!!j.busy, j.busy_since); if (j.busy) phResume(); } })   // v2.20（3.png）：快照里的冻结占位复活
-        .catch(() => { if (_HG.sid === sid) setBusy(false); });
+      // 后端 events 接口顺带返回真实 busy，按它恢复（v3.0 兼带 epoch 校验）
+      _hgEventsPoll(sid);
     } else {
       _hgFlow.innerHTML = '';
       try {
         const j = await (await fetch(`/api/harness/transcript?sid=${encodeURIComponent(sid)}`)).json();
         if (j.ok && _HG.sid === sid) {
-          _HG.seq = j.seq || 0; _HG.alive = !!j.alive;
+          _HG.seq = j.seq || 0; _HG.epoch = j.epoch || null; _HG.alive = !!j.alive;
           if (!j.lines.length) showWelcome();
           else _histRender(j.lines, Math.max(0, j.lines.length - _HG.HIST_PAGE));
           // v2.20（3.png）：busy 会话尾部组是「进行中」的组——transcript 只到

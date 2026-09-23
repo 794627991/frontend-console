@@ -758,10 +758,14 @@ function buildClaudeHarnessTab(opts = {}) {
     const nearTop = _hgFlow.scrollTop <= 60;
     const distBottom = _hgFlow.scrollHeight - _hgFlow.scrollTop - _hgFlow.clientHeight;
     const shown = _HG.histAll.length - _HG.histStart;
-    if (nearTop && _HG.histStart > 0) {
+    if (nearTop && _HG.histStart > 0
+               && Date.now() - (_HG.histRestoredAt || 0) > 400) {
       // 上滑到顶：自动扩一段，锚定滚动（视觉位置不跳）。到 CAP 上限或
       // busy 时不再扩也不自动进只读（用户定调 v2.24.8：只读模式仅点击
       // 提示条进入——上滑自动进在回底部途中误触，烦人）
+      // v3.0：补 histRestoredAt 守卫（与收缩分支同款）——滚动记忆恢复写
+      // scrollTop 也发 scroll 事件，用户原本就在顶部时会被误判为「上滑
+      // 到顶」自动扩段（非用户意图的重渲闪屏）
       const capStart = Math.max(0, _HG.histAll.length - _HG.HIST_CAP);
       if (_HG.histStart > capStart && !_HG.busy) {
         _histBusy = true;
