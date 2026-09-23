@@ -135,3 +135,41 @@ data: {"reason":"slow-subscriber"}
 - 状态唯一所有者：busy/turn 以 eventlog 投影为准，不再新加散落旗；
 - bug 修复用中文注释说明原因与依据（含用户实测记录）；
 - `py tools/architecture_check.py` 进 pre-commit（新增违规阻塞）。
+
+## 五、v3.2 第三期落地（ZCode 三大件：回合闭合 + 内联时间线 + 子代理目录）
+
+对照 ZCode 源码逐件抄明白（源文件注记在各条），四张截图全部兑现：
+
+1. **✅ 回合自动闭合「已工作 N 分 N 秒 ›」**（对照 `conversationTurnWorkSegments.ts`
+   + `ConversationTurnGroup.tsx` AssistantHistoryStatus）：
+   - 组结构改造：`.h-grp-proc{ .h-turn-head + .h-turn-body{ .h-drawer.think + .h-tl } }`，
+     正文气泡在组根（折叠区外永远可见——ZCode 的 visibleAssistantTextRow 语义）；
+   - 工时三源分级（对照 activeMs 规则）：CLI `result.duration_ms`（冻结事实）→
+     回放下一条 user ts 差值 → 本地差值兜底；历史「已工作」绝不吃当前时钟；
+   - 文案三态：运行中「工作中 Ns」（live 秒表，`_HG.turnTicks` 登记、切会话/
+     SSE reset 全收）→ 完成「已工作 X · N 工具」→ 中断「已停止 · X」；
+   - 折叠规则：回放默认收 / live 底部跟读自动收 / 用户点过头永不强制收
+     （userToggled 进 dataset 随快照走）；旧快照（v3.1 双抽屉结构）恢复走
+     legacy 分支字节级兼容。
+2. **✅ 主流程内联工具时间线**（对照 `ToolCallBlocks/ToolLayout.tsx` + explore.tsx）：
+   - 执行抽屉退役：工具行进 `.h-tl` 左脊柱时间线（1px 竖线 + 缩进行），
+     renderToolUse 与 renderHistTool（回放）同走 `_tlPlace`——两路聚组一致；
+   - **查阅聚组**（对照 `exploreToolCall.ts`）：Read/Glob/Grep/WebSearch/WebFetch
+     + 只读 Bash（rg/ls/cat/git status 正则族，写命令排除）连续聚成
+     「🔍 查阅 · N 搜索 · M 文件」折叠组；运行态头部显最新子行动（活字），
+     断组定格汇总并自动收；展开=左竖线子行树（懒填懒丢照旧）；
+     组内失败冒泡到组头（showFailureStatus 同款，收起也可见）；
+   - diff 行号列（d-ln，+/= 新文件行号、- 旧文件行号）+ 新增绿底/竖条；
+   - Bash 单行卡升级 oneclick（终端 command ˅ 展开输出）。
+3. **✅ 子智能体目录**（对照 `SubagentDirectorySidePane.tsx` +
+   `useSessionSubagents.ts`）：右栏常驻「☰ 目录」伪 tab（不让位不关闭），
+   正在运行/已结束分组列表（状态图标 ◐✓✗⏹ + 标题 + 状态词 + 摘要 120 字 +
+   相对时间）；点行开视图——运行中→live 实况 tab、已结束→回放 tab（协作代理
+   走结论回看分支）；数据源=live 档案 `_HG.agents` + 回放档案 `dyn.agentsRpl`
+   （rid 持久发号）；面板 C 区头「⏱ 已结束 N ›」入口，事件驱动刷新。
+
+**验证**：结构断言（折叠头文案命中 883000ms 冻结工时、聚组桶汇总、行号、
+oneclick、目录三态行）+ 五项交互点击（回合头/查阅组头/终端卡/编辑卡/目录行）
++ 视觉验收 5/5 PASS（闭合态全景：已工作行+正文+目录 tab）；全量回归
+（eventlog 60 / ledger 17 / roles 155 / 主链冒烟 / state 38 / undef 符号级零新增 /
+架构 0 违规）；版本 2.3.3。
