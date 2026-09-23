@@ -1,5 +1,89 @@
 // harness subpane.js (v3.0 自 buildClaudeHarnessTab 拆出,定义体零改动,缩进保持原样)
   const _sub = { tabs: {}, order: [], active: null, manual: false };
+  // ==================== v3.2：子智能体目录（ZCode SubagentDirectorySidePane 移植）====================
+  // 目录是一个常驻伪 tab（__dir__）：正在运行/已结束两组列表，行卡=状态图标+
+  // 标题+状态词+摘要+相对时间；点行开该代理视图 tab（live 直开 / 已结束走回放）。
+  // 数据源=live 档案 _HG.agents + 回放档案 dyn.agentsRpl（对照 useSessionSubagents
+  // 的 running/ended 两段口径，我们无分页——量级远小于 ZCode 云端）
+  const _SUB_DIR = '__dir__';
+  function _subDirRows() {
+    const rows = [];
+    for (const tid in (_HG.agents || {})) {
+      const a = _HG.agents[tid];
+      if (!a || a.replay) continue;
+      rows.push(Object.assign({ tid }, a));
+    }
+    for (const a of ((_HG.dyn && _HG.dyn.agentsRpl) || [])) {
+      // rid 补发（与 _dynAgents 同款持久发号——条目点击按 rid 回查存档）
+      if (!a.rid) a.rid = 'rpl' + ((_HG.rplSeq = (_HG.rplSeq || 0) + 1));
+      rows.push(Object.assign({ tid: a.rid, rpl: true }, a));
+    }
+    const running = rows.filter(r => !r.done).sort((x, y) => (x.t0 || 0) - (y.t0 || 0));
+    const ended = rows.filter(r => r.done)
+      .sort((x, y) => (y.doneAt || 0) - (x.doneAt || 0)).slice(0, 30);
+    return { running, ended };
+  }
+  function _subDirRowHtml(r) {
+    // 状态三态（对照 StatusIcon）：运行 spinner / 成功 ✓ / 失败 ✗ / 中断 ⏹
+    const st = !r.done ? 'run' : (r.interrupted ? 'stop' : (r.err ? 'err' : 'ok'));
+    const stIco = { run: '◐', ok: '✓', err: '✗', stop: '⏹' }[st];
+    const stTxt = { run: '运行中', ok: '已完成', err: '已失败', stop: '已中断' }[st];
+    const title = ((_AGENT_LABEL[r.type] || r.type || '子代理') +
+      (r.desc ? ' · ' + r.desc : '')).slice(0, 80);
+    const sum = String(r.result || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+    const t = r.done ? (r.doneAt || 0) : (r.t0 || 0);
+    return `<button class="hg-sub-dir-row ${st}" data-hg-dir="${esc(r.tid)}"` +
+      ` data-hg-dir-rpl="${r.rpl ? '1' : ''}" title="${esc(title)}">` +
+      `<span class="hg-sub-dir-ico">${stIco}</span>` +
+      `<span class="hg-sub-dir-main"><span class="hg-sub-dir-t1">` +
+      `<span class="hg-sub-dir-title">${esc(title)}</span>` +
+      `<span class="hg-sub-dir-st">${stTxt}${r.bg ? ' · 后台' : ''}${r.collab ? ' · 协作' : ''}</span></span>` +
+      (sum ? `<span class="hg-sub-dir-sum">${esc(sum)}${String(r.result || '').trim().length > 120 ? '…' : ''}</span>` : '') +
+      `</span>` +
+      (t ? `<span class="hg-sub-dir-time">${esc(_harnessRelTime(t))}</span>` : '') +
+      `</button>`;
+  }
+  function _subDirPaint() {
+    const tb = _sub.tabs[_SUB_DIR];
+    if (!tb || _sub.active !== _SUB_DIR || !tb.sc) return;
+    const { running, ended } = _subDirRows();
+    tb.sc.innerHTML =
+      `<div class="hg-sub-dir-head">子智能体目录</div>` +
+      `<div class="hg-sub-dir-sec">正在运行 · ${running.length}</div>` +
+      (running.length ? running.map(_subDirRowHtml).join('')
+        : `<div class="hg-sub-dir-empty">没有正在运行的子智能体</div>`) +
+      `<div class="hg-sub-dir-sec">已结束 · ${ended.length}</div>` +
+      (ended.length ? ended.map(_subDirRowHtml).join('')
+        : `<div class="hg-sub-dir-empty">暂无已结束的子智能体</div>`);
+  }
+  function _subDirOpen() {
+    if (!_subPaneEl) return;
+    if (!_sub.tabs[_SUB_DIR]) {
+      const sc = document.createElement('div');
+      sc.className = 'hg-sub-msgs hg-sub-dir'; sc.dataset.tid = _SUB_DIR;
+      _sub.tabs[_SUB_DIR] = { label: '目录', type: '__dir__', desc: '子智能体目录', sc,
+                              run: false, err: false, replay: false, model: '' };
+      _sub.order.push(_SUB_DIR);
+      _subBodyEl.appendChild(sc);
+    }
+    _subShow(); _subTabsPaint(); _subActivate(_SUB_DIR);
+    _subDirPaint();
+    _sub.manual = true;   // v3.2：目录是用户主动打开的视图——回合结束不自动收（同 _subReplay 口径）
+  }
+  function _subDirRowClick(tid, isRpl) {
+    if (isRpl) {
+      // 回放档案条目（历史 Task 行派生）：rid 定位存档，agentId 开回放 tab
+      const a = ((_HG.dyn && _HG.dyn.agentsRpl) || []).find(x => (x.rid || '') === tid);
+      if (!a) return;
+      _subReplay('rpl:' + tid, a.type, a.desc, a.agentId || '');
+      if (!a.agentId) showBanner('该历史子代理无 agentId 记录，无法回放', 2600);
+      return;
+    }
+    const a = (_HG.agents || {})[tid];
+    if (!a) return;
+    if (!a.done) { _subOpen(tid, a.type, a.desc); return; }         // 运行中 → live 实况 tab
+    _subReplay(tid, a.type, a.desc, a.taskId || a.agentId || '');   // 已结束 → 回放 tab（collab 分支内部自理）
+  }
   function _subReset() {
     _sub.tabs = {}; _sub.order = []; _sub.active = null; _sub.manual = false;
     if (_subPaneEl) { _subPaneEl.style.display = 'none'; _subTabsEl.innerHTML = ''; _subBodyEl.innerHTML = ''; }
@@ -27,10 +111,14 @@
                          err: !!_ag.err, replay: !!replay,
                          model: _ag.model || '' };
       _sub.order.push(tid);
-      if (_sub.order.length > 6) {          // 上限 6 个 tab，最旧让位
-        const old = _sub.order.shift();
-        if (_sub.tabs[old] && _sub.tabs[old].sc.parentNode) _sub.tabs[old].sc.remove();
-        delete _sub.tabs[old];
+      // v3.2：上限 6 个 tab，最旧让位（目录伪 tab 常驻不让位）
+      if (_sub.order.filter(t => t !== _SUB_DIR).length > 6) {
+        const old = _sub.order.find(t => t !== _SUB_DIR);
+        if (old != null) {
+          _sub.order = _sub.order.filter(t => t !== old);
+          if (_sub.tabs[old] && _sub.tabs[old].sc.parentNode) _sub.tabs[old].sc.remove();
+          delete _sub.tabs[old];
+        }
       }
       _subBodyEl.appendChild(sc);
     }
@@ -178,6 +266,7 @@
     _subBodyEl.querySelectorAll('.hg-sub-msgs').forEach(x =>
       x.style.display = x.dataset.tid === tid ? '' : 'none');
     _subTabsPaint(); _subScroll(tid);
+    if (tid === _SUB_DIR) _subDirPaint();   // v3.2：目录激活即重绘（数据最新）
   }
   function _subTabsPaint() {
     if (!_subTabsEl) return;
@@ -191,14 +280,16 @@
                     mdlFull ? '模型：' + mdlFull : '模型：主链模型（内置/无定义文件）',
                     ag.tokens ? `用量：${ag.tokens} tokens · ${ag.toolN || 0} 次工具` : '']
         .filter(Boolean).join('\n');
-      return `<div class="hg-sub-tab${t === _sub.active ? ' active' : ''}${tb.run ? ' run' : tb.err ? ' err' : ''}${tb.replay ? ' replay' : ''}"` +
+      return `<div class="hg-sub-tab${t === _sub.active ? ' active' : ''}${tb.run ? ' run' : tb.err ? ' err' : ''}${tb.replay ? ' replay' : ''}${t === _SUB_DIR ? ' dir' : ''}"` +
         ` data-hg-subtab="${esc(t)}" title="${esc(ttip)}">` +
-        `<span class="hg-sub-dot"></span>${esc(tb.label)}` +
+        (t === _SUB_DIR ? '<span class="hg-sub-dir-tabico">☰</span>' : '<span class="hg-sub-dot"></span>') + esc(tb.label) +
         (tb.replay ? `<span class="hg-sub-rp">回放</span>` : '') +
         (mdlShort ? `<span class="hg-sub-mdl">${esc(mdlShort)}</span>` : '') +
         // 窗格重设计 P1-1：单-tab ✕——hover 才浮现（CSS 控制），运行中的 tab
         // 提示「任务继续后台跑」防误触焦虑；点击走 _subDrop（tab 条委托分支）
-        `<span class="hg-sub-x2" data-hg-subclose="${esc(t)}" title="${esc(tb.run ? '关闭视图（任务继续在后台跑）' : '关闭该 tab')}">✕</span></div>`;
+        // v3.2：目录伪 tab 常驻无 ✕
+        (t === _SUB_DIR ? '' :
+        `<span class="hg-sub-x2" data-hg-subclose="${esc(t)}" title="${esc(tb.run ? '关闭视图（任务继续在后台跑）' : '关闭该 tab')}">✕</span>`) + `</div>`;
     }).join('');
   }
   function _subScroll(tid) {

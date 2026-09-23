@@ -23,6 +23,7 @@
     _hgPeerWaitStop();                  // v2.27.5：转交等待计时器不跨会话残留
     endThinking(); closeRun();
     if (_HG.grp) phStopTimer(_HG.grp);   // v2.18：防御性清占位 timer（isConnected 自杀是兜底）
+    _turnHeadStop();   // v3.2：回合秒表随切会话全收
     _hgMentionReset();          // v2.15：@ 引用高亮不跨会话残留
     _HG.rowById = {}; _HG.uidN = 0; _HG.run = null; _HG.grp = null; _HG.histNav = null;   // v2.18：组级抽屉
     // v2.43：子代理段随会话切换重置（段计时器停掉；段 DOM 随 flow 重建，内存档不跨会话残留）

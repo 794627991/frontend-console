@@ -3641,3 +3641,114 @@ html {
 }
 .hg-dyn-replay-btn:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 
+
+/* ============================================================
+   v3.2 ZCode 式回合闭合 + 内联工具时间线 + 查阅聚组 + 子代理目录
+   （对照 packages/ui ConversationTurnGroup/ToolCallBlocks/explore/
+   SubagentDirectorySidePane 的视觉规格）
+   ============================================================ */
+
+/* ---- 回合折叠头：⏱ 已工作 N 分 N 秒 › ---- */
+.h-turn-head { display: flex; align-items: center; gap: 6px; width: fit-content;
+  padding: 1px 4px; border: 0; background: none; cursor: pointer;
+  font-size: var(--fs-sm); color: var(--muted); border-radius: 5px; }
+.h-turn-head:hover { color: var(--fg); background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.h-turn-head .h-chev { font-size: 10px; color: var(--muted); opacity: .8;
+  transition: transform .15s; display: inline-block; }
+.h-turn-body:not(.closed) ~ * .h-chev, .h-grp-proc > .h-turn-head .h-chev { }
+.h-turn-label { color: var(--muted); }
+.h-turn-sub { font-size: var(--fs-2xs); color: var(--muted); opacity: .75;
+  font-family: var(--font-mono); }
+.h-turn-body.closed { display: none; }
+/* 展开态 chevron 转正（收起态 › 右指） */
+.h-grp-proc:has(.h-turn-body:not(.closed)) > .h-turn-head .h-chev { transform: rotate(90deg); }
+
+/* ---- 组内纵向布局（v3.2 前双抽屉横排 → 回合头+工作区纵排） ---- */
+.h-grp-proc { display: flex; flex-direction: column; gap: 6px; }
+.h-grp-proc > .h-drawer { flex: 1 1 auto; min-width: 0; max-width: 100%; }
+.h-turn-body { display: flex; flex-direction: column; gap: 6px; }
+
+/* ---- 内联工具时间线：左侧脊柱竖线（截图4 同款） ---- */
+.h-tl { position: relative; display: flex; flex-direction: column; gap: 3px;
+  margin: 0 0 0 12px; padding-left: 13px; }
+.h-tl::before { content: ''; position: absolute; left: 0; top: 6px; bottom: 6px;
+  width: 1px; background: color-mix(in srgb, var(--border) 90%, transparent); }
+.h-tl > .h-tool, .h-tl > .h-tool-res, .h-tl > .h-tl-grp { position: relative; }
+.h-tl:empty { display: none; }
+/* 时间线里的工具行去掉旧抽屉时代的块状底色——内联行更轻 */
+.h-tl .h-tool { background: transparent; border-color: transparent; padding-left: 0; }
+.h-tl .h-tool.col { --h-accent-l: 2px; }
+.h-tl .h-tool .h-tool-coll { margin-left: 0; }
+
+/* ---- 查阅聚组：🔍 查阅 · N 搜索 · M 文件（展开=左竖线+子行树） ---- */
+.h-tl-grp { display: flex; flex-direction: column; gap: 2px; }
+.h-tl-grp-head { display: flex; align-items: center; gap: 7px; width: fit-content;
+  padding: 1px 4px 1px 0; border: 0; background: none; cursor: pointer;
+  font-size: var(--fs-sm); color: var(--muted); text-align: left; border-radius: 5px; }
+.h-tl-grp-head:hover { color: var(--fg); }
+.h-tl-grp-head .h-chev { font-size: 10px; display: inline-block;
+  transition: transform .15s; color: var(--muted); }
+.h-tl-grp.open > .h-tl-grp-head .h-chev { transform: rotate(90deg); }
+.h-tl-grp-name { color: var(--muted); font-weight: 500; }
+.h-tl-grp-sum { color: var(--muted); opacity: .8; font-size: var(--fs-xs); }
+/* 展开的子行树：左竖线 + 缩进（ZCode explore ml-2 border-l pl-3.5 同款） */
+.h-tl-grp-body { display: none; margin: 1px 0 2px 8px; padding-left: 11px;
+  border-left: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
+  flex-direction: column; gap: 3px; }
+.h-tl-grp.open > .h-tl-grp-body { display: flex; }
+
+/* ---- diff 行号列（截图1 编辑卡：行号 + 绿底新增 + 竖条） ---- */
+.h-tool-coll .d-ctx, .h-tool-coll .d-add, .h-tool-coll .d-del { display: flex; align-items: baseline; }
+.h-tool-coll .d-ln { flex: none; width: 34px; text-align: right; margin-right: 8px;
+  font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--muted);
+  opacity: .6; user-select: none; }
+.h-tool-coll .d-tx { flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-all; }
+.h-tool-coll .d-add { background: color-mix(in srgb, #2ea043 12%, transparent);
+  border-left: 3px solid #2ea043; }
+.h-tool-coll .d-del { background: color-mix(in srgb, #e5484d 10%, transparent);
+  border-left: 3px solid #e5484d; }
+.h-tool-coll .d-add .d-ln { margin-left: -3px; padding-right: 3px; }
+.h-tool-coll .d-del .d-ln { margin-left: -3px; padding-right: 3px; }
+
+/* ---- oneclick 终端卡（Bash 行点开输出） ---- */
+.h-tool.oneclick { cursor: pointer; }
+.h-tool.oneclick .h-tool-chev { font-size: 10px; color: var(--muted);
+  display: inline-block; transition: transform .15s; margin-right: 6px; }
+.h-tool.oneclick.open .h-tool-chev { transform: rotate(90deg); }
+.h-tool.oneclick.open { background: color-mix(in srgb, var(--fg) 3%, transparent);
+  border-color: var(--border); }
+
+/* ---- 子代理目录（右栏伪 tab：正在运行/已结束两组列表） ---- */
+.hg-sub-dir { display: flex; flex-direction: column; }
+.hg-sub-dir-head { font-size: var(--fs-sm); font-weight: 600; color: var(--fg);
+  padding: 10px 12px 6px; border-bottom: 1px solid var(--border); }
+.hg-sub-dir-sec { font-size: var(--fs-xs); font-weight: 500; color: var(--muted);
+  padding: 10px 12px 4px; }
+.hg-sub-dir-empty { font-size: var(--fs-sm); color: var(--muted); opacity: .7;
+  padding: 6px 12px 10px; }
+.hg-sub-dir-row { display: flex; align-items: flex-start; gap: 9px; width: 100%;
+  padding: 7px 10px; border: 0; background: none; cursor: pointer; text-align: left;
+  border-radius: 8px; font-size: var(--fs-sm); }
+.hg-sub-dir-row:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.hg-sub-dir-ico { flex: none; width: 16px; text-align: center; margin-top: 1px;
+  font-size: 12px; }
+.hg-sub-dir-row.run .hg-sub-dir-ico { color: var(--hgd-run); animation: hgDynPulse 1.6s ease-in-out infinite; }
+.hg-sub-dir-row.ok .hg-sub-dir-ico { color: var(--hgd-done); }
+.hg-sub-dir-row.err .hg-sub-dir-ico { color: var(--hgd-fail); }
+.hg-sub-dir-row.stop .hg-sub-dir-ico { color: var(--h-warn); }
+.hg-sub-dir-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.hg-sub-dir-t1 { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.hg-sub-dir-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; color: var(--fg); font-weight: 500; }
+.hg-sub-dir-st { flex: none; font-size: var(--fs-2xs); color: var(--muted); opacity: .75; }
+.hg-sub-dir-sum { font-size: var(--fs-xs); color: var(--muted); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.hg-sub-dir-time { flex: none; font-size: var(--fs-2xs); color: var(--muted);
+  opacity: .7; margin-top: 2px; font-family: var(--font-mono); }
+.hg-sub-tab.dir { color: var(--muted); }
+.hg-sub-tab.dir .hg-sub-dir-tabico { margin-right: 4px; font-size: 11px; }
+.hg-sub-tab.dir.active { color: var(--fg); }
+/* 面板 C 区目录入口（⏱ 已结束 N ›） */
+.hg-dyn-dirbtn { margin-left: auto; border: 0; background: none; cursor: pointer;
+  font-size: var(--fs-2xs); color: var(--muted); padding: 1px 4px; border-radius: 4px; }
+.hg-dyn-dirbtn:hover { color: var(--fg); background: color-mix(in srgb, var(--accent) 8%, transparent); }

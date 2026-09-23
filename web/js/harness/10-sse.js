@@ -467,7 +467,11 @@
       _hgTurnEnd(o.subtype === 'success' ? 'ok' : 'error',
                  typeof o.duration_ms === 'number' ? o.duration_ms : 0);
       _hgTurnSumRow();                     // v3.1：ZCode 式回合摘要行（查阅 · N 搜索 · N 文件）
-      grpFinalize(true);                   // v2.18：本轮组定稿——用户没手动
+      // v3.2：定稿带冻结工时（CLI duration_ms——历史「已工作」绝不吃当前时钟）
+      // 与中断标记（subtype 非 success → 「已停止」）
+      grpFinalize(true, { durMs: (typeof o.duration_ms === 'number' ? o.duration_ms : 0),
+                          interrupted: !!(o.subtype && o.subtype !== 'success') });
+      // v2.18：本轮组定稿——用户没手动
                                           // 操作过且在底部跟读时自动收起（想看再点开，
                                           // 各抽屉独立开合）
       _hgGrantRewind();                    // v2.28.15：回合定稿——回滚按钮授予最后一条 AI 消息
@@ -491,6 +495,7 @@
     // 清场：内存态与 DOM 全部作废（switchTo 的重置块同款，供 snapshot/reset 用）
     endThinking(); closeRun();
     if (_HG.grp) phStopTimer(_HG.grp);
+    _turnHeadStop();   // v3.2：回合秒表随清场全收（timer 不随 innerHTML 快照走，不收就漏）
     Object.values(_HG.subBlk || {}).forEach(b => { if (b && b.timer) clearInterval(b.timer); });
     _HG.rowById = {}; _HG.uidN = 0; _HG.run = null; _HG.grp = null; _HG.histNav = null;
     _HG.subRows = {}; _HG.subBlk = {}; _HG.subTail = {}; _HG.subTailSeg = {};
@@ -599,7 +604,7 @@
       else if (it.kind === 'ask') { grpFinalize(true); askRender(it); }
       else if (it.kind === 'ask_done') askDone(it);
       else if (it.kind === 'interrupted') {
-        endThinking(); _hgVisionSweep(true); grpFinalize(true); renderExit(it.text); setBusy(false);
+        endThinking(); _hgVisionSweep(true); grpFinalize(true, { interrupted: true }); renderExit(it.text); setBusy(false);
         // v2.32：中断收尾——在跑的子代理标「已中断」（原缺口：只有 result
         // 分支收尾，点 ■ 停止后子代理假"运行中"+计时狂跳）
         _hgAgentsSweep(true); _hgTurnEnd('interrupt', 0);

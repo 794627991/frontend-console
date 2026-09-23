@@ -206,7 +206,10 @@ function buildClaudeHarnessTab(opts = {}) {
   // 与 _hgSaveOpen 同仓（hg-open:<sid>），重建期由 renderHistSub 读取恢复。
 
   // ---- 消息组基元（v2.18）----
-  // 组 = .h-grp{ .h-grp-proc{ .h-drawer.think + .h-drawer.exec } + AI 气泡们 }。
+  // 组 = .h-grp{ .h-grp-proc{ .h-turn-head(已工作 Ns ›) + .h-turn-body{ .h-drawer.think
+  // + .h-tl 工具时间线 } } + AI 气泡们 }（v3.2：ZCode 式回合闭合结构——工作区
+  // 整体可收成一行「已工作 X」，正文永远可见；.h-drawer.exec 为 v3.1 前旧快照
+  // 兼容形态）。
   // 每轮 renderUser 开新组，思考/工具归属自己的消息组（用户点名：所有思考
   // 挤一个抽屉里分不清是哪次思考、哪个消息触发的执行）。活状态（counts/
   // segCount/t0）存 dataset——innerHTML 快照恢复后 JS 属性全丢，dataset 随
@@ -352,6 +355,42 @@ function buildClaudeHarnessTab(opts = {}) {
         if (ok) { const orig = cp.textContent; cp.textContent = '✓';
           setTimeout(() => cp.textContent = orig, 1500); }
       });
+      return;
+    }
+    // v3.2：回合折叠头（已工作 X ›）——点开/收起整段工作区（思考+时间线）
+    const tnHead = e.target.closest('.h-turn-head');
+    if (tnHead) {
+      const proc = tnHead.closest('.h-grp-proc');
+      const body = proc && proc.querySelector('.h-turn-body');
+      if (body) {
+        body.classList.toggle('closed');
+        tnHead.dataset.userToggled = '1';
+        if (!body.classList.contains('closed')) {
+          // 展开时懒回填顺带触发（组内折叠行仍各自懒加载，这里只管布局态）
+          _hgScrollBottom();
+        }
+      }
+      return;
+    }
+    // v3.2：查阅聚组头（🔍 查阅 · N 搜索 · M 文件）——切换子行树开合
+    const expHead = e.target.closest('.h-tl-grp-head');
+    if (expHead) {
+      const grpEl = expHead.closest('.h-tl-grp');
+      if (grpEl) {
+        const opening = !grpEl.classList.contains('open');
+        grpEl.classList.toggle('open');
+        grpEl.dataset.userToggled = '1';
+        if (opening) grpEl.querySelectorAll('.h-tool').forEach(_histLazyFill);
+        else grpEl.querySelectorAll('.h-tool').forEach(_histLazyDrop);
+      }
+      return;
+    }
+    // v3.2：oneclick 工具行（Bash 终端卡）——整行点击展开/收起输出
+    const ocRow = e.target.closest('.h-tool.oneclick');
+    if (ocRow) {
+      const opening = !ocRow.classList.contains('open');
+      if (opening) _histLazyFill(ocRow); else _histLazyDrop(ocRow);
+      ocRow.classList.toggle('open');
       return;
     }
     const tHead = e.target.closest('.h-tool-head');
@@ -1011,6 +1050,9 @@ function buildClaudeHarnessTab(opts = {}) {
       renderSideStatus();
       return;
     }
+    // v3.2：子代理目录入口（区头「⏱ 已结束 N ›」）→ 打开目录伪 tab
+    const db = e.target.closest('[data-hg-agdir]');
+    if (db) { e.stopPropagation(); _subDirOpen(); return; }
     // v2.38：详情卡「回放该子代理过程」→ 回放窗格（转写数据源）
     const rb = e.target.closest('[data-hg-replay]');
     if (rb) {
@@ -1246,6 +1288,12 @@ function buildClaudeHarnessTab(opts = {}) {
   // md 代码块复制钮本在 flow 委托里，但窗格在 flow 外够不着，此处补一条
   // 同款分支。onclick 覆盖式绑定（闭包随 harness tab 重开重执行）
   if (_subBodyEl) _subBodyEl.onclick = (e) => {
+    // v3.2：子代理目录行——点行开该代理视图（live 实况/已结束回放）
+    const dirRow = e.target.closest('[data-hg-dir]');
+    if (dirRow && dirRow.dataset.hgDir) {
+      _subDirRowClick(dirRow.dataset.hgDir, dirRow.dataset.hgDirRpl === '1');
+      return;
+    }
     // md 代码块复制钮（就近取同容器 pre>code 文本）
     const cp = e.target.closest('.hg-code-copy');
     if (cp) {

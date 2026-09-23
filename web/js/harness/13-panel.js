@@ -4,6 +4,7 @@
       todoSeen: {}, todoRowId: null, agentsRpl: [] });
   }
   function renderSideStatus() {          // 事件驱动刷新入口（旧名保留：事件流调用点零改动）
+    try { _subDirPaint(); } catch(_) {}  // v3.2：目录 tab 激活时随事件刷新（非激活态内部自早退）
     if (!dynEl || _dynRaf) return;
     _dynRaf = requestAnimationFrame(() => { _dynRaf = 0; _hgDynRender(); });
   }
@@ -442,7 +443,15 @@
     const running2 = list2.filter(a => !a.done).sort((x, y) => x.t0 - y.t0);
     const finished2 = list2.filter(a => a.done && Date.now() - a.doneAt < 60000).slice(-5);
     const show = running2.concat(finished2, rpl);
-    sec.hidden = !show.length && !peers.length;
+    // v3.2：目录入口——区头「⏱ 已结束 N ›」开子代理目录 tab（ZCode 智能体
+    // 区同款入口；有任意档案即可进目录——运行中的也列在目录里）
+    const _dirBtn = sec.querySelector('[data-hg-agdir]');
+    if (_dirBtn) {
+      const endedN = list.filter(a => a.done).length;
+      _dirBtn.hidden = false;
+      _dirBtn.innerHTML = `⏱ 已结束 ${endedN} ›`;
+    }
+    sec.hidden = !show.length && !peers.length && !(_dirBtn && list.length);
     if (sec.hidden) return;
     const pill = sec.querySelector('[data-hg-d-agrun]');
     const pendPeers = peers.filter(el => !el.dataset.done);   // v2.41：unknown/stale 已在过滤头排除（R6 判定前移）
