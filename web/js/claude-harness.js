@@ -949,8 +949,10 @@ function buildClaudeHarnessTab(opts = {}) {
         if (act.dataset.hgAct === 'replay' && sbHead.dataset.hgSubr)
           _subReplay(sbHead.dataset.hgSubr, sbHead.dataset.hgSubType || 'Task',
             sbHead.dataset.hgSubDesc || '', sbHead.dataset.hgSubr);
-        else if (act.dataset.hgAct === 'pane' && sbHead.dataset.hgSub)
-          _subReopen(sbHead.dataset.hgSub);
+        else if (act.dataset.hgAct === 'pane' &&
+                 (sbHead.dataset.hgSub ||
+                  (blk && blk.dataset.hgCollab === '1' && sbHead.dataset.hgSubr)))
+          _subReopen(sbHead.dataset.hgSub || blk.dataset.hgSubblock);
         return;
       }
       if (blk) {
@@ -1402,6 +1404,9 @@ function buildClaudeHarnessTab(opts = {}) {
     _subBlkActsPaint(b);   // v2.47（需求1）：建段即画动作钮——运行段「⧉ 窗格」（段头点击已改折叠）；协作段此时 hgSubr 未落则空，落档后调方重画
     if (info.done) _subBlkState(pid, info.err);
     else if (info.live) _subBlkRun(pid);
+    // v2.55：协作段默认折叠（用户定调：主窗口消息框默认收起，内容优先看
+    // 侧窗——窗格钮/「▣ 回放」在段头上，点段头仍可人为展开）
+    if (info.fold) root.classList.add('collapsed');
     scrollBottom();
     return b;
   }
@@ -1504,7 +1509,11 @@ function buildClaudeHarnessTab(opts = {}) {
     if (b.head.dataset.hgSubr)
       html += '<span class="h-sub-act" role="button" data-hg-act="replay" ' +
         'title="回放该子代理完整过程（独立窗格）">▣ 回放</span>';
-    if (b.head.dataset.hgSub)
+    // v2.55：协作段也画实况窗格钮——轮询全喂后有事可看（旧判据 hgSub 恒缺
+    // =协作段永远没有「⧉ 窗格」入口，用户实锤「点不开」）。nopane=合成段
+    // （renderPeer 新建，无 agents 档案）不画——点击只会弹 banner 的死按钮
+    if (b.head.dataset.hgSub ||
+        (!b.nopane && b.root && b.root.dataset.hgCollab === '1' && b.head.dataset.hgSubr))
       html += '<span class="h-sub-act" role="button" data-hg-act="pane" ' +
         'title="查看实时过程窗格（段头点击=折叠/展开）">⧉ 窗格</span>';
     acts.innerHTML = html;
@@ -1725,6 +1734,31 @@ function buildClaudeHarnessTab(opts = {}) {
   // 抽屉，点开才展开」）。数据源（v2.46 起）：SSE 不转发子代理 thinking
   // （实测落盘 146 块上流 0 块）——实时思考由 .output 增量轮询喂入本函数，
   // 完成回填（_subBlkMergeThinks）兜轮询未起跑的段
+  // v2.55R：窗格思考行工厂（镜像与 _subFeed 共用——两处内联必然漂移）
+  function _subPaneThinkRow(text) {
+    const th = document.createElement('div');
+    th.className = 'hg-sub-think';
+    th.dataset.raw = text;
+    th.innerHTML = '<button class="hg-sub-think-head" title="点击展开/收起思考过程">' +
+      '<span>💭 思考</span><span class="hg-sub-think-chev">›</span></button>' +
+      '<div class="hg-sub-think-body"></div>';
+    return th;
+  }
+  // v2.55：轮询喂入的思考/文本同步镜像到实况窗格 tab（tab 存在才镜像）——
+  // SSE 不转发子代理 thinking/text，旧窗格只剩工具行（用户实锤「窗格只有
+  // 工具」）；协作段窗格钮放开后此处是窗格全量数据的增量来源
+  function _subPaneMirror(pid, kind, text) {
+    const t = _sub.tabs[pid];
+    if (!t || !text || !String(text).trim()) return;
+    if (t.replay) return;   // v2.55R：回放 tab 由 fetch 全量自建，镜像增量不得污染
+    const sc = t.sc;
+    const stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight <= 80;
+    if (kind === 'think')
+      _subAppendEl(sc, _subPaneThinkRow(text));
+    else
+      _subAppendEl(sc, _subMdRow(text));
+    if (stick) _subScroll(pid);
+  }
   function _subThink(pid, text) {
     const b = _subBlkGet(pid); if (!b) return;
     if (!(b.seg && b.seg.isConnected)) {
@@ -1739,6 +1773,7 @@ function buildClaudeHarnessTab(opts = {}) {
     const _te = b.seg.querySelector('[data-hg-think-t]');
     const _tt0 = +(b.seg.dataset.t0 || 0);
     if (_te && _tt0) _te.textContent = fmtDur((Date.now() - _tt0) / 1000);
+    _subPaneMirror(pid, 'think', text);
     scrollBottom();
   }
   // 文本：段内 md 气泡（归属已在段头，行内不再重复头像/徽章）
@@ -1770,6 +1805,7 @@ function buildClaudeHarnessTab(opts = {}) {
         sum.title = t.slice(0, 400);
       }
     }
+    _subPaneMirror(pid, 'text', text);
     scrollBottom();
   }
   // 工具行入段（renderToolUse 的 isSub 分支调用——行本体仍由 renderToolUse
@@ -1778,6 +1814,19 @@ function buildClaudeHarnessTab(opts = {}) {
     const b = _subBlkGet(pid); if (!b) return;
     _subSegEnd(b);
     _subBodyPut(b, row, 'tool');   // v2.48：进当前节的工具抽屉（节随行成形）
+    // v2.55R：窗格镜像——本函数是 SSE 与 fullFeed 轮询的共同通路，镜像前按
+    // data-tuid 查重（SSE 路径 _subFeed 也会插同名行，双源不查重=每条工具
+    // 双份、第二份永远灰点）
+    const t = _sub.tabs[pid];
+    if (t && row && row.dataset.tid &&
+        !t.sc.querySelector(`.hg-sub-tool[data-tuid="${CSS.escape(row.dataset.tid)}"]`)) {
+      const sc = t.sc;
+      const stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight <= 80;
+      _subAppend(sc, `<div class="hg-sub-tool" data-tuid="${esc(row.dataset.tid)}">` +
+        `<span class="hg-sub-tdot"></span>${esc(_hDrawerName(row._name || ''))}` +
+        (row._preview ? ` · ${esc(String(row._preview).slice(0, 80))}` : '') + '</div>');
+      if (stick) _subScroll(pid);
+    }
     scrollBottom();
   }
   // 段内工具结果：徽章+耗时进头部，结果全文进折叠体（成功默认藏、错误自动
@@ -1785,6 +1834,9 @@ function buildClaudeHarnessTab(opts = {}) {
   // 挂文本，段内点开也看不到结果全文——用户定调「点开才展开」展开的必须
   // 是详情+结果，不再是「成功只亮徽章」
   function _subToolResult(pid, tr) {
+    // v2.55R：窗格回点先于段内早退（快照恢复后 subRows 映射丢失时，窗格
+    // 镜像行仍要回点变绿+落结果）
+    _subResult(pid, tr);
     const m = (_HG.subRows || {})[pid];
     const row = m && m[tr.tool_use_id];
     if (!row || !row.isConnected) return;
@@ -2115,10 +2167,11 @@ function buildClaudeHarnessTab(opts = {}) {
       const _npid = 'peer-' + _nm + '-' + Date.now();
       // 不挂 bg（v2.54R：合成段无 agents 档案，挂 bg 会被 sweep 豁免成
       // 永不定格的跳表假段）——建段即入段回传，随后就地定格完成态
-      const _nb = _subBlkGet(_npid, { live: true, collab: true,
+      const _nb = _subBlkGet(_npid, { live: true, collab: true, fold: true,
         label: '协作 · ' + String(_disp).slice(0, 24), model: '',
         type: 'SendMessage', desc: '', done: false });
       if (_nb) {
+        _nb.nopane = true;   // 合成段无档案——不画窗格钮（点击只会 banner）
         if (/^[0-9a-zA-Z_-]{8,64}$/.test(_nm)) {
           _nb.head.dataset.hgSubr = _nm;
           _nb.head.dataset.hgSubType = 'SendMessage';
@@ -2182,9 +2235,21 @@ function buildClaudeHarnessTab(opts = {}) {
       const ne = r.querySelector('.h-subblock-name');
       if (ne && ne.textContent === '协作 · ' + nm.slice(0, 24)) push(r);
     });
-    if (!cands.length) return null;
     const _byDom = (a, b) =>
       ((a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) ? 1 : -1);
+    // v2.55R：实时回传锚全 miss（cands 空=无发信方名形态）时的归属——
+    // 仅「无名回传」（nm=其他会话/协作代理，调用方兜底名，确证无法锚定）
+    // 归 DOM 最晚的**运行中协作段**（续派审核在跑时回传必属于它，绝不新建
+    // 假段）；具名回传 miss（锚只命中 done 段而别的协作段在跑）不兜底——
+    // 迟到回传写进别人的段比新建假段更难察觉，保持 null 走新建。此兜底必须在
+    // 空候选早退**之前**（无名回传 cands 恒空，放后面永远走不到）。
+    // 历史路径（allowDone）不做无名兜底（归最新完成段/平铺）。
+    if (!allowDone && (nm === '其他会话' || nm === '协作代理')) {
+      const running = [...flow.querySelectorAll('.h-subblock[data-hg-collab]:not(.done)')]
+        .sort(_byDom);
+      if (running.length) return running[running.length - 1];
+    }
+    if (!cands.length) return null;
     // v2.53（用户定调）：实时回传只进**运行中**段——已完成段是上一轮的
     // 历史框，同名续派/迟到回传塞进去就是「混进之前的审核消息框」；全
     // done 返回 null，由 renderPeer 新建段承接。运行中多候选取 DOM 最晚
@@ -3227,7 +3292,7 @@ function buildClaudeHarnessTab(opts = {}) {
             // 类型名。段不挂 hgSub（无实况流，窗格钮不画）；真实 id 在手则
             // 建段即落 hgSubr——运行中即可「▣ 回放」围观转写，也是切会话
             // 往返后 DOM 兜底轮询的 id 来源（随快照携带）
-            _subBlkGet(tid, { live: true, collab: true, bg: true,
+            _subBlkGet(tid, { live: true, collab: true, bg: true, fold: true,
               label: '协作 · ' + ((_to && String(_to).slice(0, 24))
                 || _AGENT_LABEL[o.subagent_type] || o.subagent_type || '代理'),
               model: '', type: o.subagent_type || 'Task',
@@ -3495,7 +3560,8 @@ function buildClaudeHarnessTab(opts = {}) {
           && (_sub.tabs[o.parent_tool_use_id] || (_HG.subRows || {})[o.parent_tool_use_id]))
         for (const b of c0)
           if (b && b.type === 'tool_result') {
-            if (_sub.tabs[o.parent_tool_use_id]) _subResult(o.parent_tool_use_id, b);
+            // v2.55R：窗格回点统一收口进 _subToolResult（其尾部调 _subResult）——
+            // 旧并联写法在 _subToolResult 自身镜像窗格后会造成双路径竞争
             _subToolResult(o.parent_tool_use_id, b);
           }
       // v2.32 面板：子代理回场——tool_result 对上在跑的 Task 即完成，
@@ -5481,15 +5547,13 @@ function buildClaudeHarnessTab(opts = {}) {
         // 窗格重设计 P2-6：thinking 进窗格——块粒度一行（不合并段），默认
         // 收起防淹；全文存 dataset，首次展开才 renderMd（懒渲染，量大不卡）。
         // 行内交互全走窗格体级委托（_subBodyEl onclick）
-        const th = document.createElement('div');
-        th.className = 'hg-sub-think';
-        th.dataset.raw = b.thinking;
-        th.innerHTML = '<button class="hg-sub-think-head" title="点击展开/收起思考过程">' +
-          '<span>💭 思考</span><span class="hg-sub-think-chev">›</span></button>' +
-          '<div class="hg-sub-think-body"></div>';
-        _subAppendEl(sc, th);
+        _subAppendEl(sc, _subPaneThinkRow(b.thinking));
       }
       else if (b.type === 'tool_use') {
+        // v2.55R：对称查重——SSE 同一事件里镜像（_subBlkAppendTool）先插、
+        // 本分支后插，只查一侧必双份；两侧都查后无论谁先谁后均只落一行
+        if (b.id && sc.querySelector(`.hg-sub-tool[data-tuid="${CSS.escape(b.id)}"]`))
+          continue;
         const inp = b.input || {};
         const hint = inp.command || inp.file_path || inp.path || inp.pattern ||
                      inp.query || inp.description || inp.subject || inp.prompt || '';
@@ -5507,6 +5571,11 @@ function buildClaudeHarnessTab(opts = {}) {
     if (!_sub.tabs[parentId]) return;
     const sc = _sub.tabs[parentId].sc;
     const stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight <= 80;   // P1-5：append 前测（同 _subFeed）
+    // v2.55R：防重——同一 tool_use_id 的结果行只落一次（调用方已收口为
+    // _subToolResult 单路，此处仍设防：未来再添调用点不会双份结果行）
+    if (tr.tool_use_id &&
+        sc.querySelector(`.hg-sub-res[data-rtuid="${CSS.escape(tr.tool_use_id)}"]`))
+      return;
     const full = resultText(tr).trim();
     const txt = full.replace(/\s+/g, ' ').trim().slice(0, 120);
     // 窗格重设计 P2-7：结果到达回点对应工具行——data-tuid 精确配对优先；
@@ -5523,6 +5592,7 @@ function buildClaudeHarnessTab(opts = {}) {
     // 窗格重设计 P2-8：超 120 字的结果行不再截死——全文存 dataset，点击
     // 委托展开/收起
     _subAppend(sc, `<div class="hg-sub-res${tr.is_error ? ' err' : ''}"` +
+      (tr.tool_use_id ? ` data-rtuid="${esc(tr.tool_use_id)}"` : '') +
       (full.length > 120 ? ` data-hg-subfull="${esc(full)}" title="点击展开全文"` : '') +
       `>↳ ${esc(txt || '完成')}</div>`);
     if (stick) _subScroll(parentId);
