@@ -237,12 +237,16 @@ function buildProxyTab() {
     const total = snap.req_history_total || 0;
     const hint = histEl.querySelector('.px-hint');
     if (hint) hint.remove();
-    // 增量：只插新行到顶部（1s 轮询全量 snapshot，用游标判新）
+    // 增量：只插新行到顶部（1s 轮询全量 snapshot，用游标判新）。
+    // v2.56：统一「最新在最上」倒序语义——旧实现全量首刷按旧→新铺（顺序），
+    // 增量块却插顶且块内旧→新（块内顺序与整表倒序打架）=打开 tab 后时间错乱。
+    // 现在块内一律新→旧；表空首刷直接铺（等价倒序全量），与增量方向一致。
     if (total > conn.seenHist && hist.length) {
       const take = Math.min(total - conn.seenHist, hist.length);
       const rows = hist.slice(-take);
+      const rebuild = histEl.children.length === 0;
       const frag = document.createDocumentFragment();
-      for (const [ts, model, inTok, outTok, brief, elapsed] of rows) {
+      for (const [ts, model, inTok, outTok, brief, elapsed] of [...rows].reverse()) {
         const t = new Date(ts * 1000).toLocaleTimeString('zh-CN', {hour12: false});
         const isOverload = elapsed > 30 || (inTok === 0 && outTok === 0);
         const div = document.createElement('div');
@@ -254,7 +258,12 @@ function buildProxyTab() {
           `<span class="px-h-e">${elapsed.toFixed(1)}s</span>`;
         frag.appendChild(div);
       }
-      histEl.insertBefore(frag, histEl.firstChild);
+      if (rebuild) {
+        histEl.innerHTML = '';
+        histEl.appendChild(frag);
+      } else {
+        histEl.insertBefore(frag, histEl.firstChild);
+      }
       while (histEl.children.length > 200) histEl.removeChild(histEl.lastChild);
       conn.seenHist = total;
     } else if (total < conn.seenHist) {

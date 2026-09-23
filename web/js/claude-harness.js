@@ -521,14 +521,17 @@ function buildClaudeHarnessTab(opts = {}) {
     if (!card || card.classList.contains('done')) return;
     const qs = askQs(card), sel = askSel(card);
     const answer = {};
+    const extras = {};   // v2.56：自由输入随卡片存档——askDone 回显用
     card.querySelectorAll('.h-ask-q').forEach((box, qi) => {
       const chosen = (sel[qi] || []).slice();
       const extra = askExtraText(card, qi);       // v2.24.3 自由输入并入作答
       if (!chosen.length && !extra) return;
+      if (extra) extras[qi] = extra;
       const qtext = (qs[qi] && qs[qi].question) || ('问题' + (qi + 1));
       answer[qtext] = chosen.concat(extra ? ['补充：' + extra] : []).join(', ');
     });
     if (!Object.keys(answer).length) return;
+    try { card.dataset.hgExtra = JSON.stringify(extras); } catch (_) {}
     const btn = card.querySelector('.h-ask-submit');
     if (btn) { btn.disabled = true; btn.textContent = '提交中…'; }
     fetch('/api/harness/ask/answer', {
@@ -547,6 +550,11 @@ function buildClaudeHarnessTab(opts = {}) {
     card.querySelectorAll('.h-ask-opt').forEach(b => { b.disabled = true; });
     const ans = it.answer || {};
     const qs = askQs(card);
+    // v2.56：自由输入回显——提交的自定义文本填回输入框（disabled 保留显示），
+    // 不再「提交后自行填入那栏不显示」。数据源优先 askSubmit 存的 hgExtra
+    // （随快照走）；缺失（历史重放老卡片）时从 answer 串解析「补充：」段兜底。
+    let extras = {};
+    try { extras = JSON.parse(card.dataset.hgExtra || '{}'); } catch (_) {}
     card.querySelectorAll('.h-ask-q').forEach((box, qi) => {
       const qtext = (qs[qi] && qs[qi].question) || '';
       const chosen = ans[qtext];
@@ -554,6 +562,19 @@ function buildClaudeHarnessTab(opts = {}) {
       box.querySelectorAll('.h-ask-opt').forEach(b => {
         b.classList.toggle('on', String(chosen).split(', ').indexOf(b.dataset.hgAskLabel) >= 0);
       });
+      const inp = box.querySelector('.h-ask-x');
+      if (inp) {
+        let ex = extras[qi] || '';
+        if (!ex) {
+          const m = String(chosen).match(/(?:^|, )补充：(.*)$/);
+          if (m) ex = m[1];
+        }
+        if (ex) {
+          inp.value = ex;
+          inp.title = '已提交的自由输入';
+        }
+        inp.disabled = true;
+      }
     });
     const foot = card.querySelector('.h-ask-foot');
     if (foot) foot.innerHTML = `<span class="h-ask-done">✓ 已提交</span>`;
@@ -7300,41 +7321,57 @@ function buildClaudeHarnessTab(opts = {}) {
       const l1 = numOr(cfg.l1_max_lines, 100);
       const l2l = numOr(cfg.l2_max_lines, 200);
       const dln = numOr(cfg.design_max_lines, 200);
-      ov.innerHTML = `<div class="hg-modal hg-modal-vision"><div class="hg-modal-title">👥 三角色配置</div>
-        <div class="hg-modal-body hg-vision-hint">双形态都<b>主会话直干所有活</b>（编码/执行/调试不派干活子代理）：主会话是轻模型=轻主力——配<b>设计者</b>（只设计）+ <b>审计者</b>（只读审核）两个代理；主会话是重模型（名字含 opus）=直干+审计兜底。三槽<b>显式配置优先</b>，留空按当前方案自动识别（设计者/审计者留空时共用同一自动识别的代理模型）；主会话模型槽显式配置参与形态判定。保存后模型/分级线随下条消息热更生效（agents 自动重生成），审计模式立即生效。</div>
-        <div class="hg-vision-row">
-          <label class="hg-vision-switch"><input type="checkbox" data-hg-r-on${cfg.enabled ? ' checked' : ''}> 启用三角色</label>
-          <span class="hg-vision-state" style="font-size:11px;">当前形态：<b>${light ? '轻主力 · 主会话直干+设计者+审计者' : '重模型直干 · 主会话直干+审计者兜底'}</b>（${cfg.main_model ? `主会话槽 ${esc(cfg.main_model)}` : `主模型 ${esc(dm || '未设置')}`}）</span>
-        </div>
-        <div class="hg-vision-grid">
-          <label>主会话模型（形态判定：显式配置优先；留空=按实跑模型名自动识别——名字含 opus 视为重模型，其余轻）
-            <select data-hg-r-main>${mkOpts(cfg.main_model || '')}</select></label>
-          <label>设计者模型（designer：只设计，出方案不干活；留空=回退代理池 heavy_model，再按方案自动识别）
-            <select data-hg-r-designer>${mkOpts(designerCfg)}</select></label>
-          <label>审计者模型（reviewer：只审不改，PASS/FAIL；留空=回退代理池 heavy_model，再按方案自动识别）
-            <select data-hg-r-reviewer>${mkOpts(reviewerCfg)}</select></label>
-        </div>
-        <label class="hg-vision-prompt-lab">端点角色映射（每行：端点关键字=主会话模型,代理模型——按当前 base_url 匹配，优先于自动识别；代理模型可省略=与主会话同）
-          <textarea class="hg-vision-mm" data-hg-r-map spellcheck="false" style="height:56px;font-family:var(--font-mono);"
-            placeholder="open.bigmodel.cn=glm-5.3-flash,glm-5.3&#10;lanz.hikvision.com=Lanz-Flash,Lanz-Atuo">${esc(mapText)}</textarea></label>
-        <div class="hg-vision-grid">
-          <label>审计模式（回合结算兜底：盘点直改超线未派 reviewer，auto 自动续发要求补审）
+      ov.innerHTML = `<div class="hg-modal hg-modal-vision hg-roles"><div class="hg-modal-title">👥 三角色配置<span class="hg-roles-mode">${light ? '轻主力' : '重模型直干'}</span></div>
+        <div class="hg-modal-body">
+          <div class="hg-roles-top">
+            <label class="hg-vision-switch"><input type="checkbox" data-hg-r-on${cfg.enabled ? ' checked' : ''}> 启用三角色</label>
+            <span class="hg-roles-modeinfo">当前形态：<b>${light ? '轻主力 · 直干+设计者+审计者' : '重模型直干 · 审计者兜底'}</b></span>
+          </div>
+          <details class="hg-roles-more"><summary>工作方式说明</summary>
+            <div>双形态都<b>主会话直干所有活</b>（编码/执行/调试不派干活子代理）：主会话是轻模型 = 轻主力——配设计者 + 审计者两个代理；主会话是重模型（名字含 opus）= 直干 + 审计者兜底。保存后模型/分级线随下条消息热更生效（agents 自动重生成），审计模式立即生效。当前形态判定依据：${cfg.main_model ? `主会话槽显式配置 ${esc(cfg.main_model)}` : `实跑模型 ${esc(dm || '未设置')}（留空自动识别）`}。</div>
+          </details>
+
+          <div class="hg-roles-sec">模型分工</div>
+          <div class="hg-roles-slot" title="主会话自己干所有活；显式配置优先参与形态判定（名字含 opus = 重模型直干，其余 = 轻主力），留空按实跑模型名自动识别">
+            <span class="hg-roles-ico main">主</span>
+            <span class="hg-roles-name">主会话<i>直干所有活 · 定形态</i></span>
+            <select data-hg-r-main>${mkOpts(cfg.main_model || '')}</select>
+          </div>
+          <div class="hg-roles-slot" title="designer：只设计，出方案不干活。留空=回退代理池 heavy_model，再按当前方案自动识别">
+            <span class="hg-roles-ico des">设</span>
+            <span class="hg-roles-name">设计者<i>只设计 · 出方案</i></span>
+            <select data-hg-r-designer>${mkOpts(designerCfg)}</select>
+          </div>
+          <div class="hg-roles-slot" title="reviewer：只审不改，PASS/FAIL 二选一。留空=回退代理池 heavy_model，再按当前方案自动识别">
+            <span class="hg-roles-ico rev">审</span>
+            <span class="hg-roles-name">审计者<i>只审不改 · PASS/FAIL</i></span>
+            <select data-hg-r-reviewer>${mkOpts(reviewerCfg)}</select>
+          </div>
+          <div class="hg-roles-note">留空 = 回退代理池 → 按方案自动识别；显式配置优先</div>
+
+          <div class="hg-roles-sec">分级线 <i>按单次直改行数 · 不计文件数 · 不做累计</i></div>
+          <div class="hg-roles-line" title="单次直改总计 ≤ 此行数的小改（配置/常量/文案/注释级）主会话直接改，免审">
+            <span>免审线</span><input type="number" min="0" max="100000" data-hg-r-l1 value="${l1}"><em>≤ 此行数直接改，免审</em>
+          </div>
+          <div class="hg-roles-line" title="单次直改超过此行数 = 大改，须审计者取证级全审；重模型形态即审计线（0=最严档）">
+            <span>轻审线</span><input type="number" min="0" max="100000" data-hg-r-l2l value="${l2l}"><em>超线须审计者全审（0=最严）</em>
+          </div>
+          <div class="hg-roles-line" title="单次直改达到此行数的大改，动手前须先派设计者出方案——事中闸拦截+结算追责强制（0=不强制设计）">
+            <span>设计线</span><input type="number" min="0" max="100000" data-hg-r-dl value="${dln}"><em>达线先出方案（0=不强制）</em>
+          </div>
+          <div class="hg-roles-line" title="回合结算兜底：盘点直改超线未派审计者——auto 自动续发要求补审，warn 仅红色警示，off 关闭">
+            <span>审计模式</span>
             <select data-hg-r-am>
-              <option value="auto"${am === 'auto' ? ' selected' : ''}>auto · 违规自动续发补审（默认）</option>
-              <option value="warn"${am === 'warn' ? ' selected' : ''}>warn · 仅红色警示</option>
-              <option value="off"${am === 'off' ? ' selected' : ''}>off · 关闭审计</option>
-            </select></label>
-          <label>免审线（行）：单次直改总计 ≤ 此行数的小改（配置/常量/文案/注释级）主会话直改免审（不计文件数）
-            <input class="hg-vision-mm" type="number" min="0" max="100000" data-hg-r-l1
-                   value="${l1}"></label>
-        </div>
-        <div class="hg-vision-grid">
-          <label>轻审线（单次行）：单次直改行数上限；超线即大改须 reviewer 取证级全审，重模型形态即审计线（不计文件数、不做回合累计；0=最严档）
-            <input class="hg-vision-mm" type="number" min="0" max="100000" data-hg-r-l2l
-                   value="${l2l}"></label>
-          <label>设计线（单次行）：单次直改 ≥ 此行数的大改，动手前须先派设计者出方案——事中闸拦截+结算追责强制（0=不强制设计）
-            <input class="hg-vision-mm" type="number" min="0" max="100000" data-hg-r-dl
-                   value="${dln}"></label>
+              <option value="auto"${am === 'auto' ? ' selected' : ''}>auto · 自动续发补审</option>
+              <option value="warn"${am === 'warn' ? ' selected' : ''}>warn · 仅警示</option>
+              <option value="off"${am === 'off' ? ' selected' : ''}>off · 关闭</option>
+            </select><em>超线未审的兜底</em>
+          </div>
+
+          <div class="hg-roles-sec">端点角色映射 <i>按 base_url 匹配 · 优先于自动识别</i></div>
+          <textarea class="hg-vision-mm" data-hg-r-map spellcheck="false" style="height:56px;font-family:var(--font-mono);"
+            placeholder="open.bigmodel.cn=主会话模型,代理模型&#10;lanz.hikvision.com=Lanz-Flash,Lanz-Atuo">${esc(mapText)}</textarea>
+          <div class="hg-roles-note">每行：端点关键字 = 主会话模型,代理模型（代理模型可省略 = 与主会话同）</div>
         </div>
         <div class="hg-modal-acts"></div></div>`;
       const acts = ov.querySelector('.hg-modal-acts');
