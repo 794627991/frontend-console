@@ -54,13 +54,22 @@
     while (i < n) { ops.push(['-', ol[i++]]); }
     while (j < m) { ops.push(['+', nl[j++]]); }
     // 改动段外的长未变区间折叠（≤3 行直显，>3 行收成一行摘要）
+    // v3.2：行号列（ZCode 截图1 编辑卡同款）——统一 diff 口径：+/= 显示新文件
+    // 行号，- 显示旧文件行号（GitHub unified 惯例）
     let h = '';
     const CTX = 3;
     let k = 0;
+    let lnOld = 0;
+    let lnNew = 0;
+    const ln = n => `<span class="d-ln">${n || ''}</span>`;
     const mark = (op, line) => {
-      h += op === '=' ? `<div class="d-ctx">${esc(line)}</div>`
-          : op === '+' ? `<div class="d-add">+ ${esc(line)}</div>`
-          : `<div class="d-del">- ${esc(line)}</div>`;
+      if (op === '=') { lnOld++; lnNew++;
+        h += `<div class="d-ctx">${ln(lnNew)}<span class="d-tx">${esc(line)}</span></div>`;
+      } else if (op === '+') { lnNew++;
+        h += `<div class="d-add">${ln(lnNew)}<span class="d-tx">+ ${esc(line)}</span></div>`;
+      } else { lnOld++;
+        h += `<div class="d-del">${ln(lnOld)}<span class="d-tx">- ${esc(line)}</span></div>`;
+      }
     };
     while (k < ops.length) {
       // 当前位置往前/后各留 CTX 行上下文；中间的长等值段折叠
@@ -95,7 +104,107 @@
     return (todos || []).map(t =>
       `<div class="t-item"><span>${ICO[t.status] || '⬜'}</span><span>${esc(t.activeForm || t.content || t.subject || '')}</span></div>`).join('');
   }
+  function _tlOneclickify(row) {
+    // v3.2：one-line 工具行（Bash 等）升级为可展开卡——加 col+oneclick 类，
+    // 行首插 chevron；整行点击由 flow 委托（.h-tool.oneclick 分支）切换 open
+    if (!row || row.classList.contains('oneclick') || row.querySelector(':scope > .h-tool-head')) return;
+    row.classList.add('col', 'oneclick');
+    row.insertAdjacentHTML('afterbegin', '<span class="h-chev h-tool-chev">▸</span>');
+  }
   function closeRun() { _HG.run = null; }
+  // ==================== v3.2：ZCode 式「查阅」聚组（exploreToolCall.ts 移植）====================
+  // Read/Glob/Grep/WebSearch/WebFetch + 只读 Bash（rg/ls/cat/git status…）聚成
+  // 一个折叠组「🔍 查阅 · N 搜索 · M 文件」，展开=左竖线+子行树；写类工具/
+  // 思考/正文出现即断组（flush）。
+  const _HG_EXP_READ_RE =
+    /\b(rg|grep|find|ls|cat|head|tail|wc|stat|pwd|which|readlink|tree|sed\s+-n|dir|type|select-string)\b|^git\s+(status|log|show|diff)\b/i;
+  const _HG_EXP_WRITE_RE =
+    /\b(sed\s+-i|tee|mv|cp|rm|mkdir|touch|chmod|del|erase|out-file|move-item|copy-item)\b|^git\s+(add|commit|rm|mv|checkout|switch|restore|reset|clean|revert|merge|rebase)\b/i;
+  function _hgIsExplore(name, input) {
+    const n = name || '';
+    if (['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'TodoRead', 'LS'].includes(n)) return true;
+    if (n !== 'Bash' && n !== 'PowerShell') return false;
+    const cmd = String((input || {}).command || (input || {}).cmd || '');
+    if (!cmd.trim()) return false;
+    if (_HG_EXP_WRITE_RE.test(cmd)) return false;
+    return _HG_EXP_READ_RE.test(cmd);
+  }
+  // 桶分类（对照 ZCode explore bucket：search/list/file——汇总文案「N 搜索 · M 文件」）
+  function _hgExpBucket(name, input) {
+    const n = name || '';
+    if (n === 'Grep' || n === 'WebSearch') return 'search';
+    if (n === 'Glob' || n === 'LS') return 'list';
+    if (n === 'Read' || n === 'WebFetch' || n === 'TodoRead') return 'file';
+    const cmd = String((input || {}).command || (input || {}).cmd || '').toLowerCase();
+    if (/(^|\s)(rg|grep|ripgrep|git\s+grep)(\s|$)/.test(cmd)) return 'search';
+    if (/(^|\s)(ls|find|tree|dir)(\s|$)/.test(cmd)) return 'list';
+    return 'file';
+  }
+  // 组头副文案：完成态桶汇总；运行态追加最新子行动（「读取 xx.js」——对照
+  // ZCode 运行中 collapsedChildSummary 的活字效果）
+  function _hgExpLiveTxt(name, input) {
+    const n = name || '';
+    if (n === 'Read') {
+      const f = String((input || {}).file_path || '').split(/[\\/]/).pop();
+      return f ? '读取 ' + f : '读取文件';
+    }
+    if (n === 'Grep') return '搜索 ' + String((input || {}).pattern || '').slice(0, 30);
+    if (n === 'Glob') return '匹配 ' + String((input || {}).pattern || '').slice(0, 30);
+    if (n === 'WebSearch') return '网搜 ' + String((input || {}).query || '').slice(0, 30);
+    if (n === 'WebFetch') return '抓取 ' + String((input || {}).url || '').slice(0, 30);
+    if (n === 'Bash' || n === 'PowerShell')
+      return String((input || {}).command || '').trim().slice(0, 40);
+    return '';
+  }
+  function _tlExpFlush() {
+    const g = _HG.grp;
+    if (!g || !g.exp) return;
+    const e = g.exp;
+    g.exp = null;
+    // 定稿：头部定格为桶汇总（去掉运行态活字），未被动过则自动收起
+    if (!e.el.isConnected) return;
+    const sumEl = e.el.querySelector('.h-tl-grp-sum');
+    if (sumEl) sumEl.textContent = _hgExpSumTxt(e.sum);
+    if (e.el.dataset.userToggled !== '1' && isNearBottom()) e.el.classList.remove('open');
+  }
+  function _hgExpSumTxt(sum) {
+    const parts = [];
+    if (sum.search) parts.push(sum.search + ' 搜索');
+    if (sum.list) parts.push(sum.list + ' 列表');
+    if (sum.file) parts.push(sum.file + ' 文件');
+    return '· ' + (parts.join(' · ') || '0 项');
+  }
+  // 时间线落位：explore 类 → 当前查阅组（无则建）；其余 → 先断组再挂时间线。
+  // renderToolUse 与 renderHistTool（回放）同走本函数——live/回放聚组一致
+  function _tlPlace(row, name, input) {
+    const g = grpEnsure(true);
+    if (!g.tl) { _tlExpFlush(); drawerAppend(row, 'exec'); return; }   // 旧快照组：回落旧抽屉
+    if (_hgIsExplore(name, input)) {
+      if (!g.exp || !g.exp.el.isConnected) {
+        const grpEl = document.createElement('div');
+        grpEl.className = 'h-tl-grp open';
+        grpEl.innerHTML =
+          `<button class="h-tl-grp-head"><span class="h-chev">▸</span>` +
+          `<span class="h-tl-grp-name">🔍 查阅</span>` +
+          `<span class="h-tl-grp-sum"></span></button>` +
+          `<div class="h-tl-grp-body"></div>`;
+        g.tl.appendChild(grpEl);
+        g.exp = { el: grpEl, sum: { search: 0, list: 0, file: 0 } };
+      }
+      const body = g.exp.el.querySelector('.h-tl-grp-body');
+      if (body) body.appendChild(row);
+      g.exp.sum[_hgExpBucket(name, input)]++;
+      const sumEl = g.exp.el.querySelector('.h-tl-grp-sum');
+      if (sumEl) {
+        const live = _hgExpLiveTxt(name, input);
+        sumEl.textContent = live ? '· ' + live : _hgExpSumTxt(g.exp.sum);
+      }
+    } else {
+      _tlExpFlush();
+      g.tl.appendChild(row);
+    }
+    _hgScrollBottom();
+  }
   function toolRunPush(name, row) {
     const r = _HG.run;
     if (r && r.name === name) {
@@ -194,11 +303,11 @@
     // Bash×21…」把子代理活动压成数字）。Agent 派发本身（!isSub 的 agent 卡）
     // 仍计数——它是主会话的动作。
     if (!isSub) {
-      drawerCount(name);                  // v2.7：计数进抽屉组头（Bash×3 · Read×5 …）
+      drawerCount(name);                  // v2.7：计数进组（v3.2：折叠头副位「· N 工具」）
       // v2.8：抽屉时代不再合并同名 run——每条 Bash/Read/Grep 调用都是独立过程行
       // （用户明确要能看到每一次执行；组头徽章已承担"×N 汇总"职责）
       _HG.run = { name, head: row, rows: [row] };
-      drawerAppend(row, 'exec');          // v2.11：过程行进执行抽屉（不再散落消息流）
+      _tlPlace(row, name, b.input);       // v3.2：ZCode 式内联时间线（查阅聚组）
     } else {
       _subBlkAppendTool(subId, row);      // v2.43：子代理工具行入段体
     }
@@ -225,7 +334,7 @@
       const d = document.createElement('div');
       d.className = 'h-tool-res';
       d.textContent = txt ? '↳ ' + txt.replace(/\s+/g, ' ') : '↳ (完成)';
-      drawerAppend(d, 'exec');
+      _tlPlace(d, '_orphan', null);   // v3.2：孤立结果行同入时间线（非 explore → 直挂）
       return;
     }
     const cfg = row._cfg || {};
@@ -252,6 +361,15 @@
       if (!showRow.querySelector('.h-tool-failmark'))
         showRow.insertAdjacentHTML('beforeend',
           `<span class="h-tool-failmark">${st === 'denied' ? '已拒绝' : '执行失败'}</span>`);
+      // v3.2：查阅聚组内失败冒泡到组头（ZCode explore 父卡 showFailureStatus
+      // 同款——组收起时错误仍可见，不藏在折叠树里）
+      const eg = row.closest('.h-tl-grp');
+      if (eg && !eg.classList.contains('err')) {
+        eg.classList.add('err');
+        const stEl = eg.querySelector('.h-tl-grp-sum');
+        if (stEl) stEl.insertAdjacentHTML('afterend',
+          `<span class="h-tool-failmark">${st === 'denied' ? '已拒绝' : '执行失败'}</span>`);
+      }
     }
     // 结果折叠体（成功默认藏，错误永远显）
     const hideOk = cfg.result === 'hide' || cfg.kind === 'bash' || cfg.kind === 'diff';
@@ -261,13 +379,11 @@
       return;
     }
     if (st !== 'completed' && txt) {
-      // 错误：展开显示
+      // 错误：展开显示（v3.2：one-line 行无头可点——升级为整行可点的终端卡形态）
       const body = row.querySelector('.h-tool-coll') || (() => {
-        row.classList.add('col');
-        const h = document.createElement('button'); h.className = 'h-tool-head';
-        h.innerHTML = `<span class="h-chev">▸</span><span class="h-tool-name">输出</span><span class="h-tslots"></span>`;
+        _tlOneclickify(row);
         const co = document.createElement('div'); co.className = 'h-tool-coll';
-        row.appendChild(h); row.appendChild(co);
+        row.appendChild(co);
         row.style.setProperty('--h-accent', 'var(--neon-red, #e06c75)');
         return co;
       })();
@@ -291,13 +407,12 @@
         }
       }
     } else if (cfg.kind === 'bash' && txt) {
-      // bash 成功输出：折叠体默认收起 + 行数提示
+      // bash 成功输出：折叠体默认收起 + 行数提示（v3.2：one-line 行升级为
+      // 整行可点展开——ZCode「终端 command ˅」卡片形态）
       const body = row.querySelector('.h-tool-coll') || (() => {
-        row.classList.add('col');
-        const h = document.createElement('button'); h.className = 'h-tool-head';
-        h.innerHTML = `<span class="h-chev">▸</span><span class="h-tool-name">输出</span><span class="h-tslots"></span>`;
+        _tlOneclickify(row);
         const co = document.createElement('div'); co.className = 'h-tool-coll';
-        row.appendChild(h); row.appendChild(co);
+        row.appendChild(co);
         return co;
       })();
       const pre = document.createElement('div');

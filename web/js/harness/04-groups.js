@@ -1,30 +1,48 @@
 // harness groups.js (v3.0 自 buildClaudeHarnessTab 拆出,定义体零改动,缩进保持原样)
   function grpFromDom(root, thinkBox, execBox) {
+    // v3.2：ZCode 式回合结构——.h-grp-proc{ .h-turn-head(已工作 Ns › 折叠头) +
+    // .h-turn-body{ .h-drawer.think + .h-tl(内联工具时间线) } }。execBox 仅
+    // 旧快照（v3.1 及以前的双抽屉结构）恢复用：g.tl=null 走 legacy 兼容渲染
+    const tlBox = root.querySelector('.h-tl');
+    const turnHead = root.querySelector('.h-turn-head');
+    const turnBody = root.querySelector('.h-turn-body');
     const g = {
       root,
       proc: root.querySelector('.h-grp-proc'),
       think: { box: thinkBox, body: thinkBox.querySelector('.h-drawer-body'),
                title: thinkBox.querySelector('.h-drawer-title'),
                stats: thinkBox.querySelector('[data-hg-dslots]') },
-      exec: { box: execBox, body: execBox.querySelector('.h-drawer-body'),
+      exec: execBox ? { box: execBox, body: execBox.querySelector('.h-drawer-body'),
               title: execBox.querySelector('.h-drawer-title'),
               stats: execBox.querySelector('[data-hg-dstats]'),
-              slots: execBox.querySelector('[data-hg-dslots]') },
+              slots: execBox.querySelector('[data-hg-dslots]') } : null,
+      tl: tlBox || null,
+      head: turnHead || null,
+      headBody: turnBody || null,
+      headLabel: turnHead ? turnHead.querySelector('.h-turn-label') : null,
+      headSub: turnHead ? turnHead.querySelector('.h-turn-sub') : null,
+      headTimer: null,
+      exp: null,                  // v3.2：当前查阅聚组 {el, sum, rows}（renderToolUse 维护）
+      t0: turnHead ? (+(turnHead.dataset.t0 || 0) || undefined) : undefined,   // v3.2：认回时从折叠头恢复回合起点
       ph: null, phTimer: null, phIdx: 0,
       counts: null,               // null = 未从 dataset 恢复
     };
-    if (g.exec.stats) {
-      try { g.counts = JSON.parse(g.exec.stats.dataset.counts || 'null'); } catch(_) { g.counts = null; }
+    // v3.2：新结构把工具计数挂在 .h-tl dataset（旧结构在 exec.stats dataset）
+    const cntHost = g.tl || (g.exec && g.exec.stats) || null;
+    if (cntHost) {
+      try { g.counts = JSON.parse(cntHost.dataset.counts || 'null'); } catch(_) { g.counts = null; }
     }
     // v2.20（2.png 空壳胶囊）：无内容的抽屉整体隐藏。新建组本来就 display:none
     // （见 grpEnsure），这里按 body 内容推导——快照恢复 inline style 会在、
     // 回扫接回走现场状态，但旧快照/边界路径没有标记，推导一劳永逸：
     // 空组什么都不显示（比「思考：无 / 执行：无」更干净）。
     const thKids = g.think.body ? g.think.body.children.length : 0;
-    const exKids = g.exec.body ? g.exec.body.children.length : 0;
+    const exKids = (g.exec && g.exec.body) ? g.exec.body.children.length : 0;
     const exCnt = g.counts && Object.keys(g.counts).length ? 1 : 0;
     thinkBox.style.display = thKids ? '' : 'none';
-    execBox.style.display = (exKids || exCnt) ? '' : 'none';
+    if (execBox) execBox.style.display = (exKids || exCnt) ? '' : 'none';
+    // v3.2：空时间线不占位（组内只有思考/正文时 proc 区不留白条）
+    if (g.tl) g.tl.style.display = (g.tl.children.length || exCnt) ? '' : 'none';
     return g;
   }
   function grpEnsure(live) {
@@ -38,7 +56,8 @@
     if (root) {
       const thinkBox = root.querySelector('.h-drawer.think');
       const execBox = root.querySelector('.h-drawer.exec');
-      if (thinkBox && execBox) { _HG.grp = grpFromDom(root, thinkBox, execBox); return _HG.grp; }
+      // v3.2：新结构无 exec 抽屉——有 .h-tl 即可认回（execBox 仅旧快照在场）
+      if (thinkBox && (execBox || root.querySelector('.h-tl'))) { _HG.grp = grpFromDom(root, thinkBox, execBox); return _HG.grp; }
     }
     // 新建组
     const nr = document.createElement('div');
@@ -52,29 +71,37 @@
       `<span class="h-drawer-title">🧠 思考</span>` +
       `<span class="h-tslots" data-hg-dslots></span></button>` +
       `<div class="h-drawer-body"></div>`;
-    const execBox = document.createElement('div');
-    execBox.className = 'h-drawer exec';
-    execBox.innerHTML =
-      `<button class="h-drawer-head"><span class="h-chev">▸</span>` +
-      `<span class="h-drawer-title">💻 执行</span>` +
-      `<span class="h-drawer-stats" data-hg-dstats></span>` +
-      `<span class="h-tslots" data-hg-dslots></span></button>` +
-      `<div class="h-drawer-body"></div>`;
-    proc.appendChild(thinkBox);
-    proc.appendChild(execBox);
+    // v3.2：ZCode 式回合闭合结构——turn-head 是折叠触发行（工作中 Ns/已工作 X ›），
+    // turn-body 包思考抽屉+工具时间线；正文气泡在组根（折叠区外永远可见）
+    const turnHead = document.createElement('button');
+    turnHead.className = 'h-turn-head';
+    turnHead.dataset.hgTurnTgl = '1';
+    turnHead.style.display = 'none';
+    turnHead.innerHTML =
+      `<span class="h-chev">▸</span>` +
+      `<span class="h-turn-label">工作中 0s</span>` +
+      `<span class="h-turn-sub"></span>`;
+    const turnBody = document.createElement('div');
+    turnBody.className = 'h-turn-body';
+    const tlBox = document.createElement('div');
+    tlBox.className = 'h-tl';
+    turnBody.appendChild(thinkBox);
+    turnBody.appendChild(tlBox);
+    proc.appendChild(turnHead);
+    proc.appendChild(turnBody);
     // v2.20（2.png 空壳胶囊）：新组抽屉先隐藏——纯文本回复的组（无思考无工具）
     // 不再渲染「🧠 思考 / 💻 执行」空壳胶囊+「完成」徽章；有内容时由
     // startThinking / drawerCount 翻回显示。
     thinkBox.style.display = 'none';
-    execBox.style.display = 'none';
     nr.appendChild(proc);
     addRow(nr);
-    g = grpFromDom(nr, thinkBox, execBox);
+    g = grpFromDom(nr, thinkBox, null);
     g.counts = {};                 // 新组才清；恢复组从 dataset 读
+    g.t0 = _HG.pendingTurnT0 || Date.now();   // v3.2：回合起点（回放=用户消息 ts；live=当下）
+    _HG.pendingTurnT0 = null;
     if (g.think.stats) g.think.stats.dataset.segCount = '0';
     // 重建期：按记录恢复开合；无记录则默认收起（流式期 openState=null 不干预）
     _hgApplyOpen(thinkBox, false);
-    _hgApplyOpen(execBox, false);
     _HG.grp = g;
     // v2.25：压缩开始会把进行中的组定稿（grpFinalize→phRemove 连占位气泡
     // 一起摘掉），压缩后模型继续推理 → startThinking/renderToolUse 在这里
@@ -145,29 +172,73 @@
     }
     const thinkBox = root.querySelector('.h-drawer.think');
     const execBox = root.querySelector('.h-drawer.exec');
-    if (!thinkBox || !execBox) return;
+    if (!thinkBox && !root.querySelector('.h-tl')) return;
     if (root.querySelector(':scope > .h-msg.asst:not(.ph)')) return;   // 正文已出，不占位
     const g = grpFromDom(root, thinkBox, execBox);
     _HG.grp = g;
+    // v3.2：认回的活组若正跑（折叠头在场）→ 重启「工作中」秒表（timer 不随
+    // innerHTML 快照携带，切回不补就是死表）
+    if (g.head && g.head.style.display !== 'none' && _HG.busy) _turnHeadShow(g);
     phStart(g);     // 冻结占位由 phStart 认领复用（不新建第二个）
   }
+  // v3.2：ZCode 式回合折叠头（AssistantHistoryStatus 同款）——首条工作行到位
+  // 即亮「工作中 Ns」实时秒表；定稿改冻结文案「已工作 X」（工时优先取 CLI
+  // result.duration_ms，缺省回退本地差值——历史工时绝不吃当前时钟，否则刷新
+  // 后「已工作」会随时间继续增长，对照 workSegments activeMs 规则）。
+  // 回放路径（hist=true）不定稿前不亮头（重建瞬间成百上千组，秒表空转纯浪费）
+  function _turnHeadShow(g, opts) {
+    if (!g || !g.head) return;
+    opts = opts || {};
+    if (g.head.style.display === 'none') {
+      g.head.style.display = '';
+      if (g.t0) g.head.dataset.t0 = String(g.t0);
+    }
+    // 秒表只走 live（流式期 openState=null）；回放重建期 openState 在场——
+    // 成百上千组各挂定时器纯空转。认回复跑（phResume）headTimer 已在则不叠
+    if (!opts.hist && !g.headTimer) {
+      if (!g.t0) g.t0 = Date.now();
+      g.headTimer = setInterval(() => {
+        if (!g.headLabel || !g.head.isConnected) { clearInterval(g.headTimer); g.headTimer = null; return; }
+        g.headLabel.textContent = '工作中 ' + _hgFmtDur((Date.now() - (g.t0 || Date.now())) / 1000);
+      }, 1000);
+      (_HG.turnTicks || (_HG.turnTicks = [])).push(g.headTimer);
+    }
+  }
+  function _turnHeadStop() {                        // 清场钩子：切会话/SSE reset 时收掉全部秒表
+    ((_HG.turnTicks) || []).forEach(clearInterval);
+    _HG.turnTicks = [];
+  }
   function drawerCount(toolName) {
-    const g = grpEnsure(true);                  // 计数进当前组执行抽屉
-    g.exec.box.style.display = '';              // v2.20：第一个工具到位，执行抽屉翻回显示
+    const g = grpEnsure(true);                  // 计数进当前组
     if (!g.counts) g.counts = {};
     const n = _hDrawerName(toolName);
     g.counts[n] = (g.counts[n] || 0) + 1;
-    // chips ≤8 个，超出折叠成「…」——组头收起态必须小（用户：总体只占一小部分）
-    const entries = Object.entries(g.counts);
-    const shown = entries.slice(0, 8).map(([k, v]) => `<span class="h-drawer-chip">${esc(k)}×${v}</span>`).join('');
-    g.exec.stats.innerHTML = shown + (entries.length > 8 ? '<span class="h-drawer-chip">…</span>' : '');
-    g.exec.stats.dataset.counts = JSON.stringify(g.counts);   // 快照恢复用
+    if (g.tl) {
+      // v3.2：新结构——计数进折叠头副位（「· N 工具」），时间线随首行翻显。
+      // 回放重建期（openState 在场）不亮头：秒表会显示假「工作中 0s」，
+      // 头只在 grpFinalize 定稿时以冻结工时亮出
+      g.tl.style.display = '';
+      g.tl.dataset.counts = JSON.stringify(g.counts);   // 快照恢复用
+      if (!_HG.openState) _turnHeadShow(g);
+      const total = Object.values(g.counts).reduce((a, b) => a + b, 0);
+      if (g.headSub) g.headSub.textContent = '· ' + total + ' 工具';
+    } else if (g.exec) {
+      // 旧快照恢复的组：chips 进旧执行抽屉头（字节级兼容 v3.1 前的快照）
+      g.exec.box.style.display = '';
+      const entries = Object.entries(g.counts);
+      const shown = entries.slice(0, 8).map(([k, v]) => `<span class="h-drawer-chip">${esc(k)}×${v}</span>`).join('');
+      g.exec.stats.innerHTML = shown + (entries.length > 8 ? '<span class="h-drawer-chip">…</span>' : '');
+      g.exec.stats.dataset.counts = JSON.stringify(g.counts);
+    }
     _hgScrollBottom();
   }
-  function grpFinalize(auto) {
+  function grpFinalize(auto, opt) {
     const g = _HG.grp;
     if (!g) return;
     phRemove(g);
+    _tlExpFlush();                       // v3.2：定稿先冲查阅聚组（头部定格汇总+自动收）
+    if (g.headTimer) { clearInterval(g.headTimer); g.headTimer = null; }
+    opt = opt || {};
     // v2.20 修复：定稿把组头「思考 N 次」重写为纯文本——流式中带的脉动
     // 动画（hg-think-anim）此前无人摘，回复结束后还在闪。
     // 无思考段的组（空壳抽屉）不动，别把初始标题改写成「思考 0 次」。
@@ -175,7 +246,25 @@
     if (g.think.title && _segN > 0)
       g.think.title.innerHTML = '🧠 思考 ' + _segN + ' 次';
     if (g.think.stats) g.think.stats.innerHTML = '<span class="h-tbadge b-done">完成</span>';
-    if (g.exec.slots) g.exec.slots.innerHTML = '<span class="h-tbadge b-done">完成</span>';
+    if (g.exec && g.exec.slots) g.exec.slots.innerHTML = '<span class="h-tbadge b-done">完成</span>';
+    // v3.2：回合折叠头定稿——文案三态（工作中→已工作/已停止），工时优先
+    // 事件事实（CLI duration_ms / 回放 endTs 差值），无事实回退本地差值。
+    // 只有真正发生过工作（思考段或工具）的组才亮头；纯正文组无头（对照
+    // resolveConversationTurnWorkStatus 的 hasWork 判据）
+    const _hasWork = (_segN > 0) || !!(g.counts && Object.keys(g.counts).length);
+    if (g.head && _hasWork) {
+      _turnHeadShow(g, { hist: true });         // 兜底：纯思考组此前没走 drawerCount
+      const _end = (typeof opt.endTs === 'number' && opt.endTs > 0) ? opt.endTs : Date.now();
+      const _dur = (typeof opt.durMs === 'number' && opt.durMs > 0)
+        ? opt.durMs : Math.max(0, _end - (g.t0 || _end));
+      g.head.dataset.dur = String(_dur);
+      if (g.headLabel) g.headLabel.textContent =
+        (opt.interrupted ? '已停止 · ' : '已工作 ') + _hgTurnDurTxt(_dur);
+      // 折叠：回放默认收（除非用户开过）；live 自动收只在底部跟读时（同
+      // v2.12 判据）；用户点过头（userToggled）永不强制收
+      if (g.headBody && g.head.dataset.userToggled !== '1' && (opt.hist || (auto && isNearBottom())))
+        g.headBody.classList.add('closed');
+    }
     // v2.21：纯思考/工具组（整组没有正文气泡）定稿时补一行弱提示——
     // 模型常连跑几十轮工具（text 全是 "\n\n" 占位被过滤），组头下面悬空
     // 看着像回复丢了（用户实测困惑点）。有正文/空壳组不补。
@@ -192,14 +281,25 @@
     // 用户手动开过不强制收；自动收只在用户在底部跟读时（v2.12 判据，按组生效）
     if (auto) {
       if (g.think.box.dataset.userToggled !== '1' && isNearBottom()) g.think.box.classList.remove('open');
-      if (g.exec.box.dataset.userToggled !== '1' && isNearBottom()) g.exec.box.classList.remove('open');
+      if (g.exec && g.exec.box.dataset.userToggled !== '1' && isNearBottom()) g.exec.box.classList.remove('open');
     }
     g.root.dataset.finalized = '1';   // v2.18.1：已定稿——grpEnsure 回扫不得接回
     _HG.grp = null;      // 下轮 renderUser 开新组
   }
+  // v3.2：回合工时文案（ZCode formatConversationWorkDuration 口径：N 秒/N 分 N 秒/N 时 N 分）
+  function _hgTurnDurTxt(ms) {
+    let s = Math.max(0, Math.round(ms / 1000));
+    if (s < 60) return s + ' 秒';
+    const m = Math.floor(s / 60); s %= 60;
+    if (m < 60) return m + ' 分' + (s ? ' ' + s + ' 秒' : '');
+    const h = Math.floor(m / 60);
+    return h + ' 时 ' + (m % 60) + ' 分';
+  }
   function drawerAppend(el, kind) {
     const g = grpEnsure(true);
-    (kind === 'think' ? g.think.body : g.exec.body).appendChild(el);
+    if (kind === 'think') g.think.body.appendChild(el);
+    else if (g.tl) g.tl.appendChild(el);            // v3.2：工具行进内联时间线
+    else if (g.exec) g.exec.body.appendChild(el);   // 旧快照组：回落旧执行抽屉
     _hgScrollBottom();
   }
   function hideWelcome() {
@@ -235,7 +335,11 @@
     (host || _hgFlow).appendChild(t);
   }
   function renderUser(text, images, files, live, tsMs) {
-    grpFinalize(false);                       // v2.18：上一组定稿，本组接棒
+    // v3.2：定稿带回合终点——回放用下一条用户消息 ts（工时=两次消息间活动
+    // 时长，对照 workSegments 旧数据时间边界恢复口径）；live 用当下时刻
+    grpFinalize(false, { endTs: (live === false && tsMs > 0) ? tsMs : Date.now(),
+                         hist: live === false });
+    _HG.pendingTurnT0 = (tsMs > 0 && live === false) ? tsMs : Date.now();   // v3.2：新组回合起点
     _maybeTimeBar(tsMs || Date.now());        // v2.24.5 微信式时间条（气泡前）
     endThinking(); closeRun();
     _HG.asstText = false;                     // 本轮 AI 尚未输出文本（占位/组头判据）
@@ -291,6 +395,7 @@
     // v2.43：子代理文本不再走本函数——改入子代理段（_subText），主 flow 的
     // 灰色 sub 行与 isSub/subId 参数一并退役（归属标识上移到段头）。
     if (!text || !String(text).trim()) return;
+    _tlExpFlush();                       // v3.2：正文打断查阅聚组（对照 ZCode：非 explore 行断组）
     // v2.18.1（3.png）：组合制 = 思考+工具+回复，按正文切分。当前组已出过正文
     // → 后续正文属下一条回复：先定稿，让新组头（思考/工具）落在新正文上方。
     const cur = _HG.grp;

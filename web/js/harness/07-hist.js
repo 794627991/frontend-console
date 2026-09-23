@@ -20,7 +20,7 @@
       d.dataset.hgLazy = err ? '' : '1';   // 错误行已填（hgLazy 空）；收起丢弃后由 Drop 重置
     }
     drawerCount(l.text);
-    drawerAppend(d, 'exec');
+    _tlPlace(d, l.text, l.input || {});   // v3.2：回放同走内联时间线（查阅聚组与实时一致）
     _hgApplyOpen(d, !!l.err);   // 重建期：恢复上次开合；无记录时错误行默认展开
   }
   function renderHistLine(l, hi) {
@@ -257,8 +257,10 @@
   }
   function startThinking(hist) {
     if (_HG.think && _HG.think.seg && _HG.think.seg.isConnected) return;
+    _tlExpFlush();                       // v3.2：思考段打断查阅聚组
     const g = grpEnsure(true);
     g.think.box.style.display = '';             // v2.20：第一段思考到位，思考抽屉翻回显示
+    if (!hist) _turnHeadShow(g);                // v3.2：纯思考回合也亮「工作中」秒表（回放不亮——定稿时直接冻结文案）
     const n = thinkSegCount(g) + 1;
     thinkSegCountSet(g, n);
     // 组头：「思考 N 次」；流式中带脉动动画，历史重建（hist）静态——
