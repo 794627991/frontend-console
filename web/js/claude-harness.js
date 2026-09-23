@@ -3995,11 +3995,15 @@ function buildClaudeHarnessTab(opts = {}) {
             && l.input && (l.input.description || l.input.subagent_type || l.input.agent_type)) {
           const d = _hgDyn();
           d.agentsRpl = d.agentsRpl || [];
+          // v2.59：同路审计去重——同 type+desc 的旧条目移除只留最新（用户实锤：
+          // 同一条审计链的多轮复审逐条堆叠全是重复，回放确认即同一条路）
+          const _typ = l.input.subagent_type || l.input.agent_type || 'Task';
+          const _desc = l.input.description || '';
+          d.agentsRpl = d.agentsRpl.filter(x => !(x.type === _typ && x.desc === _desc));
           // v2.38：从结果文本提取 agentId——历史条目的回放窗格靠它定位转写
           const _aid = (l.result && String(l.result).match(/(?<![a-zA-Z])agentId[:"':\s]+([0-9a-zA-Z_-]{8,64})/i) || [])[1] || '';
           d.agentsRpl.push({
-            type: l.input.subagent_type || l.input.agent_type || 'Task',
-            desc: l.input.description || '', t0: 0, done: true, doneAt: 0, replay: true,
+            type: _typ, desc: _desc, t0: 0, done: true, doneAt: 0, replay: true,
             agentId: _aid });
           if (d.agentsRpl.length > 5) d.agentsRpl.shift();
         }
@@ -5188,7 +5192,10 @@ function buildClaudeHarnessTab(opts = {}) {
     rplTail.forEach(a => {
       if (!a.rid) a.rid = 'rpl' + ((_HG.rplSeq = (_HG.rplSeq || 0) + 1));
     });
-    const rpl = rplTail.map(a => Object.assign({}, a));
+    // v2.59：历史条目附 agentId 尾缀——同 desc 的多次派发（如多轮续审各记
+    // 一条是真实记录）不再长得一模一样分不清
+    const rpl = rplTail.map(a => Object.assign({}, a, {
+      desc: (a.desc || '') + (a.agentId ? ' · ' + String(a.agentId).slice(-4) : '') }));
     // v2.35（P1-5）：协作代理（SendMessage 转交的独立会话/识图转交）——从
     // 消息流「已转交」线派生（dataset.peer/t0/done/psum 随快照序列化），
     // 带「协作」徽章与 Task 子代理视觉区分：peer 无实况事件流，点击只跳线
@@ -5237,14 +5244,16 @@ function buildClaudeHarnessTab(opts = {}) {
           `<span class="hg-dyn-pbadge">协作</span>` +
           `<span class="hg-dyn-at">${esc(_AGENT_LABEL[a.type] || a.type)}</span>` +
           (a.desc ? `<span class="hg-dyn-desc" title="${esc(a.desc)}">${esc(a.desc)}</span>` : '') +
-          (!a.done ? `<b class="hg-dyn-el" data-t0="${a.t0}">0s</b>` : '<b class="hg-dyn-el">已结束</b>') +
+          (!a.done ? `<b class="hg-dyn-el" data-t0="${a.t0}">${a.t0 ? fmtDur(Math.max(1, Math.round((Date.now() - a.t0) / 1000))) : '0s'}</b>` : '<b class="hg-dyn-el">已结束</b>') +
           '</div>';
       }
       // v2.36：中断态补 halt 修饰类（点/文字/耗时转橙，与失败红区分；仅类名）
       const cls = a.replay ? 'hist' : !a.done ? 'run'
         : (a.err ? (a.interrupted ? 'fail halt' : 'fail') : 'done');
       let el;
-      if (!a.done) el = `<b class="hg-dyn-el" data-t0="${a.t0}">0s</b>`;
+      // v2.59：渲染时即算实际耗时——innerHTML 重建每 3-4s 一批（事件驱动），
+      // 硬编码 '0s' 占位要等下一轮 1s tick 才修正=时间反复归零（用户实锤）
+      if (!a.done) el = `<b class="hg-dyn-el" data-t0="${a.t0}">${a.t0 ? fmtDur(Math.max(1, Math.round((Date.now() - a.t0) / 1000))) : '0s'}</b>`;
       else if (a.replay) el = '<b class="hg-dyn-el">历史</b>';
       else if (a.err) el = `<b class="hg-dyn-el">${a.interrupted ? '已中断' : '失败'}</b>`;
       else el = `<b class="hg-dyn-el">${a.t0 ? fmtDur(Math.max(1, Math.round((a.doneAt - a.t0) / 1000))) : '完成'}</b>`;
@@ -5282,7 +5291,7 @@ function buildClaudeHarnessTab(opts = {}) {
         `<span class="hg-dyn-pbadge">协作</span>` +
         `<span class="hg-dyn-at">${esc(disp)}</span>` +
         `<span class="hg-dyn-desc">${esc(pend ? '等待结论回传' : (sum ? sum : '已回传'))}</span>` +
-        (pend ? `<b class="hg-dyn-el" data-t0="${t0}">0s</b>` : `<b class="hg-dyn-el">${durTxt}</b>`) + '</div>';
+        (pend ? `<b class="hg-dyn-el" data-t0="${t0}">${fmtDur(Math.max(1, Math.round((Date.now() - t0) / 1000)))}</b>` : `<b class="hg-dyn-el">${durTxt}</b>`) + '</div>';
     }).join('');
     // v2.39：重渲恢复已展开的详情卡——上面 innerHTML 全量覆盖会把插在行后
     // 的详情卡冲掉（用户实锤「点击展开后不一会又缩回去」）。条目已滚出列表
