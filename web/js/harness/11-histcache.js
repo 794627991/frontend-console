@@ -157,12 +157,12 @@
   }
   function _roDeps() {
     return {
-      _HG, _hgWrap,
+      _HG, wrap: _hgWrap,
       esc, mdBubble, renderMd, attChipsHtml, statusBadge,
       toolIco: _hToolIco, toolLabel: _hToolLabel, toolBodyHtml: _histToolBodyHtml,
       lazyFill: _histLazyFill, lazyDrop: _histLazyDrop,
       openLightbox,          // v2.3.12：只读层附件 chip 点开预览（委托经 deps 注入）
-      timeFmt: _timeFmt, _hgFmtDur, imgExt: _HARNESS_IMG_EXT,
+      timeFmt: _timeFmt, fmtDur: _hgFmtDur, imgExt: _HARNESS_IMG_EXT,
       onEmpty: () => { const bar = _hgFlow.querySelector('.hg-hist-more');
                        if (bar) bar.innerHTML = '⚠ 没有可查阅的历史'; }
     };

@@ -13,6 +13,7 @@ import logging
 log = logging.getLogger(__name__)
 from .. import app_state as _st
 from ..claude_conn import _humanize_claude_error, _resolve_claude_exe
+from .lifecycle import _ensure_gc, _get_or_create
 from .roles import audit_gate_check
 from .consts import _PROMPTS_LEGACY_KEY, _SKILL_ZH_FILE, _UPLOAD_DIR, _UPLOAD_MAX, _sessions, _sessions_lock
 from .meta import _meta, _meta_load, _meta_lock, _meta_save, _meta_tombstones

@@ -121,7 +121,7 @@ function buildClaudeHarnessTab(opts = {}) {
   _hgConn = {
     portId,
     meta: { kind: 'harness', label: 'Claude 对话', cwd: '' },
-    tab, _hgWrap,
+    tab, wrap: _hgWrap,
     sse: null, onResumePoll: null,
   };
   connections[portId] = _hgConn;
