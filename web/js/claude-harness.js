@@ -1746,6 +1746,16 @@ function buildClaudeHarnessTab(opts = {}) {
     if (!text || !String(text).trim()) return;
     const b = _subBlkGet(pid); if (!b) return;
     _subSegEnd(b);
+    // v2.53：段内同文去重——轮询与 SSE 理论上可能双源喂同一条 text（CLI
+    // 行为随版本变），渲染文本归一后与段内**任一**既有气泡等价即不重复
+    // 追加（v2.54R 从「仅段尾」扩为全段——多 text 段中段重读双份的口子）
+    const probe = document.createElement('div');
+    probe.innerHTML = renderMd(text);
+    const _norm = s => String(s || '').replace(/\s+/g, '');
+    const _want = _norm(probe.textContent);
+    if (_want && [...b.body.querySelectorAll('.h-msg.sub')]
+        .some(el => _norm(el.textContent) === _want))
+      return;
     const d = document.createElement('div');
     d.className = 'h-msg asst sub';
     d.appendChild(mdBubble(text));
@@ -2058,7 +2068,10 @@ function buildClaudeHarnessTab(opts = {}) {
     if (done && w.el && w.el.isConnected)
       _hgPeerLineFreeze(w.el);            // 单槽兼容路径（不携带摘要——摘要走按名配对）
   }
-  function renderPeer(name, text, to, noDedup) {  // 📥 回传气泡（区别于 user/AI）
+  function renderPeer(name, text, to, noDedup, hist) {  // 📥 回传气泡（区别于 user/AI）
+    // hist=true：历史回放路径（renderHistLine）——绝不开新段（v2.53 教训：
+    // 重启重建历史时每条回传都新建「协作·xx 运行中」假段，正文吞进折叠壳，
+    // 主链看似丢消息），回传归入对应已完成段；miss 则平铺气泡（原回退）
     // v2.3.2：代播回传带 to（收件人 peer 名）——防串台污染。
     // v2.3.10 修致命错位（用户实锤"回传到了界面没有"）：to 是回信方写的
     // 收件人名（本会话 CLI 名如 pro-62），而转交线上写的是发信时的收件人
@@ -2091,10 +2104,40 @@ function buildClaudeHarnessTab(opts = {}) {
     grpFinalize(false);
     endThinking(); closeRun();
     // v2.49：协作归一——SendMessage 协作回传全文入对应子代理段（替代独立
-    // 回传气泡）；段定位失败（段缺失/识图名）自然落入下方原气泡代码=回退
-    // 不丢内容
-    const _pSeg = _hgCollabSegFind(name);
+    // 回传气泡）。v2.53（用户定调）：非识图回传**禁止平铺气泡**——定位不到
+    // 运行中段（段已定格/续派未建段）时新建一个段承接，回传必须出现在
+    // 消息框里；识图转交/回传是唯一例外（原气泡保留）
+    const _pSeg = _hgCollabSegFind(name, hist);
     if (_pSeg) { _hgPeerToSeg(_pSeg, name, text); scrollBottom(); return; }
+    const _nm = String(name || '其他会话');
+    if (!hist && !_nm.includes('识图')) {
+      const _disp = (_HG.peerNames || {})[_nm] || _nm;
+      const _npid = 'peer-' + _nm + '-' + Date.now();
+      // 不挂 bg（v2.54R：合成段无 agents 档案，挂 bg 会被 sweep 豁免成
+      // 永不定格的跳表假段）——建段即入段回传，随后就地定格完成态
+      const _nb = _subBlkGet(_npid, { live: true, collab: true,
+        label: '协作 · ' + String(_disp).slice(0, 24), model: '',
+        type: 'SendMessage', desc: '', done: false });
+      if (_nb) {
+        if (/^[0-9a-zA-Z_-]{8,64}$/.test(_nm)) {
+          _nb.head.dataset.hgSubr = _nm;
+          _nb.head.dataset.hgSubType = 'SendMessage';
+          _subBlkActsPaint(_nb);   // hgSubr 在手——「▣ 回放」钮可点亮
+        }
+        _hgPeerToSeg(_nb.root, name, text);
+        // 入段即定格：回传本身就是完成信号——不停格秒表会永久跳动误导
+        // （合成段无档案，result 路径不会来认领）
+        _nb.root.classList.add('done');
+        const _st = _nb.head.querySelector('.h-subblock-state');
+        if (_st) {
+          _st.className = 'h-subblock-state ok';   // 去 run 脉冲动画
+          _st.textContent = '✓ 回传已入段';
+        }
+        if (_nb.timer) { clearInterval(_nb.timer); _nb.timer = null; }
+        scrollBottom();
+        return;
+      }
+    }
     const d = document.createElement('div'); d.className = 'h-peer';
     const head = document.createElement('div'); head.className = 'h-peer-head';
     // v2.37（P1-C）：回传方头像徽标（首字母圆形色标，与模型标识同色板哈希）
@@ -2123,7 +2166,7 @@ function buildClaudeHarnessTab(opts = {}) {
   //    （名字形态——实时建段 label 用 to 原文，name 与 to 同名即中）
   // 识图名显式 return null——识图转交/回传形态原样保留（需求唯一例外）。
   // 多候选取舍：未完成（运行中段优先承接）> data-hg-collab > DOM 序
-  function _hgCollabSegFind(name) {
+  function _hgCollabSegFind(name, allowDone) {
     const nm = String(name || '').trim();
     if (!nm || nm.includes('识图')) return null;
     const cands = [];
@@ -2140,12 +2183,17 @@ function buildClaudeHarnessTab(opts = {}) {
       if (ne && ne.textContent === '协作 · ' + nm.slice(0, 24)) push(r);
     });
     if (!cands.length) return null;
-    const rank = r => (r.classList.contains('done') ? 0 : 2) + (r.dataset.hgCollab ? 1 : 0);
-    // v2.49R1（复审3）：rank 平局取 DOM 最晚段——同名二次续派各建一段，
-    // 迟到的回传语义上属于最新一续派（取最早段会入错段）；次序优先级
-    //（未完成 > data-hg-collab）不变，仅平局兜底方向翻转
-    return cands.slice().sort((a, b) => (rank(b) - rank(a))
-      || ((a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) ? 1 : -1))[0];
+    const _byDom = (a, b) =>
+      ((a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) ? 1 : -1);
+    // v2.53（用户定调）：实时回传只进**运行中**段——已完成段是上一轮的
+    // 历史框，同名续派/迟到回传塞进去就是「混进之前的审核消息框」；全
+    // done 返回 null，由 renderPeer 新建段承接。运行中多候选取 DOM 最晚
+    // （=最新一续派）。
+    // allowDone（历史回放）：回传可归入**最新完成段**（v2.49 原行为——
+    // 历史段全是 done，禁开新段），同样取 DOM 最晚。
+    const live = cands.filter(r => !r.classList.contains('done'));
+    if (live.length) return live.sort(_byDom)[0];
+    return allowDone ? cands.slice().sort(_byDom)[0] : null;
   }
   // v2.49：回传全文落段体尾——结论行覆写「📥 回传：…」（与 _subText 同截断
   // 口径：前 120 字 + title 400；折叠态段体不可见时回传摘要仍露在段头下），
@@ -2265,7 +2313,8 @@ function buildClaudeHarnessTab(opts = {}) {
   }
   function renderHistLine(l, hi) {
     if (l.role === 'peer') {          // v2.27.3：跨会话回传（识图结论）历史回看
-      renderPeer(l.name, l.text, null, true);   // R6 复审 F：历史路径跳过 60s 判重
+      // v2.53：第 5 参 hist——历史回放绝不开新段（防假「协作·运行中」段吞正文）
+      renderPeer(l.name, l.text, null, true, true);
     }
     else if (l.role === 'vision_relay') {  // v2.28：识图 MCP 转交线（历史回看）
       renderVisionRelayHist(l);
@@ -4748,7 +4797,8 @@ function buildClaudeHarnessTab(opts = {}) {
       // v2.49：线被隐藏（SendMessage 协作归一段形态）——跳转目标改协作段
       // 本体：展开（含折叠态记忆）+居中+高亮；段不存在回落原线跳转
       if (target && target.style.display === 'none') {
-        const seg = _hgCollabSegFind(target.dataset.peer);
+        // allowDone=true（v2.54R）：跳转目标是历史段（多为已完成），live-only 会落空
+        const seg = _hgCollabSegFind(target.dataset.peer, true);
         if (seg) {
           seg.classList.remove('collapsed');
           _hgSubSaveOpen(seg, true);
@@ -5570,7 +5620,8 @@ function buildClaudeHarnessTab(opts = {}) {
   function _subBlkMergeThinks(tid, rows) {
     const b = _HG.subBlk && _HG.subBlk[tid];
     if (!b || !b.body || !b.root.isConnected) return;
-    if (!rows.some(r => r && r.k === 'think' && String(r.text || '').trim())) return;
+    // v2.53：text 气泡同回填（用户定调段内与主会话一致——思考+工具+消息）
+    if (!rows.some(r => r && (r.k === 'think' || r.k === 'text') && String(r.text || '').trim())) return;
     if (b.body.querySelectorAll('.h-think-seg').length) return;
     _subSecNormalize(b);   // 旧快照遗留布局先归节（回填只认节结构）
     // 边界映射预备：段内气泡序 / replay text 序（头区|尾区）
@@ -5627,8 +5678,24 @@ function buildClaudeHarnessTab(opts = {}) {
       return sec;
     };
     rows.forEach((r, i) => {
-      if (!r || r.k !== 'think' || !String(r.text || '').trim()) return;
+      if (!r || !String(r.text || '').trim()) return;
       const bi = ordToBubble(nextOrd[i]);
+      // v2.53：text 行回填成气泡（与实时 _subText 同构），插在其右侧边界
+      // 气泡前（时序位）；与轮询双源防重——归一文本已在段内任一气泡即跳过
+      if (r.k === 'text') {
+        const norm = s => String(s || '').replace(/\s+/g, '');
+        const want = norm(r.text);
+        if (!want) return;
+        if ([...b.body.querySelectorAll('.h-msg.sub')]
+            .some(el => norm(el.textContent) === want)) return;
+        const d = document.createElement('div');
+        d.className = 'h-msg asst sub';
+        d.appendChild(mdBubble(r.text));
+        if (bi >= 0 && bi < B && bubbles[bi]) b.body.insertBefore(d, bubbles[bi]);
+        else b.body.appendChild(d);
+        return;
+      }
+      if (r.k !== 'think') return;
       const sec = (bi >= 0 && bi < B && bubbles[bi]) ? secBefore(bubbles[bi]) : lastSec();
       const dr = _subSecDrawer(sec, 'think');
       const seg = _subThinkShell(false);
@@ -5732,9 +5799,9 @@ function buildClaudeHarnessTab(opts = {}) {
       // 从 0 全量重读会把段内已插行整体双份插入。就地按段 dataset 的快照续
       // 读位（hgTailOff）种账，不依赖轮询节拍。无续读位时的停喂判据按消费形
       // 态收口（防误伤新段——SSE 先喂了行、轮询尚未起跑是常态）：
-      // · think-only（真实/误杀代理）：仅当段内已有思考行才停——思考行只可能
-      //   来自轮询/回填（SSE 不转发子代理 thinking，v2.44 实证），有思考无账
-      //   =旧版喂过账丢了，重读必重插；text/tool 行不会经本路重插，不拦
+      // · think+text（真实/误杀代理，v2.54R）：段内已有思考行或消息气泡
+      //   即停——两者只可能来自轮询/回填（SSE 不转发子代理 thinking/text），
+      //   有行无账=旧版喂过账丢了，重读必重插；tool 行不经本路重插，不拦
       // · fullFeed（真 SendMessage 协作）：段内有任意过程行即停——独立会话
       //   行只能来自本轮询自喂，有行无账=旧版喂过，全量重读必整体重插
       if (!(aid in _HG.subTail)) {
@@ -5745,7 +5812,9 @@ function buildClaudeHarnessTab(opts = {}) {
           const _bd = _sb && _sb.body;
           const fedAlready = fullFeed
             ? (_bd && _bd.querySelectorAll('.h-think-seg, .h-tool, .h-tool-res, .h-msg, .h-subblock-note').length)
-            : (_bd && _bd.querySelectorAll('.h-think-seg').length);
+            : (_bd && _bd.querySelectorAll('.h-think-seg, .h-msg.sub').length);
+            // v2.54R：非 fullFeed 现在也喂 text（.h-msg.sub）——「有行无账」
+            // 守卫必须把它算进去，否则 offset 账丢后从 0 重读会整体双份
           if (fedAlready) { _subTailDead[aid] = true; return; }
           _HG.subTail[aid] = 0;
         }
@@ -5764,8 +5833,10 @@ function buildClaudeHarnessTab(opts = {}) {
       }
       const txt = j.text || '';
       if (!txt) return;
-      // 解析新增完整行：真实子代理只取 thinking（工具/文本实时事件流已覆盖
-      // ——只补思考）；协作段 fullFeed 全喂（独立会话无事件流，轮询是唯一源）
+      // 解析新增完整行：真实子代理取 thinking + text（v2.53 用户定调：段内
+      // 必须与主会话一致有消息气泡——实测现行 CLI 的 SSE 已不转发子代理
+      // text 事件，轮询是文本唯一来源；_subText 自带段尾同文去重防双份）；
+      // 协作段 fullFeed 全喂（独立会话无事件流，轮询是唯一源）
       const lines = txt.split('\n');
       for (const ln of lines) {
         const s = ln.trim();
@@ -5777,7 +5848,7 @@ function buildClaudeHarnessTab(opts = {}) {
           if (!blk) continue;
           if (blk.type === 'thinking' && String(blk.thinking || '').trim())
             _subThink(tid, blk.thinking);
-          else if (fullFeed && blk.type === 'text' && String(blk.text || '').trim())
+          else if (blk.type === 'text' && String(blk.text || '').trim())
             _subText(tid, blk.text);
           else if (fullFeed && blk.type === 'tool_use' && blk.name)
             renderToolUse(blk, true, tid);
@@ -6302,7 +6373,7 @@ function buildClaudeHarnessTab(opts = {}) {
               : r.audit_mode === 'warn' ? '仅警示（audit_mode=warn）——回合结束盘点直改量，超线出红色警示不自动续发'
               : '自动补审（audit_mode=auto，默认）——回合结束盘点直改量，超审计线自动续发要求派 reviewer 补审；连续 3 回合违规降级为仅警示')],
           ['分级线', !r.enabled ? '—' : light
-            ? `免审：单次直改 ≤ ${numOr('l1_max_lines', 100)} 行；轻审：单次直改 ≤ ${numOr('l2_max_lines', 200)} 行（主会话直改 + reviewer 轻审）；超线属大改——须 reviewer 取证级全审（不计文件数、不做回合累计；0=最严档）`
+            ? `免审：单次直改 ≤ ${numOr('l1_max_lines', 100)} 行；轻审：单次直改 ≤ ${numOr('l2_max_lines', 200)} 行（主会话直改 + reviewer 轻审）；超线属大改——须 reviewer 取证级全审；设计线：单次直改 ≥ ${numOr('design_max_lines', 200)} 行动手前须先派 designer 出方案（0=不强制；不计文件数、不做回合累计）`
             : `审计线：单次直改 ≤ ${numOr('l2_max_lines', 200)} 行——超线触发结算审计（派 reviewer 补审；不计文件数、不做回合累计；0=最严档）`],
           ['推荐配置', '主会话配轻模型（如 glm-5.3-flash）——直干省 token，方案/审核走设计者/审计者代理，即轻主力形态'],
           ['模型解析', `设计者 ${rs.designer || '自动识别'} / 审计者 ${rs.reviewer || '自动识别'}——各槽显式配置（designer_model/reviewer_model）优先，留空回退代理池（heavy_model）→ 方案模型表自动分类（名字含 opus=代理池，其余=主会话池）→ 默认；端点映射（model_map）可按 base_url 覆盖；换 API 方案自动适配`],
@@ -7158,6 +7229,7 @@ function buildClaudeHarnessTab(opts = {}) {
         return Number.isFinite(n) ? Math.max(0, n) : d; };
       const l1 = numOr(cfg.l1_max_lines, 100);
       const l2l = numOr(cfg.l2_max_lines, 200);
+      const dln = numOr(cfg.design_max_lines, 200);
       ov.innerHTML = `<div class="hg-modal hg-modal-vision"><div class="hg-modal-title">👥 三角色配置</div>
         <div class="hg-modal-body hg-vision-hint">双形态都<b>主会话直干所有活</b>（编码/执行/调试不派干活子代理）：主会话是轻模型=轻主力——配<b>设计者</b>（只设计）+ <b>审计者</b>（只读审核）两个代理；主会话是重模型（名字含 opus）=直干+审计兜底。三槽<b>显式配置优先</b>，留空按当前方案自动识别（设计者/审计者留空时共用同一自动识别的代理模型）；主会话模型槽显式配置参与形态判定。保存后模型/分级线随下条消息热更生效（agents 自动重生成），审计模式立即生效。</div>
         <div class="hg-vision-row">
@@ -7190,6 +7262,9 @@ function buildClaudeHarnessTab(opts = {}) {
           <label>轻审线（单次行）：单次直改行数上限；超线即大改须 reviewer 取证级全审，重模型形态即审计线（不计文件数、不做回合累计；0=最严档）
             <input class="hg-vision-mm" type="number" min="0" max="100000" data-hg-r-l2l
                    value="${l2l}"></label>
+          <label>设计线（单次行）：单次直改 ≥ 此行数的大改，动手前须先派设计者出方案——事中闸拦截+结算追责强制（0=不强制设计）
+            <input class="hg-vision-mm" type="number" min="0" max="100000" data-hg-r-dl
+                   value="${dln}"></label>
         </div>
         <div class="hg-modal-acts"></div></div>`;
       const acts = ov.querySelector('.hg-modal-acts');
@@ -7224,6 +7299,10 @@ function buildClaudeHarnessTab(opts = {}) {
         //（盘上旧值保留无害，后端 clamp 仍读它兜底）
         l2_max_lines: (() => { const v = parseInt(
           ov.querySelector('[data-hg-r-l2l]').value, 10);
+          return Number.isFinite(v) ? Math.max(0, v) : 200; })(),
+        // v2.54 设计线：0=不强制设计（与其余线「0=最严」语义不同）
+        design_max_lines: (() => { const v = parseInt(
+          ov.querySelector('[data-hg-r-dl]').value, 10);
           return Number.isFinite(v) ? Math.max(0, v) : 200; })(),
       }));
       ov.addEventListener('click', (e) => { if (e.target === ov) close(null); });

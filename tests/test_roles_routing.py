@@ -247,8 +247,32 @@ check("超轻审线 → 大改须全审（不提 dev）",
       len(v) == 1 and "全审" in v[0] and "dev" not in v[0], str(v))
 check("多文件小行数 → 不追责（文件数口径退役）", V(50, False) == [])
 check("超线但已派审 → 不追责（提示性兜底）", V(250, True) == [])
-check("designer 派发不豁免（不算已审）",
-      len(V(250, False, cfg={"l1_max_lines": 100, "l2_max_lines": 200})) == 1)
+print("[7d] 设计线（v2.54 强制设计档）")
+check("达设计线未派 designer → 违规指明方案先行",
+      any("设计线" in v and "designer" in v for v in V(200, False, designed=False)),
+      str(V(200, False, designed=False)))
+check("达设计线已派 designer → 无设计违规",
+      not any("设计线" in v for v in V(200, False, designed=True)))
+check("未达设计线不触发（150<200）",
+      not any("设计线" in v for v in V(150, False, designed=False)))
+check("design_max_lines=0 → 不强制设计",
+      not any("设计线" in v for v in V(500, False, designed=False,
+              cfg={"l1_max_lines": 100, "l2_max_lines": 200,
+                   "design_max_lines": 0})))
+check("strong 不查设计档（不装 designer）",
+      not any("设计线" in v for v in hr.audit_verdict(
+          500, False, designed=False, strong=True)))
+g_off_dl = (write_cfg(enabled=True, light_model=POOL_LIGHT,
+                      heavy_model=POOL_HEAVY, design_max_lines=0),
+            hr.roles_bridge_text(LIGHT_MODEL))[1]
+check("dl=0 引导词不宣称强制设计",
+      "设计线（强制）" not in g_off_dl and "未启用" in g_off_dl)
+g_on_dl = (write_cfg(enabled=True, light_model=POOL_LIGHT,
+                     heavy_model=POOL_HEAVY, design_max_lines=300),
+           hr.roles_bridge_text(LIGHT_MODEL))[1]
+check("dl>0 引导词嵌设计线数字",
+      "≥300 行" in g_on_dl and "设计线（强制）" in g_on_dl)
+write_cfg(enabled=True, light_model=POOL_LIGHT, heavy_model=POOL_HEAVY)
 print("[7b] 0 合法最严档")
 write_cfg(enabled=True, light_model=POOL_LIGHT, heavy_model=POOL_HEAVY,
           l1_max_lines=0, l2_max_lines=0)
@@ -286,6 +310,21 @@ check("已派 reviewer → 开闸（直干不停工）",
 check("未达线时 reviewed 不影响放行", G(10, reviewed=False) == (False, None))
 check("免审/小改不拦（旧 3 行微调口径废除沿用）",
       G(3) == (False, None) and G(99) == (False, None))
+print("[8b] 设计档事中闸（v2.54）")
+b, m = G(200, designed=False)
+check("达设计线未派 designer → 拦并指路出方案",
+      b and "设计线" in m and "designer" in m, m or "")
+check("已派 designer → 设计档不触发",
+      G(200, designed=True)[1] is not None and
+      "设计线" not in G(200, designed=True)[1],
+      str(G(200, designed=True)))
+b, m2 = G(200, designed=False, reviewed=True)
+check("已派 reviewer 不豁免设计档（两档独立）",
+      b and "设计线" in m2, m2 or "")
+check("设计线 0 → 设计档不拦（审计档独立仍在）",
+      "设计线" not in (G(500, designed=False,
+          cfg={"l1_max_lines": 100, "l2_max_lines": 200,
+               "design_max_lines": 0})[1] or ""))
 
 # ============ 9. 口径基础件 ============
 print("[9] 口径基础件")
@@ -540,11 +579,14 @@ try:
     # v2.53：设计者/审计者槽新键端到端（POST 落盘 + resolved 回显）——
     # 白名单漏键会在此现形（面板保存假成功 bug 的回归测试）
     jr5 = _c.post("/api/harness/roles", json={"designer_model": "e-dm",
-                                              "reviewer_model": "e-rm"})
+                                  "reviewer_model": "e-rm",
+                                  "design_max_lines": 150})
     jr5 = jr5.get_json(silent=True) or {}
     check("POST 设计者/审计者槽落盘",
           jr5.get("ok") and jr5.get("designer_model") == "e-dm"
           and jr5.get("reviewer_model") == "e-rm", str(jr5))
+    check("POST 设计线落盘（数字键）",
+          jr5.get("design_max_lines") == 150, str(jr5))
     gr2 = _c.get("/api/harness/roles").get_json()
     rs2 = gr2.get("resolved") or {}
     check("GET resolved 回显设计者/审计者模型",

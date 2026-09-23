@@ -909,8 +909,8 @@ def _audit_lines(name, inp):
 # ——判定只看单次直改行数，无文件数消费方（tests 同步引用已清）。
 
 
-# 角色集合（v2.51）：designer 只设计（无直改、不触发审计线、不算已审
-# ——_audit_tally 记旗仅为派发统计与 agentId 映射）；reviewer 是唯一
+# 角色集合（v2.51）：designer 只设计（无直改；派发旗是 v2.54 设计档的
+# 豁免依据——不产生直改、不算已审）；reviewer 是唯一
 # 「审过」信号（结算追责与事中闸开闸都看它）。dev/executor/coder 已退役
 # 不再识别。
 _AUDIT_ROLES = ("designer", "reviewer")
@@ -942,8 +942,8 @@ def _audit_dispatch_role(n, inp, ids=None):
 
 def _audit_hook_settings_path():
     """写 light 形态会话的 --settings 临时文件（直改事中闸注入；判定见
-    harness_roles.audit_gate_check——达轻审线上限且本回合未派过 reviewer
-    才拦，审过即开闸）。
+    harness_roles.audit_gate_check——审计档（达轻审线未派 reviewer）与
+    设计档（达设计线未派 designer）任一命中即拦，派过对应代理即开闸）。
 
     内容只有 hooks 键：Edit/Write/MultiEdit/NotebookEdit 的 PreToolUse 指向
     `--audit-hook` 子命令（它查 /audit_gate 决定放行/拦截，见
@@ -1098,8 +1098,8 @@ class HarnessSession:
         # 单次直改（Edit/Write/MultiEdit/NotebookEdit）最大行数（v2.52 起
         # max 记账，回合累计口径废除）；files=空列表仅兼容保留（文件数
         # 口径已退役，不再记账）；designer/reviewer=本回合 Task 派发
-        # 标记（SendMessage 续派也计入）——designer 只作派发统计（不计入
-        # 违规判定），reviewer 是唯一「审过」信号（结算追责与事中闸开闸
+        # 标记（SendMessage 续派也计入）——designer 旗是设计档豁免依据
+        # （v2.54 设计线判定），reviewer 是唯一「审过」信号（结算追责与事中闸开闸
         # 都看它）；streak=连续违规回合数（防自动补审死循环：连续 3 回合
         # 违规后降级为仅警示）。回合结算（result/interrupted/exit）清零。
         # ids/pending 跨回合保留——agentId→角色映射（Task 结果回填）与
@@ -1430,7 +1430,8 @@ class HarnessSession:
         单次超轻审线属大改须取证级全审却未派审——大改档违规；② strong：
         单次超审计线未派 reviewer 审计——违规。判定只看单次直改总行数
         （v2.52 用户拍板：不计文件数、不做回合累计，切片拆小不追责）。
-        designer 派发不计入（设计不产生直改、不算已审）。两形态补救统一
+        designer 派发豁免设计档（v2.54 设计线；设计不产生直改、不算已审）。
+        两形态补救统一
         为派 reviewer 补审（不再分形态——reviewer 两形态都装）。
         兜底按 audit_mode：auto=回合结束自动续发一条 [审计] user 消息
         （复用 send_message 管线，busy/进程/指纹热更检查全继承）；warn=
@@ -1441,6 +1442,7 @@ class HarnessSession:
         au = self._audit
         lines = au["lines"]
         rev = au["reviewer"]
+        designed = au.get("designer")
         au.update({"lines": 0, "files": [], "designer": False,
                    "reviewer": False})
         st = self._audit_state()
@@ -1448,7 +1450,7 @@ class HarnessSession:
             au["streak"] = 0
             return
         mode, _limits, strong = st
-        viol = audit_verdict(lines, rev, strong=strong)
+        viol = audit_verdict(lines, rev, designed=designed, strong=strong)
         if not viol:
             au["streak"] = 0
             return
@@ -1462,11 +1464,16 @@ class HarnessSession:
             # 用户抢发竞争时返回失败——静默记 log，卡已到位，不重试。
             # v2.52：文案去「Task 工具」——工具名随 CLI 版本变（Task→Agent），
             # 只说派 reviewer，派发方式模型自己知道。
-            text = (_AUDIT_MSG_PREFIX + "%s。已自动续发补审指令——立即派 "
-                    "reviewer 代理补审上述改动（对抗审核：只审"
-                    "不改，给 PASS/FAIL 结论），按结论处理：FAIL 自己修复"
-                    "后复审，PASS 才算完成，然后再答复用户。不要辩解，直接"
-                    "补审。" % desc)
+            # v2.54：违规含设计档时续发要求先补方案（派 designer）再实施。
+            remedy = ("已自动续发补正指令——先派 designer 代理出框架方案"
+                      "（带上全部已知上下文），按方案继续实施；未审的改动"
+                      "立即派 reviewer 代理补审（对抗审核：只审不改，给 "
+                      "PASS/FAIL 结论）" if "designer" in desc else
+                      "已自动续发补审指令——立即派 reviewer 代理补审上述"
+                      "改动（对抗审核：只审不改，给 PASS/FAIL 结论）")
+            text = (_AUDIT_MSG_PREFIX + "%s。" % desc + remedy +
+                    "按结论处理：FAIL 自己修复后复审，PASS 才算完成，然后"
+                    "再答复用户。不要辩解，直接补正。")
             self._audit_card(text)
             threading.Thread(target=self._audit_send, args=(text,),
                              daemon=True).start()
@@ -3026,11 +3033,13 @@ def harness_transcript():
 def harness_audit_gate():
     """light 形态直改事中闸查询端点（PreToolUse hook 在每次
     Edit/Write/MultiEdit/NotebookEdit 前来问）。?session_id=<CLI 侧会话 id>。
-    返回 {ok, gate}；gate.block=true=本回合主会话已有单次直改达轻审线
-    上限（单次直改最大行数达线，v2.52 不计文件数）**且本回合尚未派过
-    reviewer**——拦下一次并指路送审（hook exit 2，msg 随行给模型）；已派
-    reviewer 即放行（审过开闸：直干是常态，闸只逼送审不逼停工——没有
-    可转派的干活代理，硬拦到底会把唯一干活者锁死）。
+    返回 {ok, gate}；gate.block=true=本回合主会话已有单次直改达线
+    （v2.52 不计文件数）**且对应代理未派**——审计档（达轻审线未派
+    reviewer，指路送审）与设计档（达设计线未派 designer，v2.54 指路
+    先出方案）两档独立判定，任一命中即拦下一次直改（hook exit 2，msg
+    随行给模型）；已派对应代理即放行对应档（审过开闸：直干是常态，闸
+    只逼送审不逼停工——没有可转派的干活代理，硬拦到底会把唯一干活者
+    锁死）。
 
     口径与 _audit_settle 同源：_audit_state 判启用（roles 开+
     audit_mode!=off；两形态都结算审计，但闸仅 light——strong 直改是设计
@@ -3061,7 +3070,8 @@ def harness_audit_gate():
                 au = s._audit or {}
                 used_l = int(au.get("lines") or 0)
                 block, msg = audit_gate_check(
-                    used_l, reviewed=bool(au.get("reviewer")))
+                    used_l, reviewed=bool(au.get("reviewer")),
+                    designed=bool(au.get("designer")))
                 if block:
                     gate = {"block": True, "used": used_l, "msg": msg}
     return jsonify({"ok": True, "gate": gate})
@@ -4028,7 +4038,8 @@ def harness_agent_models():
 def harness_set_roles():
     """开关 + 整节配置（merge 写盘，只动出现的键）。body 可含 {enabled,
     main_model, designer_model, reviewer_model, light_model, heavy_model,
-    model_map, audit_mode, l1_max_lines, l2_max_files, l2_max_lines}
+    model_map, audit_mode, l1_max_lines, l2_max_files, l2_max_lines,
+    design_max_lines}
     （v2.53 设计者/审计者槽新键；旧键 executor_model/coder_model 仍被
     接受落盘——读取侧按池降级兼容）。生效路径与
     开关一致：模型池/分级线出现在引导词里 → 指纹热更下条消息换词重启
@@ -4055,8 +4066,9 @@ def harness_set_roles():
                             "err": "audit_mode 须为 auto/warn/off"}), 400
         patch["audit_mode"] = data.get("audit_mode")
     # v2.49 分级线三键（取代 max_free_lines）：0 合法（最严档），非法 → 400
+    # v2.54 增 design_max_lines（设计线，0=不强制设计，语义与其余线相反）
     for _k, _hi in (("l1_max_lines", 100000), ("l2_max_files", 1000),
-                    ("l2_max_lines", 100000)):
+                    ("l2_max_lines", 100000), ("design_max_lines", 100000)):
         if _k in data:
             try:
                 patch[_k] = max(0, min(_hi, int(data.get(_k))))
