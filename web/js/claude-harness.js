@@ -2242,31 +2242,44 @@ function buildClaudeHarnessTab(opts = {}) {
     const _pSeg = _hgCollabSegFind(name, hist);
     if (_pSeg) { _hgPeerToSeg(_pSeg, name, text); scrollBottom(); return; }
     const _nm = String(name || '其他会话');
-    if (!hist && !_nm.includes('识图')) {
+    if (!_nm.includes('识图')) {
       const _disp = (_HG.peerNames || {})[_nm] || _nm;
       const _npid = 'peer-' + _nm + '-' + Date.now();
-      // 不挂 bg（v2.54R：合成段无 agents 档案，挂 bg 会被 sweep 豁免成
-      // 永不定格的跳表假段）——建段即入段回传，随后就地定格完成态
-      const _nb = _subBlkGet(_npid, { live: true, collab: true, fold: true,
-        label: '协作 · ' + String(_disp).slice(0, 24), model: '',
-        type: 'SendMessage', desc: '', done: false });
+      // v2.58：miss 一律建段承接（实时=live 段；历史=done 段无秒表）——强刷
+      // 后形态保持「回传在新窗口」不再平铺。不挂 bg（合成段无 agents 档案，
+      // 挂 bg 会被 sweep 豁免成永不定格的跳表假段）
+      const _nb = _subBlkGet(_npid, hist
+        ? { hist: true, done: true, collab: true,
+            label: '协作 · ' + String(_disp).slice(0, 24),
+            model: '', type: 'SendMessage', desc: '' }
+        : { live: true, collab: true, fold: true,
+            label: '协作 · ' + String(_disp).slice(0, 24), model: '',
+            type: 'SendMessage', desc: '', done: false });
       if (_nb) {
-        _nb.nopane = true;   // 合成段无档案——不画窗格钮（点击只会 banner）
+        if (!hist) _nb.nopane = true;   // 实时合成段无档案——不画窗格死按钮
         if (/^[0-9a-zA-Z_-]{8,64}$/.test(_nm)) {
           _nb.head.dataset.hgSubr = _nm;
           _nb.head.dataset.hgSubType = 'SendMessage';
           _subBlkActsPaint(_nb);   // hgSubr 在手——「▣ 回放」钮可点亮
         }
         _hgPeerToSeg(_nb.root, name, text);
-        // 入段即定格：回传本身就是完成信号——不停格秒表会永久跳动误导
-        // （合成段无档案，result 路径不会来认领）
-        _nb.root.classList.add('done');
-        const _st = _nb.head.querySelector('.h-subblock-state');
-        if (_st) {
-          _st.className = 'h-subblock-state ok';   // 去 run 脉冲动画
-          _st.textContent = '✓ 回传已入段';
+        if (!hist) {
+          // 入段即定格：回传本身就是完成信号——不停格秒表会永久跳动误导
+          // （合成段无档案，result 路径不会来认领）
+          _nb.root.classList.add('done');
+          const _st = _nb.head.querySelector('.h-subblock-state');
+          if (_st) {
+            _st.className = 'h-subblock-state ok';   // 去 run 脉冲动画
+            _st.textContent = '✓ 回传已入段';
+          }
+          if (_nb.timer) { clearInterval(_nb.timer); _nb.timer = null; }
+          // v2.58：立即回填——拉转写全量补思考/文本进段体（回传正文只是最后
+          // 一条，审核过程一并进新窗口）。dead 清理放 drain **之后**（复审指
+          // 正）：drain 内首跑会因回传气泡满足 fedAgain 守卫重新置位 dead，提
+          // 前删无效；放后面则同 agentId 后续轮次的 tick 增量不再被拦
+          _subTailDrainThenBackfill(_npid, _nm);
+          delete _subTailDead[_nm];
         }
-        if (_nb.timer) { clearInterval(_nb.timer); _nb.timer = null; }
         scrollBottom();
         return;
       }
@@ -3628,6 +3641,30 @@ function buildClaudeHarnessTab(opts = {}) {
               const _rEl = renderPeerRelay(b.input.to);
               if (_rEl && !String(b.input.to).includes('识图'))
                 _rEl.style.display = 'none';
+              // v2.58：续派（to=agentId 形态）立即建**新段**——轮询/回传/回填
+              // 全部归属新段。旧实现等首个子代理事件才兜底建段（常缺失），续审
+              // 内容经轮询流回旧段（用户实锤「咋又跑上一个审计会话里去了」）。
+              // 识图不建（转交通道不同）
+              if (/^[0-9a-zA-Z_-]{8,64}$/.test(String(b.input.to))) {
+                const _aid = String(b.input.to);
+                (_HG.agents || (_HG.agents = {}))[b.id] = {
+                  type: 'SendMessage', desc: '', t0: Date.now(),
+                  done: false, doneAt: 0, collab: true, bg: true, taskId: _aid };
+                const _disp2 = (_HG.peerNames || {})[_aid] || _aid;
+                const _nb2 = _subBlkGet(b.id, { live: true, collab: true,
+                  bg: true, fold: true,
+                  label: '审核 · ' + String(_disp2).slice(0, 24),
+                  model: '', type: 'SendMessage', desc: '', done: false });
+                if (_nb2) {
+                  _nb2.head.dataset.hgSubr = _aid;
+                  _nb2.head.dataset.hgSubType = 'SendMessage';
+                  _nb2.root.dataset.hgFullfeed = '1';
+                  _subBlkActsPaint(_nb2);
+                }
+                // 轮询/回传归属切换：该 agentId 的活跃段=新段（旧段即使档案
+                // 未 done 也不再吃增量；offset 账共享——同一转写文件连续 append）
+                (_HG.subTailSeg || (_HG.subTailSeg = {}))[_aid] = b.id;
+              }
             }
           }
         }
@@ -4223,6 +4260,7 @@ function buildClaudeHarnessTab(opts = {}) {
     Object.values(_HG.subBlk || {}).forEach(b => { if (b && b.timer) clearInterval(b.timer); });
     _HG.subRows = {}; _HG.subBlk = {};
     _HG.subTail = {};   // v2.46：实时思考轮询 offset 随会话切换重置（防串会话读错文件位）
+    _HG.subTailSeg = {};   // v2.58：续派切段映射随会话重置
     _HG.histAll = null; _HG.histStart = 0; _HG.histLive = false;   // v2.24：多段历史渲染源不复用（防串会话）；v2.35.2：histLive 随切重置（快照恢复态不进滚动扩收）
     _HG.histStale = false;   // v2.43.2（R2-缺口A）：降级标记随切会话重置（恢复时按快照 histFp 重新判定）
     _HG.todos = null; _HG.agents = null;     // v2.30：会话动态随会话切换重置（todos 由回放重建）
@@ -5759,8 +5797,14 @@ function buildClaudeHarnessTab(opts = {}) {
     // 0-2s 概率极高）。drain 到无推进后回填：轮询插过→守卫拦重复；没插过
     // →回填全量，两不误
     if (_b && _b.root && _b.body && _aid && !_b.root.dataset.hgBackfill) {
-      _b.root.dataset.hgBackfill = '1';
-      _subTailDrainThenBackfill(tid, _aid);
+      // v2.58：续派切段——该 agentId 的活跃段已切到他段时，本段（旧轮）不得
+      // 再发起 drain（共享账本的增量字节属于新段，灌进来=串段）
+      if ((_HG.subTailSeg || {})[_aid] && (_HG.subTailSeg || {})[_aid] !== tid) {
+        _b.root.dataset.hgBackfill = '1';   // 占位防重复判定，不发起
+      } else {
+        _b.root.dataset.hgBackfill = '1';
+        _subTailDrainThenBackfill(tid, _aid);
+      }
     }
     // v2.47（需求2）：协作段连包装 id 都没有（task_started 事件缺 task_id 且
     // peerSent 未命中）——回填无从发起，直接占位，不空壳
@@ -5920,6 +5964,8 @@ function buildClaudeHarnessTab(opts = {}) {
   // 成立）。真实子代理维持 think-only——其 text/tool 已由 SSE 事件流覆盖，
   // 轮询再喂必重复。
   _HG.subTail = {};        // agentId → 已消费字节 offset
+  _HG.subTailSeg = {};     // v2.58：agentId → 当前活跃段 pid（续派切段映射——
+                           // 增量喂新段不流回旧段）
   const _subTailBusy = {}; // agentId → 拉取在途标记（防 2s 内重入叠请求）
   const _subTailDead = {}; // agentId → 停喂标记（无账本且重插风险行已在段体——
                            // 宁可少喂不重插；回填（merge 守卫）不受此限）
@@ -5954,9 +6000,13 @@ function buildClaudeHarnessTab(opts = {}) {
       // v2.47：collab 不再一票跳过——段已建（需求2）、taskId=peerSent 反查
       // 的真实 id（P4），转写三源可增量读
       if (!a || a.done || !a.taskId) continue;
-      const b = _HG.subBlk && _HG.subBlk[tid];
+      // v2.58：续派切段——该 agentId 的增量喂给**当前活跃段**（subTailSeg
+      // 映射在 SendMessage 派发时切到新段），旧段即使档案未 done 也不再吃
+      // 内容（用户实锤「续审内容跑回第一个审计段」）
+      const tgt = (_HG.subTailSeg || {})[a.taskId] || tid;
+      const b = _HG.subBlk && _HG.subBlk[tgt];
       if (!b || !b.root || !b.root.isConnected || b.root.classList.contains('done')) continue;
-      _subTailFetch(tid, a.taskId, _subFullFeedTid(tid));
+      _subTailFetch(tgt, a.taskId, _subFullFeedTid(tgt));
     }
   }
   // v2.47（需求2）：协作段 DOM 兜底轮询——段 dataset 即全部所需（随快照
@@ -5970,6 +6020,9 @@ function buildClaudeHarnessTab(opts = {}) {
       const hd = el.querySelector('.h-subblock-head');
       const aid = hd && hd.dataset.hgSubr;
       if (!pid || !aid || !el.isConnected) return;
+      // v2.58：续派切段——映射指向他段时本段已让位，不得再吃共享账本增量
+      //（否则同一 agentId 的内容被拆进新旧两段）
+      if ((_HG.subTailSeg || {})[aid] && (_HG.subTailSeg || {})[aid] !== pid) return;
       // 走 _subBlkGet（非 _subBlkAdopt）——认回分支连秒表一起复活（t0 从段头
       // 「运行中 Ns」还原）；段在本循环刚查到且仍在流（isConnected 双保险），
       // adopt 必中、不会走到新建分支
