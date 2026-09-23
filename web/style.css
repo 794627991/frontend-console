@@ -2284,8 +2284,16 @@ html {
 .h-think-seg-body { display: none; padding: 2px 10px 8px; font-size: 12px;
   color: var(--muted); line-height: 1.7; white-space: normal; }
 .h-think-seg-body p { margin: .4em 0; }
-/* v2.59：展开态限高自适应（用户实锤超长思考撑爆界面）——与执行抽屉 42vh 同款 */
-.h-think-seg.open .h-think-seg-body { display: block; max-height: 42vh; overflow-y: auto; }
+/* v2.59：展开态限高自适应（用户实锤超长思考撑爆界面）——与执行抽屉 42vh 同款
+   v2.59R：横向也自适应——思考内的代码块/长行换行或块内滚动，不撑破主窗 */
+.h-think-seg.open .h-think-seg-body { display: block; max-height: 42vh;
+  overflow-y: auto; max-width: 100%; overflow-x: auto; }
+.h-think-seg-body pre, .h-think-seg-body code { white-space: pre-wrap;
+  word-break: break-word; }
+.hg-sub-think.open .hg-sub-think-body { display: block; max-height: 40vh;
+  overflow-y: auto; max-width: 100%; overflow-x: auto; }
+.hg-sub-think-body pre, .hg-sub-think-body code { white-space: pre-wrap;
+  word-break: break-word; }
 /* v2.18 展开态上限：不超会话一半，超出内部滚动（用户明确：最长不能超过会话一半） */
 .h-drawer.open .h-drawer-body { max-height: 42vh; overflow-y: auto; }
 .h-drawer { border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
