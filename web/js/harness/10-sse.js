@@ -710,7 +710,16 @@
                            // 忙碌不能重渲）存 'stale' 哨兵——histAll 虽空，下次
                            // 恢复仍强制重渲，漂移保护不随降级丢失
                            histFp: _HG.histStale ? 'stale'
-                                   : (_HG.histAll ? _histPrefixFp(_HG.histAll, _HG.histStart | 0) : null) };
+                                   : (_HG.histAll ? _histPrefixFp(_HG.histAll, _HG.histStart | 0) : null),
+                           // v3.2.28（用户实锤「切走再切回，工作区被截断，
+                           // 回合完成后还是截断态」）：切走时存在未定稿组
+                           // （回合进行中）→ 快照注定残缺（离开期间的过程行只
+                           // 靠事件回放，环形缓冲有限会丢）——恢复端见此标记
+                           // 弃快照走 transcript 全量重渲
+                           openTurn: !!(function() {
+                             const g = [..._hgFlow.querySelectorAll('.h-grp')].pop();
+                             return g && g.dataset.finalized !== '1';
+                           })() };
     // v2.25：快照 LRU 上限 10——大会话 innerHTML 每份可达数十 MB，无上限
     // 来回切会话会攒爆内存（审计 §三.8）
     // v3.1：keep-warm（对照 ZCode 延迟销毁）——超限快照不再即时 delete，

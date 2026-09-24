@@ -813,3 +813,17 @@ b535b34a_image.png」（base64 行的应用上传 hash 名附件）+「🖼 1.pn
   撤 grpFinalize——审计不再定稿回合。
 - 单测（页面注入审计行）：回合组数不变（不分割）、警示卡落 .h-tl 内
   （工作区里）。smoke 全过。
+
+## 三十一、v3.2.28 切走回合在跑→弃快照全量重渲（用户实锤「切走再切回
+工作区被截断，回合完成后还是截断态」）
+
+- 根因：切走时回合进行中 → saveCache 存的快照注定残缺；离开期间的过程
+  行只靠事件回放补，事件环形缓冲有限会丢；回合完成后定稿落在残缺 DOM
+  上——截断态永久固化。既有 histFp 校验管不到：live 起步的会话无
+  histLive，且 histStart=0 时前缀指纹恒空比对恒过。
+- 修复：saveCache 记 openTurn（末组未定稿=true）；恢复端见 openTurn 即
+  弃快照，走 transcript 全量重渲成熟路（含 busy 续占位/SSE 接续，与首
+  开同路）。定稿会话照旧快照快路。
+- 实测：注入 openTurn 残缺快照切回 → 残影消失、1144 行 30 组全量重渲；
+  定稿会话（末组 finalized、idle）→ openTurn=false 快照正常复用；运行中
+  会话（busy 不定稿）→ openTurn=true 正确弃快照。smoke 全过/state 41。

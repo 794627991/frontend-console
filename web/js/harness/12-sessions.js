@@ -83,6 +83,11 @@
     if (c && c.html && c.html.indexOf('h-turn-body') === -1
         && c.html.indexOf('h-grp') !== -1) c = null;
     if (c && typeof c.histStart === 'number' && c.histStart > 0) c = null;
+    // v3.2.28（用户实锤「切走再切回工作区被截断，回合完成后还是截断态」）：
+    // 切走时回合还在跑（openTurn）——快照注定残缺（离开期间过程行只靠事件
+    // 回放，环形缓冲有限会丢），弃快照走 transcript 全量重渲（含 busy 续占
+    // 位/SSE 接续，与首开同路），回合完成与否都拿到完整工作区
+    if (c && c.openTurn) c = null;
     if (c) {
       // v3.1：keep-warm 命中——取消该快照的延迟销毁（saveCache 排程的 30s
       // 定时器），热快照继续作为 LRU 一员存活
