@@ -165,7 +165,18 @@
       }
     });
     const foot = card.querySelector('.h-ask-foot');
-    if (foot) foot.innerHTML = `<span class="h-ask-done">✓ 已提交</span>`;
+    if (foot) {
+      // v3.1h：备注显式回显（用户实锤「备注没体现出来」——此前只回填 disabled
+      // 输入框，视觉上像选项描述小字，看不出是自己的补充）。提交态在底部
+      // 单独一行列出全部自由输入，历史重放同走此处（extras 从 answer 串兜底）。
+      const notes = [];
+      card.querySelectorAll('.h-ask-x').forEach(inp => {
+        const v = (inp.value || '').trim();
+        if (v) notes.push(v);
+      });
+      foot.innerHTML = `<span class="h-ask-done">✓ 已提交</span>` +
+        (notes.length ? ` <span class="h-ask-note">📝 补充说明：${esc(notes.join('；'))}</span>` : '');
+    }
   }
   // v3.0 高亮缓存池（对照 ZCode shikiHighlighter.ts:56 的指纹 key + 结果
   // 缓存）：key=语言:长度:首100:尾100（不存全文防 key 本身膨胀）；命中直接
