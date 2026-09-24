@@ -1,5 +1,5 @@
 // harness histcache.js (v3.0 自 buildClaudeHarnessTab 拆出,定义体零改动,缩进保持原样)
-  function _histRender(lines, start) {
+  function _histRender(lines, start, opt) {
     _HG.lastTs = 0;   // v2.24.5：重建期时间条从零起算（第一条 user 带时间）
     // v2.24 CAP：正常模式渲染起点不得越过 capStart（翻阅上限）——更早的
     // 历史只能进「只读禅模式」看（_roEnter），保住正常模式的 DOM 省流
@@ -32,7 +32,7 @@
     }
     if (!lines.length) return;
     _HG.noScroll = true;                        // v2.16：逐行 append 不反复重排
-    _HG.openState = _hgLoadOpen(_HG.sid);       // 上次开合状态（重建期贴回）
+    _HG.openState = _hgLoadOpen(_HG.sid);       // v3.2.1：开合仓（现仅 sub: 段折叠语义键）兼重建期标志位（t0 不编造/秒表不亮/查阅定稿必收）
     try {
       // v2.28.16：边渲染边标回合边界——assistant 行之后的下一条 user 行
       // 意味着该回合已收尾，最后一条 AI 消息授予回滚按钮；流末尾的回合
@@ -74,6 +74,13 @@
       });
       if (lastAsst && lastAsst.dataset.rwa) lastAsst.classList.add('can-rewind');
       renderSideStatus();     // v2.30：回放后刷新侧栏动态（todos 已从工具行重建）
+      // v3.2.1R(F1)：尾组定稿下沉到渲染器本体——此前只在 switchTo/
+      // _hgSseRebuild/_hgReloadFlow 三入口补，扩段（_histRefresh）、快照指纹
+      // 漂移、懒填点校验失败的重渲路径全部漏收：尾组回放期不亮头（无
+      // 「已工作」行）+ 体全开，且坏形态随 saveCache 固化跨快照往返（对抗
+      // 审计 F1 实锤路径）。busy 会话的尾组是进行中的活组（phResume 要认
+      // 回续秒表），此类调用方传 opt.noFinalize 跳过
+      if (!(opt && opt.noFinalize)) grpFinalize(true, { hist: true });
     }
     finally { _HG.noScroll = false; _HG.openState = null; }
   }
@@ -151,6 +158,7 @@
       const r = await fetch(`/api/harness/transcript?sid=${encodeURIComponent(sidAt)}`);
       const j = await r.json();
       if (!j.ok || _HG.sid !== sidAt) return;   // 会话已切走，弃
+      if (_HG.busy) return;   // v3.2.1R2(R2-2)：fetch 在途时用户发送消息——重渲会抹掉活组/新消息泡，弃扩段（07-hist 懒填同款守卫）
       const lines = j.lines || [];
       _histRender(lines, start == null ? lines.length - _HG.HIST_PAGE : start);
     } catch(_) {}

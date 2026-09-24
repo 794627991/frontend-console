@@ -176,7 +176,7 @@
       return String((input || {}).command || '').trim().slice(0, 40);
     return '';
   }
-  function _tlExpFlush() {
+  function _tlExpFlush(histMode) {
     const g = _HG.grp;
     if (!g || !g.exp) return;
     const e = g.exp;
@@ -185,7 +185,11 @@
     if (!e.el.isConnected) return;
     const sumEl = e.el.querySelector('.h-tl-grp-sum');
     if (sumEl) sumEl.textContent = _hgExpSumTxt(e.sum);
-    if (e.el.dataset.userToggled !== '1' && isNearBottom()) e.el.classList.remove('open');
+    // v3.2.1（用户实测问题2）：回放定稿必收——重建期 scrollTop 在顶，
+    // isNearBottom() 恒 false → 查阅组在回滚/切回后永远开着；histMode 由
+    // 调用方传（grpFinalize 用 _hist 事实分级——尾组定稿发生在 openState
+    // 清空之后，只看 openState 会丢回放语义）；live 保持 v2.12 底部跟读判据
+    if (e.el.dataset.userToggled !== '1' && (histMode || isNearBottom())) e.el.classList.remove('open');
   }
   function _hgExpSumTxt(sum) {
     const parts = [];
@@ -198,7 +202,7 @@
   // renderToolUse 与 renderHistTool（回放）同走本函数——live/回放聚组一致
   function _tlPlace(row, name, input) {
     const g = grpEnsure(true);
-    if (!g.tl) { _tlExpFlush(); drawerAppend(row, 'exec'); return; }   // 旧快照组：回落旧抽屉
+    if (!g.tl) { _tlExpFlush(!!_HG.openState); drawerAppend(row, 'exec'); return; }   // 旧快照组：回落旧抽屉
     if (_hgIsExplore(name, input)) {
       if (!g.exp || !g.exp.el.isConnected) {
         const grpEl = document.createElement('div');
@@ -209,9 +213,11 @@
           `<span class="h-tl-grp-sum"></span></button>` +
           `<div class="h-tl-grp-body"></div>`;
         g.tl.appendChild(grpEl);
-        // v3.2R1(P2)：回放建组恢复用户开合记忆（有记录→userToggled 生效，
-        // flush 不再自动收；无记录默认展开与实时一致）
-        if (_HG.openState) _hgApplyOpen(grpEl, true);
+        // v3.2.1（用户实测问题2）：撤位置键开合恢复——_hgPathKey 按 DOM 位置
+        // 索引链编键，跨 DOM 代际（v3.1 抽屉↔v3.2 时间线、回滚截断、扩段窗移）
+        // 同键指向不同行，旧记录误开新行还误标 userToggled（用户实锤「终端默
+        // 认全部不收起」）。查阅组与终端卡统一默认收起，点击开合只在当前
+        // DOM 生命周期内有效（用户定调：必须默认都是收起状态）
         g.exp = { el: grpEl, sum: { search: 0, list: 0, file: 0 } };
       }
       const body = g.exp.el.querySelector('.h-tl-grp-body');
@@ -223,7 +229,7 @@
         sumEl.textContent = live ? '· ' + live : _hgExpSumTxt(g.exp.sum);
       }
     } else {
-      _tlExpFlush();
+      _tlExpFlush(!!_HG.openState);   // v3.2.1：回放态断组必收
       g.tl.appendChild(row);
     }
     _hgScrollBottom();

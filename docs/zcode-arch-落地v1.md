@@ -205,3 +205,53 @@ oneclick、目录三态行）+ 五项交互点击（回合头/查阅组头/终�
 - **存档接受项**：重定向子句对引号内 ">" 搜索词保守排除（08-tools 注释）、
   openState 位置键一次性升级漂移（观感）、toolRunPush 预存死代码、
   duration_ms 字段依赖 CLI 事实（缺省回退安全）。
+
+## 七、v3.2.1 用户实测修复（回滚后回合不收起 + 终端卡形态）与对抗审计 R1-R3
+
+用户实测两问题：①回滚过往会话后完成的回合没有收起；②终端卡默认全部展开且
+点不动、没有命令文本。逐层定位出**六处根因**，全部修复并三轮对抗收口。
+
+- **问题1 根因（3 处）**：a) `grpFinalize` 折叠条件
+  `(opt.hist || (auto && isNearBottom()))` 在回放重建期（scrollTop 在顶恒
+  false）与 renderAsst 切组定稿（不带 hist）路径全漏收；b) 回滚处理器
+  `_hgReloadFlow` 重建后缺尾组定稿（switchTo/_hgSseRebuild 有、它没有）；
+  c) switchTo 快照缓存恢复原样回放开着的 turn-body，坏形态跨快照往返固化。
+- **问题2 根因（3 处）**：a) 回放 bash 行（renderHistTool）头模板无命令
+  arg——只剩「Bash」秃头；b) **位置键开合记忆体系性缺陷**——`_hgPathKey`
+  按 DOM 位置索引链编键存 localStorage，跨 DOM 代际（v3.1 抽屉↔v3.2 时间线
+  结构差、回滚截断、扩段窗移）同键指向不同元素，旧记录误开新行还误标
+  userToggled（R1 审计已标记为接受项，实测坐实）；c) `_tlExpFlush` 查阅组
+  收起依赖 isNearBottom，回放期恒 false。
+- **修复口径（用户定调「完成默认收起，必须默认都是收起状态」→ 对照 ZCode
+  AssistantHistoryStatus 定稿态）**：
+  1. `grpFinalize` 折叠无条件化（仅 `userToggled` 例外——该意图经快照
+     dataset 忠实序列化；定稿收的是最新段，视口下方无上抽突跳）；
+  2. 尾组定稿下沉 `_histRender` 渲染器本体（`opt.noFinalize` 逃生口留给
+     busy 活组 phResume）——扩段/指纹漂移/懒填失败等全部重渲路径一并修好；
+  3. switchTo 快照恢复后扫 `.h-grp[data-finalized=1]`：收体（userToggled
+     例外）+ 可见「工作中 Ns」残头（app 中途被杀的冻结秒表）定格「已工作」；
+  4. 位置键体系整体退役（`_hgPathKey/_hgSaveOpen/_hgApplyOpen` 删除）：
+     重建统一默认收起，开合只在当前 DOM 生命周期内有效；`hg-open:<sid>` 仓
+     仅剩 `sub:<agentId>` 语义键（稳定不漂移，写入方顺手迁移清死键）；
+  5. 回放 bash 行头补命令 arg（前 80 字 + title 全文悬浮）；错误行默认开
+     （className 'err open' 承担，错误信息不该藏）；
+  6. `_tlExpFlush(histMode)`：回放态必收、live 保持 v2.12 底部跟读判据；
+     histMode 由 grpFinalize 用 `_hist` 事实分级传递（尾组定稿发生在
+     openState 清空后，只看 openState 会丢回放语义）。
+  7. `_hgReloadFlow` 对齐 `_hgSseRebuild`：全清场（行映射/秒表/查阅组）+
+     epoch 同步 + `delete cache[sid]`。
+- **对抗审计（同一代理三轮）**：R1 FAIL(2)+P3×4 → F1 尾组定稿矩阵缺口
+  （扩段/指纹漂移/懒填重渲路径，坏形态可固化）、F2 切走期间回合结束的快照
+  残尾永不定稿（result 到达时 `_HG.grp` 空早退）、F3 arg 缺 title、F5 位置键
+  死数据、F6 `_hgReloadFlow` 映射不重置，全修；R2 PASS+P3×3 → R2-1 认回
+  扩到 interrupted/exit（抽 `_hgTailAdopt()` 三分支共用，返回是否认回）、
+  R2-2 `_histRefresh`/`_hgReloadFlow` await 后复检 busy、R2-3 认回定稿传
+  hist 切断「切走空闲段」工时虚增，全修；R3 终审 PASS 无新发现。
+- **验证**：浏览器全路径断言——重建（14/14 收起、15/15 arg、0 非错误行默认
+  开、4/4 查阅组收）、扩段重渲（14→28 组尾组定稿+头可见）、快照往返（无意图
+  0 开、用户点开 1 保留）、直跑 `_hgReloadFlow`（回滚路径全绿）、点击交互
+  （回合头开合/终端卡懒填展开-收起）+ 截图目检（「已工作 · 2 工具」收起态 +
+  「▸ >_ Bash git log --oneline -5」单行卡 + 查阅组收起 = ZCode 形态）+
+  全量回归（eventlog 60/60、冒烟、state 38、undef 符号级零新增、架构 0）。
+- **行为变化存档**：识图回传/ask/peer 等中段边界定稿现在也收体（= ZCode 段落
+  闭合模型，语义自洽无内容丢失）；重定向保守排除等 v3.2 存档项不变。

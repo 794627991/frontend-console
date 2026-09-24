@@ -104,8 +104,8 @@
     _HG.pendingTurnT0 = null;
     g.t0 = (_pt0 > 0) ? _pt0 : (_HG.openState ? undefined : Date.now());
     if (g.think.stats) g.think.stats.dataset.segCount = '0';
-    // 重建期：按记录恢复开合；无记录则默认收起（流式期 openState=null 不干预）
-    _hgApplyOpen(thinkBox, false);
+    // v3.2.1：撤位置键开合恢复（跨代际同键碰撞误开+误标 userToggled，详见
+    // _tlPlace 注）；思考抽屉重建默认收起，开合态随快照 dataset 忠实序列化
     _HG.grp = g;
     // v2.25：压缩开始会把进行中的组定稿（grpFinalize→phRemove 连占位气泡
     // 一起摘掉），压缩后模型继续推理 → startThinking/renderToolUse 在这里
@@ -243,7 +243,12 @@
     const g = _HG.grp;
     if (!g) return;
     phRemove(g);
-    _tlExpFlush();                       // v3.2：定稿先冲查阅聚组（头部定格汇总+自动收）
+    opt = opt || {};
+    // v3.2R1(P0 审计)：回放态判据（opt.hist 或重建期 openState 在场）前置——
+    // _tlExpFlush 与工时分级共用；尾组定稿发生在 _histRender 的 finally 之后
+    // （openState 已清空），必须靠 hist:true 显式传递才不丢回放语义
+    const _hist = opt.hist === true || !!_HG.openState;
+    _tlExpFlush(_hist);                   // v3.2：定稿先冲查阅聚组（头部定格汇总+自动收）
     if (g.headTimer) {
       clearInterval(g.headTimer);
       // v3.2R1(P2)：同步从 turnTicks 摘除——只清 interval 不摘 id，数组随
@@ -251,7 +256,6 @@
       if (_HG.turnTicks) _HG.turnTicks = _HG.turnTicks.filter(t => t !== g.headTimer);
       g.headTimer = null;
     }
-    opt = opt || {};
     // v2.20 修复：定稿把组头「思考 N 次」重写为纯文本——流式中带的脉动
     // 动画（hg-think-anim）此前无人摘，回复结束后还在闪。
     // 无思考段的组（空壳抽屉）不动，别把初始标题改写成「思考 0 次」。
@@ -268,11 +272,9 @@
     if (g.head && _hasWork) {
       _turnHeadShow(g, { hist: true });         // 兜底：纯思考组此前没走 drawerCount
       // v3.2R1(P0 审计)：工时事实分级——durMs（CLI 冻结）> endTs−t0（回放
-      // 边界差）> live 时钟差；回放态（opt.hist 或重建期 openState 在场）绝
-      // 不吃当前时钟——缺事实时显示无数字的「已工作」（对照 ZCode
-      // chat.history.worked 的无时长形态），否则旧会话刷新后「已工作」
-      // 会随墙上时钟继续增长
-      const _hist = opt.hist === true || !!_HG.openState;
+      // 边界差）> live 时钟差；回放态绝不吃当前时钟——缺事实时显示无数字
+      // 的「已工作」（对照 ZCode chat.history.worked 的无时长形态），否则旧
+      // 会话刷新后「已工作」会随墙上时钟继续增长
       let _dur;
       if (typeof opt.durMs === 'number' && opt.durMs > 0) _dur = opt.durMs;
       else if (typeof opt.endTs === 'number' && opt.endTs > 0 && g.t0) _dur = Math.max(0, opt.endTs - g.t0);
@@ -282,11 +284,16 @@
         const _txt = _dur != null ? (opt.interrupted ? ' · ' : ' ') + _hgTurnDurTxt(_dur) : '';
         g.headLabel.textContent = (opt.interrupted ? '已停止' : '已工作') + _txt;
       }
-      // 折叠：回放默认收（除非用户开过）；live 自动收只在底部跟读时（同
-      // v2.12 判据）；用户点过头（userToggled）永不强制收
-      if (g.headBody && g.head.dataset.userToggled !== '1' && (opt.hist || (auto && isNearBottom())))
-        g.headBody.classList.add('closed');
     }
+    // v3.2.1（用户实测问题1）：完成的回合默认收起——对照 ZCode 回合定稿即
+    // 折叠（整段过程只剩「已工作 ›」一行）。不再按 isNearBottom/hist/_hasWork
+    // 门控：旧判据在回滚重建（_histRender 期不在底部、split 定稿不带 hist）与
+    // 快照恢复（原样回放开着的体）路径全部漏收，用户实锤「回滚后完成的会话
+    // 没有收起来」；无工作组的空体同样收（保持「定稿=收起」不变式）。定稿
+    // 收的是最新段（视口下方），不产生内容上抽的视觉突跳；用户点开的
+    // （userToggled，随快照 dataset 序列化）永不强制收
+    if (g.headBody && g.head.dataset.userToggled !== '1')
+      g.headBody.classList.add('closed');
     // v2.21：纯思考/工具组（整组没有正文气泡）定稿时补一行弱提示——
     // 模型常连跑几十轮工具（text 全是 "\n\n" 占位被过滤），组头下面悬空
     // 看着像回复丢了（用户实测困惑点）。有正文/空壳组不补。
@@ -307,6 +314,22 @@
     }
     g.root.dataset.finalized = '1';   // v2.18.1：已定稿——grpEnsure 回扫不得接回
     _HG.grp = null;      // 下轮 renderUser 开新组
+  }
+  // v3.2.1R2(R2-1)：终结类事件（result/interrupted/exit）的尾组认回——快照
+  // 恢复后回合在切走期间结束，_HG.grp 为空会让 grpFinalize 早退、尾组永不
+  // 定稿（冻结「工作中」秒表+开体+冻结占位）。判据与 phResume 同款（未定
+  // 稿 + think 抽屉 + 时间线在场；纯文本尾组无工作区本就无需定稿）。返回
+  // 是否认回——认回方据此传 hist:true（工时缺事实落无数字「已工作」，不用
+  // 当前时钟虚增「回合结束到切回」的空闲段，R2-3）
+  function _hgTailAdopt() {
+    if (_HG.grp) return false;
+    const root = [..._hgFlow.querySelectorAll('.h-grp')].pop();
+    const tb = root && root.querySelector(':scope > .h-grp-proc > .h-turn-body > .h-drawer.think');
+    if (root && !root.dataset.finalized && tb && root.querySelector('.h-tl')) {
+      _HG.grp = grpFromDom(root, tb, null);
+      return true;
+    }
+    return false;
   }
   // v3.2：回合工时文案（ZCode formatConversationWorkDuration 口径：N 秒/N 分 N 秒/N 时 N 分）
   function _hgTurnDurTxt(ms) {
@@ -417,7 +440,7 @@
     // v2.43：子代理文本不再走本函数——改入子代理段（_subText），主 flow 的
     // 灰色 sub 行与 isSub/subId 参数一并退役（归属标识上移到段头）。
     if (!text || !String(text).trim()) return;
-    _tlExpFlush();                       // v3.2：正文打断查阅聚组（对照 ZCode：非 explore 行断组）
+    _tlExpFlush(!!_HG.openState);        // v3.2：正文打断查阅聚组（回放态必收）
     // v2.18.1（3.png）：组合制 = 思考+工具+回复，按正文切分。当前组已出过正文
     // → 后续正文属下一条回复：先定稿，让新组头（思考/工具）落在新正文上方。
     const cur = _HG.grp;

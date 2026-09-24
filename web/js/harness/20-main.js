@@ -192,18 +192,15 @@ function buildClaudeHarnessTab(opts = {}) {
   // ==================== 抽屉/工具展开状态的持久化 ====================
   // 用户诉求：关掉 tab 再打开历史会话，「思考/工具展开情况不能丢」。
   // 同一 tab 内切走再切回走 innerHTML 快照，DOM 状态本来就保真；关 tab 后
-  // 只能按 transcript 重建，默认值全会复位。这里按「结构路径」（flow 子索引
-  // 逐层下钻）记开合状态到 localStorage——不依赖后端 id，重建后元素位置一致
-  // 即能对上；流式阶段前面的元素不增删，路径同样稳定。
-  // 重建期把记下的状态贴回元素（流式期 _HG.openState 为 null，不干预默认值）。
-  // 没有记录时用 defOpen：历史抽屉默认收起（正文可见、过程细节按需展开），
-  // 出错工具行默认展开（错误信息不该藏）。
-  // v2.46：子代理段折叠态记忆——键用 sub:<agentId>（agentId 稳定，不受扩段/
-  // 收缩重渲的行号漂移影响；_hgPathKey 的位置键重渲后必错位，不可用）。
-  // 动机：扩段/收缩是全量重渲，renderHistSub 建段恒默认折叠，用户已展开的
-  // 段被收回——不只是观感，段区高度突变直接破坏扩段锚定精度（Playwright
-  // 实测：展开态 8858px 重渲后自行收回 5931px，锚定落点漂 2900+px）。
-  // 与 _hgSaveOpen 同仓（hg-open:<sid>），重建期由 renderHistSub 读取恢复。
+  // 只能按 transcript 重建，默认值全会复位。v3.2.1：位置键开合记忆已整体
+  // 退役（跨代际同键碰撞误开新行，用户实锤「终端默认全部不收起」；详见
+  // 03-ask-md.js _hgLoadOpen 注）——重建统一默认收起，用户点开过的经快照
+  // dataset（userToggled）忠实保留。hg-open:<sid> 仓仅剩 sub:<agentId>
+  // 语义键（agentId 稳定，不受扩段/收缩重渲的行号漂移影响）。
+  // 动机（v2.46 原始记录）：扩段/收缩是全量重渲，renderHistSub 建段恒默认
+  // 折叠，用户已展开的段被收回——不只是观感，段区高度突变直接破坏扩段锚
+  // 定精度（Playwright 实测：展开态 8858px 重渲后自行收回 5931px，锚定落点
+  // 漂 2900+px）。重建期由 renderHistSub 读取恢复。
 
   // ---- 消息组基元（v2.18）----
   // 组 = .h-grp{ .h-grp-proc{ .h-turn-head(已工作 Ns ›) + .h-turn-body{ .h-drawer.think
@@ -320,7 +317,8 @@ function buildClaudeHarnessTab(opts = {}) {
       if (box) {
         box.classList.toggle('open');
         box.dataset.userToggled = '1';       // 写进 DOM——快照恢复后依然记得用户碰过
-        _hgSaveOpen(box);                    // v2.16：关 tab 后重建也不丢
+        // v3.2.1：撤 _hgSaveOpen 位置键持久化（跨代际碰撞误开新行，用户定调
+        // 重建统一默认收起）；开合在当前 DOM 生命周期内有效
       }
       return;
     }
@@ -331,7 +329,7 @@ function buildClaudeHarnessTab(opts = {}) {
       if (seg) {
         const opening = !seg.classList.contains('open');
         if (opening) _histLazyFill(seg); else _histLazyDrop(seg);
-        seg.classList.toggle('open'); _hgSaveOpen(seg);
+        seg.classList.toggle('open');
       }
       return;
     }
@@ -339,7 +337,7 @@ function buildClaudeHarnessTab(opts = {}) {
     const sFold = e.target.closest('.h-think-seg-fold');
     if (sFold) {
       const seg = sFold.closest('.h-think-seg');
-      if (seg) { _histLazyDrop(seg); seg.classList.remove('open'); _hgSaveOpen(seg); }
+      if (seg) { _histLazyDrop(seg); seg.classList.remove('open'); }
       return;
     }
     // 代码块/Bash 命令复制钮（v2.12 委托化——快照恢复后行内绑定会失活）。
@@ -373,8 +371,10 @@ function buildClaudeHarnessTab(opts = {}) {
       return;
     }
     // v3.2：查阅聚组头（🔍 查阅 · N 搜索 · M 文件）——切换子行树开合
-    // v3.2R1(P2)：开合进 _hgSaveOpen 持久化（与 .h-drawer/.h-tool 同仓——
-    // transcript 重建后用户展开过的组不再回默认态）
+    // v3.2.1：撤 _hgSaveOpen 位置键持久化——键按 DOM 位置索引链编，跨代际
+    // （回滚截断/扩段窗移/v3.1↔v3.2 结构差）同键指向不同元素，旧记录误开
+    // 新行还误标 userToggled（用户实锤「终端默认全部不收起」）。开合只在
+    // 当前 DOM 生命周期内有效，重建统一默认收起（用户定调）
     const expHead = e.target.closest('.h-tl-grp-head');
     if (expHead) {
       const grpEl = expHead.closest('.h-tl-grp');
@@ -382,7 +382,6 @@ function buildClaudeHarnessTab(opts = {}) {
         const opening = !grpEl.classList.contains('open');
         grpEl.classList.toggle('open');
         grpEl.dataset.userToggled = '1';
-        _hgSaveOpen(grpEl);
         if (opening) grpEl.querySelectorAll('.h-tool').forEach(_histLazyFill);
         else grpEl.querySelectorAll('.h-tool').forEach(_histLazyDrop);
       }
@@ -396,10 +395,6 @@ function buildClaudeHarnessTab(opts = {}) {
       const opening = !ocRow.classList.contains('open');
       if (opening) _histLazyFill(ocRow); else _histLazyDrop(ocRow);
       ocRow.classList.toggle('open');
-      // v3.2R2(N2)：oneclick 分支先于 tHead——回放 bash 行的 head 点击也走
-      // 这里，补 _hgSaveOpen 使开合同样持久化（否则回放 Bash 卡重建后回默认态，
-      // 与其它历史行口径不一致）
-      _hgSaveOpen(ocRow);
       return;
     }
     const tHead = e.target.closest('.h-tool-head');
@@ -408,7 +403,7 @@ function buildClaudeHarnessTab(opts = {}) {
       if (row) {
         const opening = !row.classList.contains('open');
         if (opening) _histLazyFill(row); else _histLazyDrop(row);
-        row.classList.toggle('open'); _hgSaveOpen(row);
+        row.classList.toggle('open');
       }
       return;
     }

@@ -301,36 +301,24 @@
     document.addEventListener('keydown', escFn);
     _hgWrap.appendChild(ov);
   }
-  function _hgPathKey(el) {
-    const p = [];
-    let n = el;
-    while (n && n !== _hgFlow) { p.unshift(Array.prototype.indexOf.call(n.parentNode.children, n)); n = n.parentNode; }
-    return p.join('/');
-  }
+  // v3.2.1（用户实测问题2）：位置键开合记忆（_hgPathKey/_hgSaveOpen/
+  // _hgApplyOpen）整体退役——键按 DOM 位置索引链编，跨 DOM 代际（v3.1 抽屉
+  // ↔v3.2 时间线结构差、回滚截断、扩段窗移）同键指向不同元素，旧记录误开
+  // 新行还误标 userToggled（用户实锤「终端默认全部不收起」）。重建统一默认
+  // 收起；开合在当前 DOM 生命周期内有效，用户意图经快照 dataset（userToggled）
+  // 忠实序列化。hg-open:<sid> 仓保留唯一消费方：sub:<agentId> 语义键（稳定
+  // 不漂移，见 _hgSubSaveOpen / renderHistSub）
   function _hgLoadOpen(sid) {
     try { return JSON.parse(localStorage.getItem('hg-open:' + sid) || '{}') || {}; } catch(_) { return {}; }
-  }
-  function _hgSaveOpen(el) {
-    if (!_HG.sid) return;
-    try {
-      const st = _hgLoadOpen(_HG.sid);
-      st[_hgPathKey(el)] = el.classList.contains('open') ? 1 : 0;
-      localStorage.setItem('hg-open:' + _HG.sid, JSON.stringify(st));
-    } catch(_) {}
-  }
-  function _hgApplyOpen(el, defOpen) {
-    const st = _HG.openState;
-    if (!st) return;
-    const k = _hgPathKey(el), has = k in st;
-    el.classList.toggle('open', has ? !!st[k] : !!defOpen);
-    // 有记录 = 用户碰过 → 标记住，重建末尾的 grpFinalize(true) 不再自动收它
-    if (has) el.dataset.userToggled = '1';
   }
   function _hgSubSaveOpen(blk, isOpen) {
     const aid = blk && blk.dataset && blk.dataset.hgSubblock;
     if (!_HG.sid || !aid) return;
     try {
       const st = _hgLoadOpen(_HG.sid);
+      // v3.2.1R(F5)：顺手清位置键时代遗留的非 sub: 死键（唯一写入方做迁移，
+      // 老仓不再随会话累积撑 localStorage）
+      Object.keys(st).forEach(k => { if (k.indexOf('sub:') !== 0) delete st[k]; });
       st['sub:' + aid] = isOpen ? 1 : 0;
       localStorage.setItem('hg-open:' + _HG.sid, JSON.stringify(st));
     } catch(_) {}

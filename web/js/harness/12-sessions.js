@@ -79,6 +79,20 @@
         delete _HG.cacheWarm[sid];
       }
       _hgFlow.innerHTML = c.html; _HG.seq = c.seq;
+      // v3.2.1（用户实测问题1）：快照里开着的已完成回合体规整回默认收起——
+      // 快照存的是离开瞬间的 DOM（live 定稿时可能没收/存的是重建期的开态），
+      // 恢复后按「完成默认收」清扫：用户点开过的（userToggled 随 dataset 序列
+      // 化，忠实可信）保留。顺带把快照冻结的「工作中 Ns」残头（app 中途被杀
+      // 的活组、interval 不随 innerHTML 走）定格为无数字「已工作」——工时事
+      // 实已不可考，不编造。进行中组（无 data-finalized）不动：busy 恢复路径
+      // phResume 要接着用它的体
+      _hgFlow.querySelectorAll('.h-grp[data-finalized="1"]').forEach(g => {
+        const head = g.querySelector('.h-turn-head');
+        const body = g.querySelector('.h-turn-body');
+        if (head && body && head.dataset.userToggled !== '1') body.classList.add('closed');
+        const lbl = head && head.querySelector('.h-turn-label');
+        if (lbl && lbl.textContent.indexOf('工作中') === 0) lbl.textContent = '已工作';
+      });
       _HG.epoch = c.epoch || null;     // v3.0：代际水位随快照存取（与 seq 同进退）
       _HG.echoFast = c.echoFast || null;   // v2.28.13：去重窗口随快照恢复（防重放双画）
       // v2.37（P0-A）：窗口账目重建——快照 DOM 是上一次 _histRender 的窗口
@@ -186,12 +200,13 @@
         if (j.ok && _HG.sid === sid) {
           _HG.seq = j.seq || 0; _HG.epoch = j.epoch || null; _HG.alive = !!j.alive;
           if (!j.lines.length) showWelcome();
-          else _histRender(j.lines, Math.max(0, j.lines.length - _HG.HIST_PAGE));
+          else _histRender(j.lines, Math.max(0, j.lines.length - _HG.HIST_PAGE),
+                           { noFinalize: !!j.busy });   // v3.2.1R(F1)：尾组定稿在渲染器内；busy 活组留给 phResume
           // v2.20（3.png）：busy 会话尾部组是「进行中」的组——transcript 只到
           // 已落盘部分，无条件定稿会把组关死还漏占位气泡。留活 + 补占位，
           // SSE 续传事件经 grpEnsure 回扫正常接回。
           if (j.busy) phResume();
-          else grpFinalize(true, { hist: true });   // transcript 末尾若挂着未收的组 → 定稿（v3.2R1(P0)：回放不吃时钟，缺事实落无数字「已工作」）
+          else grpFinalize(true, { hist: true });          // 幂等兜底（渲染器内已定稿则 _HG.grp 为空早退）
           _hgScrollBottom(true);              // 切会话回底（不受翻历史保护限制）
           setBusy(!!j.busy, j.busy_since);   // v2.26：计时起点带后端 busy_since（切回来不清零）
         }

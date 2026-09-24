@@ -467,10 +467,17 @@
       _hgTurnEnd(o.subtype === 'success' ? 'ok' : 'error',
                  typeof o.duration_ms === 'number' ? o.duration_ms : 0);
       _hgTurnSumRow();                     // v3.1：ZCode 式回合摘要行（查阅 · N 搜索 · N 文件）
+      // v3.2.1R(F2/R2-1)：快照恢复后回合在切走期间结束——重放的 result 到达时
+      // _HG.grp 已被 switchTo 置空，grpFinalize 早退 → 尾组永不定稿。认回尾组
+      // 再定稿（_hgTailAdopt，phRemove 的 DOM 扫顺手清冻结占位气泡）；认回
+      // 时传 hist——工时缺事实落无数字「已工作」，不用当前时钟虚增切走期间
+      // 的空闲段（R2-3）
+      const _adopted = _hgTailAdopt();
       // v3.2：定稿带冻结工时（CLI duration_ms——历史「已工作」绝不吃当前时钟）
       // 与中断标记（subtype 非 success → 「已停止」）
       grpFinalize(true, { durMs: (typeof o.duration_ms === 'number' ? o.duration_ms : 0),
-                          interrupted: !!(o.subtype && o.subtype !== 'success') });
+                          interrupted: !!(o.subtype && o.subtype !== 'success'),
+                          hist: _adopted });
       // v2.18：本轮组定稿——用户没手动
                                           // 操作过且在底部跟读时自动收起（想看再点开，
                                           // 各抽屉独立开合）
@@ -521,8 +528,9 @@
         if (!j.ok || _HG.sid !== sid) return;
         _HG.seq = j.seq || 0; _HG.epoch = j.epoch || null; _HG.alive = !!j.alive;
         if (!j.lines.length) showWelcome();
-        else _histRender(j.lines, Math.max(0, j.lines.length - _HG.HIST_PAGE));
-        if (j.busy) phResume(); else grpFinalize(true, { hist: true });   // v3.2R1(P0)：回放尾组不吃时钟
+        else _histRender(j.lines, Math.max(0, j.lines.length - _HG.HIST_PAGE),
+                         { noFinalize: !!j.busy });   // v3.2.1R(F1)：尾组定稿在渲染器内；busy 活组留给 phResume
+        if (j.busy) phResume(); else grpFinalize(true, { hist: true });   // 幂等兜底（v3.2R1(P0)：回放不吃时钟）
         _hgScrollBottom(true);
         setBusy(!!j.busy, j.busy_since);
         openSSE(sid, _HG.seq);
@@ -604,7 +612,9 @@
       else if (it.kind === 'ask') { grpFinalize(true); askRender(it); }
       else if (it.kind === 'ask_done') askDone(it);
       else if (it.kind === 'interrupted') {
-        endThinking(); _hgVisionSweep(true); grpFinalize(true, { interrupted: true }); renderExit(it.text); setBusy(false);
+        endThinking(); _hgVisionSweep(true);
+        grpFinalize(true, { interrupted: true, hist: _hgTailAdopt() });   // v3.2.1R2(R2-1/R2-3)：切走期间中断的残尾认回定稿
+        renderExit(it.text); setBusy(false);
         // v2.32：中断收尾——在跑的子代理标「已中断」（原缺口：只有 result
         // 分支收尾，点 ■ 停止后子代理假"运行中"+计时狂跳）
         _hgAgentsSweep(true); _hgTurnEnd('interrupt', 0);
@@ -613,7 +623,9 @@
         try { document.dispatchEvent(new CustomEvent('hg-interrupted', {detail: _HG.sid})); } catch(_) {}
       }
       else if (it.kind === 'exit') {
-        endThinking(); _hgVisionSweep(true); _HG.alive = false; grpFinalize(true); renderExit(it.text); setBusy(false);
+        endThinking(); _hgVisionSweep(true); _HG.alive = false;
+        grpFinalize(true, { hist: _hgTailAdopt() });   // v3.2.1R2(R2-1)：同 interrupted——切走期间退出的残尾认回定稿
+        renderExit(it.text); setBusy(false);
         _hgAgentsSweep(true); _hgTurnEnd('exit', 0);   // v2.32：同上，进程退出也收
         _subEnd();                         // v2.33：窗格收起
       }

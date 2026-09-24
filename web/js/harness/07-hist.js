@@ -9,10 +9,18 @@
     d.className = 'h-tool col' + (err ? ' err open' : '');
     // v2.21：历史回放同样带工具徽章（子代理等），与流式路径一致
     const hbc = _H_TOOL_CFG[l.text] || {};
+    // v3.2.1（用户实测问题2）：bash 行头补命令文本——live 行有 arg（cfg.get），
+    // 回放行只剩「Bash」秃头，无命令像坏行。对齐 live 取 command 前 80 字，
+    // title 悬浮放全文（80 字外被 CSS 省略号截断，段内工厂 _subToolHeadHtml
+    // 同款口径——对抗审计 F3）
+    const _cmdFull = String((l.input || {}).command || (l.input || {}).cmd || '');
+    const argH = (hbc.kind === 'bash') ? esc(_cmdFull.slice(0, 80)) : '';
+    const argTitle = (hbc.kind === 'bash' && _cmdFull) ? esc(_cmdFull) : '';
     d.innerHTML =
       `<button class="h-tool-head"><span class="h-chev">▸</span>` +
       `<span class="h-tool-name">${_hToolIco(l.text)} ${esc(_hToolLabel(l.text))}</span>` +
       (hbc.badge ? `<span class="h-tool-badge">${esc(hbc.badge)}</span>` : '') +
+      (argH ? `<span class="h-tool-arg"${argTitle ? ` title="${argTitle}"` : ''}>${argH}</span>` : '') +
       `<span class="h-tslots">${statusBadge(err ? 'error' : 'completed')}</span></button>` +
       `<div class="h-tool-coll">${err ? _histToolBodyHtml(l) : ''}</div>`;
     if (hi != null) {
@@ -22,7 +30,9 @@
     if (((_H_TOOL_CFG[l.text] || {}).kind) === 'bash') d.classList.add('oneclick');
     drawerCount(l.text);
     _tlPlace(d, l.text, l.input || {});   // v3.2：回放同走内联时间线（查阅聚组与实时一致）
-    _hgApplyOpen(d, !!l.err);   // 重建期：恢复上次开合；无记录时错误行默认展开
+    // v3.2.1：撤 _hgApplyOpen 位置键恢复——错误行默认开已由 className 的
+    // 'err open' 承担；位置键跨代际碰撞会误开正常行+误标 userToggled（用户
+    // 实锤「终端默认全部不收起」），统一默认收起（用户定调）
   }
   function renderHistLine(l, hi) {
     if (l.role === 'peer') {          // v2.27.3：跨会话回传（识图结论）历史回看
@@ -147,7 +157,8 @@
         d.dataset.hgLazy = err ? '' : '1';   // 错误行已填；收起丢弃后由 Drop 重置
       }
       _subBodyPut(b, d, 'tool');   // v2.45：历史段建段即聚合——落工具抽屉
-      _hgApplyOpen(d, !!err);   // 挂载后才可（_hgPathKey 沿 parentNode 上溯，先 apply 会空引用）
+      // v3.2.1：撤位置键开合恢复（同 renderHistTool——错误行默认开已由
+      // className 'err open' 承担；位置键跨代际碰撞误开+误标 userToggled）
     } else if (l.role === 'sub_result') {
       // 孤儿结果（无配对工具行——转写截断窗口的边界）独立成行
       _subSegEnd(b);
@@ -258,7 +269,7 @@
   }
   function startThinking(hist) {
     if (_HG.think && _HG.think.seg && _HG.think.seg.isConnected) return;
-    _tlExpFlush();                       // v3.2：思考段打断查阅聚组
+    _tlExpFlush(!!_HG.openState);        // v3.2：思考段打断查阅聚组（回放态必收）
     const g = grpEnsure(true);
     g.think.box.style.display = '';             // v2.20：第一段思考到位，思考抽屉翻回显示
     if (!hist) _turnHeadShow(g);                // v3.2：纯思考回合也亮「工作中」秒表（回放不亮——定稿时直接冻结文案）

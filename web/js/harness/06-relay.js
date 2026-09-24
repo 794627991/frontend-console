@@ -10,11 +10,21 @@
     try {
       const j = await (await fetch('/api/harness/transcript?sid=' + encodeURIComponent(sid))).json();
       if (!j.ok || _HG.sid !== sid) return;
-      _HG.seq = j.seq || 0; _HG.alive = !!j.alive;
+      // v3.2.1R(F6)：对齐 _hgSseRebuild 的清场——旧行映射（rowById/subBlk/
+      // subRows/turnTicks）指向 innerHTML 替换后的游离节点，迟到事件会往游
+      // 离行写徽章；epoch 同步换代水位（回滚必换代，带着旧 epoch 重开流会
+      // 多吃一轮 ack reset 重建）。回滚后旧快照作废（存的是回滚前 DOM）
+      delete _HG.cache[sid];
+      _hgSseResetLocal();
+      _HG.seq = j.seq || 0; _HG.epoch = j.epoch || null; _HG.alive = !!j.alive;
       _HG.visionCalls = null; _HG.peerWait = null;
-      if (!j.lines.length) { _hgFlow.innerHTML = ''; showWelcome(); }
-      else _histRender(j.lines, Math.max(0, j.lines.length - _HG.HIST_PAGE));
-      setBusy(false);
+      if (!j.lines.length) showWelcome();
+      else _histRender(j.lines, Math.max(0, j.lines.length - _HG.HIST_PAGE),
+                       { noFinalize: _HG.busy });
+        // v3.2.1R(F1)：尾组定稿在 _histRender 渲染器内（用户实测问题1）；
+        // R2-2：await 在途抢发变 busy——尾组留给 grpEnsure 认回续跑（重渲
+        // 抹活组是预存在问题，不放大成裂两组）
+      if (!_HG.busy) setBusy(false);   // R2-2：await 在途变 busy 不清指示（事件流自会维护）
       refreshSessions();
       _hgScrollBottom(true);
     } catch(_) {}
