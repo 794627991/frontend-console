@@ -544,7 +544,10 @@
     // v2.28.16：回滚按钮（回合边界授予）
     const bar = document.createElement('div');
     bar.className = 'hg-msg-acts';
+    d.dataset.rtext = String(text);   // v3.1h:AI 消息源文本——复制/编辑后发送取用
     bar.innerHTML =
+      '<button class="hg-mico h-acopy" title="复制这条回复">📋</button>' +
+      '<button class="hg-mico h-aedit" title="编辑后发送（源文本填回输入框）">✎</button>' +
       '<button class="hg-mact" data-hg-rewind title="回滚到本条所在回合结束：之后的全部丢弃（自动全量备份）">⏪ 回滚到这里</button>';
     d.appendChild(bar);
     // 锚点 = 正文前缀（随 dataset 序列化，实时/回放两路同源；后端按它

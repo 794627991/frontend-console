@@ -448,6 +448,29 @@ function buildClaudeHarnessTab(opts = {}) {
       else dispatch(text, atts?.images || [], atts?.files || [], true);
       return;
     }
+    // v3.1h：AI 消息复制（渲染后纯文本走剪贴板）——hover 下方浮现的 📋
+    const cb = e.target.closest('.h-acopy');
+    if (cb) {
+      const m = cb.closest('.h-msg.asst');
+      const t = (m?.querySelector('.h-bubble') || m)?.textContent || m?.dataset.rtext || '';
+      Promise.resolve(copyText(t.trim())).then(() => {
+        cb.textContent = '✓';
+        setTimeout(() => { cb.textContent = '📋'; }, 900);
+      });
+      return;
+    }
+    // v3.1h：AI 消息编辑后发送——md 源填回输入框
+    const ab = e.target.closest('.h-aedit');
+    if (ab) {
+      const m = ab.closest('.h-msg.asst');
+      _hgInput.value = m?.dataset.rtext || '';
+      _hgInput.style.height = 'auto';
+      _hgInput.style.height = Math.min(_hgInput.scrollHeight, 200) + 'px';
+      renderOverlay(_hgInput.value);
+      _hgInput.focus();
+      _hgScrollBottom();
+      return;
+    }
     // v2.22：编辑后重发——原文与附件填回输入框，改完正常发送
     const eb = e.target.closest('.h-edit');
     if (eb) {
