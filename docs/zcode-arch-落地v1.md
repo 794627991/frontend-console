@@ -651,3 +651,16 @@ b535b34a_image.png」（base64 行的应用上传 hash 名附件）+「🖼 1.pn
 - 实测（用户当前运行实例，未重启）：30 条真实 user 消息（20 条回显行消
   失）、链接行 0、chip 在气泡上方+占位气泡、点击 chip 灯箱打开真图加载
   （667px）。回归：smoke 全过/state 41/ledger 17/route 42。
+
+## 二十、v3.2.17 新会话垃圾治理（用户实锤「多出了一大堆的新会话」）
+
+- 根因：tests/test_route_smoke.py 按路由表逐条「空 body POST」——
+  /api/harness/connect 空 sid 即真建会话，且测试进程的 Flask 实例与用户
+  应用共享 ~/.serialconsole_pro/claude_harness.json——**每跑一轮回归就往
+  用户会话列表塞一条空「新会话」**（cwd=expanduser 默认、has_history
+  false、无 csid 是其指纹）。历轮回归累积成「一大堆」。
+- 修复：冒烟对 /connect 跳过 POST（带状态副作用的入口不打空参），其余
+  42 路由照旧。
+- 验证：跑一轮冒烟前后 meta 文件 md5 完全一致（不再写用户状态）；当前
+  会话表 3 条真实会话、垃圾 0（用户已手清的残留确认无存）。浏览器测试
+  标签页已关闭（不再作为用户实例的第二个客户端）。
