@@ -441,7 +441,11 @@ function buildClaudeHarnessTab(opts = {}) {
     const uc = e.target.closest('.h-ucopy');
     if (uc) {
       const m = uc.closest('.h-msg.user');
-      Promise.resolve(copyText(m?.dataset.rtext || '')).then(() => {
+      // v3.1h(F6):纯图消息 rtext 为空——取气泡渲染文本(占位文案),不复制空串
+      const ut = (m?.dataset.rtext || '').trim() ||
+                 ((m?.querySelector('.h-bubble') || m)?.textContent || '').trim();
+      Promise.resolve(copyText(ut)).then(okFlag => {
+        if (!okFlag) return;   // v3.1h(F5):复制失败不亮 ✓
         uc.textContent = '✓';
         setTimeout(() => { uc.textContent = '📋'; }, 900);
       });
@@ -462,23 +466,13 @@ function buildClaudeHarnessTab(opts = {}) {
     const cb = e.target.closest('.h-acopy');
     if (cb) {
       const m = cb.closest('.h-msg.asst');
-      const t = (m?.querySelector('.h-bubble') || m)?.textContent || m?.dataset.rtext || '';
-      Promise.resolve(copyText(t.trim())).then(() => {
+      const t = ((m?.querySelector('.h-bubble') || m)?.textContent || m?.dataset.rtext || '').trim();
+      if (!t) return;   // v3.1h(F6):无可复制内容不动作
+      Promise.resolve(copyText(t)).then(okFlag => {
+        if (!okFlag) return;   // v3.1h(F5):复制失败不亮 ✓
         cb.textContent = '✓';
         setTimeout(() => { cb.textContent = '📋'; }, 900);
       });
-      return;
-    }
-    // v3.1h：AI 消息编辑后发送——md 源填回输入框
-    const ab = e.target.closest('.h-aedit');
-    if (ab) {
-      const m = ab.closest('.h-msg.asst');
-      _hgInput.value = m?.dataset.rtext || '';
-      _hgInput.style.height = 'auto';
-      _hgInput.style.height = Math.min(_hgInput.scrollHeight, 200) + 'px';
-      renderOverlay(_hgInput.value);
-      _hgInput.focus();
-      _hgScrollBottom();
       return;
     }
     // v2.22：编辑后重发——原文与附件填回输入框，改完正常发送

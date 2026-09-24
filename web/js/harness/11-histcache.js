@@ -54,17 +54,8 @@
       // 都写进游离容器——主界面消失级事故）
       _hgFlow = _realFlow;
       _HG.histBuilding = false;   // v3.2.13：连接性判据还原（见顶部注释）
-      // v3.1h（用户实锤「结束不收起+头部下空白壳」）：回放逐组定稿时 _HG.grp
-      // 指针前移会漏收旧组；占位空壳随快照/重建残留。换入后统一兜底——
-      // 非尾组 turn-body 全部收起 + 清占位残壳；busy 会话尾组是活组照常展开
-      const _grps = _realFlow.querySelectorAll(':scope > .h-grp');
-      _grps.forEach((gp, i) => {
-        if (_HG.busy && i === _grps.length - 1) return;
-        const tb = gp.querySelector(':scope > .h-grp-proc > .h-turn-body');
-        if (tb) tb.classList.add("closed");
-        const ph = gp.querySelector(":scope > .h-msg.asst.ph");
-        if (ph) ph.remove();
-      });
+      // v3.1h(F4)：此处 innerHTML 已清空、恒无组，收起/清壳兜底无对象——
+      // 唯一活版本在主回放 finally（replaceChildren 换入之后）
       _hgRailSync();
       return;
     }
