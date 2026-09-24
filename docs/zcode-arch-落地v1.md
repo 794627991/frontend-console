@@ -578,3 +578,28 @@ ZCode 回合模型：
   回合 53→43（10 个认回竞态分裂组消失）、刻度轨 50 枚完好。
 - 回归：node --check×6、chain_smoke 全过、state_audit 41、architecture 0、
   ledger 17/17、route_smoke 42、roles_routing 全过。本轮免审计（用户令）。
+
+## 十七、v3.2.14 贴图并名：一次一图一原件名（用户「不能出现两次」）
+
+用户裸截图实锤 v3.2.13 遗留：单张贴图渲染出**两枚 chip**——「🖼
+b535b34a_image.png」（base64 行的应用上传 hash 名附件）+「🖼 1.png」（
+[Image: source] 回显行附件）。用户定调：后端自行处理，我要看的时候同一张
+图**只出现一次**，且要**原先的名字**。
+
+- transcript.py 并名：纯回显行丢弃前，把上一条 user 行（base64 孪生）里
+  的 `*_image.png` 附件逐个改写为回显路径（原名 + CLI Temp 原件）；无
+  marker 附件的罕见流回退为直接并入。实测 2d835190：28 个图行全部
+  images 数=附件数、hash 名残留 0、echo 残留 0，4 连图（4.png~7.png）同
+  样正确并名。
+- routes.py /api/harness/file 补 path= 分支：白名单整路径回源——
+  _UPLOAD_DIR 任意原件 + %TEMP%/claude/**/images/ 下的图片（父目录名必须
+  是 images + 图片扩展名 + realpath 包含校验），name= 旧分支保留（旧快照
+  兼容）。test client 实测：Temp 原件 200、上传原件 200、越界 403×2、
+  旧 name= 200。
+- 03-ask-md.js attChipsHtml：data-img 改传整路径（path=）——并名后附件
+  指向 Temp 原件，name= 查上传目录会 404；输入区新上传预览（16-input-fx）
+  仍是上传目录内文件，name= 照常。
+- 10-sse.js live 并名对偶：纯回显跳过前把乐观渲染行的 _image.png chip
+  改写为回显路径（label/title/data-img 三同步）——live 与回放同名同源。
+- 回归：chain_smoke 全过、state 41、undef 无新符号、route_smoke 42 健康、
+  ledger 17/17。免审计（用户令）。

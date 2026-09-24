@@ -5,9 +5,10 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 import time
 import uuid
-from flask import Blueprint, Response, jsonify, request, send_from_directory
+from flask import Blueprint, Response, jsonify, request, send_file, send_from_directory
 import logging
 log = logging.getLogger(__name__)
 from .. import app_state as _st
@@ -1638,7 +1639,23 @@ def harness_file():
     这里只读地回 _UPLOAD_DIR 里的原件。
 
     防穿越：只取 basename，再校验 realpath 落在 _UPLOAD_DIR 内。
+    v3.2.14：补 path= 分支——贴图并名后附件路径指向 CLI 的 Temp images
+    原件（原名 1.png；上传副本是 hash 名），按整路径回源。白名单两处：
+    _UPLOAD_DIR 任意文件 + %TEMP%/claude/**/images/ 下的图片原件
+    （realpath 包含校验 + 父目录名必须是 images + 图片扩展名）。
     """
+    p = request.args.get("path")
+    if p:
+        rp = os.path.realpath(p)
+        up_root = os.path.realpath(_UPLOAD_DIR) + os.sep
+        if rp.startswith(up_root):
+            return send_from_directory(_UPLOAD_DIR, os.path.basename(rp))
+        tmp_root = os.path.realpath(os.path.join(tempfile.gettempdir(), "claude")) + os.sep
+        _img_ext = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
+        if (rp.startswith(tmp_root) and os.path.basename(os.path.dirname(rp)) == "images"
+                and rp.lower().endswith(_img_ext) and os.path.isfile(rp)):
+            return send_file(rp)
+        return jsonify({"ok": False, "err": "非法路径"}), 403
     fn = os.path.basename((request.args.get("name") or "").replace("\\", "/"))
     if not fn:
         return jsonify({"ok": False, "err": "缺少 name"}), 400

@@ -619,13 +619,30 @@
         // 贴图落两条 user 行（base64 块渲染真图 + "[Image: source: 路径]" 纯回
         // 显），后者整条不渲染；仅当回显与真实文字混在同一条时才保留（剥标
         // 记、路径并进 images 出缩略，与发送侧乐观渲染形态对齐）
+        // v3.2.14（用户定调「不能出现两次，要原先的名字」）：纯回显丢弃前先
+        // 并名——把乐观渲染行的 *_image.png chip 改写为回显路径（原名 + CLI
+        // Temp 原件），与历史回放侧 transcript.py 同款归一
         {
           const _ims = String(it.text || '').match(/\[Image: source: [^\]]+?\]/g);
           if (_ims) {
             const _pre = (it.files || []).length;
             it.files = (it.files || []).concat(_ims.map(x => x.replace(/^\[Image: source: /, '').replace(/\]$/, '').trim()));
             it.text = String(it.text || '').replace(/\[Image: source: [^\]]+?\]/g, '').trim();
-            if (!String(it.text || '').trim() && !_pre) {   // 纯回显（无文字无他附件）→ 整条丢弃
+            if (!String(it.text || '').trim() && !_pre) {   // 纯回显（无文字无他附件）
+              const _ums = _hgFlow.querySelectorAll('.h-msg.user');
+              const _um = _ums[_ums.length - 1];
+              if (_um) {
+                const _chs = [..._um.querySelectorAll('.hg-att-mini[data-img]')];
+                for (const _c of _chs) {
+                  if (!_ims.length) break;
+                  if (/_image\.png$/i.test(_c.title || _c.textContent)) {
+                    const _np = _ims.shift().replace(/^\[Image: source: /, '').replace(/\]$/, '').trim();
+                    _c.dataset.img = '/api/harness/file?path=' + encodeURIComponent(_np);
+                    _c.title = _np;
+                    _c.textContent = '🖼 ' + _np.split(/[\\/]/).pop();
+                  }
+                }
+              }
               _HG.echoFast = null;
               return;
             }

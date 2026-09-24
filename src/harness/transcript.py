@@ -227,13 +227,30 @@ def transcript_for(s):
                             # v3.2.13（用户定调「不要给我渲染出来」）：贴图占位
                             # 回显行整条丢弃——CLI 对每次贴图都落两条 user 行
                             # （base64 image 块渲染真图 + "[Image: source: …]"
-                            # 纯回显行），后者只出占位卡毫无信息量；仅当回显
-                            # 与真实文字混在同一条时才保留（剥掉标记、路径并进
-                            # files 出缩略）
+                            # 纯回显行）。v3.2.14（用户定调「不能出现两次，要
+                            # 原先的名字」）：丢弃前先并名——回显路径带原始文件
+                            # 名（1.png），上一行附件是应用上传的 hash 名
+                            # （b535b34a_image.png），同一张图两枚 chip 不可接
+                            # 受；把上一行 *_image.png 逐个改写为回显路径（原
+                            # 名 + CLI Temp 原件，/api/harness/file?path= 可回源）
                             _ims = _IMG_ECHO_RE.findall(t)
                             if _ims:
                                 t = _IMG_ECHO_RE.sub("", t).strip()
                                 if not t and not m_att:
+                                    if (_last_u and _last_u[1] > 0 and lines
+                                            and lines[-1].get("role") == "user"):
+                                        _pf = lines[-1].get("files") or []
+                                        _hit = False
+                                        for _i, _p in enumerate(_pf):
+                                            if _ims and str(_p).endswith("_image.png"):
+                                                _pf[_i] = _ims.pop(0).strip()
+                                                _hit = True
+                                        if not _hit and not _pf:
+                                            # 防御：base64 行没带 marker 附件（罕
+                                            # 见流）——回显路径直接并入，总比隐形好
+                                            _pf = [x.strip() for x in _ims]
+                                            _ims = []
+                                        lines[-1]["files"] = _pf
                                     continue
                                 files = files + [x.strip() for x in _ims]
                             # v3.2.12：中断/续跑机器标记行整行丢弃
