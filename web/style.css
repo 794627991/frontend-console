@@ -3872,10 +3872,15 @@ html {
 
 /* v3.2.21：子代理窗格内来向消息（派发提示/追加消息）——右对齐窄气泡，
    与主会话 user 气泡同语言；时间线流内占一行 */
+/* v3.2.23（用户实锤「来都被收缩了」）：来向气泡右对齐改 fit-content+自动
+   左推——原 align-self:flex-end 在时间线 flex 列里 shrink-to-fit 塌成
+   ~98px 窄条、长文被挤成 4000px 高的细柱；fit-content 按内容取宽并受
+   max-width 封顶，高度自然撑开 */
 .hg-sub-msgs .h-msg.user.hg-sub-u, .h-tl .h-msg.user.hg-sub-u {
-  align-self: flex-end; max-width: 88%; margin: 6px 4px;
+  width: fit-content; max-width: 88%;
+  margin: 6px 0 6px auto;
   padding: 8px 12px; border-radius: 12px 12px 3px 12px;
   background: color-mix(in srgb, var(--accent) 14%, var(--bg-card));
   border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
 }
-.hg-sub-u .h-bubble { background: transparent; border: none; padding: 0; margin: 0; font-size: var(--fs-cap); }
+.hg-sub-u .h-bubble { background: transparent; border: none; padding: 0; margin: 0; font-size: var(--fs-base); }
