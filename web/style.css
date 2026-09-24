@@ -2214,6 +2214,22 @@ html {
 .hg-flowwrap > .hg-flow { flex: 1; }
 .hg-flow { overflow-y: auto; padding: 20px 32px; display: flex; position: relative;
   flex-direction: column; gap: 12px; align-items: flex-start; }
+/* v3.2.10：回合导航轨（ZCode ConversationTurnNavigator 同款）——flowwrap
+   左缘竖向刻度轨：每条用户提问一枚刻度，悬停 title 预览、点击跳转（未渲染
+   回合先扩窗再定位），当前视口回合高亮 + 轨自滚跟随；≥2 回合才显示 */
+.hg-rail { position: absolute; left: 3px; top: 50%; transform: translateY(-50%);
+  max-height: calc(100% - 5rem); width: 24px; z-index: 4;
+  display: none; flex-direction: column; gap: 0; padding: 4px 0;
+  overflow-y: auto; overflow-x: hidden; scrollbar-width: none; }
+.hg-rail::-webkit-scrollbar { display: none; }
+.hg-rail.show { display: flex; }
+.hg-rail-t { border: none; background: transparent; padding: 2px 5px;
+  display: flex; align-items: center; height: 10px; cursor: pointer; }
+.hg-rail-t i { display: block; width: 9px; height: 2px; border-radius: 2px;
+  background: color-mix(in srgb, var(--fg) 22%, transparent);
+  transition: width .15s, background-color .15s; }
+.hg-rail-t:hover i { width: 15px; background: var(--muted); }
+.hg-rail-t.act i { width: 15px; background: var(--accent); }
 /* v3.2.8：一键跳底浮动钮——离底 >350px 浮现（.show），贴底隐藏 */
 .hg-jumpbtm { position: absolute; right: 26px; bottom: 16px; z-index: 5;
   display: none; align-items: center; justify-content: center;
@@ -2253,31 +2269,9 @@ html {
 .hg-hist-more { align-self: center; width: auto; margin: 4px auto 8px; display: block;
   font-size: 11.5px; color: var(--muted); background: var(--bg-card);
   border: 1px dashed var(--border); border-radius: 14px; padding: 5px 16px; }
-/* v3.2.7：点击=扩段加载更早（只读模式退役，上滑同款）；封顶条是纯提示 */
+/* v3.2.10：点击=扩段加载更早——无封顶（上滑同款，任何会话可翻到第一条） */
 .hg-hist-more { cursor: pointer; }
 .hg-hist-more b { color: var(--accent); }
-.hg-hist-more.hg-hist-cap { border-style: solid; opacity: .92; }
-/* v3.2.9：封顶条=早期会话选择器入口（可点） */
-.hg-hist-more.hg-hist-cap b { cursor: pointer; }
-/* v3.2.9：早期会话选择器弹层（fixed 定位挂在 body，锚在封顶条旁） */
-.hg-sess-pop { position: fixed; z-index: 60; min-width: 300px; max-width: 400px;
-  max-height: 46vh; overflow-y: auto; display: flex; flex-direction: column; gap: 2px;
-  background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
-  padding: 6px; box-shadow: 0 8px 28px rgba(0,0,0,.3); }
-.hg-sess-pop-head { font-size: var(--fs-xs); color: var(--muted); padding: 4px 8px 6px;
-  border-bottom: 1px solid var(--border); margin-bottom: 4px; }
-.hg-sess-pop-empty { font-size: var(--fs-sm); color: var(--muted); padding: 10px 8px; text-align: center; }
-.hg-sess-pop-row { display: flex; flex-direction: column; gap: 1px; text-align: left;
-  border: none; background: transparent; border-radius: 7px; padding: 6px 9px;
-  cursor: pointer; font: inherit; position: relative; }
-.hg-sess-pop-row:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
-.hg-sess-pop-title { font-size: var(--fs-sm); color: var(--fg);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 340px; }
-.hg-sess-pop-sub { font-size: var(--fs-2xs); color: var(--muted); }
-.hg-sess-pop-time { position: absolute; right: 9px; top: 7px;
-  font-size: var(--fs-2xs); color: var(--muted); opacity: .8; }
-.hg-sess-pop-row.cur { outline: 1px dashed color-mix(in srgb, var(--accent) 45%, transparent);
-  outline-offset: -2px; }
 
 /* ==================== v2.24 只读禅模式（超长会话历史归档查阅）====================
    全屏覆盖：无侧栏/输入/一切入口，只剩居中历史流（VSCode 禅模式）。

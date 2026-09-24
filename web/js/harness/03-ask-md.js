@@ -249,10 +249,30 @@
         });
         a.title = /^https?:/i.test(href) ? '在系统浏览器中打开' : '工具内不支持跳转内部链接';
       });
+      _hgImgReserve(t);   // v3.2.11：已知尺寸的图片立即占位（防重渲后图载入高度突跳=抽搐根源之一）
       return t.innerHTML;
     }
     return '<p>' + esc(text).replace(/\n/g, '<br>') + '</p>';
   }
+  // v3.2.11（用户实锤「滚动条抽搐」根源之二）：图片尺寸缓存——img 首次装载
+  // 后记 src→宽高；重渲（扩段/收缩/切会话整体重建 DOM）时同图立即按
+  // aspect-ratio 占位，不再「先 0 高、载完弹开 200+px」把贴底判定和滚动
+  // 位置弹飞。监听挂 document 捕获 phase（img 的 load 不冒泡）
+  const _hgImgSizeCache = {};
+  function _hgImgReserve(root) {
+    if (!root || !root.querySelectorAll) return;
+    root.querySelectorAll('img').forEach(im => {
+      const c = _hgImgSizeCache[im.getAttribute('src') || ''];
+      if (c) im.style.aspectRatio = c[0] + ' / ' + c[1];
+    });
+  }
+  document.addEventListener('load', (e) => {
+    const t = e.target;
+    if (t && t.tagName === 'IMG' && t.naturalWidth > 0) {
+      const k = t.getAttribute('src') || '';
+      if (k && !_hgImgSizeCache[k]) _hgImgSizeCache[k] = [t.naturalWidth, t.naturalHeight];
+    }
+  }, true);
   function mdBubble(text) {
     const b = document.createElement('div');
     b.className = 'h-bubble';

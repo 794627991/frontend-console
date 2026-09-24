@@ -530,6 +530,7 @@
     _HG.histLineTs = 0; _HG.histActTs = 0; _HG.thinkPend = null;   // v3.2.2 ts 账 + v3.2.5 pend 随清场作废
     _HG.echoFast = null; _HG.seq = 0;
     _hgFlow.innerHTML = '';
+    _hgRailSync();   // v3.2.10：本地清场后收轨
   }
   function _hgSseRebuild(sid) {
     // reset 语义：事件流已无法表达真源（/rewind 换代）→ 弃快照缓存走

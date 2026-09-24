@@ -56,6 +56,7 @@ function buildClaudeHarnessTab(opts = {}) {
           <span class="hg-top-state" data-hg-state></span>
         </div>
         <div class="hg-flowwrap">
+          <nav class="hg-rail" data-hg-rail aria-label="回合导航（ZCode 同款快速跳转）"></nav>
           <div class="hg-flow" data-hg-flow></div>
           <button class="hg-jumpbtm" data-hg-jumpbtm title="跳到最新消息" aria-label="跳到最新消息">↓</button>
         </div>
@@ -142,13 +143,14 @@ function buildClaudeHarnessTab(opts = {}) {
 
   _hgQ = (s) => _hgWrap.querySelector(s);
   _hgFlow = _hgQ('[data-hg-flow]'), _hgInput = _hgQ('[data-hg-input]'),
-        _hgJumpBtm = _hgQ('[data-hg-jumpbtm]'),
+        _hgJumpBtm = _hgQ('[data-hg-jumpbtm]'), _hgRailEl = _hgQ('[data-hg-rail]'),
         _hgStateEl = _hgQ('[data-hg-state]'), _hgCostEl = _hgQ('[data-hg-cost]'),
         _hgSendBtn = _hgQ('[data-hg-send]'), _hgTitleEl = _hgQ('[data-hg-title]'),
         _hgCwdEl = _hgQ('[data-hg-cwd]'), _hgAttsEl = _hgQ('[data-hg-atts]'),
         _hgListEl = _hgQ('[data-hg-sessions]'), _hgSearchEl = _hgQ('[data-hg-search]'),
         _hgFileEl = _hgQ('[data-hg-file]'), _hgOverlayEl = _hgQ('[data-hg-overlay]'),
         _hgMentionEl = _hgQ('[data-hg-mention]'), _hgActEl = _hgQ('[data-hg-activity]');
+  _hgRailBind();   // v3.2.10：轨道点击绑定（builder 内元素就绪后）
   // v2.24 大会话 DOM 卸载（见 _hgFlowUnloadInit）：切走 tab 快照清空、切回恢复
   _HG.flowEl = _hgFlow;
   _HG.flowSnap = '';
@@ -791,59 +793,6 @@ function buildClaudeHarnessTab(opts = {}) {
     _hgFlow.scrollTop = _hgFlow.scrollHeight;
     _hgJumpBtm.classList.remove('show');
   };
-  // v3.2.9：早期会话选择器（封顶条入口）——弹层列出全部会话按活跃排序，
-  // 点选 switchTo 直跳；再点条/外点/Esc 收起。数据源 _HG.sessions（侧栏
-  // 同源快照，标题/项目/模型齐备；拉取时机由既有会话列表刷新维护）
-  function _hgSessPick(anchor) {
-    const exist = document.querySelector('.hg-sess-pop');
-    if (exist) { exist.dispatchEvent(new CustomEvent('hg-close')); return; }   // 再点收起（走 close 语义，listener 全摘）
-    const pop = document.createElement('div');
-    pop.className = 'hg-sess-pop';
-    const sess = (_HG.sessions || []).slice()
-      .sort((a, b) => (b.last_active || 0) - (a.last_active || 0));
-    if (!sess.length) {
-      pop.innerHTML = '<div class="hg-sess-pop-empty">没有可跳转的会话</div>';
-    } else {
-      pop.innerHTML = '<div class="hg-sess-pop-head">跳转到会话</div>' +
-        sess.map(x => {
-          const proj = String(x.cwd || '').split(/[\/]/).pop() || '~';
-          const cur = x.sid === _HG.sid;
-          return `<button class="hg-sess-pop-row${cur ? ' cur' : ''}" data-pick="${esc(x.sid)}"` +
-            ` title="${esc(x.cwd || '')} · ${esc(x.title || '')}">` +
-            `<span class="hg-sess-pop-title">${esc(x.title || '新会话')}</span>` +
-            `<span class="hg-sess-pop-sub">${esc(proj)}${x.model ? ' · ' + esc(String(x.model).split('[')[0]) : ''}` +
-            `${x.busy ? ' · 回复中' : ''}${cur ? ' · 当前' : ''}</span>` +
-            `<span class="hg-sess-pop-time">${esc(_harnessRelTime(x.last_active || 0))}</span>` +
-            `</button>`;
-        }).join('');
-    }
-    document.body.appendChild(pop);
-    const r = anchor.getBoundingClientRect();
-    pop.style.left = Math.max(8, Math.min(window.innerWidth - pop.offsetWidth - 8,
-      r.left + r.width / 2 - pop.offsetWidth / 2)) + 'px';
-    // 条在视口顶部——弹层向下展开；越底则向上
-    const down = r.bottom + pop.offsetHeight + 8 <= window.innerHeight;
-    pop.style.top = down ? (r.bottom + 6) + 'px' : Math.max(8, r.top - pop.offsetHeight - 6) + 'px';
-    const close = () => {
-      pop.remove();
-      document.removeEventListener('mousedown', out, true);
-      document.removeEventListener('keydown', esc, true);
-    };
-    const out = (ev) => { if (!pop.contains(ev.target)) close(); };
-    // v3.2.9R（审计E）：Esc 挂 document——焦点在封顶条（pop 外）时 pop 节点
-    // 监听收不到冒泡；capture 全局监听随 close 摘除（与 out 同模式）
-    const esc = (ev) => { if (ev.key === 'Escape') close(); };
-    pop.addEventListener('hg-close', close);   // toggle 收起走同一条 close
-    setTimeout(() => { document.addEventListener('mousedown', out, true);
-                      document.addEventListener('keydown', esc, true); }, 0);
-    pop.addEventListener('click', (ev) => {
-      const row = ev.target.closest('[data-pick]');
-      if (!row) return;
-      const sid = row.dataset.pick;
-      close();
-      if (sid && sid !== _HG.sid) switchTo(sid);
-    });
-  }
   // 主层「加载更早」提示条：事件委托（绑一次永在，bar 重建不丢点击）。
   // v3.2.7（用户定调「只读模式退役」）：点击=上滑同款扩段（_histRefresh
   // 大窗口重渲+滚动锚定）；封顶条（hg-hist-cap）是纯提示不可点
@@ -851,9 +800,6 @@ function buildClaudeHarnessTab(opts = {}) {
     const bar = e.target.closest('.hg-hist-more');
     if (!bar || !_hgFlow.contains(bar)) return;
     e.stopPropagation();
-    // v3.2.9（用户定调）：封顶条=早期会话选择器入口——弹层列出全部会话
-    //（按活跃排序，数据源 _HG.sessions 与侧栏同源），点选 switchTo 直跳
-    if (bar.classList.contains('hg-hist-cap')) { _hgSessPick(bar); return; }
     if (_HG.busy || _histBusy || !_HG.histAll || !_HG.histLive || !_HG.sid) return;
     const capStart = Math.max(0, _HG.histAll.length - _HG.HIST_CAP);
     if (_HG.histStart <= capStart) return;
@@ -901,6 +847,7 @@ function buildClaudeHarnessTab(opts = {}) {
       const _dj = _hgFlow.scrollHeight - _hgFlow.scrollTop - _hgFlow.clientHeight;
       _hgJumpBtm.classList.toggle('show', _dj > 350);
     }
+    _hgRailActiveRaf();   // v3.2.10：轨当前项跟随视口
     // v2.35.2（P0 切会话信息丢失根因）：histLive 门——histAll 只有在真正的
     // 窗口渲染（_histRender，含扩/收缩重渲）之后才与 DOM 建立对应关系；
     // 快照恢复路径的懒段补填（_histFetch）也会填 histAll，但 histStart 停在
@@ -909,7 +856,7 @@ function buildClaudeHarnessTab(opts = {}) {
     // 全部重新刷新」）。非窗口态一律不进扩/收缩分支；懒段展开按 hi 索引取
     // 数据不受影响。
     if (!_HG.histAll || !_HG.histLive || _HG.busy || _histBusy) return;
-    const nearTop = _hgFlow.scrollTop <= 60;
+    const nearTop = _hgFlow.scrollTop <= 100;   // v3.2.11：60→100——滚轮惯性/拖动条贴近顶部时更稳触发扩段
     const distBottom = _hgFlow.scrollHeight - _hgFlow.scrollTop - _hgFlow.clientHeight;
     const shown = _HG.histAll.length - _HG.histStart;
     if (nearTop && _HG.histStart > 0
@@ -936,18 +883,29 @@ function buildClaudeHarnessTab(opts = {}) {
         });
       }
     } else if (distBottom <= 4 && shown > _HG.HIST_PAGE * 2
-               && Date.now() - (_HG.histRestoredAt || 0) > 400
-               && Date.now() - (_HG.lastShrinkAt || 0) > 500) {
-      // 拉回底部收缩（DOM 瘦身）：v2.37R4 改**增量收缩**——直接摘除头部
-      // 整组节点+histStart 前移，不再 _histRefresh 全量重渲。旧实现重拉
-      // 转写重渲=闪屏（v2.35.2 起被 histLive 门拦死=DOM 无限膨胀），增量
-      // 方案两者兼得：账目与 DOM 恒一致，无闪屏、无网络请求。
-      // v2.37R6（P0 回归收紧）：触发判据从 ≤80px 收到 ≤4px（真正贴底）——
-      // 80px 时长距下行中途即触发，摘头+回锚把用户视口反复上提（📖 条
-      // 插入再叠加 30px 下移偏差），与扩段形成拉锯=「拉不到底」的体感；
-      // 另加 500ms 速率限制兜残余循环
-      _HG.lastShrinkAt = Date.now();
-      _hgShrinkHead();
+               && Date.now() - (_HG.histRestoredAt || 0) > 400) {
+      // 拉回底部收缩（DOM 瘦身）：v2.37R4 增量收缩（摘头整组+histStart 前移，
+      // 无网络请求）。v3.2.11（用户实锤「滚动条抽搐」）：改**贴底滞留 600ms
+      // 才收**——滚动/惯性冲到底的瞬间就摘头，滚动条拇指尺寸跳变+视口回锚
+      // 会打断还在进行的滚动手势（体感抽搐、与扩段拉锯）；滞留判定用定时
+      // 器（滞留期间无新 scroll 事件也能触发），离开底部即取消
+      clearTimeout(_HG._shrinkT);
+      // 自续期：贴底后被图片装载等内容增长顶离（滚动锚定调整中途清掉在途
+      // 定时器且不再有 scroll 事件重排）时再等一轮——上界 8 轮防无限续
+      let _tries = 0;
+      const _chk = () => {
+        if (!_HG.histAll || _HG.busy) return;
+        if (_hgFlow.scrollHeight - _hgFlow.scrollTop - _hgFlow.clientHeight > 4) {
+          if (++_tries < 8) _HG._shrinkT = setTimeout(_chk, 600);
+          return;   // 已离开底部（真滚走则外层 clear 兜底）
+        }
+        if (Date.now() - (_HG.lastShrinkAt || 0) < 500) return;
+        _HG.lastShrinkAt = Date.now();
+        _hgShrinkHead();
+      };
+      _HG._shrinkT = setTimeout(_chk, 600);
+    } else if (distBottom > 4) {
+      clearTimeout(_HG._shrinkT);   // 离开底部——取消在途收缩
     }
   }, { passive: true });
 
@@ -1928,3 +1886,89 @@ function buildClaudeHarnessTab(opts = {}) {
   return _hgConn;
   return _hgConn;
 }
+
+  // ==================== v3.2.10：回合导航轨（ZCode ConversationTurnNavigator 同款）====================
+  // 会话左缘竖向刻度轨：每条用户提问一枚刻度，悬停 title 预览、点击跳转到该
+  // 回合；当前视口所在回合高亮 + 轨自滚跟随。未渲染回合（在 histStart 之上）
+  // 按行号先扩窗（_histRefresh 到该行）再凭 data-turn-hi 定位——**无封顶**，
+  // 任何回合任何时候可达（DOM 防爆=折叠回合+懒抽屉+渐进加载，非封顶）
+  function _hgRailSync() {
+    const rail = _hgRailEl;
+    if (!rail) return;
+    const items = [];
+    const all = _HG.histAll;
+    // ① 未渲染区：histAll 里 histStart 之前的 user 行（快照恢复态 histAll
+    // 缺失时该区为空——轨只含已渲染回合，首次扩段后补全）
+    if (all && _HG.histStart > 0) {
+      for (let i = 0; i < _HG.histStart; i++) {
+        const l = all[i];
+        if (l && l.role === 'user' && String(l.text || '').trim())
+          items.push({ hi: i, el: null, txt: String(l.text).replace(/\s+/g, ' ').trim() });
+      }
+    }
+    // ② 已渲染区：flow 里的 user 气泡（盖章或快照旧 DOM 都认）
+    _hgFlow.querySelectorAll('.h-msg.user').forEach(el => {
+      items.push({ hi: +(el.dataset.turnHi || -1), el,
+        txt: (el.textContent || '').replace(/\s+/g, ' ').trim() });
+    });
+    if (items.length < 2) {
+      rail.classList.remove('show'); rail.innerHTML = '';
+      _HG.railItems = null; return;
+    }
+    rail.innerHTML = items.map((it, k) =>
+      `<button class="hg-rail-t" data-rk="${k}" title="${esc(it.txt.slice(0, 160))}" ` +
+      `aria-label="跳转到第 ${k + 1} 条提问"><i></i></button>`).join('');
+    _HG.railItems = items;
+    rail.classList.add('show');
+    _hgRailActive();
+  }
+  function _hgRailActive() {
+    const rail = _hgRailEl;
+    const items = _HG.railItems;
+    if (!rail || !items || !items.length) return;
+    const st = _hgFlow.scrollTop + 80;
+    let act = -1;
+    for (let k = 0; k < items.length; k++) {
+      const el = items[k].el;
+      if (el && el.isConnected && el.offsetTop <= st) act = k;
+    }
+    if (act < 0) act = 0;
+    const prev = rail.querySelector('.hg-rail-t.act');
+    const cur = rail.children[act];
+    if (prev === cur) return;
+    if (prev) prev.classList.remove('act');
+    if (cur) {
+      cur.classList.add('act');
+      // 轨自滚跟随（居中）——轨自身在滚动时（用户翻轨）不抢位
+      const want = cur.offsetTop - rail.clientHeight / 2;
+      if (Math.abs(want - rail.scrollTop) > rail.clientHeight / 2) rail.scrollTop = want;
+    }
+  }
+  function _hgRailActiveRaf() {
+    if (_railRaf) return;
+    _railRaf = requestAnimationFrame(() => { _railRaf = 0; _hgRailActive(); });
+  }
+  function _hgRailBind() {
+  if (_hgRailEl) _hgRailEl.addEventListener('click', (e) => {
+    const t = e.target.closest('.hg-rail-t');
+    if (!t) return;
+    const it = _HG.railItems && _HG.railItems[+t.dataset.rk];
+    if (!it) return;
+    if (it.el && it.el.isConnected) {
+      it.el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      return;
+    }
+    // 未渲染回合：先扩窗到该行（histStart=该行号——_histRender 的段头回退
+    // 只对 sub_ 行生效，user 行精确落位），渲染完成凭章定位
+    if (it.hi >= 0 && !_HG.busy && !_histBusy && _HG.sid && _HG.histAll) {
+      _histBusy = true;
+      const sidAt = _HG.sid;
+      _histRefresh(sidAt, it.hi).then(() => {
+        _histBusy = false;
+        if (_HG.sid !== sidAt) return;
+        const el = _hgFlow.querySelector('.h-msg.user[data-turn-hi="' + it.hi + '"]');
+        if (el) el.scrollIntoView({ block: 'start' });
+      });
+    }
+  });
+  }

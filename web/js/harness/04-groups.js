@@ -465,6 +465,7 @@
     if (live !== false) {
       const g = grpEnsure(true);
       phStart(g);                              // AI 未输出前的活泼占位（每轮独立）
+      _hgRailSync();   // v3.2.10：live 新回合入轨（历史路径在 _histRender 尾统一 sync）
     }
     return d;
   }

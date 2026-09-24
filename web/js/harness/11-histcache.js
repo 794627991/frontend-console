@@ -15,31 +15,36 @@
     _HG.histStart = start;
     _HG.histLive = true;   // v2.35.2：窗口渲染完成——histAll/DOM 建立对应，滚动扩收自此放行
     _HG.histStale = false; // v2.43.2（R2-缺口A）：本次渲染 DOM/hi/hEnd 账目全新一致——降级态解除
-    _hgFlow.innerHTML = '';
+    // v3.2.11（用户实锤「滚动条抽搐」）：原子渲染——全部行先落**游离缓冲**再
+    // 一次性换入。旧实现逐行 append 活 DOM，几百行渲染期间滚动条逐帧长高
+    // （抽搐）且锚定前的中间态可被绘制（上滑扩段打断滚动手势=「必须往下
+    // 再往上」）。游离态渲染对子模块透明：addRow/grpEnsure/closeRun 全走
+    // _hgFlow 引用；isNearBottom 在游离容器上恒 false（=回放收起语义，正确）
+    const _realFlow = _hgFlow;
+    const _buf = document.createElement('div');
+    _hgFlow = _buf;
+    _realFlow.innerHTML = '';
     if (start > 0) {
       const bar = document.createElement('div');
       bar.className = 'hg-hist-more';
-      // v3.2.7（用户定调）：只读模式退役——更早内容一律上滑/点击扩段加载
-      // （现有 ZCode 渲染器直出，翻阅体验与主流一致）；到 CAP 硬顶后不再
-      // 载入（DOM 不爆），提示条指向左侧会话列表定位早期会话
+      // v3.2.10（用户定调「绝对不允许封顶」）：无上限——任何时候都可上滑/
+      // 点击扩段直到第一条；回合间快速定位走左缘回合导航轨（_hgRailSync）
       // v2.43.1（R-次要④）：计数按可见行——sub_* 行聚段后不单独占消息流位，
       // 计入会把「剩 N 条」虚高（账目 histStart 仍是行号，仅显示口径剔除）
       const visN = start - lines.slice(0, start).filter(
         l => l && l.role && String(l.role).indexOf('sub_') === 0).length;
-      if (start <= capStart) {
-        // 已到翻阅硬顶：点击弹出「早期会话选择器」（全部会话按活跃排序，
-        // 点选直跳——用户定调：侧边能力必须能跳转到所有早期会话）
-        bar.classList.add('hg-hist-cap');
-        bar.innerHTML = '⬆ 已到浏览上限（已载入最近 ' + (lines.length - start) +
-          ' 行，更早内容不载入防卡顿）——<b>点击选择早期会话 ↗</b>';
-      } else {
-        bar.innerHTML = '📖 剩 ' + visN + ' 条更早消息——<b>点击加载更早</b>（上滑自动加载）';
-      }
+      bar.innerHTML = '📖 剩 ' + visN + ' 条更早消息——<b>点击加载更早</b>（上滑自动加载 / 左侧刻度轨直达）';
       // 点击走 flow 级事件委托（下方绑定一次）：bar 在扩/收/重渲中反复重建，
       // 直绑 onclick 一旦在某次重建竞态中丢失就永久点不动（用户实锤「又不好使了」）
       _hgFlow.appendChild(bar);
     }
-    if (!lines.length) return;
+    if (!lines.length) {
+      // v3.2.11：游离缓冲期早退必须先归还 _hgFlow 引用（否则全后续渲染
+      // 都写进游离容器——主界面消失级事故）
+      _hgFlow = _realFlow;
+      _hgRailSync();
+      return;
+    }
     _HG.noScroll = true;                        // v2.16：逐行 append 不反复重排
     _HG.histLineTs = 0; _HG.histActTs = 0; _HG.thinkPend = null;   // v3.2.2 ts 账 + v3.2.5 思考段时长 pend 随渲染重置
     _HG.openState = _hgLoadOpen(_HG.sid);       // v3.2.1：开合仓（现仅 sub: 段折叠语义键）兼重建期标志位（t0 不编造/秒表不亮/查阅定稿必收）
@@ -50,6 +55,13 @@
       let lastAsst = null;
       lines.slice(start).forEach((l, i) => {
         renderHistLine(l, start + i);
+        // v3.2.10：user 行盖 turn-hi 章——回合导航轨的 DOM 跳转锚（未渲染
+        // 回合按 histAll 行号扩窗后凭此定位）
+        if (l.role === 'user' && String(l.text || '').trim()) {
+          const _us = _hgFlow.querySelectorAll('.h-msg.user');
+          const _lu = _us[_us.length - 1];
+          if (_lu) _lu.dataset.turnHi = String(start + i);
+        }
         // v2.37R4（DOM 收缩）：行尾戳——每行渲染完后在 flow 最后一个元素上
         // 记「到此为止已含第 hi 行」。增量收缩按戳定位头部边界（无戳孩子
         // 属于下一个带戳孩子=同一条线的先导元素），账目与 DOM 恒一致
@@ -126,7 +138,15 @@
       if (!(opt && opt.noFinalize))
         grpFinalize(true, { hist: true, turnEnd: true, endTs: _HG.histActTs || 0 });
     }
-    finally { _HG.noScroll = false; _HG.openState = null; }
+    finally {
+      _HG.noScroll = false; _HG.openState = null;
+      // 原子换入：单次 DOM 变更单次布局——滚动条从旧态直达终态，无中间帧
+      const _frag = document.createDocumentFragment();
+      while (_buf.firstChild) _frag.appendChild(_buf.firstChild);
+      _realFlow.replaceChildren(_frag);
+      _hgFlow = _realFlow;
+      _hgRailSync();
+    }
   }
   function _hgShrinkHead() {
     if (!_HG.histAll || !_HG.histAll.length) return;
@@ -161,6 +181,7 @@
     }
     if (newStart < 0) return;                    // 纯无戳：零摘除，安全放弃
     _HG.histStart = newStart;
+    _hgRailSync();   // v3.2.10：摘头后轨补未渲染区项
     // 视口锚定（v2.46 修「翻不下来」回归——CDP+Playwright 真实布局实证）：
     // 摘除头部内容后 scrollHeight 缩小，浏览器会对越界的 scrollTop 做钳制
     // （读取 scrollHeight 强制布局时生效）——钳制本身就是正确的视觉锚定

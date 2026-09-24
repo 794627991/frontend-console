@@ -70,10 +70,16 @@
       openSSE(null); setBusy(false);
       _hgTitleEl.textContent = '新会话'; _hgCwdEl.textContent = '';
       renderList(); renderQueue();
+      _hgRailSync();   // v3.2.10：空 flow 收轨
       _hgInput.focus();
       return;
     }
-    const c = _HG.cache[sid];
+    let c = _HG.cache[sid];
+    // v3.2.11（用户实锤「有的回合没整合在一起」）：旧结构快照（v3.2 前的
+    // DOM：无 .h-turn-body 回合闭合结构）恢复后思考/工具/正文永远散着——
+    // 弃快照走 transcript 重渲，全部回合统一新结构（头+折叠体+根区结论）
+    if (c && c.html && c.html.indexOf('h-turn-body') === -1
+        && c.html.indexOf('h-grp') !== -1) c = null;
     if (c) {
       // v3.1：keep-warm 命中——取消该快照的延迟销毁（saveCache 排程的 30s
       // 定时器），热快照继续作为 LRU 一员存活
@@ -196,6 +202,7 @@
       // 再也不弹（用户实测「有实际对话但无计时条、发送键不变■」）。
       // 后端 events 接口顺带返回真实 busy，按它恢复（v3.0 兼带 epoch 校验）
       _hgEventsPoll(sid);
+      _hgRailSync();   // v3.2.10：快照恢复后重建轨（未渲染区项待 histAll 补全后自动出现）
     } else {
       _hgFlow.innerHTML = '';
       try {
