@@ -55,7 +55,10 @@ function buildClaudeHarnessTab(opts = {}) {
           <span class="hg-vis-ind" data-hg-visind style="display:none"></span>
           <span class="hg-top-state" data-hg-state></span>
         </div>
-        <div class="hg-flow" data-hg-flow></div>
+        <div class="hg-flowwrap">
+          <div class="hg-flow" data-hg-flow></div>
+          <button class="hg-jumpbtm" data-hg-jumpbtm title="跳到最新消息" aria-label="跳到最新消息">↓</button>
+        </div>
         <div class="hg-card-wrap">
           <div class="hg-queue" data-hg-queue style="display:none"></div>
           <div class="hg-quote" data-hg-quote style="display:none">
@@ -139,6 +142,7 @@ function buildClaudeHarnessTab(opts = {}) {
 
   _hgQ = (s) => _hgWrap.querySelector(s);
   _hgFlow = _hgQ('[data-hg-flow]'), _hgInput = _hgQ('[data-hg-input]'),
+        _hgJumpBtm = _hgQ('[data-hg-jumpbtm]'),
         _hgStateEl = _hgQ('[data-hg-state]'), _hgCostEl = _hgQ('[data-hg-cost]'),
         _hgSendBtn = _hgQ('[data-hg-send]'), _hgTitleEl = _hgQ('[data-hg-title]'),
         _hgCwdEl = _hgQ('[data-hg-cwd]'), _hgAttsEl = _hgQ('[data-hg-atts]'),
@@ -781,6 +785,12 @@ function buildClaudeHarnessTab(opts = {}) {
   // v2.24.11 扩/收缩前必须重拉 transcript：histAll 是切会话时拉的快照，
   // 流式期间的新消息（用户刚发的+AI 回复）不在里面——直接用旧快照重渲会
   // 把它们从界面上抹掉（用户实测「消息突然没了」；jsonl 完好=纯显示层丢失）
+  // v3.2.8：一键跳底——离底浮现的浮动钮，点击直跳 flow 底（贴底即触发
+  // 既有增量收缩，DOM 顺带瘦身；瞬时跳：长距离 smooth 滚动慢且晕）
+  if (_hgJumpBtm) _hgJumpBtm.onclick = () => {
+    _hgFlow.scrollTop = _hgFlow.scrollHeight;
+    _hgJumpBtm.classList.remove('show');
+  };
   // 主层「加载更早」提示条：事件委托（绑一次永在，bar 重建不丢点击）。
   // v3.2.7（用户定调「只读模式退役」）：点击=上滑同款扩段（_histRefresh
   // 大窗口重渲+滚动锚定）；封顶条（hg-hist-cap）是纯提示不可点
@@ -830,6 +840,12 @@ function buildClaudeHarnessTab(opts = {}) {
     btn.disabled = false;
   });
   _hgFlow.addEventListener('scroll', () => {
+    // v3.2.8：一键跳底钮显隐——离底 >350px 浮现（任何渲染态都要刷新，
+    // 先于下方 histLive 门）
+    if (_hgJumpBtm) {
+      const _dj = _hgFlow.scrollHeight - _hgFlow.scrollTop - _hgFlow.clientHeight;
+      _hgJumpBtm.classList.toggle('show', _dj > 350);
+    }
     // v2.35.2（P0 切会话信息丢失根因）：histLive 门——histAll 只有在真正的
     // 窗口渲染（_histRender，含扩/收缩重渲）之后才与 DOM 建立对应关系；
     // 快照恢复路径的懒段补填（_histFetch）也会填 histAll，但 histStart 停在

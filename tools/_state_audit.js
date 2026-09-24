@@ -15,4 +15,4 @@ if (problems.length) {
   console.log('⚠ main 无赋值:', problems.join(' '));
   process.exit(1);
 }
-console.log('全部 38 名在 main.js builder 内有赋值 ✓');
+console.log(`全部 ${names.length} 名在 main.js builder 内有赋值 ✓`);

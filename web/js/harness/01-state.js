@@ -4,6 +4,7 @@ let _hgWrap;   // wrap → _hgWrap
 let _hgConn;   // conn → _hgConn
 let _hgQ;   // q → _hgQ
 let _hgFlow;   // flow → _hgFlow
+let _hgJumpBtm;   // jumpBtm → _hgJumpBtm（v3.2.8 一键跳底浮动钮）
 let _hgInput;   // input → _hgInput
 let _hgStateEl;   // stateEl → _hgStateEl
 let _hgCostEl;   // costEl → _hgCostEl

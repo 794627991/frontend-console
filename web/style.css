@@ -2208,8 +2208,23 @@ html {
    v2.24.2：align-items center→flex-start——列整体靠左（用户定调「气泡
    要靠左」：居中在宽窗下左侧大片空白，看着像「跑到中间」；靠左贴合
    工具型界面的紧凑习惯，右侧留白由 .h-msg max-width 自然形成） */
-.hg-flow { flex: 1; overflow-y: auto; padding: 20px 32px; display: flex; position: relative;
+/* v3.2.8：flow 包一层定位容器——跳底浮动钮在 flow 外（_histRender 的
+   innerHTML='' 与快照序列化都只动 flow，钮不随渲灭） */
+.hg-flowwrap { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
+.hg-flowwrap > .hg-flow { flex: 1; }
+.hg-flow { overflow-y: auto; padding: 20px 32px; display: flex; position: relative;
   flex-direction: column; gap: 12px; align-items: flex-start; }
+/* v3.2.8：一键跳底浮动钮——离底 >350px 浮现（.show），贴底隐藏 */
+.hg-jumpbtm { position: absolute; right: 26px; bottom: 16px; z-index: 5;
+  display: none; align-items: center; justify-content: center;
+  width: 34px; height: 34px; border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+  background: color-mix(in srgb, var(--bg-card) 88%, transparent);
+  color: var(--accent); font-size: 16px; line-height: 1; cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0,0,0,.18);
+  transition: color .15s, border-color .15s, transform .15s; }
+.hg-jumpbtm.show { display: inline-flex; }
+.hg-jumpbtm:hover { color: var(--fg-bright); border-color: var(--accent); transform: translateY(-1px); }
 /* v2.10：flow 全部直接子项禁垂直压缩——定高 column flex 子项默认
    flex-shrink:1，超高内容(长思考块/大抽屉)会被按比例压扁到 ~2px 再被
    各自 overflow:hidden 裁掉（v2.9 只豁免了抽屉，用户实测思考块仍被压）。
