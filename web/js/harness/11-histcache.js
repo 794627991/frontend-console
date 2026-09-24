@@ -32,6 +32,7 @@
     }
     if (!lines.length) return;
     _HG.noScroll = true;                        // v2.16：逐行 append 不反复重排
+    _HG.histLineTs = 0; _HG.histActTs = 0;      // v3.2.2：行级 ts 账随渲染重置（段起点/终点事实源）
     _HG.openState = _hgLoadOpen(_HG.sid);       // v3.2.1：开合仓（现仅 sub: 段折叠语义键）兼重建期标志位（t0 不编造/秒表不亮/查阅定稿必收）
     try {
       // v2.28.16：边渲染边标回合边界——assistant 行之后的下一条 user 行
@@ -67,20 +68,26 @@
           if (d.agentsRpl.length > 5) d.agentsRpl.shift();
         }
         if (l.role === 'assistant') lastAsst = _HG.lastAsstEl;
-        else if (l.role === 'user' && lastAsst && lastAsst.dataset.rwa) {
+        // v3.2.4R(F4)：排除已折进时间线的中间正文（中段边界定稿折体后
+        // lastAsst 可能已在 .h-tl 内）——回滚钮只授予根区可见的回合尾正文
+        else if (l.role === 'user' && lastAsst && lastAsst.dataset.rwa
+                 && !lastAsst.closest('.h-tl')) {
           lastAsst.classList.add('can-rewind');
           lastAsst = null;
         }
       });
-      if (lastAsst && lastAsst.dataset.rwa) lastAsst.classList.add('can-rewind');
+      if (lastAsst && lastAsst.dataset.rwa && !lastAsst.closest('.h-tl')) lastAsst.classList.add('can-rewind');   // v3.2.4R(F4)：同上排除 tl 内正文
       renderSideStatus();     // v2.30：回放后刷新侧栏动态（todos 已从工具行重建）
       // v3.2.1R(F1)：尾组定稿下沉到渲染器本体——此前只在 switchTo/
       // _hgSseRebuild/_hgReloadFlow 三入口补，扩段（_histRefresh）、快照指纹
       // 漂移、懒填点校验失败的重渲路径全部漏收：尾组回放期不亮头（无
       // 「已工作」行）+ 体全开，且坏形态随 saveCache 固化跨快照往返（对抗
       // 审计 F1 实锤路径）。busy 会话的尾组是进行中的活组（phResume 要认
-      // 回续秒表），此类调用方传 opt.noFinalize 跳过
-      if (!(opt && opt.noFinalize)) grpFinalize(true, { hist: true });
+      // 回续秒表），此类调用方传 opt.noFinalize 跳过。
+      // v3.2.2：turnEnd（尾组正文=回合最终结论留在头外）+ endTs=末活动行 ts
+      //（段工时事实——用户实测「没显示工作时长」）
+      if (!(opt && opt.noFinalize))
+        grpFinalize(true, { hist: true, turnEnd: true, endTs: _HG.histActTs || 0 });
     }
     finally { _HG.noScroll = false; _HG.openState = null; }
   }

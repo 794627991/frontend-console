@@ -35,6 +35,12 @@
     // 实锤「终端默认全部不收起」），统一默认收起（用户定调）
   }
   function renderHistLine(l, hi) {
+    // v3.2.2（用户实测「没显示工作时长」）：行级 ts 账——histLineTs=当前行
+    // （grpEnsure 给切分组取段起点）；histActTs=最近一次非 user 活动（定稿
+    // 取段终点：中段切组在渲染中途读 histActTs 恰为被定稿组末活动行；回放
+    // 尾组定稿在循环外读=全段末活动）。旧转写缺 ts 保持 0——落无数字形态
+    const _ts = l && l.ts ? Date.parse(l.ts) : 0;
+    if (_ts > 0) _HG.histLineTs = _ts;
     if (l.role === 'peer') {          // v2.27.3：跨会话回传（识图结论）历史回看
       // v2.53：第 5 参 hist——历史回放绝不开新段（防假「协作·运行中」段吞正文）
       renderPeer(l.name, l.text, null, true, true);
@@ -43,10 +49,13 @@
       renderVisionRelayHist(l);
     }
     else if (l.role === 'renew') {    // v2.27.23：超窗续命注入折叠为一行分割线
+      // v3.2.4R(F3)：对齐 live（10-sse renew 分支先定稿）——不定稿则分割线落
+      // flow 尾、同回合续内容仍进组根，回放时序倒挂
+      grpFinalize(true, { hist: true, endTs: _HG.histActTs || 0 });
       renderRenew(l.text);
     }
     else if (l.role === 'audit') {    // v2.34：审计警示卡回放（v2.34.1 与实时同文本，
-      grpFinalize(true, { hist: true });   // 由 audit log 并入；对齐实时分支先定稿上一组（v3.2R1(P0)：回放不吃时钟）
+      grpFinalize(true, { hist: true, endTs: _HG.histActTs || 0 });   // 由 audit log 并入；对齐实时分支先定稿上一组（v3.2R1(P0)：回放不吃时钟；v3.2.2 段末 ts）
       renderAudit(l.text);            // 否则纯工具收尾回合的补审卡会挂错进前组）
     }
     else if (l.role === 'user') {
@@ -101,6 +110,9 @@
              || l.role === 'sub_tool' || l.role === 'sub_result' || l.role === 'sub_note') {
       renderHistSub(l, hi);
     }
+    // v3.2.2：活动行 ts 后置入账——渲染中途的定稿（切组/审计）读到的是上一
+    // 次活动（=被定稿组的末活动行），本行渲染完才成为新的「最近活动」
+    if (_ts > 0 && l.role && l.role !== 'user') _HG.histActTs = _ts;
   }
   function renderHistSub(l, hi) {
     const pid = l.agent;
@@ -271,7 +283,13 @@
     if (_HG.think && _HG.think.seg && _HG.think.seg.isConnected) return;
     _tlExpFlush(!!_HG.openState);        // v3.2：思考段打断查阅聚组（回放态必收）
     const g = grpEnsure(true);
-    g.think.box.style.display = '';             // v2.20：第一段思考到位，思考抽屉翻回显示
+    // v3.2.4（用户实锤「以前有思考和工具调用顺序的，现在没顺序了」）：思考段
+    // 作为**行**挂进工具时间线——思考段↔工具行按发生顺序交替排列（对照
+    // ZCode 回合过程区的时序流）。汇总胶囊（🧠 思考 N 次）退役为隐藏容器
+    // （segCount 统计与 grpFromDom 认回判据仍依赖它）；旧结构组（v3.1 快照
+    // 无 .h-tl）回落旧抽屉形态
+    const _toTl = !!g.tl;
+    if (!_toTl) g.think.box.style.display = '';   // 旧组：第一段思考到位，思考抽屉翻回显示
     if (!hist) _turnHeadShow(g);                // v3.2：纯思考回合也亮「工作中」秒表（回放不亮——定稿时直接冻结文案）
     const n = thinkSegCount(g) + 1;
     thinkSegCountSet(g, n);
@@ -290,19 +308,29 @@
     }
     seg.innerHTML =
       `<button class="h-think-seg-head"><span class="h-chev">▸</span>` +
-      `<span class="h-think-seg-name">思考</span>` +
+      `<span class="h-think-seg-name">🧠 思考 ${n}</span>` +
       `<span class="h-think-seg-t" data-hg-seg-t data-hg-think-t>0s</span></button>` +
       `<div class="h-think-seg-body"></div>` +
       // v2.21：段尾右下角收起钮——长思考读到尾顺手收，不用滚回顶部点头
       `<i class="h-think-seg-fold" title="收起本段">收起 ⌄</i>`;
-    g.think.body.appendChild(seg);
+    if (_toTl) {
+      g.tl.appendChild(seg);                 // v3.2.4：时间线行——与工具行同序
+      g.tl.style.display = '';
+    } else {
+      g.think.body.appendChild(seg);
+    }
     _HG.think = { seg, grp: g };
-    if (!_grpHasAsst()) {
-      // 本组还没正文 → 抽屉保持展开 + 段计时动画（thinkHeadUpdate 驱动）
-      if (!hist && g.think.box.dataset.userToggled !== '1') g.think.box.classList.add('open');
-      if (!hist) thinkHeadUpdate();
+    _turnHeadSubPaint(g);                    // v3.2.4：头副位补思考计数（· N 思考 · M 工具）
+    if (!_toTl) {
+      // 旧组抽屉形态：本组还没正文 → 抽屉保持展开 + 段计时动画
+      if (!_grpHasAsst()) {
+        if (!hist && g.think.box.dataset.userToggled !== '1') g.think.box.classList.add('open');
+        if (!hist) thinkHeadUpdate();
+      } else if (!hist) {
+        segHeadUpdate(seg);
+      }
     } else if (!hist) {
-      segHeadUpdate(seg);
+      thinkHeadUpdate();                     // 时间线形态：段计时照走（「思考中…」/时长）
     }
   }
   function _grpHasAsst() {

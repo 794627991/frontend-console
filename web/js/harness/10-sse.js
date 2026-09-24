@@ -477,7 +477,8 @@
       // 与中断标记（subtype 非 success → 「已停止」）
       grpFinalize(true, { durMs: (typeof o.duration_ms === 'number' ? o.duration_ms : 0),
                           interrupted: !!(o.subtype && o.subtype !== 'success'),
-                          hist: _adopted });
+                          hist: _adopted,
+                          turnEnd: true });   // v3.2.2：回合收尾——最终正文留在折叠头外
       // v2.18：本轮组定稿——用户没手动
                                           // 操作过且在底部跟读时自动收起（想看再点开，
                                           // 各抽屉独立开合）
@@ -511,6 +512,7 @@
     _HG.proj = null;   // v3.1：投影随清场作废（snapshot 重放将重建）
     _subReset();
     _HG.think = null; _HG.noScroll = false; _HG.openState = null;
+    _HG.histLineTs = 0; _HG.histActTs = 0;   // v3.2.2：行级 ts 账随清场作废
     _HG.echoFast = null; _HG.seq = 0;
     _hgFlow.innerHTML = '';
   }
@@ -530,7 +532,7 @@
         if (!j.lines.length) showWelcome();
         else _histRender(j.lines, Math.max(0, j.lines.length - _HG.HIST_PAGE),
                          { noFinalize: !!j.busy });   // v3.2.1R(F1)：尾组定稿在渲染器内；busy 活组留给 phResume
-        if (j.busy) phResume(); else grpFinalize(true, { hist: true });   // 幂等兜底（v3.2R1(P0)：回放不吃时钟）
+        if (j.busy) phResume(); else grpFinalize(true, { hist: true, turnEnd: true });   // 幂等兜底（v3.2R1(P0)：回放不吃时钟；v3.2.4R(F5) 对齐 switchTo turnEnd）
         _hgScrollBottom(true);
         setBusy(!!j.busy, j.busy_since);
         openSSE(sid, _HG.seq);
@@ -613,7 +615,7 @@
       else if (it.kind === 'ask_done') askDone(it);
       else if (it.kind === 'interrupted') {
         endThinking(); _hgVisionSweep(true);
-        grpFinalize(true, { interrupted: true, hist: _hgTailAdopt() });   // v3.2.1R2(R2-1/R2-3)：切走期间中断的残尾认回定稿
+        grpFinalize(true, { interrupted: true, hist: _hgTailAdopt(), turnEnd: true });   // v3.2.1R2(R2-1/R2-3)认回；v3.2.2 中断=回合收尾，正文留头外
         renderExit(it.text); setBusy(false);
         // v2.32：中断收尾——在跑的子代理标「已中断」（原缺口：只有 result
         // 分支收尾，点 ■ 停止后子代理假"运行中"+计时狂跳）
@@ -624,14 +626,14 @@
       }
       else if (it.kind === 'exit') {
         endThinking(); _hgVisionSweep(true); _HG.alive = false;
-        grpFinalize(true, { hist: _hgTailAdopt() });   // v3.2.1R2(R2-1)：同 interrupted——切走期间退出的残尾认回定稿
+        grpFinalize(true, { hist: _hgTailAdopt(), turnEnd: true });   // v3.2.1R2(R2-1)认回；v3.2.2 退出=回合收尾，正文留头外
         renderExit(it.text); setBusy(false);
         _hgAgentsSweep(true); _hgTurnEnd('exit', 0);   // v2.32：同上，进程退出也收
         _subEnd();                         // v2.33：窗格收起
       }
       // v2.20：会话内切模型 → 消息流插一条分割线（「已切换模型 · xxx」）
       else if (it.kind === 'model_switched') {
-        grpFinalize(true);
+        grpFinalize(true, { turnEnd: true });   // v3.2.2：切模型发生在回合间，正文留头外
         renderSwitch(it.text || '默认模型');
       }
     };

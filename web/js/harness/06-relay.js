@@ -2,7 +2,7 @@
   function _hgGrantRewind() {
     const last = _HG.lastAsstEl
       || [..._hgFlow.querySelectorAll('.h-msg.asst')].filter(el => !el.classList.contains('sub')).pop();
-    if (last && last.isConnected && last.dataset.rwa) last.classList.add('can-rewind');
+    if (last && last.isConnected && last.dataset.rwa && !last.closest('.h-tl')) last.classList.add('can-rewind');   // v3.2.4R(F4)：折进时间线的中间正文不授回滚钮
   }
   async function _hgReloadFlow() {
     const sid = _HG.sid;

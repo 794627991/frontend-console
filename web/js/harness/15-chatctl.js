@@ -118,7 +118,7 @@
       const j = await r.json();
       if (!j.ok) {
         try { el.remove(); } catch(_) {}       // 回滚乐观气泡
-        endThinking(); grpFinalize(false);
+        endThinking(); grpFinalize(false, { turnEnd: true });   // v3.2.2：发送失败=回合中止，正文留头外
         dispatch.rej = String(j.err || '');    // v2.35.1（F6）：失败原因外显（queuePump 据此判可回队）
         // v2.35.1（F6）：后端「正在回复」= 后端真忙（前端误判空闲的竞态）——
         // 同步置 busy 而非清空闲：清空闲会连锁触发泵链把整队消息逐条打进
@@ -143,7 +143,7 @@
     } catch(e) {
       dispatch.rej = 'network';
       try { el.remove(); } catch(_) {}
-      endThinking(); grpFinalize(false); setBusy(false);
+      endThinking(); grpFinalize(false, { turnEnd: true }); setBusy(false);   // v3.2.2 同上
       if (restoreInput) _hgInput.value = text;
       showBanner('发送失败：' + e, 3000, true);
       return false;

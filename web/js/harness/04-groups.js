@@ -100,9 +100,13 @@
     // v3.2R1(P0)：回合起点——回放用 user 行 ts（pendingTurnT0）；live 取当下；
     // 回放无 ts（旧转写缺失）保持 undefined——定稿落无数字「已工作」，
     // 绝不用当前时钟编造（否则工时随刷新增长）
+    // v3.2.2（用户实测）：切分组（段内 think/tool 触发 grpEnsure）没有
+    // pendingTurnT0——回放期取当前行 ts（_HG.histLineTs 由 renderHistLine
+    // 逐行维护）作段起点，段工时=首末行 ts 差；live 仍取当下时钟
     const _pt0 = _HG.pendingTurnT0;
     _HG.pendingTurnT0 = null;
-    g.t0 = (_pt0 > 0) ? _pt0 : (_HG.openState ? undefined : Date.now());
+    g.t0 = (_pt0 > 0) ? _pt0
+         : (_HG.openState ? (_HG.histLineTs || undefined) : Date.now());
     if (g.think.stats) g.think.stats.dataset.segCount = '0';
     // v3.2.1：撤位置键开合恢复（跨代际同键碰撞误开+误标 userToggled，详见
     // _tlPlace 注）；思考抽屉重建默认收起，开合态随快照 dataset 忠实序列化
@@ -118,6 +122,17 @@
   }
   function thinkSegCount(g) {
     return +((g.think.stats && g.think.stats.dataset.segCount) || 0) || 0;
+  }
+  // v3.2.4：回合头副位——思考段计数随时间线化上头（胶囊退役后思考数唯一
+  // 可见处）：「· N 思考 · M 工具」（无思考段只显工具）
+  function _turnHeadSubPaint(g) {
+    if (!g || !g.headSub) return;
+    const segN = thinkSegCount(g);
+    const toolN = (g.counts ? Object.values(g.counts).reduce((a, b) => a + b, 0) : 0);
+    const parts = [];
+    if (segN) parts.push(segN + ' 思考');
+    if (toolN) parts.push(toolN + ' 工具');
+    g.headSub.textContent = parts.length ? '· ' + parts.join(' · ') : '';
   }
   function thinkSegCountSet(g, n) {
     if (g.think.stats) g.think.stats.dataset.segCount = String(n);
@@ -227,8 +242,7 @@
       g.tl.style.display = '';
       g.tl.dataset.counts = JSON.stringify(g.counts);   // 快照恢复用
       if (!_HG.openState) _turnHeadShow(g);
-      const total = Object.values(g.counts).reduce((a, b) => a + b, 0);
-      if (g.headSub) g.headSub.textContent = '· ' + total + ' 工具';
+      _turnHeadSubPaint(g);                     // v3.2.4：副位带思考计数（· N 思考 · M 工具）
     } else if (g.exec) {
       // 旧快照恢复的组：chips 进旧执行抽屉头（字节级兼容 v3.1 前的快照）
       g.exec.box.style.display = '';
@@ -294,18 +308,47 @@
     // （userToggled，随快照 dataset 序列化）永不强制收
     if (g.headBody && g.head.dataset.userToggled !== '1')
       g.headBody.classList.add('closed');
+    // v3.2.2（用户实测）+ v3.2.3（一回合一组）+ v3.2.4（时序）：正文折进
+    // 折叠区——用户定调「除了最终结论其他全部收起」「一个回合整合统一计时」
+    // 「思考和工具调用要有顺序」：回合收尾定稿（turnEnd）只留组内**最后一
+    // 条**正文（=回合最终结论）在折叠头外，更早的中间正文按到达锚点
+    // （renderAsst 记的 _tlAt）插回时间线，与思考段/工具行全程交替有序；
+    // 中段边界定稿（压缩/协作/审计——回合还在继续）全部折进。旧结构组
+    // （v3.1 无 turn-body）保持原样不折（快照兼容降级）
+    // v3.2.4R(F1)：纯正文组（无思考无工具→_hasWork=false→头永不亮）不折——
+    // 折进「无头+收体+空时间线」的三重隐藏里内容彻底不可达；纯正文本来就
+    // 是该组的全部可见内容，照常留在根区
+    if (g.headBody && _hasWork) {
+      const texts = g.root.querySelectorAll(':scope > .h-msg.asst:not(.ph)');
+      const keep = opt.turnEnd ? texts[texts.length - 1] : null;
+      const tl = g.tl;
+      let _shift = 0;   // 先插回的正文把后续锚点整体后移
+      texts.forEach(m => {
+        if (m === keep) return;           // 最终结论留根区，不参与插回
+        const at = +(m._tlAt);
+        if (tl && Number.isFinite(at) && at >= 0 && at <= tl.children.length) {
+          if (tl.style.display === 'none') tl.style.display = '';   // F1 防御：空 tl 的内联 none 遗留
+          tl.insertBefore(m, tl.children[Math.min(at + _shift, tl.children.length)] || null);
+          _shift++;
+        } else {
+          g.headBody.appendChild(m);      // 无锚点（快照恢复态）回落体尾
+        }
+      });
+    }
     // v2.21：纯思考/工具组（整组没有正文气泡）定稿时补一行弱提示——
     // 模型常连跑几十轮工具（text 全是 "\n\n" 占位被过滤），组头下面悬空
     // 看着像回复丢了（用户实测困惑点）。有正文/空壳组不补。
     // v2.43.1（R-次要①）：组内有子代理段也不补——段内气泡就是可见回复，
     // 再挂「无文字回复」自相矛盾。
-    if (!g.root.querySelector(':scope > .h-msg.asst') && !g.root.querySelector(':scope > .h-grp-notext') &&
+    // v3.2.2：正文判定放宽到任意深度（中段定稿已把正文折进体，:scope 直查
+    // 会误判「无正文」）；提示行随正文折进体（根区只留回合头+最终结论）
+    if (!g.root.querySelector('.h-msg.asst:not(.ph)') && !g.root.querySelector(':scope > .h-grp-notext') &&
         !g.root.querySelector(':scope > .h-subblock') &&
         ((_segN > 0) || (g.counts && Object.keys(g.counts).length))) {
       const tip = document.createElement('div');
       tip.className = 'h-grp-notext';
       tip.textContent = '（本轮为思考/工具操作，无文字回复）';
-      g.root.appendChild(tip);
+      (g.headBody || g.root).appendChild(tip);
     }
     // 用户手动开过不强制收；自动收只在用户在底部跟读时（v2.12 判据，按组生效）
     if (auto) {
@@ -380,10 +423,18 @@
     (host || _hgFlow).appendChild(t);
   }
   function renderUser(text, images, files, live, tsMs) {
-    // v3.2：定稿带回合终点——回放用下一条用户消息 ts（工时=两次消息间活动
-    // 时长，对照 workSegments 旧数据时间边界恢复口径）；live 用当下时刻
-    grpFinalize(false, { endTs: (live === false && tsMs > 0) ? tsMs : Date.now(),
-                         hist: live === false });
+    // v3.2：定稿带回合终点——回放用该回合最后一次活动的行 ts
+    // （_HG.histActTs，renderHistLine 逐行维护；user 行自身不算活动）——
+    // 工时=回合真实工作窗，不含「回合结束到用户下一条消息」的阅读空闲
+    // （旧口径 endTs=下一条 user ts 会虚增，v3.2.2 用户实测「没显示工作
+    // 时长」连带修正）；live 用当下时刻
+    grpFinalize(false, {
+      endTs: (live === false)
+        ? ((_HG.histActTs > 0 ? _HG.histActTs : (tsMs > 0 ? tsMs : Date.now())))
+        : Date.now(),
+      hist: live === false,
+      turnEnd: true,            // v3.2.2：回合边界——上回合最终正文留在折叠头外
+    });
     _HG.pendingTurnT0 = (tsMs > 0 && live === false) ? tsMs : 0;   // v3.2R1：live 记 0（grpEnsure 取当下）；回放缺 ts 保持 0→undefined
     _maybeTimeBar(tsMs || Date.now());        // v2.24.5 微信式时间条（气泡前）
     endThinking(); closeRun();
@@ -441,12 +492,13 @@
     // 灰色 sub 行与 isSub/subId 参数一并退役（归属标识上移到段头）。
     if (!text || !String(text).trim()) return;
     _tlExpFlush(!!_HG.openState);        // v3.2：正文打断查阅聚组（回放态必收）
-    // v2.18.1（3.png）：组合制 = 思考+工具+回复，按正文切分。当前组已出过正文
-    // → 后续正文属下一条回复：先定稿，让新组头（思考/工具）落在新正文上方。
-    const cur = _HG.grp;
-    if (_HG.asstText && cur && cur.root && cur.root.querySelector(':scope > .h-msg.asst')) {
-      grpFinalize(true);
-    }
+    // v3.2.3（用户实测定调）：**一回合一组，不再按正文切组**。v2.18.1 的切组
+    // （正文后再出思考/工具就定稿开新组）把一条用户消息拆成 N 条「已工作」
+    // 行分段计时（用户实锤 4 连头：「应该全部整合在一起，统一在一起计时」）
+    // ——对照 ZCode 回合模型：user 消息→result 之间所有思考/工具/中间正文
+    // 都属同一回合，定稿只发生一次（result/下一 user/回放尾组），一个头带
+    // 总工时总工具数，根区只留最终结论（其余正文在定稿时折进体，见
+    // grpFinalize turnEnd 逻辑）。中间正文在流式期照常堆在组根可见
     _HG.asstText = true;                       // v2.11：AI 已输出文本
     // v2.18：正文进当前组（组不存在说明是组外场景——快照恢复等，兜底建组）
     const g = grpEnsure(true);
@@ -482,6 +534,10 @@
     // 定位「这条消息所在回合的 result」做截断）
     try { d.dataset.rwa = String(text).trim().slice(0, 60); } catch(_) {}
     _HG.lastAsstEl = d;                  // result 到达时授予 can-rewind
+    // v3.2.4：记时间线锚点（到达时的 tl 行数）——定稿折体时按锚点插回，
+    // 思考段↔工具行↔中间正文全程时序一致（expando 不随快照走，恢复态
+    // 回落体尾，重建必重算）
+    d._tlAt = g.tl ? g.tl.children.length : 0;
     g.root.appendChild(d);
     _hgScrollBottom();
   }

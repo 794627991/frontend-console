@@ -38,6 +38,9 @@
     _HG.proj = null;                         // v3.1：前端投影不跨会话（/events 种子重建）
     _subReset();                             // v2.33：子代理实时窗格不跨会话
     _HG.think = null; _HG.noScroll = false; _HG.openState = null;   // v2.16：重建态不跨会话残留
+    // v3.2.4R(F2)：行级 ts 账与回合起点随会话切换清零（对齐 _hgSseResetLocal；
+    // pendingTurnT0 残留会让下个会话 phResume 续跑组的秒表虚吃上会话时刻）
+    _HG.histLineTs = 0; _HG.histActTs = 0; _HG.pendingTurnT0 = null;
     _HG.sid = sid; _HG.seq = 0; _HG.epoch = null; _HG.alive = false;
     // v2.15：dirty 语义修正。旧实现只在「发送成功」置 true、只在
     // switchTo(null) 置 false —— 冷启动自动进的是历史会话（has_history），
@@ -206,7 +209,7 @@
           // 已落盘部分，无条件定稿会把组关死还漏占位气泡。留活 + 补占位，
           // SSE 续传事件经 grpEnsure 回扫正常接回。
           if (j.busy) phResume();
-          else grpFinalize(true, { hist: true });          // 幂等兜底（渲染器内已定稿则 _HG.grp 为空早退）
+          else grpFinalize(true, { hist: true, turnEnd: true });   // 幂等兜底（渲染器内已定稿则早退）；v3.2.2 turnEnd
           _hgScrollBottom(true);              // 切会话回底（不受翻历史保护限制）
           setBusy(!!j.busy, j.busy_since);   // v2.26：计时起点带后端 busy_since（切回来不清零）
         }

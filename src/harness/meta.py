@@ -28,16 +28,22 @@ _meta_tombstones = set()    # 本进程已删 sid：_meta_save 合并时防从�
 
 
 def _meta_load():
-    global _meta, _meta_loaded
+    global _meta_loaded
     if _meta_loaded:
         return
+    # v3.2.2（实测实锤）：装载必须**原地更新** _meta——拆分后 routes/lifecycle/
+    # session 都 `from .meta import _meta` 拿的是 import 时刻的 dict 对象引用，
+    # 旧写法 `_meta = {...}` 是模块级重绑定，先 import 后 load 的启动序会让
+    # 全部别名停在初始空 dict 上（本机实测：某次重启 /api/harness/sessions
+    # 恒返空表而盘面 3 条俱在）。clear+update 所有别名同享一份真值
     try:
         with open(_META_FILE, "r", encoding="utf-8") as f:
             d = json.load(f)
         if isinstance(d, dict):
-            _meta = {k: v for k, v in d.items() if isinstance(v, dict) and v.get("sid")}
+            _meta.clear()
+            _meta.update({k: v for k, v in d.items() if isinstance(v, dict) and v.get("sid")})
     except FileNotFoundError:
-        _meta = {}                     # 首次启动无表：正常路径
+        pass                            # 首次启动无表：保持空 dict（原地，勿重绑定）
     except Exception:
         # 坏文件（写入撕裂/被截断）不能静默当空表——否则下一次 _meta_save
         # 会用空表全量覆盖，整张会话列表蒸发（2026-09 实测丢过一批）。
@@ -46,7 +52,7 @@ def _meta_load():
             os.replace(_META_FILE, _META_FILE + ".bad")
         except OSError:
             pass
-        _meta = {}
+        _meta.clear()
     _meta_loaded = True
 
 # ---- from claude_harness.py:728 (_meta_save) ----
