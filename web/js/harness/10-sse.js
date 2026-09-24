@@ -512,7 +512,7 @@
     _HG.proj = null;   // v3.1：投影随清场作废（snapshot 重放将重建）
     _subReset();
     _HG.think = null; _HG.noScroll = false; _HG.openState = null;
-    _HG.histLineTs = 0; _HG.histActTs = 0;   // v3.2.2：行级 ts 账随清场作废
+    _HG.histLineTs = 0; _HG.histActTs = 0; _HG.thinkPend = null;   // v3.2.2 ts 账 + v3.2.5 pend 随清场作废
     _HG.echoFast = null; _HG.seq = 0;
     _hgFlow.innerHTML = '';
   }

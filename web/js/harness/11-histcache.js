@@ -32,7 +32,7 @@
     }
     if (!lines.length) return;
     _HG.noScroll = true;                        // v2.16：逐行 append 不反复重排
-    _HG.histLineTs = 0; _HG.histActTs = 0;      // v3.2.2：行级 ts 账随渲染重置（段起点/终点事实源）
+    _HG.histLineTs = 0; _HG.histActTs = 0; _HG.thinkPend = null;   // v3.2.2 ts 账 + v3.2.5 思考段时长 pend 随渲染重置
     _HG.openState = _hgLoadOpen(_HG.sid);       // v3.2.1：开合仓（现仅 sub: 段折叠语义键）兼重建期标志位（t0 不编造/秒表不亮/查阅定稿必收）
     try {
       // v2.28.16：边渲染边标回合边界——assistant 行之后的下一条 user 行

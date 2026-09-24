@@ -40,7 +40,7 @@
     _HG.think = null; _HG.noScroll = false; _HG.openState = null;   // v2.16：重建态不跨会话残留
     // v3.2.4R(F2)：行级 ts 账与回合起点随会话切换清零（对齐 _hgSseResetLocal；
     // pendingTurnT0 残留会让下个会话 phResume 续跑组的秒表虚吃上会话时刻）
-    _HG.histLineTs = 0; _HG.histActTs = 0; _HG.pendingTurnT0 = null;
+    _HG.histLineTs = 0; _HG.histActTs = 0; _HG.pendingTurnT0 = null; _HG.thinkPend = null;
     _HG.sid = sid; _HG.seq = 0; _HG.epoch = null; _HG.alive = false;
     // v2.15：dirty 语义修正。旧实现只在「发送成功」置 true、只在
     // switchTo(null) 置 false —— 冷启动自动进的是历史会话（has_history），

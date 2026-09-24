@@ -275,10 +275,13 @@
       const sec = cfg.sec ? cfg.sec(b.input) : '';
       // v3.1：ZCode 式行内徽标（文件类型色块 + `+N -N` 增删计数）
       const badges = _hgToolBadges(name, b.input);
+      const argTxt = esc(cfg.get(b.input) || '');
       row.innerHTML =
         `<span class="h-tool-name">${_hToolIco(name)} ${esc(label)}</span>` +
         badges +
-        `<span class="h-tool-arg">${esc(cfg.get(b.input) || '')}</span>` +
+        // v3.2.5R：bash 命令带 title 全文悬浮（对齐回放卡 argTitle 口径——
+        // 单行省略后窄面板/长命令的唯一全文入口）
+        `<span class="h-tool-arg"${cfg.kind === 'bash' && argTxt ? ` title="${argTxt}"` : ''}>${argTxt}</span>` +
         (sec ? `<span class="h-tool-sec">${esc(sec)}</span>` : '') +
         `<span class="h-tslots"></span>`;
       // Bash 类：命令可复制（源 action:'copy'；点击由 flow 委托处理，v2.12）
@@ -416,7 +419,8 @@
         row.style.setProperty('--h-accent', 'var(--neon-red, #e06c75)');
         return co;
       })();
-      row.classList.add('open');
+      // v3.2.5（用户定调）：错误不自动展开——标红（err 类+行尾「执行失败」
+      // failmark）即可，正文收进折叠体点开再看
       const pre = document.createElement('div');
       pre.className = 'h-tool-out err-txt';
       pre.textContent = txt.slice(0, 4000);

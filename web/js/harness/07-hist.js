@@ -6,7 +6,7 @@
     // 现填）；错误行保持立即渲染+默认展开（错误信息不该藏）。
     const d = document.createElement('div');
     const err = !!l.err;
-    d.className = 'h-tool col' + (err ? ' err open' : '');
+    d.className = 'h-tool col' + (err ? ' err' : '');   // v3.2.5（用户定调）：错误只标红不自动展开
     // v2.21：历史回放同样带工具徽章（子代理等），与流式路径一致
     const hbc = _H_TOOL_CFG[l.text] || {};
     // v3.2.1（用户实测问题2）：bash 行头补命令文本——live 行有 arg（cfg.get），
@@ -41,6 +41,16 @@
     // 尾组定稿在循环外读=全段末活动）。旧转写缺 ts 保持 0——落无数字形态
     const _ts = l && l.ts ? Date.parse(l.ts) : 0;
     if (_ts > 0) _HG.histLineTs = _ts;
+    // v3.2.5（用户定调「思考持续了几秒，和 ZCode 同款」）：回放思考段时长
+    // ——思考行的 ts 为起点，下一条带 ts 的行到达时定格差值（转写无段级
+    // 终点事实，邻行 ts 差是唯一诚实口径；后置入账同款时序：本行渲染前
+    // 先收上一段的账）
+    if (_HG.thinkPend && _ts > 0 && _ts > _HG.thinkPend.t0) {
+      const _tp = _HG.thinkPend;
+      const _te = _tp.seg.isConnected ? _tp.seg.querySelector('[data-hg-think-t]') : null;
+      if (_te) _te.textContent = '持续了 ' + _hgTurnDurTxt(_ts - _tp.t0);
+      _HG.thinkPend = null;
+    }
     if (l.role === 'peer') {          // v2.27.3：跨会话回传（识图结论）历史回看
       // v2.53：第 5 参 hist——历史回放绝不开新段（防假「协作·运行中」段吞正文）
       renderPeer(l.name, l.text, null, true, true);
@@ -71,11 +81,13 @@
       // v2.24 懒抽屉：历史思考段只建壳（默认收起），点开才渲染 markdown——
       // 大会话重建的大头就是几十 K 字符的 thinking 渲染
       startThinking(true);                 // 重建路径：段结构同流式，无计时动画
-      if (_HG.think && _HG.think.seg && hi != null) {
-        _HG.think.seg.dataset.hi = String(hi);
-        _HG.think.seg.dataset.hgLazy = '1';
+      const _segEl = _HG.think && _HG.think.seg;
+      if (_segEl && hi != null) {
+        _segEl.dataset.hi = String(hi);
+        _segEl.dataset.hgLazy = '1';
       } else appendThinking(l.text);       // 兜底：无行号（理论不达）
-      endThinking(true);                   // hist 模式：不显示时长（不编造）、不自动收
+      endThinking(true);                   // hist 模式：不自动收；时长见下方 pend
+      if (_segEl && _ts > 0) _HG.thinkPend = { seg: _segEl, t0: _ts };
     }
     else if (l.role === 'tool') {
       // v2.3.2：历史重建补画转交等待线——transcript 的工具行此前只画抽屉，
@@ -156,7 +168,7 @@
       _subSegEnd(b);
       const d = document.createElement('div');
       const err = !!l.err;
-      d.className = 'h-tool col sub' + (err ? ' err open' : '');
+      d.className = 'h-tool col sub' + (err ? ' err' : '');   // v3.2.5：同主链——只标红
       // v2.44R（复审建议）：类别着色与实时抽屉一致（旧版历史段行无
       // --h-accent，左边框全灰与实时段内彩色左边框两套观感）
       d.style.setProperty('--h-accent',
@@ -308,7 +320,7 @@
     }
     seg.innerHTML =
       `<button class="h-think-seg-head"><span class="h-chev">▸</span>` +
-      `<span class="h-think-seg-name">🧠 思考 ${n}</span>` +
+      `<span class="h-think-seg-name">🧠 思考</span>` +
       `<span class="h-think-seg-t" data-hg-seg-t data-hg-think-t>0s</span></button>` +
       `<div class="h-think-seg-body"></div>` +
       // v2.21：段尾右下角收起钮——长思考读到尾顺手收，不用滚回顶部点头
@@ -394,7 +406,7 @@
       if (te) te.textContent = hist ? '' : te.textContent;
     } else {
       // v3.1：定稿文案对齐 ZCode（「思考 · 持续了 7 秒」）——计数态 Ns → 持续了 Ns
-      if (te) te.textContent = '持续了 ' + _hgFmtDur((Date.now() - t0) / 1000);
+      if (te) te.textContent = '持续了 ' + _hgTurnDurTxt(Date.now() - t0);   // v3.2.5：中文时长口径（N 秒/N 分 N 秒）
       // 仅当用户没碰过且在底部跟读时自动收段（正文已在段里，收起只留段头）
       if (seg.dataset.userToggled !== '1' && isNearBottom()) seg.classList.remove('open');
     }

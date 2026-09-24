@@ -3678,6 +3678,17 @@ html {
 .h-tl > .h-msg { margin: 2px 0; }
 .h-tl > .h-msg .h-mmeta { display: none; }
 .h-tl > .h-msg .h-bubble { font-size: var(--fs-base); }
+/* v3.2.5（用户实测「字体被挡住了」）：oneclick 终端卡命令单行省略——直挂
+   arg（live 卡形态；hist 卡的 arg 在 .h-tool-head 内已走省略规则）不再
+   pre-wrap 拉满行宽顶着状态徽章/复制钮；窄面板按 flex 收缩降阶（arg 出
+   省略号，shrink:0 元素优先保住，极端时 flex-wrap 换行独占）；收起看摘
+   要（bash 带全文 title）、点开看输出 */
+.h-tool.oneclick > .h-tool-arg { display: inline-block; vertical-align: bottom;
+  max-width: 100%; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+/* v3.2.5：思考体左距加大 + 列表缩进（时间线内卡片内容贴左缘/序号压线） */
+.h-tl .h-think-seg-body { padding: 2px 12px 8px 16px; }
+.h-think-seg-body ul, .h-think-seg-body ol { margin: .3em 0; padding-left: 1.4em; }
 
 /* ---- 内联工具时间线：左侧脊柱竖线（截图4 同款） ---- */
 .h-tl { position: relative; display: flex; flex-direction: column; gap: 3px;
