@@ -453,11 +453,12 @@
       at.innerHTML = attChipsHtml(images, files);   // 点击 Lightbox 由 flow 委托（v2.12）
       d.appendChild(at);
     }
-    // v3.2.13（用户定调「不要给我渲染出来」）：只发图不带文字 → 不再造
-    // 「*（图片/附件，见上方）*」占位气泡（v2.20 文案退役）——附件 chips 已
-    // 在上方表达一切，正文体整块不渲染
-    const body = (text && text.trim()) || '';
-    if (body) d.appendChild(mdBubble(body));
+    // v3.2.16（用户最后定调，复原 v2.20 原形）：只发图不带文字 → 气泡照出
+    // 默认占位文案「*（图片/附件，见上方）*」——图片 chips 在气泡上方、可随
+    // 时点开预览；历史里唯一不许出现的是 [Image: source: …] 链接行（转写侧
+    // 丢弃 + 前端防线，与此处无关）
+    const body = (text && text.trim()) || ((images?.length || files?.length) ? '*（图片/附件，见上方）*' : '');
+    d.appendChild(mdBubble(body));
     // v2.22：一键重发 + 编辑后重发——原始内容存 dataset（属性可随
     // innerHTML 快照恢复），钮 hover 显示，点击走 flow 委托
     d.dataset.rtext = text || '';

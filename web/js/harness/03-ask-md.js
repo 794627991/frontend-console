@@ -304,11 +304,11 @@
     // v2.3.3 data-img 走 /api/harness/file 只读接口——原来直接塞本地绝对路径
     // （C:\Users\...），WebView 安全策略禁止 http 页面加载本地文件，Lightbox
     // 弹了也是裂图（用户实锤「无法弹出显示」）。title 保留完整路径供核对。
-    // v3.2.14：data-img 改传整路径（path= 分支）——贴图并名后附件指向 CLI
-    // Temp 原件（原名），name= 查上传目录会 404；上传目录本身也走 path= 照常
+    // v3.2.16（用户最后定调，复原）：chip 恒用 name=（上传目录原件，新旧后端
+    // 都能回源）——v3.2.14 的 path= 依赖新路由，未重启后端时点开全裂
     (images || []).forEach(p => {
       const name = String(p).split(/[\\/]/).pop();
-      h += `<span class="hg-att-mini" data-img="/api/harness/file?path=${encodeURIComponent(p)}" title="${esc(p)}">🖼 ${esc(name)}</span>`;
+      h += `<span class="hg-att-mini" data-img="/api/harness/file?name=${encodeURIComponent(name)}" title="${esc(p)}">🖼 ${esc(name)}</span>`;
     });
     (files || []).forEach(p => { h += `<span class="hg-att-mini">📄 ${esc(String(p).split(/[\\/]/).pop())}</span>`; });
     return h;

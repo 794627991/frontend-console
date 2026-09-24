@@ -91,12 +91,24 @@
       renderAudit(l.text);            // 否则纯工具收尾回合的补审卡会挂错进前组）
     }
     else if (l.role === 'user') {
-      const imgs = (l.files || []).filter(p => _HARNESS_IMG_EXT.test(p));
-      const files = (l.files || []).filter(p => !_HARNESS_IMG_EXT.test(p));
-      // v2.24.1 回退气泡壳化：renderUser 承担组管线边界（上一组定稿/开新组），
-      // 壳化绕过管线导致思考/工具挂错组（排序乱，用户实测不可接受）——
-      // 正确性优先，历史气泡恢复全渲染（懒抽屉+懒高亮已覆盖大头开销）。
-      renderUser(l.text, imgs, files, false, l.ts ? new Date(l.ts).getTime() : 0);
+      // v3.2.16 前端防线：旧后端（未重启进程）仍会发 [Image: source] 回显行
+      // ——特征：无文字且附件全是 CLI Temp images 路径。整条跳过，消息列内
+      // 不出现图片链接行/死链 chip（新后端转写侧已丢，这里是双保险）
+      const _tmpEcho = !(l.files || []).some(
+        p => !/Temp[\\/]claude[\\/].*[\\/]images[\\/]/i.test(String(p)))
+        && (l.files || []).length > 0;
+      if (!String(l.text || '').trim() && _tmpEcho) {
+        // 回显行不画，但组管线边界语义保留（上一组定稿照走）
+        endThinking(); closeRun(); _tlExpFlush(!!_HG.openState);
+        _HG.asstText = false;
+      } else {
+        const imgs = (l.files || []).filter(p => _HARNESS_IMG_EXT.test(p));
+        const files = (l.files || []).filter(p => !_HARNESS_IMG_EXT.test(p));
+        // v2.24.1 回退气泡壳化：renderUser 承担组管线边界（上一组定稿/开新组），
+        // 壳化绕过管线导致思考/工具挂错组（排序乱，用户实测不可接受）——
+        // 正确性优先，历史气泡恢复全渲染（懒抽屉+懒高亮已覆盖大头开销）。
+        renderUser(l.text, imgs, files, false, l.ts ? new Date(l.ts).getTime() : 0);
+      }
     }
     else if (l.role === 'assistant') renderAsst(l.text, l.model || _HG.model || '');
     else if (l.role === 'thinking') {

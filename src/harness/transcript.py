@@ -224,35 +224,19 @@ def transcript_for(s):
                             if m_att:
                                 files = m_att
                                 t = _strip_att(t)
-                            # v3.2.13（用户定调「不要给我渲染出来」）：贴图占位
-                            # 回显行整条丢弃——CLI 对每次贴图都落两条 user 行
-                            # （base64 image 块渲染真图 + "[Image: source: …]"
-                            # 纯回显行）。v3.2.14（用户定调「不能出现两次，要
-                            # 原先的名字」）：丢弃前先并名——回显路径带原始文件
-                            # 名（1.png），上一行附件是应用上传的 hash 名
-                            # （b535b34a_image.png），同一张图两枚 chip 不可接
-                            # 受；把上一行 *_image.png 逐个改写为回显路径（原
-                            # 名 + CLI Temp 原件，/api/harness/file?path= 可回源）
+                            # v3.2.16（用户最后定调，复原收敛）：贴图占位回显
+                            # ——CLI 对每次贴图落两条 user 行（base64 块+上传附
+                            # 件渲染真图缩略 + "[Image: source: …]" 纯回显行）。
+                            # 回显标记一律剥掉、路径绝不并入 files（上传副本的
+                            # chips 恒可点开预览，Temp 路径并进只会出死链）；
+                            # 剥完空壳（无文字无他附件）整行丢弃——消息列内
+                            # 永远不出现图片链接行。v3.2.14 的 hash→原名改写
+                            # 撤销（依赖新路由，未重启后端时点图全裂）
                             _ims = _IMG_ECHO_RE.findall(t)
                             if _ims:
                                 t = _IMG_ECHO_RE.sub("", t).strip()
                                 if not t and not m_att:
-                                    if (_last_u and _last_u[1] > 0 and lines
-                                            and lines[-1].get("role") == "user"):
-                                        _pf = lines[-1].get("files") or []
-                                        _hit = False
-                                        for _i, _p in enumerate(_pf):
-                                            if _ims and str(_p).endswith("_image.png"):
-                                                _pf[_i] = _ims.pop(0).strip()
-                                                _hit = True
-                                        if not _hit and not _pf:
-                                            # 防御：base64 行没带 marker 附件（罕
-                                            # 见流）——回显路径直接并入，总比隐形好
-                                            _pf = [x.strip() for x in _ims]
-                                            _ims = []
-                                        lines[-1]["files"] = _pf
                                     continue
-                                files = files + [x.strip() for x in _ims]
                             # v3.2.12：中断/续跑机器标记行整行丢弃
                             if _NOISE_RE.match((t or "").strip()):
                                 continue

@@ -615,34 +615,16 @@
       // v2.5：先 setBusy（弹活动指示条，改变 flow 高度）再渲染消息——
       // 渲染内部 scrollBottom 含 rAF 二次兜底，否则指示条挤出消息导致刚发的消息不在底
       if (it.kind === 'user_echo') {
-        // v3.2.13（用户定调「不要给我渲染出来」）：贴图占位回显——CLI 对每次
-        // 贴图落两条 user 行（base64 块渲染真图 + "[Image: source: 路径]" 纯回
-        // 显），后者整条不渲染；仅当回显与真实文字混在同一条时才保留（剥标
-        // 记、路径并进 images 出缩略，与发送侧乐观渲染形态对齐）
-        // v3.2.14（用户定调「不能出现两次，要原先的名字」）：纯回显丢弃前先
-        // 并名——把乐观渲染行的 *_image.png chip 改写为回显路径（原名 + CLI
-        // Temp 原件），与历史回放侧 transcript.py 同款归一
+        // v3.2.16（用户最后定调，复原收敛）：贴图占位回显——CLI 对每次贴图落
+        // 两条 user 行（base64 块+上传附件渲染真图缩略 + "[Image: source: 路径]"
+        // 纯回显）。回显标记一律从文本剥掉、路径不并入附件（上传 chips 已表
+        // 达且可点开预览）；剥完空壳（无文字无他附件）整条不渲染——历史/实时
+        // 同款，消息列内永远不出现图片链接行
         {
           const _ims = String(it.text || '').match(/\[Image: source: [^\]]+?\]/g);
           if (_ims) {
-            const _pre = (it.files || []).length;
-            it.files = (it.files || []).concat(_ims.map(x => x.replace(/^\[Image: source: /, '').replace(/\]$/, '').trim()));
             it.text = String(it.text || '').replace(/\[Image: source: [^\]]+?\]/g, '').trim();
-            if (!String(it.text || '').trim() && !_pre) {   // 纯回显（无文字无他附件）
-              const _ums = _hgFlow.querySelectorAll('.h-msg.user');
-              const _um = _ums[_ums.length - 1];
-              if (_um) {
-                const _chs = [..._um.querySelectorAll('.hg-att-mini[data-img]')];
-                for (const _c of _chs) {
-                  if (!_ims.length) break;
-                  if (/_image\.png$/i.test(_c.title || _c.textContent)) {
-                    const _np = _ims.shift().replace(/^\[Image: source: /, '').replace(/\]$/, '').trim();
-                    _c.dataset.img = '/api/harness/file?path=' + encodeURIComponent(_np);
-                    _c.title = _np;
-                    _c.textContent = '🖼 ' + _np.split(/[\\/]/).pop();
-                  }
-                }
-              }
+            if (!String(it.text || '').trim() && !(it.files || []).length) {
               _HG.echoFast = null;
               return;
             }
