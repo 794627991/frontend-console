@@ -389,7 +389,7 @@
     seg.innerHTML =
       `<button class="h-think-seg-head"><span class="h-chev">▸</span>` +
       `<span class="h-think-seg-name">🧠 思考</span>` +
-      `<span class="h-think-seg-t" data-hg-seg-t data-hg-think-t>0s</span></button>` +
+      `<span class="h-think-seg-t" data-hg-seg-t data-hg-think-t></span></button>` +
       `<div class="h-think-seg-body"></div>` +
       // v2.21：段尾右下角收起钮——长思考读到尾顺手收，不用滚回顶部点头
       `<i class="h-think-seg-fold" title="收起本段">收起 ⌄</i>`;

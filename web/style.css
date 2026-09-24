@@ -2269,6 +2269,13 @@ html {
    v2.18：每消息一组——.h-grp{ .h-grp-proc{ 双抽屉横排 } + AI 气泡 }，
    收起态组头一行极简（用户：默认只占一小部分），展开不超会话一半 */
 .hg-flow > .h-grp { width: min(820px, 100%); }
+/* v3.1h（用户定调「所有数据不许拖横条,全部自适应」）：消息流全链
+   禁横向滚动——长词/长命令/代码一律折行截断,详情点开展开(展开体同禁) */
+.hg-flow, .h-grp, .h-grp-proc, .h-turn-body, .h-tl, .h-tl-grp-body,
+.h-tool-coll, .h-drawer-body, .h-bubble { min-width: 0; max-width: 100%; overflow-x: hidden; }
+.h-bubble, .h-tool-coll pre, .h-bubble pre, .h-bubble code {
+  overflow-wrap: anywhere; word-break: break-word; }
+.h-bubble pre, .h-tool-coll pre { white-space: pre-wrap; }
 /* v2.24 滚动窗口式历史加载：顶部提示条（v2.24.7 恒居中——列靠左后用户仍要提示条居中） */
 .hg-hist-more { align-self: center; width: auto; margin: 4px auto 8px; display: block;
   font-size: 11.5px; color: var(--muted); background: var(--bg-card);
@@ -3775,7 +3782,8 @@ html {
    的最终结论），与工具行/思考段同轴 */
 .h-tl > .h-msg { margin: 2px 0; }
 .h-tl > .h-msg .h-mmeta { display: none; }
-.h-tl > .h-msg .h-bubble { font-size: var(--fs-base); }
+.h-tl > .h-msg .h-bubble { font-size: var(--fs-base);
+  border: 1px solid var(--border); border-radius: 10px; }  /* v3.1h:显式闭合 */
 /* v3.2.5（用户实测「字体被挡住了」）：oneclick 终端卡命令单行省略——直挂
    arg（live 卡形态；hist 卡的 arg 在 .h-tool-head 内已走省略规则）不再
    pre-wrap 拉满行宽顶着状态徽章/复制钮；窄面板按 flex 收缩降阶（arg 出
@@ -3916,3 +3924,10 @@ html {
 .hg-sub-msgs .h-tool, .hg-sub-msgs .h-tl-grp-head,
 .hg-sub-msgs .h-tool-arg, .hg-sub-msgs .h-tool-out,
 .hg-sub-msgs .h-tool-head { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+
+/* v3.1h（用户实锤「查阅」名称/命令换行）：聚组子行与时间线行头单行省略——
+   超长命令/路径截断,点开展开体看全文;展开体已限宽自适应 */
+.h-tl-grp-body .h-tool, .h-tl > .h-tool { overflow: hidden; }
+.h-tl-grp-body .h-tool-name, .h-tl > .h-tool .h-tool-name,
+.h-tl-grp-body .h-tool-arg, .h-tl > .h-tool .h-tool-arg {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }

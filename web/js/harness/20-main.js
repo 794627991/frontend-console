@@ -914,9 +914,9 @@ function buildClaudeHarnessTab(opts = {}) {
   _hgFlow.addEventListener('contextmenu', (e) => {
     // 命中范围：正文气泡(.h-msg)，或右键思考/执行抽屉(.h-drawer)时落到
     // 所在消息组的 AI 正文——用户视角「右键这条回复」不分抽屉还是正文
-    const m = e.target.closest('.h-msg')
-      || (e.target.closest('.h-grp') || {}).querySelector('.h-msg.asst')
-      || null;
+    // v3.1h（用户实锤「离老远都能出现」）：只认右键命中正文气泡本身——
+    // 组内思考段/工具行/空白不再回落引用首条 AI 正文
+    const m = e.target.closest('.h-msg');
     if (!m || !_hgFlow.contains(m)) return;
     e.preventDefault();
     const old = _hgWrap.querySelector('.hg-ctxmenu');

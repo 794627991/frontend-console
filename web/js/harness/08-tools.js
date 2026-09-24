@@ -123,6 +123,9 @@
     if (!row || row.classList.contains('oneclick') || row.querySelector(':scope > .h-tool-head')) return;
     row.classList.add('col', 'oneclick');
     row.insertAdjacentHTML('afterbegin', '<span class="h-chev h-tool-chev">▸</span>');
+    // v3.1h（用户定调「终端只保留标志,默认收起,点开看全文」）：头部命令摘要摘除
+    const _ocArg = row.querySelector(':scope > .h-tool-arg');
+    if (_ocArg) _ocArg.remove();
   }
   function closeRun() { _HG.run = null; }
   // ==================== v3.2：ZCode 式「查阅」聚组（exploreToolCall.ts 移植）====================
