@@ -796,26 +796,7 @@ function buildClaudeHarnessTab(opts = {}) {
   // 主层「加载更早」提示条：事件委托（绑一次永在，bar 重建不丢点击）。
   // v3.2.7（用户定调「只读模式退役」）：点击=上滑同款扩段（_histRefresh
   // 大窗口重渲+滚动锚定）；封顶条（hg-hist-cap）是纯提示不可点
-  _hgFlow.addEventListener('click', (e) => {
-    const bar = e.target.closest('.hg-hist-more');
-    if (!bar || !_hgFlow.contains(bar)) return;
-    e.stopPropagation();
-    if (_HG.busy || _histBusy || !_HG.histAll || !_HG.histLive || !_HG.sid) return;
-    const capStart = Math.max(0, _HG.histAll.length - _HG.HIST_CAP);
-    if (_HG.histStart <= capStart) return;
-    _histBusy = true;
-    const anchorH = _hgFlow.scrollHeight - _hgFlow.scrollTop;
-    const sidAt = _HG.sid;
-    _histRefresh(sidAt, Math.max(capStart, _HG.histStart - _HG.HIST_PAGE)).then(() => {
-      // v3.2.7R（审计）：fetch 在途切会话——旧锚定值不得写进新会话的 flow
-      // （_histRefresh 内部弃渲但外层 .then 无条件执行；busy 一并放行）
-      if (_HG.sid !== sidAt) { _histBusy = false; return; }
-      _hgFlow.scrollTop = Math.max(0, _hgFlow.scrollHeight - anchorH);
-      // v3.2.7R：同步复位——rAF 在后台标签页不触发，_histBusy 卡 true 会把
-      // 后续所有扩段入口（点击/上滑）永久堵死（实测抓到）
-      _histBusy = false;
-    });
-  });
+  // v3.2.12：hist-more「加载更早」委托随分页退役（恒全量，无剩余条）
   // v2.28.16：回滚按钮事件委托——按消息文本锚点回滚（每个定下的回合边界
   // 都可回滚到那里）。按钮 innerHTML 随气泡生成/随快照克隆，直绑 onclick
   // 会丢（同 h-macts 既有解法），flow 级委托一次永在
@@ -859,54 +840,9 @@ function buildClaudeHarnessTab(opts = {}) {
     const nearTop = _hgFlow.scrollTop <= 100;   // v3.2.11：60→100——滚轮惯性/拖动条贴近顶部时更稳触发扩段
     const distBottom = _hgFlow.scrollHeight - _hgFlow.scrollTop - _hgFlow.clientHeight;
     const shown = _HG.histAll.length - _HG.histStart;
-    if (nearTop && _HG.histStart > 0
-               && Date.now() - (_HG.histRestoredAt || 0) > 400) {
-      // 上滑到顶：自动扩一段，锚定滚动（视觉位置不跳）。到 CAP 上限或
-      // busy 时不再扩也不自动进只读（用户定调 v2.24.8：只读模式仅点击
-      // 提示条进入——上滑自动进在回底部途中误触，烦人）
-      // v3.0：补 histRestoredAt 守卫（与收缩分支同款）——滚动记忆恢复写
-      // scrollTop 也发 scroll 事件，用户原本就在顶部时会被误判为「上滑
-      // 到顶」自动扩段（非用户意图的重渲闪屏）
-      const capStart = Math.max(0, _HG.histAll.length - _HG.HIST_CAP);
-      if (_HG.histStart > capStart && !_HG.busy) {
-        _histBusy = true;
-        const anchorH = _hgFlow.scrollHeight - _hgFlow.scrollTop;
-        const sidAt = _HG.sid;
-        _histRefresh(sidAt, _HG.histStart - _HG.HIST_PAGE).then(() => {
-          // v3.2.7R（审计）：同点击路径——在途切会话弃锚定（预存在缺陷一并修）
-          if (_HG.sid !== sidAt) { _histBusy = false; return; }
-          // v2.46：Math.max 钳非负——重渲后子代理段折叠态高度缩水时
-          // scrollHeight 可能小于 anchorH，负值赋给 scrollTop 虽被浏览器
-          // 钳到 0，显式钳制防未来语义变化（且可读）
-          _hgFlow.scrollTop = Math.max(0, _hgFlow.scrollHeight - anchorH);
-          _histBusy = false;   // v3.2.7R：同步复位（rAF 后台标签不触发——同点击路径）
-        });
-      }
-    } else if (distBottom <= 4 && shown > _HG.HIST_PAGE * 2
-               && Date.now() - (_HG.histRestoredAt || 0) > 400) {
-      // 拉回底部收缩（DOM 瘦身）：v2.37R4 增量收缩（摘头整组+histStart 前移，
-      // 无网络请求）。v3.2.11（用户实锤「滚动条抽搐」）：改**贴底滞留 600ms
-      // 才收**——滚动/惯性冲到底的瞬间就摘头，滚动条拇指尺寸跳变+视口回锚
-      // 会打断还在进行的滚动手势（体感抽搐、与扩段拉锯）；滞留判定用定时
-      // 器（滞留期间无新 scroll 事件也能触发），离开底部即取消
-      clearTimeout(_HG._shrinkT);
-      // 自续期：贴底后被图片装载等内容增长顶离（滚动锚定调整中途清掉在途
-      // 定时器且不再有 scroll 事件重排）时再等一轮——上界 8 轮防无限续
-      let _tries = 0;
-      const _chk = () => {
-        if (!_HG.histAll || _HG.busy) return;
-        if (_hgFlow.scrollHeight - _hgFlow.scrollTop - _hgFlow.clientHeight > 4) {
-          if (++_tries < 8) _HG._shrinkT = setTimeout(_chk, 600);
-          return;   // 已离开底部（真滚走则外层 clear 兜底）
-        }
-        if (Date.now() - (_HG.lastShrinkAt || 0) < 500) return;
-        _HG.lastShrinkAt = Date.now();
-        _hgShrinkHead();
-      };
-      _HG._shrinkT = setTimeout(_chk, 600);
-    } else if (distBottom > 4) {
-      clearTimeout(_HG._shrinkT);   // 离开底部——取消在途收缩
-    }
+    // v3.2.12：扩段/收缩分支随分页退役——恒全量渲染，滚动条天然覆盖全部
+    // 历史（往上滑即是历史，无需加载步进；ZCode 靠虚拟化，我们靠折叠回合
+    // +懒增强+原子渲染控 DOM）
   }, { passive: true });
 
   // ==================== v2.3.11 只读模式（独立积木 harness-readonly.js）====================

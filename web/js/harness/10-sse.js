@@ -615,6 +615,22 @@
       // v2.5：先 setBusy（弹活动指示条，改变 flow 高度）再渲染消息——
       // 渲染内部 scrollBottom 含 rAF 二次兜底，否则指示条挤出消息导致刚发的消息不在底
       if (it.kind === 'user_echo') {
+        // v3.2.12（用户定调）：贴图占位回显——CLI 把粘贴图写成
+        // "[Image: source: 路径]" 文本回显，剥掉并把路径并进 images 出缩略，
+        // 与发送侧乐观渲染（附件管线）形态对齐（echoFast 去重同源）
+        {
+          const _ims = String(it.text || '').match(/\[Image: source: [^\]]+?\]/g);
+          if (_ims) {
+            it.files = (it.files || []).concat(_ims.map(x => x.replace(/^\[Image: source: /, '').replace(/\]$/, '').trim()));
+            it.text = String(it.text || '').replace(/\[Image: source: [^\]]+?\]/g, '').trim();
+          }
+        }
+        // v3.2.12：中断/续跑机器标记行（CLI 在中断或自动续跑时落的 user 行）
+        // ——非用户输入，整条不渲染（历史重建侧 transcript.py 同款过滤）
+        if (/^(\[Request interrupted by user( for tool use)?\]|Continue from where you left off\.)/i.test(String(it.text || '').trim())) {
+          _HG.echoFast = null;
+          return;
+        }
         setBusy(true);
         // v2.20：乐观渲染 → echo 到达即跳过（echoFast 只顶一条，连发两条
         // 相同文本时第二条照常走事件渲染，不会吞）

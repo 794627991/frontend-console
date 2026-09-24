@@ -24,6 +24,16 @@ def re_title(text):
 # 历史转写重建（切回会话时把历史灌进气泡）
 # ---------------------------------------------------------------------------
 _SKIP_RE = None
+# v3.2.12（用户定调「这些不要出现在聊天框」）：中断/续跑机器标记行——纯 CLI
+# 协议噪音，非用户输入，历史重建整行丢弃（成对出现：user 标记 + assistant
+# "No response requested."）
+_NOISE_RE = re.compile(
+    r"^(\[Request interrupted by user( for tool use)?\]"
+    r"|Continue from where you left off\.)", re.I)
+# 自动续命摘要（英文 CLI 形态）——折叠成 renew 分割线（同 /compact 口径）
+_CONT_RE = re.compile(r"^This session is being continued from a previous conversation", re.I)
+# 用户贴图的路径占位回显——提取成 files 图片（前端出缩略图），文本不再裸显
+_IMG_ECHO_RE = re.compile(r"\[Image: source: ([^\]]+?)\]")
 
 # ---- from claude_harness.py:2233 (transcript_for) ----
 
@@ -212,7 +222,22 @@ def transcript_for(s):
                             if m_att:
                                 files = m_att
                                 t = _strip_att(t)
-                            if (t or imgs) and not _SKIP_RE.match((t or "").strip()):
+                            # v3.2.12：贴图占位回显 → 提取路径进 files（前端
+                            # 渲染图片缩略），文本剥掉不裸显路径
+                            _ims = _IMG_ECHO_RE.findall(t)
+                            if _ims:
+                                files = files + [x.strip() for x in _ims]
+                                t = _IMG_ECHO_RE.sub("", t).strip()
+                            # v3.2.12：中断/续跑机器标记行整行丢弃
+                            if _NOISE_RE.match((t or "").strip()):
+                                continue
+                            # v3.2.12：自动续命摘要折叠 renew 线
+                            if _CONT_RE.match((t or "").strip()):
+                                lines.append({"role": "renew",
+                                              "text": "会话自动续命（上下文摘要已并入模型记忆）",
+                                              "ts": o.get("timestamp") or ""})
+                                continue
+                            if (t or imgs or files) and not _SKIP_RE.match((t or "").strip()):
                                 lines.append({"role": "user", "text": t[:8000], "images": imgs, "files": files,
                                               "ts": o.get("timestamp") or ""})
                     elif typ == "assistant" and isinstance(content, list):
@@ -244,6 +269,10 @@ def transcript_for(s):
                         # 落盘后仍是真值 → 重建时每条渲染成一个空白 AI 气泡（历史会话
                         # 满屏空白圆角条的根因），还把真正的思考/工具行挤出可视区。
                         t = "\n".join(texts).strip()
+                        # v3.2.12（用户定调「中断的消息不要显示」）：中断回显
+                        # "No response requested." 是 CLI 协议噪音非模型输出，
+                        # 从文本里剥除；同轮若还有思考/工具（中断前的工作）保留
+                        t = t.replace("No response requested.", "").strip()
                         if t:
                             # v2.38 带 model：前端历史重建气泡的模型徽章数据源
                             # （此前不落 → 旧会话气泡只剩头像字母没模型名，用户实锤）

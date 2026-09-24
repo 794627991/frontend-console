@@ -513,3 +513,26 @@ ZCode 回合模型：
 - 实测：扩段链 935→…→0 逐级原子换入；贴底滞留后收缩（hs 0→915，轨重建
   16 未渲染+3 已渲染，active 跟随）；刻度顶→底→再点未渲染刻度全通。
 - 按用户要求本轮免对抗审计（「只有我要求你审计才审计」）。
+
+## 十五、v3.2.12 聊天框净化 + 分页退役（用户四连反馈，免审计轮）
+
+1. **贴图路径文本不裸显**（用户：「这种信息不要出现在我的聊天框里面」）：
+   CLI 把粘贴图写成 `[Image: source: 路径]` 文本回显——transcript.py 提取路径
+   进 files（前端出图片缩略卡，复用既有 data-img 管线），文本剥除；live 的
+   user_echo 同款处理（与乐观渲染形态对齐，echoFast 去重同源）。实测旧噪音
+   会话 28 处提取、界面 8 张缩略卡、路径文本零残留。
+2. **中断消息不显示**：`[Request interrupted by user( for tool use)]`、
+   `Continue from where you left off.`（含自动重启变体）user 行整行丢弃
+   （transcript.py `_NOISE_RE` + live user_echo 前置滤除）；assistant
+   `No response requested.` 从文本剥除（同轮思考/工具保留——中断前的工作
+   不丢）。`This session is being continued...`（自动续命摘要）折叠 renew 线
+   （同 /compact 口径）。
+3. **图的问题**：即 1 的图片缩略化（占位文本→真实缩略图，点击灯箱）。
+4. **分页退役**（用户：「上滑显示历史不要了！只要往上滑就显示历史，DOM 你
+   处理，为啥 ZCode 能」）：`_histRender` 恒全量（start=0，一次原子换入），
+   扩段/贴底收缩/「剩 N 条」条/cap 全部退役；ZCode 靠虚拟化管 DOM，我们靠
+   **回合默认折叠（头+结论行极廉价，979 行会话整流仅 ~3.5k px）+ 代码/图片
+   懒增强 + 原子渲染**。旧的部分窗口快照（histStart>0）作废重渲。刻度轨/
+   跳底钮保留。
+- 实测：重构会话打开即 histStart=0/无剩余条/轨 17 枚全渲染/8 图缩略；
+  回归全绿。本轮按用户要求免审计。

@@ -78,8 +78,11 @@
     // v3.2.11（用户实锤「有的回合没整合在一起」）：旧结构快照（v3.2 前的
     // DOM：无 .h-turn-body 回合闭合结构）恢复后思考/工具/正文永远散着——
     // 弃快照走 transcript 重渲，全部回合统一新结构（头+折叠体+根区结论）
+    // v3.2.12：部分窗口快照（histStart>0，分页时代的产物）同样作废——恒
+    // 全量渲染后没有扩段机器，残缺 DOM 会让上半段历史翻不到
     if (c && c.html && c.html.indexOf('h-turn-body') === -1
         && c.html.indexOf('h-grp') !== -1) c = null;
+    if (c && typeof c.histStart === 'number' && c.histStart > 0) c = null;
     if (c) {
       // v3.1：keep-warm 命中——取消该快照的延迟销毁（saveCache 排程的 30s
       // 定时器），热快照继续作为 LRU 一员存活

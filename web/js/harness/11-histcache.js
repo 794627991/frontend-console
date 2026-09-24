@@ -1,6 +1,11 @@
 // harness histcache.js (v3.0 自 buildClaudeHarnessTab 拆出,定义体零改动,缩进保持原样)
   function _histRender(lines, start, opt) {
     _HG.lastTs = 0;   // v2.24.5：重建期时间条从零起算（第一条 user 带时间）
+    // v3.2.12（用户定调「只要往上滑就显示历史，分页加载不要了」）：恒全量
+    // 渲染——整段会话一次原子换入，滚动条天然覆盖全部历史（ZCode 靠虚拟化
+    // 管 DOM，我们靠：回合默认折叠（头+结论行极廉价）+ 代码/图片懒增强 +
+    // 原子渲染一次成画）。扩段/收缩/「剩 N 条」机器整体退役
+    start = 0;
     // v2.24 CAP：正常模式渲染起点不得越过 capStart（翻阅上限）——保住正常
     // 模式的 DOM 省流。v3.2.7：只读模式退役，上限 1200 行内全部上滑翻阅
     const capStart = Math.max(0, lines.length - _HG.HIST_CAP);
@@ -148,67 +153,7 @@
       _hgRailSync();
     }
   }
-  function _hgShrinkHead() {
-    if (!_HG.histAll || !_HG.histAll.length) return;
-    const keepStart = _HG.histAll.length - _HG.HIST_PAGE;
-    const children = [..._hgFlow.children];
-    const before = _hgFlow.scrollHeight;
-    const top0 = _hgFlow.scrollTop;      // v2.46：摘除前的 scrollTop（锚定基准）
-    let newStart = -1;
-    let i = 0;
-    // v2.37R5（终审·严重）：内层扫戳触底=尾部无戳（实时追加的活动内容），
-    // 视作保留区——带标签 break 出外层，统一落到函数尾收尾。旧实现此处
-    // return 硬退：已摘的组不回滚，而 histStart/入口条/scrollTop 回锚全被
-    // 跳过 → 消息流只剩活动尾、历史无入口、断裂态被 saveCache 存档。
-    // 纯无戳旧快照（一次都没摘，newStart<0）仍走静默放弃。
-    outer: while (i < children.length) {
-      const group = [children[i]];
-      let hEnd = (children[i].dataset && children[i].dataset.hEnd != null)
-        ? +children[i].dataset.hEnd : null;
-      let j = i;
-      while (hEnd == null) {
-        j++;
-        if (j >= children.length) break outer;   // 尾部无戳=保留，收尾
-        group.push(children[j]);
-        if (children[j].dataset && children[j].dataset.hEnd != null) {
-          hEnd = +children[j].dataset.hEnd;
-        }
-      }
-      if (hEnd >= keepStart) break;              // 触到保留区，摘头结束
-      for (const g of group) g.remove();
-      newStart = hEnd + 1;
-      i = j + 1;
-    }
-    if (newStart < 0) return;                    // 纯无戳：零摘除，安全放弃
-    _HG.histStart = newStart;
-    _hgRailSync();   // v3.2.10：摘头后轨补未渲染区项
-    // 视口锚定（v2.46 修「翻不下来」回归——CDP+Playwright 真实布局实证）：
-    // 摘除头部内容后 scrollHeight 缩小，浏览器会对越界的 scrollTop 做钳制
-    // （读取 scrollHeight 强制布局时生效）——钳制本身就是正确的视觉锚定
-    // （视口落在同一批内容上）。旧实现不区分钳制与否，一律再减
-    // 「摘除量」：贴底收缩时 scrollTop 已被钳到新上限，再减一次=双重补偿
-    // → 视口飞到顶部 → 触发 nearTop 扩段把刚收掉的行重渲回来 → 锚定又
-    // 落在中途（distBottom 卡 2000+px），用户再滚到底再触发——无限拉锯，
-    // 即「滚动条翻不下来」。v2.43 对照实测同款翻车（v2.37R4 起潜伏，
-    // R6 只收了触发条件没修锚定；v2.43 子代理行注入膨胀行数使其高频可达）。
-    // 修法：摘除后再读一次 scrollTop，比 top0 小=浏览器已钳制（不动）；
-    // 未钳制（用户在保留区中部，摘除不越过视口）才手动减摘除量。
-    const removed = before - _hgFlow.scrollHeight;
-    const top1 = _hgFlow.scrollTop;
-    if (top1 >= top0) _hgFlow.scrollTop = Math.max(0, top1 - removed);
-    // 头部若仍有更早历史，重建只读入口条（原条已随头部组摘除）
-    // v2.43.2（R2-N2）：计数与渲染路径同口径（visN，剔除 sub_* 行）——
-    // 否则收缩后条上数字比渲染路径虚高回跳
-    if (newStart > 0 && !_hgFlow.querySelector('.hg-hist-more')) {
-      const bar = document.createElement('div');
-      bar.className = 'hg-hist-more';
-      const _visN = newStart - ((_HG.histAll || []).slice(0, newStart).filter(
-        l => l && l.role && String(l.role).indexOf('sub_') === 0).length);
-      bar.innerHTML = '📖 剩 ' + _visN + ' 条更早消息——<b>点击进入只读模式</b>查看';
-      _hgFlow.insertBefore(bar, _hgFlow.firstChild);
-      _hgFlow.scrollTop += bar.offsetHeight;        // 条插入头部 → 视口同步下移补偿
-    }
-  }
+  // v3.2.12：_hgShrinkHead（贴底收缩）随分页退役——恒全量渲染后无「窗口」可收
   async function _histFetch(sidAt) {
     try {
       const r = await fetch(`/api/harness/transcript?sid=${encodeURIComponent(sidAt)}`);
@@ -218,14 +163,14 @@
       return true;
     } catch(_) { return false; }
   }
-  async function _histRefresh(sidAt, start) {
+  async function _histRefresh(sidAt, _startIgnored) {
     try {
       const r = await fetch(`/api/harness/transcript?sid=${encodeURIComponent(sidAt)}`);
       const j = await r.json();
       if (!j.ok || _HG.sid !== sidAt) return;   // 会话已切走，弃
-      if (_HG.busy) return;   // v3.2.1R2(R2-2)：fetch 在途时用户发送消息——重渲会抹掉活组/新消息泡，弃扩段（07-hist 懒填同款守卫）
+      if (_HG.busy) return;   // v3.2.1R2(R2-2)：fetch 在途时用户发送消息——重渲会抹掉活组/新消息泡（07-hist 懒填同款守卫）
       const lines = j.lines || [];
-      _histRender(lines, start == null ? lines.length - _HG.HIST_PAGE : start);
+      _histRender(lines, 0);   // v3.2.12：恒全量（start 参数退役保留签名兼容）
     } catch(_) {}
   }
   // v3.2.7（用户定调「只读模式退役」）：_roDeps/_roEnter/_roExit 整体退役——
