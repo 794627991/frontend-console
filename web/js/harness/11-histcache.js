@@ -168,6 +168,21 @@
       while (_buf.firstChild) _frag.appendChild(_buf.firstChild);
       _realFlow.replaceChildren(_frag);
       _hgFlow = _realFlow;
+      // v3.1h（用户实锤「结束不收起+头部下空白壳」）：回放逐组定稿时 _HG.grp
+      // 指针前移会漏收旧组；占位空壳随快照/重建残留。换入后统一兜底——
+      // 非尾组 turn-body 全部收起 + 清占位残壳；busy 会话尾组是活组照常展开
+      const _grps = _realFlow.querySelectorAll(':scope > .h-grp');
+      _grps.forEach((gp, i) => {
+        if (_HG.busy && i === _grps.length - 1) return;
+        const tb = gp.querySelector(':scope > .h-grp-proc > .h-turn-body');
+        if (tb) tb.classList.add("closed");
+        const ph = gp.querySelector(":scope > .h-msg.asst.ph");
+        if (ph) ph.remove();
+      });
+      // v3.1h（用户定调）：回滚只属最后一条 AI 消息——各回合尾条都带了
+      // can-rewind，收敛为只留全局最后一条
+      const _allAsst = _realFlow.querySelectorAll('.h-msg.asst.can-rewind');
+      _allAsst.forEach((m, i) => { if (i < _allAsst.length - 1) m.classList.remove("can-rewind"); });
       _HG.histBuilding = false;   // v3.2.13：连接性判据还原（见顶部注释）
       _hgRailSync();
     }

@@ -437,6 +437,16 @@ function buildClaudeHarnessTab(opts = {}) {
     // 附件图片 chip → Lightbox
     const img = e.target.closest('[data-img]');
     if (img) openLightbox(img.dataset.img);
+    // v3.1h：用户消息复制（原文，含 markdown 源）
+    const uc = e.target.closest('.h-ucopy');
+    if (uc) {
+      const m = uc.closest('.h-msg.user');
+      Promise.resolve(copyText(m?.dataset.rtext || '')).then(() => {
+        uc.textContent = '✓';
+        setTimeout(() => { uc.textContent = '📋'; }, 900);
+      });
+      return;
+    }
     // v2.22：用户消息重发（气泡右上刷新钮）——同内容再走一遍发送管线
     const rb = e.target.closest('.h-resend');
     if (rb) {

@@ -476,12 +476,16 @@
     d.dataset.ratts = JSON.stringify({ images: images || [], files: files || [] });
     const acts = document.createElement('div');
     acts.className = 'h-macts';
+    // v3.1h（用户定调）：与 AI 消息同构——hover 下方右对齐浮现；
+    // 复制 + 重发 + 编辑后重发（原文/附件填回输入框）
     acts.innerHTML =
+      '<button class="h-mico h-ucopy" title="复制这条消息">📋</button>' +
       '<button class="h-mact h-resend" title="重发这条消息">↻</button>' +
       '<button class="h-mact h-edit" title="编辑后重发（原文+附件填回输入框）">✎</button>';
     d.appendChild(acts);
     addRow(d);
     if (live !== false) {
+      _hgFlow.querySelectorAll('.h-msg.asst.can-rewind').forEach(m => m.classList.remove('can-rewind'));
       const g = grpEnsure(true);
       phStart(g);                              // AI 未输出前的活泼占位（每轮独立）
       _turnHeadShow(g);                        // v3.1h（用户实锤）：消息发出第一时间亮
@@ -552,7 +556,6 @@
     d.dataset.rtext = String(text);   // v3.1h:AI 消息源文本——复制/编辑后发送取用
     bar.innerHTML =
       '<button class="hg-mico h-acopy" title="复制这条回复">📋</button>' +
-      '<button class="hg-mico h-aedit" title="编辑后发送（源文本填回输入框）">✎</button>' +
       '<button class="hg-mact" data-hg-rewind title="回滚到本条所在回合结束：之后的全部丢弃（自动全量备份）">⏪ 回滚到这里</button>';
     d.appendChild(bar);
     // 锚点 = 正文前缀（随 dataset 序列化，实时/回放两路同源；后端按它
