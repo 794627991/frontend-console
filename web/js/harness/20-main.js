@@ -1862,9 +1862,14 @@ function buildClaudeHarnessTab(opts = {}) {
     const rail = _hgRailEl;
     const items = _HG.railItems;
     if (!rail || !items || !items.length) return;
+    // v3.2.15（用户实锤「翻到底了刻度不在底」）：贴底特判——末回合正文比
+    // 锚线阈值高时，offsetTop<=scrollTop+80 的判据永远够不到最后一枚，
+    // 绝对贴底（≤4px 余量）直接点亮最后一枚
+    const _atBtm = _hgFlow.scrollHeight - _hgFlow.scrollTop - _hgFlow.clientHeight <= 4;
     const st = _hgFlow.scrollTop + 80;
     let act = -1;
-    for (let k = 0; k < items.length; k++) {
+    if (_atBtm) act = items.length - 1;
+    else for (let k = 0; k < items.length; k++) {
       const el = items[k].el;
       if (el && el.isConnected && el.offsetTop <= st) act = k;
     }

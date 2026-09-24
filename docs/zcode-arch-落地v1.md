@@ -603,3 +603,29 @@ b535b34a_image.png」（base64 行的应用上传 hash 名附件）+「🖼 1.pn
   改写为回显路径（label/title/data-img 三同步）——live 与回放同名同源。
 - 回归：chain_smoke 全过、state 41、undef 无新符号、route_smoke 42 健康、
   ledger 17/17。免审计（用户令）。
+
+## 十八、v3.2.15 回合归纳 + 刻度贴底转正（用户两张标注截图，免审计轮）
+
+用户两张截图：①同一回合拆成三个「已工作」头——「为什么没有归纳在一个
+会话内？」；②翻到底刻度轨不在底——「我都翻到底了，为啥条显示不是底？」
+
+### ① 回合归纳：renderPeer 撤 grpFinalize
+- 实测定位（2d835190 全量重渲 + data-hi 范围映射）：43 个组里所有非 user
+  边界全部对齐 peer 行（hi=154/172/271/411/499/507/631/678/695/753/1116/
+  1119/1124）——06-relay renderPeer 的 grpFinalize(false) 把 SendMessage
+  协作回传当成了回合终点。但 SendMessage 是同一模型回合的中途接力（工具
+  调用-结果环，回合没结束），回传本体早已走 v2.49 归一进子代理段，定稿
+  主组纯属旧独立气泡时代的残留。
+- 修复：撤掉该 grpFinalize（endThinking/closeRun 保留——思考段确实暂停）。
+  真回合边界不动：result/下一 user 行/renderUser→grpFinalize 照旧。
+- 实测：问题1 回合三个头（34 思考·70 工具 / 3·12 / 1分7秒·2·2）归一为
+  「已工作 30 分 56 秒 · 39 思考 · 84 工具」；全会话 43 组 → 30 组 =
+  30 个 user 回合，逐回合核验无一多组。
+
+### ② 刻度贴底：_hgRailActive 贴底特判
+- 根因：激活判据「el.offsetTop <= scrollTop+80」在末回合正文高于 80px
+  时永远够不到最后一枚（末 user 行 offsetTop 9206 vs 贴底锚线 9162——
+  绝对贴底也差 44px）。凡末回合 AI 回复超过 80px 的会话必现。
+- 修复：贴底（scrollHeight-scrollTop-clientHeight ≤ 4px）直接点亮最后
+  一枚。实测：50 枚轨贴底激活 idx=49（末枚），跳底钮照旧正确隐藏。
+- 回归：chain_smoke 全过、state 41、undef 无新符号。免审计（用户令）。

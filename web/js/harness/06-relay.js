@@ -261,7 +261,11 @@
     // 交错回传（relay1,relay2,peer1,peer2）各对各的线不串；摘要随定格写入
     // dataset（面板协作行「已回传」展示用，随快照序列化切会话可派生）
     _hgPeerFreezeByName(name, text);
-    grpFinalize(false);
+    // v3.2.15（用户实锤「为什么没有归纳在一个会话内」）：协作回传不再定稿
+    // 主回合组——SendMessage 等回传属同一用户回合的中途接力（模型回合没
+    // 结束），旧 grpFinalize 把一条用户消息拆成 N 个「已工作」头；回传本体
+    // 走 v2.49 归一进子代理段，无需回合边界。真回合边界照旧：result/下一
+    // user 行的定稿路径不受影响
     endThinking(); closeRun();
     // v2.49：协作归一——SendMessage 协作回传全文入对应子代理段（替代独立
     // 回传气泡）。v2.53（用户定调）：非识图回传**禁止平铺气泡**——定位不到
