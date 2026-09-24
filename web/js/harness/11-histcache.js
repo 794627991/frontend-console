@@ -27,10 +27,11 @@
       const visN = start - lines.slice(0, start).filter(
         l => l && l.role && String(l.role).indexOf('sub_') === 0).length;
       if (start <= capStart) {
-        // 已到翻阅硬顶：notice 形态（不可点——委托按 hg-hist-cap 忽略）
+        // 已到翻阅硬顶：点击弹出「早期会话选择器」（全部会话按活跃排序，
+        // 点选直跳——用户定调：侧边能力必须能跳转到所有早期会话）
         bar.classList.add('hg-hist-cap');
         bar.innerHTML = '⬆ 已到浏览上限（已载入最近 ' + (lines.length - start) +
-          ' 行，更早内容不载入防卡顿）——早期内容请从<b>左侧会话列表</b>打开对应早期会话查看';
+          ' 行，更早内容不载入防卡顿）——<b>点击选择早期会话 ↗</b>';
       } else {
         bar.innerHTML = '📖 剩 ' + visN + ' 条更早消息——<b>点击加载更早</b>（上滑自动加载）';
       }

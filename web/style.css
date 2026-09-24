@@ -2256,8 +2256,28 @@ html {
 /* v3.2.7：点击=扩段加载更早（只读模式退役，上滑同款）；封顶条是纯提示 */
 .hg-hist-more { cursor: pointer; }
 .hg-hist-more b { color: var(--accent); }
-.hg-hist-more.hg-hist-cap { cursor: default; border-style: solid; opacity: .88; }
-.hg-hist-more.hg-hist-cap:hover { color: var(--muted); }
+.hg-hist-more.hg-hist-cap { border-style: solid; opacity: .92; }
+/* v3.2.9：封顶条=早期会话选择器入口（可点） */
+.hg-hist-more.hg-hist-cap b { cursor: pointer; }
+/* v3.2.9：早期会话选择器弹层（fixed 定位挂在 body，锚在封顶条旁） */
+.hg-sess-pop { position: fixed; z-index: 60; min-width: 300px; max-width: 400px;
+  max-height: 46vh; overflow-y: auto; display: flex; flex-direction: column; gap: 2px;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 6px; box-shadow: 0 8px 28px rgba(0,0,0,.3); }
+.hg-sess-pop-head { font-size: var(--fs-xs); color: var(--muted); padding: 4px 8px 6px;
+  border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.hg-sess-pop-empty { font-size: var(--fs-sm); color: var(--muted); padding: 10px 8px; text-align: center; }
+.hg-sess-pop-row { display: flex; flex-direction: column; gap: 1px; text-align: left;
+  border: none; background: transparent; border-radius: 7px; padding: 6px 9px;
+  cursor: pointer; font: inherit; position: relative; }
+.hg-sess-pop-row:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.hg-sess-pop-title { font-size: var(--fs-sm); color: var(--fg);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 340px; }
+.hg-sess-pop-sub { font-size: var(--fs-2xs); color: var(--muted); }
+.hg-sess-pop-time { position: absolute; right: 9px; top: 7px;
+  font-size: var(--fs-2xs); color: var(--muted); opacity: .8; }
+.hg-sess-pop-row.cur { outline: 1px dashed color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset: -2px; }
 
 /* ==================== v2.24 只读禅模式（超长会话历史归档查阅）====================
    全屏覆盖：无侧栏/输入/一切入口，只剩居中历史流（VSCode 禅模式）。

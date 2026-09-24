@@ -791,6 +791,59 @@ function buildClaudeHarnessTab(opts = {}) {
     _hgFlow.scrollTop = _hgFlow.scrollHeight;
     _hgJumpBtm.classList.remove('show');
   };
+  // v3.2.9：早期会话选择器（封顶条入口）——弹层列出全部会话按活跃排序，
+  // 点选 switchTo 直跳；再点条/外点/Esc 收起。数据源 _HG.sessions（侧栏
+  // 同源快照，标题/项目/模型齐备；拉取时机由既有会话列表刷新维护）
+  function _hgSessPick(anchor) {
+    const exist = document.querySelector('.hg-sess-pop');
+    if (exist) { exist.dispatchEvent(new CustomEvent('hg-close')); return; }   // 再点收起（走 close 语义，listener 全摘）
+    const pop = document.createElement('div');
+    pop.className = 'hg-sess-pop';
+    const sess = (_HG.sessions || []).slice()
+      .sort((a, b) => (b.last_active || 0) - (a.last_active || 0));
+    if (!sess.length) {
+      pop.innerHTML = '<div class="hg-sess-pop-empty">没有可跳转的会话</div>';
+    } else {
+      pop.innerHTML = '<div class="hg-sess-pop-head">跳转到会话</div>' +
+        sess.map(x => {
+          const proj = String(x.cwd || '').split(/[\/]/).pop() || '~';
+          const cur = x.sid === _HG.sid;
+          return `<button class="hg-sess-pop-row${cur ? ' cur' : ''}" data-pick="${esc(x.sid)}"` +
+            ` title="${esc(x.cwd || '')} · ${esc(x.title || '')}">` +
+            `<span class="hg-sess-pop-title">${esc(x.title || '新会话')}</span>` +
+            `<span class="hg-sess-pop-sub">${esc(proj)}${x.model ? ' · ' + esc(String(x.model).split('[')[0]) : ''}` +
+            `${x.busy ? ' · 回复中' : ''}${cur ? ' · 当前' : ''}</span>` +
+            `<span class="hg-sess-pop-time">${esc(_harnessRelTime(x.last_active || 0))}</span>` +
+            `</button>`;
+        }).join('');
+    }
+    document.body.appendChild(pop);
+    const r = anchor.getBoundingClientRect();
+    pop.style.left = Math.max(8, Math.min(window.innerWidth - pop.offsetWidth - 8,
+      r.left + r.width / 2 - pop.offsetWidth / 2)) + 'px';
+    // 条在视口顶部——弹层向下展开；越底则向上
+    const down = r.bottom + pop.offsetHeight + 8 <= window.innerHeight;
+    pop.style.top = down ? (r.bottom + 6) + 'px' : Math.max(8, r.top - pop.offsetHeight - 6) + 'px';
+    const close = () => {
+      pop.remove();
+      document.removeEventListener('mousedown', out, true);
+      document.removeEventListener('keydown', esc, true);
+    };
+    const out = (ev) => { if (!pop.contains(ev.target)) close(); };
+    // v3.2.9R（审计E）：Esc 挂 document——焦点在封顶条（pop 外）时 pop 节点
+    // 监听收不到冒泡；capture 全局监听随 close 摘除（与 out 同模式）
+    const esc = (ev) => { if (ev.key === 'Escape') close(); };
+    pop.addEventListener('hg-close', close);   // toggle 收起走同一条 close
+    setTimeout(() => { document.addEventListener('mousedown', out, true);
+                      document.addEventListener('keydown', esc, true); }, 0);
+    pop.addEventListener('click', (ev) => {
+      const row = ev.target.closest('[data-pick]');
+      if (!row) return;
+      const sid = row.dataset.pick;
+      close();
+      if (sid && sid !== _HG.sid) switchTo(sid);
+    });
+  }
   // 主层「加载更早」提示条：事件委托（绑一次永在，bar 重建不丢点击）。
   // v3.2.7（用户定调「只读模式退役」）：点击=上滑同款扩段（_histRefresh
   // 大窗口重渲+滚动锚定）；封顶条（hg-hist-cap）是纯提示不可点
@@ -798,7 +851,9 @@ function buildClaudeHarnessTab(opts = {}) {
     const bar = e.target.closest('.hg-hist-more');
     if (!bar || !_hgFlow.contains(bar)) return;
     e.stopPropagation();
-    if (bar.classList.contains('hg-hist-cap')) return;   // 封顶 notice——无动作
+    // v3.2.9（用户定调）：封顶条=早期会话选择器入口——弹层列出全部会话
+    //（按活跃排序，数据源 _HG.sessions 与侧栏同源），点选 switchTo 直跳
+    if (bar.classList.contains('hg-hist-cap')) { _hgSessPick(bar); return; }
     if (_HG.busy || _histBusy || !_HG.histAll || !_HG.histLive || !_HG.sid) return;
     const capStart = Math.max(0, _HG.histAll.length - _HG.HIST_CAP);
     if (_HG.histStart <= capStart) return;
