@@ -257,6 +257,10 @@
     const row = document.createElement('div');
     row.className = 'h-tool col agentline';
     row.dataset.tid = tid;
+    // v3.2.6R2（用户实锤「点了说无 agentId」）：类型/描述随行预置——agentId
+    // 后到（task_started/sub_open/agentsRpl 三路任一）时凭这对键回绑/回查
+    row.dataset.hgSubType = String(type || '').trim() || 'Agent';
+    row.dataset.hgSubDesc = String(desc || '').slice(0, 120);
     row.style.setProperty('--h-accent', _H_KIND_COLOR.agent || 'var(--border)');
     const ty = String(type || '').trim() || 'Agent';
     const dsc = String(desc || '').trim();

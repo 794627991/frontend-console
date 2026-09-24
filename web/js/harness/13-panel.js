@@ -78,6 +78,10 @@
       if (!a) { showBanner('历史子代理可从面板条目详情卡回放（转写数据源）', 2600); return; }
       const aid = a.taskId || a.agentId || '';
       if (a.done && aid) { _subReplay(tid, a.type, a.desc, aid); return; }
+      // v3.2.6R2（用户实锤「运行过程中不能点开看」）：运行中重开也走全量
+      // 铺底——旧态只建空脚手架等增量，中途重开=白板（此前事件不重现）。
+      // force 回放 + F3 运行态分支（不定稿/秒表起跑/镜像续流）= 铺底即实况
+      if (!a.done && aid) { _subReplay(tid, a.type, a.desc, aid, true); return; }
       _subOpen(tid, a.type, a.desc);
     }
     _sub.manual = true;                  // P0-3：手动来源——回合终结不自动收起，✕ 才收

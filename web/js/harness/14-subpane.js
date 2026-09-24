@@ -396,6 +396,25 @@
   const _subNoreplay = new Set();
   const _subNoReplayNote = () =>
     '<div class="hg-sub-replay-note">未找到该子代理的转写记录，历史过程不可回放</div>';
+  // v3.2.6R2：运行中代理的回放重试（CLI 刷盘有延迟——fetch 早于落盘时铺底
+  // 空，5s 后再拉一次；限 3 次防循环，tab 已换/已定稿/已有行即不再试）。
+  // R6（审计）：计数挂 **tab 档案**（tb._retry）——retry 触发的 force 重拉会
+  // 整体重建 scaffold（tb.t 换新对象），挂 t 上每轮归零、上限恒不可达
+  function _subReplayRetry(tid, type, desc, agentId) {
+    const tb = _sub.tabs[tid];
+    if (!tb) return;
+    tb._retry = (tb._retry || 0) + 1;
+    if (tb._retry > 3) return;
+    setTimeout(() => {
+      const cur = _sub.tabs[tid];
+      const sc = cur && cur.sc;
+      if (!sc || !cur.t || cur.t.done || (cur.t.tl && cur.t.tl.children.length)) return;
+      const a = (_HG.agents || {})[tid];
+      if (!a || a.done) return;
+      delete sc.dataset.replayed;
+      _subReplay(tid, type, desc, agentId, true);
+    }, 5000);
+  }
   function _subReplay(tid, type, desc, agentId, force) {
     if (!_subPaneEl) return;
     const a = (_HG.agents || {})[tid] || {};
@@ -478,6 +497,17 @@
         if (!j.found) {
           // v2.42：后端双源（projects 旧源+新版 CLI tasks 兜底）均未命中——
           // 文件不存在是持久事实，重拉永远同结果；记住结论，重点/重开不再发请求
+          // v3.2.6R2：运行中代理的转写可能只是尚未生成——不进 noreplay 锁
+          // （完成后的重开要能重试），保持运行态等镜像续流
+          const _runA = (_HG.agents || {})[tid];
+          if (_runA && !_runA.done) {
+            t.t0 = _runA.t0 || Date.now();
+            _subTlHeadPaint(t);
+            _subTlTickStart(tid);
+            note('转写尚未生成——实况继续');
+            _subReplayRetry(tid, type, desc, agentId);
+            return;
+          }
           _subNoreplay.add(agentId);
           t.done = true; t.durTxt = '';
           _subTlHeadPaint(t);   // v3.2.6R（审计F2）：失败分支也定稿头——不卡「工作中 0s」假态
@@ -487,11 +517,22 @@
         if (!(j.rows || []).length) {
           // v2.41R2：转写存在但无可渲染行——与「没有独立转写」是两回事，给中性
           // 文案且不进 noreplay 集（tab 重开后可重试，防误判永久锁死回放入口）
+          // v3.2.6R2：运行中同理不锁不封顶——CLI 刷盘有延迟，保持运行态续流
+          const _runB = (_HG.agents || {})[tid];
+          if (_runB && !_runB.done) {
+            t.t0 = _runB.t0 || Date.now();
+            _subTlHeadPaint(t);
+            _subTlTickStart(tid);
+            note('转写暂无可回放内容——实况继续');
+            _subReplayRetry(tid, type, desc, agentId);
+            return;
+          }
           t.done = true; t.durTxt = '';
           _subTlHeadPaint(t);   // v3.2.6R（审计F2）：同上
           note('转写存在但无可回放内容');
           return;
         }
+        if (_sub.tabs[tid]) _sub.tabs[tid]._retry = 0;   // v3.2.6R6：铺底成功重置重试额度
         note(`回放 · ${_AGENT_LABEL[type] || type} · ${j.rows.length} 条记录`);
         // ---- v3.2.6：rows → 时间线（与 live 同厂行；ts 事实分级）----
         const _tsGet = r0 => (r0 && r0.ts) ? Date.parse(r0.ts) : 0;

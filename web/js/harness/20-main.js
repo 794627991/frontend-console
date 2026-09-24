@@ -400,13 +400,19 @@ function buildClaudeHarnessTab(opts = {}) {
     // v3.2.6（ZCode 子智能体模式）：单行任务卡（.h-tool.agentline）——整行
     // 点击=开右侧窗格（live 实况 / 已结束回放），不再折叠展开（对照 ZCode
     // canToggle=false 产品边界：过程细节统一在窗格时间线查看）
-    // v3.2.6R（审计F1）：两路数据锚都 miss（切会话往返且行未回写 hgSubr 的
-    // 旧快照）——明确告知而非静默吞点击
+    // v3.2.6R2（审计F1+用户实锤）：agentId 三源兜底——agents 档案 → 行自带
+    // hgSubr → 面板回放档（agentsRpl 按 type+desc 匹配）；全 miss 才 banner
     const agRow = e.target.closest('.h-tool.agentline');
     if (agRow) {
       const pid = agRow.dataset.tid || '';
       if (pid && (_HG.agents || {})[pid]) { _subReopen(pid); return; }
-      const aid = agRow.dataset.hgSubr || '';
+      let aid = agRow.dataset.hgSubr || '';
+      if (!aid) {
+        const _ty = agRow.dataset.hgSubType || '', _ds = (agRow.dataset.hgSubDesc || '').slice(0, 40);
+        const _hit = (((_HG.dyn || {}).agentsRpl) || []).find(r =>
+          r && r.agentId && (r.type || '') === _ty && String(r.desc || '').slice(0, 40) === _ds);
+        if (_hit) { aid = _hit.agentId; agRow.dataset.hgSubr = aid; }
+      }
       if (aid) _subReplay(aid, agRow.dataset.hgSubType || 'Task',
         agRow.dataset.hgSubDesc || '', aid);
       else showBanner('该子代理暂无可打开的过程记录（无 agentId）', 2600);

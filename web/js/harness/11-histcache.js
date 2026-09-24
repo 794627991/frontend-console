@@ -66,6 +66,17 @@
             type: _typ, desc: _desc, t0: 0, done: true, doneAt: 0, replay: true,
             agentId: _aid });
           if (d.agentsRpl.length > 5) d.agentsRpl.shift();
+          // v3.2.6R2（用户实锤「点了说无 agentId」）：建档即回绑单行卡——
+          // async 代理的 sub_open 注入依赖转写非空（0 字节占位/空转写时缺
+          // 段），此处不依赖：行自带 hgSubType/hgSubDesc 预置键即可匹配
+          if (_aid) {
+            const _rows = _hgFlow.querySelectorAll('.h-tool.agentline:not([data-hg-subr])');
+            _rows.forEach(r => {
+              if ((r.dataset.hgSubType || '') === _typ
+                  && (r.dataset.hgSubDesc || '').slice(0, 40) === _desc.slice(0, 40))
+                r.dataset.hgSubr = _aid;
+            });
+          }
         }
         // v3.2.6R（审计F4）：SendMessage 续派也建目录条目——段卡已隐（CSS
         // display:none），此类代理无 Agent 派发行=无单行卡，目录是唯一入口。

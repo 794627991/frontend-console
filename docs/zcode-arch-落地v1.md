@@ -408,3 +408,12 @@ ZCode 回合模型：
   WRITE_RE`（前端 _HG_EXP_WRITE_RE 四分支完整复刻，re.I 对齐）按**全量命令**
   落 `w:1`，前端 w 行不合成伪 input（绝不把写命令聚进查阅组）。R5 终审
   PASS（四分支逐字符对照全等、无新引入面）。
+- **R6/R7（用户实锤「点了说无 agentId」+「运行中不能点开看」）**：async 代理
+  （Task 结果=启动确认文本，agentId 在其中，但 sub_open 注入依赖转写非空）
+  历史重建时行未绑 hgSubr → 四层修复：工厂预置 hgSubType/hgSubDesc 锚键 +
+  agentsRpl 建档即回绑（不依赖转写）+ 点击三源兜底（agents 档案→行 hgSubr→
+  agentsRpl 按 type+desc 查）+ 运行中重开走 force 回放铺底即续流（中途 ✕ 再
+  点不再是白板；!found/空 rows 尊重运行态不锁 noreplay，_subReplayRetry 5s
+  延迟重拉限 3 次——R7 计数迁移到 tab 档案防 scaffold 重建归零）。浏览器复
+  现验证：新进程恢复→点行→「回放 · Explore · 8 条记录」全时间线；运行中关
+  窗格再点行→「工作中 11s 实况继续」→完成后全量时间线+结论。R7 终审 PASS。
