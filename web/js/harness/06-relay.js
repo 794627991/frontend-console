@@ -49,10 +49,21 @@
     addRow(d);
   }
   function renderAudit(text) {
+    // v3.2.27（用户定调「警告记录到工作区内，不许分割消息流」）：审计警示
+    // 不再独立占位于消息流根部（旧形态在用户气泡与回合间插卡 + 先行定稿，
+    // 把同一条会话的工作区割成多段）——挂进当前回合时间线，按发生时序落
+    // 在思考/工具之间；回合外（罕见：回合间补审）维持旧根部形态
     const d = document.createElement('div');
     d.className = 'h-audit';
     d.textContent = text;
-    addRow(d);
+    const g = (_HG.grp && _HG.grp.root
+               && (_HG.grp.root.isConnected || _HG.histBuilding)) ? _HG.grp : null;
+    if (g && g.tl) {
+      _tlExpFlush(!!_HG.openState);
+      g.tl.appendChild(d);
+    } else {
+      addRow(d);
+    }
   }
   function _hgVisionFreeze(el, err) {
     if (!el || !el.isConnected) return;

@@ -646,7 +646,7 @@
       else if (it.kind === 'peer') { grpFinalize(true); renderPeer(it.name, it.text, it.to); }
       else if (it.kind === 'renew') { grpFinalize(true); renderRenew(it.text); }
       // v2.34：审计警示（light 回合结算违规）——回合已终结，定稿当前组再出红卡
-      else if (it.kind === 'audit') { grpFinalize(true); renderAudit(it.text); _hgScrollBottom(); }
+      else if (it.kind === 'audit') { renderAudit(it.text); _hgScrollBottom(); }   // v3.2.27：撤 grpFinalize——警示入工作区不分割回合
       else if (it.kind === 'raw') renderRaw(it.text);
       else if (it.kind === 'ask') { grpFinalize(true); askRender(it); }
       else if (it.kind === 'ask_done') askDone(it);

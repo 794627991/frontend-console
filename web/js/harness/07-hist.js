@@ -91,8 +91,10 @@
       renderRenew(l.text);
     }
     else if (l.role === 'audit') {    // v2.34：审计警示卡回放（v2.34.1 与实时同文本，
-      grpFinalize(true, { hist: true, endTs: _HG.histActTs || 0 });   // 由 audit log 并入；对齐实时分支先定稿上一组（v3.2R1(P0)：回放不吃时钟；v3.2.2 段末 ts）
-      renderAudit(l.text);            // 否则纯工具收尾回合的补审卡会挂错进前组）
+      // v3.2.27（用户定调「警告记录到工作区内，不许分割」）：撤定稿——警示
+      // 挂进当前回合时间线（renderAudit 内判组），同一条会话的工作区不再
+      // 被审计卡割成多段；由 audit log 并入
+      renderAudit(l.text);
     }
     else if (l.role === 'user') {
       // v3.2.16 前端防线：旧后端（未重启进程）仍会发 [Image: source] 回显行
