@@ -212,7 +212,7 @@
       if (!t.exp || !t.exp.el.isConnected) {
         _subTlExpBreak(t);
         const grpEl = document.createElement('div');
-        grpEl.className = 'h-tl-grp open';
+        grpEl.className = 'h-tl-grp';   // v3.2.19：生而收起（主链 _tlPlace 同款）
         grpEl.innerHTML =
           `<button class="h-tl-grp-head"><span class="h-chev">▸</span>` +
           `<span class="h-tl-grp-name">🔍 查阅</span>` +

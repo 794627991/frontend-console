@@ -358,7 +358,10 @@
       : '🧠 思考 <span class="hg-think-anim">' + n + ' 次</span>';
     const seg = document.createElement('div');
     // v2.24 懒抽屉：历史段默认收起（点开才渲染正文）；流式段保持展开
-    seg.className = 'h-think-seg' + (hist ? '' : ' open');
+    // v3.2.19（用户定调「执行过程中默认不展开」）：实况思考段也默认收起
+    // （原 live 生而 open，长思考流式撑满屏；头上的秒表/「思考中」照跑，
+    // 点击照常展开，回放态本就收起）
+    seg.className = 'h-think-seg';
     if (!hist) {
       seg.dataset.t0 = String(Date.now());   // hist：无真实起始时间，不存不编造
       seg.dataset.n = String(n);

@@ -231,7 +231,7 @@
     if (_hgIsExplore(name, input)) {
       if (!g.exp || (!g.exp.el.isConnected && !_HG.histBuilding)) {   // v3.2.13：缓冲期视缓冲内组为在场（grpEnsure 同判）
         const grpEl = document.createElement('div');
-        grpEl.className = 'h-tl-grp open';
+        grpEl.className = 'h-tl-grp';   // v3.2.19（用户定调「执行过程中默认不展开」）：生而收起——运行态活字照上组头，点击展开
         grpEl.innerHTML =
           `<button class="h-tl-grp-head"><span class="h-chev">▸</span>` +
           `<span class="h-tl-grp-name">🔍 查阅</span>` +

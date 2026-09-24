@@ -2339,20 +2339,25 @@ html {
 /* v3.0 流式思考纯文本路径（对照 ZCode reasoning 的 whitespace-pre-wrap）：
    textNode 直插无 md 包裹，plain 修饰类期间保换行；定稿升级移除该类，
    md 内容回到正常空白折叠（pre-wrap 挂基类会被 <p> 继承破坏 md 排版） */
-.h-think-seg-body.hg-think-plain { white-space: pre-wrap; word-break: break-word; }
+.h-think-seg-body.hg-think-plain { white-space: pre-wrap; word-break: break-word;
+  overflow-wrap: anywhere; }
 .h-think-seg-body { display: none; padding: 2px 10px 8px; font-size: var(--fs-base);
-  color: var(--muted); line-height: 1.7; white-space: normal; }
+  color: var(--muted); line-height: 1.7; white-space: normal;
+  /* v3.2.19（用户实锤「思考没有限制宽度」）：word-break:break-word 不影响
+     min-content 宽度，长路径照样把容器顶宽溢出；anywhere 参与内在尺寸
+     计算，长 token 在容器内折行 */
+  overflow-wrap: anywhere; min-width: 0; }
 .h-think-seg-body p { margin: .4em 0; }
 /* v2.59：展开态限高自适应（用户实锤超长思考撑爆界面）——与执行抽屉 42vh 同款
    v2.59R：横向也自适应——思考内的代码块/长行换行或块内滚动，不撑破主窗 */
 .h-think-seg.open .h-think-seg-body { display: block; max-height: 42vh;
   overflow-y: auto; max-width: 100%; overflow-x: auto; }
 .h-think-seg-body pre, .h-think-seg-body code { white-space: pre-wrap;
-  word-break: break-word; }
+  word-break: break-word; overflow-wrap: anywhere; max-width: 100%; }
 .hg-sub-think.open .hg-sub-think-body { display: block; max-height: 40vh;
   overflow-y: auto; max-width: 100%; overflow-x: auto; }
 .hg-sub-think-body pre, .hg-sub-think-body code { white-space: pre-wrap;
-  word-break: break-word; }
+  word-break: break-word; overflow-wrap: anywhere; max-width: 100%; }
 /* v2.18 展开态上限：不超会话一半，超出内部滚动（用户明确：最长不能超过会话一半） */
 .h-drawer.open .h-drawer-body { max-height: 42vh; overflow-y: auto; }
 .h-drawer { border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
@@ -3153,6 +3158,10 @@ html {
 .h-ask-submit:not(:disabled):hover { filter: brightness(1.12); }
 .h-ask-hint { color: var(--muted); font-size: var(--fs-sm); }
 .h-ask-done { color: var(--neon-green, #3fb950); font-weight: 600; font-size: var(--fs-base); }
+  /* v3.1h：提交态显式备注行（用户实锤「备注没体现」——disabled 输入框形态
+     视觉太弱像选项描述；单独一行列出自由输入，历史重放同走 askDone） */
+  .h-ask-note { font-size: 11px; color: var(--acc, #4a9eff); margin-left: 8px; }
+
 
 /* ---- 统一登录胶囊 + Proxy 状态（v2.27）：侧栏底部，提示词按钮下面 ---- */
 /* 三者均为 hg-prompt-btn 同款胶囊（内容居中）；登录胶囊点击冒泡弹窗 */
@@ -3667,6 +3676,7 @@ html {
 .hg-sub-think-chev { display: inline-block; transition: transform .15s; }
 .hg-sub-think.open .hg-sub-think-chev { transform: rotate(90deg); }
 .hg-sub-think-body { display: none; font-size: var(--fs-cap); line-height: 1.6;
+  overflow-wrap: anywhere; min-width: 0;
   color: var(--muted); padding: 4px 0 2px; }
 .hg-sub-think.open .hg-sub-think-body { display: block; max-height: 40vh;
   overflow-y: auto; }

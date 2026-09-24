@@ -674,3 +674,19 @@ b535b34a_image.png」（base64 行的应用上传 hash 名附件）+「🖼 1.pn
   0.92；深浅主题同形（accent 随主题变量）。实测（浅色主题）：实心蓝圆 +
   深色锐利箭头 + 柔和浮起投影，无样式异常；本次开页未新增会话（3 真实
   0 垃圾）。
+
+## 二十二、v3.2.19 执行中默认不展开 + 思考体宽度约束（用户三图实锤）
+
+- 执行过程中默认不展开（用户定调）：①实况思考段不再生而 open（07-hist
+  `h-think-seg + open` → 恒收起；头上秒表/「思考中」照跑，点击照常展开；
+  回放态本就收起）②查阅组两侧生而收起（08-tools _tlPlace 与 14-subpane
+  _subTlPlace 的 `h-tl-grp open` → `h-tl-grp`——运行态活字仍实时上组头，
+  对照 ZCode 折叠组 + collapsedChildSummary）。窗格思考行本就收起。
+- 思考无宽度限制的根因：`word-break: break-word` 不参与 min-content 宽度
+  计算——长路径/长 token 仍把容器顶宽、从灰底块溢出。改
+  `overflow-wrap: anywhere`（参与内在尺寸，长 token 在容器内折行）+
+  `min-width: 0`，作用于主链思考体/纯文本流式态/内嵌 pre·code 与窗格
+  思考体同款四组规则。
+- 实测（2d835190 全量回放）：230 思考段/全部查阅组默认 0 展开；抽测 25
+  个长思考体展开态横向溢出 0（scrollWidth==clientWidth）；回归
+  smoke 全过/state 41。
