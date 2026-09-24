@@ -58,7 +58,7 @@ function buildClaudeHarnessTab(opts = {}) {
         <div class="hg-flowwrap">
           <nav class="hg-rail" data-hg-rail aria-label="回合导航（ZCode 同款快速跳转）"></nav>
           <div class="hg-flow" data-hg-flow></div>
-          <button class="hg-jumpbtm" data-hg-jumpbtm title="跳到最新消息" aria-label="跳到最新消息">↓</button>
+          <button class="hg-jumpbtm" data-hg-jumpbtm title="跳到最新消息" aria-label="跳到最新消息"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v14"/><path d="M5 12l7 7 7-7"/></svg></button>
         </div>
         <div class="hg-card-wrap">
           <div class="hg-queue" data-hg-queue style="display:none"></div>

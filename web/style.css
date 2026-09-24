@@ -2231,16 +2231,20 @@ html {
 .hg-rail-t:hover i { width: 15px; background: var(--muted); }
 .hg-rail-t.act i { width: 15px; background: var(--accent); }
 /* v3.2.8：一键跳底浮动钮——离底 >350px 浮现（.show），贴底隐藏 */
+/* v3.2.18（用户定调「丑，修！」）：跳底钮重做——原幽灵态（半透明底+40%
+   淡描边+细文字箭头）对比度低、观感单薄且图标/描边双色不一致；改实底
+   accent 填充 + 粗描边 SVG 箭头 + 双层投影（外投 + 内高光），悬停上浮提亮、
+   按压回缩，深浅主题同形（accent 随主题变量走） */
 .hg-jumpbtm { position: absolute; right: 26px; bottom: 16px; z-index: 5;
   display: none; align-items: center; justify-content: center;
-  width: 34px; height: 34px; border-radius: 50%;
-  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
-  background: color-mix(in srgb, var(--bg-card) 88%, transparent);
-  color: var(--accent); font-size: 16px; line-height: 1; cursor: pointer;
-  box-shadow: 0 2px 10px rgba(0,0,0,.18);
-  transition: color .15s, border-color .15s, transform .15s; }
+  width: 38px; height: 38px; padding: 0; border: none; border-radius: 50%;
+  background: var(--accent); color: #06131d; line-height: 0; cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0,0,0,.38), inset 0 1px 0 rgba(255,255,255,.22);
+  transition: transform .15s, box-shadow .15s, filter .15s; }
 .hg-jumpbtm.show { display: inline-flex; }
-.hg-jumpbtm:hover { color: var(--fg-bright); border-color: var(--accent); transform: translateY(-1px); }
+.hg-jumpbtm:hover { transform: translateY(-2px); filter: brightness(1.1);
+  box-shadow: 0 7px 20px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.22); }
+.hg-jumpbtm:active { transform: scale(.92); }
 /* v2.10：flow 全部直接子项禁垂直压缩——定高 column flex 子项默认
    flex-shrink:1，超高内容(长思考块/大抽屉)会被按比例压扁到 ~2px 再被
    各自 overflow:hidden 裁掉（v2.9 只豁免了抽屉，用户实测思考块仍被压）。
