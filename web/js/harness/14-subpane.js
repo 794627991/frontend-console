@@ -604,12 +604,14 @@
             tw.dataset.fp = (row.name || '') + ' ' + String(row.hint || '').slice(0, 80);
             // v3.2.25（用户实锤「历史回放看不到改动」）：Edit/Write 的输入体
             // 直接进折叠体（old→new diff / 写入内容），与主流程 live 同构
+            // v3.2.26（用户实锤「要展开才能看，凭什么？」）：改动卡生而展开
             if (row.in) {
               try {
                 const _cfg = _hCfg(row.name || '');
                 const _v = _cfg.get ? _cfg.get(row.in) : '';
                 const _coll0 = tw.querySelector('.h-tool-coll');
                 if (_coll0) _coll0.innerHTML = _toolInputBodyHtml(_cfg, _v);
+                tw.classList.add('open');
               } catch(_) {}
             }
             // v3.2.6R2（审计N2）：Bash/PowerShell 的只读命令用 hint（=command

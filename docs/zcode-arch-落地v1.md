@@ -790,3 +790,14 @@ b535b34a_image.png」（base64 行的应用上传 hash 名附件）+「🖼 1.pn
   Bash heredoc 写文件（152 Bash/0 Edit），此路对新 CLI 的 Edit 型子代
   理生效。
 - 回归：smoke 全过/ledger 17。
+
+## 二十九、v3.2.26 改动卡生而展开（用户红字实锤「要展开才能看，凭什么？」）
+
+- 承 v3.2.25（点开有 diff）：用户底线是**默认就得看到**，不许藏在折叠里。
+- 三处接入 defaultOpen（Todo/Ask 既有机制）：
+  ① 02-base cfg：Write/Edit/MultiEdit defaultOpen:true——live 生而展开；
+  ② 07-hist 回放：defaultOpen 行生而 open + 同步填体（不走懒回填——懒
+    填靠点击触发，与生而开矛盾）；错误行维持标红不自动开（v3.2.5 定调）；
+  ③ 14-subpane 窗格回放：row.in 改动卡生而 open（diff 已随 v3.2.25 注入）。
+- 实测（零点击）：214 张 Edit/Write 卡 205 张生而展开且 diff 在场
+  （9 张为报错行）；渲染耗时与先前同级。smoke 全过/state 41。

@@ -25,7 +25,11 @@
     // 现填）；错误行保持立即渲染+默认展开（错误信息不该藏）。
     const d = document.createElement('div');
     const err = !!l.err;
-    d.className = 'h-tool col' + (err ? ' err' : '');   // v3.2.5（用户定调）：错误只标红不自动展开
+    // v3.2.26（用户实锤「要展开才能看，凭什么？」）：defaultOpen 类工具
+    // （Edit/Write/MultiEdit——改动本体）历史回放生而展开+同步填体——
+    // 改动不许藏在折叠里；错误行维持立即渲染（错误信息不该藏）
+    const _dOp = !!((!err && _H_TOOL_CFG[l.text] || {}).defaultOpen);
+    d.className = 'h-tool col' + (err ? ' err' : '') + (_dOp ? ' open' : '');
     // v2.21：历史回放同样带工具徽章（子代理等），与流式路径一致
     const hbc = _H_TOOL_CFG[l.text] || {};
     // v3.2.1（用户实测问题2）：bash 行头补命令文本——live 行有 arg（cfg.get），
@@ -41,10 +45,10 @@
       (hbc.badge ? `<span class="h-tool-badge">${esc(hbc.badge)}</span>` : '') +
       (argH ? `<span class="h-tool-arg"${argTitle ? ` title="${argTitle}"` : ''}>${argH}</span>` : '') +
       `<span class="h-tslots">${statusBadge(err ? 'error' : 'completed')}</span></button>` +
-      `<div class="h-tool-coll">${err ? _histToolBodyHtml(l) : ''}</div>`;
+      `<div class="h-tool-coll">${(err || _dOp) ? _histToolBodyHtml(l) : ''}</div>`;
     if (hi != null) {
       d.dataset.hi = String(hi);
-      d.dataset.hgLazy = err ? '' : '1';   // 错误行已填（hgLazy 空）；收起丢弃后由 Drop 重置
+      d.dataset.hgLazy = (err || _dOp) ? '' : '1';   // 错误行/defaultOpen 行已填（hgLazy 空）；收起丢弃后由 Drop 重置
     }
     if (((_H_TOOL_CFG[l.text] || {}).kind) === 'bash') d.classList.add('oneclick');
     drawerCount(l.text);
