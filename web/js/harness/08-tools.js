@@ -370,6 +370,10 @@
       // v3.2.6：Agent/Task 派发走单行任务卡工厂（无展开体——过程进窗格）
       row = _hgAgentRowBuild(id, _rinp.subagent_type || _rinp.agent_type || name,
         _rinp.description || '');
+      // v3.2.30（用户实锤「运行中的代理看不到发给它的消息」）：派发 prompt
+      // 入 live 来向队列——窗格已开立即插、未开等 _subOpen/task_started 冲
+      // （回放侧 v3.2.21 已有 user 行，回放插行处带同文去重）
+      _subUserQueue(id, _rinp.prompt || _rinp.description || '');
     } else if (cfg.mode === 'one-line') {
       row = document.createElement('div');
       row.className = 'h-tool';

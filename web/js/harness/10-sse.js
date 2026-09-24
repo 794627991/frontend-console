@@ -115,6 +115,8 @@
               const _realTo = (_HG.peerSent || {})[tid];
               a.taskId = (_realTo && /^[0-9a-zA-Z_-]{8,64}$/.test(String(_realTo)))
                 ? String(_realTo) : (o.task_id || '');
+              // v3.2.30：agentId 到手即冲 live 来向队列（窗格已开的目标立即收到）
+              if (a.taskId) _subUserFlush(a.taskId);
               // v3.2.6R（审计F1）：agentId 即刻回写单行卡——不等完成（切走
               // 会话时行已自带 hgSubr，回放入口随快照存活）
               if (a.taskId && /^[0-9a-zA-Z_-]{8,64}$/.test(a.taskId))
@@ -312,6 +314,10 @@
             // 反查此映射即命中原线。
             if (!isSub && b.name === 'SendMessage' && b.input && b.input.to) {
               (_HG.peerSent || (_HG.peerSent = {}))[b.id] = b.input.to;
+              // v3.2.30（用户实锤「运行中的代理看不到发给它的消息」）：追加
+              // message 入 live 来向队列（按目标 agentId 键——运行中窗格即刻
+              // 收到，未开的等绑 id 后冲）
+              _subUserQueue(String(b.input.to), b.input.message || '');
               // v2.49：协作归一子代理段——SendMessage 转交线隐藏（数据锚全保留：
               // dataset.t0/peer/done/psum 照写，面板协作行/定格配对/快照序列化
               // 链路不动），识图转交原形态保留（唯一例外）

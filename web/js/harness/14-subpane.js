@@ -145,8 +145,44 @@
     if (d) return d.slice(0, 14) + (d.length > 14 ? '…' : '');
     return _AGENT_LABEL[type] || type || '子代理';
   }
-  function _subPaneScaffold(sc, type, model, desc) {
-    const mdl = String(model || '').split('[')[0].trim();
+  // v3.2.30（用户实锤「运行中的代理看不到发给它的消息，一次改全」）：live
+  // 来向消息——Task 派发的 prompt / SendMessage 的追加 message。回放侧
+  // （v3.2.21/24）已入线程并暴露化；live 窗格只靠事件镜像流（无 user 行）
+  // ——派发时入队，tab 已开直接插、未开等 _subOpen/task_started 绑 id 后冲
+  function _subUserQueue(key, text) {
+    const t = String(text || '').trim();
+    if (!key || !t) return;
+    _HG.subUserQ = _HG.subUserQ || {};
+    const q = (_HG.subUserQ[key] = _HG.subUserQ[key] || []);
+    if (q.length < 20) q.push(t.slice(0, 1200));
+    _subUserFlush(key);
+  }
+  function _subUserRowEl(text) {
+    const u = document.createElement('div');
+    u.className = 'h-msg user hg-sub-u';
+    u.appendChild(mdBubble(String(text || '').slice(0, 1200)));
+    return u;
+  }
+  function _subUserFlush(key) {
+    const q = _HG.subUserQ;
+    if (!q || !q[key] || !q[key].length) return;
+    let tb = _sub.tabs[key];   // tid 直配
+    if (!tb) {                 // agentId 配：agents[tid].taskId === key
+      for (const k in (_HG.agents || {})) {
+        if ((_HG.agents[k].taskId || '') === key && _sub.tabs[k]) { tb = _sub.tabs[k]; break; }
+      }
+    }
+    if (!tb || !tb.t || !tb.t.tl) return;   // 窗格未开——留队等开
+    const texts = q[key];
+    delete q[key];
+    const ws = tb.t.tl.closest('.h-grp');
+    for (const text of texts) {
+      const u = _subUserRowEl(text);
+      if (ws && ws.parentElement) ws.parentElement.insertBefore(u, ws);
+      else tb.t.tl.appendChild(u);
+    }
+  }
+  function _subPaneScaffold(sc, type, model, desc) {    const mdl = String(model || '').split('[')[0].trim();
     const ty = _AGENT_LABEL[type] || type || '子代理';
     const wrap = document.createElement('div');
     wrap.className = 'hg-sub-grp';
@@ -390,6 +426,9 @@
       _subBodyEl.appendChild(sc);
       // v3.2.6：ZCode 时间线脚手架（回放 fetch 会重建；live 即刻起跑秒表）
       _sub.tabs[tid].t = _subPaneScaffold(sc, type, _ag.model || '', desc);
+      // v3.2.30：冲 live 来向消息队列（tid 键 + 已绑 agentId 键）
+      _subUserFlush(tid);
+      if (_ag.taskId) _subUserFlush(_ag.taskId);
       if (_sub.tabs[tid].run) {
         _sub.tabs[tid].t.t0 = _ag.t0 || Date.now();
         _subTlHeadPaint(_sub.tabs[tid].t);
@@ -576,15 +615,22 @@
             // v3.2.24（用户定调「像 ZCode 一样直接暴露，不要收进工作区」）：
             // 来向消息（派发提示/追加）不进时间线——插到工作区（.h-grp）前面，
             // 回合收起/展开都恒可见；多条按到达序竖排
+            // v3.2.30：与 live 队列（_subUserQueue）双源去重——同文前缀已在
+            // 场就不重复插（运行中窗格先收 live 气泡、中途 force 回放再来）
             _subTlSegFreeze(t);
             _subTlExpBreak(t);
-            const u = document.createElement('div');
-            u.className = 'h-msg user hg-sub-u';
-            u.appendChild(mdBubble(String(row.text || '').slice(0, 1200)));
-            u.dataset.hgRp = '1';
-            const ws = t.tl && t.tl.closest('.h-grp');
-            if (ws && ws.parentElement) ws.parentElement.insertBefore(u, ws);
-            else _subTlAppendRow(t, u);
+            const _txtHead = String(row.text || '').trim().slice(0, 60);
+            const _dup = [...t.sc.querySelectorAll('.hg-sub-u')].some(
+              x => (x.textContent || '').trim().indexOf(_txtHead) === 0);
+            if (!_dup) {
+              const u = document.createElement('div');
+              u.className = 'h-msg user hg-sub-u';
+              u.appendChild(mdBubble(String(row.text || '').slice(0, 1200)));
+              u.dataset.hgRp = '1';
+              const ws = t.tl && t.tl.closest('.h-grp');
+              if (ws && ws.parentElement) ws.parentElement.insertBefore(u, ws);
+              else _subTlAppendRow(t, u);
+            }
           } else if (row.k === 'note') {
             const n = document.createElement('div');
             n.className = 'hg-sub-replay-note';

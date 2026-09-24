@@ -838,3 +838,19 @@ b535b34a_image.png」（base64 行的应用上传 hash 名附件）+「🖼 1.pn
   一并摘除）。grpEnsure 新建组分支天然空组，不动。
 - 单测：发消息（空区）→占位现；思考到→占位退；第二轮发消息→占位再现；
   工具到→占位退。smoke 全过。
+
+## 三十三、v3.2.30 live 来向消息入窗格（用户实锤「运行中的代理看不到
+发给它的消息，能不能一次改全」）
+
+- 缺口：回放侧（v3.2.21/24）user 行已入线程并暴露化；**运行中**窗格只靠
+  事件镜像流（think/tool/text），从无 user 行——派发提示/追加消息看不到。
+- 修复（live 队列机制）：
+  · _subUserQueue/_subUserFlush（14-subpane）：按 tid 或 agentId 键入队，
+    窗格已开即插（工作区前暴露位，同回放形态）、未开留队；
+  · 入口①：renderToolUse agent 分支——Task 派发 prompt 入队（tid 键）；
+  · 入口②：SendMessage tool_use——追加 message 按目标 agentId 入队；
+  · 冲刷口：_subOpen 建窗（tid+已绑 taskId 双键）与 task_started 绑 id
+    即刻冲（agents 反查 tid）；
+  · 回放插行处同文前缀去重（live 气泡先到、中途 force 回放不双画）。
+- 单测全链：派发入队→绑 id 持队→开窗即插（工作区外）→SendMessage 秒到
+  （2 气泡）。smoke 全过/state 41。
