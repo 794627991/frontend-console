@@ -827,3 +827,14 @@ b535b34a_image.png」（base64 行的应用上传 hash 名附件）+「🖼 1.pn
 - 实测：注入 openTurn 残缺快照切回 → 残影消失、1144 行 30 组全量重渲；
   定稿会话（末组 finalized、idle）→ openTurn=false 快照正常复用；运行中
   会话（busy 不定稿）→ openTurn=true 正确弃快照。smoke 全过/state 41。
+
+## 三十二、v3.2.29 占位气泡只在空工作区（用户定调「一旦工作区有消息就被
+左下角正在执行取代」）
+
+- 「AI 正在思考中…」活泼占位此前只在正文到达时（renderAsst→phRemove）
+  退场——纯工具/思考回合全程挂着，与左下角活动条职责重叠。
+- 修复三口：_tlPlace 工具落位即 phRemove（live+回放同漏斗）；startThinking
+  思考落位即 phRemove；phResume 认回组已有 tl 行不复暖占位（残留冻结占位
+  一并摘除）。grpEnsure 新建组分支天然空组，不动。
+- 单测：发消息（空区）→占位现；思考到→占位退；第二轮发消息→占位再现；
+  工具到→占位退。smoke 全过。

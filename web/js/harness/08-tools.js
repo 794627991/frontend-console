@@ -227,6 +227,8 @@
   // renderToolUse 与 renderHistTool（回放）同走本函数——live/回放聚组一致
   function _tlPlace(row, name, input) {
     const g = grpEnsure(true);
+    phRemove(g);   // v3.2.29（用户定调）：工作区一有内容占位气泡即退场——
+                   // 「AI 正在思考中…」只许出现在空工作区，状态交左下角活动条
     if (!g.tl) { _tlExpFlush(!!_HG.openState); drawerAppend(row, 'exec'); return; }   // 旧快照组：回落旧抽屉
     if (_hgIsExplore(name, input)) {
       if (!g.exp || (!g.exp.el.isConnected && !_HG.histBuilding)) {   // v3.2.13：缓冲期视缓冲内组为在场（grpEnsure 同判）

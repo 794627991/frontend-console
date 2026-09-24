@@ -204,6 +204,9 @@
     // v3.2：认回的活组若正跑（折叠头在场）→ 重启「工作中」秒表（timer 不随
     // innerHTML 快照携带，切回不补就是死表）
     if (g.head && g.head.style.display !== 'none' && _HG.busy) _turnHeadShow(g);
+    // v3.2.29（用户定调「占位只在空工作区」）：认回组已有思考/工具行就
+    // 不再复暖占位气泡——状态由左下角活动条承担；冻结占位残留一并摘除
+    if (g.tl && g.tl.children.length) { phRemove(g); return; }
     phStart(g);     // 冻结占位由 phStart 认领复用（不新建第二个）
   }
   // v3.2：ZCode 式回合折叠头（AssistantHistoryStatus 同款）——首条工作行到位
@@ -481,6 +484,8 @@
     if (live !== false) {
       const g = grpEnsure(true);
       phStart(g);                              // AI 未输出前的活泼占位（每轮独立）
+      _turnHeadShow(g);                        // v3.1h（用户实锤）：消息发出第一时间亮
+                                               // 「工作中」秒表——静默等待期也是工时
       _hgRailSync();   // v3.2.10：live 新回合入轨（历史路径在 _histRender 尾统一 sync）
     }
     return d;
