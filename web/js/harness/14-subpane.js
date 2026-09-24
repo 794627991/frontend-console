@@ -219,8 +219,12 @@
           `<span class="h-tl-grp-sum"></span></button>` +
           `<div class="h-tl-grp-body"></div>`;
         t.tl.appendChild(grpEl);
-        t.exp = { el: grpEl, sum: { search: 0, list: 0, file: 0 } };
+        t.exp = { el: grpEl, sum: { search: 0, list: 0, file: 0 }, keys: {} };
       }
+      // v3.2.13：同目标重复子行折叠（主链 _tlPlace 同款去重键）
+      const _ek = _hgExpKey(name, input);
+      if (_ek && t.exp.keys[_ek]) return;
+      if (_ek) t.exp.keys[_ek] = 1;
       const body = t.exp.el.querySelector('.h-tl-grp-body');
       if (body) body.appendChild(row);
       t.exp.sum[_hgExpBucket(name, input)]++;
@@ -257,7 +261,8 @@
   function _subTlAppendThink(t, raw) {
     if (!t || !t.tl) return;
     _subTlSegFreeze(t);
-    _subTlExpBreak(t);
+    // v3.2.13：思考行不再断查阅组（主链 startThinking 同款；对照 ZCode 组跨
+    // 思考累积）——思考段挂组后，后续查阅继续回填进组体
     const seg = _subTlThinkRow(raw, '');
     seg.dataset.t0 = String(Date.now());
     t.tl.appendChild(seg);

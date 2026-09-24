@@ -615,14 +615,20 @@
       // v2.5：先 setBusy（弹活动指示条，改变 flow 高度）再渲染消息——
       // 渲染内部 scrollBottom 含 rAF 二次兜底，否则指示条挤出消息导致刚发的消息不在底
       if (it.kind === 'user_echo') {
-        // v3.2.12（用户定调）：贴图占位回显——CLI 把粘贴图写成
-        // "[Image: source: 路径]" 文本回显，剥掉并把路径并进 images 出缩略，
-        // 与发送侧乐观渲染（附件管线）形态对齐（echoFast 去重同源）
+        // v3.2.13（用户定调「不要给我渲染出来」）：贴图占位回显——CLI 对每次
+        // 贴图落两条 user 行（base64 块渲染真图 + "[Image: source: 路径]" 纯回
+        // 显），后者整条不渲染；仅当回显与真实文字混在同一条时才保留（剥标
+        // 记、路径并进 images 出缩略，与发送侧乐观渲染形态对齐）
         {
           const _ims = String(it.text || '').match(/\[Image: source: [^\]]+?\]/g);
           if (_ims) {
+            const _pre = (it.files || []).length;
             it.files = (it.files || []).concat(_ims.map(x => x.replace(/^\[Image: source: /, '').replace(/\]$/, '').trim()));
             it.text = String(it.text || '').replace(/\[Image: source: [^\]]+?\]/g, '').trim();
+            if (!String(it.text || '').trim() && !_pre) {   // 纯回显（无文字无他附件）→ 整条丢弃
+              _HG.echoFast = null;
+              return;
+            }
           }
         }
         // v3.2.12：中断/续跑机器标记行（CLI 在中断或自动续跑时落的 user 行）

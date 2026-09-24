@@ -28,6 +28,12 @@
     const _realFlow = _hgFlow;
     const _buf = document.createElement('div');
     _hgFlow = _buf;
+    // v3.2.13（用户实锤「没修复好」的根因）：游离缓冲期 grpEnsure 的
+    // isConnected 快路径恒 false → 每行都重认回新 wrapper → g.exp 丢失 →
+    // 每个 explore 工具各开一个单子行查阅组（碎片墙）。histBuilding 让
+    // 连接性判据在缓冲期视缓冲内元素为「在场」（grpEnsure/_tlPlace/
+    // _tlExpFlush 三处同判）
+    _HG.histBuilding = true;
     _realFlow.innerHTML = '';
     if (start > 0) {
       const bar = document.createElement('div');
@@ -47,6 +53,7 @@
       // v3.2.11：游离缓冲期早退必须先归还 _hgFlow 引用（否则全后续渲染
       // 都写进游离容器——主界面消失级事故）
       _hgFlow = _realFlow;
+      _HG.histBuilding = false;   // v3.2.13：连接性判据还原（见顶部注释）
       _hgRailSync();
       return;
     }
@@ -150,6 +157,7 @@
       while (_buf.firstChild) _frag.appendChild(_buf.firstChild);
       _realFlow.replaceChildren(_frag);
       _hgFlow = _realFlow;
+      _HG.histBuilding = false;   // v3.2.13：连接性判据还原（见顶部注释）
       _hgRailSync();
     }
   }

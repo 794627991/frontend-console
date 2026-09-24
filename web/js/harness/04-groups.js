@@ -47,7 +47,10 @@
   }
   function grpEnsure(live) {
     let g = _HG.grp;
-    if (g && g.root && g.root.isConnected) return g;
+    // v3.2.13：histBuilding——原子渲染期组根在游离缓冲里 isConnected 恒
+    // false，原判据每行都重认回新 wrapper（g.exp 全丢、查阅组碎成单子行
+    // 墙——用户实锤「没修复好」的根因）；缓冲期内缓冲内元素视为在场
+    if (g && g.root && (g.root.isConnected || _HG.histBuilding)) return g;
     // 快照恢复（切会话切回）后 _HG.grp 失联 → 扫 flow 最后一个组接回来。
     // 占位动画不重启：正文该到已到才走得到恢复路径。
     // v2.18.1：已定稿的组（dataset.finalized）不接回——正文切组刚定稿旧组，
@@ -438,6 +441,9 @@
     _HG.pendingTurnT0 = (tsMs > 0 && live === false) ? tsMs : 0;   // v3.2R1：live 记 0（grpEnsure 取当下）；回放缺 ts 保持 0→undefined
     _maybeTimeBar(tsMs || Date.now());        // v2.24.5 微信式时间条（气泡前）
     endThinking(); closeRun();
+    _tlExpFlush(!!_HG.openState);   // v3.2.13：回合边界定稿上回合查阅组——思考不再
+                                    // 断组后，开放组的头部定格必须由用户行兜底
+                                    // （头部定格为桶汇总 + 回放态自动收起）
     _HG.asstText = false;                     // 本轮 AI 尚未输出文本（占位/组头判据）
     const d = document.createElement('div');
     d.className = 'h-msg user';
@@ -447,10 +453,11 @@
       at.innerHTML = attChipsHtml(images, files);   // 点击 Lightbox 由 flow 委托（v2.12）
       d.appendChild(at);
     }
-    // v2.20：只发图不带文字 → mdBubble('') 是个空白气泡（用户嫌丑）；
-    // 有附件且无文字时给一行占位文案，气泡不再空壳
-    const body = (text && text.trim()) || ((images?.length || files?.length) ? '*（图片/附件，见上方）*' : '');
-    d.appendChild(mdBubble(body));
+    // v3.2.13（用户定调「不要给我渲染出来」）：只发图不带文字 → 不再造
+    // 「*（图片/附件，见上方）*」占位气泡（v2.20 文案退役）——附件 chips 已
+    // 在上方表达一切，正文体整块不渲染
+    const body = (text && text.trim()) || '';
+    if (body) d.appendChild(mdBubble(body));
     // v2.22：一键重发 + 编辑后重发——原始内容存 dataset（属性可随
     // innerHTML 快照恢复），钮 hover 显示，点击走 flow 委托
     d.dataset.rtext = text || '';

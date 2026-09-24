@@ -536,3 +536,45 @@ ZCode 回合模型：
    跳底钮保留。
 - 实测：重构会话打开即 histStart=0/无剩余条/轨 17 枚全渲染/8 图缩略；
   回归全绿。本轮按用户要求免审计。
+
+## 十六、v3.2.13 贴图回显退役 + 查阅组真整合（用户截图两处标注，免审计轮）
+
+用户裸截图两处红标：①「图 2.png（图片/附件，见上方）」占位卡——「不要给我
+渲染出来」；②工具/思考区碎片——「没修复好」。
+
+### A. 贴图回显三路退役
+- 数据源实况：每次贴图 CLI 落三条相邻行——base64 image 块（真图，含
+  harness_uploads 附件标记）+ attachment 行 + `[Image: source: …]` 纯回显行。
+  回显行无信息量，v3.2.12 只把它转缩略，仍渲染占位卡。
+- transcript.py：纯回显行（剥标记后无文字、无他附件）整条丢弃；仅当回显与
+  真实文字混行时保留（剥标记+路径进 files）。附带防御：marker-only 孪生行
+  （无文字无图、files 为上一 user 行子集且上行 images>0）同丢——纯文件附件
+  无 base64 孪生，不满足判据不会误伤（nonlocal _last_u 跨代判据）。
+- 10-sse.js live echo：同款判据整条不渲染（_HG.echoFast = null 后 return）。
+- 04-groups.js renderUser：「*（图片/附件，见上方）*」占位正文退役（v2.20
+  文案谢幕）——无文字时正文体整块不渲染，附件 chips 已表达一切。
+- 实测：2d835190 会话 1144 行，echo-text 残留 0、孪生残留 0、占位 0。
+
+### B. 查阅组真整合（含根因修复）
+- 根因（本修的主体）：v3.2.11 原子渲染把全程画进游离缓冲，grpEnsure 的
+  `g.root.isConnected` 快路径在缓冲期恒 false → 每行都走认回重建 wrapper →
+  g.exp 逐行丢失 → **每个 explore 工具各开一个单子行查阅组**（用户截图的
+  碎片墙正是它）；_tlExpFlush 的 isConnected 早退又让组头永远停在运行态
+  活字、组永远开着。
+- 修复：_HG.histBuilding 缓冲期旗标（_histRender try/finally 与早退三处
+  归位）——grpEnsure 快路径、_tlPlace 组在场判据、_tlExpFlush 定稿守卫
+  三处同判豁免。窗格侧渲染进已连接 DOM，不受影响（_subTlPlace 的
+  isConnected 是 _subTlCap 删组自愈判据，保留）。
+- 整合三件套（对照 ZCode exploreToolCall 组跨思考累积）：
+  1. codegraph_explore 入组：_HG_EXP_MCP_RE 白名单（(^|_)codegraph_explore$）
+     → explore 判定/搜索桶/「探索 xx」活字（主链+窗格共享这三函数）；
+  2. 思考不再断组：startThinking（07）与 _subTlAppendThink（14）撤断组，
+     思考行照常按序挂组后，后续查阅回填进组体；断组只留写类工具/正文/
+     回合边界（renderUser 兜底冲组——grpFinalize 先行冲，双保险）；
+  3. 同目标去重：_hgExpKey(name,input)（R:file/G:pattern/O:pattern/S:query/
+     F:url/E:query/C:command），组内重复子行不入 DOM 不计数（主链+窗格）。
+- 实测（2d835190 全量重渲）：查阅组 164→84（37 组多子行）、游离 codegraph
+  行 0、组头活字 132→0（全定格桶汇总）、未点开组全收、真实重复子行 0、
+  回合 53→43（10 个认回竞态分裂组消失）、刻度轨 50 枚完好。
+- 回归：node --check×6、chain_smoke 全过、state_audit 41、architecture 0、
+  ledger 17/17、route_smoke 42、roles_routing 全过。本轮免审计（用户令）。

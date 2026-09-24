@@ -324,7 +324,9 @@
   }
   function startThinking(hist) {
     if (_HG.think && _HG.think.seg && _HG.think.seg.isConnected) return;
-    _tlExpFlush(!!_HG.openState);        // v3.2：思考段打断查阅聚组（回放态必收）
+    // v3.2.13（用户实锤「没修复好」）：思考行不再断查阅组——思考间隔前后的
+    // 查阅并入同一组（对照 ZCode 组跨思考累积；断组只留写类工具/正文）。
+    // 思考段照常按发生顺序挂在组之后，后续查阅回填进组体
     const g = grpEnsure(true);
     // v3.2.4（用户实锤「以前有思考和工具调用顺序的，现在没顺序了」）：思考段
     // 作为**行**挂进工具时间线——思考段↔工具行按发生顺序交替排列（对照

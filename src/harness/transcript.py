@@ -58,9 +58,11 @@ def transcript_for(s):
     ordered = [x for x in ids if not (x in seen or seen.add(x))]
     import glob as _glob
     proj = os.path.join(os.path.expanduser("~"), ".claude", "projects")
+    _last_u = None   # v3.2.13：最近发出的 user 行 (files, imgs)——孪生回显判据用
 
     def _parse_one(path, lines, call_by_id):
         """解析一个 session 的 jsonl，行追加进 lines。返回是否读到文件。"""
+        nonlocal _last_u
         try:
             with open(path, "r", encoding="utf-8", errors="replace") as f:
                 for raw in f:
@@ -222,12 +224,18 @@ def transcript_for(s):
                             if m_att:
                                 files = m_att
                                 t = _strip_att(t)
-                            # v3.2.12：贴图占位回显 → 提取路径进 files（前端
-                            # 渲染图片缩略），文本剥掉不裸显路径
+                            # v3.2.13（用户定调「不要给我渲染出来」）：贴图占位
+                            # 回显行整条丢弃——CLI 对每次贴图都落两条 user 行
+                            # （base64 image 块渲染真图 + "[Image: source: …]"
+                            # 纯回显行），后者只出占位卡毫无信息量；仅当回显
+                            # 与真实文字混在同一条时才保留（剥掉标记、路径并进
+                            # files 出缩略）
                             _ims = _IMG_ECHO_RE.findall(t)
                             if _ims:
-                                files = files + [x.strip() for x in _ims]
                                 t = _IMG_ECHO_RE.sub("", t).strip()
+                                if not t and not m_att:
+                                    continue
+                                files = files + [x.strip() for x in _ims]
                             # v3.2.12：中断/续跑机器标记行整行丢弃
                             if _NOISE_RE.match((t or "").strip()):
                                 continue
@@ -238,8 +246,18 @@ def transcript_for(s):
                                               "ts": o.get("timestamp") or ""})
                                 continue
                             if (t or imgs or files) and not _SKIP_RE.match((t or "").strip()):
+                                # v3.2.13：发送侧孪生回显——base64 行紧随的
+                                # marker-only 行（无文字无图、files 是上一条的
+                                # 子集）是同一附件的重复回显，整条丢弃（用户
+                                # 定调「不要给我渲染出来」）；纯文件附件无
+                                # base64 孪生，不满足 images>0 判据不会误伤
+                                if (not t and not imgs and files and _last_u
+                                        and _last_u[1] > 0
+                                        and set(files) <= set(_last_u[0] or [])):
+                                    continue
                                 lines.append({"role": "user", "text": t[:8000], "images": imgs, "files": files,
                                               "ts": o.get("timestamp") or ""})
+                                _last_u = (files, imgs)
                     elif typ == "assistant" and isinstance(content, list):
                         texts, tools, thinks = [], [], []
                         for b in content:

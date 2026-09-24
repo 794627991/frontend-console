@@ -126,9 +126,12 @@
   }
   function closeRun() { _HG.run = null; }
   // ==================== v3.2：ZCode 式「查阅」聚组（exploreToolCall.ts 移植）====================
-  // Read/Glob/Grep/WebSearch/WebFetch + 只读 Bash（rg/ls/cat/git status…）聚成
-  // 一个折叠组「🔍 查阅 · N 搜索 · M 文件」，展开=左竖线+子行树；写类工具/
-  // 思考/正文出现即断组（flush）。
+  // Read/Glob/Grep/WebSearch/WebFetch + 只读 Bash（rg/ls/cat/git status…）+ MCP
+  // 只读探索（codegraph_explore）聚成一个折叠组「🔍 查阅 · N 搜索 · M 文件」，
+  // 展开=左竖线+子行树；写类工具/正文出现即断组（flush）。
+  // v3.2.13（用户实锤「没修复好」）：思考行不再断组——同一回合里思考间隔
+  // 前后的查阅继续并入同一组（对照 ZCode 组跨思考累积），同目标重复子行
+  // （如两次 Read 同文件）折叠为一条，组头计数只计去重后条目。
   // v3.2R1(P1 审计)：写能力排除补全——`find -delete`、输出重定向（>/>>/2>/&>）、
   // 解释器执行（python -c/node -e 等）、PS 写 cmdlet（对照 ZCode
   // SHELL_REDIRECT_WRITE_RE/EXECUTE_WRITE_COMMAND_RE 全集）；只读判定补 PS
@@ -140,9 +143,13 @@
   // v3.2R2 审计存档：重定向子句对引号内含 ">" 的搜索词（如 rg "a > b"）会
   // 误排除出聚组——保守方向（断组为普通行，绝不把写命令聚进查阅组），
   // 两态不一致可接受；后续如需精确化，把 ">" 前缀限定为左值非引号包裹
+  // v3.2.13：MCP 只读探索白名单——仅收无副作用的检索类（codegraph_explore）；
+  // 识图/浏览器等其余 MCP 一律不聚组
+  const _HG_EXP_MCP_RE = /(^|_)codegraph_explore$/;
   function _hgIsExplore(name, input) {
     const n = name || '';
     if (['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'TodoRead', 'LS'].includes(n)) return true;
+    if (_HG_EXP_MCP_RE.test(n)) return true;
     if (n !== 'Bash' && n !== 'PowerShell') return false;
     const cmd = String((input || {}).command || (input || {}).cmd || '');
     if (!cmd.trim()) return false;
@@ -152,7 +159,7 @@
   // 桶分类（对照 ZCode explore bucket：search/list/file——汇总文案「N 搜索 · M 文件」）
   function _hgExpBucket(name, input) {
     const n = name || '';
-    if (n === 'Grep' || n === 'WebSearch') return 'search';
+    if (n === 'Grep' || n === 'WebSearch' || _HG_EXP_MCP_RE.test(n)) return 'search';
     if (n === 'Glob' || n === 'LS') return 'list';
     if (n === 'Read' || n === 'WebFetch' || n === 'TodoRead') return 'file';
     const cmd = String((input || {}).command || (input || {}).cmd || '').toLowerCase();
@@ -172,8 +179,24 @@
     if (n === 'Glob') return '匹配 ' + String((input || {}).pattern || '').slice(0, 30);
     if (n === 'WebSearch') return '网搜 ' + String((input || {}).query || '').slice(0, 30);
     if (n === 'WebFetch') return '抓取 ' + String((input || {}).url || '').slice(0, 30);
+    if (_HG_EXP_MCP_RE.test(n))
+      return '探索 ' + String((input || {}).query || (input || {}).prompt || '').slice(0, 30);
     if (n === 'Bash' || n === 'PowerShell')
       return String((input || {}).command || '').trim().slice(0, 40);
+    return '';
+  }
+  // v3.2.13：同目标去重键——同组内 (工具+目标) 重复的子行折叠为一条
+  // （读取同文件×2 / 同 pattern 搜索×2；跨组不比——写类断组后属新语境）
+  function _hgExpKey(name, input) {
+    const n = name || '';
+    const i = input || {};
+    if (n === 'Read') return 'R:' + String(i.file_path || '');
+    if (n === 'Grep') return 'G:' + String(i.pattern || '');
+    if (n === 'Glob') return 'O:' + String(i.pattern || '');
+    if (n === 'WebSearch') return 'S:' + String(i.query || '');
+    if (n === 'WebFetch') return 'F:' + String(i.url || '');
+    if (_HG_EXP_MCP_RE.test(n)) return 'E:' + String(i.query || i.prompt || '');
+    if (n === 'Bash' || n === 'PowerShell') return 'C:' + String(i.command || i.cmd || '');
     return '';
   }
   function _tlExpFlush(histMode) {
@@ -182,7 +205,9 @@
     const e = g.exp;
     g.exp = null;
     // 定稿：头部定格为桶汇总（去掉运行态活字），未被动过则自动收起
-    if (!e.el.isConnected) return;
+    // v3.2.13：histBuilding——原子渲染期组在游离缓冲内 isConnected 恒
+    // false，原早退会让定稿头部永远停在运行态活字；缓冲期内照常定格
+    if (!e.el.isConnected && !_HG.histBuilding) return;
     const sumEl = e.el.querySelector('.h-tl-grp-sum');
     if (sumEl) sumEl.textContent = _hgExpSumTxt(e.sum);
     // v3.2.1（用户实测问题2）：回放定稿必收——重建期 scrollTop 在顶，
@@ -204,7 +229,7 @@
     const g = grpEnsure(true);
     if (!g.tl) { _tlExpFlush(!!_HG.openState); drawerAppend(row, 'exec'); return; }   // 旧快照组：回落旧抽屉
     if (_hgIsExplore(name, input)) {
-      if (!g.exp || !g.exp.el.isConnected) {
+      if (!g.exp || (!g.exp.el.isConnected && !_HG.histBuilding)) {   // v3.2.13：缓冲期视缓冲内组为在场（grpEnsure 同判）
         const grpEl = document.createElement('div');
         grpEl.className = 'h-tl-grp open';
         grpEl.innerHTML =
@@ -218,8 +243,13 @@
         // 同键指向不同行，旧记录误开新行还误标 userToggled（用户实锤「终端默
         // 认全部不收起」）。查阅组与终端卡统一默认收起，点击开合只在当前
         // DOM 生命周期内有效（用户定调：必须默认都是收起状态）
-        g.exp = { el: grpEl, sum: { search: 0, list: 0, file: 0 } };
+        g.exp = { el: grpEl, sum: { search: 0, list: 0, file: 0 }, keys: {} };
       }
+      // v3.2.13：同目标重复子行折叠为一条（两次读同文件/同 pattern 搜索）——
+      // 不重复入 DOM、组头计数不重复计
+      const _ek = _hgExpKey(name, input);
+      if (_ek && g.exp.keys[_ek]) return;
+      if (_ek) g.exp.keys[_ek] = 1;
       const body = g.exp.el.querySelector('.h-tl-grp-body');
       if (body) body.appendChild(row);
       g.exp.sum[_hgExpBucket(name, input)]++;
