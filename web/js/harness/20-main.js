@@ -781,10 +781,29 @@ function buildClaudeHarnessTab(opts = {}) {
   // v2.24.11 扩/收缩前必须重拉 transcript：histAll 是切会话时拉的快照，
   // 流式期间的新消息（用户刚发的+AI 回复）不在里面——直接用旧快照重渲会
   // 把它们从界面上抹掉（用户实测「消息突然没了」；jsonl 完好=纯显示层丢失）
-  // 主层「进入只读模式」提示条：事件委托（绑一次永在，bar 重建不丢点击）
+  // 主层「加载更早」提示条：事件委托（绑一次永在，bar 重建不丢点击）。
+  // v3.2.7（用户定调「只读模式退役」）：点击=上滑同款扩段（_histRefresh
+  // 大窗口重渲+滚动锚定）；封顶条（hg-hist-cap）是纯提示不可点
   _hgFlow.addEventListener('click', (e) => {
     const bar = e.target.closest('.hg-hist-more');
-    if (bar && _hgFlow.contains(bar)) { e.stopPropagation(); _roEnter(); }
+    if (!bar || !_hgFlow.contains(bar)) return;
+    e.stopPropagation();
+    if (bar.classList.contains('hg-hist-cap')) return;   // 封顶 notice——无动作
+    if (_HG.busy || _histBusy || !_HG.histAll || !_HG.histLive || !_HG.sid) return;
+    const capStart = Math.max(0, _HG.histAll.length - _HG.HIST_CAP);
+    if (_HG.histStart <= capStart) return;
+    _histBusy = true;
+    const anchorH = _hgFlow.scrollHeight - _hgFlow.scrollTop;
+    const sidAt = _HG.sid;
+    _histRefresh(sidAt, Math.max(capStart, _HG.histStart - _HG.HIST_PAGE)).then(() => {
+      // v3.2.7R（审计）：fetch 在途切会话——旧锚定值不得写进新会话的 flow
+      // （_histRefresh 内部弃渲但外层 .then 无条件执行；busy 一并放行）
+      if (_HG.sid !== sidAt) { _histBusy = false; return; }
+      _hgFlow.scrollTop = Math.max(0, _hgFlow.scrollHeight - anchorH);
+      // v3.2.7R：同步复位——rAF 在后台标签页不触发，_histBusy 卡 true 会把
+      // 后续所有扩段入口（点击/上滑）永久堵死（实测抓到）
+      _histBusy = false;
+    });
   });
   // v2.28.16：回滚按钮事件委托——按消息文本锚点回滚（每个定下的回合边界
   // 都可回滚到那里）。按钮 innerHTML 随气泡生成/随快照克隆，直绑 onclick
@@ -836,11 +855,13 @@ function buildClaudeHarnessTab(opts = {}) {
         const anchorH = _hgFlow.scrollHeight - _hgFlow.scrollTop;
         const sidAt = _HG.sid;
         _histRefresh(sidAt, _HG.histStart - _HG.HIST_PAGE).then(() => {
+          // v3.2.7R（审计）：同点击路径——在途切会话弃锚定（预存在缺陷一并修）
+          if (_HG.sid !== sidAt) { _histBusy = false; return; }
           // v2.46：Math.max 钳非负——重渲后子代理段折叠态高度缩水时
           // scrollHeight 可能小于 anchorH，负值赋给 scrollTop 虽被浏览器
           // 钳到 0，显式钳制防未来语义变化（且可读）
           _hgFlow.scrollTop = Math.max(0, _hgFlow.scrollHeight - anchorH);
-          requestAnimationFrame(() => { _histBusy = false; });
+          _histBusy = false;   // v3.2.7R：同步复位（rAF 后台标签不触发——同点击路径）
         });
       }
     } else if (distBottom <= 4 && shown > _HG.HIST_PAGE * 2

@@ -2238,9 +2238,11 @@ html {
 .hg-hist-more { align-self: center; width: auto; margin: 4px auto 8px; display: block;
   font-size: 11.5px; color: var(--muted); background: var(--bg-card);
   border: 1px dashed var(--border); border-radius: 14px; padding: 5px 16px; }
-/* v2.24.2：顶部归档入口统一（上滑/点击都进只读模式） */
+/* v3.2.7：点击=扩段加载更早（只读模式退役，上滑同款）；封顶条是纯提示 */
 .hg-hist-more { cursor: pointer; }
 .hg-hist-more b { color: var(--accent); }
+.hg-hist-more.hg-hist-cap { cursor: default; border-style: solid; opacity: .88; }
+.hg-hist-more.hg-hist-cap:hover { color: var(--muted); }
 
 /* ==================== v2.24 只读禅模式（超长会话历史归档查阅）====================
    全屏覆盖：无侧栏/输入/一切入口，只剩居中历史流（VSCode 禅模式）。

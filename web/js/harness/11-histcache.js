@@ -1,8 +1,8 @@
 // harness histcache.js (v3.0 自 buildClaudeHarnessTab 拆出,定义体零改动,缩进保持原样)
   function _histRender(lines, start, opt) {
     _HG.lastTs = 0;   // v2.24.5：重建期时间条从零起算（第一条 user 带时间）
-    // v2.24 CAP：正常模式渲染起点不得越过 capStart（翻阅上限）——更早的
-    // 历史只能进「只读禅模式」看（_roEnter），保住正常模式的 DOM 省流
+    // v2.24 CAP：正常模式渲染起点不得越过 capStart（翻阅上限）——保住正常
+    // 模式的 DOM 省流。v3.2.7：只读模式退役，上限 1200 行内全部上滑翻阅
     const capStart = Math.max(0, lines.length - _HG.HIST_CAP);
     start = Math.max(start, capStart);
     start = Math.min(start, lines.length);   // v2.37R2（复审4）：上界钳制——账目越界时 slice 为空只剩错误计数
@@ -19,13 +19,21 @@
     if (start > 0) {
       const bar = document.createElement('div');
       bar.className = 'hg-hist-more';
-      // v2.24.2：上滑到顶一律进只读禅模式（busy 时不能重渲主 flow——会炸掉
-      // 流式中的活组；CAP 上限同理）——文案统一，行为一致
+      // v3.2.7（用户定调）：只读模式退役——更早内容一律上滑/点击扩段加载
+      // （现有 ZCode 渲染器直出，翻阅体验与主流一致）；到 CAP 硬顶后不再
+      // 载入（DOM 不爆），提示条指向左侧会话列表定位早期会话
       // v2.43.1（R-次要④）：计数按可见行——sub_* 行聚段后不单独占消息流位，
       // 计入会把「剩 N 条」虚高（账目 histStart 仍是行号，仅显示口径剔除）
       const visN = start - lines.slice(0, start).filter(
         l => l && l.role && String(l.role).indexOf('sub_') === 0).length;
-      bar.innerHTML = '📖 剩 ' + visN + ' 条更早消息——<b>点击进入只读模式</b>查看';
+      if (start <= capStart) {
+        // 已到翻阅硬顶：notice 形态（不可点——委托按 hg-hist-cap 忽略）
+        bar.classList.add('hg-hist-cap');
+        bar.innerHTML = '⬆ 已到浏览上限（已载入最近 ' + (lines.length - start) +
+          ' 行，更早内容不载入防卡顿）——早期内容请从<b>左侧会话列表</b>打开对应早期会话查看';
+      } else {
+        bar.innerHTML = '📖 剩 ' + visN + ' 条更早消息——<b>点击加载更早</b>（上滑自动加载）';
+      }
       // 点击走 flow 级事件委托（下方绑定一次）：bar 在扩/收/重渲中反复重建，
       // 直绑 onclick 一旦在某次重建竞态中丢失就永久点不动（用户实锤「又不好使了」）
       _hgFlow.appendChild(bar);
@@ -198,45 +206,7 @@
       _histRender(lines, start == null ? lines.length - _HG.HIST_PAGE : start);
     } catch(_) {}
   }
-  function _roDeps() {
-    return {
-      _HG, wrap: _hgWrap,
-      esc, mdBubble, renderMd, attChipsHtml, statusBadge,
-      toolIco: _hToolIco, toolLabel: _hToolLabel, toolBodyHtml: _histToolBodyHtml,
-      lazyFill: _histLazyFill, lazyDrop: _histLazyDrop,
-      openLightbox,          // v2.3.12：只读层附件 chip 点开预览（委托经 deps 注入）
-      timeFmt: _timeFmt, fmtDur: _hgFmtDur, imgExt: _HARNESS_IMG_EXT,
-      onEmpty: () => { const bar = _hgFlow.querySelector('.hg-hist-more');
-                       if (bar) bar.innerHTML = '⚠ 没有可查阅的历史'; }
-    };
-  }
-  function _roEnter() {
-    // 主层「进入只读」提示条入口（事件委托绑在 flow click）。失败必须上屏——
-    // 静默会让用户以为按钮坏了。快照恢复路径 histAll 为空时先拉再进（v2.25）。
-    try {
-      if (!window.HgReadonly) throw new Error('只读模块未加载（harness/22-readonly.js 缺失）');
-      if (!_HG.histAll || !_HG.histAll.length) {
-        const sidAt = _HG.sid;
-        if (!sidAt || _HG._roFetching) return;
-        _HG._roFetching = true;
-        _histFetch(sidAt).then(ok => {
-          _HG._roFetching = false;
-          if (_HG.sid !== sidAt) return;
-          if (ok) _roEnter();
-          else {
-            const bar = _hgFlow.querySelector('.hg-hist-more');
-            if (bar) bar.innerHTML = '⚠ 历史拉取失败——<b>点击重试</b>';
-          }
-        });
-        return;
-      }
-      window.HgReadonly.enter(_roDeps());
-    } catch (e) {
-      console.error('[只读模式]', e);
-      const bar = _hgFlow.querySelector('.hg-hist-more');
-      if (bar) bar.innerHTML = '⚠ 只读模式打开失败: ' + esc(String(e)) + '（点击重试）';
-    }
-  }
-  function _roExit() {
-    if (window.HgReadonly) window.HgReadonly.exit();
-  }
+  // v3.2.7（用户定调「只读模式退役」）：_roDeps/_roEnter/_roExit 整体退役——
+  // 更早历史一律上滑/点击扩段进现有 ZCode 渲染器（_histRefresh 大窗口重渲），
+  // 到 HIST_CAP 硬顶后提示条指向左侧会话列表。22-readonly.js 模块保留在盘
+  // （window.HgReadonly）但无任何入口，成为不可达代码
