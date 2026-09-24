@@ -573,16 +573,18 @@
             el.dataset.hgRp = '1';   // 铺底标——镜像增量查重锚
             _subTlAppendRow(t, el);
           } else if (row.k === 'user') {
-            // v3.2.21（用户定调「有来有回」）：子代理侧来向消息（首次派发
-            // 提示 / SendMessage 追加）——回合边界：冻结思考段+断查阅组，
-            // 气泡右对齐，与 think/tool/text 交替成完整对话流
+            // v3.2.24（用户定调「像 ZCode 一样直接暴露，不要收进工作区」）：
+            // 来向消息（派发提示/追加）不进时间线——插到工作区（.h-grp）前面，
+            // 回合收起/展开都恒可见；多条按到达序竖排
             _subTlSegFreeze(t);
             _subTlExpBreak(t);
             const u = document.createElement('div');
             u.className = 'h-msg user hg-sub-u';
             u.appendChild(mdBubble(String(row.text || '').slice(0, 1200)));
             u.dataset.hgRp = '1';
-            _subTlAppendRow(t, u);
+            const ws = t.tl && t.tl.closest('.h-grp');
+            if (ws && ws.parentElement) ws.parentElement.insertBefore(u, ws);
+            else _subTlAppendRow(t, u);
           } else if (row.k === 'note') {
             const n = document.createElement('div');
             n.className = 'hg-sub-replay-note';

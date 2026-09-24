@@ -3884,3 +3884,14 @@ html {
   border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
 }
 .hg-sub-u .h-bubble { background: transparent; border: none; padding: 0; margin: 0; font-size: var(--fs-base); }
+
+/* v3.2.24（用户实锤「要自适应窗口，别让我左右拖」）：窗格内容限宽链——
+   flex 子项 min-width:0 阻断 min-content 宽度上传（长路径曾把整链撑到
+   1166px 逼出横向拖动），长词在容器内折行，横向溢出硬禁 */
+.hg-sub-msgs { overflow-x: hidden; }
+.hg-sub-msgs .hg-sub-grp, .hg-sub-msgs .h-grp, .hg-sub-msgs .h-grp-proc,
+.hg-sub-msgs .h-turn-body, .hg-sub-msgs .h-tl, .hg-sub-msgs .h-tl-grp,
+.hg-sub-msgs .h-tl-grp-body { min-width: 0; max-width: 100%; width: 100%; }
+.hg-sub-msgs .h-tool, .hg-sub-msgs .h-tl-grp-head,
+.hg-sub-msgs .h-tool-arg, .hg-sub-msgs .h-tool-out,
+.hg-sub-msgs .h-tool-head { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
