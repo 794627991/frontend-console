@@ -381,7 +381,9 @@
     // 点击照常展开，回放态本就收起）
     seg.className = 'h-think-seg';
     if (!hist) {
-      seg.dataset.t0 = String(Date.now());   // hist：无真实起始时间，不存不编造
+      // v3.1h（用户实锤「发出后半天没消息也应算思考」）：第一段思考起点回溯
+      // 到回合起点（=消息发出时刻），静默等待期计入思考时长；后续段仍取当下
+      seg.dataset.t0 = String((n === 1 && g.t0) ? g.t0 : Date.now());
       seg.dataset.n = String(n);
     }
     seg.innerHTML =
