@@ -297,3 +297,23 @@ ZCode 回合模型：
 - **存档接受项**：压缩/协作/审计等中段边界仍裂组（边界线本就是可见分割，
   各段独立计时）；快照恢复态 `_tlAt` expando 丢失回落体尾（重建必重算）；
   修复前快照存量 can-rewind 残留（LRU 10 份自愈）。
+
+## 九、v3.2.5 思考段 ZCode 形态收尾（用户三连反馈）与对抗审计
+
+- **「思考几的描述不要，要思考持续了几秒」**：思考段名去序号（「🧠 思考」）；
+  回放段时长用**行 ts 邻行差**——thinking 行 dispatch 挂 `_HG.thinkPend=
+  {seg,t0}`，下一条带 ts 的行到达时定格「持续了 N 秒」（`_hgTurnDurTxt`
+  中文口径；转写无段级终点事实，邻行差是唯一诚实口径；同秒双段降级为空
+  不编造）；live endThinking 文案统一中文。pend 清零三点：_histRender 起/
+  _hgSseResetLocal/switchTo。
+- **「出错了也不要自动展开，只标红」**：'err open'→'err'（回放主链+段内），
+  live 错误分支去 add('open')——红色 err 边框+失败徽章+live failmark 标红，
+  错误体仍立即渲染进折叠体（点开即见，非懒加载），信息可达性保留。
+- **「字体被挡住了」**：oneclick 终端卡直挂 arg 单行省略（nowrap+ellipsis，
+  窄面板 flex 收缩降阶不重叠不消失）；live bash 补 title 全文悬浮（对齐回放
+  卡 argTitle）；思考体左距加大（16px）+ ul/ol 补 1.4em 缩进（序号压线）。
+- **对抗审计**：R1 FAIL(1×P3)——`calc(100%-160px)` 固定预留极窄面板钳 0
+  （命令消失）→ 改 `max-width:100%` 弹性降阶 + title 补救入口；R2 终审
+  PASS（含属性转义/层叠/快照序列化核验）。
+- **验证**：「🧠 思考持续了 2 秒」形态、5 错误行全收起红标（collHasContent
+  点开可见）、命令省略号与徽章不重叠；回归全绿。
