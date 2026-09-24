@@ -2492,6 +2492,44 @@ html {
   color: var(--muted); padding: 1px 8px 1px 12px; max-width: 86%;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* ---- v3.2.6（ZCode 子智能体模式）：主流单行任务卡 + 窗格时间线 ---- */
+/* 子代理段卡退役：主流唯一入口=Agent/Task 派发单行卡（下组），完整过程统一
+   在右侧窗格时间线查看（对照 ZCode agent.tsx 产品边界）。段根仍留在 DOM
+   （回填/收尾/轮询兜底扫描/快照恢复的机器挂点），视觉全隐 */
+.h-subblock { display: none !important; }
+/* Agent/Task 单行任务卡解剖：🤖 子智能体 | 类型 chip（按类型名哈希取色）|
+   描述（单行省略）| 实时活动流（运行中活字）| 状态徽章/秒表/摘要 | 整行可点
+   开窗格。无折叠体（canToggle=false 的等价物） */
+.h-tool.agentline { max-width: 100%; }
+.h-tool.agentline .h-tool-head { cursor: pointer; }
+.h-tool.agentline .h-tool-name { flex-shrink: 0; }
+.h-tool.agentline .h-tool-arg { white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+.h-ag-type { flex: none; font-family: var(--font-mono); font-size: var(--fs-xs);
+  font-weight: 600; padding: 0 5px; border-radius: 4px;
+  background: color-mix(in srgb, currentColor 9%, transparent); }
+.h-ag-type.h-ava-0 { color: var(--hgd-run); }
+.h-ag-type.h-ava-1 { color: var(--hgd-fail); }
+.h-ag-type.h-ava-2 { color: var(--hgd-halt); }
+.h-ag-type.h-ava-3 { color: var(--hgd-wait); }
+.h-ag-type.h-ava-4 { color: var(--accent); }
+.h-ag-live { min-width: 0; flex: 0 1 auto; font-size: var(--fs-xs);
+  color: var(--accent); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; animation: hg-sub-pulse 1.6s ease-in-out infinite; }
+.h-ag-live:empty { display: none; }
+.h-tool.agentline .h-tslots { margin-left: auto; }
+/* 窗格时间线：子代理自己的会话用主会话同款回合结构（回合头+时间线+根区结
+   论）。行样式全复用主链类（.h-tl/.h-think-seg/.h-tool/.h-tl-grp），这里只
+   补窗格作用域的身份行/结论区/占位说明 */
+.hg-sub-grp { display: flex; flex-direction: column; gap: 8px; }
+.hg-sub-idline { display: flex; align-items: center; gap: 6px; padding: 2px 2px 0; }
+.hg-sub-idline .h-ava { margin-right: 0; }
+.hg-sub-idline-ty { font-weight: 600; font-size: var(--fs-base); }
+.hg-sub-concl { display: flex; flex-direction: column; }
+.hg-sub-concl .h-msg { margin: 0; }
+.hg-sub-msgs .h-msg.asst { max-width: 100%; }
+.hg-sub-msgs .hg-sub-replay-note { margin: 0; }
+
 /* 杂音/退出行 */
 .h-raw { align-self: flex-start; font-family: var(--font-mono); font-size: var(--fs-sm);
   color: var(--neon-red, #e06c75); padding: 2px 8px; word-break: break-all; }

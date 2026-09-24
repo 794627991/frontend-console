@@ -1,5 +1,24 @@
 // harness hist.js (v3.0 自 buildClaudeHarnessTab 拆出,定义体零改动,缩进保持原样)
   function renderHistTool(l, hi) {
+    // v3.2.6（ZCode 子智能体模式）：历史 Agent/Task 派发行走单行任务卡工厂
+    //（与 live 同解剖：🤖 子智能体 + 类型 chip + 描述 + ▣/点击开窗格），无
+    // 展开体；登记 lastAgRow 供紧随其后的 sub_open 行回绑 agentId（转写注入
+    // 保证 sub_open 紧贴派发行，隔行即失效——见 renderHistLine 顶部清账）
+    if (((_H_TOOL_CFG[l.text] || {}).kind) === 'agent') {
+      const _inp = l.input || {};
+      const _err = !!l.err;
+      const d = _hgAgentRowBuild('ag' + (hi != null ? hi : 'r' + (++_HG.uidN)),
+        _inp.subagent_type || _inp.agent_type || l.text,
+        _inp.description || '');
+      if (_err) d.classList.add('err');
+      const st = d.querySelector('.h-tslots');
+      if (st) st.innerHTML = statusBadge(_err ? 'error' : 'completed');
+      d.dataset.hgAgline = '1';
+      _HG.lastAgRow = d;
+      drawerCount(l.text);
+      _tlPlace(d, l.text, _inp);
+      return d;
+    }
     // v2.15：与 renderToolUse 的 collapsible 分支同构的结构
     // （.h-tool.col > .h-tool-head[.h-tslots] + .h-tool-coll）。
     // v2.24 懒抽屉：正常行 body 不渲染（dataset.hi 记行号，点开 _histLazyFill
@@ -51,6 +70,9 @@
       if (_te) _te.textContent = '持续了 ' + _hgTurnDurTxt(_ts - _tp.t0);
       _HG.thinkPend = null;
     }
+    // v3.2.6：lastAgRow 只活一行——sub_open 紧贴 Agent 派发行（transcript 注
+    // 入序铁律），其余任何行到达即清（防隔行错绑到更早的 Agent 行）
+    if (l.role !== 'sub_open') _HG.lastAgRow = null;
     if (l.role === 'peer') {          // v2.27.3：跨会话回传（识图结论）历史回看
       // v2.53：第 5 参 hist——历史回放绝不开新段（防假「协作·运行中」段吞正文）
       renderPeer(l.name, l.text, null, true, true);
@@ -132,6 +154,15 @@
       const b = _subBlkGet(pid, { agent: pid, type: l.type, desc: l.desc || '',
         label: _AGENT_LABEL[l.type] || l.type || '子代理', model: l.model || '',
         done: true, err: !!l.err, hist: true });   // v2.44：hist——段头显「历史」不算假用时
+      // v3.2.6：单行任务卡回绑——agentId/类型/描述落派发行（点击/▣ 开窗格
+      // 回放；lastAgRow 由 renderHistTool 登记且只活到本行）
+      const _ar = _HG.lastAgRow;
+      if (_ar && !_ar.dataset.hgSubr) {
+        _ar.dataset.hgSubr = pid;
+        _ar.dataset.hgSubType = l.type || 'Task';
+        _ar.dataset.hgSubDesc = String(l.desc || '').slice(0, 120);
+      }
+      _HG.lastAgRow = null;
       if (b) {
         // v2.46：折叠态按记忆恢复（重建期 openState 在场；无记录=默认折叠不
         // 动）——用户展开过的段不随扩段/收缩重渲收回（高度突变破坏锚定）

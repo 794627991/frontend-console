@@ -95,6 +95,14 @@
             a = _HG.agents[tid] = {
               type: o.subagent_type || 'Task', desc: o.description || '',
               t0: Date.now(), done: false, doneAt: 0 };
+            // v3.2.6：tool_use 丢失的兜底派发也补单行任务卡（子代理段已隐，
+            // 无行=派发在主流不可见；'Task' 非 explore → 直挂时间线）
+            if (!_HG.rowById[tid]) {
+              const _agRow = _hgAgentRowBuild(tid, a.type, a.desc);
+              _HG.rowById[tid] = _agRow;
+              drawerCount('Task');
+              _tlPlace(_agRow, 'Task', null);
+            }
           }
           if (a) {
             if (sub === 'task_started') {
@@ -107,6 +115,10 @@
               const _realTo = (_HG.peerSent || {})[tid];
               a.taskId = (_realTo && /^[0-9a-zA-Z_-]{8,64}$/.test(String(_realTo)))
                 ? String(_realTo) : (o.task_id || '');
+              // v3.2.6R（审计F1）：agentId 即刻回写单行卡——不等完成（切走
+              // 会话时行已自带 hgSubr，回放入口随快照存活）
+              if (a.taskId && /^[0-9a-zA-Z_-]{8,64}$/.test(a.taskId))
+                _hgAgentRowBindAid(tid, (_HG.rowById || {})[tid]);
             } else {
               // v2.35.1（F3）：用量与收尾解耦——task_notification 是完成信号，
               // usage 缺失（失败态通知常见）也必须收档，否则面板/输入框永久
@@ -121,6 +133,9 @@
                            && o.status !== 'success');
                 a.result = String(o.summary || '').trim().slice(0, 400) || a.result;
                 _subClose(tid, a.err);
+                // v3.2.6：单行任务卡定格（tool_result 丢失的兜底路径也要收
+                // 徽章；正常路径 renderOneToolResult 先到，此处幂等覆写）
+                _hgAgentRowState(tid, a.err, a.result);
               }
             }
             renderSideStatus();

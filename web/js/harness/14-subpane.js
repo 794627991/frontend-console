@@ -1,4 +1,4 @@
-// harness subpane.js (v3.0 自 buildClaudeHarnessTab 拆出,定义体零改动,缩进保持原样)
+// harness subpane.js (v3.0 自 buildClaudeHarnessTab 拆出;v3.2.6 窗格时间线重写——ZCode 子智能体模式)
   const _sub = { tabs: {}, order: [], active: null, manual: false };
   // ==================== v3.2：子智能体目录（ZCode SubagentDirectorySidePane 移植）====================
   // 目录是一个常驻伪 tab（__dir__）：正在运行/已结束两组列表，行卡=状态图标+
@@ -31,7 +31,11 @@
     const title = ((_AGENT_LABEL[r.type] || r.type || '子代理') +
       (r.desc ? ' · ' + r.desc : '')).slice(0, 80);
     const sum = String(r.result || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+    // v3.2.6（ZCode 模式）：运行行时间位改秒表（对照 ConversationStatusPanel
+    // 的 elapsed 计数——1s 重绘由 _subDirTick 驱动）；已结束保持相对时间
     const t = r.done ? (r.doneAt || 0) : (r.t0 || 0);
+    const timeTxt = r.done ? _harnessRelTime(t)
+      : (t ? _hgFmtDur(Math.max(0, (Date.now() - t) / 1000)) : '');
     return `<button class="hg-sub-dir-row ${st}" data-hg-dir="${esc(r.tid)}"` +
       ` data-hg-dir-rpl="${r.rpl ? '1' : ''}" title="${esc(title)}">` +
       `<span class="hg-sub-dir-ico">${stIco}</span>` +
@@ -40,8 +44,12 @@
       `<span class="hg-sub-dir-st">${stTxt}${r.bg ? ' · 后台' : ''}${r.collab ? ' · 协作' : ''}</span></span>` +
       (sum ? `<span class="hg-sub-dir-sum">${esc(sum)}${String(r.result || '').trim().length > 120 ? '…' : ''}</span>` : '') +
       `</span>` +
-      (t ? `<span class="hg-sub-dir-time">${esc(_harnessRelTime(t))}</span>` : '') +
+      (timeTxt ? `<span class="hg-sub-dir-time">${esc(timeTxt)}</span>` : '') +
       `</button>`;
+  }
+  let _subDirTick = null;
+  function _subDirTickStop() {
+    if (_subDirTick) { clearInterval(_subDirTick); _subDirTick = null; }
   }
   function _subDirPaint() {
     const tb = _sub.tabs[_SUB_DIR];
@@ -55,6 +63,14 @@
       `<div class="hg-sub-dir-sec">已结束 · ${ended.length}</div>` +
       (ended.length ? ended.map(_subDirRowHtml).join('')
         : `<div class="hg-sub-dir-empty">暂无已结束的子智能体</div>`);
+    // v3.2.6：有运行行才起 1s 重绘（秒表走字）；目录失活/运行清空自停
+    if (running.length && !_subDirTick) {
+      _subDirTick = setInterval(() => {
+        if (_sub.active !== _SUB_DIR) { _subDirTickStop(); return; }
+        if (!_subDirRows().running.length) { _subDirTickStop(); return; }
+        _subDirPaint();
+      }, 1000);
+    }
   }
   function _subDirOpen() {
     if (!_subPaneEl) return;
@@ -84,28 +100,15 @@
     const a = (_HG.agents || {})[tid];
     if (!a) return;
     if (!a.done) {
-      // v3.2R1(P1)+R2(N3)：协作代理无实况窗格（独立会话事件流不经本会话，
-      // 开了必空白——10-sse task_started 对 collab 就是 _subDrop 的）——运行中
-      // 点行跳主 flow 协作段：先按段键（data-hg-subblock=tid，wrapper-only
-      // 形态 hgSubr 未写也能命中）直查自身段；miss 再按 hgSubr（续派同名多段
-      // 取 DOM 最晚=最新轮段，对齐 _hgCollabSegFind 语义）；已结束走下方回放
+      // v3.2.6（ZCode 模式）：协作代理运行中——段卡已隐、过程唯一可看面=窗格，
+      // 有真实 taskId 即开全量回放+轮询镜像续流（force 重拉）；无 id 回落跳
+      // 主流段锚点（数据缺失的老形态）
       if (a.collab) {
         const aid = a.taskId || a.agentId || '';
-        let seg = _hgFlow.querySelector(`.h-subblock[data-hg-subblock="${CSS.escape(tid)}"]`);
-        if (!seg && aid) {
-          const hits = [..._hgFlow.querySelectorAll('.h-subblock[data-hg-collab]')]
-            .filter(el => { const hd = el.querySelector('.h-subblock-head'); return hd && hd.dataset.hgSubr === aid; });
-          seg = hits[hits.length - 1] || null;   // DOM 最晚 = 最新轮段（v2.58 切段语义）
-        }
-        if (seg) {
-          seg.classList.remove('collapsed');
-          _hgSubSaveOpen(seg, true);               // 展开记忆（与既有段点击口径一致）
-          seg.scrollIntoView({ block: 'center', behavior: 'smooth' });
-          seg.classList.remove('hg-dyn-jump');
-          void seg.offsetWidth;
-          seg.classList.add('hg-dyn-jump');
-          setTimeout(() => seg.classList.remove('hg-dyn-jump'), 1600);
-        } else showBanner('协作代理过程在主消息流段内展示（暂无可跳转的段）', 2600);
+        if (aid) { _subReplay(tid, a.type, a.desc, aid, true); return; }
+        // v3.2.6R（审计F4）：无真实 id——段卡已隐，跳段是 display:none 上的
+        // no-op；明确告知（与 agentline 死点击 banner 同口径）
+        showBanner('该协作代理无 agentId 记录，过程暂不可回看', 2600);
         return;
       }
       _subOpen(tid, a.type, a.desc);               // 运行中 → live 实况 tab
@@ -114,6 +117,12 @@
     _subReplay(tid, a.type, a.desc, a.taskId || a.agentId || '');   // 已结束 → 回放 tab（collab 分支内部自理）
   }
   function _subReset() {
+    // v3.2.6：先停全部窗格秒表/目录秒表再拆档（防孤儿 interval）
+    _subDirTickStop();
+    for (const k in _sub.tabs) {
+      const tb = _sub.tabs[k];
+      if (tb && tb.t && tb.t.tick) { clearInterval(tb.t.tick); tb.t.tick = null; }
+    }
     _sub.tabs = {}; _sub.order = []; _sub.active = null; _sub.manual = false;
     if (_subPaneEl) { _subPaneEl.style.display = 'none'; _subTabsEl.innerHTML = ''; _subBodyEl.innerHTML = ''; }
   }
@@ -123,6 +132,227 @@
     try { w = +(localStorage.getItem('hg-subpane-w') || 0); } catch(_) {}
     _subPaneEl.style.width = (w >= 220 && w <= 640 ? w : 320) + 'px';
     _subPaneEl.style.display = 'flex';
+  }
+  // ==================== v3.2.6：窗格时间线（ZCode 子智能体会话模式）====================
+  // 对照 ZCode SubagentSessionSidePane = 完整 SessionPane（readOnly）的产品事实：
+  // 子代理自己的会话用与主会话同款的回合结构呈现——turn-head（工作中 Ns /
+  // 已工作 X · N 思考 · M 工具）+ 时间线（🧠 思考持续了 N 秒 / 工具行 / 查阅
+  // 聚组 / 中间正文气泡按序穿插）+ 根区最终结论。live（SSE/轮询镜像增量）与
+  // replay（转写 fetch 全量）同走一套行工厂，仅定稿时长来源不同（live=档案
+  // t0 秒表；replay=rows 首末行 ts 差——transcript.py v3.2.6 起行行带 ts）
+  function _subTabLabel(type, desc) {
+    const d = String(desc || '').trim();
+    if (d) return d.slice(0, 14) + (d.length > 14 ? '…' : '');
+    return _AGENT_LABEL[type] || type || '子代理';
+  }
+  function _subPaneScaffold(sc, type, model, desc) {
+    const mdl = String(model || '').split('[')[0].trim();
+    const ty = _AGENT_LABEL[type] || type || '子代理';
+    const wrap = document.createElement('div');
+    wrap.className = 'hg-sub-grp';
+    wrap.innerHTML =
+      `<div class="hg-sub-idline">` +
+      `<span class="h-ava ${_hgAvaCls(ty)}">${esc(String(ty).charAt(0).toUpperCase())}</span>` +
+      `<span class="hg-sub-idline-ty">${esc(ty)}</span>` +
+      (mdl ? `<span class="h-mmodel">${esc(mdl)}</span>` : '') +
+      `</div>` +
+      `<div class="h-grp"><div class="h-grp-proc">` +
+      `<button class="h-turn-head" data-hg-subtgl="1"><span class="h-chev">▸</span>` +
+      `<span class="h-turn-label">工作中 0s</span><span class="h-turn-sub"></span></button>` +
+      `<div class="h-turn-body"><div class="h-tl"></div></div>` +
+      `</div><div class="hg-sub-concl"></div></div>`;
+    sc.appendChild(wrap);
+    const t = { sc,
+      head: wrap.querySelector('.h-turn-head'),
+      label: wrap.querySelector('.h-turn-label'),
+      subEl: wrap.querySelector('.h-turn-sub'),
+      body: wrap.querySelector('.h-turn-body'),
+      tl: wrap.querySelector('.h-tl'),
+      concl: wrap.querySelector('.hg-sub-concl'),
+      exp: null, stats: { think: 0, tool: 0 },
+      t0: 0, tick: null, done: false, err: false, durTxt: '' };
+    if (desc) t.head.title = String(desc).slice(0, 200);
+    return t;
+  }
+  function _subTlThinkRow(raw, durTxt) {
+    const seg = document.createElement('div');
+    seg.className = 'h-think-seg';
+    seg.dataset.raw = String(raw || '');
+    // 懒渲染三件套与主链同款（pane 委托 _histLazyFill/_histLazyDrop 处置）
+    seg.dataset.hgLazy = '1';
+    seg.innerHTML = '<button class="h-think-seg-head"><span class="h-chev">▸</span>' +
+      '<span class="h-think-seg-name">🧠 思考</span>' +
+      `<span class="h-think-seg-t">${esc(durTxt || '')}</span></button>` +
+      '<div class="h-think-seg-body"></div>';
+    return seg;
+  }
+  function _subTlTextRow(text) {
+    const d = document.createElement('div');
+    d.className = 'h-msg asst';
+    d.appendChild(mdBubble(text));
+    return d;
+  }
+  function _subTlToolRow(name, hint, tuid) {
+    const row = document.createElement('div');
+    row.className = 'h-tool col';
+    if (tuid) row.dataset.tuid = tuid;
+    row.style.setProperty('--h-accent',
+      _H_KIND_COLOR[(_H_TOOL_CFG[name] || {}).kind] || 'var(--border)');
+    row.innerHTML = _subToolHeadHtml(name, String(hint || '').slice(0, 90), '', {}) +
+      `<div class="h-tool-coll"></div>`;
+    return row;
+  }
+  function _subPaneStick(sc) {
+    return sc.scrollHeight - sc.scrollTop - sc.clientHeight <= 80;
+  }
+  // 时间线落位（窗格版 _tlPlace）：explore 类 → 当前查阅组；其余 → 断组直挂
+  function _subTlPlace(t, row, name, input) {
+    if (!t || !t.tl) return;
+    if (_hgIsExplore(name, input)) {
+      if (!t.exp || !t.exp.el.isConnected) {
+        _subTlExpBreak(t);
+        const grpEl = document.createElement('div');
+        grpEl.className = 'h-tl-grp open';
+        grpEl.innerHTML =
+          `<button class="h-tl-grp-head"><span class="h-chev">▸</span>` +
+          `<span class="h-tl-grp-name">🔍 查阅</span>` +
+          `<span class="h-tl-grp-sum"></span></button>` +
+          `<div class="h-tl-grp-body"></div>`;
+        t.tl.appendChild(grpEl);
+        t.exp = { el: grpEl, sum: { search: 0, list: 0, file: 0 } };
+      }
+      const body = t.exp.el.querySelector('.h-tl-grp-body');
+      if (body) body.appendChild(row);
+      t.exp.sum[_hgExpBucket(name, input)]++;
+      const sumEl = t.exp.el.querySelector('.h-tl-grp-sum');
+      if (sumEl) {
+        const live = _hgExpLiveTxt(name, input);
+        sumEl.textContent = live ? '· ' + live : _hgExpSumTxt(t.exp.sum);
+      }
+    } else {
+      _subTlExpBreak(t);
+      t.tl.appendChild(row);
+    }
+  }
+  // 查阅组断组：头部定格桶汇总；未被动过则收起（主链 _tlExpFlush 同语义）
+  function _subTlExpBreak(t) {
+    const e = t && t.exp;
+    if (!e) { if (t) t.exp = null; return; }
+    t.exp = null;
+    if (!e.el || !e.el.isConnected) return;
+    const sumEl = e.el.querySelector('.h-tl-grp-sum');
+    if (sumEl) sumEl.textContent = _hgExpSumTxt(e.sum);
+    if (e.el.dataset.userToggled !== '1') e.el.classList.remove('open');
+  }
+  // 冻结当前开口思考段（live 时长=now−t0；主链 endThinking 的窗格对偶）
+  function _subTlSegFreeze(t) {
+    if (!t || !t.tl) return;
+    const open = t.tl.querySelector('.h-think-seg:not([data-hg-done])');
+    if (!open) return;
+    open.dataset.hgDone = '1';
+    const te = open.querySelector('.h-think-seg-t');
+    const t0 = +(open.dataset.t0 || 0);
+    if (te && t0) te.textContent = '持续了 ' + _hgTurnDurTxt(Date.now() - t0);
+  }
+  function _subTlAppendThink(t, raw) {
+    if (!t || !t.tl) return;
+    _subTlSegFreeze(t);
+    _subTlExpBreak(t);
+    const seg = _subTlThinkRow(raw, '');
+    seg.dataset.t0 = String(Date.now());
+    t.tl.appendChild(seg);
+    t.stats.think++;
+    _subTlCap(t);
+  }
+  function _subTlAppendRow(t, el) {
+    if (!t || !t.tl) return;
+    _subTlSegFreeze(t);
+    _subTlExpBreak(t);
+    t.tl.appendChild(el);
+    _subTlCap(t);
+  }
+  function _subTlAppendTool(t, name, hint, tuid, input) {
+    if (!t || !t.tl) return;
+    _subTlSegFreeze(t);
+    const row = _subTlToolRow(name, hint, tuid);
+    _subTlPlace(t, row, name, input || null);
+    t.stats.tool++;
+    _subTlCap(t);
+  }
+  // v3.2.6R（审计F5）：窗格时间线上限 220 行（旧 _subCap 的 tl 版）——live
+  // 长跑子代理（SSE+轮询双源镜像）无界增长会拖垮 DOM/快照。溢出从头删并
+  // 置「⬆ 已省略 N 行」提示条；explore 组整组删除时 t.exp 失联由
+  // _subTlPlace 的 isConnected 判据自愈重建
+  function _subTlCap(t) {
+    if (!t || !t.tl) return;
+    while (t.tl.children.length > 220) {
+      const first = t.tl.firstElementChild;
+      if (!first) break;
+      if (first.classList.contains('hg-sub-omit')) {
+        first.dataset.omitted = String((+first.dataset.omitted || 0) + 1);
+        first.textContent = `⬆ 已省略 ${first.dataset.omitted} 行`;
+        const victim = first.nextElementSibling;
+        if (victim) victim.remove(); else first.remove();
+      } else {
+        const om = document.createElement('div');
+        om.className = 'hg-sub-omit';
+        om.dataset.omitted = '1';
+        om.textContent = '⬆ 已省略 1 行';
+        t.tl.insertBefore(om, first);
+        first.remove();
+      }
+    }
+  }
+  function _subTlHeadPaint(t) {
+    if (!t || !t.label) return;
+    if (t.done) {
+      t.label.textContent = (t.err ? '已停止' : '已工作') + (t.durTxt ? ' ' + t.durTxt : '');
+    } else {
+      t.label.textContent = '工作中 ' + _hgFmtDur((Date.now() - (t.t0 || Date.now())) / 1000);
+    }
+    if (t.subEl) {
+      const s = t.stats;
+      t.subEl.textContent = (s.think ? `· ${s.think} 思考 ` : '') +
+                           (s.tool ? `· ${s.tool} 工具` : '');
+    }
+  }
+  function _subTlTickStart(tid) {
+    const tb = _sub.tabs[tid];
+    if (!tb || !tb.t || tb.t.tick || tb.t.done) return;
+    const t = tb.t;
+    t.tick = setInterval(() => {
+      const cur = _sub.tabs[tid];
+      if (!cur || cur.t !== t || t.done) { clearInterval(t.tick); t.tick = null; return; }
+      _subTlHeadPaint(t);
+      // 开口思考段活字时长（完成定格由 _subTlSegFreeze 收「持续了 N」）
+      const open = t.tl && t.tl.querySelector('.h-think-seg:not([data-hg-done])');
+      if (open) {
+        const te = open.querySelector('.h-think-seg-t');
+        const t0 = +(open.dataset.t0 || 0);
+        if (te && t0) te.textContent = _hgTurnDurTxt(Date.now() - t0);
+      }
+    }, 1000);
+  }
+  // 定稿：头「已工作 X」、结论气泡上移根区、体默认收起（尊重手动开合）
+  function _subTlFinalize(tid, opt) {
+    const tb = _sub.tabs[tid];
+    const t = tb && tb.t;
+    if (!t || t.done) return;
+    opt = opt || {};
+    if (t.tick) { clearInterval(t.tick); t.tick = null; }
+    _subTlSegFreeze(t);
+    _subTlExpBreak(t);
+    t.done = true;
+    t.err = !!opt.err;
+    const _a = (_HG.agents || {})[tid] || {};
+    const durMs = (opt.durMs > 0) ? opt.durMs
+      : ((_a.doneAt || Date.now()) - (_a.t0 || 0));
+    t.durTxt = durMs > 0 ? _hgTurnDurTxt(durMs) : '';
+    _subTlHeadPaint(t);
+    const texts = t.tl ? [...t.tl.querySelectorAll(':scope > .h-msg.asst')] : [];
+    const last = texts[texts.length - 1];
+    if (last && t.concl) t.concl.appendChild(last);
+    if (t.body && t.head && t.head.dataset.userToggled !== '1') t.body.classList.add('closed');
   }
   function _subOpen(tid, type, desc, replay) {
     if (!_subPaneEl) return;
@@ -134,22 +364,32 @@
       // v2.35.1（F2）：运行态从档案派生——已完成代理被 tab 上限逐出后经
       // _subReopen 重建，不得回到「运行中」绿点（档案缺失的兜底才视为运行）
       // v2.38：replay=true=历史回放 tab（无绿点、置灰、带「回放」徽章）
+      // v3.2.6：tab 标题优先用描述（ZCode 右侧 tab 用任务短题，类型进窗格头）
       const _ag = (_HG.agents || {})[tid] || {};
-      _sub.tabs[tid] = { label: _AGENT_LABEL[type] || type, type, desc, sc,
+      _sub.tabs[tid] = { label: _subTabLabel(type, desc), type, desc, sc,
                          run: replay ? false : (!('done' in _ag) || !_ag.done),
                          err: !!_ag.err, replay: !!replay,
-                         model: _ag.model || '' };
+                         model: _ag.model || '', t: null };
       _sub.order.push(tid);
       // v3.2：上限 6 个 tab，最旧让位（目录伪 tab 常驻不让位）
-      if (_sub.order.filter(t => t !== _SUB_DIR).length > 6) {
-        const old = _sub.order.find(t => t !== _SUB_DIR);
+      if (_sub.order.filter(x => x !== _SUB_DIR).length > 6) {
+        const old = _sub.order.find(x => x !== _SUB_DIR);
         if (old != null) {
-          _sub.order = _sub.order.filter(t => t !== old);
-          if (_sub.tabs[old] && _sub.tabs[old].sc.parentNode) _sub.tabs[old].sc.remove();
+          const otb = _sub.tabs[old];
+          if (otb && otb.t && otb.t.tick) { clearInterval(otb.t.tick); otb.t.tick = null; }
+          _sub.order = _sub.order.filter(x => x !== old);
+          if (otb && otb.sc.parentNode) otb.sc.remove();
           delete _sub.tabs[old];
         }
       }
       _subBodyEl.appendChild(sc);
+      // v3.2.6：ZCode 时间线脚手架（回放 fetch 会重建；live 即刻起跑秒表）
+      _sub.tabs[tid].t = _subPaneScaffold(sc, type, _ag.model || '', desc);
+      if (_sub.tabs[tid].run) {
+        _sub.tabs[tid].t.t0 = _ag.t0 || Date.now();
+        _subTlHeadPaint(_sub.tabs[tid].t);
+        _subTlTickStart(tid);
+      }
     }
     _subShow(); _subTabsPaint(); _subActivate(tid);
   }
@@ -164,13 +404,21 @@
     // 无 taskId（连真实 id 都没反查到）才维持占位
     if (a.collab && !a.taskId && !agentId) {
       _subOpen(tid, type, desc, true);
-      const sc0 = _sub.tabs[tid] && _sub.tabs[tid].sc;
-      if (sc0 && !sc0.dataset.collabNote) {
-        sc0.dataset.collabNote = '1';
-        // v2.37R4（终审1）：拆两次 _subAppend——单根 append 语义下双根模板
-        // 的第二个 div（结论正文）会被整体丢弃
-        _subAppend(sc0, `<div class="hg-sub-replay-note">独立会话协作代理——过程不可回看，仅结论可回看</div>`, true);
-        _subAppend(sc0, `<div class="hg-sub-msg">${esc(a.result || '（无结论记录）')}</div>`, true);
+      const tb0 = _sub.tabs[tid];
+      if (tb0 && tb0.t && !tb0.t.sc.dataset.collabNote) {
+        tb0.t.sc.dataset.collabNote = '1';
+        const n0 = document.createElement('div');
+        n0.className = 'hg-sub-replay-note';
+        n0.textContent = '独立会话协作代理——过程不可回看，仅结论可回看';
+        tb0.t.sc.appendChild(n0);
+        if (a.result) {
+          const c0 = document.createElement('div');
+          c0.className = 'h-msg asst';
+          c0.appendChild(mdBubble(a.result));
+          tb0.t.concl.appendChild(c0);
+        }
+        tb0.t.done = true; tb0.t.durTxt = '';
+        _subTlHeadPaint(tb0.t);
       }
       _sub.manual = true;
       return;
@@ -181,6 +429,11 @@
     const sc = _sub.tabs[tid] && _sub.tabs[tid].sc;
     if (!sc) return;
     if (sc.dataset.replayed === agentId && !force) { _sub.manual = true; return; }   // 已拉过
+    // v3.2.6：拉取期头行给加载态（脚手架默认「工作中」对回放 tab 是误导）
+    {
+      const tbL = _sub.tabs[tid];
+      if (tbL && tbL.t && tbL.t.label) tbL.t.label.textContent = '回放加载中…';
+    }
     if (_subNoreplay.has(agentId)) {      // v2.41：已判定不可回放——直接出示结论，不再发请求
       sc.innerHTML = '';
       sc.dataset.replayed = agentId;
@@ -188,9 +441,7 @@
       _sub.manual = true;
       return;
     }
-    sc.innerHTML = '';
     sc.dataset.replayed = agentId;
-    _subAppend(sc, `<div class="hg-sub-replay-note">回放加载中…</div>`, true);
     _sub.manual = true;
     if (_sub.tabs[tid]) _sub.tabs[tid].replay = true;   // v2.57：fetch 期间挡镜像增量（防污染），完成后放行
     const sidAt = _HG.sid;
@@ -207,74 +458,137 @@
             delete scf.dataset.replayed;
             if (_HG.sid === sidAt) {   // 会话已切走的不动现flow（可能已属别会话窗格）
               scf.innerHTML = '';
-              _subAppend(scf, `<div class="hg-sub-replay-note">${(j && j.err) ? esc('回放读取失败：' + j.err) : '回放读取失败——重新点击「回放该子代理过程」可重试'}</div>`, true);
+              _subAppend(scf, `<div class="hg-sub-replay-note">${(j && j.err) ? esc('回放读取失败：' + j.err) : '回放读取失败——重新点击可重试'}</div>`, true);
             }
           }
           return;
         }
-        const sc2 = _sub.tabs[tid] && _sub.tabs[tid].sc;
+        const tb2 = _sub.tabs[tid];
+        const sc2 = tb2 && tb2.sc;
         if (!sc2) return;
+        // v3.2.6：重建时间线脚手架（清「回放加载中」占位）
         sc2.innerHTML = '';
+        const t = tb2.t = _subPaneScaffold(sc2, type, tb2.model || a.model || '', desc);
+        const note = (txt) => {
+          const n = document.createElement('div');
+          n.className = 'hg-sub-replay-note';
+          n.textContent = txt;
+          sc2.insertBefore(n, sc2.firstChild);
+        };
         if (!j.found) {
           // v2.42：后端双源（projects 旧源+新版 CLI tasks 兜底）均未命中——
           // 文件不存在是持久事实，重拉永远同结果；记住结论，重点/重开不再发请求
           _subNoreplay.add(agentId);
-          _subAppend(sc2, _subNoReplayNote(), true);
+          t.done = true; t.durTxt = '';
+          _subTlHeadPaint(t);   // v3.2.6R（审计F2）：失败分支也定稿头——不卡「工作中 0s」假态
+          note('未找到该子代理的转写记录');
           return;
         }
         if (!(j.rows || []).length) {
           // v2.41R2：转写存在但无可渲染行——与「没有独立转写」是两回事，给中性
           // 文案且不进 noreplay 集（tab 重开后可重试，防误判永久锁死回放入口）
-          _subAppend(sc2, '<div class="hg-sub-replay-note">转写存在但无可回放内容</div>', true);
+          t.done = true; t.durTxt = '';
+          _subTlHeadPaint(t);   // v3.2.6R（审计F2）：同上
+          note('转写存在但无可回放内容');
           return;
         }
-        _subAppend(sc2, `<div class="hg-sub-replay-note">回放 · ${esc(_AGENT_LABEL[type] || type)} · ${j.rows.length} 条记录</div>`, true);
-        let lastToolBody = null;   // v2.57R：回放 result 并入最近工具行 body
-        for (const row of j.rows) {
-          if (row.k === 'text') {
-            // 每行带头像+模型徽章（P1-C 体系复用）——标明这句话是谁发的
-            // v2.37R4（终审1）：拆两次 _subAppend——单根 append 下双根模板
-            // 的第二个 div（row.text 正文）会被整体丢弃
-            const bare = String(row.model || '').split('[')[0] || row.model || '未知';
-            _subAppend(sc2, `<div class="hg-sub-msg"><span class="h-ava ${_hgAvaCls(bare)}">${esc(bare.charAt(0).toUpperCase())}</span>` +
-              `<span class="h-mmodel">${esc(bare)}</span></div>`, true);
-            // 窗格重设计 P1-3：正文升级 md 渲染（懒高亮）。v2.57R：打 rp 铺底
-            // 标记——镜像过渡查重的比对锚（防 fetch/轮询重叠窗口双份）
-            const mrow = _subMdRow(row.text);
-            mrow.dataset.hgRp = '1';
-            _subAppendEl(sc2, mrow, true);
-          } else if (row.k === 'note') {
-            _subAppend(sc2, `<div class="hg-sub-replay-note">${esc(row.text)}</div>`, true);
-          } else if (row.k === 'think') {
-            // v2.43：思考行入回放（工厂复用 v2.57R；rp 标记同 text——查重锚）
-            const th = _subPaneThinkRow(row.text || '');
-            th.dataset.hgRp = '1';
-            _subAppendEl(sc2, th, true);
-          } else if (row.k === 'tool') {
-            // v2.57R：折叠气泡工厂（点开展开详情）；回放直接定格 done；转写无
-            // tool_use_id 不做配对。result 行并入最近工具行 body。rp 标记=镜像
-            // 指纹查重锚（重叠窗口防双份工具行）
-            const tw = _subPaneToolRow(row.name || '', row.hint || '', '', true);
-            tw.dataset.hgRp = '1';
-            lastToolBody = tw.querySelector('.hg-sub-tool-body');
-            _subAppendEl(sc2, tw, true);
-          } else if (row.k === 'result') {
-            // v2.57R：结果并入最近工具行 body（折叠可见性同详情）；无前置工
-            // 具行（转写截断窗口边界）才独立成行
-            const rfull = String(row.text || '');
-            if (lastToolBody && !lastToolBody.dataset.filled) {
-              lastToolBody.dataset.filled = '1';
-              const d = document.createElement('div');
-              d.className = 'hg-sub-tool-out' + (row.err ? ' err' : '');
-              d.textContent = rfull || '完成';
-              lastToolBody.appendChild(d);
-              continue;
-            }
-            const rtxt = rfull.replace(/\s+/g, ' ').trim().slice(0, 120);
-            _subAppend(sc2, `<div class="hg-sub-res${row.err ? ' err' : ''}"` +
-              (rfull.trim().length > 120 ? ` data-hg-subfull="${esc(rfull)}" title="点击展开全文"` : '') +
-              `>↳ ${esc(rtxt || '完成')}</div>`, true);
+        note(`回放 · ${_AGENT_LABEL[type] || type} · ${j.rows.length} 条记录`);
+        // ---- v3.2.6：rows → 时间线（与 live 同厂行；ts 事实分级）----
+        const _tsGet = r0 => (r0 && r0.ts) ? Date.parse(r0.ts) : 0;
+        const pend = [];       // 开口思考段（时长=下一带 ts 行差）
+        let lastTs = 0;
+        let lastTool = null;   // result 就近挂回的当前工具行
+        const _fillRes = (toolRow, text, err) => {
+          toolRow.dataset.done = '1';
+          toolRow.classList.toggle('err', !!err);
+          const slots = toolRow.querySelector('.h-tslots');
+          if (slots) slots.innerHTML = statusBadge(err ? 'error' : 'completed');
+          const full = String(text || '').trim();
+          const coll = toolRow.querySelector('.h-tool-coll');
+          if (coll && full && full !== '(no content)') {
+            const d = document.createElement('div');
+            d.className = 'h-tool-out' + (err ? ' err-txt' : '');
+            d.textContent = full.length > 2000 ? full.slice(0, 2000) + '…' : full;
+            coll.appendChild(d);
           }
+        };
+        for (const row of (j.rows || [])) {
+          const ts = _tsGet(row);
+          if (ts > 0) {
+            for (const p of pend) {
+              const te = p.seg.isConnected ? p.seg.querySelector('.h-think-seg-t') : null;
+              if (te && ts > p.ts) te.textContent = '持续了 ' + _hgTurnDurTxt(ts - p.ts);
+            }
+            pend.length = 0;
+            lastTs = ts;
+          }
+          if (row.k === 'text') {
+            const el = _subTlTextRow(row.text);
+            el.dataset.hgRp = '1';   // 铺底标——镜像增量查重锚
+            _subTlAppendRow(t, el);
+          } else if (row.k === 'note') {
+            const n = document.createElement('div');
+            n.className = 'hg-sub-replay-note';
+            n.textContent = row.text || '';
+            n.dataset.hgRp = '1';
+            _subTlAppendRow(t, n);
+          } else if (row.k === 'think') {
+            const seg = _subTlThinkRow(row.text || '', '');
+            seg.dataset.hgRp = '1';
+            _subTlAppendRow(t, seg);
+            t.stats.think++;
+            if (ts > 0) pend.push({ seg, ts });
+          } else if (row.k === 'tool') {
+            _subTlSegFreeze(t);
+            const tw = _subTlToolRow(row.name || '', row.hint || '', '');
+            tw.dataset.hgRp = '1';   // 铺底标——镜像增量查重锚
+            tw.dataset.fp = (row.name || '') + ' ' + String(row.hint || '').slice(0, 80);
+            // v3.2.6R2（审计N2）：Bash/PowerShell 的只读命令用 hint（=command
+            // 摘要）合成伪 input——rows 结构无 input，聚组判定才不退化。
+            // v3.2.6R3（审计残留）：row.w=后端按全量命令证明的写盘标记
+            //（重定向常在尾部，120 字截断漏检）——w 行不合成伪 input，
+            // _hgIsExplore(null input) 即直挂，绝不把写命令聚进查阅组
+            const _pin = (row.name === 'Bash' || row.name === 'PowerShell') && !row.w
+              ? { command: String(row.hint || '') } : null;
+            _subTlPlace(t, tw, row.name || '', _pin);
+            t.stats.tool++;
+            lastTool = tw;
+          } else if (row.k === 'result') {
+            if (lastTool && lastTool.isConnected && lastTool.dataset.done !== '1') {
+              _fillRes(lastTool, row.text, row.err);
+            } else {
+              const d = document.createElement('div');
+              d.className = 'h-tool-res' + (row.err ? ' err-txt' : '');
+              d.textContent = '↳ ' + String(row.text || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+              d.dataset.hgRp = '1';
+              _subTlAppendRow(t, d);
+            }
+          }
+        }
+        for (const p of pend) {
+          const te = p.seg.isConnected ? p.seg.querySelector('.h-think-seg-t') : null;
+          if (te && lastTs > p.ts) te.textContent = '持续了 ' + _hgTurnDurTxt(lastTs - p.ts);
+        }
+        // 定稿：dur=首末行 ts 差（缺 ts 落无数字「已工作」——不编造）。
+        // v3.2.6R（审计F3）：collab 运行行 force 回放=「铺底即续流」——代理
+        // 未 done 不定稿（定稿会封死 _subTlFinalize 的 done 守卫：续流增量
+        // 落进已收起体、秒表不复活、最终时长不含续跑段）。保持运行态：秒表
+        // 即刻起跑、体保持开、task_notification 到达再正式定稿
+        const _agNow = (_HG.agents || {})[tid];
+        if (_agNow && !_agNow.done) {
+          t.t0 = _agNow.t0 || Date.now();
+          _subTlHeadPaint(t);
+          _subTlTickStart(tid);
+        } else {
+          const tsAll = (j.rows || []).map(_tsGet).filter(x => x > 0);
+          const durMs = tsAll.length > 1 ? (tsAll[tsAll.length - 1] - tsAll[0]) : 0;
+          t.done = true;
+          t.durTxt = durMs > 0 ? _hgTurnDurTxt(durMs) : '';
+          _subTlHeadPaint(t);
+          const texts = [...t.tl.querySelectorAll(':scope > .h-msg.asst')];
+          const last = texts[texts.length - 1];
+          if (last && t.concl) t.concl.appendChild(last);
+          t.body.classList.add('closed');
         }
         _subScroll(tid);
       })
@@ -284,7 +598,7 @@
         const sc3 = _sub.tabs[tid] && _sub.tabs[tid].sc;
         if (sc3) {
           delete sc3.dataset.replayed;   // v2.37R2（复审1）：清标记，重点即重拉
-          sc3.innerHTML = ''; _subAppend(sc3, `<div class="hg-sub-replay-note">回放拉取失败（网络）——重新点击「回放该子代理过程」可重试</div>`, true);
+          sc3.innerHTML = ''; _subAppend(sc3, `<div class="hg-sub-replay-note">回放拉取失败（网络）——重新点击可重试</div>`, true);
         }
       });
     _subScroll(tid);
@@ -328,150 +642,127 @@
     const sc = _sub.tabs[tid] && _sub.tabs[tid].sc;
     if (sc) sc.scrollTop = sc.scrollHeight;
   }
-  function _subCap(sc) {
-    while (sc.children.length > 200) {
-      const first = sc.firstElementChild;
-      if (!first) break;
-      if (first.classList.contains('hg-sub-omit')) {
-        first.dataset.omitted = String((+first.dataset.omitted || 0) + 1);
-        first.textContent = `⬆ 已省略 ${first.dataset.omitted} 行`;
-        // 提示条已是首条：真正该删的是它后面那条内容行
-        const victim = first.nextElementSibling;
-        if (victim) victim.remove(); else first.remove();
-      } else {
-        const om = document.createElement('div');
-        om.className = 'hg-sub-omit';
-        om.dataset.omitted = '1';
-        om.textContent = '⬆ 已省略 1 行';
-        sc.insertBefore(om, first);
-        first.remove();
-      }
-    }
-  }
-  function _subAppend(sc, html, noCap) {   // 上限 200 条/子代理，溢出删首条
+  function _subCap(sc) { while (sc.children.length > 200) sc.removeChild(sc.firstElementChild); }
+  function _subAppend(sc, html, noCap) {   // 兜底占位路径仍在用（v3.2.6 回放主体已改时间线）
     const d = document.createElement('div');
     d.innerHTML = html;
     sc.appendChild(d.firstElementChild || d);
-    // v2.37R3（复审A）：noCap=true=回放路径——回放 201~202 行（含头部 note）
-    // 会被 200 上限削掉头部 note 和领命首行、「已截断」告知自身也保不住，
-    // 故整段绕过 cap；实时 tab 的 200 上限语义不变
     if (!noCap) _subCap(sc);
   }
-  function _subAppendEl(sc, el, noCap) {
-    sc.appendChild(el);
-    if (!noCap) _subCap(sc);
+  // v3.2.6：轮询镜像增量（think/text）→ 窗格时间线行（v2.57R 的 rp 铺底
+  // 前缀查重保留——回放 tab fetch 收敛放行后的重叠窗口防双份）
+  function _subPaneMirror(pid, kind, text) {
+    const tb = _sub.tabs[pid];
+    if (!tb || !tb.t || !text || !String(text).trim()) return;
+    if (tb.replay) return;   // v2.55R：回放 tab 由 fetch 全量自建，镜像增量不得污染
+    const t = tb.t;
+    const stick = _subPaneStick(t.sc);
+    const rp = [...t.tl.querySelectorAll('[data-hg-rp="1"]')].slice(-8);
+    const norm = s => String(s || '').replace(/\s+/g, '');
+    if (kind === 'think') {
+      // 单向前缀比对（镜像=全文、rp=截断前缀）：md 截断边界落在行内标记时
+      // 前缀性质可破——启发式容差
+      if (rp.some(el => {
+        const a = norm(el.dataset.raw || '');
+        return !!a && norm(text).startsWith(a);
+      }))
+        return;
+      _subTlAppendThink(t, text);
+    } else {
+      const row = _subTlTextRow(text);
+      const want = norm(row.textContent);
+      if (want && rp.some(el => {
+        const got = norm(el.textContent);
+        return !!got && want.startsWith(got);
+      }))
+        return;
+      _subTlAppendRow(t, row);
+    }
+    if (stick) _subScroll(pid);
   }
-  function _subMdRow(text) {
-    const d = document.createElement('div');
-    d.className = 'h-bubble hg-sub-msgmd';
-    d.innerHTML = renderMd(text);
-    _codeLazyEnhance(d);
-    return d;
-  }
+  // v3.2.6：live 窗格喂入（SSE 子代理块：thinking/text/tool_use）——全部走
+  // 时间线行工厂；think 开口段活字/断组/贴底与主链同口径
   function _subFeed(parentId, blocks) {
-    if (!_sub.tabs[parentId]) return;
-    const sc = _sub.tabs[parentId].sc;
-    // 窗格重设计 P1-5：贴底跟随判定——必须在 append 之前测距底（append 后
-    // scrollHeight 被新内容撑大，测出来恒不贴底）；≤80px=用户正跟读最新输出，
-    // 才跟随滚动，上翻查看历史时不拽人
-    const stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight <= 80;
+    const tb = _sub.tabs[parentId];
+    if (!tb || !tb.t) return;
+    const t = tb.t;
+    const stick = _subPaneStick(t.sc);
     // v2.35：回合终结定格过的 tab，若对应代理其实还在跑（后台 Task 跨回合
-    // 续跑），事件继续流入时恢复绿点脉冲——别让冻结态骗人
+    // 续跑），事件继续流入时恢复绿点脉冲——别让冻结态骗人；秒表一并复活
     const _ag = (_HG.agents || {})[parentId];
-    if (_sub.tabs[parentId].run !== true && _ag && !_ag.done) {
-      _sub.tabs[parentId].run = true;
+    if (tb.run !== true && _ag && !_ag.done) {
+      tb.run = true;
       _subTabsPaint();
     }
-    // 窗格重设计 P2-9：实况补头像+模型徽章行（对齐回放形态，消除两套不一致）。
-    // 仅插一次（dataset 标记）；模型取实跑值（档案最新）优先、tab 建档快照兜底，
-    // 都无（内置代理跑主链模型）用 tab 名——不编造，至少有头像色标
-    if (!sc.dataset.avabadge) {
-      sc.dataset.avabadge = '1';
-      const mdl = (_ag && _ag.model) || _sub.tabs[parentId].model || _sub.tabs[parentId].label || '';
-      const bare = String(mdl).split('[')[0] || mdl;
-      const av = document.createElement('div');
-      av.className = 'hg-sub-msg';
-      av.innerHTML = `<span class="h-ava ${_hgAvaCls(bare)}">${esc(bare.charAt(0).toUpperCase())}</span>` +
-        `<span class="h-mmodel">${esc(bare)}</span>`;
-      sc.insertBefore(av, sc.firstElementChild);
-    }
+    if (tb.run && !t.done && !t.tick) { t.t0 = t.t0 || (_ag && _ag.t0) || Date.now(); _subTlTickStart(parentId); }
     for (const b of blocks) {
-      // 窗格重设计 P1-3：文本行从裸 esc 升级 md 渲染（markdown-it + 懒高亮；
-      // 元素直挂保懒高亮 IO 绑定，链接拦截由 init.js 全局捕获兜底）——
-      // 子代理中间结论是 markdown，渲染质量对齐主 flow
-      if (b.type === 'text' && b.text && b.text.trim())
-        _subAppendEl(sc, _subMdRow(b.text));
-      else if (b.type === 'thinking' && b.thinking) {
-        // 窗格重设计 P2-6：thinking 进窗格——块粒度一行（不合并段），默认
-        // 收起防淹；全文存 dataset，首次展开才 renderMd（懒渲染，量大不卡）。
-        // 行内交互全走窗格体级委托（_subBodyEl onclick）
-        _subAppendEl(sc, _subPaneThinkRow(b.thinking));
-      }
-      else if (b.type === 'tool_use') {
-        // v2.55R：对称查重——SSE 同一事件里镜像（_subBlkAppendTool）先插、
-        // 本分支后插，只查一侧必双份；两侧都查后无论谁先谁后均只落一行
-        if (b.id && sc.querySelector(`.hg-sub-tool[data-tuid="${CSS.escape(b.id)}"]`))
+      if (!b) continue;
+      if (b.type === 'thinking' && String(b.thinking || '').trim()) {
+        _subTlAppendThink(t, b.thinking);
+      } else if (b.type === 'text' && String(b.text || '').trim()) {
+        _subTlAppendRow(t, _subTlTextRow(b.text));
+      } else if (b.type === 'tool_use' && b.name) {
+        // v2.55R：对称查重——同一事件里镜像（_subBlkAppendTool）先插、本分支
+        // 后插，只查一侧必双份；两侧都查后无论谁先谁后均只落一行
+        if (b.id && t.tl.querySelector(`.h-tool[data-tuid="${CSS.escape(b.id)}"]`))
           continue;
         const inp = b.input || {};
         const hint = inp.command || inp.file_path || inp.path || inp.pattern ||
                      inp.query || inp.description || inp.subject || inp.prompt || '';
-        // 窗格重设计 P2-7：折叠气泡工厂（状态点灰=进行中，data-tuid 供结果
-        // 回点；SSE 里 tool_use.id 与 tool_result.tool_use_id 同源恒可配对）
-        _subAppendEl(sc, _subPaneToolRow(b.name || '', hint, b.id || '', false));
+        _subTlAppendTool(t, b.name, hint, b.id || '', inp);
       }
     }
+    _subTlHeadPaint(t);
     if (stick) _subScroll(parentId);
   }
+  // v3.2.6：工具结果回点窗格时间线（tuid 精确配对优先；miss 回退最后一个未
+  // 定格行；全 miss 落孤立 ↳ 行——结果不丢）
   function _subResult(parentId, tr) {
-    if (!_sub.tabs[parentId]) return;
-    const sc = _sub.tabs[parentId].sc;
-    const stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight <= 80;   // P1-5：append 前测（同 _subFeed）
+    const tb = _sub.tabs[parentId];
+    if (!tb || !tb.t) return;
+    const t = tb.t;
+    const stick = _subPaneStick(t.sc);
     const full = resultText(tr).trim();
-    // 窗格重设计 P2-7：结果到达回点对应工具行——data-tuid 精确配对优先；
-    // miss（id 缺失/行已被 cap 裁掉）回退从尾往前找第一条未定格的工具行
-    // （SSE 流序下 tool_result 紧跟 tool_use；已 done 的行说明配对过别的
-    // 结果，跳过——并行交错时也能落到真正没收到结果的那条上）
     let toolRow = tr.tool_use_id
-      ? sc.querySelector(`.hg-sub-tool[data-tuid="${CSS.escape(tr.tool_use_id)}"]`) : null;
-    if (!toolRow)
-      for (let el = sc.lastElementChild; el; el = el.previousElementSibling) {
-        if (el.classList.contains('hg-sub-tool') && !el.classList.contains('done')) { toolRow = el; break; }
-      }
+      ? t.tl.querySelector(`.h-tool[data-tuid="${CSS.escape(tr.tool_use_id)}"]`) : null;
     if (!toolRow) {
-      // v2.57R：全 miss（回放铺底行全 done 且 tuid 不匹配）——回退独立 ↳ 行
-      //（与回放路径「无前置工具行」兜底对称），结果不丢；rtuid/subfull 属性
-      // 与旧版独立行同款（防未来双源双份 + 超长点击展开）
-      const d = document.createElement('div');
-      d.className = 'hg-sub-res' + (tr.is_error ? ' err' : '');
-      if (tr.tool_use_id) d.dataset.rtuid = tr.tool_use_id;
-      if (full.length > 120) {
-        d.dataset.hgSubfull = full;
-        d.title = '点击展开全文';
+      const all = [...t.tl.querySelectorAll('.h-tool')];
+      for (let i = all.length - 1; i >= 0; i--) {
+        if (all[i].dataset.done !== '1') { toolRow = all[i]; break; }
       }
+    }
+    if (!toolRow) {
+      const d = document.createElement('div');
+      d.className = 'h-tool-res' + (tr.is_error ? ' err-txt' : '');
+      if (tr.tool_use_id) d.dataset.rtuid = tr.tool_use_id;
       d.textContent = '↳ ' + (full.replace(/\s+/g, ' ').slice(0, 120) || '完成');
-      sc.appendChild(d);
+      _subTlAppendRow(t, d);
       if (stick) _subScroll(parentId);
       return;
     }
-    // v2.57R：防重+结果进工具行 body（折叠气泡——点开才显示，不再平铺 ↳ 行）
-    if (toolRow.classList.contains('done')) return;
-    toolRow.classList.add('done');
-    if (tr.is_error) toolRow.classList.add('err', 'open');   // 错误自动展开
-    const body = toolRow.querySelector('.hg-sub-tool-body');
-    if (body && !body.dataset.filled) {
-      body.dataset.filled = '1';
-      const d = document.createElement('div');
-      d.className = 'hg-sub-tool-out' + (tr.is_error ? ' err' : '');
-      d.textContent = full || '完成';
-      body.appendChild(d);
+    if (toolRow.dataset.done === '1') return;
+    const bad = !!tr.is_error;
+    toolRow.dataset.done = '1';
+    toolRow.classList.toggle('err', bad);   // v3.2.5 口径：错误只标红不自动展开
+    const slots = toolRow.querySelector('.h-tslots');
+    if (slots) slots.innerHTML = statusBadge(bad ? 'error' : 'completed');
+    if (full && full !== '(no content)') {
+      const coll = toolRow.querySelector('.h-tool-coll');
+      if (coll) {
+        const d = document.createElement('div');
+        d.className = 'h-tool-out' + (bad ? ' err-txt' : '');
+        d.textContent = full.length > 2000 ? full.slice(0, 2000) + '…' : full;
+        coll.appendChild(d);
+      }
     }
     if (stick) _subScroll(parentId);
   }
   function _subClose(tid, err) {
-    _subBlkFinish(tid, err);  // v2.43：主 flow 段头定格（✓/✗，不依赖窗格 tab 存活）
+    _subBlkFinish(tid, err);  // v2.43：主 flow 段头定格（不依赖窗格 tab 存活）
     const tb = _sub.tabs[tid];
     if (!tb) return;
     tb.run = false; tb.err = !!err;
+    _subTlFinalize(tid, { err });   // v3.2.6：窗格时间线定稿（已工作 X + 结论上移）
     _subTabsPaint();
   }
   function _subBlkFinish(tid, err, aidForce) {
@@ -779,7 +1070,20 @@
   }
   function _subEnd() {                     // 回合终结：全部定格；自动来源收起窗格
     let any = false;
-    for (const t in _sub.tabs) { _sub.tabs[t].run = false; any = true; }
+    for (const t in _sub.tabs) {
+      const tb = _sub.tabs[t];
+      tb.run = false; any = true;
+      // v3.2.6：停秒表（代理后台续跑时 _subFeed 会复活）；时间线定稿留给
+      // 完成信号（task_notification→_subClose）——回合 result 不等于代理完
+      // v3.2.6R2（审计N1）：collab 豁免——独立会话事件流不经本会话，
+      // _subFeed 复活链对它不可达（唯一续流源=轮询镜像，无 tick 复活逻辑），
+      // 停了就在 result→notification 窗口内秒表冻结（可达数分钟）
+      if (tb.t && tb.t.tick) {
+        const _a = (_HG.agents || {})[t];
+        if (_a && !_a.done && _a.collab) continue;
+        clearInterval(tb.t.tick); tb.t.tick = null;
+      }
+    }
     if (any) _subTabsPaint();
     // v2.35（P0-3）：用户手动打开的窗格不自动收——用户正在围观，收走就是
     // 「弹了出来一会又收回去了」；只有 ✕ 手动关。切会话/关 tab 清空不变。

@@ -67,6 +67,23 @@
             agentId: _aid });
           if (d.agentsRpl.length > 5) d.agentsRpl.shift();
         }
+        // v3.2.6R（审计F4）：SendMessage 续派也建目录条目——段卡已隐（CSS
+        // display:none），此类代理无 Agent 派发行=无单行卡，目录是唯一入口。
+        // 与后端 _inject_subagent_blocks 同源：result 文本带 resumedAgentId
+        if (l.role === 'tool' && l.text === 'SendMessage') {
+          const _ra = (String(l.result || '').match(/resumedAgentId[\"\':\s]+([0-9a-zA-Z_-]{8,64})/) || [])[1] || '';
+          if (_ra) {
+            const d = _hgDyn();
+            d.agentsRpl = d.agentsRpl || [];
+            if (!d.agentsRpl.some(x => x.agentId === _ra)) {
+              const _msg = String((l.input || {}).message || '').trim().slice(0, 40);
+              d.agentsRpl.push({
+                type: 'SendMessage', desc: '续派' + (_msg ? ' → ' + _msg : ''),
+                t0: 0, done: true, doneAt: 0, replay: true, agentId: _ra });
+              if (d.agentsRpl.length > 5) d.agentsRpl.shift();
+            }
+          }
+        }
         if (l.role === 'assistant') lastAsst = _HG.lastAsstEl;
         // v3.2.4R(F4)：排除已折进时间线的中间正文（中段边界定稿折体后
         // lastAsst 可能已在 .h-tl 内）——回滚钮只授予根区可见的回合尾正文

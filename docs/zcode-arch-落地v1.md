@@ -317,3 +317,94 @@ ZCode 回合模型：
   PASS（含属性转义/层叠/快照序列化核验）。
 - **验证**：「🧠 思考持续了 2 秒」形态、5 错误行全收起红标（collHasContent
   点开可见）、命令省略号与徽章不重叠；回归全绿。
+
+## 十、v3.2.6 子智能体 ZCode 模式（单行任务卡 + 窗格时间线）
+
+用户定调「子智能体效果全部优化成 ZCODE 模式」（对照截图 = ZCode 运行中会话：
+主流内单行任务卡 + 右侧自动打开的子代理会话标签页，子代理自己的会话用主会话
+同款完整时间线呈现）。
+
+### 产品模型（ZCode 源码 mining 结论）
+- `ToolCallBlocks/renderers/agent.tsx`：Agent/Task 在父对话**只保留单行摘要**
+  （BotIcon + 「子智能体」类别词 + 类型名彩色高亮 + 描述；运行中该行由
+  animateSummaryContent 流式显示最新子活动），`canToggle=false` 无展开体；
+  行尾动作钮 = 在右侧打开；`autoCollapseOnComplete`。
+- `SubagentSessionSidePane.tsx`：右侧 tab = 完整 SessionPane（readOnly）——
+  子代理会话与主会话**同一渲染器**（回合头/思考/工具时间线）。
+- 目录（SubagentDirectorySidePane）与状态面板（ConversationStatusPanel 的
+  agent section：运行行 elapsed 计数 + 已结束 N）我们 v3.2 已有对应物。
+
+### 主流：单行任务卡（.h-tool.agentline）
+- `_hgAgentRowBuild`（08-tools.js）：`🤖 子智能体 | 类型chip（类型名哈希
+  取色，h-ava-0..4 文字色变体）| 描述（单行省略+title全文）| .h-ag-live
+  实时活动流（accent 脉冲）| .h-tslots 状态徽章/秒表/完成摘要`。整行点击=
+  开窗格（live→_subReopen / 已结束→_subReplay），不再折叠展开。
+- 接入点四路：live renderToolUse（agent 分支）/ 回放 renderHistTool（agent
+  分支 + `_HG.lastAgRow` 只活一行，紧随的 sub_open 行回绑 hgSubr/类型/描述）
+  / task_started 兜底建行（tool_use 丢失）/ task_notification 定格
+  （`_hgAgentRowState`，与 renderOneToolResult 幂等互备）。
+- 实时活动流 `_subLivePaint` 三钩：_subThink「思考中…」/ _subText「正文 ·
+  前60字」/ _subBlkAppendTool「工具label · 摘要」；完成清空。
+- **子代理段卡（.h-subblock）视觉退役**：CSS `display:none!important`。段根
+  保留 DOM 作机器挂点（认回/轮询兜底扫描/快照恢复/思考回填/续派切段账本），
+  该系全部 JS 零改动——主流唯一入口=单行卡，过程细节统一进窗格。
+
+### 窗格：子代理会话时间线（14-subpane.js 重写）
+- `_subPaneScaffold`：`.hg-sub-grp = hg-sub-idline(身份行: 头像+类型+模型)
+  + h-grp(回合头[工作中 Ns→已工作 X · N 思考 · M 工具] + h-turn-body>h-tl)
+  + hg-sub-concl(根区最终结论)`。tab 标题改描述优先（ZCode 用任务短题）。
+- 行工厂与主链同类同款：`_subTlThinkRow`（🧠 思考+持续时长，懒渲染走
+  _histLazyFill/_histLazyDrop 同出口）、`_subTlTextRow`（md 气泡）、
+  `_subTlToolRow`（折叠头+结果进 coll）、`_subTlPlace`（explore 查阅聚组
+  + `_subTlExpBreak` 断组定格桶汇总）。
+- live：`_subFeed`（SSE think/text/tool_use）+ 轮询镜像 `_subPaneMirror`
+  （rp 铺底前缀查重保留）+ `_subBlkAppendTool` 镜像（tuid 查重 + rp 指纹）
+  + `_subResult`（tuid 配对→回退最后未定格行→孤立 ↳ 行）；开口思考段
+  `_subTlSegFreeze` 活字→「持续了 N 秒」；`_subTlTickStart` 1s 秒表
+  （tick 闭包自愈判据 + _subReset/_subDrop/_subTlFinalize/_subEnd 四路清理）。
+- replay：`_subReplay` fetch rows → 同厂行全量铺（rp 标记防镜像重投），
+  ts 事实分级——总时长=首末行 ts 差、思考时长=邻行 ts 差、缺 ts 落无数字
+  「已工作」（不编造）；定稿默认收起体、最后一条正文气泡上移根区。
+- 定稿双路幂等（t.done 守卫）：task_notification→`_subClose`→
+  `_subTlFinalize`；回合终结 `_hgAgentsSweep`（前台代理）同调；bg 代理
+  跨回合续跑时 `_subEnd` 只停秒表，`_subFeed` 恢复 run 即复活。
+- 目录：运行行时间位改秒表走字（`_subDirTick` 1s 重绘，失活/清空自停）；
+  collab 运行行点击改 `_subReplay` force（段卡已隐，窗格是唯一过程面）。
+
+### 后端（transcript.py）
+- subagent rows 行行带 `ts`（think/text/tool/result）——窗格时间线的时长
+  事实源。
+- **修实测 bug**：现行 CLI 会先落一个 0 字节 Temp tasks `<taskId>.output`
+  占位、真转写在 `projects/<主会话id>/subagents/agent-<id>.jsonl`——旧
+  「rows is not None 即返回」被占位文件解析出的 [] 短路，回放恒空。改空
+  解析继续试下一候选、全空才如实回空表（前端中性文案，不进 noreplay 锁）。
+
+### 交互委托（20-main.js）
+- 主流：agentline 整行点击分支置于 .h-tool-head 通配之前（开窗格，无折叠）。
+- 窗格体级委托：回合头开合（userToggled 防定稿收走用户正看的体）/ 思考段
+  懒渲染 / 查阅组头 / 工具头；旧 hg-sub-think-head/hg-sub-tool-head/
+  data-hg-subfull 分支随旧行工厂退役。
+
+### 验证
+- 浏览器实测（真实 CLI 派发）：单行卡「🤖 子智能体 general-purpose 侦察
+  工作区结构 运行中 1s→✓完成+摘要」；窗格自动开 tab（描述短题+模型角标），
+  时间线「已工作 36 秒 · 2 思考 · 2 工具」+ 查阅组 + 思考持续行；回放 fetch
+  （含 ts）「已工作 19 秒」+ 结论上移根区 + 体默认收起；目录「正在运行·0/
+  已结束·1」行卡；切会话往返单行卡/hgSubr/隐藏段全保持；截图目检协调。
+- 回归：node --check 全过 / 冒烟 / state 38 / 架构 0 / undef 符号级零新增 /
+  py 测试 60+17+155+42 全过。
+- 对抗审计：见下节记录。
+- **对抗审计（5 轮全闭环）**：R1 FAIL(1×P2+4×P3)——F1 live 单行卡不回写
+  agentId（切会话往返后点击死寂+入口全灭）→ `_hgAgentRowBindAid` 三路回写
+  （task_started 即回写不等完成）+ 死点击 banner；F2 回放 !found/空分支头卡
+  「工作中 0s」→ 失败分支同定稿；F3 collab force 回放铺底即封顶（续流进已
+  收起体、秒表不复活）→ 运行态不定稿（秒表即刻起跑，notification 再定稿）；
+  F4 SendMessage 续派/stub 段失去全部入口 → agentsRpl 补 resumedAgentId 条
+  目 + collab 无 aid 改 banner；F5 窗格时间线失去 200 行上限 → `_subTlCap`
+  （220 行+省略提示条）。R2 FAIL(2×P3)——N1 collab 秒表被 _subEnd 停摆无
+  复活链 → collab 未 done 豁免；N2 Bash 只读命令窗格聚组失效（镜像/回放两
+  路 input 恒 null）→ `row._rin` 随行 + 回放 hint 伪 input。R3/R4 FAIL(1×P3)
+  ——回放伪 input 120 字截断漏检尾部重定向/写动词 → 后端 `_SUBAGENT_CMD_
+  WRITE_RE`（前端 _HG_EXP_WRITE_RE 四分支完整复刻，re.I 对齐）按**全量命令**
+  落 `w:1`，前端 w 行不合成伪 input（绝不把写命令聚进查阅组）。R5 终审
+  PASS（四分支逐字符对照全等、无新引入面）。

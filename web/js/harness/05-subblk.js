@@ -376,64 +376,14 @@
       '<i class="h-think-seg-fold" title="收起本段">收起 ⌄</i>';
     return seg;
   }
-  function _subPaneThinkRow(text) {
-    const th = document.createElement('div');
-    th.className = 'hg-sub-think';
-    th.dataset.raw = text;
-    th.innerHTML = '<button class="hg-sub-think-head" title="点击展开/收起思考过程">' +
-      '<span>💭 思考</span><span class="hg-sub-think-chev">›</span></button>' +
-      '<div class="hg-sub-think-body"></div>';
-    return th;
-  }
-  function _subPaneToolRow(name, hint, tuid, done) {
-    const d = document.createElement('div');
-    d.className = 'hg-sub-tool' + (done ? ' done' : '');
-    if (tuid) d.dataset.tuid = tuid;
-    d.innerHTML = '<button class="hg-sub-tool-head" title="点击展开/收起详情">' +
-      '<span class="hg-sub-tdot"></span>' +
-      '<span class="hg-sub-tool-name">' + esc(_hDrawerName(name || '')) + '</span>' +
-      (hint ? '<span class="hg-sub-tool-hint">' + esc(String(hint).slice(0, 80)) + '</span>' : '') +
-      '<span class="hg-sub-tool-chev">›</span></button>' +
-      '<div class="hg-sub-tool-body"></div>';
-    return d;
-  }
-  function _subPaneMirror(pid, kind, text) {
-    const t = _sub.tabs[pid];
-    if (!t || !text || !String(text).trim()) return;
-    if (t.replay) return;   // v2.55R：回放 tab 由 fetch 全量自建，镜像增量不得污染
-    const sc = t.sc;
-    const stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight <= 80;
-    // v2.57R：过渡查重——全量回放 fetch 读到 T1、轮询游标落后在 C，放行后
-    // (C,T1] 的行会被下一轮 tick 重投镜像。只比对**铺底行**（fetch 铺底打
-    // data-hg-rp 标记）尾 8 行——免疫镜像行挤窗的级联失效（8 行=2s tick 约
-    // 4 个周期的重叠量，超出部分残余重复可忽略）。rp.raw / rp.textContent 均
-    // 是后端 2000 字截断前缀（claude_harness.py 护栏值，需同步维护），统一
-    // 前缀对齐比对；相邻真实内容逐字同文概率极低，误伤可忽略。
-    const rp = [...sc.children].filter(el => el.dataset.hgRp === '1').slice(-8);
-    const norm = s => String(s || '').replace(/\s+/g, '');
-    if (kind === 'think') {
-      // 单向前缀比对（镜像=全文、rp=截断前缀）：反向 startsWith 无真阳性收益
-      // 只扩大误杀面。md 截断边界落在行内标记时前缀性质可破——启发式容差。
-      if (rp.some(el => {
-        const a = norm(el.dataset.raw || '');
-        return !!a && norm(text).startsWith(a);
-      }))
-        return;
-      _subAppendEl(sc, _subPaneThinkRow(text));
-    } else {
-      const row = _subMdRow(text);
-      const want = norm(row.textContent);
-      if (want && rp.some(el => {
-        const got = norm(el.textContent);
-        return !!got && want.startsWith(got);   // 同上：单向、启发式容差
-      }))
-        return;
-      _subAppendEl(sc, row);
-    }
-    if (stick) _subScroll(pid);
-  }
+  // v3.2.6：旧窗格行工厂（_subPaneThinkRow/_subPaneToolRow/_subPaneMirror/
+  // _subMdRow）退役——窗格已时间线化（14-subpane _subTl* 行工厂接管），镜像
+  // 增量的 rp 铺底查重逻辑随迁到 _subPaneMirror 新址
   function _subThink(pid, text, fromPoll) {
     const b = _subBlkGet(pid); if (!b) return;
+    // v3.2.6：主流单行任务卡的实时活动流（段卡已隐——过程进窗格，主流只留
+    // 「正在干什么」的一行摘要）
+    _subLivePaint(pid, '思考中…');
     if (!(b.seg && b.seg.isConnected)) {
       const seg = _subThinkShell(true);
       seg.dataset.t0 = String(Date.now());
@@ -455,6 +405,11 @@
     if (!text || !String(text).trim()) return;
     const b = _subBlkGet(pid); if (!b) return;
     _subSegEnd(b);
+    // v3.2.6：实时活动流——正文摘要（窗格时间线才是完整呈现）
+    {
+      const _lt = String(text).replace(/\s+/g, ' ').trim();
+      if (_lt) _subLivePaint(pid, '正文 · ' + _lt.slice(0, 60));
+    }
     // v2.53：段内同文去重——轮询与 SSE 理论上可能双源喂同一条 text（CLI
     // 行为随版本变），渲染文本归一后与段内**任一**既有气泡等价即不重复
     // 追加（v2.54R 从「仅段尾」扩为全段——多 text 段中段重读双份的口子）
@@ -485,31 +440,27 @@
   function _subBlkAppendTool(pid, row) {
     const b = _subBlkGet(pid); if (!b) return;
     _subSegEnd(b);
+    // v3.2.6：实时活动流——最新工具动作（label · 摘要）
+    _subLivePaint(pid, (_hToolLabel(row && row._name || '') || '工具') +
+      ' · ' + String((row && row._rawHint) || (row && row._preview) || '').slice(0, 64));
     _subBodyPut(b, row, 'tool');   // v2.48：进当前节的工具抽屉（节随行成形）
-    // v2.55R：窗格镜像——本函数是 SSE 与 fullFeed 轮询的共同通路，镜像前按
-    // data-tuid 查重（SSE 路径 _subFeed 也会插同名行，双源不查重=每条工具
-    // 双份、第二份永远灰点）。v2.57R：折叠气泡工厂 + 重叠窗口指纹查重——
-    // 回放铺底的工具行（rp 标、无 tuid）与重投镜像按「渲染名+摘要」指纹比对
-    //（局限：同文件同摘要的连续调用可能漏显一条，概率极低）
-    const t = _sub.tabs[pid];
-    if (t && row && row.dataset.tid &&
-        !t.sc.querySelector(`.hg-sub-tool[data-tuid="${CSS.escape(row.dataset.tid)}"]`)) {
-      const sc = t.sc;
-      const stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight <= 80;
-      const fpName = _hDrawerName(row._name || '');
-      const fpHint = String(row._rawHint || '').slice(0, 80);
-      const rpTools = [...sc.children]
-        .filter(el => el.dataset.hgRp === '1' && el.classList.contains('hg-sub-tool'))
-        .slice(-8);
-      const dup = rpTools.some(el => {
-        const n = el.querySelector('.hg-sub-tool-name');
-        const h = el.querySelector('.hg-sub-tool-hint');
-        return (n ? n.textContent : '') === fpName &&
-               (h ? h.textContent : '') === fpHint;
-      });
-      if (!dup) {
-        _subAppendEl(sc, _subPaneToolRow(row._name || '', row._preview || '',
-                                         row.dataset.tid, false));
+    // v3.2.6：窗格时间线镜像——本函数是 SSE 与 fullFeed 轮询的共同通路，镜像
+    // 前按 data-tuid 查重（SSE 路径 _subFeed 也会插同名行，双源不查重=每条工具
+    // 双份）；回放铺底行（rp 标、无 tuid）按「名+摘要」指纹比对（v2.57R 口径，
+    // 局限：同文件同摘要的连续调用可能漏显一条，概率极低）
+    const tb = _sub.tabs[pid];
+    if (tb && tb.t && row && row.dataset.tid &&
+        !tb.t.tl.querySelector(`.h-tool[data-tuid="${CSS.escape(row.dataset.tid)}"]`)) {
+      const t = tb.t;
+      const stick = _subPaneStick(t.sc);
+      const fp = (row._name || '') + ' ' + String(row._rawHint || '').slice(0, 80);
+      const rpTools = [...t.tl.querySelectorAll('.h-tool[data-hg-rp="1"]')].slice(-8);
+      if (!rpTools.some(el => el.dataset.fp === fp)) {
+        // v3.2.6R2（审计N2）：传原始 input（row._rin）——Bash/PowerShell 只读
+        // 命令的 explore 聚组判定靠 input.command（镜像行先落、tuid 查重使
+        // _subFeed 的带 input 行恒被挡下——镜像侧必须自带聚组能力）
+        _subTlAppendTool(t, row._name || '', row._preview || '', row.dataset.tid,
+          row._rin || null);
         if (stick) _subScroll(pid);
       }
     }

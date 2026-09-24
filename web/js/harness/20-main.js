@@ -397,6 +397,21 @@ function buildClaudeHarnessTab(opts = {}) {
       ocRow.classList.toggle('open');
       return;
     }
+    // v3.2.6（ZCode 子智能体模式）：单行任务卡（.h-tool.agentline）——整行
+    // 点击=开右侧窗格（live 实况 / 已结束回放），不再折叠展开（对照 ZCode
+    // canToggle=false 产品边界：过程细节统一在窗格时间线查看）
+    // v3.2.6R（审计F1）：两路数据锚都 miss（切会话往返且行未回写 hgSubr 的
+    // 旧快照）——明确告知而非静默吞点击
+    const agRow = e.target.closest('.h-tool.agentline');
+    if (agRow) {
+      const pid = agRow.dataset.tid || '';
+      if (pid && (_HG.agents || {})[pid]) { _subReopen(pid); return; }
+      const aid = agRow.dataset.hgSubr || '';
+      if (aid) _subReplay(aid, agRow.dataset.hgSubType || 'Task',
+        agRow.dataset.hgSubDesc || '', aid);
+      else showBanner('该子代理暂无可打开的过程记录（无 agentId）', 2600);
+      return;
+    }
     const tHead = e.target.closest('.h-tool-head');
     if (tHead) {
       const row = tHead.closest('.h-tool');
@@ -1309,36 +1324,45 @@ function buildClaudeHarnessTab(opts = {}) {
       });
       return;
     }
-    // P2-6：thinking 折叠行——首展懒渲染（dataset.raw → renderMd），再点收起
-    const thHead = e.target.closest('.hg-sub-think-head');
+    // P2-6（v3.2.6 时间线化）：窗格思考段——首展懒渲染（dataset.raw →
+    // renderMd，_histLazyFill 同款），再点收起清体（与主链开合同出口）
+    const thHead = e.target.closest('.h-think-seg-head');
     if (thHead) {
-      const row = thHead.closest('.hg-sub-think');
-      const body = row && row.querySelector('.hg-sub-think-body');
-      if (row && body) {
-        if (!row.classList.contains('open') && body.dataset.filled !== '1') {
-          body.innerHTML = renderMd(row.dataset.raw || '');
-          _codeLazyEnhance(body);
-          body.dataset.filled = '1';
-        }
-        row.classList.toggle('open');
+      const seg = thHead.closest('.h-think-seg');
+      if (seg) {
+        const opening = !seg.classList.contains('open');
+        if (opening) _histLazyFill(seg); else _histLazyDrop(seg);
+        seg.classList.toggle('open');
       }
       return;
     }
-    // v2.57R：工具折叠气泡——结果实时填 body（textContent），点开直接切换
-    const toolHead = e.target.closest('.hg-sub-tool-head');
-    if (toolHead) {
-      const trow = toolHead.closest('.hg-sub-tool');
-      if (trow) trow.classList.toggle('open');
+    // v3.2.6：窗格回合头（工作中/已工作 X ›）——切时间线体开合（定稿默认
+    // 收起；手动开合记 userToggled，防定稿时把用户正看着的体收走）
+    const stgl = e.target.closest('.h-turn-head[data-hg-subtgl]');
+    if (stgl) {
+      const proc = stgl.closest('.h-grp-proc');
+      const body = proc && proc.querySelector('.h-turn-body');
+      if (body) {
+        body.classList.toggle('closed');
+        stgl.dataset.userToggled = '1';
+      }
       return;
     }
-    // P2-8：结果行点击展开全文（data-hg-subfull 只在超 120 字的行上，短行不可
-    // 点；dataset 键按浏览器规则转驼峰：data-hg-subfull → hgSubfull。属性名
-    // 刻意避开拖宽条已有的 data-hg-subres 钩子，防全局选择器歧义）
-    const resRow = e.target.closest('[data-hg-subfull]');
-    if (resRow) {
-      const full = resRow.dataset.hgSubfull || '';
-      if (resRow.classList.toggle('open')) resRow.textContent = '↳ ' + full;
-      else resRow.textContent = '↳ ' + full.replace(/\s+/g, ' ').trim().slice(0, 120);
+    // v3.2.6：窗格查阅聚组头——子行树开合（组内工具行无 hi，开合即布局态）
+    const sgrp = e.target.closest('.h-tl-grp-head');
+    if (sgrp) {
+      const grpEl = sgrp.closest('.h-tl-grp');
+      if (grpEl) {
+        grpEl.classList.toggle('open');
+        grpEl.dataset.userToggled = '1';
+      }
+      return;
+    }
+    // v3.2.6：窗格工具行头——展开/收起详情（结果文本在折叠体内）
+    const pTool = e.target.closest('.h-tool-head');
+    if (pTool) {
+      const trow = pTool.closest('.h-tool');
+      if (trow) trow.classList.toggle('open');
       return;
     }
   };

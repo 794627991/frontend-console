@@ -87,6 +87,8 @@
   function _subDrop(tid) {
     const tb = _sub.tabs[tid];
     if (!tb) return;
+    // v3.2.6：停窗格秒表（tab 档案拆了 tick 闭包的自愈判据就没了——先停）
+    if (tb.t && tb.t.tick) { clearInterval(tb.t.tick); tb.t.tick = null; }
     if (tb.sc && tb.sc.parentNode) tb.sc.remove();
     delete _sub.tabs[tid];
     _sub.order = _sub.order.filter(t => t !== tid);
@@ -122,6 +124,9 @@
         a.done = true; a.doneAt = Date.now();
         if (markErr) { a.err = true; a.interrupted = true; }
         _subBlkFinish(id, !!a.err);   // v2.43：主 flow 段头同步定格（防假"运行中"，bg 不收尾同档案语义）
+        // v3.2.6：窗格时间线同路定稿（已工作 X + 结论上移）——单行任务卡
+        // 的单行态靠档案，窗格头不能永卡「工作中」
+        if (_sub.tabs[id]) _subTlFinalize(id, { err: !!a.err });
         swept = true;
       }
     }

@@ -363,6 +363,22 @@ def _tool_summary(name, input):
 # ---- from claude_harness.py:3078 (_subagent_rows_from_jsonl) ----
 
 
+# v3.2.6R4：子代理回放工具行的写盘命令判定（前端 _HG_EXP_WRITE_RE 的完整
+# Python 复刻——四分支：写动词 / git 写子命令 / -delete / 重定向 / 解释器
+# -c|-e；re.I 对齐 JS /i）。两侧需同步维护；保守方向：宁可错杀（断组直挂）
+# 绝不把写命令聚进「查阅」组
+_SUBAGENT_CMD_WRITE_RE = re.compile(
+    r"\b(sed\s+-i|tee|mv|cp|rm|mkdir|touch|chmod|del|erase|out-file|move-item"
+    r"|copy-item|remove-item|set-content|add-content|clear-content|new-item"
+    r"|rename-item)\b"
+    r"|(^|[;&]\s*)git\s+(add|commit|rm|mv|checkout|switch|restore|reset|clean"
+    r"|revert|cherry-pick|merge|rebase)\b"
+    r"|\s-delete\b"
+    r"|(^|\s|;|&|\|)\s*(?:&?>|2?>|>{1,2})\s*\S"
+    r"|\b(python|py|node|perl|ruby|awk)\s+(-c|-e)\b",
+    re.I)
+
+
 def _subagent_rows_from_jsonl(path):
     """v2.42（内部共用）：解析子代理转写 jsonl → 回放 rows。返回 None=文件
     不可读（miss，调用方继续试兜底源）；list=解析结果（可为空——文件存在
@@ -417,32 +433,49 @@ def _subagent_rows_from_jsonl(path):
                 blocks = content if isinstance(content, list) else []
                 if typ == "assistant":
                     model = m.get("model") or ""
+                    # v3.2.6（ZCode 子智能体模式）：行级 ts——窗格时间线用首末行
+                    # ts 算「已工作」总时长、邻行 ts 差算思考段「持续了 N 秒」
+                    _ts = o.get("timestamp") or ""
                     for b in blocks:
                         if not isinstance(b, dict):
                             continue
                         if b.get("type") == "text" and (b.get("text") or "").strip():
                             _push({"k": "text", "text": b["text"][:2000],
-                                   "model": model})
+                                   "model": model, "ts": _ts})
                         elif b.get("type") == "thinking" and (b.get("thinking") or "").strip():
                             # v2.43：thinking 入 rows——子代理会话主 flow 化要
                             # 「有思考」（用户原话）；回放窗格同渲染（hg-sub-think
                             # 折叠行）。旧行为只 text/tool_use，think 块被丢弃。
                             _push({"k": "think", "text": b["thinking"][:2000],
-                                   "model": model})
+                                   "model": model, "ts": _ts})
                         elif b.get("type") == "tool_use":
                             inp = b.get("input") or {}
                             hint = (inp.get("command") or inp.get("file_path")
                                     or inp.get("path") or inp.get("pattern")
                                     or inp.get("query") or inp.get("description")
                                     or inp.get("subject") or inp.get("prompt") or "")
-                            _push({"k": "tool", "name": b.get("name") or "",
-                                   "hint": str(hint)[:120]})
+                            # v3.2.6R3/R4（审计残留）：Bash/PowerShell 的写盘
+                            # 标记按**全量命令**判定（写动词/重定向常在尾部，
+                            # hint 的 120 字截断会漏检→前端伪 input 把写命令
+                            # 误聚进查阅组）。完整复刻前端 _HG_EXP_WRITE_RE
+                            # 四分支（写动词/git 写子命令/-delete/重定向/解释
+                            # 器 -c|-e；/i 对齐 re.I）——保守方向：绝不把写
+                            # 命令聚组，两端正则需同步维护
+                            _row = {"k": "tool", "name": b.get("name") or "",
+                                    "hint": str(hint)[:120], "ts": _ts}
+                            if b.get("name") in ("Bash", "PowerShell"):
+                                _cmd = str(inp.get("command")
+                                           or inp.get("cmd") or "")
+                                if _SUBAGENT_CMD_WRITE_RE.search(_cmd):
+                                    _row["w"] = 1
+                            _push(_row)
                 else:
                     for b in blocks:
                         if isinstance(b, dict) and b.get("type") == "tool_result":
                             _push({"k": "result",
                                    "text": _txt(b.get("content"))[:200],
-                                   "err": bool(b.get("is_error"))})
+                                   "err": bool(b.get("is_error")),
+                                   "ts": o.get("timestamp") or ""})
     except OSError:
         return None
     # v2.37R2/R4：头 150 + 省略标注 + 真实尾 50——rows 恒持前 200，
@@ -488,13 +521,24 @@ def _subagent_transcript_candidates(main_dir, csids, agent):
 
 def _subagent_rows_for(main_dir, csids, agent):
     """v2.43（内部共用）：候选路径依序解析（isfile 才读；读失败 None 时试
-    下一候选），返回首个可读结果；None=两源均未命中。"""
+    下一候选），返回首个可读结果；None=两源均未命中。
+    v3.2.6：现行 CLI（Task 工具）会先落一个 **0 字节**的 Temp tasks
+    <taskId>.output 占位、真实转写随后才写 projects/<主会话id>/subagents/
+    agent-<id>.jsonl——旧「rows is not None 即返回」会在占位文件上解析出
+    [] 短路，永远到不了第三形态（实测复现：回放恒「转写存在但无可回放
+    内容」）。改为：空解析继续试下一候选，全空才如实回空表（前端给中性
+    文案，不进 noreplay 锁死集）。"""
+    first_empty = None
     for p in _subagent_transcript_candidates(main_dir, csids, agent):
         if os.path.isfile(p):
             rows = _subagent_rows_from_jsonl(p)
-            if rows is not None:
+            if rows is None:
+                continue        # 读失败——试下一候选
+            if rows:
                 return rows
-    return None
+            if first_empty is None:
+                first_empty = rows
+    return first_empty
 
 # ---- from claude_harness.py:3208 (_SUBAGENT_BLK_FULL) ----
 

@@ -248,6 +248,67 @@
     _HG.run = { name, head: row, rows: [row] };
     return false;
   }
+  // v3.2.6（ZCode 子智能体模式）：主流 Agent/Task 派发行 = 单行任务卡——
+  // 对照 ZCode agent.tsx 产品边界「父对话只保留单行摘要，完整 child timeline
+  // 统一从右侧 tab 查看」：🤖 + 「子智能体」类别词 + 类型高亮 chip + 描述 +
+  // （运行中）最新子活动流 + 状态徽章/秒表 + ▣ 打开窗格。展开体恒空——
+  // 过程细节一律进窗格时间线（14-subpane），本行不再折叠展开
+  function _hgAgentRowBuild(tid, type, desc) {
+    const row = document.createElement('div');
+    row.className = 'h-tool col agentline';
+    row.dataset.tid = tid;
+    row.style.setProperty('--h-accent', _H_KIND_COLOR.agent || 'var(--border)');
+    const ty = String(type || '').trim() || 'Agent';
+    const dsc = String(desc || '').trim();
+    row.innerHTML =
+      `<button class="h-tool-head"><span class="h-tool-name">${_hToolIco('Task')} 子智能体</span>` +
+      `<span class="h-ag-type ${_hgAvaCls(ty)}" title="${esc(ty)}">${esc(ty)}</span>` +
+      `<span class="h-tool-arg"${dsc ? ` title="${esc(dsc)}"` : ''}>${esc(dsc)}</span>` +
+      `<span class="h-ag-live"></span>` +
+      `<span class="h-tslots"></span></button>` +
+      `<div class="h-tool-coll"></div>`;
+    return row;
+  }
+  // v3.2.6：行内实时活动流——子代理 think/text/tool 事件到达即刷新（05-subblk
+  // 三钩调用；ZCode animateSummaryContent 的静态等价物：最新子动作单行摘要）
+  function _subLivePaint(pid, txt) {
+    const row = (_HG.rowById || {})[pid];
+    const lv = row && row.classList.contains('agentline')
+      ? row.querySelector('.h-ag-live') : null;
+    if (lv) lv.textContent = String(txt || '').trim().slice(0, 90);
+  }
+  // v3.2.6：单行任务卡定格（task_notification 路径——tool_result 丢失时的
+  // 状态收口；与 renderOneToolResult 正常路径幂等互备）
+  function _hgAgentRowState(tid, err, brief) {
+    const row = (_HG.rowById || {})[tid];
+    if (!row || !row.classList.contains('agentline')) return;
+    const lv = row.querySelector('.h-ag-live');
+    if (lv) lv.textContent = '';
+    const st = row.querySelector('.h-tslots');
+    if (st) {
+      if (err) st.innerHTML = statusBadge('error');
+      else {
+        const b = String(brief || '').trim();
+        st.innerHTML = statusBadge('completed') + (b
+          ? ` <span class="h-tagent-brief" title="${esc(b.slice(0, 400))}">${esc(b.slice(0, 60))}${b.length > 60 ? '…' : ''}</span>` : '');
+      }
+    }
+    row.classList.toggle('err', !!err);
+    // v3.2.6R（审计F1）：agentId 回写行——切会话往返后 agents 档案已清，行
+    // 自带的 hgSubr 是回放入口的唯一数据锚（v3.2.5 段头 ▣ 回放的同款语义）
+    _hgAgentRowBindAid(tid, row);
+  }
+  // v3.2.6R（审计F1）：从 agents 档案把 agentId/类型/描述落到单行卡
+  // （renderOneToolResult 与 _hgAgentRowState 两路共用的幂等回写）
+  function _hgAgentRowBindAid(tid, row) {
+    if (!row || row.dataset.hgSubr) return;
+    const a = (_HG.agents || {})[tid] || {};
+    const aid = a.taskId || a.agentId || '';
+    if (!aid || !/^[0-9a-zA-Z_-]{8,64}$/.test(aid)) return;
+    row.dataset.hgSubr = aid;
+    row.dataset.hgSubType = a.type || 'Task';
+    row.dataset.hgSubDesc = String(a.desc || '').slice(0, 120);
+  }
   function renderToolUse(b, isSub, subId) {
     const name = b.name || '';
     const id = b.id || ('anon' + (++_HG.uidN));
@@ -269,6 +330,10 @@
       // v2.44：段内工具行统一走抽屉工厂——one-line（Read/Grep 无展开体）与
       // collapsible（Bash 展开带全文）两形态在段内割裂，用户定调全部折叠统一
       row = _subToolDrawerRow(cfg, name, label, b.input);
+    } else if (cfg.kind === 'agent') {
+      // v3.2.6：Agent/Task 派发走单行任务卡工厂（无展开体——过程进窗格）
+      row = _hgAgentRowBuild(id, _rinp.subagent_type || _rinp.agent_type || name,
+        _rinp.description || '');
     } else if (cfg.mode === 'one-line') {
       row = document.createElement('div');
       row.className = 'h-tool';
@@ -309,6 +374,7 @@
     row._preview = row._preview !== undefined ? row._preview
       : (cfg.mode === 'one-line' ? cfg.get(b.input) : (typeof cfg.title === 'function' ? cfg.title(b.input) : label)) || '';
     row._rawHint = _rawHint;   // v2.57R：后端同序原始摘要（窗格指纹查重用）
+    row._rin = b.input || null;   // v3.2.6R2（审计N2）：原始 input 随行——窗格镜像的 explore 聚组判定（Bash 只读命令靠 input.command）
     row._name = name;
     row._cfg = cfg;
     row._id = id;
@@ -385,6 +451,12 @@
       const full = resultText(tr).replace(/\s+/g, ' ').trim();
       if (full) slots.innerHTML = statusBadge(st) +
         ` <span class="h-tagent-brief" title="${esc(full.slice(0, 400))}">${esc(full.slice(0, 60))}${full.length > 60 ? '…' : ''}</span>`;
+    }
+    // v3.2.6：agentline 单行卡完成即撤实时活动流（状态/摘要接管行尾语义）
+    if (cfg.kind === 'agent') {
+      const lv = row.querySelector('.h-ag-live');
+      if (lv) lv.textContent = '';
+      _hgAgentRowBindAid(tr.tool_use_id, row);   // v3.2.6R（审计F1）：agentId 回写
     }
     showRow.classList.toggle('err', st === 'error' || st === 'denied');
     // v3.1：ZCode 式失败标记——行尾红色点状下划线小字（错误=执行失败/拒绝=已拒绝），
