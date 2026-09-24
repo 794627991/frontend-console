@@ -128,8 +128,12 @@
     const d = document.createElement('div');
     d.className = 'h-turnsum';
     d.innerHTML = '<span class="h-turnsum-pill">🔍 查阅 · ' + parts.map(esc).join(' · ') + '</span>';
-    addRow(d);
-    _hgScrollBottom();
+    // v3.2.20（用户实锤回合末「莫名其妙的残留胶囊」）：不再挂消息流根
+    // （悬在最终结论/回滚钮之后像残留）——挂回合体内顶部，展开过程即见，
+    // 收起态根区干净
+    const g = _HG.grp || [..._hgFlow.querySelectorAll('.h-grp')].pop();
+    const hb = g && (g.headBody || (g.querySelector && g.querySelector('.h-turn-body')));
+    if (hb) hb.insertBefore(d, hb.firstChild);
   }
 
   // ==================== v3.1 流底 spinner（ZCode 式运行指示行）====================

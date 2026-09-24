@@ -311,6 +311,14 @@
     // （userToggled，随快照 dataset 序列化）永不强制收
     if (g.headBody && g.head.dataset.userToggled !== '1')
       g.headBody.classList.add('closed');
+    // v3.2.20：实时入 tl 的正文——turnEnd 把最后一条提回根区（最终结论
+    // 折叠态可见 + 回滚按钮授予），其余照留时间线保持与思考/工具的时序
+    // 交错。须在下方折体块之前跑（提回者即 texts 末位=keep，天然不折）
+    if (opt.turnEnd && g.tl) {
+      const tlTexts = g.tl.querySelectorAll(':scope > .h-msg.asst');
+      const lastT = tlTexts[tlTexts.length - 1];
+      if (lastT) { lastT.classList.add('can-rewind'); g.root.appendChild(lastT); }
+    }
     // v3.2.2（用户实测）+ v3.2.3（一回合一组）+ v3.2.4（时序）：正文折进
     // 折叠区——用户定调「除了最终结论其他全部收起」「一个回合整合统一计时」
     // 「思考和工具调用要有顺序」：回合收尾定稿（turnEnd）只留组内**最后一
@@ -547,6 +555,14 @@
     // 思考段↔工具行↔中间正文全程时序一致（expando 不随快照走，恢复态
     // 回落体尾，重建必重算）
     d._tlAt = g.tl ? g.tl.children.length : 0;
-    g.root.appendChild(d);
+    // v3.2.20（用户实锤「执行过程中看不到顺序」）：中间正文**实时入时间
+    // 线**——到达即落在当前思考段/工具行之后，思考→工具→消息全程交错
+    // 可见（原实现堆组根、定稿才折回，运行期永远「过程块在上+正文墙在
+    // 下」两截不交错）。定稿(turnEnd)把最后一条提回根区作最终结论；旧
+    // 结构组（无 tl）照旧落根
+    if (g.tl) {
+      if (g.tl.style.display === 'none') g.tl.style.display = '';
+      g.tl.appendChild(d);
+    } else g.root.appendChild(d);
     _hgScrollBottom();
   }
