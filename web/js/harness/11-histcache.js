@@ -161,6 +161,38 @@
       _hgRailSync();
     }
   }
+  // v3.2.22（用户实锤「切走再切回，子代理目录点不开」）：快照恢复路径不跑
+  // 行渲染循环——agentsRpl 在切会话时被清、切回后永远不重建，目录成空壳。
+  // 本函从 histAll 直接重建（与 _histRender 循环内逻辑同款：Task/Agent 行
+  // + SendMessage 续派行；DOM 侧不用动——快照 dataset 已带 hg-subr 绑定）
+  function _hgRplRebuild() {
+    const lines = _HG.histAll || [];
+    const d = _hgDyn();
+    d.agentsRpl = [];
+    for (const l of lines) {
+      if (l.role === 'tool' && (l.text === 'Task' || l.text === 'Agent')
+          && l.input && (l.input.description || l.input.subagent_type || l.input.agent_type)) {
+        const _typ = l.input.subagent_type || l.input.agent_type || 'Task';
+        const _desc = l.input.description || '';
+        d.agentsRpl = d.agentsRpl.filter(x => !(x.type === _typ && x.desc === _desc));
+        const _aid = (l.result && String(l.result).match(/(?<![a-zA-Z])agentId[:"':\s]+([0-9a-zA-Z_-]{8,64})/i) || [])[1] || '';
+        d.agentsRpl.push({
+          type: _typ, desc: _desc, t0: 0, done: true, doneAt: 0, replay: true,
+          agentId: _aid });
+        if (d.agentsRpl.length > 5) d.agentsRpl.shift();
+      } else if (l.role === 'tool' && l.text === 'SendMessage') {
+        const _ra = (String(l.result || '').match(/resumedAgentId["'\s:]+([0-9a-zA-Z_-]{8,64})/) || [])[1] || '';
+        if (_ra && !d.agentsRpl.some(x => x.agentId === _ra)) {
+          const _msg = String((l.input || {}).message || '').trim().slice(0, 40);
+          d.agentsRpl.push({
+            type: 'SendMessage', desc: '续派' + (_msg ? ' → ' + _msg : ''),
+            t0: 0, done: true, doneAt: 0, replay: true, agentId: _ra });
+          if (d.agentsRpl.length > 5) d.agentsRpl.shift();
+        }
+      }
+    }
+    try { _subDirPaint(); } catch(_) {}
+  }
   // v3.2.12：_hgShrinkHead（贴底收缩）随分页退役——恒全量渲染后无「窗口」可收
   async function _histFetch(sidAt) {
     try {

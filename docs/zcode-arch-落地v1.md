@@ -733,3 +733,18 @@ b535b34a_image.png」（base64 行的应用上传 hash 名附件）+「🖼 1.pn
   重复派发语义一并答清：SendMessage 续派同一智能体（线程连续可见），
   Task 新派 = 新实例（CLI 语义）。
 - 回归：smoke 全过/ledger 17/architecture 0/state 41。免审计（用户令）。
+
+## 二十五、v3.2.22 快照恢复重建子代理目录（用户实锤「有的还点不开」）
+
+- 排查（新实例 65252 已带 v3.2.21 后端）：转写 7/7 有 id、回放接口正常、
+  SendMessage 结果全带 resumedAgentId——真凶是**切会话往返**：切走时
+  agentsRpl 清空，切回走快照恢复路径（innerHTML 直灌，不跑行渲染循环），
+  agentsRpl 永不重建 → 子代理目录空壳/条目点不开。复现：12ea 首开 5 条、
+  切走切回 0 条。
+- 修复：新增 _hgRplRebuild()（从 histAll 直接重建 agentsRpl，Task/Agent +
+  SendMessage 续派同款提取/去重/上限；DOM 不动——快照 dataset 已带
+  hg-subr 绑定），挂进 12-sessions 快照恢复的两个转写补填分支（新账目
+  histLive 路径 + 旧账目直填路径）。
+- 实测：切走切回后 5 条全在（全带 id）、逐条点击 5 窗格全开；新后端下
+  窗格「有来有回」真实在场——5 窗格合计来向气泡 8、思考 126、工具 168、
+  结论 111。回归 smoke 全过/state 41。

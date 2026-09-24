@@ -138,6 +138,7 @@
               return;
             }
             _HG.histLive = true;
+            _hgRplRebuild();   // v3.2.22：快照恢复不跑渲染循环——子代理目录条目在此重建（否则切回后空壳点不开）
             renderSideStatus();   // 面板 B/C 回放数据此路也会补齐（todos 等）
             // v2.43.2（R2-缺口A）：懒行补填并入主路——旧实现另起 fetch 先于
             // events 到达，busy 判定失真，漂移分支抢跑重渲炸掉快照（实测）
@@ -148,7 +149,7 @@
         // 旧账目快照（无 histLive/histFp，v2.37 前的缓存）：维持 v2.25 直填
         // （无指纹可校验；中插变更由补填内的点校验/下次全量渲染兜底）
         _histFetch(sid).then(ok => {
-          if (ok && _HG.sid === sid) lazyOpen.forEach(el => _histLazyFill(el));
+          if (ok && _HG.sid === sid) { lazyOpen.forEach(el => _histLazyFill(el)); _hgRplRebuild(); }
         });
       }
       // v3.0 滚动记忆恢复（对照 ZCode chatSessionScrollMemory）：离开时贴底
