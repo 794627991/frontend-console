@@ -198,7 +198,14 @@ def transcript_for(s):
                                                       "text": (rc or "（识图失败，无返回内容）")[:8000],
                                                       "ts": o.get("timestamp") or ""})
                                         continue
-                                    if line is None or line.get("result") is not None:
+                                    # v3.2.21（用户实锤「为啥不能回放」缺口①）：
+                                    # 同 tool_use_id 重试（先报错后成功）——成功
+                                    # 结果覆盖报错结果（agentId 在成功结果里，
+                                    # 保先到的错会把回放 id 一起丢掉）
+                                    if line is None:
+                                        continue
+                                    if (line.get("result") is not None
+                                            and not (line.get("err") and not b.get("is_error"))):
                                         continue
                                     rc = b.get("content")
                                     if isinstance(rc, list):
@@ -207,6 +214,8 @@ def transcript_for(s):
                                     line["result"] = (rc or "")[:8000]
                                     if b.get("is_error"):
                                         line["err"] = True
+                                    else:
+                                        line.pop("err", None)
                                 continue
                             texts, imgs, files = [], 0, []
                             for b in content:
@@ -311,6 +320,7 @@ def transcript_for(s):
                                 continue
                             row = {"role": "tool", "text": tl["name"], "summary": tl["summary"],
                                    "input": tl["input"], "result": None,
+                                   "tid": tl["id"] or "",
                                    "ts": tl.get("ts") or ""}
                             if tl["id"]:
                                 call_by_id[tl["id"]] = row
@@ -354,6 +364,52 @@ def transcript_for(s):
             lines.sort(key=lambda x: x["_k"])   # 稳定排序：同刻保持原相对序
             for ln in lines:
                 ln.pop("_k", None)
+    except Exception:
+        pass
+    # v3.2.21（用户实锤「为啥不能回放」缺口②）：agentId 兜底——Task/Agent
+    # 行结果缺 id（报错重试/空结果/超长截断）时，从 subagents/*.meta.json
+    # 反查：文件名即 agentId，toolUseId 精确对齐（tid），desc+agentType 兜
+    # 底。回放窗格/目录/agentline 回绑全靠这个 id——缺它=「无 agentId 无法
+    # 回放」。meta 目录直扫（每会话个位数文件，无缓存避免运行中新增漏查）
+    try:
+        _aid_re = re.compile(r"(?<![a-zA-Z])agentId[:\"'\s]+[0-9A-Za-z_-]{8,64}", re.I)
+        _aidm = {}
+        if main_dir:
+            for csid in ordered:
+                _sd = os.path.join(main_dir, csid, "subagents")
+                if not os.path.isdir(_sd):
+                    continue
+                for fn in os.listdir(_sd):
+                    if not (fn.startswith("agent-") and fn.endswith(".meta.json")):
+                        continue
+                    try:
+                        with open(os.path.join(_sd, fn), "r", encoding="utf-8",
+                                  errors="replace") as _mf:
+                            _mj = json.load(_mf)
+                    except Exception:
+                        continue
+                    _aid = fn[len("agent-"):-len(".meta.json")]
+                    if _mj.get("toolUseId"):
+                        _aidm[("t", _mj["toolUseId"])] = _aid
+                    _aidm.setdefault(("d", str(_mj.get("agentType") or ""),
+                                      str(_mj.get("description") or "")), _aid)
+        for ln in lines:
+            if (not _aidm or ln.get("role") != "tool"
+                    or ln.get("text") not in ("Task", "Agent")):
+                continue
+            if _aid_re.search(str(ln.get("result") or "")):
+                continue
+            _inp = ln.get("input") or {}
+            _aid = (_aidm.get(("t", ln.get("tid")))
+                    or _aidm.get(("d", str(_inp.get("subagent_type")
+                                            or _inp.get("agent_type") or ""),
+                                  str(_inp.get("description") or ""))))
+            if _aid:
+                _rc = str(ln.get("result") or "")
+                if len(_rc) < 7000:
+                    ln["result"] = (_rc + "\nagentId: " + _aid).strip()
+                else:   # 超长结果——id 前置，绝不因截断再丢
+                    ln["result"] = ("agentId: " + _aid + "\n" + _rc)[:8000]
     except Exception:
         pass
     # v2.43：子代理会话主 flow 化——Agent/Task 派发行后注入子代理过程段行
@@ -518,6 +574,16 @@ def _subagent_rows_from_jsonl(path):
                                     _row["w"] = 1
                             _push(_row)
                 else:
+                    # v3.2.21（用户定调「有来有回」）：子代理侧 user 行（首次
+                    # 派发提示 / SendMessage 追加消息）——入线程作来向消息，
+                    # 与 think/tool/text 交替成完整对话流；tool_result 载体行
+                    # 的 _txt 为空自然跳过；CLI 协议噪音（system-reminder/
+                    # command 包裹）不是人来向，同样跳过
+                    _ut = _txt(content).strip()
+                    if (_ut and not _ut.startswith("<")
+                            and not (_SKIP_RE and _SKIP_RE.match(_ut))):
+                        _push({"k": "user", "text": _ut[:1200],
+                               "ts": o.get("timestamp") or ""})
                     for b in blocks:
                         if isinstance(b, dict) and b.get("type") == "tool_result":
                             _push({"k": "result",
