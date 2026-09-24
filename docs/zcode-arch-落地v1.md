@@ -774,3 +774,19 @@ b535b34a_image.png」（base64 行的应用上传 hash 名附件）+「🖼 1.pn
 - 实测：回合收起态 scrollW=clientW=284（零拖动）、展开态 296px 行内
   戳出被 hidden 裁掉（拖不动）；来向气泡在工作区外暴露、250px 宽完整
   可读；截图目检通过。smoke 全过。
+
+## 二十八、v3.2.25 历史回放看得到改动（用户红字实锤「所有编辑都是这样子，看不到改动？」）
+
+- 先按用户邀请澄清了截图（此前两轮看错图致歉）：红框圈的是 Write/Edit
+  工具卡在历史回放里只有「File created/updated successfully」一行，
+  实际写入/改动内容不可见。
+- 主流程修复（07-hist _histToolBodyHtml）：折叠体输入与 live 同构——
+  cfg.get(input) → _toolInputBodyHtml（Edit=old→new 红绿 diff、Write=
+  写入内容、Todo/Question 同款），summary/结果行随后。实测 214 张
+  Edit/Write 卡抽 12 张全有 diff（截图目检红绿对照清晰）。
+- 窗格配套（transcript.py + 14-subpane）：子代理 rows 给 Edit/Write 附
+  输入体（old/new/content 各截 3000），窗格回放同画 diff/内容
+  （_fillRes 为 append，输入体+结果共存）。注：现有存量子代理全是
+  Bash heredoc 写文件（152 Bash/0 Edit），此路对新 CLI 的 Edit 型子代
+  理生效。
+- 回归：smoke 全过/ledger 17。

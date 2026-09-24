@@ -567,6 +567,16 @@ def _subagent_rows_from_jsonl(path):
                             # 命令聚组，两端正则需同步维护
                             _row = {"k": "tool", "name": b.get("name") or "",
                                     "hint": str(hint)[:120], "ts": _ts}
+                            # v3.2.25（用户实锤「历史回放看不到改动」）：
+                            # Edit/Write 的输入体随行（old/new/content 各截
+                            # 3000）——窗格回放据此画 diff/写入内容，不再只
+                            # 有「成功」一行
+                            if b.get("name") in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
+                                _row["in"] = {
+                                    _k: (_v[:3000] if isinstance(_v, str) else _v)
+                                    for _k, _v in inp.items()
+                                    if _k in ("file_path", "old_string", "new_string",
+                                              "content", "edits", "new_source")}
                             if b.get("name") in ("Bash", "PowerShell"):
                                 _cmd = str(inp.get("command")
                                            or inp.get("cmd") or "")

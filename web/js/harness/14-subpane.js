@@ -602,6 +602,16 @@
             const tw = _subTlToolRow(row.name || '', row.hint || '', '');
             tw.dataset.hgRp = '1';   // 铺底标——镜像增量查重锚
             tw.dataset.fp = (row.name || '') + ' ' + String(row.hint || '').slice(0, 80);
+            // v3.2.25（用户实锤「历史回放看不到改动」）：Edit/Write 的输入体
+            // 直接进折叠体（old→new diff / 写入内容），与主流程 live 同构
+            if (row.in) {
+              try {
+                const _cfg = _hCfg(row.name || '');
+                const _v = _cfg.get ? _cfg.get(row.in) : '';
+                const _coll0 = tw.querySelector('.h-tool-coll');
+                if (_coll0) _coll0.innerHTML = _toolInputBodyHtml(_cfg, _v);
+              } catch(_) {}
+            }
             // v3.2.6R2（审计N2）：Bash/PowerShell 的只读命令用 hint（=command
             // 摘要）合成伪 input——rows 结构无 input，聚组判定才不退化。
             // v3.2.6R3（审计残留）：row.w=后端按全量命令证明的写盘标记

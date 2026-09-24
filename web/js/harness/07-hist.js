@@ -327,8 +327,19 @@
     } catch(_) {}
   }
   function _histToolBodyHtml(l) {
+    // v3.2.25（用户实锤「历史回放看不到改动」）：折叠工具行的输入体与
+    // live 同构（Edit 的 old→new diff / Write 的写入内容 / Todo 等，
+    // _toolInputBodyHtml + cfg.get 同一路）——此前只画「成功」结果行，
+    // Write/Edit 回放全是 File created/updated successfully 一行字
+    let inputHtml = '';
+    try {
+      const cfg = _hCfg(l.text);
+      const v = cfg.get ? cfg.get(l.input || {}) : '';
+      inputHtml = _toolInputBodyHtml(cfg, v);
+    } catch(_) {}
     const out = l.result ? String(l.result) : '';
     return (l.summary ? `<div class="h-tool-arg">${esc(l.summary)}</div>` : '') +
+      inputHtml +
       (out ? `<div class="h-tool-out${l.err ? ' err-txt' : ''}">${esc(out.length > 4000 ? out.slice(0, 4000) + '…' : out)}</div>` : '');
   }
   function isNearBottom() {
