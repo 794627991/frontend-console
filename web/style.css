@@ -3735,6 +3735,14 @@ html {
    时每行被压扁挤成一团（用户实锤「数据一多就缩一起」）。主 flow/只读层同款
    坑已修过两次（3d22ecc/b4b7b7c），子项禁垂直压缩，内容自然撑开走滚动。 */
 .hg-sub-msgs > * { flex-shrink: 0; }
+/* v3.3.10（用户实锤「分屏回复自适应，气泡都被截断了」「完成/出错太靠边」）：
+   ① 子容器禁横向溢出——长孤儿行曾把内容顶出可视区，气泡右缘被裁；
+   ② ↳ 孤儿结果行折行不截断（旧 nowrap+ellipsis 窄分屏下断在半字）；
+   ③ 时间线右缘留 12px 呼吸，状态徽章（完成/出错）不贴容器边 */
+.hg-sub-msgs { overflow-x: hidden; }
+.hg-sub-body .h-tl { padding-right: 12px; }
+.hg-sub-body .h-tl .h-tool-res { white-space: pre-wrap; word-break: break-word;
+  text-overflow: clip; }
 .hg-sub-msg { font-size: var(--fs-base); line-height: 1.65; color: var(--fg); white-space: pre-wrap; word-break: break-word; }
 .hg-sub-tool {
   font-size: 10.5px; color: var(--muted); font-family: var(--font-mono);
