@@ -201,6 +201,10 @@
     if (!tb) return;
     // v3.2.6：停窗格秒表（tab 档案拆了 tick 闭包的自愈判据就没了——先停）
     if (tb.tick) { clearInterval(tb.tick); tb.tick = null; }   // v3.4：tick 挂 tab
+    // v3.4R2：伪 tab 关闭清账——动态页断 dynEl（tick 自愈不复活，重开重建）、
+    // 目录停 1s 秒表
+    if (tid === _SUB_DYN) dynEl = null;
+    if (tid === _SUB_DIR) _subDirTickStop();
     if (tb.sc && tb.sc.parentNode) tb.sc.remove();
     delete _sub.tabs[tid];
     _sub.order = _sub.order.filter(t => t !== tid);

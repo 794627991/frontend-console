@@ -1021,8 +1021,8 @@
         // 窗格重设计 P1-1：单-tab ✕——hover 才浮现（CSS 控制），运行中的 tab
         // 提示「任务继续后台跑」防误触焦虑；点击走 _subDrop（tab 条委托分支）
         // v3.2：目录伪 tab 常驻无 ✕（v3.3：动态页同）
-        (_pseu ? '' :
-        `<span class="hg-sub-x2" data-hg-subclose="${esc(t)}" title="${esc(tb.run ? '关闭视图（任务继续在后台跑）' : '关闭该 tab')}">✕</span>`) + `</div>`;
+        // v3.4R2：伪 tab（动态/目录）也可单独关闭——懒建机制保证随时重开
+        `<span class="hg-sub-x2" data-hg-subclose="${esc(t)}" title="${esc(tb.run ? '关闭视图（任务继续在后台跑）' : _pseu ? '关闭（点胶囊/入口随时重开）' : '关闭该 tab')}">✕</span></div>`;
     }).join('');
   }
   function _subScroll(tid) {
