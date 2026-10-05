@@ -57,7 +57,10 @@
     foot.appendChild(submit);
     foot.appendChild(hint);
     card.appendChild(foot);
-    _hgFlow.appendChild(card);
+    // v3.3.2(D3)：卡片入活组根（05-subblk 段落根同款惯例）——等答卡片属于
+    // 当前工作状态，时序落在过程之后；无活组回落 flow 根
+    const _ag = _HG.grp;
+    ((_ag && _ag.root && _ag.root.isConnected) ? _ag.root : _hgFlow).appendChild(card);
     // v2.27：ask 卡片 = AI 阻塞等作答，必须让用户看见。无 force 的
     // scrollBottom 在翻历史时被 150px 阈值拦下（用户实锤「弹出时要自己
     // 翻页找」）。这里无条件把卡片顶部滚进视口：多题卡片从题1看起，
@@ -135,19 +138,31 @@
     const card = _hgFlow.querySelector(`[data-hg-ask="${CSS.escape(it.req_id || '')}"]`);
     if (!card) return;
     card.classList.add('done');
-    card.querySelectorAll('.h-ask-opt').forEach(b => { b.disabled = true; });
+    // v3.3.2(D8)：提交后「缩回去」——折叠成题头+已选项+✓脚，点击开合可回看
+    // 完整选择情况（20-main flow 委托切换 collapsed）。老快照 done 卡无此类
+    // 维持展开（两代并存，不迁移）
+    card.classList.add('collapsed');
+    // v3.2.31：选择器加 [data-hg-ask-opt]——补充说明选项卡（hg-ask-xopt，div）
+    // 复用 .h-ask-opt 视觉但无该属性，重复 askDone 时不被下面的 .on 翻转清掉
+    card.querySelectorAll('.h-ask-opt[data-hg-ask-opt]').forEach(b => { b.disabled = true; });
     const ans = it.answer || {};
     const qs = askQs(card);
-    // v2.56：自由输入回显——提交的自定义文本填回输入框（disabled 保留显示），
-    // 不再「提交后自行填入那栏不显示」。数据源优先 askSubmit 存的 hgExtra
-    // （随快照走）；缺失（历史重放老卡片）时从 answer 串解析「补充：」段兜底。
+    // 自由输入回显（两代 done 卡形态并存边界）：
+    // · v3.2.31 起（新代）：展示位=选项列表内的「补充说明」xopt 卡片（下方
+    //   追加）；disabled 输入框只是数据载体，CSS `.h-ask.done .h-ask-x
+    //   { display:none }` 恒隐藏——v2.56 当年「填回输入框保留显示」的注释与
+    //   该 CSS 矛盾，以本段为准。
+    // · v2.56→v3.1h（旧代）：展示位=disabled 输入框/底部附注行。v3.2.31 前
+    //   生成的快照恢复时 DOM 原样带回旧形态（本函数不会重跑重造），不做迁移。
+    // 数据源优先 askSubmit 存的 hgExtra（随快照走）；缺失（历史重放老卡片）
+    // 时从 answer 串解析「补充：」段兜底。
     let extras = {};
     try { extras = JSON.parse(card.dataset.hgExtra || '{}'); } catch (_) {}
     card.querySelectorAll('.h-ask-q').forEach((box, qi) => {
       const qtext = (qs[qi] && qs[qi].question) || '';
       const chosen = ans[qtext];
       if (!chosen) return;
-      box.querySelectorAll('.h-ask-opt').forEach(b => {
+      box.querySelectorAll('.h-ask-opt[data-hg-ask-opt]').forEach(b => {
         b.classList.toggle('on', String(chosen).split(', ').indexOf(b.dataset.hgAskLabel) >= 0);
       });
       const inp = box.querySelector('.h-ask-x');
@@ -163,19 +178,32 @@
         }
         inp.disabled = true;
       }
+      // v3.2.31（需求1）：补充说明选项卡化——提交的自由输入不再以底部小字
+      // 回显（旧 .h-ask-note「📝 补充说明：…」附注行退役），改为渲染成与选项
+      // 同形态的卡片（复用 .h-ask-opt 边框/内边距/radio + 「补充说明」徽章）
+      // 插入该题选项列表末尾，视觉上是选项列表的一员。幂等（先清后插）；
+      // 历史重放走同一 askDone 路径同形态。div+无 data-hg-ask-opt：不参与
+      // askPick 选择与上方 .on 翻转，锁定展示
+      box.querySelectorAll('.hg-ask-xopt').forEach(x => x.remove());
+      const _xv = ((inp && inp.value) || '').trim();
+      if (_xv) {
+        const _opts = box.querySelector('.h-ask-opts');
+        if (_opts) {
+          const _xc = document.createElement('div');
+          _xc.className = 'h-ask-opt hg-ask-xopt on';
+          _xc.title = '用户的补充说明（已随作答提交）';
+          _xc.innerHTML = '<span class="h-ask-radio"></span>' +
+            '<span class="h-ask-opt-txt"><b><span class="hg-ask-xbadge">补充说明</span>' +
+            esc(_xv) + '</b></span>';
+          _opts.appendChild(_xc);
+        }
+      }
     });
     const foot = card.querySelector('.h-ask-foot');
     if (foot) {
-      // v3.1h：备注显式回显（用户实锤「备注没体现出来」——此前只回填 disabled
-      // 输入框，视觉上像选项描述小字，看不出是自己的补充）。提交态在底部
-      // 单独一行列出全部自由输入，历史重放同走此处（extras 从 answer 串兜底）。
-      const notes = [];
-      card.querySelectorAll('.h-ask-x').forEach(inp => {
-        const v = (inp.value || '').trim();
-        if (v) notes.push(v);
-      });
-      foot.innerHTML = `<span class="h-ask-done">✓ 已提交</span>` +
-        (notes.length ? ` <span class="h-ask-note">📝 补充说明：${esc(notes.join('；'))}</span>` : '');
+      // v3.2.31（需求1）：底部只留「✓ 已提交」——补充说明改为选项列表内的
+      // 同形态卡片（上方 hg-ask-xopt 分支），不再是 foot 附注小字
+      foot.innerHTML = `<span class="h-ask-done">✓ 已提交</span>`;
     }
   }
   // v3.0 高亮缓存池（对照 ZCode shikiHighlighter.ts:56 的指纹 key + 结果

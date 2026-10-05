@@ -25,7 +25,7 @@ function buildClaudeHarnessTab(opts = {}) {
         <div class="hg-search-wrap"><input class="hg-search" data-hg-search placeholder="搜索会话" spellcheck="false"></div>
         <div class="hg-sessions" data-hg-sessions></div>
         <button class="hg-prompt-btn" data-hg-vision title="识图配置（MCP 识图模型/端点映射/提示词）">👁 识图配置</button>
-        <button class="hg-prompt-btn" data-hg-roles-cfg title="三角色配置：开关/三槽模型（主会话/设计者/审计者）/端点角色映射/审计模式与分级线（保存后下条消息热更生效）。双形态：轻主模型=主会话直干所有活+设计者+审计者两个代理；重模型=主会话直干+审计者兜底">👥 三角色</button>
+        <button class="hg-prompt-btn" data-hg-roles-cfg title="三角色配置：开关/三槽模型（主会话/设计/审核）/端点角色映射/审核模式与分级线（保存后下条消息热更生效）。双形态：轻主力=主会话直干所有活+设计+审核两个代理；重主力=直干+审核兜底">👥 三角色</button>
         <button class="hg-prompt-btn" data-hg-prompt title="管理自定义提示词（全局/项目，会话启动时注入）">📜 提示词</button>
         <button class="hg-prompt-btn" data-hg-proxy-btn title="Claude 代理：重试代理（429/5xx 自动重试）+ 用量统计。点开代理面板">
           <img src="/ico/proxy.png" alt="proxy" style="width:14px;height:14px;vertical-align:-2px;"> Proxy
@@ -59,6 +59,13 @@ function buildClaudeHarnessTab(opts = {}) {
           <nav class="hg-rail" data-hg-rail aria-label="回合导航（ZCode 同款快速跳转）"></nav>
           <div class="hg-flow" data-hg-flow></div>
           <button class="hg-jumpbtm" data-hg-jumpbtm title="跳到最新消息" aria-label="跳到最新消息"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v14"/><path d="M5 12l7 7 7-7"/></svg></button>
+          <button class="hg-dyn-capsule" data-hg-dyncaps title="会话动态：点开分屏动态页 / 动态页激活时再点收起（子代理运行中点按直达实况）">
+            <span class="hg-caps-dot"></span>
+            <span class="hg-caps-st" data-hg-caps-st>就绪</span>
+            <span class="hg-caps-dur" data-hg-caps-dur></span>
+            <span class="hg-caps-ag" data-hg-caps-ag></span>
+            <span class="hg-caps-ctx" data-hg-caps-ctx></span>
+          </button>
         </div>
         <div class="hg-card-wrap">
           <div class="hg-queue" data-hg-queue style="display:none"></div>
@@ -313,6 +320,9 @@ function buildClaudeHarnessTab(opts = {}) {
       return;
     }
     // 交互提问卡片（v2.17）：选项点击 / 提交
+    // v3.3.2(D8)：已提交 ask 卡点击开合——折叠态看摘要，点开回看选择情况
+    const _aDone = e.target.closest('.h-ask.done');
+    if (_aDone && !e.target.closest('.h-ask-opt')) { _aDone.classList.toggle('collapsed'); return; }
     const aOpt = e.target.closest('.h-ask-opt');
     if (aOpt) { askPick(aOpt); return; }
     const aSend = e.target.closest('.h-ask-submit');
@@ -407,7 +417,10 @@ function buildClaudeHarnessTab(opts = {}) {
     // 点击=开右侧窗格（live 实况 / 已结束回放），不再折叠展开（对照 ZCode
     // canToggle=false 产品边界：过程细节统一在窗格时间线查看）
     // v3.2.6R2（审计F1+用户实锤）：agentId 三源兜底——agents 档案 → 行自带
-    // hgSubr → 面板回放档（agentsRpl 按 type+desc 匹配）；全 miss 才 banner
+    // hgSubr → 面板回放档（agentsRpl 按 type+desc 匹配）
+    // v3.2.31（bug5② 终态兜底）：全 miss 不再只弹 banner（用户实锤「点了没
+    // 反应」）——打开子智能体目录 tab（常驻伪 tab，任何状态必有可见响应），
+    // banner 降为目录内的辅助提示。任何子代理行点击必开窗格
     const agRow = e.target.closest('.h-tool.agentline');
     if (agRow) {
       const pid = agRow.dataset.tid || '';
@@ -419,9 +432,10 @@ function buildClaudeHarnessTab(opts = {}) {
           r && r.agentId && (r.type || '') === _ty && String(r.desc || '').slice(0, 40) === _ds);
         if (_hit) { aid = _hit.agentId; agRow.dataset.hgSubr = aid; }
       }
-      if (aid) _subReplay(aid, agRow.dataset.hgSubType || 'Task',
-        agRow.dataset.hgSubDesc || '', aid);
-      else showBanner('该子代理暂无可打开的过程记录（无 agentId）', 2600);
+      if (aid) { _subReplay(aid, agRow.dataset.hgSubType || 'Task',
+        agRow.dataset.hgSubDesc || '', aid); return; }
+      _subDirOpen();
+      showBanner('该子代理行没有 agentId 记录——已打开子智能体目录，可从列表进入', 3000);
       return;
     }
     const tHead = e.target.closest('.h-tool-head');
@@ -1039,16 +1053,13 @@ function buildClaudeHarnessTab(opts = {}) {
       stopGen();               // interrupted → 后端 _turn_end → 800ms 泵发队首
     }
   });
-  // ==================== v2.32 右侧面板会话动态（六分区监视器）====================
-  // 设计文档 docs/设计_2026-09-20_右侧会话动态面板.md。面板=纯派生监视器：
-  // 不持状态机，一切从 _HG + sessions + localStorage 派生；骨架是 index.html
-  // 静态节点（v2.30 教训：挂 harness wrap 内 q() 扑空=面板永不显示）；事件
-  // 驱动 rAF 合并全量重渲；秒表是全局单例 interval 只改 textContent。
-  dynEl = document.querySelector('[data-hg-dyn]');   // v2.37（P0-B）：let——面板 DOM 被外层重建时可重联（见 tick 自愈）
-  _hgAiPanel = document.getElementById('aiPanel');
-  // 面板换装开关 _hgPanelMode 在顶层（闭包外的 switchTab 包装器与 _harnessClose
-  // 都要调它）；本闭包负责给它装「进入面板时拉 roles + 刷一遍」的钩子。
-  _hgRolesCache = null;   // 最近一次 /roles 响应（面板三角色行与左侧按钮同源）
+  // ==================== v2.32 会话动态（六分区监视器；v3.3 分屏化）====================
+  // 设计文档 docs/设计_2026-09-20_右侧会话动态面板.md。监视器=纯派生：
+  // 不持状态机，一切从 _HG + sessions + localStorage 派生；骨架 v3.3 起改为
+  // 分屏伪 tab __dyn__ 懒建（14-subpane _subDynOpen，旧 index.html 静态节点/
+  // #aiPanel 换装形态整体废止）——dynEl 在 _subDynOpen 里赋值，此处不绑。
+  // 事件驱动 rAF 合并全量重渲；秒表是全局单例 interval 只改 textContent。
+  _hgRolesCache = null;   // 最近一次 /roles 响应（动态页三角色行与左侧按钮同源）
 
   // ---- 派生态与入口 ----
   _dynRaf = 0;
@@ -1074,109 +1085,21 @@ function buildClaudeHarnessTab(opts = {}) {
   // renderSideStatus）是 innerHTML 全量覆盖，插入在行后的详情卡每次都被
   // 冲掉（用户实锤「点击展开后不一会又缩回去」）。展开态记 dyn.agentDetailOpen，
   // _dynAgents 重建后按 id 恢复插回。
-  // 点击交互（onclick 覆盖式绑定：闭包随 tab 重开重执行，addEventListener 会叠加）
-  if (dynEl) dynEl.onclick = (e) => {
-    const cp = e.target.closest('[data-hg-copy]');
-    if (cp) { e.stopPropagation(); _hgCopyText(cp.dataset.hgCopy); return; }
-    // v3.1：进程面板分组头折叠开关（已完成/待处理两组，状态存 _HG.dyn）
-    const pt = e.target.closest('[data-hg-proc-tgl]');
-    if (pt) {
-      e.stopPropagation();
-      const d = _hgDyn();
-      d[pt.dataset.hgProcTgl === 'done' ? 'procDoneOpen' : 'procPendOpen']
-        = !(d[pt.dataset.hgProcTgl === 'done' ? 'procDoneOpen' : 'procPendOpen']);
-      renderSideStatus();
-      return;
-    }
-    // v3.2：子代理目录入口（区头「⏱ 已结束 N ›」）→ 打开目录伪 tab
-    const db = e.target.closest('[data-hg-agdir]');
-    if (db) { e.stopPropagation(); _subDirOpen(); return; }
-    // v2.38：详情卡「回放该子代理过程」→ 回放窗格（转写数据源）
-    const rb = e.target.closest('[data-hg-replay]');
-    if (rb) {
-      e.stopPropagation();
-      const rid = rb.dataset.hgReplay;
-      const a = (_HG.agents || {})[rid]
-        || ((_HG.dyn && _HG.dyn.agentsRpl) || []).find(x => x.rid === rid) || {};
-      if (rb.dataset.hgReplayCollab) {
-        _subReplay(rid, rb.dataset.hgReplayType || a.type || '协作', a.desc || '', '');
-      } else {
-        const aid = rb.dataset.hgReplayAid || a.taskId || a.agentId || '';
-        if (!aid) { showBanner('该子代理没有 agentId 记录，无法回放', 2600); return; }
-        _subReplay(rid, rb.dataset.hgReplayType || a.type || 'Task', a.desc || '', aid);
-      }
-      return;
-    }
-    const acp = e.target.closest('[data-hg-actcp]');
-    if (acp) {
-      e.stopPropagation();
-      const a = ((_HG.dyn || {}).acts || []).find(x => x.tid === acp.dataset.hgActcp);
-      if (a) _hgCopyText(a.preview || '');
-      return;
-    }
-    if (e.target.closest('[data-hg-act]')) { _hgJumpRow(e.target.closest('[data-hg-act]').dataset.hgAct); return; }
-    if (e.target.closest('[data-hg-todo]')) {
-      const rid = (_HG.dyn || {}).todoRowId;
-      if (rid) _hgJumpRow(rid);
-      return;
-    }
-    // v2.35（P0-2/P1-5）：运行中子代理行点击=重开实时窗格并切 tab（窗格已开
-    // =切 tab）；已完成行保持展开详情卡；协作代理行=跳消息流对应转交线
-    const pr = e.target.closest('[data-hg-peer-row]');
-    if (pr) {
-      const lines = _hgPeerLines();
-      const pend = lines.filter(el => !el.dataset.done);
-      const target = (pend.length ? pend : lines).slice(-1)[0];
-      // v2.49：线被隐藏（SendMessage 协作归一段形态）——跳转目标改协作段
-      // 本体：展开（含折叠态记忆）+居中+高亮；段不存在回落原线跳转
-      if (target && target.style.display === 'none') {
-        // allowDone=true（v2.54R）：跳转目标是历史段（多为已完成），live-only 会落空
-        const seg = _hgCollabSegFind(target.dataset.peer, true);
-        if (seg) {
-          seg.classList.remove('collapsed');
-          _hgSubSaveOpen(seg, true);
-          seg.scrollIntoView({ block: 'center', behavior: 'smooth' });
-          seg.classList.remove('hg-dyn-jump');
-          void seg.offsetWidth;
-          seg.classList.add('hg-dyn-jump');
-          setTimeout(() => seg.classList.remove('hg-dyn-jump'), 1600);
-          return;
-        }
-      }
-      if (target) {
-        target.scrollIntoView({ block: 'center', behavior: 'smooth' });
-        target.classList.remove('hg-dyn-jump');
-        void target.offsetWidth;
-        target.classList.add('hg-dyn-jump');
-        setTimeout(() => target.classList.remove('hg-dyn-jump'), 1600);
-      } else {
-        showBanner('该协作没有对应的转交线（无消息流记录）', 2400);
-      }
-      return;
-    }
-    const ag = e.target.closest('[data-hg-ag]');
-    if (ag) {
-      if (ag.classList.contains('run')) { _subReopen(ag.dataset.hgAg); return; }
-      _hgAgentToggle(ag);
-      return;
-    }
-    // v2.37（P1-D）：三角色行点击=打开配置面板（开关进面板管理，防误触；
-    // 旧行为是点击直接切开关，用户明确不要）
-    if (e.target.closest('[data-hg-d-roles]')) { openRolesCfg(); return; }
-  };
+  // v3.3：动态页点击委托迁至 13-panel _hgDynClick（骨架随 _subDynOpen 懒建，绑定随骨架走）
 
   // ---- 渲染（分区独立重建，空区 hidden）----
   // v2.37（P0-B）：分区隔离——任何一区抛异常不再饿死后续区（旧实现单 rAF
   // 回调内顺序执行，首区异常=后面全部保持初始 hidden，「面板只剩 A 区」的
   // 形态）；异常落 console 带 [hg-dyn] 标记供现场取证
   // 秒级计时：全局单例 interval（闭包随 tab 重开重执行，直接 setInterval 会
-  // 叠加）；仅 hg-mode 可见且页面可见才动，且只改 textContent 不重建 DOM。
+  // 叠加）；仅分屏展开且动态页激活时可见才动（v3.3：旧 hg-mode 守卫随换装废止），且只改 textContent 不重建 DOM。
   if (!window._hgDynTick) {
     window._hgDynTick = setInterval(() => {
-      // v2.37（P0-B/F③）：自愈先于 hg-mode 守卫——①面板 DOM 被外层重建后
-      // dynEl 失联（ detached 节点真值仍为真，渲染进死节点=面板只见初始态）
-      // → 重联重渲；②消息流里未定格转交线的秒表计时器丢失（快照恢复遗漏/
-      // 异常路径清掉）→ 按 dataset 重挂。两者都是每秒一次的廉价扫描。
+      // v2.37（P0-B/F③）：自愈先于可见性守卫（v3.3 改分屏口径）——①动态页
+      // sc 被重建后 dynEl 失联（ detached 节点真值仍为真，渲染进死节点=动态
+      // 页只见初始态）→ 重联重渲；②消息流里未定格转交线的秒表计时器丢失
+      //（快照恢复遗漏/异常路径清掉）→ 按 dataset 重挂。两者都是每秒一次的
+      // 廉价扫描。
       try {
         if (!dynEl || !dynEl.isConnected) {
           const nd = document.querySelector('[data-hg-dyn]');
@@ -1189,7 +1112,13 @@ function buildClaudeHarnessTab(opts = {}) {
           if (!rl._peerTimer) _hgPeerTimerStart(rl, +(rl.dataset.t0 || 0) || Date.now());
         });
       } catch(_) {}
-      if (document.hidden || !_hgAiPanel || !_hgAiPanel.classList.contains('hg-mode')) return;
+      // v3.2.31：胶囊计时秒表走字（先于可见性守卫——分屏收起时胶囊仍可见，
+      // 其计时/脉冲必须活着）
+      try { _hgDynCapsulePaint(); } catch(_) {}
+      // v3.3 守卫改分屏口径：分屏展开且动态页激活才走字（胶囊 paint 在守卫前
+      // 无条件执行，计时不受影响）；dynEl 并入守卫——动态页未建时不查
+      if (document.hidden || !_subPaneEl || _subPaneEl.style.display !== 'flex'
+          || _sub.active !== _SUB_DYN || !dynEl) return;
       dynEl.querySelectorAll('[data-t0]').forEach(el => {
         el.textContent = _hgFmtDur(Math.max(1, Math.round((Date.now() - +(el.dataset.t0 || 0)) / 1000)));
       });
@@ -1201,7 +1130,8 @@ function buildClaudeHarnessTab(opts = {}) {
       }
     }, 1000);
   }
-  _hgPanelEnterHook = () => { _hgRolesFetch(); _hgAgentModelsFetch(); renderSideStatus(); };
+  // v3.3：_hgPanelEnterHook 随换装面板废止——roles/agentModels 拉取移到
+  // _subDynOpen（用户点开动态页才拉，点击天然节流）
   renderSideStatus();                    // 闭包（重）执行完先刷一遍（如重开 tab 恢复现场）
 
   // ==================== v2.33 子代理实时窗格 ====================
@@ -1319,7 +1249,13 @@ function buildClaudeHarnessTab(opts = {}) {
       return;
     }
     const t = e.target.closest('[data-hg-subtab]');
-    if (t) _subActivate(t.dataset.hgSubtab);
+    if (t) {
+      // v3.3R（全审 P3）：伪 tab（动态/目录）点击入口与 _subDynOpen/_subDirOpen
+      // 同口径置 manual——分屏若是 Task 自动开的（manual=false），用户点 tab 条
+      // 切过来阅读，回合终结不该把整个分屏收走
+      if (t.dataset.hgSubtab === _SUB_DIR || t.dataset.hgSubtab === _SUB_DYN) _sub.manual = true;
+      _subActivate(t.dataset.hgSubtab);
+    }
   };
   // 窗格重设计：窗格体行内交互全走 body 级事件委托——行是流式动态 append +
   // cap 删首，逐行直绑不可维护且 innerHTML 重建即丢（主 flow v2.12 的坑）。
@@ -1330,6 +1266,16 @@ function buildClaudeHarnessTab(opts = {}) {
     const dirRow = e.target.closest('[data-hg-dir]');
     if (dirRow && dirRow.dataset.hgDir) {
       _subDirRowClick(dirRow.dataset.hgDir, dirRow.dataset.hgDirRpl === '1');
+      return;
+    }
+    // v2.37R6+：回放长文本行折叠切换（展开 ∨ / 收起 ∧）——纯视觉层
+    const foldTog = e.target.closest('.hg-sub-fold-tog');
+    if (foldTog) {
+      const wrap = foldTog.closest('.hg-sub-fold-wrap');
+      if (wrap) {
+        const opening = wrap.classList.toggle('open');
+        foldTog.textContent = opening ? '收起 ∧' : '展开 ∨';
+      }
       return;
     }
     // md 代码块复制钮（就近取同容器 pre>code 文本）
@@ -1389,10 +1335,14 @@ function buildClaudeHarnessTab(opts = {}) {
   if (_subRes) _subRes.addEventListener('mousedown', (e) => {
     e.preventDefault();
     const right = _subPaneEl.getBoundingClientRect().right;
+    // v3.2.31：分屏拖拽升级——百分比口径（25%~75% 聊天区总宽），localStorage
+    // 记忆 hg-subpane-pct（14-subpane _hgSubPctGet/_hgSubPctApply 同源）。
+    // 拖拽中 .hg-main flex 收缩、聊天区总宽（=hg 宽−会话栏）恒定，分母稳定
+    const region = _hgSubRegion() || 1;
     const move = (ev) => {
-      const w = Math.min(640, Math.max(220, Math.round(right - ev.clientX)));
-      _subPaneEl.style.width = w + 'px';
-      try { localStorage.setItem('hg-subpane-w', w); } catch(_) {}
+      const pct = Math.min(75, Math.max(25, (right - ev.clientX) / region * 100));
+      _hgSubPctApply(pct);
+      try { localStorage.setItem('hg-subpane-pct', pct.toFixed(2)); } catch(_) {}
     };
     const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
     document.addEventListener('mousemove', move);
@@ -1403,6 +1353,39 @@ function buildClaudeHarnessTab(opts = {}) {
     if (_subPaneEl) _subPaneEl.style.display = 'none';
     _sub.manual = false;   // v2.35（P0-3）：手动关即退出「回合终结不自动收起」模式
   };
+  // ==================== v3.3：会话动态胶囊绑定（分屏化）====================
+  // 胶囊=分屏唯一开关，四分支状态机：
+  // ① 有运行中子代理 → 直达最新派发代理的实况 tab（联动保留，_subReopen 内
+  //    自带 _subShow+manual=true）；
+  // ② 分屏未开 → 开分屏激活「动态」伪 tab（_subDynOpen 懒建）；
+  // ③ 动态页激活中再点 → 收分屏（manual 复位，同 ✕ 语义）；
+  // ④ 分屏开着但在他 tab（纯自动实况等，动态页未建）→ 切回/补建动态页。
+  // try/catch 兜底：分屏 DOM 缺失等异常不阻断 builder 后续装配
+  try {
+    const _capsBtn = _hgQ('[data-hg-dyncaps]');
+    if (_capsBtn) _capsBtn.onclick = () => {
+      try {
+        const _runTids = Object.keys(_HG.agents || {})
+          .filter(k => !((_HG.agents || {})[k] || {}).done)
+          .sort((a, b) => ((_HG.agents[a].t0 || 0) - (_HG.agents[b].t0 || 0)));
+        if (_runTids.length) { _subReopen(_runTids[_runTids.length - 1]); return; }   // 最新派发的代理
+        const _open = _subPaneEl && _subPaneEl.style.display === 'flex';
+        if (!_open) { _subDynOpen(); return; }
+        if (_sub.active === _SUB_DYN) {
+          _subPaneEl.style.display = 'none';
+          _sub.manual = false;
+          return;
+        }
+        // _subActivate 对未注册 tab 静默早退——动态页未建时必须走 _subDynOpen
+        if (!_sub.tabs[_SUB_DYN]) { _subDynOpen(); return; }
+        _sub.manual = true;
+        _subActivate(_SUB_DYN);
+      } catch(_) {}
+      _hgDynCapsulePaint();              // 兜底路径也收敛视觉态（open/attn 派生）
+    };
+    try { localStorage.removeItem('hg-dyn-caps'); } catch(_) {}   // v3.3：旧面板偏好废止，清残留（不再读取，残留本无害）
+    _hgDynCapsulePaint();
+  } catch(_) {}
 
   // v2.3.9 组头点击：折叠/展开（localStorage 记忆），不影响选会话
   _hgListEl.addEventListener('click', (e) => {

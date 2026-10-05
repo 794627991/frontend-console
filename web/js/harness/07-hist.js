@@ -63,15 +63,19 @@
     // 取段终点：中段切组在渲染中途读 histActTs 恰为被定稿组末活动行；回放
     // 尾组定稿在循环外读=全段末活动）。旧转写缺 ts 保持 0——落无数字形态
     const _ts = l && l.ts ? Date.parse(l.ts) : 0;
+    // v3.3.1：上一行 ts——思考段起点改挂前一行（同一条 assistant 消息里
+    // thinking 与 tool_use 同 ts，按自身 ts 计时长恒 0 秒）
+    const _prevTs = (_ts > 0) ? (_HG.histLineTs || 0) : 0;
     if (_ts > 0) _HG.histLineTs = _ts;
     // v3.2.5（用户定调「思考持续了几秒，和 ZCode 同款」）：回放思考段时长
-    // ——思考行的 ts 为起点，下一条带 ts 的行到达时定格差值（转写无段级
+    // ——起点=上一带 ts 行，下一条带 ts 的行到达时定格差值（转写无段级
     // 终点事实，邻行 ts 差是唯一诚实口径；后置入账同款时序：本行渲染前
-    // 先收上一段的账）
+    // 先收上一段的账）。v3.3.1：<3s 不显示（切片噪声非事实）
     if (_HG.thinkPend && _ts > 0 && _ts > _HG.thinkPend.t0) {
       const _tp = _HG.thinkPend;
       const _te = _tp.seg.isConnected ? _tp.seg.querySelector('[data-hg-think-t]') : null;
-      if (_te) _te.textContent = '持续了 ' + _hgTurnDurTxt(_ts - _tp.t0);
+      const _dur = _ts - _tp.t0;
+      if (_te && _dur >= 3000) _te.textContent = '持续了 ' + _hgTurnDurTxt(_dur);
       _HG.thinkPend = null;
     }
     // v3.2.6：lastAgRow 只活一行——sub_open 紧贴 Agent 派发行（transcript 注
@@ -80,6 +84,10 @@
     if (l.role === 'peer') {          // v2.27.3：跨会话回传（识图结论）历史回看
       // v2.53：第 5 参 hist——历史回放绝不开新段（防假「协作·运行中」段吞正文）
       renderPeer(l.name, l.text, null, true, true);
+    }
+    else if (l.role === 'sysnote') {  // v3.3.2(D6)：机器注入弱化行历史回看
+      // 不定稿不 renderUser——历史侧回合合并自动成立（历史组只在 user 行定稿）
+      renderSysNote(l.kind, l.text);
     }
     else if (l.role === 'vision_relay') {  // v2.28：识图 MCP 转交线（历史回看）
       renderVisionRelayHist(l);
@@ -127,7 +135,8 @@
         _segEl.dataset.hgLazy = '1';
       } else appendThinking(l.text);       // 兜底：无行号（理论不达）
       endThinking(true);                   // hist 模式：不自动收；时长见下方 pend
-      if (_segEl && _ts > 0) _HG.thinkPend = { seg: _segEl, t0: _ts };
+      if (_segEl && _ts > 0) _HG.thinkPend = { seg: _segEl,
+        t0: (_prevTs > 0 && _prevTs < _ts) ? _prevTs : _ts };   // v3.3.1：起点挂上一行 ts
     }
     else if (l.role === 'tool') {
       // v2.3.2：历史重建补画转交等待线——transcript 的工具行此前只画抽屉，
@@ -351,6 +360,13 @@
   function isNearBottom() {
     return _hgFlow.scrollHeight - _hgFlow.scrollTop - _hgFlow.clientHeight < 120;
   }
+  function _hgPrevRowAt() {
+    // v3.3.1：上一 SSE 事件到达时刻（10-sse onmessage 入账）——思考段起点
+    // 的挂钟基准。30s 新鲜度护栏：太久（空闲后偶发段）回退当下时刻，
+    // 宁可缺数也不虚增时长
+    const _p = +(_HG.prevRowAt || 0);
+    return (_p && Date.now() - _p < 30000) ? _p : Date.now();
+  }
   function startThinking(hist) {
     if (_HG.think && _HG.think.seg && _HG.think.seg.isConnected) return;
     // v3.2.13（用户实锤「没修复好」）：思考行不再断查阅组——思考间隔前后的
@@ -383,7 +399,7 @@
     if (!hist) {
       // v3.1h（用户实锤「发出后半天没消息也应算思考」）：第一段思考起点回溯
       // 到回合起点（=消息发出时刻），静默等待期计入思考时长；后续段仍取当下
-      seg.dataset.t0 = String((n === 1 && g.t0) ? g.t0 : Date.now());
+      seg.dataset.t0 = String((n === 1 && g.t0) ? g.t0 : _hgPrevRowAt());
       seg.dataset.n = String(n);
     }
     seg.innerHTML =
@@ -474,7 +490,10 @@
       if (te) te.textContent = hist ? '' : te.textContent;
     } else {
       // v3.1：定稿文案对齐 ZCode（「思考 · 持续了 7 秒」）——计数态 Ns → 持续了 Ns
-      if (te) te.textContent = '持续了 ' + _hgTurnDurTxt(Date.now() - t0);   // v3.2.5：中文时长口径（N 秒/N 分 N 秒）
+      // v3.3.1：<3s 不显示——同批到达的段算出来 0/1 秒是切片噪声不是事实
+      //（起点已改上一事件时刻，正常路径不再产出；护栏留给批内多段残留）
+      const _ms = Date.now() - t0;
+      if (te) te.textContent = _ms >= 3000 ? '持续了 ' + _hgTurnDurTxt(_ms) : '';
       // 仅当用户没碰过且在底部跟读时自动收段（正文已在段里，收起只留段头）
       if (seg.dataset.userToggled !== '1' && isNearBottom()) seg.classList.remove('open');
     }

@@ -2583,6 +2583,14 @@ html {
 .hg-sub-concl { display: flex; flex-direction: column; }
 .hg-sub-concl .h-msg { margin: 0; }
 .hg-sub-msgs .h-msg.asst { max-width: 100%; }
+/* v3.2.31（bug4）：窗格 AI 回复自适应气泡——主流 .h-grp 靠 align-items:
+   flex-start 把 AI 泡收缩到内容宽，窗格时间线 .h-tl 无此设定（flex 默认
+   stretch 拉满整行），气泡被拉成通栏矩形=观感「无边框裸文本」。fit-content
+   按内容取宽（max-width:100% 封顶，长文折行不溢出），边框/底色/圆角走
+   .h-msg.asst .h-bubble 全局气泡语言（主题变量，零写死色）；回放长文折叠
+   壳（hg-sub-fold-wrap）同口径收缩 */
+.hg-sub-msgs .h-msg.asst { width: fit-content; }
+.hg-sub-fold-wrap { width: fit-content; max-width: 100%; }
 .hg-sub-msgs .hg-sub-replay-note { margin: 0; }
 
 /* 杂音/退出行 */
@@ -3167,6 +3175,16 @@ html {
   outline: none; }
 .h-ask-x:focus { border-color: var(--accent); border-style: solid; }
 .h-ask.done .h-ask-x { display: none; }
+/* v3.3.2(D8)：已提交 ask 卡折叠态——题头+已选项+✓ 已提交脚保留，未选项与
+   输入区隐藏；点击开合回看完整选择情况（老快照 done 卡无此类=维持展开） */
+.h-ask.done.collapsed { cursor: pointer; }
+.h-ask.done.collapsed .h-ask-opt:not(.on) { display: none; }
+.h-ask.done.collapsed .h-ask-extra { display: none; }
+/* v3.3.2(D7)：机器注入弱化行（task-notification/system-reminder）——单行
+   dim 入回合时间线，摘要 + 悬浮全文，不切割回合 */
+.h-sysnote { align-self: stretch; font-size: var(--fs-cap); color: var(--muted);
+  opacity: .75; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  cursor: help; }
 .h-ask-foot { display: flex; align-items: center; gap: 10px; padding: 9px 12px;
   border-top: 1px solid var(--border); background: color-mix(in srgb, var(--bg-card) 60%, transparent); }
 .h-ask-submit { border: 1px solid var(--accent); border-radius: 6px;
@@ -3177,8 +3195,21 @@ html {
 .h-ask-hint { color: var(--muted); font-size: var(--fs-sm); }
 .h-ask-done { color: var(--neon-green, #3fb950); font-weight: 600; font-size: var(--fs-base); }
   /* v3.1h：提交态显式备注行（用户实锤「备注没体现」——disabled 输入框形态
-     视觉太弱像选项描述；单独一行列出自由输入，历史重放同走 askDone） */
+     视觉太弱像选项描述；单独一行列出自由输入，历史重放同走 askDone）
+     v3.2.31：备注行退役——补充说明升格为选项列表内的同形态卡片（下） */
   .h-ask-note { font-size: 11px; color: var(--acc, #4a9eff); margin-left: 8px; }
+/* v3.2.31（需求1）：补充说明选项卡——复用 .h-ask-opt 全套边框/内边距/radio，
+   加「补充说明」徽章标识来源；.on 态与被选选项同染（它是提交作答的一部分）。
+   div+cursor:default：展示锁定，不参与点击选择 */
+.h-ask-opt.hg-ask-xopt { cursor: default; }
+.h-ask-opt.hg-ask-xopt:hover { border-color: var(--border); background: transparent; }
+.h-ask-opt.hg-ask-xopt.on:hover { border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.h-ask-opt.hg-ask-xopt .h-ask-opt-txt b { white-space: normal; line-height: 1.55; }
+.hg-ask-xbadge { display: inline-block; flex: none; font-size: var(--fs-2xs);
+  font-weight: 600; color: var(--accent); border: 1px solid var(--accent);
+  border-radius: 999px; padding: 0 6px; margin-right: 6px;
+  vertical-align: 1px; white-space: nowrap; }
 
 
 /* ---- 统一登录胶囊 + Proxy 状态（v2.27）：侧栏底部，提示词按钮下面 ---- */
@@ -3306,20 +3337,68 @@ html {
 .hg-mact:hover { color: var(--fg, #e6e6e6); border-color: var(--fg, #888); }
 .hg-mact:disabled { opacity: 0.5; cursor: default; }
 
-/* v2.32 右侧工具面板 harness 换装（设计 docs/设计_2026-09-20_右侧会话动态面板.md）：
-   Claude 对话 tab 激活时整面板切到会话动态六分区（会话状态/任务进度/子代理
-   实况/最近工具/回合历史/当前文件）——原页签对 harness 全无用，藏掉并换标题 */
-.ai-panel.hg-mode .panel-tabs,
-.ai-panel.hg-mode .panel-tab-pane { display: none !important; }
+/* v3.3 会话动态分屏化：右侧工具面板对 harness tab 整体隐藏（旧 v2.32 换装
+   形态废止——六分区迁入 harness 内部分屏伪 tab「动态」，21-shell _hgPanelMode
+   只做显隐）。面板对其他 tab（终端助手）零影响，折叠态由 aiToggle 自持 */
+.ai-panel.hg-hide { display: none !important; }
 /* v2.36 IDE 风大修（VS Code / Linear 参考）：面板六分区/窗格/输入状态区统一
    视觉语言——①状态色全部走 --hgd-* 语义变量（运行绿/完成灰/失败红/中断橙/
    等待蓝，见文件上方 html 块），替换写死的 #22A55F；②计时/计数继承
    tabular-nums（秒表跳动不再抖布局）；③层次靠 bg-panel→bg-card→hover 微染
    分层，边框降为发丝级；④可点行 hover 淡染 + 150ms 过渡。
-   间距节奏：面板 12/14 · 卡片 10/12 · 分区头下 8 · 行距 1~2。 */
-.hg-dyn-pane { display: none; flex-direction: column; gap: 8px; padding: 12px 14px;
+   间距节奏：面板 12/14 · 卡片 10/12 · 分区头下 8 · 行距 1~2。
+   v3.3：.hg-dyn-pane=分屏伪 tab sc（兼 .hg-sub-msgs 滚动容器），展示态随
+   sc 无 hidden 形态；padding 由 .hg-sub-body（10/12）承担不再自付 */
+.hg-dyn-pane { display: flex; flex-direction: column; gap: 8px;
   overflow-y: auto; font-variant-numeric: tabular-nums; }
-.ai-panel.hg-mode .hg-dyn-pane { display: flex; }
+
+/* ---- v3.2.31 会话动态胶囊：分屏唯一开关的角部浮标 ----
+   胶囊常驻 harness wrap 内（跨 tab 天然隐藏），色板全走 --hgd-*/主题变量，
+   零写死色；秒表 tabular-nums。 */
+
+.hg-dyn-capsule {
+  position: absolute; top: 10px; right: 14px; z-index: 6;
+  display: inline-flex; align-items: center; gap: 7px;
+  max-width: min(56%, 460px);
+  padding: 4px 12px; border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  background: color-mix(in srgb, var(--bg-panel) 90%, transparent);
+  backdrop-filter: blur(6px);
+  color: var(--fg); font-size: var(--fs-cap); font-family: inherit; line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer; box-shadow: 0 2px 10px rgba(0,0,0,.18);
+  transition: border-color .15s, box-shadow .15s, background-color .15s;
+}
+.hg-dyn-capsule:hover { border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--bg-card) 92%, transparent); }
+/* 展开态（面板已显示）：accent 染边提示「再点收回」——胶囊是开合唯一控制面 */
+.hg-dyn-capsule.open { border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 9%, var(--bg-panel)); }
+.hg-dyn-capsule .hg-caps-dot { flex: none; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--hgd-done); }
+.hg-dyn-capsule.run .hg-caps-dot { background: var(--hgd-run);
+  animation: hgDynPulse 1.6s ease-in-out infinite; }
+.hg-dyn-capsule.wait .hg-caps-dot { background: var(--hgd-wait);
+  animation: hgDynPulse 1.6s ease-in-out infinite; }
+.hg-dyn-capsule .hg-caps-st { flex: none; font-weight: 600; white-space: nowrap; }
+.hg-dyn-capsule .hg-caps-dur { flex: none; font-family: var(--font-mono);
+  font-size: 11px; color: var(--muted); }
+.hg-dyn-capsule.run .hg-caps-dur { color: var(--hgd-run); }
+.hg-dyn-capsule.wait .hg-caps-dur { color: var(--hgd-wait); }
+.hg-dyn-capsule .hg-caps-ag { flex: 0 1 auto; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; color: var(--accent); }
+.hg-dyn-capsule .hg-caps-ctx { flex: none; font-family: var(--font-mono);
+  font-size: 11px; color: var(--accent); }
+.hg-dyn-capsule .hg-caps-ctx.warn { color: var(--h-warn); font-weight: 600; }
+.hg-dyn-capsule .hg-caps-dur:empty, .hg-dyn-capsule .hg-caps-ag:empty,
+.hg-dyn-capsule .hg-caps-ctx:empty { display: none; }
+/* bug5③ 兜底：子代理运行中且窗格未开——胶囊高亮脉冲（绝不静默后台） */
+.hg-dyn-capsule.attn { border-color: var(--accent);
+  animation: hgCapsAttn 1.6s ease-in-out infinite; }
+@keyframes hgCapsAttn {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 40%, transparent); }
+  50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 12%, transparent); }
+}
 
 /* ---- 分区卡片骨架 ---- */
 .hg-dyn-sec {
@@ -3441,6 +3520,9 @@ html {
   user-select: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   max-width: 90%; }
 .hg-spin-row { display: flex; align-items: center; gap: 8px; justify-content: center;
+  /* v3.3.1：视觉恒垫底——flow 是 flex 列，spinner 常在内容之前被 append（busy
+     快照/重建残留、乐观渲染时序），DOM 位置不可控，order 强制它永远在最下 */ 
+  order: 999999;
   padding: 10px 0 6px; color: var(--muted); font-size: var(--fs-xs); }
 .hg-spin { width: 12px; height: 12px; border-radius: 50%;
   border: 2px solid color-mix(in srgb, var(--muted) 35%, transparent);
@@ -3578,7 +3660,12 @@ html {
    淡染细条；计时数字继承 tabular-nums */
 .hg-subpane {
   display: none; flex-direction: row; flex: none;
-  width: 320px; min-width: 220px; max-width: 640px;
+  /* v3.2.31：真分屏——宽度由 JS 按聊天区总宽百分比（25%~75%，默认 50%）
+     计算（14-subpane _hgSubPctApply），CSS 只保留窄窗地板，640px 上限拆除。
+     v3.2.31R（复审4）：CSS 兜底分母对齐 JS 口径——width:50% 的分母是 .hg
+     全宽（含 232px 会话栏），后台 tab 自动开窗格（wrap 隐藏 JS 不落 px）
+     切回后偏差 ~116px；calc 扣除会话栏后取半=聊天区总宽的 50% */
+  width: calc((100% - 232px) * 0.5); min-width: 240px;
   border-left: 1px solid var(--border); background: var(--bg-panel);
   min-height: 0; font-variant-numeric: tabular-nums;
 }
@@ -3671,6 +3758,29 @@ html {
   border-radius: 3px; padding: 0 3px; }
 .hg-sub-replay-note { font-size: var(--fs-xs); color: var(--muted);
   padding: 3px 6px; border-left: 2px solid var(--border); opacity: .9; }
+
+/* ---- v2.37R6+：回放长文本行默认折叠（>500 字符或 ≥8 行）----
+   折叠态 clip ~8 行高+底部渐隐；「展开 ∨/收起 ∧」钮走 20-main body 委托。
+   纯视觉层：行数统计/cap 不受影响，重拉重建后默认折叠。色板全走主题变量 */
+.hg-sub-fold-wrap { min-width: 0; }
+.hg-sub-fold-wrap .hg-sub-fold-body { position: relative; min-width: 0; }
+.hg-sub-fold-wrap.folded .hg-sub-fold-body {
+  max-height: calc(1.6em * 8); overflow: hidden;
+}
+.hg-sub-fold-wrap.folded .hg-sub-fold-body::after {
+  content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 2.4em;
+  background: linear-gradient(transparent, color-mix(in srgb, var(--bg-panel) 92%, transparent));
+  pointer-events: none;
+}
+/* v2.37R6 复审修复：展开态（20-main toggle 'open'）——解除裁剪与渐隐，
+   否则「展开 ∨」只翻按钮文案、正文永远被裁在 8 行 */
+.hg-sub-fold-wrap.open .hg-sub-fold-body {
+  max-height: none; overflow: visible;
+}
+.hg-sub-fold-wrap.open .hg-sub-fold-body::after { display: none; }
+.hg-sub-fold-tog { display: inline-block; font-size: var(--fs-xs); color: var(--accent);
+  cursor: pointer; user-select: none; padding: 1px 4px; border-radius: 4px; }
+.hg-sub-fold-tog:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 
 /* ---- 窗格重设计（docs/子代理窗格UI重设计.md P1+P2）---- */
 /* P1-1 单-tab ✕：默认隐形，hover 整个 tab 才浮现（运行中防误触）；✕ 自身
@@ -3805,6 +3915,10 @@ html {
 .h-tl::before { content: ''; position: absolute; left: 0; top: 6px; bottom: 6px;
   width: 1px; background: color-mix(in srgb, var(--border) 90%, transparent); }
 .h-tl > .h-tool, .h-tl > .h-tool-res, .h-tl > .h-tl-grp { position: relative; }
+/* v3.3.3（用户实锤「bash 未对齐」）：终端卡与思考段/查阅组同几何——工具行
+   不再 shrink-to-content（align-self:flex-start 基类），stretch 全宽使所有
+   时间线行共享同一左缘/右缘；收起态透明无边（开盒仅 .open 展开时出现） */
+.h-tl > .h-tool { align-self: stretch; max-width: 100%; }
 /* v3.1h（用户实锤 Bash 超长行撑破窗口）：.h-tl 是 flex column，子项
    min-width:auto 让 nowrap 内容撑破 max-width——全链放开收缩约束，
    行宽上限=时间线宽（组已 width:min(820px,100%) 自适应窗口） */
@@ -3894,9 +4008,9 @@ html {
   text-overflow: ellipsis; white-space: nowrap; }
 .hg-sub-dir-time { flex: none; font-size: var(--fs-2xs); color: var(--muted);
   opacity: .7; margin-top: 2px; font-family: var(--font-mono); }
-.hg-sub-tab.dir { color: var(--muted); }
-.hg-sub-tab.dir .hg-sub-dir-tabico { margin-right: 4px; font-size: 11px; }
-.hg-sub-tab.dir.active { color: var(--fg); }
+.hg-sub-tab.dir, .hg-sub-tab.dyn { color: var(--muted); }
+.hg-sub-tab .hg-sub-dir-tabico { margin-right: 4px; font-size: 11px; }
+.hg-sub-tab.dir.active, .hg-sub-tab.dyn.active { color: var(--fg); }
 /* 面板 C 区目录入口（⏱ 已结束 N ›） */
 .hg-dyn-dirbtn { margin-left: auto; border: 0; background: none; cursor: pointer;
   font-size: var(--fs-2xs); color: var(--muted); padding: 1px 4px; border-radius: 4px; }

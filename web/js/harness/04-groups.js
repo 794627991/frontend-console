@@ -184,6 +184,9 @@
     // 已有活的组对象且占位在屏（从未切走）→ 不用救，重开 timer 反而双计时
     const root = _hgFlow.querySelector('.h-grp:last-of-type:not([data-finalized])');
     if (_HG.grp && _HG.grp.root === root && _HG.grp.ph && _HG.grp.ph.isConnected) return;
+    // v3.3.2(D3)：待答 ask 卡在场=可见占位（等用户选择），不再复暖「正在
+    // 思考」气泡——两者并存是状态谎言
+    if (_hgWrap && _hgWrap.querySelector('.h-ask:not(.done)')) return;
     if (!root) {
       // 尾部没有活组 = transcript 重建的 busy 会话末行是 user（renderUser
       // (live=false) 不建组）——等价于「刚发完消息」：建组 + 占位。
@@ -296,9 +299,24 @@
       // 的「已工作」（对照 ZCode chat.history.worked 的无时长形态），否则旧
       // 会话刷新后「已工作」会随墙上时钟继续增长
       let _dur;
-      if (typeof opt.durMs === 'number' && opt.durMs > 0) _dur = opt.durMs;
-      else if (typeof opt.endTs === 'number' && opt.endTs > 0 && g.t0) _dur = Math.max(0, opt.endTs - g.t0);
-      else if (!_hist && g.t0) _dur = Math.max(0, Date.now() - g.t0);
+      // v3.3.2(D1/F1)：重开组（_hgTurnReopen）的 t0 是回拨值（now−前段工时），
+      // endTs/本地时钟两路的差值已含前段——不得再叠 _rd（双重累计复利发散，
+      // 全审 F1 实锤）；且要把「定稿→重开」的空闲段剔除，工作窗从重开时刻
+      // （reopenAt/dataset.rTs）起算。只有 durMs 事实源（CLI 只报本段）补累计链
+      const _rd = g.reopDur || +((g.head && g.head.dataset.rd) || 0);
+      const _rAt = g.reopenAt || +((g.head && g.head.dataset.rTs) || 0) || 0;
+      if (typeof opt.durMs === 'number' && opt.durMs > 0) {
+        _dur = _rd > 0 ? _rd + opt.durMs : opt.durMs;
+      } else if (_rAt && _rd > 0) {
+        if (typeof opt.endTs === 'number' && opt.endTs > 0)
+          _dur = _rd + Math.max(0, opt.endTs - _rAt);
+        else if (!_hist) _dur = _rd + Math.max(0, Date.now() - _rAt);
+        // else：回放态无事实（回放组不走 reopen，理论不达）——落无数字「已工作」
+      } else if (typeof opt.endTs === 'number' && opt.endTs > 0 && g.t0) {
+        _dur = Math.max(0, opt.endTs - g.t0);
+      } else if (!_hist && g.t0) {
+        _dur = Math.max(0, Date.now() - g.t0);
+      }
       g.head.dataset.dur = String(_dur || 0);
       if (g.headLabel) {
         const _txt = _dur != null ? (opt.interrupted ? ' · ' : ' ') + _hgTurnDurTxt(_dur) : '';
@@ -370,6 +388,9 @@
       if (g.exec && g.exec.box.dataset.userToggled !== '1' && isNearBottom()) g.exec.box.classList.remove('open');
     }
     g.root.dataset.finalized = '1';   // v2.18.1：已定稿——grpEnsure 回扫不得接回
+    // v3.3.2(D2)：定稿墙钟——_hgTurnReopen 的 30min 护栏事实源（回放态不吃
+    // 时钟原则同工时阶梯；老快照无 fTs 时 reopen 放行=宽口径，铁律优先）
+    if (!_hist) g.root.dataset.fTs = String(Date.now());
     _HG.grp = null;      // 下轮 renderUser 开新组
   }
   // v3.2.1R2(R2-1)：终结类事件（result/interrupted/exit）的尾组认回——快照
@@ -387,6 +408,48 @@
       return true;
     }
     return false;
+  }
+  // ==================== v3.3.2：机器续接的回合重开（P4 ask / P7 协作回传·任务通知）====
+  // 铁律：只有用户手打输入才是回合边界。ask 答后 / 协作回传 / 任务通知唤醒的
+  // 继续工作回到原回合——最后一个已定稿组重开（un-finalize）：摘 finalized、
+  // 秒表按定稿工时累计链续走（t0=now−前段工时，等待/空闲段不计入工时——区别
+  // 于「原 t0 续走」的虚增口径）、折叠体展开。30min 护栏（fTs 定稿墙钟）：真实
+  // 工作期断层后的机器唤醒开新头才诚实；老快照无 fTs 放行（宽口径，铁律优先）。
+  // 历史重建期禁用（历史侧靠 sysnote/peer 行不定稿自然合并）。幂等：活组直接返。
+  const _HG_REOPEN_MAX_GAP_MS = 30 * 60 * 1000;
+  function _hgTurnReopen() {
+    if (_HG.openState) return null;
+    if (_HG.grp && _HG.grp.root && _HG.grp.root.isConnected) return _HG.grp;
+    const root = [..._hgFlow.querySelectorAll('.h-grp')].pop();
+    if (!root) return null;
+    const tb = root.querySelector(':scope > .h-grp-proc > .h-turn-body > .h-drawer.think');
+    if (!tb || !root.querySelector('.h-tl')) return null;   // 旧结构/异常组不接（同 _hgTailAdopt 判据）
+    if (!root.dataset.finalized) {          // 未定稿——grpEnsure 认回即可，这里只补头秒表
+      _HG.grp = grpFromDom(root, tb, null);
+      _turnHeadShow(_HG.grp);
+      return _HG.grp;
+    }
+    const _fTs = +(root.dataset.fTs || 0);
+    if (_fTs && Date.now() - _fTs > _HG_REOPEN_MAX_GAP_MS) return null;
+    delete root.dataset.finalized;
+    const g = grpFromDom(root, tb, null);
+    const _acc = Math.max(0, +((g.head && g.head.dataset.dur) || 0));   // 前段定稿工时
+    g.reopenAt = Date.now();                // F1：工作窗起点（finalize 剔空闲段用）
+    g.t0 = Date.now() - _acc;               // 累计链：秒表从前段工时续走
+    g.reopDur = _acc;
+    if (g.head) {
+      g.head.dataset.t0 = String(g.t0);     // 显式回写（_turnHeadShow 只在头曾隐藏时写 t0）
+      g.head.dataset.rd = String(_acc);     // 随快照走——恢复后 result 仍能合计
+      g.head.dataset.rTs = String(g.reopenAt);
+      g.head.dataset.dur = String(_acc);
+      if (g.headLabel) g.headLabel.textContent = '工作中 ' + _hgFmtDur(_acc);   // interval 首跳要 1s
+    }
+    if (g.headBody) g.headBody.classList.remove('closed');
+    // v3.3.2(D9)：合并回合的末段 result 会重插查阅胶囊——旧段残留必删防双条
+    g.root.querySelectorAll('.h-turnsum').forEach(x => x.remove());
+    _HG.grp = g;
+    _turnHeadShow(g);                       // 重启秒表（定稿已清 headTimer）
+    return g;
   }
   // v3.2：回合工时文案（ZCode formatConversationWorkDuration 口径：N 秒/N 分 N 秒/N 时 N 分）
   function _hgTurnDurTxt(ms) {

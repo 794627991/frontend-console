@@ -29,8 +29,7 @@ let queueEl;
 let quoteEl;
 let quoteBodyEl;
 let qDrag;
-let dynEl;
-let _hgAiPanel;
+let dynEl;              // v3.3：动态页伪 tab sc（_subDynOpen 懒建赋值；未建=null）
 let _hgRolesCache;
 let _dynRaf;
 let _agentModelsTried;

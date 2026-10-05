@@ -11,7 +11,9 @@
         // 即时亮运行态不等轮询；revive 重启的新进程首 init 不在此列（闭包级
         // 计数跨 revive 连续，靠后端 send() 占位的路径不受影响）。
         _HG.initN = (_HG.initN || 0) + 1;
-        if (_HG.initN > 1 && !_HG.busy) setBusy(true);
+        // v3.3.2(P7)：init#2=CLI 自发新回合（机器唤醒：后台代理完成/协作回传）
+        // ——亮运行态的同时重开上一回合（30min 护栏），续跑工作回原组不切头
+        if (_HG.initN > 1 && !_HG.busy) { setBusy(true); _hgTurnReopen(); }
         else if (!_HG.busy) setBusy(false);
       } else if (sub === 'task_started' || sub === 'task_progress'
                  || sub === 'task_notification') {
@@ -220,7 +222,8 @@
       // v2.35（P0-1 兜底）：主链 assistant 事件到达而前端还认为空闲 = 一条
       // 没观察到起点的回合正在跑（后端同规则已置 busy，这里即时亮，不等
       // 5s 自愈轮询——轮询间隔内徽章空窗正是用户看到的「运行状态消失」）
-      if (!isSub && !_HG.busy && _HG.sid) setBusy(true);
+      // v3.3.2(P7)：空闲期 assistant 到达多为机器唤醒续跑——同步重开上一回合
+      if (!isSub && !_HG.busy && _HG.sid) { setBusy(true); _hgTurnReopen(); }
       // v2.20：网关下 result 事件的 usage 常缺失（用户实测环恒 0%）——
       // assistant 事件的 message.usage 同口径（转写实测有值：input+cache_read+
       // cache_creation），到达即刷环，不依赖 result
@@ -465,6 +468,19 @@
                    (abody ? abody[1] : agMsg.replace(/<[^>]+>/g, '')).trim());
         return;
       }
+      // v3.3.2(D6)：机器注入的可见性——task-notification/system-reminder 在
+      // live 侧此前静默丢弃（主流零锚点）。渲染弱化系统行入组（不切割回合、
+      // 不渲染用户气泡）；完整开闭标签对才判（手打半个标签不误伤，v2.37R2 哲学）
+      {
+        const _snd = (typeof c0 === 'string') ? c0
+          : (Array.isArray(c0) && !c0.some(b => b && b.type === 'tool_result')
+             ? ((c0.find(b => b && b.type === 'text' && typeof b.text === 'string') || {}).text || '')
+             : '');
+        const _snT = String(_snd || '').trim();
+        const _snKind = (/^<task-notification[^>]*>[\s\S]*<\/task-notification>$/.test(_snT) && 'task-notification')
+          || (/^<system-reminder[^>]*>[\s\S]*<\/system-reminder>$/.test(_snT) && 'system-reminder') || '';
+        if (_snKind) { renderSysNote(_snKind, _snT); return; }
+      }
       // 用户真实消息打断工具 run；工具结果事件不动 run（rendersNothing 思想）
       if (!Array.isArray(c0) || !c0.some(b => b && b.type === 'tool_result')) closeRun();
       const hasToolResult = Array.isArray(c0) && c0.some(b => b && b.type === 'tool_result');
@@ -534,6 +550,7 @@
     _subReset();
     _HG.think = null; _HG.noScroll = false; _HG.openState = null;
     _HG.histLineTs = 0; _HG.histActTs = 0; _HG.thinkPend = null;   // v3.2.2 ts 账 + v3.2.5 pend 随清场作废
+    _HG.prevRowAt = 0; _HG.lastRowAt = 0;   // v3.3.1(F5)：事件时刻账随清场作废
     _HG.echoFast = null; _HG.seq = 0;
     _hgFlow.innerHTML = '';
     _hgRailSync();   // v3.2.10：本地清场后收轨
@@ -615,6 +632,12 @@
         if (it.seq <= _HG.seq) return;
         _HG.seq = it.seq;
       }
+      // v3.3.1：事件到达时刻账——prevRowAt=上一事件时刻（lastRowAt 尚未翻转）。
+      // 思考段时长的挂钟基准：think 与同消息 tool_use 同批到达，按本事件时刻
+      // 计时长恒 0 秒（用户实锤）；上一事件时刻≈真实思考/API 等待期。重放帧
+      //（seq 未过）不更新——重放不产生挂钟事实
+      _HG.prevRowAt = +(_HG.lastRowAt || 0) || 0;
+      _HG.lastRowAt = Date.now();
       // v3.1：信封先过前端投影（turn_*/subagent_*/input_* 与工具计数——
       // 新进程面板/回合摘要行的单一状态源；legacy 分派不受影响）
       try { _hgProjEvent(it); } catch(_) {}
@@ -649,12 +672,18 @@
         else if (!_hgEchoDup(it)) renderUser(it.text, it.images, it.files);
       }
       else if (it.kind === 'event') handleEvent(it.data);
-      else if (it.kind === 'peer') { grpFinalize(true); renderPeer(it.name, it.text, it.to); }
+      // v3.3.2(D4)：协作回传不切割回合（renderPeer v3.2.15 注释的既定意图，
+      // 分派处 grpFinalize 是残留矛盾）——先重开上一回合再渲染，回传唤醒的
+      // 续跑工作才落回原组；空闲期回传是 P7 主场景
+      else if (it.kind === 'peer') { _hgTurnReopen(); renderPeer(it.name, it.text, it.to); }
       else if (it.kind === 'renew') { grpFinalize(true); renderRenew(it.text); }
       // v2.34：审计警示（light 回合结算违规）——回合已终结，定稿当前组再出红卡
       else if (it.kind === 'audit') { renderAudit(it.text); _hgScrollBottom(); }   // v3.2.27：撤 grpFinalize——警示入工作区不分割回合
       else if (it.kind === 'raw') renderRaw(it.text);
-      else if (it.kind === 'ask') { grpFinalize(true); askRender(it); }
+      // v3.3.2(B/D3)：ask 不定稿——提问是当前工作状态的中途暂停（CLI 同回合
+      // 阻塞），答后续跑 grpEnsure 自然回原组；卡片入活组根（askRender 内），
+      // 占位气泡让位（等答卡片即占位）
+      else if (it.kind === 'ask') { const _g = _hgTurnReopen(); phRemove(_g || _HG.grp); askRender(it); }
       else if (it.kind === 'ask_done') askDone(it);
       else if (it.kind === 'interrupted') {
         endThinking(); _hgVisionSweep(true);

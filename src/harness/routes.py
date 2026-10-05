@@ -754,7 +754,9 @@ def harness_peer_result_check():
     for idx, p in enumerate(peers):
         found = False
         try:
-            since = int(sinces[idx] or 0)
+            # sinces 与 peers 按下标对齐；白名单过滤后仍按下标取——越界/非法
+            # 一律回退 0（不过滤），不让对齐残缺炸掉整批核实
+            since = int(sinces[idx]) if idx < len(sinces) else 0
         except (ValueError, TypeError):
             since = 0
         if main_dir:

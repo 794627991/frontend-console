@@ -26,28 +26,22 @@
         _HG.flowEl.scrollTop = _HG.flowEl.scrollHeight;
       }
     } catch(_) {}
-    // v2.31：harness tab 激活时右侧「终端助手」整面板换装为会话动态
+    // v2.31：harness tab 激活时右侧「终端助手」面板整体隐藏（v3.3 起会话
+    // 动态在 harness 内部分屏——旧换装形态废止，面板对 harness 零用处）
     if (isHg !== wasHg) _hgPanelMode(isHg);
     return _orig(portId);
   };
 })();
 
-// ---- v2.31 右侧面板换装开关（顶层定义：switchTab 包装器与 _harnessClose
+// ---- v3.3 右侧面板隐藏开关（顶层定义：switchTab 包装器与 _harnessClose
 // 都在闭包外调用它；只依赖 index.html 静态节点 #aiPanel，无闭包状态）----
-// v2.32：进入面板时通过钩子通知闭包（拉 roles + 刷面板）。钩子由
-// buildClaudeHarnessTab 闭包赋值；顶层脚本先于闭包执行，let 已初始化。
-let _hgPanelEnterHook = null;
+// 旧 _hgPanelMode 是「换装」（hg-mode 藏页签+改标题为会话动态）；会话动态
+// 迁入分屏伪 tab 后换装废止——harness tab 激活期间面板整体 display:none，
+// 切走/关 tab 即恢复原样（标题从未被改，折叠态由 aiToggle 自持不受影响）。
 function _hgPanelMode(on) {
   const p = document.getElementById('aiPanel');
   if (!p) return;
-  p.classList.toggle('hg-mode', !!on);
-  const tt = p.querySelector('.ai-head-detail .title');
-  const ts = p.querySelector('.ai-head-detail .sub');
-  if (tt) tt.textContent = on ? '会话动态' : '终端助手';
-  if (ts) ts.textContent = on ? '会话 · 任务 · 子代理 · 工具 · 回合' : '搜索 · 感知 · 分析 · 命令';
-  if (on && typeof _hgPanelEnterHook === 'function') {
-    try { _hgPanelEnterHook(); } catch(_) {}
-  }
+  p.classList.toggle('hg-hide', !!on);
 }
 
 function _harnessClose(portId) {
@@ -81,6 +75,11 @@ function _harnessClose(portId) {
   _HG.turnTicks = [];
   _HG.think = null; _HG.noScroll = false; _HG.openState = null;
   _HG.skills = null; _HG.models = null;   // 技能/模型映射下次进 tab 重新拉
+  // v3.3R（全审 P1/P2）：分屏窗格档随 tab 销毁全清（_subReset 全局函数）——
+  // 旧只靠切会话/SSE reset 路径顺带清；关 tab 直接销毁时 _sub.tabs/dynEl 残留
+  // 游离 DOM，重开 tab 若无历史会话自动 switchTo（全新用户/列表拉取失败）就
+  // 没有自愈入口，胶囊点击会被 stale 档案短路开出空分屏（__dyn__/__dir__ 同款）
+  try { _subReset(); } catch(_) {}
   _hgConn.tab.remove();
   _hgConn.wrap.remove();
   delete connections[portId];

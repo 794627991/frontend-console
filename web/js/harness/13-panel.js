@@ -4,16 +4,115 @@
       todoSeen: {}, todoRowId: null, agentsRpl: [] });
   }
   function renderSideStatus() {          // 事件驱动刷新入口（旧名保留：事件流调用点零改动）
-    if (!dynEl || _dynRaf) return;
+    // v3.3 分屏化：dynEl=动态页伪 tab 的 sc，懒建（_subDynOpen）前恒 null——
+    // 守卫只做 rAF 去重，回调内对 dynEl 判空。_hgDynRender 可跳，但目录重绘/
+    // 输入框占位/胶囊刷新必须照跑：动态页全程不开时它们是唯一活着的刷新面
+    //（旧写法 !dynEl 早退会把占位文案冻结、胶囊事件级刷新退化成 1s tick）。
+    if (_dynRaf) return;
     _dynRaf = requestAnimationFrame(() => {
-      _dynRaf = 0; _hgDynRender();
+      _dynRaf = 0;
+      if (dynEl) _hgDynRender();
       // v3.2R1(P2)：目录重绘并入同一 rAF——原先每个事件同步全量重建目录
       // innerHTML，事件密集时 mousedown/mouseup 之间行按钮被替换、点击落空；
       // 异常记 console（不静默吞）
       try { _subDirPaint(); } catch (e) { console.error('[hg-sub-dir] 目录刷新异常', e); }
+      try { _hgInputState(); } catch(_) {}       // v2.35：派生态变化连带输入框提示（v3.3 自 _hgDynRender 尾部上移：无条件执行）
+      try { _hgDynCapsulePaint(); } catch(_) {}  // v3.2.31：胶囊与视图同源刷新（同上）
     });
   }
   function _hgDynDirty() { renderSideStatus(); }   // 别名（setBusy/_hgDrawCtxRing 调；function 声明无 TDZ）
+  // ==================== v3.3：会话动态胶囊（分屏化）====================
+  // 胶囊=分屏唯一开关（常驻 harness wrap 内，跨 tab 天然隐藏）：运行态色点 +
+  // 状态词 + 计时 + 运行中子代理数/最新动作摘要 + 上下文%。点击行为四分支
+  // （绑定在 20-main）：子代理运行中直达其实况 tab / 空闲开分屏激活「动态」
+  // 伪 tab（__dyn__，14-subpane _subDynOpen 懒建）/ 动态页激活时再点收分屏 /
+  // 分屏开着在他 tab 时点切回动态页。旧右侧面板换装形态（hg-mode/hg-dyn-min/
+  // hg-dyn-caps 偏好）已整体废止。
+  // 子代理运行中且分屏未开时胶囊加 .attn 高亮脉冲（bug5③ 绝不静默后台兜底
+  // 之一）；.open（accent 染边）按「分屏开且动态页激活」派生。
+  function _hgCapsuleEl() {
+    return _hgWrap ? _hgWrap.querySelector('[data-hg-dyncaps]') : null;
+  }
+  function _hgDynCapsulePaint() {
+    const c = _hgCapsuleEl();
+    if (!c || !c.isConnected) return;
+    const agRun = _hgAgentsRunning();
+    const peerWait = !agRun && _hgPeerPending();
+    const run = !!_HG.busy || agRun || peerWait;
+    c.classList.toggle('run', run && !peerWait);
+    c.classList.toggle('wait', peerWait && !_HG.busy);
+    // 状态词+计时（与面板 A 区同口径派生）
+    let stTxt;
+    if (_HG.compacting) stTxt = '压缩中';
+    else if (_HG.busy && agRun) stTxt = '子代理执行中';
+    else if (_HG.busy) stTxt = '回复中';
+    else if (agRun) stTxt = '子代理后台执行中';
+    else if (peerWait) stTxt = '等待协作回传';
+    else if (!_HG.sid) stTxt = '新会话';
+    else if (_HG.alive) stTxt = '就绪';
+    else stTxt = '待命';
+    const stEl = c.querySelector('[data-hg-caps-st]');
+    if (stEl) stEl.textContent = stTxt;
+    const durEl = c.querySelector('[data-hg-caps-dur]');
+    if (durEl) {
+      let dur = '';
+      if (_HG.busy && _HG.actStart) dur = _hgFmtDur(Math.max(1, Math.round((Date.now() - _HG.actStart) / 1000)));
+      else if (agRun) {
+        const t0 = Math.min(...Object.values(_HG.agents).filter(a => !a.done).map(a => a.t0 || Date.now()));
+        dur = _hgFmtDur(Math.max(1, Math.round((Date.now() - t0) / 1000)));
+      } else if (peerWait) {
+        // v3.2.31R（复审3）：与 _hgPeerPending 同口径——unknown/stale 线不计
+        // 入计时（否则面板已排除的残留线把胶囊等待秒表虚高）
+        const t0 = Math.min(..._hgPeerLines().filter(el => !el.dataset.done
+            && el.dataset.unknown !== '1' && el.dataset.stale !== '1')
+          .map(el => +(el.dataset.t0 || 0) || Date.now()));
+        dur = _hgFmtDur(Math.max(1, Math.round((Date.now() - t0) / 1000)));
+      }
+      durEl.textContent = dur;
+    }
+    // 子代理：运行数 + 最新动作摘要（多代理并发时每 4s 轮换一条=滚动展示；
+    // 描述缺失回退类型名；悬浮 title 列全量）
+    const agEl = c.querySelector('[data-hg-caps-ag]');
+    if (agEl) {
+      if (agRun) {
+        const list = Object.values(_HG.agents).filter(a => !a.done)
+          .sort((x, y) => (x.t0 || 0) - (y.t0 || 0));
+        const last = list[Math.floor(Date.now() / 4000) % list.length] || {};
+        const act = String(last.desc || '').replace(/\s+/g, ' ').trim().slice(0, 30)
+          || (_AGENT_LABEL[last.type] || last.type || '');
+        agEl.textContent = '🤖' + list.length + (act ? ' ' + act : '');
+        agEl.title = list.map(a =>
+          '· ' + (_AGENT_LABEL[a.type] || a.type || '子代理') +
+          (a.desc ? '：' + String(a.desc).replace(/\s+/g, ' ').trim().slice(0, 60) : ''))
+          .join('\n') + '\n点击打开实况分屏';
+      } else agEl.textContent = '';
+    }
+    // 上下文%（hg-ctx localStorage 是数据总线——_hgDrawCtxRing 触发 renderSideStatus）
+    const cxEl = c.querySelector('[data-hg-caps-ctx]');
+    if (cxEl) {
+      let ctxTxt = '';
+      if (_HG.sid) {
+        try {
+          const v = JSON.parse(localStorage.getItem('hg-ctx:' + _HG.sid) || 'null');
+          if (v && v.used > 0) {
+            const pct = Math.round(v.used / (v.max || 256000) * 100);
+            ctxTxt = pct + '%';
+            cxEl.classList.toggle('warn', pct >= 80);
+          }
+        } catch(_) {}
+      }
+      cxEl.textContent = ctxTxt;
+    }
+    // bug5③ 兜底脉冲：子代理运行中且窗格未开（用户可能没注意到分屏已收）。
+    // v3.2.31R（复审5）：判定收紧为 ==='flex'（_subShow 的唯一打开态）——
+    // 旧 !=='none' 对未初始化窗格（style.display===''）误判为开，脉冲不亮
+    let paneOpen = false;
+    try { paneOpen = !!_subPaneEl && _subPaneEl.style.display === 'flex'; } catch(_) {}
+    // v3.3 展开态视觉改派生（旧 _hgDynCapsApply 直控已废）：分屏开着且激活的
+    // 是动态页=胶囊 accent 染边（提示「再点收起」）；他 tab 激活时不染
+    c.classList.toggle('open', paneOpen && _sub.active === _SUB_DYN);
+    c.classList.toggle('attn', agRun && !paneOpen);
+  }
   const _ROLE_AGENTS = new Set(['executor', 'coder', 'dev', 'reviewer', 'designer']);
   function _isCollabWrap(type, bg) {
     return !!bg && !_ROLE_AGENTS.has(String(type || ''));
@@ -75,7 +174,9 @@
     if (!tid) return;
     if (!_sub.tabs[tid]) {
       const a = (_HG.agents || {})[tid];
-      if (!a) { showBanner('历史子代理可从面板条目详情卡回放（转写数据源）', 2600); return; }
+      // v3.2.31（bug5②）：档案丢失（切会话往返）不再只弹 banner——打开子
+      // 智能体目录 tab，任何点击必有可见响应（目录列回放档可进入）
+      if (!a) { _subDirOpen(); showBanner('该子代理档案已随会话切换清空——已打开子智能体目录，可从列表回放', 3000); return; }
       const aid = a.taskId || a.agentId || '';
       if (a.done && aid) { _subReplay(tid, a.type, a.desc, aid); return; }
       // v3.2.6R2（用户实锤「运行过程中不能点开看」）：运行中重开也走全量
@@ -255,7 +356,8 @@
         } catch(_) {}
       }
     }
-    try { _hgInputState(); } catch(_) {}   // v2.35：派生态变化连带输入框提示
+    // v3.3：_hgInputState/_hgDynCapsulePaint 上移 renderSideStatus（dynEl 为 null
+    // 时也要执行——原挂这里会被动态页未建短路）
   }
   function _sec(z) { return dynEl.querySelector(`[data-hg-sec="${z}"]`); }
   const _THINK_TXT = { low: '低', medium: '中', high: '高', max: '最高' };
@@ -340,9 +442,10 @@
       if (r.enabled) {
         const light = _mode === 'light';
         rEl.textContent = light ? '轻主力' : '重主力';
+        // v3.3.1（用户定调）：称谓只留 轻主力/重主力+设计+审核，冗余修饰词摘除
         rEl.title = light
-          ? `轻主力模式（主会话直干所有活，点击打开配置面板）\n设计者 designer（只设计，不写代码不改文件）: ${_res.designer || _res.heavy || '…'}\n审计者 reviewer（只读对抗审核，PASS/FAIL）: ${_res.reviewer || _res.heavy || '…'}`
-          : `重模型直干模式（主会话直干所有活，点击打开配置面板）\n审计兜底：单次直改超分级线自动派审计者对抗审计\n审计者: ${_res.reviewer || _res.heavy || '…'}`;
+          ? `轻主力模式（点击打开配置面板）\n设计：${_res.designer || _res.heavy || '…'}\n审核：${_res.reviewer || _res.heavy || '…'}`
+          : `重主力直干模式（点击打开配置面板）\n审核兜底：${_res.reviewer || _res.heavy || '…'}`;
       } else {
         rEl.textContent = '关闭·直连';
         rEl.title = '直连干活（点击打开配置面板可启用三角色）';
@@ -595,4 +698,98 @@
     if (!files.length) return;
     sec.querySelector('[data-hg-d-flist]').innerHTML = files.map(f =>
       `<div class="hg-dyn-file" title="${esc(f)}">${esc(f.split(/[\\/]/).pop())}</div>`).join('');
+  }
+  // ==================== v3.3：动态页点击委托（自 20-main 构建期绑定迁出）====
+  // 旧形态骨架是 index.html 静态节点，构建期 dynEl.onclick 直绑；v3.3 骨架改
+  // _subDynOpen 懒建——绑定随骨架走：建 sc 时 sc.onclick = _hgDynClick（onclick
+  // 覆盖式：伪 tab 重建不叠加）。函数体自 20-main 原样搬移零改动，引用全是
+  // 全局符号（各 harness 编号脚本同一全局命名空间）。
+  function _hgDynClick(e) {
+    const cp = e.target.closest('[data-hg-copy]');
+    if (cp) { e.stopPropagation(); _hgCopyText(cp.dataset.hgCopy); return; }
+    // v3.1：进程面板分组头折叠开关（已完成/待处理两组，状态存 _HG.dyn）
+    const pt = e.target.closest('[data-hg-proc-tgl]');
+    if (pt) {
+      e.stopPropagation();
+      const d = _hgDyn();
+      d[pt.dataset.hgProcTgl === 'done' ? 'procDoneOpen' : 'procPendOpen']
+        = !(d[pt.dataset.hgProcTgl === 'done' ? 'procDoneOpen' : 'procPendOpen']);
+      renderSideStatus();
+      return;
+    }
+    // v3.2：子代理目录入口（区头「⏱ 已结束 N ›」）→ 打开目录伪 tab
+    const db = e.target.closest('[data-hg-agdir]');
+    if (db) { e.stopPropagation(); _subDirOpen(); return; }
+    // v2.38：详情卡「回放该子代理过程」→ 回放窗格（转写数据源）
+    const rb = e.target.closest('[data-hg-replay]');
+    if (rb) {
+      e.stopPropagation();
+      const rid = rb.dataset.hgReplay;
+      const a = (_HG.agents || {})[rid]
+        || ((_HG.dyn && _HG.dyn.agentsRpl) || []).find(x => x.rid === rid) || {};
+      if (rb.dataset.hgReplayCollab) {
+        _subReplay(rid, rb.dataset.hgReplayType || a.type || '协作', a.desc || '', '');
+      } else {
+        const aid = rb.dataset.hgReplayAid || a.taskId || a.agentId || '';
+        if (!aid) { showBanner('该子代理没有 agentId 记录，无法回放', 2600); return; }
+        _subReplay(rid, rb.dataset.hgReplayType || a.type || 'Task', a.desc || '', aid);
+      }
+      return;
+    }
+    const acp = e.target.closest('[data-hg-actcp]');
+    if (acp) {
+      e.stopPropagation();
+      const a = ((_HG.dyn || {}).acts || []).find(x => x.tid === acp.dataset.hgActcp);
+      if (a) _hgCopyText(a.preview || '');
+      return;
+    }
+    if (e.target.closest('[data-hg-act]')) { _hgJumpRow(e.target.closest('[data-hg-act]').dataset.hgAct); return; }
+    if (e.target.closest('[data-hg-todo]')) {
+      const rid = (_HG.dyn || {}).todoRowId;
+      if (rid) _hgJumpRow(rid);
+      return;
+    }
+    // v2.35（P0-2/P1-5）：运行中子代理行点击=重开实时窗格并切 tab（窗格已开
+    // =切 tab）；已完成行保持展开详情卡；协作代理行=跳消息流对应转交线
+    const pr = e.target.closest('[data-hg-peer-row]');
+    if (pr) {
+      const lines = _hgPeerLines();
+      const pend = lines.filter(el => !el.dataset.done);
+      const target = (pend.length ? pend : lines).slice(-1)[0];
+      // v2.49：线被隐藏（SendMessage 协作归一段形态）——跳转目标改协作段
+      // 本体：展开（含折叠态记忆）+居中+高亮；段不存在回落原线跳转
+      if (target && target.style.display === 'none') {
+        // allowDone=true（v2.54R）：跳转目标是历史段（多为已完成），live-only 会落空
+        const seg = _hgCollabSegFind(target.dataset.peer, true);
+        if (seg) {
+          seg.classList.remove('collapsed');
+          _hgSubSaveOpen(seg, true);
+          seg.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          seg.classList.remove('hg-dyn-jump');
+          void seg.offsetWidth;
+          seg.classList.add('hg-dyn-jump');
+          setTimeout(() => seg.classList.remove('hg-dyn-jump'), 1600);
+          return;
+        }
+      }
+      if (target) {
+        target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        target.classList.remove('hg-dyn-jump');
+        void target.offsetWidth;
+        target.classList.add('hg-dyn-jump');
+        setTimeout(() => target.classList.remove('hg-dyn-jump'), 1600);
+      } else {
+        showBanner('该协作没有对应的转交线（无消息流记录）', 2400);
+      }
+      return;
+    }
+    const ag = e.target.closest('[data-hg-ag]');
+    if (ag) {
+      if (ag.classList.contains('run')) { _subReopen(ag.dataset.hgAg); return; }
+      _hgAgentToggle(ag);
+      return;
+    }
+    // v2.37（P1-D）：三角色行点击=打开配置面板（开关进面板管理，防误触；
+    // 旧行为是点击直接切开关，用户明确不要）
+    if (e.target.closest('[data-hg-d-roles]')) { openRolesCfg(); return; }
   }

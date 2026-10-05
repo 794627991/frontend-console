@@ -6,6 +6,69 @@
   // 数据源=live 档案 _HG.agents + 回放档案 dyn.agentsRpl（对照 useSessionSubagents
   // 的 running/ended 两段口径，我们无分页——量级远小于 ZCode 云端）
   const _SUB_DIR = '__dir__';
+  // ==================== v3.3：会话动态页（分屏化，常驻伪 tab）====================
+  // 右侧 #aiPanel 换装面板整体废止（21-shell _hgPanelMode 改纯隐藏），六分区
+  // 骨架迁入分屏伪 tab __dyn__（同 __dir__ 生命周期：_subReset 清、按需重建、
+  // 6-tab 逐出豁免、无 ✕；渲染序恒在队首）。骨架原为 index.html 静态节点
+  //（v2.30 教训：页面加载早期向 harness wrap 内绑定会扑空）——懒建无此问题：
+  // 绑定发生在用户点胶囊时，分屏 DOM 必然在场。sc 上 setAttribute('data-hg-dyn')
+  // 让 20-main tick 的自愈重绑（querySelector('[data-hg-dyn]')）路径继续成立。
+  const _SUB_DYN = '__dyn__';
+  const _HG_DYN_SKELETON =
+    `<div class="hg-sub-dir-head">会话动态</div>` +
+    `<section class="hg-dyn-sec" data-hg-sec="stat">` +
+      `<div class="hg-dyn-strow">` +
+        `<span class="hg-dyn-dot"></span>` +
+        `<span class="hg-dyn-stlabel" data-hg-d-st>就绪</span>` +
+        `<b class="hg-dyn-dur" data-hg-d-stt></b>` +
+      `</div>` +
+      `<div class="hg-dyn-kv"><span class="k">模型</span><span class="v" data-hg-d-model>—</span></div>` +
+      `<div class="hg-dyn-kv"><span class="k">思考</span><span class="v" data-hg-d-think>默认</span></div>` +
+      `<div class="hg-dyn-kv"><span class="k">权限</span><span class="v" data-hg-d-perm>—</span></div>` +
+      `<div class="hg-dyn-kv"><span class="k">三角色</span><span class="v act" data-hg-d-roles>…</span></div>` +
+      `<div class="hg-dyn-kv"><span class="k">目录</span><span class="v" data-hg-d-cwd>~</span></div>` +
+      `<div class="hg-dyn-kv ctx"><span class="k">上下文</span><span class="v" data-hg-d-ctx>待统计</span></div>` +
+    `</section>` +
+    `<section class="hg-dyn-sec" data-hg-sec="todos" hidden>` +
+      `<div class="hg-dyn-sec-head">进程<span class="hg-dyn-pill" data-hg-d-tdone>0/0</span></div>` +
+      `<div class="hg-dyn-bar"><i data-hg-d-tbar></i></div>` +
+      `<div class="hg-dyn-todos" data-hg-d-tlist></div>` +
+    `</section>` +
+    `<section class="hg-dyn-sec" data-hg-sec="agents" hidden>` +
+      `<div class="hg-dyn-sec-head">子代理 / 协作<span class="hg-dyn-pill run" data-hg-d-agrun hidden>0 运行中</span><button class="hg-dyn-dirbtn" data-hg-agdir hidden title="打开子智能体目录（正在运行/已结束全列表）"></button></div>` +
+      `<div data-hg-d-aglist></div>` +
+    `</section>` +
+    `<section class="hg-dyn-sec" data-hg-sec="acts" hidden>` +
+      `<div class="hg-dyn-sec-head">最近工具</div>` +
+      `<div class="hg-dyn-acts" data-hg-d-acts></div>` +
+    `</section>` +
+    `<section class="hg-dyn-sec" data-hg-sec="turns" hidden>` +
+      `<div class="hg-dyn-sec-head">回合历史<span class="hg-dyn-sub" data-hg-d-tsum></span></div>` +
+      `<div class="hg-dyn-turns" data-hg-d-tlist></div>` +
+    `</section>` +
+    `<section class="hg-dyn-sec" data-hg-sec="files" hidden>` +
+      `<div class="hg-dyn-sec-head">当前文件</div>` +
+      `<div class="hg-dyn-files" data-hg-d-flist></div>` +
+    `</section>`;
+  function _subDynOpen() {               // 动态页伪 tab（懒建；胶囊点击的展开面）
+    if (!_subPaneEl) return;
+    if (!_sub.tabs[_SUB_DYN]) {
+      const sc = document.createElement('div');
+      sc.className = 'hg-sub-msgs hg-dyn-pane'; sc.dataset.tid = _SUB_DYN;
+      sc.setAttribute('data-hg-dyn', '');
+      sc.innerHTML = _HG_DYN_SKELETON;
+      _sub.tabs[_SUB_DYN] = { label: '动态', type: '__dyn__', desc: '会话动态', sc,
+                              run: false, err: false, replay: false, model: '' };
+      _sub.order.push(_SUB_DYN);
+      _subBodyEl.appendChild(sc);
+      sc.onclick = _hgDynClick;          // 覆盖式绑定（伪 tab 重建不叠加）；先绑 dynEl 再渲（首帧不扑空）
+      dynEl = sc;
+    }
+    _subShow(); _subTabsPaint(); _subActivate(_SUB_DYN);
+    renderSideStatus();
+    _hgRolesFetch(); _hgAgentModelsFetch();   // 原 _hgPanelEnterHook 职责随开随拉（点击天然节流）
+    _sub.manual = true;                // 用户主动展开——回合终结不自动收（同 _subDirOpen/_subReopen 口径）
+  }
   function _subDirRows() {
     const rows = [];
     for (const tid in (_HG.agents || {})) {
@@ -31,6 +94,11 @@
     const title = ((_AGENT_LABEL[r.type] || r.type || '子代理') +
       (r.desc ? ' · ' + r.desc : '')).slice(0, 80);
     const sum = String(r.result || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+    // v3.2.31（bug5① 同源）：result 复述描述（CLI 透传摘要=description）时
+    // 标题与摘要行同文——重复观感，摘要行让位。v3.2.31R（复审6）：复用
+    // 08-tools _hgBriefDupDesc（显式两串入参），不再各持一份实现。
+    // 已知权衡（记录不改）：120 字截断的前缀判定是启发式，跨界同文可能漏判
+    const _dupDesc = !!sum && !!r.desc && _hgBriefDupDesc(r.desc, sum);
     // v3.2.6（ZCode 模式）：运行行时间位改秒表（对照 ConversationStatusPanel
     // 的 elapsed 计数——1s 重绘由 _subDirTick 驱动）；已结束保持相对时间
     const t = r.done ? (r.doneAt || 0) : (r.t0 || 0);
@@ -42,7 +110,7 @@
       `<span class="hg-sub-dir-main"><span class="hg-sub-dir-t1">` +
       `<span class="hg-sub-dir-title">${esc(title)}</span>` +
       `<span class="hg-sub-dir-st">${stTxt}${r.bg ? ' · 后台' : ''}${r.collab ? ' · 协作' : ''}</span></span>` +
-      (sum ? `<span class="hg-sub-dir-sum">${esc(sum)}${String(r.result || '').trim().length > 120 ? '…' : ''}</span>` : '') +
+      (sum && !_dupDesc ? `<span class="hg-sub-dir-sum">${esc(sum)}${String(r.result || '').trim().length > 120 ? '…' : ''}</span>` : '') +
       `</span>` +
       (timeTxt ? `<span class="hg-sub-dir-time">${esc(timeTxt)}</span>` : '') +
       `</button>`;
@@ -124,13 +192,48 @@
       if (tb && tb.t && tb.t.tick) { clearInterval(tb.t.tick); tb.t.tick = null; }
     }
     _sub.tabs = {}; _sub.order = []; _sub.active = null; _sub.manual = false;
+    dynEl = null;   // v3.3：动态页 sc 随清场销毁——防渲染进游离节点（重开由 _subDynOpen 重建）
     if (_subPaneEl) { _subPaneEl.style.display = 'none'; _subTabsEl.innerHTML = ''; _subBodyEl.innerHTML = ''; }
+  }
+  // ==================== v3.2.31：子代理窗格真分屏（需求2）====================
+  // 窗格从 220~640px 窄侧栏升级为半屏分屏：宽度记忆改为百分比 hg-subpane-pct
+  // （25%~75%，默认 50%），分母=聊天区总宽（.hg 宽 − 左侧会话栏宽，即
+  // .hg-main + .hg-subpane）——「左右各约 50%」对用户视角的聊天区成立。
+  // 拖拽（20-main _subRes mousedown）同口径计算。旧 hg-subpane-w（px）首次
+  // 按 currentRegion 折算迁移一次，之后只读写 pct 键。
+  function _hgSubRegion() {   // 聊天区总宽（px）；wrap 隐藏/未布局时 ≤0
+    const hg = _hgWrap && _hgWrap.querySelector('.hg');
+    if (!hg) return 0;
+    const side = hg.querySelector('.hg-side');
+    return hg.clientWidth - ((side && side.offsetWidth) || 0);
+  }
+  function _hgSubPctGet() {
+    try {
+      const p = parseFloat(localStorage.getItem('hg-subpane-pct'));
+      if (p >= 25 && p <= 75) return p;
+      const w = +(localStorage.getItem('hg-subpane-w') || 0);
+      if (w >= 220 && w <= 640) {
+        const region = _hgSubRegion();
+        if (region > 0) {
+          const pct = Math.min(75, Math.max(25, w / region * 100));
+          try { localStorage.setItem('hg-subpane-pct', pct.toFixed(2)); } catch(_) {}
+          return pct;
+        }
+      }
+    } catch(_) {}
+    return 50;   // 默认真分屏：左右各半
+  }
+  function _hgSubPctApply(pct) {
+    if (!_subPaneEl) return;
+    const region = _hgSubRegion();
+    // wrap 隐藏（后台 tab 收到 Task 派发自动开窗格）时不写死 px——clientWidth
+    // 恒 0 会把宽度焊成几十 px，切回 tab 窗格缩成一竖条；保持 CSS 默认 50%
+    if (region <= 220) return;
+    _subPaneEl.style.width = Math.round(region * pct / 100) + 'px';
   }
   function _subShow() {
     if (!_subPaneEl || _subPaneEl.style.display !== 'none') return;
-    let w = 0;
-    try { w = +(localStorage.getItem('hg-subpane-w') || 0); } catch(_) {}
-    _subPaneEl.style.width = (w >= 220 && w <= 640 ? w : 320) + 'px';
+    _hgSubPctApply(_hgSubPctGet());
     _subPaneEl.style.display = 'flex';
   }
   // ==================== v3.2.6：窗格时间线（ZCode 子智能体会话模式）====================
@@ -222,20 +325,61 @@
       '<div class="h-think-seg-body"></div>';
     return seg;
   }
-  function _subTlTextRow(text) {
-    const d = document.createElement('div');
-    d.className = 'h-msg asst';
-    d.appendChild(mdBubble(text));
-    return d;
+  function _subTlTextRow(text, foldable) {
+    // v2.37R6+（用户实测）：长文本（派发 prompt 全文等）默认折叠——阈值
+    // 500 字符或 8 行，折叠态 clip ~8 行高 + 「展开 ∨/收起 ∧」钮（20-main
+    // body 委托切换 .open）。折叠纯视觉层，行数统计/cap 不受影响；回放内容
+    // 重拉可重建，折叠态不持久化（默认折叠即可）。短行与实时行不受影响。
+    const long = String(text || '').length > 500
+      || (String(text || '').match(/\n/g) || []).length >= 8;
+    if (!foldable || !long) {
+      const d = document.createElement('div');
+      d.className = 'h-msg asst';
+      d.appendChild(mdBubble(text));
+      return d;
+    }
+    const wrap = document.createElement('div');
+    wrap.className = 'hg-sub-fold-wrap folded';
+    const body = document.createElement('div');
+    body.className = 'h-msg asst hg-sub-fold-body';
+    body.appendChild(mdBubble(text));
+    const tog = document.createElement('span');
+    tog.className = 'hg-sub-fold-tog';
+    tog.textContent = '展开 ∨';
+    tog.title = '展开全文 / 收起';
+    wrap.appendChild(body);
+    wrap.appendChild(tog);
+    return wrap;
   }
-  function _subTlToolRow(name, hint, tuid) {
+  function _subTlToolRow(name, hint, tuid, input) {
     const row = document.createElement('div');
     row.className = 'h-tool col';
     if (tuid) row.dataset.tuid = tuid;
+    const _cfg0 = _hCfg(name);
+    row.dataset.hgKind = _cfg0.kind || '';   // v3.2.31：结果回点静噪判据（diff 行成功回执不落）
     row.style.setProperty('--h-accent',
       _H_KIND_COLOR[(_H_TOOL_CFG[name] || {}).kind] || 'var(--border)');
     row.innerHTML = _subToolHeadHtml(name, String(hint || '').slice(0, 90), '', {}) +
       `<div class="h-tool-coll"></div>`;
+    // v3.2.31（bug3）：Edit/MultiEdit/Write 的改动体直接进折叠体——数据源是
+    // tool_use input（old_string/new_string/content，事件流/轮询镜像/回放三路
+    // 同源），渲染复用主流程同厂 _toolInputBodyHtml（diffHtml 删红增绿）。
+    // 此前窗格时间线行只有头行摘要，结果回点只落系统回执（「has been updated
+    // successfully」），改动本体不可见。改动卡生而展开（对齐主链 v3.2.26 定调
+    // 与回放路径 v3.2.25 同款）。非 diff 类工具不填（结果/输出照旧由
+    // _subResult/_fillRes 落折叠体，双源不冲突）
+    if (input) {
+      try {
+        if (_cfg0.kind === 'diff') {
+          const _v = _cfg0.get ? _cfg0.get(input) : '';
+          const _coll = row.querySelector('.h-tool-coll');
+          if (_coll) {
+            _coll.innerHTML = _toolInputBodyHtml(_cfg0, _v);
+            row.classList.add('open');
+          }
+        }
+      } catch(_) {}
+    }
     return row;
   }
   function _subPaneStick(sc) {
@@ -292,7 +436,11 @@
     open.dataset.hgDone = '1';
     const te = open.querySelector('.h-think-seg-t');
     const t0 = +(open.dataset.t0 || 0);
-    if (te && t0) te.textContent = '持续了 ' + _hgTurnDurTxt(Date.now() - t0);
+    // v3.3.1：<3s 不显示——同批到达算出的 0/1 秒是切片噪声不是事实
+    if (te && t0) {
+      const _ms = Date.now() - t0;
+      if (_ms >= 3000) te.textContent = '持续了 ' + _hgTurnDurTxt(_ms);
+    }
   }
   function _subTlAppendThink(t, raw) {
     if (!t || !t.tl) return;
@@ -300,7 +448,7 @@
     // v3.2.13：思考行不再断查阅组（主链 startThinking 同款；对照 ZCode 组跨
     // 思考累积）——思考段挂组后，后续查阅继续回填进组体
     const seg = _subTlThinkRow(raw, '');
-    seg.dataset.t0 = String(Date.now());
+    seg.dataset.t0 = String(_hgPrevRowAt());   // v3.3.1：起点挂上一事件时刻（自身到达恒 0 秒）
     t.tl.appendChild(seg);
     t.stats.think++;
     _subTlCap(t);
@@ -315,7 +463,7 @@
   function _subTlAppendTool(t, name, hint, tuid, input) {
     if (!t || !t.tl) return;
     _subTlSegFreeze(t);
-    const row = _subTlToolRow(name, hint, tuid);
+    const row = _subTlToolRow(name, hint, tuid, input);   // v3.2.31：input 透传（diff 改动体）
     _subTlPlace(t, row, name, input || null);
     t.stats.tool++;
     _subTlCap(t);
@@ -412,9 +560,9 @@
                          err: !!_ag.err, replay: !!replay,
                          model: _ag.model || '', t: null };
       _sub.order.push(tid);
-      // v3.2：上限 6 个 tab，最旧让位（目录伪 tab 常驻不让位）
-      if (_sub.order.filter(x => x !== _SUB_DIR).length > 6) {
-        const old = _sub.order.find(x => x !== _SUB_DIR);
+      // v3.2：上限 6 个 tab，最旧让位（目录/动态伪 tab 常驻不让位，v3.3 加豁免 __dyn__）
+      if (_sub.order.filter(x => x !== _SUB_DIR && x !== _SUB_DYN).length > 6) {
+        const old = _sub.order.find(x => x !== _SUB_DIR && x !== _SUB_DYN);
         if (old != null) {
           const otb = _sub.tabs[old];
           if (otb && otb.t && otb.t.tick) { clearInterval(otb.t.tick); otb.t.tick = null; }
@@ -590,7 +738,11 @@
           if (slots) slots.innerHTML = statusBadge(err ? 'error' : 'completed');
           const full = String(text || '').trim();
           const coll = toolRow.querySelector('.h-tool-coll');
-          if (coll && full && full !== '(no content)') {
+          // v3.2.31（bug3 静噪）：diff 行改动体已在场时成功回执不落（主链
+          // hideOk 同口径）；错误输出照显，无改动体的行（后端缺 input）回执照显
+          const _quiet = !err && toolRow.dataset.hgKind === 'diff'
+            && !!toolRow.querySelector('.h-diff');
+          if (coll && full && full !== '(no content)' && !_quiet) {
             const d = document.createElement('div');
             d.className = 'h-tool-out' + (err ? ' err-txt' : '');
             d.textContent = full.length > 2000 ? full.slice(0, 2000) + '…' : full;
@@ -599,17 +751,25 @@
         };
         for (const row of (j.rows || [])) {
           const ts = _tsGet(row);
+          // v3.3.1：本行之前的行 ts——思考段起点改挂前一行（同一 assistant
+          // 消息 thinking 与 tool_use 同 ts，挂自身 ts 恒 0 秒）
+          const _rowPrevTs = lastTs;
           if (ts > 0) {
             for (const p of pend) {
               const te = p.seg.isConnected ? p.seg.querySelector('.h-think-seg-t') : null;
-              if (te && ts > p.ts) te.textContent = '持续了 ' + _hgTurnDurTxt(ts - p.ts);
+              const _dur = ts - p.ts;
+              if (te && _dur >= 3000) te.textContent = '持续了 ' + _hgTurnDurTxt(_dur);
             }
             pend.length = 0;
             lastTs = ts;
           }
           if (row.k === 'text') {
-            const el = _subTlTextRow(row.text);
-            el.dataset.hgRp = '1';   // 铺底标——镜像增量查重锚
+            const el = _subTlTextRow(row.text, true);   // 回放行长文默认折叠
+            // v3.2.31R（复审1·严重）：rp 镜像查重锚必须打在折叠 body 上——
+            // 打在 wrap 上时 textContent 含「展开 ∨」钮文本，_subPaneMirror
+            // 的 want.startsWith(got) 恒 false，重叠窗口防双份失效（>500
+            // 字符文本行双份插入）。body 的 textContent=纯正文，锚语义成立
+            (el.querySelector('.hg-sub-fold-body') || el).dataset.hgRp = '1';
             _subTlAppendRow(t, el);
           } else if (row.k === 'user') {
             // v3.2.24（用户定调「像 ZCode 一样直接暴露，不要收进工作区」）：
@@ -642,7 +802,9 @@
             seg.dataset.hgRp = '1';
             _subTlAppendRow(t, seg);
             t.stats.think++;
-            if (ts > 0) pend.push({ seg, ts });
+            // v3.3.1：起点挂上一行 ts（_rowPrevTs），自身 ts 是同消息批时刻
+            if (ts > 0 || _rowPrevTs > 0)
+              pend.push({ seg, ts: (_rowPrevTs > 0 && (!ts || _rowPrevTs < ts)) ? _rowPrevTs : ts });
           } else if (row.k === 'tool') {
             _subTlSegFreeze(t);
             const tw = _subTlToolRow(row.name || '', row.hint || '', '');
@@ -684,7 +846,8 @@
         }
         for (const p of pend) {
           const te = p.seg.isConnected ? p.seg.querySelector('.h-think-seg-t') : null;
-          if (te && lastTs > p.ts) te.textContent = '持续了 ' + _hgTurnDurTxt(lastTs - p.ts);
+          const _dur2 = lastTs - p.ts;
+          if (te && _dur2 >= 3000) te.textContent = '持续了 ' + _hgTurnDurTxt(_dur2);
         }
         // 定稿：dur=首末行 ts 差（缺 ts 落无数字「已工作」——不编造）。
         // v3.2.6R（审计F3）：collab 运行行 force 回放=「铺底即续流」——代理
@@ -728,30 +891,37 @@
     _subTabsPaint();
     // v3.2R1(P2)：目录不贴底滚动——_subScroll 为聊天流贴底设计，目录的主
     // 内容（正在运行）在顶部，贴底会直接落到已结束长列表尾
-    if (tid !== _SUB_DIR) _subScroll(tid);
+    // v3.3：动态页同豁免——状态总览主内容也在顶部（会话状态卡）
+    if (tid !== _SUB_DIR && tid !== _SUB_DYN) _subScroll(tid);
     if (tid === _SUB_DIR) _subDirPaint();   // v3.2：目录激活即重绘（数据最新）
   }
   function _subTabsPaint() {
     if (!_subTabsEl) return;
-    _subTabsEl.innerHTML = _sub.order.filter(t => _sub.tabs[t]).map(t => {
+    // v3.3：动态页渲染序恒在队首（order 数组保持插入序不动——_subDrop 的
+    // `_sub.active = _sub.order[0]` 兜底行为不被扰动），目录及其余 tab 照旧
+    const _paint = (_sub.tabs[_SUB_DYN] ? [_SUB_DYN] : [])
+      .concat(_sub.order.filter(t => _sub.tabs[t] && t !== _SUB_DYN));
+    _subTabsEl.innerHTML = _paint.map(t => {
       const tb = _sub.tabs[t];
+      const _pseu = (t === _SUB_DIR || t === _SUB_DYN);   // 伪 tab：无 dot/无 ✕/悬浮只说视图
       // v2.35（P1-4）：模型进 tab（短名+悬浮全名）；tokens 进悬浮（CLI 侧计数）
       const ag = (_HG.agents || {})[t] || {};
       const mdlFull = tb.model || '';
       const mdlShort = mdlFull.length > 14 ? mdlFull.slice(0, 13) + '…' : mdlFull;
-      const ttip = [tb.desc || tb.label,
-                    mdlFull ? '模型：' + mdlFull : '模型：主链模型（内置/无定义文件）',
-                    ag.tokens ? `用量：${ag.tokens} tokens · ${ag.toolN || 0} 次工具` : '']
-        .filter(Boolean).join('\n');
-      return `<div class="hg-sub-tab${t === _sub.active ? ' active' : ''}${tb.run ? ' run' : tb.err ? ' err' : ''}${tb.replay ? ' replay' : ''}${t === _SUB_DIR ? ' dir' : ''}"` +
+      const ttip = _pseu ? (tb.desc || tb.label)
+        : [tb.desc || tb.label,
+           mdlFull ? '模型：' + mdlFull : '模型：主链模型（内置/无定义文件）',
+           ag.tokens ? `用量：${ag.tokens} tokens · ${ag.toolN || 0} 次工具` : '']
+          .filter(Boolean).join('\n');
+      return `<div class="hg-sub-tab${t === _sub.active ? ' active' : ''}${tb.run ? ' run' : tb.err ? ' err' : ''}${tb.replay ? ' replay' : ''}${t === _SUB_DIR ? ' dir' : t === _SUB_DYN ? ' dyn' : ''}"` +
         ` data-hg-subtab="${esc(t)}" title="${esc(ttip)}">` +
-        (t === _SUB_DIR ? '<span class="hg-sub-dir-tabico">☰</span>' : '<span class="hg-sub-dot"></span>') + esc(tb.label) +
+        (_pseu ? `<span class="hg-sub-dir-tabico">${t === _SUB_DYN ? '◉' : '☰'}</span>` : '<span class="hg-sub-dot"></span>') + esc(tb.label) +
         (tb.replay ? `<span class="hg-sub-rp">回放</span>` : '') +
         (mdlShort ? `<span class="hg-sub-mdl">${esc(mdlShort)}</span>` : '') +
         // 窗格重设计 P1-1：单-tab ✕——hover 才浮现（CSS 控制），运行中的 tab
         // 提示「任务继续后台跑」防误触焦虑；点击走 _subDrop（tab 条委托分支）
-        // v3.2：目录伪 tab 常驻无 ✕
-        (t === _SUB_DIR ? '' :
+        // v3.2：目录伪 tab 常驻无 ✕（v3.3：动态页同）
+        (_pseu ? '' :
         `<span class="hg-sub-x2" data-hg-subclose="${esc(t)}" title="${esc(tb.run ? '关闭视图（任务继续在后台跑）' : '关闭该 tab')}">✕</span>`) + `</div>`;
     }).join('');
   }
@@ -819,6 +989,23 @@
       } else if (b.type === 'text' && String(b.text || '').trim()) {
         _subTlAppendRow(t, _subTlTextRow(b.text));
       } else if (b.type === 'tool_use' && b.name) {
+        // v3.3.1：handback 交付——最终报告在工具 input 里不是文本块，照出工具行
+        // =报告永不可见（后端转写行同口径改 text）。取 input 最长字符串字段。
+        // v3.3.2R(F6)：镜像工具行（handleEvent renderToolUse 先插、
+        // _subBlkAppendTool 镜像进 tl）让位摘除——报告本体替换工具壳，防双行
+        if (b.name === 'SubagentHandback') {
+          let _rep = '';
+          for (const _v of Object.values(b.input || {}))
+            if (typeof _v === 'string' && _v.length > _rep.length) _rep = _v;
+          if (_rep.trim()) {
+            if (b.id) {
+              const _mir = t.tl.querySelector(`.h-tool[data-tuid="${CSS.escape(b.id)}"]`);
+              if (_mir) _mir.remove();
+            }
+            _subTlAppendRow(t, _subTlTextRow(_rep));
+            continue;
+          }
+        }
         // v2.55R：对称查重——同一事件里镜像（_subBlkAppendTool）先插、本分支
         // 后插，只查一侧必双份；两侧都查后无论谁先谁后均只落一行
         if (b.id && t.tl.querySelector(`.h-tool[data-tuid="${CSS.escape(b.id)}"]`))
@@ -865,7 +1052,11 @@
     if (slots) slots.innerHTML = statusBadge(bad ? 'error' : 'completed');
     if (full && full !== '(no content)') {
       const coll = toolRow.querySelector('.h-tool-coll');
-      if (coll) {
+      // v3.2.31（bug3 静噪）：diff 行改动体已在场时成功回执不落（主链 hideOk
+      // 同口径）；错误输出照显，无改动体的行回执照显
+      const _quiet = !bad && toolRow.dataset.hgKind === 'diff'
+        && !!toolRow.querySelector('.h-diff');
+      if (coll && !_quiet) {
         const d = document.createElement('div');
         d.className = 'h-tool-out' + (bad ? ' err-txt' : '');
         d.textContent = full.length > 2000 ? full.slice(0, 2000) + '…' : full;
@@ -1157,8 +1348,16 @@
             _subThink(tid, blk.thinking, true);
           else if (blk.type === 'text' && String(blk.text || '').trim())
             _subText(tid, blk.text, true);
-          else if (fullFeed && blk.type === 'tool_use' && blk.name)
+          else if (fullFeed && blk.type === 'tool_use' && blk.name) {
+            // v3.3.1：handback 报告按正文入段（与后端转写行/窗格 _subFeed 同口径）
+            if (blk.name === 'SubagentHandback') {
+              let _rp = '';
+              for (const _v of Object.values(blk.input || {}))
+                if (typeof _v === 'string' && _v.length > _rp.length) _rp = _v;
+              if (_rp.trim()) { _subText(tid, _rp, true); continue; }
+            }
             renderToolUse(blk, true, tid);
+          }
           else if (fullFeed && blk.type === 'tool_result' && blk.tool_use_id)
             _subToolResult(tid, blk);
         }

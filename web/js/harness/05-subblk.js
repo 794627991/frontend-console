@@ -316,7 +316,11 @@
     if (b && b.seg && b.seg.isConnected) {
       const te = b.seg.querySelector('[data-hg-think-t]');
       const t0 = +(b.seg.dataset.t0 || 0);
-      if (te && t0) te.textContent = _hgFmtDur((Date.now() - t0) / 1000);
+      // v3.3.1(F3)：<3s 不显示——同批到达的切片噪声非事实（五路同款护栏）
+      if (te && t0) {
+        const _ms = Date.now() - t0;
+        if (_ms >= 3000) te.textContent = _hgFmtDur(_ms / 1000);
+      }
     }
     if (b) b.seg = null;
   }
@@ -386,7 +390,7 @@
     _subLivePaint(pid, '思考中…');
     if (!(b.seg && b.seg.isConnected)) {
       const seg = _subThinkShell(true);
-      seg.dataset.t0 = String(Date.now());
+      seg.dataset.t0 = String(_hgPrevRowAt());   // v3.3.1(F3)：起点挂上一事件时刻（自身到达恒 0 秒，与主链/窗格同口径）
       _subBodyPut(b, seg, 'think');   // v2.48：进当前节的思考抽屉（节随行成形）
       b.seg = seg;
     }

@@ -65,6 +65,30 @@
       addRow(d);
     }
   }
+  // v3.3.2(D6/D7)：机器注入（task-notification/system-reminder）弱化行——
+  // 单行 dim 入组时间线（不切割回合）；摘要取 <summary>/<result> 首行截
+  // 80 字（主流唯一锚点，详情由协作段/动态页承接）；悬浮 title=全文。
+  // 完整开闭标签对由调用方判定。历史回放（07-hist sysnote 分支）同走此处
+  function renderSysNote(kind, text) {
+    const t = String(text || '');
+    const _m = t.match(/<summary>([\s\S]*?)<\/summary>/i)
+      || t.match(/<result>([\s\S]*?)<\/result>/i);
+    let sum = (_m ? _m[1] : '').replace(/\s+/g, ' ').trim();
+    if (sum.length > 80) sum = sum.slice(0, 80) + '…';
+    const d = document.createElement('div');
+    d.className = 'h-sysnote';
+    d.textContent = (kind === 'task-notification' ? '任务通知' : '系统提示')
+      + (sum ? ' · ' + sum : ' · 已注入当前回合上下文');
+    d.title = t.slice(0, 2000);
+    const g = (_HG.grp && _HG.grp.root
+               && (_HG.grp.root.isConnected || _HG.histBuilding)) ? _HG.grp : null;
+    if (g && g.tl) {
+      _tlExpFlush(!!_HG.openState);
+      g.tl.appendChild(d);
+    } else {
+      addRow(d);
+    }
+  }
   function _hgVisionFreeze(el, err) {
     if (!el || !el.isConnected) return;
     const i = el.querySelector('i');
@@ -330,9 +354,18 @@
     const d = document.createElement('div'); d.className = 'h-peer';
     const head = document.createElement('div'); head.className = 'h-peer-head';
     // v2.37（P1-C）：回传方头像徽标（首字母圆形色标，与模型标识同色板哈希）
+    // v2.37R6+：已知角色标识经 _AGENT_LABEL 映射朴素显示名（v3.3.1 用户定调
+    // 「只轻主力+设计+审核」，工坊系花名退役），并带该角色 frontmatter 模型徽标
+    // （_HG.agentModels 可得时）；未知 id 保持原样。
+    // v3.2.31R（复审2）：直引 _AGENT_LABEL——它是 12-sessions 顶层 const，
+    // 跨脚本可见（05/07/10/13/14 同款直引），本地 _WS_LABELS 副本退役防漂移
     const _pn = name || '其他会话';
-    head.innerHTML = `<span class="h-ava ${_hgAvaCls(_pn)}">${esc(_pn.charAt(0).toUpperCase())}</span>` +
-      `📥 ${esc(_pn)} 回传`;
+    const _fn = _AGENT_LABEL[_pn] || _pn;
+    const _pm = (_HG.agentModels || {})[_pn] || '';
+    head.innerHTML = `<span class="h-ava ${_hgAvaCls(_fn)}">${esc(_fn.charAt(0).toUpperCase())}</span>` +
+      `📥 ${esc(_fn)}` +
+      (_pm ? ` · <span class="h-mmodel">${esc(String(_pm).split('[')[0])}</span>` : '') +
+      ` 回传`;
     d.appendChild(head);
     const b = document.createElement('div'); b.className = 'h-bubble';
     b.innerHTML = renderMd(text || '');

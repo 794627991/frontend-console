@@ -209,47 +209,6 @@
           </div>
         </div>
       </div>
-      <!-- v2.32 harness 会话动态面板：当前 tab 为 Claude 对话时右侧工具面板整体换装
-           （CSS .ai-panel.hg-mode）——命令/感知/分析/Claude 页签对 harness 全无用
-           （Claude 页签是 CLI 模式专用）。六分区：会话状态/任务进度/子代理实况/
-           最近工具/回合历史/当前文件。骨架静态（v2.30 教训：挂 harness wrap 内
-           q() 扑空=面板永不显示），动态行由 web/js/harness/ 编号脚本填充 -->
-      <div class="hg-dyn-pane" data-hg-dyn>
-        <section class="hg-dyn-sec" data-hg-sec="stat">
-          <div class="hg-dyn-strow">
-            <span class="hg-dyn-dot"></span>
-            <span class="hg-dyn-stlabel" data-hg-d-st>就绪</span>
-            <b class="hg-dyn-dur" data-hg-d-stt></b>
-          </div>
-          <div class="hg-dyn-kv"><span class="k">模型</span><span class="v" data-hg-d-model>—</span></div>
-          <div class="hg-dyn-kv"><span class="k">思考</span><span class="v" data-hg-d-think>默认</span></div>
-          <div class="hg-dyn-kv"><span class="k">权限</span><span class="v" data-hg-d-perm>—</span></div>
-          <div class="hg-dyn-kv"><span class="k">三角色</span><span class="v act" data-hg-d-roles>…</span></div>
-          <div class="hg-dyn-kv"><span class="k">目录</span><span class="v" data-hg-d-cwd>~</span></div>
-          <div class="hg-dyn-kv ctx"><span class="k">上下文</span><span class="v" data-hg-d-ctx>待统计</span></div>
-        </section>
-        <section class="hg-dyn-sec" data-hg-sec="todos" hidden>
-          <div class="hg-dyn-sec-head">进程<span class="hg-dyn-pill" data-hg-d-tdone>0/0</span></div>
-          <div class="hg-dyn-bar"><i data-hg-d-tbar></i></div>
-          <div class="hg-dyn-todos" data-hg-d-tlist></div>
-        </section>
-        <section class="hg-dyn-sec" data-hg-sec="agents" hidden>
-          <div class="hg-dyn-sec-head">子代理 / 协作<span class="hg-dyn-pill run" data-hg-d-agrun hidden>0 运行中</span><button class="hg-dyn-dirbtn" data-hg-agdir hidden title="打开子智能体目录（正在运行/已结束全列表）"></button></div>
-          <div data-hg-d-aglist></div>
-        </section>
-        <section class="hg-dyn-sec" data-hg-sec="acts" hidden>
-          <div class="hg-dyn-sec-head">最近工具</div>
-          <div class="hg-dyn-acts" data-hg-d-acts></div>
-        </section>
-        <section class="hg-dyn-sec" data-hg-sec="turns" hidden>
-          <div class="hg-dyn-sec-head">回合历史<span class="hg-dyn-sub" data-hg-d-tsum></span></div>
-          <div class="hg-dyn-turns" data-hg-d-tlist></div>
-        </section>
-        <section class="hg-dyn-sec" data-hg-sec="files" hidden>
-          <div class="hg-dyn-sec-head">当前文件</div>
-          <div class="hg-dyn-files" data-hg-d-flist></div>
-        </section>
-      </div>
     </div>
   </div>
 </div>

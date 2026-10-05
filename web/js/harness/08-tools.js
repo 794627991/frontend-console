@@ -126,6 +126,15 @@
     // v3.1h（用户定调「终端只保留标志,默认收起,点开看全文」）：头部命令摘要摘除
     const _ocArg = row.querySelector(':scope > .h-tool-arg');
     if (_ocArg) _ocArg.remove();
+    // v3.3.3（用户实锤「bash 未对齐」）：终端卡必须与时间线同轴——行游离在
+    // .h-tl 之外（任何路径的异常落位，卡在组根=凸出左缘一个缩进）时归位当前
+    // 组时间线尾。.h-tl 内的行 closest 命中即原样不动
+    if (!row.closest('.h-tl')) {
+      try {
+        const g = grpEnsure(true);
+        if (g && g.tl && row.isConnected) g.tl.appendChild(row);
+      } catch(_) {}
+    }
   }
   function closeRun() { _HG.run = null; }
   // ==================== v3.2：ZCode 式「查阅」聚组（exploreToolCall.ts 移植）====================
@@ -316,6 +325,18 @@
       ? row.querySelector('.h-ag-live') : null;
     if (lv) lv.textContent = String(txt || '').trim().slice(0, 90);
   }
+  // v3.2.31（bug5① 根因修复）：完成摘要与派发描述同文去重——CLI 的
+  // task_notification.summary / Task tool_result 常原样复述 input.description
+  //（子代理最终报告=任务描述），单行卡渲染成「描述 …完成 描述」两遍。判定：
+  // 归一空白后相等或互为前缀即视为同文，摘要位让位（描述已在场，信息零丢失）。
+  // v3.2.31R（复审6）：入参改显式两串（desc, brief），主行卡两落点与目录行
+  //（14-subpane _subDirRowHtml）共用，不再各持一份实现
+  function _hgBriefDupDesc(desc, brief) {
+    const ds = String(desc || '').replace(/\s+/g, ' ').trim();
+    const bs = String(brief || '').replace(/\s+/g, ' ').trim();
+    if (!bs || !ds) return false;
+    return bs === ds || ds.indexOf(bs) === 0 || bs.indexOf(ds) === 0;
+  }
   // v3.2.6：单行任务卡定格（task_notification 路径——tool_result 丢失时的
   // 状态收口；与 renderOneToolResult 正常路径幂等互备）
   function _hgAgentRowState(tid, err, brief) {
@@ -328,7 +349,7 @@
       if (err) st.innerHTML = statusBadge('error');
       else {
         const b = String(brief || '').trim();
-        st.innerHTML = statusBadge('completed') + (b
+        st.innerHTML = statusBadge('completed') + (b && !_hgBriefDupDesc(row.dataset.hgSubDesc, b)
           ? ` <span class="h-tagent-brief" title="${esc(b.slice(0, 400))}">${esc(b.slice(0, 60))}${b.length > 60 ? '…' : ''}</span>` : '');
       }
     }
@@ -492,7 +513,9 @@
     // 报告首行 60 字（悬浮看前 400 字）；全文仍在折叠体
     if (cfg.kind === 'agent' && st === 'completed' && !row._grouped && slots) {
       const full = resultText(tr).replace(/\s+/g, ' ').trim();
-      if (full) slots.innerHTML = statusBadge(st) +
+      // v3.2.31（bug5①）：摘要复述描述时不重复渲染（_hgBriefDupDesc 同口径）
+      if (full && !_hgBriefDupDesc(row.dataset.hgSubDesc, full))
+        slots.innerHTML = statusBadge(st) +
         ` <span class="h-tagent-brief" title="${esc(full.slice(0, 400))}">${esc(full.slice(0, 60))}${full.length > 60 ? '…' : ''}</span>`;
     }
     // v3.2.6：agentline 单行卡完成即撤实时活动流（状态/摘要接管行尾语义）

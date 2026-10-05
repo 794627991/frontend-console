@@ -41,6 +41,7 @@
     // v3.2.4R(F2)：行级 ts 账与回合起点随会话切换清零（对齐 _hgSseResetLocal；
     // pendingTurnT0 残留会让下个会话 phResume 续跑组的秒表虚吃上会话时刻）
     _HG.histLineTs = 0; _HG.histActTs = 0; _HG.pendingTurnT0 = null; _HG.thinkPend = null;
+    _HG.prevRowAt = 0; _HG.lastRowAt = 0;   // v3.3.1(F5)：事件时刻账不跨会话（新会话思考起点防吃上一会话时刻）
     _HG.sid = sid; _HG.seq = 0; _HG.epoch = null; _HG.alive = false;
     // v2.15：dirty 语义修正。旧实现只在「发送成功」置 true、只在
     // switchTo(null) 置 false —— 冷启动自动进的是历史会话（has_history），
@@ -87,7 +88,12 @@
     // 切走时回合还在跑（openTurn）——快照注定残缺（离开期间过程行只靠事件
     // 回放，环形缓冲有限会丢），弃快照走 transcript 全量重渲（含 busy 续占
     // 位/SSE 接续，与首开同路），回合完成与否都拿到完整工作区
-    if (c && c.openTurn) c = null;
+    // v3.3.2R(F2)：待答 ask 卡豁免弃快照——CLI 正阻塞等选择，离开期间零
+    // 事件（无过程行可丢），快照反而完整；弃了走转写重建必丢卡（transcript
+    // 无 ask 行、ask 帧只在弹出时 emit 一次不重放），用户无从作答只能中断
+    // 自救。判定按序列化 className 精确值：待答卡=class="h-ask"（done 卡是
+    // "h-ask done collapsed"，不命中）
+    if (c && c.openTurn && !(c.html && c.html.indexOf('class="h-ask"') !== -1)) c = null;
     if (c) {
       // v3.1：keep-warm 命中——取消该快照的延迟销毁（saveCache 排程的 30s
       // 定时器），热快照继续作为 LRU 一员存活
@@ -387,4 +393,7 @@
     }
     renderQueue();
   }
-  const _AGENT_LABEL = { executor: '执行者', coder: '编程者', designer: '设计者', dev: '开发', reviewer: '审核', 'general-purpose': '通用子代理' };
+  // v3.3.1（用户定调「只轻主力+设计+审核」）：工坊系花名（明镜/大匠/疾行者）
+  // 退役——显示名回归朴素。标识符（dev.md/subagent_type/agents 文件名）不动，
+  // 本表只服务旧会话回放/旧安装文件的显示层
+  const _AGENT_LABEL = { executor: '执行', coder: '编程', designer: '设计', dev: '开发', reviewer: '审核', 'general-purpose': '通用子代理' };

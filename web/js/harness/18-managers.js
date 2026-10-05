@@ -120,7 +120,7 @@
       // 后端 clamp 回显消费：分级线被自动收紧（l1>l2l 等）时当场提示
       // 实际写盘值与原因，不再静默钳制。
       const cl = (jr.clamped || []).map(function(n) { return n.reason; });
-      showBanner('👥 三角色配置已保存——模型槽/分级线随下条消息热更生效（agents 自动重生成），审计模式立即生效'
+      showBanner('👥 三角色配置已保存——模型槽/分级线随下条消息热更生效（agents 自动重生成），审核模式立即生效'
         + (cl.length ? '；⚠ ' + cl.join('；') : ''), cl.length ? 9000 : 4200);
       _hgRolesFetch();                          // 缓存刷新（气泡角色徽章同源）
     } catch(e) { showBanner('保存失败：' + e, 3000, true); }
@@ -155,30 +155,30 @@
       const l1 = numOr(cfg.l1_max_lines, 100);
       const l2l = numOr(cfg.l2_max_lines, 200);
       const dln = numOr(cfg.design_max_lines, 200);
-      ov.innerHTML = `<div class="hg-modal hg-modal-vision hg-roles"><div class="hg-modal-title">👥 三角色配置<span class="hg-roles-mode">${light ? '轻主力' : '重模型直干'}</span></div>
+      ov.innerHTML = `<div class="hg-modal hg-modal-vision hg-roles"><div class="hg-modal-title">👥 三角色配置<span class="hg-roles-mode">${light ? '轻主力' : '重主力'}</span></div>
         <div class="hg-modal-body">
           <div class="hg-roles-top">
             <label class="hg-vision-switch"><input type="checkbox" data-hg-r-on${cfg.enabled ? ' checked' : ''}> 启用三角色</label>
-            <span class="hg-roles-modeinfo">当前形态：<b>${light ? '轻主力 · 直干+设计者+审计者' : '重模型直干 · 审计者兜底'}</b></span>
+            <span class="hg-roles-modeinfo">当前形态：<b>${light ? '轻主力 · 直干+设计+审核' : '重主力 · 直干+审核兜底'}</b></span>
           </div>
           <details class="hg-roles-more"><summary>工作方式说明</summary>
-            <div>双形态都<b>主会话直干所有活</b>（编码/执行/调试不派干活子代理）：主会话是轻模型 = 轻主力——配设计者 + 审计者两个代理；主会话是重模型（名字含 opus）= 直干 + 审计者兜底。保存后模型/分级线随下条消息热更生效（agents 自动重生成），审计模式立即生效。当前形态判定依据：${cfg.main_model ? `主会话槽显式配置 ${esc(cfg.main_model)}` : `实跑模型 ${esc(dm || '未设置')}（留空自动识别）`}。</div>
+            <div>双形态都<b>主会话直干所有活</b>（编码/执行/调试不派干活子代理）：主会话是轻模型 = 轻主力——配设计 + 审核两个代理；主会话是重模型（名字含 opus）= 重主力——直干 + 审核兜底。保存后模型/分级线随下条消息热更生效（agents 自动重生成），审核模式立即生效。当前形态判定依据：${cfg.main_model ? `主会话槽显式配置 ${esc(cfg.main_model)}` : `实跑模型 ${esc(dm || '未设置')}（留空自动识别）`}。</div>
           </details>
 
           <div class="hg-roles-sec">模型分工</div>
-          <div class="hg-roles-slot" title="主会话自己干所有活；显式配置优先参与形态判定（名字含 opus = 重模型直干，其余 = 轻主力），留空按实跑模型名自动识别">
+          <div class="hg-roles-slot" title="主会话自己干所有活；显式配置优先参与形态判定（名字含 opus = 重主力直干，其余 = 轻主力），留空按实跑模型名自动识别">
             <span class="hg-roles-ico main">主</span>
             <span class="hg-roles-name">主会话<i>直干所有活 · 定形态</i></span>
             <select data-hg-r-main>${mkOpts(cfg.main_model || '')}</select>
           </div>
           <div class="hg-roles-slot" title="designer：只设计，出方案不干活。留空=回退代理池 heavy_model，再按当前方案自动识别">
             <span class="hg-roles-ico des">设</span>
-            <span class="hg-roles-name">设计者<i>只设计 · 出方案</i></span>
+            <span class="hg-roles-name">设计<i>只设计 · 出方案</i></span>
             <select data-hg-r-designer>${mkOpts(designerCfg)}</select>
           </div>
           <div class="hg-roles-slot" title="reviewer：只审不改，PASS/FAIL 二选一。留空=回退代理池 heavy_model，再按当前方案自动识别">
             <span class="hg-roles-ico rev">审</span>
-            <span class="hg-roles-name">审计者<i>只审不改 · PASS/FAIL</i></span>
+            <span class="hg-roles-name">审核<i>只审不改 · PASS/FAIL</i></span>
             <select data-hg-r-reviewer>${mkOpts(reviewerCfg)}</select>
           </div>
           <div class="hg-roles-note">留空 = 回退代理池 → 按方案自动识别；显式配置优先</div>
@@ -187,14 +187,14 @@
           <div class="hg-roles-line" title="单次直改总计 ≤ 此行数的小改（配置/常量/文案/注释级）主会话直接改，免审">
             <span>免审线</span><input type="number" min="0" max="100000" data-hg-r-l1 value="${l1}"><em>≤ 此行数直接改，免审</em>
           </div>
-          <div class="hg-roles-line" title="单次直改超过此行数 = 大改，须审计者取证级全审；重模型形态即审计线（0=最严档）">
-            <span>轻审线</span><input type="number" min="0" max="100000" data-hg-r-l2l value="${l2l}"><em>超线须审计者全审（0=最严）</em>
+          <div class="hg-roles-line" title="单次直改超过此行数 = 大改，须审核取证级全审；重主力形态即审核线（0=最严档）">
+            <span>轻审线</span><input type="number" min="0" max="100000" data-hg-r-l2l value="${l2l}"><em>超线须审核全审（0=最严）</em>
           </div>
-          <div class="hg-roles-line" title="单次直改达到此行数的大改，动手前须先派设计者出方案——事中闸拦截+结算追责强制（0=不强制设计）">
+          <div class="hg-roles-line" title="单次直改达到此行数的大改，动手前须先派设计出方案——事中闸拦截+结算追责强制（0=不强制设计）">
             <span>设计线</span><input type="number" min="0" max="100000" data-hg-r-dl value="${dln}"><em>达线先出方案（0=不强制）</em>
           </div>
-          <div class="hg-roles-line" title="回合结算兜底：盘点直改超线未派审计者——auto 自动续发要求补审，warn 仅红色警示，off 关闭">
-            <span>审计模式</span>
+          <div class="hg-roles-line" title="回合结算兜底：盘点直改超线未派审核——auto 自动续发要求补审，warn 仅红色警示，off 关闭">
+            <span>审核模式</span>
             <select data-hg-r-am>
               <option value="auto"${am === 'auto' ? ' selected' : ''}>auto · 自动续发补审</option>
               <option value="warn"${am === 'warn' ? ' selected' : ''}>warn · 仅警示</option>

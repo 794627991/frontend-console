@@ -38,6 +38,21 @@ _IMG_ECHO_RE = re.compile(r"\[Image: source: ([^\]]+?)\]")
 # ---- from claude_harness.py:2233 (transcript_for) ----
 
 
+def _sysnote_of(t, ts):
+    """v3.3.2（回合连续性）：机器注入（task-notification/system-reminder）→
+    sysnote 弱化行（前端渲染单行 dim，不渲染用户气泡、不分割回合）。
+    完整开闭标签对才判（宽容半个标签=保留 user 行现状，v2.37R2 同哲学）；
+    附件在场不判（真人粘贴带图不误伤——调用方守卫）。返回 None=非机器注入。"""
+    s = (t or "").strip()
+    if s.startswith("<task-notification") and s.endswith("</task-notification>"):
+        return {"role": "sysnote", "kind": "task-notification", "text": s[:8000],
+                "ts": ts or ""}
+    if s.startswith("<system-reminder") and s.endswith("</system-reminder>"):
+        return {"role": "sysnote", "kind": "system-reminder", "text": s[:8000],
+                "ts": ts or ""}
+    return None
+
+
 def transcript_for(s):
     """sid → 气泡行数组。claude 侧 session_id 的 jsonl 全量解析：
     user(typed 文本/图片/文件附件) / assistant(文本/工具调用) / tool_result 摘要。
@@ -154,6 +169,13 @@ def transcript_for(s):
                             # [审计] 开头的普通消息必须照常出 user 行回放。
                             if t.lstrip().startswith(_AUDIT_MSG_PREFIX):
                                 continue
+                            # v3.3.2：机器注入弱化行（独立成对才判）——历史重建
+                            # 不再把它渲染成完整用户气泡+切割回合（live 侧
+                            # handleEvent 同口径 renderSysNote）
+                            _sn = _sysnote_of(t, o.get("timestamp"))
+                            if _sn:
+                                lines.append(_sn)
+                                continue
                             ps_ok = (o.get("promptSource") in (None, "typed", "sdk")) or \
                                 (o.get("origin") or {}).get("kind") == "human"
                             if t and ps_ok and not _SKIP_RE.match(t.strip()):
@@ -255,6 +277,13 @@ def transcript_for(s):
                                               "text": "会话自动续命（上下文摘要已并入模型记忆）",
                                               "ts": o.get("timestamp") or ""})
                                 continue
+                            # v3.3.2：机器注入弱化行（纯文本+完整标签对才判；
+                            # 带附件=真人粘贴，不误伤）
+                            if not imgs and not files:
+                                _sn = _sysnote_of(t or "", o.get("timestamp"))
+                                if _sn:
+                                    lines.append(_sn)
+                                    continue
                             if (t or imgs or files) and not _SKIP_RE.match((t or "").strip()):
                                 # v3.2.13：发送侧孪生回显——base64 行紧随的
                                 # marker-only 行（无文字无图、files 是上一条的
@@ -554,10 +583,26 @@ def _subagent_rows_from_jsonl(path):
                                    "model": model, "ts": _ts})
                         elif b.get("type") == "tool_use":
                             inp = b.get("input") or {}
+                            # v3.3.1（用户实锤「没看到方案输出」）：handback 交付形态
+                            # 的子代理——最终报告不是 text 块而是 SubagentHandback
+                            # 工具的 input（CLI 转写里根本没有那段正文）。原样出
+                            # tool 行 hint 恒空=报告在回放/主流段注入两路永不可见。
+                            # 报告行按 text 出（k='text'），取 input 里最长的字符串
+                            # 字段（防 schema 漂移）；截 8000（tail 窗保证末行不丢）
+                            if b.get("name") == "SubagentHandback":
+                                _rep = ""
+                                for _v in inp.values():
+                                    if isinstance(_v, str) and len(_v) > len(_rep):
+                                        _rep = _v
+                                if _rep.strip():
+                                    _push({"k": "text", "text": _rep[:8000],
+                                           "model": model, "ts": _ts})
+                                    continue
                             hint = (inp.get("command") or inp.get("file_path")
                                     or inp.get("path") or inp.get("pattern")
                                     or inp.get("query") or inp.get("description")
-                                    or inp.get("subject") or inp.get("prompt") or "")
+                                    or inp.get("subject") or inp.get("prompt")
+                                    or inp.get("message") or "")
                             # v3.2.6R3/R4（审计残留）：Bash/PowerShell 的写盘
                             # 标记按**全量命令**判定（写动词/重定向常在尾部，
                             # hint 的 120 字截断会漏检→前端伪 input 把写命令
