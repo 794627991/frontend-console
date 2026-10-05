@@ -3561,16 +3561,20 @@ html {
 @keyframes hg-spin-rot { to { transform: rotate(360deg); } }
 
 /* ---- v3.1 工具行徽标：文件类型色块 + diff 增删计数 + 失败标记 ---- */
+/* v3.3.13（用户实锤「JS 黄色图标浅色下看不见」）：徽章文字改恒用前景色——
+   旧「同色系浅字+浅底」在浅色主题对比度归零；语言身份由底色 tint+左色条
+   （--badge-c）承担，双主题文字恒可读 */
 .hg-file-badge { flex: none; display: inline-block; min-width: 26px; text-align: center;
   font-size: 9px; font-weight: 700; letter-spacing: .04em; line-height: 14px;
-  border-radius: 3px; padding: 0 3px; margin: 0 2px; vertical-align: middle;
-  background: color-mix(in srgb, var(--muted) 22%, transparent); color: var(--fg);
+  border-radius: 3px; padding: 0 3px 0 5px; margin: 0 2px; vertical-align: middle;
+  background: color-mix(in srgb, var(--badge-c, var(--muted)) 22%, transparent);
+  color: var(--fg); box-shadow: inset 2px 0 0 var(--badge-c, transparent);
   font-family: var(--font-mono); text-transform: uppercase; }
-.hg-file-badge.ext-js { background: rgba(241, 224, 90, .18); color: #f1e05a; }
-.hg-file-badge.ext-ts { background: rgba(49, 120, 198, .22); color: #3178c6; }
-.hg-file-badge.ext-py { background: rgba(53, 114, 165, .22); color: #3572a5; }
-.hg-file-badge.ext-md { background: rgba(8, 63, 167, .25); color: #083fa1; filter: invert(.35) hue-rotate(180deg); }
-.hg-file-badge.ext-json { background: rgba(223, 78, 43, .18); color: #df4e2f; }
+.hg-file-badge.ext-js { --badge-c: #f1e05a; }
+.hg-file-badge.ext-ts { --badge-c: #3178c6; }
+.hg-file-badge.ext-py { --badge-c: #3572a5; }
+.hg-file-badge.ext-md { --badge-c: #083fa1; }
+.hg-file-badge.ext-json { --badge-c: #df4e2f; }
 .hg-file-badge.ext-css { background: rgba(86, 61, 124, .28); color: #563d7c; filter: brightness(1.6); }
 .hg-file-badge.ext-html { background: rgba(227, 76, 38, .18); color: #e34c26; }
 .hg-file-badge.ext-yml { background: rgba(203, 118, 48, .2); color: #cb171e; filter: hue-rotate(-25deg); }
