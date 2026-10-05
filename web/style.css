@@ -3964,8 +3964,12 @@ span.h-ag-type[class*='h-ava-'] {
 .h-turn-body .h-msg { width: auto; max-width: 100%; }
 /* v3.2.4：思考段时间线化——与 .h-tl .h-tool 同款透明处理 + 紫左边框（思考
    与工具按发生顺序交替；汇总胶囊退役为隐藏容器） */
+/* v3.4.7（用户定调「思考不能带弧线」）：收起态=直条（直角无弧线端点），
+   点开展开后才有圆角框（底色+边框出现） */
 .h-tl .h-think-seg { background: transparent; border-color: transparent;
-  border-left: 2px solid var(--h-violet, #8957e5); }
+  border-left: 2px solid var(--h-violet, #8957e5); border-radius: 0; }
+.h-tl .h-think-seg.open { background: color-mix(in srgb, var(--fg) 2%, transparent);
+  border-color: var(--border); border-radius: 6px; }
 /* v3.2.4：插回时间线的中间正文——裸 md 气泡形态（头像/模型徽章只属于根区
    的最终结论），与工具行/思考段同轴 */
 .h-tl > .h-msg { margin: 2px 0; }
