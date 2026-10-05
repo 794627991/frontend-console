@@ -2576,7 +2576,8 @@ html {
   text-overflow: ellipsis; }
 .h-ag-type { flex: none; font-family: var(--font-mono); font-size: var(--fs-xs);
   font-weight: 600; padding: 0 5px; border-radius: 4px;
-  background: color-mix(in srgb, currentColor 9%, transparent); }
+  background: color-mix(in srgb, currentColor 9%, transparent);
+  max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .h-ag-type.h-ava-0 { color: var(--hgd-run); }
 .h-ag-type.h-ava-1 { color: var(--hgd-fail); }
 .h-ag-type.h-ava-2 { color: var(--hgd-halt); }
@@ -3040,8 +3041,12 @@ html {
 .h-diff { font-size: var(--fs-sm); font-family: var(--font-mono); line-height: 1.6;
   max-height: 320px; overflow-y: auto; }
 .h-diff .d-add { color: var(--h-ok); background: color-mix(in srgb, var(--h-ok) 10%, transparent); padding: 0 6px; }
-.h-diff .d-del { color: var(--h-err); background: color-mix(in srgb, var(--h-err) 9%, transparent); padding: 0 6px;
-  text-decoration: line-through; }
+.h-diff .d-del { color: var(--h-err); background: color-mix(in srgb, var(--h-err) 9%, transparent); padding: 0 6px; }
+/* v3.3.11（用户实锤「完全看不清了」）：删除行去划线+正文回可读色——行布局
+   （行号+左红条+红底）时代三层信号叠加把代码糊死；删除语义由左条+底色
+   承担足够，文本保持 fg（轻微红染） */
+.h-diff .d-del { text-decoration: none; }
+.h-diff .d-del .d-tx { color: color-mix(in srgb, var(--h-err) 30%, var(--fg)); }
 .h-diff .d-ctx { color: var(--muted); opacity: .55; padding: 0 6px; }
 .h-diff .d-info { color: var(--muted); opacity: .7; text-align: center; padding: 0 6px; }
 
