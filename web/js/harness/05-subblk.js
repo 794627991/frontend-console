@@ -453,6 +453,7 @@
     // 双份）；回放铺底行 v3.3.9 起多带 tuid（转写行 tid 随行），先走 tuid 精确
     // 查重；旧转写 tid 空的铺底行（rp 标）按「名+摘要」指纹比对兜底（v2.57R
     // 口径，局限：同文件同摘要的连续调用可能漏显一条，概率极低）
+    pid = _subTid(pid);   // v3.4R（全审P4）：镜像归一——续派工具行落原 tab
     const tb = _sub.tabs[pid];
     if (tb && tb.t && row && row.dataset.tid &&
         !tb.t.tl.querySelector(`.h-tool[data-tuid="${CSS.escape(row.dataset.tid)}"]`)) {

@@ -172,18 +172,25 @@
   }
   function _subReopen(tid) {
     if (!tid) return;
+    tid = _subTid(tid);   // v3.4：续派包装 id 归一——永远接回原子代理的 tab
     if (!_sub.tabs[tid]) {
       const a = (_HG.agents || {})[tid];
       // v3.2.31（bug5②）：档案丢失（切会话往返）不再只弹 banner——打开子
       // 智能体目录 tab，任何点击必有可见响应（目录列回放档可进入）
       if (!a) { _subDirOpen(); showBanner('该子代理档案已随会话切换清空——已打开子智能体目录，可从列表回放', 3000); return; }
       const aid = a.taskId || a.agentId || '';
-      if (a.done && aid) { _subReplay(tid, a.type, a.desc, aid); return; }
+      // v3.4：SendMessage 档案 label 溯源（tab 不叫「SendMessage」）——taskId
+      // 反查友好名（peerNames），查不到落 id 尾缀
+      let _desc = a.desc || '';
+      if ((a.type || '') === 'SendMessage' && !_desc) {
+        _desc = '续派 · ' + ((_HG.peerNames || {})[aid] || String(aid).slice(-6));
+      }
+      if (a.done && aid) { _subReplay(tid, a.type, _desc, aid); return; }
       // v3.2.6R2（用户实锤「运行过程中不能点开看」）：运行中重开也走全量
       // 铺底——旧态只建空脚手架等增量，中途重开=白板（此前事件不重现）。
       // force 回放 + F3 运行态分支（不定稿/秒表起跑/镜像续流）= 铺底即实况
-      if (!a.done && aid) { _subReplay(tid, a.type, a.desc, aid, true); return; }
-      _subOpen(tid, a.type, a.desc);
+      if (!a.done && aid) { _subReplay(tid, a.type, _desc, aid, true); return; }
+      _subOpen(tid, a.type, _desc);
     }
     _sub.manual = true;                  // P0-3：手动来源——回合终结不自动收起，✕ 才收
     _subShow();
@@ -193,7 +200,7 @@
     const tb = _sub.tabs[tid];
     if (!tb) return;
     // v3.2.6：停窗格秒表（tab 档案拆了 tick 闭包的自愈判据就没了——先停）
-    if (tb.t && tb.t.tick) { clearInterval(tb.t.tick); tb.t.tick = null; }
+    if (tb.tick) { clearInterval(tb.tick); tb.tick = null; }   // v3.4：tick 挂 tab
     if (tb.sc && tb.sc.parentNode) tb.sc.remove();
     delete _sub.tabs[tid];
     _sub.order = _sub.order.filter(t => t !== tid);

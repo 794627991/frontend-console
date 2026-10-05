@@ -189,7 +189,7 @@
     _subDirTickStop();
     for (const k in _sub.tabs) {
       const tb = _sub.tabs[k];
-      if (tb && tb.t && tb.t.tick) { clearInterval(tb.t.tick); tb.t.tick = null; }
+      if (tb && tb.tick) { clearInterval(tb.tick); tb.tick = null; }   // v3.4：tick 挂 tab
     }
     _sub.tabs = {}; _sub.order = []; _sub.active = null; _sub.manual = false;
     dynEl = null;   // v3.3：动态页 sc 随清场销毁——防渲染进游离节点（重开由 _subDynOpen 重建）
@@ -266,6 +266,47 @@
     u.appendChild(mdBubble(String(text || '').slice(0, 1200)));
     return u;
   }
+  // ==================== v3.4：续派归一（SendMessage 必须接回原子代理 tab）====
+  // CLI 把 SendMessage 续派包装成新 task id——事件流/档案/段全按包装 id 走，
+  // 不归一则窗格为每个包装 id 开独立 tab（用户实锤「绝对禁止」）。零状态归一：
+  // tabs 直命中 → agents 反查（原始 tid 的 taskId/agentId 关联任一命中）→ 原键。
+  // agents 档案天然携带三向关联（X.taskId=A、包装 b.id.taskId=A），无需 alias 表。
+  function _subTid(pid) {
+    const p = String(pid || '');
+    if (!p || _sub.tabs[p]) return p;
+    // 匹配向一：pid=真实 agentId——tab 档案 taskId/agentId 直指
+    for (const t in _sub.tabs) {
+      const a = (_HG.agents || {})[t] || {};
+      if (a && (a.taskId === p || a.agentId === p)) return t;
+    }
+    // v3.4R（全审P2）匹配向二：pid=续派包装 id——取包装自身档案的 taskId，
+    // 找共享同一 taskId 的 tab（X.taskId=A ≡ B.taskId=A）。续派事件流/镜像/
+    // 完成信号携带的都是包装 id，缺此向归一永不命中
+    const pa = (_HG.agents || {})[p] || {};
+    if (pa.taskId) {
+      for (const t in _sub.tabs) {
+        const a = (_HG.agents || {})[t] || {};
+        if (a && a.taskId === pa.taskId) return t;
+      }
+    }
+    return p;
+  }
+  // v3.4：链式运行态——原始档案 done 之外，任一续派包装（taskId 关联链）在跑
+  // 都算该代理运行中（回放续流判定用；归一后 agents[T].done 只代表首轮）
+  function _subAgRunning(tid) {
+    const a0 = (_HG.agents || {})[tid];
+    if (a0 && !a0.done) return true;
+    if (a0) {
+      for (const k in (_HG.agents || {})) {
+        const a = _HG.agents[k];
+        if (a && !a.done && a.taskId &&
+            (a.taskId === a0.taskId || a.taskId === a0.agentId ||
+             (_HG.subTailSeg || {})[a.taskId] !== undefined &&
+             (_HG.subTailSeg || {})[a.taskId] === k)) return true;
+      }
+    }
+    return false;
+  }
   function _subUserFlush(key) {
     const q = _HG.subUserQ;
     if (!q || !q[key] || !q[key].length) return;
@@ -278,30 +319,53 @@
     if (!tb || !tb.t || !tb.t.tl) return;   // 窗格未开——留队等开
     const texts = q[key];
     delete q[key];
-    const ws = tb.t.tl.closest('.h-grp');
-    for (const text of texts) {
-      const u = _subUserRowEl(text);
-      if (ws && ws.parentElement) ws.parentElement.insertBefore(u, ws);
-      else tb.t.tl.appendChild(u);
-    }
+    for (const text of texts) _subUserInto(tb, text);
   }
-  function _subPaneScaffold(sc, type, model, desc) {    const mdl = String(model || '').split('[')[0].trim();
+  // v3.4：来向消息落 tab——轮次模型的「消息N」。非新空工作区（有内容/已定稿）
+  // =旧轮定格（已工作 X）+开新轮，消息气泡插新轮前 → 消息N+已工作N+结论N 时序
+  function _subUserInto(tb, text) {
+    let t = tb.t;
+    // v3.4R（全审P5）：pristine=无工作行且无结论——连发消息不再产生空「已工作」残块轮
+    const pristine = t && !t.done && t.tl && !t.tl.children.length
+      && !(t.concl && t.concl.children.length) && tb.turns.length <= 1;
+    if (!pristine) {
+      if (t && !t.done) _subTlFinalizeT(tb, t, {});
+      t = _subTurnNew(tb);
+    }
+    const ws = t.tl.closest('.h-grp');
+    const u = _subUserRowEl(text);
+    if (ws && ws.parentElement) ws.parentElement.insertBefore(u, ws);
+    else t.tl.appendChild(u);
+  }
+  // v3.4：tab 头（idline）——多轮模型的固定头部，轮块由 _subTurnNew 纵排其后
+  function _subPaneScaffold(tb, type, model, desc) {
+    const mdl = String(model || '').split('[')[0].trim();
     const ty = _AGENT_LABEL[type] || type || '子代理';
-    const wrap = document.createElement('div');
-    wrap.className = 'hg-sub-grp';
-    wrap.innerHTML =
+    const idline = document.createElement('div');
+    idline.className = 'hg-sub-grp hg-sub-headline';
+    idline.innerHTML =
       `<div class="hg-sub-idline">` +
       `<span class="h-ava ${_hgAvaCls(ty)}">${esc(String(ty).charAt(0).toUpperCase())}</span>` +
       `<span class="hg-sub-idline-ty">${esc(ty)}</span>` +
       (mdl ? `<span class="h-mmodel">${esc(mdl)}</span>` : '') +
-      `</div>` +
+      `</div>`;
+    tb.sc.appendChild(idline);
+    tb.turns = [];
+    return _subTurnNew(tb, { t0: 0, desc });
+  }
+  // v3.4：轮块（消息N+已工作N+结论N 的工作段）——与主会话回合同构的 .h-grp
+  function _subTurnNew(tb, opts) {
+    opts = opts || {};
+    const wrap = document.createElement('div');
+    wrap.className = 'hg-sub-grp hg-sub-turn';
+    wrap.innerHTML =
       `<div class="h-grp"><div class="h-grp-proc">` +
       `<button class="h-turn-head" data-hg-subtgl="1"><span class="h-chev">▸</span>` +
       `<span class="h-turn-label">工作中 0s</span><span class="h-turn-sub"></span></button>` +
       `<div class="h-turn-body"><div class="h-tl"></div></div>` +
       `</div><div class="hg-sub-concl"></div></div>`;
-    sc.appendChild(wrap);
-    const t = { sc,
+    tb.sc.appendChild(wrap);
+    const t = { el: wrap, sc: tb.sc,   // sc=tab 滚动容器（既有 t.sc 消费方语义不变）
       head: wrap.querySelector('.h-turn-head'),
       label: wrap.querySelector('.h-turn-label'),
       subEl: wrap.querySelector('.h-turn-sub'),
@@ -309,9 +373,28 @@
       tl: wrap.querySelector('.h-tl'),
       concl: wrap.querySelector('.hg-sub-concl'),
       exp: null, stats: { think: 0, tool: 0 },
-      t0: 0, tick: null, done: false, err: false, durTxt: '' };
-    if (desc) t.head.title = String(desc).slice(0, 200);
+      t0: opts.t0 || 0, done: false, err: false, durTxt: '' };
+    if (opts.desc) t.head.title = String(opts.desc).slice(0, 200);
+    tb.turns.push(t);
+    tb.t = t;
     return t;
+  }
+  // v3.4：轮级定稿（tb+turn 直取，不依赖 tid/active 指针——切轮定格旧轮用）
+  function _subTlFinalizeT(tb, t, opt) {
+    if (!tb || !t || t.done) return;
+    opt = opt || {};
+    _subTlSegFreeze(t);
+    _subTlExpBreak(t);
+    t.done = true;
+    t.err = !!opt.err;
+    const durMs = (opt.durMs > 0) ? opt.durMs
+      : (t.t0 > 0 ? Math.max(0, Date.now() - t.t0) : 0);
+    t.durTxt = durMs > 0 ? _hgTurnDurTxt(durMs) : '';
+    _subTlHeadPaint(t);
+    const texts = t.tl ? [...t.tl.querySelectorAll(':scope > .h-msg.asst')] : [];
+    const last = texts[texts.length - 1];
+    if (last && t.concl) t.concl.appendChild(last);
+    if (t.body && t.head && t.head.dataset.userToggled !== '1') t.body.classList.add('closed');
   }
   function _subTlThinkRow(raw, durTxt) {
     const seg = document.createElement('div');
@@ -506,12 +589,15 @@
     }
   }
   function _subTlTickStart(tid) {
+    // v3.4：tick 从轮迁到 tab（每 tab 单 interval，画活跃轮 tb.t）——切轮后
+    // 新轮秒表自动接续，无需重启 interval
     const tb = _sub.tabs[tid];
-    if (!tb || !tb.t || tb.t.tick || tb.t.done) return;
-    const t = tb.t;
-    t.tick = setInterval(() => {
+    if (!tb || tb.tick) return;
+    tb.tick = setInterval(() => {
       const cur = _sub.tabs[tid];
-      if (!cur || cur.t !== t || t.done) { clearInterval(t.tick); t.tick = null; return; }
+      if (!cur || cur !== tb) { clearInterval(tb.tick); tb.tick = null; return; }
+      const t = cur.t;
+      if (!t || t.done) return;   // 无活跃轮/已定稿——空转等待新轮
       _subTlHeadPaint(t);
       // 开口思考段活字时长（完成定格由 _subTlSegFreeze 收「持续了 N」）
       const open = t.tl && t.tl.querySelector('.h-think-seg:not([data-hg-done])');
@@ -523,28 +609,15 @@
     }, 1000);
   }
   // 定稿：头「已工作 X」、结论气泡上移根区、体默认收起（尊重手动开合）
+  // v3.4：轮自身账（t.t0 起）——续派轮不再错用首轮档案的 t0/doneAt
   function _subTlFinalize(tid, opt) {
-    const tb = _sub.tabs[tid];
-    const t = tb && tb.t;
-    if (!t || t.done) return;
-    opt = opt || {};
-    if (t.tick) { clearInterval(t.tick); t.tick = null; }
-    _subTlSegFreeze(t);
-    _subTlExpBreak(t);
-    t.done = true;
-    t.err = !!opt.err;
-    const _a = (_HG.agents || {})[tid] || {};
-    const durMs = (opt.durMs > 0) ? opt.durMs
-      : ((_a.doneAt || Date.now()) - (_a.t0 || 0));
-    t.durTxt = durMs > 0 ? _hgTurnDurTxt(durMs) : '';
-    _subTlHeadPaint(t);
-    const texts = t.tl ? [...t.tl.querySelectorAll(':scope > .h-msg.asst')] : [];
-    const last = texts[texts.length - 1];
-    if (last && t.concl) t.concl.appendChild(last);
-    if (t.body && t.head && t.head.dataset.userToggled !== '1') t.body.classList.add('closed');
+    const tb = _sub.tabs[_subTid(tid)];
+    if (!tb) return;
+    _subTlFinalizeT(tb, tb.t, opt);
   }
   function _subOpen(tid, type, desc, replay) {
     if (!_subPaneEl) return;
+    tid = _subTid(tid);   // v3.4：续派包装 id 归一——命中原 tab 直接激活，绝不另开
     if (!_sub.tabs[tid]) {
       const sc = document.createElement('div');
       sc.className = 'hg-sub-msgs'; sc.dataset.tid = tid;
@@ -555,17 +628,25 @@
       // v2.38：replay=true=历史回放 tab（无绿点、置灰、带「回放」徽章）
       // v3.2.6：tab 标题优先用描述（ZCode 右侧 tab 用任务短题，类型进窗格头）
       const _ag = (_HG.agents || {})[tid] || {};
-      _sub.tabs[tid] = { label: _subTabLabel(type, desc), type, desc, sc,
+      // v3.4：label 溯源——SendMessage 包装档案的 tab 不叫「SendMessage」，
+      // 回落原档案类型 + peerNames 友好名
+      let _lbType = type, _lbDesc = desc;
+      if ((type || '') === 'SendMessage') {
+        const _A = _ag.taskId || _ag.agentId || '';
+        _lbType = _ag.type || type;
+        _lbDesc = desc || '续派 · ' + ((_HG.peerNames || {})[_A] || String(_A).slice(-6));
+      }
+      _sub.tabs[tid] = { label: _subTabLabel(_lbType, _lbDesc), type: _lbType, desc: _lbDesc, sc,
                          run: replay ? false : (!('done' in _ag) || !_ag.done),
                          err: !!_ag.err, replay: !!replay,
-                         model: _ag.model || '', t: null };
+                         model: _ag.model || '', t: null, turns: [], tick: null };
       _sub.order.push(tid);
       // v3.2：上限 6 个 tab，最旧让位（目录/动态伪 tab 常驻不让位，v3.3 加豁免 __dyn__）
       if (_sub.order.filter(x => x !== _SUB_DIR && x !== _SUB_DYN).length > 6) {
         const old = _sub.order.find(x => x !== _SUB_DIR && x !== _SUB_DYN);
         if (old != null) {
           const otb = _sub.tabs[old];
-          if (otb && otb.t && otb.t.tick) { clearInterval(otb.t.tick); otb.t.tick = null; }
+          if (otb && otb.tick) { clearInterval(otb.tick); otb.tick = null; }
           _sub.order = _sub.order.filter(x => x !== old);
           if (otb && otb.sc.parentNode) otb.sc.remove();
           delete _sub.tabs[old];
@@ -573,7 +654,8 @@
       }
       _subBodyEl.appendChild(sc);
       // v3.2.6：ZCode 时间线脚手架（回放 fetch 会重建；live 即刻起跑秒表）
-      _sub.tabs[tid].t = _subPaneScaffold(sc, type, _ag.model || '', desc);
+      // v3.4：脚手架=idline+首轮（多轮模型，续派轮由 _subUserInto/_subTurnNew 追加）
+      _sub.tabs[tid].t = _subPaneScaffold(_sub.tabs[tid], type, _ag.model || '', desc);
       // v3.2.30：冲 live 来向消息队列（tid 键 + 已绑 agentId 键）
       _subUserFlush(tid);
       if (_ag.taskId) _subUserFlush(_ag.taskId);
@@ -609,6 +691,7 @@
   }
   function _subReplay(tid, type, desc, agentId, force) {
     if (!_subPaneEl) return;
+    tid = _subTid(tid);   // v3.4：包装 id/真实 agentId 均归一到原子代理 tab 键
     const a = (_HG.agents || {})[tid] || {};
     // v2.57：协作档案有 taskId（=真实 agentId，v2.52 修复转写源后可拉全量）
     // ——不再走「过程不可回看」占位（过时判定，用户实锤途中关闭再开啥也没有）；
@@ -679,7 +762,9 @@
         if (!sc2) return;
         // v3.2.6：重建时间线脚手架（清「回放加载中」占位）
         sc2.innerHTML = '';
-        const t = tb2.t = _subPaneScaffold(sc2, type, tb2.model || a.model || '', desc);
+        // v3.4：脚手架=idline+首轮；后续 k:'user' 行切新轮（多轮回放）
+        tb2.turns = [];
+        let t = tb2.t = _subPaneScaffold(tb2, type, tb2.model || a.model || '', desc);   // v3.4R（全审P1）：let——user 行切轮重赋值
         const note = (txt) => {
           const n = document.createElement('div');
           n.className = 'hg-sub-replay-note';
@@ -753,6 +838,7 @@
         };
         for (const row of (j.rows || [])) {
           const ts = _tsGet(row);
+          if (ts > 0 && !t.t0) t.t0 = ts;   // v3.4R（全审P3a）：轮 t0=本轮首行 ts（首轮 scaffold 硬编码 0）
           // v3.3.1：本行之前的行 ts——思考段起点改挂前一行（同一 assistant
           // 消息 thinking 与 tool_use 同 ts，挂自身 ts 恒 0 秒）
           const _rowPrevTs = lastTs;
@@ -785,6 +871,12 @@
             const _dup = [...t.sc.querySelectorAll('.hg-sub-u')].some(
               x => (x.textContent || '').trim().indexOf(_txtHead) === 0);
             if (!_dup) {
+              // v3.4（D6）：多轮回放——user 行切轮：当前轮有内容则按 ts 定格
+              // 「已工作」，开新轮后气泡插新轮工作区前（消息N+已工作N+结论N）
+              if (t.tl && t.tl.children.length) {
+                _subTlFinalizeT(tb2, t, { durMs: (ts > 0 && t.t0 > 0) ? Math.max(0, ts - t.t0) : 0 });
+                t = _subTurnNew(tb2, { t0: ts || 0 });
+              }
               const u = document.createElement('div');
               u.className = 'h-msg user hg-sub-u';
               u.appendChild(mdBubble(String(row.text || '').slice(0, 1200)));
@@ -858,14 +950,16 @@
         // 未 done 不定稿（定稿会封死 _subTlFinalize 的 done 守卫：续流增量
         // 落进已收起体、秒表不复活、最终时长不含续跑段）。保持运行态：秒表
         // 即刻起跑、体保持开、task_notification 到达再正式定稿
-        const _agNow = (_HG.agents || {})[tid];
-        if (_agNow && !_agNow.done) {
-          t.t0 = _agNow.t0 || Date.now();
+        // v3.4（D6）：续派链上任一包装在跑=保持运行态（归一后 agents[T].done
+        // 只代表首轮，旧判定会把续派中的最后一轮错误定稿）
+        if (_subAgRunning(tid)) {
+          t.t0 = t.t0 || Date.now();
           _subTlHeadPaint(t);
           _subTlTickStart(tid);
         } else {
-          const tsAll = (j.rows || []).map(_tsGet).filter(x => x > 0);
-          const durMs = tsAll.length > 1 ? (tsAll[tsAll.length - 1] - tsAll[0]) : 0;
+          // v3.4R（全审P3b）：末轮 dur=轮自身账（lastTs−本轮 t0）——旧 tsAll
+          // 全转写首末差在多轮时代入跨轮跨度+轮间空转，末轮「已工作」虚大
+          const durMs = (lastTs > 0 && t.t0 > 0) ? Math.max(0, lastTs - t.t0) : 0;
           t.done = true;
           t.durTxt = durMs > 0 ? _hgTurnDurTxt(durMs) : '';
           _subTlHeadPaint(t);
@@ -943,6 +1037,7 @@
   // v3.2.6：轮询镜像增量（think/text）→ 窗格时间线行（v2.57R 的 rp 铺底
   // 前缀查重保留——回放 tab fetch 收敛放行后的重叠窗口防双份）
   function _subPaneMirror(pid, kind, text) {
+    pid = _subTid(pid);   // v3.4：续派包装 id 归一
     const tb = _sub.tabs[pid];
     if (!tb || !tb.t || !text || !String(text).trim()) return;
     if (tb.replay) return;   // v2.55R：回放 tab 由 fetch 全量自建，镜像增量不得污染
@@ -974,18 +1069,20 @@
   // v3.2.6：live 窗格喂入（SSE 子代理块：thinking/text/tool_use）——全部走
   // 时间线行工厂；think 开口段活字/断组/贴底与主链同口径
   function _subFeed(parentId, blocks) {
+    parentId = _subTid(parentId);   // v3.4：续派包装 id 归一（事件流按包装 id 走）
     const tb = _sub.tabs[parentId];
     if (!tb || !tb.t) return;
     const t = tb.t;
     const stick = _subPaneStick(t.sc);
     // v2.35：回合终结定格过的 tab，若对应代理其实还在跑（后台 Task 跨回合
     // 续跑），事件继续流入时恢复绿点脉冲——别让冻结态骗人；秒表一并复活
-    const _ag = (_HG.agents || {})[parentId];
-    if (tb.run !== true && _ag && !_ag.done) {
+    // v3.4R（全审P2）：复活判定改链式续派运行态——归一后 agents[X].done
+    // 只代表首轮，续派在跑时 tb 仍须亮运行态
+    if (tb.run !== true && _subAgRunning(parentId)) {
       tb.run = true;
       _subTabsPaint();
     }
-    if (tb.run && !t.done && !t.tick) { t.t0 = t.t0 || (_ag && _ag.t0) || Date.now(); _subTlTickStart(parentId); }
+    if (tb.run && !t.done && !tb.tick) { t.t0 = t.t0 || Date.now(); _subTlTickStart(parentId); }
     for (const b of blocks) {
       if (!b) continue;
       if (b.type === 'thinking' && String(b.thinking || '').trim()) {
@@ -1027,6 +1124,7 @@
   // 未定格行——v3.3.9 并行批口径，与回放 openTools 同源；全 miss 落孤立 ↳
   // 行——结果不丢）
   function _subResult(parentId, tr) {
+    parentId = _subTid(parentId);   // v3.4：续派包装 id 归一
     const tb = _sub.tabs[parentId];
     if (!tb || !tb.t) return;
     const t = tb.t;
@@ -1073,7 +1171,8 @@
   }
   function _subClose(tid, err) {
     _subBlkFinish(tid, err);  // v2.43：主 flow 段头定格（不依赖窗格 tab 存活）
-    const tb = _sub.tabs[tid];
+    // v3.4：窗格 tab 按 _subTid 归一——包装任务的完成信号定格原子代理 tab 的活跃轮
+    const tb = _sub.tabs[_subTid(tid)];
     if (!tb) return;
     tb.run = false; tb.err = !!err;
     _subTlFinalize(tid, { err });   // v3.2.6：窗格时间线定稿（已工作 X + 结论上移）
@@ -1400,10 +1499,10 @@
       // v3.2.6R2（审计N1）：collab 豁免——独立会话事件流不经本会话，
       // _subFeed 复活链对它不可达（唯一续流源=轮询镜像，无 tick 复活逻辑），
       // 停了就在 result→notification 窗口内秒表冻结（可达数分钟）
-      if (tb.t && tb.t.tick) {
+      if (tb.tick) {
         const _a = (_HG.agents || {})[t];
         if (_a && !_a.done && _a.collab) continue;
-        clearInterval(tb.t.tick); tb.t.tick = null;
+        clearInterval(tb.tick); tb.tick = null;   // v3.4：tick 挂 tab
       }
     }
     if (any) _subTabsPaint();

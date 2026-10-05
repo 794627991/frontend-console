@@ -3740,6 +3740,9 @@ html {
    ② ↳ 孤儿结果行折行不截断（旧 nowrap+ellipsis 窄分屏下断在半字）；
    ③ 时间线右缘留 12px 呼吸，状态徽章（完成/出错）不贴容器边 */
 .hg-sub-msgs { overflow-x: hidden; }
+/* v3.4：tab 内多轮块（消息N+已工作N+结论N）纵排分界 */
+.hg-sub-turn + .hg-sub-turn { margin-top: 6px; padding-top: 6px;
+  border-top: 1px dashed color-mix(in srgb, var(--border) 55%, transparent); }
 .hg-sub-body .h-tl { padding-right: 12px; }
 .hg-sub-body .h-tl .h-tool-res { white-space: pre-wrap; word-break: break-word;
   text-overflow: clip; }
