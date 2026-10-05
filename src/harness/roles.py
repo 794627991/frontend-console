@@ -466,7 +466,10 @@ def install_roles_agents(model=None):
                 "reviewer",
                 "审计者：改动交付或超审计线时派此代理审——分"
                 "两档：轻审（只审 diff）／全审（取证级：需求符合性/逻辑/健"
-                "壮性/安全/一致性）。只读不改，PASS/FAIL 二选一。",
+                "壮性/安全/一致性）。只读不改，PASS/FAIL 二选一。"
+                "复审（复核自己 FAIL 过的修复）由主会话 SendMessage 续派本"
+                "代理完成——上下文保留逐条验收、免重读文件；新审计目标才新开"
+                "本代理。",
                 reviewer_m, _REVIEWER_BODY, tools=_TOOLS_REVIEW),
         }
     else:
@@ -476,7 +479,10 @@ def install_roles_agents(model=None):
                 "reviewer",
                 "审计者：改动交付或超审计线时派此代理审——分"
                 "两档：轻审（只审 diff）／全审（取证级：需求符合性/逻辑/健"
-                "壮性/安全/一致性）。只读不改，PASS/FAIL 二选一。",
+                "壮性/安全/一致性）。只读不改，PASS/FAIL 二选一。"
+                "复审（复核自己 FAIL 过的修复）由主会话 SendMessage 续派本"
+                "代理完成——上下文保留逐条验收、免重读文件；新审计目标才新开"
+                "本代理。",
                 reviewer_m, _REVIEWER_BODY, tools=_TOOLS_REVIEW),
         }
     wrote = []
@@ -732,6 +738,11 @@ def roles_bridge_text(model=None):
             "流程：中改你改完 → reviewer 轻审；大改 designer 出方案 → 你"
             "实施 → reviewer 全审 → FAIL 自己修再送审，致命/严重问题清零"
             "才收 → 你消化双方结论后汇总答复用户。\n"
+            "审计者续派准则（硬性）：新审计目标（新功能/新改动的首轮轻审或"
+            "全审）才新开 reviewer——对抗中立性要求新视角；复核自己 FAIL 过"
+            "的修复必须 SendMessage 续派原 reviewer（上下文保留、逐条验收、"
+            "免重读文件），禁止为复审新开。设计者同理：同一方案的迭代续派，"
+            "新方案新开。\n"
             "纪律（%s）：\n"
             "- 不要把该审的改动刻意拆小逃审：单次改动超免审线就必须轻审、"
             "超轻审线就必须全审。\n"
@@ -750,7 +761,9 @@ def roles_bridge_text(model=None):
     if str(cfg.get("audit_mode") or "auto") != "off":
         audit_note = ("harness 会在回合结束时审计你的直改量（按单次直改总计"
                       "行数，不计文件数、不做回合累计）——超过审计线会被自动"
-                      "查出并要求派 reviewer 补审后重新汇总")
+                      "查出并要求派 reviewer 补审后重新汇总；复审复核自己 "
+                      "FAIL 过的修复必须 SendMessage 续派原 reviewer（上下文"
+                      "保留免重读），新审计目标才新开")
     else:
         audit_note = "大改不派 reviewer 审计就答复用户属重大流程违规"
     return (
