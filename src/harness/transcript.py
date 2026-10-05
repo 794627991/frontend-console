@@ -610,7 +610,11 @@ def _subagent_rows_from_jsonl(path):
                             # 四分支（写动词/git 写子命令/-delete/重定向/解释
                             # 器 -c|-e；/i 对齐 re.I）——保守方向：绝不把写
                             # 命令聚组，两端正则需同步维护
+                            # v3.3.9：tid 随行——回放重建后 live 结果可按 tuid 精确
+                            # 配对（运行中 force 回放重建不带 tuid，其后到达的
+                            # tool_result 全部落 ↳ 孤儿行）
                             _row = {"k": "tool", "name": b.get("name") or "",
+                                    "tid": b.get("id") or "",
                                     "hint": str(hint)[:120], "ts": _ts}
                             # v3.2.25（用户实锤「历史回放看不到改动」）：
                             # Edit/Write 的输入体随行（old/new/content 各截

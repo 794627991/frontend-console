@@ -730,7 +730,9 @@
         const _tsGet = r0 => (r0 && r0.ts) ? Date.parse(r0.ts) : 0;
         const pend = [];       // 开口思考段（时长=下一带 ts 行差）
         let lastTs = 0;
-        let lastTool = null;   // result 就近挂回的当前工具行
+        const openTools = [];  // v3.3.9：并行工具 FIFO 配对队列——旧 lastTool 单槽，并行批
+                               // （一条 assistant 多 tool_use + 一条 user 多 result）第二个
+                               // result 必落 ↳ 孤儿行（用户实锤审核回放里的裸代码行）
         const _fillRes = (toolRow, text, err) => {
           toolRow.dataset.done = '1';
           toolRow.classList.toggle('err', !!err);
@@ -807,7 +809,8 @@
               pend.push({ seg, ts: (_rowPrevTs > 0 && (!ts || _rowPrevTs < ts)) ? _rowPrevTs : ts });
           } else if (row.k === 'tool') {
             _subTlSegFreeze(t);
-            const tw = _subTlToolRow(row.name || '', row.hint || '', '');
+            // v3.3.9：tid 作 tuid——运行中 force 回放重建后，live 结果按 tuid 精确配对
+            const tw = _subTlToolRow(row.name || '', row.hint || '', row.tid || '');
             tw.dataset.hgRp = '1';   // 铺底标——镜像增量查重锚
             tw.dataset.fp = (row.name || '') + ' ' + String(row.hint || '').slice(0, 80);
             // v3.2.25（用户实锤「历史回放看不到改动」）：Edit/Write 的输入体
@@ -831,10 +834,11 @@
               ? { command: String(row.hint || '') } : null;
             _subTlPlace(t, tw, row.name || '', _pin);
             t.stats.tool++;
-            lastTool = tw;
+            openTools.push(tw);
           } else if (row.k === 'result') {
-            if (lastTool && lastTool.isConnected && lastTool.dataset.done !== '1') {
-              _fillRes(lastTool, row.text, row.err);
+            const _tw = openTools.shift();
+            if (_tw && _tw.isConnected && _tw.dataset.done !== '1') {
+              _fillRes(_tw, row.text, row.err);
             } else {
               const d = document.createElement('div');
               d.className = 'h-tool-res' + (row.err ? ' err-txt' : '');
@@ -1030,9 +1034,10 @@
     let toolRow = tr.tool_use_id
       ? t.tl.querySelector(`.h-tool[data-tuid="${CSS.escape(tr.tool_use_id)}"]`) : null;
     if (!toolRow) {
+      // v3.3.9：兜底改 FIFO 首个未定格行——并行批按完成序消费，与回放同口径
       const all = [...t.tl.querySelectorAll('.h-tool')];
-      for (let i = all.length - 1; i >= 0; i--) {
-        if (all[i].dataset.done !== '1') { toolRow = all[i]; break; }
+      for (const el of all) {
+        if (el.dataset.done !== '1') { toolRow = el; break; }
       }
     }
     if (!toolRow) {
