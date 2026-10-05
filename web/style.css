@@ -2224,6 +2224,12 @@ html {
    flex-end 才是对话列右缘而非容器右缘——居中后左右同欄 */
 .hg-flow > .h-msg, .hg-flow > .h-peer, .hg-flow > .h-audit, .hg-flow > .h-sysnote,
 .hg-flow > .h-switch, .hg-flow > .h-subblock { width: min(820px, 100%); }
+/* v3.3.4R（用户实锤「排布奇怪」）：用户/AI 消息都定驻居中列——用户列内靠
+   右、AI 列内靠左（经典对话轴），不再用户贴容器远右与 AI 列分家 */
+.hg-flow > .h-msg.user, .hg-flow > .h-msg.asst { align-self: center;
+  display: flex; flex-direction: column; }
+.hg-flow > .h-msg.user { align-items: flex-end; }
+.hg-flow > .h-msg.asst { align-items: flex-start; }
 /* v3.2.10：回合导航轨（ZCode ConversationTurnNavigator 同款）——flowwrap
    左缘竖向刻度轨：每条用户提问一枚刻度，悬停 title 预览、点击跳转（未渲染
    回合先扩窗再定位），当前视口回合高亮 + 轨自滚跟随；≥2 回合才显示 */
