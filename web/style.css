@@ -2221,15 +2221,18 @@ html {
    均衡留白，不再内容贴左+右缘大片空白；开分屏后列随窄区自动再居中 */
 .hg-flow > .hg-spin-row { align-self: center; width: min(820px, 100%);
   justify-content: flex-start; }
-/* 列宽收口：根区消息/协作行/子代理段与回合组同列（820px），用户气泡的
-   flex-end 才是对话列右缘而非容器右缘——居中后左右同欄 */
+/* 列宽收口：根区消息/协作行/子代理段与回合组同列（820px） */
 .hg-flow > .h-msg, .hg-flow > .h-peer, .hg-flow > .h-audit, .hg-flow > .h-sysnote,
 .hg-flow > .h-switch, .hg-flow > .h-subblock { width: min(820px, 100%); }
-/* v3.3.4R（用户实锤「排布奇怪」）：用户/AI 消息都定驻居中列——用户列内靠
-   右、AI 列内靠左（经典对话轴），不再用户贴容器远右与 AI 列分家 */
+/* v3.4.1（用户定调「视差」）：AI 列居中略偏左（右让位 min(140px,12%)），
+   用户消息锚更宽容器（1080）右缘——无分屏时形成左右视差；开分屏后容器
+   100% 生效，用户消息自动贴分屏侧边（窄区 margin 按 12% 收缩不挤占） */
+.hg-flow > .h-grp, .hg-flow > .h-msg.asst, .hg-flow > .h-peer,
+.hg-flow > .h-audit, .hg-flow > .h-sysnote, .hg-flow > .h-switch,
+.hg-flow > .h-subblock { margin-right: min(140px, 12%); }
 .hg-flow > .h-msg.user, .hg-flow > .h-msg.asst { align-self: center;
   display: flex; flex-direction: column; }
-.hg-flow > .h-msg.user { align-items: flex-end; }
+.hg-flow > .h-msg.user { align-items: flex-end; width: min(1080px, 100%); }
 .hg-flow > .h-msg.asst { align-items: flex-start; }
 /* v3.2.10：回合导航轨（ZCode ConversationTurnNavigator 同款）——flowwrap
    左缘竖向刻度轨：每条用户提问一枚刻度，悬停 title 预览、点击跳转（未渲染
