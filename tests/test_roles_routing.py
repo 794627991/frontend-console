@@ -48,7 +48,7 @@ _TMP = tempfile.mkdtemp(prefix="roles_routing_test_")
 _st.CONFIG_FILE = os.path.join(_TMP, "config.json")
 os.environ.setdefault("HARNESS_AGENTS_DIR", _TMP)   # 双保险：装 agents 也进临时目录
 
-import src.harness_roles as hr
+import src.harness.roles as hr
 
 LIGHT_MODEL = "glm-5.3-flash"       # 非 opus → light
 HEAVY_MODEL = "claude-opus-4-5"     # 含 opus → strong

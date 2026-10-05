@@ -103,6 +103,18 @@ function notifyTaskDone(nid, {ok, title, detail, ms=5000}) {
 
 // 一次性冒泡（旧 showBanner 等价，但走堆叠栈不覆盖其他通知）
 function notifyPop(msg, ms=4000, isErr=false, type) {
+  // v3.2.20（用户实锤同文案提示连刷 7~8 条）：同文去重——栈内在场的相同
+  // 文案+相同级别不再重复弹，仅重置其驻留计时（重要信息不被刷屏淹没）
+  try {
+    const dup = [..._notifyStack().children].find(n =>
+      !n._closed && n.classList.contains('err') === !!isErr &&
+      (n.querySelector('.n-title') || {}).textContent === String(msg));
+    if (dup) {
+      if (dup._timer) clearTimeout(dup._timer);
+      dup._timer = setTimeout(() => _notifyDismiss(dup), ms || 4000);
+      return dup;
+    }
+  } catch(_) {}
   const d = _notifyBuild({title: msg, isErr, type});
   d.querySelector('.n-state').innerHTML = isErr ? '✗' : '✓';
   d.querySelector('.n-close').onclick = () => _notifyDismiss(d);

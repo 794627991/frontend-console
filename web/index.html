@@ -213,7 +213,7 @@
            （CSS .ai-panel.hg-mode）——命令/感知/分析/Claude 页签对 harness 全无用
            （Claude 页签是 CLI 模式专用）。六分区：会话状态/任务进度/子代理实况/
            最近工具/回合历史/当前文件。骨架静态（v2.30 教训：挂 harness wrap 内
-           q() 扑空=面板永不显示），动态行由 claude-harness.js 填充 -->
+           q() 扑空=面板永不显示），动态行由 web/js/harness/ 编号脚本填充 -->
       <div class="hg-dyn-pane" data-hg-dyn>
         <section class="hg-dyn-sec" data-hg-sec="stat">
           <div class="hg-dyn-strow">
@@ -229,16 +229,16 @@
           <div class="hg-dyn-kv ctx"><span class="k">上下文</span><span class="v" data-hg-d-ctx>待统计</span></div>
         </section>
         <section class="hg-dyn-sec" data-hg-sec="todos" hidden>
-          <div class="hg-dyn-sec-head">任务进度<span class="hg-dyn-pill" data-hg-d-tdone>0/0</span></div>
+          <div class="hg-dyn-sec-head">进程<span class="hg-dyn-pill" data-hg-d-tdone>0/0</span></div>
           <div class="hg-dyn-bar"><i data-hg-d-tbar></i></div>
           <div class="hg-dyn-todos" data-hg-d-tlist></div>
         </section>
         <section class="hg-dyn-sec" data-hg-sec="agents" hidden>
-          <div class="hg-dyn-sec-head">子代理 / 协作<span class="hg-dyn-pill run" data-hg-d-agrun hidden>0 运行中</span></div>
+          <div class="hg-dyn-sec-head">子代理 / 协作<span class="hg-dyn-pill run" data-hg-d-agrun hidden>0 运行中</span><button class="hg-dyn-dirbtn" data-hg-agdir hidden title="打开子智能体目录（正在运行/已结束全列表）"></button></div>
           <div data-hg-d-aglist></div>
         </section>
         <section class="hg-dyn-sec" data-hg-sec="acts" hidden>
-          <div class="hg-dyn-sec-head">最近工具<span class="hg-dyn-sub">点击跳转消息流</span></div>
+          <div class="hg-dyn-sec-head">最近工具</div>
           <div class="hg-dyn-acts" data-hg-d-acts></div>
         </section>
         <section class="hg-dyn-sec" data-hg-sec="turns" hidden>
@@ -463,8 +463,31 @@
 <script src="web/js/proxy-panel.js"></script>
 <script src="web/js/proxy-usage.js"></script>
 <script src="web/js/snip.js"></script>
-<script src="web/js/claude-harness.js"></script>
-<script src="web/js/harness-readonly.js"></script>
+<!-- v3.0:claude-harness.js 拆分为 harness/ 21 文件(编号锁加载顺序,不得调换;
+     state/base 提供共享状态与基础表,main 最后组装 builder,shell 挂顶层外壳) -->
+<script src="web/js/harness/01-state.js"></script>
+<script src="web/js/harness/02-base.js"></script>
+<script src="web/js/harness/03-ask-md.js"></script>
+<script src="web/js/harness/04-groups.js"></script>
+<script src="web/js/harness/05-subblk.js"></script>
+<script src="web/js/harness/06-relay.js"></script>
+<script src="web/js/harness/07-hist.js"></script>
+<script src="web/js/harness/08-tools.js"></script>
+<script src="web/js/harness/09-fx.js"></script>
+<script src="web/js/harness/10-sse.js"></script>
+<script src="web/js/harness/11-histcache.js"></script>
+<script src="web/js/harness/12-sessions.js"></script>
+<script src="web/js/harness/13-panel.js"></script>
+<script src="web/js/harness/14-subpane.js"></script>
+<script src="web/js/harness/15-chatctl.js"></script>
+<script src="web/js/harness/16-input-fx.js"></script>
+<script src="web/js/harness/17-chips.js"></script>
+<script src="web/js/harness/18-managers.js"></script>
+<script src="web/js/harness/19-modal.js"></script>
+<script src="web/js/harness/20-main.js"></script>
+<script src="web/js/harness/21-shell.js"></script>
+<script src="web/js/harness/22-readonly.js"></script>
+<script src="web/js/harness/23-reducer.js"></script>
 <script src="web/js/init.js"></script>
 </body>
 </html>

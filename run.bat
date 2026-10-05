@@ -1,10 +1,23 @@
 @echo off
-rem Ë∑üÈöè bat ÊâÄÂú®ÁõÆÂΩïÔºàÊ∫êÁ†Å zip Ëß£ÂéãÂà∞‰ªª‰ΩïÊú∫Âô®/‰ªª‰ΩïË∑ØÂæÑÈÉΩËÉΩÁõ¥Êé•ÂèåÂáªÔºâ
+rem ∏˙ÀÊ bat À˘‘⁄ƒø¬º£®‘¥¬Î zip Ω‚—πµΩ»Œ∫Œª˙∆˜/»Œ∫Œ¬∑æ∂∂ºƒ‹÷±Ω”À´ª˜£©
 cd /d "%~dp0"
+rem »Îø⁄”≈œ»º∂£∫pythonw£®¥∞ø⁄ªØ£©°˙ pyw£®py launcher ¥∞ø⁄ªØ£¨πŸÕ¯∞≤◊∞ƒ¨»œ
+rem ÷ª”– py/pyw ‘⁄ PATH£¨python.exe ≤ª‘⁄°™°™ µ≤‚ª˙º¥¥À–ŒÃ¨£©°˙ python£®¥¯
+rem øÿ÷∆Ã®£¨±®¥Ì÷¡…Ÿø…º˚£©
 where pythonw >nul 2>nul
 if %errorlevel%==0 (
   start "" pythonw.exe src\main.py
-) else (
-  rem Êó† pythonwÔºàÊûÅÁÆÄÂÆâË£ÖÔºâÈÄÄÂåñ‰∏∫Â∏¶ÊéßÂà∂Âè∞ÁöÑ pythonÔºåÊä•ÈîôËá≥Â∞ëÂèØËßÅ
-  start "" python.exe src\main.py
+  exit /b
 )
+where pyw >nul 2>nul
+if %errorlevel%==0 (
+  start "" pyw.exe src\main.py
+  exit /b
+)
+where python >nul 2>nul
+if %errorlevel%==0 (
+  start "" python.exe src\main.py
+  exit /b
+)
+echo Œ¥’“µΩ Python£∫«Î∞≤◊∞ Python 3.12+£®π¥—° py launcher£©£¨ªÚ∞— python.exe º”»Î PATH°£
+pause
