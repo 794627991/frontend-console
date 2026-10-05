@@ -285,8 +285,10 @@
     const pa = (_HG.agents || {})[p] || {};
     if (pa.taskId) {
       for (const t in _sub.tabs) {
+        // v3.4R2（复审N2/N3）：agentId-only 档案变体 + tab 键=真实 id 角落
         const a = (_HG.agents || {})[t] || {};
-        if (a && a.taskId === pa.taskId) return t;
+        if (a && (a.taskId === pa.taskId || a.agentId === pa.taskId)) return t;
+        if (t === pa.taskId) return t;
       }
     }
     return p;
@@ -300,9 +302,7 @@
       for (const k in (_HG.agents || {})) {
         const a = _HG.agents[k];
         if (a && !a.done && a.taskId &&
-            (a.taskId === a0.taskId || a.taskId === a0.agentId ||
-             (_HG.subTailSeg || {})[a.taskId] !== undefined &&
-             (_HG.subTailSeg || {})[a.taskId] === k)) return true;
+            (a.taskId === a0.taskId || a.taskId === a0.agentId)) return true;
       }
     }
     return false;
@@ -325,9 +325,11 @@
   // =旧轮定格（已工作 X）+开新轮，消息气泡插新轮前 → 消息N+已工作N+结论N 时序
   function _subUserInto(tb, text) {
     let t = tb.t;
-    // v3.4R（全审P5）：pristine=无工作行且无结论——连发消息不再产生空「已工作」残块轮
+    // v3.4R2（复审P5 重修）：pristine=当前轮无工作行且无结论（气泡在 .h-grp 外
+    // 不计）——连发消息在同一轮内累积，直到有工作事件/定稿才切新轮；
+    // 旧 turns<=1 子句才是残块真驱动因子（上轮修复无效已取证）
     const pristine = t && !t.done && t.tl && !t.tl.children.length
-      && !(t.concl && t.concl.children.length) && tb.turns.length <= 1;
+      && !(t.concl && t.concl.children.length);
     if (!pristine) {
       if (t && !t.done) _subTlFinalizeT(tb, t, {});
       t = _subTurnNew(tb);
@@ -1042,6 +1044,13 @@
     if (!tb || !tb.t || !text || !String(text).trim()) return;
     if (tb.replay) return;   // v2.55R：回放 tab 由 fetch 全量自建，镜像增量不得污染
     const t = tb.t;
+    // v3.4R2（复审N4）：续派轮复活三件——轮询是 collab 续派唯一活况源，
+    // _subEnd 已停秒表；运行态/轮 t0/tick 不在此复活，轮 2 秒表永冻结
+    if (_subAgRunning(pid)) {
+      if (tb.run !== true) { tb.run = true; _subTabsPaint(); }
+      if (t && !t.done) t.t0 = t.t0 || Date.now();
+      if (!tb.tick) _subTlTickStart(pid);
+    }
     const stick = _subPaneStick(t.sc);
     const rp = [...t.tl.querySelectorAll('[data-hg-rp="1"]')].slice(-8);
     const norm = s => String(s || '').replace(/\s+/g, '');
@@ -1501,7 +1510,8 @@
       // 停了就在 result→notification 窗口内秒表冻结（可达数分钟）
       if (tb.tick) {
         const _a = (_HG.agents || {})[t];
-        if (_a && !_a.done && _a.collab) continue;
+        // v3.4R2（复审N4）：豁免扩链式续派——续派在跑时轮 2 秒表不停
+        if ((_a && !_a.done && _a.collab) || _subAgRunning(t)) continue;
         clearInterval(tb.tick); tb.tick = null;   // v3.4：tick 挂 tab
       }
     }
