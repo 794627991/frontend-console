@@ -971,12 +971,10 @@ function buildClaudeHarnessTab(opts = {}) {
       if (menu.contains(ev.target)) return;
       menu.remove();
       document.removeEventListener('mousedown', close, true);
-      _hgFlow.removeEventListener('scroll', close, true);
       window.removeEventListener('resize', close, true);
     };
     setTimeout(() => {
       document.addEventListener('mousedown', close, true);
-      _hgFlow.addEventListener('scroll', close, true);
       window.addEventListener('resize', close, true);
     }, 0);
   });

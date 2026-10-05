@@ -3977,7 +3977,8 @@ span.h-ag-type[class*='h-ava-'] {
 .h-tl .h-think-seg { background: transparent; border-color: transparent;
   border-left: 2px solid var(--h-violet, #8957e5); border-radius: 0; }
 .h-tl .h-think-seg.open { background: color-mix(in srgb, var(--fg) 2%, transparent);
-  border-color: var(--border); border-radius: 6px; }
+  border-color: var(--border); border-left: 2px solid var(--h-violet, #8957e5);
+  border-radius: 6px; }
 /* v3.2.4：插回时间线的中间正文——裸 md 气泡形态（头像/模型徽章只属于根区
    的最终结论），与工具行/思考段同轴 */
 .h-tl > .h-msg { margin: 2px 0; }
