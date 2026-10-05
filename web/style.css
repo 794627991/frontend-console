@@ -2751,7 +2751,9 @@ html {
 .hg-att-x { border: none; background: transparent; color: var(--muted); cursor: pointer;
   padding: 0 2px; flex-shrink: 0; font-size: 12px; line-height: 1; }
 .hg-att-x:hover { color: var(--neon-red, #e06c75); }
-.hg-input-card { max-width: 820px; margin: 0 auto; background: var(--bg-card);
+.hg-input-card { max-width: 820px; margin: 0 min(140px, 12%) 0 auto;   /* v3.4.1R（用户定调「输入框应居中」）：与 AI 对话轴同让位——视差构图
+      下 AI 列左移后，输入卡居中会显得偏右；跟随同轴读作构图正中 */
+  background: var(--bg-card);
   border: 1px solid var(--border); border-radius: 16px; padding: 8px 12px 8px;
   transition: border-color .15s, box-shadow .15s; }
 /* v2.20（参考 ZCode）：项目选择器挪到输入卡顶部一行 */
@@ -3419,6 +3421,7 @@ html {
 .hg-dyn-capsule .hg-caps-ag { flex: 0 1 auto; min-width: 0; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; color: var(--accent); }
 .hg-dyn-capsule .hg-caps-ctx { flex: none; font-family: var(--font-mono);
+  margin-left: 4px;   /* v3.3.14：dur 与 ctx 恒有间距，不依赖容器 gap */
   font-size: 11px; color: var(--accent); }
 .hg-dyn-capsule .hg-caps-ctx.warn { color: var(--h-warn); font-weight: 600; }
 .hg-dyn-capsule .hg-caps-dur:empty, .hg-dyn-capsule .hg-caps-ag:empty,
