@@ -503,6 +503,8 @@
       _hgPeerVerifyPending();              // v2.37R6（兜底复核②）：pending 线追溯核实
       _hgTurnEnd(o.subtype === 'success' ? 'ok' : 'error',
                  typeof o.duration_ms === 'number' ? o.duration_ms : 0);
+      // v3.3.7（P5 自愈）：回合终结——丢 input 的 bash 行从转写回填真命令
+      try { _hgPatchMissingCmds(); } catch(_) {}
       _hgTurnSumRow();                     // v3.1：ZCode 式回合摘要行（查阅 · N 搜索 · N 文件）
       // v3.2.1R(F2/R2-1)：快照恢复后回合在切走期间结束——重放的 result 到达时
       // _HG.grp 已被 switchTo 置空，grpFinalize 早退 → 尾组永不定稿。认回尾组

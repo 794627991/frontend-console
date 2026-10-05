@@ -2219,7 +2219,8 @@ html {
   flex-direction: column; gap: 12px; align-items: center; }
 /* v3.3.4（用户定调「布局要符合设计美学」）：会话列居中——右侧无分屏时两侧
    均衡留白，不再内容贴左+右缘大片空白；开分屏后列随窄区自动再居中 */
-.hg-flow > .hg-spin-row { align-self: stretch; }
+.hg-flow > .hg-spin-row { align-self: center; width: min(820px, 100%);
+  justify-content: flex-start; }
 /* 列宽收口：根区消息/协作行/子代理段与回合组同列（820px），用户气泡的
    flex-end 才是对话列右缘而非容器右缘——居中后左右同欄 */
 .hg-flow > .h-msg, .hg-flow > .h-peer, .hg-flow > .h-audit, .hg-flow > .h-sysnote,
@@ -2978,6 +2979,9 @@ html {
 
 /* 状态徽章（源 deriveToolStatus：running 蓝 / completed 绿 / error 红 / denied 橙） */
 .h-tslots { flex-shrink: 0; display: inline-flex; align-items: center; gap: 4px; }
+/* v3.3.7：完成徽章与复制钮呼吸间距（用户实锤「贴的太紧」） */
+.h-tslots .h-tbadge { margin-right: 2px; }
+.h-tool .h-tool-copy { margin-left: 6px; }
 .h-tbadge { font-size: 9.5px; padding: 1px 7px; border-radius: 999px; font-family: inherit; }
 .h-tbadge.b-run { color: var(--h-run); background: color-mix(in srgb, var(--h-run) 14%, transparent); }
 .h-tbadge.b-done { color: var(--h-ok); background: color-mix(in srgb, var(--h-ok) 14%, transparent); }

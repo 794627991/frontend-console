@@ -117,6 +117,47 @@
     return (todos || []).map(t =>
       `<div class="t-item"><span>${ICO[t.status] || '⬜'}</span><span>${esc(t.activeForm || t.content || t.subject || '')}</span></div>`).join('');
   }
+  // v3.3.7（P5 自愈）：回合终结时空 input 的 bash 行从转写回填真实命令——
+  // live 丢 input 是 CLI/网关流异常（转写恒完整），行存令失不再靠「重开会话
+  // 自愈」。一次 fetch 修补当回合全部缺令行；行已不在（切会话/被 cap）静默跳过
+  async function _hgPatchMissingCmds() {
+    if (!_HG.noInputTids || !_HG.noInputTids.size || !_HG.sid) return;
+    const tids = [..._HG.noInputTids];
+    _HG.noInputTids = new Set();
+    const sidAt = _HG.sid;
+    try {
+      const j = await (await fetch('/api/harness/transcript?sid=' + encodeURIComponent(sidAt))).json();
+      if (!j || !j.ok || !Array.isArray(j.lines) || _HG.sid !== sidAt) return;
+      const byId = {};
+      for (const l of j.lines)
+        if (l && l.role === 'tool' && (l.tid || l.id)) byId[l.tid || l.id] = l;   // v3.3.7R（轻审致命）：转写行 id 落 tid 键
+      for (const tid of tids) {
+        const row = _HG.rowById[tid];
+        const ln = byId[tid];
+        if (!row || !row.isConnected || !ln) continue;
+        const cmd = String((ln.input || {}).command || (ln.input || {}).cmd || '');
+        if (!cmd) continue;
+        row._rin = ln.input || null;
+        row._rawHint = cmd;
+        // v3.3.7R（轻审一般）：空 arg span（input 丢时 renderToolUse 恒输出）原位填
+        const arg = row.querySelector(':scope > .h-tool-arg');
+        if (arg && !(arg.textContent || '').trim()) {
+          arg.title = cmd;
+          arg.textContent = cmd.slice(0, 80);
+        } else if (!arg) {
+          const narg = document.createElement('span');
+          narg.className = 'h-tool-arg';
+          narg.title = cmd;
+          narg.textContent = cmd.slice(0, 80);
+          const name = row.querySelector(':scope > .h-tool-name');
+          if (name) name.insertAdjacentElement('afterend', narg);
+          else row.insertBefore(narg, row.firstChild);
+        }
+        // 查阅组判定补账：只读命令（此前 input 空判定断组直挂的）不再追改分组
+        //（行位不动，仅信息补全——挪行会造成时序跳动）
+      }
+    } catch(_) {}
+  }
   function _tlOneclickify(row) {
     // v3.2：one-line 工具行（Bash 等）升级为可展开卡——加 col+oneclick 类，
     // 行首插 chevron；整行点击由 flow 委托（.h-tool.oneclick 分支）切换 open
@@ -440,6 +481,11 @@
     row._rawHint = _rawHint;   // v2.57R：后端同序原始摘要（窗格指纹查重用）
     row._rin = b.input || null;   // v3.2.6R2（审计N2）：原始 input 随行——窗格镜像的 explore 聚组判定（Bash 只读命令靠 input.command）
     row._name = name;
+    // v3.3.7（P5 自愈）：live 事件偶发丢 tool_use input（CLI/网关流异常，实测
+    // 多命令/heredoc 聚集）——记号入账，回合一结束 _hgPatchMissingCmds 从
+    // 转写回填真命令（转写恒完整：jsonl 落盘前 CLI 已组装完 input）
+    if (!isSub && cfg.kind === 'bash' && !Object.keys(_rinp).length && b.id)
+      (_HG.noInputTids || (_HG.noInputTids = new Set())).add(b.id);
     row._cfg = cfg;
     row._id = id;
     row.dataset.tid = id;                 // 快照/段认回后重扫挂映射用
