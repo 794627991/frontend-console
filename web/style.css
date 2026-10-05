@@ -2216,7 +2216,14 @@ html {
 .hg-flowwrap { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
 .hg-flowwrap > .hg-flow { flex: 1; }
 .hg-flow { overflow-y: auto; padding: 20px 32px; display: flex; position: relative;
-  flex-direction: column; gap: 12px; align-items: flex-start; }
+  flex-direction: column; gap: 12px; align-items: center; }
+/* v3.3.4（用户定调「布局要符合设计美学」）：会话列居中——右侧无分屏时两侧
+   均衡留白，不再内容贴左+右缘大片空白；开分屏后列随窄区自动再居中 */
+.hg-flow > .hg-spin-row { align-self: stretch; }
+/* 列宽收口：根区消息/协作行/子代理段与回合组同列（820px），用户气泡的
+   flex-end 才是对话列右缘而非容器右缘——居中后左右同欄 */
+.hg-flow > .h-msg, .hg-flow > .h-peer, .hg-flow > .h-audit, .hg-flow > .h-sysnote,
+.hg-flow > .h-switch, .hg-flow > .h-subblock { width: min(820px, 100%); }
 /* v3.2.10：回合导航轨（ZCode ConversationTurnNavigator 同款）——flowwrap
    左缘竖向刻度轨：每条用户提问一枚刻度，悬停 title 预览、点击跳转（未渲染
    回合先扩窗再定位），当前视口回合高亮 + 轨自滚跟随；≥2 回合才显示 */
@@ -2238,7 +2245,7 @@ html {
    淡描边+细文字箭头）对比度低、观感单薄且图标/描边双色不一致；改实底
    accent 填充 + 粗描边 SVG 箭头 + 双层投影（外投 + 内高光），悬停上浮提亮、
    按压回缩，深浅主题同形（accent 随主题变量走） */
-.hg-jumpbtm { position: absolute; right: 26px; bottom: 16px; z-index: 5;
+.hg-jumpbtm { position: absolute; right: 26px; bottom: 64px; z-index: 5;
   display: none; align-items: center; justify-content: center;
   width: 38px; height: 38px; padding: 0; border: none; border-radius: 50%;
   background: var(--accent); color: #06131d; line-height: 0; cursor: pointer;
@@ -3103,6 +3110,10 @@ html {
    （原 accent 青点青字仅此处独用，与面板「运行绿」语义脱节） ---- */
 .hg-activity { display: flex; align-items: center; gap: 5px; flex-shrink: 0;
   font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* v3.3.4（用户定调「状态唯一面=胶囊」）：底部活动条视觉退役——与胶囊信息
+   完全重复（状态词/秒表/上下文%），双处显示职责错位。元素保留 DOM（actWord
+   特殊词注入/秒表 tick 仍以它为数据源，胶囊与动态页 A 区派生消费），仅隐藏 */
+.hg-card-foot .hg-activity { display: none !important; }
 .hg-act-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--hgd-run);
   flex-shrink: 0; animation: hg-pulse 1.2s ease-in-out infinite; }
 @keyframes hg-pulse { 0%,100% { opacity: .25; transform: scale(.8); } 50% { opacity: 1; transform: scale(1.15); } }
@@ -3357,7 +3368,9 @@ html {
    零写死色；秒表 tabular-nums。 */
 
 .hg-dyn-capsule {
-  position: absolute; top: 10px; right: 14px; z-index: 6;
+  /* v3.3.4（用户定调「怎么不是胶囊」）：状态胶囊钉输入卡上方右缘（视线锚点
+     =唯一状态面，ZCode 同位），顶部远离视线的旧位废止 */
+  position: absolute; top: auto; bottom: 12px; right: 16px; z-index: 6;
   display: inline-flex; align-items: center; gap: 7px;
   max-width: min(56%, 460px);
   padding: 4px 12px; border-radius: 999px;
