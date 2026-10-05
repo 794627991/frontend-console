@@ -46,6 +46,16 @@ from src.file_tree import tree_bp
 
 app = Flask(__name__)
 
+# v3.4.12（用户实锤「重启+Ctrl+F5 仍旧样式」）：调试模式——HARNESS_DEBUG_WEB=1
+# 时前端资源直读源码目录 web/（本文件旁），彻底绕过 RES_DIR/_mem_web/一切副本；
+# run_debug.bat 一键启动（先清旧进程残尸，控制台可见伺服模式打印）
+DEBUG_WEB = os.environ.get("HARNESS_DEBUG_WEB") == "1"
+_SRC_WEB = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                         os.pardir, "web"))
+if DEBUG_WEB:
+    print("[debug-web] 前端直读源码目录: %s" % _SRC_WEB)
+    print("[debug-web] RES_DIR(常规模式来源): %s" % RES_DIR)
+
 # 把未捕获异常的 traceback 写到日志文件，便于 exe（无控制台）模式下排查 500。
 import logging
 if not app.logger.handlers:
@@ -297,6 +307,8 @@ def _mem_web(rel):
 
 @app.route("/")
 def index():
+    if DEBUG_WEB:
+        return send_from_directory(_SRC_WEB, "index.html")
     try:
         r = _mem_web("web/index.html")
     except Exception:
@@ -307,6 +319,8 @@ def index():
 
 @app.route("/web/<path:fn>")
 def web_files(fn):
+    if DEBUG_WEB:
+        return send_from_directory(_SRC_WEB, fn)
     try:
         r = _mem_web("web/" + fn)
     except Exception:
@@ -317,6 +331,8 @@ def web_files(fn):
 
 @app.route("/<path:fn>")
 def static_files(fn):
+    if DEBUG_WEB and os.path.isfile(os.path.join(_SRC_WEB, fn)):
+        return send_from_directory(_SRC_WEB, fn)
     return send_from_directory(RES_DIR, fn)
 
 # 第三方库本地托管（Monaco Editor / markdown-it，离线可用，不走 CDN）
