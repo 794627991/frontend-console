@@ -3951,6 +3951,25 @@ html {
 .h-tl .h-tool.col { border-left: 2px solid var(--h-accent, var(--accent)); }
 .h-tl .h-tool.err { border-left: 2px solid var(--neon-red, #e06c75); }
 .h-tl .h-tool .h-tool-coll { margin-left: 0; }
+/* v3.3.5（用户三连实锤「bash 还没对齐」）：终端卡在时间线内收起态=扁平行——
+   盒状卡（四边框+圆角+底色）浮在行轴上，与思考/查阅的扁平左条行混排，观感即
+   「错位」。高特异性压扁任何嵌套层级的 col/oneclick 卡：无底色无框、仅 2px
+   类别左条、直角，行内左距与思考段头对齐（10px）；展开展盒。
+   0,3,1 压过 .h-tool.col(0,2,0)/.h-tool.oneclick.open(0,3,0) 的盒样式 */
+.hg-flow .h-tl .h-tool.col,
+.hg-flow .h-tl .h-tool.oneclick {
+  background: transparent; border-color: transparent;
+  border-left: 2px solid var(--h-accent, var(--accent));
+  border-radius: 0; box-shadow: none; padding-left: 10px;
+}
+.hg-flow .h-tl .h-tool.oneclick.open {
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  border-color: var(--border);
+  border-left: 2px solid var(--h-accent, var(--accent));
+  border-radius: 8px;
+}
+.hg-flow .h-tl .h-tool.col.err,
+.hg-flow .h-tl .h-tool.err { border-left-color: var(--neon-red, #e06c75); }
 
 /* ---- 查阅聚组：🔍 查阅 · N 搜索 · M 文件（展开=左竖线+子行树） ---- */
 .h-tl-grp { display: flex; flex-direction: column; gap: 2px;
