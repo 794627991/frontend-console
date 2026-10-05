@@ -156,6 +156,8 @@
     _hgInputState();   // v2.35：输入框提示按运行态/子代理/协作等待派生（P0-1②③；空闲文案同 v2.20）
     _hgSpinShow(b);    // v3.1：消息流底 ZCode 式 spinner 行（正在执行…）
     if (b) actStart(sinceMs);
-    else { actStop(); queuePump(); _hgCtxPoll(); }
+    else { actStop(); queuePump(); _hgCtxPoll();
+      try { _hgPatchMissingCmds(); } catch(_) {} }   // v3.3.14：空闲即补缺令行（result 触发外的二道）
+
     _hgDynDirty();   // v2.32 面板：状态区运行态徽章/计时跟随
   }

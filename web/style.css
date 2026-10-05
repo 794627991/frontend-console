@@ -2216,6 +2216,7 @@ html {
 .hg-flowwrap { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
 .hg-flowwrap > .hg-flow { flex: 1; }
 .hg-flow { overflow-y: auto; padding: 20px 32px; display: flex; position: relative;
+  container-type: inline-size;   /* v3.3.14：分屏宽窄感知——窄区自动关视差 */
   flex-direction: column; gap: 12px; align-items: center; }
 /* v3.3.4（用户定调「布局要符合设计美学」）：会话列居中——右侧无分屏时两侧
    均衡留白，不再内容贴左+右缘大片空白；开分屏后列随窄区自动再居中 */
@@ -2233,6 +2234,14 @@ html {
 .hg-flow > .h-msg.user, .hg-flow > .h-msg.asst { align-self: center;
   display: flex; flex-direction: column; }
 .hg-flow > .h-msg.user { align-items: flex-end; width: min(1080px, 100%); }
+/* v3.3.14：窄区（分屏开/窄窗）自动收视差——margin 归零、用户消息满宽贴边，
+   杜绝分屏下的挤压/错位；宽区（无分屏）视差照常 */
+@container (max-width: 1200px) {
+  .hg-flow > .h-grp, .hg-flow > .h-msg.asst, .hg-flow > .h-peer,
+  .hg-flow > .h-audit, .hg-flow > .h-sysnote, .hg-flow > .h-switch,
+  .hg-flow > .h-subblock { margin-right: 0; }
+  .hg-flow > .h-msg.user { width: 100%; }
+}
 .hg-flow > .h-msg.asst { align-items: flex-start; }
 /* v3.2.10：回合导航轨（ZCode ConversationTurnNavigator 同款）——flowwrap
    左缘竖向刻度轨：每条用户提问一枚刻度，悬停 title 预览、点击跳转（未渲染

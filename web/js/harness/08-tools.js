@@ -131,10 +131,11 @@
       const byId = {};
       for (const l of j.lines)
         if (l && l.role === 'tool' && (l.tid || l.id)) byId[l.tid || l.id] = l;   // v3.3.7R（轻审致命）：转写行 id 落 tid 键
+      const miss = [];
       for (const tid of tids) {
         const row = _HG.rowById[tid];
         const ln = byId[tid];
-        if (!row || !row.isConnected || !ln) continue;
+        if (!row || !row.isConnected || !ln) { miss.push(tid); continue; }
         const cmd = String((ln.input || {}).command || (ln.input || {}).cmd || '');
         if (!cmd) continue;
         row._rin = ln.input || null;
@@ -156,6 +157,18 @@
         // 查阅组判定补账：只读命令（此前 input 空判定断组直挂的）不再追改分组
         //（行位不动，仅信息补全——挪行会造成时序跳动）
       }
+      // v3.3.14R（轻审问题1）：miss 重试（CLI 刷盘延迟/网络抖动）——连续 miss
+      // 才累计（成功批归零），上限 3 防循环；切会话时账随 _HG 清（12-sessions）
+      if (miss.length) {
+        _HG.noInputMiss = (_HG.noInputMiss || 0) + 1;
+        const sidAt = _HG.sid;
+        if (_HG.noInputMiss <= 3) setTimeout(() => {
+          if (_HG.sid !== sidAt) return;   // v3.3.14R2（轻审可选加固）：跨切会话放弃重灌
+          _HG.noInputTids = _HG.noInputTids || new Set();
+          miss.forEach(t => _HG.noInputTids.add(t));
+          _hgPatchMissingCmds();
+        }, 5000);
+      } else _HG.noInputMiss = 0;
     } catch(_) {}
   }
   function _tlOneclickify(row) {
@@ -164,9 +177,17 @@
     if (!row || row.classList.contains('oneclick') || row.querySelector(':scope > .h-tool-head')) return;
     row.classList.add('col', 'oneclick');
     row.insertAdjacentHTML('afterbegin', '<span class="h-chev h-tool-chev">▸</span>');
-    // v3.1h（用户定调「终端只保留标志,默认收起,点开看全文」）：头部命令摘要摘除
+    // v3.3.14（用户实锤「历史记录 bash 的命令能显示，当前工作中的看不到」，
+    // 推翻 v3.1h「只保留标志」）：头部命令摘要保留——live 卡与历史卡统一形态
+    // （单行省略+title 全文，样式 .h-tool.oneclick > .h-tool-arg 已有）。
+    // 空 arg（input 随流丢失）补记自愈账——_hgPatchMissingCmds 回合终结回填
     const _ocArg = row.querySelector(':scope > .h-tool-arg');
-    if (_ocArg) _ocArg.remove();
+    const _tid = row.dataset.tid || '';
+    // v3.3.14R（轻审问题2）：补记口径对齐 renderToolUse——仅 bash 且真 tid
+    // （anon 匿名行转写永无此键，入账必 miss）
+    if (_tid && _tid.indexOf('anon') !== 0 && row._cfg && row._cfg.kind === 'bash'
+        && (!_ocArg || !(_ocArg.textContent || '').trim()))
+      (_HG.noInputTids || (_HG.noInputTids = new Set())).add(_tid);
     // v3.3.3（用户实锤「bash 未对齐」）：终端卡必须与时间线同轴——行游离在
     // .h-tl 之外（任何路径的异常落位，卡在组根=凸出左缘一个缩进）时归位当前
     // 组时间线尾。.h-tl 内的行 closest 命中即原样不动

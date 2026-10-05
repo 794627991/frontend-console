@@ -42,6 +42,7 @@
     // pendingTurnT0 残留会让下个会话 phResume 续跑组的秒表虚吃上会话时刻）
     _HG.histLineTs = 0; _HG.histActTs = 0; _HG.pendingTurnT0 = null; _HG.thinkPend = null;
     _HG.prevRowAt = 0; _HG.lastRowAt = 0;   // v3.3.1(F5)：事件时刻账不跨会话（新会话思考起点防吃上一会话时刻）
+    _HG.noInputTids = null; _HG.noInputMiss = 0;   // v3.3.14R（轻审问题1）：缺令账不跨会话（防重试预算烧穿）
     _HG.sid = sid; _HG.seq = 0; _HG.epoch = null; _HG.alive = false;
     // v2.15：dirty 语义修正。旧实现只在「发送成功」置 true、只在
     // switchTo(null) 置 false —— 冷启动自动进的是历史会话（has_history），
