@@ -2248,6 +2248,14 @@ html {
   .hg-flow > .h-subblock { margin-right: 0; }
   .hg-flow > .h-msg.user { width: 100%; margin-left: 0; }
 }
+/* v3.4.8（用户实锤「非最大化/分屏一开就露馅」）：@container 依赖新版
+   WebView2，旧运行时不认=窄区收视差从未生效。改 JS 每秒切换 hg-narrow 类
+   （20-main tick：分屏开 或 flow 宽<1200）——本规则为可靠主路径 */
+.hg.hg-narrow .hg-flow > .h-grp, .hg.hg-narrow .hg-flow > .h-msg.asst,
+.hg.hg-narrow .hg-flow > .h-peer, .hg.hg-narrow .hg-flow > .h-audit,
+.hg.hg-narrow .hg-flow > .h-sysnote, .hg.hg-narrow .hg-flow > .h-switch,
+.hg.hg-narrow .hg-flow > .h-subblock { margin-right: 0; }
+.hg.hg-narrow .hg-flow > .h-msg.user { margin-left: 0; width: 100%; }
 .hg-flow > .h-msg.asst { align-items: flex-start; }
 /* v3.2.10：回合导航轨（ZCode ConversationTurnNavigator 同款）——flowwrap
    左缘竖向刻度轨：每条用户提问一枚刻度，悬停 title 预览、点击跳转（未渲染
