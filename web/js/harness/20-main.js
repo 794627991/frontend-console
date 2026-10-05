@@ -59,7 +59,7 @@ function buildClaudeHarnessTab(opts = {}) {
           <nav class="hg-rail" data-hg-rail aria-label="回合导航（ZCode 同款快速跳转）"></nav>
           <div class="hg-flow" data-hg-flow></div>
           <button class="hg-jumpbtm" data-hg-jumpbtm title="跳到最新消息" aria-label="跳到最新消息"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v14"/><path d="M5 12l7 7 7-7"/></svg></button>
-          <button class="hg-dyn-capsule" data-hg-dyncaps title="会话动态：点开分屏动态页 / 动态页激活时再点收起（子代理运行中点按直达实况）" style="position:absolute;top:auto;bottom:12px;right:16px;z-index:7;display:inline-flex;">
+          <button class="hg-dyn-capsule" data-hg-dyncaps title="会话动态：点开分屏动态页 / 动态页激活时再点收起（子代理运行中点按直达实况）" style="position:absolute;top:10px;right:14px;z-index:7;display:inline-flex;">
             <span class="hg-caps-dot"></span>
             <span class="hg-caps-st" data-hg-caps-st>就绪</span>
             <span class="hg-caps-dur" data-hg-caps-dur></span>

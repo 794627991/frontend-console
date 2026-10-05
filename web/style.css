@@ -2251,7 +2251,7 @@ html {
    淡描边+细文字箭头）对比度低、观感单薄且图标/描边双色不一致；改实底
    accent 填充 + 粗描边 SVG 箭头 + 双层投影（外投 + 内高光），悬停上浮提亮、
    按压回缩，深浅主题同形（accent 随主题变量走） */
-.hg-jumpbtm { position: absolute; right: 26px; bottom: 64px; z-index: 5;
+.hg-jumpbtm { position: absolute; right: 26px; bottom: 16px; z-index: 5;
   display: none; align-items: center; justify-content: center;
   width: 38px; height: 38px; padding: 0; border: none; border-radius: 50%;
   background: var(--accent); color: #06131d; line-height: 0; cursor: pointer;
@@ -3374,9 +3374,9 @@ html {
    零写死色；秒表 tabular-nums。 */
 
 .hg-dyn-capsule {
-  /* v3.3.4（用户定调「怎么不是胶囊」）：状态胶囊钉输入卡上方右缘（视线锚点
-     =唯一状态面，ZCode 同位），顶部远离视线的旧位废止 */
-  position: absolute; top: auto; bottom: 12px; right: 16px; z-index: 6;
+  /* v3.3.6（用户定调「远不如第一版在右上角好看」）：回到 v3.2.31 原位——
+     流区右上角浮标；v3.3.4 的输入卡上方位实测更丑，废止 */
+  position: absolute; top: 10px; right: 14px; z-index: 6;
   display: inline-flex; align-items: center; gap: 7px;
   max-width: min(56%, 460px);
   padding: 4px 12px; border-radius: 999px;
