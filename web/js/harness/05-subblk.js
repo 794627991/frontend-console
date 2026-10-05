@@ -450,8 +450,9 @@
     _subBodyPut(b, row, 'tool');   // v2.48：进当前节的工具抽屉（节随行成形）
     // v3.2.6：窗格时间线镜像——本函数是 SSE 与 fullFeed 轮询的共同通路，镜像
     // 前按 data-tuid 查重（SSE 路径 _subFeed 也会插同名行，双源不查重=每条工具
-    // 双份）；回放铺底行（rp 标、无 tuid）按「名+摘要」指纹比对（v2.57R 口径，
-    // 局限：同文件同摘要的连续调用可能漏显一条，概率极低）
+    // 双份）；回放铺底行 v3.3.9 起多带 tuid（转写行 tid 随行），先走 tuid 精确
+    // 查重；旧转写 tid 空的铺底行（rp 标）按「名+摘要」指纹比对兜底（v2.57R
+    // 口径，局限：同文件同摘要的连续调用可能漏显一条，概率极低）
     const tb = _sub.tabs[pid];
     if (tb && tb.t && row && row.dataset.tid &&
         !tb.t.tl.querySelector(`.h-tool[data-tuid="${CSS.escape(row.dataset.tid)}"]`)) {

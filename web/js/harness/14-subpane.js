@@ -1023,8 +1023,9 @@
     _subTlHeadPaint(t);
     if (stick) _subScroll(parentId);
   }
-  // v3.2.6：工具结果回点窗格时间线（tuid 精确配对优先；miss 回退最后一个未
-  // 定格行；全 miss 落孤立 ↳ 行——结果不丢）
+  // v3.2.6：工具结果回点窗格时间线（tuid 精确配对优先；miss 回退 FIFO 首个
+  // 未定格行——v3.3.9 并行批口径，与回放 openTools 同源；全 miss 落孤立 ↳
+  // 行——结果不丢）
   function _subResult(parentId, tr) {
     const tb = _sub.tabs[parentId];
     if (!tb || !tb.t) return;
