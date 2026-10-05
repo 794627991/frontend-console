@@ -2664,6 +2664,11 @@ html {
 .h-ava-2 { background: var(--hgd-halt); }
 .h-ava-3 { background: var(--hgd-wait); }
 .h-ava-4 { background: var(--accent); }
+/* v3.4.3（用户实锤「蓝条」）：类型 chip 借 h-ava-N 只取色相——头像实心底
+   与 chip 文字同 hue 叠加=实心蓝条字不可见；chip 底改 10% tint（高特异性
+   压过头像底色规则） */
+span.h-ag-type[class*='h-ava-'] {
+  background: color-mix(in srgb, currentColor 10%, transparent); }
 .h-switch .hg-peer-t { font-weight: 400; font-variant-numeric: tabular-nums; }
 /* v2.21：内建斜杠命令的系统卡片（/help /status 等在消息流里的回显） */
 .h-syscard { align-self: center; width: min(560px, 86%); margin: 8px 0 2px;

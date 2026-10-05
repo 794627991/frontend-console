@@ -338,6 +338,10 @@
     if (opt.turnEnd && g.tl) {
       const tlTexts = g.tl.querySelectorAll(':scope > .h-msg.asst');
       const lastT = tlTexts[tlTexts.length - 1];
+      // v3.4.3（用户实锤「中间的回复回滚没意义，只有最后的结论才允许回滚」）：
+      // 多轮/多次定稿提升的历史结论一律收回回滚资格，只有当前末条保留
+      g.root.querySelectorAll(':scope > .h-msg.asst.can-rewind')
+        .forEach(m => { if (m !== lastT) m.classList.remove('can-rewind'); });
       if (lastT) { lastT.classList.add('can-rewind'); g.root.appendChild(lastT); }
     }
     // v3.2.2（用户实测）+ v3.2.3（一回合一组）+ v3.2.4（时序）：正文折进
