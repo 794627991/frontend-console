@@ -2238,8 +2238,8 @@ html {
 /* v3.4.6（用户定调「输入卡居中两消息中间」）：镜像对称视差——AI 右让位
    140、用户左让位 140，等宽 820：构图天然轴对称，输入卡 820 居中即精确落在
    AI 左缘与用户右缘的正中（不依赖任何魔法偏移数） */
-.hg-flow > .h-msg.user { align-items: flex-end; width: min(820px, 100%);
-  margin-left: min(140px, 12%); }
+.hg-flow > .h-msg.user { align-items: flex-end; width: min(410px, 100%);
+  margin-left: min(140px, 12%); }   /* v3.4.9（用户定调）：气泡最长=原来一半 */
 /* v3.3.14：窄区（分屏开/窄窗）自动收视差——margin 归零、用户消息满宽贴边，
    杜绝分屏下的挤压/错位；宽区（无分屏）视差照常 */
 @container (max-width: 1200px) {
