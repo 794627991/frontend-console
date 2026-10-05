@@ -3536,7 +3536,10 @@ html {
 @keyframes hg-proc-pulse { 50% { opacity: .35; } }
 
 /* ---- v3.1 ZCode 式回合摘要行（「🔍 查阅 · 1 搜索 · 1 文件」）+ 流底 spinner ---- */
-.h-turnsum { display: flex; justify-content: center; padding: 4px 0 2px; }
+/* v3.3.8（用户实锤「怎么还单独出来了」）：摘要胶囊归时间线轴——旧规则
+   居中悬在回合体顶，列居中后视觉上像凭空漂出的孤儿；左对齐 25px 与
+   时间线内容轴（bar 12px+缩进 13px）对齐，读作回合的一部分 */
+.h-turnsum { display: flex; justify-content: flex-start; padding: 4px 0 2px 25px; }
 .h-turnsum-pill { font-size: var(--fs-2xs); color: var(--muted);
   border: 1px solid var(--border); border-radius: 999px; padding: 2px 12px;
   background: color-mix(in srgb, var(--bg-card) 60%, transparent);
