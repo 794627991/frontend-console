@@ -2692,15 +2692,9 @@ span.h-ag-type[class*='h-ava-'] {
 /* ---- 底部输入卡（ClaudeDesktop 式）----
    v2.2 美化：限宽 760→820 与气泡列对齐；卡片加大留白、聚焦光晕阴影；
    textarea 最小高度提升（用户反馈「聊天框有点小」） */
+/* v3.4.5（用户定调「居中两消息中间」）：输入卡恒居构图正中——视差让 AI 列
+   微偏左、用户消息微偏右，输入卡在两者中间（任何偏移实验均废止） */
 .hg-card-wrap { position: relative; padding: 8px 32px 16px; border-top: 1px solid var(--border); }
-/* v3.4.1R2（用户实锤「越修越有问题」）：输入卡与 AI 列同构偏移——上一版
-   margin auto+固定右距=右锚不是左移。卡容器化后宽区（无分屏）给同样的
-   margin-right 让位（居中盒左移 70px 与 AI 列轴重合），窄区（分屏）容器
-   查询不命中自动归位，两轴始终同构 */
-.hg-card-wrap { container-type: inline-size; }
-@container (min-width: 1200px) {
-  .hg-input-card { margin-right: min(140px, 12%); }
-}
 .hg-atts { display: flex; flex-wrap: wrap; gap: 6px; max-width: 820px; margin: 0 auto 8px; }
 /* ---- 消息排队条（v2.20，参考 ZCode：busy 时继续输入 → 排队）
    v2.20：悬浮层——原来在文档流里占高，排队条一出现聊天区被压矮、消息被
