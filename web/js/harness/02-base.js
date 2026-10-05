@@ -38,7 +38,7 @@ function _hgNormalizeFences(text) {
 const _H_TOOL_ICO = {
   Read: '📖', Write: '✍️', Edit: '✏️', MultiEdit: '✏️', NotebookEdit: '📓',
   Bash: '💻', PowerShell: '🖥️', Grep: '🔍', Glob: '📂',
-  WebFetch: '🌐', WebSearch: '🔎', Task: '🤖', Agent: '🤖',
+  WebFetch: '🌐', WebSearch: '🔎', Task: '✦', Agent: '✦',   // v3.3.12：🤖 太丑（用户定调），换中性星符
   TodoWrite: '📝', TodoRead: '📋', AskUserQuestion: '❓',
   TaskCreate: '📌', TaskUpdate: '📌', TaskList: '📌', TaskGet: '📌',
   Skill: '🧩', EnterPlanMode: '🗺️', ExitPlanMode: '🗺️', exit_plan_mode: '🗺️',

@@ -348,10 +348,13 @@
     row.dataset.hgSubDesc = String(desc || '').slice(0, 120);
     row.style.setProperty('--h-accent', _H_KIND_COLOR.agent || 'var(--border)');
     const ty = String(type || '').trim() || 'Agent';
+    // v3.3.12（用户实锤「蓝色长条」）：chip 显示中文短名（_AGENT_LABEL）而非
+    // 原始 type 串——general-purpose 这类长英文名小字号渲成一坨蓝条
+    const tyDisp = _AGENT_LABEL[ty] || ty;
     const dsc = String(desc || '').trim();
     row.innerHTML =
       `<button class="h-tool-head"><span class="h-tool-name">${_hToolIco('Task')} 子智能体</span>` +
-      `<span class="h-ag-type ${_hgAvaCls(ty)}" title="${esc(ty)}">${esc(ty)}</span>` +
+      `<span class="h-ag-type ${_hgAvaCls(ty)}" title="${esc(ty)}">${esc(tyDisp)}</span>` +
       `<span class="h-tool-arg"${dsc ? ` title="${esc(dsc)}"` : ''}>${esc(dsc)}</span>` +
       `<span class="h-ag-live"></span>` +
       `<span class="h-tslots"></span></button>` +
