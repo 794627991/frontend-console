@@ -1093,9 +1093,6 @@ function buildClaudeHarnessTab(opts = {}) {
   // 叠加）；仅分屏展开且动态页激活时可见才动（v3.3：旧 hg-mode 守卫随换装废止），且只改 textContent 不重建 DOM。
   if (!window._hgDynTick) {
     window._hgDynTick = setInterval(() => {
-      // v3.4.8：窄区类每秒同步（分屏开 或 flow<1200 → hg-narrow 收视差）
-      try { _hgWrap.classList.toggle('hg-narrow',
-        (_subPaneEl && _subPaneEl.style.display === 'flex') || _hgFlow.clientWidth < 1200); } catch(_) {}
       // v2.37（P0-B/F③）：自愈先于可见性守卫（v3.3 改分屏口径）——①动态页
       // sc 被重建后 dynEl 失联（ detached 节点真值仍为真，渲染进死节点=动态
       // 页只见初始态）→ 重联重渲；②消息流里未定格转交线的秒表计时器丢失
