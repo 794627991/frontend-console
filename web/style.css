@@ -2216,39 +2216,12 @@ html {
 .hg-flowwrap { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
 .hg-flowwrap > .hg-flow { flex: 1; }
 .hg-flow { overflow-y: auto; padding: 20px 32px; display: flex; position: relative;
-  container-type: inline-size;   /* v3.3.14：分屏宽窄感知——窄区自动关视差 */
-  flex-direction: column; gap: 12px; align-items: center; }
-/* v3.3.4（用户定调「布局要符合设计美学」）：会话列居中——右侧无分屏时两侧
-   均衡留白，不再内容贴左+右缘大片空白；开分屏后列随窄区自动再居中 */
-.hg-flow > .hg-spin-row { align-self: center; width: min(820px, 100%);
-  justify-content: flex-start; }
-  /* v3.4.4：补 25px 时间线缩进（margin12+padding13）——与 AI 气泡同轴 */
-  padding-left: 25px;
-/* 列宽收口：根区消息/协作行/子代理段与回合组同列（820px） */
-.hg-flow > .h-msg, .hg-flow > .h-peer, .hg-flow > .h-audit, .hg-flow > .h-sysnote,
-.hg-flow > .h-switch, .hg-flow > .h-subblock { width: min(820px, 100%); }
-/* v3.4.1（用户定调「视差」）：AI 列居中略偏左（右让位 min(140px,12%)），
-   用户消息锚更宽容器（1080）右缘——无分屏时形成左右视差；开分屏后容器
-   100% 生效，用户消息自动贴分屏侧边（窄区 margin 按 12% 收缩不挤占） */
-.hg-flow > .h-grp, .hg-flow > .h-msg.asst, .hg-flow > .h-peer,
-.hg-flow > .h-audit, .hg-flow > .h-sysnote, .hg-flow > .h-switch,
-.hg-flow > .h-subblock { margin-right: min(140px, 12%); }
-.hg-flow > .h-msg.user, .hg-flow > .h-msg.asst { align-self: center;
-  display: flex; flex-direction: column; }
-/* v3.4.6（用户定调「输入卡居中两消息中间」）：镜像对称视差——AI 右让位
-   140、用户左让位 140，等宽 820：构图天然轴对称，输入卡 820 居中即精确落在
-   AI 左缘与用户右缘的正中（不依赖任何魔法偏移数） */
-.hg-flow > .h-msg.user { align-items: flex-end; width: min(410px, 100%);
-  margin-left: min(140px, 12%); }   /* v3.4.9（用户定调）：气泡最长=原来一半 */
-/* v3.3.14：窄区（分屏开/窄窗）自动收视差——margin 归零、用户消息满宽贴边，
-   杜绝分屏下的挤压/错位；宽区（无分屏）视差照常 */
-@container (max-width: 1200px) {
-  .hg-flow > .h-grp, .hg-flow > .h-msg.asst, .hg-flow > .h-peer,
-  .hg-flow > .h-audit, .hg-flow > .h-sysnote, .hg-flow > .h-switch,
-  .hg-flow > .h-subblock { margin-right: 0; }
-  .hg-flow > .h-msg.user { width: 100%; margin-left: 0; }
-}
-.hg-flow > .h-msg.asst { align-items: flex-start; }
+  flex-direction: column; gap: 12px; align-items: flex-start; }
+/* v3.4.16（用户终裁「最后一次」）：全部布局实验（居中/视差/镜像/自动切宽）
+   整体退回——恢复原始形态：AI 内容靠左 820 列、用户消息贴右缘、输入卡居中。
+   实验期规则全部清除（含一处误插到规则外的顶层声明，CSS 解析器从此处开始
+   错误恢复，后续规则行为不可靠——彻查发现） */
+.hg-flow > .h-msg.user { max-width: 410px; }   /* v3.4.9：气泡上限减半（保留） */
 /* v3.2.10：回合导航轨（ZCode ConversationTurnNavigator 同款）——flowwrap
    左缘竖向刻度轨：每条用户提问一枚刻度，悬停 title 预览、点击跳转（未渲染
    回合先扩窗再定位），当前视口回合高亮 + 轨自滚跟随；≥2 回合才显示 */
