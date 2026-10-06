@@ -119,6 +119,10 @@
     _HG.pendingTurnT0 = null;
     g.t0 = (_pt0 > 0) ? _pt0
          : (_HG.openState ? (_HG.histLineTs || undefined) : Date.now());
+    // v3.4.58（用户实锤「A切B切A，工作时间异常」）：回放组把真实起点写进
+    // DOM——切回重渲后 phResume 经 grpFromDom 只认 DOM dataset.t0，不写则
+    // 秒表从「切回那一刻」起算（显示 35s 实际已工作更久）
+    if (g.t0 && g.head) { try { g.head.dataset.t0 = String(g.t0); } catch (_) {} }
     if (g.think.stats) g.think.stats.dataset.segCount = '0';
     // v3.2.1：撤位置键开合恢复（跨代际同键碰撞误开+误标 userToggled，详见
     // _tlPlace 注）；思考抽屉重建默认收起，开合态随快照 dataset 忠实序列化
