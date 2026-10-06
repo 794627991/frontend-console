@@ -64,7 +64,7 @@
       sc.onclick = _hgDynClick;          // 覆盖式绑定（伪 tab 重建不叠加）；先绑 dynEl 再渲（首帧不扑空）
       dynEl = sc;
     }
-    _subShow(); _subTabsPaint(); _subActivate(_SUB_DYN);
+    _subShow(_SUB_DYN); _subTabsPaint(); _subActivate(_SUB_DYN);
     renderSideStatus();
     _hgRolesFetch(); _hgAgentModelsFetch();   // 原 _hgPanelEnterHook 职责随开随拉（点击天然节流）
     _sub.manual = true;                // 用户主动展开——回合终结不自动收（同 _subDirOpen/_subReopen 口径）
@@ -150,7 +150,7 @@
       _sub.order.push(_SUB_DIR);
       _subBodyEl.appendChild(sc);
     }
-    _subShow(); _subTabsPaint(); _subActivate(_SUB_DIR);
+    _subShow(_SUB_DIR); _subTabsPaint(); _subActivate(_SUB_DIR);
     _subDirPaint();
     _sub.manual = true;   // v3.2：目录是用户主动打开的视图——回合结束不自动收（同 _subReplay 口径）
   }
@@ -210,12 +210,13 @@
   // v3.4.21（用户定调「非子代理界面默认收窄，子代理输出才保持当前宽度」）：
   // 分屏宽度按激活 tab 分档——动态/目录（状态视图）=窄档（默认 30%，独立
   // 记忆拖拽）；子代理实况/回放=宽档（hg-subpane-pct，默认 50%，既有记忆）
-  function _subPanePctKey() {
-    return (_sub.active === _SUB_DYN || _sub.active === _SUB_DIR)
+  function _subPanePctKey(tid) {
+    const a = tid || _sub.active;
+    return (a === _SUB_DYN || a === _SUB_DIR)
       ? 'hg-subpane-narrow-pct' : 'hg-subpane-pct';
   }
-  function _hgSubPctGet() {
-    const k = _subPanePctKey();
+  function _hgSubPctGet(kOpt) {
+    const k = kOpt || _subPanePctKey();
     try {
       const p = parseFloat(localStorage.getItem(k));
       if (p >= 25 && p <= 75) return p;
@@ -257,17 +258,19 @@
     if (region <= 220) return;
     _subPaneEl.style.width = Math.round(region * pct / 100) + 'px';
   }
-  function _subShow() {
+  function _subShow(pendingTid) {
     if (!_subPaneEl || _subPaneEl.style.display !== 'none') return;
-    // v3.4.38（用户实锤「点击胶囊从大变小，难看」）：display:none 期间写的
-    // 宽度不渲染，展开首帧以 CSS 默认 50% 出现、随后 JS 写窄档 px 触发
-    // .25s 过渡=可见的收缩动画。首帧直接落目标宽：禁过渡→设宽→显示→
-    // 强制 reflow→恢复（之后宽窄档切换的平滑过渡保留）
+    // v3.4.39（v3.4.38 复现实锤「还是从大变小」）：两处时序漏洞——
+    // ① 档位 key 必须用 pendingTid：展开链里 _subShow 先于 _subActivate 跑，
+    //    active 还是 null→误判宽档，首帧写 50%；
+    // ② 过渡恢复必须等下一帧：reflow 固化首帧布局后同 tick 恢复过渡，随后
+    //    _subActivate 的窄档写入即播 50%→30% 收缩动画（上次修的败因）。
+    //    rAF 下一帧恢复，本 tick 内后续写宽全在禁用期，同值写入无动画
     _subPaneEl.style.transition = 'none';
-    _hgSubPctApply(_hgSubPctGet());
+    _hgSubPctApply(_hgSubPctGet(_subPanePctKey(pendingTid)));
     _subPaneEl.style.display = 'flex';
     void _subPaneEl.offsetWidth;
-    _subPaneEl.style.transition = '';
+    requestAnimationFrame(() => { if (_subPaneEl) _subPaneEl.style.transition = ''; });
   }
   // ==================== v3.2.6：窗格时间线（ZCode 子智能体会话模式）====================
   // 对照 ZCode SubagentSessionSidePane = 完整 SessionPane（readOnly）的产品事实：
@@ -700,7 +703,7 @@
         _subTlTickStart(tid);
       }
     }
-    _subShow(); _subTabsPaint(); _subActivate(tid);
+    _subShow(tid); _subTabsPaint(); _subActivate(tid);
   }
   const _subNoreplay = new Set();
   const _subNoReplayNote = () =>
