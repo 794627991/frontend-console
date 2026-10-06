@@ -259,8 +259,15 @@
   }
   function _subShow() {
     if (!_subPaneEl || _subPaneEl.style.display !== 'none') return;
+    // v3.4.38（用户实锤「点击胶囊从大变小，难看」）：display:none 期间写的
+    // 宽度不渲染，展开首帧以 CSS 默认 50% 出现、随后 JS 写窄档 px 触发
+    // .25s 过渡=可见的收缩动画。首帧直接落目标宽：禁过渡→设宽→显示→
+    // 强制 reflow→恢复（之后宽窄档切换的平滑过渡保留）
+    _subPaneEl.style.transition = 'none';
     _hgSubPctApply(_hgSubPctGet());
     _subPaneEl.style.display = 'flex';
+    void _subPaneEl.offsetWidth;
+    _subPaneEl.style.transition = '';
   }
   // ==================== v3.2.6：窗格时间线（ZCode 子智能体会话模式）====================
   // 对照 ZCode SubagentSessionSidePane = 完整 SessionPane（readOnly）的产品事实：

@@ -210,10 +210,10 @@
     _sub.order = _sub.order.filter(t => t !== tid);
     if (_sub.active === tid) {
       _sub.active = _sub.order[0] || null;
-      if (_sub.active) {
-        const sc = _sub.tabs[_sub.active] && _sub.tabs[_sub.active].sc;
-        if (sc) sc.style.display = '';
-      }
+      // v3.4.38（用户实锤「子代理 tab 关了窗格不缩回」）：手动切 active 原先
+      // 只翻 sc 显示，宽度停在子代理宽档——改走 _subActivate 统一处理
+      // （sc 可见性 + tab 重绘 + 宽度按新激活 tab 重新分档：退回动态/目录窄档）
+      if (_sub.active) _subActivate(_sub.active);
     }
     _subTabsPaint();
     if (!_sub.order.length && _subPaneEl) _subPaneEl.style.display = 'none';
