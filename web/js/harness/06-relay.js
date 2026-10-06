@@ -482,12 +482,13 @@
   }
   function _hgCompactionEnd() {
     if (!_HG.compacting) return;
+    // v3.4.52（致命双会话实锤）：compactResume 改存**归属会话 sid**——
+    // 全局 true 会被其它会话的工作事件误消费（B 乱 reopen 自己的组=A/B
+    // 双开会话互切后 B 结构错乱/A 组丢失的污染链）。置位在 compactSid
+    // 清空之前取归属
+    _HG.compactResume = _HG.compactSid || null;
     _HG.compacting = false;
     _HG.compactSid = null;
-    // v3.4.36（用户实锤「被压缩分割开了！不允许」）：压缩=同一轮工作的中段
-    // 维护，不是回合边界——置续跑标志，压缩后第一个工作事件经 grpEnsure
-    // 回原组（_hgTurnReopen），「压缩完成」线上下不再裂出第二个「工作中」组
-    _HG.compactResume = true;
     clearInterval(_HG.compactTimer);
     renderCompaction(true);
     // v2.27.4：status 恢复事件若丢（result 兜底到这里），活动词一并退出特殊态

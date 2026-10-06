@@ -68,7 +68,11 @@
       // （后面没有 user 行）在循环外补授（它就是最新定下的回合）
       let lastAsst = null;
       lines.slice(start).forEach((l, i) => {
-        renderHistLine(l, start + i);
+        // v3.4.52（致命双会话实锤连带）：行级隔离——此前任何一行抛错会中止
+        // 整个重建（外层 catch 静默），症状=切回后只剩首行+spinner、其余
+        // 「全没」。单行失败留痕放行，不拖垮整个 flow
+        try { renderHistLine(l, start + i); }
+        catch (e) { try { console.error('[harness] hist line render failed @' + (start + i) + ' role=' + (l && l.role), e); } catch (_) {} }
         // v3.2.10：user 行盖 turn-hi 章——回合导航轨的 DOM 跳转锚（未渲染
         // 回合按 histAll 行号扩窗后凭此定位）
         if (l.role === 'user' && String(l.text || '').trim()) {
