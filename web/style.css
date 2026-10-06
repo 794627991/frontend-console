@@ -2487,6 +2487,9 @@ html {
   border-left: 2px solid var(--accent); border-radius: 6px; padding: 4px 10px;
   max-width: 86%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .h-tool.sub { margin-left: 24px; }
+/* v3.4.27（用户实锤「没对齐」）：分屏时间线内的 .sub 行去遗留缩进——
+   与思考段/查阅行同缘对齐（24px 是旧抽屉嵌套时代的缩进） */
+.h-tl .h-tool.sub { margin-left: 0; }
 
 /* v2.43 子代理会话段：子代理过程在主 flow 的结构化容器——段头（头像+
    「角色 · 模型」+状态点）+ 段体（思考/工具/气泡，与主会话同构）。左缘紫

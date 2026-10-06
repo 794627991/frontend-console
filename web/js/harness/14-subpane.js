@@ -470,7 +470,7 @@
     row.dataset.hgKind = _cfg0.kind || '';   // v3.2.31：结果回点静噪判据（diff 行成功回执不落）
     row.style.setProperty('--h-accent',
       _H_KIND_COLOR[(_H_TOOL_CFG[name] || {}).kind] || 'var(--border)');
-    row.innerHTML = _subToolHeadHtml(name, String(hint || '').slice(0, 90), '', {}) +
+    row.innerHTML = _subToolHeadHtml(name, String(hint || '').slice(0, 300), '', {}) +
       `<div class="h-tool-coll"></div>`;
     // v3.2.31（bug3）：Edit/MultiEdit/Write 的改动体直接进折叠体——数据源是
     // tool_use input（old_string/new_string/content，事件流/轮询镜像/回放三路
