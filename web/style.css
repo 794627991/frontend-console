@@ -2490,6 +2490,10 @@ html {
 /* v3.4.27（用户实锤「没对齐」）：分屏时间线内的 .sub 行去遗留缩进——
    与思考段/查阅行同缘对齐（24px 是旧抽屉嵌套时代的缩进） */
 .h-tl .h-tool.sub { margin-left: 0; }
+/* v3.4.29：分屏工具行与思考段强制同内距（10px）——两套 DOM 结构各自
+   的 padding 差异不再依赖巧合对齐（用户实锤「还没对齐」） */
+.hg-sub-body .h-tl > .h-tool { padding-left: 10px; }
+.hg-sub-body .h-tl > .h-think-seg { padding-left: 10px; }
 
 /* v2.43 子代理会话段：子代理过程在主 flow 的结构化容器——段头（头像+
    「角色 · 模型」+状态点）+ 段体（思考/工具/气泡，与主会话同构）。左缘紫
