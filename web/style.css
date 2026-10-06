@@ -4015,7 +4015,7 @@ span.h-ag-type[class*='h-ava-'] {
    （历史回放与实况路径、主流与分屏同一公式） */
 .hg-flow .h-tl .h-tool > .h-tool-head,
 .hg-sub-body .h-tl .h-tool > .h-tool-head {
-  padding: 4px 10px 4px 30px; }   /* v3.4.44:头文字让位 ▸ 盒，图标列 32px 同线 */
+  padding: 4px 10px 4px 0; }   /* v3.4.45:容器 30px 一层让位 ▸ 即可——head 再叠 30px=双倍缩进（playwright 实锤 name@107 vs 思考@77） */
 /* 分屏折叠行同款 30px（hg-flow 选择器罩不到 sub-body） */
 .hg-sub-body .h-tl > .h-tool.col, .hg-sub-body .h-tl > .h-tool.oneclick { padding-left: 30px; }
 .h-turn-body, .h-grp-proc { min-width: 0; }
