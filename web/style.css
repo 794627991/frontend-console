@@ -2345,7 +2345,7 @@ html {
   border-radius: 6px; overflow: hidden; background: color-mix(in srgb, var(--bg-card) 60%, transparent); }
 .h-think-seg-head { display: flex; align-items: center; gap: 6px; width: 100%;
   border: none; background: transparent; color: var(--muted); font-family: var(--font-ui);
-  font-size: 11.5px; padding: 4px 10px; cursor: pointer; text-align: left; }
+  font-size: 11.5px; padding: 4px 10px 4px 30px; cursor: pointer; text-align: left; }
 .h-think-seg-head:hover { color: var(--fg); background: color-mix(in srgb, var(--h-violet, #8957e5) 6%, transparent); }
 .h-think-seg .h-chev { transition: transform .15s; display: inline-block; font-size: 10px; }
 .h-think-seg.open .h-chev { transform: rotate(90deg); }
@@ -3997,11 +3997,17 @@ span.h-ag-type[class*='h-ava-'] {
    min-width:auto 让 nowrap 内容撑破 max-width——全链放开收缩约束，
    行宽上限=时间线宽（组已 width:min(820px,100%) 自适应窗口） */
 .h-tl > * { min-width: 0; max-width: 100%; }
-/* v3.4.33（用户实锤「箭头大小和位置都不统一」）：时间线内折叠箭头统一——
-   思考段/查阅组/终端卡三种行的 ▸ 同字号同盒宽同对齐（各行头字号不同导致
-   箭头大小漂移；盒宽固定后位置恒定） */
+/* v3.4.44（用户实锤「产生换行的还是没对齐」+像素实测：各 folding 行的 ▸ 盒
+   左缘仍随 border+padding 复合漂移 ~5px、glyph 宽随字体漂移）——绝对定位
+   钉死：▸ 盒挂在行盒（relative）padding-box left:10px（border 2px 后=12px），
+   垂直 margin-top 半盒高居中（不用 translateY，给 open 态 rotate(90deg) 让
+   transform 通道）。各行头文字缩进统一 30px（border2+30=图标列 32px）。
+   live/hist、收起/展开、思考/查阅/终端卡、主流/分屏同一坐标，无复合巧合 */
+.hg-flow .h-tl .h-think-seg, .hg-sub-body .h-tl .h-think-seg,
+.h-tl-grp-body .h-tool { position: relative; }
 .hg-flow .h-tl .h-chev, .hg-sub-body .h-tl .h-chev {
-  font-size: 10px; width: 14px; flex: none; line-height: 1;
+  position: absolute; left: 10px; top: 8px;
+  font-size: 10px; width: 14px; line-height: 1;
   display: inline-flex; align-items: center; justify-content: center; }
 /* v3.4.37（用户最终通牒实锤：col 类折叠行 ▸ 比思考/查阅深 10px）：Bash/Edit
    等带 .h-tool-head 的行=容器 10px + 头自带 10px 双叠=22px。头左距归零+垂直
@@ -4009,7 +4015,9 @@ span.h-ag-type[class*='h-ava-'] {
    （历史回放与实况路径、主流与分屏同一公式） */
 .hg-flow .h-tl .h-tool > .h-tool-head,
 .hg-sub-body .h-tl .h-tool > .h-tool-head {
-  padding: 4px 10px 4px 0; }
+  padding: 4px 10px 4px 30px; }   /* v3.4.44:头文字让位 ▸ 盒，图标列 32px 同线 */
+/* 分屏折叠行同款 30px（hg-flow 选择器罩不到 sub-body） */
+.hg-sub-body .h-tl > .h-tool.col, .hg-sub-body .h-tl > .h-tool.oneclick { padding-left: 30px; }
 .h-turn-body, .h-grp-proc { min-width: 0; }
 .h-tl:empty { display: none; }
 /* 时间线里的工具行去掉旧抽屉时代的块状底色——内联行更轻；
@@ -4028,7 +4036,7 @@ span.h-ag-type[class*='h-ava-'] {
 .hg-flow .h-tl .h-tool.oneclick {
   background: transparent; border-color: transparent;
   border-left: 2px solid var(--h-accent, var(--accent));
-  border-radius: 0; box-shadow: none; padding-left: 10px;
+  border-radius: 0; box-shadow: none; padding-left: 30px;   /* v3.4.44:▸ 盒钉死后 30px=图标列 32px */
 }
 .hg-flow .h-tl .h-tool.oneclick.open {
   background: color-mix(in srgb, var(--fg) 3%, transparent);
@@ -4043,7 +4051,7 @@ span.h-ag-type[class*='h-ava-'] {
 .h-tl-grp { display: flex; flex-direction: column; gap: 2px;
   border-left: 2px solid var(--border);  /* v3.4.35:左条统一 2px,与思考段/终端卡同构 */ }
 .h-tl-grp-head { display: flex; align-items: center; gap: 6px; width: fit-content;
-  padding: 4px 10px;  /* v3.4.35:左条2px+10px=箭头盒左缘 12px,与思考/终端卡同线;上下 4px 统一行高 */ border: 0; background: none; cursor: pointer;
+  padding: 4px 10px 4px 30px;  /* v3.4.44:▸ 盒绝对钉死后头文字让位到图标列 32px */ border: 0; background: none; cursor: pointer;
   font-size: var(--fs-sm); color: var(--muted); text-align: left; border-radius: 5px; }
 .h-tl-grp-head:hover { color: var(--fg); }
 .h-tl-grp-head .h-chev { font-size: 10px; display: inline-block;

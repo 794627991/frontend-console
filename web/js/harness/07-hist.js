@@ -75,7 +75,7 @@
       const _tp = _HG.thinkPend;
       const _te = _tp.seg.isConnected ? _tp.seg.querySelector('[data-hg-think-t]') : null;
       const _dur = _ts - _tp.t0;
-      if (_te && _dur >= 3000) _te.textContent = '持续了 ' + _hgTurnDurTxt(_dur);
+      if (_te) _te.textContent = _dur >= 3000 ? '持续了 ' + _hgTurnDurTxt(_dur) : '持续了几秒';   // v3.4.44:短思考兜底模糊文案(用户定调)
       _HG.thinkPend = null;
     }
     // v3.2.6：lastAgRow 只活一行——sub_open 紧贴 Agent 派发行（transcript 注
@@ -490,10 +490,10 @@
       if (te) te.textContent = hist ? '' : te.textContent;
     } else {
       // v3.1：定稿文案对齐 ZCode（「思考 · 持续了 7 秒」）——计数态 Ns → 持续了 Ns
-      // v3.3.1：<3s 不显示——同批到达的段算出来 0/1 秒是切片噪声不是事实
-      //（起点已改上一事件时刻，正常路径不再产出；护栏留给批内多段残留）
+      // v3.3.1：<3s 原本不显示（切片噪声护栏）；v3.4.44（用户定调）：太短的
+      // 段落一片空白更怪——兜底 ZCode 同款模糊文案「持续了几秒」
       const _ms = Date.now() - t0;
-      if (te) te.textContent = _ms >= 3000 ? '持续了 ' + _hgTurnDurTxt(_ms) : '';
+      if (te) te.textContent = _ms >= 3000 ? '持续了 ' + _hgTurnDurTxt(_ms) : '持续了几秒';
       // 仅当用户没碰过且在底部跟读时自动收段（正文已在段里，收起只留段头）
       if (seg.dataset.userToggled !== '1' && isNearBottom()) seg.classList.remove('open');
     }

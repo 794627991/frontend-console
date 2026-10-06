@@ -316,10 +316,11 @@
     if (b && b.seg && b.seg.isConnected) {
       const te = b.seg.querySelector('[data-hg-think-t]');
       const t0 = +(b.seg.dataset.t0 || 0);
-      // v3.3.1(F3)：<3s 不显示——同批到达的切片噪声非事实（五路同款护栏）
+      // v3.3.1(F3)：<3s 原本不显示（切片噪声护栏）；v3.4.44（用户定调）：
+      // 空白更怪——兜底 ZCode 同款模糊文案「持续了几秒」
       if (te && t0) {
         const _ms = Date.now() - t0;
-        if (_ms >= 3000) te.textContent = _hgFmtDur(_ms / 1000);
+        te.textContent = _ms >= 3000 ? _hgFmtDur(_ms / 1000) : '持续了几秒';
       }
     }
     if (b) b.seg = null;
