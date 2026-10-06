@@ -184,7 +184,7 @@ function buildClaudeHarnessTab(opts = {}) {
       if (_HG.diag.length > 60) _HG.diag.shift();
     } catch (_) {}
   };
-  _hgDiag('boot', 'v3.4.69e 会话页构建完成');
+  _hgDiag('boot', (window._HG_VER || 'v?') + ' 会话页构建完成');
   try {
     const dgBtn = document.createElement('button');
     dgBtn.textContent = 'ⓘ';
@@ -192,8 +192,9 @@ function buildClaudeHarnessTab(opts = {}) {
     dgBtn.style.cssText = 'flex:none;border:none;background:transparent;color:var(--muted);cursor:pointer;font-size:13px;padding:0 4px';
     dgBtn.onclick = () => {
       try {
+        // v3.4.74（用户定调）：4 秒启动徽标撤除——版本固定随诊断弹窗首行显示
         const lines = (_HG.diag || []).slice().reverse();
-        showBanner('诊断日志（最新在前）：<br>' + (lines.length
+        showBanner('版本 ' + (window._HG_VER || '?') + ' · 诊断日志（最新在前）：<br>' + (lines.length
           ? lines.slice(0, 14).map(esc).join('<br>') : '（空）'), 12000);
       } catch (e) { try { showBanner('诊断日志读取失败：' + e, 4000, true); } catch (_) {} }
     };
