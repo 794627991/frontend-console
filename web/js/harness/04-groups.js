@@ -51,6 +51,13 @@
     // false，原判据每行都重认回新 wrapper（g.exp 全丢、查阅组碎成单子行
     // 墙——用户实锤「没修复好」的根因）；缓冲期内缓冲内元素视为在场
     if (g && g.root && (g.root.isConnected || _HG.histBuilding)) return g;
+    // v3.4.36：压缩完成后第一个工作事件回原组续跑（机器续跑同款 reopen，
+    // 30min 护栏内）——压缩开始的 grpFinalize 切断的组在这里接回，不新开
+    if (_HG.compactResume) {
+      _HG.compactResume = false;
+      const _rg = _hgTurnReopen();
+      if (_rg) return _rg;
+    }
     // 快照恢复（切会话切回）后 _HG.grp 失联 → 扫 flow 最后一个组接回来。
     // 占位动画不重启：正文该到已到才走得到恢复路径。
     // v2.18.1：已定稿的组（dataset.finalized）不接回——正文切组刚定稿旧组，
@@ -504,6 +511,9 @@
     (host || _hgFlow).appendChild(t);
   }
   function renderUser(text, images, files, live, tsMs) {
+    // v3.4.36：真新用户消息=真回合边界——撤销压缩续跑标志，压缩后紧跟的
+    // 新提问不许误接回旧组
+    _HG.compactResume = false;
     // v3.2：定稿带回合终点——回放用该回合最后一次活动的行 ts
     // （_HG.histActTs，renderHistLine 逐行维护；user 行自身不算活动）——
     // 工时=回合真实工作窗，不含「回合结束到用户下一条消息」的阅读空闲
