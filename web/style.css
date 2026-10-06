@@ -3988,6 +3988,12 @@ span.h-ag-type[class*='h-ava-'] {
    min-width:auto 让 nowrap 内容撑破 max-width——全链放开收缩约束，
    行宽上限=时间线宽（组已 width:min(820px,100%) 自适应窗口） */
 .h-tl > * { min-width: 0; max-width: 100%; }
+/* v3.4.33（用户实锤「箭头大小和位置都不统一」）：时间线内折叠箭头统一——
+   思考段/查阅组/终端卡三种行的 ▸ 同字号同盒宽同对齐（各行头字号不同导致
+   箭头大小漂移；盒宽固定后位置恒定） */
+.hg-flow .h-tl .h-chev, .hg-sub-body .h-tl .h-chev {
+  font-size: 10px; width: 14px; flex: none; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center; }
 .h-turn-body, .h-grp-proc { min-width: 0; }
 .h-tl:empty { display: none; }
 /* 时间线里的工具行去掉旧抽屉时代的块状底色——内联行更轻；
