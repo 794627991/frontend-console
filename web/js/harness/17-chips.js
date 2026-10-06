@@ -37,7 +37,10 @@
   const _HG_THINK_TOK = {low: '4K', medium: '10K', high: '20K', max: '32K'};
   function permChipLabel() {
     const b = _hgQ('[data-hg-perm]');
-    if (b) b.textContent = _HG.perm === 'confirm' ? '🛡 变更前确认 ▾' : '🛡';   // v3.4.27（用户定调）：权限 chip 图标模式——默认态不显字，非默认显字提醒
+        if (b) {
+      b.textContent = _HG.perm === 'confirm' ? '🛡︎ 变更前确认 ▾' : '🛡︎';   // FE0E=文本渲染（随 CSS 色）
+      b.classList.toggle('perm-confirm', _HG.perm === 'confirm');   // v3.4.31：确认态橙色醒目
+    }   // v3.4.27（用户定调）：权限 chip 图标模式——默认态不显字，非默认显字提醒
   }
   function thinkChipLabel() {
     const b = _hgQ('[data-hg-think]'); if (b) b.textContent = '💭 ' + (_HG.thinkLv ? '思考·' + _HG_THINKS[_HG.thinkLv] : '思考') + ' ▾';

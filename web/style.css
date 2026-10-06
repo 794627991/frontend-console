@@ -2774,6 +2774,10 @@ span.h-ag-type[class*='h-ava-'] {
 .hg-card-foot { display: flex; align-items: center; gap: 8px; padding-top: 6px;
   flex-wrap: wrap; }   /* v2.25：窄窗口下 chip 换行，不再溢出输入卡 */
 /* 模型 chip：长模型名先收缩省略（glm-5.3-flash[1M] 窗口化时曾顶破卡片） */
+/* v3.4.31（用户实锤「图标太不明显」）：权限图标加大加深——默认主题色，
+   切到「变更前确认」转橙色警示 */
+.hg-chip[data-hg-perm] { font-size: 15px; line-height: 1; color: var(--fg); }
+.hg-chip[data-hg-perm].perm-confirm { color: var(--h-warn, #d97706); }
 .hg-chip[data-hg-model] { min-width: 0; max-width: 200px; overflow: hidden;
   text-overflow: ellipsis; }
 .hg-chip { border: 1px solid var(--border); background: transparent; color: var(--muted);
