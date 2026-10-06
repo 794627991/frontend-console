@@ -40,23 +40,11 @@ def _prompts_load():
 
 
 def _prompts_save(items):
-    """原子写 config.json 的 harness_prompts。"""
-    try:
-        with open(_st.CONFIG_FILE, "r", encoding="utf-8") as f:
-            d = json.load(f)
-        if not isinstance(d, dict):
-            d = {}
-    except Exception:
-        d = {}
-    d[_PROMPTS_KEY] = items
-    try:
-        tmp = _st.CONFIG_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(d, f, ensure_ascii=False, indent=1)
-        os.replace(tmp, _st.CONFIG_FILE)
-        return True, None
-    except Exception as e:
-        return False, str(e)
+    """原子写 config.json 的 harness_prompts。
+    v3.4.54 起走 app_state.cfg_commit（统一锁+原子事务）。"""
+    def _mut(d):
+        d[_PROMPTS_KEY] = items
+    return _st.cfg_commit(_mut)
 
 # ---- from claude_harness.py:670 (_prompt_matches_project) ----
 

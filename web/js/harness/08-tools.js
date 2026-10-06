@@ -25,6 +25,79 @@
     if (Array.isArray(c)) return c.filter(b => b && b.type === 'text').map(b => b.text).join('\n');
     try { return JSON.stringify(c); } catch(_) { return String(c || ''); }
   }
+  // v3.4.62（用户需求「diff 看不到真实改动行号」）：diffHtml 的行号列从 1
+  // 相对计数（old/new_string 是子串，渲染时不知文件位置）——本函数在
+  // tool_result（文件已写盘）后读改后文件定位 new_string 起始行，把行号列
+  // 回填为真实文件行号。Edit=原位替换，旧/新起始同位，两侧同偏移严格成立；
+  // MultiEdit 多处编辑行号非线性（join 后的 diff 行序与文件不映射），列不
+  // 造假，只在卡头标「L<n> 起」定位首处。定位失败（该处后续又被改/文件
+  // 不存在）静默保持相对行号。_dnews/_dfp 是内存属性（不随快照序列化）——
+  // 快照恢复的 DOM 行号已真实无需重拉；回放/重建路径 input 在手重新存档
+  // 走本函数。dataset.hgDln 幂等：主链/窗格镜像/回放配对多路触发只拉一次
+  function _hgDiffLineFix(row) {
+    if (!row || !row.isConnected || row.dataset.hgDln === '1') return;
+    const news = row._dnews, fp = row._dfp;
+    if (!news || !news.length || !fp) return;
+    row.dataset.hgDln = '1';
+    fetch('/api/harness/diff_lines', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sid: _HG.sid || '', path: fp, news })
+    }).then(r => r.json()).then(j => {
+      if (!j || !j.ok || !row.isConnected) return;   // 在途行被清场（切会话等）直接弃
+      const ln0 = (j.lines || [])[0];
+      if (!ln0) return;
+      const head = row.querySelector('.h-tool-head');
+      if (news.length > 1) {
+        // MultiEdit：卡头定位 chip（各处行号非线性，diff 列保持相对不造假）
+        if (head && !row.querySelector('.h-tool-sec.hg-dln-chip'))
+          head.insertAdjacentHTML('beforeend',
+            `<span class="h-tool-sec hg-dln-chip" title="首处改动位于文件第 ${ln0} 行（各处 diff 为改动内相对行号）">L${ln0} 起</span>`);
+        return;
+      }
+      const diff = row.querySelector('.h-diff');
+      if (!diff) return;
+      const off = ln0 - 1;
+      let nn = 0, on = 0;   // 新/旧行号族游标（与 diffHtml 生成规则同构）
+      diff.querySelectorAll('.d-ctx,.d-add,.d-del,.d-info').forEach(d => {
+        const lnel = d.querySelector('.d-ln');
+        if (d.classList.contains('d-info')) {
+          const m = (d.textContent || '').match(/(\d+) 行不变/);
+          const n = m ? +m[1] : 0;
+          nn += n; on += n;   // 折叠段计数器照推（同 diffHtml）
+        } else if (d.classList.contains('d-del')) {
+          on++;
+          if (lnel) lnel.textContent = String(on + off);
+        } else if (d.classList.contains('d-ctx')) {
+          nn++; on++;   // 轻审P1：ctx 同属新旧两文件——双推进（与 diffHtml mark('=') 同构），否则后方 del 列偏小
+          if (lnel) lnel.textContent = String(nn + off);
+        } else {
+          nn++;
+          if (lnel) lnel.textContent = String(nn + off);
+        }
+      });
+    }).catch(() => {});
+  }
+  // v3.4.62：diff 真实行号定位数据存档（Edit/MultiEdit 渲染点统一入口）——
+  // 内存属性随行存活，结果到达点（renderOneToolResult/_fillRes/_subResult）
+  // 触发 _hgDiffLineFix
+  function _hgDiffLineMemo(row, name, input) {
+    if (!row || !input) return;
+    if (name !== 'Edit' && name !== 'MultiEdit') return;
+    const _news = name === 'MultiEdit'
+      ? (Array.isArray(input.edits) ? input.edits : []).map(e => e && e.new_string || '')
+      : [input.new_string || ''];
+    // 轻审P1 附带：>4000² 的 diff 走 diffHtml fallback 交集法（行号按原串
+    // 位置编号、无 ctx 折叠），回填遍历与其产物不同构——不存档不回填。
+    // 复核残留：MultiEdit 无 old_string 字段（恒 1 行），须用 edits 的 joined
+    // old 对齐 diffHtml 的 n*m 判据（单编辑 MultiEdit 走全列回填才吃得着）
+    const _ol = (name === 'MultiEdit'
+      ? (Array.isArray(input.edits) ? input.edits : []).map(e => e && e.old_string || '').join('\n')
+      : String(input.old_string || '')).split('\n').length;
+    const _nl = _news.join('\n').split('\n').length;
+    if (_ol * _nl > 4000 * 4000) return;
+    row._dfp = String(input.file_path || '');
+    row._dnews = _news;
+  }
   function diffHtml(oldS, newS) {
     // v2.8：真 LCS 行 diff（此前"交集着色"把未变行整段吞掉，大编辑只剩
     // 一两行——用户实测「咋可能只改了这点」。现在未变行作为上下文暗显，
@@ -499,6 +572,7 @@
         badges +
         (cfg.badge ? `<span class="h-tool-badge">${esc(cfg.badge)}</span>` : '') +
         `<span class="h-tslots"></span></button><div class="h-tool-coll">${_toolInputBodyHtml(cfg, v)}</div>`;
+      _hgDiffLineMemo(row, name, b.input);   // v3.4.62：diff 真实行号定位存档（结果到达后触发）
     }
     row._preview = row._preview !== undefined ? row._preview
       : (cfg.mode === 'one-line' ? cfg.get(b.input) : (typeof cfg.title === 'function' ? cfg.title(b.input) : label)) || '';
@@ -616,6 +690,7 @@
     }
     // 结果折叠体（成功默认藏，错误永远显）
     const hideOk = cfg.result === 'hide' || cfg.kind === 'bash' || cfg.kind === 'diff';
+    if (cfg.kind === 'diff' && st === 'completed') _hgDiffLineFix(row);   // v3.4.62：成功改盘才定位（轻审P2：失败 Edit 文件未写，误配出假行号）
     const txt = resultText(tr);
     if (row._grouped) {
       // 分组成员：状态已聚合到组头，输出不单独展示（组头 err 红底足够辨识）

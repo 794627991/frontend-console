@@ -146,22 +146,66 @@ def _migrate_legacy_user_data():
 _migrate_legacy_user_data()
 
 # ---- 配置 ----
-def _load_config():
-    """读取持久化配置（home 锚点 config.json：数据目录/日志目录/主题/最近记录）。"""
+# v3.4.54：config.json 五方共写（roles/vision/prompts/routes×2/app_state/
+# tftp）互不加锁、_save_config 还是裸 "w" 直写——撕裂一旦发生，各读方
+# except 返回 {} 会让下一次任一保存把全量配置静默清零。收敛为：模块级
+# _CONFIG_LOCK 串行化全部落盘 + 原子写（tmp+replace，唯一 tmp 名）+ 坏读
+# .bad 隔离（对齐 harness meta.py 惯例）。
+_CONFIG_LOCK = threading.Lock()
+
+def cfg_read():
+    """读 config.json。FileNotFoundError → {}；损坏（JSONDecodeError/
+    OSError）→ 先改名 .bad 留档供人工找回，再当 {} 起步——坏内容绝不
+    再经保存路径放大成全量清空。"""
     try:
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
+    except FileNotFoundError:
+        return {}
     except Exception:
+        try:
+            os.replace(CONFIG_FILE, CONFIG_FILE + ".bad")
+        except OSError:
+            pass
         return {}
 
+def cfg_commit(mutator):
+    """原子读-改-写 config.json（锁内整事务）。mutator(d) 就地修改 d。
+    返回 (ok, err)。读方语义：锁外热路径读不加锁（GIL 下瞬时陈旧可容忍），
+    关键在坏文件已被 cfg_read 隔离、写方全部串行。"""
+    import time as _time
+    with _CONFIG_LOCK:
+        d = cfg_read()
+        if not isinstance(d, dict):
+            d = {}
+        try:
+            r = mutator(d)
+            if isinstance(r, dict):
+                d = r
+            os.makedirs(HOME_DIR, exist_ok=True)
+            tmp = "%s.tmp.%d.%d" % (CONFIG_FILE, os.getpid(), threading.get_ident())
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(d, f, ensure_ascii=False, indent=1)
+            try:
+                os.replace(tmp, CONFIG_FILE)
+            except PermissionError:
+                _time.sleep(0.08)   # 目标被读句柄/杀软短暂持有：重试一次
+                os.replace(tmp, CONFIG_FILE)
+            return True, None
+        except Exception as e:
+            return False, str(e)
+
+def _load_config():
+    """读取持久化配置（home 锚点 config.json：数据目录/日志目录/主题/最近记录）。"""
+    return cfg_read()
+
 def _save_config(cfg):
-    """保存配置到 home 锚点 config.json（~/.serialconsole_pro/，不随数据目录迁移）。"""
-    try:
-        os.makedirs(HOME_DIR, exist_ok=True)
-        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
+    """保存配置到 home 锚点 config.json。整量替换语义（历史 22 调用点不
+    改）；v3.4.54 起锁内原子写（此前裸 "w" 直写是撕裂的头号来源）。"""
+    def _whole(d):
+        d.clear()
+        d.update(cfg)
+    cfg_commit(_whole)
 
 # 优先级：环境变量 > 配置文件 > 默认值
 _cfg = _load_config()

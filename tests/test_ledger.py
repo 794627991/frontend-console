@@ -90,11 +90,15 @@ def main():
     check("回合终结事件已落（turn_started/complete）",
           "turn_started" in ks and "turn_complete" in ks)
     check("泵出队真发（input_promoted）", "input_promoted" in ks)
-    check("无进程会话发送失败 → 条目作废不静默",
-          any(e.get("kind") == "input_discarded"
-              and str(e.get("reason") or "").startswith("发送失败")
-              for e in s.log.store.snapshot()))
-    check("队列排空", s.queue_list() == [])
+    # v3.4.54：泵发送失败改回插保命（原「作废+input_discarded」语义废除
+    # ——竞态下曾把排队消息吞掉）。无进程会话 send 必失败：断言条目回插
+    # 队首、无作废事件
+    check("无进程会话发送失败 → 条目回插保命",
+          not any(e.get("kind") == "input_discarded"
+                  and str(e.get("reason") or "").startswith("发送失败")
+                  for e in s.log.store.snapshot())
+          and [e["text"] for e in s.queue_list()] == ["新代任务"])
+    check("队列不清空（消息保命可见）", len(s.queue_list()) >= 1)
 
     print("== 5. 子代理镜像（#12）==")
     s._emit_task_mirror({"subtype": "task_started", "tool_use_id": "tu9",

@@ -164,27 +164,14 @@ def _model_is_multimodal(name):
 def _vision_save(cfg):
     """原子写识图配置。v2.25 改 merge 语义：cfg 里的键覆盖 _VISION_KEY 同名键，
     其余键（如 mm_probed 探测缓存）原样保留——旧实现整键替换，调用方没带
-    的字段会被静默抹掉。"""
-    try:
-        with open(_st.CONFIG_FILE, "r", encoding="utf-8") as f:
-            d = json.load(f)
-        if not isinstance(d, dict):
-            d = {}
-    except Exception:
-        d = {}
-    cur = d.get(_VISION_KEY)
-    if not isinstance(cur, dict):
-        cur = {}
-    cur.update(cfg)
-    d[_VISION_KEY] = cur
-    try:
-        tmp = _st.CONFIG_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(d, f, ensure_ascii=False, indent=1)
-        os.replace(tmp, _st.CONFIG_FILE)
-        return True, None
-    except Exception as e:
-        return False, str(e)
+    的字段会被静默抹掉。v3.4.54 起走 app_state.cfg_commit（统一锁+原子事务）。"""
+    def _mut(d):
+        cur = d.get(_VISION_KEY)
+        if not isinstance(cur, dict):
+            cur = {}
+        cur.update(cfg)
+        d[_VISION_KEY] = cur
+    return _st.cfg_commit(_mut)
 
 # ---- from claude_harness.py:228 (_MM_PROBE_LOCK) ----
 
@@ -273,14 +260,6 @@ def _mm_probed_load():
     except Exception:
         pass
     return {}
-    try:
-        tmp = _st.CONFIG_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(d, f, ensure_ascii=False, indent=1)
-        os.replace(tmp, _st.CONFIG_FILE)
-        return True, None
-    except Exception as e:
-        return False, str(e)
 
 # ---- from claude_harness.py:356 (_model_vision_mode) ----
 

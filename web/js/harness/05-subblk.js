@@ -361,6 +361,7 @@
       `<div class="h-tool-coll">${bodyHtml}</div>`;
     row._preview = String(summary || '');
     row._t0 = Date.now();   // v2.44：行级耗时（结果到达时定格进头部）
+    _hgDiffLineMemo(row, name, _hgInput);   // v3.4.62：diff 真实行号定位存档
     return row;
   }
   function _toolInputBodyHtml(cfg, v) {
@@ -498,4 +499,5 @@
       coll.appendChild(d);
     }
     if (bad) row.classList.add('open');   // 错误不藏：与主链/历史「错误永远显」对齐
+    if (!bad && row._cfg && row._cfg.kind === 'diff') _hgDiffLineFix(row);   // v3.4.62：成功改盘才定位（轻审P2）
   }

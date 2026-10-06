@@ -3204,7 +3204,7 @@ span.h-ag-type[class*='h-ava-'] {
 .h-ask-opt:hover:not(:disabled) { border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 7%, transparent); }
 .h-ask-opt.on { border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  background: color-mix(in srgb, var(--accent) 7%, transparent); }
 .h-ask-opt:disabled { cursor: default; }
 .h-ask-radio { flex-shrink: 0; width: 13px; height: 13px; margin-top: 2px;
   border: 1.5px solid var(--border); border-radius: 50%; position: relative; }
@@ -3257,6 +3257,66 @@ span.h-ag-type[class*='h-ava-'] {
   font-weight: 600; color: var(--accent); border: 1px solid var(--accent);
   border-radius: 999px; padding: 0 6px; margin-right: 6px;
   vertical-align: 1px; white-space: nowrap; }
+/* v3.4.60：ask 卡 ZCode 方案——序号 chip（替代 radio，老卡 radio 规则上方保留）、
+   多题分页器、忽略钮；done 折叠=单行摘要（summed 类限定新代卡，老快照不命中） */
+.h-ask-num { flex-shrink: 0; width: 18px; height: 18px; margin-top: 1px;
+  border: 1px solid var(--border); border-radius: 50%;
+  display: grid; place-items: center; font-size: 10px; color: var(--muted);
+  font-variant-numeric: tabular-nums; }
+.h-ask-opt.on .h-ask-num { background: var(--accent); border-color: var(--accent);
+  color: var(--on-accent, #fff); }
+.h-ask-pgr { margin-left: auto; flex-shrink: 0; display: inline-flex;
+  align-items: center; gap: 2px; align-self: center; }
+.h-ask-pgv { width: 22px; height: 22px; border: 1px solid var(--border);
+  border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer;
+  font: inherit; font-size: 12px; line-height: 1; display: grid; place-items: center; }
+.h-ask-pgv:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.h-ask-pgv:disabled { opacity: .35; cursor: default; }
+.h-ask-pgn { font-size: var(--fs-xs); color: var(--muted); min-width: 2.5em;
+  text-align: center; font-variant-numeric: tabular-nums; }
+.h-ask-page { display: none; }
+.h-ask-page.cur { display: block; border-top: none; }   /* 分页单页可见不吃兄弟顶线 */
+.h-ask-ignore { margin-left: auto; border: 1px solid var(--border); border-radius: 6px;
+  background: transparent; color: var(--fg); font-size: 12px; padding: 5px 14px;
+  cursor: pointer; }
+.h-ask-ignore:hover { border-color: var(--accent); color: var(--accent); }
+.h-ask.done .h-ask-sum { display: none; }   /* 展开回看时摘要行让位 */
+.h-ask-sum { display: flex; align-items: baseline; gap: 8px; padding: 8px 12px;
+  cursor: pointer; white-space: nowrap; min-width: 0; }
+.h-ask.done.collapsed .h-ask-sum { display: flex; }
+.h-ask.done.collapsed .h-ask-sum:hover { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+.h-ask-sum-ok { color: var(--neon-green, #3fb950); font-weight: 600; flex-shrink: 0; }
+.h-ask-sum-q { color: var(--muted); flex-shrink: 0; max-width: 40%;
+  overflow: hidden; text-overflow: ellipsis; }
+.h-ask-sum-arw { color: var(--muted); flex-shrink: 0; }
+.h-ask-sum-a { min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  color: var(--fg-bright); font-weight: 600; }
+.h-ask-sum-n { color: var(--muted); flex-shrink: 0; }
+/* 折叠核心：summed 新代卡收成单行（老快照 done 卡无 summed 不命中，走旧规则） */
+/* ==================== v3.4.61：ZCode 形态——ask 面板 dock 到输入框上方 ==================== */
+/* dock 容器（.hg-input-card 内、absolute 浮层）：v3.4.61R 用户实锤「面板占高
+   挡住消息」——改悬浮定位锚定输入卡，bottom:100% 浮在其正上方，不占布局
+   高度、消息流视口不动（left/right+margin auto 居中，不用 translateX——
+   出场/收缩动画的 translateY 才不互相覆盖）。显隐走 .on 类（:empty 会被
+   innerHTML 恢复混入的空白文本节点击穿） */
+.hg-input-card { position: relative; }
+.hg-ask-dock { position: absolute; bottom: calc(100% + 8px); left: 0; right: 0;
+  width: min(820px, 100%); margin: 0 auto; z-index: 20; }
+.hg-ask-dock:not(.on) { display: none; }
+.h-ask.h-ask-dock { box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
+  max-height: min(48vh, 420px); overflow-y: auto; margin: 0;
+  align-self: stretch; width: 100%; }
+/* 收缩动画（完成态 JS 配合：先定 maxHeight 再加 hg-out 类） */
+.h-ask.hg-out { max-height: 0 !important; opacity: 0; transform: translateY(6px);
+  margin: 0; border-top-width: 0; border-bottom-width: 0; overflow: hidden;
+  transition: max-height .2s ease, opacity .16s ease, transform .2s ease,
+    margin .2s ease, border-width .2s ease; }
+/* 出场（150ms 轻浮出） */
+@keyframes hgAskIn { from { opacity: 0; transform: translateY(6px); } }
+.hg-ask-dock > .h-ask { animation: hgAskIn .15s ease; }
+/* flow 结果行：dim 单行 ellipsis、不可点，复用 .h-ask-sum 内部 span 族 */
+.h-ask-rs { align-self: center; width: min(820px, 100%); margin: 2px 0;
+  font-size: var(--fs-sm); color: var(--muted); }
 
 
 /* ---- 统一登录胶囊 + Proxy 状态（v2.27）：侧栏底部，提示词按钮下面 ---- */
@@ -3784,8 +3844,12 @@ span.h-ag-type[class*='h-ava-'] {
 .hg-sub-turn + .hg-sub-turn { margin-top: 6px; padding-top: 6px;
   border-top: 1px dashed color-mix(in srgb, var(--border) 55%, transparent); }
 .hg-sub-body .h-tl { padding-right: 12px; }
-.hg-sub-body .h-tl .h-tool-res { white-space: pre-wrap; word-break: break-word;
-  text-overflow: clip; }
+/* v3.4.62（用户实锤「分页子代理莫名其妙的换行」）：孤儿结果行恢复单行省略
+   ——v3.3.10 的折行把 JS 已归一的单段文本在窄列折成多行顶格错位；文本已
+   replace(/\s+/g,' ')，nowrap+hidden+ellipsis 三件套齐配（当年「断半字」是
+   overflow 未配齐的旧疾，不复发），全文走 title 悬浮（JS 已补） */
+.hg-sub-body .h-tl .h-tool-res { white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; word-break: keep-all; overflow-wrap: normal; }
 .hg-sub-msg { font-size: var(--fs-base); line-height: 1.65; color: var(--fg); white-space: pre-wrap; word-break: break-word; }
 .hg-sub-tool {
   font-size: 10.5px; color: var(--muted); font-family: var(--font-mono);

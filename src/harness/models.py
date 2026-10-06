@@ -44,10 +44,3 @@ def available_models():
         default = names[0]   # settings 无显式默认 → 取首个映射（与 CLI 回退语义一致）
     _models_cache = {"models": names, "default": default, "_mtime": mtime}
     return _models_cache
-
-# ---- from claude_harness.py:794 (_model_label) ----
-
-
-def _model_label(m):
-    """Lanz-Auto → lanz · Lanz-Auto（参考 ClaudeDesktop 的徽章文案风格）。"""
-    return "lanz · %s" % m if m and m.startswith("Lanz") else (m or "")

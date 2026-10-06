@@ -57,18 +57,7 @@ class TftpServer:
         """把 path 记住为默认目录。写失败只影响下次启动的初值，不影响本次切换。"""
         try:
             from . import app_state as _st
-            try:
-                with open(_st.CONFIG_FILE, "r", encoding="utf-8") as f:
-                    cfg = json.load(f)
-                if not isinstance(cfg, dict):
-                    cfg = {}
-            except Exception:
-                cfg = {}
-            cfg["tftp_default_dir"] = path
-            tmp = _st.CONFIG_FILE + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(cfg, f, ensure_ascii=False, indent=1)
-            os.replace(tmp, _st.CONFIG_FILE)
+            _st.cfg_commit(lambda d: d.update({"tftp_default_dir": path}))
         except Exception:
             pass
 

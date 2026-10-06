@@ -1,27 +1,43 @@
 // harness ask-md.js (v3.0 自 buildClaudeHarnessTab 拆出,定义体零改动,缩进保持原样)
   function askRender(it) {
     if (!it || !it.req_id) return;
-    const old = _hgFlow.querySelector(`[data-hg-ask="${CSS.escape(it.req_id)}"]`);
-    if (old) old.remove();
+    // v3.4.61（ZCode 形态）：幂等跳过——同 req_id 且未 done 的面板已在场
+    // （SSE snapshot 保留窗重放同帧 / _hgAskSync 与活流竞速）直接 return，
+    // 不再先删后建（重建会清掉用户半选/草稿）。不同 req_id（后端单槽换新）
+    // 仍走删旧建新。查重域 _hgWrap：覆盖 dock（新代）与 flow（老代迁移前）
+    const _old = _hgWrap.querySelector(`[data-hg-ask="${CSS.escape(it.req_id)}"]`);
+    if (_old && !_old.classList.contains('done')) return;
+    if (_old) _old.remove();
     const qs = Array.isArray(it.questions) ? it.questions : [];
     if (!qs.length) return;
 
+    // v3.4.60：ZCode 方案改造——多题分页（一次一题）、序号 chip 替代 radio、
+    // 脚区「左提示 + 忽略/提交」。硬约束：待答卡根 class 恒恰 'h-ask'
+    // （12-sessions 弃快照豁免按 class="h-ask" 精确串判定），分页状态走 dataset
+    const paged = qs.length > 1;
     const card = document.createElement('div');
-    card.className = 'h-ask';
+    card.className = 'h-ask h-ask-dock';   // v3.4.61：dock 修饰类（根类 h-ask 保留——phResume 判据靠它）
     card.dataset.hgAsk = it.req_id;
     card.dataset.hgQs = JSON.stringify(qs);   // 问题原文（提交时作 answer 的 key）
     card.dataset.hgSel = '{}';                // 题号 -> [选中的 label]
+    if (paged) card.dataset.hgPage = '0';
     qs.forEach((_hgQ, qi) => {
       const multi = !!_hgQ.multiSelect;
       const box = document.createElement('div');
-      box.className = 'h-ask-q';
+      box.className = paged ? 'h-ask-q h-ask-page' : 'h-ask-q';
+      if (paged && qi === 0) box.classList.add('cur');
       box.innerHTML =
         `<div class="h-ask-head"><span class="h-ask-badge">${esc(_hgQ.header || '请选择')}</span>` +
         `<span class="h-ask-title">${esc(_hgQ.question || '')}</span>` +
-        (multi ? '<span class="h-ask-multi">可多选</span>' : '') + '</div>';
+        (multi ? '<span class="h-ask-multi">可多选</span>' : '') +
+        (paged ? `<span class="h-ask-pgr">` +
+          `<button class="h-ask-pgv" data-hg-pg="-1" title="上一题">‹</button>` +
+          `<span class="h-ask-pgn"></span>` +
+          `<button class="h-ask-pgv" data-hg-pg="1" title="下一题">›</button></span>` : '') +
+        '</div>';
       const opts = document.createElement('div');
       opts.className = 'h-ask-opts';
-      (_hgQ.options || []).forEach((o) => {
+      (_hgQ.options || []).forEach((o, oi) => {
         const label = typeof o === 'string' ? o : (o.label || '');
         const desc = typeof o === 'string' ? '' : (o.description || '');
         const b = document.createElement('button');
@@ -29,7 +45,7 @@
         b.dataset.hgAskOpt = String(qi);
         b.dataset.hgAskLabel = label;
         b.dataset.hgAskMulti = multi ? '1' : '';
-        b.innerHTML = `<span class="h-ask-radio"></span>` +
+        b.innerHTML = `<span class="h-ask-num">${oi + 1}</span>` +
           `<span class="h-ask-opt-txt"><b>${esc(label)}</b>` +
           (desc ? `<span class="h-ask-desc">${esc(desc)}</span>` : '') + `</span>`;
         opts.appendChild(b);
@@ -40,33 +56,55 @@
       const ex = document.createElement('div');
       ex.className = 'h-ask-extra';
       ex.innerHTML = `<input class="h-ask-x" data-hg-askx="${qi}" spellcheck="false"
-        placeholder="其他 / 补充说明（可直接输入，回车提交）">`;
+        placeholder="输入你的回答…" title="回车提交">`;
       box.appendChild(ex);
       card.appendChild(box);
     });
     const foot = document.createElement('div');
     foot.className = 'h-ask-foot';
+    const hint = document.createElement('span');
+    hint.className = 'h-ask-hint';
+    hint.textContent = '点击选择，可自由输入';
+    const ignore = document.createElement('button');
+    ignore.className = 'h-ask-ignore';
+    ignore.dataset.hgAskSend = it.req_id;
+    ignore.textContent = '忽略';
     const submit = document.createElement('button');
     submit.className = 'h-ask-submit';
     submit.dataset.hgAskSend = it.req_id;
-    submit.textContent = '提交选择';
+    submit.textContent = '提交';
     submit.disabled = true;
-    const hint = document.createElement('span');
-    hint.className = 'h-ask-hint';
-    hint.textContent = '选择后提交，AI 会继续';
-    foot.appendChild(submit);
     foot.appendChild(hint);
+    foot.appendChild(ignore);
+    foot.appendChild(submit);
     card.appendChild(foot);
-    // v3.3.2(D3)：卡片入活组根（05-subblk 段落根同款惯例）——等答卡片属于
-    // 当前工作状态，时序落在过程之后；无活组回落 flow 根
-    const _ag = _HG.grp;
-    ((_ag && _ag.root && _ag.root.isConnected) ? _ag.root : _hgFlow).appendChild(card);
-    // v2.27：ask 卡片 = AI 阻塞等作答，必须让用户看见。无 force 的
-    // scrollBottom 在翻历史时被 150px 阈值拦下（用户实锤「弹出时要自己
-    // 翻页找」）。这里无条件把卡片顶部滚进视口：多题卡片从题1看起，
-    // 而不是只露出提交按钮。
-    _hgScrollBottom(true);
-    requestAnimationFrame(() => card.scrollIntoView({ block: 'start' }));
+    if (paged) askPage(card, 0);   // pgn 文本/边界 disabled 一次到位
+    // v3.4.61（ZCode 形态）：面板 dock 到输入框正上方（.hg-card-wrap 内
+    // 输入卡紧前）——不再入消息流。回底非强制：面板恒可见（不随滚动走），
+    // 只带出回合尾部语境，不剥夺翻历史自由。dock 元素来自静态脚手架，
+    // 缺失=异常态，早退不建孤儿面板（全审 F4）
+    if (!_hgAskDockEl) return;
+    _hgAskDockEl.appendChild(card);
+    _hgAskDockEl.classList.add('on');
+    _hgScrollBottom();
+  }
+  // v3.4.60：多题分页翻页（ZCode ‹ 1/2 ›）——只切 cur 类不重建 DOM（草稿/选中
+  // 全保留）；当前页走根 dataset.hgPage（随快照序列化），总页数现算防漂移。
+  // 委托入口在 20-main（.h-ask-pgv），delta=0 用于渲染初始化
+  function askPage(card, delta) {
+    const pages = card.querySelectorAll('.h-ask-page');
+    if (!pages.length) return;
+    const p0 = +(card.dataset.hgPage || 0) || 0;
+    const p = Math.max(0, Math.min(pages.length - 1, p0 + (delta || 0)));
+    card.dataset.hgPage = String(p);
+    pages.forEach((pg, i) => pg.classList.toggle('cur', i === p));
+    // 每页 head 各有一份 pager——全量同步（当前页那份可见，其余随页隐藏）
+    card.querySelectorAll('.h-ask-pgn').forEach(n =>
+      { n.textContent = (p + 1) + '/' + pages.length; });
+    card.querySelectorAll('.h-ask-pgv').forEach(v => {
+      const d = parseInt(v.dataset.hgPg || '0', 10);
+      v.disabled = (p === 0 && d < 0) || (p === pages.length - 1 && d > 0);
+    });
   }
   function askQs(card) {
     try { return JSON.parse(card.dataset.hgQs || '[]'); } catch (_) { return []; }
@@ -87,6 +125,10 @@
       if ((sel[k] || []).length || askExtraText(card, k)) ok++;
     const sb = card.querySelector('.h-ask-submit');
     if (sb) sb.disabled = ok < need;
+    // v3.4.60：多题时 hint 报进度（跨页未答可见）；答满恢复引导语
+    const ht = card.querySelector('.h-ask-hint');
+    if (ht) ht.textContent = (need > 1 && ok < need)
+      ? `已答 ${ok}/${need} 题` : '点击选择，可自由输入';
   }
   function askPick(btn) {
     const card = btn.closest('.h-ask');
@@ -109,12 +151,21 @@
     askSelSet(card, sel);
     askCheckDone(card);
   }
-  function askSubmit(reqId) {
-    const card = _hgFlow.querySelector(`[data-hg-ask="${CSS.escape(reqId)}"]`);
+  function askSubmit(reqId, ignore) {
+    const card = _hgWrap.querySelector(`[data-hg-ask="${CSS.escape(reqId)}"]`);   // v3.4.61：查重域扩到 dock
     if (!card || card.classList.contains('done')) return;
     const qs = askQs(card), sel = askSel(card);
     const answer = {};
     const extras = {};   // v2.56：自由输入随卡片存档——askDone 回显用
+    // v3.4.60：忽略（ZCode 方案）——每题作答「（用户已忽略此提问）」，后端
+    // 原样回传给阻塞中的 MCP 调用方，协议不变；hgIgn 标记供摘要行措辞
+    if (ignore) {
+      qs.forEach((_q, qi) => {
+        answer[(_q && _q.question) || ('问题' + (qi + 1))] = '（用户已忽略此提问）';
+      });
+      card.dataset.hgIgn = '1';
+    } else {
+      delete card.dataset.hgIgn;   // 全审 P1：正常路径入口清忽略标记——防「忽略失败→改选正常提交」摘要误标
     card.querySelectorAll('.h-ask-q').forEach((box, qi) => {
       const chosen = (sel[qi] || []).slice();
       const extra = askExtraText(card, qi);       // v2.24.3 自由输入并入作答
@@ -123,30 +174,43 @@
       const qtext = (qs[qi] && qs[qi].question) || ('问题' + (qi + 1));
       answer[qtext] = chosen.concat(extra ? ['补充：' + extra] : []).join(', ');
     });
+    }
     if (!Object.keys(answer).length) return;
     try { card.dataset.hgExtra = JSON.stringify(extras); } catch (_) {}
+    try { card.dataset.hgAns = JSON.stringify(answer); } catch (_) {}   // v3.4.60：askDone 摘要兜底源
     const btn = card.querySelector('.h-ask-submit');
+    const ign = card.querySelector('.h-ask-ignore');
     if (btn) { btn.disabled = true; btn.textContent = '提交中…'; }
+    if (ign) ign.disabled = true;
+    const _restore = () => {   // v3.4.60：失败恢复双钮（含忽略）
+      if (btn) { btn.disabled = false; btn.textContent = '提交'; }
+      if (ign) ign.disabled = false;
+      delete card.dataset.hgIgn;   // 全审 P1：忽略提交失败回滚标记——残留会让后续正常提交的摘要误标「已忽略」
+    };
     fetch('/api/harness/ask/answer', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({sid: _HG.sid, req_id: reqId, answer})
     }).then(r => r.json()).then(j => {
-      if (!j.ok) { if (btn) { btn.disabled = false; btn.textContent = '提交选择'; } renderRaw('⚠ 提交失败：' + (j.err || '')); }
-    }).catch(() => { if (btn) { btn.disabled = false; btn.textContent = '提交选择'; } });
+      if (!j.ok) { _restore(); renderRaw('⚠ 提交失败：' + (j.err || '')); }
+    }).catch(() => { _restore(); });
   }
   function askDone(it) {
-    const card = _hgFlow.querySelector(`[data-hg-ask="${CSS.escape(it.req_id || '')}"]`);
-    if (!card) return;
-    card.classList.add('done');
-    // v3.3.2(D8)：提交后「缩回去」——折叠成题头+已选项+✓脚，点击开合可回看
-    // 完整选择情况（20-main flow 委托切换 collapsed）。老快照 done 卡无此类
-    // 维持展开（两代并存，不迁移）
-    card.classList.add('collapsed');
-    // v3.2.31：选择器加 [data-hg-ask-opt]——补充说明选项卡（hg-ask-xopt，div）
-    // 复用 .h-ask-opt 视觉但无该属性，重复 askDone 时不被下面的 .on 翻转清掉
-    card.querySelectorAll('.h-ask-opt[data-hg-ask-opt]').forEach(b => { b.disabled = true; });
-    const ans = it.answer || {};
-    const qs = askQs(card);
+    const card = _hgWrap.querySelector(`[data-hg-ask="${CSS.escape(it.req_id || '')}"]`);   // v3.4.61：查重域扩到 dock
+    // v3.4.61（ZCode 形态）：card 不在场（ask_done 迟到 / 他窗已答面板已收缩 /
+    // SSE snapshot 重放）也继续——结果行按 req_id 幂等，数据走 it.answer
+    // answer 兜底链——帧回显 > askSubmit 随卡存档的 hgAns（帧缺字段时兜住）
+    let ans = it.answer || {};
+    if (card && !Object.keys(ans).length) {
+      try { ans = JSON.parse(card.dataset.hgAns || '{}') || {}; } catch (_) { ans = {}; }
+    }
+    // card 缺席时无 hgQs——从 answer 的 key 构造伪题面（结果行只需问题文本）
+    const qs = card ? askQs(card) : Object.keys(ans).map(k => ({ question: k }));
+    const ign = !!(card && card.dataset.hgIgn === '1');
+    if (card) {
+      card.classList.add('done');   // phResume 判据翻面（dock 面板 done 后不再复暖占位）
+      // v3.2.31：选择器加 [data-hg-ask-opt]——补充说明选项卡（hg-ask-xopt，div）
+      // 复用 .h-ask-opt 视觉但无该属性，重复 askDone 时不被下面的 .on 翻转清掉
+      card.querySelectorAll('.h-ask-opt[data-hg-ask-opt]').forEach(b => { b.disabled = true; });
     // 自由输入回显（两代 done 卡形态并存边界）：
     // · v3.2.31 起（新代）：展示位=选项列表内的「补充说明」xopt 卡片（下方
     //   追加）；disabled 输入框只是数据载体，CSS `.h-ask.done .h-ask-x
@@ -159,7 +223,7 @@
     let extras = {};
     try { extras = JSON.parse(card.dataset.hgExtra || '{}'); } catch (_) {}
     card.querySelectorAll('.h-ask-q').forEach((box, qi) => {
-      const qtext = (qs[qi] && qs[qi].question) || '';
+      const qtext = (qs[qi] && qs[qi].question) || ('问题' + (qi + 1));   // 全审轻微①：与 askSubmit 同键族
       const chosen = ans[qtext];
       if (!chosen) return;
       box.querySelectorAll('.h-ask-opt[data-hg-ask-opt]').forEach(b => {
@@ -178,12 +242,8 @@
         }
         inp.disabled = true;
       }
-      // v3.2.31（需求1）：补充说明选项卡化——提交的自由输入不再以底部小字
-      // 回显（旧 .h-ask-note「📝 补充说明：…」附注行退役），改为渲染成与选项
-      // 同形态的卡片（复用 .h-ask-opt 边框/内边距/radio + 「补充说明」徽章）
-      // 插入该题选项列表末尾，视觉上是选项列表的一员。幂等（先清后插）；
-      // 历史重放走同一 askDone 路径同形态。div+无 data-hg-ask-opt：不参与
-      // askPick 选择与上方 .on 翻转，锁定展示
+      // v3.2.31（需求1）：补充说明选项卡化——xopt 卡插入该题选项列表末尾
+      //（幂等先清后插；div+无 data-hg-ask-opt：不参与 askPick，锁定展示）
       box.querySelectorAll('.hg-ask-xopt').forEach(x => x.remove());
       const _xv = ((inp && inp.value) || '').trim();
       if (_xv) {
@@ -192,7 +252,9 @@
           const _xc = document.createElement('div');
           _xc.className = 'h-ask-opt hg-ask-xopt on';
           _xc.title = '用户的补充说明（已随作答提交）';
-          _xc.innerHTML = '<span class="h-ask-radio"></span>' +
+          const _chip = box.querySelector('.h-ask-num') ? '<span class="h-ask-num">✎</span>'
+                                                        : '<span class="h-ask-radio"></span>';
+          _xc.innerHTML = _chip +
             '<span class="h-ask-opt-txt"><b><span class="hg-ask-xbadge">补充说明</span>' +
             esc(_xv) + '</b></span>';
           _opts.appendChild(_xc);
@@ -200,11 +262,98 @@
       }
     });
     const foot = card.querySelector('.h-ask-foot');
-    if (foot) {
-      // v3.2.31（需求1）：底部只留「✓ 已提交」——补充说明改为选项列表内的
-      // 同形态卡片（上方 hg-ask-xopt 分支），不再是 foot 附注小字
-      foot.innerHTML = `<span class="h-ask-done">✓ 已提交</span>`;
+    if (foot) foot.innerHTML = `<span class="h-ask-done">✓ 已提交</span>`;
+    // DOM 选中态兜底（answer 两级全空时重建——快照恢复卡收到迟到 ask_done）
+    if (!Object.keys(ans).length) {
+      card.querySelectorAll('.h-ask-q').forEach((box, qi) => {
+        const on = [...box.querySelectorAll('.h-ask-opt[data-hg-ask-opt].on')]
+          .map(b => b.dataset.hgAskLabel).filter(Boolean);
+        if (on.length) ans[(qs[qi] && qs[qi].question) || ('问题' + (qi + 1))] = on.join(', ');
+      });
     }
+    }   // if (card) 收口
+    // v3.4.61（ZCode 形态）：先落 flow 结果行（先留痕后消失——动画被打断也不
+    // 丢痕），面板随即收缩消失（不再折叠成卡占消息流）
+    _hgAskResultRow(it.req_id || '', ans, qs, ign);
+    if (card) _hgAskDismiss(card);
+  }
+  // v3.4.61：flow 结果行——dim 单行「✓ 问题 → 答案 [共 N 题]」复用 .h-ask-sum
+  // 的 span 族；按 req_id 幂等（data-hg-askr）；override 供失效路（已失效/已随
+  // 会话中断失效）改写文案。落点=当前活组根（ask 属回合中途暂停，答后续跑同
+  // 组），组不活兜底 flow 根
+  function _hgAskResultRow(reqId, ans, qs, ign, override) {
+    if (!reqId) return;
+    if (_hgFlow.querySelector(`[data-hg-askr="${CSS.escape(reqId)}"]`)) return;
+    const _qk = q0 => (q0 && q0.question) || ('问题' + (qs.indexOf(q0) + 1));
+    const firstQ = qs.length ? _qk(qs[0]) : (Object.keys(ans || {})[0] || '提问');
+    const row = document.createElement('div');
+    row.className = 'h-ask-rs';
+    row.dataset.hgAskr = reqId;
+    row.title = (qs.length ? qs : Object.keys(ans || {}).map(k => ({ question: k })))
+      .map(q => _qk(q) + ' → ' + ((ans || {})[_qk(q)] || '（无作答）')).join('\n');
+    row.innerHTML = `<span class="h-ask-sum-ok">✓</span>` +
+      (override || ign ? `<span class="h-ask-sum-q">${esc(override || '已忽略此提问')}</span>`
+        : `<span class="h-ask-sum-q">${esc(firstQ)}</span>` +
+          `<span class="h-ask-sum-arw">→</span>` +
+          `<b class="h-ask-sum-a">${esc(String((ans || {})[firstQ] || '已提交'))}</b>`) +
+      (qs.length > 1 ? `<span class="h-ask-sum-n">共 ${qs.length} 题</span>` : '');
+    const g = (_HG.grp && _HG.grp.root && _HG.grp.root.isConnected) ? _HG.grp.root : _hgFlow;
+    g.appendChild(row);
+    _hgScrollBottom();
+  }
+  // v3.4.61：面板收缩——先定 maxHeight 固化当前高度再加 hg-out 类（max-height
+  // 过渡必须有起点数值；none→0 不播动画），240ms 后 remove（setTimeout 不用
+  // transitionend——tab 后台 transitionend 不触发）；空 dock 收 .on；贴底联动
+  function _hgAskDismiss(panel, override) {
+    if (!panel || !panel.isConnected) return;
+    panel.classList.add('done');
+    _hgAskResultRow(panel.dataset.hgAsk || '', {}, askQs(panel), false, override || '已失效');
+    try { panel.style.maxHeight = panel.offsetHeight + 'px'; void panel.offsetWidth; } catch (_) {}
+    panel.classList.add('hg-out');
+    setTimeout(() => {
+      panel.remove();
+      if (_hgAskDockEl && !_hgAskDockEl.children.length) _hgAskDockEl.classList.remove('on');
+      if (typeof isNearBottom === 'function' && isNearBottom()) _hgScrollBottom();
+    }, 240);
+  }
+  // v3.4.61：快照恢复 dock——面板 outerHTML 回填 + 老代迁移（flow 里恢复出的
+  // 待答卡 DOM 原样搬进 dock，dataset/半选/草稿/分页全保）；提交门槛是派生态
+  // 重算作保险。html 为空 = 清场（switchTo(null)）
+  function _hgAskDockRestore(html) {
+    if (!_hgAskDockEl) return;
+    _hgAskDockEl.innerHTML = html || '';
+    const legacy = _hgFlow.querySelector('.h-ask:not(.done)');
+    if (legacy) _hgAskDockEl.appendChild(legacy);
+    _hgAskDockEl.classList.toggle('on', !!_hgAskDockEl.querySelector('.h-ask:not(.done)'));
+    const p = _hgAskDockEl.querySelector('.h-ask:not(.done)');
+    if (p) { try { askCheckDone(p); } catch (_) {} }
+  }
+  // v3.4.61：冷开/重建路的待答问题同步——transcript 路 seq 已跳过 ask 帧（不
+  // 重放），面板靠后端快照拉回（/ask/poll 空 req_id 分支）。三挂点：switchTo
+  // 冷开 / _hgSseRebuild / _hgReloadFlow。失败静默（SSE 活流仍可能在场）
+  function _hgAskSync(sid) {
+    if (!sid) return;
+    fetch('/api/harness/ask/poll', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sid }) })
+      .then(r => r.json())
+      .then(j => {
+        if (!j || !j.ok || _HG.sid !== sid) return;   // 归属守卫：fetch 在途切走竞速
+        const pend = _hgAskDockEl && _hgAskDockEl.querySelector('.h-ask:not(.done)');
+        if (!j.found) { if (pend) _hgAskDismiss(pend, '已失效'); return; }
+        if (j.done) {
+          if (pend && pend.dataset.hgAsk === j.req_id)
+            askDone({ req_id: j.req_id, answer: j.answer });   // 他窗已答/错过 ask_done 帧
+          else if (pend) _hgAskDismiss(pend, '已失效');
+          return;
+        }
+        // 未答且题面在场——异 req_id 的在场面板（跨会话僵尸/后端单槽换新）
+        // 先 dismiss，再 askRender（幂等：同 req_id 未 done 不重建，保半选）
+        if (j.req_id && Array.isArray(j.questions) && j.questions.length) {
+          if (pend && pend.dataset.hgAsk !== j.req_id) _hgAskDismiss(pend, '已失效');
+          askRender({ req_id: j.req_id, title: j.title || '', questions: j.questions });
+        }
+      }).catch(() => {});
   }
   // v3.0 高亮缓存池（对照 ZCode shikiHighlighter.ts:56 的指纹 key + 结果
   // 缓存）：key=语言:长度:首100:尾100（不存全文防 key 本身膨胀）；命中直接

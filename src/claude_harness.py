@@ -48,7 +48,6 @@ from src.harness.meta import (  # noqa: F401
     log,
 )
 from src.harness.models import (  # noqa: F401
-    _model_label,
     _models_cache,
     available_models,
     log,

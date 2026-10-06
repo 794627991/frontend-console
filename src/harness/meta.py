@@ -59,13 +59,19 @@ def _meta_load():
 
 
 def _meta_save():
-    """原子写（tmp + replace，同 claude_default 模式）。锁内快照防并发撕裂。
+    """原子写（tmp + replace，同 claude_default 模式）。锁覆盖整个落盘流程。
 
     落盘前重读盘面做并集合并：本进程只在首次用表时读一次文件，若期间另
     有进程（多开/重启窗口期）写入过新条目，拿内存快照直接覆盖会把它们抹
     掉。口径：盘面有而内存没有的条目补进来；两边都有以内存为准（本进程
     刚操作过，是最新的）。墓碑排除本进程已删条目，防止合并把刚删的复活。
+
+    v3.4.54：tmp 写盘从锁外移入——固定 tmp 名在锁外时，双线程并发保存互
+    踩 tmp（Windows 下另一线程持句柄会使本线程 replace 抛 PermissionError
+    被静默吞掉=丢保存无感知）。tmp 名带 pid/tid 唯一化（跨进程多开也不
+    撞），replace 失败重试一次，仍失败 log.warning，绝不静默。
     """
+    import time
     with _meta_lock:
         _meta_load()
         try:
@@ -79,11 +85,15 @@ def _meta_save():
                         and isinstance(v, dict) and v.get("sid")):
                     _meta[k] = v
         data = dict(_meta)
-    try:
-        os.makedirs(os.path.dirname(_META_FILE), exist_ok=True)
-        tmp = _META_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=1)
-        os.replace(tmp, _META_FILE)
-    except Exception:
-        pass
+        try:
+            os.makedirs(os.path.dirname(_META_FILE), exist_ok=True)
+            tmp = "%s.tmp.%d.%d" % (_META_FILE, os.getpid(), threading.get_ident())
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=1)
+            try:
+                os.replace(tmp, _META_FILE)
+            except PermissionError:
+                time.sleep(0.08)     # 目标被读句柄/杀软短暂持有：重试一次
+                os.replace(tmp, _META_FILE)
+        except Exception as e:
+            log.warning("meta 落盘失败（该次保存丢失）：%s", e)

@@ -13,7 +13,7 @@ reviewer 审已完成的改动，审过即开闸），未超/已送审/未启用
 放行，绝不因闸自身故障阻塞工作（回合结算审计仍在，双层兜底）。
 
 后端地址读 ~/.serialconsole_pro/endpoint.json（工具启动时写入，与
-harness_ask_mcp.py 同一套服务发现）；HARNESS_BACKEND 环境变量可覆盖
+ask_mcp.py 同一套服务发现）；HARNESS_BACKEND 环境变量可覆盖
 （同 ask_mcp 的 URL_OVERRIDE 先例，测试用）。双形态入口：源码
 `python src/main.py --audit-hook` / 打包 `exe --audit-hook`。
 """

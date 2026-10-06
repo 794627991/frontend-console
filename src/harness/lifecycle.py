@@ -96,8 +96,10 @@ def _peer_poll_loop():
                 if getattr(s, "is_vision", False) or getattr(s, "hidden", False):
                     continue
                 try:
-                    with s.clients_lock:
-                        watching = bool(s.clients)
+                    # v3.0 收编后 s.clients/clients_lock 已随 SSE 改造退役——
+                    # 旧引用 AttributeError 被下面 except 吞成 watching=False，
+                    # 轮询兜底整体死路（peer 回传静默丢失）。改问 bus 订阅者
+                    watching = s.log.bus.has_subscribers()
                 except Exception:
                     watching = False
                 if not watching:

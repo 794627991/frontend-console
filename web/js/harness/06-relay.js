@@ -16,6 +16,8 @@
       // 多吃一轮 ack reset 重建）。回滚后旧快照作废（存的是回滚前 DOM）
       delete _HG.cache[sid];
       _hgSseResetLocal();
+      _HG.histRebuilding = sid;    // 轻审 P2+复审 P3：sid 化按归属自清
+      try {
       _HG.seq = j.seq || 0; _HG.epoch = j.epoch || null; _HG.alive = !!j.alive;
       _HG.visionCalls = null; _HG.peerWait = null;
       if (!j.lines.length) showWelcome();
@@ -25,8 +27,10 @@
         // R2-2：await 在途抢发变 busy——尾组留给 grpEnsure 认回续跑（重渲
         // 抹活组是预存在问题，不放大成裂两组）
       if (!_HG.busy) setBusy(false);   // R2-2：await 在途变 busy 不清指示（事件流自会维护）
+      _hgAskSync(sid);   // v3.4.61：回滚换代重建路——旧 ask 大概率失效，按后端快照校验（收面板/拉回）
       refreshSessions();
       _hgScrollBottom(true);
+      } finally { if (_HG.histRebuilding === sid) _HG.histRebuilding = null; }
     } catch(_) {}
   }
   function renderRaw(text) {

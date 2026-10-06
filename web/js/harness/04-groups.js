@@ -530,6 +530,15 @@
     // v3.4.36：真新用户消息=真回合边界——撤销压缩续跑标志，压缩后紧跟的
     // 新提问不许误接回旧组。v3.4.52：只清归属本会话的标志（防误清别的会话的）
     if (_HG.compactResume && _HG.compactResume === _HG.sid) _HG.compactResume = null;   // v3.4.55(轻审P6):真值前置
+    // v3.4.60（用户实锤「多轮复审来回后已完成的工作不会自动收起」）：真新
+    // 回合=注意力已转移——此前展开的已完成组（含用户点开过的 userToggled，
+    // v3.2.1 的「永不强制收」在多轮回合推进场景过期）统一收起，屏幕只留
+    // 当前回合与最终结论。仅 live 路收（回放渲染的收起由渲染器 finally 统一管）
+    if (live !== false)
+      _hgFlow.querySelectorAll('.h-grp[data-finalized="1"]').forEach(gp => {
+        const tb = gp.querySelector(':scope > .h-grp-proc > .h-turn-body');
+        if (tb) tb.classList.add('closed');
+      });
     // v3.2：定稿带回合终点——回放用该回合最后一次活动的行 ts
     // （_HG.histActTs，renderHistLine 逐行维护；user 行自身不算活动）——
     // 工时=回合真实工作窗，不含「回合结束到用户下一条消息」的阅读空闲

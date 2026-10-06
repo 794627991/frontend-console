@@ -147,6 +147,22 @@
       }, 1000);
     }
   }
+  function _subDirEnsure() {
+    // v3.4.60（用户需求）：胶囊/动态页打开时同步把目录 tab 懒建在场（不夺
+    // 焦点）——点胶囊不再只看到单个视图，目录列表随手可切。已建时零操作
+    if (!_subPaneEl || _sub.tabs[_SUB_DIR]) return;
+    const sc = document.createElement('div');
+    sc.className = 'hg-sub-msgs hg-sub-dir'; sc.dataset.tid = _SUB_DIR;
+    sc.style.display = 'none';   // 轻审P1：不夺焦的 tab 必须显式隐藏——CSS 层
+                                 // .hg-sub-msgs 默认 flex 可见，漏设会与激活
+                                 // tab 平分 body 高度（空白下半屏）
+    _sub.tabs[_SUB_DIR] = { label: '目录', type: '__dir__', desc: '子智能体目录', sc,
+                            run: false, err: false, replay: false, model: '' };
+    _sub.order.push(_SUB_DIR);
+    _subBodyEl.appendChild(sc);
+    _subDirPaint();
+    _subTabsPaint();
+  }
   function _subDirOpen() {
     if (!_subPaneEl) return;
     if (!_sub.tabs[_SUB_DIR]) {
@@ -489,6 +505,7 @@
             _coll.innerHTML = _toolInputBodyHtml(_cfg0, _v);
             row.classList.add('open');
           }
+          _hgDiffLineMemo(row, name, input);   // v3.4.62：diff 真实行号定位存档（结果点触发）
         }
       } catch(_) {}
     }
@@ -864,6 +881,7 @@
             d.textContent = full.length > 2000 ? full.slice(0, 2000) + '…' : full;
             coll.appendChild(d);
           }
+          if (!err) _hgDiffLineFix(toolRow);   // v3.4.62：成功改盘才定位（轻审P2）；回放路文件已是改后态
         };
         for (const row of (j.rows || [])) {
           const ts = _tsGet(row);
@@ -944,6 +962,7 @@
                 const _coll0 = tw.querySelector('.h-tool-coll');
                 if (_coll0) _coll0.innerHTML = _toolInputBodyHtml(_cfg, _v);
                 tw.classList.add('open');
+                _hgDiffLineMemo(tw, row.name || '', row.in);   // v3.4.62：回放 diff 行存档（try 内：edits 异常不炸整个回放，轻审P4）
               } catch(_) {}
             }
             // v3.2.6R2（审计N2）：Bash/PowerShell 的只读命令用 hint（=command
@@ -963,7 +982,9 @@
             } else {
               const d = document.createElement('div');
               d.className = 'h-tool-res' + (row.err ? ' err-txt' : '');
-              d.textContent = '↳ ' + String(row.text || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+              const _orw = String(row.text || '').replace(/\s+/g, ' ').trim();
+              d.textContent = '↳ ' + _orw.slice(0, 120);
+              d.title = _orw.slice(0, 400);   // v3.4.62：单行截断后 title 是唯一全文入口
               d.dataset.hgRp = '1';
               _subTlAppendRow(t, d);
             }
@@ -1180,7 +1201,9 @@
       const d = document.createElement('div');
       d.className = 'h-tool-res' + (tr.is_error ? ' err-txt' : '');
       if (tr.tool_use_id) d.dataset.rtuid = tr.tool_use_id;
-      d.textContent = '↳ ' + (full.replace(/\s+/g, ' ').slice(0, 120) || '完成');
+      const _orw = full.replace(/\s+/g, ' ');
+      d.textContent = '↳ ' + (_orw.slice(0, 120) || '完成');
+      d.title = _orw.slice(0, 400);   // v3.4.62：单行截断后 title 是唯一全文入口
       _subTlAppendRow(t, d);
       if (stick) _subScroll(parentId);
       return;
@@ -1204,6 +1227,7 @@
         coll.appendChild(d);
       }
     }
+    if (!bad) _hgDiffLineFix(toolRow);   // v3.4.62：成功改盘才定位（轻审P2）；live 镜像路（幂等）
     if (stick) _subScroll(parentId);
   }
   function _subClose(tid, err) {

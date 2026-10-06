@@ -76,6 +76,7 @@ function buildClaudeHarnessTab(opts = {}) {
           </div>
           <div class="hg-atts" data-hg-atts style="display:none"></div>
           <div class="hg-input-card">
+            <div class="hg-ask-dock" data-hg-askdock></div>
             <div class="hg-card-head">
               <button class="hg-proj" data-hg-proj title="选择项目目录（新会话直接在该目录下打开）">📁 <span data-hg-projname>选择项目</span> ▾</button>
             </div>
@@ -150,6 +151,7 @@ function buildClaudeHarnessTab(opts = {}) {
 
   _hgQ = (s) => _hgWrap.querySelector(s);
   _hgFlow = _hgQ('[data-hg-flow]'), _hgInput = _hgQ('[data-hg-input]'),
+        _hgAskDockEl = _hgQ('[data-hg-askdock]'),   // v3.4.61：ask 面板 dock（输入卡上方）
         _hgJumpBtm = _hgQ('[data-hg-jumpbtm]'), _hgRailEl = _hgQ('[data-hg-rail]'),
         _hgStateEl = _hgQ('[data-hg-state]'), _hgCostEl = _hgQ('[data-hg-cost]'),
         _hgSendBtn = _hgQ('[data-hg-send]'), _hgTitleEl = _hgQ('[data-hg-title]'),
@@ -236,6 +238,9 @@ function buildClaudeHarnessTab(opts = {}) {
   // v2.24.3：提问卡片自由输入——输入即视为该题已作答（放行提交）；回车直接提交
   _hgFlow.addEventListener('input', (e) => {
     if (e.target.classList && e.target.classList.contains('h-ask-x')) {
+      // v3.4.60：草稿写回 value attribute——innerHTML 快照才带得走（.value 是
+      // DOM property 不序列化），切会话往返草稿不丢
+      e.target.setAttribute('value', e.target.value);
       const card = e.target.closest('.h-ask');
       if (card) askCheckDone(card);
     }
@@ -248,6 +253,37 @@ function buildClaudeHarnessTab(opts = {}) {
       if (sb && !sb.disabled) askSubmit(card.dataset.hgAsk);
     }
   });
+  // v3.4.61：ask 面板 dock 委托三件套（dock 在 _hgFlow 外，flow 委托物理收不到
+  // ——队列条 :1030 同款容器自绑；快照恢复 innerHTML 不丢监听器）。
+  // flow 上的原 ask 分支保留作老代卡安全网（老快照 pending 卡迁移后已入 dock，
+  // 纯老 done 卡仍在 flow）
+  if (_hgAskDockEl) {
+    _hgAskDockEl.addEventListener('click', (e) => {
+      const aPg = e.target.closest('.h-ask-pgv');
+      if (aPg) { const c = aPg.closest('.h-ask'); if (c) askPage(c, parseInt(aPg.dataset.hgPg || '0', 10)); return; }
+      const aOpt = e.target.closest('.h-ask-opt');
+      if (aOpt) { askPick(aOpt); return; }
+      const aSend = e.target.closest('.h-ask-submit');
+      if (aSend) { askSubmit(aSend.dataset.hgAskSend); return; }
+      const aIgn = e.target.closest('.h-ask-ignore');
+      if (aIgn) { askSubmit(aIgn.dataset.hgAskSend, true); return; }
+    });
+    _hgAskDockEl.addEventListener('input', (e) => {
+      if (e.target.classList && e.target.classList.contains('h-ask-x')) {
+        e.target.setAttribute('value', e.target.value);   // 草稿随 innerHTML 快照走
+        const card = e.target.closest('.h-ask');
+        if (card) askCheckDone(card);
+      }
+    });
+    _hgAskDockEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && e.target.classList && e.target.classList.contains('h-ask-x')) {
+        e.preventDefault();
+        const card = e.target.closest('.h-ask');
+        const sb = card && card.querySelector('.h-ask-submit');
+        if (sb && !sb.disabled) askSubmit(card.dataset.hgAsk);
+      }
+    });
+  }
   _hgFlow.addEventListener('click', (e) => {
     // v2.43：子代理段头点击。v2.45 两层收纳改型：完成段点击=toggle 折叠
     // （.collapsed 类 + CSS，快照随身携带）；窗格动作在段头右侧小按钮
@@ -320,13 +356,20 @@ function buildClaudeHarnessTab(opts = {}) {
       return;
     }
     // 交互提问卡片（v2.17）：选项点击 / 提交
+    // v3.4.60（ZCode 方案）：多题分页翻页——必须排在 done 折叠分支之前，
+    // 否则展开回看时点翻页会被折叠 toggle 吞掉
+    const aPg = e.target.closest('.h-ask-pgv');
+    if (aPg) { const c = aPg.closest('.h-ask'); if (c) askPage(c, parseInt(aPg.dataset.hgPg || '0', 10)); return; }
     // v3.3.2(D8)：已提交 ask 卡点击开合——折叠态看摘要，点开回看选择情况
+    // （pgr=分页器区域排除：点「1/2」数字不触发折叠）
     const _aDone = e.target.closest('.h-ask.done');
-    if (_aDone && !e.target.closest('.h-ask-opt')) { _aDone.classList.toggle('collapsed'); return; }
+    if (_aDone && !e.target.closest('.h-ask-opt') && !e.target.closest('.h-ask-pgr')) { _aDone.classList.toggle('collapsed'); return; }
     const aOpt = e.target.closest('.h-ask-opt');
     if (aOpt) { askPick(aOpt); return; }
     const aSend = e.target.closest('.h-ask-submit');
     if (aSend) { askSubmit(aSend.dataset.hgAskSend); return; }
+    const aIgn = e.target.closest('.h-ask-ignore');
+    if (aIgn) { askSubmit(aIgn.dataset.hgAskSend, true); return; }
     const dHead = e.target.closest('.h-drawer-head');
     if (dHead) {
       const box = dHead.closest('.h-drawer');
@@ -1369,18 +1412,19 @@ function buildClaudeHarnessTab(opts = {}) {
         const _runTids = Object.keys(_HG.agents || {})
           .filter(k => !((_HG.agents || {})[k] || {}).done)
           .sort((a, b) => ((_HG.agents[a].t0 || 0) - (_HG.agents[b].t0 || 0)));
-        if (_runTids.length) { _subReopen(_runTids[_runTids.length - 1]); return; }   // 最新派发的代理
+        if (_runTids.length) { _subReopen(_runTids[_runTids.length - 1]); _subDirEnsure(); return; }   // 最新派发的代理
         const _open = _subPaneEl && _subPaneEl.style.display === 'flex';
-        if (!_open) { _subDynOpen(); return; }
+        if (!_open) { _subDynOpen(); _subDirEnsure(); return; }
         if (_sub.active === _SUB_DYN) {
           _subPaneEl.style.display = 'none';
           _sub.manual = false;
           return;
         }
         // _subActivate 对未注册 tab 静默早退——动态页未建时必须走 _subDynOpen
-        if (!_sub.tabs[_SUB_DYN]) { _subDynOpen(); return; }
+        if (!_sub.tabs[_SUB_DYN]) { _subDynOpen(); _subDirEnsure(); return; }
         _sub.manual = true;
         _subActivate(_SUB_DYN);
+        _subDirEnsure();
       } catch(_) {}
       _hgDynCapsulePaint();              // 兜底路径也收敛视觉态（open/attn 派生）
     };

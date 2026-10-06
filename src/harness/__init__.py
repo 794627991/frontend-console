@@ -6,7 +6,7 @@ from src.harness.xxx import ...。各模块职责见各自 docstring。
 """
 from .consts import (_EVENTS_MAX, _IDLE_KILL_S, _META_FILE, _PROMPTS_KEY, _PROMPTS_LEGACY_KEY, _QUEUE_MAX, _SKILL_ZH_FILE, _SRC_DIR, _UPLOAD_DIR, _UPLOAD_MAX, _sessions, _sessions_lock, log)
 from .meta import (_meta, _meta_load, _meta_loaded, _meta_lock, _meta_save, _meta_tombstones, log)
-from .models import (_model_label, _models_cache, available_models, log)
+from .models import (_models_cache, available_models, log)
 from .prompts import (_collect_system_prompt, _prompt_matches_project, _prompts_load, _prompts_save, log)
 from .bridges import (TOKEN_RULES, _bridge_fp, ask_bridge_text, confirm_bridge_text, log, vision_bridge_text)
 from .askmcp import (_ask_mcp_cfg_path, log)

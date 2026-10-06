@@ -85,6 +85,7 @@
     _hgQueueSeed(sid);                 // v3.1：durable 队列从服务端账本初始化（#10）
     if (!sid) {
       _hgFlow.innerHTML = '';
+      _hgAskDockRestore('');   // v3.4.61：新会话清 dock（旧面板不跨会话残留）
       showWelcome();
       openSSE(null); setBusy(false);
       _hgTitleEl.textContent = '新会话'; _hgCwdEl.textContent = '';
@@ -102,6 +103,15 @@
     if (c && c.html && c.html.indexOf('h-turn-body') === -1
         && c.html.indexOf('h-grp') !== -1) c = null;
     if (c && typeof c.histStart === 'number' && c.histStart > 0) c = null;
+    // v3.4.60：stale 哨兵=已确认账目漂移的降级快照——恢复它=先渲一份注定
+    // 错位的 DOM 再等异步重渲（消费点在 _histFetch.then 里来晚了）。直接
+    // 弃快照走 transcript 全量重渲（与 histFp 比对不符分支同路）。
+    // 轻审 P1：待答 ask 卡豁免——转写无 ask 行且 ask 帧不重放，弃了=用户
+    // 无从作答只能中断自救（与下方 openTurn 弃快照同款豁免）
+    // v3.4.61：豁免判定扩 c.askPanel（dock 面板不在 html 里）；html 串判保留
+    // （老代过渡窗快照）
+    if (c && c.histFp === 'stale'
+        && !(c.askPanel || (c.html && c.html.indexOf('class="h-ask"') !== -1))) c = null;
     // v3.2.28（用户实锤「切走再切回工作区被截断，回合完成后还是截断态」）：
     // 切走时回合还在跑（openTurn）——快照注定残缺（离开期间过程行只靠事件
     // 回放，环形缓冲有限会丢），弃快照走 transcript 全量重渲（含 busy 续占
@@ -111,7 +121,8 @@
     // 无 ask 行、ask 帧只在弹出时 emit 一次不重放），用户无从作答只能中断
     // 自救。判定按序列化 className 精确值：待答卡=class="h-ask"（done 卡是
     // "h-ask done collapsed"，不命中）
-    if (c && c.openTurn && !(c.html && c.html.indexOf('class="h-ask"') !== -1)) c = null;
+    if (c && c.openTurn && !(c.askPanel
+        || (c.html && c.html.indexOf('class="h-ask"') !== -1))) c = null;
     if (c) {
       // v3.1：keep-warm 命中——取消该快照的延迟销毁（saveCache 排程的 30s
       // 定时器），热快照继续作为 LRU 一员存活
@@ -120,6 +131,7 @@
         delete _HG.cacheWarm[sid];
       }
       _hgFlow.innerHTML = c.html; _HG.seq = c.seq;
+      _hgAskDockRestore(c.askPanel);   // v3.4.61：dock 面板回挂（含老代 flow 待答卡迁移）
       // v3.2.1（用户实测问题1）：快照里开着的已完成回合体规整回默认收起——
       // 快照存的是离开瞬间的 DOM（live 定稿时可能没收/存的是重建期的开态），
       // 恢复后按「完成默认收」清扫：用户点开过的（userToggled 随 dataset 序列
@@ -241,6 +253,11 @@
       _hgRailSync();   // v3.2.10：快照恢复后重建轨（未渲染区项待 histAll 补全后自动出现）
     } else {
       _hgFlow.innerHTML = '';
+      _hgAskDockRestore('');   // 全审 F1：冷开清 dock——A 会话的待答面板已随入口
+                               // saveCache 存进 A 快照（切回可恢复），不清则 B 的
+                               // _hgAskSync 会把它当僵尸 dismiss 且污染行写进 B
+      _HG.histRebuilding = sid;   // 复审 P5：冷开转写在途窗口（同 _hgSseRebuild
+                                  // 三处同款 sid 化标志——空 flow 不入快照）
       try {
         const j = await (await fetch(`/api/harness/transcript?sid=${encodeURIComponent(sid)}`)).json();
         if (j.ok && _HG.sid === sid) {
@@ -254,10 +271,12 @@
           if (j.busy) phResume();
           else grpFinalize(true, { hist: true, turnEnd: true });   // 幂等兜底（渲染器内已定稿则早退）；v3.2.2 turnEnd
           _hgLiveAgentsRestore(sid);   // v3.4.52：转写重渲路同样回填运行中子代理 live 档案
+          _hgAskSync(sid);   // v3.4.61：冷开路 seq 已跳过 ask 帧——待答面板靠后端快照拉回
           _hgScrollBottom(true);              // 切会话回底（不受翻历史保护限制）
           setBusy(!!j.busy, j.busy_since);   // v2.26：计时起点带后端 busy_since（切回来不清零）
         }
       } catch(_) {}
+      finally { if (_HG.histRebuilding === sid) _HG.histRebuilding = null; }
     }
     // v2.35.2（P0 加固）：transcript 分支有 await——期间用户可能已切去别的
     // 会话（快切/双击竞速）。此刻本调用已是过期调用：chrome（标题/目录/chip）

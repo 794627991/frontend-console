@@ -20,7 +20,7 @@
 ### 2. harness 后端接入（`src/harness/`）
 
 - `session.py`：`events/_seq/clients` 三件套收编为 `self.log`；`emit()` = 截断→锁内盖章→落 store→广播（对照"先落 eventStore 再广播"）；**turn 边界显式化**（`_turn_start/_turn_end`，起跑点=send 占位/CLI 自发回合/peer 续跑，收尾点=result/中断/异常退出）——此前靠 `data.type=='result'` 隐式判定；`_seq` 保留为只读属性（兼容位）。
-- `routes.py`：`/stream` 换 subscribe(base) 协议；`/events` 轮询兜底带 epoch（轮询通道不再只有 seq 盲区）；`/transcript` 带 epoch；`/rewind` 成功后 `bump_epoch()`（转写重写=换代，客户端旧水位作废）；新增 `/tool_full?sid=&ref=`（截断全文按需拉取）。
+- `routes.py`：`/stream` 换 subscribe(base) 协议；`/events` 轮询兜底带 epoch（轮询通道不再只有 seq 盲区）；`/transcript` 带 epoch；`/rewind` 成功后 `bump_epoch()`（转写重写=换代，客户端旧水位作废）；新增 `/tool_full?sid=&ref=`（截断全文按需拉取；2026-10-06 清理：前端从未接线，端点已删——截断本体与 eventlog stash 仍在）。
 - `lifecycle.py`：GC 重建 `restore(epoch, seq)`——同代续号可 resume；旧 meta 无 epoch 换新代（一次性 snapshot 重建代价）。
 - `meta`：`claude_harness.json` 会话条目新增 `epoch` 字段（v2.35.2 的 seq 续号机制扩展）。
 

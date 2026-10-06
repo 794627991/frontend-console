@@ -92,12 +92,25 @@ def harness_ask_reply():
 
 @harness_bp.route("/ask/poll", methods=["POST"])
 def harness_ask_poll():
-    """MCP 侧长轮询等作答。body: {sid, req_id}。"""
+    """MCP 侧长轮询等作答。body: {sid, req_id}。
+
+    v3.4.61：req_id 为空 = 前端快照分支——返回当前待答问题全量
+    （req_id/title/questions/done/answer），供前端冷开恢复面板。MCP 侧
+    恒传 req_id，既有响应字段不变（additive）。
+    """
     data = request.get_json(force=True, silent=True) or {}
     s = _get_or_create((data.get("sid") or "").strip())
     if not s:
         return jsonify({"ok": False, "err": "会话不存在"}), 404
-    found, done, answer = s.ask_poll((data.get("req_id") or "").strip())
+    req_id = (data.get("req_id") or "").strip()
+    if not req_id:
+        found, snap = s.ask_snapshot()
+        if not found:
+            return jsonify({"ok": True, "found": False})
+        return jsonify({"ok": True, "found": True, "req_id": snap["req_id"],
+                        "title": snap["title"], "questions": snap["questions"],
+                        "done": snap["done"], "answer": snap["answer"]})
+    found, done, answer = s.ask_poll(req_id)
     return jsonify({"ok": True, "found": found, "done": done, "answer": answer})
 
 # ---- from claude_harness.py:2628 (harness_ask_answer) ----
@@ -314,23 +327,28 @@ def harness_rewind():
         return jsonify({"ok": False, "err": "会话还没有内容可回退"}), 400
     anchor = str(data.get("anchor") or "").strip()
     ts = str(data.get("ts") or "").strip()
-    if anchor:
-        # v2.28.16 消息级回滚主路径：文本锚点（气泡正文前缀）
-        ok, msg = _rewind_jsonl_anchor(s.session_id, anchor)
-    elif ts:
-        # v2.28.14 时间戳锚点（备用）
-        ok, msg = _rewind_jsonl_ts(s.session_id, ts)
-    else:
-        try:
-            turns = int(data.get("turns") or 1)
-        except Exception:
-            turns = 1
-        ok, msg = _rewind_jsonl(s.session_id, turns)
-    if not ok:
-        return jsonify({"ok": False, "err": msg}), 400
-    # 进程必须杀：内存里的历史还是旧的，resume 才会按截断后的转写重建
+    # 进程必须先杀：截断时 CLI 仍在写同一 jsonl 会丢快照后的新行，且
+    # Windows 下 CLI 恰持句柄时 os.replace 抛 PermissionError → 路由裸奔
+    # 出 500 HTML（违反全路由 JSON 错误形态）。先杀，截断失败也返回 400
     s.kill_proc(quiet=True)
     s.last_result = None                     # 用量缓存失效（守卫/窗口判定重算）
+    try:
+        if anchor:
+            # v2.28.16 消息级回滚主路径：文本锚点（气泡正文前缀）
+            ok, msg = _rewind_jsonl_anchor(s.session_id, anchor)
+        elif ts:
+            # v2.28.14 时间戳锚点（备用）
+            ok, msg = _rewind_jsonl_ts(s.session_id, ts)
+        else:
+            try:
+                turns = int(data.get("turns") or 1)
+            except Exception:
+                turns = 1
+            ok, msg = _rewind_jsonl(s.session_id, turns)
+    except Exception as e:
+        ok, msg = False, "转写重写失败：%s" % e
+    if not ok:
+        return jsonify({"ok": False, "err": msg}), 400
     # v3.0：日志重写即换代（ZCode logEpoch 语义）——转写被截断，事件流的
     # 旧 seq 空间即刻作废；换代后再 emit 提示行（落在新时代里）。客户端
     # 持旧 epoch 重连 → ack(mode=reset) → transcript 重建。
@@ -400,13 +418,15 @@ def harness_queue_act():
         return jsonify({"ok": s.queue_discard(eid, reason="user")})
     if act == "order":
         # v3.1：前端拖拽排序上报——按 ids 重排账本；未列出的条目（并发新
-        # 入队）按原顺序追加尾部，不丢
+        # 入队）按原顺序追加尾部，不丢。v3.4.54：整段入 _inbox_lock（HTTP
+        # 线程与泵/入队线程并发重排会互相丢条目）
         ids = [str(x) for x in (data.get("ids") or []) if x]
-        by = {e.get("id"): e for e in s._inbox}
-        new_order = [by[i] for i in ids if i in by]
-        seen = set(ids)
-        new_order += [e for e in s._inbox if e.get("id") not in seen]
-        s._inbox = new_order
+        with s._inbox_lock:
+            by = {e.get("id"): e for e in s._inbox}
+            new_order = [by[i] for i in ids if i in by]
+            seen = set(ids)
+            new_order += [e for e in s._inbox if e.get("id") not in seen]
+            s._inbox = new_order
         return jsonify({"ok": True})
     return jsonify({"ok": False, "err": "未知操作"}), 400
 
@@ -531,6 +551,62 @@ def harness_transcript():
                     "busy": s.busy, "busy_since": s.busy_since,
                     "model": s.model, "title": s.title, "seq": s._seq,
                     "epoch": s.log.epoch})
+
+
+# v3.4.62（用户需求「代码编辑看不到真实改动行号」）：Edit/MultiEdit diff
+# 真实行号定位。POST {sid?, path, news:[new_string,...]}。前端在
+# tool_result（文件已写盘）后调用——读改后文件按序（游标递增，MultiEdit
+# 后续编辑在更后位置）定位各 new_string 的起始行（1-based，首行+整段
+# 连续匹配防同文本误配），返回 {ok, lines:[行号|null,...]}。找不到
+# （该处后续又被改/文件移动）返回 null，前端保持相对行号不造假。
+# 只回行号不回文件内容（本地 127.0.0.1 单用户环境，与 /transcript 同
+# 信任域）；8MB/文本限定档，超大或二进制直接拒。
+@harness_bp.route("/diff_lines", methods=["POST"])
+def harness_diff_lines():
+    j = request.get_json(silent=True) or {}
+    path = str(j.get("path") or "")
+    news = j.get("news")
+    if not path or not isinstance(news, list) or not news:
+        return jsonify({"ok": False, "err": "参数缺失"}), 400
+    if not os.path.isfile(path):
+        return jsonify({"ok": False, "err": "文件不存在"}), 404
+    try:
+        if os.path.getsize(path) > 8 * 1024 * 1024:
+            return jsonify({"ok": False, "err": "文件过大"}), 413
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            fl = f.read().split("\n")
+    except OSError as e:
+        return jsonify({"ok": False, "err": "读取失败: %s" % e}), 500
+    lines = []
+    cur = 0
+    for s in news:
+        pat = str(s or "").split("\n")
+        if not pat or (len(pat) == 1 and pat[0] == ""):
+            lines.append(None)
+            continue
+        hit = None
+        for i in range(cur, max(cur, len(fl) - len(pat) + 1)):
+            if fl[i] == pat[0] and fl[i:i + len(pat)] == pat:
+                hit = i
+                break
+        if hit is None:
+            lines.append(None)
+            continue
+        # 轻审P3：全文重复命中二义（改动块与他处既有块同文）——首 match 可能
+        # 命中旧块而非真改动位，回填出「假真实行号」。全文同 pat 完整匹配数
+        # >1 时按「歧义不造假」弃定位
+        _amb = False
+        for i in range(0, len(fl) - len(pat) + 1):
+            if i != hit and fl[i] == pat[0] and fl[i:i + len(pat)] == pat:
+                _amb = True
+                break
+        if _amb:
+            lines.append(None)
+            continue
+        lines.append(hit + 1)
+        cur = hit + len(pat)   # 游标推进：MultiEdit 同文件多处编辑按序不回扫
+    return jsonify({"ok": True, "lines": lines})
+
 
 # ---- from claude_harness.py:3030 (harness_audit_gate) ----
 
@@ -822,21 +898,6 @@ def harness_events():
 # ---- from claude_harness.py:3552 (harness_rename) ----
 
 
-@harness_bp.route("/tool_full")
-def harness_tool_full():
-    """截断工具输出的全文按需拉取（v3.0，对照 ZCode truncated.ref 句柄）。
-    ?sid=&ref=——ref 来自事件里 tool_result 块的 _truncated.ref。stash 是
-    LRU（32 条/4MB），被逐出返回 404（截断标记文本仍在，只是全文没了）。"""
-    s = _get_or_create(request.args.get("sid") or "")
-    if not s:
-        return jsonify({"ok": False, "err": "会话不存在"}), 404
-    ref = (request.args.get("ref") or "").strip()
-    text = s.log.full_output(ref) if ref else None
-    if text is None:
-        return jsonify({"ok": False, "err": "全文缓存已过期（LRU 逐出）"}), 404
-    return jsonify({"ok": True, "text": text})
-
-
 @harness_bp.route("/rename", methods=["POST"])
 def harness_rename():
     data = request.get_json(force=True, silent=True) or {}
@@ -1093,21 +1154,20 @@ def harness_get_prompt():
     旧单条 harness_system_prompt 自动迁移成一条 global 条目（一次性）。"""
     items = _prompts_load()
     if not items:
-        # 旧版单条迁移（一次性）：写过 v2.4 单条提示词的机器升级后无缝接续
+        # 旧版单条迁移（一次性）：写过 v2.4 单条提示词的机器升级后无缝接续。
+        # v3.4.54：先前是 _prompts_save 再整写一遍（自身双写竞态），合并为
+        # 一次 cfg_commit 事务
         try:
-            with open(_st.CONFIG_FILE, "r", encoding="utf-8") as f:
-                d = json.load(f)
-            legacy = d.get(_PROMPTS_LEGACY_KEY)
-            if isinstance(legacy, str) and legacy.strip():
-                items = [{"id": "migrated-legacy", "scope": "global", "project": "",
-                          "note": "（v2.4 迁移）", "text": legacy.strip(),
-                          "enabled": True}]
-                _prompts_save(items)
+            def _migrate(d):
+                legacy = d.get(_PROMPTS_LEGACY_KEY)
+                if not (isinstance(legacy, str) and legacy.strip()):
+                    return
+                d[_PROMPTS_KEY] = [{"id": "migrated-legacy", "scope": "global",
+                                    "project": "", "note": "（v2.4 迁移）",
+                                    "text": legacy.strip(), "enabled": True}]
                 d.pop(_PROMPTS_LEGACY_KEY, None)
-                tmp = _st.CONFIG_FILE + ".tmp"
-                with open(tmp, "w", encoding="utf-8") as f:
-                    json.dump(d, f, ensure_ascii=False, indent=1)
-                os.replace(tmp, _st.CONFIG_FILE)
+            _st.cfg_commit(_migrate)
+            items = _prompts_load()
         except Exception:
             pass
     cwd = (request.args.get("cwd") or "").strip()
@@ -1172,30 +1232,19 @@ def harness_mm_probe():
                         "cached": True, "msg": "缓存结果（当前方案）：" + label})
     with _MM_PROBE_LOCK:          # 探测要起子进程，同时只跑一个
         mode, msg = _mm_probe_model(model)
-    # merge 落盘（不整键替换，别把并发写进来的其他字段冲掉）
-    try:
-        with open(_st.CONFIG_FILE, "r", encoding="utf-8") as f:
-            d = json.load(f)
-        if not isinstance(d, dict):
-            d = {}
-    except Exception:
-        d = {}
-    v = d.get(_VISION_KEY)
-    if not isinstance(v, dict):
-        v = {}
-    p = v.get("mm_probed")
-    if not isinstance(p, dict):
-        p = {}
-    p[pkey] = (mode == "inline")   # 仅 inline 记 True；False = 走 MCP 通道
-    v["mm_probed"] = p
-    d[_VISION_KEY] = v
-    try:
-        tmp = _st.CONFIG_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(d, f, ensure_ascii=False, indent=1)
-        os.replace(tmp, _st.CONFIG_FILE)
-    except Exception:
-        pass
+    # merge 落盘（不整键替换，别把并发写进来的其他字段冲掉）。
+    # v3.4.54：改走 cfg_commit 原子事务（五写方统一锁）
+    def _probe_cache(d):
+        v = d.get(_VISION_KEY)
+        if not isinstance(v, dict):
+            v = {}
+        p = v.get("mm_probed")
+        if not isinstance(p, dict):
+            p = {}
+        p[pkey] = (mode == "inline")   # 仅 inline 记 True；False = 走 MCP 通道
+        v["mm_probed"] = p
+        d[_VISION_KEY] = v
+    _st.cfg_commit(_probe_cache)
     # 名单归位：inline → mm_extra（真多模态 👁 名单）；mcp 无需名单（默认态）
     if mode == "inline":
         cfg = _vision_load()

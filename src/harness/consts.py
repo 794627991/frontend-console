@@ -49,7 +49,7 @@ _PROMPTS_LEGACY_KEY = "harness_system_prompt"
 # ---------------------------------------------------------------------------
 # 交互式提问（v2.17）
 #   CLI 在 -p 下没有 AskUserQuestion/ExitPlanMode，所以 ask_user 走自建 MCP。
-#   MCP server（src/harness_ask_mcp.py）反过来通过这两个端点找用户要答案，
+#   MCP server（src/harness/ask_mcp.py）反过来通过这两个端点找用户要答案，
 #   前端渲染可点卡片 → 用户提交 → 唤醒那边阻塞着的工具调用。
 # ---------------------------------------------------------------------------
 _SRC_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # v3.0: 子包内取两级回到 src/

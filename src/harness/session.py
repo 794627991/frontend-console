@@ -60,6 +60,17 @@ class HarnessSession:
         self.last_active = self.created
         # ---- 运行时（进程相关，不持久化）----
         self._proc = None
+        # v3.4.54：kill/revive 原子段锁（RLock——热更路径 kill_proc→revive_if_dead
+        # 重入同锁）。规则：任何「查 alive → start()」序列必须持本锁，防并发
+        # 复活双 Popen（threaded=True 下双 /send 同穿 alive=False 检查窗）
+        self._start_lock = threading.RLock()
+        # v3.4.54：busy/busy_since 迁移与泵事务锁（RLock——_run 重入
+        # send_message 的 CAS 段、_turn_end 重入 _queue_pump 都靠重入）。
+        # 全局锁序（防死锁单向序）：_sessions_lock > _start_lock >
+        # _busy_lock > _meta_lock > _inbox_lock；_inbox_lock 是纯叶——
+        # 锁内只允许纯内存操作，禁 emit/sync_meta/任何 IO
+        self._busy_lock = threading.RLock()
+        self._inbox_lock = threading.Lock()
         self.alive = False
         self.busy = False
         self.busy_since = None   # 本轮处理计时起点 ms（busy 时有效，供前端恢复计时）
@@ -90,10 +101,6 @@ class HarnessSession:
         self._inbox = []
         self._gen = 0
         self._pump_timer = None    # 回合终结自动泵的延迟器（防重入）
-        # v2.25：识图完成状态持久化（最近 result 时刻 + 结论摘要）。/vision_status
-        # 原从事件窗口尾部 12 条里回扫，识图轮次密集时 result/assistant 被新事件
-        # 挤出窗口 → last_done 归 0，前端「已返回」冒泡整个漏掉（用户多次反馈）
-        self.vision_done = {"ts": 0, "brief": ""}
         # v2.34 light 审计记账（运行态，不持久化）：lines=本回合主会话
         # 单次直改（Edit/Write/MultiEdit/NotebookEdit）最大行数（v2.52 起
         # max 记账，回合累计口径废除）；files=空列表仅兼容保留（文件数
@@ -110,9 +117,6 @@ class HarnessSession:
         # revive 重启由 start() 重建——hooks 是进程启动参数，活进程不热更）
         self._audit_settings_path = None
         self.last_result = None
-        base = os.path.basename(os.path.normpath(self.cwd)) or self.cwd
-        self.port = "Claude 对话(%s)" % base
-        self.baud = None
 
     # ---- 元数据同步 ----
     @property
@@ -121,6 +125,7 @@ class HarnessSession:
         return self.log.last_seq
 
     def to_meta(self):
+        _inbox, _gen = self._inbox_snapshot()   # 单临界取二元组（快照与世代原子）
         return {"sid": self.sid, "title": self.title, "model": self.model,
                 "cwd": self.cwd, "session_id": self.session_id,
                 "lineage": self.lineage, "live_model": self.live_model,
@@ -137,8 +142,8 @@ class HarnessSession:
                 "epoch": self.log.epoch,
                 # v3.1（#10/#14）：durable 输入账本 + 世代号——重启/闲置回收
                 # 后队列不丢；gen 让 /rewind 后作废旧代条目的判定可跨重启
-                "inbox": [dict(e) for e in self._inbox],
-                "gen": self._gen}
+                "inbox": _inbox,
+                "gen": _gen}
 
     def sync_meta(self):
         if getattr(self, "hidden", False):
@@ -278,30 +283,34 @@ class HarnessSession:
         是计划内动作，不该弹「会话进程已结束」吓人。
         v2.25：进程已死透（reader loop 早已收尾）时不设 _suppress_exit——
         标志位无人消费会残留，吞掉下一次真正的意外退出（两次切模型且
-        中间进程已自然退出的触发链）。"""
-        self.alive = False
-        self.busy = False
-        self._audit_settings_cleanup()
-        if quiet:
-            proc_alive = bool(self._proc and self._proc.poll() is None)
-            if proc_alive:
-                self._suppress_exit = True
-        self.ask_cancel()       # v2.17：别让 MCP 侧的提问继续空转等
-        proc, self._proc = self._proc, None
-        if proc is not None:
-            pid = None
-            try:
-                pid = proc.pid
-                if proc.poll() is None:
-                    proc.kill()
-            except Exception:
-                pass
-            try:
-                proc.wait(timeout=2)
-            except Exception:
-                pass
-            if pid or self.session_id:
-                _cleanup_peer_reg(pid, self.session_id)
+        中间进程已自然退出的触发链）。
+        v3.4.54：整体持 _start_lock——kill 是 revive 的前置清理，两段各自
+        持锁会在间隙漏进并发 start（proc.kill/wait ≤2s 有界 IO，可入锁）。"""
+        with self._start_lock:
+            self.alive = False
+            with self._busy_lock:      # 锁序 _start_lock > _busy_lock（单向）
+                self.busy = False
+            self._audit_settings_cleanup()
+            if quiet:
+                proc_alive = bool(self._proc and self._proc.poll() is None)
+                if proc_alive:
+                    self._suppress_exit = True
+            self.ask_cancel()       # v2.17：别让 MCP 侧的提问继续空转等
+            proc, self._proc = self._proc, None
+            if proc is not None:
+                pid = None
+                try:
+                    pid = proc.pid
+                    if proc.poll() is None:
+                        proc.kill()
+                except Exception:
+                    pass
+                try:
+                    proc.wait(timeout=2)
+                except Exception:
+                    pass
+                if pid or self.session_id:
+                    _cleanup_peer_reg(pid, self.session_id)
 
     def close(self):
         self.kill_proc()
@@ -312,16 +321,19 @@ class HarnessSession:
             pass
 
     def revive_if_dead(self):
-        """已死会话复活（有 claude session_id 才能续上下文）。返回能否用。"""
-        if self.alive:
-            return True
-        if not self.session_id:
-            return False
-        try:
-            self.start()
-            return True
-        except Exception:
-            return False
+        """已死会话复活（有 claude session_id 才能续上下文）。返回能否用。
+        v3.4.54：整体持 _start_lock 且锁内复查 alive（双检）——与 kill_proc
+        同锁原子，并发复活只允许一个 start() 胜出。"""
+        with self._start_lock:
+            if self.alive:
+                return True
+            if not self.session_id:
+                return False
+            try:
+                self.start()
+                return True
+            except Exception:
+                return False
 
     # ---- 输入 ----
     def _is_remote_bot_session(self):
@@ -549,16 +561,19 @@ class HarnessSession:
         # 这里恰恰是开新会话，必须裸 start。
         # v2.27.18：旧 session_id 记入血统链——transcript_for 按链串接历代
         # jsonl，历史回放不丢（用户铁律：重开可以，回放不能丢）。
-        self.kill_proc(quiet=True)
-        if self.session_id:
-            self.lineage = list(getattr(self, "lineage", None) or []) + [self.session_id]
-        self.session_id = None
-        self.title = None           # 让首条真实消息重新定标题
-        try:
-            self.start()
-        except Exception as e:
-            log.warning("超窗续命：新会话启动失败 %s", e)
-            return False
+        # v3.4.54R（全审回炉）：kill+换代+start 整体持 _start_lock——对象已
+        # 发布进 _sessions，锁外间隙并发 revive_if_dead 会双 Popen
+        with self._start_lock:
+            self.kill_proc(quiet=True)
+            if self.session_id:
+                self.lineage = list(getattr(self, "lineage", None) or []) + [self.session_id]
+            self.session_id = None
+            self.title = None           # 让首条真实消息重新定标题
+            try:
+                self.start()
+            except Exception as e:
+                log.warning("超窗续命：新会话启动失败 %s", e)
+                return False
         seed = ("[系统] 上一会话上下文已超当前模型窗口，自动重开。以下是此前"
                 "对话历史记录，请据此延续原有任务脉络：\n\n%s\n\n[系统] 历史结束。"
                 % hist)
@@ -633,9 +648,10 @@ class HarnessSession:
             try:
                 from src.proxy import ensure_direct_if_proxy_down
                 if ensure_direct_if_proxy_down("claude_send"):
-                    self.kill_proc(quiet=True)
-                    if not self.revive_if_dead():
-                        return False, "会话进程已退出（base_url 已恢复直连，请重发）"
+                    with self._start_lock:      # kill+revive 原子对（重入子调用同锁）
+                        self.kill_proc(quiet=True)
+                        if not self.revive_if_dead():
+                            return False, "会话进程已退出（base_url 已恢复直连，请重发）"
             except Exception:
                 pass
             # v2.27.13：识图引导词过期热更——系统提示是进程启动参数，代码升级
@@ -646,9 +662,10 @@ class HarnessSession:
                 try:
                     eff_model = self._eff_model()
                     if _bridge_fp(eff_model) != self.bridge_fp:
-                        self.kill_proc(quiet=True)
-                        if not self.revive_if_dead():
-                            return False, "会话进程已退出（识图引导词已更新，请重发）"
+                        with self._start_lock:  # kill+revive 原子对（重入子调用同锁）
+                            self.kill_proc(quiet=True)
+                            if not self.revive_if_dead():
+                                return False, "会话进程已退出（识图引导词已更新，请重发）"
                 except Exception:
                     pass
             # v2.37（P0+）派发前自愈：Task/SendMessage 派发前确保本形态角色
@@ -667,71 +684,76 @@ class HarnessSession:
                 pass
         if not self._proc or not self.alive:
             return False, "会话进程已退出"
-        self.busy_since = int(time.time() * 1000)   # 处理计时起点（前端切会话回来显示真实已跑时长）
-        if self.busy:
-            return False, "claude 正在回复中，请稍候"
-        # v2.25：先占 busy 再写 stdin——写在后置位时两个并发 /send 都能穿过
-        # 检查，两条 NDJSON 行交叠写进管道。失败路径就地下面的 return 处复位。
-        self.busy = True
-        content = []
-        for p in (image_paths or []):
+        # v3.4.54：CAS+stdin 写+回合起跑整体入 _busy_lock——此前检查与置位
+        # 之间仍可换线程（两条 NDJSON 交叠写管道）。busy_since 随置位（被拒
+        # 的并发 send 不再重置在飞回合的前端计时基准）。贴图 base64 读盘
+        # 可能慢，正是要的串行化语义（per-session 锁，跨会话零影响）。
+        # 注：泵 _run 曾持本锁重入此处（v3.4.54R 泵改造移除该路径——防
+        # AB-BA 死锁）；RLock 保守保留
+        with self._busy_lock:
+            if self.busy:
+                return False, "claude 正在回复中，请稍候"
+            self.busy = True
+            self.busy_since = int(time.time() * 1000)   # 处理计时起点（前端切会话回来显示真实已跑时长）
+            content = []
+            for p in (image_paths or []):
+                try:
+                    with open(p, "rb") as f:
+                        data = base64.b64encode(f.read()).decode()
+                    ext = os.path.splitext(p)[1].lower().lstrip(".") or "png"
+                    media = "image/" + ("jpeg" if ext in ("jpg", "jpeg") else ext)
+                    content.append({"type": "image",
+                                    "source": {"type": "base64", "media_type": media, "data": data}})
+                except Exception:
+                    continue
+            full_text = text or ""
+            att = list(image_paths or []) + list(file_paths or [])
+            if att:
+                att_lines = "\n".join(att)
+                full_text = (full_text + "\n\n" if full_text else "") + \
+                    "[附件，可用 Read 工具读取]\n" + att_lines
+            if not full_text and not content:
+                self.busy = False
+                return False, "消息为空"
+            if not full_text and content:
+                full_text = "请查看图片"
+            if content:
+                content.append({"type": "text", "text": full_text})
+            else:
+                content = full_text
             try:
-                with open(p, "rb") as f:
-                    data = base64.b64encode(f.read()).decode()
-                ext = os.path.splitext(p)[1].lower().lstrip(".") or "png"
-                media = "image/" + ("jpeg" if ext in ("jpg", "jpeg") else ext)
-                content.append({"type": "image",
-                                "source": {"type": "base64", "media_type": media, "data": data}})
-            except Exception:
-                continue
-        full_text = text or ""
-        att = list(image_paths or []) + list(file_paths or [])
-        if att:
-            att_lines = "\n".join(att)
-            full_text = (full_text + "\n\n" if full_text else "") + \
-                "[附件，可用 Read 工具读取]\n" + att_lines
-        if not full_text and not content:
-            self.busy = False
-            return False, "消息为空"
-        if not full_text and content:
-            full_text = "请查看图片"
-        if content:
-            content.append({"type": "text", "text": full_text})
-        else:
-            content = full_text
-        try:
-            payload = {"type": "user", "message": {"role": "user", "content": content}}
-            self._proc.stdin.write((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
-            self._proc.stdin.flush()
-        except Exception as e:
-            self.busy = False
-            return False, "发送失败：%s" % e
-        self.last_active = int(time.time() * 1000)
-        # v3.0：stdin 写成功即回合起跑（turn_started 先于 user_echo/renew，
-        # 信封 turn 字段从本回合第一条事件起生效）
-        self._turn_start()
-        # v2.34.2（R1）：判定收窄到 _AUDIT_MSG_PREFIX（_audit_settle 续发
-        # 消息的唯一句式开头）——不定标题、不画用户气泡（警示已由
-        # _audit_settle 的 kind='audit' 事件先行呈现）。用户手打「[审计]…」
-        # 开头的普通消息不命中，照常走 user_echo 画气泡。
-        _audit_msg = (text or "").lstrip().startswith(_AUDIT_MSG_PREFIX)
-        # 首条消息定标题（微信式：会话标题=首句）
-        if not self.title and text and not _audit_msg:
-            self.title = re_title(text)
-            self.sync_meta()
-        # v2.27.23：超窗续命的 [系统] 历史注入不推原文——几十万 token 刷满
-        # 消息流（用户定调"后台化"）。改推 renew 分割线事件，前端一行带过。
-        if _audit_msg:
-            pass
-        elif (text or "").lstrip().startswith("[系统] 上一会话上下文已超当前模型窗口"):
-            rounds = sum(1 for _ln in text.splitlines()
-                         if _ln.startswith(("用户：", "助手：")))
-            self.emit({"kind": "renew",
-                       "text": "上下文超窗，已自动重开会话（%d 轮历史已后台迁移）" % rounds})
-        else:
-            self.emit({"kind": "user_echo", "text": text or "",
-                       "images": list(image_paths or []), "files": list(file_paths or [])})
-        return True, None
+                payload = {"type": "user", "message": {"role": "user", "content": content}}
+                self._proc.stdin.write((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
+                self._proc.stdin.flush()
+            except Exception as e:
+                self.busy = False
+                return False, "发送失败：%s" % e
+            self.last_active = int(time.time() * 1000)
+            # v3.0：stdin 写成功即回合起跑（turn_started 先于 user_echo/renew，
+            # 信封 turn 字段从本回合第一条事件起生效）
+            self._turn_start()
+            # v2.34.2（R1）：判定收窄到 _AUDIT_MSG_PREFIX（_audit_settle 续发
+            # 消息的唯一句式开头）——不定标题、不画用户气泡（警示已由
+            # _audit_settle 的 kind='audit' 事件先行呈现）。用户手打「[审计]…」
+            # 开头的普通消息不命中，照常走 user_echo 画气泡。
+            _audit_msg = (text or "").lstrip().startswith(_AUDIT_MSG_PREFIX)
+            # 首条消息定标题（微信式：会话标题=首句）
+            if not self.title and text and not _audit_msg:
+                self.title = re_title(text)
+                self.sync_meta()
+            # v2.27.23：超窗续命的 [系统] 历史注入不推原文——几十万 token 刷满
+            # 消息流（用户定调"后台化"）。改推 renew 分割线事件，前端一行带过。
+            if _audit_msg:
+                pass
+            elif (text or "").lstrip().startswith("[系统] 上一会话上下文已超当前模型窗口"):
+                rounds = sum(1 for _ln in text.splitlines()
+                             if _ln.startswith(("用户：", "助手：")))
+                self.emit({"kind": "renew",
+                           "text": "上下文超窗，已自动重开会话（%d 轮历史已后台迁移）" % rounds})
+            else:
+                self.emit({"kind": "user_echo", "text": text or "",
+                           "images": list(image_paths or []), "files": list(file_paths or [])})
+            return True, None
 
     def interrupt(self):
         """中断当前回复：kill 进程（claude 中断语义无 stdin 通道，杀进程即停），
@@ -766,12 +788,15 @@ class HarnessSession:
                 and all(c in "0123456789abcdefghijklmnopqrstuvwxyz"
                         for c in eid.lower())):
             eid = _uuid.uuid4().hex[:12]
-        entry = {"id": eid,
-                 "text": text or "",
-                 "images": [str(p) for p in (image_paths or [])],
-                 "files": [str(p) for p in (file_paths or [])],
-                 "gen": self._gen, "ts": int(time.time() * 1000)}
-        self._inbox.append(entry)
+        with self._inbox_lock:         # 纯叶锁：只改内存，emit/sync_meta 在锁外。
+            # v3.4.54R：gen 读取随 append 同临界——锁外构造时 bump 插中间
+            # 会让条目挂旧代成永不泵发的僵尸
+            entry = {"id": eid,
+                     "text": text or "",
+                     "images": [str(p) for p in (image_paths or [])],
+                     "files": [str(p) for p in (file_paths or [])],
+                     "gen": self._gen, "ts": int(time.time() * 1000)}
+            self._inbox.append(entry)
         self.emit({"kind": "input_admitted", "id": entry["id"],
                    "text": (text or "")[:200], "gen": self._gen,
                    "att": len(entry["images"]) + len(entry["files"])})
@@ -779,64 +804,101 @@ class HarnessSession:
         return entry["id"]
 
     def queue_list(self):
-        return [dict(e) for e in self._inbox]
+        with self._inbox_lock:
+            return [dict(e) for e in self._inbox]
+
+    def _inbox_snapshot(self):
+        """to_meta 用的队列快照（v3.4.54：to_meta 在 _meta_lock 下嵌套取
+        _inbox_lock——锁序 _meta_lock > _inbox_lock 单向，合法短临界）。
+        v3.4.54R：快照与 gen 合一单临界——两段锁间穿插 bump 会落盘
+        {gen: N+1, inbox: [旧代条目]}，重启恢复出永不泵发的僵尸条目。"""
+        with self._inbox_lock:
+            return [dict(e) for e in self._inbox], self._gen
 
     def queue_discard(self, eid, reason="user"):
-        for i, e in enumerate(self._inbox):
-            if e.get("id") == eid:
-                self._inbox.pop(i)
-                self.emit({"kind": "input_discarded", "id": eid,
-                           "reason": reason})
-                self.sync_meta()
-                return True
-        return False
+        found = False
+        with self._inbox_lock:
+            for i, e in enumerate(self._inbox):
+                if e.get("id") == eid:
+                    self._inbox.pop(i)
+                    found = True
+                    break
+        if found:
+            self.emit({"kind": "input_discarded", "id": eid,
+                       "reason": reason})
+            self.sync_meta()
+        return found
 
     def queue_to_head(self, eid):
         """「立即发送」：条目提到队首，随后中断当前回合 → 回合终结泵自然
         先发它。条目不存在返回 False。"""
-        for i, e in enumerate(self._inbox):
-            if e.get("id") == eid:
-                if i:
-                    self._inbox.insert(0, self._inbox.pop(i))
-                return True
+        with self._inbox_lock:
+            for i, e in enumerate(self._inbox):
+                if e.get("id") == eid:
+                    if i:
+                        self._inbox.insert(0, self._inbox.pop(i))
+                    return True
         return False
 
     def bump_generation(self, reason="rewind"):
         """#14 分支世代：/rewind 后调用。旧代排队输入全部作废（事件显式通
         知，前端队列同步清空），世代号自增——此后入队条目都挂新代。"""
-        self._gen += 1
-        stale = [e for e in self._inbox if e.get("gen") != self._gen]
-        if stale:
-            self._inbox = [e for e in self._inbox if e.get("gen") == self._gen]
-            for e in stale:
-                self.emit({"kind": "input_discarded", "id": e.get("id"),
-                           "reason": reason, "gen": e.get("gen")})
+        with self._inbox_lock:
+            self._gen += 1
+            stale = [dict(e) for e in self._inbox if e.get("gen") != self._gen]
+            if stale:
+                self._inbox = [e for e in self._inbox if e.get("gen") == self._gen]
+        for e in stale:
+            self.emit({"kind": "input_discarded", "id": e.get("id"),
+                       "reason": reason, "gen": e.get("gen")})
         self.sync_meta()
         return len(stale)
 
     def _queue_pump(self):
         """回合终结自动泵（#10）：800ms 延迟给 result 收尾/用户中断留窗
-        口，再把当前世代队首真发（复用 send_message 全套守卫）。发送失败
-        的条目作废并事件通知，不静默吞。"""
+        口，再把当前世代队首真发（复用 send_message 全套守卫）。
+        v3.4.54R（全审回炉）：_run **不再持 _busy_lock 包 send**——泵线程
+        持 B 进 send 热更段取 _start_lock，与 kill_proc（持 S 取 B）构成
+        AB-BA 死锁（reviewer 实证复现）。双泵互斥改由 pop 的 _inbox_lock
+        原子争夺天然闭合：拿到条目者发、拿不到者让位；busy 竞争由
+        send_message 自身的 CAS（_busy_lock）裁决，被拒即回插，消息保命。"""
         if self._pump_timer:
             return
 
         def _run():
             self._pump_timer = None
             try:
-                if self.busy or not self._inbox:
+                if self.busy:
                     return
-                idx = next((i for i, e in enumerate(self._inbox)
-                            if e.get("gen") == self._gen), None)
-                if idx is None:
-                    return
-                e = self._inbox.pop(idx)
+                with self._inbox_lock:
+                    if not self._inbox:
+                        return
+                    idx = next((i for i, e in enumerate(self._inbox)
+                                if e.get("gen") == self._gen), None)
+                    if idx is None:
+                        return
+                    e = dict(self._inbox.pop(idx))
                 self.emit({"kind": "input_promoted", "id": e.get("id")})
-                ok, err = self.send_message(e.get("text") or "",
-                                            e.get("images"), e.get("files"))
+                ok, _err = self.send_message(e.get("text") or "",
+                                             e.get("images"), e.get("files"))
                 if not ok:
-                    self.emit({"kind": "input_discarded", "id": e.get("id"),
-                               "reason": "发送失败：" + str(err or "")[:120]})
+                    # 失败回插队首 + 重发 admitted 事件——前端把条目加回
+                    # 队列 UI（可见可删），下回合终结再泵；不 emit
+                    # input_discarded（原「作废」语义曾在竞态下吞消息）。
+                    # 世代校验：泵发送期间（可秒级）恰逢 /rewind 换代，旧代
+                    # 条目回插也永不被泵取（泵只取当前代）——按换代作废语义
+                    # 显式 discard，与 bump_generation 对齐
+                    if e.get("gen") != self._gen:
+                        self.emit({"kind": "input_discarded", "id": e.get("id"),
+                                   "reason": "rewind", "gen": e.get("gen")})
+                    else:
+                        with self._inbox_lock:
+                            self._inbox.insert(0, e)
+                        self.emit({"kind": "input_admitted", "id": e.get("id"),
+                                   "text": (e.get("text") or "")[:200],
+                                   "gen": e.get("gen"),
+                                   "att": len(e.get("images") or [])
+                                         + len(e.get("files") or [])})
                 self.sync_meta()
             except Exception:
                 pass
@@ -963,8 +1025,9 @@ class HarnessSession:
                 # v2.27.19：只在进程活着时置——死会话（回传兜底轮询扫到的）
                 # 没有 result 来回落，置了会永远挂「回复中」
                 if self.alive:
-                    self.busy = True
-                    self.busy_since = int(time.time() * 1000)
+                    with self._busy_lock:      # v3.4.54：置位同步入锁
+                        self.busy = True
+                        self.busy_since = int(time.time() * 1000)
                     self._turn_start()
                 self.emit({"kind": "peer",
                            "name": nm.group(1) if nm else "其他会话",
@@ -1042,8 +1105,9 @@ class HarnessSession:
                     # 必有 send() 占位，不靠这里。
                     self._init_n = getattr(self, "_init_n", 0) + 1
                     if self._init_n > 1 and self.alive and not self.busy:
-                        self.busy = True
-                        self.busy_since = int(time.time() * 1000)
+                        with self._busy_lock:  # v3.4.54：置位同步入锁
+                            self.busy = True
+                            self.busy_since = int(time.time() * 1000)
                         self._turn_start()
                 # v2.35（P0-1 兜底）：主链 assistant 事件到达而 busy 仍 False =
                 # 一条我们没观察到起点的回合正在跑（init 丢失/旧版 CLI 无续
@@ -1051,11 +1115,13 @@ class HarnessSession:
                 # 后台子代理跑活时主会话本就空闲、可以收新消息。
                 if typ == "assistant" and not o.get("parent_tool_use_id") \
                         and self.alive and not self.busy:
-                    self.busy = True
-                    self.busy_since = int(time.time() * 1000)
+                    with self._busy_lock:      # v3.4.54：置位同步入锁
+                        self.busy = True
+                        self.busy_since = int(time.time() * 1000)
                     self._turn_start()
                 if typ == "result":
-                    self.busy = False
+                    with self._busy_lock:      # v3.4.54：回落同步入锁（sync_meta 锁外）
+                        self.busy = False
                     self.last_result = o
                     # v2.2.1：回合结束落一次盘——last_active 平时只更新内存，
                     # 重启工具后 meta 停在旧时刻会话排序/时间倒退（回合粒度
@@ -1113,8 +1179,14 @@ class HarnessSession:
             pass
         finally:
             was_busy = self.busy    # v2.34：进程死时回合是否仍在进行（下方结算用）
-            self.alive = False
-            self.busy = False
+            # 身份校验：kill+立即 revive（切模型/base_url 自愈/引导词热更都
+            # 是同线程 kill 后马上 start）时，旧 reader 排空剩余 stdout 可能
+            # 晚于新 start() 完成——不校验会把新进程的 alive/busy 打死，下一
+            # 次 send 又 revive，多 spawn 一个孤儿进程
+            if proc is self._proc:
+                self.alive = False
+                with self._busy_lock:      # v3.4.54：置位同步入锁
+                    self.busy = False
             # v2.40：自然死亡不走 kill_proc——事中闸 settings 临时文件在这
             # 条路径也要清（否则 revive 覆盖引用后旧文件泄漏，见方法注释）
             self._audit_settings_cleanup()
@@ -1126,7 +1198,11 @@ class HarnessSession:
                 # v2.34：回合进行中进程死掉（崩溃/被杀）——结算审计只警示
                 # 不续发（进程已死）。was_busy 在 busy 复位前取：kill_proc
                 # 会先把 busy 清掉，正常 result 后的进程退出不算「回合中断」。
-                if was_busy:
+                # v3.4.54R（全审回炉）：结算只认当代 reader——kill 时进程已
+                # 死透（_suppress_exit 未设）且旧 reader 排空跨越 revive+新
+                # 回合的窄窗里，旧 reader 会拿新回合的 was_busy 误结算审计/
+                # 误发 turn_error；exit 行保持原位（GC 裸杀仍有提示）
+                if was_busy and proc is self._proc:
                     try:
                         self._audit_settle("exit")
                     except Exception:
@@ -1182,12 +1258,31 @@ class HarnessSession:
         return True
 
     def ask_poll(self, req_id):
-        """MCP 侧长轮询：返回 (found, done, answer)。"""
+        """MCP 侧长轮询：返回 (found, done, answer)。
+
+        v3.4.61：req_id 为空 = 前端快照语义——返回当前待答问题的完整
+        快照（含 questions 题面）。冷开/transcript 重建路 seq 已跳过 ask
+        帧（不重放），前端靠此拉回面板。MCP 侧恒传 req_id，行为不变。
+        """
         with self.ask_lock:
             a = self.ask
             if not a or a.get("req_id") != req_id:
                 return False, False, None
             return True, bool(a.get("done")), a.get("answer")
+
+    def ask_snapshot(self):
+        """待答问题全量快照（前端 _hgAskSync 冷开恢复用）：(found, dict|None)。
+
+        返回的 dict 含 req_id/title/questions/done/answer——已答的也返回
+        （done=True），供他窗已答场景走 askDone 收面板；无待答记录返回
+        (False, None)。"""
+        with self.ask_lock:
+            a = self.ask
+            if not a:
+                return False, None
+            return True, {"req_id": a.get("req_id"), "title": a.get("title"),
+                          "questions": a.get("questions") or [],
+                          "done": bool(a.get("done")), "answer": a.get("answer")}
 
     def ask_cancel(self):
         """会话进程结束/被中断：让还在等的 MCP 调用立刻拿到「用户未作答」，
@@ -1212,6 +1307,9 @@ class HarnessSession:
         self.emit({"kind": "turn_started"})
 
     def _turn_end(self, err=False):
+        # 注：_interrupt_async 在 reader 线程之外调；_run 泵事务持锁重入
+        # _turn_end 的路径已随 v3.4.54R 泵改造移除（防 AB-BA 死锁），RLock
+        # 保守保留——勿依赖重入语义新增持锁调用
         if not self._turn_id:
             return
         self.emit({"kind": "turn_error" if err else "turn_complete",
@@ -1228,38 +1326,7 @@ class HarnessSession:
         eventStore 再广播 eventSinks」）。seq 分配在 store 锁内——修 v2.x
         reader/HTTP/peer 轮询并发 emit 的同号乱序竞态。"""
         item = self.log.emit(item, turn=self._turn_id)
-        # v2.25：识图完成即落字段（见 __init__ vision_done 注释）——窗口
-        # 滑动不再影响；brief 此刻回扫必然扫得到（assistant 刚发生）
-        # v2.3.2 修真根因：CLI 事件统一包成 kind='event'（result 在 data.type
-        # 里），旧判断只认裸 kind=='result'——从事件结构重构起永不匹配，
-        # last_done 恒 0、「已返回」toast 从未弹过（用户实锤）。
-        _d = item.get("data") if isinstance(item.get("data"), dict) else {}
-        _is_result = (item.get("kind") == "result"
-                      or (item.get("kind") == "event" and _d.get("type") == "result"))
-        if _is_result and getattr(self, "is_vision", False):
-            brief = ""
-            for e in reversed(self.log.store.snapshot()):
-                # 同上：assistant 也是 kind='event' 包装（text 块在
-                # data.message.content 里），旧裸 kind 判断同样扫不到
-                txt = e.get("text")
-                if not txt and e.get("kind") == "event":
-                    _c = ((e.get("data") or {}).get("message") or {}).get("content")
-                    if isinstance(_c, list):
-                        txt = "\n".join(b.get("text", "") for b in _c
-                                        if isinstance(b, dict) and b.get("type") == "text")
-                if (e.get("kind") == "assistant" or txt) and (txt or "").strip():
-                    brief = (txt or "").strip()[:120]
-                    break
-            self.vision_done = {"ts": item.get("ts") or 0, "brief": brief}
         return item
-
-    # ---- SSE（v3.0：兼容薄层；stream 路由直连 log.subscribe）----
-    def add_client(self):
-        sub, _, _ = self.log.subscribe()
-        return sub
-
-    def remove_client(self, sub):
-        self.log.unsubscribe(sub)
 
     def get_events_after(self, after_seq=0, limit=500):
         return self.log.events_after(after_seq, limit=limit)

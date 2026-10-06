@@ -8,6 +8,7 @@ let _hgJumpBtm;   // jumpBtm → _hgJumpBtm（v3.2.8 一键跳底浮动钮）
 let _hgRailEl;   // railEl → _hgRailEl（v3.2.10 回合导航轨）
 let _railRaf = 0;   // rail active 刷新的 rAF 节流牌
 let _hgInput;   // input → _hgInput
+let _hgAskDockEl;   // askDock → _hgAskDockEl（v3.4.61 ask 面板 dock 容器）
 let _hgStateEl;   // stateEl → _hgStateEl
 let _hgCostEl;   // costEl → _hgCostEl
 let _hgSendBtn;   // sendBtn → _hgSendBtn

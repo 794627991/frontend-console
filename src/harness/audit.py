@@ -115,7 +115,7 @@ def _audit_hook_settings_path():
 
     内容只有 hooks 键：Edit/Write/MultiEdit/NotebookEdit 的 PreToolUse 指向
     `--audit-hook` 子命令（它查 /audit_gate 决定放行/拦截，见
-    harness_audit_hook.py）。双形态命令与 _ask_mcp_cfg_path 同构：源码=
+    audit_hook.py）。双形态命令与 _ask_mcp_cfg_path 同构：源码=
     python main.py，打包=exe 自身（src 不在盘上）。
 
     返回 settings 路径；任何失败返回 None（注入失败不阻塞会话启动——

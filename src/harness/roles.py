@@ -246,37 +246,22 @@ def update_roles_cfg(patch):
     (ok, err)。生效路径与开关一致：模型池（含 main_model 主会话槽——形态
     翻转即换词）/分级线（l1_max_lines 等）出现在引导词里 → 下条消息前的
     指纹热更自动换词重启 + agents 重生成；audit_mode 在回合结算时读盘，
-    即时生效。enabled 关闭即清理 agents（残留定义会被 CLI 自动发现）。"""
-    try:
-        with open(_st.CONFIG_FILE, "r", encoding="utf-8") as f:
-            d = json.load(f)
-        if not isinstance(d, dict):
-            d = {}
-    except Exception:
-        d = {}
-    r = d.get(_ROLES_KEY)
-    r = r if isinstance(r, dict) else {}
-    r.update(patch)
-    d[_ROLES_KEY] = r
-    try:
-        tmp = _st.CONFIG_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(d, f, ensure_ascii=False, indent=1)
-        os.replace(tmp, _st.CONFIG_FILE)
-    except Exception as e:
-        return False, str(e)
+    即时生效。enabled 关闭即清理 agents（残留定义会被 CLI 自动发现）。
+    v3.4.54 起走 app_state.cfg_commit（config.json 五写方统一锁+原子事务，
+    消除读-改-写窗口互抹与撕裂放大）。"""
+    def _mut(d):
+        r = d.get(_ROLES_KEY)
+        r = r if isinstance(r, dict) else {}
+        r.update(patch)
+        d[_ROLES_KEY] = r
+    ok, err = _st.cfg_commit(_mut)
+    if not ok:
+        return False, err
     if patch.get("enabled") is False:
         # 关闭即清理角色文件：CLI 自动发现 agents 目录，残留定义会让模型
         # 在开关关闭后仍自发派发（违背「关闭=回到普通」）
         _uninstall_roles_agents()
     return True, None
-
-
-def set_roles_enabled(enabled):
-    """写开关（转调 update_roles_cfg 的 merge 语义：只动 enabled，其余键
-    保留）。改完即生效——角色词在引导词指纹里，下条消息发送前的指纹热更
-    会自动 kill+resume 换词重启，已有会话无需重建。"""
-    return update_roles_cfg({"enabled": bool(enabled)})
 
 
 def _current_base_url():

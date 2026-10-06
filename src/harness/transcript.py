@@ -828,9 +828,13 @@ def _map_subagent_rows(agent, rows):
             out.append({"role": "sub_note", "agent": agent,
                         "text": r.get("text") or ""})
         elif k == "tool":
+            # v3.2.25 收集的 in/w/ts 此前在映射层被硬编码丢弃——主流子代理
+            # 段展开工具行 input 恒空、与回放窗格（直读 jsonl 行）两路不一致
             row = {"role": "sub_tool", "agent": agent, "text": r.get("name") or "",
-                   "summary": r.get("hint") or "", "input": {}, "result": None,
-                   "ts": ""}
+                   "summary": r.get("hint") or "", "input": r.get("in") or {},
+                   "result": None, "ts": r.get("ts") or ""}
+            if r.get("w"):
+                row["w"] = 1
             if r.get("err"):
                 row["err"] = True
             out.append(row)

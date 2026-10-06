@@ -474,8 +474,14 @@
         if (tb) peerText = tb.text;
       }
       if (peerText) {
-        const nm = peerText.match(/from-name="([^"]*)"/);
-        const body = peerText.match(/<cross-session-message[^>]*>([\s\S]*)<\/cross-session-message>/);
+        // v3.4.60：SubagentHandback 注入形态是「Another...sent a message:
+        // <agent-message from="agentId">」——from-name= 提取不到名、body 落
+        // 整段（含标签原文），renderPeer('其他会话') 按名配对恒 miss → 转交
+        // 线永久「等待结论回传」（用户实锤「明明已完成还等协作回传」）。
+        // 名字补 from= 提取；body 优先剥 agent-message 壳
+        const nm = peerText.match(/from-name="([^"]*)"/) || peerText.match(/\bfrom="([^"]*)"/);
+        const body = peerText.match(/<cross-session-message[^>]*>([\s\S]*)<\/cross-session-message>/)
+          || peerText.match(/<agent-message[^>]*>([\s\S]*?)<\/agent-message>/);
         renderPeer(nm ? nm[1] : '其他会话', (body ? body[1] : peerText).trim());
         return;
       }
@@ -493,7 +499,10 @@
         if (tb2) agMsg = tb2.text;
       }
       if (agMsg) {
-        const anm = agMsg.match(/from-name="([^"]*)"/) || agMsg.match(/\bname="([^"]*)"/);
+        // v3.4.60：from= 属性形态（SubagentHandback）同链加固；from 系协议
+        // 属性排在泛化 name= 之前（轻审P2：正文恰含 name="..." 时防抢跑错配）
+        const anm = agMsg.match(/from-name="([^"]*)"/) || agMsg.match(/\bfrom="([^"]*)"/)
+          || agMsg.match(/\bname="([^"]*)"/);
         const abody = agMsg.match(/<agent-message[^>]*>([\s\S]*?)<\/agent-message>/);
         renderPeer(anm ? anm[1] : '协作代理',
                    (abody ? abody[1] : agMsg.replace(/<[^>]+>/g, '')).trim());
@@ -608,6 +617,11 @@
     if (!sid || sid !== _HG.sid) return;
     delete _HG.cache[sid];
     _hgSseResetLocal();
+    _HG.histRebuilding = sid;    // 轻审 P2：清场→重建的 await 窗口期 saveCache
+                                 // 不得入库（空 flow 快照击穿 delete）。
+                                 // 复审 P3：值=sid 按归属自清——清点不吃当前
+                                 // _HG.sid（切走后迟到的 finally 也要清，否则
+                                 // 标志永久搁浅、所有快照静默失效）
     setBusy(false);
     fetch(`/api/harness/transcript?sid=${encodeURIComponent(sid)}`)
       .then(r => r.json())
@@ -619,12 +633,14 @@
                          { noFinalize: !!j.busy });   // v3.2.1R(F1)：尾组定稿在渲染器内；busy 活组留给 phResume
         if (j.busy) phResume(); else grpFinalize(true, { hist: true, turnEnd: true });   // 幂等兜底（v3.2R1(P0)：回放不吃时钟；v3.2.4R(F5) 对齐 switchTo turnEnd）
         _hgLiveAgentsRestore(sid);   // v3.4.55（轻审 P4）：reset 重建路同样回填运行中子代理
+        _hgAskSync(sid);   // v3.4.61：重建路 seq 已跳过 ask 帧——待答面板靠后端快照拉回
         _hgScrollBottom(true);
         setBusy(!!j.busy, j.busy_since);
         openSSE(sid, _HG.seq);
         refreshSessions();
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => { if (_HG.histRebuilding === sid) _HG.histRebuilding = null; });
   }
   let _hgKaTimer = null;
   function _hgKaWatchdog() {
@@ -658,8 +674,14 @@
       if (a.mode === 'reset') { _HG.epoch = a.epoch; _hgSseRebuild(sid); return; }
       _HG.epoch = a.epoch;
       // snapshot：服务端即将重放保留窗——先清场（ack 先于重放帧到达，
-      // 事件顺序保证清场时机正确）
-      if (a.mode === 'snapshot') _hgSseResetLocal();
+      // 事件顺序保证清场时机正确）。复审 P4：清场→首帧重放的间隙也是
+      // 「空 flow + saveCache」窗口——同置重建标志，首帧到达即清
+      if (a.mode === 'snapshot') {
+        _hgSseResetLocal();
+        _HG.histRebuilding = sid;
+        const _hbrSid = sid;
+        setTimeout(() => { if (_HG.histRebuilding === _hbrSid) _HG.histRebuilding = null; }, 1500);
+      }
     });
     es2.addEventListener('reset', (ev) => {
       // mid-stream reset（慢订阅者被服务端显式断开）——同样走转写重建
@@ -728,13 +750,16 @@
       else if (it.kind === 'audit') { renderAudit(it.text); _hgScrollBottom(); }   // v3.2.27：撤 grpFinalize——警示入工作区不分割回合
       else if (it.kind === 'raw') renderRaw(it.text);
       // v3.3.2(B/D3)：ask 不定稿——提问是当前工作状态的中途暂停（CLI 同回合
-      // 阻塞），答后续跑 grpEnsure 自然回原组；卡片入活组根（askRender 内），
-      // 占位气泡让位（等答卡片即占位）
+      // 阻塞），答后续跑 grpEnsure 自然回原组；v3.4.61 面板入输入框上方 dock
+      //（askRender 内），占位气泡让位（等答面板即占位）
       else if (it.kind === 'ask') { const _g = _hgTurnReopen(); phRemove(_g || _HG.grp); askRender(it); }
       else if (it.kind === 'ask_done') askDone(it);
       else if (it.kind === 'interrupted') {
         endThinking(); _hgVisionSweep(true);
         grpFinalize(true, { interrupted: true, hist: _hgTailAdopt(), turnEnd: true });   // v3.2.1R2(R2-1/R2-3)认回；v3.2.2 中断=回合收尾，正文留头外
+        // v3.4.61：中断即提问失效（后端 ask_cancel 不发帧——面板不再空挂）
+        _hgAskDismiss(_hgAskDockEl && _hgAskDockEl.querySelector('.h-ask:not(.done)'),
+                      '已随会话中断失效');
         renderExit(it.text); setBusy(false);
         // v2.32：中断收尾——在跑的子代理标「已中断」（原缺口：只有 result
         // 分支收尾，点 ■ 停止后子代理假"运行中"+计时狂跳）
@@ -746,6 +771,8 @@
       else if (it.kind === 'exit') {
         endThinking(); _hgVisionSweep(true); _HG.alive = false;
         grpFinalize(true, { hist: _hgTailAdopt(), turnEnd: true });   // v3.2.1R2(R2-1)认回；v3.2.2 退出=回合收尾，正文留头外
+        _hgAskDismiss(_hgAskDockEl && _hgAskDockEl.querySelector('.h-ask:not(.done)'),
+                      '已随会话结束失效');   // v3.4.61：进程退出=提问失效，面板收缩
         renderExit(it.text); setBusy(false);
         _hgAgentsSweep(true); _hgTurnEnd('exit', 0);   // v2.32：同上，进程退出也收
         _subEnd();                         // v2.33：窗格收起
@@ -763,6 +790,11 @@
   }
   function saveCache() {
     if (!_HG.sid) return;
+    // 轻审 P2（v3.4.60）：重建窗口期（_hgSseRebuild/_hgReloadFlow 清场后
+    // transcript fetch 在途）不入库——此刻 flow 是空/残的，且重建入口的
+    // delete cache 会被这次入库击穿，切回恢复出空白工作区。
+    // 复审 P3：门按「本会话」判——别会话在途的重建不拦本会话存快照
+    if (_HG.histRebuilding && _HG.histRebuilding === _HG.sid) return;
     // v2.28.13：echoFast 随快照保存——切走时 2420 行会清空它，但快照 html
     // 里已经带着乐观渲染的用户气泡；若 user_echo 尚未到达（快速切走），
     // 切回来重放的 echo 对不上已清空的去重窗口 → 双画（用户实锤 A→B→A
@@ -772,6 +804,11 @@
     // histStart 丢失，上滑扩段被 v2.35.2 的门拦死，历史够不着）
     _HG.cache[_HG.sid] = { html: _hgFlow.innerHTML, seq: _HG.seq,
                            epoch: _HG.epoch || null,
+                           // v3.4.61：dock 待答面板随快照走（dock 在 flow 外不吃
+                           // innerHTML）——只存 pending（done 面板收缩即逝）；切回
+                           // 由 _hgAskDockRestore 回挂，豁免判定（12-sessions）同源
+                           askPanel: (_hgAskDockEl
+                             && _hgAskDockEl.querySelector('.h-ask:not(.done)') || {}).outerHTML || '',
                            // v3.0 滚动记忆（对照 ZCode chatSessionScrollMemory 五元组）：
                            // 贴底记忆→切回回底（跟读新消息）；否则恢复钳制后的
                            // scrollTop——翻历史中途切走再切回，视口不再被拽到底
@@ -800,7 +837,14 @@
                            // 弃快照走 transcript 全量重渲
                            openTurn: !!(function() {
                              const g = [..._hgFlow.querySelectorAll('.h-grp')].pop();
-                             return g && g.dataset.finalized !== '1';
+                             // v3.4.60（用户实锤「切回只剩我的消息+转圈，已工作
+                             // 全无，新消息来了才刷出」）：空 flow（rebuild 中间态
+                             // /重置后未重建）与 histStale 降级态（已确认账目漂移）
+                             // 的快照注定残缺——旧判定「无组=false」把它们当完整
+                             // 快照入库，恢复端先渲残缺再等异步自愈
+                             if (!g) return !!(_HG.busy || _HG.histStale
+                                 || (_HG.histAll && _HG.histAll.length));
+                             return g.dataset.finalized !== '1';
                            })() };
     // v2.25：快照 LRU 上限 10——大会话 innerHTML 每份可达数十 MB，无上限
     // 来回切会话会攒爆内存（审计 §三.8）
