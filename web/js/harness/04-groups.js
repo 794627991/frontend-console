@@ -634,7 +634,9 @@
     bar.innerHTML =
       '<button class="hg-mico h-acopy" title="复制这条回复">📋</button>' +
       '<button class="hg-mact" data-hg-rewind title="回滚到本条所在回合结束：之后的全部丢弃（自动全量备份）">⏪ 回滚到这里</button>';
-    d.appendChild(bar);
+    // v3.4.41（用户实锤「要贴紧气泡，我发的消息就是贴紧的」）：动作条插在
+    // 气泡与署名行之间（原挂 meta 之后=隔一整行署名高），与用户消息 2px 同款
+    d.insertBefore(bar, meta);
     // 锚点 = 正文前缀（随 dataset 序列化，实时/回放两路同源；后端按它
     // 定位「这条消息所在回合的 result」做截断）
     try { d.dataset.rwa = String(text).trim().slice(0, 60); } catch(_) {}
