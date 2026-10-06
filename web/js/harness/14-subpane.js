@@ -71,14 +71,19 @@
   }
   function _subDirRows() {
     const rows = [];
+    // v3.4.56（轻审复核 P3 收口）：运行中 live 档案的同 desc 回放条目滤除——
+    // restore 时序/重建/快照各路差异全部在产出侧一处收口，目录不再双条
+    const _runDescs = new Set();
     for (const tid in (_HG.agents || {})) {
       const a = _HG.agents[tid];
       // v3.4.43：collab 档案（SendMessage 协作包装）归 C 区转交线展示，
       // 不进子代理目录（无转写可回放，点开必「未找到转写」空 tab）
       if (!a || a.replay || a.collab) continue;
+      if (!a.done && a.desc) _runDescs.add(a.desc);
       rows.push(Object.assign({ tid }, a));
     }
     for (const a of ((_HG.dyn && _HG.dyn.agentsRpl) || [])) {
+      if (a.desc && _runDescs.has(a.desc)) continue;   // v3.4.56:同名回放条目让位运行中
       // rid 补发（与 _dynAgents 同款持久发号——条目点击按 rid 回查存档）
       if (!a.rid) a.rid = 'rpl' + ((_HG.rplSeq = (_HG.rplSeq || 0) + 1));
       rows.push(Object.assign({ tid: a.rid, rpl: true }, a));
