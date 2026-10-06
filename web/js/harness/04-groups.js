@@ -153,10 +153,20 @@
     'AI 正在整理思路…', 'AI 正在细细品你的话…', 'AI 正在路上狂奔…',
     'AI 正在灵光乍现…', 'AI 马上就好了…'];
   function phStart(g) {
+    // v3.4.54（双会话实锤「出现多个占位气泡」）：切会话/重渲竞态会留下多份
+    // 占位（跨组游离+组内重复并存）——建/认领前全局清场：同屏只允许一份
+    // 占位，且必须属于当前活动组
+    try {
+      _hgFlow.querySelectorAll('.h-msg.asst.ph').forEach(el => {
+        if (!g.root || !g.root.contains(el)) el.remove();
+      });
+    } catch (_) {}
+    const frozenAll = g.root ? g.root.querySelectorAll(':scope > .h-msg.asst.ph') : [];
+    frozenAll.forEach((el, i) => { if (i > 0) el.remove(); });
     if (!g.ph) {
       // v2.20：先认领快照恢复留下的冻结占位（grpFromDom ph:null 丢了引用），
       // 认不到再新建——否则 phResume 后会叠出第二个占位气泡
-      const frozen = g.root.querySelector(':scope > .h-msg.asst.ph');
+      const frozen = frozenAll[0] || null;
       if (frozen) g.ph = frozen;
       else {
         const d = document.createElement('div');
