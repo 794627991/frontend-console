@@ -33,6 +33,19 @@
     _HG.subTailSeg = {};   // v2.58：续派切段映射随会话重置
     _HG.histAll = null; _HG.histStart = 0; _HG.histLive = false;   // v2.24：多段历史渲染源不复用（防串会话）；v2.35.2：histLive 随切重置（快照恢复态不进滚动扩收）
     _HG.histStale = false;   // v2.43.2（R2-缺口A）：降级标记随切会话重置（恢复时按快照 histFp 重新判定）
+    // v3.4.52（致命双会话实锤「全部变成回放了但是实际是在工作的」）：运行中
+    // 子代理 live 档案随会话暂存——原样清空后，切回走转写重渲会把运行中的
+    // 子代理当历史回放建档且 task_started 不会重放=永久假回放
+    if (prevSid && _HG.agents) {
+      const _lv = {};
+      for (const t in _HG.agents) {
+        const a = _HG.agents[t];
+        if (a && !a.done && (!a.sid || a.sid === prevSid)) _lv[t] = a;   // 无 sid=旧档案/当前会话派发，一并暂存
+      }
+      _HG.liveAgentsBy = _HG.liveAgentsBy || {};
+      if (Object.keys(_lv).length) _HG.liveAgentsBy[prevSid] = _lv;
+      else delete _HG.liveAgentsBy[prevSid];
+    }
     _HG.todos = null; _HG.agents = null;     // v2.30：会话动态随会话切换重置（todos 由回放重建）
     _HG.dyn = null;                          // v2.32 面板派生态不跨会话（活动流/回合史/打标全重建）
     _HG.proj = null;                         // v3.1：前端投影不跨会话（/events 种子重建）
@@ -213,6 +226,9 @@
           _HG.rowById[el.dataset.tid] = el;
         }
       });
+      // v3.4.52：运行中子代理 live 档案回填（快照命中路）——目录/动态页
+      // 恢复「正在运行」态，点行 live 直开不再假回放
+      _hgLiveAgentsRestore(sid);
       // v2.9：缓存恢复不能盲目清 busy——切走时正在回复的会话，切回后
       // 事件继续流入但 user_echo 已在 seq 之前（不重放），活动条/停止钮
       // 再也不弹（用户实测「有实际对话但无计时条、发送键不变■」）。
@@ -233,6 +249,7 @@
           // SSE 续传事件经 grpEnsure 回扫正常接回。
           if (j.busy) phResume();
           else grpFinalize(true, { hist: true, turnEnd: true });   // 幂等兜底（渲染器内已定稿则早退）；v3.2.2 turnEnd
+          _hgLiveAgentsRestore(sid);   // v3.4.52：转写重渲路同样回填运行中子代理 live 档案
           _hgScrollBottom(true);              // 切会话回底（不受翻历史保护限制）
           setBusy(!!j.busy, j.busy_since);   // v2.26：计时起点带后端 busy_since（切回来不清零）
         }
@@ -274,6 +291,22 @@
     renderQueue();                   // v2.20：排队条按会话各自恢复
     refreshSidebar();
     if (!keepInput) _hgInput.focus();
+  }
+  // v3.4.52（致命双会话实锤「全部变成回放了但是实际是在工作的」）：切走时
+  // 暂存的运行中子代理 live 档案回填当前会话——转写重渲只会产出回放档案
+  // （task_started 不会重放），不回填=运行中子代理永久假回放。行卡同步回
+  // 运行态；桶内已完成的条目顺带清理
+  function _hgLiveAgentsRestore(sid) {
+    const lv = (_HG.liveAgentsBy || {})[sid];
+    if (!lv) return;
+    for (const t in lv) {
+      const a = lv[t];
+      if (a.done) { delete lv[t]; continue; }
+      _HG.agents = _HG.agents || {};
+      _HG.agents[t] = a;
+      if ((_HG.rowById || {})[t]) { try { _hgAgentRowState(t, false); } catch (_) {} }
+    }
+    if (!Object.keys(lv).length) delete _HG.liveAgentsBy[sid];
   }
   function showWelcome() {
     _hgFlow.innerHTML = `

@@ -155,6 +155,17 @@
             }
             renderSideStatus();
           } else if (sub === 'task_notification') {
+            // v3.4.52：跨会话完成信号入桶——档案被切会话清场时，运行中档案
+            // 在 liveAgentsBy 桶里，直达桶内置 done（防切回后假运行）
+            for (const _ls in (_HG.liveAgentsBy || {})) {
+              const _la = _HG.liveAgentsBy[_ls][tid];
+              if (_la && !_la.done) {
+                _la.done = true; _la.doneAt = Date.now();
+                _la.err = !!(o.status && o.status !== 'completed' && o.status !== 'success');
+                _la.result = String(o.summary || '').trim().slice(0, 400) || _la.result;
+                break;
+              }
+            }
             // v2.43.1（R-FAIL1）：档案缺失（切会话往返 agents 清空）但段 DOM
             // 在 → 完成信号直达段头定格；aid 用通知自带的 task_id（与
             // task_started 同源），hgSubr 靠它补上
@@ -300,6 +311,8 @@
                 type: _ty,
                 desc: (b.input && b.input.description) || '',
                 t0: Date.now(), done: false, doneAt: 0,
+                // v3.4.52：档案记归属会话——切会话暂存/回填的判据
+                sid: _HG.sid,
                 // v2.35（P1-4）：起跑即预显模型——~/.claude/agents frontmatter
                 // （_hgAgentModels 惰拉缓存）；子代理事件到达后以实跑
                 // message.model 覆盖。读不到（内置代理 Explore/Plan 等）标「主链模型」
