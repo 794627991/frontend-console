@@ -2505,6 +2505,10 @@ html {
   border-left: 3px solid color-mix(in srgb, var(--h-violet, #8957e5) 55%, var(--border));
   background: color-mix(in srgb, var(--bg-card) 55%, transparent); }
 .h-subblock.err { border-left-color: var(--neon-red, #e06c75); }
+/* v3.4.50（用户实锤「这里空太多了」）：段挂进时间线时自带 margin 16px 叠在
+   tl 缩进（25px）上=段头比其它行深 17px——tl 内取消叠加缩进，段头 ▸ 与
+   各行箭头同线（25+3+10≈37px） */
+.h-tl .h-subblock { margin-left: 0; }
 .h-subblock-head { display: flex; align-items: center; gap: 7px; width: 100%;
   background: transparent; border: none; padding: 0; cursor: pointer;
   font: inherit; color: var(--fg); text-align: left; border-radius: 4px; }
