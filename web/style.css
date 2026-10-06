@@ -3359,6 +3359,10 @@ span.h-ag-type[class*='h-ava-'] {
    （can-rewind 类由 result 结算/历史重建授予，随 innerHTML 快照存活）；
    未授予的消息连按钮都不显示，视觉干净 */
 .h-msg.asst .hg-msg-acts { display: none; margin-top: 2px; justify-content: flex-end; }
+/* v3.4.42：消息脚行——署名左、动作条右，一行贴住气泡（hover 显条不再撑高） */
+.h-msg-foot { display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin-top: 2px; }
+.h-msg-foot .hg-msg-acts { margin-top: 0; }
 /* v3.1h：全部 AI 消息 hover 浮现动作条（复制/编辑参考 ChatGPT 式消息下方
    右对齐；回滚钮仍只在 can-rewind 授予后出现） */
 .h-msg.asst:hover .hg-msg-acts { display: flex; }

@@ -626,7 +626,6 @@
     meta.innerHTML = `<span class="h-ava ${_hgAvaCls(bare || 'AI')}">${esc((bare || 'AI').charAt(0).toUpperCase())}</span>` +
       roleB +
       (bare ? `<span class="h-mmodel" title="本条回复的实跑模型">${esc(bare)}</span>` : '');
-    d.appendChild(meta);
     // v2.28.16：回滚按钮（回合边界授予）
     const bar = document.createElement('div');
     bar.className = 'hg-msg-acts';
@@ -634,9 +633,14 @@
     bar.innerHTML =
       '<button class="hg-mico h-acopy" title="复制这条回复">📋</button>' +
       '<button class="hg-mact" data-hg-rewind title="回滚到本条所在回合结束：之后的全部丢弃（自动全量备份）">⏪ 回滚到这里</button>';
-    // v3.4.41（用户实锤「要贴紧气泡，我发的消息就是贴紧的」）：动作条插在
-    // 气泡与署名行之间（原挂 meta 之后=隔一整行署名高），与用户消息 2px 同款
-    d.insertBefore(bar, meta);
+    // v3.4.42（用户实锤「一起贴紧啊」）：署名行与动作条合并一行贴住气泡——
+    // 署名左、钮右（原两行纵排：动作条虽贴气泡、署名又另起一行）。附带修掉
+    // hover 时动作条独立占行把消息撑高的跳动
+    const mrow = document.createElement('div');
+    mrow.className = 'h-msg-foot';
+    mrow.appendChild(meta);
+    mrow.appendChild(bar);
+    d.appendChild(mrow);
     // 锚点 = 正文前缀（随 dataset 序列化，实时/回放两路同源；后端按它
     // 定位「这条消息所在回合的 result」做截断）
     try { d.dataset.rwa = String(text).trim().slice(0, 60); } catch(_) {}
