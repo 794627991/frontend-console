@@ -207,7 +207,33 @@
     const side = hg.querySelector('.hg-side');
     return hg.clientWidth - ((side && side.offsetWidth) || 0);
   }
+  // v3.4.21（用户定调「非子代理界面默认收窄，子代理输出才保持当前宽度」）：
+  // 分屏宽度按激活 tab 分档——动态/目录（状态视图）=窄档（默认 30%，独立
+  // 记忆拖拽）；子代理实况/回放=宽档（hg-subpane-pct，默认 50%，既有记忆）
+  function _subPanePctKey() {
+    return (_sub.active === _SUB_DYN || _sub.active === _SUB_DIR)
+      ? 'hg-subpane-narrow-pct' : 'hg-subpane-pct';
+  }
   function _hgSubPctGet() {
+    const k = _subPanePctKey();
+    try {
+      const p = parseFloat(localStorage.getItem(k));
+      if (p >= 25 && p <= 75) return p;
+      if (k === 'hg-subpane-pct') {
+        const w = +(localStorage.getItem('hg-subpane-w') || 0);
+        if (w >= 220 && w <= 640) {
+          const region = _hgSubRegion();
+          if (region > 0) {
+            const pct = Math.min(75, Math.max(25, w / region * 100));
+            try { localStorage.setItem('hg-subpane-pct', pct.toFixed(2)); } catch(_) {}
+            return pct;
+          }
+        }
+      }
+    } catch(_) {}
+    return k === 'hg-subpane-narrow-pct' ? 30 : 50;
+  }
+  function _hgSubPctGetLegacy() {
     try {
       const p = parseFloat(localStorage.getItem('hg-subpane-pct'));
       if (p >= 25 && p <= 75) return p;
@@ -989,6 +1015,7 @@
     _subBodyEl.querySelectorAll('.hg-sub-msgs').forEach(x =>
       x.style.display = x.dataset.tid === tid ? '' : 'none');
     _subTabsPaint();
+    _hgSubPctApply(_hgSubPctGet());   // v3.4.22：宽度按激活 tab 分档（窄/宽过渡）
     // v3.2R1(P2)：目录不贴底滚动——_subScroll 为聊天流贴底设计，目录的主
     // 内容（正在运行）在顶部，贴底会直接落到已结束长列表尾
     // v3.3：动态页同豁免——状态总览主内容也在顶部（会话状态卡）

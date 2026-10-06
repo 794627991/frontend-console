@@ -1340,7 +1340,7 @@ function buildClaudeHarnessTab(opts = {}) {
     const move = (ev) => {
       const pct = Math.min(75, Math.max(25, (right - ev.clientX) / region * 100));
       _hgSubPctApply(pct);
-      try { localStorage.setItem('hg-subpane-pct', pct.toFixed(2)); } catch(_) {}
+      try { localStorage.setItem(_subPanePctKey(), pct.toFixed(2)); } catch(_) {}   // v3.4.22：写入当前档位键（窄/宽分档记忆）
     };
     const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
     document.addEventListener('mousemove', move);

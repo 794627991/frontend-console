@@ -3703,6 +3703,7 @@ span.h-ag-type[class*='h-ava-'] {
      全宽（含 232px 会话栏），后台 tab 自动开窗格（wrap 隐藏 JS 不落 px）
      切回后偏差 ~116px；calc 扣除会话栏后取半=聊天区总宽的 50% */
   width: calc((100% - 232px) * 0.5); min-width: 240px;
+  transition: width .25s ease;   /* v3.4.22：宽窄档切换平滑 */
   border-left: 1px solid var(--border); background: var(--bg-panel);
   min-height: 0; font-variant-numeric: tabular-nums;
 }
