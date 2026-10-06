@@ -530,6 +530,10 @@
     // initialization」实锤。此前 agentsRpl 恒空、回调不执行埋着不炸；v2.38
     // 历史回放填充后面板 C 区必炸降级。tail 中转替代自引用，rid 编号语义不变。
     const rplTail = rplAll.slice(-3);
+    // v3.4.56R1（轻审终审 R1）：运行中 live 档案的同 desc 回放尾巴滤除——
+    // 快照命中路 restore 时序下 restore 侧滤除落空，面板 C 同一运行中代理
+    // 渲染 run 行 + hist「历史」行双条。产出侧一处收口（同 _subDirRows 口径）
+    const _runDescs = new Set(list.filter(a => !a.done && !a.replay && !a.collab && a.desc).map(a => a.desc));
     // v2.40 修断链：rid 必须写回存档对象。旧写法只把 rid 合进渲染副本
     // （Object.assign({rid...}, a)），存档条目本身没有 rid——条目点击走
     // _hgAgentToggle 时按 data-hg-ag 里的 rid 去 agentsRpl.find(x =>
@@ -543,9 +547,10 @@
     rplTail.forEach(a => {
       if (!a.rid) a.rid = 'rpl' + ((_HG.rplSeq = (_HG.rplSeq || 0) + 1));
     });
+    const rplFiltered = rplTail.filter(a => !(a.desc && _runDescs.has(a.desc)));
     // v2.59：历史条目附 agentId 尾缀——同 desc 的多次派发（如多轮续审各记
     // 一条是真实记录）不再长得一模一样分不清
-    const rpl = rplTail.map(a => Object.assign({}, a, {
+    const rpl = rplFiltered.map(a => Object.assign({}, a, {
       desc: (a.desc || '') + (a.agentId ? ' · ' + String(a.agentId).slice(-4) : '') }));
     // v2.35（P1-5）：协作代理（SendMessage 转交的独立会话/识图转交）——从
     // 消息流「已转交」线派生（dataset.peer/t0/done/psum 随快照序列化），
