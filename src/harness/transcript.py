@@ -34,6 +34,9 @@ _NOISE_RE = re.compile(
 _CONT_RE = re.compile(r"^This session is being continued from a previous conversation", re.I)
 # 用户贴图的路径占位回显——提取成 files 图片（前端出缩略图），文本不再裸显
 _IMG_ECHO_RE = re.compile(r"\[Image: source: ([^\]]+?)\]")
+# v3.4.66：CLI 原生 Read 回图的 meta 标注串（"[Image: original …] Multiply
+# coordinates…"）——isMeta user 行 content 的整体形态（fullmatch 判定）
+_IMG_META_RE = re.compile(r"\[Image: [^\]]+\]")
 
 # ---- from claude_harness.py:2233 (transcript_for) ----
 
@@ -107,6 +110,18 @@ def transcript_for(s):
                     if typ == "user":
                         if isinstance(content, str):
                             t = content
+                            # v3.4.66（用户实锤「这是怎么回事怎么出来的」+「把我
+                            # 的工作都分割开了」）：CLI 注入的 meta 图片标注行
+                            # （Read 回图的 "[Image: original …]" 纯标注串）不是
+                            # 真人输入——此前裸落 user 行：重建后既渲染成幽灵用
+                            # 户气泡，又被前端 _hgHistWinStart 当「最后一个 user
+                            # 行」做窗口对齐，回扫起点切进回合中间=回合头与体被
+                            # 拦腰分割。只精确打击纯标注串——isMeta 里还混着
+                            # peer 回传行（Another Claude session，实测本会话
+                            # 2+8 条），全量拦会杀死协作回传线。live 侧 10-sse
+                            # 同口径挡。
+                            if o.get("isMeta") and _IMG_META_RE.fullmatch(t.strip()):
+                                continue
                             # v2.27.3：跨会话消息（识图回传等）不再被 _SKIP_RE 静默吞掉——
                             # 解析出发件人与正文，产 peer 行让前端渲染专属回传气泡
                             # （用户定调：识图全程要有可见反馈，回传内容不能凭空消失）

@@ -979,15 +979,11 @@
             const _tw = openTools.shift();
             if (_tw && _tw.isConnected && _tw.dataset.done !== '1') {
               _fillRes(_tw, row.text, row.err);
-            } else {
-              const d = document.createElement('div');
-              d.className = 'h-tool-res' + (row.err ? ' err-txt' : '');
-              const _orw = String(row.text || '').replace(/\s+/g, ' ').trim();
-              d.textContent = '↳ ' + _orw.slice(0, 120);
-              d.title = _orw.slice(0, 400);   // v3.4.62：单行截断后 title 是唯一全文入口
-              d.dataset.hgRp = '1';
-              _subTlAppendRow(t, d);
             }
+            // v3.4.65（用户实锤「莫名换行文字。必须解决」）：配对失败的 result
+            // 摘要不再裸落时间线顶层——孤儿 ↳ 行观感=上一行（思考/查阅头）莫名
+            // 续一段代码文字。翻 v3.3.9「结果不丢」的落行承诺：截断摘要信息价值
+            // ≈0，完整结果在 ▣ 回放转写里可看
           }
         }
         for (const p of pend) {
@@ -1198,14 +1194,8 @@
       }
     }
     if (!toolRow) {
-      const d = document.createElement('div');
-      d.className = 'h-tool-res' + (tr.is_error ? ' err-txt' : '');
-      if (tr.tool_use_id) d.dataset.rtuid = tr.tool_use_id;
-      const _orw = full.replace(/\s+/g, ' ');
-      d.textContent = '↳ ' + (_orw.slice(0, 120) || '完成');
-      d.title = _orw.slice(0, 400);   // v3.4.62：单行截断后 title 是唯一全文入口
-      _subTlAppendRow(t, d);
-      if (stick) _subScroll(parentId);
+      // v3.4.65（用户实锤「莫名换行文字」）：同回放路径——孤儿结果不落行，
+      // 完整结果在 ▣ 回放转写可看（翻 v3.3.9 落行承诺）
       return;
     }
     if (toolRow.dataset.done === '1') return;

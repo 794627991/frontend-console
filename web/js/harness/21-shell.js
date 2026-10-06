@@ -24,6 +24,10 @@
         _HG.flowEl.innerHTML = _HG.flowSnap;
         _HG.flowSnap = '';
         _HG.flowEl.scrollTop = _HG.flowEl.scrollHeight;
+        // v3.4.67：本路写入意图=回底，但 wrap 仍 display:none 时 scrollTop
+        // 写入是 no-op 不触发 scroll 事件→粘底标志不会经事件回灌，显式置真
+        // （轻审实锤的脱钩拽底变体）
+        _HG.stickBtm = true;
       }
     } catch(_) {}
     // v2.31：harness tab 激活时右侧「终端助手」面板整体隐藏（v3.3 起会话

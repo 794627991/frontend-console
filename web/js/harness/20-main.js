@@ -164,12 +164,28 @@ function buildClaudeHarnessTab(opts = {}) {
   _HG.flowEl = _hgFlow;
   _HG.flowSnap = '';
 
+  // v3.4.67（用户实锤「如果我已经在底，所有输出都必须渲染到底」）：粘底跟读。
+  // 旧判据「渲染后量距 >150px=在看历史」有个致命时序：Edit/MultiEdit diff 卡
+  // 生而展开一次 append 数百 px，渲染后量距必超 150——贴底跟读被误判成看
+  // 历史，从此每条增量都不再拽底（用户被甩下，手动滚才能跟上）。改 scroll
+  // 事件维护粘底标志（滞后带防抖：<120 置真 / >150 置假，中间保持）——渲染
+  // 前的贴底状态被记住，渲染后无条件拽底；用户真翻上去（>150）才放权，拉回
+  // 底部（<120）自动恢复跟随。
+  _HG.stickBtm = true;
+  _hgFlow.addEventListener('scroll', () => {
+    if (_HG.noScroll) return;   // 历史重建的程序性 scrollTop 写入不污染粘底态
+    const gap = _hgFlow.scrollHeight - _hgFlow.scrollTop - _hgFlow.clientHeight;
+    if (gap < 120) _HG.stickBtm = true;
+    else if (gap > 150) _HG.stickBtm = false;
+  });
   _hgScrollBottom = (force) => {
     if (_HG.noScroll) return;   // v2.16：历史重建期间不滚（几百行逐行 append 会反复重排）
-    // v2.20：用户翻上去看历史时不抢滚动条——距底 >150px 视为在看历史，
-    // 流式新内容到达不再拽到底（用户实测「看之前思考时 AI 一回复就被拉到
-    // 最下面」）。force=true（自己发消息、切会话回底）不受限。
-    if (!force && _hgFlow.scrollHeight - _hgFlow.scrollTop - _hgFlow.clientHeight > 150) return;
+    // v2.20：用户翻上去看历史时不抢滚动条（用户实测「看之前思考时 AI 一回复
+    // 就被拉到最下面」）。force=true（自己发消息、切会话回底）不受限。
+    // v3.4.67：粘底跟读优先——stickBtm（渲染前在底）时无条件拽底，大块渲染
+    // 把底推远也不再误判；仅用户真翻上去（scroll 判 >150 置假）才回旧判据。
+    if (!force && !_HG.stickBtm &&
+        _hgFlow.scrollHeight - _hgFlow.scrollTop - _hgFlow.clientHeight > 150) return;
     _hgFlow.scrollTop = _hgFlow.scrollHeight;
     // 布局二次兜底：活动指示条弹出/气泡内图片加载等会在同帧稍后改变 flow 高度，
     // 下一帧再滚一次，保证"发送后我的消息在底部"（v2.5 用户反馈修复）

@@ -116,8 +116,19 @@
     // 此前漏加导致斜杠菜单紧凑样式从未生效、技能热替换也查不到 .hg-pop.skill）
     p.className = 'hg-pop ' + kind;
     p.innerHTML = html;
-    anchor.parentElement.appendChild(p);
-    const ar = anchor.getBoundingClientRect(), wr = _hgWrap.querySelector('.hg-card-wrap').getBoundingClientRect();
+    // v3.4.64：挂点改回 .hg-card-wrap——v3.4.61 给 .hg-input-card 加了
+    // position:relative（ask dock 锚定），挂按钮父级时弹层包含块变成
+    // input-card，而下方 left/bottom 一直按 card-wrap 矩形算，宽窗口下
+    // 水平偏差=card-wrap 到居中输入卡的空距（数百 px），弹层整体飞到
+    // 右侧贴边（用户实锤「选择项目/思考等级下拉位置错乱」）。挂回坐标
+    // 参照系本身，包含块与数学合一，z-30 仍盖过 dock 的 z-20。
+    // 例外：slash 仍挂 anchor.parentElement（.hg-input-stack，自身定位
+    // 元素）——15-chatctl slashMenuUpdate 在 openPop 返回后按 stack 坐标
+    // 系覆盖 left:0/right:0/bottom:calc(100%+6px)，挂 card-wrap 会让菜
+    // 单横贯全宽飘进消息区（轻审 FAIL 实锤）。
+    const wrEl = _hgWrap.querySelector('.hg-card-wrap');
+    (kind === 'slash' ? anchor.parentElement : wrEl).appendChild(p);
+    const ar = anchor.getBoundingClientRect(), wr = wrEl.getBoundingClientRect();
     p.style.left = Math.max(6, Math.min(ar.left - wr.left, wr.width - p.offsetWidth - 6)) + 'px';
     // v2.20：菜单底部贴 anchor 上缘悬浮。原来 CSS 写死 bottom:calc(100% - 2px)
     // 相对整个 card-wrap——菜单弹到输入区整体的上方（改版后那里直接是聊天流），

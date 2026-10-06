@@ -55,6 +55,7 @@
     _HG.proj = null;                         // v3.1：前端投影不跨会话（/events 种子重建）
     _subReset();                             // v2.33：子代理实时窗格不跨会话
     _HG.think = null; _HG.noScroll = false; _HG.openState = null;   // v2.16：重建态不跨会话残留
+    _HG.stickBtm = true;   // v3.4.67：粘底跟读态随会话切换复位（新会话默认贴底）
     // v3.2.4R(F2)：行级 ts 账与回合起点随会话切换清零（对齐 _hgSseResetLocal；
     // pendingTurnT0 残留会让下个会话 phResume 续跑组的秒表虚吃上会话时刻）
     _HG.histLineTs = 0; _HG.histActTs = 0; _HG.pendingTurnT0 = null; _HG.thinkPend = null;
@@ -198,11 +199,18 @@
       // 范围——DOM 未到齐时恢复值被压小，内容补齐后自然落位）。rAF 等
       // innerHTML 回填后的布局结算再写 scrollTop（同步写会被旧布局吞掉）。
       if (c.scroll && !c.scroll.atBottom) {
+        // v3.4.67：离开时在看历史——粘底态显式置假。重置块的 stick=true 置位
+        // 在本分支不成立（用户不在底），且恢复写 scrollTop 可能是 no-op（写入
+        // 值==当前值不触发事件）→ 标志与实际位置脱钩=读历史被拽底（轻审实锤）。
+        // rAF 写入后再按实测 gap 精确回填（内容钳制后可能恰好贴底）。
+        _HG.stickBtm = false;
         _HG.noScroll = true;           // 恢复写 scrollTop 触发的 scroll 事件不得进扩收分支
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
             const max = _hgFlow.scrollHeight - _hgFlow.clientHeight;
             if (max > 0) _hgFlow.scrollTop = Math.min(Math.max(c.scroll.top, 0), max);
+            _HG.stickBtm = (_hgFlow.scrollHeight - _hgFlow.scrollTop -
+                            _hgFlow.clientHeight) < 120;   // v3.4.67：按落点实测
             _HG.noScroll = false;
           });
         });

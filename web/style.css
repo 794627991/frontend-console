@@ -2573,6 +2573,13 @@ html {
    描述（单行省略）| 实时活动流（运行中活字）| 状态徽章/秒表/摘要 | 整行可点
    开窗格。无折叠体（canToggle=false 的等价物） */
 .h-tool.agentline { max-width: 100%; }
+/* v3.4.65（用户实锤「子智能体行留了很大一块空白」）：agentline 无 ▸ 箭头
+   （展开体恒空、折叠语义不适用），却吃到 col 行的 30px 箭头位缩进=行首
+   一大块空白。收回 10px，与思考段/查阅头文字起点对齐。col.agentline 双类
+   (0,5,0) 压过 4098/4113/4118 的 col 组 (0,4,0)——同特异性源序会输（轻审
+   headless 实测 30px 实锤） */
+.hg-flow .h-tl .h-tool.col.agentline,
+.hg-sub-body .h-tl .h-tool.col.agentline { padding-left: 10px; }
 .h-tool.agentline .h-tool-head { cursor: pointer; }
 .h-tool.agentline .h-tool-name { flex-shrink: 0; }
 .h-tool.agentline .h-tool-arg { white-space: nowrap; overflow: hidden;
@@ -2600,7 +2607,7 @@ html {
 .hg-sub-idline-ty { font-weight: 600; font-size: var(--fs-base); }
 .hg-sub-concl { display: flex; flex-direction: column; }
 .hg-sub-concl .h-msg { margin: 0; }
-.hg-sub-msgs .h-msg.asst { max-width: 100%; }
+.hg-sub-msgs .h-msg.asst { max-width: 92%; }   /* v3.4.65（用户实锤「AI回复气泡直接顶到头了」）：100% 长文泡贴死面板右缘，收 92% 留右距（主流 88% 同思路，窗格窄留少一档） */
 /* v3.2.31（bug4）：窗格 AI 回复自适应气泡——主流 .h-grp 靠 align-items:
    flex-start 把 AI 泡收缩到内容宽，窗格时间线 .h-tl 无此设定（flex 默认
    stretch 拉满整行），气泡被拉成通栏矩形=观感「无边框裸文本」。fit-content
@@ -4106,19 +4113,27 @@ span.h-ag-type[class*='h-ava-'] {
    类别左条、直角，行内左距与思考段头对齐（10px）；展开展盒。
    0,3,1 压过 .h-tool.col(0,2,0)/.h-tool.oneclick.open(0,3,0) 的盒样式 */
 .hg-flow .h-tl .h-tool.col,
-.hg-flow .h-tl .h-tool.oneclick {
+.hg-flow .h-tl .h-tool.oneclick,
+/* v3.4.64：直角压扁扩到分屏（用户实锤「分屏 Bash 行左条带弧线，主窗口是
+   直的」）——4093 只补了分屏 padding，直角/透明底这组漏罩，8px 圆角残留
+   让 2px 左条两端成弧 */
+.hg-sub-body .h-tl .h-tool.col,
+.hg-sub-body .h-tl .h-tool.oneclick {
   background: transparent; border-color: transparent;
   border-left: 2px solid var(--h-accent, var(--accent));
   border-radius: 0; box-shadow: none; padding-left: 30px;   /* v3.4.44:▸ 盒钉死后 30px=图标列 32px */
 }
-.hg-flow .h-tl .h-tool.oneclick.open {
+.hg-flow .h-tl .h-tool.oneclick.open,
+.hg-sub-body .h-tl .h-tool.oneclick.open {
   background: color-mix(in srgb, var(--fg) 3%, transparent);
   border-color: var(--border);
   border-left: 2px solid var(--h-accent, var(--accent));
   border-radius: 8px;
 }
 .hg-flow .h-tl .h-tool.col.err,
-.hg-flow .h-tl .h-tool.err { border-left-color: var(--neon-red, #e06c75); }
+.hg-flow .h-tl .h-tool.err,
+.hg-sub-body .h-tl .h-tool.col.err,
+.hg-sub-body .h-tl .h-tool.err { border-left-color: var(--neon-red, #e06c75); }
 
 /* ---- 查阅聚组：🔍 查阅 · N 搜索 · M 文件（展开=左竖线+子行树） ---- */
 .h-tl-grp { display: flex; flex-direction: column; gap: 2px;

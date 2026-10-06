@@ -390,6 +390,12 @@
       // （历史重建路径后端已拦成 renew 行，这里挡实时流里漏网的）
       if (o.isCompactSummary) return;
       const c0 = (o.message || {}).content;
+      // v3.4.66：CLI 注入的 meta 图片标注行（Read 回图 "[Image: original …]"
+      // 纯标注串）不是真人输入——放行会被 closeRun() 腰斩工具 run 分组（重建
+      // 路还会渲染成幽灵用户泡+切错窗口起点，transcript.py 已同步整行丢弃）。
+      // 只精确打击纯标注串：isMeta 里还混着 peer 回传行（Another Claude
+      // session），不可全量拦
+      if (o.isMeta && typeof c0 === 'string' && /^\[Image: [^\]]+\]$/.test(c0.trim())) return;
       // v2.33：子代理内部的 tool_result 也分流进窗格（user 事件同带
       // parent_tool_use_id；不属于已跟踪 tab 的忽略）
       // v2.43：结果同时挂回主 flow 段内工具行（段不依赖窗格 tab 存活——
@@ -604,6 +610,7 @@
     _HG.proj = null;   // v3.1：投影随清场作废（snapshot 重放将重建）
     _subReset();
     _HG.think = null; _HG.noScroll = false; _HG.openState = null;
+    _HG.stickBtm = true;   // v3.4.67：粘底跟读态随清场复位（重建后默认贴底）
     _HG.histLineTs = 0; _HG.histActTs = 0; _HG.thinkPend = null;   // v3.2.2 ts 账 + v3.2.5 pend 随清场作废
     _HG.prevRowAt = 0; _HG.lastRowAt = 0;   // v3.3.1(F5)：事件时刻账随清场作废
     _HG.echoFast = null; _HG.seq = 0;
