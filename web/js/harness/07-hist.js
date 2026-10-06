@@ -71,11 +71,19 @@
     // ——起点=上一带 ts 行，下一条带 ts 的行到达时定格差值（转写无段级
     // 终点事实，邻行 ts 差是唯一诚实口径；后置入账同款时序：本行渲染前
     // 先收上一段的账）。v3.3.1：<3s 不显示（切片噪声非事实）
-    if (_HG.thinkPend && _ts > 0 && _ts > _HG.thinkPend.t0) {
+    // v3.4.46（用户实锤「思考持续时间全没了」）：结算条件 `_ts > t0` 在同批
+    // 行（thinking 与 tool 同 ts）上恒 false——pend 永不结算=时长永久空白。
+    // 放宽为 `>=`：同 ts 差值 0 按 v3.4.44 定调落模糊文案「持续了一小会」，
+    // 绝不留空白（宁可模糊不虚增、更不许空白）
+    if (_HG.thinkPend && _ts > 0 && _ts >= _HG.thinkPend.t0) {
       const _tp = _HG.thinkPend;
-      const _te = _tp.seg.isConnected ? _tp.seg.querySelector('[data-hg-think-t]') : null;
+      // v3.4.46 真因（用户实锤「思考持续时间全没了」）：回放期 seg 挂游离
+      // 缓冲 isConnected 恒 false（v3.2.13 已知事实），旧判据在此把 _te 判
+      // null=文案永不写入——快照命中时有（innerHTML 随存），转写回放全空。
+      // seg 引用必在，直接写，随缓冲一起换入
+      const _te = _tp.seg.querySelector('[data-hg-think-t]');
       const _dur = _ts - _tp.t0;
-      if (_te) _te.textContent = _dur >= 3000 ? '持续了 ' + _hgTurnDurTxt(_dur) : '持续了一小会';   // v3.4.44:短思考兜底模糊文案(用户定调)
+      if (_te) _te.textContent = _dur >= 3000 ? '持续了 ' + _hgTurnDurTxt(_dur) : '持续了一小会';
       _HG.thinkPend = null;
     }
     // v3.2.6：lastAgRow 只活一行——sub_open 紧贴 Agent 派发行（transcript 注

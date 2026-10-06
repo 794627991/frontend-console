@@ -154,6 +154,13 @@
     }
     finally {
       _HG.noScroll = false; _HG.openState = null;
+      // v3.4.46：末段思考兜底——最后一段 thinking 后无更多带 ts 行，pend
+      // 永挂=空白。渲染收尾一律落模糊文案（用户定调：宁可模糊不许空白）
+      if (_HG.thinkPend) {
+        const _tp2 = _HG.thinkPend; _HG.thinkPend = null;
+        const _te2 = _tp2.seg.querySelector('[data-hg-think-t]');
+        if (_te2 && !_te2.textContent) _te2.textContent = '持续了一小会';
+      }
       // 原子换入：单次 DOM 变更单次布局——滚动条从旧态直达终态，无中间帧
       const _frag = document.createDocumentFragment();
       while (_buf.firstChild) _frag.appendChild(_buf.firstChild);
