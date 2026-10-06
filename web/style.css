@@ -3362,6 +3362,10 @@ span.h-ag-type[class*='h-ava-'] {
 /* v3.1h：全部 AI 消息 hover 浮现动作条（复制/编辑参考 ChatGPT 式消息下方
    右对齐；回滚钮仍只在 can-rewind 授予后出现） */
 .h-msg.asst:hover .hg-msg-acts { display: flex; }
+/* v3.4.40（用户实锤「过程中回滚没有意义」）：hover 显条规则把回滚钮也带了
+   出来——中间正文 hover 即见即点。回滚钮单独上锁：只认 can-rewind 授予 */
+.h-msg.asst .hg-msg-acts .hg-mact[data-hg-rewind] { display: none; }
+.h-msg.asst.can-rewind .hg-msg-acts .hg-mact[data-hg-rewind] { display: inline-block; }
 .h-msg.asst.can-rewind .hg-msg-acts { display: flex; opacity: 0.4; transition: opacity 0.15s; }
 .h-msg.asst.can-rewind:hover .hg-msg-acts { opacity: 1; }
 .hg-mico { width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--border);

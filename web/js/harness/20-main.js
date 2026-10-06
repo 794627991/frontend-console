@@ -848,6 +848,9 @@ function buildClaudeHarnessTab(opts = {}) {
     if (_HG.busy) { showBanner('AI 正在回复，结束后再回滚', 2400, true); return; }
     if (!_HG.sid) { showBanner('当前没有活动会话', 2000, true); return; }
     const host = btn.closest('.h-msg.asst');
+    // v3.4.40：只有回合末结论（can-rewind 授予）可回滚——中间正文无资格，
+    // 防 hover 显条/其它路径误触把过程中之后的全部截断
+    if (!host || !host.classList.contains('can-rewind')) return;
     const anchor = host && host.dataset.rwa;
     if (!anchor) { showBanner('这条消息没有回滚锚点', 2400, true); return; }
     btn.disabled = true;
