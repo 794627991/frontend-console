@@ -562,7 +562,7 @@
     // v3.3.1：<3s 不显示——同批到达算出的 0/1 秒是切片噪声不是事实
     if (te && t0) {
       const _ms = Date.now() - t0;
-      te.textContent = _ms >= 3000 ? '持续了 ' + _hgTurnDurTxt(_ms) : '持续了几秒';   // v3.4.44:短思考兜底
+      te.textContent = _ms >= 3000 ? '持续了 ' + _hgTurnDurTxt(_ms) : '持续了一小会';   // v3.4.44:短思考兜底
     }
   }
   function _subTlAppendThink(t, raw) {
@@ -886,7 +886,7 @@
             for (const p of pend) {
               const te = p.seg.isConnected ? p.seg.querySelector('.h-think-seg-t') : null;
               const _dur = ts - p.ts;
-              if (te) te.textContent = _dur >= 3000 ? '持续了 ' + _hgTurnDurTxt(_dur) : '持续了几秒';   // v3.4.44:短思考兜底
+              if (te) te.textContent = _dur >= 3000 ? '持续了 ' + _hgTurnDurTxt(_dur) : '持续了一小会';   // v3.4.44:短思考兜底
             }
             pend.length = 0;
             lastTs = ts;
@@ -983,7 +983,7 @@
         for (const p of pend) {
           const te = p.seg.isConnected ? p.seg.querySelector('.h-think-seg-t') : null;
           const _dur2 = lastTs - p.ts;
-          if (te) te.textContent = _dur2 >= 3000 ? '持续了 ' + _hgTurnDurTxt(_dur2) : '持续了几秒';   // v3.4.44:短思考兜底
+          if (te) te.textContent = _dur2 >= 3000 ? '持续了 ' + _hgTurnDurTxt(_dur2) : '持续了一小会';   // v3.4.44:短思考兜底
         }
         // 定稿：dur=首末行 ts 差（缺 ts 落无数字「已工作」——不编造）。
         // v3.2.6R（审计F3）：collab 运行行 force 回放=「铺底即续流」——代理

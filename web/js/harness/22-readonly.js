@@ -79,10 +79,10 @@
     }
     return 0;
   }
-  // ZCode 口径：单段思考模糊「持续了几秒」（<60s）；长思考给精确值
+  // ZCode 口径：单段思考模糊「持续了一小会」（<60s）；长思考给精确值
   function thinkDurLabel(ms) {
-    if (!ms) return '持续了几秒';
-    if (ms < 60 * 1000) return '持续了几秒';
+    if (!ms) return '持续了一小会';
+    if (ms < 60 * 1000) return '持续了一小会';
     return '约 ' + D.fmtDur(ms / 1000);
   }
 
@@ -110,7 +110,7 @@
     return d;
   }
 
-  // 思考行（二级折叠）：💭 思考 · 持续了几秒 ›
+  // 思考行（二级折叠）：💭 思考 · 持续了一小会 ›
   function renderThinkRow(lines, hi) {
     const seg = document.createElement('div');
     seg.className = 'h-think-seg';

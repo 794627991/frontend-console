@@ -67,7 +67,7 @@
     // thinking 与 tool_use 同 ts，按自身 ts 计时长恒 0 秒）
     const _prevTs = (_ts > 0) ? (_HG.histLineTs || 0) : 0;
     if (_ts > 0) _HG.histLineTs = _ts;
-    // v3.2.5（用户定调「思考持续了几秒，和 ZCode 同款」）：回放思考段时长
+    // v3.2.5（用户定调「思考持续了一小会，和 ZCode 同款」）：回放思考段时长
     // ——起点=上一带 ts 行，下一条带 ts 的行到达时定格差值（转写无段级
     // 终点事实，邻行 ts 差是唯一诚实口径；后置入账同款时序：本行渲染前
     // 先收上一段的账）。v3.3.1：<3s 不显示（切片噪声非事实）
@@ -75,7 +75,7 @@
       const _tp = _HG.thinkPend;
       const _te = _tp.seg.isConnected ? _tp.seg.querySelector('[data-hg-think-t]') : null;
       const _dur = _ts - _tp.t0;
-      if (_te) _te.textContent = _dur >= 3000 ? '持续了 ' + _hgTurnDurTxt(_dur) : '持续了几秒';   // v3.4.44:短思考兜底模糊文案(用户定调)
+      if (_te) _te.textContent = _dur >= 3000 ? '持续了 ' + _hgTurnDurTxt(_dur) : '持续了一小会';   // v3.4.44:短思考兜底模糊文案(用户定调)
       _HG.thinkPend = null;
     }
     // v3.2.6：lastAgRow 只活一行——sub_open 紧贴 Agent 派发行（transcript 注
@@ -491,9 +491,9 @@
     } else {
       // v3.1：定稿文案对齐 ZCode（「思考 · 持续了 7 秒」）——计数态 Ns → 持续了 Ns
       // v3.3.1：<3s 原本不显示（切片噪声护栏）；v3.4.44（用户定调）：太短的
-      // 段落一片空白更怪——兜底 ZCode 同款模糊文案「持续了几秒」
+      // 段落一片空白更怪——兜底 ZCode 同款模糊文案「持续了一小会」
       const _ms = Date.now() - t0;
-      if (te) te.textContent = _ms >= 3000 ? '持续了 ' + _hgTurnDurTxt(_ms) : '持续了几秒';
+      if (te) te.textContent = _ms >= 3000 ? '持续了 ' + _hgTurnDurTxt(_ms) : '持续了一小会';
       // 仅当用户没碰过且在底部跟读时自动收段（正文已在段里，收起只留段头）
       if (seg.dataset.userToggled !== '1' && isNearBottom()) seg.classList.remove('open');
     }
