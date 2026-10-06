@@ -3995,6 +3995,13 @@ span.h-ag-type[class*='h-ava-'] {
 .hg-flow .h-tl .h-chev, .hg-sub-body .h-tl .h-chev {
   font-size: 10px; width: 14px; flex: none; line-height: 1;
   display: inline-flex; align-items: center; justify-content: center; }
+/* v3.4.37（用户最终通牒实锤：col 类折叠行 ▸ 比思考/查阅深 10px）：Bash/Edit
+   等带 .h-tool-head 的行=容器 10px + 头自带 10px 双叠=22px。头左距归零+垂直
+   统一 4px，几何基准全收口到容器：左条 2px + 容器 10px = ▸ 盒左缘恒 12px
+   （历史回放与实况路径、主流与分屏同一公式） */
+.hg-flow .h-tl .h-tool > .h-tool-head,
+.hg-sub-body .h-tl .h-tool > .h-tool-head {
+  padding: 4px 10px 4px 0; }
 .h-turn-body, .h-grp-proc { min-width: 0; }
 .h-tl:empty { display: none; }
 /* 时间线里的工具行去掉旧抽屉时代的块状底色——内联行更轻；
