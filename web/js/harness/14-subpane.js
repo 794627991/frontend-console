@@ -73,7 +73,9 @@
     const rows = [];
     for (const tid in (_HG.agents || {})) {
       const a = _HG.agents[tid];
-      if (!a || a.replay) continue;
+      // v3.4.43：collab 档案（SendMessage 协作包装）归 C 区转交线展示，
+      // 不进子代理目录（无转写可回放，点开必「未找到转写」空 tab）
+      if (!a || a.replay || a.collab) continue;
       rows.push(Object.assign({ tid }, a));
     }
     for (const a of ((_HG.dyn && _HG.dyn.agentsRpl) || [])) {

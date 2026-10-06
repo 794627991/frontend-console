@@ -42,7 +42,18 @@
         // taskId 修正：与真实代理同款 peerSent 反查（P4 实证 input.to=真实
         // agentId，与 subagents/agent-<id>.jsonl 同名）——包装 task_id 无转写，
         // 落它=轮询/回放/回填三路全断
-        if (sub === 'task_started'
+        // v3.4.43（用户实锤「目录混进 Task · 推送到 origin master」）：CLI 对
+        // run_in_background 的 Bash 等主链工具也发 task_started/task_notification
+        // （is_backgrounded=true、subagent_type 空）——协作包装判定命中后给它
+        // 建了 collab 档案（type 缺省 'Task'、desc=Bash description），目录里
+        // 伪装成子代理、点开必「未找到转写」。判别：无 peerSent 且 tool_use
+        // 行不是 Task/Agent（Bash 行在 rowById，_name 可查）=纯后台 shell，
+        // 整个 Task 生命周期处理跳过（不建档不建段不进目录）
+        const _shRow = (_HG.rowById || {})[tid];
+        const _shBg = sub === 'task_started' && !((_HG.peerSent || {})[tid])
+          && _shRow && _shRow._name !== 'Task' && _shRow._name !== 'Agent';
+        if (_shBg) { /* 后台 shell：非子代理，忽略 */ }
+        else if (sub === 'task_started'
             && _isCollabWrap(o.subagent_type, o.is_backgrounded)) {
           _subDrop(tid);
           if (tid) {
@@ -89,7 +100,7 @@
             }
             renderSideStatus();
           }
-        } else if (tid) {
+        } else if (tid && !_shBg) {
           if (!_HG.agents && sub === 'task_started') _HG.agents = {};
           let a = _HG.agents && _HG.agents[tid];
           if (!a && _HG.agents && sub === 'task_started') {
