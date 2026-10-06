@@ -262,7 +262,7 @@
       const sm = s.model || (_HG.models && _HG.models.default) || null;
       if (sm && sm !== _HG.model) {
         _HG.model = sm;
-        _hgQ('[data-hg-model]').innerHTML = '🧠 ' + esc(sm) + ' ▾';
+        _hgQ('[data-hg-model]').innerHTML = esc(sm) + ' ▾';
       }
     }
     _hgTitleEl.textContent = (s && s.title) || '会话';

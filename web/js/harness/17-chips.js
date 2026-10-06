@@ -43,5 +43,5 @@
     }   // v3.4.27（用户定调）：权限 chip 图标模式——默认态不显字，非默认显字提醒
   }
   function thinkChipLabel() {
-    const b = _hgQ('[data-hg-think]'); if (b) b.textContent = '💭 ' + (_HG.thinkLv ? '思考·' + _HG_THINKS[_HG.thinkLv] : '思考') + ' ▾';
+    const b = _hgQ('[data-hg-think]'); if (b) b.textContent = (_HG.thinkLv ? _HG_THINKS[_HG.thinkLv] : '默认') + ' ▾';   // v3.4.33：只显档位值（ZCode 同款）
   }

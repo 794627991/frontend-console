@@ -92,8 +92,8 @@ function buildClaudeHarnessTab(opts = {}) {
               <span class="hg-flex1"></span>
               <span class="hg-activity" data-hg-activity style="display:none"></span>
               <span class="hg-cost" data-hg-cost></span>
-              <button class="hg-chip" data-hg-think title="思考深度（对新会话生效；等级越高思考越充分）">💭 思考 ▾</button>
-              <button class="hg-chip" data-hg-model title="选择模型（对新会话生效）">🧠 模型 ▾</button>
+              <button class="hg-chip" data-hg-think title="思考深度（对新会话生效；等级越高思考越充分）">默认 ▾</button>
+              <button class="hg-chip" data-hg-model title="选择模型（对新会话生效）">模型 ▾</button>
               <button class="hg-send" data-hg-send title="发送（Enter）" aria-label="发送">
                 <svg class="hg-ic-send" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.4 21 12 4 4.6v5.5l10.6 1.9L4 13.9z"/></svg>
                 <svg class="hg-ic-stop" viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="4.5" width="15" height="15" rx="3"/></svg>
@@ -904,7 +904,7 @@ function buildClaudeHarnessTab(opts = {}) {
       const sm = (s && s.model) || j.default;
       if (sm && !_HG.model) {
         _HG.model = sm;
-        _hgQ('[data-hg-model]').innerHTML = '🧠 ' + esc(sm) + ' ▾';
+        _hgQ('[data-hg-model]').innerHTML = esc(sm) + ' ▾';
       }
     })
     .catch(() => {});
@@ -1645,7 +1645,7 @@ function buildClaudeHarnessTab(opts = {}) {
     if (!e.target.closest('.hg-pop') && !e.target.closest('.hg-chip')
         && !e.target.closest('.hg-proj')) closePop();
   });
-  if (_HG.model) _hgQ('[data-hg-model]').innerHTML = '🧠 ' + esc(_HG.model) + ' ▾';
+  if (_HG.model) _hgQ('[data-hg-model]').innerHTML = esc(_HG.model) + ' ▾';
 
   // ==================== 项目目录（v2.7；v2.20 改版）====
   // 参考 ZCode 布局：选择器挪到输入卡顶部（📁 目录名 ▾），下拉给最近
