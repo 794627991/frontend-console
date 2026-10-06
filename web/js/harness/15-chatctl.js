@@ -200,7 +200,7 @@
     // flash，实际一直跑非多模态 glm-5.3，发图全变 CDN 链接还以为坏了）
     const prev = _HG.model;
     const chip = _hgQ('[data-hg-model]');
-    const setChip = (mm) => { chip.innerHTML = '🧠 ' + esc(mm || '默认') + ' ▾'; };
+    const setChip = (mm) => { chip.innerHTML = esc(mm || '默认') + ' ▾'; };   // v3.4.50:纯值形态（补 v3.4.33 漏网——切模型路径的 🧠 回潮）
     _HG.model = m;
     setChip(m);
     if (_HG.sid) {
