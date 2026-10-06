@@ -19,7 +19,7 @@
       _HG.seq = j.seq || 0; _HG.epoch = j.epoch || null; _HG.alive = !!j.alive;
       _HG.visionCalls = null; _HG.peerWait = null;
       if (!j.lines.length) showWelcome();
-      else _histRender(j.lines, Math.max(0, j.lines.length - _HG.HIST_PAGE),
+      else _histRender(j.lines, _hgHistWinStart(j.lines),
                        { noFinalize: _HG.busy });
         // v3.2.1R(F1)：尾组定稿在 _histRender 渲染器内（用户实测问题1）；
         // R2-2：await 在途抢发变 busy——尾组留给 grpEnsure 认回续跑（重渲
@@ -103,8 +103,12 @@
   function _hgVisionSweep(dead) {
     const vc = _HG.visionCalls;
     if (!vc) return;
+    // v3.4.54：sid 归属校验——B 会话的 result/interrupted/exit 不再算清
+    // A 的 pending 识图线（切回 A 靠事件重放重建追踪，snapshot 路径
+    // 10-sse 建线同样执行）
     for (const id in vc) {
       const el = vc[id];
+      if (el && el.dataset.vsid !== (_HG.sid || '')) continue;
       const i = el && el.querySelector('i');
       if (i) i.innerHTML = '📤 已转交 · 等待结论回传' + (dead ? '（回合已结束）' : '（历史未完成）');
       if (el) el.dataset.done = String(Date.now());   // v2.35：未回传也定格（面板协作行收口）

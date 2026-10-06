@@ -371,6 +371,20 @@
   function isNearBottom() {
     return _hgFlow.scrollHeight - _hgFlow.scrollTop - _hgFlow.clientHeight < 120;
   }
+  function _hgHistWinStart(lines) {
+    // v3.4.59（用户实锤「A切B切A，A 的工作全不显示，不刷出新消息就一直不显示」）：
+    // 尾部窗口起点必须含**最后一个 user 行**（回合边界）——大回合（审计类一轮
+    // 数百行）按 HIST_PAGE 取尾会把 user 行切在窗口外：窗口内只剩无归属的工作
+    // 行（sub 行段头在窗口外）=页面近乎空白，直到新事件刷出才恢复
+    const n = lines.length;
+    let start = Math.max(0, n - _HG.HIST_PAGE);
+    // 全量回扫：最后一个 user 行可能是数百行之前（大回合），窗口内没有
+    // user 行时必须继续往前——回合完整性优先于窗口大小
+    for (let i = n - 1; i >= 0; i--) {
+      if (lines[i] && lines[i].role === 'user' && String(lines[i].text || '').trim()) { start = i; break; }
+    }
+    return Math.max(0, start);
+  }
   function _hgPrevRowAt() {
     // v3.3.1：上一 SSE 事件到达时刻（10-sse onmessage 入账）——思考段起点
     // 的挂钟基准。30s 新鲜度护栏：太久（空闲后偶发段）回退当下时刻，

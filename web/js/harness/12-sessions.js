@@ -47,6 +47,10 @@
       else delete _HG.liveAgentsBy[prevSid];
     }
     _HG.todos = null; _HG.agents = null;     // v2.30：会话动态随会话切换重置（todos 由回放重建）
+    // v3.4.54：识图 pending 线随切会话清场（此前漏在重置块外——切走后
+    // sweep 的 sid 校验兜底，切回靠事件重放重建；DOM 随 flow 销毁，桶存无意义）
+    Object.values(_HG.visionCalls || {}).forEach(_hgPeerLineStop);
+    _HG.visionCalls = null;
     _HG.dyn = null;                          // v2.32 面板派生态不跨会话（活动流/回合史/打标全重建）
     _HG.proj = null;                         // v3.1：前端投影不跨会话（/events 种子重建）
     _subReset();                             // v2.33：子代理实时窗格不跨会话
@@ -242,7 +246,7 @@
         if (j.ok && _HG.sid === sid) {
           _HG.seq = j.seq || 0; _HG.epoch = j.epoch || null; _HG.alive = !!j.alive;
           if (!j.lines.length) showWelcome();
-          else _histRender(j.lines, Math.max(0, j.lines.length - _HG.HIST_PAGE),
+          else _histRender(j.lines, _hgHistWinStart(j.lines),
                            { noFinalize: !!j.busy });   // v3.2.1R(F1)：尾组定稿在渲染器内；busy 活组留给 phResume
           // v2.20（3.png）：busy 会话尾部组是「进行中」的组——transcript 只到
           // 已落盘部分，无条件定稿会把组关死还漏占位气泡。留活 + 补占位，

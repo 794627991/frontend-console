@@ -330,6 +330,9 @@
           if (!isSub && (b.name === 'mcp__vision__analyze_image'
                          || b.name === 'mcp__4_5v_mcp__analyze_image')) {
             const el = renderPeerRelay('识图');
+            // v3.4.54：建线即记会话归属（与 task_started 建档记归属同款）
+            // ——sweep/配对按 sid 校验，B 会话的收尾事件不再算清 A 的线
+            el.dataset.vsid = _HG.sid || '';
             (_HG.visionCalls || (_HG.visionCalls = {}))[b.id] = el;
           } else {
             renderToolUse(b, isSub, o.parent_tool_use_id);
@@ -442,6 +445,10 @@
         if (tr) {
           const el = _HG.visionCalls[tr.tool_use_id];
           delete _HG.visionCalls[tr.tool_use_id];
+          // v3.4.54：归属校验（防御性）——只定格本会话的线；异会话线直接
+          // 丢弃跟踪（DOM 已随切场销毁）
+          if (el.dataset.vsid !== (_HG.sid || ''))
+            return;
           const vtxt = Array.isArray(tr.content)
             ? tr.content.filter(x => x && x.type === 'text').map(x => x.text).join('\n')
             : String(tr.content || '');
@@ -582,6 +589,9 @@
     _HG.subRows = {}; _HG.subBlk = {}; _HG.subTail = {}; _HG.subTailSeg = {};
     _HG.histAll = null; _HG.histStart = 0; _HG.histLive = false; _HG.histStale = false;
     _HG.todos = null; _HG.agents = null; _HG.dyn = null;
+    // v3.4.54：识图 pending 线随清场收（switchTo 重置块同款——两处必须同步）
+    Object.values(_HG.visionCalls || {}).forEach(_hgPeerLineStop);
+    _HG.visionCalls = null;
     _HG.proj = null;   // v3.1：投影随清场作废（snapshot 重放将重建）
     _subReset();
     _HG.think = null; _HG.noScroll = false; _HG.openState = null;
@@ -605,7 +615,7 @@
         if (!j.ok || _HG.sid !== sid) return;
         _HG.seq = j.seq || 0; _HG.epoch = j.epoch || null; _HG.alive = !!j.alive;
         if (!j.lines.length) showWelcome();
-        else _histRender(j.lines, Math.max(0, j.lines.length - _HG.HIST_PAGE),
+        else _histRender(j.lines, _hgHistWinStart(j.lines),
                          { noFinalize: !!j.busy });   // v3.2.1R(F1)：尾组定稿在渲染器内；busy 活组留给 phResume
         if (j.busy) phResume(); else grpFinalize(true, { hist: true, turnEnd: true });   // 幂等兜底（v3.2R1(P0)：回放不吃时钟；v3.2.4R(F5) 对齐 switchTo turnEnd）
         _hgLiveAgentsRestore(sid);   // v3.4.55（轻审 P4）：reset 重建路同样回填运行中子代理
