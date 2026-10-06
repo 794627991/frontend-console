@@ -55,7 +55,7 @@
     // 30min 护栏内）——压缩开始的 grpFinalize 切断的组在这里接回，不新开。
     // v3.4.52：compactResume 存归属 sid——只被归属会话消费（其它会话的
     // 工作事件不消费不清除，防跨会话污染：B 误 reopen 自己的组）
-    if (_HG.compactResume === _HG.sid) {
+    if (_HG.compactResume && _HG.compactResume === _HG.sid) {   // v3.4.55(轻审P6):真值前置防 null===null 假命中
       _HG.compactResume = null;
       const _rg = _hgTurnReopen();
       if (_rg) return _rg;
@@ -525,7 +525,7 @@
   function renderUser(text, images, files, live, tsMs) {
     // v3.4.36：真新用户消息=真回合边界——撤销压缩续跑标志，压缩后紧跟的
     // 新提问不许误接回旧组。v3.4.52：只清归属本会话的标志（防误清别的会话的）
-    if (_HG.compactResume === _HG.sid) _HG.compactResume = null;
+    if (_HG.compactResume && _HG.compactResume === _HG.sid) _HG.compactResume = null;   // v3.4.55(轻审P6):真值前置
     // v3.2：定稿带回合终点——回放用该回合最后一次活动的行 ts
     // （_HG.histActTs，renderHistLine 逐行维护；user 行自身不算活动）——
     // 工时=回合真实工作窗，不含「回合结束到用户下一条消息」的阅读空闲

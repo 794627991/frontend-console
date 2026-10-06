@@ -565,6 +565,16 @@
   function _hgSseResetLocal() {
     // 清场：内存态与 DOM 全部作废（switchTo 的重置块同款，供 snapshot/reset 用）
     endThinking(); closeRun();
+    // v3.4.55（轻审 P4）：清 agents 前运行档案入桶——reset/快照重建路
+    // 同样暂存（switchTo 同款判据），重建完成后 _hgLiveAgentsRestore 回填
+    if (_HG.agents && _HG.sid) {
+      _HG.liveAgentsBy = _HG.liveAgentsBy || {};
+      const _tgt = (_HG.liveAgentsBy[_HG.sid] = _HG.liveAgentsBy[_HG.sid] || {});
+      for (const t in _HG.agents) {
+        const a = _HG.agents[t];
+        if (a && !a.done && (!a.sid || a.sid === _HG.sid)) _tgt[t] = a;
+      }
+    }
     if (_HG.grp) phStopTimer(_HG.grp);
     _turnHeadStop();   // v3.2：回合秒表随清场全收（timer 不随 innerHTML 快照走，不收就漏）
     Object.values(_HG.subBlk || {}).forEach(b => { if (b && b.timer) clearInterval(b.timer); });
@@ -598,6 +608,7 @@
         else _histRender(j.lines, Math.max(0, j.lines.length - _HG.HIST_PAGE),
                          { noFinalize: !!j.busy });   // v3.2.1R(F1)：尾组定稿在渲染器内；busy 活组留给 phResume
         if (j.busy) phResume(); else grpFinalize(true, { hist: true, turnEnd: true });   // 幂等兜底（v3.2R1(P0)：回放不吃时钟；v3.2.4R(F5) 对齐 switchTo turnEnd）
+        _hgLiveAgentsRestore(sid);   // v3.4.55（轻审 P4）：reset 重建路同样回填运行中子代理
         _hgScrollBottom(true);
         setBusy(!!j.busy, j.busy_since);
         openSSE(sid, _HG.seq);

@@ -70,9 +70,14 @@
       lines.slice(start).forEach((l, i) => {
         // v3.4.52（致命双会话实锤连带）：行级隔离——此前任何一行抛错会中止
         // 整个重建（外层 catch 静默），症状=切回后只剩首行+spinner、其余
-        // 「全没」。单行失败留痕放行，不拖垮整个 flow
+        // 「全没」。单行失败留痕放行，不拖垮整个 flow。
+        // v3.4.55（轻审 P5）：失败行**跳过本行全部后续记账**（turnHi 章/
+        // hEnd 戳/lastAsst 授予）——失败行的 DOM 不存在，把当前行号盖到
+        // 上一行元素上=回合导航锚与收缩边界全部错位
+        let _rok = true;
         try { renderHistLine(l, start + i); }
-        catch (e) { try { console.error('[harness] hist line render failed @' + (start + i) + ' role=' + (l && l.role), e); } catch (_) {} }
+        catch (e) { _rok = false; try { console.error('[harness] hist line render failed @' + (start + i) + ' role=' + (l && l.role), e); } catch (_) {} }
+        if (!_rok) return;
         // v3.2.10：user 行盖 turn-hi 章——回合导航轨的 DOM 跳转锚（未渲染
         // 回合按 histAll 行号扩窗后凭此定位）
         if (l.role === 'user' && String(l.text || '').trim()) {

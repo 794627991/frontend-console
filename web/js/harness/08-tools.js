@@ -527,6 +527,9 @@
       const slot = row.querySelector('.h-tslots');
       const t0 = Date.now();
       row._agentTimer = setInterval(() => {
+        // 行已游离（切会话清场/回退重建后迟到的 tool_result 走 orphan 分支
+        // 永远清不到表）——首行自杀，防 interval+DOM 子树无界累积
+        if (!row.isConnected) { clearInterval(row._agentTimer); row._agentTimer = null; return; }
         if (slot) slot.innerHTML = statusBadge('running') +
           ' <span class="h-tsec">' + Math.round((Date.now() - t0) / 1000) + 's</span>';
       }, 1000);

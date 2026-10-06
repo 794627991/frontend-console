@@ -236,22 +236,6 @@
     } catch(_) {}
     return k === 'hg-subpane-narrow-pct' ? 30 : 50;
   }
-  function _hgSubPctGetLegacy() {
-    try {
-      const p = parseFloat(localStorage.getItem('hg-subpane-pct'));
-      if (p >= 25 && p <= 75) return p;
-      const w = +(localStorage.getItem('hg-subpane-w') || 0);
-      if (w >= 220 && w <= 640) {
-        const region = _hgSubRegion();
-        if (region > 0) {
-          const pct = Math.min(75, Math.max(25, w / region * 100));
-          try { localStorage.setItem('hg-subpane-pct', pct.toFixed(2)); } catch(_) {}
-          return pct;
-        }
-      }
-    } catch(_) {}
-    return 50;   // 默认真分屏：左右各半
-  }
   function _hgSubPctApply(pct) {
     if (!_subPaneEl) return;
     const region = _hgSubRegion();

@@ -91,7 +91,15 @@
     return j.sid;
   }
   async function dispatch(text, images, files, restoreInput) {
-    const sid = await ensureSession();
+    // ensureSession 的 fetch 在主 try 之外——网络失败曾是无 catch 的
+    // rejection，而 send() 先清了输入框：文本就此无声丢失
+    let sid = null;
+    try { sid = await ensureSession(); }
+    catch (e) {
+      showBanner('连接失败：' + e, 3000, true);
+      if (restoreInput) _hgInput.value = text;
+      return false;
+    }
     if (!sid) return false;
     // v2.27：引用拼装——取出即清（排队泵逐条 dispatch 时只有第一条带引用，
     // 后续排队项是新输入的独立消息）

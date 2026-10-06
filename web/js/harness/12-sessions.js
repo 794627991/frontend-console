@@ -304,9 +304,35 @@
       if (a.done) { delete lv[t]; continue; }
       _HG.agents = _HG.agents || {};
       _HG.agents[t] = a;
-      if ((_HG.rowById || {})[t]) { try { _hgAgentRowState(t, false); } catch (_) {} }
+      // v3.4.55（轻审 P1 修正）：行卡写**运行**徽章——_hgAgentRowState(t,false)
+      // 是收口函数会盖「完成」绿徽，方向正好反了（假完成的镜像 bug）。
+      // hgSubr 回绑那半是对的，保留
+      const r = (_HG.rowById || {})[t];
+      if (r && r.classList.contains('agentline')) {
+        const stEl = r.querySelector('.h-tslots');
+        if (stEl) stEl.innerHTML = statusBadge('running');
+        try { _hgAgentRowBindAid(t, r); } catch (_) {}
+      }
     }
+    // v3.4.55（轻审 P3）：回放档案去重——同名（desc 相等）回放条目与 live
+    // 运行条目并存会让目录同时出现在「正在运行」和「已结束」
+    const _lvDescs = new Set(Object.values(lv).filter(a => !a.done && a.desc).map(a => a.desc));
+    if (_lvDescs.size && _HG.dyn && Array.isArray(_HG.dyn.agentsRpl))
+      _HG.dyn.agentsRpl = _HG.dyn.agentsRpl.filter(x => !(x.replay && x.desc && _lvDescs.has(x.desc)));
     if (!Object.keys(lv).length) delete _HG.liveAgentsBy[sid];
+  }
+  // v3.4.55（轻审 P2）：转写重渲路行卡是伪 tid（'ag'+hi）不进 rowById——
+  // 回放工厂建行时按 desc 查桶判定「运行中」，直接画运行徽章
+  function _hgLiveAgentRunning(desc) {
+    const lv = (_HG.liveAgentsBy || {})[_HG.sid];
+    if (!lv) return false;
+    const d = String(desc || '').trim();
+    if (!d) return false;
+    for (const t in lv) {
+      const a = lv[t];
+      if (!a.done && a.desc && a.desc === d) return true;
+    }
+    return false;
   }
   function showWelcome() {
     _hgFlow.innerHTML = `
