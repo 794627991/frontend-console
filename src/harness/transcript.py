@@ -132,7 +132,13 @@ def transcript_for(s):
                             _m_pos = t.find("Another Claude session sent a message")
                             if _m_pos >= 0 and "<cross-session-message" in t:
                                 _seg = t[_m_pos:]
-                                nm = _re.search(r'from-name="([^"]*)"', _seg)
+                                # v3.4.68：补 from= 口径——SubagentHandback 帧
+                                # 是 <agent-message from="agentId">（无
+                                # from-name=），旧提取落「其他会话」→ 转交线按
+                                # 名配对 miss 永不定格（用户实锤「等待回传一直
+                                # 没修复好」；live 侧 10-sse:482 早有 from=）
+                                nm = _re.search(r'from-name="([^"]*)"', _seg) \
+                                    or _re.search(r'\bfrom="([^"]*)"', _seg)
                                 body = _re.search(
                                     r"<cross-session-message[^>]*>(.*)</cross-session-message>",
                                     _seg, _re.S)
@@ -157,7 +163,9 @@ def transcript_for(s):
                             # 配对定格
                             _am = _re.search(r"<agent-message[^>]*>[\s\S]*?</agent-message>", t)
                             if _am:
+                                # v3.4.68：同上方 cross-session 分支——补 from= 口径（handback 帧形态）
                                 _anm = _re.search(r'from-name="([^"]*)"', t) \
+                                    or _re.search(r'\bfrom="([^"]*)"', t) \
                                     or _re.search(r"\bname=\"([^\"]*)\"", t)
                                 lines.append({"role": "peer",
                                               "name": (_anm.group(1) if _anm else "协作代理"),
@@ -208,7 +216,8 @@ def transcript_for(s):
                                 _am = _re.search(r"<agent-message[^>]*>[\s\S]*?</agent-message>", _tx)
                                 if _am:
                                     _anm = _re.search(r'from-name="([^"]*)"', _tx) \
-                                        or _re.search(r"\bname=\"([^\"]*)\"", _tx)
+                                        or _re.search(r'\bfrom="([^"]*)"', _tx) \
+                                        or _re.search(r"\bname=\"([^\"]*)\"", _tx)   # v3.4.68：补 from=（handback 帧）
                                     lines.append({"role": "peer",
                                                   "name": (_anm.group(1) if _anm else "协作代理"),
                                                   "text": _am.group(0).strip()[:8000],

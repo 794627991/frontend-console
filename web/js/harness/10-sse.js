@@ -348,18 +348,29 @@
               // message 入 live 来向队列（按目标 agentId 键——运行中窗格即刻
               // 收到，未开的等绑 id 后冲）
               _subUserQueue(String(b.input.to), b.input.message || '');
+              // v3.4.68（用户定调「这个也不应该存在吧？等待啥呢？」）：to 命中
+              // 本会话子代理档案（agentId/taskId 匹配）=续派复核，不是跨会话
+              // 协作——不画转交线（.h-switch 线是「等待回传」语义的载体，线
+              // 不存在则动态页协作行/全局等待态无从谈起）。档案/段锚照建
+              // （生命周期与内容归属是真的）。首次续派时原子代理档案的
+              // agentId 已由完成回填（10-sse task_result 路径），可命中。
+              const _aid0 = String(b.input.to);
+              const _localResend = Object.values(_HG.agents || {})
+                .some(a => a && (a.agentId === _aid0 || a.taskId === _aid0));
               // v2.49：协作归一子代理段——SendMessage 转交线隐藏（数据锚全保留：
               // dataset.t0/peer/done/psum 照写，面板协作行/定格配对/快照序列化
               // 链路不动），识图转交原形态保留（唯一例外）
-              const _rEl = renderPeerRelay(b.input.to);
-              if (_rEl && !String(b.input.to).includes('识图'))
-                _rEl.style.display = 'none';
+              if (!_localResend) {
+                const _rEl = renderPeerRelay(b.input.to);
+                if (_rEl && !_aid0.includes('识图'))
+                  _rEl.style.display = 'none';
+              }
               // v2.58：续派（to=agentId 形态）立即建**新段**——轮询/回传/回填
               // 全部归属新段。旧实现等首个子代理事件才兜底建段（常缺失），续审
               // 内容经轮询流回旧段（用户实锤「咋又跑上一个审计会话里去了」）。
               // 识图不建（转交通道不同）
-              if (/^[0-9a-zA-Z_-]{8,64}$/.test(String(b.input.to))) {
-                const _aid = String(b.input.to);
+              if (/^[0-9a-zA-Z_-]{8,64}$/.test(_aid0)) {
+                const _aid = _aid0;
                 (_HG.agents || (_HG.agents = {}))[b.id] = {
                   type: 'SendMessage', desc: '', t0: Date.now(),
                   done: false, doneAt: 0, collab: true, bg: true, taskId: _aid };
@@ -486,6 +497,13 @@
         // 线永久「等待结论回传」（用户实锤「明明已完成还等协作回传」）。
         // 名字补 from= 提取；body 优先剥 agent-message 壳
         const nm = peerText.match(/from-name="([^"]*)"/) || peerText.match(/\bfrom="([^"]*)"/);
+        // v3.4.68：from 命中本会话子代理档案=续派复核的回报——线已不建
+        // （派发侧 _localResend），这里也不渲染不建段：renderPeer 冻结 miss
+        // 后会走「miss 新建段」路径凭空冒协作段。报告本体主回合已消费，
+        // 档案 brief 有摘要，无需再落可视化
+        if (nm && nm[1] && Object.values(_HG.agents || {})
+            .some(a => a && (a.agentId === nm[1] || a.taskId === nm[1])))
+          return;
         const body = peerText.match(/<cross-session-message[^>]*>([\s\S]*)<\/cross-session-message>/)
           || peerText.match(/<agent-message[^>]*>([\s\S]*?)<\/agent-message>/);
         renderPeer(nm ? nm[1] : '其他会话', (body ? body[1] : peerText).trim());
@@ -638,13 +656,17 @@
         if (!j.lines.length) showWelcome();
         else _histRender(j.lines, _hgHistWinStart(j.lines),
                          { noFinalize: !!j.busy });   // v3.2.1R(F1)：尾组定稿在渲染器内；busy 活组留给 phResume
-        if (j.busy) phResume(); else grpFinalize(true, { hist: true, turnEnd: true });   // 幂等兜底（v3.2R1(P0)：回放不吃时钟；v3.2.4R(F5) 对齐 switchTo turnEnd）
+        if (j.busy) phResume(true); else grpFinalize(true, { hist: true, turnEnd: true });   // 幂等兜底（v3.2R1(P0)：回放不吃时钟；v3.2.4R(F5) 对齐 switchTo turnEnd）
         _hgLiveAgentsRestore(sid);   // v3.4.55（轻审 P4）：reset 重建路同样回填运行中子代理
         _hgAskSync(sid);   // v3.4.61：重建路 seq 已跳过 ask 帧——待答面板靠后端快照拉回
         _hgScrollBottom(true);
-        setBusy(!!j.busy, j.busy_since);
+        setBusy(!!j.busy, j.busy_since);   // v3.4.71：旧序恢复（phResume 已带参先行），活动条/发送键态回填
         openSSE(sid, _HG.seq);
         refreshSessions();
+        // v3.4.68R3：reset 重建出口同挂覆盖度自检（openSSE 之后 2s=尘埃落定，
+        // snapshot 清场若再吞成果由审计兜住）
+        setTimeout(() => _hgCoverageAudit(sid, j.lines.length, 'sse-rebuild'), 2000);
+        _hgDiag('rebuild', 'reset 重建完成 lines=' + j.lines.length + ' busy=' + !!j.busy);
       })
       .catch(() => {})
       .finally(() => { if (_HG.histRebuilding === sid) _HG.histRebuilding = null; });
@@ -684,10 +706,18 @@
       // 事件顺序保证清场时机正确）。复审 P4：清场→首帧重放的间隙也是
       // 「空 flow + saveCache」窗口——同置重建标志，首帧到达即清
       if (a.mode === 'snapshot') {
+        _hgDiag('sse', 'ack=snapshot 清场重放（histAll=' + (((_HG.histAll)||[]).length) + '）');
+        // v3.4.68R3：清场前抢存转写行数基准（resetLocal 会清 histAll）——
+        // 重放落定后跑覆盖度自检，缺口大即整帧重渲自愈（用户实锤「切回后
+        // 工作中的显示全没了等很多秒不复原」——保留窗若不含清场前内容，
+        // 重放救不回，此审计是最后防线）
+        const _snapBase = (_HG.histAll || []).length;
         _hgSseResetLocal();
         _HG.histRebuilding = sid;
         const _hbrSid = sid;
         setTimeout(() => { if (_HG.histRebuilding === _hbrSid) _HG.histRebuilding = null; }, 1500);
+        setTimeout(() => _hgCoverageAudit(sid, _snapBase, 'sse-snapshot'), 2000);
+        _hgBusyResync(sid, 2100);   // v3.4.69d：清场重放落定后 busy 会话无条件重渲兜底
       }
     });
     es2.addEventListener('reset', (ev) => {
@@ -819,8 +849,13 @@
                            // v3.0 滚动记忆（对照 ZCode chatSessionScrollMemory 五元组）：
                            // 贴底记忆→切回回底（跟读新消息）；否则恢复钳制后的
                            // scrollTop——翻历史中途切走再切回，视口不再被拽到底
+                           // v3.4.68（用户实锤「每次重开都不是直达底部的」）：
+                           // atBottom 改用粘底标志——isNearBottom() 是切走瞬间的
+                           // 单点采样，流式输出撑高 flow 时必失真（贴底跟读也被
+                           // 记成「在看历史」，切回永远停半空）。stickBtm 只在
+                           // 用户真上翻（gap>150）才 false，语义即「是否跟读」
                            scroll: { top: _hgFlow.scrollTop, h: _hgFlow.scrollHeight,
-                                     ch: _hgFlow.clientHeight, atBottom: isNearBottom() },
+                                     ch: _hgFlow.clientHeight, atBottom: _HG.stickBtm !== false },
                            echoFast: _HG.echoFast || null,
                            histStart: _HG.histStart,
                            // v2.43.2（R3 复审 F-R3）：降级快照 histLive 恒 false
@@ -890,7 +925,7 @@
         if (j.epoch && _HG.epoch && j.epoch !== _HG.epoch) { _hgSseRebuild(sid); return; }
         _hgProjSeed(j);                    // v3.1：投影/队列种子随轮询对齐服务端真相
         setBusy(!!j.busy, j.busy_since);
-        if (j.busy) phResume();
+        if (j.busy) phResume(true);
       })
       .catch(() => { if (_HG.sid === sid) setBusy(false); });
   }

@@ -429,7 +429,7 @@
   }
   // v3.2.6（ZCode 子智能体模式）：主流 Agent/Task 派发行 = 单行任务卡——
   // 对照 ZCode agent.tsx 产品边界「父对话只保留单行摘要，完整 child timeline
-  // 统一从右侧 tab 查看」：🤖 + 「子智能体」类别词 + 类型高亮 chip + 描述 +
+  // 统一从右侧 tab 查看」：✦ + 「子智能体」类别词 + 类型高亮 chip + 描述 +
   // （运行中）最新子活动流 + 状态徽章/秒表 + ▣ 打开窗格。展开体恒空——
   // 过程细节一律进窗格时间线（14-subpane），本行不再折叠展开
   function _hgAgentRowBuild(tid, type, desc) {

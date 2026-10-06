@@ -73,7 +73,7 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "name:HiClawPc;platform:win32;arch:x64;user:%s;")
 
 SESSION_PATH = os.path.join(DATA_DIR, "hiklink_session.json")
-WELCOME_TEXT = ("🤖 前端小助手已上线！直接发消息即可下达指令，"
+WELCOME_TEXT = ("✦ 前端小助手已上线！直接发消息即可下达指令，"
                 "回复会自动推回。/stop 停止当前任务。")
 _SESSION_LOCK = threading.Lock()
 

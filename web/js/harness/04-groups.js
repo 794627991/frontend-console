@@ -64,7 +64,11 @@
     // 占位动画不重启：正文该到已到才走得到恢复路径。
     // v2.18.1：已定稿的组（dataset.finalized）不接回——正文切组刚定稿旧组，
     // 回扫必须放它过去，让下面新建组承接新回复。
-    const root = _hgFlow.querySelector('.h-grp:last-of-type:not([data-finalized])');
+    // v3.4.71（复核 P3-裂组根因）：last-of-type 按标签判兄弟末位——busy 的
+    // 流级 spinner（div.hg-spin-row，setBusy 追加在组后）会让活组失去
+    // last-of-type=认回落空→幻影双组。改取「最后一个未定稿组」容忍尾部
+    // 非组行（spinner/提示条等）
+    const root = [..._hgFlow.querySelectorAll('.h-grp:not([data-finalized])')].pop() || null;
     if (root) {
       const thinkBox = root.querySelector('.h-drawer.think');
       const execBox = root.querySelector('.h-drawer.exec');
@@ -203,9 +207,15 @@
       if (frozen) frozen.remove();
     }
   }
-  function phResume() {
+  function phResume(forceBusy) {
+    // v3.4.71（复核 P3 返工·方案 a）：busy 真值由显式参数携带——调用方常在
+    // setBusy 回填前调（switchTo 入口已置 false），读 _HG.busy 恒 false=三处
+    // 门控全失效（头不亮/正文早退）。参数优先，_HG.busy 兜底
+    const _busy = (forceBusy === true) || _HG.busy;
     // 已有活的组对象且占位在屏（从未切走）→ 不用救，重开 timer 反而双计时
-    const root = _hgFlow.querySelector('.h-grp:last-of-type:not([data-finalized])');
+    // v3.4.71：认回选择器同步 grpEnsure 加固——last-of-type 会被 busy 的
+    // 流级 spinner（div.hg-spin-row）打断，改取最后一个未定稿组
+    const root = [..._hgFlow.querySelectorAll('.h-grp:not([data-finalized])')].pop() || null;
     if (_HG.grp && _HG.grp.root === root && _HG.grp.ph && _HG.grp.ph.isConnected) return;
     // v3.3.2(D3)：待答 ask 卡在场=可见占位（等用户选择），不再复暖「正在
     // 思考」气泡——两者并存是状态谎言
@@ -216,6 +226,10 @@
       // 调用方必须已确认 busy，否则会凭空造出占位气泡。
       const g = grpEnsure(true);
       phStart(g);
+      // v3.4.70（用户最后通牒「三件套一个不能少」）：busy 时新建组也必须亮
+      // 「工作中」头+秒表——旧代码此处不亮头（回放模式组头默认隐藏，无人
+      // 再开）=「一点消息没有时切回只剩占位、头全无」
+      if (_busy) _turnHeadShow(g);
       return;
     }
     const thinkBox = root.querySelector('.h-drawer.think');
@@ -224,12 +238,17 @@
     // 解引用会抛）——认回条件与 grpEnsure 对齐：think 在场 + （旧 exec 或新 tl）
     if (!thinkBox) return;
     if (!execBox && !root.querySelector('.h-tl')) return;
-    if (root.querySelector(':scope > .h-msg.asst:not(.ph)')) return;   // 正文已出，不占位
+    // v3.4.70：busy 是事实源——正文在场≠回合结束（中间 text 块/并行工具都
+    // 会落正文），busy 时绝不早退，头必须亮。仅非 busy（冻结完成态）保留旧
+    // 早退语义（正文=最终回复已出）
+    if (!_busy && root.querySelector(':scope > .h-msg.asst:not(.ph)')) return;
     const g = grpFromDom(root, thinkBox, execBox);
     _HG.grp = g;
     // v3.2：认回的活组若正跑（折叠头在场）→ 重启「工作中」秒表（timer 不随
     // innerHTML 快照携带，切回不补就是死表）
-    if (g.head && g.head.style.display !== 'none' && _HG.busy) _turnHeadShow(g);
+    // v3.4.70：去掉 display!=='none' 外层条件——它挡住 _turnHeadShow 自身的
+    // 显头逻辑（display==='none' 正是要它翻开的场景）
+    if (_busy) _turnHeadShow(g);
     // v3.2.29（用户定调「占位只在空工作区」）：认回组已有思考/工具行就
     // 不再复暖占位气泡——状态由左下角活动条承担；冻结占位残留一并摘除
     if (g.tl && g.tl.children.length) { phRemove(g); return; }

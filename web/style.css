@@ -2569,7 +2569,7 @@ html {
    在右侧窗格时间线查看（对照 ZCode agent.tsx 产品边界）。段根仍留在 DOM
    （回填/收尾/轮询兜底扫描/快照恢复的机器挂点），视觉全隐 */
 .h-subblock { display: none !important; }
-/* Agent/Task 单行任务卡解剖：🤖 子智能体 | 类型 chip（按类型名哈希取色）|
+/* Agent/Task 单行任务卡解剖：✦ 子智能体 | 类型 chip（按类型名哈希取色）|
    描述（单行省略）| 实时活动流（运行中活字）| 状态徽章/秒表/摘要 | 整行可点
    开窗格。无折叠体（canToggle=false 的等价物） */
 .h-tool.agentline { max-width: 100%; }
@@ -3524,6 +3524,15 @@ span.h-ag-type[class*='h-ava-'] {
   0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 40%, transparent); }
   50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 12%, transparent); }
 }
+/* v3.4.68（用户定调「保持主题色但不能太单一」）：dot 与状态字收 --accent
+   （跟主题走）；dur 保持 3508 默认 --muted + 3510/3511 run/wait 状态色
+   （--hgd-* 仅此两处在用，勿删变量）、3517 warn 保持 --h-warn——主色+
+   状态色秒表+警示点缀的层次。后置同构覆盖三态 dot 规则；pulse 动画留在
+   原规则不受影响。 */
+.hg-dyn-capsule .hg-caps-dot,
+.hg-dyn-capsule.run .hg-caps-dot,
+.hg-dyn-capsule.wait .hg-caps-dot { background: var(--accent); }
+.hg-dyn-capsule .hg-caps-st { color: var(--accent); }
 
 /* ---- 分区卡片骨架 ---- */
 .hg-dyn-sec {

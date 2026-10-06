@@ -1,7 +1,7 @@
 // harness hist.js (v3.0 自 buildClaudeHarnessTab 拆出,定义体零改动,缩进保持原样)
   function renderHistTool(l, hi) {
     // v3.2.6（ZCode 子智能体模式）：历史 Agent/Task 派发行走单行任务卡工厂
-    //（与 live 同解剖：🤖 子智能体 + 类型 chip + 描述 + ▣/点击开窗格），无
+    //（与 live 同解剖：✦ 子智能体 + 类型 chip + 描述 + ▣/点击开窗格），无
     // 展开体；登记 lastAgRow 供紧随其后的 sub_open 行回绑 agentId（转写注入
     // 保证 sub_open 紧贴派发行，隔行即失效——见 renderHistLine 顶部清账）
     if (((_H_TOOL_CFG[l.text] || {}).kind) === 'agent') {

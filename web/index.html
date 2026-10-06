@@ -1,10 +1,21 @@
 ﻿<!doctype html>
 <html lang="zh-CN">
 <head>
+<script>
+console.log('[harness] boot v3.4.73');
+// WebView2 无 DevTools：页面可见版本徽标（4s）——直接证明 index.html 新旧
+document.addEventListener('DOMContentLoaded', function() {
+  var b = document.createElement('div');
+  b.textContent = 'v3.4.73';
+  b.style.cssText = 'position:fixed;top:0;left:50%;transform:translateX(-50%);z-index:99999;background:#333;color:#fff;padding:2px 12px;border-radius:0 0 8px 8px;font:11px/1.6 monospace;pointer-events:none;opacity:.92';
+  document.body.appendChild(b);
+  setTimeout(function(){ b.remove(); }, 4000);
+});
+</script>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>前端控制台</title>
-<link rel="stylesheet" href="web/style.css?v=3.4.65">
+<link rel="stylesheet" href="web/style.css?v=3.4.73">
 <link rel="stylesheet" href="vendor/xterm.min.css">
 <link rel="stylesheet" href="vendor/hljs/atom-one-dark.min.css">
 <script src="vendor/xterm.min.js"></script>
@@ -424,29 +435,29 @@
 <script src="web/js/snip.js"></script>
 <!-- v3.0:claude-harness.js 拆分为 harness/ 21 文件(编号锁加载顺序,不得调换;
      state/base 提供共享状态与基础表,main 最后组装 builder,shell 挂顶层外壳) -->
-<script src="web/js/harness/01-state.js"></script>
-<script src="web/js/harness/02-base.js"></script>
-<script src="web/js/harness/03-ask-md.js"></script>
-<script src="web/js/harness/04-groups.js"></script>
-<script src="web/js/harness/05-subblk.js"></script>
-<script src="web/js/harness/06-relay.js"></script>
-<script src="web/js/harness/07-hist.js"></script>
-<script src="web/js/harness/08-tools.js"></script>
-<script src="web/js/harness/09-fx.js"></script>
-<script src="web/js/harness/10-sse.js"></script>
-<script src="web/js/harness/11-histcache.js"></script>
-<script src="web/js/harness/12-sessions.js"></script>
-<script src="web/js/harness/13-panel.js"></script>
-<script src="web/js/harness/14-subpane.js"></script>
-<script src="web/js/harness/15-chatctl.js"></script>
-<script src="web/js/harness/16-input-fx.js"></script>
-<script src="web/js/harness/17-chips.js"></script>
-<script src="web/js/harness/18-managers.js"></script>
-<script src="web/js/harness/19-modal.js"></script>
-<script src="web/js/harness/20-main.js"></script>
-<script src="web/js/harness/21-shell.js"></script>
-<script src="web/js/harness/22-readonly.js"></script>
-<script src="web/js/harness/23-reducer.js"></script>
-<script src="web/js/init.js"></script>
+<script src="web/js/harness/01-state.js?v=3.4.73"></script>
+<script src="web/js/harness/02-base.js?v=3.4.73"></script>
+<script src="web/js/harness/03-ask-md.js?v=3.4.73"></script>
+<script src="web/js/harness/04-groups.js?v=3.4.73"></script>
+<script src="web/js/harness/05-subblk.js?v=3.4.73"></script>
+<script src="web/js/harness/06-relay.js?v=3.4.73"></script>
+<script src="web/js/harness/07-hist.js?v=3.4.73"></script>
+<script src="web/js/harness/08-tools.js?v=3.4.73"></script>
+<script src="web/js/harness/09-fx.js?v=3.4.73"></script>
+<script src="web/js/harness/10-sse.js?v=3.4.73"></script>
+<script src="web/js/harness/11-histcache.js?v=3.4.73"></script>
+<script src="web/js/harness/12-sessions.js?v=3.4.73"></script>
+<script src="web/js/harness/13-panel.js?v=3.4.73"></script>
+<script src="web/js/harness/14-subpane.js?v=3.4.73"></script>
+<script src="web/js/harness/15-chatctl.js?v=3.4.73"></script>
+<script src="web/js/harness/16-input-fx.js?v=3.4.73"></script>
+<script src="web/js/harness/17-chips.js?v=3.4.73"></script>
+<script src="web/js/harness/18-managers.js?v=3.4.73"></script>
+<script src="web/js/harness/19-modal.js?v=3.4.73"></script>
+<script src="web/js/harness/20-main.js?v=3.4.73"></script>
+<script src="web/js/harness/21-shell.js?v=3.4.73"></script>
+<script src="web/js/harness/22-readonly.js?v=3.4.73"></script>
+<script src="web/js/harness/23-reducer.js?v=3.4.73"></script>
+<script src="web/js/init.js?v=3.4.73"></script>
 </body>
 </html>

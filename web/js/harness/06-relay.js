@@ -10,7 +10,13 @@
     try {
       const j = await (await fetch('/api/harness/transcript?sid=' + encodeURIComponent(sid))).json();
       if (!j.ok || _HG.sid !== sid) return;
-      // v3.2.1R(F6)：对齐 _hgSseRebuild 的清场——旧行映射（rowById/subBlk/
+      // v3.4.70（复核 P1）：水位守卫捕获点必须在 **await 之后、resetLocal
+      // 之前**——await 窗口内到达的 SSE 帧会抬高 _HG.seq（帧内容已入旧
+      // DOM），resetLocal 清 0 后若水位回退到响应构建时的 j.seq，该帧不重
+      // 发=单行暂缺。此处捕获含最新帧；resetLocal 后取 max（同 epoch）；
+      // 换代（epoch 不同）旧空间作废从 j.seq 重起
+      const _preSeq = _HG.seq, _preEp = _HG.epoch;
+      // v3.2.1R(F6）：对齐 _hgSseRebuild 的清场——旧行映射（rowById/subBlk/
       // subRows/turnTicks）指向 innerHTML 替换后的游离节点，迟到事件会往游
       // 离行写徽章；epoch 同步换代水位（回滚必换代，带着旧 epoch 重开流会
       // 多吃一轮 ack reset 重建）。回滚后旧快照作废（存的是回滚前 DOM）
@@ -18,7 +24,13 @@
       _hgSseResetLocal();
       _HG.histRebuilding = sid;    // 轻审 P2+复审 P3：sid 化按归属自清
       try {
-      _HG.seq = j.seq || 0; _HG.epoch = j.epoch || null; _HG.alive = !!j.alive;
+      // v3.4.69d（轻审观察1收口）+ v3.4.70 P1 修正：同代水位不回退——await
+      // 窗口内到达的 SSE 帧已入旧 DOM 并抬高水位，清场后若回退到响应构建时
+      // 的 j.seq，该帧不重发=单行暂缺。用清场前捕获的 _preSeq 取 max（同
+      // epoch）；换代（epoch 不同）旧空间作废从 j.seq 重起
+      _HG.seq = (String(j.epoch || '') === String(_preEp || ''))
+        ? Math.max(j.seq || 0, +_preSeq || 0) : (j.seq || 0);
+      _HG.epoch = j.epoch || null; _HG.alive = !!j.alive;
       _HG.visionCalls = null; _HG.peerWait = null;
       if (!j.lines.length) showWelcome();
       else _histRender(j.lines, _hgHistWinStart(j.lines),
@@ -27,11 +39,46 @@
         // R2-2：await 在途抢发变 busy——尾组留给 grpEnsure 认回续跑（重渲
         // 抹活组是预存在问题，不放大成裂两组）
       if (!_HG.busy) setBusy(false);   // R2-2：await 在途变 busy 不清指示（事件流自会维护）
+      // v3.4.69（用户实测 resync 后「回合头丢了」）：对齐 12-sessions:279 与
+      // _hgSseRebuild:659 的既有模式——busy 会话渲染完必须 phResume 认回活组
+      // （亮「工作中」头+续秒表），否则 resync 重渲后头永久隐藏（回放模式
+      // _turnHeadShow 不亮头，见 07-hist:243 注释）
+      if (_HG.busy) phResume(true); else grpFinalize(true, { hist: true, turnEnd: true });
+      // v3.4.72（用户实锤「正在执行没有了」）：resetLocal 的 innerHTML='' 把
+      // 流级 spinner 行（正在执行…）一起清掉，而本函数 busy 分支不重调
+      // setBusy（actStart 不能重置）——直接 _hgSpinShow 幂等重建（在场即不
+      // 重加；追加在组后，认回选择器已加固不受影响）
+      _hgSpinShow(!!_HG.busy);
+      // v3.4.69d（用户实锤「执行中的动态没有了」）：对齐 12-sessions:281/
+      // _hgSseRebuild:660 的第三件配套——重渲后回填运行中子代理 live 档案
+      // （_hgSseResetLocal 清了 agents，不回填=动态页/胶囊/秒表全静默）
+      _hgLiveAgentsRestore(sid);
+      renderSideStatus();
       _hgAskSync(sid);   // v3.4.61：回滚换代重建路——旧 ask 大概率失效，按后端快照校验（收面板/拉回）
       refreshSessions();
       _hgScrollBottom(true);
+      _hgDiag('reload', '重渲完成 lines=' + j.lines.length + ' busy=' + !!_HG.busy + ' phResume/live 档案已回填');
+      // v3.4.69：对齐 12-sessions 回底模式——渲染后图片懒加载/占位补画仍会
+      // 撑高 flow，两帧 + 600ms 终兜确保重渲后贴底
+      requestAnimationFrame(() => requestAnimationFrame(() => _hgScrollBottom(true)));
+      setTimeout(() => { if (_HG.sid === sid) _hgScrollBottom(true); }, 600);
+      // v3.4.68R3：重渲出口同挂覆盖度自检（自愈的渲染也自检——清场竞速若吞
+      // 重渲成果，此处是最后一道网）
+      setTimeout(() => _hgCoverageAudit(sid, j.lines.length, 'reload-flow'), 1200);
       } finally { if (_HG.histRebuilding === sid) _HG.histRebuilding = null; }
-    } catch(_) {}
+    } catch(e) {
+      // v3.4.69e（用户实锤「切回后真的什么都没有了」）：重渲失败不得静默——
+      // 此刻 flow 已被 resetLocal 清空，吞错=永久空白。页面可见+控制台留痕，
+      // 并回退拉一次转写重试渲染（再失败至少 banner 指路手动刷新）
+      try { console.error('[harness] reload-flow failed:', e); } catch(_) {}
+      try { showBanner('消息流重建失败（' + (e && e.message || e) + '），正在重试…', 4000, true); } catch(_) {}
+      try {
+        const j2 = await (await fetch('/api/harness/transcript?sid=' + encodeURIComponent(sid))).json();
+        if (j2.ok && _HG.sid === sid && j2.lines.length)
+          _histRender(j2.lines, _hgHistWinStart(j2.lines), { noFinalize: _HG.busy });
+        if (_HG.busy) { phResume(true); _hgDiag('reload', '重试渲染完成，busy 头已补亮'); }
+      } catch(_) { try { showBanner('重建仍失败，请手动刷新页面', 6000, true); } catch(_) {} }
+    }
   }
   function renderRaw(text) {
     const d = document.createElement('div'); d.className = 'h-raw'; d.textContent = text;
@@ -317,6 +364,14 @@
     const _pSeg = _hgCollabSegFind(name, hist);
     if (_pSeg) { _hgPeerToSeg(_pSeg, name, text); _hgScrollBottom(); return; }
     const _nm = String(name || '其他会话');
+    // v3.4.68R4（用户实锤「切B切回A 工作中的显示全没了」致命复发根因）：本地
+    // 子代理续派的回报（from=自家 reviewer agentId）在历史重建里配对 miss
+    // （v3.4.68 起续派不建线）——旧路径「miss 一律建段」会在**游离缓冲渲染期**
+    // 走 _subBlkGet 建段，段头动作钮/秒表 Painter 引用游离态不存在的元素抛
+    // 异常，行级隔离放行后共享渲染状态被污染，**当前轮后续行连续失败**（实测
+    // 恰 4 行：thinking/assistant/tool/tool），覆盖度审计 gap=4≤5 漏触发——
+    // 双重失守=「全没了且无 banner」。本地回报直接忽略（主回合已消费该报告）
+    if (!_nm.includes('识图') && _hgLocalResendPeer(_nm)) return;
     if (!_nm.includes('识图')) {
       const _disp = (_HG.peerNames || {})[_nm] || _nm;
       const _npid = 'peer-' + _nm + '-' + Date.now();

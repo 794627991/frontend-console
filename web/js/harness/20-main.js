@@ -172,6 +172,34 @@ function buildClaudeHarnessTab(opts = {}) {
   // 前的贴底状态被记住，渲染后无条件拽底；用户真翻上去（>150）才放权，拉回
   // 底部（<120）自动恢复跟随。
   _HG.stickBtm = true;
+  // v3.4.69e（用户实锤「F12 没反应」）：WebView2 无 DevTools——页面内诊断
+  // 系统。全局环形日志（最近 60 条，时间+标签+消息），顶栏 ⓘ 钮点击弹出。
+  // 重建/重渲/审计/自愈全路径埋点，替代控制台排查切回丢失问题
+  _HG.diag = [];
+  window._hgDiag = function(tag, msg) {
+    try {
+      var t = new Date();
+      var ts = ('0' + t.getHours()).slice(-2) + ':' + ('0' + t.getMinutes()).slice(-2) + ':' + ('0' + t.getSeconds()).slice(-2);
+      (_HG.diag = _HG.diag || []).push('[' + ts + '] ' + tag + ' · ' + msg);
+      if (_HG.diag.length > 60) _HG.diag.shift();
+    } catch (_) {}
+  };
+  _hgDiag('boot', 'v3.4.69e 会话页构建完成');
+  try {
+    const dgBtn = document.createElement('button');
+    dgBtn.textContent = 'ⓘ';
+    dgBtn.title = '诊断日志（重建/重渲/自愈事件流水）';
+    dgBtn.style.cssText = 'flex:none;border:none;background:transparent;color:var(--muted);cursor:pointer;font-size:13px;padding:0 4px';
+    dgBtn.onclick = () => {
+      try {
+        const lines = (_HG.diag || []).slice().reverse();
+        showBanner('诊断日志（最新在前）：<br>' + (lines.length
+          ? lines.slice(0, 14).map(esc).join('<br>') : '（空）'), 12000);
+      } catch (e) { try { showBanner('诊断日志读取失败：' + e, 4000, true); } catch (_) {} }
+    };
+    const topEl = _hgQ('.hg-top');
+    if (topEl) topEl.insertBefore(dgBtn, topEl.querySelector('.hg-vis-ind') || topEl.lastElementChild);
+  } catch (_) {}
   _hgFlow.addEventListener('scroll', () => {
     if (_HG.noScroll) return;   // 历史重建的程序性 scrollTop 写入不污染粘底态
     const gap = _hgFlow.scrollHeight - _hgFlow.scrollTop - _hgFlow.clientHeight;

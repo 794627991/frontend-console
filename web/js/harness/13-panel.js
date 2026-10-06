@@ -80,7 +80,7 @@
         const last = list[Math.floor(Date.now() / 4000) % list.length] || {};
         const act = String(last.desc || '').replace(/\s+/g, ' ').trim().slice(0, 30)
           || (_AGENT_LABEL[last.type] || last.type || '');
-        agEl.textContent = '🤖' + list.length + (act ? ' ' + act : '');
+        agEl.textContent = '✦' + list.length + (act ? ' ' + act : '');   // v3.4.68：机器人 emoji 全工程禁绝（用户定调），统一中性星符（02-base Task 图标同款）
         agEl.title = list.map(a =>
           '· ' + (_AGENT_LABEL[a.type] || a.type || '子代理') +
           (a.desc ? '：' + String(a.desc).replace(/\s+/g, ' ').trim().slice(0, 60) : ''))
@@ -123,13 +123,39 @@
   function _hgPeerLines() {              // 协作转交线（已转交/识图转交，dataset 派生）
     return [..._hgFlow.querySelectorAll('.h-switch[data-peer]')];
   }
+  // v3.4.68（用户定调「这个也不应该存在吧？等待啥呢？」）：本会话子代理的
+  // SendMessage 续派复核不是跨会话协作——它的转交线一律不上动态页「子代理/
+  // 协作」区（「协作·等待结论回传」行对它就是假等待）。判定两级：live 用
+  // agents 档案（agentId/taskId 字段，key 是包装 tool_use_id 不可直查）；
+  // 历史重建后 live 档案为空，退化为 DOM 取证——本会话子代理 Task 行的
+  // 折叠体里带「agentId: <id>」回执文本（v2.37 起的回填事实）
+  function _hgLocalResendPeer(peer) {
+    if (!peer) return false;
+    if (Object.values(_HG.agents || {})
+        .some(a => a && (a.agentId === peer || a.taskId === peer))) return true;
+    try {
+      // v3.4.68R（轻审实证）：历史重建路径 Task 行折叠体生而为空、agentId 只落
+      // dataset.hgSubr（07-hist:198-199，不进 textContent）——textContent 扫描
+      // 恒 miss。改属性直配（顺带免 textContent 物化）
+      return [..._hgFlow.querySelectorAll('.h-tool.agentline[data-hg-subr]')]
+        .some(r => r.dataset.hgSubr === peer);
+    } catch (_) { return false; }
+  }
   function _hgPeerPending() {            // 还有未回传的协作等待（任意一条未定格）
     // v2.37R6：unknown（回合终结复核未检出回传）不算等待——否则输入框/
     // 面板永久挂「等待协作回传」
     // v2.41R2：stale（>30min 疑似残留）同步排除——与面板 C 区过滤/pill 口径
     // 统一为「stale/unknown 都不算等待」，防输入框提示与 pill 对同一状态相反
-    return _hgPeerLines().some(el => !el.dataset.done
-      && el.dataset.unknown !== '1' && el.dataset.stale !== '1');
+    // v3.4.68（用户实锤「等待什么的回传？是不是有问题？」）：本会话子代理的
+    // SendMessage 续派（to=自己的 reviewer/子代理 agentId）不是跨会话协作——
+    // 回报走 SubagentHandback 帧数分钟内自回，不该把胶囊/输入框挂进「等待
+    // 协作回传」全局态（实测常驻 26min+）。线照画、回报照定格（历史事实），
+    // 只是不再驱动等待语义。agents 档案 key=包装 tool_use_id，真身在
+    // agentId/taskId 字段，故按字段匹配；档案被清时退化回旧行为（不误杀）。
+    return _hgPeerLines().some(el => {
+      if (el.dataset.done || el.dataset.unknown === '1' || el.dataset.stale === '1') return false;
+      return !_hgLocalResendPeer(el.dataset.peer);
+    });
   }
   function _hgInputState() {             // 输入框占位文案：运行态/子代理/协作等待联动
     let ph;
@@ -569,10 +595,18 @@
       // 恢复回来。主 flow 转交线保留作历史记录；迟到的真实回传到达时
       // _hgPeerLineFreeze 定格（清 unknown/stale + 记 done）后按 60s 完成
       // 窗正常回面板。连带（正向）：stale 线不再计入「N 运行中」pill。
+      // v3.4.68R（用户实锤「2 运行中怎么回事」）：本地续派线在此统一摘除——
+      // pill 计数/列表渲染同源，不再各处补滤（此前 pill 用未过滤集，列表用
+      // 过滤集，出「2 运行中」但行全历史的口径分裂）
       .filter(el => el.dataset.unknown !== '1' && el.dataset.stale !== '1'
-        && (!el.dataset.done || Date.now() - +(el.dataset.done) < 60000))
+        && (!el.dataset.done || Date.now() - +(el.dataset.done) < 60000)
+        && !_hgLocalResendPeer(el.dataset.peer))
       .slice(-4);
-    const list2 = list.filter(a => !(a.collab && a.taskId && peerIds.has(a.taskId)));
+    // v3.4.68R（轻审实证）：本地续派不建转交线后 peerIds 落空——包装档案
+    // （collab+taskId）不再被线压制，会冒「协作代理·run」假行。同口径用
+    // _hgLocalResendPeer 过滤（live 档案+DOM 取证两级）
+    const list2 = list.filter(a => !(a.collab && a.taskId &&
+      (peerIds.has(a.taskId) || _hgLocalResendPeer(a.taskId))));
     const running2 = list2.filter(a => !a.done).sort((x, y) => x.t0 - y.t0);
     const finished2 = list2.filter(a => a.done && Date.now() - a.doneAt < 60000).slice(-5);
     const show = running2.concat(finished2, rpl);

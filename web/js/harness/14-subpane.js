@@ -574,9 +574,21 @@
   function _subTlAppendThink(t, raw) {
     if (!t || !t.tl) return;
     _subTlSegFreeze(t);
+    // v3.4.73（用户实锤窗格内思考文本成对重复）：SSE 源（_subFeed）与轮询
+    // 镜像（_subPaneMirror）双源并发喂同一 tab——旧查重锚只认回放铺底行
+    // （hgRp 标），两源插入的行都不带标 → 后到源恒判「未见」再插一份=每条
+    // 成对。插入前对最近 think 段做双向前缀互查（镜像=全文/SSE=分片，互为
+    // 前缀）；命中即跳过。插入后打 hgRp 标供他源查重
+    const _norm = s => String(s || '').replace(/\s+/g, '');
+    const _n = _norm(raw);
+    if (_n && [...t.tl.querySelectorAll('.h-think-seg[data-raw]')].slice(-8)
+        .some(el => { const a = _norm(el.dataset.raw || '');
+          return !!a && (_n.startsWith(a) || a.startsWith(_n)); }))
+      return;
     // v3.2.13：思考行不再断查阅组（主链 startThinking 同款；对照 ZCode 组跨
     // 思考累积）——思考段挂组后，后续查阅继续回填进组体
     const seg = _subTlThinkRow(raw, '');
+    seg.dataset.hgRp = '1';
     seg.dataset.t0 = String(_hgPrevRowAt());   // v3.3.1：起点挂上一事件时刻（自身到达恒 0 秒）
     t.tl.appendChild(seg);
     t.stats.think++;
@@ -905,6 +917,9 @@
             // 的 want.startsWith(got) 恒 false，重叠窗口防双份失效（>500
             // 字符文本行双份插入）。body 的 textContent=纯正文，锚语义成立
             (el.querySelector('.hg-sub-fold-body') || el).dataset.hgRp = '1';
+            // v3.4.73R（复核 P5）：raw 锚同打在 body 上——SSE 侧 [data-raw]
+            // 查重锚覆盖回放行（含折叠行），raw 对 raw 与 8000 截断前缀自洽
+            (el.querySelector('.hg-sub-fold-body') || el).dataset.raw = String(row.text || '');
             _subTlAppendRow(t, el);
           } else if (row.k === 'user') {
             // v3.2.24（用户定调「像 ZCode 一样直接暴露，不要收进工作区」）：
@@ -1110,6 +1125,8 @@
       _subTlAppendThink(t, text);
     } else {
       const row = _subTlTextRow(text);
+      row.dataset.hgRp = '1';   // v3.4.73：镜像插入行同打标——SSE 源查重锚覆盖两源
+      row.dataset.raw = String(text || '');   // v3.4.73R：raw 锚（与 SSE 分支同构，raw 对 raw 互比）
       const want = norm(row.textContent);
       if (want && rp.some(el => {
         const got = norm(el.textContent);
@@ -1142,7 +1159,21 @@
       if (b.type === 'thinking' && String(b.thinking || '').trim()) {
         _subTlAppendThink(t, b.thinking);
       } else if (b.type === 'text' && String(b.text || '').trim()) {
-        _subTlAppendRow(t, _subTlTextRow(b.text));
+        // v3.4.73R（复核 P1）：text 双源查重改 raw 对 raw（行存 dataset.raw、
+        // 锚取 .h-msg.asst[data-raw] 互比）——旧写法拿原始 markdown 对渲染后
+        // textContent 比，md 格式差异（#/反引号/链接）恒不匹配=半修。raw 锚
+        // 顺带覆盖长文折叠行（hg-sub-fold-body 孙级）；命中跳过；插入打 hgRp
+        const _normT = s => String(s || '').replace(/\s+/g, '');
+        const _wantT = _normT(b.text);
+        const _dupT = _wantT && [...t.tl.querySelectorAll('.h-msg.asst[data-raw]')].slice(-8)
+          .some(el => { const _g = _normT(el.dataset.raw || '');
+            return !!_g && (_wantT.startsWith(_g) || _g.startsWith(_wantT)); });
+        if (!_dupT) {
+          const _rowT = _subTlTextRow(b.text);
+          _rowT.dataset.hgRp = '1';
+          _rowT.dataset.raw = String(b.text);
+          _subTlAppendRow(t, _rowT);
+        }
       } else if (b.type === 'tool_use' && b.name) {
         // v3.3.1：handback 交付——最终报告在工具 input 里不是文本块，照出工具行
         // =报告永不可见（后端转写行同口径改 text）。取 input 最长字符串字段。

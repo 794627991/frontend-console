@@ -1,4 +1,51 @@
 // harness sessions.js (v3.0 自 buildClaudeHarnessTab 拆出,定义体零改动,缩进保持原样)
+  // v3.4.68R3（用户实锤「切B切回A 工作中的显示全没了，等很多秒都不复原」）：
+  // 渲染覆盖度自检公共入口——转写数据/渲染器都无罪（transcript_for 实测 871 行
+  // 全在、v3.4.52 行级隔离健全），丢失发生在渲染完成之后的某层清场/竞速
+  // （snapshot 清场、快照往返、二次重建），历史多轮单点追凶失败。三个重建
+  // 出口（冷开/快照命中/snapshot 清场重放）统一在尘埃落定后调这里：flow 的
+  // hEnd 账目贴不住转写末行（缺口>5）即整帧重渲自愈 + banner 页面可见化
+  // （自愈是否触发用户直接看得到，不再依赖控制台；自愈频发=根因仍在的信号）
+  function _hgCoverageAudit(sid, totalLines, tag) {
+    if (_HG.sid !== sid || !totalLines) return;
+    let _hEnd = 0;
+    try {
+      _hgFlow.querySelectorAll('[data-h-end]').forEach(el => {
+        _hEnd = Math.max(_hEnd, +(el.dataset.hEnd || 0));
+      });
+    } catch (_) { return; }
+    const _gap = (totalLines - 1) - _hEnd;
+    // v3.4.68R4：阈值 5→2——实测「当前轮恰好 4 行渲染失败」时 gap=4 被旧阈值
+    // 漏过（banner 不弹+内容缺，双重失守的盲区）
+    if (_gap <= 2) return;
+    // 频控：10 分钟窗口最多自愈 3 次——清场竞速若循环发生，无限重渲只会闪屏
+    const _now = Date.now();
+    _HG.covAuditN = (_HG.covAuditN || []).filter(t => _now - t < 600000);
+    if (_HG.covAuditN.length >= 3) {
+      try { console.error('[harness] coverage gap persists @' + tag
+        + ' (gap=' + _gap + ') — self-heal rate-limited'); } catch (_) {}
+      return;
+    }
+    _HG.covAuditN.push(_now);
+    _hgDiag('audit', '@' + tag + ' gap=' + _gap + '（lines=' + totalLines + ' hEnd=' + _hEnd + '）→ 自愈重渲');
+    try { console.error('[harness] transcript coverage gap @' + tag
+      + ': lines=' + totalLines + ' rendered hEnd=' + _hEnd
+      + ' gap=' + _gap + ' — auto re-render'); } catch (_) {}
+    try { showBanner('检测到消息流显示不完整（缺 ' + _gap + ' 行），已自动重建', 4000, true); } catch (_) {}
+    _hgReloadFlow();
+  }
+  // v3.4.69d（用户拍板恢复）：busy 会话切回后无条件重渲一次——「A 还在运行
+  // 就必须一字不差全显示」是硬需求，条件判定（审计 gap）已被实测证明有盲区
+  // （gap=4 漏过、清场时序漂移漏过）。重渲成本一次本地 fetch+几百 ms，换
+  // 确定性。上一版撤除的原因（头丢/动态丢/不贴底）实为 _hgReloadFlow 缺三件
+  // 配套，现已补齐：phResume（头+秒表）/ _hgLiveAgentsRestore（运行中动态）/
+  // 两帧+600ms 回底兜底。idle 会话不触发
+  function _hgBusyResync(sid, delay) {
+    setTimeout(() => {
+      if (_HG.sid !== sid || !_HG.busy) return;
+      _hgReloadFlow();
+    }, delay || 800);
+  }
   async function switchTo(sid, keepInput) {
     if (sid === _HG.sid && _hgFlow.querySelector('.h-msg, .hg-welcome')) {
       // v2.15：点的是当前会话 → 早返回。但 busy 卡死时用户正是靠「重点一下
@@ -182,6 +229,11 @@
             _HG.histLive = true;
             _hgRplRebuild();   // v3.2.22：快照恢复不跑渲染循环——子代理目录条目在此重建（否则切回后空壳点不开）
             renderSideStatus();   // 面板 B/C 回放数据此路也会补齐（todos 等）
+            // v3.4.68R3：快照命中路同挂覆盖度自检（基准=histAll 全量；快照 DOM
+            // 是切走瞬间的，缺本回合后期行属正常（SSE 增量补）——延迟 1.5s 等
+            // 增量落定再审计，仍缺口即重渲自愈）。R5：busy 会话无条件 resync
+            setTimeout(() => _hgCoverageAudit(sid, _HG.histAll ? _HG.histAll.length : 0, 'snapshot-hit'), 2000);
+            if (_HG.busy) _hgBusyResync(sid, 900);
             // v2.43.2（R2-缺口A）：懒行补填并入主路——旧实现另起 fetch 先于
             // events 到达，busy 判定失真，漂移分支抢跑重渲炸掉快照（实测）
             lazyOpen.forEach(el => _histLazyFill(el));
@@ -276,12 +328,25 @@
           // v2.20（3.png）：busy 会话尾部组是「进行中」的组——transcript 只到
           // 已落盘部分，无条件定稿会把组关死还漏占位气泡。留活 + 补占位，
           // SSE 续传事件经 grpEnsure 回扫正常接回。
-          if (j.busy) phResume();
+          // v3.4.71（复核 P3 返工·方案 a）：busy 真值经参数传入 phResume——
+          // setBusy 保持旧序（phResume 后）不先加 spinner（认回选择器已加固，
+          // 双保险）；setBusy 回填活动条/发送键态
+          if (j.busy) phResume(true);
           else grpFinalize(true, { hist: true, turnEnd: true });   // 幂等兜底（渲染器内已定稿则早退）；v3.2.2 turnEnd
+          _hgDiag('cold', '冷开重建 lines=' + j.lines.length + ' busy=' + !!j.busy + ' phResume=' + (j.busy ? '已带参调' : '跳过'));
           _hgLiveAgentsRestore(sid);   // v3.4.52：转写重渲路同样回填运行中子代理 live 档案
           _hgAskSync(sid);   // v3.4.61：冷开路 seq 已跳过 ask 帧——待答面板靠后端快照拉回
           _hgScrollBottom(true);              // 切会话回底（不受翻历史保护限制）
-          setBusy(!!j.busy, j.busy_since);   // v2.26：计时起点带后端 busy_since（切回来不清零）
+          // v3.4.68（用户实锤「每次重开都不是直达底部的」）：回底后图片懒加载/
+          // 字体结算/phResume 占位补画仍会撑高 flow（_hgScrollBottom 的 rAF
+          // 二次滚只覆盖一帧）——再兜两帧 + 600ms 终兜，确保重开直达底部
+          requestAnimationFrame(() => requestAnimationFrame(() => _hgScrollBottom(true)));
+          setTimeout(() => { if (_HG.sid === sid) _hgScrollBottom(true); }, 600);
+          // v3.4.68R2：覆盖度审计（gap≥3 才触发，条件性兜底）+ R5 无条件 resync
+          // （用户拍板：切回 busy 会话后直接重渲一次，等效一条新消息的全量渲染）
+          setTimeout(() => _hgCoverageAudit(sid, j.lines.length, 'cold-rebuild'), 2000);
+          if (j.busy) _hgBusyResync(sid, 800);   // v3.4.69d：无条件重渲（三件配套已齐）
+          setBusy(!!j.busy, j.busy_since);   // v2.26：计时起点带后端 busy_since（v3.4.71：旧序恢复，phResume 已带参先行）
         }
       } catch(_) {}
       finally { if (_HG.histRebuilding === sid) _HG.histRebuilding = null; }
