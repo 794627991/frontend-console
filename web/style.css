@@ -4008,6 +4008,7 @@ span.h-ag-type[class*='h-ava-'] {
 .hg-flow .h-tl .h-chev, .hg-sub-body .h-tl .h-chev {
   position: absolute; left: 10px; top: 8px;
   font-size: 10px; width: 14px; line-height: 1;
+  font-family: var(--font-ui, system-ui);   /* v3.4.48:▸ glyph 随行字体漂移（mono 的 ▸ 撑满字框明显大一圈）——箭头独立于行字体，统一 UI 字体 */
   display: inline-flex; align-items: center; justify-content: center; }
 /* v3.4.37（用户最终通牒实锤：col 类折叠行 ▸ 比思考/查阅深 10px）：Bash/Edit
    等带 .h-tool-head 的行=容器 10px + 头自带 10px 双叠=22px。头左距归零+垂直
