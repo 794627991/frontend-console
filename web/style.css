@@ -2345,7 +2345,7 @@ html {
   border-radius: 6px; overflow: hidden; background: color-mix(in srgb, var(--bg-card) 60%, transparent); }
 .h-think-seg-head { display: flex; align-items: center; gap: 6px; width: 100%;
   border: none; background: transparent; color: var(--muted); font-family: var(--font-ui);
-  font-size: 11.5px; padding: 4px 10px 4px 30px; cursor: pointer; text-align: left; }
+  font-size: var(--fs-sm); padding: 4px 10px 4px 30px; cursor: pointer; text-align: left; }
 .h-think-seg-head:hover { color: var(--fg); background: color-mix(in srgb, var(--h-violet, #8957e5) 6%, transparent); }
 .h-think-seg .h-chev { transition: transform .15s; display: inline-block; font-size: 10px; }
 .h-think-seg.open .h-chev { transform: rotate(90deg); }
@@ -3014,8 +3014,12 @@ span.h-ag-type[class*='h-ava-'] {
 /* ---- 折叠组（collapsible 工具：diff/todo/agent/plan）---- */
 .h-tool.col { display: block; padding: 0; }
 .h-tool.col .h-tool-head { display: flex; align-items: center; gap: 6px; width: 100%;
-  border: none; background: transparent; color: var(--muted); font-family: var(--font-mono);
-  font-size: 11px; padding: 5px 10px; cursor: pointer; text-align: left; }
+  border: none; background: transparent; color: var(--muted); font-family: var(--font-ui);
+  font-size: var(--fs-sm); padding: 5px 10px; cursor: pointer; text-align: left; }
+/* v3.4.49（用户定调「全部统一字号」）：行头名称统一 font-ui + fs-sm——
+   命令/路径内容保持 mono（代码语义），head 内 arg 与 live 收起行 name 回挂 mono/ui */
+.h-tool-head .h-tool-arg { font-family: var(--font-mono); }
+.hg-flow .h-tl .h-tool > .h-tool-name, .hg-sub-body .h-tl .h-tool > .h-tool-name { font-family: var(--font-ui); }
 .h-tool.col .h-tool-head:hover { color: var(--fg); }
 .h-tool.col .h-chev { transition: transform .15s; display: inline-block; font-size: 10px; }
 .h-tool.col.open .h-chev { transform: rotate(90deg); }
