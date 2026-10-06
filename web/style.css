@@ -4048,6 +4048,17 @@ span.h-ag-type[class*='h-ava-'] {
 
 /* ---- oneclick 终端卡（Bash 行点开输出） ---- */
 .h-tool.oneclick { cursor: pointer; }
+/* v3.4.26（用户定调，对照 ZCode 终端卡 图2/图3）：终端卡两态形态——
+   收起=严格单行（▸ 图标 Bash 命令省略 徽章 复制），命令不再折行成第二行
+   碎片；展开=命令全文（pre-wrap 换行）+输出块（图2 样式）。
+   :not(.open) 保证展开态不被 flex 单行规则覆盖 */
+.h-tool.oneclick:not(.open) { display: flex; align-items: center; gap: 6px;
+  padding: 4px 10px; }
+.h-tool.oneclick:not(.open) > * { flex: none; }
+.h-tool.oneclick:not(.open) > .h-tool-arg { flex: 1 1 auto; min-width: 0;
+  display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.h-tool.oneclick.open > .h-tool-arg { white-space: pre-wrap; overflow: visible;
+  text-overflow: clip; }
 .h-tool.oneclick .h-tool-chev { font-size: 10px; color: var(--muted);
   display: inline-block; transition: transform .15s; margin-right: 6px; }
 .h-tool.oneclick.open .h-tool-chev { transform: rotate(90deg); }
