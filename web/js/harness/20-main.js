@@ -87,7 +87,7 @@ function buildClaudeHarnessTab(opts = {}) {
             <div class="hg-card-foot">
               <button class="hg-chip hg-chip-ico" data-hg-att title="添加附件（文档会以路径给模型读取）">＋</button>
               <button class="hg-chip hg-chip-ico" data-hg-snip title="截图并标注（Snipaste 式框选/箭头/马赛克/文字；确认后自动挂为附件并复制剪贴板）">📷</button>
-              <button class="hg-chip" data-hg-perm title="工具执行权限（对新会话生效）">🛡 自动执行 ▾</button>
+              <button class="hg-chip" data-hg-perm title="工具执行权限：自动执行（点击切换每次确认）">🛡</button>
               <button class="hg-chip hg-chip-ico" data-hg-skill title="加载技能（插入 /技能名）">⚡</button>
               <span class="hg-flex1"></span>
               <span class="hg-activity" data-hg-activity style="display:none"></span>
