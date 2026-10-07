@@ -266,7 +266,15 @@
             _HG.noScroll = false;
           });
         });
-      } else _hgScrollBottom(true);
+      } else {
+        // v3.4.75（用户实锤「切任意会话都不在底部」）：快照命中路（30s 保温，
+        // A→B→A 快切恒走此路）的回底此前只有一次+一帧 rAF——innerHTML 回填后
+        // 折叠行/图片/字体的布局结算远晚于一帧，写早了 scrollHeight 还小=停
+        // 半空。对齐冷开路三重兜底：两帧 + 600ms 终兜
+        _hgScrollBottom(true);
+        requestAnimationFrame(() => requestAnimationFrame(() => _hgScrollBottom(true)));
+        setTimeout(() => { if (_HG.sid === sid) _hgScrollBottom(true); }, 600);
+      }
       // v2.3.13：快照里冻结的压缩分割线——本会话没有仍在进行的压缩就定格成
       // 完成态（压缩结束事件只在原会话 SSE 里到达，切走期间错过时这里兜底），
       // 不让「正在压缩 · 已 X」冻死在消息流里

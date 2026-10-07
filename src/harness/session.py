@@ -101,6 +101,8 @@ class HarnessSession:
         self._inbox = []
         self._gen = 0
         self._pump_timer = None    # 回合终结自动泵的延迟器（防重入）
+        self._closed = False       # v3.4.76R2：会话已删除——泵链/复活闸（R1）
+        self._pumpFailN = 0        # v3.4.76R2：泵连续失败计数（R2 退避闸）
         # v2.34 light 审计记账（运行态，不持久化）：lines=本回合主会话
         # 单次直改（Edit/Write/MultiEdit/NotebookEdit）最大行数（v2.52 起
         # max 记账，回合累计口径废除）；files=空列表仅兼容保留（文件数
@@ -313,6 +315,17 @@ class HarnessSession:
                     _cleanup_peer_reg(pid, self.session_id)
 
     def close(self):
+        # v3.4.76R（复核问题四）：先取消泵重试链——close 后 3s 链到点会把
+        # 已删会话的 inbox 回插+sync_meta 复活进账本（窗口 0.8s→3.8s 被重试
+        # 机制放大）。cancel 后链即断，_run 到点也见 timer 被换不复活
+        try:
+            with self._inbox_lock:
+                self._closed = True   # in-flight _run 的 revive/挂链闸（R1）
+                if self._pump_timer:
+                    self._pump_timer.cancel()
+                    self._pump_timer = None
+        except Exception:
+            pass
         self.kill_proc()
         try:
             if getattr(self, "reader", None) and self.reader.is_alive():
@@ -861,14 +874,33 @@ class HarnessSession:
         持 B 进 send 热更段取 _start_lock，与 kill_proc（持 S 取 B）构成
         AB-BA 死锁（reviewer 实证复现）。双泵互斥改由 pop 的 _inbox_lock
         原子争夺天然闭合：拿到条目者发、拿不到者让位；busy 竞争由
-        send_message 自身的 CAS（_busy_lock）裁决，被拒即回插，消息保命。"""
-        if self._pump_timer:
-            return
+        send_message 自身的 CAS（_busy_lock）裁决，被拒即回插，消息保命。
+        v3.4.76R：_arm 统一挂 timer（_inbox_lock 内 CAS——复核问题三的
+        None→t 窗口双链不合并竞态收口）。"""
+        def _arm(delay):
+            # CAS 挂 timer：已有挂起 timer 即让位（不叠链）；已删会话不挂（R1）
+            with self._inbox_lock:
+                if self._closed or self._pump_timer:
+                    return
+                t = threading.Timer(delay, _run)
+                t.daemon = True
+                t.start()
+                self._pump_timer = t
 
         def _run():
-            self._pump_timer = None
+            with self._inbox_lock:
+                self._pump_timer = None
             try:
                 if self.busy:
+                    # v3.4.76（用户实锤「排队消息永不发送」）：busy 期不再静默
+                    # 放弃——泵到点恰逢下一回合已起（CLI 自发续跑/新消息竞速）
+                    # 是常态，旧实现一次错过即滞留。3s 周期重试至 busy 翻
+                    # false；inbox 无当前代条目则不挂（空转消散——复核问题二）
+                    with self._inbox_lock:
+                        _pending = any(e.get("gen") == self._gen
+                                       for e in self._inbox)
+                    if _pending:
+                        _arm(3.0)
                     return
                 with self._inbox_lock:
                     if not self._inbox:
@@ -881,13 +913,28 @@ class HarnessSession:
                 self.emit({"kind": "input_promoted", "id": e.get("id")})
                 ok, _err = self.send_message(e.get("text") or "",
                                              e.get("images"), e.get("files"))
+                if self._closed:
+                    # R1：pop 后 close 竞速——条目随删作废，不 revive/不挂链/
+                    # 不回写账本（复核 RES：已删会话的 sync_meta 是复活写点）
+                    return
+                if not ok and self.session_id:
+                    # v3.4.76R（复核问题一·用户实锤路径）：「立即发送」走
+                    # interrupt→kill→进程死，send_message 必拒发（"会话进程
+                    # 已退出"）——旧失败路径回插后无重试=永滞。先 revive（有
+                    # session_id 可续上下文）再试一次；revive 持 _start_lock
+                    # 与本线程无外层锁，安全
+                    try:
+                        if self.revive_if_dead():
+                            ok, _err = self.send_message(
+                                e.get("text") or "", e.get("images"),
+                                e.get("files"))
+                    except Exception:
+                        pass
                 if not ok:
                     # 失败回插队首 + 重发 admitted 事件——前端把条目加回
-                    # 队列 UI（可见可删），下回合终结再泵；不 emit
-                    # input_discarded（原「作废」语义曾在竞态下吞消息）。
-                    # 世代校验：泵发送期间（可秒级）恰逢 /rewind 换代，旧代
-                    # 条目回插也永不被泵取（泵只取当前代）——按换代作废语义
-                    # 显式 discard，与 bump_generation 对齐
+                    # 队列 UI（可见可删）；不 emit input_discarded（原「作废」
+                    # 语义曾在竞态下吞消息）。世代校验：泵发送期间恰逢 /rewind
+                    # 换代，旧代条目按换代作废语义显式 discard
                     if e.get("gen") != self._gen:
                         self.emit({"kind": "input_discarded", "id": e.get("id"),
                                    "reason": "rewind", "gen": e.get("gen")})
@@ -899,14 +946,23 @@ class HarnessSession:
                                    "gen": e.get("gen"),
                                    "att": len(e.get("images") or [])
                                          + len(e.get("files") or [])})
-                self.sync_meta()
+                        # v3.4.76R2（R2 分类闸）：仅瞬态失败挂 3s 重试——
+                        # 超窗类持久拒发（_err 含「窗口」）不挂（每 3s 事件/
+                        # 落盘/UI 闪烁无限循环+GC 杀拉锯战），静默等用户
+                        # /rewind、/compact 或下回合终结再试；连续失败 ≥5 次
+                        # 也停挂（未知持久错兜底），成功发送即清零
+                        self._pumpFailN += 1
+                        _errS = str(_err or "")
+                        if ('窗口' not in _errS) and self._pumpFailN < 5:
+                            _arm(3.0)
+                if ok:
+                    self._pumpFailN = 0
+                if not self._closed:   # 复核 RES：已删会话不回写账本
+                    self.sync_meta()
             except Exception:
                 pass
 
-        t = threading.Timer(0.8, _run)
-        t.daemon = True
-        t.start()
-        self._pump_timer = t
+        _arm(0.8)
 
     # ---- 子代理镜像事件（#12，v3.1）----
     def _emit_task_mirror(self, o):
@@ -1310,12 +1366,16 @@ class HarnessSession:
         # 注：_interrupt_async 在 reader 线程之外调；_run 泵事务持锁重入
         # _turn_end 的路径已随 v3.4.54R 泵改造移除（防 AB-BA 死锁），RLock
         # 保守保留——勿依赖重入语义新增持锁调用
-        if not self._turn_id:
-            return
-        self.emit({"kind": "turn_error" if err else "turn_complete",
-                   "text": "回合异常收尾" if err else ""})
-        self._turn_id = None
+        had = bool(self._turn_id)
+        if had:
+            self.emit({"kind": "turn_error" if err else "turn_complete",
+                       "text": "回合异常收尾" if err else ""})
+            self._turn_id = None
         # v3.1（#10）：回合终结 → 自动泵排队输入（延迟 800ms，见 _queue_pump）
+        # v3.4.76（用户实锤「排队消息永不发送」）：泵调用移出 _turn_id 早退
+        # ——turn_id 单槽在回合交错（A result 迟到清掉 B 的 id / B 终结时
+        # 已为 None）时真正该泵的那次早退，泵永不触发。幂等：timer 单例+
+        # 空 inbox+busy 检查三重守卫，重复调用无害
         try:
             self._queue_pump()
         except Exception:
