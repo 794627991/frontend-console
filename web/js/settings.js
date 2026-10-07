@@ -530,17 +530,17 @@ async function _stRenderApiPane(pane) {
         </div>
         <div class="dd-sub" style="margin-top:8px;">档位是「模型别名」：名字不代表型号（网关没有 Opus，就把最强模型填进 Opus 档）。鼠标悬停每档看它什么时候被用到。<b>1M</b> 按钮 = 声明该档用百万级上下文版本（模型名加/去 <b>[1M]</b> 后缀）。</div>
         <div class="dd-label" style="margin-top:14px;">上下文窗口与自动压缩</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px 12px;margin-top:8px;">
-          <label style="display:flex;align-items:center;gap:8px;min-width:0;">
-            <span style="flex-shrink:0;font-size:11px;color:var(--muted);">压缩窗口</span>
+        <div style="display:grid;grid-template-columns:1fr;gap:8px;margin-top:8px;">
+          <label style="display:flex;align-items:center;gap:6px;min-width:0;">
+            <span style="flex-shrink:0;width:64px;font-size:11px;color:var(--muted);">压缩窗口</span>
             <input type="text" id="apiCtxWindow" class="dd-input" spellcheck="false" placeholder="不改" style="flex:1;min-width:0;">
           </label>
-          <label style="display:flex;align-items:center;gap:8px;min-width:0;">
-            <span style="flex-shrink:0;font-size:11px;color:var(--muted);">最大上下文</span>
+          <label style="display:flex;align-items:center;gap:6px;min-width:0;">
+            <span style="flex-shrink:0;width:64px;font-size:11px;color:var(--muted);">最大上下文</span>
             <input type="text" id="apiMaxCtx" class="dd-input" spellcheck="false" placeholder="不改" style="flex:1;min-width:0;">
           </label>
-          <label style="display:flex;align-items:center;gap:8px;min-width:0;">
-            <span style="flex-shrink:0;font-size:11px;color:var(--muted);">压缩阈值%</span>
+          <label style="display:flex;align-items:center;gap:6px;min-width:0;">
+            <span style="flex-shrink:0;width:64px;font-size:11px;color:var(--muted);">压缩阈值%</span>
             <input type="text" id="apiCompactPct" class="dd-input" spellcheck="false" placeholder="不改" style="flex:1;min-width:0;">
           </label>
         </div>

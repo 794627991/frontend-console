@@ -32,6 +32,9 @@ def _audit_nlines(s):
     s = str(s or "")
     return s.count("\n") + 1 if s else 0
 
+# 纯文档后缀（小写，含点）——_audit_lines 对这些目标不计行数（见该函数 docstring）
+_AUDIT_DOC_EXTS = (".md", ".markdown", ".mdx", ".txt", ".rst", ".adoc")
+
 # ---- from claude_harness.py:874 (_audit_lines) ----
 
 
@@ -44,8 +47,14 @@ def _audit_lines(name, inp):
     - MultiEdit（v2.49）：各编辑块按 Edit 口径（max(old,new)）求和——原先
       不在 _AUDIT_EDIT_TOOLS 里整类计 0，是行数口径的逃逸口（分级路由的
       上限放大到百行级后必须堵上）。
-    - NotebookEdit：new_source（cell 新内容）行数；delete 无内容变更计 0。"""
+    - NotebookEdit：new_source（cell 新内容）行数；delete 无内容变更计 0。
+    - 纯文档豁免：审计线管的是程序风险，.md/.txt 等不会被执行的纯文档
+      不计行数（README 大改不该逼出 designer/reviewer）；口径按后缀——
+      .md .mdx .txt .rst .adoc .markdown，file_path 取不到不豁免。"""
     try:
+        path = str(inp.get("file_path") or inp.get("notebook_path") or "")
+        if path.lower().endswith(_AUDIT_DOC_EXTS):
+            return 0
         if name == "Edit":
             return max(_audit_nlines(inp.get("old_string")),
                        _audit_nlines(inp.get("new_string")))
