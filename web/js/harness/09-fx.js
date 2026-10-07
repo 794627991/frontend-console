@@ -157,6 +157,7 @@
     _hgSpinShow(b);    // v3.1：消息流底 ZCode 式 spinner 行（正在执行…）
     if (b) actStart(sinceMs);
     else { actStop(); queuePump(); _hgCtxPoll();
+      try { _hgQueueSync(); } catch (_) {}   // v3.4.77：回合终结对账队列（promoted/回插事件断档兜底）
       try { _hgPatchMissingCmds(); } catch(_) {} }   // v3.3.14：空闲即补缺令行（result 触发外的二道）
 
     _hgDynDirty();   // v2.32 面板：状态区运行态徽章/计时跟随

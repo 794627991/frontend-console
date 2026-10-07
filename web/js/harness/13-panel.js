@@ -120,8 +120,8 @@
   function _hgAgentsRunning() {          // 运行中子代理（Task 已起、未收到完成信号）
     return Object.values(_HG.agents || {}).some(a => !a.done);
   }
-  function _hgPeerLines() {              // 协作转交线（已转交/识图转交，dataset 派生）
-    return [..._hgFlow.querySelectorAll('.h-switch[data-peer]')];
+  function _hgPeerLines() {              // 协作转交线（v3.4.88：识图卡 .h-vision 并入——面板/等待/胶囊同源）
+    return [..._hgFlow.querySelectorAll('.h-switch[data-peer], .h-tool.h-vision[data-peer]')];
   }
   // v3.4.68（用户定调「这个也不应该存在吧？等待啥呢？」）：本会话子代理的
   // SendMessage 续派复核不是跨会话协作——它的转交线一律不上动态页「子代理/

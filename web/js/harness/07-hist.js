@@ -93,6 +93,20 @@
     // 入序铁律），其余任何行到达即清（防隔行错绑到更早的 Agent 行）
     if (l.role !== 'sub_open') _HG.lastAgRow = null;
     if (l.role === 'peer') {          // v2.27.3：跨会话回传（识图结论）历史回看
+      // v3.4.88（识图卡化）：识图 peer 行优先配对进 .h-vision 卡（tid 精确；
+      // 无 tid=旧转写，回落最近一张未定格卡）；miss 才走旧平铺气泡（旧会话兜底）
+      if (String(l.name || '').indexOf('识图') !== -1) {
+        let _vc = (l.tid && _HG.visionCalls && _HG.visionCalls[l.tid]) || null;
+        if (!_vc) {
+          const _open = [..._hgFlow.querySelectorAll('.h-tool.h-vision:not([data-vres])')];
+          _vc = _open[0] || null;   // 全审 P5：FIFO 取最早未定格——并行旧对不互换
+        }
+        if (_vc) {
+          _hgVisionResult(_vc, l.text || '', false);
+          if (l.tid && _HG.visionCalls) delete _HG.visionCalls[l.tid];
+          return;
+        }
+      }
       // v2.53：第 5 参 hist——历史回放绝不开新段（防假「协作·运行中」段吞正文）
       renderPeer(l.name, l.text, null, true, true);
     }
@@ -102,6 +116,21 @@
     }
     else if (l.role === 'vision_relay') {  // v2.28：识图 MCP 转交线（历史回看）
       renderVisionRelayHist(l);
+    }
+    else if (l.role === 'exit') {    // v3.4.85：中断/退出痕迹回放（事件账本补行）
+      // v3.4.86（用户实锤「重开的，依旧没有停止显示」）：interrupted 痕迹
+      //（「已中断回复」）在回放侧建组+定稿翻头——live 打断有「已停止」头，
+      // 回放路 user 行不建组、exit 行只出行=空打断回合回放后无头无停态。
+      // 复用 v3.4.80 门槛（interrupted 无条件定稿头）：grpEnsure 认回未定稿
+      // 组（有工作回合）或新建（空回合），grpFinalize(interrupted) 统一翻头。
+      // exit 帧（进程退出，含正常关闭）只出行不建头
+      if (String(l.text || '').indexOf('已中断回复') === 0) {
+        const _xg = grpEnsure(true);
+        renderExit(l.text);
+        try { grpFinalize(true, { hist: true, interrupted: true, turnEnd: true }); } catch (_) {}
+      } else {
+        renderExit(l.text);
+      }
     }
     else if (l.role === 'renew') {    // v2.27.23：超窗续命注入折叠为一行分割线
       // v3.2.4R(F3)：对齐 live（10-sse renew 分支先定稿）——不定稿则分割线落

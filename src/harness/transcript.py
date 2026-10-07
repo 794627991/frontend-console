@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import time
 import logging
 log = logging.getLogger(__name__)
 from .audit import _AUDIT_MSG_PREFIX, _audit_log_read
@@ -39,6 +40,52 @@ _IMG_ECHO_RE = re.compile(r"\[Image: source: ([^\]]+?)\]")
 _IMG_META_RE = re.compile(r"\[Image: [^\]]+\]")
 
 # ---- from claude_harness.py:2233 (transcript_for) ----
+
+
+# v3.4.87：中断/退出痕迹持久化（~/.serialconsole_pro/harness_trace.jsonl，
+# 审计卡同款机制）——事件账本是内存态，重启即空，此前 exit 行源
+# （get_events_after）在重启后拿不到中断帧=「关闭重开后什么都没有」。
+# emit 侧（session.py）落盘，回放侧（transcript_for）读盘
+def _trace_append(sid, kind, text):
+    try:
+        from .. import app_state as _st   # 复核观察1：HOME_DIR 单一事实源（与 audit 同源）
+        p = os.path.join(_st.HOME_DIR, "harness_trace.jsonl")
+        with open(p, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"sid": sid, "kind": str(kind or ""),
+                                "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                                                    time.gmtime()),
+                                "text": str(text or "")[:200]},
+                               ensure_ascii=False) + "\n")
+        if os.path.getsize(p) > 262144:   # 256KB 截半保后半（audit 同款）
+            with open(p, "r", encoding="utf-8") as f:
+                lns = f.readlines()
+            with open(p, "w", encoding="utf-8") as f:
+                f.writelines(lns[len(lns) // 2:])
+    except Exception:
+        pass
+
+
+def _trace_read(sid):
+    """读该会话全部中断/退出痕迹（回放 exit 行源）。"""
+    out = []
+    try:
+        from .. import app_state as _st
+        p = os.path.join(_st.HOME_DIR, "harness_trace.jsonl")
+        with open(p, "r", encoding="utf-8") as f:
+            for ln in f:
+                ln = ln.strip()
+                if not ln:
+                    continue
+                try:
+                    o = json.loads(ln)
+                except Exception:
+                    continue
+                if o.get("sid") == sid and o.get("kind") in ("interrupted", "exit"):
+                    out.append({"kind": o["kind"], "text": o.get("text") or "",
+                                "ts": o.get("ts") or ""})
+    except Exception:
+        pass
+    return out
 
 
 def _sysnote_of(t, ts):
@@ -121,6 +168,17 @@ def transcript_for(s):
                             # 2+8 条），全量拦会杀死协作回传线。live 侧 10-sse
                             # 同口径挡。
                             if o.get("isMeta") and _IMG_META_RE.fullmatch(t.strip()):
+                                continue
+                            # v3.4.82（用户实锤「这个明显不是我的消息」）：isMeta
+                            # 纯文本注入行（Skill 文档等机器给模型的上下文）不进
+                            # 用户气泡——弱化成 sysnote 一行（与 live renderSysNote
+                            # 同口径）；peer 回传（Another 前缀）不受影响
+                            if o.get("isMeta") and t.strip() \
+                                    and not t.lstrip().startswith("Another Claude session"):
+                                lines.append({"role": "sysnote", "kind": "skill-doc",
+                                              "text": ("已注入机器上下文：" + _re.sub(r"\s+", " ", t).strip()[:60]
+                                                       + "…（供模型参考，非用户消息）"),
+                                              "ts": o.get("timestamp") or ""})
                                 continue
                             # v2.27.3：跨会话消息（识图回传等）不再被 _SKIP_RE 静默吞掉——
                             # 解析出发件人与正文，产 peer 行让前端渲染专属回传气泡
@@ -205,6 +263,30 @@ def transcript_for(s):
                                 lines.append({"role": "user", "text": t[:8000],
                                               "ts": o.get("timestamp") or ""})
                         elif isinstance(content, list):
+                            # v3.4.82R（复核 P1·语料实证）：isMeta 纯文本注入行
+                            # 在 list 分支同样拦截——真实证据行（skill 文档）是
+                            # list 单 text 块形态，str 门命中 0 条。剥 [Image:
+                            # source:] 回显后判空（Image-only 行维持 v3.2.16 静默
+                            # 丢弃）；噪音续跑标记（v3.2.12）静默丢；其余弱化
+                            # sysnote（与 live renderSysNote 同口径）
+                            if o.get("isMeta") and content and all(
+                                    isinstance(b, dict) and b.get("type") == "text"
+                                    for b in content):
+                                _ltexts = [b.get("text") or "" for b in content
+                                           if isinstance(b, dict) and b.get("type") == "text"]
+                                _lt = chr(10).join(_ltexts).strip()
+                                _lt2 = _IMG_ECHO_RE.sub("", _lt).strip()
+                                if not _lt2:
+                                    continue   # Image-only 回显：整行丢弃（同 str 分支 v3.2.16 语义）
+                                if not _lt2.startswith("Another Claude session") and not _re.match(
+                                        r"^\[Request interrupted|^\[Request cancelled by user|^Continue from where you left off",
+                                        _lt2):
+                                    lines.append({"role": "sysnote", "kind": "skill-doc",
+                                                  "text": ("已注入机器上下文："
+                                                           + _re.sub(r"\s+", " ", _lt2)[:60]
+                                                           + "（供模型参考，非用户消息）"),
+                                                  "ts": o.get("timestamp") or ""})
+                                    continue
                             # v2.37R6（载入自愈①）：list 内容的 text 块里的
                             # agent-message 回传同样入回放（str 分支同款口径）
                             _am_skip = None
@@ -242,7 +324,8 @@ def transcript_for(s):
                                         vrow["err"] = bool(b.get("is_error"))
                                         lines.append({"role": "peer", "name": "识图",
                                                       "text": (rc or "（识图失败，无返回内容）")[:8000],
-                                                      "ts": o.get("timestamp") or ""})
+                                                      "ts": o.get("timestamp") or "",
+                                                      "tid": vrow.get("tid") or ""})   # v3.4.88：配对键
                                         continue
                                     # v3.2.21（用户实锤「为啥不能回放」缺口①）：
                                     # 同 tool_use_id 重试（先报错后成功）——成功
@@ -258,7 +341,12 @@ def transcript_for(s):
                                         rc = chr(10).join(x.get("text", "") for x in rc
                                                    if isinstance(x, dict) and x.get("type") == "text")
                                     line["result"] = (rc or "")[:8000]
-                                    if b.get("is_error"):
+                                    # v3.4.81（复核遗留收口）：SendMessage 发送
+                                    # 失败回执 is_error=false、content={"success":
+                                    # false,...}——回放侧 err 与 live deriveStatus
+                                    # 同口径探测，避免 live 红「出错」/回放绿「完成」
+                                    if b.get("is_error") or _re.match(
+                                            r'^\s*\{\s*"success"\s*:\s*false', str(rc or "")):
                                         line["err"] = True
                                     else:
                                         line.pop("err", None)
@@ -365,8 +453,17 @@ def transcript_for(s):
                                 # v2.28：识图 MCP = vision_relay 分割线行（前端 📤
                                 # 转交线+秒表），不出普通工具卡；结果由 tool_result
                                 # 分支挂回成 peer 行（📥 回传气泡）
+                                # v3.4.88（识图卡化）：补 prompt/src/tid/chan 四键——
+                                # 前端折叠卡展开要完整提示词与图片源；tid 供
+                                # peer 行精确配对；chan 标主/兜底通道（纯展示）
+                                _vin = tl.get("input") or {}
                                 row = {"role": "vision_relay", "dur": None,
-                                       "ts": tl.get("ts") or ""}
+                                       "ts": tl.get("ts") or "",
+                                       "prompt": str(_vin.get("prompt") or "")[:4000],
+                                       "src": str(_vin.get("imageSource") or "")[:600],
+                                       "tid": tl.get("id") or "",
+                                       "chan": ("兜底" if "__vision__" in str(tl.get("name") or "")
+                                                else "主")}
                                 lines.append(row)
                                 if tl["id"]:
                                     call_by_id[tl["id"]] = {"_vr": row}
@@ -398,6 +495,42 @@ def transcript_for(s):
     # v2.34.1：审计警示卡（audit log）按 ts 并入回放——warn/降级/中断档的
     # 卡此前只在实时事件流，jsonl 里没有对应行，刷新即失。卡落在本会话
     # sid 维度（跨血统链全量），按时间戳稳定排序插回各回合 result 之后。
+    # v3.4.85（用户实锤「关闭重开后什么都不显示，至少体现之前中断过」）：
+    # 中断/退出帧同路并入——进程被杀在 jsonl 不留行，空打断回合回放后整段
+    # 消失；从事件账本（s.log）补 exit 行（与 live renderExit 同形态同文案），
+    # 走下方同一 ts 稳定排序插位
+    try:
+        # v3.4.87：源改持久化 trace 文件（重启后在）——get_events_after 是
+        # 内存态，重启后空（图 40 实锤：诊断 lines=1702 但无 exit 行）
+        _xrows = []
+        for _tr in _trace_read(s.sid):
+            _xrows.append({"role": "exit",
+                           "text": ("已中断回复" if _tr["kind"] == "interrupted"
+                                    else (_tr["text"] or "会话进程已结束")),
+                           "ts": _tr["ts"]})
+        if _xrows:
+            from datetime import datetime as _dt, timezone as _tz
+
+            def _tk2(ln):
+                try:
+                    return _dt.fromisoformat(
+                        str(ln.get("ts") or "").replace("Z", "+00:00"))
+                except Exception:
+                    return _dt.min.replace(tzinfo=_tz.utc)
+            try:
+                for ln in lines:
+                    ln["_k"] = _tk2(ln)
+                for x in _xrows:
+                    x["_k"] = _tk2(x)
+                lines = lines + _xrows
+                lines.sort(key=lambda x: x["_k"])
+            finally:
+                # 轻审 P1 建议：清理入 finally——sort 抛异常时 _k 不得残留
+                # （datetime 不可 jsonify，残一行炸整个 /transcript）
+                for ln in lines:
+                    ln.pop("_k", None)
+    except Exception:
+        pass
     try:
         arows = _audit_log_read(s.sid)
         if arows:

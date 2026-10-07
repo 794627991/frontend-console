@@ -65,6 +65,29 @@
     } else if (t === 'input_admitted') {
       // 服务端账本入队（本窗乐观 push 过同 id 则跳过——POST 响应与 SSE 事件
       // 双路到达是常态，id 客户端预生成保证两路同号）
+      // v3.4.78（指纹追杀·按 sid 分域）：本地已摘除（edit/del）但作废未达的
+      // 条目——admit 事件此刻才到（迟到回号），命中指纹即补发 del，不入 UI
+      // （命中给 banner 可见——用户 30s 内有意重发同文被拦时能看到原因）
+      const _qk = (_HG.qKill || {})[_HG.sid];
+      if (_qk && _qk.length) {
+        const fp = String(it.text || '').slice(0, 200)
+          .replace(/\s+/g, ' ').trim().slice(0, 80);
+        const now = Date.now();
+        const live = _qk.filter(k => now - k.at < 30000);
+        _HG.qKill[_HG.sid] = live;
+        const hit = fp ? live.findIndex(k => k.fp === fp) : -1;
+        if (hit >= 0) {
+          live.splice(hit, 1);
+          if (it.id) fetch('/api/harness/queue_act', { method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sid: _HG.sid, id: it.id, act: 'del' })
+          }).catch(() => {});
+          p.inbox = (p.inbox || []).filter(x => x.id !== it.id);
+          try { showBanner('已拦截一条误复活的排队消息（此前编辑/删除未生效），如需发送请重新输入', 4000, true); } catch (_) {}
+          renderSideStatus();
+          return;
+        }
+      }
       const key = _hgQueueKey();
       const arr = _HG.queues[key] = _HG.queues[key] || [];
       if (it.id && !arr.some(x => x.id === it.id))

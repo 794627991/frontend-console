@@ -290,7 +290,7 @@
       // v2.35.2（P1 多槽）：全部未定格线各重挂各的计时器（此前只挂最后
       // 一条，更早的线读秒冻死）；peerWait 指向最后一条（兼容识图 sweep）。
       // 旧快照的线没有 data-peer——按文本兜底识别，一并重挂
-      const relayEls = new Set(_hgFlow.querySelectorAll('.h-switch[data-peer]:not([data-done])'));
+      const relayEls = new Set(_hgFlow.querySelectorAll('.h-switch[data-peer]:not([data-done]), .h-tool.h-vision[data-peer]:not([data-done])'));
       _hgFlow.querySelectorAll('.h-switch .hg-peer-t').forEach(tb => {
         const sw = tb.closest('.h-switch');
         if (sw && !sw.dataset.peer && !sw.dataset.done
@@ -302,6 +302,16 @@
       // ——恢复瞬间（下一子代理事件未到、subBlk/subRows 尚空）到达的子代理
       // tool_result 不再被 :2846 守卫丢弃，段内徽章照常定格
       _hgFlow.querySelectorAll('[data-tid]').forEach(el => {
+        // 全审 P4：pending 识图卡重注册回 visionCalls（迟到 tool_result 走
+        // 10-sse 正路定格），且不入 rowById（renderOneToolResult 会把全文误
+        // 灌空折叠体、用户点开时被懒填整体覆盖=回传被抹）
+        if (el.classList.contains('h-vision')) {
+          if (el.dataset.tid && !el.dataset.done) {
+            (_HG.visionCalls || (_HG.visionCalls = {}))[el.dataset.tid] = el;
+            _hgVisionPaint(el, 'run');
+          }
+          return;
+        }
         const blk = el.closest('.h-subblock');
         if (blk && blk.dataset.hgSubblock) {
           const _sp = blk.dataset.hgSubblock;
@@ -465,6 +475,35 @@
     _hgInput.focus();
   }
   function _hgQueueKey() { return _HG.sid || '_new'; }
+  // v3.4.77（用户实锤「前台看不到堆积消息」）：队列前后端对账——
+  // input_promoted 事件先摘 UI 条目，泵发送失败回插靠 input_admitted 事件
+  // 加回；该事件若因 SSE 丢帧/竞速没到 → 后端队列有条目、前台显示无
+  // =「消息消失」（后端仍在按泵节奏重试，最终发出——用户视角「莫名到达」）。
+  // 回合终结（setBusy(false)）时拉服务端真源校准渲染缓存，id 序不同才重渲
+  let _qSyncSeq = 0;
+  function _hgQueueSync() {
+    const sid = _HG.sid, seq = ++_qSyncSeq;
+    if (!sid) return;
+    fetch('/api/harness/queue?sid=' + encodeURIComponent(sid))
+      .then(r => r.json())
+      .then(j => {
+        if (!j.ok || seq !== _qSyncSeq || _HG.sid !== sid) return;
+        const key = _hgQueueKey();
+        const cur = (_HG.queues[key] || []).map(x => x.id).join(',');
+        const srv = (j.queue || []).map(e => e.id).join(',');
+        if (cur !== srv) {
+          // 以服务端为准重建（text/att 完整带回；本地草稿字段如乐观 images
+          // 保留——同 id 条目服务端字段优先）
+          const prev = {};
+          (_HG.queues[key] || []).forEach(x => { prev[x.id] = x; });
+          _HG.queues[key] = (j.queue || []).map(e => Object.assign(
+            {}, prev[e.id] || {}, e.text !== undefined ? {
+              id: e.id, text: e.text || '',
+              images: e.images || [], files: e.files || [] } : {}));
+          renderQueue();
+        }
+      }).catch(() => {});
+  }
   function renderQueue() {
     if (qDrag) return;            // 拖拽中不重建，松手后统一重渲
     const list = _HG.queues[_hgQueueKey()] || [];

@@ -19,7 +19,7 @@ from ..eventlog import SessionEventLog, new_turn_id
 from .meta import _meta, _meta_load, _meta_lock, _meta_save
 from .models import available_models
 from .prompts import _collect_system_prompt
-from .transcript import re_title
+from .transcript import re_title, _trace_append
 from .vision import _cleanup_peer_reg, _vision_load
 
 
@@ -788,6 +788,7 @@ class HarnessSession:
         except Exception:
             pass
         self.emit({"kind": "interrupted", "text": "已中断回复"})
+        _trace_append(self.sid, "interrupted", "已中断回复")   # v3.4.87：痕迹持久化（重启后回放可见）
         self._turn_end(err=True)
 
     # ---- durable 输入账本（#10/#14，v3.1）----
@@ -1265,6 +1266,8 @@ class HarnessSession:
                         pass
                     self._turn_end(err=True)
                 self.emit({"kind": "exit", "text": "会话进程已结束（发送消息将自动恢复）"})
+                _trace_append(self.sid, "exit",
+                              "会话进程已结束（发送消息将自动恢复）")   # v3.4.87：同上
 
     def _drain_stderr(self):
         proc = self._proc

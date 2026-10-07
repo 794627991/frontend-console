@@ -80,13 +80,55 @@
       } catch(_) { try { showBanner('重建仍失败，请手动刷新页面', 6000, true); } catch(_) {} }
     }
   }
+  // v3.4.79（用户定调「中断/退出散行全部整合进回合」）：raw/exit 行不再散落
+  // 消息流顶层（组外），挂进当前组时间线（renderAudit 同款）——点开回合头
+  // 就能看到「实际是被中断的」。
+  // v3.4.79R（复核 P1/P4）：去重锚**按组**存（root.dataset.lastSys）——模块级
+  // 锚会跨组残留吞掉下一回合同文案行（第二次中断/退出整行消失）；无组上下
+  // 文（散行）不去重，动态错误行（renderRaw 的 subtype/result 变体）不误伤
+  function _sysRowIntoGroup(d) {
+    const g = (_HG.grp && _HG.grp.root
+               && (_HG.grp.root.isConnected || _HG.histBuilding)) ? _HG.grp : null;
+    if (g && g.tl) {
+      const fp = (d.textContent || '').slice(0, 24);
+      // v3.4.83（复核 P4 残留收口）：sysnote 豁免去重——skill-doc 行文案恒同
+      //（摘要只在 title），同组第二条会被 24 字前缀锚整行吞掉（含全文 title）
+      if (fp && g.root.dataset.lastSys === fp && !d.classList.contains('h-sysnote')) return false;
+      g.root.dataset.lastSys = fp;
+      _tlExpFlush(!!_HG.openState);
+      // v3.4.80（复核 P1）：空组的 tl 是内联 display:none（grpFromDom 对
+      // children=0 落的）——append 后不翻转则行困在里面，点开折叠体依旧
+      // 空壳（头「已停止」但看不见中断行）
+      if (g.tl.style.display === 'none') g.tl.style.display = '';
+      g.tl.appendChild(d);
+      return true;
+    }
+    // v3.4.79R（复核 R1）：终结复合帧（interrupted+exit 双帧）第二帧到达时
+    // 活组已被前一帧定稿收回（_HG.grp=null）——三级回落：直接落**尾组**
+    // 时间线（不改 finalized 语义，仅插行；「会话进程已结束」等散行就此
+    // 归位回合折叠体），无组才 addRow 根区
+    const lastGrp = [..._hgFlow.querySelectorAll('.h-grp')].pop() || null;   // 复核 F-B：项目惯用法（last-of-type 选择器族脆弱）
+    const lastTl = lastGrp && lastGrp.querySelector('.h-tl');
+    if (lastTl) {
+      const fp = (d.textContent || '').slice(0, 24);
+      if (fp && lastGrp.dataset.lastSys === fp && !d.classList.contains('h-sysnote')) return false;
+      lastGrp.dataset.lastSys = fp;
+      if (lastTl.style.display === 'none') lastTl.style.display = '';   // v3.4.80 P1 同款
+      lastTl.appendChild(d);
+      return true;
+    }
+    addRow(d);
+    return true;
+  }
   function renderRaw(text) {
     const d = document.createElement('div'); d.className = 'h-raw'; d.textContent = text;
-    addRow(d);
+    if (!_sysRowIntoGroup(d)) return;
+    _hgScrollBottom();
   }
   function renderExit(text) {
     const d = document.createElement('div'); d.className = 'h-exit'; d.textContent = text;
-    addRow(d);
+    if (!_sysRowIntoGroup(d)) return;
+    _hgScrollBottom();
   }
   function renderSwitch(model) {
     const d = document.createElement('div'); d.className = 'h-switch';
@@ -131,25 +173,113 @@
     d.textContent = (kind === 'task-notification' ? '任务通知' : '系统提示')
       + (sum ? ' · ' + sum : ' · 已注入当前回合上下文');
     d.title = t.slice(0, 2000);
-    const g = (_HG.grp && _HG.grp.root
-               && (_HG.grp.root.isConnected || _HG.histBuilding)) ? _HG.grp : null;
-    if (g && g.tl) {
-      _tlExpFlush(!!_HG.openState);
-      g.tl.appendChild(d);
-    } else {
-      addRow(d);
-    }
+    // v3.4.82R（复核 P4）：归组统一走 _sysRowIntoGroup——空组 display:none
+    // 翻转/尾组回落同享，不再各持一份 append 逻辑
+    _sysRowIntoGroup(d);
   }
-  function _hgVisionFreeze(el, err) {
-    if (!el || !el.isConnected) return;
-    const i = el.querySelector('i');
-    if (!i) return;
-    const dur = _hgFmtDur((Date.now() - (+(el.dataset.t0 || 0))) / 1000);
-    i.innerHTML = err
-      ? '📤 已转交 · ⚠ 识图失败 · 用时 ' + dur
-      : '📤 已转交 · 📥 已回传 · 用时 ' + dur;
-    el.dataset.done = String(Date.now());
-    _hgPeerLineStop(el);                  // v2.35.2（P1 多槽）：停该线自己的计时器
+  // ==================== v3.4.88：识图 MCP 调用折叠卡（统一工作组风格）====================
+  // 用户定调：识图对（转交+回传）与 Bash/思考同语言——emoji+名+摘要+状态徽章
+  // 折叠卡，入回合时间线，点开见完整 prompt 与回传全文。旧线（.h-switch）与
+  // 气泡对识图退役；renderPeerRelay/renderPeer 保留（非识图隐藏线+旧会话遗留
+  // 识图广播兜底）。卡承接旧线全部 dataset 契约（peer/t0/done/psum/vsid）+
+  // .hg-peer-t 计时钩子——_hgPeerTimerStart/面板/等待语义零改
+  function _hgVisionSeq() {
+    return _hgFlow.querySelectorAll('.h-tool.h-vision').length + 1;   // DOM 派生序（视窗内相对序）
+  }
+  function _hgVisionPaint(el, state, durTxt) {
+    const st = el && el.querySelector('.h-vision-state');
+    if (!st) return;
+    // 图 42 修（「两个时间」）：定格态隐藏 .hg-peer-t 秒表钩子——用时已
+    // 并入徽章，双表并存叠压
+    const _tb = el.querySelector('.hg-peer-t');
+    if (_tb) _tb.style.display = (state === 'run') ? '' : 'none';
+    const _m = {
+      run: '<span class="h-tbadge b-run">识图中</span>',
+      done: '<span class="h-tbadge b-done">已回传' + (durTxt ? ' · 用时 ' + esc(durTxt) : '') + '</span>',
+      err: '<span class="h-tbadge b-err">识图失败' + (durTxt ? ' · 用时 ' + esc(durTxt) : '') + '</span>',
+      dead: '<span class="h-tbadge b-warn">未回传（回合已结束）</span>',
+      unfinished: '<span class="h-tbadge b-warn">历史未完成</span>',
+      stale: '<span class="h-tbadge b-warn">疑似残留</span>'
+    };
+    st.innerHTML = _m[state] || '';
+  }
+  function _hgVisionCardBuild(input) {
+    input = input || {};
+    const card = document.createElement('div');
+    card.className = 'h-tool col oneclick h-vision';
+    card.dataset.hgKind = 'vision';
+    card.dataset.peer = '识图';
+    card.dataset.vsid = _HG.sid || '';
+    card.dataset.t0 = String(Date.now());
+    const tid = input.__tid || '';
+    if (tid) card.dataset.tid = tid;
+    card.dataset.vseq = String(_hgVisionSeq());
+    card.dataset.vprompt = String(input.prompt || '').slice(0, 4000);
+    card.dataset.vsrc = String(input.imageSource || '').slice(0, 600);
+    card.dataset.vchan = input.__chan || '主';
+    const _pSum = String(input.prompt || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+    card.innerHTML =
+      '<button class="h-tool-head"><span class="h-chev h-tool-chev">▸</span>' +
+      '<span class="h-tool-name">识图 #' + esc(card.dataset.vseq) + '</span>' +
+      `<span class="h-tool-arg" title="${esc(card.dataset.vprompt)}">${esc(_pSum || '识图中…')}</span>` +
+      '<span class="h-vision-state"></span>' +
+      '<b class="hg-peer-t">0s</b></button>' +
+      '<div class="h-tool-coll"></div>';
+    _hgVisionPaint(card, 'run');
+    return card;
+  }
+  // 定格（吸收旧 _hgVisionFreeze 的转交线语义）：回传到达/失败/回放配对——
+  // 停表+徽章+全文懒存 dataset.vres（点开渲染，省快照体积）
+  function _hgVisionResult(el, text, err) {
+    // 全审 P0：回放渲染期卡在游离缓冲（isConnected=false）——histBuilding
+    // 双判放行（08-tools.js:361 既有同款解法）
+    if (!el || (!el.isConnected && !_HG.histBuilding)) return;
+    _hgPeerLineStop(el);
+    // 全审 P7：dur 优先卡上已有的精确 done-t0（回放 relay 行的 l.dur 定格
+    // 值），墙钟差值仅 live 兜底；err 带过（relay 行 err 已落 dataset.verr）
+    const _d0 = +(el.dataset.t0 || 0), _d1 = +(el.dataset.done || 0);
+    const dur = (_d1 > _d0)
+      ? _hgFmtDur((_d1 - _d0) / 1000)
+      : _hgFmtDur((Date.now() - (_d0 || Date.now())) / 1000);
+    if (!(_d1 > _d0)) el.dataset.done = String(Date.now());
+    delete el.dataset.unknown;
+    delete el.dataset.stale;
+    el.dataset.vres = String(text || '');
+    if (err || el.dataset.verr === '1') el.dataset.verr = '1';
+    el.dataset.psum = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+    _hgVisionPaint(el, (err || el.dataset.verr === '1') ? 'err' : 'done', dur);
+    // 全审 P2：pending 期点开过的卡已落 filled='1'（「未回传」占位）——
+    // 回传到达必须破除守卫重填，否则正文永久停留占位与徽章矛盾
+    const _coll = el.querySelector('.h-tool-coll');
+    if (_coll) delete _coll.dataset.filled;
+    if (el.classList.contains('open')) _hgVisionFillBody(el);   // 已展开即刻填
+    renderSideStatus();
+  }
+  // 折叠体填充（懒渲染：prompt esc 直渲 + 回传 renderMd）
+  function _hgVisionFillBody(el) {
+    const coll = el.querySelector('.h-tool-coll');
+    if (!coll || coll.dataset.filled === '1') return;
+    coll.dataset.filled = '1';
+    const src = el.dataset.vsrc || '';
+    let srcChip = '';
+    if (src) {
+      let disp = src;
+      try { disp = decodeURIComponent(String(src).split('?')[0].split('/').pop() || src); } catch (_) {}
+      srcChip = `<div class="h-vision-src" title="${esc(src)}">📎 ${esc(String(disp).slice(0, 60))}` +
+        ` <span class="h-vision-chan">${esc(el.dataset.vchan || '主')}</span></div>`;
+    }
+    const res = el.dataset.vres;
+    coll.innerHTML =
+      '<div class="h-vision-req"><div class="h-vision-lb">📤 发给 MCP 的提示词</div>' +
+      `<pre class="h-vision-pre">${esc(el.dataset.vprompt || '（旧转写未记录提示词）')}</pre>` + srcChip + '</div>' +
+      '<div class="h-vision-res"><div class="h-vision-lb">📥 回传结论</div>' +
+      '<div class="h-vision-md"></div></div>';
+    const md = coll.querySelector('.h-vision-md');
+    if (md) {
+      if (res != null && res !== '') { try { md.innerHTML = renderMd(res); } catch (_) { md.textContent = res; } }
+      else md.innerHTML = '<span class="h-vision-empty">' +
+        (el.dataset.verr === '1' ? '⚠ 识图失败' : '（未回传）') + '</span>';
+    }
   }
   function _hgVisionSweep(dead) {
     const vc = _HG.visionCalls;
@@ -160,29 +290,36 @@
     for (const id in vc) {
       const el = vc[id];
       if (el && el.dataset.vsid !== (_HG.sid || '')) continue;
-      const i = el && el.querySelector('i');
-      if (i) i.innerHTML = '📤 已转交 · 等待结论回传' + (dead ? '（回合已结束）' : '（历史未完成）');
-      if (el) el.dataset.done = String(Date.now());   // v2.35：未回传也定格（面板协作行收口）
-      _hgPeerLineStop(el);              // v2.35.2（P1 多槽）：各线停各的计时器
+      if (el) {
+        el.dataset.done = String(Date.now());   // v2.35：未回传也定格（面板协作行收口）
+        _hgVisionPaint(el, dead ? 'dead' : 'unfinished');
+        _hgPeerLineStop(el);              // v2.35.2（P1 多槽）：各线停各的计时器
+      }
     }
     _HG.visionCalls = null;
   }
   function renderVisionRelayHist(l) {
-    const d = document.createElement('div'); d.className = 'h-switch';
+    // v3.4.88：回放同构卡（v2.28 线退役）——dur 在手直接定格；tid 注册进
+    // visionCalls 供后续 peer 行精确配对（无 tid=旧转写，回落时间邻接配对）
+    const card = _hgVisionCardBuild({
+      prompt: l.prompt || '', imageSource: l.src || '', __tid: l.tid || '', __chan: l.chan || ''
+    });
     const t0 = l.ts ? (Date.parse(l.ts) || 0) : 0;
-    d.dataset.peer = '识图';
-    if (t0) d.dataset.t0 = String(t0);
+    if (t0) card.dataset.t0 = String(t0);
+    if (l.tid) _HG.visionCalls = _HG.visionCalls || {},
+      _HG.visionCalls[l.tid] = card;
     if (l.dur != null) {
-      d.dataset.done = String(t0 + Math.max(0, l.dur) * 1000);
+      card.dataset.done = String(t0 + Math.max(0, l.dur) * 1000);
+      card.dataset.psum = l.err ? '识图失败' : '已回传';
+      if (l.err) card.dataset.verr = '1';
+      _hgVisionPaint(card, l.err ? 'err' : 'done', _hgFmtDur(l.dur));
     } else {
-      d.dataset.done = String(t0 || Date.now());
-      d.dataset.psum = '历史未完成（未回传）';
+      card.dataset.done = String(t0 || Date.now());
+      card.dataset.psum = '历史未完成（未回传）';
+      _hgVisionPaint(card, 'unfinished');
     }
-    d.innerHTML = l.dur != null
-      ? '<span></span><i>' + (l.err ? '📤 已转交 · ⚠ 识图失败' : '📤 已转交 · 📥 已回传')
-        + ' · 用时 ' + esc(_hgFmtDur(l.dur)) + '</i><span></span>'
-      : '<span></span><i>📤 已转交 识图 · 等待结论回传（历史未完成）</i><span></span>';
-    addRow(d);
+    // 全审 P1：与 live 同挂组时间线（非 explore 名直挂）——形态统一
+    _tlPlace(card, '_vision', null);
   }
   function renderPeerRelay(to, t0ms) {    // 📤 已转交分割线（带等待计时）
     // v2.35.2（P1 多槽）：不再「新转交接管旧等待」——每条线自己的计时器自己
@@ -297,15 +434,18 @@
   }
   const _PEER_STALE_MS = 30 * 60 * 1000;   // 30 分钟显示上限
   function _hgPeerStaleSweep() {           // 秒表 tick 内逐秒巡检（cheap）
-    _hgFlow.querySelectorAll('.h-switch[data-peer]:not([data-done]):not([data-stale])').forEach(el => {
+    _hgFlow.querySelectorAll('.h-switch[data-peer]:not([data-done]):not([data-stale]), .h-tool.h-vision[data-peer]:not([data-done]):not([data-stale])').forEach(el => {
       const t0 = +(el.dataset.t0 || 0);
       if (t0 && Date.now() - t0 > _PEER_STALE_MS) {
         el.dataset.stale = '1';
         if (el._peerTimer) { clearInterval(el._peerTimer); el._peerTimer = null; }
-        const i = el.querySelector('i');
-        if (i) {
-          const nm = el.dataset.peer || '其他会话';
-          i.innerHTML = '📤 已转交 ' + esc(nm) + ' · 疑似残留，点击核实（等待超 30 分钟）';
+        if (el.classList.contains('h-vision')) _hgVisionPaint(el, 'stale');
+        else {
+          const i = el.querySelector('i');
+          if (i) {
+            const nm = el.dataset.peer || '其他会话';
+            i.innerHTML = '📤 已转交 ' + esc(nm) + ' · 疑似残留，点击核实（等待超 30 分钟）';
+          }
         }
       }
     });
@@ -332,10 +472,11 @@
     // R6 复审 H：门控补 unknown 线——「状态未知」文案替换掉「等待结论回传」
     // 后，to 门控按文本找会丢；迟到的真实回传仍要能被接收渲染。
     if (to) {
-      const waiting = [..._hgFlow.querySelectorAll('.h-switch[data-peer]')]
+      // v3.4.88：选择器并入识图卡 + 判据 dataset 化（原 textContent 文本判据脆弱）
+      const waiting = [..._hgFlow.querySelectorAll('.h-switch[data-peer], .h-tool.h-vision[data-peer]')]
         .some(el => !el.dataset.done
-          && (el.textContent.includes('等待结论回传') || el.dataset.unknown === '1'
-            || el.dataset.stale === '1'));
+          && (el.dataset.unknown === '1' || el.dataset.stale === '1'
+            || el.classList.contains('h-switch')));   // 旧线无 unknown 标=仍在等待文案
       if (!waiting) return;
     }
     // 去重：主会话自身 jsonl 检测与代播可能双份（空闲期回传两条链都通）。

@@ -17,6 +17,10 @@
       const c = String(res.content || '').toLowerCase().trim();
       return _H_DENIAL.some(m => c.includes(m)) ? 'denied' : 'error';
     }
+    // v3.4.81（用户实锤「SendMessage 失败挂完成徽标」）：SendMessage 发送失败
+    // 的回执 is_error=false、content={"success":false,...}（Agent 不可恢复等）
+    // ——按错误态标红，不再绿「完成」
+    if (/^\s*\{\s*"success"\s*:\s*false/.test(resultText(res))) return 'error';
     return 'completed';
   }
   function resultText(res) {
@@ -409,6 +413,10 @@
       }
     } else {
       _tlExpFlush(!!_HG.openState);   // v3.2.1：回放态断组必收
+      // v3.4.90（用户实锤「识图过程没显示」）：空组的 tl 是内联 display:none
+      //（grpFromDom 对 children=0 落的）——首行入列必须翻显，否则识图卡/
+      // 工具行困在隐藏容器（_sysRowIntoGroup v3.4.80 同修法的上游收口）
+      if (g.tl.style.display === 'none') g.tl.style.display = '';
       g.tl.appendChild(row);
     }
     _hgScrollBottom();

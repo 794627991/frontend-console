@@ -2509,6 +2509,33 @@ html {
    tl 缩进（25px）上=段头比其它行深 17px——tl 内取消叠加缩进，段头 ▸ 与
    各行箭头同线（25+3+10≈37px） */
 .h-tl .h-subblock { margin-left: 0; }
+
+/* ==================== v3.4.88：识图 MCP 折叠卡（统一工作组风格） ==================== */
+.h-tool.h-vision { --h-accent: var(--h-indigo, #6639ba); }
+.h-tool.h-vision .h-vision-state { flex: none; white-space: nowrap; }
+.h-tool.h-vision .h-vision-state .h-tbadge { flex: none; white-space: nowrap; }
+.h-tool.h-vision .h-tbadge.b-run { animation: hgVisionPulse 1.6s ease-in-out infinite; }
+@keyframes hgVisionPulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+.h-vision-chan { flex: none; font-size: 9.5px; color: var(--muted);
+  border: 1px solid var(--border); border-radius: 999px; padding: 0 7px; }
+.h-vision-lb { font-size: var(--fs-2xs); color: var(--muted); margin: 6px 0 4px;
+  font-family: var(--font-ui); }
+.h-vision-pre { margin: 0; padding: 6px 8px; background: var(--code-bg, rgba(127,127,127,.08));
+  border-radius: 6px; font-family: var(--font-mono); font-size: var(--fs-xs);
+  white-space: pre-wrap; word-break: break-word; color: var(--fg); max-height: 220px; overflow-y: auto; }
+.h-vision-src { font-size: var(--fs-2xs); color: var(--muted); margin-top: 4px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: default; }
+.h-vision-md { font-size: var(--fs-sm); line-height: 1.6; color: var(--fg);
+  max-height: 320px; overflow-y: auto; }
+.h-vision-md :first-child { margin-top: 0; }
+.h-vision-md :last-child { margin-bottom: 0; }
+.h-vision-empty { color: var(--muted); font-style: italic; }
+.h-tbadge.b-warn { color: var(--h-warn); font-weight: 600;
+  background: color-mix(in srgb, var(--h-warn) 14%, transparent); }
+/* v3.4.84（用户实锤「未对齐」）：exit 行归组后左对齐——.h-exit 基类是
+   居中分割线样式（align-self:center 配两侧横线），时间线内与思考/工具行
+   混排显得缩进；顶层散落形态（无组兜底）保留居中 */
+.h-tl .h-exit { align-self: flex-start; }
 .h-subblock-head { display: flex; align-items: center; gap: 7px; width: 100%;
   background: transparent; border: none; padding: 0; cursor: pointer;
   font: inherit; color: var(--fg); text-align: left; border-radius: 4px; }

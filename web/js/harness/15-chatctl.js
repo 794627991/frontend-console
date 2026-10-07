@@ -531,6 +531,22 @@
   async function stopGen() {
     if (!_HG.sid) return;
     const sid = _HG.sid;
+    // v3.4.79（用户实锤「工作中 6s 头挂着点开空的」）本地收尾：与后端
+    // interrupted 帧同构（exit 行入组+定稿中断态+子代理收尾+窗格收起），
+    // 防组头永挂「工作中 Ns」。时间戳供 10-sse 侧迟到帧去重（_stopLocalAt）
+    function _stopLocalFinish(why) {
+      try { renderExit('已中断回复'); } catch (_) {}
+      try { grpFinalize(true, { interrupted: true, hist: _hgTailAdopt(), turnEnd: true }); } catch (_) {}
+      _HG._stopLocalAt = Date.now();
+      _HG._stopLocalSid = _HG.sid;   // v3.4.79R（复核 R2）：闸按会话归属，跨会话不误吞
+      setBusy(false);
+      try { showBanner('中断' + why + '，已本地收尾', 3000); } catch (_) {}
+      try { _hgAskDismiss(_hgAskDockEl && _hgAskDockEl.querySelector('.h-ask:not(.done)'),
+                          '已随会话中断失效'); } catch (_) {}   // 复核 R3：对齐 10-sse interrupted 分支（ask 面板不空挂）
+      try { _hgAgentsSweep(true); } catch (_) {}
+      try { _hgTurnEnd('interrupt', 0); } catch (_) {}
+      try { _subEnd(); } catch (_) {}
+    }
     // v2.15：停止必须自带兜底。复位的唯一来源是后端回一条 `interrupted`
     // 事件，而后端 interrupt() 在「自身 busy 已是 false」时直接返回错误、
     // 不发任何事件（进程刚退出、事件丢失、会话查无此 sid 都会走到这条）。
@@ -550,10 +566,14 @@
         return;
       }
       // 后端已受理：等 interrupted 事件；超时没等到就自行收尾
-      await new Promise(res => setTimeout(res, 1500));
-      if (!gotEvent && _HG.sid === sid) setBusy(false);
+      // v3.4.79R（复核 P2/P3）：等待窗 1.5s→2.3s 对齐后端上界（kill 的
+      // proc.wait(timeout=2s)+审计/peer 清理，>1.5s 到帧是 Windows 现实路
+      // 径——兜底抢跑会与迟到帧双发）；兜底文案与后端帧统一「已中断回复」
+      // （补充说明走 banner），迟到帧由 _HG._stopLocalAt 闸去重（10-sse 侧）
+      await new Promise(res => setTimeout(res, 2300));
+      if (!gotEvent && _HG.sid === sid) _stopLocalFinish('事件超时');
     } catch(_) {
-      if (_HG.sid === sid) setBusy(false);
+      if (_HG.sid === sid) _stopLocalFinish('连接异常');
     } finally {
       document.removeEventListener('hg-interrupted', onInt);
     }

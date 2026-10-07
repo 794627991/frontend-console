@@ -329,11 +329,16 @@
           // 定格对应线并渲染 📥 回传气泡；按 id 记线，并行多图各对各的线
           if (!isSub && (b.name === 'mcp__vision__analyze_image'
                          || b.name === 'mcp__4_5v_mcp__analyze_image')) {
-            const el = renderPeerRelay('识图');
-            // v3.4.54：建线即记会话归属（与 task_started 建档记归属同款）
-            // ——sweep/配对按 sid 校验，B 会话的收尾事件不再算清 A 的线
-            el.dataset.vsid = _HG.sid || '';
+            // v3.4.88（识图卡化）：转交线退役——建折叠卡（emoji+名+prompt 摘要
+            // +「识图中」徽章+秒表）入回合时间线，与 Bash/思考同语言；prompt
+            // 全文随卡 dataset（点开可见）
+            const el = _hgVisionCardBuild(Object.assign({}, b.input || {}, {
+              __tid: b.id || '',
+              __chan: (b.name === 'mcp__vision__analyze_image' ? '兜底' : '主')
+            }));
+            _tlPlace(el, b.name, b.input || null);   // 非 explore → 直挂组时间线
             (_HG.visionCalls || (_HG.visionCalls = {}))[b.id] = el;
+            _hgPeerTimerStart(el, +el.dataset.t0 || Date.now());   // 卡内 .hg-peer-t 钩子走表
           } else {
             renderToolUse(b, isSub, o.parent_tool_use_id);
             // v2.27.3：转交识图/其他会话 = 强过程反馈，分割线比收起的工具行显眼
@@ -407,6 +412,28 @@
       // 只精确打击纯标注串：isMeta 里还混着 peer 回传行（Another Claude
       // session），不可全量拦
       if (o.isMeta && typeof c0 === 'string' && /^\[Image: [^\]]+\]$/.test(c0.trim())) return;
+      // v3.4.82（用户实锤「这个明显不是我的消息」）：isMeta 的纯文本注入行
+      //（Skill 文档等机器给模型的上下文）不是真人输入——渲染成用户气泡=
+      // 「别人往我的会话里塞了消息」的观感。弱化成系统提示行（文档全文在
+      // 模型上下文里，UI 只留一行痕迹）；peer 回传（Another 前缀）不受影响
+      if (o.isMeta) {
+        const _mt = typeof c0 === 'string' ? c0
+          : (Array.isArray(c0) && c0.every(b => !b || b.type === 'text')
+             ? c0.filter(b => b && b.type === 'text').map(b => b.text).join('\n') : '');
+        // v3.4.82R（复核 P2/P3·语料实证）：豁免两类——①贴图回显行
+        //（[Image: source: …] list 全文本块形态 108 条，v3.2.16 定调消息列
+        // 永不出现图片链接行→静默丢）；②机器续跑标记（v3.2.12 定调不进
+        // 聊天框→静默丢）。其余 isMeta 纯文本（skill 文档）→ sysnote 弱化
+        const _mtLines = _mt ? _mt.split('\n').map(x => x.trim()).filter(Boolean) : [];
+        const _allImgEcho = _mtLines.length > 0
+          && _mtLines.every(x => /^\[Image: [^\]]+\]$/.test(x));
+        const _noise = /^\[Request interrupted|^\[Request cancelled by user|^Continue from where you left off/.test(_mt.trim());
+        if (_allImgEcho || _noise) return;
+        if (_mt && !_mt.trim().startsWith('Another Claude session')) {
+          renderSysNote('skill-doc', '已注入机器上下文：' + _mt.replace(/\s+/g, ' ').trim().slice(0, 60) + '（供模型参考，非用户消息）');
+          return;
+        }
+      }
       // v2.33：子代理内部的 tool_result 也分流进窗格（user 事件同带
       // parent_tool_use_id；不属于已跟踪 tab 的忽略）
       // v2.43：结果同时挂回主 flow 段内工具行（段不依赖窗格 tab 存活——
@@ -432,16 +459,35 @@
         for (const b of c0) {
           if (!(b && b.type === 'tool_result')) continue;
           const a = (_HG.agents || {})[b.tool_use_id];
-          if (a && !a.done && !a.bg) {
+          // v3.4.81（用户实锤「僵尸子代理 工作 6m35s」）：SendMessage 发送失败
+          // 的回执是 content={"success":false,"message":...}（is_error=false，
+          // 无 task_notification 跟进）——bg 包装档案旧只等 notification =
+          // 永挂运行中。失败 JSON 即刻收尾（err=true，摘要入档）
+          const _rt0 = resultText(b);
+          const _sendFail = /^\s*\{\s*"success"\s*:\s*false/.test(_rt0);
+          if (a && !a.done && (_sendFail || !a.bg)) {
             a.done = true;
             a.doneAt = Date.now();
-            a.err = !!b.is_error;
-            a.result = resultText(b).slice(0, 400);
+            a.err = !!b.is_error || _sendFail;
+            a.result = _rt0.slice(0, 400);
             // v2.38：agentId 落档——Task tool_result 文本自带「agentId: xxx」
             //（与 task_started 的 task_id 同源），回放窗格靠它定位子代理转写
             a.agentId = a.taskId
-              || (resultText(b).match(/(?<![a-zA-Z])agentId[:"':\s]+([0-9a-zA-Z_-]{8,64})/i) || [])[1] || '';
+              || (_rt0.match(/(?<![a-zA-Z])agentId[:"':\s]+([0-9a-zA-Z_-]{8,64})/i) || [])[1] || '';
             _subClose(b.tool_use_id, a.err);   // v2.33：窗格 tab 定格 ✓/✗
+            // v3.4.82（用户实锤「等待协作回传 20m56s」假等待）：SendMessage
+            // 失败的转交线也要定格——派发时按 peerSent 建过隐藏线（外部 id
+            // 形态），失败后线不定格=「等待回传」秒表永走。按 tool_use_id 反查
+            // peerSent 定格对应线（摘要入 psum）
+            if (_sendFail) {
+              const _fpeer = (_HG.peerSent || {})[b.tool_use_id];
+              if (_fpeer) {
+                const _fl = _hgPeerLines().find(el => el.dataset.peer === _fpeer && !el.dataset.done);
+                // v3.4.82R（复核 P5）：走正式定格入口——清 unknown/stale
+                //（「定格即清」不变量），不直写 dataset
+                if (_fl) _hgPeerLineFreeze(_fl, '发送失败（Agent 不可恢复）');
+              }
+            }
             hitAgent = true;
           } else if (!a) {
             const ab = _subBlkAdopt(b.tool_use_id);
@@ -469,13 +515,11 @@
           const vtxt = Array.isArray(tr.content)
             ? tr.content.filter(x => x && x.type === 'text').map(x => x.text).join('\n')
             : String(tr.content || '');
-          // 先定格本线再画气泡。renderPeer 的按名配对已排除识图跟踪中的线
-          // （v2.35.2 R1），不会误冻还在跑的并行兄弟线；下方 pw 摘还仅剩
-          // 单槽兼容兜底路径在用
+          // v3.4.88（识图卡化）：定格+全文入卡（点开见完整回传），气泡退役；
+          // pw 摘还仅剩单槽兼容兜底路径在用
           const pw = _HG.peerWait;
           _HG.peerWait = null;
-          _hgVisionFreeze(el, !!tr.is_error);
-          renderPeer('识图', vtxt.trim() || '（识图失败，无返回内容）');
+          _hgVisionResult(el, vtxt.trim() || '（识图失败，无返回内容）', !!tr.is_error);
           if (pw && pw.el !== el) _HG.peerWait = pw;   // 他线还在等，还回去继续计时
           _hgScrollBottom();
           return;
@@ -793,11 +837,38 @@
       else if (it.kind === 'ask_done') askDone(it);
       else if (it.kind === 'interrupted') {
         endThinking(); _hgVisionSweep(true);
+        // v3.4.79（用户定调「中断行整合进回合」）：exit 行先入组时间线再定稿
+        // ——先定稿的话 _HG.grp 已收，行散落组外（点开回合看不到中断实况）。
+        // v3.4.79R（复核 R2/R4）：stopGen 本地收尾的迟到回执走轻收尾——判据
+        // 加 !_HG.grp（本地收尾后 grp 必 null；新回合真帧到达时 grp 活，
+        // 5s 内二次中断不被误吞）+ sid 归属；命中则整段跳过（含 turnEnd
+        // 双记），只通知 stopGen「事件到了」
+        if (it.text === '已中断回复' && !_HG.grp
+            && Date.now() - (_HG._stopLocalAt || 0) < 5000
+            && _HG._stopLocalSid === _HG.sid) {
+          try { document.dispatchEvent(new CustomEvent('hg-interrupted', {detail: _HG.sid})); } catch(_) {}
+          setBusy(false);   // 复核 F-A：幂等兜底——真帧被闸吞时 busy 不依赖后续 exit 帧
+          return;
+        }
+        renderExit(it.text);
+        // v3.4.84（用户实锤「还是显示工作中」）：exit 帧先到时它已把 _HG.grp
+        // 收走（置 null）——迟到的 interrupted 帧 grpFinalize 在 !g 早退，头
+        // 定稿块（含 v3.4.80 的 interrupted 无条件翻头）根本没机会跑=头永挂
+        // 「工作中 Ns」。兜底：组失联时直接翻尾组头文案（时长段保留）
+        if (!_HG.grp) {
+          const _tg = [..._hgFlow.querySelectorAll('.h-grp')].pop();
+          const _tlbl = _tg && _tg.querySelector('.h-turn-label');
+          // 复核残留 b 收口：exit 先到写的「已工作」也翻「已停止」（中断语义
+          // 不丢）；「已停止」幂等不碰
+          if (_tlbl && (_tlbl.textContent.indexOf('工作中') === 0
+                        || _tlbl.textContent.indexOf('已工作') === 0))
+            _tlbl.textContent = _tlbl.textContent.replace(/^(工作中|已工作)/, '已停止');
+        }
         grpFinalize(true, { interrupted: true, hist: _hgTailAdopt(), turnEnd: true });   // v3.2.1R2(R2-1/R2-3)认回；v3.2.2 中断=回合收尾，正文留头外
         // v3.4.61：中断即提问失效（后端 ask_cancel 不发帧——面板不再空挂）
         _hgAskDismiss(_hgAskDockEl && _hgAskDockEl.querySelector('.h-ask:not(.done)'),
                       '已随会话中断失效');
-        renderExit(it.text); setBusy(false);
+        setBusy(false);
         // v2.32：中断收尾——在跑的子代理标「已中断」（原缺口：只有 result
         // 分支收尾，点 ■ 停止后子代理假"运行中"+计时狂跳）
         _hgAgentsSweep(true); _hgTurnEnd('interrupt', 0);
@@ -807,10 +878,12 @@
       }
       else if (it.kind === 'exit') {
         endThinking(); _hgVisionSweep(true); _HG.alive = false;
+        // v3.4.79：exit 行先入组再定稿（同 interrupted 分支——组外散行整合）
+        renderExit(it.text);
         grpFinalize(true, { hist: _hgTailAdopt(), turnEnd: true });   // v3.2.1R2(R2-1)认回；v3.2.2 退出=回合收尾，正文留头外
         _hgAskDismiss(_hgAskDockEl && _hgAskDockEl.querySelector('.h-ask:not(.done)'),
                       '已随会话结束失效');   // v3.4.61：进程退出=提问失效，面板收缩
-        renderExit(it.text); setBusy(false);
+        setBusy(false);
         _hgAgentsSweep(true); _hgTurnEnd('exit', 0);   // v2.32：同上，进程退出也收
         _subEnd();                         // v2.33：窗格收起
       }

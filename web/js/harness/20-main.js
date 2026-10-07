@@ -498,6 +498,9 @@ function buildClaudeHarnessTab(opts = {}) {
     if (ocRow && !e.target.closest('.h-tool-coll')) {
       const opening = !ocRow.classList.contains('open');
       if (opening) _histLazyFill(ocRow); else _histLazyDrop(ocRow);
+      // v3.4.88：识图卡展开时懒填折叠体（完整 prompt+回传全文——不入
+      // _histLazyFill 的 hi/raw 账，独立体）
+      if (opening && ocRow.classList.contains('h-vision')) _hgVisionFillBody(ocRow);
       ocRow.classList.toggle('open');
       return;
     }
@@ -1114,21 +1117,41 @@ function buildClaudeHarnessTab(opts = {}) {
     // v3.1（#10）：队列条目操作全部走服务端账本（本地删只是乐观 UI，
     // input_discarded/input_promoted 事件会按 id 对账；无 id=POST 未返回
     // 的窄窗口，本地直接删，后端账本里它还在——事件晚到再对齐）
-    const _qact = (act, extra) => {
-      const it = arr[i];
+    // v3.4.78（用户实锤「编辑掉的测试1 复活在待发送区又被发出」）：
+    // **原始 bug**——旧 _qact 在 splice 之后重读 arr[i]，读到的是被删条目的
+    // 下一条或 undefined：单条队列 del/edit 空转不发（服务端条目残留→复活
+    // →被泵发出，即用户 repro）、多条队列误发下一条的 id（静默误杀无辜
+    // 条目）。作废可靠性三层修：①条目对象显式传参（不再按下标回读）；
+    // ②POST 响应校验（非 ok/异常 → 指纹追杀兜底）；③指纹按 sid 分域
+    // （30s 有效，cap 20），input_admitted 迟到回号时命中补杀（reducer
+    // input_admitted 分支内联消费）
+    const _qKillMark = (it) => {
+      const fp = String((it && it.text) || '').slice(0, 200)
+        .replace(/\s+/g, ' ').trim().slice(0, 80);
+      if (!fp) return;
+      _HG.qKill = _HG.qKill || {};
+      const bag = _HG.qKill[_HG.sid] = _HG.qKill[_HG.sid] || [];
+      bag.push({ fp, at: Date.now() });
+      if (bag.length > 20) bag.shift();
+    };
+    const _qact = (act, it, extra, killFallback) => {
       if (it && it.id) {
         fetch('/api/harness/queue_act', { method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(Object.assign({ sid: _HG.sid, id: it.id, act }, extra || {}))
-        }).catch(() => {});
+        }).then(r => r.json()).then(j => {
+          if (killFallback && (!j || !j.ok)) _qKillMark(it);
+        }).catch(() => { if (killFallback) _qKillMark(it); });
+      } else if (killFallback) {
+        _qKillMark(it);   // 无 id 兜底（id 由 queuePush 同步预生成，常态不达）
       }
     };
     if (b.dataset.qact === 'del') {
-      arr.splice(i, 1); renderQueue();
-      _qact('del');
+      const it = arr.splice(i, 1)[0]; renderQueue();
+      _qact('del', it, null, true);
     } else if (b.dataset.qact === 'edit') {
       const it = arr.splice(i, 1)[0]; renderQueue();
-      _qact('del');
+      _qact('del', it, null, true);
       _hgInput.value = it.text || '';
       renderOverlay(_hgInput.value);
       if ((it.images || []).length || (it.files || []).length)
@@ -1138,7 +1161,7 @@ function buildClaudeHarnessTab(opts = {}) {
       // v3.1：立即发送=提到队首+中断当前回合（后端回合终结泵自然先发它）
       const it = arr.splice(i, 1)[0];
       arr.unshift(it); renderQueue();
-      _qact('now');
+      _qact('now', it);   // v3.4.78：显式传条目（旧代码 splice 后回读 arr[i] 发错对象）
       stopGen();               // interrupted → 后端 _turn_end → 800ms 泵发队首
     }
   });
@@ -1197,7 +1220,7 @@ function buildClaudeHarnessTab(opts = {}) {
       } catch(_) {}
       try {
         _hgPeerStaleSweep();   // v2.37R6：>30min 标疑似残留并停表
-        _hgFlow.querySelectorAll('.h-switch[data-peer]:not([data-done]):not([data-stale]):not([data-unknown])').forEach(rl => {
+        _hgFlow.querySelectorAll('.h-switch[data-peer]:not([data-done]):not([data-stale]):not([data-unknown]), .h-tool.h-vision[data-peer]:not([data-done]):not([data-stale]):not([data-unknown])').forEach(rl => {
           if (!rl._peerTimer) _hgPeerTimerStart(rl, +(rl.dataset.t0 || 0) || Date.now());
         });
       } catch(_) {}

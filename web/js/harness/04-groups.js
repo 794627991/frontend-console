@@ -334,7 +334,12 @@
     // 只有真正发生过工作（思考段或工具）的组才亮头；纯正文组无头（对照
     // resolveConversationTurnWorkStatus 的 hasWork 判据）
     const _hasWork = (_segN > 0) || !!(g.counts && Object.keys(g.counts).length);
-    if (g.head && _hasWork) {
+    // v3.4.80（用户实锤「工作中 4s 头挂着、点开什么都没有」）：被打断的回合
+    // 无条件定稿头——首 token 前打断的空回合（无思考/工具行，_hasWork=false）
+    // 也必须从「工作中 Ns」定格「已停止」，否则秒表停了 label 冻结=永挂；
+    // 工时无 durMs 事实时走本地差值（≈打断前真实时长），点开折叠体可见
+    // 「已中断回复」行（v3.4.79 归组）不再是空壳
+    if (g.head && (_hasWork || opt.interrupted)) {
       _turnHeadShow(g, { hist: true });         // 兜底：纯思考组此前没走 drawerCount
       // v3.2R1(P0 审计)：工时事实分级——durMs（CLI 冻结）> endTs−t0（回放
       // 边界差）> live 时钟差；回放态绝不吃当前时钟——缺事实时显示无数字
