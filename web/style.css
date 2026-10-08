@@ -2544,6 +2544,21 @@ html {
   max-height: 320px; overflow-y: auto; }
 .h-vision-md :first-child { margin-top: 0; }
 .h-vision-md :last-child { margin-bottom: 0; }
+/* v3.5.13（用户实锤「回传粗体/表格看不出来」）：md 元素样式此前只作用于
+   .h-bubble 作用域——识图回传容器裸奔（表格无边框=一坨文字）。对齐 h-bubble
+   同款：表格边框/strong/代码/列表/标题分级 */
+.h-vision-md table { border-collapse: collapse; margin: .5em 0; }
+.h-vision-md th, .h-vision-md td { border: 1px solid var(--border); padding: 4px 8px; }
+.h-vision-md th { background: var(--bg, rgba(127,127,127,.08)); }
+.h-vision-md strong { font-weight: 700; color: var(--fg-bright, var(--fg)); }
+.h-vision-md code { font-family: var(--font-mono); font-size: var(--fs-xs);
+  background: var(--code-bg, rgba(127,127,127,.08)); padding: 1px 4px; border-radius: 4px; }
+.h-vision-md ul, .h-vision-md ol { margin: .3em 0; padding-left: 1.4em; }
+.h-vision-md h1, .h-vision-md h2, .h-vision-md h3, .h-vision-md h4 {
+  font-size: 1.05em; font-weight: 700; margin: .6em 0 .3em; }
+.h-vision-md a { color: var(--accent); }
+.h-vision-md blockquote { border-left: 3px solid var(--border); padding-left: 8px;
+  color: var(--muted); margin: .4em 0; }
 .h-vision-empty { color: var(--muted); font-style: italic; }
 .h-tbadge.b-warn { color: var(--h-warn); font-weight: 600;
   background: color-mix(in srgb, var(--h-warn) 14%, transparent); }
