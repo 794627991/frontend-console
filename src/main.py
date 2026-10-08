@@ -490,6 +490,9 @@ def main():
     # 全屏回 Normal 不回之前的最大化态——任务栏消失实锤的根因，显式拉回）。
     @app.route("/api/window/fullscreen", methods=["POST"])
     def _api_window_fullscreen():
+        # v3.4.94：补漏 flask request 导入——此前未导入，本路由运行时
+        # NameError→500（Cython 静态检查随打包加密实锤）
+        from flask import request
         act = (request.get_json(force=True, silent=True) or {}).get("action", "enter")
         w = getattr(main, "_win", None)
         if w is not None:

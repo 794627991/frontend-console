@@ -15,7 +15,10 @@ from .. import app_state as _st
 from ..claude_conn import _humanize_claude_error, _resolve_claude_exe
 from .lifecycle import _ensure_gc, _get_or_create
 from .roles import audit_gate_check
-from .consts import _PROMPTS_LEGACY_KEY, _SKILL_ZH_FILE, _UPLOAD_DIR, _UPLOAD_MAX, _sessions, _sessions_lock
+# v3.4.94：补漏 _PROMPTS_KEY——1165 行旧版提示词迁移用到但未导入
+#（Cython 静态检查实锤→资源加密失败；运行时该路径 NameError 被 except
+#  吞掉=v2.4 旧机的单条提示词一直迁移不上去）
+from .consts import _PROMPTS_KEY, _PROMPTS_LEGACY_KEY, _SKILL_ZH_FILE, _UPLOAD_DIR, _UPLOAD_MAX, _sessions, _sessions_lock
 from .meta import _meta, _meta_load, _meta_lock, _meta_save, _meta_tombstones
 from .models import available_models
 from .prompts import _prompt_matches_project, _prompts_load, _prompts_save
