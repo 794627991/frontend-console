@@ -313,6 +313,11 @@
       card.dataset.psum = l.err ? '识图失败' : '已回传';
       if (l.err) card.dataset.verr = '1';
       _hgVisionPaint(card, l.err ? 'err' : 'done', _hgFmtDur(l.dur));
+    } else if (_HG.histBusy && l.tid) {
+      // v3.5.8（用户实锤「A 切 B 再切 A 显示历史未完成，实际还在识图」）：
+      // busy 活会话的未回传卡=识图仍在跑——复活 run 态+续表（tid 已注册
+      // visionCalls，回传经 SSE 到达即正路定格；不设 done/psum 防误判死案）
+      _hgPeerTimerStart(card, t0 || Date.now());
     } else {
       card.dataset.done = String(t0 || Date.now());
       card.dataset.psum = '历史未完成（未回传）';

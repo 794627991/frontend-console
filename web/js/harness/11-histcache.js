@@ -1,5 +1,9 @@
 // harness histcache.js (v3.0 自 buildClaudeHarnessTab 拆出,定义体零改动,缩进保持原样)
   function _histRender(lines, start, opt) {
+    // v3.5.8（用户实锤「A 切 B 再切 A，识图中显示历史未完成」）：渲染期
+    // busy 标志——noFinalize 正是调用方的 !!j.busy（busy 活会话）。识图卡
+    // 回放据此把未回传卡复活为「识图中」（run 态+续表），不再误判死案
+    _HG.histBusy = !!(opt && opt.noFinalize);
     _HG.lastTs = 0;   // v2.24.5：重建期时间条从零起算（第一条 user 带时间）
     // v3.2.12（用户定调「只要往上滑就显示历史，分页加载不要了」）：恒全量
     // 渲染——整段会话一次原子换入，滚动条天然覆盖全部历史（ZCode 靠虚拟化
@@ -193,6 +197,7 @@
       const _allAsst = _realFlow.querySelectorAll('.h-msg.asst.can-rewind');
       _allAsst.forEach((m, i) => { if (i < _allAsst.length - 1) m.classList.remove("can-rewind"); });
       _HG.histBuilding = false;   // v3.2.13：连接性判据还原（见顶部注释）
+      _HG.histBusy = null;        // v3.5.8：busy 标志随渲染收尾还原
       _hgRailSync();
     }
   }

@@ -313,6 +313,7 @@
           if (el.dataset.tid && !el.dataset.done) {
             (_HG.visionCalls || (_HG.visionCalls = {}))[el.dataset.tid] = el;
             _hgVisionPaint(el, 'run');
+            _hgPeerTimerStart(el, +(el.dataset.t0 || 0) || Date.now());   // v3.5.8：快照恢复的 run 卡起表（旧漏：表不走）
           }
           return;
         }
