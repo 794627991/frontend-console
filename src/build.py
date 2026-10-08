@@ -134,20 +134,21 @@ def _publish(app_dir):
 
 def _publish_offline_pkg():
     """v3.4.97（用户需求「offline_pkg 同步到 release 形成压缩包，发布页
-    同步提供」）：dist/offline_pkg → dist/releases/<应用名>-offline-pkg-
-    v<ver>.zip。发布页 _versions() 自动列出带 -v 的 zip——同事端门户即见
-    即下。指纹（文件数+大小+mtime 汇总）不变且包在则跳过重压（几百 MB
-    级）。刻意不写 manifest.json——自动更新器只认主应用包，离线资源绝
-    不能被当应用更新推下去。"""
+    同步提供」）：dist/offline_pkg → dist/releases/<应用名>-offline-pkg.zip。
+    不带版本号（用户定调：离线包内容是 Git/Node/claude-code/依赖，与工具
+    版本无关）。发布中心 _offline_pkg() 单独通道列出——同事端门户即见
+    即下。指纹（文件数+大小+mtime 汇总）不变则沿用；指纹未变但旧带版本
+    号的包还在（v2.3.3 及之前的名），直接改名收编不重压（几百 MB 级）。
+    刻意不写 manifest.json——自动更新器只认主应用包，离线资源绝不能被
+    当应用更新推下去。"""
     import zipfile
     src = os.path.join(BASE, "dist", "offline_pkg")
     if not os.path.isdir(src):
         print("offline-pkg: dist/offline_pkg 不存在，跳过")
         return
-    from src.version import APP_VERSION
     rel = os.path.join(BASE, "dist", "releases")
     os.makedirs(rel, exist_ok=True)
-    dst = os.path.join(rel, "%s-offline-pkg-v%s.zip" % (APP_NAME, APP_VERSION))
+    dst = os.path.join(rel, "%s-offline-pkg.zip" % APP_NAME)
     n_files = total = 0
     for r, _, fs in os.walk(src):
         for f in fs:
@@ -164,9 +165,20 @@ def _publish_offline_pkg():
             old = f.read().strip()
     except OSError:
         old = ""
-    if old == fp and os.path.isfile(dst):
-        print("offline-pkg: 内容未变，沿用 %s" % os.path.basename(dst))
-        return
+    if old == fp:
+        if os.path.isfile(dst):
+            print("offline-pkg: 内容未变，沿用 %s" % os.path.basename(dst))
+            return
+        # 内容未变只是改了名（v2.3.3 及之前带 -v<ver>）：最新一份旧包直接
+        # 改名收编，不重压
+        olds = sorted(
+            (n for n in os.listdir(rel)
+             if n.startswith("%s-offline-pkg-v" % APP_NAME) and n.endswith(".zip")),
+            key=lambda n: os.path.getmtime(os.path.join(rel, n)))
+        if olds:
+            os.replace(os.path.join(rel, olds[-1]), dst)
+            print("offline-pkg: 内容未变，旧包改名收编 → %s" % os.path.basename(dst))
+            return
     print("offline-pkg: 压缩 dist/offline_pkg → releases（几百 MB 需几分钟）…")
     with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as z:
         for r, _, fs in os.walk(src):

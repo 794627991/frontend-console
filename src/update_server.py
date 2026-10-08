@@ -133,8 +133,9 @@ def _versions():
             continue
         # 离线资源包不是应用版本（用户定调「离线包和实际包分开」）：留着会与
         # 整包同版本号并列、按文件名序抢 hero 卡位还错挂整包 sha1——主清单
-        # 剔除，_offline_pkg() 单独通道出去各显各的
-        if "-offline-pkg-" in n:
+        # 剔除，_offline_pkg() 单独通道出去各显各的（新名不带版本号，检测串
+        # 不带尾连字符）
+        if "-offline-pkg" in n:
             continue
         ver = n.rsplit("-v", 1)[-1][:-4]
         p = os.path.join(root, n)
@@ -167,9 +168,10 @@ def _versions():
 
 
 def _offline_pkg():
-    """离线资源包单独通道（前端控制台-offline-pkg-v<ver>.zip，多份取最新）。
-    不进版本清单/更新日志——它不是应用版本，只是无外网机器的部署资源
-    （Git/Node/claude-code/Python 依赖）。sha1 不提供：manifest 刻意不收
+    """离线资源包单独通道（<应用名>-offline-pkg.zip，v2.3.3 及之前带
+    -v<ver> 尾巴也兼容识别，多份取最新）。不进版本清单/更新日志——它不是
+    应用版本，只是无外网机器的部署资源（Git/Node/claude-code/Python 依赖，
+    与工具版本无关，包名不带版本号）。sha1 不提供：manifest 刻意不收
     离线包（updater 不能推它），424MB 大文件也不宜每请求现算。"""
     root = _releases_dir()
     try:
@@ -178,7 +180,7 @@ def _offline_pkg():
         return None
     best = None
     for n in sorted(names):
-        if not (n.endswith(".zip") and "-offline-pkg-" in n):
+        if not (n.endswith(".zip") and "-offline-pkg" in n):
             continue
         p = os.path.join(root, n)
         try:
@@ -741,14 +743,14 @@ async function load(){
       +'<div class="row"><button class="btn" data-dl="'+top.url+'" data-n="'+esc(top.file)+'">⬇ 下载整包</button>'
       +'<span data-dlst style="font-size:12px;color:var(--muted)">下载后解压即完成安装</span></div></div>';
     // 离线资源包独立卡片（用户定调「离线包和实际包分开」）：不是应用版本，
-    // 不占 hero、不进更新日志，无外网部署资源单独一处下载
+    // 不占 hero、不进更新日志；包名不带版本号——内容与工具版本无关
     if(j.offline&&j.offline.url){
       h+='<div class="card" style="padding:16px 22px;margin-bottom:28px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">'
         +'<div style="flex:1;min-width:240px">'
         +'<div style="font-size:14px;font-weight:650">🧰 离线资源包'
-        +'<span style="font-size:11px;font-weight:400;color:var(--muted);margin-left:8px">OFFLINE PKG · v'+esc(j.offline.version)+'</span></div>'
+        +'<span style="font-size:11px;font-weight:400;color:var(--muted);margin-left:8px">OFFLINE PKG</span></div>'
         +'<div style="font-size:12px;color:var(--muted);margin-top:5px">📅 '+fmtTs(j.offline.mtime)+' · 📦 '+fmtSize(j.offline.size)
-        +' · 无外网机器部署资源（Git / Node / claude-code / Python 依赖），随整包版本更新，独立下载</div></div>'
+        +' · 无外网机器部署资源（Git / Node / claude-code / Python 依赖），与工具版本无关，独立下载</div></div>'
         +'<button class="btn" data-dl="'+esc(j.offline.url)+'" data-n="'+esc(j.offline.file)+'" style="flex-shrink:0">⬇ 下载离线包</button></div>';
     }
     const rest=j.items.slice(1);
