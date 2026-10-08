@@ -178,16 +178,18 @@ write_cfg(enabled=True)
 li, hv = hr.resolve_role_models(
     models=["Opus-X[1M]", "flash-a"], default="Opus-X[1M]")
 check("[1M] 窗口后缀剥离", li == "flash-a" and hv == "Opus-X")
-write_cfg(enabled=True, model_map={
-    "open.bigmodel.cn": {"executor": "m-ex", "coder": "m-co"}})
-check("model_map 旧键名（executor/coder）照收",
+# v3.5.15：model_map 端点映射从三角色判定链退役——旧/新键名两种写法都
+# 不再覆盖档位（键归识图专用，POST 解析保留见 [14]）
+write_cfg(enabled=True, light_model=POOL_LIGHT, heavy_model=POOL_HEAVY,
+          model_map={"open.bigmodel.cn": {"executor": "m-ex", "coder": "m-co"}})
+check("model_map 不再覆盖三角色档位（v3.5.15 退役·旧键名）",
       hr.resolve_role_models(base_url="https://open.bigmodel.cn/v1")
-      == ("m-ex", "m-co"))
-write_cfg(enabled=True, model_map={
-    "open.bigmodel.cn": {"light": "m-li", "heavy": "m-hv"}})
-check("model_map 新键名（light/heavy）亦可",
+      == (POOL_LIGHT, POOL_HEAVY))
+write_cfg(enabled=True, light_model=POOL_LIGHT, heavy_model=POOL_HEAVY,
+          model_map={"open.bigmodel.cn": {"light": "m-li", "heavy": "m-hv"}})
+check("model_map 不再覆盖三角色档位（v3.5.15 退役·新键名）",
       hr.resolve_role_models(base_url="https://open.bigmodel.cn/v1")
-      == ("m-li", "m-hv"))
+      == (POOL_LIGHT, POOL_HEAVY))
 write_cfg(enabled=True)
 check("方案表为空兜硬默认",
       hr.resolve_role_models(models=[], default=None)
@@ -624,12 +626,12 @@ try:
           and gr["roles"].get("audit_mode") == "auto")
     jr2 = _c.post("/api/harness/roles", json={
         "model_map": ["open.bigmodel.cn=mm-li,mm-hv"]}).get_json()
-    check("POST 行式 model_map 解析",
+    check("POST 行式 model_map 解析（识图面板专用键，v3.5.15 三角色已退役）",
           jr2.get("model_map", {}).get("open.bigmodel.cn")
           == {"executor": "mm-li", "coder": "mm-hv"}, str(jr2))
-    check("model_map 端点命中覆盖显式池",
+    check("model_map 不再影响三角色档位（v3.5.15 退役）",
           hr.resolve_role_models(base_url="https://open.bigmodel.cn/x")
-          == ("mm-li", "mm-hv"))
+          != ("mm-li", "mm-hv"))
     jr3 = _c.post("/api/harness/roles", json={"audit_mode": "bogus"})
     check("audit_mode 非法 → 400", jr3.status_code == 400)
     jr4 = _c.post("/api/harness/roles", json={"executor_model": "old-keep"})

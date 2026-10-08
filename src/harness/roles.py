@@ -46,17 +46,13 @@ main_model / light_keywords（v3.4.95 词表识别）已退役：三档下拉本
 - 开关关闭 → 全部清理。
 
 模型池解析（resolve_role_models → (轻池, 重池)），优先级：
-① model_map 端点映射（配置显式指定，关键字匹配 base_url；行式
-  "端点=轻,重" 与 dict 形态兼容——executor 键按轻池、coder 键按重池
-  解释，沿用旧格式不迁移）；
-② 显式池配置 light_model/heavy_model（面板两池下拉，用户显式指定的
-  优先于默认映射）；
-③ 当前方案模型表自动分类：名字含 opus → 重池，其余 → 轻池（default
-  落哪池优先取哪池；无 opus 时重池回退 default——主模型通常是方案里
-  最强的）；
-④ 硬默认 ("glm-5.3-flash", "glm-5.3")。
-旧键降级（读取侧兼容，不迁移写盘）：executor_model → 轻池、coder_model
-→ 重池，仅在对应新键为空时参与，新键优先。
+① 显式档位配置 light_model/heavy_model（面板三档下拉；旧键
+  executor_model/coder_model 降级——仅对应新键为空时参与）；
+② 当前方案模型表自动分类（内置轻量词表，见 _pick_pool_models）；
+③ 硬默认 ("glm-5.3-flash", "glm-5.3")。
+v3.5.15：model_map 端点映射从三角色判定链退役（用户拍板「换 API 方案
+时由我自己重新配轻中重才合理」）——model_map 键归识图专用
+（vision_mcp 按端点解析识图模型），换方案请在面板重配档位。
 
 审计（与 claude_harness 共用纯函数，引导词/结算/闸三处同源）：
 - audit_limits：两档线现值 (l1, l2f, l2l)——l1 免审线；l2l 轻审线
@@ -313,23 +309,15 @@ def _pick_pool_models(models, default):
 
 
 def resolve_role_models(base_url=None, models=None, default=None):
-    """按当前 API 方案解析 (轻池模型, 重池模型)——换方案自动适配。
-    优先级：① model_map 端点映射（配置显式指定，关键字匹配 base_url；
-    executor 键按轻池、coder 键按重池解释，沿用旧格式）；② 显式池配置
-    light_model/heavy_model（旧键 executor_model/coder_model 降级——仅在
-    对应新键为空时参与，新键优先）；③ 当前方案模型表自动分类（名字含
-    opus→重池，其余→轻池）；④ 硬默认。两池独立回退（只配一池不影响
-    另一池自动识别）。"""
+    """按当前 API 方案解析 (轻池模型, 重池模型)。
+    优先级：① 显式档位配置 light_model/heavy_model（旧键
+    executor_model/coder_model 降级——仅在对应新键为空时参与）；② 当前
+    方案模型表自动分类（内置轻量词表，见 _pick_pool_models）；③ 硬默认。
+    v3.5.15（用户拍板「换 API 方案时由我自己重新配轻中重才合理」）：
+    model_map 端点映射从三角色判定链退役——model_map 键现归识图专用
+    （vision_mcp 按端点解析识图模型，识图配置面板读写），三角色档位
+    跨方案不自动切换，换方案请在面板重配档位。两池独立回退。"""
     cfg = roles_cfg()
-    url = (base_url if base_url is not None else _current_base_url()).lower()
-    if url:
-        for key, m in (cfg.get("model_map") or {}).items():
-            k = str(key).strip().lower()
-            if k and k in url and isinstance(m, dict):
-                li = str(m.get("light") or m.get("executor") or "").strip()
-                hv = str(m.get("heavy") or m.get("coder") or "").strip()
-                if li and hv:
-                    return li, hv
     if models is None:
         try:
             # 惰性导入防循环（claude_harness 也 import 本模块）

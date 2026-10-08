@@ -151,8 +151,6 @@
       // 回退链一致；旧 light/heavy 池键不再从面板暴露
       const designerCfg = cfg.designer_model || '';
       const reviewerCfg = cfg.reviewer_model || '';
-      const mapText = Object.entries(cfg.model_map || {})
-        .map(([k, v]) => `${k}=${v.executor},${v.coder}`).sort().join('\n');
       const am = cfg.audit_mode || 'auto';
       // 分级线三键：0 合法（最严档），不能用 || 兜底；缺键/非法回默认
       // 100/3/200（与后端 defaults 同源）
@@ -219,10 +217,6 @@
             </select><em>超线未审的兜底</em>
           </div>
 
-          <div class="hg-roles-sec">端点档位映射 <i>按 base_url 匹配 · 优先于上方档位下拉</i></div>
-          <textarea class="hg-vision-mm" data-hg-r-map spellcheck="false" style="height:56px;font-family:var(--font-mono);"
-            placeholder="open.bigmodel.cn=轻档模型,重档模型&#10;lanz.hikvision.com=Lanz-Flash,Lanz-Pro">${esc(mapText)}</textarea>
-          <div class="hg-roles-note">每行：端点关键字 = 轻档模型,重档模型（重档可省略 = 与轻档同；中档不参与映射，缺省同重档）。切 API 方案时档位自动按端点切换</div>
         </div>
         <div class="hg-modal-acts"></div></div>`;
       const acts = ov.querySelector('.hg-modal-acts');
@@ -245,10 +239,9 @@
         // 设计者/审计者槽（折叠在「工作方式说明」里）：留空=回退重档/自动识别
         designer_model: ov.querySelector('[data-hg-r-designer]').value.trim(),
         reviewer_model: ov.querySelector('[data-hg-r-reviewer]').value.trim(),
-        // 端点角色映射——发 "关键字=轻,重" 行（后端按行解析，与识图面板
-        // model_map 的行式体验一致）
-        model_map: (ov.querySelector('[data-hg-r-map]').value || '')
-          .split(/\n+/).map(s => s.trim()).filter(x => x.includes('=')),
+        // v3.5.15：model_map 不再从三角色面板提交——端点映射退役（用户拍板
+        // 「换方案自己重配档位」）；该键归识图面板读写（发空数组会整键覆盖
+        // 掉识图配置，绝不发送）
         audit_mode: ov.querySelector('[data-hg-r-am]').value,
         // 分级线三键（0 合法=最严档），parseInt 后 Number.isFinite
         // 判非法回默认（与后端 defaults 同源 100/3/200）
