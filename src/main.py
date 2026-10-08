@@ -783,6 +783,15 @@ def main():
     # pywebview 窗口
     # maximized：--open-file 冷启动直接以最大化开局（原生初始态，不靠回调时机）。
     # 双击关联文件=全屏看文件（用户需求）；普通快捷方式启动维持 1280×820。
+    # v3.5.10（用户实锤「标题栏图标还是 Python 图标，风格不统一」）：显式
+    # 传窗口图标——源码跑时进程是 python.exe，不传 icon 标题栏/任务栏就
+    # 跟 Python 走。打包版 exe 已内嵌同款 ico（build.py --icon），源码/打包
+    # 两种形态从此同图标。frozen 下 ico 在 _MEIPASS 资源目录（123 行 base
+    # 同款口径），源码在项目根 ico/
+    _icon = os.path.join(
+        getattr(sys, "_MEIPASS", _ROOT)
+        if getattr(sys, "frozen", False) else _ROOT,
+        "ico", "app.ico")
     window = webview.create_window(
         title="前端控制台 v%s" % APP_VERSION,
         url=f"http://127.0.0.1:{port}/",
@@ -792,6 +801,7 @@ def main():
         maximized=bool(open_file_path),
         text_select=True,
         js_api=FileBridge(),
+        icon=_icon if os.path.isfile(_icon) else None,
     )
     main._win = window   # /api/window/maximize 路由用（--open-file 热路径让活实例最大化）
 
