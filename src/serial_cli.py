@@ -109,9 +109,15 @@ def ensure_running(auto_start=True, timeout=25):
     print("【超时】工具启动后未在规定时间内就绪，可能需要手动检查。", file=sys.stderr)
     return None
 
+# v3.4.96：93e 进程级 UA 门禁——裸 urllib 默认 UA 被后端 403。带自家
+# 标记放行（字面量与 server._WEBVIEW_UA_MARK 对齐，勿 import server）
+_SELF_UA = {"User-Agent": "SerialConsoleProWebView/1"}
+
+
 def api_get(url, path):
     try:
-        with urllib.request.urlopen(url + path, timeout=5) as r:
+        req = urllib.request.Request(url + path, headers=_SELF_UA)
+        with urllib.request.urlopen(req, timeout=5) as r:
             return json.loads(r.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         try:
@@ -124,7 +130,7 @@ def api_get(url, path):
 def api_post(url, path, body):
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(url + path, data=data,
-                                 headers={"Content-Type": "application/json"})
+                                 headers={"Content-Type": "application/json", **_SELF_UA})
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
             return json.loads(r.read().decode("utf-8"))

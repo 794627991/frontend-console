@@ -136,18 +136,24 @@ def _ensure_backend():
 
 
 # ---- HTTP 调用封装 ----
+# v3.4.96：93e 进程级 UA 门禁——裸 urllib 默认 UA 会被后端 403（探活走豁免的
+# /api/status 能通、真调用全炸）。统一带自家标记（字面量与 server.
+# _WEBVIEW_UA_MARK 对齐，勿 import server——MCP server 必须轻载快起）
+_SELF_UA = {"User-Agent": "SerialConsoleProWebView/1"}
+
+
 def _get(url, path, params=None, timeout=30):
     q = ""
     if params:
         q = "?" + urllib.parse.urlencode(params)
-    req = urllib.request.urlopen(url + path + q, timeout=timeout)
-    return json.loads(req.read().decode("utf-8"))
+    req = urllib.request.Request(url + path + q, headers=dict(_SELF_UA))
+    return json.loads(urllib.request.urlopen(req, timeout=timeout).read().decode("utf-8"))
 
 
 def _post(url, path, body, timeout=30):
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(url + path, data=data,
-                                 headers={"Content-Type": "application/json"})
+                                 headers={"Content-Type": "application/json", **_SELF_UA})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8"))
 

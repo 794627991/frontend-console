@@ -75,7 +75,13 @@ def _post(path, payload, timeout=10):
         req = urllib.request.Request(
             url + path,
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json",
+                     # v3.4.96：93e 进程级 UA 门禁——本子进程默认 UA
+                     # (Python-urllib) 被 403，ask_user 全炸（用户实锤
+                     # 「提问未被受理：unauthorized」）。带自家标记放行
+                     # （字面量与 server._WEBVIEW_UA_MARK 对齐，勿 import
+                     # server——会拖起整个 Flask）
+                     "User-Agent": "SerialConsoleProWebView/1"},
             method="POST")
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.loads(r.read().decode("utf-8", "replace") or "{}")
