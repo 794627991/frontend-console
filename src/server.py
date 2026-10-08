@@ -307,15 +307,30 @@ def _mem_web(rel):
 
 @app.route("/")
 def index():
+    """入口页（v3.5.1+ 版本注入）：index.html 源里的 __HG_VER__ 占位符在此
+    统一替换为 HARNESS_VERSION（单一源 src/harness/__init__.py，全链唯一
+    版本修改点）——boot 脚本与静态资源缓存参数三路（DEBUG/内存/磁盘）
+    一致注入。"""
+    try:
+        from src.harness import HARNESS_VERSION as _HV
+    except Exception:
+        _HV = "0"
+    def _inject(data):
+        if isinstance(data, bytes):
+            return data.replace(b"__HG_VER__", _HV.encode("utf-8"))
+        return data.replace("__HG_VER__", _HV)
     if DEBUG_WEB:
-        return send_from_directory(_SRC_WEB, "index.html")
+        with open(os.path.join(_SRC_WEB, "index.html"), "rb") as f:
+            return Response(_inject(f.read()), mimetype="text/html")
     try:
         r = _mem_web("web/index.html")
     except Exception:
         r = None
     if r is not None:
-        return r
-    return send_from_directory(RES_DIR, "web/index.html")
+        return Response(_inject(r.get_data()), mimetype="text/html",
+                        headers={"Cache-Control": r.headers.get("Cache-Control", "")})
+    with open(os.path.join(RES_DIR, "web", "index.html"), "rb") as f:
+        return Response(_inject(f.read()), mimetype="text/html")
 
 @app.route("/web/<path:fn>")
 def web_files(fn):
