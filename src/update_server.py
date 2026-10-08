@@ -131,6 +131,11 @@ def _versions():
         # v2.3.0：发布形态 zip（onedir 应用目录打包）；旧 .exe 历史包也列出（可下载）
         if not ((n.endswith(".zip") or n.endswith(".exe")) and "-v" in n):
             continue
+        # 离线资源包不是应用版本（用户定调「离线包和实际包分开」）：留着会与
+        # 整包同版本号并列、按文件名序抢 hero 卡位还错挂整包 sha1——主清单
+        # 剔除，_offline_pkg() 单独通道出去各显各的
+        if "-offline-pkg-" in n:
+            continue
         ver = n.rsplit("-v", 1)[-1][:-4]
         p = os.path.join(root, n)
         try:
@@ -159,6 +164,35 @@ def _versions():
                       "url": "", "latest": False, "notes": note})
     items.sort(key=lambda x: _ver_tuple(x["version"]), reverse=True)
     return items
+
+
+def _offline_pkg():
+    """离线资源包单独通道（前端控制台-offline-pkg-v<ver>.zip，多份取最新）。
+    不进版本清单/更新日志——它不是应用版本，只是无外网机器的部署资源
+    （Git/Node/claude-code/Python 依赖）。sha1 不提供：manifest 刻意不收
+    离线包（updater 不能推它），424MB 大文件也不宜每请求现算。"""
+    root = _releases_dir()
+    try:
+        names = os.listdir(root)
+    except OSError:
+        return None
+    best = None
+    for n in sorted(names):
+        if not (n.endswith(".zip") and "-offline-pkg-" in n):
+            continue
+        p = os.path.join(root, n)
+        try:
+            st = os.stat(p)
+        except OSError:
+            continue
+        if best and st.st_mtime <= best[1]:
+            continue
+        ver = n.rsplit("-v", 1)[-1][:-4] if "-v" in n else ""
+        best = (n, st.st_mtime, st.st_size, ver)
+    if not best:
+        return None
+    return {"file": best[0], "version": best[3], "size": best[2],
+            "mtime": int(best[1] * 1000), "url": "/" + quote(best[0])}
 
 
 # ---------------------------------------------------------------------------
@@ -706,6 +740,17 @@ async function load(){
         :'<div class="notes" style="color:var(--muted)">（本版未写更新说明——发布者在项目根 RELEASE_NOTES.md 写好后重新打包，说明会随版本带上）</div>')
       +'<div class="row"><button class="btn" data-dl="'+top.url+'" data-n="'+esc(top.file)+'">⬇ 下载整包</button>'
       +'<span data-dlst style="font-size:12px;color:var(--muted)">下载后解压即完成安装</span></div></div>';
+    // 离线资源包独立卡片（用户定调「离线包和实际包分开」）：不是应用版本，
+    // 不占 hero、不进更新日志，无外网部署资源单独一处下载
+    if(j.offline&&j.offline.url){
+      h+='<div class="card" style="padding:16px 22px;margin-bottom:28px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">'
+        +'<div style="flex:1;min-width:240px">'
+        +'<div style="font-size:14px;font-weight:650">🧰 离线资源包'
+        +'<span style="font-size:11px;font-weight:400;color:var(--muted);margin-left:8px">OFFLINE PKG · v'+esc(j.offline.version)+'</span></div>'
+        +'<div style="font-size:12px;color:var(--muted);margin-top:5px">📅 '+fmtTs(j.offline.mtime)+' · 📦 '+fmtSize(j.offline.size)
+        +' · 无外网机器部署资源（Git / Node / claude-code / Python 依赖），随整包版本更新，独立下载</div></div>'
+        +'<button class="btn" data-dl="'+esc(j.offline.url)+'" data-n="'+esc(j.offline.file)+'" style="flex-shrink:0">⬇ 下载离线包</button></div>';
+    }
     const rest=j.items.slice(1);
     if(rest.length){
       h+='<div style="font-size:12px;color:var(--muted);letter-spacing:2px;margin:26px 0 12px">更新日志</div><div class="vlist">';
@@ -868,7 +913,8 @@ class _Handler(BaseHTTPRequestHandler):
                         it["sha1"] = str(m.get("sha1") or "")
             except Exception:
                 pass
-            self._json(200, {"ok": True, "items": items})
+            self._json(200, {"ok": True, "items": items,
+                             "offline": _offline_pkg()})
             return
 
         if name == "manifest.json":
