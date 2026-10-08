@@ -604,16 +604,6 @@ def main():
 
     # JS API：暴露原生文件选择对话框给前端（拖拽拿不到 File.path 时的 fallback）
     class FileBridge:
-        def get_web_token(self):
-            """v3.4.93d 网页直开门禁：把本进程令牌交给窗口内的挑战 loader
-            （写 cookie 后原地重载）。桥只在 pywebview 窗口内存在——浏览器
-            拿不到本方法，即拿不到令牌。"""
-            try:
-                from src.server import _WEB_TOKEN
-                return _WEB_TOKEN
-            except Exception:
-                return ""
-
         def tray_confirm_hide(self):
             """首次关闭提示框「知道了」后调用：把窗口隐藏到托盘（后端时机控制）。
             在独立线程 hide——pywebview js_api 调用也在 GUI 线程，hide 本身安全。"""
@@ -995,17 +985,21 @@ def main():
     except Exception:
         pass
     # 开发调试口（config.json 加 "webview_debug": true 开启）：WebView2
-    # devtools 右键菜单 + CDP 远程调试端口 9222（DOM/内存实测取证用，
-    # 开发机常开；生产机不加该键即关闭）
-    _wv_debug = False
-    try:
-        with open(CONFIG_FILE, encoding="utf-8") as _f:
-            _wv_debug = bool(json.load(_f).get("webview_debug"))
-    except Exception:
-        pass
+    # v3.4.93e（用户定调「正常打开绝不允许刷新等页面功能，只有调试打开
+    # 才允许 web 调试」）：F5/Ctrl+R 加速键、右键菜单、F12 devtools、状态
+    # 栏全部挂在 pywebview 的 debug 开关上，而该开关**只认 run_debug.bat**
+    # （HARNESS_DEBUG_WEB=1）——config 的 webview_debug 不再单独放行。
+    # 同时：常规模式经 WebView2 进程级启动参数注入专属 UA 标记（浏览器
+    # 进程创建时生效，无首请求竞态），server._web_gate 据此放行窗口请求、
+    # 403 一切浏览器直开；调试模式门禁整体旁路（浏览器可直开）。
+    from src.server import DEBUG_WEB as _dbg_web, _WEBVIEW_UA_MARK
+    _wv_debug = _dbg_web
     if _wv_debug:
         os.environ.setdefault("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
                               "--remote-debugging-port=9222")
+    else:
+        os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = (
+            '--user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) %s"' % _WEBVIEW_UA_MARK)
     webview.start(debug=_wv_debug, private_mode=False,
                   storage_path=os.path.join(DATA_DIR, "webview_cache"))
 
