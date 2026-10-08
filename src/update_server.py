@@ -257,7 +257,7 @@ body[data-skin=term]{--fxGlow:rgba(74,246,38,.05)}
 .vmeta{font-size:12px;color:var(--muted);margin-top:5px;display:flex;gap:14px;flex-wrap:wrap}
 .sha{font-family:var(--fontMono)}
 .empty{text-align:center;color:var(--muted);padding:70px 0;font-size:14px}
-.tip{margin-top:26px;font-size:12.5px;color:var(--muted);line-height:1.9;
+.tip{margin-top:26px;margin-bottom:28px;font-size:12.5px;color:var(--muted);line-height:1.9;
   background:var(--card);border:1px solid var(--line);border-radius:var(--radL);padding:16px 20px}
 .tip b{color:var(--tipB)}
 /* 换肤按钮（登录页/门户页共用） */
