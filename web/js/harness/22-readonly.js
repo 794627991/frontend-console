@@ -121,7 +121,7 @@
       '<span class="h-think-seg-name">思考</span>' +
       '<span class="h-think-seg-t">· ' + thinkDurLabel(stepDurMs(lines, hi)) + '</span></button>' +
       '<div class="h-think-seg-body"></div>' +
-      '<i class="h-think-seg-fold" title="收起本段">收起 ⌄</i>';
+      '<i class="h-think-seg-fold" title="收起本段">收起 ⌃</i>';
     return seg;
   }
 

@@ -379,7 +379,7 @@
       '<span class="h-think-seg-name">💭 思考</span>' +
       `<span class="h-think-seg-t"${withTimer ? ' data-hg-think-t' : ''}>${withTimer ? '0s' : ''}</span></button>` +
       '<div class="h-think-seg-body"></div>' +
-      '<i class="h-think-seg-fold" title="收起本段">收起 ⌄</i>';
+      '<i class="h-think-seg-fold" title="收起本段">收起 ⌃</i>';
     return seg;
   }
   // v3.2.6：旧窗格行工厂（_subPaneThinkRow/_subPaneToolRow/_subPaneMirror/
