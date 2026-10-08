@@ -1344,7 +1344,7 @@ def harness_roles_info():
     设计者/审计者各自实际用的模型（显式优先，缺省回退重档）。
     mode——当前形态（v3.5.0 三档精确匹配：实跑模型名归一化后命中哪档
     即哪形态；light 轻主力直干+双代理 / mid 中主力直干+审核兜底 / heavy
-    最信任档纯直干全免；未匹配兜 mid）。roles 为配置全量（含遗留键透传）；
+    最信任档直干+派发自由零强制；未匹配兜 mid）。roles 为配置全量（含遗留键透传）；
     附 models/default_model 供配置面板下拉用。"""
     from .roles import (resolve_tier_models, resolve_agent_models,
                                 roles_cfg, roles_mode)
@@ -1421,18 +1421,17 @@ def harness_agent_models():
 def harness_set_roles():
     """开关 + 整节配置（merge 写盘，只动出现的键）。body 可含 {enabled,
     designer_model, reviewer_model, light_model, mid_model, heavy_model,
-    model_map, audit_mode, l1_max_lines, l2_max_files,
+    audit_mode, l1_max_lines, l2_max_files,
     l2_max_lines, design_max_lines}
     （v3.5.0 三档化：mid_model 新键；main_model/light_keywords 已退役，
-    旧前端再 POST 这两键会被白名单静默忽略不落盘）
+    旧前端再 POST 这两键会被白名单静默忽略不落盘；v3.5.18 model_map
+    亦退役——识图端点映射走独立 /vision 端点写 harness_vision 节）
     （v2.53 设计者/审计者槽新键；旧键 executor_model/coder_model 仍被
     接受落盘——读取侧按池降级兼容）。生效路径与
     开关一致：模型池/分级线出现在引导词里 → 指纹热更下条消息换词重启
     + agents 重生成；audit_mode 在回合结算时读盘，即时生效。写盘前过
     clamp_role_limits 交叉校验 l1_max_lines ≤ l2_max_lines（超线 clamp
-    到 l2，不 400——回显在响应 clamped 键）。model_map 行式 "端点关键
-    字=轻,重"（重可省=与轻同）或 dict {关键字:{executor,coder}}（旧键
-    名照收，light/heavy 新键名亦可）。"""
+    到 l2，不 400——回显在响应 clamped 键）。"""
     from .roles import update_roles_cfg, clamp_role_limits, roles_cfg
     data = request.get_json(force=True, silent=True) or {}
     patch = {}
@@ -1460,31 +1459,9 @@ def harness_set_roles():
             except (TypeError, ValueError):
                 return jsonify({"ok": False,
                                 "err": "%s 须为数字" % _k}), 400
-    mmap_raw = data.get("model_map")
-    if isinstance(mmap_raw, (dict, list)):
-        mmap = {}
-        if isinstance(mmap_raw, dict):
-            for k, v in mmap_raw.items():
-                if not str(k).strip() or not isinstance(v, dict):
-                    continue
-                ex = str(v.get("light") or v.get("executor") or "").strip()
-                co = str(v.get("heavy") or v.get("coder") or "").strip()
-                if ex and co:
-                    mmap[str(k).strip().lower()] = {"executor": ex, "coder": co}
-        else:
-            for line in mmap_raw:
-                kv = str(line).split("=", 1)
-                if len(kv) != 2 or not kv[0].strip():
-                    continue
-                # 行式 "端点=轻,重"：首位按轻池、次位按重池解释（沿用
-                # 旧「执行者,编程者」行式不迁移——语义等价改名）
-                rhs = [x.strip() for x in kv[1].split(",") if x.strip()]
-                if not rhs:
-                    continue
-                mmap[kv[0].strip().lower()] = {
-                    "executor": rhs[0],
-                    "coder": rhs[1] if len(rhs) > 1 else rhs[0]}
-        patch["model_map"] = mmap
+    # v3.5.18（全审建议）：model_map 解析删除——三角色判定已退役该键
+    # （v3.5.15），识图配置走独立 /vision 端点写 harness_vision 节，本
+    # 端点收 model_map 只会写进无人读的 harness_roles.model_map（死键）
     if not patch:
         return jsonify({"ok": False, "err": "没有可写入的配置项"}), 400
     # l1 ≤ l2l 交叉校验（clamp 档）——只对本次涉及的键生效，

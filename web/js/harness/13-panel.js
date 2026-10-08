@@ -480,7 +480,7 @@
     // 形态正确 + 模型名可读。/roles 响应自带 mode（v3.5.0 三态
     // light/mid/heavy）与 resolved（designer/reviewer 各自实模型），按形态
     // 出对应角色行；三形态主会话都直干——轻主力=设计+审核两代理，中主力
-    // =只留审核兜底，重主力=纯直干零代理
+    // =只留审核兜底，重主力=派发自由零强制(v3.5.16+)
     const _mode = _hgRolesCache && _hgRolesCache.mode;
     const _res = (_hgRolesCache && _hgRolesCache.resolved) || {};
     if (r) {

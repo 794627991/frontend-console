@@ -201,8 +201,8 @@ class HarnessSession:
             roles_txt = roles_bridge_text(eff_model)
             if roles_txt:
                 # 角色定义随工具分发：起会话前按当前形态安装到
-                # ~/.claude/agents/（幂等，light → designer+reviewer；
-                # strong → 只 reviewer 审计兜底；退役角色残留顺带清理）
+                # ~/.claude/agents/（幂等，light/heavy → designer+reviewer
+                # 双装；mid → 只 reviewer 审计兜底；退役角色残留顺带清理）
                 install_roles_agents(eff_model)
             parts = [_collect_system_prompt(self.cwd),
                      TOKEN_RULES,

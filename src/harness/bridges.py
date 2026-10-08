@@ -55,10 +55,11 @@ def confirm_bridge_text():
 
 # 角色设计：角色定义内置于 src/harness_roles.py（随工具分发，会话启动
 # 自动安装到 ~/.claude/agents/，别的机器零手工配置）；角色引导词/配置
-# 开关都在那个模块里。三档形态（v3.5.0）：三形态主会话都直干所有
-# 活，不派干活子代理；子代理只留 designer（只设计）+ reviewer（只读
-# 审核）两个代理——light 装两个、mid 只装 reviewer 作审计兜底、heavy
-# 零代理全免（旧决策者结构禁权/roles_disallow 已废除）。
+# 开关都在那个模块里。三档形态（v3.5.17 定调）：三档派发都自由（通用
+# 子代理按需随时可派），差别只在强制项——轻=设计+审核（分级线全档）、
+# 中=审核（审计线）、重=零强制；专职代理只留 designer（只设计）+
+# reviewer（只读审核）——light/heavy 双装、mid 只装 reviewer 作审计兜底
+# （旧决策者结构禁权/roles_disallow 已废除）。
 from .roles import (roles_bridge_text, install_roles_agents,
                             audit_verdict, audit_gate_check)
 

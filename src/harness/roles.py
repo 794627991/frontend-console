@@ -6,9 +6,10 @@
 才写，配置改了模型会同步重生成）。任何人装了本工具即得，零手工配置。
 
 模型名存 config.json 的 harness_roles 节（light_model / mid_model /
-heavy_model / enabled / model_map / audit_mode / l1_max_lines /
-l2_max_files / l2_max_lines / design_max_lines / designer_model /
-reviewer_model），换 API 方案改配置即可，不用动代码。
+heavy_model / enabled / audit_mode / l1_max_lines / l2_max_files /
+l2_max_lines / design_max_lines / designer_model / reviewer_model），换
+API 方案改配置即可，不用动代码（v3.5.15 端点映射退役：model_map 键现归
+识图专用，见 harness_vision 节）。
 
 形态（roles_mode，v3.5.0 三档精确匹配）：用户在面板直接配「哪个模型是
 轻/中/重哪一档」——实跑模型名归一化（剥 [1M] 类窗口后缀 + casefold）
@@ -166,7 +167,6 @@ _DEFAULTS = {"enabled": False,          # 默认关闭（用户定调：开关�
              "mid_model": "",           # 中档（中主力直干；空=没有中档层，
                                         # 两档制：非轻即重，v3.5.12 用户拍板）
              "heavy_model": "",         # 重档（designer/reviewer 用；空=自动识别）
-             "model_map": {},
              # light 形态审计（回合结算盘点工具调用记录，零 token）：
              "audit_mode": "auto",      # 兜底档：auto=违规自动续发补审 / warn=仅警示 / off=关
              # 分级线两档（旧 max_free_lines=3 已废；v2.52 只看单次直改
@@ -273,16 +273,6 @@ def update_roles_cfg(patch):
     return True, None
 
 
-def _current_base_url():
-    try:
-        p = os.path.join(os.path.expanduser("~"), ".claude", "settings.json")
-        with open(p, "r", encoding="utf-8") as f:
-            env = (json.load(f).get("env") or {})
-        return (env.get("ANTHROPIC_BASE_URL") or "").strip()
-    except Exception:
-        return ""
-
-
 def _pick_pool_models(models, default):
     """从当前方案模型表按内置轻量词表分类（v3.5.0：仅给空档位挑 sane
     默认值，形态判定不走这里——见 roles_mode 三档精确匹配）：
@@ -310,7 +300,7 @@ def _pick_pool_models(models, default):
     return light, heavy
 
 
-def resolve_role_models(base_url=None, models=None, default=None):
+def resolve_role_models(models=None, default=None):
     """按当前 API 方案解析 (轻池模型, 重池模型)。
     优先级：① 显式档位配置 light_model/heavy_model（旧键
     executor_model/coder_model 降级——仅在对应新键为空时参与）；② 当前
@@ -335,28 +325,30 @@ def resolve_role_models(base_url=None, models=None, default=None):
             ch or auto_h or "glm-5.3")
 
 
-def resolve_agent_models(base_url=None, models=None, default=None):
+def resolve_agent_models(models=None, default=None):
     """解析 (designer 模型, reviewer 模型)——v2.53 用户拍板：面板直白配
     「设计者/审计者」各自模型（designer_model/reviewer_model 显式优先），
     缺省回退重池（heavy_model→自动分类→硬默认），即两代理共用重模型的
-    历史行为；只配一槽不影响另一槽回退。"""
+    历史行为；只配一槽不影响另一槽回退。v3.5.18（全审建议11）：显式槽
+    值剥 [1M] 类窗口后缀——agent md 的 model 字段必须裸 ID（自动路径
+    _pick_pool_models 早剥，显式路径此前漏剥）。"""
     cfg = roles_cfg()
-    _l, heavy = resolve_role_models(base_url, models, default)
-    cd = str(cfg.get("designer_model") or "").strip()
-    cr = str(cfg.get("reviewer_model") or "").strip()
+    _l, heavy = resolve_role_models(models, default)
+    cd = str(cfg.get("designer_model") or "").split("[")[0].strip()
+    cr = str(cfg.get("reviewer_model") or "").split("[")[0].strip()
     return (cd or heavy, cr or heavy)
 
 
-def resolve_tier_models(base_url=None, models=None, default=None):
+def resolve_tier_models(models=None, default=None):
     """解析三档模型 (轻, 中, 重)——形态判定的数据源。
     轻档 = light_model 显式 | 方案表自动挑（_LIGHT_RE 词命中池）；
     重档 = heavy_model 显式 | 方案表自动挑（非轻词池，default 优先）；
     中档 = mid_model 显式 | 重档同值（仅取值兜底；形态判定上 mid 未配=
-    两档制，重档值命中直接 heavy——roles_mode v3.5.12）。model_map 端点
-    映射（light/heavy 两键）先行，mid 不参与映射。硬默认
+    两档制，重档值命中直接 heavy——roles_mode v3.5.12）。v3.5.15 起
+    model_map 端点映射不参与档位（键归识图专用）。硬默认
     ("glm-5.3-flash", "glm-5.3", "glm-5.3")。"""
     cfg = roles_cfg()
-    _l, _h = resolve_role_models(base_url, models, default)
+    _l, _h = resolve_role_models(models, default)
     cm = str(cfg.get("mid_model") or "").strip()
     return (_l, cm or _h, _h)
 
@@ -368,8 +360,9 @@ def roles_mode(model=None):
     - "light"：轻主力——designer+reviewer 双代理 + 分级线/事中闸/结算审计；
     - "mid"：中主力——直干 + reviewer 审核兜底（=旧 strong 行为；仅
       mid_model 显式配置时这一层才存在）；
-    - "heavy"：最信任档——纯直干零代理零审计（mid 没配=两档制：重档值
-      命中直接 heavy，不再要求三档配齐——v3.5.0 的 D2 opt-in 语义撤除）；
+    - "heavy"：最信任档——直干为主+派发自由（designer/reviewer/通用
+      子代理按需可派，v3.5.16），免的只是强制分级（事中闸/结算审计全免）
+      （mid 没配=两档制：重档值命中直接 heavy）；
     - 未匹配：mid 配了兜 mid（安全：多一道审），mid 没配按两档兜 heavy；
       名字不可得同款兜底；内部异常兜 mid。"""
     try:
@@ -446,11 +439,9 @@ def _uninstall_roles_agents():
 
 def install_roles_agents(model=None):
     """按当前形态安装/更新角色子代理定义到 ~/.claude/agents/（幂等：内容
-    有变才写）。light → designer+reviewer（各取 designer_model/
-    reviewer_model 槽，空=回退重档）；mid → 只 reviewer（审计兜底代理）；
-    heavy → 两文件都删（最信任档零代理——agents 目录被 CLI 自动发现注入
-    系统提示，残留=重档模型仍可自发派发；v2.37 共存原则的定向例外，并发
-    安全由 ensure_roles_ready 派发前自愈兜底）；executor/coder/dev 无条件
+    有变才写）。light/heavy → designer+reviewer 双装（v3.5.16 重档派发
+    自由，各取 designer_model/reviewer_model 槽，空=回退重档）；mid → 只
+    reviewer（审计兜底代理，designer 共存不清）；executor/coder/dev 无条件
     退役清理。开关关闭 → 全部清理。失败静默（不拖垮会话启动）。"""
     cfg = roles_cfg()
     if not cfg["enabled"]:
@@ -463,41 +454,23 @@ def install_roles_agents(model=None):
         return
     mode = roles_mode(model)
     designer_m, reviewer_m = resolve_agent_models()
-    if mode == "light":
-        wanted = {
-            "designer.md": _agent_md(
-                "designer",
-                "设计者：只设计，绝不干活——架构/模块划分/关键决"
-                "策/风险/依赖顺序的框架方案；不写代码不改文件不跑实现。需"
-                "要高水平方案时派此代理，并把已知上下文尽可能带上。",
-                designer_m, _DESIGNER_BODY, tools=_TOOLS_DESIGN),
-            "reviewer.md": _agent_md(
-                "reviewer",
-                "审计者：改动交付或超审计线时派此代理审——分"
-                "两档：轻审（只审 diff）／全审（取证级：需求符合性/逻辑/健"
-                "壮性/安全/一致性）。只读不改，PASS/FAIL 二选一。"
-                "复审（复核自己 FAIL 过的修复）由主会话 SendMessage 续派本"
-                "代理完成——上下文保留逐条验收、免重读文件；新审计目标才新开"
-                "本代理。",
-                reviewer_m, _REVIEWER_BODY, tools=_TOOLS_REVIEW),
-        }
-    elif mode == "mid":
+    # 三形态共用定义（v3.5.18 合并 light/heavy 两分支——逐字重复漂移风险，
+    # 全审建议9）：mid 只装 reviewer；light/heavy 双装（v3.5.16 重档派发
+    # 自由——昔日「重档定向删两文件」随禁派发语义退役）
+    _reviewer_md = _agent_md(
+        "reviewer",
+        "审计者：改动交付或超审计线时派此代理审——分"
+        "两档：轻审（只审 diff）／全审（取证级：需求符合性/逻辑/健"
+        "壮性/安全/一致性）。只读不改，PASS/FAIL 二选一。"
+        "复审（复核自己 FAIL 过的修复）由主会话 SendMessage 续派本"
+        "代理完成——上下文保留逐条验收、免重读文件；新审计目标才新开"
+        "本代理。",
+        reviewer_m, _REVIEWER_BODY, tools=_TOOLS_REVIEW)
+    if mode == "mid":
         # 中主力：主会话直干，只装审计兜底的 reviewer（designer 共存不清）
-        wanted = {
-            "reviewer.md": _agent_md(
-                "reviewer",
-                "审计者：改动交付或超审计线时派此代理审——分"
-                "两档：轻审（只审 diff）／全审（取证级：需求符合性/逻辑/健"
-                "壮性/安全/一致性）。只读不改，PASS/FAIL 二选一。"
-                "复审（复核自己 FAIL 过的修复）由主会话 SendMessage 续派本"
-                "代理完成——上下文保留逐条验收、免重读文件；新审计目标才新开"
-                "本代理。",
-                reviewer_m, _REVIEWER_BODY, tools=_TOOLS_REVIEW),
-        }
+        wanted = {"reviewer.md": _reviewer_md}
     else:
-        # heavy 最信任档（v3.5.16 纠偏）：与 light 同款双装——派发自由是
-        # 用户的明确要求（重模型手脚不捆），免的只是强制分级；此前 v3.5.0
-        # 的定向删（残留=自发派发入口）随「禁派发」语义一并退役
+        # light / heavy：双装（heavy 派发自由，v3.5.16）
         wanted = {
             "designer.md": _agent_md(
                 "designer",
@@ -505,15 +478,7 @@ def install_roles_agents(model=None):
                 "策/风险/依赖顺序的框架方案；不写代码不改文件不跑实现。需"
                 "要高水平方案时派此代理，并把已知上下文尽可能带上。",
                 designer_m, _DESIGNER_BODY, tools=_TOOLS_DESIGN),
-            "reviewer.md": _agent_md(
-                "reviewer",
-                "审计者：改动交付或超审计线时派此代理审——分"
-                "两档：轻审（只审 diff）／全审（取证级：需求符合性/逻辑/健"
-                "壮性/安全/一致性）。只读不改，PASS/FAIL 二选一。"
-                "复审（复核自己 FAIL 过的修复）由主会话 SendMessage 续派本"
-                "代理完成——上下文保留逐条验收、免重读文件；新审计目标才新开"
-                "本代理。",
-                reviewer_m, _REVIEWER_BODY, tools=_TOOLS_REVIEW),
+            "reviewer.md": _reviewer_md,
         }
     wrote = []
     for fn in _SELF_AGENTS:
@@ -708,14 +673,14 @@ def audit_gate_check(used_lines, cfg=None, reviewed=False, designed=True):
 
 
 def roles_bridge_text(model=None):
-    """角色引导词（v3.5.0 三形态）：轻档 → 轻主力词（主会话直干所有活 +
-    designer/reviewer 双重模型代理 + 分级线嵌词）；中档 → 中主力词
-    （干活者 + reviewer 审计兜底，审计线嵌词）；重档 → 极简直干词
-    （最信任档：不装任何代理、无审计线数字，只保留质量纪律与回合终点
-    纪律）。开关关闭一律空串。model 参数参与形态判定并进引导词指纹
-    （切模型/改档位配置自动换形态热更）。两档上限（audit_limits）以可数
-    数字嵌进词里，改配置即变词（指纹热更），并明示回合结算审计——威慑
-    前置（事前引导词 + 事后审计兜底；heavy 豁免）。"""
+    """角色引导词（三形态，v3.5.17 派发自由共性+强制项差异）：轻档 →
+    轻主力词（直干+设计/审核强制，分级线全档嵌词）；中档 → 中主力词
+    （直干+审核强制，审计线嵌词）；重档 → 最信任档词（直干+派发自由、
+    零强制，无任何线数字，只保留质量纪律与回合终点纪律）。开关关闭一律
+    空串。model 参数参与形态判定并进引导词指纹（切模型/改档位配置自动换
+    形态热更）。两档上限（audit_limits）以可数数字嵌进词里，改配置即变词
+    （指纹热更），并明示回合结算审计——威慑前置（事前引导词 + 事后审计
+    兜底；heavy 豁免）。"""
     if not roles_cfg()["enabled"]:
         return ""
     _mode = roles_mode(model)
@@ -808,7 +773,7 @@ def roles_bridge_text(model=None):
             "代理的过程，静默结束回合=交付没完成。\n"
             % (l1, l2l, design_line, designer_m, reviewer_m, audit_note)
         )
-    # mid 分支：中档模型主会话=干活者，自己干所有活，不派干活子代理；
+    # mid 分支：中档模型主会话=干活者，直干为主+派发自由（强制项=审核）；
     # 只保留审计兜底——单次直改超审计线（数字嵌词热更）触发回合
     # 结算审计（audit_verdict strong 分支：超线未派 reviewer=违规）。
     cfg = roles_cfg()

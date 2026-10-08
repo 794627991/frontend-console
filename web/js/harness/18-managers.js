@@ -239,9 +239,8 @@
         // 设计者/审计者槽（折叠在「工作方式说明」里）：留空=回退重档/自动识别
         designer_model: ov.querySelector('[data-hg-r-designer]').value.trim(),
         reviewer_model: ov.querySelector('[data-hg-r-reviewer]').value.trim(),
-        // v3.5.15：model_map 不再从三角色面板提交——端点映射退役（用户拍板
-        // 「换方案自己重配档位」）；该键归识图面板读写（发空数组会整键覆盖
-        // 掉识图配置，绝不发送）
+        // v3.5.15/18：model_map 从三角色链全面退役——识图端点映射走独立
+        // /vision 端点写 harness_vision 节，本面板与此键再无关系
         audit_mode: ov.querySelector('[data-hg-r-am]').value,
         // 分级线三键（0 合法=最严档），parseInt 后 Number.isFinite
         // 判非法回默认（与后端 defaults 同源 100/3/200）

@@ -10,13 +10,12 @@
    配置值（同值 轻>中>重）；mid 未配时重档值命中按中档（D2：重档须显式
    opt-in）；未匹配/无名 → mid 兜底；main_model/light_keywords 退役残留
    不参与判定；tier 解析三档齐/缺省。
-3. 模型池：model_map 端点映射（executor/coder 旧键与 light/heavy 新键
-   两读法）、显式两池 light_model/heavy_model、旧键降级
-   （executor_model/coder_model）、方案表自动分类（opus→重池）、行式
-   映射解析（Flask test client）。
-4. agent md：light 装 designer+reviewer、strong 只 reviewer、designer 在
-   strong 下共存不删；executor/coder/dev 退役清理；strong↔light 往返
-   幂等；designer body「只设计绝不干活」、reviewer body 只读强化；tools：
+3. 模型池：v3.5.15 起 model_map 不再参与档位（键归识图 /vision 端点），
+   断言「不覆盖」；显式两池 light_model/heavy_model、旧键降级
+   （executor_model/coder_model）、方案表自动分类、[1M] 剥离。
+4. agent md：light/heavy 双装 designer+reviewer（v3.5.16 重档派发自由）、
+   mid 只 reviewer（designer 共存）、退役清理、roundtrip 幂等；
+   designer body「只设计绝不干活」、reviewer body 只读强化；tools：
    designer 全集除 Task、reviewer 原样（含 Task 无编辑）；两
    body 与两 md 无版本代号；ensure_roles_ready 分形态清单。
 5. 审计判定：audit_verdict（免审区干净/超免审未轻审/超轻审属大改须全审
@@ -179,17 +178,16 @@ li, hv = hr.resolve_role_models(
     models=["Opus-X[1M]", "flash-a"], default="Opus-X[1M]")
 check("[1M] 窗口后缀剥离", li == "flash-a" and hv == "Opus-X")
 # v3.5.15：model_map 端点映射从三角色判定链退役——旧/新键名两种写法都
-# 不再覆盖档位（键归识图专用，POST 解析保留见 [14]）
+# 不再覆盖档位（键归识图专用，POST 解析保留见 [14]）；v3.5.18 撤
+# base_url 形参（无消费者），直接调即可
 write_cfg(enabled=True, light_model=POOL_LIGHT, heavy_model=POOL_HEAVY,
           model_map={"open.bigmodel.cn": {"executor": "m-ex", "coder": "m-co"}})
 check("model_map 不再覆盖三角色档位（v3.5.15 退役·旧键名）",
-      hr.resolve_role_models(base_url="https://open.bigmodel.cn/v1")
-      == (POOL_LIGHT, POOL_HEAVY))
+      hr.resolve_role_models() == (POOL_LIGHT, POOL_HEAVY))
 write_cfg(enabled=True, light_model=POOL_LIGHT, heavy_model=POOL_HEAVY,
           model_map={"open.bigmodel.cn": {"light": "m-li", "heavy": "m-hv"}})
 check("model_map 不再覆盖三角色档位（v3.5.15 退役·新键名）",
-      hr.resolve_role_models(base_url="https://open.bigmodel.cn/v1")
-      == (POOL_LIGHT, POOL_HEAVY))
+      hr.resolve_role_models() == (POOL_LIGHT, POOL_HEAVY))
 write_cfg(enabled=True)
 check("方案表为空兜硬默认",
       hr.resolve_role_models(models=[], default=None)
@@ -628,12 +626,12 @@ try:
           and gr["roles"].get("audit_mode") == "auto")
     jr2 = _c.post("/api/harness/roles", json={
         "model_map": ["open.bigmodel.cn=mm-li,mm-hv"]}).get_json()
-    check("POST 行式 model_map 解析（识图面板专用键，v3.5.15 三角色已退役）",
-          jr2.get("model_map", {}).get("open.bigmodel.cn")
-          == {"executor": "mm-li", "coder": "mm-hv"}, str(jr2))
+    check("POST model_map 已退役：被忽略不落盘（v3.5.18，识图走 /vision）",
+          not jr2.get("model_map")
+          and not (hr.roles_cfg().get("model_map") or {}).get("open.bigmodel.cn"),
+          str(jr2))
     check("model_map 不再影响三角色档位（v3.5.15 退役）",
-          hr.resolve_role_models(base_url="https://open.bigmodel.cn/x")
-          != ("mm-li", "mm-hv"))
+          hr.resolve_role_models() != ("mm-li", "mm-hv"))
     jr3 = _c.post("/api/harness/roles", json={"audit_mode": "bogus"})
     check("audit_mode 非法 → 400", jr3.status_code == 400)
     jr4 = _c.post("/api/harness/roles", json={"executor_model": "old-keep"})
