@@ -604,6 +604,16 @@ def main():
 
     # JS API：暴露原生文件选择对话框给前端（拖拽拿不到 File.path 时的 fallback）
     class FileBridge:
+        def get_web_token(self):
+            """v3.4.93d 网页直开门禁：把本进程令牌交给窗口内的挑战 loader
+            （写 cookie 后原地重载）。桥只在 pywebview 窗口内存在——浏览器
+            拿不到本方法，即拿不到令牌。"""
+            try:
+                from src.server import _WEB_TOKEN
+                return _WEB_TOKEN
+            except Exception:
+                return ""
+
         def tray_confirm_hide(self):
             """首次关闭提示框「知道了」后调用：把窗口隐藏到托盘（后端时机控制）。
             在独立线程 hide——pywebview js_api 调用也在 GUI 线程，hide 本身安全。"""
@@ -996,14 +1006,7 @@ def main():
     if _wv_debug:
         os.environ.setdefault("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
                               "--remote-debugging-port=9222")
-    # v3.4.93c（用户实锤「请彻查」）：专属 UA 标记承载网页直开门禁
-    # （server._web_gate 按 UA 放行）——v3.4.93 的 /?t= URL 令牌在
-    # webview_debug 开 F12 时可从地址栏读走复制进浏览器放行；UA 方案
-    # URL 不携带任何秘密。注意 user_agent 是 start() 的参数（6.2.1 的
-    # create_window 无此参）。
-    from src.server import _WEBVIEW_UA_MARK
     webview.start(debug=_wv_debug, private_mode=False,
-                  user_agent=f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) {_WEBVIEW_UA_MARK}",
                   storage_path=os.path.join(DATA_DIR, "webview_cache"))
 
 

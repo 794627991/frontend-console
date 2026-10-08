@@ -57,15 +57,39 @@ if DEBUG_WEB:
     print("[debug-web] RES_DIR(常规模式来源): %s" % RES_DIR)
 
 # v3.4.93（用户定调「浏览器直开调试入口关死，仅 run_debug.bat 放行」）：
-# 网页直开门禁。v3.4.93c（用户实锤「请彻查」）改架构——**URL 令牌退役**
-# （?t= 挂在页面地址上，webview_debug 开 F12 即可读走复制进浏览器放行，
-#  devtools/历史/引荐皆暴露面），改 **webview 专属 User-Agent 标记**：
-# 主窗/截图窗以带标记的 UA 加载（pywebview user_agent 参数），浏览器请求
-# 永不带标记 → 一律 403。豁免四类跨进程接口（探活/自唤/窗口控制/文件联
-# 动——单实例与双击关联文件靠它们，来自 python urllib 无标记）。
-# HARNESS_DEBUG_WEB=1（run_debug.bat）全放行——浏览器直开仅调试模式可用。
-_WEBVIEW_UA_MARK = "SerialConsoleProWebView/1"
-_WEB_EXEMPT = ("/api/status", "/api/raise_window", "/api/window/", "/api/ai/open_file")
+# 网页直开门禁。v3.4.93d（用户实锤「应用窗口被 403」）定稿架构——
+# **pywebview 桥挑战式**：
+# · 93 版 /?t= URL 令牌：挂在地址栏，F12 可读走复制进浏览器（彻查实锤）；
+# · 93c 版 UA 标记：pywebview 在 NavigationStarting 才设 UA，**首请求已
+#   带默认 UA 发出**（竞态），应用窗口自己被 403；
+# · 本版：入口页对未授权者返回**挑战 loader**（200）：应用窗口内 pywebview
+#   必注入 window.pywebview.api 桥——loader 调 FileBridge.get_web_token()
+#   拿本进程随机令牌写 cookie 后原地重载；浏览器无桥，轮询超时只见面包
+#   提示页。URL 全程不携带任何秘密；API 未授权一律 403 JSON。
+# 豁免：探活/自唤/窗口控制/文件联动（跨进程 python urllib）+截图工具页
+# （截图窗热键流不吃桥延迟）。DEBUG_WEB=1（run_debug.bat）全放行。
+import secrets as _secrets
+_WEB_TOKEN = _secrets.token_urlsafe(24)
+_WEB_EXEMPT = ("/api/status", "/api/raise_window", "/api/window/", "/api/ai/open_file",
+               "/web/screenshot.html")
+_WEB_LOADER = ("<!doctype html><meta charset=\"utf-8\"><title>前端控制台</title>"
+               "<body style=\"margin:0;font:14px/1.8 system-ui;display:flex;align-items:center;"
+               "justify-content:center;height:100vh;color:#8a94a6;background:#f5f7fa\">"
+               "<div id=\"m\">正在打开…</div>"
+               "<script>"
+               "var n=0;"
+               "function go(){"
+               "if(window.pywebview&&window.pywebview.api&&window.pywebview.api.get_web_token){"
+               "window.pywebview.api.get_web_token().then(function(t){"
+               "if(t){document.cookie='hg_t='+encodeURIComponent(t)+';path=/;samesite=lax';"
+               "location.replace('/');}else{setTimeout(go,150);}}).catch(function(){setTimeout(go,150);});"
+               "return;}"
+               "if(window.pywebview){setTimeout(go,150);return;}"   # webview——桥注入中，长等
+               "if(++n>8){document.getElementById('m').innerHTML="
+               "'请从应用窗口访问本页面。<br>如需浏览器直开调试，请使用 run_debug.bat 启动。';return;}"   # 浏览器——无桥
+               "setTimeout(go,150);}"
+               "go();"
+               "</script></body>")
 
 @app.before_request
 def _web_gate():
@@ -74,21 +98,17 @@ def _web_gate():
     p = request.path
     if p.startswith(_WEB_EXEMPT):
         return None
-    ua = request.headers.get("User-Agent") or ""
-    if _WEBVIEW_UA_MARK in ua:
+    if request.cookies.get("hg_t") == _WEB_TOKEN:
         return None
     if p.startswith("/api/"):
         return jsonify({"ok": False, "err": "unauthorized"}), 403
-    return ("<!doctype html><meta charset=\"utf-8\"><body style=\"font:14px/1.8 system-ui;"
-            "display:flex;align-items:center;justify-content:center;height:100vh;"
-            "margin:0;color:#8a94a6;background:#f5f7fa\"><div>请从应用窗口访问本页面。<br>"
-            "如需浏览器直开调试，请使用 run_debug.bat 启动。</div></body>"), 403
+    return Response(_WEB_LOADER, mimetype="text/html")
 
 @app.after_request
 def _web_gate_nostore(resp):
-    # v3.4.93b：403 拒绝页与入口文档禁缓存——旧实例时代被浏览器缓存的整页
-    # UI 会在门禁生效后仍从本地缓存渲染（用户实锤「还是有」）——no-store
-    # 杜绝后续回访吃到陈旧页面；带版本号的静态资源不受影响照常缓存
+    # v3.4.93b：403/入口文档禁缓存——旧实例时代被浏览器缓存的整页 UI 会在
+    # 门禁生效后仍从本地缓存渲染；loader 同样 no-store（每次现判）。带版本
+    # 号的静态资源不受影响照常缓存
     if resp.status_code == 403 or request.path in ("/", "/index.html"):
         resp.headers["Cache-Control"] = "no-store"
     return resp
