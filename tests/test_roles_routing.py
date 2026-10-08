@@ -48,6 +48,20 @@ import src.app_state as _st
 _TMP = tempfile.mkdtemp(prefix="roles_routing_test_")
 _st.CONFIG_FILE = os.path.join(_TMP, "config.json")
 os.environ.setdefault("HARNESS_AGENTS_DIR", _TMP)   # 双保险：装 agents 也进临时目录
+# v3.5.19：三档联动 API 配置三槽——mock settings.json 重定向（不碰真机）
+_TIER_SETTINGS = os.path.join(_TMP, "settings.json")
+os.environ["HARNESS_TIER_SETTINGS"] = _TIER_SETTINGS
+
+
+def write_tiers(haiku="", sonnet="", opus=""):
+    """写三槽映射（模拟 API 配置方案的 env 槽位）。"""
+    import json as _j
+    with open(_TIER_SETTINGS, "w", encoding="utf-8") as f:
+        _j.dump({"env": {
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": haiku,
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": sonnet,
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": opus}}, f)
+
 
 import src.harness.roles as hr
 
@@ -79,8 +93,9 @@ def write_cfg(**patch):
 print("[1] 配置默认值")
 write_cfg(enabled=True)
 d = hr.roles_cfg()
-check("两池新键默认空（自动识别）",
-      d.get("light_model") == "" and d.get("heavy_model") == "")
+check("独立档位键已退役（v3.5.19 三槽联动，不在 defaults）",
+      "light_model" not in d and "mid_model" not in d
+      and "heavy_model" not in d)
 check("分级线默认 100/3/200", hr.audit_limits() == (100, 3, 200),
       str(hr.audit_limits()))
 check("旧键 max_free_lines 已不在 defaults", "max_free_lines" not in d)
@@ -91,47 +106,41 @@ check("roles_cfg 透传未知键/旧键（降级依赖）",
       d2.get("executor_model") == "old-ex" and d2.get("legacy_junk") == 1)
 write_cfg(enabled=True)
 
-# ============ 2. 形态判定：三档精确匹配（v3.5.12 两档简化） ============
-print("[2] 形态判定（三档精确匹配·两档简化）")
+# ============ 2. 形态判定：三档联动 API 配置三槽（v3.5.19） ============
+print("[2] 形态判定（三槽联动：Haiku→轻 / Sonnet→中 / Opus→重）")
 M = hr.roles_mode
-# v3.5.12 用户拍板：mid 未配=两档制，heavy 值命中直接 heavy
-write_cfg(enabled=True, light_model=LIGHT_MODEL, heavy_model=HEAVY_MODEL)
-check("轻档值命中 → light", M(LIGHT_MODEL) == "light")
-check("轻档值带 [1M] 后缀归一化命中", M(LIGHT_MODEL + "[1M]") == "light")
-check("重档值命中且 mid 未配 → heavy（两档制：非轻即重）",
-      M(HEAVY_MODEL) == "heavy")
-check("重档值大小写不敏感", M(HEAVY_MODEL.upper()) == "heavy")
-check("未匹配且 mid 未配 → heavy（两档兜重）", M("unknown-model-x") == "heavy")
-check("无名且 mid 未配 → heavy", M(None) == "heavy" and M("") == "heavy")
-# mid 配齐 → 三档制，未匹配兜 mid
-write_cfg(enabled=True, light_model=LIGHT_MODEL, mid_model=MID_MODEL,
-          heavy_model=HEAVY_MODEL)
-check("mid 配齐：中档值命中 → mid", M(MID_MODEL) == "mid")
-check("mid 配齐：重档值命中 → heavy（最信任档全免）", M(HEAVY_MODEL) == "heavy")
-check("mid 配齐：轻档值仍 light", M(LIGHT_MODEL) == "light")
-check("mid 配齐：未匹配兜 mid（安全：多一道审）", M("unknown-model-x") == "mid")
-check("mid 配齐：无名兜 mid", M(None) == "mid" and M("") == "mid")
-# 同值配多档：轻>中>重
-write_cfg(enabled=True, light_model="same-x", mid_model="same-x",
-          heavy_model="same-x")
-check("同值多档优先级 轻>中>重（取轻）", M("same-x") == "light")
-write_cfg(enabled=True, mid_model=HEAVY_MODEL, heavy_model=HEAVY_MODEL)
-check("mid==heavy 同值：命中取中档（歧义取中）", M(HEAVY_MODEL) == "mid")
-# main_model 已退役：残留键不影响判定
-write_cfg(enabled=True, light_model=LIGHT_MODEL, heavy_model=HEAVY_MODEL,
-          main_model=HEAVY_MODEL, light_keywords="flash")
-check("main_model/light_keywords 残留不参与判定（已退役）",
-      M(LIGHT_MODEL) == "light")
-# tier 解析：mid 缺省=重档同值（取值兜底）
-write_cfg(enabled=True, light_model=POOL_LIGHT, heavy_model=POOL_HEAVY)
+write_tiers(haiku=LIGHT_MODEL, sonnet=MID_MODEL, opus=HEAVY_MODEL)
+check("Haiku 槽值命中 → light", M(LIGHT_MODEL) == "light")
+check("槽值带 [1M] 后缀归一化命中", M(LIGHT_MODEL + "[1M]") == "light")
+check("Sonnet 槽值命中 → mid", M(MID_MODEL) == "mid")
+check("Opus 槽值命中 → heavy（最信任档）", M(HEAVY_MODEL) == "heavy")
+check("槽值大小写不敏感", M(HEAVY_MODEL.upper()) == "heavy")
+check("未匹配三槽 → mid（安全兜底：多一道审）", M("unknown-model-x") == "mid")
+check("无名 → mid", M(None) == "mid" and M("") == "mid")
+# 同值多槽：轻>中>重
+write_tiers(haiku="same-x", sonnet="same-x", opus="same-x")
+check("同值多槽优先级 轻>中>重（取轻）", M("same-x") == "light")
+write_tiers(sonnet=HEAVY_MODEL, opus=HEAVY_MODEL)
+check("Sonnet==Opus 同值：命中取中档（歧义取中）", M(HEAVY_MODEL) == "mid")
+# 独立档位键已退役：残留不影响判定（三槽为唯一真相源）
+write_tiers(haiku=LIGHT_MODEL, sonnet=MID_MODEL, opus=HEAVY_MODEL)
+write_cfg(enabled=True, light_model=HEAVY_MODEL, mid_model=HEAVY_MODEL,
+          heavy_model=LIGHT_MODEL, main_model=HEAVY_MODEL, light_keywords="flash")
+check("退役档位键残留不参与判定（三槽唯一真相源）",
+      M(LIGHT_MODEL) == "light" and M(HEAVY_MODEL) == "heavy")
+# tier 解析：三槽直读（[1M] 剥离）+ 缺槽回退方案表
+write_tiers(haiku="glm-5.3-flash[1M]", sonnet="glm-4.7", opus="glm-5.3[1M]")
 _l, _m, _h = hr.resolve_tier_models()
-check("tier 解析：mid 缺省=重档同值", (_l, _m, _h) == (POOL_LIGHT, POOL_HEAVY, POOL_HEAVY),
+check("tier 解析：三槽直读且剥 [1M]",
+      (_l, _m, _h) == (LIGHT_MODEL, MID_MODEL, HEAVY_MODEL), str((_l, _m, _h)))
+write_tiers()   # 全槽缺失 → 回退方案表自动分类
+write_cfg(enabled=True)
+_l, _m, _h = hr.resolve_tier_models(
+    models=["glm-5.3-flash", MID_MODEL, "glm-5.3"], default="glm-5.3")
+check("tier 解析：缺槽回退方案表（轻词池/重池，mid=重池兜）",
+      _l == "glm-5.3-flash" and _h == "glm-5.3" and _m == "glm-5.3",
       str((_l, _m, _h)))
-write_cfg(enabled=True, light_model=POOL_LIGHT, mid_model=MID_MODEL,
-          heavy_model=POOL_HEAVY)
-_l, _m, _h = hr.resolve_tier_models()
-check("tier 解析：mid 显式三档齐", (_l, _m, _h) == (POOL_LIGHT, MID_MODEL, POOL_HEAVY),
-      str((_l, _m, _h)))
+write_tiers(haiku=LIGHT_MODEL, sonnet=MID_MODEL, opus=HEAVY_MODEL)   # 复原三槽（后续段依赖）
 
 # ============ 3. 模型池解析 ============
 print("[3] 模型池（轻/重两池）")
@@ -267,9 +276,9 @@ check("改分级线 → 指纹变（热更触发）", fp1 != fp2)
 check("切模型 → 指纹变（换形态）", _bridge_fp(HEAVY_MODEL) != fp2)
 write_cfg(enabled=True, light_model=POOL_LIGHT, heavy_model=POOL_HEAVY)
 check("复原配置 → 指纹复原", _bridge_fp(LIGHT_MODEL) == fp1)
-write_cfg(enabled=True, light_model=POOL_LIGHT, heavy_model="opus-x")
-check("改重池 → 指纹变（池名嵌词）", _bridge_fp(LIGHT_MODEL) != fp1)
-write_cfg(enabled=True, light_model=POOL_LIGHT, heavy_model=POOL_HEAVY)
+write_tiers(haiku=LIGHT_MODEL, sonnet=MID_MODEL, opus="opus-x")
+check("改 Opus 槽 → 指纹变（重档值经代理模型嵌词）", _bridge_fp(LIGHT_MODEL) != fp1)
+write_tiers(haiku=LIGHT_MODEL, sonnet=MID_MODEL, opus=HEAVY_MODEL)
 
 # ============ 7. 审计判定（audit_verdict） ============
 print("[7] audit_verdict")
@@ -612,14 +621,16 @@ try:
     if jr is None:
         print("    [debug] status=%s body=%r" % (_r0.status_code,
                                                  _r0.data[:300]))
-    check("POST 两池落盘", jr.get("ok") and jr.get("light_model") == "e-light"
-          and jr.get("heavy_model") == "e-heavy", str(jr))
+    check("POST 档位键已退役：被白名单忽略不落盘（v3.5.19 三槽联动）",
+          jr.get("ok") and "light_model" not in jr and "heavy_model" not in jr,
+          str(jr))
     check("POST clamp 回显（l1 钳到 200）",
           jr.get("clamped") and jr["clamped"][0]["to"] == 200, str(jr))
     gr = _c.get("/api/harness/roles").get_json()
     rs = gr.get("resolved") or {}
-    check("GET resolved 出两池", rs.get("light") == "e-light"
-          and rs.get("heavy") == "e-heavy", str(rs))
+    check("GET resolved 出三槽档位（mock settings）",
+          rs.get("light") == LIGHT_MODEL and rs.get("mid") == MID_MODEL
+          and rs.get("heavy") == HEAVY_MODEL, str(rs))
     check("GET roles 含分级线与 audit_mode",
           gr["roles"].get("l1_max_lines") == 200
           and gr["roles"].get("l2_max_lines") == 200
@@ -652,14 +663,14 @@ try:
                                   "light_keywords": "should-ignore"}).get_json()
     gr6 = _c.get("/api/harness/roles").get_json()
     rs6 = gr6.get("resolved") or {}
-    check("POST mid_model 落盘 + resolved.mid 回显",
-          jr6.get("mid_model") == "e-mid" and rs6.get("mid") == "e-mid",
+    check("POST mid_model 已退役：被白名单忽略（三槽为唯一真相源）",
+          "mid_model" not in jr6 and rs6.get("mid") == MID_MODEL,
           str((jr6, rs6)))
     check("退役键 main_model/light_keywords 被白名单忽略不落盘",
           "main_model" not in jr6 and "light_keywords" not in jr6
           and "main_model" not in gr6["roles"]
           and "light_keywords" not in gr6["roles"], str(jr6))
-    _c.post("/api/harness/roles", json={"mid_model": ""})   # 清理复原
+
     check("POST 设计线落盘（数字键）",
           jr5.get("design_max_lines") == 150, str(jr5))
     gr2 = _c.get("/api/harness/roles").get_json()

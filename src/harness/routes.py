@@ -1263,13 +1263,14 @@ def harness_mm_probe():
 
 @harness_bp.route("/vision", methods=["GET"])
 def harness_get_vision():
-    """读识图配置（v2.28.2：MCP 后端配置——模型/端点映射/提示词）。
-    附带 defaults 供前端「恢复默认」按钮用（mcp_prompt 缺省取 MCP 内置）。"""
+    """读识图配置（v2.28.2：MCP 后端配置——模型/提示词）。
+    附带 defaults 供前端「恢复默认」按钮用（mcp_prompt 缺省取 MCP 内置）。
+    v3.5.19：model_map 端点映射退役（用户拍板「完全由用户选择多模态模型
+    配置」）——识图模型就是面板主选择框那一个。"""
     from .vision_mcp import MCP_DEFAULT_SYSTEM
     cfg = _vision_load()
     return jsonify({"ok": True, "vision": cfg,
-                    "defaults": {"mcp_prompt": MCP_DEFAULT_SYSTEM,
-                                 "model_map": {}},
+                    "defaults": {"mcp_prompt": MCP_DEFAULT_SYSTEM},
                     "running": False,
                     "models": available_models().get("models", []),
                     "default_model": available_models().get("default")})
@@ -1279,9 +1280,10 @@ def harness_get_vision():
 
 @harness_bp.route("/vision", methods=["POST"])
 def harness_set_vision():
-    """写识图配置。body: {enabled, model, mcp_prompt?, model_map?, mm_extra?}。
+    """写识图配置。body: {enabled, model, mcp_prompt?, mm_extra?}。
     v2.28.2：配置即 MCP 行为——MCP 每次调用时读盘，改完即刻生效，无需
-    重启会话。旧键 prompt/name（会话时代）不再写入，存量值自然闲置。"""
+    重启会话。旧键 prompt/name（会话时代）不再写入，存量值自然闲置。
+    v3.5.19：model_map 端点映射退役——不再收不再存，存量值自然闲置。"""
     data = request.get_json(force=True, silent=True) or {}
     old = _vision_load()
     cfg = {
@@ -1296,22 +1298,6 @@ def harness_set_vision():
         cfg["mm_extra"] = [str(x).strip() for x in mm if str(x).strip()]
     else:
         cfg["mm_extra"] = list(old.get("mm_extra") or [])
-    # v2.28.2：端点模型映射——dict 或 "关键字=模型" 行列表均收，未提交保旧值
-    mmap_raw = data.get("model_map")
-    if isinstance(mmap_raw, dict) or isinstance(mmap_raw, list):
-        mmap = {}
-        if isinstance(mmap_raw, dict):
-            for k, v in mmap_raw.items():
-                if str(k).strip() and str(v).strip():
-                    mmap[str(k).strip().lower()] = str(v).strip()
-        else:
-            for line in mmap_raw:
-                kv = str(line).split("=", 1)
-                if len(kv) == 2 and kv[0].strip() and kv[1].strip():
-                    mmap[kv[0].strip().lower()] = kv[1].strip()
-        cfg["model_map"] = mmap
-    else:
-        cfg["model_map"] = dict(old.get("model_map") or {})
     ok, err = _vision_save(cfg)
     if not ok:
         return jsonify({"ok": False, "err": err or "写入失败"}), 500
@@ -1437,8 +1423,7 @@ def harness_set_roles():
     patch = {}
     if "enabled" in data:
         patch["enabled"] = bool(data.get("enabled"))
-    for k in ("designer_model", "reviewer_model", "light_model",
-              "mid_model", "heavy_model",
+    for k in ("designer_model", "reviewer_model",
               "executor_model", "coder_model"):
         if k in data:
             patch[k] = str(data.get(k) or "").strip()

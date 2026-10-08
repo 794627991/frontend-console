@@ -14,8 +14,8 @@ vision_mcp.log 诊断日志。
 
 链路：模型传图片（本地路径 / http(s) 链接 / data: URL 均可）→ 本进程
 取图转 base64 → 调 Anthropic 兼容 /v1/messages，模型按识图配置解析
-（端点映射 model_map 多方案自适应，[1M] 后缀自动降级裸名）→ 结论作为
-工具返回值交回主会话。
+（v3.5.19：面板直选多模态模型，端点映射已退役；[1M] 后缀自动降级
+裸名）→ 结论作为工具返回值交回主会话。
 
 端点与密钥解析顺序：env（HARNESS_VISION_BASE_URL/HARNESS_VISION_KEY）→
 ~/.claude/settings.json 的 env.ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN
@@ -126,39 +126,18 @@ def load_vision_cfg():
         return {}
 
 
-def normalize_model_map(raw):
-    """归一化端点模型映射：接受 {关键字: 模型} 或 ["关键字=模型"] 行。
-    关键字小写（匹配时对 base_url 做 contains，大小写不敏感）。"""
-    out = {}
-    if isinstance(raw, dict):
-        items = raw.items()
-    elif isinstance(raw, list):
-        items = (tuple(str(x).split("=", 1)) for x in raw if "=" in str(x))
-    else:
-        return out
-    for k, v in items:
-        k = str(k).strip().lower()
-        v = str(v).strip()
-        if k and v:
-            out[k] = v
-    return out
+# v3.5.19：normalize_model_map（端点映射归一化）随 model_map 退役删除——
+# 识图模型由用户在面板直接选（resolve_model: env > 配置 model > 默认）
 
 
 def resolve_model(base_url, cfg=None):
-    """按端点解析识图模型：env 覆盖 → model_map 最长关键字命中 → 配置
-    model → 默认。多方案适配的关键——lanz 端点配 Lanz-Medium-V、
-    bigmodel 端点配 glm-5.3-flash，切方案自动跟着走。"""
+    """解析识图模型（v3.5.19 用户拍板「去除端点映射，完全由用户选择」）：
+    env 覆盖 → 配置 model（识图面板主选择框，用户直接选多模态模型）→
+    默认。端点映射（model_map）已退役——多方案场景在面板重选即可。"""
     env = (os.environ.get("HARNESS_VISION_MODEL") or "").strip()
     if env:
         return env
     cfg = cfg if cfg is not None else load_vision_cfg()
-    url = (base_url or "").lower()
-    best_k, best_m = "", None
-    for k, m in normalize_model_map(cfg.get("model_map")).items():
-        if k in url and len(k) > len(best_k):
-            best_k, best_m = k, m
-    if best_m:
-        return best_m
     m = str(cfg.get("model") or "").strip()
     return m or DEFAULT_MODEL
 

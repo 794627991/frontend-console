@@ -163,10 +163,8 @@ def _norm_model(m):
     return str(m or "").split("[")[0].strip().casefold()
 
 _DEFAULTS = {"enabled": False,          # 默认关闭（用户定调：开关开启才生效）
-             "light_model": "",         # 轻档（轻主力直干用；空=按方案自动识别）
-             "mid_model": "",           # 中档（中主力直干；空=没有中档层，
-                                        # 两档制：非轻即重，v3.5.12 用户拍板）
-             "heavy_model": "",         # 重档（designer/reviewer 用；空=自动识别）
+             # v3.5.19：三档联动 API 配置（env 三槽 Haiku/Sonnet/Opus），
+             # 独立档位键 light/mid/heavy_model 退役（见 _tier_env）
              # light 形态审计（回合结算盘点工具调用记录，零 token）：
              "audit_mode": "auto",      # 兜底档：auto=违规自动续发补审 / warn=仅警示 / off=关
              # 分级线两档（旧 max_free_lines=3 已废；v2.52 只看单次直改
@@ -318,8 +316,8 @@ def resolve_role_models(models=None, default=None):
             models, default = d.get("models") or [], d.get("default")
         except Exception:
             models, default = [], None
-    cl = str(cfg.get("light_model") or cfg.get("executor_model") or "").strip()
-    ch = str(cfg.get("heavy_model") or cfg.get("coder_model") or "").strip()
+    cl = str(cfg.get("light_model") or cfg.get("executor_model") or "").split("[")[0].strip()   # 剥 [1M]（全审 R1）
+    ch = str(cfg.get("heavy_model") or cfg.get("coder_model") or "").split("[")[0].strip()
     auto_l, auto_h = _pick_pool_models(models, default)
     return (cl or auto_l or "glm-5.3-flash",
             ch or auto_h or "glm-5.3")
@@ -331,55 +329,72 @@ def resolve_agent_models(models=None, default=None):
     缺省回退重池（heavy_model→自动分类→硬默认），即两代理共用重模型的
     历史行为；只配一槽不影响另一槽回退。v3.5.18（全审建议11）：显式槽
     值剥 [1M] 类窗口后缀——agent md 的 model 字段必须裸 ID（自动路径
-    _pick_pool_models 早剥，显式路径此前漏剥）。"""
+    _pick_pool_models 早剥，显式路径此前漏剥）。v3.5.19：回退重档取
+    resolve_tier_models 的重档（联动 API 配置三槽）。"""
     cfg = roles_cfg()
-    _l, heavy = resolve_role_models(models, default)
+    _tl, _tm, heavy = resolve_tier_models(models, default)
     cd = str(cfg.get("designer_model") or "").split("[")[0].strip()
     cr = str(cfg.get("reviewer_model") or "").split("[")[0].strip()
     return (cd or heavy, cr or heavy)
 
 
+def _tier_env():
+    """当前生效 API 方案的 anthropic 三槽映射（v3.5.19 用户拍板「三档与
+    API 配置联动」）：读 ~/.claude/settings.json env——
+    ANTHROPIC_DEFAULT_HAIKU_MODEL → 轻档、…SONNET… → 中档、…OPUS… → 重档。
+    用户配 API 方案时已声明过三槽映射，档位跟随它是唯一真相源（独立三档
+    配置键 light/mid/heavy_model 退役）。HARNESS_TIER_SETTINGS 环境变量可
+    重定向 settings 路径（测试隔离用）。读不到（异常/缺槽）返回对应空串，
+    由调用方回退方案表自动分类。"""
+    try:
+        p = (os.environ.get("HARNESS_TIER_SETTINGS") or "").strip() \
+            or os.path.join(os.path.expanduser("~"), ".claude", "settings.json")
+        with open(p, "r", encoding="utf-8") as f:
+            env = (json.load(f).get("env") or {})
+        return (str(env.get("ANTHROPIC_DEFAULT_HAIKU_MODEL") or "").split("[")[0].strip(),
+                str(env.get("ANTHROPIC_DEFAULT_SONNET_MODEL") or "").split("[")[0].strip(),
+                str(env.get("ANTHROPIC_DEFAULT_OPUS_MODEL") or "").split("[")[0].strip())
+    except Exception:
+        return ("", "", "")
+
+
 def resolve_tier_models(models=None, default=None):
-    """解析三档模型 (轻, 中, 重)——形态判定的数据源。
-    轻档 = light_model 显式 | 方案表自动挑（_LIGHT_RE 词命中池）；
-    重档 = heavy_model 显式 | 方案表自动挑（非轻词池，default 优先）；
-    中档 = mid_model 显式 | 重档同值（仅取值兜底；形态判定上 mid 未配=
-    两档制，重档值命中直接 heavy——roles_mode v3.5.12）。v3.5.15 起
-    model_map 端点映射不参与档位（键归识图专用）。硬默认
-    ("glm-5.3-flash", "glm-5.3", "glm-5.3")。"""
-    cfg = roles_cfg()
+    """解析三档模型 (轻, 中, 重)——形态判定的数据源（v3.5.19 联动 API 配置）：
+    三档 = 当前生效方案 env 的 anthropic 三槽（Haiku→轻 / Sonnet→中 /
+    Opus→重，_tier_env），换 API 方案档位自动跟随；槽缺失回退方案表自动
+    分类（_pick_pool_models：轻量词表挑轻池，其余重池）。旧的独立三档键
+    light/mid/heavy_model 与 model_map 端点映射均已退役。"""
+    el, em, eh = _tier_env()
+    if el and em and eh:
+        return (el, em, eh)
     _l, _h = resolve_role_models(models, default)
-    cm = str(cfg.get("mid_model") or "").strip()
-    return (_l, cm or _h, _h)
+    return (el or _l, em or eh or _h, eh or _h)
 
 
 def roles_mode(model=None):
-    """主会话形态（v3.5.12 两档简化，用户拍板「mid 没填就按两档处理」）：
+    """主会话形态（v3.5.19 三档联动 API 配置）：
     实跑模型名归一化（_norm_model：剥 [1M] 后缀 + casefold）后依次匹配
-    三档配置值（resolve_tier_models），同值配多档时 轻>中>重：
+    三槽档位值（resolve_tier_models：Haiku→轻 / Sonnet→中 / Opus→重），
+    同值多档时 轻>中>重：
     - "light"：轻主力——designer+reviewer 双代理 + 分级线/事中闸/结算审计；
-    - "mid"：中主力——直干 + reviewer 审核兜底（=旧 strong 行为；仅
-      mid_model 显式配置时这一层才存在）；
+    - "mid"：中主力——直干 + reviewer 审核兜底（=旧 strong 行为）；
     - "heavy"：最信任档——直干为主+派发自由（designer/reviewer/通用
-      子代理按需可派，v3.5.16），免的只是强制分级（事中闸/结算审计全免）
-      （mid 没配=两档制：重档值命中直接 heavy）；
-    - 未匹配：mid 配了兜 mid（安全：多一道审），mid 没配按两档兜 heavy；
-      名字不可得同款兜底；内部异常兜 mid。"""
+      子代理按需可派，v3.5.16），免的只是强制分级（事中闸/结算审计全免）；
+    - 未匹配任何槽 / 名字不可得 → mid（安全兜底：漏配的最坏后果是多一道
+      审）；内部异常兜 mid。"""
     try:
         model = str(model or "").strip()
-        cfg = roles_cfg()
-        mid_set = bool(str(cfg.get("mid_model") or "").strip())
         if not model:
-            return "mid" if mid_set else "heavy"
+            return "mid"
         n = _norm_model(model)
         light, mid, heavy = resolve_tier_models()
         if light and n == _norm_model(light):
             return "light"
-        if mid_set and mid and n == _norm_model(mid):
+        if mid and n == _norm_model(mid):
             return "mid"
         if heavy and n == _norm_model(heavy):
             return "heavy"
-        return "mid" if mid_set else "heavy"
+        return "mid"   # 未匹配兜中档（安全：多一道审）
     except Exception:
         return "mid"
 

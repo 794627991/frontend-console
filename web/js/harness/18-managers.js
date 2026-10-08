@@ -18,8 +18,6 @@
       const opts = ['<option value=""' + (curModel ? '' : ' selected') + '>默认（' + 'glm-5.3-flash）</option>']
         .concat(models.map(m => `<option value="${esc(m)}"${m === curModel ? ' selected' : ''}>${esc(m)}</option>`))
         .join('');
-      const mapText = Object.entries(cfg.model_map || {})
-        .map(([k, v]) => `${k}=${v}`).sort().join('\n');
       ov.innerHTML = `<div class="hg-modal hg-modal-vision"><div class="hg-modal-title">👁 识图配置</div>
         <div class="hg-modal-body hg-vision-hint">识图走 MCP 通道（analyze_image 工具，随会话常备，无后台进程）。此处配置 MCP 调用的识图模型与提示词，<b>保存即生效</b>。主会话模型是真多模态则直读，不经过这里。</div>
         <div class="hg-vision-row">
@@ -27,12 +25,9 @@
           <span class="hg-vision-state" style="font-size:11px;color:var(--muted);">MCP 通道 · 无后台进程</span>
         </div>
         <div class="hg-vision-grid">
-          <label>识图模型（MCP 后端，需多模态；当前方案未命中下方映射时用此项）
+          <label>识图模型（MCP 后端，需多模态；换 API 方案后在此重选）
             <select data-hg-v-model>${opts}</select></label>
         </div>
-        <label class="hg-vision-prompt-lab">端点模型映射（每行一条：端点关键字=模型名——多方案适配，按当前 base_url 匹配，最长关键字命中优先）
-          <textarea class="hg-vision-mm" data-hg-v-map spellcheck="false" style="height:56px;font-family:var(--font-mono);"
-            placeholder="open.bigmodel.cn=glm-5.3-flash&#10;lanz.hikvision.com=Lanz-Medium-V">${esc(mapText)}</textarea></label>
         <label class="hg-vision-prompt-lab">多模态模型名单（逗号分隔，模型下拉的 👁 标记以此为准；名单外的模型一律走 MCP 识图通道）
           <input class="hg-vision-mm" data-hg-v-mm spellcheck="false"
                  value="${esc((cfg.mm_extra || []).join(', '))}"
@@ -47,7 +42,6 @@
       const acts = ov.querySelector('.hg-modal-acts');
       const close = (v) => { ov.remove(); resolve(v); };
       const ta = ov.querySelector('[data-hg-v-prompt]');
-      const mapEl = ov.querySelector('[data-hg-v-map]');
       const modelEl = ov.querySelector('[data-hg-v-model]');
       const onEl = ov.querySelector('[data-hg-v-on]');
       const mmEl = ov.querySelector('[data-hg-v-mm]');
@@ -95,10 +89,7 @@
         // v2.25：多模态手补名单随保存落盘（后端按前缀匹配，覆盖 [1M] 变体）
         mm_extra: (ov.querySelector('[data-hg-v-mm]').value || '')
           .split(/[,，;；\n]/).map(s => s.trim()).filter(Boolean),
-        // v2.28.3：端点模型映射——发 "端点关键字=模型名" 字符串行（后端按此
-        // 解析；此前误发 [k,v] 元组数组，后端 str() 后无 '=' 被静默丢弃）
-        model_map: (mapEl.value || '').split(/\n+/).map(s => s.trim())
-          .filter(x => x.includes('=')),
+        // v3.5.19：model_map 端点映射退役——识图模型就是上面的主选择框
       }));
       ov.addEventListener('click', (e) => { if (e.target === ov) close(null); });
       ov.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(null); });
@@ -145,7 +136,7 @@
       // v3.5.0 判定依据行：实跑名 vs 命中档位（档位匹配静默失败可见化）
       const rs = init.resolved || {};
       const _hitTier = mode === 'light' ? '轻档' : (mode === 'heavy' ? '重档' : '中档');
-      const basisTxt = `实跑 ${dm || '未设置'} → ${_hitTier}${!String(cfg.mid_model || '').trim() ? '（中档未配：两档制，非轻即重）' : ''}`;
+      const basisTxt = `实跑 ${dm || '未设置'} → ${_hitTier}（三槽联动）`;
       // 设计者/审计者槽（v2.53）：读写 designer_model/reviewer_model 新键，
       // 留空=回退重池（heavy_model→自动）——与后端 resolve_agent_models
       // 回退链一致；旧 light/heavy 池键不再从面板暴露
@@ -166,7 +157,7 @@
             <span class="hg-roles-modeinfo">当前形态：<b>${mode === 'light' ? '轻主力 · 直干+设计+审核' : mode === 'heavy' ? '重主力 · 直干+派发自由（免强制分级）' : '中主力 · 直干+审核兜底'}</b></span>
           </div>
           <details class="hg-roles-more"><summary>工作方式说明</summary>
-            <div>三形态<b>派发都自由</b>（通用子代理按需随时可派），档位差别只在强制项：实跑模型命中<b>轻档</b> = 轻主力——<b>设计+审核必须</b>（分级线全档）；命中<b>中档</b> = 中主力——<b>审核必须</b>（审计线）；命中<b>重档</b> = 重主力——零强制（最信任档）。档位按下方下拉精确匹配（同值多档取轻→中→重；<b>中档未配置 = 两档制：非轻即重</b>，重档值命中直接重主力）。保存后档位/分级线随下条消息热更生效（agents 自动重生成），审核模式立即生效。当前判定：${esc(basisTxt)}。</div>
+            <div>三形态<b>派发都自由</b>（通用子代理按需随时可派），档位差别只在强制项：实跑模型命中<b>轻档（Haiku 槽）</b> = 轻主力——<b>设计+审核必须</b>（分级线全档）；命中<b>中档（Sonnet 槽）</b> = 中主力——<b>审核必须</b>（审计线）；命中<b>重档（Opus 槽）</b> = 重主力——零强制（最信任档）。档位由 API 配置三槽映射（同值取轻→中→重；未匹配按中档），换 API 方案自动跟随。保存后分级线随下条消息热更生效（agents 自动重生成），审核模式立即生效。当前判定：${esc(basisTxt)}。</div>
             <div class="hg-roles-sec" style="margin-top:8px;">代理模型细调 <i>默认自动取重档 · 一般无需改</i></div>
             <div class="hg-roles-slot" title="designer：只设计，出方案不干活。留空=回退重档 heavy_model，再按当前方案自动识别">
               <span class="hg-roles-ico des">设</span>
@@ -180,23 +171,23 @@
             </div>
           </details>
 
-          <div class="hg-roles-sec">模型档位 <i>实跑模型命中哪档 = 哪形态</i></div>
-          <div class="hg-roles-slot" title="轻档：轻主力直干——配设计+审核双代理，分级线全档生效">
+          <div class="hg-roles-sec">模型档位 <i>联动 API 配置三槽 · 换方案自动跟随</i></div>
+          <div class="hg-roles-slot" title="轻档=当前 API 方案的 Haiku 槽（ANTHROPIC_DEFAULT_HAIKU_MODEL）。轻主力：直干+设计/审核强制（分级线全档）">
             <span class="hg-roles-ico light">轻</span>
-            <span class="hg-roles-name">轻档<i>轻主力 · 直干+设计+审核</i></span>
-            <select data-hg-r-light>${mkOpts(cfg.light_model || '')}</select>
+            <span class="hg-roles-name">轻档<i>Haiku 槽 · 轻 主力：设计+审核必须</i></span>
+            <b style="font-size:var(--fs-sm);color:var(--fg);">${esc(rs.light || '（未映射）')}</b>
           </div>
-          <div class="hg-roles-slot" title="中档：中主力直干——只装审核兜底代理。留空=没有中档这一层（两档制：非轻即重）">
+          <div class="hg-roles-slot" title="中档=当前 API 方案的 Sonnet 槽（ANTHROPIC_DEFAULT_SONNET_MODEL）。中主力：直干+审核必须">
             <span class="hg-roles-ico mid">中</span>
-            <span class="hg-roles-name">中档<i>中主力 · 直干+审核兜底</i></span>
-            <select data-hg-r-mid>${mkOpts(cfg.mid_model || '', '默认（未配置：按两档处理）')}</select>
+            <span class="hg-roles-name">中档<i>Sonnet 槽 · 中主力：审核必须</i></span>
+            <b style="font-size:var(--fs-sm);color:var(--fg);">${esc(rs.mid || '（未映射）')}</b>
           </div>
-          <div class="hg-roles-slot" title="重档：最信任档——直干为主但派发自由（设计/审核/通用子代理按需都可派），免的只是强制分级线（事中闸/结算审计全免）">
+          <div class="hg-roles-slot" title="重档=当前 API 方案的 Opus 槽（ANTHROPIC_DEFAULT_OPUS_MODEL）。重主力：直干+派发自由，零强制">
             <span class="hg-roles-ico main">重</span>
-            <span class="hg-roles-name">重档<i>重主力 · 直干+派发自由</i></span>
-            <select data-hg-r-heavy>${mkOpts(cfg.heavy_model || '')}</select>
+            <span class="hg-roles-name">重档<i>Opus 槽 · 重主力：零强制</i></span>
+            <b style="font-size:var(--fs-sm);color:var(--fg);">${esc(rs.heavy || '（未映射）')}</b>
           </div>
-          <div class="hg-roles-note">留空档位按方案自动识别；中档未配置=两档制（非轻即重），重档值命中直接重主力</div>
+          <div class="hg-roles-note">档位由 API 配置（claude 配置方案）的 Haiku/Sonnet/Opus 三槽映射决定——要调整档位归属，改 API 方案的槽位映射即可；未匹配三槽的实跑模型按中档处理</div>
 
           <div class="hg-roles-sec">分级线 <i>按单次直改行数 · 不计文件数 · 不做累计</i></div>
           <div class="hg-roles-line" title="单次直改总计 ≤ 此行数的小改（配置/常量/文案/注释级）主会话直接改，免审">
@@ -231,11 +222,8 @@
       mkBtn('取消', false, () => close(null));
       mkBtn('保存', true, () => close({
         enabled: ov.querySelector('[data-hg-r-on]').checked,
-        // v3.5.0 三档（空串=清除，回落自动识别/旧键降级）；main_model/
-        // light_keywords 已退役不再提交（后端白名单亦忽略）
-        light_model: ov.querySelector('[data-hg-r-light]').value.trim(),
-        mid_model: ov.querySelector('[data-hg-r-mid]').value.trim(),
-        heavy_model: ov.querySelector('[data-hg-r-heavy]').value.trim(),
+        // v3.5.19：三档联动 API 配置三槽（Haiku/Sonnet/Opus）——独立档位键
+        // light/mid/heavy_model 退役不再提交；改档位去改 API 方案的槽位映射
         // 设计者/审计者槽（折叠在「工作方式说明」里）：留空=回退重档/自动识别
         designer_model: ov.querySelector('[data-hg-r-designer]').value.trim(),
         reviewer_model: ov.querySelector('[data-hg-r-reviewer]').value.trim(),
@@ -260,7 +248,7 @@
       ov.addEventListener('click', (e) => { if (e.target === ov) close(null); });
       ov.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(null); });
       _hgWrap.appendChild(ov);
-      ov.querySelector('[data-hg-r-light]').focus();
+      ov.querySelector('[data-hg-r-on]').focus();
     });
   }
   function hgPromptManager(items, cwd) {
