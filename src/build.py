@@ -2,7 +2,7 @@
 """PyInstaller 打包脚本：前端控制台 → onedir 应用目录（v2.3.0 起）。
 源码整理后入口在 src/main.py，资源（web/、ico/、vendor、spec）在项目根。
 产物 = dist/前端控制台/（exe + _internal/ 依赖），发布形态 = zip。"""
-import os, sys, subprocess, shutil
+import os, sys, re, subprocess, shutil
 
 # v3.4.96：输出编码兜底——打包.bat 设 PYTHONIOENCODING=gbk，⚠/✓ 等
 # 字符在重定向（>file / CI）下 gbk 不可编码直接 UnicodeEncodeError 崩掉
@@ -104,8 +104,22 @@ def _git_notes_since_last_publish(rel):
             # 「abc1234 修 xxx：yyy」→ 取 hash 后的标题
             parts = ln.split(" ", 1)
             subject = parts[1].strip() if len(parts) == 2 else ln
+            # 用户定调「都是 harness 版本改动，最好不要体现」（流水账二犯后
+            # 根治）：门户/更新弹窗是用户视角——剥掉标题开头的内部迭代号
+            # （v3.5.25 / v3.5.14b …），纯 bump 提交整行跳过
+            subject = re.sub(r"^v\d+(\.\d+)+\w*\s*", "", subject)
+            if not subject or subject.startswith("bump"):
+                continue
             lines.append("· " + subject[:80])
-        return "\n".join(lines[:30])[:1000]   # 上限：30 条/1000 字符
+        # 按行封顶 480 字（门户展示口径 500）：超限整行丢弃——此前 1000 字
+        # 硬截在展示层切出半句话（「重档派发自由(」实锤）
+        kept, total = [], 0
+        for ln in lines:
+            if total + len(ln) + 1 > 480:
+                break
+            kept.append(ln)
+            total += len(ln) + 1
+        return "\n".join(kept)
     except Exception:
         return ""
 
