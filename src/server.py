@@ -16,7 +16,7 @@
 - src/log_index.py：日志行偏移索引（G 级文件随机访问）
 - src/tftp.py：TFTP 服务器 + Blueprint 路由
 """
-import os, sys, time, threading, json, glob, re, base64, subprocess
+import os, sys, time, threading, json, glob, re, base64, subprocess, collections
 from queue import Queue
 
 from flask import Flask, Response, request, jsonify, send_from_directory, g
@@ -389,6 +389,41 @@ def api_status():
             }
     return jsonify({"ports": info, "log_dir": LOG_DIR})
 
+# v3.5.5：paramiko 服务端 disconnect 抓手——Transport 收到 MSG_DISCONNECT
+# 时只写日志不存异常对象（且 paramiko.transport 日志级别默认 INFO 不外达），
+# 认证异常分类需要它还原服务端真实拒绝原因（Max connections limit 等）。
+# monkeypatch _parse_disconnect 截获 (code, desc) 存模块级 deque（最近 8 条，
+# 带时间戳），分类时取 3s 内最新——并发连接误配窗口极小且同类错误指向一致
+_SSH_DISC_RECENT = collections.deque(maxlen=8)
+_SSH_DISC_PATCHED = False
+def _ssh_disc_patch():
+    global _SSH_DISC_PATCHED
+    if _SSH_DISC_PATCHED:
+        return
+    try:
+        from paramiko.transport import Transport
+        _orig = Transport._parse_disconnect
+        def _patched(self, m):
+            try:
+                code = m.get_int()
+                desc = m.get_text()
+                _SSH_DISC_RECENT.append((time.time(), int(code), str(desc)))
+            except Exception:
+                pass
+            return _orig(self, m)
+        Transport._parse_disconnect = _patched
+        _SSH_DISC_PATCHED = True
+    except Exception:
+        pass
+def _ssh_last_disconnect(max_age=3.0):
+    now = time.time()
+    best = None
+    for ts, code, desc in _SSH_DISC_RECENT:
+        if now - ts <= max_age:
+            best = "Disconnect (code %d): %s" % (code, desc)   # deque 时间序，取最新
+    return best
+
+
 @app.route("/api/connect", methods=["POST"])
 def api_connect():
     data = request.get_json(force=True)
@@ -409,6 +444,7 @@ def api_connect():
             pass
         if _get_paramiko() is None:
             return jsonify({"ok": False, "err": "paramiko 未安装，无法 SSH 连接"}), 500
+        _ssh_disc_patch()   # v3.5.5：装 disconnect 截获 patch（幂等）
         port_id = f"ssh:{host}:{port}"
         # 占位防同目标重入；连接动作在锁外执行（10s 超时不再卡全局 API/其他快捷打开）
         if not _acquire_connecting(port_id):
@@ -436,7 +472,24 @@ def api_connect():
                     )
                     import socket
                     if isinstance(e, AuthenticationException):
-                        msg = "认证失败：用户名或密码/密钥错误。" + (f" {e}" if str(e) else " 请检查后重试。")
+                        # v3.5.5（用户实锤「实际是 Max connections 误报密码错」）：
+                        # paramiko 固定文案 "Authentication failed: transport shut
+                        # down or saw EOF" = 服务端在认证阶段主动 disconnect
+                        # （连接数达上限/主机拒绝等），并非密码错——真密码错的
+                        # 文案没有该后缀。定性看文案，定量（服务端原始 reason）
+                        # 从 paramiko 日志抓最近一条 Disconnect 行
+                        if "transport shut down or saw EOF" in str(e):
+                            _d = _ssh_last_disconnect()
+                            if _d and "max connection" in _d.lower():
+                                msg = ("设备拒绝连接：连接数已达上限（Max connections "
+                                       "limit）——请关闭该设备的其他 SSH 会话后重试")
+                            elif _d:
+                                msg = f"设备在认证阶段主动断开连接：{_d}"
+                            else:
+                                msg = ("设备在认证阶段主动断开连接（常见原因：连接数"
+                                       "达上限/主机拒绝该客户端）——并非用户名或密码错误")
+                        else:
+                            msg = "认证失败：用户名或密码/密钥错误。" + (f" {e}" if str(e) else " 请检查后重试。")
                     elif isinstance(e, BadHostKeyException):
                         msg = f"主机密钥校验失败：{e}"
                     elif isinstance(e, NoValidConnectionsError):
