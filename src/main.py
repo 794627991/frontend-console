@@ -780,9 +780,12 @@ def main():
     # pywebview 窗口
     # maximized：--open-file 冷启动直接以最大化开局（原生初始态，不靠回调时机）。
     # 双击关联文件=全屏看文件（用户需求）；普通快捷方式启动维持 1280×820。
+    # v3.4.93：URL 带网页直开门禁令牌（server._WEB_TOKEN）——首载换 cookie，
+    # 浏览器不带令牌的直开一律 403；run_debug.bat（HARNESS_DEBUG_WEB=1）放行。
+    from src.server import _WEB_TOKEN as _web_token
     window = webview.create_window(
         title="前端控制台 v%s" % APP_VERSION,
-        url=f"http://127.0.0.1:{port}/",
+        url=f"http://127.0.0.1:{port}/?t={_web_token}",
         width=1280,
         height=820,
         min_size=(900, 600),

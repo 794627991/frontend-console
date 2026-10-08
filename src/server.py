@@ -19,7 +19,7 @@
 import os, sys, time, threading, json, glob, re, base64, subprocess
 from queue import Queue
 
-from flask import Flask, Response, request, jsonify, send_from_directory
+from flask import Flask, Response, request, jsonify, send_from_directory, g
 
 import src.app_state as _st
 from src.app_state import (
@@ -55,6 +55,42 @@ _SRC_WEB = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file_
 if DEBUG_WEB:
     print("[debug-web] 前端直读源码目录: %s" % _SRC_WEB)
     print("[debug-web] RES_DIR(常规模式来源): %s" % RES_DIR)
+
+# v3.4.93（用户定调「浏览器直开调试入口关死，仅 run_debug.bat 放行」）：
+# 网页直开门禁——常规模式下页面与 API 请求须带**本进程随机令牌**（主窗
+# 首载 /?t= 换 httponly cookie，后续资源/SSE 同源自动携带）。豁免四类跨
+# 进程接口（探活/自唤/窗口控制/文件联动——单实例与双击关联文件靠它们），
+# 截图工具页 exempt（snip 独立进程无令牌，页面本身无敏感数据）。
+# HARNESS_DEBUG_WEB=1（run_debug.bat）全放行——浏览器直开仅调试模式可用。
+import secrets as _secrets
+_WEB_TOKEN = _secrets.token_urlsafe(24)
+_WEB_EXEMPT = ("/api/status", "/api/raise_window", "/api/window/", "/api/ai/open_file",
+               "/web/screenshot.html")
+
+@app.before_request
+def _web_gate():
+    if DEBUG_WEB:
+        return None
+    p = request.path
+    if p.startswith(_WEB_EXEMPT):
+        return None
+    tok = request.cookies.get("hg_t") or request.args.get("t") or ""
+    if tok and tok == _WEB_TOKEN:
+        if request.args.get("t"):
+            g._web_gate_set_cookie = True   # 首载带 ?t —— 落 cookie 供后续资源/API
+        return None
+    if p.startswith("/api/"):
+        return jsonify({"ok": False, "err": "unauthorized"}), 403
+    return ("<!doctype html><meta charset=\"utf-8\"><body style=\"font:14px/1.8 system-ui;"
+            "display:flex;align-items:center;justify-content:center;height:100vh;"
+            "margin:0;color:#8a94a6;background:#f5f7fa\"><div>请从应用窗口访问本页面。<br>"
+            "如需浏览器直开调试，请使用 run_debug.bat 启动。</div></body>"), 403
+
+@app.after_request
+def _web_gate_cookie(resp):
+    if getattr(g, "_web_gate_set_cookie", False):
+        resp.set_cookie("hg_t", _WEB_TOKEN, httponly=True, samesite="Lax")
+    return resp
 
 # 把未捕获异常的 traceback 写到日志文件，便于 exe（无控制台）模式下排查 500。
 import logging
