@@ -471,6 +471,16 @@
     if (_HG.histAll) _codeLazyEnhance(b); else codeBlockEnhance(b);
     return b;
   }
+  // v3.5.7（用户拍板「忽略用户消息的一切特殊字符，不做显示变化和排版」）：
+  // 用户气泡纯文本渲染——此前走 mdBubble，贴 diff/注释（行首 #）会被解析
+  // 成一级标题变满屏大字（用户实锤「太难看了」）。esc + 换行→br + 连续
+  // 空格→nbsp 保缩进；AI 回复仍走 mdBubble 不受影响
+  function plainBubble(text) {
+    const b = document.createElement('div');
+    b.className = 'h-bubble';
+    b.innerHTML = '<p style="white-space:pre-wrap;">' + esc(String(text || '')) + '</p>';
+    return b;
+  }
   function _codeLazyEnhance(container) {
     const codes = container.querySelectorAll('pre > code');
     if (!codes.length) return;

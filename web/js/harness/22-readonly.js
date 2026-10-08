@@ -98,8 +98,8 @@
       at.innerHTML = D.attChipsHtml(imgs, files);
       d.appendChild(at);
     }
-    const body = (l.text && l.text.trim()) || ((imgs.length || files.length) ? '*（图片/附件）*' : '');
-    d.appendChild(D.mdBubble(body));
+    const body = (l.text && l.text.trim()) || ((imgs.length || files.length) ? '（图片/附件）' : '');
+    d.appendChild(D.plainBubble ? D.plainBubble(body) : D.mdBubble(body));   // v3.5.7：用户行纯文本（同主渲染器，# 不变大字；本模块暂不可达，防御依赖缺失）
     return d;
   }
 
