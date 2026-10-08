@@ -4,6 +4,16 @@
 产物 = dist/前端控制台/（exe + _internal/ 依赖），发布形态 = zip。"""
 import os, sys, subprocess, shutil
 
+# v3.4.96：输出编码兜底——打包.bat 设 PYTHONIOENCODING=gbk，⚠/✓ 等
+# 字符在重定向（>file / CI）下 gbk 不可编码直接 UnicodeEncodeError 崩掉
+# 尾段（实测崩在 _publish 最后一行 ⚠ 提示；交互式控制台无恙故此前未现）。
+# replace：坏字符落 ? 不致命
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(errors="replace")
+    except Exception:
+        pass
+
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # 项目根
 if BASE not in sys.path:
     sys.path.insert(0, BASE)   # v2.3.1：tools.encrypt_pkg 在项目根下（py src/build.py 时 path[0]=src/）
