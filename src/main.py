@@ -987,22 +987,17 @@ def main():
             update_server.start()
     except Exception:
         pass
-    # 开发调试口（config.json 加 "webview_debug": true 开启）：WebView2
-    # v3.4.93e（用户定调「正常打开绝不允许刷新等页面功能，只有调试打开
-    # 才允许 web 调试」）：F5/Ctrl+R 加速键、右键菜单、F12 devtools、状态
-    # 栏全部挂在 pywebview 的 debug 开关上，而该开关**只认 run_debug.bat**
-    # （HARNESS_DEBUG_WEB=1）——config 的 webview_debug 不再单独放行。
-    # 同时：常规模式经 WebView2 进程级启动参数注入专属 UA 标记（浏览器
-    # 进程创建时生效，无首请求竞态），server._web_gate 据此放行窗口请求、
-    # 403 一切浏览器直开；调试模式门禁整体旁路（浏览器可直开）。
-    from src.server import DEBUG_WEB as _dbg_web, _WEBVIEW_UA_MARK
+    # v3.4.99（用户终裁「93e 的 UA 门禁是严重错误，撤」）：需求本体只有
+    # 一条——正常启动没有 F12/右键菜单/F5（这些全挂在 pywebview 的 debug
+    # 开关上），而该开关**只认 run_debug.bat**（HARNESS_DEBUG_WEB=1），
+    # config 的 webview_debug 不再单独放行。93~98 的浏览器直开门禁（令牌/
+    # 挑战/UA 三代）系对需求的误读叠加过度工程，连带 403 过四家内部子进
+    # 程，已整体拆除——HTTP 服务恢复仅绑 127.0.0.1 的开放原状。
+    from src.server import DEBUG_WEB as _dbg_web
     _wv_debug = _dbg_web
     if _wv_debug:
         os.environ.setdefault("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
                               "--remote-debugging-port=9222")
-    else:
-        os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = (
-            '--user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) %s"' % _WEBVIEW_UA_MARK)
     webview.start(debug=_wv_debug, private_mode=False,
                   storage_path=os.path.join(DATA_DIR, "webview_cache"))
 
