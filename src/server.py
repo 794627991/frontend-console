@@ -90,6 +90,11 @@ def _web_gate():
 def _web_gate_cookie(resp):
     if getattr(g, "_web_gate_set_cookie", False):
         resp.set_cookie("hg_t", _WEB_TOKEN, httponly=True, samesite="Lax")
+    # v3.4.93b：403 拒绝页与入口文档禁缓存——旧实例时代被浏览器缓存的整页
+    # UI 会在门禁生效后仍从本地缓存渲染（用户实锤「还是有」）——no-store
+    # 杜绝后续回访吃到陈旧页面；带版本号的静态资源不受影响照常缓存
+    if resp.status_code == 403 or request.path in ("/", "/index.html"):
+        resp.headers["Cache-Control"] = "no-store"
     return resp
 
 # 把未捕获异常的 traceback 写到日志文件，便于 exe（无控制台）模式下排查 500。
