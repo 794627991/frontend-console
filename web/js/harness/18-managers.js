@@ -164,7 +164,7 @@
             <span class="hg-roles-modeinfo">当前形态：<b>${mode === 'light' ? '轻主力 · 直干+设计+审核' : mode === 'heavy' ? '重主力 · 直干+派发自由（免强制分级）' : '中主力 · 直干+审核兜底'}</b></span>
           </div>
           <details class="hg-roles-more"><summary>工作方式说明</summary>
-            <div>三形态<b>派发都自由</b>（通用子代理按需随时可派），档位差别只在强制项：实跑模型命中<b>轻档</b> = 轻主力——<b>设计+审核必须</b>（分级线全档）；命中<b>中档</b> = 中主力——<b>审核必须</b>（审计线）；命中<b>重档</b> = 重主力——零强制（最信任档）。档位默认联动 API 配置三槽（Haiku→轻 / Sonnet→中 / Opus→重，换方案自动跟随），下方下拉可显式覆盖。<b>怎么算轻/中/重：实跑模型与哪档值相同（剥 [1M] 后缀、不分大小写）就算哪档；同一模型映射多档时按 轻&gt;中&gt;重 取轻档</b>（轻中同值时算轻主力——想让它当中档，把中档下拉显式选成不同模型）；未匹配任何档按中档。保存后档位/分级线随下条消息热更生效（agents 自动重生成），审核模式立即生效。当前判定：${esc(basisTxt)}。</div>
+            <div>三形态<b>派发都自由</b>（通用子代理按需随时可派），档位差别只在强制项：实跑模型命中<b>轻档</b> = 轻主力——<b>设计+审核必须</b>（分级线全档）；命中<b>中档</b> = 中主力——<b>审核必须</b>（审计线）；命中<b>重档</b> = 重主力——<b>零强制 · 派发随意</b>（最信任档：有想派的随时派，设计/审核/通用子代理都行，强制项一个没有）。档位默认联动 API 配置三槽（Haiku→轻 / Sonnet→中 / Opus→重，换方案自动跟随），下方下拉可显式覆盖。<b>怎么算轻/中/重：实跑模型与哪档值相同（剥 [1M] 后缀、不分大小写）就算哪档；同一模型映射多档时按 轻&gt;中&gt;重 取轻档</b>（轻中同值时算轻主力——想让它当中档，把中档下拉显式选成不同模型）；未匹配任何档按中档。保存后档位/分级线随下条消息热更生效（agents 自动重生成），审核模式立即生效。当前判定：${esc(basisTxt)}。</div>
             <div class="hg-roles-sec" style="margin-top:8px;">代理模型细调 <i>默认自动取重档 · 一般无需改</i></div>
             <div class="hg-roles-slot" title="designer：只设计，出方案不干活。留空=回退重档 heavy_model，再按当前方案自动识别">
               <span class="hg-roles-ico des">设</span>
@@ -191,7 +191,7 @@
           </div>
           <div class="hg-roles-slot" title="重档。留空=默认取当前 API 方案的 Opus 槽（ANTHROPIC_DEFAULT_OPUS_MODEL），显式选择优先。重主力：直干+派发自由，零强制">
             <span class="hg-roles-ico main">重</span>
-            <span class="hg-roles-name">重档<i>重主力 · 零强制</i></span>
+            <span class="hg-roles-name">重档<i>重主力 · 零强制 · 派发随意</i></span>
             <select data-hg-r-heavy>${mkOpts(cfg.heavy_model || '', '默认（Opus 槽：' + (rs.heavy || '未映射') + '）')}</select>
           </div>
           <div class="hg-roles-note">档位留空 = 联动 API 配置三槽（Haiku→轻 / Sonnet→中 / Opus→重，换方案自动跟随）；也可在此显式选择覆盖默认。<b>同一模型映射多档时按 轻&gt;中&gt;重 优先</b>——如轻中两档同值（图中 flash 场景），实跑该模型算轻档（轻主力）；未匹配按中档</div>
