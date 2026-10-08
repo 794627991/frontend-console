@@ -4336,3 +4336,16 @@ span.h-ag-type[class*='h-ava-'] {
 .h-tl-grp-body .h-tool-name, .h-tl > .h-tool .h-tool-name,
 .h-tl-grp-body .h-tool-arg, .h-tl > .h-tool .h-tool-arg {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+/* ---- v3.5.22 后台任务卡（Task 与子代理区分；⧗ 图标+独立底色，视觉上
+   与工具行/子代理段明确分家）---- */
+.h-taskcard { display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; margin: 3px 0; border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--accent) 38%, var(--border));
+  font-size: var(--fs-sm); }
+.h-task-ico { flex: none; color: var(--accent); }
+.h-task-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; color: var(--fg); }
+.h-task-t { flex: none; font-family: var(--font-mono); font-size: var(--fs-xs);
+  color: var(--muted); }

@@ -202,6 +202,8 @@ const _HG = {
   initN: 0,             // v2.35：本 SSE 流已见的 system/init 数——第 2 个起=CLI 自发新回合（后台任务通知/协作回传），前端即时亮运行态
   agentModels: null,    // v2.35：/agent_models 缓存 {类型: 模型名}（Task 起跑时预显示子代理模型；实跑模型以子代理事件 message.model 覆盖）
   peerNames: {},        // v2.37（P1-F①）：task_id/原始名 → 友好名映射（task_started 的 subagent_type 翻译；协作行显示用，完整 id 收 title）
+  tasks: null,          // v3.5.22：后台任务档案 tid→{desc,t0,done,doneAt,err,cancelled,result,el}
+                        // 与 agents 彻底分离（后台 shell 无转写，不进子代理体系）
   peerSent: null,       // v2.39：SendMessage tool_use_id → to 映射（task_notification 按 tool_use_id 反查原转交线名，修回传气泡配不上线）
 };
 

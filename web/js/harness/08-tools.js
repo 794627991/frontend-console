@@ -750,3 +750,85 @@
     }
     // tool_result 只挂状态不新增行——不终结 run（源 rendersNothing 不打断连续 run）
   }
+
+// ==================== v3.5.22：后台任务卡（Task 与子代理区分可视化）====================
+// 用户需求：task create/done/取消 等后台任务生命周期独立可见，不与子代理混淆。
+// 数据面档案 _HG.tasks（与 _HG.agents 彻底分离——后台 shell 无转写无实况，
+// 进子代理体系必「未找到转写」）；消息流形态=任务行卡（⧗ 后台任务·desc·状态
+// 徽章·秒表），入当前组时间线与工具行同语言但视觉独立（样式/图标/徽章色）。
+// 状态机：运行中 → 已完成/已失败（task_notification，is_err）；已中断（exit
+// sweep）；主回合 interrupted 不动它（后台任务跨回合存活，v2.35 哲学）。
+// 历史侧：CLI 不把 task_* 生命周期落转写（本会话实证），任务卡不回放——
+// 后台 Bash 的工具行历史形态照旧。
+function _taskCardBuild(tid, desc) {
+  const card = document.createElement('div');
+  card.className = 'h-tool h-taskcard';
+  card.dataset.tid = tid;
+  const sum = String(desc || '').replace(/\s+/g, ' ').trim().slice(0, 90);
+  card.innerHTML =
+    '<span class="h-task-ico">⧗</span>' +
+    '<span class="h-task-name">后台任务' + (sum ? ' · ' + esc(sum) : '') + '</span>' +
+    '<span class="h-task-state"></span>' +
+    '<b class="h-task-t">0s</b>';
+  _taskCardPaint(card, 'run');
+  return card;
+}
+function _taskCardPaint(card, state, durTxt) {
+  if (!card) return;
+  const st = card.querySelector('.h-task-state');
+  const tb = card.querySelector('.h-task-t');
+  if (tb) tb.style.display = (state === 'run') ? '' : 'none';
+  const m = {
+    run: '<span class="h-tbadge b-run">运行中</span>',
+    done: '<span class="h-tbadge b-done">已完成' + (durTxt ? ' · 用时 ' + esc(durTxt) : '') + '</span>',
+    err: '<span class="h-tbadge b-err">已失败' + (durTxt ? ' · 用时 ' + esc(durTxt) : '') + '</span>',
+    stop: '<span class="h-tbadge b-warn">已中断</span>'
+  };
+  if (st) st.innerHTML = m[state] || '';
+}
+function _taskCardTick(card) {
+  if (!card || card._taskTimer) return card._taskTimer;
+  const tb = card.querySelector('.h-task-t');
+  const t0 = +(card.dataset.t0 || 0) || Date.now();
+  card._taskTimer = setInterval(() => {
+    if (!tb.isConnected) { clearInterval(card._taskTimer); card._taskTimer = null; return; }
+    tb.textContent = _hgFmtDur((Date.now() - t0) / 1000);
+  }, 1000);
+  return card._taskTimer;
+}
+function _taskStop(card) {
+  if (card && card._taskTimer) { clearInterval(card._taskTimer); card._taskTimer = null; }
+}
+// task_started（后台 shell 判定命中）：建档+建卡（消息流与目录数据源）
+function _taskStart(tid, desc) {
+  if (!tid) return null;
+  const t = (_HG.tasks || (_HG.tasks = {}))[tid] || {
+    desc: String(desc || ''), t0: Date.now(), done: false, doneAt: 0,
+    err: false, cancelled: false };
+  _HG.tasks[tid] = t;
+  t.done = false;
+  const card = _taskCardBuild(tid, desc);
+  card.dataset.t0 = String(t.t0);
+  t.el = card;
+  drawerAppend(card);
+  _taskCardTick(card);
+  _subDirPaint && _HG.active === '__dir__' && _subDirPaint();   // 目录开着即时刷
+  return card;
+}
+// task_notification / exit sweep：定格（state: done/err/stop）
+function _taskFinish(tid, state, summary) {
+  const t = (_HG.tasks || {})[tid];
+  const card = t && t.el;
+  if (t) {
+    t.done = true; t.doneAt = Date.now();
+    t.err = (state === 'err'); t.cancelled = (state === 'stop');
+    t.result = String(summary || '').slice(0, 400);
+  }
+  if (card) {
+    _taskStop(card);
+    if (summary) card.title = String(summary).slice(0, 2000);   // 悬浮全文（轻量：无展开体）
+    const dur = _hgFmtDur(((t && t.doneAt) || Date.now()) - (+(card.dataset.t0 || 0) || Date.now())) || '';
+    _taskCardPaint(card, state, dur);
+  }
+  _subDirPaint && _HG.active === '__dir__' && _subDirPaint();
+}

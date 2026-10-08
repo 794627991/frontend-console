@@ -70,6 +70,16 @@
     _sub.manual = true;                // 用户主动展开——回合终结不自动收（同 _subDirOpen/_subReopen 口径）
   }
   function _subDirRows() {
+    // v3.5.22（用户需求「task 与子代理区分」）：后台任务独立分区——档案
+    // _HG.tasks 与子代理 _HG.agents 分离，目录不混排（tasks 单列一组）
+    const tasks = [];
+    for (const tid in (_HG.tasks || {})) {
+      const t = _HG.tasks[tid];
+      tasks.push({ tid, task: true, type: '后台任务', bg: true,
+        desc: t.desc || '', t0: t.t0, done: t.done, doneAt: t.doneAt,
+        err: t.err, interrupted: t.cancelled, result: t.result || '' });
+    }
+    tasks.sort((x, y) => (y.doneAt || y.t0 || 0) - (x.doneAt || x.t0 || 0));
     const rows = [];
     // v3.4.56（轻审复核 P3 收口）：运行中 live 档案的同 desc 回放条目滤除——
     // restore 时序/重建/快照各路差异全部在产出侧一处收口，目录不再双条
@@ -91,7 +101,7 @@
     const running = rows.filter(r => !r.done).sort((x, y) => (x.t0 || 0) - (y.t0 || 0));
     const ended = rows.filter(r => r.done)
       .sort((x, y) => (y.doneAt || 0) - (x.doneAt || 0)).slice(0, 50);
-    return { running, ended };
+    return { running, ended, tasks };
   }
   function _subDirRowHtml(r) {
     // 状态三态（对照 StatusIcon）：运行 spinner / 成功 ✓ / 失败 ✗ / 中断 ⏹
@@ -129,7 +139,7 @@
   function _subDirPaint() {
     const tb = _sub.tabs[_SUB_DIR];
     if (!tb || _sub.active !== _SUB_DIR || !tb.sc) return;
-    const { running, ended } = _subDirRows();
+    const { running, ended, tasks } = _subDirRows();
     tb.sc.innerHTML =
       `<div class="hg-sub-dir-head">子智能体目录</div>` +
       `<div class="hg-sub-dir-sec">正在运行 · ${running.length}</div>` +
@@ -137,12 +147,18 @@
         : `<div class="hg-sub-dir-empty">没有正在运行的子智能体</div>`) +
       `<div class="hg-sub-dir-sec">已结束 · ${ended.length}</div>` +
       (ended.length ? ended.map(_subDirRowHtml).join('')
-        : `<div class="hg-sub-dir-empty">暂无已结束的子智能体</div>`);
+        : `<div class="hg-sub-dir-empty">暂无已结束的子智能体</div>`) +
+      // v3.5.22：后台任务独立分区（与子代理区分；点击不回放——无转写，
+      // summary 在行卡/悬浮 title）
+      `<div class="hg-sub-dir-sec">后台任务 · ${tasks.length}</div>` +
+      (tasks.length ? tasks.map(_subDirRowHtml).join('')
+        : `<div class="hg-sub-dir-empty">暂无后台任务</div>`);
     // v3.2.6：有运行行才起 1s 重绘（秒表走字）；目录失活/运行清空自停
-    if (running.length && !_subDirTick) {
+    if ((running.length || tasks.some(t => !t.done)) && !_subDirTick) {
       _subDirTick = setInterval(() => {
         if (_sub.active !== _SUB_DIR) { _subDirTickStop(); return; }
-        if (!_subDirRows().running.length) { _subDirTickStop(); return; }
+        const r2 = _subDirRows();
+        if (!(r2.running.length || r2.tasks.some(t => !t.done))) { _subDirTickStop(); return; }
         _subDirPaint();
       }, 1000);
     }
@@ -178,6 +194,11 @@
     _sub.manual = true;   // v3.2：目录是用户主动打开的视图——回合结束不自动收（同 _subReplay 口径）
   }
   function _subDirRowClick(tid, isRpl) {
+    // v3.5.22：后台任务行——无转写无实况，不回放；结果在行卡与悬浮 title
+    if ((_HG.tasks || {})[tid]) {
+      showBanner('后台任务无过程回放——结果摘要在行卡，悬浮可看全文', 2600);
+      return;
+    }
     if (isRpl) {
       // 回放档案条目（历史 Task 行派生）：rid 定位存档，agentId 开回放 tab
       const a = ((_HG.dyn && _HG.dyn.agentsRpl) || []).find(x => (x.rid || '') === tid);

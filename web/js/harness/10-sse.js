@@ -52,8 +52,17 @@
         const _shRow = (_HG.rowById || {})[tid];
         const _shBg = sub === 'task_started' && !((_HG.peerSent || {})[tid])
           && _shRow && _shRow._name !== 'Task' && _shRow._name !== 'Agent';
-        if (_shBg) { /* 后台 shell：非子代理，忽略 */ }
-        else if (sub === 'task_started'
+        if (_shBg) {
+          // v3.5.22（用户需求「task 与子代理区分，create/done/取消可见」）：
+          // 后台 shell 不再静默忽略——建档 _HG.tasks + 消息流任务卡；完成
+          // 定格在下方 task_notification 分支（_shBgT 判定同款）。子代理
+          // 体系零污染（不进 _HG.agents/不建段/不进目录子代理分组）
+          _taskStart(tid, o.description || _shRow._preview || '');
+        } else if (sub === 'task_notification' && tid && (_HG.tasks || {})[tid]
+                   && !((_HG.peerSent || {})[tid])) {
+          // 后台任务完成定格（与子代理 notification 分流：tasks 档案优先）
+          _taskFinish(tid, o.is_error ? 'err' : 'done', o.summary || '');
+        } else if (sub === 'task_started'
             && _isCollabWrap(o.subagent_type, o.is_backgrounded)) {
           _subDrop(tid);
           if (tid) {
@@ -885,6 +894,11 @@
                       '已随会话结束失效');   // v3.4.61：进程退出=提问失效，面板收缩
         setBusy(false);
         _hgAgentsSweep(true); _hgTurnEnd('exit', 0);   // v2.32：同上，进程退出也收
+        // v3.5.22：后台任务全定格「已中断」（进程没了，CLI 侧后台 shell 同亡）
+        Object.keys(_HG.tasks || {}).forEach(_tk => {
+          const _tt = _HG.tasks[_tk];
+          if (!_tt.done) _taskFinish(_tk, 'stop', '会话进程已退出');
+        });
         _subEnd();                         // v2.33：窗格收起
       }
       // v2.20：会话内切模型 → 消息流插一条分割线（「已切换模型 · xxx」）

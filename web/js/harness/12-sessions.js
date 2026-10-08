@@ -98,6 +98,10 @@
     // sweep 的 sid 校验兜底，切回靠事件重放重建；DOM 随 flow 销毁，桶存无意义）
     Object.values(_HG.visionCalls || {}).forEach(_hgPeerLineStop);
     _HG.visionCalls = null;
+    // v3.5.22：后台任务档案随切会话清（CLI 不落转写=切回无重建源；运行中
+    // 的任务完成后 notification 只到所属会话的流——跨会话存档无意义）
+    if (_HG.tasks) Object.values(_HG.tasks).forEach(t => t.el && _taskStop(t.el));
+    _HG.tasks = null;
     _HG.dyn = null;                          // v2.32 面板派生态不跨会话（活动流/回合史/打标全重建）
     _HG.proj = null;                         // v3.1：前端投影不跨会话（/events 种子重建）
     _subReset();                             // v2.33：子代理实时窗格不跨会话
