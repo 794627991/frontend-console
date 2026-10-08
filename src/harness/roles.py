@@ -147,10 +147,12 @@ def _agents_dir_guard(d):
         raise ValueError("HARNESS_AGENTS_DIR 指向真实 agents 目录（%s）——测试隔离失效" % d)
     return d
 
-# 重模型识别（默认映射「除 Opus 皆轻」）：名字含 opus（不分大小写）→ 重；
-# 其余（flash/turbo/glm/lanz 等一切非 opus 名）→ 轻。旧的「名字含
-# flash/turbo/light 判轻」写死规则已废（用户重规划拍板）。
-_HEAVY_RE = re.compile(r"opus", re.I)
+# 轻重模型识别（v3.4.95 史诗级 bug 修正：「除 Opus 皆轻」把 glm-5.3 等
+# 高级别非 opus 模型全判轻）。改为「显式轻量词判轻，其余皆重」：含
+# flash/turbo/mini/haiku/air/lite 等轻量词 → 轻；其余（opus、glm-5.3 裸名、
+# 一切未知名）→ 重——未知默认重是安全向（漏配审计比多配代价大）。
+# 显式配置（main_model/两池/model_map）始终优先，本表只兜自动识别。
+_LIGHT_RE = re.compile(r"flash|turbo|mini|haiku|lite|nano|micro|small|instant", re.I)
 
 _DEFAULTS = {"enabled": False,          # 默认关闭（用户定调：开关开启才生效）
              "light_model": "",         # 轻池（主会话直干用；空=按方案自动识别）
@@ -275,13 +277,12 @@ def _current_base_url():
 
 
 def _pick_pool_models(models, default):
-    """从当前方案模型表按「除 Opus 皆轻」分类：名字含 opus → 重池；其余 →
-    轻池。default 是 opus 落重池、非 opus 落轻池（优先取）；无显式 opus
-    时重池回退 default——用户主模型通常是该方案里最强的；轻池优先取与
-    重池**不同**的模型（default 同时被重池占用时让位给更轻的候选），
-    方案只有一个模型时两池共用。模型名带 [1M] 类窗口后缀会被剥离（agent
-    的 model 字段必须裸 ID）。返回 (light, heavy)；表为空返回
-    (None, None)。"""
+    """从当前方案模型表按轻重词表分类（v3.4.95 同 _LIGHT_RE 新规则）：
+    含轻量词 → 轻池；其余 → 重池。default 落其所属池优先取；重池回退
+    default——用户主模型通常是该方案里最强的；轻池优先取与重池**不同**
+    的模型（default 同时被重池占用时让位给更轻的候选），方案只有一个
+    模型时两池共用。模型名带 [1M] 类窗口后缀会被剥离（agent 的 model
+    字段必须裸 ID）。返回 (light, heavy)；表为空返回 (None, None)。"""
     bare = []
     for m in models or []:
         b = str(m).split("[")[0].strip()
@@ -290,8 +291,8 @@ def _pick_pool_models(models, default):
     if not bare:
         return None, None
     d = str(default or "").split("[")[0].strip()
-    heavy_pool = [m for m in bare if _HEAVY_RE.search(m)]
-    light_pool = [m for m in bare if not _HEAVY_RE.search(m)]
+    light_pool = [m for m in bare if _LIGHT_RE.search(m)]
+    heavy_pool = [m for m in bare if not _LIGHT_RE.search(m)]
     heavy = (d if d in heavy_pool else None) \
         or (heavy_pool[0] if heavy_pool else None) \
         or (d if d in bare else None) or bare[0]
@@ -348,18 +349,20 @@ def resolve_agent_models(base_url=None, models=None, default=None):
 
 def roles_mode(model=None):
     """主会话形态：① harness_roles.main_model 显式配置优先——按配置名过
-    「除 Opus 皆轻」识别（用户声明主会话模型是什么，实测名/settings 名
-    错位时兜正形态）；② 未配置回落实跑模型名识别：名字含 opus（不分
-    大小写）→ strong 重模型直干；其余（flash/turbo/glm 等一切非 opus）
-    → light 轻主力（直干所有活 + designer/reviewer 双重模型代理）；名字
-    不可得兜 strong（不装角色、直干——与旧版空名行为一致）。"""
+    轻重词表识别（用户声明主会话模型是什么，实测名/settings 名错位时
+    兜正形态）；② 未配置回落实跑模型名识别：含轻量词（flash/turbo/mini/
+    haiku 等，见 _LIGHT_RE）→ light 轻主力（直干所有活 + designer/
+    reviewer 双重模型代理）；其余（opus、glm-5.3 裸名等高级别模型及一切
+    未知名）→ strong 重模型直干（v3.4.95 修「glm-5.3 被判轻」史诗级
+    bug——未知默认重是安全向）；名字不可得兜 strong（不装角色、直干
+    ——与旧版空名行为一致）。"""
     try:
         m = str(roles_cfg().get("main_model") or "").strip()
     except Exception:
         m = ""
     if m:
         model = m
-    if model and not _HEAVY_RE.search(str(model)):
+    if model and _LIGHT_RE.search(str(model)):
         return "light"
     return "strong"
 

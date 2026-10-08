@@ -339,7 +339,10 @@
     // 也必须从「工作中 Ns」定格「已停止」，否则秒表停了 label 冻结=永挂；
     // 工时无 durMs 事实时走本地差值（≈打断前真实时长），点开折叠体可见
     // 「已中断回复」行（v3.4.79 归组）不再是空壳
-    if (g.head && (_hasWork || opt.interrupted)) {
+    if (g.head && (_hasWork || opt.interrupted || g.head.style.display !== 'none')) {
+      // v3.4.95：追加「头已亮起」——live 乐观空组（秒表已在走）定稿时若跳过
+      // 此分支，头 label 永久冻结「工作中 Ns」（用户实锤残壳组形态）。回放
+      // 空组头 display=none 不命中，维持无头形态不变
       _turnHeadShow(g, { hist: true });         // 兜底：纯思考组此前没走 drawerCount
       // v3.2R1(P0 审计)：工时事实分级——durMs（CLI 冻结）> endTs−t0（回放
       // 边界差）> live 时钟差；回放态绝不吃当前时钟——缺事实时显示无数字
@@ -443,6 +446,31 @@
     // 时钟原则同工时阶梯；老快照无 fTs 时 reopen 放行=宽口径，铁律优先）
     if (!_hist) g.root.dataset.fTs = String(Date.now());
     _HG.grp = null;      // 下轮 renderUser 开新组
+  }
+  // v3.4.95（用户实锤「被分割成两个工作区」）：发送失败回滚——乐观渲染开的
+  // 空组必须随气泡一起拆。旧实现只 el.remove() 气泡 + grpFinalize：空组
+  // （_hasWork=false）定稿跳过头定格，头 label 永久冻结「工作中 Ns」；组又
+  // 已落 finalized，排队泵补发的新气泡+新组 append 在它后面——流里留下
+  // [空壳组·工作中1s][气泡][真组] 的分裂观感。此处只拆「零内容」的组：
+  // 有思考/工具/正文/子段的组是真工作，照旧 grpFinalize 定格保留
+  function _hgRollbackTurn(el) {
+    try { el.remove(); } catch (_) {}
+    const g = _HG.grp;
+    if (!g || !g.root || !g.root.isConnected) return;
+    const _empty = !(g.think.body && g.think.body.children.length)
+      && !(g.tl && g.tl.children.length)
+      && !g.root.querySelector('.h-msg.asst:not(.ph), .h-subblock');
+    if (_empty) {
+      if (g.headTimer) {
+        clearInterval(g.headTimer);
+        if (_HG.turnTicks) _HG.turnTicks = _HG.turnTicks.filter(t => t !== g.headTimer);   // 同 grpFinalize P2：摘 id 防数组无界涨
+        g.headTimer = null;
+      }
+      g.root.remove();
+      _HG.grp = null;
+      return;
+    }
+    grpFinalize(false, { turnEnd: true });
   }
   // v3.2.1R2(R2-1)：终结类事件（result/interrupted/exit）的尾组认回——快照
   // 恢复后回合在切走期间结束，_HG.grp 为空会让 grpFinalize 早退、尾组永不
@@ -681,6 +709,12 @@
     d.dataset.rtext = String(text);   // v3.1h:AI 消息源文本——复制/编辑后发送取用
     bar.innerHTML =
       '<button class="hg-mico h-acopy" title="复制这条回复">📋</button>' +
+      // v3.4.95（用户需求）：全部收起——图标不落文字，点它把所有展开的回合
+      // 折叠体（含当前活跃组）一口气收起；行为走 flow 委托（20-main）
+      '<button class="hg-mico" data-hg-collapse title="收起全部工作区">' +
+      '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+      'stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">' +
+      '<path d="M17 11l-5-5-5 5"/><path d="M17 18l-5-5-5 5"/></svg></button>' +
       '<button class="hg-mact" data-hg-rewind title="回滚到本条所在回合结束：之后的全部丢弃（自动全量备份）">⏪ 回滚到这里</button>';
     // v3.4.42（用户实锤「一起贴紧啊」）：署名行与动作条合并一行贴住气泡——
     // 署名左、钮右（原两行纵排：动作条虽贴气泡、署名又另起一行）。附带修掉

@@ -933,6 +933,18 @@ function buildClaudeHarnessTab(opts = {}) {
   // 都可回滚到那里）。按钮 innerHTML 随气泡生成/随快照克隆，直绑 onclick
   // 会丢（同 h-macts 既有解法），flow 级委托一次永在
   _hgFlow.addEventListener('click', async (e) => {
+    // v3.4.95（用户需求）：全部收起——所有回合折叠体（含活跃组）一口气
+    // add('closed')；定稿组本就收着，实际生效的是用户展开过+当前活跃组
+    const _cbtn = e.target.closest('[data-hg-collapse]');
+    if (_cbtn && _hgFlow.contains(_cbtn)) {
+      e.stopPropagation();
+      let _n = 0;
+      _hgFlow.querySelectorAll('.h-grp .h-turn-body').forEach(tb => {
+        if (!tb.classList.contains('closed')) { tb.classList.add('closed'); _n++; }
+      });
+      if (_n) showBanner('已收起 ' + _n + ' 个工作区', 1600);
+      return;
+    }
     const btn = e.target.closest('[data-hg-rewind]');
     if (!btn || !_hgFlow.contains(btn)) return;
     e.stopPropagation();

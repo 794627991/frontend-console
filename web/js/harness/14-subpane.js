@@ -90,7 +90,7 @@
     }
     const running = rows.filter(r => !r.done).sort((x, y) => (x.t0 || 0) - (y.t0 || 0));
     const ended = rows.filter(r => r.done)
-      .sort((x, y) => (y.doneAt || 0) - (x.doneAt || 0)).slice(0, 30);
+      .sort((x, y) => (y.doneAt || 0) - (x.doneAt || 0)).slice(0, 50);
     return { running, ended };
   }
   function _subDirRowHtml(r) {

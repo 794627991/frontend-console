@@ -125,8 +125,7 @@
         body: JSON.stringify({sid, text, images, files})});
       const j = await r.json();
       if (!j.ok) {
-        try { el.remove(); } catch(_) {}       // 回滚乐观气泡
-        endThinking(); grpFinalize(false, { turnEnd: true });   // v3.2.2：发送失败=回合中止，正文留头外
+        endThinking(); _hgRollbackTurn(el);    // v3.4.95：气泡+乐观空组一起拆（旧实现残空壳组=「两个工作区」）
         dispatch.rej = String(j.err || '');    // v2.35.1（F6）：失败原因外显（queuePump 据此判可回队）
         // v2.35.1（F6）：后端「正在回复」= 后端真忙（前端误判空闲的竞态）——
         // 同步置 busy 而非清空闲：清空闲会连锁触发泵链把整队消息逐条打进
@@ -150,8 +149,7 @@
       return true;
     } catch(e) {
       dispatch.rej = 'network';
-      try { el.remove(); } catch(_) {}
-      endThinking(); grpFinalize(false, { turnEnd: true }); setBusy(false);   // v3.2.2 同上
+      endThinking(); _hgRollbackTurn(el); setBusy(false);   // v3.4.95 同上：空组随气泡拆
       if (restoreInput) _hgInput.value = text;
       showBanner('发送失败：' + e, 3000, true);
       return false;
@@ -350,7 +348,7 @@
             : `审核线：单次直改 ≤ ${numOr('l2_max_lines', 200)} 行——超线触发结算审核（派 reviewer 补审；不计文件数、不做回合累计；0=最严档）`],
           ['推荐配置', '主会话配轻模型（如 glm-5.3-flash）——直干省 token，方案/审核走设计/审核代理，即轻主力形态'],
           ['模型解析', `设计 ${rs.designer || '自动识别'} / 审核 ${rs.reviewer || '自动识别'}——各槽显式配置（designer_model/reviewer_model）优先，留空回退代理池（heavy_model）→ 方案模型表自动分类（名字含 opus=代理池，其余=主会话池）→ 默认；端点映射（model_map）可按 base_url 覆盖；换 API 方案自动适配`],
-          ['形态判定', r.main_model ? `主会话模型槽已显式配置（harness_roles.main_model=${r.main_model}）——按此名识别形态` : '主会话模型槽未配置——按实跑模型名自动识别（名字含 opus=重主力，其余=轻主力）；切模型/改配置下条消息自动换形态'],
+          ['形态判定', r.main_model ? `主会话模型槽已显式配置（harness_roles.main_model=${r.main_model}）——按此名识别形态` : '主会话模型槽未配置——按实跑模型名自动识别（含 flash/turbo/mini/haiku 等轻量词=轻主力，其余如 opus/glm-5.3 裸名=重主力）；切模型/改配置下条消息自动换形态'],
         ]);
       })();
     } else if (cmd === 'exit') {

@@ -93,8 +93,8 @@
         // v2.30：回放恢复最新任务清单（TodoWrite 的 input 里有 todos）
         if (l.role === 'tool' && l.text === 'TodoWrite'
             && l.input && Array.isArray(l.input.todos)) _HG.todos = l.input.todos;
-        // v2.32 面板：回放重建最近的子代理条目（无精确时刻→显示「历史」，
-        // 不参与 sweep；只留最近 5 条防长会话堆积）
+        // v2.32 面板：回放重建最近的子代理条目（doneAt 带行 ts，目录显相对
+        // 时间；不参与 sweep；留最近 50 条防长会话堆积）
         if (l.role === 'tool' && (l.text === 'Task' || l.text === 'Agent')
             && l.input && (l.input.description || l.input.subagent_type || l.input.agent_type)) {
           const d = _hgDyn();
@@ -107,9 +107,10 @@
           // v2.38：从结果文本提取 agentId——历史条目的回放窗格靠它定位转写
           const _aid = (l.result && String(l.result).match(/(?<![a-zA-Z])agentId[:"':\s]+([0-9a-zA-Z_-]{8,64})/i) || [])[1] || '';
           d.agentsRpl.push({
-            type: _typ, desc: _desc, t0: 0, done: true, doneAt: 0, replay: true,
+            type: _typ, desc: _desc, t0: 0, done: true,
+            doneAt: l.ts ? (Date.parse(l.ts) || 0) : 0, replay: true,
             agentId: _aid });
-          if (d.agentsRpl.length > 5) d.agentsRpl.shift();
+          if (d.agentsRpl.length > 50) d.agentsRpl.shift();
           // v3.2.6R2（用户实锤「点了说无 agentId」）：建档即回绑单行卡——
           // async 代理的 sub_open 注入依赖转写非空（0 字节占位/空转写时缺
           // 段），此处不依赖：行自带 hgSubType/hgSubDesc 预置键即可匹配
@@ -134,8 +135,9 @@
               const _msg = String((l.input || {}).message || '').trim().slice(0, 40);
               d.agentsRpl.push({
                 type: 'SendMessage', desc: '续派' + (_msg ? ' → ' + _msg : ''),
-                t0: 0, done: true, doneAt: 0, replay: true, agentId: _ra });
-              if (d.agentsRpl.length > 5) d.agentsRpl.shift();
+                t0: 0, done: true, doneAt: l.ts ? (Date.parse(l.ts) || 0) : 0,
+                replay: true, agentId: _ra });
+              if (d.agentsRpl.length > 50) d.agentsRpl.shift();
             }
           }
         }
@@ -210,17 +212,19 @@
         d.agentsRpl = d.agentsRpl.filter(x => !(x.type === _typ && x.desc === _desc));
         const _aid = (l.result && String(l.result).match(/(?<![a-zA-Z])agentId[:"':\s]+([0-9a-zA-Z_-]{8,64})/i) || [])[1] || '';
         d.agentsRpl.push({
-          type: _typ, desc: _desc, t0: 0, done: true, doneAt: 0, replay: true,
+          type: _typ, desc: _desc, t0: 0, done: true,
+          doneAt: l.ts ? (Date.parse(l.ts) || 0) : 0, replay: true,
           agentId: _aid });
-        if (d.agentsRpl.length > 5) d.agentsRpl.shift();
+        if (d.agentsRpl.length > 50) d.agentsRpl.shift();
       } else if (l.role === 'tool' && l.text === 'SendMessage') {
         const _ra = (String(l.result || '').match(/resumedAgentId["'\s:]+([0-9a-zA-Z_-]{8,64})/) || [])[1] || '';
         if (_ra && !d.agentsRpl.some(x => x.agentId === _ra)) {
           const _msg = String((l.input || {}).message || '').trim().slice(0, 40);
           d.agentsRpl.push({
             type: 'SendMessage', desc: '续派' + (_msg ? ' → ' + _msg : ''),
-            t0: 0, done: true, doneAt: 0, replay: true, agentId: _ra });
-          if (d.agentsRpl.length > 5) d.agentsRpl.shift();
+            t0: 0, done: true, doneAt: l.ts ? (Date.parse(l.ts) || 0) : 0,
+            replay: true, agentId: _ra });
+          if (d.agentsRpl.length > 50) d.agentsRpl.shift();
         }
       }
     }

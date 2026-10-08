@@ -162,11 +162,11 @@
             <span class="hg-roles-modeinfo">当前形态：<b>${light ? '轻主力 · 直干+设计+审核' : '重主力 · 直干+审核兜底'}</b></span>
           </div>
           <details class="hg-roles-more"><summary>工作方式说明</summary>
-            <div>双形态都<b>主会话直干所有活</b>（编码/执行/调试不派干活子代理）：主会话是轻模型 = 轻主力——配设计 + 审核两个代理；主会话是重模型（名字含 opus）= 重主力——直干 + 审核兜底。保存后模型/分级线随下条消息热更生效（agents 自动重生成），审核模式立即生效。当前形态判定依据：${cfg.main_model ? `主会话槽显式配置 ${esc(cfg.main_model)}` : `实跑模型 ${esc(dm || '未设置')}（留空自动识别）`}。</div>
+            <div>双形态都<b>主会话直干所有活</b>（编码/执行/调试不派干活子代理）：主会话是轻模型（名字含 flash/turbo/mini/haiku 等轻量词）= 轻主力——配设计 + 审核两个代理；主会话是重模型（opus、glm-5.3 裸名等高级别模型）= 重主力——直干 + 审核兜底。保存后模型/分级线随下条消息热更生效（agents 自动重生成），审核模式立即生效。当前形态判定依据：${cfg.main_model ? `主会话槽显式配置 ${esc(cfg.main_model)}` : `实跑模型 ${esc(dm || '未设置')}（留空自动识别）`}。</div>
           </details>
 
           <div class="hg-roles-sec">模型分工</div>
-          <div class="hg-roles-slot" title="主会话自己干所有活；显式配置优先参与形态判定（名字含 opus = 重主力直干，其余 = 轻主力），留空按实跑模型名自动识别">
+          <div class="hg-roles-slot" title="主会话自己干所有活；显式配置优先参与形态判定（含 flash/turbo/mini/haiku 等轻量词 = 轻主力，其余 = 重主力直干），留空按实跑模型名自动识别">
             <span class="hg-roles-ico main">主</span>
             <span class="hg-roles-name">主会话<i>直干所有活 · 定形态</i></span>
             <select data-hg-r-main>${mkOpts(cfg.main_model || '')}</select>
