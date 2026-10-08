@@ -1325,23 +1325,23 @@ def harness_set_vision():
 @harness_bp.route("/roles")
 def harness_roles_info():
     """角色设计说明（/roles 命令数据源）。resolved 是按当前 API 方案解析
-    出的实际模型（换方案自动适配）：light/heavy=两池（历史口径），
-    designer/reviewer=设计者/审计者各自实际用的模型（v2.53 直白三槽：
-    designer_model/reviewer_model 显式优先，缺省回退重池）。
-    mode——当前形态（main_model 显式配置优先，未配置按 settings
-    默认模型名过「除 Opus 皆轻」识别；light 轻主力直干+双代理 / strong
-    重模型直干+审核兜底）。roles 为配置全量（含遗留键透传）；附 models/
-    default_model 供配置面板下拉用。"""
-    from .roles import (resolve_role_models, resolve_agent_models,
+    出的实际模型（换方案自动适配）：light/mid/heavy=三档（v3.5.0 三档
+    形态判定源；mid 缺省=重档同值但形态判定按中档跑），designer/reviewer=
+    设计者/审计者各自实际用的模型（显式优先，缺省回退重档）。
+    mode——当前形态（v3.5.0 三档精确匹配：实跑模型名归一化后命中哪档
+    即哪形态；light 轻主力直干+双代理 / mid 中主力直干+审核兜底 / heavy
+    最信任档纯直干全免；未匹配兜 mid）。roles 为配置全量（含遗留键透传）；
+    附 models/default_model 供配置面板下拉用。"""
+    from .roles import (resolve_tier_models, resolve_agent_models,
                                 roles_cfg, roles_mode)
-    li, hv = resolve_role_models()
+    li, mi, hv = resolve_tier_models()
     dmr, rmr = resolve_agent_models()
     try:
         mode = roles_mode(available_models().get("default"))
     except Exception:
-        mode = "strong"
+        mode = "mid"
     return jsonify({"ok": True, "roles": roles_cfg(), "mode": mode,
-                    "resolved": {"light": li, "heavy": hv,
+                    "resolved": {"light": li, "mid": mi, "heavy": hv,
                                  "designer": dmr, "reviewer": rmr},
                     "models": available_models().get("models", []),
                     "default_model": available_models().get("default")})
@@ -1392,9 +1392,11 @@ def harness_agent_models():
 @harness_bp.route("/roles", methods=["POST"])
 def harness_set_roles():
     """开关 + 整节配置（merge 写盘，只动出现的键）。body 可含 {enabled,
-    main_model, designer_model, reviewer_model, light_model, heavy_model,
-    light_keywords, model_map, audit_mode, l1_max_lines, l2_max_files,
+    designer_model, reviewer_model, light_model, mid_model, heavy_model,
+    model_map, audit_mode, l1_max_lines, l2_max_files,
     l2_max_lines, design_max_lines}
+    （v3.5.0 三档化：mid_model 新键；main_model/light_keywords 已退役，
+    旧前端再 POST 这两键会被白名单静默忽略不落盘）
     （v2.53 设计者/审计者槽新键；旧键 executor_model/coder_model 仍被
     接受落盘——读取侧按池降级兼容）。生效路径与
     开关一致：模型池/分级线出现在引导词里 → 指纹热更下条消息换词重启
@@ -1409,7 +1411,7 @@ def harness_set_roles():
     if "enabled" in data:
         patch["enabled"] = bool(data.get("enabled"))
     for k in ("designer_model", "reviewer_model", "light_model",
-              "heavy_model", "main_model", "light_keywords",
+              "mid_model", "heavy_model",
               "executor_model", "coder_model"):
         if k in data:
             patch[k] = str(data.get(k) or "").strip()

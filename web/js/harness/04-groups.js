@@ -698,7 +698,7 @@
     // h-mmodel，加右距与模型徽章隔开。
     const rj = _hgRolesCache;
     const roleB = (rj && rj.ok && rj.roles && rj.roles.enabled)
-      ? `<span class="h-mmodel" style="margin-right:6px;" title="三角色形态下的主会话角色">${rj.mode === 'light' ? '轻主力' : '重主力'}</span>`
+      ? `<span class="h-mmodel" style="margin-right:6px;" title="三角色形态下的主会话角色">${rj.mode === 'light' ? '轻主力' : rj.mode === 'heavy' ? '重主力' : '中主力'}</span>`
       : '';
     meta.innerHTML = `<span class="h-ava ${_hgAvaCls(bare || 'AI')}">${esc((bare || 'AI').charAt(0).toUpperCase())}</span>` +
       roleB +

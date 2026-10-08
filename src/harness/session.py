@@ -439,20 +439,25 @@ class HarnessSession:
 
     def _audit_state(self):
         """审计现值：(audit_mode, (l1, l2f, l2l) 两档线, strong)；不审计
-        返回 None。条件=roles 开 + audit_mode != off。两形态都结算审计
-        （违规判定走 audit_verdict 的对应分支），strong 旗仅供调用方分流
-        （verdict 分支与闸的 hook 注入）；事中闸（/audit_gate 与 start 的
-        hook 注入）仅 light——strong 直改是设计常态，且两形态违规补救
-        统一为派 reviewer 补审（reviewer 两形态都装）。结算时读一次盘
-        ——配置改动回合间生效。线值统一出自 harness_roles.audit_limits
-        （与引导词同源，词里一套数字审计另一套是 v2.34 就防的坑）。"""
+        返回 None。条件=roles 开 + audit_mode != off + 形态非重档（v3.5.0：
+        heavy 最信任档 _audit_state 直接 None——事中闸/回合结算/补审全免）。
+        light/mid 都结算审计（违规判定走 audit_verdict 的对应分支），
+        strong 旗仅供调用方分流（verdict 分支与闸的 hook 注入，v3.5.0 起
+        =形态是 mid）；事中闸（/audit_gate 与 start 的 hook 注入）仅
+        light——mid 直改是设计常态，且两形态违规补救统一为派 reviewer
+        补审（reviewer 两形态都装）。结算时读一次盘——配置改动回合间生效。
+        线值统一出自 harness_roles.audit_limits（与引导词同源，词里一套
+        数字审计另一套是 v2.34 就防的坑）。"""
         try:
             from .roles import roles_cfg, roles_mode, audit_limits
             cfg = roles_cfg()
             mode = str(cfg.get("audit_mode") or "auto")
             if not cfg.get("enabled") or mode == "off":
                 return None
-            strong = roles_mode(self._eff_model()) != "light"
+            _m = roles_mode(self._eff_model())
+            if _m == "heavy":
+                return None
+            strong = (_m == "mid")
             return mode, audit_limits(cfg), strong
         except Exception:
             return None

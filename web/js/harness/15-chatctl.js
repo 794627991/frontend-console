@@ -310,45 +310,49 @@
                         : ('回退失败：' + (j.err || '未知')), 4600, !j.ok);
       } catch(e) { showBanner('回退失败：' + e, 3000, true); }
     } else if (cmd === 'roles') {
-      // 角色设计说明——含按当前 API 方案解析出的实际模型（v2.53：设计者/
-      // 审计者各自 resolved）。双形态主会话都直干所有活；子代理只留
-      // designer（只设计）+ reviewer（只读审核）两个代理
+      // 角色设计说明——含按当前 API 方案解析出的实际模型。v3.5.0 三档形态：
+      // 实跑模型命中哪档=哪形态；三形态主会话都直干所有活
       (async () => {
         let j = null;
         try { j = await (await fetch('/api/harness/roles')).json(); } catch(_) {}
         const r = (j && j.roles) || {};
         const rs = (j && j.resolved) || {};
-        const light = j && j.mode === 'light';
+        const mode = (j && j.mode) || 'mid';
+        const light = mode === 'light';
+        const heavy = mode === 'heavy';
         const dm = rs.designer || '按当前方案自动识别';
         const rm = rs.reviewer || '按当前方案自动识别';
         const numOr = (k, d) => { const n = parseInt(r[k], 10);
           return Number.isFinite(n) ? Math.max(0, n) : d; };
         const modeRows = light ? [
-          ['当前形态', '轻主力（主会话是轻模型）——直干所有活：编码/执行/调试都自己做，不派干活子代理'],
+          ['当前形态', '轻主力（主会话=轻档模型）——直干所有活：编码/执行/调试都自己做，不派干活子代理'],
           ['设计', `designer 代理（${dm}）——只设计绝不干活：架构/模块划分/关键决策/风险/依赖顺序；不写代码不改文件不跑实现。派发必须带全上下文（目标/背景约束/已试方案/文件+行号/验收标准）`],
           ['审核', `reviewer 代理（${rm}）——只读对抗审核：假定代码有错专门挑毛病（需求符合性/逻辑/健壮性/安全/一致性），不允许修改代码/测试用例，PASS/FAIL 二选一`],
           ['标准流程', '中改主会话改完 → reviewer 轻审；大改先 designer 出方案 → 主会话实施 → reviewer 全审 → FAIL 回炉 → 致命/严重问题清零才收 → 主会话汇总答复。审计者续派准则（硬性）：新审计目标才新开 reviewer；复核自己 FAIL 过的修复必须 SendMessage 续派原 reviewer（上下文保留逐条验收免重读），禁止为复审新开；设计者同理'],
+        ] : heavy ? [
+          ['当前形态', '重主力纯直干（主会话=重档最信任模型）——全部自己干，不装任何角色代理，分级线/事中闸/结算审计全免'],
+          ['质量纪律', '动手前想清楚边界/路径/风险；改完自测再交；回合终点必须给结论汇总'],
         ] : [
-          ['当前形态', '重主力直干（主会话是重模型）——需求承接/方案/编码/debug/杂活全部自己干，不派干活子代理'],
+          ['当前形态', '中主力直干（主会话=中档模型）——需求承接/方案/编码/debug/杂活全部自己干，不派干活子代理'],
           ['审核兜底', `reviewer 代理（${rm}）——单次直改超线由结算审核兜底（自动续发要求派 reviewer 补审，PASS/FAIL；FAIL 自己修复后复审）`],
         ];
-        renderSysCard('角色设计（双形态直干）', [
+        renderSysCard('角色设计（三档形态直干）', [
           ...modeRows,
           ['状态', r.enabled === false ? '已关闭（config.json harness_roles.enabled）' : '已启用'],
           // 审计信息进 /roles 输出（用户定调：判定用客观事实，配置要看得见）
-          ['审核模式', !r.enabled ? '—（三角色未启用）'
+          ['审核模式', !r.enabled ? '—（三角色未启用）' : heavy ? '—（重档最信任档全免）'
             : light ? (r.audit_mode === 'off' ? '关闭（audit_mode=off）'
               : r.audit_mode === 'warn' ? '仅警示（audit_mode=warn）——回合结束盘点工具调用，违规出红色警示不自动续发'
               : '自动补审（audit_mode=auto，默认）——回合结束盘点工具调用记录，直改超线未送审自动续发要求派 reviewer 补审；连续 3 回合违规降级为仅警示')
             : (r.audit_mode === 'off' ? '关闭（audit_mode=off）'
               : r.audit_mode === 'warn' ? '仅警示（audit_mode=warn）——回合结束盘点直改量，超线出红色警示不自动续发'
               : '自动补审（audit_mode=auto，默认）——回合结束盘点直改量，超线自动续发要求派 reviewer 补审；连续 3 回合违规降级为仅警示')],
-          ['分级线', !r.enabled ? '—' : light
+          ['分级线', !r.enabled ? '—' : heavy ? '不适用（重档全免）' : light
             ? `免审：单次直改 ≤ ${numOr('l1_max_lines', 100)} 行；轻审：单次直改 ≤ ${numOr('l2_max_lines', 200)} 行（主会话直改 + reviewer 轻审）；超线属大改——须 reviewer 取证级全审；设计线：单次直改 ≥ ${numOr('design_max_lines', 200)} 行动手前须先派 designer 出方案（0=不强制；不计文件数、不做回合累计）`
             : `审核线：单次直改 ≤ ${numOr('l2_max_lines', 200)} 行——超线触发结算审核（派 reviewer 补审；不计文件数、不做回合累计；0=最严档）`],
-          ['推荐配置', '主会话配轻模型（如 glm-5.3-flash）——直干省 token，方案/审核走设计/审核代理，即轻主力形态'],
-          ['模型解析', `设计 ${rs.designer || '自动识别'} / 审核 ${rs.reviewer || '自动识别'}——各槽显式配置（designer_model/reviewer_model）优先，留空回退代理池（heavy_model）→ 方案模型表自动分类（名字含 opus=代理池，其余=主会话池）→ 默认；端点映射（model_map）可按 base_url 覆盖；换 API 方案自动适配`],
-          ['形态判定', r.main_model ? `主会话模型槽已显式配置（harness_roles.main_model=${r.main_model}）——按此名识别形态` : '主会话模型槽未配置——按实跑模型名自动识别（含 flash/turbo/mini/haiku 等轻量词=轻主力，其余如 opus/glm-5.3 裸名=重主力）；切模型/改配置下条消息自动换形态'],
+          ['推荐配置', '三档下拉直接配哪个模型是哪档（配置面板）：flash 类→轻档省 token，中间档→中档带审核兜底，最强档→重档纯直干最信任'],
+          ['模型解析', `轻档 ${rs.light || '自动识别'} / 中档 ${rs.mid || rs.heavy || '自动识别'}${!rs.mid ? '（未配=重档值）' : ''} / 重档 ${rs.heavy || '自动识别'}；设计 ${rs.designer || '自动识别'} / 审核 ${rs.reviewer || '自动识别'}——各槽显式配置优先，留空回退重档→方案模型表自动分类→默认；端点映射（model_map）可按 base_url 覆盖；换 API 方案自动适配`],
+          ['形态判定', '实跑模型名归一化（剥 [1M] 后缀/大小写不敏感）后精确匹配三档下拉配置值：命中轻档=轻主力、中档=中主力、重档=重主力（同值多档取轻→中→重；未匹配默认中档；中档未配时重档值按中档跑——重档须三档配齐才生效）。切模型/改档位下条消息自动换形态'],
         ]);
       })();
     } else if (cmd === 'exit') {

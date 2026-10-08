@@ -469,20 +469,22 @@
     cx.closest('.hg-dyn-kv').classList.toggle('warn', warn);
     const r = _hgRolesCache && _hgRolesCache.roles;
     const rEl = sec.querySelector('[data-hg-d-roles]');
-    // 形态正确 + 模型名可读。/roles 响应自带 mode（strong/light）与
-    // resolved（v2.53 含 designer/reviewer 各自实模型），按形态出对应角色
-    // 行；两形态主会话都直干所有活——轻主力=设计者+审计者两个代理，
-    // 重主力=只留审计者兜底
+    // 形态正确 + 模型名可读。/roles 响应自带 mode（v3.5.0 三态
+    // light/mid/heavy）与 resolved（designer/reviewer 各自实模型），按形态
+    // 出对应角色行；三形态主会话都直干——轻主力=设计+审核两代理，中主力
+    // =只留审核兜底，重主力=纯直干零代理
     const _mode = _hgRolesCache && _hgRolesCache.mode;
     const _res = (_hgRolesCache && _hgRolesCache.resolved) || {};
     if (r) {
       if (r.enabled) {
-        const light = _mode === 'light';
-        rEl.textContent = light ? '轻主力' : '重主力';
-        // v3.3.1（用户定调）：称谓只留 轻主力/重主力+设计+审核，冗余修饰词摘除
-        rEl.title = light
+        // v3.5.0：旧 strong ≡ 新 mid；称谓轻主力/中主力/重主力
+        rEl.textContent = _mode === 'light' ? '轻主力'
+          : (_mode === 'heavy' ? '重主力' : '中主力');
+        rEl.title = _mode === 'light'
           ? `轻主力模式（点击打开配置面板）\n设计：${_res.designer || _res.heavy || '…'}\n审核：${_res.reviewer || _res.heavy || '…'}`
-          : `重主力直干模式（点击打开配置面板）\n审核兜底：${_res.reviewer || _res.heavy || '…'}`;
+          : _mode === 'heavy'
+            ? '重主力纯直干（最信任档，零代理零审计；点击打开配置面板）'
+            : `中主力直干模式（点击打开配置面板）\n审核兜底：${_res.reviewer || _res.heavy || '…'}`;
       } else {
         rEl.textContent = '关闭·直连';
         rEl.title = '直连干活（点击打开配置面板可启用三角色）';

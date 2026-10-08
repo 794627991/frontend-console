@@ -17,9 +17,10 @@ from .consts import _SRC_DIR
 # v2.34 light 形态回合结算审计（三角色强制机制的兜底层）。
 # 背景：light 形态（主会话=轻快模型）下「代码修改必须走 dev+reviewer」纯靠
 # 引导词软约束——失效模式：模型偷懒自己 Edit、把多行改动自判为微调免审、
-# dev 交付后跳过 reviewer 直接答用户、分多次小改切片逃逸。strong 形态有
-# 结构禁权不管；light 主会话要干杂活不能禁工具。审计=用客观事实（stream-json
-# 事件流的工具调用记录）判定，不靠模型自判；纯本地字符串/计数，零 token。
+# dev 交付后跳过 reviewer 直接答用户、分多次小改切片逃逸。mid 形态同受
+# 审计线兜底；heavy 最信任档在上游 _audit_state 返回 None 全免。审计=用
+# 客观事实（stream-json 事件流的工具调用记录）判定，不靠模型自判；纯本地
+# 字符串/计数，零 token。
 # ---------------------------------------------------------------------------
 _AUDIT_EDIT_TOOLS = ("Edit", "Write", "MultiEdit",
                      "NotebookEdit")   # 直改类工具（主会话调用才计）

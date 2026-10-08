@@ -2987,6 +2987,8 @@ span.h-ag-type[class*='h-ava-'] {
   display: flex; align-items: center; justify-content: center;
   font-size: 11px; color: #fff; }
 .hg-roles-ico.main { background: #6366f1; }
+.hg-roles-ico.light { background: #0891b2; }   /* v3.5.0 三档：轻/中档色 */
+.hg-roles-ico.mid { background: #0ea5e9; }
 .hg-roles-ico.des { background: #d97757; }
 .hg-roles-ico.rev { background: #059669; }
 .hg-roles-name { flex: none; width: 118px; font-size: var(--fs-base); color: var(--fg); }

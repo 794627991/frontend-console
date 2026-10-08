@@ -6,8 +6,10 @@
    派发纪律（带全上下文五要素）+reviewer 只审不改；strong=直干+reviewer
    审计兜底；两词均无版本代号、无 dev/executor/coder 派发词、无 L 档位
    代号；开关关 → 空串；audit_mode 切换威慑句。
-2. 形态判定：默认「除 Opus 皆轻」（含 opus→strong、glm/flash 等其余→
-   light、无名→strong）；main_model 显式配置优先；配置往返。
+2. 形态判定（v3.5.0 三档精确匹配）：实跑模型归一化命中 轻/中/重 三档
+   配置值（同值 轻>中>重）；mid 未配时重档值命中按中档（D2：重档须显式
+   opt-in）；未匹配/无名 → mid 兜底；main_model/light_keywords 退役残留
+   不参与判定；tier 解析三档齐/缺省。
 3. 模型池：model_map 端点映射（executor/coder 旧键与 light/heavy 新键
    两读法）、显式两池 light_model/heavy_model、旧键降级
    （executor_model/coder_model）、方案表自动分类（opus→重池）、行式
@@ -50,8 +52,9 @@ os.environ.setdefault("HARNESS_AGENTS_DIR", _TMP)   # 双保险：装 agents 也
 
 import src.harness.roles as hr
 
-LIGHT_MODEL = "glm-5.3-flash"       # 非 opus → light
-HEAVY_MODEL = "claude-opus-4-5"     # 含 opus → strong
+LIGHT_MODEL = "glm-5.3-flash"       # 轻档显式值
+HEAVY_MODEL = "glm-5.3"             # 重档显式值
+MID_MODEL = "glm-4.7"               # 中档显式值（v3.5.0 三档）
 # 池内显式值（写进配置让 resolve 走确定路径，不受真机 settings 影响）
 POOL_LIGHT = "glm-5.3-flash"
 POOL_HEAVY = "glm-5.3"
@@ -89,24 +92,46 @@ check("roles_cfg 透传未知键/旧键（降级依赖）",
       d2.get("executor_model") == "old-ex" and d2.get("legacy_junk") == 1)
 write_cfg(enabled=True)
 
-# ============ 2. 形态判定：除 Opus 皆轻 ============
-print("[2] 形态判定（废轻快词规则）")
+# ============ 2. 形态判定：三档精确匹配（v3.5.0） ============
+print("[2] 形态判定（三档精确匹配）")
 M = hr.roles_mode
-check("glm-5.3-flash → light（非 opus 皆轻）", M(LIGHT_MODEL) == "light")
-check("glm-5.3 → light（旧规则会判 strong，新规则轻）", M("glm-5.3") == "light")
-check("Lanz-Max → light（非 opus）", M("Lanz-Max") == "light")
-check("claude-opus-4-5 → strong", M(HEAVY_MODEL) == "strong")
-check("OPUS 大写不分大小写 → strong", M("GLM-Opus-Pro") == "strong")
-check("无名 → strong（兜底直干）", M(None) == "strong" and M("") == "strong")
-check("旧轻快词不再单独判轻之外的角色（turbo 非 opus=轻）",
-      M("gpt-4-turbo") == "light")
-write_cfg(enabled=True, main_model=HEAVY_MODEL)
-check("main_model 显式优先：实跑 flash 判 strong", M(LIGHT_MODEL) == "strong")
-write_cfg(enabled=True, main_model=LIGHT_MODEL)
-check("main_model=flash：实跑 opus 判 light", M(HEAVY_MODEL) == "light")
-hr.update_roles_cfg({"main_model": ""})
-check("清空回落名字自动识别",
-      M(LIGHT_MODEL) == "light" and M(HEAVY_MODEL) == "strong")
+# D2 核心语义：mid_model 未配——heavy 值命中按中档（防审计兜底被静默拆除）
+write_cfg(enabled=True, light_model=LIGHT_MODEL, heavy_model=HEAVY_MODEL)
+check("轻档值命中 → light", M(LIGHT_MODEL) == "light")
+check("轻档值带 [1M] 后缀归一化命中", M(LIGHT_MODEL + "[1M]") == "light")
+check("重档值命中但 mid 未配 → mid（D2：重档须显式 opt-in）",
+      M(HEAVY_MODEL) == "mid")
+check("重档值大小写不敏感", M(HEAVY_MODEL.upper()) == "mid")
+check("未匹配任何档 → mid（安全兜底）", M("unknown-model-x") == "mid")
+check("无名 → mid（兜底直干+审核）", M(None) == "mid" and M("") == "mid")
+# mid 配齐且 ≠ heavy → heavy 可达
+write_cfg(enabled=True, light_model=LIGHT_MODEL, mid_model=MID_MODEL,
+          heavy_model=HEAVY_MODEL)
+check("mid 配齐：中档值命中 → mid", M(MID_MODEL) == "mid")
+check("mid 配齐：重档值命中 → heavy（最信任档全免）", M(HEAVY_MODEL) == "heavy")
+check("mid 配齐：轻档值仍 light", M(LIGHT_MODEL) == "light")
+# 同值配多档：轻>中>重
+write_cfg(enabled=True, light_model="same-x", mid_model="same-x",
+          heavy_model="same-x")
+check("同值多档优先级 轻>中>重（取轻）", M("same-x") == "light")
+write_cfg(enabled=True, mid_model=HEAVY_MODEL, heavy_model=HEAVY_MODEL)
+check("mid==heavy 同值：重档值取中档（歧义取中）", M(HEAVY_MODEL) == "mid")
+# main_model 已退役：残留键不影响判定
+write_cfg(enabled=True, light_model=LIGHT_MODEL, heavy_model=HEAVY_MODEL,
+          main_model=HEAVY_MODEL, light_keywords="flash")
+check("main_model/light_keywords 残留不参与判定（已退役）",
+      M(LIGHT_MODEL) == "light")
+# tier 解析：mid 缺省=重档同值
+_t = hr.resolve_tier_models.__doc__ and True
+write_cfg(enabled=True, light_model=POOL_LIGHT, heavy_model=POOL_HEAVY)
+_l, _m, _h = hr.resolve_tier_models()
+check("tier 解析：mid 缺省=重档同值", (_l, _m, _h) == (POOL_LIGHT, POOL_HEAVY, POOL_HEAVY),
+      str((_l, _m, _h)))
+write_cfg(enabled=True, light_model=POOL_LIGHT, mid_model=MID_MODEL,
+          heavy_model=POOL_HEAVY)
+_l, _m, _h = hr.resolve_tier_models()
+check("tier 解析：mid 显式三档齐", (_l, _m, _h) == (POOL_LIGHT, MID_MODEL, POOL_HEAVY),
+      str((_l, _m, _h)))
 
 # ============ 3. 模型池解析 ============
 print("[3] 模型池（轻/重两池）")
@@ -122,8 +147,8 @@ check("新旧键并存新键优先", hr.resolve_role_models() == (POOL_LIGHT, PO
 write_cfg(enabled=True, executor_model="old-ex")
 li, hv = hr.resolve_role_models(
     models=["glm-5.3", "claude-opus-4-5"], default=None)
-check("只配旧轻键：重池走方案表自动分类",
-      li == "old-ex" and hv == "claude-opus-4-5", str((li, hv)))
+check("只配旧轻键：重池走方案表自动分类（非轻词池取首个）",
+      li == "old-ex" and hv == "glm-5.3", str((li, hv)))
 write_cfg(enabled=True)
 li, hv = hr.resolve_role_models(
     models=["glm-5.3-flash", "claude-opus-4-5"], default="glm-5.3-flash")
@@ -215,6 +240,21 @@ check("strong 词无版本代号", "v2." not in gs)
 check("light/strong 词不同", g != gs)
 write_cfg(enabled=False)
 check("开关关 → 空串", hr.roles_bridge_text(LIGHT_MODEL) == "")
+write_cfg(enabled=True, light_model=POOL_LIGHT, heavy_model=POOL_HEAVY)
+
+# ============ 5b. heavy 引导词（v3.5.0 最信任档） ============
+print("[5b] heavy 引导词（纯直干全免）")
+write_cfg(enabled=True, light_model=POOL_LIGHT, mid_model=MID_MODEL,
+          heavy_model=POOL_HEAVY)
+gh = hr.roles_bridge_text(POOL_HEAVY)
+check("heavy 词=最信任档直干", "最信任档" in gh and "亲自完成" in gh)
+check("heavy 词无任何代理/审计/线数字（词与机制同源）",
+      all(w not in gh for w in ("reviewer", "designer", "审计", "免审",
+                                "轻审", "≤")))
+check("heavy 词含回合终点纪律（信任档也要交付纪律）",
+      "回合终点纪律" in gh and "结论汇总" in gh)
+check("mid/heavy 词不同", gh != gs)
+check("三形态词互不相同", len({g, gs, gh}) == 3)
 write_cfg(enabled=True, light_model=POOL_LIGHT, heavy_model=POOL_HEAVY)
 
 # ============ 6. 指纹热更 ============
@@ -404,6 +444,20 @@ hr.install_roles_agents(LIGHT_MODEL)     # light
 check("light 装 designer+reviewer",
       os.path.isfile(os.path.join(ad, "designer.md"))
       and os.path.isfile(os.path.join(ad, "reviewer.md")))
+# v3.5.0 heavy：零代理——两文件定向删（CLI 自动发现下残留=自发派发入口）
+write_cfg(enabled=True, light_model=POOL_LIGHT, mid_model=MID_MODEL,
+          heavy_model=POOL_HEAVY)
+hr.install_roles_agents(POOL_HEAVY)      # heavy（mid 配齐 → heavy 可达）
+check("heavy 清 designer+reviewer（零代理定向删，v2.37 共存原则例外）",
+      not os.path.isfile(os.path.join(ad, "designer.md"))
+      and not os.path.isfile(os.path.join(ad, "reviewer.md")))
+check("heavy ensure_roles_ready 零文件", hr.ensure_roles_ready(POOL_HEAVY) == [])
+hr.install_roles_agents(MID_MODEL)       # mid
+check("mid 只装 reviewer（heavy 删后自愈重装）",
+      os.path.isfile(os.path.join(ad, "reviewer.md"))
+      and not os.path.isfile(os.path.join(ad, "designer.md")))
+write_cfg(enabled=True, light_model=POOL_LIGHT, heavy_model=POOL_HEAVY)
+hr.install_roles_agents(LIGHT_MODEL)     # 复原 light 双装（后续段依赖）
 with open(os.path.join(ad, "designer.md"), encoding="utf-8") as f:
     dmd = f.read()
 with open(os.path.join(ad, "reviewer.md"), encoding="utf-8") as f:
@@ -585,6 +639,20 @@ try:
     check("POST 设计者/审计者槽落盘",
           jr5.get("ok") and jr5.get("designer_model") == "e-dm"
           and jr5.get("reviewer_model") == "e-rm", str(jr5))
+    # v3.5.0 三档端到端：mid_model 落盘+resolved.mid 回显；退役键被白名单忽略
+    jr6 = _c.post("/api/harness/roles", json={"mid_model": "e-mid",
+                                  "main_model": "should-ignore",
+                                  "light_keywords": "should-ignore"}).get_json()
+    gr6 = _c.get("/api/harness/roles").get_json()
+    rs6 = gr6.get("resolved") or {}
+    check("POST mid_model 落盘 + resolved.mid 回显",
+          jr6.get("mid_model") == "e-mid" and rs6.get("mid") == "e-mid",
+          str((jr6, rs6)))
+    check("退役键 main_model/light_keywords 被白名单忽略不落盘",
+          "main_model" not in jr6 and "light_keywords" not in jr6
+          and "main_model" not in gr6["roles"]
+          and "light_keywords" not in gr6["roles"], str(jr6))
+    _c.post("/api/harness/roles", json={"mid_model": ""})   # 清理复原
     check("POST 设计线落盘（数字键）",
           jr5.get("design_max_lines") == 150, str(jr5))
     gr2 = _c.get("/api/harness/roles").get_json()

@@ -120,7 +120,7 @@
       // 后端 clamp 回显消费：分级线被自动收紧（l1>l2l 等）时当场提示
       // 实际写盘值与原因，不再静默钳制。
       const cl = (jr.clamped || []).map(function(n) { return n.reason; });
-      showBanner('👥 三角色配置已保存——模型槽/分级线随下条消息热更生效（agents 自动重生成），审核模式立即生效'
+      showBanner('👥 三角色配置已保存——档位/分级线随下条消息热更生效（agents 自动重生成），审核模式立即生效'
         + (cl.length ? '；⚠ ' + cl.join('；') : ''), cl.length ? 9000 : 4200);
       _hgRolesFetch();                          // 缓存刷新（气泡角色徽章同源）
     } catch(e) { showBanner('保存失败：' + e, 3000, true); }
@@ -131,15 +131,21 @@
       ov.className = 'hg-modal-ov';
       const cfg = { ...(init.roles || {}) };
       const models = init.models || [];
-      const light = init.mode === 'light';
+      const mode = init.mode || 'mid';   // v3.5.0 三态：light/mid/heavy
+      const modeTxt = { light: '轻主力', mid: '中主力', heavy: '重主力' }[mode] || '中主力';
       const dm = init.default_model || '';
-      const mkOpts = (cur) => {
+      const mkOpts = (cur, emptyTxt) => {
         const ms = models.slice();
         if (cur && !ms.includes(cur)) ms.push(cur);   // 配置值不在当前方案表也保留可选项
-        return ['<option value=""' + (cur ? '' : ' selected') + '>默认（按当前方案自动识别）</option>']
+        return ['<option value=""' + (cur ? '' : ' selected') + '>'
+                + (emptyTxt || '默认（按当前方案自动识别）') + '</option>']
           .concat(ms.map(m => `<option value="${esc(m)}"${m === cur ? ' selected' : ''}>${esc(m)}</option>`))
           .join('');
       };
+      // v3.5.0 判定依据行：实跑名 vs 命中档位（档位匹配静默失败可见化）
+      const rs = init.resolved || {};
+      const _hitTier = mode === 'light' ? '轻档' : (mode === 'heavy' ? '重档' : '中档');
+      const basisTxt = `实跑 ${dm || '未设置'} → ${_hitTier}${mode === 'mid' && !String(cfg.mid_model || '').trim() ? '（mid 未配：重档值命中按中档跑）' : ''}`;
       // 设计者/审计者槽（v2.53）：读写 designer_model/reviewer_model 新键，
       // 留空=回退重池（heavy_model→自动）——与后端 resolve_agent_models
       // 回退链一致；旧 light/heavy 池键不再从面板暴露
@@ -155,38 +161,44 @@
       const l1 = numOr(cfg.l1_max_lines, 100);
       const l2l = numOr(cfg.l2_max_lines, 200);
       const dln = numOr(cfg.design_max_lines, 200);
-      ov.innerHTML = `<div class="hg-modal hg-modal-vision hg-roles"><div class="hg-modal-title">👥 三角色配置<span class="hg-roles-mode">${light ? '轻主力' : '重主力'}</span></div>
+      ov.innerHTML = `<div class="hg-modal hg-modal-vision hg-roles"><div class="hg-modal-title">👥 三角色配置<span class="hg-roles-mode">${modeTxt}</span></div>
         <div class="hg-modal-body">
           <div class="hg-roles-top">
             <label class="hg-vision-switch"><input type="checkbox" data-hg-r-on${cfg.enabled ? ' checked' : ''}> 启用三角色</label>
-            <span class="hg-roles-modeinfo">当前形态：<b>${light ? '轻主力 · 直干+设计+审核' : '重主力 · 直干+审核兜底'}</b></span>
+            <span class="hg-roles-modeinfo">当前形态：<b>${mode === 'light' ? '轻主力 · 直干+设计+审核' : mode === 'heavy' ? '重主力 · 纯直干（最信任档，全免）' : '中主力 · 直干+审核兜底'}</b></span>
           </div>
           <details class="hg-roles-more"><summary>工作方式说明</summary>
-            <div>双形态都<b>主会话直干所有活</b>（编码/执行/调试不派干活子代理）：主会话是轻模型（名字含轻量词表关键词）= 轻主力——配设计 + 审核两个代理；主会话是重模型（opus、glm-5.3 裸名等高级别模型）= 重主力——直干 + 审核兜底。轻量词表可在下方「模型分工」区自定义（逗号分隔，留空用内置）。保存后模型/分级线随下条消息热更生效（agents 自动重生成），审核模式立即生效。当前形态判定依据：${cfg.main_model ? `主会话槽显式配置 ${esc(cfg.main_model)}` : `实跑模型 ${esc(dm || '未设置')}（留空自动识别）`}。</div>
+            <div>三形态都<b>主会话直干所有活</b>（编码/执行/调试不派干活子代理）：实跑模型命中<b>轻档</b> = 轻主力——配设计 + 审核两个代理；命中<b>中档</b> = 中主力——直干 + 审核兜底；命中<b>重档</b> = 重主力——纯直干最信任档（不装任何代理、分级线/审计全免）。档位按下方三档下拉精确匹配（同值多档取轻→中→重；未匹配默认中档；中档未配时重档值按中档跑——重档须三档配齐才生效）。保存后档位/分级线随下条消息热更生效（agents 自动重生成），审核模式立即生效。当前判定：${esc(basisTxt)}。</div>
+            <div class="hg-roles-sec" style="margin-top:8px;">代理模型细调 <i>默认自动取重档 · 一般无需改</i></div>
+            <div class="hg-roles-slot" title="designer：只设计，出方案不干活。留空=回退重档 heavy_model，再按当前方案自动识别">
+              <span class="hg-roles-ico des">设</span>
+              <span class="hg-roles-name">设计<i>只设计 · 出方案</i></span>
+              <select data-hg-r-designer>${mkOpts(designerCfg)}</select>
+            </div>
+            <div class="hg-roles-slot" title="reviewer：只审不改，PASS/FAIL 二选一。留空=回退重档 heavy_model，再按当前方案自动识别">
+              <span class="hg-roles-ico rev">审</span>
+              <span class="hg-roles-name">审核<i>只审不改 · PASS/FAIL</i></span>
+              <select data-hg-r-reviewer>${mkOpts(reviewerCfg)}</select>
+            </div>
           </details>
 
-          <div class="hg-roles-sec">模型分工</div>
-          <div class="hg-roles-slot" title="主会话自己干所有活；显式配置优先参与形态判定（含 flash/turbo/mini/haiku 等轻量词 = 轻主力，其余 = 重主力直干），留空按实跑模型名自动识别">
-            <span class="hg-roles-ico main">主</span>
-            <span class="hg-roles-name">主会话<i>直干所有活 · 定形态</i></span>
-            <select data-hg-r-main>${mkOpts(cfg.main_model || '')}</select>
+          <div class="hg-roles-sec">模型档位 <i>实跑模型命中哪档 = 哪形态</i></div>
+          <div class="hg-roles-slot" title="轻档：轻主力直干——配设计+审核双代理，分级线全档生效">
+            <span class="hg-roles-ico light">轻</span>
+            <span class="hg-roles-name">轻档<i>轻主力 · 直干+设计+审核</i></span>
+            <select data-hg-r-light>${mkOpts(cfg.light_model || '')}</select>
           </div>
-          <div class="hg-roles-slot" title="designer：只设计，出方案不干活。留空=回退代理池 heavy_model，再按当前方案自动识别">
-            <span class="hg-roles-ico des">设</span>
-            <span class="hg-roles-name">设计<i>只设计 · 出方案</i></span>
-            <select data-hg-r-designer>${mkOpts(designerCfg)}</select>
+          <div class="hg-roles-slot" title="中档：中主力直干——只装审核兜底代理。留空=同重档值（形态判定上重档值按中档跑；重档须三档配齐才生效）">
+            <span class="hg-roles-ico mid">中</span>
+            <span class="hg-roles-name">中档<i>中主力 · 直干+审核兜底</i></span>
+            <select data-hg-r-mid>${mkOpts(cfg.mid_model || '', '默认（=重档值，按中档形态跑）')}</select>
           </div>
-          <div class="hg-roles-slot" title="reviewer：只审不改，PASS/FAIL 二选一。留空=回退代理池 heavy_model，再按当前方案自动识别">
-            <span class="hg-roles-ico rev">审</span>
-            <span class="hg-roles-name">审核<i>只审不改 · PASS/FAIL</i></span>
-            <select data-hg-r-reviewer>${mkOpts(reviewerCfg)}</select>
+          <div class="hg-roles-slot" title="重档：最信任档纯直干——不装任何代理、分级线/事中闸/结算审计全免；仅中档配齐且与重档不同值时生效">
+            <span class="hg-roles-ico main">重</span>
+            <span class="hg-roles-name">重档<i>重主力 · 纯直干全免</i></span>
+            <select data-hg-r-heavy>${mkOpts(cfg.heavy_model || '')}</select>
           </div>
-          <div class="hg-roles-line" title="v3.4.95：主会话形态判定词表——模型名含任一关键词 = 轻主力，其余 = 重主力；留空用内置词表。覆盖式：配置后完全替换内置表">
-            <span>轻量词表</span><input type="text" data-hg-r-lkw spellcheck="false" style="flex:1;min-width:0;"
-              placeholder="留空=内置：flash, turbo, mini, haiku, lite, nano, micro, small, instant"
-              value="${esc(cfg.light_keywords || '')}"><em>含词=轻主力</em>
-          </div>
-          <div class="hg-roles-note">留空 = 回退代理池 → 按方案自动识别；显式配置优先</div>
+          <div class="hg-roles-note">留空档位按方案自动识别；重档须三档配齐才生效（中档未配时重档值按中档跑，防审核兜底被静默拆除）</div>
 
           <div class="hg-roles-sec">分级线 <i>按单次直改行数 · 不计文件数 · 不做累计</i></div>
           <div class="hg-roles-line" title="单次直改总计 ≤ 此行数的小改（配置/常量/文案/注释级）主会话直接改，免审">
@@ -225,14 +237,14 @@
       mkBtn('取消', false, () => close(null));
       mkBtn('保存', true, () => close({
         enabled: ov.querySelector('[data-hg-r-on]').checked,
-        // 三槽（空串=清除，回落自动识别/旧键降级）
-        main_model: ov.querySelector('[data-hg-r-main]').value.trim(),
-        // 设计者/审计者槽（v2.53 直白命名）：写 designer_model/reviewer_model
-        // 新键，留空=回退重池/自动识别；旧 light/heavy 池键不再从面板写
+        // v3.5.0 三档（空串=清除，回落自动识别/旧键降级）；main_model/
+        // light_keywords 已退役不再提交（后端白名单亦忽略）
+        light_model: ov.querySelector('[data-hg-r-light]').value.trim(),
+        mid_model: ov.querySelector('[data-hg-r-mid]').value.trim(),
+        heavy_model: ov.querySelector('[data-hg-r-heavy]').value.trim(),
+        // 设计者/审计者槽（折叠在「工作方式说明」里）：留空=回退重档/自动识别
         designer_model: ov.querySelector('[data-hg-r-designer]').value.trim(),
         reviewer_model: ov.querySelector('[data-hg-r-reviewer]').value.trim(),
-        // 轻量词表（v3.4.95）：形态判定关键词，空=内置表
-        light_keywords: ov.querySelector('[data-hg-r-lkw]').value.trim(),
         // 端点角色映射——发 "关键字=轻,重" 行（后端按行解析，与识图面板
         // model_map 的行式体验一致）
         model_map: (ov.querySelector('[data-hg-r-map]').value || '')
@@ -256,7 +268,7 @@
       ov.addEventListener('click', (e) => { if (e.target === ov) close(null); });
       ov.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(null); });
       _hgWrap.appendChild(ov);
-      ov.querySelector('[data-hg-r-main]').focus();
+      ov.querySelector('[data-hg-r-light]').focus();
     });
   }
   function hgPromptManager(items, cwd) {
