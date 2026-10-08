@@ -295,12 +295,17 @@
     a.err = (st === 'error' || st === 'denied');
     renderSideStatus();
   }
+  let _rolesFetchSeq = 0;   // v3.5.6：请求序号——启动 fetch(无 sid) 与 switchTo
+                            // 补拉(带 sid) 并发时，旧响应后到会覆盖新值（徽章
+                            // 随机回退旧形态），过期响应一律丢弃
   async function _hgRolesFetch() {       // roles 只读拉取（缓存+刷面板；失败静默）
+    const mySeq = ++_rolesFetchSeq;
     try {
       // v3.5.3：带 sid——mode 按当前会话实跑模型判定（不带则回退方案默认，
       // 实跑与默认不同时徽章会错形态）
       const q = _HG.sid ? ('?sid=' + encodeURIComponent(_HG.sid)) : '';
       const j = await (await fetch('/api/harness/roles' + q)).json();
+      if (mySeq !== _rolesFetchSeq) return j;   // 已有更新的请求在途——丢弃
       if (j && j.ok) { _hgRolesCache = j; renderSideStatus(); }
       return j;
     } catch(_) { return null; }
