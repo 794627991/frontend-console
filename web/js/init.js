@@ -43,13 +43,14 @@ if (typeof refreshClaudePanel === 'function') refreshClaudePanel();
 // 全部回退固化 label「Claude · 目录名」，分不清开的是哪个会话（面板可见时的
 // 5s 轮询只在面板开着时兜底刷新）
 renderCmdPane();  // 命令 tab 是默认激活面板，启动即渲染（否则空面板要切走再切回才刷新）
-// v2.2.0：页头版本徽标/页面标题动态取自后端单一源（src/version.py）——
-// 以前硬编码在 index.html，改版必漏（用户实锤页头还是 v2.0.0）
-fetch('/api/update/state').then(r => r.json()).then(j => {
-  if (!j || !j.ok || !j.current) return;
-  document.title = '前端控制台 v' + j.current;
+// v3.5.9（用户实锤「这里丑」）：顶栏徽标改显 harness 迭代号（活跃、随
+// 日常改动跳动），窗口标题去版本——旧形态窗口标题+顶栏同屏两遍
+// 「前端控制台 v2.3.3」，且发版号滞后语义弱；工具发版版本仍在 ⓘ 双行显示
+fetch('/api/harness/version').then(r => r.json()).then(j => {
+  if (!j || !j.ok || !j.harness) return;
+  document.title = '前端控制台';
   document.querySelectorAll('[data-ver-badge]').forEach(el => {
-    el.textContent = 'v' + j.current;
+    el.textContent = 'v' + j.harness;
   });
 }).catch(() => {});
 // ---- v2.27.22 全局链接导航拦截（最后防线，捕获阶段）----
