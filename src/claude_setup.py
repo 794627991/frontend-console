@@ -94,6 +94,17 @@ def _find_installer(pattern, extra_dirs=None):
     return None
 
 
+def _pkg_version(pkg_dir):
+    """包源 claude-code 版本（package.json）。升级提示对比用；读不到空串。"""
+    if not pkg_dir:
+        return ""
+    try:
+        with open(os.path.join(pkg_dir, "package.json"), encoding="utf-8") as f:
+            return json.load(f).get("version") or ""
+    except Exception:
+        return ""
+
+
 def _claude_pkg_dir():
     """claude-code 包目录（离线直装的包源）。
     优先随包/自定义离线资源目录里的 claude-code（无网机器没有 npm 包），
@@ -155,12 +166,26 @@ def claude_setup_status():
         custom_dir = (_load_config().get("offline_pkg_dir") or "").strip()
     except Exception:
         custom_dir = ""
+    # v3.5.29：当前 claude 版本（读本机 npm 包 package.json，零进程开销）——
+    # 安装面板「已安装（当前 vX.Y.Z）」显示用，升级前后对比一眼可见
+    cur_ver = ""
+    try:
+        appdata = os.environ.get("APPDATA", "")
+        pj = os.path.join(appdata, "npm", "node_modules", "@anthropic-ai",
+                          "claude-code", "package.json")
+        if os.path.isfile(pj):
+            with open(pj, encoding="utf-8") as f:
+                cur_ver = json.load(f).get("version") or ""
+    except Exception:
+        pass
     return jsonify({
         "ok": True,
         "claude": claude,
+        "version": cur_ver,
         "node": bool(node), "npm": bool(npm),
         "git": bool(_git_ok()),
         "pkg_dir": pkg or "", "pkg_size": size,
+        "pkg_version": _pkg_version(pkg),
         "git_installer": _find_installer("Git-*.exe") or "",
         "node_installer": _find_installer("node-v*.msi") or "",
         "offline_pkg_dir": custom_dir,

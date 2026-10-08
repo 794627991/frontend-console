@@ -112,13 +112,31 @@ async function openClaudeSetup() {
 async function _csDetectRender() {
   const el = $('csDetect');
   el.innerHTML = '<span style="color:var(--muted)">检测中…</span>';
+  // v3.5.29：semver 比较（升级提示用）——a>b 返 1
+  const _cmpVer = (a, b) => {
+    const pa = String(a || '').split('.'), pb = String(b || '').split('.');
+    for (let i = 0; i < 3; i++) {
+      const x = parseInt(pa[i], 10) || 0, y = parseInt(pb[i], 10) || 0;
+      if (x !== y) return x > y ? 1 : -1;
+    }
+    return 0;
+  };
   try {
     const st = await (await fetch('/api/claude/setup_status')).json();
     const row = (label, ok, extra='') =>
       `<div>${ok ? '<span style="color:var(--accent)">✓</span>' : '<span style="color:var(--neon-red)">✗</span>'} ${label}${extra ? ` <span style="color:var(--muted);font-size:11px;">${extra}</span>` : ''}</div>`;
     const mb = st.pkg_size ? ` · ${(st.pkg_size/1024/1024).toFixed(0)} MB` : '';
     const res = [];
-    if (st.claude) res.push(row('Claude CLI 已安装 —— 无需安装，直接点顶栏 Claude 打开', true));
+    if (st.claude) {
+      // v3.5.29（用户实锤「找不到升级方式」）：已安装时显示当前版本+离线包
+      // 版本对比——「离线包安装」就是升级通道（选新包直接换装）
+      const _cur = st.version || '';
+      const _pkgV = st.pkg_version || '';
+      const _up = _pkgV && _cur && _pkgV !== _cur
+        ? ` —— 包源 v${_pkgV}${_cmpVer(_pkgV, _cur) > 0 ? ' 较新，可选「📂 离线包安装」升级' : ' 不高于当前版'}` : '';
+      res.push(row('Claude CLI 已安装' + (_cur ? `（当前 v${_cur}）` : ''), true,
+        '升级 = 下方「📂 离线包安装」选新版 claude-offline.zip 换装' + _up));
+    }
     res.push(row('Node.js / npm', st.node && st.npm, st.node ? '' : '离线包安装会静默补装'));
     res.push(row('Git', st.git, st.git ? '' : '离线包安装会静默补装'));
     // 离线包（zip 单文件）——本机找得到包源才能制作；安装时用户自选 zip 文件
