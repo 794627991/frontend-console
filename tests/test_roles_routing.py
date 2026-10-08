@@ -92,37 +92,38 @@ check("roles_cfg 透传未知键/旧键（降级依赖）",
       d2.get("executor_model") == "old-ex" and d2.get("legacy_junk") == 1)
 write_cfg(enabled=True)
 
-# ============ 2. 形态判定：三档精确匹配（v3.5.0） ============
-print("[2] 形态判定（三档精确匹配）")
+# ============ 2. 形态判定：三档精确匹配（v3.5.12 两档简化） ============
+print("[2] 形态判定（三档精确匹配·两档简化）")
 M = hr.roles_mode
-# D2 核心语义：mid_model 未配——heavy 值命中按中档（防审计兜底被静默拆除）
+# v3.5.12 用户拍板：mid 未配=两档制，heavy 值命中直接 heavy
 write_cfg(enabled=True, light_model=LIGHT_MODEL, heavy_model=HEAVY_MODEL)
 check("轻档值命中 → light", M(LIGHT_MODEL) == "light")
 check("轻档值带 [1M] 后缀归一化命中", M(LIGHT_MODEL + "[1M]") == "light")
-check("重档值命中但 mid 未配 → mid（D2：重档须显式 opt-in）",
-      M(HEAVY_MODEL) == "mid")
-check("重档值大小写不敏感", M(HEAVY_MODEL.upper()) == "mid")
-check("未匹配任何档 → mid（安全兜底）", M("unknown-model-x") == "mid")
-check("无名 → mid（兜底直干+审核）", M(None) == "mid" and M("") == "mid")
-# mid 配齐且 ≠ heavy → heavy 可达
+check("重档值命中且 mid 未配 → heavy（两档制：非轻即重）",
+      M(HEAVY_MODEL) == "heavy")
+check("重档值大小写不敏感", M(HEAVY_MODEL.upper()) == "heavy")
+check("未匹配且 mid 未配 → heavy（两档兜重）", M("unknown-model-x") == "heavy")
+check("无名且 mid 未配 → heavy", M(None) == "heavy" and M("") == "heavy")
+# mid 配齐 → 三档制，未匹配兜 mid
 write_cfg(enabled=True, light_model=LIGHT_MODEL, mid_model=MID_MODEL,
           heavy_model=HEAVY_MODEL)
 check("mid 配齐：中档值命中 → mid", M(MID_MODEL) == "mid")
 check("mid 配齐：重档值命中 → heavy（最信任档全免）", M(HEAVY_MODEL) == "heavy")
 check("mid 配齐：轻档值仍 light", M(LIGHT_MODEL) == "light")
+check("mid 配齐：未匹配兜 mid（安全：多一道审）", M("unknown-model-x") == "mid")
+check("mid 配齐：无名兜 mid", M(None) == "mid" and M("") == "mid")
 # 同值配多档：轻>中>重
 write_cfg(enabled=True, light_model="same-x", mid_model="same-x",
           heavy_model="same-x")
 check("同值多档优先级 轻>中>重（取轻）", M("same-x") == "light")
 write_cfg(enabled=True, mid_model=HEAVY_MODEL, heavy_model=HEAVY_MODEL)
-check("mid==heavy 同值：重档值取中档（歧义取中）", M(HEAVY_MODEL) == "mid")
+check("mid==heavy 同值：命中取中档（歧义取中）", M(HEAVY_MODEL) == "mid")
 # main_model 已退役：残留键不影响判定
 write_cfg(enabled=True, light_model=LIGHT_MODEL, heavy_model=HEAVY_MODEL,
           main_model=HEAVY_MODEL, light_keywords="flash")
 check("main_model/light_keywords 残留不参与判定（已退役）",
       M(LIGHT_MODEL) == "light")
-# tier 解析：mid 缺省=重档同值
-_t = hr.resolve_tier_models.__doc__ and True
+# tier 解析：mid 缺省=重档同值（取值兜底）
 write_cfg(enabled=True, light_model=POOL_LIGHT, heavy_model=POOL_HEAVY)
 _l, _m, _h = hr.resolve_tier_models()
 check("tier 解析：mid 缺省=重档同值", (_l, _m, _h) == (POOL_LIGHT, POOL_HEAVY, POOL_HEAVY),
@@ -224,20 +225,14 @@ g_off = (write_cfg(enabled=True, light_model=POOL_LIGHT,
 check("audit_mode=off 威慑句切换",
       "重大流程违规" in g_off and "会审计" not in g_off)
 
-# ============ 5. strong 引导词 ============
-print("[5] strong 引导词（直干+审核兜底）")
-gs = hr.roles_bridge_text(HEAVY_MODEL)
-check("strong 词=干活者直干", "干活者" in gs and "亲自完成" in gs)
-check("strong 词无派活分工词",
-      all(w not in gs for w in ("决策者", "executor", "coder", "路由", "dev")))
-check("strong 词无免审/档位词",
-      all(w not in gs for w in ("免审", "L1", "L2", "L3", "L4")))
-check("strong 词无 designer（不用设计代理）", "designer" not in gs)
-check("strong 词含 reviewer 审计兜底与线数字",
-      "审计线" in gs and "reviewer" in gs and "单次直改" in gs
-      and "≤200 行" in gs)
-check("strong 词无版本代号", "v2." not in gs)
-check("light/strong 词不同", g != gs)
+# ============ 5. mid 引导词（=旧 strong：直干+审核兜底） ============
+print("[5] mid 引导词（直干+审核兜底）")
+# v3.5.12 两档简化：HEAVY_MODEL 无 mid 配置=heavy 全免词——mid 词需三档配置
+write_cfg(enabled=True, light_model=LIGHT_MODEL, mid_model=MID_MODEL,
+          heavy_model=HEAVY_MODEL)
+gs = hr.roles_bridge_text(MID_MODEL)
+check("mid 词无版本代号", "v2." not in gs)
+check("light/mid 词不同", g != gs)
 write_cfg(enabled=False)
 check("开关关 → 空串", hr.roles_bridge_text(LIGHT_MODEL) == "")
 write_cfg(enabled=True, light_model=POOL_LIGHT, heavy_model=POOL_HEAVY)
@@ -327,12 +322,15 @@ check("strong 超线未派审 → 违规指明审计线与 reviewer",
 check("strong 线内干净（直干是常态）",
       VS(150, False, strong=True) == [] and VS(100, False, strong=True) == [])
 check("strong 已派 reviewer 视作审过", VS(250, True, strong=True) == [])
-fp_s1 = _bridge_fp(HEAVY_MODEL)
-write_cfg(enabled=True, light_model=POOL_LIGHT, heavy_model=POOL_HEAVY,
-          l2_max_lines=150)
-check("strong 改审计线 → 词变+指纹变（热更）",
-      "≤150 行" in hr.roles_bridge_text(HEAVY_MODEL)
-      and _bridge_fp(HEAVY_MODEL) != fp_s1)
+# v3.5.12 两档简化：mid 词的审计线热更用三档配置验（HEAVY_MODEL 已是 heavy 全免词）
+write_cfg(enabled=True, light_model=POOL_LIGHT, mid_model=MID_MODEL,
+          heavy_model=POOL_HEAVY)
+fp_s1 = _bridge_fp(MID_MODEL)
+write_cfg(enabled=True, light_model=POOL_LIGHT, mid_model=MID_MODEL,
+          heavy_model=POOL_HEAVY, l2_max_lines=150)
+check("mid 改审计线 → 词变+指纹变（热更）",
+      "≤150 行" in hr.roles_bridge_text(MID_MODEL)
+      and _bridge_fp(MID_MODEL) != fp_s1)
 write_cfg(enabled=True, light_model=POOL_LIGHT, heavy_model=POOL_HEAVY)
 
 # ============ 8. 事中闸（审过开闸） ============
@@ -428,18 +426,22 @@ for fn in ("executor.md", "coder.md", "designer.md", "dev.md", "reviewer.md"):
 for fn in ("executor.md", "coder.md", "designer.md", "dev.md", "reviewer.md"):
     with open(os.path.join(ad, fn), "w", encoding="utf-8") as f:
         f.write("---\nname: %s\n---\nold" % fn[:-3])
-hr.install_roles_agents(HEAVY_MODEL)     # strong
-check("strong 清退役三角色",
+# v3.5.12 两档简化：HEAVY_MODEL（glm-5.3，mid 未配）= heavy 全删——
+# 「只装 reviewer」的 mid 行为用三档配置 + MID_MODEL 验证
+write_cfg(enabled=True, light_model=LIGHT_MODEL, mid_model=MID_MODEL,
+          heavy_model=HEAVY_MODEL)
+hr.install_roles_agents(MID_MODEL)       # mid（=旧 strong：只装 reviewer）
+check("mid 清退役三角色",
       not any(os.path.exists(os.path.join(ad, fn)) for fn in
               ("executor.md", "coder.md", "dev.md")))
-check("strong 只装 reviewer", os.path.isfile(os.path.join(ad, "reviewer.md")))
-check("strong 下 designer.md 共存不删（light 在用文件）",
+check("mid 只装 reviewer", os.path.isfile(os.path.join(ad, "reviewer.md")))
+check("mid 下 designer.md 共存不删（light 在用文件）",
       os.path.isfile(os.path.join(ad, "designer.md")))
 with open(os.path.join(ad, "designer.md"), encoding="utf-8") as f:
     dmd_old = f.read()
-check("strong 不动 designer 内容（仍是旧装）", dmd_old == "---\nname: designer\n---\nold")
-check("strong ensure_roles_ready 只查 reviewer",
-      hr.ensure_roles_ready(HEAVY_MODEL) == [])
+check("mid 不动 designer 内容（仍是旧装）", dmd_old == "---\nname: designer\n---\nold")
+check("mid ensure_roles_ready 只查 reviewer",
+      hr.ensure_roles_ready(MID_MODEL) == [])
 hr.install_roles_agents(LIGHT_MODEL)     # light
 check("light 装 designer+reviewer",
       os.path.isfile(os.path.join(ad, "designer.md"))
@@ -520,8 +522,11 @@ hr.install_roles_agents(LIGHT_MODEL)
 check("light 重复安装幂等（内容不变不写）",
       {fn: open(os.path.join(ad, fn), "rb").read()
        for fn in ("designer.md", "reviewer.md")} == before)
-hr.install_roles_agents(HEAVY_MODEL)
-check("strong 往返：designer 存活 + reviewer 在位",
+# v3.5.12：HEAVY_MODEL 两档制下=heavy（全删）——「reviewer 兜底在位」用 mid 验
+write_cfg(enabled=True, light_model=POOL_LIGHT, mid_model=MID_MODEL,
+          heavy_model=POOL_HEAVY)
+hr.install_roles_agents(MID_MODEL)
+check("mid 往返：designer 存活 + reviewer 在位",
       os.path.isfile(os.path.join(ad, "designer.md"))
       and os.path.isfile(os.path.join(ad, "reviewer.md")))
 hr.update_roles_cfg({"enabled": False})

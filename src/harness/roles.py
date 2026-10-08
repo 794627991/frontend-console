@@ -17,10 +17,9 @@ reviewer_model），换 API 方案改配置即可，不用动代码。
   + 回合结算审计（=旧 light 行为）；
 - mid 中档：中主力——直干 + 仅 reviewer 审核兜底（=旧 strong 行为）；
 - heavy 重档：最信任档——纯直干，不装任何角色代理，分级线/事中闸/
-  回合结算审计全免（显式 opt-in：mid_model 配齐且与 heavy 不同值才可达
-  ——mid 缺省时 heavy 值命中按中档跑，防旧配置的审计兜底被静默拆除）；
-- 未匹配任何档 / 名字不可得 → 中档（安全兜底：漏配的最坏后果是多一道
-  审，与「未知默认安全向」同哲学）。
+  回合结算审计全免（v3.5.12 两档简化：mid 没配=没有中档这一层，重档值
+  命中直接 heavy，不再要求三档配齐）；
+- 未匹配：mid 配了兜 mid（安全：多一道审），mid 没配按两档兜 heavy。
 main_model / light_keywords（v3.4.95 词表识别）已退役：三档下拉本身即
 显式声明，第二真相源只会重蹈「配置漂移压死实跑」的坑。
 
@@ -166,9 +165,8 @@ def _norm_model(m):
 
 _DEFAULTS = {"enabled": False,          # 默认关闭（用户定调：开关开启才生效）
              "light_model": "",         # 轻档（轻主力直干用；空=按方案自动识别）
-             "mid_model": "",           # 中档（中主力直干；空=同重档值，但形态
-                                        # 判定上重档值命中按中档跑——重档须
-                                        # 显式配齐三档才可达，防静默拆审计）
+             "mid_model": "",           # 中档（中主力直干；空=没有中档层，
+                                        # 两档制：非轻即重，v3.5.12 用户拍板）
              "heavy_model": "",         # 重档（designer/reviewer 用；空=自动识别）
              "model_map": {},
              # light 形态审计（回合结算盘点工具调用记录，零 token）：
@@ -360,13 +358,13 @@ def resolve_agent_models(base_url=None, models=None, default=None):
 
 
 def resolve_tier_models(base_url=None, models=None, default=None):
-    """解析三档模型 (轻, 中, 重)——v3.5.0 形态判定的数据源。
+    """解析三档模型 (轻, 中, 重)——形态判定的数据源。
     轻档 = light_model 显式 | 方案表自动挑（_LIGHT_RE 词命中池）；
     重档 = heavy_model 显式 | 方案表自动挑（非轻词池，default 优先）；
-    中档 = mid_model 显式 | **重档同值**（缺省语义：显示/代理取值用重档，
-    但形态判定上重档值命中按中档跑——见 roles_mode，防旧配置审计兜底被
-    静默拆除）。model_map 端点映射（light/heavy 两键）先行，mid 不参与
-    映射（缺省同重档）。硬默认 ("glm-5.3-flash", "glm-5.3", "glm-5.3")。"""
+    中档 = mid_model 显式 | 重档同值（仅取值兜底；形态判定上 mid 未配=
+    两档制，重档值命中直接 heavy——roles_mode v3.5.12）。model_map 端点
+    映射（light/heavy 两键）先行，mid 不参与映射。硬默认
+    ("glm-5.3-flash", "glm-5.3", "glm-5.3")。"""
     cfg = roles_cfg()
     _l, _h = resolve_role_models(base_url, models, default)
     cm = str(cfg.get("mid_model") or "").strip()
@@ -374,32 +372,31 @@ def resolve_tier_models(base_url=None, models=None, default=None):
 
 
 def roles_mode(model=None):
-    """主会话形态（v3.5.0 三档精确匹配）：实跑模型名归一化（_norm_model：
-    剥 [1M] 后缀 + casefold）后依次匹配 三档配置值（resolve_tier_models），
-    同值配多档时 轻>中>重（首个命中即该形态）：
+    """主会话形态（v3.5.12 两档简化，用户拍板「mid 没填就按两档处理」）：
+    实跑模型名归一化（_norm_model：剥 [1M] 后缀 + casefold）后依次匹配
+    三档配置值（resolve_tier_models），同值配多档时 轻>中>重：
     - "light"：轻主力——designer+reviewer 双代理 + 分级线/事中闸/结算审计；
-    - "mid"：中主力——直干 + reviewer 审核兜底（=旧 strong 行为）；
-    - "heavy"：最信任档——纯直干零代理零审计（仅 mid_model 显式配齐且与
-      heavy 不同值时重档值才命中 heavy——mid 缺省=重档同值，重档值命中
-      按中档跑，重档必须显式 opt-in）；
-    - 未匹配任何档 / 名字不可得 / 内部异常 → "mid"（安全兜底：漏配的
-      最坏后果是多一道审）。"""
+    - "mid"：中主力——直干 + reviewer 审核兜底（=旧 strong 行为；仅
+      mid_model 显式配置时这一层才存在）；
+    - "heavy"：最信任档——纯直干零代理零审计（mid 没配=两档制：重档值
+      命中直接 heavy，不再要求三档配齐——v3.5.0 的 D2 opt-in 语义撤除）；
+    - 未匹配：mid 配了兜 mid（安全：多一道审），mid 没配按两档兜 heavy；
+      名字不可得同款兜底；内部异常兜 mid。"""
     try:
         model = str(model or "").strip()
-        if not model:
-            return "mid"
-        n = _norm_model(model)
         cfg = roles_cfg()
+        mid_set = bool(str(cfg.get("mid_model") or "").strip())
+        if not model:
+            return "mid" if mid_set else "heavy"
+        n = _norm_model(model)
         light, mid, heavy = resolve_tier_models()
-        mid_set = bool(str(cfg.get("mid_model") or "").strip())   # mid 显式配齐？
         if light and n == _norm_model(light):
             return "light"
         if mid_set and mid and n == _norm_model(mid):
             return "mid"
-        if heavy and n == _norm_model(heavy) and mid_set \
-                and _norm_model(mid) != _norm_model(heavy):
+        if heavy and n == _norm_model(heavy):
             return "heavy"
-        return "mid"
+        return "mid" if mid_set else "heavy"
     except Exception:
         return "mid"
 

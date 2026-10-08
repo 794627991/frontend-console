@@ -145,7 +145,7 @@
       // v3.5.0 判定依据行：实跑名 vs 命中档位（档位匹配静默失败可见化）
       const rs = init.resolved || {};
       const _hitTier = mode === 'light' ? '轻档' : (mode === 'heavy' ? '重档' : '中档');
-      const basisTxt = `实跑 ${dm || '未设置'} → ${_hitTier}${mode === 'mid' && !String(cfg.mid_model || '').trim() ? '（mid 未配：重档值命中按中档跑）' : ''}`;
+      const basisTxt = `实跑 ${dm || '未设置'} → ${_hitTier}${!String(cfg.mid_model || '').trim() ? '（中档未配：两档制，非轻即重）' : ''}`;
       // 设计者/审计者槽（v2.53）：读写 designer_model/reviewer_model 新键，
       // 留空=回退重池（heavy_model→自动）——与后端 resolve_agent_models
       // 回退链一致；旧 light/heavy 池键不再从面板暴露
@@ -168,7 +168,7 @@
             <span class="hg-roles-modeinfo">当前形态：<b>${mode === 'light' ? '轻主力 · 直干+设计+审核' : mode === 'heavy' ? '重主力 · 纯直干（最信任档，全免）' : '中主力 · 直干+审核兜底'}</b></span>
           </div>
           <details class="hg-roles-more"><summary>工作方式说明</summary>
-            <div>三形态都<b>主会话直干所有活</b>（编码/执行/调试不派干活子代理）：实跑模型命中<b>轻档</b> = 轻主力——配设计 + 审核两个代理；命中<b>中档</b> = 中主力——直干 + 审核兜底；命中<b>重档</b> = 重主力——纯直干最信任档（不装任何代理、分级线/审计全免）。档位按下方三档下拉精确匹配（同值多档取轻→中→重；未匹配默认中档；中档未配时重档值按中档跑——重档须三档配齐才生效）。保存后档位/分级线随下条消息热更生效（agents 自动重生成），审核模式立即生效。当前判定：${esc(basisTxt)}。</div>
+            <div>三形态都<b>主会话直干所有活</b>（编码/执行/调试不派干活子代理）：实跑模型命中<b>轻档</b> = 轻主力——配设计 + 审核两个代理；命中<b>中档</b> = 中主力——直干 + 审核兜底；命中<b>重档</b> = 重主力——纯直干最信任档（不装任何代理、分级线/审计全免）。档位按下方下拉精确匹配（同值多档取轻→中→重；<b>中档未配置 = 两档制：非轻即重</b>，重档值命中直接重主力）。保存后档位/分级线随下条消息热更生效（agents 自动重生成），审核模式立即生效。当前判定：${esc(basisTxt)}。</div>
             <div class="hg-roles-sec" style="margin-top:8px;">代理模型细调 <i>默认自动取重档 · 一般无需改</i></div>
             <div class="hg-roles-slot" title="designer：只设计，出方案不干活。留空=回退重档 heavy_model，再按当前方案自动识别">
               <span class="hg-roles-ico des">设</span>
@@ -188,17 +188,17 @@
             <span class="hg-roles-name">轻档<i>轻主力 · 直干+设计+审核</i></span>
             <select data-hg-r-light>${mkOpts(cfg.light_model || '')}</select>
           </div>
-          <div class="hg-roles-slot" title="中档：中主力直干——只装审核兜底代理。留空=同重档值（形态判定上重档值按中档跑；重档须三档配齐才生效）">
+          <div class="hg-roles-slot" title="中档：中主力直干——只装审核兜底代理。留空=没有中档这一层（两档制：非轻即重）">
             <span class="hg-roles-ico mid">中</span>
             <span class="hg-roles-name">中档<i>中主力 · 直干+审核兜底</i></span>
-            <select data-hg-r-mid>${mkOpts(cfg.mid_model || '', '默认（=重档值，按中档形态跑）')}</select>
+            <select data-hg-r-mid>${mkOpts(cfg.mid_model || '', '默认（未配置：按两档处理）')}</select>
           </div>
-          <div class="hg-roles-slot" title="重档：最信任档纯直干——不装任何代理、分级线/事中闸/结算审计全免；仅中档配齐且与重档不同值时生效">
+          <div class="hg-roles-slot" title="重档：最信任档纯直干——不装任何代理、分级线/事中闸/结算审计全免">
             <span class="hg-roles-ico main">重</span>
             <span class="hg-roles-name">重档<i>重主力 · 纯直干全免</i></span>
             <select data-hg-r-heavy>${mkOpts(cfg.heavy_model || '')}</select>
           </div>
-          <div class="hg-roles-note">留空档位按方案自动识别；重档须三档配齐才生效（中档未配时重档值按中档跑，防审核兜底被静默拆除）</div>
+          <div class="hg-roles-note">留空档位按方案自动识别；中档未配置=两档制（非轻即重），重档值命中直接重主力</div>
 
           <div class="hg-roles-sec">分级线 <i>按单次直改行数 · 不计文件数 · 不做累计</i></div>
           <div class="hg-roles-line" title="单次直改总计 ≤ 此行数的小改（配置/常量/文案/注释级）主会话直接改，免审">
