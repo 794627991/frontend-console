@@ -1322,6 +1322,20 @@ def harness_set_vision():
 # ---- from claude_harness.py:3972 (harness_roles_info) ----
 
 
+@harness_bp.route("/version")
+def harness_version():
+    """harness 版本下发（v3.5.0+ 与工具版本分离）：单一源 src.harness.
+    HARNESS_VERSION；同时带工具发版版本（APP_VERSION）供前端一并显示，
+    两条版本线互不牵连。"""
+    from . import HARNESS_VERSION
+    try:
+        from src.version import APP_VERSION
+    except Exception:
+        APP_VERSION = ""
+    return jsonify({"ok": True, "harness": HARNESS_VERSION,
+                    "app": APP_VERSION})
+
+
 @harness_bp.route("/roles")
 def harness_roles_info():
     """角色设计说明（/roles 命令数据源）。resolved 是按当前 API 方案解析

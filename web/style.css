@@ -2977,6 +2977,9 @@ span.h-ag-type[class*='h-ava-'] {
 .hg-roles-more { font-size: var(--fs-sm); color: var(--muted); margin-bottom: 4px; }
 .hg-roles-more summary { cursor: pointer; user-select: none; }
 .hg-roles-more summary:hover { color: var(--fg); }
+/* v3.5.0+（用户实锤「点开屏幕快放不下」）：说明体+折叠的代理槽限高滚动，
+   展开不再撑爆小屏弹窗 */
+.hg-roles-more[open] { display: block; max-height: 40vh; overflow-y: auto; }
 .hg-roles-more div { padding: 6px 9px; margin-top: 5px; line-height: 1.75;
   background: color-mix(in srgb, var(--accent) 7%, transparent); border-radius: 6px; }
 .hg-roles-sec { font-size: var(--fs-sm); font-weight: 600; color: var(--fg);

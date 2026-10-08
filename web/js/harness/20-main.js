@@ -185,6 +185,14 @@ function buildClaudeHarnessTab(opts = {}) {
     } catch (_) {}
   };
   _hgDiag('boot', (window._HG_VER || 'v?') + ' 会话页构建完成');
+  // v3.5.0+（用户拍板「harness 版本与工具版本分离」）：静态 _HG_VER 仅首屏
+  // 兜底，启动即拉单一源覆盖（bump 只改 src/harness/__init__.py 一处）；
+  // 工具发版版本（APP_VERSION）一并取回供 ⓘ 双行显示
+  fetch('/api/harness/version').then(r => r.json()).then(j => {
+    if (!j || !j.ok || !j.harness) return;
+    window._HG_VER = 'v' + j.harness;
+    window._APP_VER = j.app || '';
+  }).catch(() => {});
   try {
     const dgBtn = document.createElement('button');
     dgBtn.textContent = 'ⓘ';
@@ -194,7 +202,9 @@ function buildClaudeHarnessTab(opts = {}) {
       try {
         // v3.4.74（用户定调）：4 秒启动徽标撤除——版本固定随诊断弹窗首行显示
         const lines = (_HG.diag || []).slice().reverse();
-        showBanner('版本 ' + (window._HG_VER || '?') + ' · 诊断日志（最新在前）：<br>' + (lines.length
+        const _v = 'harness ' + (window._HG_VER || '?')
+          + (window._APP_VER ? ' · 工具 v' + window._APP_VER : '');
+        showBanner('版本 ' + _v + ' · 诊断日志（最新在前）：<br>' + (lines.length
           ? lines.slice(0, 14).map(esc).join('<br>') : '（空）'), 12000);
       } catch (e) { try { showBanner('诊断日志读取失败：' + e, 4000, true); } catch (_) {} }
     };
