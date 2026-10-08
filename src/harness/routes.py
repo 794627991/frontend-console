@@ -1350,8 +1350,22 @@ def harness_roles_info():
                                 roles_cfg, roles_mode)
     li, mi, hv = resolve_tier_models()
     dmr, rmr = resolve_agent_models()
+    # v3.5.3（用户实锤「用 glm-5.3 显示轻主力」）：mode 判定对象错位——旧
+    # 取方案默认模型，会话实跑与 default 不同时显示与行为分裂（引导词/
+    # agents 安装走实跑是对的）。带 sid 且会话在跑：按 _eff_model（CLI
+    # 实报名优先）判定；无 sid/找不到会话回退方案默认
+    _eff = None
+    _sid = str(request.args.get("sid") or "").strip()
+    if _sid:
+        from .consts import _sessions
+        s = _sessions.get(_sid)
+        if s:
+            try:
+                _eff = s._eff_model()
+            except Exception:
+                _eff = None
     try:
-        mode = roles_mode(available_models().get("default"))
+        mode = roles_mode(_eff or available_models().get("default"))
     except Exception:
         mode = "mid"
     return jsonify({"ok": True, "roles": roles_cfg(), "mode": mode,

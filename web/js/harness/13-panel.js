@@ -297,7 +297,10 @@
   }
   async function _hgRolesFetch() {       // roles 只读拉取（缓存+刷面板；失败静默）
     try {
-      const j = await (await fetch('/api/harness/roles')).json();
+      // v3.5.3：带 sid——mode 按当前会话实跑模型判定（不带则回退方案默认，
+      // 实跑与默认不同时徽章会错形态）
+      const q = _HG.sid ? ('?sid=' + encodeURIComponent(_HG.sid)) : '';
+      const j = await (await fetch('/api/harness/roles' + q)).json();
       if (j && j.ok) { _hgRolesCache = j; renderSideStatus(); }
       return j;
     } catch(_) { return null; }

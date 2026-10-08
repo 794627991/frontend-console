@@ -314,7 +314,7 @@
       // 实跑模型命中哪档=哪形态；三形态主会话都直干所有活
       (async () => {
         let j = null;
-        try { j = await (await fetch('/api/harness/roles')).json(); } catch(_) {}
+        try { j = await (await fetch('/api/harness/roles' + (_HG.sid ? '?sid=' + encodeURIComponent(_HG.sid) : ''))).json(); } catch(_) {}
         const r = (j && j.roles) || {};
         const rs = (j && j.resolved) || {};
         const mode = (j && j.mode) || 'mid';

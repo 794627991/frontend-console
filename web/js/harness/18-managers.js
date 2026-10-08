@@ -108,7 +108,7 @@
   }
   async function openRolesCfg() {
     let j = null;
-    try { j = await (await fetch('/api/harness/roles')).json(); } catch(_) {}
+    try { j = await (await fetch('/api/harness/roles' + (_HG.sid ? '?sid=' + encodeURIComponent(_HG.sid) : ''))).json(); } catch(_) {}
     if (!j || !j.ok) { showBanner('读取三角色配置失败', 3000, true); return; }
     const saved = await hgRolesManager(j);
     if (saved === null) return;                 // 取消不动
