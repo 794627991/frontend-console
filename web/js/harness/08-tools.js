@@ -827,7 +827,10 @@ function _taskFinish(tid, state, summary) {
   if (card) {
     _taskStop(card);
     if (summary) card.title = String(summary).slice(0, 2000);   // 悬浮全文（轻量：无展开体）
-    const dur = _hgFmtDur(((t && t.doneAt) || Date.now()) - (+(card.dataset.t0 || 0) || Date.now())) || '';
+    // 用户实锤「时间不对」：_hgFmtDur 入参是秒——差值毫秒须 /1000（旧码
+    // 把 11682ms 当 11682s 渲染成 3h14m42s）
+    const dur = _hgFmtDur((((t && t.doneAt) || Date.now())
+      - (+(card.dataset.t0 || 0) || Date.now())) / 1000) || '';
     _taskCardPaint(card, state, dur);
   }
   _subDirPaint && _HG.active === '__dir__' && _subDirPaint();
