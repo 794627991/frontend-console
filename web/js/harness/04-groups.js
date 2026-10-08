@@ -627,6 +627,17 @@
     // v3.5.7（用户拍板）：用户气泡纯文本渲染（plainBubble）——贴 diff/注释
     // 的行首 # 不再被 md 解析成大标题（用户实锤满屏大字「太难看」）
     d.appendChild(plainBubble(body));
+    // v3.5.11（用户需求）：超长消息自动折叠——贴大段 diff/引用时整屏被一
+    // 条气泡占满。默认收起（限高+渐隐+「展开 ▾」），点开全文/再收起；按钮
+    // 走 flow 委托（快照 onclick 不序列化），折叠态 class 随快照恢复
+    if (String(text || '').trim().length > 300) {
+      d.classList.add('longfold');
+      const fb = document.createElement('button');
+      fb.className = 'h-fold-btn';
+      fb.dataset.hgFold = '1';
+      fb.innerHTML = '展开全文 ▾';
+      d.appendChild(fb);
+    }
     // v2.22：一键重发 + 编辑后重发——原始内容存 dataset（属性可随
     // innerHTML 快照恢复），钮 hover 显示，点击走 flow 委托
     d.dataset.rtext = text || '';

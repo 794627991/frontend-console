@@ -943,6 +943,18 @@ function buildClaudeHarnessTab(opts = {}) {
   // 都可回滚到那里）。按钮 innerHTML 随气泡生成/随快照克隆，直绑 onclick
   // 会丢（同 h-macts 既有解法），flow 级委托一次永在
   _hgFlow.addEventListener('click', async (e) => {
+    // v3.5.11：超长用户消息折叠切换——委托绑一次（快照恢复 onclick 不
+    // 序列化），按钮文案随态换（▾ 展开 / ▴ 收起）
+    const fbtn = e.target.closest('[data-hg-fold]');
+    if (fbtn && _hgFlow.contains(fbtn)) {
+      e.stopPropagation();
+      const host = fbtn.closest('.h-msg.user.longfold');
+      if (host) {
+        host.classList.toggle('open');
+        fbtn.innerHTML = host.classList.contains('open') ? '收起 ▴' : '展开全文 ▾';
+      }
+      return;
+    }
     // v3.4.95（用户需求）：全部收起——所有回合折叠体（含活跃组）一口气
     // add('closed')；定稿组本就收着，实际生效的是用户展开过+当前活跃组
     const _cbtn = e.target.closest('[data-hg-collapse]');

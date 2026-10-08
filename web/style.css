@@ -2429,6 +2429,19 @@ html {
 /* v3.1h：与 AI 消息动作条同构——消息下方右对齐 hover 浮现(原右上角绝对定位) */
 .h-macts { display: none; gap: 4px; justify-content: flex-end; margin: 2px 6px 0 0; }
 .h-msg.user:hover .h-macts { display: flex; }
+/* ---- v3.5.11 超长用户消息自动折叠（用户需求：默认收起，▾ 展开 ▴ 收起）---- */
+/* ::after 已被气泡尾巴占用（2463 行），渐隐走 ::before；底色对齐泡体 */
+.h-msg.user.longfold .h-bubble { max-height: 132px; overflow: hidden; }
+.h-msg.user.longfold .h-bubble::before {   /* 底部渐隐暗示被截断 */
+  content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 46px;
+  background: linear-gradient(transparent,
+    color-mix(in srgb, var(--accent) 18%, var(--bg-card))); pointer-events: none; z-index: 1; }
+.h-msg.user.longfold.open .h-bubble { max-height: none; overflow: visible; }
+.h-msg.user.longfold.open .h-bubble::before { display: none; }
+.h-fold-btn { align-self: flex-end; margin: 4px 6px 0 0; padding: 2px 10px;
+  border: 1px solid var(--border); border-radius: 10px; background: transparent;
+  color: var(--muted); font-size: 11px; cursor: pointer; }
+.h-fold-btn:hover { color: var(--accent); border-color: var(--accent); }
 .h-mico { width: 20px; height: 20px; border-radius: 50%;
   border: 1px solid var(--border); background: var(--bg-card); color: var(--muted);
   cursor: pointer; font-size: 11px; line-height: 1; }
