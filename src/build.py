@@ -2,7 +2,7 @@
 """PyInstaller 打包脚本：前端控制台 → onedir 应用目录（v2.3.0 起）。
 源码整理后入口在 src/main.py，资源（web/、ico/、vendor、spec）在项目根。
 产物 = dist/前端控制台/（exe + _internal/ 依赖），发布形态 = zip。"""
-import os, sys, re, subprocess, shutil
+import os, sys, subprocess, shutil
 
 # v3.4.96：输出编码兜底——打包.bat 设 PYTHONIOENCODING=gbk，⚠/✓ 等
 # 字符在重定向（>file / CI）下 gbk 不可编码直接 UnicodeEncodeError 崩掉
@@ -61,81 +61,6 @@ def build():
         return None
 
 
-def _git_head():
-    """当前 HEAD 短 hash。git 不可用返回 None。"""
-    try:
-        out = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
-                             cwd=BASE, capture_output=True, text=True,
-                             timeout=10, encoding="utf-8", errors="replace")
-        if out.returncode == 0:
-            return out.stdout.strip()
-    except Exception:
-        pass
-    return None
-
-
-def _git_notes_since_last_publish(rel):
-    """从 git 抽取更新说明：上次发布位点（releases/publish_head.txt）到当前
-    HEAD 的提交标题，一行一条（去 hash、去 Co-Authored 尾巴）。没有位点
-    （首次发布）取最近 20 条。抽取失败返回空串（回退到无说明）。"""
-    import subprocess as sp
-    head = _git_head()
-    if not head:
-        return ""
-    marker = os.path.join(rel, "publish_head.txt")
-    old = ""
-    try:
-        with open(marker, encoding="utf-8") as f:
-            old = f.read().strip()
-    except OSError:
-        pass
-    rng = "%s..HEAD" % old if old else "-20"
-    try:
-        out = sp.run(["git", "log", "--oneline", "--no-color", rng],
-                     cwd=BASE, capture_output=True, text=True, timeout=15,
-                     encoding="utf-8", errors="replace")
-        if out.returncode != 0:
-            return ""
-        lines = []
-        for ln in out.stdout.splitlines():
-            ln = ln.strip()
-            if not ln:
-                continue
-            # 「abc1234 修 xxx：yyy」→ 取 hash 后的标题
-            parts = ln.split(" ", 1)
-            subject = parts[1].strip() if len(parts) == 2 else ln
-            # 用户定调「都是 harness 版本改动，最好不要体现」（流水账二犯后
-            # 根治）：门户/更新弹窗是用户视角——剥掉标题开头的内部迭代号
-            # （v3.5.25 / v3.5.14b …），纯 bump 提交整行跳过
-            subject = re.sub(r"^v\d+(\.\d+)+\w*\s*", "", subject)
-            if not subject or subject.startswith("bump"):
-                continue
-            lines.append("· " + subject[:80])
-        # 按行封顶 480 字（门户展示口径 500）：超限整行丢弃——此前 1000 字
-        # 硬截在展示层切出半句话（「重档派发自由(」实锤）
-        kept, total = [], 0
-        for ln in lines:
-            if total + len(ln) + 1 > 480:
-                break
-            kept.append(ln)
-            total += len(ln) + 1
-        return "\n".join(kept)
-    except Exception:
-        return ""
-
-
-def _record_publish_head(rel):
-    """记录本次发布对应的 git HEAD（下次发布抽取增量的位点）。"""
-    head = _git_head()
-    if not head:
-        return
-    try:
-        with open(os.path.join(rel, "publish_head.txt"), "w", encoding="utf-8") as f:
-            f.write(head)
-    except OSError:
-        pass
-
-
 def _publish(app_dir):
     """打包即发布（v2.3.0 zip 形态）：应用目录打成版本化 zip 放 dist/releases/
     + 生成 manifest.json（版本/sha1/大小/日期/说明）。发布机开「升级分发服务」
@@ -165,10 +90,10 @@ def _publish(app_dir):
     with open(dst, "rb") as f:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
-    # 说明三级来源（v2.3.1）：人工 RELEASE_NOTES.md 优先；没有则自动从 git
-    # 抽取「上次发布以来」的提交标题（用户定调：更新内容体现到网页上，
-    # 不想每次手写说明）；git 也不可用则留空。归档 notes-v<ver>.md 供门户
-    # 更新日志逐版展示。
+    # 说明唯一来源（用户定调「自动提取不要了，由我找AI手动处理」——流水账
+    # 两犯后整条路拆除）：只认打包前写好的 RELEASE_NOTES.md；没写就留空，
+    # 发布页该版显示「未写更新说明」。归档 notes-v<ver>.md 供门户更新日志
+    # 逐版展示。
     notes = ""
     notes_path = os.path.join(BASE, "RELEASE_NOTES.md")
     if os.path.exists(notes_path):
@@ -177,8 +102,6 @@ def _publish(app_dir):
                 notes = f.read().strip()[:500]
         except OSError:
             pass
-    if not notes:
-        notes = _git_notes_since_last_publish(rel)
     if notes:
         try:
             with open(os.path.join(rel, "notes-v%s.md" % APP_VERSION),
@@ -186,7 +109,6 @@ def _publish(app_dir):
                 f.write(notes)
         except OSError:
             pass
-    _record_publish_head(rel)
     manifest = {
         "version": APP_VERSION,
         "file": ver_name,
@@ -205,7 +127,7 @@ def _publish(app_dir):
     print(f"  sha1: {manifest['sha1']}")
     print(f"  同事升级地址: http://{_lan_ip()}:{PORT}/"
           f"（需在设置里开启「升级分发服务」）")
-    print(f"  说明文件: RELEASE_NOTES.md（本次 {'已带' if notes else '未写，发布前补上更友好'}）")
+    print(f"  说明文件: RELEASE_NOTES.md（本次 {'已带' if notes else '未写——发布页该版将无更新说明，发布前找AI写好放项目根'}）")
     print("  ⚠ v2.2.x 及更早的 onefile 旧版无法自动升级到 zip 形态——"
           "需把 zip 发给同事手动解压换装一次（2.3.0 起全程自动）")
 
