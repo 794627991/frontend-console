@@ -753,7 +753,10 @@ async function load(){
     }
     const rest=j.items.slice(1);
     if(rest.length){
-      h+='<div style="font-size:12px;color:var(--muted);letter-spacing:2px;margin:26px 0 12px">更新日志</div><div class="vlist">';
+      // 历史更新日志默认收起（用户定调「只有点开才显示」）：标题条兼开关，
+      // 默认页面只呈现最新版大卡 + 离线资源包，点标题才展开历史条目
+      h+='<div id="hlog" title="点击展开/收起历史更新日志" style="font-size:12px;color:var(--muted);letter-spacing:2px;margin:26px 0 12px;cursor:pointer;user-select:none">▸ 更新日志 · 历史版本 '+rest.length+' 条</div>'
+        +'<div class="vlist" id="hlogList" style="display:none">';
       for(const it of rest){
         h+='<div class="card vitem" style="align-items:flex-start"><div class="vmain">'
           +'<div class="vname">v'+esc(it.version)
@@ -767,6 +770,12 @@ async function load(){
       h+='</div>';
     }
     el.innerHTML=h;
+    const hlog=document.getElementById('hlog'), hlist=document.getElementById('hlogList');
+    if(hlog) hlog.onclick=()=>{
+      const open=hlist.style.display!=='none';
+      hlist.style.display=open?'none':'';
+      hlog.textContent=(open?'▸':'▾')+' 更新日志 · 历史版本 '+rest.length+' 条';
+    };
   }catch(e){document.getElementById('body').innerHTML=
     '<div class="card empty">加载失败：'+esc(e)+'</div>'}
 }
