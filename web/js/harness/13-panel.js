@@ -491,7 +491,7 @@
         rEl.title = _mode === 'light'
           ? `轻主力模式（点击打开配置面板）\n设计：${_res.designer || _res.heavy || '…'}\n审核：${_res.reviewer || _res.heavy || '…'}`
           : _mode === 'heavy'
-            ? '重主力纯直干（最信任档，零代理零审计；点击打开配置面板）'
+            ? '重主力（最信任档：直干+派发自由，免强制分级；点击打开配置面板）'
             : `中主力直干模式（点击打开配置面板）\n审核兜底：${_res.reviewer || _res.heavy || '…'}`;
       } else {
         rEl.textContent = '关闭·直连';

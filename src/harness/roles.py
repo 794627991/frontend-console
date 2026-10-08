@@ -16,9 +16,10 @@ reviewer_model），换 API 方案改配置即可，不用动代码。
 - light 轻档：轻主力——designer+reviewer 双代理 + 分级线全档 + 事中闸
   + 回合结算审计（=旧 light 行为）；
 - mid 中档：中主力——直干 + 仅 reviewer 审核兜底（=旧 strong 行为）；
-- heavy 重档：最信任档——纯直干，不装任何角色代理，分级线/事中闸/
-  回合结算审计全免（v3.5.12 两档简化：mid 没配=没有中档这一层，重档值
-  命中直接 heavy，不再要求三档配齐）；
+- heavy 重档：最信任档——直干为主但**派发自由**（designer/reviewer/通用
+  子代理按需都可派，v3.5.16 用户纠偏「重模型难道不能派代理吗」），免的
+  只是强制分级线（事中闸/回合结算审计全免）；v3.5.12 两档简化：mid 没配
+  =没有中档这一层，重档值命中直接 heavy；
 - 未匹配：mid 配了兜 mid（安全：多一道审），mid 没配按两档兜 heavy。
 main_model / light_keywords（v3.4.95 词表识别）已退役：三档下拉本身即
 显式声明，第二真相源只会重蹈「配置漂移压死实跑」的坑。
@@ -38,10 +39,9 @@ main_model / light_keywords（v3.4.95 词表识别）已退役：三档下拉本
 - executor/coder/dev 三角色退役：任何形态都不安装、md 退役删除。
 
 安装/退役（install_roles_agents，幂等）：
-- light → designer.md + reviewer.md；mid → 只 reviewer.md；heavy →
-  两文件都删（agents 目录被 CLI 自动发现注入系统提示，残留=重档模型仍
-  可自发派发，违背「最信任档零代理」——v2.37 共存原则的定向例外；
-  并发安全由 ensure_roles_ready 派发前自愈兜底）；
+- light/heavy → designer.md + reviewer.md 双装（heavy 派发自由，
+  v3.5.16——昔日「重档定向删两文件」的例外随禁派发语义退役）；mid →
+  只 reviewer.md；
 - executor.md/coder.md/dev.md 无条件退役清理；
 - 开关关闭 → 全部清理。
 
@@ -493,9 +493,26 @@ def install_roles_agents(model=None):
                 reviewer_m, _REVIEWER_BODY, tools=_TOOLS_REVIEW),
         }
     else:
-        # heavy 最信任档：零代理——designer/reviewer 都删（CLI 自动发现
-        # 机制下残留即自发派发入口）
-        wanted = {}
+        # heavy 最信任档（v3.5.16 纠偏）：与 light 同款双装——派发自由是
+        # 用户的明确要求（重模型手脚不捆），免的只是强制分级；此前 v3.5.0
+        # 的定向删（残留=自发派发入口）随「禁派发」语义一并退役
+        wanted = {
+            "designer.md": _agent_md(
+                "designer",
+                "设计者：只设计，绝不干活——架构/模块划分/关键决"
+                "策/风险/依赖顺序的框架方案；不写代码不改文件不跑实现。需"
+                "要高水平方案时派此代理，并把已知上下文尽可能带上。",
+                designer_m, _DESIGNER_BODY, tools=_TOOLS_DESIGN),
+            "reviewer.md": _agent_md(
+                "reviewer",
+                "审计者：改动交付或超审计线时派此代理审——分"
+                "两档：轻审（只审 diff）／全审（取证级：需求符合性/逻辑/健"
+                "壮性/安全/一致性）。只读不改，PASS/FAIL 二选一。"
+                "复审（复核自己 FAIL 过的修复）由主会话 SendMessage 续派本"
+                "代理完成——上下文保留逐条验收、免重读文件；新审计目标才新开"
+                "本代理。",
+                reviewer_m, _REVIEWER_BODY, tools=_TOOLS_REVIEW),
+        }
     wrote = []
     for fn in _SELF_AGENTS:
         p = os.path.join(d, fn)
@@ -508,16 +525,8 @@ def install_roles_agents(model=None):
                 pass
             continue
         if fn not in wanted:
-            # v3.5.0：另一形态在用文件原则上共存不清理（v2.37 目录共享），
-            # 唯 heavy 形态例外——重档零代理，designer/reviewer 残留即是
-            # 自发派发入口，定向删除
-            if mode == "heavy" and fn in ("designer.md", "reviewer.md"):
-                try:
-                    if os.path.isfile(p):
-                        os.remove(p)
-                        wrote.append("%s(heavy,删)" % fn)
-                except Exception:
-                    pass
+            # 另一形态的在用文件——共存不清理（v2.37 目录共享原则；v3.5.16
+            # heavy 已改双装，昔日的定向删分支随「禁派发」语义退役）
             continue
         try:
             cur = None
@@ -540,14 +549,13 @@ def ensure_roles_ready(model=None):
     （install 有变才写，成本可忽略），兜住一切上游删除路径（旧版互清/
     测试误清/人工误删），保证派发瞬间定义必在。返回安装前**缺失**的期望
     文件名清单——非空=发生过自愈，调用方应红卡告警（陈旧内容由 install
-    静默修复，审计日志可查）。light 需要 designer.md+reviewer.md；mid
-    只需 reviewer.md（审计兜底代理）；heavy 零文件。"""
+    静默修复，审计日志可查）。light/heavy 需要 designer.md+reviewer.md
+    （heavy 派发自由，v3.5.16）；mid 只需 reviewer.md（审计兜底代理）。"""
     if not roles_cfg()["enabled"]:
         return []
     d = _agents_dir_guard(_agents_dir())
     _m = roles_mode(model)
-    need = (["designer.md", "reviewer.md"] if _m == "light"
-            else (["reviewer.md"] if _m == "mid" else []))
+    need = ["reviewer.md"] if _m == "mid" else ["designer.md", "reviewer.md"]
     missing = [fn for fn in need if not os.path.isfile(os.path.join(d, fn))]
     install_roles_agents(model)
     if missing:
@@ -710,13 +718,17 @@ def roles_bridge_text(model=None):
         return ""
     _mode = roles_mode(model)
     if _mode == "heavy":
-        # 重档极简词（D5）：不含 reviewer/审计/免审/任何线数字（词与机制
-        # 同源——heavy 的 _audit_state 返回 None 全免）；只留交付纪律
-        # （回合终点纪律与审计无关，信任档也要）
+        # 重档词（v3.5.16 用户实锤纠偏「重模型难道不能派代理吗」）：撤
+        # 「不派任何子代理」——最强模型手脚不该被捆。派发自由（设计/审核/
+        # 通用子代理按需判断），免的只是强制审核分级线（_audit_state 全免
+        # 不变）；交付纪律保留
         return (
             "【主会话直干（你=最信任档）】\n"
-            "本会话用最信任档模型直接干活：全部任务亲自完成，不派任何子代"
-            "理，无审核分级线。\n"
+            "本会话用最信任档模型直接干活：编码、执行、调试通常你亲自完成"
+            "（能力最强直干最快），但子代理按需自由使用——并行探查、独立"
+            "设计（designer）、对抗审核（reviewer）、通用任务代理都可以派，"
+            "何时派你自己判断。无审核分级线强制（不会审计你的直改量），质"
+            "量由你自己把关。\n"
             "质量纪律：\n"
             "- 动手前先想清楚：需求边界、实现路径、风险点；复杂改动先在回"
             "复里列出方案要点再实施。\n"

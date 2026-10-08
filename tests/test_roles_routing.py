@@ -239,15 +239,16 @@ write_cfg(enabled=False)
 check("开关关 → 空串", hr.roles_bridge_text(LIGHT_MODEL) == "")
 write_cfg(enabled=True, light_model=POOL_LIGHT, heavy_model=POOL_HEAVY)
 
-# ============ 5b. heavy 引导词（v3.5.0 最信任档） ============
-print("[5b] heavy 引导词（纯直干全免）")
+# ============ 5b. heavy 引导词（v3.5.16 纠偏：直干+派发自由） ============
+print("[5b] heavy 引导词（直干+派发自由）")
 write_cfg(enabled=True, light_model=POOL_LIGHT, mid_model=MID_MODEL,
           heavy_model=POOL_HEAVY)
 gh = hr.roles_bridge_text(POOL_HEAVY)
 check("heavy 词=最信任档直干", "最信任档" in gh and "亲自完成" in gh)
-check("heavy 词无任何代理/审计/线数字（词与机制同源）",
-      all(w not in gh for w in ("reviewer", "designer", "审计", "免审",
-                                "轻审", "≤")))
+check("heavy 词派发自由（designer/reviewer 按需可派，v3.5.16）",
+      "子代理按需自由使用" in gh and "designer" in gh and "reviewer" in gh)
+check("heavy 词无强制分级线数字（审计全免，词与机制同源）",
+      all(w not in gh for w in ("审计线", "免审线", "轻审线", "≤")))
 check("heavy 词含回合终点纪律（信任档也要交付纪律）",
       "回合终点纪律" in gh and "结论汇总" in gh)
 check("mid/heavy 词不同", gh != gs)
@@ -448,18 +449,18 @@ hr.install_roles_agents(LIGHT_MODEL)     # light
 check("light 装 designer+reviewer",
       os.path.isfile(os.path.join(ad, "designer.md"))
       and os.path.isfile(os.path.join(ad, "reviewer.md")))
-# v3.5.0 heavy：零代理——两文件定向删（CLI 自动发现下残留=自发派发入口）
+# v3.5.16 heavy：派发自由——与 light 同款双装（昔日定向删随禁派发语义退役）
 write_cfg(enabled=True, light_model=POOL_LIGHT, mid_model=MID_MODEL,
           heavy_model=POOL_HEAVY)
 hr.install_roles_agents(POOL_HEAVY)      # heavy（mid 配齐 → heavy 可达）
-check("heavy 清 designer+reviewer（零代理定向删，v2.37 共存原则例外）",
-      not os.path.isfile(os.path.join(ad, "designer.md"))
-      and not os.path.isfile(os.path.join(ad, "reviewer.md")))
-check("heavy ensure_roles_ready 零文件", hr.ensure_roles_ready(POOL_HEAVY) == [])
+check("heavy 双装 designer+reviewer（派发自由，v3.5.16）",
+      os.path.isfile(os.path.join(ad, "designer.md"))
+      and os.path.isfile(os.path.join(ad, "reviewer.md")))
+check("heavy ensure_roles_ready 查双文件", hr.ensure_roles_ready(POOL_HEAVY) == [])
 hr.install_roles_agents(MID_MODEL)       # mid
-check("mid 只装 reviewer（heavy 删后自愈重装）",
+check("mid 只装 reviewer（designer 共存保留，v2.37 原则）",
       os.path.isfile(os.path.join(ad, "reviewer.md"))
-      and not os.path.isfile(os.path.join(ad, "designer.md")))
+      and os.path.isfile(os.path.join(ad, "designer.md")))
 write_cfg(enabled=True, light_model=POOL_LIGHT, heavy_model=POOL_HEAVY)
 hr.install_roles_agents(LIGHT_MODEL)     # 复原 light 双装（后续段依赖）
 with open(os.path.join(ad, "designer.md"), encoding="utf-8") as f:

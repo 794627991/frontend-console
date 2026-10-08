@@ -163,7 +163,7 @@
         <div class="hg-modal-body">
           <div class="hg-roles-top">
             <label class="hg-vision-switch"><input type="checkbox" data-hg-r-on${cfg.enabled ? ' checked' : ''}> 启用三角色</label>
-            <span class="hg-roles-modeinfo">当前形态：<b>${mode === 'light' ? '轻主力 · 直干+设计+审核' : mode === 'heavy' ? '重主力 · 纯直干（最信任档，全免）' : '中主力 · 直干+审核兜底'}</b></span>
+            <span class="hg-roles-modeinfo">当前形态：<b>${mode === 'light' ? '轻主力 · 直干+设计+审核' : mode === 'heavy' ? '重主力 · 直干+派发自由（免强制分级）' : '中主力 · 直干+审核兜底'}</b></span>
           </div>
           <details class="hg-roles-more"><summary>工作方式说明</summary>
             <div>三形态都<b>主会话直干所有活</b>（编码/执行/调试不派干活子代理）：实跑模型命中<b>轻档</b> = 轻主力——配设计 + 审核两个代理；命中<b>中档</b> = 中主力——直干 + 审核兜底；命中<b>重档</b> = 重主力——纯直干最信任档（不装任何代理、分级线/审计全免）。档位按下方下拉精确匹配（同值多档取轻→中→重；<b>中档未配置 = 两档制：非轻即重</b>，重档值命中直接重主力）。保存后档位/分级线随下条消息热更生效（agents 自动重生成），审核模式立即生效。当前判定：${esc(basisTxt)}。</div>
@@ -191,9 +191,9 @@
             <span class="hg-roles-name">中档<i>中主力 · 直干+审核兜底</i></span>
             <select data-hg-r-mid>${mkOpts(cfg.mid_model || '', '默认（未配置：按两档处理）')}</select>
           </div>
-          <div class="hg-roles-slot" title="重档：最信任档纯直干——不装任何代理、分级线/事中闸/结算审计全免">
+          <div class="hg-roles-slot" title="重档：最信任档——直干为主但派发自由（设计/审核/通用子代理按需都可派），免的只是强制分级线（事中闸/结算审计全免）">
             <span class="hg-roles-ico main">重</span>
-            <span class="hg-roles-name">重档<i>重主力 · 纯直干全免</i></span>
+            <span class="hg-roles-name">重档<i>重主力 · 直干+派发自由</i></span>
             <select data-hg-r-heavy>${mkOpts(cfg.heavy_model || '')}</select>
           </div>
           <div class="hg-roles-note">留空档位按方案自动识别；中档未配置=两档制（非轻即重），重档值命中直接重主力</div>
