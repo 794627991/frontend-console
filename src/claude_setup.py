@@ -14,6 +14,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import zipfile
@@ -45,7 +46,14 @@ def _log(msg):
 
 
 def _app_dir():
-    """工具根目录（src/ 的上级——打包 exe 场景为 exe 所在目录）。"""
+    """工具根目录。v3.5.27（用户实锤「发布版离线升级 claude 不可用」）：
+    旧实现用 __file__ 上溯——打包（frozen）下 __file__ 在 _internal/src/，
+    推出的根是 _internal/，而 _sync_offline_pkg 把 offline_pkg 放 exe 同级
+    （_internal 的上一级）→ 发布版永远搜不到离线资源，离线升级失效。
+    改 frozen 感知：exe 场景取 sys.executable 所在目录（exe 同级正是
+    offline_pkg 落点）；源码场景维持 src/ 上溯。"""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
