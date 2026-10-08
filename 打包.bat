@@ -25,7 +25,9 @@ if not exist "dist\前端控制台\前端控制台.exe" goto fail
 
 rem v2.3.8 自检（解密+全依赖 import，不碰单实例锁）
 "dist\前端控制台\前端控制台.exe" --selftest
-type "dist\前端控制台\selftest_result.txt"
+rem v3.4.96b: 自检结果为 UTF-8 文件, type 按码页直倒会花脸——
+rem 经 python 按 UTF-8 读出显示（findstr 判定不受影响）
+"%PY%" -c "import io,sys; sys.stdout.reconfigure(errors='replace'); print(io.open(r'dist\前端控制台\selftest_result.txt', encoding='utf-8', errors='replace').read(), end='')"
 findstr /C:"selftest FAIL" "dist\前端控制台\selftest_result.txt" >nul && goto fail
 
 :ok
