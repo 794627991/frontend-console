@@ -54,6 +54,7 @@ def build():
         except Exception as e:
             print("⚠ 资源加密失败（发布 zip 将含明文 web）:", e)
         _publish(app_dir)
+        _publish_offline_pkg()   # v3.4.97：离线资源包同步进 releases（发布页可下载）
         return dist
     else:
         print("打包失败：未找到 exe")
@@ -193,6 +194,55 @@ def _publish(app_dir):
     print(f"  说明文件: RELEASE_NOTES.md（本次 {'已带' if notes else '未写，发布前补上更友好'}）")
     print("  ⚠ v2.2.x 及更早的 onefile 旧版无法自动升级到 zip 形态——"
           "需把 zip 发给同事手动解压换装一次（2.3.0 起全程自动）")
+
+
+def _publish_offline_pkg():
+    """v3.4.97（用户需求「offline_pkg 同步到 release 形成压缩包，发布页
+    同步提供」）：dist/offline_pkg → dist/releases/<应用名>-offline-pkg-
+    v<ver>.zip。发布页 _versions() 自动列出带 -v 的 zip——同事端门户即见
+    即下。指纹（文件数+大小+mtime 汇总）不变且包在则跳过重压（几百 MB
+    级）。刻意不写 manifest.json——自动更新器只认主应用包，离线资源绝
+    不能被当应用更新推下去。"""
+    import zipfile
+    src = os.path.join(BASE, "dist", "offline_pkg")
+    if not os.path.isdir(src):
+        print("offline-pkg: dist/offline_pkg 不存在，跳过")
+        return
+    from src.version import APP_VERSION
+    rel = os.path.join(BASE, "dist", "releases")
+    os.makedirs(rel, exist_ok=True)
+    dst = os.path.join(rel, "%s-offline-pkg-v%s.zip" % (APP_NAME, APP_VERSION))
+    n_files = total = 0
+    for r, _, fs in os.walk(src):
+        for f in fs:
+            try:
+                st = os.stat(os.path.join(r, f))
+            except OSError:
+                continue
+            n_files += 1
+            total += st.st_size + int(st.st_mtime)
+    fp = "%d-%d" % (n_files, total)
+    fp_file = os.path.join(rel, "offline-pkg.fingerprint")
+    try:
+        with open(fp_file, encoding="utf-8") as f:
+            old = f.read().strip()
+    except OSError:
+        old = ""
+    if old == fp and os.path.isfile(dst):
+        print("offline-pkg: 内容未变，沿用 %s" % os.path.basename(dst))
+        return
+    print("offline-pkg: 压缩 dist/offline_pkg → releases（几百 MB 需几分钟）…")
+    with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as z:
+        for r, _, fs in os.walk(src):
+            for f in fs:
+                p = os.path.join(r, f)
+                z.write(p, os.path.join("offline_pkg", os.path.relpath(p, src)))
+    try:
+        with open(fp_file, "w", encoding="utf-8") as f:
+            f.write(fp)
+    except OSError:
+        pass
+    print("offline-pkg: 已发布 → %s (%d MB)" % (dst, os.path.getsize(dst) // 1024 // 1024))
 
 
 def _refresh_offline_claude():
