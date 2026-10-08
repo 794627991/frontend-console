@@ -32,6 +32,7 @@ def build():
         sz = sum(os.path.getsize(os.path.join(r, f))
                  for r, _, fs in os.walk(app_dir) for f in fs) / 1024 / 1024
         print(f"\n打包成功: {app_dir} ({sz:.1f} MB)")
+        _refresh_offline_claude()   # v3.4.95：离线 claude-code 版本有变即刷新
         _sync_offline_pkg()
         # v2.3.1 发布前资源加密（web 前端源码/blob → AES-256-GCM 密文，
         # exe 启动 src/secure_boot.py 自解密；第三方库不碰）
@@ -182,6 +183,52 @@ def _publish(app_dir):
     print(f"  说明文件: RELEASE_NOTES.md（本次 {'已带' if notes else '未写，发布前补上更友好'}）")
     print("  ⚠ v2.2.x 及更早的 onefile 旧版无法自动升级到 zip 形态——"
           "需把 zip 发给同事手动解压换装一次（2.3.0 起全程自动）")
+
+
+def _refresh_offline_claude():
+    """v3.4.95（用户需求「打包时 claude 版本也重新更新，如果有变化的话」）：
+    本机 npm 全局的 @anthropic-ai/claude-code 与 offline_pkg/claude-code
+    比对版本，不同则镜像刷新（根目录源 + dist 镜像两份）——离线安装资源
+    不再停留在首次打包时的旧版。找不到本机安装（CI/未装）静默跳过。"""
+    import json
+    cands = [
+        os.path.join(os.environ.get("APPDATA", ""), "npm", "node_modules",
+                     "@anthropic-ai", "claude-code"),
+    ]
+    try:   # npm 前缀自定义过的机器
+        out = subprocess.check_output(["npm", "root", "-g"], text=True,
+                                      stderr=subprocess.DEVNULL, timeout=20).strip()
+        if out:
+            cands.append(os.path.join(out, "@anthropic-ai", "claude-code"))
+    except Exception:
+        pass
+    src = next((c for c in cands if os.path.isfile(os.path.join(c, "package.json"))), None)
+    if not src:
+        print("offline claude-code: 未找到本机安装，跳过版本刷新")
+        return
+    def _ver(d):
+        try:
+            with open(os.path.join(d, "package.json"), encoding="utf-8") as f:
+                return json.load(f).get("version") or ""
+        except Exception:
+            return ""
+    src_v = _ver(src)
+    # 版本基准取两处任一现存（根目录源或 dist 镜像——本机常只有 dist 份）
+    dst_v = (_ver(os.path.join(BASE, "offline_pkg", "claude-code"))
+             or _ver(os.path.join(BASE, "dist", "offline_pkg", "claude-code")))
+    if not src_v or src_v == dst_v:
+        print(f"offline claude-code: {dst_v or '无'} 与本机一致，无需刷新")
+        return
+    for dst in (os.path.join(BASE, "offline_pkg", "claude-code"),
+                os.path.join(BASE, "dist", "offline_pkg", "claude-code")):
+        if not os.path.isdir(os.path.dirname(dst)):
+            continue
+        print(f"offline claude-code: {dst_v or '无'} → {src_v} 刷新 {dst} …")
+        # robocopy /MIR 镜像（几百 MB 级，Windows 自带，比 copytree 快且可续传）
+        rc = subprocess.call(["robocopy", src, dst, "/MIR", "/NFL", "/NDL", "/NJH",
+                              "/NJS", "/NP"], timeout=1800)
+        if rc > 7:   # 0-7 均为成功档
+            print(f"⚠ claude-code 刷新失败 (robocopy rc={rc}):", dst)
 
 
 def _sync_offline_pkg():
