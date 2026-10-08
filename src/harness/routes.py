@@ -1423,7 +1423,8 @@ def harness_set_roles():
     patch = {}
     if "enabled" in data:
         patch["enabled"] = bool(data.get("enabled"))
-    for k in ("designer_model", "reviewer_model",
+    for k in ("designer_model", "reviewer_model", "light_model",
+              "mid_model", "heavy_model",
               "executor_model", "coder_model"):
         if k in data:
             patch[k] = str(data.get(k) or "").strip()

@@ -93,9 +93,9 @@ def write_cfg(**patch):
 print("[1] 配置默认值")
 write_cfg(enabled=True)
 d = hr.roles_cfg()
-check("独立档位键已退役（v3.5.19 三槽联动，不在 defaults）",
-      "light_model" not in d and "mid_model" not in d
-      and "heavy_model" not in d)
+check("三档显式键在 defaults 且默认空（v3.5.19R：空=三槽默认）",
+      d.get("light_model") == "" and d.get("mid_model") == ""
+      and d.get("heavy_model") == "")
 check("分级线默认 100/3/200", hr.audit_limits() == (100, 3, 200),
       str(hr.audit_limits()))
 check("旧键 max_free_lines 已不在 defaults", "max_free_lines" not in d)
@@ -122,17 +122,24 @@ write_tiers(haiku="same-x", sonnet="same-x", opus="same-x")
 check("同值多槽优先级 轻>中>重（取轻）", M("same-x") == "light")
 write_tiers(sonnet=HEAVY_MODEL, opus=HEAVY_MODEL)
 check("Sonnet==Opus 同值：命中取中档（歧义取中）", M(HEAVY_MODEL) == "mid")
-# 独立档位键已退役：残留不影响判定（三槽为唯一真相源）
+# v3.5.19R：显式配置优先于三槽默认（用户纠偏「三槽只是默认，也可随便改」）
 write_tiers(haiku=LIGHT_MODEL, sonnet=MID_MODEL, opus=HEAVY_MODEL)
-write_cfg(enabled=True, light_model=HEAVY_MODEL, mid_model=HEAVY_MODEL,
-          heavy_model=LIGHT_MODEL, main_model=HEAVY_MODEL, light_keywords="flash")
-check("退役档位键残留不参与判定（三槽唯一真相源）",
-      M(LIGHT_MODEL) == "light" and M(HEAVY_MODEL) == "heavy")
-# tier 解析：三槽直读（[1M] 剥离）+ 缺槽回退方案表
+write_cfg(enabled=True, light_model=HEAVY_MODEL, heavy_model=LIGHT_MODEL)
+check("显式档位覆盖三槽默认（轻=显式 heavy 值）",
+      M(HEAVY_MODEL) == "light" and M(LIGHT_MODEL) == "heavy")
+write_cfg(enabled=True, main_model=HEAVY_MODEL, light_keywords="flash")
+check("退役键 main_model/light_keywords 残留不参与判定",
+      M(LIGHT_MODEL) == "light" and M(MID_MODEL) == "mid")
+# tier 解析：空配置=三槽直读（[1M] 剥离）；显式覆盖优先
+write_cfg(enabled=True)
 write_tiers(haiku="glm-5.3-flash[1M]", sonnet="glm-4.7", opus="glm-5.3[1M]")
 _l, _m, _h = hr.resolve_tier_models()
-check("tier 解析：三槽直读且剥 [1M]",
+check("tier 解析：空配置=三槽默认（剥 [1M]）",
       (_l, _m, _h) == (LIGHT_MODEL, MID_MODEL, HEAVY_MODEL), str((_l, _m, _h)))
+write_cfg(enabled=True, light_model="my-l", mid_model="my-m", heavy_model="my-h")
+check("tier 解析：显式三键覆盖三槽",
+      hr.resolve_tier_models() == ("my-l", "my-m", "my-h"),
+      str(hr.resolve_tier_models()))
 write_tiers()   # 全槽缺失 → 回退方案表自动分类
 write_cfg(enabled=True)
 _l, _m, _h = hr.resolve_tier_models(
@@ -276,6 +283,7 @@ check("改分级线 → 指纹变（热更触发）", fp1 != fp2)
 check("切模型 → 指纹变（换形态）", _bridge_fp(HEAVY_MODEL) != fp2)
 write_cfg(enabled=True, light_model=POOL_LIGHT, heavy_model=POOL_HEAVY)
 check("复原配置 → 指纹复原", _bridge_fp(LIGHT_MODEL) == fp1)
+write_cfg(enabled=True)   # 清显式档位（三槽生效）
 write_tiers(haiku=LIGHT_MODEL, sonnet=MID_MODEL, opus="opus-x")
 check("改 Opus 槽 → 指纹变（重档值经代理模型嵌词）", _bridge_fp(LIGHT_MODEL) != fp1)
 write_tiers(haiku=LIGHT_MODEL, sonnet=MID_MODEL, opus=HEAVY_MODEL)
@@ -621,16 +629,16 @@ try:
     if jr is None:
         print("    [debug] status=%s body=%r" % (_r0.status_code,
                                                  _r0.data[:300]))
-    check("POST 档位键已退役：被白名单忽略不落盘（v3.5.19 三槽联动）",
-          jr.get("ok") and "light_model" not in jr and "heavy_model" not in jr,
-          str(jr))
+    check("POST 档位键落盘（v3.5.19R 显式配置回归）",
+          jr.get("ok") and jr.get("light_model") == "e-light"
+          and jr.get("heavy_model") == "e-heavy", str(jr))
     check("POST clamp 回显（l1 钳到 200）",
           jr.get("clamped") and jr["clamped"][0]["to"] == 200, str(jr))
     gr = _c.get("/api/harness/roles").get_json()
     rs = gr.get("resolved") or {}
-    check("GET resolved 出三槽档位（mock settings）",
-          rs.get("light") == LIGHT_MODEL and rs.get("mid") == MID_MODEL
-          and rs.get("heavy") == HEAVY_MODEL, str(rs))
+    check("GET resolved 显式档位优先",
+          rs.get("light") == "e-light" and rs.get("heavy") == "e-heavy",
+          str(rs))
     check("GET roles 含分级线与 audit_mode",
           gr["roles"].get("l1_max_lines") == 200
           and gr["roles"].get("l2_max_lines") == 200
@@ -663,8 +671,8 @@ try:
                                   "light_keywords": "should-ignore"}).get_json()
     gr6 = _c.get("/api/harness/roles").get_json()
     rs6 = gr6.get("resolved") or {}
-    check("POST mid_model 已退役：被白名单忽略（三槽为唯一真相源）",
-          "mid_model" not in jr6 and rs6.get("mid") == MID_MODEL,
+    check("POST mid_model 落盘 + resolved.mid 回显（显式优先）",
+          jr6.get("mid_model") == "e-mid" and rs6.get("mid") == "e-mid",
           str((jr6, rs6)))
     check("退役键 main_model/light_keywords 被白名单忽略不落盘",
           "main_model" not in jr6 and "light_keywords" not in jr6

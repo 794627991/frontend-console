@@ -163,8 +163,12 @@ def _norm_model(m):
     return str(m or "").split("[")[0].strip().casefold()
 
 _DEFAULTS = {"enabled": False,          # 默认关闭（用户定调：开关开启才生效）
-             # v3.5.19：三档联动 API 配置（env 三槽 Haiku/Sonnet/Opus），
-             # 独立档位键 light/mid/heavy_model 退役（见 _tier_env）
+             # v3.5.19R（用户纠偏「三槽只是默认，也可自己随便改」）：三档
+             # 显式配置键回归——空=默认联动 API 配置三槽（Haiku/Sonnet/Opus，
+             # 见 _tier_env），显式值优先于三槽
+             "light_model": "",         # 轻档（空=Haiku 槽值）
+             "mid_model": "",           # 中档（空=Sonnet 槽值）
+             "heavy_model": "",         # 重档（空=Opus 槽值）
              # light 形态审计（回合结算盘点工具调用记录，零 token）：
              "audit_mode": "auto",      # 兜底档：auto=违规自动续发补审 / warn=仅警示 / off=关
              # 分级线两档（旧 max_free_lines=3 已废；v2.52 只看单次直改
@@ -359,16 +363,25 @@ def _tier_env():
 
 
 def resolve_tier_models(models=None, default=None):
-    """解析三档模型 (轻, 中, 重)——形态判定的数据源（v3.5.19 联动 API 配置）：
-    三档 = 当前生效方案 env 的 anthropic 三槽（Haiku→轻 / Sonnet→中 /
-    Opus→重，_tier_env），换 API 方案档位自动跟随；槽缺失回退方案表自动
-    分类（_pick_pool_models：轻量词表挑轻池，其余重池）。旧的独立三档键
-    light/mid/heavy_model 与 model_map 端点映射均已退役。"""
+    """解析三档模型 (轻, 中, 重)——形态判定的数据源（v3.5.19R：显式优先、
+    三槽默认）：① 面板显式配置 light/mid/heavy_model；② 未配档位默认联动
+    API 配置三槽（Haiku→轻 / Sonnet→中 / Opus→重，_tier_env，换方案自动
+    跟随；中档缺省取重档同值）；③ 轻/重仍缺回退方案表自动分类
+    （_pick_pool_models）。model_map 端点映射保持退役。"""
+    cfg = roles_cfg()
+    cl = str(cfg.get("light_model") or "").split("[")[0].strip()
+    cm = str(cfg.get("mid_model") or "").split("[")[0].strip()
+    ch = str(cfg.get("heavy_model") or "").split("[")[0].strip()
     el, em, eh = _tier_env()
-    if el and em and eh:
-        return (el, em, eh)
-    _l, _h = resolve_role_models(models, default)
-    return (el or _l, em or eh or _h, eh or _h)
+    cl = cl or el
+    cm = cm or em or eh     # 中档缺省=重档值（Sonnet 槽在则用槽值）
+    ch = ch or eh
+    if not cl or not ch:    # 显式+三槽都缺的档 → 方案表自动分类兜底
+        _pl, _ph = resolve_role_models(models, default)
+        cl = cl or _pl
+        cm = cm or _ph
+        ch = ch or _ph
+    return (cl, cm, ch)
 
 
 def roles_mode(model=None):
