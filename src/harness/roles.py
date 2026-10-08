@@ -149,10 +149,28 @@ def _agents_dir_guard(d):
 
 # 轻重模型识别（v3.4.95 史诗级 bug 修正：「除 Opus 皆轻」把 glm-5.3 等
 # 高级别非 opus 模型全判轻）。改为「显式轻量词判轻，其余皆重」：含
-# flash/turbo/mini/haiku/air/lite 等轻量词 → 轻；其余（opus、glm-5.3 裸名、
+# flash/turbo/mini/haiku/lite 等轻量词 → 轻；其余（opus、glm-5.3 裸名、
 # 一切未知名）→ 重——未知默认重是安全向（漏配审计比多配代价大）。
-# 显式配置（main_model/两池/model_map）始终优先，本表只兜自动识别。
+# 词表可配（v3.4.95+ 用户拍板「配置比写死合理」）：harness_roles.light_keywords
+# 逗号/空格/竖线分隔关键词，覆盖内置表；空=内置兜底。显式配置
+# （main_model/两池/model_map）始终优先，本表只兜自动识别。
 _LIGHT_RE = re.compile(r"flash|turbo|mini|haiku|lite|nano|micro|small|instant", re.I)
+
+
+def _light_re():
+    """生效的轻量词正则：配置 light_keywords 优先（逐词 escape 防
+    正则注入；半/全角逗号、分号、空格、竖线任一分隔——中文输入法全角
+    逗号不拆会静默成死词表，轻审 FAIL 项），空/全无效回退内置 _LIGHT_RE。
+    re.compile 自带 pattern 缓存，每次调用无编译开销。"""
+    try:
+        kw = str(roles_cfg().get("light_keywords") or "").strip()
+    except Exception:
+        kw = ""
+    if kw:
+        words = [w for w in re.split(r"[,，;；\s|]+", kw) if w.strip()]
+        if words:
+            return re.compile("|".join(re.escape(w) for w in words), re.I)
+    return _LIGHT_RE
 
 _DEFAULTS = {"enabled": False,          # 默认关闭（用户定调：开关开启才生效）
              "light_model": "",         # 轻池（主会话直干用；空=按方案自动识别）
@@ -161,6 +179,9 @@ _DEFAULTS = {"enabled": False,          # 默认关闭（用户定调：开关�
              # 识别；空串=按实跑模型名自动识别
              "main_model": "",
              "model_map": {},
+             # 轻量词表（v3.4.95+）：主会话形态判定/池分类用——名字含任一
+             # 关键词 = 轻，其余 = 重；空 = 内置词表（见 _LIGHT_RE）
+             "light_keywords": "",
              # light 形态审计（回合结算盘点工具调用记录，零 token）：
              "audit_mode": "auto",      # 兜底档：auto=违规自动续发补审 / warn=仅警示 / off=关
              # 分级线两档（旧 max_free_lines=3 已废；v2.52 只看单次直改
@@ -291,8 +312,9 @@ def _pick_pool_models(models, default):
     if not bare:
         return None, None
     d = str(default or "").split("[")[0].strip()
-    light_pool = [m for m in bare if _LIGHT_RE.search(m)]
-    heavy_pool = [m for m in bare if not _LIGHT_RE.search(m)]
+    _lr = _light_re()
+    light_pool = [m for m in bare if _lr.search(m)]
+    heavy_pool = [m for m in bare if not _lr.search(m)]
     heavy = (d if d in heavy_pool else None) \
         or (heavy_pool[0] if heavy_pool else None) \
         or (d if d in bare else None) or bare[0]
@@ -362,7 +384,7 @@ def roles_mode(model=None):
         m = ""
     if m:
         model = m
-    if model and _LIGHT_RE.search(str(model)):
+    if model and _light_re().search(str(model)):
         return "light"
     return "strong"
 

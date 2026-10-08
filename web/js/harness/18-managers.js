@@ -162,7 +162,7 @@
             <span class="hg-roles-modeinfo">当前形态：<b>${light ? '轻主力 · 直干+设计+审核' : '重主力 · 直干+审核兜底'}</b></span>
           </div>
           <details class="hg-roles-more"><summary>工作方式说明</summary>
-            <div>双形态都<b>主会话直干所有活</b>（编码/执行/调试不派干活子代理）：主会话是轻模型（名字含 flash/turbo/mini/haiku 等轻量词）= 轻主力——配设计 + 审核两个代理；主会话是重模型（opus、glm-5.3 裸名等高级别模型）= 重主力——直干 + 审核兜底。保存后模型/分级线随下条消息热更生效（agents 自动重生成），审核模式立即生效。当前形态判定依据：${cfg.main_model ? `主会话槽显式配置 ${esc(cfg.main_model)}` : `实跑模型 ${esc(dm || '未设置')}（留空自动识别）`}。</div>
+            <div>双形态都<b>主会话直干所有活</b>（编码/执行/调试不派干活子代理）：主会话是轻模型（名字含轻量词表关键词）= 轻主力——配设计 + 审核两个代理；主会话是重模型（opus、glm-5.3 裸名等高级别模型）= 重主力——直干 + 审核兜底。轻量词表可在下方「模型分工」区自定义（逗号分隔，留空用内置）。保存后模型/分级线随下条消息热更生效（agents 自动重生成），审核模式立即生效。当前形态判定依据：${cfg.main_model ? `主会话槽显式配置 ${esc(cfg.main_model)}` : `实跑模型 ${esc(dm || '未设置')}（留空自动识别）`}。</div>
           </details>
 
           <div class="hg-roles-sec">模型分工</div>
@@ -180,6 +180,11 @@
             <span class="hg-roles-ico rev">审</span>
             <span class="hg-roles-name">审核<i>只审不改 · PASS/FAIL</i></span>
             <select data-hg-r-reviewer>${mkOpts(reviewerCfg)}</select>
+          </div>
+          <div class="hg-roles-line" title="v3.4.95：主会话形态判定词表——模型名含任一关键词 = 轻主力，其余 = 重主力；留空用内置词表。覆盖式：配置后完全替换内置表">
+            <span>轻量词表</span><input type="text" data-hg-r-lkw spellcheck="false" style="flex:1;min-width:0;"
+              placeholder="留空=内置：flash, turbo, mini, haiku, lite, nano, micro, small, instant"
+              value="${esc(cfg.light_keywords || '')}"><em>含词=轻主力</em>
           </div>
           <div class="hg-roles-note">留空 = 回退代理池 → 按方案自动识别；显式配置优先</div>
 
@@ -226,6 +231,8 @@
         // 新键，留空=回退重池/自动识别；旧 light/heavy 池键不再从面板写
         designer_model: ov.querySelector('[data-hg-r-designer]').value.trim(),
         reviewer_model: ov.querySelector('[data-hg-r-reviewer]').value.trim(),
+        // 轻量词表（v3.4.95）：形态判定关键词，空=内置表
+        light_keywords: ov.querySelector('[data-hg-r-lkw]').value.trim(),
         // 端点角色映射——发 "关键字=轻,重" 行（后端按行解析，与识图面板
         // model_map 的行式体验一致）
         model_map: (ov.querySelector('[data-hg-r-map]').value || '')

@@ -1393,8 +1393,8 @@ def harness_agent_models():
 def harness_set_roles():
     """开关 + 整节配置（merge 写盘，只动出现的键）。body 可含 {enabled,
     main_model, designer_model, reviewer_model, light_model, heavy_model,
-    model_map, audit_mode, l1_max_lines, l2_max_files, l2_max_lines,
-    design_max_lines}
+    light_keywords, model_map, audit_mode, l1_max_lines, l2_max_files,
+    l2_max_lines, design_max_lines}
     （v2.53 设计者/审计者槽新键；旧键 executor_model/coder_model 仍被
     接受落盘——读取侧按池降级兼容）。生效路径与
     开关一致：模型池/分级线出现在引导词里 → 指纹热更下条消息换词重启
@@ -1409,7 +1409,7 @@ def harness_set_roles():
     if "enabled" in data:
         patch["enabled"] = bool(data.get("enabled"))
     for k in ("designer_model", "reviewer_model", "light_model",
-              "heavy_model", "main_model",
+              "heavy_model", "main_model", "light_keywords",
               "executor_model", "coder_model"):
         if k in data:
             patch[k] = str(data.get(k) or "").strip()
