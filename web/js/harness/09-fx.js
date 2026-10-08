@@ -1,7 +1,14 @@
 // harness fx.js (v3.0 自 buildClaudeHarnessTab 拆出,定义体零改动,缩进保持原样)
   const _ACT_WORDS = ['思考中', '处理中', '分析中', '执行中', '检索中', '推理中'];
   function actStart(sinceMs) {
-    if (_HG.activity) return;
+    if (_HG.activity) {
+      // v3.5.28（用户实锤「bash 执行中计时每 5s 归零」）：活动条已在场时
+      // 只接受「更早的事实起点」纠偏（切会话恢复/自愈带 busy_since），
+      // 不带起点的重复 setBusy(true)（事件流竞态补亮等）绝不重置计时——
+      // 旧码 innerHTML 重建+actStart=now，5s 自愈轮询一碰就归零
+      if (sinceMs && sinceMs < _HG.actStart) _HG.actStart = sinceMs;
+      return;
+    }
     // v2.26：计时起点优先用后端的 busy_since——切会话回来/自愈纠偏时
     // 不能从「现在」重新计时（用户实锤：执行中切走再切回，计时被清 0）
     _HG.actStart = sinceMs || Date.now();
