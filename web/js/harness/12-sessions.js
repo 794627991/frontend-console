@@ -109,6 +109,10 @@
     _HG.prevRowAt = 0; _HG.lastRowAt = 0;   // v3.3.1(F5)：事件时刻账不跨会话（新会话思考起点防吃上一会话时刻）
     _HG.noInputTids = null; _HG.noInputMiss = 0;   // v3.3.14R（轻审问题1）：缺令账不跨会话（防重试预算烧穿）
     _HG.sid = sid; _HG.seq = 0; _HG.epoch = null; _HG.alive = false;
+    // v3.5.4（用户实锤「重启后新消息仍轻主力」）：sid 就绪即重拉 roles——
+    // 启动时的 _hgRolesFetch 赶不上 sid（切回会话才有），cache 固化方案
+    // 默认判定的形态，新消息徽章随之错档；切会话补拉（带 sid 实跑判定）
+    if (typeof _hgRolesFetch === 'function') _hgRolesFetch();
     // v2.15：dirty 语义修正。旧实现只在「发送成功」置 true、只在
     // switchTo(null) 置 false —— 冷启动自动进的是历史会话（has_history），
     // dirty 仍是 false，于是点一下模型/项目 chip 就会走 `if (!_HG.dirty)`
