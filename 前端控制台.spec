@@ -39,6 +39,7 @@ a = Analysis(
         'Crypto.Cipher.AES', 'Crypto.PublicKey.RSA',
         'Crypto.Hash.HMAC', 'Crypto.Signature.PKCS1_v1_5',            # pycryptodome（代理 CAS + 资源解密）
         'PIL', 'PIL.Image', 'PIL.ImageDraw', 'PIL.ImageFont',
+        'PIL.ImageGrab',                 # v3.5.26：snip.py 延迟导入（函数内 import，静态分析收不到——发布版截图 --grab 分支 ImportError 实锤）
         'numpy',                         # proxy_usage 用量统计
         'yaml',                          # 配置解析
         'pystray', 'pystray._win32',     # 托盘历史兼容（现原生 Win32，保留无害）
