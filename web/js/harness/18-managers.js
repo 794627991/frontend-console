@@ -219,10 +219,10 @@
             </select><em>超线未审的兜底</em>
           </div>
 
-          <div class="hg-roles-sec">端点角色映射 <i>按 base_url 匹配 · 优先于自动识别</i></div>
+          <div class="hg-roles-sec">端点档位映射 <i>按 base_url 匹配 · 优先于上方档位下拉</i></div>
           <textarea class="hg-vision-mm" data-hg-r-map spellcheck="false" style="height:56px;font-family:var(--font-mono);"
-            placeholder="open.bigmodel.cn=主会话模型,代理模型&#10;lanz.hikvision.com=Lanz-Flash,Lanz-Atuo">${esc(mapText)}</textarea>
-          <div class="hg-roles-note">每行：端点关键字 = 主会话模型,代理模型（代理模型可省略 = 与主会话同）</div>
+            placeholder="open.bigmodel.cn=轻档模型,重档模型&#10;lanz.hikvision.com=Lanz-Flash,Lanz-Pro">${esc(mapText)}</textarea>
+          <div class="hg-roles-note">每行：端点关键字 = 轻档模型,重档模型（重档可省略 = 与轻档同；中档不参与映射，缺省同重档）。切 API 方案时档位自动按端点切换</div>
         </div>
         <div class="hg-modal-acts"></div></div>`;
       const acts = ov.querySelector('.hg-modal-acts');
