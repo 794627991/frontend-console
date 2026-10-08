@@ -200,7 +200,8 @@ print("[4] light 引导词（直干+双代理）")
 write_cfg(enabled=True, light_model=POOL_LIGHT, heavy_model=POOL_HEAVY)
 g = hr.roles_bridge_text(LIGHT_MODEL)
 for kw, label in [
-        ("直干所有活", "主会话直干"),
+        ("任务分级", "任务分级头"),
+        ("派发完全自由", "通用子代理派发自由（v3.5.17）"),
         ("免审", "免审字样"), ("轻审", "轻审字样"), ("全审", "全审字样"),
         ("designer", "设计者代理"), ("reviewer", "审核者代理"),
         ("只设计不干活", "designer 只设计"),
