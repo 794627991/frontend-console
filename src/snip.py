@@ -351,7 +351,13 @@ def window_main(port, armed=False):
     threading.Thread(target=_arm_loop, daemon=True).start()
 
     win.events.loaded += _on_loaded
-    webview.start()          # 子进程消息循环，常驻直到 os._exit
+    # v3.4.93c：截图窗同款专属 UA——screenshot.html 走主实例服务器，
+    # 门禁按 UA 放行（该页已撤出豁免清单）
+    try:
+        from src.server import _WEBVIEW_UA_MARK
+        webview.start(user_agent=f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) {_WEBVIEW_UA_MARK}")
+    except Exception:
+        webview.start()       # 子进程消息循环，常驻直到 os._exit
 
 
 # ---------------------------------------------------------------------------

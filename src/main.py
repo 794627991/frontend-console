@@ -780,12 +780,9 @@ def main():
     # pywebview 窗口
     # maximized：--open-file 冷启动直接以最大化开局（原生初始态，不靠回调时机）。
     # 双击关联文件=全屏看文件（用户需求）；普通快捷方式启动维持 1280×820。
-    # v3.4.93：URL 带网页直开门禁令牌（server._WEB_TOKEN）——首载换 cookie，
-    # 浏览器不带令牌的直开一律 403；run_debug.bat（HARNESS_DEBUG_WEB=1）放行。
-    from src.server import _WEB_TOKEN as _web_token
     window = webview.create_window(
         title="前端控制台 v%s" % APP_VERSION,
-        url=f"http://127.0.0.1:{port}/?t={_web_token}",
+        url=f"http://127.0.0.1:{port}/",
         width=1280,
         height=820,
         min_size=(900, 600),
@@ -999,7 +996,14 @@ def main():
     if _wv_debug:
         os.environ.setdefault("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
                               "--remote-debugging-port=9222")
+    # v3.4.93c（用户实锤「请彻查」）：专属 UA 标记承载网页直开门禁
+    # （server._web_gate 按 UA 放行）——v3.4.93 的 /?t= URL 令牌在
+    # webview_debug 开 F12 时可从地址栏读走复制进浏览器放行；UA 方案
+    # URL 不携带任何秘密。注意 user_agent 是 start() 的参数（6.2.1 的
+    # create_window 无此参）。
+    from src.server import _WEBVIEW_UA_MARK
     webview.start(debug=_wv_debug, private_mode=False,
+                  user_agent=f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) {_WEBVIEW_UA_MARK}",
                   storage_path=os.path.join(DATA_DIR, "webview_cache"))
 
 

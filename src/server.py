@@ -57,15 +57,15 @@ if DEBUG_WEB:
     print("[debug-web] RES_DIR(常规模式来源): %s" % RES_DIR)
 
 # v3.4.93（用户定调「浏览器直开调试入口关死，仅 run_debug.bat 放行」）：
-# 网页直开门禁——常规模式下页面与 API 请求须带**本进程随机令牌**（主窗
-# 首载 /?t= 换 httponly cookie，后续资源/SSE 同源自动携带）。豁免四类跨
-# 进程接口（探活/自唤/窗口控制/文件联动——单实例与双击关联文件靠它们），
-# 截图工具页 exempt（snip 独立进程无令牌，页面本身无敏感数据）。
+# 网页直开门禁。v3.4.93c（用户实锤「请彻查」）改架构——**URL 令牌退役**
+# （?t= 挂在页面地址上，webview_debug 开 F12 即可读走复制进浏览器放行，
+#  devtools/历史/引荐皆暴露面），改 **webview 专属 User-Agent 标记**：
+# 主窗/截图窗以带标记的 UA 加载（pywebview user_agent 参数），浏览器请求
+# 永不带标记 → 一律 403。豁免四类跨进程接口（探活/自唤/窗口控制/文件联
+# 动——单实例与双击关联文件靠它们，来自 python urllib 无标记）。
 # HARNESS_DEBUG_WEB=1（run_debug.bat）全放行——浏览器直开仅调试模式可用。
-import secrets as _secrets
-_WEB_TOKEN = _secrets.token_urlsafe(24)
-_WEB_EXEMPT = ("/api/status", "/api/raise_window", "/api/window/", "/api/ai/open_file",
-               "/web/screenshot.html")
+_WEBVIEW_UA_MARK = "SerialConsoleProWebView/1"
+_WEB_EXEMPT = ("/api/status", "/api/raise_window", "/api/window/", "/api/ai/open_file")
 
 @app.before_request
 def _web_gate():
@@ -74,10 +74,8 @@ def _web_gate():
     p = request.path
     if p.startswith(_WEB_EXEMPT):
         return None
-    tok = request.cookies.get("hg_t") or request.args.get("t") or ""
-    if tok and tok == _WEB_TOKEN:
-        if request.args.get("t"):
-            g._web_gate_set_cookie = True   # 首载带 ?t —— 落 cookie 供后续资源/API
+    ua = request.headers.get("User-Agent") or ""
+    if _WEBVIEW_UA_MARK in ua:
         return None
     if p.startswith("/api/"):
         return jsonify({"ok": False, "err": "unauthorized"}), 403
@@ -87,9 +85,7 @@ def _web_gate():
             "如需浏览器直开调试，请使用 run_debug.bat 启动。</div></body>"), 403
 
 @app.after_request
-def _web_gate_cookie(resp):
-    if getattr(g, "_web_gate_set_cookie", False):
-        resp.set_cookie("hg_t", _WEB_TOKEN, httponly=True, samesite="Lax")
+def _web_gate_nostore(resp):
     # v3.4.93b：403 拒绝页与入口文档禁缓存——旧实例时代被浏览器缓存的整页
     # UI 会在门禁生效后仍从本地缓存渲染（用户实锤「还是有」）——no-store
     # 杜绝后续回访吃到陈旧页面；带版本号的静态资源不受影响照常缓存
