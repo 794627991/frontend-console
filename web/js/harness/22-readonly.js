@@ -131,14 +131,18 @@ function RO_enter(sid, deps) {
 // 内容列不得溢出 flow 可视宽（分屏宽档过宽时防「内容缩右侧」）
 function RO_calcShift() {
   if (!_ro || !_ro.flow || !_ro.flow.isConnected) return;
+  // v3.5.72（用户实锤「我的消息偏右 AI 消息偏左，一个偏左一个不动」）：
+  // 居中改走**左右对称 padding**——align-items 恢复 flex-start，内容列(820)
+  // 靠左对齐于 pl 之后；user 气泡 align-self:flex-end 贴 pr 内侧。数学恒等：
+  // pl+820 == flowW-pr ⇔ 内容列右缘 == user 气泡右缘，两类消息永不分离。
+  // 中线偏移=pl 加 shift / pr 减 shift（对称破缺），shift 封顶 pr≥32
   const flowW = _ro.flow.clientWidth;
   const subw = _ro.subpaneEl ? (parseFloat(_ro.subpaneEl.style.width) || 0) : 0;
-  // v3.5.71（用户实锤「点开历史子代理→退出→再进，内容贴右」）：封顶改吃
-  // 富余的一半——旧 cap(flowW-884) 把全部富余喂给偏移，窄 RO 区（宽档面板
-  // 开着）内容列被推到贴右。半富余封顶=内容列永远保持居中倾向
-  const shift = Math.max(0, Math.min(Math.round(subw) - 232, Math.floor((flowW - 884) / 2)));
-  // 32=flow 原左 padding 基准，与偏移合并写一个变量（CSS 零 calc）
-  document.documentElement.style.setProperty('--hg-roshift', (32 + shift) + 'px');
+  const base = Math.max(32, Math.floor((flowW - 820) / 2));   // 居中基准 padding
+  const shift = Math.max(0, Math.min(Math.round(subw) - 232, base - 32));
+  const st = document.documentElement.style;
+  st.setProperty('--hg-ropl', (base + shift) + 'px');
+  st.setProperty('--hg-ropr', (base - shift) + 'px');
 }
 
 // RO 内切换查看的会话（抽屉跳转）：同场重渲（不回主视图）
@@ -217,7 +221,8 @@ function RO_exit(force) {
   _HG.readonly = null;
   _HG.roViewSid = null;
   if (_ro.busyTimer) { clearInterval(_ro.busyTimer); _ro.busyTimer = null; }
-  document.documentElement.style.setProperty('--hg-roshift', '32px');   // v3.5.70：偏移随 RO 退出回基准（32=flow 原左 padding）
+  document.documentElement.style.setProperty('--hg-ropl', '32px');   // v3.5.72：随 RO 退出回基准（32=flow 原左 padding）
+  document.documentElement.style.setProperty('--hg-ropr', '32px');
   if (_ro.root) _ro.root.remove();
   // 恢复 peerSent 快照（designer P2：B 的 resumedAgentId 映射不残留进 A）
   if (_ro.snapPeerSent !== null) _HG.peerSent = _ro.snapPeerSent;

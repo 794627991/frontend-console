@@ -2327,16 +2327,15 @@ html {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hg-ro-dmeta { font-size: var(--fs-2xs); color: var(--muted); }
 /* RO flow：与主 flow 同类（.hg-flow 保留→内部行样式零改生效）。
-   v3.5.70（用户实锤「导轨/滚动条要靠边显示」）：flow 占满 RO 区——导轨
-   （rail absolute 于 fw，left:3px）贴 RO 左缘、滚动条贴 RO 右缘天然达成；
-   内容列(820)在 flow 内 align-items:center 居中，中线偏移走 padding-left
-   var(--hg-roshift)（JS 算好总 px 含 32 基准，封顶防溢出）。零 transform
-   零 calc——v3.5.65 的 transform+calc/max 滚动回归教训保持 */
+   v3.5.72（用户实锤「user 偏右 AI 偏左分家」）：内容列居中走**左右对称
+   padding**（--hg-ropl/--hg-ropr，JS 算好纯 px）——align-items 保持主窗口
+   同款 flex-start，user 气泡 align-self:flex-end 贴 pr 内侧=内容列右缘，
+   两类消息恒同列。导轨贴 RO 左缘/滚动条贴 RO 右缘（flow 占满）不变 */
 .hg-rov-wrap { flex: 1; min-width: 0; display: flex; overflow: hidden; }
 .hg-rov-fw { width: 100%; position: relative;
   display: flex; flex-direction: column; height: 100%; }
-.hg-rov-fw > .hg-flow { flex: 1; min-height: 0; align-items: center;
-  padding-left: var(--hg-roshift, 32px); }
+.hg-rov-fw > .hg-flow { flex: 1; min-height: 0;
+  padding-left: var(--hg-ropl, 32px); padding-right: var(--hg-ropr, 32px); }
 /* （v3.5.61 撤主窗口顶栏「📖 只读模式」浮钮——入口唯一化为归档提示点击） */
 /* ---- 旧禅模式死样式（v3.5.50 重修后无消费方，见 22-readonly.js 重写注释）----
 .hg-readonly { position: absolute; inset: 0; z-index: 90; display: flex;
