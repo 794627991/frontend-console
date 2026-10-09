@@ -101,16 +101,7 @@
       return false;
     }
     if (!sid) return false;
-    // v2.27：引用拼装——取出即清（排队泵逐条 dispatch 时只有第一条带引用，
-    // 后续排队项是新输入的独立消息）
-    let out = text || '';
-    if (_HG.quote && out.trim()) {
-      const qt = _HG.quote.text.length > 2000
-        ? _HG.quote.text.slice(0, 2000) + '…（引用已截断）' : _HG.quote.text;
-      out = `[引用 ${_HG.quote.who} 的消息]\n${qt}\n\n[我的问题]\n${text}`;
-      setQuote(null);
-    }
-    text = out;
+    // v3.5.33：引用拼装已上移 send() 入口（排队路径同享）——此处不再重复
     _hgHistAppend(sid, text);          // 输入历史（记录到真实会话 scope）
     _HG.histNav = null;
     // v2.20：乐观渲染——connect 一回来就画出自己的气泡。原实现要等 SSE 的
@@ -502,8 +493,19 @@
     }
   }
   async function send() {
-    const text = _hgInput.value.trim();
+    let text = _hgInput.value.trim();
     if (!text && !_HG.atts.length) return;
+    // v3.5.33（用户实锤「排队消息没带引用，引用条一直堆积」）：引用拼装
+    // 上移到发送入口（dispatch 与 busy 排队共用）——旧实现在 dispatch 内，
+    // busy 分支直接把裸 text 入队，服务端泵发出的是无引用裸文本，且引用条
+    // 无人清=永久堆积。此处拼好完整文本再分发，两路同享；泵逐条 dispatch
+    // 时只有第一条带引用的既定语义不变（后续排队项是新输入的独立消息）
+    if (_HG.quote && text) {
+      const qt = _HG.quote.text.length > 2000
+        ? _HG.quote.text.slice(0, 2000) + '…（引用已截断）' : _HG.quote.text;
+      text = `[引用 ${_HG.quote.who} 的消息]\n${qt}\n\n[我的问题]\n${text}`;
+      setQuote(null);
+    }
     // v2.21：内建斜杠命令本地执行（附件与命令互斥，命令不需要附件）
     if (!_HG.atts.length && text.startsWith('/')) {
       const c0 = text.split(/\s/, 1)[0].toLowerCase();
