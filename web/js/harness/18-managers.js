@@ -25,53 +25,27 @@
         .concat(models.map(m => `<option value="${esc(m)}"${m === curModel ? ' selected' : ''}>${esc(m)}</option>`))
         .join('');
       // v3.5.39（用户拍板「改成下拉选择」）→ v3.5.44（实锤「多点几次直接溢出
-      // 屏幕了；要的是和上面同款下拉选择」）：人工判定行=模型下拉（与上方
-      // 识图模型同款 select，方案表全量）+判定下拉+删行钮——旧版模型名是
-      // 自由输入框（占宽爆行）；+添加=补一行下拉（不再无限增行溢出：超 6 行
-      // 区域自身滚动）
-      const _mmUserRowHtml = (name, val) => {
-        const sel = ['<option value=""' + (!name ? ' selected' : '') + '>选择模型…</option>']
-          .concat(models.map(m => `<option value="${esc(m)}"${_normEq(m, name) ? ' selected' : ''}>${esc(m)}</option>`))
-          .concat(!name || models.some(m => _normEq(m, name)) ? '' : [`<option value="${esc(name)}" selected>${esc(name)}</option>`])
-          .join('');
-        return `<div class="hg-vision-grid" style="margin-top:4px;" data-mm-user-row>` +
-          `<select data-mm-user-name style="flex:1;min-width:0;">${sel}</select>` +
-          `<select data-mm-user-val style="flex:none;width:110px;">` +
-          `<option value="auto"${val == null ? ' selected' : ''}>自动判定</option>` +
-          `<option value="yes"${val === true ? ' selected' : ''}>多模态</option>` +
-          `<option value="no"${val === false ? ' selected' : ''}>非多模态</option>` +
-          `</select>` +
-          `<button class="btn ghost" data-mm-user-del style="flex:none;font-size:11px;">🗑</button></div>`;
-      };
-      function _normEq(a, b) {
-        const n = x => String(x || '').split('[')[0].trim().toLowerCase();
-        return n(a) && n(a) === n(b);
-      }
+      // 屏幕了；要的是和上面同款下拉选择」）→ v3.5.46（草图重构定稿）：
+      // 人工判定整块删除，并入模型行——模型下拉 + 🔍自动检测 + 强制指定
+      // 三控件一行（强制指定=写 mm_user[name]=true 压过一切自动判定）
       ov.innerHTML = `<div class="hg-modal hg-modal-vision"><div class="hg-modal-title">👁 识图配置</div>
         <div class="hg-modal-body hg-vision-hint">识图走 MCP 通道（analyze_image 工具，随会话常备，无后台进程）。此处配置 MCP 调用的识图模型与提示词，<b>保存即生效</b>。主会话模型是真多模态则直读，不经过这里。</div>
         <div class="hg-vision-row">
           <label class="hg-vision-switch"><input type="checkbox" data-hg-v-on${cfg.enabled ? ' checked' : ''}> 启用识图</label>
           <span class="hg-vision-state" style="font-size:11px;color:var(--muted);">MCP 通道 · 无后台进程</span>
         </div>
-        <div class="hg-vision-grid">
-          <label>识图模型（MCP 后端，需多模态；换 API 方案后在此重选）
-            <select data-hg-v-model>${opts}</select></label>
-        </div>
-        <div style="display:flex;gap:8px;align-items:center;margin-top:4px;">
-          <button class="btn ghost" data-hg-v-probe style="font-size:11px;">🔍 检测算图模型能否读图</button>
-          <span data-hg-v-probe-out style="font-size:11px;color:var(--muted);"></span>
-        </div>
-        <div style="border-top:1px solid var(--border);margin:10px 0 4px;"></div>
+        <label class="hg-vision-prompt-lab">识图模型（MCP 后端，需多模态；换 API 方案后在此重选）
+          <div style="display:flex;gap:8px;align-items:center;">
+            <select data-hg-v-model style="flex:1;min-width:0;">${opts}</select>
+            <button class="btn ghost" data-hg-v-probe style="flex:none;font-size:11px;" title="自动检测：发张测试图让该模型读——答对颜色即多模态（结果缓存，二次点秒回）">🔍 自动检测</button>
+            <button class="btn ghost" data-hg-v-force style="flex:none;font-size:11px;" title="强制指定：以你的判断为准——强制认为当前选中的模型是多模态（压过一切自动检测与缓存，探测抽风时用）；再点一次取消强制">强制指定</button>
+          </div>
+          <div data-hg-v-probe-out style="font-size:11px;color:var(--muted);margin-top:3px;min-height:14px;"></div>
+        </label>
         <label class="hg-vision-prompt-lab">多模态模型名单（逗号分隔，模型下拉的 👁 标记以此为准；名单外的模型一律走 MCP 识图通道）
           <input class="hg-vision-mm" data-hg-v-mm spellcheck="false"
                  value="${esc((cfg.mm_extra || []).join(', '))}"
                  placeholder="如：glm-5.3 flash, Lanz-Medium-V（前缀匹配，填一个即可覆盖其 [1M] 变体）"></label>
-        <label class="hg-vision-prompt-lab">多模态人工判定（用户定调：探测抽风时你的眼见为实压过一切缓存。点「+ 添加」→ 下拉选模型 → 判定选「多模态/非多模态」；「自动判定」档=删除该条回自动）
-          <div class="hg-vision-grid" data-hg-v-user-list style="max-height:180px;overflow-y:auto;">
-            ${Object.entries(cfg.mm_user || {}).sort().map(([k, v]) => _mmUserRowHtml(k, v)).join('')}
-          </div>
-          <button class="btn ghost" data-hg-v-user-add style="font-size:11px;margin-top:4px;">+ 添加模型判定</button>
-        </label>
         <label class="hg-vision-prompt-lab">识图提示词（作为识图请求的 system）
           <textarea class="hg-vision-prompt" data-hg-v-prompt spellcheck="false"></textarea></label>
         <div class="hg-modal-acts"></div></div>`;
@@ -81,16 +55,37 @@
       const modelEl = ov.querySelector('[data-hg-v-model]');
       const onEl = ov.querySelector('[data-hg-v-on]');
       const mmEl = ov.querySelector('[data-hg-v-mm]');
-      const userListEl = ov.querySelector('[data-hg-v-user-list]');
-      // v3.5.39：人工判定行增删（委托：行可动态添加，直绑会丢）
-      ov.querySelector('[data-hg-v-user-add]').onclick = () => {
-        userListEl.insertAdjacentHTML('beforeend', _mmUserRowHtml('', null));
+      // v3.5.46（用户拍板草图重构定稿）：模型行三控件——下拉 + 🔍自动检测 +
+      // 「强制指定」按键。点击强制=写 mm_user[当前模型]=true（压过一切自动
+      // 判定与缓存，探测抽风时用）；再点一次取消强制。原人工判定区块
+      // （多行手写/行式下拉）随本重构删除
+      const forceEl = ov.querySelector('[data-hg-v-force]');
+      const _mmUser = cfg.mm_user || {};
+      const _normEq = (a, b) => {
+        const n = x => String(x || '').split('[')[0].trim().toLowerCase();
+        return n(a) && n(a) === n(b);
       };
-      userListEl.addEventListener('click', (e) => {
-        const del = e.target.closest('[data-mm-user-del]');
-        if (del) del.closest('[data-mm-user-row]').remove();
-      });
-      ta.value = cfg.mcp_prompt || def.mcp_prompt || '';
+      const _forcedKey = () => Object.keys(_mmUser).find(k => _mmUser[k] === true && _normEq(k, modelEl.value));
+      const _forcePaint = () => {
+        const on = !!_forcedKey();
+        forceEl.textContent = on ? '已强制 ✓' : '强制指定';
+        forceEl.classList.toggle('primary', on);
+      };
+      forceEl.onclick = () => {
+        const m = modelEl.value.trim();
+        if (!m) { forceEl.title = '请先在左侧下拉选择模型'; return; }
+        const k = _forcedKey();
+        if (k) { delete _mmUser[k]; }          // 已强制 → 取消
+        else { Object.keys(_mmUser).forEach(x => { if (_normEq(x, m)) delete _mmUser[x]; });
+               _mmUser[m.toLowerCase()] = true; }
+        _forcePaint();
+        forceEl.title = on_text();
+        function on_text() {
+          return _forcedKey() ? '已强制为多模态（压过一切自动判定）——再点一次取消'
+                              : '未强制——点击强制认为该模型是多模态';
+        }
+      };
+      _forcePaint();
       // v2.25：运行时探测——发张纯红测试图让该模型 Read，答对即多模态并
       // 自动并入名单（后端缓存，二次点秒回）。拿不准网关模型名是什么能力
       // 时点一下就行，不用猜也不用记。
@@ -134,18 +129,9 @@
         // v2.25：多模态手补名单随保存落盘（后端按前缀匹配，覆盖 [1M] 变体）
         mm_extra: (ov.querySelector('[data-hg-v-mm]').value || '')
           .split(/[,，;；\n]/).map(s => s.trim()).filter(Boolean),
-        // v3.5.39：人工判定表——按行收集（下拉选择制）。name 空或「自动判
-        // 定」档跳过（=删除该条回自动）；「多模态/非多模态」写 bool
-        mm_user: (() => {
-          const out = {};
-          userListEl.querySelectorAll('[data-mm-user-row]').forEach(row => {
-            const name = (row.querySelector('[data-mm-user-name]').value || '').trim().toLowerCase();
-            const v = row.querySelector('[data-mm-user-val]').value;
-            if (!name || v === 'auto') return;
-            out[name] = (v === 'yes');
-          });
-          return out;
-        })(),
+        // v3.5.46：人工判定表——「强制指定」按键点击时已实时写 _mmUser
+        // （toggle 强制/取消），保存时原样落盘
+        mm_user: _mmUser,
         // v3.5.19：model_map 端点映射退役——识图模型就是上面的主选择框
       }));
       ov.addEventListener('click', (e) => { if (e.target === ov) close(null); });
