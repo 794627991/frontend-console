@@ -47,6 +47,10 @@ function RO_enter(sid, deps) {
   if (side) side.style.display = 'none';
   if (flowwrap) flowwrap.style.display = 'none';
   if (cardwrap) cardwrap.style.display = 'none';
+  // RO 期间分屏保持可见（子代理目录/回放窗格在 RO 里照常使用）
+  const subpane = document.querySelector('[data-hg-subpane]');
+  const subOrigDisplay = subpane ? subpane.style.display : '';
+  if (subpane) subpane.style.display = 'flex';
   // RO DOM（插在 flowwrap 同层前；分屏 .hg-subpane 保持原位=自动让位）
   const root = document.createElement('div');
   root.className = 'hg-ro';
@@ -76,6 +80,7 @@ function RO_enter(sid, deps) {
     fw: root.querySelector('.hg-rov-fw'),
     flow: root.querySelector('[data-ro-flow]'),
     rail: root.querySelector('[data-ro-rail]'),
+    subpaneEl: subpane, subpaneDisp: subOrigDisplay,   // 退出时恢复分屏显示
   });
   _ro.flow.addEventListener('scroll', () => {
     if (typeof _hgRailActiveRaf === 'function') _hgRailActiveRaf();
@@ -128,7 +133,11 @@ function RO_view(sid) {
       if (j.busy) { if (typeof phResume === 'function') phResume(true); }
       else grpFinalize(true, { hist: true, turnEnd: true });
       if (typeof _hgRailSync === 'function') _hgRailSync();
-      if (typeof _hgScrollBottom === 'function') _hgScrollBottom(true);
+      // v3.5.60（用户实锤「直接归底不展开工作区」）：撤 _hgScrollBottom——
+      // RO 渲染后保持在顶部（看历史从上往下），不跳到底部
+      _ro.flow.scrollTop = 0;
+      // 默认展开子代理目录（方便查看过往子代理状态）
+      if (typeof _subDirOpen === 'function') { try { _subDirOpen(); } catch (_) {} }
     })
     .catch(() => {});
 }
@@ -176,6 +185,7 @@ function RO_exit(force) {
   // 恢复 peerSent 快照（designer P2：B 的 resumedAgentId 映射不残留进 A）
   if (_ro.snapPeerSent !== null) _HG.peerSent = _ro.snapPeerSent;
   const anchor = _ro.anchorSid;   // v3.5.53：进入只读时的主会话（退出 rebuild 判定锚）
+  const roSub = _ro.subpaneEl, roSubDisp = _ro.subpaneDisp;
   _ro = null;
   // 恢复布局
   const side = document.querySelector('.hg-side');
@@ -183,6 +193,7 @@ function RO_exit(force) {
   if (side) side.style.display = '';
   if (flowwrap) flowwrap.style.display = '';
   if (cardwrap) cardwrap.style.display = '';
+  if (roSub) roSub.style.display = roSubDisp;
   // _hgFlow 指回主 flow（rebuild 的 resetLocal 清的是它）
   _hgFlow = document.querySelector('[data-hg-flow]');
   // 全量重建主视图 + openSSE 断点续传（后台期间的事件零丢失）
