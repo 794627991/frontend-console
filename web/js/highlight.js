@@ -28,6 +28,11 @@ function scheduleKwHighlight(conn) {
 }
 function highlightNewKw(conn) {
   if (!conn.term || !conn.term.registerDecoration) return;
+  // 颜色每轮扫描读一次：kwColor 内是 getComputedStyle（强制同步样式计算），
+  // 原先放在命中循环里，日志爆发时一轮几千个命中 = 几千次样式计算，
+  // 单次扫描卡几百 ms~秒级、主线程被占死导致输入积压（多开卡顿实锤主因）。
+  const kwColors = {};
+  for (const cls in KW_COLOR) kwColors[cls] = kwColor(cls);
   const buf = conn.term.buffer.active;
   const totalRows = buf.length;
   // 增量扫描窗口：只扫自上次以来的新行 + 回溯 1 行防跨行漏扫。
@@ -57,7 +62,7 @@ function highlightNewKw(conn) {
             marker: conn.term.registerMarker(offset),
             x: start,
             width: end - start,
-            foregroundColor: kwColor(rule.cls),
+            foregroundColor: kwColors[rule.cls],
             layer: 'top',
           });
           if (dec) conn.kwDecorations.push(dec);
