@@ -60,13 +60,13 @@ v3.5.15：model_map 端点映射从三角色判定链退役（用户拍板「换
 审计（与 claude_harness 共用纯函数，引导词/结算/闸三处同源）：
 - audit_limits：两档线现值 (l1, l2f, l2l)——l1 免审线；l2l 轻审线
   （单次直改总行数）；l2f 键保留兼容但 v2.52 起不参与任何判定
-  （用户拍板：只看单次直改总行数，不计文件数、不做回合累计）。
+  （v3.5.41 用户拍板收紧：改回合内直改累计——单次最大口径被多次小 Edit 切片逃逸，实测 174 行回合零审计）
   0 合法（最严档），缺键/非法回默认；
 - audit_verdict(lines, rev, strong)：light——单次超免审线未轻审=
   违规、单次超轻审线属大改须全审未派=违规（已派视作审过，不重复
   追责）；strong 旗（=中档 mid 直干；重档 heavy 上游短路全免）——单次
   超审计线未派 reviewer=违规（直干是常态，
-  无轻审义务）；设计档（v2.54）：单次直改 ≥ 设计线（design_limit，
+  无轻审义务）；设计档（v2.54）：回合内直改累计 ≥ 设计线（design_limit，
   0=关）未派 designer=违规；designer 派发豁免设计档（不产生直改、
   不算已审）；
 - audit_gate_check(used_lines, reviewed, designed)：事中闸（仅 light
@@ -94,12 +94,12 @@ v3.5.15：model_map 端点映射从三角色判定链退役（用户拍板「换
   判定废「名字含 flash/turbo/light 判轻」改「除 Opus 皆轻」+ 两池显式
   配置（旧键降级兼容）；分级路由 L0-L4 语义收编进新引导词（免审线/
   轻审线保留，派 dev 路径作废）；引导词与 body 全面去版本代号瘦身；
-- v2.52（用户拍板）：审计判定只看单次直改总行数——不计文件数、不做
-  回合累计；文案去「Task 工具」名；
+- v2.52 曾定「单次最大不累计」；v3.5.41 用户实锤多次小 Edit 切片逃逸
+  （174 行回合零审计）改回合内累计；文案去「Task 工具」名；
 - v2.53：三槽直白化「主会话/设计者/审计者」各自模型（designer_model/
   reviewer_model 新键，空=回退重池）；「重」角标移除；
 - v2.54（用户拍板）：设计线 design_max_lines（默认 200，0=不强制）——
-  单次直改达线未派 designer：事中闸拦+结算追责，强制大改方案先行；
+  回合内直改累计达线未派 designer：事中闸拦+结算追责，强制大改方案先行；
   子代理段内补 text 气泡（轮询+回填双通道）；回传历史/实时分离
   （历史绝不新建段）。
 """
@@ -173,10 +173,10 @@ _DEFAULTS = {"enabled": False,          # 默认关闭（用户定调：开关�
              "audit_mode": "auto",      # 兜底档：auto=违规自动续发补审 / warn=仅警示 / off=关
              # 分级线两档（旧 max_free_lines=3 已废；v2.52 只看单次直改
              # 总行数，不计文件数、不做回合累计）：
-             "l1_max_lines": 100,       # 免审线：单次直改总计 ≤ 此行数免审
+             "l1_max_lines": 100,       # 免审线：回合内直改累计 ≤ 此行数免审
              "l2_max_files": 3,         # 已退役不参与判定（键保留兼容旧配置）
-             "l2_max_lines": 200,       # 轻审线：单次直改总计 ≤ 此行数；超线属大改须全审
-             "design_max_lines": 200}   # 设计线：单次直改 ≥ 此行数须先派 designer 出方案（0=不强制）
+             "l2_max_lines": 200,       # 轻审线：回合内直改累计 ≤ 此行数；超线属大改须全审
+             "design_max_lines": 200}   # 设计线：回合内直改累计 ≥ 此行数须先派 designer 出方案（0=不强制）
 
 
 def roles_cfg():
@@ -564,7 +564,7 @@ def audit_limits(cfg=None):
     引导词 / 回合结算 / 事中闸三处共用本函数——数字同源，不会词里一套
     审计另一套。0 合法（最严档：l1=0 任何直改都须轻审；l2=0 任何直改都
     属大改须全审），缺键/非法回默认。纯函数不落盘（cfg 缺省读盘一次）。
-    v2.52 用户拍板：判定只看单次直改总行数——l2_max_files 不再参与任何
+    v2.52 曾定单次最大口径；v3.5.41 改回合内累计。l2_max_files 不再参与任何
     判定（键与返回形状保留兼容旧配置/旧调用方；clamp_role_limits 仅解包
     弃值不消费它）。"""
     c = cfg if cfg is not None else roles_cfg()
@@ -580,7 +580,7 @@ def audit_limits(cfg=None):
 
 
 def design_limit(cfg=None):
-    """设计线现值（v2.54）：单次直改 ≥ 此行数的大改，动手前须先派
+    """设计线现值（v2.54）：回合内直改累计 ≥ 此行数的大改，动手前须先派
     designer 出框架方案——主会话惯性全自己做（用户原话）的事前强制档。
     0=不强制设计（与审计线「0=最严」语义相反：设计强制的是动手前行为，
     0 线会让一切直改都要先出方案，过凶）。缺键/非法回默认 200。
@@ -594,7 +594,7 @@ def design_limit(cfg=None):
 
 def audit_verdict(lines, rev, designed=True, cfg=None, strong=False):
     """回合结算违规判定（纯函数，claude_harness._audit_settle 调用）：
-    入参 lines=本回合单次直改的最大行数、rev=是否派发过 reviewer、
+    入参 lines=本回合直改累计行数（v3.5.41 起 _audit_tally 累计入账）、rev=是否派发过 reviewer、
     designed=是否派发过 designer（v2.52 用户拍板：判定只看单次直改总
     行数——不计文件数、不做回合累计；v2.54 新增设计档强制）。返回违规
     描述列表（空=干净）；描述自带档位与可数依据，供警示卡/补审指令直用。
@@ -617,22 +617,22 @@ def audit_verdict(lines, rev, designed=True, cfg=None, strong=False):
     if strong:
         if not rev and lines > l2l:
             viol.append(
-                "主会话单次直改 %d 行，超过审计线（单次总计 ≤%d 行），"
+                "主会话回合内直改累计 %d 行，超过审计线（回合累计 ≤%d 行），"
                 "本回合未派 reviewer 审计" % (lines, l2l))
         return viol
     if not rev and lines > l1:
         if lines <= l2l:
             viol.append(
-                "主会话单次直改 %d 行，超过免审线（单次总计 ≤%d 行）属"
+                "主会话回合内直改累计 %d 行，超过免审线（回合累计 ≤%d 行）属"
                 "中改，本回合未派 reviewer 轻审（只审 diff）" % (lines, l1))
         else:
             viol.append(
-                "主会话单次直改 %d 行，超过轻审线（单次总计 ≤%d 行）属"
+                "主会话回合内直改累计 %d 行，超过轻审线（回合累计 ≤%d 行）属"
                 "大改——须 reviewer 取证级全审，本回合未派审" % (lines, l2l))
     dl = design_limit(cfg)
     if dl > 0 and not designed and lines >= dl:
         viol.append(
-            "主会话单次直改 %d 行，达到设计线（≥%d 行）属大改，本回合"
+            "主会话回合内直改累计 %d 行，达到设计线（≥%d 行）属大改，本回合"
             "未先派 designer 出框架方案——大改须方案先行" % (lines, dl))
     return viol
 
@@ -670,8 +670,8 @@ def clamp_role_limits(patch, cfg=None):
 def audit_gate_check(used_lines, cfg=None, reviewed=False, designed=True):
     """事中闸判定（纯函数，claude_harness /audit_gate 调用）：
     (block, msg)。两档独立判定，任一命中即拦下一次直改：
-    - 审计档：单次直改达轻审线且本回合未派 reviewer → 指路送审；
-    - 设计档（v2.54）：单次直改达设计线（design_limit，0=关）且未派
+    - 审计档：回合内直改累计达轻审线且本回合未派 reviewer → 指路送审；
+    - 设计档（v2.54）：回合内直改累计达设计线（design_limit，0=关）且未派
       designer → 指路先出方案——「主会话惯性全自己做」的事前强制：
       大改在改的过程中就被拦下补方案，而非改完靠结算追责。
     已派对应代理即放行对应档（审过/设计过开闸——直干是常态，闸只逼
@@ -679,18 +679,18 @@ def audit_gate_check(used_lines, cfg=None, reviewed=False, designed=True):
     口径用 >=（达线即拦下一次），与结算的超线追责（>，audit_verdict）
     互补：事中闸让「超线且全程未送审/无方案」尽量不发生，事后审计只
     兜闸失效的漏网。免审/轻审区内的直改一律放行。
-    v2.52 用户拍板：只看单次直改行数——文件数与回合累计不参与。"""
+    v3.5.41：used_lines=回合内累计（_audit_tally 入账），切片不可逃逸。"""
     _l1, _l2f, l2l = audit_limits(cfg)   # 闸只守轻审行数线，l1 不参与
     msgs = []
     if not reviewed and used_lines >= l2l:
-        msgs.append("本回合已有单次直改 %d 行，达到轻审线上限（单次总计 "
+        msgs.append("本回合直改累计 %d 行，达到轻审线上限（回合累计 "
                     "≤%d 行）——请先派 reviewer 代理审已完成的改动（对抗"
                     "审核：只审不改，PASS/FAIL），审过即可继续直改；需要"
                     "方案支持可派 designer（带上全部已知上下文）"
                     % (used_lines, l2l))
     dl = design_limit(cfg)
     if not designed and dl > 0 and used_lines >= dl:
-        msgs.append("单次直改 %d 行达到设计线（≥%d 行）——请先派 designer "
+        msgs.append("回合内直改累计 %d 行达到设计线（≥%d 行）——请先派 designer "
                     "代理出框架方案（带上全部已知上下文：目标/背景约束/"
                     "已试方案/文件+行号/验收标准），按方案继续实施"
                     % (used_lines, dl))
@@ -738,9 +738,9 @@ def roles_bridge_text(model=None):
         # 模型被抓过一次空头支票后纪律反而松动）
         if str(cfg.get("audit_mode") or "auto") != "off":
             audit_note = ("harness 会在回合结束时审计你的工具调用记录——按"
-                          "单次直改总计行数判定，不计文件数、不做回合累计"
-                          "（切片拆小不追责）；单次超免审线未轻审、单次超轻"
-                          "审线未全审会被自动查出并要求补审")
+                          "回合内直改累计行数判定，不计文件数（多次小改会累"
+                          "计，拆小不逃审）；累计超免审线未轻审、超轻审线未"
+                          "全审会被自动查出并要求补审")
         else:
             audit_note = "跳过应做的审核（轻审/全审）就答复用户属重大流程违规"
         designer_m, reviewer_m = resolve_agent_models()
@@ -748,7 +748,7 @@ def roles_bridge_text(model=None):
         # 设计线行按 dl 条件生成（v2.54R：dl=0 引导词不得宣称「≥0 行都要
         # 方案」——词与判定机制同源，否则关闭强制后模型仍被词驱动过度派发）
         if dl > 0:
-            design_line = ("· 设计线（强制）：单次直改 ≥%d 行的大改，动手前"
+            design_line = ("· 设计线（强制）：回合内直改累计 ≥%d 行的大改，动手前"
                            "必须先派 designer 出框架方案再实施——不要惯性全"
                            "自己做掉；方案没把握时即使没到线也应先派 "
                            "designer。\n" % dl)
@@ -764,12 +764,12 @@ def roles_bridge_text(model=None):
             "计——只有一次性改超才审计）：\n"
             "· 杂活：问答、查文件、跑命令、环境排查、信息收集 → 你直接"
             "干。\n"
-            "· 小改（免审）：单次直改总计 ≤%d 行的配置/常量/文案/"
+            "· 小改（免审）：回合内直改累计 ≤%d 行的配置/常量/文案/"
             "注释级 → 你直接改，免审。\n"
-            "· 中改（轻审）：单次直改总计 ≤%d 行的真代码改动 → "
+            "· 中改（轻审）：回合内直改累计 ≤%d 行的真代码改动 → "
             "你直接改，交付前派 reviewer 轻审（只审 diff：逻辑/边界/一致"
             "性）。\n"
-            "· 大改（全审）：单次直改超轻审线、多文件重构、架构改动、疑难"
+            "· 大改（全审）：回合内直改累计超轻审线、多文件重构、架构改动、疑难"
             " bug → "
             "仍由你实施，交付前 reviewer 取证级全审。\n"
             "%s"
@@ -802,13 +802,13 @@ def roles_bridge_text(model=None):
             % (l1, l2l, design_line, designer_m, reviewer_m, audit_note)
         )
     # mid 分支：中档模型主会话=干活者，直干为主+派发自由（强制项=审核）；
-    # 只保留审计兜底——单次直改超审计线（数字嵌词热更）触发回合
+    # 只保留审计兜底——回合内直改累计超审计线（数字嵌词热更）触发回合
     # 结算审计（audit_verdict strong 分支：超线未派 reviewer=违规）。
     cfg = roles_cfg()
     _l1, _l2f, l2l = audit_limits(cfg)
     if str(cfg.get("audit_mode") or "auto") != "off":
-        audit_note = ("harness 会在回合结束时审计你的直改量（按单次直改总计"
-                      "行数，不计文件数、不做回合累计）——超过审计线会被自动"
+        audit_note = ("harness 会在回合结束时审计你的直改量（按回合内直改"
+                      "累计行数，不计文件数）——超过审计线会被自动"
                       "查出并要求派 reviewer 补审后重新汇总；复审复核自己 "
                       "FAIL 过的修复必须 SendMessage 续派原 reviewer（上下文"
                       "保留免重读），新审计目标才新开")
@@ -822,7 +822,7 @@ def roles_bridge_text(model=None):
         "质量纪律：\n"
         "- 动手前先想清楚：需求边界、实现路径、风险点；复杂改动先在回复里"
         "列出方案要点再实施。\n"
-        "- 审计兜底（%s）：单次直改超过审计线（单次总计 ≤%d 行）"
+        "- 审计兜底（%s）：回合内直改累计超过审计线（回合累计 ≤%d 行）"
         "即触发审计——须派 reviewer 对抗审计（只审不改，PASS/FAIL），FAIL "
         "自己修复后复审再答复用户。\n"
         "- 改完自测通过再交；遵守项目既有代码风格与约定。\n"

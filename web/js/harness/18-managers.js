@@ -248,14 +248,14 @@
           </div>
           <div class="hg-roles-note">档位留空 = 联动 API 配置三槽（Haiku→轻 / Sonnet→中 / Opus→重，换方案自动跟随）；也可在此显式选择覆盖默认。<b>同一模型映射多档时按 轻&gt;中&gt;重 优先</b>——如轻中两档同值（图中 flash 场景），实跑该模型算轻档（轻主力）；未匹配按中档</div>
 
-          <div class="hg-roles-sec">分级线 <i>按单次直改行数 · 不计文件数 · 不做累计</i></div>
-          <div class="hg-roles-line" title="单次直改总计 ≤ 此行数的小改（配置/常量/文案/注释级）主会话直接改，免审">
+          <div class="hg-roles-sec">分级线 <i>按回合内直改累计行数 · 不计文件数</i></div>
+          <div class="hg-roles-line" title="回合内直改累计 ≤ 此行数的小改（配置/常量/文案/注释级）主会话直接改，免审">
             <span>免审线</span><input type="number" min="0" max="100000" data-hg-r-l1 value="${l1}"><em>≤ 此行数直接改，免审</em>
           </div>
-          <div class="hg-roles-line" title="单次直改超过此行数 = 大改，须审核取证级全审；重主力形态即审核线（0=最严档）">
+          <div class="hg-roles-line" title="回合内直改累计超过此行数 = 大改，须审核取证级全审；中主力形态即审核线（0=最严档）">
             <span>轻审线</span><input type="number" min="0" max="100000" data-hg-r-l2l value="${l2l}"><em>超线须审核全审（0=最严）</em>
           </div>
-          <div class="hg-roles-line" title="单次直改达到此行数的大改，动手前须先派设计出方案——事中闸拦截+结算追责强制（0=不强制设计）">
+          <div class="hg-roles-line" title="回合内直改累计达到此行数的大改，动手前须先派设计出方案——事中闸拦截+结算追责强制（0=不强制设计）">
             <span>设计线</span><input type="number" min="0" max="100000" data-hg-r-dl value="${dln}"><em>达线先出方案（0=不强制）</em>
           </div>
           <div class="hg-roles-line" title="回合结算兜底：盘点直改超线未派审核——auto 自动续发要求补审，warn 仅红色警示，off 关闭">

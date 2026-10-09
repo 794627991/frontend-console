@@ -399,7 +399,11 @@ class HarnessSession:
             n = str(b.get("name") or "")
             inp = b.get("input") if isinstance(b.get("input"), dict) else {}
             if n in _AUDIT_EDIT_TOOLS:
-                au["lines"] = max(au.get("lines") or 0, _audit_lines(n, inp))
+                # v3.5.41（用户实锤「审计线没生效」严查）：口径从「单次最大」
+                # 改「回合累计」——旧口径下 AI 把大改拆成多次小 Edit（每次
+                # <免审线）即永久免审（真实转写复算：回合总和 174 行、单次
+                # max 25，零审计）。切片拆小不追责的旧定调随本次口径作废
+                au["lines"] = (au.get("lines") or 0) + _audit_lines(n, inp)
                 continue
             role = _audit_dispatch_role(n, inp, au.get("ids") or {})
             if not role:
