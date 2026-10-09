@@ -4375,5 +4375,6 @@ span.h-ag-type[class*='h-ava-'] {
 /* ---- v3.5.57 回合归档提示（主窗口只保留最近 20 轮，更早的进只读看）----
    v3.5.61（用户拍板「保留这个，然后居中」）：flex 居中——flow 限宽内视觉居中 */
 .h-archive-hint { display: flex; align-items: center; justify-content: center;
+  width: 100%; box-sizing: border-box;   /* v3.5.63：flow 是 align-items:flex-start 的 flex column——不拉满则 hint 收缩成窄条，「居中」只在条内生效 */
   padding: 8px 12px; font-size: var(--fs-sm);
   color: var(--muted); border-bottom: 1px dashed var(--border); cursor: pointer; }
