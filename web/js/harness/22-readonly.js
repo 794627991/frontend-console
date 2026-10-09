@@ -19,7 +19,7 @@
 // ============================================================
 'use strict';
 
-let _ro = null;   // {sid, gen(视图世代), dgen(抽屉世代——v3.5.66 与视图分离), root, drawer, drawerList, fw, flow, rail, busyTimer, fc, fc2, snapPeerSent}
+let _ro = null;   // {sid, gen, root, drawer, drawerList, fw, flow, rail, busyTimer, fc, fc2, snapPeerSent}
 
 function RO_active() { return !!_HG.readonly; }
 
@@ -33,7 +33,7 @@ function RO_enter(sid, deps) {
   _HG.roViewSid = sid;
   // v3.5.53（复核问题1 修复配套）：anchorSid=进入只读时的主会话——退出
   // rebuild 判定用锚（浏览过多档会话后 readonly 已非锚值，不能拿它判定）
-  _ro = { sid, anchorSid: sid, gen: 1, dgen: 1, fc, fc2, snapPeerSent: _HG.peerSent };
+  _ro = { sid, anchorSid: sid, gen: 1, fc, fc2, snapPeerSent: _HG.peerSent };
   // 断主 SSE：close 后必须置 null——看门狗（5s 巡检 _HG.sse）否则强制重开，
   // live 事件灌进 RO 视图（designer P0-1）
   if (_HG.sse) { try { _HG.sse.close(); } catch (_) {} _HG.sse = null; }
@@ -51,11 +51,6 @@ function RO_enter(sid, deps) {
   const subpane = document.querySelector('[data-hg-subpane]');
   const subOrigDisplay = subpane ? subpane.style.display : '';
   if (subpane) subpane.style.display = 'flex';
-  // v3.5.65（用户实锤「内容在中线向左」）：分屏挤压 RO 区后 margin:auto 只能
-  // 居中于挤压区——把面板宽写进 CSS 变量，fw 右移 (subw-左栏)/2 ≈ 窗口中线。
-  // RO 期间宽度不变（resizer 在主输入区），exit 清 0，无需钩 14-subpane
-  const subw = subpane ? (parseFloat(subpane.style.width) || 0) : 0;
-  document.documentElement.style.setProperty('--hg-subw', Math.round(subw) + 'px');
   // RO DOM（插在 flowwrap 同层前；分屏 .hg-subpane 保持原位=自动让位）
   const root = document.createElement('div');
   root.className = 'hg-ro';
@@ -96,9 +91,7 @@ function RO_enter(sid, deps) {
   // 建 <nav class="hg-rail" data-ro-rail> 外层再嵌原 rail——外层 .hg-rail
   // 默认 display:none 且嵌套后 absolute 定位塌陷。直接放 .hg-rov-fw
   // （position:relative 同主 flowwrap 形态）下无嵌套；_hgRailEl 引用不变，
-  // _hgRailSync/_hgRailActive/点击跳转（绑在 rail 自身）照常工作。
-  // v3.5.66（用户实锤「滚完导轨也没了」）：撤 v3.5.65 自动淡出——那是把
-  // 「滚动条常显」误读成导轨；导轨恢复与主窗口同款常显
+  // _hgRailSync/_hgRailActive/点击跳转（绑在 rail 自身）照常工作
   if (rail) {
     _ro.fw.insertBefore(rail, _ro.fw.firstChild);
     rail.classList.add('show');   // .hg-rail 默认 display:none，需 .show 才可见
@@ -107,8 +100,6 @@ function RO_enter(sid, deps) {
   _hgFlow = _ro.flow;
   if (typeof _hgSseResetLocal === 'function') _hgSseResetLocal();
   _HG.histAll = null; _HG.histLive = false; _HG.histStart = 0;
-  // v3.5.65（用户拍板「默认打开」）：进只读即开会话列表抽屉
-  _ro.drawer.style.display = 'flex';
   RO_drawerRender();
   RO_view(sid);
   // 后台 busy 信标（5s 查主 sid 的 busy——纯显示，不 setBusy 不抢渲染）
@@ -159,13 +150,10 @@ function RO_view(sid) {
 
 function RO_drawerRender() {
   if (!_ro || !_ro.drawerList) return;
-  // v3.5.66（用户实锤「会话框没了」）：抽屉用独立 dgen——共用 _ro.gen 时
-  // RO_view 的 ++gen 会把在途抽屉渲染判过期丢掉（进 RO 时 drawerRender 先
-  // 发 fetch、RO_view 随即 ++gen，响应回来守卫必弃=抽屉恒空白）
-  const gen = ++_ro.dgen;
+  const gen = ++_ro.gen;
   fetch('/api/harness/sessions').then(r => r.json()).then(j => {
-    // 世代守卫：退出/重进后在途旧响应不渲染进新抽屉
-    if (!j || !j.ok || !_ro || _ro.dgen !== gen) return;
+    // v3.5.53（复核问题2）：世代守卫——退出/重进后在途旧响应渲染进新抽屉
+    if (!j || !j.ok || !_ro || _ro.gen !== gen) return;
     const list = (j.sessions || []).slice().sort((a, b) =>
       (b.last_active || 0) - (a.last_active || 0));
     _ro.drawerList.innerHTML = list.map(s =>
@@ -200,7 +188,6 @@ function RO_exit(force) {
   _HG.readonly = null;
   _HG.roViewSid = null;
   if (_ro.busyTimer) { clearInterval(_ro.busyTimer); _ro.busyTimer = null; }
-  document.documentElement.style.setProperty('--hg-subw', '0px');   // v3.5.65：右移补偿随 RO 退出清零
   if (_ro.root) _ro.root.remove();
   // 恢复 peerSent 快照（designer P2：B 的 resumedAgentId 映射不残留进 A）
   if (_ro.snapPeerSent !== null) _HG.peerSent = _ro.snapPeerSent;
