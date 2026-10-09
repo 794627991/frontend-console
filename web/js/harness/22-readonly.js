@@ -129,7 +129,10 @@ function RO_view(sid) {
         return;
       }
       // 主渲染管线（designer 确认：与主窗口完全同款；noFinalize 对齐 switchTo 冷开）
-      _histRender(j.lines, _hgHistWinStart(j.lines), { noFinalize: !!j.busy });
+      // v3.5.62（用户实锤「只读也只能看最近20条」）：start=0 全量渲染——
+      // 窗口化起点（_hgHistWinStart）是主窗口 DOM 控制手段，只读要的就是全量；
+      // 配套：_trimOldTurns 已加 readonly 守卫（renderUser 路径不再裁 20 轮）
+      _histRender(j.lines, 0, { noFinalize: !!j.busy });
       if (j.busy) { if (typeof phResume === 'function') phResume(true); }
       else grpFinalize(true, { hist: true, turnEnd: true });
       if (typeof _hgRailSync === 'function') _hgRailSync();

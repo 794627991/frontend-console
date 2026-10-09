@@ -583,6 +583,7 @@
   // 整块移除（user 消息是 .h-msg.user，AI 是 .h-grp，它们是 flow 的兄弟节点
   // 不是嵌套关系——只删 .h-grp 会留下孤儿 user 消息）。裁剪后顶部插归档提示
   function _trimOldTurns() {
+    if (_HG.readonly) return;   // v3.5.62（用户实锤「只读模式也只能看到最近20条」）：只读视图=看全量历史，裁剪只属于主窗口
     const MAX = 20;
     const all = Array.from(_hgFlow.children);
     let grpCount = 0;
