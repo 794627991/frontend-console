@@ -2,6 +2,7 @@
 """harness.audit —— v3.0 重构自 src/claude_harness.py(机械切割,见 tools/_split_gen.py)"""
 import json
 import os
+import re
 import sys
 import tempfile
 import logging
@@ -72,9 +73,38 @@ def _audit_lines(name, inp):
             return total
         if name == "NotebookEdit":
             return _audit_nlines(inp.get("new_source"))
+        if name == "Bash":
+            return _audit_bash_lines(inp.get("command"))
     except Exception:
         pass
     return 0
+
+
+# v3.5.40（用户实锤「审计线没生效」）：Bash 写文件计数盲区——heredoc/
+# 重定向/sed -i/tee 写文件不走 Edit 类工具，旧口径整类计 0（AI 直改
+# 走 Bash 时 tally 恒 0 = 永远免审线内零红卡）。写特征命令按「命令物理
+# 行数与 heredoc 体行数取大」计；无写特征（查询类）不计不变。
+_BASH_WRITE_RE = re.compile(
+    r">{1,2}|tee\s+-a?\b|sed\s+[-a-zA-Z]*i\b|\bcp\b|\bmv\b|\binstall\b|\bpatch\b|<<-?")
+def _audit_bash_lines(cmd):
+    """Bash 写文件命令的审计行数口径（保守宁多）：
+    - 无写特征（>>?>|tee|sed -i|cp|mv|install|patch|heredoc）→ 0（查询类
+      不计，保持旧行为）；
+    - 有写特征 → max(命令物理行数, heredoc 体行数)——多行命令如实计；
+      单行 python -c 内联长脚本靠 heredoc 体或命令整体行数兜底（精确解析
+      不现实，宁多勿漏）。"""
+    c = str(cmd or "")
+    if not c or not _BASH_WRITE_RE.search(c):
+        return 0
+    phys = _audit_nlines(c)
+    hd = 0
+    m = re.search(r"<<-?\s*['\"]?(\w+)['\"]?", c)
+    if m:
+        tag = m.group(1)
+        body = c[m.end():]
+        end = re.search(r"^\s*%s\s*$" % re.escape(tag), body, re.M)
+        hd = _audit_nlines(body[:end.start()]) if end else _audit_nlines(body)
+    return max(phys, hd)
 
 # ---- from claude_harness.py:906 (_AUDIT_ROLES) ----
 
