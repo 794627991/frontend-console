@@ -57,6 +57,11 @@
           <label>识图模型（MCP 后端，需多模态；换 API 方案后在此重选）
             <select data-hg-v-model>${opts}</select></label>
         </div>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:4px;">
+          <button class="btn ghost" data-hg-v-probe style="font-size:11px;">🔍 检测算图模型能否读图</button>
+          <span data-hg-v-probe-out style="font-size:11px;color:var(--muted);"></span>
+        </div>
+        <div style="border-top:1px solid var(--border);margin:10px 0 4px;"></div>
         <label class="hg-vision-prompt-lab">多模态模型名单（逗号分隔，模型下拉的 👁 标记以此为准；名单外的模型一律走 MCP 识图通道）
           <input class="hg-vision-mm" data-hg-v-mm spellcheck="false"
                  value="${esc((cfg.mm_extra || []).join(', '))}"
@@ -67,10 +72,6 @@
           </div>
           <button class="btn ghost" data-hg-v-user-add style="font-size:11px;margin-top:4px;">+ 添加模型判定</button>
         </label>
-        <div style="display:flex;gap:8px;align-items:center;margin-top:4px;">
-          <button class="btn ghost" data-hg-v-probe style="font-size:11px;">🔍 检测识图模型能否读图</button>
-          <span data-hg-v-probe-out style="font-size:11px;color:var(--muted);"></span>
-        </div>
         <label class="hg-vision-prompt-lab">识图提示词（作为识图请求的 system）
           <textarea class="hg-vision-prompt" data-hg-v-prompt spellcheck="false"></textarea></label>
         <div class="hg-modal-acts"></div></div>`;

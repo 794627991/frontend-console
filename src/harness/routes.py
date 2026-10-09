@@ -1148,14 +1148,33 @@ def harness_vision_status():
     mode = ""
     sid = (request.args.get("sid") or "").strip()
     if sid:
+        m = ""
         with _sessions_lock:
             s = _sessions.get(sid)
         if s:
             try:
                 from .vision import _model_vision_mode
-                mode = _model_vision_mode(s._eff_model())
+                m = s._eff_model()
+                mode = _model_vision_mode(m)
             except Exception:
                 mode = ""
+        # v3.5.45（用户实锤「重启了还是显示 MCP，过一会才变」）：重启后后端
+        # _sessions 内存为空（会话 lazy 建），?sid= 查不到 → mode 空 → 前端
+        # 回退通用「已启用（MCP）」，等会话被别的调用 lazy 建后才纠正。
+        # 回退读落盘 meta（claude_harness.json 的 live_model/model）——重启
+        # 丢失的只是内存，档位事实在盘上
+        if not m:
+            try:
+                meta = json.load(open(os.path.join(
+                    os.path.expanduser("~"), ".serialconsole_pro",
+                    "claude_harness.json"), encoding="utf-8"))
+                mm = meta.get(sid) or {}
+                m = (mm.get("live_model") or mm.get("model") or "").strip()
+                if m:
+                    from .vision import _model_vision_mode
+                    mode = _model_vision_mode(m)
+            except Exception:
+                pass
     return jsonify({"ok": True, "enabled": bool(cfg["enabled"]),
                     "name": cfg["name"], "model": cfg["model"],
                     "mode": mode,
