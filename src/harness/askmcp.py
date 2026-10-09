@@ -13,10 +13,14 @@ from .vision import _vision_load
 # ---- from claude_harness.py:808 (_ask_mcp_cfg_path) ----
 
 
-def _ask_mcp_cfg_path(sid, perm="auto"):
+def _ask_mcp_cfg_path(sid, perm="auto", include_vision=True):
     """写本会话的 --mcp-config 文件（内容极小，每次 start 覆写）。
 
     perm：会话权限模式（auto/confirm），经 HARNESS_PERM 传给 ask_user MCP。
+    include_vision：vision server（本地兜底识图 analyze_image）是否注入——
+    v3.5.36（用户拍板「多模态模型 MCP 直接不启用」）：主会话模型判定为
+    多模态（inline 直读）时传 False，analyze_image 工具从工具列表彻底消失
+    （比不预授权更干净——模型连尝试入口都没有）；非多模态默认 True。
     路径用正斜杠：cmd.exe shim 会吞反斜杠转义，JSON 里带 \\ 的 Windows 路径
     经 shim 传递后解析失败（实测 --mcp-config 内联 JSON 会被引号处理吃掉）。
     """
@@ -45,7 +49,7 @@ def _ask_mcp_cfg_path(sid, perm="auto"):
         "args": ask_args,
         "env": {"HARNESS_SID": sid, "HARNESS_PERM": perm},
     }}
-    if _vision_load()["enabled"]:
+    if include_vision and _vision_load()["enabled"]:
         servers["vision"] = {
             "command": vis_cmd,
             "args": vis_args,

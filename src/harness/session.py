@@ -177,18 +177,22 @@ class HarnessSession:
         # --mcp-config 是追加式的（实测：内置 codegraph/headroom 等仍在），
         # 不会覆盖用户已有的 MCP。
         if not self.is_vision:
-            _cfg = _ask_mcp_cfg_path(self.sid, self.permission)
+            # v3.5.36（用户拍板「多模态模型 MCP 直接不启用；非多模态默认启用」）：
+            # vision server（本地兜底 analyze_image）按主会话模型形态注入——
+            # inline（多模态直读）连 server 都不配，analyze_image 从工具列表
+            # 彻底消失（模型连尝试入口都没有，比不预授权更干净）；非多模态
+            # 默认注入（那是它唯一的看图通道）。ask_user 始终在（交互提问
+            # 与识图无关）。
+            _inline_mm = _model_vision_mode(self._eff_model()) == "inline"
+            _cfg = _ask_mcp_cfg_path(self.sid, self.permission,
+                                     include_vision=not _inline_mm)
             if _cfg:
                 argv += ["--mcp-config", _cfg]
-                # v2.28.5：本地兜底识图工具随开关门控（与 --mcp-config 同步）；
-                # 网关主通道名也保留预授权（个别链路网关不拦截时可客户端执行）
-                # v3.5.34R（用户连番实锤「多模态模型怎么又走 MCP」）：主会话
-                # 模型判定为多模态（inline 直读）时**不再预授权**识图工具——
-                # 引导词只劝不拦，工具躺在列表里模型就抄近道调 MCP（直读词
-                # 白注入）。非多模态形态维持注入（那是它唯一的看图通道）
+                # allowedTools 与 server 注入同步：vision server 没配时两个
+                # 识图工具名也不预授权（网关主通道名同理——inline 时模型
+                # 不该看到任何识图入口）
                 _tools = ["mcp__harness__ask_user"]
-                if _vision_load()["enabled"] \
-                        and _model_vision_mode(self._eff_model()) != "inline":
+                if _vision_load()["enabled"] and not _inline_mm:
                     _tools += ["mcp__4_5v_mcp__analyze_image",
                                "mcp__vision__analyze_image"]
                 argv += ["--allowedTools", ",".join(_tools)]
