@@ -133,7 +133,10 @@ function RO_calcShift() {
   if (!_ro || !_ro.flow || !_ro.flow.isConnected) return;
   const flowW = _ro.flow.clientWidth;
   const subw = _ro.subpaneEl ? (parseFloat(_ro.subpaneEl.style.width) || 0) : 0;
-  const shift = Math.max(0, Math.min(Math.round(subw) - 232, flowW - 884));
+  // v3.5.71（用户实锤「点开历史子代理→退出→再进，内容贴右」）：封顶改吃
+  // 富余的一半——旧 cap(flowW-884) 把全部富余喂给偏移，窄 RO 区（宽档面板
+  // 开着）内容列被推到贴右。半富余封顶=内容列永远保持居中倾向
+  const shift = Math.max(0, Math.min(Math.round(subw) - 232, Math.floor((flowW - 884) / 2)));
   // 32=flow 原左 padding 基准，与偏移合并写一个变量（CSS 零 calc）
   document.documentElement.style.setProperty('--hg-roshift', (32 + shift) + 'px');
 }
