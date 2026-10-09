@@ -24,14 +24,18 @@
       const opts = ['<option value=""' + (curModel ? '' : ' selected') + '>默认（' + 'glm-5.3-flash）</option>']
         .concat(models.map(m => `<option value="${esc(m)}"${m === curModel ? ' selected' : ''}>${esc(m)}</option>`))
         .join('');
-      // v3.5.39（用户拍板「改成下拉选择」）：人工判定行=模型下拉(方案表全量+已存值)+判定下拉(自动/多模态/非多模态)
+      // v3.5.39（用户拍板「改成下拉选择」）→ v3.5.44（实锤「多点几次直接溢出
+      // 屏幕了；要的是和上面同款下拉选择」）：人工判定行=模型下拉（与上方
+      // 识图模型同款 select，方案表全量）+判定下拉+删行钮——旧版模型名是
+      // 自由输入框（占宽爆行）；+添加=补一行下拉（不再无限增行溢出：超 6 行
+      // 区域自身滚动）
       const _mmUserRowHtml = (name, val) => {
-        const mo = ['<option value=""' + (!name ? ' selected' : '') + '>选择模型…</option>']
+        const sel = ['<option value=""' + (!name ? ' selected' : '') + '>选择模型…</option>']
           .concat(models.map(m => `<option value="${esc(m)}"${_normEq(m, name) ? ' selected' : ''}>${esc(m)}</option>`))
           .concat(!name || models.some(m => _normEq(m, name)) ? '' : [`<option value="${esc(name)}" selected>${esc(name)}</option>`])
           .join('');
         return `<div class="hg-vision-grid" style="margin-top:4px;" data-mm-user-row>` +
-          `<input class="hg-vision-mm" data-mm-user-name spellcheck="false" style="flex:1;min-width:0;" value="${esc(name || '')}" placeholder="模型名（前缀匹配覆盖 [1M] 变体）">` +
+          `<select data-mm-user-name style="flex:1;min-width:0;">${sel}</select>` +
           `<select data-mm-user-val style="flex:none;width:110px;">` +
           `<option value="auto"${val == null ? ' selected' : ''}>自动判定</option>` +
           `<option value="yes"${val === true ? ' selected' : ''}>多模态</option>` +
@@ -57,8 +61,8 @@
           <input class="hg-vision-mm" data-hg-v-mm spellcheck="false"
                  value="${esc((cfg.mm_extra || []).join(', '))}"
                  placeholder="如：glm-5.3 flash, Lanz-Medium-V（前缀匹配，填一个即可覆盖其 [1M] 变体）"></label>
-        <label class="hg-vision-prompt-lab">多模态人工判定（用户定调：探测抽风时你的眼见为实压过一切缓存。下拉选中即人工判定——三档下拉同理可覆盖档位默认）
-          <div class="hg-vision-grid" data-hg-v-user-list>
+        <label class="hg-vision-prompt-lab">多模态人工判定（用户定调：探测抽风时你的眼见为实压过一切缓存。点「+ 添加」→ 下拉选模型 → 判定选「多模态/非多模态」；「自动判定」档=删除该条回自动）
+          <div class="hg-vision-grid" data-hg-v-user-list style="max-height:180px;overflow-y:auto;">
             ${Object.entries(cfg.mm_user || {}).sort().map(([k, v]) => _mmUserRowHtml(k, v)).join('')}
           </div>
           <button class="btn ghost" data-hg-v-user-add style="font-size:11px;margin-top:4px;">+ 添加模型判定</button>
