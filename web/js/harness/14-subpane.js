@@ -284,7 +284,11 @@
     // wrap 隐藏（后台 tab 收到 Task 派发自动开窗格）时不写死 px——clientWidth
     // 恒 0 会把宽度焊成几十 px，切回 tab 窗格缩成一竖条；保持 CSS 默认 50%
     if (region <= 220) return;
-    _subPaneEl.style.width = Math.round(region * pct / 100) + 'px';
+    let px = Math.round(region * pct / 100);
+    // v3.5.69（用户 v3.5.65 需求「适当缩窄」恢复）：目录/动态窄档按百分比在
+    // 宽屏上过宽——cap 360px（子代理实况/回放宽档不设限，仍按 pct 记忆）
+    if (_subPanePctKey() === 'hg-subpane-narrow-pct') px = Math.min(px, 360);
+    _subPaneEl.style.width = px + 'px';
   }
   function _subShow(pendingTid) {
     if (!_subPaneEl || _subPaneEl.style.display !== 'none') return;

@@ -2328,7 +2328,12 @@ html {
 .hg-ro-dmeta { font-size: var(--fs-2xs); color: var(--muted); }
 /* RO flow：与主 flow 同类（.hg-flow 保留→内部行样式零改生效），外层限宽居中 */
 /* v3.5.64：884=820 内容列+64 flow padding——卡片全填内容列左右对称，
-   与主窗口 820 列同宽统一（旧 920 让 820 卡片靠左悬着，右侧多 100px 不对称） */
+   与主窗口 820 列同宽统一（旧 920 让 820 卡片靠左悬着，右侧多 100px 不对称）
+   v3.5.69：wrap 层承载「右移贴窗口中线」——margin-left: var(--hg-roshift)
+   （JS 算好纯 px，=分屏宽-232 左栏宽，非负）。v3.5.65 的 transform+calc/max
+   引发滚动回归已证死：本版零 transform 零 calc，fw/flow 滚动约束链不动 */
+.hg-rov-wrap { flex: 1; min-width: 0; display: flex; overflow: hidden;
+  margin-left: var(--hg-roshift, 0px); }
 .hg-rov-fw { width: min(884px, 100%); margin: 0 auto; position: relative;
   display: flex; flex-direction: column; height: 100%; }
 .hg-rov-fw > .hg-flow { flex: 1; min-height: 0; }
