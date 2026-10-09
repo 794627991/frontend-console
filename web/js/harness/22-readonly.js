@@ -51,6 +51,11 @@ function RO_enter(sid, deps) {
   const subpane = document.querySelector('[data-hg-subpane]');
   const subOrigDisplay = subpane ? subpane.style.display : '';
   if (subpane) subpane.style.display = 'flex';
+  // v3.5.65（用户实锤「内容在中线向左」）：分屏挤压 RO 区后 margin:auto 只能
+  // 居中于挤压区——把面板宽写进 CSS 变量，fw 右移 (subw-左栏)/2 ≈ 窗口中线。
+  // RO 期间宽度不变（resizer 在主输入区），exit 清 0，无需钩 14-subpane
+  const subw = subpane ? (parseFloat(subpane.style.width) || 0) : 0;
+  document.documentElement.style.setProperty('--hg-subw', Math.round(subw) + 'px');
   // RO DOM（插在 flowwrap 同层前；分屏 .hg-subpane 保持原位=自动让位）
   const root = document.createElement('div');
   root.className = 'hg-ro';
@@ -83,6 +88,7 @@ function RO_enter(sid, deps) {
   });
   _ro.flow.addEventListener('scroll', () => {
     if (typeof _hgRailActiveRaf === 'function') _hgRailActiveRaf();
+    if (_ro.railWake) _ro.railWake();   // v3.5.65：滚动唤醒导轨
   }, { passive: true });
   // 交互同款：主层命名 handler（deps 传入）绑 RO flow
   _ro.flow.addEventListener('click', fc);
@@ -91,15 +97,25 @@ function RO_enter(sid, deps) {
   // 建 <nav class="hg-rail" data-ro-rail> 外层再嵌原 rail——外层 .hg-rail
   // 默认 display:none 且嵌套后 absolute 定位塌陷。直接放 .hg-rov-fw
   // （position:relative 同主 flowwrap 形态）下无嵌套；_hgRailEl 引用不变，
-  // _hgRailSync/_hgRailActive/点击跳转（绑在 rail 自身）照常工作
+  // _hgRailSync/_hgRailActive/点击跳转（绑在 rail 自身）照常工作。
+  // v3.5.65（用户拍板「不要常显」）：RO 里滚动/悬停时亮，静止 1.6s 淡出
   if (rail) {
     _ro.fw.insertBefore(rail, _ro.fw.firstChild);
-    rail.classList.add('show');   // .hg-rail 默认 display:none，需 .show 才可见
+    rail.classList.add('show', 'ro-dim');   // .show 控制显示，.ro-dim 控制淡入淡出
+    _ro.railWake = () => {
+      rail.classList.remove('ro-dim');
+      clearTimeout(_ro.railT);
+      _ro.railT = setTimeout(() => rail.classList.add('ro-dim'), 1600);
+    };
+    rail.addEventListener('mouseenter', () => { clearTimeout(_ro.railT); rail.classList.remove('ro-dim'); });
+    rail.addEventListener('mouseleave', () => { clearTimeout(_ro.railT); _ro.railT = setTimeout(() => rail.classList.add('ro-dim'), 1600); });
   }
   // _hgFlow 指向 RO 容器 + 清目标会话态（主会话态退出时 _hgSseRebuild 全量重建）
   _hgFlow = _ro.flow;
   if (typeof _hgSseResetLocal === 'function') _hgSseResetLocal();
   _HG.histAll = null; _HG.histLive = false; _HG.histStart = 0;
+  // v3.5.65（用户拍板「默认打开」）：进只读即开会话列表抽屉
+  _ro.drawer.style.display = 'flex';
   RO_drawerRender();
   RO_view(sid);
   // 后台 busy 信标（5s 查主 sid 的 busy——纯显示，不 setBusy 不抢渲染）
@@ -188,6 +204,8 @@ function RO_exit(force) {
   _HG.readonly = null;
   _HG.roViewSid = null;
   if (_ro.busyTimer) { clearInterval(_ro.busyTimer); _ro.busyTimer = null; }
+  if (_ro.railT) { clearTimeout(_ro.railT); _ro.railT = null; }
+  document.documentElement.style.setProperty('--hg-subw', '0px');   // v3.5.65：右移补偿随 RO 退出清零
   if (_ro.root) _ro.root.remove();
   // 恢复 peerSent 快照（designer P2：B 的 resumedAgentId 映射不残留进 A）
   if (_ro.snapPeerSent !== null) _HG.peerSent = _ro.snapPeerSent;
