@@ -61,6 +61,7 @@
       // （多行手写/行式下拉）随本重构删除
       const forceEl = ov.querySelector('[data-hg-v-force]');
       const _mmUser = cfg.mm_user || {};
+      ta.value = cfg.mcp_prompt || def.mcp_prompt || '';   // v3.5.49 补回：v3.5.46 重构时漏搬——textarea 恒空, 保存空值会覆盖用户提示词
       const _normEq = (a, b) => {
         const n = x => String(x || '').split('[')[0].trim().toLowerCase();
         return n(a) && n(a) === n(b);
