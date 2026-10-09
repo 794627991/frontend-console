@@ -73,10 +73,11 @@ function highlightNewKw(conn) {
   }
   conn.kwDecorLastRow = totalRows;
   // decoration 数量硬上限：每个 decoration 是一个 DOM overlay，超量是渲染卡顿重灾区。
-  // 3000 折中：错误密集日志（几百行全是 error/warning）不丢高亮，又不至于拖垮渲染。
+  // 1500 折中（v2.27.18 多开卡顿排查降档）：一屏几十行、视口内命中至多百级，
+  // 1500 仍覆盖视口±数百行；2 终端顶格 overlay 从 6000 降到 3000，dispose 尖峰同步变小。
   // 超限丢最旧的（滚动出视野的早已无用）
-  if (conn.kwDecorations.length > 3000) {
-    const drop = conn.kwDecorations.splice(0, conn.kwDecorations.length - 3000);
+  if (conn.kwDecorations.length > 1500) {
+    const drop = conn.kwDecorations.splice(0, conn.kwDecorations.length - 1500);
     drop.forEach(d => { try { d.dispose(); } catch(e){} });
   }
 }
