@@ -2334,10 +2334,9 @@ html {
    补回 ≈ 以窗口中线为基准；面板关（变量 0）时 max() 兜住不偏移 */
 .hg-rov-fw { width: min(884px, 100%); margin: 0 auto; position: relative;
   transform: translateX(max(0px, calc((var(--hg-subw, 0px) - 232px) / 2))); }
-/* v3.5.66（用户实锤「不要常显」真目标=滚动条，v3.5.65 误读成导轨已撤）：
-   RO flow 滚动条悬停内容区才显，平时透明 */
-.hg-rov-fw > .hg-flow::-webkit-scrollbar-thumb { background: transparent; }
-.hg-rov-fw:hover > .hg-flow::-webkit-scrollbar-thumb { background: var(--border); }
+/* v3.5.67：撤 v3.5.66 的「滚动条 hover 才显」——用户实锤正是它导致 RO 无法
+   滚动（WebKit 自定义 scrollbar 覆盖在 WebView2 下破坏了该滚动容器），
+   恢复全局滚动条样式（8px thumb=var(--border)） */
   display: flex; flex-direction: column; height: 100%; }
 .hg-rov-fw > .hg-flow { flex: 1; min-height: 0; }
 /* （v3.5.61 撤主窗口顶栏「📖 只读模式」浮钮——入口唯一化为归档提示点击） */
