@@ -67,21 +67,11 @@ def _vision_load():
             mm = raw.get("mm_extra")
             if isinstance(mm, list):
                 cfg["mm_extra"] = [str(x).strip() for x in mm if str(x).strip()]
-            # v2.28.2：端点模型映射（dict 或 "关键字=模型" 行列表均收）+
-            # MCP 识图提示词
-            mmap_raw = raw.get("model_map")
-            mmap = {}
-            if isinstance(mmap_raw, dict):
-                mmap = {str(k).strip().lower(): str(v).strip()
-                        for k, v in mmap_raw.items()
-                        if str(k).strip() and str(v).strip()}
-            elif isinstance(mmap_raw, list):
-                for line in mmap_raw:
-                    kv = str(line).split("=", 1)
-                    if len(kv) == 2 and kv[0].strip() and kv[1].strip():
-                        mmap[kv[0].strip().lower()] = kv[1].strip()
-            if mmap:
-                cfg["model_map"] = mmap
+            # v3.5.31：mm_user 人工判定表（{模型名: bool}）——判定链最高优先级
+            mu = raw.get("mm_user")
+            if isinstance(mu, dict):
+                cfg["mm_user"] = {str(k).strip().lower(): bool(v)
+                                  for k, v in mu.items() if str(k).strip()}
             mp = str(raw.get("mcp_prompt") or "").strip()
             if mp:
                 cfg["mcp_prompt"] = mp
@@ -137,14 +127,21 @@ def _model_is_multimodal(name):
     if not name:
         return False
     lname = name.lower()
-    # 当前方案下的运行时探测结果最权威（真实链路上验证过能否读图），
-    # 优先于名字启发式与 mm_extra 名单——名单可能是别的方案探测时自动加的
+    cfg = _vision_load()
+    # v3.5.31（用户定调「防止抽风，用户判断永远优先于缓存」）：mm_user 人工
+    # 判定表最高优先级——探测缓存/名字正则/名单全部让位。探测是 headless
+    # 一次性进程，环境抖动会把多模态模型误判 false（glm-5.3 实锤）；用户
+    # 眼见为实的结论不该被机器缓存覆盖。表结构 {模型名小写: bool}，面板写入
+    for item, val in (cfg.get("mm_user") or {}).items():
+        it = (item or "").strip().lower()
+        if it and (lname == it or lname.startswith(it + "[")):
+            return bool(val)
+    # 当前方案下的运行时探测结果次之（真实链路上验证过能否读图）
     cached = _mm_probed_load().get(_mm_probe_key(name))
     if cached is not None:
         return bool(cached)
     if _MM_RE.search(lname):
         return True
-    cfg = _vision_load()
     # v2.27.5：全部比较用小写——CLI 切模型后上报 [1m] 小写，配置里是 [1M]，
     # 严格相等永远 False → 多模态模型被误判走转交（用户实锤）
     if lname == (cfg["model"] or "").strip().lower():

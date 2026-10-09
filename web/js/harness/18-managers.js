@@ -32,6 +32,10 @@
           <input class="hg-vision-mm" data-hg-v-mm spellcheck="false"
                  value="${esc((cfg.mm_extra || []).join(', '))}"
                  placeholder="如：glm-5.3 flash, Lanz-Medium-V（前缀匹配，填一个即可覆盖其 [1M] 变体）"></label>
+        <label class="hg-vision-prompt-lab">人工判定（用户定调：探测抽风时你的眼见为实压过一切缓存。格式「模型名=多模态」，逗号分隔——判多模态填 =是，判不能看图填 =否）
+          <input class="hg-vision-mm" data-hg-v-user spellcheck="false"
+                 value="${esc(Object.entries(cfg.mm_user || {}).map(([k, v]) => `${k}=${v ? '是' : '否'}`).sort().join(', '))}"
+                 placeholder="如：glm-5.3=是（前缀匹配覆盖 [1M] 变体；删除该条即回到自动判定）"></label>
         <div style="display:flex;gap:8px;align-items:center;margin-top:4px;">
           <button class="btn ghost" data-hg-v-probe style="font-size:11px;">🔍 检测识图模型能否读图</button>
           <span data-hg-v-probe-out style="font-size:11px;color:var(--muted);"></span>
@@ -89,6 +93,20 @@
         // v2.25：多模态手补名单随保存落盘（后端按前缀匹配，覆盖 [1M] 变体）
         mm_extra: (ov.querySelector('[data-hg-v-mm]').value || '')
           .split(/[,，;；\n]/).map(s => s.trim()).filter(Boolean),
+        // v3.5.31：人工判定表——「模型名=是/否」行解析（用户定调眼见为实
+        // 压过探测缓存）；未提及的模型维持自动判定
+        mm_user: (() => {
+          const out = {};
+          (ov.querySelector('[data-hg-v-user]').value || '')
+            .split(/[,，;；\n]/).map(s => s.trim()).filter(x => x.includes('='))
+            .forEach(pair => {
+              const i = pair.indexOf('=');
+              const k = pair.slice(0, i).trim().toLowerCase();
+              const v = /是|yes|true|1/i.test(pair.slice(i + 1));
+              if (k) out[k] = v;
+            });
+          return out;
+        })(),
         // v3.5.19：model_map 端点映射退役——识图模型就是上面的主选择框
       }));
       ov.addEventListener('click', (e) => { if (e.target === ov) close(null); });

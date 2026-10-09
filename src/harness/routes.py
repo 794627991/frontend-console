@@ -1298,6 +1298,15 @@ def harness_set_vision():
         cfg["mm_extra"] = [str(x).strip() for x in mm if str(x).strip()]
     else:
         cfg["mm_extra"] = list(old.get("mm_extra") or [])
+    # v3.5.31：mm_user（用户人工判定表 {模型名: bool}）——最高优先级压过
+    # 探测缓存/正则/名单（用户实锤「探测抽风把多模态判 false，眼见为实优先」）。
+    # 未提交保旧值；提交则整表替换（面板是全量表编辑）
+    mu = data.get("mm_user")
+    if isinstance(mu, dict):
+        cfg["mm_user"] = {str(k).strip().lower(): bool(v)
+                          for k, v in mu.items() if str(k).strip()}
+    else:
+        cfg["mm_user"] = dict(old.get("mm_user") or {})
     ok, err = _vision_save(cfg)
     if not ok:
         return jsonify({"ok": False, "err": err or "写入失败"}), 500
