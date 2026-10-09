@@ -57,6 +57,7 @@ function buildClaudeHarnessTab(opts = {}) {
         </div>
         <div class="hg-flowwrap">
           <nav class="hg-rail" data-hg-rail aria-label="回合导航（ZCode 同款快速跳转）"></nav>
+          <button class="hg-ro-entry" data-hg-roentry title="进入只读模式：只看历史（后台照常运行），可查看全部过往会话">📖 只读模式</button>
           <div class="hg-flow" data-hg-flow></div>
           <button class="hg-jumpbtm" data-hg-jumpbtm title="跳到最新消息" aria-label="跳到最新消息"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v14"/><path d="M5 12l7 7 7-7"/></svg></button>
           <button class="hg-dyn-capsule" data-hg-dyncaps title="会话动态：点开分屏动态页 / 动态页激活时再点收起（子代理运行中点按直达实况）" style="position:absolute;top:10px;right:14px;z-index:7;display:inline-flex;align-items:center;gap:7px;padding:4px 12px;border-radius:999px;">
@@ -339,7 +340,7 @@ function buildClaudeHarnessTab(opts = {}) {
       }
     });
   }
-  _hgFlow.addEventListener('click', (e) => {
+  function _hgFlowClick(e) {
     // v2.43：子代理段头点击。v2.45 两层收纳改型：完成段点击=toggle 折叠
     // （.collapsed 类 + CSS，快照随身携带）；窗格动作在段头右侧小按钮
     // （「▣ 回放」hgSubr /「⧉ 窗格」hgSub，span+role 防 button 嵌套）。
@@ -568,6 +569,8 @@ function buildClaudeHarnessTab(opts = {}) {
     }
     // v2.22：用户消息重发（气泡右上刷新钮）——同内容再走一遍发送管线
     const rb = e.target.closest('.h-resend');
+    // v3.5.51：只读模式无变更类操作（重发/编辑走输入态，RO 内拦截）
+    if (rb && _HG.readonly) { showBanner('只读模式下不能重发', 2000, true); return; }
     if (rb) {
       const m = rb.closest('.h-msg.user');
       let atts = null;
@@ -592,6 +595,8 @@ function buildClaudeHarnessTab(opts = {}) {
     }
     // v2.22：编辑后重发——原文与附件填回输入框，改完正常发送
     const eb = e.target.closest('.h-edit');
+    // v3.5.51：只读模式拦截（编辑后重发属变更态）
+    if (eb && _HG.readonly) { showBanner('只读模式下不能编辑重发', 2000, true); return; }
     if (eb) {
       const m = eb.closest('.h-msg.user');
       let atts = null;
@@ -609,7 +614,9 @@ function buildClaudeHarnessTab(opts = {}) {
       _hgInput.focus();
       _hgScrollBottom();
     }
-  });
+  }
+  // v3.5.50：click 委托绑定（handler 提取为命名函数——只读层 RO flow 复用同款交互）
+  _hgFlow.addEventListener('click', _hgFlowClick);
   // 组定稿（result / 新一轮 renderUser / 正文切组）：徽章 + 未手动碰过时自动收
 
   // ==================== 气泡基元 ====================
@@ -883,6 +890,8 @@ function buildClaudeHarnessTab(opts = {}) {
   // 5s 轮询会话列表纠偏,指示器永远反映后端真实 busy;计时起点同步用
   // busy_since(切会话回来不清零,用户实锤)。
   setInterval(() => {
+    // v3.5.50：只读模式早退——RO 期间 busy 自愈会 setBusy 抢渲染权
+    if (_HG.readonly) return;
     if (document.hidden || !_HG.sid || !_HG.sse) return;
     fetch('/api/harness/sessions').then(r => r.json()).then(j => {
       if (!j || !j.ok) return;
@@ -942,7 +951,7 @@ function buildClaudeHarnessTab(opts = {}) {
   // v2.28.16：回滚按钮事件委托——按消息文本锚点回滚（每个定下的回合边界
   // 都可回滚到那里）。按钮 innerHTML 随气泡生成/随快照克隆，直绑 onclick
   // 会丢（同 h-macts 既有解法），flow 级委托一次永在
-  _hgFlow.addEventListener('click', async (e) => {
+  async function _hgFlowClick2(e) {
     // v3.5.11：超长用户消息折叠切换——委托绑一次（快照恢复 onclick 不
     // 序列化），按钮文案随态换（▾ 展开 / ▴ 收起）
     const fbtn = e.target.closest('[data-hg-fold]');
@@ -968,6 +977,8 @@ function buildClaudeHarnessTab(opts = {}) {
       return;
     }
     const btn = e.target.closest('[data-hg-rewind]');
+    // v3.5.51：只读模式拦截回滚（历史查看态严禁变更操作）
+    if (btn && _HG.readonly) { showBanner('只读模式下不能回滚', 2000, true); return; }
     if (!btn || !_hgFlow.contains(btn)) return;
     e.stopPropagation();
     if (_HG.busy) { showBanner('AI 正在回复，结束后再回滚', 2400, true); return; }
@@ -989,7 +1000,9 @@ function buildClaudeHarnessTab(opts = {}) {
       await _hgReloadFlow();
     } catch(err) { showBanner('回滚失败：' + err, 3000, true); }
     btn.disabled = false;
-  });
+  }
+  // v3.5.50：同上（async 变更类 handler）
+  _hgFlow.addEventListener('click', _hgFlowClick2);
   _hgFlow.addEventListener('scroll', () => {
     // v3.2.8：一键跳底钮显隐——离底 >350px 浮现（任何渲染态都要刷新，
     // 先于下方 histLive 门）
@@ -1012,7 +1025,17 @@ function buildClaudeHarnessTab(opts = {}) {
     // v3.2.12：扩段/收缩分支随分页退役——恒全量渲染，滚动条天然覆盖全部
     // 历史（往上滑即是历史，无需加载步进；ZCode 靠虚拟化，我们靠折叠回合
     // +懒增强+原子渲染控 DOM）
+    // v3.5.50（用户需求「上拉到最上面，点击进入只读模式」）：滚到顶时浮出
+    // 只读入口（只看历史，后台照常跑）；离开顶部即隐
+    const roEntry = _hgQ('[data-hg-roentry]');
+    if (roEntry) roEntry.classList.toggle('show', _hgFlow.scrollTop <= 4);
   }, { passive: true });
+  _hgQ('[data-hg-roentry]').onclick = () => {
+    if (_HG.readonly || !_HG.sid) return;
+    // v3.5.51（designer B1）：交互 handler 闭包内私有——传参给 RO 模块
+    //（RO flow 绑同款委托；闭包外按名引用不可达）
+    window.HgRO && HgRO.enter(_HG.sid, { fc: _hgFlowClick, fc2: _hgFlowClick2 });
+  };
 
   // ==================== v2.3.11 只读模式（独立积木 harness-readonly.js）====================
   // ZCode 方案完整重构：默认只显结论，「已工作 Xs」总开关分级展开过程（思考/

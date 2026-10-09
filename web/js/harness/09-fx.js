@@ -154,6 +154,9 @@
       .finally(() => { _hgCtxInFlight = false; });
   }
   function setBusy(b, sinceMs) {
+    // v3.5.50：只读模式守卫——RO 期间主会话事件流已断（SSE close），主视图
+    // 藏于 flowwrap，任何 busy 态变更（5s 自愈轮询等）都不动活动条/输入卡
+    if (_HG.readonly) return;
     _HG.busy = b;
     _hgConn.tab.querySelector('.led').classList.toggle('on', b);
     _hgSendBtn.classList.toggle('stop', b);

@@ -234,12 +234,11 @@ class HarnessSession:
             # ——直改是设计常态，只有回合结算审计兜底（_audit_state 第三位
             # strong 旗分流）。闸与结算同源判定（audit_mode=off 时闸与审计
             # 同步关）；注入失败照常启动（闸失效不阻塞工作）。
-            _st_audit = self._audit_state()
-            if _st_audit is not None and not _st_audit[2]:
-                _p = _audit_hook_settings_path()
-                if _p:
-                    self._audit_settings_path = _p
-                    argv += ["--settings", _p]
+            # v3.5.51（用户拍板「至少等改完才咬」）：事中闸退役——不再注入
+            # PreToolUse hook（中途拦直改会把大改切成两半）。审计统一回合结束
+            # 结算追责（_audit_settle 按线咬：补审/补方案指令自动续发），派发
+            # 标记（designer/reviewer）结算时照样核验——追责能力不降，只去掉
+            # 中途打断。_audit_settings_path 随之不再生成。
         if sys_prompt:
             argv += ["--append-system-prompt", sys_prompt]
         if self.name:
