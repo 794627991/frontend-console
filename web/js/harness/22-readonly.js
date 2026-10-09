@@ -67,7 +67,6 @@ function RO_enter(sid, deps) {
         '<div data-ro-dlist class="hg-ro-dlist"></div>' +
       '</div>' +
       '<div class="hg-rov-fw">' +
-        '<nav class="hg-rail" data-ro-rail aria-label="回合导航"></nav>' +
         '<div class="hg-flow" data-ro-flow></div>' +
       '</div>' +
     '</div>';
@@ -79,7 +78,7 @@ function RO_enter(sid, deps) {
     drawerList: root.querySelector('[data-ro-dlist]'),
     fw: root.querySelector('.hg-rov-fw'),
     flow: root.querySelector('[data-ro-flow]'),
-    rail: root.querySelector('[data-ro-rail]'),
+    rail: root.querySelector('.hg-rov-fw'),   // v3.5.64：_ro.rail=定位父级 fw（退出时从这找回原 rail）
     subpaneEl: subpane, subpaneDisp: subOrigDisplay,   // 退出时恢复分屏显示
   });
   _ro.flow.addEventListener('scroll', () => {
@@ -88,10 +87,14 @@ function RO_enter(sid, deps) {
   // 交互同款：主层命名 handler（deps 传入）绑 RO flow
   _ro.flow.addEventListener('click', fc);
   _ro.flow.addEventListener('click', fc2);
-  // rail 节点整体挪入 RO（_hgRailEl 引用不变——_hgRailSync 照常工作）
+  // rail 节点整体挪入 fw 首位（v3.5.64 用户实锤「只读导轨是空壳」：旧码
+  // 建 <nav class="hg-rail" data-ro-rail> 外层再嵌原 rail——外层 .hg-rail
+  // 默认 display:none 且嵌套后 absolute 定位塌陷。直接放 .hg-rov-fw
+  // （position:relative 同主 flowwrap 形态）下无嵌套；_hgRailEl 引用不变，
+  // _hgRailSync/_hgRailActive/点击跳转（绑在 rail 自身）照常工作
   if (rail) {
-    _ro.rail.appendChild(rail);
-    rail.classList.add('show');   // v3.5.57：.hg-rail 默认 display:none，需 .show 才可见
+    _ro.fw.insertBefore(rail, _ro.fw.firstChild);
+    rail.classList.add('show');   // .hg-rail 默认 display:none，需 .show 才可见
   }
   // _hgFlow 指向 RO 容器 + 清目标会话态（主会话态退出时 _hgSseRebuild 全量重建）
   _hgFlow = _ro.flow;
@@ -177,8 +180,9 @@ function RO_exit(force) {
   if (!_ro) return;
   const rail = _ro.rail && _ro.rail.querySelector('[data-hg-rail]');
   const flowwrap = document.querySelector('.hg-flowwrap');
-  // rail 救回 flowwrap（RO 销毁前——节点在 RO 子树里会一起没）
-  if (rail && flowwrap) flowwrap.insertBefore(rail, flowwrap.firstChild);
+  // rail 救回 flowwrap（RO 销毁前——节点在 RO 子树里会一起没）；摘 .show
+  // 交回主窗口 _hgRailSync 按回合数决定显隐（RO 期间被强制 show 过）
+  if (rail && flowwrap) { rail.classList.remove('show'); flowwrap.insertBefore(rail, flowwrap.firstChild); }
   const sid = _HG.readonly;
   // 清守卫在前——退出流程内的 rebuild/setBusy 要恢复工作
   _HG.readonly = null;
