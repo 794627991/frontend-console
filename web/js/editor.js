@@ -1791,6 +1791,19 @@ async function openFileSmart(path, mode) {
   buildLogViewer(path);
 }
 
+// v3.5.73：原生拖拽多文件入口（main.py 全量透传）——harness 活动时全部
+// 加为对话附件（用户拖 5 个文件就该进 5 个附件）；其余 tab 保持首文件行为
+// （编辑器/阅读器一次开一个是合理交互），旧码在 Python 侧 break 只发第一个
+async function openDroppedFiles(paths) {
+  if (!Array.isArray(paths) || !paths.length) return;
+  const harnessActive = activePortId && connections[activePortId] &&
+    connections[activePortId].meta && connections[activePortId].meta.kind === 'harness';
+  if (harnessActive && typeof window.harnessAddFilesByPath === 'function') {
+    await window.harnessAddFilesByPath(paths);
+    return;
+  }
+  return openDroppedFile(paths[0], false);
+}
 async function openDroppedFile(path, fromRecent) {
   // v2.24：双拖放通道去重（.NET 原生 DragDrop 即时 + pywebview 兜底延迟
   // ~12s 可能先后到达）——同路径 2s 内只处理一次
