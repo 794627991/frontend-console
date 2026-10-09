@@ -591,7 +591,12 @@
     _hgFlow.querySelectorAll(':scope > .h-archive-hint').forEach(x => x.remove());
     const hint = document.createElement('div');
     hint.className = 'h-archive-hint';
-    hint.innerHTML = '⬆ 前 ' + cut + ' 轮已归档——上拉到顶进只读模式查看';
+    hint.innerHTML = '⬆ 前 ' + cut + ' 轮已归档——点击进入只读模式查看';
+    hint.style.cursor = 'pointer';
+    hint.onclick = () => {
+      const roBtn = document.querySelector('[data-hg-roentry]');
+      if (roBtn) roBtn.click();
+    };
     _hgFlow.insertBefore(hint, _hgFlow.firstChild);
   }
 
