@@ -31,7 +31,9 @@ function RO_enter(sid, deps) {
   const meta = (_HG.sessions || []).find(x => x.sid === sid) || {};
   _HG.readonly = sid;
   _HG.roViewSid = sid;
-  _ro = { sid, gen: 1, fc, fc2, snapPeerSent: _HG.peerSent };
+  // v3.5.53（复核问题1 修复配套）：anchorSid=进入只读时的主会话——退出
+  // rebuild 判定用锚（浏览过多档会话后 readonly 已非锚值，不能拿它判定）
+  _ro = { sid, anchorSid: sid, gen: 1, fc, fc2, snapPeerSent: _HG.peerSent };
   // 断主 SSE：close 后必须置 null——看门狗（5s 巡检 _HG.sse）否则强制重开，
   // live 事件灌进 RO 视图（designer P0-1）
   if (_HG.sse) { try { _HG.sse.close(); } catch (_) {} _HG.sse = null; }
@@ -130,8 +132,10 @@ function RO_view(sid) {
 
 function RO_drawerRender() {
   if (!_ro || !_ro.drawerList) return;
+  const gen = ++_ro.gen;
   fetch('/api/harness/sessions').then(r => r.json()).then(j => {
-    if (!j || !j.ok || !_ro || !_ro.drawerList) return;
+    // v3.5.53（复核问题2）：世代守卫——退出/重进后在途旧响应渲染进新抽屉
+    if (!j || !j.ok || !_ro || _ro.gen !== gen) return;
     const list = (j.sessions || []).slice().sort((a, b) =>
       (b.last_active || 0) - (a.last_active || 0));
     _ro.drawerList.innerHTML = list.map(s =>
@@ -143,6 +147,11 @@ function RO_drawerRender() {
       el.onclick = () => {
         const dsid = el.dataset.roDsid;
         if (dsid === _HG.readonly) return;
+        // v3.5.53（复核问题1 修复）：浏览态三处 sid 同步更新——守卫按当前
+        // readonly 放行渲染（旧码不更新=守卫恒真=抽屉切换整体死亡）
+        _HG.readonly = dsid;
+        _HG.roViewSid = dsid;
+        _ro.sid = dsid;
         RO_view(dsid);
       };
     });
@@ -163,6 +172,7 @@ function RO_exit(force) {
   if (_ro.root) _ro.root.remove();
   // 恢复 peerSent 快照（designer P2：B 的 resumedAgentId 映射不残留进 A）
   if (_ro.snapPeerSent !== null) _HG.peerSent = _ro.snapPeerSent;
+  const anchor = _ro.anchorSid;   // v3.5.53：进入只读时的主会话（退出 rebuild 判定锚）
   _ro = null;
   // 恢复布局
   const side = document.querySelector('.hg-side');
@@ -173,8 +183,9 @@ function RO_exit(force) {
   // _hgFlow 指回主 flow（rebuild 的 resetLocal 清的是它）
   _hgFlow = document.querySelector('[data-hg-flow]');
   // 全量重建主视图 + openSSE 断点续传（后台期间的事件零丢失）
+  // rebuild 锚=进入只读时的主会话（RO 中浏览过多档会话后 readonly 已非锚值）
   // force=true 仅供关 tab 濒死路径（不 rebuild）
-  if (!force && sid && _HG.sid === sid && typeof _hgSseRebuild === 'function') _hgSseRebuild(sid);
+  if (!force && anchor && _HG.sid === anchor && typeof _hgSseRebuild === 'function') _hgSseRebuild(anchor);
   else if (typeof openSSE === 'function' && _HG.sid) openSSE(_HG.sid, _HG.seq);
 }
 
