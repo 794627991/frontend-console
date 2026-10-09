@@ -28,7 +28,7 @@
       // 屏幕了；要的是和上面同款下拉选择」）→ v3.5.46（草图重构定稿）：
       // 人工判定整块删除，并入模型行——模型下拉 + 🔍自动检测 + 强制指定
       // 三控件一行（强制指定=写 mm_user[name]=true 压过一切自动判定）
-      ov.innerHTML = `<div class="hg-modal hg-modal-vision"><div class="hg-modal-title">👁 识图配置</div>
+      ov.innerHTML = `<div class="hg-modal hg-modal-vision"><div class="hg-modal-title">识图配置</div>
         <div class="hg-modal-body hg-vision-hint">识图走 MCP 通道（analyze_image 工具，随会话常备，无后台进程）。此处配置 MCP 调用的识图模型与提示词，<b>保存即生效</b>。主会话模型是真多模态则直读，不经过这里。</div>
         <div class="hg-vision-row">
           <label class="hg-vision-switch"><input type="checkbox" data-hg-v-on${cfg.enabled ? ' checked' : ''}> 启用识图</label>
@@ -37,7 +37,7 @@
         <label class="hg-vision-prompt-lab">识图模型（MCP 后端，需多模态；换 API 方案后在此重选）
           <div style="display:flex;gap:8px;align-items:center;">
             <select data-hg-v-model style="flex:1;min-width:0;">${opts}</select>
-            <button class="btn ghost" data-hg-v-probe style="flex:none;font-size:11px;" title="自动检测：发张测试图让该模型读——答对颜色即多模态（结果缓存，二次点秒回）">🔍 自动检测</button>
+            <button class="btn ghost" data-hg-v-probe style="flex:none;font-size:11px;" title="自动检测：发张测试图让该模型读——答对颜色即多模态（结果缓存，二次点秒回）">自动检测</button>
             <button class="btn ghost" data-hg-v-force style="flex:none;font-size:11px;" title="强制指定：以你的判断为准——强制认为当前选中的模型是多模态（压过一切自动检测与缓存，探测抽风时用）；再点一次取消强制">强制指定</button>
           </div>
           <div data-hg-v-probe-out style="font-size:11px;color:var(--muted);margin-top:3px;min-height:14px;"></div>
