@@ -2297,23 +2297,56 @@ html {
 /* ==================== v2.24 只读禅模式（超长会话历史归档查阅）====================
    全屏覆盖：无侧栏/输入/一切入口，只剩居中历史流（VSCode 禅模式）。
    退出即整层销毁。 */
-.hg-readonly { position: absolute; inset: 0; z-index: 90; display: flex;
-  flex-direction: column; background: var(--bg-deep); }
+/* v3.5.50 只读模式 v2（主渲染管线复用）：RO 层替换 flowwrap 占同层位，
+   分屏 .hg-subpane 保持原位自动让位；flow 限宽居中两边留白 */
+.hg-ro { flex: 1; min-height: 0; display: flex; flex-direction: column;
+  background: var(--bg); }
 .hg-ro-bar { flex-shrink: 0; display: flex; align-items: center; gap: 14px;
   padding: 10px 22px; border-bottom: 1px solid var(--border);
   background: var(--bg-panel); }
 .hg-ro-title { font-size: var(--fs-lg); font-weight: 600; color: var(--fg-bright); }
 .hg-ro-busy { font-size: var(--fs-cap); color: var(--accent); animation: hg-think-blink 1.4s ease-in-out infinite; }
 .hg-ro-hint { flex: 1; font-size: var(--fs-sm); color: var(--muted); }
-.hg-ro-exit { flex-shrink: 0; font-size: var(--fs-base); color: var(--muted);
+.hg-ro-btn { flex-shrink: 0; font-size: var(--fs-base); color: var(--muted);
   background: var(--bg-card); border: 1px solid var(--border); border-radius: 7px;
   padding: 5px 14px; cursor: pointer; }
+.hg-ro-btn:hover { color: var(--accent); border-color: var(--accent); }
 .hg-ro-exit:hover { color: var(--neon-red); border-color: var(--neon-red); }
+.hg-ro-body { flex: 1; min-height: 0; display: flex; overflow: hidden; }
+.hg-ro-drawer { flex-shrink: 0; width: 250px; flex-direction: column;
+  overflow-y: auto; border-right: 1px solid var(--border);
+  background: var(--bg-card); padding: 6px 4px; }
+.hg-ro-drawer-head { font-size: var(--fs-cap); color: var(--muted);
+  padding: 4px 10px 6px; }
+.hg-ro-dlist { display: flex; flex-direction: column; gap: 2px; }
+.hg-ro-ditem { display: flex; flex-direction: column; gap: 1px; padding: 6px 10px;
+  border-radius: 7px; cursor: pointer; }
+.hg-ro-ditem:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.hg-ro-ditem.cur { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.hg-ro-dtitle { font-size: var(--fs-base); color: var(--fg);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hg-ro-dmeta { font-size: var(--fs-2xs); color: var(--muted); }
+/* RO flow：与主 flow 同类（.hg-flow 保留→内部行样式零改生效），外层限宽居中 */
+.hg-rov-fw { width: min(920px, 100%); margin: 0 auto; position: relative;
+  display: flex; flex-direction: column; height: 100%; }
+.hg-rov-fw > .hg-flow { flex: 1; min-height: 0; }
+/* 入口条：滚到消息流顶浮现（v3.5.50） */
+.hg-ro-entry { display: none; position: absolute; top: 10px; left: 50%;
+  transform: translateX(-50%); z-index: 6; padding: 6px 16px;
+  border: 1px solid var(--accent); border-radius: 999px; cursor: pointer;
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-card));
+  color: var(--accent); font-size: var(--fs-sm); }
+.hg-ro-entry.show { display: inline-flex; }
+.hg-ro-entry:hover { background: color-mix(in srgb, var(--accent) 30%, var(--bg-card)); }
+/* ---- 旧禅模式死样式（v3.5.50 重修后无消费方，见 22-readonly.js 重写注释）----
+.hg-readonly { position: absolute; inset: 0; z-index: 90; display: flex;
+  flex-direction: column; background: var(--bg-deep); }
 .hg-ro-flow { flex: 1; overflow-y: auto; padding: 20px 32px; display: flex;
   flex-direction: column; gap: 12px; align-items: flex-start; }
 .hg-ro-flow > * { flex-shrink: 0; }
 .hg-ro-flow > .h-msg, .hg-ro-flow > .h-tool { width: min(820px, 100%); }
 .hg-ro-flow > .h-msg { max-width: 88%; }
+*/
 .h-grp { display: flex; flex-direction: column; gap: 8px;
   /* v2.25：组宽限到与用户泡同款 820/88%，组内子项不再横向拉伸——
      用户泡 v2.24.4 已按内容自适应，AI 泡却因 width:100% 拉满组宽，

@@ -1,8 +1,14 @@
 // harness chatctl.js (v3.0 自 buildClaudeHarnessTab 拆出,定义体零改动,缩进保持原样)
   function renderList() {
     const kw = (_hgSearchEl.value || '').trim().toLowerCase();
-    const items = _HG.sessions.filter(s => !kw || (s.title || '').toLowerCase().includes(kw)
-      || (s.cwd || '').toLowerCase().includes(kw));
+    // v3.5.50（用户需求「主窗口最多保留 20 条会话，超过的全部收入只读模式」）：
+    // 正常列表只渲染最近 20 条；更早的会话不在主列表（只读模式的会话列表
+    // 抽屉可看全部）。按活跃排序后截断，搜索在 20 条内进行
+    const all = _HG.sessions.slice().sort((a, b) => (b.last_active || 0) - (a.last_active || 0));
+    const visible = new Set(all.slice(0, 20).map(s => s.sid));
+    const items = all.filter(s => visible.has(s.sid) &&
+      (!kw || (s.title || '').toLowerCase().includes(kw)
+      || (s.cwd || '').toLowerCase().includes(kw)));
     // v2.3.9 项目分组视图（用户需求：一个项目多个会话归一组查找）：
     // 按 cwd basename 分组、组按组内最近活跃排序、组内会话按活跃排序。
     // v2.3.13 单会话组同样可折叠（用户实锤「单会话不能收缩」）——组头带

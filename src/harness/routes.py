@@ -616,23 +616,16 @@ def harness_diff_lines():
 
 @harness_bp.route("/audit_gate")
 def harness_audit_gate():
-    """light 形态直改事中闸查询端点（PreToolUse hook 在每次
-    Edit/Write/MultiEdit/NotebookEdit 前来问）。?session_id=<CLI 侧会话 id>。
-    返回 {ok, gate}；gate.block=true=本回合主会话已有单次直改达线
-    （v2.52 不计文件数）**且对应代理未派**——审计档（达轻审线未派
-    reviewer，指路送审）与设计档（达设计线未派 designer，v2.54 指路
-    先出方案）两档独立判定，任一命中即拦下一次直改（hook exit 2，msg
-    随行给模型）；已派对应代理即放行对应档（审过开闸：直干是常态，闸
-    只逼送审不逼停工——没有可转派的干活代理，硬拦到底会把唯一干活者
-    锁死）。
+    """设计档事中一次性提醒端点（v3.5.53 重构）。?session_id=<CLI 侧会话 id>。
+    返回 {ok, gate}；gate.block=true=本回合首次累计达设计线且未派 designer
+    （msg 指路出方案，designFired 置位后本回合不再咬）。审计档（轻审线中途
+    拦截）已退役归回合结束结算。
 
     口径与 _audit_settle 同源：_audit_state 判启用（roles 开+
-    audit_mode!=off；两形态都结算审计，但闸仅 light——strong 直改是设计
-    常态，_audit_state 第三位 strong 旗在此分流；读一次小配置文件，改配置
-    即时生效），used/reviewed 取会话 _audit 的单次直改最大行数与 reviewer
-    旗，判定走 harness_roles.audit_gate_check（达线 >= 即拦下一次）而非
-    结算的超线追责——事中闸的职责是让「超线且全程未送审」尽量不发生，
-    事后审计只兜闸失效的漏网。
+    audit_mode!=off；闸仅 light——strong 直改是设计常态，_audit_state
+    第三位 strong 旗在此分流；读一次小配置文件，改配置即时生效），
+    used/designFired 取会话 _audit 的回合内直改累计与设计档一次性触发标志，
+    判定走 harness_roles.audit_gate_check。
 
     查不到会话（session_id 不在 _sessions：别的实例/已换代）一律放行。
     注意子代理与主会话同 session_id（官方 hooks 文档+本机 CLI 实证：hook
