@@ -116,7 +116,10 @@
     // v3.5.4（用户实锤「重启后新消息仍轻主力」）：sid 就绪即重拉 roles——
     // 启动时的 _hgRolesFetch 赶不上 sid（切回会话才有），cache 固化方案
     // 默认判定的形态，新消息徽章随之错档；切会话补拉（带 sid 实跑判定）
+    // v3.5.43：识图徽章同款——旧码只启动+30s 兜底刷，重启后首刷不带 sid
+    // 恒显「已启用（MCP）」，等半个轮询周期才变「多模态直读」；切会话即刻刷
     if (typeof _hgRolesFetch === 'function') _hgRolesFetch();
+    if (typeof paintVisionBtn === 'function') paintVisionBtn();
     // v2.15：dirty 语义修正。旧实现只在「发送成功」置 true、只在
     // switchTo(null) 置 false —— 冷启动自动进的是历史会话（has_history），
     // dirty 仍是 false，于是点一下模型/项目 chip 就会走 `if (!_HG.dirty)`

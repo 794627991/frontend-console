@@ -905,6 +905,9 @@
       else if (it.kind === 'model_switched') {
         grpFinalize(true, { turnEnd: true });   // v3.2.2：切模型发生在回合间，正文留头外
         renderSwitch(it.text || '默认模型');
+        // v3.5.43：切模型=识图形态可能翻转（inline↔mcp）——徽章即刻刷
+        // （进程重启重建 mcp-config，vision_status 按 sid 现算新形态）
+        if (typeof paintVisionBtn === 'function') paintVisionBtn();
       }
     };
   }
