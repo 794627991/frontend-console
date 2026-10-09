@@ -24,6 +24,25 @@
       const opts = ['<option value=""' + (curModel ? '' : ' selected') + '>默认（' + 'glm-5.3-flash）</option>']
         .concat(models.map(m => `<option value="${esc(m)}"${m === curModel ? ' selected' : ''}>${esc(m)}</option>`))
         .join('');
+      // v3.5.39（用户拍板「改成下拉选择」）：人工判定行=模型下拉(方案表全量+已存值)+判定下拉(自动/多模态/非多模态)
+      const _mmUserRowHtml = (name, val) => {
+        const mo = ['<option value=""' + (!name ? ' selected' : '') + '>选择模型…</option>']
+          .concat(models.map(m => `<option value="${esc(m)}"${_normEq(m, name) ? ' selected' : ''}>${esc(m)}</option>`))
+          .concat(!name || models.some(m => _normEq(m, name)) ? '' : [`<option value="${esc(name)}" selected>${esc(name)}</option>`])
+          .join('');
+        return `<div class="hg-vision-grid" style="margin-top:4px;" data-mm-user-row>` +
+          `<input class="hg-vision-mm" data-mm-user-name spellcheck="false" style="flex:1;min-width:0;" value="${esc(name || '')}" placeholder="模型名（前缀匹配覆盖 [1M] 变体）">` +
+          `<select data-mm-user-val style="flex:none;width:110px;">` +
+          `<option value="auto"${val == null ? ' selected' : ''}>自动判定</option>` +
+          `<option value="yes"${val === true ? ' selected' : ''}>多模态</option>` +
+          `<option value="no"${val === false ? ' selected' : ''}>非多模态</option>` +
+          `</select>` +
+          `<button class="btn ghost" data-mm-user-del style="flex:none;font-size:11px;">🗑</button></div>`;
+      };
+      function _normEq(a, b) {
+        const n = x => String(x || '').split('[')[0].trim().toLowerCase();
+        return n(a) && n(a) === n(b);
+      }
       ov.innerHTML = `<div class="hg-modal hg-modal-vision"><div class="hg-modal-title">👁 识图配置</div>
         <div class="hg-modal-body hg-vision-hint">识图走 MCP 通道（analyze_image 工具，随会话常备，无后台进程）。此处配置 MCP 调用的识图模型与提示词，<b>保存即生效</b>。主会话模型是真多模态则直读，不经过这里。</div>
         <div class="hg-vision-row">
@@ -38,10 +57,12 @@
           <input class="hg-vision-mm" data-hg-v-mm spellcheck="false"
                  value="${esc((cfg.mm_extra || []).join(', '))}"
                  placeholder="如：glm-5.3 flash, Lanz-Medium-V（前缀匹配，填一个即可覆盖其 [1M] 变体）"></label>
-        <label class="hg-vision-prompt-lab">人工判定（用户定调：探测抽风时你的眼见为实压过一切缓存。格式「模型名=多模态」，逗号分隔——判多模态填 =是，判不能看图填 =否）
-          <input class="hg-vision-mm" data-hg-v-user spellcheck="false"
-                 value="${esc(Object.entries(cfg.mm_user || {}).map(([k, v]) => `${k}=${v ? '是' : '否'}`).sort().join(', '))}"
-                 placeholder="如：glm-5.3=是（前缀匹配覆盖 [1M] 变体；删除该条即回到自动判定）"></label>
+        <label class="hg-vision-prompt-lab">多模态人工判定（用户定调：探测抽风时你的眼见为实压过一切缓存。下拉选中即人工判定——三档下拉同理可覆盖档位默认）
+          <div class="hg-vision-grid" data-hg-v-user-list>
+            ${Object.entries(cfg.mm_user || {}).sort().map(([k, v]) => _mmUserRowHtml(k, v)).join('')}
+          </div>
+          <button class="btn ghost" data-hg-v-user-add style="font-size:11px;margin-top:4px;">+ 添加模型判定</button>
+        </label>
         <div style="display:flex;gap:8px;align-items:center;margin-top:4px;">
           <button class="btn ghost" data-hg-v-probe style="font-size:11px;">🔍 检测识图模型能否读图</button>
           <span data-hg-v-probe-out style="font-size:11px;color:var(--muted);"></span>
@@ -55,6 +76,15 @@
       const modelEl = ov.querySelector('[data-hg-v-model]');
       const onEl = ov.querySelector('[data-hg-v-on]');
       const mmEl = ov.querySelector('[data-hg-v-mm]');
+      const userListEl = ov.querySelector('[data-hg-v-user-list]');
+      // v3.5.39：人工判定行增删（委托：行可动态添加，直绑会丢）
+      ov.querySelector('[data-hg-v-user-add]').onclick = () => {
+        userListEl.insertAdjacentHTML('beforeend', _mmUserRowHtml('', null));
+      };
+      userListEl.addEventListener('click', (e) => {
+        const del = e.target.closest('[data-mm-user-del]');
+        if (del) del.closest('[data-mm-user-row]').remove();
+      });
       ta.value = cfg.mcp_prompt || def.mcp_prompt || '';
       // v2.25：运行时探测——发张纯红测试图让该模型 Read，答对即多模态并
       // 自动并入名单（后端缓存，二次点秒回）。拿不准网关模型名是什么能力
@@ -99,18 +129,16 @@
         // v2.25：多模态手补名单随保存落盘（后端按前缀匹配，覆盖 [1M] 变体）
         mm_extra: (ov.querySelector('[data-hg-v-mm]').value || '')
           .split(/[,，;；\n]/).map(s => s.trim()).filter(Boolean),
-        // v3.5.31：人工判定表——「模型名=是/否」行解析（用户定调眼见为实
-        // 压过探测缓存）；未提及的模型维持自动判定
+        // v3.5.39：人工判定表——按行收集（下拉选择制）。name 空或「自动判
+        // 定」档跳过（=删除该条回自动）；「多模态/非多模态」写 bool
         mm_user: (() => {
           const out = {};
-          (ov.querySelector('[data-hg-v-user]').value || '')
-            .split(/[,，;；\n]/).map(s => s.trim()).filter(x => x.includes('='))
-            .forEach(pair => {
-              const i = pair.indexOf('=');
-              const k = pair.slice(0, i).trim().toLowerCase();
-              const v = /是|yes|true|1/i.test(pair.slice(i + 1));
-              if (k) out[k] = v;
-            });
+          userListEl.querySelectorAll('[data-mm-user-row]').forEach(row => {
+            const name = (row.querySelector('[data-mm-user-name]').value || '').trim().toLowerCase();
+            const v = row.querySelector('[data-mm-user-val]').value;
+            if (!name || v === 'auto') return;
+            out[name] = (v === 'yes');
+          });
           return out;
         })(),
         // v3.5.19：model_map 端点映射退役——识图模型就是上面的主选择框
