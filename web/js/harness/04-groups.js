@@ -596,18 +596,32 @@
       }
     }
     if (keepFrom <= 0) return;   // 不超限或无可删
-    const trimmed = keepFrom;
-    for (let i = 0; i < keepFrom; i++) all[i].remove();
-    // 顶部插归档提示
+    // v3.5.61（用户实锤「不可能只有3轮这么少」）：旧口径 trimmed=keepFrom 是
+    // 本次删的**节点数**（time条+user消息+grp 混计）且只计本次——窗口化渲染
+    // 下 flow 只有尾部一小段，数字远小于真实归档量。改为：_HG.histAll 在场
+    // （hist 渲染/重建）按全量 user 轮数精确重算；live 追加（histAll 滞后）
+    // 按本次删除的整轮 grp 数累加
+    let cutGrps = 0;
+    for (let i = 0; i < keepFrom; i++) {
+      if (all[i].classList && all[i].classList.contains('h-grp')) cutGrps++;
+      all[i].remove();
+    }
+    if (_HG.histAll) {
+      let total = 0;
+      for (const l of _HG.histAll)
+        if (l && l.role === 'user' && String(l.text || '').trim()) total++;
+      _HG.archivedTurns = Math.max(cutGrps, total - grpCount);
+    } else {
+      _HG.archivedTurns = (_HG.archivedTurns || 0) + cutGrps;
+    }
+    // 顶部插归档提示（点击直达只读——v3.5.61 顶栏入口按钮已撤，经全局事件
+    // 转给 20-main 闭包内的 HgRO.enter，fc/fc2 跨脚本不可达）
     _hgFlow.querySelectorAll(':scope > .h-archive-hint').forEach(x => x.remove());
     const hint = document.createElement('div');
     hint.className = 'h-archive-hint';
-    hint.innerHTML = '⬆ 前 ' + trimmed + ' 轮已归档——点击进入只读模式查看';
+    hint.innerHTML = '⬆ 前 ' + _HG.archivedTurns + ' 轮已归档——点击进入只读模式查看';
     hint.style.cursor = 'pointer';
-    hint.onclick = () => {
-      const roBtn = document.querySelector('[data-hg-roentry]');
-      if (roBtn) roBtn.click();
-    };
+    hint.onclick = () => document.dispatchEvent(new CustomEvent('hg-ro-enter'));
     _hgFlow.insertBefore(hint, _hgFlow.firstChild);
   }
 

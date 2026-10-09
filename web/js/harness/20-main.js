@@ -57,7 +57,6 @@ function buildClaudeHarnessTab(opts = {}) {
         </div>
         <div class="hg-flowwrap">
           <nav class="hg-rail" data-hg-rail aria-label="回合导航（ZCode 同款快速跳转）"></nav>
-          <button class="hg-ro-entry" data-hg-roentry title="进入只读模式：只看历史（后台照常运行），可查看全部过往会话">📖 只读模式</button>
           <div class="hg-flow" data-hg-flow></div>
           <button class="hg-jumpbtm" data-hg-jumpbtm title="跳到最新消息" aria-label="跳到最新消息"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v14"/><path d="M5 12l7 7 7-7"/></svg></button>
           <button class="hg-dyn-capsule" data-hg-dyncaps title="会话动态：点开分屏动态页 / 动态页激活时再点收起（子代理运行中点按直达实况）" style="position:absolute;top:10px;right:14px;z-index:7;display:inline-flex;align-items:center;gap:7px;padding:4px 12px;border-radius:999px;">
@@ -1025,17 +1024,13 @@ function buildClaudeHarnessTab(opts = {}) {
     // v3.2.12：扩段/收缩分支随分页退役——恒全量渲染，滚动条天然覆盖全部
     // 历史（往上滑即是历史，无需加载步进；ZCode 靠虚拟化，我们靠折叠回合
     // +懒增强+原子渲染控 DOM）
-    // v3.5.50（用户需求「上拉到最上面，点击进入只读模式」）：滚到顶时浮出
-    // 只读入口（只看历史，后台照常跑）；离开顶部即隐
-    const roEntry = _hgQ('[data-hg-roentry]');
-    if (roEntry) roEntry.classList.toggle('show', _hgFlow.scrollTop <= 4);
   }, { passive: true });
-  _hgQ('[data-hg-roentry]').onclick = () => {
+  // v3.5.61（用户拍板「入口重复了，按钮不要」）：顶栏「📖 只读模式」按钮已撤
+  // ——唯一入口=归档提示点击（04-groups 经全局事件转发，fc/fc2 闭包内私有）
+  document.addEventListener('hg-ro-enter', () => {
     if (_HG.readonly || !_HG.sid) return;
-    // v3.5.51（designer B1）：交互 handler 闭包内私有——传参给 RO 模块
-    //（RO flow 绑同款委托；闭包外按名引用不可达）
     window.HgRO && HgRO.enter(_HG.sid, { fc: _hgFlowClick, fc2: _hgFlowClick2 });
-  };
+  });
 
   // ==================== v2.3.11 只读模式（独立积木 harness-readonly.js）====================
   // ZCode 方案完整重构：默认只显结论，「已工作 Xs」总开关分级展开过程（思考/

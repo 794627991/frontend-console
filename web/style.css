@@ -2330,14 +2330,7 @@ html {
 .hg-rov-fw { width: min(920px, 100%); margin: 0 auto; position: relative;
   display: flex; flex-direction: column; height: 100%; }
 .hg-rov-fw > .hg-flow { flex: 1; min-height: 0; }
-/* 入口条：滚到消息流顶浮现（v3.5.50） */
-.hg-ro-entry { display: none; position: absolute; top: 10px; left: 50%;
-  transform: translateX(-50%); z-index: 6; padding: 6px 16px;
-  border: 1px solid var(--accent); border-radius: 999px; cursor: pointer;
-  background: color-mix(in srgb, var(--accent) 16%, var(--bg-card));
-  color: var(--accent); font-size: var(--fs-sm); }
-.hg-ro-entry.show { display: inline-flex; }
-.hg-ro-entry:hover { background: color-mix(in srgb, var(--accent) 30%, var(--bg-card)); }
+/* （v3.5.61 撤主窗口顶栏「📖 只读模式」浮钮——入口唯一化为归档提示点击） */
 /* ---- 旧禅模式死样式（v3.5.50 重修后无消费方，见 22-readonly.js 重写注释）----
 .hg-readonly { position: absolute; inset: 0; z-index: 90; display: flex;
   flex-direction: column; background: var(--bg-deep); }
@@ -4379,6 +4372,8 @@ span.h-ag-type[class*='h-ava-'] {
 .h-task-t { flex: none; font-family: var(--font-mono); font-size: var(--fs-xs);
   color: var(--muted); }
 
-/* ---- v3.5.57 回合归档提示（主窗口只保留最近 20 轮，更早的进只读看）---- */
-.h-archive-hint { text-align: center; padding: 8px 12px; font-size: var(--fs-sm);
-  color: var(--muted); border-bottom: 1px dashed var(--border); }
+/* ---- v3.5.57 回合归档提示（主窗口只保留最近 20 轮，更早的进只读看）----
+   v3.5.61（用户拍板「保留这个，然后居中」）：flex 居中——flow 限宽内视觉居中 */
+.h-archive-hint { display: flex; align-items: center; justify-content: center;
+  padding: 8px 12px; font-size: var(--fs-sm);
+  color: var(--muted); border-bottom: 1px dashed var(--border); cursor: pointer; }

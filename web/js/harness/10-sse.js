@@ -674,6 +674,7 @@
     _HG.rowById = {}; _HG.uidN = 0; _HG.run = null; _HG.grp = null; _HG.histNav = null;
     _HG.subRows = {}; _HG.subBlk = {}; _HG.subTail = {}; _HG.subTailSeg = {};
     _HG.histAll = null; _HG.histStart = 0; _HG.histLive = false; _HG.histStale = false;
+    _HG.archivedTurns = 0;   // v3.5.61：归档轮数随清场归零（切会话由 hist 重算）
     _HG.todos = null; _HG.agents = null; _HG.dyn = null;
     // v3.4.54：识图 pending 线随清场收（switchTo 重置块同款——两处必须同步）
     Object.values(_HG.visionCalls || {}).forEach(_hgPeerLineStop);
