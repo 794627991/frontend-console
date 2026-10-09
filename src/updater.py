@@ -17,6 +17,7 @@ GET manifest → semver 比对 → 下载 zip 到应用目录旁 .update/ → sh
 - v2.2.x 及更早 onefile 旧版没有 zip 升级能力，升级到本版需手动换装一次
 """
 import os, sys, json, time, shutil, hashlib, threading
+import urllib.parse
 import urllib.request
 
 from src.version import APP_VERSION
@@ -180,7 +181,10 @@ def apply_update():
         shutil.rmtree(staging, ignore_errors=True)
     os.makedirs(staging, exist_ok=True)
     dst = os.path.join(staging, m["file"])
-    url = base + m["file"]
+    # v3.5.32（用户实锤「下载失败 ascii codec can't encode position 5-9」）：
+    # 包文件名含中文（前端控制台-v2.3.4.zip）——URL 必须百分号编码，裸中文
+    # urllib 直接 ascii 编码崩溃。quote 保留 /（路径分隔），仅编码非 ASCII
+    url = base + urllib.parse.quote(m["file"], safe="/")
     # 下载（带重试一次：内网偶发 reset）
     last_err = None
     for attempt in (1, 2):
