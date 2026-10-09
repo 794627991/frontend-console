@@ -20,7 +20,7 @@ from .meta import _meta, _meta_load, _meta_lock, _meta_save
 from .models import available_models
 from .prompts import _collect_system_prompt
 from .transcript import re_title, _trace_append
-from .vision import _cleanup_peer_reg, _vision_load
+from .vision import _cleanup_peer_reg, _model_vision_mode, _vision_load
 
 
 # ---- from claude_harness.py:1036 (HarnessSession) ----
@@ -182,8 +182,13 @@ class HarnessSession:
                 argv += ["--mcp-config", _cfg]
                 # v2.28.5：本地兜底识图工具随开关门控（与 --mcp-config 同步）；
                 # 网关主通道名也保留预授权（个别链路网关不拦截时可客户端执行）
+                # v3.5.34R（用户连番实锤「多模态模型怎么又走 MCP」）：主会话
+                # 模型判定为多模态（inline 直读）时**不再预授权**识图工具——
+                # 引导词只劝不拦，工具躺在列表里模型就抄近道调 MCP（直读词
+                # 白注入）。非多模态形态维持注入（那是它唯一的看图通道）
                 _tools = ["mcp__harness__ask_user"]
-                if _vision_load()["enabled"]:
+                if _vision_load()["enabled"] \
+                        and _model_vision_mode(self._eff_model()) != "inline":
                     _tools += ["mcp__4_5v_mcp__analyze_image",
                                "mcp__vision__analyze_image"]
                 argv += ["--allowedTools", ",".join(_tools)]
