@@ -285,9 +285,11 @@
     // 恒 0 会把宽度焊成几十 px，切回 tab 窗格缩成一竖条；保持 CSS 默认 50%
     if (region <= 220) return;
     let px = Math.round(region * pct / 100);
-    // v3.5.69（用户 v3.5.65 需求「适当缩窄」恢复）：目录/动态窄档按百分比在
-    // 宽屏上过宽——cap 360px（子代理实况/回放宽档不设限，仍按 pct 记忆）
-    if (_subPanePctKey() === 'hg-subpane-narrow-pct') px = Math.min(px, 360);
+    // v3.5.69（用户「适当缩窄」）：目录/动态窄档 cap 360px。
+    // v3.5.70（用户实锤「历史子代理分页有点宽了 缩小一点」）：宽档（实况/
+    // 回放）按百分比在宽屏上同样过宽——cap 620px（resizer 拖拽仍受 25~75%
+    // 记忆，仅默认/超宽收敛）
+    px = Math.min(px, _subPanePctKey() === 'hg-subpane-narrow-pct' ? 360 : 620);
     _subPaneEl.style.width = px + 'px';
   }
   function _subShow(pendingTid) {

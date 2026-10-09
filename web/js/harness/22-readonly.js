@@ -51,13 +51,12 @@ function RO_enter(sid, deps) {
   const subpane = document.querySelector('[data-hg-subpane]');
   const subOrigDisplay = subpane ? subpane.style.display : '';
   if (subpane) subpane.style.display = 'flex';
-  // v3.5.69（v3.5.65 布局需求重做·滚动安全版）：内容右移贴窗口中线——
-  // JS 算好偏移写纯 px 变量，CSS 只 margin-left 引用。v3.5.65 用 transform
-  // +calc/max 嵌套引发滚动回归（v3.5.68 回滚），本版零 transform 零 calc，
-  // fw/flow 滚动约束链一根手指不碰
-  const subw = subpane ? (parseFloat(subpane.style.width) || 0) : 0;
-  const roShift = Math.max(0, Math.round(subw) - 232);   // -232=左栏宽（窗口中线基准）
-  document.documentElement.style.setProperty('--hg-roshift', roShift + 'px');
+  // v3.5.70（用户实锤「导轨/滚动条要靠边显示」+「退出重进内容缩右侧」）：
+  // 布局再理顺——flow 占满 RO 区（导轨贴左缘/滚动条贴右缘天然达成），内容列
+  // 在 flow 内居中，中线偏移=flow padding-left（--hg-roshift 由 JS 算好总
+  // px，含 flow 原 32 基准）。偏移量在 DOM+抽屉就绪后由 RO_calcShift 实测
+  // flow 宽封顶——分屏面板过宽（历史子代理回放宽档不受窄档 cap）时内容列
+  // (884) 也不得被推出可视区（v3.5.69「退出重进缩右侧」的根因）
   // RO DOM（插在 flowwrap 同层前；分屏 .hg-subpane 保持原位=自动让位）
   const root = document.createElement('div');
   root.className = 'hg-ro';
@@ -111,6 +110,7 @@ function RO_enter(sid, deps) {
   _HG.histAll = null; _HG.histLive = false; _HG.histStart = 0;
   // v3.5.69（用户 v3.5.65 拍板「默认打开」恢复）：进只读即开会话列表抽屉
   _ro.drawer.style.display = 'flex';
+  RO_calcShift();   // v3.5.70：抽屉就绪后实测 flow 宽算中线偏移
   RO_drawerRender();
   RO_view(sid);
   // 后台 busy 信标（5s 查主 sid 的 busy——纯显示，不 setBusy 不抢渲染）
@@ -124,6 +124,18 @@ function RO_enter(sid, deps) {
       if (b && s) b.textContent = (s.busy ? '● 后台进行中 · ' : '☰ ') + '会话';
     }).catch(() => {});
   }, 5000);
+}
+
+// v3.5.70：中线偏移实测计算——flow 占满 RO 区后，内容列(884=820+64)在
+// flow 内居中，padding-left 额外右移 (分屏宽-232左栏)/2；封顶条件：偏移后
+// 内容列不得溢出 flow 可视宽（分屏宽档过宽时防「内容缩右侧」）
+function RO_calcShift() {
+  if (!_ro || !_ro.flow || !_ro.flow.isConnected) return;
+  const flowW = _ro.flow.clientWidth;
+  const subw = _ro.subpaneEl ? (parseFloat(_ro.subpaneEl.style.width) || 0) : 0;
+  const shift = Math.max(0, Math.min(Math.round(subw) - 232, flowW - 884));
+  // 32=flow 原左 padding 基准，与偏移合并写一个变量（CSS 零 calc）
+  document.documentElement.style.setProperty('--hg-roshift', (32 + shift) + 'px');
 }
 
 // RO 内切换查看的会话（抽屉跳转）：同场重渲（不回主视图）
@@ -202,7 +214,7 @@ function RO_exit(force) {
   _HG.readonly = null;
   _HG.roViewSid = null;
   if (_ro.busyTimer) { clearInterval(_ro.busyTimer); _ro.busyTimer = null; }
-  document.documentElement.style.setProperty('--hg-roshift', '0px');   // v3.5.69：中线偏移随 RO 退出清零
+  document.documentElement.style.setProperty('--hg-roshift', '32px');   // v3.5.70：偏移随 RO 退出回基准（32=flow 原左 padding）
   if (_ro.root) _ro.root.remove();
   // 恢复 peerSent 快照（designer P2：B 的 resumedAgentId 映射不残留进 A）
   if (_ro.snapPeerSent !== null) _HG.peerSent = _ro.snapPeerSent;
@@ -233,6 +245,7 @@ document.addEventListener('click', (e) => {
     const d = _ro.drawer;
     d.style.display = d.style.display === 'none' ? 'flex' : 'none';
     if (d.style.display === 'flex') RO_drawerRender();
+    RO_calcShift();   // v3.5.70：抽屉开合改变 flow 宽，偏移重算（封顶跟随）
   }
 });
 
