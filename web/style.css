@@ -3795,14 +3795,10 @@ span.h-ag-type[class*='h-ava-'] {
 .h-tool-failmark { flex: none; font-size: var(--fs-2xs); color: var(--h-err);
   border-bottom: 1px dotted var(--h-err); padding-bottom: 1px; margin-left: 4px; }
 
-/* ---- v3.1 DOM 节省（对照 ZCode）：离屏内容跳过渲染 ----
-   content-visibility:auto 让滚出视口的行级块跳过布局/绘制，占位高度由
-   contain-intrinsic-size 兜底（滚动条稳定）；贴底流式行天然在视口内不受
-   影响。覆盖：气泡/工具行/思考段/子代理段/回传气泡。 */
-.h-msg, .h-tool, .h-think-seg, .h-subblock, .h-peer {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 72px;
-}
+/* ---- v3.1 DOM 节省 → v3.5.55 撤除（用户实锤「上翻跳翻不连贯」）----
+   content-visibility:auto 的占位估高（72px）与真实高度差距过大，上翻时
+   元素进入视口被真实渲染导致高度跳变=滚动位置跳翻。会话规模下性能收益
+   不抵 UX 代价，行级撤除；代码块层保留（块高度较可控且不透明度低）。 */
 
 /* ---- C 子代理实况（E 工具行共用 adot/at/desc/el 内层类，状态色规则两处同写；
    完成=灰点灰耗时——IDE 式「过去了就安静」，运行/失败/中断各自着色） ---- */
