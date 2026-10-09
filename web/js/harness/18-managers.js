@@ -1,11 +1,17 @@
 // harness managers.js (v3.0 自 buildClaudeHarnessTab 拆出,定义体零改动,缩进保持原样)
   async function paintVisionBtn() {
     let j = null;
-    try { j = await (await fetch('/api/harness/vision_status')).json(); } catch(_) {}
+    try { j = await (await fetch('/api/harness/vision_status' +
+      (_HG.sid ? '?sid=' + encodeURIComponent(_HG.sid) : ''))).json(); } catch(_) {}
     if (!visBtnEl) return;
+    // v3.5.37（用户实锤「识图 MCP 还显示开着」误导）：后端按当前会话模型
+    // 形态回 mode——多模态（inline）会话没有 MCP 识图工具，徽章显示
+    // 「多模态直读」；非多模态会话才显示「已启用（MCP）」
+    const _inline = j && j.mode === 'inline';
+    const stTxt = !(j && j.ok && j.enabled) ? '未启用'
+      : (_inline ? '多模态直读 · 无 MCP' : '已启用（MCP）');
     visBtnEl.innerHTML = _HG_EYE + ' 识图配置 <span class="hg-vstat ' +
-      (j && j.ok && j.enabled ? 'ok' : 'off') + '">· ' +
-      ((j && j.ok && j.enabled) ? '已启用（MCP）' : '未启用') + '</span>';
+      ((j && j.ok && j.enabled) ? 'ok' : 'off') + '">· ' + stTxt + '</span>';
   }
   function hgVisionManager(init) {
     return new Promise((resolve) => {

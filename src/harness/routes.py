@@ -1140,10 +1140,25 @@ def harness_mcp_list():
 def harness_vision_status():
     """v2.28：识图会话退役——状态 API 只回静态退役形态。前端徽章按
     needed=false + alive=false 显示「多模态直读/关闭」，不再有会话态。
-    保留端点是为兼容旧前端轮询（改字段会 JS 报错）。"""
+    保留端点是为兼容旧前端轮询（改字段会 JS 报错）。
+    v3.5.37（用户实锤「徽章显示 MCP 还开着」误导）：带 ?sid= 时附当前会话
+    模型的识图形态 mode（inline=多模态直读无 MCP 工具 / mcp=MCP 通道挂载）
+    ——v3.5.36 起 MCP 挂载按模型形态门控，徽章该反映的是会话真相。"""
     cfg = _vision_load()
+    mode = ""
+    sid = (request.args.get("sid") or "").strip()
+    if sid:
+        with _sessions_lock:
+            s = _sessions.get(sid)
+        if s:
+            try:
+                from .vision import _model_vision_mode
+                mode = _model_vision_mode(s._eff_model())
+            except Exception:
+                mode = ""
     return jsonify({"ok": True, "enabled": bool(cfg["enabled"]),
                     "name": cfg["name"], "model": cfg["model"],
+                    "mode": mode,
                     "alive": False, "busy": False, "needed": False,
                     "sid": "", "last_seq": 0, "recent": [], "busy_since": None,
                     "last_done": 0, "last_brief": ""})
