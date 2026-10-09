@@ -58,7 +58,7 @@ function RO_enter(sid, deps) {
       '<button class="hg-ro-btn hg-ro-exit" data-ro-exit title="退出只读，回到正常会话（自动补齐后台期间的消息）">✕ 退出只读</button>' +
     '</div>' +
     '<div class="hg-ro-body">' +
-      '<div class="hg-ro-drawer" data-ro-drawer style="display:flex">' +
+      '<div class="hg-ro-drawer" data-ro-drawer style="display:none">' +
         '<div class="hg-ro-drawer-head">全部会话（点击切换查看）</div>' +
         '<div data-ro-dlist class="hg-ro-dlist"></div>' +
       '</div>' +
@@ -84,7 +84,10 @@ function RO_enter(sid, deps) {
   _ro.flow.addEventListener('click', fc);
   _ro.flow.addEventListener('click', fc2);
   // rail 节点整体挪入 RO（_hgRailEl 引用不变——_hgRailSync 照常工作）
-  if (rail) _ro.rail.appendChild(rail);
+  if (rail) {
+    _ro.rail.appendChild(rail);
+    rail.classList.add('show');   // v3.5.57：.hg-rail 默认 display:none，需 .show 才可见
+  }
   // _hgFlow 指向 RO 容器 + 清目标会话态（主会话态退出时 _hgSseRebuild 全量重建）
   _hgFlow = _ro.flow;
   if (typeof _hgSseResetLocal === 'function') _hgSseResetLocal();
