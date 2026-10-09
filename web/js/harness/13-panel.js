@@ -723,8 +723,11 @@
     if (!acts.length) return;
     sec.querySelector('[data-hg-d-acts]').innerHTML = acts.slice().reverse().map(a => {
       const cls = a.done ? (a.err ? 'fail' : 'done') : 'run';
+      // v3.5.34（用户实锤「最近工具计时每 5s 归零」）：运行中条目重建时
+      // 按 t0 直算当前值——旧码写死「0s」，等 1s tick 才纠正；事件密集时
+      // renderSideStatus 高频重建，每次都闪回 0s（体感=周期性归零）
       const el = !a.done
-        ? `<b class="hg-dyn-el" data-t0="${a.t0}">0s</b>`
+        ? `<b class="hg-dyn-el" data-t0="${a.t0}">${a.t0 ? _hgFmtDur(Math.max(1, Math.round((Date.now() - a.t0) / 1000))) : '0s'}</b>`
         : `<b class="hg-dyn-el">${a.err ? '失败' : _hgFmtDur(Math.max(1, Math.round((a.doneAt - a.t0) / 1000)))}</b>`;
       const cp = a.kind === 'bash' && a.preview
         ? `<button class="hg-dyn-actcp" data-hg-actcp="${esc(a.tid)}" title="复制命令">⧉</button>` : '';
