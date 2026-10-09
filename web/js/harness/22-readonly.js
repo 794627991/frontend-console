@@ -19,7 +19,7 @@
 // ============================================================
 'use strict';
 
-let _ro = null;   // {sid, gen, root, drawer, drawerList, fw, flow, rail, busyTimer, fc, fc2, snapPeerSent}
+let _ro = null;   // {sid, gen(视图世代), dgen(抽屉世代——v3.5.66 与视图分离), root, drawer, drawerList, fw, flow, rail, busyTimer, fc, fc2, snapPeerSent}
 
 function RO_active() { return !!_HG.readonly; }
 
@@ -33,7 +33,7 @@ function RO_enter(sid, deps) {
   _HG.roViewSid = sid;
   // v3.5.53（复核问题1 修复配套）：anchorSid=进入只读时的主会话——退出
   // rebuild 判定用锚（浏览过多档会话后 readonly 已非锚值，不能拿它判定）
-  _ro = { sid, anchorSid: sid, gen: 1, fc, fc2, snapPeerSent: _HG.peerSent };
+  _ro = { sid, anchorSid: sid, gen: 1, dgen: 1, fc, fc2, snapPeerSent: _HG.peerSent };
   // 断主 SSE：close 后必须置 null——看门狗（5s 巡检 _HG.sse）否则强制重开，
   // live 事件灌进 RO 视图（designer P0-1）
   if (_HG.sse) { try { _HG.sse.close(); } catch (_) {} _HG.sse = null; }
@@ -88,7 +88,6 @@ function RO_enter(sid, deps) {
   });
   _ro.flow.addEventListener('scroll', () => {
     if (typeof _hgRailActiveRaf === 'function') _hgRailActiveRaf();
-    if (_ro.railWake) _ro.railWake();   // v3.5.65：滚动唤醒导轨
   }, { passive: true });
   // 交互同款：主层命名 handler（deps 传入）绑 RO flow
   _ro.flow.addEventListener('click', fc);
@@ -98,17 +97,11 @@ function RO_enter(sid, deps) {
   // 默认 display:none 且嵌套后 absolute 定位塌陷。直接放 .hg-rov-fw
   // （position:relative 同主 flowwrap 形态）下无嵌套；_hgRailEl 引用不变，
   // _hgRailSync/_hgRailActive/点击跳转（绑在 rail 自身）照常工作。
-  // v3.5.65（用户拍板「不要常显」）：RO 里滚动/悬停时亮，静止 1.6s 淡出
+  // v3.5.66（用户实锤「滚完导轨也没了」）：撤 v3.5.65 自动淡出——那是把
+  // 「滚动条常显」误读成导轨；导轨恢复与主窗口同款常显
   if (rail) {
     _ro.fw.insertBefore(rail, _ro.fw.firstChild);
-    rail.classList.add('show', 'ro-dim');   // .show 控制显示，.ro-dim 控制淡入淡出
-    _ro.railWake = () => {
-      rail.classList.remove('ro-dim');
-      clearTimeout(_ro.railT);
-      _ro.railT = setTimeout(() => rail.classList.add('ro-dim'), 1600);
-    };
-    rail.addEventListener('mouseenter', () => { clearTimeout(_ro.railT); rail.classList.remove('ro-dim'); });
-    rail.addEventListener('mouseleave', () => { clearTimeout(_ro.railT); _ro.railT = setTimeout(() => rail.classList.add('ro-dim'), 1600); });
+    rail.classList.add('show');   // .hg-rail 默认 display:none，需 .show 才可见
   }
   // _hgFlow 指向 RO 容器 + 清目标会话态（主会话态退出时 _hgSseRebuild 全量重建）
   _hgFlow = _ro.flow;
@@ -166,10 +159,13 @@ function RO_view(sid) {
 
 function RO_drawerRender() {
   if (!_ro || !_ro.drawerList) return;
-  const gen = ++_ro.gen;
+  // v3.5.66（用户实锤「会话框没了」）：抽屉用独立 dgen——共用 _ro.gen 时
+  // RO_view 的 ++gen 会把在途抽屉渲染判过期丢掉（进 RO 时 drawerRender 先
+  // 发 fetch、RO_view 随即 ++gen，响应回来守卫必弃=抽屉恒空白）
+  const gen = ++_ro.dgen;
   fetch('/api/harness/sessions').then(r => r.json()).then(j => {
-    // v3.5.53（复核问题2）：世代守卫——退出/重进后在途旧响应渲染进新抽屉
-    if (!j || !j.ok || !_ro || _ro.gen !== gen) return;
+    // 世代守卫：退出/重进后在途旧响应不渲染进新抽屉
+    if (!j || !j.ok || !_ro || _ro.dgen !== gen) return;
     const list = (j.sessions || []).slice().sort((a, b) =>
       (b.last_active || 0) - (a.last_active || 0));
     _ro.drawerList.innerHTML = list.map(s =>
@@ -204,7 +200,6 @@ function RO_exit(force) {
   _HG.readonly = null;
   _HG.roViewSid = null;
   if (_ro.busyTimer) { clearInterval(_ro.busyTimer); _ro.busyTimer = null; }
-  if (_ro.railT) { clearTimeout(_ro.railT); _ro.railT = null; }
   document.documentElement.style.setProperty('--hg-subw', '0px');   // v3.5.65：右移补偿随 RO 退出清零
   if (_ro.root) _ro.root.remove();
   // 恢复 peerSent 快照（designer P2：B 的 resumedAgentId 映射不残留进 A）
