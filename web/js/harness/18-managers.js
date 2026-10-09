@@ -9,7 +9,7 @@
     // 「多模态直读」；非多模态会话才显示「已启用（MCP）」
     const _inline = j && j.mode === 'inline';
     const stTxt = !(j && j.ok && j.enabled) ? '未启用'
-      : (_inline ? '多模态直读 · 无 MCP' : '已启用（MCP）');
+      : (_inline ? '多模态直读' : '已启用（MCP）');
     visBtnEl.innerHTML = _HG_EYE + ' 识图配置 <span class="hg-vstat ' +
       ((j && j.ok && j.enabled) ? 'ok' : 'off') + '">· ' + stTxt + '</span>';
   }
