@@ -916,6 +916,9 @@
     return !!(s && s.has_history);
   }
   function saveCache() {
+    // v3.5.51（designer B2）：只读模式防毒化——RO 渲染的是目标会话 DOM，
+    // 此刻入库会把 B 的内容写进 A(_HG.sid) 的快照；RO 中关页/切换路径防御
+    if (_HG.readonly) return;
     if (!_HG.sid) return;
     // 轻审 P2（v3.4.60）：重建窗口期（_hgSseRebuild/_hgReloadFlow 清场后
     // transcript fetch 在途）不入库——此刻 flow 是空/残的，且重建入口的

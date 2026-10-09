@@ -666,6 +666,10 @@
     body.appendChild(_hgWrap);
   }
   function renderCompaction(done) {
+    // v3.5.51（designer B2）：只读模式防污染——压缩计时器 tick 会把「正在
+    // 压缩」线 addRow 进当前 flow；RO 期间写入即跨视图污染，退出 rebuild
+    // 后 timer 下一 tick 自愈重建该线，状态零损
+    if (_HG.readonly) return;
     let el = _hgFlow.querySelector('.h-switch[data-hg-compact]');
     if (!done && !el) {
       // v2.3.13：压缩分割线只归发起压缩的会话。压缩中切到别的会话，1s 计时器

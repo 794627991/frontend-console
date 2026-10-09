@@ -51,6 +51,12 @@ function _hgPanelMode(on) {
 function _harnessClose(portId) {
   const _hgConn = connections[portId];
   if (!_hgConn) return;
+  // v3.5.51（designer P0-7）：只读模式中关 tab——清 readonly/roViewSid 僵尸态
+  //（否则重开 tab 后 setBusy 守卫永久早退）+ 拆 RO 层（force=濒死不 rebuild）
+  if (_HG.readonly) {
+    _HG.readonly = null; _HG.roViewSid = null;
+    try { window.HgRO && window.HgRO.exit(true); } catch(_) {}
+  }
   if (_HG.sse) { try { _HG.sse.close(); } catch(_) {} _HG.sse = null; }
   _HG.conn = null; _HG.sid = null; _HG.cache = {};
   _HG.rowById = {}; _HG.run = null;

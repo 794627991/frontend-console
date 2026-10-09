@@ -1452,6 +1452,10 @@
     return !!(b && b.root && b.root.dataset.hgFullfeed === '1');
   }
   function _subThinkPollTick() {
+    // v3.5.51（designer B2）：只读模式早退——_subCollabDomPoll 会扫 RO flow
+    // 的协作段并把主会话在跑代理的 agentId 标 _subTailDead（退出后停喂增量）；
+    // RO 期间 agents 已被清空，本 tick 本就无有效工作
+    if (_HG.readonly) return;
     if (!_HG.sid) return;
     // v2.47（需求2）：协作段 DOM 兜底扫描先于 busy 门槛——切会话往返后
     // agents 档案已清（task_started 不重放）而协作代理还在后台跑，且那正是
