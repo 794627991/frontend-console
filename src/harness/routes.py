@@ -654,10 +654,15 @@ def harness_audit_gate():
             if st is not None and not st[2]:
                 au = s._audit or {}
                 used_l = int(au.get("lines") or 0)
+                fired = bool(au.get("designFired"))
                 block, msg = audit_gate_check(
                     used_l, reviewed=bool(au.get("reviewer")),
-                    designed=bool(au.get("designer")))
+                    designed=bool(au.get("designer")),
+                    design_fired=fired)
                 if block:
+                    # v3.5.53：设计档一次性——命中即置 fired（本回合不再咬；
+                    # 结算时清零，新回合重新可触发一次）
+                    au["designFired"] = True
                     gate = {"block": True, "used": used_l, "msg": msg}
     return jsonify({"ok": True, "gate": gate})
 

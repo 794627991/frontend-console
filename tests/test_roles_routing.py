@@ -353,27 +353,34 @@ check("mid 改审计线 → 词变+指纹变（热更）",
 write_cfg(enabled=True, light_model=POOL_LIGHT, heavy_model=POOL_HEAVY)
 
 # ============ 8. 事中闸（审过开闸） ============
-print("[8] audit_gate_check")
+print("[8] 事中闸（v3.5.53：仅设计档一次性触发；审计档退役归结算）")
 G = hr.audit_gate_check
-check("轻审线内（150 行）放行", G(150) == (False, None))
-check("轻审线内（100 行）放行", G(100) == (False, None))
-b, m = G(200)
-check("行数达线 → 拦（>= 口径）", b and "reviewer" in m, m or "")
-b, m = G(250)
-check("拦下文案指路送审不提 dev",
+check("设计线内（100 行）放行", G(100) == (False, None))
+check("轻审线无设计线 → 不拦（审计档退役归结算）",
+      G(200) == (False, None))
+b, m = G(250, designed=False)
+check("达设计线 → 拦（>= 口径）", b and "designer" in m, m or "")
+b, m = G(350, designed=False)
+check("拦下文案指路出方案不提 dev",
       b and "派 dev" not in m and "designer" in m, m or "")
-check("已派 reviewer → 开闸（直干不停工）",
-      G(250, reviewed=True) == (False, None))
-check("未达线时 reviewed 不影响放行", G(10, reviewed=False) == (False, None))
+check("已派 designer → 开闸",
+      G(350, designed=True) == (False, None))
+check("未达线时 designed 不影响放行", G(10, designed=False) == (False, None))
 check("免审/小改不拦（旧 3 行微调口径废除沿用）",
       G(3) == (False, None) and G(99) == (False, None))
+# v3.5.53：设计档一次性触发（design_fired）+ 审计档退役
+check("design_fired=True → 不拦（本回合只咬一口）",
+      G(250, design_fired=True) == (False, None))
+check("审计档退役：仅超轻审线未达设计线 → 不拦",
+      G(250, reviewed=False) == (False, None))
+check("审计档退役：已派 reviewer 也不拦（同上）",
+      G(300, reviewed=True) == (False, None))
 print("[8b] 设计档事中闸（v2.54）")
 b, m = G(200, designed=False)
 check("达设计线未派 designer → 拦并指路出方案",
       b and "设计线" in m and "designer" in m, m or "")
-check("已派 designer → 设计档不触发",
-      G(200, designed=True)[1] is not None and
-      "设计线" not in G(200, designed=True)[1],
+check("已派 designer → 设计档不触发（v3.5.53 零强制零拦截）",
+      G(200, designed=True) == (False, None),
       str(G(200, designed=True)))
 b, m2 = G(200, designed=False, reviewed=True)
 check("已派 reviewer 不豁免设计档（两档独立）",

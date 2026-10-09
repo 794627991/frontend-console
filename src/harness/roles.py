@@ -14,12 +14,12 @@ API 方案改配置即可，不用动代码（v3.5.15 端点映射退役：model
 形态（roles_mode，v3.5.0 三档精确匹配）：用户在面板直接配「哪个模型是
 轻/中/重哪一档」——实跑模型名归一化（剥 [1M] 类窗口后缀 + casefold）
 后依次匹配 三档配置值（同值配多档时 轻>中>重），首个命中即该形态：
-- light 轻档：轻主力——designer+reviewer 双代理 + 分级线全档 + 事中闸
-  + 回合结算审计（=旧 light 行为）；
+- light 轻档：轻主力——designer+reviewer 双代理 + 分级线全档
+  + 回合结算审计（=旧 light 行为；v3.5.51 事中闸退役，中途不拦截）；
 - mid 中档：中主力——直干 + 仅 reviewer 审核兜底（=旧 strong 行为）；
 - heavy 重档：最信任档——直干为主但**派发自由**（designer/reviewer/通用
   子代理按需都可派，v3.5.16 用户纠偏「重模型难道不能派代理吗」），免的
-  只是强制分级线（事中闸/回合结算审计全免）；v3.5.12 两档简化：mid 没配
+  只是强制分级线（回合结算审计全免）；v3.5.12 两档简化：mid 没配
   =没有中档这一层，重档值命中直接 heavy；
 - 未匹配：mid 配了兜 mid（安全：多一道审），mid 没配按两档兜 heavy。
 main_model / light_keywords（v3.4.95 词表识别）已退役：三档下拉本身即
@@ -99,7 +99,7 @@ v3.5.15：model_map 端点映射从三角色判定链退役（用户拍板「换
 - v2.53：三槽直白化「主会话/设计者/审计者」各自模型（designer_model/
   reviewer_model 新键，空=回退重池）；「重」角标移除；
 - v2.54（用户拍板）：设计线 design_max_lines（默认 200，0=不强制）——
-  回合内直改累计达线未派 designer：事中闸拦+结算追责，强制大改方案先行；
+  回合内直改累计达线未派 designer：回合结束结算追责，强制大改方案先行（v3.5.51 事中闸退役：中途不打断）；
   子代理段内补 text 气泡（轮询+回填双通道）；回传历史/实时分离
   （历史绝不新建段）。
 """
@@ -389,10 +389,10 @@ def roles_mode(model=None):
     实跑模型名归一化（_norm_model：剥 [1M] 后缀 + casefold）后依次匹配
     三槽档位值（resolve_tier_models：Haiku→轻 / Sonnet→中 / Opus→重），
     同值多档时 轻>中>重：
-    - "light"：轻主力——designer+reviewer 双代理 + 分级线/事中闸/结算审计；
+    - "light"：轻主力——designer+reviewer 双代理 + 分级线/结算审计；
     - "mid"：中主力——直干 + reviewer 审核兜底（=旧 strong 行为）；
     - "heavy"：最信任档——直干为主+派发自由（designer/reviewer/通用
-      子代理按需可派，v3.5.16），免的只是强制分级（事中闸/结算审计全免）；
+      子代理按需可派，v3.5.16），免的只是强制分级（结算审计全免）；
     - 未匹配任何槽 / 名字不可得 → mid（安全兜底：漏配的最坏后果是多一道
       审）；内部异常兜 mid。"""
     try:
@@ -561,7 +561,7 @@ def ensure_roles_ready(model=None):
 
 def audit_limits(cfg=None):
     """审计两档线现值：(l1_max_lines, l2_max_files, l2_max_lines)。
-    引导词 / 回合结算 / 事中闸三处共用本函数——数字同源，不会词里一套
+    引导词 / 回合结算两处共用本函数（事中闸 v3.5.51 退役）——数字同源，不会词里一套
     审计另一套。0 合法（最严档：l1=0 任何直改都须轻审；l2=0 任何直改都
     属大改须全审），缺键/非法回默认。纯函数不落盘（cfg 缺省读盘一次）。
     v2.52 曾定单次最大口径；v3.5.41 改回合内累计。l2_max_files 不再参与任何
@@ -603,8 +603,8 @@ def audit_verdict(lines, rev, designed=True, cfg=None, strong=False):
       轻审，未派=违规；lines>l2l 属大改——直改须 reviewer 取证级全审，
       未派=违规（已派视作审过，不重复追责——提示性兜底）；设计档
       （v2.54）：lines≥设计线且未派 designer=违规（大改须方案先行；
-      dl=0 关闭；事后只能查「派过没有」，派发先于直改的时序靠事中闸
-      前置）；
+      dl=0 关闭；事后只能查「派过没有」（v3.5.51 事中闸退役，无前置
+      时序强制，漏派由结算兜底）；
     - strong 旗（v3.5.0 起=中档 mid 直干；重档 heavy 在上游 _audit_state
       已短路返回 None 不进本函数）：只守审计线（lines>l2l 且未派
       reviewer=违规；直干是设计常态，无轻审义务，也无 designer 强制
@@ -667,37 +667,28 @@ def clamp_role_limits(patch, cfg=None):
     return out, notes
 
 
-def audit_gate_check(used_lines, cfg=None, reviewed=False, designed=True):
+def audit_gate_check(used_lines, cfg=None, reviewed=False, designed=True,
+                     design_fired=False):
     """事中闸判定（纯函数，claude_harness /audit_gate 调用）：
-    (block, msg)。两档独立判定，任一命中即拦下一次直改：
-    - 审计档：回合内直改累计达轻审线且本回合未派 reviewer → 指路送审；
-    - 设计档（v2.54）：回合内直改累计达设计线（design_limit，0=关）且未派
-      designer → 指路先出方案——「主会话惯性全自己做」的事前强制：
-      大改在改的过程中就被拦下补方案，而非改完靠结算追责。
-    已派对应代理即放行对应档（审过/设计过开闸——直干是常态，闸只逼
-    送审不逼停工：没有可转派的干活代理，硬拦到底会把唯一干活者锁死）。
-    口径用 >=（达线即拦下一次），与结算的超线追责（>，audit_verdict）
-    互补：事中闸让「超线且全程未送审/无方案」尽量不发生，事后审计只
-    兜闸失效的漏网。免审/轻审区内的直改一律放行。
-    v3.5.41：used_lines=回合内累计（_audit_tally 入账），切片不可逃逸。"""
-    _l1, _l2f, l2l = audit_limits(cfg)   # 闸只守轻审行数线，l1 不参与
-    msgs = []
-    if not reviewed and used_lines >= l2l:
-        msgs.append("本回合直改累计 %d 行，达到轻审线上限（回合累计 "
-                    "≤%d 行）——请先派 reviewer 代理审已完成的改动（对抗"
-                    "审核：只审不改，PASS/FAIL），审过即可继续直改；需要"
-                    "方案支持可派 designer（带上全部已知上下文）"
-                    % (used_lines, l2l))
+    (block, msg)。v3.5.53（用户定调「设计事中触发一次；审计只事后」）：
+    - 设计档：本回合**首次**累计达设计线（design_limit，0=关）且未派
+      designer 时拦一次——指路先出方案；design_fired=True（本回合已触发过）
+      不再拦（同一事务只咬一口；方案实施中需要核对可随时自由派 designer）；
+    - 审计档退役：轻审线中途不再拦——「改一段审一段」把大改切成两半（用户
+      实锤），审计统一回合结束结算送审（audit_verdict），允许多次审计直到
+      修复完成。
+    reviewed/designer 旗保留（派过即放行对应档的旧语义兼容）。口径用 >=
+    （达线即触发）。"""
     dl = design_limit(cfg)
-    if not designed and dl > 0 and used_lines >= dl:
-        msgs.append("回合内直改累计 %d 行达到设计线（≥%d 行）——请先派 designer "
-                    "代理出框架方案（带上全部已知上下文：目标/背景约束/"
-                    "已试方案/文件+行号/验收标准），按方案继续实施"
-                    % (used_lines, dl))
-    if not msgs:
+    if design_fired:
         return False, None
-    return True, ("；".join(msgs)
-                  + "。确需放宽可在三角色配置里调整分级线。")
+    if not designed and dl > 0 and used_lines >= dl:
+        return True, ("回合内直改累计 %d 行达到设计线（≥%d 行）——请先派 designer "
+                      "代理出框架方案（带上全部已知上下文：目标/背景约束/"
+                      "已试方案/文件+行号/验收标准），按方案继续实施"
+                      "（本回合只提醒这一次，之后自由直改，回合结束统一审计）"
+                      % (used_lines, dl))
+    return False, None
 
 
 def roles_bridge_text(model=None):

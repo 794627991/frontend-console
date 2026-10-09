@@ -114,6 +114,7 @@ class HarnessSession:
         # ids/pending 跨回合保留——agentId→角色映射（Task 结果回填）与
         # 在飞派发表，续派常发生在派发后的后续回合。
         self._audit = {"lines": 0, "files": [], "designer": False,
+                       "designFired": False,   # v3.5.53：设计线事中一次性触发标志
                        "reviewer": False, "streak": 0, "ids": {}, "pending": {}}
         # v2.40：light 形态事中闸的 --settings 临时文件路径（kill 时清理；
         # revive 重启由 start() 重建——hooks 是进程启动参数，活进程不热更）
@@ -495,7 +496,7 @@ class HarnessSession:
         rev = au["reviewer"]
         designed = au.get("designer")
         au.update({"lines": 0, "files": [], "designer": False,
-                   "reviewer": False})
+                   "reviewer": False, "designFired": False})   # v3.5.53：新回合设计线重新可触发一次
         st = self._audit_state()
         if st is None:
             au["streak"] = 0
