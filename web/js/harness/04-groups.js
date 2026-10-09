@@ -578,20 +578,31 @@
     t.textContent = _timeFmt(ms);
     (host || _hgFlow).appendChild(t);
   }
-  // v3.5.57（用户需求「单会话超 20 轮进只读」）：主窗口只保留最近 20 轮，
-  // 超出的从 DOM 移除（转写仍完整，只读模式拉全量可看）。每次新回合边界
-  // （用户发消息）时调用。裁剪后顶部插入归档提示
+  // v3.5.57→v3.5.58（用户需求「单会话超 20 轮进只读」+ 实锤「用户消息没跟
+  // 着删」）：主窗口只保留最近 20 轮。一轮 = user 消息 + AI 回复组，裁剪时
+  // 整块移除（user 消息是 .h-msg.user，AI 是 .h-grp，它们是 flow 的兄弟节点
+  // 不是嵌套关系——只删 .h-grp 会留下孤儿 user 消息）。裁剪后顶部插归档提示
   function _trimOldTurns() {
     const MAX = 20;
-    const grps = _hgFlow.querySelectorAll(':scope > .h-grp');
-    if (grps.length <= MAX) return;
-    const cut = grps.length - MAX;
-    for (let i = 0; i < cut; i++) grps[i].remove();
-    // 顶部插归档提示（去旧防叠）
+    const all = Array.from(_hgFlow.children);
+    let grpCount = 0;
+    let keepFrom = -1;
+    // 从尾往前数 .h-grp，找到第 MAX 个的位置（含）→ 它之前的全删
+    for (let i = all.length - 1; i >= 0; i--) {
+      const cl = all[i].classList;
+      if (cl && cl.contains('h-grp')) {
+        grpCount++;
+        if (grpCount === MAX) { keepFrom = i; break; }
+      }
+    }
+    if (keepFrom <= 0) return;   // 不超限或无可删
+    const trimmed = keepFrom;
+    for (let i = 0; i < keepFrom; i++) all[i].remove();
+    // 顶部插归档提示
     _hgFlow.querySelectorAll(':scope > .h-archive-hint').forEach(x => x.remove());
     const hint = document.createElement('div');
     hint.className = 'h-archive-hint';
-    hint.innerHTML = '⬆ 前 ' + cut + ' 轮已归档——点击进入只读模式查看';
+    hint.innerHTML = '⬆ 前 ' + trimmed + ' 轮已归档——点击进入只读模式查看';
     hint.style.cursor = 'pointer';
     hint.onclick = () => {
       const roBtn = document.querySelector('[data-hg-roentry]');
