@@ -131,18 +131,16 @@ function RO_enter(sid, deps) {
 // 内容列不得溢出 flow 可视宽（分屏宽档过宽时防「内容缩右侧」）
 function RO_calcShift() {
   if (!_ro || !_ro.flow || !_ro.flow.isConnected) return;
-  // v3.5.72（用户实锤「我的消息偏右 AI 消息偏左，一个偏左一个不动」）：
-  // 居中改走**左右对称 padding**——align-items 恢复 flex-start，内容列(820)
-  // 靠左对齐于 pl 之后；user 气泡 align-self:flex-end 贴 pr 内侧。数学恒等：
-  // pl+820 == flowW-pr ⇔ 内容列右缘 == user 气泡右缘，两类消息永不分离。
-  // 中线偏移=pl 加 shift / pr 减 shift（对称破缺），shift 封顶 pr≥32
+  // v3.5.74（用户拍板回退偏移）：撤「窗口中线偏移」——那是 v3.5.65 误读
+  // 「左右宽度不统一」的发明，面板开着时把内容推得贴右，连打 4 版补丁仍歪。
+  // 现在内容列(820)恒居中于当前可视区（左右 padding 恒对称）：无面板居中
+  // 于聊天区、面板开着居中于剩余区。user 气泡 flex-end 贴 pr 内侧=内容列
+  // 右缘，与 AI 列恒同列（v3.5.72 的对称 padding 结构保持）
   const flowW = _ro.flow.clientWidth;
-  const subw = _ro.subpaneEl ? (parseFloat(_ro.subpaneEl.style.width) || 0) : 0;
-  const base = Math.max(32, Math.floor((flowW - 820) / 2));   // 居中基准 padding
-  const shift = Math.max(0, Math.min(Math.round(subw) - 232, base - 32));
+  const base = Math.max(32, Math.floor((flowW - 820) / 2));
   const st = document.documentElement.style;
-  st.setProperty('--hg-ropl', (base + shift) + 'px');
-  st.setProperty('--hg-ropr', (base - shift) + 'px');
+  st.setProperty('--hg-ropl', base + 'px');
+  st.setProperty('--hg-ropr', base + 'px');
 }
 
 // RO 内切换查看的会话（抽屉跳转）：同场重渲（不回主视图）
