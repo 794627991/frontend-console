@@ -578,6 +578,23 @@
     t.textContent = _timeFmt(ms);
     (host || _hgFlow).appendChild(t);
   }
+  // v3.5.57（用户需求「单会话超 20 轮进只读」）：主窗口只保留最近 20 轮，
+  // 超出的从 DOM 移除（转写仍完整，只读模式拉全量可看）。每次新回合边界
+  // （用户发消息）时调用。裁剪后顶部插入归档提示
+  function _trimOldTurns() {
+    const MAX = 20;
+    const grps = _hgFlow.querySelectorAll(':scope > .h-grp');
+    if (grps.length <= MAX) return;
+    const cut = grps.length - MAX;
+    for (let i = 0; i < cut; i++) grps[i].remove();
+    // 顶部插归档提示（去旧防叠）
+    _hgFlow.querySelectorAll(':scope > .h-archive-hint').forEach(x => x.remove());
+    const hint = document.createElement('div');
+    hint.className = 'h-archive-hint';
+    hint.innerHTML = '⬆ 前 ' + cut + ' 轮已归档——上拉到顶进只读模式查看';
+    _hgFlow.insertBefore(hint, _hgFlow.firstChild);
+  }
+
   function renderUser(text, images, files, live, tsMs) {
     // v3.4.36：真新用户消息=真回合边界——撤销压缩续跑标志，压缩后紧跟的
     // 新提问不许误接回旧组。v3.4.52：只清归属本会话的标志（防误清别的会话的）
@@ -606,6 +623,10 @@
     _HG.pendingTurnT0 = (tsMs > 0 && live === false) ? tsMs : 0;   // v3.2R1：live 记 0（grpEnsure 取当下）；回放缺 ts 保持 0→undefined
     _maybeTimeBar(tsMs || Date.now());        // v2.24.5 微信式时间条（气泡前）
     endThinking(); closeRun();
+    // v3.5.57（用户需求「单会话超 20 轮进只读」）：主窗口只保留最近 20 轮
+    // ——超出的从 DOM 移除（转写仍完整，只读模式拉全量可看）。每次新回合
+    // 边界（用户发消息）时裁剪一次
+    _trimOldTurns();
     _tlExpFlush(!!_HG.openState);   // v3.2.13：回合边界定稿上回合查阅组——思考不再
                                     // 断组后，开放组的头部定格必须由用户行兜底
                                     // （头部定格为桶汇总 + 回放态自动收起）

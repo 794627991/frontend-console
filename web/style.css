@@ -4378,3 +4378,7 @@ span.h-ag-type[class*='h-ava-'] {
   white-space: nowrap; color: var(--fg); }
 .h-task-t { flex: none; font-family: var(--font-mono); font-size: var(--fs-xs);
   color: var(--muted); }
+
+/* ---- v3.5.57 回合归档提示（主窗口只保留最近 20 轮，更早的进只读看）---- */
+.h-archive-hint { text-align: center; padding: 8px 12px; font-size: var(--fs-sm);
+  color: var(--muted); border-bottom: 1px dashed var(--border); }
