@@ -987,6 +987,10 @@ function _stRenderDataPane(pane) {
         <div class="dd-path" id="ddCurPath">—</div>
         <div class="dd-sub" id="ddCurStat"></div>
       </div>
+      <div class="dd-cur" id="ddUsage">
+        <div class="dd-label">存储占用</div>
+        <div class="dd-sub" id="ddUsageBody">统计中…</div>
+      </div>
       <div class="dd-form">
         <div class="dd-label">修改到</div>
         <div class="dd-row">
@@ -1085,6 +1089,32 @@ async function _ddRefreshDataPane(pane) {
     pane.querySelector('#ddCurStat').textContent = subs + (j.total_size ? ` · 共 ${_ddFmtSize(j.total_size)}` : '');
     pane.querySelector('#ddDefault').textContent = j.default || '';
   } catch(_) {}
+  // v3.5.92：存储感知——用户数据空间（可迁移）/工具数据空间（固定）/
+  // 附件目录占用与自动清理策略（异步拉，不阻塞本页首屏）
+  _ddRefreshUsage(pane);
+}
+
+async function _ddRefreshUsage(pane) {
+  const el = pane.querySelector('#ddUsageBody');
+  if (!el) return;
+  try {
+    const r = await fetch('/api/data_dir/usage');
+    const j = await r.json();
+    if (!j.ok || !pane.querySelector('#ddUsageBody')) return;
+    const row = (t, u, extra) =>
+      `<div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;">` +
+      `<b style="min-width:9.5em;font-weight:600;">${t}</b>` +
+      `<span style="font-family:var(--font-mono);font-size:12px;color:var(--fg);">${esc(u.path)}</span>` +
+      `<span style="margin-left:auto;font-variant-numeric:tabular-nums;color:var(--accent);font-weight:600;">${_ddFmtSize(u.bytes)}</span>` +
+      (extra ? `<span style="font-size:11px;color:var(--muted);">${extra}</span>` : '') + `</div>`;
+    const upPct = j.uploads && j.uploads.max_bytes
+      ? Math.min(100, Math.round(j.uploads.bytes / j.uploads.max_bytes * 100)) : 0;
+    el.innerHTML =
+      row('用户数据空间（可迁移）', j.user || {}, '日志 / 笔记 / 缓存——随上方迁移走') +
+      row('工具数据空间（固定）', j.tool || {}, '配置 / 附件 / 子进程状态——位置定死不随迁移') +
+      row('会话附件 harness_uploads', j.uploads || {},
+          `已用 ${upPct}% · 自动清理：超 ${j.uploads ? j.uploads.max_age_days : 180} 天删除，超 1GB 删最老至 80%`);
+  } catch(_) { el.textContent = '统计不可用'; }
 }
 
 // ---- 文件关联子页：各后缀 接管/还原 状态 + 全选/批量操作 ----

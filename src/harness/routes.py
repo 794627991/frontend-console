@@ -1716,6 +1716,13 @@ def harness_upload():
             f.write(raw)
     except OSError as e:
         return jsonify({"ok": False, "err": str(e)}), 500
+    # v3.5.92：附件落盘成功后节流触发目录清理（半年过期 + 1GB 上限，见
+    # src/data_hygiene.py；10 分钟节流 + 异步，不阻塞上传响应）
+    try:
+        from src.data_hygiene import cleanup_throttled
+        cleanup_throttled()
+    except Exception:
+        pass
     return jsonify({"ok": True, "path": path, "name": name, "size": len(raw)})
 
 # ---- from claude_harness.py:4315 (harness_file) ----

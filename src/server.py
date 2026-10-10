@@ -232,6 +232,14 @@ BaseConnection.append_line = _patched_append
 
 def start_background():
     """启动后台维护线程。"""
+    # v3.5.92：附件目录自动清理（半年过期 + 1GB 上限删至 80%；挂在这里=
+    # main.py 导入启动与 server.py 直跑两条路径都覆盖）
+    try:
+        from src.data_hygiene import start as _dh_start
+        _dh_start()
+    except Exception:
+        pass
+
     def _cleanup():
         while True:
             time.sleep(30)
@@ -1231,6 +1239,18 @@ def api_data_dir_get():
                     "default": _st._default_data_dir(),
                     "subdirs": subs, "total_size": total,
                     "home_anchor": HOME_DIR})
+
+@app.route("/api/data_dir/usage")
+def api_data_dir_usage():
+    """存储感知（v3.5.92 设置→数据目录）：用户数据空间（可迁移 DATA_DIR）/
+    工具数据空间（固定 HOME_DIR）/ 附件目录占用与清理策略。目录大的话
+    首扫可能秒级，前端按需拉（进设置页才调）。"""
+    try:
+        from src.data_hygiene import usage_stats
+        return jsonify({"ok": True, **usage_stats()})
+    except Exception as e:
+        return jsonify({"ok": False, "err": str(e)}), 500
+
 
 @app.route("/api/data_dir/check", methods=["POST"])
 def api_data_dir_check():
