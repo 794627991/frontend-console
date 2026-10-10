@@ -411,7 +411,10 @@ def harness_queue_act():
         return jsonify({"ok": False, "err": "会话不存在"}), 404
     eid = str(data.get("id") or "").strip()
     act = str(data.get("act") or "").strip()
-    if not eid:
+    # v3.5.106（用户实锤「拖拽排序后仍按时间序发出」）：id 必填检查只对
+    # now/del 生效——order 按 ids 整体重排、天然无单个 id，之前被此检查
+    # 400 拦死，排序上报从未生效（前端 catch 不看响应码，静默吞）。
+    if act != "order" and not eid:
         return jsonify({"ok": False, "err": "缺少条目 id"}), 400
     if act == "now":
         if not s.queue_to_head(eid):
@@ -437,6 +440,7 @@ def harness_queue_act():
             seen = set(ids)
             new_order += [e for e in s._inbox if e.get("id") not in seen]
             s._inbox = new_order
+        s.sync_meta()   # v3.5.106：排序落 meta——此前只活内存，GC 重建/重启后打回时间序
         return jsonify({"ok": True})
     return jsonify({"ok": False, "err": "未知操作"}), 400
 

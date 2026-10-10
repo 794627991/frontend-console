@@ -604,7 +604,13 @@
         fetch('/api/harness/queue_act', { method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ sid: _HG.sid, act: 'order', ids })
-        }).catch(() => {});
+        }).then(r => r.json()).then(j => {
+          // v3.5.106：失败不再静默——排序没落账本的话泵发会按旧序发，
+          // 用户必须知道（曾因后端 400 被静默吞，排序上报从未生效过）
+          if (!j || !j.ok) {
+            showBanner('排序上报失败' + (j && j.err ? '：' + j.err : '') + '——发送将按原顺序', 4000, true);
+          }
+        }).catch(() => showBanner('排序上报失败：网络错误——发送将按原顺序', 4000, true));
     }
     renderQueue();
   }

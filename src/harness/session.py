@@ -885,14 +885,21 @@ class HarnessSession:
 
     def queue_to_head(self, eid):
         """「立即发送」：条目提到队首，随后中断当前回合 → 回合终结泵自然
-        先发它。条目不存在返回 False。"""
+        先发它。条目不存在返回 False（已在队首也算存在，返回 True）。"""
+        found = moved = False
         with self._inbox_lock:
             for i, e in enumerate(self._inbox):
                 if e.get("id") == eid:
+                    found = True
                     if i:
                         self._inbox.insert(0, self._inbox.pop(i))
-                    return True
-        return False
+                        moved = True
+                    break
+        # v3.5.106：提队首也是顺序变更，落 meta（锁外——既有锁序 meta→inbox，
+        # 锁内反取会构成 inbox→meta 的 AB-BA 死锁风险）；已在队首不动不落
+        if moved:
+            self.sync_meta()
+        return found
 
     def bump_generation(self, reason="rewind"):
         """#14 分支世代：/rewind 后调用。旧代排队输入全部作废（事件显式通
