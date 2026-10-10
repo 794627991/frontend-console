@@ -75,8 +75,15 @@ def _src_brief(s):
 _DL_TIMEOUT = 25          # 图片下载超时（秒）
 _DL_MAX = 15 * 1024 * 1024  # 图片大小上限（15MB，超限直接报错不硬扛）
 _API_TIMEOUT = 120        # 视觉模型响应超时（秒）
+# 图片 CDN 下载用浏览器 UA（防盗链拒绝非浏览器请求）
 _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+# v3.5.98 识图 API 请求专用 UA：内网 lanz 网关按 UA 白名单放行 Anthropic
+# 协议（仅 claude-cli/*，Chrome/anthropic-sdk UA 一律 403 "Anthropic protocol
+# is restricted"——内网实测）；智谱 /api/anthropic 本就是 Claude Code 客户端
+# 端点、天然放行 claude-cli UA——两边交集，两方案全兼容。Chrome UA 仅保留
+# 给图片下载（CDN 防盗链认浏览器）。
+_API_UA = "claude-cli/2.0.0 (external, cli)"
 
 # 给视觉模型 system：与会话版识图提示词同一口径（结论先行/坐标可复核/客观
 # 不猜）——harness 引导词向主会话承诺的返回风格由这里兑现
@@ -341,7 +348,7 @@ def _post_vision(base, key, model, sys_prompt, b64, media_type, prompt):
     req = urllib.request.Request(
         base.rstrip("/") + "/v1/messages", data=body, method="POST",
         headers={"Content-Type": "application/json",
-                 "User-Agent": _UA,
+                 "User-Agent": _API_UA,
                  "anthropic-version": "2023-06-01",
                  # 两种鉴权头都带：claude 系网关认 x-api-key，
                  # anthropic 兼容层多认 Bearer，冗余无害

@@ -32,6 +32,7 @@ def _get_or_create(sid):
         s.created = m.get("created") or s.created
         s.last_active = m.get("last_active") or s.last_active
         s.live_model = m.get("live_model") or None   # v2.27.21：实报模型跨重启保留
+        s.scheme = m.get("scheme") or None           # v3.5.98：方案名跨 GC/重启保留
         # v2.35.2：事件序号续号；v3.0 连代际一起续——GC 重建不是日志重写，
         # epoch 不变，前端旧 base 仍可 resume；无 epoch 的旧 meta（升级前
         # 落盘）→ restore 内部换新代，前端旧水位作废走一次 snapshot 重建

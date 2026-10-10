@@ -466,6 +466,40 @@ def _mask_token(t):
     return (t[:8] + "…" + t[-4:]) if len(t) > 16 else ("已设置" if t else "")
 
 
+def _harness_roles_read():
+    """读 config.json 的 harness_roles 节（三角色配置，随 API 方案走）。
+    读不到返回 None（调用方按「无快照」处理，不动现有配置）。
+    v3.5.98R：路径走 app_state 单一源（轻审 B3——硬编码双源漂移险）。"""
+    try:
+        from src.app_state import CONFIG_FILE
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            v = json.load(f).get("harness_roles")
+        return v if isinstance(v, dict) else None
+    except Exception:
+        return None
+
+
+def _harness_roles_write(roles):
+    """把方案携带的 harness_roles 写回 config.json（v3.5.98 用户实锤
+    「切 lanzi 方案三角色还留智谱配置」——三角色模型必须随方案走）。
+    v3.5.98R：cfg_commit 单事务（轻审 B1 严重——_load_config+_save_config
+    两段式读-改间隙会被其它 config 写方插入后整量覆盖，丢更新）；写失败
+    上抛给调用方显式报错（轻审 B2——静默吞会让「切了方案三角色没跟」
+    复发且无从定位）。整节替换热生效（roles.py 每次现读 config）。"""
+    from src.app_state import cfg_commit
+    ok, err = cfg_commit(lambda d: d.__setitem__("harness_roles", roles))
+    if not ok:
+        raise RuntimeError(err or "config.json 写入失败")
+
+
+def active_scheme_name():
+    """当前激活的 API 方案名（harness 会话档案/拦截用）。无方案=空串。"""
+    try:
+        return str(_read_profiles().get("active") or "").strip()
+    except Exception:
+        return ""
+
+
 @claude_default_bp.route("/api/claude/profiles")
 def claude_profiles_get():
     """方案列表 + 当前激活名（打码显示 token）。"""
@@ -495,12 +529,18 @@ def claude_profiles_save():
     """把当前 settings.json 整份存为一个方案（同名覆盖）。
     v2.22 快照制——不同网关不止 TOKEN/BASE_URL 不同，模型映射
     （ANTHROPIC_MODEL / ANTHROPIC_DEFAULT_*_MODEL）也随网关变，
-    只切两键会得到「新网关 + 旧模型名」的废配置（用户实测）。body: {name}"""
+    只切两键会得到「新网关 + 旧模型名」的废配置（用户实测）。
+    v3.5.98：快照增挂 harness_roles 节——三角色配置（轻中重档/代理
+    模型/分级线）同样随方案变（用户实锤「切 lanzi 还留智谱 glm 配置」），
+    存方案时一并带上。body: {name}"""
     data = request.get_json(force=True, silent=True) or {}
     name = (data.get("name") or "").strip()
     if not name:
         return jsonify({"ok": False, "err": "方案名不能为空"}), 400
     prof = {"name": name, "settings": _read_settings()}
+    roles = _harness_roles_read()          # v3.5.98：三角色配置随方案带走
+    if roles is not None:
+        prof["harness_roles"] = roles
     d = _read_profiles()
     for i, p in enumerate(d["profiles"]):
         if p.get("name") == name:
@@ -589,6 +629,16 @@ def claude_profiles_apply():
             return jsonify({"ok": True, "warning":
                             "方案「%s」是旧格式（只存了 Token/网关），模型映射没有切换。"
                             "请在该网关下配好模型映射后重新「存当前为方案」升级为完整快照。" % name})
+        # v3.5.98：三角色配置随方案切换——方案快照带 harness_roles 节即写回
+        # config.json 热生效；不带（升级前存的旧方案）不动现有配置，沿用
+        # 自动分类兜底（用户拍板）。面板下次打开即显示新方案的角色配置。
+        # v3.5.98R：写失败显式告警不吞（轻审 B2）。
+        roles_warn = ""
+        if isinstance(prof.get("harness_roles"), dict):
+            try:
+                _harness_roles_write(prof["harness_roles"])
+            except Exception as _e:
+                roles_warn = "（三角色配置写回失败：%s——请到三角色面板重配）" % _e
         d["active"] = name
         _write_profiles(d)
         _sync_proxy_upstream(prof_base, was_proxy)
@@ -599,7 +649,7 @@ def claude_profiles_apply():
         # 下次发送时按需换新进程）。超窗续命见 send_message 拦截分支。
         threading.Thread(target=_renew_bot_after_switch, daemon=True).start()
     _last_applied_profile["name"] = name   # 成功收尾才记（失败下次重做全量）
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "warning": roles_warn or None})
 
 
 def _renew_bot_after_switch():

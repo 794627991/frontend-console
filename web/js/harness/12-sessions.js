@@ -474,7 +474,7 @@
   async function refreshSessions() {
     try {
       const j = await (await fetch('/api/harness/sessions')).json();
-      if (j.ok) { _HG.sessions = j.sessions || []; renderList(); }
+      if (j.ok) { _HG.sessions = j.sessions || []; _HG.scheme = j.scheme || ''; renderList(); }
     } catch(_) {}
   }
   function setQuote(_hgQ) {

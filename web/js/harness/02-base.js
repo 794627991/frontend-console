@@ -206,6 +206,7 @@ const _HG = {
   tasks: null,          // v3.5.22：后台任务档案 tid→{desc,t0,done,doneAt,err,cancelled,result,el}
                         // 与 agents 彻底分离（后台 shell 无转写，不进子代理体系）
   peerSent: null,       // v2.39：SendMessage tool_use_id → to 映射（task_notification 按 tool_use_id 反查原转交线名，修回传气泡配不上线）
+  scheme: '',           // v3.5.98：当前激活 API 方案名（refreshSessions 刷新；会话卡对比标注 ⇄ 异方案）
 };
 
 // ---- 抽屉：工具名 → 展示名（用户口径：bash*n read*m grep*x 编辑*y）----

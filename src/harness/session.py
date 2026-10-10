@@ -120,6 +120,11 @@ class HarnessSession:
         # revive 重启由 start() 重建——hooks 是进程启动参数，活进程不热更）
         self._audit_settings_path = None
         self.last_result = None
+        # v3.5.98：会话创建时的 API 方案名（跨方案发消息拦截依据）。切方案
+        # 会换网关/模型映射/上下文窗口，旧会话续发必然错位（上下文大小不一
+        # 致/模型名不被新网关认）。None=升级前的旧会话（无标记），按用户拍板
+        # 放行不拦；仅新会话起打标强制。
+        self.scheme = None
 
     # ---- 元数据同步 ----
     @property
@@ -146,7 +151,9 @@ class HarnessSession:
                 # v3.1（#10/#14）：durable 输入账本 + 世代号——重启/闲置回收
                 # 后队列不丢；gen 让 /rewind 后作废旧代条目的判定可跨重启
                 "inbox": _inbox,
-                "gen": _gen}
+                "gen": _gen,
+                # v3.5.98：会话方案名随元数据落盘（GC/重启后拦截判定不失忆）
+                "scheme": self.scheme}
 
     def sync_meta(self):
         if getattr(self, "hidden", False):
@@ -637,6 +644,20 @@ class HarnessSession:
         # too long（实测 267112 > 262144）——直接拦在发送前并给出路。
         # 3% 余量：prompt 除历史外还有 system/工具定义等固定开销。
         # /compact 后 _session_ctx_used 撞压缩边界归零，即可继续发。
+        # v3.5.98：跨方案拒发（用户需求「切了方案就不让发，新开会话」）——
+        # 会话创建时打的方案名与当前激活方案不一致 → 拒发。不同方案的
+        # 模型映射/上下文窗口完全不同，旧会话续发必错位。仅拦有标记且
+        # 不一致的（用户拍板：无标记的升级前旧会话放行）。
+        try:
+            from src.claude_default import active_scheme_name
+            cur_scheme = active_scheme_name()
+            if self.scheme and cur_scheme and self.scheme != cur_scheme:
+                return False, ("当前 API 方案是「%s」，本会话是「%s」方案创建的——"
+                               "模型映射与上下文窗口已随方案切换，旧会话续发会错位。"
+                               "请新建会话（历史消息仍可在列表中回看）"
+                               % (cur_scheme, self.scheme))
+        except Exception:
+            pass
         try:
             eff_model = self._eff_model()
             if eff_model and self.session_id:

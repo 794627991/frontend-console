@@ -57,12 +57,19 @@ def harness_connect():
             return jsonify({"ok": False, "err": "会话已失效（无法恢复上下文）"}), 400
         # v2.28：识图走 MCP 通道（注入所有会话），连接时不再拉识图会话
         return jsonify({"ok": True, "port_id": s.port_id, "sid": s.sid, "kind": "harness",
-                        "cwd": s.cwd, "model": s.model, "title": s.title})
+                        "cwd": s.cwd, "model": s.model, "title": s.title,
+                        "scheme": s.scheme or ""})
     # 新会话
     new_sid = uuid.uuid4().hex
     s = HarnessSession(new_sid, cwd=cwd, model=model,
                        permission=(data.get("permission") or "").strip() or None,
                        think=(data.get("think") or "").strip() or None)
+    # v3.5.98：新会话打上当前 API 方案名（跨方案发消息拦截的档案依据）
+    try:
+        from src.claude_default import active_scheme_name
+        s.scheme = active_scheme_name() or None
+    except Exception:
+        pass
     try:
         s.start()
     except Exception as e:
@@ -536,9 +543,16 @@ def harness_sessions():
                       "think": m.get("think"),
                       "session_id": m.get("session_id"), "has_history": bool(m.get("session_id")),
                       "created": m.get("created", 0), "last_active": last_active,
-                      "alive": alive, "busy": busy, "busy_since": busy_since})
+                      "alive": alive, "busy": busy, "busy_since": busy_since,
+                      "scheme": m.get("scheme") or ""})   # v3.5.98：会话方案名（前端标注）
     items.sort(key=lambda x: -x["last_active"])
-    return jsonify({"ok": True, "sessions": items})
+    _cur_scheme = ""
+    try:
+        from src.claude_default import active_scheme_name
+        _cur_scheme = active_scheme_name()
+    except Exception:
+        pass
+    return jsonify({"ok": True, "sessions": items, "scheme": _cur_scheme})
 
 # ---- from claude_harness.py:3018 (harness_transcript) ----
 

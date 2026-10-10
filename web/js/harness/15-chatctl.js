@@ -49,7 +49,7 @@
               </span>
             </div>
             <div class="hg-item-row">
-              <span class="hg-item-sub">${s.model ? esc(s.model) + (_hgMm(s.model) ? ' ' + _HG_EYE : '') : ''}</span>
+              <span class="hg-item-sub">${s.model ? esc(s.model) + (_hgMm(s.model) ? ' ' + _HG_EYE : '') : ''}${s.scheme && _HG.scheme && s.scheme !== _HG.scheme ? `<span class="hg-item-scheme diff" title="会话创建于「${esc(s.scheme)}」方案，当前是「${esc(_HG.scheme)}」——发送会被拦截，请新建会话"> ⇄${esc(s.scheme)}</span>` : (s.scheme ? `<span class="hg-item-scheme" title="API 方案"> ${esc(s.scheme)}</span>` : '')}</span>
             </div>
           </div>`).join('');
       }
