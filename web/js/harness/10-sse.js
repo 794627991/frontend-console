@@ -760,6 +760,17 @@
       // 事件顺序保证清场时机正确）。复审 P4：清场→首帧重放的间隙也是
       // 「空 flow + saveCache」窗口——同置重建标志，首帧到达即清
       if (a.mode === 'snapshot') {
+        // v3.5.77（用户实锤「新会话首条消息消失」）：冷启动竞态——openSSE(0)
+        // 的 ack(snapshot) 在乐观渲染之后到达时，清场（resetLocal）把刚画的
+        // 用户气泡抹掉；此刻保留窗为空（消息尚未 POST /send 或刚入窗），
+        // 重放救不回、echoFast 又让随后 user_echo 跳过补画 = 首条消息蒸发
+        // （切 B 再切回靠转写重渲才回来）。守卫：转写渲染未建（histAll 空）且
+        // 乐观气泡在场——无任何可重放基线，不清场（活视图即最新态；已流过
+        // 的帧由 seq 去重天然免疫重放）
+        if (!_HG.histAll && _HG.echoFast) {
+          _hgDiag('sse', 'ack=snapshot 跳过清场（新会话乐观气泡在场）');
+          return;
+        }
         _hgDiag('sse', 'ack=snapshot 清场重放（histAll=' + (((_HG.histAll)||[]).length) + '）');
         // v3.4.68R3：清场前抢存转写行数基准（resetLocal 会清 histAll）——
         // 重放落定后跑覆盖度自检，缺口大即整帧重渲自愈（用户实锤「切回后
@@ -828,7 +839,13 @@
         setBusy(true);
         // v2.20：乐观渲染 → echo 到达即跳过（echoFast 只顶一条，连发两条
         // 相同文本时第二条照常走事件渲染，不会吞）
-        if (_HG.echoFast && _HG.echoFast.text === (it.text || '')) _HG.echoFast = null;
+        // v3.5.77：跳过的前提=乐观气泡还在屏（el.isConnected）——气泡若被
+        // 中途清场（快照重放/重建竞态）抹掉，echo 负责补画（防蒸发兜底）
+        if (_HG.echoFast && _HG.echoFast.text === (it.text || '')) {
+          const _live = _HG.echoFast.el && _HG.echoFast.el.isConnected;
+          _HG.echoFast = null;
+          if (!_live && !_hgEchoDup(it)) renderUser(it.text, it.images, it.files);
+        }
         else if (!_hgEchoDup(it)) renderUser(it.text, it.images, it.files);
       }
       else if (it.kind === 'event') handleEvent(it.data);

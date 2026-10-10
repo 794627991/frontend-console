@@ -107,8 +107,10 @@
     // v2.20：乐观渲染——connect 一回来就画出自己的气泡。原实现要等 SSE 的
     // user_echo 绕一圈才显示，新会话冷启动时「发出去半天上面没动静」（用户
     // 实测）。echoFast 让随后到达的 SSE 同文本 echo 跳过，不双渲染。
+    // v3.5.77：echoFast 带气泡引用 el——echo 跳过补画前先验气泡还在屏
+    //（被清场抹掉时 echo 补画，防「新会话首条消息消失」）
     const el = renderUser(text, images, files);
-    _HG.echoFast = { text: text || '' };
+    _HG.echoFast = { text: text || '', el };
     _hgScrollBottom(true);                 // 自己发的消息无条件回底
     setBusy(true);
     try {
