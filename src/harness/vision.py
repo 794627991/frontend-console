@@ -141,12 +141,11 @@ def _model_is_multimodal(name):
         it = (item or "").strip().lower()
         if it and (lname == it or lname.startswith(it + "[")):
             return bool(val)
-    # 当前方案下的运行时探测结果次之（真实链路上验证过能否读图）
-    cached = _mm_probed_load().get(_mm_probe_key(name))
-    if cached is not None:
-        return bool(cached)
-    if _MM_RE.search(lname):
-        return True
+    # v3.5.91（用户实锤内网机 Lanz-Medium-V 显示 MCP）：**用户显式配置全面
+    # 提到探测缓存之前**——识图配置的「识图模型」与「多模态名单」都是用户
+    # 亲手选/填的，延续 v3.5.31「用户判断永远优先于缓存」的定调。旧顺序
+    # （缓存→正则→名单）里，一次环境坏掉的探测（如旧版端点落智谱连接拒绝）
+    # 会缓存 False 且永久压制名单——名单填了 Lanz-Medium-V 照样显示 MCP
     # v2.27.5：全部比较用小写——CLI 切模型后上报 [1m] 小写，配置里是 [1M]，
     # 严格相等永远 False → 多模态模型被误判走转交（用户实锤）
     if lname == (cfg["model"] or "").strip().lower():
@@ -158,6 +157,13 @@ def _model_is_multimodal(name):
         item = (item or "").strip().lower()
         if lname == item or lname.startswith(item + "["):
             return True
+    # 用户显式配置之后才是运行时探测缓存（真实链路上验证过能否读图）与
+    # 名字正则——名字启发式的正反两面都不该盖过用户配置
+    cached = _mm_probed_load().get(_mm_probe_key(name))
+    if cached is not None:
+        return bool(cached)
+    if _MM_RE.search(lname):
+        return True
     return False
 
 # ---- from claude_harness.py:202 (_vision_save) ----
