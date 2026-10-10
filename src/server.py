@@ -327,8 +327,13 @@ def index():
     except Exception:
         r = None
     if r is not None:
+        # v3.5.80：入口页强制 no-cache——旧实现透传打包资源的 Cache-Control
+        #（空/带 max-age），WebView2 持久缓存会端出旧 index.html → 引用旧
+        # ?v= 脚本地址 = 整套旧前端（版本徽章走 API 是新的，页面却是旧引擎，
+        # 用户实锤「v3.5.78 拖拽修复没生效」的真因）。no-cache 仅要求每次
+        # 校验（304 语义），内容几 KB 零成本；子资源照旧吃 ?v= 长缓存
         return Response(_inject(r.get_data()), mimetype="text/html",
-                        headers={"Cache-Control": r.headers.get("Cache-Control", "")})
+                        headers={"Cache-Control": "no-cache"})
     with open(os.path.join(RES_DIR, "web", "index.html"), "rb") as f:
         return Response(_inject(f.read()), mimetype="text/html")
 
