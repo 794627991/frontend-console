@@ -897,7 +897,8 @@ class HarnessSession:
                     break
         # v3.5.106：提队首也是顺序变更，落 meta（锁外——既有锁序 meta→inbox，
         # 锁内反取会构成 inbox→meta 的 AB-BA 死锁风险）；已在队首不动不落
-        if moved:
+        # v3.5.108（轻审低3）：_closed 守卫——不复活刚删会话
+        if moved and not self._closed:
             self.sync_meta()
         return found
 

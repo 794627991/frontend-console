@@ -610,7 +610,7 @@
           if (!j || !j.ok) {
             showBanner('排序上报失败' + (j && j.err ? '：' + j.err : '') + '——发送将按原顺序', 4000, true);
           }
-        }).catch(() => showBanner('排序上报失败：网络错误——发送将按原顺序', 4000, true));
+        }).catch(() => showBanner('排序上报失败：网络或服务错误——发送将按原顺序', 4000, true));
     }
     renderQueue();
   }
