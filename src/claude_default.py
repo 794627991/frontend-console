@@ -530,6 +530,9 @@ def _sync_active_profile_snapshot():
                 roles = _harness_roles_read()
                 if roles is not None:
                     prof["harness_roles"] = roles
+                vcfg = _harness_vision_user_read()   # v3.5.101：识图配置同随
+                if vcfg is not None:
+                    prof["harness_vision"] = vcfg
                 d["profiles"][i] = prof
                 _write_profiles(d)
                 _last_applied_profile["name"] = None   # 快照内容已变，清幂等短路
@@ -575,6 +578,87 @@ def _clear_stale_role_models():
                       "executor_model", "coder_model"):
                 r.pop(k, None)
     return cfg_commit(_mut)
+
+
+# v3.5.101：识图用户配置子集——随方案快照走（对称 harness_roles 链路）。
+# 只含面板用户配置；mm_extra/mm_user/mm_probed 是跨方案的用户判定表与
+# 按方案签名（base_url|model）的探测缓存，设计上全局共享，不进快照。
+_VISION_USER_KEYS = ("enabled", "model", "mcp_prompt", "base_url", "api_key")
+
+
+def _harness_vision_user_read():
+    """读 config.json harness_vision 节的用户配置子集。节不存在返回
+    None（调用方按「无配置」处理）。"""
+    try:
+        from src.app_state import CONFIG_FILE
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            v = json.load(f).get("harness_vision")
+        if not isinstance(v, dict):
+            return None
+        return {
+            "enabled": bool(v.get("enabled", False)),
+            "model": str(v.get("model") or "").strip(),
+            "mcp_prompt": str(v.get("mcp_prompt") or "").strip(),
+            "base_url": str(v.get("base_url") or "").strip(),
+            "api_key": str(v.get("api_key") or "").strip(),
+        }
+    except Exception:
+        return None
+
+
+def _harness_vision_write(vcfg):
+    """把方案携带的识图用户配置写回 config.json harness_vision 节
+    （merge 只动 _VISION_USER_KEYS，mm_* 判定表/缓存原样保留）。
+    写失败上抛给调用方显式告警（同 _harness_roles_write 口径）。"""
+    from src.app_state import cfg_commit
+
+    def _mut(d):
+        cur = d.get("harness_vision")
+        if not isinstance(cur, dict):
+            cur = {}
+        cur.update({k: vcfg.get(k) for k in _VISION_USER_KEYS})
+        d["harness_vision"] = cur
+    ok, err = cfg_commit(_mut)
+    if not ok:
+        raise RuntimeError(err or "config.json 写入失败")
+
+
+def _clear_stale_vision_cfg():
+    """清 config.json harness_vision 节里残留的用户配置键（v3.5.101，
+    apply 到「未存过识图配置」的无节方案时用——语义同 v3.5.100 的
+    _clear_stale_role_models：无节=本方案从没配过，残留值全是上一方案的）。
+    清 enabled/model/base_url/api_key 四键回落「settings 同源端点 + 默认
+    模型」（切方案后 settings 已是新方案的，识图自动跟新网关）；mcp_prompt
+    是用户提示词偏好，保留。节不存在则不建空节。返回 (ok, err)。"""
+    from src.app_state import cfg_commit
+
+    def _mut(dd):
+        v = dd.get("harness_vision")
+        if isinstance(v, dict):
+            for k in ("enabled", "model", "base_url", "api_key"):
+                v.pop(k, None)
+    return cfg_commit(_mut)
+
+
+def sync_active_profile_vision():
+    """识图面板保存后的同步：把激活方案快照的 harness_vision 子集刷成
+    config.json 现值（v3.5.101，对称 sync_active_profile_roles——面板保存
+    只写 config，快照不跟的话来回切方案时 apply 用旧值写回/清空回落，
+    改动被打回或错乱）。返回同步的方案名 / None。"""
+    from src import proxy as _proxy
+    with _proxy.switch_lock():
+        d = _read_profiles()
+        name = str(d.get("active") or "").strip()
+        vcfg = _harness_vision_user_read()
+        if not name or vcfg is None:
+            return None
+        for p in d["profiles"]:
+            if p.get("name") == name:
+                p["harness_vision"] = vcfg
+                _write_profiles(d)
+                _last_applied_profile["name"] = None
+                return name
+    return None
 
 
 def active_scheme_name():
@@ -626,6 +710,9 @@ def claude_profiles_save():
     roles = _harness_roles_read()          # v3.5.98：三角色配置随方案带走
     if roles is not None:
         prof["harness_roles"] = roles
+    vcfg = _harness_vision_user_read()     # v3.5.101：识图配置随方案带走
+    if vcfg is not None:
+        prof["harness_vision"] = vcfg
     d = _read_profiles()
     for i, p in enumerate(d["profiles"]):
         if p.get("name") == name:
@@ -737,6 +824,24 @@ def claude_profiles_apply():
             else:
                 roles_warn = ("（残留模型档清除失败：%s——请到三角色面板手动"
                               "清空各档）" % (err or "config.json 写入失败"))
+        # v3.5.101：识图用户配置随方案走（对称 roles 链）——用户实锤
+        # 「来回切 API 方案识图配置变未启用」：识图配置原是 config 单份，
+        # 从没进方案快照，两方案各配各的识图模型只剩最后一次保存的值。
+        # 快照带节 → 写回（merge 只动用户配置 5 键，mm_* 判定表/缓存保留）；
+        # 无节 → 本方案从没配过识图，清残留四键回落「settings 同源端点 +
+        # 默认模型」（切方案后 settings 已是本方案的，识图自动跟新网关）。
+        vision_warn = ""
+        if isinstance(prof.get("harness_vision"), dict):
+            try:
+                _harness_vision_write(prof["harness_vision"])
+            except Exception as _e:
+                vision_warn = "（识图配置写回失败：%s——请到识图面板重配）" % _e
+        else:
+            ok, err = _clear_stale_vision_cfg()
+            if not ok:
+                vision_warn = ("（残留识图配置清除失败：%s——请到识图面板手动"
+                               "重配）" % (err or "config.json 写入失败"))
+        warn = "；".join(w for w in (roles_warn, vision_warn) if w)
         d["active"] = name
         _write_profiles(d)
         _sync_proxy_upstream(prof_base, was_proxy)
@@ -747,7 +852,7 @@ def claude_profiles_apply():
         # 下次发送时按需换新进程）。超窗续命见 send_message 拦截分支。
         threading.Thread(target=_renew_bot_after_switch, daemon=True).start()
     _last_applied_profile["name"] = name   # 成功收尾才记（失败下次重做全量）
-    return jsonify({"ok": True, "warning": roles_warn or None})
+    return jsonify({"ok": True, "warning": warn or None})
 
 
 def _renew_bot_after_switch():

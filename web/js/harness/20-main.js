@@ -1885,7 +1885,12 @@ function buildClaudeHarnessTab(opts = {}) {
         headers:{'Content-Type':'application/json'}, body: JSON.stringify(saved)});
       const jr = await r.json();
       if (!jr.ok) { showBanner(jr.err || '保存失败', 3000, true); return; }
-      showBanner(saved.enabled ? '识图配置已保存（MCP 通道，即刻生效）' : '识图已关闭', 3000);
+      // v3.5.101：后端已同步激活方案快照的识图配置（来回切方案不再还原）；
+      // 同步失败显式告警。
+      const vs = (jr.vision || {});
+      showBanner((saved.enabled ? '识图配置已保存（MCP 通道，即刻生效）' : '识图已关闭')
+        + (vs.synced ? '，方案「' + vs.synced + '」快照已同步' : ''), vs.sync_err ? 7000 : 3000);
+      if (vs.sync_err) showBanner('⚠ ' + vs.sync_err, 7000, true);
     } catch(e) { showBanner('保存失败：' + e, 3000, true); }
   };
   // 识图配置界面（v2.28.2）：开关 + MCP 识图模型 + 端点映射 + 提示词 +

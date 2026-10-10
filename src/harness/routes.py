@@ -1360,6 +1360,16 @@ def harness_set_vision():
     ok, err = _vision_save(cfg)
     if not ok:
         return jsonify({"ok": False, "err": err or "写入失败"}), 500
+    # v3.5.101：同步激活方案快照的识图用户配置子集（对称 harness_set_roles
+    # 的 roles 同步——面板保存只写 config，快照不跟的话来回切方案时 apply
+    # 用旧值写回，改动被打回）。失败不阻断保存——sync_err 带回前端告警。
+    try:
+        from ..claude_default import sync_active_profile_vision
+        _vn = sync_active_profile_vision()
+        if _vn:
+            cfg["synced"] = _vn
+    except Exception as _e:
+        cfg["sync_err"] = "方案快照同步失败：%s——切方案可能还原本次修改" % _e
     return jsonify({"ok": True, "vision": cfg})
 
 
