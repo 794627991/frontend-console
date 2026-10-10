@@ -1124,12 +1124,19 @@ async function _ddRefreshUsage(pane) {
     // 轻审R1-3：接口 ok=false 不能装「统计中…」——显式失败态
     if (!j.ok) { el.textContent = '统计不可用'; return; }
     if (!pane.querySelector('#ddUsageBody')) return;
+    // v3.5.112（用户实锤「排布太丑」）：两行式行卡取代单行 flex-wrap——
+    // 旧行长路径换行后大小/按钮掉行错位、条目间无分隔。新结构：第一行
+    // 名称+说明(ellipsis)+大小右对齐(+清理钮)，第二行完整路径可断行，
+    // 条目间 border-bottom 分隔
     const row = (t, u, extra) =>
-      `<div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;">` +
-      `<b style="min-width:9.5em;font-weight:600;">${t}</b>` +
-      `<span style="font-family:var(--font-mono);font-size:12px;color:var(--fg);">${esc(u.path)}</span>` +
-      `<span style="margin-left:auto;font-variant-numeric:tabular-nums;color:var(--accent);font-weight:600;">${_ddFmtSize(u.bytes)}</span>` +
-      (extra ? `<span style="font-size:11px;color:var(--muted);">${extra}</span>` : '') + `</div>`;
+      `<div style="padding:8px 0;border-bottom:1px solid var(--border);">` +
+      `<div style="display:flex;gap:8px;align-items:center;">` +
+      `<b style="font-weight:600;flex-shrink:0;">${t}</b>` +
+      (extra ? `<span style="font-size:11px;color:var(--muted);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${extra}</span>` : '<span style="flex:1"></span>') +
+      `<span style="font-variant-numeric:tabular-nums;color:var(--accent);font-weight:600;flex-shrink:0;">${_ddFmtSize(u.bytes)}</span>` +
+      `</div>` +
+      `<div style="font-family:var(--font-mono);font-size:11px;color:var(--muted);margin-top:3px;word-break:break-all;">${esc(u.path)}</div>` +
+      `</div>`;
     // v3.5.93：可清理目标（衍生数据）——每行 🧹 手动清理，范围二选一
     //（按策略 / 全部清空）。笔记/命令库/配置不在此列，永远不可触达
     const POLICY = {
@@ -1144,16 +1151,19 @@ async function _ddRefreshUsage(pane) {
       logs: '', idx: '', cache: '', ask: '',
     };
     const trows = Object.entries(j.targets || {}).map(([k, u]) =>
-      `<div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;">` +
-      `<b style="min-width:9.5em;font-weight:500;">${esc(u.name || k)}</b>` +
-      `<span style="font-family:var(--font-mono);font-size:11px;color:var(--muted);">${esc(u.path)}</span>` +
-      `<span style="margin-left:auto;font-variant-numeric:tabular-nums;color:var(--fg);">${_ddFmtSize(u.bytes)}</span>` +
-      `<button class="btn ghost icon-btn" data-ddclean="${k}" title="手动清理 ${esc(u.name || k)}" style="font-size:12px;">🧹</button>` +
+      `<div style="padding:8px 0;border-bottom:1px solid var(--border);">` +
+      `<div style="display:flex;gap:8px;align-items:center;">` +
+      `<b style="font-weight:500;flex-shrink:0;">${esc(u.name || k)}</b>` +
+      `<span style="font-size:11px;color:var(--muted);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${POLICY[k] || ''}">${POLICY[k] || ''}</span>` +
+      `<span style="font-variant-numeric:tabular-nums;color:var(--fg);flex-shrink:0;">${_ddFmtSize(u.bytes)}</span>` +
+      `<button class="btn ghost icon-btn" data-ddclean="${k}" title="手动清理 ${esc(u.name || k)}" style="font-size:12px;flex-shrink:0;">🧹</button>` +
+      `</div>` +
+      `<div style="font-family:var(--font-mono);font-size:11px;color:var(--muted);margin-top:3px;word-break:break-all;">${esc(u.path)}</div>` +
       `</div>`).join('');
     el.innerHTML =
       row('用户数据空间（可迁移）', j.user || {}, '日志 / 笔记 / 缓存——随上方迁移走') +
       row('工具数据空间（固定）', j.tool || {}, '配置 / 附件 / 子进程状态——位置定死不随迁移') +
-      `<div class="dd-label" style="margin-top:10px;">可清理项（衍生数据 · 笔记/命令库/配置不可触达）</div>` +
+      `<div class="dd-label" style="margin-top:14px;">可清理项（衍生数据 · 笔记/命令库/配置不可触达）</div>` +
       trows +
       `<div id="ddCleanBar" style="display:none;gap:8px;align-items:center;flex-wrap:wrap;` +
         `margin-top:8px;padding:8px 10px;border:1px dashed var(--border);border-radius:8px;">` +
