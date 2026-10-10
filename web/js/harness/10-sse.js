@@ -926,6 +926,10 @@
         // v3.5.43：切模型=识图形态可能翻转（inline↔mcp）——徽章即刻刷
         // （进程重启重建 mcp-config，vision_status 按 sid 现算新形态）
         if (typeof paintVisionBtn === 'function') paintVisionBtn();
+        // v3.5.96（用户实锤「同会话切 glm-5.3，消息徽章仍显示轻主力」）：
+        // 角色徽章读 _hgRolesCache，切会话/开面板都会刷、唯独切模型不刷
+        // ——轻↔重翻转后新消息仍盖旧形态章（三角色面板现拉所以显示对）
+        if (typeof _hgRolesFetch === 'function') _hgRolesFetch();
       }
     };
   }
