@@ -21,8 +21,10 @@ UPLOADS_TARGET_PCT = 0.8                 # 超限删到剩余 80% 为止
 
 
 def uploads_dir():
-    from src.app_state import HOME_DIR
-    return os.path.join(HOME_DIR, "harness_uploads")
+    # v3.5.94（轻审R1-1）：复用 harness/consts._UPLOAD_DIR 单一源——此前两处
+    # 独立拼 HOME_DIR/harness_uploads，任一侧改址即清理与上传目标分家
+    from src.harness.consts import _UPLOAD_DIR
+    return _UPLOAD_DIR
 
 
 def _scan():
@@ -31,9 +33,10 @@ def _scan():
         for fn in os.listdir(uploads_dir()):
             p = os.path.join(uploads_dir(), fn)
             try:
+                if not os.path.isfile(p):
+                    continue   # 轻审R1-2：只收文件（旧 or st_size 写法在 POSIX 下会把目录计入）
                 st = os.stat(p)
-                if os.path.isfile(p) or st.st_size:
-                    items.append((st.st_mtime, st.st_size, p))
+                items.append((st.st_mtime, st.st_size, p))
             except OSError:
                 pass
     except OSError:
@@ -92,8 +95,17 @@ def _dir_size(root):
     return total
 
 
-def usage_stats():
-    """两栏占用 + 附件目录明细 + 可清理目标清单（设置页存储感知数据源）。"""
+_usage_cache = {"ts": 0.0, "data": None}
+
+
+def usage_stats(force=False):
+    """两栏占用 + 附件目录明细 + 可清理目标清单（设置页存储感知数据源）。
+    v3.5.94（轻审R1-5）：60s TTL 缓存——DATA_DIR 含 G 级日志，反复进出设置页
+    不该反复全量深扫；manual_clean 后 force 重扫。"""
+    import time as _t
+    now = _t.time()
+    if not force and _usage_cache["data"] and now - _usage_cache["ts"] < 60:
+        return _usage_cache["data"]
     from src import app_state as st
     up = uploads_dir()
     log_dir = getattr(st, "LOG_DIR", st.DEFAULT_LOG_DIR)
@@ -112,7 +124,7 @@ def usage_stats():
                   "name": "WebView 缓存（可重建）"},
         "ask": {"path": ask, "bytes": _dir_size(ask), "name": "提问状态"},
     }
-    return {
+    data = {
         "user": {"path": st.DATA_DIR, "bytes": _dir_size(st.DATA_DIR)},
         "tool": {"path": st.HOME_DIR, "bytes": _dir_size(st.HOME_DIR)},
         "uploads": {"path": up, "bytes": targets["uploads"]["bytes"],
@@ -120,6 +132,9 @@ def usage_stats():
                     "max_age_days": UPLOADS_MAX_AGE_S // (24 * 3600)},
         "targets": targets,
     }
+    _usage_cache["ts"] = now
+    _usage_cache["data"] = data
+    return data
 
 
 # ---- 手动清理（v3.5.93：用户拍板「手动清理+可选范围」）--------------------
@@ -170,6 +185,7 @@ def manual_clean(target, mode):
     freed = 0
     if target not in _CLEANABLE or mode not in ("policy", "all"):
         return 0, 0
+    _usage_cache["ts"] = 0.0   # 清理后占用缓存失效（下次 usage 强制重扫）
 
     if target == "uploads":
         if mode == "policy":

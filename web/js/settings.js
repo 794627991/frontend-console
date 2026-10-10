@@ -1100,7 +1100,9 @@ async function _ddRefreshUsage(pane) {
   try {
     const r = await fetch('/api/data_dir/usage');
     const j = await r.json();
-    if (!j.ok || !pane.querySelector('#ddUsageBody')) return;
+    // 轻审R1-3：接口 ok=false 不能装「统计中…」——显式失败态
+    if (!j.ok) { el.textContent = '统计不可用'; return; }
+    if (!pane.querySelector('#ddUsageBody')) return;
     const row = (t, u, extra) =>
       `<div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;">` +
       `<b style="min-width:9.5em;font-weight:600;">${t}</b>` +
