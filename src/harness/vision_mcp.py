@@ -154,21 +154,21 @@ def resolve_prompt(cfg=None):
 
 
 def _endpoints():
-    """候选 (base_url, key) 列表：主端点在前，智谱直连兜底在后。
-    v3.5.86 解析链扩容：env > 识图配置节（base_url/api_key，内网/自建
-    网关专用——设置面板「识图配置」可填）> ~/.claude/settings.json 同源
-    > 智谱直连兜底。内网机器此前落不到 settings.json 就恒为智谱兜底
-    =连接拒绝（用户实锤 lanzi 内网机识图必炸）。"""
+    """候选 (base_url, key) 列表。v3.5.87（用户拍板「无论如何也不应该是
+    智谱兜底」）：**单端点**——配置是什么就只打什么，撤「主端点连不上
+    追加智谱直连」的兜底追加（内网机器主端点失败后必再打一次智谱=必炸，
+    还把真因从报错里挤掉；识图 MCP 本身就是兜底工具，必须忠实走用户
+    配置）。解析链：env > 识图配置节（base_url/api_key，面板「识图配置」
+    可填）> ~/.claude/settings.json 同源（与主会话完全一致——主会话能用
+    的网关这里就能用）> 全空时的默认值（仅「零配置」机器的缺省，不是
+    对用户配置的覆盖）"""
     cfg = load_vision_cfg()
     c_base = str(cfg.get("base_url") or "").strip()
     c_key = str(cfg.get("api_key") or "").strip()
     s_base, s_key = _claude_env()
     primary_base = BASE_OVERRIDE or c_base or s_base or DIRECT_FALLBACK
     key = KEY_OVERRIDE or c_key or s_key
-    eps = [(primary_base, key)]
-    if primary_base.rstrip("/") != DIRECT_FALLBACK:
-        eps.append((DIRECT_FALLBACK, key))
-    return eps
+    return [(primary_base, key)]
 
 
 def _sniff_media_type(data):
@@ -274,7 +274,8 @@ def _call_vision(b64, media_type, prompt):
       才值得试，其余失败换变体纯属浪费还制造报错噪音；
     - 200 空正文是网关对部分模型的偶发行为（实测 flash 时空时有不空，
     同图同参直连复测即正常）——同模型补发一次再降级，不当场判死；
-    - 主端点连不上换直连兜底；模型按实际端点解析（model_map 多方案）；
+    - 主端点连不上**就报错**（v3.5.87 撤直连兜底——单端点忠实走用户配置，
+      内网机器不再被甩去智谱白炸一趟）；
     - 最终报错优先非模型名错误，不让变体噪音遮真因。"""
     cfg = load_vision_cfg()
     sys_prompt = resolve_prompt(cfg)
