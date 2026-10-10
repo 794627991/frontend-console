@@ -953,7 +953,44 @@ def main():
             except Exception:
                 pass
         try:
-            window.dom.get_element('body').on('drop', drop_handler)
+            _body_el = window.dom.get_element('body')
+            _body_el.on('drop', drop_handler)
+            # v3.5.84：拖放快通道（v3.5.82 修正版）。根因（探针实锤 html-drop→
+            # py-drop 11s）：pywebview body drop 监听把整个 DragEvent 序列化回
+            # 传，serialize 对 event.path 祖先链的 DOM 节点走 domJSON
+            # （serialProperties）——document/body 节点连整个子树+全部属性
+            # 序列化=整个页面序列化一遍，DOM 越大越慢（大会话 11s，小会话
+            # 毫秒级——v3.5.79 那次「快」正是小 DOM 的运气）。快通道在
+            # window 捕获阶段截胡：①additional objects 直送文件对象（C# 收
+            # 绝对路径，毫秒级）②轻量事件 JSON（仅文件名数组，零 DOM 序列
+            # 化）走 pywebviewEventHandler——util.py 按名匹配 _dnd_state 挂
+            # pywebviewFullPath 后照常分发 drop_handler ③stopImmediate-
+            # Propagation 阻断重序列化的 body 监听。nodeId 用 Python 侧
+            # Element._node_id（82 版从 DOM 属性猜的键与 _elements 注册表
+            # 不匹配=事件无分发落点=彻底死，本次修正）；轻量消息发送失败时
+            # 不阻断原通道（回落慢路径，保底可用）。__hgFastDrop 防多次
+            # on_loaded 重复注入
+            _nid = ''
+            try:
+                _nid = _body_el._node_id or ''
+            except Exception:
+                _nid = ''
+            if _nid:
+                window.evaluate_js(
+                    "if (!window.__hgFastDrop) { window.__hgFastDrop = 1;"
+                    "window.addEventListener('drop', function(e){"
+                    "if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;"
+                    "var fs = [];"
+                    "for (var i = 0; i < e.dataTransfer.files.length; i++)"
+                    " fs.push({name: e.dataTransfer.files[i].name});"
+                    "var ok = false;"
+                    "try { chrome.webview.postMessageWithAdditionalObjects('FilesDropped', e.dataTransfer.files); } catch(_){}"
+                    "try { chrome.webview.postMessage(['pywebviewEventHandler',"
+                    " JSON.stringify({event:{type:'drop', dataTransfer:{files: fs}}, nodeId: '" + _nid + "'}),"
+                    " 'eventHandler']); ok = true; } catch(_){}"
+                    "e.preventDefault();"
+                    "if (ok) e.stopImmediatePropagation();"
+                    "}, true); }")
         except Exception:
             pass
 
