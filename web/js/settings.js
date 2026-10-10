@@ -740,11 +740,18 @@ async function _stRenderApiPane(pane) {
       return;
     }
     try {
+      // v3.5.99：sync_active 只在普通保存分支传（新建分支共用 body——那边
+      // active 还指着旧方案，同步会把旧方案快照污染成新方案的配置）。
       const r = await fetch('/api/claude/api_config', {method:'POST',
-        headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({...body, sync_active: true})});
       const j = await r.json();
       if (!j.ok) { showBanner('保存失败: ' + (j.err || ''), 4000, true); return; }
-      showBanner('API 配置已保存——新开的 Claude 会话生效', 4000);
+      // v3.5.99：后端已把激活方案快照同步为本次保存的内容——来回切方案
+      // 不再还原；同步失败显式告警（settings 本身已保存成功）。
+      showBanner(j.synced ? ('API 配置已保存，方案「' + j.synced + '」快照已同步——来回切方案不再还原')
+        : 'API 配置已保存——新开的 Claude 会话生效', j.synced ? 4500 : 4000);
+      if (j.sync_err) showBanner('⚠ ' + j.sync_err, 7000, true);
       setTokMasked();
       refresh();
     } catch(e) { showBanner('保存失败: ' + e, 4000, true); }

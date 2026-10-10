@@ -155,7 +155,11 @@
       // 后端 clamp 回显消费：分级线被自动收紧（l1>l2l 等）时当场提示
       // 实际写盘值与原因，不再静默钳制。
       const cl = (jr.clamped || []).map(function(n) { return n.reason; });
+      // v3.5.99：后端已同步激活方案快照的 harness_roles 节（来回切方案
+      // 不再还原三角色配置）；同步失败显式告警。
+      if (jr.sync_err) cl.push(jr.sync_err);
       showBanner('👥 三角色配置已保存——档位/分级线随下条消息热更生效（agents 自动重生成），审核模式立即生效'
+        + (jr.synced ? '；方案「' + jr.synced + '」快照已同步' : '')
         + (cl.length ? '；⚠ ' + cl.join('；') : ''), cl.length ? 9000 : 4200);
       _hgRolesFetch();                          // 缓存刷新（气泡角色徽章同源）
     } catch(e) { showBanner('保存失败：' + e, 3000, true); }

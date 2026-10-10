@@ -347,7 +347,8 @@ def claude_api_config_get():
 @claude_default_bp.route("/api/claude/api_config", methods=["POST"])
 def claude_api_config_set():
     """写 API 配置（v2.22：不止 token）。body（全部可选，只写提供的字段）:
-    {token?, base_url?, models?:{main,opus,...,subagent}, ctx_window?, max_ctx?, compact_pct?}
+    {token?, base_url?, models?:{main,opus,...,subagent}, ctx_window?, max_ctx?, compact_pct?,
+     sync_active?}
     空串 = 该项不改。模型档位写 MODEL 键，成对的同时写 _NAME 键（同值）。"""
     data = request.get_json(force=True, silent=True) or {}
     cur = _read_settings()
@@ -383,7 +384,24 @@ def claude_api_config_set():
         if v:
             env[key] = v
     _write_settings(cur)
-    return jsonify({"ok": True})
+    # v3.5.99：sync_active=true（设置页普通「保存配置」分支显式传）时把
+    # 激活方案快照同步为保存后的最新内容——否则来回切方案时 apply 整份
+    # 写回旧快照，本次保存被打回（用户实锤「怎么保存都没用」）。默认
+    # 不同步：新建方案分支紧随其后的 profiles/save 才落新方案名，此处
+    # active 还指着旧方案，同步会把旧方案快照污染成新方案的配置。
+    # 同步失败不 500（settings 已落盘）——sync_err 带回前端显式告警。
+    synced, sync_err = None, ""
+    if data.get("sync_active"):
+        try:
+            synced = _sync_active_profile_snapshot()
+        except Exception as _e:
+            sync_err = "方案快照同步失败：%s——来回切方案可能还原本次修改" % _e
+    out = {"ok": True}
+    if synced:
+        out["synced"] = synced
+    if sync_err:
+        out["sync_err"] = sync_err
+    return jsonify(out)
 
 
 @claude_default_bp.route("/api/claude/models_probe", methods=["POST"])
@@ -490,6 +508,56 @@ def _harness_roles_write(roles):
     ok, err = cfg_commit(lambda d: d.__setitem__("harness_roles", roles))
     if not ok:
         raise RuntimeError(err or "config.json 写入失败")
+
+
+def _sync_active_profile_snapshot():
+    """把激活方案的快照整份刷新为当前 settings.json + harness_roles。
+    v3.5.99（用户实锤「保存配置后来回切 API，改的又变回去了，怎么保存
+    都没用」）：设置页「保存配置」只写 settings.json 不动方案快照，切方案
+    时 apply 整份写回旧快照，本次保存必被打回——保存即同步快照，切换不再
+    还原。返回同步的方案名；无激活方案/方案不在列表返回 None（不算错）。
+    内部拿 switch_lock（与 apply 的 profiles 读-改-写互斥；毫秒级文件
+    操作，锁不伤体感）。"""
+    from src import proxy as _proxy
+    with _proxy.switch_lock():
+        d = _read_profiles()
+        name = str(d.get("active") or "").strip()
+        if not name:
+            return None
+        for i, p in enumerate(d["profiles"]):
+            if p.get("name") == name:
+                prof = {"name": name, "settings": _read_settings()}
+                roles = _harness_roles_read()
+                if roles is not None:
+                    prof["harness_roles"] = roles
+                d["profiles"][i] = prof
+                _write_profiles(d)
+                _last_applied_profile["name"] = None   # 快照内容已变，清幂等短路
+                return name
+    return None
+
+
+def sync_active_profile_roles():
+    """三角色面板保存后的同步：只把激活方案快照的 harness_roles 节刷成
+    config.json 现值（settings 快照部分不动）。v3.5.99（与「保存配置」
+    同病同修——面板改三角色只写 config.json，快照不跟的话来回切方案时
+    apply 用旧节写回，改动被打回）。旧快照无节也补上：用户主动改了配置，
+    就该随方案走（与 v3.5.98「旧快照不带节不动」的区别——那管的是 apply
+    时点，这里用户刚显式保存）。返回同步的方案名 / None。"""
+    from src import proxy as _proxy
+    with _proxy.switch_lock():
+        d = _read_profiles()
+        name = str(d.get("active") or "").strip()
+        roles = _harness_roles_read()
+        if not name or roles is None:
+            return None
+        for p in d["profiles"]:
+            if p.get("name") == name:
+                p["harness_roles"] = roles
+                _write_profiles(d)
+                _last_applied_profile["name"] = None
+                return name
+    return None
 
 
 def active_scheme_name():

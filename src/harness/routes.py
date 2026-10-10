@@ -1521,6 +1521,17 @@ def harness_set_roles():
     resp.update(patch)
     if clamped:
         resp["clamped"] = clamped
+    # v3.5.99：同步激活方案快照的 harness_roles 节——面板改三角色只写
+    # config.json，快照不跟的话来回切 API 方案时 apply 用旧节写回，改动
+    # 被打回（与设置页「保存配置」同病同修）。失败不阻断保存——sync_err
+    # 带回前端告警。
+    try:
+        from ..claude_default import sync_active_profile_roles
+        _rn = sync_active_profile_roles()
+        if _rn:
+            resp["synced"] = _rn
+    except Exception as _e:
+        resp["sync_err"] = "方案快照同步失败：%s——切方案可能还原本次修改" % _e
     return jsonify(resp)
 
 # ---- from claude_harness.py:4118 (harness_skills) ----
