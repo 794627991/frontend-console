@@ -560,6 +560,23 @@ def sync_active_profile_roles():
     return None
 
 
+def _clear_stale_role_models():
+    """清 config.json harness_roles 节里残留的显式模型档键（v3.5.100，
+    apply 到「未存过三角色」的无节方案时用——见 apply 内注释）。非模型
+    键（enabled/audit_mode/分级线）保留；整节不存在则不建空节。返回
+    (ok, err)。"""
+    from src.app_state import cfg_commit
+
+    def _mut(dd):
+        r = dd.get("harness_roles")
+        if isinstance(r, dict):
+            for k in ("light_model", "mid_model", "heavy_model",
+                      "designer_model", "reviewer_model",
+                      "executor_model", "coder_model"):
+                r.pop(k, None)
+    return cfg_commit(_mut)
+
+
 def active_scheme_name():
     """当前激活的 API 方案名（harness 会话档案/拦截用）。无方案=空串。"""
     try:
@@ -698,15 +715,28 @@ def claude_profiles_apply():
                             "方案「%s」是旧格式（只存了 Token/网关），模型映射没有切换。"
                             "请在该网关下配好模型映射后重新「存当前为方案」升级为完整快照。" % name})
         # v3.5.98：三角色配置随方案切换——方案快照带 harness_roles 节即写回
-        # config.json 热生效；不带（升级前存的旧方案）不动现有配置，沿用
-        # 自动分类兜底（用户拍板）。面板下次打开即显示新方案的角色配置。
-        # v3.5.98R：写失败显式告警不吞（轻审 B2）。
+        # config.json 热生效。v3.5.100 语义修正（推翻 v3.5.98「不带节不动」
+        # 的兜底）：用户实锤「从智谱切 lanzi，只有默认档变了，之前指定过的
+        # 档没变」——无节 = 本方案从没保存过三角色（v3.5.99 起保存即同步
+        # 快照，有保存必有节），残留的显式模型档全是上一方案的，不清就
+        # 一直顶着旧网关的模型名。清模型档键回落「联动 API 三槽（此刻已随
+        # 本方案 settings 写回）+ 自动分类」；enabled/audit_mode/分级线等
+        # 非模型键保留（跨方案通用偏好，清了才叫丢配置）。整节不存在则
+        # 本就无残留可清，不建空节。v3.5.98R：写失败显式告警不吞（轻审 B2）。
         roles_warn = ""
         if isinstance(prof.get("harness_roles"), dict):
             try:
                 _harness_roles_write(prof["harness_roles"])
             except Exception as _e:
                 roles_warn = "（三角色配置写回失败：%s——请到三角色面板重配）" % _e
+        else:
+            ok, err = _clear_stale_role_models()
+            if ok:
+                roles_warn = ("方案「%s」未存过三角色配置——已清残留的上一方案"
+                              "模型档，各档回落自动联动本方案" % name)
+            else:
+                roles_warn = ("（残留模型档清除失败：%s——请到三角色面板手动"
+                              "清空各档）" % (err or "config.json 写入失败"))
         d["active"] = name
         _write_profiles(d)
         _sync_proxy_upstream(prof_base, was_proxy)
