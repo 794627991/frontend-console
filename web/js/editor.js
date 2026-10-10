@@ -123,8 +123,8 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
       <div class="term-search-splitter ed-search-splitter" style="display:none" title="拖动调节查找分栏高度"></div>
       <div class="term-search-pane ed-search-pane" style="display:none">
         <div class="term-search-head">
-          <input type="text" class="term-search-input ed-search-q" placeholder="查找…（回车搜索，正则支持）" autocomplete="off">
-          <input type="text" class="term-search-exclude ed-search-ex" placeholder="排除（多个用 | 分隔，支持正则）" autocomplete="off">
+          <input type="text" name="ed_search_q" placeholder="查找…（回车搜索，正则支持）" autocomplete="off">
+          <input type="text" name="ed_search_ex" placeholder="排除（多个用 | 分隔，支持正则）" autocomplete="off">
           <span class="term-search-count ed-search-count"></span>
           <button class="btn ghost term-search-collapse ed-search-collapse" title="折叠分栏">▾</button>
         </div>

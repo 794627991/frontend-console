@@ -233,27 +233,27 @@
       <!-- 串口字段 -->
       <div id="connSerialFields" style="flex-direction:column;gap:18px">
         <div>
-          <label>串口端口</label>
+          <label for="connPort">串口端口</label>
           <select id="connPort" style="margin-top:8px;"></select>
         </div>
         <div>
-          <label>波特率</label>
+          <label for="connBaud">波特率</label>
           <select id="connBaud" style="margin-top:8px;"></select>
         </div>
       </div>
       <!-- SSH 字段（内部各子块间留出呼吸空间） -->
       <div id="connSSHFields" style="display:none;flex-direction:column;gap:18px">
         <div>
-          <label>主机</label>
+          <label for="connHost">主机</label>
           <input type="text" id="connHost" placeholder="如 10.17.97.239" autocomplete="off" style="margin-top:8px;">
         </div>
         <div style="display:flex;gap:10px;">
           <div style="flex:1">
-            <label>端口</label>
+            <label for="connSshPort">端口</label>
             <input type="number" id="connSshPort" value="22" min="1" max="65535" style="margin-top:8px;">
           </div>
           <div style="flex:2">
-            <label>用户名</label>
+            <label for="connUser">用户名</label>
             <input type="text" id="connUser" placeholder="如 admin" value="admin" autocomplete="off" style="margin-top:8px;">
           </div>
         </div>
@@ -262,7 +262,7 @@
           <button class="conn-auth-btn" data-auth="key">密钥文件</button>
         </div>
         <div id="connAuthPassword">
-          <label>密码 <span style="color:var(--muted);font-weight:normal;">（可留空，连上后若设备提示再输）</span></label>
+          <label for="connPass">密码 <span style="color:var(--muted);font-weight:normal;">（可留空，连上后若设备提示再输）</span></label>
           <div style="display:flex;align-items:center;gap:6px;margin-top:6px;">
             <input type="password" id="connPass" placeholder="密码" autocomplete="off" style="flex:1;">
             <button class="pass-eye" id="connPassToggle" type="button" title="显示/隐藏密码" aria-label="显示或隐藏密码">
@@ -274,18 +274,18 @@
           </div>
         </div>
         <div id="connAuthKey" style="display:none">
-          <label>密钥文件路径</label>
+          <label for="connKeyPath">密钥文件路径</label>
           <input type="text" id="connKeyPath" placeholder="如 C:\\Users\\you\\.ssh\\id_rsa" autocomplete="off" style="margin-top:8px;">
         </div>
       </div>
       <!-- Telnet 字段（主机+端口，无认证——设备侧 shell 即进） -->
       <div id="connTelnetFields" style="display:none;flex-direction:column;gap:18px">
         <div>
-          <label>主机</label>
+          <label for="connTelnetHost">主机</label>
           <input type="text" id="connTelnetHost" placeholder="设备 IP 地址" autocomplete="off" style="margin-top:8px;">
         </div>
         <div>
-          <label>端口</label>
+          <label for="connTelnetPort">端口</label>
           <input type="number" id="connTelnetPort" value="23" min="1" max="65535" style="margin-top:8px;">
         </div>
       </div>
@@ -308,11 +308,11 @@
     </div>
     <div class="conn-form">
       <div>
-        <label>备注名（可选）</label>
+        <label for="cmdEditName">备注名（可选）</label>
         <input type="text" id="cmdEditName" placeholder="留空则只显示命令" autocomplete="off" style="margin-top:8px;">
       </div>
       <div>
-        <label>命令内容</label>
+        <label for="cmdEditCmd">命令内容</label>
         <input type="text" id="cmdEditCmd" placeholder="命令内容…" autocomplete="off" style="margin-top:8px;">
       </div>
       <div class="actions">
