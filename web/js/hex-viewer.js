@@ -57,7 +57,7 @@ async function buildHexViewerTab(path, name) {
           <option value="u64">无符号十进制(64 位)</option>
         </select>
         <label class="hx-zero-toggle" title="0x00 字节灰色弱化显示（ImHex 同款），可配置">
-          <input type="checkbox" data-hx-zero> 00 灰显
+          <input type="checkbox" data-hx-zero name="hg_hx_zero"> 00 灰显
         </label>
         <span class="lv-info" data-hx-info></span>
       </div>

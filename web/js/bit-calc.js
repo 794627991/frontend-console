@@ -192,25 +192,25 @@ function buildBitCalcTab() {
         <div class="bc-bits" data-bc-bits-grid></div>
         <!-- 整值三进制显示/输入（仿 Marvell Hex/Dec/Oct 单选 + MSB 输入框） -->
         <div class="bc-values">
-          <label class="bc-vrow">HEX <input data-bc-v="16" spellcheck="false"></label>
-          <label class="bc-vrow">DEC <input data-bc-v="10" spellcheck="false"></label>
-          <label class="bc-vrow">OCT <input data-bc-v="8" spellcheck="false"></label>
-          <label class="bc-vrow">BIN <input data-bc-v="2" spellcheck="false"></label>
+          <label class="bc-vrow">HEX <input data-bc-v="16" spellcheck="false" name="hg_bc_v"></label>
+          <label class="bc-vrow">DEC <input data-bc-v="10" spellcheck="false" name="hg_bc_v"></label>
+          <label class="bc-vrow">OCT <input data-bc-v="8" spellcheck="false" name="hg_bc_v"></label>
+          <label class="bc-vrow">BIN <input data-bc-v="2" spellcheck="false" name="hg_bc_v"></label>
         </div>
         <!-- 位运算速算：对当前值直接施加（带可选第二操作数） -->
         <div class="bc-opbar">
-          <input class="bc-op2" data-bc-op2 placeholder="操作数 (0x.. / dec)" spellcheck="false">
+          <input class="bc-op2" data-bc-op2 placeholder="操作数 (0x.. / dec)" spellcheck="false" name="hg_bc_op2">
           <button class="lv-btn" data-bc-op="and">AND</button>
           <button class="lv-btn" data-bc-op="or">OR</button>
           <button class="lv-btn" data-bc-op="xor">XOR</button>
           <button class="lv-btn" data-bc-op="not">NOT</button>
           <button class="lv-btn" data-bc-op="shl" title="左移（右侧「位数」框的位数）"><<</button>
           <button class="lv-btn" data-bc-op="shr" title="右移（右侧「位数」框的位数）">>></button>
-          <span class="bc-shift-n"><input data-bc-shiftn value="1" style="width:34px"> 位</span>
+          <span class="bc-shift-n"><input data-bc-shiftn value="1" style="width:34px" name="hg_bc_shiftn"> 位</span>
         </div>
         <!-- 表达式计算器：完整运算（+ - * / % & | ^ ~ << >> 括号） -->
         <div class="bc-calc">
-          <input class="bc-expr" data-bc-expr placeholder="表达式：如 (0x1F << 2) | 0b101 / 支持括号、0x/0b/0o 前缀、回车计算" spellcheck="false">
+          <input class="bc-expr" data-bc-expr placeholder="表达式：如 (0x1F << 2) | 0b101 / 支持括号、0x/0b/0o 前缀、回车计算" spellcheck="false" name="hg_bc_expr">
           <button class="lv-btn" data-bc-act="eval">=</button>
           <span class="bc-expr-res" data-bc-expr-res></span>
         </div>
@@ -239,13 +239,13 @@ function buildBitCalcTab() {
               <!-- 时间戳 sheet：Unix 秒/毫秒/0x → 本地+UTC+相对；datetime-local 反向出三形态 -->
               <div class="bc-sheet-pane active" data-bcsheet-pane="ts">
                 <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                  <input class="bc-expr" data-bc-ts-in placeholder="Unix 秒 / 毫秒 / 0x 时间戳" spellcheck="false" style="flex:1;min-width:150px;">
+                  <input class="bc-expr" data-bc-ts-in placeholder="Unix 秒 / 毫秒 / 0x 时间戳" spellcheck="false" style="flex:1;min-width:150px;" name="hg_bc_ts_in">
                   <button class="lv-btn" data-bc-ts-now title="取当前时间戳（秒）">现在</button>
                 </div>
                 <div class="bc-ts-out" data-bc-ts-out></div>
                 <div style="display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap;">
                   <span style="color:var(--muted);font-size:11px;">反向</span>
-                  <input type="datetime-local" class="bc-dt" data-bc-ts-dt step="1">
+                  <input type="datetime-local" class="bc-dt" data-bc-ts-dt step="1" name="hg_bc_ts_dt">
                 </div>
                 <div class="bc-ts-out" data-bc-ts-rev></div>
               </div>

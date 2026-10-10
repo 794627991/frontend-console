@@ -150,13 +150,13 @@ function buildLogViewer(path) {
       <div class="log-search-splitter"></div>
       <div class="log-search-pane">
         <div class="log-search-head">
-          <input type="text" class="log-search-input" placeholder="查找关键字…（回车搜索，再按回车跳下一个）" autocomplete="off">
-          <input type="text" class="log-search-exclude" placeholder="排除（多个用 | 分隔，支持正则）" title="命中行含任一排除模式则剔除。多个用 | 分隔，支持正则。例：bsp.err | timeout" autocomplete="off">
+          <input type="text" class="log-search-input" placeholder="查找关键字…（回车搜索，再按回车跳下一个）" autocomplete="off" name="log_search_input">
+          <input type="text" class="log-search-exclude" placeholder="排除（多个用 | 分隔，支持正则）" title="命中行含任一排除模式则剔除。多个用 | 分隔，支持正则。例：bsp.err | timeout" autocomplete="off" name="log_search_exclude">
           <button class="btn ghost log-search-btn">查找全部</button>
           <span class="log-search-count"></span>
           <span class="log-jump-goto">
             <span class="log-jump-lbl">跳到第</span>
-            <input type="number" class="log-jump-input" min="1" step="1" placeholder="N" title="跳到第 N 个匹配（回车）">
+            <input type="number" class="log-jump-input" min="1" step="1" placeholder="N" title="跳到第 N 个匹配（回车）" name="log_jump_input">
             <span class="log-jump-lbl">个</span>
           </span>
           <button class="btn ghost icon-btn log-search-collapse" title="折叠分栏">▾</button>

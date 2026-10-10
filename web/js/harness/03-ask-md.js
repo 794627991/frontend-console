@@ -56,7 +56,7 @@
       const ex = document.createElement('div');
       ex.className = 'h-ask-extra';
       ex.innerHTML = `<input class="h-ask-x" data-hg-askx="${qi}" spellcheck="false"
-        placeholder="输入你的回答…" title="回车提交">`;
+        placeholder="输入你的回答…" title="回车提交" name="hg_askx">`;
       box.appendChild(ex);
       card.appendChild(box);
     });

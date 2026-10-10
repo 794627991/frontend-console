@@ -28,6 +28,6 @@
       [{label: '取消', value: false}, {label: '删除', primary: true, value: true}]);
   }
   function hgPrompt(title, label, val) {
-    return hgModal(title, `<div class="hg-modal-body"><label>${esc(label)}</label><input data-hg-mi value="${esc(val || '')}"></div>`,
+    return hgModal(title, `<div class="hg-modal-body"><label>${esc(label)}</label><input data-hg-mi value="${esc(val || '')}" name="hg_mi"></div>`,
       [{label: '取消', value: null}, {label: '保存', primary: true, value: (inp) => (inp ? inp.value.trim() : '')}]);
   }

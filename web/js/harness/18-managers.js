@@ -31,7 +31,7 @@
       ov.innerHTML = `<div class="hg-modal hg-modal-vision"><div class="hg-modal-title">识图配置</div>
         <div class="hg-modal-body hg-vision-hint">识图走 MCP 通道（analyze_image 工具，随会话常备，无后台进程）。此处配置 MCP 调用的识图模型与提示词，<b>保存即生效</b>。主会话模型是真多模态则直读，不经过这里。</div>
         <div class="hg-vision-row">
-          <label class="hg-vision-switch"><input type="checkbox" data-hg-v-on${cfg.enabled ? ' checked' : ''}> 启用识图</label>
+          <label class="hg-vision-switch"><input type="checkbox" data-hg-v-on${cfg.enabled ? ' checked' : ''} name="hg_v_on"> 启用识图</label>
           <span class="hg-vision-state" style="font-size:11px;color:var(--muted);">MCP 通道 · 无后台进程</span>
         </div>
         <label class="hg-vision-prompt-lab">识图模型（MCP 后端，需多模态；换 API 方案后在此重选）
@@ -45,7 +45,7 @@
         <label class="hg-vision-prompt-lab">多模态模型名单（逗号分隔，模型下拉的 👁 标记以此为准；名单外的模型一律走 MCP 识图通道）
           <input class="hg-vision-mm" data-hg-v-mm spellcheck="false"
                  value="${esc((cfg.mm_extra || []).join(', '))}"
-                 placeholder="如：glm-5.3 flash, Lanz-Medium-V（前缀匹配，填一个即可覆盖其 [1M] 变体）"></label>
+                 placeholder="如：glm-5.3 flash, Lanz-Medium-V（前缀匹配，填一个即可覆盖其 [1M] 变体）" name="hg_v_mm"></label>
         <label class="hg-vision-prompt-lab">识图提示词（作为识图请求的 system）
           <textarea class="hg-vision-prompt" data-hg-v-prompt spellcheck="false"></textarea></label>
         <div class="hg-modal-acts"></div></div>`;
@@ -204,7 +204,7 @@
       ov.innerHTML = `<div class="hg-modal hg-modal-vision hg-roles"><div class="hg-modal-title">👥 三角色配置<span class="hg-roles-mode">${modeTxt}</span></div>
         <div class="hg-modal-body">
           <div class="hg-roles-top">
-            <label class="hg-vision-switch"><input type="checkbox" data-hg-r-on${cfg.enabled ? ' checked' : ''}> 启用三角色</label>
+            <label class="hg-vision-switch"><input type="checkbox" data-hg-r-on${cfg.enabled ? ' checked' : ''} name="hg_r_on"> 启用三角色</label>
             <span class="hg-roles-modeinfo">当前形态：<b>${mode === 'light' ? '轻主力 · 直干+设计+审核' : mode === 'heavy' ? '重主力 · 直干+派发自由（免强制分级）' : '中主力 · 直干+审核兜底'}</b></span>
           </div>
           <details class="hg-roles-more"><summary>工作方式说明</summary>
@@ -242,13 +242,13 @@
 
           <div class="hg-roles-sec">分级线 <i>按回合内直改累计行数 · 不计文件数</i></div>
           <div class="hg-roles-line" title="回合内直改累计 ≤ 此行数的小改（配置/常量/文案/注释级）主会话直接改，免审">
-            <span>免审线</span><input type="number" min="0" max="100000" data-hg-r-l1 value="${l1}"><em>≤ 此行数直接改，免审</em>
+            <span>免审线</span><input type="number" min="0" max="100000" data-hg-r-l1 value="${l1}" name="hg_r_l1"><em>≤ 此行数直接改，免审</em>
           </div>
           <div class="hg-roles-line" title="回合内直改累计超过此行数 = 大改，须审核取证级全审；中主力形态即审核线（0=最严档）">
-            <span>轻审线</span><input type="number" min="0" max="100000" data-hg-r-l2l value="${l2l}"><em>超线须审核全审（0=最严）</em>
+            <span>轻审线</span><input type="number" min="0" max="100000" data-hg-r-l2l value="${l2l}" name="hg_r_l2l"><em>超线须审核全审（0=最严）</em>
           </div>
           <div class="hg-roles-line" title="回合内直改累计达到此行数的大改，动手前须先派设计出方案——事中闸拦截+结算追责强制（0=不强制设计）">
-            <span>设计线</span><input type="number" min="0" max="100000" data-hg-r-dl value="${dln}"><em>达线先出方案（0=不强制）</em>
+            <span>设计线</span><input type="number" min="0" max="100000" data-hg-r-dl value="${dln}" name="hg_r_dl"><em>达线先出方案（0=不强制）</em>
           </div>
           <div class="hg-roles-line" title="回合结算兜底：盘点直改超线未派审核——auto 自动续发要求补审，warn 仅红色警示，off 关闭">
             <span>审核模式</span>
@@ -324,12 +324,12 @@
           card.className = 'hg-prompt-item' + (it.enabled ? '' : ' off');
           card.innerHTML =
             `<div class="hg-prompt-item-head">` +
-            `<input class="hg-prompt-note" placeholder="备注（如：中文注释规范）" value="${esc(it.note || '')}">` +
+            `<input class="hg-prompt-note" placeholder="备注（如：中文注释规范）" value="${esc(it.note || '')}" name="hg_prompt_note">` +
             `<select class="hg-prompt-scope">` +
             `<option value="global"${it.scope !== 'project' ? ' selected' : ''}>🌐 全局</option>` +
             `<option value="project"${it.scope === 'project' ? ' selected' : ''}>📁 项目</option>` +
             `</select>` +
-            `<input class="hg-prompt-proj" placeholder="目录名" value="${esc(it.project || '')}"${it.scope === 'project' ? '' : ' style="display:none"'}${it.active === false ? ' title="当前项目不匹配（不会注入本会话）"' : ''}>` +
+            `<input class="hg-prompt-proj" placeholder="目录名" value="${esc(it.project || '')}"${it.scope === 'project' ? '' : ' style="display:none"'}${it.active === false ? ' title="当前项目不匹配（不会注入本会话）"' : ''} name="hg_prompt_proj">` +
             `<button class="hg-prompt-onoff" title="启用/停用">${it.enabled ? '🟢' : '⚪'}</button>` +
             `<button class="hg-prompt-del" title="删除">✕</button></div>` +
             `<textarea class="hg-prompt-ta" spellcheck="false" placeholder="提示词正文…"></textarea>`;

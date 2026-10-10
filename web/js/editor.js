@@ -1168,7 +1168,7 @@ function newFileMenuShow(anchor) {
     <div class="nf-item" data-ext=".txt"><b>📄 纯文本</b><span>.txt</span></div>
     <div class="nf-item" data-ext=".md"><b>📝 Markdown</b><span>.md</span></div>
     <div class="nf-custom">
-      <input class="nf-ext-inp" data-nf-ext placeholder="自定义后缀，如 .log / .csv" spellcheck="false">
+      <input class="nf-ext-inp" data-nf-ext placeholder="自定义后缀，如 .log / .csv" spellcheck="false" name="hg_nf_ext">
       <button class="btn ghost nf-ext-go" data-nf-go>新建</button>
     </div>`;
   menu.style.position = 'fixed';
