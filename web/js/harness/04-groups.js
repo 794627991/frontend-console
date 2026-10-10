@@ -765,10 +765,25 @@
     // v2.38 角色徽章：三角色开启时按形态标主会话角色（v2.50：strong=
     // 重主力直干/light=轻主力）。缓存未拉到不标——不编造归属。样式复用
     // h-mmodel，加右距与模型徽章隔开。
+    // v3.5.97（用户实锤「同会话切模型徽章不跟、重开全变轻主力」）：徽章
+    // 从**会话级形态**改为**本条消息的模型**对 resolved 档位映射（light/
+    // mid/heavy 三槽实配名）——旧写法 rj.mode 是会话当前档，切模型后历史
+    // 消息全烙旧形态章；且切会话时 hist 渲染与 roles 拉取竞态（渲染先完成）
+    // 用的是旧缓存。每条消息自带实跑模型，按它映射才是正确归属；映射不中
+    // （旧模型已不在任何槽）回退会话级形态
     const rj = _hgRolesCache;
-    const roleB = (rj && rj.ok && rj.roles && rj.roles.enabled)
-      ? `<span class="h-mmodel" style="margin-right:6px;" title="三角色形态下的主会话角色">${rj.mode === 'light' ? '轻主力' : rj.mode === 'heavy' ? '重主力' : '中主力'}</span>`
-      : '';
+    let roleB = '';
+    if (rj && rj.ok && rj.roles && rj.roles.enabled) {
+      const _n = m => String(m || '').split('[')[0].trim().toLowerCase();
+      const _mm = _n(bare);
+      const _res = rj.resolved || {};
+      let _lab = '';
+      if (_mm && _n(_res.light) === _mm) _lab = '轻主力';
+      else if (_mm && _n(_res.heavy) === _mm) _lab = '重主力';
+      else if (_mm && _n(_res.mid) === _mm) _lab = '中主力';
+      if (!_lab) _lab = rj.mode === 'light' ? '轻主力' : rj.mode === 'heavy' ? '重主力' : '中主力';
+      roleB = `<span class="h-mmodel" style="margin-right:6px;" title="三角色形态下的主会话角色">${_lab}</span>`;
+    }
     meta.innerHTML = `<span class="h-ava ${_hgAvaCls(bare || 'AI')}">${esc((bare || 'AI').charAt(0).toUpperCase())}</span>` +
       roleB +
       (bare ? `<span class="h-mmodel" title="本条回复的实跑模型">${esc(bare)}</span>` : '');
