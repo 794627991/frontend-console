@@ -367,6 +367,12 @@ ICO_DIR = os.path.join(RES_DIR, "ico")
 def ico_files(fn):
     return send_from_directory(ICO_DIR, fn)
 
+@app.route("/favicon.ico")
+def favicon():
+    """v3.5.81：浏览器每页必请求 favicon——此前 404 刷控制台（用户实锤
+    DevTools 红错之一），回应用图标"""
+    return send_from_directory(ICO_DIR, "app.ico")
+
 @app.route("/api/ports")
 def api_ports():
     return jsonify({"ports": list_ports(), "bauds": COMMON_BAUDS})

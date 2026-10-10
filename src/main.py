@@ -954,6 +954,16 @@ def main():
                 pass
         try:
             window.dom.get_element('body').on('drop', drop_handler)
+            # v3.5.81：吞 pywebview 事件序列化噪音——body drop 监听把每个
+            # DragEvent 整体序列化回传（api.js stringify），非文件拖拽
+            # （编辑器文本拖动等）的事件对象缺 toJSON 目标时抛 TypeError
+            # 刷控制台（用户实锤 DevTools 33 个红错）。文件路径通道
+            # （postMessageWithAdditionalObjects）在序列化之前已发出，
+            # 包 try/catch 零功能损失
+            window.evaluate_js(
+                "Object.keys(window.pywebview._eventHandlers||{}).forEach(function(k){"
+                "var f=window.pywebview._eventHandlers[k];"
+                "window.pywebview._eventHandlers[k]=function(e){try{f(e)}catch(_){}};});")
         except Exception:
             pass
 
