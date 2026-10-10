@@ -953,23 +953,20 @@ def main():
             except Exception:
                 pass
         try:
+            _keys_pre = window.evaluate_js(
+                "Object.keys((window.pywebview&&window.pywebview._eventHandlers)||{}).join('|')") or ''
             _body_el = window.dom.get_element('body')
             _body_el.on('drop', drop_handler)
-            # v3.5.84：拖放快通道（v3.5.82 修正版）。根因（探针实锤 html-drop→
-            # py-drop 11s）：pywebview body drop 监听把整个 DragEvent 序列化回
-            # 传，serialize 对 event.path 祖先链的 DOM 节点走 domJSON
-            # （serialProperties）——document/body 节点连整个子树+全部属性
-            # 序列化=整个页面序列化一遍，DOM 越大越慢（大会话 11s，小会话
-            # 毫秒级——v3.5.79 那次「快」正是小 DOM 的运气）。快通道在
-            # window 捕获阶段截胡：①additional objects 直送文件对象（C# 收
-            # 绝对路径，毫秒级）②轻量事件 JSON（仅文件名数组，零 DOM 序列
-            # 化）走 pywebviewEventHandler——util.py 按名匹配 _dnd_state 挂
-            # pywebviewFullPath 后照常分发 drop_handler ③stopImmediate-
-            # Propagation 阻断重序列化的 body 监听。nodeId 用 Python 侧
-            # Element._node_id（82 版从 DOM 属性猜的键与 _elements 注册表
-            # 不匹配=事件无分发落点=彻底死，本次修正）；轻量消息发送失败时
-            # 不阻断原通道（回落慢路径，保底可用）。__hgFastDrop 防多次
-            # on_loaded 重复注入
+            # v3.5.85：拖放快通道（v3.5.84 的阻断版升级为摘除版）。84 用
+            # stopImmediatePropagation 截胡，把应用自己的拖放 UI（「松开添加
+            # 为对话附件」遮罩的隐藏逻辑）一并拦死=屏障永驻（用户实锤）。
+            # 本版不阻断任何事件：①diff 出 .on('drop') 刚注册的 body 监听并
+            # removeEventListener 摘除（pywebview 的重序列化路径——DragEvent
+            # 整体序列化，domJSON 连 document 子树全属性=整页序列化，大会话
+            # 11s 的根因；Python 侧 num_listeners 计数保留，C# FilesDropped
+            # 照收路径）②window 捕获快通道照发：additional objects 直送 +
+            # 轻量 JSON 事件（仅文件名，nodeId=Element._node_id 权威键）分
+            # 发 drop_handler。应用全部拖放 UI/监听正常运行
             _nid = ''
             try:
                 _nid = _body_el._node_id or ''
@@ -978,18 +975,21 @@ def main():
             if _nid:
                 window.evaluate_js(
                     "if (!window.__hgFastDrop) { window.__hgFastDrop = 1;"
+                    "var _pre = '" + _keys_pre + "'.split('|');"
+                    "try { Object.keys(pywebview._eventHandlers || {}).forEach(function(k){"
+                    "if (_pre.indexOf(k) < 0)"
+                    " try { document.body.removeEventListener('drop', pywebview._eventHandlers[k]); } catch(_){}"
+                    "}); } catch(_){}"
                     "window.addEventListener('drop', function(e){"
                     "if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;"
                     "var fs = [];"
                     "for (var i = 0; i < e.dataTransfer.files.length; i++)"
                     " fs.push({name: e.dataTransfer.files[i].name});"
-                    "var ok = false;"
                     "try { chrome.webview.postMessageWithAdditionalObjects('FilesDropped', e.dataTransfer.files); } catch(_){}"
                     "try { chrome.webview.postMessage(['pywebviewEventHandler',"
                     " JSON.stringify({event:{type:'drop', dataTransfer:{files: fs}}, nodeId: '" + _nid + "'}),"
-                    " 'eventHandler']); ok = true; } catch(_){}"
+                    " 'eventHandler']); } catch(_){}"
                     "e.preventDefault();"
-                    "if (ok) e.stopImmediatePropagation();"
                     "}, true); }")
         except Exception:
             pass

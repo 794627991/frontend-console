@@ -1844,6 +1844,12 @@ window.addEventListener('drop', () => { window.__dragT0 = Date.now(); window.__d
 // （编辑器/阅读器一次开一个是合理交互），旧码在 Python 侧 break 只发第一个
 async function openDroppedFiles(paths) {
   if (!Array.isArray(paths) || !paths.length) return;
+  // v3.5.85：双发去重（快通道+兜底慢路万一并发）——同路径清单 2s 内只处理
+  // 一次（对齐单文件时代 openDroppedFile._last 的既有语义）
+  const _sig = paths.slice().sort().join('\u0001');
+  const _now = Date.now();
+  if (openDroppedFiles._last && openDroppedFiles._last.s === _sig && _now - openDroppedFiles._last.t < 2000) return;
+  openDroppedFiles._last = { s: _sig, t: _now };
   window.__dragProbe && __dragProbe('js-recv ' + paths.length + '个');
   const harnessActive = activePortId && connections[activePortId] &&
     connections[activePortId].meta && connections[activePortId].meta.kind === 'harness';
