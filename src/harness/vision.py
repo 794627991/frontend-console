@@ -49,7 +49,8 @@ def _vision_default_cfg():
     # v2.28.2：model_map 端点模型映射 + mcp_prompt——识图配置（MCP 后端）
     # 多方案适配：lanz 端点配 Lanz 系、bigmodel 端点配 glm 系。
     return {"enabled": False, "model": "", "prompt": "", "name": "",
-            "mm_extra": [], "model_map": {}, "mcp_prompt": ""}
+            "mm_extra": [], "model_map": {}, "mcp_prompt": "",
+            "base_url": "", "api_key": ""}
 
 # ---- from claude_harness.py:101 (_vision_load) ----
 
@@ -75,6 +76,10 @@ def _vision_load():
             mp = str(raw.get("mcp_prompt") or "").strip()
             if mp:
                 cfg["mcp_prompt"] = mp
+            # v3.5.86：识图专用端点/密钥（内网/自建网关）——留空走
+            # settings.json 同源→智谱直连兜底（vision_mcp._endpoints 链）
+            cfg["base_url"] = str(raw.get("base_url") or "").strip()
+            cfg["api_key"] = str(raw.get("api_key") or "").strip()
     except Exception:
         pass
     return cfg

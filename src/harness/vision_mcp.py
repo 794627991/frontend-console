@@ -154,10 +154,17 @@ def resolve_prompt(cfg=None):
 
 
 def _endpoints():
-    """候选 (base_url, key) 列表：主端点在前，智谱直连兜底在后。"""
+    """候选 (base_url, key) 列表：主端点在前，智谱直连兜底在后。
+    v3.5.86 解析链扩容：env > 识图配置节（base_url/api_key，内网/自建
+    网关专用——设置面板「识图配置」可填）> ~/.claude/settings.json 同源
+    > 智谱直连兜底。内网机器此前落不到 settings.json 就恒为智谱兜底
+    =连接拒绝（用户实锤 lanzi 内网机识图必炸）。"""
+    cfg = load_vision_cfg()
+    c_base = str(cfg.get("base_url") or "").strip()
+    c_key = str(cfg.get("api_key") or "").strip()
     s_base, s_key = _claude_env()
-    primary_base = BASE_OVERRIDE or s_base or DIRECT_FALLBACK
-    key = KEY_OVERRIDE or s_key
+    primary_base = BASE_OVERRIDE or c_base or s_base or DIRECT_FALLBACK
+    key = KEY_OVERRIDE or c_key or s_key
     eps = [(primary_base, key)]
     if primary_base.rstrip("/") != DIRECT_FALLBACK:
         eps.append((DIRECT_FALLBACK, key))
@@ -273,6 +280,9 @@ def _call_vision(b64, media_type, prompt):
     sys_prompt = resolve_prompt(cfg)
     last_err = None
     real_err = None        # 第一个非模型名错误（最终报错的优先来源）
+    ep_errs = []           # v3.5.86：按端点聚合错误——内网上多端点全连不上时，
+                           # 旧实现 last_err 逐次覆盖，报错只剩最后一个端点
+                           #（用户误以为「端点写死了」），真因（主端点失败）被遮
     for base, key in _endpoints():
         next_variant = True
         for model in _model_variants(resolve_model(base, cfg)):
@@ -299,6 +309,11 @@ def _call_vision(b64, media_type, prompt):
                 # hard / 空文二连：只有模型名问题才值得试下一个变体
                 next_variant = _model_name_err(info)
                 break
+        ep_errs.append("%s → %s" % (base, last_err or "未知错误"))
+    if len(ep_errs) > 1:
+        # 多端点都试过：逐个列出（端点→错误），一眼看出主端点与兜底各自死因
+        return _result("识图请求失败（试了 %d 个端点）：%s"
+                       % (len(ep_errs), "；".join(ep_errs)), is_error=True)
     final = last_err
     if _model_name_err(final or "") and real_err:
         final = real_err                   # 1211 噪音不遮真因

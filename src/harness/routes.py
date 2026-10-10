@@ -1322,6 +1322,10 @@ def harness_set_vision():
         "enabled": bool(data.get("enabled", False)),
         "model": str(data.get("model") or "").strip(),
         "mcp_prompt": str(data.get("mcp_prompt") or "").strip(),
+        # v3.5.86：识图专用端点/密钥（内网/自建网关——用户实锤内网 lanzi
+        # 机器落不到 settings.json，主端点恒为智谱兜底=连接拒绝）
+        "base_url": str(data.get("base_url") or "").strip(),
+        "api_key": str(data.get("api_key") or "").strip(),
     }
     # v2.25：mm_extra（多模态手补名单）随保存一起落盘——旧实现重建 cfg 时
     # 没带这个字段，_vision_save 整体覆盖后用户配过的名单被静默清空

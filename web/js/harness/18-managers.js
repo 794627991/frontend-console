@@ -46,6 +46,13 @@
           <input class="hg-vision-mm" data-hg-v-mm spellcheck="false"
                  value="${esc((cfg.mm_extra || []).join(', '))}"
                  placeholder="如：glm-5.3 flash, Lanz-Medium-V（前缀匹配，填一个即可覆盖其 [1M] 变体）"></label>
+        <label class="hg-vision-prompt-lab">识图端点与密钥（内网/自建网关必填；留空=跟主会话同源（~/.claude/settings.json），再兜底智谱直连）
+          <div class="hg-vision-grid" style="margin-bottom:0;">
+            <input data-hg-v-base spellcheck="false" placeholder="如 https://lanzi-gw/api/anthropic"
+                   value="${esc(cfg.base_url || '')}">
+            <input data-hg-v-key spellcheck="false" type="password" placeholder="API Key（端点要求鉴权时填）"
+                   value="${esc(cfg.api_key || '')}">
+          </div></label>
         <label class="hg-vision-prompt-lab">识图提示词（作为识图请求的 system）
           <textarea class="hg-vision-prompt" data-hg-v-prompt spellcheck="false"></textarea></label>
         <div class="hg-modal-acts"></div></div>`;
@@ -127,6 +134,10 @@
         enabled: onEl.checked,
         model: modelEl.value.trim(),
         mcp_prompt: ta.value.trim(),
+        // v3.5.86：识图专用端点/密钥（内网/自建网关）——留空=跟主会话同源
+        //（settings.json）→智谱直连兜底
+        base_url: (ov.querySelector('[data-hg-v-base]').value || '').trim(),
+        api_key: (ov.querySelector('[data-hg-v-key]').value || '').trim(),
         // v2.25：多模态手补名单随保存落盘（后端按前缀匹配，覆盖 [1M] 变体）
         mm_extra: (ov.querySelector('[data-hg-v-mm]').value || '')
           .split(/[,，;；\n]/).map(s => s.trim()).filter(Boolean),
