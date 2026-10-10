@@ -1791,15 +1791,47 @@ async function openFileSmart(path, mode) {
   buildLogViewer(path);
 }
 
+// v3.5.76（拖附件 4s+ 根修）：pywebview 的 on('drop') 只注册 drop 不取消
+// dragover——按 HTML 规范 dragover 未被 preventDefault 则页面不是合法落点，
+// drop 事件不会正常触发；WebView2 宿主只能按导航消化 OS 拖放、拖放会话超时
+// 后才回灌 web 内容 = 4~12s 变长延迟。这里全局取消 Files 类 dragover（文本
+// 内部拖拽不受影响），页面即时成为合法落点，drop 毫秒级派发——ZCode/Electron
+// 同理（renderer 有 dragover 处理，宿主不抢拖放）。配套取消 Files 类 drop 的
+// 默认行为（防浏览器把落点文件当导航目标）
+['dragover', 'drop'].forEach(evt => {
+  window.addEventListener(evt, e => {
+    if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files'))
+      e.preventDefault();
+  }, true);
+});
+// v3.5.76：拖拽计时探针（右上角浮层，20s 自隐）——html-drop→py-drop→js→done
+// 各跳时刻，一屏定位延迟段
+window.__dragProbe = (tag) => {
+  try {
+    let el = document.getElementById('__dragProbe');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = '__dragProbe';
+      el.style.cssText = 'position:fixed;top:8px;right:8px;z-index:99999;background:rgba(0,0,0,.85);color:#7fd1ff;font:11px/1.6 Consolas,monospace;padding:6px 10px;border-radius:6px;pointer-events:none;white-space:pre';
+      document.body.appendChild(el);
+    }
+    el.textContent += (el.textContent ? '\n' : '') + tag + '  ' + new Date().toLocaleTimeString('en-GB', { hour12: false });
+    clearTimeout(window.__dragProbeT);
+    window.__dragProbeT = setTimeout(() => el.remove(), 20000);
+  } catch (_) {}
+};
+window.addEventListener('drop', () => { window.__dragProbe && __dragProbe('html-drop'); }, true);
 // v3.5.73：原生拖拽多文件入口（main.py 全量透传）——harness 活动时全部
 // 加为对话附件（用户拖 5 个文件就该进 5 个附件）；其余 tab 保持首文件行为
 // （编辑器/阅读器一次开一个是合理交互），旧码在 Python 侧 break 只发第一个
 async function openDroppedFiles(paths) {
   if (!Array.isArray(paths) || !paths.length) return;
+  window.__dragProbe && __dragProbe('js-recv ' + paths.length + '个');
   const harnessActive = activePortId && connections[activePortId] &&
     connections[activePortId].meta && connections[activePortId].meta.kind === 'harness';
   if (harnessActive && typeof window.harnessAddFilesByPath === 'function') {
     await window.harnessAddFilesByPath(paths);
+    window.__dragProbe && __dragProbe('atts-done');
     return;
   }
   return openDroppedFile(paths[0], false);

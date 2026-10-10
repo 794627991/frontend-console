@@ -920,15 +920,6 @@ def main():
     #   注入 event.dataTransfer.files[i].pywebviewFullPath）。需用 pywebview DOM API
     #   注册 drop 监听（_dnd_state.num_listeners>0 才捕获路径），回调里 evaluate_js 调前端。
     def on_loaded():
-        # v3.5.73：关 WebView2 原生拖放接管——AllowExternalDrop 默认 true 时 OS
-        # 文件拖放被 WebView2 抢走（当导航处理），HTML drop 事件被抑制到拖放
-        # 会话超时才派发（实测拖附件 5~12s 才进）。关掉后 drop 即达，pywebview
-        # FilesDropped 路径通道（C# CoreWebView2File.Path→pywebviewFullPath）
-        # 毫秒级——ZCode/Electron 秒拖同理（renderer 内直拿路径，无宿主抢拖放）
-        try:
-            window.gui.browser.webview.AllowExternalDrop = False
-        except Exception:
-            pass
         # 页面加载完成即激活并置前窗口：从托盘/后台/快捷方式启动时窗口可能不在
         # 前台，用户打开工具就是为了敲命令——不等先点一下
         try:
@@ -954,9 +945,10 @@ def main():
                          if f.get('pywebviewFullPath')]
                 if not paths:
                     return
-                # v3.5.73：多文件全量透传（json 数组防注入）——旧码 break 只取
-                # 第一个，多文件拖进 harness 附件只进一个。分发决策在前端
-                # openDroppedFiles（harness tab 全收；其余 tab 保持首文件行为）
+                # v3.5.76：计时探针（py 侧收到时刻）+ 多文件全量透传（json 数组
+                # 防注入）——旧码 break 只取第一个。前端 openDroppedFiles 分发
+                # （harness tab 全收；其余 tab 首文件）
+                window.evaluate_js("window.__dragProbe && window.__dragProbe('py-drop');")
                 window.evaluate_js('openDroppedFiles(' + json.dumps(paths) + ');')
             except Exception:
                 pass
