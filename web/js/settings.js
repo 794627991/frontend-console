@@ -733,8 +733,22 @@ async function _stRenderApiPane(pane) {
           headers:{'Content-Type':'application/json'}, body: JSON.stringify({name})});
         const j2 = await r2.json();
         if (!j2.ok) { showBanner('配置已写入 settings.json，但存方案失败: ' + (j2.err || ''), 6000, true); return; }
+        // v3.5.102（轻审严重1）：保存新方案后立即「应用」它——此前 active
+        // 仍指旧方案而 settings 已是新方案内容，用户接着点普通「保存配置」
+        // 会把新方案内容同步进旧方案快照（污染）。切换让 active 与 settings
+        // 重新对齐，后续保存/同步全部落在新方案名下。切不动（409 未稳定
+        // 等）只提示手动应用，不算保存失败。
+        const r3 = await fetch('/api/claude/profiles/apply', {method:'POST',
+          headers:{'Content-Type':'application/json'}, body: JSON.stringify({name})});
+        let j3 = null;
+        try { j3 = await r3.json(); } catch(_) {}
         _stApiNewMode = false;
-        showBanner('新方案「' + name + '」已保存并写入 settings.json——新开的会话生效', 5000);
+        if (!j3 || !j3.ok) {
+          showBanner('新方案「' + name + '」已保存，但未能自动切换（' + ((j3 && j3.err) || '网络错误') + '）——请到方案列表手动「应用」后再做其它修改', 8000, true);
+        } else {
+          if (j3.warning) showBanner('⚠ ' + j3.warning, 9000, true);
+          showBanner('新方案「' + name + '」已保存并切换——后续保存都会同步到它', 5000);
+        }
         _stRenderApiPane(pane);
       } catch(e) { showBanner('保存失败: ' + e, 4000, true); }
       return;

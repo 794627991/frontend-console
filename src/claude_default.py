@@ -567,8 +567,10 @@ def _clear_stale_role_models():
     """清 config.json harness_roles 节里残留的显式模型档键（v3.5.100，
     apply 到「未存过三角色」的无节方案时用——见 apply 内注释）。非模型
     键（enabled/audit_mode/分级线）保留；整节不存在则不建空节。返回
-    (ok, err)。"""
+    (ok, err, n_cleared)——v3.5.102 计数（轻审一般2：空清不算事件，
+    调用方据此静默，不再对「本就没配过」的用户弹错误样式警告）。"""
     from src.app_state import cfg_commit
+    cleared = []
 
     def _mut(dd):
         r = dd.get("harness_roles")
@@ -576,8 +578,11 @@ def _clear_stale_role_models():
             for k in ("light_model", "mid_model", "heavy_model",
                       "designer_model", "reviewer_model",
                       "executor_model", "coder_model"):
-                r.pop(k, None)
-    return cfg_commit(_mut)
+                if k in r:
+                    r.pop(k, None)
+                    cleared.append(k)
+    ok, err = cfg_commit(_mut)
+    return ok, err, len(cleared)
 
 
 # v3.5.101：识图用户配置子集——随方案快照走（对称 harness_roles 链路）。
@@ -629,15 +634,20 @@ def _clear_stale_vision_cfg():
     _clear_stale_role_models：无节=本方案从没配过，残留值全是上一方案的）。
     清 enabled/model/base_url/api_key 四键回落「settings 同源端点 + 默认
     模型」（切方案后 settings 已是新方案的，识图自动跟新网关）；mcp_prompt
-    是用户提示词偏好，保留。节不存在则不建空节。返回 (ok, err)。"""
+    是用户提示词偏好，保留。节不存在则不建空节。返回 (ok, err, n_cleared)
+    ——v3.5.102 计数（轻审一般2：空清静默）。"""
     from src.app_state import cfg_commit
+    cleared = []
 
     def _mut(dd):
         v = dd.get("harness_vision")
         if isinstance(v, dict):
             for k in ("enabled", "model", "base_url", "api_key"):
-                v.pop(k, None)
-    return cfg_commit(_mut)
+                if k in v:
+                    v.pop(k, None)
+                    cleared.append(k)
+    ok, err = cfg_commit(_mut)
+    return ok, err, len(cleared)
 
 
 def sync_active_profile_vision():
@@ -713,14 +723,18 @@ def claude_profiles_save():
     vcfg = _harness_vision_user_read()     # v3.5.101：识图配置随方案带走
     if vcfg is not None:
         prof["harness_vision"] = vcfg
-    d = _read_profiles()
-    for i, p in enumerate(d["profiles"]):
-        if p.get("name") == name:
-            d["profiles"][i] = prof
-            break
-    else:
-        d["profiles"].append(prof)
-    _write_profiles(d)
+    # v3.5.102（轻审低3）：读-改-写段包 switch_lock——sync/apply 等持锁
+    # 写方已增到 4 个，本路由裸写交错时会整份覆盖丢一侧更新（RLock 可重入）
+    from src import proxy as _proxy
+    with _proxy.switch_lock():
+        d = _read_profiles()
+        for i, p in enumerate(d["profiles"]):
+            if p.get("name") == name:
+                d["profiles"][i] = prof
+                break
+        else:
+            d["profiles"].append(prof)
+        _write_profiles(d)
     _last_applied_profile["name"] = None   # 覆盖保存后内容已变，清幂等短路
     return jsonify({"ok": True})
 
@@ -817,13 +831,16 @@ def claude_profiles_apply():
             except Exception as _e:
                 roles_warn = "（三角色配置写回失败：%s——请到三角色面板重配）" % _e
         else:
-            ok, err = _clear_stale_role_models()
-            if ok:
-                roles_warn = ("方案「%s」未存过三角色配置——已清残留的上一方案"
-                              "模型档，各档回落自动联动本方案" % name)
-            else:
+            ok, err, nclr = _clear_stale_role_models()
+            if not ok:
                 roles_warn = ("（残留模型档清除失败：%s——请到三角色面板手动"
                               "清空各档）" % (err or "config.json 写入失败"))
+            elif nclr:
+                roles_warn = ("方案「%s」未存过三角色配置——已清残留的上一方案"
+                              "模型档 %d 项，各档回落自动联动本方案" % (name, nclr))
+            # 空清（config 本无显式档残留）→ 静默：无残留可清不算事件
+            # （轻审一般2——空清也弹错误样式警告会让没配过三角色的用户
+            # 每次切方案都以为出了问题）
         # v3.5.101：识图用户配置随方案走（对称 roles 链）——用户实锤
         # 「来回切 API 方案识图配置变未启用」：识图配置原是 config 单份，
         # 从没进方案快照，两方案各配各的识图模型只剩最后一次保存的值。
@@ -837,10 +854,13 @@ def claude_profiles_apply():
             except Exception as _e:
                 vision_warn = "（识图配置写回失败：%s——请到识图面板重配）" % _e
         else:
-            ok, err = _clear_stale_vision_cfg()
+            ok, err, nclr = _clear_stale_vision_cfg()
             if not ok:
                 vision_warn = ("（残留识图配置清除失败：%s——请到识图面板手动"
                                "重配）" % (err or "config.json 写入失败"))
+            elif nclr:
+                vision_warn = ("方案「%s」未存过识图配置——已清残留的上一方案"
+                              "识图配置，回落跟随本方案网关" % name)
         warn = "；".join(w for w in (roles_warn, vision_warn) if w)
         d["active"] = name
         _write_profiles(d)
@@ -918,11 +938,13 @@ def claude_profiles_del():
     """删除方案（不动 settings.json）。body: {name}"""
     data = request.get_json(force=True, silent=True) or {}
     name = (data.get("name") or "").strip()
-    d = _read_profiles()
-    d["profiles"] = [p for p in d["profiles"] if p.get("name") != name]
-    if d.get("active") == name:
-        d["active"] = ""
-    _write_profiles(d)
+    from src import proxy as _proxy
+    with _proxy.switch_lock():   # v3.5.102（轻审低3）：与其它 profiles 写方互斥
+        d = _read_profiles()
+        d["profiles"] = [p for p in d["profiles"] if p.get("name") != name]
+        if d.get("active") == name:
+            d["active"] = ""
+        _write_profiles(d)
     return jsonify({"ok": True})
 
 

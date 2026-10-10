@@ -17,7 +17,13 @@ for r in app.url_map.iter_rules():
 # 共享元数据（~/.serialconsole_pro/claude_harness.json）里真建一条空「新会
 # 话」——每跑一轮冒烟就往用户会话列表塞一条垃圾。带状态副作用的入口改打
 # 安全形态：/connect 只 GET 探测存在性（405 也算健康，不是 500/HTML）
-SKIP_POST = {'/connect'}
+SKIP_POST = {'/connect',
+             # v3.5.102（用户实锤「识图配置自己关闭」）：空 body 探测会让
+             # harness_set_vision 落默认值 enabled=False 写进真实 config
+             # （v3.5.101 起还会同步进真实方案快照，用户开启的配置被探测
+             # 打回关闭态）。后端已加空 body 400 防御，此处一并改打安全形
+             # 态——GET 探测存在性即可。
+             '/vision'}
 
 bad = []
 n = 0

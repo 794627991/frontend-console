@@ -1331,6 +1331,15 @@ def harness_set_vision():
     重启会话。旧键 prompt/name（会话时代）不再写入，存量值自然闲置。
     v3.5.19：model_map 端点映射退役——不再收不再存，存量值自然闲置。"""
     data = request.get_json(force=True, silent=True) or {}
+    # v3.5.102：空 body 防御（用户实锤「识图配置自己关闭」——冒烟测试对
+    # 本路由发空探测请求，enabled 落默认 False 写进真实 config 并被 v3.5.101
+    # 的快照同步放大进方案快照，用户开启的配置被探测打回关闭态）。对齐
+    # /roles 的「没有可写入的配置项」口径：body 里一个有效键都没有 → 400
+    # 拒写，任何探测/误调用都不再落默认值。
+    if not any(k in data for k in ("enabled", "model", "mcp_prompt",
+                                   "base_url", "api_key",
+                                   "mm_extra", "mm_user")):
+        return jsonify({"ok": False, "err": "没有可写入的配置项"}), 400
     old = _vision_load()
     cfg = {
         "enabled": bool(data.get("enabled", False)),
