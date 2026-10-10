@@ -1,8 +1,18 @@
 // harness relay.js (v3.0 自 buildClaudeHarnessTab 拆出,定义体零改动,缩进保持原样)
   function _hgGrantRewind() {
+    // v3.5.78（用户需求「所有回合的结论都可回滚」）：逐组授予——每回合组的
+    // 根区最后一条正文=该回合结论（中间正文定稿时已折进 tl 或被组内收回，
+    // v3.2.4R(F4) 的 tl 不授约束由此天然成立）。旧实现只授全局末条=回滚重建
+    // /续跑后只剩最后一个回合能回滚
+    _hgFlow.querySelectorAll('.h-grp').forEach(g => {
+      const ts = g.querySelectorAll(':scope > .h-msg.asst');
+      const lastT = ts[ts.length - 1];
+      if (lastT && lastT.dataset.rwa) lastT.classList.add('can-rewind');
+    });
+    // 组外散落正文（快照恢复等无组兜底路径）：维持原「全局末条」授予
     const last = _HG.lastAsstEl
       || [..._hgFlow.querySelectorAll('.h-msg.asst')].filter(el => !el.classList.contains('sub')).pop();
-    if (last && last.isConnected && last.dataset.rwa && !last.closest('.h-tl')) last.classList.add('can-rewind');   // v3.2.4R(F4)：折进时间线的中间正文不授回滚钮
+    if (last && last.isConnected && last.dataset.rwa && !last.closest('.h-grp') && !last.closest('.h-tl')) last.classList.add('can-rewind');
   }
   async function _hgReloadFlow() {
     const sid = _HG.sid;

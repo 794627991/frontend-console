@@ -705,7 +705,10 @@
     d.appendChild(acts);
     addRow(d);
     if (live !== false) {
-      _hgFlow.querySelectorAll('.h-msg.asst.can-rewind').forEach(m => m.classList.remove('can-rewind'));
+      // v3.5.78（用户需求「整个会话所有 AI 结论都可回滚」）：撤 v3.4.3 的
+      // 全清——新回合开跑不再收回历史回合结论的回滚钮（后端本就按 rwa 锚
+      // 定位任意回合截断）；「组内只认末条结论、中间输出无资格」的约束仍在
+      // grpFinalize turnEnd（04-groups 上方）不变
       const g = grpEnsure(true);
       phStart(g);                              // AI 未输出前的活泼占位（每轮独立）
       _turnHeadShow(g);                        // v3.1h（用户实锤）：消息发出第一时间亮

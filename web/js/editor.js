@@ -1805,8 +1805,13 @@ async function openFileSmart(path, mode) {
   }, true);
 });
 // v3.5.76：拖拽计时探针（右上角浮层，20s 自隐）——html-drop→py-drop→js→done
-// 各跳时刻，一屏定位延迟段
-window.__dragProbe = (tag) => {
+// 各跳时刻，一屏定位延迟段。v3.5.78（用户要求「只有 debug 打开才显示」）：
+// 默认 no-op；开启=URL 带 ?debug 或 localStorage.setItem('hg-dbg','1')
+const __DRAG_DBG = (function () {
+  try { return localStorage.getItem('hg-dbg') === '1' || /[?&]debug/.test(location.search); }
+  catch (_) { return false; }
+})();
+window.__dragProbe = __DRAG_DBG ? (tag) => {
   try {
     let el = document.getElementById('__dragProbe');
     if (!el) {
@@ -1819,7 +1824,7 @@ window.__dragProbe = (tag) => {
     clearTimeout(window.__dragProbeT);
     window.__dragProbeT = setTimeout(() => el.remove(), 20000);
   } catch (_) {}
-};
+} : function () {};
 window.addEventListener('drop', () => { window.__dragProbe && __dragProbe('html-drop'); }, true);
 // v3.5.73：原生拖拽多文件入口（main.py 全量透传）——harness 活动时全部
 // 加为对话附件（用户拖 5 个文件就该进 5 个附件）；其余 tab 保持首文件行为
