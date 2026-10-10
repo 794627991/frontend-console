@@ -432,22 +432,11 @@ def harness_queue_act():
     if act == "order":
         # v3.1：前端拖拽排序上报——按 ids 重排账本；未列出的条目（并发新
         # 入队）按原顺序追加尾部，不丢。v3.4.54：整段入 _inbox_lock（HTTP
-        # 线程与泵/入队线程并发重排会互相丢条目）
-        ids = [str(x) for x in (data.get("ids") or []) if x]
-        # v3.5.108（轻审低1）：重复 id 去重——否则同一 entry 被复制多份进
-        # 账本并随 sync_meta 持久化，泵会重复发送（轻审探针实证）
-        ids = list(dict.fromkeys(ids))
-        with s._inbox_lock:
-            by = {e.get("id"): e for e in s._inbox}
-            new_order = [by[i] for i in ids if i in by]
-            seen = set(ids)
-            new_order += [e for e in s._inbox if e.get("id") not in seen]
-            s._inbox = new_order
-        # v3.5.106：排序落 meta——此前只活内存，GC 重建/重启后打回时间序
-        # v3.5.108（轻审低3）：_closed 守卫——与 /delete 并发时不复活刚删会话
-        if not s._closed:
-            s.sync_meta()
-        return jsonify({"ok": True})
+        # 线程与泵/入队线程并发重排会互相丢条目）。
+        # v3.5.109（designer F2/D）：重排+去重+落盘下沉 session.queue_order
+        # （路由薄化、测试可直连）；响应带落账后的权威 id 序——前端按它
+        # 重建本地缓存，「写响应即对账」，收窄排序后 UI 弹回旧序的窗口。
+        return jsonify({"ok": True, "queue": s.queue_order(data.get("ids"))})
     return jsonify({"ok": False, "err": "未知操作"}), 400
 
 # ---- from claude_harness.py:2920 (harness_ctx) ----

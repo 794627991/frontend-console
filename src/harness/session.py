@@ -883,6 +883,11 @@ class HarnessSession:
             self.sync_meta()
         return found
 
+    # v3.5.109（designer F3）：泵延迟可注入——测试覆写实例属性即可秒级驱动
+    # 泵链路，根治「sleep 1.6s 等 800ms 泵」的时序 flaky 类（test_ledger 实锤）
+    _PUMP_DELAY = 0.8     # 回合终结 → 泵发首条的留窗（result 收尾/用户中断）
+    _PUMP_RETRY = 3.0     # busy 期/瞬态失败的泵重试周期
+
     def queue_to_head(self, eid):
         """「立即发送」：条目提到队首，随后中断当前回合 → 回合终结泵自然
         先发它。条目不存在返回 False（已在队首也算存在，返回 True）。"""
@@ -901,6 +906,30 @@ class HarnessSession:
         if moved and not self._closed:
             self.sync_meta()
         return found
+
+    def queue_order(self, ids):
+        """拖拽排序：按 ids 重排账本（v3.5.109 自 routes 内联下沉——designer
+        F2，归位 session 层、解锁测试直连；路由只剩薄调用）。重复 id 首现
+        生效（v3.5.108）；未列出的条目按原相对序追加尾部不丢；落账后
+        sync_meta（v3.5.106，_closed 守卫随行）。返回落账后的权威 id 序
+        ——前端按它重建本地缓存，写响应即对账（designer 方案 D，收窄
+        「order 在途被回合终结对账弹回旧序」的视觉窗口）。"""
+        seen = set()
+        ordered = []
+        for i in (ids or []):
+            i = str(i or "").strip()
+            if i and i not in seen:
+                seen.add(i)
+                ordered.append(i)
+        with self._inbox_lock:
+            by = {e.get("id"): e for e in self._inbox}
+            new_order = [by[i] for i in ordered if i in by]
+            new_order += [e for e in self._inbox if e.get("id") not in seen]
+            self._inbox = new_order
+            out = [e.get("id") for e in new_order]
+        if not self._closed:   # 锁外（锁序 meta→inbox）；不复活刚删会话
+            self.sync_meta()
+        return out
 
     def bump_generation(self, reason="rewind"):
         """#14 分支世代：/rewind 后调用。旧代排队输入全部作废（事件显式通
@@ -949,7 +978,7 @@ class HarnessSession:
                         _pending = any(e.get("gen") == self._gen
                                        for e in self._inbox)
                     if _pending:
-                        _arm(3.0)
+                        _arm(self._PUMP_RETRY)
                     return
                 with self._inbox_lock:
                     if not self._inbox:
@@ -1003,7 +1032,7 @@ class HarnessSession:
                         self._pumpFailN += 1
                         _errS = str(_err or "")
                         if ('窗口' not in _errS) and self._pumpFailN < 5:
-                            _arm(3.0)
+                            _arm(self._PUMP_RETRY)
                 if ok:
                     self._pumpFailN = 0
                 if not self._closed:   # 复核 RES：已删会话不回写账本
@@ -1011,7 +1040,7 @@ class HarnessSession:
             except Exception:
                 pass
 
-        _arm(0.8)
+        _arm(self._PUMP_DELAY)
 
     # ---- 子代理镜像事件（#12，v3.1）----
     def _emit_task_mirror(self, o):

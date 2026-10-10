@@ -131,6 +131,31 @@ function fmtTs(ms) {
   return d.toLocaleTimeString('zh-CN', {hour12:false}) + '.' + String(ms % 1000).padStart(3,'0');
 }
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+
+// v3.5.109（designer 方案 O1）：写操作统一包装——义务化响应校验，替代各
+// 调用点裸 .catch(()=>{})（order 400 静默 3 年的教训：写操作不看响应码，
+// 失败无声丢失）。非 2xx 也尝试解析 JSON；j.ok 不真/解析失败/网络错一律
+// 失败路径并 banner（label 前缀调用方定文案）。返回 {ok, j} 供调用方做
+// 回滚/后续逻辑；成功静默不弹（调用方需要成功提示的自己发）。
+async function apiPost(path, body, opt) {
+  opt = opt || {};
+  try {
+    const r = await fetch(path, { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}) });
+    let j = null;
+    try { j = await r.json(); } catch (_) {}          // 5xx HTML 错误页等
+    if (!j || !j.ok) {
+      const why = (j && j.err) ? ('：' + j.err) : ('（HTTP ' + r.status + '）');
+      showBanner((opt.label || '操作失败') + why, 4000, true);
+      return { ok: false, j };
+    }
+    return { ok: true, j };
+  } catch (e) {
+    showBanner((opt.label || '操作失败') + '：网络或服务错误', 4000, true);
+    return { ok: false, j: null };
+  }
+}
 // 连接排序：串口[0] < SSH[1] < 日志[2] < 编辑器[3] < claude[4]，同类内按自然序
 function sortKeyFn(pid) {
   const m = /^COM(\d+)$/i.exec(pid);

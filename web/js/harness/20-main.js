@@ -1188,12 +1188,12 @@ function buildClaudeHarnessTab(opts = {}) {
     };
     const _qact = (act, it, extra, killFallback) => {
       if (it && it.id) {
-        fetch('/api/harness/queue_act', { method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(Object.assign({ sid: _HG.sid, id: it.id, act }, extra || {}))
-        }).then(r => r.json()).then(j => {
-          if (killFallback && (!j || !j.ok)) _qKillMark(it);
-        }).catch(() => { if (killFallback) _qKillMark(it); });
+        // v3.5.109：迁移 apiPost 统一写包装（失败 banner 义务化）
+        apiPost('/api/harness/queue_act',
+                Object.assign({ sid: _HG.sid, id: it.id, act }, extra || {}),
+                { label: '队列操作失败' }).then(res => {
+          if (killFallback && !res.ok) _qKillMark(it);
+        });
       } else if (killFallback) {
         _qKillMark(it);   // 无 id 兜底（id 由 queuePush 同步预生成，常态不达）
       }

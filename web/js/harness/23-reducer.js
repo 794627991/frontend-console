@@ -78,10 +78,11 @@
         const hit = fp ? live.findIndex(k => k.fp === fp) : -1;
         if (hit >= 0) {
           live.splice(hit, 1);
-          if (it.id) fetch('/api/harness/queue_act', { method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sid: _HG.sid, id: it.id, act: 'del' })
-          }).catch(() => {});
+          // v3.5.109：迁移 apiPost（O2——写操作禁止裸 catch；补杀失败必须
+          // 可见，否则用户以为拦住了、消息实际还会复活发出）
+          if (it.id) apiPost('/api/harness/queue_act',
+            { sid: _HG.sid, id: it.id, act: 'del' },
+            { label: '拦截补杀失败——该消息可能复活，请手动删除' });
           p.inbox = (p.inbox || []).filter(x => x.id !== it.id);
           try { showBanner('已拦截一条误复活的排队消息（此前编辑/删除未生效），如需发送请重新输入', 4000, true); } catch (_) {}
           renderSideStatus();

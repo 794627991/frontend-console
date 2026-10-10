@@ -547,33 +547,26 @@
     //（跨设备/跨重启可见，回合终结由后端自动泵真发）。id 客户端预生成并
     // 随 POST 提交（服务端直接采用）——SSE input_admitted 事件常先于 POST
     // 响应到达，同 id 去重是防双画的锚点；本地数组只是渲染缓存
+    // v3.5.109：迁移 apiPost 统一写包装（失败 banner 由包装层发，本函数
+    // 只做回滚；O4——乐观变更必须定义失败路径）
     if (!it.id) it.id = 'q' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
     const key = _hgQueueKey();
     const arr = _HG.queues[key] = _HG.queues[key] || [];
     arr.push(it);
     renderQueue();
     showBanner('已排队：当前回复结束后自动发送', 2200);
-    fetch('/api/harness/queue', { method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sid: _HG.sid, id: it.id, text: it.text || '',
-                             images: it.images || [], files: it.files || [] })
-    }).then(r => r.json()).then(j => {
-      if (j && j.ok) {
+    apiPost('/api/harness/queue', { sid: _HG.sid, id: it.id, text: it.text || '',
+                                    images: it.images || [], files: it.files || [] },
+            { label: '排队失败' }).then(res => {
+      if (res.ok) {
         renderQueue();
       } else {
-        // 入队失败（会话不在等）：回滚本地条目
+        // 入队失败（会话不在等）：回滚本地条目（banner 已由 apiPost 发）
         const cur = _HG.queues[key] || [];
         const i = cur.indexOf(it);
         if (i >= 0) cur.splice(i, 1);
         renderQueue();
-        showBanner('排队失败：' + ((j && j.err) || '未知错误'), 2600, true);
       }
-    }).catch(() => {
-      const cur = _HG.queues[key] || [];
-      const i = cur.indexOf(it);
-      if (i >= 0) cur.splice(i, 1);
-      renderQueue();
-      showBanner('排队失败：网络错误', 2400, true);
     });
   }
   function queuePump() {
@@ -601,16 +594,18 @@
       // 的乐观条目——POST 未返回——由后续事件对齐，这里只发已有 id 的）
       const ids = list.map(x => x.id).filter(Boolean);
       if (ids.length)
-        fetch('/api/harness/queue_act', { method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sid: _HG.sid, act: 'order', ids })
-        }).then(r => r.json()).then(j => {
-          // v3.5.106：失败不再静默——排序没落账本的话泵发会按旧序发，
-          // 用户必须知道（曾因后端 400 被静默吞，排序上报从未生效过）
-          if (!j || !j.ok) {
-            showBanner('排序上报失败' + (j && j.err ? '：' + j.err : '') + '——发送将按原顺序', 4000, true);
+        // v3.5.109（designer D）：响应带落账后的权威 id 序——按它重建本地
+        // 缓存，「写响应即对账」，收窄排序后被回合终结对账弹回旧序的窗口；
+        // 失败 banner 由 apiPost 统一发
+        apiPost('/api/harness/queue_act', { sid: _HG.sid, act: 'order', ids },
+                { label: '排序上报失败——发送将按原顺序' }).then(res => {
+          if (res.ok && Array.isArray(res.j.queue)) {
+            const byId = {};
+            list.forEach(x => { byId[x.id] = x; });
+            _HG.queues[key] = res.j.queue.map(id => byId[id]).filter(Boolean);
+            renderQueue();
           }
-        }).catch(() => showBanner('排序上报失败：网络或服务错误——发送将按原顺序', 4000, true));
+        });
     }
     renderQueue();
   }

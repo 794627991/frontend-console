@@ -100,6 +100,105 @@ def main():
           and [e["text"] for e in s.queue_list()] == ["新代任务"])
     check("队列不清空（消息保命可见）", len(s.queue_list()) >= 1)
 
+    # == 4.5 order 重排 + 落盘断言（v3.5.109 designer P1——order 被 400 拦死
+    # 3 年未暴露的根因是路由级零语义覆盖；本段直连 session.queue_order +
+    # meta 记录器钉住「重排生效且落盘」）==
+    print("== 4.5 order 重排（v3.5.109 designer P1）==")
+    saves = {"n": 0}
+    _real_meta_save = S._meta_save
+    S._meta_save = lambda: saves.__setitem__("n", saves["n"] + 1)
+    try:
+        while s.queue_list():   # 清场：第 4 节泵用例残留的「新代任务」
+            s.queue_discard(s.queue_list()[0]["id"], "test")
+        s.queue_admit("甲"); s.queue_admit("乙"); s.queue_admit("丙")
+        ids3 = [e["id"] for e in s.queue_list()]          # [甲, 乙, 丙]
+        out = s.queue_order([ids3[2], ids3[0], ids3[1]])  # 丙,甲,乙
+        check("order 重排生效", [e["text"] for e in s.queue_list()]
+              == ["丙", "甲", "乙"])
+        check("order 返回权威 id 序", out == [e["id"] for e in s.queue_list()])
+        check("order 落盘（meta inbox 序=内存序）",
+              [x["id"] for x in (S._meta.get("test-ledger") or {}).get("inbox") or []]
+              == out and saves["n"] > 0)
+        n0 = saves["n"]
+        out2 = s.queue_order([ids3[2], "ghost-id", ids3[1]])   # 含不存在 id
+        check("order ghost id 忽略不炸、其余保序",
+              [e["text"] for e in s.queue_list()] == ["丙", "乙", "甲"]
+              and "ghost-id" not in out2)
+        out3 = s.queue_order([ids3[1], ids3[1], ids3[0]])      # 重复 id
+        check("order 重复 id 首现生效不复制",
+              len(s.queue_list()) == 3
+              and [e["text"] for e in s.queue_list()] == ["乙", "甲", "丙"])
+        out4 = s.queue_order([ids3[2]])                        # 只列一条
+        rest = [e["text"] for e in s.queue_list()]
+        # 未列出（甲、乙）按**当前账本序**（上一轮结果 [乙,甲,丙] 去丙）追加尾
+        check("order 未列出条目按当前账本相对序追加尾",
+              rest == ["丙", "乙", "甲"], str(rest))
+        s.queue_order(ids3)                                    # 还原时间序
+        # to_head 落盘口径：队首不动不落、移动落
+        head_id = s.queue_list()[0]["id"]
+        n1 = saves["n"]
+        check("to_head 已在队首不动不落 meta",
+              s.queue_to_head(head_id) is True and saves["n"] == n1)
+        s.queue_admit("丁")
+        n2 = saves["n"]
+        check("to_head 提队首落 meta",
+              s.queue_to_head(s.queue_list()[-1]["id"]) is True
+              and saves["n"] == n2 + 1)
+    finally:
+        S._meta_save = _real_meta_save
+
+    # == 4.6 order→泵端到端（designer P1：_PUMP_DELAY 注入秒级驱动，
+    # 断言泵取重排后队首）==
+    print("== 4.6 order→泵端到端（_PUMP_DELAY 注入）==")
+    s._PUMP_DELAY = 0.05
+    sent = []
+    _real_send = s.send_message
+    s.send_message = lambda text, imgs=None, fls=None: (
+        sent.append(text), (True, None))[1]
+    try:
+        while s.queue_list():   # 清场
+            s.queue_discard(s.queue_list()[0]["id"], "test")
+        # 第 4 节泵失败重试挂的 3s timer 仍在链上——不清标记则 _arm CAS
+        # 让位，本节 0.05s 的新链永远挂不上（首跑实锤 sent=[] 的根因）
+        s._pump_timer = None
+        s.queue_admit("E1"); s.queue_admit("E2"); s.queue_admit("E3")
+        idsE = [e["id"] for e in s.queue_list()]
+        s.queue_order([idsE[2], idsE[0], idsE[1]])            # E3,E1,E2
+        s._turn_start()
+        s._turn_end()
+        time.sleep(0.4)                                       # 0.05 泵延迟 ×8 余量
+        ks = kinds(s)
+        prom = [e for e in s.log.store.snapshot()
+                if e.get("kind") == "input_promoted"]
+        check("泵按重排后队首真发（E3 先发）",
+              sent[:1] == ["E3"] and len(prom) >= 1
+              and prom[-1].get("id") == idsE[2],
+              "sent=%r promN=%d busy=%s" % (sent, len(prom), s.busy))
+        check("泵单发出队后剩余保序",
+              [e["text"] for e in s.queue_list()] == ["E1", "E2"],
+              str([e["text"] for e in s.queue_list()]))
+    finally:
+        s.send_message = _real_send
+        s._pump_timer = None          # 防第 4 节旧 timer 迟到空转/误发
+        while s.queue_list():         # 清场给第 5 节
+            s.queue_discard(s.queue_list()[0]["id"], "test")
+
+    # == 4.7 识图文案防回退（v3.5.109 designer P3，锚 v3.5.107 泛化口径）：
+    # 具体 mcp__ 工具名只允许作例举且必须带「并非所有环境」类限定；泛化
+    # 判断措辞（识图类工具/按工具描述）必须在场——写死回潮时这里变红
+    print("== 4.7 识图文案防回退（designer P3）==")
+    try:
+        from src.harness.bridges import vision_bridge_text as _vbt
+        _t = _vbt("glm-5.3")
+        check("bridge 兜底泛化措辞在场（识图类工具+限定语）",
+              "识图类工具" in _t and "并非所有环境都有" in _t)
+        from src.harness.vision_mcp import _TOOLS as _VT
+        _d = (_VT[0].get("description") or "") if _VT else ""
+        check("本地识图工具 description 泛化措辞在场",
+              "识图类工具" in _d and "部分网关内建" in _d)
+    except ImportError as e:
+        check("识图文案模块不可用，跳过（%s）" % e, True)
+
     print("== 5. 子代理镜像（#12）==")
     s._emit_task_mirror({"subtype": "task_started", "tool_use_id": "tu9",
                          "subagent_type": "reviewer", "description": "审计拆分",
