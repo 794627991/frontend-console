@@ -563,7 +563,12 @@
           // 一条，审核过程一并进新窗口）。dead 清理放 drain **之后**（复审指
           // 正）：drain 内首跑会因回传气泡满足 fedAgain 守卫重新置位 dead，提
           // 前删无效；放后面则同 agentId 后续轮次的 tick 增量不再被拦
-          _subTailDrainThenBackfill(_npid, _nm);
+          // v3.5.111（用户实锤 console 400 刷屏）：回放仅对 task_id 形态的
+          // peer 名发起（与上方 546 行「回放钮点亮」同款门卫）——协作卡 peer
+          // 名是会话显示名（如「其他会话」），拿去查 subagent_replay 必被
+          // 后端 ^[0-9a-zA-Z_-]{8,64}$ 拒 400，每条回传刷一条报错
+          if (/^[0-9a-zA-Z_-]{8,64}$/.test(_nm))
+            _subTailDrainThenBackfill(_npid, _nm);
           delete _subTailDead[_nm];
         }
         _hgScrollBottom();
