@@ -93,16 +93,147 @@ def _dir_size(root):
 
 
 def usage_stats():
-    """两栏占用 + 附件目录明细（设置页存储感知数据源）。"""
-    from src.app_state import DATA_DIR, HOME_DIR
+    """两栏占用 + 附件目录明细 + 可清理目标清单（设置页存储感知数据源）。"""
+    from src import app_state as st
     up = uploads_dir()
+    log_dir = getattr(st, "LOG_DIR", st.DEFAULT_LOG_DIR)
+    idx_dirs = [os.path.join(st.DATA_DIR, "logs", "idx"),
+                os.path.join(getattr(st, "BASE_DIR", st.DATA_DIR), "idx")]
+    ask = os.path.join(st.HOME_DIR, "harness_ask")
+    cache = os.path.join(st.DATA_DIR, "webview_cache")
+    targets = {
+        "uploads": {"path": up, "bytes": _dir_size(up), "name": "会话附件"},
+        "logs": {"path": log_dir, "bytes": _dir_size(os.path.join(log_dir))
+                 - sum(_dir_size(os.path.join(log_dir, d)) for d in ("idx",) if os.path.isdir(os.path.join(log_dir, d))),
+                 "name": "串口日志"},
+        "idx": {"path": idx_dirs[0], "bytes": sum(_dir_size(d) for d in idx_dirs),
+                "name": "日志索引（可重建）"},
+        "cache": {"path": cache, "bytes": _dir_size(cache),
+                  "name": "WebView 缓存（可重建）"},
+        "ask": {"path": ask, "bytes": _dir_size(ask), "name": "提问状态"},
+    }
     return {
-        "user": {"path": DATA_DIR, "bytes": _dir_size(DATA_DIR)},
-        "tool": {"path": HOME_DIR, "bytes": _dir_size(HOME_DIR)},
-        "uploads": {"path": up, "bytes": _dir_size(up),
+        "user": {"path": st.DATA_DIR, "bytes": _dir_size(st.DATA_DIR)},
+        "tool": {"path": st.HOME_DIR, "bytes": _dir_size(st.HOME_DIR)},
+        "uploads": {"path": up, "bytes": targets["uploads"]["bytes"],
                     "max_bytes": UPLOADS_MAX_BYTES,
                     "max_age_days": UPLOADS_MAX_AGE_S // (24 * 3600)},
+        "targets": targets,
     }
+
+
+# ---- 手动清理（v3.5.93：用户拍板「手动清理+可选范围」）--------------------
+# 目标只含**衍生数据**（附件/日志/索引/缓存/提问状态）——笔记、命令库、
+# 配置等用户数据永远不出现在这里
+
+_CLEANABLE = ("uploads", "logs", "idx", "cache", "ask")
+
+
+def _files_in(root, suffix=None):
+    out = []
+    for dirpath, _dirs, filenames in os.walk(root, onerror=lambda e: None):
+        for fn in filenames:
+            if suffix and not fn.endswith(suffix):
+                continue
+            p = os.path.join(dirpath, fn)
+            try:
+                st = os.stat(p)
+                out.append((st.st_mtime, st.st_size, p))
+            except OSError:
+                pass
+    return out
+
+
+def _try_rm(p):
+    try:
+        os.remove(p)
+        return True
+    except OSError:
+        return False
+
+
+# WebView 纯缓存子树清单（与 main._clean_webview_cache 同源——只删随时可
+# 重建的，保留 Local Storage/Cookies 等用户状态）
+_CACHE_SUBS = ("Default/Cache", "Default/Code Cache", "Default/GPUCache",
+               "Default/DawnWebGPUCache", "Default/DawnGraphiteCache",
+               "GrShaderCache", "ShaderCache", "component_crx_cache",
+               "Subresource Filter")
+
+
+def manual_clean(target, mode):
+    """手动清理入口。target ∈ uploads|logs|idx|cache|ask；mode ∈ policy|all。
+    返回 (removed, freed)。policy=按各自保留策略；all=清空该类（缓存类
+    policy 与 all 等价——缓存没有保留策略）。"""
+    import shutil
+    from src import app_state as st
+    removed = 0
+    freed = 0
+    if target not in _CLEANABLE or mode not in ("policy", "all"):
+        return 0, 0
+
+    if target == "uploads":
+        if mode == "policy":
+            removed, freed = cleanup_uploads()
+        else:
+            for _mt, sz, p in _files_in(uploads_dir()):
+                if _try_rm(p):
+                    removed += 1
+                    freed += sz
+
+    elif target == "logs":
+        log_dir = getattr(st, "LOG_DIR", st.DEFAULT_LOG_DIR)
+        cutoff = time.time() - 7 * 86400
+        for mt, sz, p in _files_in(log_dir, suffix=".log"):
+            if mode == "policy" and os.path.basename(p).startswith("serial_") \
+                    and mt >= cutoff:
+                continue   # policy：保留 7 天内的串口日志
+            if mode == "policy" and not os.path.basename(p).startswith("serial_"):
+                continue   # policy：只动 serial_* 日志，别的文件不碰
+            if _try_rm(p):
+                removed += 1
+                freed += sz
+
+    elif target == "idx":
+        dirs = [os.path.join(st.DATA_DIR, "logs", "idx"),
+                os.path.join(getattr(st, "BASE_DIR", st.DATA_DIR), "idx")]
+        if mode == "policy":
+            from src.log_index import cleanup_stale_idx
+            before = sum(_dir_size(d) for d in dirs)
+            cleanup_stale_idx(3)
+            after = sum(_dir_size(d) for d in dirs)
+            removed, freed = -1, max(0, before - after)   # 计数函数内部有，这里以释放量为准
+        else:
+            for _mt, sz, p in _files_in(dirs[0], suffix=".idx") + \
+                    _files_in(dirs[1], suffix=".idx"):
+                if _try_rm(p):
+                    removed += 1
+                    freed += sz
+
+    elif target == "cache":
+        import shutil as _sh
+        root = os.path.join(st.DATA_DIR, "webview_cache", "EBWebView")
+        for sub in _CACHE_SUBS:
+            d = os.path.join(root, *sub.split("/"))
+            if not os.path.isdir(d):
+                continue
+            before = _dir_size(d)
+            _sh.rmtree(d, ignore_errors=True)   # 运行中被占用的文件会跳过
+            freed += before - _dir_size(d) if os.path.exists(d) else before
+            removed += 1
+        removed = max(1, removed)
+
+    elif target == "ask":
+        ask = os.path.join(st.HOME_DIR, "harness_ask")
+        items = _files_in(ask)
+        if mode == "policy":
+            items.sort(key=lambda x: x[0], reverse=True)   # 新在前
+            items = items[500:]                            # 保留最近 500 个
+        for _mt, sz, p in items:
+            if _try_rm(p):
+                removed += 1
+                freed += sz
+
+    return removed, freed
 
 
 _last_ts = [0.0]

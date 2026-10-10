@@ -1240,6 +1240,19 @@ def api_data_dir_get():
                     "subdirs": subs, "total_size": total,
                     "home_anchor": HOME_DIR})
 
+@app.route("/api/data_dir/clean", methods=["POST"])
+def api_data_dir_clean():
+    """手动清理（v3.5.93 设置→数据目录→存储占用）。body: {target, mode}。
+    target ∈ uploads|logs|idx|cache|ask；mode ∈ policy|all。目标只含衍生
+    数据（附件/日志/索引/缓存/提问状态），笔记/命令库/配置不可触达。"""
+    data = request.get_json(force=True, silent=True) or {}
+    target = str(data.get("target") or "").strip()
+    mode = str(data.get("mode") or "").strip()
+    from src.data_hygiene import manual_clean
+    removed, freed = manual_clean(target, mode)
+    return jsonify({"ok": True, "removed": removed, "freed": freed})
+
+
 @app.route("/api/data_dir/usage")
 def api_data_dir_usage():
     """存储感知（v3.5.92 设置→数据目录）：用户数据空间（可迁移 DATA_DIR）/

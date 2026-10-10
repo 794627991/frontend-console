@@ -1107,13 +1107,67 @@ async function _ddRefreshUsage(pane) {
       `<span style="font-family:var(--font-mono);font-size:12px;color:var(--fg);">${esc(u.path)}</span>` +
       `<span style="margin-left:auto;font-variant-numeric:tabular-nums;color:var(--accent);font-weight:600;">${_ddFmtSize(u.bytes)}</span>` +
       (extra ? `<span style="font-size:11px;color:var(--muted);">${extra}</span>` : '') + `</div>`;
-    const upPct = j.uploads && j.uploads.max_bytes
-      ? Math.min(100, Math.round(j.uploads.bytes / j.uploads.max_bytes * 100)) : 0;
+    // v3.5.93：可清理目标（衍生数据）——每行 🧹 手动清理，范围二选一
+    //（按策略 / 全部清空）。笔记/命令库/配置不在此列，永远不可触达
+    const POLICY = {
+      uploads: '按策略：删超半年 + 超量缩至 80%',
+      logs: '按策略：删 7 天前的串口日志',
+      idx: '按策略：删 3 天未用的索引',
+      cache: '清理可重建缓存（运行中被占用的文件自动跳过）',
+      ask: '按策略：保留最近 500 个',
+    };
+    const DANGER = {
+      uploads: '全部清空后，历史会话里引用的图片将失效',
+      logs: '', idx: '', cache: '', ask: '',
+    };
+    const trows = Object.entries(j.targets || {}).map(([k, u]) =>
+      `<div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;">` +
+      `<b style="min-width:9.5em;font-weight:500;">${esc(u.name || k)}</b>` +
+      `<span style="font-family:var(--font-mono);font-size:11px;color:var(--muted);">${esc(u.path)}</span>` +
+      `<span style="margin-left:auto;font-variant-numeric:tabular-nums;color:var(--fg);">${_ddFmtSize(u.bytes)}</span>` +
+      `<button class="btn ghost icon-btn" data-ddclean="${k}" title="手动清理 ${esc(u.name || k)}" style="font-size:12px;">🧹</button>` +
+      `</div>`).join('');
     el.innerHTML =
       row('用户数据空间（可迁移）', j.user || {}, '日志 / 笔记 / 缓存——随上方迁移走') +
       row('工具数据空间（固定）', j.tool || {}, '配置 / 附件 / 子进程状态——位置定死不随迁移') +
-      row('会话附件 harness_uploads', j.uploads || {},
-          `已用 ${upPct}% · 自动清理：超 ${j.uploads ? j.uploads.max_age_days : 180} 天删除，超 1GB 删最老至 80%`);
+      `<div class="dd-label" style="margin-top:10px;">可清理项（衍生数据 · 笔记/命令库/配置不可触达）</div>` +
+      trows +
+      `<div id="ddCleanBar" style="display:none;gap:8px;align-items:center;flex-wrap:wrap;` +
+        `margin-top:8px;padding:8px 10px;border:1px dashed var(--border);border-radius:8px;">` +
+        `<span id="ddCleanTip" style="font-size:11px;color:var(--muted);flex:1;min-width:200px;"></span>` +
+        `<button class="btn ghost" id="ddCleanPolicy">按策略清理</button>` +
+        `<button class="btn ghost" id="ddCleanAll" style="color:#e5484d;">全部清空</button>` +
+        `<button class="btn ghost" id="ddCleanCancel">取消</button></div>`;
+    const bar = el.querySelector('#ddCleanBar');
+    let pending = '';
+    el.querySelectorAll('[data-ddclean]').forEach(b => {
+      b.onclick = () => {
+        pending = b.dataset.ddclean;
+        bar.style.display = 'flex';
+        bar.querySelector('#ddCleanTip').innerHTML =
+          `清理「${(j.targets[pending] || {}).name || pending}」：${POLICY[pending] || ''}` +
+          (DANGER[pending] ? `<br>⚠ ${DANGER[pending]}` : '');
+      };
+    });
+    bar.querySelector('#ddCleanCancel').onclick = () => { pending = ''; bar.style.display = 'none'; };
+    const _do = async (mode) => {
+      if (!pending) return;
+      const tip = bar.querySelector('#ddCleanTip');
+      tip.textContent = '清理中…';
+      try {
+        const r = await fetch('/api/data_dir/clean', {method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({target: pending, mode})});
+        const j2 = await r.json();
+        if (!j2.ok) { showBanner('清理失败: ' + (j2.err || ''), 3000, true); }
+        else showBanner(`已清理 ${j2.removed} 项，释放 ${_ddFmtSize(j2.freed || 0)}`, 3200);
+      } catch(e) { showBanner('清理失败: ' + e, 3000, true); }
+      pending = '';
+      bar.style.display = 'none';
+      _ddRefreshUsage(pane);
+    };
+    bar.querySelector('#ddCleanPolicy').onclick = () => _do('policy');
+    bar.querySelector('#ddCleanAll').onclick = () => _do('all');
   } catch(_) { el.textContent = '统计不可用'; }
 }
 
