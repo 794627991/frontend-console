@@ -112,15 +112,22 @@ def usage_stats(force=False):
     idx_dirs = [os.path.join(st.DATA_DIR, "logs", "idx"),
                 os.path.join(getattr(st, "BASE_DIR", st.DATA_DIR), "idx")]
     ask = os.path.join(st.HOME_DIR, "harness_ask")
-    cache = os.path.join(st.DATA_DIR, "webview_cache")
+    cache_root = os.path.join(st.DATA_DIR, "webview_cache")
+    # 轻审R2-6：cache 行只统计可清理的 _CACHE_SUBS 子树（Local Storage/
+    # Cookies 等用户状态永不删，计入会「清空后仍剩字节数」的假不清干净）
+    cache_bytes = 0
+    for sub in _CACHE_SUBS:
+        d = os.path.join(cache_root, "EBWebView", *sub.split("/"))
+        if os.path.isdir(d):
+            cache_bytes += _dir_size(d)
     targets = {
         "uploads": {"path": up, "bytes": _dir_size(up), "name": "会话附件"},
         "logs": {"path": log_dir, "bytes": _dir_size(os.path.join(log_dir))
                  - sum(_dir_size(os.path.join(log_dir, d)) for d in ("idx",) if os.path.isdir(os.path.join(log_dir, d))),
                  "name": "串口日志"},
         "idx": {"path": idx_dirs[0], "bytes": sum(_dir_size(d) for d in idx_dirs),
-                "name": "日志索引（可重建）"},
-        "cache": {"path": cache, "bytes": _dir_size(cache),
+                "name": "日志索引（可重建，含 legacy 目录）"},
+        "cache": {"path": os.path.join(cache_root, "EBWebView"), "bytes": cache_bytes,
                   "name": "WebView 缓存（可重建）"},
         "ask": {"path": ask, "bytes": _dir_size(ask), "name": "提问状态"},
     }
@@ -145,14 +152,22 @@ _CLEANABLE = ("uploads", "logs", "idx", "cache", "ask")
 
 
 def _files_in(root, suffix=None):
+    """root 下文件清单 [(mtime, size, path)]。与 _dir_size 同款 reparse point
+    剪枝（轻审R2-1 严重）：Windows 下 os.walk 默认下钻 junction（mklink /J
+    无需管理员），不剪枝则 manual_clean 会删到目标目录之外——uploads 里被
+    塞一个 junction 即可波及任意目录。"""
     out = []
-    for dirpath, _dirs, filenames in os.walk(root, onerror=lambda e: None):
+    real = os.path.realpath(root)
+    for dirpath, dirnames, filenames in os.walk(root, onerror=lambda e: None):
+        dirnames[:] = [d for d in dirnames
+                       if os.path.realpath(os.path.join(dirpath, d))
+                       .startswith(real + os.sep)]
         for fn in filenames:
             if suffix and not fn.endswith(suffix):
                 continue
             p = os.path.join(dirpath, fn)
             try:
-                st = os.stat(p)
+                st = os.stat(p, follow_symlinks=False)
                 out.append((st.st_mtime, st.st_size, p))
             except OSError:
                 pass
@@ -179,7 +194,6 @@ def manual_clean(target, mode):
     """手动清理入口。target ∈ uploads|logs|idx|cache|ask；mode ∈ policy|all。
     返回 (removed, freed)。policy=按各自保留策略；all=清空该类（缓存类
     policy 与 all 等价——缓存没有保留策略）。"""
-    import shutil
     from src import app_state as st
     removed = 0
     freed = 0
@@ -210,17 +224,21 @@ def manual_clean(target, mode):
                 freed += sz
 
     elif target == "idx":
+        # 轻审R2-2 严重：cleanup_stale_idx(3) 内部只清 legacy BASE_DIR/idx，
+        # LogIndex 实际写 DATA_DIR/logs/idx——policy 此前对现行目录空转。
+        # 改为自实现按 atime/mtime 双目录清理（口径与前端声明一致）
         dirs = [os.path.join(st.DATA_DIR, "logs", "idx"),
                 os.path.join(getattr(st, "BASE_DIR", st.DATA_DIR), "idx")]
-        if mode == "policy":
-            from src.log_index import cleanup_stale_idx
-            before = sum(_dir_size(d) for d in dirs)
-            cleanup_stale_idx(3)
-            after = sum(_dir_size(d) for d in dirs)
-            removed, freed = -1, max(0, before - after)   # 计数函数内部有，这里以释放量为准
-        else:
-            for _mt, sz, p in _files_in(dirs[0], suffix=".idx") + \
-                    _files_in(dirs[1], suffix=".idx"):
+        cutoff = time.time() - 3 * 86400
+        for d in dirs:
+            for _mt, sz, p in _files_in(d, suffix=".idx"):
+                if mode == "policy":
+                    try:
+                        s2 = os.stat(p)
+                        if max(s2.st_atime, s2.st_mtime) >= cutoff:
+                            continue   # policy：3 天内用过的保留
+                    except OSError:
+                        continue
                 if _try_rm(p):
                     removed += 1
                     freed += sz
@@ -232,11 +250,14 @@ def manual_clean(target, mode):
             d = os.path.join(root, *sub.split("/"))
             if not os.path.isdir(d):
                 continue
-            before = _dir_size(d)
+            files = _files_in(d)
+            before = sum(sz for _m, sz, _p in files)
             _sh.rmtree(d, ignore_errors=True)   # 运行中被占用的文件会跳过
-            freed += before - _dir_size(d) if os.path.exists(d) else before
-            removed += 1
-        removed = max(1, removed)
+            after = _dir_size(d) if os.path.exists(d) else 0
+            freed += max(0, before - after)
+            # 轻审R2-4：按实际删掉的文件数计（目录消失=全删；残留=前后差）
+            gone = len(files) - (len(_files_in(d)) if os.path.exists(d) else 0)
+            removed += max(0, gone)
 
     elif target == "ask":
         ask = os.path.join(st.HOME_DIR, "harness_ask")

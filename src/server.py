@@ -1244,11 +1244,17 @@ def api_data_dir_get():
 def api_data_dir_clean():
     """手动清理（v3.5.93 设置→数据目录→存储占用）。body: {target, mode}。
     target ∈ uploads|logs|idx|cache|ask；mode ∈ policy|all。目标只含衍生
-    数据（附件/日志/索引/缓存/提问状态），笔记/命令库/配置不可触达。"""
-    data = request.get_json(force=True, silent=True) or {}
+    数据（附件/日志/索引/缓存/提问状态），笔记/命令库/配置不可触达。
+    v3.5.95（轻审R2-5）：非对象 body 显式 400；非法 target/mode 返回
+    ok:false——不再「假成功 0 项」。"""
+    data = request.get_json(force=True, silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"ok": False, "err": "参数必须是 JSON 对象"}), 400
     target = str(data.get("target") or "").strip()
     mode = str(data.get("mode") or "").strip()
-    from src.data_hygiene import manual_clean
+    from src.data_hygiene import _CLEANABLE, manual_clean
+    if target not in _CLEANABLE or mode not in ("policy", "all"):
+        return jsonify({"ok": False, "err": "非法 target/mode"}), 400
     removed, freed = manual_clean(target, mode)
     return jsonify({"ok": True, "removed": removed, "freed": freed})
 

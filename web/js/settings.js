@@ -1156,6 +1156,9 @@ async function _ddRefreshUsage(pane) {
       if (!pending) return;
       const tip = bar.querySelector('#ddCleanTip');
       tip.textContent = '清理中…';
+      // 轻审R2-7：请求在途禁用全部清理入口（🧹 与确认条），防双击并发
+      const btns = el.querySelectorAll('[data-ddclean], #ddCleanPolicy, #ddCleanAll');
+      btns.forEach(b => b.disabled = true);
       try {
         const r = await fetch('/api/data_dir/clean', {method: 'POST',
           headers: {'Content-Type': 'application/json'},
