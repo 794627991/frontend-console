@@ -403,10 +403,12 @@ def _analyze(args):
 _TOOLS = [{
     "name": "analyze_image",
     "description": (
-        "本地兜底识图工具——主通道 mcp__4_5v_mcp__analyze_image 报错"
-        "（1210/400/超时）后才使用本工具。\n"
+        "本地识图主工具（v3.5.104 起为主通道；识图模型/端点由识图面板"
+        "配置，随 API 方案走）。\n"
         "imageSource 首选图片的本地绝对路径（用户附件消息里就有，本工具直接"
         "读盘，不依赖 CDN 链接）；也支持 http(s) 直链与 data: URL。\n"
+        "本工具报错且手头有 CDN 链接时，才兜底改用网关的 "
+        "mcp__4_5v_mcp__analyze_image（它读不了本地盘）。\n"
         "prompt 写清楚想从图里知道什么；返回结论先行、位置带坐标参考。"
     ),
     "inputSchema": {

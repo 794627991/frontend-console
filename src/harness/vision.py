@@ -287,11 +287,12 @@ def _model_vision_mode(name):
 # ---- from claude_harness.py:369 (_VISION_TOOLS) ----
 
 
-# v2.28.5：识图工具名双通道——网关内置名（主通道，服务端执行）+ 本地名
-# （兜底通道，harness_vision_mcp.py 注册，server 名 vision）。同名会被网关
-# 遮蔽（实测 log 零记录、零 tool_use），本地版必须独立名字才可作为真兜底。
-# 实时事件流与历史回放解析按两个名字识别识图调用。
-_VISION_TOOLS = ("mcp__4_5v_mcp__analyze_image", "mcp__vision__analyze_image")
+# v2.28.5：识图工具名双通道——本地名（v3.5.104 起主通道，用户拍板方案B，
+# harness_vision_mcp.py 注册，server 名 vision）+ 网关内置名（兜底通道，
+# 服务端执行、仅支持 URL）。历史：网关名曾是主通道。同名会被网关遮蔽
+# （实测 log 零记录、零 tool_use），本地版必须独立名字。
+# 实时事件流与历史回放解析按两个名字识别识图调用（顺序无关）。
+_VISION_TOOLS = ("mcp__vision__analyze_image", "mcp__4_5v_mcp__analyze_image")
 
 # ---- from claude_harness.py:376 (_iso_dur_sec) ----
 

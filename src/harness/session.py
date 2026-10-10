@@ -201,8 +201,9 @@ class HarnessSession:
                 # 不该看到任何识图入口）
                 _tools = ["mcp__harness__ask_user"]
                 if _vision_load()["enabled"] and not _inline_mm:
-                    _tools += ["mcp__4_5v_mcp__analyze_image",
-                               "mcp__vision__analyze_image"]
+                    # v3.5.104：本地工具升主通道，列前；网关 4_5v 降兜底列后
+                    _tools += ["mcp__vision__analyze_image",
+                               "mcp__4_5v_mcp__analyze_image"]
                 argv += ["--allowedTools", ",".join(_tools)]
         # v2.14：识图后台会话用固定基础提示词；普通会话走用户提示词体系 +
         # 识图转交引导（主会话默认不知道有识图同伴，必须显式告知）。
