@@ -289,13 +289,13 @@ function _openCustomPanel(forceLight) {
   const ov = document.createElement('div');
   ov.className = 'ct-overlay';
   const rows = CT_FIELDS.map(([k, name]) => `
-    <div class="ct-row"><input type="color" data-ck="${k}" value="${_customData[k] || '#000000'}">
-      <input type="text" data-ck-t="${k}" spellcheck="false" value="${_customData[k] || ''}" placeholder="--${k}">
+    <div class="ct-row"><input type="color" name="ct_ck_${k}" data-ck="${k}" value="${_customData[k] || '#000000'}">
+      <input type="text" name="ct_ck_t_${k}" data-ck-t="${k}" spellcheck="false" value="${_customData[k] || ''}" placeholder="--${k}">
       <span>${name}</span></div>`).join('');
   ov.innerHTML = `<div class="ct-panel">
     <div class="ct-title">🎨 自定义主题 <span style="font-size:11px;color:var(--muted);font-weight:400;">改动即时预览，保存后跨启动生效</span></div>
     <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);margin-bottom:6px;">
-      <input type="checkbox" data-ct-light${_customData.light ? ' checked' : ''}> 亮色模式（终端换浅底深字）
+      <input type="checkbox" name="ct_light" data-ct-light${_customData.light ? ' checked' : ''}> 亮色模式（终端换浅底深字）
     </label>
     <div class="ct-grid">${rows}</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">

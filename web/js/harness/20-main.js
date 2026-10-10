@@ -82,7 +82,7 @@ function buildClaudeHarnessTab(opts = {}) {
             </div>
             <div class="hg-input-stack">
               <div class="hg-input-overlay" data-hg-overlay aria-hidden="true"></div>
-              <textarea class="hg-input" data-hg-input rows="1" placeholder="给 Claude 发消息，@ 引用文件，/ 选择技能 · 可直接粘贴图片" spellcheck="false"></textarea>
+              <textarea name="hg_input" class="hg-input" data-hg-input rows="1" placeholder="给 Claude 发消息，@ 引用文件，/ 选择技能 · 可直接粘贴图片" spellcheck="false"></textarea>
             </div>
             <div class="hg-mention-drop" data-hg-mention style="display:none"></div>
             <div class="hg-card-foot">

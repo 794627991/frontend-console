@@ -177,7 +177,7 @@ function buildBitCalcTab() {
   wrap.innerHTML = `
     <div class="editor">
       <div class="log-viewer-toolbar">
-        <select class="lv-btn" data-bc-bits title="寄存器位宽">
+        <select name="bc_bits" class="lv-btn" data-bc-bits title="寄存器位宽">
           <option value="8">8 位</option>
           <option value="16">16 位</option>
           <option value="32" selected>32 位</option>

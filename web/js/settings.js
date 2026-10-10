@@ -515,14 +515,14 @@ async function _stRenderApiPane(pane) {
           ${M_SLOTS.map(([k, n, tip]) => `
             <label title="${tip}" style="display:flex;align-items:center;gap:6px;min-width:0;cursor:help;">
               <span style="flex-shrink:0;width:50px;font-size:11px;color:var(--muted);">${n}</span>
-              <input type="text" class="dd-input" data-mk="${k}" spellcheck="false"
+              <input type="text" name="dd_mk_${k}" class="dd-input" data-mk="${k}" spellcheck="false"
                      placeholder="不改" style="flex:1;min-width:0;">
               <button type="button" class="btn ghost" data-mk1m="${k}" title="声明支持 1M：给模型名加/去 [1M] 后缀（网关按此后缀提供百万级上下文）"
                       style="flex-shrink:0;padding:2px 7px;font-size:10px;">1M</button>
             </label>`).join('')}
           <label title="默认兜底模型（ANTHROPIC_MODEL）：未明确落到上面 5 个角色档的请求都用它。新开的会话默认用它，也是本工具模型下拉里显示的那一项。" style="display:flex;align-items:center;gap:6px;min-width:0;cursor:help;">
             <span style="flex-shrink:0;width:50px;font-size:11px;color:var(--muted);">兜底</span>
-            <input type="text" class="dd-input" data-mk="main" spellcheck="false"
+            <input type="text" name="dd_mk_main" class="dd-input" data-mk="main" spellcheck="false"
                    placeholder="不改" style="flex:1;min-width:0;">
             <button type="button" class="btn ghost" data-mk1m="main" title="声明支持 1M：给模型名加/去 [1M] 后缀"
                     style="flex-shrink:0;padding:2px 7px;font-size:10px;">1M</button>

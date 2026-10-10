@@ -91,9 +91,9 @@ function buildProxyTab() {
         <div class="px-sec">
           <div class="px-sec-title">Lanz 额度</div>
           <div class="px-quota-login" data-px-quota-login>
-            <input data-px-q-user placeholder="内网 SSO 用户名" spellcheck="false" style="width:150px;">
+            <input name="px_q_user" data-px-q-user placeholder="内网 SSO 用户名" spellcheck="false" style="width:150px;">
             <span class="px-eye-wrap">
-              <input data-px-q-pwd type="password" placeholder="密码（存本地 lanz_credentials.json）" spellcheck="false" style="width:220px;">
+              <input name="px_q_pwd" data-px-q-pwd type="password" placeholder="密码（存本地 lanz_credentials.json）" spellcheck="false" style="width:220px;">
               <button class="px-eye" data-px-q-eye title="显示/隐藏密码" tabindex="-1" aria-label="显示或隐藏密码">
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/>
@@ -105,7 +105,7 @@ function buildProxyTab() {
             <button class="lv-btn" data-px-q-refresh title="立即刷新额度（沿用当前登录）">↻ 刷新</button>
             <button class="lv-btn" data-px-q-relogin title="登录失效（多天不用后获取不到数据）时的自救：丢弃旧会话强制重新登录。只刷新登录状态，代理链路不受影响">强制重登</button>
             <button class="lv-btn" data-px-q-logout title="删除本地凭据">断开</button>
-            <label class="px-q-auto" title="每 10 分钟自动刷新额度"><input type="checkbox" data-px-q-auto checked> 自动刷新(10min)</label>
+            <label class="px-q-auto" title="每 10 分钟自动刷新额度"><input type="checkbox" name="px_q_auto" data-px-q-auto checked> 自动刷新(10min)</label>
           </div>
           <div class="px-q-statrow">
             <span data-px-q-status style="font-size:12px;"></span>
@@ -511,19 +511,19 @@ function buildProxyTab() {
           <div style="padding:14px 18px 4px;display:flex;flex-direction:column;gap:10px;font-size:13px;">
             <label style="display:flex;align-items:center;gap:10px;">
               <span style="width:110px;flex-shrink:0;">重试上限次数</span>
-              <input type="number" min="0" step="1" data-rt-attempts style="width:90px;">
+              <input type="number" name="px_rt_attempts" min="0" step="1" data-rt-attempts style="width:90px;">
               <span class="px-hint">0 = 无限重试（默认）</span></label>
             <label style="display:flex;align-items:center;gap:10px;">
               <span style="width:110px;flex-shrink:0;">最大重试时长（秒）</span>
-              <input type="number" min="0" step="1" data-rt-seconds style="width:90px;">
+              <input type="number" name="px_rt_seconds" min="0" step="1" data-rt-seconds style="width:90px;">
               <span class="px-hint">0 = 不限时；超时即放弃并返回错误</span></label>
             <label style="display:flex;align-items:center;gap:10px;">
               <span style="width:110px;flex-shrink:0;">阶梯退避</span>
-              <input type="checkbox" data-rt-backoff>
+              <input type="checkbox" name="px_rt_backoff" data-rt-backoff>
               <span class="px-hint">关 = 不逐次加长等待（固定最短间隔）</span></label>
             <label style="display:flex;align-items:center;gap:10px;">
               <span style="width:110px;flex-shrink:0;">退避封顶（秒）</span>
-              <input type="number" min="0.1" step="0.5" data-rt-cap style="width:90px;">
+              <input type="number" name="px_rt_cap" min="0.1" step="0.5" data-rt-cap style="width:90px;">
               <span class="px-hint">单次等待上限，实际带随机抖动</span></label>
             <div class="px-hint" style="margin-top:4px;">保存即写 retry_config.json 并热更正在运行的代理，无需重启。命中上限后该请求以最后一次错误返回给客户端。</div>
           </div>
@@ -607,7 +607,7 @@ function buildProxyTab() {
                 </label>`).join('')}
             </div>
             <div class="px-hr-ccr">
-              <label><input type="checkbox" data-hr-ccr> CCR 流压缩</label>
+              <label><input type="checkbox" name="px_hr_ccr" data-hr-ccr> CCR 流压缩</label>
               <span data-hr-ccr-hint></span>
             </div>
             <div class="px-hint" style="margin:10px 0 0;">${esc(HR_NOTE)}</div>

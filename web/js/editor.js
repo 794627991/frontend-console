@@ -97,7 +97,7 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
         <button class="lv-btn" data-ed-action="rename" title="双击标签页标题可快捷改名">重命名</button>
         <button class="lv-btn" data-ed-action="search" title="Ctrl+F 全局搜索（支持正则/排除）">🔍 搜索</button>
         <button class="lv-btn" data-ed-action="outline" title="显示/隐藏右侧大纲面板">☰ 大纲</button>
-        <select class="lv-btn ed-enc-sel" data-ed-enc title="文件编码（切换后按所选编码重新读取；保存始终写 UTF-8）" style="display:none;">
+        <select name="ed_enc" class="lv-btn ed-enc-sel" data-ed-enc title="文件编码（切换后按所选编码重新读取；保存始终写 UTF-8）" style="display:none;">
           <option value="">编码：自动</option>
           <option value="utf-8">UTF-8</option>
           <option value="gb2312">GB2312</option>

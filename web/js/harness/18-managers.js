@@ -43,11 +43,11 @@
           <div data-hg-v-probe-out style="font-size:11px;color:var(--muted);margin-top:3px;min-height:14px;"></div>
         </label>
         <label class="hg-vision-prompt-lab">多模态模型名单（逗号分隔，模型下拉的 👁 标记以此为准；名单外的模型一律走 MCP 识图通道）
-          <input class="hg-vision-mm" data-hg-v-mm spellcheck="false"
+          <input name="hg_v_mm" class="hg-vision-mm" data-hg-v-mm spellcheck="false"
                  value="${esc((cfg.mm_extra || []).join(', '))}"
                  placeholder="如：glm-5.3 flash, Lanz-Medium-V（前缀匹配，填一个即可覆盖其 [1M] 变体）" name="hg_v_mm"></label>
         <label class="hg-vision-prompt-lab">识图提示词（作为识图请求的 system）
-          <textarea class="hg-vision-prompt" data-hg-v-prompt spellcheck="false"></textarea></label>
+          <textarea name="hg_v_prompt" class="hg-vision-prompt" data-hg-v-prompt spellcheck="false"></textarea></label>
         <div class="hg-modal-acts"></div></div>`;
       const acts = ov.querySelector('.hg-modal-acts');
       const close = (v) => { ov.remove(); resolve(v); };
@@ -256,7 +256,7 @@
           </div>
           <div class="hg-roles-line" title="回合结算兜底：盘点直改超线未派审核——auto 自动续发要求补审，warn 仅红色警示，off 关闭">
             <span>审核模式</span>
-            <select data-hg-r-am>
+            <select name="hg_r_am" data-hg-r-am>
               <option value="auto"${am === 'auto' ? ' selected' : ''}>auto · 自动续发补审</option>
               <option value="warn"${am === 'warn' ? ' selected' : ''}>warn · 仅警示</option>
               <option value="off"${am === 'off' ? ' selected' : ''}>off · 关闭</option>
@@ -329,14 +329,14 @@
           card.innerHTML =
             `<div class="hg-prompt-item-head">` +
             `<input class="hg-prompt-note" placeholder="备注（如：中文注释规范）" value="${esc(it.note || '')}" name="hg_prompt_note">` +
-            `<select class="hg-prompt-scope">` +
+            `<select name="hg_prompt_scope" class="hg-prompt-scope">` +
             `<option value="global"${it.scope !== 'project' ? ' selected' : ''}>🌐 全局</option>` +
             `<option value="project"${it.scope === 'project' ? ' selected' : ''}>📁 项目</option>` +
             `</select>` +
             `<input class="hg-prompt-proj" placeholder="目录名" value="${esc(it.project || '')}"${it.scope === 'project' ? '' : ' style="display:none"'}${it.active === false ? ' title="当前项目不匹配（不会注入本会话）"' : ''} name="hg_prompt_proj">` +
             `<button class="hg-prompt-onoff" title="启用/停用">${it.enabled ? '🟢' : '⚪'}</button>` +
             `<button class="hg-prompt-del" title="删除">✕</button></div>` +
-            `<textarea class="hg-prompt-ta" spellcheck="false" placeholder="提示词正文…"></textarea>`;
+            `<textarea name="hg_prompt_ta" class="hg-prompt-ta" spellcheck="false" placeholder="提示词正文…"></textarea>`;
           const ta = card.querySelector('.hg-prompt-ta');
           ta.value = it.text || '';
           ta.oninput = (e) => { it.text = e.target.value; };

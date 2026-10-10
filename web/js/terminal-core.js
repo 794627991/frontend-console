@@ -30,8 +30,8 @@ function buildTerminal(portId, meta) {
       <div class="term-search-splitter"></div>
       <div class="term-search-pane">
         <div class="term-search-head">
-          <input type="text" class="term-search-input" placeholder="查找关键字…（回车搜索全部，Shift+回车跳下一个）" autocomplete="off">
-          <input type="text" class="term-search-exclude" placeholder="排除（多个用 | 分隔，支持正则）" title="命中行含任一排除模式则剔除。多个用 | 分隔，支持正则。例：bsp.err | timeout" autocomplete="off">
+          <input type="text" name="term_search_q" class="term-search-input" placeholder="查找关键字…（回车搜索全部，Shift+回车跳下一个）" autocomplete="off">
+          <input type="text" name="term_search_ex" class="term-search-exclude" placeholder="排除（多个用 | 分隔，支持正则）" title="命中行含任一排除模式则剔除。多个用 | 分隔，支持正则。例：bsp.err | timeout" autocomplete="off">
           <span class="term-search-count"></span>
           <button class="btn ghost term-search-collapse" title="折叠分栏">▾</button>
         </div>
