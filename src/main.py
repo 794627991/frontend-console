@@ -954,37 +954,6 @@ def main():
                 pass
         try:
             window.dom.get_element('body').on('drop', drop_handler)
-            # v3.5.82：拖放快通道（替代 v3.5.81 的 try/catch 包裹——那招是
-            # 无效 no-op：listener 持原函数引用，换字典不生效；且真问题不是
-            # 噪音）。根因（探针实锤 html-drop→py-drop 恰 11s）：pywebview
-            # body drop 监听把整个 DragEvent 序列化回传，其 serialize 对 DOM
-            # 节点走 domJSON.toJSON(serialProperties)——落点元素属性图全量
-            # 序列化，同步阻塞渲染线程秒级（落点 DOM 越大越久；DevTools 的
-            # toJSON TypeError 也出自这里）。快通道在 window 捕获阶段截胡：
-            # ①additional objects 先送文件对象（C# 直收绝对路径，毫秒级）
-            # ②轻量事件 JSON（仅文件名数组）走 pywebviewEventHandler——
-            # util.py 按名匹配 _dnd_state 挂 pywebviewFullPath 后分发
-            # drop_handler，链路不变 ③stopImmediatePropagation 阻断重的
-            # body 监听。页面内其他 Files 落点（计算器哈希/对比弹窗）均由
-            # openDroppedFiles 统一分发覆盖，无旁路损失
-            try:
-                nid = window.evaluate_js(
-                    "(document.body.getAttribute('data-pywebview-id')||'')") or ''
-            except Exception:
-                nid = ''
-            if nid:
-                window.evaluate_js(
-                    "window.addEventListener('drop', function(e){"
-                    "if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;"
-                    "var fs = [];"
-                    "for (var i = 0; i < e.dataTransfer.files.length; i++)"
-                    " fs.push({name: e.dataTransfer.files[i].name});"
-                    "try { chrome.webview.postMessageWithAdditionalObjects('FilesDropped', e.dataTransfer.files); } catch(_){}"
-                    "try { chrome.webview.postMessage(['pywebviewEventHandler',"
-                    " JSON.stringify({event:{type:'drop', dataTransfer:{files: fs}}, nodeId: '" + nid + "'}),"
-                    " 'eventHandler']); } catch(_){}"
-                    "e.stopImmediatePropagation(); e.preventDefault();"
-                    "}, true);")
         except Exception:
             pass
 
