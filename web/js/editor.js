@@ -1806,12 +1806,10 @@ async function openFileSmart(path, mode) {
 });
 // v3.5.76：拖拽计时探针（右上角浮层，20s 自隐）——html-drop→py-drop→js→done
 // 各跳时刻，一屏定位延迟段。v3.5.78（用户要求「只有 debug 打开才显示」）：
-// 默认 no-op；开启=URL 带 ?debug 或 localStorage.setItem('hg-dbg','1')
-const __DRAG_DBG = (function () {
-  try { return localStorage.getItem('hg-dbg') === '1' || /[?&]debug/.test(location.search); }
-  catch (_) { return false; }
-})();
-window.__dragProbe = __DRAG_DBG ? (tag) => {
+// 默认 no-op；开启=URL 带 ?debug 或 localStorage hg-dbg=1。
+// v3.5.79：①Ctrl+Shift+D 随时切换 debug（banner 反馈）②慢拖（全程>1.5s）
+// 自动现形——健康时永远不弹，出问题自带证据（各跳时刻自动上屏）
+const __dragProbeShow = (tag) => {
   try {
     let el = document.getElementById('__dragProbe');
     if (!el) {
@@ -1824,8 +1822,23 @@ window.__dragProbe = __DRAG_DBG ? (tag) => {
     clearTimeout(window.__dragProbeT);
     window.__dragProbeT = setTimeout(() => el.remove(), 20000);
   } catch (_) {}
-} : function () {};
-window.addEventListener('drop', () => { window.__dragProbe && __dragProbe('html-drop'); }, true);
+};
+window.__dragDbg = (function () {
+  try { return localStorage.getItem('hg-dbg') === '1' || /[?&]debug/.test(location.search); }
+  catch (_) { return false; }
+})();
+window.__dragProbe = () => {};
+function __dragProbeSync() { window.__dragProbe = window.__dragDbg ? __dragProbeShow : function () {}; }
+__dragProbeSync();
+window.addEventListener('keydown', (e) => {
+  if (e.ctrlKey && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
+    try { localStorage.setItem('hg-dbg', window.__dragDbg ? '0' : '1'); } catch (_) {}
+    window.__dragDbg = !window.__dragDbg;
+    __dragProbeSync();
+    if (typeof showBanner === 'function') showBanner(window.__dragDbg ? '拖拽计时探针：已开启' : '拖拽计时探针：已关闭', 2000);
+  }
+});
+window.addEventListener('drop', () => { window.__dragT0 = Date.now(); window.__dragProbe && __dragProbe('html-drop'); }, true);
 // v3.5.73：原生拖拽多文件入口（main.py 全量透传）——harness 活动时全部
 // 加为对话附件（用户拖 5 个文件就该进 5 个附件）；其余 tab 保持首文件行为
 // （编辑器/阅读器一次开一个是合理交互），旧码在 Python 侧 break 只发第一个
@@ -1837,6 +1850,10 @@ async function openDroppedFiles(paths) {
   if (harnessActive && typeof window.harnessAddFilesByPath === 'function') {
     await window.harnessAddFilesByPath(paths);
     window.__dragProbe && __dragProbe('atts-done');
+    // v3.5.79：慢拖自动现形（非 debug 也不吞证据）——html-drop→完成超 1.5s
+    // 强制上屏，各跳时刻可见即定位延迟段
+    const _d = Date.now() - (window.__dragT0 || Date.now());
+    if (_d > 1500) __dragProbeShow('⚠ 慢拖 ' + (_d / 1000).toFixed(1) + 's（drop→完成）');
     return;
   }
   return openDroppedFile(paths[0], false);

@@ -2004,6 +2004,10 @@ function buildClaudeHarnessTab(opts = {}) {
   // 按行号先扩窗（_histRefresh 到该行）再凭 data-turn-hi 定位——**无封顶**，
   // 任何回合任何时候可达（DOM 防爆=折叠回合+懒抽屉+渐进加载，非封顶）
   function _hgRailSync() {
+    // v3.5.79（用户实锤「回滚按钮历史会话不出现」）：所有渲染完成路径
+    //（历史/快照恢复/重建/实时）都过这里——逐组授予回滚钮（结论=每组根区
+    // 末条正文；组内中间输出不授的约束在 grpFinalize turnEnd，幂等安全）
+    try { _hgGrantRewind(); } catch (_) {}
     const rail = _hgRailEl;
     if (!rail) return;
     const items = [];
