@@ -180,24 +180,33 @@ def main():
     finally:
         s.send_message = _real_send
         s._pump_timer = None          # 防第 4 节旧 timer 迟到空转/误发
+        s._PUMP_DELAY = 0.8           # v3.5.110（补审低2）：还原，防后续节静默快泵
         while s.queue_list():         # 清场给第 5 节
             s.queue_discard(s.queue_list()[0]["id"], "test")
 
     # == 4.7 识图文案防回退（v3.5.109 designer P3，锚 v3.5.107 泛化口径）：
     # 具体 mcp__ 工具名只允许作例举且必须带「并非所有环境」类限定；泛化
-    # 判断措辞（识图类工具/按工具描述）必须在场——写死回潮时这里变红
+    # 判断措辞（识图类工具/按工具描述）必须在场——写死回潮时这里变红。
+    # v3.5.110（补审一般1）封闭：猴补 _vision_load/_model_vision_mode——
+    # vision_bridge_text 内部走 _vision_load() 读真实用户 config（本机
+    # enabled=True 过、默认环境必红）+ mm_user 判态漂移，不封闭则结果随
+    # 机器配置漂移，违背本文件「不碰真实用户数据」铁律
     print("== 4.7 识图文案防回退（designer P3）==")
+    import src.harness.bridges as _B
+    _r_vl, _r_vm = _B._vision_load, _B._model_vision_mode
+    _B._vision_load = lambda: {"enabled": True, "model": "glm-5.3",
+                               "mcp_prompt": "", "mm_extra": [], "mm_user": {}}
+    _B._model_vision_mode = lambda m: "mcp"
     try:
-        from src.harness.bridges import vision_bridge_text as _vbt
-        _t = _vbt("glm-5.3")
+        _t = _B.vision_bridge_text("glm-5.3")
         check("bridge 兜底泛化措辞在场（识图类工具+限定语）",
               "识图类工具" in _t and "并非所有环境都有" in _t)
         from src.harness.vision_mcp import _TOOLS as _VT
         _d = (_VT[0].get("description") or "") if _VT else ""
         check("本地识图工具 description 泛化措辞在场",
               "识图类工具" in _d and "部分网关内建" in _d)
-    except ImportError as e:
-        check("识图文案模块不可用，跳过（%s）" % e, True)
+    finally:
+        _B._vision_load, _B._model_vision_mode = _r_vl, _r_vm
 
     print("== 5. 子代理镜像（#12）==")
     s._emit_task_mirror({"subtype": "task_started", "tool_use_id": "tu9",
