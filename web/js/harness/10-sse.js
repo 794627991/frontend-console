@@ -881,6 +881,7 @@
       else if (it.kind === 'ask') { const _g = _hgTurnReopen(); phRemove(_g || _HG.grp); askRender(it); }
       else if (it.kind === 'ask_done') askDone(it);
       else if (it.kind === 'interrupted') {
+        _HG.hold = false;   // v3.5.124：中断/退出=保活退场（防旗残留瞬态误态）
         endThinking(); _hgVisionSweep(true);
         // v3.4.79（用户定调「中断行整合进回合」）：exit 行先入组时间线再定稿
         // ——先定稿的话 _HG.grp 已收，行散落组外（点开回合看不到中断实况）。
@@ -922,6 +923,7 @@
         try { document.dispatchEvent(new CustomEvent('hg-interrupted', {detail: _HG.sid})); } catch(_) {}
       }
       else if (it.kind === 'exit') {
+        _HG.hold = false;   // v3.5.124：中断/退出=保活退场（防旗残留瞬态误态）
         endThinking(); _hgVisionSweep(true); _HG.alive = false;
         // v3.4.79：exit 行先入组再定稿（同 interrupted 分支——组外散行整合）
         renderExit(it.text);

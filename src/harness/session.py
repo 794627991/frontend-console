@@ -1135,7 +1135,10 @@ class HarnessSession:
                        "bg": bool(o.get("is_backgrounded")),
                        "task_id": str(o.get("task_id") or "")})
             # v3.5.123：后台子代理登记（回合保活——在飞时不许结束大回合）
-            if o.get("is_backgrounded"):
+            # v3.5.124（全审P6）：只登记**真子代理**（subagent_type 非空）——
+            # CLI 对 run_in_background 的 Bash 也发 is_backgrounded=true
+            # （v3.4.43 实锤），fire-and-forget shell 不该锁大回合至硬顶
+            if o.get("is_backgrounded") and str(o.get("subagent_type") or "").strip():
                 self._bg_tasks[tid] = {"t0": time.time(),
                                        "desc": str(o.get("description") or "")[:80],
                                        "slow": False}
@@ -1164,6 +1167,10 @@ class HarnessSession:
         return bool(self._bg_tasks)
 
     def _bg_monitor_ensure(self):
+        # v3.5.124（全审P1）：监视线程**常驻不退**——旧「自退+下次登记拉起」
+        # 被 _bg_mon_started 一次性闩锁击穿（线程自退后 ensure 永远早退，第二
+        # 个含后台任务的回合起三层兜底全部缺席=僵尸任务可锁死大回合）。
+        # daemon 空转 30s 一跳成本可忽略，常驻换确定性
         if self._bg_mon_started:
             return
         self._bg_mon_started = True
@@ -1194,8 +1201,6 @@ class HarnessSession:
                                       if self.last_active else now)
                         if idle > self._BG_IDLE_RELEASE:
                             self._bg_hold_release("bg_idle")
-                    if not self._bg_tasks and not self._held:
-                        return   # 集空且无 hold——监视线程自退（下次登记拉起）
                 except Exception:
                     pass
         threading.Thread(target=_loop, daemon=True).start()
@@ -1215,9 +1220,18 @@ class HarnessSession:
         self._turn_end()
 
     def bg_in_flight_clear(self):
-        """进程死亡/kill 路径的保活状态清理（子代理同进程必死，幂等）。"""
+        """进程死亡/kill 路径的保活状态清理（子代理同进程必死，幂等）。
+        v3.5.124（全审P5）：hold 中被清=大回合被外部终止（kill/进程死）——
+        defer 中的审计结算在此补一次（reason=exit 只警示不续发，不计 streak），
+        否则本大回合累计 lines 被下一条用户消息的边界清零直接蒸发。"""
+        held = self._held
         self._bg_tasks = {}
         self._held = False
+        if held:
+            try:
+                self._audit_settle("exit")
+            except Exception:
+                pass
 
     def _check_peer_lines(self):
         """跨会话回传检测（v2.27.4）：CLI 收到 peer 消息只写转写 jsonl，
@@ -1405,8 +1419,14 @@ class HarnessSession:
                         self.busy_since = int(time.time() * 1000)
                     self._turn_start()
                 if typ == "result":
-                    with self._busy_lock:      # v3.4.54：回落同步入锁（sync_meta 锁外）
-                        self.busy = False
+                    # v3.5.124（全审P3）：hold 期 busy 维持 True——busy=False 会让
+                    # ■中断闸（interrupt 要求 busy）失效、send CAS 放行（HikLink
+                    # 排队分支变死代码+边界清零抹 defer 账本）、队列泵提前放行。
+                    # busy 保持=手动退场/排队语义/审计 defer 在 hold 窗口全部成立
+                    _hold_now = bool(self._bg_tasks)
+                    if not _hold_now:
+                        with self._busy_lock:      # v3.4.54：回落同步入锁（sync_meta 锁外）
+                            self.busy = False
                     self.last_result = o
                     # v2.2.1：回合结束落一次盘——last_active 平时只更新内存，
                     # 重启工具后 meta 停在旧时刻会话排序/时间倒退（回合粒度
@@ -1451,20 +1471,25 @@ class HarnessSession:
                         self._emit_task_mirror(o)
                     except Exception:
                         pass
+                # v3.5.124（全审P4）：turn_hold 必须先于 result 帧到达前端——
+                # 后发则前端首 hold 守卫（hold 未立时 result 落 busy）永不命中
+                if typ == "result" and self._bg_tasks:
+                    self._held = True
+                    with self._busy_lock:
+                        self.busy = True   # P3 同临界：busy 维持 True
+                    self.emit({"kind": "turn_hold", "n": len(self._bg_tasks)})
                 self.emit({"kind": "event", "data": o})
                 # v2.34：result 即回合终点——结算审计（light 形态违规兜底，
                 # 事件已 emit，前端先收 result 收尾再收审计警示，顺序自然）
                 # v3.5.123（用户口径「子代理在飞不许结束大回合」）：仍有后台
                 # 子代理在飞 → hold：busy 保持、审计结算挂起（defer 到真终点
-                # ——bg 集空后的唤醒回合 result 才真收尾）；先于 result 帧发
-                # turn_hold 让前端先立 hold 旗
-                if typ == "result" and self._bg_tasks:
-                    self._held = True
-                    self.emit({"kind": "turn_hold", "n": len(self._bg_tasks)})
+                # ——bg 集空后的唤醒回合 result 才真收尾）
                 if typ == "result" and not self._bg_tasks:
                     # turn_complete：真收尾标记（前端据此清 turn_hold 旗——
                     # hold 期所有中间 result 帧前端都不落 busy，等这一帧才落）
                     self.emit({"kind": "turn_complete"})
+                    with self._busy_lock:
+                        self._held = False   # v3.5.124（全审P2）：真收尾清 hold——防 120s 后幽灵二次 settle/turn_end
                     try:
                         self._audit_settle("result")
                     except Exception:
