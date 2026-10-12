@@ -135,6 +135,13 @@ function buildTerminal(portId, meta) {
   conn.term.loadAddon(conn.search);
   try { conn.term.loadAddon(new WebLinksAddon.WebLinksAddon()); } catch(e) {}
   conn.term.open(conn.xtermWrap);
+  // v3.5.116（清 DevTools Issues 剩余 2 条）：xterm 库内部建的键盘捕获框
+  // 无 name/id 每连接告警一条——open() 后运行时补 name，纯 DOM 属性追加，
+  // xterm 的事件监听与 textarea 引用不受影响（不改 vendor 源码）
+  try {
+    const _hta = conn.xtermWrap.querySelector('.xterm-helper-textarea');
+    if (_hta) _hta.name = 'xterm_helper';
+  } catch (_) {}
   // WebGL2 renderer：GPU 加速 glyph 渲染，高吞吐滚动不再卡（Tabby/Windows Terminal 同思路）。
   // 加载失败（无 WebGL2/驱动异常）自动回退默认 DOM 渲染，不影响功能
   try {
