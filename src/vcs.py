@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 
 from flask import Blueprint, jsonify, request
 
-from src.app_state import DATA_DIR
+from src import app_state as _st
 from src.file_tree import _under_roots
 
 vcs_bp = Blueprint("vcs", __name__)
@@ -45,9 +45,19 @@ _ROOT_LOCKS_GUARD = threading.Lock()
 
 
 def _root_lock(wc_dir):
-    """每个工作副本一把写锁——同仓 commit/update 串行，跨仓互不阻塞。"""
+    """每个工作副本一把写锁——同仓 commit/update 串行，跨仓互不阻塞。
+    键 normcase 归一（轻审 P9：Windows 同仓异形态防两把锁）。"""
     with _ROOT_LOCKS_GUARD:
-        return _ROOT_LOCKS.setdefault(wc_dir, threading.Lock())
+        return _ROOT_LOCKS.setdefault(os.path.normcase(wc_dir), threading.Lock())
+
+
+def _data_dir():
+    """运行时取 app_state.DATA_DIR（v3.5.118，轻审 P4：from-import 是值
+    拷贝，数据目录迁移端点回写 _st.DATA_DIR 后这里仍指旧目录——vcs_tmp
+    会落已删除的旧位置并复活目录。函数内查 _st 属性根治，测试同受益）。"""
+    d = _st.DATA_DIR
+    os.makedirs(d, exist_ok=True)
+    return d
 
 
 def _dec(b):
@@ -79,11 +89,6 @@ def _run(argv, cwd, timeout):
 def _tool(name):
     """CLI 探测：None = 未安装（调用方呈现「未安装」占位，绝不抛错）。"""
     return shutil.which(name)
-
-
-def _data_dir():
-    os.makedirs(DATA_DIR, exist_ok=True)
-    return DATA_DIR
 
 
 def _tmp_materialize(data, name_hint):
@@ -208,11 +213,15 @@ def _git_status(wc):
         xy = tok[:2]
         st = _GIT_ST_MAP.get(xy[0] if xy[0] not in " M" else
                              (xy[1] if xy[1] != " " else xy[0]), "?")
+        # v3.5.118（轻审 P5）：unmerged（UU/AU/DD 等）→ C 冲突态，绝不显示成
+        # 「未纳管」给 ＋add 按钮（git add 强收冲突是破坏性误导）
+        if "U" in xy:
+            st = "C"
         rel = tok[3:]
-        if st == "R":                       # rename: new\0old
+        if xy[0] in "RC":                   # rename/copy: new\0old（轻审 P7：C 同消费）
             old_rel = next(it, "")
             files.append({"rel": rel.replace("\\", "/"), "path": rel,
-                          "st": "R", "old_rel": old_rel.replace("\\", "/")})
+                          "st": st, "old_rel": old_rel.replace("\\", "/")})
         else:
             files.append({"rel": rel.replace("\\", "/"), "path": rel, "st": st})
     rc, rev, _e = _run(["git", "rev-parse", "--short", "HEAD"], wc, 10)
@@ -273,6 +282,12 @@ def vcs_status():
     vcs, wc, err, _tool_ok = _guard(data.get("root"))
     if err:
         return err
+    # v3.5.118（轻审 P3）：「未安装 = tool:False 占位」设计内首态——status 是
+    # 只读探测，未装 CLI 时返回 200 + 空 files，前端渲染占位而非报错
+    if not _tool(vcs):
+        return jsonify({"ok": True, "vcs": vcs, "tool": False, "branch": "",
+                        "rev": "", "ahead": 0, "behind": 0,
+                        "files": [], "truncated": 0})
     res, e = (_git_status(wc) if vcs == "git" else _svn_status(wc))
     if e:
         return jsonify({"ok": False, "err": e}), 500
@@ -332,23 +347,25 @@ def vcs_log():
 def _git_old_bytes(wc, rel, st):
     if st == "A":                           # 新增文件：旧版为空
         return b""
-    p = subprocess.run(["git", "show", "HEAD:%s" % rel], cwd=wc,
-                       capture_output=True, timeout=VCS_TIMEOUT_RO,
-                       creationflags=CREATE_NO_WINDOW)
-    if p.returncode != 0:
+    try:                                    # 轻审 P6：超时/异常降级空旧版
+        p = subprocess.run(["git", "show", "HEAD:%s" % rel], cwd=wc,
+                           capture_output=True, timeout=VCS_TIMEOUT_RO,
+                           creationflags=CREATE_NO_WINDOW)
+        return p.stdout if p.returncode == 0 else b""
+    except Exception:
         return b""
-    return p.stdout
 
 
 def _svn_old_bytes(wc, rel, st):
     if st == "A":
         return b""
-    p = subprocess.run(["svn", "cat", "-r", "BASE", os.path.join(wc, rel)],
-                       cwd=wc, capture_output=True, timeout=VCS_TIMEOUT_RO,
-                       creationflags=CREATE_NO_WINDOW)
-    if p.returncode != 0:
+    try:
+        p = subprocess.run(["svn", "cat", "-r", "BASE", os.path.join(wc, rel)],
+                           cwd=wc, capture_output=True, timeout=VCS_TIMEOUT_RO,
+                           creationflags=CREATE_NO_WINDOW)
+        return p.stdout if p.returncode == 0 else b""
+    except Exception:
         return b""
-    return p.stdout
 
 
 @vcs_bp.route("/api/vcs/diff", methods=["POST"])
@@ -358,7 +375,7 @@ def vcs_diff():
     if err:
         return err
     rel = str(data.get("path") or "").replace("\\", "/").strip()
-    if not rel or rel.startswith("/") or ".." in rel.split("/"):
+    if _bad_rel(rel):
         return jsonify({"ok": False, "err": "非法文件路径"}), 400
     full = os.path.join(wc, *rel.split("/"))
     st = str(data.get("st") or "M")
@@ -380,8 +397,18 @@ def vcs_diff():
 # 写操作：add / commit / update（per-root 锁 + 显式确认语义）
 # ---------------------------------------------------------------------------
 
+def _bad_rel(p):
+    """rel 路径统一校验（轻审 P2）：空 / 绝对（/ 或盘符）/ .. 穿越全拒。"""
+    p = (p or "").replace("\\", "/").strip()
+    return (not p or p.startswith("/") or re.match(r"^[A-Za-z]:", p)
+            or ".." in p.split("/"))
+
+
 def _git_add_missing(wc, paths):
-    """勾选中未跟踪的先 add（git 提交 pathspec 限定时未跟踪文件必须先入索引）。"""
+    """勾选中未跟踪的先 add（git 提交 pathspec 限定时未跟踪文件必须先入索引）。
+    v3.5.118（轻审 P1 严重）：porcelain -z 的 untracked token 是 "?? path"
+    （两个问号+空格）——旧代码 startswith("? ")+tok[2:] 永假，新文件从不
+    自动 add，git commit 原子失败连坐同组已跟踪文件。"""
     rc, out, _e = _run(["git", "-c", "core.quotepath=false",
                         "status", "--porcelain=v1", "-z"], wc, VCS_TIMEOUT_RO)
     if rc != 0:
@@ -390,10 +417,10 @@ def _git_add_missing(wc, paths):
     toks = out.split("\0")
     it = iter(toks)
     for tok in it:
-        if tok.startswith("? "):
-            untracked.add(tok[2:].replace("\\", "/"))
-        elif tok.startswith("R  "):
-            next(it, None)                  # rename 的 old 占位跳过
+        if tok.startswith("?? "):
+            untracked.add(tok[3:].replace("\\", "/"))
+        elif tok[:2] in ("R ", "C "):
+            next(it, None)                  # rename/copy 的 old 占位跳过
     want = [p for p in paths if p.replace("\\", "/") in untracked]
     if want:
         _run(["git", "add", "--"] + want, wc, VCS_TIMEOUT_RW)
@@ -406,10 +433,8 @@ def vcs_add():
     if err:
         return err
     paths = [str(p).replace("\\", "/") for p in (data.get("paths") or []) if p]
-    if not paths:
-        return jsonify({"ok": False, "err": "未选择文件"}), 400
-    if any(p.startswith("/") or ".." in p.split("/") for p in paths):
-        return jsonify({"ok": False, "err": "非法文件路径"}), 400
+    if not paths or any(_bad_rel(p) for p in paths):
+        return jsonify({"ok": False, "err": "未选择文件或路径非法"}), 400
     with _root_lock(wc):
         if vcs == "git":
             rc, out, e = _run(["git", "add", "--"] + paths, wc, VCS_TIMEOUT_RW)
@@ -431,10 +456,8 @@ def vcs_commit():
     if not msg:
         return jsonify({"ok": False, "err": "提交说明必填"}), 400
     paths = [str(p).replace("\\", "/") for p in (data.get("paths") or []) if p]
-    if not paths:
-        return jsonify({"ok": False, "err": "未选择文件"}), 400
-    if any(p.startswith("/") or ".." in p.split("/") for p in paths):
-        return jsonify({"ok": False, "err": "非法文件路径"}), 400
+    if not paths or any(_bad_rel(p) for p in paths):
+        return jsonify({"ok": False, "err": "未选择文件或路径非法"}), 400
     with _root_lock(wc):
         if vcs == "git":
             _git_add_missing(wc, paths)

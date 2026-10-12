@@ -23,12 +23,6 @@
     _vcsEl = sc;
     sc.innerHTML = '<div class="hg-vcs-loading">…</div>';
   }
-  function _vcsOpen() {              // 用户主动点 tab/入口：开分屏激活版本页
-    _vcsEnsure();
-    _subShow(_SUB_VCS); _subTabsPaint(); _subActivate(_SUB_VCS);
-    _sub.manual = true;
-    _vcsActivate(true);
-  }
   function _vcsReset() {             // 分屏清场/伪 tab 关闭：引用随 _sub.tabs 拆档置空
     _vcsEl = null;
     _HG.vcs = { root: (_HG.vcs || {}).root || '', data: null, log: null,
@@ -106,7 +100,7 @@
       _vcsEl.innerHTML = rootsSel +
         `<div class="hg-vcs-empty">${esc(D.err)}</div>` +
         `<div class="hg-vcs-acts"><button class="btn ghost" name="hg_vcs_refresh">⟳ 重试</button></div>`;
-      _vcsBind(rootsSel !== '');
+      _vcsBind(true);
       return;
     }
     const head = _vcsHeadHtml(D);

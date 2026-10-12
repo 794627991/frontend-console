@@ -127,6 +127,30 @@ def main():
     check("未登记根 → 400 + 中文 err", r.status_code == 400
           and not j.get("ok") and "文件树" in (j.get("err") or ""), str(j))
 
+    print("== 5.5 _git_add_missing 真实 porcelain 字节（v3.5.118 轻审 P1 回归锚）==")
+    z2 = (b" M tracked.py\x00"
+          b"?? untracked.txt\x00")
+    captured = []
+    orig2 = vcs._run
+    def _fake_run(argv, cwd, to):
+        captured.append(list(argv))
+        if "status" in argv:
+            return 0, z2.decode("utf-8"), ""
+        return 0, "", ""
+    vcs._run = _fake_run
+    try:
+        vcs._git_add_missing("D:\\fake", ["tracked.py", "untracked.txt"])
+        add_calls = [a for a in captured if a[1] == "add"]
+        check("untracked 识别并自动 add（?? 前缀解析）",
+              len(add_calls) == 1 and add_calls[0][-1] == "untracked.txt"
+              and "tracked.py" not in add_calls[0], str(add_calls))
+    finally:
+        vcs._run = orig2
+    check("rel 校验拒盘符穿越", all(vcs._bad_rel(x) for x in
+          ("C:/etc/passwd", "c:\\x", "a/../b", "/abs", "")))
+    check("rel 校验放行正常相对路径", not any(vcs._bad_rel(x) for x in
+          ("src/main.c", "a b.txt", "x[1].c", "深/目录/文件.py")))
+
     print("== 6. 临时件物化与清理 ==")
     vcs._TMP_KEEP_S = 0           # 全部视为过期
     p1 = vcs._tmp_materialize(b"AAA", "a.txt")
