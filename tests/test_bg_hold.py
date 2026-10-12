@@ -51,23 +51,21 @@ def _tally_task(s, tid, subagent_type="designer", bg=True):
 def test_hold_keeps_busy_and_defers_settle():
     """P3/P4（复核R3 改真实调用）：源码绊网验证 reader hold 行为——
     ①hold 分支 busy 维持与 _held 置位；②中间 result 不落 busy（hold 守卫
-    在 turn_complete 之前）；③bg 空分支才 settle/turn_end。"""
+    在 turn_complete 之前）；③settle/turn_end 只在真收尾分支。"""
     src = open(os.path.join(ROOT, "src", "harness", "session.py"),
                encoding="utf-8").read()
-    head = src.index('if typ == "result":')
-    tail = src.index('except Exception:\n            pass\n        finally:')
-    seg = src[head:tail]
-    # ①hold 分支先立旗并维持 busy（同 _busy_lock 临界）
-    assert 'if typ == "result" and _hold_now:' in seg
-    assert seg.index("_held = True") < seg.index('if typ == "result" and not _hold_now:')
-    # ②busy 落 False 受 _HG.hold 同款守卫（前端）/ _hold_now 快照（后端）双闸
-    assert "if not _hold_now:" in seg and "self.busy = False" in seg
-    # ③settle/turn_end 只在真收尾分支（not _hold_now）
-    assert seg.index('"turn_complete"') < seg.index('_audit_settle("result")') \
-        < seg.index("self._turn_end()")
-    # 中间 result 分支（_hold_now=True 路径）不得出现 settle/turn_end
-    hold_seg = seg[seg.index('and _hold_now:'):seg.index('"turn_complete"')]
+    # ①hold 分支：立 _held + busy 维持 True（同 _busy_lock 临界）
+    h = src.index('if typ == "result" and _hold_now:')
+    hold_seg = src[h:src.index('"turn_complete"')]
+    assert "self._held = True" in hold_seg
+    assert "self.busy = True" in hold_seg
+    # ②中间 result 分支不得出现 settle/turn_end（defer 语义）
     assert "_audit_settle" not in hold_seg and "_turn_end()" not in hold_seg
+    # ③真收尾分支：turn_complete → 清 _held → settle → turn_end 顺序
+    t = src.index('"turn_complete"')
+    tail_seg = src[t:t + 800]
+    assert "self._held = False" in tail_seg
+    assert tail_seg.index('_audit_settle("result")') < tail_seg.index("self._turn_end()")
     print("hold defer PASS")
 
 
