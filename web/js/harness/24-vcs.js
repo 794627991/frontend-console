@@ -31,9 +31,166 @@
     sc.innerHTML = '<div class="hg-vcs-loading">…</div>';
   }
   function _vcsReset() {             // 分屏清场/伪 tab 关闭：引用随 _sub.tabs 拆档置空
+    _vcsHistClose();                 // v3.5.133（designer D10）：弹窗防御性关闭——唯一收口防陈旧态
     _vcsEl = null;
     _HG.vcs = { root: (_HG.vcs || {}).root || '', data: null, log: null,
                 out: '', busy: false, sel: new Set(), ts: 0 };
+  }
+
+  // ==================== v3.5.133 提交历史弹窗（designer 方案 v1）====================
+  // 左列表(≤100)右详情 master-detail；数据吃 _HG.vcs.log 共享源（秒开），
+  // 打开时后台补刷新；点文件 → commit_diff → buildDiffViewerTab 主区 diff tab
+  //（harness tab 隐藏不销毁，回切弹窗原样）；Esc/遮罩/按钮/reset 四路关闭
+  // 全走 _vcsHistClose 唯一收口。
+  let _vcsHist = null;               // {ov, sel, seq, files:Map, escFn}
+
+  function _vcsFmtDt(iso) {
+    const d = new Date(iso);
+    if (isNaN(d)) return String(iso || '');
+    const p = n => String(n).padStart(2, '0');
+    return (d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+
+  // 公共 diff 点击（designer 5.7）：面板展开行与弹窗详情共用一份实现
+  function _vcsFileDiffClick(rev, path, st, rowEl) {
+    (async () => {
+      if (rowEl) rowEl.style.opacity = '.5';
+      try {
+        const j = await (await fetch('/api/vcs/commit_diff', { method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ root: _HG.vcs.root, rev, path, st }) })).json();
+        if (j.ok) { try { buildDiffViewerTab(j.a, j.b); } catch (e) { showBanner('diff 打开失败：' + e, 4000, true); } }
+        else showBanner('提交 diff 获取失败：' + (j.err || ''), 4000, true);
+      } catch (e) { showBanner('提交 diff 获取失败：' + e, 4000, true); }
+      if (rowEl) rowEl.style.opacity = '';
+    })();
+  }
+
+  function _vcsHistOpen() {
+    if (_vcsHist) { return; }        // 双开守卫
+    const D = _HG.vcs.data;
+    if (!D || !D.tool) { showBanner('当前工程不可用版本控制操作', 3000, true); return; }
+    const ov = document.createElement('div');
+    ov.className = 'hg-modal-ov';
+    const escFn = (e) => { if (e.key === 'Escape') _vcsHistClose(); };
+    document.addEventListener('keydown', escFn);
+    _vcsHist = { ov, sel: null, seq: 0, files: new Map(), escFn };
+    ov.innerHTML =
+      `<div class="hg-modal hg-modal-vcslog">` +
+        `<div class="hg-modal-title">📜 提交历史 · ${esc(D.vcs || '')}${D.branch ? ' · ⎇ ' + esc(D.branch) : ''}</div>` +
+        `<div class="hg-vcs-hbody">` +
+          `<div class="hg-vcs-hlist" data-vcs-hlist></div>` +
+          `<div class="hg-vcs-hdetail" data-vcs-hdetail>` +
+            `<div class="hg-vcs-empty">← 在左侧选择一个提交查看详情</div>` +
+          `</div>` +
+        `</div>` +
+        `<div class="hg-modal-acts">` +
+          `<button class="btn ghost" data-vcs-hrefresh>⟳ 刷新</button>` +
+          `<span style="flex:1"></span>` +
+          `<button class="btn ghost" data-vcs-hclose>关闭</button>` +
+        `</div>` +
+      `</div>`;
+    ov.addEventListener('click', (e) => { if (e.target === ov) _vcsHistClose(); });
+    ov.querySelector('[data-vcs-hclose]').onclick = () => _vcsHistClose();
+    ov.querySelector('[data-vcs-hrefresh]').onclick = () => _vcsReloadLog();
+    _hgWrap.appendChild(ov);
+    _vcsHistPaintList(false);
+    if (!_HG.vcs.log && !_vcsLogBusy) _vcsReloadLog();   // 无缓存即拉；有缓存秒开后台补新
+  }
+
+  function _vcsHistClose() {
+    if (!_vcsHist) return;
+    try { document.removeEventListener('keydown', _vcsHist.escFn); } catch (_) {}
+    _vcsHist.ov.remove();
+    _vcsHist = null;
+  }
+
+  function _vcsHistPaintList(keepSel) {
+    if (!_vcsHist) return;
+    const listEl = _vcsHist.ov.querySelector('[data-vcs-hlist]');
+    if (!listEl) return;
+    const log = _HG.vcs.log;
+    if (!log) {
+      listEl.innerHTML = '<div class="hg-vcs-empty">' + (_vcsLogBusy ? '加载中…' : '暂无数据——点 ⟳ 刷新') + '</div>';
+      return;
+    }
+    if (!log.length) { listEl.innerHTML = '<div class="hg-vcs-empty">还没有提交记录</div>'; return; }
+    if (keepSel && _vcsHist.sel && !log.some(c => c.rev === _vcsHist.sel)) {
+      _vcsHist.sel = null;   // 刷新后选中提交被顶掉——详情回空态
+      const d = _vcsHist.ov.querySelector('[data-vcs-hdetail]');
+      if (d) d.innerHTML = '<div class="hg-vcs-empty">← 在左侧选择一个提交查看详情</div>';
+    }
+    listEl.innerHTML = log.map(c =>
+      `<div class="hg-vcs-hlrow${c.rev === _vcsHist.sel ? ' on' : ''}" data-hrev="${esc(c.rev || '')}">` +
+        `<span class="hg-vcs-logrev">${esc(c.short || c.rev || '')}</span>` +
+        `<span class="hg-vcs-logmsg">${esc((c.msg || '').slice(0, 44))}</span>` +
+        `<span class="hg-vcs-logdt">${esc(_vcsFmtDt(c.date))}</span>` +
+        `<span class="hg-vcs-logau">${esc(c.author || '')}</span>` +
+      `</div>`).join('') +
+      (log.length >= 100
+        ? '<div class="hg-vcs-hlfoot">已显示最近 100 条（更早请用命令行）</div>'
+        : `<div class="hg-vcs-hlfoot">共 ${log.length} 条</div>`);
+    listEl.querySelectorAll('[data-hrev]').forEach(row => {
+      row.onclick = () => _vcsHistSelect(row.dataset.hrev);
+    });
+  }
+
+  function _vcsHistSelect(rev) {
+    if (!_vcsHist || !rev) return;
+    _vcsHist.sel = rev;
+    _vcsHist.ov.querySelectorAll('[data-hrev]').forEach(r =>
+      r.classList.toggle('on', r.dataset.hrev === rev));
+    _vcsHistDetail(rev);
+  }
+
+  function _vcsHistDetail(rev) {
+    if (!_vcsHist) return;
+    const dEl = _vcsHist.ov.querySelector('[data-vcs-hdetail]');
+    if (!dEl) return;
+    const c = (_HG.vcs.log || []).find(x => x.rev === rev);
+    if (!c) { dEl.innerHTML = '<div class="hg-vcs-empty">提交不在列表中（可能已被顶掉）</div>'; return; }
+    const seq = ++_vcsHist.seq;      // designer D6：连点竞态——旧响应丢弃
+    const cached = _vcsHist.files.get(rev);
+    const _meta = () =>
+      `<div class="hg-vcs-hmeta"><b title="${esc(c.rev)}">${esc(c.short || c.rev)}</b>` +
+      `<span>${esc(c.author || '')}</span><span>${esc(_vcsFmtDt(c.date))}</span></div>` +
+      `<div class="hg-vcs-hmsg">${esc(c.msg || '')}</div>` +
+      `<div class="hg-vcs-sec">改动文件</div>`;
+    if (cached) {
+      dEl.innerHTML = _meta() + (cached instanceof Error
+        ? `<div class="hg-vcs-empty">${esc(cached.message || '加载失败')}（点 ⟳ 刷新重试）</div>`
+        : (cached.length
+          ? cached.map(f => `<div class="hg-vcs-cfrow" data-hpath="${esc(f.path)}" data-hst="${esc(f.st)}">${esc(f.st)} ${esc(f.path)}</div>`).join('')
+          : '<div class="hg-vcs-empty">该提交无文件级改动记录</div>'));
+      dEl.querySelectorAll('.hg-vcs-cfrow').forEach(fr =>
+        fr.onclick = () => _vcsFileDiffClick(rev, fr.dataset.hpath, fr.dataset.hst, fr));
+      return;
+    }
+    dEl.innerHTML = _meta() + '<div class="hg-vcs-empty">加载文件清单中…</div>';
+    fetch('/api/vcs/commit_files', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ root: _HG.vcs.root, rev }) })
+      .then(r => r.json()).then(j => {
+        if (!_vcsHist || _vcsHist.sel !== rev || _vcsHist.seq !== seq) return;   // 竞态守卫
+        if (!j.ok) {
+          _vcsHist.files.set(rev, new Error(j.err || '获取失败'));
+        } else {
+          const fl = j.files || [];
+          _vcsHist.files.set(rev, fl);
+          dEl.innerHTML = _meta() + (fl.length
+            ? fl.map(f => `<div class="hg-vcs-cfrow" data-hpath="${esc(f.path)}" data-hst="${esc(f.st)}">${esc(f.st)} ${esc(f.path)}</div>`).join('')
+              + (fl.length >= 200 ? '<div class="hg-vcs-hlfoot">至多显示前 200 个文件</div>' : '')
+            : '<div class="hg-vcs-empty">该提交无文件级改动记录</div>');
+          dEl.querySelectorAll('.hg-vcs-cfrow').forEach(fr =>
+            fr.onclick = () => _vcsFileDiffClick(rev, fr.dataset.hpath, fr.dataset.hst, fr));
+          return;
+        }
+        _vcsHistDetail(rev);   // 错误缓存态重绘
+      }).catch(e => {
+        if (!_vcsHist || _vcsHist.sel !== rev || _vcsHist.seq !== seq) return;
+        _vcsHist.files.set(rev, new Error(String(e)));
+        _vcsHistDetail(rev);
+      });
   }
   let _vcsTick = null;
   function _vcsTickStart() {         // v3.5.124（用户需求）：激活期 60s 静默轮询
@@ -82,11 +239,14 @@
     _vcsLogBusy = true;
     fetch('/api/vcs/log', { method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ root: _HG.vcs.root, limit: 30 }) })
+      // v3.5.133（designer D3）：一次拉 100 存共享源——面板 slice(0,20) 渲染、
+      // 提交历史弹窗全量渲染，单请求双视图
+      body: JSON.stringify({ root: _HG.vcs.root, limit: 100 }) })
       .then(r => r.json()).then(j => {
         _vcsLogBusy = false;
         _HG.vcs.log = j.ok ? (j.commits || []) : null;
         _vcsPaint();
+        if (_vcsHist) _vcsHistPaintList(true);   // 弹窗开着：保选中重绘左列
       }).catch(() => { _vcsLogBusy = false; });
   }
   function _vcsApi(path, body, label, done) {
@@ -137,14 +297,18 @@
           + (D.truncated ? `<div class="hg-vcs-more">还有 ${D.truncated} 个文件未显示（用命令行查看）</div>` : '')
         : `<div class="hg-vcs-empty">工作区干净，没有未提交的改动。</div>`) +
       (_HG.vcs.out ? `<div class="hg-vcs-out"><div class="hg-vcs-out-t">上次命令输出</div><pre>${esc(_HG.vcs.out.slice(0, 4000))}</pre></div>` : '') +
-      `<div class="hg-vcs-acts"><button class="btn ghost" name="hg_vcs_logbtn" ${canOp ? '' : 'disabled'}>📜 最近提交</button>` +
+      `<div class="hg-vcs-acts"><button class="btn ghost" name="hg_vcs_logbtn" ${canOp ? '' : 'disabled'}>📜 提交历史</button>` +
       `<button class="btn ghost" name="hg_vcs_refresh" ${_HG.vcs.busy ? 'disabled' : ''}>⟳ 刷新</button></div>` +
-      (_HG.vcs.log ? `<div class="hg-vcs-sec">最近提交（点行看该提交改了什么）</div>` + _HG.vcs.log.map(c =>
+      // v3.5.133（用户拍板「面板只显示最近20条」）：内嵌列表 20 封顶，全量
+      // 走「提交历史」弹窗（_vcsHistOpen）
+      (_HG.vcs.log ? `<div class="hg-vcs-sec">最近提交（点行看该提交改了什么）</div>` + _HG.vcs.log.slice(0, 20).map(c =>
         `<div class="hg-vcs-logrow" data-vcsrev="${esc(c.rev || '')}" title="${esc(c.msg || '')}" style="cursor:pointer;">` +
         `<span class="hg-vcs-logrev">${esc(c.short || c.rev || '')}</span>` +
         `<span class="hg-vcs-logmsg">${esc((c.msg || '').slice(0, 60))}</span>` +
         `<span class="hg-vcs-logau">${esc(c.author || '')}</span></div>` +
-        `<div class="hg-vcs-cfiles" data-vcsfiles="${esc(c.rev || '')}" style="display:none;"></div>`).join('')
+        `<div class="hg-vcs-cfiles" data-vcsfiles="${esc(c.rev || '')}" style="display:none;"></div>`).join('') +
+        (_HG.vcs.log.length > 20
+          ? `<div class="hg-vcs-hlfoot">已显示最近 20 / 共 ${_HG.vcs.log.length} 条——点上方 📜 看全部</div>` : '')
         : '');
     _vcsBind(true);
   }
@@ -207,9 +371,10 @@
     _vcsEl.querySelectorAll('[name="hg_vcs_refresh"]').forEach(b =>
       b.onclick = () => { _HG.vcs.sel = new Set(); _vcsReload(); });
     const lb = _vcsEl.querySelector('[name="hg_vcs_logbtn"]');
-    // v3.5.127（用户实锤「提交后点刷新不显示最新提交，要点两次」）：旧逻辑
-    // 有数据时第一次点只清空不重拉——无条件重拉才是「刷新」语义
-    if (lb) lb.onclick = () => _vcsReloadLog();
+    // v3.5.133（用户需求「历史提交新增一个弹窗 UI 式显示」）：按钮改开
+    // 提交历史弹窗（打开时后台补刷新——v3.5.127「无条件重拉」语义由弹窗
+    // 承接：无缓存即拉，有缓存先显后刷）
+    if (lb) lb.onclick = () => _vcsHistOpen();
     _vcsEl.querySelectorAll('.hg-vcs-ck').forEach(ck => ck.onchange = () => {
       if (ck.checked) _HG.vcs.sel.add(ck.dataset.rel); else _HG.vcs.sel.delete(ck.dataset.rel);
       const cb = _vcsEl.querySelector('[name="hg_vcs_commit"]');
