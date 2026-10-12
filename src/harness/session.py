@@ -518,10 +518,16 @@ class HarnessSession:
         # reviewer 派发记 rev_at 快照——「审后再改再审」按审后新增量判定
         st = self._audit_state()
         if st is None:
-            au["streak"] = 0
+            with self._audit_lock:
+                au["streak"] = 0
             return
-        mode, limits, strong = st
-        l1, _l2f, l2l = limits
+        mode, _l0, strong = st
+        # v3.5.121（复核R2）：线值全部来自单读 cfg（audit_limits+design_limit
+        # 同一 roles_cfg 快照）——_audit_state 内部的 limits 读弃用，消除
+        # design_limit 与 audit_limits 混代窗口
+        from .roles import roles_cfg as _rc, audit_limits as _al
+        l1, _l2f, l2l = _al(cfg=_rc())
+        limits = (l1, _l2f, l2l)
         line_need = l2l if strong else l1          # 需审线（light=免审线上沿 / strong=审计线）
         unaudited = lines - rev_at   # 审后未审的改动量（未审过=全部）
         viol = []
@@ -559,7 +565,8 @@ class HarnessSession:
             # 只说派 reviewer，派发方式模型自己知道。
             # v2.54：违规含设计档时续发要求先补方案（派 designer）再实施。
             # v3.5.120（用户需求「推翻重来再超线=续派审计，不是重新触发新派」）：
-            # ids 映射里已有本大回合 reviewer 的 agentId 时，补审指令改为
+            # ids 映射里已有本会话 reviewer 的 agentId 时（ids 跨回合保留、
+            # 无回合适域——死 id 由模型侧自愈，复核R5），补审指令改为
             # SendMessage 续派原 reviewer（上下文还在，审新增量）——不新派
             _rev_id = None
             for _aid, _role in reversed(list((au.get("ids") or {}).items())):

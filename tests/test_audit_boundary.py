@@ -5,9 +5,26 @@ _audit_state/_audit_card，验证 lines 跨 AI 回合累计、审后再审、fir
 水位防重复、boundary 清零。"""
 import os
 import sys
+import tempfile
 import types
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+# R1（复核残留）：隔离 CONFIG_FILE（必须在 import src.* 前改 app_state）——
+# design_limit 走 roles_cfg 读它，不隔离则读用户真 config，设计线值漂移
+# 会让本套件假失败/假通过
+import src.app_state as _st   # noqa: E402
+_TMP = tempfile.mkdtemp(prefix="audit_boundary_test_")
+_st.CONFIG_FILE = os.path.join(_TMP, "config.json")
+os.environ.setdefault("HARNESS_AGENTS_DIR", _TMP)
+# 线值显式钉死（免审100/轻审250/设计150）——R2 后 settle 用单读真实
+# audit_limits/design_limit，桩的 _audit_state limits 已弃用，不钉会漂
+import json as _json
+with open(_st.CONFIG_FILE, "w", encoding="utf-8") as _f:
+    _json.dump({"harness_roles": {"design_max_lines": 150,
+                                  "l1_max_lines": 100,
+                                  "l2_max_lines": 250}}, _f)
+
 from src.harness.session import HarnessSession   # noqa: E402
 
 
