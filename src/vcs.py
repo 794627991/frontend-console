@@ -368,6 +368,88 @@ def _svn_old_bytes(wc, rel, st):
         return b""
 
 
+@vcs_bp.route("/api/vcs/commit_files", methods=["POST"])
+def vcs_commit_files():
+    """v3.5.131：点「最近提交」行查看该提交的改动文件清单（用户需求
+    「历史提交点开查看历史修改情况」）。git：show --name-status；svn：
+    diff --summarize -c rev。rev 走 _run 原样传参（无 shell 注入面）。"""
+    data = request.get_json(force=True, silent=True) or {}
+    vcs, wc, err, _tool_ok = _guard(data.get("root"))
+    if err:
+        return err
+    rev = str(data.get("rev") or "").strip()
+    if not rev or len(rev) > 64 or not re.match(r"^[0-9a-zA-Z^-]{1,64}$", rev):
+        return jsonify({"ok": False, "err": "非法修订号"}), 400
+    files = []
+    if vcs == "git":
+        rc, out, e = _run(["git", "show", "--name-status", "--no-renames",
+                           "--format=", rev], wc, VCS_TIMEOUT_RO)
+        if rc != 0:
+            return jsonify({"ok": False, "err": e or "git show 失败"}), 500
+        for line in out.splitlines():
+            m = re.match(r"^([AMD])\t(.+)$", line)
+            if m:
+                files.append({"st": m.group(1), "path": m.group(2)})
+    else:
+        prev = "prev"   # svn -c rev 对比 rev-1:rev
+        rc, out, e = _run(["svn", "diff", "--summarize", "-c", rev, wc],
+                          wc, VCS_TIMEOUT_RO)
+        if rc != 0:
+            return jsonify({"ok": False, "err": e or "svn diff 失败"}), 500
+        for line in out.splitlines():
+            m = re.match(r"^[AMD]\s+(.+)$", line.strip())
+            if m:
+                files.append({"st": m.group(1)[0], "path": m.group(1)})
+        del prev
+    return jsonify({"ok": True, "files": files[:200]})
+
+
+@vcs_bp.route("/api/vcs/commit_diff", methods=["POST"])
+def vcs_commit_diff():
+    """v3.5.131：单文件在某提交的改动对比——父修订/该修订两版物化临时文件，
+    前端 buildDiffViewerTab 走真实路径（与 /api/vcs/diff 同机制）。"""
+    data = request.get_json(force=True, silent=True) or {}
+    vcs, wc, err, _tool_ok = _guard(data.get("root"))
+    if err:
+        return err
+    rev = str(data.get("rev") or "").strip()
+    if not rev or len(rev) > 64 or not re.match(r"^[0-9a-zA-Z^-]{1,64}$", rev):
+        return jsonify({"ok": False, "err": "非法修订号"}), 400
+    rel = str(data.get("path") or "").replace("\\", "/").strip()
+    if _bad_rel(rel):
+        return jsonify({"ok": False, "err": "非法文件路径"}), 400
+    st = str(data.get("st") or "M")
+
+    def _git_rev_bytes(spec):
+        try:
+            p = subprocess.run(["git", "show", "%s:%s" % (spec, rel)], cwd=wc,
+                               capture_output=True, timeout=VCS_TIMEOUT_RO,
+                               creationflags=CREATE_NO_WINDOW)
+            return p.stdout if p.returncode == 0 else b""
+        except Exception:
+            return b""
+
+    base = os.path.basename(rel)
+    if vcs == "git":
+        a_bytes = b"" if st == "A" else _git_rev_bytes(rev + "~1")
+        b_bytes = b"" if st == "D" else _git_rev_bytes(rev)
+        a_hint, b_hint = "%s@%s~1" % (base, rev[:8]), "%s@%s" % (base, rev[:8])
+    else:
+        def _svn_rev_bytes(r):
+            try:
+                p = subprocess.run(["svn", "cat", "-r", r, os.path.join(wc, rel)],
+                                   cwd=wc, capture_output=True, timeout=VCS_TIMEOUT_RO,
+                                   creationflags=CREATE_NO_WINDOW)
+                return p.stdout if p.returncode == 0 else b""
+            except Exception:
+                return b""
+        a_bytes = b"" if st == "A" else _svn_rev_bytes(str(int(rev) - 1))
+        b_bytes = b"" if st == "D" else _svn_rev_bytes(rev)
+        a_hint, b_hint = "%s@r%s-1" % (base, rev), "%s@r%s" % (base, rev)
+    return jsonify({"ok": True, "a": _tmp_materialize(a_bytes, a_hint),
+                    "b": _tmp_materialize(b_bytes, b_hint)})
+
+
 @vcs_bp.route("/api/vcs/diff", methods=["POST"])
 def vcs_diff():
     data = request.get_json(force=True, silent=True) or {}

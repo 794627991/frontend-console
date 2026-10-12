@@ -139,11 +139,12 @@
       (_HG.vcs.out ? `<div class="hg-vcs-out"><div class="hg-vcs-out-t">上次命令输出</div><pre>${esc(_HG.vcs.out.slice(0, 4000))}</pre></div>` : '') +
       `<div class="hg-vcs-acts"><button class="btn ghost" name="hg_vcs_logbtn" ${canOp ? '' : 'disabled'}>📜 最近提交</button>` +
       `<button class="btn ghost" name="hg_vcs_refresh" ${_HG.vcs.busy ? 'disabled' : ''}>⟳ 刷新</button></div>` +
-      (_HG.vcs.log ? `<div class="hg-vcs-sec">最近提交</div>` + _HG.vcs.log.map(c =>
-        `<div class="hg-vcs-logrow" title="${esc(c.msg || '')}">` +
+      (_HG.vcs.log ? `<div class="hg-vcs-sec">最近提交（点行看该提交改了什么）</div>` + _HG.vcs.log.map(c =>
+        `<div class="hg-vcs-logrow" data-vcsrev="${esc(c.rev || '')}" title="${esc(c.msg || '')}" style="cursor:pointer;">` +
         `<span class="hg-vcs-logrev">${esc(c.short || c.rev || '')}</span>` +
         `<span class="hg-vcs-logmsg">${esc((c.msg || '').slice(0, 60))}</span>` +
-        `<span class="hg-vcs-logau">${esc(c.author || '')}</span></div>`).join('')
+        `<span class="hg-vcs-logau">${esc(c.author || '')}</span></div>` +
+        `<div class="hg-vcs-cfiles" data-vcsfiles="${esc(c.rev || '')}" style="display:none;"></div>`).join('')
         : '');
     _vcsBind(true);
   }
@@ -227,6 +228,46 @@
             if (j.ok) { try { buildDiffViewerTab(j.a, j.b); } catch (e) { showBanner('diff 打开失败：' + e, 4000, true); } }
             else showBanner('diff 获取失败：' + (j.err || ''), 4000, true);
           }).catch(e => { _HG.vcs.busy = false; _vcsPaint(); showBanner('diff 获取失败：' + e, 4000, true); });
+      };
+    });
+    // v3.5.131（用户批注「历史提交无法点开查看」）：提交行点击展开该提交
+    // 改动文件清单；文件行点击物化父/本修订两版开 diff 对比
+    _vcsEl.querySelectorAll('.hg-vcs-logrow[data-vcsrev]').forEach(row => {
+      row.onclick = async () => {
+        const rev = row.dataset.vcsrev;
+        const box = _vcsEl.querySelector('[data-vcsfiles="' + CSS.escape(rev) + '"]');
+        if (!rev || !box) return;
+        if (box.style.display !== 'none') { box.style.display = 'none'; return; }   // 再点收起
+        if (!box.dataset.loaded) {
+          box.innerHTML = '<div class="hg-vcs-empty">加载中…</div>';
+          box.style.display = 'block';
+          try {
+            const j = await (await fetch('/api/vcs/commit_files', { method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ root: _HG.vcs.root, rev }) })).json();
+            if (!j.ok) { box.innerHTML = '<div class="hg-vcs-empty">' + esc(j.err || '获取失败') + '</div>'; return; }
+            box.dataset.loaded = '1';
+            box.innerHTML = (j.files || []).map(f =>
+              `<div class="hg-vcs-cfrow" data-rev="${esc(rev)}" data-path="${esc(f.path)}" data-st="${esc(f.st)}" title="查看该提交中此文件的改动">${esc(f.st)} ${esc(f.path)}</div>`).join('')
+              || '<div class="hg-vcs-empty">该提交无文件级改动记录</div>';
+            box.querySelectorAll('.hg-vcs-cfrow').forEach(fr => {
+              fr.onclick = async () => {
+                fr.style.opacity = '.5';
+                try {
+                  const j2 = await (await fetch('/api/vcs/commit_diff', { method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ root: _HG.vcs.root, rev,
+                                           path: fr.dataset.path, st: fr.dataset.st }) })).json();
+                  if (j2.ok) buildDiffViewerTab(j2.a, j2.b);
+                  else showBanner('提交 diff 获取失败：' + (j2.err || ''), 4000, true);
+                } catch (e) { showBanner('提交 diff 获取失败：' + e, 4000, true); }
+                fr.style.opacity = '';
+              };
+            });
+          } catch (e) {
+            box.innerHTML = '<div class="hg-vcs-empty">获取失败：' + esc(String(e)) + '</div>';
+          }
+        } else box.style.display = 'block';
       };
     });
     _vcsEl.querySelectorAll('[name="hg_vcs_addone"]').forEach(b => b.onclick = (e) => {

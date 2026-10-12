@@ -4441,3 +4441,9 @@ span.h-ag-type[class*='h-ava-'] {
 .hg-vcs-msg { width: 100%; margin-top: 8px; background: var(--bg-input); color: var(--fg);
   border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
   font-size: 12px; resize: vertical; }
+
+/* v3.5.131：提交详情文件行（点提交行展开） */
+.hg-vcs-cfiles { padding: 0 8px 6px 26px; }
+.hg-vcs-cfrow { font-size: var(--fs-xs); font-family: var(--font-mono); color: var(--fg);
+  padding: 3px 6px; border-radius: 5px; cursor: pointer; }
+.hg-vcs-cfrow:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
