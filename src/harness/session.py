@@ -522,12 +522,12 @@ class HarnessSession:
                 au["streak"] = 0
             return
         mode, _l0, strong = st
-        # v3.5.121（复核R2）：线值全部来自单读 cfg（audit_limits+design_limit
-        # 同一 roles_cfg 快照）——_audit_state 内部的 limits 读弃用，消除
-        # design_limit 与 audit_limits 混代窗口
+        # v3.5.121→122（复核R2 两次打回的正解）：audit_limits+design_limit
+        # 共用**同一个 _cfg 对象**（单读单快照）——上次只同源了读法、仍是
+        # 两次 _rc() 独立读，混代窗口原样（复核实测混出混合线卡）
         from .roles import roles_cfg as _rc, audit_limits as _al
-        l1, _l2f, l2l = _al(cfg=_rc())
-        limits = (l1, _l2f, l2l)
+        _cfg = _rc()
+        l1, _l2f, l2l = _al(cfg=_cfg)
         line_need = l2l if strong else l1          # 需审线（light=免审线上沿 / strong=审计线）
         unaudited = lines - rev_at   # 审后未审的改动量（未审过=全部）
         viol = []
@@ -541,8 +541,7 @@ class HarnessSession:
             else:
                 viol.append("主会话直改累计 %d 行，超过轻审线（≤%d 行）属大改，其中 %d 行尚未派 reviewer 取证级全审"
                             % (lines, l2l, unaudited))
-        from .roles import roles_cfg as _rc
-        dl = design_limit(cfg=_rc())   # P8：与 audit_limits 同源一次读（此前 cfg=None 二次盘读，保存瞬间可混代）
+        dl = design_limit(cfg=_cfg)   # P8+v3.5.122：与 audit_limits 同一 _cfg 快照（零二次读）
         if dl > 0 and not designed and lines >= dl and lines > fired:
             viol.append("主会话直改累计 %d 行，达到设计线（≥%d 行）属大改，尚未先派 designer 出框架方案——大改须方案先行"
                         % (lines, dl))
