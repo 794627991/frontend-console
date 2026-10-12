@@ -10,6 +10,10 @@
   let _vcsEl = null;                 // 版本页 sc 容器（随 _subReset/_subDrop 清）
   let _vcsLogBusy = false;           // log 拉取防连点
   let _vcsTs = 0;                    // 上次 status 拉取时刻（30s 激活缓存）
+  let _vcsTick = null;               // v3.5.146（用户实锤「版本全挂」）：补声明——v3.5.124 引入
+                                     // _vcsTickStart 时漏了 let，读未声明变量 ReferenceError 被
+                                     // _subActivate 的 try-catch 吞掉=_vcsReload 永不执行、版本
+                                     // tab 永停「…」占位（_undef_check 早报过、被当存量噪音放过）
   const _VCS_ST_CLS = { M: 'm', A: 'a', D: 'd', R: 'r', '?': 'u', C: 'c', '!': 'd' };
   const _VCS_ST_TXT = { M: '改', A: '增', D: '删', R: '移', '?': '未纳管', C: '冲突', '!': '丢失' };
 
