@@ -247,14 +247,14 @@
     _subTabsPaint();
     if (!_sub.order.length && _subPaneEl) _subPaneEl.style.display = 'none';
   }
-  function _hgAgentsSweep(markErr) {     // 回合终结：在跑的子代理统一收尾（防假"运行中"）
+  function _hgAgentsSweep(markErr, forceBg) {     // 回合终结：在跑的子代理统一收尾（防假"运行中"）
     if (!_HG.agents) {
       // v2.43.1（R-FAIL1）：档案缺失（切会话往返重置）——按 DOM 段兜底定格
       // （重放 result/interrupted/exit 到达时档案三路全早退，段头会永久假
       // 「运行中」）。data-hg-bg 段非中断不收（后台代理跨回合续跑，与档案
       // 路径同语义——标记在段创建时从档案落 dataset，随快照携带）
       _hgFlow.querySelectorAll('.h-subblock:not(.done)').forEach(el => {
-        if (!markErr && el.dataset.hgBg === '1') return;
+        if (!markErr && !forceBg && el.dataset.hgBg === '1') return;
         const pid = el.dataset.hgSubblock;
         if (pid) _subBlkFinish(pid, !!markErr);
       });
@@ -265,7 +265,11 @@
       const a = _HG.agents[id];
       // v2.35：后台代理（bg）在主回合 result 时不收——它还在跑，收尾信号是
       // task_notification；中断/退出（markErr）照收：进程没了，一切皆停
-      if (!a.done && !(a.bg && !markErr)) {
+      // v3.5.143：forceBg——turn_complete（大回合真收尾，后端 bg 集已空/已
+      // 硬顶释放）时强收 bg 残留为「已工作」非 err：notification 丢失或 30min
+      // 硬顶后卡片不死跑（result 正常路径不传——hold 机制保证 bg 在飞时
+      // 到不了那）
+      if (!a.done && !(a.bg && !markErr && !forceBg)) {
         a.done = true; a.doneAt = Date.now();
         if (markErr) { a.err = true; a.interrupted = true; }
         _subBlkFinish(id, !!a.err);   // v2.43：主 flow 段头同步定格（防假"运行中"，bg 不收尾同档案语义）

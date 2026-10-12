@@ -430,14 +430,20 @@
       if (a.done) { delete lv[t]; continue; }
       _HG.agents = _HG.agents || {};
       _HG.agents[t] = a;
-      // v3.4.55（轻审 P1 修正）：行卡写**运行**徽章——_hgAgentRowState(t,false)
-      // 是收口函数会盖「完成」绿徽，方向正好反了（假完成的镜像 bug）。
-      // hgSubr 回绑那半是对的，保留
-      const r = (_HG.rowById || {})[t];
+      // v3.5.143（用户批注「切会话(ABA)，过程显示就没了」）：档案回填扩到
+      // **行回绑**——转写重渲的 agentline 行是伪 tid（07-hist 'ag'+hi）不进
+      // rowById，旧码 rowById[t] 必 miss=秒表不复活、_subLivePaint 喂不到卡
+      // （轮询数据源本就在，卡在「行的键对不上」）。认回重挂真键后，
+      // 轮询喂卡/过程计数/点击回放/完成通知四路全通
+      const r = (_HG.rowById || {})[t] || _hgAgentRowFindByDesc(a);
       if (r && r.classList.contains('agentline')) {
-        const stEl = r.querySelector('.h-tslots');
-        if (stEl) stEl.innerHTML = statusBadge('running');
+        r.dataset.tid = t;            // 伪键重挂真键（'ag' 前缀与真 tid 无碰撞）
+        _HG.rowById[t] = r;
+        if (a.taskId && /^[0-9a-zA-Z_-]{8,64}$/.test(a.taskId)) r.dataset.hgSubr = a.taskId;
+        // v3.4.55 旧径保留：徽章画运行态；v3.5.143 秒表复活（时长连续不
+        // 归零，t0 用档案起跑时刻——切走多久都不重计）
         try { _hgAgentRowBindAid(t, r); } catch (_) {}
+        _hgAgentRowTimerRestart(r, a.t0 || Date.now());
       }
     }
     // v3.4.55（轻审 P3）：回放档案去重——同名（desc 相等）回放条目与 live
@@ -446,6 +452,39 @@
     if (_lvDescs.size && _HG.dyn && Array.isArray(_HG.dyn.agentsRpl))
       _HG.dyn.agentsRpl = _HG.dyn.agentsRpl.filter(x => !(x.replay && x.desc && _lvDescs.has(x.desc)));
     if (!Object.keys(lv).length) delete _HG.liveAgentsBy[sid];
+  }
+  // v3.5.143：按档案认回转写重渲的伪 tid 行。hgSubr===taskId 精确匹配优先
+  //（task_started 落的 id 与回放行回绑的 hgSubr 同源）；退化按 desc 等值
+  //（与 _hgLiveAgentRunning 同口径，hgSubDesc 工厂侧 slice(0,120) 对齐），
+  // 只认未完成态行（无完成摘要）防同描述历史行误绑
+  function _hgAgentRowFindByDesc(a) {
+    if (!a) return null;
+    const rows = _hgFlow.querySelectorAll('.h-tool.agentline');
+    if (a.taskId) {
+      for (const r of rows)
+        if (r.dataset.hgSubr === a.taskId && !r.querySelector('.h-tagent-brief')) return r;
+    }
+    const d = String(a.desc || '').trim().slice(0, 120);
+    if (!d) return null;
+    for (const r of rows) {
+      const tid = String(r.dataset.tid || '');
+      if (!tid || tid.indexOf('ag') === 0) {   // 伪键/无键行才可认领
+        const rd = String(r.dataset.hgSubDesc || '').trim();
+        if (rd === d && !r.querySelector('.h-tagent-brief')) return r;
+      }
+    }
+    return null;
+  }
+  // v3.5.143：秒表复活（ABA 回绑）——渲染单元与派发 interval 共用
+  // （_hgAgentSlotPaint），游离自杀守卫同款
+  function _hgAgentRowTimerRestart(r, t0) {
+    if (!r || !r.isConnected) return;
+    if (r._agentTimer) { clearInterval(r._agentTimer); r._agentTimer = null; }
+    _hgAgentSlotPaint(r, t0);
+    r._agentTimer = setInterval(() => {
+      if (!r.isConnected) { clearInterval(r._agentTimer); r._agentTimer = null; return; }
+      _hgAgentSlotPaint(r, t0);
+    }, 1000);
   }
   // v3.4.55（轻审 P2）：转写重渲路行卡是伪 tid（'ag'+hi）不进 rowById——
   // 回放工厂建行时按 desc 查桶判定「运行中」，直接画运行徽章

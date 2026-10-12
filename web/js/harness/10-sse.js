@@ -882,7 +882,7 @@
         _HG.hold = false;
         const hr = _HG.holdRes || {}; _HG.holdRes = null;
         _hgVisionSweep(true);
-        _hgAgentsSweep(false);
+        _hgAgentsSweep(false, true);   // v3.5.143：force 收 bg 残留（notification 丢失/后端硬顶释放后卡片不死跑）
         _subEnd();
         _hgPeerVerifyPending();
         _hgTurnEnd(hr.ok === false ? 'error' : 'ok', hr.durMs || 0);
