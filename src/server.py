@@ -870,7 +870,9 @@ def api_theme():
                             "term_font_size": int(tk.get("term_font_size", 13)),
                             "ui_zoom": int(tk.get("ui_zoom", 100)),
                         },
-                        "snip_hotkey": cfg.get("snip_hotkey", "ctrl+alt+a")})
+                        "snip_hotkey": cfg.get("snip_hotkey", "ctrl+alt+a"),
+                        "pin_hotkey": cfg.get("pin_hotkey", "f3"),
+                        "snip_auto_pin": bool(cfg.get("snip_auto_pin", False))})
     data = request.get_json(force=True) or {}
     if "data_dir_prompted" in data:
         # 仅写引导标记的轻请求（不带 theme 字段）
@@ -918,6 +920,17 @@ def api_theme():
         if not ok:
             return jsonify({"ok": False, "err": err}), 400
         _save_config({**_load_config(), "snip_hotkey": val})
+    # v3.5.150 贴图全局热键 + 截图自动贴开关（与 snip_hotkey 同模式：先热
+    # 替换注册，成功才落盘）
+    if "pin_hotkey" in data:
+        import src.snip as _snip
+        val = str(data["pin_hotkey"] or "").strip().lower()
+        ok, err = _snip.set_hotkey(val, slot="pin")
+        if not ok:
+            return jsonify({"ok": False, "err": err}), 400
+        _save_config({**_load_config(), "pin_hotkey": val})
+    if "snip_auto_pin" in data:
+        _save_config({**_load_config(), "snip_auto_pin": bool(data["snip_auto_pin"])})
     if "custom_theme" in data and isinstance(data["custom_theme"], dict):
         # v2.25 自定义主题调色：键白名单 + 值格式校验（#rgb/#rrgggb、light 布尔），
         # 防 config 被塞脏数据（与 term_keys 白名单同思路）
@@ -1836,6 +1849,23 @@ def snip_img():
         return data, 200, {"Content-Type": "image/bmp",
                            "Cache-Control": "no-store, max-age=0"}
     return "no image", 404
+
+
+@app.route("/api/snip/pinimg")
+def snip_pinimg():
+    """贴图窗底图（v3.5.150）：TEMP/fc_pin_<id>.png 白名单直读（id 纯数字
+    防穿越），no-store。常驻截图窗进程建的贴图窗页面拉这里。"""
+    import re as _re
+    pid = str(request.args.get("id") or "")
+    if not _re.match(r"^\d{1,6}$", pid):
+        return "bad id", 400
+    p = os.path.join(os.environ.get("TEMP", "."), "fc_pin_%s.png" % pid)
+    if not os.path.isfile(p):
+        return "no pin", 404
+    with open(p, "rb") as f:
+        data = f.read()
+    return data, 200, {"Content-Type": "image/png",
+                       "Cache-Control": "no-store, max-age=0"}
 
 
 @app.route("/api/snip/grab", methods=["POST"])
