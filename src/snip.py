@@ -188,9 +188,12 @@ def read_clipboard_image():
                 # +12 越过像素起点（全审F3 实证 V5 双计解码失败）
                 if comp == 3 and bits in (16, 32) and bisize == 40:
                     off += 12
-                elif bits <= 8:                   # 调色板（biClrUsed 在 36，
-                    nclr = struct.unpack_from("<I", blob, 36)[0] or (1 << bits)
-                    off += nclr * 4               # 32 是 biYPelsPerMeter——
+                elif bits <= 8:                   # 调色板（biClrUsed 在 32：
+                    nclr = struct.unpack_from("<I", blob, 32)[0] or (1 << bits)
+                    off += nclr * 4               # 36 是 biClrImportant——
+                                                  # v3.5.152 复核勘误：3.5.151
+                                                  # 按误报改 36 读成 Important
+                                                  # 反成回归，回到 32）
                 fh = b"BM" + struct.pack("<IHHI", 14 + len(blob), 0, 0, off)
                 from PIL import Image
                 im = Image.open(BytesIO(fh + blob))
@@ -864,6 +867,15 @@ def window_main(port, armed=False, pin_pending=False):
                 idle_since = time.time()
                 threading.Thread(target=_handle_pin, daemon=True).start()
             elif fired == "go":
+                # v3.5.152 全审F6b：收到事件即刷心跳——「ALIVE <10s 新鲜」
+                # 的语义自此成立（事件必达=心跳必新；事件未达=心跳陈旧→
+                # launch_window 的 _check 兜底 grab 正确放行，不再被
+                # 30s 周期心跳的随机龄误拦）
+                try:
+                    with open(_TMP_ALIVE, "w", encoding="utf-8") as f:
+                        json.dump({"port": int(port), "t": time.time()}, f)
+                except Exception:
+                    pass
                 # 主路径：进程内抓屏（60-120ms）+ 免 reload 唤醒
                 try:
                     _grab_only()
