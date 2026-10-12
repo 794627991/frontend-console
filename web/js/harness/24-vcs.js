@@ -66,23 +66,141 @@
     })();
   }
 
+  // ==================== v2（designer S2/S3/S4）====================
+  // 累积式分页 + 查询态分离 + 筛选工具栏 + pager + deco/复制/键盘
+  function _vcsHistQfp() {
+    const q = _vcsHist.q;
+    return JSON.stringify([q.text, q.author, q.since, q.until]);
+  }
+  function _vcsHistActive() {          // 活动数据（浏览累积 / 查询累积）
+    return _vcsHist.querying ? _vcsHist.qlog : _HG.vcs.log;
+  }
+  function _vcsHistBusy() {
+    return _vcsHist.querying ? _vcsHist.qbusy : _vcsLogBusy;
+  }
+  function _vcsHistTotal() {
+    return _vcsHist.querying ? _vcsHist.qtotal : _HG.vcs.total;
+  }
+
+  // 列表数据入口（浏览/查询路由 + lseq/指纹双竞态校验）
+  function _vcsHistFetch(reset) {
+    const H = _vcsHist;
+    if (!H) return;
+    const lseq = ++H.lseq;
+    const fp = _vcsHistQfp();
+    if (H.querying) H.qbusy = true;
+    const arr = H.querying ? H.qlog : (_HG.vcs.log = _HG.vcs.log || []);
+    const skip = reset ? 0 : arr.length;
+    const oldest = arr.length ? arr[arr.length - 1].rev : '';
+    const isSvn = ((_HG.vcs.data || {}).vcs === 'svn');
+    const body = { root: _HG.vcs.root, limit: 100, skip: isSvn ? 0 : skip };
+    if (isSvn && !reset && oldest) body.before_rev = String(parseInt(oldest, 10) - 1 || 0);
+    Object.assign(body, H.q);
+    fetch('/api/vcs/log', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body) })
+      .then(r => r.json()).then(j => {
+        if (!H || H.lseq !== lseq || _vcsHistQfp() !== fp) return;   // 竞态：旧响应丢弃
+        if (H.querying) H.qbusy = false;
+        if (!j.ok) {
+          H.fetchErr = j.err || '获取失败';
+          if (!H.querying) { _HG.vcs.log = null; _HG.vcs.total = undefined; }
+          _vcsHistPaintList(true);
+          return;
+        }
+        H.fetchErr = null;
+        const tgt = H.querying ? H.qlog : _HG.vcs.log;
+        const known = new Set(tgt.map(c => c.rev));
+        const add = (j.commits || []).filter(c => c.rev && !known.has(c.rev));
+        if (reset) { tgt.length = 0; tgt.push(...(j.commits || [])); }
+        else tgt.push(...add);
+        if (H.querying) H.qtotal = j.total;
+        else _HG.vcs.total = j.total;
+        // 漂移补齐：skip 语义下新提交顶入取不满一页 → 追拉（≤3 轮）
+        if (!reset && !isSvn && add.length < (j.commits || []).length
+            && (j.commits || []).length >= 100 && H.rounds < 3) {
+          H.rounds++;
+          _vcsHistFetch(false);
+          return;
+        }
+        H.rounds = 0;
+        if (reset && H.sel && !tgt.some(c => c.rev === H.sel)) {
+          H.sel = null;
+          const d = H.ov.querySelector('[data-vcs-hdetail]');
+          if (d) d.innerHTML = '<div class="hg-vcs-empty">← 在左侧选择一个提交查看详情</div>';
+        }
+        _vcsHistPaintList(true);
+        if (!H.querying) _vcsPaint();   // 面板共享源同步
+      }).catch(e => {
+        if (H && H.lseq === lseq) {
+          if (H.querying) H.qbusy = false;
+          H.fetchErr = String(e);
+          _vcsHistPaintList(true);
+        }
+      });
+  }
+
   function _vcsHistOpen() {
     if (_vcsHist) { return; }        // 双开守卫
     const D = _HG.vcs.data;
     if (!D || !D.tool) { showBanner('当前工程不可用版本控制操作', 3000, true); return; }
+    const isSvn = D.vcs === 'svn';
+    const size = parseInt(localStorage.getItem('hg-vcs-histsize') || '20', 10) || 20;
     const ov = document.createElement('div');
     ov.className = 'hg-modal-ov';
-    const escFn = (e) => { if (e.key === 'Escape') _vcsHistClose(); };
+    const escFn = (e) => {
+      if (e.key === 'Escape') { _vcsHistClose(); return; }
+      // S4：↑↓ 键盘导航（焦点不在输入控件时）
+      if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && _vcsHist) {
+        const t = e.target;
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA')) return;
+        const rows = Array.from(_vcsHist.ov.querySelectorAll('[data-hrev]'));
+        if (!rows.length) return;
+        e.preventDefault();
+        let idx = rows.findIndex(r => r.dataset.hrev === _vcsHist.sel);
+        idx = e.key === 'ArrowDown' ? Math.min(rows.length - 1, idx + 1)
+                                    : Math.max(0, idx <= 0 ? 0 : idx - 1);
+        rows[idx].click();
+        rows[idx].scrollIntoView({ block: 'nearest' });
+      }
+    };
     document.addEventListener('keydown', escFn);
-    _vcsHist = { ov, sel: null, seq: 0, files: new Map(), escFn };
+    _vcsHist = { ov, sel: null, seq: 0, files: new Map(), escFn,
+                 q: { text: '', author: '', since: '', until: '' },
+                 qlog: [], qbusy: false, qtotal: undefined, querying: false,
+                 page: 1, size, lseq: 0, rounds: 0, fetchErr: null, debT: null };
+    const dateInp = (k, ph) =>
+      `<input type="date" class="hg-vcs-hdate" data-vcs-hq="${k}" title="${ph}">`;
     ov.innerHTML =
       `<div class="hg-modal hg-modal-vcslog">` +
         `<div class="hg-modal-title">📜 提交历史 · ${esc(D.vcs || '')}${D.branch ? ' · ⎇ ' + esc(D.branch) : ''}</div>` +
+        `<div class="hg-vcs-htool">` +
+          `<input class="hg-vcs-hsearch" data-vcs-hq="text" placeholder="${isSvn ? '🔍 关键字（svn 整串匹配，含作者/日期）' : '🔍 关键字（多词 AND，含正文）'}" spellcheck="false">` +
+          (isSvn ? '' :
+            `<input class="hg-vcs-hauthor" data-vcs-hq="author" list="hg-vcs-authors" placeholder="👤 作者" spellcheck="false">` +
+            `<datalist id="hg-vcs-authors"></datalist>`) +
+          `<button class="btn ghost hg-vcs-chip" data-vcs-chip="today">今天</button>` +
+          `<button class="btn ghost hg-vcs-chip" data-vcs-chip="7d">近7天</button>` +
+          `<button class="btn ghost hg-vcs-chip" data-vcs-chip="30d">近30天</button>` +
+          dateInp('since', '起始日期') + `<span class="hg-vcs-hsep">~</span>` + dateInp('until', '结束日期') +
+          `<button class="btn ghost" data-vcs-hclear style="display:none;">✕ 清除筛选</button>` +
+        `</div>` +
         `<div class="hg-vcs-hbody">` +
           `<div class="hg-vcs-hlist" data-vcs-hlist></div>` +
           `<div class="hg-vcs-hdetail" data-vcs-hdetail>` +
             `<div class="hg-vcs-empty">← 在左侧选择一个提交查看详情</div>` +
           `</div>` +
+        `</div>` +
+        `<div class="hg-vcs-hpager">` +
+          `<button class="btn ghost icon-btn" data-vcs-hprev title="上一页">‹</button>` +
+          `<span data-vcs-hpginfo class="hg-vcs-hpginfo">—</span>` +
+          `<button class="btn ghost icon-btn" data-vcs-hnext title="下一页（末页自动加载更早）">›</button>` +
+          `<span class="hg-vcs-hsep">每页</span>` +
+          `<select class="hg-vcs-hsize" data-vcs-hsize>` +
+            [20, 50, 100].map(n => `<option value="${n}"${n === size ? ' selected' : ''}>${n}</option>`).join('') +
+          `</select>` +
+          `<span style="flex:1"></span>` +
+          `<span data-vcs-hcount class="hg-vcs-hpginfo"></span>` +
         `</div>` +
         `<div class="hg-modal-acts">` +
           `<button class="btn ghost" data-vcs-hrefresh>⟳ 刷新</button>` +
@@ -92,50 +210,163 @@
       `</div>`;
     ov.addEventListener('click', (e) => { if (e.target === ov) _vcsHistClose(); });
     ov.querySelector('[data-vcs-hclose]').onclick = () => _vcsHistClose();
-    ov.querySelector('[data-vcs-hrefresh]').onclick = () => _vcsReloadLog();
+    ov.querySelector('[data-vcs-hrefresh]').onclick = () => _vcsHistFetch(true);
+    ov.querySelector('[data-vcs-hprev]').onclick = () => {
+      if (_vcsHist && _vcsHist.page > 1) { _vcsHist.page--; _vcsHistPaintList(true); }
+    };
+    ov.querySelector('[data-vcs-hnext]').onclick = () => {
+      const H = _vcsHist; if (!H) return;
+      const arr = _vcsHistActive();
+      const pages = Math.max(1, Math.ceil(arr.length / H.size));
+      if (H.page < pages) { H.page++; _vcsHistPaintList(true); return; }
+      // 当前末页且可能还有更早——拉下一块（svn 无 total：整百=可能还有）
+      const atEnd = _vcsHistTotal() != null ? arr.length >= _vcsHistTotal()
+        : !(arr.length % 100 === 0);
+      if (!atEnd && !_vcsHistBusy()) { H.page++; _vcsHistFetch(false); }
+    };
+    ov.querySelector('[data-vcs-hsize]').onchange = (e) => {
+      if (!_vcsHist) return;
+      _vcsHist.size = +e.target.value || 20;
+      try { localStorage.setItem('hg-vcs-histsize', String(_vcsHist.size)); } catch (_) {}
+      const arr = _vcsHistActive();
+      _vcsHist.page = Math.min(_vcsHist.page, Math.max(1, Math.ceil(arr.length / _vcsHist.size)));
+      _vcsHistPaintList(true);
+    };
+    // 筛选绑定（S3）：输入防抖 400ms / 日期即变 / chips 快捷档 / 清除
+    const _applyQ = () => {
+      const H = _vcsHist; if (!H) return;
+      const has = !!(H.q.text || H.q.author || H.q.since || H.q.until);
+      H.querying = has;
+      H.page = 1;
+      H.qlog.length = 0;
+      H.ov.querySelector('[data-vcs-hclear]').style.display = has ? '' : 'none';
+      const dl = H.ov.querySelector('#hg-vcs-authors');
+      if (dl) {
+        const seen = new Set();
+        dl.innerHTML = Array.from(_HG.vcs.log || []).map(c => c.author)
+          .filter(a => a && !seen.has(a) && seen.add(a)).slice(0, 30)
+          .map(a => `<option value="${esc(a)}">`).join('');
+      }
+      _vcsHistFetch(true);   // 两态统一走 fetch（浏览态 reset=⟳ 同义）
+    };
+    const _debounced = () => {
+      clearTimeout(_vcsHist.debT);
+      _vcsHist.debT = setTimeout(_applyQ, 400);
+    };
+    ov.querySelectorAll('[data-vcs-hq]').forEach(inp => {
+      const k = inp.dataset.vcsHq;
+      if (k === 'text' || k === 'author') inp.addEventListener('input', () => { _vcsHist.q[k] = inp.value.trim(); _debounced(); });
+      else inp.addEventListener('change', () => { _vcsHist.q[k] = inp.value; _applyQ(); });
+    });
+    ov.querySelectorAll('[data-vcs-chip]').forEach(c => c.onclick = () => {
+      const H = _vcsHist; if (!H) return;
+      const fmt = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+      const back = n => { const d = new Date(); d.setDate(d.getDate() - n); return fmt(d); };
+      const today = fmt(new Date());
+      if (c.dataset.vcsChip === 'today') { H.q.since = today; H.q.until = today; }
+      else if (c.dataset.vcsChip === '7d') { H.q.since = back(6); H.q.until = today; }
+      else { H.q.since = back(29); H.q.until = today; }
+      const si = ov.querySelector('[data-vcs-hq="since"]'); if (si) si.value = H.q.since;
+      const ui = ov.querySelector('[data-vcs-hq="until"]'); if (ui) ui.value = H.q.until;
+      ov.querySelectorAll('.hg-vcs-chip').forEach(x => x.classList.remove('on'));
+      c.classList.add('on');
+      _applyQ();
+    });
+    ov.querySelector('[data-vcs-hclear]').onclick = () => {
+      const H = _vcsHist; if (!H) return;
+      H.q = { text: '', author: '', since: '', until: '' };
+      ov.querySelectorAll('[data-vcs-hq]').forEach(i => i.value = '');
+      ov.querySelectorAll('.hg-vcs-chip').forEach(c => c.classList.remove('on'));
+      _applyQ();
+    };
     _hgWrap.appendChild(ov);
-    // 轻审R2/R3：打开**必**补拉（有缓存先显后刷——外部新提交即时跟上，
-    // v3.5.127「无条件重拉」语义真正承接）；先发起再绘列表——首开即显
-    // 「加载中…」而非误导的「暂无数据」
+    // 打开必补拉（R2/R3 语义）；先显已载再补
     if (!_vcsLogBusy) _vcsReloadLog();
     _vcsHistPaintList(false);
   }
 
   function _vcsHistClose() {
     if (!_vcsHist) return;
+    clearTimeout(_vcsHist.debT);
     try { document.removeEventListener('keydown', _vcsHist.escFn); } catch (_) {}
     _vcsHist.ov.remove();
-    _vcsHist = null;
+    _vcsHist = null;   // 查询态随弹窗即焚（designer D6）
   }
 
   function _vcsHistPaintList(keepSel) {
     if (!_vcsHist) return;
-    const listEl = _vcsHist.ov.querySelector('[data-vcs-hlist]');
+    const H = _vcsHist;
+    const listEl = H.ov.querySelector('[data-vcs-hlist]');
     if (!listEl) return;
-    const log = _HG.vcs.log;
-    if (!log) {
-      listEl.innerHTML = '<div class="hg-vcs-empty">' + (_vcsLogBusy ? '加载中…' : '暂无数据——点 ⟳ 刷新') + '</div>';
+    const arr = _vcsHistActive();
+    if (H.fetchErr) {
+      listEl.innerHTML = '<div class="hg-vcs-empty">' + esc(H.fetchErr) + '——点 ⟳ 刷新重试</div>';
+      _vcsHistPager();
       return;
     }
-    if (!log.length) { listEl.innerHTML = '<div class="hg-vcs-empty">还没有提交记录</div>'; return; }
-    if (keepSel && _vcsHist.sel && !log.some(c => c.rev === _vcsHist.sel)) {
-      _vcsHist.sel = null;   // 刷新后选中提交被顶掉——详情回空态
-      const d = _vcsHist.ov.querySelector('[data-vcs-hdetail]');
+    if (!arr) {
+      listEl.innerHTML = '<div class="hg-vcs-empty">' + (H.querying
+        ? (_vcsHistBusy() ? '搜索中…' : '无匹配——调整关键字/时间范围')
+        : (_vcsLogBusy ? '加载中…' : '暂无数据——点 ⟳ 刷新')) + '</div>';
+      _vcsHistPager();
+      return;
+    }
+    if (!arr.length) {
+      listEl.innerHTML = '<div class="hg-vcs-empty">' + (H.querying
+        ? '无匹配提交——调整关键字/时间范围，或 ✕ 清除筛选'
+        : '还没有提交记录') + '</div>';
+      _vcsHistPager();
+      return;
+    }
+    if (keepSel && H.sel && !arr.some(c => c.rev === H.sel)) {
+      H.sel = null;
+      const d = H.ov.querySelector('[data-vcs-hdetail]');
       if (d) d.innerHTML = '<div class="hg-vcs-empty">← 在左侧选择一个提交查看详情</div>';
     }
-    listEl.innerHTML = log.map(c =>
-      `<div class="hg-vcs-hlrow${c.rev === _vcsHist.sel ? ' on' : ''}" data-hrev="${esc(c.rev || '')}">` +
-        `<span class="hg-vcs-logrev">${esc(c.short || c.rev || '')}</span>` +
+    const pages = Math.max(1, Math.ceil(arr.length / H.size));
+    H.page = Math.min(H.page, pages);
+    const pg = arr.slice((H.page - 1) * H.size, H.page * H.size);
+    listEl.innerHTML = pg.map(c =>
+      `<div class="hg-vcs-hlrow${c.rev === H.sel ? ' on' : ''}" data-hrev="${esc(c.rev || '')}">` +
+        `<span class="hg-vcs-logrev">${esc(c.short || c.rev || '')}${c.deco ? `<span class="hg-vcs-deco">${esc(c.deco)}</span>` : ''}</span>` +
         `<span class="hg-vcs-logmsg">${esc((c.msg || '').slice(0, 44))}</span>` +
         `<span class="hg-vcs-logdt">${esc(_vcsFmtDt(c.date))}</span>` +
         `<span class="hg-vcs-logau">${esc(c.author || '')}</span>` +
-      `</div>`).join('') +
-      (log.length >= 100
-        ? '<div class="hg-vcs-hlfoot">已显示最近 100 条（更早请用命令行）</div>'
-        : `<div class="hg-vcs-hlfoot">共 ${log.length} 条</div>`);
+        `<span class="hg-vcs-copybtn" data-copy="${esc(c.rev || '')}" title="复制完整修订号">⧉</span>` +
+      `</div>`).join('');
     listEl.querySelectorAll('[data-hrev]').forEach(row => {
-      row.onclick = () => _vcsHistSelect(row.dataset.hrev);
+      row.onclick = (e) => {
+        if (e.target.closest('[data-copy]')) return;
+        _vcsHistSelect(row.dataset.hrev);
+      };
     });
+    listEl.querySelectorAll('[data-copy]').forEach(b => b.onclick = (e) => {
+      e.stopPropagation();
+      try { navigator.clipboard.writeText(b.dataset.copy); showBanner('已复制 ' + b.dataset.copy.slice(0, 12) + '…', 1800); }
+      catch (_) { showBanner('复制失败', 2000, true); }
+    });
+    _vcsHistPager();
+  }
+
+  function _vcsHistPager() {
+    const H = _vcsHist; if (!H) return;
+    const arr = _vcsHistActive();
+    const info = H.ov.querySelector('[data-vcs-hpginfo]');
+    const cnt = H.ov.querySelector('[data-vcs-hcount]');
+    const prev = H.ov.querySelector('[data-vcs-hprev]');
+    const next = H.ov.querySelector('[data-vcs-hnext]');
+    const n = (arr || []).length;
+    const pages = Math.max(1, Math.ceil(n / H.size));
+    const total = _vcsHistTotal();
+    const atEnd = total != null ? n >= total : !(n && n % 100 === 0);
+    if (info) info.textContent = n ? `第 ${H.page}/${pages} 页` : '—';
+    if (prev) prev.disabled = H.page <= 1;
+    if (next) next.disabled = !n || (H.page >= pages && atEnd && !_vcsHistBusy());
+    if (cnt) {
+      if (!n) cnt.textContent = '';
+      else if (total != null) cnt.textContent = `共 ${total} 条`;
+      else cnt.textContent = `已载 ${n} 条` + (atEnd ? '（已到最早）' : '');
+    }
   }
 
   function _vcsHistSelect(rev) {
@@ -150,12 +381,13 @@
     if (!_vcsHist) return;
     const dEl = _vcsHist.ov.querySelector('[data-vcs-hdetail]');
     if (!dEl) return;
-    const c = (_HG.vcs.log || []).find(x => x.rev === rev);
-    if (!c) { dEl.innerHTML = '<div class="hg-vcs-empty">提交不在列表中（可能已被顶掉）</div>'; return; }
-    const seq = ++_vcsHist.seq;      // designer D6：连点竞态——旧响应丢弃
+    const c = _vcsHistActive().find(x => x.rev === rev);
+    if (!c) { dEl.innerHTML = '<div class="hg-vcs-empty">提交不在当前视图（可能被筛选/翻页移出）</div>'; return; }
+    const seq = ++_vcsHist.seq;
     const cached = _vcsHist.files.get(rev);
     const _meta = () =>
       `<div class="hg-vcs-hmeta"><b title="${esc(c.rev)}">${esc(c.short || c.rev)}</b>` +
+      (c.deco ? `<span class="hg-vcs-deco">${esc(c.deco)}</span>` : '') +
       `<span>${esc(c.author || '')}</span><span>${esc(_vcsFmtDt(c.date))}</span></div>` +
       `<div class="hg-vcs-hmsg">${esc(c.msg || '')}</div>` +
       `<div class="hg-vcs-sec">改动文件</div>`;
@@ -174,7 +406,7 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ root: _HG.vcs.root, rev }) })
       .then(r => r.json()).then(j => {
-        if (!_vcsHist || _vcsHist.sel !== rev || _vcsHist.seq !== seq) return;   // 竞态守卫
+        if (!_vcsHist || _vcsHist.sel !== rev || _vcsHist.seq !== seq) return;
         if (!j.ok) {
           _vcsHist.files.set(rev, new Error(j.err || '获取失败'));
         } else {
@@ -188,14 +420,14 @@
             fr.onclick = () => _vcsFileDiffClick(rev, fr.dataset.hpath, fr.dataset.hst, fr));
           return;
         }
-        _vcsHistDetail(rev);   // 错误缓存态重绘
+        _vcsHistDetail(rev);
       }).catch(e => {
         if (!_vcsHist || _vcsHist.sel !== rev || _vcsHist.seq !== seq) return;
         _vcsHist.files.set(rev, new Error(String(e)));
         _vcsHistDetail(rev);
       });
   }
-  let _vcsTick = null;
+
   function _vcsTickStart() {         // v3.5.124（用户需求）：激活期 60s 静默轮询
     if (_vcsTick) return;            // git 改动/外部命令后自动跟上；不用太频繁
     _vcsTick = setInterval(() => {   // 失活自停（目录秒表 _subDirTick 同款惯例）
@@ -238,18 +470,20 @@
     }).catch(e => { _HG.vcs.busy = false; _HG.vcs.data = { err: String(e) }; _vcsPaint(); });
   }
   function _vcsReloadLog() {
+    // v2：浏览态回补——从已载量一次拿够（reset 语义，弹窗/面板双视图同步）
     if (_vcsLogBusy) return;           // 防连点重复 fetch
     _vcsLogBusy = true;
+    const hadLen = (_HG.vcs.log || []).length;
     fetch('/api/vcs/log', { method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      // v3.5.133（designer D3）：一次拉 100 存共享源——面板 slice(0,20) 渲染、
-      // 提交历史弹窗全量渲染，单请求双视图
-      body: JSON.stringify({ root: _HG.vcs.root, limit: 100 }) })
+      body: JSON.stringify({ root: _HG.vcs.root,
+                             limit: Math.max(100, Math.min(500, hadLen || 100)) }) })
       .then(r => r.json()).then(j => {
         _vcsLogBusy = false;
         _HG.vcs.log = j.ok ? (j.commits || []) : null;
+        _HG.vcs.total = j.ok ? j.total : undefined;
         _vcsPaint();
-        if (_vcsHist) {
+        if (_vcsHist && !_vcsHist.querying) {
           // 轻审R1：Error 缓存条目随刷新失效（「点⟳重试」承诺兑现）+当前选中重拉详情
           let _errCleared = false;
           for (const k of Array.from(_vcsHist.files.keys())) {
@@ -319,7 +553,7 @@
         `<span class="hg-vcs-logau">${esc(c.author || '')}</span></div>` +
         `<div class="hg-vcs-cfiles" data-vcsfiles="${esc(c.rev || '')}" style="display:none;"></div>`).join('') +
         (_HG.vcs.log.length > 20
-          ? `<div class="hg-vcs-hlfoot">已显示最近 20 / 共 ${_HG.vcs.log.length} 条——点上方 📜 看全部</div>` : '')
+          ? `<div class="hg-vcs-hlfoot">已显示最近 20 / 共 ${_HG.vcs.total || _HG.vcs.log.length} 条——点上方 📜 看全部</div>` : '')
         : '');
     _vcsBind(true);
   }

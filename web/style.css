@@ -4464,3 +4464,28 @@ span.h-ag-type[class*='h-ava-'] {
 .hg-vcs-hmeta { display: flex; gap: 12px; align-items: baseline; font-size: var(--fs-sm); }
 .hg-vcs-hmeta b { font-family: var(--font-mono); color: var(--accent); }
 .hg-vcs-hmsg { margin: 6px 0 10px; white-space: pre-wrap; font-size: var(--fs-sm); }
+
+/* ---- v2 提交历史弹窗：工具栏/pager/deco/复制 ---- */
+.hg-vcs-htool { display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  padding: 8px 12px 4px; }
+.hg-vcs-hsearch, .hg-vcs-hauthor { font-size: var(--fs-xs); padding: 4px 8px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--bg-card);
+  color: var(--fg); min-width: 0; }
+.hg-vcs-hsearch { flex: 1 1 170px; }
+.hg-vcs-hauthor { flex: 0 1 110px; }
+.hg-vcs-hdate { font-size: var(--fs-xs); padding: 3px 6px; border: 1px solid var(--border);
+  border-radius: 6px; background: var(--bg-card); color: var(--fg); }
+.hg-vcs-chip { font-size: var(--fs-2xs); padding: 3px 8px; }
+.hg-vcs-chip.on { color: var(--accent); border-color: var(--accent); }
+.hg-vcs-hsep { font-size: var(--fs-2xs); color: var(--muted); }
+.hg-vcs-hpager { display: flex; gap: 8px; align-items: center;
+  padding: 6px 12px; border-top: 1px solid var(--border); }
+.hg-vcs-hpginfo { font-size: var(--fs-xs); color: var(--muted);
+  font-variant-numeric: tabular-nums; }
+.hg-vcs-hsize { font-size: var(--fs-xs); padding: 2px 4px;
+  border: 1px solid var(--border); border-radius: 5px; background: var(--bg-card); color: var(--fg); }
+.hg-vcs-deco { font-size: 9px; color: var(--muted); margin-left: 4px; }
+.hg-vcs-copybtn { flex: none; visibility: hidden; font-size: 11px; cursor: pointer;
+  color: var(--muted); padding: 0 2px; }
+.hg-vcs-hlrow:hover .hg-vcs-copybtn { visibility: visible; }
+.hg-vcs-copybtn:hover { color: var(--accent); }
