@@ -10,7 +10,7 @@ import time
 import logging
 log = logging.getLogger(__name__)
 from ..claude_conn import _resolve_claude_exe, _trust_workspace
-from .roles import audit_verdict, install_roles_agents, roles_bridge_text
+from .roles import audit_verdict, design_limit, install_roles_agents, roles_bridge_text
 from .askmcp import _ask_mcp_cfg_path
 from .audit import _AUDIT_EDIT_TOOLS, _AUDIT_MSG_PREFIX, _audit_dispatch_role, _audit_hook_settings_path, _audit_lines, _audit_log_append
 from .bridges import TOKEN_RULES, _bridge_fp, ask_bridge_text, confirm_bridge_text, vision_bridge_text
@@ -115,7 +115,9 @@ class HarnessSession:
         # 在飞派发表，续派常发生在派发后的后续回合。
         self._audit = {"lines": 0, "files": [], "designer": False,
                        "designFired": False,   # v3.5.53：设计线事中一次性触发标志
-                       "reviewer": False, "streak": 0, "ids": {}, "pending": {}}
+                       "reviewer": False, "rev_at": 0,   # v3.5.100：审派发时的 lines 快照（再审判定=审后新增量）
+                       "fired_at": 0,    # v3.5.100：上次审计触发时的 lines（防同水位重复触发）
+                       "streak": 0, "ids": {}, "pending": {}}
         # v2.40：light 形态事中闸的 --settings 临时文件路径（kill 时清理；
         # revive 重启由 start() 重建——hooks 是进程启动参数，活进程不热更）
         self._audit_settings_path = None
@@ -501,26 +503,42 @@ class HarnessSession:
         清零。"""
         au = self._audit
         lines = au["lines"]
-        rev = au["reviewer"]
         designed = au.get("designer")
-        # v3.5.99（用户实锤「designer 方案先行已派，1049 行实施回合仍报未派
-        # designer」）：**designer 旗跨回合保留**——大改的实施必然横跨多个回
-        # 合（方案已出、续回合纯实施），旧写法每回合结算清 designer=每一回合
-        # 都要求重派 designer=误报（模型澄清「同一需求的方案已存在且已按其
-        # 落地」）。清零点移到 send_message 新用户消息（新需求才重新要求设计
-        # 先行）；reviewer/lines 维持每回合清（每回合改动都要审）
-        au.update({"lines": 0, "files": [],
-                   "reviewer": False, "designFired": False})
+        # v3.5.100（用户拍板「回合以我的消息为界」）：**结算不再清任何累计**
+        # ——lines 跨 AI 回合累计到下一条用户消息（中间多少次 result/子代理
+        # 都算同一大回合）；designer 旗同（大回合内出过设计即算，v3.5.99）；
+        # reviewer 派发记 rev_at 快照——「审后再改再审」按审后新增量判定
         st = self._audit_state()
         if st is None:
             au["streak"] = 0
             return
-        mode, _limits, strong = st
-        viol = audit_verdict(lines, rev, designed=designed, strong=strong)
+        mode, limits, strong = st
+        l1, _l2f, l2l = limits
+        line_need = l2l if strong else l1          # 需审线（light=免审线上沿 / strong=审计线）
+        reviewed = au.get("reviewer")
+        unaudited = lines - (au.get("rev_at") or 0)   # 审后未审的改动量（未审过=全部）
+        fired = au.get("fired_at") or 0
+        viol = []
+        if lines > line_need and unaudited > line_need and lines > fired:
+            if strong:
+                viol.append("主会话直改累计 %d 行，超过审计线（≤%d 行），其中 %d 行尚未派 reviewer 审计"
+                            % (lines, l2l, unaudited))
+            elif lines <= l2l:
+                viol.append("主会话直改累计 %d 行，超过免审线（≤%d 行）属中改，其中 %d 行尚未派 reviewer 轻审（只审 diff）"
+                            % (lines, l1, unaudited))
+            else:
+                viol.append("主会话直改累计 %d 行，超过轻审线（≤%d 行）属大改，其中 %d 行尚未派 reviewer 取证级全审"
+                            % (lines, l2l, unaudited))
+        dl = design_limit(cfg=None)
+        if dl > 0 and not designed and lines >= dl and lines > fired:
+            viol.append("主会话直改累计 %d 行，达到设计线（≥%d 行）属大改，尚未先派 designer 出框架方案——大改须方案先行"
+                        % (lines, dl))
         if not viol:
-            au["streak"] = 0
+            if reviewed:
+                au["streak"] = 0
             return
         desc = "；".join(viol)
+        au["fired_at"] = lines   # v3.5.100：触发水位记账（同水位不重复触发；审后新增量再触发）
         if reason == "result":
             au["streak"] += 1
         degraded = au["streak"] >= 3
@@ -565,7 +583,7 @@ class HarnessSession:
         emit）。失败静默（log）——用户抢先发消息/进程退出属正常竞争，不重试
         不阻塞。"""
         try:
-            ok, err = self.send_message(text)
+            ok, err = self.send_message(text, boundary=False)
             if not ok:
                 log.warning("[审计] 补审续发未发出：%s", err)
         except Exception as e:
@@ -622,7 +640,7 @@ class HarnessSession:
         seed = ("[系统] 上一会话上下文已超当前模型窗口，自动重开。以下是此前"
                 "对话历史记录，请据此延续原有任务脉络：\n\n%s\n\n[系统] 历史结束。"
                 % hist)
-        ok, err = HarnessSession.send_message(self, seed)
+        ok, err = HarnessSession.send_message(self, seed, boundary=False)
         if not ok:
             log.warning("超窗续命：历史注入失败 %s", err)
             return False
@@ -643,7 +661,7 @@ class HarnessSession:
             return False   # 用户消息没发出去 → 走拒发提示，别静默吞
         return True
 
-    def send_message(self, text, image_paths=None, file_paths=None):
+    def send_message(self, text, image_paths=None, file_paths=None, boundary=True):
         """发消息：文本 + 可选图片（base64 块，实测网关透传）+ 文件路径（文本
         附录，任何模型都能用 Read 读）。返回 (ok, err)。"""
         # 上下文超窗拒发（用户定调）：切 API 方案会把模型强制跟着切小窗
@@ -699,13 +717,17 @@ class HarnessSession:
                                           round(mwin / 1024)))
         except Exception:
             pass   # 检测自身失败不拦发送（读不到用量时维持原行为）
-        # v3.5.99：新用户消息=可能的新需求——designer 旗在此重置（设计先行
-        # 要求按新需求重新满足；同需求的后续实施回合由结算侧保留的旗豁免）
-        try:
-            self._audit["designer"] = False
-            self._audit["designFired"] = False
-        except Exception:
-            pass
+        # v3.5.100（用户拍板「回合以我的消息为界」）：用户消息=大回合边界——
+        # 审计累计全线清零（lines/审派发/designer/streak），下一条消息起重新
+        # 计账。boundary=False（审计续发等系统消息）不清——补审指令不是用户
+        # 边界，不清会把手头的审计状态抹掉
+        if boundary:
+            try:
+                self._audit.update({"lines": 0, "files": [], "designer": False,
+                                    "designFired": False, "reviewer": False,
+                                    "rev_at": 0, "fired_at": 0, "streak": 0})
+            except Exception:
+                pass
         # base_url 死代理自愈的第二时机（用户实锤）：start 里的自愈只在起
         # 进程时跑——claude 启动时代理还活着、之后代理被停，进程不死就永远
         # 不走 start，消息全打进死端口。发送前发现 base_url 已恢复直连，
