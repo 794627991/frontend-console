@@ -3,7 +3,7 @@
 import hashlib
 import logging
 log = logging.getLogger(__name__)
-from .vision import _model_vision_mode, _vision_load
+from .vision import _model_vision_mode, _vision_load, _model_vision_mode_dual
 
 
 # ---- from claude_harness.py:316 (ask_bridge_text) ----
@@ -76,7 +76,7 @@ TOKEN_RULES = (
 # ---- from claude_harness.py:407 (_bridge_fp) ----
 
 
-def _bridge_fp(model):
+def _bridge_fp(model, configured=None):
     """识图引导词指纹（send 前热更检测用）：内容含三态判定结果，代码升级
     / mm_mcp 名单调整 / vision 开关都会改变指纹。未启用时空串（有→无也
     构成变化，同样触发重启换新）。v2.29：三角色引导词并入指纹——角色
@@ -87,7 +87,7 @@ def _bridge_fp(model):
 # ---- from claude_harness.py:416 (vision_bridge_text) ----
 
 
-def vision_bridge_text(model=None):
+def vision_bridge_text(model=None, configured=None):
     """生成注入每个主会话的识图引导段（识图未启用则空串）。
 
     这是问题2 的核心：主会话默认不知道自己有识图同伴，必须显式告知——
@@ -101,7 +101,9 @@ def vision_bridge_text(model=None):
     cfg = _vision_load()
     if not cfg["enabled"]:
         return ""
-    mode = _model_vision_mode(model) if model else None
+    # v3.5.128（全审P1）：判定与工具面同源走 dual——live_model 是网关轮转
+    # 别名（重启路径在档），单名判 mcp 会注入「调不存在工具」的引导
+    mode = _model_vision_mode_dual(model, configured) if (model or configured) else None
     if mode == "inline":
         return (
             "【识图说明】\n"

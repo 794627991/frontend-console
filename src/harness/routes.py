@@ -1165,8 +1165,10 @@ def harness_vision_status():
         if s:
             try:
                 from .vision import _model_vision_mode_dual
-                mode = _model_vision_mode_dual(s._eff_model(), s.model)
+                m = s._eff_model() or ""   # v3.5.128（全审P2）：恢复守卫语义——内存查到才不读盘
+                mode = _model_vision_mode_dual(m, s.model)
             except Exception:
+                m = ""
                 mode = ""
         # v3.5.45（用户实锤「重启了还是显示 MCP，过一会才变」）：重启后后端
         # _sessions 内存为空（会话 lazy 建），?sid= 查不到 → mode 空 → 前端

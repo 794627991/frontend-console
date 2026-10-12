@@ -20,8 +20,7 @@ from .meta import _meta, _meta_load, _meta_lock, _meta_save
 from .models import available_models
 from .prompts import _collect_system_prompt
 from .transcript import re_title, _trace_append
-from .vision import (_cleanup_peer_reg, _model_vision_mode, _model_vision_mode_dual,
-                     _vision_load)
+from .vision import _cleanup_peer_reg, _model_vision_mode_dual, _vision_load
 
 
 # ---- from claude_harness.py:1036 (HarnessSession) ----
@@ -244,7 +243,7 @@ class HarnessSession:
             parts = [_collect_system_prompt(self.cwd),
                      TOKEN_RULES,
                      roles_txt,
-                     vision_bridge_text(eff_model),
+                     vision_bridge_text(eff_model, self.model),
                      ask_bridge_text()]
             if self.permission == "confirm":
                 parts.append(confirm_bridge_text())
@@ -252,7 +251,7 @@ class HarnessSession:
             # v2.27.13：记注入时的引导词指纹——系统提示是进程启动参数，
             # 活会话不会因代码升级/名单调整换新词（用户实锤：MCP 类模型
             # 揣着旧「转交版」绕识图会话白等 1m20s）。send 前对指纹热更。
-            self.bridge_fp = _bridge_fp(eff_model)
+            self.bridge_fp = _bridge_fp(eff_model, self.model)
             # v2.29~v2.49 的决策者结构禁权（--disallowedTools 全禁干活工具
             # 逼派发）已废——主会话=干活者要亲自干活，禁权失去意义
             # （roles_disallow/ROLE_DISALLOW 一并移除）。
@@ -794,7 +793,7 @@ class HarnessSession:
             if self.alive and self.bridge_fp is not None:
                 try:
                     eff_model = self._eff_model()
-                    if _bridge_fp(eff_model) != self.bridge_fp:
+                    if _bridge_fp(eff_model, self.model) != self.bridge_fp:
                         with self._start_lock:  # kill+revive 原子对（重入子调用同锁）
                             self.kill_proc(quiet=True)
                             if not self.revive_if_dead():
