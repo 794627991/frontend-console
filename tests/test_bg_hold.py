@@ -73,9 +73,10 @@ def test_real_tail_clears_held():
     """P2 回归：真收尾分支必须清 _held（防幽灵释放）——直读源码断言。"""
     src = open(os.path.join(ROOT, "src", "harness", "session.py"),
                encoding="utf-8").read()
-    seg = src[src.index('if typ == "result" and not self._bg_tasks'):
-              src.index('self._turn_end()', src.index('if typ == "result" and not self._bg_tasks'))]
+    h = src.index('if typ == "result" and not _hold_now:')
+    seg = src[h:src.index("self._turn_end()", h)]
     assert "self._held = False" in seg, "真收尾未清 _held（幽灵释放回归）"
+    assert '"turn_complete"' in seg, "真收尾缺 turn_complete emit（前端 hold 永不清）"
     print("tail clears held PASS")
 
 
