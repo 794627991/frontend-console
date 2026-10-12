@@ -193,10 +193,12 @@ def main():
     # 机器配置漂移，违背本文件「不碰真实用户数据」铁律
     print("== 4.7 识图文案防回退（designer P3）==")
     import src.harness.bridges as _B
-    _r_vl, _r_vm = _B._vision_load, _B._model_vision_mode
+    _r_vl, _r_vm = _B._vision_load, _B._model_vision_mode_dual
     _B._vision_load = lambda: {"enabled": True, "model": "glm-5.3",
                                "mcp_prompt": "", "mm_extra": [], "mm_user": {}}
-    _B._model_vision_mode = lambda m: "mcp"
+    # v3.5.129（复核R2）：bridge 判定已切 dual——猴补目标同步（单名属性已
+    # 不在 bridge 代码路径，补它=无效封闭，mm 名单含 glm-5.3 的机器必红）
+    _B._model_vision_mode_dual = lambda live, configured: "mcp"
     try:
         _t = _B.vision_bridge_text("glm-5.3")
         check("bridge 兜底泛化措辞在场（识图类工具+限定语）",
@@ -206,7 +208,7 @@ def main():
         check("本地识图工具 description 泛化措辞在场",
               "识图类工具" in _d and "部分网关内建" in _d)
     finally:
-        _B._vision_load, _B._model_vision_mode = _r_vl, _r_vm
+        _B._vision_load, _B._model_vision_mode_dual = _r_vl, _r_vm
 
     print("== 5. 子代理镜像（#12）==")
     s._emit_task_mirror({"subtype": "task_started", "tool_use_id": "tu9",

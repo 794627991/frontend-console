@@ -3,7 +3,7 @@
 import hashlib
 import logging
 log = logging.getLogger(__name__)
-from .vision import _model_vision_mode, _vision_load, _model_vision_mode_dual
+from .vision import _vision_load, _model_vision_mode_dual
 
 
 # ---- from claude_harness.py:316 (ask_bridge_text) ----
@@ -81,7 +81,7 @@ def _bridge_fp(model, configured=None):
     / mm_mcp 名单调整 / vision 开关都会改变指纹。未启用时空串（有→无也
     构成变化，同样触发重启换新）。v2.29：三角色引导词并入指纹——角色
     开关/词改动同样触发活会话热更换词。"""
-    return hashlib.md5((vision_bridge_text(model) + "\x00"
+    return hashlib.md5((vision_bridge_text(model, configured) + "\x00"
                         + roles_bridge_text(model)).encode("utf-8")).hexdigest()
 
 # ---- from claude_harness.py:416 (vision_bridge_text) ----
