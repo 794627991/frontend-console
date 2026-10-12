@@ -36,7 +36,8 @@ VCS_TIMEOUT_RO = 20     # status/log/diff/show/cat
 VCS_TIMEOUT_RW = 60     # add/commit
 VCS_TIMEOUT_NET = 120   # pull/update
 FILES_CAP = 500         # 改动列表上限（对齐 file_tree LIST_CAP 文化）
-_LOG_CAP = 100
+_LOG_CAP = 500         # v2：单次 log 上限（翻页/回补一次拿够）
+_SKIP_CAP = 5000       # v2：skip+limit 累积深度上限（巨仓深翻脚注引导命令行）
 _TMP_KEEP_S = 24 * 3600
 _TMP_MAX = 60
 
@@ -298,33 +299,130 @@ def vcs_status():
 # log
 # ---------------------------------------------------------------------------
 
+# ---- v2（designer 方案 S1）：log 查询计划——参数校验+命令组装纯函数 ----
+
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
+# git --author 是 BRE 正则——仅转义这 6 个元字符（GNU BRE 里转义 +?(){}| 反而
+# 制造元字符，切不可用 re.escape，designer D10）
+_BRE_META = "\\.*[]^$"
+
+
+def _bre_lit(s):
+    return "".join(("\\" + c) if c in _BRE_META else c for c in s)
+
+
+def _log_plan(vcs, data):
+    """校验并组装 log 查询。返回 (err_tuple|None, git_argv|None,
+    git_count_argv|None, svn_argv|None, skip, limit)。"""
+    try:
+        limit = max(1, min(_LOG_CAP, int(data.get("limit") or 30)))
+    except (TypeError, ValueError):
+        limit = 30
+    try:
+        skip = max(0, int(data.get("skip") or 0))
+    except (TypeError, ValueError):
+        skip = 0
+    if skip + limit > _SKIP_CAP:
+        return (("深度超限：skip+limit ≤ %d（更早历史请用命令行）" % _SKIP_CAP), 400), \
+            None, None, None, skip, limit
+    text = _CTRL_RE.sub("", str(data.get("text") or "").strip())[:200]
+    author = _CTRL_RE.sub("", str(data.get("author") or "").strip())[:200]
+    since = str(data.get("since") or "").strip()
+    until = str(data.get("until") or "").strip()
+    for d in (since, until):
+        if d and not _DATE_RE.match(d):
+            return (("日期格式应为 YYYY-MM-DD"), 400), None, None, None, skip, limit
+    if since and until and since > until:
+        return (("起始日期不能晚于结束日期"), 400), None, None, None, skip, limit
+    before_rev = str(data.get("before_rev") or "").strip()
+
+    if vcs == "git":
+        argv = ["git", "log", "-n", str(limit), "--date=iso-strict",
+                "--decorate=short",
+                "--pretty=format:%H%x1f%h%x1f%an%x1f%ad%x1f%s%x1f%d"]
+        cargv = ["git", "rev-list", "--count", "HEAD"]
+        if skip:
+            argv += ["--skip", str(skip)]
+        if text:
+            argv += ["--fixed-strings", "-i", "--all-match"]
+            for w in text.split():
+                argv += ["--grep", w]
+            cargv += ["--fixed-strings", "-i", "--all-match"]
+            for w in text.split():
+                cargv += ["--grep", w]
+        if author:
+            argv += ["--author", _bre_lit(author)]
+            cargv += ["--author", _bre_lit(author)]
+        if since:
+            argv += ["--since", since + "T00:00:00"]
+            cargv += ["--since", since + "T00:00:00"]
+        if until:
+            argv += ["--until", until + "T23:59:59"]
+            cargv += ["--until", until + "T23:59:59"]
+        return None, argv, (None if skip else cargv), None, skip, limit
+
+    # svn：-r 游标/日期花括号 + --search（1.8+，整串 OR 语义，与 git AND 差异
+    # 由前端 placeholder 文档化）；作者无等价参数（不显示控件，designer D10）
+    argv = ["svn", "log", "--xml"]
+    lo = "{%s}" % (since + "T00:00:00") if since else "1"
+    hi = "{%s}" % (until + "T23:59:59") if until else "HEAD"
+    if before_rev:
+        if not before_rev.isdigit():
+            return (("svn 游标必须是数字修订号"), 400), None, None, None, skip, limit
+        argv += ["-r", "%s:%s" % (before_rev, lo)]
+    else:
+        argv += ["-r", "%s:%s" % (hi, lo)]
+    argv += ["-l", str(limit)]
+    if text:
+        argv += ["--search", text]
+    return None, None, None, argv, skip, limit
+
+
 @vcs_bp.route("/api/vcs/log", methods=["POST"])
 def vcs_log():
     data = request.get_json(force=True, silent=True) or {}
     vcs, wc, err, _tool_ok = _guard(data.get("root"))
     if err:
         return err
-    try:
-        limit = max(1, min(_LOG_CAP, int(data.get("limit") or 30)))
-    except (TypeError, ValueError):
-        limit = 30
+    plan = _log_plan(vcs, data)
+    err_t, git_argv, git_count_argv, svn_argv, skip, limit = plan
+    if err_t:
+        return jsonify({"ok": False, "err": err_t[0]}), err_t[1]
     commits = []
+    total = None
     if vcs == "git":
-        rc, out, e = _run(["git", "log", "-n", limit, "--date=iso-strict",
-                           "--pretty=format:%H%x1f%h%x1f%an%x1f%ad%x1f%s"],
-                          wc, VCS_TIMEOUT_RO)
+        rc, out, e = _run(git_argv, wc, VCS_TIMEOUT_RO)
         if rc != 0:
             if "does not have any commits yet" in (e or "") or rc == 128 and not out:
                 return jsonify({"ok": True, "commits": []})
             return jsonify({"ok": False, "err": e or "git log 失败"}), 500
         for line in out.splitlines():
             parts = line.split("\x1f")
-            if len(parts) == 5:
+            # v2 D9：5 字段放宽为 ≥5（第 6 可选 deco，带前导空格须 trim）
+            if len(parts) >= 5:
                 commits.append({"rev": parts[0], "short": parts[1],
                                 "author": parts[2], "date": parts[3],
-                                "msg": parts[4]})
+                                "msg": parts[4],
+                                "deco": (parts[5].strip() if len(parts) > 5 else "")})
+        if git_count_argv:   # 仅首页（skip==0）附带精确总数（svn 无此能力）
+            rc2, out2, _e2 = _run(git_count_argv, wc, VCS_TIMEOUT_RO)
+            if rc2 == 0:
+                try:
+                    total = int(out2.strip() or 0) or None
+                except ValueError:
+                    total = None
     else:
-        rc, out, e = _run(["svn", "log", "-l", limit, "--xml"], wc, VCS_TIMEOUT_RO)
+        rc, out, e = _run(svn_argv, wc, VCS_TIMEOUT_RO)
+        if rc != 0 and text_param := str(data.get("text") or "").strip():
+            # svn <1.8 无 --search：探测特征 → 降级重拉（客户端过滤由前端
+            # 按 banner 提示处理已载分页，designer 第六节）
+            if "unknown option" in (e or ""):
+                _argv2 = [a for a in svn_argv]
+                _i = _argv2.index("--search") if "--search" in _argv2 else -1
+                if _i >= 0:
+                    del _argv2[_i:_i + 2]
+                rc, out, e = _run(_argv2, wc, VCS_TIMEOUT_RO)
         if rc != 0:
             return jsonify({"ok": False, "err": e or "svn log 失败"}), 500
         try:
@@ -334,10 +432,14 @@ def vcs_log():
                                 "short": "r%s" % le.get("revision", ""),
                                 "author": le.findtext("author") or "",
                                 "date": le.findtext("date") or "",
-                                "msg": (le.findtext("msg") or "").strip()})
+                                "msg": (le.findtext("msg") or "").strip(),
+                                "deco": ""})
         except ET.ParseError as pe:
             return jsonify({"ok": False, "err": "svn log 解析失败：%s" % pe}), 500
-    return jsonify({"ok": True, "commits": commits})
+    resp = {"ok": True, "commits": commits}
+    if total is not None:
+        resp["total"] = total
+    return jsonify(resp)
 
 
 # ---------------------------------------------------------------------------
