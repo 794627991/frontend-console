@@ -99,8 +99,9 @@ def test_kill_settles_exit_when_held():
 
 
 def test_monitor_thread_persistent():
-    """P1：monitor 线程常驻——_bg_mon_started 置位后二次 ensure 不新建线程，
-    且线程循环体无 return 自退（源码断言）。"""
+    """P1：monitor 线程常驻——_bg_mon_started 置位后二次 ensure 不新建线程；
+    循环主路径不得出现「集空且无 hold」自退（v3.5.124 一次性闩锁回归）。
+    R1 的 _closed 自退（已删会话）是合法停机，排除在外。"""
     s = _mk_session()
     s._bg_monitor_ensure()
     s._bg_monitor_ensure()          # 二次调用不应建第二条线程
@@ -110,9 +111,10 @@ def test_monitor_thread_persistent():
     seg = seg[:seg.index("def bg_in_flight_clear")]
     loop_body = seg[seg.index("def _loop"):]
     assert "while True" in loop_body, "monitor 应常驻 while True"
-    body_after_sleep = loop_body[loop_body.index("time.sleep(30)"):]
-    assert "return" not in body_after_sleep.split("except")[0], \
-        "循环主路径不得自退（P1 一次性闩锁回归）"
+    main_path = loop_body[loop_body.index("time.sleep(30):") if "time.sleep(30):" in loop_body
+                          else loop_body.index("time.sleep(30)"):].split("except")[0]
+    assert "not self._bg_tasks and not self._held" not in main_path, \
+        "集空自退回归（P1 一次性闩锁复辟）"
     print("monitor persistent PASS")
 
 
