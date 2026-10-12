@@ -1178,6 +1178,10 @@ class HarnessSession:
         def _loop():
             while True:
                 time.sleep(30)
+                # v3.5.125（复核R1）：已删会话（close 后 _sessions 已摘除）不再
+                # 有新 bg 登记——monitor 自退防线程+session 对象永久泄漏
+                if getattr(self, "_closed", False):
+                    return
                 try:
                     now = time.time()
                     for tid, info in list(self._bg_tasks.items()):
@@ -1473,7 +1477,10 @@ class HarnessSession:
                         pass
                 # v3.5.124（全审P4）：turn_hold 必须先于 result 帧到达前端——
                 # 后发则前端首 hold 守卫（hold 未立时 result 落 busy）永不命中
-                if typ == "result" and self._bg_tasks:
+                if typ == "result" and _hold_now:
+                    # v3.5.125（复核R2）：分流与 busy 维持统一用 _hold_now
+                    # 单次快照（1426 读）——旧再读 _bg_tasks 与 monitor 硬顶
+                    # pop 有微秒 TOCTOU（busy 卡 True 变体）
                     self._held = True
                     with self._busy_lock:
                         self.busy = True   # P3 同临界：busy 维持 True
@@ -1484,10 +1491,11 @@ class HarnessSession:
                 # v3.5.123（用户口径「子代理在飞不许结束大回合」）：仍有后台
                 # 子代理在飞 → hold：busy 保持、审计结算挂起（defer 到真终点
                 # ——bg 集空后的唤醒回合 result 才真收尾）
-                if typ == "result" and not self._bg_tasks:
+                if typ == "result" and not _hold_now:
                     # turn_complete：真收尾标记（前端据此清 turn_hold 旗——
                     # hold 期所有中间 result 帧前端都不落 busy，等这一帧才落）
-                    self.emit({"kind": "turn_complete"})
+                    # v3.5.125（复核R2）：与 hold 分支同用 _hold_now 单次快照
+                    # ——缝隙闭合（monitor 硬顶 pop 卡进两读之间不再可能）
                     with self._busy_lock:
                         self._held = False   # v3.5.124（全审P2）：真收尾清 hold——防 120s 后幽灵二次 settle/turn_end
                     try:

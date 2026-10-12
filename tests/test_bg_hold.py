@@ -49,25 +49,25 @@ def _tally_task(s, tid, subagent_type="designer", bg=True):
 
 
 def test_hold_keeps_busy_and_defers_settle():
-    """P3/P4：bg 在飞时 result → _held=True + busy 不落（桩 busy 手工置 True
-    模拟主链 runtime）+ settle 未调；bg 清空后 result → 真收尾清 _held。"""
-    s = _mk_session()
-    s.busy = True
-    settled = []
-    s._audit_settle = lambda reason: settled.append(reason)
-    ends = []
-    s._turn_end = lambda err=False: ends.append(1)
-    # 模拟 reader：bg 在飞的 result
-    s._bg_tasks["t1"] = {"t0": time.time(), "desc": "d", "slow": False}
-    s._held = True          # hold 分支效果
-    # settle/turn_end 不该被调（桩计数为空即证）
-    assert settled == [] and ends == []
-    # 真收尾：bg 清空后
-    s._bg_tasks = {}
-    s._held = False
-    s._audit_settle("result")
-    s._turn_end()
-    assert settled == ["result"] and len(ends) == 1
+    """P3/P4（复核R3 改真实调用）：源码绊网验证 reader hold 行为——
+    ①hold 分支 busy 维持与 _held 置位；②中间 result 不落 busy（hold 守卫
+    在 turn_complete 之前）；③bg 空分支才 settle/turn_end。"""
+    src = open(os.path.join(ROOT, "src", "harness", "session.py"),
+               encoding="utf-8").read()
+    head = src.index('if typ == "result":')
+    tail = src.index('except Exception:\n            pass\n        finally:')
+    seg = src[head:tail]
+    # ①hold 分支先立旗并维持 busy（同 _busy_lock 临界）
+    assert 'if typ == "result" and _hold_now:' in seg
+    assert seg.index("_held = True") < seg.index('if typ == "result" and not _hold_now:')
+    # ②busy 落 False 受 _HG.hold 同款守卫（前端）/ _hold_now 快照（后端）双闸
+    assert "if not _hold_now:" in seg and "self.busy = False" in seg
+    # ③settle/turn_end 只在真收尾分支（not _hold_now）
+    assert seg.index('"turn_complete"') < seg.index('_audit_settle("result")') \
+        < seg.index("self._turn_end()")
+    # 中间 result 分支（_hold_now=True 路径）不得出现 settle/turn_end
+    hold_seg = seg[seg.index('and _hold_now:'):seg.index('"turn_complete"')]
+    assert "_audit_settle" not in hold_seg and "_turn_end()" not in hold_seg
     print("hold defer PASS")
 
 
@@ -118,16 +118,22 @@ def test_monitor_thread_persistent():
 
 
 def test_bg_shell_not_registered():
-    """P6：run_in_background 的 Bash（subagent_type 空）不登记保活。"""
+    """P6（复核R3 改真实调用）：直调 _emit_task_mirror——后台 shell
+    （subagent_type 空）不登记保活；真子代理登记。"""
     s = _mk_session()
-    # 直调 mirror 逻辑等价段：subagent_type 空 + is_backgrounded → 不入表
-    o = {"subtype": "task_started", "tool_use_id": "t9",
-         "subagent_type": "", "is_backgrounded": True, "description": "sleep"}
-    sub = o.get("subtype")
-    tid = str(o.get("tool_use_id") or "")
-    if o.get("is_backgrounded") and str(o.get("subagent_type") or "").strip():
-        s._bg_tasks[tid] = {}
+    s.emit = lambda o: None
+    s._bg_monitor_ensure = lambda: None   # 桩掉线程拉起
+    s._emit_task_mirror({"subtype": "task_started", "tool_use_id": "t9",
+                         "subagent_type": "", "is_backgrounded": True,
+                         "description": "sleep"})
     assert s._bg_tasks == {}, "后台 shell 不该锁大回合"
+    s._emit_task_mirror({"subtype": "task_started", "tool_use_id": "t10",
+                         "subagent_type": "designer", "is_backgrounded": True,
+                         "description": "设计"})
+    assert "t10" in s._bg_tasks, "真子代理应登记"
+    # 注销：notification 到达即出表
+    s._emit_task_mirror({"subtype": "task_notification", "tool_use_id": "t10"})
+    assert "t10" not in s._bg_tasks
     print("bg shell excluded PASS")
 
 
