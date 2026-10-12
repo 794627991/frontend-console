@@ -304,6 +304,7 @@
 
   function _vcsHistClose() {
     if (!_vcsHist) return;
+    _vcsHistLseq++;   // R2 终修（复核建议）：关窗即失效在途令牌——重开瞬间的 RTT 窗口也拦
     clearTimeout(_vcsHist.debT);
     try { document.removeEventListener('keydown', _vcsHist.escFn); } catch (_) {}
     _vcsHist.ov.remove();
