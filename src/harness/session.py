@@ -503,8 +503,14 @@ class HarnessSession:
         lines = au["lines"]
         rev = au["reviewer"]
         designed = au.get("designer")
-        au.update({"lines": 0, "files": [], "designer": False,
-                   "reviewer": False, "designFired": False})   # v3.5.53：新回合设计线重新可触发一次
+        # v3.5.99（用户实锤「designer 方案先行已派，1049 行实施回合仍报未派
+        # designer」）：**designer 旗跨回合保留**——大改的实施必然横跨多个回
+        # 合（方案已出、续回合纯实施），旧写法每回合结算清 designer=每一回合
+        # 都要求重派 designer=误报（模型澄清「同一需求的方案已存在且已按其
+        # 落地」）。清零点移到 send_message 新用户消息（新需求才重新要求设计
+        # 先行）；reviewer/lines 维持每回合清（每回合改动都要审）
+        au.update({"lines": 0, "files": [],
+                   "reviewer": False, "designFired": False})
         st = self._audit_state()
         if st is None:
             au["streak"] = 0
@@ -693,6 +699,13 @@ class HarnessSession:
                                           round(mwin / 1024)))
         except Exception:
             pass   # 检测自身失败不拦发送（读不到用量时维持原行为）
+        # v3.5.99：新用户消息=可能的新需求——designer 旗在此重置（设计先行
+        # 要求按新需求重新满足；同需求的后续实施回合由结算侧保留的旗豁免）
+        try:
+            self._audit["designer"] = False
+            self._audit["designFired"] = False
+        except Exception:
+            pass
         # base_url 死代理自愈的第二时机（用户实锤）：start 里的自愈只在起
         # 进程时跑——claude 启动时代理还活着、之后代理被停，进程不死就永远
         # 不走 start，消息全打进死端口。发送前发现 base_url 已恢复直连，
