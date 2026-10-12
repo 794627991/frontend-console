@@ -94,8 +94,11 @@
     ov.querySelector('[data-vcs-hclose]').onclick = () => _vcsHistClose();
     ov.querySelector('[data-vcs-hrefresh]').onclick = () => _vcsReloadLog();
     _hgWrap.appendChild(ov);
+    // 轻审R2/R3：打开**必**补拉（有缓存先显后刷——外部新提交即时跟上，
+    // v3.5.127「无条件重拉」语义真正承接）；先发起再绘列表——首开即显
+    // 「加载中…」而非误导的「暂无数据」
+    if (!_vcsLogBusy) _vcsReloadLog();
     _vcsHistPaintList(false);
-    if (!_HG.vcs.log && !_vcsLogBusy) _vcsReloadLog();   // 无缓存即拉；有缓存秒开后台补新
   }
 
   function _vcsHistClose() {
@@ -246,7 +249,15 @@
         _vcsLogBusy = false;
         _HG.vcs.log = j.ok ? (j.commits || []) : null;
         _vcsPaint();
-        if (_vcsHist) _vcsHistPaintList(true);   // 弹窗开着：保选中重绘左列
+        if (_vcsHist) {
+          // 轻审R1：Error 缓存条目随刷新失效（「点⟳重试」承诺兑现）+当前选中重拉详情
+          let _errCleared = false;
+          for (const k of Array.from(_vcsHist.files.keys())) {
+            if (_vcsHist.files.get(k) instanceof Error) { _vcsHist.files.delete(k); _errCleared = true; }
+          }
+          _vcsHistPaintList(true);   // 弹窗开着：保选中重绘左列
+          if (_errCleared && _vcsHist.sel) _vcsHistDetail(_vcsHist.sel);
+        }
       }).catch(() => { _vcsLogBusy = false; });
   }
   function _vcsApi(path, body, label, done) {
@@ -416,18 +427,9 @@
               `<div class="hg-vcs-cfrow" data-rev="${esc(rev)}" data-path="${esc(f.path)}" data-st="${esc(f.st)}" title="查看该提交中此文件的改动">${esc(f.st)} ${esc(f.path)}</div>`).join('')
               || '<div class="hg-vcs-empty">该提交无文件级改动记录</div>';
             box.querySelectorAll('.hg-vcs-cfrow').forEach(fr => {
-              fr.onclick = async () => {
-                fr.style.opacity = '.5';
-                try {
-                  const j2 = await (await fetch('/api/vcs/commit_diff', { method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ root: _HG.vcs.root, rev,
-                                           path: fr.dataset.path, st: fr.dataset.st }) })).json();
-                  if (j2.ok) buildDiffViewerTab(j2.a, j2.b);
-                  else showBanner('提交 diff 获取失败：' + (j2.err || ''), 4000, true);
-                } catch (e) { showBanner('提交 diff 获取失败：' + e, 4000, true); }
-                fr.style.opacity = '';
-              };
+              // 轻审R4：改调公共 _vcsFileDiffClick——旧内联副本无 buildDiffViewerTab
+              // 异常防护（unhandled rejection 无提示），与弹窗版已漂移
+              fr.onclick = () => _vcsFileDiffClick(rev, fr.dataset.path, fr.dataset.st, fr);
             });
           } catch (e) {
             box.innerHTML = '<div class="hg-vcs-empty">获取失败：' + esc(String(e)) + '</div>';

@@ -121,7 +121,10 @@ function buildTerminal(portId, meta) {
   conn.term = new Terminal({
     fontFamily: '"Cascadia Code", "JetBrains Mono", "Consolas", "Menlo", monospace',
     fontSize: (typeof termFontSize === 'number') ? termFontSize : 13,   // 设置/Ctrl+=/- 全局字号
-    lineHeight: 1.3,
+    // v3.5.128：lineHeight 1.3→1.0——设备 debug 输出的块字符图形（QR 码/
+    // 进度条）按「字符格宽:高=1:2」绘制，1.3 的行距把格高拉到 1:2.6，
+    // QR 显示成窄长变形无法扫码（MobaXterm/主流终端均 1.0）
+    lineHeight: 1.0,
     cursorBlink: true,
     cursorStyle: 'bar',
     scrollback: 100000,       // 大回滚缓冲，配合后端分页
@@ -158,9 +161,11 @@ function buildTerminal(portId, meta) {
   // ---- PTY 尺寸同步（claude 终端）：xterm onResize → /api/resize → ConPTY setwinsize。
   // debounce 200ms（拖拽窗口 fit 高频触发）；尺寸未变短路。初始 fit 也会触发一次——
   // 恰好把真实尺寸同步给 PTY（纠正 spawn 时猜测的 120x30），无害且正确。
+  // v3.5.128：SSH 同步——invoke_shell 默认 80 列，远端行编辑按 80 列回绕，
+  // 本地宽窗口里长命令回显错位拼接（svn st 实锤）
   conn._lastCols = 0; conn._lastRows = 0;
   conn.term.onResize(({cols, rows}) => {
-    if (!conn.meta || conn.meta.kind !== 'claude') return;
+    if (!conn.meta || (conn.meta.kind !== 'claude' && conn.meta.kind !== 'ssh')) return;
     clearTimeout(conn._resizeTimer);
     conn._resizeTimer = setTimeout(() => {
       if (connections[portId] !== conn) return;

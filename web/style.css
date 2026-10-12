@@ -4449,7 +4449,7 @@ span.h-ag-type[class*='h-ava-'] {
 .hg-vcs-cfrow:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 
 /* ---- v3.5.133 提交历史弹窗（designer 方案：master-detail，880px/84vh）---- */
-.hg-modal-vcslog { width: min(880px, 94%); max-height: 84vh; display: flex; flex-direction: column; }
+.hg-modal-vcslog { width: min(880px, 94%); max-width: 94%; max-height: 84vh; display: flex; flex-direction: column; }
 .hg-vcs-hbody { flex: 1; min-height: 0; display: flex; border-top: 1px solid var(--border); }
 .hg-vcs-hlist { width: 46%; min-width: 280px; overflow-y: auto; border-right: 1px solid var(--border);
   padding: 4px 0; }
