@@ -186,7 +186,7 @@ def t_log_plan():
     check("关键字分词 AND 字面量", len(gi) == 2 and g[gi[0] + 1] == "fix(x)" and g[gi[1] + 1] == "网络")
     check("count 同套过滤", c.count("--grep") == 2)
     e, g, c, sv, skip, lim = P("git", {"author": "gao.yi*"})
-    check("作者 BRE 六元转义", g[g.index("--author") + 1] == "gao\.yi\*")
+    check("作者 BRE 六元转义", g[g.index("--author") + 1] == r"gao\.yi\*")
     check("日期格式 400", P("git", {"since": "2026-13-01"})[0][1] == 400)
     check("日期区间 400", P("git", {"since": "2026-10-10", "until": "2026-10-01"})[0][1] == 400)
     e, g, c, sv, skip, lim = P("git", {"since": "2026-10-01", "until": "2026-10-10"})
@@ -202,8 +202,7 @@ def t_log_plan():
           and "ab" not in " ".join(P("git", {"text": "ab"})[1]))
 
 
-t_log_plan()
-
-
 if __name__ == "__main__":
-    sys.exit(0)
+    rc1 = main()          # R1：恢复原有 16 项断言执行（v3.5.138 误改为恒 0）
+    t_log_plan()
+    sys.exit(1 if (_FAIL or rc1) else 0)

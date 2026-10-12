@@ -101,7 +101,7 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body) })
       .then(r => r.json()).then(j => {
-        if (!H || H.lseq !== lseq || _vcsHistQfp() !== fp) return;   // 竞态：旧响应丢弃
+        if (!H || H.lseq !== lseq || _vcsHistLseq !== lseq || _vcsHistQfp() !== fp) return;   // 竞态：旧响应丢弃（R2：活读模块级单调——关窗重开窗口期旧响应双保险拦截）
         if (H.querying) H.qbusy = false;
         if (!j.ok) {
           H.fetchErr = j.err || '获取失败';
