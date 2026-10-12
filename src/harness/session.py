@@ -1496,6 +1496,7 @@ class HarnessSession:
                     # hold 期所有中间 result 帧前端都不落 busy，等这一帧才落）
                     # v3.5.125（复核R2）：与 hold 分支同用 _hold_now 单次快照
                     # ——缝隙闭合（monitor 硬顶 pop 卡进两读之间不再可能）
+                    self.emit({"kind": "turn_complete"})
                     with self._busy_lock:
                         self._held = False   # v3.5.124（全审P2）：真收尾清 hold——防 120s 后幽灵二次 settle/turn_end
                     try:
