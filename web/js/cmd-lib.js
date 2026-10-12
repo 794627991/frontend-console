@@ -170,6 +170,11 @@ function sendCmd(cmd) {
   if (!activePortId) { showBanner('无活动连接', 3000, true); return; }
   fetch('/api/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ port_id: activePortId, cmd }) });
   showBanner('已发送：' + cmd);
+  // v3.5.116（用户实锤「点命令库发送后焦点被右侧面板占据，必须手点回
+  // 终端才能输入」）：发送完把焦点还给活动终端的 xterm——继续敲命令不用
+  // 再点一次窗口。非终端 tab（harness 等）无 term，静默跳过
+  const conn = connections[activePortId];
+  if (conn && conn.term) { try { conn.term.focus(); } catch (_) {} }
 }
 $('cmdAddBtn').onclick = async () => {
   const name = $('cmdAddName').value.trim();
