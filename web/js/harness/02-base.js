@@ -190,6 +190,8 @@ const _HG = {
   archivedTurns: 0,     // v3.5.61：主窗口已归档轮数（归档提示文案用，切会话清零重算）
   hold: false,          // v3.5.123：大回合保活旗——后台子代理在飞时后端发 turn_hold，
                         // busy 保持工作中（中间 result 不落 busy），turn_complete 清
+  holdRes: null,        // v3.5.130：hold 期中间 result 帧存档（真收尾 turn_complete
+                        // 补收尾序列用：冻结工时/中断标记/ctx 环数据）
   histBuilding: false,  // v3.2.13：原子渲染（游离缓冲）进行中——isConnected 判据的缓冲期豁免（grpEnsure/_tlPlace/_tlExpFlush）
   imgSrv: null,         // 图片服务路径标记（后端 /api/harness/img/<sid>/file）
   activity: null,       // 活动指示 {start, verbTimer, tickTimer}

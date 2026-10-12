@@ -609,6 +609,21 @@
         _hgScrollBottom();
       }
     } else if (typ === 'result') {
+      // v3.5.130（用户批注「大回合计时不变？子代理跑时不应收起」）：hold 期
+      // 中间 result **不做回合收尾**——组保持展开、秒表继续走（子代理在飞
+      // 也算本回合工作）、子代理不收尾不关窗；result 帧存档，真收尾
+      //（turn_complete 事件）才执行完整收尾序列
+      if (_HG.hold) {
+        _HG.holdRes = { o,
+                        durMs: (typeof o.duration_ms === 'number' ? o.duration_ms : 0),
+                        ok: !(o.subtype && o.subtype !== 'success') };
+        endThinking(); closeRun();
+        setBusy(true);
+        if (o.subtype && o.subtype !== 'success')
+          renderRaw(`⚠ 回复异常结束：${o.subtype}${o.result ? ' — ' + String(o.result).slice(0, 200) : ''}`);
+        refreshSessions();
+        return;
+      }
       _hgCompactionEnd();                  // v2.20：status 恢复事件若丢，result 兜底收压缩态
       endThinking();
       closeRun();
@@ -641,11 +656,7 @@
       _hgGrantRewind();                    // v2.28.15：回合定稿——回滚按钮授予最后一条 AI 消息
       // v2.3 问题4：不显示金额，显示上下文用量环（⭕ 百分比，256K 实窗口径）
       renderCtxRing(o);
-      // v3.5.123（用户口径「子代理在飞不许结束大回合」）：hold 期中间 result
-      // 不落 busy——工作中保持，等 turn_complete（真收尾）才落；渲染收尾
-      //（组定稿/ctx 环/回滚授予）照常，组视觉连续性由 init#2 重开解决
-      if (_HG.hold) { setBusy(true); }
-      else setBusy(false);
+      setBusy(false);
       if (o.subtype && o.subtype !== 'success')
         renderRaw(`⚠ 回复异常结束：${o.subtype}${o.result ? ' — ' + String(o.result).slice(0, 200) : ''}`);
       refreshSessions();
@@ -865,8 +876,26 @@
         setBusy(true);   // 幂等保持工作中（输入走排队，子代理全完成后泵出）
       }
       else if (it.kind === 'turn_complete') {
+        // v3.5.130：真收尾——补完整回合收尾序列（hold 期中间 result 跳过的
+        // 那套，此刻用存档的 result 帧数据执行：子代理收尾/窗格收起/组定稿
+        // 收起/秒表定格冻结工时/ctx 环/回滚授予）
         _HG.hold = false;
+        const hr = _HG.holdRes || {}; _HG.holdRes = null;
+        _hgVisionSweep(true);
+        _hgAgentsSweep(false);
+        _subEnd();
+        _hgPeerVerifyPending();
+        _hgTurnEnd(hr.ok === false ? 'error' : 'ok', hr.durMs || 0);
+        try { _hgPatchMissingCmds(); } catch (_) {}
+        _hgTurnSumRow();
+        grpFinalize(true, { durMs: hr.durMs || 0,
+                            interrupted: hr.ok === false,
+                            hist: _hgTailAdopt(),
+                            turnEnd: true });
+        _hgGrantRewind();
+        if (hr.o) renderCtxRing(hr.o);
         setBusy(false);   // 真收尾（bg 集空后的唤醒回合 result）——正常落 busy
+        refreshSessions();
       }
       else if (it.kind === 'subagent_slow') {
         showBanner(`后台子代理「${(it.desc || '').slice(0, 24)}」已运行 ${Math.round((it.dur || 600) / 60)} 分钟——点子代理胶囊可查看实况`, 6000, true);
