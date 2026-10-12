@@ -20,6 +20,12 @@
                             run: false, err: false, replay: false, model: '' };
     _sub.order.push(_SUB_VCS);
     _subBodyEl.appendChild(sc);
+    // v3.5.119（用户实锤「子代理窗格只显示一半，点开版本页签就好了」）：
+    // 本函数是「不夺焦点」懒建（_subDirEnsure 头部随四入口触发）——新 sc
+    // 不像动态/目录那样紧跟 _subActivate(自己) 接管显示，裸 append 会以
+    // display:'' 叠在当前激活窗格上把内容挤掉一半。藏住，激活交给
+    // _subActivate 统一切换
+    if (_sub.active !== _SUB_VCS) sc.style.display = 'none';
     _vcsEl = sc;
     sc.innerHTML = '<div class="hg-vcs-loading">…</div>';
   }
