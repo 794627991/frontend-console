@@ -414,7 +414,14 @@ def vcs_log():
                     total = None
     else:
         rc, out, e = _run(svn_argv, wc, VCS_TIMEOUT_RO)
-        if rc != 0 and text_param := str(data.get("text") or "").strip():
+        if rc != 0 and "unknown option" in (e or "") \
+                and "--search" in svn_argv:
+            # svn <1.8 无 --search：探测特征 → 去掉重拉（客户端过滤由前端
+            # 按 banner 提示处理已载分页，designer 第六节）
+            _argv2 = list(svn_argv)
+            _i = _argv2.index("--search")
+            del _argv2[_i:_i + 2]
+            rc, out, e = _run(_argv2, wc, VCS_TIMEOUT_RO)
             # svn <1.8 无 --search：探测特征 → 降级重拉（客户端过滤由前端
             # 按 banner 提示处理已载分页，designer 第六节）
             if "unknown option" in (e or ""):
