@@ -593,7 +593,10 @@ def design_limit(cfg=None):
 
 
 def audit_verdict(lines, rev, designed=True, cfg=None, strong=False):
-    """回合结算违规判定（纯函数，claude_harness._audit_settle 调用）：
+    """【v3.5.100 起退役】结算已改用户消息边界制（session._audit_settle 内
+    联新口径：lines 跨 AI 回合累计+审后再审），本函数不再被调用——保留仅供
+    tests/test_roles_routing.py 锚旧纯函数语义（口径参考，非活代码）。
+    原文档：回合结算违规判定（纯函数）：
     入参 lines=本回合直改累计行数（v3.5.41 起 _audit_tally 累计入账）、rev=是否派发过 reviewer、
     designed=是否派发过 designer（v2.52 用户拍板：判定只看单次直改总
     行数——不计文件数、不做回合累计；v2.54 新增设计档强制）。返回违规

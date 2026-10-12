@@ -153,7 +153,7 @@ def main():
     s._PUMP_DELAY = 0.05
     sent = []
     _real_send = s.send_message
-    s.send_message = lambda text, imgs=None, fls=None: (
+    s.send_message = lambda text, imgs=None, fls=None, boundary=True: (
         sent.append(text), (True, None))[1]
     try:
         while s.queue_list():   # 清场
