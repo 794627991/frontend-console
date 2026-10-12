@@ -39,7 +39,8 @@ findstr /C:"selftest FAIL" "dist\前端控制台\selftest_result.txt" >nul && goto fa
 :ok
 echo.
 echo ==============================================
-echo [成功] 打包完成: dist\前端控制台echo 结果已记录: dist\打包结果.txt
+echo [成功] 打包完成: dist\前端控制台
+echo  结果已记录: dist\打包结果.txt
 echo ==============================================
 >>"dist\打包结果.txt" echo [%date% %time%] 成功
 pause
