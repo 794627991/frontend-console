@@ -159,7 +159,9 @@
   }
   function _hgInputState() {             // 输入框占位文案：运行态/子代理/协作等待联动
     let ph;
-    if (_HG.busy && _hgAgentsRunning())
+    if (_HG.busy && _HG.hold)
+      ph = '大回合执行中（后台子代理/审计在跑）——输入将排队，全部完成后自动发送';
+    else if (_HG.busy && _hgAgentsRunning())
       ph = '子代理执行中——回复进行中，继续输入将排队，结束后自动发送';
     else if (_HG.busy)
       ph = '回复执行中——继续输入将排队，结束后自动发送';

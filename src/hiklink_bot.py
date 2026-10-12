@@ -917,6 +917,15 @@ class HikLinkBotController:
             self.bot.reply("已收到，开始处理：%s" % text[:80])
             ok, err = s.send_message(text)
             if not ok:
+                # v3.5.123：busy 拒发（大回合保活期）→ 入服务端队列回「已排队」，
+                # 不再回「发送失败」（用户口径：子代理在飞也算回合内，消息排队）
+                if err and "正在回复" in err:
+                    try:
+                        s.queue_admit(text=text)
+                        self.bot.reply("⏳ 当前大回合未结束，已排队，完成后自动执行")
+                        return
+                    except Exception:
+                        pass
                 self.bot.reply("消息发送失败: %s" % (err or ""))
                 return
             # v2.27.15：超窗自动续命——send_message 内部已把旧历史注入新会话并
@@ -999,11 +1008,18 @@ class HikLinkBotController:
 
     @staticmethod
     def _saw_result(s, after_seq):
-        """after_seq 之后是否已出现 result 帧（turn 的终止标志）。"""
+        """after_seq 之后是否已出现 result 帧（turn 的终止标志）。
+        v3.5.123（用户口径「子代理在飞不许结束大回合」）：hold 期的中间
+        result 不算完——bg_in_flight 为真时继续等（手机不收半截答案）。"""
         try:
             for e in s.get_events_after(after_seq):
                 if e.get("kind") == "event" \
                         and (e.get("data") or {}).get("type") == "result":
+                    try:
+                        if s.bg_in_flight():
+                            continue   # hold：后台子代理还在跑，回合未终
+                    except Exception:
+                        pass
                     return True
         except Exception:
             pass

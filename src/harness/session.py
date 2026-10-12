@@ -125,6 +125,13 @@ class HarnessSession:
         # v2.40：light 形态事中闸的 --settings 临时文件路径（kill 时清理；
         # revive 重启由 start() 重建——hooks 是进程启动参数，活进程不热更）
         self._audit_settings_path = None
+        # v3.5.123（用户口径「子代理在飞不许结束大回合」）：后台子代理在飞
+        # 登记表 + hold 旗——主链 result 到达但仍有 is_backgrounded 任务在跑
+        # 时：busy 保持、审计结算挂起（defer 到真终点）、前端 turn_hold 保持
+        # 工作中；三层防锁死兜底见 _bg_monitor（30min 硬顶/集空闲置/■中断）
+        self._bg_tasks = {}      # tid → {"t0": epoch, "desc": str, "slow": bool}
+        self._held = False
+        self._bg_mon_started = False
         self.last_result = None
         # v3.5.98：会话创建时的 API 方案名（跨方案发消息拦截依据）。切方案
         # 会换网关/模型映射/上下文窗口，旧会话续发必然错位（上下文大小不一
@@ -315,6 +322,7 @@ class HarnessSession:
             self.alive = False
             with self._busy_lock:      # 锁序 _start_lock > _busy_lock（单向）
                 self.busy = False
+            self.bg_in_flight_clear()   # v3.5.123：kill=子代理全灭，保活状态同步清
             self._audit_settings_cleanup()
             if quiet:
                 proc_alive = bool(self._proc and self._proc.poll() is None)
@@ -1126,7 +1134,15 @@ class HarnessSession:
                        "desc": str(o.get("description") or "")[:200],
                        "bg": bool(o.get("is_backgrounded")),
                        "task_id": str(o.get("task_id") or "")})
+            # v3.5.123：后台子代理登记（回合保活——在飞时不许结束大回合）
+            if o.get("is_backgrounded"):
+                self._bg_tasks[tid] = {"t0": time.time(),
+                                       "desc": str(o.get("description") or "")[:80],
+                                       "slow": False}
+                self._bg_monitor_ensure()
         elif sub == "task_notification":
+            # v3.5.123：完成即注销（保活集合收缩；未知 tid 静默跳过）
+            self._bg_tasks.pop(tid, None)
             usage = o.get("usage") or {}
             st = str(o.get("status") or "")
             self.emit({"kind": "subagent_result", "tid": tid,
@@ -1137,6 +1153,72 @@ class HarnessSession:
                        "task_id": str(o.get("task_id") or "")})
 
     # ---- 事件层 ----
+
+    # ---- v3.5.123 后台子代理保活（回合在飞守卫）----
+    _BG_SLOW = 600           # 单后台任务 >10min：一次性 slow 提示（状态查询手段）
+    _BG_CAP = 1800           # >30min：硬顶强制收尾（防 CLI 僵尸锁死大回合）
+    _BG_IDLE_RELEASE = 120   # hold 中且集合已空且进程闲置 >120s：合成收尾（防唤醒回合缺席）
+
+    def bg_in_flight(self):
+        """只读：后台子代理是否在飞（HikLink 等待判定用）。"""
+        return bool(self._bg_tasks)
+
+    def _bg_monitor_ensure(self):
+        if self._bg_mon_started:
+            return
+        self._bg_mon_started = True
+
+        def _loop():
+            while True:
+                time.sleep(30)
+                try:
+                    now = time.time()
+                    for tid, info in list(self._bg_tasks.items()):
+                        dur = now - info.get("t0", now)
+                        if dur > self._BG_CAP:
+                            # 硬顶：清表 + 合成收尾（警示卡先行）
+                            self._bg_tasks.pop(tid, None)
+                            self._audit_card(
+                                "[审计] 后台子代理「%s」已运行 %d 分钟未归"
+                                "（超过 30 分钟硬顶），大回合强制收尾；若它"
+                                "稍后返回结果，仅作补妆不计入本回合。"
+                                % (info.get("desc") or tid, int(dur // 60)))
+                        elif dur > self._BG_SLOW and not info.get("slow"):
+                            info["slow"] = True
+                            self.emit({"kind": "subagent_slow", "tid": tid,
+                                       "dur": int(dur),
+                                       "desc": info.get("desc") or ""})
+                    if self._held and not self._bg_tasks:
+                        # 集空但 hold 未放（notification 到了而唤醒回合缺席）
+                        idle = now - (self.last_active / 1000.0
+                                      if self.last_active else now)
+                        if idle > self._BG_IDLE_RELEASE:
+                            self._bg_hold_release("bg_idle")
+                    if not self._bg_tasks and not self._held:
+                        return   # 集空且无 hold——监视线程自退（下次登记拉起）
+                except Exception:
+                    pass
+        threading.Thread(target=_loop, daemon=True).start()
+
+    def _bg_hold_release(self, reason):
+        """hold 强制/合成收尾：busy 落 + 审计结算 + turn_end（泵队列）。
+        CAS 进 _busy_lock（与 send busy 拒发同锁）；已在收尾竞态中则让位。"""
+        with self._busy_lock:
+            if not self._held:
+                return
+            self._held = False
+            self.busy = False
+        try:
+            self._audit_settle("result")
+        except Exception:
+            pass
+        self._turn_end()
+
+    def bg_in_flight_clear(self):
+        """进程死亡/kill 路径的保活状态清理（子代理同进程必死，幂等）。"""
+        self._bg_tasks = {}
+        self._held = False
+
     def _check_peer_lines(self):
         """跨会话回传检测（v2.27.4）：CLI 收到 peer 消息只写转写 jsonl，
         不往 stdout 流吐 user 事件（实测事件缓冲里 495 条 system 全是
@@ -1372,7 +1454,17 @@ class HarnessSession:
                 self.emit({"kind": "event", "data": o})
                 # v2.34：result 即回合终点——结算审计（light 形态违规兜底，
                 # 事件已 emit，前端先收 result 收尾再收审计警示，顺序自然）
-                if typ == "result":
+                # v3.5.123（用户口径「子代理在飞不许结束大回合」）：仍有后台
+                # 子代理在飞 → hold：busy 保持、审计结算挂起（defer 到真终点
+                # ——bg 集空后的唤醒回合 result 才真收尾）；先于 result 帧发
+                # turn_hold 让前端先立 hold 旗
+                if typ == "result" and self._bg_tasks:
+                    self._held = True
+                    self.emit({"kind": "turn_hold", "n": len(self._bg_tasks)})
+                if typ == "result" and not self._bg_tasks:
+                    # turn_complete：真收尾标记（前端据此清 turn_hold 旗——
+                    # hold 期所有中间 result 帧前端都不落 busy，等这一帧才落）
+                    self.emit({"kind": "turn_complete"})
                     try:
                         self._audit_settle("result")
                     except Exception:
@@ -1390,6 +1482,7 @@ class HarnessSession:
                 self.alive = False
                 with self._busy_lock:      # v3.4.54：置位同步入锁
                     self.busy = False
+                self.bg_in_flight_clear()   # v3.5.123：进程死=子代理全灭，保活状态同步清
             # v2.40：自然死亡不走 kill_proc——事中闸 settings 临时文件在这
             # 条路径也要清（否则 revive 覆盖引用后旧文件泄漏，见方法注释）
             self._audit_settings_cleanup()

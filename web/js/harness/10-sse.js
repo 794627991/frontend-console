@@ -13,7 +13,7 @@
         _HG.initN = (_HG.initN || 0) + 1;
         // v3.3.2(P7)：init#2=CLI 自发新回合（机器唤醒：后台代理完成/协作回传）
         // ——亮运行态的同时重开上一回合（30min 护栏），续跑工作回原组不切头
-        if (_HG.initN > 1 && !_HG.busy) { setBusy(true); _hgTurnReopen(); }
+        if (_HG.initN > 1 && (!_HG.busy || _HG.hold)) { setBusy(true); _hgTurnReopen(); }
         else if (!_HG.busy) setBusy(false);
       } else if (sub === 'task_started' || sub === 'task_progress'
                  || sub === 'task_notification') {
@@ -641,7 +641,11 @@
       _hgGrantRewind();                    // v2.28.15：回合定稿——回滚按钮授予最后一条 AI 消息
       // v2.3 问题4：不显示金额，显示上下文用量环（⭕ 百分比，256K 实窗口径）
       renderCtxRing(o);
-      setBusy(false);
+      // v3.5.123（用户口径「子代理在飞不许结束大回合」）：hold 期中间 result
+      // 不落 busy——工作中保持，等 turn_complete（真收尾）才落；渲染收尾
+      //（组定稿/ctx 环/回滚授予）照常，组视觉连续性由 init#2 重开解决
+      if (_HG.hold) { setBusy(true); }
+      else setBusy(false);
       if (o.subtype && o.subtype !== 'success')
         renderRaw(`⚠ 回复异常结束：${o.subtype}${o.result ? ' — ' + String(o.result).slice(0, 200) : ''}`);
       refreshSessions();
@@ -657,6 +661,8 @@
   // 无帧判死强制重连（对照 persistent-protocol KEEP_ALIVE=5s/ACK_TIMEOUT=20s）。
   function _hgSseResetLocal() {
     // 清场：内存态与 DOM 全部作废（switchTo 的重置块同款，供 snapshot/reset 用）
+    // v3.5.123：hold 旗随清场（切走的会话若在 hold，回切由 replay 的 turn_hold 重建）
+    _HG.hold = false;
     endThinking(); closeRun();
     // v3.4.55（轻审 P4）：清 agents 前运行档案入桶——reset/快照重建路
     // 同样暂存（switchTo 同款判据），重建完成后 _hgLiveAgentsRestore 回填
@@ -853,6 +859,18 @@
       // 分派处 grpFinalize 是残留矛盾）——先重开上一回合再渲染，回传唤醒的
       // 续跑工作才落回原组；空闲期回传是 P7 主场景
       else if (it.kind === 'peer') { _hgTurnReopen(); renderPeer(it.name, it.text, it.to); }
+      // v3.5.123（用户口径「子代理在飞不许结束大回合」）：后端 hold 保活事件
+      else if (it.kind === 'turn_hold') {
+        _HG.hold = true;
+        setBusy(true);   // 幂等保持工作中（输入走排队，子代理全完成后泵出）
+      }
+      else if (it.kind === 'turn_complete') {
+        _HG.hold = false;
+        setBusy(false);   // 真收尾（bg 集空后的唤醒回合 result）——正常落 busy
+      }
+      else if (it.kind === 'subagent_slow') {
+        showBanner(`后台子代理「${(it.desc || '').slice(0, 24)}」已运行 ${Math.round((it.dur || 600) / 60)} 分钟——点子代理胶囊可查看实况`, 6000, true);
+      }
       else if (it.kind === 'renew') { grpFinalize(true); renderRenew(it.text); }
       // v2.34：审计警示（light 回合结算违规）——回合已终结，定稿当前组再出红卡
       else if (it.kind === 'audit') { renderAudit(it.text); _hgScrollBottom(); }   // v3.2.27：撤 grpFinalize——警示入工作区不分割回合

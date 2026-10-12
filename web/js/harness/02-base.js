@@ -188,6 +188,8 @@ const _HG = {
   histLive: false,      // v2.35.2：histAll 是否经窗口渲染建立 DOM 对应（快照恢复的懒填不算——滚动扩收的放行门）
   histStale: false,     // v2.43.2（R2-缺口A）：降级标记——已确认漂移但忙碌未重渲，saveCache 存 'stale' 哨兵、恢复强制重渲
   archivedTurns: 0,     // v3.5.61：主窗口已归档轮数（归档提示文案用，切会话清零重算）
+  hold: false,          // v3.5.123：大回合保活旗——后台子代理在飞时后端发 turn_hold，
+                        // busy 保持工作中（中间 result 不落 busy），turn_complete 清
   histBuilding: false,  // v3.2.13：原子渲染（游离缓冲）进行中——isConnected 判据的缓冲期豁免（grpEnsure/_tlPlace/_tlExpFlush）
   imgSrv: null,         // 图片服务路径标记（后端 /api/harness/img/<sid>/file）
   activity: null,       // 活动指示 {start, verbTimer, tickTimer}
