@@ -8,6 +8,7 @@
 // ============================================================
   _HG.vcs = { root: '', data: null, log: null, out: '', busy: false, sel: new Set(), ts: 0 };
   let _vcsEl = null;                 // 版本页 sc 容器（随 _subReset/_subDrop 清）
+  let _vcsLogBusy = false;           // log 拉取防连点
   let _vcsTs = 0;                    // 上次 status 拉取时刻（30s 激活缓存）
   const _VCS_ST_CLS = { M: 'm', A: 'a', D: 'd', R: 'r', '?': 'u', C: 'c', '!': 'd' };
   const _VCS_ST_TXT = { M: '改', A: '增', D: '删', R: '移', '?': '未纳管', C: '冲突', '!': '丢失' };
@@ -77,13 +78,16 @@
     }).catch(e => { _HG.vcs.busy = false; _HG.vcs.data = { err: String(e) }; _vcsPaint(); });
   }
   function _vcsReloadLog() {
+    if (_vcsLogBusy) return;           // 防连点重复 fetch
+    _vcsLogBusy = true;
     fetch('/api/vcs/log', { method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ root: _HG.vcs.root, limit: 30 }) })
       .then(r => r.json()).then(j => {
+        _vcsLogBusy = false;
         _HG.vcs.log = j.ok ? (j.commits || []) : null;
         _vcsPaint();
-      }).catch(() => {});
+      }).catch(() => { _vcsLogBusy = false; });
   }
   function _vcsApi(path, body, label, done) {
     _HG.vcs.busy = true; _vcsPaint();
@@ -202,7 +206,9 @@
     _vcsEl.querySelectorAll('[name="hg_vcs_refresh"]').forEach(b =>
       b.onclick = () => { _HG.vcs.sel = new Set(); _vcsReload(); });
     const lb = _vcsEl.querySelector('[name="hg_vcs_logbtn"]');
-    if (lb) lb.onclick = () => { if (!_HG.vcs.log) _vcsReloadLog(); else { _HG.vcs.log = null; _vcsPaint(); } };
+    // v3.5.127（用户实锤「提交后点刷新不显示最新提交，要点两次」）：旧逻辑
+    // 有数据时第一次点只清空不重拉——无条件重拉才是「刷新」语义
+    if (lb) lb.onclick = () => _vcsReloadLog();
     _vcsEl.querySelectorAll('.hg-vcs-ck').forEach(ck => ck.onchange = () => {
       if (ck.checked) _HG.vcs.sel.add(ck.dataset.rel); else _HG.vcs.sel.delete(ck.dataset.rel);
       const cb = _vcsEl.querySelector('[name="hg_vcs_commit"]');
