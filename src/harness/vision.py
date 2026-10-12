@@ -269,6 +269,19 @@ def _mm_probed_load():
         pass
     return {}
 
+# ---- v3.5.126 双名判定（内网实锤缺陷1）----
+
+def _model_vision_mode_dual(live, configured):
+    """lanzi 网关的配置名是**动态路由别名**：配置选 Lanz-Medium-V，实报名
+    （live_model）可能轮转为 DeepSeek-V4.1-Flash / Qwen3.8-Flash-Next 等
+    （内网实锤，多会话实报名各不相同）——只按实报名查 mm_user/名单/正则
+    会随网关路由漂移误判走 MCP。双名判定：实报名与配置名（用户亲手选的，
+    恒在场）任一判 inline 即 inline。"""
+    if _model_vision_mode(live) == "inline":
+        return "inline"
+    return _model_vision_mode(configured)
+
+
 # ---- from claude_harness.py:356 (_model_vision_mode) ----
 
 

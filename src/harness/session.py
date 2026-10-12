@@ -20,7 +20,8 @@ from .meta import _meta, _meta_load, _meta_lock, _meta_save
 from .models import available_models
 from .prompts import _collect_system_prompt
 from .transcript import re_title, _trace_append
-from .vision import _cleanup_peer_reg, _model_vision_mode, _vision_load
+from .vision import (_cleanup_peer_reg, _model_vision_mode, _model_vision_mode_dual,
+                     _vision_load)
 
 
 # ---- from claude_harness.py:1036 (HarnessSession) ----
@@ -204,7 +205,9 @@ class HarnessSession:
             # 彻底消失（模型连尝试入口都没有，比不预授权更干净）；非多模态
             # 默认注入（那是它唯一的看图通道）。ask_user 始终在（交互提问
             # 与识图无关）。
-            _inline_mm = _model_vision_mode(self._eff_model()) == "inline"
+            # v3.5.126（内网实锤缺陷1）：双名判定——实报名（网关动态路由
+            # 别名，会轮转）与配置名（用户亲手选）任一判 inline 即 inline
+            _inline_mm = _model_vision_mode_dual(self._eff_model(), self.model) == "inline"
             _cfg = _ask_mcp_cfg_path(self.sid, self.permission,
                                      include_vision=not _inline_mm)
             if _cfg:
@@ -214,9 +217,12 @@ class HarnessSession:
                 # 不该看到任何识图入口）
                 _tools = ["mcp__harness__ask_user"]
                 if _vision_load()["enabled"] and not _inline_mm:
-                    # v3.5.104：本地工具升主通道，列前；网关 4_5v 降兜底列后
-                    _tools += ["mcp__vision__analyze_image",
-                               "mcp__4_5v_mcp__analyze_image"]
+                    # v3.5.104：本地工具升主通道。
+                    # v3.5.126（内网实锤缺陷3）：4_5v 是幽灵授权——除 BigModel
+                    # 网关外无 server 注册，列进 allowedTools 只是每次会话的
+                    # 无效项；移除（提示词兜底阶梯的「网关内建工具」措辞已
+                    # 允许不存在，不受影响）
+                    _tools += ["mcp__vision__analyze_image"]
                 argv += ["--allowedTools", ",".join(_tools)]
         # v2.14：识图后台会话用固定基础提示词；普通会话走用户提示词体系 +
         # 识图转交引导（主会话默认不知道有识图同伴，必须显式告知）。

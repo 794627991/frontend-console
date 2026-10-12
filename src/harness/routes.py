@@ -1164,9 +1164,8 @@ def harness_vision_status():
             s = _sessions.get(sid)
         if s:
             try:
-                from .vision import _model_vision_mode
-                m = s._eff_model()
-                mode = _model_vision_mode(m)
+                from .vision import _model_vision_mode_dual
+                mode = _model_vision_mode_dual(s._eff_model(), s.model)
             except Exception:
                 mode = ""
         # v3.5.45（用户实锤「重启了还是显示 MCP，过一会才变」）：重启后后端
@@ -1180,10 +1179,11 @@ def harness_vision_status():
                     os.path.expanduser("~"), ".serialconsole_pro",
                     "claude_harness.json"), encoding="utf-8"))
                 mm = meta.get(sid) or {}
-                m = (mm.get("live_model") or mm.get("model") or "").strip()
-                if m:
-                    from .vision import _model_vision_mode
-                    mode = _model_vision_mode(m)
+                m = (mm.get("live_model") or "").strip()
+                mc = (mm.get("model") or "").strip()
+                if m or mc:
+                    from .vision import _model_vision_mode_dual
+                    mode = _model_vision_mode_dual(m, mc)
             except Exception:
                 pass
     return jsonify({"ok": True, "enabled": bool(cfg["enabled"]),
