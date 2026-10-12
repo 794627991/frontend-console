@@ -34,8 +34,17 @@
     _HG.vcs = { root: (_HG.vcs || {}).root || '', data: null, log: null,
                 out: '', busy: false, sel: new Set(), ts: 0 };
   }
+  let _vcsTick = null;
+  function _vcsTickStart() {         // v3.5.124（用户需求）：激活期 60s 静默轮询
+    if (_vcsTick) return;            // git 改动/外部命令后自动跟上；不用太频繁
+    _vcsTick = setInterval(() => {   // 失活自停（目录秒表 _subDirTick 同款惯例）
+      if (_sub.active !== _SUB_VCS) { clearInterval(_vcsTick); _vcsTick = null; return; }
+      if (!_HG.vcs.busy && _vcsEl) _vcsReload();
+    }, 60000);
+  }
   function _vcsActivate(force) {     // 激活按需刷新（30s 缓存；写操作后 force 由调用方传 _vcsReload）
     if (!_vcsEl) return;
+    _vcsTickStart();
     const now = Date.now();
     if (!force && (_HG.vcs.data || _HG.vcs.busy) && now - _vcsTs < 30000) { _vcsPaint(); return; }
     if (!_HG.vcs.busy) _vcsReload();
