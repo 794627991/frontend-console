@@ -555,7 +555,9 @@ def main():
     try:
         from src.app_state import CONFIG_FILE as _CF2
         with open(_CF2, encoding="utf-8") as _f:
-            _pin_hk = (json.load(_f).get("pin_hotkey") or "f3")
+            # v3.5.151 全审F5：get 两参——显式空串（用户点清除=禁用）必须
+            # 保持禁用，不能被 or 回退成默认 f3 抢注全局键；键缺失才给默认
+            _pin_hk = json.load(_f).get("pin_hotkey", "f3")
     except Exception:
         _pin_hk = "f3"
     _snip_mod.start_hotkey(_pin_hk, _on_pin_hotkey, slot="pin")

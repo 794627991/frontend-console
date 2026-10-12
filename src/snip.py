@@ -84,6 +84,8 @@ def _open_event(name):
         k32.WaitForMultipleObjects.argtypes = [ctypes.c_uint,
                                                ctypes.POINTER(ctypes.c_void_p),
                                                ctypes.c_int, ctypes.c_uint]
+        k32.CloseHandle.restype = ctypes.c_int
+        k32.CloseHandle.argtypes = [ctypes.c_void_p]
         h = k32.CreateEventW(None, False, False, name)
         return h or None
     except Exception:
@@ -96,8 +98,8 @@ def set_go_event(port):
     if h:
         try:
             ctypes.windll.kernel32.SetEvent(h)
-        except Exception:
-            pass
+        finally:
+            ctypes.windll.kernel32.CloseHandle(h)   # v3.5.151 全审F6a：不再漏
 
 
 # v3.5.150（用户拍板 Snipaste F3 同款）：贴图信号事件，同 go 事件机制
@@ -110,8 +112,8 @@ def set_pin_event(port):
     if h:
         try:
             ctypes.windll.kernel32.SetEvent(h)
-        except Exception:
-            pass
+        finally:
+            ctypes.windll.kernel32.CloseHandle(h)   # v3.5.151 全审F6a：不再漏
 
 
 def _cfg_flag(name, dflt=False):
@@ -181,11 +183,14 @@ def read_clipboard_image():
                 bits = struct.unpack_from("<H", blob, 14)[0]
                 comp = struct.unpack_from("<I", blob, 16)[0]
                 off = 14 + bisize
-                if comp == 3 and bits == 32:      # BI_BITFIELDS 掩码 3 dword
+                # BI_BITFIELDS 掩码紧随头只在经典 BITMAPINFOHEADER(40)——
+                # V2/V3/V4/V5 头（52/56/108/124）掩码已含在 bisize 内，再
+                # +12 越过像素起点（全审F3 实证 V5 双计解码失败）
+                if comp == 3 and bits in (16, 32) and bisize == 40:
                     off += 12
-                elif bits <= 8:                   # 调色板
-                    nclr = struct.unpack_from("<I", blob, 32)[0] or (1 << bits)
-                    off += nclr * 4
+                elif bits <= 8:                   # 调色板（biClrUsed 在 36，
+                    nclr = struct.unpack_from("<I", blob, 36)[0] or (1 << bits)
+                    off += nclr * 4               # 32 是 biYPelsPerMeter——
                 fh = b"BM" + struct.pack("<IHHI", 14 + len(blob), 0, 0, off)
                 from PIL import Image
                 im = Image.open(BytesIO(fh + blob))
@@ -345,6 +350,17 @@ def window_main(port, armed=False, pin_pending=False):
 
     state = {"armed": armed, "showing": False, "pin_pending": pin_pending}
 
+    def _die():
+        """自退唯一出口（v3.5.151 全审F1）：先删 ALIVE 探活标记再退——30s
+        周期心跳让死前标记恒新鲜，660s 容忍下直接退=死后 ~10 分钟「假活
+        死区」（SetEvent 发进无人等的事件，F1/F3 反复按反复无响应）。删标
+        记使死亡即刻可见，主进程下一击即走冷启动重拉。"""
+        try:
+            os.remove(_TMP_ALIVE)
+        except OSError:
+            pass
+        os._exit(0)
+
     def _page_url():
         g = _virt_geo()        # reload 时现取：换分辨率/显示器自适应
         return ("http://127.0.0.1:%s/web/screenshot.html?w=%d&h=%d&v=%d"
@@ -397,8 +413,18 @@ def window_main(port, armed=False, pin_pending=False):
     # kill_snip_windows EnumWindows 收编 + 本进程 Flask 探活自杀兜底。 ----
     _pins = {}          # n -> {"wv": 窗对象, "w": 原图宽, "h": 原图高, "t": 创建时刻}
     _pin_seq = [0]
+    _pin_lock = threading.Lock()   # v3.5.151 全审F6c：seq 分配/LRU 原子化
     _MAX_PINS = 8       # 内存护栏：每贴一张≈一个 WebView2 渲染进程（40-80MB）
     _PIN_DIR = os.environ.get("TEMP", ".")
+    try:                # 启动清扫上次会话贴图残留（v3.5.151 全审F4）
+        for _f in os.listdir(_PIN_DIR):
+            if _f.startswith("fc_pin_") and _f.endswith(".png"):
+                try:
+                    os.remove(os.path.join(_PIN_DIR, _f))
+                except OSError:
+                    pass
+    except OSError:
+        pass
 
     class RECTr(ctypes.Structure):
         _fields_ = [("l", ctypes.c_long), ("t", ctypes.c_long),
@@ -416,6 +442,10 @@ def window_main(port, armed=False, pin_pending=False):
             if info and info.get("wv"):
                 info["wv"].destroy()
         except Exception:
+            pass
+        try:            # v3.5.151 全审F4：底图同删，%TEMP% 不留贴图尸体
+            os.remove(os.path.join(_PIN_DIR, "fc_pin_%d.png" % n))
+        except OSError:
             pass
 
     def _pin_resize(n, nw, nh):
@@ -559,8 +589,9 @@ def window_main(port, armed=False, pin_pending=False):
         w, h = img.size
         if not w or not h:
             return
-        _pin_seq[0] += 1
-        n = _pin_seq[0]
+        with _pin_lock:            # F3 连发+自动贴并发：seq 分配原子
+            _pin_seq[0] += 1
+            n = _pin_seq[0]
         path = os.path.join(_PIN_DIR, "fc_pin_%d.png" % n)
         try:
             img.save(path)
@@ -587,8 +618,11 @@ def window_main(port, armed=False, pin_pending=False):
                 pass
             return
         _pins[n] = {"wv": wv, "w": w, "h": h, "t": time.time()}
-        while len(_pins) > _MAX_PINS:              # LRU 淘汰最旧
-            _pin_close(min(_pins, key=lambda k: _pins[k]["t"]))
+        with _pin_lock:            # LRU 淘汰最旧（选 key 锁内、销毁锁外）
+            old = min(_pins, key=lambda k: _pins[k]["t"]) \
+                if len(_pins) > _MAX_PINS else None
+        if old is not None:
+            _pin_close(old)
 
         def _pin_loaded():
             def _do():
@@ -696,7 +730,7 @@ def window_main(port, armed=False, pin_pending=False):
                 if _ok is not True:
                     state["fails"] = state.get("fails", 0) + 1
                     if state["fails"] > 3:
-                        os._exit(0)
+                        _die()
                     try:
                         time.sleep(1)          # 给 WebView2 一拍喘息再重试
                         win.load_url(_page_url())
@@ -820,7 +854,7 @@ def window_main(port, armed=False, pin_pending=False):
             if now - last_probe > 2:      # Flask 探活 2s 一次足够
                 last_probe = now
                 if not _flask_ok():
-                    os._exit(0)   # 主实例没了：静默退，下一次启动重新拉起
+                    _die()   # 主实例没了：静默退，下一次启动重新拉起
             try:
                 m = os.path.getmtime(_TMP_BMP) if os.path.isfile(_TMP_BMP) else 0
             except OSError:
@@ -873,8 +907,9 @@ def window_main(port, armed=False, pin_pending=False):
             elif state["showing"] or _pins:
                 idle_since = time.time()   # 贴图挂着=进程有活干，绝不自退
             elif not _pins and time.time() - idle_since > 600:
-                os._exit(0)   # 空闲 10 分钟自退：内存归零，下次热键冷启动
-                              # （v3.5.150：有贴图挂着不退——贴图随工具存亡）
+                _die()   # 空闲 10 分钟自退：内存归零，下次热键冷启动
+                         # （v3.5.150：有贴图挂着不退——贴图随工具存亡；
+                         #  v3.5.151：删 ALIVE 再退，杜绝假活死区）
     threading.Thread(target=_arm_loop, daemon=True).start()
 
     win.events.loaded += _on_loaded
@@ -1047,9 +1082,18 @@ def launch_window(port):
         set_go_event(port)
 
         def _check():
-            # 兜底核查：1s 后 BMP mtime 未动=事件链路失效（句柄/权限异常），
-            # 补旧路 spawn --grab 落盘——常驻窗 mtime 轮询分支接住弹出
-            time.sleep(1.0)
+            # v3.5.151 全审F6b：兜底判据从「mtime 未变」改为「ALIVE 心跳不
+            # 新鲜」——心跳 <10s 新鲜 = 常驻窗活着且必在等本 port 的事件
+            #（SetEvent 必达），只是抓屏慢；补 grab 反而与常驻窗 _grab_only
+            # 双写撕裂底图。心跳陈旧 = 窗真死（_die 已删标记，此处读不到），
+            # 补旧路落盘供冷启动。
+            time.sleep(1.5)
+            try:
+                with open(_TMP_ALIVE, encoding="utf-8") as f:
+                    if time.time() - float(json.load(f).get("t") or 0) < 10:
+                        return
+            except Exception:
+                pass
             m = os.path.getmtime(_TMP_BMP) if os.path.isfile(_TMP_BMP) else 0
             if m <= t0:
                 grab()

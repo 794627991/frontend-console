@@ -64,6 +64,9 @@
     // （原 #000=黑屏闪烁/保存键黑屏挂死双实锤）。背景换成底图原图：
     // 销毁瞬间只丢遮罩变亮，不再黑，配合 Python 侧即刻 hide 基本无感。
     document.body.style.background = '#000 url(' + img + ') center/100% 100% no-repeat';
+    // v3.5.151 全审F6d：ALIVE 写入（loaded 后即写）早于 boot 闸门完成，
+    // 该窗口期 __snipArm 若被调已建过实例——直接覆盖会泄漏旧实例，先拆再建
+    try { window.__snipInst && window.__snipInst.destroyComponents(); } catch (e) {}
     window.__snipInst = makeInst(img);
   }
   // go 事件唤醒入口：换底图（v=时间戳防缓存）+ 重建插件实例；旧实例先
