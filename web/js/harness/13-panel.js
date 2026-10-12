@@ -256,7 +256,12 @@
       _hgFlow.querySelectorAll('.h-subblock:not(.done)').forEach(el => {
         if (!markErr && !forceBg && el.dataset.hgBg === '1') return;
         const pid = el.dataset.hgSubblock;
-        if (pid) _subBlkFinish(pid, !!markErr);
+        if (pid) {
+          _subBlkFinish(pid, !!markErr);
+          // v3.5.145（全审F1）：段收口同步收主会话流单行任务卡——否则
+          // row._agentTimer 无路径清除，卡片永跑「运行中 Ns」
+          _hgAgentRowState(pid, !!markErr, '');
+        }
       });
       return;
     }
@@ -276,6 +281,10 @@
         // v3.2.6：窗格时间线同路定稿（已工作 X + 结论上移）——单行任务卡
         // 的单行态靠档案，窗格头不能永卡「工作中」
         if (_sub.tabs[id]) _subTlFinalize(id, { err: !!a.err });
+        // v3.5.145（全审F1）：主会话流单行卡同步终态收口（停秒表+徽章）——
+        // _hgAgentRowState 是终态唯一停表点，幂等（notification 已到时档案
+        // done 本分支不进；正常路 renderOneToolResult 先到已收，重入无害）
+        _hgAgentRowState(id, !!a.err, a.result || '');
         swept = true;
       }
     }

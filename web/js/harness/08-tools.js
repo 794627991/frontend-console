@@ -455,7 +455,8 @@
     // 类别词与类型 chip——类型信息不丢，行 title 悬浮「类型 · 描述全文」；
     // 让出的宽度归描述与过程摘要（.h-ag-live）。类名锚点全保（JS 查询锚不动，
     // 仅删无 JS 消费的 .h-ag-type 节点，CSS 规则组同步清理）
-    row.title = ty + (dsc ? ' · ' + dsc : '');
+    // v3.5.145（全审F5）：title 类型名过 _AGENT_LABEL 中文短名（与旧 chip 口径一致）
+    row.title = (_AGENT_LABEL[ty] || ty) + (dsc ? ' · ' + dsc : '');
     row.innerHTML =
       `<button class="h-tool-head"><span class="h-tool-name">${_hToolIco('Task')}</span>` +
       `<span class="h-tool-arg">${esc(dsc)}</span>` +
@@ -471,10 +472,12 @@
     const slot = row.querySelector('.h-tslots');
     if (!slot) return;
     const a = (_HG.agents || {})[row.dataset.tid] || {};
-    const n = ((a.thinkN || 0) + '思') + ((a.toolN || 0) ? ' ' + a.toolN + '工' : '');
+    // v3.5.145（全审F4）：零段省略——thinkN=0 时不显「0思」，双零整段不显
+    const tn = a.thinkN || 0, wn = a.toolN || 0;
+    const n = (tn ? tn + '思' : '') + (wn ? (tn ? ' ' : '') + wn + '工' : '');
     slot.innerHTML = statusBadge('running') +
       ' <span class="h-tsec">' + Math.round((Date.now() - t0) / 1000) + 's</span>' +
-      (n !== '0思' ? `<span class="h-ag-cnt">${n}</span>` : '');
+      (n ? `<span class="h-ag-cnt">${n}</span>` : '');
   }
   // v3.2.6：行内实时活动流——子代理 think/text/tool 事件到达即刷新（05-subblk
   // 三钩调用；ZCode animateSummaryContent 的静态等价物：最新子动作单行摘要）
@@ -546,6 +549,7 @@
       }
     }
     row.classList.toggle('err', !!err);
+    row.dataset.final = '1';   // v3.5.145（全审F2）：终态标记——ABA 回绑 finder 只认未完成行（brief 非可靠判据：回放行恒无/同文省略）
     // v3.2.6R（审计F1）：agentId 回写行——切会话往返后 agents 档案已清，行
     // 自带的 hgSubr 是回放入口的唯一数据锚（v3.2.5 段头 ▣ 回放的同款语义）
     _hgAgentRowBindAid(tid, row);
@@ -734,6 +738,7 @@
     if (cfg.kind === 'agent') {
       const lv = row.querySelector('.h-ag-live');
       if (lv) lv.textContent = '';
+      row.dataset.final = '1';   // v3.5.145（全审F2）：终态标记（finder 判据）
       _hgAgentRowBindAid(tr.tool_use_id, row);   // v3.2.6R（审计F1）：agentId 回写
     }
     showRow.classList.toggle('err', st === 'error' || st === 'denied');

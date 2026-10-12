@@ -416,7 +416,6 @@
     {
       const _lt = String(text).replace(/\s+/g, ' ').trim();
       if (_lt) _subLivePaint(pid, '正文 · ' + _lt.slice(0, 60));
-      _hgAgCnt(pid, 1, 0);   // v3.5.142：过程计数（正文按思考口径累计——产出活动）
     }
     // v2.53：段内同文去重——轮询与 SSE 理论上可能双源喂同一条 text（CLI
     // 行为随版本变），渲染文本归一后与段内**任一**既有气泡等价即不重复
@@ -428,6 +427,7 @@
     if (_want && [...b.body.querySelectorAll('.h-msg.sub')]
         .some(el => _norm(el.textContent) === _want))
       return;
+    _hgAgCnt(pid, 1, 0);   // v3.5.145（全审F3）：计数移去重后——SSE+轮询双源同文不虚增，历史重渲重放不再每轮+1
     const d = document.createElement('div');
     d.className = 'h-msg asst sub';
     d.appendChild(mdBubble(text));

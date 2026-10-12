@@ -14,8 +14,10 @@
       const st = d.querySelector('.h-tslots');
       // v3.4.55（轻审 P2）：运行中子代理（切会话暂存桶在案）画运行徽章——
       // 回放工厂原对无 result 的 Task 无条件盖「完成」=假完成
-      if (st) st.innerHTML = statusBadge(_err ? 'error'
-        : (_hgLiveAgentRunning(_inp.description) ? 'running' : 'completed'));
+      // v3.5.145（全审F2）：终态行标 data-final（ABA 回绑 finder 判据）
+      const _running = _hgLiveAgentRunning(_inp.description);
+      if (st) st.innerHTML = statusBadge(_err ? 'error' : (_running ? 'running' : 'completed'));
+      if (!_running) d.dataset.final = '1';
       d.dataset.hgAgline = '1';
       _HG.lastAgRow = d;
       drawerCount(l.text);

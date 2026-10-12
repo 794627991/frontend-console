@@ -439,7 +439,9 @@
       if (r && r.classList.contains('agentline')) {
         r.dataset.tid = t;            // 伪键重挂真键（'ag' 前缀与真 tid 无碰撞）
         _HG.rowById[t] = r;
-        if (a.taskId && /^[0-9a-zA-Z_-]{8,64}$/.test(a.taskId)) r.dataset.hgSubr = a.taskId;
+        // v3.5.145（全审F2）：仅空时落——防覆写既有回放锚
+        if (a.taskId && /^[0-9a-zA-Z_-]{8,64}$/.test(a.taskId) && !r.dataset.hgSubr)
+          r.dataset.hgSubr = a.taskId;
         // v3.4.55 旧径保留：徽章画运行态；v3.5.143 秒表复活（时长连续不
         // 归零，t0 用档案起跑时刻——切走多久都不重计）
         try { _hgAgentRowBindAid(t, r); } catch (_) {}
@@ -455,22 +457,24 @@
   }
   // v3.5.143：按档案认回转写重渲的伪 tid 行。hgSubr===taskId 精确匹配优先
   //（task_started 落的 id 与回放行回绑的 hgSubr 同源）；退化按 desc 等值
-  //（与 _hgLiveAgentRunning 同口径，hgSubDesc 工厂侧 slice(0,120) 对齐），
-  // 只认未完成态行（无完成摘要）防同描述历史行误绑
+  //（与 _hgLiveAgentRunning 同口径，hgSubDesc 工厂侧 slice(0,120) 对齐）。
+  // v3.5.145（全审F2）：未完成判据改 data-final 终态标记（三处完成落点统一
+  // 标记）——旧 .h-tagent-brief 判据不可靠：回放行恒无 brief、live 完成路径
+  // 摘要与 desc 同文时也省略，同名 desc 已完成历史行会被误绑
   function _hgAgentRowFindByDesc(a) {
     if (!a) return null;
     const rows = _hgFlow.querySelectorAll('.h-tool.agentline');
     if (a.taskId) {
       for (const r of rows)
-        if (r.dataset.hgSubr === a.taskId && !r.querySelector('.h-tagent-brief')) return r;
+        if (r.dataset.hgSubr === a.taskId && !r.dataset.final) return r;
     }
     const d = String(a.desc || '').trim().slice(0, 120);
     if (!d) return null;
     for (const r of rows) {
       const tid = String(r.dataset.tid || '');
-      if (!tid || tid.indexOf('ag') === 0) {   // 伪键/无键行才可认领
+      if ((!tid || tid.indexOf('ag') === 0) && !r.dataset.final) {   // 伪键/无键行才可认领
         const rd = String(r.dataset.hgSubDesc || '').trim();
-        if (rd === d && !r.querySelector('.h-tagent-brief')) return r;
+        if (rd === d) return r;
       }
     }
     return null;
