@@ -88,9 +88,10 @@
   }
 
   // 列表数据入口（浏览/查询路由 + lseq/指纹双竞态校验）
-  function _vcsHistFetch(reset) {
+  // v3.5.148：cb 参数——跳页（_vcsHistGoto）串行补拉用；所有收尾路径必达
+  function _vcsHistFetch(reset, cb) {
     const H = _vcsHist;
-    if (!H) return;
+    if (!H) { if (cb) cb(); return; }
     const lseq = (H.lseq = ++_vcsHistLseq);   // L2：模块级单调令牌
     const fp = _vcsHistQfp();
     if (H.querying) H.qbusy = true;
@@ -111,6 +112,7 @@
           H.fetchErr = j.err || '获取失败';
           if (!H.querying) { _HG.vcs.log = null; _HG.vcs.total = undefined; }
           _vcsHistPaintList(true);
+          if (cb) cb();
           return;
         }
         H.fetchErr = null;
@@ -132,7 +134,7 @@
         if (!reset && !isSvn && add.length < (j.commits || []).length
             && (j.commits || []).length >= 100 && H.rounds < 3) {
           H.rounds++;
-          _vcsHistFetch(false);
+          _vcsHistFetch(false, cb);
           return;
         }
         H.rounds = 0;
@@ -143,12 +145,14 @@
         }
         _vcsHistPaintList(true);
         if (!H.querying) _vcsPaint();   // 面板共享源同步
+        if (cb) cb();
       }).catch(e => {
         if (H && H.lseq === lseq) {
           if (H.querying) H.qbusy = false;
           H.fetchErr = String(e);
           _vcsHistPaintList(true);
         }
+        if (cb) cb();
       });
   }
 
@@ -382,17 +386,65 @@
     const prev = H.ov.querySelector('[data-vcs-hprev]');
     const next = H.ov.querySelector('[data-vcs-hnext]');
     const n = (arr || []).length;
-    const pages = Math.max(1, Math.ceil(n / H.size));
+    const loadedPages = Math.max(1, Math.ceil(n / H.size));
     const total = _vcsHistTotal();
     const atEnd = total != null ? n >= total : (H.exhausted || !(n && n % 100 === 0));
-    if (info) info.textContent = n ? `第 ${H.page}/${pages} 页` : '—';
+    // v3.5.148（用户批注「初始页数不对，803 条应按总数显示页数」）：总数已知
+    //（git rev-list/查询 qtotal）显示真实总页数；svn 无 total 保持已载页数诚实
+    const vpages = total != null ? Math.max(1, Math.ceil(total / H.size)) : loadedPages;
+    if (info) {
+      // v3.5.148：页码可编辑跳转（Enter/失焦触发 _vcsHistGoto——已载内直跳、
+      // 不足自动补拉）；重绘重建 input，值随 H.page
+      info.innerHTML = n ? `第 <input class="hg-vcs-hpgin" value="${H.page}" ` +
+        `title="输入页码回车跳转（共 ${vpages} 页）"> / ${vpages} 页` : '—';
+      const inp = info.querySelector('.hg-vcs-hpgin');
+      if (inp) inp.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault(); e.stopPropagation();
+        const v = parseInt(inp.value, 10);
+        if (v >= 1) _vcsHistGoto(v);
+      });
+    }
     if (prev) prev.disabled = H.page <= 1;
-    if (next) next.disabled = !n || (H.page >= pages && atEnd && !_vcsHistBusy());
+    // next 可点性按已载页判定（› 到已载末页再点=拉下一块，累积式语义不变）
+    if (next) next.disabled = !n || (H.page >= loadedPages && atEnd && !_vcsHistBusy());
     if (cnt) {
       if (!n) cnt.textContent = '';
       else if (total != null) cnt.textContent = `共 ${total} 条`;
       else cnt.textContent = `已载 ${n} 条` + (atEnd ? '（已到最早）' : '');
     }
+  }
+
+  // v3.5.148（用户批注「没有页跳转」）：跳到第 p 页——已载内直跳；不足自动
+  // 串行补拉（每轮 100 条，guard 12 轮封顶防巨仓长拉；svn 无 total 按
+  // exhausted/非整百启发式判到底）；deepseek 首次跳远页会有 1~2s 补拉延迟
+  function _vcsHistGoto(p) {
+    const H = _vcsHist; if (!H) return;
+    const arr = _vcsHistActive();
+    if (!arr || !arr.length) return;
+    const total = _vcsHistTotal();
+    const vpages = total != null ? Math.max(1, Math.ceil(total / H.size))
+      : Math.max(1, Math.ceil(arr.length / H.size));
+    p = Math.min(p, vpages);
+    const need = p * H.size;
+    if (arr.length >= need || (total != null && arr.length >= total)) {
+      H.page = p; _vcsHistPaintList(true); return;
+    }
+    if (_vcsHistBusy()) return;
+    let guard = 0;
+    const _step = () => {
+      const a2 = _vcsHistActive();
+      const t2 = _vcsHistTotal();
+      const endKnown = t2 != null ? a2.length >= t2
+        : (H.exhausted || !(a2.length && a2.length % 100 === 0));
+      if (a2.length >= need || endKnown || ++guard > 12 || !H.ov.isConnected) {
+        H.page = Math.min(p, Math.max(1, Math.ceil(a2.length / H.size)));
+        _vcsHistPaintList(true);
+        return;
+      }
+      _vcsHistFetch(false, _step);
+    };
+    _step();
   }
 
   function _vcsHistSelect(rev) {

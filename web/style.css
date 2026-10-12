@@ -2680,6 +2680,11 @@ html {
   text-overflow: ellipsis; animation: hg-sub-pulse 1.6s ease-in-out infinite; }
 .h-ag-live:empty { display: none; }
 .h-tool.agentline .h-tslots { margin-left: auto; }
+/* v3.5.148（用户批注「没有页跳转」）：提交历史弹窗页码跳转输入框 */
+.hg-vcs-hpgin { width: 3.4em; text-align: center; padding: 1px 2px; margin: 0 2px;
+  font: inherit; font-size: var(--fs-xs); border: 1px solid var(--border);
+  border-radius: 4px; background: var(--bg-input); color: inherit; }
+.hg-vcs-hpgin:focus { outline: none; border-color: var(--accent); }
 /* v3.5.142（用户批注「名字去掉，保留空间给过程显示」）：类型 chip（.h-ag-type）
    随「子智能体」类别词一并退役——行 title 悬浮保留类型全文；新增过程计数
    「N思 M工」（运行中挂在秒表尾，数据来自 agents 档案） */
