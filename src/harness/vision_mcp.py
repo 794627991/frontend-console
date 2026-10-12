@@ -339,7 +339,9 @@ def _post_vision(base, key, model, sys_prompt, b64, media_type, prompt):
         "model": model,
         # v2.28.9：2048 会被网关的 thinking 全额吃掉（实测 stop=max_tokens、
         # 块=[thinking]、正文为零——经代理的 flash 尤其饿）→ 8192 给正文留足
-        "max_tokens": 8192,
+        # v3.5.144：8192 也失守（10-12 实锤同图 stop=max_tokens 零正文，
+        # 32768 一次穿透 stop=end_turn）——flash thinking 单次可吃 >8K
+        "max_tokens": 32768,
         "system": sys_prompt,
         "messages": [{"role": "user", "content": [
             {"type": "image",
