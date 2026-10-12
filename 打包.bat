@@ -1,56 +1,56 @@
 @echo off
 chcp 936 >nul
-rem Ò»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½dist\Ç°ï¿½Ë¿ï¿½ï¿½ï¿½Ì¨\ï¿½ï¿½onedirï¿½ï¿½exe+È«ï¿½ï¿½ï¿½ï¿½Ô´ï¿½ï¿½
-rem Ë«ï¿½ï¿½ï¿½ï¿½ï¿½Ã£ï¿½ï¿½É¹ï¿½/Ê§ï¿½Ü´ï¿½ï¿½Ú¶ï¿½Í£ï¿½ï¿½ï¿½ï¿½Ê¾ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ dist\ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½.txt
-rem v3.4.96ï¿½ï¿½ï¿½Þ¸ï¿½ be5c669 ï¿½ï¿½Î²ï¿½ï¿½ï¿½ï¿½Ê§ï¿½ï¿½:fail ï¿½ï¿½Ç©ï¿½ï¿½ï¿½ï¿½ï¿½Ú¡ï¿½goto ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ø´ï¿½ï¿½ï¿½
-rem ï¿½É¹ï¿½Â·ï¿½ï¿½Ò²ï¿½ï¿½ pauseï¿½ï¿½ï¿½ï¿½ï¿½Ã»ï¿½Êµï¿½ï¿½ï¿½ï¿½Äªï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ê§ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½É°Ü¡ï¿½ï¿½ï¿½
+rem Ò»¼ü´ò°ü£ºdist\Ç°¶Ë¿ØÖÆÌ¨\£¨onedir£ºexe+È«²¿×ÊÔ´£©
+rem Ë«»÷¼´ÓÃ£»³É¹¦/Ê§°Ü´°¿Ú¶¼Í£ÁôÏÔÊ¾½á¹û£¬²¢ÂäÅÌ dist\´ò°ü½á¹û.txt
+rem v3.4.96£ºÐÞ¸´ be5c669 ÆðÎ²²¿¶ªÊ§£¨:fail ±êÇ©²»´æÔÚ¡úgoto ±¨´íÃë¹Ø´°£¬
+rem ³É¹¦Â·¾¶Ò²ÎÞ pause¡ª¡ªÓÃ»§Êµ´¸¡¸ÄªÃûÆäÃîÏûÊ§£¬¿´²»µ½³É°Ü¡¹£©
 cd /d "%~dp0"
 if not exist "dist" mkdir "dist"
-rem ï¿½ï¿½ï¿½ï¿½ Pythonï¿½ï¿½ï¿½ï¿½ PATHï¿½ï¿½ï¿½Ë»Ø±ï¿½ï¿½ï¿½ Python314 ï¿½Ã»ï¿½ï¿½ï¿½×°Â·ï¿½ï¿½
+rem ½âÎö Python£ºÏÈ PATH£¬ÍË»Ø±¾»ú Python314 ÓÃ»§°²×°Â·¾¶
 set "PY="
 set "PYFALLBACK=%LOCALAPPDATA%\Programs\Python\Python314\python.exe"
 where python.exe >nul 2>&1
 rem v3.5.115 fix: resolve the FULL path via where. The old code kept the
-rem bare name on success and then `if not exist "python.exe"` tested a
+rem bare name on success and then `if not exist "%PY%"` tested a
 rem CWD-relative file - always missing - so the script misjudged failure
 rem once Python got added to PATH. Fallback stays for PATH-less machines.
 if not errorlevel 1 for /f "delims=" %%i in ('where python.exe') do if not defined PY set "PY=%%i"
 if not defined PY set "PY=%PYFALLBACK%"
 if not exist "%PY%" (
-  echo [Ê§ï¿½ï¿½] ï¿½Ò²ï¿½ï¿½ï¿½ python.exeï¿½ï¿½ï¿½ë°²×° Python ï¿½ï¿½ï¿½ï¿½ï¿½ PATH
+  echo [Ê§°Ü] ÕÒ²»µ½ python.exe£ºÇë°²×° Python »ò¼ÓÈë PATH
   pause
   exit /b 1
 )
 echo ==============================================
-echo   Ç°ï¿½Ë¿ï¿½ï¿½ï¿½Ì¨ Ò»ï¿½ï¿½ï¿½ï¿½ï¿½
+echo   Ç°¶Ë¿ØÖÆÌ¨ Ò»¼ü´ò°ü
 echo ==============================================
 set PYTHONIOENCODING=gbk
 "%PY%" src\build.py
 if errorlevel 1 goto fail
-if not exist "dist\Ç°ï¿½Ë¿ï¿½ï¿½ï¿½Ì¨\Ç°ï¿½Ë¿ï¿½ï¿½ï¿½Ì¨.exe" goto fail
+if not exist "dist\Ç°¶Ë¿ØÖÆÌ¨\Ç°¶Ë¿ØÖÆÌ¨.exe" goto fail
 
-rem v2.3.8 ï¿½Ô¼ì£¨ï¿½ï¿½ï¿½ï¿½+È«ï¿½ï¿½ï¿½ï¿½ importï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Êµï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
-"dist\Ç°ï¿½Ë¿ï¿½ï¿½ï¿½Ì¨\Ç°ï¿½Ë¿ï¿½ï¿½ï¿½Ì¨.exe" --selftest
-rem v3.4.96b: ï¿½Ô¼ï¿½ï¿½ï¿½Îª UTF-8 ï¿½Ä¼ï¿½, type ï¿½ï¿½ï¿½ï¿½Ò³Ö±ï¿½ï¿½ï¿½á»¨ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
-rem ï¿½ï¿½ python ï¿½ï¿½ UTF-8 ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ê¾ï¿½ï¿½findstr ï¿½Ð¶ï¿½ï¿½ï¿½ï¿½ï¿½Ó°ï¿½ì£©
-"%PY%" -c "import io,sys; sys.stdout.reconfigure(errors='replace'); print(io.open(r'dist\Ç°ï¿½Ë¿ï¿½ï¿½ï¿½Ì¨\selftest_result.txt', encoding='utf-8', errors='replace').read(), end='')"
-findstr /C:"selftest FAIL" "dist\Ç°ï¿½Ë¿ï¿½ï¿½ï¿½Ì¨\selftest_result.txt" >nul && goto fail
+rem v2.3.8 ×Ô¼ì£¨½âÃÜ+È«ÒÀÀµ import£¬²»Åöµ¥ÊµÀýËø£©
+"dist\Ç°¶Ë¿ØÖÆÌ¨\Ç°¶Ë¿ØÖÆÌ¨.exe" --selftest
+rem v3.4.96b: ×Ô¼ì½á¹ûÎª UTF-8 ÎÄ¼þ, type °´ÂëÒ³Ö±µ¹»á»¨Á³¡ª¡ª
+rem ¾­ python °´ UTF-8 ¶Á³öÏÔÊ¾£¨findstr ÅÐ¶¨²»ÊÜÓ°Ïì£©
+"%PY%" -c "import io,sys; sys.stdout.reconfigure(errors='replace'); print(io.open(r'dist\Ç°¶Ë¿ØÖÆÌ¨\selftest_result.txt', encoding='utf-8', errors='replace').read(), end='')"
+findstr /C:"selftest FAIL" "dist\Ç°¶Ë¿ØÖÆÌ¨\selftest_result.txt" >nul && goto fail
 
 :ok
 echo.
 echo ==============================================
-echo [ï¿½É¹ï¿½] ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½: dist\Ç°ï¿½Ë¿ï¿½ï¿½ï¿½Ì¨echo ï¿½ï¿½ï¿½ï¿½Ñ¼ï¿½Â¼: dist\ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½.txt
+echo [³É¹¦] ´ò°üÍê³É: dist\Ç°¶Ë¿ØÖÆÌ¨echo ½á¹ûÒÑ¼ÇÂ¼: dist\´ò°ü½á¹û.txt
 echo ==============================================
->>"dist\ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½.txt" echo [%date% %time%] ï¿½É¹ï¿½
+>>"dist\´ò°ü½á¹û.txt" echo [%date% %time%] ³É¹¦
 pause
 exit /b 0
 
 :fail
 echo.
 echo ==============================================
-echo [Ê§ï¿½ï¿½] ï¿½ï¿½ï¿½Î´ï¿½É¹ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ï·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Í¼/ï¿½ï¿½ï¿½ï¿½
-echo ï¿½ï¿½ï¿½ï¿½Ñ¼ï¿½Â¼: dist\ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½.txt
+echo [Ê§°Ü] ´ò°üÎ´³É¹¦¡ª¡ªÇë°ÑÉÏ·½±¨´í½ØÍ¼/¸´ÖÆ
+echo ½á¹ûÒÑ¼ÇÂ¼: dist\´ò°ü½á¹û.txt
 echo ==============================================
->>"dist\ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½.txt" echo [%date% %time%] Ê§ï¿½ï¿½
+>>"dist\´ò°ü½á¹û.txt" echo [%date% %time%] Ê§°Ü
 pause
 exit /b 1
