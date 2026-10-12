@@ -305,7 +305,7 @@ function _openCustomPanel(forceLight) {
       <button class="btn ghost" data-ct-ini>📥 导入 MobaXterm ini</button>
     </div>
     <div data-ct-ini-box style="display:none;margin-top:8px;">
-      <textarea data-ct-ini-txt class="hg-vision-prompt" spellcheck="false" style="min-height:110px;"
+      <textarea name="ct_ini_txt" data-ct-ini-txt class="hg-vision-prompt" spellcheck="false" style="min-height:110px;"
         placeholder="把 MobaXterm.ini 的 [Colors] 段（或整份 ini）粘贴到这里，点「解析并应用」。至少要有 BackgroundColour 和 ForegroundColour 两行。"></textarea>
       <div style="display:flex;gap:8px;margin-top:6px;align-items:center;">
         <button class="btn ghost" data-ct-ini-go style="font-size:11px;">解析并应用</button>

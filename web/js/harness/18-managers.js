@@ -36,7 +36,7 @@
         </div>
         <label class="hg-vision-prompt-lab">识图模型（MCP 后端，需多模态；换 API 方案后在此重选）
           <div class="hg-vision-grid" style="align-items:center;margin-bottom:0;">
-            <select data-hg-v-model style="flex:1;min-width:0;">${opts}</select>
+            <select name="hg_v_model" data-hg-v-model style="flex:1;min-width:0;">${opts}</select>
             <button class="btn ghost" data-hg-v-probe style="flex:none;font-size:11px;" title="自动检测：发张测试图让该模型读——答对颜色即多模态（结果缓存，二次点秒回）">自动检测</button>
             <button class="btn ghost" data-hg-v-force style="flex:none;font-size:11px;" title="强制指定：以你的判断为准——强制认为当前选中的模型是多模态（压过一切自动检测与缓存，探测抽风时用）；再点一次取消强制">强制指定</button>
           </div>
@@ -217,12 +217,12 @@
             <div class="hg-roles-slot" title="designer：只设计，出方案不干活。留空=回退重档 heavy_model，再按当前方案自动识别">
               <span class="hg-roles-ico des">设</span>
               <span class="hg-roles-name">设计<i>只设计 · 出方案</i></span>
-              <select data-hg-r-designer>${mkOpts(designerCfg)}</select>
+              <select name="hg_r_designer" data-hg-r-designer>${mkOpts(designerCfg)}</select>
             </div>
             <div class="hg-roles-slot" title="reviewer：只审不改，PASS/FAIL 二选一。留空=回退重档 heavy_model，再按当前方案自动识别">
               <span class="hg-roles-ico rev">审</span>
               <span class="hg-roles-name">审核<i>只审不改 · PASS/FAIL</i></span>
-              <select data-hg-r-reviewer>${mkOpts(reviewerCfg)}</select>
+              <select name="hg_r_reviewer" data-hg-r-reviewer>${mkOpts(reviewerCfg)}</select>
             </div>
           </details>
 
@@ -230,17 +230,17 @@
           <div class="hg-roles-slot" title="轻档。留空=默认取当前 API 方案的 Haiku 槽（ANTHROPIC_DEFAULT_HAIKU_MODEL），显式选择优先。轻主力：直干+设计/审核强制（分级线全档）">
             <span class="hg-roles-ico light">轻</span>
             <span class="hg-roles-name">轻档<i>轻主力 · 设计+审核必须</i></span>
-            <select data-hg-r-light>${mkOpts(cfg.light_model || '', '默认（Haiku 槽：' + (rs.light || '未映射') + '）')}</select>
+            <select name="hg_r_light" data-hg-r-light>${mkOpts(cfg.light_model || '', '默认（Haiku 槽：' + (rs.light || '未映射') + '）')}</select>
           </div>
           <div class="hg-roles-slot" title="中档。留空=默认取当前 API 方案的 Sonnet 槽（ANTHROPIC_DEFAULT_SONNET_MODEL），显式选择优先。中主力：直干+审核必须">
             <span class="hg-roles-ico mid">中</span>
             <span class="hg-roles-name">中档<i>中主力 · 审核必须</i></span>
-            <select data-hg-r-mid>${mkOpts(cfg.mid_model || '', '默认（Sonnet 槽：' + (rs.mid || '未映射') + '）')}</select>
+            <select name="hg_r_mid" data-hg-r-mid>${mkOpts(cfg.mid_model || '', '默认（Sonnet 槽：' + (rs.mid || '未映射') + '）')}</select>
           </div>
           <div class="hg-roles-slot" title="重档。留空=默认取当前 API 方案的 Opus 槽（ANTHROPIC_DEFAULT_OPUS_MODEL），显式选择优先。重主力：直干+派发自由，零强制">
             <span class="hg-roles-ico main">重</span>
             <span class="hg-roles-name">重档<i>重主力 · 零强制 · 派发随意</i></span>
-            <select data-hg-r-heavy>${mkOpts(cfg.heavy_model || '', '默认（Opus 槽：' + (rs.heavy || '未映射') + '）')}</select>
+            <select name="hg_r_heavy" data-hg-r-heavy>${mkOpts(cfg.heavy_model || '', '默认（Opus 槽：' + (rs.heavy || '未映射') + '）')}</select>
           </div>
           <div class="hg-roles-note">档位留空 = 联动 API 配置三槽（Haiku→轻 / Sonnet→中 / Opus→重，换方案自动跟随）；也可在此显式选择覆盖默认。<b>同一模型映射多档时按 轻&gt;中&gt;重 优先</b>——如轻中两档同值（图中 flash 场景），实跑该模型算轻档（轻主力）；未匹配按中档</div>
 

@@ -186,14 +186,14 @@
                  qlog: [], qbusy: false, qtotal: undefined, querying: false, exhausted: false,
                  page: 1, size, lseq: 0, rounds: 0, fetchErr: null, debT: null };
     const dateInp = (k, ph) =>
-      `<input type="date" class="hg-vcs-hdate" data-vcs-hq="${k}" title="${ph}">`;
+      `<input type="date" name="hg_vcs_hdate_${k}" class="hg-vcs-hdate" data-vcs-hq="${k}" title="${ph}">`;
     ov.innerHTML =
       `<div class="hg-modal hg-modal-vcslog">` +
         `<div class="hg-modal-title">📜 提交历史 · ${esc(D.vcs || '')}${D.branch ? ' · ⎇ ' + esc(D.branch) : ''}</div>` +
         `<div class="hg-vcs-htool">` +
-          `<input class="hg-vcs-hsearch" data-vcs-hq="text" placeholder="${isSvn ? '🔍 关键字（svn 整串匹配，含作者/日期）' : '🔍 关键字（多词 AND，含正文）'}" spellcheck="false">` +
+          `<input name="hg_vcs_hsearch" class="hg-vcs-hsearch" data-vcs-hq="text" placeholder="${isSvn ? '🔍 关键字（svn 整串匹配，含作者/日期）' : '🔍 关键字（多词 AND，含正文）'}" spellcheck="false">` +
           (isSvn ? '' :
-            `<input class="hg-vcs-hauthor" data-vcs-hq="author" list="hg-vcs-authors" placeholder="👤 作者" spellcheck="false">` +
+            `<input name="hg_vcs_hauthor" class="hg-vcs-hauthor" data-vcs-hq="author" list="hg-vcs-authors" placeholder="👤 作者" spellcheck="false">` +
             `<datalist id="hg-vcs-authors"></datalist>`) +
           `<button class="btn ghost hg-vcs-chip" data-vcs-chip="today">今天</button>` +
           `<button class="btn ghost hg-vcs-chip" data-vcs-chip="7d">近7天</button>` +
@@ -212,7 +212,7 @@
           `<span data-vcs-hpginfo class="hg-vcs-hpginfo">—</span>` +
           `<button class="btn ghost icon-btn" data-vcs-hnext title="下一页（末页自动加载更早）">›</button>` +
           `<span class="hg-vcs-hsep">每页</span>` +
-          `<select class="hg-vcs-hsize" data-vcs-hsize>` +
+          `<select name="hg_vcs_hsize" class="hg-vcs-hsize" data-vcs-hsize>` +
             [20, 50, 100].map(n => `<option value="${n}"${n === size ? ' selected' : ''}>${n}</option>`).join('') +
           `</select>` +
           `<span style="flex:1"></span>` +
@@ -395,7 +395,7 @@
     if (info) {
       // v3.5.148：页码可编辑跳转（Enter/失焦触发 _vcsHistGoto——已载内直跳、
       // 不足自动补拉）；重绘重建 input，值随 H.page
-      info.innerHTML = n ? `第 <input class="hg-vcs-hpgin" value="${H.page}" ` +
+      info.innerHTML = n ? `第 <input name="hg_vcs_hpgin" class="hg-vcs-hpgin" value="${H.page}" ` +
         `title="输入页码回车跳转（共 ${vpages} 页）"> / ${vpages} 页` : '—';
       const inp = info.querySelector('.hg-vcs-hpgin');
       if (inp) inp.addEventListener('keydown', (e) => {
