@@ -121,7 +121,7 @@ function buildTerminal(portId, meta) {
   conn.term = new Terminal({
     fontFamily: '"Cascadia Code", "JetBrains Mono", "Consolas", "Menlo", monospace',
     fontSize: (typeof termFontSize === 'number') ? termFontSize : 13,   // 设置/Ctrl+=/- 全局字号
-    // v3.5.128：lineHeight 1.3→1.0——设备 debug 输出的块字符图形（QR 码/
+    // v3.5.134 并入（写于 v3.5.128 轮）：lineHeight 1.3→1.0——设备 debug 输出的块字符图形（QR 码/
     // 进度条）按「字符格宽:高=1:2」绘制，1.3 的行距把格高拉到 1:2.6，
     // QR 显示成窄长变形无法扫码（MobaXterm/主流终端均 1.0）
     lineHeight: 1.0,

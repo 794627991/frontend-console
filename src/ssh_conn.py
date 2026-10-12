@@ -68,7 +68,7 @@ class SSHConnection(BaseConnection):
         client.connect(**kwargs)
         self._client = client
         # 交互式 shell（PTY），匹配嵌入式设备 dropbear/uboot-over-ssh 场景。
-        # v3.5.128：显式大列数起步（默认 80 列会让远端行编辑按 80 回绕，
+        # v3.5.134 并入（写于 v3.5.128 轮，滞留工作区随本版提交——见 3f069ed 留痕 commit）：显式大列数起步（默认 80 列会让远端行编辑按 80 回绕，
         # 本地宽窗口里长命令回显错位拼接——svn st 实锤）；实际尺寸随后由
         # 前端 fit → /api/resize → resize() 精确同步
         chan = client.invoke_shell(width=200, height=50)
@@ -79,7 +79,7 @@ class SSHConnection(BaseConnection):
         self._keepalive.start()
 
     def resize(self, rows, cols):
-        """PTY 尺寸同步（v3.5.128：xterm onResize → /api/resize 到此）——
+        """PTY 尺寸同步（v3.5.134 并入：xterm onResize → /api/resize 到此）——
         远端行编辑按同步后的列数回绕，与本地终端显示一致。"""
         if self._channel is not None:
             self._channel.resize_pty(width=int(cols), height=int(rows))
