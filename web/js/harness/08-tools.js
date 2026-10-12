@@ -450,18 +450,31 @@
     row.dataset.hgSubDesc = String(desc || '').slice(0, 120);
     row.style.setProperty('--h-accent', _H_KIND_COLOR.agent || 'var(--border)');
     const ty = String(type || '').trim() || 'Agent';
-    // v3.3.12（用户实锤「蓝色长条」）：chip 显示中文短名（_AGENT_LABEL）而非
-    // 原始 type 串——general-purpose 这类长英文名小字号渲成一坨蓝条
-    const tyDisp = _AGENT_LABEL[ty] || ty;
     const dsc = String(desc || '').trim();
+    // v3.5.142（用户批注「名字去掉没用，空间保留给过程显示」）：去「子智能体」
+    // 类别词与类型 chip——类型信息不丢，行 title 悬浮「类型 · 描述全文」；
+    // 让出的宽度归描述与过程摘要（.h-ag-live）。类名锚点全保（JS 查询锚不动，
+    // 仅删无 JS 消费的 .h-ag-type 节点，CSS 规则组同步清理）
+    row.title = ty + (dsc ? ' · ' + dsc : '');
     row.innerHTML =
-      `<button class="h-tool-head"><span class="h-tool-name">${_hToolIco('Task')} 子智能体</span>` +
-      `<span class="h-ag-type ${_hgAvaCls(ty)}" title="${esc(ty)}">${esc(tyDisp)}</span>` +
-      `<span class="h-tool-arg"${dsc ? ` title="${esc(dsc)}"` : ''}>${esc(dsc)}</span>` +
+      `<button class="h-tool-head"><span class="h-tool-name">${_hToolIco('Task')}</span>` +
+      `<span class="h-tool-arg">${esc(dsc)}</span>` +
       `<span class="h-ag-live"></span>` +
       `<span class="h-tslots"></span></button>` +
       `<div class="h-tool-coll"></div>`;
     return row;
+  }
+  // v3.5.143：agentline 运行槽渲染单元（运行徽章+秒表+过程计数「N思 M工」）
+  // ——派发 interval 与 ABA 回绑复活（12-sessions _hgAgentRowTimerRestart）
+  // 共用一份。计数数据挂 agents 档案（_hgAgCnt 计，窗格关着也有数）
+  function _hgAgentSlotPaint(row, t0) {
+    const slot = row.querySelector('.h-tslots');
+    if (!slot) return;
+    const a = (_HG.agents || {})[row.dataset.tid] || {};
+    const n = ((a.thinkN || 0) + '思') + ((a.toolN || 0) ? ' ' + a.toolN + '工' : '');
+    slot.innerHTML = statusBadge('running') +
+      ' <span class="h-tsec">' + Math.round((Date.now() - t0) / 1000) + 's</span>' +
+      (n !== '0思' ? `<span class="h-ag-cnt">${n}</span>` : '');
   }
   // v3.2.6：行内实时活动流——子代理 think/text/tool 事件到达即刷新（05-subblk
   // 三钩调用；ZCode animateSummaryContent 的静态等价物：最新子动作单行摘要）
@@ -470,6 +483,35 @@
     const lv = row && row.classList.contains('agentline')
       ? row.querySelector('.h-ag-live') : null;
     if (lv) lv.textContent = String(txt || '').trim().slice(0, 90);
+  }
+  // v3.5.142（用户批注「保留空间给过程显示」）：过程计数——think/text 增 thinkN、
+  // 工具增 toolN，挂 agents 档案（秒表渲染读它；窗格关着也照计）。pid 可能是
+  // 主 tid / agentId / 续派包装 id：直查 miss 时按档案三向关联反查 + _subTid
+  // 归一（与 _subBlkGet 认段同源思路，不依赖窗格 tab 存活）
+  function _hgAgCnt(pid, think, tool) {
+    const ag = _HG.agents || {};
+    let a = ag[pid];
+    if (!a) {
+      for (const k in ag) {
+        const x = ag[k];
+        if (x && !x.done && (x.agentId === pid || x.taskId === pid)) { a = x; break; }
+      }
+    }
+    if (!a) a = ag[_subTid(pid)];
+    if (a) { a.thinkN = (a.thinkN || 0) + (think || 0); a.toolN = (a.toolN || 0) + (tool || 0); }
+  }
+  // v3.5.142（用户实锤「派出去就完成」）：后台子代理派发 ack 守卫——
+  // run_in_background 的立即返回 tool_result（"agent launched successfully…"）
+  // 是「已派出」内部元数据不是任务结果，真完成信号是 task_notification（或
+  // hold 释放）。档案层 10-sse.js 早有 a.bg 守卫（不吃 ack 收尾），这里补
+  // 卡片层对称判定。双保险：档案 bg 标记优先（task_started 竞态丢失时靠文本
+  // 形态兜底——"launched successfully" + "internal" 双签，防误伤前台真报告）
+  function _hgIsBgLaunchAck(row, tr) {
+    if (row && !row.classList.contains('agentline')) return false;
+    const a = (_HG.agents || {})[tr.tool_use_id];
+    if (a && a.bg) return true;
+    const t = resultText(tr);
+    return /^agent launched successfully/i.test(t) && t.indexOf('internal') !== -1;
   }
   // v3.2.31（bug5① 根因修复）：完成摘要与派发描述同文去重——CLI 的
   // task_notification.summary / Task tool_result 常原样复述 input.description
@@ -488,6 +530,10 @@
   function _hgAgentRowState(tid, err, brief) {
     const row = (_HG.rowById || {})[tid];
     if (!row || !row.classList.contains('agentline')) return;
+    // v3.5.142：终态唯一停表收口——ack 守卫（renderOneToolResult 头部）生效后
+    // 秒表活到 task_notification 到达才停；也顺修现存隐患：丢 tool_result 走
+    // 本兜底路径的行，旧码不停表=interval 下一秒覆写绿徽
+    if (row._agentTimer) { clearInterval(row._agentTimer); row._agentTimer = null; }
     const lv = row.querySelector('.h-ag-live');
     if (lv) lv.textContent = '';
     const st = row.querySelector('.h-tslots');
@@ -606,14 +652,12 @@
     // v2.21：子代理行运行秒表——子代理一跑几分钟，主流毫无动静，没有
     // 秒表就像卡死。完成时由 renderOneToolResult 清表。
     if (cfg.kind === 'agent' && !isSub) {
-      const slot = row.querySelector('.h-tslots');
       const t0 = Date.now();
       row._agentTimer = setInterval(() => {
         // 行已游离（切会话清场/回退重建后迟到的 tool_result 走 orphan 分支
         // 永远清不到表）——首行自杀，防 interval+DOM 子树无界累积
         if (!row.isConnected) { clearInterval(row._agentTimer); row._agentTimer = null; return; }
-        if (slot) slot.innerHTML = statusBadge('running') +
-          ' <span class="h-tsec">' + Math.round((Date.now() - t0) / 1000) + 's</span>';
+        _hgAgentSlotPaint(row, t0);
       }, 1000);
     }
     // v2.43：组统计去混——子代理内部调用不进主链组头胶囊（用户实锤「子代理×1
@@ -645,8 +689,21 @@
   }
   function renderOneToolResult(tr) {
     const row = _HG.rowById[tr.tool_use_id];
+    // v3.5.142：bg 派发 ack 不翻完成——见 _hgIsBgLaunchAck。命中即静默
+    // return（不清秒表/不翻徽章/不清 live/不记 _hgActDone），仅早绑 agentId
+    // （ack 文本自带，与 10-sse.js 档案路径同源正则——早绑早回放）
+    if (_hgIsBgLaunchAck(row, tr)) {
+      const a = (_HG.agents || {})[tr.tool_use_id];
+      const aid = (a && (a.taskId || a.agentId)) || (resultText(tr)
+        .match(/(?<![a-zA-Z])agentId[:"':\s]+([0-9a-zA-Z_-]{8,64})/i) || [])[1] || '';
+      if (a && aid) a.agentId = a.agentId || aid;
+      if (row) _hgAgentRowBindAid(tr.tool_use_id, row);
+      return;
+    }
     if (!row) {
-      // 无对应行（transcript 重建的孤立结果）→ 单行摘要（v2.7：也进抽屉）
+      // 无对应行（transcript 重建的孤立结果）→ 单行摘要（v2.7：也进抽屉）；
+      // v3.5.142：bg 派发 ack 的孤儿形态（重建态迟到 ack）已在上方守卫静默
+      // 吞掉——内部元数据不该画成「↳ agent launched successfully…」孤儿行
       const txt = resultText(tr).slice(0, 120);
       const d = document.createElement('div');
       d.className = 'h-tool-res';

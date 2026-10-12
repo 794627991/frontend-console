@@ -2675,20 +2675,16 @@ html {
 .h-tool.agentline .h-tool-name { flex-shrink: 0; }
 .h-tool.agentline .h-tool-arg { white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis; }
-.h-ag-type { flex: none; font-family: var(--font-mono); font-size: var(--fs-xs);
-  font-weight: 600; padding: 0 5px; border-radius: 4px;
-  background: color-mix(in srgb, currentColor 9%, transparent);
-  max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.h-ag-type.h-ava-0 { color: var(--hgd-run); }
-.h-ag-type.h-ava-1 { color: var(--hgd-fail); }
-.h-ag-type.h-ava-2 { color: var(--hgd-halt); }
-.h-ag-type.h-ava-3 { color: var(--hgd-wait); }
-.h-ag-type.h-ava-4 { color: var(--accent); }
 .h-ag-live { min-width: 0; flex: 0 1 auto; font-size: var(--fs-xs);
   color: var(--accent); white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis; animation: hg-sub-pulse 1.6s ease-in-out infinite; }
 .h-ag-live:empty { display: none; }
 .h-tool.agentline .h-tslots { margin-left: auto; }
+/* v3.5.142（用户批注「名字去掉，保留空间给过程显示」）：类型 chip（.h-ag-type）
+   随「子智能体」类别词一并退役——行 title 悬浮保留类型全文；新增过程计数
+   「N思 M工」（运行中挂在秒表尾，数据来自 agents 档案） */
+.h-ag-cnt { font-size: var(--fs-xs); color: var(--accent); opacity: .85;
+  margin-left: 6px; white-space: nowrap; }
 /* 窗格时间线：子代理自己的会话用主会话同款回合结构（回合头+时间线+根区结
    论）。行样式全复用主链类（.h-tl/.h-think-seg/.h-tool/.h-tl-grp），这里只
    补窗格作用域的身份行/结论区/占位说明 */
@@ -2753,11 +2749,8 @@ html {
 .h-ava-2 { background: var(--hgd-halt); }
 .h-ava-3 { background: var(--hgd-wait); }
 .h-ava-4 { background: var(--accent); }
-/* v3.4.3（用户实锤「蓝条」）：类型 chip 借 h-ava-N 只取色相——头像实心底
-   与 chip 文字同 hue 叠加=实心蓝条字不可见；chip 底改 10% tint（高特异性
-   压过头像底色规则） */
-span.h-ag-type[class*='h-ava-'] {
-  background: color-mix(in srgb, currentColor 10%, transparent); }
+/* v3.5.142：类型 chip（span.h-ag-type）已随「子智能体」类别词退役（08-tools
+   _hgAgentRowBuild），chip 取色规则一并删除 */
 .h-switch .hg-peer-t { font-weight: 400; font-variant-numeric: tabular-nums; }
 /* v2.21：内建斜杠命令的系统卡片（/help /status 等在消息流里的回显） */
 .h-syscard { align-self: center; width: min(560px, 86%); margin: 8px 0 2px;

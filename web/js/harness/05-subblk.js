@@ -390,6 +390,7 @@
     // v3.2.6：主流单行任务卡的实时活动流（段卡已隐——过程进窗格，主流只留
     // 「正在干什么」的一行摘要）
     _subLivePaint(pid, '思考中…');
+    _hgAgCnt(pid, 1, 0);   // v3.5.142：过程计数（思考→N思）
     if (!(b.seg && b.seg.isConnected)) {
       const seg = _subThinkShell(true);
       seg.dataset.t0 = String(_hgPrevRowAt());   // v3.3.1(F3)：起点挂上一事件时刻（自身到达恒 0 秒，与主链/窗格同口径）
@@ -415,6 +416,7 @@
     {
       const _lt = String(text).replace(/\s+/g, ' ').trim();
       if (_lt) _subLivePaint(pid, '正文 · ' + _lt.slice(0, 60));
+      _hgAgCnt(pid, 1, 0);   // v3.5.142：过程计数（正文按思考口径累计——产出活动）
     }
     // v2.53：段内同文去重——轮询与 SSE 理论上可能双源喂同一条 text（CLI
     // 行为随版本变），渲染文本归一后与段内**任一**既有气泡等价即不重复
@@ -449,6 +451,7 @@
     // v3.2.6：实时活动流——最新工具动作（label · 摘要）
     _subLivePaint(pid, (_hToolLabel(row && row._name || '') || '工具') +
       ' · ' + String((row && row._rawHint) || (row && row._preview) || '').slice(0, 64));
+    _hgAgCnt(pid, 0, 1);   // v3.5.142：过程计数（工具→M工）
     _subBodyPut(b, row, 'tool');   // v2.48：进当前节的工具抽屉（节随行成形）
     // v3.2.6：窗格时间线镜像——本函数是 SSE 与 fullFeed 轮询的共同通路，镜像
     // 前按 data-tuid 查重（SSE 路径 _subFeed 也会插同名行，双源不查重=每条工具
