@@ -4386,3 +4386,58 @@ span.h-ag-type[class*='h-ava-'] {
   width: 100%; box-sizing: border-box;   /* v3.5.63：flow 是 align-items:flex-start 的 flex column——不拉满则 hint 收缩成窄条，「居中」只在条内生效 */
   padding: 8px 12px; font-size: var(--fs-sm);
   color: var(--muted); border-bottom: 1px dashed var(--border); cursor: pointer; }
+
+/* ============================================================
+   v3.5.117 「版本」页签（git/svn，24-vcs.js）——右栏窗格第三伪 tab
+   ============================================================ */
+.hg-vcs-pane { overflow-y: auto; padding: 10px 12px; font-size: 12px; }
+.hg-vcs-rootrow { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+.hg-vcs-roott { flex-shrink: 0; color: var(--muted); font-size: 11px; }
+.hg-vcs-root { flex: 1; min-width: 0; background: var(--bg-input); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font-size: 12px; }
+.hg-vcs-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px; }
+.hg-vcs-badge { flex-shrink: 0; padding: 2px 8px; border-radius: 10px; font-size: 11px;
+  font-weight: 600; background: rgba(80,200,120,.15); color: #4caf7d; }
+.hg-vcs-badge.svn { background: rgba(80,140,220,.15); color: #6a9fe0; }
+.hg-vcs-badge.none { background: rgba(150,150,150,.15); color: var(--muted); }
+.hg-vcs-branch { font-weight: 600; }
+.hg-vcs-count { margin-left: auto; color: var(--muted); font-size: 11px; flex-shrink: 0; }
+.hg-vcs-warn { color: var(--muted); font-size: 11px; }
+.hg-vcs-acts { display: flex; gap: 8px; align-items: center; margin: 10px 0 6px; }
+.hg-vcs-hint { color: var(--muted); font-size: 11px; margin-left: auto; }
+.hg-vcs-files { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.hg-vcs-frow { display: flex; gap: 8px; align-items: center; padding: 6px 10px;
+  border-bottom: 1px solid var(--border); cursor: pointer; }
+.hg-vcs-frow:last-child { border-bottom: none; }
+.hg-vcs-frow:hover { background: rgba(128,128,128,.08); }
+.hg-vcs-st { flex-shrink: 0; width: 20px; height: 18px; line-height: 18px; text-align: center;
+  border-radius: 4px; font-size: 11px; font-weight: 700; }
+.hg-vcs-st.m { background: rgba(230,145,56,.18); color: #e69138; }
+.hg-vcs-st.a { background: rgba(76,175,125,.18); color: #4caf7d; }
+.hg-vcs-st.d, .hg-vcs-st.c { background: rgba(229,72,77,.18); color: #e5484d; }
+.hg-vcs-st.r { background: rgba(140,100,220,.18); color: #a58ce0; }
+.hg-vcs-st.u { background: rgba(150,150,150,.18); color: var(--muted); }
+.hg-vcs-ck { flex-shrink: 0; }
+.hg-vcs-fpath { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; font-family: var(--font-mono); font-size: 11px; }
+.hg-vcs-ren { color: var(--muted); margin-right: 4px; text-decoration: line-through; }
+.hg-vcs-more { padding: 8px 10px; color: var(--muted); font-size: 11px; }
+.hg-vcs-out { margin: 10px 0; border: 1px dashed var(--border); border-radius: 8px; padding: 8px 10px; }
+.hg-vcs-out-t { color: var(--muted); font-size: 11px; margin-bottom: 4px; }
+.hg-vcs-out pre { margin: 0; white-space: pre-wrap; word-break: break-all;
+  font-family: var(--font-mono); font-size: 11px; max-height: 180px; overflow-y: auto; }
+.hg-vcs-sec { margin: 12px 0 6px; font-weight: 600; }
+.hg-vcs-logrow { display: flex; gap: 8px; align-items: baseline; padding: 5px 4px;
+  border-bottom: 1px solid var(--border); }
+.hg-vcs-logrev { flex-shrink: 0; font-family: var(--font-mono); color: var(--accent); font-size: 11px; }
+.hg-vcs-logmsg { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hg-vcs-logau { flex-shrink: 0; color: var(--muted); font-size: 11px; }
+.hg-vcs-empty { padding: 18px 10px; text-align: center; color: var(--muted); font-size: 12px; }
+.hg-vcs-loading { padding: 18px 10px; text-align: center; color: var(--muted); }
+.hg-vcs-cfile { display: flex; gap: 6px; align-items: center; padding: 3px 0;
+  font-family: var(--font-mono); font-size: 11px; }
+.hg-vcs-cnew { color: #e69138; font-size: 11px; margin: 6px 0; }
+.hg-vcs-msg { width: 100%; margin-top: 8px; background: var(--bg-input); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
+  font-size: 12px; resize: vertical; }

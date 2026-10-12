@@ -14,6 +14,7 @@
   // 绑定发生在用户点胶囊时，分屏 DOM 必然在场。sc 上 setAttribute('data-hg-dyn')
   // 让 20-main tick 的自愈重绑（querySelector('[data-hg-dyn]')）路径继续成立。
   const _SUB_DYN = '__dyn__';
+  const _SUB_VCS = '__vcs__';   // v3.5.117：版本页签（git/svn，24-vcs.js）
   const _HG_DYN_SKELETON =
     `<div class="hg-sub-dir-head">会话动态</div>` +
     `<section class="hg-dyn-sec" data-hg-sec="stat">` +
@@ -164,6 +165,7 @@
     }
   }
   function _subDirEnsure() {
+    try { if (typeof _vcsEnsure === 'function') _vcsEnsure(); } catch (_) {}   // v3.5.117：版本 tab 同步懒建（不夺焦点）
     // v3.4.60（用户需求）：胶囊/动态页打开时同步把目录 tab 懒建在场（不夺
     // 焦点）——点胶囊不再只看到单个视图，目录列表随手可切。已建时零操作
     if (!_subPaneEl || _sub.tabs[_SUB_DIR]) return;
@@ -237,6 +239,7 @@
     }
     _sub.tabs = {}; _sub.order = []; _sub.active = null; _sub.manual = false;
     dynEl = null;   // v3.3：动态页 sc 随清场销毁——防渲染进游离节点（重开由 _subDynOpen 重建）
+    try { if (typeof _vcsReset === 'function') _vcsReset(); } catch (_) {}   // v3.5.117：版本页 sc 同清
     if (_subPaneEl) { _subPaneEl.style.display = 'none'; _subTabsEl.innerHTML = ''; _subBodyEl.innerHTML = ''; }
   }
   // ==================== v3.2.31：子代理窗格真分屏（需求2）====================
@@ -256,7 +259,7 @@
   // 记忆拖拽）；子代理实况/回放=宽档（hg-subpane-pct，默认 50%，既有记忆）
   function _subPanePctKey(tid) {
     const a = tid || _sub.active;
-    return (a === _SUB_DYN || a === _SUB_DIR)
+    return (a === _SUB_DYN || a === _SUB_DIR || a === _SUB_VCS)
       ? 'hg-subpane-narrow-pct' : 'hg-subpane-pct';
   }
   function _hgSubPctGet(kOpt) {
@@ -727,8 +730,8 @@
                          model: _ag.model || '', t: null, turns: [], tick: null };
       _sub.order.push(tid);
       // v3.2：上限 6 个 tab，最旧让位（目录/动态伪 tab 常驻不让位，v3.3 加豁免 __dyn__）
-      if (_sub.order.filter(x => x !== _SUB_DIR && x !== _SUB_DYN).length > 6) {
-        const old = _sub.order.find(x => x !== _SUB_DIR && x !== _SUB_DYN);
+      if (_sub.order.filter(x => x !== _SUB_DIR && x !== _SUB_DYN && x !== _SUB_VCS).length > 6) {
+        const old = _sub.order.find(x => x !== _SUB_DIR && x !== _SUB_DYN && x !== _SUB_VCS);
         if (old != null) {
           const otb = _sub.tabs[old];
           if (otb && otb.tick) { clearInterval(otb.tick); otb.tick = null; }
@@ -1079,8 +1082,9 @@
     // v3.2R1(P2)：目录不贴底滚动——_subScroll 为聊天流贴底设计，目录的主
     // 内容（正在运行）在顶部，贴底会直接落到已结束长列表尾
     // v3.3：动态页同豁免——状态总览主内容也在顶部（会话状态卡）
-    if (tid !== _SUB_DIR && tid !== _SUB_DYN) _subScroll(tid);
+    if (tid !== _SUB_DIR && tid !== _SUB_DYN && tid !== _SUB_VCS) _subScroll(tid);
     if (tid === _SUB_DIR) _subDirPaint();   // v3.2：目录激活即重绘（数据最新）
+    if (tid === _SUB_VCS) { try { if (typeof _vcsActivate === 'function') _vcsActivate(); } catch (_) {} }
   }
   function _subTabsPaint() {
     if (!_subTabsEl) return;
@@ -1090,7 +1094,7 @@
       .concat(_sub.order.filter(t => _sub.tabs[t] && t !== _SUB_DYN));
     _subTabsEl.innerHTML = _paint.map(t => {
       const tb = _sub.tabs[t];
-      const _pseu = (t === _SUB_DIR || t === _SUB_DYN);   // 伪 tab：无 dot/无 ✕/悬浮只说视图
+      const _pseu = (t === _SUB_DIR || t === _SUB_DYN || t === _SUB_VCS);   // 伪 tab：无 dot/无 ✕/悬浮只说视图
       // v2.35（P1-4）：模型进 tab（短名+悬浮全名）；tokens 进悬浮（CLI 侧计数）
       const ag = (_HG.agents || {})[t] || {};
       const mdlFull = tb.model || '';
@@ -1102,7 +1106,7 @@
           .filter(Boolean).join('\n');
       return `<div class="hg-sub-tab${t === _sub.active ? ' active' : ''}${tb.run ? ' run' : tb.err ? ' err' : ''}${tb.replay ? ' replay' : ''}${t === _SUB_DIR ? ' dir' : t === _SUB_DYN ? ' dyn' : ''}"` +
         ` data-hg-subtab="${esc(t)}" title="${esc(ttip)}">` +
-        (_pseu ? `<span class="hg-sub-dir-tabico">${t === _SUB_DYN ? '◉' : '☰'}</span>` : '<span class="hg-sub-dot"></span>') + esc(tb.label) +
+        (_pseu ? `<span class="hg-sub-dir-tabico">${t === _SUB_DYN ? '◉' : t === _SUB_VCS ? '⎇' : '☰'}</span>` : '<span class="hg-sub-dot"></span>') + esc(tb.label) +
         (tb.replay ? `<span class="hg-sub-rp">回放</span>` : '') +
         (mdlShort ? `<span class="hg-sub-mdl">${esc(mdlShort)}</span>` : '') +
         // 窗格重设计 P1-1：单-tab ✕——hover 才浮现（CSS 控制），运行中的 tab

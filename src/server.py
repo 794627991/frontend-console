@@ -89,6 +89,10 @@ app.register_blueprint(assoc_bp)
 # 注册文件树工作区 Blueprint（路由 /api/tree/*，根目录登记制安全模型）
 app.register_blueprint(tree_bp)
 
+# 注册版本控制 Blueprint（路由 /api/vcs/*，git/svn 查看+常用写；沿文件树登记根安全模型）
+from src.vcs import vcs_bp
+app.register_blueprint(vcs_bp)
+
 # 注册 Claude 安装引导 Blueprint（路由 /api/claude/setup_*，联网/离线双通道）
 from src.claude_setup import claude_setup_bp
 app.register_blueprint(claude_setup_bp)
