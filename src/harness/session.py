@@ -558,12 +558,23 @@ class HarnessSession:
             # v2.52：文案去「Task 工具」——工具名随 CLI 版本变（Task→Agent），
             # 只说派 reviewer，派发方式模型自己知道。
             # v2.54：违规含设计档时续发要求先补方案（派 designer）再实施。
+            # v3.5.120（用户需求「推翻重来再超线=续派审计，不是重新触发新派」）：
+            # ids 映射里已有本大回合 reviewer 的 agentId 时，补审指令改为
+            # SendMessage 续派原 reviewer（上下文还在，审新增量）——不新派
+            _rev_id = None
+            for _aid, _role in reversed(list((au.get("ids") or {}).items())):
+                if _role == "reviewer":
+                    _rev_id = _aid
+                    break
+            _rev_cmd = ('SendMessage 续派原 reviewer（to="%s"）继续审计新增'
+                        '改动' % _rev_id) if _rev_id else \
+                       '立即派 reviewer 代理补审上述改动'
             remedy = ("已自动续发补正指令——先派 designer 代理出框架方案"
                       "（带上全部已知上下文），按方案继续实施；未审的改动"
-                      "立即派 reviewer 代理补审（对抗审核：只审不改，给 "
-                      "PASS/FAIL 结论）" if "designer" in desc else
-                      "已自动续发补审指令——立即派 reviewer 代理补审上述"
-                      "改动（对抗审核：只审不改，给 PASS/FAIL 结论）")
+                      "%s（对抗审核：只审不改，给 PASS/FAIL 结论）"
+                      % _rev_cmd if "designer" in desc else
+                      "已自动续发补审指令——%s（对抗审核：只审不改，给 "
+                      "PASS/FAIL 结论）" % _rev_cmd)
             text = (_AUDIT_MSG_PREFIX + "%s。" % desc + remedy +
                     "按结论处理：FAIL 自己修复后复审，PASS 才算完成，然后"
                     "再答复用户。不要辩解，直接补正。")
