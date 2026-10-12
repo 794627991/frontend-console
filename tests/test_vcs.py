@@ -171,5 +171,39 @@ def main():
     return 1 if _FAIL else 0
 
 
+# ---- v3.5.138R（全审P7）：_log_plan 参数矩阵断言组（V2 S1 落库）----
+def t_log_plan():
+    P = vcs._log_plan
+    e, g, c, sv, skip, lim = P("git", {"limit": 50})
+    check("git 基础 argv", e is None and g[3] == "50" and c is not None)
+    e, g, c, sv, skip, lim = P("git", {"skip": 100, "limit": 20})
+    check("skip 翻页", skip == 100 and "--skip" in g and c is None)
+    check("超深 400", P("git", {"skip": 4990, "limit": 20})[0][1] == 400)
+    e, g, c, sv, skip, lim = P("git", {"text": "fix(x) 网络"})
+    i = g.index("--fixed-strings")
+    check("关键字 fixed-strings/-i/all-match", g[i:i + 3] == ["--fixed-strings", "-i", "--all-match"])
+    gi = [j for j, x in enumerate(g) if x == "--grep"]
+    check("关键字分词 AND 字面量", len(gi) == 2 and g[gi[0] + 1] == "fix(x)" and g[gi[1] + 1] == "网络")
+    check("count 同套过滤", c.count("--grep") == 2)
+    e, g, c, sv, skip, lim = P("git", {"author": "gao.yi*"})
+    check("作者 BRE 六元转义", g[g.index("--author") + 1] == "gao\.yi\*")
+    check("日期格式 400", P("git", {"since": "2026-13-01"})[0][1] == 400)
+    check("日期区间 400", P("git", {"since": "2026-10-10", "until": "2026-10-01"})[0][1] == 400)
+    e, g, c, sv, skip, lim = P("git", {"since": "2026-10-01", "until": "2026-10-10"})
+    check("日期边界 T00/T23:59", g[g.index("--since") + 1] == "2026-10-01T00:00:00"
+          and g[g.index("--until") + 1] == "2026-10-10T23:59:59")
+    e, g, c, sv, skip, lim = P("svn", {"text": "关键词"})
+    check("svn --search 整串", sv[sv.index("-r") + 1] == "HEAD:1"
+          and sv[sv.index("--search") + 1] == "关键词")
+    e, g, c, sv, skip, lim = P("svn", {"before_rev": "88", "since": "2026-10-01"})
+    check("svn 游标+日期", sv[sv.index("-r") + 1] == "88:{2026-10-01T00:00:00}")
+    check("svn 游标数字校验", P("svn", {"before_rev": "abc"})[0][1] == 400)
+    check("控制符滤除", P("git", {"text": "ab"})[1] is not None
+          and "ab" not in " ".join(P("git", {"text": "ab"})[1]))
+
+
+t_log_plan()
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(0)

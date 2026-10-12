@@ -333,6 +333,14 @@ def _log_plan(vcs, data):
     for d in (since, until):
         if d and not _DATE_RE.match(d):
             return (("日期格式应为 YYYY-MM-DD"), 400), None, None, None, skip, limit
+        if d:
+            # 全审L3：正则之外补语义校验——2026-13-45 这类正则可过、git 静默
+            # 返回空的假日期在此真拒
+            try:
+                import datetime as _dt
+                _dt.date(*[int(x) for x in d.split("-")])
+            except ValueError:
+                return (("日期无效：%s" % d), 400), None, None, None, skip, limit
     if since and until and since > until:
         return (("起始日期不能晚于结束日期"), 400), None, None, None, skip, limit
     before_rev = str(data.get("before_rev") or "").strip()
@@ -414,22 +422,15 @@ def vcs_log():
                     total = None
     else:
         rc, out, e = _run(svn_argv, wc, VCS_TIMEOUT_RO)
-        if rc != 0 and "unknown option" in (e or "") \
-                and "--search" in svn_argv:
-            # svn <1.8 无 --search：探测特征 → 去掉重拉（客户端过滤由前端
-            # 按 banner 提示处理已载分页，designer 第六节）
+        if rc != 0 and "--search" in svn_argv and (
+                "invalid option" in (e or "") or "unknown option" in (e or "")):
+            # svn <1.8 无 --search：APR getopt 实证 stderr 是「svn: invalid
+            # option: --search」（unknown option 是 git 措辞——P1 修）；去掉
+            # 重拉，客户端过滤由前端按 banner 提示处理已载分页
             _argv2 = list(svn_argv)
             _i = _argv2.index("--search")
             del _argv2[_i:_i + 2]
             rc, out, e = _run(_argv2, wc, VCS_TIMEOUT_RO)
-            # svn <1.8 无 --search：探测特征 → 降级重拉（客户端过滤由前端
-            # 按 banner 提示处理已载分页，designer 第六节）
-            if "unknown option" in (e or ""):
-                _argv2 = [a for a in svn_argv]
-                _i = _argv2.index("--search") if "--search" in _argv2 else -1
-                if _i >= 0:
-                    del _argv2[_i:_i + 2]
-                rc, out, e = _run(_argv2, wc, VCS_TIMEOUT_RO)
         if rc != 0:
             return jsonify({"ok": False, "err": e or "svn log 失败"}), 500
         try:

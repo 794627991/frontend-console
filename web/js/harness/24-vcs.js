@@ -42,7 +42,8 @@
   // 打开时后台补刷新；点文件 → commit_diff → buildDiffViewerTab 主区 diff tab
   //（harness tab 隐藏不销毁，回切弹窗原样）；Esc/遮罩/按钮/reset 四路关闭
   // 全走 _vcsHistClose 唯一收口。
-  let _vcsHist = null;               // {ov, sel, seq, files:Map, escFn}
+  let _vcsHist = null;               // {ov, sel, seq, files:Map, escFn, q, qlog, ...}
+  let _vcsHistLseq = 0;              // L2：模块级单调——重开窗口期间旧响应不可穿透
 
   function _vcsFmtDt(iso) {
     const d = new Date(iso);
@@ -86,7 +87,7 @@
   function _vcsHistFetch(reset) {
     const H = _vcsHist;
     if (!H) return;
-    const lseq = ++H.lseq;
+    const lseq = (H.lseq = ++_vcsHistLseq);   // L2：模块级单调令牌
     const fp = _vcsHistQfp();
     if (H.querying) H.qbusy = true;
     const arr = H.querying ? H.qlog : (_HG.vcs.log = _HG.vcs.log || []);
@@ -109,13 +110,20 @@
           return;
         }
         H.fetchErr = null;
+        if (reset) H.exhausted = false;
         const tgt = H.querying ? H.qlog : _HG.vcs.log;
         const known = new Set(tgt.map(c => c.rev));
         const add = (j.commits || []).filter(c => c.rev && !known.has(c.rev));
         if (reset) { tgt.length = 0; tgt.push(...(j.commits || [])); }
         else tgt.push(...add);
-        if (H.querying) H.qtotal = j.total;
-        else _HG.vcs.total = j.total;
+        // P2：后端仅 skip==0 附 total——追加响应无 total 时保住已有精确值
+        //（旧写法 undefined 覆盖 → 翻一页「共523条」降级「已载200条」）
+        if (j.total !== undefined) {
+          if (H.querying) H.qtotal = j.total;
+          else _HG.vcs.total = j.total;
+        }
+        // P4：svn 无 total 的终点信号——追加响应去重后零新增=已到最早
+        if (!reset && add.length === 0) H.exhausted = true;
         // 漂移补齐：skip 语义下新提交顶入取不满一页 → 追拉（≤3 轮）
         if (!reset && !isSvn && add.length < (j.commits || []).length
             && (j.commits || []).length >= 100 && H.rounds < 3) {
@@ -167,7 +175,7 @@
     document.addEventListener('keydown', escFn);
     _vcsHist = { ov, sel: null, seq: 0, files: new Map(), escFn,
                  q: { text: '', author: '', since: '', until: '' },
-                 qlog: [], qbusy: false, qtotal: undefined, querying: false,
+                 qlog: [], qbusy: false, qtotal: undefined, querying: false, exhausted: false,
                  page: 1, size, lseq: 0, rounds: 0, fetchErr: null, debT: null };
     const dateInp = (k, ph) =>
       `<input type="date" class="hg-vcs-hdate" data-vcs-hq="${k}" title="${ph}">`;
@@ -210,7 +218,12 @@
       `</div>`;
     ov.addEventListener('click', (e) => { if (e.target === ov) _vcsHistClose(); });
     ov.querySelector('[data-vcs-hclose]').onclick = () => _vcsHistClose();
-    ov.querySelector('[data-vcs-hrefresh]').onclick = () => _vcsHistFetch(true);
+    ov.querySelector('[data-vcs-hrefresh]').onclick = () => {
+      // P8：⟳ 统一回补语义——查询态走 fetch(reset)，浏览态走 _vcsReloadLog
+      //（回补到已载量 ≤500，不缩回 100）
+      if (_vcsHist && _vcsHist.querying) _vcsHistFetch(true);
+      else _vcsReloadLog();
+    };
     ov.querySelector('[data-vcs-hprev]').onclick = () => {
       if (_vcsHist && _vcsHist.page > 1) { _vcsHist.page--; _vcsHistPaintList(true); }
     };
@@ -219,10 +232,14 @@
       const arr = _vcsHistActive();
       const pages = Math.max(1, Math.ceil(arr.length / H.size));
       if (H.page < pages) { H.page++; _vcsHistPaintList(true); return; }
-      // 当前末页且可能还有更早——拉下一块（svn 无 total：整百=可能还有）
+      // 当前末页且可能还有更早——拉下一块（svn 无 total：exhausted 信号
+      // 或非整百启发式；before_rev 已到 r1 边界不再发）
       const atEnd = _vcsHistTotal() != null ? arr.length >= _vcsHistTotal()
-        : !(arr.length % 100 === 0);
-      if (!atEnd && !_vcsHistBusy()) { H.page++; _vcsHistFetch(false); }
+        : (H.exhausted || !(arr.length % 100 === 0));
+      const oldest = arr.length ? arr[arr.length - 1].rev : '';
+      const svnEnd = ((_HG.vcs.data || {}).vcs === 'svn')
+        && oldest && parseInt(oldest, 10) <= 1;
+      if (!atEnd && !svnEnd && !_vcsHistBusy()) { H.page++; _vcsHistFetch(false); }
     };
     ov.querySelector('[data-vcs-hsize]').onchange = (e) => {
       if (!_vcsHist) return;
@@ -312,8 +329,9 @@
       return;
     }
     if (!arr.length) {
-      listEl.innerHTML = '<div class="hg-vcs-empty">' + (H.querying
-        ? '无匹配提交——调整关键字/时间范围，或 ✕ 清除筛选'
+      listEl.innerHTML = '<div class="hg-vcs-empty">' + (
+        _vcsHistBusy() ? (H.querying ? '搜索中…' : '加载中…')
+        : H.querying ? '无匹配提交——调整关键字/时间范围，或 ✕ 清除筛选'
         : '还没有提交记录') + '</div>';
       _vcsHistPager();
       return;
@@ -342,8 +360,11 @@
     });
     listEl.querySelectorAll('[data-copy]').forEach(b => b.onclick = (e) => {
       e.stopPropagation();
-      try { navigator.clipboard.writeText(b.dataset.copy); showBanner('已复制 ' + b.dataset.copy.slice(0, 12) + '…', 1800); }
-      catch (_) { showBanner('复制失败', 2000, true); }
+      try {
+        navigator.clipboard.writeText(b.dataset.copy)
+          .then(() => showBanner('已复制 ' + b.dataset.copy.slice(0, 12) + '…', 1800))
+          .catch(() => showBanner('复制失败', 2000, true));
+      } catch (_) { showBanner('复制失败', 2000, true); }
     });
     _vcsHistPager();
   }
@@ -358,7 +379,7 @@
     const n = (arr || []).length;
     const pages = Math.max(1, Math.ceil(n / H.size));
     const total = _vcsHistTotal();
-    const atEnd = total != null ? n >= total : !(n && n % 100 === 0);
+    const atEnd = total != null ? n >= total : (H.exhausted || !(n && n % 100 === 0));
     if (info) info.textContent = n ? `第 ${H.page}/${pages} 页` : '—';
     if (prev) prev.disabled = H.page <= 1;
     if (next) next.disabled = !n || (H.page >= pages && atEnd && !_vcsHistBusy());
