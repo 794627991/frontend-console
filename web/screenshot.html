@@ -27,13 +27,12 @@
 // ============================================================
 (function () {
   'use strict';
-  function boot() {
-    var img = '/api/snip/img?v=' + Date.now();
-    // 收尾防黑闪：插件 √/×/保存 都会 destroyDom 销毁界面，露出 body 背景
-    // （原 #000=黑屏闪烁/保存键黑屏挂死双实锤）。背景换成底图原图：
-    // 销毁瞬间只丢遮罩变亮，不再黑，配合 Python 侧即刻 hide 基本无感。
-    document.body.style.background = '#000 url(' + img + ') center/100% 100% no-repeat';
-    new screenShotPlugin({
+  // v3.5.149（零延迟）：实例挂 window——常驻 Python 侧 go 事件路径用
+  // evaluate_js 调 __snipArm() 免 reload 唤醒（整页 reload 的导航+插件重建+
+  // 底图重拉开销全免）。destroyComponents 是插件原型的全量拆解入口。
+  window.__snipInst = null;
+  function makeInst(img) {
+    return new screenShotPlugin({
       capture: { source: 'image', imageSrc: img },
       writeBase64: false,
       showScreenData: true,
@@ -59,6 +58,22 @@
       }
     });
   }
+  function boot() {
+    var img = '/api/snip/img?v=' + Date.now();
+    // 收尾防黑闪：插件 √/×/保存 都会 destroyDom 销毁界面，露出 body 背景
+    // （原 #000=黑屏闪烁/保存键黑屏挂死双实锤）。背景换成底图原图：
+    // 销毁瞬间只丢遮罩变亮，不再黑，配合 Python 侧即刻 hide 基本无感。
+    document.body.style.background = '#000 url(' + img + ') center/100% 100% no-repeat';
+    window.__snipInst = makeInst(img);
+  }
+  // go 事件唤醒入口：换底图（v=时间戳防缓存）+ 重建插件实例；旧实例先
+  // destroyComponents 免 DOM/事件泄漏。异常抛回 Python 侧回落整页 reload。
+  window.__snipArm = function () {
+    try { window.__snipInst && window.__snipInst.destroyComponents(); } catch (e) {}
+    var v = '/api/snip/img?v=' + Date.now();
+    document.body.style.background = '#000 url(' + v + ') center/100% 100% no-repeat';
+    window.__snipInst = makeInst(v);
+  };
   // boot 闸门：等视口=物理屏幕宽高（子进程 loaded 后才把 WinForms
   // ClientSize 钉到物理矩形，此前窗口是创建期被钳小的尺寸）。插件 canvas
   // 按当时视口建且不重建，早 boot=canvas 偏小→底图缩放+框选错位。比较用

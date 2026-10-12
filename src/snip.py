@@ -60,6 +60,46 @@ def _virt_geo():
             "w": u32.GetSystemMetrics(78), "h": u32.GetSystemMetrics(79)}
 
 
+# v3.5.149（用户实锤 Snipaste 按 F1 立刻响应）：热键信号走命名事件——主进程
+# SetEvent <1ms 直达常驻截图窗进程，替代「spawn --grab 子进程（冷启动+落盘）
+# + 0.15s mtime 轮询」的旧链路。事件名带 port：单实例下彻底规避跨实例串扰。
+_SNIP_GO_EVENT = "Local\\fc_snip_go_%s"
+
+
+def _open_event(name):
+    """打开/创建命名事件（自动复位）。返回 HANDLE（0=失败转 None）。
+    restype/argtypes 必须显式 c_void_p：默认 c_int 在 64 位下截断句柄
+    （main.py 剪贴板实锤同款坑——SetEvent 带截断句柄静默失败）。"""
+    try:
+        k32 = ctypes.windll.kernel32
+        k32.CreateEventW.restype = ctypes.c_void_p
+        k32.CreateEventW.argtypes = [ctypes.c_void_p, ctypes.c_void_p,
+                                     ctypes.c_int, ctypes.c_wchar_p]
+        # 注意：SetEvent/WaitForMultipleObjects 无 W 后缀变体（不带字符串参数
+        # 的 API 不分 ANSI/Wide，kernel32 只导出裸名）——写 SetEventW 会在
+        # argtypes 赋值时 AttributeError 'function not found' 被 except 吞掉
+        k32.SetEvent.restype = ctypes.c_int
+        k32.SetEvent.argtypes = [ctypes.c_void_p]
+        k32.WaitForMultipleObjects.restype = ctypes.c_uint
+        k32.WaitForMultipleObjects.argtypes = [ctypes.c_uint,
+                                               ctypes.POINTER(ctypes.c_void_p),
+                                               ctypes.c_int, ctypes.c_uint]
+        h = k32.CreateEventW(None, False, False, name)
+        return h or None
+    except Exception:
+        return None
+
+
+def set_go_event(port):
+    """主进程热键 → 唤醒常驻截图窗（它自己进程内抓屏，免 spawn）。"""
+    h = _open_event(_SNIP_GO_EVENT % port)
+    if h:
+        try:
+            ctypes.windll.kernel32.SetEvent(h)
+        except Exception:
+            pass
+
+
 def _grab_only():
     """--grab：抓屏 → BMP（PNG 编码 1920x1080 要 ~0.4s，BMP 免压缩 ~0.05s，
     localhost 传输不差这点体积）+ 几何 json。"""
@@ -321,22 +361,79 @@ def window_main(port, armed=False):
             return False
 
     def _arm_loop():
-        """待命哨兵：主进程抓屏落 BMP（mtime 更新）→ reload 新底图弹出。
-        Flask 连不通（孤儿窗）直接自杀，绝不让错误页见人。"""
+        """待命哨兵 v3.5.149：命名事件主等（<1ms）+ 150ms 超时兜底（mtime
+        轮询/Flask 探活原逻辑全保留）。go 事件 → 进程内抓屏（本进程已 DPI
+        aware，免 spawn 子进程免冷启动）→ 几何未变走 evaluate_js 免 reload
+        唤醒；几何变了/唤醒失败回落整页 reload（旧路永在）。"""
         last = os.path.getmtime(_TMP_BMP) if os.path.isfile(_TMP_BMP) else 0
         idle_since = time.time()
         last_probe = 0.0
+        last_beat = 0.0
+        ev_go = _open_event(_SNIP_GO_EVENT % port)
+        k32 = ctypes.windll.kernel32
+        handles = None
+        if ev_go:
+            handles = (ctypes.c_void_p * 1)(ctypes.c_void_p(ev_go))
         while True:
-            time.sleep(0.15)
-            if time.time() - last_probe > 2:      # Flask 探活 2s 一次足够
-                last_probe = time.time()
+            fired = False
+            if handles:
+                # WAIT_OBJECT_0(=0)：go 事件触发；超时(0x102)走兜底轮询
+                fired = (k32.WaitForMultipleObjects(1, handles, False, 150) == 0)
+            else:
+                time.sleep(0.15)
+            now = time.time()
+            # v3.5.149 心跳周期写：免 reload 后 loaded 不再周期发生，而
+            # snip_window_alive 靠 ALIVE 心跳判活（660s 容忍）——停更=主进程
+            # 误判窗已死再 spawn=双窗实锤回归，30s 一写必须与免 reload 同笔
+            if now - last_beat > 30:
+                last_beat = now
+                try:
+                    with open(_TMP_ALIVE, "w", encoding="utf-8") as f:
+                        json.dump({"port": int(port), "t": now}, f)
+                except Exception:
+                    pass
+            if now - last_probe > 2:      # Flask 探活 2s 一次足够
+                last_probe = now
                 if not _flask_ok():
                     os._exit(0)   # 主实例没了：静默退，下一次启动重新拉起
             try:
                 m = os.path.getmtime(_TMP_BMP) if os.path.isfile(_TMP_BMP) else 0
             except OSError:
                 continue
-            if m > last:
+            if fired:
+                # 主路径：进程内抓屏（60-120ms）+ 免 reload 唤醒
+                try:
+                    _grab_only()
+                except Exception:
+                    pass
+                last = os.path.getmtime(_TMP_BMP) if os.path.isfile(_TMP_BMP) else last
+                g = _virt_geo()
+                same = True
+                try:
+                    same = (win.x == g["x"] and win.y == g["y"]
+                            and win.width == g["w"] and win.height == g["h"])
+                except Exception:
+                    pass
+                state["showing"] = True
+                idle_since = time.time()
+                if same:
+                    try:
+                        win.evaluate_js("window.__snipArm && __snipArm()")
+                        win.show()
+                        hwnd = ctypes.windll.user32.FindWindowW(None, "fc-snip")
+                        if hwnd:
+                            ctypes.windll.user32.SetForegroundWindow(hwnd)
+                    except Exception:
+                        try:     # 页面假死/WebView2 崩：回落整页 reload
+                            win.load_url(_page_url())
+                        except Exception:
+                            pass
+                else:
+                    try:         # 几何变了：整页 reload 走 _on_loaded 重钉尺寸
+                        win.load_url(_page_url())
+                    except Exception:
+                        pass
+            elif m > last:
                 last = m
                 state["showing"] = True      # _on_loaded 里 show
                 try:
@@ -485,15 +582,29 @@ def kill_snip_windows():
 
 
 def launch_window(port):
-    """主进程热键路径：先抓屏 → 常驻窗活着则它感知 BMP 更新自弹（<1s）；
-    死了则 armed 冷启动（首载即显）。轮询收图逻辑不变。"""
+    """主进程热键路径 v3.5.149：常驻窗活着 → 命名事件唤醒（它进程内抓屏，
+    免 spawn 子进程）；死了 → 冷路径 spawn --grab + armed 窗。事件链路失效
+    由 1s 核查兜底补旧路。收图逻辑不变。"""
+    t0 = time.time()
     if os.path.isfile(_TMP_OUT):
         os.remove(_TMP_OUT)
-    grab()                       # 抓屏落 BMP（mtime 更新驱动常驻窗 reload）
-    if not snip_window_alive(port):
-        ok, info = _spawn_window(port, armed=True)
-        if not ok:
-            return False, "截图窗启动失败：%s" % info
+    if snip_window_alive(port):
+        set_go_event(port)
+
+        def _check():
+            # 兜底核查：1s 后 BMP mtime 未动=事件链路失效（句柄/权限异常），
+            # 补旧路 spawn --grab 落盘——常驻窗 mtime 轮询分支接住弹出
+            time.sleep(1.0)
+            m = os.path.getmtime(_TMP_BMP) if os.path.isfile(_TMP_BMP) else 0
+            if m <= t0:
+                grab()
+        threading.Thread(target=_check, daemon=True).start()
+    else:
+        grab()                       # 抓屏落 BMP（mtime 更新驱动常驻窗 reload）
+        if not snip_window_alive(port):
+            ok, info = _spawn_window(port, armed=True)
+            if not ok:
+                return False, "截图窗启动失败：%s" % info
 
     def _collect():
         deadline = time.time() + 180
