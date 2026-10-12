@@ -161,7 +161,7 @@ function buildTerminal(portId, meta) {
   // ---- PTY 尺寸同步（claude 终端）：xterm onResize → /api/resize → ConPTY setwinsize。
   // debounce 200ms（拖拽窗口 fit 高频触发）；尺寸未变短路。初始 fit 也会触发一次——
   // 恰好把真实尺寸同步给 PTY（纠正 spawn 时猜测的 120x30），无害且正确。
-  // v3.5.128：SSH 同步——invoke_shell 默认 80 列，远端行编辑按 80 列回绕，
+  // v3.5.134 并入（写于 v3.5.128 轮）：SSH 同步——invoke_shell 默认 80 列，远端行编辑按 80 列回绕，
   // 本地宽窗口里长命令回显错位拼接（svn st 实锤）
   conn._lastCols = 0; conn._lastRows = 0;
   conn.term.onResize(({cols, rows}) => {
