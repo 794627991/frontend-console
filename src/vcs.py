@@ -374,15 +374,20 @@ def vcs_commit_files():
     「历史提交点开查看历史修改情况」）。git：show --name-status；svn：
     diff --summarize -c rev。rev 走 _run 原样传参（无 shell 注入面）。"""
     data = request.get_json(force=True, silent=True) or {}
-    vcs, wc, err, _tool_ok = _guard(data.get("root"))
+    vcs, wc, err, _tool_ok = _guard(data.get("root"), need_tool=True)
     if err:
         return err
     rev = str(data.get("rev") or "").strip()
     if not rev or len(rev) > 64 or not re.match(r"^[0-9a-zA-Z^-]{1,64}$", rev):
         return jsonify({"ok": False, "err": "非法修订号"}), 400
+    if vcs == "svn" and not rev.isdigit():
+        return jsonify({"ok": False, "err": "svn 修订号必须是数字"}), 400
     files = []
     if vcs == "git":
-        rc, out, e = _run(["git", "show", "--name-status", "--no-renames",
+        # v3.5.132（轻审严重2）：quotepath=false——非 ASCII 文件名默认输出
+        # 引号+八进制转义，下游 git show rev:path 实测 fatal 假无差异
+        rc, out, e = _run(["git", "-c", "core.quotepath=false", "show",
+                           "--name-status", "--no-renames",
                            "--format=", rev], wc, VCS_TIMEOUT_RO)
         if rc != 0:
             return jsonify({"ok": False, "err": e or "git show 失败"}), 500
@@ -391,16 +396,21 @@ def vcs_commit_files():
             if m:
                 files.append({"st": m.group(1), "path": m.group(2)})
     else:
-        prev = "prev"   # svn -c rev 对比 rev-1:rev
         rc, out, e = _run(["svn", "diff", "--summarize", "-c", rev, wc],
                           wc, VCS_TIMEOUT_RO)
         if rc != 0:
             return jsonify({"ok": False, "err": e or "svn diff 失败"}), 500
+        wcp = wc.replace("/", os.sep).rstrip(os.sep) + os.sep
         for line in out.splitlines():
-            m = re.match(r"^[AMD]\s+(.+)$", line.strip())
-            if m:
-                files.append({"st": m.group(1)[0], "path": m.group(1)})
-        del prev
+            # v3.5.132（轻审严重1）：双捕获组——旧单组取路径首字符当状态字母
+            m = re.match(r"^([AMD])\s+(.+)$", line.strip())
+            if not m:
+                continue
+            path = m.group(2).replace("\\", "/")
+            apath = path.replace("/", os.sep)
+            if apath.startswith(wcp):   # svn summarize 可能输出绝对路径——剥工作副本前缀转 rel
+                path = apath[len(wcp):].replace(os.sep, "/")
+            files.append({"st": m.group(1), "path": path})
     return jsonify({"ok": True, "files": files[:200]})
 
 
@@ -409,12 +419,16 @@ def vcs_commit_diff():
     """v3.5.131：单文件在某提交的改动对比——父修订/该修订两版物化临时文件，
     前端 buildDiffViewerTab 走真实路径（与 /api/vcs/diff 同机制）。"""
     data = request.get_json(force=True, silent=True) or {}
-    vcs, wc, err, _tool_ok = _guard(data.get("root"))
+    vcs, wc, err, _tool_ok = _guard(data.get("root"), need_tool=True)
     if err:
         return err
     rev = str(data.get("rev") or "").strip()
     if not rev or len(rev) > 64 or not re.match(r"^[0-9a-zA-Z^-]{1,64}$", rev):
         return jsonify({"ok": False, "err": "非法修订号"}), 400
+    # v3.5.132（轻审一般3）：svn 分支要算 rev-1——非数字提前 400（int() 异常
+    # 会裸 500 HTML）
+    if vcs == "svn" and not rev.isdigit():
+        return jsonify({"ok": False, "err": "svn 修订号必须是数字"}), 400
     rel = str(data.get("path") or "").replace("\\", "/").strip()
     if _bad_rel(rel):
         return jsonify({"ok": False, "err": "非法文件路径"}), 400
@@ -422,7 +436,10 @@ def vcs_commit_diff():
 
     def _git_rev_bytes(spec):
         try:
-            p = subprocess.run(["git", "show", "%s:%s" % (spec, rel)], cwd=wc,
+            # v3.5.132（轻审严重2）：quotepath 同步——rel 含非 ASCII 时 rev:rel
+            # 必须按原字节名寻址
+            p = subprocess.run(["git", "-c", "core.quotepath=false", "show",
+                                "%s:%s" % (spec, rel)], cwd=wc,
                                capture_output=True, timeout=VCS_TIMEOUT_RO,
                                creationflags=CREATE_NO_WINDOW)
             return p.stdout if p.returncode == 0 else b""
