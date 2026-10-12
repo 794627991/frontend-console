@@ -1487,7 +1487,14 @@
       // 内容（用户实锤「续审内容跑回第一个审计段」）
       const tgt = (_HG.subTailSeg || {})[a.taskId] || tid;
       const b = _HG.subBlk && _HG.subBlk[tgt];
-      if (!b || !b.root || !b.root.isConnected || b.root.classList.contains('done')) continue;
+      if (!b || !b.root || !b.root.isConnected || b.root.classList.contains('done')) {
+        // v3.5.127（用户实锤「切会话回来子代理段变回放定格不刷新」）：协作段
+        // 有 _subCollabDomPoll 的 DOM 兜底认回，普通段没有对等物——切走时
+        // _subReset 清了 subBlk 映射，主循环空查全跳过=段定格。补对称认回：
+        // _subBlkGet 从快照 DOM 认回段（t0 从段头「运行中 Ns」还原+秒表复活）
+        const bb = _subBlkGet(tgt);
+        if (!bb || !bb.root || !bb.root.isConnected || bb.root.classList.contains('done')) continue;
+      }
       _subTailFetch(tgt, a.taskId, _subFullFeedTid(tgt));
     }
   }
