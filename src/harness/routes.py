@@ -1799,6 +1799,13 @@ def harness_file():
         if (rp.startswith(tmp_root) and os.path.basename(os.path.dirname(rp)) == "images"
                 and rp.lower().endswith(_img_ext) and os.path.isfile(rp)):
             return send_file(rp)
+        # v3.5.136（用户实锤「拖拽进来的图片无法点击预览」）：拖拽文件来自
+        # 任意盘（桌面/工程目录），不落在上面两处白名单——补第三条：图片
+        # 扩展名 + 文件存在的任意路径直接回源。本机单用户工具，/api/read_text
+        # 已有任意绝对路径读文本的先例（敏感面更大），图片白名单扩展名限死
+        # 不放行脚本/文档，实质风险不新增
+        if rp.lower().endswith(_img_ext) and os.path.isfile(rp):
+            return send_file(rp)
         return jsonify({"ok": False, "err": "非法路径"}), 403
     fn = os.path.basename((request.args.get("name") or "").replace("\\", "/"))
     if not fn:

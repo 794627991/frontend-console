@@ -71,7 +71,15 @@
     ).join('');
   }
   function _attUrl(a) {
-    return '/api/harness/file?name=' + encodeURIComponent(String(a.path).split(/[\\/]/).pop());
+    // v3.5.136（用户实锤「拖拽进来的图片无法点击预览」）：拖拽附件的 path
+    // 是磁盘绝对路径（桌面/任意盘），旧拼法 ?name=basename 只查上传目录必
+    // 404 → 缩略图 onerror 隐藏、点击目标消失。改按 path 整路径回源（后端
+    // harness_file 白名单已扩图片扩展名任意路径）；上传/贴图附件同为绝对
+    // 路径，命中各自白名单行为不变。拖拽入队链路零改动。
+    const p = String(a.path || '');
+    return '/api/harness/file?' + (/[\\/]/.test(p)
+      ? 'path=' + encodeURIComponent(p)
+      : 'name=' + encodeURIComponent(p));
   }
   function renderAtts() {
     if (!_HG.atts.length) { _hgAttsEl.style.display = 'none'; _hgAttsEl.innerHTML = ''; return; }
