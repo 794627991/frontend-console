@@ -271,7 +271,13 @@
     // 秒表只走 live（流式期 openState=null）；回放重建期 openState 在场——
     // 成百上千组各挂定时器纯空转。认回复跑（phResume）headTimer 已在则不叠
     if (!opts.hist && !g.headTimer) {
-      if (!g.t0) g.t0 = Date.now();
+      // v3.5.191r3（用户实锤「切回瞬间工作时间归 0」）：t0 缺失时不再编造
+      // Date.now()——编造=秒表从当前时刻起算，切回/补尾窗口期 label 闪
+      // 「工作中 0s」（真实 t0 在 dataset/行 ts，随后接管又跳回真值=归 0
+      // 闪烁）。t0 缺失=工时事实不可考，保持静态 label 不启动秒表
+      // （对照 v3.2.29 区「绝不用当前时钟编造」同哲学），真值到位的认回
+      // 路径（grpFromDom dataset.t0）不受影响
+      if (!g.t0) return;
       g.headTimer = setInterval(() => {
         if (!g.headLabel || !g.head.isConnected) { clearInterval(g.headTimer); g.headTimer = null; return; }
         g.headLabel.textContent = '工作中 ' + _hgFmtDur((Date.now() - (g.t0 || Date.now())) / 1000);
