@@ -717,7 +717,6 @@
     if (_HG.sse) { try { _HG.sse.close(); } catch(_) {} _HG.sse = null; }
     if (!sid || sid !== _HG.sid) return;
     delete _HG.cache[sid];
-    if (_HG.histBy) delete _HG.histBy[sid];   // v3.5.181：行缓存随 cache 同步失效（rewind/换代）
     _hgSseResetLocal();
     _HG.histRebuilding = sid;    // 轻审 P2：清场→重建的 await 窗口期 saveCache
                                  // 不得入库（空 flow 快照击穿 delete）。
@@ -1042,12 +1041,6 @@
                            // 恢复仍强制重渲，漂移保护不随降级丢失
                            histFp: _HG.histStale ? 'stale'
                                    : (_HG.histAll ? _histPrefixFp(_HG.histAll, _HG.histStart | 0) : null),
-                           // v3.5.181（designer D1）：per-sid transcript 行缓存——
-                           // 快照命中切回免重拉 11MB transcript（fetch+parse ~2s
-                           // 固定成本）；LRU 4，rewind/换代由删缓存点同步失效
-                           histByLines: _HG.histAll ? _HG.histAll.slice() : null,
-                           histBySfps: _HG.histSfps || null,
-                           histByEpoch: _HG.epoch || null,
                            // v3.2.28（用户实锤「切走再切回，工作区被截断，
                            // 回合完成后还是截断态」）：切走时存在未定稿组
                            // （回合进行中）→ 快照注定残缺（离开期间的过程行只

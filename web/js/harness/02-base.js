@@ -183,10 +183,6 @@ const _HG = {
   // 回合间快速定位走左缘回合导航轨（hg-rail，ZCode ConversationTurnNavigator
   // 同款——刻度悬停预览、点击跳转、未渲染回合先扩窗再定位）
   HIST_CAP: Infinity,
-  // v3.5.181（designer D1）：per-sid transcript 行缓存——切会话快照命中时
-  // 免重拉 11MB transcript（fetch+JSON.parse ~2s 固定成本）。LRU 上限 4，
-  // 随 cache 删除点（rewind/换代）同步失效；tail refresh（增量校验）配套
-  histBy: {}, histSfps: null, histEpoch: null,
   histAll: null,        // 当前会话全量 transcript 行（多段渲染源）
   histStart: 0,         // 已渲染起点 index（0=全量）
   histLive: false,      // v2.35.2：histAll 是否经窗口渲染建立 DOM 对应（快照恢复的懒填不算——滚动扩收的放行门）

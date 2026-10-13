@@ -1015,22 +1015,3 @@ def _map_subagent_rows(agent, rows):
                             "text": r.get("text") or "",
                             "err": bool(r.get("err"))})
     return out
-
-
-def _sfp_chain(lines):
-    """前缀指纹链（v3.5.179 切会话零卡顿 designer D2）：sfps[i] = 前 i+1 行
-    的累积哈希。服务端单侧实现，客户端只回显数值（无双端算法同步问题）。
-    每行纳入：role/text/agent/tid 长度 + result 是否已回填 + err 位——
-    result 回填与 err 翻转是仅有的「旧行变异」，纳入后任何变异都换指纹
-    （客户端指纹不符即回退全量，防增量合并错账）。"""
-    out, h = [], 0x9E3779B9
-    for l in lines:
-        l = l or {}
-        h = (h * 31 + len(str(l.get("role") or ""))
-             + len(str(l.get("text") or ""))
-             + len(str(l.get("agent") or ""))
-             + len(str(l.get("tid") or ""))
-             + (3 if l.get("result") is not None else 0)
-             + (7 if l.get("err") else 0)) & 0x7FFFFFFF
-        out.append(h)
-    return out

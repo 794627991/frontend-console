@@ -23,7 +23,7 @@ from .meta import _meta, _meta_load, _meta_lock, _meta_save, _meta_tombstones
 from .models import available_models
 from .prompts import _prompt_matches_project, _prompts_load, _prompts_save
 from .session import HarnessSession, _session_ctx_used
-from .transcript import _subagent_rows_for, _subagent_transcript_candidates, transcript_for, _sfp_chain
+from .transcript import _subagent_rows_for, _subagent_transcript_candidates, transcript_for
 from .vision import _MM_PROBE_LOCK, _VISION_KEY, _mm_probe_key, _mm_probe_model, _mm_probed_load, _model_is_multimodal, _vision_load, _vision_save
 
 
@@ -563,14 +563,7 @@ def harness_sessions():
 
 @harness_bp.route("/transcript")
 def harness_transcript():
-    """切回会话的历史气泡。?sid=。转写不存在返回 lines:[]（新会话空气泡）。
-    v3.5.179（designer D2/D3 切会话零卡顿）：增量协议与 NDJSON 流式——
-    ?after=N&sfp=<前缀指纹>&epoch=<代际>：客户端已持有前 N 行且前缀指纹
-    匹配（含 epoch 一致）→ 返回 inc:1 + append（N 之后的行）+ sfps 全链；
-    任何不符（回滚截断/换代/前缀变异/行数缩）→ 落全量分支（客户端按
-    inc 缺失自动回退全量，双向兼容）。?fmt=ndjson → 流式 NDJSON（首行
-    meta 含 sfps 全链+total，随后每行一条），解析随到达分摊杀 805ms
-    JSON.parse 冻结。旧前端无参调用行为字节级不变。"""
+    """切回会话的历史气泡。?sid=。转写不存在返回 lines:[]（新会话空气泡）。"""
     s = _get_or_create(request.args.get("sid") or "")
     if not s:
         return jsonify({"ok": False, "err": "会话不存在"}), 404
@@ -581,44 +574,11 @@ def harness_transcript():
         s.stale_hold_repair()
     except Exception:
         pass
-    lines = transcript_for(s) or []
-    meta = {"ok": True, "alive": s.alive, "busy": s.busy,
-            "busy_since": s.busy_since, "model": s.model, "title": s.title,
-            "seq": s._seq, "epoch": s.log.epoch, "total": len(lines)}
-
-    # ---- v3.5.179 增量协议：after+sfp+epoch 三元校验，全过才发增量 ----
-    try:
-        after = int(request.args.get("after") or 0)
-    except (TypeError, ValueError):
-        after = 0
-    sfp = (request.args.get("sfp") or "").strip()
-    cl_ep = (request.args.get("epoch") or "").strip()
-    if after > 0 and sfp and cl_ep and cl_ep == str(s.log.epoch or "") \
-            and len(lines) >= after:
-        pre = _sfp_chain(lines[:after])
-        if pre and str(pre[-1]) == sfp:
-            return jsonify({**meta, "inc": 1, "append": lines[after:],
-                            "sfps": _sfp_chain(lines)})
-        # 指纹不符（前缀变异/result 回填/中插）→ 落全量
-
-    # ---- NDJSON 流式（fmt=ndjson）：首行 meta，随后每行一条 ----
-    if request.args.get("fmt") == "ndjson":
-        sfps = _sfp_chain(lines)
-
-        def _gen():
-            yield json.dumps({**meta, "sfps": sfps},
-                             ensure_ascii=False) + "\n"
-            buf = []
-            for l in lines:
-                buf.append(json.dumps(l, ensure_ascii=False))
-                if len(buf) >= 64:
-                    yield "\n".join(buf) + "\n"
-                    buf = []
-            if buf:
-                yield "\n".join(buf) + "\n"
-        return Response(_gen(), mimetype="application/x-ndjson")
-
-    return jsonify({**meta, "lines": lines, "sfps": _sfp_chain(lines)})
+    lines = transcript_for(s)
+    return jsonify({"ok": True, "lines": lines or [], "alive": s.alive,
+                    "busy": s.busy, "busy_since": s.busy_since,
+                    "model": s.model, "title": s.title, "seq": s._seq,
+                    "epoch": s.log.epoch})
 
 
 # v3.4.62（用户需求「代码编辑看不到真实改动行号」）：Edit/MultiEdit diff
