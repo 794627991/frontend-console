@@ -1167,12 +1167,46 @@ class HarnessSession:
     # ---- 事件层 ----
 
     # ---- v3.5.123 后台子代理保活（回合在飞守卫）----
-    _BG_SLOW = 600           # 单后台任务 >10min：一次性 slow 提示（状态查询手段）
-    _BG_NUDGE = 1800         # >30min：升级提示（大规模探索属正常，继续保活）
-    _BG_URGE = 3600          # >60min：催促提示（建议催子代理输出结果）——
-    # v3.5.182（用户定调「绝对不要出现直接结束」）：硬顶强制收尾退役——
-    # 子代理活着就保活，监控只做分级提示，永不清表不合成收尾
+    # v3.5.183（用户定调「前端提示全去，对内对 CLI 探活，30/45/60 加大力度催」）：
+    # 三档探活检查点——探活=CLI 进程存活+子代理转写落盘活跃度（mtime 增长）
+    # 双信号；结论只在 30min 起进工作区审计卡（前端 banner 退役），60min 加大
+    # 力度。永不清表不合成收尾（活着的只催不杀，硬顶已退役）
+    _BG_PROBE30 = 1800       # 30min：首探——探活结论入工作区
+    _BG_PROBE45 = 2700       # 45min：再探——停滞则建议介入
+    _BG_PROBE60 = 3600       # 60min：强催——红牌+探活详情，强烈建议催促
     _BG_IDLE_RELEASE = 120   # hold 中且集合已空且进程闲置 >120s：合成收尾（防唤醒回合缺席）
+
+    def _bg_alive_probe(self):
+        """对内探活（v3.5.183）：CLI 进程存活 + 子代理转写落盘活跃度。
+        返回 (proc_alive, recent_write, stall_min)——recent_write=最近
+        120s 内 Temp claude 下任意 tasks/*.output 有增长（子代理/后台任务
+        仍在干活）；stall_min=最近一次落盘距 now 的分钟数（无文件=None）。
+        tid→agentId 映射后端不可知（CLI 内部调度），故取全局最近写判定
+        「子代理体系是否在动」；tid 全局唯一不歧义。"""
+        proc_alive = bool(self._proc is not None and self._proc.poll() is None)
+        recent = False
+        newest = None
+        try:
+            import glob as _g
+            la = os.environ.get("LOCALAPPDATA")
+            if la:
+                now = time.time()
+                for p in _g.glob(os.path.join(la, "Temp", "claude",
+                                              "*", "*", "tasks", "*.output")):
+                    try:
+                        mt = os.path.getmtime(p)
+                    except OSError:
+                        continue
+                    if newest is None or mt > newest:
+                        newest = mt
+                    if now - mt < 120:
+                        recent = True
+                        break
+        except Exception:
+            pass
+        stall_min = (int((time.time() - newest) // 60)
+                     if newest is not None else None)
+        return proc_alive, recent, stall_min
 
     def bg_in_flight(self):
         """只读：后台子代理是否在飞（HikLink 等待判定用）。"""
@@ -1205,29 +1239,38 @@ class HarnessSession:
                         pass
                     for tid, info in list(self._bg_tasks.items()):
                         dur = now - info.get("t0", now)
-                        # v3.5.182：三级温和提示，绝不结束（原 30min 硬顶
-                        # pop+合成收尾退役——僵尸由 CLI 死亡的 turn_error
-                        # 路径与 stale_hold_repair 兜，活着的只催不杀）
-                        if dur > self._BG_URGE and not info.get("urge"):
-                            info["urge"] = True
-                            self.emit({"kind": "subagent_slow", "tid": tid,
-                                       "dur": int(dur), "level": "urge",
-                                       "desc": info.get("desc") or ""})
+                        # v3.5.183：30/45/60 三档对内探活，力度递进；永不清
+                        # 表不合成收尾（僵尸由 CLI 死亡的 turn_error 路径与
+                        # stale_hold_repair 兜，活着的只催不杀）
+                        if dur > self._BG_PROBE60 and not info.get("p60"):
+                            info["p60"] = True
+                            pa, rw, stall = self._bg_alive_probe()
                             self._audit_card(
-                                "[保活] 后台子代理「%s」已运行 %d 分钟未归。"
-                                "保活继续（不会自动结束）；建议催促其输出"
-                                "阶段性结果或自行介入。"
-                                % (info.get("desc") or tid, int(dur // 60)))
-                        elif dur > self._BG_NUDGE and not info.get("nudge"):
-                            info["nudge"] = True
-                            self.emit({"kind": "subagent_slow", "tid": tid,
-                                       "dur": int(dur), "level": "nudge",
-                                       "desc": info.get("desc") or ""})
-                        elif dur > self._BG_SLOW and not info.get("slow"):
-                            info["slow"] = True
-                            self.emit({"kind": "subagent_slow", "tid": tid,
-                                       "dur": int(dur),
-                                       "desc": info.get("desc") or ""})
+                                "[保活·强催] 后台子代理「%s」已运行 %d 分钟。"
+                                "探活：%s。强烈建议催促其输出结果或自行介入"
+                                "（保活继续，不会自动结束）。"
+                                % (info.get("desc") or tid, int(dur // 60),
+                                   "CLI 活着，转写仍在增长（在干活）" if rw else
+                                   "CLI %s，转写已 %s 分钟无增长（疑似停滞）"
+                                   % ("活着" if pa else "已退出",
+                                      stall if stall is not None else "?")))
+                        elif dur > self._BG_PROBE45 and not info.get("p45"):
+                            info["p45"] = True
+                            pa, rw, _st = self._bg_alive_probe()
+                            if not rw:
+                                self._audit_card(
+                                    "[保活] 后台子代理「%s」已运行 %d 分钟，"
+                                    "转写无增长（疑似停滞）——建议介入核查。"
+                                    % (info.get("desc") or tid, int(dur // 60)))
+                        elif dur > self._BG_PROBE30 and not info.get("p30"):
+                            info["p30"] = True
+                            pa, rw, _st = self._bg_alive_probe()
+                            self._audit_card(
+                                "[保活] 后台子代理「%s」已运行 30 分钟。探活：%s。"
+                                % (info.get("desc") or tid,
+                                   "在干活（转写持续增长），继续等待" if rw else
+                                   "CLI %s，转写暂无增长（可能整段思考未落盘）"
+                                   % ("活着" if pa else "已退出")))
                     if self._held and not self._bg_tasks:
                         # 集空但 hold 未放（notification 到了而唤醒回合缺席）
                         idle = now - (self.last_active / 1000.0

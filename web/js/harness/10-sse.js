@@ -903,17 +903,8 @@
         setBusy(false);   // 真收尾（bg 集空后的唤醒回合 result）——正常落 busy
         refreshSessions();
       }
-      else if (it.kind === 'subagent_slow') {
-        // v3.5.182：三级温和提示（10min 提示/30min 升级/60min 催促）——
-        // 保活永不自动结束（硬顶退役）
-        const _mm = Math.round((it.dur || 600) / 60);
-        const _msg = it.level === 'urge'
-          ? `后台子代理「${(it.desc || '').slice(0, 24)}」已运行 ${_mm} 分钟——建议催促其输出结果（保活继续，不会自动结束）`
-          : it.level === 'nudge'
-          ? `后台子代理「${(it.desc || '').slice(0, 24)}」已运行 ${_mm} 分钟——大规模探索属正常，继续保活`
-          : `后台子代理「${(it.desc || '').slice(0, 24)}」已运行 ${_mm} 分钟——点子代理胶囊可查看实况`;
-        showBanner(_msg, it.level ? 8000 : 6000, true);
-      }
+      // v3.5.183：subagent_slow 前端提示退役（用户定调「提示全部去掉，没用」）——
+      // 探活对内进行（CLI 进程+转写活跃度，30/45/60 分级），结论走工作区审计卡
       else if (it.kind === 'renew') { grpFinalize(true); renderRenew(it.text); }
       // v2.34：审计警示（light 回合结算违规）——回合已终结，定稿当前组再出红卡
       else if (it.kind === 'audit') { renderAudit(it.text); _hgScrollBottom(); }   // v3.2.27：撤 grpFinalize——警示入工作区不分割回合
