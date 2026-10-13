@@ -628,11 +628,23 @@ def window_main(port, armed=False, pin_pending=False):
             _pin_close(old)
 
         def _pin_loaded():
+            tries = [0]
+
             def _do():
                 try:
                     time.sleep(0.2)
                     if wv.evaluate_js("window.__FC_PIN__===true") is not True:
-                        _pin_close(n)              # 错误页绝不 show
+                        # v3.5.153：错误页不再一关了之（用户只见「没反应」）
+                        # ——重试加载 2 次（WebGUI 冷启竞态实锤形态），仍败才关
+                        tries[0] += 1
+                        if tries[0] <= 2:
+                            try:
+                                wv.load_url("http://127.0.0.1:%s/web/pin.html?id=%d"
+                                            % (port, n))
+                            except Exception:
+                                pass
+                            return          # load_url 完成会再触发 loaded
+                        _pin_close(n)       # 错误页绝不 show
                         return
                     u32 = ctypes.windll.user32
                     hwnd = _pin_hwnd(n)
@@ -918,10 +930,10 @@ def window_main(port, armed=False, pin_pending=False):
                 idle_since = time.time()
             elif state["showing"] or _pins:
                 idle_since = time.time()   # 贴图挂着=进程有活干，绝不自退
-            elif not _pins and time.time() - idle_since > 600:
-                _die()   # 空闲 10 分钟自退：内存归零，下次热键冷启动
-                         # （v3.5.150：有贴图挂着不退——贴图随工具存亡；
-                         #  v3.5.151：删 ALIVE 再退，杜绝假活死区）
+            elif not _pins and time.time() - idle_since > 1800:
+                _die()   # 空闲 30 分钟自退（v3.5.153：600→1800——用户节奏
+                         # 「放置十几分钟再截」正落 600s 窗外=每次首截都是
+                         # 冷启动慢；常驻待命 ~100MB，30 分钟不用才释放）
     threading.Thread(target=_arm_loop, daemon=True).start()
 
     win.events.loaded += _on_loaded
@@ -1005,9 +1017,11 @@ def grab():
 
 
 def prewarm(port):
-    """主进程启动预热：延时拉起常驻截图窗（首载不弹窗）。第一次热键即 <1s。"""
+    """主进程启动预热（v3.5.153 提前）：延时拉起常驻截图窗（首载不弹窗），
+    第一次热键即 <1s。旧 10s 延迟=启动后立刻按 F1 常驻窗未起走冷启动
+    （spawn python+WebView2 冷启 ~2s，用户实锤「首次还是慢」）。"""
     def _go():
-        time.sleep(10)          # 避开启动高峰（主窗渲染/依赖自检）
+        time.sleep(3)           # 避开主窗创建最高峰，2~3s 内常驻窗就位
         try:
             if not snip_window_alive(port):
                 _spawn_window(port, armed=False)   # 内含 8s 防抖
