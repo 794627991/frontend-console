@@ -861,6 +861,68 @@ function _taskCardTick(card) {
 function _taskStop(card) {
   if (card && card._taskTimer) { clearInterval(card._taskTimer); card._taskTimer = null; }
 }
+// ==================== v3.5.160：任务卡点击展开输出（「看不到在执行什么」）====
+// 后端 /api/harness/task_output 增量读 tasks/<tid>.output。展开=tail 64KB
+// 起读；运行中档案 2s 轮询增量 append（用户上滚即停跟随，贴底恢复）；已完成
+// 只读一次。卡移除/收起即停轮询（isConnected 检测，无泄漏）。
+function _taskOutToggle(card) {
+  const tid = card.dataset.tid || '';
+  if (!tid) return;
+  const old = card.nextElementSibling;
+  if (old && old.classList && old.classList.contains('h-taskout')) { old.remove(); return; }
+  const box = document.createElement('div');
+  box.className = 'h-taskout';
+  box.style.cssText = 'margin:4px 0 2px 26px;padding:6px 8px;background:#111418;' +
+    'border:1px solid #2a2f38;border-radius:6px;max-height:260px;overflow:auto;';
+  const pre = document.createElement('pre');
+  pre.style.cssText = 'margin:0;font:12px/1.5 Consolas,monospace;white-space:pre-wrap;' +
+    'word-break:break-all;color:#c7cdd6;';
+  pre.textContent = '读取任务输出…';
+  box.appendChild(pre);
+  card.after(box);
+  let off = 0, stick = true, first = true;
+  pre.addEventListener('scroll', () => {
+    stick = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 24;
+  });
+  const fill = (txt, follow) => {
+    if (!txt) return;
+    pre.textContent = first ? txt : pre.textContent + txt;
+    first = false;
+    if (follow && stick) pre.scrollTop = pre.scrollHeight;
+  };
+  const poll = () => {
+    fetch('/api/harness/task_output?sid=' + encodeURIComponent(_HG.sid) +
+          '&tid=' + encodeURIComponent(tid) + '&offset=' + off)
+      .then(r => r.json()).then(j => {
+        if (!box.isConnected) return;             // 收起/切会话：止轮询
+        if (j && j.ok === true && j.found) {
+          off = j.offset || off;
+          fill(j.text || '', true);
+        }
+      }).catch(() => {});
+  };
+  fetch('/api/harness/task_output?sid=' + encodeURIComponent(_HG.sid) +
+        '&tid=' + encodeURIComponent(tid) + '&mode=tail')
+    .then(r => r.json()).then(j => {
+      if (!box.isConnected) return;
+      if (j && j.ok === true && j.found) {
+        off = j.offset || 0;
+        fill(j.text || '（暂无输出）', true);
+      } else {
+        pre.textContent = '未找到任务输出文件（可能已被系统清理）';
+        return;
+      }
+      const t = (_HG.tasks || {})[tid];
+      if (t && !t.done) {                          // 运行中：增量跟随
+        box._poll = setInterval(() => {
+          if (!box.isConnected) { clearInterval(box._poll); box._poll = null; return; }
+          poll();
+        }, 2000);
+      }
+    }).catch(() => {
+      if (box.isConnected) pre.textContent = '任务输出读取失败';
+    });
+}
 // task_started（后台 shell 判定命中）：建档+建卡（消息流与目录数据源）
 function _taskStart(tid, desc) {
   if (!tid) return null;

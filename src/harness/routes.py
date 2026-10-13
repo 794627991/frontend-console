@@ -969,6 +969,79 @@ def harness_subagent_tail():
             continue
     return jsonify({"ok": True, "found": False, "text": "", "offset": offset})
 
+@harness_bp.route("/task_output")
+def harness_task_output():
+    """v3.5.160（用户需求「后台任务点不开，看不到在执行什么」）：后台 Bash
+    任务输出增量读——h-taskcard 点击展开的数据源。
+    ?sid=&tid=&mode=tail（默认，回尾部 ≤64KB，offset 语义=文件大小）
+    | ?offset=<n>（增量从 n 读到尾，行边界消费同 subagent_tail）。
+    文件：LOCALAPPDATA/Temp/claude/<项目转码名>/<csid>/tasks/<tid>.output
+    （Bash run_in_background 的 stdout 流；子代理形态的 .output 是 JSONL
+    转写但走不到本接口——子代理点击走 h-subblock/胶囊体系）。任何异常降级
+    found:False，绝不 500。"""
+    s2 = _get_or_create(request.args.get("sid") or "")
+    if not s2:
+        return jsonify({"ok": False, "err": "会话不存在"}), 404
+    tid = (request.args.get("tid") or "").strip()
+    if not tid or not re.match(r"^[0-9a-zA-Z_-]{8,64}$", tid):
+        return jsonify({"ok": False, "err": "tid 参数非法"}), 400
+    mode = (request.args.get("mode") or "tail").strip()
+    try:
+        offset = max(0, int(request.args.get("offset") or 0))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "err": "offset 参数非法"}), 400
+    try:
+        import glob as _g
+        csids = [x for x in (list(getattr(s2, "lineage", None) or [])
+                             + [s2.session_id]) if x]
+        main_dir = None
+        for csid in csids:
+            for cand in _g.glob(os.path.join(os.path.expanduser("~"), ".claude",
+                                             "projects", "*", csid + ".jsonl")):
+                main_dir = os.path.dirname(cand)
+                break
+            if main_dir:
+                break
+        la = os.environ.get("LOCALAPPDATA")
+        if not main_dir or not la:
+            return jsonify({"ok": True, "found": False, "text": "", "offset": offset})
+        path = None
+        for csid in csids:
+            p = os.path.join(la, "Temp", "claude", os.path.basename(main_dir),
+                             csid, "tasks", tid + ".output")
+            if os.path.isfile(p):
+                path = p
+                break
+        if not path:
+            return jsonify({"ok": True, "found": False, "text": "", "offset": offset})
+        size = os.path.getsize(path)
+        if mode != "tail" and size <= offset:
+            return jsonify({"ok": True, "found": True, "text": "", "offset": offset,
+                            "size": size, "done": True})
+        with open(path, "rb") as f:
+            if mode == "tail":
+                f.seek(max(0, size - 65536))
+                chunk = f.read()
+                # 首块对齐行边界（半行头丢弃，防 UTF-8 多字节截断乱码）
+                cut = chunk.find(b"\n")
+                if 0 <= cut < len(chunk) - 1:
+                    chunk = chunk[cut + 1:]
+                return jsonify({"ok": True, "found": True,
+                                "text": chunk.decode("utf-8", errors="replace"),
+                                "offset": size, "size": size})
+            f.seek(offset)
+            chunk = f.read()
+        cut = chunk.rfind(b"\n")   # 增量只消费完整行
+        if cut < 0:
+            return jsonify({"ok": True, "found": True, "text": "", "offset": offset,
+                            "size": size})
+        return jsonify({"ok": True, "found": True,
+                        "text": chunk[:cut + 1].decode("utf-8", errors="replace"),
+                        "offset": offset + cut + 1, "size": size})
+    except Exception as _e:
+        log.warning("task_output fail: %r", _e)
+        return jsonify({"ok": True, "found": False, "text": "", "offset": offset})
+
 # ---- from claude_harness.py:3445 (harness_peer_pair_log) ----
 
 
