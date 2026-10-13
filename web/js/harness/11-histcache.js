@@ -14,18 +14,15 @@
       });
     } catch (_) { return false; }
     if (hEnd >= _HG.histAll.length) return true;   // 无增长：快照即最新
-    _HG.noScroll = true;
+    // v3.5.195（全审级教训）：补尾必须走 _histRender 官方路径（exactStart
+    // 模式）——手写循环调 renderHistLine 会绕过行尾全套记账（hEnd/turnHi/
+    // lastAsst），账目不推进→coverage 审计判巨 gap→自愈全量重渲（空白期）+
+    // 内容重复叠加（实测「自己分析吧」×6）。exactStart 从 hEnd+1 渲到尾，
+    // 记账闭环；busy noFinalize 留活组，phResume 认回续秒表
     try {
-      for (let i = hEnd + 1; i < _HG.histAll.length; i++) {
-        try { renderHistLine(_HG.histAll[i], i); }
-        catch (e) {
-          try { console.error('[harness] tail-grow line fail @' + i
-            + ' role=' + (_HG.histAll[i] && _HG.histAll[i].role), e); } catch (_) {}
-          return false;
-        }
-      }
+      _histRender(_HG.histAll, hEnd + 1,
+                  { exactStart: true, noFinalize: !!_HG.busy });
     } catch (_) { return false; }
-    finally { _HG.noScroll = false; }
     if (typeof phResume === 'function') { try { phResume(true); } catch (_) {} }
     if (typeof _hgRailSync === 'function') { try { _hgRailSync(); } catch (_) {} }
     return true;
@@ -44,19 +41,26 @@
     // ParseHTML→约 800 次，DevTools Profiler 实锤切回重渲为卡顿大头）。
     // 超出部分走既有只读归档（归档条 hg-ro-enter）；v3.5.178 首试败于
     // capStart 误删，本次保留 capStart 语义规避
-    const TURN_N = 20;
-    start = lines.length;
-    let _tn = 0;
-    for (let i = lines.length - 1; i >= 0; i--) {
-      start = i;
-      const l = lines[i];
-      if (l && l.role === 'user' && String(l.text || '').trim()) {
-        _tn++;
-        if (_tn > TURN_N) break;   // 第 21 个 user 行 = 窗口起点（含该回合）
+    if (opt && opt.exactStart) {
+      // v3.5.195（补尾模式）：start=调用方精确给定的渲染起点（增量补尾从
+      // DOM 账目 hEnd+1 起）——跳过窗口计算，行尾全套记账（hEnd/turnHi/
+      // lastAsst/回滚授予）走既有循环，账目与 DOM 恒一致
+      start = Math.max(0, Math.min(start, lines.length));
+    } else {
+      const TURN_N = 20;
+      start = lines.length;
+      let _tn = 0;
+      for (let i = lines.length - 1; i >= 0; i--) {
+        start = i;
+        const l = lines[i];
+        if (l && l.role === 'user' && String(l.text || '').trim()) {
+          _tn++;
+          if (_tn > TURN_N) break;   // 第 21 个 user 行 = 窗口起点（含该回合）
+        }
       }
+      start = Math.max(0, start);              // 全扫不满 20 回合 → 全渲
+      start = Math.min(start, lines.length);   // v2.37R2（复审4）：上界钳制——账目越界时 slice 为空只剩错误计数
     }
-    start = Math.max(0, start);              // 全扫不满 20 回合 → 全渲
-    start = Math.min(start, lines.length);   // v2.37R2（复审4）：上界钳制——账目越界时 slice 为空只剩错误计数
     // v2.24 CAP：正常模式渲染起点不得越过 capStart（翻阅上限）——保住正常
     // 模式的 DOM 省流。v3.2.7：只读模式退役，上限 1200 行内全部上滑翻阅
     const capStart = Math.max(0, lines.length - _HG.HIST_CAP);
