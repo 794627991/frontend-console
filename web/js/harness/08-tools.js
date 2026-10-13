@@ -861,10 +861,12 @@ function _taskCardTick(card) {
 function _taskStop(card) {
   if (card && card._taskTimer) { clearInterval(card._taskTimer); card._taskTimer = null; }
 }
-// ==================== v3.5.161：任务卡点击展开输出（「看不到在执行什么」）====
-// 后端 /api/harness/task_output 增量读 tasks/<tid>.output。展开=tail 64KB
-// 起读；运行中档案 2s 轮询增量 append（用户上滚即停跟随，贴底恢复）；已完成
-// 只读一次。卡移除/收起即停轮询（isConnected 检测，无泄漏）。
+// ==================== v3.5.166：任务卡点击展开（「看不到在执行什么」）====
+// 数据源两层：①档案 _HG.tasks[tid].result（task_notification.summary，CLI
+// 对后台 Bash 只给 ≤400 字完成摘要——tasks/<shell_tid>.output 实测恒 0 字节
+// 占位，CLI 不落盘 stdout）展开立即可显；②tasks/<tid>.output 文件（子代理
+// 形态是 JSONL 转写/未来 CLI 若落盘则有数据）tail 64KB 起读+运行中 2s 增量。
+// 文件空/未找到不再报错式文案——摘要已在，只补一行说明。样式走主题变量。
 function _taskOutToggle(card) {
   const tid = card.dataset.tid || '';
   if (!tid) return;
@@ -872,15 +874,19 @@ function _taskOutToggle(card) {
   if (old && old.classList && old.classList.contains('h-taskout')) { old.remove(); return; }
   const box = document.createElement('div');
   box.className = 'h-taskout';
-  box.style.cssText = 'margin:4px 0 2px 26px;padding:6px 8px;background:#111418;' +
-    'border:1px solid #2a2f38;border-radius:6px;max-height:260px;overflow:auto;';
+  box.style.cssText = 'margin:4px 0 2px 26px;padding:6px 10px;background:var(--bg-input);' +
+    'border:1px solid var(--border);border-radius:6px;max-height:260px;overflow:auto;';
   const pre = document.createElement('pre');
   pre.style.cssText = 'margin:0;font:12px/1.5 Consolas,monospace;white-space:pre-wrap;' +
-    'word-break:break-all;color:#c7cdd6;';
-  pre.textContent = '读取任务输出…';
+    'word-break:break-all;color:var(--fg);';
+  // ①摘要先行：档案有 result（完成摘要）或运行中 desc——点开必有内容
+  const t = (_HG.tasks || {})[tid];
+  const head = (t && (t.result || (!t.done && t.desc)))
+    ? '【任务摘要】' + String(t.result || t.desc).trim() + '\n' : '';
+  pre.textContent = head || '读取任务输出…';
   box.appendChild(pre);
   card.after(box);
-  let off = 0, stick = true, first = true;
+  let off = 0, stick = true, first = !head;
   pre.addEventListener('scroll', () => {
     stick = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 24;
   });
@@ -909,9 +915,10 @@ function _taskOutToggle(card) {
       if (!box.isConnected) return;
       if (j && j.ok === true && j.found) {
         off = j.offset || 0;
-        fill(j.text || '（暂无输出）', true);
-      } else {
-        pre.textContent = '未找到任务输出文件（可能已被系统清理）';
+        fill(j.text || '', true);                 // ②文件有数据才叠显
+        if (first && !head) fill('（CLI 未为此任务落盘输出——完成摘要见任务卡/上方摘要区）', true);
+      } else if (!head) {
+        pre.textContent = 'CLI 未为此任务落盘输出文件；完成摘要见任务卡悬浮与「任务摘要」（若已产生）。';
         return;
       }
       const t = (_HG.tasks || {})[tid];
@@ -922,7 +929,7 @@ function _taskOutToggle(card) {
         }, 2000);
       }
     }).catch(() => {
-      if (box.isConnected) pre.textContent = '任务输出读取失败';
+      if (box.isConnected && !head) pre.textContent = '任务输出读取失败';
     });
 }
 // task_started（后台 shell 判定命中）：建档+建卡（消息流与目录数据源）
