@@ -953,6 +953,22 @@ function _taskStart(tid, desc) {
   return card;
 }
 // task_notification / exit sweep：定格（state: done/err/stop）
+// v3.5.177（用户拍板「只保留运行中」）：完成即运行卡消逝——换一行轻量
+// 通知行（含状态/描述/用时），点击复用 _taskOutToggle 展开输出（task_output
+// 全 csid 扫描）。理由：CLI 不把 task 生命周期落转写（切会话卡必丢）+
+// summary 只有 exit code——完成态定格卡是半残展示，不如一行通知。
+function _taskDoneRow(tid, t, state, dur) {
+  const row = document.createElement('div');
+  row.className = 'h-tool h-taskdone' + (state === 'err' ? ' err' : '');
+  row.dataset.tid = tid;
+  const ico = state === 'err' ? '✗' : state === 'stop' ? '⏹' : '✓';
+  const word = state === 'err' ? '后台任务失败' : state === 'stop' ? '后台任务中断' : '后台任务完成';
+  row.innerHTML = '<span class="h-task-ico">' + ico + '</span>' +
+    '<span class="h-task-name">' + esc(word) + (t && t.desc ? ' · ' + esc(t.desc) : '') + '</span>' +
+    (dur ? '<span class="h-task-t">' + esc(dur) + '</span>' : '') +
+    '<span class="h-task-hint">点看输出</span>';
+  return row;
+}
 function _taskFinish(tid, state, summary) {
   const t = (_HG.tasks || {})[tid];
   const card = t && t.el;
@@ -963,12 +979,13 @@ function _taskFinish(tid, state, summary) {
   }
   if (card) {
     _taskStop(card);
-    if (summary) card.title = String(summary).slice(0, 2000);   // 悬浮全文（轻量：无展开体）
-    // 用户实锤「时间不对」：_hgFmtDur 入参是秒——差值毫秒须 /1000（旧码
-    // 把 11682ms 当 11682s 渲染成 3h14m42s）
+    // 用户实锤「时间不对」：_hgFmtDur 入参是秒——差值毫秒须 /1000
     const dur = _hgFmtDur((((t && t.doneAt) || Date.now())
       - (+(card.dataset.t0 || 0) || Date.now())) / 1000) || '';
-    _taskCardPaint(card, state, dur);
+    const row = _taskDoneRow(tid, t, state, dur);
+    if (summary) row.title = String(summary).slice(0, 2000);   // 悬浮全文
+    card.replaceWith(row);
+    t.el = row;
   }
   _subDirPaint && _HG.active === '__dir__' && _subDirPaint();
 }

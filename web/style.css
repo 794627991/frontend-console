@@ -4377,6 +4377,16 @@ html {
   white-space: nowrap; color: var(--fg); }
 .h-task-t { flex: none; font-family: var(--font-mono); font-size: var(--fs-xs);
   color: var(--muted); }
+/* v3.5.177 完成通知行（用户拍板「只保留运行中」：完成即卡消逝，留一行轻
+   通知，点击展开输出）——视觉同任务卡但实线弱化、不抢眼 */
+.h-taskdone { display: flex; align-items: center; gap: 8px; cursor: pointer;
+  padding: 4px 10px; margin: 2px 0; border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 3%, transparent);
+  border: 1px solid var(--border); font-size: var(--fs-sm); }
+.h-taskdone:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.h-taskdone .h-task-ico { color: var(--muted); }
+.h-taskdone.err .h-task-ico { color: var(--err, #e06c75); }
+.h-task-hint { flex: none; font-size: var(--fs-xs); color: var(--muted); }
 
 /* ---- v3.5.57 回合归档提示（主窗口只保留最近 20 轮，更早的进只读看）----
    v3.5.61（用户拍板「保留这个，然后居中」）：flex 居中——flow 限宽内视觉居中 */

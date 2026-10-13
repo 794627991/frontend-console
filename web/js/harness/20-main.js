@@ -425,7 +425,7 @@ function buildClaudeHarnessTab(opts = {}) {
     }
     // v3.5.161（用户需求「后台任务点不开，看不到在执行什么」）：任务卡点击
     // → 卡下方展开/收起输出块（tail 64KB 起读，运行中 2s 增量轮询跟随）
-    const _tkc = e.target.closest('.h-taskcard');
+    const _tkc = e.target.closest('.h-taskcard, .h-taskdone');   // v3.5.177：完成通知行同款点击展开
     if (_tkc) { _taskOutToggle(_tkc); return; }
     // 交互提问卡片（v2.17）：选项点击 / 提交
     // v3.4.60（ZCode 方案）：多题分页翻页——必须排在 done 折叠分支之前，
