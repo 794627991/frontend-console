@@ -879,10 +879,15 @@ function _taskOutToggle(card) {
   const pre = document.createElement('pre');
   pre.style.cssText = 'margin:0;font:12px/1.5 Consolas,monospace;white-space:pre-wrap;' +
     'word-break:break-all;color:var(--fg);';
-  // ①摘要先行：档案有 result（完成摘要）或运行中 desc——点开必有内容
+  // ①完成通知先行：result=CLI task_notification.summary（形态「Background
+  //   command "desc" completed (exit code N)」——只有退出码，不含 stdout）；
+  //   与 desc 复述时去假不重复（v3.5.173 的「【任务摘要】」实为 desc 假帽）
   const t = (_HG.tasks || {})[tid];
-  const head = (t && (t.result || (!t.done && t.desc)))
-    ? '【任务摘要】' + String(t.result || t.desc).trim() + '\n' : '';
+  const _res = t ? String(t.result || '').trim() : '';
+  const _desc = t ? String(t.desc || '').trim() : '';
+  const _dup = _res && _desc && (_res === _desc || _res.indexOf(_desc) >= 0);
+  const head = (_res && !_dup) ? '【完成通知】' + _res + '\n'
+    : (!_res && t && !t.done && _desc) ? '（运行中）' + _desc + '\n' : '';
   pre.textContent = head || '读取任务输出…';
   box.appendChild(pre);
   card.after(box);
@@ -915,11 +920,10 @@ function _taskOutToggle(card) {
       if (!box.isConnected) return;
       if (j && j.ok === true && j.found) {
         off = j.offset || 0;
-        fill(j.text || '', true);                 // ②文件有数据才叠显
-        if (first && !head) fill('（CLI 未为此任务落盘输出——完成摘要见任务卡/上方摘要区）', true);
-      } else if (!head) {
-        pre.textContent = 'CLI 未为此任务落盘输出文件；完成摘要见任务卡悬浮与「任务摘要」（若已产生）。';
-        return;
+        if (j.text) { fill(j.text, true); }       // ②文件有数据才叠显
+        else if (first) fill('（输出文件暂空——命令本身无 stdout，或 CLI 尚未刷盘）', true);
+      } else if (first) {
+        fill('（未找到输出文件——CLI 未为此任务落盘 stdout）', true);
       }
       const t = (_HG.tasks || {})[tid];
       if (t && !t.done) {                          // 运行中：增量跟随

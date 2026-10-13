@@ -1005,13 +1005,14 @@ def harness_task_output():
         la = os.environ.get("LOCALAPPDATA")
         if not main_dir or not la:
             return jsonify({"ok": True, "found": False, "text": "", "offset": offset})
+        # v3.5.176：tid 全局唯一——不再猜 csid（实测任务的 output 常落在
+        # 非当前会话对象的 csid 目录下），项目转码名下全 csid 扫一遍即中
         path = None
-        for csid in csids:
-            p = os.path.join(la, "Temp", "claude", os.path.basename(main_dir),
-                             csid, "tasks", tid + ".output")
-            if os.path.isfile(p):
-                path = p
-                break
+        for p in _g.glob(os.path.join(la, "Temp", "claude",
+                                      os.path.basename(main_dir),
+                                      "*", "tasks", tid + ".output")):
+            path = p
+            break
         if not path:
             return jsonify({"ok": True, "found": False, "text": "", "offset": offset})
         size = os.path.getsize(path)
