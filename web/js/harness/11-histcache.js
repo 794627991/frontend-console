@@ -245,6 +245,8 @@
       const j = await r.json();
       if (!j.ok || _HG.sid !== sidAt) return false;
       _HG.histAll = j.lines || [];
+      _HG.histSfps = j.sfps || null;       // v3.5.181：前缀指纹链（tail refresh 用）
+      _HG.histEpoch = j.epoch || null;
       return true;
     } catch(_) { return false; }
   }
@@ -254,8 +256,8 @@
       const j = await r.json();
       if (!j.ok || _HG.sid !== sidAt) return;   // 会话已切走，弃
       if (_HG.busy) return;   // v3.2.1R2(R2-2)：fetch 在途时用户发送消息——重渲会抹掉活组/新消息泡（07-hist 懒填同款守卫）
-      const lines = j.lines || [];
-      _histRender(lines, 0);   // v3.2.12：恒全量（start 参数退役保留签名兼容）
+      _HG.histSfps = j.sfps || null;
+      _histRender(j.lines || [], 0);   // v3.2.12：恒全量（start 参数退役保留签名兼容）
     } catch(_) {}
   }
   // v3.2.7（用户定调「只读模式退役」）：_roDeps/_roEnter/_roExit 整体退役——

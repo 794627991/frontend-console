@@ -78,6 +78,9 @@
       return;
     }
     saveCache();
+    // v3.5.182（designer R1）：快照入库后 bump 渲染令牌——在飞的分批渲染
+    // 批界中止弃渲（旧会话 buf 不得换到新切换的视图上）
+    _HG.histRenderTok = (_HG.histRenderTok || 0) + 1;
     const prevSid = _HG.sid;            // v2.3.0：旧会话 id（未发送附件暂存归属）
     closePop(); closeMention();
     setQuote(null);                     // v2.27：引用属于当前输入草稿，切会话不跨带
@@ -236,7 +239,21 @@
       // 把关闭行也预填，废了懒加载）；补填并入下面主路（单次拉取）
       const lazyOpen = _hgFlow.querySelectorAll('.h-think-seg.open[data-hg-lazy="1"], .h-tool.open[data-hg-lazy="1"]');
       if (c.histLive && !_HG.histAll) {
-        _histFetch(sid).then(ok => {
+        // v3.5.181（designer D1）：快照自带行缓存（histByLines/histBySfps/
+        // histByEpoch 随快照入库）→ 免重拉 11MB transcript，零请求零解析
+        const _hasLineCache = !!c.histByLines;
+        const _load = _hasLineCache
+          ? Promise.resolve().then(() => {
+              _HG.histAll = c.histByLines;
+              _HG.histSfps = c.histBySfps || null;
+              _HG.histEpoch = c.histByEpoch || null;
+              return true;
+            })
+          : _histFetch(sid).then(ok => {
+              if (ok && _HG.sid === sid) _HG.histSfps = _HG.histSfps || null;
+              return ok;
+            });
+        _load.then(async ok => {
           if (ok && _HG.sid === sid) {
             // v2.37R2（复审4）：账目越界钳制——快照存账后该会话在别窗做过
             // 回滚（转写被截断），histStart 可能越过现在的行数
@@ -266,7 +283,7 @@
                 m = Math.max(m, +(el.dataset.hEnd || 0)); }); } catch (_) {} return m; })();
             const _hasGrow = _HG.histAll.length - 1 > _snapHEnd;
             if (!_HG.busy && _hasGrow) {
-              _histRender(_HG.histAll, _HG.histStart | 0);
+              await _histRender(_HG.histAll, _HG.histStart | 0);
               setTimeout(() => { if (_HG.sid === sid)
                 _hgCoverageAudit(sid, _HG.histAll.length, 'snapshot-hit-refresh',
                   { snapshotBase: true }); }, 2000);
