@@ -72,7 +72,12 @@ class BaseConnection:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         safe = re.sub(r"[^a-zA-Z0-9_]", "_", self.port_id)
         self.log_path = os.path.join(log_dir, f"serial_{safe}_{ts}.log")
-        self.log_fp = open(self.log_path, "w", encoding="utf-8", buffering=1)
+        # v3.5.162：buffering 1(行缓冲)→64KB 块缓冲——行缓冲+append_line 的
+        # 显式 flush 让每行日志刷盘两次，SSH 输出风暴（QR 码/大量行，实锤）
+        # 时每秒数千次刷盘打满磁盘 IO，多连接场景整机卡顿分钟级。块缓冲后
+        # 系统调用降 ~千倍；代价：进程异常退出丢尾部 <64KB 日志（可接受，
+        # 崩溃排查另有 traceback 渠道），正常关闭/停止记录不受影响
+        self.log_fp = open(self.log_path, "w", encoding="utf-8", buffering=65536)
         self.log_fp.write(f"# 串口日志 {self.port_id} 开始 {datetime.now().isoformat()}\n")
 
     def append_line(self, raw_line, local_echo=False):
@@ -91,8 +96,9 @@ class BaseConnection:
             with self.log_lock:
                 try:
                     # 写 clean（已去 ANSI）而非 raw_line，否则日志回看会带 \x1b[...m 转义码
+                    # v3.5.162：去显式 flush（块缓冲批量落盘；风暴期每行两次刷盘
+                    # 是多连接整机卡顿的主凶）
                     self.log_fp.write(f"{ts_ms}\t{tag}\t{clean}\n")
-                    self.log_fp.flush()
                 except Exception:
                     pass
 
