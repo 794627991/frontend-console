@@ -504,6 +504,11 @@ def harness_stream():
     s = _get_or_create(request.args.get("sid") or "")
     if not s:
         return jsonify({"ok": False, "err": "会话不存在"}), 404
+    # v3.5.154：跨进程残留 hold 对账（重连订阅必经；幂等）——同 transcript
+    try:
+        s.stale_hold_repair()
+    except Exception:
+        pass
     base_epoch = (request.args.get("epoch") or "").strip()
     base_seq = request.args.get("after_seq", 0, type=int)
     sub, mode, replay = s.log.subscribe(base_epoch=base_epoch, base_seq=base_seq)
@@ -562,6 +567,13 @@ def harness_transcript():
     s = _get_or_create(request.args.get("sid") or "")
     if not s:
         return jsonify({"ok": False, "err": "会话不存在"}), 404
+    # v3.5.154：跨进程残留 hold 对账（切回会话必经）——上一进程 emit 的
+    # turn_hold 在进程死亡后残留事件流，前端重放即永久挂死；后端无回合
+    # 在跑时补发 turn_complete 解锁（详见 session.stale_hold_repair）
+    try:
+        s.stale_hold_repair()
+    except Exception:
+        pass
     lines = transcript_for(s)
     return jsonify({"ok": True, "lines": lines or [], "alive": s.alive,
                     "busy": s.busy, "busy_since": s.busy_since,

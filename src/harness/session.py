@@ -1242,6 +1242,36 @@ class HarnessSession:
             except Exception:
                 pass
 
+    def stale_hold_repair(self):
+        """v3.5.154（用户实锤「孤儿 SendMessage 导致大回合结束不了」）：跨进程
+        残留 hold 对账修复。机理：上一进程在后台任务（如续派 reviewer）在飞时
+        emit 过 turn_hold，随后进程死亡（任务与回传全丢）；重启后新进程内存
+        全空（busy/_held/_turn_id 均 falsy=后端真相是无回合在跑），但事件流
+        尾部的 turn_hold 被前端重放消费 → hold 永久挂死（胶囊计时/排队提示/
+        孤儿 SendMessage 转交线全不消失），后端 _BG_IDLE_RELEASE 也救不了
+        （新进程 _held=false，monitor 判定不触发）。切回会话/重连订阅时对账：
+        后端无回合在跑 且 事件尾部存在未配对 turn_hold → 补发一条真实
+        turn_complete（落 store，seq 正常递增），前端收尾链（含 peer 转交线
+        核实）自然走完。幂等：修复后尾部变 turn_complete，不再触发。"""
+        if self.busy or self._turn_id or self._held:
+            return False
+        try:
+            tail = self.get_events_after(max(0, getattr(self, "_seq", 0) - 40),
+                                         limit=50)
+        except Exception:
+            return False
+        unpaired = False
+        for ev in tail or []:
+            kind = (ev or {}).get("kind")
+            if kind == "turn_hold":
+                unpaired = True
+            elif kind == "turn_complete":
+                unpaired = False
+        if not unpaired:
+            return False
+        self.emit({"kind": "turn_complete", "text": ""})
+        return True
+
     def _check_peer_lines(self):
         """跨会话回传检测（v2.27.4）：CLI 收到 peer 消息只写转写 jsonl，
         不往 stdout 流吐 user 事件（实测事件缓冲里 495 条 system 全是
