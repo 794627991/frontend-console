@@ -861,81 +861,6 @@ function _taskCardTick(card) {
 function _taskStop(card) {
   if (card && card._taskTimer) { clearInterval(card._taskTimer); card._taskTimer = null; }
 }
-// ==================== v3.5.166：任务卡点击展开（「看不到在执行什么」）====
-// 数据源两层：①档案 _HG.tasks[tid].result（task_notification.summary，CLI
-// 对后台 Bash 只给 ≤400 字完成摘要——tasks/<shell_tid>.output 实测恒 0 字节
-// 占位，CLI 不落盘 stdout）展开立即可显；②tasks/<tid>.output 文件（子代理
-// 形态是 JSONL 转写/未来 CLI 若落盘则有数据）tail 64KB 起读+运行中 2s 增量。
-// 文件空/未找到不再报错式文案——摘要已在，只补一行说明。样式走主题变量。
-function _taskOutToggle(card) {
-  const tid = card.dataset.tid || '';
-  if (!tid) return;
-  const old = card.nextElementSibling;
-  if (old && old.classList && old.classList.contains('h-taskout')) { old.remove(); return; }
-  const box = document.createElement('div');
-  box.className = 'h-taskout';
-  box.style.cssText = 'margin:4px 0 2px 26px;padding:6px 10px;background:var(--bg-input);' +
-    'border:1px solid var(--border);border-radius:6px;max-height:260px;overflow:auto;';
-  const pre = document.createElement('pre');
-  pre.style.cssText = 'margin:0;font:12px/1.5 Consolas,monospace;white-space:pre-wrap;' +
-    'word-break:break-all;color:var(--fg);';
-  // ①完成通知先行：result=CLI task_notification.summary（形态「Background
-  //   command "desc" completed (exit code N)」——只有退出码，不含 stdout）；
-  //   与 desc 复述时去假不重复（v3.5.173 的「【任务摘要】」实为 desc 假帽）
-  const t = (_HG.tasks || {})[tid];
-  const _res = t ? String(t.result || '').trim() : '';
-  const _desc = t ? String(t.desc || '').trim() : '';
-  const _dup = _res && _desc && (_res === _desc || _res.indexOf(_desc) >= 0);
-  const head = (_res && !_dup) ? '【完成通知】' + _res + '\n'
-    : (!_res && t && !t.done && _desc) ? '（运行中）' + _desc + '\n' : '';
-  pre.textContent = head || '读取任务输出…';
-  box.appendChild(pre);
-  card.after(box);
-  let off = 0, stick = true, first = !head;
-  pre.addEventListener('scroll', () => {
-    stick = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 24;
-  });
-  const fill = (txt, follow) => {
-    if (!txt) return;
-    pre.textContent = first ? txt : pre.textContent + txt;
-    first = false;
-    if (follow && stick) pre.scrollTop = pre.scrollHeight;
-  };
-  const poll = () => {
-    fetch('/api/harness/task_output?sid=' + encodeURIComponent(_HG.sid) +
-          '&tid=' + encodeURIComponent(tid) + '&offset=' + off + '&mode=inc')
-      .then(r => r.json()).then(j => {
-        if (!box.isConnected) return;             // 收起/切会话：止轮询
-        const t2 = (_HG.tasks || {})[tid];        // 轻审一般修：完成即收轮
-        if (t2 && t2.done && box._poll) { clearInterval(box._poll); box._poll = null; }
-        if (j && j.ok === true && j.found) {
-          off = j.offset || off;
-          fill(j.text || '', true);
-        }
-      }).catch(() => {});
-  };
-  fetch('/api/harness/task_output?sid=' + encodeURIComponent(_HG.sid) +
-        '&tid=' + encodeURIComponent(tid) + '&mode=tail')
-    .then(r => r.json()).then(j => {
-      if (!box.isConnected) return;
-      if (j && j.ok === true && j.found) {
-        off = j.offset || 0;
-        if (j.text) { fill(j.text, true); }       // ②文件有数据才叠显
-        else if (first) fill('（输出文件暂空——命令本身无 stdout，或 CLI 尚未刷盘）', true);
-      } else if (first) {
-        fill('（未找到输出文件——CLI 未为此任务落盘 stdout）', true);
-      }
-      const t = (_HG.tasks || {})[tid];
-      if (t && !t.done) {                          // 运行中：增量跟随
-        box._poll = setInterval(() => {
-          if (!box.isConnected) { clearInterval(box._poll); box._poll = null; return; }
-          poll();
-        }, 2000);
-      }
-    }).catch(() => {
-      if (box.isConnected && !head) pre.textContent = '任务输出读取失败';
-    });
-}
 // task_started（后台 shell 判定命中）：建档+建卡（消息流与目录数据源）
 function _taskStart(tid, desc) {
   if (!tid) return null;
@@ -953,22 +878,6 @@ function _taskStart(tid, desc) {
   return card;
 }
 // task_notification / exit sweep：定格（state: done/err/stop）
-// v3.5.177（用户拍板「只保留运行中」）：完成即运行卡消逝——换一行轻量
-// 通知行（含状态/描述/用时），点击复用 _taskOutToggle 展开输出（task_output
-// 全 csid 扫描）。理由：CLI 不把 task 生命周期落转写（切会话卡必丢）+
-// summary 只有 exit code——完成态定格卡是半残展示，不如一行通知。
-function _taskDoneRow(tid, t, state, dur) {
-  const row = document.createElement('div');
-  row.className = 'h-tool h-taskdone' + (state === 'err' ? ' err' : '');
-  row.dataset.tid = tid;
-  const ico = state === 'err' ? '✗' : state === 'stop' ? '⏹' : '✓';
-  const word = state === 'err' ? '后台任务失败' : state === 'stop' ? '后台任务中断' : '后台任务完成';
-  row.innerHTML = '<span class="h-task-ico">' + ico + '</span>' +
-    '<span class="h-task-name">' + esc(word) + (t && t.desc ? ' · ' + esc(t.desc) : '') + '</span>' +
-    (dur ? '<span class="h-task-t">' + esc(dur) + '</span>' : '') +
-    '<span class="h-task-hint">点看输出</span>';
-  return row;
-}
 function _taskFinish(tid, state, summary) {
   const t = (_HG.tasks || {})[tid];
   const card = t && t.el;
@@ -979,13 +888,12 @@ function _taskFinish(tid, state, summary) {
   }
   if (card) {
     _taskStop(card);
-    // 用户实锤「时间不对」：_hgFmtDur 入参是秒——差值毫秒须 /1000
+    if (summary) card.title = String(summary).slice(0, 2000);   // 悬浮全文（轻量：无展开体）
+    // 用户实锤「时间不对」：_hgFmtDur 入参是秒——差值毫秒须 /1000（旧码
+    // 把 11682ms 当 11682s 渲染成 3h14m42s）
     const dur = _hgFmtDur((((t && t.doneAt) || Date.now())
       - (+(card.dataset.t0 || 0) || Date.now())) / 1000) || '';
-    const row = _taskDoneRow(tid, t, state, dur);
-    if (summary) row.title = String(summary).slice(0, 2000);   // 悬浮全文
-    card.replaceWith(row);
-    t.el = row;
+    _taskCardPaint(card, state, dur);
   }
   _subDirPaint && _HG.active === '__dir__' && _subDirPaint();
 }
