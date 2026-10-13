@@ -23,7 +23,7 @@ from .meta import _meta, _meta_load, _meta_lock, _meta_save, _meta_tombstones
 from .models import available_models
 from .prompts import _prompt_matches_project, _prompts_load, _prompts_save
 from .session import HarnessSession, _session_ctx_used
-from .transcript import _subagent_rows_for, _subagent_transcript_candidates, transcript_for
+from .transcript import _subagent_rows_for, _subagent_transcript_candidates, transcript_for, _sfp_chain
 from .vision import _MM_PROBE_LOCK, _VISION_KEY, _mm_probe_key, _mm_probe_model, _mm_probed_load, _model_is_multimodal, _vision_load, _vision_save
 
 
