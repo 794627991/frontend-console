@@ -102,158 +102,6 @@ def set_go_event(port):
             ctypes.windll.kernel32.CloseHandle(h)   # v3.5.151 全审F6a：不再漏
 
 
-# v3.5.150（用户拍板 Snipaste F3 同款）：贴图信号事件，同 go 事件机制
-_SNIP_PIN_EVENT = "Local\\fc_snip_pin_%s"
-
-
-def set_pin_event(port):
-    """主进程 F3 → 唤醒常驻截图窗贴图（读剪贴板/req 直通）。"""
-    h = _open_event(_SNIP_PIN_EVENT % port)
-    if h:
-        try:
-            ctypes.windll.kernel32.SetEvent(h)
-        finally:
-            ctypes.windll.kernel32.CloseHandle(h)   # v3.5.151 全审F6a：不再漏
-
-
-def _cfg_flag(name, dflt=False):
-    """读 config.json 布尔键（主进程用；贴图自动贴开关）。"""
-    try:
-        from src.app_state import CONFIG_FILE
-        with open(CONFIG_FILE, encoding="utf-8") as f:
-            return bool(json.load(f).get(name, dflt))
-    except Exception:
-        return dflt
-
-
-def read_clipboard_image():
-    """读剪贴板图片（v3.5.150 F3 贴图数据源）。优先级：PNG 注册格式（无损带
-    alpha，浏览器/新工具多写）→ CF_DIBV5(17) → CF_DIB(8) → CF_HDROP(15) 图片
-    文件（资源管理器复制的白送支持）。返回 PIL.Image 或 None。
-    全程 restype/argtypes 显式（64 位句柄截断，main.py 剪贴板实锤同款坑）。"""
-    from ctypes import wintypes
-    u32 = ctypes.windll.user32
-    k32 = ctypes.windll.kernel32
-    s32 = ctypes.windll.shell32
-    for fn, restype, argtypes in (
-            (k32.GlobalLock, wintypes.LPVOID, [wintypes.HGLOBAL]),
-            (k32.GlobalUnlock, None, [wintypes.HGLOBAL]),
-            (k32.GlobalSize, ctypes.c_size_t, [wintypes.HGLOBAL]),
-            (u32.GetClipboardData, wintypes.HANDLE, [wintypes.UINT]),
-            (u32.RegisterClipboardFormatW, wintypes.UINT, [wintypes.LPCWSTR]),
-            (u32.IsClipboardFormatAvailable, wintypes.BOOL, [wintypes.UINT]),
-            (s32.DragQueryFileW, wintypes.UINT, [wintypes.HANDLE, wintypes.UINT,
-                                                 wintypes.LPWSTR, wintypes.UINT])):
-        if restype is not None:
-            fn.restype = restype
-        fn.argtypes = argtypes
-
-    def _hbytes(h):
-        if not h:
-            return b""
-        p = k32.GlobalLock(h)
-        try:
-            n = k32.GlobalSize(h) or 0
-            if not p or not n:
-                return b""
-            return ctypes.string_at(p, n)
-        finally:
-            k32.GlobalUnlock(h)
-
-    # OpenClipboard 竞态：别的程序正占着 → 40ms 间隔重试 3 发
-    opened = False
-    for _ in range(3):
-        if u32.OpenClipboard(0):
-            opened = True
-            break
-        time.sleep(0.04)
-    if not opened:
-        return None
-    try:
-        from io import BytesIO
-        import struct
-        img = None
-
-        def _dib_to_image(blob):
-            """DIB 载荷 → 拼 BITMAPFILEHEADER → PIL（PIL 不收裸 DIB）。"""
-            if len(blob) < 40:
-                return None
-            try:
-                bisize = struct.unpack_from("<I", blob, 0)[0]
-                bits = struct.unpack_from("<H", blob, 14)[0]
-                comp = struct.unpack_from("<I", blob, 16)[0]
-                off = 14 + bisize
-                # BI_BITFIELDS 掩码紧随头只在经典 BITMAPINFOHEADER(40)——
-                # V2/V3/V4/V5 头（52/56/108/124）掩码已含在 bisize 内，再
-                # +12 越过像素起点（全审F3 实证 V5 双计解码失败）
-                if comp == 3 and bits in (16, 32) and bisize == 40:
-                    off += 12
-                elif bits <= 8:                   # 调色板（biClrUsed 在 32：
-                    nclr = struct.unpack_from("<I", blob, 32)[0] or (1 << bits)
-                    off += nclr * 4               # 36 是 biClrImportant——
-                                                  # v3.5.152 复核勘误：3.5.151
-                                                  # 按误报改 36 读成 Important
-                                                  # 反成回归，回到 32）
-                fh = b"BM" + struct.pack("<IHHI", 14 + len(blob), 0, 0, off)
-                from PIL import Image
-                im = Image.open(BytesIO(fh + blob))
-                im.load()
-                return im
-            except Exception:
-                return None
-
-        fmt_png = u32.RegisterClipboardFormatW("PNG")
-        if fmt_png and u32.IsClipboardFormatAvailable(fmt_png):
-            blob = _hbytes(u32.GetClipboardData(fmt_png))
-            if blob[:8] == b"\x89PNG\r\n\x1a\n":
-                try:
-                    from PIL import Image
-                    img = Image.open(BytesIO(blob))
-                    img.load()
-                except Exception:
-                    img = None
-        for fmt in ((17, 8) if img is None else ()):   # CF_DIBV5 → CF_DIB
-            if u32.IsClipboardFormatAvailable(fmt):
-                img = _dib_to_image(_hbytes(u32.GetClipboardData(fmt)))
-                if img is not None:
-                    break
-        if img is None and u32.IsClipboardFormatAvailable(15):   # CF_HDROP
-            h = u32.GetClipboardData(15)
-            if h:
-                n = s32.DragQueryFileW(h, 0xFFFFFFFF, None, 0)
-                for i in range(n):
-                    buf = ctypes.create_unicode_buffer(300)
-                    if not s32.DragQueryFileW(h, i, buf, 300):
-                        continue
-                    ext = buf.value.rsplit(".", 1)[-1].lower() \
-                        if "." in buf.value else ""
-                    if ext in ("png", "jpg", "jpeg", "bmp", "gif", "webp"):
-                        try:
-                            from PIL import Image
-                            img = Image.open(buf.value)
-                            img.load()
-                            break
-                        except Exception:
-                            pass
-        if img is not None:
-            # alpha 全 0 修补：32bpp DIB 的 alpha 常是全零填充 → 全透明/发黑
-            #（历史实锤）；真透明图（PNG 剪贴）extrema 不会是 (0,0)
-            try:
-                if img.mode in ("RGBA", "LA"):
-                    if img.getchannel("A").getextrema() == (0, 0):
-                        img.putalpha(255)
-            except Exception:
-                pass
-        return img
-    except Exception:
-        return None
-    finally:
-        try:
-            u32.CloseClipboard()
-        except Exception:
-            pass
-
-
 def _grab_only():
     """--grab：抓屏 → BMP（PNG 编码 1920x1080 要 ~0.4s，BMP 免压缩 ~0.05s，
     localhost 传输不差这点体积）+ 几何 json。"""
@@ -267,7 +115,7 @@ def _grab_only():
 # ---------------------------------------------------------------------------
 # 子进程：截图窗（--snip-window <port>）
 # ---------------------------------------------------------------------------
-def window_main(port, armed=False, pin_pending=False):
+def window_main(port, armed=False):
     """常驻截图窗子进程：DPI 感知 → 无边框置顶全屏窗（hidden）待命。
     生命周期：主进程热键时抓屏（--grab 落 BMP）→ 本进程 _arm_loop 感知
     BMP mtime 变化 → reload 页面拿新底图 → loaded 钉物理几何 → show；
@@ -351,7 +199,7 @@ def window_main(port, armed=False, pin_pending=False):
         t.Join()
         return result.get("path")
 
-    state = {"armed": armed, "showing": False, "pin_pending": pin_pending}
+    state = {"armed": armed, "showing": False}
 
     def _die():
         """自退唯一出口（v3.5.151 全审F1）：先删 ALIVE 探活标记再退——30s
@@ -410,301 +258,6 @@ def window_main(port, armed=False, pin_pending=False):
         def snip_cancel(self):
             _hide()
             return True
-
-    # ---- v3.5.150 贴图（pin）子系统：常驻进程 pywebview 多窗，每贴一张
-    # 一个独立置顶无边框小窗（Snipaste F3 同款）。随工具存亡：主进程退出
-    # kill_snip_windows EnumWindows 收编 + 本进程 Flask 探活自杀兜底。 ----
-    _pins = {}          # n -> {"wv": 窗对象, "w": 原图宽, "h": 原图高, "t": 创建时刻}
-    _pin_seq = [0]
-    _pin_lock = threading.Lock()   # v3.5.151 全审F6c：seq 分配/LRU 原子化
-    _MAX_PINS = 8       # 内存护栏：每贴一张≈一个 WebView2 渲染进程（40-80MB）
-    _PIN_DIR = os.environ.get("TEMP", ".")
-    try:                # 启动清扫上次会话贴图残留（v3.5.151 全审F4）
-        for _f in os.listdir(_PIN_DIR):
-            if _f.startswith("fc_pin_") and _f.endswith(".png"):
-                try:
-                    os.remove(os.path.join(_PIN_DIR, _f))
-                except OSError:
-                    pass
-    except OSError:
-        pass
-
-    class RECTr(ctypes.Structure):
-        _fields_ = [("l", ctypes.c_long), ("t", ctypes.c_long),
-                    ("r", ctypes.c_long), ("b", ctypes.c_long)]
-
-    class PTxy(ctypes.Structure):
-        _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
-
-    def _pin_hwnd(n):
-        return ctypes.windll.user32.FindWindowW(None, "fc-pin-%d" % n)
-
-    def _pin_close(n):
-        info = _pins.pop(n, None)
-        try:
-            if info and info.get("wv"):
-                info["wv"].destroy()
-        except Exception:
-            pass
-        try:            # v3.5.151 全审F4：底图同删，%TEMP% 不留贴图尸体
-            os.remove(os.path.join(_PIN_DIR, "fc_pin_%d.png" % n))
-        except OSError:
-            pass
-
-    def _pin_resize(n, nw, nh):
-        """改贴图窗尺寸，鼠标点锚定（缩放不漂移）。全程物理像素+SetWindowPos，
-        绕开 pywebview 逻辑像素换算（DPI>100% 混淆源）。"""
-        u32 = ctypes.windll.user32
-        hwnd = _pin_hwnd(n)
-        if not hwnd or nw < 80 or nh < 80:
-            return
-        rc = RECTr()
-        if not u32.GetWindowRect(hwnd, ctypes.byref(rc)):
-            return
-        pt = PTxy()
-        u32.GetCursorPos(ctypes.byref(pt))
-        k2 = nw / max(1, rc.r - rc.l)
-        u32.SetWindowPos(hwnd, -1,                 # -1=TOPMOST 重申置顶
-                         int(pt.x - (pt.x - rc.l) * k2),
-                         int(pt.y - (pt.y - rc.t) * k2),
-                         int(nw), int(nh), 0x0040)
-
-    def _pin_drag(n, dx, dy):
-        """按像素拖动。dx/dy 是 CSS px——乘窗口 DPI 比回物理。"""
-        u32 = ctypes.windll.user32
-        hwnd = _pin_hwnd(n)
-        if not hwnd:
-            return
-        rc = RECTr()
-        if not u32.GetWindowRect(hwnd, ctypes.byref(rc)):
-            return
-        u32.GetDpiForWindow.restype = ctypes.c_uint
-        k = (u32.GetDpiForWindow(hwnd) or 96) / 96.0
-        u32.SetWindowPos(hwnd, -1,
-                         rc.l + int(dx * k), rc.t + int(dy * k),
-                         0, 0, 0x0001 | 0x0010 | 0x0040)   # NOSIZE|NOACTIVATE
-
-    def _pin_alpha(n, pct):
-        u32 = ctypes.windll.user32
-        hwnd = _pin_hwnd(n)
-        if not hwnd:
-            return
-        u32.SetWindowLongW(hwnd, -20,              # GWL_EXSTYLE |= WS_EX_LAYERED
-                           u32.GetWindowLongW(hwnd, -20) | 0x00080000)
-        u32.SetLayeredWindowAttributes(hwnd, 0,
-                                       max(25, min(255, int(255 * pct / 100))), 2)
-
-    def _pin_fit(n, orig_w, orig_h):
-        """适应屏幕：光标所在屏工作区 90% 完整显示，居中。"""
-        u32 = ctypes.windll.user32
-        hwnd = _pin_hwnd(n)
-        if not hwnd:
-            return
-        pt = PTxy()
-        u32.GetCursorPos(ctypes.byref(pt))
-        hmon = u32.MonitorFromPoint(pt, 2)         # MONITOR_DEFAULTTONEAREST
-
-        class MINFO(ctypes.Structure):
-            _fields_ = [("cbSize", ctypes.c_uint), ("rcMonitor", RECTr),
-                        ("rcWork", RECTr), ("dwFlags", ctypes.c_uint)]
-        mi = MINFO()
-        mi.cbSize = ctypes.sizeof(MINFO)
-        if not u32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
-            return
-        rc = mi.rcWork
-        mw, mh = rc.r - rc.l, rc.b - rc.t
-        sc = min(0.9 * mw / max(1, orig_w), 0.9 * mh / max(1, orig_h))
-        nw, nh = max(80, int(orig_w * sc)), max(80, int(orig_h * sc))
-        u32.SetWindowPos(hwnd, -1, rc.l + (mw - nw) // 2, rc.t + (mh - nh) // 2,
-                         nw, nh, 0x0040)
-
-    class PinWin:
-        """贴图窗 js_api（pin.html 调）：拖动/缩放/透明度/关闭/适应屏幕。"""
-
-        def __init__(self, n, w, h):
-            self.n, self.w, self.h = n, w, h
-
-        def close(self):
-            _pin_close(self.n)
-            return True
-
-        def drag_by(self, dx, dy):
-            try:
-                _pin_drag(self.n, float(dx or 0), float(dy or 0))
-            except Exception:
-                pass
-            return True
-
-        def zoom(self, direction):
-            """滚轮缩放：原图 2.5x 与虚拟屏 1.25x 双上限，80px 下限。"""
-            try:
-                cur = _pins.get(self.n) or {}
-                hwnd = _pin_hwnd(self.n)
-                rc = RECTr()
-                if hwnd and ctypes.windll.user32.GetWindowRect(
-                        hwnd, ctypes.byref(rc)):
-                    cw = rc.r - rc.l
-                else:
-                    cw = int(cur.get("w") or self.w)
-                nw = cw * (1.15 if int(direction or 0) > 0 else 1 / 1.15)
-                g = _virt_geo()
-                nw = max(80, min(int(nw), int(cur.get("w") or self.w) * 5 // 2,
-                                 int(g["w"] * 1.25)))
-                nh = max(80, int(nw * self.h / max(1, self.w)))
-                _pin_resize(self.n, nw, nh)
-            except Exception:
-                pass
-            return True
-
-        def scale_pct(self, pct):
-            """右键菜单预设：相对原图 50/100/200%。"""
-            try:
-                _pin_resize(self.n,
-                            max(80, int(self.w * int(pct) / 100)),
-                            max(80, int(self.h * int(pct) / 100)))
-            except Exception:
-                pass
-            return True
-
-        def fit_screen(self):
-            try:
-                _pin_fit(self.n, self.w, self.h)
-            except Exception:
-                pass
-            return True
-
-        def opacity(self, pct):
-            try:
-                _pin_alpha(self.n, int(pct or 100))
-            except Exception:
-                pass
-            return True
-
-    def _create_pin(img):
-        """贴一张：图落 TEMP/fc_pin_<n>.png（/api/snip/pinimg 服务给页面）
-        → 建无边框置顶窗（loaded 后钉物理尺寸+去任务栏+show，snip 窗同款
-        手法——create 的 width/height 是逻辑口径，必须重钉）。"""
-        try:
-            if img.mode not in ("RGB", "RGBA"):
-                img = img.convert("RGBA")
-        except Exception:
-            return
-        w, h = img.size
-        if not w or not h:
-            return
-        with _pin_lock:            # F3 连发+自动贴并发：seq 分配原子
-            _pin_seq[0] += 1
-            n = _pin_seq[0]
-        path = os.path.join(_PIN_DIR, "fc_pin_%d.png" % n)
-        try:
-            img.save(path)
-        except Exception:
-            return
-        g = _virt_geo()
-        sc = min(1.0, (g["w"] * 0.9) / max(1, w), (g["h"] * 0.9) / max(1, h))
-        pw, ph = max(80, int(w * sc)), max(80, int(h * sc))
-        pin = PinWin(n, w, h)
-        try:
-            wv = webview.create_window(
-                "fc-pin-%d" % n,
-                "http://127.0.0.1:%s/web/pin.html?id=%d" % (port, n),
-                js_api=pin,
-                x=min(max(0, g["x"] + g["w"] // 2 - pw // 2), g["x"] + g["w"] - pw),
-                y=min(max(0, g["y"] + g["h"] // 2 - ph // 2), g["y"] + g["h"] - ph),
-                width=pw, height=ph,
-                frameless=True, on_top=True, resizable=False,
-                easy_drag=False, shadow=False, hidden=True)
-        except Exception:
-            try:
-                os.remove(path)
-            except OSError:
-                pass
-            return
-        _pins[n] = {"wv": wv, "w": w, "h": h, "t": time.time()}
-        with _pin_lock:            # LRU 淘汰最旧（选 key 锁内、销毁锁外）
-            old = min(_pins, key=lambda k: _pins[k]["t"]) \
-                if len(_pins) > _MAX_PINS else None
-        if old is not None:
-            _pin_close(old)
-
-        def _pin_loaded():
-            tries = [0]
-
-            def _do():
-                try:
-                    time.sleep(0.2)
-                    if wv.evaluate_js("window.__FC_PIN__===true") is not True:
-                        # v3.5.153：错误页不再一关了之（用户只见「没反应」）
-                        # ——重试加载 2 次（WebGUI 冷启竞态实锤形态），仍败才关
-                        tries[0] += 1
-                        if tries[0] <= 2:
-                            try:
-                                wv.load_url("http://127.0.0.1:%s/web/pin.html?id=%d"
-                                            % (port, n))
-                            except Exception:
-                                pass
-                            return          # load_url 完成会再触发 loaded
-                        _pin_close(n)       # 错误页绝不 show
-                        return
-                    u32 = ctypes.windll.user32
-                    hwnd = _pin_hwnd(n)
-                    if hwnd:
-                        u32.SetWindowLongW(hwnd, -20,
-                                           u32.GetWindowLongW(hwnd, -20) | 0x80)
-                    try:
-                        from System import Func, Type
-                        from System.Drawing import Size
-                        native = wv.native
-
-                        def _fix():
-                            native.ClientSize = Size(pw, ph)
-                        native.Invoke(Func[Type](_fix))
-                    except Exception:
-                        if hwnd:                   # CLR 不可用兜底（会被弹回）
-                            u32.SetWindowPos(hwnd, -1, 0, 0, pw, ph, 0x0040)
-                    if hwnd:
-                        u32.SetWindowPos(hwnd, -1, 0, 0, 0, 0,
-                                         0x0001 | 0x0002 | 0x0040)
-                    wv.show()
-                except Exception:
-                    pass
-            threading.Thread(target=_do, daemon=True).start()
-        wv.events.loaded += _pin_loaded
-
-    def _handle_pin():
-        """贴图入口（pin 事件唤醒）：req 直通（截图自动贴，保 alpha 不走剪贴
-        板时序）→ 剪贴板读图（PNG/DIB/文件三源）。"""
-        try:
-            img = None
-            req = os.path.join(os.environ.get("TEMP", "."), "fc_pin_req.json")
-            if os.path.isfile(req):
-                try:
-                    with open(req, encoding="utf-8") as f:
-                        m = json.load(f)
-                except Exception:
-                    m = None
-                try:
-                    os.remove(req)
-                except OSError:
-                    pass
-                p = (m or {}).get("path") or ""
-                if p and os.path.isfile(p):
-                    try:
-                        from PIL import Image
-                        img = Image.open(p)
-                        img.load()
-                    except Exception:
-                        img = None
-            if img is None:
-                img = read_clipboard_image()
-            if img is None:
-                return
-            _create_pin(img)
-        except Exception:
-            pass
-
-    if pin_pending:
-        state["pin_pending"] = True   # 冷路径：首载 loaded 后贴一次（_on_loaded 消费）
 
     def _hide():
         # 即刻 hide（旧版 sleep 0.2 给了插件 destroyDom 黑帧 200ms 展示时间，
@@ -805,10 +358,6 @@ def window_main(port, armed=False, pin_pending=False):
                         json.dump({"port": int(port), "t": time.time()}, f)
                 except Exception:
                     pass
-                # v3.5.150：冷路径贴图（spawn 带 pin 参）→ 首载后贴一次
-                if state.get("pin_pending"):
-                    state["pin_pending"] = False
-                    threading.Thread(target=_handle_pin, daemon=True).start()
             except Exception:
                 pass
         threading.Thread(target=_do, daemon=True).start()
@@ -834,25 +383,17 @@ def window_main(port, armed=False, pin_pending=False):
         last_probe = 0.0
         last_beat = 0.0
         ev_go = _open_event(_SNIP_GO_EVENT % port)
-        ev_pin = _open_event(_SNIP_PIN_EVENT % port)
-        kinds, hs = [], []
-        for ev, kind in ((ev_go, "go"), (ev_pin, "pin")):
-            if ev:
-                kinds.append(kind)
-                hs.append(ev)
         handles = None
-        if hs:
-            handles = (ctypes.c_void_p * len(hs))(
-                *[ctypes.c_void_p(h) for h in hs])
+        if ev_go:
+            handles = (ctypes.c_void_p * 1)(ctypes.c_void_p(ev_go))
         while True:
             fired = None
             if handles:
-                # WAIT_OBJECT_0+i：对应事件触发（0=go / 1=pin）；超时(0x102)
-                # 走兜底轮询。原型已在 _open_event 统一声明
+                # WAIT_OBJECT_0(=0)：go 事件触发；超时(0x102)走兜底轮询
                 r = ctypes.windll.kernel32.WaitForMultipleObjects(
-                    len(hs), handles, False, 150)
-                if 0 <= r < len(hs):
-                    fired = kinds[r]
+                    1, handles, False, 150)
+                if r == 0:
+                    fired = "go"
             else:
                 time.sleep(0.15)
             now = time.time()
@@ -874,11 +415,7 @@ def window_main(port, armed=False, pin_pending=False):
                 m = os.path.getmtime(_TMP_BMP) if os.path.isfile(_TMP_BMP) else 0
             except OSError:
                 continue
-            if fired == "pin":
-                # v3.5.150 贴图：读 req/剪贴板 → 建独立置顶窗（不动截图主窗）
-                idle_since = time.time()
-                threading.Thread(target=_handle_pin, daemon=True).start()
-            elif fired == "go":
+            if fired == "go":
                 # v3.5.152 全审F6b：收到事件即刷心跳——「ALIVE <10s 新鲜」
                 # 的语义自此成立（事件必达=心跳必新；事件未达=心跳陈旧→
                 # launch_window 的 _check 兜底 grab 正确放行，不再被
@@ -928,9 +465,9 @@ def window_main(port, armed=False, pin_pending=False):
                 except Exception:
                     pass
                 idle_since = time.time()
-            elif state["showing"] or _pins:
-                idle_since = time.time()   # 贴图挂着=进程有活干，绝不自退
-            elif not _pins and time.time() - idle_since > 1800:
+            elif state["showing"]:
+                idle_since = time.time()
+            elif time.time() - idle_since > 1800:
                 _die()   # 空闲 30 分钟自退（v3.5.153：600→1800——用户节奏
                          # 「放置十几分钟再截」正落 600s 窗外=每次首截都是
                          # 冷启动慢；常驻待命 ~100MB，30 分钟不用才释放）
@@ -1043,10 +580,9 @@ def snip_window_alive(port):
         return False
 
 
-def _spawn_window(port, armed, pin_pending=False):
+def _spawn_window(port, armed):
     """拉起截图窗子进程（带 8s 防抖：热键冷启动与 prewarm 竞态双窗实锤位）。
-    armed=True 首载即显（热键路径）；False 预热待命；pin_pending=True 冷路径
-    贴图（首载后贴一次）。"""
+    armed=True 首载即显（热键路径）；False 预热待命。"""
     if os.path.isfile(_TMP_SPAWN) and \
             time.time() - os.path.getmtime(_TMP_SPAWN) < 8:
         return True, "spawning"
@@ -1055,7 +591,7 @@ def _spawn_window(port, armed, pin_pending=False):
             f.write("1")
         subprocess.Popen(_self_exe_mode(
             "--snip-window", port,
-            extra=(["armed"] if armed else []) + (["pin"] if pin_pending else [])),
+            extra=(["armed"] if armed else [])),
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         return True, "ok"
     except Exception as e:
@@ -1063,37 +599,14 @@ def _spawn_window(port, armed, pin_pending=False):
 
 
 def kill_snip_windows():
-    """主进程退出时收编孤儿窗：fc-snip 主窗 + 全部 fc-pin-* 贴图窗发 WM_CLOSE
-    （v3.5.150 EnumWindows 前缀匹配；正常退出路径调，异常崩溃兜底靠子进程
-    Flask 探活自杀）。"""
+    """主进程退出时收编孤儿窗：给所有 fc-snip 窗发 WM_CLOSE。正常退出路径
+    （✕/托盘退出）调；异常崩溃兜底靠子进程 _arm_loop 的 Flask 探活自杀。"""
     u32 = ctypes.windll.user32
-    targets = []
-    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p,
-                                     ctypes.c_void_p)
-
-    @WNDENUMPROC
-    def _cb(hwnd, _lp):
-        try:
-            buf = ctypes.create_unicode_buffer(64)
-            u32.GetWindowTextW(hwnd, buf, 64)
-            t = buf.value
-            if t == "fc-snip" or t.startswith("fc-pin-"):
-                targets.append(hwnd)
-        except Exception:
-            pass
-        return True
-
-    try:
-        u32.EnumWindows(_cb, 0)
-    except Exception:
-        pass
-    for hwnd in targets:
-        u32.PostMessageW(hwnd, 0x0010, 0, 0)   # WM_CLOSE
-    for _ in range(4):                          # 残留兜底（snip 主窗单实例）
+    for _ in range(4):
         hwnd = u32.FindWindowW(None, "fc-snip")
         if not hwnd:
             return
-        u32.PostMessageW(hwnd, 0x0010, 0, 0)
+        u32.PostMessageW(hwnd, 0x0010, 0, 0)   # WM_CLOSE
         time.sleep(0.15)
 
 
@@ -1152,17 +665,6 @@ def launch_window(port):
                 copy_png_to_clipboard(path)
                 from src.app_state import _broadcast_to_ai
                 _broadcast_to_ai({"kind": "ui_action", "action": "snip_done", "path": path})
-                # v3.5.150 自动贴图（config snip_auto_pin，设置页开关）：req
-                # 文件直通 uploads 原图（保 alpha，不吃剪贴板时序）+ pin 事件
-                if _cfg_flag("snip_auto_pin"):
-                    try:
-                        with open(os.path.join(os.environ.get("TEMP", "."),
-                                               "fc_pin_req.json"),
-                                  "w", encoding="utf-8") as f:
-                            json.dump({"path": path}, f)
-                        set_pin_event(port)
-                    except Exception:
-                        pass
                 return
             time.sleep(0.3)
 
@@ -1226,7 +728,8 @@ def _parse_hotkey(s):
 
 def set_hotkey(hotkey_str, slot="snip"):
     """热更新键位（v3.5.150 多槽）：'f1'/'ctrl+alt+a'/''（空=注销禁用）。
-    slot：snip=截图（0xFC1）/ pin=贴图（0xFC3）。返回 (ok, err)。"""
+    slot：snip=截图（0xFC1）。v3.5.156：pin 槽（贴图/F3）随功能拆除退役，
+    机制保留供将来扩展。返回 (ok, err)。"""
     u32 = ctypes.windll.user32
     s = str(hotkey_str or "").strip().lower()
     if not s:
@@ -1327,5 +830,4 @@ if __name__ == "__main__":
     elif "--snip-window" in sys.argv:
         i = sys.argv.index("--snip-window")
         port = sys.argv[i + 1] if i + 1 < len(sys.argv) else "80"
-        window_main(port, armed="armed" in sys.argv,
-                    pin_pending="pin" in sys.argv)
+        window_main(port, armed="armed" in sys.argv)

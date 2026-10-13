@@ -535,33 +535,6 @@ def main():
     from src import snip as _snip_mod
     _snip_mod.start_hotkey(_snip_hk, _on_snip_hotkey)
 
-    # v3.5.150 贴图全局热键（Snipaste F3 同款）：读 config pin_hotkey
-    #（默认 f3，空串禁用），注册失败静默。触发 → 常驻截图窗读剪贴板/req
-    # 贴出置顶可缩放小窗；常驻窗死了走冷启动（带 pin 参，首载后贴）。
-    def _on_pin_hotkey():
-        from src import snip as _snip2
-        try:
-            with open(os.path.join(HOME_DIR, "endpoint.json"), encoding="utf-8") as f:
-                port = int((json.load(f) or {}).get("port") or 0)
-        except Exception:
-            return
-        if not port:
-            return
-        if _snip2.snip_window_alive(port):
-            _snip2.set_pin_event(port)
-        else:
-            _snip2._spawn_window(port, armed=False, pin_pending=True)
-
-    try:
-        from src.app_state import CONFIG_FILE as _CF2
-        with open(_CF2, encoding="utf-8") as _f:
-            # v3.5.151 全审F5：get 两参——显式空串（用户点清除=禁用）必须
-            # 保持禁用，不能被 or 回退成默认 f3 抢注全局键；键缺失才给默认
-            _pin_hk = json.load(_f).get("pin_hotkey", "f3")
-    except Exception:
-        _pin_hk = "f3"
-    _snip_mod.start_hotkey(_pin_hk, _on_pin_hotkey, slot="pin")
-
     # Flask 用空闲端口，避免冲突
     import socket
     def free_port():

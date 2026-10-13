@@ -197,16 +197,13 @@ async function _stRenderTermKeysPane(pane) {
   let closeToTray = true;
   let claudeUiMode = 'harness';
   let snipHk = 'ctrl+alt+a';
-  let pinHk = 'f3';
-  let snipAutoPin = false;
+
   try {
     const j = await (await fetch('/api/theme')).json();
     if (j.ok && j.term_keys) tk = j.term_keys;
     if (j.ok) closeToTray = j.close_to_tray !== false;   // 缺省=开（config 旧版无此键）
     if (j.ok && j.claude_ui_mode) claudeUiMode = j.claude_ui_mode;   // Claude 入口分派：harness=界面化 / cli=终端
     if (j.ok && typeof j.snip_hotkey === 'string') snipHk = j.snip_hotkey || '';
-    if (j.ok && typeof j.pin_hotkey === 'string') pinHk = j.pin_hotkey || '';
-    if (j.ok) snipAutoPin = !!j.snip_auto_pin;
   } catch(_) {}
   pane.innerHTML = `
     <div class="dd-body">
@@ -254,17 +251,6 @@ async function _stRenderTermKeysPane(pane) {
                  style="flex:1;font-family:var(--font-mono);padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-input);color:var(--fg);cursor:pointer;">
           <button class="btn ghost" id="snipHkClear" title="清空=禁用全局快捷键">清除</button>
         </div>
-        <div class="dd-row" style="display:flex;gap:8px;margin-top:6px;align-items:center;">
-          <input type="text" id="pinHk" value="${pinHk}" spellcheck="false" readonly
-                 placeholder="点击录制按键…"
-                 style="flex:1;font-family:var(--font-mono);padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-input);color:var(--fg);cursor:pointer;">
-          <button class="btn ghost" id="pinHkClear" title="清空=禁用贴图快捷键">清除</button>
-          <label style="display:flex;align-items:center;gap:4px;white-space:nowrap;cursor:pointer;"
-                 title="截图完成后自动贴出置顶小窗（Snipaste 行为）">
-            <input type="checkbox" id="snipAutoPin"${snipAutoPin ? ' checked' : ''}>自动贴图
-          </label>
-        </div>
-        <div class="dd-sub" style="margin-top:4px;">贴图：截完按此键（或复制图片后按）贴出置顶小窗，拖动移动、滚轮缩放、右键菜单、双击关闭</div>
         <div class="dd-sub" style="margin-top:4px;">点击输入框后直接按想要的组合键即录制并生效（Esc 取消）。功能键 F1–F12 可单键；字母/数字键需带修饰（Ctrl/Alt/Shift/Win）。点「清除」禁用。</div>
       </div>
       <div class="dd-cur" style="margin-top:8px;">
@@ -388,76 +374,6 @@ async function _stRenderTermKeysPane(pane) {
       _hkApply('');                           // 空串=禁用
     };
   }
-  // v3.5.150 贴图快捷键：与截图键同款录制式（抽公共工厂，两框逻辑一致）。
-  // 先 POST 探测注册（被占用/与截图键冲突即报），成功才本地落值。
-  const _pinInput = pane.querySelector('#pinHk');
-  if (_pinInput) {
-    const _pinApply = async (val) => {
-      try {
-        const r = await fetch('/api/theme', {method: 'POST', headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({pin_hotkey: val})});
-        const j = await r.json();
-        if (j.ok) { pinHk = val; showBanner(val ? `贴图快捷键已应用：${val}` : '贴图快捷键已禁用'); }
-        else { showBanner(j.err || '快捷键无效', 3000, true); _pinInput.value = pinHk; }
-      } catch (e) { showBanner('应用失败：' + e, 3000, true); _pinInput.value = pinHk; }
-    };
-    let _rec = false;
-    const _setRec = (on) => {
-      _rec = on;
-      _pinInput.placeholder = on ? '按下组合键…（Esc 取消）' : '点击录制按键…';
-      _pinInput.style.borderColor = on ? 'var(--accent, #4a9eff)' : 'var(--border)';
-    };
-    _pinInput.addEventListener('click', () => {
-      if (_rec) return;
-      _pinInput.value = '';
-      _setRec(true);
-      _pinInput.focus();
-    });
-    _pinInput.addEventListener('keydown', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (e.key === 'Escape') { _pinInput.value = pinHk; _setRec(false); return; }
-      const mod = [];
-      if (e.ctrlKey) mod.push('ctrl');
-      if (e.altKey) mod.push('alt');
-      if (e.shiftKey) mod.push('shift');
-      if (e.metaKey) mod.push('win');
-      const k = (e.key || '').toLowerCase();
-      const isFn = /^f([1-9]|1[0-2])$/.test(k);
-      const isAlnum = /^[a-z0-9]$/.test(k);
-      if (!isFn && !isAlnum) return;
-      if (isAlnum && !mod.length) {
-        _pinInput.value = '';
-        _pinInput.placeholder = '字母/数字需搭配 Ctrl/Alt/Shift/Win…';
-        return;
-      }
-      const combo = mod.concat([k]).join('+');
-      _pinInput.value = combo;
-      _setRec(false);
-      _pinApply(combo);
-    });
-    _pinInput.addEventListener('blur', () => {
-      if (_rec) { _pinInput.value = pinHk; _setRec(false); }
-    });
-    const _pinClear = pane.querySelector('#pinHkClear');
-    if (_pinClear) _pinClear.onclick = () => {
-      _pinInput.value = '';
-      pinHk = '';
-      _setRec(false);
-      _pinApply('');
-    };
-  }
-  // 截图完成后自动贴图（config snip_auto_pin）
-  const _autoPin = pane.querySelector('#snipAutoPin');
-  if (_autoPin) _autoPin.onchange = async () => {
-    try {
-      const r = await fetch('/api/theme', {method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({snip_auto_pin: _autoPin.checked})});
-      const j = await r.json();
-      if (j.ok) showBanner(_autoPin.checked ? '截图完成后自动贴图已开启' : '自动贴图已关闭');
-      else { showBanner(j.err || '设置失败', 3000, true); _autoPin.checked = !_autoPin.checked; }
-    } catch (e) { showBanner('设置失败：' + e, 3000, true); _autoPin.checked = !_autoPin.checked; }
-  };
 }
 
 // ---- Claude 重装子页：重开安装窗 / 修复状态栏 / 离线包目录 ----
