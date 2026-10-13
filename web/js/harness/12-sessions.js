@@ -269,14 +269,24 @@
               try { _hgFlow.querySelectorAll('[data-h-end]').forEach(el => {
                 m = Math.max(m, +(el.dataset.hEnd || 0)); }); } catch (_) {} return m; })();
             const _hasGrow = _HG.histAll.length - 1 > _snapHEnd;
-            // v3.5.193（用户定调「要重渲染的效果+只渲 20 回合」）：有增长
-            // 一律窗口重渲（_histRender 内部 TURN_N=20 窗口，渲染量降 ~96%，
-            // 形态=结构化重渲优于流式）——v3.5.192 增量补尾弃用（保留的是
-            // 流式形态，用户不要）。busy 传 noFinalize 留活组给 phResume 认回
-            // （10-sse:735 同款配套）。无增长快照即最新，什么都不用做。
-            if (_hasGrow) {
-              _histRender(_HG.histAll, _HG.histStart | 0, { noFinalize: !!_HG.busy });
-              if (_HG.busy && typeof phResume === 'function') phResume(true);
+            // v3.5.194（用户实锤「来回切工作时间归 0 一瞬间+体感 2s」）：
+            // busy+有增长 → 增量补尾（renderHistLine 与窗口重渲同渲染器，
+            // 形态一致；不重建活组=秒表 t0 不归 0、无清场白窗、无第 2 遍
+            // fetch）——v3.5.193 的 busy 窗口重渲正是「归 0 瞬间」来源
+            // （重建组 t0 重置）。idle+有增长 → 窗口重渲一次做对（无卡顿
+            // 顾虑，形态最优）。补尾失败兜底窗口重渲。无增长不动作。
+            let _grown = true;
+            if (_HG.busy && _hasGrow) {
+              try { _grown = _histTailGrow(sid); } catch (_) { _grown = false; }
+              if (!_grown) {
+                _histRender(_HG.histAll, _HG.histStart | 0, { noFinalize: true });
+                if (typeof phResume === 'function') phResume(true);
+              }
+              setTimeout(() => { if (_HG.sid === sid)
+                _hgCoverageAudit(sid, _HG.histAll ? _HG.histAll.length : 0,
+                  'snapshot-hit', { snapshotBase: true }); }, 2000);
+            } else if (!_HG.busy && _hasGrow) {
+              _histRender(_HG.histAll, _HG.histStart | 0);
               setTimeout(() => { if (_HG.sid === sid)
                 _hgCoverageAudit(sid, _HG.histAll.length, 'snapshot-hit-refresh',
                   { snapshotBase: true }); }, 2000);
