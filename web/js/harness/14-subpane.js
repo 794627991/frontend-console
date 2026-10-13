@@ -88,7 +88,7 @@
       // v3.4.43：collab 档案（SendMessage 协作包装）归 C 区转交线展示，
       // 不进子代理目录（无转写可回放，点开必「未找到转写」空 tab）
       if (!a || a.replay || a.collab) continue;
-      // v3.5.162（用户拍板「task和后台一样退出目录，task不体现在目录里面」）：
+      // v3.5.163（用户拍板「task和后台一样退出目录，task不体现在目录里面」）：
       // Task 类型条目退全——目录只留具名角色（designer/reviewer/通用子代理
       // 等）；Task 的查看入口在消息流协作段头▣回放/胶囊/转交线（v3.5.160
       // 必达体系），总览在顶部「子代理执行中」状态胶囊
@@ -99,7 +99,7 @@
     for (const a of ((_HG.dyn && _HG.dyn.agentsRpl) || [])) {
       if (a.desc && _runDescs.has(a.desc)) continue;   // v3.4.56:同名回放条目让位运行中
       if ((a.doneAt || a.t0 || 0) < _dayStart) continue;   // v3.5.147：当天闸
-      if ((a.type || '') === 'Task') continue;   // v3.5.162：Task 退目录（同上）
+      if ((a.type || '') === 'Task') continue;   // v3.5.163：Task 退目录（同上）
       // rid 补发（与 _dynAgents 同款持久发号——条目点击按 rid 回查存档）
       if (!a.rid) a.rid = 'rpl' + ((_HG.rplSeq = (_HG.rplSeq || 0) + 1));
       rows.push(Object.assign({ tid: a.rid, rpl: true }, a));

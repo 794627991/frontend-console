@@ -8,7 +8,7 @@
   // （自愈是否触发用户直接看得到，不再依赖控制台；自愈频发=根因仍在的信号）
   function _hgCoverageAudit(sid, totalLines, tag, opts) {
     if (_HG.sid !== sid || !totalLines) return;
-    // v3.5.163（轻审 F1/F2 回修，取代 v3.5.137 的一刀切）：误报机制只在
+    // v3.5.164（轻审 F1/F2 回修，取代 v3.5.137 的一刀切）：误报机制只在
     // 「快照基准」路径成立——snapshot-hit/sse-snapshot 的 totalLines 是离开
     // 会话瞬间的快照行数，busy 会话离开后持续产出，2s 审计时 live 增量使
     // histAll 恒领先 DOM 账目十行级 → gap 必超阈误触发全量重渲（trace 实测
@@ -27,7 +27,7 @@
     } catch (_) { return; }
     const _gap = (totalLines - 1) - _hEnd;
     // v3.4.68R4：阈值 5→2——实测「当前轮恰好 4 行渲染失败」时 gap=4 被旧阈值
-    // 漏过（banner 不弹+内容缺，双重失守的盲区）。v3.5.163：非快照基准路径
+    // 漏过（banner 不弹+内容缺，双重失守的盲区）。v3.5.164：非快照基准路径
     // 恒用 2（R4 盲区不重开）；快照基准路径 idle 时 gap≈0 本就不触发，阈值
     // 比例化只为防御性容差，且忙时已整体跳过
     const _thr = _snapBase ? Math.max(3, Math.ceil(totalLines * 0.02)) : 2;
@@ -259,7 +259,7 @@
             // 增量落定再审计，仍缺口即重渲自愈）。R5：busy 会话无条件 resync
             setTimeout(() => _hgCoverageAudit(sid, _HG.histAll ? _HG.histAll.length : 0,
               'snapshot-hit', { snapshotBase: true }), 2000);
-            // v3.5.163（轻审 F3）：无条件排程——busy 真值由 _hgBusyResync 回调内
+            // v3.5.164（轻审 F3）：无条件排程——busy 真值由 _hgBusyResync 回调内
             // 自检（_histFetch 与 eventsPoll/init#2 的回填有竞速，排程时判会漏）
             _hgBusyResync(sid, 900);
             // v2.43.2（R2-缺口A）：懒行补填并入主路——旧实现另起 fetch 先于
