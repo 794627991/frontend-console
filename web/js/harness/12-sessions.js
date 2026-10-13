@@ -175,7 +175,11 @@
     // 全量渲染后没有扩段机器，残缺 DOM 会让上半段历史翻不到
     if (c && c.html && c.html.indexOf('h-turn-body') === -1
         && c.html.indexOf('h-grp') !== -1) c = null;
-    if (c && typeof c.histStart === 'number' && c.histStart > 0) c = null;
+    // v3.5.191r2：窗口化渲染（v3.5.191）下窗口快照（histStart>0）是合法
+    // 完整形态——「上半段历史」入口是归档条进只读（不再靠上滑），原判定
+    // 前提（恒全量+上滑扩段）已退役。保留它会打死快照秒开：每次切回都弃
+    // 快照走全量重渲（用户实锤「静态来回切都不是秒开了」）
+    // if (c && typeof c.histStart === 'number' && c.histStart > 0) c = null;
     // v3.4.60：stale 哨兵=已确认账目漂移的降级快照——恢复它=先渲一份注定
     // 错位的 DOM 再等异步重渲（消费点在 _histFetch.then 里来晚了）。直接
     // 弃快照走 transcript 全量重渲（与 histFp 比对不符分支同路）。
