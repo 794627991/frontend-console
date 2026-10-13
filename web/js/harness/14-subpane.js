@@ -838,7 +838,12 @@
     }
     agentId = agentId || a.taskId || a.agentId || '';
     if (!agentId) { showBanner('该子代理没有 agentId 记录，无法回放', 2600); return; }
-    _subOpen(tid, type, desc, true);
+    // v3.5.189（用户实锤「SendMessage 明明活着却显示成了回放」）：tab 态按
+    // 档案生死分——活代理=实况 tab（原名+绿点+秒表，镜像续流跟随当前环节），
+    // 已结束=回放 tab（置灰徽章）。回放拉底机制不变（运行中也拉全量打底，
+    // fetch 期挡增量/完成放行既有），仅 tab 态不再误标
+    const _alive = a && !a.done;
+    _subOpen(tid, type, desc, !_alive);
     const sc = _sub.tabs[tid] && _sub.tabs[tid].sc;
     if (!sc) return;
     if (sc.dataset.replayed === agentId && !force) { _sub.manual = true; return; }   // 已拉过
