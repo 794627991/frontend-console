@@ -808,8 +808,10 @@
       _subReplay(tid, type, desc, agentId, true);
     }, 5000);
   }
-  function _subReplay(tid, type, desc, agentId, force) {
+  function _subReplay(tid, type, desc, agentId, force, alive) {
     if (!_subPaneEl) return;
+    const tid0 = tid;     // v3.5.191r1：归一前键留存——解析漏斗回填档案落在
+                          // 包装键，归一键可能无档案，双查防活代理误判死
     tid = _subTid(tid);   // v3.4：包装 id/真实 agentId 均归一到原子代理 tab 键
     const a = (_HG.agents || {})[tid] || {};
     // v2.57：协作档案有 taskId（=真实 agentId，v2.52 修复转写源后可拉全量）
@@ -842,7 +844,8 @@
     // 档案生死分——活代理=实况 tab（原名+绿点+秒表，镜像续流跟随当前环节），
     // 已结束=回放 tab（置灰徽章）。回放拉底机制不变（运行中也拉全量打底，
     // fetch 期挡增量/完成放行既有），仅 tab 态不再误标
-    const _alive = a && !a.done;
+    const _a2 = a.done === undefined ? ((_HG.agents || {})[tid0] || {}) : a;
+    const _alive = (alive === true) || (alive !== false && _a2 && !_a2.done);
     _subOpen(tid, type, desc, !_alive);
     const sc = _sub.tabs[tid] && _sub.tabs[tid].sc;
     if (!sc) return;

@@ -220,7 +220,7 @@
                                   agentId: j.agentId, taskId: j.agentId };
               _HG.subTidRes = _HG.subTidRes || {};
               _HG.subTidRes[tid] = { agentId: j.agentId };
-              _subReplay(tid, j.type || _uType, j.desc || _uDesc, j.agentId, true);
+              _subReplay(tid, j.type || _uType, j.desc || _uDesc, j.agentId, true, true);
             } else if (j && j.kind === 'task') {
               showBanner('这是后台命令任务（Bash 后台执行），没有子代理转写', 4000);
             } else {
@@ -278,7 +278,7 @@
                 taskId: j.agentId };
               _HG.subTidRes = _HG.subTidRes || {};
               _HG.subTidRes[tid] = { agentId: j.agentId, type: j.type || 'Task', desc: j.desc || '' };
-              _subReplay(tid, j.type || 'Task', j.desc || '', j.agentId, true);
+              _subReplay(tid, j.type || 'Task', j.desc || '', j.agentId, true, true);
             } else if (j.kind === 'task') {
               _fallbackDir('这是后台命令任务（Bash 后台执行），没有子代理转写——已打开子智能体目录');
             } else {

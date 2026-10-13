@@ -2032,16 +2032,9 @@ function buildClaudeHarnessTab(opts = {}) {
     const rail = _hgRailEl;
     if (!rail) return;
     const items = [];
-    const all = _HG.histAll;
-    // ① 未渲染区：histAll 里 histStart 之前的 user 行（快照恢复态 histAll
-    // 缺失时该区为空——轨只含已渲染回合，首次扩段后补全）
-    if (all && _HG.histStart > 0) {
-      for (let i = 0; i < _HG.histStart; i++) {
-        const l = all[i];
-        if (l && l.role === 'user' && String(l.text || '').trim())
-          items.push({ hi: i, el: null, txt: String(l.text).replace(/\s+/g, ' ').trim() });
-      }
-    }
+    // v3.5.191r1（用户实锤「导航轨乱」）：v3.5.191 渲染窗口化后 histStart>0
+    // 是常态——原①区把窗口外全部回合列成无 DOM 死刻度（165 枚点了没反应），
+    // 轨被灌爆。窗口外回合的入口是归档条→只读模式，轨只显示 DOM 在场的回合。
     // ② 已渲染区：flow 里的 user 气泡（盖章或快照旧 DOM 都认）
     _hgFlow.querySelectorAll('.h-msg.user').forEach(el => {
       items.push({ hi: +(el.dataset.turnHi || -1), el,
