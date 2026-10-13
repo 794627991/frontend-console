@@ -166,7 +166,11 @@ class HarnessSession:
                 "inbox": _inbox,
                 "gen": _gen,
                 # v3.5.98：会话方案名随元数据落盘（GC/重启后拦截判定不失忆）
-                "scheme": self.scheme}
+                "scheme": self.scheme,
+                # v3.5.154：大回合保活标记随元数据落盘——进程死亡（任务/回传
+                # 全丢）后，重启的新进程据此识别「上一回合的 turn_hold 未收尾」，
+                # 切回会话/重连订阅时补发 turn_complete 解前端挂死
+                "held": bool(self._held)}
 
     def sync_meta(self):
         if getattr(self, "hidden", False):
@@ -1245,31 +1249,33 @@ class HarnessSession:
     def stale_hold_repair(self):
         """v3.5.154（用户实锤「孤儿 SendMessage 导致大回合结束不了」）：跨进程
         残留 hold 对账修复。机理：上一进程在后台任务（如续派 reviewer）在飞时
-        emit 过 turn_hold，随后进程死亡（任务与回传全丢）；重启后新进程内存
-        全空（busy/_held/_turn_id 均 falsy=后端真相是无回合在跑），但事件流
-        尾部的 turn_hold 被前端重放消费 → hold 永久挂死（胶囊计时/排队提示/
-        孤儿 SendMessage 转交线全不消失），后端 _BG_IDLE_RELEASE 也救不了
-        （新进程 _held=false，monitor 判定不触发）。切回会话/重连订阅时对账：
-        后端无回合在跑 且 事件尾部存在未配对 turn_hold → 补发一条真实
-        turn_complete（落 store，seq 正常递增），前端收尾链（含 peer 转交线
-        核实）自然走完。幂等：修复后尾部变 turn_complete，不再触发。"""
-        if self.busy or self._turn_id or self._held:
-            return False
+        emit 过 turn_hold 并把 held 标记落 meta（to_meta "held":true），随后
+        进程死亡（任务与回传全丢）；重启后新进程内存全空（busy/_held/_turn_id
+        均 falsy=后端真相是无回合在跑），事件 store 纯内存也拿不到旧 turn_hold
+        ——前端以 resume 重连拿空重放，永远等不到 turn_complete → hold 永久
+        挂死（胶囊计时/排队提示/孤儿 SendMessage 转交线全不消失），后端
+        _BG_IDLE_RELEASE 也救不了（新进程 _held=false，monitor 判定不触发）。
+        切回会话/重连订阅时对账：后端无回合在跑 且 meta 里上一进程遗留
+        held=true → 补发一条真实 turn_complete（落 store，seq 正常递增）并清
+        meta 标记，前端收尾链（含 peer 转交线核实）自然走完。幂等：修复后
+        meta.held=false，不再触发。持久真源在 meta 不在内存事件流（store 纯
+        内存，跨进程无证据——v3.5.154 轻审问题1 实证）。"""
+        with self._busy_lock:
+            if self.busy or self._turn_id or self._held:
+                return False   # 真实回合在跑/收尾竞态——绝不注入
+            try:
+                with _meta_lock:
+                    _meta_load()
+                    entry = _meta.get(self.sid) or {}
+                if not entry.get("held"):
+                    return False
+                self.emit({"kind": "turn_complete", "text": ""})
+            except Exception:
+                return False
         try:
-            tail = self.get_events_after(max(0, getattr(self, "_seq", 0) - 40),
-                                         limit=50)
+            self.sync_meta()   # held 标记清除（to_meta 持 _held=False）
         except Exception:
-            return False
-        unpaired = False
-        for ev in tail or []:
-            kind = (ev or {}).get("kind")
-            if kind == "turn_hold":
-                unpaired = True
-            elif kind == "turn_complete":
-                unpaired = False
-        if not unpaired:
-            return False
-        self.emit({"kind": "turn_complete", "text": ""})
+            pass
         return True
 
     def _check_peer_lines(self):
@@ -1520,6 +1526,12 @@ class HarnessSession:
                     with self._busy_lock:
                         self.busy = True   # P3 同临界：busy 维持 True
                     self.emit({"kind": "turn_hold", "n": len(self._bg_tasks)})
+                    # v3.5.154：held 标记随 meta 落盘（进程死亡后重启的新进程
+                    # 据此识别未收尾的 turn_hold——stale_hold_repair 持久真源）
+                    try:
+                        self.sync_meta()
+                    except Exception:
+                        pass
                 self.emit({"kind": "event", "data": o})
                 # v2.34：result 即回合终点——结算审计（light 形态违规兜底，
                 # 事件已 emit，前端先收 result 收尾再收审计警示，顺序自然）
@@ -1534,6 +1546,11 @@ class HarnessSession:
                     self.emit({"kind": "turn_complete"})
                     with self._busy_lock:
                         self._held = False   # v3.5.124（全审P2）：真收尾清 hold——防 120s 后幽灵二次 settle/turn_end
+                    # v3.5.154：held 标记随 meta 清除（与 turn_hold 落盘对偶）
+                    try:
+                        self.sync_meta()
+                    except Exception:
+                        pass
                     try:
                         self._audit_settle("result")
                     except Exception:

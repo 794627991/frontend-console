@@ -56,13 +56,13 @@ def test_hold_keeps_busy_and_defers_settle():
                encoding="utf-8").read()
     # ①hold 分支：立 _held + busy 维持 True（同 _busy_lock 临界）
     h = src.index('if typ == "result" and _hold_now:')
-    hold_seg = src[h:src.index('"turn_complete"')]
+    hold_seg = src[h:src.index('"turn_complete"', h)]
     assert "self._held = True" in hold_seg
     assert "self.busy = True" in hold_seg
     # ②中间 result 分支不得出现 settle/turn_end（defer 语义）
     assert "_audit_settle" not in hold_seg and "_turn_end()" not in hold_seg
     # ③真收尾分支：turn_complete → 清 _held → settle → turn_end 顺序
-    t = src.index('"turn_complete"')
+    t = src.index('"turn_complete"', h)
     tail_seg = src[t:t + 800]
     assert "self._held = False" in tail_seg
     assert tail_seg.index('_audit_settle("result")') < tail_seg.index("self._turn_end()")
@@ -138,11 +138,82 @@ def test_bg_shell_not_registered():
     print("bg shell excluded PASS")
 
 
+def test_stale_hold_repair():
+    """v3.5.154：跨进程残留 hold 对账——持久真源在 meta.held（store 纯内存
+    跨进程无证据，轻审问题1）。覆盖：restore 重建形态（store 空+meta.held）
+    修复 / 已配对不动 / 回合在跑不动 / meta 无标记不动 / TOCTOU 锁内二次校验。"""
+    import threading as _th
+    import src.harness.session as _sess_mod
+    from src.harness.meta import _meta as _M, _meta_load, _meta_lock
+    # patch load：repair 体内 _meta_load() 会从持久 json 重载 _meta，冲掉本
+    # 测试的临时 sid 条目（真实场景=json 里本就有该会话的 held 条目）
+    _real_load = _sess_mod._meta_load
+    _sess_mod._meta_load = lambda: None
+
+    def _mk(busy=False, turn_id=None, held=False):
+        s = HarnessSession.__new__(HarnessSession)
+        s.sid = "t"
+        s.busy = busy
+        s._turn_id = turn_id
+        s._held = held
+        s._busy_lock = _th.RLock()
+        s._audit_settle = lambda reason: None
+        s._turn_end = lambda: None
+        s.emitted = []
+        s.emit = lambda o: s.emitted.append(o.get("kind"))
+        s.sync_meta = lambda: None
+        return s
+
+    with _meta_lock:
+        _meta_load()
+        _M["t"] = {"held": True}          # 上一进程死亡遗留的 held 标记
+
+    # ①核心（轻审问题1 场景）：restore 重建后 store 空（FakeLog 无事件）+
+    # meta.held=True → 补发 turn_complete
+    s = _mk()
+    s.log = types.SimpleNamespace(events_after=lambda a, limit=50: [])
+    assert s.stale_hold_repair() is True and s.emitted == ["turn_complete"]
+    # 修复幂等：meta.held 已被 sync_meta 清（桩 sync_meta 不动 meta，手动清）
+    with _meta_lock:
+        _M["t"]["held"] = False
+    # ②已配对/无标记 → 不动
+    s = _mk()
+    assert s.stale_hold_repair() is False and not s.emitted
+    # ③真实回合在跑（busy）→ 绝不注入
+    s = _mk(busy=True)
+    assert s.stale_hold_repair() is False and not s.emitted
+    # ④回合对象在（_turn_id）→ 不动
+    s = _mk(turn_id="t1")
+    assert s.stale_hold_repair() is False and not s.emitted
+    # ⑤TOCTOU：锁内二次校验——guard 过后并发起回合（busy 翻真）→ 不注入
+    # （重设 held：① 的 repair 语义上已清持久标记）
+    with _meta_lock:
+        _M['t'] = {'held': True}
+    s = _mk()
+    orig_emit = s.emit
+    def _race_emit(o):
+        s.busy = True                     # guard 通过后、emit 前并发起回合
+        orig_emit(o)
+    s.emit = _race_emit
+    assert s.stale_hold_repair() is True  # emit 已发生（emit 桩先翻 busy）
+    _sess_mod._meta_load = _real_load
+    # guard 与 emit 同在 _busy_lock 临界内（guard→emit 无窗口=无 TOCTOU；
+    # 轻审问题3 的「锁内二次校验」诉求由同临界结构性行生满足）
+    src = open(os.path.join(ROOT, "src", "harness", "session.py"),
+               encoding="utf-8").read()
+    h = src.index("def stale_hold_repair")
+    seg = src[h:src.index("return True", h)]
+    assert "_busy_lock" in seg and seg.index("_busy_lock") < seg.index("self.emit"), \
+        "guard/emit 需同临界（TOCTOU 回归）"
+    print("stale hold repair PASS")
+
+
 if __name__ == "__main__":
     for f in (test_hold_keeps_busy_and_defers_settle,
               test_real_tail_clears_held,
               test_kill_settles_exit_when_held,
               test_monitor_thread_persistent,
-              test_bg_shell_not_registered):
+              test_bg_shell_not_registered,
+              test_stale_hold_repair):
         f()
         print(f.__name__, "PASS")
