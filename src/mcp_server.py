@@ -47,6 +47,17 @@ except Exception:
 import json
 import time
 import urllib.request
+try:                   # v3.5.187 DevTools 五件套（CDP 直连，懒加载 websocket）
+    from src import devtools_cdp
+    from src.devtools_cdp import DevtoolsError
+except Exception:      # 独立跑（python src/mcp_server.py）兜底 src 在 path
+    try:
+        import devtools_cdp
+        from devtools_cdp import DevtoolsError
+    except Exception:
+        devtools_cdp = None
+        class DevtoolsError(Exception):
+            pass
 import urllib.error
 import urllib.parse
 import subprocess
@@ -531,6 +542,212 @@ def tool_tftp_set_dir(url, root_dir):
 # ---- MCP stdio 协议 ----
 # 用最小化 JSON-RPC 实现，避免依赖 mcp SDK（纯标准库即可被 Claude Code 调用）。
 # MCP 协议: https://spec.modelcontextprotocol.io/
+# ---- DevTools（CDP 直连 WebView2，v3.5.187 designer 方案）----
+# 调试专用：CDP 端口仅 run_debug.bat（HARNESS_DEBUG_WEB=1）开启（P0b 用户拍板）。
+# 无状态用完即弃：每次调用现查 target→新建 WS→执行→close，页面刷新自愈。
+
+
+def _dt_wrap(fn):
+    """统一错误包装：DevtoolsError 族 → 中文三段式文案（类别/详情/建议）。"""
+    def wrap(url, args):
+        try:
+            return fn(url, args)
+        except DevtoolsError as e:
+            return "失败：%s" % e
+        except Exception as e:
+            return "失败：未知错误 %r" % e
+    return wrap
+
+
+@_dt_wrap
+def tool_devtools_eval(url, args):
+    expr = str(args.get("expression") or "")
+    if not expr:
+        return "失败：缺少必填参数 'expression'"
+    max_len = max(500, min(20000, int(args.get("max_len") or 4000)))
+    return "OK " + devtools_cdp.evaluate(expr, max_len=max_len)
+
+
+@_dt_wrap
+def tool_devtools_dom(url, args):
+    sel = str(args.get("selector") or "")
+    if not sel:
+        return "失败：缺少必填参数 'selector'"
+    limit = max(1, min(50, int(args.get("limit") or 20)))
+    js = (
+        "(function(){var els=document.querySelectorAll(%s);"
+        "var items=[];for(var i=0;i<Math.min(els.length,%d);i++){"
+        "var e=els[i],r=e.getBoundingClientRect();"
+        "items.push({tag:e.tagName,id:e.id||'',cls:String(e.className||'').slice(0,100),"
+        "text:(e.textContent||'').replace(/\\s+/g,' ').trim().slice(0,150),"
+        "w:Math.round(r.width),h:Math.round(r.height),"
+        "vis:r.width>0&&r.height>0});}"
+        "return JSON.stringify({url:location.pathname,title:document.title,"
+        "ready:document.readyState,count:els.length,items:items});})()"
+        % (json.dumps(sel), limit))
+    out = devtools_cdp.evaluate(js, max_len=20000)
+    if out.startswith("OK "):
+        out = out[3:]
+    try:
+        d = json.loads(out)
+    except Exception:
+        return out
+    lines = ["页面: %s %s [%s]" % (d.get("title", ""), d.get("url", ""), d.get("ready", "")),
+             "命中 %s 个" % d.get("count", 0)]
+    for it in d.get("items", []):
+        if it.get("vis"):
+            sz = " [%sx%s]" % (it.get("w"), it.get("h"))
+        else:
+            sz = " [隐藏]"
+        lines.append("<%s id=%s class=%s> %s%s" % (
+            it.get("tag"), it.get("id") or "-", (it.get("cls") or "-")[:40],
+            (it.get("text") or "")[:80], sz))
+    if d.get("count", 0) > len(d.get("items", [])):
+        lines.append("（仅列前 %d 个）" % len(d.get("items", [])))
+    return "\n".join(lines)
+
+
+@_dt_wrap
+def tool_devtools_console(url, args):
+    tail = max(1, min(200, int(args.get("tail") or 50)))
+    level = args.get("level") or "all"
+    live = max(0, min(30, float(args.get("live_seconds") or 0)))
+    port, tid, _o = devtools_cdp.page_target_origin_probe()
+    lines = []
+    with devtools_cdp.CdpSession(port, tid) as cs:
+        # 缓冲（hook 随页面启动累计；旧前端无缓冲→降级提示）
+        probe = cs.send("Runtime.evaluate", {"expression":
+            "window.__consoleBuf ? JSON.stringify(window.__consoleBuf.slice(-%d)) : 'undefined'" % tail})
+        raw = (probe.get("result") or {}).get("value")
+        if raw == "undefined" or raw is None:
+            lines.append("（前端无 console 缓冲——旧版本页面，仅实时模式可用）")
+        else:
+            try:
+                items = json.loads(raw)
+            except Exception:
+                items = []
+            lines.append("缓冲起点=页面最近一次加载，共取 %d 条" % len(items))
+            for it in items:
+                if level == "error" and it.get("lv") != "error":
+                    continue
+                if level == "warn" and it.get("lv") not in ("warn", "error"):
+                    continue
+                t = time.strftime("%H:%M:%S", time.localtime((it.get("t") or 0) / 1000))
+                lines.append("[%s][%s] %s" % (t, it.get("lv"), (it.get("text") or "")[:300]))
+        # 实时窗口（可选）
+        if live > 0:
+            cs.send("Runtime.enable")
+            cs.send("Log.enable")
+            live_events = []
+
+            def _on(msg):
+                m = msg.get("method", "")
+                pm = msg.get("params", {})
+                if m == "Runtime.consoleAPICalled":
+                    txt = " ".join(str(a.get("value", a.get("description", "")))
+                                   for a in pm.get("args", []))
+                    live_events.append("[%s] %s" % (pm.get("type", "log"), txt[:300]))
+                elif m == "Log.entryAdded":
+                    en = pm.get("entry", {})
+                    live_events.append("[%s] %s" % (en.get("level", "info"),
+                                                    (en.get("text") or "")[:300]))
+            cs.collect(live, _on)
+            if live_events:
+                lines.append("—— 实时窗口 %ds 收到 %d 条 ——" % (int(live), len(live_events)))
+                lines.extend(live_events[-30:])
+            else:
+                lines.append("—— 实时窗口 %ds 无新输出 ——" % int(live))
+    n_err = sum(1 for x in lines if "[error]" in x)
+    n_warn = sum(1 for x in lines if "[warn]" in x)
+    lines.append("统计: error %d, warn %d" % (n_err, n_warn))
+    return "\n".join(lines[:80])
+
+
+@_dt_wrap
+def tool_devtools_screenshot(url, args):
+    import base64
+    port, tid, _o = devtools_cdp.page_target_origin_probe()
+    with devtools_cdp.CdpSession(port, tid) as cs:
+        cs.send("Page.enable")
+        res = cs.send("Page.captureScreenshot", {"format": "png"}, timeout=15)
+    data = base64.b64decode(res.get("data", ""))
+    d = os.path.join(os.path.expanduser("~"), ".serialconsole_pro", "devtools")
+    os.makedirs(d, exist_ok=True)
+    fp = os.path.join(d, time.strftime("shot_%Y%m%d_%H%M%S")
+                      + "_%03d.png" % (int(time.time() * 1000) % 1000))
+    with open(fp, "wb") as f:
+        f.write(data)
+    return ("已保存: %s (%.1f KB)\n用 Read 工具查看（图像）。"
+            "注意：截图含用户真实数据，转述时注意敏感信息。" % (fp, len(data) / 1024))
+
+
+@_dt_wrap
+def tool_devtools_network(url, args):
+    seconds = max(1, min(30, float(args.get("seconds") or 5)))
+    flt = str(args.get("filter") or "")
+    port, tid, _o = devtools_cdp.page_target_origin_probe()
+    reqs = {}          # requestId → 聚合 dict
+    order = []
+    with devtools_cdp.CdpSession(port, tid) as cs:
+        cs.send("Network.enable")
+
+        def _on(msg):
+            m = msg.get("method", "")
+            pm = msg.get("params", {})
+            rid = pm.get("requestId", "")
+            if m == "Network.requestWillBeSent":
+                r = pm.get("request", {})
+                reqs[rid] = {"url": r.get("url", ""), "method": r.get("method", ""),
+                             "type": pm.get("type", ""), "status": None,
+                             "size": None, "done": False}
+                order.append(rid)
+            elif m == "Network.responseReceived" and rid in reqs:
+                resp = pm.get("response", {})
+                reqs[rid]["status"] = resp.get("status")
+                reqs[rid]["type"] = pm.get("type", "") or reqs[rid]["type"]
+            elif m == "Network.loadingFinished" and rid in reqs:
+                reqs[rid]["size"] = pm.get("encodedDataLength")
+                reqs[rid]["done"] = True
+            elif m == "Network.loadingFailed" and rid in reqs:
+                reqs[rid]["done"] = True
+                reqs[rid]["status"] = "FAIL:" + pm.get("errorText", "err")
+        cs.collect(seconds, _on)
+    rows = []
+    seen = set()
+    for rid in order:
+        if rid in seen:
+            continue
+        seen.add(rid)
+        r = reqs[rid]
+        u = r["url"]
+        if flt and flt not in u:
+            continue
+        rows.append((rid, r, u))
+    def _is_fail(r):
+        return str(r.get("status", "")).startswith("FAIL")
+    def _is_bad(r):
+        return isinstance(r.get("status"), int) and r["status"] >= 400
+    fail = [(k, r, u) for k, r, u in rows if _is_fail(r)]
+    bad = [(k, r, u) for k, r, u in rows if _is_bad(r)]
+    lines = ["窗口 %ds，共 %d 请求 | 失败 %d | 4xx/5xx %d" % (
+        int(seconds), len(rows), len(fail), len(bad))]
+    for _k, r, u in (fail + bad)[:15]:
+        lines.append("  !! %s %s" % (r.get("status"), u[:120]))
+    bad_keys = {k for k, _r, _u in fail + bad}
+    body = [(k, r, u) for k, r, u in rows if k not in bad_keys][-40:]
+    for _k, r, u in body:
+        st = r.get("status")
+        if not r.get("done"):
+            st = "[stream]"
+        elif not st:
+            st = "?"
+        sz = ("%dk" % (r["size"] // 1024)) if r.get("size") else ""
+        lines.append("%s %s %s %s %s" % (st, r["method"], u[:120], r.get("type", ""), sz))
+    if len(body) < len([1 for k, r, u in rows if k not in bad_keys]):
+        lines.append("（更早的 %d 条略）" % (len(rows) - len(bad_keys) - len(body)))
+    return "\n".join(lines)
+
+
 _TOOLS = [
     {
         "name": "observe",
@@ -735,6 +952,58 @@ _TOOLS = [
             "required": ["root_dir"],
         },
     },
+    {
+        "name": "devtools_eval",
+        "description": "DevTools：在工具真实页面执行任意 JS 表达式（支持 await/Promise），返回 JSON 化结果。诊断万能底座——可查 DOM/状态/调用后端 API。警告：可改变页面状态与发起真实操作（含发串口命令），慎做破坏性操作；页面刷新即复位。CDP 仅调试模式（run_debug.bat）可用。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "expression": {"type": "string", "description": "JS 表达式（支持 await）"},
+                "max_len": {"type": "integer", "default": 4000, "description": "返回截断上限字符"},
+            },
+            "required": ["expression"],
+        },
+    },
+    {
+        "name": "devtools_dom",
+        "description": "DevTools：按 CSS 选择器查询页面元素（标签/id/class/文本/尺寸/可见性），附页面标题与 readyState。用于核对 DOM 结构与定位元素。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "selector": {"type": "string", "description": "CSS 选择器"},
+                "limit": {"type": "integer", "default": 20, "description": "最多列出元素数（≤50）"},
+            },
+            "required": ["selector"],
+        },
+    },
+    {
+        "name": "devtools_console",
+        "description": "DevTools：读页面 console 历史缓冲（含未捕获异常/unhandledrejection，环形 200 条，随页面加载起点）。可加 live_seconds 实时订阅窗口。报错定位首选。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "tail": {"type": "integer", "default": 50, "description": "取最近 N 条"},
+                "level": {"type": "string", "enum": ["all", "error", "warn"], "default": "all"},
+                "live_seconds": {"type": "number", "default": 0, "description": ">0 时追加实时订阅窗口（秒，≤30）"},
+            },
+        },
+    },
+    {
+        "name": "devtools_screenshot",
+        "description": "DevTools：截取工具页面当前画面，保存 PNG 到 ~/.serialconsole_pro/devtools/ 并返回绝对路径（用 Read 查看）。截图含用户真实数据，注意敏感信息。",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "devtools_network",
+        "description": "DevTools：订阅 N 秒网络请求窗口并汇总（状态/方法/URL/类型/大小；失败与 4xx/5xx 全列，其余按序最多 40 行，不返回 body）。先用 devtools_eval 触发动作再开窗口，或窗口期内让用户操作。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "seconds": {"type": "number", "default": 5, "description": "监听窗口秒数（1-30）"},
+                "filter": {"type": "string", "description": "URL 子串过滤（可选）"},
+            },
+        },
+    },
 ]
 
 
@@ -783,6 +1052,16 @@ def _dispatch(url, name, args):
         return tool_tftp_stop(url)
     if name == "tftp_set_dir":
         return tool_tftp_set_dir(url, need("root_dir"))
+    if name == "devtools_eval":
+        return tool_devtools_eval(url, args)
+    if name == "devtools_dom":
+        return tool_devtools_dom(url, args)
+    if name == "devtools_console":
+        return tool_devtools_console(url, args)
+    if name == "devtools_screenshot":
+        return tool_devtools_screenshot(url, args)
+    if name == "devtools_network":
+        return tool_devtools_network(url, args)
     return f"未知工具: {name}"
 
 

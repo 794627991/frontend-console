@@ -2,6 +2,40 @@
 <html lang="zh-CN">
 <head>
 <script>window._HG_VER='v__HG_VER__';console.log('[harness] boot '+window._HG_VER);</script>
+<script>
+/* v3.5.187 DevTools console 环形缓冲 hook（designer 方案 5.3）：
+   供 MCP devtools_console 读取历史 console/error——head 内联早于一切
+   脚本（vendor 报错也收）；cap 200 环形；刷新即重装清空 */
+(function () {
+  var buf = [], CAP = 200, inHook = false;
+  function fmt(a) {
+    var out = [];
+    for (var i = 0; i < a.length; i++) {
+      var v = a[i];
+      try { out.push(typeof v === 'string' ? v : JSON.stringify(v)); }
+      catch (_) { out.push(String(v)); }
+    }
+    return out.join(' ').slice(0, 400);
+  }
+  function rec(lv, text) {
+    if (inHook) return;
+    inHook = true;
+    try { buf.push({ t: Date.now(), lv: lv, text: text }); if (buf.length > CAP) buf.shift(); }
+    finally { inHook = false; }
+  }
+  ['log', 'info', 'warn', 'error', 'debug'].forEach(function (lv) {
+    var orig = console[lv] ? console[lv].bind(console) : function () {};
+    console[lv] = function () { orig.apply(null, arguments); rec(lv, fmt(arguments)); };
+  });
+  addEventListener('error', function (e) {
+    rec('error', (e.message || 'error') + ' @ ' + (e.filename || '') + ':' + e.lineno + ':' + e.colno);
+  });
+  addEventListener('unhandledrejection', function (e) {
+    rec('error', 'unhandledrejection: ' + ((e.reason && (e.reason.stack || e.reason.message)) || String(e.reason)));
+  });
+  Object.defineProperty(window, '__consoleBuf', { get: function () { return buf; } });
+})();
+</script>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>前端控制台</title>
