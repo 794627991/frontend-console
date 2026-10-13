@@ -5,29 +5,18 @@
     // 回放据此把未回传卡复活为「识图中」（run 态+续表），不再误判死案
     _HG.histBusy = !!(opt && opt.noFinalize);
     _HG.lastTs = 0;   // v2.24.5：重建期时间条从零起算（第一条 user 带时间）
-    // v3.5.176（用户定调「只渲染最近 20 回合，超出的走只读归档；切会话不能
-    // 卡」）：渲染窗口=最近 TURN_N 个回合（user 行为界数 20 个），窗口起点
-    // 天然对齐回合头；超出部分走既有只读归档（_trimOldTurns 裁剪 + 归档条
-    // 点击进只读，均既有机制零新增）。取代 v3.2.12 恒全量——千行会话 2.1 万
-    // 次 ParseHTML 切会话秒级卡（trace 实锤），20 回合窗口渲染量降 ~96%。
-    // v3.5.170 首试失败根因（capStart 定义误删→引用错乱）本次以保留 capStart
-    // 语义规避；无上滑监听、无加载条（v3.5.137/170 的过度设计不再犯）
-    const TURN_N = 20;
-    start = lines.length;
-    let _tn = 0;
-    for (let i = lines.length - 1; i >= 0; i--) {
-      start = i;
-      const l = lines[i];
-      if (l && l.role === 'user' && String(l.text || '').trim()) {
-        _tn++;
-        if (_tn > TURN_N) break;   // 第 21 个 user 行 = 窗口起点（含该回合）
-      }
-    }
-    start = Math.max(0, start);              // 全扫不满 20 回合 → 全渲
-    start = Math.min(start, lines.length);   // v2.37R2（复审4）：上界钳制——账目越界时 slice 为空只剩错误计数
-    // v2.24 CAP：capStart 语义保留（HIST_CAP=Infinity 时恒 0 无影响）
+    // v3.2.12（用户定调「只要往上滑就显示历史，分页加载不要了」）：恒全量
+    // 渲染——整段会话一次原子换入，滚动条天然覆盖全部历史（ZCode 靠虚拟化
+    // 管 DOM，我们靠：回合默认折叠（头+结论行极廉价）+ 代码/图片懒增强 +
+    // 原子渲染一次成画）。扩段/收缩/「剩 N 条」机器整体退役。
+    // v3.5.169/v3.5.170-172：HIST_PAGE/回合窗口两次分页尝试均因用户体验
+    // 不符回退（git cef5ddb/507dca1/1edc67d，恒全量语义为最终定稿）
+    start = 0;
+    // v2.24 CAP：正常模式渲染起点不得越过 capStart（翻阅上限）——保住正常
+    // 模式的 DOM 省流。v3.2.7：只读模式退役，上限 1200 行内全部上滑翻阅
     const capStart = Math.max(0, lines.length - _HG.HIST_CAP);
     start = Math.max(start, capStart);
+    start = Math.min(start, lines.length);   // v2.37R2（复审4）：上界钳制——账目越界时 slice 为空只剩错误计数
     // v2.43：窗口起点落在子代理段中间时回退到段头——段行聚段渲染，拦腰起点
     // 会让段身行全部静默丢弃（回退上限=单段行数上限+头，不破 HIST_CAP 语义）
     while (start > capStart && lines[start] && lines[start].role
@@ -52,26 +41,8 @@
     // _tlExpFlush 三处同判）
     _HG.histBuilding = true;
     _realFlow.innerHTML = '';
-    // v3.5.176（用户定调「超出的走只读归档」）：分页渲染（start>0=窗口外有
-    // 归档轮）时在顶部插「前 N 轮已归档——点击进入只读模式」——与 04-groups
-    // _trimOldTurns 的归档条同款（onclick dispatch hg-ro-enter 进只读）。
-    // 归档裁剪=渲染窗口本身（只渲 20 回合），trim 兜底 live 追加路径
-    if (start > 0) {
-      let totalTurns = 0, winTurns = 0;
-      for (const l of lines)
-        if (l && l.role === 'user' && String(l.text || '').trim()) totalTurns++;
-      for (let i = start; i < lines.length; i++)
-        if (lines[i] && lines[i].role === 'user' && String(lines[i].text || '').trim()) winTurns++;
-      const archived = totalTurns - winTurns;
-      if (archived > 0) {
-        const hint = document.createElement('div');
-        hint.className = 'h-archive-hint';
-        hint.innerHTML = '⬆ 前 ' + archived + ' 轮已归档——点击进入只读模式查看';
-        hint.style.cursor = 'pointer';
-        hint.onclick = () => document.dispatchEvent(new CustomEvent('hg-ro-enter'));
-        _hgFlow.appendChild(hint);   // 渲染期 _hgFlow=buf——条在 buf 头部，换入后居顶
-      }
-    }
+    // 归档提示条由 _trimOldTurns（渲染后 DOM 裁剪）原生插入——v3.5.171 的
+    // 分页期插入段随恒全量回退移除（v3.5.174）
     if (!lines.length) {
       // v3.2.11：游离缓冲期早退必须先归还 _hgFlow 引用（否则全后续渲染
       // 都写进游离容器——主界面消失级事故）
