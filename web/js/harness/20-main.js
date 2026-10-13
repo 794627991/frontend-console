@@ -423,7 +423,7 @@ function buildClaudeHarnessTab(opts = {}) {
       showBanner('此线只标记转交——协作过程聚在下方「协作」段（段头「▣ 回放」可围观），回传到达将归入其协作段', 3200);
       return;
     }
-    // v3.5.160（用户需求「后台任务点不开，看不到在执行什么」）：任务卡点击
+    // v3.5.161（用户需求「后台任务点不开，看不到在执行什么」）：任务卡点击
     // → 卡下方展开/收起输出块（tail 64KB 起读，运行中 2s 增量轮询跟随）
     const _tkc = e.target.closest('.h-taskcard');
     if (_tkc) { _taskOutToggle(_tkc); return; }

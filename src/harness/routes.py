@@ -971,7 +971,7 @@ def harness_subagent_tail():
 
 @harness_bp.route("/task_output")
 def harness_task_output():
-    """v3.5.160（用户需求「后台任务点不开，看不到在执行什么」）：后台 Bash
+    """v3.5.161（用户需求「后台任务点不开，看不到在执行什么」）：后台 Bash
     任务输出增量读——h-taskcard 点击展开的数据源。
     ?sid=&tid=&mode=tail（默认，回尾部 ≤64KB，offset 语义=文件大小）
     | ?offset=<n>（增量从 n 读到尾，行边界消费同 subagent_tail）。

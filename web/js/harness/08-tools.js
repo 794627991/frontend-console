@@ -861,7 +861,7 @@ function _taskCardTick(card) {
 function _taskStop(card) {
   if (card && card._taskTimer) { clearInterval(card._taskTimer); card._taskTimer = null; }
 }
-// ==================== v3.5.160：任务卡点击展开输出（「看不到在执行什么」）====
+// ==================== v3.5.161：任务卡点击展开输出（「看不到在执行什么」）====
 // 后端 /api/harness/task_output 增量读 tasks/<tid>.output。展开=tail 64KB
 // 起读；运行中档案 2s 轮询增量 append（用户上滚即停跟随，贴底恢复）；已完成
 // 只读一次。卡移除/收起即停轮询（isConnected 检测，无泄漏）。
@@ -892,9 +892,11 @@ function _taskOutToggle(card) {
   };
   const poll = () => {
     fetch('/api/harness/task_output?sid=' + encodeURIComponent(_HG.sid) +
-          '&tid=' + encodeURIComponent(tid) + '&offset=' + off)
+          '&tid=' + encodeURIComponent(tid) + '&offset=' + off + '&mode=inc')
       .then(r => r.json()).then(j => {
         if (!box.isConnected) return;             // 收起/切会话：止轮询
+        const t2 = (_HG.tasks || {})[tid];        // 轻审一般修：完成即收轮
+        if (t2 && t2.done && box._poll) { clearInterval(box._poll); box._poll = null; }
         if (j && j.ok === true && j.found) {
           off = j.offset || off;
           fill(j.text || '', true);
