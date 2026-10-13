@@ -624,6 +624,7 @@ def tool_devtools_console(url, args):
         n_err = n_warn = 0
         if raw == "undefined" or raw is None:
             lines.append("（前端无 console 缓冲——旧版本页面，仅实时模式可用）")
+            lines.append("统计: error 0, warn 0（无缓冲可统计）")
         else:
             try:
                 items = json.loads(raw)
@@ -657,7 +658,10 @@ def tool_devtools_console(url, args):
             def _on(msg):
                 m = msg.get("method", "")
                 pm = msg.get("params", {})
-                if m == "Runtime.consoleAPICalled":
+                if m == "_cdp_disconnected":
+                    # r2 全审G2：断连可感知——页面已死不再谎报「无新输出」
+                    live_events.append("〔窗口期内页面断连——以上仅为断连前输出〕")
+                elif m == "Runtime.consoleAPICalled":
                     txt = " ".join(str(a.get("value", a.get("description", "")))
                                    for a in pm.get("args", []))
                     live_events.append("[%s] %s" % (pm.get("type", "log"), txt[:300]))
@@ -671,7 +675,7 @@ def tool_devtools_console(url, args):
                 lines.extend(live_events[-30:])
             else:
                 lines.append("—— 实时窗口 %ds 无新输出 ——" % int(live))
-    return "\n".join(lines[:220])   # v3.5.187r1 S1：硬顶提至 220 只防失控
+    return "\n".join(lines[:235])   # v3.5.187r1 S1：硬顶提至 220 只防失控
 
 
 @_dt_wrap
@@ -722,6 +726,8 @@ def tool_devtools_network(url, args):
             elif m == "Network.loadingFailed" and rid in reqs:
                 reqs[rid]["done"] = True
                 reqs[rid]["status"] = "FAIL:" + pm.get("errorText", "err")
+            elif m == "_cdp_disconnected":
+                reqs["__disconnected__"] = True   # r2 G2：断连可感知
         cs.collect(seconds, _on)
     rows = []
     seen = set()
@@ -740,8 +746,10 @@ def tool_devtools_network(url, args):
         return isinstance(r.get("status"), int) and r["status"] >= 400
     fail = [(k, r, u) for k, r, u in rows if _is_fail(r)]
     bad = [(k, r, u) for k, r, u in rows if _is_bad(r)]
-    lines = ["窗口 %ds，共 %d 请求 | 失败 %d | 4xx/5xx %d" % (
-        int(seconds), len(rows), len(fail), len(bad))]
+    _disc = reqs.pop("__disconnected__", False)
+    lines = ["窗口 %ds，共 %d 请求 | 失败 %d | 4xx/5xx %d%s" % (
+        int(seconds), len(rows), len(fail), len(bad),
+        "（窗口期内页面断连，仅含断连前事件）" if _disc else "")]
     _fb = fail + bad
     for _k, r, u in _fb[:15]:
         lines.append("  !! %s %s" % (r.get("status"), u[:120]))
