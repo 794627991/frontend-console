@@ -960,12 +960,31 @@ function buildClaudeHarnessTab(opts = {}) {
     _hgFlow.scrollTop = _hgFlow.scrollHeight;
     _hgJumpBtm.classList.remove('show');
   };
-  // 主层「加载更早」提示条：事件委托（绑一次永在，bar 重建不丢点击）。
-  // v3.2.7（用户定调「只读模式退役」）：点击=上滑同款扩段（_histRefresh
-  // 大窗口重渲+滚动锚定）；封顶条（hg-hist-cap）是纯提示不可点
-  // v3.2.12：hist-more「加载更早」委托随分页退役（恒全量，无剩余条）
-  // v3.5.169：v3.5.137 的分页尝试（委托复活+上滑扩段）用户体验不符已整体
-  // 回退——恢复 v3.2.12 恒全量渲染语义
+  // 主层懒渲染扩段（v3.5.170，用户定调「按 20 回合渲染，超过懒渲染，加载
+  // 条完全去掉」）：上滑到顶 120px 内自动前扩 20 个回合（user 行为界），
+  // 防抖 400ms；滚动锚定（记 scrollHeight-scrollTop 重渲后还原）。
+  // 无提示条——用户上滑即触发，自然无感
+  let _hgTurnMoreT = null;
+  _hgFlow.addEventListener('scroll', () => {
+    if (_hgFlow.scrollTop > 120 || !_HG.histLive || !_HG.histAll
+        || (_HG.histStart | 0) <= 0) return;
+    if (_hgTurnMoreT) return;
+    _hgTurnMoreT = setTimeout(() => {
+      _hgTurnMoreT = null;
+      if (_hgFlow.scrollTop > 120 || (_HG.histStart | 0) <= 0) return;
+      const anchor = _hgFlow.scrollHeight - _hgFlow.scrollTop;
+      let cnt = 0, ns = (_HG.histStart | 0) - 1;
+      for (let i = ns; i >= 0; i--) {
+        ns = i;
+        const l = _HG.histAll[i];
+        if (l && l.role === 'user' && String(l.text || '').trim() && ++cnt >= 20) break;
+      }
+      if (ns < (_HG.histStart | 0)) {
+        _histRender(_HG.histAll, ns);
+        _hgFlow.scrollTop = _hgFlow.scrollHeight - anchor;
+      }
+    }, 400);
+  });
   // v2.28.16：回滚按钮事件委托——按消息文本锚点回滚（每个定下的回合边界
   // 都可回滚到那里）。按钮 innerHTML 随气泡生成/随快照克隆，直绑 onclick
   // 会丢（同 h-macts 既有解法），flow 级委托一次永在
