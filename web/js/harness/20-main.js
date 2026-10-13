@@ -963,7 +963,34 @@ function buildClaudeHarnessTab(opts = {}) {
   // 主层「加载更早」提示条：事件委托（绑一次永在，bar 重建不丢点击）。
   // v3.2.7（用户定调「只读模式退役」）：点击=上滑同款扩段（_histRefresh
   // 大窗口重渲+滚动锚定）；封顶条（hg-hist-cap）是纯提示不可点
-  // v3.2.12：hist-more「加载更早」委托随分页退役（恒全量，无剩余条）
+  // v3.5.137（用户需求恢复分页）：委托复活——点 .hg-hist-more → 前扩一批
+  // HIST_PAGE 行（_histRender 窗口重渲+滚动位置锚定，三行锚定法）
+  _hgFlow.addEventListener('click', (e) => {
+    const more = e.target.closest('.hg-hist-more');
+    if (!more || !_HG.histLive || !_HG.histAll) return;
+    const anchor = _hgFlow.scrollHeight - _hgFlow.scrollTop;
+    const newStart = Math.max(0, (_HG.histStart | 0) - _HG.HIST_PAGE);
+    if (newStart === (_HG.histStart | 0)) return;   // 已到顶
+    _histRender(_HG.histAll, newStart);
+    _hgFlow.scrollTop = _hgFlow.scrollHeight - anchor;
+  });
+  // 上滑自动扩段：滚到顶部 120px 内自动前扩一批（防抖 400ms——惯性滚动
+  // 高频触发防连发）
+  let _hgHistMoreT = null;
+  _hgFlow.addEventListener('scroll', () => {
+    if (_hgFlow.scrollTop > 120 || !_HG.histLive || !_HG.histAll
+        || (_HG.histStart | 0) <= 0) return;
+    if (_hgHistMoreT) return;
+    _hgHistMoreT = setTimeout(() => {
+      _hgHistMoreT = null;
+      if (_hgFlow.scrollTop > 120 || (_HG.histStart | 0) <= 0) return;
+      const anchor = _hgFlow.scrollHeight - _hgFlow.scrollTop;
+      const newStart = Math.max(0, (_HG.histStart | 0) - _HG.HIST_PAGE);
+      if (newStart === (_HG.histStart | 0)) return;
+      _histRender(_HG.histAll, newStart);
+      _hgFlow.scrollTop = _hgFlow.scrollHeight - anchor;
+    }, 400);
+  });
   // v2.28.16：回滚按钮事件委托——按消息文本锚点回滚（每个定下的回合边界
   // 都可回滚到那里）。按钮 innerHTML 随气泡生成/随快照克隆，直绑 onclick
   // 会丢（同 h-macts 既有解法），flow 级委托一次永在
