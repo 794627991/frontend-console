@@ -233,8 +233,31 @@ def _git_status(wc):
 
 
 def _svn_status(wc):
+    # v3.5.164（SVN 超时排查报告层 B）：网络盘大仓库（SMB+内核树）全树
+    # status 实测 54s+，必然超 VCS_TIMEOUT_RO=20s 且把整页拖成报错。
+    # 重排：先 O(1) 的 svn info 拿 rev/branch（主信息，0.3s），再跑全树
+    # status；status 超时降级为「版本已就绪+changes_timeout 标记」，不 500
+    rc, out, err = _run(["svn", "info", "--xml"], wc, VCS_TIMEOUT_RO)
+    rev, branch = "", ""
+    if rc == 0:
+        try:
+            root = ET.fromstring(out.encode("utf-8"))
+            e = root.find("entry")
+            if e is not None:
+                c = e.find("commit")
+                rev = (c.get("revision") if c is not None else "") or ""
+                u = e.findtext("url") or ""
+                branch = u.rstrip("/").rsplit("/", 1)[-1]
+        except ET.ParseError:
+            pass
     rc, out, err = _run(["svn", "status", "--xml"], wc, VCS_TIMEOUT_RO)
     if rc != 0:
+        if "超时" in (err or ""):
+            # 全树扫描超时：主信息照常返回，改动列表缺席（前端明示，不再
+            # 冒充「工作区干净」）
+            return {"vcs": "svn", "tool": True, "branch": branch, "rev": rev,
+                    "ahead": 0, "behind": 0, "files": [], "truncated": 0,
+                    "changes_timeout": True}, None
         return None, err or "svn status 失败"
     files = []
     try:
@@ -258,19 +281,6 @@ def _svn_status(wc):
                               **({"old_rel": old} if old else {})})
     except ET.ParseError as e:
         return None, "svn status 输出解析失败：%s" % e
-    rc, out, err = _run(["svn", "info", "--xml"], wc, VCS_TIMEOUT_RO)
-    rev, branch = "", ""
-    if rc == 0:
-        try:
-            root = ET.fromstring(out.encode("utf-8"))
-            e = root.find("entry")
-            if e is not None:
-                c = e.find("commit")
-                rev = (c.get("revision") if c is not None else "") or ""
-                u = e.findtext("url") or ""
-                branch = u.rstrip("/").rsplit("/", 1)[-1]
-        except ET.ParseError:
-            pass
     truncated = max(0, len(files) - FILES_CAP)
     return {"vcs": "svn", "tool": True, "branch": branch, "rev": rev,
             "ahead": 0, "behind": 0,

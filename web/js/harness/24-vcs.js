@@ -618,7 +618,9 @@
       (files.length
         ? `<div class="hg-vcs-files">` + files.map((f, i) => _vcsFileHtml(f, i)).join('') + `</div>`
           + (D.truncated ? `<div class="hg-vcs-more">还有 ${D.truncated} 个文件未显示（用命令行查看）</div>` : '')
-        : `<div class="hg-vcs-empty">工作区干净，没有未提交的改动。</div>`) +
+        : D.changes_timeout
+          ? `<div class="hg-vcs-empty">全树改动扫描超时（网络盘大仓库）——版本信息已就绪；改动列表请用命令行 svn status 查看。</div>`
+          : `<div class="hg-vcs-empty">工作区干净，没有未提交的改动。</div>`) +
       (_HG.vcs.out ? `<div class="hg-vcs-out"><div class="hg-vcs-out-t">上次命令输出</div><pre>${esc(_HG.vcs.out.slice(0, 4000))}</pre></div>` : '') +
       `<div class="hg-vcs-acts"><button class="btn ghost" name="hg_vcs_logbtn" ${canOp ? '' : 'disabled'}>📜 提交历史</button>` +
       `<button class="btn ghost" name="hg_vcs_refresh" ${_HG.vcs.busy ? 'disabled' : ''}>⟳ 刷新</button></div>` +
