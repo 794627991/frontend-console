@@ -254,16 +254,33 @@
             _HG.histLive = true;
             _hgRplRebuild();   // v3.2.22：快照恢复不跑渲染循环——子代理目录条目在此重建（否则切回后空壳点不开）
             renderSideStatus();   // 面板 B/C 回放数据此路也会补齐（todos 等）
-            // v3.4.68R3：快照命中路同挂覆盖度自检（基准=histAll 全量；快照 DOM
-            // 是切走瞬间的，缺本回合后期行属正常（SSE 增量补）——延迟 1.5s 等
-            // 增量落定再审计，仍缺口即重渲自愈）。R5：busy 会话无条件 resync
-            setTimeout(() => _hgCoverageAudit(sid, _HG.histAll ? _HG.histAll.length : 0,
-              'snapshot-hit', { snapshotBase: true }), 2000);
+            // v3.5.165（用户定调「一次做对，渲染全对」）：快照 DOM 是切走瞬间的——
+            // 切走期间有产出（histAll 比 DOM 账目多行）且会话空闲（无活组可炸）时，
+            // 立即全量重渲一次做对：不再走「先显示一半 → 2s 审计发现缺口 → 再卡
+            // 一遍重渲」的两段式（trace 实测两遍 ParseHTML 各 ~2.1 万次）。有增量
+            // 且 busy → 不在此重渲（活组在场，重渲炸活组——R2-缺口A 既有约束），
+            // 交由下方 R5 resync（900ms，用户拍板的切回全显路径）渲染全；无增量 →
+            // 快照即全，什么都不用做。审计照挂作核对（重渲/增量路径均 gap≈0 不触发）
+            const _snapHEnd = (() => { let m = 0;
+              try { _hgFlow.querySelectorAll('[data-h-end]').forEach(el => {
+                m = Math.max(m, +(el.dataset.hEnd || 0)); }); } catch (_) {} return m; })();
+            const _hasGrow = _HG.histAll.length - 1 > _snapHEnd;
+            if (!_HG.busy && _hasGrow) {
+              _histRender(_HG.histAll, _HG.histStart | 0);
+              setTimeout(() => { if (_HG.sid === sid)
+                _hgCoverageAudit(sid, _HG.histAll.length, 'snapshot-hit-refresh',
+                  { snapshotBase: true }); }, 2000);
+            } else {
+              setTimeout(() => { if (_HG.sid === sid)
+                _hgCoverageAudit(sid, _HG.histAll ? _HG.histAll.length : 0,
+                  'snapshot-hit', { snapshotBase: true }); }, 2000);
+            }
             // v3.5.164（轻审 F3）：无条件排程——busy 真值由 _hgBusyResync 回调内
             // 自检（_histFetch 与 eventsPoll/init#2 的回填有竞速，排程时判会漏）
             _hgBusyResync(sid, 900);
             // v2.43.2（R2-缺口A）：懒行补填并入主路——旧实现另起 fetch 先于
-            // events 到达，busy 判定失真，漂移分支抢跑重渲炸掉快照（实测）
+            // events 到达，busy 判定失真，漂移分支抢跑重渲炸掉快照（实测）。
+            // v3.5.165：保持在最后——重渲分支会重建 DOM，补填须查新树
             lazyOpen.forEach(el => _histLazyFill(el));
           }
         });
