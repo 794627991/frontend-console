@@ -803,7 +803,8 @@
         _HG.histRebuilding = sid;
         const _hbrSid = sid;
         setTimeout(() => { if (_HG.histRebuilding === _hbrSid) _HG.histRebuilding = null; }, 1500);
-        setTimeout(() => _hgCoverageAudit(sid, _snapBase, 'sse-snapshot'), 2000);
+        setTimeout(() => _hgCoverageAudit(sid, _snapBase, 'sse-snapshot',
+          { snapshotBase: true }), 2000);
         _hgBusyResync(sid, 2100);   // v3.4.69d：清场重放落定后 busy 会话无条件重渲兜底
       }
     });

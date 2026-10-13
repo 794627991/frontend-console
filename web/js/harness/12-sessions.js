@@ -6,14 +6,19 @@
   // 出口（冷开/快照命中/snapshot 清场重放）统一在尘埃落定后调这里：flow 的
   // hEnd 账目贴不住转写末行（缺口>5）即整帧重渲自愈 + banner 页面可见化
   // （自愈是否触发用户直接看得到，不再依赖控制台；自愈频发=根因仍在的信号）
-  function _hgCoverageAudit(sid, totalLines, tag) {
+  function _hgCoverageAudit(sid, totalLines, tag, opts) {
     if (_HG.sid !== sid || !totalLines) return;
-    // v3.5.137（Performance trace 实锤「切会话卡 3~4s」主因）：busy 会话在
-    // 持续输出，live 增量让 histAll 行数永远领先 DOM 账目十行级——2s 后审计
-    // gap 必然超阈触发第二遍全量重渲（trace 实测两遍 ParseHTML 各 ~2.1 万次
-    // /750ms，合计 3~4s 主线程阻塞，期间一切交互排队）。busy 下跳过自愈：
-    // 渲染兜底由 R5 的无条件 _hgBusyResync 承担（另一条既有路径）
-    if (_HG.busy) return;
+    // v3.5.163（轻审 F1/F2 回修，取代 v3.5.137 的一刀切）：误报机制只在
+    // 「快照基准」路径成立——snapshot-hit/sse-snapshot 的 totalLines 是离开
+    // 会话瞬间的快照行数，busy 会话离开后持续产出，2s 审计时 live 增量使
+    // histAll 恒领先 DOM 账目十行级 → gap 必超阈误触发全量重渲（trace 实测
+    // 两遍 ParseHTML 各 ~2.1 万次/750ms，切会话卡 3~4s 主因）。这类路径
+    // busy 时跳过自愈（渲染兜底：snapshot-hit=无条件 resync、sse-snapshot=
+    // 2100ms 无条件 resync）。sse-rebuild/reload-flow/cold-rebuild 的
+    // totalLines 是本批渲染行数（fetch 捕获值），live 增量既不抬基准也不盖
+    // 戳——gap>阈 即真丢行，busy 下保留审计（那是无 R5 兜底路径的唯一防线）
+    const _snapBase = !!(opts && opts.snapshotBase);
+    if (_snapBase && _HG.busy) return;
     let _hEnd = 0;
     try {
       _hgFlow.querySelectorAll('[data-h-end]').forEach(el => {
@@ -22,11 +27,11 @@
     } catch (_) { return; }
     const _gap = (totalLines - 1) - _hEnd;
     // v3.4.68R4：阈值 5→2——实测「当前轮恰好 4 行渲染失败」时 gap=4 被旧阈值
-    // 漏过（banner 不弹+内容缺，双重失守的盲区）
-    // v3.5.137：空闲会话阈值比例化 max(3, 2%)——大会话（千行级）快照往返/
-    // 增量补行的时序差有十行级量级，固定 2 行在大会话上必误触发全量重渲；
-    // 真丢内容（半屏/整段）的缺口远超 2% 仍会触发
-    if (_gap <= Math.max(3, Math.ceil(totalLines * 0.02))) return;
+    // 漏过（banner 不弹+内容缺，双重失守的盲区）。v3.5.163：非快照基准路径
+    // 恒用 2（R4 盲区不重开）；快照基准路径 idle 时 gap≈0 本就不触发，阈值
+    // 比例化只为防御性容差，且忙时已整体跳过
+    const _thr = _snapBase ? Math.max(3, Math.ceil(totalLines * 0.02)) : 2;
+    if (_gap <= _thr) return;
     // 频控：10 分钟窗口最多自愈 3 次——清场竞速若循环发生，无限重渲只会闪屏
     const _now = Date.now();
     _HG.covAuditN = (_HG.covAuditN || []).filter(t => _now - t < 600000);
@@ -252,8 +257,11 @@
             // v3.4.68R3：快照命中路同挂覆盖度自检（基准=histAll 全量；快照 DOM
             // 是切走瞬间的，缺本回合后期行属正常（SSE 增量补）——延迟 1.5s 等
             // 增量落定再审计，仍缺口即重渲自愈）。R5：busy 会话无条件 resync
-            setTimeout(() => _hgCoverageAudit(sid, _HG.histAll ? _HG.histAll.length : 0, 'snapshot-hit'), 2000);
-            if (_HG.busy) _hgBusyResync(sid, 900);
+            setTimeout(() => _hgCoverageAudit(sid, _HG.histAll ? _HG.histAll.length : 0,
+              'snapshot-hit', { snapshotBase: true }), 2000);
+            // v3.5.163（轻审 F3）：无条件排程——busy 真值由 _hgBusyResync 回调内
+            // 自检（_histFetch 与 eventsPoll/init#2 的回填有竞速，排程时判会漏）
+            _hgBusyResync(sid, 900);
             // v2.43.2（R2-缺口A）：懒行补填并入主路——旧实现另起 fetch 先于
             // events 到达，busy 判定失真，漂移分支抢跑重渲炸掉快照（实测）
             lazyOpen.forEach(el => _histLazyFill(el));
