@@ -721,7 +721,14 @@ def harness_subagent_replay():
     # v2.43：双源查找抽共用 _subagent_rows_for（transcript_for 的子代理段
     # 注入同源复用；语义不变：①projects 同目录优先 ②新版 CLI tasks 目录按
     # lineage 全链兜底，读失败继续试下一候选）
-    rows = _subagent_rows_for(main_dir, csids, agent)
+    # v3.5.154：脏转写防御兜底——进程死亡可致转写异型行（实测裸 bool 行
+    # 使 _subagent_rows_from_jsonl 抛 AttributeError=整接口 500），任何异常
+    # 都降级为 found:False（前端走中性「无可回放」分支），绝不 500
+    try:
+        rows = _subagent_rows_for(main_dir, csids, agent)
+    except Exception as _e:
+        log.warning("subagent_replay parse fail: %r", _e)
+        return jsonify({"ok": True, "found": False, "rows": []})
     if rows is None:
         return jsonify({"ok": True, "found": False, "rows": []})
     return jsonify({"ok": True, "found": True, "rows": rows})
@@ -791,6 +798,10 @@ def harness_subagent_tail():
                             "text": consumed.decode("utf-8", errors="replace"),
                             "offset": offset + cut + 1})
         except OSError:
+            continue
+        except Exception as _e:
+            # v3.5.154：单候选任何异常（脏转写/句柄竞态）都试下一候选，绝不 500
+            log.warning("subagent_tail candidate fail: %r", _e)
             continue
     return jsonify({"ok": True, "found": False, "text": "", "offset": offset})
 

@@ -1193,6 +1193,13 @@ class HarnessSession:
                     return
                 try:
                     now = time.time()
+                    # v3.5.154（用户定调「不接受切走再切回解锁，必须自行处
+                    # 理孤儿」）：跨进程残留 hold 对账挂进常驻巡检——进程起
+                    # 30s 后自动补发收尾，不依赖用户切会话触发
+                    try:
+                        self.stale_hold_repair()
+                    except Exception:
+                        pass
                     for tid, info in list(self._bg_tasks.items()):
                         dur = now - info.get("t0", now)
                         if dur > self._BG_CAP:

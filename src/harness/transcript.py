@@ -715,6 +715,11 @@ def _subagent_rows_from_jsonl(path):
                     o = json.loads(raw)
                 except Exception:
                     continue
+                # v3.5.154（用户实锤 subagent_replay 500）：进程死亡可致转写
+                # 脏行（实测裸 bool 行——json.loads 合法但非 dict），o.get
+                # 即 AttributeError 且路由层无兜底=整接口 500。非 dict 跳过。
+                if not isinstance(o, dict):
+                    continue
                 typ = o.get("type")
                 if typ not in ("assistant", "user"):
                     continue
