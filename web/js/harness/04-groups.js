@@ -249,9 +249,11 @@
     // v3.4.70：去掉 display!=='none' 外层条件——它挡住 _turnHeadShow 自身的
     // 显头逻辑（display==='none' 正是要它翻开的场景）
     if (_busy) _turnHeadShow(g);
-    // v3.2.29（用户定调「占位只在空工作区」）：认回组已有思考/工具行就
-    // 不再复暖占位气泡——状态由左下角活动条承担；冻结占位残留一并摘除
-    if (g.tl && g.tl.children.length) { phRemove(g); return; }
+    // v3.5.190（用户实锤「AI工作中的气泡没了」推翻 v3.2.29）：busy 时占位
+    // 复暖不再看过程行——思考/工具行不让位（07-hist/08-tools 同步改），
+    // 占位保留到正文到达（renderAssistant phRemove）；非 busy（冻结回放）
+    // 保留原摘除语义（正文已接管）
+    if (!_busy && g.tl && g.tl.children.length) { phRemove(g); return; }
     phStart(g);     // 冻结占位由 phStart 认领复用（不新建第二个）
   }
   // v3.2：ZCode 式回合折叠头（AssistantHistoryStatus 同款）——首条工作行到位
