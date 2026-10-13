@@ -128,7 +128,7 @@ class HarnessSession:
         # v3.5.123（用户口径「子代理在飞不许结束大回合」）：后台子代理在飞
         # 登记表 + hold 旗——主链 result 到达但仍有 is_backgrounded 任务在跑
         # 时：busy 保持、审计结算挂起（defer 到真终点）、前端 turn_hold 保持
-        # 工作中；三层防锁死兜底见 _bg_monitor（30min 硬顶/集空闲置/■中断）
+        # 工作中；三级温和探活兜底见 _bg_monitor（分级提示/集空闲置/■中断）——v3.5.182 硬顶退役
         self._bg_tasks = {}      # tid → {"t0": epoch, "desc": str, "slow": bool}
         self._held = False
         self._bg_mon_started = False
@@ -1168,7 +1168,10 @@ class HarnessSession:
 
     # ---- v3.5.123 后台子代理保活（回合在飞守卫）----
     _BG_SLOW = 600           # 单后台任务 >10min：一次性 slow 提示（状态查询手段）
-    _BG_CAP = 1800           # >30min：硬顶强制收尾（防 CLI 僵尸锁死大回合）
+    _BG_NUDGE = 1800         # >30min：升级提示（大规模探索属正常，继续保活）
+    _BG_URGE = 3600          # >60min：催促提示（建议催子代理输出结果）——
+    # v3.5.182（用户定调「绝对不要出现直接结束」）：硬顶强制收尾退役——
+    # 子代理活着就保活，监控只做分级提示，永不清表不合成收尾
     _BG_IDLE_RELEASE = 120   # hold 中且集合已空且进程闲置 >120s：合成收尾（防唤醒回合缺席）
 
     def bg_in_flight(self):
@@ -1202,14 +1205,24 @@ class HarnessSession:
                         pass
                     for tid, info in list(self._bg_tasks.items()):
                         dur = now - info.get("t0", now)
-                        if dur > self._BG_CAP:
-                            # 硬顶：清表 + 合成收尾（警示卡先行）
-                            self._bg_tasks.pop(tid, None)
+                        # v3.5.182：三级温和提示，绝不结束（原 30min 硬顶
+                        # pop+合成收尾退役——僵尸由 CLI 死亡的 turn_error
+                        # 路径与 stale_hold_repair 兜，活着的只催不杀）
+                        if dur > self._BG_URGE and not info.get("urge"):
+                            info["urge"] = True
+                            self.emit({"kind": "subagent_slow", "tid": tid,
+                                       "dur": int(dur), "level": "urge",
+                                       "desc": info.get("desc") or ""})
                             self._audit_card(
-                                "[审计] 后台子代理「%s」已运行 %d 分钟未归"
-                                "（超过 30 分钟硬顶），大回合强制收尾；若它"
-                                "稍后返回结果，仅作补妆不计入本回合。"
+                                "[保活] 后台子代理「%s」已运行 %d 分钟未归。"
+                                "保活继续（不会自动结束）；建议催促其输出"
+                                "阶段性结果或自行介入。"
                                 % (info.get("desc") or tid, int(dur // 60)))
+                        elif dur > self._BG_NUDGE and not info.get("nudge"):
+                            info["nudge"] = True
+                            self.emit({"kind": "subagent_slow", "tid": tid,
+                                       "dur": int(dur), "level": "nudge",
+                                       "desc": info.get("desc") or ""})
                         elif dur > self._BG_SLOW and not info.get("slow"):
                             info["slow"] = True
                             self.emit({"kind": "subagent_slow", "tid": tid,

@@ -904,7 +904,15 @@
         refreshSessions();
       }
       else if (it.kind === 'subagent_slow') {
-        showBanner(`后台子代理「${(it.desc || '').slice(0, 24)}」已运行 ${Math.round((it.dur || 600) / 60)} 分钟——点子代理胶囊可查看实况`, 6000, true);
+        // v3.5.182：三级温和提示（10min 提示/30min 升级/60min 催促）——
+        // 保活永不自动结束（硬顶退役）
+        const _mm = Math.round((it.dur || 600) / 60);
+        const _msg = it.level === 'urge'
+          ? `后台子代理「${(it.desc || '').slice(0, 24)}」已运行 ${_mm} 分钟——建议催促其输出结果（保活继续，不会自动结束）`
+          : it.level === 'nudge'
+          ? `后台子代理「${(it.desc || '').slice(0, 24)}」已运行 ${_mm} 分钟——大规模探索属正常，继续保活`
+          : `后台子代理「${(it.desc || '').slice(0, 24)}」已运行 ${_mm} 分钟——点子代理胶囊可查看实况`;
+        showBanner(_msg, it.level ? 8000 : 6000, true);
       }
       else if (it.kind === 'renew') { grpFinalize(true); renderRenew(it.text); }
       // v2.34：审计警示（light 回合结算违规）——回合已终结，定稿当前组再出红卡
