@@ -265,8 +265,14 @@
               try { _hgFlow.querySelectorAll('[data-h-end]').forEach(el => {
                 m = Math.max(m, +(el.dataset.hEnd || 0)); }); } catch (_) {} return m; })();
             const _hasGrow = _HG.histAll.length - 1 > _snapHEnd;
-            if (!_HG.busy && _hasGrow) {
-              _histRender(_HG.histAll, _HG.histStart | 0);
+            // v3.5.193（用户定调「要重渲染的效果+只渲 20 回合」）：有增长
+            // 一律窗口重渲（_histRender 内部 TURN_N=20 窗口，渲染量降 ~96%，
+            // 形态=结构化重渲优于流式）——v3.5.192 增量补尾弃用（保留的是
+            // 流式形态，用户不要）。busy 传 noFinalize 留活组给 phResume 认回
+            // （10-sse:735 同款配套）。无增长快照即最新，什么都不用做。
+            if (_hasGrow) {
+              _histRender(_HG.histAll, _HG.histStart | 0, { noFinalize: !!_HG.busy });
+              if (_HG.busy && typeof phResume === 'function') phResume(true);
               setTimeout(() => { if (_HG.sid === sid)
                 _hgCoverageAudit(sid, _HG.histAll.length, 'snapshot-hit-refresh',
                   { snapshotBase: true }); }, 2000);
@@ -275,9 +281,6 @@
                 _hgCoverageAudit(sid, _HG.histAll ? _HG.histAll.length : 0,
                   'snapshot-hit', { snapshotBase: true }); }, 2000);
             }
-            // v3.5.164（轻审 F3）：无条件排程——busy 真值由 _hgBusyResync 回调内
-            // 自检（_histFetch 与 eventsPoll/init#2 的回填有竞速，排程时判会漏）
-            _hgBusyResync(sid, 900);
             // v2.43.2（R2-缺口A）：懒行补填并入主路——旧实现另起 fetch 先于
             // events 到达，busy 判定失真，漂移分支抢跑重渲炸掉快照（实测）。
             // v3.5.165：保持在最后——重渲分支会重建 DOM，补填须查新树
