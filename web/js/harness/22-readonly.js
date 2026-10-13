@@ -180,6 +180,14 @@ function RO_drawerRender() {
         _HG.readonly = dsid;
         _HG.roViewSid = dsid;
         _ro.sid = dsid;
+        // v3.5.177（用户实锤「点到了但焦点没变，还是显示最上面那个只读会话」）：
+        // 切换后视觉焦点跟随——顶部标题与列表高亮同步（旧码只改状态变量，
+        // cur 类和标题都是进 RO 时写死的，切会话后视觉停在进入时会话）
+        const t2 = el.querySelector('.hg-ro-dtitle');
+        const tb = _ro.root.querySelector('.hg-ro-title');
+        if (tb && t2) tb.textContent = '📖 只读模式 · ' + t2.textContent;
+        _ro.drawerList.querySelectorAll('[data-ro-dsid]').forEach(el2 =>
+          el2.classList.toggle('cur', el2.dataset.roDsid === dsid));
         RO_view(dsid);
       };
     });
