@@ -188,7 +188,13 @@
       _allAsst.forEach((m, i) => { if (i < _allAsst.length - 1) m.classList.remove("can-rewind"); });
       _HG.histBuilding = false;   // v3.2.13：连接性判据还原（见顶部注释）
       _HG.histBusy = null;        // v3.5.8：busy 标志随渲染收尾还原
-      _hgRailSync();
+      // v3.5.175（用户实锤「只读模式点击进不去了」）：渲染路径也走一次回合
+      // 裁剪——恒全量渲染把全部 .h-grp 画进 flow，而 _trimOldTurns（>20 轮
+      // 删旧组+插「前 N 轮已归档」条）此前只在 live 发消息路径（renderUser
+      // 回合边界）跑，切会话/重渲渲染后归档条缺席=无条可点。trim 在游离
+      // 缓冲换入完成之后跑（操作活 flow DOM）；删头组影响回合导航轨，补
+      // 一次 sync
+      try { _trimOldTurns(); _hgRailSync(); } catch (_) {}
     }
   }
   // v3.2.22（用户实锤「切走再切回，子代理目录点不开」）：快照恢复路径不跑
