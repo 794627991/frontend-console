@@ -405,9 +405,28 @@ function buildClaudeHarnessTab(opts = {}) {
     if (e.target.closest('.h-switch[data-peer]')) {
       // v2.37R6：stale 线点击给核实口径
       const swp = e.target.closest('.h-switch[data-peer]');
-      showBanner(swp.dataset.stale === '1'
-        ? '该等待线超 30 分钟未回传，疑似残留——回传若到达会自动定格'
-        : '此线只标记转交——协作过程聚在下方「协作」段（段头「▣ 回放」可围观），回传到达将归入其协作段', 3200);
+      if (swp.dataset.stale === '1') {
+        showBanner('该等待线超 30 分钟未回传，疑似残留——回传若到达会自动定格', 3200);
+        return;
+      }
+      // v3.5.158（用户硬性要求）：id 形态 peer（=真实 agentId）点击直达该
+      // 子代理全链回放（原 Task+历次续派同文件天然全链）；名字形态走
+      // peerSent 反查（to===name 的键→真实 id）；识图/真跨会话协作保留原
+      // 说明 banner（本会话无子代理可跳）
+      const _peer = swp.dataset.peer || '';
+      if (/^[0-9a-zA-Z_-]{8,64}$/.test(_peer)) {
+        _subReplay('peer:' + _peer, 'SendMessage',
+          '续派 · ' + ((_HG.peerNames || {})[_peer] || _peer.slice(-6)), _peer);
+        return;
+      }
+      const _viaSent = Object.keys(_HG.peerSent || {}).find(
+        k2 => (_HG.peerSent[k2] || '') === _peer);
+      if (_viaSent && /^[0-9a-zA-Z_-]{8,64}$/.test(_viaSent)) {
+        _subReplay('peer:' + _viaSent, 'SendMessage',
+          '续派 · ' + ((_HG.peerNames || {})[_viaSent] || _viaSent.slice(-6)), _viaSent);
+        return;
+      }
+      showBanner('此线只标记转交——协作过程聚在下方「协作」段（段头「▣ 回放」可围观），回传到达将归入其协作段', 3200);
       return;
     }
     // 交互提问卡片（v2.17）：选项点击 / 提交

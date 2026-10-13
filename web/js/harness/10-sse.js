@@ -72,7 +72,12 @@
             (_HG.agents || (_HG.agents = {}))[tid] = {
               type: o.subagent_type || 'Task', desc: o.description || '',
               t0: Date.now(), done: false, doneAt: 0,
-              collab: true, bg: true, taskId: _real || (o.task_id || '') };
+              collab: true, bg: true,
+              // v3.5.158：peerSent miss 时 taskId 降级为包装 task_id（无转写
+              // 的「幻影档案」）——unresolved 标记让 _subReopen/_subDirRowClick
+              // 走 subagent_resolve 解析漏斗而非拿降级 id 硬开回放
+              unresolved: !_real,
+              taskId: _real || (o.task_id || '') };
             // 段头名字优先用转交收件人（与「已转交」线同名对齐），否则角色
             // 类型名。段不挂 hgSub（无实况流，窗格钮不画）；真实 id 在手则
             // 建段即落 hgSubr——运行中即可「▣ 回放」围观转写，也是切会话

@@ -210,6 +210,13 @@
     const d = _hgDyn();
     d.agentsRpl = [];
     for (const l of lines) {
+      // v3.5.158：正向映射（包装 tid→真实 agentId）随重建一并建——
+      // _subReopen 档案 miss 漏斗的 b2 层（快照恢复态的同步跳转依据）
+      if (l.role === 'tool' && l.text === 'SendMessage' && l.id) {
+        const _ra2 = (String(l.result || '').match(/resumedAgentId["'\s:]+([0-9a-zA-Z_-]{8,64})/) || [])[1] || '';
+        if (_ra2) (_HG.subTidRes = _HG.subTidRes || {})[l.id] =
+          { agentId: _ra2, type: 'SendMessage', desc: '续派' };
+      }
       if (l.role === 'tool' && (l.text === 'Task' || l.text === 'Agent')
           && l.input && (l.input.description || l.input.subagent_type || l.input.agent_type)) {
         const _typ = l.input.subagent_type || l.input.agent_type || 'Task';

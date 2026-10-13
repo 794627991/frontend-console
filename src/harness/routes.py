@@ -733,6 +733,161 @@ def harness_subagent_replay():
         return jsonify({"ok": True, "found": False, "rows": []})
     return jsonify({"ok": True, "found": True, "rows": rows})
 
+
+# ---- v3.5.158：SendMessage/胶囊点击 → 无条件直达子代理（解析接口） ----
+
+_SUBAGENT_RESOLVE_CACHE = {}          # (sid, tid) → dict（FIFO 128）
+_SUBAGENT_RESOLVE_KEYS = []
+_AGENTID_RE = re.compile(r"^[0-9a-zA-Z_-]{8,64}$")
+
+
+def _resolve_cache_put(key, val):
+    """进程内结果记忆（FIFO 128）：同 tid 二次点击零成本。"""
+    if key in _SUBAGENT_RESOLVE_CACHE:
+        return
+    _SUBAGENT_RESOLVE_CACHE[key] = val
+    _SUBAGENT_RESOLVE_KEYS.append(key)
+    while len(_SUBAGENT_RESOLVE_KEYS) > 128:
+        _SUBAGENT_RESOLVE_CACHE.pop(_SUBAGENT_RESOLVE_KEYS.pop(0), None)
+
+
+@harness_bp.route("/subagent_resolve")
+def harness_subagent_resolve():
+    """v3.5.158（用户硬性要求「任何情况下点开胶囊/SendMessage 必达原子代理」）：
+    tid（tool_use_id | task_id | agentId）→ 解析出真实 agentId。
+    处理序：①O(1) 快判（tid 本身有转写=agent；tasks/<tid>.output 存在=后台
+    命令任务）②扫主会话转写 jsonl（血统链，子串门控命中行才 json.loads，
+    55MB 实测 0.23s）提 SendMessage 的 to/result 双侧 agentId。全 miss →
+    kind:notfound。任何异常降级 notfound（对齐「绝不 500」口径）。进程内
+    FIFO 128 缓存，同 tid 二次点击零成本。"""
+    s = _get_or_create(request.args.get("sid") or "")
+    if not s:
+        return jsonify({"ok": False, "err": "会话不存在"}), 404
+    tid = (request.args.get("tid") or "").strip()
+    if not tid or not re.match(r"^[0-9a-zA-Z_-]{8,64}$", tid):
+        return jsonify({"ok": False, "err": "tid 参数非法"}), 400
+    key = (s.sid, tid)
+    hit = _SUBAGENT_RESOLVE_CACHE.get(key)
+    if hit is not None:
+        return jsonify({"ok": True, **hit})
+    res = {"kind": "notfound"}
+    try:
+        import glob as _g
+        csids = [x for x in (list(getattr(s, "lineage", None) or [])
+                             + [s.session_id]) if x]
+        main_dir = None
+        for csid in csids:
+            for cand in _g.glob(os.path.join(os.path.expanduser("~"), ".claude",
+                                             "projects", "*", csid + ".jsonl")):
+                main_dir = os.path.dirname(cand)
+                break
+            if main_dir:
+                break
+        # ①O(1) 快判（序敏感：先 task 后 agent——tasks output 候选也在
+        #   _subagent_transcript_candidates 形态②里，先判 agent 会误吞）：
+        #   tasks/<tid>.output 存在 = 后台命令任务（Bash run_in_background）
+        la = os.environ.get("LOCALAPPDATA")
+        if la and main_dir:
+            for csid in csids or []:
+                if os.path.isfile(os.path.join(
+                        la, "Temp", "claude", os.path.basename(main_dir),
+                        csid, "tasks", tid + ".output")):
+                    res = {"kind": "task", "taskId": tid}
+                    break
+        # ②tid 本身有子代理转写（projects jsonl / subagents jsonl 两个形态，
+        #   **不含** tasks output）= 就是 agentId
+        if res["kind"] == "notfound" and main_dir:
+            for p in _subagent_transcript_candidates(main_dir, csids, tid):
+                if ".output" in os.path.basename(p):
+                    continue        # tasks 形态已在①判过（不属子代理转写）
+                if os.path.isfile(p):
+                    res = {"kind": "agent", "agentId": tid}
+                    break
+        # ③扫主会话转写：tool_use 侧（SendMessage.to / Task 描述）+
+        #   tool_result 侧（resumedAgentId / agentId 多形态）
+        if res["kind"] == "notfound" and main_dir:
+            files = []
+            for csid in csids:
+                fp = os.path.join(main_dir, csid + ".jsonl")
+                if os.path.isfile(fp):
+                    files.append(fp)
+            _id_re = re.compile(r"^[0-9a-zA-Z_-]{8,64}$")
+            _aid_res = [re.compile(p) for p in (
+                r"resumedAgentId[\"':\s]+([0-9a-zA-Z_-]{8,64})",
+                r"[\"']agentId[\"'][:\s]+[\"']([0-9a-zA-Z_-]{8,64})[\"']",
+                r"(?<![a-zA-Z])agentId[\"':\s]+([0-9a-zA-Z_-]{8,64})",
+                r'from "([0-9a-zA-Z_-]{8,64})" \(its SubagentHandback')]
+            agent_id = to_name = None
+            t_type = t_desc = ""
+            for fp in files:
+                try:
+                    with open(fp, "r", encoding="utf-8", errors="replace") as f:
+                        for raw in f:
+                            if tid not in raw:
+                                continue        # 子串门控：命中行才 json.loads
+                            try:
+                                o = json.loads(raw)
+                            except Exception:
+                                continue
+                            if not isinstance(o, dict):
+                                continue
+                            m = o.get("message") or {}
+                            content = m.get("content")
+                            blocks = content if isinstance(content, list) else []
+                            for b in blocks:
+                                if not isinstance(b, dict):
+                                    continue
+                                if b.get("type") == "tool_use" and b.get("id") == tid:
+                                    inp = b.get("input") or {}
+                                    to = str(inp.get("to") or "")
+                                    if _id_re.match(to):
+                                        agent_id = to
+                                    elif to:
+                                        to_name = to
+                                    if (b.get("name") or "") in ("Task", "Agent"):
+                                        t_type = inp.get("subagent_type") or inp.get("agent_type") or "Task"
+                                        t_desc = str(inp.get("description") or "")[:120]
+                                elif b.get("type") == "tool_result" and b.get("tool_use_id") == tid:
+                                    txt = ""
+                                    bc = b.get("content")
+                                    if isinstance(bc, str):
+                                        txt = bc
+                                    elif isinstance(bc, list):
+                                        txt = "\n".join(
+                                            x.get("text", "") for x in bc
+                                            if isinstance(x, dict))
+                                    for rx in _aid_res:
+                                        mm = rx.search(txt)
+                                        if mm:
+                                            agent_id = mm.group(1)
+                                            break
+                            if agent_id:
+                                break
+                except Exception:
+                    continue
+                if agent_id:
+                    break
+            if agent_id and _id_re.match(agent_id):
+                res = {"kind": "agent", "agentId": agent_id}
+                if t_type:
+                    res["type"] = t_type
+                if t_desc:
+                    res["desc"] = t_desc
+                # 转写存在性探测（供前端区分「回放必有」与「转写或在别处」）
+                tr = False
+                for p in _subagent_transcript_candidates(main_dir, csids, agent_id):
+                    if os.path.isfile(p):
+                        tr = True
+                        break
+                res["transcript"] = tr
+            elif to_name:
+                res = {"kind": "toName", "toName": to_name}
+    except Exception as _e:
+        log.warning("subagent_resolve fail: %r", _e)
+        res = {"kind": "notfound"}
+    _resolve_cache_put(key, res)
+    return jsonify({"ok": True, **res})
+
 # ---- from claude_harness.py:3379 (harness_subagent_tail) ----
 
 

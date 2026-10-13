@@ -209,6 +209,24 @@
       // 主流段锚点（数据缺失的老形态）
       if (a.collab) {
         const aid = a.taskId || a.agentId || '';
+        // v3.5.158：幻影档案（unresolved=降级 taskId 无转写）——直接 force
+        // 回放会陷入「转写尚未生成」重试循环（第二失败形态），走解析漏斗
+        if (a.unresolved && !a.agentId) {
+          showBanner('正在定位该子代理（扫主会话转写）…', 2500);
+          fetch('/api/harness/subagent_resolve?sid=' + encodeURIComponent(_HG.sid) +
+                '&tid=' + encodeURIComponent(tid))
+            .then(r => r.json()).then(j => {
+              if (j && j.ok === true && j.kind === 'agent' && j.agentId) {
+                a.unresolved = false; a.agentId = j.agentId; a.taskId = j.agentId;
+                _subReplay(tid, a.type, a.desc, j.agentId, true);
+              } else if (j && j.kind === 'task') {
+                showBanner('这是后台命令任务（Bash 后台执行），没有子代理转写', 4000);
+              } else {
+                showBanner('找不到该子代理的转写记录（可能已被清理）', 4000);
+              }
+            }).catch(() => showBanner('子代理定位请求失败', 4000));
+          return;
+        }
         if (aid) { _subReplay(tid, a.type, a.desc, aid, true); return; }
         // v3.2.6R（审计F4）：无真实 id——段卡已隐，跳段是 display:none 上的
         // no-op；明确告知（与 agentline 死点击 banner 同口径）

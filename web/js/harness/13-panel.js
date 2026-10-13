@@ -203,9 +203,87 @@
     tid = _subTid(tid);   // v3.4：续派包装 id 归一——永远接回原子代理的 tab
     if (!_sub.tabs[tid]) {
       const a = (_HG.agents || {})[tid];
+      // v3.5.158：幻影档案（task_started 兜底建档时 peerSent miss→taskId
+      // 降级为包装 task_id，unresolved 标记）——拿降级 id 硬开回放会陷入
+      // 「转写尚未生成」重试循环（_subDirRowClick 第二失败形态），统一走
+      // 解析漏斗（S2）拿真实 agentId 重建真档案
+      if (a && a.unresolved && !a.agentId) {
+        const _uType = a.type || 'Task', _uDesc = a.desc || '';
+        delete (_HG.agents || {})[tid];
+        fetch('/api/harness/subagent_resolve?sid=' + encodeURIComponent(_HG.sid) +
+              '&tid=' + encodeURIComponent(tid))
+          .then(r => r.json()).then(j => {
+            if (j && j.ok === true && j.kind === 'agent' && j.agentId) {
+              _HG.agents = _HG.agents || {};
+              _HG.agents[tid] = { type: j.type || _uType, desc: j.desc || _uDesc,
+                                  t0: Date.now(), done: true, doneAt: Date.now(),
+                                  agentId: j.agentId, taskId: j.agentId };
+              _HG.subTidRes = _HG.subTidRes || {};
+              _HG.subTidRes[tid] = { agentId: j.agentId };
+              _subReplay(tid, j.type || _uType, j.desc || _uDesc, j.agentId);
+            } else if (j && j.kind === 'task') {
+              showBanner('这是后台命令任务（Bash 后台执行），没有子代理转写', 4000);
+            } else {
+              _subDirOpen();
+              showBanner('找不到该子代理的转写记录（可能已被清理）——已打开子智能体目录', 4000);
+            }
+          }).catch(() => {
+            _HG.agents[tid] = { type: _uType, desc: _uDesc, t0: Date.now(),
+                                done: true, doneAt: Date.now(),
+                                unresolved: true, taskId: tid };
+            _subDirOpen();
+            showBanner('子代理定位请求失败——已打开子智能体目录', 4000);
+          });
+        return;
+      }
       // v3.2.31（bug5②）：档案丢失（切会话往返）不再只弹 banner——打开子
       // 智能体目录 tab，任何点击必有可见响应（目录列回放档可进入）
-      if (!a) { _subDirOpen(); showBanner('该子代理档案已随会话切换清空——已打开子智能体目录，可从列表回放', 3000); return; }
+      if (!a) {
+        // v3.5.158（用户硬性要求「任何情况下点开胶囊/SendMessage 必达原子
+        // 代理，不允许无法跳转」）：解析漏斗——S0 flow DOM 取证（段头/行卡
+        // 的 hgSubr=回绑过的真实 agentId，随快照/重渲存留）→ S1 正向映射
+        // → S2 后端扫主会话转写（持久真源，任何情况下找回）。全 miss 才
+        // 目录兜底+准确文案。
+        const _s0 = (function () {
+          const seg = (_hgFlow || document).querySelector(
+            '.h-subblock[data-hg-subblock="' + tid + '"] .h-subblock-head[data-hg-subr], ' +
+            '.h-tool[data-tid="' + tid + '"][data-hg-subr]');
+          return seg ? (seg.dataset.hgSubr || seg.closest('[data-hg-subr]') || {}).hgSubr || seg.dataset.hgSubr : '';
+        })();
+        const _s1 = ((_HG.subTidRes || {})[tid] || {}).agentId || '';
+        const _go = (aid2, type2, desc2) => {
+          _HG.subTidRes = _HG.subTidRes || {};
+          _HG.subTidRes[tid] = { agentId: aid2, type: type2, desc: desc2 };
+          _subReplay(tid, type2 || 'Task', desc2 || '子代理', aid2);
+        };
+        const _fallbackDir = (msg) => { _subDirOpen(); showBanner(msg, 4000); };
+        if (_s0 && /^[0-9a-zA-Z_-]{8,64}$/.test(_s0)) { _go(_s0); return; }
+        if (_s1) { _go(_s1); return; }
+        // S2 异步解析（tab 头挂「定位中…」防重复点击，回放加载中…同款语义）
+        _subDirOpen();
+        showBanner('正在定位该子代理（扫主会话转写）…', 2500);
+        fetch('/api/harness/subagent_resolve?sid=' + encodeURIComponent(_HG.sid) +
+              '&tid=' + encodeURIComponent(tid))
+          .then(r => r.json()).then(j => {
+            if (!j || j.ok !== true) { _fallbackDir('子代理定位失败——已打开子智能体目录'); return; }
+            if (j.kind === 'agent' && j.agentId) {
+              // 回填：档案/段头/正向映射三处（下次同 tid 零成本直达）
+              _HG.agents = _HG.agents || {};
+              _HG.agents[tid] = _HG.agents[tid] || {
+                type: j.type || 'Task', desc: j.desc || '', t0: Date.now(),
+                done: true, doneAt: Date.now(), agentId: j.agentId,
+                taskId: j.agentId };
+              _HG.subTidRes = _HG.subTidRes || {};
+              _HG.subTidRes[tid] = { agentId: j.agentId, type: j.type || 'Task', desc: j.desc || '' };
+              _subReplay(tid, j.type || 'Task', j.desc || '', j.agentId);
+            } else if (j.kind === 'task') {
+              _fallbackDir('这是后台命令任务（Bash 后台执行），没有子代理转写——已打开子智能体目录');
+            } else {
+              _fallbackDir('找不到该子代理的转写记录（可能已被清理）——已打开子智能体目录');
+            }
+          }).catch(() => _fallbackDir('子代理定位请求失败——已打开子智能体目录'));
+        return;
+      }
       const aid = a.taskId || a.agentId || '';
       // v3.4：SendMessage 档案 label 溯源（tab 不叫「SendMessage」）——taskId
       // 反查友好名（peerNames），查不到落 id 尾缀
