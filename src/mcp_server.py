@@ -550,6 +550,8 @@ def tool_tftp_set_dir(url, root_dir):
 def _dt_wrap(fn):
     """统一错误包装：DevtoolsError 族 → 中文三段式文案（类别/详情/建议）。"""
     def wrap(url, args):
+        if devtools_cdp is None:
+            return "失败：devtools_cdp 模块未加载（导入失败）——检查安装完整性"
         try:
             return fn(url, args)
         except DevtoolsError as e:
@@ -586,8 +588,6 @@ def tool_devtools_dom(url, args):
         "ready:document.readyState,count:els.length,items:items});})()"
         % (json.dumps(sel), limit))
     out = devtools_cdp.evaluate(js, max_len=20000)
-    if out.startswith("OK "):
-        out = out[3:]
     try:
         d = json.loads(out)
     except Exception:
@@ -616,9 +616,12 @@ def tool_devtools_console(url, args):
     lines = []
     with devtools_cdp.CdpSession(port, tid) as cs:
         # 缓冲（hook 随页面启动累计；旧前端无缓冲→降级提示）
+        # v3.5.187r1 全审S1：条目按旧→新 append，保留最新端（诊断价值最高），
+        # 超限显式标注省略数；统计行前置永不丢
         probe = cs.send("Runtime.evaluate", {"expression":
-            "window.__consoleBuf ? JSON.stringify(window.__consoleBuf.slice(-%d)) : 'undefined'" % tail})
+            "window.__consoleBuf ? JSON.stringify(window.__consoleBuf) : 'undefined'"})
         raw = (probe.get("result") or {}).get("value")
+        n_err = n_warn = 0
         if raw == "undefined" or raw is None:
             lines.append("（前端无 console 缓冲——旧版本页面，仅实时模式可用）")
         else:
@@ -626,12 +629,23 @@ def tool_devtools_console(url, args):
                 items = json.loads(raw)
             except Exception:
                 items = []
-            lines.append("缓冲起点=页面最近一次加载，共取 %d 条" % len(items))
+            shown = []
             for it in items:
-                if level == "error" and it.get("lv") != "error":
+                lv = it.get("lv")
+                if level == "error" and lv != "error":
                     continue
-                if level == "warn" and it.get("lv") not in ("warn", "error"):
+                if level == "warn" and lv not in ("warn", "error"):
                     continue
+                if lv == "error":
+                    n_err += 1
+                elif lv == "warn":
+                    n_warn += 1
+                shown.append(it)
+            drop = len(shown) - tail
+            lines.append("统计: error %d, warn %d（缓冲起点=页面最近一次加载）" % (n_err, n_warn))
+            if drop > 0:
+                lines.append("（已省略最早 %d 条，显示最新 %d 条）" % (drop, tail))
+            for it in shown[-tail:]:
                 t = time.strftime("%H:%M:%S", time.localtime((it.get("t") or 0) / 1000))
                 lines.append("[%s][%s] %s" % (t, it.get("lv"), (it.get("text") or "")[:300]))
         # 实时窗口（可选）
@@ -657,10 +671,7 @@ def tool_devtools_console(url, args):
                 lines.extend(live_events[-30:])
             else:
                 lines.append("—— 实时窗口 %ds 无新输出 ——" % int(live))
-    n_err = sum(1 for x in lines if "[error]" in x)
-    n_warn = sum(1 for x in lines if "[warn]" in x)
-    lines.append("统计: error %d, warn %d" % (n_err, n_warn))
-    return "\n".join(lines[:80])
+    return "\n".join(lines[:220])   # v3.5.187r1 S1：硬顶提至 220 只防失控
 
 
 @_dt_wrap
@@ -731,8 +742,11 @@ def tool_devtools_network(url, args):
     bad = [(k, r, u) for k, r, u in rows if _is_bad(r)]
     lines = ["窗口 %ds，共 %d 请求 | 失败 %d | 4xx/5xx %d" % (
         int(seconds), len(rows), len(fail), len(bad))]
-    for _k, r, u in (fail + bad)[:15]:
+    _fb = fail + bad
+    for _k, r, u in _fb[:15]:
         lines.append("  !! %s %s" % (r.get("status"), u[:120]))
+    if len(_fb) > 15:
+        lines.append("  （另有 %d 条失败/异常略）" % (len(_fb) - 15))
     bad_keys = {k for k, _r, _u in fail + bad}
     body = [(k, r, u) for k, r, u in rows if k not in bad_keys][-40:]
     for _k, r, u in body:

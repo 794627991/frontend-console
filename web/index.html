@@ -8,24 +8,23 @@
    脚本（vendor 报错也收）；cap 200 环形；刷新即重装清空 */
 (function () {
   var buf = [], CAP = 200, inHook = false;
-  function fmt(a) {
-    var out = [];
-    for (var i = 0; i < a.length; i++) {
-      var v = a[i];
-      try { out.push(typeof v === 'string' ? v : JSON.stringify(v)); }
-      catch (_) { out.push(String(v)); }
-    }
-    return out.join(' ').slice(0, 400);
-  }
-  function rec(lv, text) {
-    if (inHook) return;
-    inHook = true;
-    try { buf.push({ t: Date.now(), lv: lv, text: text }); if (buf.length > CAP) buf.shift(); }
-    finally { inHook = false; }
+  function rec(lv, args) {
+    if (inHook) return;         // guard 覆盖 fmt+rec 全程（T5：toJSON 内再打
+    inHook = true;              // console 的理论递归防御）
+    try {
+      var out = [];
+      for (var i = 0; i < args.length; i++) {
+        var v = args[i];
+        try { out.push(typeof v === 'string' ? v : JSON.stringify(v)); }
+        catch (_) { out.push(String(v)); }
+      }
+      buf.push({ t: Date.now(), lv: lv, text: out.join(' ').slice(0, 400) });
+      if (buf.length > CAP) buf.shift();
+    } finally { inHook = false; }
   }
   ['log', 'info', 'warn', 'error', 'debug'].forEach(function (lv) {
     var orig = console[lv] ? console[lv].bind(console) : function () {};
-    console[lv] = function () { orig.apply(null, arguments); rec(lv, fmt(arguments)); };
+    console[lv] = function () { orig.apply(null, arguments); rec(lv, arguments); };
   });
   addEventListener('error', function (e) {
     rec('error', (e.message || 'error') + ' @ ' + (e.filename || '') + ':' + e.lineno + ':' + e.colno);

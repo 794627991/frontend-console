@@ -61,7 +61,9 @@ class TargetNotFound(DevtoolsError):
 
 
 class CdpError(DevtoolsError):
-    pass
+    def __init__(self, msg, code="generic"):
+        super().__init__(msg)
+        self.code = code        # "expr"=页面表达式异常 | "generic"=传输/协议
 
 
 def find_cdp(timeout=1.0):
@@ -171,7 +173,7 @@ class CdpSession(object):
             if msg.get("id") == mid:
                 if msg.get("error"):
                     raise CdpError("CDP 错误: %s" % json.dumps(
-                        msg["error"], ensure_ascii=False)[:300])
+                        msg["error"], ensure_ascii=False)[:300], code="expr")
                 return msg.get("result") or {}
             if msg.get("method") and self._collector:
                 try:
@@ -184,14 +186,20 @@ class CdpSession(object):
         """订阅窗口：seconds 内收到的事件喂 on_event（阻塞至 deadline）。"""
         prev = self._collector
         self._collector = on_event
+        closed = False
         try:
+            ws_mod = self._ws_mod
             deadline = time.time() + max(0.5, min(60.0, seconds))
             while time.time() < deadline:
                 try:
                     self._ws.settimeout(0.5)
                     raw = self._ws.recv()
+                except ws_mod.WebSocketTimeoutException:
+                    continue          # 窗口内正常超时，续等
                 except Exception:
-                    continue          # 超时续等（ws 内部 timeout 非 fatal）
+                    # v3.5.187r1 全审G2：断连（页面刷新/关闭）不再空转到 deadline
+                    closed = True
+                    break
                 if not raw:
                     continue
                 try:
@@ -204,6 +212,11 @@ class CdpSession(object):
                     except Exception:
                         pass
         finally:
+            if closed:
+                try:
+                    on_event({"method": "_cdp_disconnected", "params": {}})
+                except Exception:
+                    pass
             self._collector = prev
             try:
                 self._ws.settimeout(self._timeout)
@@ -217,7 +230,8 @@ def evaluate(js_expression, timeout=10.0, max_len=4000):
     port = find_cdp()
     info = {}
     try:
-        info = json.loads(open(ENDPOINT_FILE, encoding="utf-8").read())
+        with open(ENDPOINT_FILE, encoding="utf-8") as f:
+            info = json.loads(f.read())
     except Exception:
         pass
     origin = "http://127.0.0.1:%s" % info.get("port", "")
@@ -228,8 +242,8 @@ def evaluate(js_expression, timeout=10.0, max_len=4000):
                 "returnByValue": True, "awaitPromise": True,
             }, timeout=timeout)
         except CdpError as e:
-            if "CDP 错误" in str(e):
-                raise CdpError("表达式异常: %s" % str(e))
+            if getattr(e, "code", "") == "expr":
+                raise CdpError("表达式异常: %s" % e)
             raise
         if res.get("exceptionDetails"):
             ed = res["exceptionDetails"]
@@ -253,7 +267,8 @@ def page_target_origin_probe():
     port = find_cdp()
     info = {}
     try:
-        info = json.loads(open(ENDPOINT_FILE, encoding="utf-8").read())
+        with open(ENDPOINT_FILE, encoding="utf-8") as f:
+            info = json.loads(f.read())
     except Exception:
         pass
     origin = "http://127.0.0.1:%s" % info.get("port", "")
