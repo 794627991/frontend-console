@@ -783,26 +783,27 @@ def harness_subagent_resolve():
                 break
             if main_dir:
                 break
-        # ①O(1) 快判（序敏感：先 task 后 agent——tasks output 候选也在
-        #   _subagent_transcript_candidates 形态②里，先判 agent 会误吞）：
-        #   tasks/<tid>.output 存在 = 后台命令任务（Bash run_in_background）
-        la = os.environ.get("LOCALAPPDATA")
-        if la and main_dir:
-            for csid in csids or []:
-                if os.path.isfile(os.path.join(
-                        la, "Temp", "claude", os.path.basename(main_dir),
-                        csid, "tasks", tid + ".output")):
-                    res = {"kind": "task", "taskId": tid}
-                    break
-        # ②tid 本身有子代理转写（projects jsonl / subagents jsonl 两个形态，
-        #   **不含** tasks output）= 就是 agentId
-        if res["kind"] == "notfound" and main_dir:
+        # ①O(1) 快判（序敏感：先 agent 后 task——同 tid 既有真实子代理转写
+        #   又有 tasks/<tid>.output 时（CLI 启动即建 0 字节占位文件），占位
+        #   文件不得抢走真实转写的身份）：
+        #   projects jsonl / subagents jsonl 两形态转写存在 = agentId
+        if main_dir:
             for p in _subagent_transcript_candidates(main_dir, csids, tid):
                 if ".output" in os.path.basename(p):
-                    continue        # tasks 形态已在①判过（不属子代理转写）
+                    continue        # tasks output 不算子代理转写证据
                 if os.path.isfile(p):
                     res = {"kind": "agent", "agentId": tid}
                     break
+        # ②tasks/<tid>.output 存在 = 后台命令任务（Bash run_in_background）
+        if res["kind"] == "notfound":
+            la = os.environ.get("LOCALAPPDATA")
+            if la and main_dir:
+                for csid in csids or []:
+                    if os.path.isfile(os.path.join(
+                            la, "Temp", "claude", os.path.basename(main_dir),
+                            csid, "tasks", tid + ".output")):
+                        res = {"kind": "task", "taskId": tid}
+                        break
         # ③扫主会话转写：tool_use 侧（SendMessage.to / Task 描述）+
         #   tool_result 侧（resumedAgentId / agentId 多形态）
         if res["kind"] == "notfound" and main_dir:
@@ -867,25 +868,33 @@ def harness_subagent_resolve():
                     continue
                 if agent_id:
                     break
+            # v3.5.160 全审F5：第三正则可能从 tool_result 散文（如报错文案）
+            # 误吞伪 agentId——命中后必须先验转写候选真实存在才置信 agent，
+            # 否则降 toName/notfound（「转写或在别处」由前端横幅承接）
             if agent_id and _id_re.match(agent_id):
-                res = {"kind": "agent", "agentId": agent_id}
-                if t_type:
-                    res["type"] = t_type
-                if t_desc:
-                    res["desc"] = t_desc
-                # 转写存在性探测（供前端区分「回放必有」与「转写或在别处」）
                 tr = False
                 for p in _subagent_transcript_candidates(main_dir, csids, agent_id):
                     if os.path.isfile(p):
                         tr = True
                         break
-                res["transcript"] = tr
+                if tr:
+                    res = {"kind": "agent", "agentId": agent_id, "transcript": True}
+                    if t_type:
+                        res["type"] = t_type
+                    if t_desc:
+                        res["desc"] = t_desc
+                elif to_name:
+                    res = {"kind": "toName", "toName": to_name}
             elif to_name:
                 res = {"kind": "toName", "toName": to_name}
     except Exception as _e:
         log.warning("subagent_resolve fail: %r", _e)
         res = {"kind": "notfound"}
-    _resolve_cache_put(key, res)
+    # v3.5.160 全审F1：只缓存终态（agent/task）——toName/notfound 是瞬态
+    # （send→result 落盘窗口/转写未刷盘），缓存会把包装 tid 的跳转钉死到
+    # 进程重启，违反「任何情况必达」
+    if res.get("kind") in ("agent", "task"):
+        _resolve_cache_put(key, res)
     return jsonify({"ok": True, **res})
 
 # ---- from claude_harness.py:3379 (harness_subagent_tail) ----

@@ -203,30 +203,32 @@
     }
     const a = (_HG.agents || {})[tid];
     if (!a) return;
+    // v3.5.160 全审F3a：幻影档案（unresolved=降级 taskId 无转写）**不分
+    // done/运行**一律走解析漏斗——notification 到达即 done:true 而
+    // unresolved 保留，done 分支拿包装 taskId 硬开回放=「未找到」+noreplay
+    // 锁（用户实锤 b7xvfmyip 形态在已结束入口存活）
+    if (a.unresolved && !a.agentId) {
+      showBanner('正在定位该子代理（扫主会话转写）…', 2500);
+      fetch('/api/harness/subagent_resolve?sid=' + encodeURIComponent(_HG.sid) +
+            '&tid=' + encodeURIComponent(tid))
+        .then(r => r.json()).then(j => {
+          if (j && j.ok === true && j.kind === 'agent' && j.agentId) {
+            a.unresolved = false; a.agentId = j.agentId; a.taskId = j.agentId;
+            _subReplay(tid, a.type, a.desc, j.agentId, true);
+          } else if (j && j.kind === 'task') {
+            showBanner('这是后台命令任务（Bash 后台执行），没有子代理转写', 4000);
+          } else {
+            showBanner('找不到该子代理的转写记录（可能已被清理）', 4000);
+          }
+        }).catch(() => showBanner('子代理定位请求失败', 4000));
+      return;
+    }
     if (!a.done) {
       // v3.2.6（ZCode 模式）：协作代理运行中——段卡已隐、过程唯一可看面=窗格，
       // 有真实 taskId 即开全量回放+轮询镜像续流（force 重拉）；无 id 回落跳
       // 主流段锚点（数据缺失的老形态）
       if (a.collab) {
         const aid = a.taskId || a.agentId || '';
-        // v3.5.158：幻影档案（unresolved=降级 taskId 无转写）——直接 force
-        // 回放会陷入「转写尚未生成」重试循环（第二失败形态），走解析漏斗
-        if (a.unresolved && !a.agentId) {
-          showBanner('正在定位该子代理（扫主会话转写）…', 2500);
-          fetch('/api/harness/subagent_resolve?sid=' + encodeURIComponent(_HG.sid) +
-                '&tid=' + encodeURIComponent(tid))
-            .then(r => r.json()).then(j => {
-              if (j && j.ok === true && j.kind === 'agent' && j.agentId) {
-                a.unresolved = false; a.agentId = j.agentId; a.taskId = j.agentId;
-                _subReplay(tid, a.type, a.desc, j.agentId, true);
-              } else if (j && j.kind === 'task') {
-                showBanner('这是后台命令任务（Bash 后台执行），没有子代理转写', 4000);
-              } else {
-                showBanner('找不到该子代理的转写记录（可能已被清理）', 4000);
-              }
-            }).catch(() => showBanner('子代理定位请求失败', 4000));
-          return;
-        }
         if (aid) { _subReplay(tid, a.type, a.desc, aid, true); return; }
         // v3.2.6R（审计F4）：无真实 id——段卡已隐，跳段是 display:none 上的
         // no-op；明确告知（与 agentline 死点击 banner 同口径）
@@ -1321,7 +1323,13 @@
     // v2.46R（P4）：档案 taskId 优先——续派形态下它是 peerSent 反查的真实
     // agentId，aidForce（notification.task_id）是 CLI 包装新 id；常规 Agent
     // 两者同值（v2.44 实证同源），顺序翻转零影响
-    const _aid = _a.taskId || aidForce || _a.agentId || '';
+    // v3.5.160 全审F3b：幻影档案（unresolved=taskId 是降级包装 id 无转写）
+    // **不落 hgSubr**——可见的「▣ 回放」钮拿包装 id 直开会「未找到」+noreplay
+    // 锁，且污染 S0 取证前提（hgSubr 恒真实 agentId）；unresolved 档案的
+    // 跳转走 _subDirRowClick 解析漏斗
+    const _aid = _a.unresolved && !_a.agentId
+      ? (aidForce || '')
+      : (_a.taskId || aidForce || _a.agentId || '');
     const _b = _HG.subBlk && _HG.subBlk[tid];
     if (_b && _b.head && _aid && !_b.head.dataset.hgSubr) {
       _b.head.dataset.hgSubr = _aid;
