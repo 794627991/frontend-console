@@ -43,6 +43,14 @@ def _get_or_create(sid):
         s._inbox = [dict(e) for e in (m.get("inbox") or []) if isinstance(e, dict)]
         s._gen = int(m.get("gen") or 0)
         _sessions[sid] = s
+        # v3.5.158：monitor 常驻线程随重建拉起——v3.5.154 把孤儿 hold 对账
+        # 挂在 _bg_monitor 巡检里，但 ensure 的唯一调用点在 bg 登记路径
+        # （重启后的孤儿会话在新进程里没跑过带后台任务的回合=无线程=30s
+        # 自行对账声称落空）。重建即拉起，孤儿 30s 内自动解锁成真。
+        try:
+            s._bg_monitor_ensure()
+        except Exception:
+            pass
         return s
 
 # ---- from claude_harness.py:2164 (_gc_loop) ----

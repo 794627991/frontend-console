@@ -1248,6 +1248,13 @@ class HarnessSession:
         self._bg_tasks = {}
         self._held = False
         if held:
+            # v3.5.158（轻审 R1 对偶）：kill 路径也同步清 meta.held（否则
+            # 重启后 repair 注入一条冗余 turn_complete——前端幂等消化无害，
+            # 但盘面该干净就干净）
+            try:
+                self.sync_meta()
+            except Exception:
+                pass
             try:
                 self._audit_settle("exit")
             except Exception:
@@ -1706,6 +1713,16 @@ class HarnessSession:
             self.emit({"kind": "turn_error" if err else "turn_complete",
                        "text": "回合异常收尾" if err else ""})
             self._turn_id = None
+        # v3.5.158（轻审 R1 对偶）：全部收尾路径同步清 meta.held——原仅 1534
+        # 真收尾分支清，CLI 死亡(turn_error+exit)/idle 释放/kill quiet 清
+        # _held 却留 meta.held=true → 下次 transcript/stream 注入一条冗余
+        # turn_complete（前端幂等消化，无害但脏）。had 才写：无回合纯查询
+        # 不动盘面
+        if had:
+            try:
+                self.sync_meta()
+            except Exception:
+                pass
         # v3.1（#10）：回合终结 → 自动泵排队输入（延迟 800ms，见 _queue_pump）
         # v3.4.76（用户实锤「排队消息永不发送」）：泵调用移出 _turn_id 早退
         # ——turn_id 单槽在回合交错（A result 迟到清掉 B 的 id / B 终结时
