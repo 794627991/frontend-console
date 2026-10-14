@@ -1,32 +1,4 @@
 // harness histcache.js (v3.0 自 buildClaudeHarnessTab 拆出,定义体零改动,缩进保持原样)
-  // v3.5.194：busy 切回增量补尾——快照 DOM 在屏，只把切走期间新增行
-  // （DOM 账目 hEnd 之后）逐行 renderHistLine 喂入。形态与窗口重渲完全
-  // 一致（同一渲染器 hist 模式），但不重建活组——「工作中」秒表 dataset.t0
-  // 原样保留（用户实锤「来回切工作时间归 0 一瞬间」的根因就是重渲重建组），
-  // 也无清场白窗。busy+有增长走本函数；失败兜底窗口重渲（12-sessions）。
-  // 前置：调用方已完成 histFp 前缀校验。
-  function _histTailGrow(sid) {
-    if (!_HG.histAll) return false;
-    let hEnd = 0;
-    try {
-      _hgFlow.querySelectorAll('[data-h-end]').forEach(el => {
-        hEnd = Math.max(hEnd, +(el.dataset.hEnd || 0));
-      });
-    } catch (_) { return false; }
-    if (hEnd >= _HG.histAll.length) return true;   // 无增长：快照即最新
-    // v3.5.195（全审级教训）：补尾必须走 _histRender 官方路径（exactStart
-    // 模式）——手写循环调 renderHistLine 会绕过行尾全套记账（hEnd/turnHi/
-    // lastAsst），账目不推进→coverage 审计判巨 gap→自愈全量重渲（空白期）+
-    // 内容重复叠加（实测「自己分析吧」×6）。exactStart 从 hEnd+1 渲到尾，
-    // 记账闭环；busy noFinalize 留活组，phResume 认回续秒表
-    try {
-      _histRender(_HG.histAll, hEnd + 1,
-                  { exactStart: true, noFinalize: !!_HG.busy });
-    } catch (_) { return false; }
-    if (typeof phResume === 'function') { try { phResume(true); } catch (_) {} }
-    if (typeof _hgRailSync === 'function') { try { _hgRailSync(); } catch (_) {} }
-    return true;
-  }
   function _histRender(lines, start, opt) {
     // v3.5.8（用户实锤「A 切 B 再切 A，识图中显示历史未完成」）：渲染期
     // busy 标志——noFinalize 正是调用方的 !!j.busy（busy 活会话）。识图卡
