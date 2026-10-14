@@ -118,9 +118,21 @@
     // sweep 的 sid 校验兜底，切回靠事件重放重建；DOM 随 flow 销毁，桶存无意义）
     Object.values(_HG.visionCalls || {}).forEach(_hgPeerLineStop);
     _HG.visionCalls = null;
-    // v3.5.22：后台任务档案随切会话清（CLI 不落转写=切回无重建源；运行中
-    // 的任务完成后 notification 只到所属会话的流——跨会话存档无意义）
-    if (_HG.tasks) Object.values(_HG.tasks).forEach(t => t.el && _taskStop(t.el));
+    // v3.5.216（用户定调「重渲规整但要保留流式细节——后台/子代理等显示
+    // 全没了，统一」）：tasks 随切会话**暂存**（原 v3.5.22 直接清=切回重渲
+    // 后任务卡永久消失）。CLI 不落转写是事实，但档案在内存（跨切换保留
+    // 即可）；notification 到达时档案在场=正常定格（后端 events 接口
+    // busy/事件流按 sid 路由，不跨会话误投）
+    if (_HG.tasks) {
+      Object.values(_HG.tasks).forEach(t => t.el && _taskStop(t.el));
+      if (prevSid) {
+        const _tk = {};
+        for (const k in _HG.tasks) { const t = _HG.tasks[k]; if (t && !t.done) _tk[k] = t; }
+        _HG.tasksBy = _HG.tasksBy || {};
+        if (Object.keys(_tk).length) _HG.tasksBy[prevSid] = _tk;
+        else delete _HG.tasksBy[prevSid];
+      }
+    }
     _HG.tasks = null;
     _HG.dyn = null;                          // v2.32 面板派生态不跨会话（活动流/回合史/打标全重建）
     _HG.proj = null;                         // v3.1：前端投影不跨会话（/events 种子重建）
@@ -291,6 +303,20 @@
             // noFinalize 留活组+phResume 认回接续秒表（t0 行 ts 保真）。
             _histRender(_HG.histAll, _HG.histStart | 0, { noFinalize: !!_HG.busy });
             if (_HG.busy && typeof phResume === 'function') phResume(true);
+            // v3.5.216：重渲只回放转写行——live-only 元素（运行中子代理
+            // 档案/后台任务卡）不在转写里，重渲后统一回填（用户定调
+            // 「重渲规整+流式细节统一」）
+            if (typeof _hgLiveAgentsRestore === 'function') { try { _hgLiveAgentsRestore(sid); } catch (_) {} }
+            if (_HG.tasksBy && _HG.tasksBy[sid]) {
+              const _tk = _HG.tasksBy[sid];
+              for (const k in _tk) {
+                const t = _tk[k];
+                try { _taskStart(k, t.desc || ''); } catch (_) { continue; }
+                const t2 = (_HG.tasks || {})[k];
+                if (t2) Object.assign(t2, t, { el: t2.el });   // 恢复原档案（t0/desc），卡用新建的
+              }
+              delete _HG.tasksBy[sid];
+            }
             // v3.5.205b（用户实锤「重渲必现：执行中动画消失+不贴底」）：重渲
             // 换入清了流底 spinner（innerHTML 重建），busy 真值未变 setBusy
             // 不会重调——幂等重挂（在场即不重加，06-relay 冷开同款）；
