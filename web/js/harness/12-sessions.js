@@ -200,8 +200,14 @@
     // 无 ask 行、ask 帧只在弹出时 emit 一次不重放），用户无从作答只能中断
     // 自救。判定按序列化 className 精确值：待答卡=class="h-ask"（done 卡是
     // "h-ask done collapsed"，不命中）
-    if (c && c.openTurn && !(c.askPanel
-        || (c.html && c.html.indexOf('class="h-ask"') !== -1))) c = null;
+    // v3.5.201b（用户实锤「A(活跃)→B→A 点击后明显迟滞」）：openTurn 快照
+    // 不再弃——弃了=每次切回全量 fetch 13MB+渲染（迟滞真身）。改为照常
+    // 恢复（旧内容秒显），离开期间新增的过程行由既有「有增长→窗口重渲
+    // 一次做对」分支补全（histAll 拉到后对比 DOM hEnd 账目，有增长立即重
+    // 渲=完整工作区）。v3.2.28 担心的「过程行丢失」由重渲兜底而非弃整个
+    // 快照；ask 豁免语义由不弃天然满足（v3.3.2R F2 场景）
+    // if (c && c.openTurn && !(c.askPanel
+    //     || (c.html && c.html.indexOf('class="h-ask"') !== -1))) c = null;
     if (c) {
       // v3.1：keep-warm 命中——取消该快照的延迟销毁（saveCache 排程的 30s
       // 定时器），热快照继续作为 LRU 一员存活
