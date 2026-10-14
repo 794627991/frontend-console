@@ -248,3 +248,20 @@ try {
   hgProxyES.onmessage = () => hgProxyRefreshState();
 } catch (_) {}
 hgProxyRefreshState();
+
+// v3.5.243（开发期缓存穿透坑提醒）：页面 JS 的 ?v= 由后端长驻进程注入，
+// 后端不重启则 URL 不变→浏览器命中旧缓存（用户刷新/重启页面均无效）。
+// 加载时实时对比：页面注入版本 vs 后端当前版本，不一致提示重启工具。
+(function () {
+  try {
+    var pageVer = (window._HG_VER || '').replace('v', '');
+    if (!pageVer) return;
+    fetch('/api/harness/version').then(r => r.json()).then(j => {
+      var live = (j && j.harness) || '';
+      if (live && pageVer !== live) {
+        showBanner('工具内核已更新（页面 ' + pageVer + ' → 后端 ' + live
+          + '）——请完全重启工具生效', 8000, true);
+      }
+    }).catch(() => {});
+  } catch (_) {}
+})();
