@@ -653,6 +653,10 @@
         const _sidB = _HG.sid;
         setTimeout(() => {
           if (_HG.sid !== _sidB) return;
+          // A组G3：切回静默窗（5s）内跳过——SSE 重放的 result 帧同样走到
+          // 这里，会在命中路整窗重渲之上再全量替换（v224「只留那一次」被
+          // 击穿，每重放 result 一番 150-260ms 长任务+整屏换帧）
+          if (Date.now() - (_HG.lastSwitchAt || 0) < 5000) return;
           // v3.5.229（用户实锤「方案B没落实」）：busy 判据改 fetch 回的后端
           // 真值——原读 _HG.busy 在回填竞态窗/hold 场景下恒 true → 早退 →
           // 回合终重渲永不执行=流式残留（如游离摘要行）不被规整化
@@ -661,6 +665,22 @@
             if (_HG.fetchedBusy) return;   // 真在跑（含 hold）让位
             try {
               _histRender(_HG.histAll, _HG.histStart | 0);
+              // B组P4：hist 渲染器不产 .h-turnsum——重渲后从投影重插
+              try { _hgTurnSumRow(); } catch (_) {}
+              // A组S3a：任务卡不在转写——重渲整替会抹掉运行中任务卡，
+              // 从 tasksBy 回填（与切换命中路同款；agents restore 同补）
+              if (_HG.tasksBy && _HG.tasksBy[_sidB]) {
+                const _tk2 = _HG.tasksBy[_sidB];
+                for (const k in _tk2) {
+                  const t2 = _tk2[k];
+                  if (_hgFlow.querySelector('.h-taskcard[data-tid="' + k + '"]')) continue;
+                  try { _taskStart(k, t2.desc || '');
+                    const nt = (_HG.tasks || {})[k];
+                    if (nt) Object.assign(nt, t2, { el: nt.el });
+                  } catch (_) {}
+                }
+              }
+              if (typeof _hgLiveAgentsRestore === 'function') { try { _hgLiveAgentsRestore(_sidB); } catch (_) {} }
               _hgScrollBottom();
             } catch (_) {}
           });

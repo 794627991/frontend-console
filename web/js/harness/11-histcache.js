@@ -323,6 +323,7 @@
       // 判据用它（_HG.busy 在 events poll 回填前有竞态窗，误 false 会让尾组
       // 被定稿+phResume(true) 新建悬挂活组=「一个回合两个块」分割实锤）
       _HG.fetchedBusy = !!j.busy;
+      _HG.fetchedSeq = j.seq || 0;   // B组P1：seq 随拉取存档（RO 退出断点续传用）
       return true;
     } catch(_) { return false; }
   }

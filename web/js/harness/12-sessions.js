@@ -8,9 +8,10 @@
   // （自愈是否触发用户直接看得到，不再依赖控制台；自愈频发=根因仍在的信号）
   function _hgCoverageAudit(sid, totalLines, tag, opts) {
     if (_HG.sid !== sid || !totalLines) return;
-    // v3.5.224：切回静默窗（5s）内不审计——多路重渲并行时账目必然打架
-    // 误判 gap 互相点火（风暴主源）；窗后账目已稳定，审计恢复正常价值
-    if (Date.now() - (_HG.lastSwitchAt || 0) < 5000) return;
+    // A组S1：审计窗 2s（原 5s 把切换路径全部审计排期(2.3-3.5s)挡成死代码
+    // =sse-snapshot 清场后无自愈兜底）；resync 窗保持 5s（防风暴两路 900/
+    // 2100ms 仍被挡）。2.3s+ 的审计排期落窗外，覆盖兜底恢复
+    if (Date.now() - (_HG.lastSwitchAt || 0) < 2000) return;
     // v3.5.196：重建在途/刚恢复不审计——reload 清场期（keepDom 后为旧 DOM）
     // 与渲染中的 DOM 账目必然不完整，hEnd=0 误判巨 gap 触发连锁自愈重渲
     // （用户 trace 实锤「rendered hEnd=0 gap=5722 auto re-render」+连着
@@ -283,6 +284,7 @@
                 || (c.histFp != null && _histPrefixFp(_HG.histAll, _HG.histStart | 0) !== c.histFp)) {
               if (!_HG.busy) _histRender(_HG.histAll, _HG.histStart | 0);
               else { _HG.histAll = null; _HG.histStale = true; }
+              if (_HG.tasksBy) delete _HG.tasksBy[sid];   // A组S3c：防残档下次复活
               return;
             }
             _HG.histLive = true;
@@ -332,6 +334,10 @@
               const _tk = _HG.tasksBy[sid];
               for (const k in _tk) {
                 const t = _tk[k];
+                // A组S3b：快照 html 已含任务卡（v227 无增长恢复路径）——
+                // DOM 在场则跳过重建（原无条件 _taskStart=同 tid 双卡+旧卡
+                // 冻结运行中永不清）
+                if (_hgFlow.querySelector('.h-taskcard[data-tid="' + k + '"], [data-tid="' + k + '"].h-taskcard')) continue;
                 try { _taskStart(k, t.desc || ''); } catch (_) { continue; }
                 const t2 = (_HG.tasks || {})[k];
                 if (t2) Object.assign(t2, t, { el: t2.el });   // 恢复原档案（t0/desc），卡用新建的
@@ -491,7 +497,12 @@
           if (j.busy) _hgBusyResync(sid, 800);   // v3.4.69d：无条件重渲（三件配套已齐）
           setBusy(!!j.busy, j.busy_since);   // v2.26：计时起点带后端 busy_since（v3.4.71：旧序恢复，phResume 已带参先行）
         }
-      } catch(_) {}
+      } catch(_) {
+        // A组G2：冷开 fetch 失败不再静默——提示+保持 histRebuilding（禁存
+        // 快照，防上一会话残屏投毒本会话快照）；SSE 重连的 ack-snapshot 兜底
+        try { showBanner('会话内容加载失败（网络/后端异常）——SSE 重连将自动重建', 5000, true); } catch(_) {}
+        return;   // 不清 histRebuilding：失败期 saveCache 禁入
+      }
       finally { if (_HG.histRebuilding === sid) _HG.histRebuilding = null; }
     }
     // v2.35.2（P0 加固）：transcript 分支有 await——期间用户可能已切去别的

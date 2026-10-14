@@ -1596,6 +1596,9 @@ function buildClaudeHarnessTab(opts = {}) {
         if (!ok) return;
         await fetch('/api/harness/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({sid})});
         delete _HG.cache[sid];
+
+        if (_HG.tasksBy) delete _HG.tasksBy[sid];      // A组T2：v216 桶随删清
+        if (_HG.liveAgentsBy) delete _HG.liveAgentsBy[sid];
         delete _HG.attsBy[sid];   // v2.3.0：暂存附件随会话清
         delete _HG.queues[sid];   // v2.25：排队草稿随会话清（审计 §三.9）
         try { localStorage.removeItem('hg-open:' + sid); localStorage.removeItem('hg-ctx:' + sid); } catch(_) {}   // v2.16：连开合/用量记录一起清

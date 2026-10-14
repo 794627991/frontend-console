@@ -247,9 +247,17 @@ function RO_exit(force) {
           if (typeof _hgSpinShow === 'function') { try { _hgSpinShow(_b); } catch (_) {} }
           try { _hgScrollBottom(true); } catch (_) {}
         }
+        // A组G1：RO_enter resetLocal 清掉的 dyn/todos/agents 重建（无增长
+        // 分支不跑渲染循环=无人重建，侧栏/目录空）+agents restore
+        try { _hgRplRebuild && _hgRplRebuild(); } catch (_) {}
+        if (typeof _hgLiveAgentsRestore === 'function') { try { _hgLiveAgentsRestore(anchor); } catch (_) {} }
+        try { renderSideStatus(); } catch (_) {}
       });
     }
-    if (typeof openSSE === 'function') openSSE(anchor, _HG.seq);
+    // B组P1：openSSE 移入 fetch.then——用 transcript 回带的真 seq（RO_enter
+    // 的 resetLocal 已把 _HG.seq 清零，原 openSSE(anchor,0) 必触发 ack=snapshot
+    // 清场重放=白屏复发/保留窗空时永久空流（B组活体实证）
+    if (typeof openSSE === 'function') openSSE(anchor, _HG.fetchedSeq || _HG.seq);
   } else if (typeof openSSE === 'function' && _HG.sid) openSSE(_HG.sid, _HG.seq);
 }
 

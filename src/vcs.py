@@ -75,9 +75,13 @@ def _run(argv, cwd, timeout):
     """subprocess 统一入口：list argv / bytes 输出 / 隐藏窗口 / 超时保护。
     返回 (rc, out_str, err_str)——超时转 rc=-1 + err 文案。"""
     try:
+        # B组P7：git/svn 子进程强制 C locale——shortstat 解析按英文
+        # 「N insertions/deletions」配对，zh_CN gettext 下徽章会整体消失
+        import subprocess as _sp
+        _env = dict(os.environ, LC_ALL="C", LANG="C")
         p = subprocess.run([str(a) for a in argv], cwd=cwd,
                            capture_output=True, timeout=timeout,
-                           creationflags=CREATE_NO_WINDOW)
+                           env=_env, creationflags=CREATE_NO_WINDOW)
         return p.returncode, _dec(p.stdout), _dec(p.stderr)
     except subprocess.TimeoutExpired:
         return -1, "", "命令超时（%ds）——仓库过大或命令行假死" % timeout
