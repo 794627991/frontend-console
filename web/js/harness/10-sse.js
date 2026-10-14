@@ -291,20 +291,10 @@
         // 段与 run 状态不被子代理事件打断（两路流各自独立）
         if (b.type === 'thinking' && b.thinking) {
           if (isSub) _subThink(o.parent_tool_use_id, b.thinking);
-          else if (_HG.liveHist) {
-            // v3.5.219 归一化：主链 thinking 入 live 账本（1s tick hist 渲染）
-            closeRun();
-            window._hgLL && _hgLL.text('thinking', b.thinking);
-          }
           else { closeRun(); appendThinking(b.thinking); }
         }
         else if (b.type === 'text' && b.text && b.text.trim()) {
           if (isSub) _subText(o.parent_tool_use_id, b.text);
-          else if (_HG.liveHist) {
-            // v3.5.219：主链 text 入账本（多块 newline 拼接同一行——修每块一气泡）
-            endThinking(); closeRun();
-            window._hgLL && _hgLL.text('assistant', b.text, (o.message || {}).model || _HG.model || '');
-          }
           else { endThinking(); closeRun(); renderAsst(b.text, (o.message || {}).model || _HG.model || ''); }
         }
         else if (b.type === 'tool_use') {
@@ -363,9 +353,6 @@
             _tlPlace(el, b.name, b.input || null);   // 非 explore → 直挂组时间线
             (_HG.visionCalls || (_HG.visionCalls = {}))[b.id] = el;
             _hgPeerTimerStart(el, +el.dataset.t0 || Date.now());   // 卡内 .hg-peer-t 钩子走表
-          } else if (_HG.liveHist && !isSub) {
-            // v3.5.219：主链 tool_use 入账本（档案类副作用已在上方照跑）
-            window._hgLL && _hgLL.toolUse(b);
           } else {
             renderToolUse(b, isSub, o.parent_tool_use_id);
             // v2.27.3：转交识图/其他会话 = 强过程反馈，分割线比收起的工具行显眼
@@ -623,13 +610,7 @@
       // rowById 迁到 _HG.subRows（旧路径会把段内结果画成主链执行抽屉的孤立
       // 结果行），段内配对在上方 _subToolResult 完成
       if (!o.isSynthetic && !o.parent_tool_use_id && hasToolResult) {
-        if (_HG.liveHist && window._hgLL) {
-          // v3.5.219：主链 tool_result 回填账本（原位补徽章由 tick patch）
-          (Array.isArray(c0) ? c0 : []).forEach(b => {
-            if (b && b.type === 'tool_result') _hgLL.toolResult(b);
-          });
-          _hgLL.flush();
-        } else renderToolResult(o);
+        renderToolResult(o);
         _hgScrollBottom();
       }
     } else if (typ === 'result') {
@@ -662,8 +643,6 @@
       // v3.3.7（P5 自愈）：回合终结——丢 input 的 bash 行从转写回填真命令
       try { _hgPatchMissingCmds(); } catch(_) {}
       _hgTurnSumRow();                     // v3.1：ZCode 式回合摘要行（查阅 · N 搜索 · N 文件）
-      // v3.5.219：回合终 transcript 对账（签名不符才窗口重渲，常态零闪烁）
-      if (_HG.liveHist && window._hgLL && _HG.sid) { try { _hgLL.reconcile(_HG.sid); } catch (_) {} }
       // v3.2.1R(F2/R2-1)：快照恢复后回合在切走期间结束——重放的 result 到达时
       // _HG.grp 已被 switchTo 置空，grpFinalize 早退 → 尾组永不定稿。认回尾组
       // 再定稿（_hgTailAdopt，phRemove 的 DOM 扫顺手清冻结占位气泡）；认回
@@ -697,7 +676,6 @@
   // ka 心跳 5s 一发（命名事件，SSE 注释行 JS 不可见做不了看门狗）；20s
   // 无帧判死强制重连（对照 persistent-protocol KEEP_ALIVE=5s/ACK_TIMEOUT=20s）。
   function _hgSseResetLocal(keepDom) {
-    if (_HG.liveHist && window._hgLL) { try { _hgLL.reset(); } catch (_) {} }   // v3.5.219：live 账本随清场
     // 清场：内存态与 DOM 全部作废（switchTo 的重置块同款，供 snapshot/reset 用）
     // v3.5.196：keepDom=true 时跳过 flow 清空（reload 重建用）——旧 DOM 保留
     // 到渲染器原子换入，消除「清场→新内容换入」之间的白屏空窗（用户实锤
@@ -860,9 +838,6 @@
       // v3.1：信封先过前端投影（turn_*/subagent_*/input_* 与工具计数——
       // 新进程面板/回合摘要行的单一状态源；legacy 分派不受影响）
       try { _hgProjEvent(it); } catch(_) {}
-      // v3.5.219：lifecycle 信封（user_echo/result/turn_complete 等）到达前
-      // 强制把 live 账本刷屏——收尾/开组操作面对最新 DOM
-      if (_HG.liveHist && window._hgLL && _HG.busy) { try { _hgLL.flush(); } catch (_) {} }
       // v2.5：先 setBusy（弹活动指示条，改变 flow 高度）再渲染消息——
       // 渲染内部 scrollBottom 含 rAF 二次兜底，否则指示条挤出消息导致刚发的消息不在底
       if (it.kind === 'user_echo') {
@@ -898,9 +873,6 @@
           if (!_live && !_hgEchoDup(it)) renderUser(it.text, it.images, it.files);
         }
         else if (!_hgEchoDup(it)) renderUser(it.text, it.images, it.files);
-        // v3.5.219：user_echo = 回合边界——账本追加 user 行（真实渲染仍走
-        // renderUser 乐观/去重链，行只做账：tick 渲染从 user 行后起接）
-        if (_HG.liveHist && window._hgLL) { try { _hgLL.user(it.text); } catch (_) {} }
       }
       else if (it.kind === 'event') handleEvent(it.data);
       // v3.3.2(D4)：协作回传不切割回合（renderPeer v3.2.15 注释的既定意图，
