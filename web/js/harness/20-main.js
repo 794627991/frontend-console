@@ -2088,8 +2088,18 @@ function buildClaudeHarnessTab(opts = {}) {
     if (!t) return;
     const it = _HG.railItems && _HG.railItems[+t.dataset.rk];
     if (!it) return;
+    // v3.5.207b（用户要求「点导轨点到底部就到底部，点到中间就到中间」）：
+    // ①末刻度=视口贴 flow 底（原 block:'start' 只把最后回合头对齐视口顶，
+    // 实测尾差 339px=「点了底部没到底」）；②RO 只读长内容（193 轮/10 万
+    // px）smooth 动画慢且长距观感失控——即时跳转（主窗口保留 smooth）
     if (it.el && it.el.isConnected) {
-      it.el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      const _last = +t.dataset.rk === _HG.railItems.length - 1;
+      if (_last) {
+        _hgFlow.scrollTop = _hgFlow.scrollHeight;
+        return;
+      }
+      it.el.scrollIntoView({ block: 'start',
+        behavior: _HG.readonly ? 'auto' : 'smooth' });
       return;
     }
     // 未渲染回合：先扩窗到该行（histStart=该行号——_histRender 的段头回退
