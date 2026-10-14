@@ -148,10 +148,16 @@
   function _turnHeadSubPaint(g) {
     if (!g || !g.headSub) return;
     const segN = thinkSegCount(g);
-    const toolN = (g.counts ? Object.values(g.counts).reduce((a, b) => a + b, 0) : 0);
+    // v3.5.237：visionN 单列「N 识图」（原 Object.values 求和会把它并入
+    // 工具数——分列显示），其余 counts 合计为工具数
+    const visN = (g.counts && g.counts.visionN) || 0;
+    const toolN = (g.counts ? Object.entries(g.counts)
+      .filter(([k]) => k !== 'visionN')
+      .reduce((a, [, b]) => a + b, 0) : 0);
     const parts = [];
     if (segN) parts.push(segN + ' 思考');
     if (toolN) parts.push(toolN + ' 工具');
+    if (visN) parts.push(visN + ' 识图');
     g.headSub.textContent = parts.length ? '· ' + parts.join(' · ') : '';
   }
   function thinkSegCountSet(g, n) {

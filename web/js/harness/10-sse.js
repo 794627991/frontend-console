@@ -352,6 +352,16 @@
             }));
             _tlPlace(el, b.name, b.input || null);   // 非 explore → 直挂组时间线
             (_HG.visionCalls || (_HG.visionCalls = {}))[b.id] = el;
+            // v3.5.237（用户需求「调用识图工具，头部把识图也显示上」）：识图
+            // 计数进组 counts.visionN（与工具分列），实时刷头副位
+            {
+              const _g = _HG.grp;
+              if (_g) {
+                _g.counts = _g.counts || {};
+                _g.counts.visionN = (_g.counts.visionN || 0) + 1;
+                try { _turnHeadSubPaint(_g); } catch (_) {}
+              }
+            }
             _hgPeerTimerStart(el, +el.dataset.t0 || Date.now());   // 卡内 .hg-peer-t 钩子走表
           } else {
             renderToolUse(b, isSub, o.parent_tool_use_id);
