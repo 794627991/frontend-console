@@ -2249,7 +2249,7 @@ html {
 .hg-rail-t i { display: block; width: 9px; height: 2px; border-radius: 2px;
   background: color-mix(in srgb, var(--fg) 22%, transparent);
   transition: width .15s, background-color .15s; }
-.hg-rail-t:hover i { width: 15px; background: var(--fg-bright, #e8f1ff); }   /* v3.5.212b：hover 与 act 异色（muted 近 accent 难分辨） */
+.hg-rail-t:hover i { width: 17px; height: 3px; background: #ffb02e; }   /* v3.5.213b：hover 琥珀橙高亮（亮白暗主题不显眼）——宽+粗+暖色三重对比 act 蓝 */
 .hg-rail-t.act i { width: 15px; background: var(--accent); }
 /* v3.2.8：一键跳底浮动钮——离底 >350px 浮现（.show），贴底隐藏 */
 /* v3.2.18（用户定调「丑，修！」）：跳底钮重做——原幽灵态（半透明底+40%
