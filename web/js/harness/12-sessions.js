@@ -310,8 +310,9 @@
             // histAll 就绪即替换为重渲完美格式（快照存的是切走瞬间的
             // 流式残留形态，重渲才是结构化终态；无增长也渲）。busy 传
             // noFinalize 留活组+phResume 认回接续秒表（t0 行 ts 保真）。
-            _histRender(_HG.histAll, _HG.histStart | 0, { noFinalize: !!_HG.busy });
-            if (_HG.busy && typeof phResume === 'function') phResume(true);
+            const _busy2 = (_HG.fetchedBusy != null) ? _HG.fetchedBusy : !!_HG.busy;
+            _histRender(_HG.histAll, _HG.histStart | 0, { noFinalize: _busy2 });
+            if (_busy2 && typeof phResume === 'function') phResume(true);
             // v3.5.216：重渲只回放转写行——live-only 元素（运行中子代理
             // 档案/后台任务卡）不在转写里，重渲后统一回填（用户定调
             // 「重渲规整+流式细节统一」）
@@ -330,7 +331,7 @@
             // 换入清了流底 spinner（innerHTML 重建），busy 真值未变 setBusy
             // 不会重调——幂等重挂（在场即不重加，06-relay 冷开同款）；
             // 贴底三重兜底同冷开（图片/字体懒结算撑高会再偏，两帧+600ms）
-            if (typeof _hgSpinShow === 'function') { try { _hgSpinShow(!!_HG.busy); } catch (_) {} }
+            if (typeof _hgSpinShow === 'function') { try { _hgSpinShow(_busy2); } catch (_) {} }
             try { _hgScrollBottom(true); } catch (_) {}
             requestAnimationFrame(() => requestAnimationFrame(() => { try { _hgScrollBottom(true); } catch (_) {} }));
             setTimeout(() => { if (_HG.sid === sid) { try { _hgScrollBottom(true); } catch (_) {} } }, 600);

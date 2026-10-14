@@ -294,6 +294,10 @@
       const j = await r.json();
       if (!j.ok || _HG.sid !== sidAt) return false;
       _HG.histAll = j.lines || [];
+      // v3.5.225：后端 busy 真值随拉取存档——切回重渲的 noFinalize/phResume
+      // 判据用它（_HG.busy 在 events poll 回填前有竞态窗，误 false 会让尾组
+      // 被定稿+phResume(true) 新建悬挂活组=「一个回合两个块」分割实锤）
+      _HG.fetchedBusy = !!j.busy;
       return true;
     } catch(_) { return false; }
   }
