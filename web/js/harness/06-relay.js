@@ -314,6 +314,18 @@
     _HG.visionCalls = null;
   }
   function renderVisionRelayHist(l) {
+    // v3.5.244（用户实锤「明确识图过的回合头部无识图计数」）：hist 路径
+    // （方案B回合终重渲/切回重渲）同样计数 counts.visionN 并刷副位——
+    // v3.5.237 只挂了 live 路径（10-sse 建档处），重渲后组 counts 重建
+    // 时识图归零（转写 vision_relay=62 行实证 hist 是重渲后唯一来源）
+    try {
+      const _gv = _HG.grp || (typeof grpEnsure === 'function' && grpEnsure(true));
+      if (_gv) {
+        _gv.counts = _gv.counts || {};
+        _gv.counts.visionN = (_gv.counts.visionN || 0) + 1;
+        if (typeof _turnHeadSubPaint === 'function') _turnHeadSubPaint(_gv);
+      }
+    } catch (_) {}
     // v3.4.88：回放同构卡（v2.28 线退役）——dur 在手直接定格；tid 注册进
     // visionCalls 供后续 peer 行精确配对（无 tid=旧转写，回落时间邻接配对）
     const card = _hgVisionCardBuild({
