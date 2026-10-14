@@ -321,7 +321,13 @@
             try { _hgFlow.querySelectorAll('[data-h-end]').forEach(el => {
               _he2 = Math.max(_he2, +(el.dataset.hEnd || 0)); }); } catch (_) {}
             if (_HG.histAll.length - 1 > _he2) {
-              _histRender(_HG.histAll, _he2 + 1, { exactStart: true, noFinalize: _busy2 });
+              // v3.5.230（用户实锤「历史全没了」紧急回修）：v3.5.227 用
+              // exactStart 追加是错的——_histRender 的原子换入把 flow 整替
+              // 成「只有新增行」（hEnd 前的历史全被换掉=241 轮消失，重蹈
+              // v3.5.195 补尾覆辙）。改回整窗重渲（histStart 起，完整 20
+              // 回合窗口）：无增长不动 DOM（live 思考保留）语义不变；有
+              // 增长=工具已落盘（思考也随之落）→整窗渲含思考，两全
+              _histRender(_HG.histAll, _HG.histStart | 0, { noFinalize: _busy2 });
             }
             if (_busy2 && typeof phResume === 'function') phResume(true);
             // v3.5.216：重渲只回放转写行——live-only 元素（运行中子代理
