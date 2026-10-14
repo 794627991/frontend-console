@@ -1,5 +1,14 @@
 // harness ask-md.js (v3.0 自 buildClaudeHarnessTab 拆出,定义体零改动,缩进保持原样)
-  function askRender(it) {
+  
+// v3.5.241（用户实测实锤「工作区没显示askuser的」）：副位非高频重绘——
+// 秒表 interval 只更新时长文本不重画 headSub，askRender/askDone/Dismiss
+// 后必须主动刷一次，否则「待答」永不出现（v3.5.240 的查询式跟随推断错误）
+function _hgAskHeadSync() {
+  try {
+    if (typeof _turnHeadSubPaint === 'function' && _HG.grp) _turnHeadSubPaint(_HG.grp);
+  } catch (_) {}
+}
+function askRender(it) {
     if (!it || !it.req_id) return;
     // v3.4.61（ZCode 形态）：幂等跳过——同 req_id 且未 done 的面板已在场
     // （SSE snapshot 保留窗重放同帧 / _hgAskSync 与活流竞速）直接 return，
@@ -86,6 +95,7 @@
     if (!_hgAskDockEl) return;
     _hgAskDockEl.appendChild(card);
     _hgAskDockEl.classList.add('on');
+    _hgAskHeadSync();   // v3.5.241：ask 到达刷副位「待答」
     _hgScrollBottom();
   }
   // v3.4.60：多题分页翻页（ZCode ‹ 1/2 ›）——只切 cur 类不重建 DOM（草稿/选中
@@ -195,6 +205,7 @@
     }).catch(() => { _restore(); });
   }
   function askDone(it) {
+    _hgAskHeadSync();   // v3.5.241：作答→刷副位去「待答」
     const card = _hgWrap.querySelector(`[data-hg-ask="${CSS.escape(it.req_id || '')}"]`);   // v3.4.61：查重域扩到 dock
     // v3.4.61（ZCode 形态）：card 不在场（ask_done 迟到 / 他窗已答面板已收缩 /
     // SSE snapshot 重放）也继续——结果行按 req_id 幂等，数据走 it.answer
@@ -305,6 +316,7 @@
   // 过渡必须有起点数值；none→0 不播动画），240ms 后 remove（setTimeout 不用
   // transitionend——tab 后台 transitionend 不触发）；空 dock 收 .on；贴底联动
   function _hgAskDismiss(panel, override) {
+    _hgAskHeadSync();   // v3.5.241：面板收缩→刷副位
     if (!panel || !panel.isConnected) return;
     panel.classList.add('done');
     _hgAskResultRow(panel.dataset.hgAsk || '', {}, askQs(panel), false, override || '已失效');
