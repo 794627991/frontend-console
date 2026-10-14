@@ -679,9 +679,9 @@
             // v3.5.240 ①：方案B重渲同款——进行中识图卡摘下/回插
             var _liveVis2 = [];
             try {
-              _hgFlow.querySelectorAll('.h-tool.h-vision:not([data-done])').forEach(c => _liveVis2.push(c));
+              _hgFlow.querySelectorAll('.h-tool.h-vision:not([data-done]), .h-ask-rs').forEach(c => _liveVis2.push(c));
               _liveVis2.forEach(c => c.remove());
-            } catch (_) {}
+            } catch (_) {}   // v3.5.242：ask结果行同护
             try {
               _histRender(_HG.histAll, _HG.histStart | 0);
               // v3.5.235（用户实锤「流式时从没有过头+查阅胶囊,结束反而冒出

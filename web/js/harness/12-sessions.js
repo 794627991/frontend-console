@@ -326,9 +326,9 @@
             // 存在，整窗重渲会丢卡）——重渲前摘下，渲后回插尾组时间线
             var _liveVis = [];
             try {
-              _hgFlow.querySelectorAll('.h-tool.h-vision:not([data-done])').forEach(c => _liveVis.push(c));
+              _hgFlow.querySelectorAll('.h-tool.h-vision:not([data-done]), .h-ask-rs').forEach(c => _liveVis.push(c));
               _liveVis.forEach(c => c.remove());
-            } catch (_) {}
+            } catch (_) {}   // v3.5.242：ask结果行同护（转写无ask行，重渲必丢）
             if (_HG.histAll.length - 1 > _he2) {
               // v3.5.230（用户实锤「历史全没了」紧急回修）：v3.5.227 用
               // exactStart 追加是错的——_histRender 的原子换入把 flow 整替
