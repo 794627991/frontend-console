@@ -219,7 +219,12 @@
     if (_HG.grp && _HG.grp.root === root && _HG.grp.ph && _HG.grp.ph.isConnected) return;
     // v3.3.2(D3)：待答 ask 卡在场=可见占位（等用户选择），不再复暖「正在
     // 思考」气泡——两者并存是状态谎言
-    if (_hgWrap && _hgWrap.querySelector('.h-ask:not(.done)')) return;
+    // v3.5.202b（用户实锤「切回来有概率工作区头不显示」）：ask 守卫不再
+    // 拦整个函数——原 return 连「工作中」回合头都不亮（ask 在场的 busy
+    // 切回，头永久缺失）。改为拦 phStart（占位气泡，D3 本义）不拦
+    // _turnHeadShow（头是回合状态载体，与 ask 并存不冲突——CLI 同回合
+    // 阻塞等选择，工时照走）
+    const _askHold = !!(_hgWrap && _hgWrap.querySelector('.h-ask:not(.done)'));
     if (!root) {
       // 尾部没有活组 = transcript 重建的 busy 会话末行是 user（renderUser
       // (live=false) 不建组）——等价于「刚发完消息」：建组 + 占位。
@@ -254,6 +259,7 @@
     // 占位保留到正文到达（renderAssistant phRemove）；非 busy（冻结回放）
     // 保留原摘除语义（正文已接管）
     if (!_busy && g.tl && g.tl.children.length) { phRemove(g); return; }
+    if (_askHold) return;   // D3：ask 在场不复暖占位气泡（头不受影响）
     phStart(g);     // 冻结占位由 phStart 认领复用（不新建第二个）
   }
   // v3.2：ZCode 式回合折叠头（AssistantHistoryStatus 同款）——首条工作行到位
