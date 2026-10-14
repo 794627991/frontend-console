@@ -665,8 +665,30 @@
             if (_HG.fetchedBusy) return;   // 真在跑（含 hold）让位
             try {
               _histRender(_HG.histAll, _HG.histStart | 0);
-              // B组P4：hist 渲染器不产 .h-turnsum——重渲后从投影重插
-              try { _hgTurnSumRow(); } catch (_) {}
+              // v3.5.235（用户实锤「流式时从没有过头+查阅胶囊,结束反而冒出
+              // 来=不符合正常输出格式」）：方案B 重渲用的是 hist 渲染器——
+              // 它给每个定稿组亮「已工作 X」头,这是**历史回放形态**;live
+              // 会话刚结束的尾组应保持 live 干净形态（无定稿头无摘要行,
+              // 正文+回滚按钮收尾）——重渲后对尾组隐藏头+删 turnsum+
+              // 展开工作区。历史形态留给切回/只读场景（那时是历史语境）
+              try {
+                const _gs = _hgFlow.querySelectorAll(':scope > .h-grp');
+                const _lg = _gs[_gs.length - 1];
+                if (_lg) {
+                  const _lh = _lg.querySelector(':scope > .h-grp-proc > .h-turn-head');
+                  if (_lh) _lh.style.display = 'none';
+                  _lg.querySelectorAll('.h-turnsum').forEach(x => x.remove());
+                  const _ltb = _lg.querySelector(':scope > .h-grp-proc > .h-turn-body');
+                  if (_ltb) _ltb.classList.remove('closed');
+                }
+              } catch (_) {}
+              // B组P4：摘要行只对**非尾组**补（历史组保持）——尾组刚隐藏
+              try {
+                const _gs2 = _hgFlow.querySelectorAll(':scope > .h-grp');
+                const _sv = _HG.grp; _HG.grp = _gs2[_gs2.length - 2] || null;
+                if (_HG.grp) _hgTurnSumRow();
+                _HG.grp = _sv;
+              } catch (_) {}
               // A组S3a：任务卡不在转写——重渲整替会抹掉运行中任务卡，
               // 从 tasksBy 回填（与切换命中路同款；agents restore 同补）
               if (_HG.tasksBy && _HG.tasksBy[_sidB]) {
