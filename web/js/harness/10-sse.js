@@ -675,8 +675,11 @@
   //   reset    epoch 不匹配 → 弃事件流，transcript 重建后以新水位重开
   // ka 心跳 5s 一发（命名事件，SSE 注释行 JS 不可见做不了看门狗）；20s
   // 无帧判死强制重连（对照 persistent-protocol KEEP_ALIVE=5s/ACK_TIMEOUT=20s）。
-  function _hgSseResetLocal() {
+  function _hgSseResetLocal(keepDom) {
     // 清场：内存态与 DOM 全部作废（switchTo 的重置块同款，供 snapshot/reset 用）
+    // v3.5.196：keepDom=true 时跳过 flow 清空（reload 重建用）——旧 DOM 保留
+    // 到渲染器原子换入，消除「清场→新内容换入」之间的白屏空窗（用户实锤
+    // 「连着两个 300ms 空闲帧=体感卡顿」：原清场先清 DOM 再等 fetch+渲染）
     // v3.5.123：hold 旗随清场（切走的会话若在 hold，回切由 replay 的 turn_hold 重建）
     _HG.hold = false;
     endThinking(); closeRun();
@@ -708,8 +711,8 @@
     _HG.histLineTs = 0; _HG.histActTs = 0; _HG.thinkPend = null;   // v3.2.2 ts 账 + v3.2.5 pend 随清场作废
     _HG.prevRowAt = 0; _HG.lastRowAt = 0;   // v3.3.1(F5)：事件时刻账随清场作废
     _HG.echoFast = null; _HG.seq = 0;
-    _hgFlow.innerHTML = '';
-    _hgRailSync();   // v3.2.10：本地清场后收轨
+    if (!keepDom) _hgFlow.innerHTML = '';
+    _hgRailSync();   // v3.2.10：本地清场后收轨（keepDom 时轨随渲染器换入后同步）
   }
   function _hgSseRebuild(sid) {
     // reset 语义：事件流已无法表达真源（/rewind 换代）→ 弃快照缓存走

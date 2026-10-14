@@ -89,7 +89,8 @@
     // 连接性判据在缓冲期视缓冲内元素为「在场」（grpEnsure/_tlPlace/
     // _tlExpFlush 三处同判）
     _HG.histBuilding = true;
-    _realFlow.innerHTML = '';
+    // v3.5.196：不再预清 flow——buf 渲染期旧 DOM 保留在屏（消除白屏），
+    // replaceChildren 原子换入即整替（预清与换入语义重复且制造空窗）
     // 归档提示条：窗口化渲染（v3.5.193）时由本渲染器自插（start>0=有归档轮，
     // 见窗口起点计算）；trim 兜底 live 追加路径
     if (!lines.length) {

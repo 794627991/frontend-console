@@ -31,7 +31,8 @@
       // 离行写徽章；epoch 同步换代水位（回滚必换代，带着旧 epoch 重开流会
       // 多吃一轮 ack reset 重建）。回滚后旧快照作废（存的是回滚前 DOM）
       delete _HG.cache[sid];
-      _hgSseResetLocal();
+      _hgSseResetLocal(true);      // v3.5.196：keepDom——旧内容保留到渲染器
+                                   // 原子换入，消除清场白屏空窗
       _HG.histRebuilding = sid;    // 轻审 P2+复审 P3：sid 化按归属自清
       try {
       // v3.4.69d（轻审观察1收口）+ v3.4.70 P1 修正：同代水位不回退——await

@@ -8,6 +8,12 @@
   // （自愈是否触发用户直接看得到，不再依赖控制台；自愈频发=根因仍在的信号）
   function _hgCoverageAudit(sid, totalLines, tag, opts) {
     if (_HG.sid !== sid || !totalLines) return;
+    // v3.5.196：重建在途/刚恢复不审计——reload 清场期（keepDom 后为旧 DOM）
+    // 与渲染中的 DOM 账目必然不完整，hEnd=0 误判巨 gap 触发连锁自愈重渲
+    // （用户 trace 实锤「rendered hEnd=0 gap=5722 auto re-render」+连着
+    // 空白帧）；histRestoredAt 1.5s 内换入/trim/补尾未稳也不审
+    if (_HG.histRebuilding) return;
+    if (Date.now() - (_HG.histRestoredAt || 0) < 1500) return;
     // v3.5.164（轻审 F1/F2 回修，取代 v3.5.137 的一刀切）：误报机制只在
     // 「快照基准」路径成立——snapshot-hit/sse-snapshot 的 totalLines 是离开
     // 会话瞬间的快照行数，busy 会话离开后持续产出，2s 审计时 live 增量使
