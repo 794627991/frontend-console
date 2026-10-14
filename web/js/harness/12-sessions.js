@@ -107,6 +107,7 @@
     _HG.subRows = {}; _HG.subBlk = {};
     _HG.subTail = {};   // v2.46：实时思考轮询 offset 随会话切换重置（防串会话读错文件位）
     _HG.subTailSeg = {};   // v2.58：续派切段映射随会话重置
+    _HG.fetchedBusy = null;   // C组T5：随切会话清（防陈旧值误用）
     _HG.histAll = null; _HG.histStart = 0; _HG.histLive = false;   // v2.24：多段历史渲染源不复用（防串会话）；v2.35.2：histLive 随切重置（快照恢复态不进滚动扩收）
     _HG.histStale = false;   // v2.43.2（R2-缺口A）：降级标记随切会话重置（恢复时按快照 histFp 重新判定）
     // v3.4.52（致命双会话实锤「全部变成回放了但是实际是在工作的」）：运行中
@@ -297,7 +298,6 @@
             const _snapHEnd = (() => { let m = 0;
               try { _hgFlow.querySelectorAll('[data-h-end]').forEach(el => {
                 m = Math.max(m, +(el.dataset.hEnd || 0)); }); } catch (_) {} return m; })();
-            const _hasGrow = _HG.histAll.length - 1 > _snapHEnd;
             // v3.5.197（用户实锤「上一回合的内容渲染进了新回合」）：有增长
             // 一律窗口重渲一次做对（busy 传 noFinalize 留活组+phResume 认回
             // 接续秒表，t0 由行 ts 保真不归 0）——v3.5.194 的 busy 增量补尾
@@ -311,15 +311,9 @@
             // 流式残留形态，重渲才是结构化终态；无增长也渲）。busy 传
             // noFinalize 留活组+phResume 认回接续秒表（t0 行 ts 保真）。
             const _busy2 = (_HG.fetchedBusy != null) ? _HG.fetchedBusy : !!_HG.busy;
-            // v3.5.227（用户实锤「思考气泡切回消失」）：转写落盘延迟窗内
-            // （思考进行中切走）fetch 回来无新行——原「一律重渲」会把快照
-            // DOM 里的 live 思考整替掉（转写还没有它）=思考消失，直到工具
-            // 落盘再切才回来。改为：无增长**不动 DOM**（live 思考保留）；
-            // 有增长**只追加新行**（exactStart 不拆已有 DOM——live 思考/
-            // 气泡原样，新增行规整渲染）。回合结束方案 B 重渲统一规整化。
-            let _he2 = 0;
-            try { _hgFlow.querySelectorAll('[data-h-end]').forEach(el => {
-              _he2 = Math.max(_he2, +(el.dataset.hEnd || 0)); }); } catch (_) {}
+            // v3.5.227+230（思考保留+历史完整）：无增长不动 DOM（live 思考
+            // 保留——转写未落盘的思考只在屏上）；有增长整窗重渲（完整 20
+            // 回合窗口，历史完整；exactStart 追加模式已因整替丢历史事故退役）
             if (_HG.histAll.length - 1 > _he2) {
               // v3.5.230（用户实锤「历史全没了」紧急回修）：v3.5.227 用
               // exactStart 追加是错的——_histRender 的原子换入把 flow 整替

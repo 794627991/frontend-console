@@ -699,6 +699,7 @@
   // ka 心跳 5s 一发（命名事件，SSE 注释行 JS 不可见做不了看门狗）；20s
   // 无帧判死强制重连（对照 persistent-protocol KEEP_ALIVE=5s/ACK_TIMEOUT=20s）。
   function _hgSseResetLocal(keepDom) {
+    _HG.fetchedBusy = null;   // C组T5：随清场清（防陈旧值误用）
     // 清场：内存态与 DOM 全部作废（switchTo 的重置块同款，供 snapshot/reset 用）
     // v3.5.196：keepDom=true 时跳过 flow 清空（reload 重建用）——旧 DOM 保留
     // 到渲染器原子换入，消除「清场→新内容换入」之间的白屏空窗（用户实锤

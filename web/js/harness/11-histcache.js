@@ -21,11 +21,6 @@
       // 既有定调），归档条自插仅 start>0 时天然不触发
       start = 0;
       start = Math.min(start, lines.length);
-    } else if (opt && opt.exactStart) {
-      // v3.5.195（补尾模式）：start=调用方精确给定的渲染起点（增量补尾从
-      // DOM 账目 hEnd+1 起）——跳过窗口计算，行尾全套记账（hEnd/turnHi/
-      // lastAsst/回滚授予）走既有循环，账目与 DOM 恒一致
-      start = Math.max(0, Math.min(start, lines.length));
     } else {
       const TURN_N = 20;
       start = lines.length;
@@ -206,7 +201,9 @@
       // 非尾组 turn-body 全部收起 + 清占位残壳；busy 会话尾组是活组照常展开
       const _grps = _realFlow.querySelectorAll(':scope > .h-grp');
       _grps.forEach((gp, i) => {
-        if (_HG.busy && i === _grps.length - 1) return;
+        // C组G3：busy 判据统一——noFinalize（fetchedBusy 真值）优先，_HG.busy
+        // 兜底（events poll 未回填的竞态窗内陈旧 false 曾让活组被误收体+删占位）
+        if (((opt && opt.noFinalize) || _HG.busy) && i === _grps.length - 1) return;
         const tb = gp.querySelector(':scope > .h-grp-proc > .h-turn-body');
         if (tb) tb.classList.add("closed");
         const ph = gp.querySelector(":scope > .h-msg.asst.ph");

@@ -238,9 +238,13 @@ function RO_exit(force) {
             hEnd = Math.max(hEnd, +(el.dataset.hEnd || 0)); });
         } catch (_) {}
         if (_HG.histAll && _HG.histAll.length - 1 > hEnd) {
-          _histRender(_HG.histAll, _HG.histStart | 0, { noFinalize: !!_HG.busy });
-          if (_HG.busy && typeof phResume === 'function') phResume(true);
-          if (typeof _hgSpinShow === 'function') { try { _hgSpinShow(!!_HG.busy); } catch (_) {} }
+          // C组G4：busy 用 fetchedBusy（_histFetch 刚刷新的后端真值）——
+          // RO 期间 SSE 断，_HG.busy 冻结陈旧：true→幻影工作中头空转；
+          // false→活组被定稿后新帧另起组=分裂
+          const _b = (_HG.fetchedBusy != null) ? _HG.fetchedBusy : !!_HG.busy;
+          _histRender(_HG.histAll, _HG.histStart | 0, { noFinalize: _b });
+          if (_b && typeof phResume === 'function') phResume(true);
+          if (typeof _hgSpinShow === 'function') { try { _hgSpinShow(_b); } catch (_) {} }
           try { _hgScrollBottom(true); } catch (_) {}
         }
       });

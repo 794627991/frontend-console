@@ -18,7 +18,6 @@ import traceback
 
 _REQS = {}
 _LOCK = threading.Lock()
-_N = [0]
 _LAST = [0.0]
 _DUMP = os.path.join(os.path.expanduser("~"), ".serialconsole_pro",
                      "watchdog_dump.log")
@@ -30,7 +29,6 @@ except Exception:      # 独立导入失败（非 Flask 环境）——不安装
 
 
 def _before():
-    _N[0] += 1
     with _LOCK:
         _REQS[threading.get_ident()] = {
             "path": (request.path or "?")[:60], "t0": time.time()}
@@ -67,13 +65,17 @@ def _loop():
             with _LOCK:
                 slow = [(r["path"], now - r["t0"])
                         for r in _REQS.values() if now - r["t0"] > 2.0]
+            # C组G2：老化剔除——请求线程异常死亡（after 未跑）的条目永驻
+            # 会让 slow 恒真 → 无限幻影转储；>600s 的条目直接清
+            with _LOCK:
+                for k in list(_REQS):
+                    if now - _REQS[k]["t0"] > 600:
+                        del _REQS[k]
             if not slow:
                 continue
             if now - _LAST[0] < 10:      # 10s 频控（持续卡顿防日志爆炸）
                 continue
             _LAST[0] = now
-            with _LOCK:                  # 拿快照后再取栈（不持锁取栈）
-                pass
             _dump_stacks(slow)
         except Exception:
             pass

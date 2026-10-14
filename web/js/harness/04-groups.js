@@ -315,7 +315,9 @@
       (_HG.turnTicks || (_HG.turnTicks = [])).push(g.headTimer);
     }
   }
-  function _turnHeadStop() {                        // 清场钩子：切会话/SSE reset 时收掉全部秒表
+  function _turnHeadStop() {
+  // C组T6：清场同时清游离 interval 的元素属性标记（keepDom reset 后 DOM
+  // 保留，属性残留会让早退分支误判「表已在跑」不再起新表）                        // 清场钩子：切会话/SSE reset 时收掉全部秒表
     ((_HG.turnTicks) || []).forEach(clearInterval);
     _HG.turnTicks = [];
   }
