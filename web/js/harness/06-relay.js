@@ -30,7 +30,11 @@
       // subRows/turnTicks）指向 innerHTML 替换后的游离节点，迟到事件会往游
       // 离行写徽章；epoch 同步换代水位（回滚必换代，带着旧 epoch 重开流会
       // 多吃一轮 ack reset 重建）。回滚后旧快照作废（存的是回滚前 DOM）
-      delete _HG.cache[sid];
+      // v3.5.198：清场不再删快照——删了之后 fetch/parse 窗口期切走时
+      // saveCache 被 histRebuilding 守卫跳过=快照永久丢失，下次切回只能
+      // 无快照冷开（清场白屏等 13MB fetch，用户 trace 实锤 15 次全量拉取
+      // 连环白屏）。旧快照保留：恢复显示旧内容（总比白屏好）+ histStale
+      // 机制强制重渲保正确性；新快照就绪时自然覆盖
       _hgSseResetLocal(true);      // v3.5.196：keepDom——旧内容保留到渲染器
                                    // 原子换入，消除清场白屏空窗
       _HG.histRebuilding = sid;    // 轻审 P2+复审 P3：sid 化按归属自清
