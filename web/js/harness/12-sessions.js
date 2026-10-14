@@ -387,10 +387,18 @@
       _hgEventsPoll(sid);
       _hgRailSync();   // v3.2.10：快照恢复后重建轨（未渲染区项待 histAll 补全后自动出现）
     } else {
-      _hgFlow.innerHTML = '';
-      _hgAskDockRestore('');   // 全审 F1：冷开清 dock——A 会话的待答面板已随入口
-                               // saveCache 存进 A 快照（切回可恢复），不清则 B 的
-                               // _hgAskSync 会把它当僵尸 dismiss 且污染行写进 B
+      // v3.5.198（用户实测白屏专项：切 13MB 大会话 n=0 全程白屏）：不再预清
+      // flow——上一个会话的内容保留在屏（总比白屏好），fetch 完成由
+      // _histRender 原子换入（v3.5.196 已撤渲染器预清）；顶部插轻量加载
+      // 指示（换入时被 replaceChildren 自然清掉）。dock 照清（A 的待答面板
+      // 已随入口 saveCache 存进 A 快照，不清则 B 的 _hgAskSync 当僵尸）
+      _hgAskDockRestore('');
+      try {
+        var _ld = document.createElement('div');
+        _ld.className = 'hg-spin-row';
+        _ld.innerHTML = '<span class="hg-spin"></span><span>加载会话内容…</span>';
+        _hgFlow.insertBefore(_ld, _hgFlow.firstChild);
+      } catch (_) {}
       _HG.histRebuilding = sid;   // 复审 P5：冷开转写在途窗口（同 _hgSseRebuild
                                   // 三处同款 sid 化标志——空 flow 不入快照）
       try {
