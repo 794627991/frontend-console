@@ -2095,17 +2095,26 @@ function buildClaudeHarnessTab(opts = {}) {
     }
     if (act < 0) act = 0;
     const prev = rail.querySelector('.hg-rail-t.act');
-    const cur = rail.children[act];
+    // v3.5.211c（跟随失效根因）：三段式后 rail.children=[▲,scroll,▼]——
+    // children[act] 取到按钮而非刻度，act 高亮全丢。刻度在 .hg-rail-scroll
+    // 的 children 里（旧结构回退 rail.children 兼容）
+    const _rsc2 = rail.querySelector('.hg-rail-scroll');
+    const cur = _rsc2 ? _rsc2.children[act] : rail.children[act];
     if (prev === cur) return;
     if (prev) prev.classList.remove('act');
     if (cur) {
       cur.classList.add('act');
-      // 轨自滚跟随（居中）——v3.5.210b：滚动容器是 .hg-rail-scroll（轨
-      // 三段式重构后按钮占首尾，offsetTop 相对 rail 仍有效，滚动作用到
-      // 刻度区）；轨自身在滚动时（用户翻轨）不抢位
-      const _rsc = rail.querySelector('.hg-rail-scroll') || rail;
-      const want = cur.offsetTop - _rsc.clientHeight / 2;
-      if (Math.abs(want - _rsc.scrollTop) > _rsc.clientHeight / 2) _rsc.scrollTop = want;
+      // 轨自滚跟随（居中）——v3.5.211b（用户实锤「跟随效果没有了」）：
+      // 三段式后 cur.offsetTop 相对 rail（含▲按钮高），滚动容器是内层
+      // .hg-rail-scroll——换算 cur 相对滚动容器：curTop - scTop0；且把
+      // 抢位阈值从 clientHeight/2 收紧到 40px（原半屏阈值=小幅滚动永远
+      // 不跟随，观感即「跟随没了」）；轨自身在滚动（用户翻轨）时不抢位
+      const _rsc = rail.querySelector('.hg-rail-scroll');
+      if (_rsc) {
+        const want = (cur.offsetTop - _rsc.offsetTop) - _rsc.clientHeight / 2;
+        if (Math.abs(want - _rsc.scrollTop) > 40
+            && Math.abs(want - _rsc.scrollTop) < _rsc.scrollHeight) _rsc.scrollTop = want;
+      }
     }
   }
   function _hgRailActiveRaf() {
