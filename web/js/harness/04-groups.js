@@ -751,7 +751,7 @@
     const c = (String(name || '?').charCodeAt(0) || 63) % 5;
     return 'h-ava-' + c;
   }
-  function renderAsst(text, model) {
+  function renderAsst(text, model, hi) {
     // v2.16：空白/纯换行的 text 块不渲染。模型每轮都会吐一个 "\n\n" 占位块，
     // 旧判据 `if (!text)` 挡不住 → 每条渲染成一个空白气泡（历史重建后满屏空白
     // 圆角条）。重建与流式两条路径都走这里，一并对齐。
@@ -772,6 +772,7 @@
     phRemove(g);                               // 正文接管，占位动画退场
     const d = document.createElement('div');
     d.className = 'h-msg asst';
+    if (hi != null) d.dataset.hi = String(hi);   // v3.5.221r2 N1：assistant 行 hi 钩子（livelog 盖戳/删除锚寻址）
     d.appendChild(mdBubble(text));
     // v2.37（P1-C）+ v2.37R6（徽章间歇缺失）：任何路径的 AI 气泡都至少有
     // 头像——实跑 model 可得（实时事件自带 message.model，缺省回退会话模型）

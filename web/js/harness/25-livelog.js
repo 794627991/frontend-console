@@ -111,12 +111,12 @@
       const r = ha[i];
       if (!r.__live) break;
       if (r.role === 'assistant' && r.__dirty) {
-        // 旧 DOM（同 hEnd 戳的 asst 元素）移除；renderHistLine 重画+重盖戳
-        _hgFlow.querySelectorAll('.h-msg.asst[data-h-end="' + i + '"]').forEach(e => e.remove());
-        const _b = _hgFlow.lastElementChild;
+        // r2 N1：删除锚=data-hi（asst 气泡随 renderAsst(hi) 带 hi）；
+        // 重画后同址盖 hEnd——原 data-h-end 删除锚对无戳气泡永 miss=只增不删
+        _hgFlow.querySelectorAll('.h-msg.asst[data-hi="' + i + '"]').forEach(e => e.remove());
         try { renderHistLine(r, i); } catch (_) {}
-        const _a = _hgFlow.lastElementChild;
-        if (_a && _a !== _b) _a.dataset.hEnd = String(i);
+        const _el = _hgFlow.querySelector('.h-msg.asst[data-hi="' + i + '"]');
+        if (_el) _el.dataset.hEnd = String(i);
         r.__dirty = false;
         return;
       }
@@ -144,19 +144,17 @@
         if (!r) continue;
         // r1 P4：user 行不入屏（renderUser 乐观链已渲，账本只做回合边界账）
         if (r.role === 'user') { r.__settled = true; continue; }
-        const _before = _hgFlow.lastElementChild;
         try { renderHistLine(r, i); } catch (e) {
           try { console.error('[harness] livelog append fail @' + i, e); } catch (_) {}
           L.dirty = true;   // 下 tick 重试
           break;
         }
-        // r1 P2：hEnd 记账闭环——renderHistLine 不盖戳（唯一盖戳点在
-        // _histRender），tick 自行对落位元素补 data-h-end（对齐
-        // 11-histcache.js:116 语义），否则 _hEndMax 恒停在窗口水位=
-        // 每 tick 全量重复渲染
-        const _after = _hgFlow.lastElementChild;
-        const _stamped = _after && _after !== _before ? _after : null;
-        if (_stamped) _stamped.dataset.hEnd = String(i);
+        // r2 N1：hEnd 记账闭环——按 data-hi 寻址行元素本体盖戳（tool/thinking
+        // 行 renderHistTool/思考段自带 dataset.hi；assistant 行 r2 起随
+        // renderAsst(hi) 落 hi）。原 lastElementChild 判据被 DOM 嵌套架空
+        // （行落在组 tl/查阅组内，永非 flow 直接子级）——每 tick 全量重渲
+        const _el = _hgFlow.querySelector('[data-hi="' + i + '"]');
+        if (_el) _el.dataset.hEnd = String(i);
         r.__settled = true;
       }
       // ② patch：已渲 tool 行有新 result——原位补徽章（r1 P3：renderOneToolResult
@@ -186,10 +184,12 @@
     } finally { _HG.noScroll = noScrollPrev; }
     // ④ 滚动跟随（stickBtm=false 时不打扰）
     try { if (_HG.stickBtm !== false) _hgScrollBottom(); } catch (_) {}
-    // ⑤ 一致性自检 + 预算自适应
+    // ⑤ 一致性自检 + 预算自适应（r2 P7：tick 内检测变更即重建 interval——
+    // busy 期间无人再调 start()，原「跨回合生效」降频在最需要时失效）
     const cost = performance.now() - t0;
     if (cost > 50) L.tickMs = 2000;
     else if (L.tickMs === 2000 && cost < 30) L.tickMs = 1000;
+    if (L.tickMs !== _llTimerMs) _llStart();   // _llStart 幂等（_llTimerMs 判据）
   }
 
   function _llStart() {
@@ -228,7 +228,10 @@
         const fetched = j.lines || [];
         // 主链签名：role+tid+text 长度序列（忽略 sub_* 注入行）
         const sig = arr => arr.filter(l => l && !String(l.role).startsWith('sub_'))
-          .map(l => l.role + ':' + (l.tid || '') + ':' + String(l.text || '').length).join('|');
+          .map(l => l.role + ':' + (l.tid || '') + ':' + String(l.text || '').length
+            + ':' + (l.err ? 'E' : '') + ':' + (l.result != null ? 'R' : '')).join('|');
+        // r2 N2b：签名含 err/result 位——徽章漂移（err 翻转/result 回填）
+        // 也触发重渲兜底，错工具不再永久留绿 completed
         const a = sig(_HG.histAll.slice(L.provStart));
         const b = sig(fetched.slice(L.provStart));
         // r1 P5：sub_* 中位注入使 fetched 更长但主链签名仍相符——索引

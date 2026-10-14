@@ -10,6 +10,10 @@
       const d = _hgAgentRowBuild('ag' + (hi != null ? hi : 'r' + (++_HG.uidN)),
         _inp.subagent_type || _inp.agent_type || l.text,
         _inp.description || '');
+      // v3.5.221r2 N2：hist 工具行补真 tid（原只有 live 路径设 data-tid，
+      // 且本行用的 'ag'+hi 伪 tid 与账本行真 tid 恒不等）——livelog 的
+      // patch 通道按 .h-tool[data-tid] 寻行原位补徽章
+      if (l.tid) d.dataset.tid = l.tid;
       if (_err) d.classList.add('err');
       const st = d.querySelector('.h-tslots');
       // v3.4.55（轻审 P2）：运行中子代理（切会话暂存桶在案）画运行徽章——
@@ -166,7 +170,7 @@
         renderUser(l.text, imgs, files, false, l.ts ? new Date(l.ts).getTime() : 0);
       }
     }
-    else if (l.role === 'assistant') renderAsst(l.text, l.model || _HG.model || '');
+    else if (l.role === 'assistant') renderAsst(l.text, l.model || _HG.model || '', hi);
     else if (l.role === 'thinking') {
       // v2.24 懒抽屉：历史思考段只建壳（默认收起），点开才渲染 markdown——
       // 大会话重建的大头就是几十 K 字符的 thinking 渲染
