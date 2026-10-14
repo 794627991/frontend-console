@@ -672,11 +672,14 @@
               // 正文+回滚按钮收尾）——重渲后对尾组隐藏头+删 turnsum+
               // 展开工作区。历史形态留给切回/只读场景（那时是历史语境）
               try {
+                // v3.5.236（修正 v3.5.235 的悬空 bug）：头**保留**——live 流式
+                // 定稿本来就有「已工作 X」头（grpFinalize 冻结，用户从未异议），
+                // v3.5.235 把头 display:none 后工作区元素（缩进竖线/查阅行）失去
+                // 容器悬空；只删尾组 turnsum 胶囊（用户实锤「流式期间没有、结束
+                // 冒出来的只有这个」）+工作区展开（live 终态不折叠）
                 const _gs = _hgFlow.querySelectorAll(':scope > .h-grp');
                 const _lg = _gs[_gs.length - 1];
                 if (_lg) {
-                  const _lh = _lg.querySelector(':scope > .h-grp-proc > .h-turn-head');
-                  if (_lh) _lh.style.display = 'none';
                   _lg.querySelectorAll('.h-turnsum').forEach(x => x.remove());
                   const _ltb = _lg.querySelector(':scope > .h-grp-proc > .h-turn-body');
                   if (_ltb) _ltb.classList.remove('closed');
