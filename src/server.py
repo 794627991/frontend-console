@@ -45,6 +45,14 @@ from src.file_tree import tree_bp
 
 
 app = Flask(__name__)
+# v3.5.223 请求看门狗：在途请求 >2s 自动转储全部线程栈（复现 SSH 卡死类
+# 后端阻塞的取证基建，dump 落 ~/.serialconsole_pro/watchdog_dump.log）
+try:
+    from src.watchdog import install_watchdog
+    install_watchdog(app)
+except Exception:
+    pass
+
 
 # v3.4.12（用户实锤「重启+Ctrl+F5 仍旧样式」）：调试模式——HARNESS_DEBUG_WEB=1
 # 时前端资源直读源码目录 web/（本文件旁），彻底绕过 RES_DIR/_mem_web/一切副本；
