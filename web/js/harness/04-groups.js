@@ -158,11 +158,15 @@
     if (segN) parts.push(segN + ' 思考');
     if (toolN) parts.push(toolN + ' 工具');
     if (visN) parts.push(visN + ' 识图');
-    // v3.5.240 ③（用户需求「askuser也体现在工作区头里面」）：待答提问
-    // 在场（dock 有未答 .h-ask）→ 副位追加「待答」
+    // v3.5.245 ③（用户定调「只要问过我问题，就在工作区头显示」）：弹出
+    // 待答时显示「待答」；作答后持久显示「N 提问」——查询组内 .h-ask-rs
+    // 作答结果行（v3.5.242 已保证重渲摘下回插=重渲后计数仍在）
     try {
-      if (typeof _hgAskDockEl !== 'undefined' && _hgAskDockEl
-          && _hgAskDockEl.querySelector('.h-ask:not(.done)')) parts.push('待答');
+      const _pend = (typeof _hgAskDockEl !== 'undefined' && _hgAskDockEl
+        && _hgAskDockEl.querySelector('.h-ask:not(.done)')) ? 1 : 0;
+      const _asked = _pend + (g.root ? g.root.querySelectorAll('.h-ask-rs').length : 0);
+      if (_pend) parts.push('待答');
+      else if (_asked) parts.push(_asked + ' 提问');
     } catch (_) {}
     g.headSub.textContent = parts.length ? '· ' + parts.join(' · ') : '';
   }
