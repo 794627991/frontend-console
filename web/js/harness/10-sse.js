@@ -676,6 +676,12 @@
           _histFetch(_sidB).then((_ok) => {
             if (!_ok || _HG.sid !== _sidB) return;
             if (_HG.fetchedBusy) return;   // 真在跑（含 hold）让位
+            // v3.5.240 ①：方案B重渲同款——进行中识图卡摘下/回插
+            var _liveVis2 = [];
+            try {
+              _hgFlow.querySelectorAll('.h-tool.h-vision:not([data-done])').forEach(c => _liveVis2.push(c));
+              _liveVis2.forEach(c => c.remove());
+            } catch (_) {}
             try {
               _histRender(_HG.histAll, _HG.histStart | 0);
               // v3.5.235（用户实锤「流式时从没有过头+查阅胶囊,结束反而冒出
@@ -713,6 +719,19 @@
                 }
               }
               if (typeof _hgLiveAgentsRestore === 'function') { try { _hgLiveAgentsRestore(_sidB); } catch (_) {} }
+              try {
+                const _gsV2 = _hgFlow.querySelectorAll(':scope > .h-grp');
+                const _lgV2 = _gsV2[_gsV2.length - 1];
+                const _tlV2 = _lgV2 && _lgV2.querySelector('.h-tl');
+                _liveVis2.forEach(c => {
+                  if (_tlV2) _tlV2.appendChild(c);
+                  if (c.dataset.tid) {
+                    _HG.visionCalls = _HG.visionCalls || {};
+                    _HG.visionCalls[c.dataset.tid] = c;
+                    try { _hgPeerTimerStart(c, +(c.dataset.t0 || 0) || Date.now()); } catch (_) {}
+                  }
+                });
+              } catch (_) {}
               _hgScrollBottom();
             } catch (_) {}
           });

@@ -322,6 +322,13 @@
             // v3.5.227+230（思考保留+历史完整）：无增长不动 DOM（live 思考
             // 保留——转写未落盘的思考只在屏上）；有增长整窗重渲（完整 20
             // 回合窗口，历史完整；exactStart 追加模式已因整替丢历史事故退役）
+            // v3.5.240 ①：进行中识图卡（转写未落盘的 vision_relay 行不
+            // 存在，整窗重渲会丢卡）——重渲前摘下，渲后回插尾组时间线
+            var _liveVis = [];
+            try {
+              _hgFlow.querySelectorAll('.h-tool.h-vision:not([data-done])').forEach(c => _liveVis.push(c));
+              _liveVis.forEach(c => c.remove());
+            } catch (_) {}
             if (_HG.histAll.length - 1 > _he2) {
               // v3.5.230（用户实锤「历史全没了」紧急回修）：v3.5.227 用
               // exactStart 追加是错的——_histRender 的原子换入把 flow 整替
@@ -336,6 +343,20 @@
             // 档案/后台任务卡）不在转写里，重渲后统一回填（用户定调
             // 「重渲规整+流式细节统一」）
             if (typeof _hgLiveAgentsRestore === 'function') { try { _hgLiveAgentsRestore(sid); } catch (_) {} }
+            // v3.5.240 ①回插：进行中识图卡挂回尾组时间线+重注册 visionCalls
+            try {
+              const _gsV = _hgFlow.querySelectorAll(':scope > .h-grp');
+              const _lgV = _gsV[_gsV.length - 1];
+              const _tlV = _lgV && _lgV.querySelector('.h-tl');
+              _liveVis.forEach(c => {
+                if (_tlV) _tlV.appendChild(c);
+                if (c.dataset.tid) {
+                  _HG.visionCalls = _HG.visionCalls || {};
+                  _HG.visionCalls[c.dataset.tid] = c;
+                  try { _hgPeerTimerStart(c, +(c.dataset.t0 || 0) || Date.now()); } catch (_) {}
+                }
+              });
+            } catch (_) {}
             if (_HG.tasksBy && _HG.tasksBy[sid]) {
               const _tk = _HG.tasksBy[sid];
               for (const k in _tk) {
@@ -457,7 +478,7 @@
       // 再也不弹（用户实测「有实际对话但无计时条、发送键不变■」）。
       // 后端 events 接口顺带返回真实 busy，按它恢复（v3.0 兼带 epoch 校验）
       _hgEventsPoll(sid);
-      _hgRailSync();   // v3.2.10：快照恢复后重建轨（未渲染区项待 histAll 补全后自动出现）
+      if (typeof _hgAskSync === 'function') { try { _hgAskSync(sid); } catch (_) {} }   // v3.5.240 ②：后端 ask 真源拉回待答面板（原仅重建路拉，命中路漏）
     } else {
       // v3.5.198（用户实测白屏专项：切 13MB 大会话 n=0 全程白屏）：不再预清
       // flow——上一个会话的内容保留在屏（总比白屏好），fetch 完成由

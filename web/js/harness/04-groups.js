@@ -158,6 +158,12 @@
     if (segN) parts.push(segN + ' 思考');
     if (toolN) parts.push(toolN + ' 工具');
     if (visN) parts.push(visN + ' 识图');
+    // v3.5.240 ③（用户需求「askuser也体现在工作区头里面」）：待答提问
+    // 在场（dock 有未答 .h-ask）→ 副位追加「待答」
+    try {
+      if (typeof _hgAskDockEl !== 'undefined' && _hgAskDockEl
+          && _hgAskDockEl.querySelector('.h-ask:not(.done)')) parts.push('待答');
+    } catch (_) {}
     g.headSub.textContent = parts.length ? '· ' + parts.join(' · ') : '';
   }
   function thinkSegCountSet(g, n) {
