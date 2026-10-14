@@ -311,7 +311,18 @@
             // 流式残留形态，重渲才是结构化终态；无增长也渲）。busy 传
             // noFinalize 留活组+phResume 认回接续秒表（t0 行 ts 保真）。
             const _busy2 = (_HG.fetchedBusy != null) ? _HG.fetchedBusy : !!_HG.busy;
-            _histRender(_HG.histAll, _HG.histStart | 0, { noFinalize: _busy2 });
+            // v3.5.227（用户实锤「思考气泡切回消失」）：转写落盘延迟窗内
+            // （思考进行中切走）fetch 回来无新行——原「一律重渲」会把快照
+            // DOM 里的 live 思考整替掉（转写还没有它）=思考消失，直到工具
+            // 落盘再切才回来。改为：无增长**不动 DOM**（live 思考保留）；
+            // 有增长**只追加新行**（exactStart 不拆已有 DOM——live 思考/
+            // 气泡原样，新增行规整渲染）。回合结束方案 B 重渲统一规整化。
+            let _he2 = 0;
+            try { _hgFlow.querySelectorAll('[data-h-end]').forEach(el => {
+              _he2 = Math.max(_he2, +(el.dataset.hEnd || 0)); }); } catch (_) {}
+            if (_HG.histAll.length - 1 > _he2) {
+              _histRender(_HG.histAll, _he2 + 1, { exactStart: true, noFinalize: _busy2 });
+            }
             if (_busy2 && typeof phResume === 'function') phResume(true);
             // v3.5.216：重渲只回放转写行——live-only 元素（运行中子代理
             // 档案/后台任务卡）不在转写里，重渲后统一回填（用户定调
