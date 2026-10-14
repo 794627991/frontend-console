@@ -313,6 +313,12 @@
             // 流式残留形态，重渲才是结构化终态；无增长也渲）。busy 传
             // noFinalize 留活组+phResume 认回接续秒表（t0 行 ts 保真）。
             const _busy2 = (_HG.fetchedBusy != null) ? _HG.fetchedBusy : !!_HG.busy;
+            // 自测矩阵实锤修复：T2 注释回修误删 _he2 声明段——切回链
+            // fetch.then 抛 ReferenceError(unhandledrejection)=phResume/live
+            // 回填/贴底全断。补回 DOM 账目水位计算
+            let _he2 = 0;
+            try { _hgFlow.querySelectorAll('[data-h-end]').forEach(el => {
+              _he2 = Math.max(_he2, +(el.dataset.hEnd || 0)); }); } catch (_) {}
             // v3.5.227+230（思考保留+历史完整）：无增长不动 DOM（live 思考
             // 保留——转写未落盘的思考只在屏上）；有增长整窗重渲（完整 20
             // 回合窗口，历史完整；exactStart 追加模式已因整替丢历史事故退役）
