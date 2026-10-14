@@ -212,6 +212,28 @@
         const ph = gp.querySelector(":scope > .h-msg.asst.ph");
         if (ph) ph.remove();
       });
+      // v3.5.226（用户最后通牒「头没了立刻根治」）：活组头**渲染器当场亮**——
+      // 不再依赖 phResume 事后补（其 thinkBox 早退分支让无思考段的活组头
+      // 永不亮=15:03 复现形态）。busy 真值=noFinalize（调用方传 fetchedBusy
+      // 后端真值）；t0 取 head.dataset.t0（renderUser 已写行 ts）；秒表
+      // interval 自杀守卫+挂 turnTicks 清场链
+      if (opt && opt.noFinalize && _grps.length) {
+        const _lg = _grps[_grps.length - 1];
+        const _lh = _lg.querySelector(':scope > .h-grp-proc > .h-turn-head');
+        if (_lh && _lh.style.display === 'none') {
+          _lh.style.display = '';
+          const _lbl = _lh.querySelector('.h-turn-label');
+          const _t0 = +(_lh.dataset.t0 || 0);
+          if (_lbl && _t0) {
+            _lbl.textContent = '工作中 ' + _hgFmtDur((Date.now() - _t0) / 1000);
+            const _tm = setInterval(() => {
+              if (!_lh.isConnected) { clearInterval(_tm); return; }
+              _lbl.textContent = '工作中 ' + _hgFmtDur((Date.now() - _t0) / 1000);
+            }, 1000);
+            (_HG.turnTicks || (_HG.turnTicks = [])).push(_tm);
+          }
+        }
+      }
       // v3.1h（用户定调）：回滚只属最后一条 AI 消息——各回合尾条都带了
       // can-rewind，收敛为只留全局最后一条
       const _allAsst = _realFlow.querySelectorAll('.h-msg.asst.can-rewind');

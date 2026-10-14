@@ -241,8 +241,25 @@
     const execBox = root.querySelector('.h-drawer.exec');
     // v3.2R1(P2)：think 抽屉缺失直接放弃（grpFromDom 对 thinkBox 无条件
     // 解引用会抛）——认回条件与 grpEnsure 对齐：think 在场 + （旧 exec 或新 tl）
-    if (!thinkBox) return;
-    if (!execBox && !root.querySelector('.h-tl')) return;
+    // v3.5.226（根治补）：放弃认回≠放弃头——无思考段的活组（工具直开回合）
+    // 头也要亮（15:03 用户实锤形态），亮头只需要 root+head 不需要组对象
+    if (!thinkBox || (!execBox && !root.querySelector('.h-tl'))) {
+      if (_busy) {
+        const _h2 = root.querySelector(':scope > .h-grp-proc > .h-turn-head');
+        if (_h2 && _h2.style.display === 'none') {
+          _h2.style.display = '';
+          const _lbl2 = _h2.querySelector('.h-turn-label');
+          const _t02 = +(_h2.dataset.t0 || 0);
+          if (_lbl2 && _t02) _lbl2.textContent = '工作中 ' + _hgFmtDur((Date.now() - _t02) / 1000);
+          if (!_h2._hdT && _t02) _h2._hdT = setInterval(() => {
+            if (!_h2.isConnected) { clearInterval(_h2._hdT); _h2._hdT = null; return; }
+            _lbl2.textContent = '工作中 ' + _hgFmtDur((Date.now() - _t02) / 1000);
+          }, 1000);
+          if (_h2._hdT) (_HG.turnTicks || (_HG.turnTicks = [])).push(_h2._hdT);
+        }
+      }
+      return;
+    }
     // v3.4.70：busy 是事实源——正文在场≠回合结束（中间 text 块/并行工具都
     // 会落正文），busy 时绝不早退，头必须亮。仅非 busy（冻结完成态）保留旧
     // 早退语义（正文=最终回复已出）
