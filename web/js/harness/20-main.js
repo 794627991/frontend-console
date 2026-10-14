@@ -423,6 +423,14 @@ function buildClaudeHarnessTab(opts = {}) {
       showBanner('此线只标记转交——协作过程聚在下方「协作」段（段头「▣ 回放」可围观），回传到达将归入其协作段', 3200);
       return;
     }
+    // v3.5.233b（自测矩阵实锤「点归档条进不去只读」）：快照恢复的归档条
+    // 无 onclick（innerHTML 序列化不带事件）——改 flow 级事件委托，无论
+    // hint 来自渲染器还是快照恢复都可点
+    const _arch = e.target.closest('.h-archive-hint');
+    if (_arch) {
+      document.dispatchEvent(new CustomEvent('hg-ro-enter'));
+      return;
+    }
     // v3.5.161（用户需求「后台任务点不开，看不到在执行什么」）：任务卡点击
     // → v3.5.182 回退：该分支调用的 _taskOutToggle 已随后台任务功能整体
     // 回退（c806f01）不存在，点击即抛 ReferenceError——分支整体移除
