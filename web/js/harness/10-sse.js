@@ -652,9 +652,13 @@
       if (_HG.sid && typeof _histFetch === 'function') {
         const _sidB = _HG.sid;
         setTimeout(() => {
-          if (_HG.sid !== _sidB || _HG.busy) return;
+          if (_HG.sid !== _sidB) return;
+          // v3.5.229（用户实锤「方案B没落实」）：busy 判据改 fetch 回的后端
+          // 真值——原读 _HG.busy 在回填竞态窗/hold 场景下恒 true → 早退 →
+          // 回合终重渲永不执行=流式残留（如游离摘要行）不被规整化
           _histFetch(_sidB).then((_ok) => {
-            if (!_ok || _HG.sid !== _sidB || _HG.busy) return;
+            if (!_ok || _HG.sid !== _sidB) return;
+            if (_HG.fetchedBusy) return;   // 真在跑（含 hold）让位
             try {
               _histRender(_HG.histAll, _HG.histStart | 0);
               _hgScrollBottom();
