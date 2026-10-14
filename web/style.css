@@ -2231,13 +2231,13 @@ html {
 /* v3.2.10：回合导航轨（ZCode ConversationTurnNavigator 同款）——flowwrap
    左缘竖向刻度轨：每条用户提问一枚刻度，悬停 title 预览、点击跳转（未渲染
    回合先扩窗再定位），当前视口回合高亮 + 轨自滚跟随；≥2 回合才显示 */
-.hg-rail { position: absolute; left: 3px; top: 50%; transform: translateY(-50%);
+.hg-rail { position: absolute; left: 3px; top: 2%; height: 96%;
   max-height: calc(100% - 5rem); width: 24px; z-index: 4;
   display: none; flex-direction: column; gap: 0; padding: 4px 0;
   overflow-y: auto; overflow-x: hidden; scrollbar-width: none; }
 .hg-rail::-webkit-scrollbar { display: none; }
 .hg-rail.show { display: flex; }
-.hg-rail-t { border: none; background: transparent; padding: 2px 5px;
+.hg-rail-t { position: absolute; border: none; background: transparent; padding: 2px 5px; transform: translateY(-50%);
   display: flex; align-items: center; height: 10px; cursor: pointer; }
 .hg-rail-t i { display: block; width: 9px; height: 2px; border-radius: 2px;
   background: color-mix(in srgb, var(--fg) 22%, transparent);

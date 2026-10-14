@@ -61,7 +61,7 @@ function RO_enter(sid, deps) {
     '<div class="hg-ro-bar">' +
       '<button class="hg-ro-btn" data-ro-list title="全部会话列表（含主窗口外的过往会话）">☰ 会话</button>' +
       '<b class="hg-ro-title">📖 只读模式 · ' + esc(meta.title || sid.slice(-6)) + '</b>' +
-      '<span class="hg-ro-hint">只看历史 · 后台照常运行 · 上滑加载更早 · 点子代理行开分屏回放</span>' +
+      '<span class="hg-ro-hint">只看历史 · 后台照常运行 · 点子代理行开分屏回放</span>' +
       '<button class="hg-ro-btn hg-ro-exit" data-ro-exit title="退出只读，回到正常会话（自动补齐后台期间的消息）">✕ 退出只读</button>' +
     '</div>' +
     '<div class="hg-ro-body">' +

@@ -2044,8 +2044,19 @@ function buildClaudeHarnessTab(opts = {}) {
       rail.classList.remove('show'); rail.innerHTML = '';
       _HG.railItems = null; return;
     }
+    // v3.5.208b（用户实锤「点导轨条到底滚动条还在中间」的真身）：刻度
+    // 均匀分布 vs 回合内容高度不均匀——视觉位置≠滚动条位置。刻度改为按
+    // 内容比例定位（top=该回合 offsetTop/总高），轨上位置=滚动条位置，
+    // 点哪到哪天然同步；未渲染回合（el=null）按行号比例估位
+    const _totalH = Math.max(1, _hgFlow.scrollHeight);
+    const _posOf = (it, k) => {
+      if (it.el && it.el.isConnected) return (it.el.offsetTop / _totalH) * 100;
+      if (_HG.histAll && it.hi >= 0) return (it.hi / Math.max(1, _HG.histAll.length)) * 100;
+      return (k / Math.max(1, items.length)) * 100;
+    };
     rail.innerHTML = items.map((it, k) =>
       `<button class="hg-rail-t" data-rk="${k}" title="${esc(it.txt.slice(0, 160))}" ` +
+      `style="top:${_posOf(it, k).toFixed(2)}%" ` +
       `aria-label="跳转到第 ${k + 1} 条提问"><i></i></button>`).join('');
     _HG.railItems = items;
     rail.classList.add('show');
