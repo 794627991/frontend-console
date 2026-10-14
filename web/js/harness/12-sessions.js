@@ -8,6 +8,9 @@
   // （自愈是否触发用户直接看得到，不再依赖控制台；自愈频发=根因仍在的信号）
   function _hgCoverageAudit(sid, totalLines, tag, opts) {
     if (_HG.sid !== sid || !totalLines) return;
+    // v3.5.224：切回静默窗（5s）内不审计——多路重渲并行时账目必然打架
+    // 误判 gap 互相点火（风暴主源）；窗后账目已稳定，审计恢复正常价值
+    if (Date.now() - (_HG.lastSwitchAt || 0) < 5000) return;
     // v3.5.196：重建在途/刚恢复不审计——reload 清场期（keepDom 后为旧 DOM）
     // 与渲染中的 DOM 账目必然不完整，hEnd=0 误判巨 gap 触发连锁自愈重渲
     // （用户 trace 实锤「rendered hEnd=0 gap=5722 auto re-render」+连着
@@ -63,10 +66,16 @@
   function _hgBusyResync(sid, delay) {
     setTimeout(() => {
       if (_HG.sid !== sid || !_HG.busy) return;
+      // v3.5.224：切回静默窗（5s）内跳过——切回已由快照命中路全显一次，
+      // 此路在窗内再跑只会与它互相点火重渲风暴（实测 35s 13 轮）
+      if (Date.now() - (_HG.lastSwitchAt || 0) < 5000) return;
       _hgReloadFlow();
     }, delay || 800);
   }
   async function switchTo(sid, keepInput) {
+    // v3.5.224（诊断报告「重渲风暴」）：切回静默窗起点——5s 内兜底类全量
+    // 重渲（resync/审计自愈）全跳，只留快照命中路的那一次（切回全显已满足）
+    _HG.lastSwitchAt = Date.now();
     if (sid === _HG.sid && _hgFlow.querySelector('.h-msg, .hg-welcome')) {
       // v2.15：点的是当前会话 → 早返回。但 busy 卡死时用户正是靠「重点一下
       // 当前会话」自救，这里不能什么都不做：至少按后端真实值纠偏一次。
