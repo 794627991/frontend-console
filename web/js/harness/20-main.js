@@ -2134,7 +2134,9 @@ function buildClaudeHarnessTab(opts = {}) {
     if (it.el && it.el.isConnected) {
       const _last = +t.dataset.rk === _HG.railItems.length - 1;
       if (_last) {
-        _hgFlow.scrollTop = _hgFlow.scrollHeight;
+        // v3.5.212b（用户实锤「点末条动画没了直接跳底」）：末刻度同样走
+        // 平滑滚动（RO 即时/主窗口 smooth），与中间刻度体验一致
+        _hgFlow.scrollTo({ top: _hgFlow.scrollHeight, behavior: _HG.readonly ? 'auto' : 'smooth' });
         return;
       }
       it.el.scrollIntoView({ block: 'start',
