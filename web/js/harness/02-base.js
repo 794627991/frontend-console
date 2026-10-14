@@ -204,9 +204,7 @@ const _HG = {
   compactUsed: 0,       // 压缩开始时的上下文规模（分割线里展示规模用）
   compactTimer: null,   // 秒表 tick
   dyn: null,            // v2.32 右侧面板派生态 {acts,turns,turnN,turnTools,todoSeen,todoRowId}（_hgDyn 惰建，切会话/关 tab 置 null）
-  initN: 0,
-  liveHist: (function(){ try { return localStorage.getItem('hg-livehist') !== '0'; } catch(_) { return true; } })(),   // v3.5.219r1 归一化引擎（kill-switch：hg-livehist=0 回旧路径）
-  liveLedger: { provStart: 0, dirty: false, tickMs: 1000 },             // v2.35：本 SSE 流已见的 system/init 数——第 2 个起=CLI 自发新回合（后台任务通知/协作回传），前端即时亮运行态
+  initN: 0,             // v2.35：本 SSE 流已见的 system/init 数——第 2 个起=CLI 自发新回合（后台任务通知/协作回传），前端即时亮运行态
   agentModels: null,    // v2.35：/agent_models 缓存 {类型: 模型名}（Task 起跑时预显示子代理模型；实跑模型以子代理事件 message.model 覆盖）
   peerNames: {},        // v2.37（P1-F①）：task_id/原始名 → 友好名映射（task_started 的 subagent_type 翻译；协作行显示用，完整 id 收 title）
   tasks: null,          // v3.5.22：后台任务档案 tid→{desc,t0,done,doneAt,err,cancelled,result,el}

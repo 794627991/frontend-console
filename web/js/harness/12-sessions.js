@@ -98,7 +98,6 @@
     _HG.subRows = {}; _HG.subBlk = {};
     _HG.subTail = {};   // v2.46：实时思考轮询 offset 随会话切换重置（防串会话读错文件位）
     _HG.subTailSeg = {};   // v2.58：续派切段映射随会话重置
-    if (_HG.liveHist && window._hgLL) { try { _hgLL.reset(); } catch (_) {} }   // v3.5.219r1：live 账本随切会话清（P1b）
     _HG.histAll = null; _HG.histStart = 0; _HG.histLive = false;   // v2.24：多段历史渲染源不复用（防串会话）；v2.35.2：histLive 随切重置（快照恢复态不进滚动扩收）
     _HG.histStale = false;   // v2.43.2（R2-缺口A）：降级标记随切会话重置（恢复时按快照 histFp 重新判定）
     // v3.4.52（致命双会话实锤「全部变成回放了但是实际是在工作的」）：运行中
