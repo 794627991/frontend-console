@@ -643,6 +643,25 @@
       // v3.3.7（P5 自愈）：回合终结——丢 input 的 bash 行从转写回填真命令
       try { _hgPatchMissingCmds(); } catch(_) {}
       _hgTurnSumRow();                     // v3.1：ZCode 式回合摘要行（查阅 · N 搜索 · N 文件）
+      // v3.5.222 方案B（用户拍板「大回合结束后重渲一次，最简单」）：回合
+      // 终把流式残留形态替换为 hist 规整形态——延迟 400ms（定稿动画/摘要
+      // 行先落，避免双闪）后 fetch 真源+窗口重渲一次做对（与切回重渲同
+      // 渲染器同语义，keepDom 原子换入无白屏）；期间新回合开跑/busy 则让
+      // 位（新回合的终局会再做）；滚动不强贴底（用户可能翻历史，stickBtm
+      // 判据交由 _hgScrollBottom 内部语义）
+      if (_HG.sid && typeof _histFetch === 'function') {
+        const _sidB = _HG.sid;
+        setTimeout(() => {
+          if (_HG.sid !== _sidB || _HG.busy) return;
+          _histFetch(_sidB).then((_ok) => {
+            if (!_ok || _HG.sid !== _sidB || _HG.busy) return;
+            try {
+              _histRender(_HG.histAll, _HG.histStart | 0);
+              _hgScrollBottom();
+            } catch (_) {}
+          });
+        }, 400);
+      }
       // v3.2.1R(F2/R2-1)：快照恢复后回合在切走期间结束——重放的 result 到达时
       // _HG.grp 已被 switchTo 置空，grpFinalize 早退 → 尾组永不定稿。认回尾组
       // 再定稿（_hgTailAdopt，phRemove 的 DOM 扫顺手清冻结占位气泡）；认回
