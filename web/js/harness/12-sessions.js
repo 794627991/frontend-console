@@ -98,6 +98,15 @@
     _HG.subRows = {}; _HG.subBlk = {};
     _HG.subTail = {};   // v2.46：实时思考轮询 offset 随会话切换重置（防串会话读错文件位）
     _HG.subTailSeg = {};   // v2.58：续派切段映射随会话重置
+    // v3.5.217（用户对比实锤：垫底期暴露快照流式残留形态=「异常气泡」）
+    // histAll 随会话暂存（LRU 3）——切回零等待直接重渲完美格式，B 形态
+    // 零暴露；fetch 仅后台对账（无增长不重渲）
+    if (prevSid && _HG.histAll && _HG.histAll.length) {
+      _HG.histAllBy = _HG.histAllBy || {};
+      const keys = Object.keys(_HG.histAllBy);
+      if (keys.length >= 3 && !_HG.histAllBy[prevSid]) delete _HG.histAllBy[keys[0]];
+      _HG.histAllBy[prevSid] = _HG.histAll;
+    }
     _HG.histAll = null; _HG.histStart = 0; _HG.histLive = false;   // v2.24：多段历史渲染源不复用（防串会话）；v2.35.2：histLive 随切重置（快照恢复态不进滚动扩收）
     _HG.histStale = false;   // v2.43.2（R2-缺口A）：降级标记随切会话重置（恢复时按快照 histFp 重新判定）
     // v3.4.52（致命双会话实锤「全部变成回放了但是实际是在工作的」）：运行中
@@ -254,12 +263,29 @@
       // >2 页的快照会被立刻「收段」重渲（观感=又刷了一遍）
       _HG.histStart = (typeof c.histStart === 'number') ? c.histStart : 0;
       _HG.histRestoredAt = Date.now();
+      // v3.5.217（形态统一终态）：histAllBy 暂存在场→**立即**重渲完美格式
+      // （零等待——快照流式残留形态零暴露，用户对比实锤该形态=「异常气泡」）。
+      // 外层 fetch 随后对账：无增长不重渲（histPreRendered 标记），有增长重渲
+      if (_HG.histAllBy && _HG.histAllBy[sid] && _HG.histAllBy[sid].length) {
+        _HG.histAll = _HG.histAllBy[sid];
+        delete _HG.histAllBy[sid];
+        try {
+          _histRender(_HG.histAll, _HG.histStart | 0, { noFinalize: !!_HG.busy });
+          if (_HG.busy && typeof phResume === 'function') phResume(true);
+          if (typeof _hgSpinShow === 'function') _hgSpinShow(!!_HG.busy);
+          if (typeof _hgLiveAgentsRestore === 'function') _hgLiveAgentsRestore(sid);
+          try { _hgScrollBottom(true); } catch (_) {}
+          _HG.histPreRendered = true;
+        } catch (_) { _HG.histAll = null; }
+      }
       // v2.25：快照里「已点开」的懒段/懒工具，切回来必须显示内容——histAll
       // 已被切会话清空，拉 transcript 后补填（否则展开=空白壳，用户实测
       // 「早起会话的历史思考点不开」）。v2.43.2：选择器补 .open（原漏——
       // 把关闭行也预填，废了懒加载）；补填并入下面主路（单次拉取）
       const lazyOpen = _hgFlow.querySelectorAll('.h-think-seg.open[data-hg-lazy="1"], .h-tool.open[data-hg-lazy="1"]');
-      if (c.histLive && !_HG.histAll) {
+      // v3.5.217：预渲（histPreRendered）后 histAll 已在场——原条件会跳过
+      // fetch=切走期间新增行丢失，补条件仍拉对账（指纹校验对同源数据恒过）
+      if (c.histLive && (!_HG.histAll || _HG.histPreRendered)) {
         _histFetch(sid).then(ok => {
           if (ok && _HG.sid === sid) {
             // v2.37R2（复审4）：账目越界钳制——快照存账后该会话在别窗做过
@@ -296,13 +322,21 @@
             // 触发空白期+上回合内容重复渲染进新回合），增量路径复杂度不可
             // 控。窗口重渲成本实测 150-260ms（长任务级，keepDom 原子换入无
             // 空白期），确定性换复杂度。无增长快照即最新，不做任何事。
-            // v3.5.204b（用户定调「重渲染的格式更完美，全部使用重渲染
-            // 格式」）：一律窗口重渲——快照仅作 fetch 期的秒显垫底，
-            // histAll 就绪即替换为重渲完美格式（快照存的是切走瞬间的
-            // 流式残留形态，重渲才是结构化终态；无增长也渲）。busy 传
-            // noFinalize 留活组+phResume 认回接续秒表（t0 行 ts 保真）。
-            _histRender(_HG.histAll, _HG.histStart | 0, { noFinalize: !!_HG.busy });
-            if (_HG.busy && typeof phResume === 'function') phResume(true);
+            // v3.5.217：外层 fetch 已就绪（histAll 在场）；已预渲（histAllBy
+            // 恢复时立即渲过）且无增长则跳过重渲，否则重渲一次做对
+            let _he = 0;
+            try { _hgFlow.querySelectorAll('[data-h-end]').forEach(el => {
+              _he = Math.max(_he, +(el.dataset.hEnd || 0)); }); } catch (_) {}
+            if (!_HG.histPreRendered || _HG.histAll.length - 1 > _he) {
+              _histRender(_HG.histAll, _HG.histStart | 0, { noFinalize: !!_HG.busy });
+              if (_HG.busy && typeof phResume === 'function') phResume(true);
+              if (typeof _hgSpinShow === 'function') { try { _hgSpinShow(!!_HG.busy); } catch (_) {} }
+              try { _hgScrollBottom(true); } catch (_) {}
+            }
+            _HG.histPreRendered = false;
+            setTimeout(() => { if (_HG.sid === sid)
+              _hgCoverageAudit(sid, _HG.histAll ? _HG.histAll.length : 0,
+                'snapshot-hit-refresh', { snapshotBase: true }); }, 2000);
             // v3.5.216：重渲只回放转写行——live-only 元素（运行中子代理
             // 档案/后台任务卡）不在转写里，重渲后统一回填（用户定调
             // 「重渲规整+流式细节统一」）
