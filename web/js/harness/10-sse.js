@@ -652,7 +652,10 @@
                  typeof o.duration_ms === 'number' ? o.duration_ms : 0);
       // v3.3.7（P5 自愈）：回合终结——丢 input 的 bash 行从转写回填真命令
       try { _hgPatchMissingCmds(); } catch(_) {}
-      _hgTurnSumRow();                     // v3.1：ZCode 式回合摘要行（查阅 · N 搜索 · N 文件）
+      // v3.5.239（用户实锤「流式期间没有、结束瞬间冒出=显示bug」）：回合
+      // 摘要胶囊（🔍 查阅·N 命令）全链路退役——result 时刻的插入（本行）
+      // 与方案B重渲后的补插均已撤；工具构成已由头部副位「N思考·M工具·K识图」
+      // 承载，胶囊冗余
       // v3.5.222 方案B（用户拍板「大回合结束后重渲一次，最简单」）：回合
       // 终把流式残留形态替换为 hist 规整形态——延迟 400ms（定稿动画/摘要
       // 行先落，避免双闪）后 fetch 真源+窗口重渲一次做对（与切回重渲同
@@ -691,18 +694,11 @@
                 const _lg = _gs[_gs.length - 1];
                 if (_lg) {
                   _lg.querySelectorAll('.h-turnsum').forEach(x => x.remove());
-                  // v3.5.238（用户严令）：只删查阅胶囊——工作区折叠等其余
-                  // 全部保持渲染器原生行为（回合结束默认收起，v3.5.236 的
-                  // remove('closed') 展开是瞎改，撤销）
+                  // v3.5.239：turnsum 全链路退役后此删除仅兜底（旧会话快照
+                  // 里可能残留历史胶囊）；其余行为一律保持渲染器原生
                 }
               } catch (_) {}
-              // B组P4：摘要行只对**非尾组**补（历史组保持）——尾组刚隐藏
-              try {
-                const _gs2 = _hgFlow.querySelectorAll(':scope > .h-grp');
-                const _sv = _HG.grp; _HG.grp = _gs2[_gs2.length - 2] || null;
-                if (_HG.grp) _hgTurnSumRow();
-                _HG.grp = _sv;
-              } catch (_) {}
+
               // A组S3a：任务卡不在转写——重渲整替会抹掉运行中任务卡，
               // 从 tasksBy 回填（与切换命中路同款；agents restore 同补）
               if (_HG.tasksBy && _HG.tasksBy[_sidB]) {
@@ -976,7 +972,6 @@
         _hgPeerVerifyPending();
         _hgTurnEnd(hr.ok === false ? 'error' : 'ok', hr.durMs || 0);
         try { _hgPatchMissingCmds(); } catch (_) {}
-        _hgTurnSumRow();
         grpFinalize(true, { durMs: hr.durMs || 0,
                             interrupted: hr.ok === false,
                             hist: _hgTailAdopt(),
