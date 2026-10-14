@@ -357,6 +357,8 @@
       `<div class="hg-vcs-hlrow${c.rev === H.sel ? ' on' : ''}" data-hrev="${esc(c.rev || '')}">` +
         `<span class="hg-vcs-logrev">${esc(c.short || c.rev || '')}${c.deco ? `<span class="hg-vcs-deco">${esc(c.deco)}</span>` : ''}</span>` +
         `<span class="hg-vcs-logmsg">${esc((c.msg || '').slice(0, 44))}</span>` +
+        (c.ins != null ? `<span class="hg-vcs-stat" title="${esc(c.ins || 0)} 增 / ${esc(c.del || 0)} 删">` +
+          `<b class="up">+${esc(c.ins || 0)}</b> <b class="del">-${esc(c.del || 0)}</b></span>` : '') +
         `<span class="hg-vcs-logdt">${esc(_vcsFmtDt(c.date))}</span>` +
         `<span class="hg-vcs-logau">${esc(c.author || '')}</span>` +
         `<span class="hg-vcs-copybtn" data-copy="${esc(c.rev || '')}" title="复制完整修订号">⧉</span>` +
@@ -630,6 +632,7 @@
         `<div class="hg-vcs-logrow" data-vcsrev="${esc(c.rev || '')}" title="${esc(c.msg || '')}" style="cursor:pointer;">` +
         `<span class="hg-vcs-logrev">${esc(c.short || c.rev || '')}</span>` +
         `<span class="hg-vcs-logmsg">${esc((c.msg || '').slice(0, 60))}</span>` +
+        (c.ins != null ? `<span class="hg-vcs-stat"><b class="up">+${esc(c.ins || 0)}</b> <b class="del">-${esc(c.del || 0)}</b></span>` : '') +
         `<span class="hg-vcs-logau">${esc(c.author || '')}</span></div>` +
         `<div class="hg-vcs-cfiles" data-vcsfiles="${esc(c.rev || '')}" style="display:none;"></div>`).join('') +
         (_HG.vcs.log.length > 20

@@ -4378,6 +4378,12 @@ html {
 .h-task-t { flex: none; font-family: var(--font-mono); font-size: var(--fs-xs);
   color: var(--muted); }
 
+/* v3.5.198 提交列表增减徽章（git --shortstat；svn 无行级统计不渲染） */
+.hg-vcs-stat { flex: none; font-family: var(--font-mono); font-size: var(--fs-xs);
+  white-space: nowrap; }
+.hg-vcs-stat .up { color: #6fbf73; font-weight: 600; }
+.hg-vcs-stat .del { color: #e06c75; font-weight: 600; }
+
 /* ---- v3.5.57 回合归档提示（主窗口只保留最近 20 轮，更早的进只读看）----
    v3.5.61（用户拍板「保留这个，然后居中」）：flex 居中——flow 限宽内视觉居中 */
 .h-archive-hint { display: flex; align-items: center; justify-content: center;

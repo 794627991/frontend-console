@@ -357,7 +357,7 @@ def _log_plan(vcs, data):
 
     if vcs == "git":
         argv = ["git", "log", "-n", str(limit), "--date=iso-strict",
-                "--decorate=short",
+                "--decorate=short", "--shortstat",
                 "--pretty=format:%H%x1f%h%x1f%an%x1f%ad%x1f%s%x1f%d"]
         cargv = ["git", "rev-list", "--count", "HEAD"]
         if skip:
@@ -423,6 +423,13 @@ def vcs_log():
                                 "author": parts[2], "date": parts[3],
                                 "msg": parts[4],
                                 "deco": (parts[5].strip() if len(parts) > 5 else "")})
+            elif commits and " changed" in line:
+                # v3.5.198（用户需求「提交列表加增减数字」）：--shortstat 追加行
+                # 「 N files changed, N insertions(+), N deletions(-)」配对上一条
+                _mi = re.search(r"(\d+) insertion", line)
+                _md = re.search(r"(\d+) deletion", line)
+                commits[-1]["ins"] = int(_mi.group(1)) if _mi else 0
+                commits[-1]["del"] = int(_md.group(1)) if _md else 0
         if git_count_argv:   # 仅首页（skip==0）附带精确总数（svn 无此能力）
             rc2, out2, _e2 = _run(git_count_argv, wc, VCS_TIMEOUT_RO)
             if rc2 == 0:
