@@ -291,6 +291,14 @@
             // noFinalize 留活组+phResume 认回接续秒表（t0 行 ts 保真）。
             _histRender(_HG.histAll, _HG.histStart | 0, { noFinalize: !!_HG.busy });
             if (_HG.busy && typeof phResume === 'function') phResume(true);
+            // v3.5.205b（用户实锤「重渲必现：执行中动画消失+不贴底」）：重渲
+            // 换入清了流底 spinner（innerHTML 重建），busy 真值未变 setBusy
+            // 不会重调——幂等重挂（在场即不重加，06-relay 冷开同款）；
+            // 贴底三重兜底同冷开（图片/字体懒结算撑高会再偏，两帧+600ms）
+            if (typeof _hgSpinShow === 'function') { try { _hgSpinShow(!!_HG.busy); } catch (_) {} }
+            try { _hgScrollBottom(true); } catch (_) {}
+            requestAnimationFrame(() => requestAnimationFrame(() => { try { _hgScrollBottom(true); } catch (_) {} }));
+            setTimeout(() => { if (_HG.sid === sid) { try { _hgScrollBottom(true); } catch (_) {} } }, 600);
             setTimeout(() => { if (_HG.sid === sid)
               _hgCoverageAudit(sid, _HG.histAll ? _HG.histAll.length : 0,
                 'snapshot-hit-refresh', { snapshotBase: true }); }, 2000);

@@ -284,6 +284,10 @@
       // （对照 v3.2.29 区「绝不用当前时钟编造」同哲学），真值到位的认回
       // 路径（grpFromDom dataset.t0）不受影响
       if (!g.t0) return;
+      // v3.5.205b（用户实锤「重渲后头闪 工作中0s」）：首帧立即写正确值——
+      // interval 首跳要等 1s，认回瞬间的初值「工作中 0s」（渲染器默认）会
+      // 停留一秒才被真值覆盖（实测 1.5s 采样 0s/2.5s 才 57s）
+      if (g.headLabel) g.headLabel.textContent = '工作中 ' + _hgFmtDur((Date.now() - g.t0) / 1000);
       g.headTimer = setInterval(() => {
         if (!g.headLabel || !g.head.isConnected) { clearInterval(g.headTimer); g.headTimer = null; return; }
         g.headLabel.textContent = '工作中 ' + _hgFmtDur((Date.now() - (g.t0 || Date.now())) / 1000);
