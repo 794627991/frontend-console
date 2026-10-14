@@ -691,8 +691,9 @@
                 const _lg = _gs[_gs.length - 1];
                 if (_lg) {
                   _lg.querySelectorAll('.h-turnsum').forEach(x => x.remove());
-                  const _ltb = _lg.querySelector(':scope > .h-grp-proc > .h-turn-body');
-                  if (_ltb) _ltb.classList.remove('closed');
+                  // v3.5.238（用户严令）：只删查阅胶囊——工作区折叠等其余
+                  // 全部保持渲染器原生行为（回合结束默认收起，v3.5.236 的
+                  // remove('closed') 展开是瞎改，撤销）
                 }
               } catch (_) {}
               // B组P4：摘要行只对**非尾组**补（历史组保持）——尾组刚隐藏
