@@ -221,11 +221,32 @@ function RO_exit(force) {
   if (roSub) roSub.style.display = roSubDisp;
   // _hgFlow 指回主 flow（rebuild 的 resetLocal 清的是它）
   _hgFlow = document.querySelector('[data-hg-flow]');
-  // 全量重建主视图 + openSSE 断点续传（后台期间的事件零丢失）
-  // rebuild 锚=进入只读时的主会话（RO 中浏览过多档会话后 readonly 已非锚值）
-  // force=true 仅供关 tab 濒死路径（不 rebuild）
-  if (!force && anchor && _HG.sid === anchor && typeof _hgSseRebuild === 'function') _hgSseRebuild(anchor);
-  else if (typeof openSSE === 'function' && _HG.sid) openSSE(_HG.sid, _HG.seq);
+  // v3.5.215（用户实锤「退出只读也有白屏过程」）：退出不再走 _hgSseRebuild
+  // （其 resetLocal 清场→fetch→重放的等待窗=白屏，与切会话白屏同构）——
+  // 主 flow 旧 DOM 本就完整（RO 只隐藏未清空），改为无清场恢复：
+  // ①旧 DOM 直接显示（无白屏）②后台拉转写有增长→窗口重渲一次做对
+  // （keepDom 原子换入；busy 传 noFinalize+phResume 接秒表——与切回路径
+  // 完全同款语义）③openSSE 带 seq 断点续传（RO 期间 SSE 帧零丢失）。
+  // force=true 仅供关 tab 濒死路径
+  if (!force && anchor && _HG.sid === anchor) {
+    if (typeof _histFetch === 'function') {
+      _histFetch(anchor).then((ok) => {
+        if (!ok || _HG.sid !== anchor || _HG.readonly) return;
+        let hEnd = 0;
+        try {
+          _hgFlow.querySelectorAll('[data-h-end]').forEach(el => {
+            hEnd = Math.max(hEnd, +(el.dataset.hEnd || 0)); });
+        } catch (_) {}
+        if (_HG.histAll && _HG.histAll.length - 1 > hEnd) {
+          _histRender(_HG.histAll, _HG.histStart | 0, { noFinalize: !!_HG.busy });
+          if (_HG.busy && typeof phResume === 'function') phResume(true);
+          if (typeof _hgSpinShow === 'function') { try { _hgSpinShow(!!_HG.busy); } catch (_) {} }
+          try { _hgScrollBottom(true); } catch (_) {}
+        }
+      });
+    }
+    if (typeof openSSE === 'function') openSSE(anchor, _HG.seq);
+  } else if (typeof openSSE === 'function' && _HG.sid) openSSE(_HG.sid, _HG.seq);
 }
 
 // 横条按钮委托（会话列表开关/退出）——RO DOM 建完后绑
