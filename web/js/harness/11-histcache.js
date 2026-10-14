@@ -226,8 +226,14 @@
           const _t0 = +(_lh.dataset.t0 || 0);
           if (_lbl && _t0) {
             _lbl.textContent = '工作中 ' + _hgFmtDur((Date.now() - _t0) / 1000);
+            // v3.5.228（用户实锤「工作中不结束了」）：interval 每跳自查组
+            // 定稿态——定稿即停表退出（游离 interval 每秒覆写 label=已定稿
+            // 回合永远挂「工作中」）。定稿由 grpFinalize 落 dataset.finalized
             const _tm = setInterval(() => {
-              if (!_lh.isConnected) { clearInterval(_tm); return; }
+              const _gp = _lh.closest('.h-grp');
+              if (!_lh.isConnected || !_gp || _gp.dataset.finalized) {
+                clearInterval(_tm); return;
+              }
               _lbl.textContent = '工作中 ' + _hgFmtDur((Date.now() - _t0) / 1000);
             }, 1000);
             (_HG.turnTicks || (_HG.turnTicks = [])).push(_tm);

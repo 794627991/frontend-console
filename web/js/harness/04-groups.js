@@ -252,7 +252,10 @@
           const _t02 = +(_h2.dataset.t0 || 0);
           if (_lbl2 && _t02) _lbl2.textContent = '工作中 ' + _hgFmtDur((Date.now() - _t02) / 1000);
           if (!_h2._hdT && _t02) _h2._hdT = setInterval(() => {
-            if (!_h2.isConnected) { clearInterval(_h2._hdT); _h2._hdT = null; return; }
+            const _gp2 = _h2.closest('.h-grp');
+            if (!_h2.isConnected || !_gp2 || _gp2.dataset.finalized) {
+              clearInterval(_h2._hdT); _h2._hdT = null; return;   // v3.5.228：定稿自查停
+            }
             _lbl2.textContent = '工作中 ' + _hgFmtDur((Date.now() - _t02) / 1000);
           }, 1000);
           if (_h2._hdT) (_HG.turnTicks || (_HG.turnTicks = [])).push(_h2._hdT);
