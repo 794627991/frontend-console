@@ -13,7 +13,15 @@
     // ParseHTML→约 800 次，DevTools Profiler 实锤切回重渲为卡顿大头）。
     // 超出部分走既有只读归档（归档条 hg-ro-enter）；v3.5.178 首试败于
     // capStart 误删，本次保留 capStart 语义规避
-    if (opt && opt.exactStart) {
+    if (_HG.readonly || (opt && opt.full)) {
+      // v3.5.206b（用户实锤「只读模式出问题了」）：RO 全量渲染语义保留——
+      // 窗口化（v3.5.191 TURN_N=20）误伤只读：RO_view 传的 start=0 被窗口
+      // 计算覆盖成尾部 20 回合+自插归档条（RO 里点归档条又进 RO=死循环观感，
+      // 且 193 轮历史看不见）。RO 恒 start=0 全渲（v3.5.62 只读=看全量的
+      // 既有定调），归档条自插仅 start>0 时天然不触发
+      start = 0;
+      start = Math.min(start, lines.length);
+    } else if (opt && opt.exactStart) {
       // v3.5.195（补尾模式）：start=调用方精确给定的渲染起点（增量补尾从
       // DOM 账目 hEnd+1 起）——跳过窗口计算，行尾全套记账（hEnd/turnHi/
       // lastAsst/回滚授予）走既有循环，账目与 DOM 恒一致
