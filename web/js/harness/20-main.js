@@ -2044,23 +2044,46 @@ function buildClaudeHarnessTab(opts = {}) {
       rail.classList.remove('show'); rail.innerHTML = '';
       _HG.railItems = null; return;
     }
-    // v3.5.208b（用户实锤「点导轨条到底滚动条还在中间」的真身）：刻度
-    // 均匀分布 vs 回合内容高度不均匀——视觉位置≠滚动条位置。刻度改为按
-    // 内容比例定位（top=该回合 offsetTop/总高），轨上位置=滚动条位置，
-    // 点哪到哪天然同步；未渲染回合（el=null）按行号比例估位
-    const _totalH = Math.max(1, _hgFlow.scrollHeight);
-    const _posOf = (it, k) => {
-      if (it.el && it.el.isConnected) return (it.el.offsetTop / _totalH) * 100;
-      if (_HG.histAll && it.hi >= 0) return (it.hi / Math.max(1, _HG.histAll.length)) * 100;
-      return (k / Math.max(1, items.length)) * 100;
-    };
+    // v3.5.210（用户定调「回退最开始的均匀轨最美观；装不下加上下指示
+    // 翻页」）：均匀刻度（原版形态），轨自滚跟随 act 既有（_hgRailActive
+    // 居中），上下翻页钮由 _hgRailPagers 挂顶/尾（溢出才显示）
     rail.innerHTML = items.map((it, k) =>
       `<button class="hg-rail-t" data-rk="${k}" title="${esc(it.txt.slice(0, 160))}" ` +
-      `style="top:${_posOf(it, k).toFixed(2)}%" ` +
       `aria-label="跳转到第 ${k + 1} 条提问"><i></i></button>`).join('');
+    _hgRailPagers(rail);
     _HG.railItems = items;
     rail.classList.add('show');
     _hgRailActive();
+  }
+  // v3.5.210：轨上下翻页指示——刻度溢出轨高时顶/尾显 ▲▼，点击滚一页；
+  // 不溢出则隐藏（原版视觉零变化）
+  function _hgRailPagers(rail) {
+    const upd = () => {
+      let up = rail.querySelector('.hg-rail-pg.up'), dn = rail.querySelector('.hg-rail-pg.dn');
+      const overflow = rail.scrollHeight - rail.clientHeight > 8;
+      if (!overflow) {
+        if (up) up.remove(); if (dn) dn.remove();
+        rail.style.paddingTop = ''; rail.style.paddingBottom = '';
+        return;
+      }
+      if (!up) {
+        up = document.createElement('button');
+        up.className = 'hg-rail-pg up'; up.innerHTML = '▲'; up.title = '上一页';
+        up.onclick = (e) => { e.stopPropagation(); rail.scrollTop -= rail.clientHeight * 0.8; };
+        rail.prepend(up);
+      }
+      if (!dn) {
+        dn = document.createElement('button');
+        dn.className = 'hg-rail-pg dn'; dn.innerHTML = '▼'; dn.title = '下一页';
+        dn.onclick = (e) => { e.stopPropagation(); rail.scrollTop += rail.clientHeight * 0.8; };
+        rail.append(dn);
+      }
+      rail.style.paddingTop = '14px'; rail.style.paddingBottom = '14px';
+      up.style.visibility = rail.scrollTop > 8 ? 'visible' : 'hidden';
+      dn.style.visibility = rail.scrollTop + rail.clientHeight < rail.scrollHeight - 8 ? 'visible' : 'hidden';
+    };
+    rail.onscroll = upd;
+    requestAnimationFrame(upd);
   }
   function _hgRailActive() {
     const rail = _hgRailEl;
