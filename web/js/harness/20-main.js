@@ -2047,43 +2047,36 @@ function buildClaudeHarnessTab(opts = {}) {
     // v3.5.210（用户定调「回退最开始的均匀轨最美观；装不下加上下指示
     // 翻页」）：均匀刻度（原版形态），轨自滚跟随 act 既有（_hgRailActive
     // 居中），上下翻页钮由 _hgRailPagers 挂顶/尾（溢出才显示）
-    rail.innerHTML = items.map((it, k) =>
-      `<button class="hg-rail-t" data-rk="${k}" title="${esc(it.txt.slice(0, 160))}" ` +
-      `aria-label="跳转到第 ${k + 1} 条提问"><i></i></button>`).join('');
+    // v3.5.210b（用户实锤「重合了」——sticky 翻页钮与刻度叠压）：轨重构
+    // 为「▲ + 刻度滚动区 + ▼」三段——按钮固定轨顶/尾（flex 首尾元素），
+    // 刻度在独立 .hg-rail-scroll 内滚动，物理上不可能与按钮重叠
+    rail.innerHTML = '<button class="hg-rail-pg up" title="更早" hidden>▲</button>' +
+      '<div class="hg-rail-scroll">' + items.map((it, k) =>
+        `<button class="hg-rail-t" data-rk="${k}" title="${esc(it.txt.slice(0, 160))}" ` +
+        `aria-label="跳转到第 ${k + 1} 条提问"><i></i></button>`).join('') + '</div>' +
+      '<button class="hg-rail-pg dn" title="更近" hidden>▼</button>';
     _hgRailPagers(rail);
     _HG.railItems = items;
     rail.classList.add('show');
     _hgRailActive();
   }
-  // v3.5.210：轨上下翻页指示——刻度溢出轨高时顶/尾显 ▲▼，点击滚一页；
-  // 不溢出则隐藏（原版视觉零变化）
+  // v3.5.210b：翻页钮显隐+滚动（刻度区 .hg-rail-scroll 独立滚动，按钮
+  // 固定轨首尾 flex 元素——不 sticky 不叠刻度）
   function _hgRailPagers(rail) {
+    const sc = rail.querySelector('.hg-rail-scroll');
+    const up = rail.querySelector('.hg-rail-pg.up');
+    const dn = rail.querySelector('.hg-rail-pg.dn');
+    if (!sc || !up || !dn) return;
     const upd = () => {
-      let up = rail.querySelector('.hg-rail-pg.up'), dn = rail.querySelector('.hg-rail-pg.dn');
-      const overflow = rail.scrollHeight - rail.clientHeight > 8;
-      if (!overflow) {
-        if (up) up.remove(); if (dn) dn.remove();
-        rail.style.paddingTop = ''; rail.style.paddingBottom = '';
-        return;
-      }
-      if (!up) {
-        up = document.createElement('button');
-        up.className = 'hg-rail-pg up'; up.innerHTML = '▲'; up.title = '上一页';
-        up.onclick = (e) => { e.stopPropagation(); rail.scrollTop -= rail.clientHeight * 0.8; };
-        rail.prepend(up);
-      }
-      if (!dn) {
-        dn = document.createElement('button');
-        dn.className = 'hg-rail-pg dn'; dn.innerHTML = '▼'; dn.title = '下一页';
-        dn.onclick = (e) => { e.stopPropagation(); rail.scrollTop += rail.clientHeight * 0.8; };
-        rail.append(dn);
-      }
-      rail.style.paddingTop = '14px'; rail.style.paddingBottom = '14px';
-      up.style.visibility = rail.scrollTop > 8 ? 'visible' : 'hidden';
-      dn.style.visibility = rail.scrollTop + rail.clientHeight < rail.scrollHeight - 8 ? 'visible' : 'hidden';
+      const of = sc.scrollHeight - sc.clientHeight > 8;
+      up.hidden = !of || sc.scrollTop <= 8;
+      dn.hidden = !of || sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 8;
     };
-    rail.onscroll = upd;
+    up.onclick = (e) => { e.stopPropagation(); sc.scrollTop -= sc.clientHeight * 0.8; };
+    dn.onclick = (e) => { e.stopPropagation(); sc.scrollTop += sc.clientHeight * 0.8; };
+    sc.onscroll = upd;
     requestAnimationFrame(upd);
+    setTimeout(upd, 300);
   }
   function _hgRailActive() {
     const rail = _hgRailEl;
@@ -2107,9 +2100,12 @@ function buildClaudeHarnessTab(opts = {}) {
     if (prev) prev.classList.remove('act');
     if (cur) {
       cur.classList.add('act');
-      // 轨自滚跟随（居中）——轨自身在滚动时（用户翻轨）不抢位
-      const want = cur.offsetTop - rail.clientHeight / 2;
-      if (Math.abs(want - rail.scrollTop) > rail.clientHeight / 2) rail.scrollTop = want;
+      // 轨自滚跟随（居中）——v3.5.210b：滚动容器是 .hg-rail-scroll（轨
+      // 三段式重构后按钮占首尾，offsetTop 相对 rail 仍有效，滚动作用到
+      // 刻度区）；轨自身在滚动时（用户翻轨）不抢位
+      const _rsc = rail.querySelector('.hg-rail-scroll') || rail;
+      const want = cur.offsetTop - _rsc.clientHeight / 2;
+      if (Math.abs(want - _rsc.scrollTop) > _rsc.clientHeight / 2) _rsc.scrollTop = want;
     }
   }
   function _hgRailActiveRaf() {

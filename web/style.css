@@ -2239,10 +2239,11 @@ html {
 .hg-rail.show { display: flex; }
 .hg-rail-t { border: none; background: transparent; padding: 2px 5px;
   display: flex; align-items: center; height: 10px; cursor: pointer; }
-.hg-rail-pg { position: sticky; left: 0; width: 100%; border: none; background: transparent;
-  color: var(--muted); font-size: 9px; line-height: 10px; padding: 2px 0; cursor: pointer; z-index: 2; }
-.hg-rail-pg.up { position: sticky; top: 0; }
-.hg-rail-pg.dn { position: sticky; bottom: 0; }
+.hg-rail-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
+  scrollbar-width: none; display: flex; flex-direction: column; }
+.hg-rail-scroll::-webkit-scrollbar { display: none; }
+.hg-rail-pg { flex: none; border: none; background: transparent;
+  color: var(--muted); font-size: 9px; line-height: 12px; padding: 2px 0 1px; cursor: pointer; }
 .hg-rail-pg:hover { color: var(--fg); }
 .hg-rail-t i { display: block; width: 9px; height: 2px; border-radius: 2px;
   background: color-mix(in srgb, var(--fg) 22%, transparent);
