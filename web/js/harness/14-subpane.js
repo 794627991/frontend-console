@@ -859,6 +859,16 @@
       sc.innerHTML = '';
       sc.dataset.replayed = agentId;
       _subAppend(sc, _subNoReplayNote(), true);
+      // v3.5.204b（用户实锤「task 点开啥也没有」）：转写文件已被系统清理
+      // 是数据事实（Temp 生命周期），但任务结论在档案——miss 时附结论
+      // 气泡，点开至少看到「干了什么的结论」而非纯报错
+      const _ra = (_HG.agents || {})[tid] || (_HG.agents || {})[tid0] || {};
+      if (_ra.result) {
+        const c = document.createElement('div');
+        c.className = 'h-msg asst';
+        c.appendChild(mdBubble(String(_ra.result)));
+        sc.appendChild(c);
+      }
       _sub.manual = true;
       return;
     }

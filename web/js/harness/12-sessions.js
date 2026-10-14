@@ -284,17 +284,16 @@
             // 触发空白期+上回合内容重复渲染进新回合），增量路径复杂度不可
             // 控。窗口重渲成本实测 150-260ms（长任务级，keepDom 原子换入无
             // 空白期），确定性换复杂度。无增长快照即最新，不做任何事。
-            if (_hasGrow) {
-              _histRender(_HG.histAll, _HG.histStart | 0, { noFinalize: !!_HG.busy });
-              if (_HG.busy && typeof phResume === 'function') phResume(true);
-              setTimeout(() => { if (_HG.sid === sid)
-                _hgCoverageAudit(sid, _HG.histAll.length, 'snapshot-hit-refresh',
-                  { snapshotBase: true }); }, 2000);
-            } else {
-              setTimeout(() => { if (_HG.sid === sid)
-                _hgCoverageAudit(sid, _HG.histAll ? _HG.histAll.length : 0,
-                  'snapshot-hit', { snapshotBase: true }); }, 2000);
-            }
+            // v3.5.204b（用户定调「重渲染的格式更完美，全部使用重渲染
+            // 格式」）：一律窗口重渲——快照仅作 fetch 期的秒显垫底，
+            // histAll 就绪即替换为重渲完美格式（快照存的是切走瞬间的
+            // 流式残留形态，重渲才是结构化终态；无增长也渲）。busy 传
+            // noFinalize 留活组+phResume 认回接续秒表（t0 行 ts 保真）。
+            _histRender(_HG.histAll, _HG.histStart | 0, { noFinalize: !!_HG.busy });
+            if (_HG.busy && typeof phResume === 'function') phResume(true);
+            setTimeout(() => { if (_HG.sid === sid)
+              _hgCoverageAudit(sid, _HG.histAll ? _HG.histAll.length : 0,
+                'snapshot-hit-refresh', { snapshotBase: true }); }, 2000);
             // v2.43.2（R2-缺口A）：懒行补填并入主路——旧实现另起 fetch 先于
             // events 到达，busy 判定失真，漂移分支抢跑重渲炸掉快照（实测）。
             // v3.5.165：保持在最后——重渲分支会重建 DOM，补填须查新树
