@@ -166,7 +166,7 @@
     _hgInputState();   // v2.35：输入框提示按运行态/子代理/协作等待派生（P0-1②③；空闲文案同 v2.20）
     _hgSpinShow(b);    // v3.1：消息流底 ZCode 式 spinner 行（正在执行…）
     // v3.5.219：live 账本 tick 随 busy 启停（归一化渲染引擎）
-    if (window._hgLL) { try { b ? _hgLL.start() : _hgLL.stop(); } catch (_) {} }
+    if (_HG.liveHist && window._hgLL) { try { b ? _hgLL.start() : _hgLL.stop(); } catch (_) {} }
     if (b) actStart(sinceMs);
     else { actStop(); queuePump(); _hgCtxPoll();
       try { _hgQueueSync(); } catch (_) {}   // v3.4.77：回合终结对账队列（promoted/回插事件断档兜底）

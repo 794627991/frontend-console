@@ -38,6 +38,7 @@
       last.text = (last.text || '') + '\n' + txt;
     } else {
       _HG.histAll.push({ role: role, text: txt, ts: new Date().toISOString(),
+        model: model || _HG.model || '',   // r1 P9：model 随行（中途切模型归属正确）
         __live: true, __dirty: true });
     }
     L.dirty = true;
@@ -92,6 +93,7 @@
   // ---- tick 引擎：append / patch / refresh ----
 
   let _llTimer = null;
+  let _llTimerMs = 0;   // r1 P7：自适应间隔重建判据
 
   function _hEndMax() {
     let m = 0;
@@ -109,9 +111,12 @@
       const r = ha[i];
       if (!r.__live) break;
       if (r.role === 'assistant' && r.__dirty) {
-        // 旧 DOM（同 hEnd 戳的 asst 元素）移除；renderHistLine 重画
+        // 旧 DOM（同 hEnd 戳的 asst 元素）移除；renderHistLine 重画+重盖戳
         _hgFlow.querySelectorAll('.h-msg.asst[data-h-end="' + i + '"]').forEach(e => e.remove());
+        const _b = _hgFlow.lastElementChild;
         try { renderHistLine(r, i); } catch (_) {}
+        const _a = _hgFlow.lastElementChild;
+        if (_a && _a !== _b) _a.dataset.hEnd = String(i);
         r.__dirty = false;
         return;
       }
@@ -137,21 +142,44 @@
       for (let i = hEnd + 1; i < ha.length; i++) {
         const r = ha[i];
         if (!r) continue;
+        // r1 P4：user 行不入屏（renderUser 乐观链已渲，账本只做回合边界账）
+        if (r.role === 'user') { r.__settled = true; continue; }
+        const _before = _hgFlow.lastElementChild;
         try { renderHistLine(r, i); } catch (e) {
           try { console.error('[harness] livelog append fail @' + i, e); } catch (_) {}
           L.dirty = true;   // 下 tick 重试
           break;
         }
-        if (r.role !== 'assistant') r.__settled = true;
+        // r1 P2：hEnd 记账闭环——renderHistLine 不盖戳（唯一盖戳点在
+        // _histRender），tick 自行对落位元素补 data-h-end（对齐
+        // 11-histcache.js:116 语义），否则 _hEndMax 恒停在窗口水位=
+        // 每 tick 全量重复渲染
+        const _after = _hgFlow.lastElementChild;
+        const _stamped = _after && _after !== _before ? _after : null;
+        if (_stamped) _stamped.dataset.hEnd = String(i);
+        r.__settled = true;
       }
-      // ② patch：已渲 tool 行有新 result（__settled 未上屏）——原位补徽章
+      // ② patch：已渲 tool 行有新 result——原位补徽章（r1 P3：renderOneToolResult
+      // 吃 tool_result 信封且经 rowById 寻行（账本行不在册）——自写就地更新：
+      // 徽章 done/error + 折叠体结果摘要，不动 DOM 结构（幂等天然成立）
       _hgFlow.querySelectorAll('.h-tool[data-tid]').forEach(row => {
+        if (row.dataset.llDone) return;
         const tid = row.dataset.tid;
-        const r = ha.find(x => x && x.tid === tid && x.__live);
-        if (r && r.result != null && !row.dataset.llDone) {
-          row.dataset.llDone = '1';
-          try { renderOneToolResult(r, row); } catch (_) { row.dataset.llDone = ''; }
-        }
+        const r = ha.find(x => x && x.tid === tid && x.__live && x.result != null);
+        if (!r) return;
+        row.dataset.llDone = '1';
+        try {
+          const st = row.querySelector('.h-tslots');
+          if (st) st.innerHTML = statusBadge(r.err ? 'error' : 'completed');
+          row.classList.toggle('err', !!r.err);
+          const coll = row.querySelector('.h-tool-coll');
+          if (coll && !coll.innerHTML.trim()) {
+            const pre = document.createElement('div');
+            pre.className = 'h-tool-body';
+            pre.appendChild(document.createTextNode(String(r.result || '').slice(0, 2000)));
+            coll.appendChild(pre);
+          }
+        } catch (_) { row.dataset.llDone = ''; }
       });
       // ③ refresh：活动正文气泡（增量文本原位更新）
       _llRefreshAsst();
@@ -166,11 +194,17 @@
 
   function _llStart() {
     const L = _HG.liveLedger;
-    if (_llTimer || !L) return;
+    if (!L) return;
+    const ms = L.tickMs || 1000;
+    if (_llTimer) {                    // r1 P7：tickMs 变更时重建 interval
+      if (_llTimerMs === ms) return;
+      clearInterval(_llTimer);
+    }
+    _llTimerMs = ms;
     _llTimer = setInterval(() => {
       if (!L || !_HG.histAll || _HG.readonly) return;
       _hgLiveTick();
-    }, L.tickMs || 1000);
+    }, ms);
   }
   function _llStop() {
     if (_llTimer) { clearInterval(_llTimer); _llTimer = null; }
@@ -197,7 +231,11 @@
           .map(l => l.role + ':' + (l.tid || '') + ':' + String(l.text || '').length).join('|');
         const a = sig(_HG.histAll.slice(L.provStart));
         const b = sig(fetched.slice(L.provStart));
-        if (a !== b) {
+        // r1 P5：sub_* 中位注入使 fetched 更长但主链签名仍相符——索引
+        // 漂移后 DOM 的 hEnd/hi 全部指错行。相符判据收紧：主链签名一致
+        // 且总长度一致（中位注入=长度差→走重渲分支盖新戳）
+        const _match = (a === b) && (fetched.length === _HG.histAll.length);
+        if (!_match) {
           _hgDiag('livelog', 'reconcile mismatch → 窗口重渲（行 ' + L.provStart + '，账本 ' + _HG.histAll.length + ' vs 转写 ' + fetched.length + '）');
           _HG.histAll = fetched;
           _histRender(fetched, _HG.histStart | 0, { noFinalize: !!_HG.busy });
@@ -215,8 +253,10 @@
 
   // 清账本（切会话/SSE 清场/换代）
   function _hgLiveReset() {
+    // r1 P6：清场时 histAll 即将被清/重建——provStart 置 0（不取将失效的
+    // length），重建完成后由回合终 reconcile 校准为真源长度
     const L = _HG.liveLedger;
-    if (L) { L.dirty = false; L.provStart = (_HG.histAll || []).length; }
+    if (L) { L.dirty = false; L.provStart = 0; }
   }
 
   window._hgLL = { text: _llText, toolUse: _llToolUse, toolResult: _llToolResult,
