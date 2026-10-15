@@ -599,11 +599,16 @@
   function _vcsReloadChanges() {
     if (_HG.vcs.chgBusy || !_HG.vcs.root) return;
     _HG.vcs.chgBusy = true; _vcsPaint();
+    // v3.5.274（严查）：世代守卫——两段在途期间切工程（root 变）时，旧工程
+    // 的 shallow/全树响应不得写入新工程的 data（旧码直写=跨工程污染列表）
+    const _root0 = _HG.vcs.root;
+    const _stale = () => _HG.vcs.root !== _root0;
     const _chg = (shallow) => fetch('/api/vcs/changes', { method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ root: _HG.vcs.root, shallow: shallow ? 1 : 0 }) })
+      body: JSON.stringify({ root: _root0, shallow: shallow ? 1 : 0 }) })
       .then(r => r.json());
     _chg(true).then(j1 => {
+      if (_stale()) return _chg(false);   // 已切走：一段结果弃，链继续走完收尾
       if (j1 && j1.ok && _HG.vcs.data && !_HG.vcs.data.err) {
         _HG.vcs.data.files = j1.files || [];
         _HG.vcs.data.truncated = j1.truncated || 0;
@@ -614,6 +619,7 @@
       return _chg(false);   // 二段：全树补扫
     }).then(j2 => {
       _HG.vcs.chgBusy = false;
+      if (_stale()) { _vcsPaint(); return; }   // 已切走：二段结果弃
       if (j2 && j2.ok && _HG.vcs.data && !_HG.vcs.data.err) {
         _HG.vcs.data.files = j2.files || [];
         _HG.vcs.data.truncated = j2.truncated || 0;
