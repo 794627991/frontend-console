@@ -595,8 +595,24 @@
       _subUserQueue(id, _rinp.prompt || _rinp.description || '');
     } else if (cfg.mode === 'one-line') {
       row = document.createElement('div');
-      row.className = 'h-tool';
       const sec = cfg.sec ? cfg.sec(b.input) : '';
+      // v3.5.262（用户实锤「流式点开两列竖排，重渲的很棒，保持一样」）：
+      // bash 行生来即 hist renderHistTool 完全同构 head 卡（col+oneclick+
+      // button头+80字截断+head内复制键+coll预塞命令全文）——同一 CSS 路径
+      // 展开形态必然一致，v3.5.249/254 无 head flex 模拟的系列边角根治
+      if (cfg.kind === 'bash') {
+        row.className = 'h-tool col oneclick';
+        row.style.setProperty('--h-accent', _H_KIND_COLOR[cfg.kind] || 'var(--border)');
+        const _cmd = String(cfg.get(b.input) || '');
+        row.innerHTML =
+          `<button class="h-tool-head"><span class="h-chev">▸</span>` +
+          `<span class="h-tool-name">${_hToolIco(name)} ${esc(label)}</span>` +
+          `<span class="h-tool-arg" title="${esc(_cmd)}">${esc(_cmd.slice(0, 80))}</span>` +
+          `<span class="h-tool-copy" role="button" title="复制命令">复制</span>` +
+          `<span class="h-tslots"></span></button>` +
+          `<div class="h-tool-coll"><div class="h-tool-arg">${esc(_cmd)}</div></div>`;
+      } else {
+      row.className = 'h-tool';
       // v3.1：ZCode 式行内徽标（文件类型色块 + `+N -N` 增删计数）
       const badges = _hgToolBadges(name, b.input);
       const argTxt = esc(cfg.get(b.input) || '');
@@ -613,6 +629,7 @@
         const cp = document.createElement('button');
         cp.className = 'h-tool-copy'; cp.textContent = '复制'; cp.title = '复制命令';
         row.appendChild(cp);
+      }
       }
     } else {
       // collapsible：折叠组（左边框按类别着色，源 CollapsibleDisplay）
@@ -807,7 +824,8 @@
       pre.className = 'h-tool-out';
       pre.textContent = txt.length > 8000 ? txt.slice(0, 8000) + '…' : txt;
       body.appendChild(pre);
-      row.insertAdjacentHTML('beforeend', `<span class="h-tool-sec">${txt.split('\n').length} 行</span>`);
+      // v3.5.262：「N 行」入 coll 尾（head 卡结构下行根直插会掉出卡体）
+      body.insertAdjacentHTML('beforeend', `<span class="h-tool-sec">${txt.split('\n').length} 行</span>`);
     }
     // tool_result 只挂状态不新增行——不终结 run（源 rendersNothing 不打断连续 run）
   }

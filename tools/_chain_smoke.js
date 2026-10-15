@@ -7,7 +7,7 @@ const vm = require('vm');
 
 function mkEl(tag) {
   const el = {
-    tag: tag || 'div', style: new Proxy({}, { get: () => '', set: () => true }),
+    tag: tag || 'div', style: new Proxy({}, { get: (t, k) => k === 'setProperty' ? (() => {}) : '', set: () => true }),
     dataset: {}, classList: { add() {}, remove() {}, contains: () => false, toggle() {} },
     children: [], innerHTML: '', textContent: '', value: '', files: [],
     appendChild(c) { this.children.push(c); return c; },
