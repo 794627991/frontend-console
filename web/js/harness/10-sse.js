@@ -680,6 +680,13 @@
             var _liveVis2 = [];
             try {
               _hgFlow.querySelectorAll('.h-tool.h-vision:not([data-done]), .h-ask-rs').forEach(c => _liveVis2.push(c));
+              // v3.5.259：ask 行记所属组序锚（同 12-sessions——回插按锚归位）
+              _liveVis2.forEach(c => {
+                if (!c.classList.contains('h-ask-rs')) return;
+                const _gs = _hgFlow.querySelectorAll(':scope > .h-grp');
+                const _pg = c.closest('.h-grp');
+                c.dataset.hgGidx = _pg ? Array.prototype.indexOf.call(_gs, _pg) : -1;
+              });
               _liveVis2.forEach(c => c.remove());
             } catch (_) {}   // v3.5.242：ask结果行同护
             try {
@@ -724,6 +731,14 @@
                 const _lgV2 = _gsV2[_gsV2.length - 1];
                 const _tlV2 = _lgV2 && _lgV2.querySelector('.h-tl');
                 _liveVis2.forEach(c => {
+                  // v3.5.259：ask 行按组序锚归位（同 12-sessions）
+                  if (c.classList.contains('h-ask-rs') && c.dataset.hgGidx != null) {
+                    const _gi = +c.dataset.hgGidx;
+                    const _gsA = _hgFlow.querySelectorAll(':scope > .h-grp');
+                    const _tg = (_gi >= 0 && _gi < _gsA.length) ? _gsA[_gi] : _gsA[_gsA.length - 1];
+                    const _ttA = _tg && _tg.querySelector('.h-tl');
+                    if (_ttA) { _ttA.appendChild(c); return; }
+                  }
                   if (_tlV2) _tlV2.appendChild(c);
                   if (c.dataset.tid) {
                     _HG.visionCalls = _HG.visionCalls || {};

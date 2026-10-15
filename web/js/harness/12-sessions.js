@@ -327,6 +327,14 @@
             var _liveVis = [];
             try {
               _hgFlow.querySelectorAll('.h-tool.h-vision:not([data-done]), .h-ask-rs').forEach(c => _liveVis.push(c));
+              // v3.5.259（用户实锤「历史ask结果行重渲到当前回合」）：ask 行记
+              // 所属组序锚——回插按锚归位原回合，不再全堆尾组
+              _liveVis.forEach(c => {
+                if (!c.classList.contains('h-ask-rs')) return;
+                const _gs = _hgFlow.querySelectorAll(':scope > .h-grp');
+                const _pg = c.closest('.h-grp');
+                c.dataset.hgGidx = _pg ? Array.prototype.indexOf.call(_gs, _pg) : -1;
+              });
               _liveVis.forEach(c => c.remove());
             } catch (_) {}   // v3.5.242：ask结果行同护（转写无ask行，重渲必丢）
             if (_HG.histAll.length - 1 > _he2) {
@@ -349,6 +357,15 @@
               const _lgV = _gsV[_gsV.length - 1];
               const _tlV = _lgV && _lgV.querySelector('.h-tl');
               _liveVis.forEach(c => {
+                // v3.5.259：ask 行按组序锚归位（跨回合不再错组）；识图卡/
+                // 无锚旧行保持尾组兜底
+                if (c.classList.contains('h-ask-rs') && c.dataset.hgGidx != null) {
+                  const _gi = +c.dataset.hgGidx;
+                  const _gsA = _hgFlow.querySelectorAll(':scope > .h-grp');
+                  const _tg = (_gi >= 0 && _gi < _gsA.length) ? _gsA[_gi] : _gsA[_gsA.length - 1];
+                  const _ttA = _tg && _tg.querySelector('.h-tl');
+                  if (_ttA) { _ttA.appendChild(c); return; }
+                }
                 if (_tlV) _tlV.appendChild(c);
                 if (c.dataset.tid) {
                   _HG.visionCalls = _HG.visionCalls || {};
