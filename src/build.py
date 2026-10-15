@@ -44,6 +44,11 @@ def build():
 
     # v2.3.0 onedir：产物是应用目录（exe + _internal），exe 在目录内
     app_dir = os.path.join(BASE, "dist", APP_NAME + ("_debug" if DEBUG else ""))
+    # v3.5.248b（用户实锤 debug 打包「未找到 exe」）：PyInstaller onedir 产物
+    # 恒在 distpath 下再套一层 name 目录（distpath\name\name.exe）
+    # distpath 是 dist/前端控制台_debug，真身在其下 前端控制台/ 内
+    if DEBUG:
+        app_dir = os.path.join(app_dir, APP_NAME)
     dist = os.path.join(app_dir, APP_NAME + ".exe")
     if os.path.exists(dist):
         sz = sum(os.path.getsize(os.path.join(r, f))
