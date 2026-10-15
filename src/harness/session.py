@@ -76,6 +76,10 @@ class HarnessSession:
         self.busy_since = None   # 本轮处理计时起点 ms（busy 时有效，供前端恢复计时）
         self.bridge_fp = None    # 注入时的识图引导词指纹（send 前热更检测，见 start()）
         self.renewed_at = 0      # v2.27.15：最近一次超窗续命的事件位点（HikLink 等待基准用）
+        # v3.5.286：切模型后的首条消息前置口径声明（set_model 写入；真正的
+        # 上下文注入点——emit sysnote 只进前端事件流，CLI 模型上下文=jsonl
+        # 转写，只有发进 stdin 的消息才进）。发送即清（一次性）
+        self._model_switch_note = None
         # v2.27.21：CLI 实报模型名（assistant 事件 message.model）。引导词/
         # 窗口判定以它为准——settings 默认名（如 glm-5.3-flash[1M]）与实跑名
         # （glm-5.3）会错位，三态分类按 settings 名算会把 MCP 类模型判成
@@ -843,6 +847,14 @@ class HarnessSession:
                 except Exception:
                     continue
             full_text = text or ""
+            # v3.5.286（高级模型复查 v3.5.285 缺口）：切模型后的首条消息
+            # 前置口径声明——随用户消息进 stdin=jsonl=模型上下文，新模型
+            # 第一次被唤起就看到（盖掉 resume 历史里旧模型时代的
+            # analyze_image 调用惯性）。一次性，发完即清
+            if getattr(self, "_model_switch_note", None):
+                full_text = ("[系统说明：本会话已切换模型。识图口径：%s]\n\n"
+                             % self._model_switch_note) + full_text
+                self._model_switch_note = None
             att = list(image_paths or []) + list(file_paths or [])
             if att:
                 att_lines = "\n".join(att)

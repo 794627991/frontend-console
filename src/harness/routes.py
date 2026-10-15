@@ -497,6 +497,10 @@ def harness_set_model():
                 "旧模型时代，禁止模仿"
                 if _mm == "inline" else
                 "MCP 识图通道：看图调用 mcp__vision__analyze_image")
+        # v3.5.286：真注入标记——emit 只进前端事件流（模型看不到），首条
+        # 消息前置声明才进 CLI jsonl 上下文；两路并存（前端即时可见+模型
+        # 首条消息起知情）
+        s._model_switch_note = _way
         s.emit({"kind": "sysnote",
                 "text": "[模型切换] 已切换到 %s。识图方式：%s。"
                         % (model or "默认模型", _way)})
