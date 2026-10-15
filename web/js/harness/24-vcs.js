@@ -512,7 +512,9 @@
     if (_vcsTick) return;            // git 改动/外部命令后自动跟上；不用太频繁
     _vcsTick = setInterval(() => {   // 失活自停（目录秒表 _subDirTick 同款惯例）
       if (_sub.active !== _SUB_VCS) { clearInterval(_vcsTick); _vcsTick = null; return; }
-      if (!_HG.vcs.busy && _vcsEl) _vcsReload();
+      // v3.5.264（Q1 放大因素）：60s tick 只刷轻 status（info 级）——旧全
+      // 量轮询在 svn 网络盘=每 60s 一次 20s 阻塞；改动列表只在激活/⟳/写后拉
+      if (!_HG.vcs.busy && _vcsEl) _vcsReload(true);
     }, 60000);
   }
   function _vcsActivate(force) {     // 激活按需刷新（30s 缓存；写操作后 force 由调用方传 _vcsReload）
@@ -525,7 +527,9 @@
   }
 
   // ---- 数据 ----
-  function _vcsReload() {
+  // v3.5.264：lite=true（60s tick 用）只拉 status 本身；svn 的 changes 补拉
+  // 跳过——改动列表只在激活/手动⟳/写操作后全量扫
+  function _vcsReload(lite) {
     _HG.vcs.busy = true; _vcsTs = Date.now(); _vcsPaint();
     fetch('/api/tree/roots').then(r => r.json()).then(jr => {
       const roots = (jr && jr.ok) ? (jr.roots || []) : [];
@@ -549,8 +553,31 @@
         _HG.vcs.busy = false;
         _HG.vcs.data = js.ok ? js : { err: js.err || '状态获取失败', vcs: null };
         _vcsPaint();
+        // v3.5.264（Q1）：svn status 已轻量化（只有 info）——改动列表由
+        // changes 端点惰性补拉（独立 chgBusy，不置灰 logbtn）
+        if (js.ok && js.changes_pending && !_HG.vcs.chgBusy && !lite) _vcsReloadChanges();
       });
     }).catch(e => { _HG.vcs.busy = false; _HG.vcs.data = { err: String(e) }; _vcsPaint(); });
+  }
+  // v3.5.264（Q1）：改动列表独立拉取（svn 全树 status 长耗时，后端 90s 超时）
+  function _vcsReloadChanges() {
+    if (_HG.vcs.chgBusy || !_HG.vcs.root) return;
+    _HG.vcs.chgBusy = true; _vcsPaint();
+    fetch('/api/vcs/changes', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ root: _HG.vcs.root }) })
+      .then(r => r.json()).then(j => {
+        _HG.vcs.chgBusy = false;
+        if (_HG.vcs.data && !_HG.vcs.data.err) {
+          if (j.ok) {
+            _HG.vcs.data.files = j.files || [];
+            _HG.vcs.data.truncated = j.truncated || 0;
+            _HG.vcs.data.changes_timeout = j.changes_timeout || false;
+          }
+          _HG.vcs.data.changes_pending = false;
+        }
+        _vcsPaint();
+      }).catch(() => { _HG.vcs.chgBusy = false; _vcsPaint(); });
   }
   function _vcsReloadLog() {
     // v2：浏览态回补——从已载量一次拿够（reset 语义，弹窗/面板双视图同步）

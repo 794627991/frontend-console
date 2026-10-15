@@ -32,7 +32,10 @@ from src.file_tree import _under_roots
 vcs_bp = Blueprint("vcs", __name__)
 
 CREATE_NO_WINDOW = 0x08000000
-VCS_TIMEOUT_RO = 20     # status/log/diff/show/cat
+VCS_TIMEOUT_RO = 20
+# v3.5.264（SVN三问题报告 Q1）：全树 status 移出 status 端点关键路径——
+# 网络盘大仓库（SMB+内核树）实测 54s+，独立 changes 端点配长超时 ≥90s
+VCS_TIMEOUT_CHG = 90     # status/log/diff/show/cat
 VCS_TIMEOUT_RW = 60     # add/commit
 VCS_TIMEOUT_NET = 120   # pull/update
 FILES_CAP = 500         # 改动列表上限（对齐 file_tree LIST_CAP 文化）
@@ -236,11 +239,9 @@ def _git_status(wc):
             "files": files[:FILES_CAP], "truncated": truncated}, None
 
 
-def _svn_status(wc):
-    # v3.5.164（SVN 超时排查报告层 B）：网络盘大仓库（SMB+内核树）全树
-    # status 实测 54s+，必然超 VCS_TIMEOUT_RO=20s 且把整页拖成报错。
-    # 重排：先 O(1) 的 svn info 拿 rev/branch（主信息，0.3s），再跑全树
-    # status；status 超时降级为「版本已就绪+changes_timeout 标记」，不 500
+def _svn_info(wc):
+    """v3.5.264（Q1 主修）：O(1) svn info——rev/branch 0.3s 级，status 端点
+    只跑这个（全树 status 移出关键路径，见 /api/vcs/changes）。"""
     rc, out, err = _run(["svn", "info", "--xml"], wc, VCS_TIMEOUT_RO)
     rev, branch = "", ""
     if rc == 0:
@@ -254,6 +255,48 @@ def _svn_status(wc):
                 branch = u.rstrip("/").rsplit("/", 1)[-1]
         except ET.ParseError:
             pass
+    return rev, branch
+
+
+def _svn_changes(wc):
+    """v3.5.264（Q1 主修）：全树 svn status 独立函数——配 VCS_TIMEOUT_CHG
+    长超时，由 /api/vcs/changes 单独调用（前端惰性加载），不再阻塞 status。"""
+    rc, out, err = _run(["svn", "status", "--xml"], wc, VCS_TIMEOUT_CHG)
+    if rc != 0:
+        if "超时" in (err or ""):
+            return {"files": [], "truncated": 0, "changes_timeout": True}, None
+        return None, err or "svn status 失败"
+    files = []
+    try:
+        root = ET.fromstring(out.encode("utf-8"))
+        for t in root.iter("target"):
+            for e in t.iter("entry"):
+                rel = e.get("path", "").replace("\\", "/")
+                if not rel:
+                    continue
+                it = e.find("wc-status")
+                if it is None:
+                    continue
+                st_raw = it.get("item", "none")
+                st = {"modified": "M", "added": "A", "deleted": "D",
+                      "unversioned": "?", "conflicted": "C",
+                      "replaced": "R", "missing": "!", "none": ""}.get(st_raw)
+                if not st:
+                    continue
+                old = (it.findtext("move-to") or "")
+                files.append({"rel": rel, "path": rel, "st": st,
+                              **({"old_rel": old} if old else {})})
+    except ET.ParseError as e:
+        return None, "svn status 输出解析失败：%s" % e
+    truncated = max(0, len(files) - FILES_CAP)
+    return {"files": files[:FILES_CAP], "truncated": truncated}, None
+
+
+def _svn_status(wc):
+    # v3.5.164：先 O(1) 的 svn info 拿 rev/branch，再跑全树 status（超时降
+    # 级 changes_timeout 不 500）。v3.5.264：本函数仅剩兼容语义——status 端
+    # 点已改走 _svn_info 轻路径，全树扫描由 /api/vcs/changes 承担
+    rev, branch = _svn_info(wc)
     rc, out, err = _run(["svn", "status", "--xml"], wc, VCS_TIMEOUT_RO)
     if rc != 0:
         if "超时" in (err or ""):
@@ -303,10 +346,43 @@ def vcs_status():
         return jsonify({"ok": True, "vcs": vcs, "tool": False, "branch": "",
                         "rev": "", "ahead": 0, "behind": 0,
                         "files": [], "truncated": 0})
-    res, e = (_git_status(wc) if vcs == "git" else _svn_status(wc))
+    # v3.5.264（Q1）：svn 走轻路径——只 svn info（0.3s 级），全树 status 移
+    # 出关键路径（/api/vcs/changes 惰性加载）；files 空表+changes_pending 标
+    # 记，前端显示「改动扫描中」占位。git 的 status 本身亚秒级，维持原样
+    if vcs == "svn":
+        rev, branch = _svn_info(wc)
+        return jsonify({"ok": True, "vcs": "svn", "tool": True,
+                        "branch": branch, "rev": rev, "ahead": 0, "behind": 0,
+                        "files": [], "truncated": 0, "changes_pending": True})
+    res, e = _git_status(wc)
     if e:
         return jsonify({"ok": False, "err": e}), 500
     return jsonify({"ok": True, **res})
+
+
+@vcs_bp.route("/api/vcs/changes", methods=["POST"])
+def vcs_changes():
+    """v3.5.264（Q1）：改动列表独立端点——svn 全树 status（长超时 90s）/
+    git 复用 _git_status。前端版本 tab 激活/手动⟳/写操作后惰性调用，
+    不再拖垮 status 关键路径与 logbtn。"""
+    data = request.get_json(force=True, silent=True) or {}
+    vcs, wc, err, _tool_ok = _guard(data.get("root"))
+    if err:
+        return err
+    if not _tool(vcs):
+        return jsonify({"ok": True, "vcs": vcs, "tool": False,
+                        "files": [], "truncated": 0})
+    if vcs == "svn":
+        res, e = _svn_changes(wc)
+        if e:
+            return jsonify({"ok": False, "err": e}), 500
+        return jsonify({"ok": True, "vcs": "svn", **res})
+    res, e = _git_status(wc)
+    if e:
+        return jsonify({"ok": False, "err": e}), 500
+    return jsonify({"ok": True, "vcs": "git",
+                    "files": res.get("files", []),
+                    "truncated": res.get("truncated", 0)})
 
 
 # ---------------------------------------------------------------------------
