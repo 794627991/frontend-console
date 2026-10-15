@@ -721,6 +721,16 @@ def _subagent_rows_from_jsonl(path):
                 if not isinstance(o, dict):
                     continue
                 typ = o.get("type")
+                # v3.5.281（用户关切「子代理孤儿停不下来」）：CLI 落盘的顶层
+                # result 行=子代理会话终态（最终报告）——旧解析直接丢弃=回放
+                # 无终态信号、前端档案失去权威判死源（SSE 事件一丢即孤儿）。
+                # 透出为 k:'final'（保尾 50 恒在尾部），前端轮询据此收口
+                if typ == "result":
+                    _push({"k": "final",
+                           "text": (o.get("result") or "")[:8000],
+                           "err": bool(o.get("is_error")),
+                           "ts": o.get("timestamp") or ""})
+                    continue
                 if typ not in ("assistant", "user"):
                     continue
                 m = o.get("message") or {}

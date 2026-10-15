@@ -741,8 +741,25 @@
                   cur.followInflight = false;
                   const tbF = _sub.tabs[tid];
                   if (!tbF || tbF !== cur || !jf || !jf.ok) return;
-                  const nNew = (jf.rows || []).length;
-                  if (nNew > (tbF.rpN || 0)) _subReplayForce(tid);   // 有新行才重建
+                  const _rowsF = jf.rows || [];
+                  // v3.5.281（用户关切「孤儿停不下来」）：转写终态行=权威判死
+                  // ——CLI 写完会话才落 k:'final'，慢任务无此行不会错杀；SSE
+                  // 完成事件丢失导致的孤儿档案在此收口（done 翻转→tick 复活
+                  // /轮询自然停→行卡定稿→胶囊/目录计数归位）
+                  const _fin = _rowsF.length && _rowsF[_rowsF.length - 1].k === 'final'
+                    ? _rowsF[_rowsF.length - 1] : null;
+                  if (_fin && _aF && !_aF.done) {
+                    _aF.done = true; _aF.doneAt = Date.now();
+                    _aF.result = String(_fin.text || _aF.result || '').slice(0, 2000);
+                    _aF.err = !!_fin.err;
+                    try {
+                      const _rowF = (_HG.rowById || {})[cur.tid0] || (_HG.rowById || {})[tid];
+                      if (_rowF && typeof _hgAgentRowState === 'function')
+                        _hgAgentRowState(cur.tid0 || tid, !!_fin.err, _aF.result);
+                    } catch (_) {}
+                  }
+                  const nNew = _rowsF.length;
+                  if (nNew > (tbF.rpN || 0)) _subReplayForce(tid);   // 有新行才重建（final 行也计入→重建后窗格自然定稿）
                 }).catch(() => { cur.followInflight = false; });
             } else cur.followInflight = false;
           }
