@@ -574,6 +574,10 @@
         // v3.5.264（Q1）：svn status 已轻量化（只有 info）——改动列表由
         // changes 端点惰性补拉（独立 chgBusy，不置灰 logbtn）
         if (js.ok && js.changes_pending && !_HG.vcs.chgBusy && !lite) _vcsReloadChanges();
+        // v3.5.266（用户需求「点到版本，最近提交就后台刷出来，不等点提交
+        // 历史」）：激活即后台补拉最近提交（_vcsLogBusy 防连点；lite tick
+        // 不拉——60s 轻轮询保持 info 级）
+        if (!lite && !_vcsLogBusy) _vcsReloadLog();
       });
     }).catch(e => { _HG.vcs.busy = false; _HG.vcs.data = { err: String(e) }; _vcsPaint(); });
   }
