@@ -613,6 +613,8 @@
         if (_HG.vcs.data && !_HG.vcs.data.err && _HG.vcs.data.changes_pending) {
           _HG.vcs.data.changes_timeout = true;
           _HG.vcs.data.changes_pending = false;
+          _vcsPaint();   // v3.5.277（终审 X1）：调用方 paint 在 rearm 之前——
+                         // 封顶变异后无重绘=终帧假净滞留至下次 tick（≤60s 有界窗）
         }
         return;
       }
@@ -655,9 +657,9 @@
           _HG.vcs.data.changes_pending = false;
           _HG.vcs.chgRetry = 0;
         } else if (_j1ok) {
-          // F3-B：一段成功二段失败——shallow 列表在场+失败叙事（清 shallow 标记）
+          // F3-B：一段成功二段失败——shallow 列表在场+失败叙事
+          // v3.5.277（终审 X2）：shallow 保留——footnote 同挂（文案已通用化）
           _HG.vcs.data.changes_timeout = true;
-          _HG.vcs.data.changes_shallow = false;
           _HG.vcs.data.changes_pending = false;
         } else {
           // F3-C：两段皆败——绝不允许落「干净」假象，置失败叙事
@@ -775,7 +777,7 @@
         ? `<div class="hg-vcs-files">` + files.map((f, i) => _vcsFileHtml(f, i)).join('') + `</div>`
           + (D.truncated ? `<div class="hg-vcs-more">还有 ${D.truncated} 个文件未显示（用命令行查看）</div>` : '')
           // v3.5.276（R5）：超时但列表在场=顶层结果，明示口径消解头部「未获取」张力
-          + (D.changes_timeout && D.changes_shallow ? `<div class="hg-vcs-more">以上为顶层扫描结果（全树扫描超时，完整改动请用命令行 svn status 查看）</div>` : '')
+          + (D.changes_timeout && D.changes_shallow ? `<div class="hg-vcs-more">以上为顶层扫描结果（全树扫描未完成，完整改动请用命令行 svn status 查看或点 ⟳ 重试）</div>` : '')
         : D.changes_timeout
           ? `<div class="hg-vcs-empty">全树改动扫描超时（网络盘大仓库）——版本信息已就绪；改动列表请用命令行 svn status 查看。</div>`
           : (D.changes_pending && (_HG.vcs.chgBusy || D.changes_shallow))
