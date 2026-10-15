@@ -1003,7 +1003,17 @@
         }
         else if (!_hgEchoDup(it)) renderUser(it.text, it.images, it.files);
       }
-      else if (it.kind === 'event') handleEvent(it.data);
+      else if (it.kind === 'event') {
+        // v3.5.293（用户实锤内网「停止超长回合后发新消息前端冻结」）：单事件
+        // 异常隔离——handleEvent 内任何一步抛异常此前会沿 onmessage 冒出，
+        // EventSource 消息处理终止=后续所有事件全丢（旧秒表转/新消息不渲染，
+        // 心跳照收看门狗不触发），直到切会话 transcript 重建才恢复。隔离后
+        // 单事件炸只丢该事件并 console.error 留证（kind/seq/堆栈），事件流
+        // 永不断——无论内部还有什么渲染 bug，都不再冻结整个前端
+        try { handleEvent(it.data); }
+        catch (e) { try { console.error('[sse] 事件处理异常 kind='
+          + ((it.data && it.data.kind) || '?') + ' seq=' + it.seq, e); } catch(_) {} }
+      }
       // v3.3.2(D4)：协作回传不切割回合（renderPeer v3.2.15 注释的既定意图，
       // 分派处 grpFinalize 是残留矛盾）——先重开上一回合再渲染，回传唤醒的
       // 续跑工作才落回原组；空闲期回传是 P7 主场景
