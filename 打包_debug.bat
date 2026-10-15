@@ -22,19 +22,19 @@ echo   前端控制台 调试打包（源码明文，不发布）
 echo ==============================================
 set PYTHONIOENCODING=gbk
 set HG_NO_ENCRYPT=1
-"%PY%" srcuild.py
+"%PY%" src\build.py
 if errorlevel 1 goto fail
-if not exist "dist\前端控制台\前端控制台.exe" goto fail
+if not exist "dist\前端控制台_debug\前端控制台.exe" goto fail
 
 rem 自检（同正包：启动+全部模块 import）
-"dist\前端控制台\前端控制台.exe" --selftest
-"%PY%" -c "import io,sys; sys.stdout.reconfigure(errors='replace'); print(io.open(r'dist\前端控制台\selftest_result.txt', encoding='utf-8', errors='replace').read(), end='')"
-findstr /C:"selftest FAIL" "dist\前端控制台\selftest_result.txt" >nul && goto fail
+"dist\前端控制台_debug\前端控制台.exe" --selftest
+"%PY%" -c "import io,sys; sys.stdout.reconfigure(errors='replace'); print(io.open(r'dist\前端控制台_debug\selftest_result.txt', encoding='utf-8', errors='replace').read(), end='')"
+findstr /C:"selftest FAIL" "dist\前端控制台_debug\selftest_result.txt" >nul && goto fail
 
 :ok
 echo.
 echo ==============================================
-echo [成功] 调试包: dist\前端控制台 （源码明文，勿分发）
+echo [成功] 调试包: dist\前端控制台_debug + 同名zip在dist根（勿分发）
 echo  记录已记: dist\打包记录.txt
 echo ==============================================
 >>"dist\打包记录.txt" echo [%date% %time%] 调试包 成功

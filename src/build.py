@@ -18,6 +18,9 @@ BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # 项目根
 if BASE not in sys.path:
     sys.path.insert(0, BASE)   # v2.3.1：tools.encrypt_pkg 在项目根下（py src/build.py 时 path[0]=src/）
 APP_NAME = "前端控制台"
+# v3.5.248（打包_debug.bat）：HG_NO_ENCRYPT=1 = 调试包——独立目录、源码明文、
+# 仍打 zip（放 dist 根）；正包流（offline 同步/加密/releases 发布）全跳过
+DEBUG = os.environ.get("HG_NO_ENCRYPT") == "1"
 MAIN = os.path.join(BASE, "src", "main.py")
 ICON = os.path.join(BASE, "ico", "app.ico")
 
@@ -30,23 +33,28 @@ def build():
 
     # 用 spec 文件打包（spec 里配置了 excludes 排除 cryptography 等重依赖以加速启动）
     spec = os.path.join(BASE, APP_NAME + ".spec")
-    cmd = [sys.executable, "-m", "PyInstaller", "--noconfirm", spec]
+    cmd = [sys.executable, "-m", "PyInstaller", "--noconfirm"]
+    # v3.5.248：调试包独立目录 dist/前端控制台_debug/——与正包互不覆盖
+    if DEBUG:
+        cmd += ["--distpath", os.path.join("dist", APP_NAME + "_debug")]
+    cmd.append(spec)
 
     print("打包命令:", " ".join(cmd))
     subprocess.check_call(cmd, cwd=BASE)
 
     # v2.3.0 onedir：产物是应用目录（exe + _internal），exe 在目录内
-    app_dir = os.path.join(BASE, "dist", APP_NAME)
+    app_dir = os.path.join(BASE, "dist", APP_NAME + ("_debug" if DEBUG else ""))
     dist = os.path.join(app_dir, APP_NAME + ".exe")
     if os.path.exists(dist):
         sz = sum(os.path.getsize(os.path.join(r, f))
                  for r, _, fs in os.walk(app_dir) for f in fs) / 1024 / 1024
         print(f"\n打包成功: {app_dir} ({sz:.1f} MB)")
-        # v3.5.247（打包_debug.bat）：HG_NO_ENCRYPT=1 = 调试包——web 源码保持
-        # 明文（可直接查看/改 dist 内文件），且跳过整条发布流（离线资源同步/
-        # 加密/zip+manifest 进 releases）——调试包绝不能进发布流被同事拉到
-        if os.environ.get("HG_NO_ENCRYPT") == "1":
-            print("调试包模式（HG_NO_ENCRYPT=1）：源码明文、未发布（勿分发）")
+        # v3.5.248（打包_debug.bat）：HG_NO_ENCRYPT=1 = 调试包——web 源码明文
+        # （可直接查看/改），zip 照打（v3.5.248 用户定调「打包压缩还是要的」）
+        # 但放 dist 根、不进 releases——升级分发流绝不收录调试包
+        if DEBUG:
+            print("调试包模式（HG_NO_ENCRYPT=1）：源码明文，zip 输出到 dist 根")
+            _publish_debug(app_dir)
             return dist
         _refresh_offline_claude()   # v3.4.95：离线 claude-code 版本有变即刷新
         _sync_offline_pkg()
@@ -65,6 +73,27 @@ def build():
     else:
         print("打包失败：未找到 exe")
         return None
+
+
+def _publish_debug(app_dir):
+    """v3.5.248：调试包压缩——同 _publish 的 zip 口径（顶层壳目录、跳运行时
+    产物），但输出 dist 根、不写 manifest、不进 releases：压缩是给用户拿去
+    别处调试用的，升级分发服务（检查更新）绝不收录调试包。"""
+    import zipfile
+    sys.path.insert(0, BASE)
+    from src.version import APP_VERSION
+    dst = os.path.join(BASE, "dist", "%s_debug-v%s.zip" % (APP_NAME, APP_VERSION))
+    skip_dirs = {".update", "data"}          # 运行时产物不进包
+    skip_files = {"update.bat"}
+    with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
+        for r, ds, fs in os.walk(app_dir):
+            ds[:] = [d for d in ds if d not in skip_dirs]
+            for f in fs:
+                if f in skip_files:
+                    continue
+                p = os.path.join(r, f)
+                z.write(p, os.path.join(APP_NAME + "_debug", os.path.relpath(p, app_dir)))
+    print("调试 zip: %s (%.1f MB)" % (dst, os.path.getsize(dst) / 1024 / 1024))
 
 
 def _publish(app_dir):
