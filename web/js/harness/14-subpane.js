@@ -954,7 +954,10 @@
         if (_sub.tabs[tid]) _sub.tabs[tid]._retry = 0;   // v3.2.6R6：铺底成功重置重试额度
         // v3.5.273（用户实锤「明明是活跃的子代理，还是回放状态？」）：活代理
         // 拉全量打底≠回放——措辞按档案生死分（旧一律「回放 · …」误导）
-        note(a.done
+        // v3.5.275（对抗审 F4）：实时双键查档案——fetch 前快照 a.done 在
+        // 期间翻转会误标；包装键档案（归一键无档）同补（同款双查先例）
+        const _aNow = (_HG.agents || {})[tid] || (_HG.agents || {})[tid0] || {};
+        note(_aNow.done
           ? `回放 · ${_AGENT_LABEL[type] || type} · ${j.rows.length} 条记录`
           : `实况 · 已载 ${j.rows.length} 条历史，跟随中`);
         // ---- v3.2.6：rows → 时间线（与 live 同厂行；ts 事实分级）----

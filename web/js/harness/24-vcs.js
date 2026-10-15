@@ -599,17 +599,27 @@
   function _vcsReloadChanges() {
     if (_HG.vcs.chgBusy || !_HG.vcs.root) return;
     _HG.vcs.chgBusy = true; _vcsPaint();
-    // v3.5.274（严查）：世代守卫——两段在途期间切工程（root 变）时，旧工程
-    // 的 shallow/全树响应不得写入新工程的 data（旧码直写=跨工程污染列表）
+    // v3.5.275（对抗审 F3/F5）：世代计数——切工程/写操作成功都 ++chgGen
+    // 作废在途链（旧链收尾只清 busy 不写已 stale 数据），并按 pending 重臂
+    // 新扫描（F3-A 挂死根治：旧链不再占死新工程的补拉门）
+    const _gen0 = (_HG.vcs.chgGen = (_HG.vcs.chgGen || 0) + 1);
     const _root0 = _HG.vcs.root;
-    const _stale = () => _HG.vcs.root !== _root0;
+    const _stale = () => (_HG.vcs.chgGen || 0) !== _gen0 || _HG.vcs.root !== _root0;
+    const _rearm = () => {   // F3-A：旧链收尾后新态仍待扫且无人扫→重臂（限2次防死循环）
+      if (_HG.vcs.chgBusy || !_HG.vcs.data || !_HG.vcs.data.changes_pending) return;
+      if ((_HG.vcs.chgRetry || 0) >= 2) return;
+      _HG.vcs.chgRetry = (_HG.vcs.chgRetry || 0) + 1;
+      _vcsReloadChanges();
+    };
     const _chg = (shallow) => fetch('/api/vcs/changes', { method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ root: _root0, shallow: shallow ? 1 : 0 }) })
       .then(r => r.json());
+    let _j1ok = false;
     _chg(true).then(j1 => {
-      if (_stale()) return _chg(false);   // 已切走：一段结果弃，链继续走完收尾
+      if (_stale()) return _chg(false);   // 已作废：一段弃，链继续走完收尾
       if (j1 && j1.ok && _HG.vcs.data && !_HG.vcs.data.err) {
+        _j1ok = true;
         _HG.vcs.data.files = j1.files || [];
         _HG.vcs.data.truncated = j1.truncated || 0;
         _HG.vcs.data.changes_timeout = false;
@@ -619,16 +629,43 @@
       return _chg(false);   // 二段：全树补扫
     }).then(j2 => {
       _HG.vcs.chgBusy = false;
-      if (_stale()) { _vcsPaint(); return; }   // 已切走：二段结果弃
-      if (j2 && j2.ok && _HG.vcs.data && !_HG.vcs.data.err) {
-        _HG.vcs.data.files = j2.files || [];
-        _HG.vcs.data.truncated = j2.truncated || 0;
-        _HG.vcs.data.changes_timeout = j2.changes_timeout || false;
-        _HG.vcs.data.changes_shallow = false;
+      if (_stale()) { _vcsPaint(); _rearm(); return; }   // 已作废：结果弃+重臂
+      if (_HG.vcs.data && !_HG.vcs.data.err) {
+        if (j2 && j2.ok) {
+          if (j2.changes_timeout) {
+            // F8 改良：全树超时保留 shallow 已示列表，仅置超时叙事（不空屏）
+            _HG.vcs.data.changes_timeout = true;
+          } else {
+            _HG.vcs.data.files = j2.files || [];
+            _HG.vcs.data.truncated = j2.truncated || 0;
+            _HG.vcs.data.changes_timeout = false;
+          }
+          _HG.vcs.data.changes_shallow = false;
+          _HG.vcs.data.changes_pending = false;
+          _HG.vcs.chgRetry = 0;
+        } else if (_j1ok) {
+          // F3-B：一段成功二段失败——shallow 列表在场+失败叙事（清 shallow 标记）
+          _HG.vcs.data.changes_timeout = true;
+          _HG.vcs.data.changes_shallow = false;
+          _HG.vcs.data.changes_pending = false;
+        } else {
+          // F3-C：两段皆败——绝不允许落「干净」假象，置失败叙事
+          _HG.vcs.data.changes_timeout = true;
+          _HG.vcs.data.changes_shallow = false;
+          _HG.vcs.data.changes_pending = false;
+        }
       }
-      if (_HG.vcs.data) _HG.vcs.data.changes_pending = false;
       _vcsPaint();
-    }).catch(() => { _HG.vcs.chgBusy = false; _vcsPaint(); });
+    }).catch(() => {
+      _HG.vcs.chgBusy = false;
+      // F3-C 同款：异常收尾不得假净
+      if (!_stale() && _HG.vcs.data && !_HG.vcs.data.err) {
+        _HG.vcs.data.changes_timeout = true;
+        _HG.vcs.data.changes_shallow = false;
+        _HG.vcs.data.changes_pending = false;
+      }
+      _vcsPaint(); _rearm();
+    });
   }
   function _vcsReloadLog() {
     // v2：浏览态回补——从已载量一次拿够（reset 语义，弹窗/面板双视图同步）
@@ -691,7 +728,7 @@
           if (j && j.out) { _HG.vcs.out = j.out; }
         }
         if (done) done(ok, j || {});
-        else if (ok) _vcsReload();
+        else if (ok) { _HG.vcs.chgGen = (_HG.vcs.chgGen || 0) + 1; _vcsReload(); }   // v3.5.275 F5：作废在途扫描（提交前快照不得回盖）
         else _vcsPaint();
       })
       .catch(e => { _HG.vcs.busy = false; showBanner(label + '失败：' + e, 5000, true); _vcsPaint(); });
@@ -725,7 +762,7 @@
           + (D.truncated ? `<div class="hg-vcs-more">还有 ${D.truncated} 个文件未显示（用命令行查看）</div>` : '')
         : D.changes_timeout
           ? `<div class="hg-vcs-empty">全树改动扫描超时（网络盘大仓库）——版本信息已就绪；改动列表请用命令行 svn status 查看。</div>`
-          : (D.changes_pending || _HG.vcs.chgBusy)
+          : (D.changes_pending && (_HG.vcs.chgBusy || D.changes_shallow))
             ? `<div class="hg-vcs-empty">改动列表扫描中…（网络盘大仓库可能需要数十秒）</div>`
             : `<div class="hg-vcs-empty">工作区干净，没有未提交的改动。</div>`) +
       (_HG.vcs.out ? `<div class="hg-vcs-out"><div class="hg-vcs-out-t">上次命令输出</div><pre>${esc(_HG.vcs.out.slice(0, 4000))}</pre></div>` : '') +
@@ -771,8 +808,10 @@
     // v3.5.271（SVN 报告完整版 Q4）：changes_timeout 时不得显示「0 个改动」
     //——空数组是「未获取」不是「干净」，头部与正文必须同一叙事（旧=UI 说谎，
     // 会诱导用户误判工作区干净而漏提交）
-    const _chgTxt = D.changes_timeout ? '改动数未获取（扫描超时）'
-      : (D.changes_pending || _HG.vcs.chgBusy || D.changes_shallow) ? '全树扫描中…'
+    // v3.5.275 F7：在途扫描（busy/shallow）优先于超时叙事——重扫期间头部
+    // 显「扫描中」不滞留「未获取」；挂起（pending 无 busy）由失败叙事兜底
+    const _chgTxt = (D.changes_pending && (_HG.vcs.chgBusy || D.changes_shallow)) ? '全树扫描中…'
+      : D.changes_timeout ? '改动数未获取（扫描超时）'
       : `${(D.files || []).length} 个改动`;
     return `<div class="hg-vcs-head"><span class="hg-vcs-badge ${esc(D.vcs)}">${esc(D.vcs)}</span>` +
       `<span class="hg-vcs-branch">⎇ ${esc(D.branch || '(未知)')}${esc(rev)}${esc(ab)}</span>` +
@@ -806,6 +845,7 @@
             || '<option value="">（文件树为空）</option>';
         }).catch(() => {});
         sel.onchange = () => {
+          _HG.vcs.chgGen = (_HG.vcs.chgGen || 0) + 1;   // v3.5.275 F3-A：作废在途扫描链
           _HG.vcs.root = sel.value; localStorage.setItem('hg-vcs-root', sel.value);
           _HG.vcs.data = null; _HG.vcs.log = null; _HG.vcs.sel = new Set();
           _vcsReload(); _vcsReloadLog();

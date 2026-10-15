@@ -2697,8 +2697,7 @@ html {
 /* v3.5.142（用户批注「名字去掉，保留空间给过程显示」）：类型 chip（.h-ag-type）
    随「子智能体」类别词一并退役——行 title 悬浮保留类型全文；新增过程计数
    「N思 M工」（运行中挂在秒表尾，数据来自 agents 档案） */
-.h-ag-cnt { font-size: var(--fs-xs); color: var(--accent); opacity: .85;
-  margin-left: 6px; white-space: nowrap; }
+/* v3.5.269 撤「N思M工」计数后 .h-ag-cnt 唯一生产者已撤（对抗审 F6 清孤儿） */
 /* 窗格时间线：子代理自己的会话用主会话同款回合结构（回合头+时间线+根区结
    论）。行样式全复用主链类（.h-tl/.h-think-seg/.h-tool/.h-tl-grp），这里只
    补窗格作用域的身份行/结论区/占位说明 */

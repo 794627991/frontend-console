@@ -353,7 +353,10 @@ def vcs_changes():
         return jsonify({"ok": True, "vcs": vcs, "tool": False,
                         "files": [], "truncated": 0})
     if vcs == "svn":
-        res, e = _svn_changes(wc)
+        # v3.5.275（对抗审 F1）：端点接线——272 首笔 vcs.py 未进提交、272b
+        # 只补了函数体，端点从未透传 shallow（分层加载端到端失效实锤）。
+        # shallow=1 → depth='empty' 顶层模式（--depth empty 秒级）
+        res, e = _svn_changes(wc, depth="empty" if data.get("shallow") else None)
         if e:
             return jsonify({"ok": False, "err": e}), 500
         return jsonify({"ok": True, "vcs": "svn", **res})

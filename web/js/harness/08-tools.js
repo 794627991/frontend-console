@@ -464,9 +464,9 @@
       `<div class="h-tool-coll"></div>`;
     return row;
   }
-  // v3.5.143：agentline 运行槽渲染单元（运行徽章+秒表+过程计数「N思 M工」）
+  // v3.5.143→269：agentline 运行槽渲染单元（运行徽章+秒表；「N思M工」计数已撤）
   // ——派发 interval 与 ABA 回绑复活（12-sessions _hgAgentRowTimerRestart）
-  // 共用一份。计数数据挂 agents 档案（_hgAgCnt 计，窗格关着也有数）
+  // 共用一份。秒表只读 t0；thinkN/toolN 档案统计保留（toolN 另有用量消费）
   function _hgAgentSlotPaint(row, t0) {
     const slot = row.querySelector('.h-tslots');
     if (!slot) return;

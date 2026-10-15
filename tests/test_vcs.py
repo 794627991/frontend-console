@@ -203,7 +203,40 @@ def t_log_plan():
           and "ab" not in " ".join(P("git", {"text": "ab"})[1]))
 
 
+def t_changes_shallow():
+    """v3.5.275（对抗审 F1）：端点→_svn_changes 的 shallow→depth 透传断言
+    （272 首笔端点未接线、分层加载端到端失效的事故回归哨）。"""
+    import json as _json
+    from flask import Flask
+    captured = {}
+    orig = vcs._svn_changes
+    orig_guard, orig_tool = vcs._guard, vcs._tool
+    def _cap(wc, depth=None):
+        captured["depth"] = depth
+        return ({"files": [], "truncated": 0, "shallow": bool(depth)}, None)
+    vcs._svn_changes = _cap
+    vcs._guard = lambda root: ("svn", "D:\fake", None, True)
+    vcs._tool = lambda v: True
+    try:
+        app = Flask(__name__)
+        app.register_blueprint(vcs.vcs_bp)
+        c = app.test_client()
+        c.post("/api/vcs/changes", data=_json.dumps({"root": "x", "shallow": 1}),
+               content_type="application/json")
+        check("changes端点 shallow=1→depth=empty", captured.get("depth") == "empty",
+              str(captured))
+        captured.clear()
+        c.post("/api/vcs/changes", data=_json.dumps({"root": "x"}),
+               content_type="application/json")
+        check("changes端点 无shallow→depth=None", captured.get("depth") is None,
+              str(captured))
+    finally:
+        vcs._svn_changes = orig
+        vcs._guard, vcs._tool = orig_guard, orig_tool
+
+
 if __name__ == "__main__":
     rc1 = main()          # R1：恢复原有 16 项断言执行（v3.5.138 误改为恒 0）
     t_log_plan()
+    t_changes_shallow()
     sys.exit(1 if (_FAIL or rc1) else 0)
