@@ -42,6 +42,12 @@ def build():
         sz = sum(os.path.getsize(os.path.join(r, f))
                  for r, _, fs in os.walk(app_dir) for f in fs) / 1024 / 1024
         print(f"\n打包成功: {app_dir} ({sz:.1f} MB)")
+        # v3.5.247（打包_debug.bat）：HG_NO_ENCRYPT=1 = 调试包——web 源码保持
+        # 明文（可直接查看/改 dist 内文件），且跳过整条发布流（离线资源同步/
+        # 加密/zip+manifest 进 releases）——调试包绝不能进发布流被同事拉到
+        if os.environ.get("HG_NO_ENCRYPT") == "1":
+            print("调试包模式（HG_NO_ENCRYPT=1）：源码明文、未发布（勿分发）")
+            return dist
         _refresh_offline_claude()   # v3.4.95：离线 claude-code 版本有变即刷新
         _sync_offline_pkg()
         # v2.3.1 发布前资源加密（web 前端源码/blob → AES-256-GCM 密文，
