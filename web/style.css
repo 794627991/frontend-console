@@ -3133,6 +3133,15 @@ html {
    无 arg 行（SendMessage 等转交行 head 无 .h-tool-arg）失去唯一 flex 撑开
    元素，徽章悬在文字后不贴行右缘；有 arg 行 arg flex 撑开与之兼容不冲突 */
 .h-tool.col .h-tool-head .h-tslots { margin-left: auto; }
+/* v3.5.282（用户铁令「所有完成/错误/已回传徽章一律无条件对齐，流式+重渲
+   全形态」）：①head 内 name 收敛——SendMessage 等 Default 行的长标题
+   （JSON 全文）无收敛把行撑爆，徽章被推出容器越界裁切（用户实锤图1 行2）；
+   短名行零影响（shrink 只在挤时生效）②识图卡状态位同推右保险（无 slots
+   结构，已回传徽章所在）——三路合围后所有徽章右缘一列对齐 */
+.h-tool.col .h-tool-head .h-tool-name {
+  min-width: 0; flex-shrink: 1; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.h-tool-head .h-vision-state { margin-left: auto; flex-shrink: 0; }
 .h-tool.col .h-tool-head { display: flex; align-items: center; gap: 6px; width: 100%;
   border: none; background: transparent; color: var(--muted); font-family: var(--font-ui);
   font-size: var(--fs-sm); padding: 5px 10px; cursor: pointer; text-align: left; }
