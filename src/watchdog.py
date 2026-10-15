@@ -2,9 +2,16 @@
 """v3.5.223 请求看门狗（用户实锤：两串口+SSH+后台claude 并发时后端整体
 阻塞 150s——send_raw/tftp/sessions 全挂起，关串口才恢复）。
 
-在途请求 >2s 未完成时，自动把**全部线程栈**转储到
+在途请求 >5s 未完成时，自动把**全部线程栈**转储到
 ~/.serialconsole_pro/watchdog_dump.log（sys._current_frames——无需
-py-spy）。诊断基建：下一次复现直接有栈可读，一次定凶。
+py-spy）。
+
+v3.5.289（用户需求「不仅记录，还要能打断阻塞」）：同一请求持续超
+15s 时向其线程注入 WatchdogInterrupt 异常——**纯 Python 阻塞**（死锁/
+死循环/锁竞争）在下次字节码边界抛出，请求立即 500 返回（前端收到
+错误而非干等）；**C 级系统调用阻塞**（subprocess 等待/socket recv，
+GIL 已释放）注入不生效——那类由各端点自身超时兜底（如 vcs 的
+20s/90s 超时即 kill 子进程）。每请求只注入一次，防异常循环。
 
 用法（server.py app 创建后一行）：
     from src.watchdog import install_watchdog
@@ -31,7 +38,8 @@ except Exception:      # 独立导入失败（非 Flask 环境）——不安装
 def _before():
     with _LOCK:
         _REQS[threading.get_ident()] = {
-            "path": (request.path or "?")[:60], "t0": time.time()}
+            "path": (request.path or "?")[:60], "t0": time.time(),
+            "interrupted": False}
 
 
 def _after(resp):
@@ -65,6 +73,28 @@ def _dump_stacks(slow):
         pass
 
 
+class WatchdogInterrupt(Exception):
+    """v3.5.289：看门狗注入的长阻塞打断异常（>15s 的请求线程）。"""
+
+
+def _interrupt(tid, path, dt):
+    """向阻塞请求线程注入异步异常。返回是否已注入（幂等：_REQS 打标）。"""
+    import ctypes
+    r = _REQS.get(tid)
+    if not r or r.get("interrupted"):
+        return False
+    r["interrupted"] = True
+    # 目标线程下次执行 Python 字节码时抛出；卡在 C 调用里则挂起至其返回
+    ctypes.pythonapi.PyThreadState_SetAsyncExc(
+        ctypes.c_long(tid), ctypes.py_object(WatchdogInterrupt))
+    try:
+        with open(_DUMP, "a", encoding="utf-8", errors="replace") as f:
+            f.write("WATCHDOG INTERRUPT %.1fs %s (tid=%x)\n" % (dt, path, tid))
+    except Exception:
+        pass
+    return True
+
+
 def _loop():
     while True:
         time.sleep(2)
@@ -81,6 +111,14 @@ def _loop():
                         del _REQS[k]
             if not slow:
                 continue
+            # v3.5.289：>15s 的在途请求注入打断（每请求一次；纯 Python 阻塞
+            # 立抛，C 级阻塞不生效由端点超时兜底）
+            for tid2, dt2 in slow:
+                if dt2 > 15.0:
+                    try:
+                        _interrupt(tid2, *_REQS[tid2]["path"] and (_REQS[tid2]["path"], dt2))
+                    except Exception:
+                        pass
             if now - _LAST[0] < 10:      # 10s 频控（持续卡顿防日志爆炸）
                 continue
             _LAST[0] = now
