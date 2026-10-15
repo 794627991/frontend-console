@@ -1086,9 +1086,20 @@ def _selftest():
                 "serial.tools.list_ports", "websocket", "webview",
                 "Crypto.Cipher.AES", "Crypto.Cipher.PKCS1_v1_5", "Crypto.PublicKey.RSA", "PIL.Image"):
         _t("import " + mod, lambda n=mod: _imp(n))
-    _t("web 内存 serve 抽查", lambda: (
-        None if getattr(sys, "FC_MEM_WEB", {}) else (_ for _ in ()).throw(AssertionError("内存字典为空")),
-        list(getattr(sys, "FC_MEM_WEB", {}))[:1]))
+    # v3.5.250b：debug 包（打包_debug.bat，HG_NO_ENCRYPT=1）无 .fcenc 清单=
+    # web 明文磁盘 serve（[debug-web] 直读 _internal/web），FC_MEM_WEB 恒空
+    # 是预期——改抽查磁盘 web 存在性；加密包维持内存 serve 抽查
+    if os.path.isfile(os.path.join(os.path.dirname(sys.executable),
+                                   "_internal", ".fcenc")):
+        _t("web 内存 serve 抽查", lambda: (
+            None if getattr(sys, "FC_MEM_WEB", {}) else (_ for _ in ()).throw(AssertionError("内存字典为空")),
+            list(getattr(sys, "FC_MEM_WEB", {}))[:1]))
+    else:
+        _t("web 明文磁盘 serve 抽查(debug)", lambda: (
+            None if os.path.isfile(os.path.join(os.path.dirname(sys.executable),
+                                                "_internal", "web", "index.html"))
+            else (_ for _ in ()).throw(AssertionError("_internal/web/index.html 缺失")),
+            "plain"))
     header = "selftest %s @ %s\n" % ("PASS" if ok else "FAIL", sys.executable)
     out.write("argv=%r\n" % (sys.argv,))
     _flush(final=header.split(" @ ")[0])

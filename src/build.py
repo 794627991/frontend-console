@@ -58,6 +58,26 @@ def build():
         # （可直接查看/改），zip 照打（v3.5.248 用户定调「打包压缩还是要的」）
         # 但放 dist 根、不进 releases——升级分发流绝不收录调试包
         if DEBUG:
+            # v3.5.250（用户实锤 debug 包启动 ModuleNotFoundError: src.version）：
+            # spec excludes 'src'——正包的 src 由 encrypt_pkg 编译成原生 pyd
+            # 外置 _internal/src/（防反解），debug 跳过加密=没人生成 pyd=src
+            # 整包缺失。debug 改为把 src 源树 .py 明文落 _internal/src/
+            #（FrozenImporter 排除 src 后自动回落文件系统 import——这正是
+            # 「不加密源码」的形态本体）
+            _src_root = os.path.join(BASE, "src")
+            _dst = os.path.join(app_dir, "_internal", "src")
+            _n = 0
+            for r, ds, fs in os.walk(_src_root):
+                ds[:] = [d for d in ds if d != "__pycache__"]
+                for f in fs:
+                    if not f.endswith(".py"):
+                        continue
+                    _sp = os.path.join(r, f)
+                    _dp = os.path.join(_dst, os.path.relpath(_sp, _src_root))
+                    os.makedirs(os.path.dirname(_dp), exist_ok=True)
+                    shutil.copy2(_sp, _dp)
+                    _n += 1
+            print(f"调试包: src 源码明文外置 {_n} 个 .py → _internal/src/")
             print("调试包模式（HG_NO_ENCRYPT=1）：源码明文，zip 输出到 dist 根")
             _publish_debug(app_dir)
             return dist
