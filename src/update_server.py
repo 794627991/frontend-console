@@ -459,6 +459,10 @@ body[data-skin=term] .vlist .card{animation:fcUp .4s both,fcGlow2 4s ease-in-out
 .mn-step p { font-size:13px; line-height:1.75; color:var(--muted); margin-bottom:10px; }
 .mn-step img { width:100%; border-radius:8px; border:1px solid var(--line); display:block; }
 .mn-tip { font-size:12.5px; color:var(--muted); }
+
+.mn-svg { width:100%; max-width:720px; height:auto; display:block; margin:4px 0 12px;
+  color:var(--fg); background:color-mix(in srgb, var(--bg) 40%, transparent);
+  border-radius:8px; padding:6px 4px; }
 """
 
 _LOGIN_HTML = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
@@ -654,21 +658,68 @@ _PORTAL_HTML = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
     </div>
     <div class="mn-sec"><b>🚀 快速上手 · 三个配置</b></div>
     <div class="mn-step">
-      <div class="mn-step-t">1️⃣ 接入 Claude Code（首次自动引导）</div>
-      <p>首次打开工具会自动检测 Claude CLI / Node / Git 环境，缺什么弹什么，支持<b>离线包安装</b>（无网机器一键装）。装好即自动拉起 Claude。</p>
-      <img src="manual/claude_setup.png" loading="lazy" alt="Claude 接入引导">
+      <div class="mn-step-t">1️⃣ 接入 Claude Code —— 让 AI 在工具里跑起来</div>
+      <svg class="mn-svg" viewBox="0 0 720 96" xmlns="http://www.w3.org/2000/svg">
+        <defs><linearGradient id="g1" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" stop-color="#4f8fff"/><stop offset="1" stop-color="#8957e5"/></linearGradient></defs>
+        <rect x="10" y="18" width="200" height="56" rx="10" fill="none" stroke="url(#g1)" stroke-width="1.5"/>
+        <text x="110" y="42" text-anchor="middle" fill="currentColor" font-size="13" font-weight="600">① 自动检测环境</text>
+        <text x="110" y="62" text-anchor="middle" fill="#8899aa" font-size="11">Claude CLI / Node / Git</text>
+        <path d="M 218 46 H 262" stroke="url(#g1)" stroke-width="1.5" marker-end="url(#ar1)"/>
+        <rect x="270" y="18" width="200" height="56" rx="10" fill="none" stroke="url(#g1)" stroke-width="1.5"/>
+        <text x="370" y="42" text-anchor="middle" fill="currentColor" font-size="13" font-weight="600">② 引导安装（缺啥装啥）</text>
+        <text x="370" y="62" text-anchor="middle" fill="#8899aa" font-size="11">联网安装 / 离线包一键装</text>
+        <path d="M 478 46 H 522" stroke="url(#g1)" stroke-width="1.5"/>
+        <rect x="530" y="18" width="180" height="56" rx="10" fill="none" stroke="url(#g1)" stroke-width="1.5"/>
+        <text x="620" y="42" text-anchor="middle" fill="currentColor" font-size="13" font-weight="600">③ 自动拉起 Claude</text>
+        <text x="620" y="62" text-anchor="middle" fill="#8899aa" font-size="11">API Token 配好即用</text>
+      </svg>
+      <p><b>怎么配：</b>首次打开工具会自动弹出「安装 Claude Code」引导——自动检测 Claude CLI / Node / Git 三样环境，缺什么引导装什么（有网一键联网装，无网机器点「制作离线包」拷到目标机器装）。检测全勾后自动拉起 Claude。<br>
+      <b>API 接入：</b>需要 Anthropic 兼容 API 的（企业内网网关 / 智谱等），在 Claude 对话页的接入引导里填 <b>Base URL + API Token</b>（支持 settings.json 同源自动读取）；官方账号用户装好 CLI 登录即可。<br>
+      <b>提示：</b>工具页左下角有「Claude」状态徽章，绿色=通道就绪。之后每个会话页签就是一个独立 AI，互不干扰。</p>
     </div>
     <div class="mn-step">
-      <div class="mn-step-t">2️⃣ 配置识图（让 AI 看懂截图）</div>
-      <p>工具页点 <b>👁 识图配置</b> → 勾选「启用识图」→ 选择多模态模型（如 glm-5.3-flash）→ 保存。
-      真多模态模型直读图片；非多模态模型自动走内置 MCP 识图通道，无需额外配置。配好后把截图拖进会话，AI 直接分析。</p>
-      <img src="manual/vision_cfg.png" loading="lazy" alt="识图配置">
+      <div class="mn-step-t">2️⃣ 配置识图 —— 让 AI 看懂你的截图</div>
+      <svg class="mn-svg" viewBox="0 0 720 96" xmlns="http://www.w3.org/2000/svg">
+        <rect x="10" y="18" width="170" height="56" rx="10" fill="none" stroke="#4f8fff" stroke-width="1.5"/>
+        <rect x="30" y="30" width="44" height="32" rx="4" fill="none" stroke="#4f8fff" stroke-width="1.2"/>
+        <circle cx="44" cy="40" r="4" fill="#4f8fff"/><path d="M 36 58 L 52 46 L 66 58" stroke="#4f8fff" stroke-width="1.2" fill="none"/>
+        <text x="95" y="50" text-anchor="middle" fill="currentColor" font-size="12">截图拖进会话</text>
+        <path d="M 190 46 H 300" stroke="#4f8fff" stroke-width="1.5"/>
+        <rect x="308" y="18" width="120" height="56" rx="28" fill="none" stroke="#8957e5" stroke-width="1.5"/>
+        <text x="368" y="50" text-anchor="middle" fill="currentColor" font-size="13" font-weight="600">🤖 AI 识图</text>
+        <path d="M 436 46 H 546" stroke="#8957e5" stroke-width="1.5"/>
+        <rect x="554" y="18" width="160" height="56" rx="10" fill="none" stroke="#3fb950" stroke-width="1.5"/>
+        <text x="634" y="50" text-anchor="middle" fill="currentColor" font-size="12">分析结论 / 修改建议</text>
+      </svg>
+      <p><b>怎么配：</b>工具页点 <b>👁 识图配置</b> 按钮（Claude 会话页输入区上方）→<br>
+      ① 勾选「<b>启用识图</b>」；<br>
+      ② 「识图模型」下拉选择一个多模态模型（如 glm-5.3-flash，带 👁 标记的都是）；<br>
+      ③ 企业内网 / 自建网关用户：展开高级配置填专用 <b>端点 + 密钥</b>（留空自动跟随主会话 API）；<br>
+      ④ 点「保存」——即改即生效，无需重启。<br>
+      <b>智能通道：</b>真多模态模型（如 glm-5.3）AI 直接看图；非多模态模型自动走内置 MCP 识图通道——<b>切换模型无需改任何配置</b>，工具自动判定。<br>
+      <b>用法：</b>把截图拖进会话输入框（或粘贴），AI 直接分析图内内容。</p>
     </div>
     <div class="mn-step">
-      <div class="mn-step-t">3️⃣ 配置三角色（AI 分身干活）</div>
-      <p>工具页点 <b>👥 三角色</b> → 打开开关 → 三档模型各自分配（主会话模型 / 设计者 / 审计者）→ 保存，下条消息热更生效。
-      之后 AI 会自动派出「设计者」出方案、「审计者」做复核——各用各的模型，主会话只管调度。</p>
-      <img src="manual/roles_cfg.png" loading="lazy" alt="三角色配置">
+      <div class="mn-step-t">3️⃣ 配置三角色 —— AI 分身帮你干活</div>
+      <svg class="mn-svg" viewBox="0 0 720 110" xmlns="http://www.w3.org/2000/svg">
+        <rect x="10" y="10" width="200" height="40" rx="8" fill="none" stroke="#4f8fff" stroke-width="1.5"/>
+        <text x="110" y="35" text-anchor="middle" fill="currentColor" font-size="12">主会话（调度+干活）· 模型槽 A</text>
+        <rect x="10" y="60" width="200" height="40" rx="8" fill="none" stroke="#8957e5" stroke-width="1.5"/>
+        <text x="110" y="85" text-anchor="middle" fill="currentColor" font-size="12">设计者（出方案）· 模型槽 B</text>
+        <rect x="510" y="35" width="200" height="40" rx="8" fill="none" stroke="#3fb950" stroke-width="1.5"/>
+        <text x="610" y="60" text-anchor="middle" fill="currentColor" font-size="12">审计者（复核把关）· 模型槽 C</text>
+        <path d="M 215 55 C 350 55 400 55 505 55" stroke="#8899aa" stroke-width="1.2" fill="none" stroke-dasharray="5 4"/>
+        <path d="M 215 80 C 350 90 420 70 505 60" stroke="#8899aa" stroke-width="1.2" fill="none" stroke-dasharray="5 4"/>
+        <text x="360" y="45" text-anchor="middle" fill="#8899aa" font-size="11">派出任务</text>
+        <text x="360" y="95" text-anchor="middle" fill="#8899aa" font-size="11">回报结论</text>
+      </svg>
+      <p><b>怎么配：</b>工具页点 <b>👥 三角色</b> 按钮 →<br>
+      ① 打开「<b>启用三角色</b>」开关；<br>
+      ② 三档模型槽各自下拉分配：<b>主会话模型</b>（调度与干活）/ <b>设计者</b>（出方案，可配强模型）/ <b>审计者</b>（复核把关，可配快模型省钱）——<b>三个槽可以用不同模型</b>；<br>
+      ③ 审计模式与分级线可调（直改多少行触发审计由你定）；<br>
+      ④ 点「保存」——<b>下条消息热更生效，无需重启</b>。<br>
+      <b>效果：</b>之后派任务时 AI 自动分工——设计者出方案、执行者落地、审计者复核打回，全程在窗格里实时可见，各角色干完自动汇报。</p>
     </div>
     <div class="mn-sec"><b>💡 提示</b></div>
     <p class="mn-tip">识图与三角色均支持按 API 方案独立配置（切方案各配各的）；所有配置即改即生效，无需重启。</p>
