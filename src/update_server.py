@@ -439,6 +439,26 @@ body[data-skin=term] .hero h2{animation:fcGlow 3s ease-in-out infinite}
 body[data-skin=term] .btn::after{display:none}
 body[data-skin=term] .vlist .card{animation:fcUp .4s both,fcGlow2 4s ease-in-out infinite}
 @keyframes fcGlow2{0%,100%{border-color:#1d2e1d}50%{border-color:#2a452a}}
+
+/* ---- v3.5.290 工具说明书 tab ---- */
+.pgtabs { display:flex; gap:10px; margin:0 0 18px; }
+.pgtab { padding:9px 22px; border-radius:99px; border:1px solid var(--line);
+  background:var(--card); color:var(--muted); cursor:pointer; font-size:13.5px; font-weight:600; }
+.pgtab.on { background:var(--accent,#4f8fff); color:#fff; border-color:transparent; }
+.mn-hero { padding:6px 4px 14px; }
+.mn-hero h2 { font-size:22px; font-weight:700; }
+.mn-hero p { color:var(--muted); font-size:13.5px; margin-top:6px; }
+.mn-sec { font-size:15px; font-weight:700; margin:22px 0 12px; }
+.mn-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; }
+.mn-card { background:var(--card); border:1px solid var(--line); border-radius:10px;
+  padding:14px 16px; font-size:13px; line-height:1.7; color:var(--muted); }
+.mn-card b { display:block; color:var(--fg); font-size:13.5px; margin-bottom:4px; }
+.mn-step { background:var(--card); border:1px solid var(--line); border-radius:10px;
+  padding:16px 18px; margin-bottom:16px; }
+.mn-step-t { font-size:14.5px; font-weight:700; margin-bottom:8px; }
+.mn-step p { font-size:13px; line-height:1.75; color:var(--muted); margin-bottom:10px; }
+.mn-step img { width:100%; border-radius:8px; border:1px solid var(--line); display:block; }
+.mn-tip { font-size:12.5px; color:var(--muted); }
 """
 
 _LOGIN_HTML = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
@@ -615,6 +635,13 @@ _PORTAL_HTML = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
   </div>
   <div id="body"><div class="empty">版本加载中…</div></div>
 </div>
+<script>
+function pgSwitch(pg){
+  document.querySelectorAll('.pgtab').forEach(function(b){ b.classList.toggle('on', b.dataset.pg === pg); });
+  document.getElementById('pg-dl').style.display = pg === 'dl' ? '' : 'none';
+  document.getElementById('pg-mn').style.display = pg === 'mn' ? '' : 'none';
+}
+</script>
 <button class="btn ghost skinbtn" id="skin" title="切换界面风格">🎨 换肤</button>
 <canvas id="fxCanvas"></canvas>
 <div class="fx-glow"></div>
