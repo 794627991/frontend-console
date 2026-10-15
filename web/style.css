@@ -3811,14 +3811,18 @@ html {
 .hg-file-badge.ext-py { --badge-c: #3572a5; }
 .hg-file-badge.ext-md { --badge-c: #083fa1; }
 .hg-file-badge.ext-json { --badge-c: #df4e2f; }
-.hg-file-badge.ext-css { background: rgba(86, 61, 124, .28); color: #563d7c; filter: brightness(1.6); }
-.hg-file-badge.ext-html { background: rgba(227, 76, 38, .18); color: #e34c26; }
-.hg-file-badge.ext-yml { background: rgba(203, 118, 48, .2); color: #cb171e; filter: hue-rotate(-25deg); }
-.hg-file-badge.ext-c { background: rgba(85, 85, 85, .35); color: #aaa; }
-.hg-file-badge.ext-sh { background: rgba(137, 179, 79, .18); color: #89e051; }
-.hg-file-badge.ext-go { background: rgba(0, 173, 216, .18); color: #00add8; }
-.hg-file-badge.ext-rs { background: rgba(222, 136, 26, .18); color: #de8c26; }
-.hg-file-badge.ext-java { background: rgba(176, 114, 25, .22); color: #b07219; }
+/* v3.5.291（用户实锤「C 的图标完全看不清」）：ext-css/html/yml/c/sh/go/rs/java
+   八个徽章仍是 v3.3.13 前旧写法（浅字+浅底/灰底灰字，浅色主题对比度归零）——
+   统一迁入 --badge-c 体系（背景 tint+左色条担语言身份，文字恒前景色双主题可读）。
+   c/h/cpp 取 VSCode C 图标蓝灰 #a8b9cc（官方 #555 灰与无色 fallback 难区分） */
+.hg-file-badge.ext-css { --badge-c: #563d7c; }
+.hg-file-badge.ext-html { --badge-c: #e34c26; }
+.hg-file-badge.ext-yml { --badge-c: #cb171e; }
+.hg-file-badge.ext-c { --badge-c: #a8b9cc; }
+.hg-file-badge.ext-sh { --badge-c: #89e051; }
+.hg-file-badge.ext-go { --badge-c: #00add8; }
+.hg-file-badge.ext-rs { --badge-c: #de8c26; }
+.hg-file-badge.ext-java { --badge-c: #b07219; }
 .hg-diffstat { flex: none; font-family: var(--font-mono); font-size: 10px;
   margin: 0 2px; vertical-align: middle; }
 .hg-diffstat .add { color: var(--h-ok); font-style: normal; font-weight: 600; }
