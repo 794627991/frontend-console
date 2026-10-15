@@ -564,14 +564,9 @@ function buildClaudeHarnessTab(opts = {}) {
           r && r.agentId && (r.type || '') === _ty && String(r.desc || '').slice(0, 40) === _ds);
         if (_hit) { aid = _hit.agentId; agRow.dataset.hgSubr = aid; }
       }
-      // v3.5.269（用户实锤「Task 点开永远啥也没有，就不要让用户能点进来」）
-      // v3.5.270（用户补充「运行中的 task 我也看不到实况啊」）：Task 型无论
-      // 运行中/已结束一律不开窗——CLI 无独立转写，实况窗格同样空白
-      const _agT = agRow.dataset.hgSubType || '';
-      if (aid && _agT === 'Task') {
-        showBanner('该 Task 子代理没有可回放的过程记录', 2600);
-        return;
-      }
+      // v3.5.273（撤 269/270 一刀切）：「点开啥也没有」的真来源是无 agentId
+      // 的 Task 行（该路径本就开目录+banner，不弹窗）；有 agentId 的 Task 转写
+      // 存在（外部 AI 实测：调研型 Task 拉到 9 条记录+实况续流）——拦截误伤，恢复原点击
       if (aid) { _subReplay(aid, agRow.dataset.hgSubType || 'Task',
         agRow.dataset.hgSubDesc || '', aid); return; }
       _subDirOpen();

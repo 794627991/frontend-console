@@ -814,6 +814,9 @@
                           // 包装键，归一键可能无档案，双查防活代理误判死
     tid = _subTid(tid);   // v3.4：包装 id/真实 agentId 均归一到原子代理 tab 键
     const a = (_HG.agents || {})[tid] || {};
+    // v3.5.273（用户实锤「怎么变成 Task 了？还没有名？」）：desc 空时档案
+    // 补名——否则 tab 落裸类型字（「Task」），活跃调研子代理看不出是谁
+    desc = desc || a.desc || '';
     // v2.57：协作档案有 taskId（=真实 agentId，v2.52 修复转写源后可拉全量）
     // ——不再走「过程不可回看」占位（过时判定，用户实锤途中关闭再开啥也没有）；
     // 无 taskId（连真实 id 都没反查到）才维持占位
@@ -947,7 +950,11 @@
           return;
         }
         if (_sub.tabs[tid]) _sub.tabs[tid]._retry = 0;   // v3.2.6R6：铺底成功重置重试额度
-        note(`回放 · ${_AGENT_LABEL[type] || type} · ${j.rows.length} 条记录`);
+        // v3.5.273（用户实锤「明明是活跃的子代理，还是回放状态？」）：活代理
+        // 拉全量打底≠回放——措辞按档案生死分（旧一律「回放 · …」误导）
+        note(a.done
+          ? `回放 · ${_AGENT_LABEL[type] || type} · ${j.rows.length} 条记录`
+          : `实况 · 已载 ${j.rows.length} 条历史，跟随中`);
         // ---- v3.2.6：rows → 时间线（与 live 同厂行；ts 事实分级）----
         const _tsGet = r0 => (r0 && r0.ts) ? Date.parse(r0.ts) : 0;
         const pend = [];       // 开口思考段（时长=下一带 ts 行差）
