@@ -258,13 +258,20 @@ def _svn_info(wc):
     return rev, branch
 
 
-def _svn_changes(wc):
-    """v3.5.264（Q1 主修）：全树 svn status 独立函数——配 VCS_TIMEOUT_CHG
-    长超时，由 /api/vcs/changes 单独调用（前端惰性加载），不再阻塞 status。"""
-    rc, out, err = _run(["svn", "status", "--xml"], wc, VCS_TIMEOUT_CHG)
+def _svn_changes(wc, depth=None):
+    """v3.5.264（Q1 主修）：svn status 独立函数——配长超时，由
+    /api/vcs/changes 单独调用（前端惰性加载），不再阻塞 status。
+    v3.5.272b（报告 §6 分层加载）：depth='empty' 顶层模式（--depth empty
+    实测 0.45s vs 全树 39~54s）——首屏秒出顶层改动，全树由前端二段补扫
+    覆盖；超时 30s 对秒级余量充足。"""
+    argv = ["svn", "status", "--xml"]
+    if depth:
+        argv += ["--depth", depth]
+    rc, out, err = _run(argv, wc, 30 if depth == "empty" else VCS_TIMEOUT_CHG)
     if rc != 0:
         if "超时" in (err or ""):
-            return {"files": [], "truncated": 0, "changes_timeout": True}, None
+            return {"files": [], "truncated": 0,
+                    "changes_timeout": True, "shallow": bool(depth)}, None
         return None, err or "svn status 失败"
     files = []
     try:
@@ -289,7 +296,8 @@ def _svn_changes(wc):
     except ET.ParseError as e:
         return None, "svn status 输出解析失败：%s" % e
     truncated = max(0, len(files) - FILES_CAP)
-    return {"files": files[:FILES_CAP], "truncated": truncated}, None
+    return {"files": files[:FILES_CAP], "truncated": truncated,
+            "shallow": bool(depth)}, None
 
 
 def _svn_status(wc):
