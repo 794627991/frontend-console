@@ -1102,9 +1102,12 @@ def _selftest():
             else (_ for _ in ()).throw(AssertionError("_internal/web/index.html 缺失")),
             "plain"))
     else:
-        _t("资源加密在场", lambda: (_ for _ in ()).throw(
-            AssertionError("非 debug 包但无 .fcenc 加密清单——资源加密失败？（web 处于明文发布态）")),
-            "no-fcenc")
+        # v3.5.268（复核严重项）：_t 两参签名——标记收回 lambda 元组（对齐
+        # debug 分支 "plain" 模式；旧三参写法在目标态 TypeError 崩 selftest）
+        _t("资源加密在场", lambda: (
+            (_ for _ in ()).throw(AssertionError(
+                "非 debug 包但无 .fcenc 加密清单——资源加密失败？（web 处于明文发布态）")),
+            "no-fcenc"))
     header = "selftest %s @ %s\n" % ("PASS" if ok else "FAIL", sys.executable)
     out.write("argv=%r\n" % (sys.argv,))
     _flush(final=header.split(" @ ")[0])

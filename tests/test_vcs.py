@@ -80,10 +80,11 @@ def main():
           b'<entry path="."><url>https://svn/svn/proj/branches/dev</url>'
           b'<commit revision="188"><author>zhang</author></commit></entry>\n</info>')
     orig_run2 = vcs._run
-    calls = {"n": 0}
+    # v3.5.268（复核）：mock 按命令名分派——旧「第1/第2响应」计数与
+    # _svn_status 调用序耦合，v3.5.264 拆分后失配（两红）
     def _svn_run(argv, cwd, to):
-        calls["n"] += 1
-        return (0, (sx if calls["n"] == 1 else ix).decode("utf-8"), "")
+        is_info = any(a == "info" for a in argv)
+        return (0, (ix if is_info else sx).decode("utf-8"), "")
     vcs._run = _svn_run
     try:
         res, e = vcs._svn_status("D:\\fake")

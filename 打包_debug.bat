@@ -28,6 +28,8 @@ if not exist "dist\前端控制台_debug\前端控制台\前端控制台.exe" goto fail
 
 rem 自检（同正包：启动+全部模块 import）
 "dist\前端控制台_debug\前端控制台\前端控制台.exe" --selftest
+rem v3.5.268(复核):selftest崩溃态(TypError等)exit非零——findstr查不到FAIL行会假报成功,补errorlevel兜底
+if errorlevel 1 goto fail
 "%PY%" -c "import io,sys; sys.stdout.reconfigure(errors='replace'); print(io.open(r'dist\前端控制台_debug\前端控制台\selftest_result.txt', encoding='utf-8', errors='replace').read(), end='')"
 findstr /C:"selftest FAIL" "dist\前端控制台_debug\前端控制台\selftest_result.txt" >nul && goto fail
 

@@ -572,11 +572,14 @@
         // v3.5.267（全审严重项）：lite tick 不抹已载改动列表——svn 轻响应恒
         // files:[]+changes_pending，整体替换会把已扫出的改动清成假「干净」；
         // lite 只更新版本头，files/changes_* 沿用现值
-        if (js.ok && lite && _HG.vcs.data && !_HG.vcs.data.err) {
+        if (js.ok && lite && js.changes_pending && _HG.vcs.data && !_HG.vcs.data.err) {
+          // svn 轻响应：只更新版本头，files/changes_* 沿用现值
           _HG.vcs.data.rev = js.rev || _HG.vcs.data.rev;
           _HG.vcs.data.branch = js.branch || _HG.vcs.data.branch;
           _HG.vcs.data.ahead = js.ahead; _HG.vcs.data.behind = js.behind;
         } else {
+          // v3.5.268（复核）：git/非 lite 整体换新——git tick 自带完整新鲜
+          // files（v3.5.124「改动/外部命令后自动跟上」既定用途不失效）
           _HG.vcs.data = js.ok ? js : { err: js.err || '状态获取失败', vcs: null };
         }
         _vcsPaint();
@@ -632,7 +635,17 @@
         else {
           const _oldL = _HG.vcs.log || [];
           const _known = new Set(_oldL.map(c => c.rev));
-          _HG.vcs.log = (j.commits || []).filter(c => c.rev && !_known.has(c.rev)).concat(_oldL);
+          const _addH = (j.commits || []).filter(c => c.rev && !_known.has(c.rev));
+          _HG.vcs.log = _addH.concat(_oldL);
+          // v3.5.268（复核轻微项）：svn 拼头后 rev 相邻性校验——两轮回补间隔
+          // 新增 >100 时新头与旧头间有中段空洞，r 差>1 整体重建（git 是 sha
+          // 无序不可判，维持拼头——空洞自愈出口在查询态 reset）
+          if (_addH.length && _oldL.length
+              && ((_HG.vcs.data || {}).vcs === 'svn')) {
+            const _nh = parseInt(_addH[_addH.length - 1].rev, 10) || 0;
+            const _oh = parseInt(_oldL[0].rev, 10) || 0;
+            if (_nh && _oh && _nh + 1 < _oh) _HG.vcs.log = (j.commits || []).slice();
+          }
           if (j.total !== undefined) _HG.vcs.total = j.total;   // P2：无 total 不覆盖已有精确值
         }
         _vcsPaint();
