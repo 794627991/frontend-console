@@ -4474,6 +4474,12 @@ html {
 .hg-vcs-logmsg { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hg-vcs-logau { flex-shrink: 0; color: var(--muted); font-size: 11px; }
 .hg-vcs-empty { padding: 18px 10px; text-align: center; color: var(--muted); font-size: 12px; }
+/* v3.5.292：svn 未版本控制折叠条——次要信息降噪（默认收起=svn st -q 口径） */
+.hg-vcs-unv { margin: 8px 0 0; }
+.hg-vcs-unv-t { padding: 7px 10px; color: var(--muted); font-size: 11px; cursor: pointer;
+  border: 1px dashed var(--border); border-radius: 8px; user-select: none; }
+.hg-vcs-unv-t:hover { color: var(--fg); border-color: var(--muted); }
+.hg-vcs-unv .hg-vcs-files { margin-top: 6px; max-height: 320px; overflow-y: auto; }
 .hg-vcs-loading { padding: 18px 10px; text-align: center; color: var(--muted); }
 .hg-vcs-cfile { display: flex; gap: 6px; align-items: center; padding: 3px 0;
   font-family: var(--font-mono); font-size: 11px; }

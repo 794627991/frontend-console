@@ -548,6 +548,7 @@
   // v3.5.264：lite=true（60s tick 用）只拉 status 本身；svn 的 changes 补拉
   // 跳过——改动列表只在激活/手动⟳/写操作后全量扫
   function _vcsReload(lite) {
+    if (!lite) _HG.vcs.showUnv = false;   // v3.5.292：全量刷新重置未版本控制折叠态（默认干净视图=svn st -q）
     _HG.vcs.busy = true; _vcsTs = Date.now(); _vcsPaint();
     fetch('/api/tree/roots').then(r => r.json()).then(jr => {
       const roots = (jr && jr.ok) ? (jr.roots || []) : [];
@@ -766,6 +767,17 @@
     const head = _vcsHeadHtml(D);
     if (!D.vcs) { _vcsEl.innerHTML = rootsSel + head; _vcsBind(false); return; }
     const files = D.files || [];
+    // v3.5.292（用户实锤「svn 一大堆没用的改动文件，平时敲 svn st -q」）：svn 的
+    // ? 未版本控制文件（内核编译产物/临时文件为主，动辄几百个）默认折叠成一条
+    // 汇总——实质改动 M/A/D/R/C 不再被淹没。git 有 .gitignore 不需要此过滤，
+    // 维持原样。展开后 ? 行照常渲染：二元组保原数组索引（_vcsBind 的
+    // files[data-i] 取行不串位），＋add/勾选提交链路不变（vcs.py 勾选 ? 先
+    // svn add 再提交）。showUnv 在 _vcsReload 全量刷新/切工程时重置回折叠。
+    const _svn = D.vcs === 'svn';
+    const _core = [], _unv = [];
+    if (_svn) files.forEach((f, i) => { (f.st === '?' ? _unv : _core).push([f, i]); });
+    const _coreN = _svn ? _core.length : files.length;
+    const _showUnv = _svn && !!_HG.vcs.showUnv;
     const nSel = _HG.vcs.sel.size;
     const canOp = D.tool && !_HG.vcs.busy;
     _vcsEl.innerHTML = rootsSel + head +
@@ -773,8 +785,10 @@
       `<button class="btn ghost" name="hg_vcs_commit" ${canOp && nSel ? '' : 'disabled'}>☑ 提交（${nSel}）</button>` +
       `<button class="btn ghost" name="hg_vcs_update" ${canOp ? '' : 'disabled'}>⇩ ${D.vcs === 'git' ? 'Pull' : 'Update'}</button>` +
       `<span class="hg-vcs-hint">勾选后提交；点行看改动</span></div>` +
-      (files.length
-        ? `<div class="hg-vcs-files">` + files.map((f, i) => _vcsFileHtml(f, i)).join('') + `</div>`
+      (_coreN
+        ? `<div class="hg-vcs-files">` + (_svn
+            ? _core.map(([f, i]) => _vcsFileHtml(f, i)).join('')
+            : files.map((f, i) => _vcsFileHtml(f, i)).join('')) + `</div>`
           + (D.truncated ? `<div class="hg-vcs-more">还有 ${D.truncated} 个文件未显示（用命令行查看）</div>` : '')
           // v3.5.276（R5）：超时但列表在场=顶层结果，明示口径消解头部「未获取」张力
           + (D.changes_timeout && D.changes_shallow ? `<div class="hg-vcs-more">以上为顶层扫描结果（全树扫描未完成，完整改动请用命令行 svn status 查看或点 ⟳ 重试）</div>` : '')
@@ -782,7 +796,15 @@
           ? `<div class="hg-vcs-empty">全树改动扫描超时（网络盘大仓库）——版本信息已就绪；改动列表请用命令行 svn status 查看。</div>`
           : (D.changes_pending && (_HG.vcs.chgBusy || D.changes_shallow))
             ? `<div class="hg-vcs-empty">改动列表扫描中…（网络盘大仓库可能需要数十秒）</div>`
-            : `<div class="hg-vcs-empty">工作区干净，没有未提交的改动。</div>`) +
+            : (_svn && _unv.length)
+              ? `<div class="hg-vcs-empty">没有实质改动（另有 ${_unv.length} 个未版本控制文件已折叠，点下方展开可 svn add）。</div>`
+              : `<div class="hg-vcs-empty">工作区干净，没有未提交的改动。</div>`) +
+      (_svn && _unv.length
+        ? `<div class="hg-vcs-unv" data-vcs-unv="1">` +
+          (_showUnv
+            ? `<div class="hg-vcs-unv-t">▾ 未版本控制 ${_unv.length} 个（点收起）——勾选后提交时先 svn add 再提交</div><div class="hg-vcs-files">` + _unv.map(([f, i]) => _vcsFileHtml(f, i)).join('') + `</div>`
+            : `<div class="hg-vcs-unv-t">▸ 未版本控制 ${_unv.length} 个（编译产物/临时文件为主——点展开）</div>`) + `</div>`
+        : '') +
       (_HG.vcs.out ? `<div class="hg-vcs-out"><div class="hg-vcs-out-t">上次命令输出</div><pre>${esc(_HG.vcs.out.slice(0, 4000))}</pre></div>` : '') +
       // v3.5.265（Q3 首选嫌疑缓解）：busy 期置灰同时给明确提示（旧=静默灰
       // 按钮，svn 扫描窗内点击零反馈=「点了不弹窗」的主观来源）
@@ -828,9 +850,13 @@
     // 会诱导用户误判工作区干净而漏提交）
     // v3.5.275 F7：在途扫描（busy/shallow）优先于超时叙事——重扫期间头部
     // 显「扫描中」不滞留「未获取」；挂起（pending 无 busy）由失败叙事兜底
+    // v3.5.292：svn 头部计数同步排除 ? 未版本控制（与正文折叠口径一致）——
+    // 「500 个改动」实为 2 个 M + 498 个编译产物，必须说的是实质改动数
+    const _svnU = D.vcs === 'svn' ? (D.files || []).filter(f => f.st === '?') : [];
     const _chgTxt = (D.changes_pending && (_HG.vcs.chgBusy || D.changes_shallow)) ? '全树扫描中…'
       : D.changes_timeout ? '改动数未获取（扫描超时）'
-      : `${(D.files || []).length} 个改动`;
+      : `${(D.files || []).length - _svnU.length} 个改动` +
+        (_svnU.length ? `（另有 ${_svnU.length} 个未版本控制）` : '');
     return `<div class="hg-vcs-head"><span class="hg-vcs-badge ${esc(D.vcs)}">${esc(D.vcs)}</span>` +
       `<span class="hg-vcs-branch">⎇ ${esc(D.branch || '(未知)')}${esc(rev)}${esc(ab)}</span>` +
       `<span class="hg-vcs-count">${_chgTxt}</span></div>`;
@@ -882,6 +908,13 @@
       const cb = _vcsEl.querySelector('[name="hg_vcs_commit"]');
       if (cb) { cb.textContent = '☑ 提交（' + _HG.vcs.sel.size + '）'; cb.disabled = !_HG.vcs.sel.size; }
     });
+    // v3.5.292：未版本控制折叠条展开/收起（? 文件行自身有点击开 diff，冒泡到此按 frow 放行）
+    const _uv = _vcsEl.querySelector('[data-vcs-unv]');
+    if (_uv) _uv.onclick = (e) => {
+      if (e.target.closest('input') || e.target.closest('button')
+          || e.target.closest('.hg-vcs-frow')) return;
+      _HG.vcs.showUnv = !_HG.vcs.showUnv; _vcsPaint();
+    };
     _vcsEl.querySelectorAll('.hg-vcs-frow').forEach(row => {
       row.onclick = (e) => {
         if (e.target.closest('input') || e.target.closest('button')) return;
