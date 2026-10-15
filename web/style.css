@@ -2702,6 +2702,12 @@ html {
    残余 2px 消除）+已回传徽章推右 */
 .h-tool.h-vision .h-tslots:empty { display: none; }
 .h-tool.h-vision .h-vision-state { margin-left: auto; }
+/* v3.5.284（用户实锤「查阅组内完成徽章显示不全」）：head 空间不足时徽章
+   被压缩成残条（无 shrink:0 保护）——状态槽与徽章永不压缩，空间不足由
+   name/arg 收敛承担（两者 min-width:0 已就位）；组内行 max-width 100%
+   防行超组体被 overflow:hidden 裁切 */
+.h-tl .h-tslots, .h-tl .h-tbadge { flex-shrink: 0; }
+.h-tl-grp-body .h-tool { max-width: 100%; }
 /* 窗格时间线：子代理自己的会话用主会话同款回合结构（回合头+时间线+根区结
    论）。行样式全复用主链类（.h-tl/.h-think-seg/.h-tool/.h-tl-grp），这里只
    补窗格作用域的身份行/结论区/占位说明 */
