@@ -539,6 +539,17 @@ function askRender(it) {
     const ov = document.createElement('div');
     ov.className = 'hg-lightbox';
     ov.innerHTML = `<img src="${esc(src)}" alt=""><button class="hg-lightbox-x" title="关闭 (Esc)">✕</button>`;
+    // v3.5.256（用户需求）：原图已删除/路径失效 → 取后端 err 文案显提醒层
+    // （后端 404=「文件不存在或已删除：<路径>」，其他失败回落通用文案）
+    const _im = ov.querySelector('img');
+    _im.onerror = async () => {
+      let msg = '图片无法加载（文件可能已不存在或已删除）';
+      try { const j = await (await fetch(src)).json(); if (j && j.err) msg = j.err; } catch (_) {}
+      const tip = document.createElement('div');
+      tip.className = 'hg-lightbox-err';
+      tip.textContent = '⚠ ' + msg;
+      _im.replaceWith(tip);
+    };
     ov.addEventListener('click', (e) => { if (e.target === ov || e.target.classList.contains('hg-lightbox-x')) ov.remove(); });
     ov.addEventListener('keydown', () => {});
     const escFn = (e) => { if (e.key === 'Escape') { ov.remove(); document.removeEventListener('keydown', escFn); } };

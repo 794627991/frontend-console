@@ -1991,8 +1991,12 @@ def harness_file():
         # 扩展名 + 文件存在的任意路径直接回源。本机单用户工具，/api/read_text
         # 已有任意绝对路径读文本的先例（敏感面更大），图片白名单扩展名限死
         # 不放行脚本/文档，实质风险不新增
-        if rp.lower().endswith(_img_ext) and os.path.isfile(rp):
-            return send_file(rp)
+        # v3.5.256（用户需求）：图片扩展名但文件已不在 → 明确 404「不存在/
+        # 已删除」（原落 403 非法路径=文案误导），前端 Lightbox 据此显示提醒
+        if rp.lower().endswith(_img_ext):
+            if os.path.isfile(rp):
+                return send_file(rp)
+            return jsonify({"ok": False, "err": "文件不存在或已删除：%s" % p}), 404
         return jsonify({"ok": False, "err": "非法路径"}), 403
     fn = os.path.basename((request.args.get("name") or "").replace("\\", "/"))
     if not fn:

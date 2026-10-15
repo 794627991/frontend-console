@@ -4532,3 +4532,8 @@ html {
 /* live 期组根直挂气泡同款（v3.5.252 已缩进 25px 到列位，补竖条同形态） */
 .h-grp > .h-msg.asst {
   border-left: 2px solid var(--border); padding-left: 10px; }
+
+/* v3.5.256：Lightbox 图片加载失败提醒层（文件不存在/已删除） */
+.hg-lightbox-err { max-width: 80vw; padding: 22px 30px; border-radius: 10px;
+  background: rgba(20,24,30,.92); color: #ffb86b; font-size: 14px;
+  border: 1px solid rgba(255,184,107,.4); word-break: break-all; }
