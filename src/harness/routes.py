@@ -496,7 +496,10 @@ def harness_set_model():
                 "中没有 analyze_image 类识图工具，历史里出现过的此类调用属于"
                 "旧模型时代，禁止模仿"
                 if _mm == "inline" else
-                "MCP 识图通道：看图调用 mcp__vision__analyze_image")
+                "MCP 识图通道：看图必须调用 mcp__vision__analyze_image（传"
+                "图片路径/链接）；对话历史里出现过的 Read 直读图片记录属于"
+                "旧多模态模型时代——你无法通过 Read 获得图片内容（只会拿到"
+                "无意义的二进制/编码文本），禁止模仿，看图一律走识图工具")
         # v3.5.286：真注入标记——emit 只进前端事件流（模型看不到），首条
         # 消息前置声明才进 CLI jsonl 上下文；两路并存（前端即时可见+模型
         # 首条消息起知情）
