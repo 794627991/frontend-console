@@ -63,6 +63,10 @@
       `<span class="h-tool-name">${_hToolIco(l.text)} ${esc(_hToolLabel(l.text))}</span>` +
       (hbc.badge ? `<span class="h-tool-badge">${esc(hbc.badge)}</span>` : '') +
       (argH ? `<span class="h-tool-arg"${argTitle ? ` title="${argTitle}"` : ''}>${argH}</span>` : '') +
+      // v3.5.249（用户实锤「重渲的bash没有复制按键」）：bash 行头部补复制
+      // 键——CSS 门控 open 才显示（收起不暴露），与 live 卡同交互；head 是
+      // <button> 嵌套 button 非法，span+role 复用 .h-tool-copy（05-subblk 同款）
+      ((hbc.kind === 'bash') ? `<span class="h-tool-copy" role="button" title="复制命令">复制</span>` : '') +
       `<span class="h-tslots">${statusBadge(err ? 'error' : 'completed')}</span></button>` +
       `<div class="h-tool-coll">${(err || _dOp) ? _histToolBodyHtml(l) : ''}</div>`;
     if (hi != null) {

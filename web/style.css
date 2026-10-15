@@ -4500,3 +4500,15 @@ html {
   color: var(--muted); padding: 0 2px; }
 .hg-vcs-hlrow:hover .hg-vcs-copybtn { visibility: visible; }
 .hg-vcs-copybtn:hover { color: var(--accent); }
+
+/* v3.5.249（用户四图定调：收起=不换行+复制不暴露；点开=流式风格全文+复制键）
+   ① live bash 卡（_tlOneclickify 升级行，无 head 结构）收起单行——.h-tool 的
+   flex-wrap:wrap 让长命令把徽章挤落第二行（换行实锤）；:not(:has) 排除
+   hist/识图卡（它们有 head button，本就单行形态） */
+.h-tool.col.oneclick:not(:has(> .h-tool-head)) {
+  display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; max-width: 88%; }
+.h-tool.col.oneclick:not(:has(> .h-tool-head)) > .h-tool-coll { flex: 1 0 100%; }
+/* ② 复制键默认藏（收起态不直接暴露），点开（open）才显示——live 升级行 /
+   hist 行 / sub 抽屉行统一此门控；后置同权覆盖上方 3106 的恒显规则 */
+.h-tool .h-tool-copy { display: none; }
+.h-tool.open .h-tool-copy { display: inline-block; margin-left: 6px; }

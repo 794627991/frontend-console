@@ -485,8 +485,15 @@ function buildClaudeHarnessTab(opts = {}) {
     if (cp) {
       // 复制内容就近取：代码块取同容器 pre>code 文本；Bash 行取 .h-tool-arg 文本
       const codeBox = cp.closest('.hg-code');
+      // v3.5.249：open 态优先取折叠体内的 .h-tool-arg——hist 行头部 arg 是
+      // slice(0,80) 真截断，复制必须取体部 summary 全文；live 行体部无 arg
+      // 自然回落行首（live arg 本就是全文）
+      const _cpBox = cp.closest('.h-tool');
+      const _cpArg = (_cpBox && _cpBox.classList.contains('open')
+        && _cpBox.querySelector('.h-tool-coll .h-tool-arg'))
+        || (_cpBox && _cpBox.querySelector('.h-tool-arg'));
       const txt = codeBox ? codeBox.querySelector('pre > code')?.textContent.replace(/\n$/, '')
-        : cp.closest('.h-tool')?.querySelector('.h-tool-arg')?.textContent;
+        : _cpArg && _cpArg.textContent;
       if (txt) copyText(txt).then(ok => {
         if (ok) { const orig = cp.textContent; cp.textContent = '✓';
           setTimeout(() => cp.textContent = orig, 1500); }
