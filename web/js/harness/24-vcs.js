@@ -594,24 +594,35 @@
     }).catch(e => { _HG.vcs.busy = false; _HG.vcs.data = { err: String(e) }; _vcsPaint(); });
   }
   // v3.5.264（Q1）：改动列表独立拉取（svn 全树 status 长耗时，后端 90s 超时）
+  // v3.5.272（报告 §6 分层加载）：两段式——顶层 --depth empty 秒回（实测
+  // 0.45s vs 全树 39~54s）立即出列表，全树后台补扫完成后覆盖
   function _vcsReloadChanges() {
     if (_HG.vcs.chgBusy || !_HG.vcs.root) return;
     _HG.vcs.chgBusy = true; _vcsPaint();
-    fetch('/api/vcs/changes', { method: 'POST',
+    const _chg = (shallow) => fetch('/api/vcs/changes', { method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ root: _HG.vcs.root }) })
-      .then(r => r.json()).then(j => {
-        _HG.vcs.chgBusy = false;
-        if (_HG.vcs.data && !_HG.vcs.data.err) {
-          if (j.ok) {
-            _HG.vcs.data.files = j.files || [];
-            _HG.vcs.data.truncated = j.truncated || 0;
-            _HG.vcs.data.changes_timeout = j.changes_timeout || false;
-          }
-          _HG.vcs.data.changes_pending = false;
-        }
+      body: JSON.stringify({ root: _HG.vcs.root, shallow: shallow ? 1 : 0 }) })
+      .then(r => r.json());
+    _chg(true).then(j1 => {
+      if (j1 && j1.ok && _HG.vcs.data && !_HG.vcs.data.err) {
+        _HG.vcs.data.files = j1.files || [];
+        _HG.vcs.data.truncated = j1.truncated || 0;
+        _HG.vcs.data.changes_timeout = false;
+        _HG.vcs.data.changes_shallow = true;   // 头部保持「全树扫描中」
         _vcsPaint();
-      }).catch(() => { _HG.vcs.chgBusy = false; _vcsPaint(); });
+      }
+      return _chg(false);   // 二段：全树补扫
+    }).then(j2 => {
+      _HG.vcs.chgBusy = false;
+      if (j2 && j2.ok && _HG.vcs.data && !_HG.vcs.data.err) {
+        _HG.vcs.data.files = j2.files || [];
+        _HG.vcs.data.truncated = j2.truncated || 0;
+        _HG.vcs.data.changes_timeout = j2.changes_timeout || false;
+        _HG.vcs.data.changes_shallow = false;
+      }
+      if (_HG.vcs.data) _HG.vcs.data.changes_pending = false;
+      _vcsPaint();
+    }).catch(() => { _HG.vcs.chgBusy = false; _vcsPaint(); });
   }
   function _vcsReloadLog() {
     // v2：浏览态回补——从已载量一次拿够（reset 语义，弹窗/面板双视图同步）
@@ -755,7 +766,7 @@
     //——空数组是「未获取」不是「干净」，头部与正文必须同一叙事（旧=UI 说谎，
     // 会诱导用户误判工作区干净而漏提交）
     const _chgTxt = D.changes_timeout ? '改动数未获取（扫描超时）'
-      : (D.changes_pending || _HG.vcs.chgBusy) ? '改动扫描中…'
+      : (D.changes_pending || _HG.vcs.chgBusy || D.changes_shallow) ? '全树扫描中…'
       : `${(D.files || []).length} 个改动`;
     return `<div class="hg-vcs-head"><span class="hg-vcs-badge ${esc(D.vcs)}">${esc(D.vcs)}</span>` +
       `<span class="hg-vcs-branch">⎇ ${esc(D.branch || '(未知)')}${esc(rev)}${esc(ab)}</span>` +
