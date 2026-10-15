@@ -152,7 +152,9 @@
     // 工具数——分列显示），其余 counts 合计为工具数
     const visN = (g.counts && g.counts.visionN) || 0;
     const toolN = (g.counts ? Object.entries(g.counts)
-      .filter(([k]) => k !== 'visionN')
+      // v3.5.267（全审）：toolN 合计排除 visionN+askN——askN 单列「M 提问」
+      //（v3.5.246 自述「独立并行」实未排除，双计进工具数）
+      .filter(([k]) => k !== 'visionN' && k !== 'askN')
       .reduce((a, [, b]) => a + b, 0) : 0);
     const parts = [];
     if (segN) parts.push(segN + ' 思考');

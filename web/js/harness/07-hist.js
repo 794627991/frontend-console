@@ -73,7 +73,12 @@
       d.dataset.hi = String(hi);
       d.dataset.hgLazy = (err || _dOp) ? '' : '1';   // 错误行/defaultOpen 行已填（hgLazy 空）；收起丢弃后由 Drop 重置
     }
-    if (((_H_TOOL_CFG[l.text] || {}).kind) === 'bash') d.classList.add('oneclick');
+    // v3.5.267（全审）：bash 行补设 --h-accent 与 live 同源（绿）——hist 主
+    // 链从不设 accent 落 var(--accent) 青，刷新后 bash 左边框由绿变青
+    if (((_H_TOOL_CFG[l.text] || {}).kind) === 'bash') {
+      d.classList.add('oneclick');
+      d.style.setProperty('--h-accent', _H_KIND_COLOR.bash || 'var(--border)');
+    }
     drawerCount(l.text);
     _tlPlace(d, l.text, l.input || {});   // v3.2：回放同走内联时间线（查阅聚组与实时一致）
     // v3.2.1：撤 _hgApplyOpen 位置键恢复——错误行默认开已由 className 的

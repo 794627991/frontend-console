@@ -1089,17 +1089,22 @@ def _selftest():
     # v3.5.250b：debug 包（打包_debug.bat，HG_NO_ENCRYPT=1）无 .fcenc 清单=
     # web 明文磁盘 serve（[debug-web] 直读 _internal/web），FC_MEM_WEB 恒空
     # 是预期——改抽查磁盘 web 存在性；加密包维持内存 serve 抽查
-    if os.path.isfile(os.path.join(os.path.dirname(sys.executable),
-                                   "_internal", ".fcenc")):
+    # v3.5.267（全审）：三态判据（.fcdebug 哨兵区分 debug 与「正包加密失败
+    # 态」——后者两无应 FAIL，此前会误走明文分支放过发布链自检）
+    _fc_int = os.path.join(os.path.dirname(sys.executable), "_internal")
+    if os.path.isfile(os.path.join(_fc_int, ".fcenc")):
         _t("web 内存 serve 抽查", lambda: (
             None if getattr(sys, "FC_MEM_WEB", {}) else (_ for _ in ()).throw(AssertionError("内存字典为空")),
             list(getattr(sys, "FC_MEM_WEB", {}))[:1]))
-    else:
+    elif os.path.isfile(os.path.join(_fc_int, ".fcdebug")):
         _t("web 明文磁盘 serve 抽查(debug)", lambda: (
-            None if os.path.isfile(os.path.join(os.path.dirname(sys.executable),
-                                                "_internal", "web", "index.html"))
+            None if os.path.isfile(os.path.join(_fc_int, "web", "index.html"))
             else (_ for _ in ()).throw(AssertionError("_internal/web/index.html 缺失")),
             "plain"))
+    else:
+        _t("资源加密在场", lambda: (_ for _ in ()).throw(
+            AssertionError("非 debug 包但无 .fcenc 加密清单——资源加密失败？（web 处于明文发布态）")),
+            "no-fcenc")
     header = "selftest %s @ %s\n" % ("PASS" if ok else "FAIL", sys.executable)
     out.write("argv=%r\n" % (sys.argv,))
     _flush(final=header.split(" @ ")[0])

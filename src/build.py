@@ -58,6 +58,12 @@ def build():
         # （可直接查看/改），zip 照打（v3.5.248 用户定调「打包压缩还是要的」）
         # 但放 dist 根、不进 releases——升级分发流绝不收录调试包
         if DEBUG:
+            # v3.5.267（全审）：debug 哨兵文件——selftest 据此区分 debug 明文
+            # 形态与「正包加密失败态」（后者无 .fcenc 也无 .fcdebug，应 FAIL）
+            try:
+                open(os.path.join(app_dir, "_internal", ".fcdebug"), "w").close()
+            except OSError:
+                pass
             # v3.5.250（用户实锤 debug 包启动 ModuleNotFoundError: src.version）：
             # spec excludes 'src'——正包的 src 由 encrypt_pkg 编译成原生 pyd
             # 外置 _internal/src/（防反解），debug 跳过加密=没人生成 pyd=src

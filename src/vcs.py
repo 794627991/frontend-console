@@ -293,45 +293,17 @@ def _svn_changes(wc):
 
 
 def _svn_status(wc):
-    # v3.5.164：先 O(1) 的 svn info 拿 rev/branch，再跑全树 status（超时降
-    # 级 changes_timeout 不 500）。v3.5.264：本函数仅剩兼容语义——status 端
-    # 点已改走 _svn_info 轻路径，全树扫描由 /api/vcs/changes 承担
+    """v3.5.267（全审收编）：组合 _svn_info + _svn_changes——原实现与
+    _svn_changes 整段重复（解析块两份）。生产零调用者（status 端点已拆轻
+    路径），保留仅为 tests/test_vcs.py 旧语义兼容。"""
     rev, branch = _svn_info(wc)
-    rc, out, err = _run(["svn", "status", "--xml"], wc, VCS_TIMEOUT_RO)
-    if rc != 0:
-        if "超时" in (err or ""):
-            # 全树扫描超时：主信息照常返回，改动列表缺席（前端明示，不再
-            # 冒充「工作区干净」）
-            return {"vcs": "svn", "tool": True, "branch": branch, "rev": rev,
-                    "ahead": 0, "behind": 0, "files": [], "truncated": 0,
-                    "changes_timeout": True}, None
-        return None, err or "svn status 失败"
-    files = []
-    try:
-        root = ET.fromstring(out.encode("utf-8"))
-        for t in root.iter("target"):
-            for e in t.iter("entry"):
-                rel = e.get("path", "").replace("\\", "/")
-                if not rel:
-                    continue
-                it = e.find("wc-status")
-                if it is None:
-                    continue
-                st_raw = it.get("item", "none")
-                st = {"modified": "M", "added": "A", "deleted": "D",
-                      "unversioned": "?", "conflicted": "C",
-                      "replaced": "R", "missing": "!", "none": ""}.get(st_raw)
-                if not st:
-                    continue
-                old = (it.findtext("move-to") or "")
-                files.append({"rel": rel, "path": rel, "st": st,
-                              **({"old_rel": old} if old else {})})
-    except ET.ParseError as e:
-        return None, "svn status 输出解析失败：%s" % e
-    truncated = max(0, len(files) - FILES_CAP)
-    return {"vcs": "svn", "tool": True, "branch": branch, "rev": rev,
-            "ahead": 0, "behind": 0,
-            "files": files[:FILES_CAP], "truncated": truncated}, None
+    chg, e = _svn_changes(wc)
+    if e:
+        return None, e
+    d = {"vcs": "svn", "tool": True, "branch": branch, "rev": rev,
+         "ahead": 0, "behind": 0}
+    d.update(chg or {"files": [], "truncated": 0, "changes_timeout": True})
+    return d, None
 
 
 @vcs_bp.route("/api/vcs/status", methods=["POST"])

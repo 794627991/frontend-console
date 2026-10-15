@@ -143,7 +143,7 @@
         H.lastLimit = _lim;
         // 漂移补齐：skip 语义下新提交顶入取不满一页 → 追拉（≤3 轮）
         if (!reset && !isSvn && add.length < (j.commits || []).length
-            && (j.commits || []).length >= 100 && H.rounds < 3) {
+            && (j.commits || []).length >= _lim && H.rounds < 3) {
           H.rounds++;
           _vcsHistFetch(false, cb);
           return;
@@ -569,7 +569,16 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ root: _HG.vcs.root }) }).then(r => r.json()).then(js => {
         _HG.vcs.busy = false;
-        _HG.vcs.data = js.ok ? js : { err: js.err || '状态获取失败', vcs: null };
+        // v3.5.267（全审严重项）：lite tick 不抹已载改动列表——svn 轻响应恒
+        // files:[]+changes_pending，整体替换会把已扫出的改动清成假「干净」；
+        // lite 只更新版本头，files/changes_* 沿用现值
+        if (js.ok && lite && _HG.vcs.data && !_HG.vcs.data.err) {
+          _HG.vcs.data.rev = js.rev || _HG.vcs.data.rev;
+          _HG.vcs.data.branch = js.branch || _HG.vcs.data.branch;
+          _HG.vcs.data.ahead = js.ahead; _HG.vcs.data.behind = js.behind;
+        } else {
+          _HG.vcs.data = js.ok ? js : { err: js.err || '状态获取失败', vcs: null };
+        }
         _vcsPaint();
         // v3.5.264（Q1）：svn status 已轻量化（只有 info）——改动列表由
         // changes 端点惰性补拉（独立 chgBusy，不置灰 logbtn）
@@ -605,22 +614,27 @@
     // v2：浏览态回补——从已载量一次拿够（reset 语义，弹窗/面板双视图同步）
     if (_vcsLogBusy) return;           // 防连点重复 fetch
     _vcsLogBusy = true;
-    const hadLen = (_HG.vcs.log || []).length;
     const myseq = (_vcsLogSeq = ++_vcsLogSeq);
     _vcsHistLseq++;   // v3.5.265：同时作废翻页在途响应（同数组双写者互斥）
     fetch('/api/vcs/log', { method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      // v3.5.265（Q2-3）：去掉 500 上限——hadLen>500 时 limit=500 整体替换
-      // =确定性从 N 缩到 500（报告审计补充路径）
-      body: JSON.stringify({ root: _HG.vcs.root,
-                             limit: Math.max(100, hadLen || 100) }) })
+      // v3.5.267（全审一般项）：回补语义改「头部增量」——固定拉最新 100
+      // 去重后拼到已载数组头，不动尾部更早条目。旧「按 hadLen 整量重拉+
+      // 整体替换」在 hadLen>500 时被后端 _LOG_CAP 截断=确定性缩水（v3.5.265
+      // 声称修实则只去了前端上限）；且天然不再丢翻页已载条目
+      body: JSON.stringify({ root: _HG.vcs.root, limit: 100 }) })
       .then(r => r.json()).then(j => {
         _vcsLogBusy = false;
         // v3.5.265（Q2-3）：翻页/重开窗口后迟到的回补响应丢弃——不再覆盖
         // _vcsHistFetch 已 push 的更早条目
         if (myseq !== _vcsLogSeq) return;
-        _HG.vcs.log = j.ok ? (j.commits || []) : null;
-        _HG.vcs.total = j.ok ? j.total : undefined;
+        if (!j.ok) { _HG.vcs.log = null; _HG.vcs.total = undefined; }
+        else {
+          const _oldL = _HG.vcs.log || [];
+          const _known = new Set(_oldL.map(c => c.rev));
+          _HG.vcs.log = (j.commits || []).filter(c => c.rev && !_known.has(c.rev)).concat(_oldL);
+          if (j.total !== undefined) _HG.vcs.total = j.total;   // P2：无 total 不覆盖已有精确值
+        }
         _vcsPaint();
         if (_vcsHist && !_vcsHist.querying) {
           // 轻审R1：Error 缓存条目随刷新失效（「点⟳重试」承诺兑现）+当前选中重拉详情
@@ -681,7 +695,9 @@
           + (D.truncated ? `<div class="hg-vcs-more">还有 ${D.truncated} 个文件未显示（用命令行查看）</div>` : '')
         : D.changes_timeout
           ? `<div class="hg-vcs-empty">全树改动扫描超时（网络盘大仓库）——版本信息已就绪；改动列表请用命令行 svn status 查看。</div>`
-          : `<div class="hg-vcs-empty">工作区干净，没有未提交的改动。</div>`) +
+          : (D.changes_pending || _HG.vcs.chgBusy)
+            ? `<div class="hg-vcs-empty">改动列表扫描中…（网络盘大仓库可能需要数十秒）</div>`
+            : `<div class="hg-vcs-empty">工作区干净，没有未提交的改动。</div>`) +
       (_HG.vcs.out ? `<div class="hg-vcs-out"><div class="hg-vcs-out-t">上次命令输出</div><pre>${esc(_HG.vcs.out.slice(0, 4000))}</pre></div>` : '') +
       // v3.5.265（Q3 首选嫌疑缓解）：busy 期置灰同时给明确提示（旧=静默灰
       // 按钮，svn 扫描窗内点击零反馈=「点了不弹窗」的主观来源）

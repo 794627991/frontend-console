@@ -619,17 +619,12 @@
       row.innerHTML =
         `<span class="h-tool-name">${_hToolIco(name)} ${esc(label)}</span>` +
         badges +
-        // v3.2.5R：bash 命令带 title 全文悬浮（对齐回放卡 argTitle 口径——
-        // 单行省略后窄面板/长命令的唯一全文入口）
-        `<span class="h-tool-arg"${cfg.kind === 'bash' && argTxt ? ` title="${argTxt}"` : ''}>${argTxt}</span>` +
+        // v3.5.267（全审）：bash 已分流到上方 head 卡——本 else 只剩非 bash
+        // one-line 行（Read/Grep 查阅子行），原 bash title 三元/复制按钮块
+        // 永不可达，删除（v3.5.262 遗留死代码）；arg 无 title（非 bash 恒无）
+        `<span class="h-tool-arg">${argTxt}</span>` +
         (sec ? `<span class="h-tool-sec">${esc(sec)}</span>` : '') +
         `<span class="h-tslots"></span>`;
-      // Bash 类：命令可复制（源 action:'copy'；点击由 flow 委托处理，v2.12）
-      if (cfg.kind === 'bash') {
-        const cp = document.createElement('button');
-        cp.className = 'h-tool-copy'; cp.textContent = '复制'; cp.title = '复制命令';
-        row.appendChild(cp);
-      }
       }
     } else {
       // collapsible：折叠组（左边框按类别着色，源 CollapsibleDisplay）

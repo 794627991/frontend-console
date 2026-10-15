@@ -334,6 +334,14 @@
                 const _gs = _hgFlow.querySelectorAll(':scope > .h-grp');
                 const _pg = c.closest('.h-grp');
                 c.dataset.hgGidx = _pg ? Array.prototype.indexOf.call(_gs, _pg) : -1;
+                // v3.5.267（全审）：补稳定键——组末行 h-end 水位（组序锚在
+                // 窗口起点移动>20 回合后错位，水位跨重渲稳定）
+                if (_pg) {
+                  let _me = 0;
+                  _pg.querySelectorAll('[data-h-end]').forEach(el2 => {
+                    _me = Math.max(_me, +(el2.dataset.hEnd || 0)); });
+                  c.dataset.hgGend = String(_me);
+                }
               });
               _liveVis.forEach(c => c.remove());
             } catch (_) {}   // v3.5.242：ask结果行同护（转写无ask行，重渲必丢）
@@ -360,9 +368,24 @@
                 // v3.5.259：ask 行按组序锚归位（跨回合不再错组）；识图卡/
                 // 无锚旧行保持尾组兜底
                 if (c.classList.contains('h-ask-rs') && c.dataset.hgGidx != null) {
-                  const _gi = +c.dataset.hgGidx;
                   const _gsA = _hgFlow.querySelectorAll(':scope > .h-grp');
-                  const _tg = (_gi >= 0 && _gi < _gsA.length) ? _gsA[_gi] : _gsA[_gsA.length - 1];
+                  // v3.5.267（全审）：优先按组末行水位精确匹配（稳定键），
+                  // 组序锚仅兜底（窗口移动后序错位），越界终兜底尾组
+                  let _tg = null;
+                  const _ge = c.dataset.hgGend;
+                  if (_ge) {
+                    for (const gg of _gsA) {
+                      let _m2 = 0;
+                      gg.querySelectorAll('[data-h-end]').forEach(el2 => {
+                        _m2 = Math.max(_m2, +(el2.dataset.hEnd || 0)); });
+                      if (String(_m2) === _ge) { _tg = gg; break; }
+                    }
+                  }
+                  if (!_tg) {
+                    const _gi = +c.dataset.hgGidx;
+                    if (_gi >= 0 && _gi < _gsA.length) _tg = _gsA[_gi];
+                  }
+                  if (!_tg) _tg = _gsA[_gsA.length - 1];
                   const _ttA = _tg && _tg.querySelector('.h-tl');
                   if (_ttA) { _ttA.appendChild(c); return; }
                 }
