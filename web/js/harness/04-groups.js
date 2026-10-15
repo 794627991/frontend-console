@@ -158,15 +158,16 @@
     if (segN) parts.push(segN + ' 思考');
     if (toolN) parts.push(toolN + ' 工具');
     if (visN) parts.push(visN + ' 识图');
-    // v3.5.245 ③（用户定调「只要问过我问题，就在工作区头显示」）：弹出
-    // 待答时显示「待答」；作答后持久显示「N 提问」——查询组内 .h-ask-rs
-    // 作答结果行（v3.5.242 已保证重渲摘下回插=重渲后计数仍在）
+    // v3.5.246 ③（用户实锤「刷新又没了」）：改读组 counts.askN 持久计数
+    // （live=askRender 建卡 +1；hist=renderHistTool 渲染转写 ask 行 +1，
+    // 两路互斥），刷新/重渲后计数仍在；「待答」（dock 未答卡）与「N 提问」
+    // 独立并行——问过就显示，未答另加待答态
     try {
       const _pend = (typeof _hgAskDockEl !== 'undefined' && _hgAskDockEl
         && _hgAskDockEl.querySelector('.h-ask:not(.done)')) ? 1 : 0;
-      const _asked = _pend + (g.root ? g.root.querySelectorAll('.h-ask-rs').length : 0);
+      const _askN = ((g.counts && g.counts.askN) || 0);
+      if (_askN) parts.push(_askN + ' 提问');
       if (_pend) parts.push('待答');
-      else if (_asked) parts.push(_asked + ' 提问');
     } catch (_) {}
     g.headSub.textContent = parts.length ? '· ' + parts.join(' · ') : '';
   }

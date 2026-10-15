@@ -1,5 +1,19 @@
 // harness hist.js (v3.0 自 buildClaudeHarnessTab 拆出,定义体零改动,缩进保持原样)
   function renderHistTool(l, hi) {
+    // v3.5.246（用户实锤「运行中正常，刷新又没了」）：hist 路径（刷新/重渲）
+    // ask 行同样计数 counts.askN——v3.5.245 计数源是 live-only 的 .h-ask-rs
+    // 结果行，刷新后 DOM 重建=归零；转写里 ask 以 tool_use 行持久在案
+    // （mcp__harness__ask_user/AskUserQuestion），hist 是重建后唯一来源
+    if (l.text === 'AskUserQuestion' || l.text === 'mcp__harness__ask_user') {
+      try {
+        const _ga = _HG.grp || (typeof grpEnsure === 'function' && grpEnsure(true));
+        if (_ga) {
+          _ga.counts = _ga.counts || {};
+          _ga.counts.askN = (_ga.counts.askN || 0) + 1;
+          if (typeof _turnHeadSubPaint === 'function') _turnHeadSubPaint(_ga);
+        }
+      } catch (_) {}
+    }
     // v3.2.6（ZCode 子智能体模式）：历史 Agent/Task 派发行走单行任务卡工厂
     //（与 live 同解剖：✦ 子智能体 + 类型 chip + 描述 + ▣/点击开窗格），无
     // 展开体；登记 lastAgRow 供紧随其后的 sub_open 行回绑 agentId（转写注入

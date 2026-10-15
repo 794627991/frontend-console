@@ -95,6 +95,15 @@ function askRender(it) {
     if (!_hgAskDockEl) return;
     _hgAskDockEl.appendChild(card);
     _hgAskDockEl.classList.add('on');
+    // v3.5.246：live 提问即计入组 counts.askN（与 hist 路径同源——重渲后
+    // hist 建档重建 counts，两路互斥不叠加）
+    try {
+      const _ga = _HG.grp || (typeof grpEnsure === 'function' && grpEnsure(true));
+      if (_ga) {
+        _ga.counts = _ga.counts || {};
+        _ga.counts.askN = (_ga.counts.askN || 0) + 1;
+      }
+    } catch (_) {}
     _hgAskHeadSync();   // v3.5.241：ask 到达刷副位「待答」
     _hgScrollBottom();
   }
