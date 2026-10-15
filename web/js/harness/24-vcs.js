@@ -751,9 +751,15 @@
     const rev = D.rev ? ' · ' + D.rev : '';
     const ab = (D.vcs === 'git' && (D.ahead || D.behind))
       ? ` · ↑${D.ahead || 0} ↓${D.behind || 0}` : '';
+    // v3.5.271（SVN 报告完整版 Q4）：changes_timeout 时不得显示「0 个改动」
+    //——空数组是「未获取」不是「干净」，头部与正文必须同一叙事（旧=UI 说谎，
+    // 会诱导用户误判工作区干净而漏提交）
+    const _chgTxt = D.changes_timeout ? '改动数未获取（扫描超时）'
+      : (D.changes_pending || _HG.vcs.chgBusy) ? '改动扫描中…'
+      : `${(D.files || []).length} 个改动`;
     return `<div class="hg-vcs-head"><span class="hg-vcs-badge ${esc(D.vcs)}">${esc(D.vcs)}</span>` +
       `<span class="hg-vcs-branch">⎇ ${esc(D.branch || '(未知)')}${esc(rev)}${esc(ab)}</span>` +
-      `<span class="hg-vcs-count">${(D.files || []).length} 个改动</span></div>`;
+      `<span class="hg-vcs-count">${_chgTxt}</span></div>`;
   }
   function _vcsFileHtml(f, i) {
     const cls = _VCS_ST_CLS[f.st] || 'm';
