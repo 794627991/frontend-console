@@ -956,7 +956,10 @@
         // 拉全量打底≠回放——措辞按档案生死分（旧一律「回放 · …」误导）
         // v3.5.275（对抗审 F4）：实时双键查档案——fetch 前快照 a.done 在
         // 期间翻转会误标；包装键档案（归一键无档）同补（同款双查先例）
-        const _aNow = (_HG.agents || {})[tid] || (_HG.agents || {})[tid0] || {};
+        // v3.5.276（复审 R3）：镜像 _a2 的 done 级回退——归一键有档但缺
+        // done 字段且包装键 done=true 时，对象级回退会误落「实况」
+        const _aN0 = (_HG.agents || {})[tid] || {};
+        const _aNow = _aN0.done !== undefined ? _aN0 : ((_HG.agents || {})[tid0] || {});
         note(_aNow.done
           ? `回放 · ${_AGENT_LABEL[type] || type} · ${j.rows.length} 条记录`
           : `实况 · 已载 ${j.rows.length} 条历史，跟随中`);

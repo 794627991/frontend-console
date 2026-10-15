@@ -607,7 +607,15 @@
     const _stale = () => (_HG.vcs.chgGen || 0) !== _gen0 || _HG.vcs.root !== _root0;
     const _rearm = () => {   // F3-A：旧链收尾后新态仍待扫且无人扫→重臂（限2次防死循环）
       if (_HG.vcs.chgBusy || !_HG.vcs.data || !_HG.vcs.data.changes_pending) return;
-      if ((_HG.vcs.chgRetry || 0) >= 2) return;
+      // v3.5.276（复审 R2）：重试耗尽置失败叙事——封顶直 return 会留
+      // pending 无在途无终态=渲染落「0 个改动/工作区干净」假净
+      if ((_HG.vcs.chgRetry || 0) >= 2) {
+        if (_HG.vcs.data && !_HG.vcs.data.err && _HG.vcs.data.changes_pending) {
+          _HG.vcs.data.changes_timeout = true;
+          _HG.vcs.data.changes_pending = false;
+        }
+        return;
+      }
       _HG.vcs.chgRetry = (_HG.vcs.chgRetry || 0) + 1;
       _vcsReloadChanges();
     };
@@ -617,7 +625,9 @@
       .then(r => r.json());
     let _j1ok = false;
     _chg(true).then(j1 => {
-      if (_stale()) return _chg(false);   // 已作废：一段弃，链继续走完收尾
+      // v3.5.276（复审 R6）：已作废短路二段（不再为旧 root 白跑 39~90s
+      // 全树），直接落收尾——null 经 stale 分支早退+rearm 即时接管新工程
+      if (_stale()) return null;
       if (j1 && j1.ok && _HG.vcs.data && !_HG.vcs.data.err) {
         _j1ok = true;
         _HG.vcs.data.files = j1.files || [];
@@ -634,13 +644,14 @@
         if (j2 && j2.ok) {
           if (j2.changes_timeout) {
             // F8 改良：全树超时保留 shallow 已示列表，仅置超时叙事（不空屏）
+            // v3.5.276（R5）：shallow 标记保留——正文列表尾据此标注「仅顶层」
             _HG.vcs.data.changes_timeout = true;
           } else {
             _HG.vcs.data.files = j2.files || [];
             _HG.vcs.data.truncated = j2.truncated || 0;
             _HG.vcs.data.changes_timeout = false;
+            _HG.vcs.data.changes_shallow = false;
           }
-          _HG.vcs.data.changes_shallow = false;
           _HG.vcs.data.changes_pending = false;
           _HG.vcs.chgRetry = 0;
         } else if (_j1ok) {
@@ -727,8 +738,11 @@
           showBanner(label + '失败：' + why, 6000, true);
           if (j && j.out) { _HG.vcs.out = j.out; }
         }
+        // v3.5.276（复审 R1）：gen++ 提到 ok 公共层——update/commit 走 done
+        // 回调曾漏作废在途链，提交前扫描快照照样回盖（F5 只修了 add 路径）
+        if (ok) _HG.vcs.chgGen = (_HG.vcs.chgGen || 0) + 1;
         if (done) done(ok, j || {});
-        else if (ok) { _HG.vcs.chgGen = (_HG.vcs.chgGen || 0) + 1; _vcsReload(); }   // v3.5.275 F5：作废在途扫描（提交前快照不得回盖）
+        else if (ok) _vcsReload();
         else _vcsPaint();
       })
       .catch(e => { _HG.vcs.busy = false; showBanner(label + '失败：' + e, 5000, true); _vcsPaint(); });
@@ -760,6 +774,8 @@
       (files.length
         ? `<div class="hg-vcs-files">` + files.map((f, i) => _vcsFileHtml(f, i)).join('') + `</div>`
           + (D.truncated ? `<div class="hg-vcs-more">还有 ${D.truncated} 个文件未显示（用命令行查看）</div>` : '')
+          // v3.5.276（R5）：超时但列表在场=顶层结果，明示口径消解头部「未获取」张力
+          + (D.changes_timeout && D.changes_shallow ? `<div class="hg-vcs-more">以上为顶层扫描结果（全树扫描超时，完整改动请用命令行 svn status 查看）</div>` : '')
         : D.changes_timeout
           ? `<div class="hg-vcs-empty">全树改动扫描超时（网络盘大仓库）——版本信息已就绪；改动列表请用命令行 svn status 查看。</div>`
           : (D.changes_pending && (_HG.vcs.chgBusy || D.changes_shallow))
