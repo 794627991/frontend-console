@@ -2388,7 +2388,7 @@ html {
   border-radius: 6px; overflow: hidden; background: color-mix(in srgb, var(--bg-card) 60%, transparent); }
 .h-think-seg-head { display: flex; align-items: center; gap: 6px; width: 100%;
   border: none; background: transparent; color: var(--muted); font-family: var(--font-ui);
-  font-size: var(--fs-sm); padding: 4px 10px 4px 30px; cursor: pointer; text-align: left; }
+  font-size: var(--fs-sm); padding: 4px 10px 4px 10px; cursor: pointer; text-align: left; }
 .h-think-seg-head:hover { color: var(--fg); background: color-mix(in srgb, var(--h-violet, #8957e5) 6%, transparent); }
 .h-think-seg .h-chev { transition: transform .15s; display: inline-block; font-size: 10px; }
 .h-think-seg.open .h-chev { transform: rotate(90deg); }
@@ -2698,6 +2698,10 @@ html {
    随「子智能体」类别词一并退役——行 title 悬浮保留类型全文；新增过程计数
    「N思 M工」（运行中挂在秒表尾，数据来自 agents 档案） */
 /* v3.5.269 撤「N思M工」计数后 .h-ag-cnt 唯一生产者已撤（对抗审 F6 清孤儿） */
+/* v3.5.283（徽章一律对齐收口）：识图卡空槽隐藏（state margin:auto 推右后
+   残余 2px 消除）+已回传徽章推右 */
+.h-tool.h-vision .h-tslots:empty { display: none; }
+.h-tool.h-vision .h-vision-state { margin-left: auto; }
 /* 窗格时间线：子代理自己的会话用主会话同款回合结构（回合头+时间线+根区结
    论）。行样式全复用主链类（.h-tl/.h-think-seg/.h-tool/.h-tl-grp），这里只
    补窗格作用域的身份行/结论区/占位说明 */
@@ -3129,9 +3133,10 @@ html {
 
 /* ---- 折叠组（collapsible 工具：diff/todo/agent/plan）---- */
 .h-tool.col { display: block; padding: 0; }
-/* v3.5.278（用户实锤图4/7）：head 内状态槽恒推右（margin-left:auto）——
-   无 arg 行（SendMessage 等转交行 head 无 .h-tool-arg）失去唯一 flex 撑开
-   元素，徽章悬在文字后不贴行右缘；有 arg 行 arg flex 撑开与之兼容不冲突 */
+/* v3.5.278→283（用户铁令「所有徽章以子代理完成位置为基准一律对齐，流式
+   +重渲全部」）：状态槽推广到全部 col head 恒推右（margin-left:auto）——
+   实测三行 gap：bash 23/agentline 13/vision 27（各 head 内容排布差异），
+   slots 恒推 head 右缘后 gap 统一=head padding-right，全行一列 */
 .h-tool.col .h-tool-head .h-tslots { margin-left: auto; }
 /* v3.5.282（用户铁令「所有完成/错误/已回传徽章一律无条件对齐，流式+重渲
    全形态」）：①head 内 name 收敛——SendMessage 等 Default 行的长标题
@@ -4221,7 +4226,7 @@ html {
 .hg-sub-body .h-tl .h-tool > .h-tool-head {
   padding: 4px 10px 4px 0; }   /* v3.4.45:容器 30px 一层让位 ▸ 即可——head 再叠 30px=双倍缩进（playwright 实锤 name@107 vs 思考@77） */
 /* 分屏折叠行同款 30px（hg-flow 选择器罩不到 sub-body） */
-.hg-sub-body .h-tl > .h-tool.col, .hg-sub-body .h-tl > .h-tool.oneclick { padding-left: 30px; }
+.hg-sub-body .h-tl > .h-tool.col, .hg-sub-body .h-tl > .h-tool.oneclick { padding-left: 10px; }
 .h-turn-body, .h-grp-proc { min-width: 0; }
 .h-tl:empty { display: none; }
 /* 时间线里的工具行去掉旧抽屉时代的块状底色——内联行更轻；
@@ -4245,7 +4250,7 @@ html {
 .hg-sub-body .h-tl .h-tool.oneclick {
   background: transparent; border-color: transparent;
   border-left: 2px solid var(--h-accent, var(--accent));
-  border-radius: 0; box-shadow: none; padding-left: 30px;   /* v3.4.44:▸ 盒钉死后 30px=图标列 32px */
+  border-radius: 0; box-shadow: none; padding-left: 10px;   /* v3.4.44:▸ 盒钉死后 30px=图标列 32px */
 }
 .hg-flow .h-tl .h-tool.oneclick.open,
 .hg-sub-body .h-tl .h-tool.oneclick.open {
@@ -4263,7 +4268,7 @@ html {
 .h-tl-grp { display: flex; flex-direction: column; gap: 2px;
   border-left: 2px solid var(--border);  /* v3.4.35:左条统一 2px,与思考段/终端卡同构 */ }
 .h-tl-grp-head { display: flex; align-items: center; gap: 6px; width: fit-content;
-  padding: 4px 10px 4px 30px;  /* v3.4.44:▸ 盒绝对钉死后头文字让位到图标列 32px */ border: 0; background: none; cursor: pointer;
+  padding: 4px 10px 4px 10px;  /* v3.4.44:▸ 盒绝对钉死后头文字让位到图标列 32px */ border: 0; background: none; cursor: pointer;
   font-size: var(--fs-sm); color: var(--muted); text-align: left; border-radius: 5px; }
 .h-tl-grp-head:hover { color: var(--fg); }
 .h-tl-grp-head .h-chev { font-size: 10px; display: inline-block;
@@ -4540,3 +4545,17 @@ html {
 .hg-lightbox-err { max-width: 80vw; padding: 22px 30px; border-radius: 10px;
   background: rgba(20,24,30,.92); color: #ffb86b; font-size: 14px;
   border: 1px solid rgba(255,184,107,.4); word-break: break-all; }
+
+/* v3.5.283（用户铁令「徽章以子代理完成位置为基准一律对齐，流式+重渲全部」）：
+   行几何锁死 agentline 基准（pl10/pr0/bl2）——保底覆盖段压过任何历史变体 */
+.hg-flow .h-tl .h-tool.col,
+.hg-flow .h-tl .h-tool.oneclick,
+.hg-sub-body .h-tl .h-tool.col,
+.hg-sub-body .h-tl .h-tool.oneclick {
+  padding-left: 10px !important;
+  padding-right: 0 !important;
+}
+.h-tl .h-think-seg-head,
+.h-tl .h-tl-grp-head {
+  padding-left: 10px !important;
+}
