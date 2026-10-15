@@ -3129,6 +3129,10 @@ html {
 
 /* ---- 折叠组（collapsible 工具：diff/todo/agent/plan）---- */
 .h-tool.col { display: block; padding: 0; }
+/* v3.5.278（用户实锤图4/7）：head 内状态槽恒推右（margin-left:auto）——
+   无 arg 行（SendMessage 等转交行 head 无 .h-tool-arg）失去唯一 flex 撑开
+   元素，徽章悬在文字后不贴行右缘；有 arg 行 arg flex 撑开与之兼容不冲突 */
+.h-tool.col .h-tool-head .h-tslots { margin-left: auto; }
 .h-tool.col .h-tool-head { display: flex; align-items: center; gap: 6px; width: 100%;
   border: none; background: transparent; color: var(--muted); font-family: var(--font-ui);
   font-size: var(--fs-sm); padding: 5px 10px; cursor: pointer; text-align: left; }

@@ -718,6 +718,21 @@
       const t = cur.t;
       if (!t || t.done) return;   // 无活跃轮/已定稿——空转等待新轮
       _subTlHeadPaint(t);
+      // v3.5.278（用户铁令「正在进行的子代理无条件跟随」）：断流自愈——
+      // SSE 镜像超 8s 未喂本 tab 且档案仍活，说明事件流断了（切会话/重渲
+      // 后路由失配等一切原因），10s 节流重拉转写铺底兜底。正常跟随时
+      // lastFeed 恒新，零开销零闪烁；拉回后 lastFeed 刷新回到镜像模式
+      try {
+        const _aF = (_HG.agents || {})[tid];
+        if (cur.tid0 && _aF && !_aF.done && !cur.replay
+            && Date.now() - (cur.lastFeed || 0) > 8000
+            && Date.now() - (cur.lastFollow || 0) > 10000
+            && cur.t && !cur.t.done && _sub.active === tid) {
+          cur.lastFollow = Date.now();
+          cur.lastFeed = Date.now();          // 先续防 tick 连发
+          _subReplayForce(tid);
+        }
+      } catch (_) {}
       // 开口思考段活字时长（完成定格由 _subTlSegFreeze 收「持续了 N」）
       const open = t.tl && t.tl.querySelector('.h-think-seg:not([data-hg-done])');
       if (open) {
@@ -793,6 +808,16 @@
   // 空，5s 后再拉一次；限 3 次防循环，tab 已换/已定稿/已有行即不再试）。
   // R6（审计）：计数挂 **tab 档案**（tb._retry）——retry 触发的 force 重拉会
   // 整体重建 scaffold（tb.t 换新对象），挂 t 上每轮归零、上限恒不可达
+  // v3.5.278：断流自愈的强制重拉（tick 检测镜像断流时调）——force 直通
+  // replayed 早退守卫，重建脚手架拉最新转写；type/desc/agentId 取自档案
+  function _subReplayForce(tid) {
+    const tb = _sub.tabs && _sub.tabs[tid];
+    if (!tb) return;
+    const a = (_HG.agents || {})[tb.tid0 || tid] || (_HG.agents || {})[tid] || {};
+    const _aid = a.taskId || a.agentId || '';
+    if (!_aid) return;
+    _subReplay(tid, a.type || 'Task', a.desc || '', _aid, true);
+  }
   function _subReplayRetry(tid, type, desc, agentId) {
     const tb = _sub.tabs[tid];
     if (!tb) return;
@@ -879,7 +904,10 @@
     }
     sc.dataset.replayed = agentId;
     _sub.manual = true;
-    if (_sub.tabs[tid]) _sub.tabs[tid].replay = true;   // v2.57：fetch 期间挡镜像增量（防污染），完成后放行
+    if (_sub.tabs[tid]) {   // v2.57：fetch 期间挡镜像增量（防污染），完成后放行
+      _sub.tabs[tid].replay = true;
+      _sub.tabs[tid].tid0 = tid0;   // v3.5.278：归一前键留 tab（断流自愈判档案活）
+    }
     const sidAt = _HG.sid;
     fetch(`/api/harness/subagent_replay?sid=${encodeURIComponent(sidAt || '')}&agent=${encodeURIComponent(agentId)}`)
       .then(r => r.json())
@@ -960,6 +988,10 @@
         // done 字段且包装键 done=true 时，对象级回退会误落「实况」
         const _aN0 = (_HG.agents || {})[tid] || {};
         const _aNow = _aN0.done !== undefined ? _aN0 : ((_HG.agents || {})[tid0] || {});
+        // v3.5.278（用户实锤图6「已工作45秒」）：活代理铺底后轮 t0 用档案
+        // 起跑时刻——转写首行 ts 是落盘时刻（CLI 刷盘延迟），当 t0=首行 ts
+        // 秒表被重置成「刚起跑」，与真实运行时长（胶囊 31 分）矛盾
+        if (!_aNow.done && _aNow.t0 && t) t.t0 = _aNow.t0;
         note(_aNow.done
           ? `回放 · ${_AGENT_LABEL[type] || type} · ${j.rows.length} 条记录`
           : `实况 · 已载 ${j.rows.length} 条历史，跟随中`);
@@ -1194,6 +1226,8 @@
   // v3.2.6：轮询镜像增量（think/text）→ 窗格时间线行（v2.57R 的 rp 铺底
   // 前缀查重保留——回放 tab fetch 收敛放行后的重叠窗口防双份）
   function _subPaneMirror(pid, kind, text) {
+    const _tbM = _sub.tabs && _sub.tabs[pid];   // v3.5.278：喂入记账（断流检测的数据源）
+    if (_tbM) _tbM.lastFeed = Date.now();
     pid = _subTid(pid);   // v3.4：续派包装 id 归一
     const tb = _sub.tabs[pid];
     if (!tb || !tb.t || !text || !String(text).trim()) return;
