@@ -257,8 +257,23 @@
           _subReplay(tid, type2 || 'Task', desc2 || '子代理', aid2);
         };
         const _fallbackDir = (msg) => { _subDirOpen(); showBanner(msg, 4000); };
-        if (_s0 && /^[0-9a-zA-Z_-]{8,64}$/.test(_s0)) { _go(_s0); return; }
-        if (_s1) { _go(_s1); return; }
+        // v3.5.280（用户实锤「名字变成子代理,不是那次审计的名」）：S0/S1
+        // 直达只传 agentId——desc 落「子代理」兜底丢实名。带上各自源的
+        // type/desc（S0=DOM 行预置对；S1=正向映射存档对）
+        if (_s0 && /^[0-9a-zA-Z_-]{8,64}$/.test(_s0)) {
+          const _row0 = (_hgFlow || document).querySelector(
+            '.h-subblock[data-hg-subblock="' + tid + '"] .h-subblock-head[data-hg-subr], ' +
+            '.h-tool[data-tid="' + tid + '"][data-hg-subr]');
+          const _m0 = _HG.subTidRes && _HG.subTidRes[tid];
+          _go(_s0, (_row0 && _row0.dataset.hgSubType) || (_m0 && _m0.type),
+              (_row0 && _row0.dataset.hgSubDesc) || (_m0 && _m0.desc));
+          return;
+        }
+        if (_s1) {
+          const _m1 = (_HG.subTidRes || {})[tid] || {};
+          _go(_s1, _m1.type, _m1.desc);
+          return;
+        }
         // S2 异步解析（v3.5.160 F7：在途防抖——同 tid 解析中重复点击不再
         // 并发 fetch；_subDirOpen 已开 tab，二点自然落在 tab 上）
         if ((_HG.subResInflight || {})[tid]) return;
