@@ -718,19 +718,34 @@
       const t = cur.t;
       if (!t || t.done) return;   // 无活跃轮/已定稿——空转等待新轮
       _subTlHeadPaint(t);
-      // v3.5.278（用户铁令「正在进行的子代理无条件跟随」）：断流自愈——
-      // SSE 镜像超 8s 未喂本 tab 且档案仍活，说明事件流断了（切会话/重渲
-      // 后路由失配等一切原因），10s 节流重拉转写铺底兜底。正常跟随时
-      // lastFeed 恒新，零开销零闪烁；拉回后 lastFeed 刷新回到镜像模式
+      // v3.5.279（用户最后通牒「无条件」）：活代理恒定跟随——不再做断流
+      // 检测/不依赖镜像记账（那些条件本身会失效）。只要档案活着：①窗格
+      // 永不定稿（被误定稿即复活保持「工作中」）②每 10s 无条件拉转写，
+      // 行数有增才重建（内容无变化不动 DOM 零闪烁）。镜像在喂时轮询空转
+      // 兜底；镜像断了轮询就是唯一跟随通道——无论断因，永远在刷新。
       try {
-        const _aF = (_HG.agents || {})[tid];
-        if (cur.tid0 && _aF && !_aF.done && !cur.replay
-            && Date.now() - (cur.lastFeed || 0) > 8000
-            && Date.now() - (cur.lastFollow || 0) > 10000
-            && cur.t && !cur.t.done && _sub.active === tid) {
-          cur.lastFollow = Date.now();
-          cur.lastFeed = Date.now();          // 先续防 tick 连发
-          _subReplayForce(tid);
+        const _aF = cur.tid0 ? ((_HG.agents || {})[cur.tid0] || (_HG.agents || {})[tid]) : null;
+        if (_aF && !_aF.done && _sub.active === tid) {
+          // ① 活档案覆写定稿——「保持工作中」
+          if (t.done) { t.done = false; t.durTxt = ''; _subTlHeadPaint(t); }
+          // ② 无条件轮询（10s 节流；拉取在途/手动重拉期不并发）
+          if (!cur.replay && !cur.followInflight
+              && Date.now() - (cur.lastFollow || 0) > 10000) {
+            cur.lastFollow = Date.now();
+            cur.followInflight = true;
+            const _aidF = _aF.taskId || _aF.agentId || '';
+            if (_aidF) {
+              fetch('/api/harness/subagent_replay?sid=' + encodeURIComponent(_HG.sid || '') +
+                    '&agent=' + encodeURIComponent(_aidF))
+                .then(r => r.json()).then(jf => {
+                  cur.followInflight = false;
+                  const tbF = _sub.tabs[tid];
+                  if (!tbF || tbF !== cur || !jf || !jf.ok) return;
+                  const nNew = (jf.rows || []).length;
+                  if (nNew > (tbF.rpN || 0)) _subReplayForce(tid);   // 有新行才重建
+                }).catch(() => { cur.followInflight = false; });
+            } else cur.followInflight = false;
+          }
         }
       } catch (_) {}
       // 开口思考段活字时长（完成定格由 _subTlSegFreeze 收「持续了 N」）
@@ -930,6 +945,7 @@
         const tb2 = _sub.tabs[tid];
         const sc2 = tb2 && tb2.sc;
         if (!sc2) return;
+        tb2.rpN = (j.rows || []).length;   // v3.5.279：铺底行数基准（无条件轮询比对有新才重建）
         // v3.2.6：重建时间线脚手架（清「回放加载中」占位）
         sc2.innerHTML = '';
         // v3.4：脚手架=idline+首轮；后续 k:'user' 行切新轮（多轮回放）
