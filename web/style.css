@@ -4512,3 +4512,8 @@ html {
    hist 行 / sub 抽屉行统一此门控；后置同权覆盖上方 3106 的恒显规则 */
 .h-tool .h-tool-copy { display: none; }
 .h-tool.open .h-tool-copy { display: inline-block; margin-left: 6px; }
+
+/* v3.5.252（用户实锤流式「不对齐」）：live 期正文气泡挂组根（04-groups
+   addAsstText），不在 .h-tl 内——比 tl 行（margin 12 + padding 13）凸出
+   25px；重渲后气泡进 tl 自然对齐，> 直系只在 live 期命中 */
+.h-grp > .h-msg.asst { margin-left: 25px; }
