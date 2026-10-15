@@ -471,12 +471,10 @@
     const slot = row.querySelector('.h-tslots');
     if (!slot) return;
     const a = (_HG.agents || {})[row.dataset.tid] || {};
-    // v3.5.145（全审F4）：零段省略——thinkN=0 时不显「0思」，双零整段不显
-    const tn = a.thinkN || 0, wn = a.toolN || 0;
-    const n = (tn ? tn + '思' : '') + (wn ? (tn ? ' ' : '') + wn + '工' : '');
+    // v3.5.269（用户需求「去掉这个计数」）：撤「N思 M工」过程计数显示——
+    // 运行槽只留运行徽章+秒表（thinkN/toolN 档案统计保留，仅不显示）
     slot.innerHTML = statusBadge('running') +
-      ' <span class="h-tsec">' + Math.round((Date.now() - t0) / 1000) + 's</span>' +
-      (n ? `<span class="h-ag-cnt">${n}</span>` : '');
+      ' <span class="h-tsec">' + Math.round((Date.now() - t0) / 1000) + 's</span>';
   }
   // v3.2.6：行内实时活动流——子代理 think/text/tool 事件到达即刷新（05-subblk
   // 三钩调用；ZCode animateSummaryContent 的静态等价物：最新子动作单行摘要）
