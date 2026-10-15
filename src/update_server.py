@@ -633,7 +633,46 @@ _PORTAL_HTML = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
     <b>工具内热更新</b>：把地址 <b>__URL__</b> 填到工具「设置 → 关于与升级 → 升级服务器地址」，
     以后有新版工具会自动检查、一键升级（旧版自动备份为 .bak 可回退）。
   </div>
-  <div id="body"><div class="empty">版本加载中…</div></div>
+  <div class="pgtabs">
+    <button class="pgtab on" data-pg="dl" onclick="pgSwitch('dl')">📦 版本下载</button>
+    <button class="pgtab" data-pg="mn" onclick="pgSwitch('mn')">📖 工具说明书</button>
+  </div>
+  <div id="pg-dl"><div id="body"><div class="empty">版本加载中…</div></div></div>
+  <div id="pg-mn" style="display:none">
+    <div class="mn-hero">
+      <h2>前端控制台 —— 一站式嵌入式调试工作台</h2>
+      <p>常用工具全部集成 × Claude AI 深度赋能，装一个顶一堆</p>
+    </div>
+    <div class="mn-sec"><b>✨ 产品亮点</b></div>
+    <div class="mn-grid">
+      <div class="mn-card"><b>🔩 调试工具全家桶</b>串口 · SSH · Telnet · TFTP · HFS 文件服务，一个窗口全搞定</div>
+      <div class="mn-card"><b>📄 大文件友好</b>1GB+ 级日志阅读器（缩放虚拟列表，再大也不卡）、文本编辑器、二进制查看、文件对比、程序员计算器</div>
+      <div class="mn-card"><b>🤖 Claude AI 深度集成</b>AI 会话多开并行、子代理全程实况跟随、任务/审计/复盘体系，AI 直接帮你操作和排查</div>
+      <div class="mn-card"><b>👥 三角色智能体（可分配模型）</b>轻/中/重三档形态，主会话 / 设计者 / 审计者三槽模型各自分配，审计模式与分级线可调</div>
+      <div class="mn-card"><b>👁 内置 MCP 识图</b>截图发给 AI 即懂——真多模态模型直读，其余自动走内置识图通道，面板一键配置</div>
+      <div class="mn-card"><b>🛡 稳定性基建</b>请求看门狗（超时自动打断+留证）、SSE 断线水位续传、会话恢复、热更新带备份回退</div>
+    </div>
+    <div class="mn-sec"><b>🚀 快速上手 · 三个配置</b></div>
+    <div class="mn-step">
+      <div class="mn-step-t">1️⃣ 接入 Claude Code（首次自动引导）</div>
+      <p>首次打开工具会自动检测 Claude CLI / Node / Git 环境，缺什么弹什么，支持<b>离线包安装</b>（无网机器一键装）。装好即自动拉起 Claude。</p>
+      <img src="manual/claude_setup.png" loading="lazy" alt="Claude 接入引导">
+    </div>
+    <div class="mn-step">
+      <div class="mn-step-t">2️⃣ 配置识图（让 AI 看懂截图）</div>
+      <p>工具页点 <b>👁 识图配置</b> → 勾选「启用识图」→ 选择多模态模型（如 glm-5.3-flash）→ 保存。
+      真多模态模型直读图片；非多模态模型自动走内置 MCP 识图通道，无需额外配置。配好后把截图拖进会话，AI 直接分析。</p>
+      <img src="manual/vision_cfg.png" loading="lazy" alt="识图配置">
+    </div>
+    <div class="mn-step">
+      <div class="mn-step-t">3️⃣ 配置三角色（AI 分身干活）</div>
+      <p>工具页点 <b>👥 三角色</b> → 打开开关 → 三档模型各自分配（主会话模型 / 设计者 / 审计者）→ 保存，下条消息热更生效。
+      之后 AI 会自动派出「设计者」出方案、「审计者」做复核——各用各的模型，主会话只管调度。</p>
+      <img src="manual/roles_cfg.png" loading="lazy" alt="三角色配置">
+    </div>
+    <div class="mn-sec"><b>💡 提示</b></div>
+    <p class="mn-tip">识图与三角色均支持按 API 方案独立配置（切方案各配各的）；所有配置即改即生效，无需重启。</p>
+  </div>
 </div>
 <script>
 function pgSwitch(pg){
@@ -959,6 +998,19 @@ class _Handler(BaseHTTPRequestHandler):
             p = _safe_path(root, name)
             if p and os.path.isfile(p):
                 self._file(p, "application/json")
+            else:
+                self._text(404, "not found")
+            return
+
+        # v3.5.290（工具说明书 tab）：配置教程截图（manual/*.png，登录态
+        # 可见；_safe_path 防穿越；只放行 png）
+        if name.startswith("manual/"):
+            if not self._session_ok():
+                self._text(401, "not found")
+                return
+            p = _safe_path(root, name)
+            if p and os.path.isfile(p) and p.lower().endswith(".png"):
+                self._file(p, "image/png")
             else:
                 self._text(404, "not found")
             return
