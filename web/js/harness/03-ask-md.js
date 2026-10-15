@@ -527,7 +527,10 @@ function askRender(it) {
     // 都能回源）——v3.2.14 的 path= 依赖新路由，未重启后端时点开全裂
     (images || []).forEach(p => {
       const name = String(p).split(/[\\/]/).pop();
-      h += `<span class="hg-att-mini" data-img="/api/harness/file?name=${encodeURIComponent(name)}" title="${esc(p)}">🖼 ${esc(name)}</span>`;
+    // v3.5.253（用户实锤「拖 Y:\nfs\1.png 点了无法预览」）：chip 改走 path= 回源——拖入的是原路径
+    // （网络盘/桌面/工程目录），不落上传目录，name= 只查 _UPLOAD_DIR 必 404；path= 白名单
+    // 三覆盖（上传目录/CLI Temp images/任意存在图片路径 v3.5.136）拖路径正中第三条
+      h += `<span class="hg-att-mini" data-img="/api/harness/file?path=${encodeURIComponent(p)}" title="${esc(p)}">🖼 ${esc(name)}</span>`;
     });
     (files || []).forEach(p => { h += `<span class="hg-att-mini">📄 ${esc(String(p).split(/[\\/]/).pop())}</span>`; });
     return h;
