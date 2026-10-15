@@ -4523,3 +4523,12 @@ html {
    addAsstText），不在 .h-tl 内——比 tl 行（margin 12 + padding 13）凸出
    25px；重渲后气泡进 tl 自然对齐，> 直系只在 live 期命中 */
 .h-grp > .h-msg.asst { margin-left: 25px; }
+
+/* v3.5.255（用户实锤「角标未对齐」）：时间线竖条列断档——正文气泡/ask 结果
+   行无左边框，竖条列在该行断开上下不连；补同款 2px 竖条+10px 缩进，内容
+   起点与 bash 卡（border2+padding10）全列一致 */
+.h-tl > .h-msg.asst, .h-tl > .h-ask-rs {
+  border-left: 2px solid var(--border); padding-left: 10px; }
+/* live 期组根直挂气泡同款（v3.5.252 已缩进 25px 到列位，补竖条同形态） */
+.h-grp > .h-msg.asst {
+  border-left: 2px solid var(--border); padding-left: 10px; }
