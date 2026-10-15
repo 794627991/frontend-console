@@ -4507,7 +4507,13 @@ html {
    hist/识图卡（它们有 head button，本就单行形态） */
 .h-tool.col.oneclick:not(:has(> .h-tool-head)) {
   display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; max-width: 88%; }
-.h-tool.col.oneclick:not(:has(> .h-tool-head)) > .h-tool-coll { flex: 1 0 100%; }
+/* v3.5.254（用户实锤「流式bash点开一字一行」）：open 态转 wrap + arg basis 0——
+   收起态 coll 不参与布局 nowrap 单行正常；点开后 coll(flex:1 0 100%)独占整行
+   放输出，首行 arg 占剩余宽省略——旧规则 nowrap 下 coll 恒占满基准宽把 arg
+   (word-break:break-all 的 min-content=1字) 压成一字一行 */
+.h-tool.col.oneclick:not(:has(> .h-tool-head)).open { flex-wrap: wrap; }
+.h-tool.col.oneclick:not(:has(> .h-tool-head)) > .h-tool-coll { flex: 1 0 100%; min-width: 0; }
+.h-tool.col.oneclick:not(:has(> .h-tool-head)).open > .h-tool-arg { flex: 1 1 0; }
 /* ② 复制键默认藏（收起态不直接暴露），点开（open）才显示——live 升级行 /
    hist 行 / sub 抽屉行统一此门控；后置同权覆盖上方 3106 的恒显规则 */
 .h-tool .h-tool-copy { display: none; }
