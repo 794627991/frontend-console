@@ -9,6 +9,9 @@
   _HG.vcs = { root: '', data: null, log: null, out: '', busy: false, sel: new Set(), ts: 0 };
   let _vcsEl = null;                 // 版本页 sc 容器（随 _subReset/_subDrop 清）
   let _vcsLogBusy = false;           // log 拉取防连点
+  // v3.5.265（Q2-3）：回补响应竞态令牌——_vcsReloadLog 与 _vcsHistFetch 共
+  // 写 _HG.vcs.log，后到的整体替换曾确定性覆盖翻页追加（新增消失/页码回跳）
+  let _vcsLogSeq = 0;
   let _vcsTs = 0;                    // 上次 status 拉取时刻（30s 激活缓存）
   let _vcsTick = null;               // v3.5.146（用户实锤「版本全挂」）：补声明——v3.5.124 引入
                                      // _vcsTickStart 时漏了 let，读未声明变量 ReferenceError 被
@@ -93,13 +96,17 @@
     const H = _vcsHist;
     if (!H) { if (cb) cb(); return; }
     const lseq = (H.lseq = ++_vcsHistLseq);   // L2：模块级单调令牌
+    _vcsLogSeq++;   // v3.5.265（Q2-3）：作废在途回补响应（同数组双写者互斥）
     const fp = _vcsHistQfp();
     if (H.querying) H.qbusy = true;
     const arr = H.querying ? H.qlog : (_HG.vcs.log = _HG.vcs.log || []);
     const skip = reset ? 0 : arr.length;
     const oldest = arr.length ? arr[arr.length - 1].rev : '';
     const isSvn = ((_HG.vcs.data || {}).vcs === 'svn');
-    const body = { root: _HG.vcs.root, limit: 100, skip: isSvn ? 0 : skip };
+    // v3.5.265（Q2-2）：limit 取用户选定每页条数（原硬编码 100——「每页 20」
+    // 选了也只按 100 拉，默认只显示 100 条的观感来源之一）
+    const _lim = H.size || 100;
+    const body = { root: _HG.vcs.root, limit: _lim, skip: isSvn ? 0 : skip };
     if (isSvn && !reset && oldest) body.before_rev = String(parseInt(oldest, 10) - 1 || 0);
     Object.assign(body, H.q);
     fetch('/api/vcs/log', { method: 'POST',
@@ -130,6 +137,10 @@
         }
         // P4：svn 无 total 的终点信号——追加响应去重后零新增=已到最早
         if (!reset && add.length === 0) H.exhausted = true;
+        // v3.5.265（Q2-1）：记录本页返回量——svn 无 total 时终点判据从
+        // 「整百启发式」改「本页不足 limit」（恰整百时旧启发式恒判未到底）
+        H.lastBatch = (j.commits || []).length;
+        H.lastLimit = _lim;
         // 漂移补齐：skip 语义下新提交顶入取不满一页 → 追拉（≤3 轮）
         if (!reset && !isSvn && add.length < (j.commits || []).length
             && (j.commits || []).length >= 100 && H.rounds < 3) {
@@ -157,6 +168,9 @@
   }
 
   function _vcsHistOpen() {
+    // v3.5.265（Q3 次选嫌疑自愈）：守卫为真但 DOM 无弹窗=历史异常泄漏态——
+    // 复位放行，不再永久「点了没反应」
+    if (_vcsHist && !_vcsHist.ov || (_vcsHist && !_vcsHist.ov.isConnected)) { _vcsHist = null; }
     if (_vcsHist) { return; }        // 双开守卫
     const D = _HG.vcs.data;
     if (!D || !D.tool) { showBanner('当前工程不可用版本控制操作', 3000, true); return; }
@@ -242,8 +256,10 @@
       if (H.page < pages) { H.page++; _vcsHistPaintList(true); return; }
       // 当前末页且可能还有更早——拉下一块（svn 无 total：exhausted 信号
       // 或非整百启发式；before_rev 已到 r1 边界不再发）
+      // v3.5.265（Q2-1）：svn 无 total 终点=本页不足 limit（整百启发式在恰
+      // 载满一页时恒真=「还能加载」逐百新增的元凶）
       const atEnd = _vcsHistTotal() != null ? arr.length >= _vcsHistTotal()
-        : (H.exhausted || !(arr.length % 100 === 0));
+        : (H.exhausted || (H.lastBatch != null && H.lastBatch < (H.lastLimit || 100)));
       const oldest = arr.length ? arr[arr.length - 1].rev : '';
       const svnEnd = ((_HG.vcs.data || {}).vcs === 'svn')
         && oldest && parseInt(oldest, 10) <= 1;
@@ -315,8 +331,9 @@
     _vcsHistLseq++;   // R2 终修（复核建议）：关窗即失效在途令牌——重开瞬间的 RTT 窗口也拦
     clearTimeout(_vcsHist.debT);
     try { document.removeEventListener('keydown', _vcsHist.escFn); } catch (_) {}
-    _vcsHist.ov.remove();
-    _vcsHist = null;   // 查询态随弹窗即焚（designer D6）
+    const _ovC = _vcsHist.ov;
+    _vcsHist = null;   // v3.5.265（Q3）：置空前置于 remove——remove 抛错也不留死守卫
+    try { _ovC.remove(); } catch (_) {}
   }
 
   function _vcsHistPaintList(keepSel) {
@@ -390,7 +407,8 @@
     const n = (arr || []).length;
     const loadedPages = Math.max(1, Math.ceil(n / H.size));
     const total = _vcsHistTotal();
-    const atEnd = total != null ? n >= total : (H.exhausted || !(n && n % 100 === 0));
+    // v3.5.265（Q2-1）：同 hnext——svn 终点=本页不足 limit
+    const atEnd = total != null ? n >= total : (H.exhausted || (H.lastBatch != null && H.lastBatch < (H.lastLimit || 100)));
     // v3.5.148（用户批注「初始页数不对，803 条应按总数显示页数」）：总数已知
     //（git rev-list/查询 qtotal）显示真实总页数；svn 无 total 保持已载页数诚实
     const vpages = total != null ? Math.max(1, Math.ceil(total / H.size)) : loadedPages;
@@ -584,12 +602,19 @@
     if (_vcsLogBusy) return;           // 防连点重复 fetch
     _vcsLogBusy = true;
     const hadLen = (_HG.vcs.log || []).length;
+    const myseq = (_vcsLogSeq = ++_vcsLogSeq);
+    _vcsHistLseq++;   // v3.5.265：同时作废翻页在途响应（同数组双写者互斥）
     fetch('/api/vcs/log', { method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      // v3.5.265（Q2-3）：去掉 500 上限——hadLen>500 时 limit=500 整体替换
+      // =确定性从 N 缩到 500（报告审计补充路径）
       body: JSON.stringify({ root: _HG.vcs.root,
-                             limit: Math.max(100, Math.min(500, hadLen || 100)) }) })
+                             limit: Math.max(100, hadLen || 100) }) })
       .then(r => r.json()).then(j => {
         _vcsLogBusy = false;
+        // v3.5.265（Q2-3）：翻页/重开窗口后迟到的回补响应丢弃——不再覆盖
+        // _vcsHistFetch 已 push 的更早条目
+        if (myseq !== _vcsLogSeq) return;
         _HG.vcs.log = j.ok ? (j.commits || []) : null;
         _HG.vcs.total = j.ok ? j.total : undefined;
         _vcsPaint();
@@ -654,7 +679,9 @@
           ? `<div class="hg-vcs-empty">全树改动扫描超时（网络盘大仓库）——版本信息已就绪；改动列表请用命令行 svn status 查看。</div>`
           : `<div class="hg-vcs-empty">工作区干净，没有未提交的改动。</div>`) +
       (_HG.vcs.out ? `<div class="hg-vcs-out"><div class="hg-vcs-out-t">上次命令输出</div><pre>${esc(_HG.vcs.out.slice(0, 4000))}</pre></div>` : '') +
-      `<div class="hg-vcs-acts"><button class="btn ghost" name="hg_vcs_logbtn" ${canOp ? '' : 'disabled'}>📜 提交历史</button>` +
+      // v3.5.265（Q3 首选嫌疑缓解）：busy 期置灰同时给明确提示（旧=静默灰
+      // 按钮，svn 扫描窗内点击零反馈=「点了不弹窗」的主观来源）
+      `<div class="hg-vcs-acts"><button class="btn ghost" name="hg_vcs_logbtn" ${canOp ? '' : 'disabled'} title="${_HG.vcs.busy ? '状态扫描中，稍候再点' : ''}">📜 提交历史${_HG.vcs.busy ? '（扫描中…）' : ''}</button>` +
       `<button class="btn ghost" name="hg_vcs_refresh" ${_HG.vcs.busy ? 'disabled' : ''}>⟳ 刷新</button></div>` +
       // v3.5.133（用户拍板「面板只显示最近20条」）：内嵌列表 20 封顶，全量
       // 走「提交历史」弹窗（_vcsHistOpen）
