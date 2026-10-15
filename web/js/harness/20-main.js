@@ -564,16 +564,13 @@ function buildClaudeHarnessTab(opts = {}) {
           r && r.agentId && (r.type || '') === _ty && String(r.desc || '').slice(0, 40) === _ds);
         if (_hit) { aid = _hit.agentId; agRow.dataset.hgSubr = aid; }
       }
-      // v3.5.269（用户实锤「Task 点开永远啥也没有，就不要让用户能点进来」）：
-      // Task 型（通用子代理，CLI 无独立转写）已结束行点击不开回放窗——
-      // 提示代替空窗；运行中行照常开实况窗格
+      // v3.5.269（用户实锤「Task 点开永远啥也没有，就不要让用户能点进来」）
+      // v3.5.270（用户补充「运行中的 task 我也看不到实况啊」）：Task 型无论
+      // 运行中/已结束一律不开窗——CLI 无独立转写，实况窗格同样空白
       const _agT = agRow.dataset.hgSubType || '';
       if (aid && _agT === 'Task') {
-        const _agP = (_HG.agents || {})[aid];
-        if (!_agP || _agP.done) {
-          showBanner('该 Task 子代理没有可回放的过程记录', 2600);
-          return;
-        }
+        showBanner('该 Task 子代理没有可回放的过程记录', 2600);
+        return;
       }
       if (aid) { _subReplay(aid, agRow.dataset.hgSubType || 'Task',
         agRow.dataset.hgSubDesc || '', aid); return; }
