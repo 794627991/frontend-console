@@ -51,6 +51,14 @@ def _dump_stacks(slow):
         lines.extend("    " + l for l in traceback.format_stack(fr)[-12:])
     try:
         os.makedirs(os.path.dirname(_DUMP), exist_ok=True)
+        # v3.5.288（卡死报告 §6.3）：滚动上限——超 10MB 截半（单文件无限
+        # 追加一天 3.6MB，长跑机器失控）
+        if os.path.exists(_DUMP) and os.path.getsize(_DUMP) > 10 * 1024 * 1024:
+            with open(_DUMP, "r", encoding="utf-8", errors="replace") as f:
+                tail = f.read()[5 * 1024 * 1024:]
+            with open(_DUMP + ".tmp", "w", encoding="utf-8", errors="replace") as f:
+                f.write(tail)
+            os.replace(_DUMP + ".tmp", _DUMP)
         with open(_DUMP, "a", encoding="utf-8", errors="replace") as f:
             f.write("\n".join(lines) + "\n")
     except Exception:
@@ -64,7 +72,7 @@ def _loop():
             now = time.time()
             with _LOCK:
                 slow = [(r["path"], now - r["t0"])
-                        for r in _REQS.values() if now - r["t0"] > 2.0]
+                        for r in _REQS.values() if now - r["t0"] > 5.0]   # v3.5.288: 2s被常态慢请求误报(全天320次转储),5s只抓真卡顿
             # C组G2：老化剔除——请求线程异常死亡（after 未跑）的条目永驻
             # 会让 slow 恒真 → 无限幻影转储；>600s 的条目直接清
             with _LOCK:

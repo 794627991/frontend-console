@@ -440,7 +440,7 @@ function buildProxyTab() {
   // 隐藏即停 interval（下次 switchTab 回来时 startPoll 重建）。
   // 倒计时 1s tick 只更新「上次刷新 Ns 前」字符串（零网络），同随可见性启停。
   function _startPoll() {
-    if (!conn.pollTimer) { conn.pollTimer = setInterval(_tickPoll, 1000); _poll(); }
+    if (!conn.pollTimer) { conn.pollTimer = setInterval(_tickPoll, 3000)   /* v3.5.288: 1s→3s——代理状态无需秒级刷新（卡死报告 §6.4） */; _poll(); }
     if (!conn.tickTimer) conn.tickTimer = setInterval(() => { qLastEl.textContent = _qLastText(); }, 1000);
   }
   function _stopPoll() {
