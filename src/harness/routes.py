@@ -485,6 +485,23 @@ def harness_set_model():
     if s.session_id:
         s.revive_if_dead()               # 失败无妨：下次 send 前仍会 revive
     s.sync_meta()
+    # v3.5.285（用户铁令「切模型必须确保提示词换对，不再出此类问题」）：
+    # 切换即把新模型的识图口径显性写进对话流（进转写=进上下文）——盖掉
+    # 历史里旧模型时代的 analyze_image 调用惯性（resume 保留的历史会让
+    # 新模型模仿旧工具调用，实测连环触发不存在的工具）
+    try:
+        from .vision import _model_vision_mode_dual
+        _mm = _model_vision_mode_dual(model, model)
+        _way = ("多模态直读：看图一律用 Read 工具直读图片路径；当前工具列表"
+                "中没有 analyze_image 类识图工具，历史里出现过的此类调用属于"
+                "旧模型时代，禁止模仿"
+                if _mm == "inline" else
+                "MCP 识图通道：看图调用 mcp__vision__analyze_image")
+        s.emit({"kind": "sysnote",
+                "text": "[模型切换] 已切换到 %s。识图方式：%s。"
+                        % (model or "默认模型", _way)})
+    except Exception:
+        pass
     s.emit({"kind": "model_switched", "text": model or "默认模型"})
     return jsonify({"ok": True, "model": s.model})
 
