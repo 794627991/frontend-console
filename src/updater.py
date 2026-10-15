@@ -121,41 +121,72 @@ def _locate_app_root(staging_root, exe_name):
 
 def _write_bat(parent_dir, app_name, exe_name, staging_root):
     """整目录替换脚本（GBK 写，中文路径/文件名在 chcp 936 下可靠）。
-    流程：等旧进程退出（3s）→ 旧应用目录改名 .bak-时间戳（回退通道）→
-    新目录 move 就位（同级同盘，原子）→ data/ 用户数据从 .bak 搬回 →
-    拉起新版 → 清理 staging → 自删。失败分支自动回退改名。"""
+    v3.5.292（同事升级失败现场：嵌套目录+文件占用+误删，三图实锤）修复：
+    ① taskkill 自家残留实例（防双开实例占文件）
+    ② ren 重试循环 30s（旧 3s 固定等待撞 claude 子进程占用=「另一个程序
+       正在使用此文件」，ren 失败目录即残）
+    ③ fail 分支绝不删原目录（旧 rd /s /q 在半损目录上反复蹂躏=只剩
+       _internal 惨案），只做「bak 存在才回退+校验」
+    ④ 全程写升级日志（update_log.txt）——失败截图日志即可远程定位
+    """
     ts = time.strftime("%Y%m%d-%H%M%S")
     bak = "%s.bak-%s" % (app_name, ts)
     app_rel = app_name                       # 应用目录相对父目录名
     new_rel = os.path.relpath(staging_root, parent_dir)
     bat = os.path.join(parent_dir, _BAT)
-    body = "\r\n".join([
-        "@echo off",
-        "chcp 936 >nul",
-        'cd /d "%s"' % parent_dir,
-        "timeout /t 3 /nobreak >nul",
-        'if exist "%s" ren "%s" "%s"' % (app_rel, app_rel, bak),
-        'if not exist "%s" goto fail' % app_rel,
-        'move "%s" "%s" >nul' % (new_rel, app_rel),
-        "if errorlevel 1 goto fail",
+    log = "update_log.txt"
+    BS = '\\'
+    NL = '\\r\\n'
+    DBSN = '\\\\'
+    body = NL.join([
+        '@echo off',
+        'chcp 936 >nul',
+        'cd /d "' + parent_dir + '"',
+        'if exist "' + log + '" del "' + log + '"',
+        '>> "' + log + '" echo === 升级开始 ===',
+        # 杀残留自家实例（主进程已请求退出；兜底双开/僵尸进程占文件）
+        'taskkill /f /im "' + exe_name + '" 2>nul',
+        # ren 重试循环：最长 30s（15x2s）——等 claude 子进程/杀软释放文件
+        'set /a tries=0',
+        ':retry',
+        'set /a tries+=1',
+        'if exist "' + app_rel + '" ren "' + app_rel + '" "' + bak + '" 2>nul',
+        'if exist "' + bak + '" goto ok_renamed',
+        'if %tries% GEQ 15 goto fail_busy',
+        'timeout /t 2 /nobreak >nul',
+        'goto retry',
+        ':ok_renamed',
+        '>> "' + log + '" echo 旧目录已改名 ' + bak,
+        'move "' + new_rel + '" "' + app_rel + '" >nul',
+        'if errorlevel 1 goto fail_move',
+        '>> "' + log + '" echo 新版本已就位',
         # data/（用户数据：凭据/会话/命令库）从备份搬回——没有则跳过
-        'if exist "%s\\data" move "%s\\data" "%s\\data" >nul' % (bak, bak, app_rel),
-        'start "" "%s\\%s"' % (app_rel, exe_name),
-        'rd /s /q "%s.update" 2>nul' % app_name,
-        'del "%%~f0"',
-        "exit /b 0",
-        ":fail",
-        'if exist "%s" rd /s /q "%s" 2>nul' % (app_rel, app_rel),
-        'if exist "%s" ren "%s" "%s"' % (bak, bak, app_rel),
-        "echo [升级失败] 已回退到旧版本，请联系发布者或手动重试",
-        "pause",
-        'del "%%~f0"',
-    ]) + "\r\n"
+        'if exist "' + bak + DBSN + 'data" move "' + bak + DBSN + 'data" "' + app_rel + DBSN + 'data" >nul',
+        'start "" "' + app_rel + DBSN + exe_name + '"',
+        'rd /s /q "' + app_name + '.update" 2>nul',
+        '>> "' + log + '" echo 升级完成',
+        'del "%~f0"',
+        'exit /b 0',
+        # —— 失败分支：绝不删原目录（v3.5.290 惨案：rd 在半损目录上雪上
+        # 加霜最终只剩 _internal）。bak 在=回退；不在=原目录未动，如实报错
+        ':fail_move',
+        'if exist "' + new_rel + '" rd /s /q "' + new_rel + '" 2>nul',
+        ':fail_busy',
+        'if exist "' + bak + '" (',
+        '  ren "' + bak + '" "' + app_rel + '" 2>nul',
+        '  >> "' + log + '" echo 已回退到旧版本',
+        ')',
+        'if exist "' + app_rel + '" >> "' + log + '" echo 原目录完好未改动',
+        '>> "' + log + '" echo [升级失败] 文件被占用无法完成替换——请关闭所有'
+        '前端控制台窗口（含 Claude 会话）后重新点升级',
+        'echo [升级失败] 文件被占用——请关闭所有前端控制台窗口（含 Claude 会'
+        '话）后重新点升级；详见 ' + log,
+        'pause',
+        'del "%~f0"',
+    ]) + NL
     with open(bat, "w", encoding="gbk") as f:
         f.write(body)
     return bat
-
-
 def apply_update():
     """下载 zip + 校验 + 解压 + 写 update.bat。返回 (ok, err/bat)。"""
     exe = _exe_path()
