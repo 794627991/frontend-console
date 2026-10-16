@@ -407,7 +407,7 @@ def _fm_desc(head):
         return ""
     v = m.group(1).strip()
     if v in ("|", ">", "|-", ">-", "|+", ">+") or re.fullmatch(
-            r"[|>][+-]?\d*", v):   # v3.5.317（轻审一般3）：含显式缩进指示符 |2 等
+            r"[|>](?:[+-]\d*|\d+[+-]?)?", v):   # v3.5.317（轻审一般3）：含显式缩进指示符 |2 等
         lines = []
         for ln in head[m.end():].splitlines():
             if not ln.strip():

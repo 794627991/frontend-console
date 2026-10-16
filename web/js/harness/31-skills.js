@@ -54,6 +54,7 @@ function skRepoOpen() {
   }
   SK.root.classList.add('show');
   skLoadStatus();
+  _skInstZhRounds = 0;   // v3.5.318（复审 R1）：每次打开面板重置——计数器只增不减会拦住二次打开的补译
   skLoadInstalled().then(() => { if (SK.view === 'home') skRenderHome(); skInstZhPatch(); });
   skLoadHome();
 }
@@ -429,6 +430,7 @@ function skOpenDetail(key) {
 function skShowHome() {
   SK.view = 'home';
   skRenderHome();
+  skInstZhPatch();   // v3.5.318（复审 R2）：详情页安装后返回首页，新装描述回补汉化
 }
 
 let _skMd = null;   // markdown-it 实例复用；html:false 显式锁死（skills.sh 内容是第三方可发布内容）
