@@ -208,6 +208,11 @@ class AgentRegistry(object):
 
     # ---- 读侧（HTTP 线程）----
 
+    def aid_of(self, tid):
+        """tid → agentId 单查（emit 附 aid 用——锁内一次 dict 读，不拷贝）。"""
+        with self._lock:
+            return self._tid_map.get(str(tid or "")) or ""
+
     def snapshot(self):
         with self._lock:
             agents = {}

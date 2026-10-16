@@ -21,6 +21,7 @@
       doneAt: e.doneAt || 0,
       bg: !!e.bg, rounds: e.rounds || 1,
       taskId: e.agentId || '', agentId: e.agentId || '',
+      tids: (e.tids && e.tids.slice) ? e.tids.slice() : [],
       tokens: e.tokens || 0, toolN: e.toolN || 0,
       result: e.brief || '', found: e.found !== false,
       sid: sid || _HG.sid, reg: true };

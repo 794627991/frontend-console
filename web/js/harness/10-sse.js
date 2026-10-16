@@ -22,6 +22,12 @@
         // 影响，Sync 把 agentId 键权威态收编进来——名称/轮数/状态对齐）
         if (sub !== 'task_progress' && typeof _hgRegSyncSoon === 'function')
           _hgRegSyncSoon(_HG.sid);
+        // subagent-registry：镜像事件附 aid——即收即更 tidMap（_subTid 归一
+        // 零延迟，不等 2s Sync 窗口）
+        if (o.aid && o.tool_use_id) {
+          _HG.tidMap = _HG.tidMap || {};
+          _HG.tidMap[o.tool_use_id] = o.aid;
+        }
         // v2.35（P1-4/P0-1②）：Task 生命周期系统事件（主链事件、不带
         // parent_tool_use_id，但带 tool_use_id 指回 Task 调用）——
         // · task_started：is_backgrounded 标记后台代理（主回合 result 不收

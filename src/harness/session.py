@@ -1252,11 +1252,14 @@ class HarnessSession:
                     tid, o.get("subagent_type"), o.get("description"),
                     o.get("task_id"), bool(o.get("is_backgrounded")),
                     int(time.time() * 1000))
+            # subagent-registry：镜像事件附 aid（注册表归一后的 agentId）——
+            # 前端收到即更新 tidMap，live 帧归一零延迟（不等 2s Sync）
             self.emit({"kind": "subagent_started", "tid": tid,
                        "agent_type": o.get("subagent_type") or "Task",
                        "desc": str(o.get("description") or "")[:200],
                        "bg": bool(o.get("is_backgrounded")),
-                       "task_id": str(o.get("task_id") or "")})
+                       "task_id": str(o.get("task_id") or ""),
+                       "aid": (_rg.aid_of(tid)) if _rg is not None else ""})
             # v3.5.123：后台子代理登记（回合保活——在飞时不许结束大回合）
             # v3.5.124（全审P6）：只登记**真子代理**（subagent_type 非空）——
             # CLI 对 run_in_background 的 Bash 也发 is_backgrounded=true
@@ -1282,7 +1285,8 @@ class HarnessSession:
                        "brief": str(o.get("summary") or "")[:200],
                        "tokens": usage.get("total_tokens") or 0,
                        "tool_n": usage.get("tool_uses") or 0,
-                       "task_id": str(o.get("task_id") or "")})
+                       "task_id": str(o.get("task_id") or ""),
+                       "aid": (_rgN.aid_of(tid)) if _rgN is not None else ""})
 
     # ---- 事件层 ----
 

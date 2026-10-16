@@ -390,7 +390,18 @@
       if (!a.done && !(a.bg && !markErr && !forceBg)) {
         a.done = true; a.doneAt = Date.now();
         if (markErr) { a.err = true; a.interrupted = true; }
-        _subBlkFinish(id, !!a.err);   // v2.43：主 flow 段头同步定格（防假"运行中"，bg 不收尾同档案语义）
+        // subagent-registry：段卡键=tid（dataset.hgSubblock），档案键=
+        // agentId（Sync 归并后）——段收口先试 id 直查（live tid 键场景），
+        // miss 时按注册表 tids 链逐个找在场段（任一命中即收——同链段
+        // 的最后一轮已在铺底/轮询定格语义内，此处只兜异常残留）
+        const _segKeys = [id].concat((a.tids && a.tids.length) ? a.tids : []);
+        for (const sk of _segKeys) {
+          if (_HG.subBlk && _HG.subBlk[sk] && _HG.subBlk[sk].root
+              && _HG.subBlk[sk].root.isConnected) {
+            _subBlkFinish(sk, !!a.err);   // v2.43：主 flow 段头同步定格（防假"运行中"，bg 不收尾同档案语义）
+            break;
+          }
+        }
         // v3.2.6：窗格时间线同路定稿（已工作 X + 结论上移）——单行任务卡
         // 的单行态靠档案，窗格头不能永卡「工作中」
         if (_sub.tabs[id]) _subTlFinalize(id, { err: !!a.err });
