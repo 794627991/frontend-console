@@ -119,6 +119,14 @@ class AgentRegistry(object):
                 if tid not in cur["tids"]:
                     cur["tids"].append(tid)
                 self._tid_map[tid] = aid
+                # 复审F5残留②：旧 CLI 形态 task_started 曾把 wrapper task_id
+                # 采纳为键（has_pend 门卫内的合法路径）——回执提取出真实
+                # agentId 迁真键后，wrapper 键条目若只挂本 tid 则为孤儿
+                #（永 running），一并清扫
+                if known and known != aid:
+                    old = self._ag.get(known)
+                    if old is not None and old.get("tids") == [tid]:
+                        self._ag.pop(known, None)
                 cur["status"] = "err" if err else "done"
                 cur["doneAt"] = ts_ms or 0
                 cur["lastActive"] = ts_ms or 0
@@ -221,6 +229,11 @@ class AgentRegistry(object):
                     cur["bg"] = True
                 if tid and tid not in cur["tids"]:
                     cur["tids"].append(tid)
+                # 复审F2回归修复：tidMap 赋值必须无条件——迁键沿用的 pending
+                # 副本 tids 已含 tid，旧「not-in-tids 才赋值」守卫把映射整个
+                # 跳过 → 终态信号（result/notification 按 tid 反查）全丢
+                # → 首轮 Task 永卡 running（复审完整序列实证）
+                if tid:
                     self._tid_map[tid] = aid
                 if not cur["t0"]:
                     cur["t0"] = ts_ms or 0

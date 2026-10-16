@@ -175,6 +175,47 @@ def test_feed_flip_via_session():
        and a["status"] == "running" and a["desc"] == "继续审", a)
 
 
+def test_full_lifecycle_mainline():
+    """复审F2回归网：主生命周期序列（dispatch→task_started→result→
+    notification，新 CLI task_id=真实 agentId 形态）——迁键路径丢
+    tidMap 的回归恰在此序列（task_started 先迁键、result/notification
+    按 tid 反查），每个断言锁死一层。"""
+    r = AgentRegistry()
+    r.on_task_dispatch("toolu_M", "reviewer", "主序列审", 1000)
+    r.on_task_started("toolu_M", "reviewer", "主序列审", "rev_main_0001",
+                      True, 1100)
+    j1 = r.snapshot()
+    ok("主序列-started迁键", "rev_main_0001" in j1["agents"]
+       and "pending:toolu_M" not in j1["agents"], list(j1["agents"].keys()))
+    ok("主序列-started的tidMap（迁键不丢映射）",
+       j1["tidMap"].get("toolu_M") == "rev_main_0001", j1["tidMap"])
+    r.on_task_result("toolu_M", '{"agentId":"rev_main_0001","success":true}',
+                     False, 60000, 1500, 15)
+    r.on_task_notification("toolu_M", True, "PASS 主序列", 61000, 1600, 16)
+    j2 = r.snapshot()
+    a = j2["agents"]["rev_main_0001"]
+    ok("主序列-终态done", a["status"] == "done" and a["doneAt"] == 61000, a)
+    ok("主序列-brief/用量", a["brief"] == "PASS 主序列"
+       and a["tokens"] == 1600 and a["toolN"] == 16, a)
+    ok("主序列-result后tidMap仍在", j2["tidMap"].get("toolu_M") == "rev_main_0001")
+    # bg 形态同序列
+    r.on_task_dispatch("toolu_N", "Explore", "bg探查", 100)
+    r.on_task_started("toolu_N", "Explore", "bg探查", "exp_main_0002",
+                      True, 200)
+    r.on_task_notification("toolu_N", True, "bg完成", 50000, 100, 5)
+    a2 = r.snapshot()["agents"]["exp_main_0002"]
+    ok("主序列-bg通知终态", a2["status"] == "done" and a2["brief"] == "bg完成", a2)
+    # 旧 CLI wrapper 键孤儿清扫（F5 残留②）
+    r2 = AgentRegistry()
+    r2.on_task_dispatch("toolu_W", "reviewer", "旧CLI形态", 100)
+    r2.on_task_started("toolu_W", "reviewer", "旧CLI形态", "wrap_key_99",
+                       False, 200)
+    r2.on_task_result("toolu_W", "agentId: rev_true_0003", False, 900, 0, 0)
+    j3 = r2.snapshot()
+    ok("主序列-wrapper孤儿清扫", "wrap_key_99" not in j3["agents"]
+       and j3["agents"]["rev_true_0003"]["status"] == "done", list(j3["agents"].keys()))
+
+
 if __name__ == "__main__":
     test_ids_direction_f1()
     test_pending_cleanup_f2()
@@ -183,5 +224,6 @@ if __name__ == "__main__":
     test_interrupt_semantics()
     test_rebuild_merge_f7()
     test_feed_flip_via_session()
+    test_full_lifecycle_mainline()
     print("========================================================")
     print("registry tests: %d PASS" % _PASS)
