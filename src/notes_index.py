@@ -61,17 +61,22 @@ def _note_to_blocks(raw):
     """Editor.js JSON 文本 → [{kind, text}]（text 已提纯内联标签）。
     list 嵌套 items 递归展平为多行文本；table 展平 content 为 | 分隔行；
     code 标 kind='code'（双链/标签解析跳过它）。兼容 items/content 双形态
-    （旧版数据形状差异，同 editor.js doEdSearch 的既有兜底口径）。"""
+    （旧版数据形状差异，同 editor.js doEdSearch 的既有兜底口径）。
+    data 非字典（用户手改坏文件）按空处理——单坏块不炸全链路。"""
     try:
         data = json.loads(raw) if isinstance(raw, str) else (raw or {})
     except (ValueError, TypeError):
+        return [{"kind": "paragraph", "text": str(raw or "")}]
+    if not isinstance(data, dict):
         return [{"kind": "paragraph", "text": str(raw or "")}]
     blocks_out = []
     for b in (data.get("blocks") or []):
         if not isinstance(b, dict):
             continue
         t = b.get("type") or ""
-        d = b.get("data") or {}
+        d = b.get("data")
+        if not isinstance(d, dict):
+            d = {}
         kind, texts = "paragraph", []
         if t in ("paragraph",):
             texts = [d.get("text") or ""]
@@ -187,18 +192,25 @@ def _scan(force=False):
         text, err, _enc = _read_text(p, max_bytes=_MAX_FILE)
         if err:
             continue
-        if fn.lower().endswith(".note"):
-            blocks = _note_to_blocks(text)
-        else:
-            blocks = [{"kind": "line", "text": ln}
-                      for ln in text.split("\n")]
-        _CACHE[fn] = {
-            "mtime": mtime, "size": size, "blocks": blocks,
-            "links": _extract_links(blocks), "tags": _extract_tags(blocks),
-        }
+        try:
+            if fn.lower().endswith(".note"):
+                blocks = _note_to_blocks(text)
+            else:
+                blocks = [{"kind": "line", "text": ln}
+                          for ln in text.split("\n")]
+            _CACHE[fn] = {
+                "mtime": mtime, "size": size, "blocks": blocks,
+                "links": _extract_links(blocks), "tags": _extract_tags(blocks),
+            }
+        except Exception:
+            # 全审 S2：单个结构损坏的文件（JSON 合法但字段类型错）不得瘫痪
+            # 搜索/反链/标签/导出四功能——坏文件跳过，其余照常入库
+            continue
     for gone in [k for k in _CACHE if k not in seen]:
         _CACHE.pop(gone, None)           # 已删除的文件清出缓存
-    return _CACHE, skipped
+    # 浅拷贝快照：路由侧迭代快照键，并发 _scan 改活 dict 不再炸
+    # 「dictionary changed size during iteration」（全审 G1，threaded=True）
+    return dict(_CACHE), skipped
 
 
 # ==================== 路由 ====================
@@ -220,7 +232,7 @@ def _compile_query(q, regex, case):
 
 def _snippet(text, marks_abs, width=200):
     """命中行截窗：行 >width 时取首个命中前后窗，marks 坐标同步平移。
-    返回 (snippet, marks_rel)。"""
+    返回 (snippet, marks_rel)。前缀「…」占 1 字符，marks 随之 +1（全审 L1）。"""
     if len(text) <= width:
         return text, marks_abs
     first = marks_abs[0][0] if marks_abs else 0
@@ -228,8 +240,11 @@ def _snippet(text, marks_abs, width=200):
     hi = min(len(text), lo + width)
     if hi - lo < width:
         lo = max(0, hi - width)
-    rel = [[max(0, s - lo), min(len(text) - lo, e - lo)] for s, e in marks_abs]
-    return ("…" if lo > 0 else "") + text[lo:hi] + ("…" if hi < len(text) else ""), rel
+    pre = "…" if lo > 0 else ""
+    off = len(pre)
+    rel = [[max(0, s - lo + off), min(len(text) - lo + off, e - lo + off)]
+           for s, e in marks_abs]
+    return pre + text[lo:hi] + ("…" if hi < len(text) else ""), rel
 
 
 def _resolve_target(target):
@@ -356,26 +371,37 @@ def _md_list_walk(items, ordered, depth, start_num, out):
 def _blocks_to_md(blocks):
     """Editor.js blocks（原始 data，含内联 HTML）→ Markdown 文本。
     映射表见 designer 方案 v3.5.299（vendor 实测形状）。[[双链]]/#tag 原样
-    保留（Obsidian 原生兼容——导出的核心收益）。"""
+    保留（Obsidian 原生兼容——导出的核心收益）。
+    全审 S3：畸形字段（level 非 int/meta 非字典/table 行全非 list）逐处防御，
+    坏块降级不炸导出。"""
+    if isinstance(blocks, dict):
+        blocks = blocks.get("blocks")   # 全审 F1：前端传 OutputData 包装对象 {blocks,time,version}
     out = []
     for b in blocks or []:
         if not isinstance(b, dict):
             continue
         t = b.get("type") or ""
-        d = b.get("data") or {}
+        d = b.get("data")
+        if not isinstance(d, dict):
+            d = {}
         if t == "paragraph":
             out += ["", _md_inline(d.get("text") or "")]
         elif t == "header":
-            lvl = max(1, min(3, int(d.get("level") or 2)))
+            try:
+                lvl = max(1, min(3, int(d.get("level") or 2)))
+            except (TypeError, ValueError):
+                lvl = 2
             out += ["", "#" * lvl + " " + _md_inline(d.get("text") or "")]
         elif t in ("list", "nestedList", "olUL"):
             lines = []
             ordered = (d.get("style") == "ordered")
             start = 1
-            try:
-                start = int((d.get("meta") or {}).get("start") or 1)
-            except (TypeError, ValueError):
-                start = 1
+            meta = d.get("meta")
+            if isinstance(meta, dict):
+                try:
+                    start = int(meta.get("start") or 1)
+                except (TypeError, ValueError):
+                    start = 1
             _md_list_walk(d.get("items"), ordered, 0, start, lines)
             if lines:
                 out += [""]
@@ -399,10 +425,12 @@ def _blocks_to_md(blocks):
             out += ["", fence, code, fence]
         elif t == "table":
             rows = d.get("content") or []
-            if rows:
-                width = max(len(r) for r in rows if isinstance(r, list))
+            list_rows = [r for r in rows if isinstance(r, list)]
+            if list_rows:
+                width = max(len(r) for r in list_rows)
                 out += [""]
-                head = [_md_table_cell((rows[0] or [""])[i]) if i < len(rows[0]) else ""
+                r0 = rows[0] if isinstance(rows[0], list) else []
+                head = [_md_table_cell(r0[i]) if i < len(r0) else ""
                         for i in range(width)]
                 out.append("| " + " | ".join(head) + " |")
                 if d.get("withHeadings"):
@@ -411,7 +439,7 @@ def _blocks_to_md(blocks):
                     # GFM 结构必需表头分隔行：无表头语义时输出空表头占位
                     out.append("|" + "|".join(["   "] * width) + "|")
                     out.append("|" + "|".join([" --- "] * width) + "|")
-                for r in rows[(1 if d.get("withHeadings") else 0):]:
+                for r in list_rows[(1 if d.get("withHeadings") else 0):]:
                     cells = [_md_table_cell(r[i]) if i < len(r) else ""
                              for i in range(width)]
                     out.append("| " + " | ".join(cells) + " |")
@@ -463,9 +491,16 @@ def notes_export_md():
                         "exists": True}), 409
     try:
         tmp = out + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            f.write(md)
-        os.replace(tmp, out)
+        try:
+            # newline=""：禁 Windows 换行翻译，与 /api/ed/save 落盘口径一致（全审 L3）
+            with open(tmp, "w", encoding="utf-8", newline="") as f:
+                f.write(md)
+            os.replace(tmp, out)
+        except OSError:
+            if os.path.exists(tmp):
+                try: os.remove(tmp)   # 全审 L3：失败不留 .tmp 残骸
+                except OSError: pass
+            raise
     except OSError as e:
         return jsonify({"ok": False, "err": "写入失败: %s" % e}), 500
     return jsonify({"ok": True, "name": out_name})

@@ -106,8 +106,13 @@ async function nnOpenAndJump(name, line) {
     if (c && c.meta && c.meta.kind === 'editor' && c.meta.label === name) { conn = c; break; }
   }
   if (!conn) return;
-  // .note 的 Editor.js 实例化是异步的：等 editor 就绪再跳块（上限 3s 兜底）
-  for (let i = 0; i < 30 && !conn.editor && !conn.monaco && !conn.ta; i++) {
+  // .note 的 Editor.js 实例化同步、块渲染异步（全审 G2：旧条件恒零等待）——
+  // 等 .ce-block 首块渲染出来再跳（上限 3s 兜底；Monaco/ta 同步就绪直接过）
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
+    if (conn.monaco || conn.ta) break;
+    if (conn.editor && conn.holder
+        && conn.holder.querySelectorAll('.ce-block').length > 0) break;
     await new Promise(r => setTimeout(r, 100));
   }
   nnJumpLine(conn, line);
@@ -252,11 +257,13 @@ function nnBindWikiClick(conn) {
     if (!m) return;
     e.preventDefault(); e.stopPropagation();
     const target = m[1].trim();
-    const j = conn._nnLinks;
-    const hit = j && j.outgoing && j.outgoing.find(x => x.target === target);
-    const resolved = hit ? hit.resolved : null;
-    if (resolved) nnOpenAndJump(resolved, 1);
-    else nnConfirmCreate(target, conn);
+    // 全审 S1：面板数据（conn._nnLinks）只在面板开过才有——默认态不能依赖它
+    // 判「不存在」。先候选名探测（命中已存在文件即打开），全失败才走新建确认。
+    const hit = conn._nnLinks && conn._nnLinks.outgoing
+      && conn._nnLinks.outgoing.find(x => x.target === target);
+    if (hit && hit.resolved) { nnOpenAndJump(hit.resolved, 1); return; }
+    nnTryOpen([target, target + '.note', target + '.md', target + '.txt'],
+      target, conn);
   }, true);
 }
 function _nnTextAtPoint(e) {
@@ -330,13 +337,8 @@ function nnLinkifyPreview(pv, conn) {
       if (!a) return;
       e.preventDefault();
       const t = a.dataset.nnw;
-      // 面板数据里查已解析目标；没有则即时探测（save_as 前先确认）
-      fetch('/api/notes/backlinks?name=' + encodeURIComponent(t + '.note'))
-        .then(r => r.json()).then(j => {
-          // backlinks 是反向查询，这里复用 resolve 语义：直接尝试常见后缀打开
-          const cand = [t, t + '.note', t + '.md', t + '.txt'];
-          nnTryOpen(cand, t, conn);
-        }).catch(() => nnTryOpen([t, t + '.note'], t, conn));
+      // 全审 L2：候选名直接探测打开（旧死请求 backlinks 响应未用，删）
+      nnTryOpen([t, t + '.note', t + '.md', t + '.txt'], t, conn);
     });
   }
 }
