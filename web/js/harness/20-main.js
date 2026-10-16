@@ -2042,7 +2042,6 @@ function buildClaudeHarnessTab(opts = {}) {
     else _hgInput.focus();
   })();
   return _hgConn;
-  return _hgConn;
 }
 
   // ==================== v3.2.10：回合导航轨（ZCode ConversationTurnNavigator 同款）====================

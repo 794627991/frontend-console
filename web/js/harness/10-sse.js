@@ -67,11 +67,30 @@
           _subDrop(tid);
           if (tid) {
             const _to = (_HG.peerSent || {})[tid];
-            const _real = (_to && /^[0-9a-zA-Z_-]{8,64}$/.test(String(_to)))
-              ? String(_to) : '';
+            // v3.5.315：merge 保真——SendMessage tool_use 时已建过档案
+            //（10-sse SendMessage 分支：taskId=input.to 真实 id、t0=派发
+            // 时刻）。旧码此处整体覆盖重建，peerSent miss（事件乱序/重放）
+            // 时降级 taskId=包装 task_id 把正确关联链砸断 → _subTid 归一
+            // miss → 单开第二个 tab/胶囊双条目（用户实锤「续派出现两个
+            // 子代理」）。优先沿用旧档的可信 taskId/desc/t0，新事件只补
+            // 缺失字段
+            const _prev = (_HG.agents || {})[tid] || null;
+            const _prevReal = (_prev && !_prev.unresolved && _prev.taskId
+              && /^[0-9a-zA-Z_-]{8,64}$/.test(String(_prev.taskId)))
+              ? String(_prev.taskId) : '';
+            const _real = _prevReal
+              || ((_to && /^[0-9a-zA-Z_-]{8,64}$/.test(String(_to)))
+                ? String(_to) : '');
             (_HG.agents || (_HG.agents = {}))[tid] = {
-              type: o.subagent_type || 'Task', desc: o.description || '',
-              t0: Date.now(), done: false, doneAt: 0,
+              type: o.subagent_type || 'Task',
+              // desc：CLI 对 SendMessage 续派恒不带 description——保旧档
+              // 已解析名，再退 _peerDesc（对齐 v3.5.296 非 collab 分支），
+              // 胶囊/目录才显示任务名而非「协作代理」
+              desc: o.description || (_prev && _prev.desc)
+                || (typeof _peerDesc === 'function'
+                  ? _peerDesc(_to, (_HG.peerMsg || {})[tid]) : ''),
+              t0: (_prev && _prev.t0) || Date.now(),
+              done: false, doneAt: 0,
               collab: true, bg: true,
               // v3.5.158：peerSent miss 时 taskId 降级为包装 task_id（无转写
               // 的「幻影档案」）——unresolved 标记让 _subReopen/_subDirRowClick

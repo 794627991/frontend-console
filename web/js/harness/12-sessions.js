@@ -547,6 +547,10 @@
           else grpFinalize(true, { hist: true, turnEnd: true });   // 幂等兜底（渲染器内已定稿则早退）；v3.2.2 turnEnd
           _hgDiag('cold', '冷开重建 lines=' + j.lines.length + ' busy=' + !!j.busy + ' phResume=' + (j.busy ? '已带参调' : '跳过'));
           _hgLiveAgentsRestore(sid);   // v3.4.52：转写重渲路同样回填运行中子代理 live 档案
+          // v3.5.315：F5/关 tab 后内存桶已灭，restore 必 no-op——补拉一次
+          // /events 让 proj 真源补种（_hgProjAgentsSeed→再 restore 覆写 hist
+          // 工厂盖的假完成徽章）；顺带对齐 busy/epoch（与快照命中路同款）
+          _hgEventsPoll(sid);
           _hgAskSync(sid);   // v3.4.61：冷开路 seq 已跳过 ask 帧——待答面板靠后端快照拉回
           _hgScrollBottom(true);              // 切会话回底（不受翻历史保护限制）
           // v3.4.68（用户实锤「每次重开都不是直达底部的」）：回底后图片懒加载/

@@ -83,6 +83,14 @@
     // v3.4.56（轻审复核 P3 收口）：运行中 live 档案的同 desc 回放条目滤除——
     // restore 时序/重建/快照各路差异全部在产出侧一处收口，目录不再双条
     const _runDescs = new Set();
+    // v3.5.315：链去重——collab 包装（SendMessage 续派）的原代理档案在场
+    //（非 collab 档案的 agentId/taskId===包装 taskId）时包装跳过，目录只出
+    // 原代理一条（旧码两档案各出一行=「续派后目录两个子代理」）。判定排除
+    // 包装自匹配（跨会话协作本会话无原代理，照常单列）；unresolved 幻影
+    //（taskId 降级）不滤——它是该链唯一线索
+    const _agAll = Object.values(_HG.agents || {});
+    const _origHit = (peer, self) => _agAll.some(x => x && x !== self && !x.collab
+      && (x.agentId === peer || x.taskId === peer));
     for (const tid in (_HG.agents || {})) {
       const a = _HG.agents[tid];
       // v3.5.306b（用户实锤「明明有至少一个设计一个审核的，目录啥都没有」）：
@@ -92,6 +100,7 @@
       // 仍无 id 的保持退出（点开必空的场景不复活）
       if (!a || a.replay) continue;
       if ((a.collab || (a.type || '') === 'Task') && !a.taskId && !a.agentId) continue;
+      if (a.collab && a.taskId && !a.unresolved && _origHit(a.taskId, a)) continue;
       if (!a.done && a.desc) _runDescs.add(a.desc);
       rows.push(Object.assign({ tid }, a));
     }

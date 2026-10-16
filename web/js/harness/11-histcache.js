@@ -20,7 +20,6 @@
       // 且 193 轮历史看不见）。RO 恒 start=0 全渲（v3.5.62 只读=看全量的
       // 既有定调），归档条自插仅 start>0 时天然不触发
       start = 0;
-      start = Math.min(start, lines.length);
     } else {
       const TURN_N = 20;
       start = lines.length;

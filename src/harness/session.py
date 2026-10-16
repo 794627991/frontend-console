@@ -126,21 +126,21 @@ class HarnessSession:
         # fired_at/streak）与 send_message 边界清零（HTTP/泵/HikLink 线程）
         # 并发穿插会吞违规/残留 fired_at 压制新触发
         self._audit_lock = threading.Lock()
-        # v2.40：light 形态事中闸的 --settings 临时文件路径（kill 时清理；
-        # revive 重启由 start() 重建——hooks 是进程启动参数，活进程不热更）
+        # v3.5.314（用户定调恢复事中闸，推翻 v3.5.51 退役）：light 形态
+        # --settings 临时文件路径（kill 时清理；revive 由 start() 重建——
+        # hooks 是进程启动参数，活进程不热更）。v2.40 同款赋值已并入本条
+        # （v3.5.315 清理改稿残留的重复赋值）
         self._audit_settings_path = None
         # v3.5.123（用户口径「子代理在飞不许结束大回合」）：后台子代理在飞
         # 登记表 + hold 旗——主链 result 到达但仍有 is_backgrounded 任务在跑
         # 时：busy 保持、审计结算挂起（defer 到真终点）、前端 turn_hold 保持
         # 工作中；三级温和探活兜底见 _bg_monitor（分级提示/集空闲置/■中断）——v3.5.182 硬顶退役
-        self._bg_tasks = {}      # tid → {"t0": epoch, "desc": str, "slow": bool}
+        # v3.5.315：slow 键死字段清除（v3.5.183 三档探活改用 p30/p45/p60 后
+        # 全仓零读取）
+        self._bg_tasks = {}      # tid → {"t0": epoch, "desc": str}
         self._held = False
         self._bg_mon_started = False
         self.last_result = None
-        # v3.5.314（用户定调恢复事中闸，推翻 v3.5.51 退役）：light 形态
-        # --settings 临时文件路径（kill 时清理；revive 由 start() 重建——
-        # hooks 是进程启动参数，活进程不热更）
-        self._audit_settings_path = None
         # v3.5.98：会话创建时的 API 方案名（跨方案发消息拦截依据）。切方案
         # 会换网关/模型映射/上下文窗口，旧会话续发必然错位（上下文大小不一
         # 致/模型名不被新网关认）。None=升级前的旧会话（无标记），按用户拍板
@@ -284,7 +284,7 @@ class HarnessSession:
             # 性；reviewed 在场不拦=v3.5.313 豁免语义；strong/mid 不入闸：
             # 直改常态，回合结算审计兜底）。注入失败照常启动（闸是增强不是
             # 依赖，结算审计仍在兜底）。
-            _st_audit = _audit_state()
+            _st_audit = self._audit_state()
             if _st_audit is not None and not _st_audit[2]:
                 _p = _audit_hook_settings_path()
                 if _p:
@@ -1182,8 +1182,7 @@ class HarnessSession:
             # （v3.4.43 实锤），fire-and-forget shell 不该锁大回合至硬顶
             if o.get("is_backgrounded") and str(o.get("subagent_type") or "").strip():
                 self._bg_tasks[tid] = {"t0": time.time(),
-                                       "desc": str(o.get("description") or "")[:80],
-                                       "slow": False}
+                                       "desc": str(o.get("description") or "")[:80]}
                 self._bg_monitor_ensure()
         elif sub == "task_notification":
             # v3.5.123：完成即注销（保活集合收缩；未知 tid 静默跳过）

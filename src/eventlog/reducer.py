@@ -76,6 +76,10 @@ def apply_event(proj, ev):
         ag[str(ev.get("tid") or "")] = {
             "type": ev.get("agent_type") or "Task", "desc": ev.get("desc") or "",
             "bg": bool(ev.get("bg")), "task_id": ev.get("task_id") or "",
+            # v3.5.315：起跑时刻进投影（信封 ts）——前端刷新/切会话后从
+            # proj 真源重建运行中档案时秒表不归零（此前前端只能拿「重建
+            # 时刻」近似，长跑代理时长凭空缩水）
+            "t0": ev.get("ts") or 0,
             "done": False, "err": False, "tokens": 0, "tool_n": 0}
         p["agents"] = ag
     elif t == SessionEventType.SUBAGENT_RESULT:

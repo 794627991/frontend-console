@@ -52,7 +52,8 @@
       }
     } else if (t === 'subagent_started') {
       p.agents[it.tid] = { type: it.agent_type || 'Task', desc: it.desc || '',
-                           bg: !!it.bg, taskId: it.task_id || '', done: false,
+                           bg: !!it.bg, taskId: it.task_id || '',
+                           t0: it.ts || 0, done: false,
                            err: false, tokens: 0, toolN: 0 };
       dirty = true;
     } else if (t === 'subagent_result') {
@@ -119,7 +120,39 @@
       _HG.proj = Object.assign(base, j.proj);
       _HG.proj.turnTools = Object.assign(_hgEmptyTools(), j.proj.turn_tools || {});
       _HG.proj.toolsTotal = Object.assign(_hgEmptyTools(), j.proj.tools_total || {});
+      _hgProjAgentsSeed(j.proj);
       renderSideStatus();
+    }
+  }
+  // v3.5.315：服务端真源接线——proj.agents 里仍在跑（done:false）的子代理
+  // 补种进 _HG.liveAgentsBy[sid] 桶。此前刷新（F5）/关 tab 后内存桶全灭，
+  // _hgLiveAgentsRestore 空转 no-op，运行中子代理被 hist 工厂盖「completed」
+  // 假完成徽章、subagent_tail 轮询也因无档案停喂——后端投影（事件流归约
+  // 的服务端真相）一直随 /events 下发却零消费。补种后既有 restore 全链
+  // （行回绑/秒表复活/目录/胶囊）自动工作。桶内已有更富的前端档案时不覆盖
+  // （只有 done 翻转由既有通知路径负责）。
+  function _hgProjAgentsSeed(proj) {
+    const sid = proj && proj.sid;
+    const pa = proj && proj.agents;
+    if (!sid || !pa) return;
+    let seeded = 0;
+    _HG.liveAgentsBy = _HG.liveAgentsBy || {};
+    const tgt = _HG.liveAgentsBy[sid] = _HG.liveAgentsBy[sid] || {};
+    for (const tid in pa) {
+      const a = pa[tid];
+      if (!a || a.done || tgt[tid]) continue;
+      tgt[tid] = {
+        type: a.type || 'Task', desc: a.desc || '',
+        t0: a.t0 || 0, done: false, doneAt: 0,
+        bg: !!a.bg, taskId: a.task_id || a.taskId || '',
+        err: false, sid: sid, projSeed: true };
+      seeded++;
+    }
+    if (seeded) {
+      // 当前就是本会话 → 立即回填（restore 内部自建 _HG.agents 并行回绑/
+      // 秒表复活；F5 冷开路 hist 工厂已先跑完盖了假完成徽章，此处是覆写
+      // 运行态的唯一时机。行卡 miss 无害——档案先进目录/胶囊，行回绑幂等）
+      if (_HG.sid === sid) _hgLiveAgentsRestore(sid);
     }
   }
   async function _hgQueueSeed(sid) {
