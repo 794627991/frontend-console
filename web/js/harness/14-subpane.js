@@ -85,21 +85,21 @@
     const _runDescs = new Set();
     for (const tid in (_HG.agents || {})) {
       const a = _HG.agents[tid];
-      // v3.4.43：collab 档案（SendMessage 协作包装）归 C 区转交线展示，
-      // 不进子代理目录（无转写可回放，点开必「未找到转写」空 tab）
-      if (!a || a.replay || a.collab) continue;
-      // v3.5.163（用户拍板「task和后台一样退出目录，task不体现在目录里面」）：
-      // Task 类型条目退全——目录只留具名角色（designer/reviewer/通用子代理
-      // 等）；Task 的查看入口在消息流协作段头▣回放/胶囊/转交线（v3.5.160
-      // 必达体系），总览在顶部「子代理执行中」状态胶囊
-      if ((a.type || '') === 'Task') continue;
+      // v3.5.306b（用户实锤「明明有至少一个设计一个审核的，目录啥都没有」）：
+      // collab/Task 曾因「无转写可回放」退目录（v3.4.43/v3.5.163）——前提已
+      // 变：v2.46R 起 task_started 修正路径回填 a.taskId=真实 agentId（转写
+      // 可达），v3.5.296 起建档即补 desc 原名。有 id 可回放即放行进目录；
+      // 仍无 id 的保持退出（点开必空的场景不复活）
+      if (!a || a.replay) continue;
+      if ((a.collab || (a.type || '') === 'Task') && !a.taskId && !a.agentId) continue;
       if (!a.done && a.desc) _runDescs.add(a.desc);
       rows.push(Object.assign({ tid }, a));
     }
     for (const a of ((_HG.dyn && _HG.dyn.agentsRpl) || [])) {
       if (a.desc && _runDescs.has(a.desc)) continue;   // v3.4.56:同名回放条目让位运行中
       if ((a.doneAt || a.t0 || 0) < _dayStart) continue;   // v3.5.147：当天闸
-      if ((a.type || '') === 'Task') continue;   // v3.5.163：Task 退目录（同上）
+      // v3.5.306b：Task/协作回放条目同款放行（有 agentId 可回放即进，同上）
+      if ((a.type || '') === 'Task' && !a.agentId) continue;
       // rid 补发（与 _dynAgents 同款持久发号——条目点击按 rid 回查存档）
       if (!a.rid) a.rid = 'rpl' + ((_HG.rplSeq = (_HG.rplSeq || 0) + 1));
       rows.push(Object.assign({ tid: a.rid, rpl: true }, a));
