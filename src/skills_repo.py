@@ -609,6 +609,11 @@ def pack_apply(token, names, overwrite=False):
                 prefix = "skills/" + nm + "/"
                 arcs = [a for a in all_arcs
                         if a.startswith(prefix) and not a.endswith("/")]
+                # 只留 slip 防护通过的有效条目——全被拦时按「包内无文件」拒绝
+                #（否则 done files:0 报成功留空壳，复审 N1 续审点名的残留边缘）
+                arcs = [a for a in arcs
+                        if not (".." in a[len(prefix):] or ":" in a[len(prefix):]
+                                or os.path.isabs(a[len(prefix):]))]
                 if not arcs:
                     failed.append({"name": nm, "err": "包内无文件"})
                     continue
