@@ -96,22 +96,29 @@ class AgentRegistry(object):
                 self._ag["pending:" + tid] = ent
 
     def on_send_message(self, tid, to, message_first_line, ids_map, ts_ms):
-        """③ SendMessage tool_use——to 归链建轮（agentId 直连或角色名经
-        Task 结果回填的 agentId→角色 映射解析）。归链失败（跨会话协作）
-        不建条目（注册表只管本会话派出的子代理）。"""
+        """③ SendMessage tool_use——to 归链建轮。归链判定顺序（冒烟实测
+        bug 修正：'reviewer' 恰 8 字符合法 id 形态，先判形态会把角色名当
+        agentId 建独立条目=归链失败）：
+          ① ids_map（Task 回执回填的 角色→agentId 映射）优先
+          ② to 本身是注册表现有键（首轮已回填 agentId 的直连续派）
+          ③ 都不中=跨会话协作/无效寻址——不建条目（注册表只管本会话派出
+            的子代理；to 形如 id 但从未在本会话出现过的场景必然如此——
+            本会话续派的前提是首轮完成、agentId 已回填在场）
+        """
         to = str(to or "").strip()
-        aid = to if _looks_id(to) else str((ids_map or {}).get(to) or "")
-        if not _looks_id(aid):
-            return
         with self._lock:
+            aid = str((ids_map or {}).get(to) or "")
+            if not aid:
+                aid = to if (to and to in self._ag) else ""
+            if not aid:
+                return
             cur = self._ag.get(aid)
             if cur is None:
-                # 链首档案不在（重启后增量先到/转写丢失）——轻条目兜底，
-                # 下次全量重建会补全 desc/type
+                # 竞态兜底：ids_map 命中但条目被重建置换等罕见路径
                 cur = self._ag[aid] = {
                     "agentId": aid, "found": True, "type": "SendMessage",
                     "desc": "", "status": "running",
-                    "t0": ts_ms or 0, "doneAt": 0, "rounds": 1,
+                    "t0": ts_ms or 0, "doneAt": 0, "rounds": 0,
                     "lastActive": ts_ms or 0, "tids": [],
                     "tokens": 0, "toolN": 0, "brief": ""}
             cur["rounds"] += 1

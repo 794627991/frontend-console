@@ -1135,7 +1135,10 @@ def harness_agents():
     if not s:
         return jsonify({"ok": False, "err": "会话不存在"}), 404
     snap = s._registry.snapshot()
-    if not snap["rebuilt"] and not s.busy and not s.alive:
+    # 冒烟实测 bug 修正：重建判据收紧为「有 CLI 历史（session_id 在场）且
+    # 进程已死」——空 session_id 的新会话/未连接会话 not alive 恒真，旧判据
+    # 每查都触发空重建把增量注册表覆盖清零
+    if (not snap["rebuilt"] and s.session_id and not s.busy and not s.alive):
         # 进程已死（重启场景）：扫转写重建（live 增量不在途，静态事实为准）；
         # 活会话的增量链更及时，不重建（rebuilt 标记保持 False——进程死后的
         # 首查才补）
