@@ -57,7 +57,7 @@
     // 工作事件不消费不清除，防跨会话污染：B 误 reopen 自己的组）
     if (_HG.compactResume && _HG.compactResume === _HG.sid) {   // v3.4.55(轻审P6):真值前置防 null===null 假命中
       _HG.compactResume = null;
-      const _rg = _hgTurnReopen();
+      const _rg = _hgTurnReopen(true);   // 压缩开始 grpFinalize 切断的组——合法复活场景
       if (_rg) return _rg;
     }
     // 快照恢复（切会话切回）后 _HG.grp 失联 → 扫 flow 最后一个组接回来。
@@ -555,10 +555,16 @@
   // 工作期断层后的机器唤醒开新头才诚实；老快照无 fTs 放行（宽口径，铁律优先）。
   // 历史重建期禁用（历史侧靠 sysnote/peer 行不定稿自然合并）。幂等：活组直接返。
   const _HG_REOPEN_MAX_GAP_MS = 30 * 60 * 1000;
-  function _hgTurnReopen() {
+  function _hgTurnReopen(allowFinalized) {
     if (_HG.openState) return null;
     if (_HG.grp && _HG.grp.root && _HG.grp.root.isConnected) return _HG.grp;
-    const root = [..._hgFlow.querySelectorAll('.h-grp')].pop();
+    // v3.5.296b（用户实锤「上一回合已结束，没收起来」15m44s 秒表续走）：
+    // 默认不接已定稿组——init/cli_stream 的新轮把上一组删 finalized 复活
+    // =完结回合被拉回「工作中」。复活仅限两个合法续跑场景显式放行：
+    // peer 协作回传（v3.3.2 D4 空闲期回传续跑落原组）/ compactResume
+    //（v3.4.36 压缩开始切断的组接回）。与 grpEnsure v2.18.1 同口径
+    const root = [..._hgFlow.querySelectorAll(allowFinalized
+      ? '.h-grp' : '.h-grp:not([data-finalized])')].pop();
     if (!root) return null;
     const tb = root.querySelector(':scope > .h-grp-proc > .h-turn-body > .h-drawer.think');
     if (!tb || !root.querySelector('.h-tl')) return null;   // 旧结构/异常组不接（同 _hgTailAdopt 判据）

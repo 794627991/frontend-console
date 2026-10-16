@@ -13,7 +13,7 @@
         _HG.initN = (_HG.initN || 0) + 1;
         // v3.3.2(P7)：init#2=CLI 自发新回合（机器唤醒：后台代理完成/协作回传）
         // ——亮运行态的同时重开上一回合（30min 护栏），续跑工作回原组不切头
-        if (_HG.initN > 1 && (!_HG.busy || _HG.hold)) { setBusy(true); _hgTurnReopen(); }
+        if (_HG.initN > 1 && (!_HG.busy || _HG.hold)) { setBusy(true); _hgTurnReopen(false); }
         else if (!_HG.busy) setBusy(false);
       } else if (sub === 'task_started' || sub === 'task_progress'
                  || sub === 'task_notification') {
@@ -265,7 +265,7 @@
       // 没观察到起点的回合正在跑（后端同规则已置 busy，这里即时亮，不等
       // 5s 自愈轮询——轮询间隔内徽章空窗正是用户看到的「运行状态消失」）
       // v3.3.2(P7)：空闲期 assistant 到达多为机器唤醒续跑——同步重开上一回合
-      if (!isSub && !_HG.busy && _HG.sid) { setBusy(true); _hgTurnReopen(); }
+      if (!isSub && !_HG.busy && _HG.sid) { setBusy(true); _hgTurnReopen(false); }
       // v2.20：网关下 result 事件的 usage 常缺失（用户实测环恒 0%）——
       // assistant 事件的 message.usage 同口径（转写实测有值：input+cache_read+
       // cache_creation），到达即刷环，不依赖 result
@@ -1023,7 +1023,7 @@
       // v3.3.2(D4)：协作回传不切割回合（renderPeer v3.2.15 注释的既定意图，
       // 分派处 grpFinalize 是残留矛盾）——先重开上一回合再渲染，回传唤醒的
       // 续跑工作才落回原组；空闲期回传是 P7 主场景
-      else if (it.kind === 'peer') { _hgTurnReopen(); renderPeer(it.name, it.text, it.to); }
+      else if (it.kind === 'peer') { _hgTurnReopen(true); renderPeer(it.name, it.text, it.to); }
       // v3.5.123（用户口径「子代理在飞不许结束大回合」）：后端 hold 保活事件
       else if (it.kind === 'turn_hold') {
         _HG.hold = true;
