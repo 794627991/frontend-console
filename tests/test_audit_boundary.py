@@ -109,3 +109,22 @@ def test_designer_flag_cross_result():
     s._audit["lines"] = 360
     s._audit_settle("result")     # 新增量超线再触发——但设计档仍被旗豁免
     assert s._audit["designer"] is True, "designer 旗不该被结算清掉"
+
+
+def test_reviewed_exempts_design_line():
+    """v3.5.313（用户实锤「已经多次审计过了就不能再派设计了」）：本回合已
+    派过 reviewer（审计链已建立）→ 设计线豁免——回修/审计驱动迭代回合不再
+    触发设计档（改动质量由 reviewer 对抗审计兜底）。"""
+    s = _mk_session()
+    s._audit_state = lambda: ("auto", (100, 200, 250), True)   # strong：需审线=250
+    s._audit["lines"] = 200      # 达设计线(150)、未达审线(250)——纯设计档场景
+    s._audit["reviewer"] = True  # 审计链已建立（回修类回合的标志）
+    s._audit_settle("result")
+    assert s._audit["fired_at"] == 0, "reviewed 在场：设计档应被豁免（不触发）"
+    # 对照：reviewer 不在场时同水位触发（既有 test_design_line 已覆盖，此处
+    # 再验一次同桩隔离对照）
+    s2 = _mk_session()
+    s2._audit_state = lambda: ("auto", (100, 200, 250), True)
+    s2._audit["lines"] = 200
+    s2._audit_settle("result")
+    assert s2._audit["fired_at"] == 200, "无 reviewer 时设计档照常触发"

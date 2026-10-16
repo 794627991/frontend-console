@@ -563,7 +563,12 @@ class HarnessSession:
                 viol.append("主会话直改累计 %d 行，超过轻审线（≤%d 行）属大改，其中 %d 行尚未派 reviewer 取证级全审"
                             % (lines, l2l, unaudited))
         dl = design_limit(cfg=_cfg)   # P8+v3.5.122：与 audit_limits 同一 _cfg 快照（零二次读）
-        if dl > 0 and not designed and lines >= dl and lines > fired:
+        # v3.5.313（用户实锤「已经多次审计过了就不能再派设计了」）：设计线
+        # 豁免**本回合已派过 reviewer** 的回合——设计线的初衷是方向未定时
+        # 方案先行（审计链未建立）；一旦 reviewer 在场，改动已在对抗审计链
+        # 内约束（FAIL 列必修→修→复审验收），再要求 designer 出方案=机制
+        # 空转。审计回修/审计驱动迭代类回合自此不再触发设计档。
+        if dl > 0 and not designed and not reviewed and lines >= dl and lines > fired:
             viol.append("主会话直改累计 %d 行，达到设计线（≥%d 行）属大改，尚未先派 designer 出框架方案——大改须方案先行"
                         % (lines, dl))
         if not viol:
