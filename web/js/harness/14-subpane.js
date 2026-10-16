@@ -760,7 +760,11 @@
       // 兜底；镜像断了轮询就是唯一跟随通道——无论断因，永远在刷新。
       try {
         const _aF = cur.tid0 ? ((_HG.agents || {})[cur.tid0] || (_HG.agents || {})[tid]) : null;
-        if (_aF && !_aF.done && _sub.active === tid) {
+        // v3.5.327（用户实锤「全部不跟随！不刷新！」）：活判定改链式——归一
+        // 键的单档案在「断了，重来」（interrupt sweep 收 err+done）后判死，
+        // 但 SendMessage 续派包装在链上活着；旧判定把无条件跟随轮询整个废
+        // 掉，tab 停在断流瞬间的 3 行。链上任一在跑=tab 活着=永远刷新
+        if (_aF && (!_aF.done || _subAgRunning(tid)) && _sub.active === tid) {
           // ① 活档案覆写定稿——「保持工作中」
           if (t.done) { t.done = false; t.durTxt = ''; _subTlHeadPaint(t); }
           // ② 无条件轮询（10s 节流；拉取在途/手动重拉期不并发）
@@ -783,10 +787,21 @@
                   // /轮询自然停→行卡定稿→胶囊/目录计数归位）
                   const _fin = _rowsF.length && _rowsF[_rowsF.length - 1].k === 'final'
                     ? _rowsF[_rowsF.length - 1] : null;
-                  if (_fin && _aF && !_aF.done) {
+                  // v3.5.327：final 收口扩整链——单档案已 done（中断 sweep 收过）
+                  // 但续派包装在跑时，旧判定跳过收口=包装永挂运行；转写终态是
+                  // 整条链（同 agentId）的权威终点，链上活跃档案一并收
+                  if (_fin && _aF && (!_aF.done || _subAgRunning(tid))) {
                     _aF.done = true; _aF.doneAt = Date.now();
                     _aF.result = String(_fin.text || _aF.result || '').slice(0, 2000);
                     _aF.err = !!_fin.err;
+                    for (const k in (_HG.agents || {})) {
+                      const x = (_HG.agents || {})[k];
+                      if (x && !x.done && x.taskId
+                          && (x.taskId === _aF.taskId || x.taskId === _aF.agentId)) {
+                        x.done = true; x.doneAt = Date.now();
+                        x.result = x.result || _aF.result; x.err = x.err || _aF.err;
+                      }
+                    }
                     try {
                       const _rowF = (_HG.rowById || {})[cur.tid0] || (_HG.rowById || {})[tid];
                       if (_rowF && typeof _hgAgentRowState === 'function')
@@ -946,7 +961,11 @@
     // 已结束=回放 tab（置灰徽章）。回放拉底机制不变（运行中也拉全量打底，
     // fetch 期挡增量/完成放行既有），仅 tab 态不再误标
     const _a2 = a.done === undefined ? ((_HG.agents || {})[tid0] || {}) : a;
-    const _alive = (alive === true) || (alive !== false && _a2 && !_a2.done);
+    // v3.5.327（用户实锤 tab 挂「回放」角标但头部「实况·跟随中」）：活判定
+    // 改链式——归一键单档案被中断 sweep 收死后，tab 角标误标回放；链上
+    //（同 taskId 的续派包装）任一在跑即实况 tab（与 1214 头部判定同源）
+    const _alive = (alive === true)
+      || (alive !== false && ((_a2 && !_a2.done) || _subAgRunning(tid) || _subAgRunning(tid0)));
     _subOpen(tid, type, desc, !_alive);
     const sc = _sub.tabs[tid] && _sub.tabs[tid].sc;
     if (!sc) return;

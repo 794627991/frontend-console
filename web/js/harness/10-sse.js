@@ -433,14 +433,26 @@
               // 识图不建（转交通道不同）
               if (/^[0-9a-zA-Z_-]{8,64}$/.test(_aid0)) {
                 const _aid = _aid0;
+                // v3.5.327（用户实锤胶囊「✦4 协作代理」名字全不对）：建档即补
+                // 任务名（消息首行）——旧 desc:'' 要等 task_started merge 才补，
+                // CLI 不发 task_started 或事件乱序时胶囊/目录一直显示类型兜底
+                // 「协作代理」而非任务内容
                 (_HG.agents || (_HG.agents = {}))[b.id] = {
-                  type: 'SendMessage', desc: '', t0: Date.now(),
+                  type: 'SendMessage',
+                  desc: (typeof _peerDesc === 'function'
+                    ? _peerDesc(_aid, String(b.input.message || '').trim()) : '')
+                    || ((_HG.peerMsg || {})[b.id] || ''),
+                  t0: Date.now(),
                   done: false, doneAt: 0, collab: true, bg: true, taskId: _aid };
                 const _disp2 = (_HG.peerNames || {})[_aid] || _aid;
+                // v3.5.327：段头名对齐档案 desc（任务名优先）——旧硬编码
+                // 「审核 · id尾缀」在胶囊已显示任务名时两处名字不一致
                 const _nb2 = _subBlkGet(b.id, { live: true, collab: true,
                   bg: true, fold: true,
-                  label: '审核 · ' + String(_disp2).slice(0, 24),
-                  model: '', type: 'SendMessage', desc: '', done: false });
+                  label: ((_HG.agents || {})[b.id] || {}).desc
+                    || ('审核 · ' + String(_disp2).slice(0, 24)),
+                  model: '', type: 'SendMessage',
+                  desc: ((_HG.agents || {})[b.id] || {}).desc || '', done: false });
                 if (_nb2) {
                   _nb2.head.dataset.hgSubr = _aid;
                   _nb2.head.dataset.hgSubType = 'SendMessage';
