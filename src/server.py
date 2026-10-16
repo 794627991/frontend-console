@@ -2168,6 +2168,18 @@ def claude_skills_list():
 
 # ---- 技能仓库（skills.sh 网页适配 + 安装/离线包/汉化，见 src/skills_repo.py）----
 
+import re as _sk_re
+_SK_NAME_RE = _sk_re.compile(r"[A-Za-z0-9_.\-]{1,120}\Z")   # 防御纵深（全审建议7）
+
+
+def _sk_parts(d):
+    """owner/repo/skill 三元组校验（白名单外的直接拒绝）。"""
+    vals = tuple(str(d.get(k) or "") for k in ("owner", "repo", "skill"))
+    if not all(_SK_NAME_RE.match(v) for v in vals):
+        return None
+    return vals
+
+
 @app.route("/api/skills/registry")
 def skills_registry():
     """榜单卡片（tab=top/trending/hot；q 内存过滤搜索）。
@@ -2185,16 +2197,17 @@ def skills_registry():
 
 @app.route("/api/skills/detail")
 def skills_detail():
-    """技能详情（prose 预览 + raw 原文 + 汉化缓存命中）。"""
+    """技能详情（raw 原文 + 汉化缓存命中）。"""
     from .skills_repo import detail
-    d = detail(request.args.get("owner", ""), request.args.get("repo", ""),
-               request.args.get("skill", ""))
-    return jsonify({"ok": True, "detail": d})
+    p = _sk_parts(request.args)
+    if not p:
+        return jsonify({"ok": False, "err": "非法 owner/repo/skill"}), 400
+    return jsonify({"ok": True, "detail": detail(*p)})
 
 
 @app.route("/api/skills/installed")
 def skills_installed():
-    """本地已安装（三来源 + disabled 标记 + sha）。"""
+    """本地已安装（user 级目录名身份 + disabled + sha + origin）。"""
     from .skills_repo import installed
     return jsonify({"ok": True, "skills": installed(request.args.get("cwd") or None)})
 
@@ -2204,8 +2217,13 @@ def skills_install():
     """安装技能到 ~/.claude/skills/。"""
     from .skills_repo import install
     d = request.get_json(force=True, silent=True) or {}
-    r = install(str(d.get("owner") or ""), str(d.get("repo") or ""),
-                str(d.get("skill") or ""), str(d.get("scope") or "user"))
+    p = _sk_parts(d)
+    if not p:
+        return jsonify({"ok": False, "err": "非法 owner/repo/skill"}), 400
+    try:
+        r = install(*p, scope=str(d.get("scope") or "user"))
+    except Exception as e:   # 落盘意外（盘满/权限）不炸 500，如实回错
+        return jsonify({"ok": False, "err": str(e)[:150]}), 500
     return jsonify(r), (200 if r.get("ok") else 502)
 
 
@@ -2268,7 +2286,7 @@ def skills_pack_apply():
 def skills_translate():
     """汉化：kind=meta 批量元数据 / kind=body 单篇正文 / kind=search 中文搜索词
     →英文关键词（缓存优先，轻主力模型）。"""
-    from .skills_repo import (translate_meta, translate_body, detail as _sr_detail,
+    from .skills_repo import (translate_meta, translate_body, _raw_skill_md,
                               _llm, _zh_key, _zh_load, _zh_save, light_model)
     d = request.get_json(force=True, silent=True) or {}
     kind = d.get("kind")
@@ -2296,13 +2314,15 @@ def skills_translate():
             return jsonify({"ok": False, "err": "items 为空或超限"}), 400
         return jsonify({"ok": True, "map": translate_meta(items)})
     if kind == "body":
-        owner, repo, skill = str(d.get("owner") or ""), str(d.get("repo") or ""), str(d.get("skill") or "")
-        det = _sr_detail(owner, repo, skill)
-        md = det.get("md")
+        p = _sk_parts(d)
+        if not p:
+            return jsonify({"ok": False, "err": "非法 owner/repo/skill"}), 400
+        md = _raw_skill_md(*p)   # 直取原文（不走 detail——不烧 contents 限额，全审建议3）
         if not md:
             return jsonify({"ok": False, "err": "SKILL.md 拉取失败"}), 502
-        if det.get("body_zh"):
-            return jsonify({"ok": True, "body_zh": det["body_zh"], "cached": True})
+        hit = _zh_load(_zh_key("body:", md))
+        if hit:
+            return jsonify({"ok": True, "body_zh": hit.get("body_zh"), "cached": True})
         r, err = translate_body(md)
         if err:
             return jsonify({"ok": False, "err": err}), 502

@@ -32,7 +32,9 @@ function _skFetch(url, opts) {
 
 function skRepoOpen() {
   if (!_hgWrap) { showBanner('请先进入 Claude 对话页', 2500, true); return; }
-  if (!SK.root) {
+  // isConnected：关 Claude 页会连 root 一起摘走，重开后旧 root 成游离节点，
+  // 必须重建（否则 classList 加了也永远不显示）
+  if (!SK.root || !SK.root.isConnected) {
     SK.root = document.createElement('div');
     SK.root.className = 'sk-repo';
     SK.root.innerHTML =
@@ -52,6 +54,7 @@ function skRepoOpen() {
   }
   SK.root.classList.add('show');
   skLoadStatus();
+  skLoadInstalled().then(() => { if (SK.view === 'home') skRenderHome(); });
   skLoadHome();
 }
 
@@ -83,7 +86,15 @@ function _skOnClick(e) {
 }
 
 function _skOnChange(e) {
-  if (e.target.id === 'skFile' && e.target.files[0]) skPackInspect(e.target.files[0]);
+  const t = e.target;
+  if (t.id === 'skFile' && t.files[0]) skPackInspect(t.files[0]);
+  else if (t.classList.contains('sk-sel')) {
+    // 已安装卡片勾选（导出离线包用）——只更新计数，不整页重渲（避免打断连续勾选）
+    const n = t.dataset.skSel;
+    if (t.checked) SK.sel.add(n); else SK.sel.delete(n);
+    const b = SK.root.querySelector('[data-sk-export]');
+    if (b) { b.disabled = !SK.sel.size; b.textContent = '导出离线包(' + SK.sel.size + ')'; }
+  }
 }
 
 function _skOnKey(e) {
@@ -243,8 +254,12 @@ function skInstall(key, btn) {
     });
 }
 
-function skUninstall(name) {
-  if (!confirm('卸载技能「' + name + '」？其目录将被删除。')) return;
+async function skUninstall(name) {
+  // 破坏性操作走 hgModal（项目惯例；WebView2 下原生 confirm 行为未经验证）
+  const ok = await hgModal('卸载技能',
+    '<div class="hg-modal-body">卸载「' + _skEsc(name) + '」？其技能目录将被删除。</div>',
+    [{ label: '取消', value: false }, { label: '卸载', primary: true, value: true }]);
+  if (!ok) return;
   _skFetch('/api/skills/uninstall', { method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ skill: name }) }).then(r => {
@@ -308,30 +323,31 @@ function skPackInspect(file) {
 
 function _skPackModal(token, skills) {
   const anyConflict = skills.some(s => s.conflict);
+  // 复用 hg-modal 类体系（.modal-box 无 CSS 规则）；关闭即 remove（防反复导入 DOM 堆积）
   const m = document.createElement('div');
-  m.className = 'modal';
+  m.className = 'hg-modal-ov';
   m.innerHTML =
-    '<div class="modal-box sk-pack-box"><h3>离线包导入预览</h3>' +
+    '<div class="hg-modal sk-pack-box"><div class="hg-modal-title">离线包导入预览</div>' +
     '<div class="sk-pack-list">' + skills.map(s =>
       '<label><input type="checkbox" checked value="' + _skEsc(s.name) + '"> ' +
       _skEsc(s.name) + (s.conflict ? ' <u class="sk-updtag">已装·将覆盖</u>' : '') + '</label>'
     ).join('') + '</div>' +
     (anyConflict ? '<div class="sk-pack-tip">勾选「覆盖已装」才会替换同名技能，否则跳过</div>' : '') +
-    '<label class="sk-pack-ow"><input type="checkbox" id="skPackOw"' + (anyConflict ? '' : ' disabled') + '> 覆盖已装技能</label>' +
-    '<div class="modal-acts"><button class="sk-btn" id="skPackCancel">取消</button>' +
-    '<button class="sk-btn pri" id="skPackGo">安装所选</button></div></div>';
-  document.body.appendChild(m);
-  requestAnimationFrame(() => m.classList.add('show'));
-  m.querySelector('#skPackCancel').onclick = () => m.classList.remove('show');
-  m.querySelector('#skPackGo').onclick = () => {
+    '<label class="sk-pack-ow"><input type="checkbox" data-sk-ow' + (anyConflict ? '' : ' disabled') + '> 覆盖已装技能</label>' +
+    '<div class="hg-modal-acts"><button class="sk-btn" data-sk-pack-cancel>取消</button>' +
+    '<button class="sk-btn pri" data-sk-pack-go>安装所选</button></div></div>';
+  _hgWrap.appendChild(m);
+  m.querySelector('[data-sk-pack-cancel]').onclick = () => m.remove();
+  m.addEventListener('click', e => { if (e.target === m) m.remove(); });
+  m.querySelector('[data-sk-pack-go]').onclick = () => {
     const names = [...m.querySelectorAll('.sk-pack-list input:checked')].map(i => i.value);
     if (!names.length) { showBanner('未选择技能', 2500, true); return; }
-    m.querySelector('#skPackGo').disabled = true;
+    m.querySelector('[data-sk-pack-go]').disabled = true;
     _skFetch('/api/skills/pack/apply', { method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token, names, overwrite: m.querySelector('#skPackOw').checked }) })
+      body: JSON.stringify({ token, names, overwrite: m.querySelector('[data-sk-ow]').checked }) })
       .then(r => {
-        m.classList.remove('show');
+        m.remove();
         if (!r.ok) { showBanner('导入失败：' + (r.err || ''), 4000, true); return; }
         const bad = (r.failed || []).map(f => f.name).join('、');
         showBanner('导入完成：装 ' + (r.installed || []).length + ' 个' +
@@ -365,17 +381,22 @@ function skShowHome() {
   skRenderHome();
 }
 
+let _skMd = null;   // markdown-it 实例复用；html:false 显式锁死（skills.sh 内容是第三方可发布内容）
+
+function _skRenderMd(src) {
+  try {
+    if (!window.markdownit) return '<pre>' + _skEsc(src) + '</pre>';
+    if (!_skMd) _skMd = window.markdownit({ breaks: true, html: false });
+    return _skMd.render(src);
+  } catch (e) { return '<pre>' + _skEsc(src) + '</pre>'; }
+}
+
 function skRenderDetail() {
   const d = SK.det;
   if (!d || SK.view !== 'detail') return;
   const el = SK.root.querySelector('#skBody');
   const mdSrc = (SK.detZh && d.body_zh) ? d.body_zh : (d.md || '');
-  let bodyHtml = '';
-  try {
-    bodyHtml = window.markdownit
-      ? window.markdownit({ breaks: true }).render(mdSrc)
-      : '<pre>' + _skEsc(mdSrc) + '</pre>';
-  } catch (e) { bodyHtml = '<pre>' + _skEsc(mdSrc) + '</pre>'; }
+  const bodyHtml = _skRenderMd(mdSrc);
   const gloss = d.glossary && Object.keys(d.glossary).length
     ? '<div class="sk-gloss"><b>术语对照</b>' + Object.entries(d.glossary).slice(0, 12)
         .map(kv => '<span>' + _skEsc(kv[0]) + ' → ' + _skEsc(kv[1]) + '</span>').join('') + '</div>'

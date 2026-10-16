@@ -34,8 +34,7 @@ _ZH_DIR = os.path.join(HOME_DIR, "skill_zh")             # 汉化缓存
 _EXPORT_DIR = os.path.join(HOME_DIR, "skill_exports")    # 离线包导出目录
 _PACK_TTL = 1800          # 导入暂存 zip 的有效期（秒）
 _PAGE_TTL = 600           # skills.sh 网页内存缓存（秒）
-_LB_LOCK = threading.Lock()
-_LB_CACHE = {}            # tab -> (ts, rows)
+_LB_CACHE = {}            # path -> (ts, html)；读写仅赋值/取值，GIL 下原子
 _DESC_LOCK = threading.Lock()
 _DESC_CACHE = {}          # skill键 -> {desc, ts}（raw frontmatter description）
 _PACK_STASH = {}          # token -> {zip_path, ts}（导入两步：inspect 暂存→apply）
@@ -180,17 +179,17 @@ def _desc_backfill(keys):
 _RE_H1 = re.compile(r'<h1[^>]*>([^<]+)</h1>')
 _RE_INST_BIG = re.compile(r'<span>Installs</span></div>'
                           r'<div class="text-3xl[^"]*">([^<]+)</div>')
-_RE_PROSE = re.compile(r'<div class="prose prose-invert[^"]*">(.*?)</div>\s*</div>',
-                       re.S)
 
 
 def detail(owner, repo, skill):
-    """详情：skills.sh 详情页（h1/installs/prose 预览正文）+ raw SKILL.md
-    （frontmatter description + 全文，落 _CACHE_DIR 供安装复用）。"""
+    """详情：skills.sh 详情页（h1/installs）+ raw SKILL.md
+    （frontmatter description + 全文，落 _CACHE_DIR 供安装复用）。
+    正文渲染走前端 markdown-it（prose 预览字段已删——skills.sh 内容属
+    第三方可发布内容，直注 innerHTML 是存储型 XSS 面，全审建议2）。"""
     html = _page("/%s/%s/%s" % (owner, repo, skill))
     out = {"key": "%s/%s/%s" % (owner, repo, skill),
            "owner": owner, "repo": repo, "skill": skill,
-           "name": skill, "installs": "", "prose_html": "", "desc": "",
+           "name": skill, "installs": "", "desc": "",
            "md": None}
     if html:
         m = _RE_H1.search(html)
@@ -199,9 +198,6 @@ def detail(owner, repo, skill):
         m = _RE_INST_BIG.search(html)
         if m:
             out["installs"] = m.group(1).strip()
-        m = _RE_PROSE.search(html)
-        if m:
-            out["prose_html"] = m.group(1)
     md = _raw_skill_md(owner, repo, skill)
     if md:
         out["md"] = md
@@ -213,7 +209,7 @@ def detail(owner, repo, skill):
             out["zh_name"] = zh.get("zh_name")
             out["zh_desc"] = zh.get("zh_desc")
             out["glossary"] = zh.get("glossary")
-        zb = _zh_load("body:" + md)
+        zb = _zh_load(_zh_key("body:", md))
         if zb:
             out["body_zh"] = zb.get("body_zh")
     # 文件清单（GitHub contents API 限额敏感——None=列不了，前端如实标注）
@@ -303,6 +299,10 @@ def install(owner, repo, skill, scope="user"):
     if not md:
         return {"ok": False, "err": "SKILL.md 拉取失败（检查外网连通）"}
     existed = os.path.isdir(dst)
+    # 已禁用的同名目录先清（否则装出启用副本，旧 .disabled 成卸不掉的僵尸——全审 G1）
+    dis = _safe_skill_dir(skill + ".disabled")
+    if dis and os.path.isdir(dis):
+        shutil.rmtree(dis, ignore_errors=True)
     os.makedirs(dst, exist_ok=True)
     with open(os.path.join(dst, "SKILL.md"), "w", encoding="utf-8", newline="\n") as f:
         f.write(md)
@@ -396,67 +396,76 @@ def _meta_del(skill):
 
 def check_updates():
     """更新检测：对「本工具装的」user 级技能（meta 有 origin）raw 拉最新
-    SKILL.md（绕缓存）比对 sha。返回 [{skill, has_update, err}]。"""
-    out = []
-    for nm, info in _meta_load().items():
-        key = str(info.get("key") or "")
-        parts = key.split("/")
+    SKILL.md（绕缓存）比对 sha。并发 4（串行在离线时 N×6 URL×15s 可挂数
+    分钟——全审建议4）。返回 [{skill, has_update, err}]。"""
+    def _one(item):
+        nm, info = item
+        parts = str(info.get("key") or "").split("/")
         if len(parts) != 3 or not info.get("sha"):
-            continue
+            return None
         md = _raw_skill_md(parts[0], parts[1], parts[2], cache=False)
         if not md:
-            out.append({"skill": nm, "has_update": False, "err": "拉取失败"})
-            continue
+            return {"skill": nm, "has_update": False, "err": "拉取失败"}
         cur = hashlib.sha256(md.encode("utf-8", "replace")).hexdigest()[:16]
-        out.append({"skill": nm, "has_update": cur != info["sha"],
-                    "new_sha": cur, "err": ""})
+        return {"skill": nm, "has_update": cur != info["sha"],
+                "new_sha": cur, "err": ""}
+    items = [(nm, info) for nm, info in _meta_load().items()]
+    out = []
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            for r in ex.map(_one, items):
+                if r:
+                    out.append(r)
+    except Exception:
+        for r in map(_one, items):   # 线程池不可用的极端兜底
+            if r:
+                out.append(r)
     return out
 
 
 def installed(cwd=None):
-    """本地已安装（复用 claude_sessions.list_skills 三来源扫描，扩展：
-    user 级附带 .disabled 目录与 SKILL.md hash（更新检测对账用）。"""
+    """本地已安装。user 级以目录名为身份自扫（list_skills 的 name 会被
+    frontmatter 覆盖，与目录名错位会让卸载/禁用/更新全部对不上——全审
+    G1）；project/plugin 走 list_skills（只读展示）。附 disabled 标记、
+    SKILL.md sha（更新检测对账）、origin（本工具安装的来源）。"""
     from src.claude_sessions import list_skills
-    out = list_skills(cwd)
-    home_sk = _SKILLS_DIR
+    out = []
+    have = set()
     _meta = _meta_load()
-    for it in out:
-        it["origin"] = (_meta.get(it.get("name")) or {}).get("key")
-        it["disabled"] = False
-        it["sha"] = None
-        if it.get("source") != "user":
-            continue
-        for nm in (it.get("name"), it.get("name") + ".disabled"):
+    if os.path.isdir(_SKILLS_DIR):
+        for nm in sorted(os.listdir(_SKILLS_DIR)):
+            disabled = nm.endswith(".disabled")
+            base = nm[:-len(".disabled")] if disabled else nm
             d = _safe_skill_dir(nm)
-            if d and os.path.isdir(d):
-                it["disabled"] = nm.endswith(".disabled")
-                md = os.path.join(d, "SKILL.md")
-                if os.path.isfile(md):
-                    try:
-                        with open(md, "rb") as f:
-                            it["sha"] = hashlib.sha256(f.read()).hexdigest()[:16]
-                    except OSError:
-                        pass
-                break
-    # user 级 .disabled 目录 list_skills 扫不到（SKILL.md 在但目录名带后缀），
-    # 补扫一遍
-    have = {(it.get("source"), it.get("name")) for it in out}
-    if os.path.isdir(home_sk):
-        for d in glob.glob(os.path.join(home_sk, "*.disabled")):
-            nm = os.path.basename(d)[:-len(".disabled")]
-            if ("user", nm) in have:
+            if not d or not os.path.isdir(d) or base in have:
                 continue
             md = os.path.join(d, "SKILL.md")
-            desc = ""
-            if os.path.isfile(md):
-                try:
-                    with open(md, "r", encoding="utf-8", errors="replace") as f:
-                        m = re.search(r'^description:\s*(.+)$', f.read(8192), re.M)
-                    desc = m.group(1).strip() if m else ""
-                except OSError:
-                    pass
-            out.append({"name": nm, "desc": desc, "source": "user",
-                        "disabled": True, "sha": None})
+            if not os.path.isfile(md):
+                continue   # 空目录/残壳不展示
+            have.add(base)
+            desc = sha = ""
+            try:
+                with open(md, "r", encoding="utf-8", errors="replace") as f:
+                    m = re.search(r'^description:\s*(.+)$', f.read(8192), re.M)
+                desc = m.group(1).strip() if m else ""
+            except OSError:
+                pass
+            try:
+                with open(md, "rb") as f:
+                    sha = hashlib.sha256(f.read()).hexdigest()[:16]
+            except OSError:
+                pass
+            out.append({"name": base, "desc": desc, "source": "user",
+                        "disabled": disabled, "sha": sha,
+                        "origin": (_meta.get(base) or {}).get("key")})
+    for it in list_skills(cwd):
+        if it.get("source") == "user":
+            continue   # user 级已自扫（身份=目录名）
+        it["disabled"] = False
+        it["sha"] = None
+        it["origin"] = None
+        out.append(it)
     return out
 
 
@@ -511,21 +520,27 @@ def pack_inspect(file_storage):
     返回 token（apply 凭它取暂存包）+ 技能清单。"""
     if not file_storage or not file_storage.filename:
         return None, "未收到文件"
-    zp = file_storage.filename.lower()
-    if not zp.endswith(".zip"):
+    if not file_storage.filename.lower().endswith(".zip"):
         return None, "仅支持 zip 离线包"
+    file_storage.stream.seek(0, 2)
+    if file_storage.stream.tell() > 200 * 1024 * 1024:
+        return None, "离线包超过 200MB 上限"
+    file_storage.stream.seek(0)
     os.makedirs(_CACHE_DIR, exist_ok=True)
     token = "pk" + hashlib.sha1((time.time_ns()).to_bytes(8, "big")).hexdigest()[:12]
     path = os.path.join(_CACHE_DIR, "pack_" + token + ".zip")
-    file_storage.save(path)
-    names, err = _pack_read_manifest(path)
+    try:
+        file_storage.save(path)
+    except OSError as e:
+        return None, "保存上传文件失败：" + str(e)[:100]
+    names, shas, err = _pack_read_manifest(path)
     if err:
         try:
             os.remove(path)
         except OSError:
             pass
         return None, err
-    _PACK_STASH[token] = {"zip": path, "ts": time.time()}
+    _PACK_STASH[token] = {"zip": path, "ts": time.time(), "shas": shas}
     # 清过期暂存
     now = time.time()
     for k in [k for k, v in _PACK_STASH.items() if now - v["ts"] > _PACK_TTL]:
@@ -542,31 +557,47 @@ def pack_inspect(file_storage):
 
 
 def _pack_read_manifest(path):
-    """读离线包 manifest → 技能名列表（校验格式与路径安全）。"""
+    """读离线包 manifest → (技能名列表, {包内路径: sha256})（校验格式与
+    路径安全；items 必须是数组——恶意/畸形 manifest 防 500，全审 G4）。
+    sha 按文件粒度（items 每文件一条，path=包内 arc 路径为键）。"""
     try:
         with zipfile.ZipFile(path) as z:
             if "manifest.json" not in z.namelist():
-                return None, "不是技能离线包（缺 manifest.json）"
+                return None, None, "不是技能离线包（缺 manifest.json）"
             meta = json.loads(z.read("manifest.json").decode("utf-8", "replace"))
-        if meta.get("format") != "skillpack":
-            return None, "离线包格式不符"
-        names = sorted({i.get("name") for i in meta.get("items", [])
-                        if i.get("name") and _safe_skill_dir(i["name"])})
+        if not isinstance(meta, dict) or meta.get("format") != "skillpack":
+            return None, None, "离线包格式不符"
+        items = meta.get("items")
+        if not isinstance(items, list):
+            return None, None, "离线包 manifest 异常（items 非数组）"
+        names, shas = set(), {}
+        for i in items:
+            if not isinstance(i, dict):
+                continue
+            nm = i.get("name")
+            if nm and _safe_skill_dir(nm):
+                names.add(nm)
+                if i.get("sha256") and i.get("path"):
+                    shas[str(i["path"])] = str(i["sha256"])
         if not names:
-            return None, "包内没有技能"
-        return names, None
+            return None, None, "包内没有技能"
+        return sorted(names), shas, None
     except (zipfile.BadZipFile, ValueError, KeyError) as e:
-        return None, "离线包解析失败：" + str(e)[:100]
+        return None, None, "离线包解析失败：" + str(e)[:100]
 
 
 def pack_apply(token, names, overwrite=False):
-    """导入第二步：从暂存包落盘安装（overwrite=True 覆盖同名）。"""
+    """导入第二步：从暂存包落盘安装（overwrite=True 覆盖同名）。
+    manifest 带有 sha256 的文件做完整性校验（不符按损坏计——全审建议5）；
+    先确认包内有文件才建目录（失败不留空壳——全审 G1 连带）。"""
     st = _PACK_STASH.get(token)
     if not st:
         return {"ok": False, "err": "导入会话已过期，请重新选择文件"}
+    shas = st.get("shas") or {}
     done, skipped, failed = [], [], []
     try:
         with zipfile.ZipFile(st["zip"]) as z:
+            all_arcs = z.namelist()
             for nm in names:
                 if not _safe_skill_dir(nm):
                     failed.append({"name": nm, "err": "非法技能名"})
@@ -575,24 +606,39 @@ def pack_apply(token, names, overwrite=False):
                 if d and os.path.isdir(d) and not overwrite:
                     skipped.append(nm)
                     continue
+                prefix = "skills/" + nm + "/"
+                arcs = [a for a in all_arcs
+                        if a.startswith(prefix) and not a.endswith("/")]
+                if not arcs:
+                    failed.append({"name": nm, "err": "包内无文件"})
+                    continue
                 if d and os.path.isdir(d):
                     shutil.rmtree(d, ignore_errors=True)
                 os.makedirs(d, exist_ok=True)
-                prefix = "skills/" + nm + "/"
                 n = 0
-                for arc in z.namelist():
-                    if not arc.startswith(prefix) or arc.endswith("/"):
-                        continue
+                bad = False
+                for arc in arcs:
                     rel = arc[len(prefix):]
                     if ".." in rel or ":" in rel or os.path.isabs(rel):
                         continue   # zip slip 防护
+                    if arc in shas:
+                        h = hashlib.sha256()
+                        with z.open(arc) as src:
+                            for chunk in iter(lambda: src.read(1 << 20), b""):
+                                h.update(chunk)
+                        if h.hexdigest().lower() != shas[arc].lower():
+                            bad = True
+                            break
                     dp = os.path.join(d, rel)
                     os.makedirs(os.path.dirname(dp), exist_ok=True)
                     with z.open(arc) as src, open(dp, "wb") as out:
                         shutil.copyfileobj(src, out)
                     n += 1
-                (done if n else failed).append(
-                    {"name": nm, **({"files": n} if n else {"err": "包内无文件"})})
+                if bad:
+                    shutil.rmtree(d, ignore_errors=True)   # 校验失败清残壳
+                    failed.append({"name": nm, "err": "完整性校验失败（sha256 不符）"})
+                else:
+                    done.append({"name": nm, "files": n})
     except (zipfile.BadZipFile, OSError) as e:
         return {"ok": False, "err": "解压失败：" + str(e)[:120]}
     return {"ok": True, "installed": done, "skipped": skipped, "failed": failed}
@@ -712,14 +758,14 @@ def translate_meta(items):
     未命中的一次 LLM 调用批量译。"""
     out, pending = {}, []
     for it in items:
-        payload = json.dumps({"name": it.get("name", ""),
-                              "desc": it.get("desc", "")}, ensure_ascii=False)
-        key = _zh_key("meta:" + it["key"], payload)
+        # 缓存键只用技能身份（不含内容 hash）——读侧（detail/_desc_backfill）
+        # 拿不到与写侧同源的 name/desc，带 hash 的键永远对不上（全审 S4 实锤）
+        key = "meta:" + it["key"]
         hit = _zh_load(key)
         if hit:
             out[it["key"]] = hit
         else:
-            pending.append((it, key, payload))
+            pending.append((it, key, None))
     if pending:
         ask = json.dumps([{"i": i, "name": p[0].get("name", ""),
                            "desc": p[0].get("desc", "")}
@@ -735,7 +781,7 @@ def translate_meta(items):
                     got[int(row.get("i"))] = row
                 except (TypeError, ValueError):
                     continue
-        for i, (it, key, payload) in enumerate(pending):
+        for i, (it, key, _payload) in enumerate(pending):
             row = got.get(i) or {}
             d = {"zh_name": str(row.get("zh_name") or it.get("name", ""))[:120],
                  "zh_desc": str(row.get("zh_desc") or "")[:600],
