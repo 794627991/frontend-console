@@ -75,12 +75,12 @@
     const agEl = c.querySelector('[data-hg-caps-ag]');
     if (agEl) {
       if (agRun) {
-        // v3.5.315：链去重——collab 包装档案（SendMessage 续派）与其原代理
+        // v3.5.317：链去重——collab 包装档案（SendMessage 续派）与其原代理
         // 档案按 taskId 链并成一条（先派发的原代理 t0 更早先入列并占链，
         // 后到的包装跳过）。旧码数档案条数，续派期间同一逻辑代理被数 2 次
         // （胶囊「✦2」而动态页过滤后 1 行，口径分裂）；跨会话协作（本会话
         // 无原代理档案）链无碰撞照常单列。胶囊只显示真实任务名（档案 desc，
-        // v3.5.315 collab 建档 merge 修复后 desc 恒有值）
+        // v3.5.317 collab 建档 merge 修复后 desc 恒有值）
         const _seenLink = new Set();
         const list = Object.values(_HG.agents || {}).filter(a => !a.done)
           .sort((x, y) => (x.t0 || 0) - (y.t0 || 0))

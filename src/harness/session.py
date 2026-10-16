@@ -129,13 +129,13 @@ class HarnessSession:
         # v3.5.314（用户定调恢复事中闸，推翻 v3.5.51 退役）：light 形态
         # --settings 临时文件路径（kill 时清理；revive 由 start() 重建——
         # hooks 是进程启动参数，活进程不热更）。v2.40 同款赋值已并入本条
-        # （v3.5.315 清理改稿残留的重复赋值）
+        # （v3.5.317 清理改稿残留的重复赋值）
         self._audit_settings_path = None
         # v3.5.123（用户口径「子代理在飞不许结束大回合」）：后台子代理在飞
         # 登记表 + hold 旗——主链 result 到达但仍有 is_backgrounded 任务在跑
         # 时：busy 保持、审计结算挂起（defer 到真终点）、前端 turn_hold 保持
         # 工作中；三级温和探活兜底见 _bg_monitor（分级提示/集空闲置/■中断）——v3.5.182 硬顶退役
-        # v3.5.315：slow 键死字段清除（v3.5.183 三档探活改用 p30/p45/p60 后
+        # v3.5.317：slow 键死字段清除（v3.5.183 三档探活改用 p30/p45/p60 后
         # 全仓零读取）
         self._bg_tasks = {}      # tid → {"t0": epoch, "desc": str}
         self._held = False
@@ -1171,6 +1171,13 @@ class HarnessSession:
         if not tid:
             return
         if sub == "task_started":
+            # v3.5.322（复审#1）：只镜像**真子代理**（subagent_type 非空，与
+            # 1183 行 _bg_tasks 登记同判据）——CLI 对 run_in_background 的
+            # Bash 也发 task_started（v3.4.43 实锤），镜像进投影后前端 F5/
+            # 切回按 proj 真源补种会把后台命令混进子代理目录/胶囊（live 路
+            # 径 _shBg 早有此过滤，投影路径补齐同口径）
+            if not str(o.get("subagent_type") or "").strip():
+                return
             self.emit({"kind": "subagent_started", "tid": tid,
                        "agent_type": o.get("subagent_type") or "Task",
                        "desc": str(o.get("description") or "")[:200],

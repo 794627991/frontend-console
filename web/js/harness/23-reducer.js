@@ -124,7 +124,7 @@
       renderSideStatus();
     }
   }
-  // v3.5.315：服务端真源接线——proj.agents 里仍在跑（done:false）的子代理
+  // v3.5.317：服务端真源接线——proj.agents 里仍在跑（done:false）的子代理
   // 补种进 _HG.liveAgentsBy[sid] 桶。此前刷新（F5）/关 tab 后内存桶全灭，
   // _hgLiveAgentsRestore 空转 no-op，运行中子代理被 hist 工厂盖「completed」
   // 假完成徽章、subagent_tail 轮询也因无档案停喂——后端投影（事件流归约
@@ -140,7 +140,11 @@
     const tgt = _HG.liveAgentsBy[sid] = _HG.liveAgentsBy[sid] || {};
     for (const tid in pa) {
       const a = pa[tid];
-      if (!a || a.done || tgt[tid]) continue;
+      // v3.5.322（复审#3）：live 档案已在场即跳过——/events 在途响应的 proj
+      // 快照可能早于刚到达的完成信号（task_notification/SSE ack 重放建档），
+      // 贫快照种入并经 restore 覆写会把刚 done 的代理复活成假运行
+      if (!a || a.done || tgt[tid]
+          || ((_HG.agents || {})[tid])) continue;
       tgt[tid] = {
         type: a.type || 'Task', desc: a.desc || '',
         t0: a.t0 || 0, done: false, doneAt: 0,

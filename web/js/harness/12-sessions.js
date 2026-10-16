@@ -547,7 +547,7 @@
           else grpFinalize(true, { hist: true, turnEnd: true });   // 幂等兜底（渲染器内已定稿则早退）；v3.2.2 turnEnd
           _hgDiag('cold', '冷开重建 lines=' + j.lines.length + ' busy=' + !!j.busy + ' phResume=' + (j.busy ? '已带参调' : '跳过'));
           _hgLiveAgentsRestore(sid);   // v3.4.52：转写重渲路同样回填运行中子代理 live 档案
-          // v3.5.315：F5/关 tab 后内存桶已灭，restore 必 no-op——补拉一次
+          // v3.5.317：F5/关 tab 后内存桶已灭，restore 必 no-op——补拉一次
           // /events 让 proj 真源补种（_hgProjAgentsSeed→再 restore 覆写 hist
           // 工厂盖的假完成徽章）；顺带对齐 busy/epoch（与快照命中路同款）
           _hgEventsPoll(sid);
@@ -620,7 +620,12 @@
       const a = lv[t];
       if (a.done) { delete lv[t]; continue; }
       _HG.agents = _HG.agents || {};
-      _HG.agents[t] = a;
+      // v3.5.322（复审#4）：在场档案不覆写——SSE 重放/续派建档可能已建更富
+      // 档案（unresolved/collab/正确 taskId），桶内贫档案（proj 补种）覆写
+      // 会丢保护标志→点击拿包装 id 硬开回放「未找到转写」（v3.5.160 形态
+      // 复活）。在场时只走行回绑（档案本体保留），桶条目随即清理防重放
+      if (_HG.agents[t] && _HG.agents[t] !== a) { delete lv[t]; }
+      else _HG.agents[t] = a;
       // v3.5.143（用户批注「切会话(ABA)，过程显示就没了」）：档案回填扩到
       // **行回绑**——转写重渲的 agentline 行是伪 tid（07-hist 'ag'+hi）不进
       // rowById，旧码 rowById[t] 必 miss=秒表不复活、_subLivePaint 喂不到卡

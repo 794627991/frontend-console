@@ -67,7 +67,7 @@
           _subDrop(tid);
           if (tid) {
             const _to = (_HG.peerSent || {})[tid];
-            // v3.5.315：merge 保真——SendMessage tool_use 时已建过档案
+            // v3.5.317：merge 保真——SendMessage tool_use 时已建过档案
             //（10-sse SendMessage 分支：taskId=input.to 真实 id、t0=派发
             // 时刻）。旧码此处整体覆盖重建，peerSent miss（事件乱序/重放）
             // 时降级 taskId=包装 task_id 把正确关联链砸断 → _subTid 归一
@@ -75,7 +75,10 @@
             // 子代理」）。优先沿用旧档的可信 taskId/desc/t0，新事件只补
             // 缺失字段
             const _prev = (_HG.agents || {})[tid] || null;
-            const _prevReal = (_prev && !_prev.unresolved && _prev.taskId
+            // v3.5.322（复审#4）：projSeed 补种档案的 taskId 可能是 CLI 包装
+            // task_id（恰合 id 正则的无转写异形 id）——不能当真实 id 沿用
+            const _prevReal = (_prev && !_prev.unresolved && !_prev.projSeed
+              && _prev.taskId
               && /^[0-9a-zA-Z_-]{8,64}$/.test(String(_prev.taskId)))
               ? String(_prev.taskId) : '';
             const _real = _prevReal

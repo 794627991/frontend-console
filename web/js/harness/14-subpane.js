@@ -83,14 +83,6 @@
     // v3.4.56（轻审复核 P3 收口）：运行中 live 档案的同 desc 回放条目滤除——
     // restore 时序/重建/快照各路差异全部在产出侧一处收口，目录不再双条
     const _runDescs = new Set();
-    // v3.5.315：链去重——collab 包装（SendMessage 续派）的原代理档案在场
-    //（非 collab 档案的 agentId/taskId===包装 taskId）时包装跳过，目录只出
-    // 原代理一条（旧码两档案各出一行=「续派后目录两个子代理」）。判定排除
-    // 包装自匹配（跨会话协作本会话无原代理，照常单列）；unresolved 幻影
-    //（taskId 降级）不滤——它是该链唯一线索
-    const _agAll = Object.values(_HG.agents || {});
-    const _origHit = (peer, self) => _agAll.some(x => x && x !== self && !x.collab
-      && (x.agentId === peer || x.taskId === peer));
     for (const tid in (_HG.agents || {})) {
       const a = _HG.agents[tid];
       // v3.5.306b（用户实锤「明明有至少一个设计一个审核的，目录啥都没有」）：
@@ -100,7 +92,6 @@
       // 仍无 id 的保持退出（点开必空的场景不复活）
       if (!a || a.replay) continue;
       if ((a.collab || (a.type || '') === 'Task') && !a.taskId && !a.agentId) continue;
-      if (a.collab && a.taskId && !a.unresolved && _origHit(a.taskId, a)) continue;
       if (!a.done && a.desc) _runDescs.add(a.desc);
       rows.push(Object.assign({ tid }, a));
     }
@@ -113,14 +104,45 @@
       if (!a.rid) a.rid = 'rpl' + ((_HG.rplSeq = (_HG.rplSeq || 0) + 1));
       rows.push(Object.assign({ tid: a.rid, rpl: true }, a));
     }
-    const running = rows.filter(r => !r.done).sort((x, y) => (x.t0 || 0) - (y.t0 || 0));
-    const ended = rows.filter(r => r.done && (r.doneAt || r.t0 || 0) >= _dayStart)
+    // v3.5.322（复审#2）：链合并——SendMessage 续派包装（collab）并入原子代理
+    // 行，目录每条逻辑链只出一行（用户定调「续派必须链接到原派出的子代理，
+    // 显示都在原子代理中」）。锚=本会话任何非 collab 行（live 原代理或回放
+    // 条目——ABA 切会话后 live 档案被暂存丢弃，回放条目仍是锚），按
+    // agentId/taskId===包装 taskId 匹配；包装在跑则锚标 chainRun（已完成锚
+    // 显示「运行中」——续派让整条链复活）。包装行无论 done 均移除。无锚
+    //（跨会话协作/原代理条目未建）照常单列；unresolved 幻影（taskId 降级）
+    // 不并——它是该链唯一线索
+    const _wraps = rows.filter(r => r.collab && r.taskId && !r.unresolved);
+    if (_wraps.length) {
+      const _anchorOf = w => rows.find(r => r !== w && !r.collab && !r.rpl
+        && (r.agentId === w.taskId || r.taskId === w.taskId))
+        || rows.find(r => r !== w && r.rpl && r.agentId === w.taskId);
+      const _drop = new Set();
+      for (const w of _wraps) {
+        const anchor = _anchorOf(w);
+        if (!anchor) continue;
+        if (!w.done) {
+          anchor.chainRun = true;
+          // 活跃轮起点（秒表用）——取最早在跑包装的 t0（同链多轮续派取首）
+          if (w.t0 && (!anchor.chainT0 || w.t0 < anchor.chainT0)) anchor.chainT0 = w.t0;
+        }
+        _drop.add(w);
+      }
+      for (let i = rows.length - 1; i >= 0; i--)
+        if (_drop.has(rows[i])) rows.splice(i, 1);
+    }
+    const running = rows.filter(r => !r.done || r.chainRun)
+      .sort((x, y) => (x.t0 || 0) - (y.t0 || 0));
+    const ended = rows.filter(r => r.done && !r.chainRun && (r.doneAt || r.t0 || 0) >= _dayStart)
       .sort((x, y) => (y.doneAt || 0) - (x.doneAt || 0)).slice(0, 50);
     return { running, ended };
   }
   function _subDirRowHtml(r) {
     // 状态三态（对照 StatusIcon）：运行 spinner / 成功 ✓ / 失败 ✗ / 中断 ⏹
-    const st = !r.done ? 'run' : (r.interrupted ? 'stop' : (r.err ? 'err' : 'ok'));
+    // v3.5.322：chainRun（续派链复活——锚行自身 done 但链上包装在跑）视同
+    // 运行中，秒表起点用包装 t0（链的当前活跃轮）
+    const _run = !r.done || r.chainRun;
+    const st = _run ? 'run' : (r.interrupted ? 'stop' : (r.err ? 'err' : 'ok'));
     const stIco = { run: '◐', ok: '✓', err: '✗', stop: '⏹' }[st];
     const stTxt = { run: '运行中', ok: '已完成', err: '已失败', stop: '已中断' }[st];
     const title = ((_AGENT_LABEL[r.type] || r.type || '子代理') +
@@ -133,9 +155,10 @@
     const _dupDesc = !!sum && !!r.desc && _hgBriefDupDesc(r.desc, sum);
     // v3.2.6（ZCode 模式）：运行行时间位改秒表（对照 ConversationStatusPanel
     // 的 elapsed 计数——1s 重绘由 _subDirTick 驱动）；已结束保持相对时间
-    const t = r.done ? (r.doneAt || 0) : (r.t0 || 0);
-    const timeTxt = r.done ? _harnessRelTime(t)
-      : (t ? _hgFmtDur(Math.max(0, (Date.now() - t) / 1000)) : '');
+    // v3.5.322：chainRun 的 t0 用链上活跃轮起点（_subDirRows 合并时回填）
+    const t = _run ? (r.chainT0 || r.t0 || 0) : (r.doneAt || 0);
+    const timeTxt = _run ? (t ? _hgFmtDur(Math.max(0, (Date.now() - t) / 1000)) : '')
+      : _harnessRelTime(t);
     return `<button class="hg-sub-dir-row ${st}" data-hg-dir="${esc(r.tid)}"` +
       ` data-hg-dir-rpl="${r.rpl ? '1' : ''}" title="${esc(title)}">` +
       `<span class="hg-sub-dir-ico">${stIco}</span>` +
