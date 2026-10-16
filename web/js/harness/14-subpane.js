@@ -1492,7 +1492,11 @@
   function _subBlkFinish(tid, err, aidForce) {
     if (!_subBlkAdopt(tid)) return;    // 段不在（无过程行的代理/协作包装）——无事可做
     _subBlkState(tid, err);
-    const _a = (_HG.agents || {})[tid] || {};
+    // subagent-registry：tidMap 桥（段键=tid/档案键=agentId 双轨，同
+    // _subBlkInfoLive）——Sync 后按 agentId 键取档，taskId=真实 id 落
+    // hgSubr（回放入口不落包装 id）
+    const _a = (_HG.agents || {})[tid]
+            || (_HG.agents || {})[((_HG.tidMap || {})[tid])] || {};
     // v2.46R（P4）：档案 taskId 优先——续派形态下它是 peerSent 反查的真实
     // agentId，aidForce（notification.task_id）是 CLI 包装新 id；常规 Agent
     // 两者同值（v2.44 实证同源），顺序翻转零影响
