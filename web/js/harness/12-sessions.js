@@ -843,3 +843,16 @@
   // 退役——显示名回归朴素。标识符（dev.md/subagent_type/agents 文件名）不动，
   // 本表只服务旧会话回放/旧安装文件的显示层
   const _AGENT_LABEL = { executor: '执行', coder: '编程', designer: '设计', dev: '开发', reviewer: '审核', 'general-purpose': '通用子代理' };
+  // v3.5.296（用户实锤「SendMessage 往来的代理显示成 Task，要求显示原名」）：
+  // to 形态三收——角色名（reviewer/designer）出中文短名；已知 agentId/taskId
+  // 反查本会话档案原名；其余原样（超长 id 截短）。供 SendMessage 续派建档
+  // 补 desc（tab 名/状态胶囊/agentline 全链显示走档案 desc，此处修好全好）
+  function _peerLabel(to) {
+    const t = String(to || '').trim();
+    if (!t) return '';
+    if (_AGENT_LABEL[t]) return _AGENT_LABEL[t];
+    const hit = Object.values(_HG.agents || {})
+      .find(a => a && (a.agentId === t || a.taskId === t));
+    if (hit) return hit.desc || _AGENT_LABEL[hit.type] || t;
+    return t.length > 24 ? t.slice(0, 8) + '…' : t;
+  }

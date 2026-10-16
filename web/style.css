@@ -4729,3 +4729,10 @@ html {
 .sk-pack-list label { display: block; padding: 5px 4px; color: var(--fg); font-size: 12.5px;
   border-bottom: 1px solid var(--border); cursor: pointer; }
 .sk-pack-tip, .sk-pack-ow { color: var(--muted); font-size: 11.5px; margin: 6px 0; display: block; }
+
+/* v3.5.296：会话行活跃 spinner（busy ● 太弱——用户实锤「都在活跃但看不出来」） */
+.hg-item-run { display: inline-block; width: 9px; height: 9px; margin-right: 5px;
+  border: 2px solid var(--accent, #2a6db5); border-top-color: transparent;
+  border-radius: 50%; animation: spin-rot 0.8s linear infinite;
+  vertical-align: -1px; flex-shrink: 0; }
+.hg-item.running .hg-item-title { color: var(--fg-bright); }

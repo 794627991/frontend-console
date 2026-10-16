@@ -119,8 +119,14 @@
           let a = _HG.agents && _HG.agents[tid];
           if (!a && _HG.agents && sub === 'task_started') {
             // 兜底建档（Task tool_use 已建档时零改动）：t0 用当下近似
+            // v3.5.296（用户实锤「SendMessage 往来的代理显示成 Task」）：
+            // 续派事件 description 恒空——peerSent[tid] 命中即补 to 原名
+            //（_peerLabel：角色名出中文/已知 id 反查档案名），tab 名、状态
+            // 胶囊「✦N …」、窗格全链走档案 desc，此处修好全好
             a = _HG.agents[tid] = {
-              type: o.subagent_type || 'Task', desc: o.description || '',
+              type: o.subagent_type || 'Task',
+              desc: o.description || (typeof _peerLabel === 'function'
+                ? _peerLabel((_HG.peerSent || {})[tid]) : ''),
               t0: Date.now(), done: false, doneAt: 0 };
             // v3.2.6：tool_use 丢失的兜底派发也补单行任务卡（子代理段已隐，
             // 无行=派发在主流不可见；'Task' 非 explore → 直挂时间线）

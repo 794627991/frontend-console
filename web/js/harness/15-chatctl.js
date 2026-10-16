@@ -39,9 +39,9 @@
         // 同款层次（用户实锤「单会话没有像多会话有分层效果」）；时间只在
         // 组头显示（单会话组头时间即该会话活跃时间，不重复出独立时间行）
         h += g.items.map(s => `
-          <div class="hg-item${s.sid === _HG.sid ? ' active' : ''} grp-child" data-sid="${esc(s.sid)}" title="${esc(s.cwd || '')} · ${esc(s.title || '')}">
+          <div class="hg-item${s.sid === _HG.sid ? ' active' : ''}${s.busy ? ' running' : ''} grp-child" data-sid="${esc(s.sid)}" title="${esc(s.cwd || '')} · ${esc(s.title || '')}">
             <div class="hg-item-row">
-              <span class="hg-item-title">${esc(s.title || '新会话')}</span>
+              <span class="hg-item-title">${s.busy ? '<span class="hg-item-run" title="回复中"></span>' : ''}${esc(s.title || '新会话')}</span>
               <span class="hg-item-acts">
                 ${s.busy ? '<span class="hg-item-busy" title="回复中">●</span>' : ''}
                 <button class="hg-item-act" data-act="rename" data-sid="${esc(s.sid)}" title="重命名">✎</button>

@@ -161,6 +161,11 @@ function buildClaudeHarnessTab(opts = {}) {
         _hgFileEl = _hgQ('[data-hg-file]'), _hgOverlayEl = _hgQ('[data-hg-overlay]'),
         _hgMentionEl = _hgQ('[data-hg-mention]'), _hgActEl = _hgQ('[data-hg-activity]');
   _hgRailBind();   // v3.2.10：轨道点击绑定（builder 内元素就绪后）
+  // v3.5.296（用户实锤「两个会话都在活跃，但看不出来该会话活跃」）：会话行
+  // busy ● 只在 SSE 特定时机随 refreshSessions 重渲——非当前会话的 busy
+  // 变化根本不触发列表刷新。10s 周期对账（本地亚秒级接口，开销可忽略），
+  // 配合行首 spinner（renderList）让活跃态可见
+  setInterval(() => { try { refreshSessions(); } catch (_) {} }, 10000);
   // v2.24 大会话 DOM 卸载（见 _hgFlowUnloadInit）：切走 tab 快照清空、切回恢复
   _HG.flowEl = _hgFlow;
   _HG.flowSnap = '';
