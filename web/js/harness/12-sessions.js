@@ -866,12 +866,12 @@
     if (hit) return hit.desc || _AGENT_LABEL[hit.type] || t;
     return t.length > 24 ? t.slice(0, 8) + '…' : t;
   }
-  // v3.5.308（用户二次实锤「续派这种词也算协议词，我要的是当时的任务名」）：
-  // 组装最终显示名 = 角色短名 · 任务内容首行（如「审核 · 修复已提交请复审」）。
-  // msg 由 10-sse 在 SendMessage tool_use 时记入 _HG.peerMsg（tool_use_id→首行）
+  // v3.5.309（用户定调「名字不是必须审核+xxx设计+xxx，而是 AI 派出去的
+  // 真实的任务名」）：真实任务内容就是名字本身（不加角色前缀不拼接）——
+  // msg 由 10-sse 在 SendMessage tool_use 时记入 _HG.peerMsg（首行60字）；
+  // 内容缺失才退角色短名（_peerLabel），再无才是终极兜底词
   function _peerDesc(to, msg) {
-    const role = _peerLabel(to);
     const m = String(msg || '').replace(/\s+/g, ' ').trim().slice(0, 60);
-    if (role && m && role !== m) return role + ' · ' + m;
-    return m || role || '';
+    if (m) return m;
+    return _peerLabel(to);
   }
