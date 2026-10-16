@@ -1761,33 +1761,6 @@ function _showOpenModeDialog(path, sizeMB, withHex) {
   });
 }
 
-// ---- 统一文件打开入口（拖拽/最近/顶栏打开 共用）----
-// mode: 'auto'（默认按大小规则）| 'edit' | 'view' | 'hex'
-// 规则：未知/二进制类型 → 弹窗让选（二进制/阅读器/编辑器）；
-//       已知文本：<20M 编辑器；20~30M 弹窗提示选（默认建议阅读器）；>30M 强制阅读器。
-async function openFileSmart(path, mode) {
-  const name = path.split(/[\/]/).pop().toLowerCase();
-  const dot = name.lastIndexOf('.');
-  const ext = dot > 0 ? name.slice(dot) : name;
-  const isText = _DROP_TEXT_EXT.has(ext) || name === 'makefile' || name === 'readme';
-  // 探测大小（失败按 0 处理走编辑器尝试）
-  let size = 0, isTextSrv = isText;
-  try {
-    const r = await fetch('/api/file_info', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path})});
-    const j = await r.json();
-    if (j.ok) { size = j.size; isTextSrv = j.is_text; }
-  } catch(e) {}
-  const MB = size / 1024 / 1024;
-  // 决策
-  let how = mode || 'auto';
-  if (how === 'auto') {
-    if (!isTextSrv) how = await _showOpenModeDialog(path, MB ? MB.toFixed(1) : null, true);  // 未知类型：弹窗选（二进制/阅读器/编辑器）
-    else if (MB > 30) how = 'view';                        // >30M 强制阅读器（Monaco 必卡）
-    else if (MB > 20) how = await _showOpenModeDialog(path, MB.toFixed(1), false);  // 20~30M 提示选
-    else how = 'edit';                                     // <20M 默认编辑器
-    if (!how) return;                                      // 用户关掉了弹窗
-  }
-
 // ============================================================
 // v3.5.302 .note 撤销/重做（自研轻量快照栈）
 // Editor.js 核心不含 undo，官方 editorjs-undo 插件未 vendor 化=Ctrl+Z 从来
@@ -1797,6 +1770,9 @@ async function openFileSmart(path, mode) {
 // 压掉 contenteditable 的半残原生栈，块级操作原生栈本就会断）；恢复走
 // blocks.render 全量重渲，恢复态与栈顶相同不重复压栈（render 触发的
 // onChange 被busy 标志+同串比对双保险跳过）。
+// v3.5.306（designer 补档风险1实锤）：本函数曾被误插进 openFileSmart 函数体
+// 内部=顶层 typeof 检查恒 false=落盘版死代码（热注入验证掩盖作用域错误）——
+// 上提到文件顶层，教训：插入位置必须核对外层函数边界
 // ============================================================
 function _edUndoInit(conn) {
   if (!conn.editor || conn._edUndo) return;
@@ -1835,6 +1811,33 @@ function _edUndoInit(conn) {
   }, true);
   snap();                                                // 初始快照（undo 底）
 }
+
+// ---- 统一文件打开入口（拖拽/最近/顶栏打开 共用）----
+// mode: 'auto'（默认按大小规则）| 'edit' | 'view' | 'hex'
+// 规则：未知/二进制类型 → 弹窗让选（二进制/阅读器/编辑器）；
+//       已知文本：<20M 编辑器；20~30M 弹窗提示选（默认建议阅读器）；>30M 强制阅读器。
+async function openFileSmart(path, mode) {
+  const name = path.split(/[\/]/).pop().toLowerCase();
+  const dot = name.lastIndexOf('.');
+  const ext = dot > 0 ? name.slice(dot) : name;
+  const isText = _DROP_TEXT_EXT.has(ext) || name === 'makefile' || name === 'readme';
+  // 探测大小（失败按 0 处理走编辑器尝试）
+  let size = 0, isTextSrv = isText;
+  try {
+    const r = await fetch('/api/file_info', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path})});
+    const j = await r.json();
+    if (j.ok) { size = j.size; isTextSrv = j.is_text; }
+  } catch(e) {}
+  const MB = size / 1024 / 1024;
+  // 决策
+  let how = mode || 'auto';
+  if (how === 'auto') {
+    if (!isTextSrv) how = await _showOpenModeDialog(path, MB ? MB.toFixed(1) : null, true);  // 未知类型：弹窗选（二进制/阅读器/编辑器）
+    else if (MB > 30) how = 'view';                        // >30M 强制阅读器（Monaco 必卡）
+    else if (MB > 20) how = await _showOpenModeDialog(path, MB.toFixed(1), false);  // 20~30M 提示选
+    else how = 'edit';                                     // <20M 默认编辑器
+    if (!how) return;                                      // 用户关掉了弹窗
+  }
 
   if (how === 'hex') { buildHexViewerTab(path, name); return; }
   if (how === 'view') { buildLogViewer(path); return; }

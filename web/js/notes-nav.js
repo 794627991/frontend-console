@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // 笔记库导航（notes-nav.js）：全局全文搜索（第 1 步）；双链/反链/标签/导出
 // 随后续步骤长成。设计来源：designer 方案 v3.5.296（/api/notes/* 只读扫描，
 // 与 /api/ed/* 零接触）。
@@ -436,7 +436,7 @@ function _nnSugDetect(ce) {
   const before = (node.nodeValue || '').slice(0, rng.startOffset);
   let m = before.match(/\[\[([^\[\]\n]{0,100})$/);
   if (m) return { kind: 'file', prefix: m[1], triggerLen: m[1].length + 2 };
-  m = before.match(/(^|[\s，。、；：！？（）()【】、"'`.,;:!?-])#([^\W\d_][^\W_]{0,30})$/);
+  m = before.match(/(^|[\s，。、；：！？（）()【】、"'`.,;:!?-])#([\p{L}_][\p{L}\p{N}_]{0,30})$/u);
   if (m) return { kind: 'tag', prefix: m[2], triggerLen: m[2].length + 1 };
   return null;
 }
@@ -550,10 +550,14 @@ function _nnUnwrapHl(scope) {
     sp.parentNode.replaceChild(document.createTextNode(sp.textContent), sp);
   });
 }
-const _NN_HL_TEXT = /(\[\[[^\[\]\n]{1,120}\]\])|(#[^\W\d_][^\W_]{0,39}?(?=$|[\s，。、；：！？（）【】《》「」\"'`~,;:!?\.\(\)\[\]\{\}<>\-—/|*=+&%$@~^]))/g;
+const _NN_HL_TEXT = /(\[\[[^\[\]\n]{1,120}\]\])|(#[\p{L}_][\p{L}\p{N}_]{0,39}?(?=$|[\s，。、；：！？（）【】《》「」"'`,;:!?.\-(){}[\]|*=+&%$@~^<>/]))/gu;
+const _nnHlSig = new WeakMap();   // 块文本签名——打断「染色DOM变更→onChange→再染色」自激环（designer补档风险2）
 function _nnHlBlock(blk) {
   if (blk.contains(document.activeElement)) return;   // 编辑中块不动
-  if (blk.querySelector('span.nn-hl')) _nnUnwrapHl(blk);   // 重扫前还原旧标记
+  const hasHl = !!blk.querySelector('span.nn-hl');
+  const sig = blk.textContent || '';
+  if (hasHl && _nnHlSig.get(blk) === sig) return;     // 已染色且文本未变→跳过（自激环断点）
+  if (hasHl) _nnUnwrapHl(blk);   // 重扫前还原旧标记
   const walker = document.createTreeWalker(blk, NodeFilter.SHOW_TEXT, {
     acceptNode: n => {
       const p = n.parentNode;
@@ -571,9 +575,11 @@ function _nnHlBlock(blk) {
     _NN_HL_TEXT.lastIndex = 0;
     let html = '', pos = 0, m;
     while ((m = _NN_HL_TEXT.exec(txt))) {
-      html += esc(txt.slice(pos, m.index));
       const s = m[0];
-      html += `<span class="nn-hl ${s.startsWith('[[') ? 'nn-hl-w' : 'nn-hl-t'}">${esc(s)}</span>`;
+      const isHex = s.startsWith('#') && /^[0-9a-f]{3}$|^[0-9a-f]{6}$/i.test(s.slice(1));
+      html += esc(txt.slice(pos, m.index));
+      if (!isHex) html += `<span class="nn-hl ${s.startsWith('[[') ? 'nn-hl-w' : 'nn-hl-t'}">${esc(s)}</span>`;
+      else html += esc(s);                             // hex 颜色码不染色（对齐后端排除）
       pos = m.index + s.length;
     }
     html += esc(txt.slice(pos));
@@ -581,6 +587,7 @@ function _nnHlBlock(blk) {
     span.innerHTML = html;
     node.parentNode.replaceChild(span, node);
   }
+  _nnHlSig.set(blk, blk.textContent || '');
 }
 let _nnHlTimer = null;
 function nnHlSchedule(conn) {
