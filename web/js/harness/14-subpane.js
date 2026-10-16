@@ -164,7 +164,7 @@
       `<span class="hg-sub-dir-ico">${stIco}</span>` +
       `<span class="hg-sub-dir-main"><span class="hg-sub-dir-t1">` +
       `<span class="hg-sub-dir-title">${esc(title)}</span>` +
-      `<span class="hg-sub-dir-st">${stTxt}${r.bg ? ' · 后台' : ''}${r.collab ? ' · 协作' : ''}</span></span>` +
+      `<span class="hg-sub-dir-st">${stTxt}${r.bg ? ' · 后台' : ''}${r.collab ? ' · 协作' : ''}${r.rounds > 1 ? ' · 第' + r.rounds + '轮' : ''}</span></span>` +
       (sum && !_dupDesc ? `<span class="hg-sub-dir-sum">${esc(sum)}${String(r.result || '').trim().length > 120 ? '…' : ''}</span>` : '') +
       `</span>` +
       (timeTxt ? `<span class="hg-sub-dir-time">${esc(timeTxt)}</span>` : '') +

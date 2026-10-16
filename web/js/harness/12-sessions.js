@@ -613,7 +613,12 @@
   // 暂存的运行中子代理 live 档案回填当前会话——转写重渲只会产出回放档案
   // （task_started 不会重放），不回填=运行中子代理永久假回放。行卡同步回
   // 运行态；桶内已完成的条目顺带清理
+  // subagent-registry 阶段2：注册表为主路（_hgRegSync 拉 /agents 权威清单
+  // 重建 _HG.agents——刷新/切会话后的真状态/任务名/续派链全由此来），
+  // 下方内存桶逻辑保留为**同步降级**（/agents 请求在途/失败时先保运行态
+  // 显示，Sync 到达后收编覆盖）
   function _hgLiveAgentsRestore(sid) {
+    if (typeof _hgRegSync === 'function') _hgRegSync(sid);
     const lv = (_HG.liveAgentsBy || {})[sid];
     if (!lv) return;
     for (const t in lv) {

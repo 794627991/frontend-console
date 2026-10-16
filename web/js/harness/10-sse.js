@@ -17,6 +17,11 @@
         else if (!_HG.busy) setBusy(false);
       } else if (sub === 'task_started' || sub === 'task_progress'
                  || sub === 'task_notification') {
+        // subagent-registry 阶段2：生命周期事件后 2s 收敛一次注册表同步
+        //（后端钩子已实时维护注册表，前端 live 档案 tid 键即时显示不受
+        // 影响，Sync 把 agentId 键权威态收编进来——名称/轮数/状态对齐）
+        if (sub !== 'task_progress' && typeof _hgRegSyncSoon === 'function')
+          _hgRegSyncSoon(_HG.sid);
         // v2.35（P1-4/P0-1②）：Task 生命周期系统事件（主链事件、不带
         // parent_tool_use_id，但带 tool_use_id 指回 Task 调用）——
         // · task_started：is_backgrounded 标记后台代理（主回合 result 不收
