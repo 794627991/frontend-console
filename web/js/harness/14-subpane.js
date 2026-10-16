@@ -398,6 +398,15 @@
   function _subTid(pid) {
     const p = String(pid || '');
     if (!p || _sub.tabs[p]) return p;
+    // subagent-registry 阶段3：注册表 tidMap 优先（后端权威归一——包装
+    // task id/派发 tool_use id → 真实 agentId 一表直达，历次归一 miss 的
+    // 根治）。命中且 tab 已按 agentId 开着/agents 有档即归一；未 Sync 到
+    // （live 瞬时）回落下方旧三向（过渡期兼容，Sync 后自然 no-op）
+    const _rAid = (_HG.tidMap || {})[p];
+    if (_rAid && _rAid !== p) {
+      if (_sub.tabs[_rAid]) return _rAid;
+      if ((_HG.agents || {})[_rAid]) return _rAid;
+    }
     // 匹配向一：pid=真实 agentId——tab 档案 taskId/agentId 直指
     for (const t in _sub.tabs) {
       const a = (_HG.agents || {})[t] || {};
