@@ -73,6 +73,8 @@ function _skOnClick(e) {
   if (tp) { SK.topic = tp.dataset.skTopic; skRenderHome(); return; }
   const card = hit('[data-sk-key]');
   if (card && !hit('button,input,label')) { skOpenDetail(card.dataset.skKey); return; }
+  const lcard = hit('[data-sk-local]');
+  if (lcard && !hit('button,input,label')) { skOpenLocal(lcard.dataset.skLocal); return; }
   const ins = hit('[data-sk-install]');
   if (ins) { skInstall(ins.dataset.skInstall, ins); return; }
   const un = hit('[data-sk-uninstall]');
@@ -121,6 +123,7 @@ function skLoadStatus() {
 function skLoadHome() {
   SK.loading = true;
   skRenderHome();
+  _skZhRounds = 0;   // 新一批榜单——汉化续跑轮数重置
   const q = SK.q;
   const zh = /[一-鿿]/.test(q);
   const go = en => {
@@ -128,7 +131,13 @@ function skLoadHome() {
              '&q=' + encodeURIComponent(en || q)).then(r => {
       SK.loading = false;
       SK.rows = r.ok ? r.rows : null;
-      if (r.ok) skZhPatch();
+      if (r.ok) {
+        skZhPatch();
+        // desc 后台补齐是异步串行（可达数十秒）——定时补跑汉化，
+        // desc 陆续到位陆续翻（幂等：命中缓存的零消耗）
+        setTimeout(skZhPatch, 6000);
+        setTimeout(skZhPatch, 15000);
+      }
       skRenderHome();
       if (!r.ok) showBanner('榜单拉取失败：' + (r.err || ''), 3500, true);
     });
@@ -141,13 +150,19 @@ function skLoadHome() {
   } else go('');
 }
 
-// 渐进汉化：前 24 条有英文 desc 的卡片批量翻译（结果进后端缓存，
-// 下次 registry 直带 zh——本次先 patch 渲染）
+// 渐进汉化（v3.5.304 修「翻译不生效」）：desc 由后端后台线程补齐（raw 逐个
+// 串行 12-24s），registry 刚返回时大多还空——旧版只翻「desc 已在」的卡且
+// 只跑一次 = 永远只有缓存命中的 1 张中文。改：分批 8 条 + 有产出则 4s 后
+// 自续下一批（desc 陆续补齐陆续翻，封顶 4 轮防长转）
+let _skZhRounds = 0;
 function skZhPatch() {
-  const need = (SK.rows || []).slice(0, 24)
+  if (SK.view !== 'home') return;
+  const need = (SK.rows || [])
     .filter(r => r.desc && !r.zh_desc)
+    .slice(0, 8)
     .map(r => ({ key: r.key, name: r.name, desc: r.desc }));
   if (!need.length) return;
+  _skZhRounds++;
   _skFetch('/api/skills/translate', { method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ kind: 'meta', items: need }) }).then(r => {
@@ -157,7 +172,11 @@ function skZhPatch() {
       if (m) { row.zh_name = m.zh_name; row.zh_desc = m.zh_desc; }
     }
     if (SK.view === 'home') skRenderHome();
-  });
+    // 还有饿着的卡（desc 刚补齐的）→ 续跑（封顶 4 轮）
+    if ((SK.rows || []).some(x => x.desc && !x.zh_desc) && _skZhRounds < 4) {
+      setTimeout(skZhPatch, 4000);
+    }
+  }).catch(() => {});
 }
 
 function skLoadInstalled() {
@@ -199,12 +218,11 @@ function skRenderHome() {
 }
 
 function skRowCard(r) {
-  const zh = r.zh_desc ? '中文' : '';
   return '<div class="sk-card" data-sk-key="' + _skEsc(r.key) + '" title="' + _skEsc(r.desc || r.skill) + '">' +
     _skIcon(r.name) +
     '<div class="sk-card-m"><div class="sk-card-n"><b>' + _skEsc(r.zh_name || r.name) + '</b>' +
     (r.zh_name && r.zh_name !== r.name ? '<i class="sk-en">' + _skEsc(r.name) + '</i>' : '') +
-    (zh ? '<u class="sk-zhtag">中</u>' : '') + '</div>' +
+    '</div>' +
     '<div class="sk-card-d">' + _skEsc(r.zh_desc || r.desc || r.source) + '</div>' +
     '<div class="sk-card-f"><span>' + _skEsc(r.source) + '</span><span>⬇ ' + _skEsc(r.installs || '-') + '</span></div></div>' +
     '<button class="sk-btn sm pri" data-sk-install="' + _skEsc(r.key) + '">安装</button></div>';
@@ -212,7 +230,9 @@ function skRowCard(r) {
 
 function skInstCard(s) {
   const upd = SK.updates[s.name];
-  return '<div class="sk-card' + (s.disabled ? ' off' : '') + '">' +
+  // v3.5.304 反馈5：已安装卡可点开本地详情（勾选框/按钮外区域）
+  return '<div class="sk-card' + (s.disabled ? ' off' : '') + '"' +
+    (s.source === 'user' ? ' data-sk-local="' + _skEsc(s.name) + '" style="cursor:pointer"' : '') + '>' +
     '<input type="checkbox" class="sk-sel" data-sk-sel="' + _skEsc(s.name) + '"' +
     (SK.sel.has(s.name) ? ' checked' : '') + ' title="勾选导出离线包">' +
     _skIcon(s.name) +
@@ -401,22 +421,52 @@ function skRenderDetail() {
     ? '<div class="sk-gloss"><b>术语对照</b>' + Object.entries(d.glossary).slice(0, 12)
         .map(kv => '<span>' + _skEsc(kv[0]) + ' → ' + _skEsc(kv[1]) + '</span>').join('') + '</div>'
     : '';
+  // 周安装趋势（v3.5.304 反馈3）：8 周迷你条形图
+  const wk = Array.isArray(d.weekly) ? d.weekly : [];
+  const trend = wk.length
+    ? '<div class="sk-trend"><b>周安装趋势</b><span class="sk-trend-bars">' +
+      wk.map(v => {
+        const mx = Math.max.apply(null, wk) || 1;
+        return '<i style="height:' + Math.max(8, Math.round(v / mx * 40)) + 'px" title="' + v.toLocaleString() + '"></i>';
+      }).join('') + '</span>' +
+      '<span class="sk-trend-num">近周 ' + wk[wk.length - 1].toLocaleString() + ' · 峰值 ' + Math.max.apply(null, wk).toLocaleString() + '</span></div>'
+    : '';
+  const isLocal = !!d.local;
   el.innerHTML =
     '<div class="sk-sec sk-det-h">' +
       _skIcon(d.name, 40) +
       '<div class="sk-card-m"><div class="sk-card-n"><b>' + _skEsc(d.zh_name || d.name) + '</b>' +
-        '<i class="sk-en">' + _skEsc(d.name) + '</i></div>' +
+        (isLocal ? '' : '<i class="sk-en">' + _skEsc(d.name) + '</i>') +
+        (d.disabled ? '<u class="sk-offtag">已禁用</u>' : '') + '</div>' +
         '<div class="sk-card-d">' + _skEsc(d.zh_desc || d.desc || '') + '</div>' +
-        '<div class="sk-card-f"><span>' + _skEsc(d.owner + '/' + d.repo) + '</span>' +
-        '<span>⬇ ' + _skEsc(d.installs || '-') + '</span>' +
-        (d.files ? '<span>' + d.files.length + ' 个文件</span>' : '<span>文件清单不可得（API 限额）</span>') + '</div></div>' +
+        '<div class="sk-card-f"><span>' + (isLocal
+          ? _skEsc('本地 · ' + (d.dir || '').split('\\').slice(-1)[0])
+          : _skEsc(d.owner + '/' + d.repo)) + '</span>' +
+        (isLocal ? '' : '<span>⬇ ' + _skEsc(d.installs || '-') + '</span>') + '</div></div>' +
+      (trend ? trend : '') +
       '<span class="sk-ops">' +
-        '<button class="sk-btn sm" data-sk-zh>' + (SK.detZh ? '看英文' : (d.body_zh ? '看中文' : '翻译正文')) + '</button>' +
-        '<button class="sk-btn sm pri" data-sk-do-install>' + (d.zh_name ? '重装' : '安装') + '</button></span>' +
+        (isLocal
+          ? '<button class="sk-btn sm danger" data-sk-uninstall="' + _skEsc(d.name) + '">卸载</button>'
+          : '<button class="sk-btn sm" data-sk-zh>' + (SK.detZh ? '看英文' : (d.body_zh ? '看中文' : '翻译正文')) + '</button>' +
+            '<button class="sk-btn sm pri" data-sk-do-install>' + (d.zh_name ? '重装' : '安装') + '</button>') +
+      '</span>' +
     '</div>' +
     (gloss || (SK.detZh && d.body_zh) ? '<div class="sk-review"><b>安装前校阅（' + (SK.detZh ? '中文译文' : '') + '）</b>' + gloss + '</div>' : '') +
     '<div class="sk-md">' + bodyHtml + '</div>';
   if (SK.detZh && !d.body_zh) skDetailZh();   // 点了「翻译正文」后自动渲染译文
+}
+
+// 本地已安装技能详情（v3.5.304 反馈5「已安装技能点不开」）：读本地 SKILL.md
+function skOpenLocal(name) {
+  SK.det = null; SK.detZh = false; SK.view = 'detail';
+  const el = SK.root.querySelector('#skBody');
+  el.innerHTML = '<div class="sk-empty">读取本地技能…</div>';
+  _skFetch('/api/skills/local_detail?name=' + encodeURIComponent(name)).then(r => {
+    if (!r.ok) { el.innerHTML = '<div class="sk-empty">' + _skEsc(r.err || '读取失败') + '</div>'; return; }
+    SK.det = { key: 'local:' + name, name: r.name, md: r.md, desc: r.desc,
+               disabled: r.disabled, dir: r.dir, local: true };
+    skRenderDetail();
+  });
 }
 
 function skDetailZh() {

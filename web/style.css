@@ -4541,6 +4541,21 @@ html {
 .nn-tag-chip:hover { color: var(--fg); border-color: var(--muted); }
 .nn-tag-chip.on { color: #fff; background: var(--accent); border-color: var(--accent); }
 .nn-tag-chip.on i { color: #fff; opacity: .85; }
+
+/* ---- v3.5.305 双链/标签补全浮层 + 阅读态染色 ---- */
+.nn-sug { position: fixed; z-index: 9999; min-width: 220px; max-width: 300px;
+  max-height: 220px; overflow-y: auto; background: var(--panel-bg, #fff);
+  border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0,0,0,.18); padding: 4px; }
+.nn-sug-it { padding: 6px 10px; font-size: 12px; border-radius: 5px; cursor: pointer;
+  color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nn-sug-it:hover { background: var(--hover, rgba(128,138,150,.12)); }
+.nn-sug-it.on { background: var(--accent, #4a9eff); color: #fff; }
+span.nn-hl { border-radius: 3px; padding: 0 2px; }
+span.nn-hl-w { background: color-mix(in srgb, var(--accent, #4a9eff) 16%, transparent);
+  color: var(--accent, #4a9eff); font-weight: 600; }
+span.nn-hl-t { background: color-mix(in srgb, #3fb950 15%, transparent);
+  color: #2da44e; font-weight: 600; }
 .hg-vcs-loading { padding: 18px 10px; text-align: center; color: var(--muted); }
 .hg-vcs-cfile { display: flex; gap: 6px; align-items: center; padding: 3px 0;
   font-family: var(--font-mono); font-size: 11px; }
@@ -4736,3 +4751,21 @@ html {
   border-radius: 50%; animation: spin-rot 0.8s linear infinite;
   vertical-align: -1px; flex-shrink: 0; }
 .hg-item.running .hg-item-title { color: var(--fg-bright); }
+
+/* v3.5.304 排版打磨（用户反馈2/图165/图164） */
+.sk-back { width: 28px; height: 28px; padding: 0; border-radius: 50%;
+  background: transparent; border: 1px solid var(--border); font-size: 13px;
+  line-height: 1; display: inline-flex; align-items: center; justify-content: center; }
+.sk-back:hover { background: var(--bg-card); }
+.sk-body { max-width: 1500px; margin: 0 auto; }
+.sk-grid { grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 12px; }
+.sk-card { padding: 12px 14px; border-radius: 12px; }
+.sk-det-h { display: flex; flex-wrap: wrap; }
+/* 周安装趋势迷你条形图 */
+.sk-trend { display: flex; align-items: flex-end; gap: 10px; margin: 0 14px; }
+.sk-trend > b { color: var(--muted); font-size: 11px; font-weight: 400; }
+.sk-trend-bars { display: flex; align-items: flex-end; gap: 3px; }
+.sk-trend-bars i { width: 9px; background: linear-gradient(to top, var(--accent, #2a6db5), #7ab3ef);
+  border-radius: 2px 2px 0 0; opacity: .75; }
+.sk-trend-bars i:last-child { opacity: 1; }
+.sk-trend-num { color: var(--muted); font-size: 11px; }

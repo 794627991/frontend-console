@@ -2254,6 +2254,17 @@ def skills_check_updates():
     return jsonify({"ok": True, "updates": check_updates()})
 
 
+@app.route("/api/skills/local_detail")
+def skills_local_detail():
+    """本地已安装技能详情（读本地 SKILL.md，不出网）。"""
+    from .skills_repo import local_detail
+    name = request.args.get("name", "").strip()
+    if not name:
+        return jsonify({"ok": False, "err": "name 为空"}), 400
+    r = local_detail(name)
+    return jsonify({"ok": not r.get("err"), **r}), (200 if not r.get("err") else 404)
+
+
 @app.route("/api/skills/pack/export", methods=["POST"])
 def skills_pack_export():
     """勾选技能导出离线包 zip（返回文件路径）。"""

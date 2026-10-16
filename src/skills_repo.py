@@ -179,6 +179,7 @@ def _desc_backfill(keys):
 _RE_H1 = re.compile(r'<h1[^>]*>([^<]+)</h1>')
 _RE_INST_BIG = re.compile(r'<span>Installs</span></div>'
                           r'<div class="text-3xl[^"]*">([^<]+)</div>')
+_RE_NUM = re.compile(r'\d+(?:,\d{3})*')
 
 
 def detail(owner, repo, skill):
@@ -190,7 +191,7 @@ def detail(owner, repo, skill):
     out = {"key": "%s/%s/%s" % (owner, repo, skill),
            "owner": owner, "repo": repo, "skill": skill,
            "name": skill, "installs": "", "desc": "",
-           "md": None}
+           "weekly": [], "md": None}
     if html:
         m = _RE_H1.search(html)
         if m:
@@ -198,6 +199,15 @@ def detail(owner, repo, skill):
         m = _RE_INST_BIG.search(html)
         if m:
             out["installs"] = m.group(1).strip()
+        # v3.5.304（用户反馈3「看不到安装排名趋势」）：详情页同款
+        # Weekly installs sparkline 数据（8 周序列）
+        wk = _RE_WEEK.search(html)
+        if wk:
+            try:
+                out["weekly"] = [int(x.replace(",", ""))
+                                 for x in _RE_NUM.findall(wk.group(1))]
+            except ValueError:
+                pass
     md = _raw_skill_md(owner, repo, skill)
     if md:
         out["md"] = md
@@ -212,10 +222,10 @@ def detail(owner, repo, skill):
         zb = _zh_load(_zh_key("body:", md))
         if zb:
             out["body_zh"] = zb.get("body_zh")
-    # 文件清单（GitHub contents API 限额敏感——None=列不了，前端如实标注）
-    fl = skill_files(owner, repo, skill)
-    if fl is not None:
-        out["files"] = [{"name": n, "type": t} for n, u, t in fl]
+    # v3.5.304（用户反馈1「文件清单不可得」）：skill_files（GitHub contents
+    # API）已从详情链摘除——匿名 60/h 限额必爆，横幅「不可得」比没有更糟；
+    # skills.sh 详情页本就只有 SKILL.md 正文，无文件树可解析。辅助文件仍由
+    # 安装路径尽力（install→skill_files），详情页不再显示文件清单
     return out
 
 
@@ -392,6 +402,25 @@ def _meta_del(skill):
                     json.dump(d, f, ensure_ascii=False, indent=1)
             except OSError:
                 pass
+
+
+def local_detail(name):
+    """本地已安装技能详情（v3.5.304 用户反馈5「已安装技能点不开」）：
+    读 ~/.claude/skills/<name>/SKILL.md（含 .disabled 变体）全文返回。"""
+    for nm in (name, name + ".disabled"):
+        d = _safe_skill_dir(nm)
+        md = os.path.join(d, "SKILL.md") if d else ""
+        if md and os.path.isfile(md):
+            try:
+                with open(md, "r", encoding="utf-8", errors="replace") as f:
+                    txt = f.read()
+                m = re.search(r'^description:\s*(.+)$', txt[:2048], re.M)
+                return {"name": name, "md": txt, "disabled": nm.endswith(".disabled"),
+                        "desc": (m.group(1).strip()[:600] if m else ""),
+                        "dir": d}
+            except OSError as e:
+                return {"name": name, "md": None, "err": str(e)[:120]}
+    return {"name": name, "md": None, "err": "未找到本地技能目录"}
 
 
 def check_updates():
