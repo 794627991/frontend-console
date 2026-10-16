@@ -54,7 +54,7 @@ function skRepoOpen() {
   }
   SK.root.classList.add('show');
   skLoadStatus();
-  skLoadInstalled().then(() => { if (SK.view === 'home') skRenderHome(); });
+  skLoadInstalled().then(() => { if (SK.view === 'home') skRenderHome(); skInstZhPatch(); });
   skLoadHome();
 }
 
@@ -240,7 +240,7 @@ function skInstCard(s) {
     (s.disabled ? '<u class="sk-offtag">已禁用</u>' : '') +
     (upd === true ? '<u class="sk-updtag">可更新</u>' : '') +
     (s.source !== 'user' ? '<u class="sk-srctag">' + _skEsc(s.source) + '</u>' : '') + '</div>' +
-    '<div class="sk-card-d">' + _skEsc(s.desc || '') + '</div>' +
+    '<div class="sk-card-d">' + _skEsc(s.zh_desc || s.desc || '') + '</div>' +
     (upd === false && s.origin ? '<div class="sk-card-f"><span>已是最新</span></div>' : '') + '</div>' +
     '<span class="sk-ops">' +
     (s.source === 'user'
@@ -254,6 +254,29 @@ function skInstCard(s) {
 
 function _skRefreshInst() {
   return skLoadInstalled().then(() => { if (SK.view === 'home') skRenderHome(); });
+}
+
+// v3.5.310：已安装卡描述渐进修译（key=local:<name>，缓存命名空间独立；
+// 命中走 installed() 附带的 zh_desc，未命中的批量 8 条补译一轮）
+let _skInstZhRun = false;
+function skInstZhPatch() {
+  if (_skInstZhRun || SK.view !== 'home') return;
+  const need = (SK.inst || []).filter(s => s.desc && !s.zh_desc)
+    .slice(0, 8).map(s => ({ key: 'local:' + s.name, name: s.name, desc: s.desc }));
+  if (!need.length) return;
+  _skInstZhRun = true;
+  _skFetch('/api/skills/translate', { method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind: 'meta', items: need }) }).then(r => {
+    _skInstZhRun = false;
+    if (!r.ok || !r.map) return;
+    for (const row of SK.inst || []) {
+      const m = r.map['local:' + row.name];
+      if (m && m.zh_desc) row.zh_desc = m.zh_desc;
+    }
+    if (SK.view === 'home') skRenderHome();
+    if ((SK.inst || []).some(x => x.desc && !x.zh_desc)) setTimeout(skInstZhPatch, 4000);
+  }).catch(() => { _skInstZhRun = false; });
 }
 
 function skInstall(key, btn) {
@@ -449,7 +472,8 @@ function skRenderDetail() {
       (trend ? trend : '') +
       '<span class="sk-ops">' +
         (isLocal
-          ? '<button class="sk-btn sm danger" data-sk-uninstall="' + _skEsc(d.name) + '">卸载</button>'
+          ? '<button class="sk-btn sm" data-sk-zh>' + (SK.detZh ? '看英文' : (d.body_zh ? '看中文' : '翻译正文')) + '</button>' +
+            '<button class="sk-btn sm danger" data-sk-uninstall="' + _skEsc(d.name) + '">卸载</button>'
           : '<button class="sk-btn sm" data-sk-zh>' + (SK.detZh ? '看英文' : (d.body_zh ? '看中文' : '翻译正文')) + '</button>' +
             '<button class="sk-btn sm pri" data-sk-do-install>' + (d.zh_name ? '重装' : '安装') + '</button>') +
       '</span>' +
@@ -479,10 +503,12 @@ function skDetailZh() {
   if (d.body_zh) { SK.detZh = true; skRenderDetail(); return; }
   const btn = SK.root.querySelector('[data-sk-zh]');
   if (btn) { btn.disabled = true; btn.textContent = '翻译中…'; }
-  const parts = d.key.split('/');
+  const ask = d.local ? { kind: 'body', local: d.name }
+    : (() => { const parts = d.key.split('/');
+        return { kind: 'body', owner: parts[0], repo: parts[1], skill: parts[2] }; })();
   _skFetch('/api/skills/translate', { method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ kind: 'body', owner: parts[0], repo: parts[1], skill: parts[2] }) })
+    body: JSON.stringify(ask) })
     .then(r => {
       if (btn) { btn.disabled = false; btn.textContent = '翻译正文'; }
       if (!r.ok) { showBanner('翻译失败：' + (r.err || ''), 4000, true); return; }

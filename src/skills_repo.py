@@ -162,10 +162,7 @@ def _desc_backfill(keys):
             continue
         owner, repo, skill = key.split("/")
         md = _raw_skill_md(owner, repo, skill, cache=False)
-        desc = ""
-        if md:
-            m = re.search(r'^description:\s*(.+)$', md[:2048], re.M)
-            desc = m.group(1).strip()[:300] if m else ""
+        desc = _fm_desc(md[:2048]) if md else ""
         with _DESC_LOCK:
             _DESC_CACHE[key] = {"desc": desc, "ts": time.time()}
         # 汉化缓存命中顺手带上（translate_meta 生成过就直接复用）
@@ -210,9 +207,7 @@ def detail(owner, repo, skill):
     md = _raw_skill_md(owner, repo, skill)
     if md:
         out["md"] = md
-        m = re.search(r'^description:\s*(.+)$', md[:2048], re.M)
-        if m:
-            out["desc"] = m.group(1).strip()[:600]
+        out["desc"] = _fm_desc(md[:2048])
         zh = _zh_load("meta:" + out["key"])
         if zh:
             out["zh_name"] = zh.get("zh_name")
@@ -403,6 +398,25 @@ def _meta_del(skill):
                 pass
 
 
+def _fm_desc(head):
+    """frontmatter description 提取（v3.5.310）：单行直取；YAML 块标量
+    （description: | / > 多行折叠）抓缩进续行拼接——单行正则只会抓到
+    「|」一个字符（HikLink-claw-cli 实锤，英文原文形同没翻）。"""
+    m = re.search(r'^description:\s*(.*)$', head, re.M)
+    if not m:
+        return ""
+    v = m.group(1).strip()
+    if v in ("|", ">", "|-", ">-", "|+", ">+"):
+        lines = []
+        for ln in head[m.end():].splitlines():
+            if ln[:1] in (" ", "\t") and ln.strip():
+                lines.append(ln.strip())
+            elif lines:
+                break   # 续行段结束
+        v = " ".join(lines)
+    return v[:600]
+
+
 def local_detail(name):
     """本地已安装技能详情（v3.5.304 用户反馈5「已安装技能点不开」）：
     读 ~/.claude/skills/<name>/SKILL.md（含 .disabled 变体）全文返回。"""
@@ -413,10 +427,8 @@ def local_detail(name):
             try:
                 with open(md, "r", encoding="utf-8", errors="replace") as f:
                     txt = f.read()
-                m = re.search(r'^description:\s*(.+)$', txt[:2048], re.M)
                 return {"name": name, "md": txt, "disabled": nm.endswith(".disabled"),
-                        "desc": (m.group(1).strip()[:600] if m else ""),
-                        "dir": d}
+                        "desc": _fm_desc(txt[:2048]), "dir": d}
             except OSError as e:
                 return {"name": name, "md": None, "err": str(e)[:120]}
     return {"name": name, "md": None, "err": "未找到本地技能目录"}
@@ -475,8 +487,7 @@ def installed(cwd=None):
             desc = sha = ""
             try:
                 with open(md, "r", encoding="utf-8", errors="replace") as f:
-                    m = re.search(r'^description:\s*(.+)$', f.read(8192), re.M)
-                desc = m.group(1).strip() if m else ""
+                    desc = _fm_desc(f.read(8192))
             except OSError:
                 pass
             try:
@@ -484,9 +495,11 @@ def installed(cwd=None):
                     sha = hashlib.sha256(f.read()).hexdigest()[:16]
             except OSError:
                 pass
+            _zh = _zh_load("meta:local:" + base)   # v3.5.310：已安装卡中文描述
             out.append({"name": base, "desc": desc, "source": "user",
                         "disabled": disabled, "sha": sha,
-                        "origin": (_meta.get(base) or {}).get("key")})
+                        "origin": (_meta.get(base) or {}).get("key"),
+                        **({"zh_desc": _zh["zh_desc"]} if _zh else {})})
     for it in list_skills(cwd):
         if it.get("source") == "user":
             continue   # user 级已自扫（身份=目录名）
@@ -787,7 +800,10 @@ def _extract_json(text):
     try:
         return json.loads(t)
     except ValueError:
-        return None
+        try:
+            return json.loads(t, strict=False)   # 译文串含原始换行（控制字符）容忍
+        except ValueError:
+            return None
 
 
 def translate_meta(items):
@@ -842,6 +858,22 @@ def translate_body(md):
                      "输出 JSON：{\"body_zh\":\"译文\"}。正文：\n" + md)
     data = _extract_json(text) if not err else None
     if not data or not data.get("body_zh"):
+        # 兜底（实测正文译文 JSON 内含大量原始换行时模型常输出非法 JSON）：
+        # 模型没包成功但输出本身是完整 markdown 译文时，剥围栏直接采信
+        t = (text or "").strip()
+        m = re.search(r"```(?:json)?\s*(.*?)```", t, re.S)
+        if m:
+            t = m.group(1).strip()
+        if not err and len(t) > 300:
+            # 采信前二次解包：模型常把整个 JSON 原文当围栏内容输出
+            if t.startswith('{"body_zh"'):
+                try:
+                    t = json.loads(t, strict=False).get("body_zh") or t
+                except ValueError:
+                    t = t[len('{"body_zh":"'):-2] if t.endswith('"}') else t
+            d0 = {"body_zh": t, "model": light_model(), "ts": int(time.time())}
+            _zh_save(key, d0)
+            return d0, None
         return None, err or "翻译结果解析失败"
     d = {"body_zh": data["body_zh"], "model": light_model(),
          "ts": int(time.time())}

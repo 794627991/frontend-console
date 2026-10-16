@@ -485,11 +485,12 @@ def _add_skill(md_path, source, out, seen):
         if m:
             fm = m.group(1)
             nm = re.search(r"^name:\s*(.+)$", fm, re.M)
-            dm = re.search(r"^description:\s*(.+)$", fm, re.M)
             if nm:
                 name = nm.group(1).strip()
-            if dm:
-                desc = dm.group(1).strip()
+            # v3.5.310：块标量（description: | 多行折叠）走共享解析——单行正
+            # 则只会抓到「|」一个字符（HikLink-claw-cli 实锤）
+            from src.skills_repo import _fm_desc
+            desc = _fm_desc(fm)
     except OSError:
         pass
     out.append({"name": name, "desc": desc, "source": source})
