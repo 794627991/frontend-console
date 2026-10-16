@@ -148,10 +148,13 @@ function nnJumpLine(conn, line) {
   }
 }
 
-// ---- 全局快捷键 Ctrl+Alt+F（全库搜索）----
-// 注：Ctrl+F=当前文档内搜索（sidebar.js，未排除 shiftKey），故全库取 Ctrl+Alt+F。
+// ---- 全局快捷键（全库搜索，v3.5.310 可配置，默认 Ctrl+Alt+F）----
+// 注：文档内搜索默认 Ctrl+F（sidebar.js 等，可配置），两键错开由设置页保证——
+// 用户改键撞车时后者注册者胜（先到先得不再修正，如实提示）。
 document.addEventListener('keydown', e => {
-  if (e.ctrlKey && e.altKey && !e.shiftKey && (e.key === 'f' || e.key === 'F')) {
+  if (typeof hkMatch === 'function'
+      ? hkMatch(e, window._HK && window._HK.notesSearch)
+      : (e.ctrlKey && e.altKey && !e.shiftKey && (e.key === 'f' || e.key === 'F'))) {
     e.preventDefault(); e.stopPropagation();
     nnSearchShow();
   }

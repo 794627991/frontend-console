@@ -272,8 +272,10 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
       else edSave(conn);
       return;
     }
-    // Ctrl+F：编辑器全局搜索分栏（同日志/串口——全局搜索是基础文本能力）
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+    // 文档内搜索（v3.5.310 可配置，默认 Ctrl+F）：编辑器全局搜索分栏
+    if (typeof hkMatch === 'function'
+        ? hkMatch(e, window._HK && window._HK.docSearch)
+        : ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f')) {
       e.preventDefault();
       edToggleSearchPane(conn, true);
       return;

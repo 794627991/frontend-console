@@ -882,7 +882,10 @@ def api_theme():
                             "term_font_size": int(tk.get("term_font_size", 13)),
                             "ui_zoom": int(tk.get("ui_zoom", 100)),
                         },
-                        "snip_hotkey": cfg.get("snip_hotkey", "ctrl+alt+a")})
+                        "snip_hotkey": cfg.get("snip_hotkey", "ctrl+alt+a"),
+                        # v3.5.310 可配置搜索快捷键（页面内 keydown，非系统热键）
+                        "doc_search_hotkey": cfg.get("doc_search_hotkey", "ctrl+f"),
+                        "notes_search_hotkey": cfg.get("notes_search_hotkey", "ctrl+alt+f")})
     data = request.get_json(force=True) or {}
     if "data_dir_prompted" in data:
         # 仅写引导标记的轻请求（不带 theme 字段）
@@ -930,6 +933,14 @@ def api_theme():
         if not ok:
             return jsonify({"ok": False, "err": err}), 400
         _save_config({**_load_config(), "snip_hotkey": val})
+    # v3.5.310 可配置搜索快捷键：仅落 config（页面内 keydown 消费，前端
+    # 热更新 window._HK），无系统级注册
+    _hk_updates = {}
+    for _hk_field in ("doc_search_hotkey", "notes_search_hotkey"):
+        if _hk_field in data:
+            _hk_updates[_hk_field] = str(data[_hk_field] or "").strip().lower()
+    if _hk_updates:
+        _save_config({**_load_config(), **_hk_updates})
     if "custom_theme" in data and isinstance(data["custom_theme"], dict):
         # v2.25 自定义主题调色：键白名单 + 值格式校验（#rgb/#rrgggb、light 布尔），
         # 防 config 被塞脏数据（与 term_keys 白名单同思路）

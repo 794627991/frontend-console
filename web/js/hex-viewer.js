@@ -326,7 +326,9 @@ async function buildHexViewerTab(path, name) {
     });
   }
   wrap.addEventListener('keydown', e => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'f') { e.preventDefault(); conn.findBar.style.display = 'flex'; conn.findInput.focus(); }
+    if (typeof hkMatch === 'function'
+        ? hkMatch(e, window._HK && window._HK.docSearch)
+        : ((e.ctrlKey || e.metaKey) && e.key === 'f')) { e.preventDefault(); conn.findBar.style.display = 'flex'; conn.findInput.focus(); }
     if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); _hxSave(conn); }
   });
   // 关 tab 脏确认（closeEditorTab 调）：应用风格弹窗

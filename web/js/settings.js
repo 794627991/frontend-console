@@ -197,6 +197,9 @@ async function _stRenderTermKeysPane(pane) {
   let closeToTray = true;
   let claudeUiMode = 'harness';
   let snipHk = 'ctrl+alt+a';
+  // v3.5.310 可配置搜索快捷键（页面内 keydown，非系统热键）
+  let docHk = 'ctrl+f';
+  let notesHk = 'ctrl+alt+f';
 
   try {
     const j = await (await fetch('/api/theme')).json();
@@ -204,6 +207,8 @@ async function _stRenderTermKeysPane(pane) {
     if (j.ok) closeToTray = j.close_to_tray !== false;   // 缺省=开（config 旧版无此键）
     if (j.ok && j.claude_ui_mode) claudeUiMode = j.claude_ui_mode;   // Claude 入口分派：harness=界面化 / cli=终端
     if (j.ok && typeof j.snip_hotkey === 'string') snipHk = j.snip_hotkey || '';
+    if (j.ok && typeof j.doc_search_hotkey === 'string') docHk = j.doc_search_hotkey || 'ctrl+f';
+    if (j.ok && typeof j.notes_search_hotkey === 'string') notesHk = j.notes_search_hotkey || 'ctrl+alt+f';
   } catch(_) {}
   pane.innerHTML = `
     <div class="dd-body">
@@ -250,6 +255,20 @@ async function _stRenderTermKeysPane(pane) {
                  placeholder="点击录制按键…"
                  style="flex:1;font-family:var(--font-mono);padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-input);color:var(--fg);cursor:pointer;">
           <button class="btn ghost" id="snipHkClear" title="清空=禁用全局快捷键">清除</button>
+        </div>
+        <div class="dd-label" style="margin-top:10px;">文档内搜索（${esc(docHk)}）</div>
+        <div class="dd-row" style="display:flex;gap:8px;margin-top:6px;align-items:center;">
+          <input type="text" id="docHkInput" value="${docHk}" spellcheck="false" readonly
+                 placeholder="点击录制按键…"
+                 style="flex:1;font-family:var(--font-mono);padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-input);color:var(--fg);cursor:pointer;">
+        </div>
+        <div class="dd-label" style="margin-top:10px;">全库笔记搜索（${esc(notesHk)}）</div>
+        <div class="dd-row" style="display:flex;gap:8px;margin-top:6px;align-items:center;">
+          <input type="text" id="notesHkInput" value="${notesHk}" spellcheck="false" readonly
+                 placeholder="点击录制按键…"
+                 style="flex:1;font-family:var(--font-mono);padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-input);color:var(--fg);cursor:pointer;">
+        </div>
+        <div class="dd-sub" style="margin-top:4px;">改键立即生效（热更新，无需重启）。文档内搜索=当前日志/编辑器/终端查找；全库笔记搜索=跨全部笔记与文本文件检索。</div>
         </div>
         <div class="dd-sub" style="margin-top:4px;">点击输入框后直接按想要的组合键即录制并生效（Esc 取消）。功能键 F1–F12 可单键；字母/数字键需带修饰（Ctrl/Alt/Shift/Win）。点「清除」禁用。</div>
       </div>
@@ -374,6 +393,51 @@ async function _stRenderTermKeysPane(pane) {
       _hkApply('');                           // 空串=禁用
     };
   }
+
+  // v3.5.310 可配置搜索快捷键：录制式（同截图快捷键交互），POST /api/theme
+  // 落 config + 热更新 window._HK（消费端 hkMatch 即时生效，无需重启）。
+  const _bindSearchHk = (inputId, curRef, field) => {
+    const inp = pane.querySelector('#' + inputId);
+    if (!inp) return;
+    let rec = false;
+    const setRec = on => {
+      rec = on;
+      inp.placeholder = on ? '按下组合键…（Esc 取消）' : '点击录制按键…';
+      inp.style.borderColor = on ? 'var(--accent, #4a9eff)' : 'var(--border)';
+    };
+    inp.addEventListener('click', () => { if (rec) return; inp.value = ''; setRec(true); inp.focus(); });
+    inp.addEventListener('keydown', e => {
+      e.preventDefault(); e.stopPropagation();
+      if (e.key === 'Escape') { inp.value = curRef.get(); setRec(false); return; }
+      const mod = [];
+      if (e.ctrlKey) mod.push('ctrl');
+      if (e.altKey) mod.push('alt');
+      if (e.shiftKey) mod.push('shift');
+      const k = (e.key || '').toLowerCase();
+      if (!/^([a-z0-9]|f([1-9]|1[0-2]))$/.test(k)) return;   // 只收字母/数字/F1-F12
+      if (!mod.length) { inp.value = ''; inp.placeholder = '字母/数字需搭配 Ctrl/Alt/Shift…'; return; }
+      inp.value = mod.concat([k]).join('+');
+      setRec(false);
+      (async () => {
+        try {
+          const r = await fetch('/api/theme', { method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ [field]: inp.value }) });
+          const j = await r.json();
+          if (j.ok) {
+            curRef.set(inp.value);
+            if (window._HK) window._HK[field === 'doc_search_hotkey' ? 'docSearch' : 'notesSearch'] = inp.value;
+            showBanner('搜索快捷键已应用：' + inp.value + '（立即生效）');
+          } else { showBanner(j.err || '保存失败', 3000, true); inp.value = curRef.get(); }
+        } catch (e) { showBanner('保存失败: ' + e, 3000, true); inp.value = curRef.get(); }
+      })();
+    });
+    inp.addEventListener('blur', () => { if (rec) { inp.value = curRef.get(); setRec(false); } });
+  };
+  const _docRef = { get: () => docHk, set: v => { docHk = v; } };
+  const _notesRef = { get: () => notesHk, set: v => { notesHk = v; } };
+  _bindSearchHk('docHkInput', _docRef, 'doc_search_hotkey');
+  _bindSearchHk('notesHkInput', _notesRef, 'notes_search_hotkey');
 }
 
 // ---- Claude 重装子页：重开安装窗 / 修复状态栏 / 离线包目录 ----

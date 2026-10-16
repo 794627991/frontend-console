@@ -181,3 +181,31 @@ function sortKeyFn(pid) {
 // 注：实际终端元素由 buildTerminal() 创建，此处不再保留死代码。
 
 // 重新设计：每个连接有自己的 xterm 终端容器
+
+// ============================================================
+// v3.5.310 可配置快捷键（设置页录制式）：文档内搜索（原 Ctrl+F）/ 全库
+// 笔记搜索（原 Ctrl+Alt+F）。_HK 由启动 GET /api/theme 填充，设置页改键
+// 后热更新 window._HK。hkMatch 只比对配置里出现的修饰键（未出现的忽略——
+// 保持既有 Ctrl+F 不排 Shift 的宽松行为），末段=键名。
+// ============================================================
+function hkMatch(e, combo) {
+  if (!combo) return false;
+  const parts = String(combo).toLowerCase().split('+').filter(Boolean);
+  if (!parts.length) return false;
+  const key = parts[parts.length - 1];
+  if ((e.key || '').toLowerCase() !== key) return false;
+  if (parts.includes('ctrl') !== !!e.ctrlKey) return false;
+  if (parts.includes('alt') !== !!e.altKey) return false;
+  if (parts.includes('shift') !== !!e.shiftKey) return false;
+  return true;
+}
+window._HK = { docSearch: 'ctrl+f', notesSearch: 'ctrl+alt+f' };
+(function () {
+  fetch('/api/theme').then(r => r.json()).then(j => {
+    if (!j || !j.ok) return;
+    if (typeof j.doc_search_hotkey === 'string' && j.doc_search_hotkey)
+      window._HK.docSearch = j.doc_search_hotkey;
+    if (typeof j.notes_search_hotkey === 'string' && j.notes_search_hotkey)
+      window._HK.notesSearch = j.notes_search_hotkey;
+  }).catch(() => {});
+})();

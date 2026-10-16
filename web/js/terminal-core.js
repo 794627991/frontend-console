@@ -219,7 +219,7 @@ function buildTerminal(portId, meta) {
       _pasteToConn(conn);
       return false;
     }
-    if (e.ctrlKey && (e.key === 'f' || e.key === 'F')) {
+    if (typeof hkMatch === 'function' && hkMatch(e, window._HK && window._HK.docSearch)) {
       toggleTermSearchPane(conn, true);
       conn.termSearchInput.focus(); conn.termSearchInput.select();
       return false;
