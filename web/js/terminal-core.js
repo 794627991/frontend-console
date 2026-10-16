@@ -219,7 +219,9 @@ function buildTerminal(portId, meta) {
       _pasteToConn(conn);
       return false;
     }
-    if (typeof hkMatch === 'function' && hkMatch(e, window._HK && window._HK.docSearch)) {
+    if ((typeof hkMatch === 'function'
+        ? hkMatch(e, window._HK && window._HK.docSearch, true)
+        : (e.ctrlKey && (e.key === 'f' || e.key === 'F')))) {
       toggleTermSearchPane(conn, true);
       conn.termSearchInput.focus(); conn.termSearchInput.select();
       return false;

@@ -244,33 +244,36 @@ async function _stRenderTermKeysPane(pane) {
       <div class="dd-cur" style="margin-top:8px;">
         <div class="dd-label">固定快捷键（恒可用，不受上面配置影响）</div>
         <div class="dd-sub" style="margin-top:4px;">
-          Ctrl+C 复制选中 / 发 ^C 中断　·　Ctrl+V 粘贴　·　Ctrl+F 查找<br>
-          Shift+右键 粘贴　·　Ctrl+右键 弹菜单（右键行为=ctrl_menu 时）
+          Ctrl+C 复制选中 / 发 ^C 中断　·　Ctrl+V 粘贴<br>
+          Shift+右键 粘贴　·　Ctrl+右键 弹菜单（右键行为=ctrl_menu 时）　·　Ctrl+S 保存（编辑器）
         </div>
       </div>
       <div class="dd-cur" style="margin-top:8px;">
         <div class="dd-label">截图快捷键（全局）</div>
         <div class="dd-row" style="display:flex;gap:8px;margin-top:6px;align-items:center;">
-          <input type="text" id="snipHk" value="${snipHk}" spellcheck="false" readonly
+          <input type="text" id="snipHk" value="${esc(snipHk)}" spellcheck="false" readonly
                  placeholder="点击录制按键…"
                  style="flex:1;font-family:var(--font-mono);padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-input);color:var(--fg);cursor:pointer;">
           <button class="btn ghost" id="snipHkClear" title="清空=禁用全局快捷键">清除</button>
         </div>
+        <div class="dd-sub" style="margin-top:4px;">点击输入框后直接按想要的组合键即录制并生效（Esc 取消）。功能键 F1–F12 可单键；字母/数字键需带修饰（Ctrl/Alt/Shift/Win）。点「清除」禁用。</div>
+      </div>
+      <div class="dd-cur" style="margin-top:8px;">
+        <div class="dd-label">搜索快捷键</div>
+        <div class="dd-sub" style="margin-top:4px;">改键立即生效（热更新，无需重启）。文档内搜索=当前日志/编辑器/终端/十六进制查看的查找；全库笔记搜索=跨全部笔记与文本文件检索（Ctrl+点击双链不受影响）。</div>
         <div class="dd-label" style="margin-top:10px;">文档内搜索（${esc(docHk)}）</div>
         <div class="dd-row" style="display:flex;gap:8px;margin-top:6px;align-items:center;">
-          <input type="text" id="docHkInput" value="${docHk}" spellcheck="false" readonly
+          <input type="text" id="docHkInput" value="${esc(docHk)}" spellcheck="false" readonly
                  placeholder="点击录制按键…"
                  style="flex:1;font-family:var(--font-mono);padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-input);color:var(--fg);cursor:pointer;">
         </div>
         <div class="dd-label" style="margin-top:10px;">全库笔记搜索（${esc(notesHk)}）</div>
         <div class="dd-row" style="display:flex;gap:8px;margin-top:6px;align-items:center;">
-          <input type="text" id="notesHkInput" value="${notesHk}" spellcheck="false" readonly
+          <input type="text" id="notesHkInput" value="${esc(notesHk)}" spellcheck="false" readonly
                  placeholder="点击录制按键…"
                  style="flex:1;font-family:var(--font-mono);padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-input);color:var(--fg);cursor:pointer;">
         </div>
-        <div class="dd-sub" style="margin-top:4px;">改键立即生效（热更新，无需重启）。文档内搜索=当前日志/编辑器/终端查找；全库笔记搜索=跨全部笔记与文本文件检索。</div>
-        </div>
-        <div class="dd-sub" style="margin-top:4px;">点击输入框后直接按想要的组合键即录制并生效（Esc 取消）。功能键 F1–F12 可单键；字母/数字键需带修饰（Ctrl/Alt/Shift/Win）。点「清除」禁用。</div>
+        <div class="dd-sub" style="margin-top:4px;">录制与截图快捷键同款（Esc 取消）。两键请勿设成相同组合——撞车时全库搜索（页面捕获层）优先。</div>
       </div>
       <div class="dd-cur" style="margin-top:8px;">
         <div class="dd-label">Claude 打开方式</div>
@@ -414,8 +417,9 @@ async function _stRenderTermKeysPane(pane) {
       if (e.altKey) mod.push('alt');
       if (e.shiftKey) mod.push('shift');
       const k = (e.key || '').toLowerCase();
-      if (!/^([a-z0-9]|f([1-9]|1[0-2]))$/.test(k)) return;   // 只收字母/数字/F1-F12
-      if (!mod.length) { inp.value = ''; inp.placeholder = '字母/数字需搭配 Ctrl/Alt/Shift…'; return; }
+      const isFn = /^f([1-9]|1[0-2])$/.test(k);
+      if (!/^[a-z0-9]$/.test(k) && !isFn) return;   // 只收字母/数字/F1-F12
+      if (!mod.length && !isFn) { inp.value = ''; inp.placeholder = '字母/数字需搭配 Ctrl/Alt/Shift（功能键可单键）…'; return; }
       inp.value = mod.concat([k]).join('+');
       setRec(false);
       (async () => {

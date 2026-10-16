@@ -148,9 +148,10 @@ function nnJumpLine(conn, line) {
   }
 }
 
-// ---- 全局快捷键（全库搜索，v3.5.310 可配置，默认 Ctrl+Alt+F）----
-// 注：文档内搜索默认 Ctrl+F（sidebar.js 等，可配置），两键错开由设置页保证——
-// 用户改键撞车时后者注册者胜（先到先得不再修正，如实提示）。
+// ---- 全局快捷键（全库搜索，v3.5.310 可配置，默认 Ctrl+Alt+F，严格三键匹配）----
+// 注：文档内搜索默认 Ctrl+F（sidebar.js 等，可配置）。两键若被用户设成相同
+// 组合，本监听（页面捕获层）先于冒泡层命中=全库搜索优先——设置页帮助文如实
+// 提示勿设同键，无自动撞键检测。
 document.addEventListener('keydown', e => {
   if (typeof hkMatch === 'function'
       ? hkMatch(e, window._HK && window._HK.notesSearch)

@@ -185,18 +185,22 @@ function sortKeyFn(pid) {
 // ============================================================
 // v3.5.310 可配置快捷键（设置页录制式）：文档内搜索（原 Ctrl+F）/ 全库
 // 笔记搜索（原 Ctrl+Alt+F）。_HK 由启动 GET /api/theme 填充，设置页改键
-// 后热更新 window._HK。hkMatch 只比对配置里出现的修饰键（未出现的忽略——
-// 保持既有 Ctrl+F 不排 Shift 的宽松行为），末段=键名。
+// 后热更新 window._HK。
+// hkMatch(e, combo, loose)：loose=true（文档内搜索——原 sidebar/editor 条件
+// 不排 Shift/Alt，宽松保持）；loose 缺省=严格（三修饰键精确匹配，全库搜索
+// 原语义）。轻审 F2：strict 语义不可放宽到 docSearch，否则 ctrl+f 吞掉
+// ctrl+alt+f。
 // ============================================================
-function hkMatch(e, combo) {
+function hkMatch(e, combo, loose) {
   if (!combo) return false;
   const parts = String(combo).toLowerCase().split('+').filter(Boolean);
   if (!parts.length) return false;
   const key = parts[parts.length - 1];
   if ((e.key || '').toLowerCase() !== key) return false;
-  if (parts.includes('ctrl') !== !!e.ctrlKey) return false;
-  if (parts.includes('alt') !== !!e.altKey) return false;
-  if (parts.includes('shift') !== !!e.shiftKey) return false;
+  const chk = (want, got) => (loose ? (!want || got) : want === got);
+  if (!chk(parts.includes('ctrl'), !!e.ctrlKey)) return false;
+  if (!chk(parts.includes('alt'), !!e.altKey)) return false;
+  if (!chk(parts.includes('shift'), !!e.shiftKey)) return false;
   return true;
 }
 window._HK = { docSearch: 'ctrl+f', notesSearch: 'ctrl+alt+f' };

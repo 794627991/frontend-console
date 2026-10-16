@@ -934,11 +934,17 @@ def api_theme():
             return jsonify({"ok": False, "err": err}), 400
         _save_config({**_load_config(), "snip_hotkey": val})
     # v3.5.310 可配置搜索快捷键：仅落 config（页面内 keydown 消费，前端
-    # 热更新 window._HK），无系统级注册
+    # 热更新 window._HK），无系统级注册。白名单校验（复审 F4）：空串=禁用，
+    # 否则 1-4 段小写字母数字以 + 相连——防直连 POST 塞 "win+f" 类脏值
+    # （hkMatch 忽略未知修饰键，脏值会退化成裸键触发）
+    _HK_RE = re.compile(r"^(|[a-z0-9]+(\+[a-z0-9]+){0,3})$")
     _hk_updates = {}
     for _hk_field in ("doc_search_hotkey", "notes_search_hotkey"):
         if _hk_field in data:
-            _hk_updates[_hk_field] = str(data[_hk_field] or "").strip().lower()
+            _v = str(data[_hk_field] or "").strip().lower()
+            if not _HK_RE.match(_v):
+                return jsonify({"ok": False, "err": _hk_field + " 格式非法（形如 ctrl+f）"}), 400
+            _hk_updates[_hk_field] = _v
     if _hk_updates:
         _save_config({**_load_config(), **_hk_updates})
     if "custom_theme" in data and isinstance(data["custom_theme"], dict):

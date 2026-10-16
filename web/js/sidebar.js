@@ -255,8 +255,12 @@ async function refreshGlobalStatus() {
 // 这里仅保留全局快捷键：Ctrl+End 跳底、Ctrl+L 清屏等）
 // ============================================================
 document.addEventListener('keydown', (e) => {
-  // 文档内搜索（v3.5.310 可配置，默认 Ctrl+F）：日志 tab → 激活底部查找分栏
-  if (typeof hkMatch === 'function' && hkMatch(e, window._HK && window._HK.docSearch) && activePortId) {
+  // 文档内搜索（v3.5.310 可配置，默认 Ctrl+F；loose=宽松保持原不排 Shift 行为）：
+  // 日志 tab → 激活底部查找分栏
+  const _docHit = (typeof hkMatch === 'function')
+    ? hkMatch(e, window._HK && window._HK.docSearch, true)
+    : (e.ctrlKey && (e.key === 'f' || e.key === 'F'));
+  if (_docHit && activePortId) {
     const conn = connections[activePortId];
     if (conn && conn.meta && conn.meta.kind === 'log') {
       e.preventDefault();
