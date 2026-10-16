@@ -326,6 +326,8 @@ async function buildHexViewerTab(path, name) {
     });
   }
   wrap.addEventListener('keydown', e => {
+    // 此点刻意保持 strict（不传 loose）：hex 原条件大小写敏感、Ctrl+Shift+F
+    // 原本不命中——loose 反而新增命中改变原行为（复审 R1 已声明）
     if (typeof hkMatch === 'function'
         ? hkMatch(e, window._HK && window._HK.docSearch)
         : ((e.ctrlKey || e.metaKey) && e.key === 'f')) { e.preventDefault(); conn.findBar.style.display = 'flex'; conn.findInput.focus(); }

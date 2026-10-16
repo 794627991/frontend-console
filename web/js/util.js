@@ -197,6 +197,9 @@ function hkMatch(e, combo, loose) {
   if (!parts.length) return false;
   const key = parts[parts.length - 1];
   if ((e.key || '').toLowerCase() !== key) return false;
+  // 纵深防御（复审 R2）：直连 POST 塞 'win+f' 类脏配置时，未知修饰段使按键
+  // 永不命中——比「退化成裸键触发」安全（UI 录制器产不出此类值）
+  if (parts.slice(0, -1).some(mm => !['ctrl', 'alt', 'shift'].includes(mm))) return false;
   const chk = (want, got) => (loose ? (!want || got) : want === got);
   if (!chk(parts.includes('ctrl'), !!e.ctrlKey)) return false;
   if (!chk(parts.includes('alt'), !!e.altKey)) return false;
