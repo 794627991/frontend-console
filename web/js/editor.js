@@ -397,6 +397,9 @@ async function _edInitContent(conn, content) {
           // v3.5.302：.note 撤销/重做（Editor.js 核心不含 undo，官方
           // editorjs-undo 插件未 vendor 化=Ctrl+Z 从来无效——自研轻量快照栈）
           if (typeof _edUndoInit === 'function') { try { _edUndoInit(conn); } catch (_) {} }
+          // v3.5.308（全审F3）：初始渲染不产生 onChange——打开笔记时补一次
+          // 染色调度，否则「阅读态染色」主场景缺席（须先编辑才染色）
+          if (typeof nnHlSchedule === 'function') { try { nnHlSchedule(conn); } catch (_) {} }
         },
       });
       conn.savedData = data;
@@ -1792,6 +1795,9 @@ function _edUndoInit(conn) {
   };
   conn._edUndoHook = () => { clearTimeout(st.timer); st.timer = setTimeout(snap, 400); };
   const apply = async dir => {
+    // v3.5.308（全审F11b）：冲刷 400ms 去抖 pending——打字后 400ms 内按
+    // Ctrl+Z，把当前内容立即入栈再退，否则最近输入丢失且无 redo
+    if (st.timer) { clearTimeout(st.timer); st.timer = null; await snap(); }
     const ni = st.idx + dir;
     if (ni < 0 || ni >= st.stack.length) return;         // 到栈底/顶
     st.idx = ni;
@@ -1805,6 +1811,10 @@ function _edUndoInit(conn) {
   };
   conn.holder.addEventListener('keydown', e => {
     if (!(e.ctrlKey || e.metaKey)) return;
+    // v3.5.308（全审F11a）：行内工具条输入框（链接 URL 等）焦点在 INPUT/
+    // TEXTAREA——放行其原生撤销，不整机回滚块
+    const tg = e.target;
+    if (tg && (tg.tagName === 'INPUT' || tg.tagName === 'TEXTAREA')) return;
     const k = (e.key || '').toLowerCase();
     if (k === 'z' && !e.shiftKey) { e.preventDefault(); e.stopPropagation(); apply(-1); }
     else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); e.stopPropagation(); apply(1); }

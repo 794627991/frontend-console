@@ -481,7 +481,7 @@ function _nnSugPaint(list) {
 }
 
 function _nnSugApply() {
-  const { ce, items, idx, triggerLen, kind } = _nnSug;
+  const { ce, items, idx, kind } = _nnSug;
   const text = items[idx];
   _nnSugHide();
   if (!ce || !text || !ce.isConnected) return;
@@ -492,10 +492,15 @@ function _nnSugApply() {
   const node = rng.startContainer;
   if (node.nodeType !== 3) return;
   const off = rng.startOffset;
-  // 删掉触发串（[[ 或 # + 已敲前缀），插入完整文本
-  node.nodeValue = node.nodeValue.slice(0, Math.max(0, off - triggerLen))
-    + full + node.nodeValue.slice(off);
-  const caret = Math.max(0, off - triggerLen) + full.length;
+  // v3.5.308（全审F7）：应用前复验触发串仍在光标前——浮层开着按 Home/End/
+  // PgUp 移了光标（无 input 事件不触发重检测）时，按旧 triggerLen 盲删会错乱
+  const det = _nnSugDetect(ce);
+  if (!det || det.kind !== kind) return;
+  const full2 = kind === 'file' ? '[[' + text + ']]' : '#' + text + ' ';
+  node.nodeValue = node.nodeValue.slice(0, Math.max(0, off - det.triggerLen))
+    + full2 + node.nodeValue.slice(off);
+  const caret = Math.max(0, off - det.triggerLen) + full2.length;
+  void full;
   const nr = document.createRange();
   nr.setStart(node, caret);
   nr.collapse(true);
@@ -543,12 +548,18 @@ document.addEventListener('click', e => {
   if (_nnSug.ov && !e.target.closest('.nn-sug') && !e.target.closest('.nn-sug-it')) _nnSugHide();
 });
 
-// ---- 阅读态染色（非聚焦块包 span.nn-hl，聚焦即还原——save() 读 textContent
-// 已实测不污染存储数据；编辑中块不处理避免 caret 扰动）----
+// ---- 阅读态染色（非聚焦块包 span.nn-hl，聚焦即还原；编辑中块不处理避免
+// caret 扰动）。零污染真实机制（全审F9修正）：Editor.js paragraph save() 取
+// innerHTML，但 Saver 落盘前走 sanitizer 白名单——span 非白名单被 unwrap 保
+// 文本（vendor 偏移 ~50478 实证）。注意：未来任何工具写 sanitize:{text:true}
+// 这类放行配置即破此防线——新内联工具必须走对象形 sanitize。
 function _nnUnwrapHl(scope) {
   scope.querySelectorAll('span.nn-hl').forEach(sp => {
     sp.parentNode.replaceChild(document.createTextNode(sp.textContent), sp);
   });
+  // v3.5.308（全审F6）：合并拆散的相邻文本节点——Ctrl+点击的落点窗口检测
+  // 只读单节点文本，不合并则相邻片段里的 [[..]] 找不到
+  try { scope.normalize(); } catch (_) {}
 }
 const _NN_HL_TEXT = /(\[\[[^\[\]\n]{1,120}\]\])|(#[\p{L}_][\p{L}\p{N}_]{0,39}?(?=$|[\s，。、；：！？（）【】《》「」"'`,;:!?.\-(){}[\]|*=+&%$@~^<>/]))/gu;
 const _nnHlSig = new WeakMap();   // 块文本签名——打断「染色DOM变更→onChange→再染色」自激环（designer补档风险2）
