@@ -25,13 +25,40 @@ import threading
 import urllib.request
 import urllib.error
 
-from src.app_state import HOME_DIR
+from src.app_state import HOME_DIR, DATA_DIR
 
 UA = "frontend-console-skills/1.0"
 _SKILLS_DIR = os.path.join(os.path.expanduser("~"), ".claude", "skills")
-_CACHE_DIR = os.path.join(HOME_DIR, "skill_cache")       # SKILL.md 原文缓存
-_ZH_DIR = os.path.join(HOME_DIR, "skill_zh")             # 汉化缓存
-_EXPORT_DIR = os.path.join(HOME_DIR, "skill_exports")    # 离线包导出目录
+# v3.5.320（用户需求「翻译文件跟着数据空间走」）：技能数据落数据目录——
+# 随数据空间迁移/统计/清理走（server._DATA_SUBDIRS 已收录）；模块加载时把
+# 旧 HOME_DIR 位置的缓存一次性搬过来（老用户翻译缓存不丢不重翻）
+_CACHE_DIR = os.path.join(DATA_DIR, "skill_cache")       # SKILL.md 原文缓存
+_ZH_DIR = os.path.join(DATA_DIR, "skill_zh")             # 汉化缓存
+_EXPORT_DIR = os.path.join(DATA_DIR, "skill_exports")    # 离线包导出目录
+
+
+def _migrate_legacy_dirs():
+    """旧 HOME_DIR 位置的技能缓存一次性搬到数据目录（都存在时以新位置为准
+    ——迁移是 best-effort，失败静默留旧位置，下次加载不再重试因为新位置
+    已有内容）。"""
+    for sub in ("skill_cache", "skill_zh", "skill_exports"):
+        old = os.path.join(HOME_DIR, sub)
+        new = os.path.join(DATA_DIR, sub)
+        if os.path.isdir(old) and not os.path.isdir(new):
+            try:
+                shutil.move(old, new)
+            except OSError:
+                pass
+    old_meta = os.path.join(HOME_DIR, "skill_meta.json")
+    new_meta = os.path.join(DATA_DIR, "skill_meta.json")
+    if os.path.isfile(old_meta) and not os.path.isfile(new_meta):
+        try:
+            shutil.move(old_meta, new_meta)
+        except OSError:
+            pass
+
+
+_migrate_legacy_dirs()
 _PACK_TTL = 1800          # 导入暂存 zip 的有效期（秒）
 _PAGE_TTL = 600           # skills.sh 网页内存缓存（秒）
 _LB_CACHE = {}            # path -> (ts, html)；读写仅赋值/取值，GIL 下原子
@@ -360,7 +387,7 @@ def disable(skill, off):
         return {"ok": False, "err": str(e)[:150]}
 
 
-_META_FILE = os.path.join(HOME_DIR, "skill_meta.json")
+_META_FILE = os.path.join(DATA_DIR, "skill_meta.json")
 _META_LOCK = threading.Lock()
 
 
@@ -378,7 +405,7 @@ def _meta_set(skill, info):
         d = _meta_load()
         d[skill] = info
         try:
-            os.makedirs(HOME_DIR, exist_ok=True)
+            os.makedirs(DATA_DIR, exist_ok=True)
             tmp = _META_FILE + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(d, f, ensure_ascii=False, indent=1)

@@ -1235,7 +1235,9 @@ def api_update_server_toggle():
 # 被运行中 WebView2 锁定的文件跳过，纯缓存丢了自动重建）。
 # 迁移铁律（用户强调）：迁移前后数据必须都能找到——采用「先复制后切换」而非「先删后搬」：
 # 复制全部内容 → 校验大小一致 → 写 config 切换 → 旧目录完整保留不删（用户自查后手动删）。
-_DATA_SUBDIRS = ["logs", "files", "webview_cache"]
+_DATA_SUBDIRS = ["logs", "files", "webview_cache",
+                # v3.5.320（用户需求）：技能数据随数据空间迁移/统计
+                "skill_zh", "skill_cache", "skill_exports"]
 
 def _data_root_json_files():
     """数据目录根级 *.json 清单（关键配置，迁移时严格校验逐个比对大小）。"""
