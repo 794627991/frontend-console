@@ -481,6 +481,23 @@ def api_connect():
             return jsonify({"ok": False, "err": "paramiko 未安装，无法 SSH 连接"}), 500
         _ssh_disc_patch()   # v3.5.5：装 disconnect 截获 patch（幂等）
         port_id = f"ssh:{host}:{port}"
+        # v3.5.315（同事需求「ssh 我想双开，有的时候想看两个界面」）：SSH 允许
+        # 同主机多开——每个连接是独立 paramiko channel=独立 shell 界面；同目标
+        # 已连接/连接中时自动追加实例序号（ssh:host:port#2/#3…），首连保持无
+        # 后缀（向后兼容：旧记录/快捷重开的 port_id 不变）。串口不适用（物理
+        # 口独占）。序号分配持 _ports_lock 防双开竞态；_connecting_locks 条目
+        # 永不 pop，故用锁持有态（locked）判「连接中」而非键存在（避免关掉
+        # 后序号跳涨）。
+        with _ports_lock:
+            _base, _n = port_id, 1
+            def _ssh_busy(pid):
+                if pid in _ports:
+                    return True
+                lk = _connecting_locks.get(pid)
+                return bool(lk and lk.locked())
+            while _ssh_busy(port_id):
+                _n += 1
+                port_id = f"{_base}#{_n}"
         # 占位防同目标重入；连接动作在锁外执行（10s 超时不再卡全局 API/其他快捷打开）
         if not _acquire_connecting(port_id):
             with _ports_lock:
@@ -2346,10 +2363,19 @@ def skills_translate():
             return jsonify({"ok": False, "err": "items 为空或超限"}), 400
         return jsonify({"ok": True, "map": translate_meta(items)})
     if kind == "body":
-        p = _sk_parts(d)
-        if not p:
-            return jsonify({"ok": False, "err": "非法 owner/repo/skill"}), 400
-        md = _raw_skill_md(*p)   # 直取原文（不走 detail——不烧 contents 限额，全审建议3）
+        # v3.5.310：本地已安装技能（body: {local: name}）——读本地 SKILL.md，
+        # 不出网；缓存键与远端同构（内容 hash），skills.sh 装的技能两路共享译文
+        local_name = str(d.get("local") or "").strip()
+        if local_name:
+            from .skills_repo import local_detail as _ld
+            md = (_ld(local_name) or {}).get("md")
+            if not md:
+                return jsonify({"ok": False, "err": "本地 SKILL.md 读取失败"}), 404
+        else:
+            p = _sk_parts(d)
+            if not p:
+                return jsonify({"ok": False, "err": "非法 owner/repo/skill"}), 400
+            md = _raw_skill_md(*p)   # 直取原文（不走 detail——不烧 contents 限额，全审建议3）
         if not md:
             return jsonify({"ok": False, "err": "SKILL.md 拉取失败"}), 502
         hit = _zh_load(_zh_key("body:", md))

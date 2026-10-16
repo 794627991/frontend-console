@@ -70,7 +70,10 @@ async function connectSSH(host, port, username, password, key_path, quiet) {
     if (j.ok) {
       const port_id = j.port_id;
       if (nid) notifyTaskDone(nid, {ok:true, title:`已连接 ${username}@${host}:${port}`, detail:'SSH'});
-      const conn = buildTerminal(port_id, {kind:'ssh', label:`${username}@${host}`, host, user:username});
+      // v3.5.315：双开实例标签区分（后端序号 #2/#3… 只在多开时出现）
+      const _dup = /#(\d+)$/.exec(port_id);
+      const _lbl = `${username}@${host}` + (_dup ? ` ·${_dup[1]}` : '');
+      const conn = buildTerminal(port_id, {kind:'ssh', label:_lbl, host, user:username});
       connections[port_id] = conn;
       switchTab(port_id);
       refreshSidebar();
