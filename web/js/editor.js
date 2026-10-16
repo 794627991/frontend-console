@@ -98,6 +98,7 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
         <button class="lv-btn" data-ed-action="search" title="Ctrl+F 全局搜索（支持正则/排除）">🔍 搜索</button>
         <button class="lv-btn" data-ed-action="outline" title="显示/隐藏右侧大纲面板">☰ 大纲</button>
         <button class="lv-btn" data-ed-action="links" title="显示/隐藏双链面板（链入/链出/标签）">🔗 链接</button>
+        <button class="lv-btn" data-ed-action="exportmd" title="导出为 Markdown（同目录同名 .md，图片相对路径）">⤓ .md</button>
         <select name="ed_enc" class="lv-btn ed-enc-sel" data-ed-enc title="文件编码（切换后按所选编码重新读取；保存始终写 UTF-8）" style="display:none;">
           <option value="">编码：自动</option>
           <option value="utf-8">UTF-8</option>
@@ -257,6 +258,7 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
       else if (act === 'delete') { if (conn.extPath) showBanner('外部文件不提供删除（请到文件管理器操作）', 3000, true); else edDelete(conn); }   // 按钮已移除，防御保留
       else if (act === 'outline') edToggleOutline(conn);
       else if (act === 'links') { if (typeof nnToggleLinks === 'function') nnToggleLinks(conn); }   // v3.5.297 双链反链面板
+      else if (act === 'exportmd') { if (typeof nnExportMd === 'function') nnExportMd(conn); }   // v3.5.299 导出 .md
     };
   });
   // 快捷键 Ctrl+S / Ctrl+Shift+S：挂 document 全局生效——

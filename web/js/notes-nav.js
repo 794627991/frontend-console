@@ -397,3 +397,29 @@ function nnFilterListByTag(modal, listEl, tag) {
     it.style.display = (!active || tags.includes(active)) ? '' : 'none';
   });
 }
+
+// ============================================================
+// v3.5.299 导出 .md（仅 .note；当前编辑内容所见即所得，409 确认覆盖）
+// ============================================================
+async function nnExportMd(conn) {
+  if (!conn.isNote) { showBanner('仅块笔记（.note）支持导出 .md', 3000, true); return; }
+  const content = await _edGetContent(conn);
+  if (content === null) { showBanner('读取内容失败', 4000, true); return; }
+  await nnExportDo(conn, content, false);
+}
+async function nnExportDo(conn, content, overwrite) {
+  try {
+    const r = await fetch('/api/notes/export_md', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: conn.meta.label, blocks: content, overwrite }) });
+    const j = await r.json();
+    if (j.exists && !overwrite) {
+      const ok = await _edConfirm('已存在 ' + (j.err || '').replace('已存在 ', '') + '，覆盖？');
+      if (ok) await nnExportDo(conn, content, true);
+      return;
+    }
+    if (!j.ok) { showBanner(j.err || '导出失败', 4000, true); return; }
+    showBanner('已导出 ' + j.name + '（files/ 目录，图片相对路径可直接进 Obsidian）', 3500);
+    fetch('/api/ed/open_dir', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  } catch (e) { showBanner('导出失败: ' + e, 4000, true); }
+}

@@ -309,6 +309,179 @@ def notes_tags():
     return jsonify({"ok": True, "tags": tags})
 
 
+# ==================== 导出 .md ====================
+
+_MD_ENT = {"&nbsp;": " ", "&amp;": "&amp;", "&lt;": "<", "&gt;": ">",
+           "&quot;": "\"", "&#39;": "'"}
+
+
+def _md_inline(s):
+    """Editor.js 行内 HTML → Markdown 内联：<b>→**x**、<mark>→==x==（Obsidian
+    高亮语法）、<code>→`x`、<a href>→[t](href)；实体反转义（&amp; 保留转义——
+    md 里裸 & 合法但转义更稳， Obsidian/VSCode 都接受）。"""
+    s = str(s or "")
+    s = re.sub(r"<b>(.*?)</b>", r"**\1**", s, flags=re.I | re.S)
+    s = re.sub(r"<mark[^>]*>(.*?)</mark>", r"==\1==", s, flags=re.I | re.S)
+    s = re.sub(r"<code[^>]*>(.*?)</code>", r"`\1`", s, flags=re.I | re.S)
+    s = re.sub(r'<a[^>]*href="([^"]*)"[^>]*>(.*?)</a>', r"[\2](\1)", s,
+               flags=re.I | re.S)
+    s = re.sub(r"<br\s*/?>", "\n", s, flags=re.I)
+    for k, v in _MD_ENT.items():
+        s = s.replace(k, v)
+    return s
+
+
+def _md_table_cell(s):
+    """表格单元格：| 转义、内联换行转 <br>（GFM 单元格禁裸换行）。"""
+    return _md_inline(s).replace("|", "\\|").replace("\n", "<br>")
+
+
+def _md_list_walk(items, ordered, depth, start_num, out):
+    """list 嵌套树递归：unordered '- ' / ordered 序号（首层从 meta.start 起，
+    嵌套层重置 1——md 有序列表嵌套编号各层独立）；每深一层缩进 4 空格。"""
+    n = start_num
+    for it in items or []:
+        if not isinstance(it, dict):
+            continue
+        indent = "    " * depth
+        marker = (str(n) + ". ") if ordered else "- "
+        out.append(indent + marker + _md_inline(it.get("content") or ""))
+        if ordered:
+            n += 1
+        sub = it.get("items")
+        if isinstance(sub, list) and sub:
+            _md_list_walk(sub, ordered, depth + 1, 1, out)
+
+
+def _blocks_to_md(blocks):
+    """Editor.js blocks（原始 data，含内联 HTML）→ Markdown 文本。
+    映射表见 designer 方案 v3.5.299（vendor 实测形状）。[[双链]]/#tag 原样
+    保留（Obsidian 原生兼容——导出的核心收益）。"""
+    out = []
+    for b in blocks or []:
+        if not isinstance(b, dict):
+            continue
+        t = b.get("type") or ""
+        d = b.get("data") or {}
+        if t == "paragraph":
+            out += ["", _md_inline(d.get("text") or "")]
+        elif t == "header":
+            lvl = max(1, min(3, int(d.get("level") or 2)))
+            out += ["", "#" * lvl + " " + _md_inline(d.get("text") or "")]
+        elif t in ("list", "nestedList", "olUL"):
+            lines = []
+            ordered = (d.get("style") == "ordered")
+            start = 1
+            try:
+                start = int((d.get("meta") or {}).get("start") or 1)
+            except (TypeError, ValueError):
+                start = 1
+            _md_list_walk(d.get("items"), ordered, 0, start, lines)
+            if lines:
+                out += [""]
+            out += lines
+        elif t == "checklist":
+            out += [""]
+            for it in (d.get("items") or []):
+                if isinstance(it, dict):
+                    mark = "x" if it.get("checked") else " "
+                    out.append("- [" + mark + "] " + _md_inline(it.get("text") or ""))
+        elif t == "quote":
+            txt = _md_inline(d.get("text") or "")
+            cap = _md_inline(d.get("caption") or "")
+            lines = ["> " + x for x in txt.split("\n")] or [">"]
+            if cap:
+                lines.append("> — " + cap)
+            out += [""] + lines   # alignment 丢弃（md 无语义）
+        elif t in ("code", "codeTool"):
+            code = d.get("code") or ""
+            fence = "~~~~" if "```" in code else "```"
+            out += ["", fence, code, fence]
+        elif t == "table":
+            rows = d.get("content") or []
+            if rows:
+                width = max(len(r) for r in rows if isinstance(r, list))
+                out += [""]
+                head = [_md_table_cell((rows[0] or [""])[i]) if i < len(rows[0]) else ""
+                        for i in range(width)]
+                out.append("| " + " | ".join(head) + " |")
+                if d.get("withHeadings"):
+                    out.append("|" + "|".join([" --- "] * width) + "|")
+                else:
+                    # GFM 结构必需表头分隔行：无表头语义时输出空表头占位
+                    out.append("|" + "|".join(["   "] * width) + "|")
+                    out.append("|" + "|".join([" --- "] * width) + "|")
+                for r in rows[(1 if d.get("withHeadings") else 0):]:
+                    cells = [_md_table_cell(r[i]) if i < len(r) else ""
+                             for i in range(width)]
+                    out.append("| " + " | ".join(cells) + " |")
+        elif t in ("image", "simpleImage"):
+            url = ((d.get("file") or {}).get("url")) or ""
+            # 库内图片绝对路由 → 相对路径（files/ 当 Obsidian vault 时图片可见）
+            url = url.replace("/api/ed/img/", "images/") if url.startswith("/api/ed/img/") else url
+            cap = _md_inline(d.get("caption") or "")
+            out += ["", "![" + cap + "](" + url + ")"]
+        elif t == "delimiter":
+            out += ["", "---"]
+        else:
+            txt = _md_inline(d.get("text") or "")
+            out += ["", txt, "<!-- 导出降级：块类型 " + (t or "?") + " -->"]
+    md = "\n".join(out)
+    # 收敛空行（≥3 连空 → 1 空行）+ 首尾整洁
+    md = re.sub(r"\n{3,}", "\n\n", md)
+    return md.strip() + "\n"
+
+
+@notes_bp.route("/api/notes/export_md", methods=["POST"])
+def notes_export_md():
+    """导出 .note → 同目录同名 .md（files/ 平铺 + images/ = 天然 Obsidian vault，
+    图片相对路径不断链——designer 方案决策 5）。入参 {name, blocks?, overwrite?}：
+    blocks 传前端当前内容（脏内容所见即所得）；不传则读盘。同名 .md 已存在且未
+    overwrite → 409。原子写（tmp+replace，同 /api/ed/save 口径）。"""
+    data = request.get_json(force=True, silent=True) or {}
+    name = (data.get("name") or "").strip()
+    overwrite = bool(data.get("overwrite"))
+    src = _safe_path_notes(name)
+    if not src:
+        return jsonify({"ok": False, "err": "非法文件名"}), 400
+    blocks = data.get("blocks")
+    if blocks is None:
+        raw, err, _enc = _read_text(src)
+        if err:
+            return jsonify({"ok": False, "err": err}), 400
+        try:
+            blocks = (json.loads(raw) or {}).get("blocks") or []
+        except (ValueError, TypeError):
+            return jsonify({"ok": False, "err": "笔记 JSON 解析失败"}), 400
+    md = _blocks_to_md(blocks)
+    out_name = os.path.splitext(name)[0] + ".md"
+    out = _safe_path_notes(out_name)
+    if not out:
+        return jsonify({"ok": False, "err": "导出文件名非法"}), 400
+    if os.path.exists(out) and not overwrite:
+        return jsonify({"ok": False, "err": "已存在 " + out_name,
+                        "exists": True}), 409
+    try:
+        tmp = out + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(md)
+        os.replace(tmp, out)
+    except OSError as e:
+        return jsonify({"ok": False, "err": "写入失败: %s" % e}), 500
+    return jsonify({"ok": True, "name": out_name})
+
+
+def _safe_path_notes(name):
+    """files/ 内路径校验（同 editor_files._safe_path 口径——不直接 import 其
+    私有函数，防上游签名变化牵连）。"""
+    if not re.match(r'^[^\\/:*?"<>|\x00-\x1f]{1,120}$', name or ""):
+        return None
+    p = os.path.normpath(os.path.join(FILES_DIR, name))
+    if not os.path.realpath(p).startswith(os.path.realpath(FILES_DIR) + os.sep):
+        return None
+    return p
+
+
 @notes_bp.route("/api/notes/search", methods=["POST"])
 def notes_search():
     """全局全文搜索。入参 {q, regex?, case?, tag?}：
