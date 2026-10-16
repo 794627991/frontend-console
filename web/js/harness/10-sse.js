@@ -83,7 +83,8 @@
             // 建段即落 hgSubr——运行中即可「▣ 回放」围观转写，也是切会话
             // 往返后 DOM 兜底轮询的 id 来源（随快照携带）
             _subBlkGet(tid, { live: true, collab: true, bg: true, fold: true,
-              label: '协作 · ' + ((_to && String(_to).slice(0, 24))
+              label: '协作 · ' + ((typeof _peerLabel === 'function' && _to
+                  ? _peerLabel(_to) : '') || (_to && String(_to).slice(0, 24))
                 || _AGENT_LABEL[o.subagent_type] || o.subagent_type || '代理'),
               model: '', type: o.subagent_type || 'Task',
               desc: o.description || '', done: false });

@@ -848,7 +848,11 @@
   // v3.3.1（用户定调「只轻主力+设计+审核」）：工坊系花名（明镜/大匠/疾行者）
   // 退役——显示名回归朴素。标识符（dev.md/subagent_type/agents 文件名）不动，
   // 本表只服务旧会话回放/旧安装文件的显示层
-  const _AGENT_LABEL = { executor: '执行', coder: '编程', designer: '设计', dev: '开发', reviewer: '审核', 'general-purpose': '通用子代理' };
+  // v3.5.303（用户最终确认令「决不能出现 task 或 sendmessage」）：Task/
+  // SendMessage 是 CLI 协议裸类型字，非真名——映射成中文兜底词，全前端
+  // 20+ 处 `_AGENT_LABEL[type] || type` 消费点一次性收口（真名仍优先：
+  // desc/peerSent 反查在前，本表只兜 desc 也空的极端态）
+  const _AGENT_LABEL = { executor: '执行', coder: '编程', designer: '设计', dev: '开发', reviewer: '审核', 'general-purpose': '通用子代理', Task: '子代理', SendMessage: '续派' };
   // v3.5.296（用户实锤「SendMessage 往来的代理显示成 Task，要求显示原名」）：
   // to 形态三收——角色名（reviewer/designer）出中文短名；已知 agentId/taskId
   // 反查本会话档案原名；其余原样（超长 id 截短）。供 SendMessage 续派建档

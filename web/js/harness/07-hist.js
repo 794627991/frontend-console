@@ -228,7 +228,8 @@
         if (_raid && l.id)
           (_HG.subTidRes = _HG.subTidRes || {})[l.id] =
             { agentId: _raid[1], type: 'SendMessage',
-              desc: '续派 · ' + (l.input.to || '') };
+              desc: '续派 · ' + (typeof _peerLabel === 'function'
+                ? _peerLabel(l.input.to) : (l.input.to || '')) };
         const _rElH = renderPeerRelay((l.input && l.input.to) || '识图会话',
                         l.ts ? new Date(l.ts).getTime() : 0);
         if (_rElH && l.input && l.input.to && !String(l.input.to).includes('识图'))
