@@ -1244,11 +1244,14 @@ class HarnessSession:
             # 径 _shBg 早有此过滤，投影路径补齐同口径）
             if not str(o.get("subagent_type") or "").strip():
                 return
-            # 阶段1：注册表——t0/rounds/tid 补记（幂等）
-            self._registry.on_task_started(
-                tid, o.get("subagent_type"), o.get("description"),
-                o.get("task_id"), bool(o.get("is_backgrounded")),
-                int(time.time() * 1000))
+            # 阶段1：注册表——t0/rounds/tid 补记（幂等）。getattr 防御：
+            # 测试 __new__ 装配的裸对象无 _registry（镜像主链不受影响）
+            _rg = getattr(self, "_registry", None)
+            if _rg is not None:
+                _rg.on_task_started(
+                    tid, o.get("subagent_type"), o.get("description"),
+                    o.get("task_id"), bool(o.get("is_backgrounded")),
+                    int(time.time() * 1000))
             self.emit({"kind": "subagent_started", "tid": tid,
                        "agent_type": o.get("subagent_type") or "Task",
                        "desc": str(o.get("description") or "")[:200],
@@ -1267,11 +1270,13 @@ class HarnessSession:
             self._bg_tasks.pop(tid, None)
             usage = o.get("usage") or {}
             st = str(o.get("status") or "")
-            # 阶段1：注册表——完成信号（链上 tid 反查落定）
-            self._registry.on_task_notification(
-                tid, st in ("", "completed", "success"),
-                str(o.get("summary") or ""), int(time.time() * 1000),
-                usage.get("total_tokens") or 0, usage.get("tool_uses") or 0)
+            # 阶段1：注册表——完成信号（链上 tid 反查落定；getattr 防御同上）
+            _rgN = getattr(self, "_registry", None)
+            if _rgN is not None:
+                _rgN.on_task_notification(
+                    tid, st in ("", "completed", "success"),
+                    str(o.get("summary") or ""), int(time.time() * 1000),
+                    usage.get("total_tokens") or 0, usage.get("tool_uses") or 0)
             self.emit({"kind": "subagent_result", "tid": tid,
                        "ok": st in ("", "completed", "success"),
                        "brief": str(o.get("summary") or "")[:200],
@@ -1419,7 +1424,8 @@ class HarnessSession:
         self._bg_tasks = {}
         self._held = False
         # 阶段1：注册表——进程死=链上 running 全部落 interrupted（真源一致
-        # 性：前端不会再看到假运行；后续 SendMessage 续派/重建翻正）
+        # 性：前端不会再看到假运行；后续 SendMessage 续派/重建翻正）。
+        # getattr 防御：测试用 __new__ 装配的裸对象无 _registry
         try:
             self._registry.on_interrupt_all(int(time.time() * 1000))
         except Exception:
