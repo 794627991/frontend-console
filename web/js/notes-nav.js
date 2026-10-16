@@ -151,3 +151,210 @@ document.addEventListener('keydown', e => {
     nnSearchShow();
   }
 }, true);
+
+// ============================================================
+// v3.5.297 双链 [[]] + 反链面板
+// ============================================================
+
+// 反链面板开关（editor.js 工具栏 🔗 链接按钮 → 这里）
+function nnToggleLinks(conn) {
+  const pn = conn.wrap.querySelector('.ed-links');
+  if (!pn) return;
+  const show = pn.style.display === 'none';
+  pn.style.display = show ? '' : 'none';
+  if (show) nnRefreshLinks(conn);
+}
+
+// 面板开着才刷（edSave 成功钩子调用——「保存后刷新可见」）
+function nnRefreshLinksIfOpen(conn) {
+  const pn = conn.wrap.querySelector('.ed-links');
+  if (pn && pn.style.display !== 'none') nnRefreshLinks(conn);
+}
+
+async function nnRefreshLinks(conn) {
+  const pn = conn.wrap.querySelector('.ed-links');
+  const list = pn && pn.querySelector('.ed-links-list');
+  if (!pn || !list) return;
+  const name = conn.extPath ? '' : (conn.meta.label || '');
+  if (!name) { list.innerHTML = '<div class="ed-links-empty">外部文件不参与链接图谱（库仅限 files/ 内）</div>'; return; }
+  list.innerHTML = '<div class="ed-links-empty">加载中…</div>';
+  let j;
+  try {
+    const r = await fetch('/api/notes/backlinks?name=' + encodeURIComponent(name));
+    j = await r.json();
+  } catch (e) { list.innerHTML = '<div class="ed-links-empty">加载失败: ' + esc(String(e)) + '</div>'; return; }
+  if (!j.ok) { list.innerHTML = '<div class="ed-links-empty">' + esc(j.err || '加载失败') + '</div>'; return; }
+  conn._nnLinks = j;
+  const _row = (cls, html) => `<div class="ed-links-row ${cls}">${html}</div>`;
+  let html = '';
+  // 链入
+  html += `<div class="ed-links-sec">链入（${j.incoming.length}）</div>`;
+  html += j.incoming.length
+    ? j.incoming.map(x => _row('ed-links-in',
+        `<span class="ed-links-name" data-nnopen="${esc(x.from)}" data-nnline="${esc(String(x.at_line || 1))}" title="${esc(x.snippet)}">📄 ${esc(x.from)}</span>` +
+        `<span class="ed-links-cnt">×${esc(String(x.count))}</span>`)).join('')
+    : '<div class="ed-links-none">没有其他笔记引用本文</div>';
+  // 链出
+  html += `<div class="ed-links-sec">链出（${j.outgoing.length}）</div>`;
+  html += j.outgoing.length
+    ? j.outgoing.map(x => x.resolved
+        ? _row('ed-links-out',
+            `<span class="ed-links-name" data-nnopen="${esc(x.resolved)}" data-nnline="1" title="点击打开">📄 ${esc(x.target)}</span>` +
+            `<span class="ed-links-cnt">×${esc(String(x.count))}</span>`)
+        : _row('ed-links-missing',
+            `<span class="ed-links-name miss" data-nnnew="${esc(x.target)}" title="目标不存在，点击新建">⚠ ${esc(x.target)}</span>` +
+            `<span class="ed-links-cnt">未创建</span>`)).join('')
+    : '<div class="ed-links-none">本文没有 [[]] 双链（正文中写 [[目标名]] 即可链接）</div>';
+  // 本文标签
+  html += `<div class="ed-links-sec">本文标签</div>`;
+  html += j.tags.length
+    ? `<div class="ed-links-tags">` + j.tags.map(t => `<span class="ed-links-tag">#${esc(t)}</span>`).join('') + `</div>`
+    : '<div class="ed-links-none">没有 #标签</div>';
+  html += `<div class="ed-links-foot"><button class="btn ghost icon-btn" data-nnrel title="重新扫描">⟳</button></div>`;
+  list.innerHTML = html;
+  // 绑定：打开目标 / 新建缺失目标 / 手动刷新
+  list.querySelectorAll('[data-nnopen]').forEach(el => {
+    el.onclick = () => nnOpenAndJump(el.dataset.nnopen, +el.dataset.nnline || 1);
+  });
+  list.querySelectorAll('[data-nnnew]').forEach(el => {
+    el.onclick = async () => {
+      const t = el.dataset.nnnew;
+      const nm = t.toLowerCase().endsWith('.note') || t.toLowerCase().endsWith('.md')
+        || t.toLowerCase().endsWith('.txt') ? t : t + '.note';
+      const ok = await _edConfirm('目标「' + t + '」不存在，新建 ' + nm + '？');
+      if (!ok) return;
+      try {
+        const r = await fetch('/api/ed/save_as', { method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ new_name: nm, text: '' }) });
+        const jj = await r.json();
+        if (!jj.ok) { showBanner(jj.err || '新建失败', 4000, true); return; }
+        showBanner('已创建 ' + nm, 2500);
+        nnRefreshLinks(conn);
+      } catch (e) { showBanner('新建失败: ' + e, 4000, true); }
+    };
+  });
+  const rel = list.querySelector('[data-nnrel]');
+  if (rel) rel.onclick = () => nnRefreshLinks(conn);
+}
+
+// ---- .note 正文 Ctrl+点击双链跳转（VSCode follow-link 心智：普通单击照常编辑）----
+// holder click 委托捕获期：ctrl 按下时用 caretRangeFromPoint 取落点文本向两侧
+// 扩展出 [[..]]；取不到静默放行（退化为普通点击）。WebView2=Chromium 支持。
+function nnBindWikiClick(conn) {
+  const holder = conn.holder;
+  if (!holder || holder._nnWiki) return;
+  holder._nnWiki = true;
+  holder.addEventListener('click', e => {
+    if (!e.ctrlKey) return;   // Ctrl+点击=跟随双链；普通单击照常编辑光标
+    const text = _nnTextAtPoint(e);
+    const m = text && text.match(/\[\[([^\[\]\n]{1,120})\]\]/);
+    if (!m) return;
+    e.preventDefault(); e.stopPropagation();
+    const target = m[1].trim();
+    const j = conn._nnLinks;
+    const hit = j && j.outgoing && j.outgoing.find(x => x.target === target);
+    const resolved = hit ? hit.resolved : null;
+    if (resolved) nnOpenAndJump(resolved, 1);
+    else nnConfirmCreate(target, conn);
+  }, true);
+}
+function _nnTextAtPoint(e) {
+  try {
+    if (!document.caretRangeFromPoint) return '';
+    const r = document.caretRangeFromPoint(e.clientX, e.clientY);
+    if (!r || !r.startContainer) return '';
+    const node = r.startContainer;
+    const txt = node.textContent || '';
+    if (!txt) return '';
+    const off = r.startOffset;
+    // 向两侧扩展 140 字符窗口（[[ 与 ]] 限 120，够覆盖），在窗口内找包含 off 的 [[]]
+    const lo = Math.max(0, off - 140), hi = Math.min(txt.length, off + 140);
+    const seg = txt.slice(lo, hi);
+    const m = seg.match(/\[\[([^\[\]\n]{1,120})\]\]/g) || [];
+    for (const s of m) {
+      const at = seg.indexOf(s);
+      if (off - lo >= at && off - lo <= at + s.length) return s;
+    }
+    return '';
+  } catch (_) { return ''; }
+}
+async function nnConfirmCreate(target, conn) {
+  const nm = target.toLowerCase().endsWith('.note') || target.toLowerCase().endsWith('.md')
+    || target.toLowerCase().endsWith('.txt') ? target : target + '.note';
+  const ok = await _edConfirm('「' + target + '」不存在，新建 ' + nm + '？');
+  if (!ok) return;
+  try {
+    const r = await fetch('/api/ed/save_as', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ new_name: nm, text: '' }) });
+    const j = await r.json();
+    if (!j.ok) { showBanner(j.err || '新建失败', 4000, true); return; }
+    showBanner('已创建 ' + nm, 2500);
+    if (conn) nnRefreshLinks(conn);
+  } catch (e) { showBanner('新建失败: ' + e, 4000, true); }
+}
+
+// ---- .md 预览列双链渲染（_mdRenderPreview 的 apply() 挂点调用）----
+// [[..]] 是纯文本不是 md 语法，markdown-it 不会给 a 标签——在渲染完的文本节点
+// 里把 [[..]] 包成 <a class="nn-wlink">（无 href，不触发外链拦截逻辑）。
+function nnLinkifyPreview(pv, conn) {
+  if (!pv) return;
+  const walker = document.createTreeWalker(pv, NodeFilter.SHOW_TEXT, {
+    acceptNode: n => (n.parentNode && /^(A|CODE|PRE|MARK|STYLE)$/.test(n.parentNode.tagName))
+      ? NodeFilter.FILTER_REJECT
+      : (n.nodeValue && n.nodeValue.includes('[[') ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT)
+  });
+  const targets = [];
+  while (walker.nextNode()) targets.push(walker.currentNode);
+  if (!targets.length) return;
+  for (const node of targets) {
+    const txt = node.nodeValue;
+    let html = '', pos = 0, m;
+    const re = /\[\[([^\[\]\n]{1,120})\]\]/g;
+    while ((m = re.exec(txt))) {
+      html += esc(txt.slice(pos, m.index));
+      const t = m[1].trim();
+      html += `<a class="nn-wlink" data-nnw="${esc(t)}" title="双链：${esc(t)}（Ctrl+库内搜索可达）">[[${esc(t)}]]</a>`;
+      pos = m.index + m[0].length;
+    }
+    html += esc(txt.slice(pos));
+    const span = document.createElement('span');
+    span.innerHTML = html;
+    node.parentNode.replaceChild(span, node);
+  }
+  if (!pv._nnWlinkBound) {
+    pv._nnWlinkBound = true;
+    pv.addEventListener('click', e => {
+      const a = e.target.closest('.nn-wlink');
+      if (!a) return;
+      e.preventDefault();
+      const t = a.dataset.nnw;
+      // 面板数据里查已解析目标；没有则即时探测（save_as 前先确认）
+      fetch('/api/notes/backlinks?name=' + encodeURIComponent(t + '.note'))
+        .then(r => r.json()).then(j => {
+          // backlinks 是反向查询，这里复用 resolve 语义：直接尝试常见后缀打开
+          const cand = [t, t + '.note', t + '.md', t + '.txt'];
+          nnTryOpen(cand, t, conn);
+        }).catch(() => nnTryOpen([t, t + '.note'], t, conn));
+    });
+  }
+}
+// 依次尝试候选名打开（openEditorFile 失败会静默返回）——全失败提示新建
+async function nnTryOpen(cands, label, conn) {
+  for (const c of cands) {
+    if (!c) continue;
+    const before = Object.keys(connections).length;
+    await openEditorFile(c);
+    await new Promise(r => setTimeout(r, 150));
+    let opened = false;
+    for (const pid in connections) {
+      const cc = connections[pid];
+      if (cc && cc.meta && cc.meta.kind === 'editor' && cc.meta.label === c) { opened = true; break; }
+    }
+    if (opened) return;
+    if (Object.keys(connections).length > before) return;   // 新 tab 已建（外部路径等）
+    void label;
+  }
+  nnConfirmCreate(label, conn);
+}

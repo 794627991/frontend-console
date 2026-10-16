@@ -232,6 +232,68 @@ def _snippet(text, marks_abs, width=200):
     return ("…" if lo > 0 else "") + text[lo:hi] + ("…" if hi < len(text) else ""), rel
 
 
+def _resolve_target(target):
+    """双链目标解析：①全名精确存在 → ②裸名按 .note>.md>.txt 补后缀取首个
+    存在者 → ③None（未解析，前端给「新建」入口）。"""
+    t = (target or "").strip()
+    if not t:
+        return None
+    p = os.path.join(FILES_DIR, t)
+    if os.path.isfile(p):
+        return t
+    for ext in (".note", ".md", ".txt"):
+        cand = t if t.lower().endswith(ext) else t + ext
+        if os.path.isfile(os.path.join(FILES_DIR, cand)):
+            return cand
+    return None
+
+
+@notes_bp.route("/api/notes/backlinks")
+def notes_backlinks():
+    """双链关系：?name=文件名 → {ok, incoming:[{from,count,snippet,at_line}],
+    outgoing:[{target,resolved,count}], tags:[...]}。
+    incoming=谁引用了我（扫全库 links，code 块已排除）；outgoing=我引用了谁
+    （resolved=None 表示目标不存在，前端给新建入口）。at_line=首个引用的
+    块序/行号（跳转锚点）。外部拖入文件不参与图谱（不可枚举+路径迁移断链）。"""
+    name = (request.args.get("name") or "").strip()
+    if not name:
+        return jsonify({"ok": False, "err": "缺少 name"}), 400
+    cache, _skipped = _scan()
+    me = cache.get(name)
+    if me is None:
+        # 未入库（新建草稿/超大文件/外部文件）：不报错，返回空图谱
+        return jsonify({"ok": True, "incoming": [], "outgoing": [],
+                        "tags": [], "external": name not in cache})
+    incoming = []
+    for fn, d in cache.items():
+        if fn == name:
+            continue
+        cnt, at_line, snip = 0, None, ""
+        for ln, b in enumerate(d["blocks"], 1):
+            hits = _WIKI_RE.findall(b.get("text") or "") if b.get("kind") != "code" else []
+            hit_me = [h for h in hits if h.strip() == name or
+                      _resolve_target(h.strip()) == name]
+            if hit_me:
+                cnt += len(hit_me)
+                if at_line is None:
+                    at_line = ln
+                    snip = (b.get("text") or "")[:160]
+        if cnt:
+            incoming.append({"from": fn, "count": cnt, "snippet": snip,
+                             "at_line": at_line})
+    incoming.sort(key=lambda x: -x["count"])
+    seen, outgoing = set(), []
+    for t in me["links"]:
+        if t in seen:
+            continue
+        seen.add(t)
+        resolved = _resolve_target(t)
+        cnt = sum(1 for x in me["links"] if x == t)
+        outgoing.append({"target": t, "resolved": resolved, "count": cnt})
+    return jsonify({"ok": True, "incoming": incoming, "outgoing": outgoing,
+                    "tags": me["tags"]})
+
+
 @notes_bp.route("/api/notes/search", methods=["POST"])
 def notes_search():
     """全局全文搜索。入参 {q, regex?, case?, tag?}：

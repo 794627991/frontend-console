@@ -97,6 +97,7 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
         <button class="lv-btn" data-ed-action="rename" title="双击标签页标题可快捷改名">重命名</button>
         <button class="lv-btn" data-ed-action="search" title="Ctrl+F 全局搜索（支持正则/排除）">🔍 搜索</button>
         <button class="lv-btn" data-ed-action="outline" title="显示/隐藏右侧大纲面板">☰ 大纲</button>
+        <button class="lv-btn" data-ed-action="links" title="显示/隐藏双链面板（链入/链出/标签）">🔗 链接</button>
         <select name="ed_enc" class="lv-btn ed-enc-sel" data-ed-enc title="文件编码（切换后按所选编码重新读取；保存始终写 UTF-8）" style="display:none;">
           <option value="">编码：自动</option>
           <option value="utf-8">UTF-8</option>
@@ -113,6 +114,10 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
           <div class="ed-outline-head">大纲<span class="ed-outline-actions" style="display:none;"><span class="ed-outline-act" data-act="collapseAll" title="全部折叠">⤠</span><span class="ed-outline-act" data-act="expandAll" title="全部展开">⤡</span></span></div>
           <div class="ed-outline-list"></div>
           <div class="ed-outline-stats"></div>
+        </div>
+        <div class="ed-links" style="display:none;">
+          <div class="ed-links-head">🔗 链接</div>
+          <div class="ed-links-list"></div>
         </div>
         <div class="ed-scroll">
           <div class="ed-holder"></div>
@@ -218,6 +223,8 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
     }
   }
   // 初始化编辑区（异步：Editor.js 实例化）
+  // v3.5.297：.note 正文 Ctrl+点击 [[双链]] 跳转（notes-nav.js，捕获期委托）
+  if (typeof nnBindWikiClick === 'function') { try { nnBindWikiClick(conn); } catch (_) {} }
   _edInitContent(conn, content);
   // 搜索分栏事件：回车搜索（Shift+回车跳下一个）、排除框回车、折叠按钮
   const qEl = wrap.querySelector('.ed-search-q');
@@ -249,6 +256,7 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
       else if (act === 'rename') { if (conn.extPath) showBanner('外部文件不支持重命名（保持原路径）', 3000, true); else edRenamePrompt(conn); }
       else if (act === 'delete') { if (conn.extPath) showBanner('外部文件不提供删除（请到文件管理器操作）', 3000, true); else edDelete(conn); }   // 按钮已移除，防御保留
       else if (act === 'outline') edToggleOutline(conn);
+      else if (act === 'links') { if (typeof nnToggleLinks === 'function') nnToggleLinks(conn); }   // v3.5.297 双链反链面板
     };
   });
   // 快捷键 Ctrl+S / Ctrl+Shift+S：挂 document 全局生效——
@@ -843,6 +851,8 @@ async function edSave(conn) {
       }).catch(() => {});
     }
     showBanner('已保存 ' + (conn.extPath || conn.meta.label), 1500);
+    // v3.5.297：保存后反链面板自动刷新（链入/链出与磁盘内容保持一致）
+    if (typeof nnRefreshLinksIfOpen === 'function') { try { nnRefreshLinksIfOpen(conn); } catch (_) {} }
     // 保存成功即入最近列表（草稿定名/已有文件覆盖保存都会走到这）
     if (typeof _recentAdd === 'function') _recentAdd({type:'file', key:'file:'+conn.meta.label, label:conn.meta.label, data:{kind:'edit', name:conn.meta.label, path:conn.meta.label, extPath: conn.extPath || ''}});
   } catch(e) { showBanner('保存失败: ' + e, 4000, true); }
@@ -1480,6 +1490,8 @@ function _mdRenderPreview(conn) {
       const href = a.getAttribute('href') || '';
       if (!/^https?:/i.test(href)) { a.addEventListener('click', e => e.preventDefault()); a.title = '工具内不支持跳转内部链接'; }
     });
+    // v3.5.297：[[双链]] 渲染为可点击链接（notes-nav.js，无 href 不与上方拦截冲突）
+    if (typeof nnLinkifyPreview === 'function') { try { nnLinkifyPreview(pv, conn); } catch (_) {} }
     if (typeof hljs !== 'undefined' && hljs.highlightElement) {
       pv.querySelectorAll('pre code').forEach(el => {
         const hit = prevHl.get(el.textContent);

@@ -4504,6 +4504,31 @@ html {
 .nn-search-sn { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-family: var(--font-mono); }
 .nn-search-sn mark { background: var(--accent, #4a9eff); color: #fff; border-radius: 2px; padding: 0 1px; }
+
+/* ---- v3.5.297 双链反链面板（ed-links-*，与大纲面板同位同级）---- */
+.ed-links { width: 250px; flex-shrink: 0; border-left: 1px solid var(--border);
+  display: flex; flex-direction: column; min-height: 0; background: var(--panel, transparent); }
+.ed-links-head { padding: 8px 10px; font-size: 12px; font-weight: 600;
+  color: var(--muted); border-bottom: 1px solid var(--border); }
+.ed-links-list { flex: 1; overflow-y: auto; padding: 6px 8px; font-size: 12px; }
+.ed-links-sec { color: var(--muted); font-size: 11px; font-weight: 600;
+  margin: 10px 0 4px; }
+.ed-links-row { display: flex; align-items: center; gap: 6px; padding: 3px 4px;
+  border-radius: 4px; }
+.ed-links-row:hover { background: var(--hover, rgba(128,138,150,.12)); }
+.ed-links-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  cursor: pointer; color: var(--fg); }
+.ed-links-name:hover { color: var(--accent); }
+.ed-links-name.miss { color: var(--h-warn, #d29922); }
+.ed-links-cnt { flex: none; color: var(--muted); font-size: 11px; }
+.ed-links-none { color: var(--muted); font-size: 11px; padding: 2px 4px; }
+.ed-links-empty { color: var(--muted); font-size: 12px; padding: 14px 6px; text-align: center; }
+.ed-links-tags { display: flex; flex-wrap: wrap; gap: 5px; padding: 2px 4px; }
+.ed-links-tag { font-size: 11px; color: var(--accent); background:
+  color-mix(in srgb, var(--accent) 14%, transparent); border-radius: 999px; padding: 1px 8px; }
+.ed-links-foot { padding: 6px 4px; text-align: right; }
+.md-preview-body .nn-wlink { color: var(--accent); cursor: pointer;
+  text-decoration: underline dotted; }
 .hg-vcs-loading { padding: 18px 10px; text-align: center; color: var(--muted); }
 .hg-vcs-cfile { display: flex; gap: 6px; align-items: center; padding: 3px 0;
   font-family: var(--font-mono); font-size: 11px; }
