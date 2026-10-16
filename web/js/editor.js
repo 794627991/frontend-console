@@ -369,7 +369,7 @@ async function _edInitContent(conn, content) {
             },
           },
         },
-        onChange: () => { _edMarkDirty(conn); },
+        onChange: () => { _edMarkDirty(conn); if (conn._edUndoHook) conn._edUndoHook(); },
         onReady: () => {
           // ---- Quote 对齐补丁（只打一次）----
           // vendor 版 quote 插件 bug：_toggleTune 只写 data.alignment，render() 从不
@@ -394,6 +394,9 @@ async function _edInitContent(conn, content) {
             };
           }
           _edUpdateInfo(conn);
+          // v3.5.302：.note 撤销/重做（Editor.js 核心不含 undo，官方
+          // editorjs-undo 插件未 vendor 化=Ctrl+Z 从来无效——自研轻量快照栈）
+          if (typeof _edUndoInit === 'function') { try { _edUndoInit(conn); } catch (_) {} }
         },
       });
       conn.savedData = data;
@@ -1784,6 +1787,55 @@ async function openFileSmart(path, mode) {
     else how = 'edit';                                     // <20M 默认编辑器
     if (!how) return;                                      // 用户关掉了弹窗
   }
+
+// ============================================================
+// v3.5.302 .note 撤销/重做（自研轻量快照栈）
+// Editor.js 核心不含 undo，官方 editorjs-undo 插件未 vendor 化=Ctrl+Z 从来
+// 无效（DevTools 构造复证实锤）。快照栈方案：onChange → 400ms 去抖存
+// editor.save() 全量快照（上限 100，覆盖打字/粘贴/回车/工具栏块操作全部
+// 变更源）；Ctrl+Z / Ctrl+Y|Ctrl+Shift+Z 在 holder 捕获期接管（preventDefault
+// 压掉 contenteditable 的半残原生栈，块级操作原生栈本就会断）；恢复走
+// blocks.render 全量重渲，恢复态与栈顶相同不重复压栈（render 触发的
+// onChange 被busy 标志+同串比对双保险跳过）。
+// ============================================================
+function _edUndoInit(conn) {
+  if (!conn.editor || conn._edUndo) return;
+  const st = { stack: [], idx: -1, busy: false, timer: null };
+  conn._edUndo = st;
+  const snap = async () => {
+    if (st.busy) return;
+    try {
+      const data = await conn.editor.save();
+      const json = JSON.stringify((data && data.blocks) || []);
+      if (st.stack[st.idx] === json) return;             // 无变化不压栈
+      st.stack = st.stack.slice(0, st.idx + 1);          // 截断 redo 分支
+      st.stack.push(json);
+      if (st.stack.length > 100) st.stack.shift();
+      st.idx = st.stack.length - 1;
+    } catch (_) {}
+  };
+  conn._edUndoHook = () => { clearTimeout(st.timer); st.timer = setTimeout(snap, 400); };
+  const apply = async dir => {
+    const ni = st.idx + dir;
+    if (ni < 0 || ni >= st.stack.length) return;         // 到栈底/顶
+    st.idx = ni;
+    st.busy = true;                                      // render 触发的 onChange 不入栈
+    try {
+      let blocks = [];
+      try { blocks = JSON.parse(st.stack[ni]) || []; } catch (_) { blocks = []; }
+      await conn.editor.blocks.render({ blocks });
+    } catch (_) {}
+    st.busy = false;
+  };
+  conn.holder.addEventListener('keydown', e => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    const k = (e.key || '').toLowerCase();
+    if (k === 'z' && !e.shiftKey) { e.preventDefault(); e.stopPropagation(); apply(-1); }
+    else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); e.stopPropagation(); apply(1); }
+  }, true);
+  snap();                                                // 初始快照（undo 底）
+}
+
   if (how === 'hex') { buildHexViewerTab(path, name); return; }
   if (how === 'view') { buildLogViewer(path); return; }
   // edit：未知类型用户硬选编辑器——超 20M 后端会拒（大小前提由后端硬上限兜底），拒则降级
