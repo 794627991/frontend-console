@@ -397,6 +397,207 @@ async function nnCopyImage(url) {
 }
 
 // ============================================================
+// v3.5.305 双链/标签 输入补全 + 阅读态染色（用户实锤「没有特殊化显示，
+// 没有快捷键快速打标签快速引入」）
+// ============================================================
+
+// ---- 补全浮层 ----
+const _nnSug = { ov: null, items: [], idx: 0, ce: null, triggerLen: 0, kind: '' };
+const _nnSugFileCache = { t: 0, list: [] };
+const _nnSugTagCache = { t: 0, list: [] };
+
+function _nnSugHide() {
+  if (_nnSug.ov) { _nnSug.ov.remove(); _nnSug.ov = null; }
+  _nnSug.ce = null; _nnSug.items = []; _nnSug.kind = '';
+}
+
+async function _nnSugData(kind) {
+  const c = kind === 'file' ? _nnSugFileCache : _nnSugTagCache;
+  if (Date.now() - c.t < 60000) return c.list;
+  try {
+    const r = await fetch(kind === 'file' ? '/api/ed/list' : '/api/notes/tags');
+    const j = await r.json();
+    c.list = j.ok ? (kind === 'file'
+      ? (j.files || []).map(f => f.name)
+      : (j.tags || []).map(t => t.tag)) : [];
+  } catch (_) { c.list = []; }
+  c.t = Date.now();
+  return c.list;
+}
+
+// caret 前缀检测：块内光标前文本 → {kind, prefix, triggerLen} 或 null
+function _nnSugDetect(ce) {
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return null;
+  const rng = sel.getRangeAt(0);
+  if (!rng.collapsed || !ce.contains(rng.startContainer)) return null;
+  const node = rng.startContainer;
+  if (node.nodeType !== 3) return null;
+  const before = (node.nodeValue || '').slice(0, rng.startOffset);
+  let m = before.match(/\[\[([^\[\]\n]{0,100})$/);
+  if (m) return { kind: 'file', prefix: m[1], triggerLen: m[1].length + 2 };
+  m = before.match(/(^|[\s，。、；：！？（）()【】、"'`.,;:!?-])#([^\W\d_][^\W_]{0,30})$/);
+  if (m) return { kind: 'tag', prefix: m[2], triggerLen: m[2].length + 1 };
+  return null;
+}
+
+function _nnSugShow(ce, kind, prefix) {
+  _nnSug.ce = ce; _nnSug.kind = kind; _nnSug.triggerLen = prefix.length + (kind === 'file' ? 2 : 1);
+  if (!_nnSug.ov) {
+    const ov = document.createElement('div');
+    ov.className = 'nn-sug';
+    ov.id = 'nnSugOv';
+    document.body.appendChild(ov);
+    _nnSug.ov = ov;
+  }
+  // 定位：caret 屏幕坐标
+  const sel = window.getSelection();
+  let rect = null;
+  if (sel.rangeCount) {
+    const r = sel.getRangeAt(0).cloneRange();
+    const span = document.createElement('span');
+    span.textContent = '​';
+    r.insertNode(span);
+    rect = span.getBoundingClientRect();
+    span.remove();
+    ce.normalize();
+  }
+  if (rect) {
+    const ov2 = _nnSug.ov;
+    ov2.style.left = Math.min(rect.left, window.innerWidth - 280) + 'px';
+    ov2.style.top = Math.min(rect.bottom + 4, window.innerHeight - 200) + 'px';
+  }
+}
+
+function _nnSugPaint(list) {
+  const ov = _nnSug.ov;
+  ov.innerHTML = list.map((x, i) =>
+    `<div class="nn-sug-it${i === _nnSug.idx ? ' on' : ''}" data-i="${i}">${esc(x)}</div>`).join('');
+  ov.querySelectorAll('.nn-sug-it').forEach(el => {
+    el.onclick = () => { _nnSug.idx = +el.dataset.i; _nnSugApply(); };
+  });
+  const on = ov.querySelector('.nn-sug-it.on');
+  if (on) on.scrollIntoView({ block: 'nearest' });
+}
+
+function _nnSugApply() {
+  const { ce, items, idx, triggerLen, kind } = _nnSug;
+  const text = items[idx];
+  _nnSugHide();
+  if (!ce || !text || !ce.isConnected) return;
+  const full = kind === 'file' ? '[[' + text + ']]' : '#' + text + ' ';
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return;
+  const rng = sel.getRangeAt(0);
+  const node = rng.startContainer;
+  if (node.nodeType !== 3) return;
+  const off = rng.startOffset;
+  // 删掉触发串（[[ 或 # + 已敲前缀），插入完整文本
+  node.nodeValue = node.nodeValue.slice(0, Math.max(0, off - triggerLen))
+    + full + node.nodeValue.slice(off);
+  const caret = Math.max(0, off - triggerLen) + full.length;
+  const nr = document.createRange();
+  nr.setStart(node, caret);
+  nr.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(nr);
+  ce.dispatchEvent(new Event('input', { bubbles: true }));   // 脏标记联动
+}
+
+// 编辑器内输入驱动（document 捕获 input，委托到 .note 可编辑区）
+document.addEventListener('input', e => {
+  const ce = e.target;
+  if (!ce || !ce.isContentEditable) return;
+  const flow = ce.closest('.term-area');
+  if (!flow || typeof connections === 'undefined') return;
+  const det = _nnSugDetect(ce);
+  if (!det) { _nnSugHide(); return; }
+  _nnSugData(det.kind).then(list => {
+    if (_nnSug.ce !== ce || _nnSug.kind !== det.kind) return;
+    const redet = _nnSugDetect(ce);
+    if (!redet || redet.kind !== det.kind) { _nnSugHide(); return; }
+    const p = (redet.prefix || '').toLowerCase();
+    const hits = list.filter(x => !p || x.toLowerCase().includes(p)).slice(0, 8);
+    if (!hits.length) { _nnSugHide(); return; }
+    _nnSug.items = hits; _nnSug.idx = 0;
+    _nnSugShow(ce, det.kind, redet.prefix);
+    _nnSugPaint(hits);
+  });
+}, true);
+// keydown：补全浮层的 ↑↓/Enter/Esc（捕获期，浮层在场才拦）
+document.addEventListener('keydown', e => {
+  if (!_nnSug.ov) return;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault(); e.stopPropagation();
+    _nnSug.idx = (_nnSug.idx + (e.key === 'ArrowDown' ? 1 : _nnSug.items.length - 1)) % _nnSug.items.length;
+    _nnSugPaint(_nnSug.items);
+  } else if (e.key === 'Enter') {
+    e.preventDefault(); e.stopPropagation();
+    _nnSugApply();
+  } else if (e.key === 'Escape') {
+    e.preventDefault(); e.stopPropagation();
+    _nnSugHide();
+  }
+}, true);
+document.addEventListener('click', e => {
+  if (_nnSug.ov && !e.target.closest('.nn-sug') && !e.target.closest('.nn-sug-it')) _nnSugHide();
+});
+
+// ---- 阅读态染色（非聚焦块包 span.nn-hl，聚焦即还原——save() 读 textContent
+// 已实测不污染存储数据；编辑中块不处理避免 caret 扰动）----
+function _nnUnwrapHl(scope) {
+  scope.querySelectorAll('span.nn-hl').forEach(sp => {
+    sp.parentNode.replaceChild(document.createTextNode(sp.textContent), sp);
+  });
+}
+const _NN_HL_TEXT = /(\[\[[^\[\]\n]{1,120}\]\])|(#[^\W\d_][^\W_]{0,39}?(?=$|[\s，。、；：！？（）【】《》「」\"'`~,;:!?\.\(\)\[\]\{\}<>\-—/|*=+&%$@~^]))/g;
+function _nnHlBlock(blk) {
+  if (blk.contains(document.activeElement)) return;   // 编辑中块不动
+  if (blk.querySelector('span.nn-hl')) _nnUnwrapHl(blk);   // 重扫前还原旧标记
+  const walker = document.createTreeWalker(blk, NodeFilter.SHOW_TEXT, {
+    acceptNode: n => {
+      const p = n.parentNode;
+      if (!p || /^(MARK|CODE|A|STYLE|SCRIPT|TEXTAREA)$/.test(p.tagName)) return NodeFilter.FILTER_REJECT;
+      const v = n.nodeValue || '';
+      return (v.includes('[[') || v.includes('#')) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+    }
+  });
+  const targets = [];
+  while (walker.nextNode()) targets.push(walker.currentNode);
+  for (const node of targets) {
+    const txt = node.nodeValue;
+    _NN_HL_TEXT.lastIndex = 0;
+    if (!_NN_HL_TEXT.test(txt)) continue;
+    _NN_HL_TEXT.lastIndex = 0;
+    let html = '', pos = 0, m;
+    while ((m = _NN_HL_TEXT.exec(txt))) {
+      html += esc(txt.slice(pos, m.index));
+      const s = m[0];
+      html += `<span class="nn-hl ${s.startsWith('[[') ? 'nn-hl-w' : 'nn-hl-t'}">${esc(s)}</span>`;
+      pos = m.index + s.length;
+    }
+    html += esc(txt.slice(pos));
+    const span = document.createElement('span');
+    span.innerHTML = html;
+    node.parentNode.replaceChild(span, node);
+  }
+}
+let _nnHlTimer = null;
+function nnHlSchedule(conn) {
+  clearTimeout(_nnHlTimer);
+  _nnHlTimer = setTimeout(() => {
+    try {
+      conn.holder.querySelectorAll('.ce-block').forEach(_nnHlBlock);
+    } catch (_) {}
+  }, 800);
+}
+// 聚焦块还原（编辑态纯文本不扰动 caret）
+document.addEventListener('focusin', e => {
+  const blk = e.target.closest && e.target.closest('.ce-block');
+  if (blk && blk.querySelector('span.nn-hl')) _nnUnwrapHl(blk);
+}, true);
+
+// ============================================================
 // v3.5.298 标签 #tag 聚合（📝 笔记弹窗顶部 chips，点选过滤文件列表）
 // ============================================================
 let _nnTagMap = null;    // name -> [tags]（过滤用，随 chips 一起拉）

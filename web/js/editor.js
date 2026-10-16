@@ -369,7 +369,7 @@ async function _edInitContent(conn, content) {
             },
           },
         },
-        onChange: () => { _edMarkDirty(conn); if (conn._edUndoHook) conn._edUndoHook(); },
+        onChange: () => { _edMarkDirty(conn); if (conn._edUndoHook) conn._edUndoHook(); if (typeof nnHlSchedule === 'function') nnHlSchedule(conn); },
         onReady: () => {
           // ---- Quote 对齐补丁（只打一次）----
           // vendor 版 quote 插件 bug：_toggleTune 只写 data.alignment，render() 从不
