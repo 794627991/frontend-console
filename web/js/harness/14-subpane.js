@@ -800,7 +800,8 @@
       if ((type || '') === 'SendMessage') {
         const _A = _ag.taskId || _ag.agentId || '';
         _lbType = _ag.type || type;
-        _lbDesc = desc || '续派 · ' + ((_HG.peerNames || {})[_A] || String(_A).slice(-6));
+        _lbDesc = desc || (typeof _peerDesc === 'function' ? _peerDesc(_A, '') : '')
+          || ((_HG.peerNames || {})[_A] || String(_A).slice(-6));
       }
       _sub.tabs[tid] = { label: _subTabLabel(_lbType, _lbDesc), type: _lbType, desc: _lbDesc, sc,
                          run: replay ? false : (!('done' in _ag) || !_ag.done),

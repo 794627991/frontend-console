@@ -308,7 +308,8 @@
       // 反查友好名（peerNames），查不到落 id 尾缀
       let _desc = a.desc || '';
       if ((a.type || '') === 'SendMessage' && !_desc) {
-        _desc = '续派 · ' + ((_HG.peerNames || {})[aid] || String(aid).slice(-6));
+        _desc = (typeof _peerDesc === 'function' ? _peerDesc(aid, '') : '')
+          || ((_HG.peerNames || {})[aid] || String(aid).slice(-6));
       }
       if (a.done && aid) { _subReplay(tid, a.type, _desc, aid); return; }
       // v3.2.6R2（用户实锤「运行过程中不能点开看」）：运行中重开也走全量

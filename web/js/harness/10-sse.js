@@ -83,9 +83,9 @@
             // 建段即落 hgSubr——运行中即可「▣ 回放」围观转写，也是切会话
             // 往返后 DOM 兜底轮询的 id 来源（随快照携带）
             _subBlkGet(tid, { live: true, collab: true, bg: true, fold: true,
-              label: '协作 · ' + ((typeof _peerLabel === 'function' && _to
-                  ? _peerLabel(_to) : '') || (_to && String(_to).slice(0, 24))
-                || _AGENT_LABEL[o.subagent_type] || o.subagent_type || '代理'),
+              label: (typeof _peerDesc === 'function'
+                  ? _peerDesc(_to, (_HG.peerMsg || {})[tid]) : '')
+                || (_AGENT_LABEL[o.subagent_type] || o.subagent_type || '代理'),
               model: '', type: o.subagent_type || 'Task',
               desc: o.description || '', done: false });
             if (_real) {
@@ -126,8 +126,8 @@
             // 胶囊「✦N …」、窗格全链走档案 desc，此处修好全好
             a = _HG.agents[tid] = {
               type: o.subagent_type || 'Task',
-              desc: o.description || (typeof _peerLabel === 'function'
-                ? _peerLabel((_HG.peerSent || {})[tid]) : ''),
+              desc: o.description || (typeof _peerDesc === 'function'
+                ? _peerDesc((_HG.peerSent || {})[tid], (_HG.peerMsg || {})[tid]) : ''),
               t0: Date.now(), done: false, doneAt: 0 };
             // v3.2.6：tool_use 丢失的兜底派发也补单行任务卡（子代理段已隐，
             // 无行=派发在主流不可见；'Task' 非 explore → 直挂时间线）
@@ -380,6 +380,10 @@
             // 反查此映射即命中原线。
             if (!isSub && b.name === 'SendMessage' && b.input && b.input.to) {
               (_HG.peerSent || (_HG.peerSent = {}))[b.id] = b.input.to;
+              // v3.5.308（用户令「显示当时的任务名」）：任务内容首行随键存——
+              // 建档 desc 的最终兜底（角色短名 · 任务首行，如「审核 · 复审请求」）
+              (_HG.peerMsg || (_HG.peerMsg = {}))[b.id] =
+                String(b.input.message || '').replace(/\s+/g, ' ').trim().slice(0, 60);
               // v3.2.30（用户实锤「运行中的代理看不到发给它的消息」）：追加
               // message 入 live 来向队列（按目标 agentId 键——运行中窗格即刻
               // 收到，未开的等绑 id 后冲）

@@ -423,7 +423,8 @@ function buildClaudeHarnessTab(opts = {}) {
       const _peer = swp.dataset.peer || '';
       if (/^[0-9a-zA-Z_-]{8,64}$/.test(_peer)) {
         _subReplay('peer:' + _peer, 'SendMessage',
-          '续派 · ' + ((_HG.peerNames || {})[_peer] || _peer.slice(-6)), _peer);
+          (typeof _peerDesc === 'function' ? _peerDesc(_peer, '') : '')
+            || ((_HG.peerNames || {})[_peer] || _peer.slice(-6)), _peer);
         return;
       }
       showBanner('此线只标记转交——协作过程聚在下方「协作」段（段头「▣ 回放」可围观），回传到达将归入其协作段', 3200);

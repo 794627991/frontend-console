@@ -153,7 +153,7 @@
             if (!d.agentsRpl.some(x => x.agentId === _ra)) {
               const _msg = String((l.input || {}).message || '').trim().slice(0, 40);
               d.agentsRpl.push({
-                type: 'SendMessage', desc: '续派' + (_msg ? ' → ' + _msg : ''),
+                type: 'SendMessage', desc: (typeof _peerDesc === 'function' ? _peerDesc((l.input || {}).to, _msg) : (_msg || '')),
                 t0: 0, done: true, doneAt: l.ts ? (Date.parse(l.ts) || 0) : 0,
                 replay: true, agentId: _ra });
               if (d.agentsRpl.length > 50) d.agentsRpl.shift();
@@ -285,7 +285,7 @@
       if (l.role === 'tool' && l.text === 'SendMessage' && l.id) {
         const _ra2 = (String(l.result || '').match(/resumedAgentId["'\s:]+([0-9a-zA-Z_-]{8,64})/) || [])[1] || '';
         if (_ra2) (_HG.subTidRes = _HG.subTidRes || {})[l.id] =
-          { agentId: _ra2, type: 'SendMessage', desc: '续派' };
+          { agentId: _ra2, type: 'SendMessage', desc: (typeof _peerDesc === 'function' ? _peerDesc((l.input || {}).to, '') : '') };
       }
       if (l.role === 'tool' && (l.text === 'Task' || l.text === 'Agent')
           && l.input && (l.input.description || l.input.subagent_type || l.input.agent_type)) {
@@ -303,7 +303,7 @@
         if (_ra && !d.agentsRpl.some(x => x.agentId === _ra)) {
           const _msg = String((l.input || {}).message || '').trim().slice(0, 40);
           d.agentsRpl.push({
-            type: 'SendMessage', desc: '续派' + (_msg ? ' → ' + _msg : ''),
+            type: 'SendMessage', desc: (typeof _peerDesc === 'function' ? _peerDesc((l.input || {}).to, _msg) : (_msg || '')),
             t0: 0, done: true, doneAt: l.ts ? (Date.parse(l.ts) || 0) : 0,
             replay: true, agentId: _ra });
           if (d.agentsRpl.length > 50) d.agentsRpl.shift();

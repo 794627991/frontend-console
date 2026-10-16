@@ -852,7 +852,7 @@
   // SendMessage 是 CLI 协议裸类型字，非真名——映射成中文兜底词，全前端
   // 20+ 处 `_AGENT_LABEL[type] || type` 消费点一次性收口（真名仍优先：
   // desc/peerSent 反查在前，本表只兜 desc 也空的极端态）
-  const _AGENT_LABEL = { executor: '执行', coder: '编程', designer: '设计', dev: '开发', reviewer: '审核', 'general-purpose': '通用子代理', Task: '子代理', SendMessage: '续派' };
+  const _AGENT_LABEL = { executor: '执行', coder: '编程', designer: '设计', dev: '开发', reviewer: '审核', 'general-purpose': '通用子代理', Task: '子代理', SendMessage: '协作代理' };
   // v3.5.296（用户实锤「SendMessage 往来的代理显示成 Task，要求显示原名」）：
   // to 形态三收——角色名（reviewer/designer）出中文短名；已知 agentId/taskId
   // 反查本会话档案原名；其余原样（超长 id 截短）。供 SendMessage 续派建档
@@ -865,4 +865,13 @@
       .find(a => a && (a.agentId === t || a.taskId === t));
     if (hit) return hit.desc || _AGENT_LABEL[hit.type] || t;
     return t.length > 24 ? t.slice(0, 8) + '…' : t;
+  }
+  // v3.5.308（用户二次实锤「续派这种词也算协议词，我要的是当时的任务名」）：
+  // 组装最终显示名 = 角色短名 · 任务内容首行（如「审核 · 修复已提交请复审」）。
+  // msg 由 10-sse 在 SendMessage tool_use 时记入 _HG.peerMsg（tool_use_id→首行）
+  function _peerDesc(to, msg) {
+    const role = _peerLabel(to);
+    const m = String(msg || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+    if (role && m && role !== m) return role + ' · ' + m;
+    return m || role || '';
   }
