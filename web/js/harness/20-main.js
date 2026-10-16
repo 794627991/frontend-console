@@ -1573,7 +1573,10 @@ function buildClaudeHarnessTab(opts = {}) {
         const _runTids = Object.keys(_HG.agents || {})
           .filter(k => !((_HG.agents || {})[k] || {}).done)
           .sort((a, b) => ((_HG.agents[a].t0 || 0) - (_HG.agents[b].t0 || 0)));
-        if (_runTids.length) { _subReopen(_runTids[_runTids.length - 1]); _subDirEnsure(); return; }   // 最新派发的代理
+        // v3.5.324（用户批注「多个子代理时，点一下 全部打开(所有子代理)」）：
+        // 运行中的全部逐个 _subReopen（每个全量铺底+续流），最终激活最新
+        // 派发的（循环内逐次 activate，最后一个胜出）；tab 上限 6 逐出旧照旧
+        if (_runTids.length) { for (const t of _runTids) _subReopen(t); _subDirEnsure(); return; }
         const _open = _subPaneEl && _subPaneEl.style.display === 'flex';
         if (!_open) { _subDynOpen(); _subDirEnsure(); return; }
         if (_sub.active === _SUB_DYN) {

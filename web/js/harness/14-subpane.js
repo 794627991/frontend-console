@@ -273,7 +273,10 @@
         showBanner('该协作代理无 agentId 记录，过程暂不可回看', 2600);
         return;
       }
-      _subOpen(tid, a.type, a.desc);               // 运行中 → live 实况 tab
+      // v3.5.324（用户实锤「切会话再切回来，数据没了」）：运行中一律走
+      // _subReopen（全量铺底+续流+归一+解析漏斗）——旧走 _subOpen 只建空壳
+      // 实况 tab，SSE 仅喂切回后新到事件，切走期间的完整过程永久缺失
+      _subReopen(tid);
       return;
     }
     _subReplay(tid, a.type, a.desc, a.taskId || a.agentId || '');   // 已结束 → 回放 tab（collab 分支内部自理）
