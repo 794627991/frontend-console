@@ -44,6 +44,32 @@
     }
     return b;
   }
+  // v3.5.323（用户需求「所有子代理（流式输出）置底——当前回合的底，永远
+  // 能看到当前会话的子代理运行情况」）：活跃段沉降——运行中的段卡钉在
+  // 当前组末尾，主链后续输出（正文气泡/结论行/新段卡）不再把它顶离视野。
+  // 已完成段保持历史位置（不打乱回放叙事序）；多运行段按 t0 排序保持相对
+  // 序；无活跃组（回合间隙）不动——下一条主链行开组时自然跟随进当前回合。
+  // 挂载在 renderSideStatus 的 rAF 合并回调（13-panel）：全部 SSE 事件都经
+  // 它刷新，天然节流；appendChild 移动节点不换引用，段内 seg/timer 无恙
+  function _subBlkSink() {
+    const g = _HG.grp;
+    if (!g || !g.root || !(g.root.isConnected || _HG.histBuilding)) return;
+    let live = null;
+    for (const pid in (_HG.subBlk || {})) {
+      const b = _HG.subBlk[pid];
+      // 不限 parentNode（组内被正文顶上去的也要挪回尾）；已在组尾的由
+      // lastElementChild 判定零 DOM 操作跳过
+      if (b && b.root && b.root.isConnected
+          && !b.root.classList.contains('done')) {
+        (live || (live = [])).push(b);
+      }
+    }
+    if (!live) return;
+    live.sort((x, y) => (x.t0 || 0) - (y.t0 || 0));
+    for (const b of live) {
+      if (g.root.lastElementChild !== b.root) g.root.appendChild(b.root);
+    }
+  }
   function _subBlkGet(pid, info) {
     if (!pid) return null;
     const known = _HG.subBlk && _HG.subBlk[pid];

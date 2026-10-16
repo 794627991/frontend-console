@@ -16,6 +16,7 @@
       // innerHTML，事件密集时 mousedown/mouseup 之间行按钮被替换、点击落空；
       // 异常记 console（不静默吞）
       try { _subDirPaint(); } catch (e) { console.error('[hg-sub-dir] 目录刷新异常', e); }
+      try { _subBlkSink(); } catch(_) {}          // v3.5.323：运行中子代理段卡钉当前组尾（用户需求「永远能看到子代理运行情况」）
       try { _hgInputState(); } catch(_) {}       // v2.35：派生态变化连带输入框提示（v3.3 自 _hgDynRender 尾部上移：无条件执行）
       try { _hgDynCapsulePaint(); } catch(_) {}  // v3.2.31：胶囊与视图同源刷新（同上）
     });
