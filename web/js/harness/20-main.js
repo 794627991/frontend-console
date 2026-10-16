@@ -1605,11 +1605,8 @@ function buildClaudeHarnessTab(opts = {}) {
   });
   // v2.2.1：相对时间随钟表 tick 且对话中实时刷新（用户实锤：对话进行中
   // 列表仍定格旧时间——refreshSessions 只在回复结束才拉，60s 只重渲旧数据
-  // 没用）。这里 60s 真拉一次列表（一个轻 GET）：对话中的会话时间滚动到
-  // 「1分钟前/刚刚」，活跃会话按 last_active 排到最前。
-  setInterval(() => {
-    refreshSessions();
-  }, 60000);
+  // 没用）。v3.5.296b2（全审 G1）：旧 60s interval 收编删除——builder 内
+  // 10s 周期对账（v3.5.296）已完整覆盖其职责，双周期并存只多打重复请求。
   _hgListEl.addEventListener('click', async (e) => {
     const act = e.target.closest('[data-act]');
     if (act) {

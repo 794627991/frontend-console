@@ -701,9 +701,15 @@
   function _hgMm(m) {
     return !!(_HG.models && (_HG.models.mm || []).includes(m));
   }
+  // v3.5.296b2（全审 G2）：乱序守卫——10s 轮询/SSE/重命名多触发源并发时，
+  // 迟到响应用旧数据覆盖新数据（busy/标题短暂回退）。仿 _qSyncSeq 自增序号，
+  // 响应到达时序号已过期即丢弃（_sessSeq 由最近的调用持有真值）
+  let _sessSeq = 0;
   async function refreshSessions() {
+    const seq = ++_sessSeq;
     try {
       const j = await (await fetch('/api/harness/sessions')).json();
+      if (seq !== _sessSeq) return;   // 已有更新请求在途/完成——本次作废
       if (j.ok) { _HG.sessions = j.sessions || []; _HG.scheme = j.scheme || ''; renderList(); }
     } catch(_) {}
   }

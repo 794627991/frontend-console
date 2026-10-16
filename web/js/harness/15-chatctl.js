@@ -43,7 +43,6 @@
             <div class="hg-item-row">
               <span class="hg-item-title">${s.busy ? '<span class="hg-item-run" title="回复中"></span>' : ''}${esc(s.title || '新会话')}</span>
               <span class="hg-item-acts">
-                ${s.busy ? '<span class="hg-item-busy" title="回复中">●</span>' : ''}
                 <button class="hg-item-act" data-act="rename" data-sid="${esc(s.sid)}" title="重命名">✎</button>
                 <button class="hg-item-act del" data-act="del" data-sid="${esc(s.sid)}" title="删除会话">✕</button>
               </span>
