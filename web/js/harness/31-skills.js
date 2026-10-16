@@ -416,6 +416,7 @@ function skOpenDetail(key) {
   if (parts.length !== 3) return;
   SK.det = null; SK.detZh = false; SK.view = 'detail';
   const el = SK.root.querySelector('#skBody');
+  SK.homeScroll = el.scrollTop;   // v3.5.319：返回时恢复列表位置（innerHTML 重建归零）
   el.innerHTML = '<div class="sk-empty">加载详情…</div>';
   SK.root.querySelector('#skSearch').blur();
   _skFetch('/api/skills/detail?owner=' + encodeURIComponent(parts[0]) +
@@ -430,6 +431,8 @@ function skOpenDetail(key) {
 function skShowHome() {
   SK.view = 'home';
   skRenderHome();
+  const el = SK.root.querySelector('#skBody');
+  if (el) el.scrollTop = SK.homeScroll || 0;   // v3.5.319：回到点进前的位置
   skInstZhPatch();   // v3.5.318（复审 R2）：详情页安装后返回首页，新装描述回补汉化
 }
 
@@ -493,6 +496,7 @@ function skRenderDetail() {
 function skOpenLocal(name) {
   SK.det = null; SK.detZh = false; SK.view = 'detail';
   const el = SK.root.querySelector('#skBody');
+  SK.homeScroll = el.scrollTop;   // v3.5.319：同上
   el.innerHTML = '<div class="sk-empty">读取本地技能…</div>';
   _skFetch('/api/skills/local_detail?name=' + encodeURIComponent(name)).then(r => {
     if (!r.ok) { el.innerHTML = '<div class="sk-empty">' + _skEsc(r.err || '读取失败') + '</div>'; return; }
