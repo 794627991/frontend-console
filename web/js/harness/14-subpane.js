@@ -1693,7 +1693,15 @@
       // v2.58：续派切段——该 agentId 的增量喂给**当前活跃段**（subTailSeg
       // 映射在 SendMessage 派发时切到新段），旧段即使档案未 done 也不再吃
       // 内容（用户实锤「续审内容跑回第一个审计段」）
-      const tgt = (_HG.subTailSeg || {})[a.taskId] || tid;
+      // subagent-registry F3（全审）：Sync 后遍历键=agentId 而首轮 Task 无
+      // subTailSeg 映射——旧兜底 tgt=键本身会让 _subBlkGet(aid) 新建第二张
+      // 段卡（原段冻结断流）。改按条目 tids 链找在场段；全 miss 才落键
+      const _tgtSeg = (_HG.subTailSeg || {})[a.taskId]
+        || ((a.tids || []).find(t => _HG.subBlk && _HG.subBlk[t]
+              && _HG.subBlk[t].root && _HG.subBlk[t].root.isConnected
+              && !_HG.subBlk[t].root.classList.contains('done')))
+        || tid;
+      const tgt = _tgtSeg;
       const b = _HG.subBlk && _HG.subBlk[tgt];
       if (!b || !b.root || !b.root.isConnected || b.root.classList.contains('done')) {
         // v3.5.127（用户实锤「切会话回来子代理段变回放定格不刷新」）：协作段

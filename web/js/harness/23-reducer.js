@@ -55,8 +55,13 @@
                            bg: !!it.bg, taskId: it.task_id || '',
                            t0: it.ts || 0, done: false,
                            err: false, tokens: 0, toolN: 0 };
+      // subagent-registry F6（全审）：镜像事件附 aid——即收即更 tidMap
+      //（_subTid 归一零延迟；此前 aid 附在事件上但本 handler 忽略它=
+      // 死代码，头 2s 仍靠旧三向反查）
+      if (it.aid && it.tid) { _HG.tidMap = _HG.tidMap || {}; _HG.tidMap[it.tid] = it.aid; }
       dirty = true;
     } else if (t === 'subagent_result') {
+      if (it.aid && it.tid) { _HG.tidMap = _HG.tidMap || {}; _HG.tidMap[it.tid] = it.aid; }
       const a = p.agents[it.tid];
       if (a) Object.assign(a, { done: true, err: !it.ok,
                                 tokens: it.tokens || a.tokens || 0,

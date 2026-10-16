@@ -963,6 +963,10 @@ def _inject_subagent_blocks(lines, csids, main_dir):
         head = {"role": "sub_open", "agent": aid,
                 "type": inp.get("subagent_type") or inp.get("agent_type") or "Task",
                 "desc": str(_desc or "")[:200],
+                # subagent-registry：附派发行 ts（ISO，消费方 Date.parse）——
+                # 注册表重建的 t0/doneAt 时间源（此前行无 ts，重建条目过不了
+                # 前端目录当天闸=重启后不可见）
+                "ts": ln.get("ts") or "",
                 "model": "", "err": bool(ln.get("err"))}
         if aid not in full:
             head["stub"] = True

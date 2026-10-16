@@ -1151,8 +1151,10 @@ def harness_agents():
                        and l.get("role") == "tool"
                        and str(l.get("text") or "") == "SendMessage"]
             reg = rebuild_from_transcript(sub_open, sendmsg)
-            s._registry.replace_all(reg.snapshot()["agents"],
-                                    reg.snapshot()["tidMap"])
+            # F7：merge 而非 replace——增量（进程死路径刚落的 interrupted）
+            # lastActive 恒新于转写静态事实，按条合并保增量不丢
+            s._registry.merge_rebuilt(reg.snapshot()["agents"],
+                                      reg.snapshot()["tidMap"])
             snap = s._registry.snapshot()
         except Exception as _e:
             log.warning("agent registry rebuild fail %r", _e)

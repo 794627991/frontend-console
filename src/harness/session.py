@@ -1185,7 +1185,12 @@ class HarnessSession:
                 return
             now_ms = int(time.time() * 1000)
             with self._audit_lock:
-                ids_snap = dict(self._audit.get("ids") or {})
+                # F1 修复（全审）：_audit["ids"] 是 agentId→角色（回填方向），
+                # on_send_message 要 角色→agentId——传表前反转（同角色多
+                # agentId 时后写覆盖=取最新，dict 迭代序=插入序保证）
+                ids_snap = {}
+                for _aid, _role in (self._audit.get("ids") or {}).items():
+                    ids_snap[str(_role)] = str(_aid)
             for b in blocks:
                 if not isinstance(b, dict) or b.get("type") != "tool_use":
                     continue

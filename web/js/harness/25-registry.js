@@ -57,8 +57,14 @@
       for (const k in jAg) {
         if (k.indexOf('pending:') === 0) {
           // 后端未回填 agentId 的临时条目（CLI 异常形态）——保留 tid 键
-          // 兼容 live 流，found=false 不回放
-          agents[k.slice(8)] = Object.assign(
+          // 兼容 live 流，found=false 不回放。
+          // F2 修复（全审）：tid 已被 tidMap 归链且 aid 条目在场时**跳过
+          // 落键**——稀疏档（无 taskId/tids/rounds）覆写 live 富档会丢
+          // 字段+鬼影双计（后端迁键删 pending 后此分支自然消失，双保险）
+          const _pk = k.slice(8);
+          const _pAid = (_HG.tidMap || {})[_pk];
+          if (_pAid && jAg[_pAid]) continue;
+          agents[_pk] = Object.assign(
             { type: jAg[k].type, desc: jAg[k].desc, t0: jAg[k].t0,
               done: jAg[k].status !== 'running',
               err: jAg[k].status === 'err',
