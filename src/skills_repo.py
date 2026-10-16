@@ -789,30 +789,41 @@ _ZH_SYS = ("你是技能文档翻译引擎。把给定的 Claude 技能元数据
 
 
 def _llm(system, user, max_tokens=4096):
-    """调轻主力模型（Anthropic 兼容 /v1/messages，单次非流式）。"""
+    """调轻主力模型（Anthropic 兼容 /v1/messages，单次非流式）。
+    v3.5.323（用户实锤本地全文翻译恒报解析失败）：网关对长输入偶发
+    200 空正文（vision_mcp._call_vision 同款已知行为）——空 content 补发
+    一次再降级，不当场判死。"""
     base, key = _claude_env()
     if not base or not key:
         return None, "未配置 API 端点（settings.json env 缺失）"
     model = light_model()
     if not model:
         return None, "轻主力模型未配置"
-    body = json.dumps({
-        "model": model, "max_tokens": max_tokens, "system": system,
-        "messages": [{"role": "user", "content": user}]}).encode("utf-8")
-    req = urllib.request.Request(
-        base + "/v1/messages", data=body, method="POST",
-        headers={"Content-Type": "application/json",
-                 "x-api-key": key, "Authorization": "Bearer " + key,
-                 "anthropic-version": "2023-06-01", "User-Agent": UA})
-    try:
-        with urllib.request.urlopen(req, timeout=90) as r:
-            d = json.loads(r.read().decode("utf-8", "replace"))
-    except Exception as e:
-        return None, str(e)[:200]
-    try:
-        return "".join(c.get("text", "") for c in d.get("content", [])), None
-    except Exception:
-        return None, "响应解析失败"
+
+    def _once():
+        body = json.dumps({
+            "model": model, "max_tokens": max_tokens, "system": system,
+            "messages": [{"role": "user", "content": user}]}).encode("utf-8")
+        req = urllib.request.Request(
+            base + "/v1/messages", data=body, method="POST",
+            headers={"Content-Type": "application/json",
+                     "x-api-key": key, "Authorization": "Bearer " + key,
+                     "anthropic-version": "2023-06-01", "User-Agent": UA})
+        try:
+            with urllib.request.urlopen(req, timeout=180) as r:
+                d = json.loads(r.read().decode("utf-8", "replace"))
+        except Exception as e:
+            return None, str(e)[:200]
+        try:
+            return "".join(c.get("text", "") for c in d.get("content", [])), None
+        except Exception:
+            return None, "响应解析失败"
+
+    text, err = _once()
+    if not err and not (text or "").strip():
+        time.sleep(1)   # 空正文补发一次（网关偶发行为，同参直连复测即正常）
+        text, err = _once()
+    return text, err
 
 
 def _extract_json(text):
@@ -875,37 +886,31 @@ def translate_meta(items):
 
 
 def translate_body(md):
-    """正文汉化（SKILL.md 全文，按需调用）。"""
+    """正文汉化（SKILL.md 全文，按需调用）。
+    v3.5.323（用户实锤「不可能这么脆弱」+二分定位）：13.6K 源文要求 JSON
+    包裹时网关 144s 空正文必败，同一输入直出译文 76s 全文成功——**空正文
+    触发器是「长输入+JSON 包裹长输出」组合**，与长度/拆分无关。prompt 改
+    直出译文，全文当译文采信（剥可能围栏）；_llm 层保留空正文补发一次。"""
     key = _zh_key("body:", md)
     hit = _zh_load(key)
     if hit:
         return hit, None
     if len(md) > 60000:
         return None, "技能正文过长（%d 字节），暂不支持翻译" % len(md)
-    text, err = _llm(_ZH_SYS, "翻译以下 SKILL.md 全文为简体中文，"
-                     "保留 markdown 结构/代码块/命令/frontmatter 键名原样，"
-                     "输出 JSON：{\"body_zh\":\"译文\"}。正文：\n" + md)
-    data = _extract_json(text) if not err else None
-    if not data or not data.get("body_zh"):
-        # 兜底（实测正文译文 JSON 内含大量原始换行时模型常输出非法 JSON）：
-        # 模型没包成功但输出本身是完整 markdown 译文时，剥围栏直接采信
-        t = (text or "").strip()
-        m = re.search(r"```(?:json)?\s*(.*?)```", t, re.S)
-        if m:
-            t = m.group(1).strip()
-        if not err and len(t) > 300:
-            # 采信前二次解包：模型常把整个 JSON 原文当围栏内容输出
-            if t.startswith('{"body_zh"'):
-                try:
-                    t = json.loads(t, strict=False).get("body_zh") or t
-                except ValueError:
-                    t = t[len('{"body_zh":"'):-2] if t.endswith('"}') else t
-            d0 = {"body_zh": t, "model": light_model(), "ts": int(time.time())}
-            _zh_save(key, d0)
-            return d0, None
-        return None, err or "翻译结果解析失败"
-    d = {"body_zh": data["body_zh"], "model": light_model(),
-         "ts": int(time.time())}
+    text, err = _llm(
+        "你是翻译引擎。把 SKILL.md 翻译成简体中文：markdown 结构、代码块、"
+        "命令、链接、frontmatter 键名原样保留；专有名词/产品名保留。"
+        "直接输出译文全文，不要任何解释或包裹。",
+        "翻译成简体中文，直接输出译文：\n" + md, max_tokens=4096)
+    if err:
+        return None, err
+    t = (text or "").strip()
+    if not t:
+        return None, "模型返回空响应（稍后重试）"
+    m = re.match(r"^```(?:markdown)?\s*\n(.*?)\n```\s*$", t, re.S)
+    if m:
+        t = m.group(1)   # 剥模型偶尔加的围栏
+    d = {"body_zh": t, "model": light_model(), "ts": int(time.time())}
     _zh_save(key, d)
     return d, None
 
