@@ -362,6 +362,41 @@ async function nnTryOpen(cands, label, conn) {
 }
 
 // ============================================================
+// v3.5.301 图片右键复制（用户需求）：库内图片（/api/ed/img/*）右键直接复制
+// 图片本体到剪贴板——非 png 先经 canvas 转 png（剪贴板只收位图，gif 取静帧）；
+// 外部图片不拦（保留原生菜单）。document 级事件委托，零挂点不碰 Editor.js。
+// ============================================================
+document.addEventListener('contextmenu', e => {
+  const img = e.target.closest('img');
+  if (!img) return;
+  const src = img.currentSrc || img.src || '';
+  if (!src.includes('/api/ed/img/')) return;
+  e.preventDefault();
+  nnCopyImage(src);
+});
+async function nnCopyImage(url) {
+  try {
+    let blob = await (await fetch(url)).blob();
+    if (blob.type !== 'image/png') {
+      blob = await new Promise((resolve, reject) => {
+        const im = new Image();
+        im.onload = () => {
+          const cv = document.createElement('canvas');
+          cv.width = im.naturalWidth;
+          cv.height = im.naturalHeight;
+          cv.getContext('2d').drawImage(im, 0, 0);
+          cv.toBlob(b => b ? resolve(b) : reject(new Error('canvas 转换失败')), 'image/png');
+        };
+        im.onerror = () => reject(new Error('图片解码失败'));
+        im.src = URL.createObjectURL(blob);
+      });
+    }
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+    showBanner('已复制图片，可直接粘贴到聊天/文档', 2200);
+  } catch (e) { showBanner('复制图片失败: ' + (e && e.message || e), 3500, true); }
+}
+
+// ============================================================
 // v3.5.298 标签 #tag 聚合（📝 笔记弹窗顶部 chips，点选过滤文件列表）
 // ============================================================
 let _nnTagMap = null;    // name -> [tags]（过滤用，随 chips 一起拉）
