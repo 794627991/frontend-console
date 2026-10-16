@@ -1120,6 +1120,41 @@ def harness_events():
                     "proj": s.log.store.projection,
                     "queue": s.queue_list()})
 
+
+@harness_bp.route("/agents")
+def harness_agents():
+    """refactor/subagent-registry 阶段1：子代理注册表（agentId 主键权威清单）。
+
+    ?sid= → {ok, agents:{agentId→条目}, tidMap:{tid→agentId}, rebuilt}
+    条目：{agentId, found, type, desc(任务名), status(running/done/err/
+    interrupted), t0, doneAt, rounds(续派轮数), lastActive, tids[], bg,
+    tokens, toolN, brief}。前端胶囊/目录/动态/分页全部从它派生——三套 id
+    的归一在后端一处完成（历次「续派两个子代理/假完成/名字不对」实锤的
+    根治）。重启后首查（rebuilt=False 且非 busy）扫转写静态重建一次。"""
+    s = _get_or_create(request.args.get("sid") or "")
+    if not s:
+        return jsonify({"ok": False, "err": "会话不存在"}), 404
+    snap = s._registry.snapshot()
+    if not snap["rebuilt"] and not s.busy and not s.alive:
+        # 进程已死（重启场景）：扫转写重建（live 增量不在途，静态事实为准）；
+        # 活会话的增量链更及时，不重建（rebuilt 标记保持 False——进程死后的
+        # 首查才补）
+        try:
+            from .registry import rebuild_from_transcript
+            lines = transcript_for(s) or []
+            sub_open = [l for l in lines
+                        if isinstance(l, dict) and l.get("role") == "sub_open"]
+            sendmsg = [l for l in lines if isinstance(l, dict)
+                       and l.get("role") == "tool"
+                       and str(l.get("text") or "") == "SendMessage"]
+            reg = rebuild_from_transcript(sub_open, sendmsg)
+            s._registry.replace_all(reg.snapshot()["agents"],
+                                    reg.snapshot()["tidMap"])
+            snap = s._registry.snapshot()
+        except Exception as _e:
+            log.warning("agent registry rebuild fail %r", _e)
+    return jsonify({"ok": True, **snap})
+
 # ---- from claude_harness.py:3552 (harness_rename) ----
 
 

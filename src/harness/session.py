@@ -141,6 +141,11 @@ class HarnessSession:
         self._held = False
         self._bg_mon_started = False
         self.last_result = None
+        # refactor/subagent-registry 阶段1：子代理注册表（agentId 主键权威
+        # 清单——归一收敛到后端一处，前端全部视图从它派生；详见
+        # registry.py 模块注释）
+        from .registry import AgentRegistry
+        self._registry = AgentRegistry()
         # v3.5.98：会话创建时的 API 方案名（跨方案发消息拦截依据）。切方案
         # 会换网关/模型映射/上下文窗口，旧会话续发必然错位（上下文大小不一
         # 致/模型名不被新网关认）。None=升级前的旧会话（无标记），按用户拍板
@@ -946,6 +951,12 @@ class HarnessSession:
             self._audit_settle("interrupted")
         except Exception:
             pass
+        # 阶段1：注册表——■ 中断=前台子代理同停（bg 跨回合存活不在此收，
+        # 进程死由 bg_in_flight_clear 全收；与前端 sweep 口径一致）
+        try:
+            self._registry.on_interrupt_all(int(time.time() * 1000), only_fg=True)
+        except Exception:
+            pass
         self.emit({"kind": "interrupted", "text": "已中断回复"})
         _trace_append(self.sid, "interrupted", "已中断回复")   # v3.4.87：痕迹持久化（重启后回放可见）
         self._turn_end(err=True)
@@ -1162,6 +1173,61 @@ class HarnessSession:
         _arm(self._PUMP_DELAY)
 
     # ---- 子代理镜像事件（#12，v3.1）----
+    # ---- 注册表钩子（refactor/subagent-registry 阶段1）----
+    def _registry_feed(self, o):
+        """assistant 帧：Task/Agent 派发建档 + SendMessage 续派归链。
+        只处理主链帧（子代理内部事件带 parent_tool_use_id 不计）。"""
+        try:
+            if o.get("parent_tool_use_id"):
+                return
+            blocks = (o.get("message") or {}).get("content")
+            if not isinstance(blocks, list):
+                return
+            now_ms = int(time.time() * 1000)
+            with self._audit_lock:
+                ids_snap = dict(self._audit.get("ids") or {})
+            for b in blocks:
+                if not isinstance(b, dict) or b.get("type") != "tool_use":
+                    continue
+                n = str(b.get("name") or "")
+                inp = b.get("input") or {}
+                if n in ("Task", "Agent"):
+                    self._registry.on_task_dispatch(
+                        str(b.get("id") or ""),
+                        str(inp.get("subagent_type") or inp.get("agent_type") or ""),
+                        str(inp.get("description") or ""), now_ms)
+                elif n == "SendMessage":
+                    msg1 = str(inp.get("message") or "").strip().split("\n")[0]
+                    self._registry.on_send_message(
+                        str(b.get("id") or ""), str(inp.get("to") or ""),
+                        msg1[:60], ids_snap, now_ms)
+        except Exception:
+            pass
+
+    def _registry_result(self, o):
+        """user 帧（tool_result）：Task 派发回执提取 agentId 迁移键 + 终态。"""
+        try:
+            if o.get("parent_tool_use_id"):
+                return
+            blocks = (o.get("message") or {}).get("content")
+            if not isinstance(blocks, list):
+                return
+            now_ms = int(time.time() * 1000)
+            for b in blocks:
+                if not isinstance(b, dict) or b.get("type") != "tool_result":
+                    continue
+                c = b.get("content")
+                if isinstance(c, list):
+                    txt = "\n".join(str(x.get("text") or "")
+                                    for x in c if isinstance(x, dict))
+                else:
+                    txt = str(c or "")
+                self._registry.on_task_result(
+                    str(b.get("tool_use_id") or ""), txt,
+                    bool(b.get("is_error")), now_ms, 0, 0)
+        except Exception:
+            pass
+
     def _emit_task_mirror(self, o):
         """CLI 杂讯 → 干净生命周期事件。前端 handleEvent 的 20 段 Task
         解析（协作包装/转交线/段壳）保持不动——镜像事件只喂 reducer 投影
@@ -1178,6 +1244,11 @@ class HarnessSession:
             # 径 _shBg 早有此过滤，投影路径补齐同口径）
             if not str(o.get("subagent_type") or "").strip():
                 return
+            # 阶段1：注册表——t0/rounds/tid 补记（幂等）
+            self._registry.on_task_started(
+                tid, o.get("subagent_type"), o.get("description"),
+                o.get("task_id"), bool(o.get("is_backgrounded")),
+                int(time.time() * 1000))
             self.emit({"kind": "subagent_started", "tid": tid,
                        "agent_type": o.get("subagent_type") or "Task",
                        "desc": str(o.get("description") or "")[:200],
@@ -1196,6 +1267,11 @@ class HarnessSession:
             self._bg_tasks.pop(tid, None)
             usage = o.get("usage") or {}
             st = str(o.get("status") or "")
+            # 阶段1：注册表——完成信号（链上 tid 反查落定）
+            self._registry.on_task_notification(
+                tid, st in ("", "completed", "success"),
+                str(o.get("summary") or ""), int(time.time() * 1000),
+                usage.get("total_tokens") or 0, usage.get("tool_uses") or 0)
             self.emit({"kind": "subagent_result", "tid": tid,
                        "ok": st in ("", "completed", "success"),
                        "brief": str(o.get("summary") or "")[:200],
@@ -1342,6 +1418,12 @@ class HarnessSession:
         held = self._held
         self._bg_tasks = {}
         self._held = False
+        # 阶段1：注册表——进程死=链上 running 全部落 interrupted（真源一致
+        # 性：前端不会再看到假运行；后续 SendMessage 续派/重建翻正）
+        try:
+            self._registry.on_interrupt_all(int(time.time() * 1000))
+        except Exception:
+            pass
         if held:
             # v3.5.158（轻审 R1 对偶）：kill 路径也同步清 meta.held（否则
             # 重启后 repair 注入一条冗余 turn_complete——前端幂等消化无害，
@@ -1596,6 +1678,8 @@ class HarnessSession:
                         self._audit_tally_result(o)
                     except Exception:
                         pass
+                    # 阶段1：注册表——Task 回执提 agentId（迁移键+终态）
+                    self._registry_result(o)
                 if typ == "assistant":
                     # v2.27.21：记录 CLI 实报模型名——引导词热更/窗口判定
                     # 的第一依据（settings 名会与实跑名错位，见 _eff_model）。
@@ -1616,6 +1700,8 @@ class HarnessSession:
                     # v2.34：回合内审计累计（纯计数零盘 IO；子代理事件内部
                     # 自行排除，见 _audit_tally）
                     self._audit_tally(o)
+                    # 阶段1：注册表——Task/Agent 派发建档 + SendMessage 归链
+                    self._registry_feed(o)
                 if typ in ("assistant", "result"):
                     self._check_peer_lines()   # 回合有输出 → 先补发新到的 peer 回传
                 # v3.1（#12）：Task 生命周期系统事件 → 干净镜像事件（reducer/新面板用）
