@@ -1218,6 +1218,7 @@ async function showFilesModal() {
         <div class="head">
           <strong>📝 笔记</strong>
           <div class="head-actions">
+            <button class="btn ghost" id="filesSearchBtn" title="全库搜索（Ctrl+Alt+F）">🔍 搜索</button>
             <button class="btn ghost" id="filesNew" title="新建笔记（不落盘，保存时才写文件）">＋ 新建笔记</button>
             <button class="btn ghost icon-btn" id="filesOpenDir" title="在资源管理器中打开 files/ 目录">📁</button>
             <button class="btn ghost icon-btn" id="filesClose">✕</button>

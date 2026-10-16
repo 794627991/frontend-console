@@ -90,6 +90,10 @@ app.register_blueprint(hex_bp)
 # 注册文本编辑器 Blueprint（路由 /api/ed/*）
 app.register_blueprint(edit_bp)
 
+# 注册笔记库索引 Blueprint（路由 /api/notes/*——搜索/双链/标签/导出，只读扫描 files/）
+from src.notes_index import notes_bp
+app.register_blueprint(notes_bp)
+
 # 注册文件关联接管/还原 Blueprint（路由 /api/assoc/*，注册表只动 HKCU）
 from src.file_assoc import assoc_bp
 app.register_blueprint(assoc_bp)
