@@ -406,13 +406,15 @@ def _fm_desc(head):
     if not m:
         return ""
     v = m.group(1).strip()
-    if v in ("|", ">", "|-", ">-", "|+", ">+"):
+    if v in ("|", ">", "|-", ">-", "|+", ">+") or re.fullmatch(
+            r"[|>][+-]?\d*", v):   # v3.5.317（轻审一般3）：含显式缩进指示符 |2 等
         lines = []
         for ln in head[m.end():].splitlines():
-            if ln[:1] in (" ", "\t") and ln.strip():
-                lines.append(ln.strip())
-            elif lines:
-                break   # 续行段结束
+            if not ln.strip():
+                continue   # 块内合法空行不截断
+            if ln[:1] not in (" ", "\t"):
+                break   # 零缩进非空行=块结束（空块标量/正文边界，一律停）
+            lines.append(ln.strip())
         v = " ".join(lines)
     return v[:600]
 

@@ -253,18 +253,22 @@ function skInstCard(s) {
 // ==================== 已安装操作 ====================
 
 function _skRefreshInst() {
-  return skLoadInstalled().then(() => { if (SK.view === 'home') skRenderHome(); });
+  return skLoadInstalled().then(() => {
+    if (SK.view === 'home') skRenderHome();
+    skInstZhPatch();   // v3.5.317（轻审一般5）：重建后新装技能描述回补汉化
+  });
 }
 
 // v3.5.310：已安装卡描述渐进修译（key=local:<name>，缓存命名空间独立；
 // 命中走 installed() 附带的 zh_desc，未命中的批量 8 条补译一轮）
-let _skInstZhRun = false;
+let _skInstZhRun = false, _skInstZhRounds = 0;
 function skInstZhPatch() {
   if (_skInstZhRun || SK.view !== 'home') return;
   const need = (SK.inst || []).filter(s => s.desc && !s.zh_desc)
     .slice(0, 8).map(s => ({ key: 'local:' + s.name, name: s.name, desc: s.desc }));
   if (!need.length) return;
-  _skInstZhRun = true;
+  if (_skInstZhRounds >= 4) return;   // v3.5.317（轻审严重1）：封顶防空翻译投毒后无限循环
+  _skInstZhRounds++;
   _skFetch('/api/skills/translate', { method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ kind: 'meta', items: need }) }).then(r => {
