@@ -4529,6 +4529,18 @@ html {
 .ed-links-foot { padding: 6px 4px; text-align: right; }
 .md-preview-body .nn-wlink { color: var(--accent); cursor: pointer;
   text-decoration: underline dotted; }
+
+/* ---- v3.5.298 标签聚合 chips（📝 笔记弹窗顶部）---- */
+.nn-tag-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  padding: 8px 12px 0; }
+.nn-tag-loading { color: var(--muted); font-size: 11px; }
+.nn-tag-cap { color: var(--muted); font-size: 12px; }
+.nn-tag-chip { font-size: 11px; color: var(--muted); cursor: pointer; user-select: none;
+  border: 1px solid var(--border); border-radius: 999px; padding: 2px 9px; }
+.nn-tag-chip i { font-style: normal; color: var(--muted); opacity: .7; }
+.nn-tag-chip:hover { color: var(--fg); border-color: var(--muted); }
+.nn-tag-chip.on { color: #fff; background: var(--accent); border-color: var(--accent); }
+.nn-tag-chip.on i { color: #fff; opacity: .85; }
 .hg-vcs-loading { padding: 18px 10px; text-align: center; color: var(--muted); }
 .hg-vcs-cfile { display: flex; gap: 6px; align-items: center; padding: 3px 0;
   font-family: var(--font-mono); font-size: 11px; }

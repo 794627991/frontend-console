@@ -358,3 +358,42 @@ async function nnTryOpen(cands, label, conn) {
   }
   nnConfirmCreate(label, conn);
 }
+
+// ============================================================
+// v3.5.298 标签 #tag 聚合（📝 笔记弹窗顶部 chips，点选过滤文件列表）
+// ============================================================
+let _nnTagMap = null;    // name -> [tags]（过滤用，随 chips 一起拉）
+
+async function nnRenderTagFilter(modal, listEl) {
+  // 已有 chips 行：先移除重建（列表每次 show 都重渲，chips 跟随刷新）
+  const old = modal.querySelector('.nn-tag-row');
+  if (old) old.remove();
+  const row = document.createElement('div');
+  row.className = 'nn-tag-row';
+  row.innerHTML = '<span class="nn-tag-loading">标签加载中…</span>';
+  listEl.parentNode.insertBefore(row, listEl);
+  let j;
+  try {
+    const r = await fetch('/api/notes/tags');
+    j = await r.json();
+  } catch (e) { row.innerHTML = '<span class="nn-tag-loading">标签加载失败</span>'; return; }
+  if (!j.ok || !j.tags.length) { row.innerHTML = '<span class="nn-tag-loading">没有 #标签（正文中写 #标签 即自动收集）</span>'; return; }
+  _nnTagMap = {};
+  for (const t of j.tags) for (const f of t.files) (_nnTagMap[f] = _nnTagMap[f] || []).push(t.tag);
+  row.innerHTML = '<span class="nn-tag-cap">🏷</span>' + j.tags.map(t =>
+    `<span class="nn-tag-chip" data-nntag="${esc(t.tag)}" title="${esc(String(t.count))} 个文件">#${esc(t.tag)} <i>${esc(String(t.count))}</i></span>`).join('');
+  row.querySelectorAll('.nn-tag-chip').forEach(ch => {
+    ch.onclick = () => nnFilterListByTag(modal, listEl, ch.dataset.nntag);
+  });
+}
+
+function nnFilterListByTag(modal, listEl, tag) {
+  const chip = modal.querySelector('.nn-tag-chip.on');
+  const active = chip && chip.dataset.nntag === tag ? null : tag;   // 再点同 chip=取消
+  modal.querySelectorAll('.nn-tag-chip').forEach(c => c.classList.toggle('on', c.dataset.nntag === active));
+  listEl.querySelectorAll('.item').forEach(it => {
+    const name = it.dataset.name || '';
+    const tags = (_nnTagMap && _nnTagMap[name]) || [];
+    it.style.display = (!active || tags.includes(active)) ? '' : 'none';
+  });
+}

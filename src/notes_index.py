@@ -294,6 +294,21 @@ def notes_backlinks():
                     "tags": me["tags"]})
 
 
+@notes_bp.route("/api/notes/tags")
+def notes_tags():
+    """标签聚合：{ok, tags: [{tag, count, files: [name..]}]}（count 降序）。
+    count=该标签的文件数（非出现次数——聚合视图按文件算直觉）。"""
+    cache, _skipped = _scan()
+    agg = {}
+    for fn, d in cache.items():
+        for t in d["tags"]:
+            e = agg.setdefault(t, {"tag": t, "count": 0, "files": []})
+            e["count"] += 1
+            e["files"].append(fn)
+    tags = sorted(agg.values(), key=lambda x: (-x["count"], x["tag"]))
+    return jsonify({"ok": True, "tags": tags})
+
+
 @notes_bp.route("/api/notes/search", methods=["POST"])
 def notes_search():
     """全局全文搜索。入参 {q, regex?, case?, tag?}：

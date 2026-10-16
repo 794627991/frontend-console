@@ -1250,9 +1250,12 @@ async function showFilesModal() {
     if (!j.ok) { listEl.innerHTML = '<div style="padding:20px;color:var(--muted);">加载失败</div>'; return; }
     if (!j.files.length) { listEl.innerHTML = '<div style="padding:20px;color:var(--muted);">暂无笔记，点击「新建笔记」创建</div>'; return; }
     listEl.innerHTML = '';
+    // v3.5.298：标签 chips 行注入（notes-nav.js——#tag 聚合筛选，点选过滤列表）
+    if (typeof nnRenderTagFilter === 'function') { try { nnRenderTagFilter(modal, listEl); } catch (_) {} }
     j.files.forEach(f => {
       const d = document.createElement('div');
       d.className = 'item';
+      d.dataset.name = f.name;   // v3.5.298：标签筛选按文件名过滤（notes-nav.js）
       const dt = new Date(f.mtime*1000);
       const kb = f.size >= 1024 ? (f.size/1024).toFixed(1) + ' KB' : f.size + ' B';
       const icon = f.name.toLowerCase().endsWith('.note') ? '📝' : (f.name.toLowerCase().endsWith('.txt') ? '📄' : '📄');
