@@ -820,8 +820,12 @@ def _llm(system, user, max_tokens=4096):
             return None, "响应解析失败"
 
     text, err = _once()
-    if not err and not (text or "").strip():
-        time.sleep(1)   # 空正文补发一次（网关偶发行为，同参直连复测即正常）
+    # v3.5.325：空正文补发两次（网关偶发行为非确定性——同一请求实测时好
+    # 时坏，两次全空的概率大幅降；间隔递增给网关喘息）
+    for wait in (1, 3):
+        if err or (text or "").strip():
+            break
+        time.sleep(wait)
         text, err = _once()
     return text, err
 
