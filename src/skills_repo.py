@@ -612,10 +612,7 @@ def pack_apply(token, names, overwrite=False):
                 if not arcs:
                     failed.append({"name": nm, "err": "包内无文件"})
                     continue
-                if d and os.path.isdir(d):
-                    shutil.rmtree(d, ignore_errors=True)
-                os.makedirs(d, exist_ok=True)
-                n = 0
+                # sha 全量校验提前到删原目录之前（N1：损坏包不许殃及已装技能）
                 bad = False
                 for arc in arcs:
                     rel = arc[len(prefix):]
@@ -629,16 +626,23 @@ def pack_apply(token, names, overwrite=False):
                         if h.hexdigest().lower() != shas[arc].lower():
                             bad = True
                             break
+                if bad:
+                    failed.append({"name": nm, "err": "完整性校验失败（sha256 不符），原目录未改动"})
+                    continue
+                if d and os.path.isdir(d):
+                    shutil.rmtree(d, ignore_errors=True)
+                os.makedirs(d, exist_ok=True)
+                n = 0
+                for arc in arcs:
+                    rel = arc[len(prefix):]
+                    if ".." in rel or ":" in rel or os.path.isabs(rel):
+                        continue   # zip slip 防护
                     dp = os.path.join(d, rel)
                     os.makedirs(os.path.dirname(dp), exist_ok=True)
                     with z.open(arc) as src, open(dp, "wb") as out:
                         shutil.copyfileobj(src, out)
                     n += 1
-                if bad:
-                    shutil.rmtree(d, ignore_errors=True)   # 校验失败清残壳
-                    failed.append({"name": nm, "err": "完整性校验失败（sha256 不符）"})
-                else:
-                    done.append({"name": nm, "files": n})
+                done.append({"name": nm, "files": n})
     except (zipfile.BadZipFile, OSError) as e:
         return {"ok": False, "err": "解压失败：" + str(e)[:120]}
     return {"ok": True, "installed": done, "skipped": skipped, "failed": failed}
