@@ -286,6 +286,9 @@ async function skUninstall(name) {
     if (!r.ok) { showBanner('卸载失败：' + (r.err || ''), 3500, true); return; }
     SK.sel.delete(name);
     showBanner('已卸载：' + name, 3000);
+    // v3.5.306（轻审 P3）：本地详情页卸载后停在该视图=继续展示已删技能，
+    // 卸载按钮再点必报错——回到列表
+    if (SK.view === 'detail' && SK.det && SK.det.local && SK.det.name === name) skShowHome();
     _skRefreshInst();
   });
 }

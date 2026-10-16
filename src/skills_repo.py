@@ -179,7 +179,6 @@ def _desc_backfill(keys):
 _RE_H1 = re.compile(r'<h1[^>]*>([^<]+)</h1>')
 _RE_INST_BIG = re.compile(r'<span>Installs</span></div>'
                           r'<div class="text-3xl[^"]*">([^<]+)</div>')
-_RE_NUM = re.compile(r'\d+(?:,\d{3})*')
 
 
 def detail(owner, repo, skill):
