@@ -27,6 +27,7 @@ function buildClaudeHarnessTab(opts = {}) {
         <button class="hg-prompt-btn" data-hg-vision title="识图配置（MCP 识图模型/端点映射/提示词）">👁 识图配置</button>
         <button class="hg-prompt-btn" data-hg-roles-cfg title="三角色配置：开关/三槽模型（主会话/设计/审核）/端点角色映射/审核模式与分级线（保存后下条消息热更生效）。双形态：轻主力=主会话直干所有活+设计+审核两个代理；重主力=直干+审核兜底">👥 三角色</button>
         <button class="hg-prompt-btn" data-hg-prompt title="管理自定义提示词（全局/项目，会话启动时注入）">📜 提示词</button>
+        <button class="hg-prompt-btn" data-hg-skills-btn title="技能仓库：发现/安装/管理 Claude 技能（skills.sh），支持离线包与中文汉化">🧩 技能仓库</button>
         <button class="hg-prompt-btn" data-hg-proxy-btn title="Claude 代理：重试代理（429/5xx 自动重试）+ 用量统计。点开代理面板">
           <img src="/ico/proxy.png" alt="proxy" style="width:14px;height:14px;vertical-align:-2px;"> Proxy
           <span class="hg-proxy-state" data-hg-proxy-state>检测中…</span>
@@ -2006,6 +2007,7 @@ function buildClaudeHarnessTab(opts = {}) {
     document.body.appendChild(ov);
   };
   // 备注/作用域/开关/编辑/删除，整表保存。
+  _hgQ('[data-hg-skills-btn]').onclick = () => skRepoOpen();
   _hgQ('[data-hg-prompt]').onclick = async () => {
     let prompts = [];
     try { prompts = (await (await fetch('/api/harness/system_prompt?cwd=' + encodeURIComponent(_HG.cwd || ''))).json()).prompts || []; }

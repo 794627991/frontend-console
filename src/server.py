@@ -2166,6 +2166,157 @@ def claude_skills_list():
     return jsonify({"ok": True, "skills": list_skills(cwd)})
 
 
+# ---- 技能仓库（skills.sh 网页适配 + 安装/离线包/汉化，见 src/skills_repo.py）----
+
+@app.route("/api/skills/registry")
+def skills_registry():
+    """榜单卡片（tab=top/trending/hot；q 内存过滤搜索）。
+    顺手后台补齐英文 description（首屏卡片即时出，描述几秒后渐进可见）。"""
+    from .skills_repo import registry, _desc_backfill
+    rows = registry(request.args.get("tab", "top"),
+                    request.args.get("q", ""))
+    if rows is None:
+        return jsonify({"ok": False, "err": "skills.sh 不可达（检查外网）"}), 502
+    miss = [r["key"] for r in rows[:40] if not r.get("desc")]
+    if miss:
+        threading.Thread(target=_desc_backfill, args=(miss,), daemon=True).start()
+    return jsonify({"ok": True, "rows": rows})
+
+
+@app.route("/api/skills/detail")
+def skills_detail():
+    """技能详情（prose 预览 + raw 原文 + 汉化缓存命中）。"""
+    from .skills_repo import detail
+    d = detail(request.args.get("owner", ""), request.args.get("repo", ""),
+               request.args.get("skill", ""))
+    return jsonify({"ok": True, "detail": d})
+
+
+@app.route("/api/skills/installed")
+def skills_installed():
+    """本地已安装（三来源 + disabled 标记 + sha）。"""
+    from .skills_repo import installed
+    return jsonify({"ok": True, "skills": installed(request.args.get("cwd") or None)})
+
+
+@app.route("/api/skills/install", methods=["POST"])
+def skills_install():
+    """安装技能到 ~/.claude/skills/。"""
+    from .skills_repo import install
+    d = request.get_json(force=True, silent=True) or {}
+    r = install(str(d.get("owner") or ""), str(d.get("repo") or ""),
+                str(d.get("skill") or ""), str(d.get("scope") or "user"))
+    return jsonify(r), (200 if r.get("ok") else 502)
+
+
+@app.route("/api/skills/uninstall", methods=["POST"])
+def skills_uninstall():
+    """卸载 user 级技能。"""
+    from .skills_repo import uninstall
+    d = request.get_json(force=True, silent=True) or {}
+    return jsonify(uninstall(str(d.get("skill") or "")))
+
+
+@app.route("/api/skills/disable", methods=["POST"])
+def skills_disable():
+    """禁用/启用（目录改名 .disabled）。body: {skill, off}"""
+    from .skills_repo import disable
+    d = request.get_json(force=True, silent=True) or {}
+    return jsonify(disable(str(d.get("skill") or ""), bool(d.get("off"))))
+
+
+@app.route("/api/skills/check_updates", methods=["POST"])
+def skills_check_updates():
+    """更新检测：本工具装的 user 级技能逐个比对上游 SKILL.md sha。"""
+    from .skills_repo import check_updates
+    return jsonify({"ok": True, "updates": check_updates()})
+
+
+@app.route("/api/skills/pack/export", methods=["POST"])
+def skills_pack_export():
+    """勾选技能导出离线包 zip（返回文件路径）。"""
+    from .skills_repo import export_pack
+    d = request.get_json(force=True, silent=True) or {}
+    names = [str(n) for n in (d.get("names") or []) if str(n).strip()]
+    if not names:
+        return jsonify({"ok": False, "err": "未选择技能"}), 400
+    ok, r = export_pack(names)
+    return jsonify({"ok": ok, **({"path": r} if ok else {"err": r})})
+
+
+@app.route("/api/skills/pack/inspect", methods=["POST"])
+def skills_pack_inspect():
+    """导入第一步：上传 zip → 暂存 + 清单预览 + 冲突检测。"""
+    from .skills_repo import pack_inspect
+    r, err = pack_inspect(request.files.get("file"))
+    if err:
+        return jsonify({"ok": False, "err": err}), 400
+    return jsonify({"ok": True, **r})
+
+
+@app.route("/api/skills/pack/apply", methods=["POST"])
+def skills_pack_apply():
+    """导入第二步：按 token 从暂存包落盘。body: {token, names, overwrite}"""
+    from .skills_repo import pack_apply
+    d = request.get_json(force=True, silent=True) or {}
+    return jsonify(pack_apply(str(d.get("token") or ""),
+                              [str(n) for n in (d.get("names") or [])],
+                              bool(d.get("overwrite"))))
+
+
+@app.route("/api/skills/translate", methods=["POST"])
+def skills_translate():
+    """汉化：kind=meta 批量元数据 / kind=body 单篇正文 / kind=search 中文搜索词
+    →英文关键词（缓存优先，轻主力模型）。"""
+    from .skills_repo import (translate_meta, translate_body, detail as _sr_detail,
+                              _llm, _zh_key, _zh_load, _zh_save, light_model)
+    d = request.get_json(force=True, silent=True) or {}
+    kind = d.get("kind")
+    if kind == "search":
+        q = str(d.get("q") or "").strip()[:60]
+        if not q:
+            return jsonify({"ok": False, "err": "q 为空"}), 400
+        key = _zh_key("search:", q)
+        hit = _zh_load(key)
+        if hit:
+            return jsonify({"ok": True, "en": hit.get("en")})
+        text, err = _llm("你是搜索词翻译引擎。把中文搜索词译成 1-3 个英文关键词"
+                         "（小写、空格分隔），用于在英文技能库里搜索。只输出英文关键词。",
+                         q, max_tokens=64)
+        en = (text or "").strip().lower().split("\n")[0].strip() if not err else ""
+        if not en:
+            return jsonify({"ok": False, "err": err or "翻译失败"}), 502
+        _zh_save(key, {"en": en[:80], "ts": int(time.time())})
+        return jsonify({"ok": True, "en": en[:80]})
+    if kind == "meta":
+        items = [{"key": str(i.get("key") or ""), "name": str(i.get("name") or ""),
+                  "desc": str(i.get("desc") or "")}
+                 for i in (d.get("items") or []) if isinstance(i, dict) and i.get("key")]
+        if not items or len(items) > 40:
+            return jsonify({"ok": False, "err": "items 为空或超限"}), 400
+        return jsonify({"ok": True, "map": translate_meta(items)})
+    if kind == "body":
+        owner, repo, skill = str(d.get("owner") or ""), str(d.get("repo") or ""), str(d.get("skill") or "")
+        det = _sr_detail(owner, repo, skill)
+        md = det.get("md")
+        if not md:
+            return jsonify({"ok": False, "err": "SKILL.md 拉取失败"}), 502
+        if det.get("body_zh"):
+            return jsonify({"ok": True, "body_zh": det["body_zh"], "cached": True})
+        r, err = translate_body(md)
+        if err:
+            return jsonify({"ok": False, "err": err}), 502
+        return jsonify({"ok": True, **r})
+    return jsonify({"ok": False, "err": "kind 必须是 meta/body"}), 400
+
+
+@app.route("/api/skills/status")
+def skills_status():
+    """状态条：轻主力模型名 + 数据源可达性。"""
+    from .skills_repo import status
+    return jsonify({"ok": True, **status()})
+
+
 # ---- Claude 实时版本（v2.27：Claude 按钮 hover 显示当前 CLI 版本）----
 _claude_ver_cache = {"ver": None, "at": 0.0}
 

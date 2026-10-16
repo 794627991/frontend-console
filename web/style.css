@@ -4575,3 +4575,96 @@ html {
 .h-tl .h-tl-grp-head {
   padding-left: 10px !important;
 }
+
+
+/* ==================== 技能仓库（31-skills.js，全屏独立页） ==================== */
+.sk-repo { display: none; position: absolute; inset: 0; z-index: 40;
+  background: var(--bg); flex-direction: column; }
+.sk-repo.show { display: flex; }
+.sk-top { display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+  border-bottom: 1px solid var(--border); background: var(--bg-panel); flex-shrink: 0; }
+.sk-back { background: none; border: 1px solid var(--border); color: var(--fg);
+  border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 15px; }
+.sk-back:hover { border-color: var(--border-glow); color: var(--fg-bright); }
+.sk-title { display: flex; flex-direction: column; line-height: 1.25; }
+.sk-title b { color: var(--fg-bright); font-size: 15px; }
+.sk-title span { color: var(--muted); font-size: 11px; }
+.sk-status { margin-left: auto; color: var(--muted); font-size: 11px;
+  white-space: nowrap; display: flex; align-items: center; gap: 5px; }
+.sk-status .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+.sk-status .dot.ok { background: #3fae5a; } .sk-status .dot.mid { background: #d0a03a; }
+.sk-status .dot.bad { background: #c0504a; }
+.sk-search { flex: 0 1 260px; background: var(--bg-input); border: 1px solid var(--border);
+  color: var(--fg); border-radius: 6px; padding: 6px 10px; font-size: 12px; }
+.sk-search:focus { outline: none; border-color: var(--border-glow); }
+.sk-btn { background: var(--bg-card); border: 1px solid var(--border); color: var(--fg);
+  border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px; white-space: nowrap; }
+.sk-btn:hover:not(:disabled) { border-color: var(--border-glow); color: var(--fg-bright); }
+.sk-btn:disabled { opacity: .5; cursor: default; }
+.sk-btn.sm { padding: 4px 9px; font-size: 11px; }
+.sk-btn.pri { background: var(--accent, #2a6db5); border-color: transparent; color: var(--on-accent, #fff); }
+.sk-btn.danger { color: #e07b76; }
+.sk-btn.danger:hover:not(:disabled) { border-color: #c0504a; color: #ff9a94; }
+.sk-body { flex: 1; overflow-y: auto; padding: 14px 18px 40px; }
+.sk-sec { margin-bottom: 22px; }
+.sk-sec-h { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.sk-sec-h b { color: var(--fg-bright); font-size: 14px; }
+.sk-sec-ops { margin-left: auto; display: flex; gap: 6px; }
+.sk-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; }
+.sk-card { display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
+  cursor: pointer; min-width: 0; }
+.sk-card:hover { border-color: var(--border-glow); }
+.sk-card.off { opacity: .55; }
+.sk-card[data-sk-key] { cursor: pointer; }
+.sk-ico { border-radius: 8px; color: #fff; font-weight: 700; display: inline-flex;
+  align-items: center; justify-content: center; flex-shrink: 0; }
+.sk-card-m { flex: 1; min-width: 0; }
+.sk-card-n { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.sk-card-n b { color: var(--fg-bright); font-size: 13px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+.sk-en { color: var(--muted); font-size: 11px; font-style: normal; white-space: nowrap; }
+.sk-zhtag, .sk-offtag, .sk-updtag, .sk-srctag { font-size: 10px; font-style: normal;
+  border-radius: 4px; padding: 1px 5px; text-decoration: none; flex-shrink: 0; }
+.sk-zhtag { background: #2a4a7a55; color: #7ab3ef; }
+.sk-offtag { background: #444a55aa; color: #99a; }
+.sk-updtag { background: #d0a03a33; color: #e8c56a; }
+.sk-srctag { background: #3a5a4a33; color: #7ac39a; }
+.sk-card-d { color: var(--muted); font-size: 11.5px; margin-top: 3px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.sk-card-f { display: flex; gap: 12px; margin-top: 5px; color: var(--muted); font-size: 10.5px; }
+.sk-ops { display: flex; gap: 5px; flex-shrink: 0; align-items: center; }
+.sk-ro { color: var(--muted); font-size: 10.5px; }
+.sk-sel { flex-shrink: 0; cursor: pointer; }
+.sk-empty { color: var(--muted); font-size: 12px; padding: 18px; text-align: center;
+  grid-column: 1 / -1; border: 1px dashed var(--border); border-radius: 10px; }
+.sk-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; align-items: center; }
+.sk-chip { background: var(--bg-input); border: 1px solid var(--border); color: var(--muted);
+  border-radius: 999px; padding: 4px 12px; cursor: pointer; font-size: 11.5px; }
+.sk-chip.on { background: var(--accent, #2a6db5); border-color: transparent; color: var(--on-accent, #fff); }
+.sk-chip-sep { width: 1px; height: 16px; background: var(--border); margin: 0 4px; }
+.sk-det-h { display: flex; gap: 12px; align-items: center; padding-bottom: 12px;
+  border-bottom: 1px solid var(--border); }
+.sk-review { background: var(--bg-panel); border: 1px solid var(--border);
+  border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; font-size: 12px; color: var(--fg); }
+.sk-review > b { display: block; color: var(--fg-bright); margin-bottom: 6px; font-size: 12px; }
+.sk-gloss { display: flex; flex-wrap: wrap; gap: 6px; }
+.sk-gloss span { background: var(--bg-input); border: 1px solid var(--border);
+  border-radius: 5px; padding: 2px 8px; font-size: 11px; color: var(--muted); }
+.sk-md { color: var(--fg); font-size: 13px; line-height: 1.65; max-width: 920px; }
+.sk-md h1, .sk-md h2, .sk-md h3, .sk-md h4 { color: var(--fg-bright); margin: 1em 0 .4em; }
+.sk-md code { background: var(--bg-input); border: 1px solid var(--border);
+  border-radius: 4px; padding: 1px 5px; font-size: 12px; }
+.sk-md pre { background: var(--bg-deep); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 12px; overflow-x: auto; }
+.sk-md pre code { background: none; border: none; padding: 0; }
+.sk-md a { color: #7ab3ef; }
+.sk-md blockquote { border-left: 3px solid var(--border-glow); margin: .6em 0;
+  padding: 2px 12px; color: var(--muted); }
+.sk-md table { border-collapse: collapse; margin: .6em 0; }
+.sk-md th, .sk-md td { border: 1px solid var(--border); padding: 4px 10px; font-size: 12px; }
+.sk-pack-box { max-width: 460px; }
+.sk-pack-list { max-height: 260px; overflow-y: auto; margin: 10px 0; }
+.sk-pack-list label { display: block; padding: 5px 4px; color: var(--fg); font-size: 12.5px;
+  border-bottom: 1px solid var(--border); cursor: pointer; }
+.sk-pack-tip, .sk-pack-ow { color: var(--muted); font-size: 11.5px; margin: 6px 0; display: block; }
