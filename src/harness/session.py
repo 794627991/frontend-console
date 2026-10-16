@@ -137,6 +137,10 @@ class HarnessSession:
         self._held = False
         self._bg_mon_started = False
         self.last_result = None
+        # v3.5.314（用户定调恢复事中闸，推翻 v3.5.51 退役）：light 形态
+        # --settings 临时文件路径（kill 时清理；revive 由 start() 重建——
+        # hooks 是进程启动参数，活进程不热更）
+        self._audit_settings_path = None
         # v3.5.98：会话创建时的 API 方案名（跨方案发消息拦截依据）。切方案
         # 会换网关/模型映射/上下文窗口，旧会话续发必然错位（上下文大小不一
         # 致/模型名不被新网关认）。None=升级前的旧会话（无标记），按用户拍板
@@ -274,6 +278,18 @@ class HarnessSession:
             # 结算追责（_audit_settle 按线咬：补审/补方案指令自动续发），派发
             # 标记（designer/reviewer）结算时照样核验——追责能力不降，只去掉
             # 中途打断。_audit_settings_path 随之不再生成。
+            # v3.5.314（用户定调恢复事中闸，推翻 v3.5.51 退役决策）：light
+            # 形态恢复 PreToolUse hook 注入——回合内直改**累计**达设计线且
+            # 尚未派 reviewer 时拦下一次并指路派 designer（designFired 一次
+            # 性；reviewed 在场不拦=v3.5.313 豁免语义；strong/mid 不入闸：
+            # 直改常态，回合结算审计兜底）。注入失败照常启动（闸是增强不是
+            # 依赖，结算审计仍在兜底）。
+            _st_audit = _audit_state()
+            if _st_audit is not None and not _st_audit[2]:
+                _p = _audit_hook_settings_path()
+                if _p:
+                    self._audit_settings_path = _p
+                    argv += ["--settings", _p]
         if sys_prompt:
             argv += ["--append-system-prompt", sys_prompt]
         if self.name:

@@ -683,13 +683,14 @@ def audit_gate_check(used_lines, cfg=None, reviewed=False, designed=True,
     - 审计档退役：轻审线中途不再拦——「改一段审一段」把大改切成两半（用户
       实锤），审计统一回合结束结算送审（audit_verdict），允许多次审计直到
       修复完成。
-    reviewed/designer 旗保留（派过即放行对应档的旧语义兼容）。口径用 >=
-    （达线即触发）。"""
+    v3.5.314（用户定调恢复事中闸+语义收紧）：触发条件=**尚未审计**
+    （reviewer 未在场——审计链建立后设计档豁免，与回合结算 v3.5.313 同
+    口径：回修/审计驱动迭代不触发设计档）。口径用 >=（达线即触发）。"""
     dl = design_limit(cfg)
-    if design_fired:
+    if design_fired or reviewed:
         return False, None
     if not designed and dl > 0 and used_lines >= dl:
-        return True, ("回合内直改累计 %d 行达到设计线（≥%d 行）——请先派 designer "
+        return True, ("回合内直改累计 %d 行达到设计线（≥%d 行）且尚未审计——请先派 designer "
                       "代理出框架方案（带上全部已知上下文：目标/背景约束/"
                       "已试方案/文件+行号/验收标准），按方案继续实施"
                       "（本回合只提醒这一次，之后自由直改，回合结束统一审计）"
