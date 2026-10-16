@@ -476,12 +476,36 @@ async function _edGetContent(conn) {
 
 // ---- 脏检测：当前内容 vs 上次保存 ----
 function _edMarkDirty(conn) {
-  // .note 的 onChange 即视为脏（比对 JSON 成本高且 await 别扭）；
-  // 保存后 savedData 更新 + dirty 复位。纯文本精确比对字符串（Monaco/textarea 同源）。
-  const cur = conn.isNote ? null : (conn.monaco ? conn.monaco.getValue() : (conn.ta ? conn.ta.value : ''));
-  const dirty = conn.isNote ? true : (cur !== conn.savedData);
-  if (dirty !== conn.dirty) { conn.dirty = dirty; _edMarkTab(conn); }
-  _edUpdateInfo(conn);
+  if (!conn.isNote) {
+    // 纯文本精确比对字符串（Monaco/textarea 同源）
+    const cur = conn.monaco ? conn.monaco.getValue() : (conn.ta ? conn.ta.value : '');
+    const dirty = cur !== conn.savedData;
+    if (dirty !== conn.dirty) { conn.dirty = dirty; _edMarkTab(conn); }
+    _edUpdateInfo(conn);
+    return;
+  }
+  // v3.5.309（复审N1）：.note 脏判定改内容比对——染色包 span 等视觉层 DOM
+  // 变更同样触发 onChange，但 save() 经 sanitizer 提纯后数据不变，不能置脏
+  // （旧实现恒 true：打开含双链/标签的笔记 ~1.2s 后假「未保存」，保存后点击
+  // 染色块又变脏=保存链路语义被打断）。blocks-only JSON 比对（键序由同一
+  // 引擎生成稳定；undo 的 snap 已证明此成本可接受）+ 300ms 去抖合并；save
+  // 失败保守置脏。残余：外部工具手写的老 .note 键序可能不同→首开显示脏，
+  // 保存一次即自愈（键序归一为引擎输出）。
+  clearTimeout(conn._dirtyT);
+  conn._dirtyT = setTimeout(async () => {
+    try {
+      const data = await conn.editor.save();
+      const cur = JSON.stringify((data && data.blocks) || []);
+      const base = (conn.savedData && conn.savedData.blocks)
+        ? JSON.stringify(conn.savedData.blocks) : '[]';
+      const dirty = cur !== base;
+      if (dirty !== conn.dirty) { conn.dirty = dirty; _edMarkTab(conn); }
+      _edUpdateInfo(conn);
+    } catch (_) {
+      if (!conn.dirty) { conn.dirty = true; _edMarkTab(conn); }
+      _edUpdateInfo(conn);
+    }
+  }, 300);
 }
 
 // ---- 脏标记：tab 标题加 *（Notepad++ 风格）+ tab/左栏列表同步未保存类 ----
