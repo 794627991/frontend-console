@@ -474,7 +474,7 @@
                 // 归链就是 Sync 归链的预演，两轨天然收敛。跨会话（原档不
                 // 在场）照旧建独立 collab 档
                 const _orig = _localResend ? _hgAg(_aid) : null;
-                const _msg1 = String(b.input.message || '').trim().split('\n')[0];
+                const _msg1 = String(b.input.message || '').trim().split('\n')[0].slice(0, 60);   // 与后端 m1[:60] 对齐（消 Sync 跳变）
                 if (_orig) {
                   _orig.rounds = (_orig.rounds || 1) + 1;
                   _orig.done = false; _orig.doneAt = 0; _orig.err = false;
