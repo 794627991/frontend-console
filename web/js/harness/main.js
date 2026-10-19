@@ -1363,10 +1363,7 @@ function buildClaudeHarnessTab(opts = {}) {
   //（_subText/renderToolUse(isSub)/_subToolResult，行序=到达序 FIFO 配对
   // 成立）。真实子代理维持 think-only——其 text/tool 已由 SSE 事件流覆盖，
   // 轮询再喂必重复。
-  _HG.subTail = {};        // agentId → 已消费字节 offset
-  _HG.subTailSeg = {};     // v2.58：agentId → 当前活跃段 pid（续派切段映射——
-                           // 增量喂新段不流回旧段）
-                           // 宁可少喂不重插；回填（merge 守卫）不受此限）
+  _HG.subTail = {};        // agentId → 已消费字节 offset（复审#5：subTailSeg 初始化随段删）
   // collab 全喂判定：档案 collab 且其派发行确为 SendMessage（peerSent 在档）
   // ——只有 SendMessage 续派才保证「独立会话、本会话无事件流」（轮询是唯一
   // 源，全喂不重复）。被 v2.37「宁可误杀」收进 collab 的真实后台代理事件流

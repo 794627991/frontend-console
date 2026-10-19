@@ -219,7 +219,7 @@
       if (!_histLazyLineOk(el, l)) {
         el.dataset.hgLazy = '';
         const nb = el.querySelector('.h-think-seg-body, .h-tool-coll');
-        if (nb) nb.innerHTML = '<div class="h-subblock-note">（本条内容已失效——历史结构已变化）</div>';
+        if (nb) nb.innerHTML = '<div class="hg-sub-replay-note">（本条内容已失效——历史结构已变化）</div>';
         if (!_HG.busy && _HG.histAll)
           _histRender(_HG.histAll, Math.max(0, Math.min(_HG.histStart | 0, _HG.histAll.length)));
         return;

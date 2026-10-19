@@ -1,5 +1,6 @@
 // harness subpane.js (v3.0 自 buildClaudeHarnessTab 拆出;v3.2.6 窗格时间线重写——ZCode 子智能体模式)
   const _sub = { tabs: {}, order: [], active: null, manual: false };
+  const _subTailBusy = {};   // 复审#1：转写喂数防重入锁（批1 重写时随 _subTailDead 声明块误删致通道整体 ReferenceError）
   // ==================== v3.2：子智能体目录（ZCode SubagentDirectorySidePane 移植）====================
   // 目录是一个常驻伪 tab（__dir__）：正在运行/已结束两组列表，行卡=状态图标+
   // 标题+状态词+摘要+相对时间；点行开该代理视图 tab（live 直开 / 已结束走回放）。
@@ -618,7 +619,9 @@
     // 前缀）；命中即跳过。插入后打 hgRp 标供他源查重
     const _norm = s => String(s || '').replace(/\s+/g, '');
     const _n = _norm(raw);
-    if (_n && [...t.tl.querySelectorAll('.h-think-seg[data-raw]')].slice(-8)
+    // 复审#3：查重窗口全量化——无账本首拉全量重喂场景（切会话重开窗格，
+    // 铺底行数>8）下最近 8 条窗口不含早期行=必双份；窗格行规模百级，全扫可承受
+    if (_n && [...t.tl.querySelectorAll('.h-think-seg[data-raw]')]
         .some(el => { const a = _norm(el.dataset.raw || '');
           return !!a && (_n.startsWith(a) || a.startsWith(_n)); }))
       return;
@@ -1258,49 +1261,6 @@
   }
   // v3.2.6：轮询镜像增量（think/text）→ 窗格时间线行（v2.57R 的 rp 铺底
   // 前缀查重保留——回放 tab fetch 收敛放行后的重叠窗口防双份）
-  function _subPaneMirror(pid, kind, text) {
-    const _tbM = _sub.tabs && _sub.tabs[pid];   // v3.5.278：喂入记账（断流检测的数据源）
-    if (_tbM) _tbM.lastFeed = Date.now();
-    pid = _subTid(pid);   // v3.4：续派包装 id 归一
-    const tb = _sub.tabs[pid];
-    if (!tb || !tb.t || !text || !String(text).trim()) return;
-    if (tb.replay) return;   // v2.55R：回放 tab 由 fetch 全量自建，镜像增量不得污染
-    const t = tb.t;
-    // v3.4R2（复审N4）：续派轮复活三件——轮询是 collab 续派唯一活况源，
-    // _subEnd 已停秒表；运行态/轮 t0/tick 不在此复活，轮 2 秒表永冻结
-    if (_subAgRunning(pid)) {
-      if (tb.run !== true) { tb.run = true; _subTabsPaint(); }
-      if (t && !t.done) t.t0 = t.t0 || Date.now();
-      if (!tb.tick) _subTlTickStart(pid);
-    }
-    const stick = _subPaneStick(t.sc);
-    const rp = [...t.tl.querySelectorAll('[data-hg-rp="1"]')].slice(-8);
-    const norm = s => String(s || '').replace(/\s+/g, '');
-    if (kind === 'think') {
-      // 单向前缀比对（镜像=全文、rp=截断前缀）：md 截断边界落在行内标记时
-      // 前缀性质可破——启发式容差
-      if (rp.some(el => {
-        const a = norm(el.dataset.raw || '');
-        return !!a && norm(text).startsWith(a);
-      }))
-        return;
-      _subTlAppendThink(t, text);
-    } else {
-      const row = _subTlTextRow(text);
-      row.dataset.hgRp = '1';   // v3.4.73：镜像插入行同打标——SSE 源查重锚覆盖两源
-      row.dataset.raw = String(text || '');   // v3.4.73R：raw 锚（与 SSE 分支同构，raw 对 raw 互比）
-      const want = norm(row.textContent);
-      if (want && rp.some(el => {
-        const got = norm(el.textContent);
-        return !!got && want.startsWith(got);
-      }))
-        return;
-      _subTlAppendRow(t, row);
-    }
-    if (stick) _subScroll(pid);
-  }
-  // v3.2.6：live 窗格喂入（SSE 子代理块：thinking/text/tool_use）——全部走
-  // 时间线行工厂；think 开口段活字/断组/贴底与主链同口径
   function _subFeed(parentId, blocks) {
     parentId = _subTid(parentId);   // v3.4：续派包装 id 归一（事件流按包装 id 走）
     const tb = _sub.tabs[parentId];
@@ -1327,7 +1287,7 @@
         // 顺带覆盖长文折叠行（hg-sub-fold-body 孙级）；命中跳过；插入打 hgRp
         const _normT = s => String(s || '').replace(/\s+/g, '');
         const _wantT = _normT(b.text);
-        const _dupT = _wantT && [...t.tl.querySelectorAll('.h-msg.asst[data-raw]')].slice(-8)
+        const _dupT = _wantT && [...t.tl.querySelectorAll('.h-msg.asst[data-raw]')]   // 复审#3：全量查重（同 think）
           .some(el => { const _g = _normT(el.dataset.raw || '');
             return !!_g && (_wantT.startsWith(_g) || _g.startsWith(_wantT)); });
         if (!_dupT) {
@@ -1416,6 +1376,12 @@
   function _subClose(tid, err) {
     // 批2（迁出主窗）：_subBlkFinish 段定格退役——三收口=档案（调用方置 done）
     //+行卡（_hgAgentRowState，sse 完成链）+窗格定稿（本函数）；主窗零 .h-subblock
+    // 复审#2：完成前最后一轮 drain 回接（批2 删 _subBlkFinish 时丢失）——
+    // done 后 tick 跳过/follow 闸停，完成信号前 ≤2s 落盘的行不补读就永久丢
+    try {
+      const _a0 = typeof _hgAg === 'function' ? _hgAg(tid) : null;
+      _subTailDrain((_a0 && (_a0.taskId || _a0.agentId)) || tid);
+    } catch (_) {}
     // v3.4：窗格 tab 按 _subTid 归一——包装任务的完成信号定格原子代理 tab 的活跃轮
     const tb = _sub.tabs[_subTid(tid)];
     if (!tb) return;
@@ -1472,11 +1438,12 @@
           else if (blk.type === 'tool_use' && blk.name) kept.push(blk);
         }
         if (kept.length) _subFeed(aid, kept);   // tab 未开/回放态自然早退
+        // 复审#9：计数退场归 SSE 单点（sse.js 状态层）——tail+SSE 双计且展示
+        // 位以 tokens 为前提、完成时 usage 权威覆写，tail 侧只留摘要
         for (const blk of kept) {
-          if (blk.type === 'thinking') { _subLivePaint(aid, '思考中…'); _hgAgCnt(aid, 1, 0); }
+          if (blk.type === 'thinking') _subLivePaint(aid, '思考中…');
           else if (blk.type === 'text') {
             _subLivePaint(aid, '正文 · ' + String(blk.text).replace(/\s+/g, ' ').trim().slice(0, 60));
-            _hgAgCnt(aid, 1, 0);
           } else {
             const inp = blk.input || {};
             const hint = inp.command || inp.file_path || inp.path || inp.pattern ||

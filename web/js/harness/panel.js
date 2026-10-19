@@ -348,7 +348,7 @@
         // 批2：段头定格退役（段不存在）——两收口保留
         // v3.2.6：窗格时间线同路定稿（已工作 X + 结论上移）——单行任务卡
         // 的单行态靠档案，窗格头不能永卡「工作中」
-        if (_sub.tabs[id]) _subTlFinalize(id, { err: !!a.err });
+        if (_sub.tabs[_subTid(id)]) _subTlFinalize(id, { err: !!a.err });   // 复审#10：tab 键归一（Sync 后 agents 键=agentId 而 tab 键=首见 tid）
         // v3.5.145（全审F1）：主会话流单行卡同步终态收口（停秒表+徽章）——
         // _hgAgentRowState 是终态唯一停表点，幂等（notification 已到时档案
         // done 本分支不进；正常路 renderOneToolResult 先到已收，重入无害）
