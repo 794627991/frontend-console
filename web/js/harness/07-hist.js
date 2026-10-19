@@ -66,22 +66,10 @@
     // 入序铁律），其余任何行到达即清（防隔行错绑到更早的 Agent 行）
     if (l.role !== 'sub_open') _HG.lastAgRow = null;
     if (l.role === 'peer') {          // v2.27.3：跨会话回传（识图结论）历史回看
-      // v3.4.88（识图卡化）：识图 peer 行优先配对进 .h-vision 卡（tid 精确；
-      // 无 tid=旧转写，回落最近一张未定格卡）；miss 才走旧平铺气泡（旧会话兜底）
-      if (String(l.name || '').indexOf('识图') !== -1) {
-        let _vc = (l.tid && _HG.visionCalls && _HG.visionCalls[l.tid]) || null;
-        if (!_vc) {
-          const _open = [..._hgFlow.querySelectorAll('.h-tool.h-vision:not([data-vres])')];
-          _vc = _open[0] || null;   // 全审 P5：FIFO 取最早未定格——并行旧对不互换
-        }
-        if (_vc) {
-          _hgVisionResult(_vc, l.text || '', false);
-          if (l.tid && _HG.visionCalls) delete _HG.visionCalls[l.tid];
-          return;
-        }
-      }
-      // v2.53：第 5 参 hist——历史回放绝不开新段（防假「协作·运行中」段吞正文）
-      renderPeer(l.name, l.text, null, true, true);
+      // R4：走 dispatch（live/hist 同一 handlers 同一渲染订阅）——识图卡
+      // 配对/回落逻辑整迁订阅 case（对齐补丁退役）
+      _hgDispatch({ t: 'peer_return', name: l.name, text: l.text,
+                    to: l.to, tid: l.tid, hist: true });
     }
     else if (l.role === 'sysnote') {  // v3.3.2(D6)：机器注入弱化行历史回看
       // 不定稿不 renderUser——历史侧回合合并自动成立（历史组只在 user 行定稿）

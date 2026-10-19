@@ -96,6 +96,26 @@
           renderUser(e.text || '', e.images || [], e.files || [], false,
                      e.ts ? new Date(e.ts).getTime() : 0);
           break;
+        // R4：跨会话回传——识图 peer 行优先配对 .h-vision 卡（v3.4.88 口径：
+        // tid 精确/无 tid 回落最早未定格卡 FIFO），miss 走平铺气泡（v2.53
+        // hist 参数防开新段）；live/hist 同一 case
+        case 'peer_return': {
+          const _nm = String(e.name || '');
+          if (_nm.indexOf('识图') !== -1) {
+            let _vc = (e.tid && _HG.visionCalls && _HG.visionCalls[e.tid]) || null;
+            if (!_vc) {
+              const _open = [..._hgFlow.querySelectorAll('.h-tool.h-vision:not([data-vres])')];
+              _vc = _open[0] || null;   // 全审 P5：FIFO 取最早未定格
+            }
+            if (_vc) {
+              _hgVisionResult(_vc, e.text || '', false);
+              if (e.tid && _HG.visionCalls) delete _HG.visionCalls[e.tid];
+              break;
+            }
+          }
+          renderPeer(e.name, e.text, null, true, true);
+          break;
+        }
         case 'assistant_thinking':
           if (e.live) {
             closeRun(); appendThinking(e.text || '');

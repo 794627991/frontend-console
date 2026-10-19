@@ -101,6 +101,13 @@
                          images: it.images || [], files: it.files || [],
                          ts: it.ts || 0, live: !!it.live }, fx);
     },
+    peer_return(p, it, fx) {
+      // R4：跨会话回传（识图结论/协作回传）——渲染订阅 case 消费；ZCode 无
+      // 转交对位（识图转交为本产品特有形态——环境适配存档）
+      _hgEntryPush(p, { t: 'peer_return', name: it.name || '', text: it.text || '',
+                         to: it.to, tid: it.tid,
+                         hist: !!it.hist, live: !!it.live }, fx);
+    },
     subagent_started(p, it, fx) {
       p.agents[it.tid] = { type: it.agent_type || 'Task', desc: it.desc || '',
                            bg: !!it.bg, taskId: it.task_id || '',

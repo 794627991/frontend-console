@@ -1124,7 +1124,9 @@
       // v3.3.2(D4)：协作回传不切割回合（renderPeer v3.2.15 注释的既定意图，
       // 分派处 grpFinalize 是残留矛盾）——先重开上一回合再渲染，回传唤醒的
       // 续跑工作才落回原组；空闲期回传是 P7 主场景
-      else if (it.kind === 'peer') { _hgTurnReopen(true); renderPeer(it.name, it.text, it.to); }
+      // R4：peer 回传走 dispatch（识图卡配对在渲染订阅，与 hist 同一 case）；
+      // _hgTurnReopen 编排（回传不切割回合）保留在分支
+      else if (it.kind === 'peer') { _hgTurnReopen(true); _hgDispatch({ t: 'peer_return', name: it.name, text: it.text, to: it.to, live: true }); }
       // v3.5.123（用户口径「子代理在飞不许结束大回合」）：后端 hold 保活事件
       else if (it.kind === 'turn_hold') {
         _HG.hold = true;
