@@ -378,6 +378,10 @@
       }
     }
     if (swept) renderSideStatus();
+    // 冷查询批5：sweep 是同步视觉收口（interrupted/exit/result/turn_complete
+    // 四路即刻定格），冷查询是异步权威——fire-and-forget 一次 Sync 让权威态
+    // 2s 内纠偏（bg 真跑被误收的场景由此翻正，A5 净改善；幂等拉取无副作用）
+    if (swept && typeof _hgRegSyncSoon === 'function') _hgRegSyncSoon(_HG.sid);
   }
   function _hgTurnEnd(st, durMs) {       // 回合记账 ring（≤10）；dur 优先事件值（网关常缺失→本地差值）
     const d = _hgDyn();

@@ -618,42 +618,18 @@
   // 下方内存桶逻辑保留为**同步降级**（/agents 请求在途/失败时先保运行态
   // 显示，Sync 到达后收编覆盖）
   function _hgLiveAgentsRestore(sid) {
+    // 冷查询批5：主路=regSync（/agents 权威，行回绑在其 95-106 行同职责；
+    // agentsRpl 去重在 _subDirRows 产出侧 _runDescs 同职责）。桶仅做
+    // Sync 在途/失败的降级显示：缺键并置，Sync 到达后收编覆盖
     if (typeof _hgRegSync === 'function') _hgRegSync(sid);
     const lv = (_HG.liveAgentsBy || {})[sid];
     if (!lv) return;
     for (const t in lv) {
       const a = lv[t];
-      if (a.done) { delete lv[t]; continue; }
+      if (a.done || (_HG.agents || {})[t]) { delete lv[t]; continue; }
       _HG.agents = _HG.agents || {};
-      // v3.5.322（复审#4）：在场档案不覆写——SSE 重放/续派建档可能已建更富
-      // 档案（unresolved/collab/正确 taskId），桶内贫档案（proj 补种）覆写
-      // 会丢保护标志→点击拿包装 id 硬开回放「未找到转写」（v3.5.160 形态
-      // 复活）。在场时只走行回绑（档案本体保留），桶条目随即清理防重放
-      if (_HG.agents[t] && _HG.agents[t] !== a) { delete lv[t]; }
-      else _HG.agents[t] = a;
-      // v3.5.143（用户批注「切会话(ABA)，过程显示就没了」）：档案回填扩到
-      // **行回绑**——转写重渲的 agentline 行是伪 tid（07-hist 'ag'+hi）不进
-      // rowById，旧码 rowById[t] 必 miss=秒表不复活、_subLivePaint 喂不到卡
-      // （轮询数据源本就在，卡在「行的键对不上」）。认回重挂真键后，
-      // 轮询喂卡/过程计数/点击回放/完成通知四路全通
-      const r = (_HG.rowById || {})[t] || _hgAgentRowFindByDesc(a);
-      if (r && r.classList.contains('agentline')) {
-        r.dataset.tid = t;            // 伪键重挂真键（'ag' 前缀与真 tid 无碰撞）
-        _HG.rowById[t] = r;
-        // v3.5.145（全审F2）：仅空时落——防覆写既有回放锚
-        if (a.taskId && /^[0-9a-zA-Z_-]{8,64}$/.test(a.taskId) && !r.dataset.hgSubr)
-          r.dataset.hgSubr = a.taskId;
-        // v3.4.55 旧径保留：徽章画运行态；v3.5.143 秒表复活（时长连续不
-        // 归零，t0 用档案起跑时刻——切走多久都不重计）
-        try { _hgAgentRowBindAid(t, r); } catch (_) {}
-        _hgAgentRowTimerRestart(r, a.t0 || Date.now());
-      }
+      _HG.agents[t] = a;
     }
-    // v3.4.55（轻审 P3）：回放档案去重——同名（desc 相等）回放条目与 live
-    // 运行条目并存会让目录同时出现在「正在运行」和「已结束」
-    const _lvDescs = new Set(Object.values(lv).filter(a => !a.done && a.desc).map(a => a.desc));
-    if (_lvDescs.size && _HG.dyn && Array.isArray(_HG.dyn.agentsRpl))
-      _HG.dyn.agentsRpl = _HG.dyn.agentsRpl.filter(x => !(x.replay && x.desc && _lvDescs.has(x.desc)));
     if (!Object.keys(lv).length) delete _HG.liveAgentsBy[sid];
   }
   // v3.5.143：按档案认回转写重渲的伪 tid 行。hgSubr===taskId 精确匹配优先
