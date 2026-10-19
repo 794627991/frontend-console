@@ -1,4 +1,5 @@
   :root {
+  --hg-dur: .3s; --hg-ease: cubic-bezier(.4, 0, .2, 1);   /* 动画统一语言（ZCode motion 同参） */
     --bg-deep: #070b14;
     --bg: #101724;
     --bg-panel: #141c2e;
@@ -3136,8 +3137,16 @@ html {
   border: 1px solid var(--border); border-radius: 999px; padding: 0 6px; }
 .h-tool.col { border-left-width: 3px;
   border-left-color: var(--h-accent, var(--accent)); }
-.h-tool.col .h-tool-coll { display: none; padding: 6px 10px 10px; }
-.h-tool.col.open .h-tool-coll { display: block; }
+/* 动画批A：工具卡开合高度过渡（ZCode Radix Collapsible 300ms 同参）——
+   display 硬切 → grid-rows 0fr→1fr 过渡（免量高），padding 随行内同步过渡；
+   收起态 pointer-events 关（0fr 时内容不可点） */
+.h-tool.col .h-tool-coll { display: grid; grid-template-rows: 0fr; opacity: 0;
+  padding: 0 10px; overflow: hidden; pointer-events: none;
+  transition: grid-template-rows var(--hg-dur, .3s) var(--hg-ease, cubic-bezier(.4,0,.2,1)),
+              opacity var(--hg-dur, .3s) var(--hg-ease, cubic-bezier(.4,0,.2,1)),
+              padding var(--hg-dur, .3s) var(--hg-ease, cubic-bezier(.4,0,.2,1)); }
+.h-tool.col .h-tool-coll > * { min-height: 0; overflow: hidden; }
+.h-tool.col.open .h-tool-coll { grid-template-rows: 1fr; opacity: 1; padding: 6px 10px 10px; pointer-events: auto; }
 .h-tool-body { font-size: var(--fs-sm); color: var(--fg); line-height: 1.6;
   font-family: var(--font-mono); white-space: pre-wrap; word-break: break-word;
   max-height: 320px; overflow-y: auto; }
