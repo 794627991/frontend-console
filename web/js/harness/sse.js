@@ -1036,8 +1036,14 @@
         // （切 B 再切回靠转写重渲才回来）。守卫：转写渲染未建（histAll 空）且
         // 乐观气泡在场——无任何可重放基线，不清场（活视图即最新态；已流过
         // 的帧由 seq 去重天然免疫重放）
-        if (!_HG.histAll && _HG.echoFast) {
-          _hgDiag('sse', 'ack=snapshot 跳过清场（新会话乐观气泡在场）');
+        // v3.5.327（用户实锤「打断后紧跟发消息，消息不显示、AI 回复正常，
+        // 切会话重渲才回来」）：守卫推广到所有场景——打断→revive→openSSE
+        // 的 ack(snapshot) 清场同样会抹掉老会话刚画的乐观气泡（重放窗不含
+        // 尚未 POST 的消息，echoFast 又已被清，user_echo 到达后 _hgEchoDup
+        // 对着被清空的 flow 误判）。echoFast 在场=用户刚发消息、活视图即
+        // 最新态：跳过清场续流即可，已流过的帧由 seq 去重天然免疫重放
+        if (_HG.echoFast) {
+          _hgDiag('sse', 'ack=snapshot 跳过清场（乐观气泡在场）');
           return;
         }
         _hgDiag('sse', 'ack=snapshot 清场重放（histAll=' + (((_HG.histAll)||[]).length) + '）');
