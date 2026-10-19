@@ -2393,8 +2393,10 @@ html {
 .h-think-seg .h-chev { transition: transform .15s; display: inline-block; font-size: 10px; }
 .h-think-seg.open .h-chev { transform: rotate(90deg); }
 .h-think-seg-name { font-weight: 600; color: var(--fg); }
+/* 观感修正（用户实锤「短预览 550px 空条+文字沉右」）：预览左对齐——
+   尾部内容从头可读，超长右侧省略；不再右对齐（短文本=左侧大片空白） */
 .h-think-prev { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
-  white-space: nowrap; text-align: right; color: var(--muted); font-size: var(--fs-xs);
+  white-space: nowrap; text-align: left; color: var(--muted); font-size: var(--fs-xs);
   font-family: var(--font-ui); }
 .h-think-seg-t { font-size: var(--fs-xs); color: var(--muted); font-family: var(--font-mono); }
 /* v3.0 流式思考纯文本路径（对照 ZCode reasoning 的 whitespace-pre-wrap）：
