@@ -478,8 +478,11 @@
       : (t.t0 > 0 ? Math.max(0, Date.now() - t.t0) : 0);
     t.durTxt = durMs > 0 ? _hgTurnDurTxt(durMs) : '';
     _subTlHeadPaint(t);
-    const texts = t.tl ? [...t.tl.querySelectorAll(':scope > .h-msg.asst')] : [];
-    const last = texts[texts.length - 1];
+    // 统一修复②（实测「结论=中途文本」终局）：记录式上移——渲染时记末条
+    // 正文（t._lastAsst），定稿直接取；兜底全后代查询。旧 ':scope >' 只认
+    // 未折叠直接子级：设计稿两条=折叠 wrap 永远漏配，末条误取中途行
+    const last = (t._lastAsst && t._lastAsst.isConnected) ? t._lastAsst
+      : (t.tl ? [...t.tl.querySelectorAll('.h-msg.asst')].pop() : null);
     if (last && t.concl) t.concl.appendChild(last);
     if (t.body && t.head && t.head.dataset.userToggled !== '1') t.body.classList.add('closed');
   }
@@ -1097,6 +1100,7 @@
             // 折叠行 raw 只在孙级 body=扫描恒 miss（8000 截断的末段 raw 与
             // 行级全文 raw 互为前缀仍可命中）；双层锚后任一形态的重复喂入可挡
             el.dataset.raw = String(row.text || '').slice(0, 8000);
+            t._lastAsst = el;   // 统一修复②：记录式上移——渲染时记末条正文，定稿直取
             _subTlAppendRow(t, el);
           } else if (row.k === 'user') {
             // v3.2.24（用户定调「像 ZCode 一样直接暴露，不要收进工作区」）：
@@ -1205,8 +1209,9 @@
           t.done = true;
           t.durTxt = durMs > 0 ? _hgTurnDurTxt(durMs) : '';
           _subTlHeadPaint(t);
-          const texts = [...t.tl.querySelectorAll(':scope > .h-msg.asst')];
-          const last = texts[texts.length - 1];
+          // 统一修复②：记录式上移（同 _subTlFinalizeT——':scope >' 漏折叠行）
+          const last = (t._lastAsst && t._lastAsst.isConnected) ? t._lastAsst
+            : [...t.tl.querySelectorAll('.h-msg.asst')].pop();
           if (last && t.concl) t.concl.appendChild(last);
           t.body.classList.add('closed');
         }
