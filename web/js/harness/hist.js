@@ -360,6 +360,7 @@
     seg.innerHTML =
       `<button class="h-think-seg-head"><span class="h-chev">▸</span>` +
       `<span class="h-think-seg-name">🧠 思考</span>` +
+      `<span class="h-think-prev" data-hg-think-prev></span>` +
       `<span class="h-think-seg-t" data-hg-seg-t data-hg-think-t></span></button>` +
       `<div class="h-think-seg-body"></div>` +
       // v2.21：段尾右下角收起钮——长思考读到尾顺手收，不用滚回顶部点头
@@ -412,6 +413,20 @@
     // 一次性 renderMd 升级替换（升级失败 catch 保留纯文本，展示不中断）。
     holder.classList.add('hg-think-plain');
     holder.appendChild(document.createTextNode(text));
+    // 思考流③（ZCode 折叠态流式摘要复刻）：段头预览位=思考文本**最后非空
+    // 行**尾部截断（product-projection 深挖口径：信息密度高渲染代价低，
+    // 流式推进自然「滚到末尾」）——折叠态/流式期都能看见正在想什么
+    {
+      const prev = seg.querySelector('[data-hg-think-prev]');
+      if (prev) {
+        const ls = holder.textContent.split('\n');
+        let last = '';
+        for (let i = ls.length - 1; i >= 0; i--)
+          if (ls[i].trim()) { last = ls[i].trim(); break; }
+        prev.textContent = last ? '…' + last.slice(-80) : '';
+        prev.title = last;
+      }
+    }
     thinkHeadUpdate();
     _hgScrollBottom();
   }

@@ -110,6 +110,10 @@
     // 保留 el=null 传参（_hgRollbackTurn 幂等）
     const el = null;
     setBusy(true);
+    // 思考流①（ZCode「准备中」spinner 复刻）：POST 发起即亮组头+秒表+占位
+    //（①提交中→②TurnStarted 工作中连续态，中间零空窗）；失败分支
+    // _hgRollbackTurn 幂等拆组（null 传参 v3.4.95 已兼容）不动
+    try { phResume(true); } catch (_) {}
     try {
       const r = await fetch('/api/harness/send', {method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({sid, text, images, files})});
@@ -135,14 +139,9 @@
       }
       dispatch.rej = '';
       _HG.dirty = true;
-      // 纯 ZCode 式边界修正（用户实锤「工作中不立刻渲染+AI 占位气泡没了」
-      // +361 修正后实锤「只有占位、组头没出现」）：消息**内容**等 user_echo
-      //（唯一真相源），但「已受理→工作中」的状态反馈（组头亮起+秒表+占位
-      //「正在思考」）是 POST 成功的本地确认——ZCode task spinner 同款。
-      // phResume(true)=「刚发完消息」现成路径（229 行注释原义）：建组+
-      // 亮头（_turnHeadShow+t0 起秒表）+开占位；grpEnsure 只建组不亮头
-      //（头默认 display:none，361 只调它=用户看到的占位有头没有）
-      try { phResume(true); } catch (_) {}
+      // 纯 ZCode 式边界修正（362 定稿）：消息**内容**等 user_echo（唯一
+      // 真相源）；「已受理→工作中」状态反馈已提前到 POST 发起（思考流①，
+      // 上方）——此处幂等不重调
       refreshSessions();
       return true;
     } catch(e) {

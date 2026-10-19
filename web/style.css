@@ -2393,6 +2393,9 @@ html {
 .h-think-seg .h-chev { transition: transform .15s; display: inline-block; font-size: 10px; }
 .h-think-seg.open .h-chev { transform: rotate(90deg); }
 .h-think-seg-name { font-weight: 600; color: var(--fg); }
+.h-think-prev { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; text-align: right; color: var(--muted); font-size: var(--fs-xs);
+  font-family: var(--font-ui); }
 .h-think-seg-t { font-size: var(--fs-xs); color: var(--muted); font-family: var(--font-mono); }
 /* v3.0 流式思考纯文本路径（对照 ZCode reasoning 的 whitespace-pre-wrap）：
    textNode 直插无 md 包裹，plain 修饰类期间保换行；定稿升级移除该类，
