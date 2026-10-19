@@ -355,7 +355,14 @@
           else _hgDispatch({ t: 'assistant_thinking', text: b.thinking, live: true });
         }
         else if (b.type === 'text' && b.text && b.text.trim()) {
-          if (isSub) _subText(o.parent_tool_use_id, b.text);
+          // 用户实锤「子代理显示环境气泡」：新版 CLI 把子代理会话的注入
+          // 上下文（system-reminder 全文/# Environment/MCP Server
+          // Instructions）作为 assistant text 块转发上主 stdout（带
+          // parent_tool_use_id）——这些是喂给子代理模型的机器上下文，不是
+          // 子代理的工作产出，段内不画（窗格只留思考/工具/正文/结论）
+          if (isSub && /^\s*(<system-reminder>|#?\s*Environment\b|MCP Server Instructions\b)/.test(b.text)) {
+            // 静默跳过
+          } else if (isSub) _subText(o.parent_tool_use_id, b.text);
           // R2a：主链气泡走 dispatch（endThinking 编排保留在先——顺序敏感）
           else { endThinking(); _hgDispatch({ t: 'assistant_text', text: b.text,
                        model: (o.message || {}).model || '', live: true }); }
@@ -627,10 +634,13 @@
               }
             }
             hitAgent = true;
-          } else if (!a && !_isSmRcpt) {
+          } else if (!a && !_isSmRcpt && !/launched successfully/i.test(_rt0)) {
             // 全审P1：SendMessage 成功回执不进「档案缺失」完成信号分支
             //（该分支为前台 Task 完成定格设计；名字形态续派 tidMap 无键
-            // 同样靠 _isSmRcpt 守卫）
+            // 同样靠 _isSmRcpt 守卫）。用户实锤「已工作13s」补第三守卫：
+            // 后台 Task 的 ACK（"Async agent launched successfully"——
+            // agentId 异步、task_started 未达=档案未建窗口）同样不是完成
+            // 信号，收段=段卡提前定格（判据与 subagent_projection ACK 同源）
             const ab = _subBlkAdopt(b.tool_use_id);
             if (ab && !ab.root.classList.contains('done')) {
               const _aid = (resultText(b).match(/(?<![a-zA-Z])agentId[:"':\s]+([0-9a-zA-Z_-]{8,64})/i) || [])[1] || '';
