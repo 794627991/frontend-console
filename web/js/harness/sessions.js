@@ -106,6 +106,7 @@
     _HG.subTail = {};   // v2.46：tail 轮询 offset 随会话切换重置（防串会话读错文件位；批4：subRows/subBlk/subTailSeg 随段退役删）
     _HG.fetchedBusy = null;   // C组T5：随切会话清（防陈旧值误用）
     _HG.histAll = null; _HG.histStart = 0; _HG.histLive = false;   // v2.24：多段历史渲染源不复用（防串会话）；v2.35.2：histLive 随切重置（快照恢复态不进滚动扩收）
+    _HG.histCursor = 0;   // 398-P2：主切换清场（审 P2——六处清点漏此主点，旧会话游标残留经快照路泵=异会话重渲/丢行）
     _HG.histStale = false;   // v2.43.2（R2-缺口A）：降级标记随切会话重置（恢复时按快照 histFp 重新判定）
     // v3.4.52（致命双会话实锤「全部变成回放了但是实际是在工作的」）：运行中
     // 子代理 live 档案随会话暂存——原样清空后，切回走转写重渲会把运行中的
@@ -342,12 +343,12 @@
               _liveVis.forEach(c => c.remove());
             } catch (_) {}   // v3.5.242：ask结果行同护（转写无ask行，重渲必丢）
             if (_HG.histAll.length - 1 > _he2) {
-
-              // 394 单账游标制：有增长→游标泵（只渲染账尾新增行）——不再整窗
-              // 重建（384 事故触发器形态退役；快照 DOM 的渲染账=hEnd 尾值）
-              if (!_HG.histCursor) _HG.histCursor = _he2 + 1;
+              // 398-P1 真退役（审 P1——395 的整窗行未删=泵+整窗双跑，虚假退役）：
+              // 快照恢复增长路径只泵差量。校准无条件（审 P2a——旧值非零时
+              // !cursor 判定恒假，异会话残留游标泵重渲）。账此处恒为 fetch 版
+              //（273 区刚 fetch），dirty 免疫（P3 守卫的边界场景不在此路径）
+              _HG.histCursor = _he2 + 1;
               if (_HG.histAll.length > _HG.histCursor) _histPump();
-              _histRender(_HG.histAll, _HG.histStart | 0, { noFinalize: _busy2 });
             }
             if (_busy2 && typeof phResume === 'function') phResume(true);
             // v3.5.216：重渲只回放转写行——live-only 元素（运行中子代理

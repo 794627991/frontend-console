@@ -7,7 +7,11 @@
   function _hgRowAdd(row) {
     if (!row || !row.role) return;
     if (!Array.isArray(_HG.histAll)) _HG.histAll = [];
+    row._sq = _HG.seq || 0;   // 398-P5：入账事件 seq（fetch 重建时未落盘行拼接判据）
     _HG.histAll.push(row);
+    _HG.histDirty = true;   // 398-P3：live 账期标脏——工具行不入账（设计3）使 live 账
+                            // 下标与转写版结构性错位，长度比较不可作对齐判据；
+                            // 脏账期间的 fetch 走整窗校正（_histRefresh 守卫消费）
     _histPump();
   }
   function _histPump() {
@@ -21,6 +25,23 @@
     _HG.histCursor = _HG.histAll.length;
   }
   function _histRender(lines, start, opt) {
+    // 398-P5a 未落盘行拼接：SSE 事件先于 jsonl flush 到达（事件流与落盘异步）
+    // ——fetch 版不含「已入账未落盘」的 live 行，整窗替换会丢它们。从旧账尾
+    // 拼接 _sq > fetchedSeq 的行（服务器尚未见的）；user 行按文本精确去重
+    //（转写已含的同文行不双拼），assistant/thinking 落盘快由转写版覆盖
+    {
+      const old = _HG.histAll;
+      if (Array.isArray(old) && Array.isArray(lines) && lines !== old) {
+        const fs = _HG.fetchedSeq || 0;
+        const seenUser = new Set(lines.filter(l => l && l.role === 'user')
+          .map(l => String(l.text || '')));
+        for (const l of old) {
+          if (!l || !l._sq || l._sq <= fs) continue;
+          if (l.role === 'user' && seenUser.has(String(l.text || ''))) continue;
+          lines.push(l);
+        }
+      }
+    }
     // v3.5.8（用户实锤「A 切 B 再切 A，识图中显示历史未完成」）：渲染期
     // busy 标志——noFinalize 正是调用方的 !!j.busy（busy 活会话）。识图卡
     // 回放据此把未回传卡复活为「识图中」（run 态+续表），不再误判死案
@@ -119,6 +140,7 @@
         // hEnd 戳/lastAsst 授予）——失败行的 DOM 不存在，把当前行号盖到
         // 上一行元素上=回合导航锚与收缩边界全部错位
         let _rok = true;
+if (l && l.live) l.live = 0;   // 398-P5b：重放归一（live 动画/流式语义只在泵路径，整窗重放=回放形态）
         try { renderHistLine(l, start + i); }
         catch (e) { _rok = false; try { console.error('[harness] hist line render failed @' + (start + i) + ' role=' + (l && l.role), e); } catch (_) {} }
         if (!_rok) return;
@@ -293,9 +315,12 @@
           _realFlow.insertBefore(hint, _realFlow.firstChild);
         }
       }
-      _HG.histCursor = _HG.histAll ? _HG.histAll.length : 0;   // 394：游标对齐（渲染期 live 入账的行由再泵兜底）
-      try { _trimOldTurns(); _histPump();
+      // 398-P4（审 P4——先对齐后泵=零迭代死代码，兜底方向本就错）：
+      // histBuilding 此时已由 finally 归还前——渲染期 live 入账被泵拦的行，
+      // 此处先泵（泵自推游标），完成后账净（脏标清=fetch 版为基+拼接行在场）
+      try { _histPump(); _trimOldTurns();
 _hgRailSync(); } catch (_) {}
+      _HG.histDirty = false;   // 整窗重放后账净（live 行已并入——见入口拼接）
     }
   }
   // v3.2.22（用户实锤「切走再切回，子代理目录点不开」）：快照恢复路径不跑
@@ -358,8 +383,8 @@ _hgRailSync(); } catch (_) {}
       const lines = j.lines || [];
       // 394 单账游标制：DOM/游标有效时只泵账尾差量（前缀一致性）；游标无效
       //（冷启动/降级/失配）→ 整窗（原行为，_histRender 内部对齐游标）
-      if (_HG.histLive && !_HG.histStale && (_HG.histCursor || 0) > 0
-          && (_HG.histCursor || 0) <= lines.length) {
+      if (_HG.histLive && !_HG.histStale && !_HG.histDirty && (_HG.histCursor || 0) > 0
+          && (_HG.histCursor || 0) <= lines.length) {   // 398-P3：脏账（有未回流 fetch 的 live 行）禁泵——长度≠对齐（审 P3 工具行错位演算）
         _HG.histAll = lines;
         _histPump();
       } else _histRender(lines, 0);
