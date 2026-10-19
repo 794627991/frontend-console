@@ -38,6 +38,10 @@
   // 不存在）静默保持相对行号。_dnews/_dfp 是内存属性（不随快照序列化）——
   // 快照恢复的 DOM 行号已真实无需重拉；回放/重建路径 input 在手重新存档
   // 走本函数。dataset.hgDln 幂等：主链/窗格镜像/回放配对多路触发只拉一次
+  // v3.5.337（用户问「之前前端乱七八糟的一大堆是不是可以删」）：336 转写
+  // 权威行号落地后，重建路径（快照/重渲/刷新/重开）全走 l.dln——此处收缩
+  // 为 live 专用最小链：Edit 结果刚到达（转写未重渲前）的即时行号，其余
+  // 补丁（329 缓存/dataset 副本、330/333 触发）整体退役
   function _hgDiffLineFix(row) {
     if (!row || !row.isConnected || row.dataset.hgDln === '1') return;
     const news = row._dnews, fp = row._dfp;
@@ -47,12 +51,11 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sid: _HG.sid || '', path: fp, news })
     }).then(r => r.json()).then(j => {
-      if (!j || !j.ok || !row.isConnected) return;   // 在途行被清场（切会话等）直接弃
+      if (!j || !j.ok || !row.isConnected) return;   // 在途行被清场（重渲接管）直接弃
       const ln0 = (j.lines || [])[0];
       if (!ln0) return;
       const head = row.querySelector('.h-tool-head');
       if (news.length > 1) {
-        // MultiEdit：卡头定位 chip（各处行号非线性，diff 列保持相对不造假）
         if (head && !row.querySelector('.h-tool-sec.hg-dln-chip'))
           head.insertAdjacentHTML('beforeend',
             `<span class="h-tool-sec hg-dln-chip" title="首处改动位于文件第 ${ln0} 行（各处 diff 为改动内相对行号）">L${ln0} 起</span>`);
@@ -61,18 +64,18 @@
       const diff = row.querySelector('.h-diff');
       if (!diff) return;
       const off = ln0 - 1;
-      let nn = 0, on = 0;   // 新/旧行号族游标（与 diffHtml 生成规则同构）
+      let nn = 0, on = 0;
       diff.querySelectorAll('.d-ctx,.d-add,.d-del,.d-info').forEach(d => {
         const lnel = d.querySelector('.d-ln');
         if (d.classList.contains('d-info')) {
           const m = (d.textContent || '').match(/(\d+) 行不变/);
           const n = m ? +m[1] : 0;
-          nn += n; on += n;   // 折叠段计数器照推（同 diffHtml）
+          nn += n; on += n;
         } else if (d.classList.contains('d-del')) {
           on++;
           if (lnel) lnel.textContent = String(on + off);
         } else if (d.classList.contains('d-ctx')) {
-          nn++; on++;   // 轻审P1：ctx 同属新旧两文件——双推进（与 diffHtml mark('=') 同构），否则后方 del 列偏小
+          nn++; on++;
           if (lnel) lnel.textContent = String(nn + off);
         } else {
           nn++;
