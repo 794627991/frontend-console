@@ -207,6 +207,14 @@ def test_fresh_and_bg_liveness():
     ok("转写新鲜优先于进程死", a["status"] == "running", a)
     a2 = project(f, liveness=LV)["agents"]["exp_fr_0001"]
     ok("bg进程活宁跑勿完", a2["status"] == "running", a2)
+    # 影子对账实锤：进程死后 mid_flight 尾态不可信（历史死代理永停
+    # mid_flight——不新鲜+进程死 → interrupted，不得永久 running）
+    a3 = project(f, liveness=dict(LV, proc_alive=False),
+                 child_states={"exp_fr_0001": {"terminal": False,
+                                                "status": "", "summary": "",
+                                                "endedAt": 0, "lastActive": 1}}
+                 )["agents"]["exp_fr_0001"]
+    ok("进程死mid_flight不永跑", a3["status"] == "interrupted", a3)
 
 
 def test_wrapper_phantom_absent():

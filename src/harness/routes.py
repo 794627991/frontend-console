@@ -1134,6 +1134,17 @@ def harness_agents():
     s = _get_or_create(request.args.get("sid") or "")
     if not s:
         return jsonify({"ok": False, "err": "会话不存在"}), 404
+    # 冷查询影子通道（提交2/4）：?src=cold 走 ZCode 式磁盘现算投影，与既有
+    # 增量注册表同形对账（tools/_agents_diff.py）；翻转（提交3）后成默认
+    if (request.args.get("src") or "") == "cold":
+        try:
+            from .subagent_readmodel import get_model
+            proj = get_model(request.args.get("sid") or "").refresh(s)
+            return jsonify({"ok": True, "agents": proj["agents"],
+                            "tidMap": proj["tidMap"], "rev": proj["rev"]})
+        except Exception as _e:
+            log.warning("cold agents fail %r", _e)
+            return jsonify({"ok": False, "err": "cold:%r" % _e}), 500
     snap = s._registry.snapshot()
     # 冒烟实测 bug 修正：重建判据收紧为「有 CLI 历史（session_id 在场）且
     # 进程已死」——空 session_id 的新会话/未连接会话 not alive 恒真，旧判据

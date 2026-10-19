@@ -428,13 +428,17 @@ def project(facts, child_states=None, liveness=None, external_links=None,
         aid = ent.get("agentId")
         co = child_states.get(aid) if aid else None
         # ---- 状态判定链（优先级契约，ZCode runningStatus/endedStatus 对位）----
-        # RUNNING 1：notify 未落终态 + 尾探 mid_flight / 转写新鲜
-        if ent["status"] == "running" and co and not co.get("terminal"):
+        # RUNNING 1：转写新鲜（mtime<120s，CLI 还在写=铁证在跑）——进程死
+        # 也不否决（孤儿 CLI 诚实显示在跑）
+        if ent["status"] == "running" and aid and fresh.get(aid):
+            continue
+        # RUNNING 1b：尾探 mid_flight——**仅在进程活时可信**（进程死后转写
+        # 永停 mid_flight，历史死代理不得永久 running；影子对账实锤）
+        if ent["status"] == "running" and co and not co.get("terminal") \
+                and proc_alive:
             ent["lastActive"] = max(ent["lastActive"],
                                     co.get("lastActive") or 0)
             continue
-        if ent["status"] == "running" and aid and fresh.get(aid):
-            continue   # 转写 mtime 新鲜（CLI 还在写=铁证在跑）
         # RUNNING 2：bg 且无任何终态证据且进程活（宁跑勿完——ACK/未 flush 窗口）
         if ent["status"] == "running" and ent.get("bg") and proc_alive:
             continue
