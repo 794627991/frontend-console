@@ -116,6 +116,7 @@
     if (!lines.length) {
       // v3.2.11：游离缓冲期早退必须先归还 _hgFlow 引用（否则全后续渲染
       // 都写进游离容器——主界面消失级事故）
+      _HG.histCursor = 0;   // 399-加固（审 N1 备注）：空账早退游标归零（残留值>账长=下次 rowAdd 行不渲）
       _hgFlow = _realFlow;
       _HG.histBuilding = false;   // v3.2.13：连接性判据还原（见顶部注释）
       // v3.1h(F4)：此处 innerHTML 已清空、恒无组，收起/清壳兜底无对象——
@@ -366,7 +367,7 @@ _hgRailSync(); } catch (_) {}
       const r = await fetch(`/api/harness/transcript?sid=${encodeURIComponent(sidAt)}`);
       const j = await r.json();
       if (!j.ok || _HG.sid !== sidAt) return false;
-      _HG.histAll = _hgMergeLive(j.lines || [], _HG.histAll, j.seq || 0);
+      _HG.histAll = _hgMergeLive(j.lines || [], _HG.histAll, j.lines_seq || 0);   // 399-N1：水位=读窗前快照（j.seq 是应答时刻，读→应答窗内事件行会被误判已含而丢弃）
       // 399-R3（复审实锤：fetch 窗口期 SSE 先到入账的行被整替毁掉——old 已
       // 换新，入口拼接救不了；保尾在赋值处就地做）+ v3.5.225 busy 真值随拉取存档
       // v3.5.225：后端 busy 真值随拉取存档——切回重渲的 noFinalize/phResume
@@ -374,6 +375,7 @@ _hgRailSync(); } catch (_) {}
       // 被定稿+phResume(true) 新建悬挂活组=「一个回合两个块」分割实锤）
       _HG.fetchedBusy = !!j.busy;
       _HG.fetchedSeq = j.seq || 0;   // B组P1：seq 随拉取存档（RO 退出断点续传用）
+      _HG.fetchedSeq = j.lines_seq || _HG.fetchedSeq || 0;   // 399-N1：合并水位=读窗前快照（fetchedSeq 语义=「转写已含到哪」；RO 断点用 j.seq 不变）
       return true;
     } catch(_) { return false; }
   }
@@ -383,7 +385,7 @@ _hgRailSync(); } catch (_) {}
       const j = await r.json();
       if (!j.ok || _HG.sid !== sidAt) return;   // 会话已切走，弃
       if (_HG.busy) return;   // v3.2.1R2(R2-2)：fetch 在途时用户发送消息——重渲会抹掉活组/新消息泡（07-hist 懒填同款守卫）
-      _HG.fetchedSeq = j.seq || 0;   // 399-R2：水位即时更新（拼接判据）——原只在 _histFetch 更新，本路旧水位使已落盘行被重复拼接
+      _HG.fetchedSeq = j.lines_seq || 0;   // 399-N1：水位=读窗前快照（_histFetch 同步；R2 的 j.seq 版本在读→应答窗内反向）
       const lines = j.lines || [];
       // 394 单账游标制：DOM/游标有效时只泵账尾差量（前缀一致性）；游标无效
       //（冷启动/降级/失配）→ 整窗（原行为，_histRender 内部对齐游标）

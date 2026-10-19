@@ -598,12 +598,17 @@ def harness_transcript():
         s.stale_hold_repair()
     except Exception:
         pass
+    # 399-N1：水位在**读文件之前**捕获（transcript_for 解析大会话可达百毫秒，
+    # 期间 emit 的事件行先于读窗不入 lines、又 ≤ 应答 seq——旧水位把它们判为
+    # 「已含」跳过=从账与 DOM 双丢）。lines_seq=读窗前快照：_sq > lines_seq 的
+    # live 行前端一律保尾拼接（宁毫秒级重复 assistant/thinking，不丢消息）
+    _seq0 = s._seq
     lines = transcript_for(s)
     _dln_inject(lines)   # v3.5.336：Edit/MultiEdit 行注入真实行号（ZCode 式权威下发）
     return jsonify({"ok": True, "lines": lines or [], "alive": s.alive,
                     "busy": s.busy, "busy_since": s.busy_since,
                     "model": s.model, "title": s.title, "seq": s._seq,
-                    "epoch": s.log.epoch})
+                    "lines_seq": _seq0, "epoch": s.log.epoch})
 
 
 # ---- v3.5.336：Edit 真实行号转写级注入（ZCode 架构对齐 ----
