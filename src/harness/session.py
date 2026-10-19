@@ -141,7 +141,7 @@ class HarnessSession:
         self._held = False
         self._bg_mon_started = False
         self.last_result = None
-                # v3.5.98：会话创建时的 API 方案名（跨方案发消息拦截依据）。切方案
+        # v3.5.98：会话创建时的 API 方案名（跨方案发消息拦截依据）。切方案
         # 会换网关/模型映射/上下文窗口，旧会话续发必然错位（上下文大小不一
         # 致/模型名不被新网关认）。None=升级前的旧会话（无标记），按用户拍板
         # 放行不拦；仅新会话起打标强制。

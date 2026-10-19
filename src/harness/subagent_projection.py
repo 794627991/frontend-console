@@ -35,8 +35,9 @@ import re
 _SUBAGENT_TOOLS = ("Agent", "Task")
 # cancel 语义正则（ZCode CANCELLATION_PATTERN 对位）
 _RE_CANCEL = re.compile(r"abort|cancel|interrupt|stop(?!e)", re.I)
-# 后台 ACK 纯文本 agentId（ZCode agentIdFromLaunchAcknowledgement 对位）
-_RE_ACK_AGENT = re.compile(r"agentId:\s*([0-9a-zA-Z_-]{8,64})")
+# 后台 ACK 纯文本 agentId（宽松版——仅对 bg=True 回执使用，见
+# _agent_id_from_receipt 的形态锚说明；全审S2）
+_RE_ACK_LOOSE = re.compile(r"agentId:\s*([0-9a-zA-Z_-]{8,64})")
 # SendMessage 回执 JSON
 _RE_RESUMED = re.compile(r"resumedAgentId[\"'\s:]+([0-9a-zA-Z_-]{8,64})")
 _RE_AGENT_JSON = re.compile(r"[\"']agentId[\"'\s:]+([0-9a-zA-Z_-]{8,64})")
@@ -157,15 +158,22 @@ def collect_main_facts(lines):
                 txt = _content_text(b.get("content"))
                 tid = str(b.get("tool_use_id") or "")
                 err = bool(b.get("is_error"))
-                m = _RE_RESUMED.search(txt)
-                if m:
-                    # SendMessage 回执：送达/复活确认（不是子代理终态）
-                    facts.append({"kind": "send_result", "tid": tid,
-                                  "resumed": m.group(1), "ok": not err,
-                                  "text": txt[:200], "ts": ts})
-                else:
-                    facts.append({"kind": "result", "tid": tid,
-                                  "text": txt, "is_error": err, "ts": ts})
+                facts.append({"kind": "result", "tid": tid,
+                              "text": txt, "is_error": err, "ts": ts})
+    # 全审S2：send_result 后置分类——回执文本必须 (a)tid 有对应 send 事实
+    # (b)resumedAgentId 命中。旧前向判定让「前台回执正文里引用
+    # resumedAgentId: xxx」被误判成 SendMessage 回执：前台终态被吞+
+    # 幻影条目 running+bg 永跑
+    send_tids = {f["tid"] for f in facts if f["kind"] == "send"}
+    for f in facts:
+        if f["kind"] != "result" or f["tid"] not in send_tids:
+            continue
+        m = _RE_RESUMED.search(f.get("text") or "")
+        if m:
+            f["kind"] = "send_result"
+            f["resumed"] = m.group(1)
+            f["ok"] = not f["is_error"]
+            f["text"] = (f.get("text") or "")[:200]
     for i, f in enumerate(facts):
         f["i"] = i   # 全局事实序（行序）——新轮越界判定的基准
     return facts
@@ -182,11 +190,12 @@ def child_outcome_from_tail(tail_lines):
     endedAt, lastActive}（terminal=False 表示仍在飞/无定论）。
     """
     out = {"terminal": False, "status": "", "summary": "",
-           "endedAt": 0, "lastActive": 0}
-    last_asst_text = ""
-    last_ts = 0
+           "endedAt": 0, "lastActive": 0, "tokens": 0, "toolN": 0}
     for line in reversed(tail_lines or []):
-        # 逆序找最顶层结论：先遇 result 行直接定；否则找最后 assistant
+        # 逆序找最顶层结论：先遇 result 行直接定；否则**最后一条 assistant**
+        # （全审S1：ZCode at(-1) 语义——逆序遇第一条 assistant 即定案，不得
+        # 越过终局 text 向更早的 tool assistant 探——否则主流尾部形态
+        # [tool_asst, user, text_asst] 被误判 mid_flight）
         try:
             o = json.loads(line)
         except Exception:
@@ -208,6 +217,15 @@ def child_outcome_from_tail(tail_lines):
                                                      "error_during_execution")) else "done"
             out["summary"] = txt
             out["endedAt"] = ts
+            # 全审G3：顶层 result 行带 usage（与主会话 result 同构）——
+            # 用量只在此提取（ZCode：在飞的那条还没有账）
+            u = o.get("usage") or {}
+            try:
+                out["tokens"] = int(u.get("total_tokens") or 0) or out["tokens"]
+                out["toolN"] = int(u.get("tool_uses") or u.get("num_turns")
+                                   or 0) or out["toolN"]
+            except Exception:
+                pass
             continue
         if typ == "assistant" and not out["terminal"]:
             msg = o.get("message") or {}
@@ -219,19 +237,50 @@ def child_outcome_from_tail(tail_lines):
             if has_tool:
                 # 最后 assistant 在调工具=在干活（ZCode hasToolRound 防御）
                 return out
-            if not last_asst_text:
-                txt = "\n".join(str(x.get("text") or "")
-                                for x in blocks if isinstance(x, dict))
-                last_asst_text = txt[:200]
+            # 最后 assistant 纯文本=终局 success——立即定案（不再向更早探）
+            txt = "\n".join(str(x.get("text") or "")
+                            for x in blocks if isinstance(x, dict))
+            out["terminal"] = True
+            out["status"] = "done"
+            out["summary"] = txt[:200]
+            out["endedAt"] = ts
+            return out
         # 其他行（user/attachment…）继续逆序
-    if last_asst_text and not out["terminal"]:
-        out["terminal"] = True
-        out["status"] = "done"
-        out["summary"] = last_asst_text
     return out
 
 
 # ---- ③ 投影（状态判定链=优先级契约） ----
+
+def _agent_id_from_receipt(txt, bg=False):
+    """回执文本提 agentId（全审S2 双锚）：
+    · bg=True（后台派发的回执=ACK 形态）：任意位置 agentId: 提取——生产
+      ACK 实测带 "Task " 前缀（"Task agentId: xxx (internal ID)"），纯
+      行首锚会漏；后台回执文本出自 CLI 本体，形态可信
+    · bg=False（前台回执）：JSON 形态（strip 后 { 开头且整串 parse 成
+      dict）走键提取——前台回执正文里引用 "agentId: xxx" 的散文/协议
+      说明不采（S2 探针：前台终态被吞+幻影 running 即此形态）"""
+    s = str(txt or "")
+    if bg:
+        m = _RE_ACK_LOOSE.search(s)
+        return m.group(1) if m and _looks_id(m.group(1)) else ""
+    st = s.strip()
+    if st.startswith("{"):
+        # 真实前台回执=首个 JSON 对象后跟结论文本——取 {...} 段 parse，
+        # 整串 parse 必失败（实测 '{"agentId":...} 结论 PASS'）
+        end = st.find("}")
+        segs = [st[:end + 1]] if end > 0 else []
+        segs.append(st)
+        for seg in segs:
+            try:
+                j = json.loads(seg)
+            except Exception:
+                continue
+            if isinstance(j, dict):
+                v = str(j.get("agentId") or "")
+                if _looks_id(v):
+                    return v
+    return ""
+
 
 def _status_from_notify(st):
     """notification <status> → done/err/interrupted（未知值保守归 done）。"""
@@ -288,14 +337,15 @@ def project(facts, child_states=None, liveness=None, external_links=None,
         elif k == "notify":
             notifies.append(f)
 
-    # agentId 解析（三源：ACK/JSON 回执 → external_links(meta)）
+    # agentId 解析（三源：ACK/JSON 回执（S2 形态锚）→ external_links(meta)）
     def aid_of_dispatch(tid):
         r = result_by_tid.get(tid)
+        d = dispatch_by_tid.get(tid)
         if r:
-            m = _RE_AGENT_JSON.search(r.get("text") or "") \
-                or _RE_ACK_AGENT.search(r.get("text") or "")
-            if m and _looks_id(m.group(1)):
-                return m.group(1)
+            a = _agent_id_from_receipt(r.get("text") or "",
+                                       bg=bool(d and d.get("bg")))
+            if a:
+                return a
         return external_links.get(tid) or ""
 
     # 候选构建：dispatch（首轮）+ send_result.resumed（跨会话纯续派）
@@ -390,14 +440,28 @@ def project(facts, child_states=None, liveness=None, external_links=None,
 
     # notification 终态（bg 权威；tid 或 task_id 双反查）
     for n in notifies:
-        aid = tid_map.get(n.get("tid") or "") or ""
+        tid_n = n.get("tid") or ""
+        aid = tid_map.get(tid_n) or ""
         if not aid and _looks_id(n.get("task_id") or ""):
             aid = n["task_id"]
         ent = ents.get(aid) if aid else None
         if ent is None:
-            continue
-        if n.get("i", 0) < last_round_i.get(aid, -1):
-            continue   # 旧轮通知：新轮已开（更晚的 send），不再定终态
+            # 全审G4：ACK 未落盘窗口（dispatch 已 flush、回执没有）——条目
+            # 尚在 pending:tid 键。notify 自带 task_id，直接迁键落终态（对位
+            # 旧 registry 迁键语义；ACK 一旦落盘后续投影自然同键收敛）
+            pend = ents.get("pending:" + tid_n)
+            if pend is not None and _looks_id(aid):
+                pend["agentId"] = aid
+                pend["found"] = True
+                ents[aid] = pend
+                ents.pop("pending:" + tid_n, None)
+                tid_map[tid_n] = aid
+                ent = pend
+            else:
+                continue
+        else:
+            if n.get("i", 0) < last_round_i.get(aid, -1):
+                continue   # 旧轮通知：新轮已开（更晚的 send），不再定终态
         st = _status_from_notify(n.get("status"))
         ent["status"] = st
         ent["doneAt"] = n.get("ts") or 0
@@ -418,7 +482,7 @@ def project(facts, child_states=None, liveness=None, external_links=None,
             # bg ACK（dispatch.bg 且文本 agentId: 形态）不是终态——启程确认
             d = dispatch_by_tid.get(tid)
             txt = r.get("text") or ""
-            if d and d.get("bg") and _RE_ACK_AGENT.search(txt) and not r.get("is_error"):
+            if d and d.get("bg") and _RE_ACK_LOOSE.search(txt) and not r.get("is_error"):
                 continue
             if r.get("is_error"):
                 fg_final = ("interrupted" if _RE_CANCEL.search(txt) else "err",
@@ -457,6 +521,10 @@ def project(facts, child_states=None, liveness=None, external_links=None,
             ent["doneAt"] = co.get("endedAt") or 0
             if co.get("summary"):
                 ent["brief"] = co["summary"]
+            if co.get("tokens"):
+                ent["tokens"] = co["tokens"]   # 全审G3：顶层 result usage
+            if co.get("toolN"):
+                ent["toolN"] = co["toolN"]
             ent["lastActive"] = max(ent["lastActive"], co.get("lastActive") or 0)
             continue
         # ENDED 4：证据不足——进程死/不新鲜 → interrupted+lost（不装 done）

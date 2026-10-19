@@ -1169,6 +1169,14 @@ def harness_delete():
     sid = (data.get("sid") or "").strip()
     with _sessions_lock:
         s = _sessions.pop(sid, None)
+    # 全审G2：readmodel（含全量事实表）随会话删除同步回收——否则滞留后端
+    # 进程生命周期，长期运行累积泄漏
+    try:
+        from .subagent_readmodel import _models, _models_lock
+        with _models_lock:
+            _models.pop(sid, None)
+    except Exception:
+        pass
     if s:
         s.close()
     with _meta_lock:

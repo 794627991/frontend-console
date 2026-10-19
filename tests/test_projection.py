@@ -192,6 +192,74 @@ def test_child_tail_outcome():
          "is_error": True, "result": "max turns exceeded"})]
     co3 = child_outcome_from_tail(resl)
     ok("顶层result优先", co3["terminal"] and co3["status"] == "err", co3)
+    # 全审S1：主流尾部形态 [tool_asst, user, text_asst]（无顶层 result 行）
+    # ——最后一条 assistant 是纯文本=终局 done，不得被更早的 tool assistant
+    # 误翻 mid_flight
+    main_stream = [
+        json.dumps({"type": "assistant", "timestamp": "2026-10-19T08:00:01Z",
+                    "message": {"content": [
+                        {"type": "tool_use", "id": "y1", "name": "Grep",
+                         "input": {}}]}}),
+        json.dumps({"type": "user", "timestamp": "2026-10-19T08:00:02Z",
+                    "message": {"content": [
+                        {"type": "tool_result", "tool_use_id": "y1",
+                         "content": "hit"}]}}),
+        json.dumps({"type": "assistant", "timestamp": "2026-10-19T08:00:03Z",
+                    "message": {"content": [
+                        {"type": "text", "text": "探查结论在此"}]}}),
+    ]
+    co4 = child_outcome_from_tail(main_stream)
+    ok("S1-终局text不被早tool翻mid_flight",
+       co4["terminal"] and co4["status"] == "done"
+       and co4["summary"] == "探查结论在此", co4)
+    # 全审G3：顶层 result 行 usage 提取
+    resu = main_stream + [json.dumps(
+        {"type": "result", "timestamp": "2026-10-19T08:00:05Z",
+         "usage": {"total_tokens": 4321, "tool_uses": 17}})]
+    co5 = child_outcome_from_tail(resu)
+    ok("G3-result行usage", co5["tokens"] == 4321 and co5["toolN"] == 17, co5)
+
+
+def test_s2_receipt_anchors():
+    """全审S2：前台回执正文引用「resumedAgentId: xxx」不得误判成
+    SendMessage 回执（前台终态被吞+幻影 running+bg 永跑）；ACK 行首锚
+    （散文裸 agentId: 不采）。"""
+    lines = [
+        asst("tS", "Task", {"subagent_type": "general-purpose",
+                            "description": "协议文档"}),
+        res("tS", "协议字段说明: resumedAgentId: fake_id_99 与 agentId: "
+                  "bare_99xx 语义不同。实测结论：完成。"),
+    ]
+    p = project(collect_main_facts(lines), liveness=LV)
+    a = p["agents"]["pending:tS"]
+    ok("S2-前台终态不被吞", a["status"] == "done", a)
+    ok("S2-无幻影条目", "fake_id_99" not in p["agents"]
+       and "bare_99xx" not in p["agents"], list(p["agents"]))
+    # 真·后台 ACK（行首）照常提取
+    lines2 = [
+        asst("tS2", "Task", {"subagent_type": "Explore",
+                             "description": "锚验证",
+                             "run_in_background": True}),
+        res("tS2", "\nagentId: anchor_ok_001 (internal ID)"),
+    ]
+    a2 = project(collect_main_facts(lines2), liveness=LV)["agents"]
+    ok("S2-行首ACK照常提取", a2.get("anchor_ok_001", {}).get("bg") is True, a2)
+
+
+def test_g4_notify_before_ack():
+    """全审G4：ACK 未落盘窗口（dispatch 已 flush 回执没有）——notify 自带
+    task_id 直接迁键落终态（对位旧 registry 迁键语义）。"""
+    lines = [
+        asst("tG", "Task", {"subagent_type": "Explore",
+                            "description": "窗口", "run_in_background": True}),
+        notify_xml("tG", "exp_g4_0001", "completed", "窗口期完成"),
+    ]
+    p = project(collect_main_facts(lines), liveness=LV)
+    a = p["agents"].get("exp_g4_0001")
+    ok("G4-notify先于ACK迁键落终态",
+       a and a["status"] == "done" and a["found"] is True
+       and p["tidMap"].get("tG") == "exp_g4_0001", (a, p["tidMap"]))
+    ok("G4-pending键已迁走", "pending:tG" not in p["agents"], list(p["agents"]))
 
 
 def test_fresh_and_bg_liveness():
@@ -299,6 +367,8 @@ if __name__ == "__main__":
     test_notify_status_map()
     test_lost_and_interrupted()
     test_child_tail_outcome()
+    test_s2_receipt_anchors()
+    test_g4_notify_before_ack()
     test_fresh_and_bg_liveness()
     test_wrapper_phantom_absent()
     test_pending_window_and_links()

@@ -19,7 +19,7 @@ import threading
 import time
 
 from .subagent_projection import (collect_main_facts, child_outcome_from_tail,
-                                  project, _RE_ACK_AGENT, _RE_AGENT_JSON,
+                                  project, _agent_id_from_receipt,
                                   _looks_id, FRESH_WINDOW_MS)
 
 _TAIL_BYTES = 65536        # 子代理转写尾探窗口（覆盖几十行足够）
@@ -136,9 +136,21 @@ class SubagentReadModel(object):
         with self._lock:
             paths, csids = self._main_paths(s)
             main_dir = os.path.dirname(paths[-1]) if paths else None
-            # ① 主文件增量吸收
+            # ① 主文件增量吸收（全审G1：任一文件缩水——/rewind 物理截断是
+            # 必然路径——整体清空重吸收，被回退回合的旧事实不留驻）
             sig_parts = []
             changed = force
+            for p in paths:
+                try:
+                    st = os.stat(p)
+                except OSError:
+                    continue
+                if st.st_size < self._main_wm.get(p, 0):
+                    self._facts = []
+                    self._main_wm = {}
+                    self._child = {}
+                    changed = True
+                    break
             for p in paths:
                 try:
                     st = os.stat(p)
@@ -149,7 +161,7 @@ class SubagentReadModel(object):
                 if st.st_size == off and p in self._main_wm:
                     continue
                 lines, new_off = _line_chunks(p, off)
-                if lines is None:     # 缩水/换文件：全量重扫
+                if lines is None:     # 增量读失败（异态）：全量重扫
                     lines, new_off = _line_chunks(p, 0)
                     if lines is None:
                         continue
@@ -168,12 +180,15 @@ class SubagentReadModel(object):
             self._meta_scan(s, main_dir)
             # ③ 候选 agentId：dispatch 回执提取 + meta 链接值
             aids = set()
+            dispatch_bg = {f["tid"]: bool(f.get("bg"))
+                           for f in self._facts if f["kind"] == "dispatch"}
             for f in self._facts:
                 if f["kind"] == "result":
-                    m = _RE_AGENT_JSON.search(f.get("text") or "") \
-                        or _RE_ACK_AGENT.search(f.get("text") or "")
-                    if m and _looks_id(m.group(1)):
-                        aids.add(m.group(1))
+                    a = _agent_id_from_receipt(
+                        f.get("text") or "",
+                        bg=dispatch_bg.get(f["tid"], False))
+                    if a:
+                        aids.add(a)   # S2 形态锚：前台散文裸 id 不采
                 elif f["kind"] == "send_result":
                     if _looks_id(f.get("resumed") or ""):
                         aids.add(f["resumed"])
