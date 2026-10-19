@@ -824,7 +824,19 @@ def harness_subagent_replay():
         return jsonify({"ok": True, "found": False, "rows": []})
     if rows is None:
         return jsonify({"ok": True, "found": False, "rows": []})
-    return jsonify({"ok": True, "found": True, "rows": rows})
+    # 批3b（实测修复「重铺后中途行重复插入乱序」）：响应附转写字节尾——前端
+    # 铺底成功即写 tail 账本，消除「无账本 offset=0 全量重喂」通道（~900KB
+    # ×2s 逐行重喂 + 长文折叠行查重锚打孙级失明 = 中途行 append 到时间线尾
+    # 冒充结论的温床；批1「铺底后轮询续流」缺这环衔接）
+    _sz = 0
+    try:
+        for _c in _subagent_transcript_candidates(main_dir, csids, agent):
+            if _c and os.path.isfile(_c):
+                _sz = os.path.getsize(_c)
+                break
+    except Exception:
+        _sz = 0
+    return jsonify({"ok": True, "found": True, "rows": rows, "size": _sz})
 
 
 # ---- v3.5.158：SendMessage/胶囊点击 → 无条件直达子代理（解析接口） ----

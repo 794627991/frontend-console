@@ -970,6 +970,12 @@
         const sc2 = tb2 && tb2.sc;
         if (!sc2) return;
         tb2.rpN = (j.rows || []).length;   // v3.5.279：铺底行数基准（无条件轮询比对有新才重建）
+        // 批3b（实测修复「重铺后中途行重复插入乱序」）：铺底=已读全文件，
+        // 后端 size（转写字节尾）直接落 tail 账本——tick 增量从文件尾续拉，
+        // 「无账本 offset=0 全量重喂」通道构造性消失（长文折叠行查重锚打
+        // 孙级 body 失明时，中途行被 append 到时间线尾冒充结论的病根）
+        if (typeof j.size === 'number' && j.size > 0)
+          _HG.subTail[agentId] = j.size;
         // v3.2.6：重建时间线脚手架（清「回放加载中」占位）
         sc2.innerHTML = '';
         // v3.4：脚手架=idline+首轮；后续 k:'user' 行切新轮（多轮回放）
