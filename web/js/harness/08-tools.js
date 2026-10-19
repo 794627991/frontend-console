@@ -111,6 +111,11 @@
     // 折叠展示改动段全貌；改动段外超 3 行的未变区间折叠成「… N 行不变」）
     const ol = String(oldS || '').split('\n'), nl = String(newS || '').split('\n');
     const n = ol.length, m = nl.length;
+    // v3.5.336（ZCode 式权威行号）：ln0=转写行携带的真实起始行——计数器
+    // 初值=ln0-1（Edit 原位替换新旧同偏移）；缺省 0=相对行号（live 回填
+    // 前的过渡态）。cherry-pick 实锤修复：本声明曾在 pick 冲突中丢失，
+    // TDZ ReferenceError 被 _histToolBodyHtml 的 catch 吞掉=Edit 卡空体
+    const _off = (typeof ln0 === 'number' && ln0 > 0) ? (ln0 - 1) : 0;
     // v3.2R1(P1)：行号计数器与列模板前置（fallback 分支也要用——原实现行号
     // 声明在 fallback 之后，挪用会 TDZ；折叠未变区间也必须推进计数器，否则
     // 折叠段之后的行号整体偏小「折叠行数」）
@@ -151,8 +156,8 @@
     // 计数器照推（v3.2R1 修复：否则折叠段之后行号整体偏小）
     let h = '';
     // v3.5.336：真实起始行（ZCode 式转写下发）——ln0 到位时行号族直接从
-    // 文件真实行起数（Edit 原位替换旧新同位，两侧同偏移）；缺席保持相对
-    let _off = (typeof ln0 === 'number' && ln0 >= 1) ? (ln0 - 1) : 0;
+    // 文件真实行起数（Edit 原位替换旧新同位，两侧同偏移）；缺席保持相对。
+    // （_off 声明已前置到函数头计数器旁——cherry-pick 双声明实锤后归一）
     const CTX = 3;
     let k = 0;
     const mark = (op, line) => {
