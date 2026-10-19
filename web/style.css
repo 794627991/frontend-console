@@ -2409,8 +2409,11 @@ html {
 /* 动画批C：live 新行进入淡入（ZCode 逐行渐显对位；hist 重建不打类不播） */
 .hg-enter { animation: hg-enter-kf var(--hg-dur, .3s) var(--hg-ease, cubic-bezier(.4,0,.2,1)) both; }
 @keyframes hg-enter-kf { from { opacity: 0; transform: translateY(.4em); } to { opacity: 1; transform: translateY(0); } }
+/* 动画批D：徽章翻动（状态翻转纵向翻入） */
+.hg-flip { animation: hg-flip-kf var(--hg-dur, .3s) var(--hg-ease, cubic-bezier(.4,0,.2,1)); display: inline-flex; }
+@keyframes hg-flip-kf { from { transform: translateY(.6em); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {
-  .hg-enter, .h-think-prev > .exit, .h-think-prev > .enter { animation: none; }
+  .hg-enter, .h-think-prev > .exit, .h-think-prev > .enter, .hg-flip { animation: none; }
   .h-tool.col .h-tool-coll, .h-turn-body { transition: none; }
 }
 

@@ -1056,6 +1056,7 @@
           toolRow.classList.toggle('err', !!err);
           const slots = toolRow.querySelector('.h-tslots');
           if (slots) slots.innerHTML = statusBadge(err ? 'error' : 'completed');
+    if (typeof _hgBadgeFlip === 'function') _hgBadgeFlip(slots);
           const full = String(text || '').trim();
           const coll = toolRow.querySelector('.h-tool-coll');
           // v3.2.31（bug3 静噪）：diff 行改动体已在场时成功回执不落（主链
@@ -1384,6 +1385,7 @@
     toolRow.classList.toggle('err', bad);   // v3.2.5 口径：错误只标红不自动展开
     const slots = toolRow.querySelector('.h-tslots');
     if (slots) slots.innerHTML = statusBadge(bad ? 'error' : 'completed');
+    if (typeof _hgBadgeFlip === 'function') _hgBadgeFlip(slots);
     if (full && full !== '(no content)') {
       const coll = toolRow.querySelector('.h-tool-coll');
       // v3.2.31（bug3 静噪）：diff 行改动体已在场时成功回执不落（主链 hideOk

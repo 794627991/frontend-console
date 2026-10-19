@@ -1,4 +1,11 @@
 // harness tools.js (v3.0 自 buildClaudeHarnessTab 拆出,定义体零改动,缩进保持原样)
+  // 动画批D：徽章状态翻动（ZCode FlipMetricValue 对位——状态翻转时纵向翻入）
+  function _hgBadgeFlip(el) {
+    if (!el || !el.classList) return;
+    el.classList.remove('hg-flip');
+    void el.offsetWidth;   // 重触发
+    el.classList.add('hg-flip');
+  }
   function statusBadge(st) {
     // running 蓝 / completed 绿 / error 红 / denied 橙
     const map = { running: ['运行中', 'b-run'], completed: ['完成', 'b-done'],
@@ -754,7 +761,7 @@
     const showRow = row._grouped ? row._groupHead : row;
     const slots = showRow.querySelector('.h-tslots');
     if (slots && st !== 'completed') slots.innerHTML = statusBadge(st);
-    else if (slots && !row._grouped) slots.innerHTML = statusBadge(st);
+    _hgBadgeFlip(slots);
     // v2.21：子代理完成摘要——点开折叠体才见报告太隐身，徽章旁给
     // 报告首行 60 字（悬浮看前 400 字）；全文仍在折叠体
     if (cfg.kind === 'agent' && st === 'completed' && !row._grouped && slots) {
