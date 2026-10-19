@@ -696,10 +696,8 @@
                             _rinp.pattern || _rinp.query || _rinp.description ||
                             _rinp.subject || _rinp.prompt || '');
 
-    // 注意：这里不 closeRun——run 的边界是文本/thinking/用户消息/result；
-    // tool_use 本身若是同名工具正是 run 的延续，由 toolRunPush 判定并入组。
     // R2c：非 sub 已在前置块（hgToolCard）return——此处仅 isSub（段内
-    // 抽屉行，独立形态不收编）
+    // 抽屉行，独立形态不收编；toolRunPush 已随 F6 删，run 边界注释随迁）
     const row = _subToolDrawerRow(cfg, name, label, b.input);
     row._preview = row._preview !== undefined ? row._preview
       : (cfg.mode === 'one-line' ? cfg.get(b.input) : (typeof cfg.title === 'function' ? cfg.title(b.input) : label)) || '';
@@ -709,8 +707,7 @@
     // v3.3.7（P5 自愈）：live 事件偶发丢 tool_use input（CLI/网关流异常，实测
     // 多命令/heredoc 聚集）——记号入账，回合一结束 _hgPatchMissingCmds 从
     // 转写回填真命令（转写恒完整：jsonl 落盘前 CLI 已组装完 input）
-    if (!isSub && cfg.kind === 'bash' && !Object.keys(_rinp).length && b.id)
-      (_HG.noInputTids || (_HG.noInputTids = new Set())).add(b.id);
+
     row._cfg = cfg;
     row._id = id;
     row.dataset.tid = id;                 // 快照/段认回后重扫挂映射用
@@ -724,31 +721,12 @@
     }
     // v2.21：子代理行运行秒表——子代理一跑几分钟，主流毫无动静，没有
     // 秒表就像卡死。完成时由 renderOneToolResult 清表。
-    if (cfg.kind === 'agent' && !isSub) {
-      const t0 = Date.now();
-      row._agentTimer = setInterval(() => {
-        // 行已游离（切会话清场/回退重建后迟到的 tool_result 走 orphan 分支
-        // 永远清不到表）——首行自杀，防 interval+DOM 子树无界累积
-        if (!row.isConnected) { clearInterval(row._agentTimer); row._agentTimer = null; return; }
-        _hgAgentSlotPaint(row, t0);
-      }, 1000);
-    }
+
     // v2.43：组统计去混——子代理内部调用不进主链组头胶囊（用户实锤「子代理×1
     // Bash×21…」把子代理活动压成数字）。Agent 派发本身（!isSub 的 agent 卡）
     // 仍计数——它是主会话的动作。
-    if (!isSub) {
-      drawerCount(name);                  // v2.7：计数进组（v3.2：折叠头副位「· N 工具」）
-      // v2.8：抽屉时代不再合并同名 run——每条 Bash/Read/Grep 调用都是独立过程行
-      // （用户明确要能看到每一次执行；组头徽章已承担"×N 汇总"职责）
-      _HG.run = { name, head: row, rows: [row] };
-      _tlPlace(row, name, b.input);       // v3.2：ZCode 式内联时间线（查阅聚组）
-    } else {
-      _subBlkAppendTool(subId, row);      // v2.43：子代理工具行入段体
-    }
-    // v2.32 面板：活动流记录（ring buffer 20 条；历史回放不记只看实时；
-    // v2.43：主链专属——子代理内部调用不入主会话活动流）
-    if (!_HG.openState && !isSub)
-      _hgActPush({ tid: id, name, label, preview: row._preview || '', kind: cfg.kind, t0: Date.now() });
+    _subBlkAppendTool(subId, row);      // v2.43：子代理工具行入段体（isSub 专属路径）
+
   }
   function renderToolResult(o) {
     const c = o.message && o.message.content;
