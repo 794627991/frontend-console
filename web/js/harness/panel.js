@@ -882,11 +882,11 @@
       const a = (_HG.agents || {})[rid]
         || ((_HG.dyn && _HG.dyn.agentsRpl) || []).find(x => x.rid === rid) || {};
       if (rb.dataset.hgReplayCollab) {
-        _subReplay(rid, rb.dataset.hgReplayType || a.type || '协作', a.desc || '', '');
+        _subReplay(rid, rb.dataset.hgReplayType || a.type || '协作', a.desc || '', '', true);
       } else {
         const aid = rb.dataset.hgReplayAid || a.taskId || a.agentId || '';
         if (!aid) { showBanner('该子代理没有 agentId 记录，无法回放', 2600); return; }
-        _subReplay(rid, rb.dataset.hgReplayType || a.type || 'Task', a.desc || '', aid);
+        _subReplay(rid, rb.dataset.hgReplayType || a.type || 'Task', a.desc || '', aid, true);
       }
       return;
     }

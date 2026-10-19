@@ -209,7 +209,7 @@
       // v3.2R1(P2)：无 agentId 本地单 toast 即止——_subReplay('') 内部还会
       // 弹一条，双 banner 2.6s 内相继覆盖
       if (!a.agentId) { showBanner('该历史子代理无 agentId 记录，无法回放', 2600); return; }
-      _subReplay('rpl:' + tid, a.type, a.desc, a.agentId);
+      _subReplay('rpl:' + tid, a.type, a.desc, a.agentId, true);
       return;
     }
     const a = (_HG.agents || {})[tid];
@@ -252,7 +252,11 @@
       _subReopen(tid);
       return;
     }
-    _subReplay(tid, a.type, a.desc, a.taskId || a.agentId || '');   // 已结束 → 回放 tab（collab 分支内部自理）
+    // 已结束 → 回放 tab（collab 分支内部自理）。实测修复：force=true——369 只
+    // 补了 _subReopen 路径，目录已结束行此直调无 force 时 tab 已在（replayed
+    // 标记命中）只切换不重拉，旧版双通道乱序残留 DOM（终稿后跟中途文本冒充
+    // 结论）继续可见；重开=全量重铺幂等
+    _subReplay(tid, a.type, a.desc, a.taskId || a.agentId || '', true);
   }
   function _subReset() {
     // v3.2.6：先停全部窗格秒表/目录秒表再拆档（防孤儿 interval）
