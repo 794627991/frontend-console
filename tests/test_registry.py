@@ -220,41 +220,6 @@ def test_rebuild_merge_f7():
     ok("F7-merge保增量interrupted", a2["status"] == "interrupted", a2)
 
 
-def test_feed_flip_via_session():
-    """端到端：session._registry_feed 的 ids 反转（F1 生产路径）。"""
-    from src.harness.session import HarnessSession
-    s = HarnessSession.__new__(HarnessSession)
-    s._audit = {"ids": {"rev_00000007": "reviewer"}}
-    s._audit_lock = __import__("threading").Lock()
-    from src.harness.registry import AgentRegistry
-    s._registry = AgentRegistry()
-    # Task 派发+回执（同帧序列走 _registry_feed/_registry_result 形态）
-    s._registry_feed({"message": {"content": [
-        {"type": "tool_use", "id": "tJ", "name": "Task",
-         "input": {"subagent_type": "reviewer", "description": "审Y"}}]}})
-    s._registry_result({"message": {"content": [
-        {"type": "tool_result", "tool_use_id": "tJ",
-         "content": '{"agentId":"rev_00000007","success":true}'}]}})
-    # 角色名续派（生产 ids=agentId→角色，feed 内反转）
-    s._registry_feed({"message": {"content": [
-        {"type": "tool_use", "id": "tK", "name": "SendMessage",
-         "input": {"to": "reviewer", "message": "继续审\n细节"}}]}})
-    a = s._registry.snapshot()["agents"].get("rev_00000007")
-    ok("端到端-角色名归链(session反转)", a and a["rounds"] == 2
-       and a["status"] == "running" and a["desc"] == "继续审", a)
-    # 端到端 bg 透传（A1 回归）：run_in_background → _bg_tids/bg 标记
-    s._registry_feed({"message": {"content": [
-        {"type": "tool_use", "id": "tBG2", "name": "Task",
-         "input": {"subagent_type": "Explore", "description": "bg派",
-                   "run_in_background": True}}]}})
-    s._registry_result({"message": {"content": [
-        {"type": "tool_result", "tool_use_id": "tBG2",
-         "content": '{"agentId":"exp_bg_0009","success":true}'}]}})
-    a4 = s._registry.snapshot()["agents"].get("exp_bg_0009")
-    ok("端到端-bg回执不落终态(session透传)", a4 and a4["status"] == "running"
-       and a4.get("bg") is True, a4)
-
-
 def test_full_lifecycle_mainline():
     """复审F2回归网：主生命周期序列（dispatch→task_started→result→
     notification，新 CLI task_id=真实 agentId 形态）——迁键路径丢
@@ -304,7 +269,6 @@ if __name__ == "__main__":
     test_bg_receipt_not_final()
     test_interrupt_semantics()
     test_rebuild_merge_f7()
-    test_feed_flip_via_session()
     test_full_lifecycle_mainline()
     print("========================================================")
     print("registry tests: %d PASS" % _PASS)

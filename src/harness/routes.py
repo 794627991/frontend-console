@@ -1134,9 +1134,10 @@ def harness_agents():
     s = _get_or_create(request.args.get("sid") or "")
     if not s:
         return jsonify({"ok": False, "err": "会话不存在"}), 404
-    # 冷查询影子通道（提交2/4）：?src=cold 走 ZCode 式磁盘现算投影，与既有
-    # 增量注册表同形对账（tools/_agents_diff.py）；翻转（提交3）后成默认
-    if (request.args.get("src") or "") == "cold":
+    # 提交3翻转：默认走冷查询（ZCode 式磁盘现算投影——F5/切会话/后端重启
+    # 的正确性由唯一真源=磁盘构造性保证）。?src=reg 保留旧增量注册表通道
+    # （对账/回滚用，提交4退役删除）
+    if (request.args.get("src") or "") != "reg":
         try:
             from .subagent_readmodel import get_model
             proj = get_model(request.args.get("sid") or "").refresh(s)

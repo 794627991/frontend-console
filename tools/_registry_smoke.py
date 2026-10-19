@@ -33,7 +33,7 @@ def main():
     c = app.test_client()
 
     def snap():
-        r = c.get("/api/harness/agents?sid=" + s.sid)
+        r = c.get("/api/harness/agents?sid=%s&src=reg" % s.sid)
         j = r.get_json()
         assert j and j["ok"], j
         return j
