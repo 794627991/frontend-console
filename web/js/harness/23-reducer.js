@@ -95,6 +95,12 @@
                          hi: it.hi, ts: it.ts || 0, prevTs: it.prevTs || 0,
                          live: !!it.live }, fx);
     },
+    user_message(p, it, fx) {
+      // R2b：user 气泡（组管线边界由 renderUser 内部承担——v2.24.1 定调）
+      _hgEntryPush(p, { t: 'user_message', text: it.text || '',
+                         images: it.images || [], files: it.files || [],
+                         ts: it.ts || 0, live: !!it.live }, fx);
+    },
     subagent_started(p, it, fx) {
       p.agents[it.tid] = { type: it.agent_type || 'Task', desc: it.desc || '',
                            bg: !!it.bg, taskId: it.task_id || '',

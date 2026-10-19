@@ -90,6 +90,12 @@
         case 'assistant_text':
           renderAsst(e.text || '', e.model || _HG.model || '');
           break;
+        // R2b：user 气泡——live/hist 同一入口（renderUser 承担组管线边界）；
+        // ts 时间条 hist 形态带（live 流式无）
+        case 'user_message':
+          renderUser(e.text || '', e.images || [], e.files || [], false,
+                     e.ts ? new Date(e.ts).getTime() : 0);
+          break;
         case 'assistant_thinking':
           if (e.live) {
             closeRun(); appendThinking(e.text || '');

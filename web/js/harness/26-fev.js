@@ -126,6 +126,24 @@
     return /^(mcp__vision__analyze_image|mcp__4_5v_mcp__analyze_image|analyze_image)$/i.test(String(nm || ''));
   }
 
+  // ---- R2b：user 行过滤规则（单一实现——live user_echo 与 hist role:user
+  //      两轨此前各持一份同款过滤，屎山点收敛处）。返回 {text, skip} ----
+  function _fevUserFilter(text, files) {
+    // ① 贴图占位回显（v3.2.16 定调）：CLI 对每次贴图落两条 user 行（真图
+    // 缩略 + "[Image: source: 路径]" 纯回显）——回显标记一律剥掉、路径不
+    // 并入附件；剥完空壳（无文字无他附件）整条不渲染
+    let t = String(text || '');
+    const _ims = t.match(/\[Image: source: [^\]]+?\]/g);
+    if (_ims) {
+      t = t.replace(/\[Image: source: [^\]]+?\]/g, '').trim();
+      if (!t && !(files || []).length) return { text: '', skip: true };
+    }
+    // ② 中断/续跑机器标记行（v3.2.12）：非用户输入，整条不渲染
+    if (/^(\[Request interrupted by user( for tool use)?\]|Continue from where you left off\.)/i.test(t.trim()))
+      return { text: t, skip: true };
+    return { text: t, skip: false };
+  }
+
   // ---- coldAdapter：transcript 行 → FEV 列表（纯函数，R1 起逐域接线）----
   function _fevFromHistLine(l) {
     // l = transcript_for 产出行 {role, ...}。role→FEV 映射；tool 行一拆二。

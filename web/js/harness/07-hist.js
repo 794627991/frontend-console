@@ -186,7 +186,9 @@
         // v2.24.1 回退气泡壳化：renderUser 承担组管线边界（上一组定稿/开新组），
         // 壳化绕过管线导致思考/工具挂错组（排序乱，用户实测不可接受）——
         // 正确性优先，历史气泡恢复全渲染（懒抽屉+懒高亮已覆盖大头开销）。
-        renderUser(l.text, imgs, files, false, l.ts ? new Date(l.ts).getTime() : 0);
+        // R2b：走 dispatch（live/hist 唯一渲染入口）
+        _hgDispatch({ t: 'user_message', text: l.text,
+                      images: imgs, files: files, ts: _ts });
       }
     }
     // R2a（气泡域归一）：assistant/thinking 走 FEV dispatch——live/hist 同一
