@@ -235,6 +235,29 @@ def child_outcome_from_tail(tail_lines):
             has_tool = any(isinstance(x, dict) and x.get("type") == "tool_use"
                            for x in blocks)
             if has_tool:
+                # 实测修复（用户实锤「复审完成的 reviewer 显示中断」）：末条
+                # assistant=SubagentHandback 交付（工坊协议：报告交付即终局，
+                # 其后 user(tool_result) 是 CLI 确认回执）——旧码按 generic
+                # tool_use 判 mid_flight，notify 又被 last_round 旧轮证据拦截
+                # 后掉进 saw_receipt 兜底误判 interrupted+lost。handback 形态
+                # 定案 done（summary 取 input 最长字段，与转写 text 化同口径）
+                hb = next((x for x in blocks if isinstance(x, dict)
+                           and x.get("type") == "tool_use"
+                           and x.get("name") == "SubagentHandback"), None)
+                if hb is not None:
+                    _rep = ""
+                    try:
+                        for _v in (hb.get("input") or {}).values():
+                            if isinstance(_v, str) and len(_v) > len(_rep):
+                                _rep = _v
+                    except Exception:
+                        _rep = ""
+                    if _rep.strip():
+                        out["terminal"] = True
+                        out["status"] = "done"
+                        out["summary"] = _rep[:200]
+                        out["endedAt"] = ts
+                        return out
                 # 最后 assistant 在调工具=在干活（ZCode hasToolRound 防御）
                 return out
             # 最后 assistant 纯文本=终局 success——立即定案（不再向更早探）

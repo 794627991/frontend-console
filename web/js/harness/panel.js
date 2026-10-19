@@ -289,7 +289,10 @@
         _desc = (typeof _peerDesc === 'function' ? _peerDesc(aid, '') : '')
           || ((_HG.peerNames || {})[aid] || String(aid).slice(-6));
       }
-      if (a.done && aid) { _subReplay(tid, a.type, _desc, aid); return; }
+      // 实测修复（用户实锤「结论不对板」）：done 路径也 force 重铺——tab 已在
+      // 时旧码只切换不重建，窗格留的是旧版双通道喂数的乱序残留 DOM（铺底行
+      // 与中途增量交错，最后一条 asst=中途文本冒充结论）；重开=全量重铺幂等
+      if (a.done && aid) { _subReplay(tid, a.type, _desc, aid, true); return; }
       // v3.2.6R2（用户实锤「运行过程中不能点开看」）：运行中重开也走全量
       // 铺底——旧态只建空脚手架等增量，中途重开=白板（此前事件不重现）。
       // force 回放 + F3 运行态分支（不定稿/秒表起跑/镜像续流）= 铺底即实况
