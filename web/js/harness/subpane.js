@@ -1462,7 +1462,7 @@
         _b.root.dataset.hgBackfill = '1';   // 占位防重复判定，不发起
       } else {
         _b.root.dataset.hgBackfill = '1';
-        _subTailDrainThenBackfill(tid, _aid);
+        _subTailDrain(_aid);   // 批1：drain 改道转写通道（窗格+摘要；段回填随段退役）
       }
     }
     // v2.47（需求2）：协作段连包装 id 都没有（task_started 事件缺 task_id 且
@@ -1599,49 +1599,107 @@
     const b = _HG.subBlk && _HG.subBlk[tid];
     return !!(b && b.root && b.root.dataset.hgFullfeed === '1');
   }
+  // ===== 批1（迁出主窗·喂数单通道化）：窗格内容唯一真源=磁盘转写 =====
+  // SSE isSub 帧停喂窗格（sse.js 降级状态层），本 tick 拉转写增量经 gate
+  // 过滤后喂数：窗格 tab 开着且未回放→时间线行（_subFeed/_subResult 自带
+  // rp/raw/tuid 查重，无账本首拉全量不双份）；无条件写单行卡摘要+计数。
+  // 段卡（.h-subblock）本批起静止（不再收增量），批2 整体退役。
+  function _subTlGate(kind, text) {
+    // 环境气泡过滤单点（问题d 根治）：黑名单对齐 transcript.py
+    // _subagent_rows_from_jsonl 的协议噪音口径；SSE 摘要与 tail 喂入共用
+    const t = String(text || '').trim();
+    if (!t) return false;
+    if (kind === 'text') {
+      if (/^#(Environment|Notes|MCP Server Instructions)\b/.test(t)) return false;
+      if (/^Caveat:/.test(t)) return false;
+      if (/^<system-reminder>/.test(t)) return false;
+    }
+    return true;
+  }
+  async function _subTailFeed(aid) {
+    // 转写增量→窗格+摘要（agentId 键；offset 账本 subTail[agentId] 内存化，
+    // 不再落段 dataset——切会话清账后首拉全量，已铺底行由查重消化一次性浪费）
+    if (!aid) return;
+    if (_subTailBusy[aid]) return;
+    _subTailBusy[aid] = true;
+    const sidAt = _HG.sid;
+    try {
+      const off = _HG.subTail[aid] || 0;
+      const r = await fetch('/api/harness/subagent_tail?sid=' + encodeURIComponent(sidAt)
+        + '&agent=' + encodeURIComponent(aid) + '&offset=' + off);
+      const j = await r.json();
+      if (_HG.sid !== sidAt || !j.ok || !j.found) return;
+      if (typeof j.offset === 'number') _HG.subTail[aid] = j.offset;
+      const txt = j.text || '';
+      if (!txt) return;
+      for (const ln of txt.split('\n')) {
+        const s = ln.trim();
+        if (!s) continue;
+        let o; try { o = JSON.parse(s); } catch (_) { continue; }
+        if (!o || o.isMeta) continue;   // isMeta 行整行丢（F3 白名单口径）
+        const blocks = o.message && o.message.content;
+        if (!Array.isArray(blocks)) continue;
+        if (o.type === 'user') {
+          // user 行只吃 tool_result（窗格行回点配对）；text 块=注入/回显不进正文
+          for (const blk of blocks)
+            if (blk && blk.type === 'tool_result' && blk.tool_use_id) _subResult(aid, blk);
+          continue;
+        }
+        const kept = [];
+        for (const blk of blocks) {
+          if (!blk) continue;
+          if (blk.type === 'thinking' && String(blk.thinking || '').trim()) kept.push(blk);
+          else if (blk.type === 'text' && _subTlGate('text', blk.text)) kept.push(blk);
+          else if (blk.type === 'tool_use' && blk.name) kept.push(blk);
+        }
+        if (kept.length) _subFeed(aid, kept);   // tab 未开/回放态自然早退
+        for (const blk of kept) {
+          if (blk.type === 'thinking') { _subLivePaint(aid, '思考中…'); _hgAgCnt(aid, 1, 0); }
+          else if (blk.type === 'text') {
+            _subLivePaint(aid, '正文 · ' + String(blk.text).replace(/\s+/g, ' ').trim().slice(0, 60));
+            _hgAgCnt(aid, 1, 0);
+          } else {
+            const inp = blk.input || {};
+            const hint = inp.command || inp.file_path || inp.path || inp.pattern ||
+                         inp.query || inp.description || inp.subject || inp.prompt || '';
+            _subLivePaint(aid, (_hToolLabel(blk.name) || '工具') + ' · ' + String(hint).slice(0, 64));
+            _hgAgCnt(aid, 0, 1);
+          }
+        }
+      }
+    } catch (_) {}
+    finally { _subTailBusy[aid] = false; }
+  }
+  async function _subTailDrain(aid) {
+    // 完成信号前最后一轮增量收尾（原 _subTailDrainThenBackfill 的 drain 段；
+    // 段回填随段退役）——drain 到无推进（≤6 轮）
+    const sidAt = _HG.sid;
+    try {
+      for (let k = 0; k < 6; k++) {
+        let wait = 0;
+        while (_subTailBusy[aid] && wait < 3000) {
+          await new Promise(r => setTimeout(r, 120)); wait += 120;
+        }
+        if (_HG.sid !== sidAt) return;
+        const off0 = _HG.subTail[aid] || 0;
+        await _subTailFeed(aid);
+        if ((_HG.subTail[aid] || 0) <= off0) break;
+      }
+    } catch (_) {}
+  }
   function _subThinkPollTick() {
-    // v3.5.51（designer B2）：只读模式早退——_subCollabDomPoll 会扫 RO flow
-    // 的协作段并把主会话在跑代理的 agentId 标 _subTailDead（退出后停喂增量）；
-    // RO 期间 agents 已被清空，本 tick 本就无有效工作
+    // v3.5.51：只读模式早退（RO 期间 agents 已清空，本 tick 无有效工作）
     if (_HG.readonly) return;
     if (!_HG.sid) return;
-    // v2.47（需求2）：协作段 DOM 兜底扫描先于 busy 门槛——切会话往返后
-    // agents 档案已清（task_started 不重放）而协作代理还在后台跑，且那正是
-    // 主流空闲（!busy）的常态时段，放门槛后面会被饿死；扫描本身只是一次
-    // querySelectorAll（无协作段=零成本）
-    _subCollabDomPoll();
-    // v2.47（需求2）：busy 门槛放宽为「busy 或任一代理在跑」——协作包装
-    // 后台执行，主回合 result 后 busy 已 false 而任务仍在跑；纯空闲（无在跑
-    // 代理）仍零请求
+    // busy 门槛：busy 或任一代理在跑（协作后台代理跨回合续跑的常态时段）
     if (!_HG.busy && !_hgAgentsRunning()) return;
     const ag = _HG.agents || {};
-    for (const tid in ag) {
-      const a = ag[tid];
-      // v2.47：collab 不再一票跳过——段已建（需求2）、taskId=peerSent 反查
-      // 的真实 id（P4），转写三源可增量读
-      if (!a || a.done || !a.taskId) continue;
-      // v2.58：续派切段——该 agentId 的增量喂给**当前活跃段**（subTailSeg
-      // 映射在 SendMessage 派发时切到新段），旧段即使档案未 done 也不再吃
-      // 内容（用户实锤「续审内容跑回第一个审计段」）
-      // subagent-registry F3（全审）：Sync 后遍历键=agentId 而首轮 Task 无
-      // subTailSeg 映射——旧兜底 tgt=键本身会让 _subBlkGet(aid) 新建第二张
-      // 段卡（原段冻结断流）。改按条目 tids 链找在场段；全 miss 才落键
-      const _tgtSeg = (_HG.subTailSeg || {})[a.taskId]
-        || ((a.tids || []).find(t => _HG.subBlk && _HG.subBlk[t]
-              && _HG.subBlk[t].root && _HG.subBlk[t].root.isConnected
-              && !_HG.subBlk[t].root.classList.contains('done')))
-        || tid;
-      const tgt = _tgtSeg;
-      const b = _HG.subBlk && _HG.subBlk[tgt];
-      if (!b || !b.root || !b.root.isConnected || b.root.classList.contains('done')) {
-        // v3.5.127（用户实锤「切会话回来子代理段变回放定格不刷新」）：协作段
-        // 有 _subCollabDomPoll 的 DOM 兜底认回，普通段没有对等物——切走时
-        // _subReset 清了 subBlk 映射，主循环空查全跳过=段定格。补对称认回：
-        // _subBlkGet 从快照 DOM 认回段（t0 从段头「运行中 Ns」还原+秒表复活）
-        const bb = _subBlkGet(tgt);
-        if (!bb || !bb.root || !bb.root.isConnected || bb.root.classList.contains('done')) continue;
-      }
-      _subTailFetch(tgt, a.taskId, _subFullFeedTid(tgt));
+    for (const k in ag) {
+      const a = ag[k];
+      if (!a || a.done || (!a.taskId && !a.agentId)) continue;
+      // 喂入键恒 agentId（taskId 归一后；_subFeed/_subResult/_subLivePaint
+      // 内部经 _subTid/_hgAg 解析到 tab/行卡，与档案键空间无关）
+      _subTailFeed(a.taskId || a.agentId || k);
     }
   }
   function _subCollabDomPoll() {

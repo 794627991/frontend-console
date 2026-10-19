@@ -479,7 +479,14 @@
   // v3.2.6：行内实时活动流——子代理 think/text/tool 事件到达即刷新（05-subblk
   // 三钩调用；ZCode animateSummaryContent 的静态等价物：最新子动作单行摘要）
   function _subLivePaint(pid, txt) {
-    const row = (_HG.rowById || {})[pid];
+    // 批1（喂数单通道化）：pid 恒 agentId（taskId 归一后），rowById 键=
+    // BindAid 后的 agentId；live 早期/键形态不一致时经 _hgAg 单点解析兜底
+    const _rb = _HG.rowById || {};
+    let row = _rb[pid];
+    if (!row) {
+      const a = typeof _hgAg === 'function' ? _hgAg(pid) : null;
+      if (a) row = _rb[a.taskId] || _rb[a.agentId];
+    }
     const lv = row && row.classList.contains('agentline')
       ? row.querySelector('.h-ag-live') : null;
     if (lv) lv.textContent = String(txt || '').trim().slice(0, 90);

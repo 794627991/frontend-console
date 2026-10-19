@@ -349,7 +349,9 @@
         // ——不再碰主链思考抽屉/正文气泡/run 归组/组统计；主链的 thinking
         // 段与 run 状态不被子代理事件打断（两路流各自独立）
         if (b.type === 'thinking' && b.thinking) {
-          if (isSub) _subThink(o.parent_tool_use_id, b.thinking);
+          // 批1（迁出主窗）：isSub 停喂段/窗格——降级状态层（摘要+计数）；
+          // 过程呈现统一走 _subTailFeed 转写通道（2s）
+          if (isSub) { _subLivePaint(o.parent_tool_use_id, '思考中…'); _hgAgCnt(o.parent_tool_use_id, 1, 0); }
           // R2a：主链 thinking 走 dispatch（渲染订阅 live 形态=closeRun+
           // appendThinking，与原直调等价；子代理段独立流不动）
           else _hgDispatch({ t: 'assistant_thinking', text: b.thinking, live: true });
@@ -358,7 +360,11 @@
           // 353 的 SSE 前缀过滤已撤（全审复核：实证泄漏向量是 tail 通道
           // [F3 已闭]，SSE 向量无帧级证据；该前缀会误杀以 "Environment"
           // 等开头的子代理真实产出且制造 live/replay 分叉）
-          if (isSub) _subText(o.parent_tool_use_id, b.text);
+          // 批1：isSub 摘要过 gate（环境气泡不进摘要）
+          if (isSub && _subTlGate('text', b.text)) {
+            _subLivePaint(o.parent_tool_use_id, '正文 · ' + String(b.text).replace(/\s+/g, ' ').trim().slice(0, 60));
+            _hgAgCnt(o.parent_tool_use_id, 1, 0);
+          }
           // R2a：主链气泡走 dispatch（endThinking 编排保留在先——顺序敏感）
           else { endThinking(); _hgDispatch({ t: 'assistant_text', text: b.text,
                        model: (o.message || {}).model || '', live: true }); }
@@ -429,8 +435,15 @@
               }
             }
             _hgPeerTimerStart(el, +el.dataset.t0 || Date.now());   // 卡内 .hg-peer-t 钩子走表
+          } else if (isSub) {
+            // 批1：isSub 工具帧停喂段/窗格——状态层摘要+计数
+            const _inp = b.input || {};
+            const _hint = _inp.command || _inp.file_path || _inp.path || _inp.pattern ||
+                          _inp.query || _inp.description || _inp.subject || _inp.prompt || '';
+            _subLivePaint(o.parent_tool_use_id, (_hToolLabel(b.name) || '工具') + ' · ' + String(_hint).slice(0, 64));
+            _hgAgCnt(o.parent_tool_use_id, 0, 1);
           } else {
-            renderToolUse(b, isSub, o.parent_tool_use_id);
+            renderToolUse(b, false, null);
             // v2.27.3：转交识图/其他会话 = 强过程反馈，分割线比收起的工具行显眼
             // v2.39：记 tool_use_id → to 映射——SendMessage 续派后台代理时 CLI
             // 包装成新 Task，task_notification.task_id 是包装后的新 id，与线的
@@ -522,8 +535,9 @@
           }
         }
       }
-      // v2.33：子代理消息分流进实时窗格（主 flow 照旧画灰色 sub 行，双处显示）
-      if (isSub) _subFeed(o.parent_tool_use_id, blocks);
+      // 批1（迁出主窗）：isSub 消息级分流停喂——窗格喂数唯一通道=转写
+      //（_subTailFeed 2s 轮询，喂入复用 _subFeed 行工厂）；主窗单行卡摘要
+      // 由上方块级分支驱动
       _hgScrollBottom();
     } else if (typ === 'user') {
       // v2.3.12：/compact 摘要行不渲染——它是模型续命记忆，显示成用户气泡是噪音
@@ -558,18 +572,9 @@
           return;
         }
       }
-      // v2.33：子代理内部的 tool_result 也分流进窗格（user 事件同带
-      // parent_tool_use_id；不属于已跟踪 tab 的忽略）
-      // v2.43：结果同时挂回主 flow 段内工具行（段不依赖窗格 tab 存活——
-      // tab 被上限逐出/✕ 关闭后徽章照常定格）
-      if (Array.isArray(c0) && o.parent_tool_use_id
-          && (_sub.tabs[o.parent_tool_use_id] || (_HG.subRows || {})[o.parent_tool_use_id]))
-        for (const b of c0)
-          if (b && b.type === 'tool_result') {
-            // v2.55R：窗格回点统一收口进 _subToolResult（其尾部调 _subResult）——
-            // 旧并联写法在 _subToolResult 自身镜像窗格后会造成双路径竞争
-            _subToolResult(o.parent_tool_use_id, b);
-          }
+      // 批1（迁出主窗）：isSub tool_result 分流停喂——窗格工具行回点由
+      // _subTailFeed 的 user 行 tool_result 配对承接（转写行序=落盘序，
+      // _subResult tuid/FIFO 双兜底）
       // v2.32 面板：子代理回场——tool_result 对上在跑的 Task 即完成，
       // 顺手存结果摘要/失败标志（面板完成行展示用，纯前端两行）
       // v2.35：后台 Task（run_in_background）的 tool_result 只是「已派出」
