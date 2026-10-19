@@ -26,6 +26,20 @@
       result: e.brief || '', found: e.found !== false,
       sid: sid || _HG.sid, reg: true };
   }
+  function _hgAg(key) {
+    // 冷查询批2：单点档案解析器——key（tid/agentId/档案键任一形态）→ 档案。
+    // 顺序：直配 → aidKey 反查 → tidMap 归链。全库键桥接只许走本函数/
+    // _subTid/tidMap 三件套（25-registry 头部纪律），旧三向反查/链扫描退役
+    const k = String(key || '');
+    if (!k) return null;
+    const ag = _HG.agents || {};
+    if (ag[k]) return ag[k];
+    const ak = (_HG.aidKey || {})[k];
+    if (ak && ag[ak]) return ag[ak];
+    const aid = (_HG.tidMap || {})[k];
+    if (aid && ag[aid]) return ag[aid];
+    return null;
+  }
   let _regSyncSeq = 0;
   async function _hgRegSync(sid, opts) {
     if (!sid) return;

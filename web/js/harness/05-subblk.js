@@ -1,11 +1,7 @@
 // harness subblk.js (v3.0 自 buildClaudeHarnessTab 拆出,定义体零改动,缩进保持原样)
   function _subBlkInfoLive(pid) {
-    // subagent-registry：段卡键=tid（dataset.hgSubblock），档案键=agentId
-    //（Sync 归并后）——tidMap 桥接双轨；两键都 miss=Sync 前的 live 瞬时
-    //（旧 tid 键档案仍在），直查兜底链全兼容
-    const a = (_HG.agents || {})[pid]
-            || (_HG.agents || {})[((_HG.tidMap || {})[pid])]
-            || {};
+    // 冷查询批2：段卡键（tid）→ 档案，单点解析（_hgAg：直配→aidKey→tidMap）
+    const a = (typeof _hgAg === 'function' ? _hgAg(pid) : null) || {};
     // v2.47（需求2）：collab 段头带「协作 ·」前缀（与真实子代理段视觉区分
     // ——独立会话，过程靠转写轮询/回放而非实况流）
     return { live: true, collab: !!a.collab,

@@ -396,74 +396,32 @@
   // tabs 直命中 → agents 反查（原始 tid 的 taskId/agentId 关联任一命中）→ 原键。
   // agents 档案天然携带三向关联（X.taskId=A、包装 b.id.taskId=A），无需 alias 表。
   function _subTid(pid) {
+    // 冷查询批2：单点解析（tabs 直配 → tidMap 得 aid → tabs[aid] →
+    // tidMap 反扫）。tidMap 写点已完备（批1 I2：task_started/SendMessage/
+    // collab/前台回执/镜像 aid/Sync 全写），旧三向反查/链扫描退役。
+    // 反扫版覆盖「Sync 后目录行 agentId 键而 tab 还在首见 tid 键」的
+    // 旧漏配形态（tidMap[t]===aid 命中即归）
     const p = String(pid || '');
     if (!p || _sub.tabs[p]) return p;
-    // subagent-registry 阶段3：注册表 tidMap 优先（后端权威归一——包装
-    // task id/派发 tool_use id → 真实 agentId 一表直达，历次归一 miss 的
-    // 根治）。命中且 tab 已按 agentId 开着/agents 有档即归一；未 Sync 到
-    // （live 瞬时）回落下方旧三向（过渡期兼容，Sync 后自然 no-op）
-    const _rAid = (_HG.tidMap || {})[p];
-    if (_rAid && _rAid !== p) {
-      if (_sub.tabs[_rAid]) return _rAid;
-      if ((_HG.agents || {})[_rAid]) return _rAid;
-    }
-    // 匹配向一：pid=真实 agentId——tab 档案 taskId/agentId 直指
-    for (const t in _sub.tabs) {
-      const a = (_HG.agents || {})[t] || {};
-      if (a && (a.taskId === p || a.agentId === p)) return t;
-    }
-    // v3.4R（全审P2）匹配向二：pid=续派包装 id——取包装自身档案的 taskId，
-    // 找共享同一 taskId 的 tab（X.taskId=A ≡ B.taskId=A）。续派事件流/镜像/
-    // 完成信号携带的都是包装 id，缺此向归一永不命中
-    const pa = (_HG.agents || {})[p] || {};
-    if (pa.taskId) {
-      for (const t in _sub.tabs) {
-        // v3.4R2（复审N2/N3）：agentId-only 档案变体 + tab 键=真实 id 角落
-        const a = (_HG.agents || {})[t] || {};
-        if (a && (a.taskId === pa.taskId || a.agentId === pa.taskId)) return t;
-        if (t === pa.taskId) return t;
+    const aid = (_HG.tidMap || {})[p];
+    if (aid) {
+      if (_sub.tabs[aid]) return aid;
+      for (const t in _HG.tidMap) {
+        if (_HG.tidMap[t] === aid && _sub.tabs[t]) return t;
       }
-    }
-    // v3.5.147（用户拍板「所有 sendmessage（各种续派）点开必须原封不动是
-    // 原子代理的 tab，不能单开」）：**包装归一到底**——上两向全 miss（原 tab
-    // 被 6 个上限逐出/从未开过）时，旧实现 return p 给包装 id 让 _subOpen/
-    // _subReopen 单开一个包装 tab（label 虽溯源友好名、内容只有续派轮）。
-    // 改为归回**原代理键**：包装档案 taskId=peerSent 反查的真实 agentId，
-    // 与原档案 agentId 同源——按它反查原档案键；原档案已清（切会话往返）
-    // 落 pa.taskId 本身（_subReopen 按转写重开原代理回放，绝不给包装开 tab）
-    if (pa.collab && pa.taskId) {
-      for (const k in (_HG.agents || {})) {
-        const x = (_HG.agents || {})[k];
-        if (x && !x.collab && x !== pa &&
-            (x.agentId === pa.taskId || x.taskId === pa.taskId)) return k;
-      }
-      return String(pa.taskId);
+      return aid;   // 归回 agentId（_subOpen/_subReopen 按它定位转写，绝不单开包装 tab）
     }
     return p;
   }
-  // v3.4：链式运行态——原始档案 done 之外，任一续派包装（taskId 关联链）在跑
-  // 都算该代理运行中（回放续流判定用；归一后 agents[T].done 只代表首轮）
+  // 冷查询批2：一链一档（归链后 done 即整链状态，链扫描退役）
   function _subAgRunning(tid) {
-    const a0 = (_HG.agents || {})[tid];
-    if (a0 && !a0.done) return true;
-    if (a0) {
-      for (const k in (_HG.agents || {})) {
-        const a = _HG.agents[k];
-        if (a && !a.done && a.taskId &&
-            (a.taskId === a0.taskId || a.taskId === a0.agentId)) return true;
-      }
-    }
-    return false;
+    const a = _hgAg(tid);
+    return !!(a && !a.done);
   }
   function _subUserFlush(key) {
     const q = _HG.subUserQ;
     if (!q || !q[key] || !q[key].length) return;
-    let tb = _sub.tabs[key];   // tid 直配
-    if (!tb) {                 // agentId 配：agents[tid].taskId === key
-      for (const k in (_HG.agents || {})) {
-        if ((_HG.agents[k].taskId || '') === key && _sub.tabs[k]) { tb = _sub.tabs[k]; break; }
-      }
-    }
+    const tb = _sub.tabs[key] || _sub.tabs[_subTid(key)];   // 单点解析
     if (!tb || !tb.t || !tb.t.tl) return;   // 窗格未开——留队等开
     const texts = q[key];
     delete q[key];
@@ -768,12 +726,10 @@
       // 行数有增才重建（内容无变化不动 DOM 零闪烁）。镜像在喂时轮询空转
       // 兜底；镜像断了轮询就是唯一跟随通道——无论断因，永远在刷新。
       try {
-        const _aF = cur.tid0 ? ((_HG.agents || {})[cur.tid0] || (_HG.agents || {})[tid]) : null;
-        // v3.5.327（用户实锤「全部不跟随！不刷新！」）：活判定改链式——归一
-        // 键的单档案在「断了，重来」（interrupt sweep 收 err+done）后判死，
-        // 但 SendMessage 续派包装在链上活着；旧判定把无条件跟随轮询整个废
-        // 掉，tab 停在断流瞬间的 3 行。链上任一在跑=tab 活着=永远刷新
-        if (_aF && (!_aF.done || _subAgRunning(tid)) && _sub.active === tid) {
+        // 冷查询批2：单点解析 + 一链一档（done 即整链状态，链式判定/
+        // 链环收口退役——转写终态只收本档）
+        const _aF = _hgAg(cur.tid0 || tid);
+        if (_aF && !_aF.done && _sub.active === tid) {
           // ① 活档案覆写定稿——「保持工作中」
           if (t.done) { t.done = false; t.durTxt = ''; _subTlHeadPaint(t); }
           // ② 无条件轮询（10s 节流；拉取在途/手动重拉期不并发）
@@ -796,21 +752,10 @@
                   // /轮询自然停→行卡定稿→胶囊/目录计数归位）
                   const _fin = _rowsF.length && _rowsF[_rowsF.length - 1].k === 'final'
                     ? _rowsF[_rowsF.length - 1] : null;
-                  // v3.5.327：final 收口扩整链——单档案已 done（中断 sweep 收过）
-                  // 但续派包装在跑时，旧判定跳过收口=包装永挂运行；转写终态是
-                  // 整条链（同 agentId）的权威终点，链上活跃档案一并收
-                  if (_fin && _aF && (!_aF.done || _subAgRunning(tid))) {
+                  if (_fin && _aF && !_aF.done) {
                     _aF.done = true; _aF.doneAt = Date.now();
                     _aF.result = String(_fin.text || _aF.result || '').slice(0, 2000);
                     _aF.err = !!_fin.err;
-                    for (const k in (_HG.agents || {})) {
-                      const x = (_HG.agents || {})[k];
-                      if (x && !x.done && x.taskId
-                          && (x.taskId === _aF.taskId || x.taskId === _aF.agentId)) {
-                        x.done = true; x.doneAt = Date.now();
-                        x.result = x.result || _aF.result; x.err = x.err || _aF.err;
-                      }
-                    }
                     try {
                       const _rowF = (_HG.rowById || {})[cur.tid0] || (_HG.rowById || {})[tid];
                       if (_rowF && typeof _hgAgentRowState === 'function')
@@ -969,12 +914,10 @@
     // 档案生死分——活代理=实况 tab（原名+绿点+秒表，镜像续流跟随当前环节），
     // 已结束=回放 tab（置灰徽章）。回放拉底机制不变（运行中也拉全量打底，
     // fetch 期挡增量/完成放行既有），仅 tab 态不再误标
-    const _a2 = a.done === undefined ? ((_HG.agents || {})[tid0] || {}) : a;
-    // v3.5.327（用户实锤 tab 挂「回放」角标但头部「实况·跟随中」）：活判定
-    // 改链式——归一键单档案被中断 sweep 收死后，tab 角标误标回放；链上
-    //（同 taskId 的续派包装）任一在跑即实况 tab（与 1214 头部判定同源）
+    // 冷查询批2：单点解析（一链一档，链式双查/链活判定退役）
+    const _a2 = a.done === undefined ? (_hgAg(tid0) || {}) : a;
     const _alive = (alive === true)
-      || (alive !== false && ((_a2 && !_a2.done) || _subAgRunning(tid) || _subAgRunning(tid0)));
+      || (alive !== false && (_a2 && !_a2.done));
     _subOpen(tid, type, desc, !_alive);
     const sc = _sub.tabs[tid] && _sub.tabs[tid].sc;
     if (!sc) return;
@@ -1082,12 +1025,8 @@
         if (_sub.tabs[tid]) _sub.tabs[tid]._retry = 0;   // v3.2.6R6：铺底成功重置重试额度
         // v3.5.273（用户实锤「明明是活跃的子代理，还是回放状态？」）：活代理
         // 拉全量打底≠回放——措辞按档案生死分（旧一律「回放 · …」误导）
-        // v3.5.275（对抗审 F4）：实时双键查档案——fetch 前快照 a.done 在
-        // 期间翻转会误标；包装键档案（归一键无档）同补（同款双查先例）
-        // v3.5.276（复审 R3）：镜像 _a2 的 done 级回退——归一键有档但缺
-        // done 字段且包装键 done=true 时，对象级回退会误落「实况」
-        const _aN0 = (_HG.agents || {})[tid] || {};
-        const _aNow = _aN0.done !== undefined ? _aN0 : ((_HG.agents || {})[tid0] || {});
+        // 冷查询批2：fetch 后实时单点解析（双键回退退役）
+        const _aNow = _hgAg(tid) || _hgAg(tid0) || {};
         // v3.5.278（用户实锤图6「已工作45秒」）：活代理铺底后轮 t0 用档案
         // 起跑时刻——转写首行 ts 是落盘时刻（CLI 刷盘延迟），当 t0=首行 ts
         // 秒表被重置成「刚起跑」，与真实运行时长（胶囊 31 分）矛盾
@@ -1492,11 +1431,8 @@
   function _subBlkFinish(tid, err, aidForce) {
     if (!_subBlkAdopt(tid)) return;    // 段不在（无过程行的代理/协作包装）——无事可做
     _subBlkState(tid, err);
-    // subagent-registry：tidMap 桥（段键=tid/档案键=agentId 双轨，同
-    // _subBlkInfoLive）——Sync 后按 agentId 键取档，taskId=真实 id 落
-    // hgSubr（回放入口不落包装 id）
-    const _a = (_HG.agents || {})[tid]
-            || (_HG.agents || {})[((_HG.tidMap || {})[tid])] || {};
+    // 冷查询批2：单点解析（段键 tid → 档案，_hgAg 直配→aidKey→tidMap）
+    const _a = (typeof _hgAg === 'function' ? _hgAg(tid) : null) || {};
     // v2.46R（P4）：档案 taskId 优先——续派形态下它是 peerSent 反查的真实
     // agentId，aidForce（notification.task_id）是 CLI 包装新 id；常规 Agent
     // 两者同值（v2.44 实证同源），顺序翻转零影响

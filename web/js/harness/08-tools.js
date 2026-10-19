@@ -489,15 +489,9 @@
   // 主 tid / agentId / 续派包装 id：直查 miss 时按档案三向关联反查 + _subTid
   // 归一（与 _subBlkGet 认段同源思路，不依赖窗格 tab 存活）
   function _hgAgCnt(pid, think, tool) {
-    const ag = _HG.agents || {};
-    let a = ag[pid];
-    if (!a) {
-      for (const k in ag) {
-        const x = ag[k];
-        if (x && !x.done && (x.agentId === pid || x.taskId === pid)) { a = x; break; }
-      }
-    }
-    if (!a) a = ag[_subTid(pid)];
+    // 冷查询批2：单点解析（旧 agentId/taskId 双向扫描退役）
+    const a = (typeof _hgAg === 'function' ? _hgAg(pid) : null)
+           || (typeof _subTid === 'function' ? (_HG.agents || {})[_subTid(pid)] : null);
     if (a) { a.thinkN = (a.thinkN || 0) + (think || 0); a.toolN = (a.toolN || 0) + (tool || 0); }
   }
   // v3.5.142（用户实锤「派出去就完成」）：后台子代理派发 ack 守卫——
