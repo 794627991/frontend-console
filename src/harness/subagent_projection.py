@@ -473,16 +473,26 @@ def project(facts, child_states=None, liveness=None, external_links=None,
     for key, ent in list(ents.items()):
         li = last_round_i.get(key, -1)
         fg_final = None
+        saw_receipt = False   # 派发回执已到（ACK/终态/SM 送达任一）——ENDED4 判据
         for tid in ent["tids"]:
             r = result_by_tid.get(tid)
             if r is None:
+                # 续派轮的回执是 send_result（resumedAgentId 送达确认）
+                if sendres_by_tid.get(tid) is not None:
+                    saw_receipt = True
                 continue
             if r.get("i", 0) < li:
                 continue   # 旧轮回执：新轮已开，不定新轮终态
-            # bg ACK（dispatch.bg 且文本 agentId: 形态）不是终态——启程确认
+            saw_receipt = True
+            # bg ACK（启程确认）不是终态。判据二选一（用户实锤「活着 12 个」
+            # 修复②：dispatch 未带 run_in_background 但回执文本自证后台
+            # ——"Async agent launched successfully" 形态；注意前台 JSON 回执
+            # 自带 agentId 是正常终态，不得按提取成功判 ACK——测试实锤误伤）
             d = dispatch_by_tid.get(tid)
             txt = r.get("text") or ""
-            if d and d.get("bg") and _RE_ACK_LOOSE.search(txt) and not r.get("is_error"):
+            if not r.get("is_error") and (
+                    (d and d.get("bg") and _RE_ACK_LOOSE.search(txt))
+                    or "launched successfully" in txt.lower()):
                 continue
             if r.get("is_error"):
                 fg_final = ("interrupted" if _RE_CANCEL.search(txt) else "err",
@@ -505,19 +515,30 @@ def project(facts, child_states=None, liveness=None, external_links=None,
         # 也不否决（孤儿 CLI 诚实显示在跑）
         if ent["status"] == "running" and aid and fresh.get(aid):
             continue
-        # RUNNING 1b：尾探 mid_flight——**仅在进程活时可信**（进程死后转写
-        # 永停 mid_flight，历史死代理不得永久 running；影子对账实锤）
+        # RUNNING 1b：尾探 mid_flight——**仅在「转写新鲜或尾行时间新鲜」时
+        # 可信**（用户实锤「活着 12 个」根因：转写尾 [tool_use, tool_result]
+        # 是完成的常见落盘形态，终局 text/result 行 CLI 可不写；进程活≠
+        # 该子代理在跑——mtime 停更的 mid_flight 是历史残影）
         if ent["status"] == "running" and co and not co.get("terminal") \
-                and proc_alive:
+                and proc_alive \
+                and (fresh.get(aid)
+                     or (now_ms - int(co.get("lastActive") or 0)) < FRESH_WINDOW_MS):
             ent["lastActive"] = max(ent["lastActive"],
                                     co.get("lastActive") or 0)
             continue
-        # RUNNING 2：bg 且无任何终态证据且进程活（宁跑勿完——ACK/未 flush 窗口）
-        if ent["status"] == "running" and ent.get("bg") and proc_alive:
+        # RUNNING 2：bg 且无任何终态证据且进程活（宁跑勿完——ACK/未 flush
+        # 窗口；同样要求转写活——转写停更的 bg 是残影，「活着 12 个」实锤
+        # 的另一半：周五 reviewer 转写早停更仍判活）
+        if ent["status"] == "running" and ent.get("bg") and proc_alive \
+                and (fresh.get(aid) or not co
+                     or (now_ms - int(co.get("lastActive") or 0)) < FRESH_WINDOW_MS):
             continue
-        # RUNNING 3：前台无 result 事实且会话 busy（父 tool part pending/running）
+        # RUNNING 3：前台无 result 事实且会话 busy（父 tool part pending/
+        # running）——同样要求转写活（前台真在跑=转写在写；停更=残影）
         if ent["status"] == "running" and not ent.get("bg") and fg_final is None \
-                and busy and proc_alive:
+                and busy and proc_alive \
+                and (fresh.get(aid) or not co
+                     or (now_ms - int(co.get("lastActive") or 0)) < FRESH_WINDOW_MS):
             continue
         # ENDED 1/2：notification / 前台 result（上面已写 status，此处补 brief）
         if fg_final is not None and ent["status"] in ("running",):
@@ -532,18 +553,21 @@ def project(facts, child_states=None, liveness=None, external_links=None,
                 ent["brief"] = co["summary"]
             ent["lastActive"] = max(ent["lastActive"], co.get("lastActive") or 0)
             continue
-        # ENDED 4：证据不足——进程死/不新鲜 → interrupted+lost（不装 done）
+        # ENDED 4：证据不足——不装 done，按「派发在途 vs 历史残影」分诊
+        # （用户实锤「活着 12 个」修复③：旧兜底「busy+进程活保持 running
+        # 不猜」被无证据残影全部命中——ACK 已到+转写停更+无完成证据=残影）
         if ent["status"] == "running":
-            if not proc_alive:
+            if not proc_alive or not busy:
+                # 进程死 / 回合越界：CLI 必写完成证据，缺失=中断
                 ent["status"] = "interrupted"
                 ent["lost"] = True
                 ent["doneAt"] = ent["lastActive"]
-            # proc_alive 但既无终态证据也不 fresh 且非 bg 非 busy：
-            # 前台无 result 且回合已越界（!busy）——健康 CLI 必写 result，
-            # 缺失=中断
-            elif not busy and not ent.get("bg"):
+            elif saw_receipt:
+                # 回执已到（ACK 也在内=派发早完成）而转写停更、无 notify/
+                # 终局——残影，判 interrupted（真实终态证据已被 compact 吞/
+                # CLI 未落盘，诚实显示不装跑）
                 ent["status"] = "interrupted"
                 ent["lost"] = True
                 ent["doneAt"] = ent["lastActive"]
-            # else：保持 running（liveness 不明时不猜）
+            # else：dispatch 后回执未到（派发在途）——保持 running
     return {"agents": ents, "tidMap": tid_map, "rev": len(facts)}

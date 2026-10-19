@@ -164,9 +164,61 @@ def test_lost_and_interrupted():
                  liveness=dict(LV, busy=False))["agents"].get("pending:t10")
     ok("前台缺result越界interrupted", a2 and a2["status"] == "interrupted"
        and a2.get("lost") is True, a2)
-    # 同场景进程活+busy → 保持 running（liveness 不明不猜）
+    # 同场景进程活+busy → 保持 running（**派发在途**：无任何回执——用户
+    # 实锤「活着 12 个」修复后仅剩此形态允许 busy 中 running）
     a3 = project(collect_main_facts(lines2), liveness=LV)["agents"]["pending:t10"]
-    ok("busy中保持running", a3["status"] == "running", a3)
+    ok("busy中派发在途保持running", a3["status"] == "running", a3)
+
+
+def test_stale_midflight_not_running():
+    """用户实锤「活着 12 个」回归网（2026-10-19）：转写尾 [tool_use,
+    tool_result]（完成但无终局行——常见落盘形态）+ 转写停更 = 残影，
+    进程活/busy 都不得判 running。"""
+    # 形态①：ACK 回执（dispatch 未带 bg 但文本自证后台）+ 尾探 mid_flight
+    # 停更 → interrupted+lost
+    lines = [
+        asst("tV", "Task", {"subagent_type": "Explore", "description": "残影"}),
+        res("tV", "Async agent launched successfully. (This tool result is "
+                  "interim — the agent is still running)"),
+    ]
+    stale_co = {"terminal": False, "status": "", "summary": "",
+                "endedAt": 0, "lastActive": 1}   # lastActive 距今极远=停更
+    a = project(collect_main_facts(lines), liveness=LV,
+                child_states={"resid_0001": stale_co},
+                external_links={"tV": "resid_0001"})["agents"].get("resid_0001")
+    ok("残影-ACK回执+尾停更=interrupted",
+       a and a["status"] == "interrupted" and a.get("lost") is True, a)
+    # 形态②：bg=True + 转写停更（周五 reviewer 形态）→ interrupted
+    lines2 = [
+        asst("tW", "Task", {"subagent_type": "reviewer", "description": "旧bg",
+                            "run_in_background": True}),
+        res("tW", "Task agentId: resid_0002 started in background"),
+    ]
+    a2 = project(collect_main_facts(lines2), liveness=LV,
+                 child_states={"resid_0002": stale_co},
+                 external_links={"tW": "resid_0002"})["agents"].get("resid_0002")
+    ok("残影-bg+转写停更=interrupted",
+       a2 and a2["status"] == "interrupted", a2)
+    # 形态③：send 续派轮回执已到（send_result）+ 尾停更 → interrupted
+    lines3 = [
+        asst("tX", "Task", {"subagent_type": "reviewer", "description": "首轮"}),
+        res("tX", '{"agentId":"resid_0003"} PASS'),
+        asst("tY", "SendMessage", {"to": "resid_0003", "message": "第二轮"}),
+        res("tY", '{"resumedAgentId":"resid_0003"}'),
+    ]
+    a3 = project(collect_main_facts(lines3), liveness=LV,
+                 child_states={"resid_0003": stale_co},
+                 external_links={"tX": "resid_0003"})["agents"].get("resid_0003")
+    ok("残影-续派轮回执+尾停更=interrupted",
+       a3 and a3["status"] == "interrupted" and a3["rounds"] == 2, a3)
+    # 反向护栏：尾探新鲜（lastActive=now）的 mid_flight 仍 running（真在跑）
+    fresh_co = dict(stale_co, lastActive=1792396800000)
+    LVf = dict(LV, now_ms=1792396800000 + 30000)
+    a4 = project(collect_main_facts(lines), liveness=LVf,
+                 child_states={"resid_0004": fresh_co},
+                 external_links={"tV": "resid_0004"})["agents"].get("resid_0004")
+    ok("护栏-尾探新鲜mid_flight仍running",
+       a4 and a4["status"] == "running", a4)
 
 
 def test_child_tail_outcome():
@@ -372,6 +424,7 @@ if __name__ == "__main__":
     test_send_rounds_and_name()
     test_notify_status_map()
     test_lost_and_interrupted()
+    test_stale_midflight_not_running()
     test_child_tail_outcome()
     test_s2_receipt_anchors()
     test_g4_notify_before_ack()
