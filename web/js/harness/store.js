@@ -108,8 +108,8 @@
         // R2b：user 气泡——live/hist 同一入口（renderUser 承担组管线边界）；
         // ts 时间条 hist 形态带（live 流式无）
         case 'user_message':
-          renderUser(e.text || '', e.images || [], e.files || [], false,
-                     e.ts ? new Date(e.ts).getTime() : 0);
+          renderUser(e.text || '', e.images || [], e.files || [], !!e.live,
+                     e.ts ? new Date(e.ts).getTime() : 0);   // 394：live 行透传（动画态）
           break;
         // R4：跨会话回传——识图 peer 行优先配对 .h-vision 卡（v3.4.88 口径：
         // tid 精确/无 tid 回落最早未定格卡 FIFO），miss 走平铺气泡（v2.53
