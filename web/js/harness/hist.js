@@ -118,13 +118,13 @@
         // 正确性优先，历史气泡恢复全渲染（懒抽屉+懒高亮已覆盖大头开销）。
         // R2b：走 dispatch（live/hist 唯一渲染入口）
         _hgDispatch({ t: 'user_message', text: l.text,
-                      images: imgs, files: files, ts: _ts });
+                      images: imgs, files: files, ts: _ts, live: !!l.live });   // 394：live 行透传（动画/滚播态）
       }
     }
     // R2a（气泡域归一）：assistant/thinking 走 FEV dispatch——live/hist 同一
     // handlers 同一渲染订阅（27-store _hgRenderEntries），懒抽屉/pend 上下文
     // 随事件携带（hi/ts/prevTs）。对齐补丁退役起点
-    else if (l.role === 'assistant') _hgDispatch({ t: 'assistant_text', text: l.text, model: l.model || '' });
+    else if (l.role === 'assistant') _hgDispatch({ t: 'assistant_text', text: l.text, model: l.model || '', live: !!l.live });   // 394
     else if (l.role === 'thinking') {
       // 图5 修复（ZCode reasoning_start 每块新行复刻）：历史行流中每条
       // thinking 都是独立块——中间夹的查阅组/工具行不阻断时旧码续用同一
@@ -134,7 +134,7 @@
       // v2.24 懒抽屉：历史思考段只建壳（默认收起），点开才渲染 markdown——
       // 大会话重建的大头就是几十 K 字符的 thinking 渲染（渲染体在订阅 case）
       _hgDispatch({ t: 'assistant_thinking', text: l.text,
-                    hi: hi, ts: _ts, prevTs: _prevTs });
+                    hi: hi, ts: _ts, prevTs: _prevTs, live: !!l.live });   // 394
     }
     else if (l.role === 'tool') {
       // v2.3.2：历史重建补画转交等待线——transcript 的工具行此前只画抽屉，

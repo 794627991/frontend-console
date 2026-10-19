@@ -1,4 +1,25 @@
 // harness histcache.js (v3.0 自 buildClaudeHarnessTab 拆出,定义体零改动,缩进保持原样)
+  // ===== 单账游标制（394 终态）：唯一写入+唯一渲染 =====
+  // live 消息行不再直改 DOM——构造行 append 进唯一账 histAll，游标泵渲染
+  //（renderHistLine→dispatch→renderEntries，与 hist 同一管线 R1 成果）。
+  // DOM=账的 [histStart, cursor) 呈现；fetch 重建账后 pump 只渲染差量
+  //（前缀一致性：后端落盘序=事件序，live 行被 fetch 版同位吸收）
+  function _hgRowAdd(row) {
+    if (!row || !row.role) return;
+    if (!Array.isArray(_HG.histAll)) _HG.histAll = [];
+    _HG.histAll.push(row);
+    _histPump();
+  }
+  function _histPump() {
+    if (!_HG.histAll || _HG.histBuilding || _HG.readonly) return;
+    if (!_HG.histLive) _HG.histLive = true;   // live 建账即建立 DOM/账对应（扩收放行）
+    const from = Math.max(_HG.histCursor || 0, _HG.histStart || 0);
+    for (let i = from; i < _HG.histAll.length; i++) {
+      try { renderHistLine(_HG.histAll[i], i); }
+      catch (e) { try { console.error('[harness] pump line failed @' + i, e); } catch (_) {} }
+    }
+    _HG.histCursor = _HG.histAll.length;
+  }
   // ===== 消息永不丢对账（393 根治）：重渲后补画账外 live 行 =====
   // 双真源根因：histAll 是 fetch 时点快照，任何重渲（上翻收缩/扩段/切回/
   // fetch 增长）按账本整窗重建=抹掉账外 live 行。本函数在每次 _histRender
@@ -292,7 +313,8 @@
           _realFlow.insertBefore(hint, _realFlow.firstChild);
         }
       }
-      try { _trimOldTurns(); _hgLiveReplay();   // 393：换入+兜底后对账补画（账外 live 消息行）
+      _HG.histCursor = _HG.histAll ? _HG.histAll.length : 0;   // 394：游标对齐（渲染期 live 入账的行由再泵兜底）
+      try { _trimOldTurns(); _histPump(); _hgLiveReplay();   // 394：渲染期 append 补渲染（393 对账随批3 退役，暂并存）
       _hgRailSync(); } catch (_) {}
     }
   }

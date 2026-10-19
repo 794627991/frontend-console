@@ -305,7 +305,7 @@
           if (isSub) { _subLivePaint(o.parent_tool_use_id, '思考中…'); _hgAgCnt(o.parent_tool_use_id, 1, 0); }
           // R2a：主链 thinking 走 dispatch（渲染订阅 live 形态=closeRun+
           // appendThinking，与原直调等价；子代理段独立流不动）
-          else _hgDispatch({ t: 'assistant_thinking', text: b.thinking, live: true });
+          else _hgRowAdd({ role: 'thinking', text: String(b.thinking || ''), live: 1 });   // 394：入账+泵渲染（唯一写入）
         }
         else if (b.type === 'text' && b.text && b.text.trim()) {
           // 353 的 SSE 前缀过滤已撤（全审复核：实证泄漏向量是 tail 通道
@@ -317,8 +317,8 @@
             _hgAgCnt(o.parent_tool_use_id, 1, 0);
           }
           // R2a：主链气泡走 dispatch（endThinking 编排保留在先——顺序敏感）
-          else { endThinking(); _hgDispatch({ t: 'assistant_text', text: b.text,
-                       model: (o.message || {}).model || '', live: true }); }
+          else { endThinking(); _hgRowAdd({ role: 'assistant', text: String(b.text || ''),
+                       model: (o.message || {}).model || '', live: 1 }); }   // 394：入账+泵渲染
         }
         else if (b.type === 'tool_use') {
           if (!isSub) endThinking();
@@ -1023,8 +1023,8 @@
         //（v2.20-v3.5.332 守卫/兜底/补画全家随乐观渲染退役）。_hgEchoDup
         // 重放去重保留（与乐观无关的 seq 前置防线）
         if (!_hgEchoDup(it))
-          _hgDispatch({ t: 'user_message', text: it.text,
-                        images: it.images, files: it.files, live: true });
+          _hgRowAdd({ role: 'user', text: it.text, ts: Date.now(),
+                      images: (it.images || []).slice(), files: (it.files || []).slice(), live: 1 });   // 394：入账+泵渲染
       }
       else if (it.kind === 'event') {
         // v3.5.293（用户实锤内网「停止超长回合后发新消息前端冻结」）：单事件
