@@ -548,7 +548,7 @@
           const _coll = row.querySelector('.h-tool-coll');
           if (_coll) {
             _coll.innerHTML = _toolInputBodyHtml(_cfg0, _v);
-            if ((_H_TOOL_CFG[row._name] || {}).defaultOpen) row.classList.add('open');   // 小需求：编辑默认不展开（读 cfg；Write/Todo/计划仍展开）
+            if ((_H_TOOL_CFG[name] || {}).defaultOpen) row.classList.add('open');   // 小需求：编辑默认不展开（读 cfg；Write/Todo/计划仍展开）
           }
           _hgDiffLineMemo(row, name, input);   // v3.4.62：diff 真实行号定位存档（结果点触发）
         }
