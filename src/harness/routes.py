@@ -831,7 +831,10 @@ def harness_subagent_replay():
     _sz = 0
     try:
         for _c in _subagent_transcript_candidates(main_dir, csids, agent):
-            if _c and os.path.isfile(_c):
+            # 0 字节的 tasks .output 占位不算（现行 CLI 先落占位再写真转写，
+            # 与 _subagent_rows_for 的「空解析继续试下一候选」同语义——
+            # 实测：占位先命中 break 后 _sz=0，账本不落=全量重喂通道复活）
+            if _c and os.path.isfile(_c) and os.path.getsize(_c) > 0:
                 _sz = os.path.getsize(_c)
                 break
     except Exception:
