@@ -722,7 +722,11 @@
         // live 打开却查无档=未知而非已死，不定稿不熄秒表；真终态由回放
         // 收敛/通知落 done 后 tick 自然停）
         const _aF = _hgAg(cur.tid0 || tid);
-        if ((!_aF || !_aF.done) && _sub.active === tid) {
+        // 统一修复（v3.5.374，用户令「别再打补丁」）：窗格内容唯一更新机制=
+        // 行数比对→全量重建（本 follow 链），增量 append 通道整体退役——
+        // active 限定撤销（所有开着且未定稿的 tab 都跟随），节流 10s→2.5s
+        //（行数无增不动 DOM 零闪烁；实时感由 SSE 状态层摘要+tail 单行卡承担）
+        if (!_aF || !_aF.done) {
           // ① 活档案覆写定稿——「保持工作中」
           if (t.done) { t.done = false; t.durTxt = ''; _subTlHeadPaint(t); }
           // ② 无条件轮询（10s 节流；拉取在途/手动重拉期不并发）
@@ -731,7 +735,7 @@
           // _aF.taskId 解引用=TypeError 被 catch 吞+followInflight 已置
           // 位=轮询通道在 miss 窗口被永久杀死（恰是本修复要保护的场景）
           if (!cur.replay && !cur.followInflight
-              && Date.now() - (cur.lastFollow || 0) > 10000) {
+              && Date.now() - (cur.lastFollow || 0) > 2500) {
             const _aidF = (_aF && (_aF.taskId || _aF.agentId))
               || ((_HG.tidMap || {})[cur.tid0 || tid]) || '';
             if (_aidF) {
@@ -1450,12 +1454,7 @@
         if (!o || o.isMeta) continue;   // isMeta 行整行丢（F3 白名单口径）
         const blocks = o.message && o.message.content;
         if (!Array.isArray(blocks)) continue;
-        if (o.type === 'user') {
-          // user 行只吃 tool_result（窗格行回点配对）；text 块=注入/回显不进正文
-          for (const blk of blocks)
-            if (blk && blk.type === 'tool_result' && blk.tool_use_id) _subResult(aid, blk);
-          continue;
-        }
+        if (o.type === 'user') continue;   // user 行（tool_result/text）不进摘要
         const kept = [];
         for (const blk of blocks) {
           if (!blk) continue;
@@ -1463,7 +1462,9 @@
           else if (blk.type === 'text' && _subTlGate('text', blk.text)) kept.push(blk);
           else if (blk.type === 'tool_use' && blk.name) kept.push(blk);
         }
-        if (kept.length) _subFeed(aid, kept);   // tab 未开/回放态自然早退
+        // 统一修复（v3.5.374）：窗格行喂入退役（_subFeed/_subResult 不再调）
+        //——窗格内容唯一更新机制=follow 链「行数比对→全量重建」，增量
+        // append/账本/查重锚从正确性依赖降为冗余防线；tail 只供单行卡摘要
         // 复审#9：计数退场归 SSE 单点（sse.js 状态层）——tail+SSE 双计且展示
         // 位以 tokens 为前提、完成时 usage 权威覆写，tail 侧只留摘要
         for (const blk of kept) {
