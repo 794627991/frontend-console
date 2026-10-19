@@ -392,7 +392,9 @@
     return row;
   }
   function _toolInputBodyHtml(cfg, v) {
-    if (cfg.kind === 'diff') return `<div class="h-diff">${diffHtml(v && v.old, v && v.neu)}</div>`;
+    // v3.5.336：v.dln（转写权威行号，ZCode 式）到位时 diff 行号从真实行起数
+    if (cfg.kind === 'diff') return `<div class="h-diff">${diffHtml(v && v.old, v && v.neu,
+      (v && typeof v.dln === 'number') ? v.dln : undefined)}</div>`;
     if (cfg.kind === 'todo') return todoHtml(v && v.todos || v);
     if (cfg.kind === 'question') return (v || []).map(_hgQ =>
       `<div class="t-item"><span>❓</span><span><b>${esc(_hgQ.header || '')}</b> ${esc(_hgQ.question || '')}${(_hgQ.options || []).map(o => `<span class="q-opt">${esc(typeof o === 'string' ? o : o.label)}</span>`).join('')}</span></div>`).join('');

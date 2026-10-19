@@ -102,7 +102,7 @@
     row._dfp = String(input.file_path || '');
     row._dnews = _news;
   }
-  function diffHtml(oldS, newS) {
+  function diffHtml(oldS, newS, ln0) {
     // v2.8：真 LCS 行 diff（此前"交集着色"把未变行整段吞掉，大编辑只剩
     // 一两行——用户实测「咋可能只改了这点」。现在未变行作为上下文暗显，
     // 折叠展示改动段全貌；改动段外超 3 行的未变区间折叠成「… N 行不变」）
@@ -111,8 +111,8 @@
     // v3.2R1(P1)：行号计数器与列模板前置（fallback 分支也要用——原实现行号
     // 声明在 fallback 之后，挪用会 TDZ；折叠未变区间也必须推进计数器，否则
     // 折叠段之后的行号整体偏小「折叠行数」）
-    let lnOld = 0;
-    let lnNew = 0;
+    let lnOld = _off;
+    let lnNew = _off;
     const ln = num => `<span class="d-ln">${num || ''}</span>`;
     // LCS 动态规划（O(n*m) 内存；Edit 的 old/new 一般几十行，可承受，
     // 超大输入（>4000 行）退回旧交集法防卡顿）
@@ -147,6 +147,9 @@
     // 行号，- 显示旧文件行号（GitHub unified 惯例）；折叠段不 emit 行但
     // 计数器照推（v3.2R1 修复：否则折叠段之后行号整体偏小）
     let h = '';
+    // v3.5.336：真实起始行（ZCode 式转写下发）——ln0 到位时行号族直接从
+    // 文件真实行起数（Edit 原位替换旧新同位，两侧同偏移）；缺席保持相对
+    let _off = (typeof ln0 === 'number' && ln0 >= 1) ? (ln0 - 1) : 0;
     const CTX = 3;
     let k = 0;
     const mark = (op, line) => {

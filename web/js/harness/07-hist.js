@@ -415,6 +415,9 @@
     try {
       const cfg = _hCfg(l.text);
       const v = cfg.get ? cfg.get(l.input || {}) : '';
+      // v3.5.336：转写行权威行号直传（Edit 单处）——重建路径零回填零竞态
+      if (l.dln && Array.isArray(l.dln) && l.dln[0] && v && typeof v === 'object'
+          && l.text === 'Edit') v.dln = l.dln[0];
       inputHtml = _toolInputBodyHtml(cfg, v);
     } catch(_) {}
     const out = l.result ? String(l.result) : '';

@@ -599,10 +599,79 @@ def harness_transcript():
     except Exception:
         pass
     lines = transcript_for(s)
+    _dln_inject(lines)   # v3.5.336：Edit/MultiEdit 行注入真实行号（ZCode 式权威下发）
     return jsonify({"ok": True, "lines": lines or [], "alive": s.alive,
                     "busy": s.busy, "busy_since": s.busy_since,
                     "model": s.model, "title": s.title, "seq": s._seq,
                     "epoch": s.log.epoch})
+
+
+# ---- v3.5.336：Edit 真实行号转写级注入（ZCode 架构对齐 ----
+# 用户实锤「反反复复修不好，重开会话行号还是不对」：前端事后回填
+# （v3.4.62/329/331/333）在任何重建路径上都要重新接线，竞态修不胜修。
+# ZCode 的做法是权威事实一次产生：编辑结果落盘时算好 hunk 行号、随
+# 转写行结构化下发（fileDiff hunks 自带 oldStart/newStart），前端零回填。
+# 此处对齐：transcript 响应前对 Edit/MultiEdit 行定位（当前文件定位
+# new_string——与既有 diff_lines 同逻辑同口径），写 l.dln。所有重建
+# 路径（快照/重渲/刷新/重开）读转写即得，前端零逻辑零竞态。
+_DLN_CACHE = {}
+
+
+def _dln_inject(lines):
+    try:
+        for l in lines:
+            if not isinstance(l, dict) or l.get("role") != "tool":
+                continue
+            nm = str(l.get("text") or "")
+            if nm not in ("Edit", "MultiEdit"):
+                continue
+            inp = l.get("input") or {}
+            fp = str(inp.get("file_path") or "")
+            if not fp or not os.path.isfile(fp):
+                continue
+            news = ([str(e.get("new_string") or "")
+                     for e in (inp.get("edits") or []) if isinstance(e, dict)]
+                    if nm == "MultiEdit" else [str(inp.get("new_string") or "")])
+            if not any(news):
+                continue
+            key = fp + "\x01" + str(news[0])[:120]
+            hit = _DLN_CACHE.get(key)
+            if hit is None:
+                hit = _dln_locate(fp, news)
+                _DLN_CACHE[key] = hit
+            l["dln"] = hit
+    except Exception:
+        pass
+
+
+def _dln_locate(fp, news):
+    """当前文件定位各 new_string 起始行（歧义/未命中给 None，不造假）。"""
+    try:
+        if os.path.getsize(fp) > 8 * 1024 * 1024:
+            return [None] * len(news)
+        with open(fp, "r", encoding="utf-8", errors="replace") as f:
+            fl = f.read().split("\n")
+    except OSError:
+        return [None] * len(news)
+    out, cur = [], 0
+    for s in news:
+        pat = str(s or "").split("\n")
+        if not pat or (len(pat) == 1 and pat[0] == ""):
+            out.append(None)
+            continue
+        hit = None
+        for i in range(cur, max(cur, len(fl) - len(pat) + 1)):
+            if fl[i] == pat[0] and fl[i:i + len(pat)] == pat:
+                hit = i
+                break
+        if hit is None:
+            out.append(None)
+            continue
+        amb = any(i != hit and fl[i] == pat[0] and fl[i:i + len(pat)] == pat
+                  for i in range(len(fl) - len(pat) + 1))
+        out.append(None if amb else hit + 1)
+        cur = hit + len(pat)
+    return out
 
 
 # v3.4.62（用户需求「代码编辑看不到真实改动行号」）：Edit/MultiEdit diff
