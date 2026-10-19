@@ -1,9 +1,7 @@
 // harness hist.js (v3.0 自 buildClaudeHarnessTab 拆出,定义体零改动,缩进保持原样)
   function renderHistTool(l, hi) {
     // v3.5.246（用户实锤「运行中正常，刷新又没了」）：hist 路径（刷新/重渲）
-    // ask 行同样计数 counts.askN——v3.5.245 计数源是 live-only 的 .h-ask-rs
-    // 结果行，刷新后 DOM 重建=归零；转写里 ask 以 tool_use 行持久在案
-    // （mcp__harness__ask_user/AskUserQuestion），hist 是重建后唯一来源
+    // ask 行同样计数 counts.askN
     if (l.text === 'AskUserQuestion' || l.text === 'mcp__harness__ask_user') {
       try {
         const _ga = _HG.grp || (typeof grpEnsure === 'function' && grpEnsure(true));
@@ -14,89 +12,26 @@
         }
       } catch (_) {}
     }
-    // v3.2.6（ZCode 子智能体模式）：历史 Agent/Task 派发行走单行任务卡工厂
-    //（与 live 同解剖：✦ 子智能体 + 类型 chip + 描述 + ▣/点击开窗格），无
-    // 展开体；登记 lastAgRow 供紧随其后的 sub_open 行回绑 agentId（转写注入
-    // 保证 sub_open 紧贴派发行，隔行即失效——见 renderHistLine 顶部清账）
-    if (((_H_TOOL_CFG[l.text] || {}).kind) === 'agent') {
-      const _inp = l.input || {};
-      const _err = !!l.err;
-      // R2c-lite（键空间归一）：行自带 tid（transcript 下发）——hist agent 行
-      // 用真键进 rowById（伪键 'ag'+hi 时 ABA 回绑需按认回重挂，真键直配；
-      // 旧转写无 tid 时回退伪键）
-      const _agKey = l.tid || ('ag' + (hi != null ? hi : 'r' + (++_HG.uidN)));
-      const d = _hgAgentRowBuild(_agKey,
-        _inp.subagent_type || _inp.agent_type || l.text,
-        _inp.description || '');
-      if (_err) d.classList.add('err');
-      const st = d.querySelector('.h-tslots');
-      // v3.4.55（轻审 P2）：运行中子代理（切会话暂存桶在案）画运行徽章——
-      // 回放工厂原对无 result 的 Task 无条件盖「完成」=假完成
-      // v3.5.145（全审F2）：终态行标 data-final（ABA 回绑 finder 判据）
-      const _running = _hgLiveAgentRunning(_inp.description);
-      if (st) st.innerHTML = statusBadge(_err ? 'error' : (_running ? 'running' : 'completed'));
-      if (!_running) d.dataset.final = '1';
-      d.dataset.hgAgline = '1';
-      _HG.lastAgRow = d;
-      drawerCount(l.text);
-      _tlPlace(d, l.text, _inp);
-      return d;
-    }
-    // v2.15：与 renderToolUse 的 collapsible 分支同构的结构
-    // （.h-tool.col > .h-tool-head[.h-tslots] + .h-tool-coll）。
-    // v2.24 懒抽屉：正常行 body 不渲染（dataset.hi 记行号，点开 _histLazyFill
-    // 现填）；错误行保持立即渲染+默认展开（错误信息不该藏）。
-    const d = document.createElement('div');
-    const err = !!l.err;
-    // v3.2.26（用户实锤「要展开才能看，凭什么？」）：defaultOpen 类工具
-    // （Edit/Write/MultiEdit——改动本体）历史回放生而展开+同步填体——
-    // 改动不许藏在折叠里；错误行维持立即渲染（错误信息不该藏）
-    const _dOp = !!((!err && _H_TOOL_CFG[l.text] || {}).defaultOpen);
-    d.className = 'h-tool col' + (err ? ' err' : '') + (_dOp ? ' open' : '');
-    // v2.21：历史回放同样带工具徽章（子代理等），与流式路径一致
-    const hbc = _H_TOOL_CFG[l.text] || {};
-    // v3.2.1（用户实测问题2）：bash 行头补命令文本——live 行有 arg（cfg.get），
-    // 回放行只剩「Bash」秃头，无命令像坏行。对齐 live 取 command 前 80 字，
-    // title 悬浮放全文（80 字外被 CSS 省略号截断，段内工厂 _subToolHeadHtml
-    // 同款口径——对抗审计 F3）
-    const _cmdFull = String((l.input || {}).command || (l.input || {}).cmd || '');
-    const argH = (hbc.kind === 'bash') ? esc(_cmdFull.slice(0, 80)) : '';
-    const argTitle = (hbc.kind === 'bash' && _cmdFull) ? esc(_cmdFull) : '';
-    d.innerHTML =
-      `<button class="h-tool-head"><span class="h-chev">▸</span>` +
-      `<span class="h-tool-name">${_hToolIco(l.text)} ${esc(_hToolLabel(l.text))}</span>` +
-      (hbc.badge ? `<span class="h-tool-badge">${esc(hbc.badge)}</span>` : '') +
-      (argH ? `<span class="h-tool-arg"${argTitle ? ` title="${argTitle}"` : ''}>${argH}</span>` : '') +
-      // v3.5.249（用户实锤「重渲的bash没有复制按键」）：bash 行头部补复制
-      // 键——CSS 门控 open 才显示（收起不暴露），与 live 卡同交互；head 是
-      // <button> 嵌套 button 非法，span+role 复用 .h-tool-copy（05-subblk 同款）
-      ((hbc.kind === 'bash') ? `<span class="h-tool-copy" role="button" title="复制命令">复制</span>` : '') +
-      `<span class="h-tslots">${statusBadge(err ? 'error' : 'completed')}</span></button>` +
-      `<div class="h-tool-coll">${(err || _dOp) ? _histToolBodyHtml(l) : ''}</div>`;
-    if (hi != null) {
-      d.dataset.hi = String(hi);
-      d.dataset.hgLazy = (err || _dOp) ? '' : '1';   // 错误行/defaultOpen 行已填（hgLazy 空）；收起丢弃后由 Drop 重置
-    }
-    // v3.5.267（全审）：bash 行补设 --h-accent 与 live 同源（绿）——hist 主
-    // 链从不设 accent 落 var(--accent) 青，刷新后 bash 左边框由绿变青
-    if (((_H_TOOL_CFG[l.text] || {}).kind) === 'bash') {
-      d.classList.add('oneclick');
-      d.style.setProperty('--h-accent', _H_KIND_COLOR.bash || 'var(--border)');
-    }
+    // R2c：走合一构造 hgToolCard（done 形态一次成型；hi 懒标记/dln 直传；
+    // agent 行运行徽章）。ask 计数/lastAgRow/drawerCount/_tlPlace/rowById
+    // 为 hist 侧放置账，留在 caller
+    const _agKind = ((_H_TOOL_CFG[l.text] || {}).kind) === 'agent';
+    const d = hgToolCard({
+      id: l.tid || ('ag' + (hi != null ? hi : 'r' + (++_HG.uidN))),
+      name: l.text, input: l.input || {}, phase: 'done',
+      err: !!l.err, hi: hi,
+      dln: (l.dln && Array.isArray(l.dln) && l.dln[0]) ? l.dln[0] : undefined,
+      summary: l.summary, result: (l.err || ((_H_TOOL_CFG[l.text] || {}).defaultOpen)) ? l.result : undefined,
+      running: _agKind ? _hgLiveAgentRunning((l.input || {}).description) : false,
+    });
+    if (_agKind) _HG.lastAgRow = d;
     drawerCount(l.text);
-    _tlPlace(d, l.text, l.input || {});   // v3.2：回放同走内联时间线（查阅聚组与实时一致）
-    // R2c-lite 补齐（用户实锤「↳ 函数体裸漏」根因）：hist 工具行进 rowById
-    //（tid 键）——F5 后 SSE 续流重放的 tool_result（renderOneToolResult 按
-    // tool_use_id 配对）此前全 miss=逐条画「↳ 结果前 120 字」孤儿行；配对
-    // 上则定格到既有行（徽章/折叠体），孤儿行绝迹
+    _tlPlace(d, l.text, l.input || {});
     if (l.tid) {
       _HG.rowById = _HG.rowById || {};
       _HG.rowById[l.tid] = d;
-      d.dataset.tid = l.tid;
     }
-    // v3.2.1：撤 _hgApplyOpen 位置键恢复——错误行默认开已由 className 的
-    // 'err open' 承担；位置键跨代际碰撞会误开正常行+误标 userToggled（用户
-    // 实锤「终端默认全部不收起」），统一默认收起（用户定调）
+    return d;
   }
   function renderHistLine(l, hi) {
     // v3.2.2（用户实测「没显示工作时长」）：行级 ts 账——histLineTs=当前行

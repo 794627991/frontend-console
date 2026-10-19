@@ -567,12 +567,130 @@
     row.dataset.hgSubType = a.type || 'Task';
     row.dataset.hgSubDesc = String(a.desc || '').slice(0, 120);
   }
+  // ==================== R2c 合一构造（ZCode ToolPart 对位）====================
+  // 单构造 phase 驱动：live（'run'，tslots 空，result 到达 renderOneToolResult
+  // 定格）与回放（'done'，一次成型徽章+懒体）同卡同 DOM。bash 是先例
+  // （v3.5.262 live 生即 hist 同构）；本批把非 bash one-line 扁平行也统一为
+  // col 折叠卡（「最终形态只有一种」——hist/ZCode 形态）。懒抽屉（hi 标记+
+  // _histLazyFill 点开填充）是回放态性能机制，保留为体填充器非构造双轨。
+  function hgToolCard(o) {
+    const name = o.name || '';
+    const cfg = _hCfg(name);
+    const label = _hToolLabel(name);
+    const inp = o.input || {};
+    const err = !!o.err;
+    const done = o.phase !== 'run';
+    // agent 行：单行任务卡工厂（解剖两轨同源；live 队列/秒表由 caller 挂）
+    if (cfg.kind === 'agent') {
+      const d = _hgAgentRowBuild(o.id, inp.subagent_type || inp.agent_type || name,
+        inp.description || '');
+      if (err) d.classList.add('err');
+      if (done) {
+        const st = d.querySelector('.h-tslots');
+        const _running = !!o.running;
+        if (st) st.innerHTML = statusBadge(err ? 'error' : (_running ? 'running' : 'completed'));
+        if (!_running) d.dataset.final = '1';
+      }
+      d.dataset.hgAgline = '1';
+      return d;
+    }
+    // bash/one-line/collapsible 统一 col 折叠卡（唯一形态）
+    const d = document.createElement('div');
+    const _dOp = !!(cfg.defaultOpen) || err;   // Edit/Write 族生而展开；错误行不藏
+    d.className = 'h-tool col' + (err ? ' err' : '') + (_dOp ? ' open' : '')
+                + (cfg.kind === 'bash' ? ' oneclick' : '');
+    d.style.setProperty('--h-accent', _H_KIND_COLOR[cfg.kind] || 'var(--border)');
+    const title = typeof cfg.title === 'function' ? cfg.title(inp) : (cfg.title || label);
+    const badges = _hgToolBadges(name, inp);
+    let argH = '', argTitle = '';
+    let _cmdFull = '';
+    if (cfg.kind === 'bash') {
+      _cmdFull = String(cfg.get ? cfg.get(inp) : (inp.command || inp.cmd || ''));
+      argH = esc(_cmdFull.slice(0, 80));
+      argTitle = esc(_cmdFull);
+    }
+    d.innerHTML =
+      `<button class="h-tool-head"><span class="h-chev">▸</span>` +
+      `<span class="h-tool-name">${_hToolIco(name)} ${esc(title)}</span>` +
+      badges +
+      (cfg.badge ? `<span class="h-tool-badge">${esc(cfg.badge)}</span>` : '') +
+      (argH ? `<span class="h-tool-arg"${argTitle ? ` title="${argTitle}"` : ''}>${argH}</span>` : '') +
+      (cfg.kind === 'bash' ? `<span class="h-tool-copy" role="button" title="复制命令">复制</span>` : '') +
+      `<span class="h-tslots">${done ? statusBadge(err ? 'error' : 'completed') : ''}</span></button>` +
+      `<div class="h-tool-coll">${hgToolBody(cfg, inp, { done, err, dln: o.dln, result: o.result, summary: o.summary, cmd: _cmdFull })}</div>`;
+    // 公共账（两轨同挂——renderOneToolResult/_subTlPoll/快照认回全消费）
+    d._cfg = cfg;
+    d._name = name;
+    d._id = o.id;
+    d._preview = (cfg.kind === 'bash' ? _cmdFull
+      : (typeof cfg.title === 'function' ? cfg.title(inp) : label)) || '';
+    if (o.id) d.dataset.tid = o.id;
+    if (o.hi != null) {
+      d.dataset.hi = String(o.hi);
+      d.dataset.hgLazy = (err || _dOp) ? '' : '1';   // 已填行空标记；收起丢弃由 Drop 重置
+    }
+    _hgDiffLineMemo(d, name, inp);   // live 回填存档（done/dln 直传时无操作）
+    return d;
+  }
+  // 合一体工厂：live 即填（cfg 驱动，与 _toolInputBodyHtml 同源）；done 形态
+  // 可懒（caller 传 hi 时由 hgToolCard 留空+标记，_histLazyFill 点开现填）
+  function hgToolBody(cfg, inp, x) {
+    if (x.done) {
+      if (x.err) return _toolInputBodyHtml(cfg, cfg.get ? cfg.get(inp) : '')
+        + (x.result ? `<div class="h-tool-out err-txt">${esc(String(x.result).slice(0, 4000))}</div>` : '');
+      // 非错误 done：懒（hi 由 caller 标）——这里返回即填内容仅当 summary/
+      // result 在手（转写行直渲染）；否则空串交懒填充
+      // 即填条件：result/summary 在手，或 defaultOpen（Edit/Write 族改动
+      // 本体生而展开——v3.2.26 用户定调「要展开才能看，凭什么」）
+      if (x.result !== undefined || x.summary || cfg.defaultOpen) {
+        const v = cfg.get ? cfg.get(inp) : '';
+        if (v && typeof v === 'object' && x.dln) v.dln = x.dln;
+        return (x.summary ? `<div class="h-tool-arg">${esc(x.summary)}</div>` : '')
+          + _toolInputBodyHtml(cfg, v)
+          + (x.result ? `<div class="h-tool-out">${esc(String(x.result).length > 4000 ? String(x.result).slice(0, 4000) + '…' : String(x.result))}</div>` : '');
+      }
+      return '';
+    }
+    // live run：即填（bash 命令全文在 coll；Edit/Write 展开体即时）
+    const v = cfg.get ? cfg.get(inp) : '';
+    return _toolInputBodyHtml(cfg, v);
+  }
   function renderToolUse(b, isSub, subId) {
     const name = b.name || '';
     const id = b.id || ('anon' + (++_HG.uidN));
     const cfg = _hCfg(name);
     const label = _hToolLabel(name);
     if (cfg.mode === 'hidden') return;
+    // R2c：主链行改走合一构造 hgToolCard（ZCode ToolPart 对位——单构造
+    // phase 驱动，live/回放同卡）。isSub（段内抽屉行）不收编（独立形态）
+    if (!isSub) {
+      const _row2 = hgToolCard({ id: id, name: name, input: b.input || {},
+                                 phase: 'run' });
+      // live 专属账（合一构造不背编排）
+      _row2._rawHint = String((b.input || {}).command || (b.input || {}).file_path ||
+                        (b.input || {}).path || (b.input || {}).pattern ||
+                        (b.input || {}).query || (b.input || {}).description ||
+                        (b.input || {}).subject || (b.input || {}).prompt || '');
+      _row2._rin = b.input || null;   // 原始 input 随行（窗格镜像 explore 聚组判定）
+      if (cfg.kind === 'agent') {
+        _subUserQueue(id, (b.input || {}).prompt || (b.input || {}).description || '');
+        const t0 = Date.now();
+        _row2._agentTimer = setInterval(() => {
+          if (!_row2.isConnected) { clearInterval(_row2._agentTimer); _row2._agentTimer = null; return; }
+          _hgAgentSlotPaint(_row2, t0);
+        }, 1000);
+      }
+      if (cfg.kind === 'bash' && !Object.keys(b.input || {}).length && b.id)
+        (_HG.noInputTids || (_HG.noInputTids = new Set())).add(b.id);
+      _HG.rowById[id] = _row2;
+      drawerCount(name);
+      _HG.run = { name, head: _row2, rows: [_row2] };
+      _tlPlace(_row2, name, b.input);
+      if (!_HG.openState)
+        _hgActPush({ tid: id, name, label, preview: _row2._preview || '',
+                     kind: cfg.kind, t0: Date.now() });
+      return;
+    }
     // v2.57R：后端同序原始摘要（command→file_path→path→pattern→query→…，与
     // _subFeed 提取式一致）——窗格工具指纹查重的镜像侧数据源（row._preview
     // 是前端 cfg 格式化值，与回放侧原始字段系统性不相等，不能做指纹）
@@ -583,68 +701,13 @@
 
     // 注意：这里不 closeRun——run 的边界是文本/thinking/用户消息/result；
     // tool_use 本身若是同名工具正是 run 的延续，由 toolRunPush 判定并入组。
+    // R2c：非 sub 已在前置块（hgToolCard）return——此处仅 isSub（段内
+    // 抽屉行，独立形态不收编）
     let row;
     if (isSub) {
-      // v2.44：段内工具行统一走抽屉工厂——one-line（Read/Grep 无展开体）与
-      // collapsible（Bash 展开带全文）两形态在段内割裂，用户定调全部折叠统一
       row = _subToolDrawerRow(cfg, name, label, b.input);
-    } else if (cfg.kind === 'agent') {
-      // v3.2.6：Agent/Task 派发走单行任务卡工厂（无展开体——过程进窗格）
-      row = _hgAgentRowBuild(id, _rinp.subagent_type || _rinp.agent_type || name,
-        _rinp.description || '');
-      // v3.2.30（用户实锤「运行中的代理看不到发给它的消息」）：派发 prompt
-      // 入 live 来向队列——窗格已开立即插、未开等 _subOpen/task_started 冲
-      // （回放侧 v3.2.21 已有 user 行，回放插行处带同文去重）
-      _subUserQueue(id, _rinp.prompt || _rinp.description || '');
-    } else if (cfg.mode === 'one-line') {
-      row = document.createElement('div');
-      const sec = cfg.sec ? cfg.sec(b.input) : '';
-      // v3.5.262（用户实锤「流式点开两列竖排，重渲的很棒，保持一样」）：
-      // bash 行生来即 hist renderHistTool 完全同构 head 卡（col+oneclick+
-      // button头+80字截断+head内复制键+coll预塞命令全文）——同一 CSS 路径
-      // 展开形态必然一致，v3.5.249/254 无 head flex 模拟的系列边角根治
-      if (cfg.kind === 'bash') {
-        row.className = 'h-tool col oneclick';
-        row.style.setProperty('--h-accent', _H_KIND_COLOR[cfg.kind] || 'var(--border)');
-        const _cmd = String(cfg.get(b.input) || '');
-        row.innerHTML =
-          `<button class="h-tool-head"><span class="h-chev">▸</span>` +
-          `<span class="h-tool-name">${_hToolIco(name)} ${esc(label)}</span>` +
-          `<span class="h-tool-arg" title="${esc(_cmd)}">${esc(_cmd.slice(0, 80))}</span>` +
-          `<span class="h-tool-copy" role="button" title="复制命令">复制</span>` +
-          `<span class="h-tslots"></span></button>` +
-          `<div class="h-tool-coll"><div class="h-tool-arg">${esc(_cmd)}</div></div>`;
-      } else {
-      row.className = 'h-tool';
-      // v3.1：ZCode 式行内徽标（文件类型色块 + `+N -N` 增删计数）
-      const badges = _hgToolBadges(name, b.input);
-      const argTxt = esc(cfg.get(b.input) || '');
-      row.innerHTML =
-        `<span class="h-tool-name">${_hToolIco(name)} ${esc(label)}</span>` +
-        badges +
-        // v3.5.267（全审）：bash 已分流到上方 head 卡——本 else 只剩非 bash
-        // one-line 行（Read/Grep 查阅子行），原 bash title 三元/复制按钮块
-        // 永不可达，删除（v3.5.262 遗留死代码）；arg 无 title（非 bash 恒无）
-        `<span class="h-tool-arg">${argTxt}</span>` +
-        (sec ? `<span class="h-tool-sec">${esc(sec)}</span>` : '') +
-        `<span class="h-tslots"></span>`;
-      }
     } else {
-      // collapsible：折叠组（左边框按类别着色，源 CollapsibleDisplay）
-      row = document.createElement('div');
-      row.className = 'h-tool col' + (cfg.defaultOpen ? ' open' : '');
-      row.style.setProperty('--h-accent', _H_KIND_COLOR[cfg.kind] || 'var(--border)');
-      const title = typeof cfg.title === 'function' ? cfg.title(b.input) : (cfg.title || label);
-      const v = cfg.get ? cfg.get(b.input) : '';
-      // v3.1：折叠组头同挂徽标（Edit 族的 diff 计数在收起态也要可见）
-      const badges = _hgToolBadges(name, b.input);
-      row.innerHTML =
-        `<button class="h-tool-head"><span class="h-chev">▸</span>` +
-        `<span class="h-tool-name">${_hToolIco(name)} ${esc(title)}</span>` +
-        badges +
-        (cfg.badge ? `<span class="h-tool-badge">${esc(cfg.badge)}</span>` : '') +
-        `<span class="h-tslots"></span></button><div class="h-tool-coll">${_toolInputBodyHtml(cfg, v)}</div>`;
-      _hgDiffLineMemo(row, name, b.input);   // v3.4.62：diff 真实行号定位存档（结果到达后触发）
+      return;   // 不可达（防御——前置块已 return）
     }
     row._preview = row._preview !== undefined ? row._preview
       : (cfg.mode === 'one-line' ? cfg.get(b.input) : (typeof cfg.title === 'function' ? cfg.title(b.input) : label)) || '';
