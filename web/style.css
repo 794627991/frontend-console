@@ -2392,7 +2392,7 @@ html {
 .h-think-seg-head:hover { color: var(--fg); background: color-mix(in srgb, var(--h-violet, #8957e5) 6%, transparent); }
 .h-think-seg .h-chev { transition: transform .15s; display: inline-block; font-size: 10px; }
 .h-think-seg.open .h-chev { transform: rotate(90deg); }
-.h-think-seg-name { font-weight: 600; color: var(--fg); }
+.h-think-seg-name { font-weight: 600; color: var(--fg); flex: 0 0 auto; white-space: nowrap; }
 /* 思考流③ ZCode reasoning.tsx 完整复刻：摘要视口=单行滚动（流水式）——
    完成态 :empty 隐藏（时长回贴「思考 持续了N秒」整串贴排，不推右）；
    流式态 flex:1 占位，内容 span min-w-max，JS scrollLeft=scrollWidth 推尾
@@ -2407,6 +2407,7 @@ html {
 .h-think-dot { display: none; color: var(--muted); flex: 0 0 auto; }
 .h-think-seg-head:has(.h-think-prev:not(:empty)) .h-think-dot { display: inline; }
 .h-think-seg-t { font-size: var(--fs-xs); color: var(--muted); font-family: var(--font-mono); }
+.h-think-seg-t { flex: 0 0 auto; white-space: nowrap; }   /* 识图实测「秒」字掉行/「思考」竖排——ZCode shrink-0 nowrap 对位 */
 /* v3.0 流式思考纯文本路径（对照 ZCode reasoning 的 whitespace-pre-wrap）：
    textNode 直插无 md 包裹，plain 修饰类期间保换行；定稿升级移除该类，
    md 内容回到正常空白折叠（pre-wrap 挂基类会被 <p> 继承破坏 md 排版） */
