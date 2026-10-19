@@ -24,24 +24,23 @@
     }
     _HG.histCursor = _HG.histAll.length;
   }
-  function _histRender(lines, start, opt) {
-    // 398-P5a 未落盘行拼接：SSE 事件先于 jsonl flush 到达（事件流与落盘异步）
-    // ——fetch 版不含「已入账未落盘」的 live 行，整窗替换会丢它们。从旧账尾
-    // 拼接 _sq > fetchedSeq 的行（服务器尚未见的）；user 行按文本精确去重
-    //（转写已含的同文行不双拼），assistant/thinking 落盘快由转写版覆盖
-    {
-      const old = _HG.histAll;
-      if (Array.isArray(old) && Array.isArray(lines) && lines !== old) {
-        const fs = _HG.fetchedSeq || 0;
-        const seenUser = new Set(lines.filter(l => l && l.role === 'user')
-          .map(l => String(l.text || '')));
-        for (const l of old) {
-          if (!l || !l._sq || l._sq <= fs) continue;
-          if (l.role === 'user' && seenUser.has(String(l.text || ''))) continue;
-          lines.push(l);
-        }
-      }
+  // 399-R3 抽函数：fetch 版与旧账合并——保住「已入账未落盘」的 live 行
+  //（SSE 事件先于 jsonl flush 的毫秒窗）；user 行按文本精确去重防双拼
+  function _hgMergeLive(lines, old, fs) {
+    if (!Array.isArray(lines) || !Array.isArray(old) || lines === old) return lines;
+    fs = fs || _HG.fetchedSeq || 0;
+    const seenUser = new Set(lines.filter(l => l && l.role === 'user')
+      .map(l => String(l.text || '')));
+    for (const l of old) {
+      if (!l || !l._sq || l._sq <= fs) continue;
+      if (l.role === 'user' && seenUser.has(String(l.text || ''))) continue;
+      lines.push(l);
     }
+    return lines;
+  }
+  function _histRender(lines, start, opt) {
+    // 398-P5a→399-R3：未落盘行保尾（抽 _hgMergeLive，fetch 赋值处同用）
+    lines = _hgMergeLive(lines, _HG.histAll, _HG.fetchedSeq);
     // v3.5.8（用户实锤「A 切 B 再切 A，识图中显示历史未完成」）：渲染期
     // busy 标志——noFinalize 正是调用方的 !!j.busy（busy 活会话）。识图卡
     // 回放据此把未回传卡复活为「识图中」（run 态+续表），不再误判死案
@@ -315,12 +314,14 @@ if (l && l.live) l.live = 0;   // 398-P5b：重放归一（live 动画/流式语
           _realFlow.insertBefore(hint, _realFlow.firstChild);
         }
       }
-      // 398-P4（审 P4——先对齐后泵=零迭代死代码，兜底方向本就错）：
-      // histBuilding 此时已由 finally 归还前——渲染期 live 入账被泵拦的行，
-      // 此处先泵（泵自推游标），完成后账净（脏标清=fetch 版为基+拼接行在场）
+      // 399-R1（复审实锤：398 删对齐行=整窗后尾泵把 [start,len) 双渲追加，
+      // 冷开/切会话/自愈全窗口两份——原对齐语义本就正确，P4 的正解是改注释）：
+      // 先对齐（重建循环已渲到账尾）再泵——泵零迭代；渲染期同步无入账窗口，
+      // 此泵仅形式兜底（防御未来异步化）
+      _HG.histCursor = _HG.histAll ? _HG.histAll.length : 0;
+      _HG.histDirty = false;   // 整窗重放后账净（live 行已并入——见入口拼接）
       try { _histPump(); _trimOldTurns();
 _hgRailSync(); } catch (_) {}
-      _HG.histDirty = false;   // 整窗重放后账净（live 行已并入——见入口拼接）
     }
   }
   // v3.2.22（用户实锤「切走再切回，子代理目录点不开」）：快照恢复路径不跑
@@ -365,7 +366,9 @@ _hgRailSync(); } catch (_) {}
       const r = await fetch(`/api/harness/transcript?sid=${encodeURIComponent(sidAt)}`);
       const j = await r.json();
       if (!j.ok || _HG.sid !== sidAt) return false;
-      _HG.histAll = j.lines || [];
+      _HG.histAll = _hgMergeLive(j.lines || [], _HG.histAll, j.seq || 0);
+      // 399-R3（复审实锤：fetch 窗口期 SSE 先到入账的行被整替毁掉——old 已
+      // 换新，入口拼接救不了；保尾在赋值处就地做）+ v3.5.225 busy 真值随拉取存档
       // v3.5.225：后端 busy 真值随拉取存档——切回重渲的 noFinalize/phResume
       // 判据用它（_HG.busy 在 events poll 回填前有竞态窗，误 false 会让尾组
       // 被定稿+phResume(true) 新建悬挂活组=「一个回合两个块」分割实锤）
@@ -380,6 +383,7 @@ _hgRailSync(); } catch (_) {}
       const j = await r.json();
       if (!j.ok || _HG.sid !== sidAt) return;   // 会话已切走，弃
       if (_HG.busy) return;   // v3.2.1R2(R2-2)：fetch 在途时用户发送消息——重渲会抹掉活组/新消息泡（07-hist 懒填同款守卫）
+      _HG.fetchedSeq = j.seq || 0;   // 399-R2：水位即时更新（拼接判据）——原只在 _histFetch 更新，本路旧水位使已落盘行被重复拼接
       const lines = j.lines || [];
       // 394 单账游标制：DOM/游标有效时只泵账尾差量（前缀一致性）；游标无效
       //（冷启动/降级/失配）→ 整窗（原行为，_histRender 内部对齐游标）
