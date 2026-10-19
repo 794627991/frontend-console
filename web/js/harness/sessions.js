@@ -343,12 +343,11 @@
               _liveVis.forEach(c => c.remove());
             } catch (_) {}   // v3.5.242：ask结果行同护（转写无ask行，重渲必丢）
             if (_HG.histAll.length - 1 > _he2) {
-              // v3.5.230（用户实锤「历史全没了」紧急回修）：v3.5.227 用
-              // exactStart 追加是错的——_histRender 的原子换入把 flow 整替
-              // 成「只有新增行」（hEnd 前的历史全被换掉=241 轮消失，重蹈
-              // v3.5.195 补尾覆辙）。改回整窗重渲（histStart 起，完整 20
-              // 回合窗口）：无增长不动 DOM（live 思考保留）语义不变；有
-              // 增长=工具已落盘（思考也随之落）→整窗渲含思考，两全
+
+              // 394 单账游标制：有增长→游标泵（只渲染账尾新增行）——不再整窗
+              // 重建（384 事故触发器形态退役；快照 DOM 的渲染账=hEnd 尾值）
+              if (!_HG.histCursor) _HG.histCursor = _he2 + 1;
+              if (_HG.histAll.length > _HG.histCursor) _histPump();
               _histRender(_HG.histAll, _HG.histStart | 0, { noFinalize: _busy2 });
             }
             if (_busy2 && typeof phResume === 'function') phResume(true);

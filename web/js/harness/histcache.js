@@ -377,7 +377,13 @@
       if (!j.ok || _HG.sid !== sidAt) return;   // 会话已切走，弃
       if (_HG.busy) return;   // v3.2.1R2(R2-2)：fetch 在途时用户发送消息——重渲会抹掉活组/新消息泡（07-hist 懒填同款守卫）
       const lines = j.lines || [];
-      _histRender(lines, 0);   // v3.2.12：恒全量（start 参数退役保留签名兼容）
+      // 394 单账游标制：DOM/游标有效时只泵账尾差量（前缀一致性）；游标无效
+      //（冷启动/降级/失配）→ 整窗（原行为，_histRender 内部对齐游标）
+      if (_HG.histLive && !_HG.histStale && (_HG.histCursor || 0) > 0
+          && (_HG.histCursor || 0) <= lines.length) {
+        _HG.histAll = lines;
+        _histPump();
+      } else _histRender(lines, 0);
     } catch(_) {}
   }
   // v3.2.7（用户定调「只读模式退役」）：_roDeps/_roEnter/_roExit 整体退役——
