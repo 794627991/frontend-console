@@ -1088,6 +1088,11 @@
             // v3.4.73R（复核 P5）：raw 锚同打在 body 上——SSE 侧 [data-raw]
             // 查重锚覆盖回放行（含折叠行），raw 对 raw 与 8000 截断前缀自洽
             (el.querySelector('.hg-sub-fold-body') || el).dataset.raw = String(row.text || '');
+            // 全路径排查（实测「中途行冒充结论」的查重失明层）：行级同值锚
+            // 兜底——_subFeed 查重 selector 是 '.h-msg.asst[data-raw]'（行上），
+            // 折叠行 raw 只在孙级 body=扫描恒 miss（8000 截断的末段 raw 与
+            // 行级全文 raw 互为前缀仍可命中）；双层锚后任一形态的重复喂入可挡
+            el.dataset.raw = String(row.text || '').slice(0, 8000);
             _subTlAppendRow(t, el);
           } else if (row.k === 'user') {
             // v3.2.24（用户定调「像 ZCode 一样直接暴露，不要收进工作区」）：
@@ -1297,7 +1302,10 @@
         // 顺带覆盖长文折叠行（hg-sub-fold-body 孙级）；命中跳过；插入打 hgRp
         const _normT = s => String(s || '').replace(/\s+/g, '');
         const _wantT = _normT(b.text);
-        const _dupT = _wantT && [...t.tl.querySelectorAll('.h-msg.asst[data-raw]')]   // 复审#3：全量查重（同 think）
+        // 全路径排查：查重容器 t.tl→t.sc（含结论区）——定稿上移的行脱离 t.tl
+        // 后旧扫描盲区=同文重喂时查重 miss 再插一份（终稿双份的最后一层）
+        const _dupScope = t.sc || t.tl;
+        const _dupT = _wantT && [..._dupScope.querySelectorAll('.h-msg.asst[data-raw]')]   // 复审#3：全量查重（同 think）
           .some(el => { const _g = _normT(el.dataset.raw || '');
             return !!_g && (_wantT.startsWith(_g) || _g.startsWith(_wantT)); });
         if (!_dupT) {
@@ -1415,6 +1423,14 @@
     // 转写增量→窗格+摘要（agentId 键；offset 账本 subTail[agentId] 内存化，
     // 不再落段 dataset——切会话清账后首拉全量，已铺底行由查重消化一次性浪费）
     if (!aid) return;
+    // 全路径排查保险丝（实测教训：372 前 size=0 致账本丢失，无账本 offset=0
+    // 全量重喂=中途行 append 到时间线尾冒充结论）：tab 已有铺底行（rpN>0）
+    // 而账本缺失=账本丢失形态，跳过本轮（正确性优先于实时性——最坏缺增量，
+    // 绝不乱序）；无铺底行=正常首拉全量。账本由铺底成功写（j.size，371/372）
+    if (!(aid in _HG.subTail)) {
+      const _tbF = _sub.tabs[_subTid(aid)];
+      if (_tbF && (_tbF.rpN || 0) > 0) return;
+    }
     if (_subTailBusy[aid]) return;
     _subTailBusy[aid] = true;
     const sidAt = _HG.sid;
