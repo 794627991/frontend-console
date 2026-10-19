@@ -103,14 +103,12 @@
     // v3.5.33：引用拼装已上移 send() 入口（排队路径同享）——此处不再重复
     _hgHistAppend(sid, text);          // 输入历史（记录到真实会话 scope）
     _HG.histNav = null;
-    // v2.20：乐观渲染——connect 一回来就画出自己的气泡。原实现要等 SSE 的
-    // user_echo 绕一圈才显示，新会话冷启动时「发出去半天上面没动静」（用户
-    // 实测）。echoFast 让随后到达的 SSE 同文本 echo 跳过，不双渲染。
-    // v3.5.77：echoFast 带气泡引用 el——echo 跳过补画前先验气泡还在屏
-    //（被清场抹掉时 echo 补画，防「新会话首条消息消失」）
-    const el = renderUser(text, images, files);
-    _HG.echoFast = { text: text || '', el };
-    _hgScrollBottom(true);                 // 自己发的消息无条件回底
+    // 纯 ZCode 式（用户拍板「接受延迟感，ZCode 实际无感」）：**不乐观
+    // 渲染**——本地不先画气泡，user_echo 从后端事件流回来经 dispatch 渲
+    // 染（唯一真相源=后端事件，ZCode zcodeSessionProjection 同款）。蒸
+    // 发/双画/守卫/兜底（v2.20-v3.5.332 整族）构造性消失。失败回滚分支
+    // 保留 el=null 传参（_hgRollbackTurn 幂等）
+    const el = null;
     setBusy(true);
     try {
       const r = await fetch('/api/harness/send', {method:'POST', headers:{'Content-Type':'application/json'},

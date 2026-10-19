@@ -1029,23 +1029,9 @@
       // 事件顺序保证清场时机正确）。复审 P4：清场→首帧重放的间隙也是
       // 「空 flow + saveCache」窗口——同置重建标志，首帧到达即清
       if (a.mode === 'snapshot') {
-        // v3.5.77（用户实锤「新会话首条消息消失」）：冷启动竞态——openSSE(0)
-        // 的 ack(snapshot) 在乐观渲染之后到达时，清场（resetLocal）把刚画的
-        // 用户气泡抹掉；此刻保留窗为空（消息尚未 POST /send 或刚入窗），
-        // 重放救不回、echoFast 又让随后 user_echo 跳过补画 = 首条消息蒸发
-        // （切 B 再切回靠转写重渲才回来）。守卫：转写渲染未建（histAll 空）且
-        // 乐观气泡在场——无任何可重放基线，不清场（活视图即最新态；已流过
-        // 的帧由 seq 去重天然免疫重放）
-        // v3.5.327（用户实锤「打断后紧跟发消息，消息不显示、AI 回复正常，
-        // 切会话重渲才回来」）：守卫推广到所有场景——打断→revive→openSSE
-        // 的 ack(snapshot) 清场同样会抹掉老会话刚画的乐观气泡（重放窗不含
-        // 尚未 POST 的消息，echoFast 又已被清，user_echo 到达后 _hgEchoDup
-        // 对着被清空的 flow 误判）。echoFast 在场=用户刚发消息、活视图即
-        // 最新态：跳过清场续流即可，已流过的帧由 seq 去重天然免疫重放
-        if (_HG.echoFast) {
-          _hgDiag('sse', 'ack=snapshot 跳过清场（乐观气泡在场）');
-          return;
-        }
+        // 纯 ZCode 式（用户拍板）：无乐观渲染=无本地先行态可被清场抹掉
+        // ——v3.5.77/327 守卫与 v3.5.330b 兜底针对的「蒸发」构造性不存在。
+        // ack 一律清场重放（后端保留窗是唯一真相，seq 去重免疫重放帧）
         _hgDiag('sse', 'ack=snapshot 清场重放（histAll=' + (((_HG.histAll)||[]).length) + '）');
         // v3.4.68R3：清场前抢存转写行数基准（resetLocal 会清 histAll）——
         // 重放落定后跑覆盖度自检，缺口大即整帧重渲自愈（用户实锤「切回后
@@ -1059,19 +1045,6 @@
         setTimeout(() => _hgCoverageAudit(sid, _snapBase, 'sse-snapshot',
           { snapshotBase: true }), 2000);
         _hgBusyResync(sid, 2100);   // v3.4.69d：清场重放落定后 busy 会话无条件重渲兜底
-        // v3.5.330b（用户二次实锤「打断后紧跟发消息仍蒸发」）：328 守卫只拦
-        // 「ack 晚于气泡」一种时序；ack 先到时清场/重放仍可能与 renderUser
-        // 竞速抹掉气泡。无差别兜底：重放落定后（2.6s）检查乐观气泡在场否，
-        // 被抹即补画（管它哪条路径抹的）——_hgEchoDup 对上轮同文本误判由
-        // 直接 renderUser 绕过（乐观气泡本就该无条件可见）
-        setTimeout(() => {
-          const ef = _HG.echoFast;
-          if (!ef || !ef.text || _HG.sid !== sid) return;
-          if (ef.el && ef.el.isConnected) return;
-          const el2 = renderUser(ef.text, ef.images || [], ef.files || []);
-          ef.el = el2;   // 稍后 user_echo 到达仍按在场跳过，不双画
-          _hgScrollBottom(true);
-        }, 2600);
       }
     });
     es2.addEventListener('reset', (ev) => {
@@ -1113,23 +1086,13 @@
         // R2b：过滤规则收敛 _fevUserFilter（live/hist 单一实现——贴图回显
         // 剥除+中断标记拦截，此前两轨各持一份同款正则）
         const _uf = _fevUserFilter(it.text, it.files);
-        if (_uf.skip) { _HG.echoFast = null; return; }
+        if (_uf.skip) return;
         it.text = _uf.text;
         setBusy(true);
-        // v2.20：乐观渲染 → echo 到达即跳过（echoFast 只顶一条，连发两条
-        // 相同文本时第二条照常走事件渲染，不会吞）
-        // v3.5.77：跳过的前提=乐观气泡还在屏（el.isConnected）——气泡若被
-        // 中途清场（快照重放/重建竞态）抹掉，echo 负责补画（防蒸发兜底）
-        // R2b：渲染走 dispatch（entries 唯一入口）；去重判定留分支（乐观
-        // 态属 live 编排，ZCode pending→confirmed 对位）
-        if (_HG.echoFast && _HG.echoFast.text === (it.text || '')) {
-          const _live = _HG.echoFast.el && _HG.echoFast.el.isConnected;
-          _HG.echoFast = null;
-          if (!_live && !_hgEchoDup(it))
-            _hgDispatch({ t: 'user_message', text: it.text,
-                          images: it.images, files: it.files, live: true });
-        }
-        else if (!_hgEchoDup(it))
+        // 纯 ZCode 式：无乐观态无 echoFast 去重窗口——蒸发构造性不存在
+        //（v2.20-v3.5.332 守卫/兜底/补画全家随乐观渲染退役）。_hgEchoDup
+        // 重放去重保留（与乐观无关的 seq 前置防线）
+        if (!_hgEchoDup(it))
           _hgDispatch({ t: 'user_message', text: it.text,
                         images: it.images, files: it.files, live: true });
       }
@@ -1286,10 +1249,6 @@
     // delete cache 会被这次入库击穿，切回恢复出空白工作区。
     // 复审 P3：门按「本会话」判——别会话在途的重建不拦本会话存快照
     if (_HG.histRebuilding && _HG.histRebuilding === _HG.sid) return;
-    // v2.28.13：echoFast 随快照保存——切走时 2420 行会清空它，但快照 html
-    // 里已经带着乐观渲染的用户气泡；若 user_echo 尚未到达（快速切走），
-    // 切回来重放的 echo 对不上已清空的去重窗口 → 双画（用户实锤 A→B→A
-    // 出两条同文消息）。随快照存取，恢复后重放 echo 仍能命中跳过。
     // v2.37（P0-A）：窗口账目随快照存——恢复路径重建 histStart/histLive，
     // 使滚动扩收机制在快照态重新成立（此前快照恢复后 histLive=false 且
     // histStart 丢失，上滑扩段被 v2.35.2 的门拦死，历史够不着）
@@ -1310,7 +1269,6 @@
                            // 用户真上翻（gap>150）才 false，语义即「是否跟读」
                            scroll: { top: _hgFlow.scrollTop, h: _hgFlow.scrollHeight,
                                      ch: _hgFlow.clientHeight, atBottom: _HG.stickBtm !== false },
-                           echoFast: _HG.echoFast || null,
                            histStart: _HG.histStart,
                            // v2.43.2（R3 复审 F-R3）：降级快照 histLive 恒 false
                            //（降级 return 在置 histLive 之前），恢复主路的

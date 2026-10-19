@@ -196,7 +196,7 @@ const _HG = {
   imgSrv: null,         // 图片服务路径标记（后端 /api/harness/img/<sid>/file）
   activity: null,       // 活动指示 {start, verbTimer, tickTimer}
   actStart: 0,
-  echoFast: null,       // v2.20：乐观渲染的 echo 去重窗口 {text}（SSE 回声跳过）
+  echoFast: null,       // 已退役（纯 ZCode 式无乐观渲染）——字段保留防旧快照读取炸
   queues: {},           // v2.20：消息排队 sid -> [{text, images, files}]
   qTimer: null,         // 排队泵去抖 timer
   compacting: false,    // v2.20：压缩进行中（分割线只插一次，恢复时补「完成」）

@@ -182,7 +182,6 @@
     if (prevSid) _HG.attsBy[prevSid] = _HG.atts;
     _HG.atts = (sid && _HG.attsBy[sid]) || [];
     renderAtts();
-    _HG.echoFast = null;               // v2.20：切会话清乐观渲染去重窗口（防串会话吞 echo）
     _hgCtxRestore(sid);                // 切回旧会话：恢复该会话上次的上下文用量（result 不重放）
     _hgQueueSeed(sid);                 // v3.1：durable 队列从服务端账本初始化（#10）
     if (!sid) {
@@ -255,7 +254,6 @@
         if (lbl && lbl.textContent.indexOf('工作中') === 0) lbl.textContent = '已工作';
       });
       _HG.epoch = c.epoch || null;     // v3.0：代际水位随快照存取（与 seq 同进退）
-      _HG.echoFast = c.echoFast || null;   // v2.28.13：去重窗口随快照恢复（防重放双画）
       // v2.37（P0-A）：窗口账目重建——快照 DOM 是上一次 _histRender 的窗口
       // （histStart 起的尾部段），账目随快照存取（见 saveCache）。histLive
       // 置 true 需 histAll 数据在场：拉一次 transcript 只填数据不重渲
