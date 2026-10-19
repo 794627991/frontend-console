@@ -223,15 +223,6 @@
           .match(/resumedAgentId["':\s]+([0-9a-zA-Z_-]{8,64})/);
         if (_raid && l.input && l.input.to)
           (_HG.peerSent || (_HG.peerSent = {}))[_raid[1]] = l.input.to;
-        // v3.5.158：正向映射（包装 tid→真实 agentId）——_subReopen 档案
-        // miss 漏斗的 b2 层（切会话清内存档案后的同步跳转依据）
-        if (_raid && l.id)
-          (_HG.subTidRes = _HG.subTidRes || {})[l.id] =
-            { agentId: _raid[1], type: 'SendMessage',
-              desc: (typeof _peerDesc === 'function'
-                ? _peerDesc(l.input.to,
-                    String(l.input.message || '').replace(/\s+/g, ' ').trim().slice(0, 60))
-                : (l.input.to || '')) };
         const _rElH = renderPeerRelay((l.input && l.input.to) || '识图会话',
                         l.ts ? new Date(l.ts).getTime() : 0);
         if (_rElH && l.input && l.input.to && !String(l.input.to).includes('识图'))

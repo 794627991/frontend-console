@@ -60,22 +60,18 @@
         if (k.indexOf('pending:') !== 0 && !ak[k]) ak[k] = k;
       }
       _HG.aidKey = ak;
-      // 双轨归并：live 期 SSE 按 tid 建的档案（键=tool_use id）经 tidMap
-      // 映射到 agentId 键；注册表条目为权威（status/desc/rounds），live
-      // 档案的富字段（model）保留。live 独有（注册表尚未收录的瞬时）原样
-      // 保留——下一轮 Sync 收编
+      // 双轨归并：live 期 SSE 按 tid 建的档案经 tidMap 映射到 agentId 键；
+      // 投影条目为权威（status/desc/rounds），live 档案的富字段（model——
+      // 后端条目无此字段，live/agent_models 是唯一来源）保留。live 独有
+      //（冷查询尚未收录的瞬时）原样保留——下一轮 Sync 收编。
+      // 冷查询批4：_liveA 整机制缩为纯 model 累积（字段补全非归一层）
       const live = _HG.agents || {};
-      const byAid = {};
+      const modelBy = {};
       for (const k in live) {
         const a = live[k];
-        const aid = (_HG.tidMap[k] || (a && (a.taskId || a.agentId)) || '');
-        if (a && aid && /^[0-9a-zA-Z_-]{8,64}$/.test(aid)) {
-          const cur = byAid[aid] = byAid[aid] || {};
-          // 富字段合入（model 等注册表没有的）
-          if (a.model && !cur.model) cur.model = a.model;
-          if (!cur._liveA || !cur._liveA.t0 || (a.t0 && a.t0 < cur._liveA.t0))
-            cur._liveA = a;
-        }
+        if (!a || !a.model) continue;
+        const aid = (_HG.tidMap[k] || a.taskId || a.agentId || k) || '';
+        if (aid && !modelBy[aid]) modelBy[aid] = a.model;
       }
       const agents = {};
       const jAg = j.agents || {};
@@ -85,7 +81,7 @@
           // 兼容 live 流，found=false 不回放。
           // F2 修复（全审）：tid 已被 tidMap 归链且 aid 条目在场时**跳过
           // 落键**——稀疏档（无 taskId/tids/rounds）覆写 live 富档会丢
-          // 字段+鬼影双计（后端迁键删 pending 后此分支自然消失，双保险）
+          // 字段+鬼影双计
           const _pk = k.slice(8);
           const _pAid = (_HG.tidMap || {})[_pk];
           if (_pAid && jAg[_pAid]) continue;
@@ -99,11 +95,7 @@
           continue;
         }
         const loc = _hgRegToLocal(jAg[k], sid);
-        const rich = byAid[k];
-        if (rich) {
-          if (rich.model) loc.model = rich.model;
-          if (rich._liveA && rich._liveA.model) loc.model = loc.model || rich._liveA.model;
-        }
+        if (modelBy[k]) loc.model = modelBy[k];
         agents[k] = loc;
       }
       // live 独有条目（注册表快照未含——瞬时在途）：保留原键原样
