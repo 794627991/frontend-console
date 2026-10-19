@@ -80,15 +80,11 @@
             // 子代理」）。优先沿用旧档的可信 taskId/desc/t0，新事件只补
             // 缺失字段
             const _prev = (_HG.agents || {})[tid] || null;
-            // v3.5.322（复审#4）：projSeed 补种档案的 taskId 可能是 CLI 包装
-            // task_id（恰合 id 正则的无转写异形 id）——不能当真实 id 沿用
-            const _prevReal = (_prev && !_prev.unresolved && !_prev.projSeed
-              && _prev.taskId
-              && /^[0-9a-zA-Z_-]{8,64}$/.test(String(_prev.taskId)))
-              ? String(_prev.taskId) : '';
-            const _real = _prevReal
-              || ((_to && /^[0-9a-zA-Z_-]{8,64}$/.test(String(_to)))
-                ? String(_to) : '');
+            // 冷查询批3（I3 一链一档）：本地续派的 task_started 并入原档
+            //（SendMessage 分支已归链建轮；此处只保活+补名），原档不在场
+            // （跨会话/名字形态）才走 collab 独立建档
+            const _real = (_to && /^[0-9a-zA-Z_-]{8,64}$/.test(String(_to)))
+              ? String(_to) : '';
             // 冷查询批1（I2 tidMap 完备）：agentId 已知即写映射——消费点
             // 单点解析的前提（_subTid 反查扫描随批2 退役）
             if (_real) {
@@ -97,22 +93,29 @@
               _HG.aidKey = _HG.aidKey || {};
               if (!_HG.aidKey[_real]) _HG.aidKey[_real] = tid;
             }
-            (_HG.agents || (_HG.agents = {}))[tid] = {
-              type: o.subagent_type || 'Task',
-              // desc：CLI 对 SendMessage 续派恒不带 description——保旧档
-              // 已解析名，再退 _peerDesc（对齐 v3.5.296 非 collab 分支），
-              // 胶囊/目录才显示任务名而非「协作代理」
-              desc: o.description || (_prev && _prev.desc)
-                || (typeof _peerDesc === 'function'
-                  ? _peerDesc(_to, (_HG.peerMsg || {})[tid]) : ''),
-              t0: (_prev && _prev.t0) || Date.now(),
-              done: false, doneAt: 0,
-              collab: true, bg: true,
-              // v3.5.158：peerSent miss 时 taskId 降级为包装 task_id（无转写
-              // 的「幻影档案」）——unresolved 标记让 _subReopen/_subDirRowClick
-              // 走 subagent_resolve 解析漏斗而非拿降级 id 硬开回放
-              unresolved: !_real,
-              taskId: _real || (o.task_id || '') };
+            const _orig3 = _real ? _hgAg(_real) : null;
+            if (_orig3) {
+              // 并入原档：保活（续派轮在跑）+desc 兜底 +tids 补包装 tid
+              _orig3.done = false; _orig3.doneAt = 0; _orig3.err = false;
+              if (!_orig3.desc && o.description) _orig3.desc = o.description;
+              _orig3.tids = _orig3.tids || [];
+              if (_orig3.tids.indexOf(tid) < 0) _orig3.tids.push(tid);
+            } else {
+              // 原档不在场（跨会话/名字形态）——独立 collab 档
+              (_HG.agents || (_HG.agents = {}))[tid] = {
+                type: o.subagent_type || 'Task',
+                desc: o.description
+                  || (typeof _peerDesc === 'function'
+                    ? _peerDesc(_to, (_HG.peerMsg || {})[tid]) : ''),
+                t0: Date.now(),
+                done: false, doneAt: 0,
+                collab: true, bg: true,
+                // v3.5.158：peerSent miss 时 taskId 降级为包装 task_id（无转写
+                // 的「幻影档案」）——unresolved 标记让 _subReopen/_subDirRowClick
+                // 走 subagent_resolve 解析漏斗而非拿降级 id 硬开回放
+                unresolved: !_real,
+                taskId: _real || (o.task_id || '') };
+            }
             // 段头名字优先用转交收件人（与「已转交」线同名对齐），否则角色
             // 类型名。段不挂 hgSub（无实况流，窗格钮不画）；真实 id 在手则
             // 建段即落 hgSubr——运行中即可「▣ 回放」围观转写，也是切会话
@@ -458,26 +461,39 @@
                 _HG.tidMap[b.id] = _aid;
                 _HG.aidKey = _HG.aidKey || {};
                 if (!_HG.aidKey[_aid]) _HG.aidKey[_aid] = b.id;
-                // v3.5.327（用户实锤胶囊「✦4 协作代理」名字全不对）：建档即补
-                // 任务名（消息首行）——旧 desc:'' 要等 task_started merge 才补，
-                // CLI 不发 task_started 或事件乱序时胶囊/目录一直显示类型兜底
-                // 「协作代理」而非任务内容
-                (_HG.agents || (_HG.agents = {}))[b.id] = {
-                  type: 'SendMessage',
-                  desc: (typeof _peerDesc === 'function'
-                    ? _peerDesc(_aid, String(b.input.message || '').trim()) : '')
-                    || ((_HG.peerMsg || {})[b.id] || ''),
-                  t0: Date.now(),
-                  done: false, doneAt: 0, collab: true, bg: true, taskId: _aid };
+                // 冷查询批3（I3 一链一档）：本地续派**并入原档**（rounds++/
+                // 复活/desc=最新轮消息首行/tids+=包装 tid）——与后端 send
+                // 归链（subagent_projection.py send 循环）逐字段同构，live
+                // 归链就是 Sync 归链的预演，两轨天然收敛。跨会话（原档不
+                // 在场）照旧建独立 collab 档
+                const _orig = _localResend ? _hgAg(_aid) : null;
+                const _msg1 = String(b.input.message || '').trim().split('\n')[0];
+                if (_orig) {
+                  _orig.rounds = (_orig.rounds || 1) + 1;
+                  _orig.done = false; _orig.doneAt = 0; _orig.err = false;
+                  _orig.desc = _msg1 || _orig.desc;
+                  _orig.tids = _orig.tids || [];
+                  if (_orig.tids.indexOf(b.id) < 0) _orig.tids.push(b.id);
+                } else {
+                  (_HG.agents || (_HG.agents = {}))[b.id] = {
+                    type: 'SendMessage',
+                    desc: (typeof _peerDesc === 'function'
+                      ? _peerDesc(_aid, String(b.input.message || '').trim()) : '')
+                      || ((_HG.peerMsg || {})[b.id] || ''),
+                    t0: Date.now(),
+                    done: false, doneAt: 0, collab: true, bg: true, taskId: _aid };
+                }
                 const _disp2 = (_HG.peerNames || {})[_aid] || _aid;
-                // v3.5.327：段头名对齐档案 desc（任务名优先）——旧硬编码
-                // 「审核 · id尾缀」在胶囊已显示任务名时两处名字不一致
+                // v2.58：续派轮**新段**（轮询/回传/回填全部归属新段——
+                // 用户实锤「咋又跑上一个审计会话里去了」）；段头名对齐
+                // 档案 desc（任务名优先）
+                const _lbl = (_orig ? _orig.desc : ((_HG.agents || {})[b.id] || {}).desc)
+                  || ('审核 · ' + String(_disp2).slice(0, 24));
                 const _nb2 = _subBlkGet(b.id, { live: true, collab: true,
                   bg: true, fold: true,
-                  label: ((_HG.agents || {})[b.id] || {}).desc
-                    || ('审核 · ' + String(_disp2).slice(0, 24)),
+                  label: _lbl,
                   model: '', type: 'SendMessage',
-                  desc: ((_HG.agents || {})[b.id] || {}).desc || '', done: false });
+                  desc: _lbl, done: false });
                 if (_nb2) {
                   _nb2.head.dataset.hgSubr = _aid;
                   _nb2.head.dataset.hgSubType = 'SendMessage';

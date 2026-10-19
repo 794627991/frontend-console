@@ -76,22 +76,10 @@
     const agEl = c.querySelector('[data-hg-caps-ag]');
     if (agEl) {
       if (agRun) {
-        // v3.5.317：链去重——collab 包装档案（SendMessage 续派）与其原代理
-        // 档案按 taskId 链并成一条（先派发的原代理 t0 更早先入列并占链，
-        // 后到的包装跳过）。旧码数档案条数，续派期间同一逻辑代理被数 2 次
-        // （胶囊「✦2」而动态页过滤后 1 行，口径分裂）；跨会话协作（本会话
-        // 无原代理档案）链无碰撞照常单列。胶囊只显示真实任务名（档案 desc，
-        // v3.5.317 collab 建档 merge 修复后 desc 恒有值）
-        const _seenLink = new Set();
+        // 冷查询批3（I3 一链一档）：续派归链后一链一档，直接数——
+        // v3.5.317 链去重（_seenLink）退役。胶囊只显示真实任务名（档案 desc）
         const list = Object.values(_HG.agents || {}).filter(a => !a.done)
-          .sort((x, y) => (x.t0 || 0) - (y.t0 || 0))
-          .filter(a => {
-            const lk = (a.collab && a.taskId) ? a.taskId
-              : (a.agentId || a.taskId || '');
-            if (lk && _seenLink.has(lk)) return false;
-            if (lk) _seenLink.add(lk);
-            return true;
-          });
+          .sort((x, y) => (x.t0 || 0) - (y.t0 || 0));
         const last = list[Math.floor(Date.now() / 4000) % list.length] || {};
         const act = String(last.desc || '').replace(/\s+/g, ' ').trim().slice(0, 30)
           || (_AGENT_LABEL[last.type] || last.type || '');
