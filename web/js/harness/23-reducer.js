@@ -22,11 +22,12 @@
              agents: {}, inbox: [], turnTools: _hgEmptyTools(),
              toolsTotal: _hgEmptyTools(), lastTurnTools: null, lastErr: null };
   }
-  function _hgProjEvent(it) {
-    // SSE 信封入口（onmessage 每帧先过这里再走 legacy 分派）
-    if (!_HG.proj) _HG.proj = _hgProjInit(it && it.sid);
-    const p = _HG.proj;
-    const t = it.type || it.kind;
+  function _hgReduce(p, it, fx) {
+    // R0 纯化（ZCode EventReducer 纪律）：归约只动状态与 fx 出参（副作用
+    // 描述数组，由 _hgRunFx 统一执行）——renderQueue/apiPost/showBanner/
+    // renderSideStatus 不再内嵌。_HG 全局键的读写（queues/qKill/tidMap）
+    // 保留（状态存储归 R7 收缩，非 DOM 副作用）。
+    const t = it.type || it.kind || it.t;
     let dirty = false;
     if (t === 'turn_started') {
       p.status = 'running'; p.turnCount++; p.turnTools = _hgEmptyTools();
@@ -56,8 +57,7 @@
                            t0: it.ts || 0, done: false,
                            err: false, tokens: 0, toolN: 0 };
       // subagent-registry F6（全审）：镜像事件附 aid——即收即更 tidMap
-      //（_subTid 归一零延迟；此前 aid 附在事件上但本 handler 忽略它=
-      // 死代码，头 2s 仍靠旧三向反查）
+      //（_subTid 归一零延迟；25-registry 单点纪律域）
       if (it.aid && it.tid) { _HG.tidMap = _HG.tidMap || {}; _HG.tidMap[it.tid] = it.aid; }
       dirty = true;
     } else if (t === 'subagent_result') {
@@ -84,14 +84,14 @@
         const hit = fp ? live.findIndex(k => k.fp === fp) : -1;
         if (hit >= 0) {
           live.splice(hit, 1);
-          // v3.5.109：迁移 apiPost（O2——写操作禁止裸 catch；补杀失败必须
-          // 可见，否则用户以为拦住了、消息实际还会复活发出）
-          if (it.id) apiPost('/api/harness/queue_act',
-            { sid: _HG.sid, id: it.id, act: 'del' },
-            { label: '拦截补杀失败——该消息可能复活，请手动删除' });
+          // v3.5.109：补杀失败必须可见（O2），否则用户以为拦住了、消息
+          // 实际还会复活发出——经 fx 描述（api_queue_del）
+          if (it.id) fx.push({ op: 'api_queue_del', id: it.id });
           p.inbox = (p.inbox || []).filter(x => x.id !== it.id);
-          try { showBanner('已拦截一条误复活的排队消息（此前编辑/删除未生效），如需发送请重新输入', 4000, true); } catch (_) {}
-          renderSideStatus();
+          fx.push({ op: 'banner',
+                    text: '已拦截一条误复活的排队消息（此前编辑/删除未生效），如需发送请重新输入',
+                    ms: 4000, warn: true });
+          fx.push({ op: 'render_side' });
           return;
         }
       }
@@ -101,7 +101,7 @@
         arr.push({ id: it.id, text: it.text || '', images: [], files: [],
                    att: it.att || 0 });
       p.inbox = arr.map(x => ({ id: x.id, text: x.text || '' }));
-      renderQueue();
+      fx.push({ op: 'render_queue' });
       dirty = true;
     } else if (t === 'input_promoted' || t === 'input_discarded') {
       // promoted：后端已真发（user_echo 随后到达画气泡）；discarded：作废
@@ -109,13 +109,24 @@
       const key = _hgQueueKey();
       const arr = _HG.queues[key] || [];
       const i = arr.findIndex(x => x.id === it.id);
-      if (i >= 0) { arr.splice(i, 1); renderQueue(); }
+      if (i >= 0) { arr.splice(i, 1); fx.push({ op: 'render_queue' }); }
       p.inbox = p.inbox.filter(x => x.id !== it.id);
       if (t === 'input_discarded' && it.reason === 'rewind')
-        showBanner('回退已作废 ' + (p.inbox.length + 1) + ' 条排队输入（旧世代）', 2600);
+        fx.push({ op: 'banner',
+                  text: '回退已作废 ' + (p.inbox.length + 1) + ' 条排队输入（旧世代）',
+                  ms: 2600 });
       dirty = true;
     }
-    if (dirty) renderSideStatus();
+    if (dirty) fx.push({ op: 'render_side' });
+  }
+  function _hgProjEvent(it) {
+    // SSE 信封入口（onmessage 每帧先过这里再走 legacy 分派）——R0 起为
+    // _hgReduce（纯）+ fx 执行的兼容壳；_hgDispatch（27-store）是统一
+    // 管线的正式入口（FEV 直达 _hgReduce 同一函数）
+    if (!_HG.proj) _HG.proj = _hgProjInit(it && it.sid);
+    const fx = [];
+    _hgReduce(_HG.proj, it, fx);
+    for (let i = 0; i < fx.length; i++) _hgRunFx(fx[i]);
   }
   function _hgProjSeed(j) {
     // /events 响应的 proj+queue 种子（切会话/轮询兜底路径）
