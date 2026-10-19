@@ -251,8 +251,7 @@
         Promise.resolve(typeof _hgRegSync === 'function'
           ? _hgRegSync(_HG.sid, { quiet: true }) : null)
           .then(() => {
-            const a2 = (_HG.agents || {})[tid]
-                    || (_HG.agents || {})[((_HG.tidMap || {})[tid])];
+            const a2 = (typeof _hgAg === 'function' ? _hgAg(tid) : null);
             if (a2 && (a2.agentId || a2.taskId)) {
               _subReplay(tid, a2.type || 'Task', a2.desc || '子代理',
                          a2.agentId || a2.taskId, true, !a2.done);

@@ -75,11 +75,6 @@
             // v3.5.317：merge 保真——SendMessage tool_use 时已建过档案
             //（10-sse SendMessage 分支：taskId=input.to 真实 id、t0=派发
             // 时刻）。旧码此处整体覆盖重建，peerSent miss（事件乱序/重放）
-            // 时降级 taskId=包装 task_id 把正确关联链砸断 → _subTid 归一
-            // miss → 单开第二个 tab/胶囊双条目（用户实锤「续派出现两个
-            // 子代理」）。优先沿用旧档的可信 taskId/desc/t0，新事件只补
-            // 缺失字段
-            const _prev = (_HG.agents || {})[tid] || null;
             // 冷查询批3（I3 一链一档）：本地续派的 task_started 并入原档
             //（SendMessage 分支已归链建轮；此处只保活+补名），原档不在场
             // （跨会话/名字形态）才走 collab 独立建档
@@ -156,6 +151,17 @@
         } else if (tid && !_shBg) {
           if (!_HG.agents && sub === 'task_started') _HG.agents = {};
           let a = _HG.agents && _HG.agents[tid];
+          // 全审P2：非协作分类的续派包装（role 型/fg 形态走本分支）先归并
+          //——tidMap[tid]=A 批1 写点命中即并入原档（保活+bg 补标），
+          // 不为一链铸第二档案（I3 瞬时破窗）
+          if (!a && sub === 'task_started') {
+            const _m2 = typeof _hgAg === 'function' ? _hgAg(tid) : null;
+            if (_m2) {
+              _m2.done = false; _m2.doneAt = 0;
+              if (o.is_backgrounded) _m2.bg = true;
+              a = _m2;
+            }
+          }
           if (!a && _HG.agents && sub === 'task_started') {
             // 兜底建档（Task tool_use 已建档时零改动）：t0 用当下近似
             // v3.5.296（用户实锤「SendMessage 往来的代理显示成 Task」）：
@@ -320,8 +326,9 @@
       // v2.35（P1-4）：子代理实跑模型——assistant 事件自带 message.model
       // （网关映射后的真名，优先于 frontmatter 预显示），首见即记入档案
       if (isSub && o.parent_tool_use_id && (o.message || {}).model
-          && _HG.agents && _HG.agents[o.parent_tool_use_id]) {
-        const _sa = _HG.agents[o.parent_tool_use_id];
+          && _HG.agents) {
+        const _sa = (typeof _hgAg === 'function' ? _hgAg(o.parent_tool_use_id) : null)
+                 || _HG.agents[o.parent_tool_use_id];
         if (_sa.model !== o.message.model) {
           _sa.model = o.message.model;
           if (_sub.tabs[o.parent_tool_use_id]
@@ -568,14 +575,24 @@
         let hitAgent = false;
         for (const b of c0) {
           if (!(b && b.type === 'tool_result')) continue;
-          const a = (_HG.agents || {})[b.tool_use_id];
+          // 全审P1：回执路径随 I3 归链收敛——本地续派包装档已并入原档
+          //（键=agentId/首见 tid），直查 agents[b.id] 必 miss → 旧码落入
+          // 「档案缺失」完成信号分支把仍在跑的段卡误定格「✓ 完成」。
+          // 单点解析（tidMap[b.id]=A 批1 写点）命中合并档
+          const a = (typeof _hgAg === 'function' ? _hgAg(b.tool_use_id) : null)
+                 || ((_HG.agents || {})[b.tool_use_id]);
           // v3.4.81（用户实锤「僵尸子代理 工作 6m35s」）：SendMessage 发送失败
           // 的回执是 content={"success":false,"message":...}（is_error=false，
           // 无 task_notification 跟进）——bg 包装档案旧只等 notification =
           // 永挂运行中。失败 JSON 即刻收尾（err=true，摘要入档）
           const _rt0 = resultText(b);
           const _sendFail = /^\s*\{\s*"success"\s*:\s*false/.test(_rt0);
-          if (a && !a.done && (_sendFail || !a.bg)) {
+          // 全审P1a：SendMessage 成功回执（resumedAgentId=送达/复活确认，
+          // 非 Task 派发终态）不得按前台完成收——peerSent 在场或 JSON 带
+          // resumedAgentId 都是真子代理派发的否定信号
+          const _isSmRcpt = !!((_HG.peerSent || {})[b.tool_use_id])
+                         || /resumedAgentId/.test(_rt0);
+          if (a && !a.done && (_sendFail || (!a.bg && !_isSmRcpt))) {
             a.done = true;
             a.doneAt = Date.now();
             a.err = !!b.is_error || _sendFail;
@@ -606,7 +623,10 @@
               }
             }
             hitAgent = true;
-          } else if (!a) {
+          } else if (!a && !_isSmRcpt) {
+            // 全审P1：SendMessage 成功回执不进「档案缺失」完成信号分支
+            //（该分支为前台 Task 完成定格设计；名字形态续派 tidMap 无键
+            // 同样靠 _isSmRcpt 守卫）
             const ab = _subBlkAdopt(b.tool_use_id);
             if (ab && !ab.root.classList.contains('done')) {
               const _aid = (resultText(b).match(/(?<![a-zA-Z])agentId[:"':\s]+([0-9a-zA-Z_-]{8,64})/i) || [])[1] || '';

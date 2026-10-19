@@ -368,13 +368,15 @@
   // tabs 直命中 → agents 反查（原始 tid 的 taskId/agentId 关联任一命中）→ 原键。
   // agents 档案天然携带三向关联（X.taskId=A、包装 b.id.taskId=A），无需 alias 表。
   function _subTid(pid) {
-    // 冷查询批2：单点解析（tabs 直配 → tidMap 得 aid → tabs[aid] →
-    // tidMap 反扫）。tidMap 写点已完备（批1 I2：task_started/SendMessage/
-    // collab/前台回执/镜像 aid/Sync 全写），旧三向反查/链扫描退役。
-    // 反扫版覆盖「Sync 后目录行 agentId 键而 tab 还在首见 tid 键」的
-    // 旧漏配形态（tidMap[t]===aid 命中即归）
+    // 冷查询批2：单点解析（tabs 直配 → aidKey → tidMap 得 aid →
+    // tabs[aid] → tidMap 反扫）。tidMap 写点已完备（批1 I2），旧三向
+    // 反查/链扫描退役。全审P3：补 aidKey 腿——p=agentId 形态（消息
+    // 队列键=to/轮2 事件）在 live 窗口（tab 开于首见 tid、Sync 未到）
+    // 靠它归回，旧向一（agents[t].taskId===p 扫描）的覆盖由此补齐
     const p = String(pid || '');
     if (!p || _sub.tabs[p]) return p;
+    const ak = (_HG.aidKey || {})[p];
+    if (ak && _sub.tabs[ak]) return ak;
     const aid = (_HG.tidMap || {})[p];
     if (aid) {
       if (_sub.tabs[aid]) return aid;
