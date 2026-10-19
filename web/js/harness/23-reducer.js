@@ -65,11 +65,12 @@
     },
     turn_interrupted(p, it, fx) {
       p.status = 'idle';
-      _hgEntryPush(p, { t: 'turn_interrupted', text: it.text }, fx);
+      _hgEntryPush(p, { t: 'turn_interrupted', text: it.text,
+                         hist: !!it.hist }, fx);
       fx.push({ op: 'render_side' });
     },
     turn_exit(p, it, fx) {
-      _hgEntryPush(p, { t: 'turn_exit', text: it.text }, fx);
+      _hgEntryPush(p, { t: 'turn_exit', text: it.text, hist: !!it.hist }, fx);
     },
     model_switched(p, it, fx) {
       _hgEntryPush(p, { t: 'model_switched', text: it.text || '' }, fx);
