@@ -993,6 +993,12 @@
       // 两条我发的命令」）。同一会话内 seq 严格递增，≤当前值的一律是重放。
       if (it.seq) {
         if (it.seq <= _HG.seq) return;
+        // 397 单账制防线（ZCode 机制7 seq 断档检测对位：断档不猜）：事件
+        // seq 跳跃=中间事件丢失（SSE 断线期缓冲逐出等）——账本缺行且无人
+        // 知道，静默继续=丢消息。置 histStale：下次 transcript fetch 走
+        // 整窗重建（守卫消费 histStale），从后端权威版自愈；误报无害
+        //（后端 seq 锁内逐事件递增无洞，断档必真）
+        if (_HG.seq > 0 && it.seq > _HG.seq + 1) _HG.histStale = true;
         _HG.seq = it.seq;
       }
       // v3.3.1：事件到达时刻账——prevRowAt=上一事件时刻（lastRowAt 尚未翻转）。
