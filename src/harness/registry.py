@@ -41,16 +41,23 @@ class AgentRegistry(object):
         self._ag = {}        # agentId(或临时 tid) -> 条目 dict
         self._tid_map = {}   # tid/tool_use_id -> agentId（live 帧归一表）
         self._sm_tids = set()   # SendMessage tool_use tid（回执≠完成，见 on_task_result）
+        self._bg_tids = set()   # run_in_background Task 的派发 tid（回执=启程
+        #   确认≠完成——生产实锤：后台回执 9.8s 即落 done，F5/切会话后前台
+        #   全显「已完成/回放」；真终态是 task_notification）
         self._lock = threading.Lock()
         self._rebuilt = False   # 重启后扫转写重建已执行（一次）
 
     # ---- 增量钩子（reader 线程）----
 
-    def on_task_dispatch(self, tid, agent_type, desc, ts_ms):
-        """① Task/Agent tool_use 到达——建临时条目（agentId 待 result 回填）。"""
+    def on_task_dispatch(self, tid, agent_type, desc, ts_ms, bg=False):
+        """① Task/Agent tool_use 到达——建临时条目（agentId 待 result 回填）。
+        bg=run_in_background：回执只是「已在后台启动」确认，终态等
+        task_notification（on_task_result 对 _bg_tids 不落终态）。"""
         with self._lock:
             if tid in self._tid_map:      # 已归链（异常重放）幂等
                 return
+            if bg:
+                self._bg_tids.add(tid)
             self._ag["pending:" + tid] = {
                 "agentId": "", "found": False, "type": agent_type or "Task",
                 "desc": str(desc or "")[:200], "status": "running",
@@ -58,6 +65,8 @@ class AgentRegistry(object):
                 "lastActive": ts_ms or 0, "tids": [tid],
                 "tokens": 0, "toolN": 0, "brief": "",
             }
+            if bg:
+                self._ag["pending:" + tid]["bg"] = True
 
     def on_task_result(self, tid, result_text, err, ts_ms, tokens, tool_n):
         """② tool_result 回执。F4 修复（全审）：**只在 tid 已有 pending 或
@@ -75,6 +84,9 @@ class AgentRegistry(object):
             or _RE_RES_AGENT.search(str(result_text or ""))
         aid = m.group(1) if m else ""
         with self._lock:
+            bg_receipt = tid in self._bg_tids
+            if bg_receipt:
+                self._bg_tids.discard(tid)
             if tid in self._sm_tids:
                 # SendMessage 回执：resumedAgentId 归链兜底（不落终态）
                 self._sm_tids.discard(tid)
@@ -127,8 +139,12 @@ class AgentRegistry(object):
                     old = self._ag.get(known)
                     if old is not None and old.get("tids") == [tid]:
                         self._ag.pop(known, None)
-                cur["status"] = "err" if err else "done"
-                cur["doneAt"] = ts_ms or 0
+                if not bg_receipt:
+                    # 前台 Task：回执=真终态。后台（bg_receipt）：回执只是
+                    # 「已在后台启动」确认——迁键归一照做，终态留给
+                    # task_notification（生产实锤：9.8s 假 done → F5 全回放）
+                    cur["status"] = "err" if err else "done"
+                    cur["doneAt"] = ts_ms or 0
                 cur["lastActive"] = ts_ms or 0
                 if tokens:
                     cur["tokens"] = tokens
@@ -138,9 +154,11 @@ class AgentRegistry(object):
                 # 留守=永 running 鬼影）
                 self._ag.pop("pending:" + tid, None)
             elif ent is not None:
-                # 无 id 可提（CLI 异常形态）——临时条目直接落终态（前端不回放）
-                ent["status"] = "err" if err else "done"
-                ent["doneAt"] = ts_ms or 0
+                # 无 id 可提（CLI 异常形态）——临时条目直接落终态（前端不回放）；
+                # 后台回执同样不落（终态等 notification）
+                if not bg_receipt:
+                    ent["status"] = "err" if err else "done"
+                    ent["doneAt"] = ts_ms or 0
                 self._ag["pending:" + tid] = ent
 
     def on_send_message(self, tid, to, message_first_line, ids_map, ts_ms):

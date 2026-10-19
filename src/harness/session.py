@@ -1200,7 +1200,8 @@ class HarnessSession:
                     self._registry.on_task_dispatch(
                         str(b.get("id") or ""),
                         str(inp.get("subagent_type") or inp.get("agent_type") or ""),
-                        str(inp.get("description") or ""), now_ms)
+                        str(inp.get("description") or ""), now_ms,
+                        bool(inp.get("run_in_background")))
                 elif n == "SendMessage":
                     msg1 = str(inp.get("message") or "").strip().split("\n")[0]
                     self._registry.on_send_message(

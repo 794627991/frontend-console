@@ -109,6 +109,39 @@ def test_wrapper_no_phantom_f5():
     # 有 pending 的直派 task_started 迁键 ✓（F2 已测）
 
 
+def test_bg_receipt_not_final():
+    """A1 根因回归网（2026-10-19 生产实锤）：后台 Task 的 tool_result 回执
+    是「已在后台启动」确认**不是完成**——旧码落 done（生产实测 9.8s 假
+    终态），F5/切会话后 /agents 全 done → 前端全显「已完成/回放」。
+    终态只认 task_notification。"""
+    r = AgentRegistry()
+    r.on_task_dispatch("tBG", "Explore", "后台探查", 1000, bg=True)
+    r.on_task_result("tBG", '{"agentId":"exp_bg_0001","success":true}',
+                     False, 10980, 0, 0)
+    j = r.snapshot()["agents"]
+    a = j["exp_bg_0001"]
+    ok("bg回执不落终态", a["status"] == "running" and a["doneAt"] == 0, a)
+    ok("bg标记在场", a.get("bg") is True, a)
+    ok("bg迁键删pending", "pending:tBG" not in j, list(j.keys()))
+    # notification 才是终态（brief/用量此刻才落）
+    r.on_task_notification("tBG", True, "bg真完成", 90000, 800, 8)
+    a2 = r.snapshot()["agents"]["exp_bg_0001"]
+    ok("bg通知落终态", a2["status"] == "done" and a2["doneAt"] == 90000
+       and a2["brief"] == "bg真完成" and a2["tokens"] == 800, a2)
+    # 前台 Task 回执照旧=终态（语义不回归）
+    r.on_task_dispatch("tFG", "Explore", "前台探查", 2000)
+    r.on_task_result("tFG", '{"agentId":"exp_fg_0002","success":true}',
+                     False, 60000, 0, 0)
+    ok("前台回执仍终态", r.snapshot()["agents"]["exp_fg_0002"]["status"] == "done")
+    # 中断语义：bg 假 running 期间 ■ only_fg 不误收（A1 场景 F5 后仍 running）
+    r2 = AgentRegistry()
+    r2.on_task_dispatch("tZ", "Explore", "bg跑着按F5", 1000, bg=True)
+    r2.on_task_result("tZ", '{"agentId":"exp_z_0003","success":true}', False, 2000, 0, 0)
+    r2.on_interrupt_all(3000, only_fg=True)
+    ok("bg假running不误收",
+       r2.snapshot()["agents"]["exp_z_0003"]["status"] == "running")
+
+
 def test_interrupt_semantics():
     """中断语义：only_fg 不收 bg；进程死全收。"""
     r = AgentRegistry()
@@ -173,6 +206,17 @@ def test_feed_flip_via_session():
     a = s._registry.snapshot()["agents"].get("rev_00000007")
     ok("端到端-角色名归链(session反转)", a and a["rounds"] == 2
        and a["status"] == "running" and a["desc"] == "继续审", a)
+    # 端到端 bg 透传（A1 回归）：run_in_background → _bg_tids/bg 标记
+    s._registry_feed({"message": {"content": [
+        {"type": "tool_use", "id": "tBG2", "name": "Task",
+         "input": {"subagent_type": "Explore", "description": "bg派",
+                   "run_in_background": True}}]}})
+    s._registry_result({"message": {"content": [
+        {"type": "tool_result", "tool_use_id": "tBG2",
+         "content": '{"agentId":"exp_bg_0009","success":true}'}]}})
+    a4 = s._registry.snapshot()["agents"].get("exp_bg_0009")
+    ok("端到端-bg回执不落终态(session透传)", a4 and a4["status"] == "running"
+       and a4.get("bg") is True, a4)
 
 
 def test_full_lifecycle_mainline():
@@ -221,6 +265,7 @@ if __name__ == "__main__":
     test_pending_cleanup_f2()
     test_no_phantom_f4()
     test_wrapper_no_phantom_f5()
+    test_bg_receipt_not_final()
     test_interrupt_semantics()
     test_rebuild_merge_f7()
     test_feed_flip_via_session()
