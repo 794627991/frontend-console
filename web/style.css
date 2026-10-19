@@ -2405,6 +2405,14 @@ html {
   -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; -webkit-mask-size: 100% 100%; mask-size: 100% 100%; }
 .h-think-prev:empty { display: none; }
 .h-think-prev > span { display: inline-block; min-width: max-content; }
+/* 思考流换行翻转（ZCode QueuedSummaryContent motion 复刻）：旧行上翻淡出
+   （y:-0.8em）、新行自下滑入（y:0.8em→0），300ms cubic-bezier(.4,0,.2,1)；
+   exit 克隆 absolute 原位防布局跳动，animationend 自拆 */
+.h-think-prev { position: relative; }
+.h-think-prev > .exit { position: absolute; inset: 0 auto auto 0; animation: hg-think-line-out .3s cubic-bezier(.4, 0, .2, 1) forwards; }
+.h-think-prev > .enter { animation: hg-think-line-in .3s cubic-bezier(.4, 0, .2, 1); }
+@keyframes hg-think-line-in { from { transform: translateY(0.8em); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+@keyframes hg-think-line-out { from { transform: translateY(0); opacity: 1; } to { transform: translateY(-0.8em); opacity: 0; } }
 .h-think-dot { display: none; color: var(--muted); flex: 0 0 auto; }
 .h-think-seg-head:has(.h-think-prev:not(:empty)) .h-think-dot { display: inline; }
 .h-think-seg-t { font-size: var(--fs-xs); color: var(--muted); font-family: var(--font-mono); }

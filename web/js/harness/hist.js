@@ -425,18 +425,40 @@
     // 两侧 16px 渐隐 mask（:242-283 scrollReasoningSummaryToEnd 同款）；
     // 完成态摘要清空（endThinking）只留「🧠 思考 持续了 N 秒」贴排
     {
+      // 思考流（ZCode reasoning.tsx+QueuedSummaryContent 完整复刻）：
+      // · 行内增长（行号不变）：原位刷新文本+scrollLeft 推尾=向左流水
+      //   （scrollReasoningSummaryToEnd 同款，超宽后旧内容左移最新恒可见）
+      // · 换行（行号变）：纵向翻转动画——旧行 y:-0.8em 淡出+新行 y:0.8em
+      //   滑入（SUMMARY_ROLL_TRANSITION_MS=300/ease[.4,0,.2,1]），翻完新行
+      //   从行首继续流水（contentKey=reasoning-line:{index} 换 key 触发 promote）
       const prev = seg.querySelector('[data-hg-think-prev]');
       if (prev) {
         const ls = holder.textContent.split('\n');
-        let last = '';
+        let last = '', li = -1;
         for (let i = ls.length - 1; i >= 0; i--)
-          if (ls[i].trim()) { last = ls[i].trim(); break; }
-        if (last) {
-          prev.innerHTML = '';
-          const sp = document.createElement('span');
-          sp.textContent = last;
-          prev.appendChild(sp);
-          prev.scrollLeft = prev.scrollWidth;   // 流水推尾（ZCode 滚动机制）
+          if (ls[i].trim()) { last = ls[i].trim(); li = i; break; }
+        if (last && li >= 0) {
+          const cur = prev.firstElementChild;
+          const sameLine = cur && cur.dataset.li === String(li) && !cur.classList.contains('enter');
+          if (sameLine && cur) {
+            cur.textContent = last;                    // 行内原位刷新（无动画）
+          } else {
+            const old = cur;
+            if (old) {                                 // 换行：旧行上翻淡出
+              const gone = old.cloneNode(true);
+              gone.classList.remove('enter');
+              gone.classList.add('exit');
+              prev.appendChild(gone);
+              gone.addEventListener('animationend', () => gone.remove(), { once: true });
+            }
+            const sp = document.createElement('span');
+            sp.className = 'h-think-line enter';
+            sp.dataset.li = String(li);
+            sp.textContent = last;
+            prev.appendChild(sp);
+            if (old) old.remove();
+          }
+          requestAnimationFrame(() => { prev.scrollLeft = prev.scrollWidth; });   // 流水推尾
         }
       }
     }
