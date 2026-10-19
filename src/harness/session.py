@@ -141,9 +141,6 @@ class HarnessSession:
         self._held = False
         self._bg_mon_started = False
         self.last_result = None
-        # refactor/subagent-registry 阶段1：子代理注册表（agentId 主键权威
-        # 清单——归一收敛到后端一处，前端全部视图从它派生；详见
-        # registry.py 模块注释）
                 # v3.5.98：会话创建时的 API 方案名（跨方案发消息拦截依据）。切方案
         # 会换网关/模型映射/上下文窗口，旧会话续发必然错位（上下文大小不一
         # 致/模型名不被新网关认）。None=升级前的旧会话（无标记），按用户拍板
@@ -1165,7 +1162,6 @@ class HarnessSession:
         _arm(self._PUMP_DELAY)
 
     # ---- 子代理镜像事件（#12，v3.1）----
-    # ---- 注册表钩子（refactor/subagent-registry 阶段1）----
     def _rm_aid(self, tid):
         """冷查询缓存投影的 tid→agentId（镜像事件附 aid 用）。readmodel
         状态源在磁盘，此处只读缓存——不做 refresh（镜像路径零盘 IO，

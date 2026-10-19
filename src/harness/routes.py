@@ -1123,54 +1123,26 @@ def harness_events():
 
 @harness_bp.route("/agents")
 def harness_agents():
-    """refactor/subagent-registry 阶段1：子代理注册表（agentId 主键权威清单）。
+    """子代理冷查询投影（ZCode 式，唯一真源=磁盘）。
 
-    ?sid= → {ok, agents:{agentId→条目}, tidMap:{tid→agentId}, rebuilt}
+    ?sid= → {ok, agents:{agentId(或pending:tid)→条目}, tidMap, rev}
     条目：{agentId, found, type, desc(任务名), status(running/done/err/
-    interrupted), t0, doneAt, rounds(续派轮数), lastActive, tids[], bg,
-    tokens, toolN, brief}。前端胶囊/目录/动态/分页全部从它派生——三套 id
-    的归一在后端一处完成（历次「续派两个子代理/假完成/名字不对」实锤的
-    根治）。重启后首查（rebuilt=False 且非 busy）扫转写静态重建一次。"""
+    interrupted[+lost]), t0, doneAt, rounds(续派轮数), lastActive, tids[],
+    bg, tokens, toolN, brief}。前端胶囊/目录/动态/分页全部从它派生。
+    每次查询从主会话 jsonl（水位增量吸收）+子代理转写尾探+meta.json
+    现算——F5/切会话/后端重启的正确性由数据源构造性保证（历次
+    「续派两个子代理/假完成/名字不对/bg假done」实锤的整类根治）。"""
     s = _get_or_create(request.args.get("sid") or "")
     if not s:
         return jsonify({"ok": False, "err": "会话不存在"}), 404
-    # 提交3翻转：默认走冷查询（ZCode 式磁盘现算投影——F5/切会话/后端重启
-    # 的正确性由唯一真源=磁盘构造性保证）。?src=reg 保留旧增量注册表通道
-    # （对账/回滚用，提交4退役删除）
-    if (request.args.get("src") or "") != "reg":
-        try:
-            from .subagent_readmodel import get_model
-            proj = get_model(request.args.get("sid") or "").refresh(s)
-            return jsonify({"ok": True, "agents": proj["agents"],
-                            "tidMap": proj["tidMap"], "rev": proj["rev"]})
-        except Exception as _e:
-            log.warning("cold agents fail %r", _e)
-            return jsonify({"ok": False, "err": "cold:%r" % _e}), 500
-    snap = s._registry.snapshot()
-    # 冒烟实测 bug 修正：重建判据收紧为「有 CLI 历史（session_id 在场）且
-    # 进程已死」——空 session_id 的新会话/未连接会话 not alive 恒真，旧判据
-    # 每查都触发空重建把增量注册表覆盖清零
-    if (not snap["rebuilt"] and s.session_id and not s.busy and not s.alive):
-        # 进程已死（重启场景）：扫转写重建（live 增量不在途，静态事实为准）；
-        # 活会话的增量链更及时，不重建（rebuilt 标记保持 False——进程死后的
-        # 首查才补）
-        try:
-            from .registry import rebuild_from_transcript
-            lines = transcript_for(s) or []
-            sub_open = [l for l in lines
-                        if isinstance(l, dict) and l.get("role") == "sub_open"]
-            sendmsg = [l for l in lines if isinstance(l, dict)
-                       and l.get("role") == "tool"
-                       and str(l.get("text") or "") == "SendMessage"]
-            reg = rebuild_from_transcript(sub_open, sendmsg)
-            # F7：merge 而非 replace——增量（进程死路径刚落的 interrupted）
-            # lastActive 恒新于转写静态事实，按条合并保增量不丢
-            s._registry.merge_rebuilt(reg.snapshot()["agents"],
-                                      reg.snapshot()["tidMap"])
-            snap = s._registry.snapshot()
-        except Exception as _e:
-            log.warning("agent registry rebuild fail %r", _e)
-    return jsonify({"ok": True, **snap})
+    try:
+        from .subagent_readmodel import get_model
+        proj = get_model(request.args.get("sid") or "").refresh(s)
+        return jsonify({"ok": True, "agents": proj["agents"],
+                        "tidMap": proj["tidMap"], "rev": proj["rev"]})
+    except Exception as _e:
+        log.warning("cold agents fail %r", _e)
+        return jsonify({"ok": False, "err": "cold:%r" % _e}), 500
 
 # ---- from claude_harness.py:3552 (harness_rename) ----
 
