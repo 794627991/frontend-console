@@ -2393,11 +2393,19 @@ html {
 .h-think-seg .h-chev { transition: transform .15s; display: inline-block; font-size: 10px; }
 .h-think-seg.open .h-chev { transform: rotate(90deg); }
 .h-think-seg-name { font-weight: 600; color: var(--fg); }
-/* 观感修正（用户实锤「短预览 550px 空条+文字沉右」）：预览左对齐——
-   尾部内容从头可读，超长右侧省略；不再右对齐（短文本=左侧大片空白） */
-.h-think-prev { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
-  white-space: nowrap; text-align: left; color: var(--muted); font-size: var(--fs-xs);
-  font-family: var(--font-ui); }
+/* 思考流③ ZCode reasoning.tsx 完整复刻：摘要视口=单行滚动（流水式）——
+   完成态 :empty 隐藏（时长回贴「思考 持续了N秒」整串贴排，不推右）；
+   流式态 flex:1 占位，内容 span min-w-max，JS scrollLeft=scrollWidth 推尾
+   （旧内容左移最新恒可见），两侧 16px 渐隐 mask；分隔点仅流式显示（:has） */
+.h-think-prev { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap;
+  color: var(--muted); font-size: var(--fs-xs); font-family: var(--font-ui);
+  -webkit-mask-image: linear-gradient(to right, transparent 0, black 16px, black calc(100% - 16px), transparent 100%);
+  mask-image: linear-gradient(to right, transparent 0, black 16px, black calc(100% - 16px), transparent 100%);
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; -webkit-mask-size: 100% 100%; mask-size: 100% 100%; }
+.h-think-prev:empty { display: none; }
+.h-think-prev > span { display: inline-block; min-width: max-content; }
+.h-think-dot { display: none; color: var(--muted); flex: 0 0 auto; }
+.h-think-seg-head:has(.h-think-prev:not(:empty)) .h-think-dot { display: inline; }
 .h-think-seg-t { font-size: var(--fs-xs); color: var(--muted); font-family: var(--font-mono); }
 /* v3.0 流式思考纯文本路径（对照 ZCode reasoning 的 whitespace-pre-wrap）：
    textNode 直插无 md 包裹，plain 修饰类期间保换行；定稿升级移除该类，
