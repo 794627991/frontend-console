@@ -431,20 +431,9 @@
     }
     _hgScrollBottom();
   }
-  function toolRunPush(name, row) {
-    const r = _HG.run;
-    if (r && r.name === name) {
-      r.rows.push(row);
-      row._grouped = true; row._groupHead = r.head;
-      const named = r.rows.slice(0, 2).map(x => x._preview).filter(Boolean);
-      const extra = r.rows.length - named.length;   // 按实际拼出条数计（源 buildGroupPreview）
-      const arg = r.head.querySelector('.h-tool-arg');
-      if (arg) arg.textContent = `×${r.rows.length}  ${named.join(', ')}${extra > 0 ? `, +${extra} more` : ''}`;
-      return true;   // 已并入组，不单独显示
-    }
-    _HG.run = { name, head: row, rows: [row] };
-    return false;
-  }
+  // F6（全审）：toolRunPush 已删——v2.8 抽屉时代退役后零调用方，
+  // _grouped/_groupHead/_HG.run 成死状态群（读者不存在）；closeRun 保留
+  // （多处调用它清 _HG.run 防御性置空，本身无害）
   // v3.2.6（ZCode 子智能体模式）：主流 Agent/Task 派发行 = 单行任务卡——
   // 对照 ZCode agent.tsx 产品边界「父对话只保留单行摘要，完整 child timeline
   // 统一从右侧 tab 查看」：✦ + 「子智能体」类别词 + 类型高亮 chip + 描述 +
@@ -608,13 +597,21 @@
       _cmdFull = String(cfg.get ? cfg.get(inp) : (inp.command || inp.cmd || ''));
       argH = esc(_cmdFull.slice(0, 80));
       argTitle = esc(_cmdFull);
+    } else if (cfg.mode === 'one-line') {
+      // F5（全审）：one-line 非 bash（Read/Grep/WebSearch 等）头补参数摘要
+      // ——旧扁平行的 h-tool-arg 信息在合一后丢失（秃头）；cfg.sec 同步
+      // （Grep/Glob 的「in path」等，此前零渲染点）
+      argH = esc(String(cfg.get ? cfg.get(inp) : '').slice(0, 80));
     }
+    const secH = (cfg.mode === 'one-line' && cfg.sec)
+      ? esc(String(cfg.sec(inp) || '')) : '';
     d.innerHTML =
       `<button class="h-tool-head"><span class="h-chev">▸</span>` +
       `<span class="h-tool-name">${_hToolIco(name)} ${esc(title)}</span>` +
       badges +
       (cfg.badge ? `<span class="h-tool-badge">${esc(cfg.badge)}</span>` : '') +
       (argH ? `<span class="h-tool-arg"${argTitle ? ` title="${argTitle}"` : ''}>${argH}</span>` : '') +
+      (secH ? `<span class="h-tool-sec">${secH}</span>` : '') +
       (cfg.kind === 'bash' ? `<span class="h-tool-copy" role="button" title="复制命令">复制</span>` : '') +
       `<span class="h-tslots">${done ? statusBadge(err ? 'error' : 'completed') : ''}</span></button>` +
       `<div class="h-tool-coll">${hgToolBody(cfg, inp, { done, err, dln: o.dln, result: o.result, summary: o.summary, cmd: _cmdFull })}</div>`;
@@ -623,7 +620,8 @@
     d._name = name;
     d._id = o.id;
     d._preview = (cfg.kind === 'bash' ? _cmdFull
-      : (typeof cfg.title === 'function' ? cfg.title(inp) : label)) || '';
+      : (cfg.mode === 'one-line' && cfg.get ? String(cfg.get(inp) || '')
+         : (typeof cfg.title === 'function' ? cfg.title(inp) : label))) || '';
     if (o.id) d.dataset.tid = o.id;
     if (o.hi != null) {
       d.dataset.hi = String(o.hi);
@@ -684,7 +682,6 @@
         (_HG.noInputTids || (_HG.noInputTids = new Set())).add(b.id);
       _HG.rowById[id] = _row2;
       drawerCount(name);
-      _HG.run = { name, head: _row2, rows: [_row2] };
       _tlPlace(_row2, name, b.input);
       if (!_HG.openState)
         _hgActPush({ tid: id, name, label, preview: _row2._preview || '',

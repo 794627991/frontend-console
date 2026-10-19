@@ -73,7 +73,9 @@
     }
     else if (l.role === 'sysnote') {  // v3.3.2(D6)：机器注入弱化行历史回看
       // 不定稿不 renderUser——历史侧回合合并自动成立（历史组只在 user 行定稿）
-      renderSysNote(l.kind, l.text);
+      // F7（全审）：接线 dispatch——R1「七类进 entries」至此真七类（此前
+      // sysnote handler 零构造点=死 handler）
+      _hgDispatch({ t: 'sysnote', kind: l.kind || '', text: l.text });
     }
     else if (l.role === 'vision_relay') {  // v2.28：识图 MCP 转交线（历史回看）
       renderVisionRelayHist(l);
