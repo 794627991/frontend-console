@@ -1,4 +1,24 @@
 // harness histcache.js (v3.0 自 buildClaudeHarnessTab 拆出,定义体零改动,缩进保持原样)
+  // ===== 消息永不丢对账（393 根治）：重渲后补画账外 live 行 =====
+  // 双真源根因：histAll 是 fetch 时点快照，任何重渲（上翻收缩/扩段/切回/
+  // fetch 增长）按账本整窗重建=抹掉账外 live 行。本函数在每次 _histRender
+  // 换入后运行：liveRows 中 seq > liveBase（fetch 基准）的消息行按序补画
+  // ——不动 histAll 账本（384 事故教训：账本一动重渲机制连锁）、不依赖
+  // 触发路径，构造性兜住所有重渲路径
+  function _hgLiveReplay() {
+    const rows = _HG.liveRows || [];
+    if (!rows.length || rows.every(r => r.seq <= (_HG.liveBase || 0))) return;
+    for (const r of rows) {
+      if (r.seq <= (_HG.liveBase || 0)) continue;
+      try {
+        if (r.role === 'user')
+          renderUser(r.text || '', r.images || [], r.files || [], false, r.ts || 0);
+        else if (r.role === 'assistant')
+          renderAsst(r.text || '', r.model || '');
+      } catch (_) {}
+    }
+    _hgScrollBottom();
+  }
   function _histRender(lines, start, opt) {
     // v3.5.8（用户实锤「A 切 B 再切 A，识图中显示历史未完成」）：渲染期
     // busy 标志——noFinalize 正是调用方的 !!j.busy（busy 活会话）。识图卡
@@ -272,7 +292,8 @@
           _realFlow.insertBefore(hint, _realFlow.firstChild);
         }
       }
-      try { _trimOldTurns(); _hgRailSync(); } catch (_) {}
+      try { _trimOldTurns(); _hgLiveReplay();   // 393：换入+兜底后对账补画（账外 live 消息行）
+      _hgRailSync(); } catch (_) {}
     }
   }
   // v3.2.22（用户实锤「切走再切回，子代理目录点不开」）：快照恢复路径不跑
@@ -323,6 +344,7 @@
       // 被定稿+phResume(true) 新建悬挂活组=「一个回合两个块」分割实锤）
       _HG.fetchedBusy = !!j.busy;
       _HG.fetchedSeq = j.seq || 0;   // B组P1：seq 随拉取存档（RO 退出断点续传用）
+      _HG.liveBase = _HG.liveSeq || 0;   // 393：fetch 时点基准——此前的 live 行 histAll 已含
       return true;
     } catch(_) { return false; }
   }

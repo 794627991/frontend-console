@@ -769,6 +769,12 @@
       '<button class="h-mact h-edit" title="编辑后重发（原文+附件填回输入框）">✎</button>';
     d.appendChild(acts);
     if (live !== false) d.classList.add('hg-enter');   // 动画批C：live 新行淡入（hist 重建 live=false 不播）
+    if (live !== false) {   // 消息永不丢对账：live 用户行登记（重渲补画数据源）
+      _HG.liveSeq = (_HG.liveSeq || 0) + 1;
+      (_HG.liveRows = _HG.liveRows || []).push({ seq: _HG.liveSeq, role: 'user',
+        text: text || '', images: images || [], files: files || [], ts: tsMs || 0 });
+      if (_HG.liveRows.length > 200) _HG.liveRows.splice(0, _HG.liveRows.length - 200);
+    }
     addRow(d);
     if (live !== false) {
       // v3.5.78（用户需求「整个会话所有 AI 结论都可回滚」）：撤 v3.4.3 的
@@ -892,5 +898,11 @@
       g.tl.appendChild(d);
     } else g.root.appendChild(d);
     if (!_HG.openState) d.classList.add('hg-enter');   // 动画批C：live 淡入（openState=hist 重建标志在场不播）
+    if (!_HG.openState) {   // 消息永不丢对账：live AI 行登记
+      _HG.liveSeq = (_HG.liveSeq || 0) + 1;
+      (_HG.liveRows = _HG.liveRows || []).push({ seq: _HG.liveSeq, role: 'assistant',
+        text: String(text || ''), model: model || '' });
+      if (_HG.liveRows.length > 200) _HG.liveRows.splice(0, _HG.liveRows.length - 200);
+    }
     _hgScrollBottom();
   }
