@@ -191,11 +191,3 @@
     for (let i = 0; i < fx.length; i++) _hgRunFx(fx[i]);
     if (fx.length) _HG_STORE.mark('proj');
   }
-
-  // ---- 冷读入口（R1+ 逐域接线）：transcript 行数组 → FEV → dispatch ----
-  function _hgDispatchHist(lines) {
-    for (const l of (lines || [])) {
-      for (const ev of _fevFromHistLine(l)) _hgDispatch(ev);
-    }
-    _HG_STORE.flush();
-  }

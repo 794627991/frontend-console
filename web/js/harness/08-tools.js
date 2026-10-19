@@ -703,12 +703,7 @@
     // tool_use 本身若是同名工具正是 run 的延续，由 toolRunPush 判定并入组。
     // R2c：非 sub 已在前置块（hgToolCard）return——此处仅 isSub（段内
     // 抽屉行，独立形态不收编）
-    let row;
-    if (isSub) {
-      row = _subToolDrawerRow(cfg, name, label, b.input);
-    } else {
-      return;   // 不可达（防御——前置块已 return）
-    }
+    const row = _subToolDrawerRow(cfg, name, label, b.input);
     row._preview = row._preview !== undefined ? row._preview
       : (cfg.mode === 'one-line' ? cfg.get(b.input) : (typeof cfg.title === 'function' ? cfg.title(b.input) : label)) || '';
     row._rawHint = _rawHint;   // v2.57R：后端同序原始摘要（窗格指纹查重用）
