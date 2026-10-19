@@ -84,9 +84,9 @@ class AgentRegistry(object):
             or _RE_RES_AGENT.search(str(result_text or ""))
         aid = m.group(1) if m else ""
         with self._lock:
-            bg_receipt = tid in self._bg_tids
-            if bg_receipt:
-                self._bg_tids.discard(tid)
+            # 启程确认 tid 出队（幂等；终态闸门已改查条目 bg 标记——
+            # 重复回执/旗标源分歧由此天然免疫）
+            self._bg_tids.discard(tid)
             if tid in self._sm_tids:
                 # SendMessage 回执：resumedAgentId 归链兜底（不落终态）
                 self._sm_tids.discard(tid)
@@ -139,10 +139,16 @@ class AgentRegistry(object):
                     old = self._ag.get(known)
                     if old is not None and old.get("tids") == [tid]:
                         self._ag.pop(known, None)
-                if not bg_receipt:
-                    # 前台 Task：回执=真终态。后台（bg_receipt）：回执只是
-                    # 「已在后台启动」确认——迁键归一照做，终态留给
-                    # task_notification（生产实锤：9.8s 假 done → F5 全回放）
+                # 终态闸门（轻审#1/#3/#5 统一）：以**条目 bg 标记**为准（双源
+                # 合一——input.run_in_background 与 task_started
+                # is_backgrounded 都落条目上），不再只认易失的 _bg_tids：
+                # · bg 且成功回执=「已在后台启动」启程确认——迁键归一照做，
+                #   终态留给 task_notification（生产实锤：9.8s 假 done → F5
+                #   全回放；重复回执同样不落终态=幂等）
+                # · bg 且 err=True=后台**启动失败**——失败回执不是启程确认，
+                #   notification 永不来，落 err 收口（否则永 running 鬼影，
+                #   only_fg 中断按设计放行 bg 条目，会话内无自救）
+                if not (cur.get("bg") and not err):
                     cur["status"] = "err" if err else "done"
                     cur["doneAt"] = ts_ms or 0
                 cur["lastActive"] = ts_ms or 0
@@ -155,8 +161,9 @@ class AgentRegistry(object):
                 self._ag.pop("pending:" + tid, None)
             elif ent is not None:
                 # 无 id 可提（CLI 异常形态）——临时条目直接落终态（前端不回放）；
-                # 后台回执同样不落（终态等 notification）
-                if not bg_receipt:
+                # 后台成功回执同样不落（终态等 notification），启动失败落 err
+                #（同上有 aid 分支的轻审#1/#3/#5 闸门语义）
+                if not (ent.get("bg") and not err):
                     ent["status"] = "err" if err else "done"
                     ent["doneAt"] = ts_ms or 0
                 self._ag["pending:" + tid] = ent
@@ -266,20 +273,38 @@ class AgentRegistry(object):
             # 其归链由 on_send_message/回执 resumedAgentId 负责，pending
             # 只属于「Task 直派 tool_use 帧乱序滞后」的形态
             if tid not in self._sm_tids and "pending:" + tid not in self._ag:
-                self._ag["pending:" + tid] = {
+                # 轻审#2：兜底分支同样消费自身 bg 参数——乱序早到的后台
+                # task_started（先于 assistant 派发帧）此前不标 bg 不灌
+                # _bg_tids，随后回执按前台落 done=A1 症状经乱序形态复活
+                _pend = {
                     "agentId": "", "found": False,
                     "type": agent_type or "Task",
                     "desc": str(desc or "")[:200], "status": "running",
                     "t0": ts_ms or 0, "doneAt": 0, "rounds": 1,
                     "lastActive": ts_ms or 0, "tids": [tid],
                     "tokens": 0, "toolN": 0, "brief": ""}
+                if bg:
+                    _pend["bg"] = True
+                    self._bg_tids.add(tid)
+                self._ag["pending:" + tid] = _pend
 
     def on_task_notification(self, tid, ok, brief, ts_ms, tokens, tool_n):
-        """④b task_notification——完成信号（链上 tid 反查 agentId 落定）。"""
+        """④b task_notification——完成信号（链上 tid 反查 agentId 落定）。
+
+        轻审#4：notification 先于回执/task_started 到达时 tidMap 反查落空
+        被静默丢弃——此后回执迁键落 running，再无终态信号=鬼影且 only_fg
+        不收。兜底：按 tids 反扫条目（pending 兜底条目 tids=[tid]）。"""
         with self._lock:
+            tid = str(tid or "")
             aid = self._tid_map.get(tid) or ""
             if not aid:
+                for k, e in self._ag.items():
+                    if tid in (e.get("tids") or []):
+                        aid = k
+                        break
+            if not aid:
                 return
+            self._bg_tids.discard(tid)
             cur = self._ag.get(aid)
             if cur is None:
                 return

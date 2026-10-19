@@ -140,6 +140,42 @@ def test_bg_receipt_not_final():
     r2.on_interrupt_all(3000, only_fg=True)
     ok("bg假running不误收",
        r2.snapshot()["agents"]["exp_z_0003"]["status"] == "running")
+    # 轻审#1：bg 启动失败回执（err=True）落 err 终态——notification 永不来
+    r3 = AgentRegistry()
+    r3.on_task_dispatch("tE1", "Explore", "后台启动失败", 1000, bg=True)
+    r3.on_task_result("tE1", "cannot spawn subagent", True, 2000, 0, 0)
+    ok("轻审1-bg启动失败落err",
+       r3.snapshot()["agents"]["pending:tE1"]["status"] == "err")
+    # 轻审#3：重复 bg 回执幂等——第二份不按前台落 done
+    r4 = AgentRegistry()
+    r4.on_task_dispatch("tE2", "Explore", "重复回执", 1000, bg=True)
+    r4.on_task_result("tE2", '{"agentId":"exp_dup_01","success":true}', False, 2000, 0, 0)
+    r4.on_task_result("tE2", '{"agentId":"exp_dup_01","success":true}', False, 3000, 0, 0)
+    ok("轻审3-重复回执幂等",
+       r4.snapshot()["agents"]["exp_dup_01"]["status"] == "running")
+    # 轻审#5：旗标源分歧——task_started 标 bg（input 未带）回执不落终态
+    r5 = AgentRegistry()
+    r5.on_task_dispatch("tE3", "Explore", "旗标源分歧", 1000)   # 无 bg
+    r5.on_task_started("tE3", "Explore", "", "exp_flag_01", True, 1100)  # bg=True
+    r5.on_task_result("tE3", '{"agentId":"exp_flag_01","success":true}', False, 2000, 0, 0)
+    ok("轻审5-旗标源分歧不落终态",
+       r5.snapshot()["agents"]["exp_flag_01"]["status"] == "running")
+    # 轻审#2：乱序后台 task_started 早到兜底带 bg——回执不落终态
+    r6 = AgentRegistry()
+    r6.on_task_started("tE4", "Explore", "乱序早到", "exp_ord_01", True, 1000)
+    r6.on_task_result("tE4", '{"agentId":"exp_ord_01","success":true}', False, 2000, 0, 0)
+    a6 = r6.snapshot()["agents"]
+    ok("轻审2-乱序bg不落终态",
+       a6["exp_ord_01"]["status"] == "running" and a6["exp_ord_01"].get("bg") is True, a6)
+    # 轻审#4：notification 先到（无 tidMap）按 tids 反扫落终态——条目尚在
+    # pending 键（回执未到未迁键），终态落 pending 条目上不丢
+    r7 = AgentRegistry()
+    r7.on_task_started("tE5", "Explore", "通知先到", "exp_ntf_01", True, 1000)
+    r7.on_task_notification("tE5", True, "通知先到也能落", 5000, 700, 7)
+    a7 = r7.snapshot()["agents"]
+    ok("轻审4-通知先到反扫落终态",
+       a7["pending:tE5"]["status"] == "done"
+       and a7["pending:tE5"]["brief"] == "通知先到也能落", a7)
 
 
 def test_interrupt_semantics():
