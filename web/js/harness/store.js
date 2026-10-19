@@ -104,21 +104,12 @@
         // 分形态（产品形态差异，ZCode 无此对位物——环境适配存档）
         case 'assistant_text':
           renderAsst(e.text || '', e.model || _HG.model || '');
-          // 滚窗防抹账（用户实锤「排队消息上翻回来没了」）：live 渲染的行
-          // 同步入账 histAll——上翻收缩/回看扩段的重渲窗口以 histAll 为源，
-          // 不入账的 live 新行会被重渲整体抹掉（DOM 在而账不在=幽灵丢失）
-          if (e.live && Array.isArray(_HG.histAll))
-            _HG.histAll.push({ role: 'assistant', text: e.text || '', model: e.model || '' });
           break;
         // R2b：user 气泡——live/hist 同一入口（renderUser 承担组管线边界）；
         // ts 时间条 hist 形态带（live 流式无）
         case 'user_message':
           renderUser(e.text || '', e.images || [], e.files || [], false,
                      e.ts ? new Date(e.ts).getTime() : 0);
-          // 滚窗防抹账：同 assistant（排队提升的 echo 在上翻窗口重渲中最易丢）
-          if (e.live && Array.isArray(_HG.histAll))
-            _HG.histAll.push({ role: 'user', text: e.text || '', ts: e.ts || 0,
-                               images: e.images, files: e.files });
           break;
         // R4：跨会话回传——识图 peer 行优先配对 .h-vision 卡（v3.4.88 口径：
         // tid 精确/无 tid 回落最早未定格卡 FIFO），miss 走平铺气泡（v2.53
@@ -143,9 +134,6 @@
         case 'assistant_thinking':
           if (e.live) {
             closeRun(); appendThinking(e.text || '');
-            // 滚窗防抹账：思考块同入账（重渲后思考段不消失）
-            if (Array.isArray(_HG.histAll))
-              _HG.histAll.push({ role: 'thinking', text: e.text || '' });
           } else {
             startThinking(true);
             const _segEl = _HG.think && _HG.think.seg;
