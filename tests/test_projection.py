@@ -75,6 +75,12 @@ def test_bg_ack_not_final():
         notify_xml("t1", "exp_bg_0001", "completed", "bg真完成")])
     a2 = project(facts2, liveness=LV)["agents"]["exp_bg_0001"]
     ok("notify权威终态", a2["status"] == "done" and a2["brief"] == "bg真完成", a2)
+    # 全审G3补齐：notify(ENDED1)路径同样消费 child usage（常规完成路径）
+    a2u = project(facts2, liveness=LV, child_states={"exp_bg_0001": {
+        "terminal": True, "status": "done", "summary": "bg真完成",
+        "endedAt": 90000, "lastActive": 90000,
+        "tokens": 999, "toolN": 3}})["agents"]["exp_bg_0001"]
+    ok("G3补齐-notify路径usage", a2u["tokens"] == 999 and a2u["toolN"] == 3, a2u)
 
 
 def test_fg_result_final():

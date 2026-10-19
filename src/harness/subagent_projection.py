@@ -491,6 +491,15 @@ def project(facts, child_states=None, liveness=None, external_links=None,
                 fg_final = ("done", r.get("ts") or 0, txt[:200])
         aid = ent.get("agentId")
         co = child_states.get(aid) if aid else None
+        # 全审G3补齐：usage 统一在此消费——notify(ENDED1)/前台 result(ENDED2)
+        # 落终态的常规路径此前不取 child 用量（只 ENDED3 异常形态取到），
+        # 条目 tokens 恒 0 被 2s Sync 清零 live 值、F5 后永失。co.terminal
+        # 时才有账（在飞的那条还没有账，ZCode 同语义）；条目已有值不覆写
+        if co and co.get("terminal"):
+            if co.get("tokens") and not ent.get("tokens"):
+                ent["tokens"] = co["tokens"]
+            if co.get("toolN") and not ent.get("toolN"):
+                ent["toolN"] = co["toolN"]
         # ---- 状态判定链（优先级契约，ZCode runningStatus/endedStatus 对位）----
         # RUNNING 1：转写新鲜（mtime<120s，CLI 还在写=铁证在跑）——进程死
         # 也不否决（孤儿 CLI 诚实显示在跑）
@@ -521,10 +530,6 @@ def project(facts, child_states=None, liveness=None, external_links=None,
             ent["doneAt"] = co.get("endedAt") or 0
             if co.get("summary"):
                 ent["brief"] = co["summary"]
-            if co.get("tokens"):
-                ent["tokens"] = co["tokens"]   # 全审G3：顶层 result usage
-            if co.get("toolN"):
-                ent["toolN"] = co["toolN"]
             ent["lastActive"] = max(ent["lastActive"], co.get("lastActive") or 0)
             continue
         # ENDED 4：证据不足——进程死/不新鲜 → interrupted+lost（不装 done）
