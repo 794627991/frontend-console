@@ -165,9 +165,7 @@ const _HG = {
   busy: false, alive: false,
   atts: [],
   pop: null,            // 'skill' | 'model' | 'file' | null
-  rowById: {},          // tool_use_id -> 工具行 DOM（挂结果用）
-  subRows: {},          // v2.43：子代理段内工具行 parent_tool_use_id -> {tool_use_id: row}（段内结果配对，不入主链 rowById）
-  subBlk: {},           // v2.43：子代理段 {pid: {root,head,body,seg,timer,t0}}（主 flow 化段；DOM 为持久源，切回按 data-hg-subblock 认回）
+  rowById: {},          // tool_use_id -> 工具行 DOM（挂结果用；批4：subRows/subBlk 随段退役删除）
   uidN: 0,              // 无 id tool_use 的兜底计数
   run: null,            // 当前同名工具 run {name, head, rows, pending}（源 toolGrouping：run≥2 折叠）
   think: null,          // 当前活动思考段 {seg, grp}（v2.18：分段条目制）

@@ -59,10 +59,7 @@ function _harnessClose(portId) {
   }
   if (_HG.sse) { try { _HG.sse.close(); } catch(_) {} _HG.sse = null; }
   _HG.conn = null; _HG.sid = null; _HG.cache = {};
-  _HG.rowById = {}; _HG.run = null;
-  // v2.43：子代理段档随 tab 销毁（计时器停掉；段 DOM 随 wrap.remove 消失）
-  Object.values(_HG.subBlk || {}).forEach(b => { if (b && b.timer) clearInterval(b.timer); });
-  _HG.subRows = {}; _HG.subBlk = {};
+  _HG.rowById = {}; _HG.run = null;   // 批4：subRows/subBlk 段档随段退役删除
   // v2.15：补齐残留态复位。旧实现只清了上面这几个，重开 tab 后 dirty/busy/
   // activity 等沿用上一轮的值——dirty 漏复位会与「点 chip 删会话」叠加，
   // 重开后第一次点模型 chip 就可能删掉一条会话。tab 即将销毁，这里只需清

@@ -103,11 +103,7 @@
     _turnHeadStop();   // v3.2：回合秒表随切会话全收
     _hgMentionReset();          // v2.15：@ 引用高亮不跨会话残留
     _HG.rowById = {}; _HG.uidN = 0; _HG.run = null; _HG.grp = null; _HG.histNav = null;   // v2.18：组级抽屉
-    // v2.43：子代理段随会话切换重置（段计时器停掉；段 DOM 随 flow 重建，内存档不跨会话残留）
-    Object.values(_HG.subBlk || {}).forEach(b => { if (b && b.timer) clearInterval(b.timer); });
-    _HG.subRows = {}; _HG.subBlk = {};
-    _HG.subTail = {};   // v2.46：实时思考轮询 offset 随会话切换重置（防串会话读错文件位）
-    _HG.subTailSeg = {};   // v2.58：续派切段映射随会话重置
+    _HG.subTail = {};   // v2.46：tail 轮询 offset 随会话切换重置（防串会话读错文件位；批4：subRows/subBlk/subTailSeg 随段退役删）
     _HG.fetchedBusy = null;   // C组T5：随切会话清（防陈旧值误用）
     _HG.histAll = null; _HG.histStart = 0; _HG.histLive = false;   // v2.24：多段历史渲染源不复用（防串会话）；v2.35.2：histLive 随切重置（快照恢复态不进滚动扩收）
     _HG.histStale = false;   // v2.43.2（R2-缺口A）：降级标记随切会话重置（恢复时按快照 histFp 重新判定）

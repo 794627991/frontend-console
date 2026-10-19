@@ -561,20 +561,8 @@ function askRender(it) {
   // ↔v3.2 时间线结构差、回滚截断、扩段窗移）同键指向不同元素，旧记录误开
   // 新行还误标 userToggled（用户实锤「终端默认全部不收起」）。重建统一默认
   // 收起；开合在当前 DOM 生命周期内有效，用户意图经快照 dataset（userToggled）
-  // 忠实序列化。hg-open:<sid> 仓保留唯一消费方：sub:<agentId> 语义键（稳定
-  // 不漂移，见 _hgSubSaveOpen / renderHistSub）
+  // 忠实序列化。批4（迁出主窗）：_hgSubSaveOpen 与 sub: 折叠键随段退役删除
+  //——_hgLoadOpen 保留（openState 仍作「回放重建期」标志位被 groups 消费）
   function _hgLoadOpen(sid) {
     try { return JSON.parse(localStorage.getItem('hg-open:' + sid) || '{}') || {}; } catch(_) { return {}; }
-  }
-  function _hgSubSaveOpen(blk, isOpen) {
-    const aid = blk && blk.dataset && blk.dataset.hgSubblock;
-    if (!_HG.sid || !aid) return;
-    try {
-      const st = _hgLoadOpen(_HG.sid);
-      // v3.2.1R(F5)：顺手清位置键时代遗留的非 sub: 死键（唯一写入方做迁移，
-      // 老仓不再随会话累积撑 localStorage）
-      Object.keys(st).forEach(k => { if (k.indexOf('sub:') !== 0) delete st[k]; });
-      st['sub:' + aid] = isOpen ? 1 : 0;
-      localStorage.setItem('hg-open:' + _HG.sid, JSON.stringify(st));
-    } catch(_) {}
   }

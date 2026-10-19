@@ -144,9 +144,6 @@ function buildClaudeHarnessTab(opts = {}) {
   _HG.attsBy = {};   // v2.3.0：未发送附件按会话暂存（切走存/切回恢复，用户实锤丢图）
   _HG.sid = null;
   _HG.rowById = {}; _HG.uidN = 0; _HG.run = null;
-  // v2.43：子代理段收尾——段计时器停掉再清档（段 DOM 随 flow 清空/快照处理）
-  Object.values(_HG.subBlk || {}).forEach(b => { if (b && b.timer) clearInterval(b.timer); });
-  _HG.subRows = {}; _HG.subBlk = {};
   _HG.think = null; _HG.grp = null; _HG.histNav = null; _HG.mention = null;
   switchTab(portId);
 

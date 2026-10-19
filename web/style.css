@@ -2535,7 +2535,6 @@ html {
   border-radius: 5px; padding: 1px 6px; color: var(--muted); }
 
 /* 子代理消息：缩进 + 弱化 */
-.h-msg.sub { max-width: 78%; opacity: .85; margin-left: 24px; }
 
 /* 工具调用行：等宽紧凑条 */
 .h-tool { align-self: flex-start; font-family: var(--font-mono); font-size: var(--fs-sm);
@@ -2552,19 +2551,6 @@ html {
 /* v3.4.35：思考段不再叠加容器内距——头部自带 10px，再垫 10px 会让分屏内
    思考段箭头比终端卡/查阅组深 10px（箭头列不齐的元凶，基准=左条2px+10px） */
 
-/* v2.43 子代理会话段：子代理过程在主 flow 的结构化容器——段头（头像+
-   「角色 · 模型」+状态点）+ 段体（思考/工具/气泡，与主会话同构）。左缘紫
-   （与思考段同色系但弱一档）+ 浅底延续 sub 弱化语言；段内行不再重复缩进 */
-.h-subblock { display: flex; flex-direction: column; gap: 6px; margin: 2px 0 2px 16px;
-  max-width: 100%; padding: 8px 10px 10px; border-radius: 8px;
-  border: 1px solid var(--border);
-  border-left: 3px solid color-mix(in srgb, var(--h-violet, #8957e5) 55%, var(--border));
-  background: color-mix(in srgb, var(--bg-card) 55%, transparent); }
-.h-subblock.err { border-left-color: var(--neon-red, #e06c75); }
-/* v3.4.50（用户实锤「这里空太多了」）：段挂进时间线时自带 margin 16px 叠在
-   tl 缩进（25px）上=段头比其它行深 17px——tl 内取消叠加缩进，段头 ▸ 与
-   各行箭头同线（25+3+10≈37px） */
-.h-tl .h-subblock { margin-left: 0; }
 
 /* ==================== v3.4.88：识图 MCP 折叠卡（统一工作组风格） ==================== */
 .h-tool.h-vision { --h-accent: var(--h-indigo, #6639ba); }
@@ -2607,55 +2593,6 @@ html {
    居中分割线样式（align-self:center 配两侧横线），时间线内与思考/工具行
    混排显得缩进；顶层散落形态（无组兜底）保留居中 */
 .h-tl .h-exit { align-self: flex-start; }
-.h-subblock-head { display: flex; align-items: center; gap: 7px; width: 100%;
-  background: transparent; border: none; padding: 0; cursor: pointer;
-  font: inherit; color: var(--fg); text-align: left; border-radius: 4px; }
-.h-subblock-head:hover .h-subblock-name { color: var(--accent); }
-.h-subblock-name { font-size: var(--fs-base); font-weight: 600; }
-.h-subblock-state { font-size: var(--fs-xs); font-family: var(--font-mono); color: var(--muted); }
-.h-subblock-state.run { color: var(--h-ok); animation: hg-sub-pulse 1.2s ease-in-out infinite; }
-.h-subblock-state.ok { color: var(--h-ok); }
-.h-subblock-state.err { color: var(--h-err); }
-@keyframes hg-sub-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
-.h-subblock-body { display: flex; flex-direction: column; gap: 6px; }
-/* 段已整体弱化（浅底+左缘），段内行撤掉旧 sub 行的双重缩进/降透明度 */
-.h-subblock-body > .h-msg.sub { margin-left: 0; opacity: 1; max-width: 94%; }
-/* v2.45 两层收纳：思考段/工具行聚合进抽屉后不再是 body 直子——选择器放宽到
-   后代（抽屉内 .h-drawer-body 的规则接管宽度/布局，这里只管段内字号缩进） */
-.h-subblock-body .h-tool.sub { margin-left: 0; }
-.h-subblock-body .h-think-seg.sub { font-size: var(--fs-base); }
-.h-subblock-note { font-size: var(--fs-sm); color: var(--muted); font-style: italic; padding: 0 2px; }
-/* v2.45 第一层：完成段默认折叠——段体收起、结论行露出。折叠态全部由
-   .collapsed 类驱动（innerHTML 快照随身携带，恢复即保持，无 JS 重建逻辑）。
-   v2.47（需求1）：运行段也可手动收起（长任务收起平铺干别的，后台继续跑，
-   折叠态下实时追加照常落 DOM），同一类驱动零分叉 */
-.h-subblock.collapsed > .h-subblock-body { display: none; }
-.h-subblock-sum { display: none; font-size: var(--fs-cap); color: var(--muted);
-  padding: 0 2px 0 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  cursor: pointer; }
-.h-subblock.collapsed > .h-subblock-sum:not(:empty) { display: block; }
-/* 段头折叠箭头：v2.47（需求1）所有段都显示（原仅完成段——运行段点击已从
-   开实况窗格改为折叠/展开，窗格入口挪到段头「⧉ 窗格」钮）；展开态旋转 90° */
-.h-subblock .h-sub-chev { display: inline-block; font-size: var(--fs-2xs); color: var(--muted);
-  transition: transform .15s; }
-.h-subblock:not(.collapsed) .h-sub-chev { transform: rotate(90deg); }
-/* 段头右侧动作钮（v2.47：不限完成段——运行段「⧉ 窗格」、协作段运行中即可
-   「▣ 回放」）——span+role 避开 button 嵌套 */
-.h-subblock-acts { margin-left: auto; display: flex; gap: 4px; flex-shrink: 0; }
-.h-sub-act { font-size: var(--fs-xs); color: var(--muted); border: 1px solid var(--border);
-  border-radius: 4px; padding: 1px 7px; cursor: pointer; user-select: none;
-  white-space: nowrap; font-family: var(--font-ui); }
-.h-sub-act:hover { color: var(--accent); border-color: var(--accent); }
-/* v2.48 时序节：段体按时序切节（text 气泡=节边界），节内思考/工具两抽屉
-   并列（思考在前）。节自身只是无皮的纵向容器——间距沿用 body 的 gap */
-.h-subsec { display: flex; flex-direction: column; gap: 6px; }
-/* v2.45 第二层：段内聚合抽屉（复用主链 .h-drawer 语言，段内轻量变体——
-   字号/内距收敛、展开上限比主链矮一档）。v2.48 抽屉挂进 .h-subsec（后代
-   选择器——旧 v2.45 快照恢复未归一时的 body 直子抽屉同吃本规则） */
-.h-subblock-body .h-drawer.sub { font-size: var(--fs-cap); }
-.h-subblock-body .h-drawer.sub .h-drawer-head { padding: 4px 8px; font-size: var(--fs-cap); gap: 6px; }
-.h-subblock-body .h-drawer.sub .h-drawer-body { padding: 2px 4px 4px; gap: 4px; }
-.h-subblock-body .h-drawer.sub.open .h-drawer-body { max-height: 34vh; }
 .h-tool-name { color: var(--accent); font-weight: 600; margin-right: 6px; }
 .h-tool-arg { opacity: .8; }
 .h-tool-res { align-self: flex-start; font-family: var(--font-mono); font-size: var(--fs-sm);
@@ -2759,12 +2696,6 @@ html {
 .h-sub-notify .h-ava { flex: 0 0 auto; }
 .h-sub-notify-txt { color: var(--ink2, var(--ink)); opacity: .85; overflow: hidden;
   text-overflow: ellipsis; }
-/* v2.49：协作段内回传全文（SendMessage 协作归一——回传入段替代独立气泡；
-   识图回传仍走 .h-peer 原形态）。嵌套在段体里非 body 直子，重置 .h-msg.sub
-   的缩进/弱化（与 .h-subblock-body > .h-msg.sub 同语义） */
-.h-peer-in { display: flex; flex-direction: column; gap: 3px; max-width: 94%; }
-.h-peer-in-tag { font-size: var(--fs-sm); color: var(--accent); font-weight: 600; padding-left: 2px; }
-.h-peer-in .h-msg.sub { margin-left: 0; opacity: 1; max-width: 100%; }
 
 /* ---- v2.37（P1-C）模型标识与头像徽标 ----
    色板全走主题/语义变量（--hgd-* 与 --accent），零写死色；头像=首字母圆标，
