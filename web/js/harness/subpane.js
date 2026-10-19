@@ -548,7 +548,7 @@
           const _coll = row.querySelector('.h-tool-coll');
           if (_coll) {
             _coll.innerHTML = _toolInputBodyHtml(_cfg0, _v);
-            if ((_H_TOOL_CFG[name] || {}).defaultOpen) row.classList.add('open');   // 小需求：编辑默认不展开（读 cfg；Write/Todo/计划仍展开）
+            // 用户定调：所有工具卡默认不展开（v3.2.26「生而展开」定调撤销）
           }
           _hgDiffLineMemo(row, name, input);   // v3.4.62：diff 真实行号定位存档（结果点触发）
         }
@@ -1157,7 +1157,7 @@
                 const _v = _cfg.get ? _cfg.get(row.in) : '';
                 const _coll0 = tw.querySelector('.h-tool-coll');
                 if (_coll0) _coll0.innerHTML = _toolInputBodyHtml(_cfg, _v);
-                if ((_H_TOOL_CFG[row.name] || {}).defaultOpen) tw.classList.add('open');   // 小需求：编辑默认不展开
+                // 用户定调：所有工具卡默认不展开
                 _hgDiffLineMemo(tw, row.name || '', row.in);   // v3.4.62：回放 diff 行存档（try 内：edits 异常不炸整个回放，轻审P4）
               } catch(_) {}
             }

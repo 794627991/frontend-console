@@ -595,7 +595,7 @@
     }
     // bash/one-line/collapsible 统一 col 折叠卡（唯一形态）
     const d = document.createElement('div');
-    const _dOp = !!(cfg.defaultOpen) || err;   // Edit/Write 族生而展开；错误行不藏
+    const _dOp = false;   // 用户定调：所有工具卡默认一律不展开（含错误行——点开才看）
     d.className = 'h-tool col' + (err ? ' err' : '') + (_dOp ? ' open' : '')
                 + (cfg.kind === 'bash' ? ' oneclick' : '');
     d.style.setProperty('--h-accent', _H_KIND_COLOR[cfg.kind] || 'var(--border)');

@@ -63,7 +63,7 @@ const _H_TOOL_CFG = {
   Bash:      { mode: 'one-line', kind: 'bash',   get: i => i.command || i.cmd || '' },
   PowerShell:{ mode: 'one-line', kind: 'bash',   get: i => i.command || i.cmd || '' },
   Read:      { mode: 'one-line', kind: 'file',   get: i => i.file_path || '', result: 'hide' },
-  Write:     { mode: 'collapsible', kind: 'diff', title: i => (i.file_path || '').split(/[\\/]/).pop() || '文件', badge: '新建', defaultOpen: true, get: i => ({ old: '', neu: i.content || '' }) },
+  Write:     { mode: 'collapsible', kind: 'diff', title: i => (i.file_path || '').split(/[\\/]/).pop() || '文件', badge: '新建', get: i => ({ old: '', neu: i.content || '' }) },
   Edit:      { mode: 'collapsible', kind: 'diff', title: i => (i.file_path || '').split(/[\\/]/).pop() || '文件', badge: '编辑', get: i => ({ old: i.old_string || '', neu: i.new_string || '' }) },
   MultiEdit: { mode: 'collapsible', kind: 'diff', title: i => (i.file_path || '').split(/[\\/]/).pop() || '文件', badge: '编辑', get: i => ({ old: (i.edits || []).map(e => e.old_string || '').join('\n'), neu: (i.edits || []).map(e => e.new_string || '').join('\n') }) },
   NotebookEdit:{ mode: 'one-line', kind: 'file', get: i => i.notebook_path || i.file_path || '' },
@@ -78,7 +78,7 @@ const _H_TOOL_CFG = {
       const act = todos.find(t => t?.status === 'in_progress');
       if (act) return `${act.activeForm || act.content} — ${done}/${todos.length}`;
       return done === todos.length ? `完成 — ${done}/${todos.length}` : `${done}/${todos.length} 完成`;
-    }, get: i => ({ todos: i.todos || [] }), result: 'hide', defaultOpen: true },
+    }, get: i => ({ todos: i.todos || [] }), result: 'hide' },
   TodoRead:  { mode: 'one-line', kind: 'todo', get: () => '读取清单' },
   TaskCreate:{ mode: 'collapsible', kind: 'task', title: i => i.subject || '创建任务',
     get: i => [i.description && '描述：' + i.description,
@@ -101,9 +101,9 @@ const _H_TOOL_CFG = {
       const qs = Array.isArray(i?.questions) ? i.questions : [];
       if (qs.length === 1) return `${qs[0]?.header || '问题'}${i?.answers?.[qs[0]?.question] ? ' — ' + i.answers[qs[0].question] : ''}`;
       return qs.length + ' 个问题';
-    }, get: i => i.questions || [], result: 'hide', defaultOpen: true },
-  ExitPlanMode: { mode: 'collapsible', kind: 'plan', title: () => '实施计划', get: i => String(i?.plan || '').replace(/\\n/g, '\n'), result: 'hide', defaultOpen: true },
-  exit_plan_mode: { mode: 'collapsible', kind: 'plan', title: () => '实施计划', get: i => String(i?.plan || '').replace(/\\n/g, '\n'), result: 'hide', defaultOpen: true },
+    }, get: i => i.questions || [], result: 'hide' },
+  ExitPlanMode: { mode: 'collapsible', kind: 'plan', title: () => '实施计划', get: i => String(i?.plan || '').replace(/\\n/g, '\n'), result: 'hide' },
+  exit_plan_mode: { mode: 'collapsible', kind: 'plan', title: () => '实施计划', get: i => String(i?.plan || '').replace(/\\n/g, '\n'), result: 'hide' },
   Skill:     { mode: 'one-line', kind: 'skill', get: i => i.skill || '' },
   // Default：未注册工具走参数摘要（按键优先级抽 80 字符，不千篇一律 Parameters）
   Default:   { mode: 'collapsible', kind: 'default', title: i => {
