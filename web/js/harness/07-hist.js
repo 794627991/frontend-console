@@ -21,7 +21,11 @@
     if (((_H_TOOL_CFG[l.text] || {}).kind) === 'agent') {
       const _inp = l.input || {};
       const _err = !!l.err;
-      const d = _hgAgentRowBuild('ag' + (hi != null ? hi : 'r' + (++_HG.uidN)),
+      // R2c-lite（键空间归一）：行自带 tid（transcript 下发）——hist agent 行
+      // 用真键进 rowById（伪键 'ag'+hi 时 ABA 回绑需按认回重挂，真键直配；
+      // 旧转写无 tid 时回退伪键）
+      const _agKey = l.tid || ('ag' + (hi != null ? hi : 'r' + (++_HG.uidN)));
+      const d = _hgAgentRowBuild(_agKey,
         _inp.subagent_type || _inp.agent_type || l.text,
         _inp.description || '');
       if (_err) d.classList.add('err');
