@@ -692,6 +692,16 @@
       const cur = _sub.tabs[tid];
       if (!cur || cur !== tb) { clearInterval(tb.tick); tb.tick = null; return; }
       const t = cur.t;
+      // 全审F2①（用户实测「已工作13s不显示工作中」）：复活判定**先于**
+      // done 早退——旧序（695 行早退在前）使 v3.5.279「被误定稿即复活」
+      // 永不可达（回放收敛把 miss 判死定稿后，tick 空转，档案稍后出现
+      // 运行态也翻不回）。活档案（done=false）即覆写定稿复活
+      try {
+        const _aF0 = _hgAg(cur.tid0 || tid);
+        if (t && t.done && _aF0 && !_aF0.done) {
+          t.done = false; t.durTxt = ''; _subTlHeadPaint(t);
+        }
+      } catch (_) {}
       if (!t || t.done) return;   // 无活跃轮/已定稿——空转等待新轮
       _subTlHeadPaint(t);
       // v3.5.279（用户最后通牒「无条件」）：活代理恒定跟随——不再做断流
@@ -700,10 +710,12 @@
       // 行数有增才重建（内容无变化不动 DOM 零闪烁）。镜像在喂时轮询空转
       // 兜底；镜像断了轮询就是唯一跟随通道——无论断因，永远在刷新。
       try {
-        // 冷查询批2：单点解析 + 一链一档（done 即整链状态，链式判定/
-        // 链环收口退役——转写终态只收本档）
+        // 冷查询批2+全审F2②：单点解析 + 一链一档；**档案 miss（_hgAg
+        // null——刚派档未建/Sync 键空间替换窗口）保守视为运行**（tab 以
+        // live 打开却查无档=未知而非已死，不定稿不熄秒表；真终态由回放
+        // 收敛/通知落 done 后 tick 自然停）
         const _aF = _hgAg(cur.tid0 || tid);
-        if (_aF && !_aF.done && _sub.active === tid) {
+        if ((!_aF || !_aF.done) && _sub.active === tid) {
           // ① 活档案覆写定稿——「保持工作中」
           if (t.done) { t.done = false; t.durTxt = ''; _subTlHeadPaint(t); }
           // ② 无条件轮询（10s 节流；拉取在途/手动重拉期不并发）
@@ -1144,7 +1156,11 @@
         // 即刻起跑、体保持开、task_notification 到达再正式定稿
         // v3.4（D6）：续派链上任一包装在跑=保持运行态（归一后 agents[T].done
         // 只代表首轮，旧判定会把续派中的最后一轮错误定稿）
-        if (_subAgRunning(tid)) {
+        // 全审F2②：档案 miss（_hgAg null——刚派 ACK/未 task_started/Sync
+        // 键空间替换窗口）保守视为运行，不定稿——旧 `!a.done` 对 null 恒
+        // false=miss 判死（「已工作13s」定稿路径）；真终态档案到位后 tick
+        // 收敛/复活链自然处理
+        if (_subAgRunning(tid) || !_hgAg(_subTid(tid))) {
           t.t0 = t.t0 || Date.now();
           _subTlHeadPaint(t);
           _subTlTickStart(tid);
@@ -1687,9 +1703,20 @@
         const s = ln.trim();
         if (!s) continue;
         let o; try { o = JSON.parse(s); } catch(_) { continue; }
+        // 全审F3（用户实测「环境气泡」真根因）：tail 通道此前不判行类型/
+        // isMeta——子代理转写里的 isMeta user 行（system-reminder 全文/
+        // #Environment/MCP Server Instructions 等机器注入）的 text 块被当
+        // 正文喂 _subText 画进窗格。对齐回放通道白名单（transcript.py
+        // _subagent_rows_from_jsonl：user 行仅工具配对+协议噪音过滤）：
+        // user 行只走 tool_result 配对（fullFeed），text 块一律不进正文；
+        // assistant 行 isMeta（罕见形态）同样跳过
+        const _isUserRow = o && o.type === 'user';
+        if (o && (o.isMeta || _isUserRow) && !fullFeed) continue;
         const blocks = o && o.message && o.message.content;
         if (!Array.isArray(blocks)) continue;
         for (const blk of blocks) {
+          if (_isUserRow && blk.type === 'text') continue;   // 注入/回显不进正文
+          if (o.isMeta) continue;
           if (!blk) continue;
           if (blk.type === 'thinking' && String(blk.thinking || '').trim())
             _subThink(tid, blk.thinking, true);

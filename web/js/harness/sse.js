@@ -751,9 +751,16 @@
         _hgScrollBottom();
       }
     } else if (typ === 'result') {
-      // R6b：result 帧收尾走 _hgTurnWrapup（hold 短路径/真收尾序列单函数
-      // 定义——ZCode TurnComplete handler 对位：投影状态经 dispatch 同步，
-      // 编排集中一处）+ 投影 dispatch；方案B 重渲保留原位（异步性能路径）
+      // R6b（全审F1 修复）：hold 期**完整跳过**分支尾部（旧码 return 语义
+      // 在 R6b 重构时丢失——wrapup 内部 return 只退出函数，外层尾部
+      // grpFinalize/setBusy(false)/grantRewind/方案B 照跑=主窗提前定稿
+      // 收起+繁忙态熄灭+误授回滚，用户实测①根因）。dispatch 同样免于
+      // hold 期（中途翻 idle/冻结 lastTurnTools 是附带伤害）
+      if (_HG.hold) {
+        _hgTurnWrapup(o);
+        return;
+      }
+      // 真收尾：投影 dispatch + 编排单函数 + 方案B（原位）
       _hgDispatch({ t: 'turn_complete',
                     ok: !(o.subtype && o.subtype !== 'success'),
                     durMs: (typeof o.duration_ms === 'number' ? o.duration_ms : 0),
@@ -1000,6 +1007,11 @@
       openSSE(sid, _HG.seq);
     }, 5000);
   }
+  // 全审F4：FEV 已接管的信封 kind（各分支自行 dispatch/处理）——信封级
+  // _hgProjEvent 跳过，防杂项行双渲染（模块级前置声明，防 TDZ 自雷）
+  const _HG_ENVELOPE_TAKEN = new Set(['renew', 'audit', 'raw', 'model_switched',
+    'peer', 'ask', 'ask_done', 'user_echo', 'interrupted', 'exit',
+    'turn_hold', 'turn_complete']);
   function openSSE(sid, afterSeq) {
     if (_HG.sse) { try { _HG.sse.close(); } catch(_) {} _HG.sse = null; }
     _HG.initN = 0;   // v2.35：init 计数随流重置——新流首个 init=进程待机，不算回合起跑（跨会话/重开 tab 不残留）
@@ -1072,8 +1084,14 @@
       _HG.prevRowAt = +(_HG.lastRowAt || 0) || 0;
       _HG.lastRowAt = Date.now();
       // v3.1：信封先过前端投影（turn_*/subagent_*/input_* 与工具计数——
-      // 新进程面板/回合摘要行的单一状态源；legacy 分派不受影响）
-      try { _hgProjEvent(it); } catch(_) {}
+      // 新进程面板/回合摘要行的单一状态源；legacy 分派不受影响）。
+      // 全审F4 修复：FEV 已接管的 kind（R1-R6 各分支自行 dispatch）在此
+      // 跳过——信封级 handlers 命中+分支再 dispatch=杂项行双渲染（node
+      // 实证 renew/audit/raw/model_switched 各画两条）。投影类事件
+      // （turn_started/cli_stream/input_*/subagent_*）仍走信封级
+      try {
+        if (!_HG_ENVELOPE_TAKEN.has(it.kind)) _hgProjEvent(it);
+      } catch(_) {}
       // v2.5：先 setBusy（弹活动指示条，改变 flow 高度）再渲染消息——
       // 渲染内部 scrollBottom 含 rAF 二次兜底，否则指示条挤出消息导致刚发的消息不在底
       if (it.kind === 'user_echo') {
