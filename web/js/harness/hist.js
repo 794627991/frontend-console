@@ -410,6 +410,61 @@
     const t0 = +(seg.dataset.t0 || 0);
     te.textContent = t0 ? _hgFmtDur((Date.now() - t0) / 1000) : '';
   }
+  // ===== 思考流滚播器（ZCode QueuedSummaryContent 对位）=====
+  // _HG.thinkQ = { seg, lines:[未播行], n:已入队完整行数, timer }
+  function _hgThinkEnq(seg, full) {
+    const q = _HG.thinkQ || (_HG.thinkQ = { seg: null, lines: [], n: 0, timer: null });
+    if (q.seg !== seg) {          // 新思考段：清队重置
+      if (q.timer) { clearTimeout(q.timer); q.timer = null; }
+      q.lines = []; q.n = 0; q.seg = seg;
+    }
+    const ls = String(full || '').split('\n').map(x => x.trim()).filter(Boolean);
+    if (ls.length - 1 > q.n) {                    // 有新完整行（尾行=增长中不占位）
+      q.lines = q.lines.concat(ls.slice(q.n, ls.length - 1));
+      q.n = ls.length - 1;
+      if (q.lines.length > 12) q.lines = q.lines.slice(-2);   // 积压跳最新
+    }
+    _hgThinkPlay(seg, ls);
+  }
+  function _hgThinkShowLine(seg, line) {
+    const prev = seg.querySelector('[data-hg-think-prev]');
+    if (!prev || !line) return;
+    const old = prev.querySelector('.h-think-line:not(.exit)');
+    if (old) {
+      const gone = old.cloneNode(true);
+      gone.classList.remove('enter');
+      gone.classList.add('exit');
+      prev.appendChild(gone);
+      gone.addEventListener('animationend', () => gone.remove(), { once: true });
+      old.remove();
+    }
+    const sp = document.createElement('span');
+    sp.className = 'h-think-line enter';
+    sp.textContent = line;
+    prev.appendChild(sp);
+    requestAnimationFrame(() => { prev.scrollLeft = prev.scrollWidth; });   // 流水推尾
+  }
+  function _hgThinkPlay(seg, ls) {
+    const q = _HG.thinkQ;
+    if (!q || q.timer) return;
+    q.timer = setTimeout(function step() {
+      q.timer = null;
+      if (!seg.isConnected || !_HG.think || _HG.think.seg !== seg) { q.lines = []; return; }
+      if (q.lines.length) {
+        _hgThinkShowLine(seg, q.lines.shift());
+        q.timer = setTimeout(step, 800);   // 300ms 翻转 + 500ms hold（ZCode 同参）
+      } else {
+        const tail = ls && ls[ls.length - 1];   // 队空：直显增长中的尾行
+        if (tail) {
+          const prev = seg.querySelector('[data-hg-think-prev]');
+          const cur = prev && prev.querySelector('.h-think-line:not(.exit)');
+          if (cur) cur.textContent = tail;
+          else _hgThinkShowLine(seg, tail);
+          if (prev) requestAnimationFrame(() => { prev.scrollLeft = prev.scrollWidth; });
+        }
+      }
+    }, 0);
+  }
   function appendThinking(text) {
     if (!_HG.think || !_HG.think.seg.isConnected) startThinking();
     const seg = _HG.think.seg;
@@ -425,44 +480,13 @@
     // scrollWidth 推到末尾——旧内容向左移、最新 token 恒可见（流水感），
     // 两侧 16px 渐隐 mask（:242-283 scrollReasoningSummaryToEnd 同款）；
     // 完成态摘要清空（endThinking）只留「🧠 思考 持续了 N 秒」贴排
-    {
-      // 思考流（ZCode reasoning.tsx+QueuedSummaryContent 完整复刻）：
-      // · 行内增长（行号不变）：原位刷新文本+scrollLeft 推尾=向左流水
-      //   （scrollReasoningSummaryToEnd 同款，超宽后旧内容左移最新恒可见）
-      // · 换行（行号变）：纵向翻转动画——旧行 y:-0.8em 淡出+新行 y:0.8em
-      //   滑入（SUMMARY_ROLL_TRANSITION_MS=300/ease[.4,0,.2,1]），翻完新行
-      //   从行首继续流水（contentKey=reasoning-line:{index} 换 key 触发 promote）
-      const prev = seg.querySelector('[data-hg-think-prev]');
-      if (prev) {
-        const ls = holder.textContent.split('\n');
-        let last = '', li = -1;
-        for (let i = ls.length - 1; i >= 0; i--)
-          if (ls[i].trim()) { last = ls[i].trim(); li = i; break; }
-        if (last && li >= 0) {
-          const cur = prev.firstElementChild;
-          const sameLine = cur && cur.dataset.li === String(li) && !cur.classList.contains('enter');
-          if (sameLine && cur) {
-            cur.textContent = last;                    // 行内原位刷新（无动画）
-          } else {
-            const old = cur;
-            if (old) {                                 // 换行：旧行上翻淡出
-              const gone = old.cloneNode(true);
-              gone.classList.remove('enter');
-              gone.classList.add('exit');
-              prev.appendChild(gone);
-              gone.addEventListener('animationend', () => gone.remove(), { once: true });
-            }
-            const sp = document.createElement('span');
-            sp.className = 'h-think-line enter';
-            sp.dataset.li = String(li);
-            sp.textContent = last;
-            prev.appendChild(sp);
-            if (old) old.remove();
-          }
-          requestAnimationFrame(() => { prev.scrollLeft = prev.scrollWidth; });   // 流水推尾
-        }
-      }
-    }
+      // 思考流（ZCode QueuedSummaryContent 逐行滚播复刻）：网关把整段
+      // thinking 一次性送达（实测 18s 思考≈1-2 块到达）——「最后非空行」
+      // 直显=瞬间结束、用户干等。改为行队列滚播：完整行入队，播放器逐行
+      // promote（300ms 翻转+500ms hold=800ms/行，SUMMARY_ROLL_TOTAL_MS 同参）
+      // ——播放本身制造持续动态=「确实在思考」体感；增长中的尾行不入队
+      //（完成后入）；积压>12 行丢旧队只留最新 2 行（timer-drift skip 对位）
+      _hgThinkEnq(seg, holder.textContent || '');
     thinkHeadUpdate();
     _hgScrollBottom();
   }
@@ -480,8 +504,12 @@
     const seg = t.seg;
     // 思考流③（ZCode 完成态）：摘要视口清空——:empty 隐藏后时长回贴
     //「🧠 思考 持续了 N 秒」整串贴排（reasoning.tsx:335-360 完成态无摘要行）
-    const prev0 = seg.querySelector('[data-hg-think-prev]');
-    if (prev0) prev0.textContent = '';
+    {   // 滚播器收队：定格最终行入 endThinking 清空（完成态摘要消失）
+      const q = _HG.thinkQ;
+      if (q) { if (q.timer) { clearTimeout(q.timer); q.timer = null; } q.lines = []; q.seg = null; }
+      const prev0 = seg.querySelector('[data-hg-think-prev]');
+      if (prev0) prev0.textContent = '';
+    }
     // v3.0：定稿升级——流式期间攒的纯文本段一次性渲染成 Markdown（历史
     // 路径 body 本就是 md，无 plain 类零开销直通；升级失败保留纯文本）
     const body = seg.querySelector('.h-think-seg-body');
