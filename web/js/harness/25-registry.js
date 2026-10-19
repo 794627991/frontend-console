@@ -1,13 +1,13 @@
 // harness registry.js (refactor/subagent-registry 阶段2：注册表统一消费层)
   // ==================== 子代理注册表消费层（agentId 主键）====================
-  // 设计定调：后端 /api/harness/agents 是子代理状态/名称/续派链的**唯一权威**
-  // （三套 id 的归一在后端 registry.py 一处完成）。本层职责：
-  //   ① _hgRegToLocal：注册表条目 → 前端档案形态（消费方零改动）
-  //   ② _hgRegSync：拉注册表重建 _HG.agents（键=agentId）+ _HG.tidMap；
-  //      live 期 SSE 仍按 tid 建档（阶段3 迁移），Sync 时经 tidMap 归并
+  // 设计定调：后端 /api/harness/agents（冷查询投影）是子代理状态/名称/续派
+  // 链的**唯一权威**（三套 id 的归一在后端一处完成）。本层职责：
+  //   ① _hgRegToLocal：投影条目 → 前端档案形态（消费方零改动）
+  //   ② _hgRegSync：拉投影重建 _HG.agents（键=agentId）+ _HG.tidMap/_HG.aidKey；
+  //      live 期 SSE 按 tid 建档（即时显示），Sync 时经 tidMap 归并
   //   ③ _hgRegSyncSoon：事件驱动 debounce（SSE 子代理事件后 2s 收敛）
-  // 历次实锤（续派两个子代理/假完成/名字不对/不跟随）的归一层补丁
-  // （_subTid 三向反查/peerSent/subTidRes/链式判定）随阶段3 退役。
+  // 单点解析纪律（防归一层屎山再生）：键桥接只许走 _hgAg/_subTid/tidMap
+  // 三件套——禁止在任何消费点新增 dual-lookup（链扫描/三向反查）。
   function _hgRegToLocal(e, sid) {
     // 注册表条目 → 前端档案形态。status 四态映射 done/err/interrupted；
     // taskId/agentId 统一=agentId（归一在后端已完成，前端不再反查）
@@ -35,6 +35,17 @@
       const j = await r.json();
       if (!j || !j.ok || _HG.sid !== sid || seq !== _regSyncSeq) return;
       _HG.tidMap = j.tidMap || {};
+      // 冷查询批1（I2）：aidKey 反查索引随 Sync 重建——Sync 后档案键=
+      // agentId（自指），live 期键=首见 tid（tidMap/aidKey 写点在 10-sse）
+      const ak = {};
+      for (const t in _HG.tidMap) {
+        const aid2 = _HG.tidMap[t];
+        if (aid2 && !ak[aid2]) ak[aid2] = t;
+      }
+      for (const k in (j.agents || {})) {
+        if (k.indexOf('pending:') !== 0 && !ak[k]) ak[k] = k;
+      }
+      _HG.aidKey = ak;
       // 双轨归并：live 期 SSE 按 tid 建的档案（键=tool_use id）经 tidMap
       // 映射到 agentId 键；注册表条目为权威（status/desc/rounds），live
       // 档案的富字段（model）保留。live 独有（注册表尚未收录的瞬时）原样

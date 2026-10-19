@@ -22,12 +22,6 @@
         // 影响，Sync 把 agentId 键权威态收编进来——名称/轮数/状态对齐）
         if (sub !== 'task_progress' && typeof _hgRegSyncSoon === 'function')
           _hgRegSyncSoon(_HG.sid);
-        // subagent-registry：镜像事件附 aid——即收即更 tidMap（_subTid 归一
-        // 零延迟，不等 2s Sync 窗口）
-        if (o.aid && o.tool_use_id) {
-          _HG.tidMap = _HG.tidMap || {};
-          _HG.tidMap[o.tool_use_id] = o.aid;
-        }
         // v2.35（P1-4/P0-1②）：Task 生命周期系统事件（主链事件、不带
         // parent_tool_use_id，但带 tool_use_id 指回 Task 调用）——
         // · task_started：is_backgrounded 标记后台代理（主回合 result 不收
@@ -95,6 +89,14 @@
             const _real = _prevReal
               || ((_to && /^[0-9a-zA-Z_-]{8,64}$/.test(String(_to)))
                 ? String(_to) : '');
+            // 冷查询批1（I2 tidMap 完备）：agentId 已知即写映射——消费点
+            // 单点解析的前提（_subTid 反查扫描随批2 退役）
+            if (_real) {
+              _HG.tidMap = _HG.tidMap || {};
+              _HG.tidMap[tid] = _real;
+              _HG.aidKey = _HG.aidKey || {};
+              if (!_HG.aidKey[_real]) _HG.aidKey[_real] = tid;
+            }
             (_HG.agents || (_HG.agents = {}))[tid] = {
               type: o.subagent_type || 'Task',
               // desc：CLI 对 SendMessage 续派恒不带 description——保旧档
@@ -182,6 +184,13 @@
               const _realTo = (_HG.peerSent || {})[tid];
               a.taskId = (_realTo && /^[0-9a-zA-Z_-]{8,64}$/.test(String(_realTo)))
                 ? String(_realTo) : (o.task_id || '');
+              // 冷查询批1（I2）：agentId 落档即写映射（真子代理主路径）
+              if (a.taskId && /^[0-9a-zA-Z_-]{8,64}$/.test(a.taskId)) {
+                _HG.tidMap = _HG.tidMap || {};
+                _HG.tidMap[tid] = a.taskId;
+                _HG.aidKey = _HG.aidKey || {};
+                if (!_HG.aidKey[a.taskId]) _HG.aidKey[a.taskId] = tid;
+              }
               // v3.2.30：agentId 到手即冲 live 来向队列（窗格已开的目标立即收到）
               if (a.taskId) _subUserFlush(a.taskId);
               // v3.2.6R（审计F1）：agentId 即刻回写单行卡——不等完成（切走
@@ -444,6 +453,11 @@
               // 识图不建（转交通道不同）
               if (/^[0-9a-zA-Z_-]{8,64}$/.test(_aid0)) {
                 const _aid = _aid0;
+                // 冷查询批1（I2）：SendMessage 派发即知真实 id——写映射
+                _HG.tidMap = _HG.tidMap || {};
+                _HG.tidMap[b.id] = _aid;
+                _HG.aidKey = _HG.aidKey || {};
+                if (!_HG.aidKey[_aid]) _HG.aidKey[_aid] = b.id;
                 // v3.5.327（用户实锤胶囊「✦4 协作代理」名字全不对）：建档即补
                 // 任务名（消息首行）——旧 desc:'' 要等 task_started merge 才补，
                 // CLI 不发 task_started 或事件乱序时胶囊/目录一直显示类型兜底
@@ -554,6 +568,13 @@
             //（与 task_started 的 task_id 同源），回放窗格靠它定位子代理转写
             a.agentId = a.taskId
               || (_rt0.match(/(?<![a-zA-Z])agentId[:"':\s]+([0-9a-zA-Z_-]{8,64})/i) || [])[1] || '';
+            // 冷查询批1（I2）：前台回执提得 agentId 即写映射
+            if (a.agentId && /^[0-9a-zA-Z_-]{8,64}$/.test(a.agentId)) {
+              _HG.tidMap = _HG.tidMap || {};
+              _HG.tidMap[b.tool_use_id] = a.agentId;
+              _HG.aidKey = _HG.aidKey || {};
+              if (!_HG.aidKey[a.agentId]) _HG.aidKey[a.agentId] = b.tool_use_id;
+            }
             _subClose(b.tool_use_id, a.err);   // v2.33：窗格 tab 定格 ✓/✗
             // v3.4.82（用户实锤「等待协作回传 20m56s」假等待）：SendMessage
             // 失败的转交线也要定格——派发时按 peerSent 建过隐藏线（外部 id
