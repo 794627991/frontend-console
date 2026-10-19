@@ -104,7 +104,7 @@ function RO_enter(sid, deps) {
   // _hgFlow 指向 RO 容器 + 清目标会话态（主会话态退出时 _hgSseRebuild 全量重建）
   _hgFlow = _ro.flow;
   if (typeof _hgSseResetLocal === 'function') _hgSseResetLocal();
-  _HG.histAll = null; _HG.histLive = false; _HG.histStart = 0;
+  _HG.histAll = null; _HG.histLive = false; _HG.histStart = 0; _HG.histCursor = 0;
   // v3.5.69（用户 v3.5.65 拍板「默认打开」恢复）：进只读即开会话列表抽屉
   _ro.drawer.style.display = 'flex';
   RO_drawerRender();
@@ -133,7 +133,7 @@ function RO_view(sid) {
       if (!j || !j.ok || _HG.readonly !== sid || !_ro || _ro.sid !== sid || _ro.gen !== gen) return;
       _hgFlow = _ro.flow;
       if (typeof _hgSseResetLocal === 'function') _hgSseResetLocal();
-      _HG.histAll = null; _HG.histLive = false; _HG.histStart = 0;
+      _HG.histAll = null; _HG.histLive = false; _HG.histStart = 0; _HG.histCursor = 0;
       if (!j.lines.length) {
         _ro.flow.innerHTML = '<div class="hg-list-empty" style="padding:40px;text-align:center;color:var(--muted)">该会话暂无历史内容</div>';
         return;

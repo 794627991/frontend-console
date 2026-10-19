@@ -867,7 +867,7 @@
     _turnHeadStop();   // v3.2：回合秒表随清场全收（timer 不随 innerHTML 快照走，不收就漏）
     _HG.rowById = {}; _HG.uidN = 0; _HG.run = null; _HG.grp = null; _HG.histNav = null;
     _HG.subTail = {};   // 批4：subRows/subBlk/subTailSeg 随段退役删；subTail 账本保留
-    _HG.histAll = null; _HG.histStart = 0; _HG.histLive = false; _HG.histStale = false;
+    _HG.histAll = null; _HG.histStart = 0; _HG.histLive = false; _HG.histStale = false; _HG.histCursor = 0;
     _HG.archivedTurns = 0;   // v3.5.61：归档轮数随清场归零（切会话由 hist 重算）
     _HG.todos = null; _HG.agents = null; _HG.dyn = null;
     // v3.4.54：识图 pending 线随清场收（switchTo 重置块同款——两处必须同步）

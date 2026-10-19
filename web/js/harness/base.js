@@ -166,7 +166,6 @@ const _HG = {
   atts: [],
   pop: null,            // 'skill' | 'model' | 'file' | null
   rowById: {},          // tool_use_id -> 工具行 DOM（挂结果用；批4：subRows/subBlk 随段退役删除）
-  liveRows: [], liveSeq: 0, liveBase: 0,   // 消息永不丢对账（393）：live 渲染行登记（seq 递增）；liveBase=histAll fetch 时点基准——重渲后补画 seq>base 的行，账外 live 行构造性不丢
   uidN: 0,              // 无 id tool_use 的兜底计数
   run: null,            // 当前同名工具 run {name, head, rows, pending}（源 toolGrouping：run≥2 折叠）
   think: null,          // 当前活动思考段 {seg, grp}（v2.18：分段条目制）

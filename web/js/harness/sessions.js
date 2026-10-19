@@ -104,7 +104,6 @@
     _hgMentionReset();          // v2.15：@ 引用高亮不跨会话残留
     _HG.rowById = {}; _HG.uidN = 0; _HG.run = null; _HG.grp = null; _HG.histNav = null;   // v2.18：组级抽屉
     _HG.subTail = {};   // v2.46：tail 轮询 offset 随会话切换重置（防串会话读错文件位；批4：subRows/subBlk/subTailSeg 随段退役删）
-    _HG.liveRows = []; _HG.liveSeq = 0; _HG.liveBase = 0;   // 393：live 对账账随会话切换清零
     _HG.fetchedBusy = null;   // C组T5：随切会话清（防陈旧值误用）
     _HG.histAll = null; _HG.histStart = 0; _HG.histLive = false;   // v2.24：多段历史渲染源不复用（防串会话）；v2.35.2：histLive 随切重置（快照恢复态不进滚动扩收）
     _HG.histStale = false;   // v2.43.2（R2-缺口A）：降级标记随切会话重置（恢复时按快照 histFp 重新判定）
@@ -282,7 +281,7 @@
             if (c.histFp === 'stale'
                 || (c.histFp != null && _histPrefixFp(_HG.histAll, _HG.histStart | 0) !== c.histFp)) {
               if (!_HG.busy) _histRender(_HG.histAll, _HG.histStart | 0);
-              else { _HG.histAll = null; _HG.histStale = true; }
+              else { _HG.histAll = null; _HG.histStale = true; _HG.histCursor = 0; }
               if (_HG.tasksBy) delete _HG.tasksBy[sid];   // A组S3c：防残档下次复活
               return;
             }
