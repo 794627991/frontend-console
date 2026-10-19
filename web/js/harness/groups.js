@@ -768,6 +768,7 @@
       '<button class="h-mact h-resend" title="重发这条消息">↻</button>' +
       '<button class="h-mact h-edit" title="编辑后重发（原文+附件填回输入框）">✎</button>';
     d.appendChild(acts);
+    if (live !== false) d.classList.add('hg-enter');   // 动画批C：live 新行淡入（hist 重建 live=false 不播）
     addRow(d);
     if (live !== false) {
       // v3.5.78（用户需求「整个会话所有 AI 结论都可回滚」）：撤 v3.4.3 的
@@ -890,5 +891,6 @@
       if (g.tl.style.display === 'none') g.tl.style.display = '';
       g.tl.appendChild(d);
     } else g.root.appendChild(d);
+    if (!_HG.openState) d.classList.add('hg-enter');   // 动画批C：live 淡入（openState=hist 重建标志在场不播）
     _hgScrollBottom();
   }

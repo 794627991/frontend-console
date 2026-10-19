@@ -674,6 +674,7 @@
     if (!isSub) {
       const _row2 = hgToolCard({ id: id, name: name, input: b.input || {},
                                  phase: 'run' });
+      _row2.classList.add('hg-enter');   // 动画批C：live 工具行淡入（renderToolUse 为 live 专属路径）
       // live 专属账（合一构造不背编排）
       _row2._rawHint = String((b.input || {}).command || (b.input || {}).file_path ||
                         (b.input || {}).path || (b.input || {}).pattern ||

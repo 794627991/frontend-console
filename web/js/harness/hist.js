@@ -372,7 +372,8 @@
       // v2.21：段尾右下角收起钮——长思考读到尾顺手收，不用滚回顶部点头
       `<i class="h-think-seg-fold" title="收起本段">收起 ⌃</i>`;
     if (_toTl) {
-      g.tl.appendChild(seg);                 // v3.2.4：时间线行——与工具行同序
+      g.tl.appendChild(seg);
+    if (!hist) seg.classList.add('hg-enter');   // 动画批C：live 思考段淡入                 // v3.2.4：时间线行——与工具行同序
       g.tl.style.display = '';
     } else {
       g.think.body.appendChild(seg);

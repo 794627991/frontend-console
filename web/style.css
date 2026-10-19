@@ -2406,6 +2406,14 @@ html {
   -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; -webkit-mask-size: 100% 100%; mask-size: 100% 100%; }
 .h-think-prev:empty { display: none; }
 .h-think-prev > span { display: inline-block; min-width: max-content; }
+/* 动画批C：live 新行进入淡入（ZCode 逐行渐显对位；hist 重建不打类不播） */
+.hg-enter { animation: hg-enter-kf var(--hg-dur, .3s) var(--hg-ease, cubic-bezier(.4,0,.2,1)) both; }
+@keyframes hg-enter-kf { from { opacity: 0; transform: translateY(.4em); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) {
+  .hg-enter, .h-think-prev > .exit, .h-think-prev > .enter { animation: none; }
+  .h-tool.col .h-tool-coll, .h-turn-body { transition: none; }
+}
+
 /* 思考流换行翻转（ZCode QueuedSummaryContent motion 复刻）：旧行上翻淡出
    （y:-0.8em）、新行自下滑入（y:0.8em→0），300ms cubic-bezier(.4,0,.2,1)；
    exit 克隆 absolute 原位防布局跳动，animationend 自拆 */
