@@ -135,12 +135,14 @@
       }
       dispatch.rej = '';
       _HG.dirty = true;
-      // 纯 ZCode 式边界修正（用户实锤「工作中不立刻渲染+AI 占位气泡没了」）：
-      // 消息**内容**等 user_echo（唯一真相源），但「已受理→工作中」的状态
-      // 反馈（组头+占位「正在思考」）是 POST 成功的本地确认——ZCode task
-      // spinner 同款，必须即时。grpEnsure(true) 建组开占位；echo 到达
-      // renderUser 组管线把占位收编进组（v2.24.1 语义不变）
-      try { grpEnsure(true); } catch (_) {}
+      // 纯 ZCode 式边界修正（用户实锤「工作中不立刻渲染+AI 占位气泡没了」
+      // +361 修正后实锤「只有占位、组头没出现」）：消息**内容**等 user_echo
+      //（唯一真相源），但「已受理→工作中」的状态反馈（组头亮起+秒表+占位
+      //「正在思考」）是 POST 成功的本地确认——ZCode task spinner 同款。
+      // phResume(true)=「刚发完消息」现成路径（229 行注释原义）：建组+
+      // 亮头（_turnHeadShow+t0 起秒表）+开占位；grpEnsure 只建组不亮头
+      //（头默认 display:none，361 只调它=用户看到的占位有头没有）
+      try { phResume(true); } catch (_) {}
       refreshSessions();
       return true;
     } catch(e) {
