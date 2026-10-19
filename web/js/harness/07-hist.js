@@ -189,19 +189,15 @@
         renderUser(l.text, imgs, files, false, l.ts ? new Date(l.ts).getTime() : 0);
       }
     }
-    else if (l.role === 'assistant') renderAsst(l.text, l.model || _HG.model || '');
+    // R2a（气泡域归一）：assistant/thinking 走 FEV dispatch——live/hist 同一
+    // handlers 同一渲染订阅（27-store _hgRenderEntries），懒抽屉/pend 上下文
+    // 随事件携带（hi/ts/prevTs）。对齐补丁退役起点
+    else if (l.role === 'assistant') _hgDispatch({ t: 'assistant_text', text: l.text, model: l.model || '' });
     else if (l.role === 'thinking') {
       // v2.24 懒抽屉：历史思考段只建壳（默认收起），点开才渲染 markdown——
-      // 大会话重建的大头就是几十 K 字符的 thinking 渲染
-      startThinking(true);                 // 重建路径：段结构同流式，无计时动画
-      const _segEl = _HG.think && _HG.think.seg;
-      if (_segEl && hi != null) {
-        _segEl.dataset.hi = String(hi);
-        _segEl.dataset.hgLazy = '1';
-      } else appendThinking(l.text);       // 兜底：无行号（理论不达）
-      endThinking(true);                   // hist 模式：不自动收；时长见下方 pend
-      if (_segEl && _ts > 0) _HG.thinkPend = { seg: _segEl,
-        t0: (_prevTs > 0 && _prevTs < _ts) ? _prevTs : _ts };   // v3.3.1：起点挂上一行 ts
+      // 大会话重建的大头就是几十 K 字符的 thinking 渲染（渲染体在订阅 case）
+      _hgDispatch({ t: 'assistant_thinking', text: l.text,
+                    hi: hi, ts: _ts, prevTs: _prevTs });
     }
     else if (l.role === 'tool') {
       // v2.3.2：历史重建补画转交等待线——transcript 的工具行此前只画抽屉，

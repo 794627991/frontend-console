@@ -350,11 +350,15 @@
         // 段与 run 状态不被子代理事件打断（两路流各自独立）
         if (b.type === 'thinking' && b.thinking) {
           if (isSub) _subThink(o.parent_tool_use_id, b.thinking);
-          else { closeRun(); appendThinking(b.thinking); }
+          // R2a：主链 thinking 走 dispatch（渲染订阅 live 形态=closeRun+
+          // appendThinking，与原直调等价；子代理段独立流不动）
+          else _hgDispatch({ t: 'assistant_thinking', text: b.thinking, live: true });
         }
         else if (b.type === 'text' && b.text && b.text.trim()) {
           if (isSub) _subText(o.parent_tool_use_id, b.text);
-          else { endThinking(); closeRun(); renderAsst(b.text, (o.message || {}).model || _HG.model || ''); }
+          // R2a：主链气泡走 dispatch（endThinking 编排保留在先——顺序敏感）
+          else { endThinking(); _hgDispatch({ t: 'assistant_text', text: b.text,
+                       model: (o.message || {}).model || '', live: true }); }
         }
         else if (b.type === 'tool_use') {
           if (!isSub) endThinking();

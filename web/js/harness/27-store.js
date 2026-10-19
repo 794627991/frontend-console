@@ -83,6 +83,29 @@
         case 'model_switched': renderSwitch(e.text || '默认模型'); break;
         case 'turn_exit': renderExit(e.text); break;
         case 'turn_interrupted': renderExit(e.text); break;
+        // R2a（气泡域归一）：assistant/thinking 两类——渲染原语两轨本就
+        // 共享（renderAsst/startThinking/appendThinking），此处接成唯一入口；
+        // live 流式（计时动画）与 hist 重建（壳+懒抽屉+无动画）按 entry.live
+        // 分形态（产品形态差异，ZCode 无此对位物——环境适配存档）
+        case 'assistant_text':
+          renderAsst(e.text || '', e.model || _HG.model || '');
+          break;
+        case 'assistant_thinking':
+          if (e.live) {
+            closeRun(); appendThinking(e.text || '');
+          } else {
+            startThinking(true);
+            const _segEl = _HG.think && _HG.think.seg;
+            if (_segEl && e.hi != null) {
+              _segEl.dataset.hi = String(e.hi);
+              _segEl.dataset.hgLazy = '1';
+            } else appendThinking(e.text || '');   // 兜底：无行号（理论不达）
+            endThinking(true);
+            if (_segEl && e.ts > 0)
+              _HG.thinkPend = { seg: _segEl,
+                t0: (e.prevTs > 0 && e.prevTs < e.ts) ? e.prevTs : e.ts };
+          }
+          break;
         default: break;
       }
     }

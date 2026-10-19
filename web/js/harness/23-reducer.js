@@ -86,6 +86,15 @@
     sysnote(p, it, fx) {
       _hgEntryPush(p, { t: 'sysnote', kind: it.kind || '', text: it.text }, fx);
     },
+    assistant_text(p, it, fx) {
+      _hgEntryPush(p, { t: 'assistant_text', text: it.text || '',
+                         model: it.model || '', live: !!it.live }, fx);
+    },
+    assistant_thinking(p, it, fx) {
+      _hgEntryPush(p, { t: 'assistant_thinking', text: it.text || '',
+                         hi: it.hi, ts: it.ts || 0, prevTs: it.prevTs || 0,
+                         live: !!it.live }, fx);
+    },
     subagent_started(p, it, fx) {
       p.agents[it.tid] = { type: it.agent_type || 'Task', desc: it.desc || '',
                            bg: !!it.bg, taskId: it.task_id || '',
