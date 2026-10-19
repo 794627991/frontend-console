@@ -355,14 +355,10 @@
           else _hgDispatch({ t: 'assistant_thinking', text: b.thinking, live: true });
         }
         else if (b.type === 'text' && b.text && b.text.trim()) {
-          // 用户实锤「子代理显示环境气泡」：新版 CLI 把子代理会话的注入
-          // 上下文（system-reminder 全文/# Environment/MCP Server
-          // Instructions）作为 assistant text 块转发上主 stdout（带
-          // parent_tool_use_id）——这些是喂给子代理模型的机器上下文，不是
-          // 子代理的工作产出，段内不画（窗格只留思考/工具/正文/结论）
-          if (isSub && /^\s*(<system-reminder>|#?\s*Environment\b|MCP Server Instructions\b)/.test(b.text)) {
-            // 静默跳过
-          } else if (isSub) _subText(o.parent_tool_use_id, b.text);
+          // 353 的 SSE 前缀过滤已撤（全审复核：实证泄漏向量是 tail 通道
+          // [F3 已闭]，SSE 向量无帧级证据；该前缀会误杀以 "Environment"
+          // 等开头的子代理真实产出且制造 live/replay 分叉）
+          if (isSub) _subText(o.parent_tool_use_id, b.text);
           // R2a：主链气泡走 dispatch（endThinking 编排保留在先——顺序敏感）
           else { endThinking(); _hgDispatch({ t: 'assistant_text', text: b.text,
                        model: (o.message || {}).model || '', live: true }); }
@@ -1144,6 +1140,13 @@
         // v3.5.130：真收尾——补完整回合收尾序列（hold 期中间 result 跳过的
         // 那套，此刻用存档的 result 帧数据执行：子代理收尾/窗格收起/组定稿
         // 收起/秒表定格冻结工时/ctx 环/回滚授予）
+        // 全审F4-R1：turn_complete 信封入 _HG_ENVELOPE_TAKEN 后，held 回合
+        // 的真收尾投影（status idle/lastTurnTools 冻结——普通回合由 result
+        // 帧 dispatch 承担）在此补——面板「上一回合计数」否则永久卡运行态
+        const hr0 = _HG.holdRes || {};
+        _hgDispatch({ t: 'turn_complete',
+                      ok: hr0.ok !== false,
+                      durMs: hr0.durMs || 0, subtype: '', frame: null });
         _HG.hold = false;
         const hr = _HG.holdRes || {}; _HG.holdRes = null;
         _hgVisionSweep(true);

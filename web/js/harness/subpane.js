@@ -719,12 +719,17 @@
           // ① 活档案覆写定稿——「保持工作中」
           if (t.done) { t.done = false; t.durTxt = ''; _subTlHeadPaint(t); }
           // ② 无条件轮询（10s 节流；拉取在途/手动重拉期不并发）
+          // 全审F2-R1：miss（_aF null）窗口的轮询目标 id 从 tidMap 反查
+          //（tidMap 批1写点保证 task_started/ACK 即有映射）——旧码对
+          // _aF.taskId 解引用=TypeError 被 catch 吞+followInflight 已置
+          // 位=轮询通道在 miss 窗口被永久杀死（恰是本修复要保护的场景）
           if (!cur.replay && !cur.followInflight
               && Date.now() - (cur.lastFollow || 0) > 10000) {
-            cur.lastFollow = Date.now();
-            cur.followInflight = true;
-            const _aidF = _aF.taskId || _aF.agentId || '';
+            const _aidF = (_aF && (_aF.taskId || _aF.agentId))
+              || ((_HG.tidMap || {})[cur.tid0 || tid]) || '';
             if (_aidF) {
+              cur.lastFollow = Date.now();
+              cur.followInflight = true;
               fetch('/api/harness/subagent_replay?sid=' + encodeURIComponent(_HG.sid || '') +
                     '&agent=' + encodeURIComponent(_aidF))
                 .then(r => r.json()).then(jf => {
@@ -736,22 +741,29 @@
                   // ——CLI 写完会话才落 k:'final'，慢任务无此行不会错杀；SSE
                   // 完成事件丢失导致的孤儿档案在此收口（done 翻转→tick 复活
                   // /轮询自然停→行卡定稿→胶囊/目录计数归位）
+                  // 全审F2-R1②：final 判死**不要求档案在场**（rows 末行即
+                  // 权威——transcript.py k:'final' 本就是权威判死源；miss
+                  // 时落到 cur.t 上定稿+行卡收口，双兜底在 miss 分支兑现）
                   const _fin = _rowsF.length && _rowsF[_rowsF.length - 1].k === 'final'
                     ? _rowsF[_rowsF.length - 1] : null;
-                  if (_fin && _aF && !_aF.done) {
-                    _aF.done = true; _aF.doneAt = Date.now();
-                    _aF.result = String(_fin.text || _aF.result || '').slice(0, 2000);
-                    _aF.err = !!_fin.err;
-                    try {
-                      const _rowF = (_HG.rowById || {})[cur.tid0] || (_HG.rowById || {})[tid];
-                      if (_rowF && typeof _hgAgentRowState === 'function')
-                        _hgAgentRowState(cur.tid0 || tid, !!_fin.err, _aF.result);
-                    } catch (_) {}
+                  if (_fin) {
+                    const _tgt = _aF || { done: false };
+                    if (!_tgt.done) {
+                      _tgt.done = true; _tgt.doneAt = Date.now();
+                      _tgt.result = String(_fin.text || _tgt.result || '').slice(0, 2000);
+                      _tgt.err = !!_fin.err;
+                      try {
+                        const _rowF = (_HG.rowById || {})[cur.tid0] || (_HG.rowById || {})[tid];
+                        if (_rowF && typeof _hgAgentRowState === 'function')
+                          _hgAgentRowState(cur.tid0 || tid, !!_fin.err, _tgt.result);
+                      } catch (_) {}
+                      if (t && !t.done) { t.done = true; t.durTxt = ''; _subTlHeadPaint(t); }
+                    }
                   }
                   const nNew = _rowsF.length;
                   if (nNew > (tbF.rpN || 0)) _subReplayForce(tid);   // 有新行才重建（final 行也计入→重建后窗格自然定稿）
                 }).catch(() => { cur.followInflight = false; });
-            } else cur.followInflight = false;
+            }
           }
         }
       } catch (_) {}
