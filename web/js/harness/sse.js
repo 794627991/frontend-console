@@ -1059,6 +1059,19 @@
         setTimeout(() => _hgCoverageAudit(sid, _snapBase, 'sse-snapshot',
           { snapshotBase: true }), 2000);
         _hgBusyResync(sid, 2100);   // v3.4.69d：清场重放落定后 busy 会话无条件重渲兜底
+        // v3.5.330b（用户二次实锤「打断后紧跟发消息仍蒸发」）：328 守卫只拦
+        // 「ack 晚于气泡」一种时序；ack 先到时清场/重放仍可能与 renderUser
+        // 竞速抹掉气泡。无差别兜底：重放落定后（2.6s）检查乐观气泡在场否，
+        // 被抹即补画（管它哪条路径抹的）——_hgEchoDup 对上轮同文本误判由
+        // 直接 renderUser 绕过（乐观气泡本就该无条件可见）
+        setTimeout(() => {
+          const ef = _HG.echoFast;
+          if (!ef || !ef.text || _HG.sid !== sid) return;
+          if (ef.el && ef.el.isConnected) return;
+          const el2 = renderUser(ef.text, ef.images || [], ef.files || []);
+          ef.el = el2;   // 稍后 user_echo 到达仍按在场跳过，不双画
+          _hgScrollBottom(true);
+        }, 2600);
       }
     });
     es2.addEventListener('reset', (ev) => {
