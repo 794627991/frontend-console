@@ -46,6 +46,9 @@
       case 'render_queue':
         try { renderQueue(); } catch (_) {}
         return;
+      case 'render_entries':
+        try { _hgRenderEntries(); } catch (_) {}
+        return;
       case 'banner':
         try { showBanner(String(f.text || ''), f.ms || 3000, !!f.warn); } catch (_) {}
         return;
@@ -60,6 +63,31 @@
         return;
     }
   }
+
+  // ---- R1 渲染消费：entries 增量 → 现有渲染函数（UI 风格不变——渲染
+  //      函数本体零改动，live/冷读经此合一）。游标防重：SSE snapshot 重放/
+  // 事件双路到达时已渲染过的 entry 不重画（ZCode 幂等投影的渲染面）----
+  let _hgEntryCursor = 0;
+  function _hgRenderEntries() {
+    const p = _HG.proj;
+    const es = (p && p.entries) || [];
+    if (_hgEntryCursor > es.length) _hgEntryCursor = 0;   // 投影重置（切会话）
+    for (; _hgEntryCursor < es.length; _hgEntryCursor++) {
+      const e = es[_hgEntryCursor];
+      if (!e || !e.t) continue;
+      switch (e.t) {
+        case 'renew': renderRenew(e.text); break;
+        case 'audit': renderAudit(e.text); break;
+        case 'raw': renderRaw(e.text); break;
+        case 'sysnote': renderSysNote(e.kind, e.text); break;
+        case 'model_switched': renderSwitch(e.text || '默认模型'); break;
+        case 'turn_exit': renderExit(e.text); break;
+        case 'turn_interrupted': renderExit(e.text); break;
+        default: break;
+      }
+    }
+  }
+  function _hgEntryCursorReset() { _hgEntryCursor = 0; }
 
   // ---- dispatch：FEV → 纯归约 → 副作用/通知（live 与冷读唯一入口）----
   // R0：_hgProjEvent 的现有归约逻辑已迁入 _hgReduce（纯函数，fx 出参）；

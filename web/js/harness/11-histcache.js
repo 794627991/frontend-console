@@ -5,6 +5,11 @@
     // 回放据此把未回传卡复活为「识图中」（run 态+续表），不再误判死案
     _HG.histBusy = !!(opt && opt.noFinalize);
     _HG.lastTs = 0;   // v2.24.5：重建期时间条从零起算（第一条 user 带时间）
+    // R1（流式/重渲统一）：重放前投影行级模型清零——hist 的 renew/audit 等
+    // 行走 dispatch 进 entries，游标重置后随渲染循环重画（不清=F5 后游标
+    // 已在尾、杂项行全部消失）
+    if (_HG.proj) { _HG.proj.entries = []; }
+    if (typeof _hgEntryCursorReset === 'function') _hgEntryCursorReset();
     // v3.5.193（用户定调「主窗口本身就限制 20 回合，至于全量渲染吗；重渲染
     // 效果比流式好」）：渲染窗口=最近 TURN_N=20 回合（从尾回扫数 user 行，
     // 第 21 个 user 行=窗口起点天然对齐回合头；不足 20 回合全渲）——与

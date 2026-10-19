@@ -1159,10 +1159,13 @@
       }
       // v3.5.183：subagent_slow 前端提示退役（用户定调「提示全部去掉，没用」）——
       // 探活对内进行（CLI 进程+转写活跃度，30/45/60 分级），结论走工作区审计卡
-      else if (it.kind === 'renew') { grpFinalize(true); renderRenew(it.text); }
+      // R1（流式/重渲统一试点）：杂项行走 FEV dispatch（渲染归 entries 订阅，
+      // renderRenew/renderAudit/renderRaw 渲染函数本体不动=UI 零变）；编排
+      // （grpFinalize 等）保留在分支内归 R6 回合状态机
+      else if (it.kind === 'renew') { grpFinalize(true); _hgDispatch({ t: 'renew', text: it.text }); }
       // v2.34：审计警示（light 回合结算违规）——回合已终结，定稿当前组再出红卡
-      else if (it.kind === 'audit') { renderAudit(it.text); _hgScrollBottom(); }   // v3.2.27：撤 grpFinalize——警示入工作区不分割回合
-      else if (it.kind === 'raw') renderRaw(it.text);
+      else if (it.kind === 'audit') { _hgDispatch({ t: 'audit', text: it.text }); _hgScrollBottom(); }   // v3.2.27：撤 grpFinalize——警示入工作区不分割回合
+      else if (it.kind === 'raw') _hgDispatch({ t: 'raw', text: it.text });
       // v3.3.2(B/D3)：ask 不定稿——提问是当前工作状态的中途暂停（CLI 同回合
       // 阻塞），答后续跑 grpEnsure 自然回原组；v3.4.61 面板入输入框上方 dock
       //（askRender 内），占位气泡让位（等答面板即占位）

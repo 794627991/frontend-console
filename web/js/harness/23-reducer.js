@@ -23,21 +23,15 @@
              toolsTotal: _hgEmptyTools(), lastTurnTools: null, lastErr: null };
   }
   function _hgReduce(p, it, fx) {
-    // R0 纯化（ZCode EventReducer 纪律）：归约只动状态与 fx 出参（副作用
-    // 描述数组，由 _hgRunFx 统一执行）——renderQueue/apiPost/showBanner/
-    // renderSideStatus 不再内嵌。_HG 全局键的读写（queues/qKill/tidMap）
-    // 保留（状态存储归 R7 收缩，非 DOM 副作用）。
+    // R1（ZCode 对齐）：if-else 链改 handlers map（对位 event-reducer.ts
+    // 的 this.handlers[event.type] 分派）。环境适配两处（注释存档）：
+    // · ZCode immutable spread（{...p} 每 handler）——我们大状态 mutate
+    //   +dirty 标记（WebView2 性能优先，语义仍「视图只从投影派生」）
+    // · ZCode reducer 零副作用——我们副作用走 fx 出参描述（_hgRunFx 执行）
     const t = it.type || it.kind || it.t;
-    let dirty = false;
-    if (t === 'turn_started') {
-      p.status = 'running'; p.turnCount++; p.turnTools = _hgEmptyTools();
-      dirty = true;
-    } else if (t === 'turn_complete') {
-      p.status = 'idle'; p.lastTurnTools = Object.assign({}, p.turnTools);
-      dirty = true;
-    } else if (t === 'turn_error') {
-      p.status = 'idle'; p.lastErr = it.text || 'turn aborted';
-      dirty = true;
+    const h = _HG_REDUCERS[t];
+    if (h) {
+      h(p, it, fx);
     } else if (t === 'cli_stream') {
       const d = it.data || {};
       if (d.type === 'assistant' && !d.parent_tool_use_id) {
@@ -47,11 +41,52 @@
             if (b && b.type === 'tool_use') {
               _hgTally(p.turnTools, String(b.name || ''));
               _hgTally(p.toolsTotal, String(b.name || ''));
-              dirty = true;
+              fx.push({ op: 'render_side' });
             }
         }
       }
-    } else if (t === 'subagent_started') {
+    }
+  }
+  const _HG_REDUCERS = {
+    turn_started(p, it, fx) {
+      // ZCode TurnStarted 同款：新一轮接受即清旧错（旧错误不再是当前任务
+      // 事实，反反复复恢复旧横幅）
+      p.status = 'running'; p.turnCount++; p.turnTools = _hgEmptyTools();
+      p.lastErr = null;
+      fx.push({ op: 'render_side' });
+    },
+    turn_complete(p, it, fx) {
+      p.status = 'idle'; p.lastTurnTools = Object.assign({}, p.turnTools);
+      fx.push({ op: 'render_side' });
+    },
+    turn_error(p, it, fx) {
+      p.status = 'idle'; p.lastErr = it.text || 'turn aborted';
+      fx.push({ op: 'render_side' });
+    },
+    turn_interrupted(p, it, fx) {
+      p.status = 'idle';
+      _hgEntryPush(p, { t: 'turn_interrupted', text: it.text }, fx);
+      fx.push({ op: 'render_side' });
+    },
+    turn_exit(p, it, fx) {
+      _hgEntryPush(p, { t: 'turn_exit', text: it.text }, fx);
+    },
+    model_switched(p, it, fx) {
+      _hgEntryPush(p, { t: 'model_switched', text: it.text || '' }, fx);
+    },
+    renew(p, it, fx) {
+      _hgEntryPush(p, { t: 'renew', text: it.text }, fx);
+    },
+    audit(p, it, fx) {
+      _hgEntryPush(p, { t: 'audit', text: it.text }, fx);
+    },
+    raw(p, it, fx) {
+      _hgEntryPush(p, { t: 'raw', text: it.text }, fx);
+    },
+    sysnote(p, it, fx) {
+      _hgEntryPush(p, { t: 'sysnote', kind: it.kind || '', text: it.text }, fx);
+    },
+    subagent_started(p, it, fx) {
       p.agents[it.tid] = { type: it.agent_type || 'Task', desc: it.desc || '',
                            bg: !!it.bg, taskId: it.task_id || '',
                            t0: it.ts || 0, done: false,
@@ -59,16 +94,18 @@
       // subagent-registry F6（全审）：镜像事件附 aid——即收即更 tidMap
       //（_subTid 归一零延迟；25-registry 单点纪律域）
       if (it.aid && it.tid) { _HG.tidMap = _HG.tidMap || {}; _HG.tidMap[it.tid] = it.aid; }
-      dirty = true;
-    } else if (t === 'subagent_result') {
+      fx.push({ op: 'render_side' });
+    },
+    subagent_result(p, it, fx) {
       if (it.aid && it.tid) { _HG.tidMap = _HG.tidMap || {}; _HG.tidMap[it.tid] = it.aid; }
       const a = p.agents[it.tid];
       if (a) Object.assign(a, { done: true, err: !it.ok,
                                 tokens: it.tokens || a.tokens || 0,
                                 toolN: it.tool_n || a.toolN || 0,
                                 brief: String(it.brief || '').slice(0, 200) });
-      dirty = true;
-    } else if (t === 'input_admitted') {
+      fx.push({ op: 'render_side' });
+    },
+    input_admitted(p, it, fx) {
       // 服务端账本入队（本窗乐观 push 过同 id 则跳过——POST 响应与 SSE 事件
       // 双路到达是常态，id 客户端预生成保证两路同号）
       // v3.4.78（指纹追杀·按 sid 分域）：本地已摘除（edit/del）但作废未达的
@@ -102,22 +139,32 @@
                    att: it.att || 0 });
       p.inbox = arr.map(x => ({ id: x.id, text: x.text || '' }));
       fx.push({ op: 'render_queue' });
-      dirty = true;
-    } else if (t === 'input_promoted' || t === 'input_discarded') {
-      // promoted：后端已真发（user_echo 随后到达画气泡）；discarded：作废
-      //（rewind 换代/用户删/发送失败）。两态都从队列摘除
-      const key = _hgQueueKey();
-      const arr = _HG.queues[key] || [];
-      const i = arr.findIndex(x => x.id === it.id);
-      if (i >= 0) { arr.splice(i, 1); fx.push({ op: 'render_queue' }); }
-      p.inbox = p.inbox.filter(x => x.id !== it.id);
-      if (t === 'input_discarded' && it.reason === 'rewind')
-        fx.push({ op: 'banner',
-                  text: '回退已作废 ' + (p.inbox.length + 1) + ' 条排队输入（旧世代）',
-                  ms: 2600 });
-      dirty = true;
-    }
-    if (dirty) fx.push({ op: 'render_side' });
+      fx.push({ op: 'render_side' });
+    },
+    input_promoted(p, it, fx) { _hgQueueRemove(p, it, fx, false); },
+    input_discarded(p, it, fx) { _hgQueueRemove(p, it, fx, true); },
+  };
+  function _hgQueueRemove(p, it, fx, discarded) {
+    // promoted：后端已真发（user_echo 随后到达画气泡）；discarded：作废
+    //（rewind 换代/用户删/发送失败）。两态都从队列摘除
+    const key = _hgQueueKey();
+    const arr = _HG.queues[key] || [];
+    const i = arr.findIndex(x => x.id === it.id);
+    if (i >= 0) { arr.splice(i, 1); fx.push({ op: 'render_queue' }); }
+    p.inbox = p.inbox.filter(x => x.id !== it.id);
+    if (discarded && it.reason === 'rewind')
+      fx.push({ op: 'banner',
+                text: '回退已作废 ' + (p.inbox.length + 1) + ' 条排队输入（旧世代）',
+                ms: 2600 });
+    fx.push({ op: 'render_side' });
+  }
+  function _hgEntryPush(p, entry, fx) {
+    // R1：entries=行级读模型（ZCode entries 对位）——杂项行起步，气泡/
+    // 工具行随 R2/R3 进。渲染由 _HG_STORE 订阅消费（renderEntries）
+    p.entries = p.entries || [];
+    entry.i = p.entries.length;
+    p.entries.push(entry);
+    fx.push({ op: 'render_entries' });
   }
   function _hgProjEvent(it) {
     // SSE 信封入口（onmessage 每帧先过这里再走 legacy 分派）——R0 起为

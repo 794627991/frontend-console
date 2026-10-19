@@ -158,16 +158,16 @@
       }
     }
     else if (l.role === 'renew') {    // v2.27.23：超窗续命注入折叠为一行分割线
-      // v3.2.4R(F3)：对齐 live（10-sse renew 分支先定稿）——不定稿则分割线落
-      // flow 尾、同回合续内容仍进组根，回放时序倒挂
+      // R1（流式/重渲统一）：走同一 FEV dispatch——live/hist 同一 handlers
+      // →同一渲染函数，对齐补丁（v3.2.4R F3）退役为 dispatch 的统一编排
       grpFinalize(true, { hist: true, endTs: _HG.histActTs || 0 });
-      renderRenew(l.text);
+      _hgDispatch({ t: 'renew', text: l.text });
     }
     else if (l.role === 'audit') {    // v2.34：审计警示卡回放（v2.34.1 与实时同文本，
       // v3.2.27（用户定调「警告记录到工作区内，不许分割」）：撤定稿——警示
       // 挂进当前回合时间线（renderAudit 内判组），同一条会话的工作区不再
       // 被审计卡割成多段；由 audit log 并入
-      renderAudit(l.text);
+      _hgDispatch({ t: 'audit', text: l.text });
     }
     else if (l.role === 'user') {
       // v3.2.16 前端防线：旧后端（未重启进程）仍会发 [Image: source] 回显行
