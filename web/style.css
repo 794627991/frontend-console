@@ -4140,14 +4140,18 @@ html {
 .h-turn-label { color: var(--muted); }
 .h-turn-sub { font-size: var(--fs-2xs); color: var(--muted); opacity: .75;
   font-family: var(--font-mono); }
-.h-turn-body.closed { display: none; }
+/* 动画批B：组开合高度过渡（工具卡同款 grid-rows 方案；display 硬切退役） */
+.h-turn-body.closed { display: grid; grid-template-rows: 0fr; opacity: 0; overflow: hidden; }
 /* 展开态 chevron 转正（收起态 › 右指） */
 .h-grp-proc:has(.h-turn-body:not(.closed)) > .h-turn-head .h-chev { transform: rotate(90deg); }
 
 /* ---- 组内纵向布局（v3.2 前双抽屉横排 → 回合头+工作区纵排） ---- */
 .h-grp-proc { display: flex; flex-direction: column; gap: 6px; }
 .h-grp-proc > .h-drawer { flex: 1 1 auto; min-width: 0; max-width: 100%; }
-.h-turn-body { display: flex; flex-direction: column; gap: 6px; }
+.h-turn-body { display: grid; grid-template-rows: 1fr; opacity: 1; gap: 6px;
+  transition: grid-template-rows var(--hg-dur, .3s) var(--hg-ease, cubic-bezier(.4,0,.2,1)),
+              opacity var(--hg-dur, .3s) var(--hg-ease, cubic-bezier(.4,0,.2,1)); }
+.h-turn-body > * { min-height: 0; }
 /* v3.2.2：折进体的中间正文——对齐 .h-grp > .h-msg 的自适应宽（体是
    flex column，默认拉伸会拉满组宽） */
 .h-turn-body .h-msg { width: auto; max-width: 100%; }
