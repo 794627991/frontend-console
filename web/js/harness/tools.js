@@ -487,6 +487,9 @@
       const a = typeof _hgAg === 'function' ? _hgAg(pid) : null;
       if (a) row = _rb[a.taskId] || _rb[a.agentId];
     }
+    // 复审②：终态守卫——完成链 drain（异步）晚于 _hgAgentRowState 定格时，
+    // 不把实时摘要写回已完成的行卡（.h-ag-live 本已被清空隐藏）
+    if (row && row.dataset.final === '1') return;
     const lv = row && row.classList.contains('agentline')
       ? row.querySelector('.h-ag-live') : null;
     if (lv) lv.textContent = String(txt || '').trim().slice(0, 90);

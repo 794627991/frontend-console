@@ -1449,7 +1449,7 @@
             const hint = inp.command || inp.file_path || inp.path || inp.pattern ||
                          inp.query || inp.description || inp.subject || inp.prompt || '';
             _subLivePaint(aid, (_hToolLabel(blk.name) || '工具') + ' · ' + String(hint).slice(0, 64));
-            _hgAgCnt(aid, 0, 1);
+            // 复审①：toolN 计数同退 SSE 单点（367 漏删此一处）
           }
         }
       }
