@@ -153,6 +153,32 @@
   }
   function _hgEntryCursorReset() { _hgEntryCursor = 0; }
 
+  // ---- R6b：result 帧收尾编排（单函数定义——ZCode TurnComplete 的 UI 订阅
+  //      层对位；hold 短路径 v3.5.130 口径/真收尾序列 v2.20-v3.3.7 逐条保序）----
+  function _hgTurnWrapup(o) {
+    if (_HG.hold) {
+      _HG.holdRes = { o,
+                      durMs: (typeof o.duration_ms === 'number' ? o.duration_ms : 0),
+                      ok: !(o.subtype && o.subtype !== 'success') };
+      endThinking(); closeRun();
+      setBusy(true);
+      if (o.subtype && o.subtype !== 'success')
+        renderRaw(`⚠ 回复异常结束：${o.subtype}${o.result ? ' — ' + String(o.result).slice(0, 200) : ''}`);
+      refreshSessions();
+      return;
+    }
+    _hgCompactionEnd();                  // v2.20：status 恢复事件若丢，result 兜底收压缩态
+    endThinking();
+    closeRun();
+    _hgVisionSweep(true);                // v2.28.3：回合终结算清未回传的识图线
+    _hgAgentsSweep(false);               // v2.32：在跑子代理统一收尾（不标失败）
+    _subEnd();                           // v2.33：窗格收起
+    _hgPeerVerifyPending();              // v2.37R6：pending 线追溯核实
+    _hgTurnEnd(o.subtype === 'success' ? 'ok' : 'error',
+               typeof o.duration_ms === 'number' ? o.duration_ms : 0);
+    try { _hgPatchMissingCmds(); } catch (_) {}   // v3.3.7：丢 input bash 回填
+  }
+
   // ---- dispatch：FEV → 纯归约 → 副作用/通知（live 与冷读唯一入口）----
   // R0：_hgProjEvent 的现有归约逻辑已迁入 _hgReduce（纯函数，fx 出参）；
   // dispatch = _hgReduce + fx 执行 + store.mark。10-sse 的 onmessage 先过

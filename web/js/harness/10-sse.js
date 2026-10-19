@@ -741,34 +741,14 @@
         _hgScrollBottom();
       }
     } else if (typ === 'result') {
-      // v3.5.130（用户批注「大回合计时不变？子代理跑时不应收起」）：hold 期
-      // 中间 result **不做回合收尾**——组保持展开、秒表继续走（子代理在飞
-      // 也算本回合工作）、子代理不收尾不关窗；result 帧存档，真收尾
-      //（turn_complete 事件）才执行完整收尾序列
-      if (_HG.hold) {
-        _HG.holdRes = { o,
-                        durMs: (typeof o.duration_ms === 'number' ? o.duration_ms : 0),
-                        ok: !(o.subtype && o.subtype !== 'success') };
-        endThinking(); closeRun();
-        setBusy(true);
-        if (o.subtype && o.subtype !== 'success')
-          renderRaw(`⚠ 回复异常结束：${o.subtype}${o.result ? ' — ' + String(o.result).slice(0, 200) : ''}`);
-        refreshSessions();
-        return;
-      }
-      _hgCompactionEnd();                  // v2.20：status 恢复事件若丢，result 兜底收压缩态
-      endThinking();
-      closeRun();
-      _hgVisionSweep(true);                // v2.28.3：回合终结算清未回传的识图线
-      // v2.32：回合终结——还在跑的子代理统一收尾（收不到 tool_result 的
-      // 结束都不标失败；中断/退出的收尾在各自分支标「已中断」）
-      _hgAgentsSweep(false);
-      _subEnd();                           // v2.33：窗格收起（跑完随回合结束消失）
-      _hgPeerVerifyPending();              // v2.37R6（兜底复核②）：pending 线追溯核实
-      _hgTurnEnd(o.subtype === 'success' ? 'ok' : 'error',
-                 typeof o.duration_ms === 'number' ? o.duration_ms : 0);
-      // v3.3.7（P5 自愈）：回合终结——丢 input 的 bash 行从转写回填真命令
-      try { _hgPatchMissingCmds(); } catch(_) {}
+      // R6b：result 帧收尾走 _hgTurnWrapup（hold 短路径/真收尾序列单函数
+      // 定义——ZCode TurnComplete handler 对位：投影状态经 dispatch 同步，
+      // 编排集中一处）+ 投影 dispatch；方案B 重渲保留原位（异步性能路径）
+      _hgDispatch({ t: 'turn_complete',
+                    ok: !(o.subtype && o.subtype !== 'success'),
+                    durMs: (typeof o.duration_ms === 'number' ? o.duration_ms : 0),
+                    subtype: String(o.subtype || ''), frame: o });
+      _hgTurnWrapup(o);
       // v3.5.239（用户实锤「流式期间没有、结束瞬间冒出=显示bug」）：回合
       // 摘要胶囊（🔍 查阅·N 命令）全链路退役——result 时刻的插入（本行）
       // 与方案B重渲后的补插均已撤；工具构成已由头部副位「N思考·M工具·K识图」
