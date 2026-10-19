@@ -346,56 +346,9 @@ function buildClaudeHarnessTab(opts = {}) {
     });
   }
   function _hgFlowClick(e) {
-    // v2.43：子代理段头点击。v2.45 两层收纳改型：完成段点击=toggle 折叠
-    // （.collapsed 类 + CSS，快照随身携带）；窗格动作在段头右侧小按钮
-    // （「▣ 回放」hgSubr /「⧉ 窗格」hgSub，span+role 防 button 嵌套）。
-    // v2.47（需求1）：运行段也能手动收起——长任务把平铺收起来干别的，后台
-    // 继续跑（折叠态 .collapsed 只藏段体，实时追加照常落 DOM——display:none
-    // 不影响 DOM 操作，v2.45 已实证；秒表写段头照走），展开恢复围观。段头
-    // 点击不再分 done/运行（一律 toggle），「开实况窗格」挪到「⧉ 窗格」钮
-    // （_subBlkActsPaint 运行态也画）。段内行交互（抽屉头/工具折叠头/复制/
-    // 收起钮）不受影响——它们不在 .h-subblock-head 里，后续既有分支照常处理
-    // v2.45R：折叠段的结论行（.h-subblock-sum）与段头构成视觉整体，点击
-    // 同样 toggle 折叠——CSS 标了 cursor:pointer 却没有处理分支就是死点击
-    //（reviewer 实锤）。v2.47 随段头一同放开 done 限定。
-    const sbSum = e.target.closest('.h-subblock-sum');
-    if (sbSum) {
-      const blk = sbSum.closest('.h-subblock');
-      if (blk) {
-        blk.classList.toggle('collapsed');
-        _hgSubSaveOpen(blk, !blk.classList.contains('collapsed'));   // v2.46：折叠态记忆
-        if (blk.classList.contains('collapsed') && isNearBottom()) _hgScrollBottom();
-      }
-      return;
-    }
-    const sbHead = e.target.closest('.h-subblock-head');
-    if (sbHead) {
-      const blk = sbHead.closest('.h-subblock');
-      // v2.47（需求1）：动作钮不限完成段——运行段「⧉ 窗格」由此进入（原段头
-      // 点击的实况入口挪来）；「▣ 回放」凭 hgSubr（协作段建段即有，运行中可围观）
-      const act = blk && e.target.closest('.h-sub-act');
-      if (act) {
-        if (act.dataset.hgAct === 'replay' && sbHead.dataset.hgSubr)
-          _subReplay(sbHead.dataset.hgSubr, sbHead.dataset.hgSubType || 'Task',
-            sbHead.dataset.hgSubDesc || '', sbHead.dataset.hgSubr);
-        else if (act.dataset.hgAct === 'pane' && sbHead.dataset.hgSub)
-          _subReopen(sbHead.dataset.hgSub);
-        // v2.57：协作段「⧉ 窗格」=全量回放+force 重拉（途中关闭再打开也有
-        // 数据；打开后轮询增量经镜像实时续——t.replay 在 fetch 完成后放行）
-        else if (act.dataset.hgAct === 'pane' && blk && blk.dataset.hgCollab === '1'
-                 && sbHead.dataset.hgSubr)
-          _subReplay(blk.dataset.hgSubblock, sbHead.dataset.hgSubType || 'SendMessage',
-                     sbHead.dataset.hgSubDesc || '', sbHead.dataset.hgSubr, true);
-        return;
-      }
-      if (blk) {
-        blk.classList.toggle('collapsed');
-        _hgSubSaveOpen(blk, !blk.classList.contains('collapsed'));   // v2.46：折叠态记忆
-        // 收起时若用户在底部跟读，flow 底部随内容收缩上移——贴底别丢
-        if (blk.classList.contains('collapsed') && isNearBottom()) _hgScrollBottom();
-      }
-      return;
-    }
+    // 批2（迁出主窗）：段头/结论行/段内行三分支退役——主窗零 .h-subblock，
+    // 子过程唯一入口=单行卡（agRow 分支）+胶囊/目录（各自入口）；旧快照
+    // 残留的段 DOM 由批3 switchTo 剥离，不在此兼容
     // v2.35（P0-2）：子代理消息行/工具行点击 → 重开实时窗格并切到对应
     // tab（✕ 收起后同一子代理还在跑时的重开入口；窗格已开=切 tab）
     // v2.35.1（F1/F7）：行内交互子元素放行——折叠头(.h-tool-head 展开/收起)、
@@ -571,11 +524,9 @@ function buildClaudeHarnessTab(opts = {}) {
           r && r.agentId && (r.type || '') === _ty && String(r.desc || '').slice(0, 40) === _ds);
         if (_hit) { aid = _hit.agentId; agRow.dataset.hgSubr = aid; }
       }
-      // v3.5.273（撤 269/270 一刀切）：「点开啥也没有」的真来源是无 agentId
-      // 的 Task 行（该路径本就开目录+banner，不弹窗）；有 agentId 的 Task 转写
-      // 存在（外部 AI 实测：调研型 Task 拉到 9 条记录+实况续流）——拦截误伤，恢复原点击
-      if (aid) { _subReplay(aid, agRow.dataset.hgSubType || 'Task',
-        agRow.dataset.hgSubDesc || '', aid); return; }
+      // 批2（迁出主窗）：点击统一收敛 _subReopen（内含 done/running 分诊
+      //（_subReplay/_subReplay(force,alive)）+miss 时 regSync→resolve 漏斗）
+      if (aid) { _subReopen(aid); return; }
       _subDirOpen();
       showBanner('该子代理行没有 agentId 记录——已打开子智能体目录，可从列表进入', 3000);
       return;

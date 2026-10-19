@@ -111,41 +111,8 @@
                 unresolved: !_real,
                 taskId: _real || (o.task_id || '') };
             }
-            // 段头名字优先用转交收件人（与「已转交」线同名对齐），否则角色
-            // 类型名。段不挂 hgSub（无实况流，窗格钮不画）；真实 id 在手则
-            // 建段即落 hgSubr——运行中即可「▣ 回放」围观转写，也是切会话
-            // 往返后 DOM 兜底轮询的 id 来源（随快照携带）
-            _subBlkGet(tid, { live: true, collab: true, bg: true, fold: true,
-              label: (typeof _peerDesc === 'function'
-                  ? _peerDesc(_to, (_HG.peerMsg || {})[tid]) : '')
-                || (_AGENT_LABEL[o.subagent_type] || o.subagent_type || '代理'),
-              model: '', type: o.subagent_type || 'Task',
-              desc: o.description || '', done: false });
-            if (_real) {
-              const _cb = _HG.subBlk && _HG.subBlk[tid];
-              if (_cb && _cb.head && _cb.root) {
-                _cb.head.dataset.hgSubr = _real;
-                _cb.head.dataset.hgSubType = o.subagent_type || 'Task';
-                _cb.head.dataset.hgSubDesc = String(o.description || '').slice(0, 120);
-                // v2.47R（复审2）：全喂持久标记——peerSent 真实 id 命中（确为
-                // SendMessage 续派）才落，随快照携带。档案缺失时全喂判定唯一
-                // 依据；不能看 hgSubr/data-hg-collab 双证——_subBlkFinish 对
-                // 所有段落 hgSubr（误杀形态完成瞬间也会落），双证会被攻破
-                _cb.root.dataset.hgFullfeed = '1';
-                _subBlkActsPaint(_cb);
-              }
-            } else if (!_to) {
-              // 误杀形态（collab 判定命中但无 peerSent=非 SendMessage 续派）：
-              // 真实后台代理，事件流照常到达——补 hgSub 实况入口（与 v2.45
-              // 运行段行为一致，围观不断路）。data-hg-collab 保留（无转写占位
-              // 有内容守卫不误伤）；hgFullfeed 不落（全喂判定永不命中——事件
-              // 流已覆盖，全喂必重复）
-              const _cb = _HG.subBlk && _HG.subBlk[tid];
-              if (_cb && _cb.head) {
-                _cb.head.dataset.hgSub = tid;
-                _subBlkActsPaint(_cb);
-              }
-            }
+            // 批2（迁出主窗）：collab 建段壳退役——过程呈现归窗格+单行卡
+            //（档案已在上方建立，轮询按 taskId 喂转写；主窗零 .h-subblock）
             renderSideStatus();
           }
         } else if (tid && !_shBg) {
@@ -238,20 +205,8 @@
                 break;
               }
             }
-            // v2.43.1（R-FAIL1）：档案缺失（切会话往返 agents 清空）但段 DOM
-            // 在 → 完成信号直达段头定格；aid 用通知自带的 task_id（与
-            // task_started 同源），hgSubr 靠它补上
-            // v2.47（需求2）：aid 优先 peerSent 反查的真实 agentId（协作段
-            // 的包装 task_id 无转写，落它回放必空）——与 task_started 建档
-            // 同源；名字形态（非 id）不可作转写定位，校验后回退
-            const ab = _subBlkAdopt(tid);
-            if (ab && !ab.root.classList.contains('done')) {
-              const _pto = String(((_HG.peerSent || {})[o.tool_use_id]) || '');
-              _subBlkFinish(tid,
-                !!(o.status && o.status !== 'completed' && o.status !== 'success'),
-                (/^[0-9a-zA-Z_-]{8,64}$/.test(_pto) ? _pto : '') || (o.task_id || ''));
-              renderSideStatus();
-            }
+            // 批2（迁出主窗）：档案缺失的段头定格兜底退役——段不存在；
+            // 切会话往返场景由上方 liveAgentsBy 桶置 done（防假运行）承接
           }
         }
         // v2.37（P1-F②）：协作包装的完成通知——严格按名配对定格对应转交线
@@ -336,11 +291,7 @@
             _sub.tabs[o.parent_tool_use_id].model = o.message.model;
             _subTabsPaint();
           }
-          // v2.43：段头标识随实跑模型刷新（段可能尚未建——_subBlkPaint 只画
-          // 已建段，不建段不编造）
-          _subBlkPaint(o.parent_tool_use_id,
-            { label: _AGENT_LABEL[_sa.type] || _sa.type || '子代理',
-              model: _sa.model, type: _sa.type, desc: _sa.desc });
+          // 批2：段头刷新退役（段不存在）；模型落档+tab 刷新保留
           renderSideStatus();
         }
       }
@@ -511,25 +462,9 @@
                     done: false, doneAt: 0, collab: true, bg: true, taskId: _aid };
                 }
                 const _disp2 = (_HG.peerNames || {})[_aid] || _aid;
-                // v2.58：续派轮**新段**（轮询/回传/回填全部归属新段——
-                // 用户实锤「咋又跑上一个审计会话里去了」）；段头名对齐
-                // 档案 desc（任务名优先）
-                const _lbl = (_orig ? _orig.desc : ((_HG.agents || {})[b.id] || {}).desc)
-                  || ('审核 · ' + String(_disp2).slice(0, 24));
-                const _nb2 = _subBlkGet(b.id, { live: true, collab: true,
-                  bg: true, fold: true,
-                  label: _lbl,
-                  model: '', type: 'SendMessage',
-                  desc: _lbl, done: false });
-                if (_nb2) {
-                  _nb2.head.dataset.hgSubr = _aid;
-                  _nb2.head.dataset.hgSubType = 'SendMessage';
-                  _nb2.root.dataset.hgFullfeed = '1';
-                  _subBlkActsPaint(_nb2);
-                }
-                // 轮询/回传归属切换：该 agentId 的活跃段=新段（旧段即使档案
-                // 未 done 也不再吃增量；offset 账共享——同一转写文件连续 append）
-                (_HG.subTailSeg || (_HG.subTailSeg = {}))[_aid] = b.id;
+                // 批2（迁出主窗）：续派建新段退役——续派轮=窗格多轮模型
+                //（转写 k:'user' 行切轮，_subUserInto 开新轮）；subTailSeg
+                // 切段映射随段退役（转写账本 subTail[agentId] 天然连续）
               }
             }
           }
@@ -636,18 +571,9 @@
             }
             hitAgent = true;
           } else if (!a && !_isSmRcpt && !/launched successfully/i.test(_rt0)) {
-            // 全审P1：SendMessage 成功回执不进「档案缺失」完成信号分支
-            //（该分支为前台 Task 完成定格设计；名字形态续派 tidMap 无键
-            // 同样靠 _isSmRcpt 守卫）。用户实锤「已工作13s」补第三守卫：
-            // 后台 Task 的 ACK（"Async agent launched successfully"——
-            // agentId 异步、task_started 未达=档案未建窗口）同样不是完成
-            // 信号，收段=段卡提前定格（判据与 subagent_projection ACK 同源）
-            const ab = _subBlkAdopt(b.tool_use_id);
-            if (ab && !ab.root.classList.contains('done')) {
-              const _aid = (resultText(b).match(/(?<![a-zA-Z])agentId[:"':\s]+([0-9a-zA-Z_-]{8,64})/i) || [])[1] || '';
-              _subBlkFinish(b.tool_use_id, !!b.is_error, _aid);
-              hitAgent = true;
-            }
+            // 批2（迁出主窗）：档案缺失的段定格兜底退役（段不存在）——
+            // 三守卫保留注释存档：SendMessage 回执/名字形态续派/后台 ACK
+            // 均非完成信号；真终态由轮询 final 行判死链+sweep 行卡收口承接
           }
         }
         if (hitAgent) renderSideStatus();

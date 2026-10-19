@@ -703,37 +703,9 @@
                             _rinp.pattern || _rinp.query || _rinp.description ||
                             _rinp.subject || _rinp.prompt || '');
 
-    // R2c：非 sub 已在前置块（hgToolCard）return——此处仅 isSub（段内
-    // 抽屉行，独立形态不收编；toolRunPush 已随 F6 删，run 边界注释随迁）
-    const row = _subToolDrawerRow(cfg, name, label, b.input);
-    row._preview = row._preview !== undefined ? row._preview
-      : (cfg.mode === 'one-line' ? cfg.get(b.input) : (typeof cfg.title === 'function' ? cfg.title(b.input) : label)) || '';
-    row._rawHint = _rawHint;   // v2.57R：后端同序原始摘要（窗格指纹查重用）
-    row._rin = b.input || null;   // v3.2.6R2（审计N2）：原始 input 随行——窗格镜像的 explore 聚组判定（Bash 只读命令靠 input.command）
-    row._name = name;
-    // v3.3.7（P5 自愈）：live 事件偶发丢 tool_use input（CLI/网关流异常，实测
-    // 多命令/heredoc 聚集）——记号入账，回合一结束 _hgPatchMissingCmds 从
-    // 转写回填真命令（转写恒完整：jsonl 落盘前 CLI 已组装完 input）
-
-    row._cfg = cfg;
-    row._id = id;
-    row.dataset.tid = id;                 // 快照/段认回后重扫挂映射用
-    // v2.43：子代理内部工具行归段——不入主链 rowById（主链 tool_result 不可能
-    // 引用它们），进段内映射（_subToolResult 挂徽章用）；行级 hgSub 点击入口
-    // 退役（段头是重开窗格的唯一入口，行内交互不再被劫持）
-    if (isSub && subId) {
-      ((_HG.subRows[subId]) || (_HG.subRows[subId] = {}))[id] = row;
-    } else {
-      _HG.rowById[id] = row;
-    }
-    // v2.21：子代理行运行秒表——子代理一跑几分钟，主流毫无动静，没有
-    // 秒表就像卡死。完成时由 renderOneToolResult 清表。
-
-    // v2.43：组统计去混——子代理内部调用不进主链组头胶囊（用户实锤「子代理×1
-    // Bash×21…」把子代理活动压成数字）。Agent 派发本身（!isSub 的 agent 卡）
-    // 仍计数——它是主会话的动作。
-    _subBlkAppendTool(subId, row);      // v2.43：子代理工具行入段体（isSub 专属路径）
-
+    // 批2（迁出主窗）：isSub 尾段退役——批1 后唯一调用点恒 isSub=false
+    //（非 sub 前置块 hgToolCard 已 return；子代理工具帧走 SSE 状态层摘要+
+    // _subTailFeed 转写通道，不再进段/窗格镜像）
   }
   function renderToolResult(o) {
     const c = o.message && o.message.content;

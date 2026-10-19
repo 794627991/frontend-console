@@ -414,29 +414,6 @@
   // v3.2.6：旧窗格行工厂（_subPaneThinkRow/_subPaneToolRow/_subPaneMirror/
   // _subMdRow）退役——窗格已时间线化（14-subpane _subTl* 行工厂接管），镜像
   // 增量的 rp 铺底查重逻辑随迁到 _subPaneMirror 新址
-  function _subThink(pid, text, fromPoll) {
-    const b = _subBlkGet(pid); if (!b) return;
-    // v3.2.6：主流单行任务卡的实时活动流（段卡已隐——过程进窗格，主流只留
-    // 「正在干什么」的一行摘要）
-    _subLivePaint(pid, '思考中…');
-    _hgAgCnt(pid, 1, 0);   // v3.5.142：过程计数（思考→N思）
-    if (!(b.seg && b.seg.isConnected)) {
-      const seg = _subThinkShell(true);
-      seg.dataset.t0 = String(_hgPrevRowAt());   // v3.3.1(F3)：起点挂上一事件时刻（自身到达恒 0 秒，与主链/窗格同口径）
-      _subBodyPut(b, seg, 'think');   // v2.48：进当前节的思考抽屉（节随行成形）
-      b.seg = seg;
-    }
-    b.seg.querySelector('.h-think-seg-body').insertAdjacentHTML('beforeend', renderMd(text));
-    // v2.43.1（R-次要②）：段内思考流式时长——每批增量到达即刷新（主链由
-    // thinkHeadUpdate 驱动，段内无对偶；_subSegEnd 收口再定格一次）
-    const _te = b.seg.querySelector('[data-hg-think-t]');
-    const _tt0 = +(b.seg.dataset.t0 || 0);
-    if (_te && _tt0) _te.textContent = _hgFmtDur((Date.now() - _tt0) / 1000);
-    // v2.57：仅轮询源镜像窗格——SSE 自带 _subFeed、重渲历史行不得重复进
-    // （fromPoll 区分数据来源，防回放 tab 完成后被重渲污染）
-    if (fromPoll) _subPaneMirror(pid, 'think', text);
-    _hgScrollBottom();
-  }
   function _subText(pid, text, fromPoll) {
     if (!text || !String(text).trim()) return;
     const b = _subBlkGet(pid); if (!b) return;
@@ -473,63 +450,4 @@
     }
     if (fromPoll) _subPaneMirror(pid, 'text', text);
     _hgScrollBottom();
-  }
-  function _subBlkAppendTool(pid, row) {
-    const b = _subBlkGet(pid); if (!b) return;
-    _subSegEnd(b);
-    // v3.2.6：实时活动流——最新工具动作（label · 摘要）
-    _subLivePaint(pid, (_hToolLabel(row && row._name || '') || '工具') +
-      ' · ' + String((row && row._rawHint) || (row && row._preview) || '').slice(0, 64));
-    _hgAgCnt(pid, 0, 1);   // v3.5.142：过程计数（工具→M工）
-    _subBodyPut(b, row, 'tool');   // v2.48：进当前节的工具抽屉（节随行成形）
-    // v3.2.6：窗格时间线镜像——本函数是 SSE 与 fullFeed 轮询的共同通路，镜像
-    // 前按 data-tuid 查重（SSE 路径 _subFeed 也会插同名行，双源不查重=每条工具
-    // 双份）；回放铺底行 v3.3.9 起多带 tuid（转写行 tid 随行），先走 tuid 精确
-    // 查重；旧转写 tid 空的铺底行（rp 标）按「名+摘要」指纹比对兜底（v2.57R
-    // 口径，局限：同文件同摘要的连续调用可能漏显一条，概率极低）
-    pid = _subTid(pid);   // v3.4R（全审P4）：镜像归一——续派工具行落原 tab
-    const tb = _sub.tabs[pid];
-    if (tb && tb.t && row && row.dataset.tid &&
-        !tb.t.tl.querySelector(`.h-tool[data-tuid="${CSS.escape(row.dataset.tid)}"]`)) {
-      const t = tb.t;
-      const stick = _subPaneStick(t.sc);
-      const fp = (row._name || '') + ' ' + String(row._rawHint || '').slice(0, 80);
-      const rpTools = [...t.tl.querySelectorAll('.h-tool[data-hg-rp="1"]')].slice(-8);
-      if (!rpTools.some(el => el.dataset.fp === fp)) {
-        // v3.2.6R2（审计N2）：传原始 input（row._rin）——Bash/PowerShell 只读
-        // 命令的 explore 聚组判定靠 input.command（镜像行先落、tuid 查重使
-        // _subFeed 的带 input 行恒被挡下——镜像侧必须自带聚组能力）
-        _subTlAppendTool(t, row._name || '', row._preview || '', row.dataset.tid,
-          row._rin || null);
-        if (stick) _subScroll(pid);
-      }
-    }
-    _hgScrollBottom();
-  }
-  function _subToolResult(pid, tr) {
-    // v2.55R：窗格回点先于段内早退（快照恢复后 subRows 映射丢失时，窗格
-    // 镜像行仍要回点变绿+落结果）
-    _subResult(pid, tr);
-    const m = (_HG.subRows || {})[pid];
-    const row = m && m[tr.tool_use_id];
-    if (!row || !row.isConnected) return;
-    const st = deriveStatus(tr);
-    const bad = st === 'error' || st === 'denied';
-    const slots = row.querySelector('.h-tslots');
-    if (slots) {
-      const dur = row._t0 ? _hgFmtDur((Date.now() - row._t0) / 1000) : '';
-      slots.innerHTML = statusBadge(st) + (dur ? ` <span class="h-tsec">${dur}</span>` : '');
-    }
-    row.classList.toggle('err', bad);
-    const txt = resultText(tr).trim();
-    const coll = row.querySelector('.h-tool-coll');
-    if (coll && txt && txt !== '(no content)') {
-      // 截 2000 字防超长结果（Read 全文等）撑爆 DOM/快照；折叠体限高由 CSS 管
-      const d = document.createElement('div');
-      d.className = 'h-tool-out' + (bad ? ' err-txt' : '');
-      d.textContent = txt.length > 2000 ? txt.slice(0, 2000) + '…' : txt;
-      coll.appendChild(d);
-    }
-    if (bad) row.classList.add('open');   // 错误不藏：与主链/历史「错误永远显」对齐
-    if (!bad && row._cfg && row._cfg.kind === 'diff') _hgDiffLineFix(row);   // v3.4.62：成功改盘才定位（轻审P2）
   }

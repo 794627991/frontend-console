@@ -16,7 +16,6 @@
       // innerHTML，事件密集时 mousedown/mouseup 之间行按钮被替换、点击落空；
       // 异常记 console（不静默吞）
       try { _subDirPaint(); } catch (e) { console.error('[hg-sub-dir] 目录刷新异常', e); }
-      try { _subBlkSink(); } catch(_) {}          // v3.5.323：运行中子代理段卡钉当前组尾（用户需求「永远能看到子代理运行情况」）
       try { _hgInputState(); } catch(_) {}       // v2.35：派生态变化连带输入框提示（v3.3 自 _hgDynRender 尾部上移：无条件执行）
       try { _hgDynCapsulePaint(); } catch(_) {}  // v3.2.31：胶囊与视图同源刷新（同上）
     });
@@ -326,20 +325,12 @@
   }
   function _hgAgentsSweep(markErr, forceBg) {     // 回合终结：在跑的子代理统一收尾（防假"运行中"）
     if (!_HG.agents) {
-      // v2.43.1（R-FAIL1）：档案缺失（切会话往返重置）——按 DOM 段兜底定格
-      // （重放 result/interrupted/exit 到达时档案三路全早退，段头会永久假
-      // 「运行中」）。data-hg-bg 段非中断不收（后台代理跨回合续跑，与档案
-      // 路径同语义——标记在段创建时从档案落 dataset，随快照携带）
-      _hgFlow.querySelectorAll('.h-subblock:not(.done)').forEach(el => {
-        if (!markErr && !forceBg && el.dataset.hgBg === '1') return;
-        const pid = el.dataset.hgSubblock;
-        if (pid) {
-          _subBlkFinish(pid, !!markErr);
-          // v3.5.145（全审F1）：段收口同步收主会话流单行任务卡——否则
-          // row._agentTimer 无路径清除，卡片永跑「运行中 Ns」
-          _hgAgentRowState(pid, !!markErr, '');
-        }
-      });
+      // 批2（迁出主窗）：DOM 段扫兜底退役（段不存在）——窗格 tab 键即 id，
+      // 按 tabs 兜底定稿+行卡收口（防永卡「工作中」/秒表不死跑）
+      for (const t in _sub.tabs) {
+        try { _subTlFinalize(t, { err: !!markErr }); } catch (_) {}
+        try { _hgAgentRowState(t, !!markErr, ''); } catch (_) {}
+      }
       return;
     }
     let swept = false;
@@ -354,18 +345,7 @@
       if (!a.done && !(a.bg && !markErr && !forceBg)) {
         a.done = true; a.doneAt = Date.now();
         if (markErr) { a.err = true; a.interrupted = true; }
-        // subagent-registry：段卡键=tid（dataset.hgSubblock），档案键=
-        // agentId（Sync 归并后）——段收口先试 id 直查（live tid 键场景），
-        // miss 时按注册表 tids 链逐个找在场段（任一命中即收——同链段
-        // 的最后一轮已在铺底/轮询定格语义内，此处只兜异常残留）
-        const _segKeys = [id].concat((a.tids && a.tids.length) ? a.tids : []);
-        for (const sk of _segKeys) {
-          if (_HG.subBlk && _HG.subBlk[sk] && _HG.subBlk[sk].root
-              && _HG.subBlk[sk].root.isConnected) {
-            _subBlkFinish(sk, !!a.err);   // v2.43：主 flow 段头同步定格（防假"运行中"，bg 不收尾同档案语义）
-            break;
-          }
-        }
+        // 批2：段头定格退役（段不存在）——两收口保留
         // v3.2.6：窗格时间线同路定稿（已工作 X + 结论上移）——单行任务卡
         // 的单行态靠档案，窗格头不能永卡「工作中」
         if (_sub.tabs[id]) _subTlFinalize(id, { err: !!a.err });
@@ -927,21 +907,11 @@
       const lines = _hgPeerLines();
       const pend = lines.filter(el => !el.dataset.done);
       const target = (pend.length ? pend : lines).slice(-1)[0];
-      // v2.49：线被隐藏（SendMessage 协作归一段形态）——跳转目标改协作段
-      // 本体：展开（含折叠态记忆）+居中+高亮；段不存在回落原线跳转
+      // 批2（迁出主窗）：协作段跳转退役（段不存在）——线隐藏（SendMessage
+      // 协作归一形态）时改开窗格围观（转写全量铺底；miss 走 _subReopen 漏斗）
       if (target && target.style.display === 'none') {
-        // allowDone=true（v2.54R）：跳转目标是历史段（多为已完成），live-only 会落空
-        const seg = _hgCollabSegFind(target.dataset.peer, true);
-        if (seg) {
-          seg.classList.remove('collapsed');
-          _hgSubSaveOpen(seg, true);
-          seg.scrollIntoView({ block: 'center', behavior: 'smooth' });
-          seg.classList.remove('hg-dyn-jump');
-          void seg.offsetWidth;
-          seg.classList.add('hg-dyn-jump');
-          setTimeout(() => seg.classList.remove('hg-dyn-jump'), 1600);
-          return;
-        }
+        _subReopen(target.dataset.peer);
+        return;
       }
       if (target) {
         target.scrollIntoView({ block: 'center', behavior: 'smooth' });

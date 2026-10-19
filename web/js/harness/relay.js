@@ -532,10 +532,9 @@
     endThinking(); closeRun();
     // v2.49：协作归一——SendMessage 协作回传全文入对应子代理段（替代独立
     // 回传气泡）。v2.53（用户定调）：非识图回传**禁止平铺气泡**——定位不到
-    // 运行中段（段已定格/续派未建段）时新建一个段承接，回传必须出现在
-    // 消息框里；识图转交/回传是唯一例外（原气泡保留）
-    const _pSeg = _hgCollabSegFind(name, hist);
-    if (_pSeg) { _hgPeerToSeg(_pSeg, name, text); _hgScrollBottom(); return; }
+    // 批2（迁出主窗）：协作回传入段/建段退役——段不存在（live 全程零
+    // .h-subblock）；回传走下方平铺气泡（完整正文，信息零丢失），批3 改
+    // 单行通知行；识图转交/回传例外原样
     const _nm = String(name || '其他会话');
     // v3.4.68R4（用户实锤「切B切回A 工作中的显示全没了」致命复发根因）：本地
     // 子代理续派的回报（from=自家 reviewer agentId）在历史重建里配对 miss
@@ -545,53 +544,6 @@
     // 恰 4 行：thinking/assistant/tool/tool），覆盖度审计 gap=4≤5 漏触发——
     // 双重失守=「全没了且无 banner」。本地回报直接忽略（主回合已消费该报告）
     if (!_nm.includes('识图') && _hgLocalResendPeer(_nm)) return;
-    if (!_nm.includes('识图')) {
-      const _disp = (_HG.peerNames || {})[_nm] || _nm;
-      const _npid = 'peer-' + _nm + '-' + Date.now();
-      // v2.58：miss 一律建段承接（实时=live 段；历史=done 段无秒表）——强刷
-      // 后形态保持「回传在新窗口」不再平铺。不挂 bg（合成段无 agents 档案，
-      // 挂 bg 会被 sweep 豁免成永不定格的跳表假段）
-      const _nb = _subBlkGet(_npid, hist
-        ? { hist: true, done: true, collab: true,
-            label: '协作 · ' + String(_disp).slice(0, 24),
-            model: '', type: 'SendMessage', desc: '' }
-        : { live: true, collab: true, fold: true,
-            label: '协作 · ' + String(_disp).slice(0, 24), model: '',
-            type: 'SendMessage', desc: '', done: false });
-      if (_nb) {
-        if (!hist) _nb.nopane = true;   // 实时合成段无档案——不画窗格死按钮
-        if (/^[0-9a-zA-Z_-]{8,64}$/.test(_nm)) {
-          _nb.head.dataset.hgSubr = _nm;
-          _nb.head.dataset.hgSubType = 'SendMessage';
-          _subBlkActsPaint(_nb);   // hgSubr 在手——「▣ 回放」钮可点亮
-        }
-        _hgPeerToSeg(_nb.root, name, text);
-        if (!hist) {
-          // 入段即定格：回传本身就是完成信号——不停格秒表会永久跳动误导
-          // （合成段无档案，result 路径不会来认领）
-          _nb.root.classList.add('done');
-          const _st = _nb.head.querySelector('.h-subblock-state');
-          if (_st) {
-            _st.className = 'h-subblock-state ok';   // 去 run 脉冲动画
-            _st.textContent = '✓ 回传已入段';
-          }
-          if (_nb.timer) { clearInterval(_nb.timer); _nb.timer = null; }
-          // v2.58：立即回填——拉转写全量补思考/文本进段体（回传正文只是最后
-          // 一条，审核过程一并进新窗口）。dead 清理放 drain **之后**（复审指
-          // 正）：drain 内首跑会因回传气泡满足 fedAgain 守卫重新置位 dead，提
-          // 前删无效；放后面则同 agentId 后续轮次的 tick 增量不再被拦
-          // v3.5.111（用户实锤 console 400 刷屏）：回放仅对 task_id 形态的
-          // peer 名发起（与上方 546 行「回放钮点亮」同款门卫）——协作卡 peer
-          // 名是会话显示名（如「其他会话」），拿去查 subagent_replay 必被
-          // 后端 ^[0-9a-zA-Z_-]{8,64}$ 拒 400，每条回传刷一条报错
-          if (/^[0-9a-zA-Z_-]{8,64}$/.test(_nm))
-            _subTailDrainThenBackfill(_npid, _nm);
-          delete _subTailDead[_nm];
-        }
-        _hgScrollBottom();
-        return;
-      }
-    }
     const d = document.createElement('div'); d.className = 'h-peer';
     const head = document.createElement('div'); head.className = 'h-peer-head';
     // v2.37（P1-C）：回传方头像徽标（首字母圆形色标，与模型标识同色板哈希）
