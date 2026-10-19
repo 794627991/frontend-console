@@ -358,6 +358,9 @@ function buildClaudeHarnessTab(opts = {}) {
     if (subRow && !e.target.closest('.h-tool-head, .h-tool-copy, .h-tool-coll, .hg-code-copy')) {
       _subReopen(subRow.dataset.hgSub); return;
     }
+    // 批3（迁出主窗）：协作回传通知行点击 → 开对端窗格（转写全量；miss 走漏斗）
+    const ntRow = e.target.closest('.h-sub-notify[data-hg-peer]');
+    if (ntRow) { _subReopen(ntRow.dataset.hgPeer); return; }
     // v2.35（P1-5）：「已转交」线点击 → 说明（线只标记转交本身——协作过程
     // v2.47 起聚在紧随其后的「协作 · …」段，点段头「▣ 回放」可围观；回传
     // 以 📥 气泡呈现）

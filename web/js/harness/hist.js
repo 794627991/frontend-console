@@ -169,78 +169,20 @@
     if (_ts > 0 && l.role && l.role !== 'user') _HG.histActTs = _ts;
   }
   function renderHistSub(l, hi) {
-    const pid = l.agent;
+    // 批3（迁出主窗）：renderHistSub 缩减——段建/行渲染退役（主窗零
+    // .h-subblock），sub_* 过程行只消费 sub_open 做单行卡回绑；过程回看
+    // =点单行卡走 subagent_replay（与 live 同路，天然一致）。后端注入不动
+    //（数据保留，头150+尾50 窗口护栏已有）
     if (l.role === 'sub_open') {
-      const b = _subBlkGet(pid, { agent: pid, type: l.type, desc: l.desc || '',
-        label: _AGENT_LABEL[l.type] || l.type || '子代理', model: l.model || '',
-        done: true, err: !!l.err, hist: true });   // v2.44：hist——段头显「历史」不算假用时
-      // v3.2.6：单行任务卡回绑——agentId/类型/描述落派发行（点击/▣ 开窗格
+      // v3.2.6：单行任务卡回绑——agentId/类型/描述落派发行（点击开窗格
       // 回放；lastAgRow 由 renderHistTool 登记且只活到本行）
       const _ar = _HG.lastAgRow;
       if (_ar && !_ar.dataset.hgSubr) {
-        _ar.dataset.hgSubr = pid;
+        _ar.dataset.hgSubr = l.agent;
         _ar.dataset.hgSubType = l.type || 'Task';
         _ar.dataset.hgSubDesc = String(l.desc || '').slice(0, 120);
       }
       _HG.lastAgRow = null;
-      if (b) {
-        // v2.46：折叠态按记忆恢复（重建期 openState 在场；无记录=默认折叠不
-        // 动）——用户展开过的段不随扩段/收缩重渲收回（高度突变破坏锚定）
-        const _ost = _HG.openState;
-        if (_ost && _ost['sub:' + pid] === 1) b.root.classList.remove('collapsed');
-      }
-      if (b && l.stub) {
-        const n = document.createElement('div');
-        n.className = 'h-subblock-note';
-        n.textContent = '（较早期的子代理段——过程行已折叠；完整过程点段头右侧「▣ 回放」）';
-        b.body.appendChild(n);
-      }
-      return;
-    }
-    const b = _HG.subBlk && _HG.subBlk[pid];
-    if (!b || !b.body || !b.root.isConnected) return;   // 无段头先导（异常序列）——静默丢行不出错
-    if (l.role === 'sub_text') {
-      _subText(pid, l.text || '');
-    } else if (l.role === 'sub_note') {
-      const n = document.createElement('div');
-      n.className = 'h-subblock-note';
-      n.textContent = l.text || '';
-      b.body.appendChild(n);
-    } else if (l.role === 'sub_think') {
-      // 同主链历史思考段：壳+懒渲染（点开才 renderMd，大会话重建不吃满）
-      _subSegEnd(b);
-      const seg = _subThinkShell(false);
-      if (hi != null) { seg.dataset.hi = String(hi); seg.dataset.hgLazy = '1'; }
-      _subBodyPut(b, seg, 'think');   // v2.45：历史段建段即聚合——落思考抽屉
-    } else if (l.role === 'sub_tool') {
-      // 与 renderHistTool 同构（懒抽屉/错误行即时渲染），但落点=段体且不进
-      // 主链抽屉计数（drawerCount/drawerAppend 都不走）。v2.44 头部走段内
-      // 工厂 _subToolHeadHtml——与实时抽屉行（_subToolDrawerRow）字节级同构
-      _subSegEnd(b);
-      const d = document.createElement('div');
-      const err = !!l.err;
-      d.className = 'h-tool col sub' + (err ? ' err' : '');   // v3.2.5：同主链——只标红
-      // v2.44R（复审建议）：类别着色与实时抽屉一致（旧版历史段行无
-      // --h-accent，左边框全灰与实时段内彩色左边框两套观感）
-      d.style.setProperty('--h-accent',
-        _H_KIND_COLOR[(_H_TOOL_CFG[l.text] || {}).kind] || 'var(--border)');
-      d.innerHTML =
-        _subToolHeadHtml(l.text, l.summary, statusBadge(err ? 'error' : 'completed')) +
-        `<div class="h-tool-coll">${err ? _histToolBodyHtml(l) : ''}</div>`;
-      if (hi != null) {
-        d.dataset.hi = String(hi);
-        d.dataset.hgLazy = err ? '' : '1';   // 错误行已填；收起丢弃后由 Drop 重置
-      }
-      _subBodyPut(b, d, 'tool');   // v2.45：历史段建段即聚合——落工具抽屉
-      // v3.2.1：撤位置键开合恢复（同 renderHistTool——错误行默认开已由
-      // className 'err open' 承担；位置键跨代际碰撞误开+误标 userToggled）
-    } else if (l.role === 'sub_result') {
-      // 孤儿结果（无配对工具行——转写截断窗口的边界）独立成行
-      _subSegEnd(b);
-      const d = document.createElement('div');
-      d.className = 'h-tool-res' + (l.err ? ' err-txt' : '');
-      d.textContent = '↳ ' + String(l.text || '').replace(/\s+/g, ' ').trim().slice(0, 200);
-      _subBodyPut(b, d, 'tool');   // v2.45：孤儿结果同入工具抽屉（计数口径一致）
     }
   }
   function _histLazyLineOk(el, l) {

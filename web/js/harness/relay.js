@@ -544,6 +544,23 @@
     // 恰 4 行：thinking/assistant/tool/tool），覆盖度审计 gap=4≤5 漏触发——
     // 双重失守=「全没了且无 banner」。本地回报直接忽略（主回合已消费该报告）
     if (!_nm.includes('识图') && _hgLocalResendPeer(_nm)) return;
+    // 批3（迁出主窗）：协作回传通知行——段退役后的新承载体（ZCode
+    // backgroundResult 等价物：单行摘要+title 全文 400+点击开对端窗格，
+    // 正文完整态在对端转写里，点卡 _subReplay 可见）；识图例外保留原气泡
+    if (!_nm.includes('识图')) {
+      const nd = document.createElement('div');
+      nd.className = 'h-sub-notify';
+      const _nfn = _AGENT_LABEL[name] || name || '其他会话';
+      const _nfull = String(text || '').replace(/\s+/g, ' ').trim();
+      nd.innerHTML = `<span class="h-ava ${_hgAvaCls(_nfn)}">${esc(_nfn.charAt(0).toUpperCase())}</span>` +
+        ` 📥 协作回传 · ${esc(_nfn)}：<span class="h-sub-notify-txt">` +
+        esc(_nfull.slice(0, 120)) + (_nfull.length > 120 ? '…' : '') + '</span>';
+      nd.title = _nfull.slice(0, 400);
+      nd.dataset.hgPeer = String(name || '');
+      addRow(nd);
+      _hgScrollBottom();
+      return nd;
+    }
     const d = document.createElement('div'); d.className = 'h-peer';
     const head = document.createElement('div'); head.className = 'h-peer-head';
     // v2.37（P1-C）：回传方头像徽标（首字母圆形色标，与模型标识同色板哈希）
@@ -566,88 +583,6 @@
     addRow(d);
     _hgScrollBottom();
     return d;
-  }
-  function _hgCollabSegFind(name, allowDone) {
-    const nm = String(name || '').trim();
-    if (!nm || nm.includes('识图')) return null;
-    const cands = [];
-    const push = r => { if (r && r.isConnected && !cands.includes(r)) cands.push(r); };
-    _hgFlow.querySelectorAll('.h-subblock-head[data-hg-subr="' + CSS.escape(nm) + '"]')
-      .forEach(h => push(h.closest('.h-subblock')));
-    const ps = _HG.peerSent || {};
-    for (const tid in ps)
-      if (ps[tid] === nm)
-        push(_hgFlow.querySelector('.h-subblock[data-hg-subblock="' + CSS.escape(tid) + '"]'));
-    push(_hgFlow.querySelector('.h-subblock[data-hg-subblock="' + CSS.escape(nm) + '"]'));
-    _hgFlow.querySelectorAll('.h-subblock[data-hg-collab]').forEach(r => {
-      const ne = r.querySelector('.h-subblock-name');
-      if (ne && ne.textContent === '协作 · ' + nm.slice(0, 24)) push(r);
-    });
-    const _byDom = (a, b) =>
-      ((a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) ? 1 : -1);
-    // v2.55R：实时回传锚全 miss（cands 空=无发信方名形态）时的归属——
-    // 仅「无名回传」（nm=其他会话/协作代理，调用方兜底名，确证无法锚定）
-    // 归 DOM 最晚的**运行中协作段**（续派审核在跑时回传必属于它，绝不新建
-    // 假段）；具名回传 miss（锚只命中 done 段而别的协作段在跑）不兜底——
-    // 迟到回传写进别人的段比新建假段更难察觉，保持 null 走新建。此兜底必须在
-    // 空候选早退**之前**（无名回传 cands 恒空，放后面永远走不到）。
-    // 历史路径（allowDone）不做无名兜底（归最新完成段/平铺）。
-    if (!allowDone && (nm === '其他会话' || nm === '协作代理')) {
-      const running = [..._hgFlow.querySelectorAll('.h-subblock[data-hg-collab]:not(.done)')]
-        .sort(_byDom);
-      if (running.length) return running[running.length - 1];
-    }
-    if (!cands.length) return null;
-    // v2.53（用户定调）：实时回传只进**运行中**段——已完成段是上一轮的
-    // 历史框，同名续派/迟到回传塞进去就是「混进之前的审核消息框」；全
-    // done 返回 null，由 renderPeer 新建段承接。运行中多候选取 DOM 最晚
-    // （=最新一续派）。
-    // allowDone（历史回放）：回传可归入**最新完成段**（v2.49 原行为——
-    // 历史段全是 done，禁开新段），同样取 DOM 最晚。
-    const live = cands.filter(r => !r.classList.contains('done'));
-    if (live.length) return live.sort(_byDom)[0];
-    return allowDone ? cands.slice().sort(_byDom)[0] : null;
-  }
-  function _hgPeerToSeg(seg, name, text) {
-    const t = String(text || '').replace(/\s+/g, ' ').trim();
-    const sum = seg.querySelector(':scope > .h-subblock-sum');
-    if (sum && t) {
-      sum.textContent = '📥 回传：' + t.slice(0, 120) + (t.length > 120 ? '…' : '');
-      sum.title = '📥 回传：' + t.slice(0, 400);
-    }
-    const body = seg.querySelector(':scope > .h-subblock-body');
-    if (!body) return;
-    const tag = document.createElement('div');
-    tag.className = 'h-peer-in-tag';
-    tag.textContent = '📥 ' + (String(name || '其他会话')) + ' 回传';
-    // 同文去重：探针走 renderMd（与 fullFeed 那条同为渲染后文本，md 语法符
-    // 号差异归零）再归一空白比对；空正文不参与（防空对空误判）
-    let reuse = null;
-    const probe = document.createElement('div');
-    probe.innerHTML = renderMd(text || '');
-    const norm = s => String(s || '').replace(/\s+/g, '');
-    const want = norm(probe.textContent);
-    const lastMsgs = body.querySelectorAll('.h-msg.sub');
-    if (want && lastMsgs.length) {
-      const last = lastMsgs[lastMsgs.length - 1];
-      if (norm(last.textContent) === want) reuse = last;
-    }
-    if (reuse) {
-      const _hgWrap = document.createElement('div');
-      _hgWrap.className = 'h-peer-in';
-      _hgWrap.appendChild(tag);
-      reuse.parentNode.insertBefore(_hgWrap, reuse);   // 原位包裹（不动渲染好的正文）
-      _hgWrap.appendChild(reuse);
-      return;
-    }
-    const _hgWrap = document.createElement('div');
-    _hgWrap.className = 'h-peer-in';
-    _hgWrap.appendChild(tag);
-    const m = document.createElement('div');
-    m.className = 'h-msg asst sub';
-    m.appendChild(mdBubble(text || ''));
-    _hgWrap.appendChild(m);
-    body.appendChild(_hgWrap);
   }
   function renderCompaction(done) {
     // v3.5.51（designer B2）：只读模式防污染——压缩计时器 tick 会把「正在

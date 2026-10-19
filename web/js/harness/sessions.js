@@ -238,6 +238,10 @@
         delete _HG.cacheWarm[sid];
       }
       _hgFlow.innerHTML = c.html; _HG.seq = c.seq;
+      // 批3（迁出主窗）：旧快照段 DOM 一次性剥离——段体系已退役（live/历史
+      // 两路均不再建段），旧快照只被读一次即净化（saveCache 存出的新快照
+      // 天然无段；过程回看=点单行卡 subagent_replay）
+      _hgFlow.querySelectorAll('.h-subblock').forEach(el => el.remove());
       _hgAskDockRestore(c.askPanel);   // v3.4.61：dock 面板回挂（含老代 flow 待答卡迁移）
       // v3.2.1（用户实测问题1）：快照里开着的已完成回合体规整回默认收起——
       // 快照存的是离开瞬间的 DOM（live 定稿时可能没收/存的是重建期的开态），
@@ -481,9 +485,8 @@
       });
       relayEls.forEach(rl => _hgPeerTimerStart(rl, +(rl.dataset.t0 || 0) || Date.now()));
       // 快照恢复后重建 rowById（busy 会话切回时 tool_result 事件要挂回行）
-      // v2.43.1（R-FAIL2）：段内工具行按所在段归 subRows（不入主链 rowById）
-      // ——恢复瞬间（下一子代理事件未到、subBlk/subRows 尚空）到达的子代理
-      // tool_result 不再被 :2846 守卫丢弃，段内徽章照常定格
+      // 批3（迁出主窗）：subRows 段内重扫退役——段已剥离（上方一次性
+      // remove），[data-tid] 行全部直挂主链 rowById
       _hgFlow.querySelectorAll('[data-tid]').forEach(el => {
         // 全审 P4：pending 识图卡重注册回 visionCalls（迟到 tool_result 走
         // 10-sse 正路定格），且不入 rowById（renderOneToolResult 会把全文误
@@ -496,13 +499,7 @@
           }
           return;
         }
-        const blk = el.closest('.h-subblock');
-        if (blk && blk.dataset.hgSubblock) {
-          const _sp = blk.dataset.hgSubblock;
-          ((_HG.subRows[_sp]) || (_HG.subRows[_sp] = {}))[el.dataset.tid] = el;
-        } else {
-          _HG.rowById[el.dataset.tid] = el;
-        }
+        _HG.rowById[el.dataset.tid] = el;
       });
       // v3.4.52：运行中子代理 live 档案回填（快照命中路）——目录/动态页
       // 恢复「正在运行」态，点行 live 直开不再假回放
