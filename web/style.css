@@ -2386,11 +2386,12 @@ html {
 /* v2.18 思考分段条目：一段一个可折叠行（结构仿 .h-tool.col） */
 .h-think-seg { border: 1px solid var(--border); border-left: 3px solid var(--h-violet, #8957e5);
   border-radius: 6px; overflow: hidden; background: color-mix(in srgb, var(--bg-card) 60%, transparent); }
-.h-think-seg-head { display: flex; align-items: center; gap: 6px; width: 100%;
+.h-think-seg-head { display: flex; align-items: baseline; gap: 6px; width: 100%;   /* 用户强迫症：「思考」与「持续了N秒」水平不齐——center几何居中在小字号时段视觉下沉，改 baseline 文字基线对齐（ZCode inline 文本流同款） */
   border: none; background: transparent; color: var(--muted); font-family: var(--font-ui);
   font-size: var(--fs-sm); padding: 4px 10px 4px 10px; cursor: pointer; text-align: left; }
 .h-think-seg-head:hover { color: var(--fg); background: color-mix(in srgb, var(--h-violet, #8957e5) 6%, transparent); }
-.h-think-seg .h-chev { transition: transform .15s; display: inline-block; font-size: 10px; }
+.h-think-seg .h-chev { transition: transform .15s; display: inline-block; font-size: 10px; align-self: center; }
+.h-think-prev { align-self: center; }   /* 摘要视口/箭头几何居中（非文本成员不参与基线） */
 .h-think-seg.open .h-chev { transform: rotate(90deg); }
 .h-think-seg-name { font-weight: 600; color: var(--fg); flex: 0 0 auto; white-space: nowrap; }
 /* 思考流③ ZCode reasoning.tsx 完整复刻：摘要视口=单行滚动（流水式）——
