@@ -2647,6 +2647,10 @@ html {
    name/arg 收敛承担（两者 min-width:0 已就位）；组内行 max-width 100%
    防行超组体被 overflow:hidden 裁切 */
 .h-tl .h-tslots, .h-tl .h-tbadge { flex-shrink: 0; }
+/* 图6/7（用户令「所有带完成徽章的位置固定直接贴右边」）：全局工具行徽章
+   槽右贴——.h-tool-arg 已 flex:1 占位（:3051），槽位 margin-left:auto 恒推
+   右，不再依赖 agentline/col 特例 */
+.h-tool .h-tslots { margin-left: auto; }
 .h-tl-grp-body .h-tool { max-width: 100%; }
 /* 窗格时间线：子代理自己的会话用主会话同款回合结构（回合头+时间线+根区结
    论）。行样式全复用主链类（.h-tl/.h-think-seg/.h-tool/.h-tl-grp），这里只

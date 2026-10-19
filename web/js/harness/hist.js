@@ -126,6 +126,11 @@
     // 随事件携带（hi/ts/prevTs）。对齐补丁退役起点
     else if (l.role === 'assistant') _hgDispatch({ t: 'assistant_text', text: l.text, model: l.model || '' });
     else if (l.role === 'thinking') {
+      // 图5 修复（ZCode reasoning_start 每块新行复刻）：历史行流中每条
+      // thinking 都是独立块——中间夹的查阅组/工具行不阻断时旧码续用同一
+      // seg（_HG.think 存活续接）=「查阅多了思考全连起来」。行前断开，
+      // 每块开新段（live 路不受影响：SSE tool_use 分支已 endThinking）
+      _HG.think = null;
       // v2.24 懒抽屉：历史思考段只建壳（默认收起），点开才渲染 markdown——
       // 大会话重建的大头就是几十 K 字符的 thinking 渲染（渲染体在订阅 case）
       _hgDispatch({ t: 'assistant_thinking', text: l.text,
