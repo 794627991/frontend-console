@@ -85,6 +85,15 @@
     }
     drawerCount(l.text);
     _tlPlace(d, l.text, l.input || {});   // v3.2：回放同走内联时间线（查阅聚组与实时一致）
+    // R2c-lite 补齐（用户实锤「↳ 函数体裸漏」根因）：hist 工具行进 rowById
+    //（tid 键）——F5 后 SSE 续流重放的 tool_result（renderOneToolResult 按
+    // tool_use_id 配对）此前全 miss=逐条画「↳ 结果前 120 字」孤儿行；配对
+    // 上则定格到既有行（徽章/折叠体），孤儿行绝迹
+    if (l.tid) {
+      _HG.rowById = _HG.rowById || {};
+      _HG.rowById[l.tid] = d;
+      d.dataset.tid = l.tid;
+    }
     // v3.2.1：撤 _hgApplyOpen 位置键恢复——错误行默认开已由 className 的
     // 'err open' 承担；位置键跨代际碰撞会误开正常行+误标 userToggled（用户
     // 实锤「终端默认全部不收起」），统一默认收起（用户定调）
