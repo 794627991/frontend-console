@@ -79,19 +79,11 @@
       renderVisionRelayHist(l);
     }
     else if (l.role === 'exit') {    // v3.4.85：中断/退出痕迹回放（事件账本补行）
-      // v3.4.86（用户实锤「重开的，依旧没有停止显示」）：interrupted 痕迹
-      //（「已中断回复」）在回放侧建组+定稿翻头——live 打断有「已停止」头，
-      // 回放路 user 行不建组、exit 行只出行=空打断回合回放后无头无停态。
-      // 复用 v3.4.80 门槛（interrupted 无条件定稿头）：grpEnsure 认回未定稿
-      // 组（有工作回合）或新建（空回合），grpFinalize(interrupted) 统一翻头。
-      // exit 帧（进程退出，含正常关闭）只出行不建头
-      if (String(l.text || '').indexOf('已中断回复') === 0) {
-        const _xg = grpEnsure(true);
-        renderExit(l.text);
-        try { grpFinalize(true, { hist: true, interrupted: true, turnEnd: true }); } catch (_) {}
-      } else {
-        renderExit(l.text);
-      }
+      // R6a：走 dispatch——出 exit 行+interrupted 建组定稿翻头的编排整迁
+      // 订阅 case（v3.4.86 口径保留，两轨对齐补丁退役）
+      _hgDispatch(String(l.text || '').indexOf('已中断回复') === 0
+        ? { t: 'turn_interrupted', text: l.text, hist: true }
+        : { t: 'turn_exit', text: l.text, hist: true });
     }
     else if (l.role === 'renew') {    // v2.27.23：超窗续命注入折叠为一行分割线
       // R1（流式/重渲统一）：走同一 FEV dispatch——live/hist 同一 handlers

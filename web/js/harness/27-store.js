@@ -88,7 +88,16 @@
         case 'sysnote': renderSysNote(e.kind, e.text); break;
         case 'model_switched': renderSwitch(e.text || '默认模型'); break;
         case 'turn_exit': renderExit(e.text); break;
-        case 'turn_interrupted': renderExit(e.text); break;
+        // R6a：中断痕迹——v3.4.86 口径（回放侧 interrupted 建组+定稿翻头
+        // 「已停止」，空打断回合也有头有停态）；hist 形态才做定稿（live 的
+        // 收尾编排在 10-sse 分支——瞬态清场含 sweep/ask 失效等，hist 无）
+        case 'turn_interrupted':
+          renderExit(e.text);
+          if (e.hist) {
+            try { grpEnsure(true); } catch (_) {}
+            try { grpFinalize(true, { hist: true, interrupted: true, turnEnd: true }); } catch (_) {}
+          }
+          break;
         // R2a（气泡域归一）：assistant/thinking 两类——渲染原语两轨本就
         // 共享（renderAsst/startThinking/appendThinking），此处接成唯一入口；
         // live 流式（计时动画）与 hist 重建（壳+懒抽屉+无动画）按 entry.live
