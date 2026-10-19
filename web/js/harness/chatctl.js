@@ -110,10 +110,6 @@
     // 保留 el=null 传参（_hgRollbackTurn 幂等）
     const el = null;
     setBusy(true);
-    // 思考流①（ZCode「准备中」spinner 复刻）：POST 发起即亮组头+秒表+占位
-    //（①提交中→②TurnStarted 工作中连续态，中间零空窗）；失败分支
-    // _hgRollbackTurn 幂等拆组（null 传参 v3.4.95 已兼容）不动
-    try { phResume(true); } catch (_) {}
     try {
       const r = await fetch('/api/harness/send', {method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({sid, text, images, files})});
@@ -139,9 +135,11 @@
       }
       dispatch.rej = '';
       _HG.dirty = true;
-      // 纯 ZCode 式边界修正（362 定稿）：消息**内容**等 user_echo（唯一
-      // 真相源）；「已受理→工作中」状态反馈已提前到 POST 发起（思考流①，
-      // 上方）——此处幂等不重调
+      // 378 回退 376①（用户实锤「组头都改错了」：POST 前 phResume 建组+
+      // 亮头，与 echo 到达的组管线叠出双组头——顶部旧组计时+中部空壳
+      // 「已工作 0 秒/正在执行」并存，0 秒与执行中自相矛盾）。恢复 362
+      // 定稿形态：POST 成功即本地确认（建组+亮头+秒表+占位），362 已验收
+      try { phResume(true); } catch (_) {}
       refreshSessions();
       return true;
     } catch(e) {
