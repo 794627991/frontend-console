@@ -59,6 +59,12 @@
             { label: '拦截补杀失败——该消息可能复活，请手动删除' });
         } catch (_) {}
         return;
+      case 'ask_render':
+        try { askRender(f.it); } catch (_) {}
+        return;
+      case 'ask_done':
+        try { askDone(f.it); } catch (_) {}
+        return;
       default:
         return;
     }

@@ -1165,8 +1165,10 @@
       // v3.3.2(B/D3)：ask 不定稿——提问是当前工作状态的中途暂停（CLI 同回合
       // 阻塞），答后续跑 grpEnsure 自然回原组；v3.4.61 面板入输入框上方 dock
       //（askRender 内），占位气泡让位（等答面板即占位）
-      else if (it.kind === 'ask') { const _g = _hgTurnReopen(); phRemove(_g || _HG.grp); askRender(it); }
-      else if (it.kind === 'ask_done') askDone(it);
+      // R5：ask 走 dispatch（投影 p.ask 瞬态+渲染订阅）——回合重开/占位
+      // 清理编排留分支
+      else if (it.kind === 'ask') { const _g = _hgTurnReopen(); phRemove(_g || _HG.grp); _hgDispatch({ t: 'ask', req_id: it.req_id, title: it.title, questions: it.questions }); }
+      else if (it.kind === 'ask_done') _hgDispatch({ t: 'ask_done', req_id: it.req_id, answer: it.answer });
       else if (it.kind === 'interrupted') {
         _HG.hold = false;   // v3.5.124：中断/退出=保活退场（防旗残留瞬态误态）
         endThinking(); _hgVisionSweep(true);

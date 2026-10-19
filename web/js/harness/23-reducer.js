@@ -108,6 +108,17 @@
                          to: it.to, tid: it.tid,
                          hist: !!it.hist, live: !!it.live }, fx);
     },
+    ask(p, it, fx) {
+      // R5：交互提问（ZCode PermissionRequested 对位——瞬态 dock，hist 只
+      // 计数不重建面板，快照恢复走 03-ask-md 服务端拉取路径）
+      p.ask = { req_id: it.req_id || '', title: it.title || '',
+                questions: it.questions || [] };
+      fx.push({ op: 'ask_render', it: it });
+    },
+    ask_done(p, it, fx) {
+      p.ask = null;
+      fx.push({ op: 'ask_done', it: it });
+    },
     subagent_started(p, it, fx) {
       p.agents[it.tid] = { type: it.agent_type || 'Task', desc: it.desc || '',
                            bg: !!it.bg, taskId: it.task_id || '',
