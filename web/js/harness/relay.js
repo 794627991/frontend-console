@@ -564,6 +564,24 @@
       _hgScrollBottom();
       return nd;
     }
+    // 422b（用户实锤「识图回传怎么又变成这样了——最早的平铺方案早废弃」）：
+    // 识图回传不走平铺气泡（.h-peer 头像+标题+正文=旧 v2.x 形态）——v3.4.88
+    // 定调回传整合进识图卡（_hgVisionResult 定格+卡内结论）。本函数是 relay
+    // 直调路径（live peer 事件），此前漏掉识图分流（dispatch 路径的
+    // peer_return case 有 visionCalls 配对，本路径没有）→ 识图名落此=旧形态
+    // 复现。分流：pending 识图卡逐个配对（tuid/FIFO 与 case 同口径），全
+    // miss 落通知行（.h-sub-notify，非平铺）
+    if (String(name || '').indexOf('识图') !== -1) {
+      let _vc = null;
+      const _open = [..._hgFlow.querySelectorAll('.h-tool.h-vision:not([data-vres])')];
+      if (text && text.tid && _HG.visionCalls && _HG.visionCalls[text.tid]) _vc = _HG.visionCalls[text.tid];
+      else _vc = _open[0] || null;
+      if (_vc) {
+        try { _hgVisionResult(_vc, String(text && text.text || text || ''), false); } catch (_) {}
+        if (text && text.tid && _HG.visionCalls) delete _HG.visionCalls[text.tid];
+        return null;
+      }
+    }
     const d = document.createElement('div'); d.className = 'h-peer';
     const head = document.createElement('div'); head.className = 'h-peer-head';
     // v2.37（P1-C）：回传方头像徽标（首字母圆形色标，与模型标识同色板哈希）
