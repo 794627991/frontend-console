@@ -17,11 +17,13 @@
     // _HG 是 state.js 的 let 全局（不挂 window）——裸标识符沿作用域链解析
     if (typeof _HG === 'undefined') return false;
     if (_HG.v4 !== undefined) return !!_HG.v4;
-    // v4 归一管线默认常开（用户拍板：run_debug 打开即 v4，直接替换旧管线）。
-    // ?v4=0 保留为紧急回退口（排查问题时单次降级，不影响下次启动）。
-    var off = /[?&]v4=0/.test(location.search);
-    _HG.v4 = !off;
-    return _HG.v4;
+    // v4 回退（用户拍板 2026-10-20：实测 UI 问题多，先回旧管线）——默认关，
+    // ?v4=1 或 localStorage.hg_v4='1' 显式开启（灰度实测用，验收后再常开）
+    var on = /[?&]v4=1(?:&|$)/.test(location.search)
+      || (function () { try { return localStorage.getItem('hg_v4') === '1'; }
+          catch (e) { return false; } })();
+    _HG.v4 = on;
+    return on;
   }
 
   // ---- 主窗 store/render 单例 ----------------------------------------------
