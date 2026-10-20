@@ -20,6 +20,7 @@
     // v4 回退（用户拍板 2026-10-20：实测 UI 问题多，先回旧管线）——默认关，
     // ?v4=1 或 localStorage.hg_v4='1' 显式开启（灰度实测用，验收后再常开）
     var on = /[?&]v4=1(?:&|$)/.test(location.search)
+      || root.__HG_V4__ === true
       || (function () { try { return localStorage.getItem('hg_v4') === '1'; }
           catch (e) { return false; } })();
     _HG.v4 = on;
@@ -36,7 +37,7 @@
     var flow = (typeof _hgFlow !== 'undefined') ? _hgFlow : null;   // let 全局
     if (!flow) return;
     var store = new root.V4Store(sid, 'main');
-    var render = new root.V4Render(store, flow, { live: true });
+    var render = new root.V4View(store, flow, { live: true });
     _cur = { sid: sid, store: store, render: render };
     _HG.v4Cur = _cur;
     store.connect();
@@ -106,8 +107,10 @@
     v4SubClose(el);
     var sid = _HG.sid;
     if (!sid) return false;
+    // 结论区在 flow 内长尾——渲染层只把 turn 组塞进 el，结论区（若有）
+    // 由 v4view 的 conclEl 单独管理，避免与行流争同一个父节点
     var store = new root.V4Store(sid, 'sub:' + agentKey);
-    var render = new root.V4Render(store, el,
+    var render = new root.V4View(store, el,
       { live: true, sub: true, conclEl: conclEl || null });
     _subs[(el.dataset && el.dataset.v4Key) || agentKey] = _subs[agentKey] =
       { store: store, render: render, el: el };

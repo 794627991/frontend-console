@@ -86,6 +86,107 @@ class TestMainReducer(unittest.TestCase):
         self.assertEqual(tool[0]["status"], "success")
         self.assertEqual(tool[0]["output"], "结论ABC")   # 结论=工具行终态
 
+    def test_sub_mirror_filtered_from_main(self):
+        """红线：子代理镜像事件绝不进主投影。判据分层对齐 sse.js：
+        业务事件看 parent_tool_use_id/isSidechain；system 另加 agent_id。"""
+        f = self._feed()
+        f.ingest(_env(1, "turn_started"))
+        f.ingest(_env(2, "cli_stream", data={
+            "type": "assistant", "parent_tool_use_id": "tu1",
+            "message": {"content": [{"type": "text", "text": "子代理正文"}]}}))
+        f.ingest(_env(3, "cli_stream", data={
+            "type": "assistant", "isSidechain": True,
+            "message": {"content": [{"type": "text", "text": "侧链正文"}]}}))
+        f.ingest(_env(4, "cli_stream", data={
+            "type": "system", "agent_id": "agent_x",
+            "subtype": "task_started", "message": {}}))
+        f.ingest(_env(5, "cli_stream", data={
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": "主会话正文"}]}}))
+        texts = [r.get("text") for r in f.snap["rows"]
+                 if r["kind"] == "assistant_text"]
+        self.assertEqual(texts, ["主会话正文"])
+        # 主链 assistant 带 agent_id 不过滤（sse.js 同口径，防误杀主窗正文）
+        f.ingest(_env(6, "cli_stream", data={
+            "type": "assistant", "agent_id": "agent_y",
+            "message": {"content": [{"type": "text", "text": "主链二"}]}}))
+        texts = [r.get("text") for r in f.snap["rows"]
+                 if r["kind"] == "assistant_text"]
+        self.assertEqual(texts, ["主会话正文", "主链二"])
+
+    def test_result_fallback_closes_header(self):
+        """turn_complete 缺失（CLI 自发回合）时 result 帧兜底收口组头。"""
+        f = self._feed()
+        f.ingest(_env(1, "turn_started"))
+        f.ingest(_env(2, "cli_stream", data={
+            "type": "result", "duration_ms": 900, "is_error": False}))
+        hdr = f.snap["rows"][0]
+        self.assertEqual(hdr["kind"], "turn_header")
+        self.assertEqual(hdr["state"], "success")
+        self.assertEqual(hdr["activeMs"], 900)
+
+    def test_held_result_does_not_close(self):
+        """hold 期（后台子代理在飞）result 帧不提前收口组头。"""
+        f = self._feed()
+        f.ingest(_env(1, "turn_started"))
+        f.ingest(_env(2, "turn_hold", data={"n": 1}))
+        f.ingest(_env(3, "cli_stream", data={"type": "result"}))
+        self.assertEqual(f.snap["rows"][0]["state"], "running")
+        f.ingest(_env(4, "turn_complete"))
+        self.assertEqual(f.snap["rows"][0]["state"], "success")
+        # 收口后 hold 标记清除，后续回合 result 时间戳正常兜底
+        f.ingest(_env(5, "turn_started"))
+        f.ingest(_env(6, "cli_stream", data={"type": "result"}))
+        self.assertEqual(f.snap["rows"][-1]["state"], "success")
+
+    def test_header_lazy_created(self):
+        """turn_started 缺失时，任何带 turn 的行到达都要补建组头——
+        「工作组头不出现」红线的构造性防线。"""
+        f = self._feed()
+        f.ingest(_env(1, "user_echo", data={"text": "你好"}))
+        kinds = [r["kind"] for r in f.snap["rows"]]
+        self.assertEqual(kinds, ["turn_header", "user_input"])
+        self.assertEqual(f.snap["rows"][0]["state"], "running")
+        # 第二条用户消息同轮不重复建头
+        f.ingest(_env(2, "user_echo", data={"text": "再来"}))
+        self.assertEqual([r["kind"] for r in f.snap["rows"]].count("turn_header"), 1)
+
+    def test_replay_dedup_against_hydration(self):
+        """水位补放期与 hydration 重叠的用户行不重复渲染。"""
+        f = self._feed()
+        f.snap["rows"].append({"rowId": 1, "turnId": "t0",
+                               "kind": "user_input", "text": "历史一条"})
+        f.snap["total"] = 1
+        f._hyd_keys = {("user_input", "历史一条")}
+        f._replay = True
+        f.ingest(_env(1, "user_echo", data={"text": "历史一条"}))
+        self.assertEqual(len([r for r in f.snap["rows"]
+                              if r["kind"] == "user_input"]), 1)
+        # 补放期结束：真实新消息照常画
+        f._replay = False
+        f.ingest(_env(2, "user_echo", data={"text": "历史一条"}))
+        self.assertEqual(len([r for r in f.snap["rows"]
+                              if r["kind"] == "user_input"]), 2)
+
+    def test_replay_dedup末轮边界(self):
+        # 单调上界：只有 at <= hydration 最大时刻 + 2s 的同文本才去重；
+        # 显著更晚的同文本（用户真实重发）必须照常成行。
+        # 已知窄窗：2s 内原样重发仍会被当作补放重复（仅 feed 冷建那一次）。
+        f = self._feed()
+        f._hyd_keys = {("user_input", "复述这句话")}
+        f._hyd_max_at = 1_000_000
+        f._replay = True
+        # 同一时刻附近（补放重叠真实重复）→ 去重，不重画
+        f.ingest(_env(1, "user_echo", ts=1_000_500,
+                      data={"text": "复述这句话"}))
+        self.assertEqual(len([r for r in f.snap["rows"]
+                              if r["kind"] == "user_input"]), 0)
+        # 显著更晚（> 容差，真实新消息）→ 照常画
+        f.ingest(_env(2, "user_echo", ts=1_060_000,
+                      data={"text": "复述这句话"}))
+        self.assertEqual(len([r for r in f.snap["rows"]
+                              if r["kind"] == "user_input"]), 1)
+
     def test_frames_resume_and_snapshot(self):
         f = self._feed()
         for i in range(1, 6):
@@ -140,14 +241,16 @@ class TestSubFeed(unittest.TestCase):
         self.assertEqual(f.snap["state"]["done"], True)
         self.assertEqual(f.snap["state"]["final"], "最终报告")
 
-    def test_handback_report_as_text(self):
+    def test_handback_report_goes_to_final_only(self):
+        """结论单一真源：SubagentHandback 只进 state.final，不落行流
+        （否则子 pane 时间线与结论区各画一份）。"""
         f = F.V4Feed(epoch="sub")
         f.feed_jsonl_line({"type": "assistant", "message": {"content": [
             {"type": "tool_use", "name": "SubagentHandback",
              "input": {"report": "交付的结论文本"}}]}})
-        rows = f.snap["rows"]
-        self.assertEqual(rows[0]["kind"], "assistant_text")
-        self.assertEqual(rows[0]["text"], "交付的结论文本")
+        self.assertEqual(len(f.snap["rows"]), 0)
+        self.assertEqual(f.snap["state"]["final"], "交付的结论文本")
+        self.assertTrue(f.snap["state"]["done"])
 
 
 if __name__ == "__main__":

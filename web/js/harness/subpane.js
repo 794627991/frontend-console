@@ -960,11 +960,22 @@
     if (typeof V4Main !== 'undefined' && V4Main.on()) {
       sc.dataset.replayed = agentId;
       const _tbV = _sub.tabs[tid];
-      const _concl = _tbV && _tbV.t && _tbV.t.concl ? _tbV.t.concl : null;
+      // v4：投影渲染层自建组（turn_header 派生），旧脚手架的空轮块会与之
+      // 并存成空壳——只摘旧轮块，末尾重建结论区供 state.final 用
+      if (_tbV && _tbV.t && _tbV.t.el && _tbV.t.el.parentNode) {
+        _tbV.t.el.parentNode.removeChild(_tbV.t.el);
+      }
+      const _concl = document.createElement('div');
+      _concl.className = 'hg-sub-concl';
+      sc.appendChild(_concl);
+      if (_tbV) _tbV.t = { el: _concl, sc: sc, concl: _concl,
+                           label: null, body: null,
+                           tl: null, head: null, done: false, stats: {},
+                           t0: 0, v4: true };
       V4Main.subOpen(sc, agentId, _concl);
-      if (_tbV && _tbV.t) {
+      if (_tbV) {
         _tbV.t.v4 = true;
-        _tbV.t.label.textContent = desc || type || '子代理';
+        _tbV.label = _subTabLabel(type, desc || '');
       }
       _sub.manual = true;
       return;
@@ -1569,6 +1580,18 @@
     if (!cur || !cur.t || cur.t.done || cur.replay) return;
     cur.lastFollow = 0;        // 打破 follow 节流（下个 tick 立即拉取比对）
     _subTlTickStart(k);        // tick 未跑则起（重建后跟随管道恢复）
+  }
+  // ===== 408 窗格三态（_subThinkPollTick 自愈判据）=====
+  // final = 已定稿（终稿已收口，无需再动）
+  // shell = 建了壳但从未铺底（无轮对象，或 rpN=0 未拉到转写）
+  // live  = 未定稿且已铺底（tick 活着即健康，tick 死=冻死窗格需自愈）
+  // none  = 无 tab（伪 tab / 已拆除）
+  function _subState(tb) {
+    if (!tb) return 'none';
+    if (tb.t && tb.t.done) return 'final';
+    if (!tb.t) return 'shell';
+    if (!tb.rpN) return 'shell';
+    return 'live';
   }
   function _subThinkPollTick() {
     // v3.5.51：只读模式早退（RO 期间 agents 已清空，本 tick 无有效工作）

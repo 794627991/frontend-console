@@ -92,6 +92,11 @@ class V4Feed(object):
         self._turn_rows = {}           # turnId -> turn_header rowId
         self._hydrate = hydrate        # 冷启动重建回调（snapshot 空时调用）
         self._hydrated = False
+        self._hyd_keys = set()         # hydration 已呈现行的内容指纹（去重）
+        self._hyd_last_user_ts = 0     # hydration 末条 user 行时刻（末轮边界）
+        self._hyd_max_at = 0           # hydration 全部行的最大时刻（去重上界）
+        self._held = False             # 后台子代理 hold（result 不提前收口）
+        self._replay = False           # 水位补放阶段（历史重复行过滤）
         if hydrate:
             hydrate(self)              # 重建路径直接填 snapshot（不发 delta）
 
@@ -124,6 +129,11 @@ class V4Feed(object):
         ds = []
         with self._lock:
             if t == "user_echo":
+                if self._dup_hist("user_input", data.get("text"), ts):
+                    return                # 补放与 hydration 重叠：不重画
+                hd, _hr = self._ensure_header(turn, ts, seq)
+                if hd:
+                    ds.append(hd)     # 组头先于用户气泡（顺序即渲染序）
                 d, _ = self._row(turn, "user_input", ts, seq,
                                  text=data.get("text") or "",
                                  files=data.get("files") or [],
@@ -136,19 +146,29 @@ class V4Feed(object):
                 if turn and turn not in self._turn_rows:
                     d, rid = self._row(turn, "turn_header", ts, seq,
                                        state="running",
-                                       model=data.get("model") or "")
+                                       model=data.get("model") or "",
+                                       startedAt=ts)
                     ds.append(d)
                     self._turn_rows[turn] = rid
                 ds.append(P.d_state({"busy": True, "curTurn": turn}))
             elif t == "turn_complete":
                 rid = self._turn_rows.get(turn)
+                if rid is None and turn:
+                    hd, rid = self._ensure_header(turn, ts, seq)
+                    if hd:
+                        ds.append(hd)
                 if rid:
                     d, _ = self._upsert(rid, state="success",
                                         endedAt=ts,
                                         activeMs=data.get("duration_ms"))
                     if d:
                         ds.append(d)
+                self._held = False
                 ds.append(P.d_state({"busy": False}))
+            elif t == "turn_hold":
+                # 后台子代理在飞：result 已到但回合未完（session 不发
+                # turn_complete）——标记后 _reduce_cli 的 result 兜底不收口
+                self._held = True
             elif t == "turn_error":
                 rid = self._turn_rows.get(turn)
                 if rid:
@@ -157,6 +177,7 @@ class V4Feed(object):
                     if d:
                         ds.append(d)
                 ds.append(P.d_state({"busy": False}))
+                self._held = False    # 与 turn_complete 对称：hold 不跨回合残留
             elif t == "interrupted":
                 d, _ = self._row("", "marker", ts, seq,
                                  mkind="interrupted", text=data.get("text") or "")
@@ -168,6 +189,9 @@ class V4Feed(object):
                         ds.append(d2)
                 ds.append(P.d_state({"busy": False}))
             elif t == "subagent_started":
+                hd, _hr = self._ensure_header(turn, ts, seq)
+                if hd:
+                    ds.append(hd)
                 agent = data.get("task_id") or data.get("aid") or ""
                 d, rid = self._row(turn, "subagent", ts, seq,
                                    agentType=data.get("type") or "Agent",
@@ -221,13 +245,64 @@ class V4Feed(object):
             self._log.append((seq, ds))
             self._trim()
 
+    def _dup_hist(self, kind, text, at=0):
+        # 补放期去重：该行是否已由 hydration 呈现。
+        #
+        # 单一方向边界（不是 ±5s 绝对值）：hydration 读的是「创建 feed 时刻
+        # 已落盘的转写」，其最大行时刻 = _hyd_max_at。同一条事件的 jsonl 行
+        # 与账本补放行的时刻同源，必然 at <= _hyd_max_at + 容差；而用户此后
+        # 重发同文本的新消息 at 必然更大 → 不会被误杀（round-2 的 ±5s 双向
+        # 窗口会误杀「5s 内原样重发」）。
+        # 容差 2s：jsonl 的 ts 由 CLI 打、env ts 由 harness emit 时打，同一条
+        # 事件两者可差数百毫秒。
+        # 已知残留：同文本且在 hydration 末行 2s 内的新消息仍会被当作重复
+        # （仅 feed 冷建的那一次补放窗内，窗口极窄）。
+        if not self._replay or not self._hyd_keys:
+            return False
+        if (kind, (text or "")[:200]) not in self._hyd_keys:
+            return False
+        if at and self._hyd_max_at:
+            return at <= self._hyd_max_at + 2000
+        return True
+
+    @staticmethod
+    def _is_sub_mirror(o):
+        """子代理镜像/注入行判据（对齐 sse.js 的既有分层口径）。
+
+        红线：子代理正文/工具绝不允许进主投影。CLI 把子代理事件镜像到主
+        会话 stdout（带 parent_tool_use_id），旧 handleEvent 靠这些字段分流
+        到子窗格；v4 主 feed 若不过滤，子内容会直接流进主窗口。
+
+        分层（与 sse.js:285/697 与 :30 一致——不做统一加宽，防误杀主链）：
+        - assistant/user/result 等业务事件：parent_tool_use_id / isSidechain
+        - system 生命周期事件：另加 agent_id（嵌套派发的唯一标记）
+        """
+        if o.get("parent_tool_use_id") or o.get("isSidechain"):
+            return True
+        return o.get("type") == "system" and bool(o.get("agent_id"))
+
+    def _ensure_header(self, turn, ts, seq, model=""):
+        """组头懒建（turn_started 缺失兜底）：任何带 turn 的行到达时补建，
+        否则组头永远不出现（「工作组头不出现」红线的构造性防线）。"""
+        if not turn or turn in self._turn_rows:
+            return None, None
+        d, rid = self._row(turn, "turn_header", ts, seq,
+                           state="running", model=model, startedAt=ts)
+        self._turn_rows[turn] = rid
+        return d, rid
+
     def _reduce_cli(self, data, turn, ts, seq):
         """CLI stream-json 事件 → deltas。"""
         ds = []
+        if self._is_sub_mirror(data):
+            return ds                     # 子代理镜像行：不进主投影（红线）
         typ = data.get("type")
         if typ == "assistant":
             m = data.get("message") or {}
             model = m.get("model") or ""
+            hd, _hr = self._ensure_header(turn, ts, seq, model)
+            if hd:
+                ds.append(hd)
             for b in (m.get("content") or []):
                 if not isinstance(b, dict):
                     continue
@@ -270,8 +345,19 @@ class V4Feed(object):
             if md:
                 ds.append(P.d_state({"model": md}))
         elif typ == "result":
-            # CLI result 帧（兜底：turn_complete 未到也收口）
-            pass
+            # 兜底收口：turn_started/turn_complete 缺失（CLI 自发回合、旧版
+            # CLI）时也要有组头终态——否则前端组永远停在「工作中」。hold 期
+            # （后台子代理在飞）session 不发 turn_complete，结果帧照常到达，
+            # 此时**不**收口（避免组头提前 success 而 busy 仍 True）。
+            if getattr(self, "_held", False):
+                return ds
+            rid = self._turn_rows.get(turn) if turn else None
+            if rid:
+                d, _ = self._upsert(rid, state="error" if data.get("is_error")
+                                    else "success", endedAt=ts,
+                                    activeMs=data.get("duration_ms"))
+                if d:
+                    ds.append(d)
         return ds
 
     def _reduce_peer(self, data, turn, ts, seq):
@@ -338,14 +424,16 @@ class V4Feed(object):
                             ds.append(d)
                         elif bt == "tool_use":
                             if b.get("name") == "SubagentHandback":
+                                # 结论单一真源：只进 state.final（不落行流），
+                                # 否则子 pane 时间线与结论区会各画一份（红线）
                                 rep = ""
                                 for v in (b.get("input") or {}).values():
                                     if isinstance(v, str) and len(v) > len(rep):
                                         rep = v
                                 if rep.strip():
-                                    d, _ = self._row("s", "assistant_text", ts,
-                                                     seq, text=rep[:8000])
-                                    ds.append(d)
+                                    self.snap["state"]["final"] = rep[:8000]
+                                    ds.append(P.d_state({"final": rep[:8000],
+                                                         "done": True}))
                                     continue
                             d, rid = self._row("s", "tool_call", ts, seq,
                                                tool=b.get("name") or "",

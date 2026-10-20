@@ -20,6 +20,25 @@ import threading
 from . import v4feed as F
 from .consts import _sessions, _sessions_lock, log
 
+
+def _ts_ms(v):
+    """transcript 行 ts → epoch ms。ts 是 CLI jsonl 的 ISO-8601 字符串
+    （transcript.py:268 直取 o['timestamp']），旧写法 int(x[:13]) 恒抛
+    ValueError 回落 0——hydration 行全部无时刻，补放去重的末轮边界失效。
+    与 subagent_projection._ts_ms 同款（ISO 优先、数字兜底）。"""
+    import datetime
+    s = str(v or "").strip()
+    if not s:
+        return 0
+    try:
+        return int(datetime.datetime.fromisoformat(
+            s.replace("Z", "+00:00")).timestamp() * 1000)
+    except Exception:
+        try:
+            return int(float(s))
+        except Exception:
+            return 0
+
 _lock = threading.Lock()
 _main_feeds = {}            # sid -> V4Feed
 _sub_feeds = {}             # (sid, agentKey) -> V4Feed
@@ -42,9 +61,12 @@ def v4_main_feed(s):
     _hydrate_main(feed, s)               # 转写全量打底（历史权威）
     if h > 0:
         try:
+            feed._replay = True          # 补放期：与 hydration 重叠的行不重画
             for env in s.log.events_after(h):   # 只补水位后在飞事件（不重复）
                 feed.ingest(env)
+            feed._replay = False
         except Exception:
+            feed._replay = False
             log.exception("v4 账本尾部补放失败 sid=%s", sid)
     with _lock:
         old = _main_feeds.get(sid)
@@ -85,11 +107,7 @@ def _hydrate_main(feed, s):
         turn_n = 0
         for l in lines:
             role = l.get("role")
-            ts = 0
-            try:
-                ts = int(str(l.get("ts") or "")[:13] or 0)
-            except Exception:
-                ts = 0
+            ts = _ts_ms(l.get("ts"))
             if role == "user":
                 turn_n += 1
                 feed._row_id += 1
@@ -145,6 +163,21 @@ def _hydrate_main(feed, s):
                     dur=l.get("dur") or 0, status="done"))
                 feed.snap["total"] += 1
             # sub_open/sub_text/... 不进主投影（红线：子内容只在子 pane）
+        # 水位补放的去重键：hydration 已呈现的历史行不得被账本尾部补放重复
+        # （rows 按 rowId 幂等，但 hydration 的行 rowId 与账本 delta 不是同一
+        # 命名空间——用内容指纹兜底）
+        try:
+            feed._hydrated = True
+            feed._hyd_keys = set(
+                (r.get("kind"), (r.get("text") or "")[:200])
+                for r in feed.snap["rows"])
+            _last = [r for r in feed.snap["rows"] if r.get("kind") == "user_input"]
+            feed._hyd_last_user_ts = (_last[-1].get("at") if _last else 0) or 0
+            # 补放去重的单向上界：hydration 已呈现行的最大时刻
+            feed._hyd_max_at = max(
+                [int(r.get("at") or 0) for r in feed.snap["rows"]] or [0])
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------

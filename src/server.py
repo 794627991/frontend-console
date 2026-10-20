@@ -58,6 +58,9 @@ except Exception:
 # 时前端资源直读源码目录 web/（本文件旁），彻底绕过 RES_DIR/_mem_web/一切副本；
 # run_debug.bat 一键启动（先清旧进程残尸，控制台可见伺服模式打印）
 DEBUG_WEB = os.environ.get("HARNESS_DEBUG_WEB") == "1"
+# v4 灰度（run_debug_v4.bat 打开）：服务端把 HARNESS_V4=1 注入页面，
+# 前端 v4main 以 window.__HG_V4__ 为准（localStorage 仍可单独强制）。
+DEBUG_V4 = os.environ.get("HARNESS_V4") == "1"
 _SRC_WEB = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                          os.pardir, "web"))
 if DEBUG_WEB:
@@ -341,8 +344,10 @@ def index():
         _HV = "0"
     def _inject(data):
         if isinstance(data, bytes):
-            return data.replace(b"__HG_VER__", _HV.encode("utf-8"))
-        return data.replace("__HG_VER__", _HV)
+            data = data.replace(b"__HG_VER__", _HV.encode("utf-8"))
+            return data.replace(b"__HG_V4__", b"1" if DEBUG_V4 else b"0")
+        data = data.replace("__HG_VER__", _HV)
+        return data.replace("__HG_V4__", "1" if DEBUG_V4 else "0")
     if DEBUG_WEB:
         with open(os.path.join(_SRC_WEB, "index.html"), "rb") as f:
             return Response(_inject(f.read()), mimetype="text/html")
