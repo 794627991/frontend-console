@@ -853,6 +853,32 @@
   // 整体重建 scaffold（tb.t 换新对象），挂 t 上每轮归零、上限恒不可达
   // v3.5.278：断流自愈的强制重拉（tick 检测镜像断流时调）——force 直通
   // replayed 早退守卫，重建脚手架拉最新转写；type/desc/agentId 取自档案
+  // ===== 404 窗格数据管道唯一入口（ZCode subscribe 对位）=====
+  // 「开 tab→铺底→续流→定稿」一条管道全链通。此前五个触发点各管一段的
+  // 隐式接力（tool_use 开壳/task_started 建档/follow 挂 tick/目录 force/
+  // 自愈兜底）=374 断链事故的结构根因：没有入口拥有全链，任何一环退役
+  // 下游静默断。契约：tab 不在→建壳；从未铺底且 agentId 可得→force+alive
+  // 铺底（_subReplay 内起 tick+follow 续流+按档案分诊定稿）；agentId 未
+  // 得（task_started 未到）→挂起，task_started 再 ensure（幂等重入）；
+  // 已铺底→零动作。**新增窗格触发点一律走本函数**（蓝图纪律）
+  function _subEnsure(tid) {
+    if (!tid) return null;
+    const k = _subTid(tid);
+    const a = (typeof _hgAg === 'function' ? _hgAg(tid) : null) || (_HG.agents || {})[k] || (_HG.agents || {})[tid];
+    let tb = _sub.tabs[k];
+    if (!tb) {
+      _subOpen(k, (a && a.type) || 'Task', (a && a.desc) || '');
+      tb = _sub.tabs[k];
+      if (!tb) return null;
+    }
+    if (tb.rpN) return tb;   // 已铺底：follow 已在跑（tick 内），零动作
+    const aid = (a && (a.taskId || a.agentId)) || ((_HG.tidMap || {})[tid]) || ((_HG.tidMap || {})[k]) || '';
+    if (!aid) return tb;     // agentId 未得：挂起等 task_started 重入
+    if (tb._ensAt && Date.now() - tb._ensAt < 3000) return tb;   // 铺底在途防重入
+    tb._ensAt = Date.now();
+    _subReplay(k, (a && a.type) || 'Task', (a && a.desc) || '', aid, true, true);
+    return tb;
+  }
   function _subReplayForce(tid) {
     const tb = _sub.tabs && _sub.tabs[tid];
     if (!tb) return;
@@ -1494,18 +1520,13 @@
     // 完成信号前最后一轮增量收尾（原 _subTailDrainThenBackfill 的 drain 段；
     // 段回填随段退役）——drain 到无推进（≤6 轮）
     const sidAt = _HG.sid;
-    try {
-      for (let k = 0; k < 6; k++) {
-        let wait = 0;
-        while (_subTailBusy[aid] && wait < 3000) {
-          await new Promise(r => setTimeout(r, 120)); wait += 120;
-        }
-        if (_HG.sid !== sidAt) return;
-        const off0 = _HG.subTail[aid] || 0;
-        await _subTailFeed(aid);
-        if ((_HG.subTail[aid] || 0) <= off0) break;
-      }
-    } catch (_) {}
+      try {
+        // 404：自愈防线收敛走 _subEnsure（唯一入口；在跑→ensure 管铺底+tick
+        // 复活（_subReplay 内起）；done+空壳→ensure 铺底分支管；miss 保守
+        // 不动；ensure 内置 3s 节流）
+        const aF = _hgAg(t);
+        if (aF && (!aF.done || !tb.rpN)) _subEnsure(t);
+      } catch (_) {}
   }
   function _subThinkPollTick() {
     // v3.5.51：只读模式早退（RO 期间 agents 已清空，本 tick 无有效工作）
