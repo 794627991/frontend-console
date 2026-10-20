@@ -343,11 +343,14 @@ def index():
     except Exception:
         _HV = "0"
     def _inject(data):
+        # 占位符用 __HG_V4FLAG__（与变量名 __HG_V4__ 刻意不同名——子串相同
+        # 会让 replace 连变量名一起吃掉：window.__HG_V4__ → window.1，
+        # boot 行语法错误整行报废，v4 开关永远读不到（a12 实测根因））
         if isinstance(data, bytes):
             data = data.replace(b"__HG_VER__", _HV.encode("utf-8"))
-            return data.replace(b"__HG_V4__", b"1" if DEBUG_V4 else b"0")
+            return data.replace(b"__HG_V4FLAG__", b"1" if DEBUG_V4 else b"0")
         data = data.replace("__HG_VER__", _HV)
-        return data.replace("__HG_V4__", "1" if DEBUG_V4 else "0")
+        return data.replace("__HG_V4FLAG__", "1" if DEBUG_V4 else "0")
     if DEBUG_WEB:
         with open(os.path.join(_SRC_WEB, "index.html"), "rb") as f:
             return Response(_inject(f.read()), mimetype="text/html")
