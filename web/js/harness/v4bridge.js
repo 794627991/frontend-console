@@ -136,6 +136,25 @@
         var rT = _g('renderToolUse');
         if (rT) { try { rT({ id: row.tid || '', name: row.tool || '',
                              input: row.input || {} }, false); } catch (e) {} }
+        // 行内运行秒表（用户期望，ZCode toolCall 形态）：行尾「N s」，终态
+        // upsert 时 renderOneToolResult 重写 slots 自然替换；interval 挂在
+        // span 上、随 DOM 摘除自杀
+        var el = (typeof _HG !== 'undefined' && _HG.rowById)
+          ? _HG.rowById[row.tid || ''] : null;
+        var sl = el && el.querySelector('.h-tslots');
+        if (sl && !sl.querySelector('.hg-tdur-run')) {
+          var _t0 = row.startedAt || Date.now();
+          var sp = document.createElement('span');
+          sp.className = 'hg-tdur-run';
+          sp.style.cssText = 'opacity:.6;font-size:.85em;margin-left:6px';
+          sl.appendChild(sp);
+          var _tick = function () {
+            if (!sp.isConnected) { clearInterval(sp._tmr); return; }
+            sp.textContent = Math.max(0, Math.round((Date.now() - _t0) / 1000)) + 's';
+          };
+          sp._tmr = setInterval(_tick, 1000);
+          _tick();
+        }
         return;
       }
       if (live) L.live = 1;                 // V3 live 语义（动画/占位/组头）
