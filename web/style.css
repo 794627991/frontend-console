@@ -4204,7 +4204,11 @@ html {
   max-width: 100%; white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis; }
 /* v3.2.5：思考体左距加大 + 列表缩进（时间线内卡片内容贴左缘/序号压线） */
-.h-tl .h-think-seg-body { padding: 2px 12px 8px 16px; }
+/* 422（用户实锤 419 引入裁切）：时间线内 padding 覆写特异性高于基础态的
+   padding:0——收起态 padding 撑出高度+过渡期裁切。统一过渡语言：收起 padding 0
+   /展开恢复原值，与基础态同参 */
+.h-tl .h-think-seg-body { padding: 0 12px 0 16px; }
+.h-tl .h-think-seg.open .h-think-seg-body { padding: 2px 12px 8px 16px; }
 .h-think-seg-body ul, .h-think-seg-body ol { margin: .3em 0; padding-left: 1.4em; }
 
 /* ---- 内联工具时间线：左侧脊柱竖线（截图4 同款） ---- */
