@@ -52,9 +52,25 @@
     var flow = this.flow;
     while (flow.firstChild) flow.removeChild(flow.firstChild);
     var rows = (snap && snap.rows) || [];
+    var prevAt = 0;
     for (var i = 0; i < rows.length; i++) {
-      try { this._rowRender(rows[i], false); }
+      var r = rows[i];
+      try {
+        if (r.kind === 'reasoning' && typeof _HG !== 'undefined') {
+          // 思考段时长口径（hist 同款）：起点=上一带 ts 行、下一条带 ts 行定格
+          this._rowRender(r, false, prevAt);
+        } else {
+          this._rowRender(r, false, 0);
+        }
+      }
       catch (e) { /* 行级隔离：单行异常不伤整窗 */ }
+      // 行级 ts 账（renderUser 定稿工时与思考段时长的数据源——对齐 renderHistLine）
+      if (r.at && r.kind !== 'user_input' && r.kind !== 'turn_header'
+          && typeof _HG !== 'undefined') {
+        _HG.histLineTs = r.at;
+        _HG.histActTs = r.at;
+      }
+      if (r.at) prevAt = r.at;
     }
     // 终态清理（回放态）：收思考段/关运行行/定稿尾组
     var fns = [_g('endThinking'), _g('closeRun')];
@@ -89,7 +105,7 @@
 
   // ---- 行渲染（kind 分发 → 现有基元） -------------------------------------
 
-  V4Render.prototype._rowRender = function (row, live) {
+  V4Render.prototype._rowRender = function (row, live, prevTs) {
     var k = row.kind;
     var el = null;
     if (k === 'user_input') {
@@ -109,7 +125,8 @@
       if (disp) {
         // 394 口径：live/hist 同一 FEV handlers（思考段/滚播/懒抽屉全复用）
         disp({ t: 'assistant_thinking', text: row.text || '',
-               hi: null, ts: 0, prevTs: 0, live: !!live });
+               hi: null, ts: live ? 0 : (row.at || 0),
+               prevTs: live ? 0 : (prevTs || 0), live: !!live });
       }
     } else if (k === 'tool_call') {
       el = this._toolRow(row, live);
@@ -130,21 +147,44 @@
     return el;
   };
 
-  // 工具行：run 形态建卡（现有合一构造）+ _HG.rowById 注册（结果回写定位）
+  // 工具行：回放终态=done 形态一次成型（对齐 renderHistTool）；live 增量=
+  // run 形态建卡（后续 upsert 终态回写）。run→done 双构造是会话加载巨卡
+  // 的主因之一（百余工具卡翻倍开销）。
   V4Render.prototype._toolRow = function (row, live) {
-    var rT = _g('renderToolUse');
-    if (!rT) return null;
-    var b = { id: row.tid || ('v4r' + row.rowId), name: row.tool || '',
-              input: row.input || {} };
-    rT(b, false);
-    var el = (typeof _HG !== 'undefined' && _HG.rowById) ? _HG.rowById[b.id] : null;
-    if (el && live) el.classList.add('hg-enter');
-    // 终态直收（snapshot 回放行/迟到增量）：立即写终态形态
-    if (el && row.status && row.status !== 'running' && row.status !== 'streaming_input') {
-      this._toolDone(row, el);
+    var el = null;
+    var done = row.status && row.status !== 'running'
+      && row.status !== 'streaming_input';
+    var id = row.tid || ('v4r' + row.rowId);
+    if (done && !live) {
+      var card = _g('hgToolCard');
+      if (!card) return null;
+      card({ id: id, name: row.tool || '', input: row.input || {},
+             phase: 'done', err: row.status === 'error',
+             summary: row.summary,
+             result: (row.status === 'error' || row.output) ? (row.output || '') : undefined });
+      el = _pickToolEl(id);
+      var dc = _g('drawerCount'), place = _g('_tlPlace');
+      if (el && dc) { try { dc(row.tool || ''); } catch (e) {} }
+      if (el && place) { try { place(el, row.tool || '', row.input || {}); } catch (e) {} }
+    } else {
+      var rT = _g('renderToolUse');
+      if (!rT) return null;
+      rT({ id: id, name: row.tool || '', input: row.input || {} }, false);
+      el = _pickToolEl(id);
+      if (el && live) el.classList.add('hg-enter');
+      // 迟到终态（live 期间行已建、upsert 未到前 snapshot 重放）：直收
+      if (el && done) this._toolDone(row, el);
+    }
+    if (el && row.tid && typeof _HG !== 'undefined' && _HG.rowById) {
+      _HG.rowById[row.tid] = el;
     }
     return el;
   };
+
+  function _pickToolEl(id) {
+    if (typeof _HG !== 'undefined' && _HG.rowById) return _HG.rowById[id] || null;
+    return null;
+  }
 
   // 工具终态：复用 renderOneToolResult（错误/折叠体/组头冒泡全复用）
   // + 终态徽章必写（P0-1 根治：completed 也写状态+耗时——徽章是行状态纯函数）
