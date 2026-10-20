@@ -110,6 +110,17 @@
         case 'user_message':
           renderUser(e.text || '', e.images || [], e.files || [], !!e.live,
                      e.ts ? new Date(e.ts).getTime() : 0);   // 394：live 行透传（动画态）
+          // 414 最终通牒·三件套锚定受理事件：任何发送形态（正常/排队/引用/
+          // 引用排队/带图）的 live 消息必经 user_echo（消息被后端受理、事件流
+          // 回流）——三件套（组头「工作中」+秒表+占位/正在执行转圈）在此建立，
+          // 不再依赖前端 send 路径（排队不走 send=旧断因，用户实锤「排队消息
+          // 发出后工作标头没了」）。幂等：正常发时 chatctl 的 phResume/setBusy
+          // 先到，此处认组不重建；排队发时此处是唯一建立点。hist 重放
+          // （live=false）不触发
+          if (e.live) {
+            try { if (typeof phResume === 'function') phResume(true); } catch (_) {}
+            try { setBusy(true); } catch (_) {}
+          }
           break;
         // R4：跨会话回传——识图 peer 行优先配对 .h-vision 卡（v3.4.88 口径：
         // tid 精确/无 tid 回落最早未定格卡 FIFO），miss 走平铺气泡（v2.53
