@@ -181,7 +181,9 @@ def coalesce(deltas):
 
 
 def wire_snapshot(snap, tail=400):
-    """出线快照：A 区 + rows 尾窗（fromSeq 固定 0，客户端整体替换）。"""
+    """出线快照：A 区 + rows 尾窗（fromSeq 固定 0，客户端整体替换）。
+    turnsTotal=全量 user 轮数（rows 被尾窗裁掉的历史轮数只能由服务端数，
+    前端归档条「前 N 轮已归档」的真源——a24 实测尾窗重放数出「前 1 轮」）。"""
     rows = snap["rows"][-tail:] if tail and len(snap["rows"]) > tail else snap["rows"]
     return {
         "seq": snap["seq"], "epoch": snap["epoch"],
@@ -189,4 +191,7 @@ def wire_snapshot(snap, tail=400):
         "rows": [dict(r) for r in rows],
         "total": snap["total"],
         "firstRowId": rows[0]["rowId"] if rows else 0,
+        "turnsTotal": sum(1 for r in snap["rows"]
+                          if r.get("kind") == "user_input"
+                          and str(r.get("text") or "").strip()),
     }

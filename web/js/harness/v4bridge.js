@@ -102,6 +102,8 @@
       _HG.histAll = lines;                  // V3 账本即渲染账本
       _HG.seq = snap ? snap.seq : 0;
       _HG.epoch = (snap && snap.epoch) || _HG.epoch;
+      // 归档轮真源（服务端全量数）：归档条「前 N 轮」不再按尾窗 lines 瞎数
+      _HG.histArchiveTurns = (snap && snap.turnsTotal) || 0;
     }
     var win = _g('_hgHistWinStart');        // V3 20 回合窗口起点
     var start = win ? win(lines, 0) : 0;

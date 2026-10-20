@@ -301,11 +301,16 @@ if (l && l.live) l.live = 0;   // 398-P5b：重放归一（live 动画/流式语
       // 窗口内 ≤20 轮，trim 已无活干，条由渲染器负责
       if (start > 0) {
         let totalTurns = 0, winTurns = 0;
+        // v4（a24）：尾窗重放时 lines 缺头部——totalTurns 优先读服务端全量
+        // 真源（v4bridge 从 snapshot.turnsTotal 挂 _HG.histArchiveTurns），
+        // 否则「前 N 轮已归档」永远数出窗内裁剪量（实测恒「前 1 轮」）
+        const _srcTotal = (typeof _HG !== 'undefined' && _HG.histArchiveTurns > 0)
+          ? _HG.histArchiveTurns : null;
         for (const l of lines)
           if (l && l.role === 'user' && String(l.text || '').trim()) totalTurns++;
         for (let i = start; i < lines.length; i++)
           if (lines[i] && lines[i].role === 'user' && String(lines[i].text || '').trim()) winTurns++;
-        const archived = totalTurns - winTurns;
+        const archived = Math.max(0, (_srcTotal || totalTurns) - winTurns);
         if (archived > 0) {
           const hint = document.createElement('div');
           hint.className = 'h-archive-hint';
