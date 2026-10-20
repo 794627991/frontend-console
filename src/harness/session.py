@@ -974,7 +974,8 @@ class HarnessSession:
             self._inbox.append(entry)
         self.emit({"kind": "input_admitted", "id": entry["id"],
                    "text": (text or "")[:200], "gen": self._gen,
-                   "att": len(entry["images"]) + len(entry["files"])})
+                   "att": len(entry["images"]) + len(entry["files"]),
+                   "queue": self._inbox_snapshot()[0]})   # v4：全量快照（A 区队列投影驱动）
         self.sync_meta()
         return entry["id"]
 
@@ -1000,7 +1001,7 @@ class HarnessSession:
                     break
         if found:
             self.emit({"kind": "input_discarded", "id": eid,
-                       "reason": reason})
+                       "reason": reason, "queue": self._inbox_snapshot()[0]})
             self.sync_meta()
         return found
 
@@ -1109,7 +1110,8 @@ class HarnessSession:
                     if idx is None:
                         return
                     e = dict(self._inbox.pop(idx))
-                self.emit({"kind": "input_promoted", "id": e.get("id")})
+                self.emit({"kind": "input_promoted", "id": e.get("id"),
+                           "queue": self._inbox_snapshot()[0]})
                 ok, _err = self.send_message(e.get("text") or "",
                                              e.get("images"), e.get("files"))
                 if self._closed:

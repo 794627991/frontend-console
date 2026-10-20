@@ -203,6 +203,39 @@ class TestMainReducer(unittest.TestCase):
         f._floor_seq = 4
         self.assertIsNone(f.frames_after(3))
 
+    def test_user_echo_top_level_fields(self):
+        """a17 实测根因回归：V3 事件业务字段在信封顶层（非 data）——
+        user_echo/renew/queue 族 text 必须 correctly 取到。"""
+        f = self._feed()
+        # 信封顶层布局（session.py 真实 emit 形态：无 data 键）
+        env = {"seq": 1, "ts": 1000, "epoch": "e1", "sid": "s1", "turn": "t1",
+               "kind": "user_echo", "type": "user_echo",
+               "text": "你好世界", "images": ["a.png"], "files": [],
+               "cmd": "c1"}
+        f.ingest(env)
+        rows = f.snap["rows"]
+        u = next(r for r in rows if r["kind"] == "user_input")
+        self.assertEqual(u["text"], "你好世界")
+        self.assertEqual(u["cmd"], "c1")
+        self.assertEqual(u["images"], ["a.png"])
+        # marker 顶层 text 同理
+        f.ingest({"seq": 2, "ts": 1001, "epoch": "e1", "sid": "s1", "turn": "",
+                  "kind": "renew", "type": "renew", "text": "已续命"})
+        self.assertEqual(f.snap["rows"][-1]["text"], "已续命")
+
+    def test_queue_snapshot_projection(self):
+        """queue 事件带全量快照 → A 区（队列条投影驱动）。"""
+        f = self._feed()
+        qs = [{"id": "e1", "text": "排队一", "gen": 1, "ts": 1}]
+        f.ingest({"seq": 1, "ts": 1000, "epoch": "e1", "sid": "s1", "turn": "",
+                  "kind": "input_admitted", "type": "input_admitted",
+                  "id": "e1", "queue": qs})
+        self.assertEqual(f.snap["state"]["queue"], qs)
+        f.ingest({"seq": 2, "ts": 1001, "epoch": "e1", "sid": "s1", "turn": "",
+                  "kind": "input_promoted", "type": "input_promoted",
+                  "id": "e1", "queue": []})
+        self.assertEqual(f.snap["state"]["queue"], [])
+
     def test_ask_state_projection(self):
         """ask/ask_done → A 区（V3 askRender 挂 dock 形态，非消息行）。"""
         f = self._feed()

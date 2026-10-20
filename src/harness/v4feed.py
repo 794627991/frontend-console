@@ -121,7 +121,19 @@ class V4Feed(object):
     # ------------------------------------------------------------------
     def ingest(self, env):
         t = env.get("type")
+        # 字段合并视图：V3 事件的业务字段有两种布局——user_echo/renew/peer/
+        # queue 族在**信封顶层**（session.py emit {"kind":"user_echo",
+        # "text":...}），cli_stream 族在 data 里。只查 data 会全部取空
+        # （实测 a17：用户消息行 text 全空=气泡空白根因）。合并：顶层非信封
+        # 字段打底，data 覆盖（cli_stream 的 data 无顶层重名，安全）
         data = env.get("data") if isinstance(env.get("data"), dict) else {}
+        _top = {k: v for k, v in env.items()
+                if k not in ("type", "kind", "seq", "ts", "epoch",
+                             "sid", "turn", "data")}
+        if _top:
+            _m = dict(_top)
+            _m.update(data)
+            data = _m
         seq = env.get("seq") or 0
         turn = env.get("turn") or ""
         ts = env.get("ts") or 0
