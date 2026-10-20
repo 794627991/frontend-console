@@ -16,11 +16,11 @@
   function v4On() {
     if (typeof root._HG === 'undefined') return false;
     if (_HG.v4 !== undefined) return !!_HG.v4;
-    var on = /[?&]v4(?:=|$)/.test(root.location.search)
-      || (function () { try { return localStorage.getItem('hg_v4') === '1'; }
-          catch (e) { return false; } })();
-    _HG.v4 = on;
-    return on;
+    // v4 归一管线默认常开（用户拍板：run_debug 打开即 v4，直接替换旧管线）。
+    // ?v4=0 保留为紧急回退口（排查问题时单次降级，不影响下次启动）。
+    var off = /[?&]v4=0/.test(root.location.search);
+    _HG.v4 = !off;
+    return _HG.v4;
   }
 
   // ---- 主窗 store/render 单例 ----------------------------------------------

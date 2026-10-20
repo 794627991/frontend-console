@@ -37,6 +37,11 @@ function RO_enter(sid, deps) {
   // 断主 SSE：close 后必须置 null——看门狗（5s 巡检 _HG.sse）否则强制重开，
   // live 事件灌进 RO 视图（designer P0-1）
   if (_HG.sse) { try { _HG.sse.close(); } catch (_) {} _HG.sse = null; }
+  // v4（批F 常开）：投影 store 同步断开（否则 delta 持续画进 RO 视图）；
+  // RO_exit 由 V4Main.switch 重建
+  if (typeof V4Main !== 'undefined' && V4Main.on()) {
+    try { V4Main.close(); } catch (_) {}
+  }
   if (typeof _hgPeerWaitStop === 'function') _hgPeerWaitStop();
   if (typeof actStop === 'function') actStop();
   // 隐藏主视图三件：左栏 / flowwrap（flow+rail+jumpbtm+capsule）/ 输入区
@@ -257,7 +262,14 @@ function RO_exit(force) {
     // B组P1：openSSE 移入 fetch.then——用 transcript 回带的真 seq（RO_enter
     // 的 resetLocal 已把 _HG.seq 清零，原 openSSE(anchor,0) 必触发 ack=snapshot
     // 清场重放=白屏复发/保留窗空时永久空流（B组活体实证）
-    if (typeof openSSE === 'function') openSSE(anchor, _HG.fetchedSeq || _HG.seq);
+    // v4（批F 常开）：投影 store 接管恢复（snapshot 重建为权威形态，覆盖上方
+    // 旧管线过渡渲染）
+    if (typeof V4Main !== 'undefined' && V4Main.on()) {
+      const _tgt = anchor || _HG.sid;
+      if (_tgt) V4Main.switch(_tgt);
+    } else if (typeof openSSE === 'function') openSSE(anchor, _HG.fetchedSeq || _HG.seq);
+  } else if (typeof V4Main !== 'undefined' && V4Main.on() && _HG.sid) {
+    V4Main.switch(_HG.sid);
   } else if (typeof openSSE === 'function' && _HG.sid) openSSE(_HG.sid, _HG.seq);
 }
 

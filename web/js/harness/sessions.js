@@ -81,6 +81,11 @@
       // v2.15：点的是当前会话 → 早返回。但 busy 卡死时用户正是靠「重点一下
       // 当前会话」自救，这里不能什么都不做：至少按后端真实值纠偏一次。
       if (sid) {
+        // v4（批F 常开）：投影 store 自管归属与判死——早返回路径不再开旧流
+        if (typeof V4Main !== 'undefined' && V4Main.on()) {
+          if (!_HG.v4Cur || _HG.v4Cur.sid !== sid) V4Main.switch(sid, keepInput);
+          return;
+        }
         // v2.35.2（P0 加固）：SSE 归属校验——历史竞态（切换竞速/早返回）可能
         // 让 _HG.sse 停在别的会话的流上：内容看着正常、事件永远不来。归属
         // 不符即重开本会话流（after_seq 用当前 seq，不重放已渲染事件）。
@@ -593,7 +598,9 @@
     _hgConn.meta.label = _hgTitleEl.textContent;
     _hgConn.meta.cwd = (s && s.cwd) || '';
     _hgConn.tab.querySelector('.label').textContent = _hgTitleEl.textContent;
-    openSSE(sid, _HG.seq);
+    // v4（批F 常开）：此处 openSSE 在 v4 分流（下方 return）之前——必须守卫，
+    // 否则 v4 模式先开旧流再接管=双流（两套渲染并发）
+    if (!(typeof V4Main !== 'undefined' && V4Main.on())) openSSE(sid, _HG.seq);
     renderList();
     renderQueue();                   // v2.20：排队条按会话各自恢复
     refreshSidebar();
