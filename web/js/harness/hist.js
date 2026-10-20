@@ -111,8 +111,9 @@
         endThinking(); closeRun(); _tlExpFlush(!!_HG.openState);
         _HG.asstText = false;
       } else {
-        const imgs = (l.files || []).filter(p => _HARNESS_IMG_EXT.test(p));
-        const files = (l.files || []).filter(p => !_HARNESS_IMG_EXT.test(p));
+        const _fall = (l.files || []).concat(l.images || []);   // 407：兼容 live 入账行的 images 字段（双保险）
+        const imgs = _fall.filter(p => _HARNESS_IMG_EXT.test(p));
+        const files = _fall.filter(p => !_HARNESS_IMG_EXT.test(p));
         // v2.24.1 回退气泡壳化：renderUser 承担组管线边界（上一组定稿/开新组），
         // 壳化绕过管线导致思考/工具挂错组（排序乱，用户实测不可接受）——
         // 正确性优先，历史气泡恢复全渲染（懒抽屉+懒高亮已覆盖大头开销）。

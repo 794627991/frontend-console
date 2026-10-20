@@ -1043,7 +1043,9 @@
         // 重放去重保留（与乐观无关的 seq 前置防线）
         if (!_hgEchoDup(it))
           _hgRowAdd({ role: 'user', text: it.text, ts: Date.now(),
-                      images: (it.images || []).slice(), files: (it.files || []).slice(), live: 1 });   // 394：入账+泵渲染
+                      // 407：图片并入 files（renderHistLine 只从 l.files 按扩展名过滤——
+                      // 394 入账用了 images+files 两字段，l.images 被忽略=附件图不渲染实锤）
+                      files: [].concat(it.images || [], it.files || []), live: 1 });
       }
       else if (it.kind === 'event') {
         // v3.5.293（用户实锤内网「停止超长回合后发新消息前端冻结」）：单事件
