@@ -3156,12 +3156,17 @@ html {
    子元素落**隐式行 auto**（实测 0px 62.39px=空白块露出）。改 grid-auto-rows 管
    全部行（含隐式）；auto-rows 不可插值=开合动画退化瞬切（383 默认全收后开合
    低频，正确性优先） */
-.h-tool.col .h-tool-coll { display: grid; grid-auto-rows: 0fr; opacity: 0;
+/* 416（三修折叠——devtools 实测抓真凶）：406 的 grid-auto-rows:0fr 在浏览器
+   实际行为不折叠（结果文本 append 后 coll computed height=13px=完成行
+   +13px 持续不回落，用户实锤「完成时高度变高」），纸上等价臆断未实测之过。
+   回归最古老可靠的 max-height 技巧——且 max-height 可插值=387 的开合
+   动画随之找回（406 曾弃）；展开上限 60vh（长输出内滚） */
+.h-tool.col .h-tool-coll { display: block; max-height: 0; opacity: 0;
   padding: 0 10px; overflow: hidden; pointer-events: none;
-  transition: opacity var(--hg-dur, .3s) var(--hg-ease, cubic-bezier(.4,0,.2,1)),
+  transition: max-height var(--hg-dur, .3s) var(--hg-ease, cubic-bezier(.4,0,.2,1)),
+              opacity var(--hg-dur, .3s) var(--hg-ease, cubic-bezier(.4,0,.2,1)),
               padding var(--hg-dur, .3s) var(--hg-ease, cubic-bezier(.4,0,.2,1)); }
-.h-tool.col .h-tool-coll > * { min-height: 0; overflow: hidden; }
-.h-tool.col.open .h-tool-coll { grid-auto-rows: 1fr; opacity: 1; padding: 6px 10px 10px; pointer-events: auto; }
+.h-tool.col.open .h-tool-coll { max-height: 60vh; opacity: 1; padding: 6px 10px 10px; pointer-events: auto; }
 .h-tool-body { font-size: var(--fs-sm); color: var(--fg); line-height: 1.6;
   font-family: var(--font-mono); white-space: pre-wrap; word-break: break-word;
   max-height: 320px; overflow-y: auto; }
