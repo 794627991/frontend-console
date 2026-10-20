@@ -118,6 +118,15 @@ def _hydrate_main(feed, s):
         for l in lines:
             role = l.get("role")
             ts = _ts_ms(l.get("ts"))
+            if turn_n == 0 and role != "user":
+                # 开场非 user 行（sysnote/renew/开场白）归入 t1——先建 t1
+                # header。否则该组无 turn_header（实测 a12：189 行挤无头组，
+                # 前端把无头组当 running 渲染「工作中 6时2分」假秒表）
+                turn_n = 1
+                feed._row_id += 1
+                feed.snap["rows"].append(F.P.mk_row(
+                    feed._row_id, "t1", "turn_header", ts, 0, state="success"))
+                feed.snap["total"] += 1
             if role == "user":
                 turn_n += 1
                 feed._row_id += 1

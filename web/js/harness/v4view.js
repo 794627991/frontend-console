@@ -202,7 +202,12 @@
   V4View.prototype.paintHead = function (turnId) {
     var g = this.grpEls[turnId];
     if (!g) return;
-    var hdr = g.hdr || {};
+    var hdr = g.hdr;
+    if (!hdr) {
+      // 无 turn_header 的组（兜底/迟到）：绝不默认 running——否则假秒表
+      // 「工作中 6时2分」（实测 a12：now-最早行at）。按终态渲染防之
+      hdr = { state: 'success' };
+    }
     var st = hdr.state || 'running';
     if (hdr.at && !g.startedAt) g.startedAt = hdr.at;
     if (st === 'running') {
