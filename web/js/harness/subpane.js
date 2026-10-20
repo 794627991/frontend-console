@@ -1512,6 +1512,23 @@
     if (_HG.readonly) return;
     if (!_HG.sid) return;
     // busy 门槛：busy 或任一代理在跑（协作后台代理跨回合续跑的常态时段）
+    // 402 冻死窗格自愈（用户实锤「全审子代理窗格空 12h」根因）：后台 agent
+    // 跨回合时 _subEnd 停 tick（call_ 形态键 _subAgRunning 解析 miss）→
+    // follow 链挂 tick 同死 → 窗格冻在空壳。follow 不再依赖 tick 存活——
+    // 全局轮询对所有「未定稿但 tick 已死」的 tab 补行数校对重建（有新才动
+    // DOM）+复活 tick；冻死窗格 2.5s 自愈
+    for (const t in _sub.tabs) {
+      const tb = _sub.tabs[t];
+      if (!tb || !tb.t || tb.t.done || tb.tick) continue;
+      if (String(t).indexOf('__') === 0) continue;   // 伪 tab（动态/目录/版本）
+      try {
+        const aF = _hgAg(t);
+        if (aF && !aF.done) {   // 档案在跑=真冻死；miss 保守不动
+          _subReplayForce(t);
+          _subTlTickStart(t);
+        }
+      } catch (_) {}
+    }
     if (!_HG.busy && !_hgAgentsRunning()) return;
     const ag = _HG.agents || {};
     for (const k in ag) {
