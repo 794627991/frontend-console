@@ -367,6 +367,10 @@ _hgRailSync(); } catch (_) {}
   }
   // v3.2.12：_hgShrinkHead（贴底收缩）随分页退役——恒全量渲染后无「窗口」可收
   async function _histFetch(sidAt) {
+    // v4（a23）：投影模式 histAll 只由 v4bridge 写——V3 fetch 链覆盖 histAll
+    // 会把 transcript 语义（images=计数数字）混进投影语义（images=路径数组），
+    // 两套语义打架产「📄 1」假文件 chip（用户实测 a22）
+    if (typeof _HG !== 'undefined' && _HG.v4Cur) return null;
     try {
       const r = await fetch(`/api/harness/transcript?sid=${encodeURIComponent(sidAt)}`);
       const j = await r.json();
@@ -384,6 +388,7 @@ _hgRailSync(); } catch (_) {}
     } catch(_) { return false; }
   }
   async function _histRefresh(sidAt, _startIgnored) {
+    if (typeof _HG !== 'undefined' && _HG.v4Cur) return null;   // v4：同 _histFetch 守卫
     try {
       const r = await fetch(`/api/harness/transcript?sid=${encodeURIComponent(sidAt)}`);
       const j = await r.json();
