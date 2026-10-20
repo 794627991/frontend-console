@@ -1,0 +1,413 @@
+# -*- coding: utf-8 -*-
+"""v4 投影 feed：CLI 事件 → 行 delta 归约 + delta log + 订阅帧（拉模式）。
+
+对照 ZCode bootstrap/zcode-protocol-v4/{product-projection,
+conversation-topic-publisher}.ts 的 SSE 化移植（v4 线，2026-10-20 重构）：
+
+- V4Feed 每会话一只（主会话 + 每个子代理各一只）。ingest(env) 把信封
+  事件归约成封闭五操作 delta，用 v4proto.apply 推进自身快照（投影与
+  delta 流逐字节一致是构造保证——服务端快照就是 apply 的产物）。
+- 发布采用「共享 delta log + 订阅者游标」而非逐订阅者 push buffer：
+  SSE 生成器每 30ms（FLUSH_MS）拉 frames_after(sent_seq)，对区间内 delta
+  做 coalesce 打一帧。订阅者落后越出保留窗（floor）→ 拉 None → 发
+  snapshot 帧重对齐（服务端单方裁决整窗替换，客户端没有猜结构路径）。
+- 挂接顺序（persist-before-publish）：HarnessSession.emit → log.emit
+  （store 锁内 seq 落账）→ 本 feed.ingest(env)。前端永远只消费投影。
+- epoch：/rewind bump_epoch 时 feed 重建（_reset），旧订阅携旧 epoch
+  重连只能拿 snapshot。
+- 子代理 feed（V4AgentFeeds）：watcher 扫描 CLI 子代理转写 jsonl 的增量
+  行 → feed_jsonl_line 归约入子投影；首次访问（hydrate）从文件全量重建。
+  子投影与主投影共用 V4Feed 的行模型与帧协议——子 pane 与主窗口同管线。
+
+行粒度对齐（.hg-unify-plan.md 核对结论）：assistant text/thinking 块级
+一行；tool_use 一行、tool_result 终态 upsert；CLI 不开 partial 流式，
+文本块一次到达（row.delta 预留流式能力，当前主要消费方是 coalesce 后
+的批量 append——协议位留足，CLI 开 partial 即生效）。
+"""
+import json
+import threading
+
+from . import v4proto as P
+
+FLUSH_MS = 30                  # 订阅帧合并窗口（ZCode continuous profile）
+LOG_RETAIN = 600               # delta log 保留条数（越窗订阅者转 snapshot）
+TAIL_ROWS = 400                # wire snapshot 尾窗行数
+
+
+def _txt(content):
+    """CLI content 块列表 → 纯文本（str 直通；list 拼 text 块）。"""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for b in content:
+            if isinstance(b, dict) and b.get("type") == "text":
+                parts.append(b.get("text") or "")
+        return "\n".join(parts)
+    return ""
+
+
+def _input_brief(inp, limit=2000):
+    """tool_use input → 展示用摘要 JSON（保序截断）。"""
+    try:
+        s = json.dumps(inp, ensure_ascii=False)
+    except Exception:
+        s = str(inp)
+    return s[:limit]
+
+
+class V4Feed(object):
+    """单会话投影 feed（主会话与子代理共用）。线程安全：ingest 与取帧
+    并发（ingest 来自 session 线程，取帧来自 SSE 生成器），锁内推进。"""
+
+    def __init__(self, epoch="", hydrate=None):
+        self._lock = threading.Lock()
+        self._reset(epoch, hydrate)
+
+    def _reset(self, epoch, hydrate=None):
+        self.epoch = epoch
+        self.snap = P.new_snapshot(epoch)
+        self._row_id = 0
+        self._log = []                 # [(seq, [delta,...]), ...]
+        self._floor_seq = 0            # log 内最老条目的 seq（0=空）
+        self._pending_tools = {}       # tool_use id -> rowId（终态配对）
+        self._pending_agents = {}      # Task tool_use id -> (sub行, tool行)
+        self._turn_rows = {}           # turnId -> turn_header rowId
+        self._hydrate = hydrate        # 冷启动重建回调（snapshot 空时调用）
+        self._hydrated = False
+        if hydrate:
+            hydrate(self)              # 重建路径直接填 snapshot（不发 delta）
+
+    # ------------------------------------------------------------------
+    # 行构造（reducer 内部）
+    # ------------------------------------------------------------------
+    def _row(self, turn, kind, at, at_seq, **fields):
+        self._row_id += 1
+        row = P.mk_row(self._row_id, turn or "", kind, at, at_seq, **fields)
+        return P.d_row_appended(row), self._row_id
+
+    def _upsert(self, row_id, **fields):
+        """按 rowId 换整行（保留行原有字段——从当前快照行取）。"""
+        for r in self.snap["rows"]:
+            if r["rowId"] == row_id:
+                nr = dict(r)
+                nr.update(fields)
+                return P.d_row_upserted(nr), nr
+        return None, None
+
+    # ------------------------------------------------------------------
+    # ingest：信封事件 → deltas（主会话 reducer）
+    # ------------------------------------------------------------------
+    def ingest(self, env):
+        t = env.get("type")
+        data = env.get("data") if isinstance(env.get("data"), dict) else {}
+        seq = env.get("seq") or 0
+        turn = env.get("turn") or ""
+        ts = env.get("ts") or 0
+        ds = []
+        with self._lock:
+            if t == "user_echo":
+                d, _ = self._row(turn, "user_input", ts, seq,
+                                 text=data.get("text") or "",
+                                 files=data.get("files") or [],
+                                 images=data.get("images") or 0)
+                ds.append(d)
+            elif t == "cli_stream":
+                ds = self._reduce_cli(data, turn, ts, seq)
+            elif t == "turn_started":
+                if turn and turn not in self._turn_rows:
+                    d, rid = self._row(turn, "turn_header", ts, seq,
+                                       state="running",
+                                       model=data.get("model") or "")
+                    ds.append(d)
+                    self._turn_rows[turn] = rid
+                ds.append(P.d_state({"busy": True, "curTurn": turn}))
+            elif t == "turn_complete":
+                rid = self._turn_rows.get(turn)
+                if rid:
+                    d, _ = self._upsert(rid, state="success",
+                                        endedAt=ts,
+                                        activeMs=data.get("duration_ms"))
+                    if d:
+                        ds.append(d)
+                ds.append(P.d_state({"busy": False}))
+            elif t == "turn_error":
+                rid = self._turn_rows.get(turn)
+                if rid:
+                    d, _ = self._upsert(rid, state="error", endedAt=ts,
+                                        err=data.get("brief") or "")
+                    if d:
+                        ds.append(d)
+                ds.append(P.d_state({"busy": False}))
+            elif t == "interrupted":
+                d, _ = self._row("", "marker", ts, seq,
+                                 mkind="interrupted", text=data.get("text") or "")
+                ds.append(d)
+                rid = self._turn_rows.get(self.snap["state"].get("curTurn"))
+                if rid:
+                    d2, _ = self._upsert(rid, state="cancelled", endedAt=ts)
+                    if d2:
+                        ds.append(d2)
+                ds.append(P.d_state({"busy": False}))
+            elif t == "subagent_started":
+                agent = data.get("task_id") or data.get("aid") or ""
+                d, rid = self._row(turn, "subagent", ts, seq,
+                                   agentType=data.get("type") or "Agent",
+                                   status="running",
+                                   summary=data.get("desc") or "",
+                                   childTopic="sub:" + agent if agent else "")
+                ds.append(d)
+                # Task tool_use 行同时开（结论回写锚点）
+                td, trid = self._row(turn, "tool_call", ts, seq,
+                                     tool=data.get("tool") or "Task",
+                                     status="running",
+                                     input=_input_brief(data.get("input") or {}),
+                                     startedAt=ts)
+                ds.append(td)
+                if data.get("tid"):
+                    self._pending_agents[data["tid"]] = (rid, trid)
+            elif t == "subagent_result":
+                tid = data.get("tid") or ""
+                pair = self._pending_agents.pop(tid, None)
+                ok = bool(data.get("ok"))
+                if pair:
+                    srid, trid = pair
+                    d, _ = self._upsert(srid,
+                                        status="success" if ok else "failed",
+                                        summary=data.get("brief") or "",
+                                        endedAt=ts)
+                    if d:
+                        ds.append(d)
+                    d2, _ = self._upsert(trid,
+                                         status="success" if ok else "error",
+                                         output=data.get("brief") or "",
+                                         endedAt=ts,
+                                         dur=data.get("dur"))
+                    if d2:
+                        ds.append(d2)
+            elif t == "peer":
+                ds = self._reduce_peer(data, turn, ts, seq)
+            elif t in ("renew", "sysnote", "audit", "exit", "model_switched"):
+                text = data.get("text") or data.get("msg") or ""
+                d, _ = self._row("", "marker", ts, seq, mkind=t, text=text)
+                ds.append(d)
+            elif t in ("input_admitted", "input_promoted", "input_discarded"):
+                # queue 真源在 durable 排队账本；仅当事件携带全量 queue 时才
+                # 更新 A 区（否则等路由订阅时冷填）
+                if isinstance(data.get("queue"), list):
+                    ds.append(P.d_state({"queue": data["queue"]}))
+            if not ds:
+                return
+            P.apply_deltas(self.snap, ds)
+            self.snap["seq"] = seq
+            self._log.append((seq, ds))
+            self._trim()
+
+    def _reduce_cli(self, data, turn, ts, seq):
+        """CLI stream-json 事件 → deltas。"""
+        ds = []
+        typ = data.get("type")
+        if typ == "assistant":
+            m = data.get("message") or {}
+            model = m.get("model") or ""
+            for b in (m.get("content") or []):
+                if not isinstance(b, dict):
+                    continue
+                bt = b.get("type")
+                if bt == "text" and (b.get("text") or "").strip():
+                    d, _ = self._row(turn, "assistant_text", ts, seq,
+                                     text=b["text"], model=model)
+                    ds.append(d)
+                elif bt == "thinking" and (b.get("thinking") or "").strip():
+                    d, _ = self._row(turn, "reasoning", ts, seq,
+                                     text=b["thinking"])
+                    ds.append(d)
+                elif bt == "tool_use":
+                    name = b.get("name") or ""
+                    d, rid = self._row(turn, "tool_call", ts, seq,
+                                       tool=name, status="running",
+                                       input=_input_brief(b.get("input") or {}),
+                                       startedAt=ts,
+                                       tid=b.get("id") or "")
+                    ds.append(d)
+                    if b.get("id"):
+                        self._pending_tools[b["id"]] = rid
+        elif typ == "user":
+            m = data.get("message") or {}
+            for b in (m.get("content") or []):
+                if isinstance(b, dict) and b.get("type") == "tool_result":
+                    rid = self._pending_tools.pop(b.get("tool_use_id"), None)
+                    if rid is None:
+                        continue
+                    err = bool(b.get("is_error"))
+                    d, _ = self._upsert(
+                        rid, status="error" if err else "success",
+                        output=_txt(b.get("content"))[:8000],
+                        endedAt=ts)
+                    if d:
+                        ds.append(d)
+        elif typ == "system":
+            m = data.get("message") or {}
+            md = m.get("model") or ""
+            if md:
+                ds.append(P.d_state({"model": md}))
+        elif typ == "result":
+            # CLI result 帧（兜底：turn_complete 未到也收口）
+            pass
+        return ds
+
+    def _reduce_peer(self, data, turn, ts, seq):
+        """peer 族：协作回传通知行 / 识图卡行。"""
+        ds = []
+        if data.get("vision"):
+            v = data.get("vision") or {}
+            d, rid = self._row(turn, "vision", ts, seq,
+                               prompt=v.get("prompt") or "",
+                               src=v.get("src") or "",
+                               chan=v.get("chan") or "",
+                               status="pending")
+            ds.append(d)
+            if v.get("tid"):
+                self._pending_tools["v:" + v["tid"]] = rid
+        else:
+            d, _ = self._row("", "peer_notify", ts, seq,
+                             title=data.get("title") or "协作回传",
+                             brief=data.get("brief") or "")
+            ds.append(d)
+        return ds
+
+    # ------------------------------------------------------------------
+    # 子代理 jsonl 行归约（watcher 增量与 hydrate 共用）
+    # ------------------------------------------------------------------
+    def feed_jsonl_line(self, obj):
+        """CLI 转写 jsonl 单行（dict）→ deltas 入子投影。返回是否消费。"""
+        if not isinstance(obj, dict):
+            return False
+        ds = []
+        seq = self.snap["seq"] + 1
+        ts = 0
+        try:
+            import time as _t
+            ts = int(_t.time() * 1000)
+        except Exception:
+            pass
+        typ = obj.get("type")
+        with self._lock:
+            if typ == "result":
+                self.snap["state"]["done"] = True
+                self.snap["state"]["final"] = (obj.get("result") or "")[:8000]
+                self.snap["state"]["err"] = bool(obj.get("is_error"))
+                ds.append(P.d_state({"done": True,
+                                     "final": self.snap["state"]["final"],
+                                     "err": self.snap["state"]["err"]}))
+            elif typ in ("assistant", "user"):
+                m = obj.get("message") or {}
+                content = m.get("content")
+                blocks = content if isinstance(content, list) else []
+                if typ == "assistant":
+                    model = m.get("model") or ""
+                    for b in blocks:
+                        if not isinstance(b, dict):
+                            continue
+                        bt = b.get("type")
+                        if bt == "text" and (b.get("text") or "").strip():
+                            d, _ = self._row("s", "assistant_text", ts, seq,
+                                             text=b["text"][:2000], model=model)
+                            ds.append(d)
+                        elif bt == "thinking" and (b.get("thinking") or "").strip():
+                            d, _ = self._row("s", "reasoning", ts, seq,
+                                             text=b["thinking"][:2000])
+                            ds.append(d)
+                        elif bt == "tool_use":
+                            if b.get("name") == "SubagentHandback":
+                                rep = ""
+                                for v in (b.get("input") or {}).values():
+                                    if isinstance(v, str) and len(v) > len(rep):
+                                        rep = v
+                                if rep.strip():
+                                    d, _ = self._row("s", "assistant_text", ts,
+                                                     seq, text=rep[:8000])
+                                    ds.append(d)
+                                    continue
+                            d, rid = self._row("s", "tool_call", ts, seq,
+                                               tool=b.get("name") or "",
+                                               status="running",
+                                               tid=b.get("id") or "")
+                            ds.append(d)
+                            if b.get("id"):
+                                self._pending_tools[b["id"]] = rid
+                else:
+                    t = _txt(content).strip()
+                    if t and not t.startswith("<"):
+                        d, _ = self._row("s", "user_input", ts, seq, text=t[:1200])
+                        ds.append(d)
+                    for b in blocks:
+                        if isinstance(b, dict) and b.get("type") == "tool_result":
+                            rid = self._pending_tools.pop(
+                                b.get("tool_use_id"), None)
+                            if rid is None:
+                                continue
+                            err = bool(b.get("is_error"))
+                            d, _ = self._upsert(
+                                rid, status="error" if err else "success",
+                                output=_txt(b.get("content"))[:8000],
+                                endedAt=ts)
+                            if d:
+                                ds.append(d)
+            if not ds:
+                return False
+            P.apply_deltas(self.snap, ds)
+            self.snap["seq"] = seq
+            self._log.append((seq, ds))
+            self._trim()
+            return True
+
+    def hydrate_jsonl(self, path):
+        """从子代理转写文件全量重建（子投影冷启动）。"""
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                for raw in f:
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    try:
+                        o = json.loads(raw)
+                    except Exception:
+                        continue
+                    self.feed_jsonl_line(o)
+            self._hydrated = True
+            return True
+        except OSError:
+            return False
+
+    # ------------------------------------------------------------------
+    # 订阅帧（拉模式；SSE 生成器每 FLUSH_MS 调用）
+    # ------------------------------------------------------------------
+    def _trim(self):
+        if len(self._log) > LOG_RETAIN:
+            drop = len(self._log) - LOG_RETAIN
+            del self._log[:drop]
+            self._floor_seq = self._log[0][0] if self._log else 0
+
+    def frames_after(self, after_seq):
+        """(after_seq, last] 合并帧。越窗/落后 → None（调用方发 snapshot）。
+        epoch 校验由路由层做（base.epoch != feed.epoch → 直接 snapshot）。"""
+        with self._lock:
+            if after_seq < self._floor_seq:
+                return None
+            ds = []
+            for seq, dl in self._log:
+                if seq > after_seq:
+                    ds.extend(dl)
+            if not ds:
+                return None
+            return P.coalesce(ds), self.snap["seq"]
+
+    def snapshot_wire(self):
+        with self._lock:
+            return P.wire_snapshot(self.snap, tail=TAIL_ROWS)
+
+    @property
+    def last_seq(self):
+        with self._lock:
+            return self.snap["seq"]

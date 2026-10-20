@@ -545,6 +545,99 @@ def harness_stream():
     return Response(gen(), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
+
+# ---- v4 投影流（2026-10-20 归一重构批B；REBUILD-PLAN-ZCODE.md） ----
+
+
+@harness_bp.route("/v4/stream")
+def harness_v4_stream():
+    """v4 投影 SSE（ZCode 归一管线）。?sid=&topic=main|sub:<agentKey>&epoch=&seq=。
+
+    帧协议（前端 v4store 唯一消费源）：
+      event:ack    {mode:resume|snapshot, epoch, seq}
+      event:frame  data:{kind:"snapshot", fromSeq:0, toSeq, snapshot:{...}}
+                   data:{kind:"deltas", fromSeq, toSeq, deltas:[封闭五操作]}
+    服务端单方裁决续传或整窗：epoch 失配 / 落后越出保留窗 → snapshot。
+    deltas 帧为 30ms 合并窗（coalesce）产物；空闲 5s 心跳 event:ka。"""
+    s = _get_or_create(request.args.get("sid") or "")
+    if not s:
+        return jsonify({"ok": False, "err": "会话不存在"}), 404
+    topic = (request.args.get("topic") or "main").strip()
+    from . import v4hub
+    if topic.startswith("sub:"):
+        agent = topic[4:]
+        if not re.match(r"^[0-9a-zA-Z_:.]{4,128}$", agent):
+            return jsonify({"ok": False, "err": "topic 非法"}), 400
+        import glob as _g
+        csids = [x for x in (list(getattr(s, "lineage", None) or [])
+                             + [s.session_id]) if x]
+        main_dir = None
+        for csid in csids:
+            for cand in _g.glob(os.path.join(os.path.expanduser("~"),
+                                             ".claude", "projects", "*",
+                                             csid + ".jsonl")):
+                main_dir = os.path.dirname(cand)
+                break
+            if main_dir:
+                break
+        from .transcript import _subagent_transcript_candidates
+        paths = _subagent_transcript_candidates(main_dir, csids, agent) \
+            if main_dir else []
+        feed = v4hub.v4_sub_feed(s.session_id, agent, paths)
+    else:
+        feed = v4hub.v4_main_feed(s)
+    base_epoch = (request.args.get("epoch") or "").strip()
+    base_seq = request.args.get("seq", 0, type=int)
+
+    def _frame(obj):
+        return "event:frame\ndata: %s\n\n" % json.dumps(obj, ensure_ascii=False)
+
+    def gen():
+        sent = 0
+        mode = "snapshot"
+        if base_epoch and base_epoch == feed.epoch and base_seq > 0:
+            fr = feed.frames_after(base_seq)
+            if fr is not None:
+                deltas, to = fr
+                mode, sent = "resume", to
+                yield "event:ack\ndata: %s\n\n" % json.dumps(
+                    {"mode": mode, "epoch": feed.epoch, "seq": to},
+                    ensure_ascii=False)
+                if deltas:
+                    yield _frame({"kind": "deltas", "fromSeq": base_seq,
+                                  "toSeq": to, "deltas": deltas})
+        if mode == "snapshot":
+            w = feed.snapshot_wire()
+            sent = w["seq"]
+            yield "event:ack\ndata: %s\n\n" % json.dumps(
+                {"mode": "snapshot", "epoch": feed.epoch, "seq": w["seq"]},
+                ensure_ascii=False)
+            yield _frame({"kind": "snapshot", "fromSeq": 0, "toSeq": w["seq"],
+                          "snapshot": w})
+        idle = 0.0
+        while True:
+            time.sleep(0.03)                  # 30ms 合并窗（FLUSH_MS）
+            try:
+                fr = feed.frames_after(sent)
+            except Exception:
+                log.exception("v4 stream 取帧失败 sid=%s", s.session_id)
+                fr = None
+            if fr is not None:
+                deltas, to = fr
+                frm_from = sent
+                sent = to
+                idle = 0.0
+                if deltas:
+                    yield _frame({"kind": "deltas", "fromSeq": frm_from,
+                                  "toSeq": to, "deltas": deltas})
+                continue
+            idle += 0.03
+            if idle >= 5.0:
+                idle = 0.0
+                yield "event:ka\ndata: {}\n\n"
+    return Response(gen(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
 # ---- from claude_harness.py:2990 (harness_sessions) ----
 
 
@@ -1259,11 +1352,16 @@ def harness_delete():
     with _sessions_lock:
         s = _sessions.pop(sid, None)
     # 全审G2：readmodel（含全量事实表）随会话删除同步回收——否则滞留后端
-    # 进程生命周期，长期运行累积泄漏
+    # 进程生命周期，长期运行累积泄漏；v4 投影 feed 同步回收（批B）
     try:
         from .subagent_readmodel import _models, _models_lock
         with _models_lock:
             _models.pop(sid, None)
+    except Exception:
+        pass
+    try:
+        from . import v4hub
+        v4hub.v4_drop_session(sid)
     except Exception:
         pass
     if s:

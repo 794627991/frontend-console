@@ -1854,8 +1854,15 @@ class HarnessSession:
     def emit(self, item):
         """事件唯一出口：截断→锁内盖章→落 store→广播（对照 ZCode「先落
         eventStore 再广播 eventSinks」）。seq 分配在 store 锁内——修 v2.x
-        reader/HTTP/peer 轮询并发 emit 的同号乱序竞态。"""
+        reader/HTTP/peer 轮询并发 emit 的同号乱序竞态。
+        v4 归一重构：落账后喂投影 feed（v4hub 唯一挂接点，persist-
+        before-publish——前端 v4 管线只消费投影）。"""
         item = self.log.emit(item, turn=self._turn_id)
+        try:
+            from . import v4hub
+            v4hub.v4_ingest_main(self, item)
+        except Exception:
+            pass                                  # 投影失败不伤旧链路
         return item
 
     def get_events_after(self, after_seq=0, limit=500):

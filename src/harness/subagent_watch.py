@@ -1,20 +1,25 @@
 # -*- coding: utf-8 -*-
-"""subagent_watch —— 子代理转写 watcher（v3.5.405 单订阅模型批A）。
+"""subagent_watch —— 子代理转写 watcher（v3.5.405 建；v4 归一重构批B 升级）。
 
-ZCode subscribe 对位：窗格数据由**服务端推送**（snapshot+delta），前端不轮询。
-我们的子代理内容在磁盘转写（CLI 落盘、无进程内事件），本模块用全局 watcher
-线程检测「新鲜转写的增量」→ 经既有 SSE 事件流（session.emit→bus→SSE）推
-`subagent_delta` 事件给前端——前端的 2s tail 轮询降级为兜底。
+v4 职责（ZCode ingestDetachedLiveSession 对位）：扫「新鲜子代理转写」的
+增量行 → 逐行解析喂 v4 子投影（v4hub.v4_sub_ingest）→ 子 pane 的
+/v4/stream sub:<agent> 订阅者收到 delta 帧（子代理实时刷新红线的数据面）。
+旧 emit `subagent_delta` 事件保留（旧前端兼容；批F 旧管线退役时一并下线）。
 
-设计要点（对位 ZCode 机制4/5）：
+扫描覆盖两源（三源候选的③+②；源①旧版 CLI 罕见，由子 feed hydrate 兜底）：
+- 源③ projects/<proj>/<csid>/subagents/agent-<id>.jsonl（SendMessage 续派）
+- 源② %LOCALAPPDATA%\\Temp\\claude\\<projName>/<csid>/tasks/<id>.output
+  （新版 CLI 2.1.267+ Agent 工具）——v4 前此源增量无人喂（P0-3 缺口）
+
+设计要点：
 - 只 watch 新鲜转写（mtime 120s 内）——终态文件零开销；
-- 每文件记 offset（内存），读尾增量原文推送——解析/过滤留在前端既有
-  _subDeltaFeed（已验证的行解析逻辑，不在后端重写一遍）；
-- 会话按文件所属目录反查（projects/<proj>/<csid>/subagents/ 的 csid 与
-  lineage 匹配）；找不到会话=文件不属于任何活会话，跳过；
-- watcher 全局单线程 daemon，随 lifecycle 启动（_gc_loop 同款挂法）。
+- 每文件记 offset（内存），只推整行（尾半行下轮补）；
+- 会话按文件所属目录反查 lineage；找不到会话=不属于活会话，跳过；
+- watcher 全局单线程 daemon，随 lifecycle 启动（_gc_loop 同款挂法），
+  任何单轮异常静默（watcher 永不死）。
 """
 import glob
+import json
 import os
 import threading
 import time
@@ -43,6 +48,55 @@ def _session_for(cs_dir, csid):
         if csid and csid in [x for x in ids if x]:
             return s
     return None
+
+
+def _push_file(s, fp, aid):
+    """读 fp 自 offset 起的增量整行：喂 v4 子投影 + emit 兼容事件。"""
+    now = time.time()
+    if now - os.path.getmtime(fp) > FRESH_WINDOW_S:
+        return
+    off = _offsets.get(fp, 0)
+    sz = os.path.getsize(fp)
+    if sz <= off:
+        return
+    if sz - off > MAX_DELTA_BYTES:
+        off = sz - MAX_DELTA_BYTES             # 爆量截尾（不推史前）
+    with open(fp, "r", encoding="utf-8", errors="replace") as f:
+        f.seek(off)
+        txt = f.read()
+    # 只推整行（尾半行下轮补）
+    if txt and not txt.endswith("\n"):
+        cut = txt.rfind("\n")
+        if cut < 0:
+            return
+        txt = txt[:cut + 1]
+        new_off = off + len(txt.encode("utf-8"))
+    else:
+        new_off = sz if sz == os.path.getsize(fp) else off + len(txt.encode("utf-8"))
+    _offsets[fp] = new_off
+    if not txt.strip():
+        return
+    # v4 子投影：逐行解析喂入（子 pane 订阅者由此收 delta 帧）
+    try:
+        from . import v4hub
+        for raw in txt.splitlines():
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                obj = json.loads(raw)
+            except Exception:
+                continue
+            v4hub.v4_sub_ingest(s.session_id, aid, obj)
+    except Exception:
+        pass
+    # 兼容旧前端（批F 退役）
+    s.emit({"kind": "event", "data": {
+        "type": "subagent_delta",
+        "agent": aid,
+        "offset": new_off,
+        "text": txt[:MAX_DELTA_BYTES],
+    }})
 
 
 def _watch_loop():
@@ -78,38 +132,34 @@ def _watch_loop():
                         continue
                     for fp in glob.glob(os.path.join(sub_dir, "agent-*.jsonl")):
                         try:
-                            if now - os.path.getmtime(fp) > FRESH_WINDOW_S:
-                                continue
-                            off = _offsets.get(fp, 0)
-                            sz = os.path.getsize(fp)
-                            if sz <= off:
-                                continue
-                            if sz - off > MAX_DELTA_BYTES:
-                                off = sz - MAX_DELTA_BYTES   # 爆量截尾（不推史前）
-                            with open(fp, "r", encoding="utf-8", errors="replace") as f:
-                                f.seek(off)
-                                txt = f.read()
-                            # 只推整行（对齐 tail 接口的行边界语义；尾半行下轮补）
-                            if txt and not txt.endswith("\n"):
-                                cut = txt.rfind("\n")
-                                if cut < 0:
-                                    continue
-                                txt = txt[:cut + 1]
-                                new_off = off + len(txt.encode("utf-8"))
-                            else:
-                                new_off = sz if sz == os.path.getsize(fp) else off + len(txt.encode("utf-8"))
-                            _offsets[fp] = new_off
-                            if not txt.strip():
-                                continue
-                            aid = os.path.basename(fp)[len("agent-"):-len(".jsonl")]
-                            s.emit({"kind": "event", "data": {
-                                "type": "subagent_delta",
-                                "agent": aid,
-                                "offset": new_off,
-                                "text": txt[:MAX_DELTA_BYTES],
-                            }})
+                            _push_file(s, fp,
+                                       os.path.basename(fp)[len("agent-"):-len(".jsonl")])
                         except Exception:
                             continue
+            # 源②（新版 CLI Agent 工具 tasks/<id>.output）——v4 补的覆盖面
+            la = os.environ.get("LOCALAPPDATA")
+            if la:
+                for s in _iter_sessions():
+                    sid = getattr(s, "session_id", None)
+                    if not sid:
+                        continue
+                    proj_name = None
+                    for cand in glob.glob(os.path.join(
+                            home, ".claude", "projects", "*", sid + ".jsonl")):
+                        proj_name = os.path.basename(os.path.dirname(cand))
+                        break
+                    if not proj_name:
+                        continue
+                    for csid in [x for x in (
+                            list(getattr(s, "lineage", None) or []) + [sid]) if x]:
+                        for fp in glob.glob(os.path.join(
+                                la, "Temp", "claude", proj_name, csid,
+                                "tasks", "*.output")):
+                            try:
+                                _push_file(s, fp,
+                                           os.path.basename(fp)[:-len(".output")])
+                            except Exception:
+                                continue
         except Exception:
             pass   # watcher 永不死（任何单轮异常静默，下轮重来）
 
