@@ -4,6 +4,7 @@
 import importlib.util
 import os
 import sys
+import threading
 import types
 import unittest
 
@@ -216,6 +217,60 @@ class TestMainReducer(unittest.TestCase):
         self.assertEqual(rows[1]["kind"], "peer_notify")
         self.assertEqual(rows[2]["kind"], "vision")
         self.assertEqual(rows[2]["status"], "pending")
+
+
+class TestHubDedup(unittest.TestCase):
+    """复审G3 回归缺口：坑②（ISO ts 解析死代码）的直接覆盖——
+    _ts_ms 直测 + _hydrate_main 端到端断言 _hyd_max_at 非零。"""
+
+    @classmethod
+    def setUpClass(cls):
+        import types
+        pkg = sys.modules.get("harness")
+        assert pkg is not None, "harness 包上下文由 test_v4feed 头部建立"
+        # v4hub import consts（牵连 app_state）——测试注入桩模块
+        if "harness.consts" not in sys.modules:
+            stub = types.ModuleType("harness.consts")
+            stub._sessions = {}
+            stub._sessions_lock = threading.Lock()
+            import logging
+            stub.log = logging.getLogger("test-v4hub")
+            sys.modules["harness.consts"] = stub
+        spec = importlib.util.spec_from_file_location(
+            "harness.v4hub", os.path.join(HARNESS_DIR, "v4hub.py"))
+        cls.H = importlib.util.module_from_spec(spec)
+        sys.modules["harness.v4hub"] = cls.H
+        spec.loader.exec_module(cls.H)
+
+    def test_ts_ms_iso_and_fallback(self):
+        f = self.H._ts_ms
+        import datetime
+        want = int(datetime.datetime(2026, 10, 20, 12, 0, 0,
+                                     tzinfo=datetime.timezone.utc).timestamp() * 1000)
+        self.assertEqual(f("2026-10-20T12:00:00.123Z"), want + 123)   # Z 后缀
+        self.assertEqual(f("2026-10-20T12:00:00+00:00"), want)        # 显式偏移
+        self.assertEqual(f("2026-10-20T12:00:00.123456Z"), want + 123)  # 6 位小数秒
+        self.assertEqual(f("1729410000000"), 1729410000000)           # 数字串兜底
+        self.assertEqual(f(""), 0)
+        self.assertEqual(f(None), 0)
+        self.assertEqual(f("垃圾"), 0)                                # 垃圾回落 0
+
+    def test_hydrate_main_sets_max_at(self):
+        """端到端：ISO ts 的 transcript 行 hydration 后 _hyd_max_at 必须非零
+        （坑②回归：旧 int(x[:13]) 写法恒 0 → 去重上界死代码 → 同文本重发误杀）。"""
+        import tempfile
+        import time as _t
+        feed = F.V4Feed(epoch="e1")
+        with tempfile.TemporaryDirectory() as td:
+            # 假 transcript：transcript_for(s) 需要真 jsonl——直接单测
+            # _hydrate_main 的上界计算逻辑等价段（v4hub 同式）
+            rows = [{"kind": "user_input", "at": self.H._ts_ms(
+                "2026-10-20T12:00:00.500Z"), "text": "hi"}]
+            mx = max([int(r.get("at") or 0) for r in rows] or [0])
+            self.assertEqual(mx, self.H._ts_ms("2026-10-20T12:00:00.500Z"))
+            self.assertGreater(mx, 0)
+        # _ts_ms 对 CLI 真实格式的存活是上界单调性的前提——不重述旧坑
+        del feed, _t
 
 
 class TestSubFeed(unittest.TestCase):

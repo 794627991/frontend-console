@@ -40,6 +40,7 @@ def _ts_ms(v):
             return 0
 
 _lock = threading.Lock()
+_build_locks = {}           # sid -> 冷建串行锁（复审G1：并发冷建双喂防）
 _main_feeds = {}            # sid -> V4Feed
 _sub_feeds = {}             # (sid, agentKey) -> V4Feed
 
@@ -54,27 +55,36 @@ def v4_main_feed(s):
     sid = s.session_id
     with _lock:
         feed = _main_feeds.get(sid)
+        blk = _build_locks.get(sid)
+        if blk is None:
+            blk = _build_locks[sid] = threading.Lock()
     if feed is not None and feed.epoch == s.log.epoch:
         return feed
-    feed = F.V4Feed(epoch=s.log.epoch)
-    h = s.log.last_seq                   # hydration 水位（此刻账本已到的事件）
-    _hydrate_main(feed, s)               # 转写全量打底（历史权威）
-    if h > 0:
-        try:
-            feed._replay = True          # 补放期：与 hydration 重叠的行不重画
-            for env in s.log.events_after(h):   # 只补水位后在飞事件（不重复）
-                feed.ingest(env)
-            feed._replay = False
-        except Exception:
-            feed._replay = False
-            log.exception("v4 账本尾部补放失败 sid=%s", sid)
-    with _lock:
-        old = _main_feeds.get(sid)
-        if old is None or old.epoch != s.log.epoch:
-            _main_feeds[sid] = feed
-            feed = _main_feeds[sid]
-        else:
-            feed = old                   # 并发建窗：保留先入者（幂等）
+    with blk:                            # 冷建串行（复审G1：并发冷建会双喂
+        # 同一事件——先存者补放窗与后存者 live ingest 重叠=行双画）
+        with _lock:
+            feed = _main_feeds.get(sid)
+        if feed is not None and feed.epoch == s.log.epoch:
+            return feed                  # 双重检查：等锁期间他人已建好
+        feed = F.V4Feed(epoch=s.log.epoch)
+        h = s.log.last_seq               # hydration 水位（此刻账本已到的事件）
+        _hydrate_main(feed, s)           # 转写全量打底（历史权威）
+        if h > 0:
+            try:
+                feed._replay = True      # 补放期：与 hydration 重叠的行不重画
+                for env in s.log.events_after(h):   # 只补水位后在飞事件
+                    feed.ingest(env)
+                feed._replay = False
+            except Exception:
+                feed._replay = False
+                log.exception("v4 账本尾部补放失败 sid=%s", sid)
+        with _lock:
+            old = _main_feeds.get(sid)
+            if old is None or old.epoch != s.log.epoch:
+                _main_feeds[sid] = feed
+                feed = _main_feeds[sid]
+            else:
+                feed = old               # 锁内仍撞（epoch 竞速）：保留先入者
     return feed
 
 
@@ -171,8 +181,6 @@ def _hydrate_main(feed, s):
             feed._hyd_keys = set(
                 (r.get("kind"), (r.get("text") or "")[:200])
                 for r in feed.snap["rows"])
-            _last = [r for r in feed.snap["rows"] if r.get("kind") == "user_input"]
-            feed._hyd_last_user_ts = (_last[-1].get("at") if _last else 0) or 0
             # 补放去重的单向上界：hydration 已呈现行的最大时刻
             feed._hyd_max_at = max(
                 [int(r.get("at") or 0) for r in feed.snap["rows"]] or [0])

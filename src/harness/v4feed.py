@@ -93,7 +93,6 @@ class V4Feed(object):
         self._hydrate = hydrate        # 冷启动重建回调（snapshot 空时调用）
         self._hydrated = False
         self._hyd_keys = set()         # hydration 已呈现行的内容指纹（去重）
-        self._hyd_last_user_ts = 0     # hydration 末条 user 行时刻（末轮边界）
         self._hyd_max_at = 0           # hydration 全部行的最大时刻（去重上界）
         self._held = False             # 后台子代理 hold（result 不提前收口）
         self._replay = False           # 水位补放阶段（历史重复行过滤）
