@@ -37,7 +37,7 @@
     var flow = (typeof _hgFlow !== 'undefined') ? _hgFlow : null;   // let 全局
     if (!flow) return;
     var store = new root.V4Store(sid, 'main');
-    var render = new root.V4View(store, flow, { live: true });
+    var render = new root.V4Bridge(store, flow, { live: true });
     _cur = { sid: sid, store: store, render: render };
     _HG.v4Cur = _cur;
     store.connect();
@@ -110,7 +110,7 @@
     // 结论区在 flow 内长尾——渲染层只把 turn 组塞进 el，结论区（若有）
     // 由 v4view 的 conclEl 单独管理，避免与行流争同一个父节点
     var store = new root.V4Store(sid, 'sub:' + agentKey);
-    var render = new root.V4View(store, el,
+    var render = new root.V4Bridge(store, el,
       { live: true, sub: true, conclEl: conclEl || null });
     _subs[(el.dataset && el.dataset.v4Key) || agentKey] = _subs[agentKey] =
       { store: store, render: render, el: el };
