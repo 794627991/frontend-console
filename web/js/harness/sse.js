@@ -1,6 +1,9 @@
 // harness sse.js (v3.0 自 buildClaudeHarnessTab 拆出,定义体零改动,缩进保持原样)
   function handleEvent(o) {
     const typ = o.type;
+    // 405 批B：后端 watcher 推送的子代理转写增量（ZCode subscribe 对位）——
+    // 触发订阅中窗格立即行数比对重建（推送替代 2.5s 定时器触发）
+    if (typ === 'subagent_delta' && o.agent) { _subDeltaPing(o.agent); return; }
     if (typ === 'system') {
       const sub = o.subtype;
       if (sub === 'init') {

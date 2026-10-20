@@ -83,6 +83,11 @@ def _ensure_gc():
         _gc_started = True
         threading.Thread(target=_gc_loop, daemon=True).start()
         threading.Thread(target=_peer_poll_loop, daemon=True).start()
+        try:
+            from .subagent_watch import ensure_started as _sub_watch_start
+            _sub_watch_start()   # 405 批A：子代理转写 watcher（delta 推送，ZCode subscribe 对位）
+        except Exception:
+            pass
 
 # ---- from claude_harness.py:2197 (_peer_poll_loop) ----
 

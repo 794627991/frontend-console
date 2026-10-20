@@ -1528,6 +1528,18 @@
         if (aF && (!aF.done || !tb.rpN)) _subEnsure(t);
       } catch (_) {}
   }
+  // ===== 405 批B：delta 推送消费（ZCode subscribe 对位）=====
+  // 后端 watcher（subagent_watch.py）检测转写增量→SSE 推 subagent_delta→
+  // 本函数触发该 tab 立即行数比对重建（374 重建模型的唯一更新机制不变，
+  // 触发源从 2.5s 定时器换成推送——实时性≈1s；watcher 失效时定时器仍兜底）
+  function _subDeltaPing(aid) {
+    if (!aid) return;
+    const k = _subTid(aid);
+    const cur = _sub.tabs[k];
+    if (!cur || !cur.t || cur.t.done || cur.replay) return;
+    cur.lastFollow = 0;        // 打破 follow 节流（下个 tick 立即拉取比对）
+    _subTlTickStart(k);        // tick 未跑则起（重建后跟随管道恢复）
+  }
   function _subThinkPollTick() {
     // v3.5.51：只读模式早退（RO 期间 agents 已清空，本 tick 无有效工作）
     if (_HG.readonly) return;
