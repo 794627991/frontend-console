@@ -260,7 +260,13 @@
       if (ad) { try { ad(patch.ask_done); } catch (e) {} }
     }
     if (Array.isArray(patch.queue)) {
-      if (typeof _HG !== 'undefined') _HG.queue = patch.queue;
+      // 队列条真源=_HG.queues[_hgQueueKey()]（按会话分桶，renderQueue 读它）
+      // ——a19 写错字段 _HG.queue 从未生效（用户实测：promoted 后队列条不摘）
+      if (typeof _HG !== 'undefined') {
+        var qk = (typeof _hgQueueKey === 'function') ? _hgQueueKey()
+          : (_HG.sid || '_new');
+        _HG.queues[qk] = patch.queue;
+      }
       var rq = _g('renderQueue');
       if (rq) { try { rq(); } catch (e) {} }
     }
