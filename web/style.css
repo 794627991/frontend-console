@@ -3151,13 +3151,17 @@ html {
 /* 动画批A：工具卡开合高度过渡（ZCode Radix Collapsible 300ms 同参）——
    display 硬切 → grid-rows 0fr→1fr 过渡（免量高），padding 随行内同步过渡；
    收起态 pointer-events 关（0fr 时内容不可点） */
-.h-tool.col .h-tool-coll { display: grid; grid-template-rows: 0fr; opacity: 0;
+/* 406 修复（用户实锤「Bash 下方一大片空白」）：387 批A 的 grid-template-rows:0fr
+   只折叠第一行——coll 含多子元素（Bash 的 arg+body / err 行 body+out）时第二个
+   子元素落**隐式行 auto**（实测 0px 62.39px=空白块露出）。改 grid-auto-rows 管
+   全部行（含隐式）；auto-rows 不可插值=开合动画退化瞬切（383 默认全收后开合
+   低频，正确性优先） */
+.h-tool.col .h-tool-coll { display: grid; grid-auto-rows: 0fr; opacity: 0;
   padding: 0 10px; overflow: hidden; pointer-events: none;
-  transition: grid-template-rows var(--hg-dur, .3s) var(--hg-ease, cubic-bezier(.4,0,.2,1)),
-              opacity var(--hg-dur, .3s) var(--hg-ease, cubic-bezier(.4,0,.2,1)),
+  transition: opacity var(--hg-dur, .3s) var(--hg-ease, cubic-bezier(.4,0,.2,1)),
               padding var(--hg-dur, .3s) var(--hg-ease, cubic-bezier(.4,0,.2,1)); }
 .h-tool.col .h-tool-coll > * { min-height: 0; overflow: hidden; }
-.h-tool.col.open .h-tool-coll { grid-template-rows: 1fr; opacity: 1; padding: 6px 10px 10px; pointer-events: auto; }
+.h-tool.col.open .h-tool-coll { grid-auto-rows: 1fr; opacity: 1; padding: 6px 10px 10px; pointer-events: auto; }
 .h-tool-body { font-size: var(--fs-sm); color: var(--fg); line-height: 1.6;
   font-family: var(--font-mono); white-space: pre-wrap; word-break: break-word;
   max-height: 320px; overflow-y: auto; }
