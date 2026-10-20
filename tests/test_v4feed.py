@@ -203,6 +203,21 @@ class TestMainReducer(unittest.TestCase):
         f._floor_seq = 4
         self.assertIsNone(f.frames_after(3))
 
+    def test_ask_state_projection(self):
+        """ask/ask_done → A 区（V3 askRender 挂 dock 形态，非消息行）。"""
+        f = self._feed()
+        f.ingest(_env(1, "ask", turn="", data={
+            "req_id": "r1", "title": "请选择",
+            "questions": [{"header": "方案", "question": "用 A 还是 B？",
+                           "options": [{"label": "A"}, {"label": "B"}]}]}))
+        self.assertEqual(f.snap["state"]["ask"]["req_id"], "r1")
+        self.assertEqual(len(f.snap["state"]["ask"]["questions"]), 1)
+        self.assertEqual([r["kind"] for r in f.snap["rows"]], [])   # 不成行
+        f.ingest(_env(2, "ask_done", turn="", data={
+            "req_id": "r1", "answer": {"方案": ["A"]}}))
+        self.assertIsNone(f.snap["state"]["ask"])
+        self.assertEqual(f.snap["state"]["ask_done"]["req_id"], "r1")
+
     def test_marker_and_peer(self):
         f = self._feed()
         f.ingest(_env(1, "renew", turn="", data={"text": "已续命"}))

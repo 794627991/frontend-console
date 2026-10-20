@@ -232,6 +232,20 @@ class V4Feed(object):
                 text = data.get("text") or data.get("msg") or ""
                 d, _ = self._row("", "marker", ts, seq, mkind=t, text=text)
                 ds.append(d)
+            elif t == "ask":
+                # 交互提问进 A 区（V3 形态=挂 dock 的 askRender 面板，非消息行）；
+                # 前端 v4view paintState 消费。幂等：askRender 同 req_id 查重。
+                ds.append(P.d_state({"ask": {
+                    "req_id": data.get("req_id") or "",
+                    "title": data.get("title") or "",
+                    "questions": data.get("questions") or [],
+                }}))
+            elif t == "ask_done":
+                ds.append(P.d_state({
+                    "ask": None,
+                    "ask_done": {"req_id": data.get("req_id") or "",
+                                 "answer": data.get("answer")},
+                }))
             elif t in ("input_admitted", "input_promoted", "input_discarded"):
                 # queue 真源在 durable 排队账本；仅当事件携带全量 queue 时才
                 # 更新 A 区（否则等路由订阅时冷填）

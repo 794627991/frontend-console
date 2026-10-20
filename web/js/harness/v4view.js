@@ -688,6 +688,17 @@
       var chip = q ? q('[data-hg-model]') : null;
       if (chip) chip.innerHTML = esc(patch.model) + ' ▾';
     }
+    // 交互提问（V3 形态对齐：askRender 挂 dock 面板，非消息行）。
+    // askRender 自带同 req_id 幂等查重；点击/提交委托与 POST /ask/answer
+    // 均复用既有 DOM 委托链（dock 在 _hgWrap 内，v4 未动）。
+    if (patch.ask !== undefined) {
+      var ar = _g('askRender');
+      if (ar) { try { patch.ask ? ar(patch.ask) : null; } catch (e) {} }
+    }
+    if (patch.ask_done) {
+      var ad = _g('askDone');
+      if (ad) { try { ad(patch.ask_done); } catch (e) {} }
+    }
     // 子 pane 结论终稿（state.done + final）：一次成型，绝不重复
     if (this.isSub && this.conclEl && !this.conclDone) {
       var done = (patch.done !== undefined) ? patch.done : !!st.done;
