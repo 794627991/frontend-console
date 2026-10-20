@@ -9,13 +9,13 @@ rem ============================================================
 cd /d "%~dp0"
 set HARNESS_DEBUG_WEB=1
 set HARNESS_V4=1
-where python >/dev/null 2>nul
+where python >nul 2>nul
 if %errorlevel%==0 (
   python src\main.py
   pause
   exit /b
 )
-where py >/dev/null 2>nul
+where py >nul 2>nul
 if %errorlevel%==0 (
   py src\main.py
   pause
