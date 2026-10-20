@@ -1523,9 +1523,16 @@
       if (String(t).indexOf('__') === 0) continue;   // 伪 tab（动态/目录/版本）
       try {
         const aF = _hgAg(t);
-        if (aF && !aF.done) {   // 档案在跑=真冻死；miss 保守不动
-          _subReplayForce(t);
-          _subTlTickStart(t);
+        const empty = !(tb.t.tl && tb.t.tl.children.length);   // 时间线空=从未铺底
+        if (aF && (!aF.done || empty || !tb.rpN)) {
+          // 402b：在跑→救跟随+复活 tick；已 done 但窗格空壳/从未铺底
+          //（rpN 未设）→同样补铺（_subReplay 按档案分诊定稿，幂等）。
+          // 10s 节流（force 是全量拉，不能每 2.5s 打）；档案 miss 保守不动
+          if (!tb._healAt || Date.now() - tb._healAt > 10000) {
+            tb._healAt = Date.now();
+            _subReplayForce(t);
+          }
+          if (!aF.done) _subTlTickStart(t);
         }
       } catch (_) {}
     }
