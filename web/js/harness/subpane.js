@@ -737,7 +737,10 @@
           //（tidMap 批1写点保证 task_started/ACK 即有映射）——旧码对
           // _aF.taskId 解引用=TypeError 被 catch 吞+followInflight 已置
           // 位=轮询通道在 miss 窗口被永久杀死（恰是本修复要保护的场景）
-          if (!cur.replay && !cur.followInflight
+          // v4（批E）：投影订阅的 tab 轮询退役——delta 流已在推（实时刷新
+          // 不再依赖 2.5s follow；终稿由 state.final 驱动 concl 区）
+          if (t.v4) { /* v4 tab：无轮询无重建 */ }
+          else if (!cur.replay && !cur.followInflight
               && Date.now() - (cur.lastFollow || 0) > 2500) {
             const _aidF = (_aF && (_aF.taskId || _aF.agentId))
               || ((_HG.tidMap || {})[cur.tid0 || tid]) || '';
@@ -951,6 +954,21 @@
     _subOpen(tid, type, desc, !_alive);
     const sc = _sub.tabs[tid] && _sub.tabs[tid].sc;
     if (!sc) return;
+    // v4 归一管线（批E）：子窗格走投影订阅——delta 直推实时刷新（红线：
+    // 活跃子代理与主窗同管线刷新），fetch /subagent_replay 全量重建与
+    // tick follow 轮询在此模式下退役；结论终稿由 state.final 驱动 concl 区
+    if (typeof V4Main !== 'undefined' && V4Main.on()) {
+      sc.dataset.replayed = agentId;
+      const _tbV = _sub.tabs[tid];
+      const _concl = _tbV && _tbV.t && _tbV.t.concl ? _tbV.t.concl : null;
+      V4Main.subOpen(sc, agentId, _concl);
+      if (_tbV && _tbV.t) {
+        _tbV.t.v4 = true;
+        _tbV.t.label.textContent = desc || type || '子代理';
+      }
+      _sub.manual = true;
+      return;
+    }
     if (sc.dataset.replayed === agentId && !force) { _sub.manual = true; return; }   // 已拉过
     // v3.2.6：拉取期头行给加载态（脚手架默认「工作中」对回放 tab 是误导）
     {
@@ -1450,7 +1468,10 @@
     try {
       const _k = _subTid(tid);
       const tbF = _sub.tabs[_k];
-      if (tbF && tbF.t && !tbF.t.tlDone) setTimeout(() => { try { _subReplayForce(_k); } catch (_) {} }, 600);
+      // v4（批E）：投影 tab 的终稿必达由 state.final→concl 驱动（delta 流），
+      // 600ms 全量重建校对退役（重建会摧毁 v4 订阅容器）
+      if (tbF && tbF.t && !tbF.t.tlDone && !tbF.t.v4)
+        setTimeout(() => { try { _subReplayForce(_k); } catch (_) {} }, 600);
     } catch (_) {}
   }
   function _subTlGate(kind, text) {

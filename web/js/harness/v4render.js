@@ -61,6 +61,8 @@
     for (var j = 0; j < fns.length; j++) { try { fns[j] && fns[j](); } catch (e) {} }
     var fin = _g('grpFinalize');
     if (fin) { try { fin(true, { hist: true, endTs: Date.now() }); } catch (e) {} }
+    // 子 pane：snapshot 即含终态（state.final）时结论区一次成型
+    if (snap && snap.state && snap.state.final) this._statePatch(snap.state);
     this._scrollFollow(true);
   };
 
@@ -286,12 +288,30 @@
     if (st) st.textContent = row.status === 'error' ? '失败' : '完成';
   };
 
-  // ---- A 区状态（busy/queue——spinner 与排队条） ---------------------------
+  // ---- A 区状态（busy/queue/done+final——spinner/排队条/子代理结论区） -----
 
   V4Render.prototype._statePatch = function (patch) {
     if (typeof patch.busy === 'boolean') {
       var busy = _g('setBusy') || _g('_hgSetBusy');
       if (busy) { try { busy(patch.busy); } catch (e) {} }
+    }
+    // 子 pane 结论终稿必达：state.done + final → 结论区一次成型
+    if (this.opt.conclEl && (patch.done || patch.final !== undefined)) {
+      var txt = patch.final;
+      if (txt === undefined && this.store && this.store.snap)
+        txt = (this.store.snap.state || {}).final;
+      if (txt) {
+        var cel = this.opt.conclEl;
+        if (!cel.dataset.v4FinalDone) {
+          cel.dataset.v4FinalDone = '1';
+          var md = _g('mdBubble');
+          var d = document.createElement('div');
+          d.className = 'h-msg asst';
+          if (md) { try { d.appendChild(md(txt)); } catch (e) { d.textContent = txt; } }
+          else d.textContent = txt;
+          cel.appendChild(d);
+        }
+      }
     }
   };
 

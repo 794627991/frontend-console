@@ -181,6 +181,10 @@
     renderAtts();
     _hgCtxRestore(sid);                // 切回旧会话：恢复该会话上次的上下文用量（result 不重放）
     _hgQueueSeed(sid);                 // v3.1：durable 队列从服务端账本初始化（#10）
+    // v4 归一管线（批F 灰度开关，验收后常开）：清场与状态账完成后全权接管
+    // ——store connect 收 snapshot 整建 + delta 增量；旧 openSSE/histFetch/
+    // _histRender 路径不再执行（sse.js/histcache.js 批G 退役）
+    if (typeof V4Main !== 'undefined' && V4Main.on()) { V4Main.switch(sid, keepInput); return; }
     if (!sid) {
       _hgFlow.innerHTML = '';
       _hgAskDockRestore('');   // v3.4.61：新会话清 dock（旧面板不跨会话残留）

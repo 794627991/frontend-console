@@ -85,7 +85,8 @@
     _HG.sid = j.sid; _HG.seq = 0; _HG.alive = true;
     _hgTitleEl.textContent = '新会话';
     _hgCwdEl.textContent = (j.cwd || '').split(/[\\/]/).pop() || '~';
-    openSSE(j.sid, 0);
+    if (typeof V4Main !== 'undefined' && V4Main.on()) V4Main.switch(j.sid);
+    else openSSE(j.sid, 0);
     refreshSessions();
     return j.sid;
   }
@@ -110,10 +111,14 @@
     // 保留 el=null 传参（_hgRollbackTurn 幂等）
     const el = null;
     setBusy(true);
+    // v4 归一管线（批F）：命令上行带 cmd 锚——成功 ACK 即 markPending，
+    // 投影 2s 内未回显本命令则自动重订阅恢复权威投影（绝不重放/伪造）
+    const _v4cmd = (typeof V4Main !== 'undefined' && V4Main.on()) ? V4Main.newCmd() : null;
     try {
       const r = await fetch('/api/harness/send', {method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({sid, text, images, files})});
+        body: JSON.stringify({sid, text, images, files, cmd: _v4cmd})});
       const j = await r.json();
+      if (j.ok && _v4cmd) V4Main.markPending(_v4cmd);
       if (!j.ok) {
         endThinking(); _hgRollbackTurn(el);    // v3.4.95：气泡+乐观空组一起拆（旧实现残空壳组=「两个工作区」）
         dispatch.rej = String(j.err || '');    // v2.35.1（F6）：失败原因外显（queuePump 据此判可回队）
