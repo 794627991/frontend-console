@@ -1569,7 +1569,13 @@
         // 或 tick 死的 live → ensure 管（铺底+复活，内置 3s 节流）；档案
         // miss 保守不动
         const aF = _hgAg(t);
-        if (aF && (!aF.done || st === 'shell')) _subEnsure(t);
+        // 421（用户重启后仍实锤「结论没出来」——现场铁证：rpl1 tab rpN=201/tlN=95
+        // 但 done=false+结论空，档案早 done=420 的 _subClose 修复只护"完成信号
+        // 到达时在场"的 tab，此前冻死的 live 态 tab 无人管——自愈条件
+        // `!aF.done || st==='shell'` 漏了「档案已 done 但 tab 冻在 live」形态）：
+        // tab 未定稿且档案在场（任何死活）→ ensure（_subReplay 按档案分诊自然
+        // 定稿+终稿必达，幂等）
+        if (aF && st !== 'final') _subEnsure(t);
       } catch (_) {}
     }
     if (!_HG.busy && !_hgAgentsRunning()) return;
