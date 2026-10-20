@@ -72,6 +72,7 @@
     this.conclEl = this.opt.conclEl || null;
     this.conclDone = false;
     this._lastBusy = undefined;
+    this._lastRole = null;
     this.unsub = store.subscribe(function (ev) { self._onEv(ev); });
   }
 
@@ -129,6 +130,15 @@
         return;
       }
       if (live) L.live = 1;                 // V3 live 语义（动画/占位/组头）
+      // 思考段收口对齐 V3 sse（:335/:339）：任何非 thinking 行到达前
+      // endThinking——否则段头残留流式滚播尾巴（用户实测「思考结束还残留
+      // 思考内容，不统一」）
+      if (L.role !== 'thinking' && this._lastRole === 'thinking') {
+        var eT = _g('endThinking'), cR = _g('closeRun');
+        if (eT) { try { eT(); } catch (e) {} }
+        if (cR) { try { cR(); } catch (e) {} }
+      }
+      this._lastRole = L.role;
       var add = _g('_hgRowAdd');
       if (add) { try { add(L); } catch (e) {} }
     } else if (op === 'row.upserted') {
