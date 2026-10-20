@@ -105,11 +105,20 @@
     }
     var win = _g('_hgHistWinStart');        // V3 20 回合窗口起点
     var start = win ? win(lines, 0) : 0;
+    var busy = !!(snap && snap.state && snap.state.busy);
     var render = _g('_histRender');
     if (render) {
-      try { render(lines, start, { noFinalize: false }); } catch (e) {
+      // busy 会话切回：noFinalize 留活组（对齐 V3 sessions.js:534）——写死
+      // false 会把进行中的尾组定稿，后续 live delta 落入幽灵新组（用户实测
+      // 「A切B切A 工作组错乱」）
+      try { render(lines, start, { noFinalize: busy }); } catch (e) {
         (root.console && console.error) && console.error('[v4bridge] rebuild', e);
       }
+    }
+    if (busy) {
+      // V3 快照路同款恢复（sessions.js:362）：占位气泡+组头秒表认回接续
+      var pr = _g('phResume');
+      if (pr) { try { pr(true); } catch (e) {} }
     }
     if (snap && snap.state) this._paintState(snap.state, true);
   };
