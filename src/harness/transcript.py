@@ -220,6 +220,10 @@ def transcript_for(s):
                             # 才判（与实时口径一致），产 peer 行走前端既有按名
                             # 配对定格
                             _am = _re.search(r"<agent-message[^>]*>[\s\S]*?</agent-message>", t)
+                            if _am and "[Subagent hand-back]" in t:
+                                # 401：自家子代理交付信封不产 peer 行（v3.4.68 起大量
+                                # 使用——回放侧无条件产=4 条「协作回传」通知行实锤）
+                                continue
                             if _am:
                                 # v3.4.68：同上方 cross-session 分支——补 from= 口径（handback 帧形态）
                                 _anm = _re.search(r'from-name="([^"]*)"', t) \

@@ -1480,6 +1480,8 @@ class HarnessSession:
                 # v2.3.2 审计 1a 误报收窄：非 peer origin（内嵌型）还须 system-reminder
                 # 壳在标记之前——CLI 排队注入的固定形态；用户手贴回传原文/贴原始
                 # jsonl 排查问题时通常不带这层壳，不再弹假回传气泡
+                if "[Subagent hand-back]" in t:
+                    continue   # 401：自家子代理交付信封不走回传线
                 _mp = t.find("Another Claude session sent a message")
                 if (o.get("origin") or {}).get("kind") != "peer" and _mp > 0:
                     if t.find("<system-reminder") < 0 or \

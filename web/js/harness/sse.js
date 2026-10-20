@@ -613,6 +613,11 @@
         if (tb) peerText = tb.text;
       }
       if (peerText) {
+        // 401：我们自己的 SubagentHandback 信封（含固定标记）无条件静默——
+        // v3.4.68 的「from 命中档案」判定依赖 agents 在场性（SendMessage 续用
+        // 窗口 miss），漏网即冒「协作回传」通知行+endThinking/closeRun 打断
+        // 当前组（用户实锤 4 条通知+49 秒新组）
+        if (peerText.indexOf('[Subagent hand-back]') >= 0) return;
         // v3.4.60：SubagentHandback 注入形态是「Another...sent a message:
         // <agent-message from="agentId">」——from-name= 提取不到名、body 落
         // 整段（含标签原文），renderPeer('其他会话') 按名配对恒 miss → 转交
@@ -645,6 +650,7 @@
         if (tb2) agMsg = tb2.text;
       }
       if (agMsg) {
+        if (agMsg.indexOf('[Subagent hand-back]') >= 0) return;   // 401：同上（信封静默）
         // v3.4.60：from= 属性形态（SubagentHandback）同链加固；from 系协议
         // 属性排在泛化 name= 之前（轻审P2：正文恰含 name="..." 时防抢跑错配）
         const anm = agMsg.match(/from-name="([^"]*)"/) || agMsg.match(/\bfrom="([^"]*)"/)

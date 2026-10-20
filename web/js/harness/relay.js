@@ -491,6 +491,9 @@
       _hgPeerLineFreeze(w.el);            // 单槽兼容路径（不携带摘要——摘要走按名配对）
   }
   function renderPeer(name, text, to, noDedup, hist) {  // 📥 回传气泡（区别于 user/AI）
+    // 401 兜底：SubagentHandback 信封不进任何回传可视化（四重防线之末）
+    if (String(text || '').indexOf('[Subagent hand-back]') >= 0
+        || String(name || '').indexOf('[Subagent hand-back]') >= 0) return;
     // hist=true：历史回放路径（renderHistLine）——绝不开新段（v2.53 教训：
     // 重启重建历史时每条回传都新建「协作·xx 运行中」假段，正文吞进折叠壳，
     // 主链看似丢消息），回传归入对应已完成段；miss 则平铺气泡（原回退）
