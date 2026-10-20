@@ -50,7 +50,13 @@
         : row.mkind;                        // renew/sysnote/audit
       L.text = row.text || '';
     } else if (k === 'peer_notify') {
-      L.role = 'peer'; L.title = row.title || ''; L.text = row.brief || '';
+      // 用户拍板（a16 实测截图）：无名字无内容的历史遗留回传行=屎山胶囊
+      // 「协作回传·其他会话：」——直接不渲染。有实义的回传保留通知行形态
+      // （423/424 形态约定），名字必须传对（否则 V3 兜底显示「其他会话」）
+      var _pn = String(row.title || '').trim();
+      var _pb = String(row.brief || '').trim();
+      if ((!_pn || _pn === '其他会话') && !_pb) return null;
+      L.role = 'peer'; L.name = _pn; L.text = _pb;
     } else if (k === 'vision') {
       L.role = 'vision_relay'; L.prompt = row.prompt || ''; L.src = row.src || '';
       L.chan = row.chan || ''; L.tid = row.tid || ''; L.dur = row.dur || 0;
