@@ -1,0 +1,141 @@
+[
+  {
+    "name": "append_then_delta_text",
+    "snapshot0": null,
+    "deltas": [
+      {"op": "row.appended", "row": {"rowId": 1, "turnId": "t1", "kind": "assistant_text", "at": 100, "atSeq": 5, "text": "你"}},
+      {"op": "row.delta", "rowId": 1, "path": "text", "append": "好"},
+      {"op": "row.delta", "rowId": 1, "path": "text", "append": "，世界"}
+    ],
+    "expect": {"seq": 0, "epoch": "", "state": {}, "rows": [
+      {"rowId": 1, "turnId": "t1", "kind": "assistant_text", "at": 100, "atSeq": 5, "text": "你好，世界"}
+    ], "total": 1},
+    "expect_coalesced": [
+      {"op": "row.appended", "row": {"rowId": 1, "turnId": "t1", "kind": "assistant_text", "at": 100, "atSeq": 5, "text": "你"}},
+      {"op": "row.delta", "rowId": 1, "path": "text", "append": "好，世界"}
+    ]
+  },
+  {
+    "name": "upserted_replaces_row",
+    "snapshot0": null,
+    "deltas": [
+      {"op": "row.appended", "row": {"rowId": 2, "turnId": "t1", "kind": "tool_call", "at": 200, "atSeq": 9, "tool": "Bash", "status": "running"}},
+      {"op": "row.upserted", "row": {"rowId": 2, "turnId": "t1", "kind": "tool_call", "at": 200, "atSeq": 9, "tool": "Bash", "status": "success", "output": "ok", "endedAt": 900, "dur": 700}}
+    ],
+    "expect": {"seq": 0, "epoch": "", "state": {}, "rows": [
+      {"rowId": 2, "turnId": "t1", "kind": "tool_call", "at": 200, "atSeq": 9, "tool": "Bash", "status": "success", "output": "ok", "endedAt": 900, "dur": 700}
+    ], "total": 1}
+  },
+  {
+    "name": "upserted_absorbs_delta",
+    "snapshot0": null,
+    "deltas": [
+      {"op": "row.appended", "row": {"rowId": 1, "turnId": "t1", "kind": "assistant_text", "at": 1, "atSeq": 1, "text": ""}},
+      {"op": "row.delta", "rowId": 1, "path": "text", "append": "部分"},
+      {"op": "row.upserted", "row": {"rowId": 1, "turnId": "t1", "kind": "assistant_text", "at": 1, "atSeq": 1, "text": "终稿全文"}}
+    ],
+    "expect": {"seq": 0, "epoch": "", "state": {}, "rows": [
+      {"rowId": 1, "turnId": "t1", "kind": "assistant_text", "at": 1, "atSeq": 1, "text": "终稿全文"}
+    ], "total": 1},
+    "expect_coalesced": [
+      {"op": "row.appended", "row": {"rowId": 1, "turnId": "t1", "kind": "assistant_text", "at": 1, "atSeq": 1, "text": ""}},
+      {"op": "row.upserted", "row": {"rowId": 1, "turnId": "t1", "kind": "assistant_text", "at": 1, "atSeq": 1, "text": "终稿全文"}}
+    ]
+  },
+  {
+    "name": "removed_suffix",
+    "snapshot0": null,
+    "deltas": [
+      {"op": "row.appended", "row": {"rowId": 1, "turnId": "t1", "kind": "marker", "at": 1, "atSeq": 1, "mkind": "renew", "text": "r1"}},
+      {"op": "row.appended", "row": {"rowId": 2, "turnId": "t1", "kind": "user_input", "at": 2, "atSeq": 2, "text": "u"}},
+      {"op": "row.appended", "row": {"rowId": 3, "turnId": "t1", "kind": "assistant_text", "at": 3, "atSeq": 3, "text": "a"}},
+      {"op": "row.appended", "row": {"rowId": 4, "turnId": "t1", "kind": "assistant_text", "at": 4, "atSeq": 4, "text": "b"}},
+      {"op": "row.removed", "fromRowId": 3}
+    ],
+    "expect": {"seq": 0, "epoch": "", "state": {}, "rows": [
+      {"rowId": 1, "turnId": "t1", "kind": "marker", "at": 1, "atSeq": 1, "mkind": "renew", "text": "r1"},
+      {"rowId": 2, "turnId": "t1", "kind": "user_input", "at": 2, "atSeq": 2, "text": "u"}
+    ], "total": 2}
+  },
+  {
+    "name": "state_shallow_merge",
+    "snapshot0": {"seq": 3, "epoch": "e1", "state": {"busy": true, "model": "a"}, "rows": [], "total": 0},
+    "deltas": [
+      {"op": "state.updated", "patch": {"busy": false}},
+      {"op": "state.updated", "patch": {"queue": [{"id": 1, "text": "q"}]}}
+    ],
+    "expect": {"seq": 3, "epoch": "e1", "state": {"busy": false, "model": "a", "queue": [{"id": 1, "text": "q"}]}, "rows": [], "total": 0},
+    "expect_coalesced": [
+      {"op": "state.updated", "patch": {"busy": false, "queue": [{"id": 1, "text": "q"}]}}
+    ]
+  },
+  {
+    "name": "delta_unknown_row_noop",
+    "snapshot0": null,
+    "deltas": [
+      {"op": "row.appended", "row": {"rowId": 1, "turnId": "t1", "kind": "assistant_text", "at": 1, "atSeq": 1, "text": "x"}},
+      {"op": "row.delta", "rowId": 99, "path": "text", "append": "?"},
+      {"op": "row.delta", "rowId": 1, "path": "bogus", "append": "?"},
+      {"op": "row.delta", "rowId": 1, "path": "text", "append": ""}
+    ],
+    "expect": {"seq": 0, "epoch": "", "state": {}, "rows": [
+      {"rowId": 1, "turnId": "t1", "kind": "assistant_text", "at": 1, "atSeq": 1, "text": "x"}
+    ], "total": 1}
+  },
+  {
+    "name": "appended_idempotent",
+    "snapshot0": null,
+    "deltas": [
+      {"op": "row.appended", "row": {"rowId": 1, "turnId": "t1", "kind": "marker", "at": 1, "atSeq": 1, "mkind": "sysnote", "text": "n"}},
+      {"op": "row.appended", "row": {"rowId": 1, "turnId": "t1", "kind": "marker", "at": 1, "atSeq": 1, "mkind": "sysnote", "text": "n"}}
+    ],
+    "expect": {"seq": 0, "epoch": "", "state": {}, "rows": [
+      {"rowId": 1, "turnId": "t1", "kind": "marker", "at": 1, "atSeq": 1, "mkind": "sysnote", "text": "n"}
+    ], "total": 1}
+  },
+  {
+    "name": "removed_barrier_coalesce",
+    "snapshot0": null,
+    "deltas": [
+      {"op": "row.appended", "row": {"rowId": 2, "turnId": "t1", "kind": "assistant_text", "at": 2, "atSeq": 2, "text": "旧"}},
+      {"op": "row.delta", "rowId": 2, "path": "text", "append": "流"},
+      {"op": "row.removed", "fromRowId": 2},
+      {"op": "row.appended", "row": {"rowId": 5, "turnId": "t9", "kind": "assistant_text", "at": 9, "atSeq": 9, "text": "新分支"}}
+    ],
+    "expect": {"seq": 0, "epoch": "", "state": {}, "rows": [
+      {"rowId": 5, "turnId": "t9", "kind": "assistant_text", "at": 9, "atSeq": 9, "text": "新分支"}
+    ], "total": 1},
+    "expect_coalesced": [
+      {"op": "row.removed", "fromRowId": 2},
+      {"op": "row.appended", "row": {"rowId": 5, "turnId": "t9", "kind": "assistant_text", "at": 9, "atSeq": 9, "text": "新分支"}}
+    ]
+  },
+  {
+    "name": "tool_lifecycle_stream_input",
+    "snapshot0": null,
+    "deltas": [
+      {"op": "row.appended", "row": {"rowId": 3, "turnId": "t1", "kind": "tool_call", "at": 10, "atSeq": 10, "tool": "Edit", "status": "streaming_input", "inputText": "pa"}},
+      {"op": "row.delta", "rowId": 3, "path": "inputText", "append": "th="},
+      {"op": "row.delta", "rowId": 3, "path": "inputText", "append": "a.ts"},
+      {"op": "row.upserted", "row": {"rowId": 3, "turnId": "t1", "kind": "tool_call", "at": 10, "atSeq": 10, "tool": "Edit", "status": "running", "input": "path=a.ts", "startedAt": 50}}
+    ],
+    "expect": {"seq": 0, "epoch": "", "state": {}, "rows": [
+      {"rowId": 3, "turnId": "t1", "kind": "tool_call", "at": 10, "atSeq": 10, "tool": "Edit", "status": "running", "input": "path=a.ts", "startedAt": 50}
+    ], "total": 1}
+  },
+  {
+    "name": "turn_header_and_subagent_row",
+    "snapshot0": null,
+    "deltas": [
+      {"op": "row.appended", "row": {"rowId": 1, "turnId": "t1", "kind": "turn_header", "at": 1, "atSeq": 1, "state": "running", "model": "m1"}},
+      {"op": "row.appended", "row": {"rowId": 2, "turnId": "t1", "kind": "subagent", "at": 2, "atSeq": 2, "agentType": "Explore", "status": "running", "summary": "探查中", "childTopic": "sub:agent_1"}},
+      {"op": "row.delta", "rowId": 2, "path": "summary", "append": "……完毕"},
+      {"op": "row.upserted", "row": {"rowId": 2, "turnId": "t1", "kind": "subagent", "at": 2, "atSeq": 2, "agentType": "Explore", "status": "success", "summary": "探查中……完毕", "childTopic": "sub:agent_1", "endedAt": 800}},
+      {"op": "row.upserted", "row": {"rowId": 1, "turnId": "t1", "kind": "turn_header", "at": 1, "atSeq": 1, "state": "success", "model": "m1", "endedAt": 900, "activeMs": 890}}
+    ],
+    "expect": {"seq": 0, "epoch": "", "state": {}, "rows": [
+      {"rowId": 1, "turnId": "t1", "kind": "turn_header", "at": 1, "atSeq": 1, "state": "success", "model": "m1", "endedAt": 900, "activeMs": 890},
+      {"rowId": 2, "turnId": "t1", "kind": "subagent", "at": 2, "atSeq": 2, "agentType": "Explore", "status": "success", "summary": "探查中……完毕", "childTopic": "sub:agent_1", "endedAt": 800}
+    ], "total": 2}
+  }
+]
