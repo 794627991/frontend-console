@@ -185,8 +185,17 @@
     }
     if (row.kind === 'turn_header') {
       if (row.state && row.state !== 'running') {
+        // 空壳守卫（用户实测 a21「已工作 0 秒」幽灵组）：组内无思考/工具/
+        // 正文时摘除整组而非定稿——定稿空组=「已工作 0 秒」裸壳
+        var g = (typeof _HG !== 'undefined') ? _HG.grp : null;
+        var hasWork = !!(g && ((g.counts && (g.counts.think || g.counts.tool
+          || g.counts.sub)) || (g.root
+          && g.root.querySelector('.h-msg.asst:not(.ph), .h-tl > *'))));
         var fin = _g('grpFinalize');
-        if (fin) {
+        if (g && !hasWork && g.root && g.root.parentNode) {
+          try { g.root.parentNode.removeChild(g.root); } catch (e) {}
+          if (_HG.grp === g) _HG.grp = null;
+        } else if (fin && hasWork) {
           try { fin(false, { turnEnd: true,
                              endTs: row.endedAt || Date.now() }); } catch (e) {}
         }
