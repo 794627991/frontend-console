@@ -20,6 +20,14 @@
         else if (!_HG.busy) setBusy(false);
       } else if (sub === 'task_started' || sub === 'task_progress'
                  || sub === 'task_notification') {
+        // 417 嵌套泄漏根治（用户实锤「这个还是子代理的task，怎么又出现在
+        // 主窗口了」——devtools 事件实证：嵌套 agent 的事件带完整
+        // parent_tool_use_id+agent_id 标记，但本分支是 system 事件从不查
+        // parent → 嵌套 task_started 被当主会话派发建档案+行卡+后台任务行
+        // =三卡泄漏+三计时不一致的源头）。带 parent/agent_id 标记的生命
+        // 周期事件=子代理内部的嵌套派发：不建主窗档案/行卡（其过程归
+        // 对应 agent 窗格与转写，tail/delta 通道自管）
+        if (o.parent_tool_use_id || o.agent_id) return;   // handleEvent 内链尾互斥，return 安全
         // subagent-registry 阶段2：生命周期事件后 2s 收敛一次注册表同步
         //（后端钩子已实时维护注册表，前端 live 档案 tid 键即时显示不受
         // 影响，Sync 把 agentId 键权威态收编进来——名称/轮数/状态对齐）
