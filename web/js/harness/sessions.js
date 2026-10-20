@@ -405,14 +405,9 @@
               }
               delete _HG.tasksBy[sid];
             }
-            // v3.5.205b（用户实锤「重渲必现：执行中动画消失+不贴底」）：重渲
-            // 换入清了流底 spinner（innerHTML 重建），busy 真值未变 setBusy
-            // 不会重调——幂等重挂（在场即不重加，06-relay 冷开同款）；
-            // 贴底三重兜底同冷开（图片/字体懒结算撑高会再偏，两帧+600ms）
-            if (typeof _hgSpinShow === 'function') { try { _hgSpinShow(_busy2); } catch (_) {} }
-            try { _hgScrollBottom(true); } catch (_) {}
-            requestAnimationFrame(() => requestAnimationFrame(() => { try { _hgScrollBottom(true); } catch (_) {} }));
-            setTimeout(() => { if (_HG.sid === sid) { try { _hgScrollBottom(true); } catch (_) {} } }, 600);
+            // 410 善后内聚：本分支 395 起走游标泵（不 replaceChildren、不清
+            // spinner），v3.5.205b 的整窗善后（spin 重挂+三重贴底）随整窗退役
+            // ——泵路径贴底由 renderUser/renderAsst 内建跟随判据承担
             setTimeout(() => { if (_HG.sid === sid)
               _hgCoverageAudit(sid, _HG.histAll ? _HG.histAll.length : 0,
                 'snapshot-hit-refresh', { snapshotBase: true }); }, 2000);

@@ -244,7 +244,7 @@ function RO_exit(force) {
           const _b = (_HG.fetchedBusy != null) ? _HG.fetchedBusy : !!_HG.busy;
           _histRender(_HG.histAll, _HG.histStart | 0, { noFinalize: _b });
           if (_b && typeof phResume === 'function') phResume(true);
-          if (typeof _hgSpinShow === 'function') { try { _hgSpinShow(_b); } catch (_) {} }
+          // 410：spin 恢复内聚于 _histRender 尾部（409），调用方散补退役
           try { _hgScrollBottom(true); } catch (_) {}
         }
         // A组G1：RO_enter resetLocal 清掉的 dyn/todos/agents 重建（无增长
