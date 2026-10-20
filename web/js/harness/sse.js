@@ -169,6 +169,18 @@
               }
               // v3.2.30：agentId 到手即冲 live 来向队列（窗格已开的目标立即收到）
               if (a.taskId) _subUserFlush(a.taskId);
+              // 403 首次铺底接链（根因修复——402b 之前的实锤「窗格空壳 12h」）：
+              // 374 喂数单通道化退役 SSE 喂入时，live 自动开 tab（_subOpen 只建
+              // 壳）的首次数据源接缝断裂——旧「_subFeed 喂入顺手起 tick」的
+              // 启动链同死，follow 挂 tick 从未跑=从未铺底。正解：agentId 到手
+              // 的本事件（生命周期起点必有）对已开的 tab 发起首次铺底（force+
+              // alive：全量渲染+follow 续流+tick 自然起）；目录点击开的 tab 已
+              // 铺过（rpN 在场）由 _subReplay 的 replayed 标幂等跳过
+              if (a.taskId && /^[0-9a-zA-Z_-]{8,64}$/.test(a.taskId)) {
+                const tbS = _sub.tabs[tid];
+                if (tbS && !tbS.rpN)   // 开着且从未铺底
+                  _subReplay(tid, a.type || 'Task', a.desc || '', a.taskId, true, true);
+              }
               // v3.2.6R（审计F1）：agentId 即刻回写单行卡——不等完成（切走
               // 会话时行已自带 hgSubr，回放入口随快照存活）
               if (a.taskId && /^[0-9a-zA-Z_-]{8,64}$/.test(a.taskId))
