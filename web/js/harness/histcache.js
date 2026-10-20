@@ -323,6 +323,10 @@ if (l && l.live) l.live = 0;   // 398-P5b：重放归一（live 动画/流式语
       _HG.histDirty = false;   // 整窗重放后账净（live 行已并入——见入口拼接）
       try { _histPump(); _trimOldTurns();
 _hgRailSync(); } catch (_) {}
+      // 409：整窗换入把 .hg-spin-row（flow 直子）清掉了——重渲后幂等恢复
+      // 「正在执行…」转圈（用户实锤「正在执行的转圈图标没有了」；此前只有
+      // 快照路径 sessions:412 补，主渲染路径漏；幂等：busy=false 时为 no-op）
+      try { if (typeof _hgSpinShow === 'function') _hgSpinShow(!!_HG.busy); } catch (_) {}
     }
   }
   // v3.2.22（用户实锤「切走再切回，子代理目录点不开」）：快照恢复路径不跑
