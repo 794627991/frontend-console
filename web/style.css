@@ -2434,7 +2434,12 @@ html {
    md 内容回到正常空白折叠（pre-wrap 挂基类会被 <p> 继承破坏 md 排版） */
 .h-think-seg-body.hg-think-plain { white-space: pre-wrap; word-break: break-word;
   overflow-wrap: anywhere; }
-.h-think-seg-body { display: none; padding: 2px 10px 8px; font-size: var(--fs-base);
+/* 419-①（用户记录「思考点开没有平滑动画，编辑/查阅/bash都有」）：display
+   硬切改 max-height 过渡（416 工具卡同方案）——收起 0/展开 42vh 可插值 */
+.h-think-seg-body { display: block; max-height: 0; padding: 0 10px;
+  overflow: hidden; font-size: var(--fs-base);
+  transition: max-height var(--hg-dur, .3s) var(--hg-ease, cubic-bezier(.4,0,.2,1)),
+              padding var(--hg-dur, .3s) var(--hg-ease, cubic-bezier(.4,0,.2,1));
   color: var(--muted); line-height: 1.7; white-space: normal;
   /* v3.2.19（用户实锤「思考没有限制宽度」）：word-break:break-word 不影响
      min-content 宽度，长路径照样把容器顶宽溢出；anywhere 参与内在尺寸
@@ -2443,7 +2448,7 @@ html {
 .h-think-seg-body p { margin: .4em 0; }
 /* v2.59：展开态限高自适应（用户实锤超长思考撑爆界面）——与执行抽屉 42vh 同款
    v2.59R：横向也自适应——思考内的代码块/长行换行或块内滚动，不撑破主窗 */
-.h-think-seg.open .h-think-seg-body { display: block; max-height: 42vh;
+.h-think-seg.open .h-think-seg-body { max-height: 42vh; padding: 2px 10px 8px;
   overflow-y: auto; max-width: 100%; overflow-x: auto; }
 .h-think-seg-body pre, .h-think-seg-body code { white-space: pre-wrap;
   word-break: break-word; overflow-wrap: anywhere; max-width: 100%; }
