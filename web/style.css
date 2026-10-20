@@ -4247,6 +4247,15 @@ html {
    「错位」。高特异性压扁任何嵌套层级的 col/oneclick 卡：无底色无框、仅 2px
    类别左条、直角，行内左距与思考段头对齐（10px）；展开展盒。
    0,3,1 压过 .h-tool.col(0,2,0)/.h-tool.oneclick.open(0,3,0) 的盒样式 */
+/* 411（用户实锤「bash 高度还是明显不对！要求和之前一样，和思考同高」）：
+   时间线内收起态竖直收紧——压扁形态本就无底无框，v3.3.5 原意=扁平行与
+   思考段头同高（27px 实测 vs Bash 41px）；收起 padding-block 清零+头行
+   内缩；.open 展开态保持原样（展开需要呼吸感） */
+.hg-flow .h-tl .h-tool.col:not(.open),
+.hg-flow .h-tl .h-tool.oneclick:not(.open) { padding-block: 0; }
+.hg-flow .h-tl .h-tool.col:not(.open) .h-tool-head,
+.hg-flow .h-tl .h-tool.oneclick:not(.open) .h-tool-head { padding-block: 3px; min-height: 0; }
+
 .hg-flow .h-tl .h-tool.col,
 .hg-flow .h-tl .h-tool.oneclick,
 /* v3.4.64：直角压扁扩到分屏（用户实锤「分屏 Bash 行左条带弧线，主窗口是
