@@ -26,20 +26,26 @@ _sub_feeds = {}             # (sid, agentKey) -> V4Feed
 
 
 def v4_main_feed(s):
-    """主 feed 懒建（feed 与 session 同生命周期；epoch 跟随账本）。"""
+    """主 feed 懒建（feed 与 session 同生命周期；epoch 跟随账本）。
+
+    初始化（ZCode transcript-hydration 对位）：**transcript hydration 永远
+    打底**（CLI 落盘转写是历史权威），账本只补「取水位时刻之后」的在飞事件
+    ——重启后账本恢复 seq 水位但事件体不在（实测 v4.0.0-a6 白屏根因：
+    `last_seq>0` 误判为完整账本走重放，投影只剩当前 turn）。"""
     sid = s.session_id
     with _lock:
         feed = _main_feeds.get(sid)
     if feed is not None and feed.epoch == s.log.epoch:
         return feed
     feed = F.V4Feed(epoch=s.log.epoch)
-    # 初始化在 feed 自身锁内串行完成；建好前并发 ingest 由调用方时序保证
-    # （emit 只会在 feed 建好后到达——_ensure 在路由/emit 桥都先走这里）
-    if s.log.last_seq > 0:
-        for env in s.log.events_after(0):
-            feed.ingest(env)             # 账本重放（live/近期会话）
-    else:
-        _hydrate_main(feed, s)           # 转写 hydration（冷开/重启）
+    h = s.log.last_seq                   # hydration 水位（此刻账本已到的事件）
+    _hydrate_main(feed, s)               # 转写全量打底（历史权威）
+    if h > 0:
+        try:
+            for env in s.log.events_after(h):   # 只补水位后在飞事件（不重复）
+                feed.ingest(env)
+        except Exception:
+            log.exception("v4 账本尾部补放失败 sid=%s", sid)
     with _lock:
         old = _main_feeds.get(sid)
         if old is None or old.epoch != s.log.epoch:
