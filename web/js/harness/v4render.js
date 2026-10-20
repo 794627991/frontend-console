@@ -137,7 +137,7 @@
     var b = { id: row.tid || ('v4r' + row.rowId), name: row.tool || '',
               input: row.input || {} };
     rT(b, false);
-    var el = (root._HG && root._HG.rowById) ? root._HG.rowById[b.id] : null;
+    var el = (typeof _HG !== 'undefined' && _HG.rowById) ? _HG.rowById[b.id] : null;
     if (el && live) el.classList.add('hg-enter');
     // 终态直收（snapshot 回放行/迟到增量）：立即写终态形态
     if (el && row.status && row.status !== 'running' && row.status !== 'streaming_input') {
@@ -175,7 +175,7 @@
   V4Render.prototype._rowUpsert = function (row) {
     var el = this.rowEls[row.rowId];
     if (row.kind === 'tool_call') {
-      if (!el && root._HG && root._HG.rowById) el = root._HG.rowById[row.tid];
+      if (!el && typeof _HG !== 'undefined' && _HG.rowById) el = _HG.rowById[row.tid];
       if (el) { this.rowEls[row.rowId] = el; this._toolDone(row, el); }
       return;
     }

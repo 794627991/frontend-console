@@ -14,11 +14,12 @@
   'use strict';
 
   function v4On() {
-    if (typeof root._HG === 'undefined') return false;
+    // _HG 是 state.js 的 let 全局（不挂 window）——裸标识符沿作用域链解析
+    if (typeof _HG === 'undefined') return false;
     if (_HG.v4 !== undefined) return !!_HG.v4;
     // v4 归一管线默认常开（用户拍板：run_debug 打开即 v4，直接替换旧管线）。
     // ?v4=0 保留为紧急回退口（排查问题时单次降级，不影响下次启动）。
-    var off = /[?&]v4=0/.test(root.location.search);
+    var off = /[?&]v4=0/.test(location.search);
     _HG.v4 = !off;
     return _HG.v4;
   }
@@ -30,7 +31,7 @@
   function v4Switch(sid, keepInput) {
     v4Close();
     if (!sid) return;
-    var flow = root._hgFlow;
+    var flow = (typeof _hgFlow !== 'undefined') ? _hgFlow : null;   // let 全局
     if (!flow) return;
     var store = new root.V4Store(sid, 'main');
     var render = new root.V4Render(store, flow, { live: true });
@@ -47,7 +48,7 @@
       try { _cur.store.close(); } catch (e) {}
     }
     _cur = null;
-    if (root._HG) _HG.v4Cur = null;
+    if (typeof _HG !== 'undefined') _HG.v4Cur = null;
   }
 
   // ---- 发送对账（overlay：不含文本、不渲染，只喂 watchdog） -----------------
