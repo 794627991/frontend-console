@@ -1049,8 +1049,6 @@
         // 纯 ZCode 式：无乐观态无 echoFast 去重窗口——蒸发构造性不存在
         //（v2.20-v3.5.332 守卫/兜底/补画全家随乐观渲染退役）。_hgEchoDup
         // 重放去重保留（与乐观无关的 seq 前置防线）
-        // 415 临时探针（三件套投递断链定位，找到后撤）：echo 到达/Dup 判定/入账三针
-        try { console.log('[probe] user_echo 到达 seq=' + it.seq + ' dup=' + _hgEchoDup(it) + ' busy=' + _HG.busy); } catch(_) {}
         if (!_hgEchoDup(it))
           _hgRowAdd({ role: 'user', text: it.text, ts: Date.now(),
                       // 407：图片并入 files（renderHistLine 只从 l.files 按扩展名过滤——

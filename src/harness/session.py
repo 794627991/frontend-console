@@ -1177,6 +1177,11 @@ class HarnessSession:
         解析（协作包装/转交线/段壳）保持不动——镜像事件只喂 reducer 投影
         （新进程面板与回合摘要行），live/重放共用同一份干净契约。"""
         sub = o.get("subtype")
+        # 418（全诊案4 附带）：嵌套 system 帧（owned_by_subagent/parent_task_id，
+        # 实测 local_bash 形态）不做镜像——给嵌套工具行发 subagent_result 镜像
+        # =投影污染（aid 空壳）
+        if o.get("owned_by_subagent") or o.get("parent_task_id")                 or o.get("parent_tool_use_id") or o.get("agent_id"):
+            return
         tid = str(o.get("tool_use_id") or "")
         if not tid:
             return

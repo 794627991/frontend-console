@@ -118,10 +118,8 @@
           // 先到，此处认组不重建；排队发时此处是唯一建立点。hist 重放
           // （live=false）不触发
           if (e.live) {
-            try { console.log('[probe] echo-case phResume 前 busy=' + _HG.busy + ' grpPh=' + (_HG.grp && _HG.grp.ph && _HG.grp.ph.isConnected)); } catch (_) {}
             try { if (typeof phResume === 'function') phResume(true); } catch (_) {}
             try { setBusy(true); } catch (_) {}
-            try { console.log('[probe] echo-case 后 工作头=' + ([...document.querySelectorAll('.h-turn-head')].pop()||{}).textContent); } catch (_) {}
           }
           break;
         // R4：跨会话回传——识图 peer 行优先配对 .h-vision 卡（v3.4.88 口径：
