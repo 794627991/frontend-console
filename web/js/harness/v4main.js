@@ -40,6 +40,38 @@
     store.connect();
     // 兼容旧链路的状态账（部分基元读这些字段）
     _HG.sid = sid;
+    // switchTo 公共尾巴（标头/模型/cwd/列表）被 v4 分流短路——此处补齐
+    v4PaintHeader(sid, keepInput);
+  }
+
+  function v4PaintHeader(sid, keepInput) {
+    var meta = null;
+    for (var i = 0; i < (_HG.sessions || []).length; i++)
+      if (_HG.sessions[i] && _HG.sessions[i].sid === sid) { meta = _HG.sessions[i]; break; }
+    var title = (meta && meta.title) || '会话';
+    try {
+      if (typeof _hgTitleEl !== 'undefined' && _hgTitleEl) _hgTitleEl.textContent = title;
+      if (typeof _hgConn !== 'undefined' && _hgConn) {
+        _hgConn.meta.label = title;
+        _hgConn.meta.cwd = (meta && meta.cwd) || '';
+        var lb = _hgConn.tab && _hgConn.tab.querySelector('.label');
+        if (lb) lb.textContent = title;
+      }
+      var sm = (meta && meta.model) || (_HG.models && _HG.models.default) || null;
+      if (sm && sm !== _HG.model) {
+        _HG.model = sm;
+        if (typeof _hgQ !== 'undefined' && _hgQ) {
+          var mEl = _hgQ('[data-hg-model]');
+          if (mEl) mEl.innerHTML = (typeof esc === 'function' ? esc(sm) : sm) + ' ▾';
+        }
+      }
+      if (typeof _hgCwdEl !== 'undefined' && _hgCwdEl)
+        _hgCwdEl.textContent = (meta && meta.cwd) || '';
+      if (typeof renderList === 'function') renderList();
+      if (typeof renderQueue === 'function') renderQueue();
+      if (typeof refreshSidebar === 'function') refreshSidebar();
+      if (!keepInput && typeof _hgInput !== 'undefined' && _hgInput) _hgInput.focus();
+    } catch (e) { /* 头部装饰失败不伤管线 */ }
   }
 
   function v4Close() {

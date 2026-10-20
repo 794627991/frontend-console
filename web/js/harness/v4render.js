@@ -335,6 +335,15 @@
       var busy = _g('setBusy') || _g('_hgSetBusy');
       if (busy) { try { busy(patch.busy); } catch (e) {} }
     }
+    // 模型切换（cli system init / model_switched）：chip 跟随投影真值
+    if (patch.model && typeof _HG !== 'undefined') {
+      _HG.model = patch.model;
+      if (typeof _hgQ !== 'undefined' && _hgQ) {
+        var mEl = _hgQ('[data-hg-model]');
+        if (mEl) mEl.innerHTML = (typeof esc === 'function'
+          ? esc(patch.model) : patch.model) + ' ▾';
+      }
+    }
     // 子 pane 结论终稿必达：state.done + final → 结论区一次成型
     if (this.opt.conclEl && (patch.done || patch.final !== undefined)) {
       var txt = patch.final;
