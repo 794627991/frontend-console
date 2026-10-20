@@ -582,28 +582,23 @@
         return null;
       }
     }
-    const d = document.createElement('div'); d.className = 'h-peer';
-    const head = document.createElement('div'); head.className = 'h-peer-head';
-    // v2.37（P1-C）：回传方头像徽标（首字母圆形色标，与模型标识同色板哈希）
-    // v2.37R6+：已知角色标识经 _AGENT_LABEL 映射朴素显示名（v3.3.1 用户定调
-    // 「只轻主力+设计+审核」，工坊系花名退役），并带该角色 frontmatter 模型徽标
-    // （_HG.agentModels 可得时）；未知 id 保持原样。
-    // v3.2.31R（复审2）：直引 _AGENT_LABEL——它是 12-sessions 顶层 const，
-    // 跨脚本可见（05/07/10/13/14 同款直引），本地 _WS_LABELS 副本退役防漂移
-    const _pn = name || '其他会话';
-    const _fn = _AGENT_LABEL[_pn] || _pn;
-    const _pm = (_HG.agentModels || {})[_pn] || '';
-    head.innerHTML = `<span class="h-ava ${_hgAvaCls(_fn)}">${esc(_fn.charAt(0).toUpperCase())}</span>` +
-      `📥 ${esc(_fn)}` +
-      (_pm ? ` · <span class="h-mmodel">${esc(String(_pm).split('[')[0])}</span>` : '') +
-      ` 回传`;
-    d.appendChild(head);
-    const b = document.createElement('div'); b.className = 'h-bubble';
-    b.innerHTML = renderMd(text || '');
-    d.appendChild(b);
-    addRow(d);
-    _hgScrollBottom();
-    return d;
+    // 424（用户拍板「平铺气泡路子彻底删掉——早不用这方案了」）：.h-peer
+    // 平铺（头像+📥标题+md 气泡=v2.x 旧形态）整体退役。识图 miss 兜底也走
+    // 通知行（对端转写/识图卡才是正文完整态载体）
+    {
+      const nd = document.createElement('div');
+      nd.className = 'h-sub-notify';
+      const _nfn = _AGENT_LABEL[name] || name || '其他会话';
+      const _nfull = String(text || '').replace(/\s+/g, ' ').trim();
+      nd.innerHTML = `<span class="h-ava ${_hgAvaCls(_nfn)}">${esc(_nfn.charAt(0).toUpperCase())}</span>` +
+        ` 📥 ${esc(_nfn)}：<span class="h-sub-notify-txt">` +
+        esc(_nfull.slice(0, 120)) + (_nfull.length > 120 ? '…' : '') + '</span>';
+      nd.title = _nfull.slice(0, 400);
+      nd.dataset.hgPeer = String(name || '');
+      addRow(nd);
+      _hgScrollBottom();
+      return nd;
+    }
   }
   function renderCompaction(done) {
     // v3.5.51（designer B2）：只读模式防污染——压缩计时器 tick 会把「正在

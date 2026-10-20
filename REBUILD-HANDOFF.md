@@ -56,3 +56,16 @@
 2. P0-3 watcher 实证（加日志半小时的事）
 3. P0-2 动作归一前必须与用户确认 R4 最终形态（泵差量 vs 整窗重渲）
 4. 架构现状详见 .hg-unify-plan.md（ZCode 九机制对位+三层收敛记录）
+
+## 五、422-424 增补（换会话前最后一批）
+
+- **422 思考展开裁切（419 引入）**：.h-tl 内 padding 覆写特异性 > 基础态 padding:0 → 收起态撑高+过渡期裁切。修：时间线内收起 padding 0/展开恢复，动画保留。
+- **423 识图回传旧平铺复现**：relay.renderPeer（live peer 直调路径）漏识图分流——dispatch 路径有 visionCalls 配对（v3.4.88 卡化），此路径没有 → 识图回传落 v2.x 平铺。修：补 tuid/FIFO 配对 → _hgVisionResult 定格卡内。
+- **424 平铺气泡（.h-peer）JS 生产源整体退役**（用户拍板"早不用了为何还留着"）：renderPeer 尾分支删，识图 miss 兜底也走通知行。**注意**：CSS `.h-peer` 规则保留（旧快照 innerHTML 可能残留该类 DOM，删 CSS 会让历史快照裸奔）；readonly.js 的 `.hg-ro-turn > .h-peer` 选择器同理。
+- **421 冻死 live 态 tab 自愈漏网**：自愈条件 `!aF.done||shell` 漏「档案 done+tab 冻 live」→ 改 `st!=='final'`。现场铁证 rpl1（rpN=201/done=false/结论空，档案早 done）。
+- **420 终稿差量必达**：_subClose 后 600ms 强制行数校对（完成信号在场形态）。
+
+### 平铺退役后的回传形态约定（重构须遵守）
+1. 识图回传 → 识图卡内部（_hgVisionResult：卡定格+绿徽章+点开结论）
+2. 协作回传（SubagentHandback 除外，401 五重静默）→ .h-sub-notify 通知行（单行摘要+title 400+点击开对端窗格）
+3. **禁止任何新路径直画 .h-peer 平铺**
