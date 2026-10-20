@@ -547,23 +547,13 @@
     // 恰 4 行：thinking/assistant/tool/tool），覆盖度审计 gap=4≤5 漏触发——
     // 双重失守=「全没了且无 banner」。本地回报直接忽略（主回合已消费该报告）
     if (!_nm.includes('识图') && _hgLocalResendPeer(_nm)) return;
-    // 批3（迁出主窗）：协作回传通知行——段退役后的新承载体（ZCode
-    // backgroundResult 等价物：单行摘要+title 全文 400+点击开对端窗格，
-    // 正文完整态在对端转写里，点卡 _subReplay 可见）；识图例外保留原气泡
-    if (!_nm.includes('识图')) {
-      const nd = document.createElement('div');
-      nd.className = 'h-sub-notify';
-      const _nfn = _AGENT_LABEL[name] || name || '其他会话';
-      const _nfull = String(text || '').replace(/\s+/g, ' ').trim();
-      nd.innerHTML = `<span class="h-ava ${_hgAvaCls(_nfn)}">${esc(_nfn.charAt(0).toUpperCase())}</span>` +
-        ` 📥 协作回传 · ${esc(_nfn)}：<span class="h-sub-notify-txt">` +
-        esc(_nfull.slice(0, 120)) + (_nfull.length > 120 ? '…' : '') + '</span>';
-      nd.title = _nfull.slice(0, 400);
-      nd.dataset.hgPeer = String(name || '');
-      addRow(nd);
-      _hgScrollBottom();
-      return nd;
-    }
+    // 批3→a17（用户拍板「彻底删除这种胶囊！这是屎山」）：协作回传通知行
+    // （.h-sub-notify「📥 协作回传·xx：」）整体退役——主窗消息流不画任何
+    // 回传胶囊；结论完整态的载体=Agent 工具行卡（subagent_result 回写）与
+    // 对端转写（点卡 _subReplay），通知行是冗余第二通道。转交线定格
+    // （_hgPeerFreezeByName，上方已执行）照旧——「已转交」线收到结论即
+    // 定格收口，视觉链完整
+    if (!_nm.includes('识图')) return null;
     // 422b（用户实锤「识图回传怎么又变成这样了——最早的平铺方案早废弃」）：
     // 识图回传不走平铺气泡（.h-peer 头像+标题+正文=旧 v2.x 形态）——v3.4.88
     // 定调回传整合进识图卡（_hgVisionResult 定格+卡内结论）。本函数是 relay
@@ -582,23 +572,10 @@
         return null;
       }
     }
-    // 424（用户拍板「平铺气泡路子彻底删掉——早不用这方案了」）：.h-peer
-    // 平铺（头像+📥标题+md 气泡=v2.x 旧形态）整体退役。识图 miss 兜底也走
-    // 通知行（对端转写/识图卡才是正文完整态载体）
-    {
-      const nd = document.createElement('div');
-      nd.className = 'h-sub-notify';
-      const _nfn = _AGENT_LABEL[name] || name || '其他会话';
-      const _nfull = String(text || '').replace(/\s+/g, ' ').trim();
-      nd.innerHTML = `<span class="h-ava ${_hgAvaCls(_nfn)}">${esc(_nfn.charAt(0).toUpperCase())}</span>` +
-        ` 📥 ${esc(_nfn)}：<span class="h-sub-notify-txt">` +
-        esc(_nfull.slice(0, 120)) + (_nfull.length > 120 ? '…' : '') + '</span>';
-      nd.title = _nfull.slice(0, 400);
-      nd.dataset.hgPeer = String(name || '');
-      addRow(nd);
-      _hgScrollBottom();
-      return nd;
-    }
+    // 424（用户拍板「平铺气泡路子彻底删掉」）+ a17（用户拍板「协作回传胶囊
+    // 彻底删除！这是屎山」）：.h-peer 平铺与 .h-sub-notify 通知行双双退役。
+    // 识图 miss（卡已不在场）同样静默——结论完整态在对端转写/工具行卡
+    return null;
   }
   function renderCompaction(done) {
     // v3.5.51（designer B2）：只读模式防污染——压缩计时器 tick 会把「正在

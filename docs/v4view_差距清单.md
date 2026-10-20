@@ -89,3 +89,12 @@ v4view 独立渲染层（833 行）两轮实测证明：重写渲染层不可能
 - snapshot 帧 → 清场 + 逐行 renderHistLine 重放（一条管线的整窗）；
   delta 帧 → row.appended/upserted 翻译成 _hgRowAdd/回写调用。
 - 子 pane：投影 rows → _subReplay 同构行喂入。
+
+## 📌 a17 形态裁决：协作回传胶囊整体退役（用户拍板 2026-10-20）
+
+「📥 协作回传·xx：」通知行（.h-sub-notify）**彻底删除**——主窗消息流不画任何
+回传胶囊（v4bridge peer_notify 一律不翻译；V3 renderPeer 两处构造点退役，
+识图 miss 也静默）。结论完整态载体=Agent 工具行卡（subagent_result 回写）
++ 对端转写（_subReplay）。转交线定格（_hgPeerFreezeByName）照旧。
+**推翻 423/424 的「协作回传→通知行」约定**；CSS .h-sub-notify 规则保留
+（旧快照 innerHTML DOM 兼容，删则历史快照裸奔——424 教训）。
