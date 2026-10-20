@@ -1443,6 +1443,15 @@
     tb.run = false; tb.err = !!err;
     _subTlFinalize(tid, { err });   // v3.2.6：窗格时间线定稿（已工作 X + 结论上移）
     _subTabsPaint();
+    // 420（用户实锤「全诊子代理最后结论没出来」——现场铁证：agent done 后
+    // follow 链停（判活闸关）=终稿行差量永不渲染，tab 冻在运行态+tick 悬转）：
+    // 完成信号触发最后一次行数校对重建（终稿+结论上移必达；force 只在有新
+    // 行时动 DOM——_subReplay 内 rpN 比对，幂等无害）
+    try {
+      const _k = _subTid(tid);
+      const tbF = _sub.tabs[_k];
+      if (tbF && tbF.t && !tbF.t.tlDone) setTimeout(() => { try { _subReplayForce(_k); } catch (_) {} }, 600);
+    } catch (_) {}
   }
   function _subTlGate(kind, text) {
     // 环境气泡过滤单点（问题d 根治）：黑名单对齐 transcript.py
