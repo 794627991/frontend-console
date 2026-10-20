@@ -155,7 +155,8 @@ def harness_send():
         return jsonify({"ok": False, "err": "会话不存在"}), 404
     if not s.alive and not s.revive_if_dead():
         return jsonify({"ok": False, "err": "会话已失效，请新建会话"}), 400
-    ok, err = s.send_message(text, images or None, files or None)
+    ok, err = s.send_message(text, images or None, files or None,
+                             cmd=data.get("cmd") or None)
     if not ok:
         return jsonify({"ok": False, "err": err}), 400
     return jsonify({"ok": True})

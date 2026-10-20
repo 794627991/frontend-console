@@ -729,7 +729,8 @@ class HarnessSession:
             return False   # 用户消息没发出去 → 走拒发提示，别静默吞
         return True
 
-    def send_message(self, text, image_paths=None, file_paths=None, boundary=True):
+    def send_message(self, text, image_paths=None, file_paths=None, boundary=True,
+                     cmd=None):
         """发消息：文本 + 可选图片（base64 块，实测网关透传）+ 文件路径（文本
         附录，任何模型都能用 Read 读）。返回 (ok, err)。"""
         # 上下文超窗拒发（用户定调）：切 API 方案会把模型强制跟着切小窗
@@ -924,7 +925,8 @@ class HarnessSession:
                            "text": "上下文超窗，已自动重开会话（%d 轮历史已后台迁移）" % rounds})
             else:
                 self.emit({"kind": "user_echo", "text": text or "",
-                           "images": list(image_paths or []), "files": list(file_paths or [])})
+                           "images": list(image_paths or []), "files": list(file_paths or []),
+                           "cmd": cmd or ""})   # v4：overlay 对账锚（前端 store reconcile）
             return True, None
 
     def interrupt(self):

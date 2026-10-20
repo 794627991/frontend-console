@@ -56,6 +56,23 @@ def _input_brief(inp, limit=2000):
     return s[:limit]
 
 
+def _in_obj(inp, cap=4000):
+    """tool_use input → 可渲染对象（浅拷贝，超长字符串值截断防爆）。"""
+    if not isinstance(inp, dict):
+        return {}
+    out = {}
+    for k, v in inp.items():
+        if isinstance(v, str) and len(v) > cap:
+            out[k] = v[:cap] + "…"
+        else:
+            try:
+                json.dumps(v, ensure_ascii=False)
+                out[k] = v
+            except Exception:
+                out[k] = str(v)
+    return out
+
+
 class V4Feed(object):
     """单会话投影 feed（主会话与子代理共用）。线程安全：ingest 与取帧
     并发（ingest 来自 session 线程，取帧来自 SSE 生成器），锁内推进。"""
@@ -110,7 +127,8 @@ class V4Feed(object):
                 d, _ = self._row(turn, "user_input", ts, seq,
                                  text=data.get("text") or "",
                                  files=data.get("files") or [],
-                                 images=data.get("images") or 0)
+                                 images=data.get("images") or 0,
+                                 cmd=data.get("cmd") or "")
                 ds.append(d)
             elif t == "cli_stream":
                 ds = self._reduce_cli(data, turn, ts, seq)
@@ -226,7 +244,7 @@ class V4Feed(object):
                     name = b.get("name") or ""
                     d, rid = self._row(turn, "tool_call", ts, seq,
                                        tool=name, status="running",
-                                       input=_input_brief(b.get("input") or {}),
+                                       input=_in_obj(b.get("input") or {}),
                                        startedAt=ts,
                                        tid=b.get("id") or "")
                     ds.append(d)
