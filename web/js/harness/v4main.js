@@ -70,6 +70,14 @@
       }
       if (typeof _hgCwdEl !== 'undefined' && _hgCwdEl)
         _hgCwdEl.textContent = (meta && meta.cwd) || '';
+      // 项目 chip 跟随会话 cwd（对齐 V3 sessions.js:581——切回历史会话恢复
+      // 该会话目录；v4 分流短路了冷开路此段，chip 停在默认项目）
+      var mcwd = (meta && meta.cwd) || '';
+      if (mcwd) {
+        _HG.cwd = mcwd;
+        if (typeof _hgSaveCwd === 'function') { try { _hgSaveCwd(mcwd); } catch (e) {} }
+        if (typeof projChipLabel === 'function') { try { projChipLabel(); } catch (e) {} }
+      }
       if (typeof renderList === 'function') renderList();
       if (typeof renderQueue === 'function') renderQueue();
       if (typeof refreshSidebar === 'function') refreshSidebar();
