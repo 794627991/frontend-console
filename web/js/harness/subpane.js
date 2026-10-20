@@ -1552,21 +1552,15 @@
     // DOM）+复活 tick；冻死窗格 2.5s 自愈
     for (const t in _sub.tabs) {
       const tb = _sub.tabs[t];
-      if (!tb || !tb.t || tb.t.done || tb.tick) continue;
       if (String(t).indexOf('__') === 0) continue;   // 伪 tab（动态/目录/版本）
+      const st = _subState(tb);
+      if (st === 'final' || st === 'none' || (st === 'live' && tb.tick)) continue;   // 408：live+tick 活=健康
       try {
+        // 404/408：自愈防线走 _subEnsure（唯一入口）；shell（空壳/从未铺底）
+        // 或 tick 死的 live → ensure 管（铺底+复活，内置 3s 节流）；档案
+        // miss 保守不动
         const aF = _hgAg(t);
-        const empty = !(tb.t.tl && tb.t.tl.children.length);   // 时间线空=从未铺底
-        if (aF && (!aF.done || empty || !tb.rpN)) {
-          // 402b：在跑→救跟随+复活 tick；已 done 但窗格空壳/从未铺底
-          //（rpN 未设）→同样补铺（_subReplay 按档案分诊定稿，幂等）。
-          // 10s 节流（force 是全量拉，不能每 2.5s 打）；档案 miss 保守不动
-          if (!tb._healAt || Date.now() - tb._healAt > 10000) {
-            tb._healAt = Date.now();
-            _subReplayForce(t);
-          }
-          if (!aF.done) _subTlTickStart(t);
-        }
+        if (aF && (!aF.done || st === 'shell')) _subEnsure(t);
       } catch (_) {}
     }
     if (!_HG.busy && !_hgAgentsRunning()) return;
