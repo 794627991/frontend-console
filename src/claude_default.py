@@ -88,10 +88,14 @@ STATUSLINE_SRC = '''# -*- coding: utf-8 -*-
 """
 import sys, json
 
-# 实际模型上下文窗口（tokens）。Lanz-Auto(GLM-5.2)=256K。
-# 必须与 settings.json 的 CLAUDE_CODE_AUTO_COMPACT_WINDOW 一致，
-# 否则状态栏百分比与 autocompact 触发时机对不上。
-REAL_CTX = 256000
+# 实际模型上下文窗口（tokens）。413：运行时读用户设置（与工具端
+# _session_ctx_window 优先级链一致），不再写死——用户配 500K 状态栏
+# 百分比即按 500K 计。statusline 是 CLI 拉起的独立进程，继承 settings.json
+# 注入的 env；两者都缺时兜底 256000
+try:
+    REAL_CTX = int(os.environ.get("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "0")) or               int(os.environ.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "0")) or 256000
+except Exception:
+    REAL_CTX = 256000
 
 try:
     raw = sys.stdin.read()

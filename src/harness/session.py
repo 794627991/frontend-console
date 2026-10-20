@@ -1931,13 +1931,44 @@ _CTX_WINDOW_DEFAULT = 262144
 
 
 def _session_ctx_window(s):
-    """v2.27.22：会话上下文窗口——候选链解析 [1M] 后缀：会话配置名 →
-    settings 默认名 → CLI 实报名。实报名（live_model，网关上报）会被
-    剥掉 [1M] 后缀（裸 glm-5.3），单看它会把 1M 会话判成 256K →
-    251K 被误判超窗拒发（用户实锤「严重 bug」）。窗口是用户在配置里
-    显式选的后缀属性，必须从配置名读；实报名只作最后兜底。"""
+    """413：窗口判定优先级链（用户报告《上下文窗口写死256K问题》根治——
+    旧版只看模型名 [1M] 后缀，其余一律写死 262144，用户 settings.json 配
+    500K 完全不被读取=263K 被按 256K 拒发）。取值顺序，第一个可用生效：
+      1. 网关实报：last_result.modelUsage[].contextWindow（模型真实能力，
+         数据已有——_session_ctx_used 同源字段，此前算了未用于判定）
+      2. 用户设置：settings.json 的 CLAUDE_CODE_MAX_CONTEXT_TOKENS /
+         CLAUDE_CODE_AUTO_COMPACT_WINDOW
+      3. 模型名 [1M] 后缀（v2.27.22 语义保留：配置名显式选择的窗口属性）
+      4. 兜底 262144
+    注意与 v2.27.22 的张力：实报名会剥后缀，但实报的 contextWindow 是网关
+    上报的真实窗口数（非名字推断），值本身可信且高于名字推断——1M 场景
+    网关实报 ≥1048576 自然胜出，不冲突。"""
+    # 1. 网关实报（最权威）
+    try:
+        mu = (getattr(s, "last_result", None) or {}).get("modelUsage") or {}
+        for k in mu:
+            w = (mu[k] or {}).get("contextWindow") or 0
+            if w and int(w) > 0:
+                return int(w)
+    except Exception:
+        pass
+    # 2. 用户设置（settings.json env 注入块）
+    try:
+        import json as _json
+        _sp = os.path.join(os.path.expanduser("~"), ".claude", "settings.json")
+        with open(_sp, "r", encoding="utf-8") as f:
+            _env = (_json.load(f) or {}).get("env") or {}
+        for key in ("CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+                    "CLAUDE_CODE_AUTO_COMPACT_WINDOW"):
+            v = str(_env.get(key) or "").strip()
+            if v.isdigit() and int(v) > 0:
+                return int(v)
+    except Exception:
+        pass
+    # 3. 模型名 [1M] 后缀（显式选择）
     for n in (s.model, available_models().get("default"), s._eff_model()):
         n = (n or "").lower()
         if "[1m]" in n or n.endswith("1m"):
             return _CTX_WINDOW_1M
+    # 4. 兜底
     return _CTX_WINDOW_DEFAULT
