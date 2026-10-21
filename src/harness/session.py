@@ -1696,6 +1696,22 @@ class HarnessSession:
             pass
         finally:
             was_busy = self.busy    # v2.34：进程死时回合是否仍在进行（下方结算用）
+            # a63（用户实测「claude 进程 3 秒猝死，死因无据可查」）：进程死亡
+            # 取证——exit code + stderr 尾部随 exit 落日志。stderr 由独立线程
+            # 持续排空入环形缓冲（防 PIPE 满憋死），此处快照最后 2KB
+            try:
+                _rc = proc.poll()
+                _err_tail = ""
+                try:
+                    _err = getattr(self, "_stderr_tail", None)
+                    if _err:
+                        _err_tail = "".join(list(_err)[-20:])[-2000:]
+                except Exception:
+                    pass
+                log.warning("claude 进程退出 sid=%s rc=%s was_busy=%s stderr尾=%r",
+                            self.session_id, _rc, was_busy, _err_tail)
+            except Exception:
+                pass
             # 身份校验：kill+立即 revive（切模型/base_url 自愈/引导词热更都
             # 是同线程 kill 后马上 start）时，旧 reader 排空剩余 stdout 可能
             # 晚于新 start() 完成——不校验会把新进程的 alive/busy 打死，下一
