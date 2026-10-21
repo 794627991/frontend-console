@@ -127,16 +127,28 @@
 
   var _subs = {};       // container → {store, render}
 
-  function v4SubOpen(el, agentKey, conclEl) {
+  function v4SubOpen(el, agentKey, opt) {
+    opt = opt || {};
     if (!el || !agentKey) return false;
     v4SubClose(el);
+    // a64（用户实锤「子代理页开关几次后消息发不出去、后端像挂了」）：再按
+    // agentKey 清一次旧条目——tab 重建后 sc 是新元素，v4SubClose(el) 按 el
+    // 永远匹配不到旧条目，_subs[agentKey] 被直接覆盖=旧 store 的 EventSource
+    // 无人关闭永久存活。开关几个来回吃满浏览器同域 6 连接上限：发消息 POST、
+    // 主窗/子页 SSE 全部排队发不出去（后端无辜，/api/status 短请求还能挤过
+    // ——「只刷 status」的假象来源）
+    v4SubClose(agentKey);
     var sid = _HG.sid;
     if (!sid) return false;
-    // 结论区在 flow 内长尾——渲染层只把 turn 组塞进 el，结论区（若有）
-    // 由 v4view 的 conclEl 单独管理，避免与行流争同一个父节点
+    // a65：渲染走 bridge 子引擎（V3 subpane kit，只落窗格容器）；opt 带
+    // tid/type/desc 供脚手架与档案联动。空快照兜底在 bridge 内闭环
     var store = new root.V4Store(sid, 'sub:' + agentKey);
-    var render = new root.V4Bridge(store, el,
-      { live: true, sub: true, conclEl: conclEl || null });
+    var render = new root.V4Bridge(store, el, {
+      live: true, sub: true,
+      tid: opt.tid || '', agent: agentKey,
+      type: opt.type || 'Task', desc: opt.desc || '',
+      conclEl: opt.conclEl || null
+    });
     _subs[(el.dataset && el.dataset.v4Key) || agentKey] = _subs[agentKey] =
       { store: store, render: render, el: el };
     store.connect();

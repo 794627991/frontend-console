@@ -261,6 +261,31 @@ def v4_drop_sub(sid, agent_key=None):
             _sub_feeds.pop((sid, agent_key), None)
 
 
+def v4_main_has(sid):
+    """a65：该会话的 v4 主投影是否已建（watcher 按需 hydrate 的启用闸——
+    主 feed 在场=有 v4 客户端订阅过本会话，子投影按需冷建才有意义；V3
+    模式恒 False，watcher 行为与旧版完全一致）。"""
+    with _lock:
+        return _main_feeds.get(sid) is not None
+
+
+def v4_sub_has(sid, agent_key):
+    with _lock:
+        return _sub_feeds.get((sid, agent_key)) is not None
+
+
+def v4_sub_hydrate(sid, agent_key, paths):
+    """a65：watcher 按需冷建子 feed——pane 先开而转写后到（刚派发的代理
+    CLI 尚未落盘）时，快照恒空；转写首行出现即按候选全量 hydrate 建出
+    有内容的 feed 并缓存，此后 watcher 增量正常续喂（调用方须把本轮
+    offset 推到文件尾——hydrate 已消费全量，增量跳过防重复）。
+    返回是否建出有内容的 feed。"""
+    if v4_sub_has(sid, agent_key):
+        return True
+    v4_sub_feed(sid, agent_key, paths)
+    return v4_sub_has(sid, agent_key)
+
+
 def v4_drop_session(sid):
     """会话删除/回收时清全部 feed。"""
     v4_drop_main(sid)

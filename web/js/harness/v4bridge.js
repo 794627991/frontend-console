@@ -77,19 +77,37 @@
     this.conclDone = false;
     this._lastBusy = undefined;
     this._lastRole = null;
+    // a65 子 pane 专用态（渲染引擎见 _subRebuild 族）
+    this._t = null;            // 当前轮时间线对象（subpane kit 形态）
+    this._openTools = [];      // V3 兜底行的 FIFO 结果配对队列
+    this._fbTried = false;     // /subagent_replay 兜底只试一次
+    this._firstAt = 0;         // 首行时刻（轮时长口径）
+    this._lastAt = 0;
+    this._subTick = null;      // 子 pane 秒表 interval（v4 无 V3 tick）
     this.unsub = store.subscribe(function (ev) { self._onEv(ev); });
   }
 
   V4Bridge.prototype.close = function () {
     if (this.unsub) { this.unsub(); this.unsub = null; }
+    this._subWatchStop();
   };
 
   V4Bridge.prototype._onEv = function (ev) {
     var kind = ev && ev.kind;
+    // a65（红线：子代理内容绝不进主窗）：子 pane 全部事件走独立渲染引擎
+    // （V3 subpane kit，落点只在窗格容器），主窗函数一条不可达
+    if (this.opt.sub) {
+      if (kind === 'snapshot') this._subRebuild(ev.snap);
+      else if (kind === 'deltas') {
+        var ds = ev.deltas || [];
+        for (var i = 0; i < ds.length; i++) this._subApplyOne(ds[i]);
+      }
+      return;
+    }
     if (kind === 'snapshot') this._rebuild(ev.snap);
     else if (kind === 'deltas') {
-      var ds = ev.deltas || [];
-      for (var i = 0; i < ds.length; i++) this._applyOne(ds[i]);
+      var ds2 = ev.deltas || [];
+      for (var j = 0; j < ds2.length; j++) this._applyOne(ds2[j]);
     }
   };
 
@@ -209,6 +227,9 @@
           var _running = ent.status === 'running';
           a.done = !_running;
           a.err = ent.status === 'err';
+          // a65：结论摘要随档（readmodel brief）——子 pane 结论区回退源与
+          // 目录行卡摘要在冷同步会话（重启/切回）同源补齐
+          if (!a.result && ent.brief) a.result = String(ent.brief).slice(0, 400);
           var _t0 = Number(ent.t0) || 0;
           a.t0 = a.t0 || (_t0 > 1e12 ? _t0 : _t0 * 1000) || Date.now();
           a.doneAt = a.done ? ((Number(ent.doneAt) || 0) > 1e12
@@ -674,6 +695,429 @@
         this.conclEl.appendChild(dv);
       }
     }
+  };
+
+  // ===========================================================================
+  // a65 子 pane 渲染引擎（红线根治：数据=投影，渲染=V3 subpane kit）
+  //
+  // 背景（用户实测「子代理和主窗混了/子页一开主窗异常/子页打不开内容」的
+  // 共同根因）：子 bridge 曾复用主窗渲染链（_histRender/_hgRowAdd/
+  // renderToolUse）——子快照直接刷进主窗 flow 并覆盖 _HG.histAll（a62 只
+  // 挡了显式赋值，_histRender 内部的 _HG.histAll=lines 与 _hgFlow 渲染没
+  // 挡住），窗格本体反而永远空。本引擎：快照/delta 全部翻译成 subpane
+  // kit 调用（scaffold/时间线/工具卡/结论区，与 V3 回放逐 class 同构），
+  // 落点只在窗格自己的容器；空快照走 /subagent_replay 兜底（同一渲染器），
+  // 再空给「未找到转写」+档案结论——打开必有内容（无条件显示）。
+  // ===========================================================================
+
+  function _toolHintOf(inp) {
+    inp = inp || {};
+    return inp.command || inp.file_path || inp.path || inp.pattern ||
+           inp.query || inp.description || inp.subject || inp.prompt || '';
+  }
+
+  function _normWs(s) { return String(s || '').replace(/\s+/g, ''); }
+
+  // 归一行：v4 投影行（fromV3=false）与 /subagent_replay 行（true）统一成
+  // 一套渲染器输入——兜底不引入第二形态
+  function _subNorm(row, fromV3) {
+    if (!row) return null;
+    if (fromV3) {
+      var k = row.k;
+      if (k === 'user') return { r: 'user', text: row.text || '' };
+      if (k === 'text') return { r: 'text', text: row.text || '' };
+      if (k === 'think') return { r: 'think', text: row.text || '' };
+      if (k === 'note') return { r: 'note', text: row.text || '' };
+      if (k === 'tool') return { r: 'tool', name: row.name || '',
+                                 hint: row.hint || '', tid: row.tid || '',
+                                 input: row.in || null };
+      if (k === 'result') return { r: 'result', text: row.text || '',
+                                   err: !!row.err };
+      return null;
+    }
+    var kk = row.kind;
+    if (kk === 'user_input') return { r: 'user', text: row.text || '' };
+    if (kk === 'assistant_text') return { r: 'text', text: row.text || '' };
+    if (kk === 'reasoning') return { r: 'think', text: row.text || '' };
+    if (kk === 'tool_call') {
+      var done = row.status && row.status !== 'running';
+      return { r: 'tool', name: row.tool || '',
+               hint: _toolHintOf(row.input), tid: row.tid || '',
+               input: row.input || null, done: !!done,
+               out: row.output || '', err: row.status === 'error' };
+    }
+    return null;
+  }
+
+  V4Bridge.prototype._subTab = function () {
+    var g = _g('_sub');
+    if (!g || !g.tabs || !this.opt.tid) return null;
+    return g.tabs[this.opt.tid] || null;
+  };
+
+  V4Bridge.prototype._subScrollBottom = function (stick) {
+    var sc = (this._t && this._t.sc) || this.flow;
+    if (!sc) return;
+    if (stick === false) return;
+    try { sc.scrollTop = sc.scrollHeight; } catch (e) {}
+  };
+
+  // 秒表（v4 pane 无 V3 tick——健康源=store 连接，1s 只画头）
+  V4Bridge.prototype._subWatchStart = function () {
+    var self = this;
+    if (this._subTick) return;
+    var hp = _g('_subTlHeadPaint');
+    this._subTick = setInterval(function () {
+      if (self._closed || !self._t) {
+        if (self._subTick) { clearInterval(self._subTick); self._subTick = null; }
+        return;
+      }
+      if (!self._t.done && hp) { try { hp(self._t); } catch (e) {} }
+    }, 1000);
+  };
+  V4Bridge.prototype._subWatchStop = function () {
+    if (this._subTick) { clearInterval(this._subTick); this._subTick = null; }
+  };
+
+  // 单行追加（含双源查重锚——快照/兜底/delta 三路喂入幂等）
+  V4Bridge.prototype._subAppend = function (n) {
+    var t = this._t;
+    if (!t || !t.tl) return;
+    var i, el;
+    if (n.r === 'user') {
+      var head = String(n.text || '').trim().slice(0, 60);
+      var dupU = head && [...t.sc.querySelectorAll('.hg-sub-u')]
+        .some(x => (x.textContent || '').trim().indexOf(head) === 0);
+      if (dupU) return;
+      // 多轮：当前轮有内容则定格开新轮（V3 回放 D6 同款）
+      if (t.tl.children.length) {
+        var finT = _g('_subTlFinalizeT'), tb0 = this._subTab();
+        if (finT && tb0) {
+          try { finT(tb0, t, { durMs: (this._lastAt && t.t0)
+                               ? Math.max(0, this._lastAt - t.t0) : 0 }); } catch (e) {}
+        }
+        var nt = _g('_subTurnNew');
+        if (nt && tb0) { t = this._t = nt(tb0, { t0: this._lastAt || 0 }); t.v4 = true; }
+        if (!t || !t.tl) return;
+      }
+      var u = document.createElement('div');
+      u.className = 'h-msg user hg-sub-u';
+      var mdU = _g('mdBubble');
+      if (mdU) { try { u.appendChild(mdU(String(n.text || '').slice(0, 1200))); } catch (e) { u.textContent = n.text; } }
+      else u.textContent = n.text;
+      u.dataset.hgRp = '1';
+      var ws = t.tl.closest('.h-grp');
+      if (ws && ws.parentElement) ws.parentElement.insertBefore(u, ws);
+      else { var sfr = _g('_subTlSegFreeze'); if (sfr) sfr(t); t.tl.appendChild(u); }
+      return;
+    }
+    if (n.r === 'text') {
+      var want = _normWs(n.text);
+      var dupT = want && [...(t.sc || t.tl).querySelectorAll('.h-msg.asst[data-raw]')]
+        .some(x => { var g = _normWs(x.dataset.raw);
+                     return !!g && (want.startsWith(g) || g.startsWith(want)); });
+      if (dupT) return;
+      var tr = _g('_subTlTextRow');
+      el = tr ? tr(n.text, true) : null;
+      if (!el) return;
+      var anchor = el.querySelector('.hg-sub-fold-body') || el;
+      anchor.dataset.hgRp = '1';
+      anchor.dataset.raw = String(n.text || '');
+      el.dataset.raw = String(n.text || '').slice(0, 8000);
+      t._lastAsst = el;
+      var ar2 = _g('_subTlAppendRow');
+      if (ar2) { try { ar2(t, el); } catch (e) {} }
+      return;
+    }
+    if (n.r === 'think') {
+      var wantK = _normWs(n.text);
+      var dupK = wantK && [...t.tl.querySelectorAll('.h-think-seg[data-raw]')]
+        .some(x => { var g = _normWs(x.dataset.raw);
+                     return !!g && (wantK.startsWith(g) || g.startsWith(wantK)); });
+      if (dupK) return;
+      var tk = _g('_subTlThinkRow');
+      if (!tk) return;
+      var seg = tk(n.text || '', '');
+      seg.dataset.hgRp = '1';
+      var ar3 = _g('_subTlAppendRow');
+      if (ar3) { try { ar3(t, seg); } catch (e) { t.tl.appendChild(seg); } }
+      else t.tl.appendChild(seg);
+      t.stats.think++;
+      return;
+    }
+    if (n.r === 'note') {
+      var d = document.createElement('div');
+      d.className = 'hg-sub-replay-note';
+      d.textContent = n.text || '';
+      d.dataset.hgRp = '1';
+      var ar4 = _g('_subTlAppendRow');
+      if (ar4) { try { ar4(t, d); } catch (e) { t.tl.appendChild(d); } }
+      else t.tl.appendChild(d);
+      return;
+    }
+    if (n.r === 'tool') {
+      if (n.tid) {
+        try {
+          if (t.tl.querySelector('.h-tool[data-tuid="' + CSS.escape(n.tid) + '"]')) return;
+        } catch (e) {}
+      }
+      var at2 = _g('_subTlAppendTool');
+      if (!at2) return;
+      var stickEl = t.sc;
+      var stick = stickEl ? _g('_subPaneStick') && _g('_subPaneStick')(stickEl) : true;
+      try { at2(t, n.name, n.hint, n.tid, n.input); } catch (e) {}
+      this._openTools.push(n);
+      if (n.done) this._subToolDone(n.tid, n.out, n.err);
+      else if (stick) this._subScrollBottom();
+      return;
+    }
+    if (n.r === 'result') {   // V3 兜底行的 FIFO 配对
+      var w = this._openTools.shift();
+      if (w) this._subToolDone(w.tid, n.text, n.err);
+    }
+  };
+
+  // 工具终态回点（tuid 精确优先；V3 兜底无 tid 行 FIFO；全 miss 静默——
+  // 完整结果在工具卡折叠体，孤儿摘要不裸落时间线（V3 v3.4.65 同口径））
+  V4Bridge.prototype._subToolDone = function (tid, out, err) {
+    var t = this._t;
+    if (!t || !t.tl) return;
+    var row = null;
+    if (tid) {
+      try { row = t.tl.querySelector('.h-tool[data-tuid="' + CSS.escape(tid) + '"]'); }
+      catch (e) {}
+    }
+    if (!row) {
+      var all = [...t.tl.querySelectorAll('.h-tool')];
+      for (var i = 0; i < all.length; i++) {
+        if (all[i].dataset.done !== '1') { row = all[i]; break; }
+      }
+    }
+    if (!row || row.dataset.done === '1') return;
+    row.dataset.done = '1';
+    row.classList.toggle('err', !!err);
+    var slots = row.querySelector('.h-tslots');
+    var sb = _g('statusBadge');
+    if (slots && sb) slots.innerHTML = sb(err ? 'error' : 'completed');
+    var full = String(out || '').trim();
+    var coll = row.querySelector('.h-tool-coll');
+    var quiet = !err && row.dataset.hgKind === 'diff' && !!row.querySelector('.h-diff');
+    if (coll && full && full !== '(no content)' && !quiet) {
+      var d = document.createElement('div');
+      d.className = 'h-tool-out' + (err ? ' err-txt' : '');
+      d.textContent = full.length > 2000 ? full.slice(0, 2000) + '…' : full;
+      coll.appendChild(d);
+    }
+  };
+
+  // 终态收口：done → 定稿+结论；running → 秒表起跑
+  V4Bridge.prototype._subFinish = function (st) {
+    var tb = this._subTab(), t = this._t;
+    if (!tb || !t) return;
+    st = st || {};
+    var running = !st.done;
+    var ag = (typeof _HG !== 'undefined' && _HG.agents)
+      ? _HG.agents[this.opt.tid] : null;
+    if (running && ag && ag.done) running = false;   // 档案终态优先（防投影滞后假跑）
+    if (!running) {
+      var fin = _g('_subTlFinalizeT');
+      var durMs = (this._lastAt && t.t0 && this._lastAt > t.t0)
+        ? this._lastAt - t.t0 : 0;
+      if (fin) { try { fin(tb, t, { durMs: durMs }); } catch (e) {} }
+      else { t.done = true; }
+      // 结论：state.final 单一真源；与末条正文同文不重画（finalize 已上移）。
+      // a65 补：转写无 result/handback（全是思考+工具的干话代理）时
+      // state.final 空——回退档案结论（目录行卡同源），结论区不空窗
+      var finTxt = st.final || '';
+      if (!finTxt) {
+        var agF = (typeof _HG !== 'undefined' && _HG.agents)
+          ? _HG.agents[this.opt.tid] : null;
+        if (agF && agF.result) finTxt = String(agF.result);
+      }
+      if (finTxt && t.concl) {
+        var lastA = t.concl.querySelector('.h-msg.asst');
+        var same = lastA && _normWs(lastA.dataset.raw) === _normWs(finTxt);
+        if (!same) {
+          var dv = document.createElement('div');
+          dv.className = 'h-msg asst';
+          dv.dataset.raw = String(finTxt).slice(0, 8000);
+          var md = _g('mdBubble');
+          if (md) { try { dv.appendChild(md(finTxt)); } catch (e) { dv.textContent = finTxt; } }
+          else dv.textContent = finTxt;
+          t.concl.appendChild(dv);
+        }
+      }
+      this._subWatchStop();
+    } else {
+      t.done = false;
+      t.t0 = t.t0 || this._firstAt || Date.now();
+      var hp = _g('_subTlHeadPaint');
+      if (hp) { try { hp(t); } catch (e) {} }
+      this._subWatchStart();
+    }
+  };
+
+  // 快照整建（子 pane 唯一整窗入口）
+  V4Bridge.prototype._subRebuild = function (snap) {
+    var tb = this._subTab();
+    if (!tb) return;
+    var sc = this.flow;
+    var stick = _g('_subPaneStick') ? _g('_subPaneStick')(sc) : true;
+    sc.innerHTML = '';
+    tb.turns = [];
+    this._openTools = [];
+    this._firstAt = 0; this._lastAt = 0;
+    var scaffold = _g('_subPaneScaffold');
+    var t = scaffold ? scaffold(tb, this.opt.type || 'Task', '', this.opt.desc || '')
+                     : null;
+    if (!t) return;
+    t.v4 = true;
+    this._t = t;
+    tb.t = t;
+    var rows = (snap && snap.rows) || [];
+    var i, n;
+    for (i = 0; i < rows.length; i++) {
+      if (rows[i] && rows[i].at) {
+        if (!this._firstAt) this._firstAt = rows[i].at;
+        this._lastAt = rows[i].at;
+      }
+      n = _subNorm(rows[i], false);
+      if (n) this._subAppend(n);
+    }
+    if (rows.length) {
+      var st = (snap && snap.state) || {};
+      // 快照内工具行自带终态（upsert 语义）
+      for (i = 0; i < rows.length; i++) {
+        if (rows[i] && rows[i].kind === 'tool_call'
+            && rows[i].status && rows[i].status !== 'running') {
+          this._subToolDone(rows[i].tid, rows[i].output,
+                            rows[i].status === 'error');
+        }
+      }
+      // 首 t0=首行时刻（V3 回放 P3a 同口径）
+      if (this._t && !this._t.t0) this._t.t0 = this._firstAt || 0;
+      this._subFinish(st);
+      tb.rpN = rows.length;   // 已铺底：shell 态的 4s ensure 循环构造性消失
+      if (stick) this._subScrollBottom();
+      return;
+    }
+    // 空快照：三级兜底（无条件显示）
+    tb.rpN = 1;               // 即便兜底也视为已铺底（防 ensure 循环）
+    this._subFallback(snap);
+  };
+
+  // 兜底：投影零行 → /subagent_replay（V3 已验证数据源，同一渲染器）→
+  // 「未找到转写」+档案结论。运行中代理转写晚到由 watcher 按需 hydrate
+  // 喂数（后端 a65），delta 到达自然续流。
+  V4Bridge.prototype._subFallback = function (snap) {
+    var self = this;
+    var st = (snap && snap.state) || {};
+    var agent = String(this.opt.agent || '');
+    if (st.final) {   // 投影只有结论（行流缺）：结论照显，不空窗
+      this._subFinish({ done: true, final: st.final });
+      this._subEmptyNote(true, '行流不可用，已出示结论');
+      return;
+    }
+    if (this._fbTried) { this._subEmptyNote(false, ''); return; }
+    this._fbTried = true;
+    var sid = this.store.sid;
+    fetch('/api/harness/subagent_replay?sid=' + encodeURIComponent(sid) +
+          '&agent=' + encodeURIComponent(agent))
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (self._closed) return;
+        var tb = self._subTab();
+        if (!tb) return;
+        if (j && j.ok && j.found && (j.rows || []).length) {
+          var rows = j.rows;
+          for (var i = 0; i < rows.length; i++) {
+            var ts = rows[i] && rows[i].ts ? Date.parse(rows[i].ts) : 0;
+            if (ts > 0) {
+              if (!self._firstAt) self._firstAt = ts;
+              self._lastAt = ts;
+            }
+            var n = _subNorm(rows[i], true);
+            if (n) self._subAppend(n);
+          }
+          if (self._t && !self._t.t0) self._t.t0 = self._firstAt || 0;
+          tb.rpN = rows.length;
+          self._subFinish({ done: self._agentDone() });
+          self._subScrollBottom();
+          // feed 后续有数据时以服务端快照整体接管（防兜底行与 delta 双源重复）
+          if (self.store && !self.store._closed) {
+            self.store._forceSnapshot = true;
+            self.store._scheduleReconnect();
+          }
+          return;
+        }
+        self._subEmptyNote(!!(j && j.found), '');
+      })
+      .catch(function () { if (!self._closed) self._subEmptyNote(false, ''); });
+  };
+
+  V4Bridge.prototype._agentDone = function () {
+    var ag = (typeof _HG !== 'undefined' && _HG.agents)
+      ? _HG.agents[this.opt.tid] : null;
+    return ag ? !!ag.done : true;   // 档案 miss 保守视为已结束（回放语义）
+  };
+
+  // 空态注记：运行中→「转写尚未生成——实况跟随中」；已结束→未找到 + 档案结论
+  V4Bridge.prototype._subEmptyNote = function (found, prefix) {
+    var t = this._t, tb = this._subTab();
+    if (!t || !tb) return;
+    var ag = (typeof _HG !== 'undefined' && _HG.agents)
+      ? _HG.agents[this.opt.tid] : null;
+    var running = ag ? !ag.done : false;
+    var note = document.createElement('div');
+    note.className = 'hg-sub-replay-note';
+    if (running) {
+      note.textContent = (prefix ? prefix + '——' : '') + '转写尚未生成——实况跟随中';
+      t.tl.appendChild(note);
+      t.t0 = (ag && ag.t0) || Date.now();
+      this._subWatchStart();
+    } else {
+      note.textContent = (prefix ? prefix + '——' : '') +
+        (found ? '转写存在但无可回放内容' : '未找到该子代理的转写记录');
+      t.tl.appendChild(note);
+      if (ag && ag.result) {
+        var dv = document.createElement('div');
+        dv.className = 'h-msg asst';
+        var md = _g('mdBubble');
+        if (md) { try { dv.appendChild(md(String(ag.result))); } catch (e) { dv.textContent = ag.result; } }
+        else dv.textContent = ag.result;
+        if (t.concl) t.concl.appendChild(dv);
+      }
+      this._subFinish({ done: true });
+    }
+  };
+
+  // delta 增量（子 pane 实时刷新红线：SSE 直推，无轮询）
+  V4Bridge.prototype._subApplyOne = function (d) {
+    var t = this._t;
+    if (!t) return;
+    var stickEl = t.sc;
+    var stick = stickEl && _g('_subPaneStick') ? _g('_subPaneStick')(stickEl) : true;
+    if (d.op === 'row.appended') {
+      var row = d.row;
+      if (row && row.at) {
+        if (!this._firstAt) this._firstAt = row.at;
+        this._lastAt = row.at;
+      }
+      var n = _subNorm(row, false);
+      if (n) this._subAppend(n);
+    } else if (d.op === 'row.upserted') {
+      if (d.row && d.row.kind === 'tool_call') {
+        this._subToolDone(d.row.tid, d.row.output, d.row.status === 'error');
+      }
+    } else if (d.op === 'state.updated') {
+      var p = d.patch || {};
+      if (p.done !== undefined || p.final !== undefined) {
+        var st = (this.store && this.store.snap
+                  && this.store.snap.state) || {};
+        this._subFinish(st);
+      }
+    }
+    if (stick) this._subScrollBottom();
   };
 
   root.V4Bridge = V4Bridge;

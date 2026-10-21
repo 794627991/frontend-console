@@ -307,6 +307,13 @@
   function _subDrop(tid) {
     const tb = _sub.tabs[tid];
     if (!tb) return;
+    // a64（用户实锤「子代理页开关几次后全前端发不出请求」）：✕ 关 tab 必须
+    // 同步关 v4 子 store——EventSource 不关就永久占一条同域连接（6 条上限），
+    // 开关几个来回 POST/SSE 全排队。el 即将脱离 DOM，靠它匹配的唯一机会在此
+    try {
+      if (typeof V4Main !== 'undefined' && V4Main.on() && tb.sc)
+        V4Main.subClose(tb.sc);
+    } catch (_) {}
     // v3.2.6：停窗格秒表（tab 档案拆了 tick 闭包的自愈判据就没了——先停）
     if (tb.tick) { clearInterval(tb.tick); tb.tick = null; }   // v3.4：tick 挂 tab
     // v3.4R2：伪 tab 关闭清账——动态页断 dynEl（tick 自愈不复活，重开重建）、

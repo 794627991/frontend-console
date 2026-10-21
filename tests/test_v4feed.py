@@ -98,17 +98,21 @@ class TestMainReducer(unittest.TestCase):
         f.ingest(_env(3, "cli_stream", data={
             "type": "assistant", "isSidechain": True,
             "message": {"content": [{"type": "text", "text": "侧链正文"}]}}))
+        # a65：isMeta 同滤（设计 §5.2；sse.js:1549 同款丢弃）
         f.ingest(_env(4, "cli_stream", data={
+            "type": "assistant", "isMeta": True,
+            "message": {"content": [{"type": "text", "text": "元行正文"}]}}))
+        f.ingest(_env(5, "cli_stream", data={
             "type": "system", "agent_id": "agent_x",
             "subtype": "task_started", "message": {}}))
-        f.ingest(_env(5, "cli_stream", data={
+        f.ingest(_env(6, "cli_stream", data={
             "type": "assistant",
             "message": {"content": [{"type": "text", "text": "主会话正文"}]}}))
         texts = [r.get("text") for r in f.snap["rows"]
                  if r["kind"] == "assistant_text"]
         self.assertEqual(texts, ["主会话正文"])
         # 主链 assistant 带 agent_id 不过滤（sse.js 同口径，防误杀主窗正文）
-        f.ingest(_env(6, "cli_stream", data={
+        f.ingest(_env(7, "cli_stream", data={
             "type": "assistant", "agent_id": "agent_y",
             "message": {"content": [{"type": "text", "text": "主链二"}]}}))
         texts = [r.get("text") for r in f.snap["rows"]
@@ -353,6 +357,21 @@ class TestSubFeed(unittest.TestCase):
         self.assertEqual(len(f.snap["rows"]), 0)
         self.assertEqual(f.snap["state"]["final"], "交付的结论文本")
         self.assertTrue(f.snap["state"]["done"])
+
+    def test_uuid_dedup_watcher_vs_hydrate(self):
+        """a65：同 uuid 行二次喂入 no-op——hydrate 全量与 watcher 增量
+        并发重叠窗口的同行双画闸。"""
+        f = F.V4Feed(epoch="sub")
+        line = {"uuid": "u-1", "type": "assistant", "message": {
+            "model": "m", "content": [{"type": "text", "text": "一"}]}}
+        self.assertTrue(f.feed_jsonl_line(dict(line)))
+        self.assertFalse(f.feed_jsonl_line(dict(line)))
+        texts = [r.get("text") for r in f.snap["rows"]
+                 if r["kind"] == "assistant_text"]
+        self.assertEqual(texts, ["一"])
+        # 无 uuid 的行不受影响（旧格式照常消费）
+        self.assertTrue(f.feed_jsonl_line({"type": "assistant", "message": {
+            "content": [{"type": "text", "text": "二"}]}}))
 
 
 if __name__ == "__main__":

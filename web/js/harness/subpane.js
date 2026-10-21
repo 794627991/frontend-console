@@ -1,5 +1,6 @@
 // harness subpane.js (v3.0 自 buildClaudeHarnessTab 拆出;v3.2.6 窗格时间线重写——ZCode 子智能体模式)
   const _sub = { tabs: {}, order: [], active: null, manual: false };
+  window._sub = _sub;   // a65：v4bridge 子引擎按 tid 查 tab——const 不上 window，显式挂
   const _subTailBusy = {};   // 复审#1：转写喂数防重入锁（批1 重写时随 _subTailDead 声明块误删致通道整体 ReferenceError）
   // ==================== v3.2：子智能体目录（ZCode SubagentDirectorySidePane 移植）====================
   // 目录是一个常驻伪 tab（__dir__）：正在运行/已结束两组列表，行卡=状态图标+
@@ -268,6 +269,12 @@
     _subReplay(tid, a.type, a.desc, a.taskId || a.agentId || '', true);
   }
   function _subReset() {
+    // a64：v4 子 store 全量随清场关闭（切会话/删会话路径）——EventSource 不
+    // 关=同域连接永久泄漏（6 条上限），几次切换后全前端请求排队发不出去
+    try {
+      if (typeof V4Main !== 'undefined' && V4Main.subCloseAll)
+        V4Main.subCloseAll();
+    } catch (_) {}
     // v3.2.6：先停全部窗格秒表/目录秒表再拆档（防孤儿 interval）
     _subDirTickStop();
     for (const k in _sub.tabs) {
@@ -835,6 +842,12 @@
         const old = _sub.order.find(x => x !== _SUB_DIR && x !== _SUB_DYN && x !== _SUB_VCS);
         if (old != null) {
           const otb = _sub.tabs[old];
+          // a64：被逐出 tab 的 v4 子 store 同步关（el 随 sc.remove 脱离 DOM，
+          // 此后无人能按 el 匹配到它——不关=EventSource 永久泄漏连接）
+          try {
+            if (otb && typeof V4Main !== 'undefined' && V4Main.on() && otb.sc)
+              V4Main.subClose(otb.sc);
+          } catch (_) {}
           if (otb && otb.tick) { clearInterval(otb.tick); otb.tick = null; }
           _sub.order = _sub.order.filter(x => x !== old);
           if (otb && otb.sc.parentNode) otb.sc.remove();
@@ -963,29 +976,14 @@
     _subOpen(tid, type, desc, !_alive);
     const sc = _sub.tabs[tid] && _sub.tabs[tid].sc;
     if (!sc) return;
-    // v4 归一管线（批E）：子窗格走投影订阅——delta 直推实时刷新（红线：
-    // 活跃子代理与主窗同管线刷新），fetch /subagent_replay 全量重建与
-    // tick follow 轮询在此模式下退役；结论终稿由 state.final 驱动 concl 区
+    // v4 归一管线（批E→a65 重构）：数据=子投影（快照铺底+delta 实时续流），
+    // 渲染=bridge 子引擎（复用本文件 subpane kit，落点只在窗格容器——绝不
+    // 触碰主窗 _histRender/_hgRowAdd，「子代理内容混进主窗」结构性根治）。
+    // 空快照时 bridge 自带三级兜底（/subagent_replay→未找到+档案结论）
+    // ——打开必有内容（无条件显示）。fetch 回放/tick follow 在此模式下退役
     if (typeof V4Main !== 'undefined' && V4Main.on()) {
       sc.dataset.replayed = agentId;
-      const _tbV = _sub.tabs[tid];
-      // v4：投影渲染层自建组（turn_header 派生），旧脚手架的空轮块会与之
-      // 并存成空壳——只摘旧轮块，末尾重建结论区供 state.final 用
-      if (_tbV && _tbV.t && _tbV.t.el && _tbV.t.el.parentNode) {
-        _tbV.t.el.parentNode.removeChild(_tbV.t.el);
-      }
-      const _concl = document.createElement('div');
-      _concl.className = 'hg-sub-concl';
-      sc.appendChild(_concl);
-      if (_tbV) _tbV.t = { el: _concl, sc: sc, concl: _concl,
-                           label: null, body: null,
-                           tl: null, head: null, done: false, stats: {},
-                           t0: 0, v4: true };
-      V4Main.subOpen(sc, agentId, _concl);
-      if (_tbV) {
-        _tbV.t.v4 = true;
-        _tbV.label = _subTabLabel(type, desc || '');
-      }
+      V4Main.subOpen(sc, agentId, { tid: tid, type: type, desc: desc });
       _sub.manual = true;
       return;
     }
@@ -1598,6 +1596,10 @@
   function _subState(tb) {
     if (!tb) return 'none';
     if (tb.t && tb.t.done) return 'final';
+    // a65：v4 pane 的健康源=store 连接（bridge 自带秒表+delta 续流），无
+    // V3 tick 可停——按 live 判定且不触发 tick 死自愈（下方 tick 健康条件
+    // 同步放行 v4），4s ensure 重开循环构造性消失
+    if (tb.t && tb.t.v4) return 'live';
     if (!tb.t) return 'shell';
     if (!tb.rpN) return 'shell';
     return 'live';
@@ -1616,7 +1618,9 @@
       const tb = _sub.tabs[t];
       if (String(t).indexOf('__') === 0) continue;   // 伪 tab（动态/目录/版本）
       const st = _subState(tb);
-      if (st === 'final' || st === 'none' || (st === 'live' && tb.tick)) continue;   // 408：live+tick 活=健康
+      // a65：v4 pane 无 V3 tick——live+store 即健康（tick 死自愈只属 V3 管线）
+      if (st === 'final' || st === 'none'
+          || (st === 'live' && (tb.tick || (tb.t && tb.t.v4)))) continue;
       try {
         // 404/408：自愈防线走 _subEnsure（唯一入口）；shell（空壳/从未铺底）
         // 或 tick 死的 live → ensure 管（铺底+复活，内置 3s 节流）；档案

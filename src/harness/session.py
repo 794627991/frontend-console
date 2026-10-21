@@ -8,6 +8,7 @@ import subprocess
 import threading
 import time
 import logging
+from collections import deque
 log = logging.getLogger(__name__)
 from ..claude_conn import _resolve_claude_exe, _trust_workspace
 from .roles import design_limit, install_roles_agents, roles_bridge_text
@@ -60,6 +61,10 @@ class HarnessSession:
         self.last_active = self.created
         # ---- 运行时（进程相关，不持久化）----
         self._proc = None
+        # a63（补全）：stderr 取证环形缓冲——_drain_stderr 逐行写入（良性
+        # 过滤之前，全量留痕），进程死亡取证（_reader_loop finally 的退出
+        # 日志）快照末尾
+        self._stderr_tail = deque(maxlen=64)
         # v3.4.54：kill/revive 原子段锁（RLock——热更路径 kill_proc→revive_if_dead
         # 重入同锁）。规则：任何「查 alive → start()」序列必须持本锁，防并发
         # 复活双 Popen（threaded=True 下双 /send 同穿 alive=False 检查窗）
@@ -1757,6 +1762,11 @@ class HarnessSession:
                 txt = line.decode("utf-8", errors="replace").strip()
                 if not txt:
                     continue
+                # a63（补全）：取证环形缓冲写入（良性过滤之前，全量留痕）
+                try:
+                    self._stderr_tail.append(txt)
+                except Exception:
+                    pass
                 # v2.13：CLI stderr 良性日志过滤——unrecognized_model 是 CLI
                 # 对非内置名（Lanz-*）的提醒，模型实际回退默认照常跑（实测 rc=0
                 # 输出正常）；原样 emit 成 raw 事件会在界面显示红字，用户实测

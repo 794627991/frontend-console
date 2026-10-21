@@ -98,6 +98,10 @@ class V4Feed(object):
         self._hyd_max_at = 0           # hydration 全部行的最大时刻（去重上界）
         self._held = False             # 后台子代理 hold（result 不提前收口）
         self._replay = False           # 水位补放阶段（历史重复行过滤）
+        # a65：子 feed uuid 去重（设计 §5.2）——watcher 增量与 hydrate 全量
+        # 并发喂同一文件时同一行双画；CLI jsonl 行 uuid 是稳定键（主 feed 无
+        # 此问题：信封 seq 天然幂等）
+        self._seen_uuid = set()
         if hydrate:
             hydrate(self)              # 重建路径直接填 snapshot（不发 delta）
 
@@ -358,9 +362,11 @@ class V4Feed(object):
 
         分层（与 sse.js:285/697 与 :30 一致——不做统一加宽，防误杀主链）：
         - assistant/user/result 等业务事件：parent_tool_use_id / isSidechain
+          / isMeta（a65 补——设计 §5.2 列明，CLI 对 sidechain 元行打 isMeta，
+          sse.js:1549 同款丢弃）
         - system 生命周期事件：另加 agent_id（嵌套派发的唯一标记）
         """
-        if o.get("parent_tool_use_id") or o.get("isSidechain"):
+        if o.get("parent_tool_use_id") or o.get("isSidechain") or o.get("isMeta"):
             return True
         return o.get("type") == "system" and bool(o.get("agent_id"))
 
@@ -494,12 +500,31 @@ class V4Feed(object):
         """CLI 转写 jsonl 单行（dict）→ deltas 入子投影。返回是否消费。"""
         if not isinstance(obj, dict):
             return False
+        # a65：uuid 去重——hydrate 全量与 watcher 增量重叠窗口的同行双喂，
+        # 同 uuid no-op（行级幂等由 _log seq 承担，这里是入馈闸）
+        _u = obj.get("uuid")
+        if isinstance(_u, str) and _u:
+            if _u in self._seen_uuid:
+                return False
+            self._seen_uuid.add(_u)
+            if len(self._seen_uuid) > 4096:
+                self._seen_uuid = set(list(self._seen_uuid)[-4096:])
         ds = []
         seq = self.snap["seq"] + 1
+        # a65：行时刻优先取行自身 timestamp（ISO/数字两形态）——喂入时刻
+        # 是 hydrate/扫描的时钟（全文件同毫秒），据此算的轮时长恒「0 秒」；
+        # jsonl 的 timestamp 才是事件真实时刻（V3 回放同源）。缺省回落 now
         ts = 0
         try:
             import time as _t
             ts = int(_t.time() * 1000)
+            _tsv = obj.get("timestamp")
+            if isinstance(_tsv, str) and _tsv.strip():
+                import datetime
+                ts = int(datetime.datetime.fromisoformat(
+                    _tsv.replace("Z", "+00:00")).timestamp() * 1000)
+            elif isinstance(_tsv, (int, float)) and _tsv > 0:
+                ts = int(_tsv) if _tsv > 1e12 else int(_tsv * 1000)
         except Exception:
             pass
         typ = obj.get("type")
