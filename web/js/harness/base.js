@@ -73,10 +73,12 @@ const _H_TOOL_CFG = {
   Glob:      { mode: 'one-line', kind: 'search', get: i => i.pattern || '', sec: i => i.path ? `in ${i.path}` : '' },
   WebSearch: { mode: 'one-line', kind: 'web',    get: i => i.query || '' },
   WebFetch:  { mode: 'one-line', kind: 'web',    get: i => i.url || '' },
-  // a46：harness 交互提问——归一 V3 配置卡（kind:'question' 体原生渲染
-  // header/question/选项 chip，_toolInputBodyHtml:24 现成件）。live/回放
-  // 全场景同款（v4bridge 的 a42 特判卡退役）
-  mcp__harness__ask_user: { mode: 'collapsible', kind: 'question',
+  // a49：harness 交互提问——归一 V3 配置卡（kind:'askcard' 分流到
+  // tools.js _hgAskCardBuildV3=a42 UI 原件：❓提问+题干摘要头，体=题目+
+  // 选项(含说明)+回答区）。defaultOpen 让回放路 renderHistTool 把 result
+  // 传进构造（一次成型含回答）
+  mcp__harness__ask_user: { mode: 'collapsible', kind: 'askcard',
+    defaultOpen: true,
     title: i => { const q = (Array.isArray(i && i.questions) && i.questions[0]) || {};
       return String(q.question || q.header || '提问')
         .replace(/\s+/g, ' ').slice(0, 50); },

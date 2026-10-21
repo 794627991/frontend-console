@@ -579,6 +579,47 @@
   // （v3.5.262 live 生即 hist 同构）；本批把非 bash one-line 扁平行也统一为
   // col 折叠卡（「最终形态只有一种」——hist/ZCode 形态）。懒抽屉（hi 标记+
   // _histLazyFill 点开填充）是回放态性能机制，保留为体填充器非构造双轨。
+  // a49：交互提问卡构造（a42 UI 原样归位；o={id,input,result,err,phase}。
+  // running（phase:'run'）回答区=⏳；done 带 result=📝 回答。体自带（不打
+  // 懒标——懒填的 V3 通用体会覆盖结构化排版），点开/收起走全局 head 委托）
+  function _hgAskCardBuildV3(o) {
+    const inp = o.input || {};
+    const qs = Array.isArray(inp.questions) ? inp.questions : [];
+    const dsc = String((qs[0] && qs[0].question) || '');
+    const brief = dsc.replace(/\s+/g, ' ').trim().slice(0, 40);
+    const row = document.createElement('div');
+    row.className = 'h-tool col h-askcard' + (o.err ? ' err' : '');
+    if (o.id) row.dataset.tid = o.id;
+    row.style.setProperty('--h-accent', 'var(--accent)');
+    row.title = '提问' + (dsc ? ' · ' + dsc : '');
+    const sb = statusBadge(o.err ? 'error'
+      : (o.phase === 'run' ? 'running' : 'completed'));
+    row.innerHTML =
+      `<button class="h-tool-head"><span class="h-tool-name">${_hToolIco('mcp__harness__ask_user')}</span>` +
+      `<span class="h-tool-name">提问</span>` +
+      `<span class="h-tool-arg" title="${esc(dsc)}">${esc(brief)}</span>` +
+      `<span class="h-tslots">${sb}</span></button>` +
+      `<div class="h-tool-coll" data-askbody></div>`;
+    let h = '';
+    for (let i = 0; i < qs.length; i++) {
+      const q = qs[i] || {};
+      h += `<div class="h-askcard-q"><b>${esc(q.question || '')}</b>`;
+      const ops = Array.isArray(q.options) ? q.options : [];
+      for (let j = 0; j < ops.length; j++) {
+        const op = ops[j] || {};
+        h += `<div class="h-askcard-opt"><code>${esc(op.label || '')}</code>` +
+          (op.description ? `<span class="h-askcard-dsc">${esc(op.description)}</span>` : '') +
+          `</div>`;
+      }
+      h += `</div>`;
+    }
+    h += `<div class="h-askcard-ans" data-askans>${
+      o.err ? '⚠ 提问失败'
+        : (o.phase === 'run' ? '⏳ 等待回答…'
+          : '📝 回答：' + esc(String(o.result || '').trim()))}</div>`;
+    row.querySelector('[data-askbody]').innerHTML = h;
+    return row;
+  }
   function hgToolCard(o) {
     const name = o.name || '';
     const cfg = _hCfg(name);
@@ -586,6 +627,10 @@
     const inp = o.input || {};
     const err = !!o.err;
     const done = o.phase !== 'run';
+    // a49：harness 交互提问卡（a42 UI 正式归位 V3 原件——用户定调「要统一
+    // 成之前的效果」：❓提问+题干摘要头；体=题目+选项(含说明)+回答区；
+    // live 与回放同一构造，配置表 kind:'askcard' 分流到此）
+    if (cfg.kind === 'askcard') return _hgAskCardBuildV3(o);
     // agent 行：单行任务卡工厂（解剖两轨同源；live 队列/秒表由 caller 挂）
     if (cfg.kind === 'agent') {
       const d = _hgAgentRowBuild(o.id, inp.subagent_type || inp.agent_type || name,
@@ -754,6 +799,17 @@
     }
     const cfg = row._cfg || {};
     const st = deriveStatus(tr);
+    // a49：提问卡收口（kind:'askcard'）——徽章翻终态+回答区回填「📝 回答」，
+    // 不走通用体回写（V3 通用体会覆盖结构化排版）
+    if (cfg.kind === 'askcard') {
+      const _as = row.querySelector('.h-tslots');
+      if (_as) _as.innerHTML = statusBadge(st === 'error' || st === 'denied' ? 'error' : 'completed');
+      const _an = row.querySelector('[data-askans]');
+      if (_an) _an.textContent = (st === 'error' || st === 'denied')
+        ? '⚠ 提问失败' : '📝 回答：' + resultText(tr).trim();
+      row.dataset.final = '1';
+      return;
+    }
     if (!_HG.openState) _hgActDone(tr.tool_use_id, st);   // v2.32 面板：活动流定格
     // v2.21：子代理秒表收表（历史重建/分组恢复无 timer，置空无妨）
     if (row._agentTimer) { clearInterval(row._agentTimer); row._agentTimer = null; }
