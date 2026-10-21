@@ -46,6 +46,10 @@
       if (row.status === 'error') L.err = true;
       if (row.dln) L.dln = row.dln;
     } else if (k === 'marker') {
+      // 系统提示不占位（用户拍板 a39）：纯注入提示行不画（feed skind 标记
+      // task-notification 除外——后台代理完成通知有摘要信息量）
+      if (row.mkind === 'sysnote'
+          && row.skind !== 'task-notification') return null;
       L.role = (row.mkind === 'exit' || row.mkind === 'interrupted') ? 'exit'
         : row.mkind;                        // renew/sysnote/audit
       L.text = row.text || '';

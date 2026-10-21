@@ -263,7 +263,18 @@ class V4Feed(object):
                                      mkind="interrupted", text=text)
                 if d:
                     ds.append(d)
-            elif t in ("renew", "sysnote", "audit", "exit", "model_switched"):
+            elif t == "sysnote":
+                # 系统提示不占位（用户拍板 a39：「系统提示 · 已注入…」气泡
+                # 当时只是没改）——skind 标记 task-notification（后台代理完成
+                # 通知有摘要信息量，保留），纯注入提示行前端不画
+                text = data.get("text") or data.get("msg") or ""
+                _sk = ("task-notification"
+                       if ("<task-notification" in text or "任务通知" in text)
+                       else "")
+                d, _ = self._row("", "marker", ts, seq, mkind=t, text=text,
+                                 skind=_sk)
+                ds.append(d)
+            elif t in ("renew", "audit", "exit", "model_switched"):
                 text = data.get("text") or data.get("msg") or ""
                 d, rid = self._row("", "marker", ts, seq, mkind=t, text=text)
                 ds.append(d)
