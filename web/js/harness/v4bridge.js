@@ -203,6 +203,20 @@
                 && typeof _hgAgentRowState === 'function')
               _hgAgentRowState(tid, a.err, ent.brief || '');
           }
+          // a60：回放档（dyn.agentsRpl）agentId 回填——历史行派生时 aid 未
+          // 知=条目 agentId 空，目录点击走 _subDirRowClick isRpl 分支必报
+          // 「无 agentId 无法回放」（用户实测「还是点不开」的真正入口）；
+          // 同任务（desc 前 40 字与档案一致）即回填钥匙
+          var _rpl = ((_HG.dyn || {}).agentsRpl) || [];
+          for (var ri = 0; ri < _rpl.length; ri++) {
+            var rr = _rpl[ri];
+            if (!rr.agentId && rr.type === a.type
+                && String(rr.desc || '').slice(0, 40)
+                  === String(a.desc || '').slice(0, 40)) {
+              rr.agentId = aid;
+              if (!rr.taskId) rr.taskId = aid;
+            }
+          }
         }
         if (typeof renderSideStatus === 'function') renderSideStatus();
       })
