@@ -96,8 +96,17 @@
       if (!a.done && a.desc) _runDescs.add(a.desc);
       rows.push(Object.assign({ tid }, a));
     }
+    const _seenIds = new Set();
+    for (const tid in (_HG.agents || {})) {
+      const a = _HG.agents[tid];
+      // a58R：同 agentId 的档案 id 集合——回放档与 live 档案同 aid 只留一份
+      //（用户实测「每个子代理都有一个重名的」：已完成同名不挡，双条）
+      const _id = a.taskId || a.agentId || '';
+      if (_id) _seenIds.add(_id);
+    }
     for (const a of ((_HG.dyn && _HG.dyn.agentsRpl) || [])) {
       if (a.desc && _runDescs.has(a.desc)) continue;   // v3.4.56:同名回放条目让位运行中
+      if (a.agentId && _seenIds.has(a.agentId)) continue;   // a58R：同 aid 档案在场，回放档让位
       if ((a.doneAt || a.t0 || 0) < _dayStart) continue;   // v3.5.147：当天闸
       // v3.5.306b：Task/协作回放条目同款放行（有 agentId 可回放即进，同上）
       if ((a.type || '') === 'Task' && !a.agentId) continue;
