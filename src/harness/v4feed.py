@@ -396,9 +396,26 @@ class V4Feed(object):
                     if rid is None:
                         continue
                     err = bool(b.get("is_error"))
+                    out = _txt(b.get("content"))[:8000]
+                    # a48（用户定调「回答形态要 a42 效果」）：ask_user 的
+                    # 回答在后端人类可读化——原始 JSON {"问题":"答案"} →
+                    # 「📝 回答：问题 → 答案；…」。数据在后端整合（红线），
+                    # 前端 live/回放/体全场景直接吃到成品文本
+                    _tn = next((r.get("tool") for r in self.snap["rows"]
+                                if r["rowId"] == rid), "")
+                    if _tn == "mcp__harness__ask_user" and not err:
+                        try:
+                            _oj = json.loads(out)
+                            if isinstance(_oj, dict):
+                                out = "；".join(
+                                    "%s → %s" % (k, v)
+                                    for k, v in _oj.items()) or out
+                        except Exception:
+                            pass
+                        out = "📝 回答：" + out
                     d, _ = self._upsert(
                         rid, status="error" if err else "success",
-                        output=_txt(b.get("content"))[:8000],
+                        output=out,
                         endedAt=ts)
                     if d:
                         ds.append(d)

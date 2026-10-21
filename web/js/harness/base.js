@@ -78,7 +78,7 @@ const _H_TOOL_CFG = {
   // 全场景同款（v4bridge 的 a42 特判卡退役）
   mcp__harness__ask_user: { mode: 'collapsible', kind: 'question',
     title: i => { const q = (Array.isArray(i && i.questions) && i.questions[0]) || {};
-      return '❓ ' + String(q.question || q.header || '提问')
+      return String(q.question || q.header || '提问')
         .replace(/\s+/g, ' ').slice(0, 50); },
     get: i => (i && Array.isArray(i.questions)) ? i.questions : [] },
   TodoWrite: { mode: 'collapsible', kind: 'todo', title: i => {
