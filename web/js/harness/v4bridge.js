@@ -98,7 +98,10 @@
       var L = rowToLine(rows[i]);
       if (L) lines.push(L);
     }
-    if (typeof _HG !== 'undefined') {
+    if (typeof _HG !== 'undefined' && !this.opt.sub) {
+      // 全局账只由主窗 bridge 写（用户实测「归档条恒前1轮」根因：子 pane
+      // rebuild 无差别覆盖 _HG.histAll/seq/epoch/histArchiveTurns——子投影
+      // 值污染主窗，一批玄学渲染问题的共同源头）。子 bridge 只渲染自己容器
       _HG.histAll = lines;                  // V3 账本即渲染账本
       _HG.seq = snap ? snap.seq : 0;
       _HG.epoch = (snap && snap.epoch) || _HG.epoch;
@@ -269,6 +272,23 @@
 
   V4Bridge.prototype._paintState = function (patch, isSnapshot) {
     var st = (this.store && this.store.snap && this.store.snap.state) || {};
+    // 子 pane 的 A 区只消费结论终稿——busy/ask/queue/model 全是主窗语义，
+    // 子投影 patch 不得外溢（同 _rebuild 全局账守卫）
+    if (this.opt.sub) {
+      var _sd = (patch.done !== undefined) ? patch.done : st.done;
+      var _sf = (patch.final !== undefined) ? patch.final : st.final;
+      if (this.conclEl && !this.conclDone && _sd && _sf) {
+        this.conclDone = true;
+        this.conclEl.innerHTML = '';
+        var _md = _g('mdBubble');
+        var _dv = document.createElement('div');
+        _dv.className = 'h-msg asst';
+        if (_md) { try { _dv.appendChild(_md(_sf)); } catch (e) { _dv.textContent = _sf; } }
+        else _dv.textContent = _sf;
+        this.conclEl.appendChild(_dv);
+      }
+      return;
+    }
     if (typeof patch.busy === 'boolean' || isSnapshot) {
       var b = typeof patch.busy === 'boolean' ? patch.busy : !!st.busy;
       if (b !== this._lastBusy) {
