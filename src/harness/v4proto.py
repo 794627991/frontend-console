@@ -180,18 +180,21 @@ def coalesce(deltas):
     return out
 
 
-def wire_snapshot(snap, tail=400, tail_turns=0):
+def wire_snapshot(snap, tail=0, tail_turns=0):
     """出线快照：A 区 + rows 尾窗（fromSeq 固定 0，客户端整体替换）。
     turnsTotal=全量 user 轮数（rows 被尾窗裁掉的历史轮数只能由服务端数，
     前端归档条「前 N 轮已归档」的真源——a24 实测尾窗重放数出「前 1 轮」）。
 
-    tail_turns（a41）：按回合数裁窗（优先于行数 tail）——用户实测重启后
-    「会话变短/导轨数量不对/归档条没了」三现象同源：TAIL_ROWS=400 行装不下
-    V3 形态的 20 回合窗（43 轮会话 385 行只剩 13 轮），回合被拦腰截断、
-    窗内 <20 轮时前端 _hgHistWinStart 算出 start=0 → 归档条自插判据
-    （start>0）不触发。裁窗改为保最后 N 个完整回合（N+1 个 user 行为起点，
-    多带 1 轮让前端窗口计算产生 start>0=归档条恢复）；行数 tail 保留为
-    绝对上限兜底（超大回合仍裁）。"""
+    tail_turns（a41）：按回合数裁窗——用户实测重启后「会话变短/导轨数量
+    不对/归档条没了」三现象同源：行数窗装不下 V3 形态的 20 回合窗（43 轮
+    会话 385 行只剩 13 轮），回合被拦腰截断、窗内 <20 轮时前端
+    _hgHistWinStart 算出 start=0 → 归档条自插判据（start>0）不触发。裁窗
+    保最后 N 个完整回合（N+1 个 user 行为起点，多带 1 轮让前端窗口计算
+    产生 start>0=归档条恢复）。
+    tail（a41c）：默认 0=不启用。行数闸与回合闸并存必打架——a41c 实锤
+    调用点删了 TAIL_ROWS 但本函数默认 tail=400 仍二次裁剪（22 轮≈410 行
+    恰卡 400 被裁回 13 轮，「重启没修好」二连）。回合窗是唯一裁剪；tail
+    仅剩单测直传用途。"""
     rows = snap["rows"]
     if tail_turns and len(rows) > 1:
         cnt = 0
