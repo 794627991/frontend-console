@@ -204,21 +204,28 @@ class V4Feed(object):
                 if hd:
                     ds.append(hd)
                 agent = data.get("task_id") or data.get("aid") or ""
+                _tid = data.get("tid") or ""
+                _inp = data.get("input") or {}
                 d, rid = self._row(turn, "subagent", ts, seq,
+                                   tid=_tid,
                                    agentType=data.get("type") or "Agent",
                                    status="running",
-                                   summary=data.get("desc") or "",
+                                   summary=(data.get("desc")
+                                            or _inp.get("description") or ""),
                                    childTopic="sub:" + agent if agent else "")
                 ds.append(d)
-                # Task tool_use 行同时开（结论回写锚点）
+                # Task tool_use 行同时开（结论回写锚点）。tid 必带——前端
+                # renderToolUse/renderOneToolResult 全靠它配对 rowById（缺tid
+                # =行卡无名/秒表永跑/终态不收口，用户实测致命问题根因）
                 td, trid = self._row(turn, "tool_call", ts, seq,
+                                     tid=_tid,
                                      tool=data.get("tool") or "Task",
                                      status="running",
-                                     input=_input_brief(data.get("input") or {}),
+                                     input=_input_brief(_inp),
                                      startedAt=ts)
                 ds.append(td)
-                if data.get("tid"):
-                    self._pending_agents[data["tid"]] = (rid, trid)
+                if _tid:
+                    self._pending_agents[_tid] = (rid, trid)
             elif t == "subagent_result":
                 tid = data.get("tid") or ""
                 pair = self._pending_agents.pop(tid, None)

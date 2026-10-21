@@ -108,6 +108,13 @@
       // 归档轮真源（服务端全量数）：归档条「前 N 轮」不再按尾窗 lines 瞎数
       _HG.histArchiveTurns = (snap && snap.turnsTotal) || 0;
     }
+    // running 态子代理行补建档案（等价 V3 liveAgentsBy 桶恢复）：busy 会话
+    // 切回后胶囊/目录才有「子代理执行中」。完成态不建——回放行卡由
+    // renderHistTool 定格，目录走 registry 冷查询（与 V3 整窗路同口径）
+    for (var j = 0; j < rows.length; j++) {
+      if (rows[j] && rows[j].kind === 'subagent'
+          && rows[j].status === 'running') this._agentFile(rows[j]);
+    }
     var win = _g('_hgHistWinStart');        // V3 20 回合窗口起点
     var start = win ? win(lines, 0) : 0;
     var busy = !!(snap && snap.state && snap.state.busy);
@@ -139,10 +146,41 @@
 
   // ---- deltas：翻译成 V3 原生入口 ----------------------------------------
 
+  // ---- V3 档案链（sse.js task_started 同款语义） ---------------------------
+  // _HG.agents 是胶囊（_hgAgentsRunning）/子代理目录/行卡终态
+  // （_hgAgentRowState）/窗格下钻（hgSubr 回写）四链共同真源。v4 下旧 SSE
+  // 不跑，档案无人建档=用户实测四个致命问题（胶囊不显示子代理/目录空/
+  // 行卡无名点不开/秒表永跑）的共同根因——bridge 必须补建
+  V4Bridge.prototype._agentFile = function (row) {
+    if (!row || this.opt.sub) return;
+    var tid = row.tid || '';
+    if (!tid || typeof _HG === 'undefined') return;
+    var aid = String(row.childTopic || '').replace(/^sub:/, '');
+    _HG.agents = _HG.agents || {};
+    var a = _HG.agents[tid] || (_HG.agents[tid] = {});
+    a.type = row.agentType || a.type || 'Task';
+    if (row.summary) a.desc = row.summary;
+    a.t0 = a.t0 || (row.at ? (Date.parse(row.at) || Date.now()) : Date.now());
+    a.done = false; a.doneAt = 0;
+    if (aid && /^[0-9a-zA-Z_-]{8,64}$/.test(aid)) {
+      a.taskId = aid;
+      // sse.js 冷查询批1 同款映射：_hgAg/_subTid 单点解析读它
+      _HG.tidMap = _HG.tidMap || {}; _HG.tidMap[tid] = aid;
+      _HG.aidKey = _HG.aidKey || {};
+      if (!_HG.aidKey[aid]) _HG.aidKey[aid] = tid;
+      // agentId 即刻回写行卡（审计F1：切会话后行自带 hgSubr 是回放唯一锚）
+      if (typeof _hgAgentRowBindAid === 'function')
+        _hgAgentRowBindAid(tid, (_HG.rowById || {})[tid]);
+    }
+    var rss = _g('renderSideStatus');
+    if (rss) { try { rss(); } catch (e) {} }
+  };
+
   V4Bridge.prototype._applyOne = function (d) {
     var op = d.op;
     if (op === 'row.appended') {
       var row = d.row, live = true;
+      if (row.kind === 'subagent') { this._agentFile(row); return; }
       var L = rowToLine(row);
       if (!L) return;
       if (row.kind === 'tool_call' && row.status === 'running') {
@@ -254,12 +292,25 @@
       return;
     }
     if (row.kind === 'subagent') {
-      // 档案收口（V3 agent 行卡终态）：_hgAgentRowState 存在则委托
+      // 档案收口（sse.js task_notification 同款）：done/err/result 落档——
+      // 胶囊（_hgAgentsRunning 数运行中）与目录读档案，不收口=假运行
+      if (!this.opt.sub && typeof _HG !== 'undefined' && _HG.agents
+          && row.tid) {
+        var a = _HG.agents[row.tid];
+        if (a && !a.done) {
+          a.done = true; a.doneAt = Date.now();
+          a.err = row.status === 'failed';
+          a.result = String(row.summary || '').trim().slice(0, 400);
+        }
+      }
+      // 行卡终态（V3 agent 单行卡：停表+徽章+摘要+agentId 回绑）
       var ars = _g('_hgAgentRowState');
       if (ars && row.tid) {
         try { ars(row.tid, row.status === 'failed', row.summary || ''); }
         catch (e) {}
       }
+      var rss2 = _g('renderSideStatus');
+      if (rss2) { try { rss2(); } catch (e) {} }
       return;
     }
     if (row.kind === 'vision') {
