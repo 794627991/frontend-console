@@ -3173,6 +3173,11 @@ html {
   background: color-mix(in srgb, var(--accent) 8%, transparent);
   border-radius: 4px; }
 .h-askcard-dsc { color: var(--muted); }
+/* a63：bash/PowerShell 命令体纯文本 pre——命令不走 markdown（__x__ 粗体
+   语法吞下划线=复制损坏，用户实锤）。等宽+保留空白+可换行 */
+.h-tool-cmd { margin: 0; padding: 6px 10px; white-space: pre-wrap;
+  word-break: break-all; font-family: var(--font-mono);
+  font-size: var(--fs-sm); color: var(--fg); }
 .h-askcard-ans { padding: 8px 12px; background: color-mix(in srgb, var(--accent) 5%, transparent);
   border-top: 1px solid var(--border); font-size: var(--fs-sm); white-space: pre-wrap; }
 /* v4.0.0-a36：行头文本基线统一（用户实测「识图 #x 与提示词水平不对齐」）：

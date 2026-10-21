@@ -449,8 +449,10 @@ function buildClaudeHarnessTab(opts = {}) {
       // slice(0,80) 真截断，复制必须取体部 summary 全文；live 行体部无 arg
       // 自然回落行首（live arg 本就是全文）
       const _cpBox = cp.closest('.h-tool');
+      // a63：体部候选加 .h-tool-cmd（bash 命令纯文本 pre 全文）——否则
+      // bash 复制回落行首摘要（80 字真截断，v3.5.249 同坑）
       const _cpArg = (_cpBox && _cpBox.classList.contains('open')
-        && _cpBox.querySelector('.h-tool-coll .h-tool-arg'))
+        && _cpBox.querySelector('.h-tool-coll .h-tool-arg, .h-tool-coll .h-tool-cmd'))
         || (_cpBox && _cpBox.querySelector('.h-tool-arg'));
       const txt = codeBox ? codeBox.querySelector('pre > code')?.textContent.replace(/\n$/, '')
         : _cpArg && _cpArg.textContent;
