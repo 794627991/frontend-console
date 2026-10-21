@@ -214,7 +214,8 @@
           var sb2 = _g('statusBadge');
           var _ms = (row.endedAt && row.startedAt && row.endedAt > row.startedAt)
             ? row.endedAt - row.startedAt : 0;
-          var _dur = _ms ? Math.round(_ms / 1000) + 's'
+          var _dur = _ms ? (_ms < 10000 ? (_ms / 1000).toFixed(1) + 's'
+                                        : Math.round(_ms / 1000) + 's')
                          : (run.textContent || '0s');
           sl2.innerHTML = (sb2 ? sb2(row.status === 'error' ? 'error' : 'completed') : '')
             + ' <span class="hg-tdur-run" style="opacity:.6;font-size:.85em">' + _dur + '</span>';
