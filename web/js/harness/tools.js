@@ -616,7 +616,9 @@
     h += `<div class="h-askcard-ans" data-askans>${
       o.err ? '⚠ 提问失败'
         : (o.phase === 'run' ? '⏳ 等待回答…'
-          : '📝 回答：' + esc(String(o.result || '').trim()))}</div>`;
+          : (() => { const _at = String(o.result || '').trim();
+            return _at.indexOf('📝 回答：') === 0 ? esc(_at)
+              : '📝 回答：' + esc(_at); })())}</div>`;
     row.querySelector('[data-askbody]').innerHTML = h;
     return row;
   }
@@ -805,8 +807,14 @@
       const _as = row.querySelector('.h-tslots');
       if (_as) _as.innerHTML = statusBadge(st === 'error' || st === 'denied' ? 'error' : 'completed');
       const _an = row.querySelector('[data-askans]');
-      if (_an) _an.textContent = (st === 'error' || st === 'denied')
-        ? '⚠ 提问失败' : '📝 回答：' + resultText(tr).trim();
+      if (_an) {
+        // a51：前缀幂等——a48 feed 端已把 output 转成「📝 回答：…」成品，
+        // 前端只在缺失时补（双层前缀=用户截图「有两个回答」实锤）
+        const _at = resultText(tr).trim();
+        _an.textContent = (st === 'error' || st === 'denied')
+          ? '⚠ 提问失败'
+          : (_at.indexOf('📝 回答：') === 0 ? _at : '📝 回答：' + _at);
+      }
       row.dataset.final = '1';
       return;
     }
