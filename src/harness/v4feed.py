@@ -31,10 +31,8 @@ from . import v4proto as P
 
 FLUSH_MS = 30                  # 订阅帧合并窗口（ZCode continuous profile）
 LOG_RETAIN = 600               # delta log 保留条数（越窗订阅者转 snapshot）
-TAIL_ROWS = 1200               # wire snapshot 行数绝对上限（a41R：400 在
-                                # 22 回合窗时刚好卡线被二次裁回 10 轮——用户
-                                # 实测「重启没修好」；放大到 1200 只兜单轮爆
-                                # 行，常态由 tail_turns=21 回合窗约束）
+# a41c 退役：TAIL_ROWS 行数闸删除（与回合窗并存必打架，见 snapshot_wire
+# 注释）；wire_snapshot 的 tail 参数保留仅供单测直接调用
 
 
 def _txt(content):
@@ -569,9 +567,13 @@ class V4Feed(object):
 
     def snapshot_wire(self):
         with self._lock:
-            # a41：按回合裁窗（21=V3 窗 20 轮+1，让前端 start>0 归档条判据
-            # 成立）；TAIL_ROWS 保留为行数绝对上限兜底
-            return P.wire_snapshot(self.snap, tail=TAIL_ROWS, tail_turns=21)
+            # a41c（用户定调「放大不是办法」）：回合窗是唯一裁剪——行数闸
+            # 删除（TAIL_ROWS 退役）。投影「行」有天然上界（一轮=思考段+工具
+            # 调用+正文，工具输出截断在字段级非行级），不存在单轮爆行需兜的
+            # 场景；行数闸与回合闸并存必打架（a41 实锤 21 回合恰卡 400 行被
+            # 二次裁回 10 轮，a41b 放大只是把打架阈值后挪）。21=V3 窗 20 轮+1
+            #（多 1 轮做前端 start>0 归档条判定锚）
+            return P.wire_snapshot(self.snap, tail_turns=21)
 
     @property
     def last_seq(self):
