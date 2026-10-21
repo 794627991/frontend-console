@@ -144,7 +144,13 @@
       // 亮头，与 echo 到达的组管线叠出双组头——顶部旧组计时+中部空壳
       // 「已工作 0 秒/正在执行」并存，0 秒与执行中自相矛盾）。恢复 362
       // 定稿形态：POST 成功即本地确认（建组+亮头+秒表+占位），362 已验收
-      try { phResume(true); } catch (_) {}
+      // v4.0.0-a38（孤儿 0 秒组第三元凶实锤）：v4 下此调用有害——POST 响应
+      // 先回（本地快）、user_echo 后到（30ms 合帧），phResume 建的组 20ms 后
+      // 被 echo 的 renderUser→grpFinalize 定稿=data-dur 20ms「已工作 0 秒」
+      // 孤儿（devtools 实锤 t0 …707/f-ts …727）。v4 的组头/占位由 echo 后
+      // 内容行链自建（用户实测「工作中 Ns」正常即证据），此处跳过；V3 保留
+      if (!(typeof V4Main !== 'undefined' && V4Main.on()))
+        try { phResume(true); } catch (_) {}
       refreshSessions();
       return true;
     } catch(e) {
