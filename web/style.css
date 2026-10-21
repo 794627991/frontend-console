@@ -3145,6 +3145,12 @@ html {
   min-width: 0; flex-shrink: 1; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; }
 .h-tool-head .h-vision-state { margin-left: auto; flex-shrink: 0; }
+/* v4.0.0-a36：行头文本基线统一（用户实测「识图 #x 与提示词水平不对齐」）：
+   emoji 图标 span 的字体度量把行盒撑到 17-19px、纯文本 15px，center
+   对齐下两种盒的文字基线漂移 1-2px。固定行高后同排文本 span 等高同
+   基线（实测识图/agent/思考/组头/查阅五类行头全中招，一并修） */
+.h-tool-head > span, .h-think-seg-head > span, .h-turn-head > span,
+.h-tl-grp-head > span { line-height: 1.35; }
 .h-tool.col .h-tool-head { display: flex; align-items: center; gap: 6px; width: 100%;
   border: none; background: transparent; color: var(--muted); font-family: var(--font-ui);
   font-size: var(--fs-sm); padding: 5px 10px; cursor: pointer; text-align: left; }
