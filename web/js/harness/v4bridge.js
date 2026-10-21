@@ -122,6 +122,15 @@
       var pr = _g('phResume');
       if (pr) { try { pr(true); } catch (e) {} }
     }
+    // 打开会话强制贴底（用户实测「打开会话不置底」）：渲染后布局仍会变
+    // （懒体/折叠），rAF 双贴等布局稳定
+    var box = this.flow;
+    if (box) {
+      try { box.scrollTop = box.scrollHeight; } catch (e) {}
+      requestAnimationFrame(function () {
+        try { box.scrollTop = box.scrollHeight; } catch (e) {}
+      });
+    }
     if (snap && snap.state) this._paintState(snap.state, true);
   };
 
@@ -190,6 +199,23 @@
       if (r1 && row.tid) {
         try { r1({ tool_use_id: row.tid, content: row.output || '',
                    is_error: row.status === 'error' }); } catch (e) {}
+      }
+      // 运行秒表收口（a25 泄漏修复）：renderOneToolResult 对 completed 刻意
+      // 不写 slots（P0-1 防噪门）——秒表 span 无人替换=永跳。终态时主动
+      // 换成「徽章+静态耗时」（无 interval）
+      if (typeof _HG !== 'undefined' && _HG.rowById) {
+        var el2 = _HG.rowById[row.tid];
+        var sl2 = el2 && el2.querySelector('.h-tslots');
+        var run = sl2 && sl2.querySelector('.hg-tdur-run');
+        if (run) {
+          var sb2 = _g('statusBadge');
+          var _ms = (row.endedAt && row.startedAt && row.endedAt > row.startedAt)
+            ? row.endedAt - row.startedAt : 0;
+          var _dur = _ms ? Math.round(_ms / 1000) + 's'
+                         : (run.textContent || '0s');
+          sl2.innerHTML = (sb2 ? sb2(row.status === 'error' ? 'error' : 'completed') : '')
+            + ' <span class="hg-tdur-run" style="opacity:.6;font-size:.85em">' + _dur + '</span>';
+        }
       }
       // 账本同步：V3 账本内同 tid 行补终态（供后续整窗重放一致）
       if (typeof _HG !== 'undefined' && Array.isArray(_HG.histAll)) {
