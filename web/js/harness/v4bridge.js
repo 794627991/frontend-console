@@ -218,51 +218,10 @@
     this._lastRole = null;
   };
 
-  // 交互提问卡工厂（a42；V3 无对位原件——askRender/dock 是输入框上方的
-  // 交互作答面板，消息流档案卡是 v4 新形态。DOM 结构复用 V3 卡类
-  // .h-tool col 同款件=风格天然一致，点开/收起由 main.js .h-tool-head
-  // 委托现成接管，不新增交互代码）
-  V4Bridge.prototype._askCardBuild = function (row) {
-    if (typeof _HG === 'undefined') return;
-    var inp = row.input || {};
-    var qs = Array.isArray(inp.questions) ? inp.questions : [];
-    var _esc = (typeof esc === 'function') ? esc : function (s) { return String(s); };
-    // 头部摘要：首个题干（截 40 字）；title 悬浮全文
-    var _q0 = (qs[0] && qs[0].question) || '';
-    var _brief = String(_q0).replace(/\s+/g, ' ').trim().slice(0, 40);
-    var card = document.createElement('div');
-    card.className = 'h-tool col h-askcard';
-    if (row.tid) card.dataset.tid = row.tid;
-    card.style.setProperty('--h-accent', 'var(--accent)');
-    var sb = _g('statusBadge');
-    card.innerHTML =
-      '<button class="h-tool-head">' +
-      '<span class="h-tool-name">❓ 提问</span>' +
-      '<span class="h-tool-arg" title="' + _esc(_q0) + '">' + _esc(_brief) + '</span>' +
-      '<span class="h-tslots">' + (sb ? sb('running') : '') + '</span>' +
-      '</button>' +
-      '<div class="h-tool-coll" data-askbody></div>';
-    // 折叠体：题目+选项全文（用户拍板「点开后能看到题目和用户回答」）
-    var body = card.querySelector('[data-askbody]');
-    var h = '';
-    for (var i = 0; i < qs.length; i++) {
-      var q = qs[i] || {};
-      h += '<div class="h-askcard-q"><b>' + _esc(q.question || '') + '</b>';
-      var ops = Array.isArray(q.options) ? q.options : [];
-      for (var j = 0; j < ops.length; j++) {
-        var o = ops[j] || {};
-        h += '<div class="h-askcard-opt"><code>' + _esc(o.label || '') + '</code>' +
-          (o.description ? '<span class="h-askcard-dsc">' + _esc(o.description) + '</span>' : '') +
-          '</div>';
-      }
-      h += '</div>';
-    }
-    h += '<div class="h-askcard-ans" data-askans>⏳ 等待回答…</div>';
-    body.innerHTML = h;
-    var tp = _g('_tlPlace');
-    if (tp) tp(card, 'mcp__harness__ask_user', inp);
-    if (row.tid) _HG.rowById = _HG.rowById || {}, _HG.rowById[row.tid] = card;
-  };
+  // a46：a42 特判卡（_askCardBuild）已退役——ask_user 注册进 V3 配置表
+  // （base.js _H_TOOL_CFG kind:'question'），live/回放全场景同一张配置卡，
+  // 体=题目+选项 chip（_toolInputBodyHtml question 分支现成件），回答走
+  // result 常规链。真正的归一
 
   V4Bridge.prototype._applyOne = function (d) {
     var op = d.op;
@@ -340,15 +299,8 @@
       if (!L) return;
       if (row.kind === 'tool_call' && row.status === 'running') {
         this._closeThink();   // V3 sse.js:339：tool_use 前收思考段
-        // 交互提问卡（用户拍板 a42：「askuser 改成和识图类似风格，不要用
-        // 这种 mcp 工具方式」）——普通工具行=原始 JSON 参数+结果平铺置底，
-        // 改折叠卡（同 V3 .h-tool col 结构=识图同款风格）：头部=「提问」+
-        // 题干摘要+待答徽章；折叠体=题目+选项全文；终态回填用户回答。
-        // 不置底：随时间线原位，不强制滚动
-        if (row.tool === 'mcp__harness__ask_user') {
-          try { this._askCardBuild(row); } catch (e) {}
-          return;
-        }
+        // a46：ask_user 不再特判——已在 V3 配置表注册（base.js _H_TOOL_CFG，
+        // kind:'question'），renderToolUse 走配置卡，live/回放全场景归一
         // 识图双通道（V3 sse.js:382 同款分流）：识图工具不走普通工具卡——
         // 折叠卡（prompt 摘要+「识图中」徽章+运行秒表）+visionCalls 注册
         //（回传配对锚）+组头计数。秒表曾因此链断而消失（用户实测）
@@ -430,35 +382,6 @@
   V4Bridge.prototype._upsert = function (row) {
     if (!row) return;
     if (row.kind === 'tool_call') {
-      // 提问卡终态（a43R）：ask_user 永不进普通工具链——配对 hit→收口；
-      // miss（卡未建/已被整窗重建清掉）→建卡一次成型（含回答）。绝不能
-      // fall through 到 renderOneToolResult：其 rowById miss 分支画「↳文本」
-      // 孤儿平铺行（tools.js:744，用户截图红框实锤）
-      if (row.tool === 'mcp__harness__ask_user') {
-        var _ac = (typeof _HG !== 'undefined' && _HG.rowById)
-          ? _HG.rowById[row.tid] : null;
-        if (!_ac) {
-          this._askCardBuild(row);
-          _ac = (typeof _HG !== 'undefined' && _HG.rowById)
-            ? _HG.rowById[row.tid] : null;
-        }
-        if (_ac) {
-          var _sl = _ac.querySelector('.h-tslots');
-          var _sb3 = _g('statusBadge');
-          if (_sl) _sl.innerHTML = _sb3
-            ? _sb3(row.status === 'error' ? 'error' : 'completed')
-            : '';
-          var _an = _ac.querySelector('[data-askans]');
-          if (_an) {
-            _an.textContent = row.status === 'error'
-              ? '⚠ 提问失败'
-              : '📝 回答：' + String(row.output || '').trim();
-          }
-          if (typeof _HG !== 'undefined' && _HG.rowById)
-            delete _HG.rowById[row.tid];
-        }
-        return;
-      }
       // 识图终态（V3 sse.js:598 同款）：visionCalls 配对 hit→卡定格+结论
       // 入卡（md 懒存 vres 点开渲染）；不走普通工具行收口
       if (typeof _HG !== 'undefined' && _HG.visionCalls && row.tid

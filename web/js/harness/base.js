@@ -40,6 +40,7 @@ const _H_TOOL_ICO = {
   Bash: '💻', PowerShell: '🖥️', Grep: '🔍', Glob: '📂',
   WebFetch: '🌐', WebSearch: '🔎', Task: '✦', Agent: '✦',   // v3.3.12：机器人 emoji 太丑（用户定调），换中性星符 ✦
   TodoWrite: '📝', TodoRead: '📋', AskUserQuestion: '❓',
+  mcp__harness__ask_user: '❓',   // v4.0.0-a46：harness 交互提问（归一 V3 配置卡）
   TaskCreate: '📌', TaskUpdate: '📌', TaskList: '📌', TaskGet: '📌',
   Skill: '🧩', EnterPlanMode: '🗺️', ExitPlanMode: '🗺️', exit_plan_mode: '🗺️',
 };
@@ -52,6 +53,7 @@ function _hToolIco(name) {
 // mcp__server__tool → tool (server)（源 toolConfigs.ts formatToolName；server 名可含 _，取最后一个 __ 切）
 function _hToolLabel(name) {
   const n = name || '';
+  if (n === 'mcp__harness__ask_user') return '提问';   // a46：中文短名（归一配置卡头部）
   const i = n.indexOf('mcp__') === 0 ? n.lastIndexOf('__') : -1;
   return i > 4 ? `${n.slice(i + 2)} (${n.slice(5, i)})` : n;
 }
@@ -71,6 +73,14 @@ const _H_TOOL_CFG = {
   Glob:      { mode: 'one-line', kind: 'search', get: i => i.pattern || '', sec: i => i.path ? `in ${i.path}` : '' },
   WebSearch: { mode: 'one-line', kind: 'web',    get: i => i.query || '' },
   WebFetch:  { mode: 'one-line', kind: 'web',    get: i => i.url || '' },
+  // a46：harness 交互提问——归一 V3 配置卡（kind:'question' 体原生渲染
+  // header/question/选项 chip，_toolInputBodyHtml:24 现成件）。live/回放
+  // 全场景同款（v4bridge 的 a42 特判卡退役）
+  mcp__harness__ask_user: { mode: 'collapsible', kind: 'question',
+    title: i => { const q = (Array.isArray(i && i.questions) && i.questions[0]) || {};
+      return '❓ ' + String(q.question || q.header || '提问')
+        .replace(/\s+/g, ' ').slice(0, 50); },
+    get: i => (i && Array.isArray(i.questions)) ? i.questions : [] },
   TodoWrite: { mode: 'collapsible', kind: 'todo', title: i => {
       const todos = Array.isArray(i?.todos) ? i.todos : [];
       if (!todos.length) return '更新清单';
