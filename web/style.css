@@ -2298,10 +2298,16 @@ html {
 /* a27（用户实锤「右缘竖条一闪而过，大丑」）：overflow-x:hidden 使纵向
    计算值变 auto——组时间线内容比分配高度多几 px（gap/行渲染抖动）就闪现
    满高滚动条 thumb。这几个布局容器的纵向滚动非设计意图，滚动条隐藏
-   （滚轮仍可微滚，竖条永绝） */
+   （滚轮仍可微滚，竖条永绝）
+   a40（用户实测 a28 藏法失效复发）：WebView2 内核 scrollbar-width 计算值
+   已 none 竖条仍在——藏滚动条不可靠。改釜底抽薪：.h-tl 用 overflow-x:clip
+   （裁溢出但不创建滚动容器，兼容 Chrome 90+）+ 纵向显式 visible——纵向
+   计算值不再被强制成 auto，无滚动资格即无 thumb；5px 微溢出直接裁掉
+   （a28 实证是布局抖动，无视觉差）。其余三容器无溢出证据，保留 a28 藏法 */
 .h-tl, .h-tl-grp-body, .h-turn-body, .h-grp-proc { scrollbar-width: none; }
 .h-tl::-webkit-scrollbar, .h-tl-grp-body::-webkit-scrollbar,
 .h-turn-body::-webkit-scrollbar, .h-grp-proc::-webkit-scrollbar { display: none; }
+.h-tl { overflow-x: clip; overflow-y: visible; }
 .h-bubble, .h-tool-coll pre, .h-bubble pre, .h-bubble code {
   overflow-wrap: anywhere; word-break: break-word; }
 .h-bubble pre, .h-tool-coll pre { white-space: pre-wrap; }
