@@ -673,10 +673,17 @@
       all[i].remove();
     }
     if (_HG.histAll) {
+      // v4.0.0-a43（用户实测归档条「前 2 轮」）：真源优先（a30 的 histcache
+      // 自插点已同口径，此处漏齐）——v4 尾窗 21 轮时窗内计数 21-21=0/2，
+      // 全量真源在服务端 turnsTotal（histArchiveTurns=45）；窗内计数只在
+      // 无真源（V3 转写路）时兜底
+      const _srcTotal = (typeof _HG.histArchiveTurns === 'number'
+                         && _HG.histArchiveTurns > 0) ? _HG.histArchiveTurns : null;
       let total = 0;
       for (const l of _HG.histAll)
         if (l && l.role === 'user' && String(l.text || '').trim()) total++;
-      _HG.archivedTurns = Math.max(cutGrps, total - grpCount);
+      _HG.archivedTurns = Math.max(cutGrps,
+        (_srcTotal || total) - grpCount);
     } else {
       _HG.archivedTurns = (_HG.archivedTurns || 0) + cutGrps;
     }
