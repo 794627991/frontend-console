@@ -33,7 +33,24 @@
 
   function v4Switch(sid, keepInput) {
     v4Close();
-    if (!sid) return;
+    if (!sid) {
+      // a53（用户实测致命「新建会话点不开了」）：switchTo(null) 的 v4 分流
+      // 在此早退，V3 的新建 UI 块（sessions.js:194 清 flow/welcome/标题/
+      // 聚焦）全被跳过=点了没反应。新建场景 v4 无 store 可建，把该 UI 块
+      // 补齐（函数为跨 script 顶层声明，typeof 守卫沿全局链可达）
+      if (typeof _hgFlow !== 'undefined' && _hgFlow) {
+        try { _hgFlow.innerHTML = ''; } catch (e) {}
+        if (typeof _hgAskDockRestore === 'function') { try { _hgAskDockRestore(''); } catch (e) {} }
+        if (typeof showWelcome === 'function') { try { showWelcome(); } catch (e) {} }
+      }
+      if (typeof _hgTitleEl !== 'undefined' && _hgTitleEl) _hgTitleEl.textContent = '新会话';
+      if (typeof _hgCwdEl !== 'undefined' && _hgCwdEl) _hgCwdEl.textContent = '';
+      if (typeof renderList === 'function') { try { renderList(); } catch (e) {} }
+      if (typeof renderQueue === 'function') { try { renderQueue(); } catch (e) {} }
+      if (typeof _hgRailSync === 'function') { try { _hgRailSync(); } catch (e) {} }
+      if (typeof _hgInput !== 'undefined' && _hgInput) _hgInput.focus();
+      return;
+    }
     var flow = (typeof _hgFlow !== 'undefined') ? _hgFlow : null;   // let 全局
     if (!flow) return;
     var store = new root.V4Store(sid, 'main');
