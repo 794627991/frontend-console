@@ -173,7 +173,12 @@
     var a = _HG.agents[tid] || (_HG.agents[tid] = {});
     a.type = row.agentType || a.type || 'Task';
     if (row.summary) a.desc = row.summary;
-    a.t0 = a.t0 || (row.at ? (Date.parse(row.at) || Date.now()) : Date.now());
+    // a54：at 数字 ms 兼容（hub _ts_ms ISO 优先数字兜底——Date.parse(纯数字)
+    // =NaN 致 t0 恒 Date.now()=目录/胶囊计时从重建时刻起算的「14s 异常」）
+    var _rt = row.at;
+    var _t0v = (typeof _rt === 'number') ? _rt
+      : (_rt ? (Date.parse(_rt) || 0) : 0);
+    a.t0 = a.t0 || (_t0v || Date.now());
     a.done = false; a.doneAt = 0;
     if (aid && /^[0-9a-zA-Z_-]{8,64}$/.test(aid)) {
       a.taskId = aid;
@@ -368,6 +373,10 @@
       var add = _g('_hgRowAdd');
       if (add) { try { add(L); } catch (e) {} }
     } else if (op === 'row.upserted') {
+      // a54：subagent 行 upsert 且仍 running=aid 后到补绑（feed 2s Sync 重发
+      // 镜像）——补档案映射+BindAid 回写行卡 hgSubr（可点开的钥匙）
+      if (d.row && d.row.kind === 'subagent' && d.row.status === 'running')
+        this._agentFile(d.row);
       this._upsert(d.row);
     } else if (op === 'row.delta') {
       var aT = _g('appendThinking');

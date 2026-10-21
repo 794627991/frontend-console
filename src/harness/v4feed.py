@@ -209,26 +209,46 @@ class V4Feed(object):
                 agent = data.get("task_id") or data.get("aid") or ""
                 _tid = data.get("tid") or ""
                 _inp = data.get("input") or {}
-                d, rid = self._row(turn, "subagent", ts, seq,
-                                   tid=_tid,
-                                   agentType=data.get("type") or "Agent",
-                                   status="running",
-                                   summary=(data.get("desc")
-                                            or _inp.get("description") or ""),
-                                   childTopic="sub:" + agent if agent else "")
-                ds.append(d)
-                # Task tool_use 行同时开（结论回写锚点）。tid 必带——前端
-                # renderToolUse/renderOneToolResult 全靠它配对 rowById（缺tid
-                # =行卡无名/秒表永跑/终态不收口，用户实测致命问题根因）
-                td, trid = self._row(turn, "tool_call", ts, seq,
-                                     tid=_tid,
-                                     tool=data.get("tool") or "Task",
-                                     status="running",
-                                     input=_input_brief(_inp),
-                                     startedAt=ts)
-                ds.append(td)
-                if _tid:
-                    self._pending_agents[_tid] = (rid, trid)
+                _desc = (data.get("desc") or _inp.get("description") or "")
+                _prev = self._pending_agents.get(_tid) if _tid else None
+                if _prev:
+                    # a54（用户实测致命「8张卡4无名全点不开/计时14s」）：
+                    # readmodel 2s Sync 会重发同 tid 镜像（aid 后到）——旧码
+                    # 每次都建新行=4派发×2=8行且aid空的行永缺hgSubr点不开。
+                    # 改为 upsert 补绑（childTopic/summary 更新，不建新行）
+                    srid, trid = _prev
+                    _f = {"summary": _desc}
+                    if agent:
+                        _f["childTopic"] = "sub:" + agent
+                    d, _ = self._upsert(srid, **_f)
+                    if d:
+                        ds.append(d)
+                    d2, _ = self._upsert(trid, input={"description": _desc,
+                                                      "subagent_type": data.get("agent_type") or "Task"})
+                    if d2:
+                        ds.append(d2)
+                else:
+                    d, rid = self._row(turn, "subagent", ts, seq,
+                                       tid=_tid,
+                                       agentType=data.get("agent_type") or data.get("type") or "Agent",
+                                       status="running",
+                                       summary=_desc,
+                                       childTopic="sub:" + agent if agent else "")
+                    ds.append(d)
+                    # Task tool_use 行同时开（结论回写锚点）。tid 必带——前端
+                    # renderToolUse/renderOneToolResult 全靠它配对 rowById（缺tid
+                    # =行卡无名/秒表永跑/终态不收口，用户实测致命问题根因）。
+                    # input.description/subagent_type 带上=agentline 卡有名字
+                    td, trid = self._row(turn, "tool_call", ts, seq,
+                                         tid=_tid,
+                                         tool=data.get("tool") or "Task",
+                                         status="running",
+                                         input={"description": _desc,
+                                                "subagent_type": data.get("agent_type") or "Task"},
+                                         startedAt=ts)
+                    ds.append(td)
+                    if _tid:
+                        self._pending_agents[_tid] = (rid, trid)
             elif t == "subagent_result":
                 tid = data.get("tid") or ""
                 pair = self._pending_agents.pop(tid, None)
