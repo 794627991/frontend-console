@@ -185,6 +185,35 @@
     if (rss) { try { rss(); } catch (e) {} }
   };
 
+  // 思考段收口（V3 sse.js:335/:339 语义：text 块与 tool_use 块到达前
+  // endThinking）。bridge 曾只在正文行前收——工具行分支提前 return 不收口，
+  // 连续「思考→工具→思考」的中间段全挂「思考中…」活标签（用户实测
+  // 「思考不结束」，仅末段被正文收口）
+  V4Bridge.prototype._closeThink = function () {
+    if (this._lastRole !== 'thinking') return;
+    // 收口段打 raw 懒标（V3 _histLazyDrop/Fill raw 路同款语义）：live
+    // 段无标记时收起不敢丢=内容永驻，20 轮后全量 DOM 拖垮开合动画
+    //（用户实测「点开/收起思考明显卡顿」——V3 靠 hist 重建懒化，v4
+    // 全程 live 从不重建）。raw 全文直存段上，fill/drop 原件零改动
+    if (typeof _HG !== 'undefined' && _HG.think && _HG.think.seg
+        && Array.isArray(_HG.histAll)) {
+      var _sg = _HG.think.seg;
+      if (_sg && _sg.dataset.raw == null) {
+        for (var ti = _HG.histAll.length - 1; ti >= 0; ti--) {
+          var _tl = _HG.histAll[ti];
+          if (_tl && _tl.role === 'thinking') {
+            _sg.dataset.raw = String(_tl.text || '');
+            break;
+          }
+        }
+      }
+    }
+    var eT = _g('endThinking'), cR = _g('closeRun');
+    if (eT) { try { eT(); } catch (e) {} }
+    if (cR) { try { cR(); } catch (e) {} }
+    this._lastRole = null;
+  };
+
   V4Bridge.prototype._applyOne = function (d) {
     var op = d.op;
     if (op === 'row.appended') {
@@ -251,6 +280,7 @@
       var L = rowToLine(row);
       if (!L) return;
       if (row.kind === 'tool_call' && row.status === 'running') {
+        this._closeThink();   // V3 sse.js:339：tool_use 前收思考段
         // 识图双通道（V3 sse.js:382 同款分流）：识图工具不走普通工具卡——
         // 折叠卡（prompt 摘要+「识图中」徽章+运行秒表）+visionCalls 注册
         //（回传配对锚）+组头计数。秒表曾因此链断而消失（用户实测）
@@ -312,31 +342,8 @@
         return;
       }
       if (live) L.live = 1;                 // V3 live 语义（动画/占位/组头）
-      // 思考段收口对齐 V3 sse（:335/:339）：任何非 thinking 行到达前
-      // endThinking——否则段头残留流式滚播尾巴（用户实测「思考结束还残留
-      // 思考内容，不统一」）
-      if (L.role !== 'thinking' && this._lastRole === 'thinking') {
-        // 收口段打 raw 懒标（V3 _histLazyDrop/Fill raw 路同款语义）：live
-        // 段无标记时收起不敢丢=内容永驻，20 轮后全量 DOM 拖垮开合动画
-        //（用户实测「点开/收起思考明显卡顿」——V3 靠 hist 重建懒化，v4
-        // 全程 live 从不重建）。raw 全文直存段上，fill/drop 原件零改动
-        if (typeof _HG !== 'undefined' && _HG.think && _HG.think.seg
-            && Array.isArray(_HG.histAll)) {
-          var _sg = _HG.think.seg;
-          if (_sg && _sg.dataset.raw == null) {
-            for (var ti = _HG.histAll.length - 1; ti >= 0; ti--) {
-              var _tl = _HG.histAll[ti];
-              if (_tl && _tl.role === 'thinking') {
-                _sg.dataset.raw = String(_tl.text || '');
-                break;
-              }
-            }
-          }
-        }
-        var eT = _g('endThinking'), cR = _g('closeRun');
-        if (eT) { try { eT(); } catch (e) {} }
-        if (cR) { try { cR(); } catch (e) {} }
-      }
+      // 思考段收口对齐 V3 sse（:335）：正文行到达前收段
+      if (L.role !== 'thinking') this._closeThink();
       this._lastRole = L.role;
       var add = _g('_hgRowAdd');
       if (add) { try { add(L); } catch (e) {} }
@@ -388,6 +395,15 @@
           sl2.innerHTML = (sb2 ? sb2(row.status === 'error' ? 'error' : 'completed') : '')
             + ' <span class="hg-tdur-run" style="opacity:.85;font-size:.85em">' + _dur + '</span>';
         }
+      }
+      // 失败标记归行（用户定调「不要换行，保持和思考同高度」）：V3 把
+      // .h-tool-failmark 插行元素末尾——col 折叠卡（bash/PowerShell）里
+      // head 是独立行，行尾插=掉到卡下方另起一行；移进 head 行内尾随
+      if (typeof _HG !== 'undefined' && _HG.rowById) {
+        var el3 = _HG.rowById[row.tid];
+        var _fm = el3 && el3.querySelector(':scope > .h-tool-failmark');
+        var _hd = el3 && el3.querySelector(':scope > .h-tool-head');
+        if (_fm && _hd && _fm.parentNode !== _hd) _hd.appendChild(_fm);
       }
       // 账本同步：V3 账本内同 tid 行补终态（供后续整窗重放一致）
       if (typeof _HG !== 'undefined' && Array.isArray(_HG.histAll)) {
