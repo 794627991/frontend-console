@@ -89,6 +89,7 @@ class V4Feed(object):
         self._floor_seq = 0            # log 内最老条目的 seq（0=空）
         self._pending_tools = {}       # tool_use id -> rowId（终态配对）
         self._pending_agents = {}      # Task tool_use id -> (sub行, tool行)
+        self._exit_marker_row = None   # 最近 exit marker 行（interrupted 合并锚）
         self._turn_rows = {}           # turnId -> turn_header rowId
         self._hydrate = hydrate        # 冷启动重建回调（snapshot 空时调用）
         self._hydrated = False
@@ -140,6 +141,7 @@ class V4Feed(object):
         ds = []
         with self._lock:
             if t == "user_echo":
+                self._exit_marker_row = None   # 新回合=合并锚失效
                 if self._dup_hist("user_input", data.get("text"), ts):
                     return                # 补放与 hydration 重叠：不重画
                 hd, _hr = self._ensure_header(turn, ts, seq)
@@ -247,10 +249,27 @@ class V4Feed(object):
                         ds.append(d2)
             elif t == "peer":
                 ds = self._reduce_peer(data, turn, ts, seq)
+            elif t == "interrupted":
+                # 中断与 exit 连发（杀进程中断=exit 先到 interrupted 后到）合并
+                # 为一行：双行会在回放侧触发 turn_interrupted 编排两次建组
+                #（store.js grpEnsure）——第二条凭空建空组定稿=「已工作 0 秒」
+                # 孤儿组（用户实测）。V3 转写侧本就只补一条中断痕迹行
+                text = data.get("text") or data.get("msg") or ""
+                rid_ex = self._exit_marker_row
+                if rid_ex:
+                    d, _ = self._upsert(rid_ex, mkind="interrupted", text=text)
+                else:
+                    d, _ = self._row("", "marker", ts, seq,
+                                     mkind="interrupted", text=text)
+                if d:
+                    ds.append(d)
             elif t in ("renew", "sysnote", "audit", "exit", "model_switched"):
                 text = data.get("text") or data.get("msg") or ""
-                d, _ = self._row("", "marker", ts, seq, mkind=t, text=text)
+                d, rid = self._row("", "marker", ts, seq, mkind=t, text=text)
                 ds.append(d)
+                # 记录最近 exit marker 行（interrupted 合并锚；新 exit 覆盖）
+                if t == "exit":
+                    self._exit_marker_row = rid
             elif t == "ask":
                 # 交互提问进 A 区（V3 形态=挂 dock 的 askRender 面板，非消息行）；
                 # 前端 v4view paintState 消费。幂等：askRender 同 req_id 查重。

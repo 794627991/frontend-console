@@ -94,8 +94,17 @@
   V4Bridge.prototype._rebuild = function (snap) {
     var rows = (snap && snap.rows) || [];
     var lines = [];
+    var _prevMk = null;
     for (var i = 0; i < rows.length; i++) {
-      var L = rowToLine(rows[i]);
+      var rw = rows[i];
+      // 存量投影防御（a33 前的双行）：紧跟 exit 行的 interrupted marker 跳过
+      // ——回放侧 turn_interrupted 编排会 grpEnsure 建空组定稿=「已工作 0 秒」
+      // 孤儿组（feed 已改为合并单行，此为旧投影兜底）
+      if (rw && rw.kind === 'marker' && rw.mkind === 'interrupted'
+          && _prevMk === 'exit') { _prevMk = rw.mkind; continue; }
+      if (rw && rw.kind === 'marker') _prevMk = rw.mkind;
+      else _prevMk = null;
+      var L = rowToLine(rw);
       if (L) lines.push(L);
     }
     if (typeof _HG !== 'undefined' && !this.opt.sub) {
@@ -181,6 +190,38 @@
     if (op === 'row.appended') {
       var row = d.row, live = true;
       if (row.kind === 'subagent') { this._agentFile(row); return; }
+      // exit/interrupted live 收尾（V3 sse.js:1124/1166 分支等价）：绝不能走
+      // _hgRowAdd——renderHistLine 对 exit 行 dispatch 硬编码 hist:true，会
+      // 在 live 时刻触发回放侧编排 grpEnsure(true)+grpFinalize
+      //（store.js turn_interrupted 分支）凭空建空组定稿=「已工作 0 秒」
+      // 孤儿组（用户实测截图实锤，372-380 区间 marker 行触发）
+      if (row.kind === 'marker'
+          && (row.mkind === 'exit' || row.mkind === 'interrupted')) {
+        var _fin = _g('endThinking');
+        if (_fin) { try { _fin(); } catch (e) {} }
+        var _vs = _g('_hgVisionSweep');
+        if (_vs) { try { _vs(true); } catch (e) {} }
+        var _re = _g('renderExit');
+        if (_re) { try { _re(row.text || ''); } catch (e) {} }
+        // 无活组早退（grpFinalize 语义）——绝不 grpEnsure 建组
+        var _gf = _g('grpFinalize');
+        if (_gf) {
+          try { _gf(true, { interrupted: row.mkind === 'interrupted',
+                            turnEnd: true }); } catch (e) {}
+        }
+        var _ad = _g('_hgAskDismiss');
+        if (_ad) {
+          var _dk = (typeof _hgAskDockEl !== 'undefined') ? _hgAskDockEl : null;
+          var _op = _dk && _dk.querySelector('.h-ask:not(.done)');
+          if (_op) { try { _ad(_op, row.mkind === 'interrupted'
+                            ? '已随会话中断失效' : '已随会话结束失效'); } catch (e) {} }
+        }
+        var _sw = _g('_hgAgentsSweep');
+        if (_sw) { try { _sw(true); } catch (e) {} }
+        var _sb2 = _g('setBusy');
+        if (_sb2) { try { _sb2(false); } catch (e) {} }
+        return;
+      }
       var L = rowToLine(row);
       if (!L) return;
       if (row.kind === 'tool_call' && row.status === 'running') {
