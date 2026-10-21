@@ -31,7 +31,10 @@ from . import v4proto as P
 
 FLUSH_MS = 30                  # 订阅帧合并窗口（ZCode continuous profile）
 LOG_RETAIN = 600               # delta log 保留条数（越窗订阅者转 snapshot）
-TAIL_ROWS = 400                # wire snapshot 尾窗行数
+TAIL_ROWS = 1200               # wire snapshot 行数绝对上限（a41R：400 在
+                                # 22 回合窗时刚好卡线被二次裁回 10 轮——用户
+                                # 实测「重启没修好」；放大到 1200 只兜单轮爆
+                                # 行，常态由 tail_turns=21 回合窗约束）
 
 
 def _txt(content):
