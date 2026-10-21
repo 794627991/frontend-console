@@ -72,6 +72,27 @@ class TestWireSnapshot(unittest.TestCase):
         self.assertEqual(w["total"], 10)          # total 仍是全量账
         self.assertEqual(w["firstRowId"], 7)
 
+    def test_tail_turns_window(self):
+        # a41：按回合裁窗——窗保最后 N+1 个完整回合（user 行数），回合内
+        # 行（thinking/tool）不拦腰截断；行数 tail 作绝对上限兜底
+        snap = P.new_snapshot("e")
+        rid = 0
+        for t in range(1, 6):                     # 5 轮，每轮 user+thinking+tool
+            for kind, txt in (("user_input", "u%d" % t),
+                              ("reasoning", "th"), ("tool_call", "tl")):
+                rid += 1
+                P.apply_delta(snap, P.d_row_appended(
+                    P.mk_row(rid, "t%d" % t, kind, rid, rid, text=txt)))
+        w = P.wire_snapshot(snap, tail_turns=2)   # 保最后 2+1=3 个 user 行起
+        kinds = [r["kind"] for r in w["rows"]]
+        self.assertEqual(kinds.count("user_input"), 3)
+        self.assertEqual(kinds[0], "user_input")   # 窗起点=完整回合头
+        self.assertEqual(w["turnsTotal"], 5)       # 真源仍是全量
+        self.assertEqual(w["firstRowId"], 7)       # 第 3 轮 user 行=rowId 7
+        # 行数兜底：tail_turns 裁完后仍超 tail 再按行裁
+        w2 = P.wire_snapshot(snap, tail=4, tail_turns=99)
+        self.assertEqual(len(w2["rows"]), 4)
+
     def test_unknown_op_noop(self):
         snap = P.new_snapshot("")
         P.apply_delta(snap, {"op": "row.moved", "rowId": 1})   # 封闭集外

@@ -566,7 +566,9 @@ class V4Feed(object):
 
     def snapshot_wire(self):
         with self._lock:
-            return P.wire_snapshot(self.snap, tail=TAIL_ROWS)
+            # a41：按回合裁窗（21=V3 窗 20 轮+1，让前端 start>0 归档条判据
+            # 成立）；TAIL_ROWS 保留为行数绝对上限兜底
+            return P.wire_snapshot(self.snap, tail=TAIL_ROWS, tail_turns=21)
 
     @property
     def last_seq(self):
