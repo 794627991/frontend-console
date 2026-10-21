@@ -331,7 +331,10 @@ function askRender(it) {
     _hgAskHeadSync();   // v3.5.241：面板收缩→刷副位
     if (!panel || !panel.isConnected) return;
     panel.classList.add('done');
-    _hgAskResultRow(panel.dataset.hgAsk || '', {}, askQs(panel), false, override || '已失效');
+    // v4.0.0-a45（用户实测「出现已失效几个字」）：失效路结果行同 a44 退役
+    // ——v4 提问卡回答区已承载状态，dock 失效不留痕；V3 保留
+    if (!(typeof V4Main !== 'undefined' && V4Main.on()))
+      _hgAskResultRow(panel.dataset.hgAsk || '', {}, askQs(panel), false, override || '已失效');
     try { panel.style.maxHeight = panel.offsetHeight + 'px'; void panel.offsetWidth; } catch (_) {}
     panel.classList.add('hg-out');
     setTimeout(() => {
