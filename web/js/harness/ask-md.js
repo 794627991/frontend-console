@@ -294,7 +294,10 @@ function askRender(it) {
     }   // if (card) 收口
     // v3.4.61（ZCode 形态）：先落 flow 结果行（先留痕后消失——动画被打断也不
     // 丢痕），面板随即收缩消失（不再折叠成卡占消息流）
-    _hgAskResultRow(it.req_id || '', ans, qs, ign);
+    // v4.0.0-a44（用户实测「回答完问题后才出现的平铺行」）：结果行退役——
+    // 信息已由消息流提问卡（h-askcard）回答区承载；V3 无卡保留留痕行
+    if (!(typeof V4Main !== 'undefined' && V4Main.on()))
+      _hgAskResultRow(it.req_id || '', ans, qs, ign);
     if (card) _hgAskDismiss(card);
   }
   // v3.4.61：flow 结果行——dim 单行「✓ 问题 → 答案 [共 N 题]」复用 .h-ask-sum
