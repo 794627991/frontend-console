@@ -4184,6 +4184,11 @@ html {
   transition: grid-template-rows var(--hg-dur, .3s) var(--hg-ease, cubic-bezier(.4,0,.2,1)),
               opacity var(--hg-dur, .3s) var(--hg-ease, cubic-bezier(.4,0,.2,1)); }
 .h-turn-body > * { min-height: 0; }
+/* v4.0.0-a34（用户实测「20 轮后开合思考卡顿」）：收起终态的工作区体跳过
+   子树 layout+paint——grid 0fr 只压高度不省布局，长会话收起组全量 DOM
+   常驻拖垮全局动画帧率；hidden 对不可见内容零视觉差，展开过渡首帧付
+   一次性回建成本（远小于每帧常驻） */
+.h-turn-body.closed > * { content-visibility: hidden; }
 /* v3.2.2：折进体的中间正文——对齐 .h-grp > .h-msg 的自适应宽（体是
    flex column，默认拉伸会拉满组宽） */
 .h-turn-body .h-msg { width: auto; max-width: 100%; }

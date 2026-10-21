@@ -412,23 +412,16 @@ class V4Feed(object):
         return ds
 
     def _reduce_peer(self, data, turn, ts, seq):
-        """peer 族：协作回传通知行 / 识图卡行。"""
+        """peer 族（session.py emit {kind:'peer', name, text, to}——name 含
+        「识图」=识图会话回传代播）。字段按后端真身取：旧 title/brief 从未
+        匹配过（回传正文全丢）；识图发起不在此处——走 cli_stream 的识图
+        tool_use（V3 同源：sse.js 双通道工具名分支建卡起表）。"""
         ds = []
-        if data.get("vision"):
-            v = data.get("vision") or {}
-            d, rid = self._row(turn, "vision", ts, seq,
-                               prompt=v.get("prompt") or "",
-                               src=v.get("src") or "",
-                               chan=v.get("chan") or "",
-                               status="pending")
-            ds.append(d)
-            if v.get("tid"):
-                self._pending_tools["v:" + v["tid"]] = rid
-        else:
-            d, _ = self._row("", "peer_notify", ts, seq,
-                             title=data.get("title") or "协作回传",
-                             brief=data.get("brief") or "")
-            ds.append(d)
+        d, _ = self._row("", "peer_notify", ts, seq,
+                         name=data.get("name") or "其他会话",
+                         text=(data.get("text") or "")[:8000],
+                         to=data.get("to") or "")
+        ds.append(d)
         return ds
 
     # ------------------------------------------------------------------

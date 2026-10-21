@@ -252,19 +252,18 @@ class TestMainReducer(unittest.TestCase):
         self.assertEqual(f.snap["state"]["ask_done"]["req_id"], "r1")
 
     def test_marker_and_peer(self):
+        # peer 事件按后端真身 {name,text,to}（session.py emit）；识图发起走
+        # cli_stream 的 tool_use（不产 vision 行——旧 vision 分支是死代码）
         f = self._feed()
         f.ingest(_env(1, "renew", turn="", data={"text": "已续命"}))
-        f.ingest(_env(2, "peer", turn="", data={"title": "协作A",
-                                                "brief": "回传完成"}))
-        f.ingest(_env(3, "peer", turn="", data={"vision": {
-            "prompt": "看图", "src": "http://x/1.png", "tid": "v1",
-            "chan": "vision"}}))
+        f.ingest(_env(2, "peer", turn="", data={"name": "识图会话A",
+                                                "text": "回传结论全文"}))
         rows = f.snap["rows"]
         self.assertEqual(rows[0]["kind"], "marker")
         self.assertEqual(rows[0]["mkind"], "renew")
         self.assertEqual(rows[1]["kind"], "peer_notify")
-        self.assertEqual(rows[2]["kind"], "vision")
-        self.assertEqual(rows[2]["status"], "pending")
+        self.assertEqual(rows[1]["name"], "识图会话A")
+        self.assertEqual(rows[1]["text"], "回传结论全文")
 
 
 class TestHubDedup(unittest.TestCase):

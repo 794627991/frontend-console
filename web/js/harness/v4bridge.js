@@ -190,6 +190,32 @@
     if (op === 'row.appended') {
       var row = d.row, live = true;
       if (row.kind === 'subagent') { this._agentFile(row); return; }
+      // 识图回传代播（V3 relay/store peer_return 原件链）：name 含「识图」
+      // → dispatch peer_return——visionCalls[tid]/FIFO 配对 hit→卡定格+结论
+      // md 入卡；miss→renderPeer（识图分支同配对，全 miss 静默）。非识图
+      // peer 通知行退役（a17 用户拍板），不进消息流
+      if (row.kind === 'peer_notify') {
+        if (String(row.name || '').indexOf('识图') !== -1) {
+          var _dp = _g('_hgDispatch');
+          if (_dp) {
+            try { _dp({ t: 'peer_return', name: row.name || '识图',
+                        text: row.text || '', tid: '' }); } catch (e) {}
+          }
+        }
+        return;
+      }
+      // 转写 vision_relay 回放行（hydration）：走 V3 回放同构卡；busy 会话
+      // 未回传卡需复活 run 态+续表（histBusy 前置——live 期它是上次 rebuild
+      // 的旧值恒 false，不置则「历史未完成」死案=秒表消失）
+      if (row.kind === 'vision') {
+        var _rvh = _g('renderVisionRelayHist');
+        if (_rvh) {
+          if (typeof _HG !== 'undefined' && !row.dur) _HG.histBusy = true;
+          var _vl = rowToLine(row);
+          if (_vl) { try { _rvh(_vl); } catch (e) {} }
+        }
+        return;
+      }
       // exit/interrupted live 收尾（V3 sse.js:1124/1166 分支等价）：绝不能走
       // _hgRowAdd——renderHistLine 对 exit 行 dispatch 硬编码 hist:true，会
       // 在 live 时刻触发回放侧编排 grpEnsure(true)+grpFinalize
@@ -225,6 +251,41 @@
       var L = rowToLine(row);
       if (!L) return;
       if (row.kind === 'tool_call' && row.status === 'running') {
+        // 识图双通道（V3 sse.js:382 同款分流）：识图工具不走普通工具卡——
+        // 折叠卡（prompt 摘要+「识图中」徽章+运行秒表）+visionCalls 注册
+        //（回传配对锚）+组头计数。秒表曾因此链断而消失（用户实测）
+        var _vn = row.tool || '';
+        if (_vn === 'mcp__vision__analyze_image'
+            || _vn === 'mcp__4_5v_mcp__analyze_image') {
+          var _cb = _g('_hgVisionCardBuild');
+          if (_cb) {
+            var _inp = {};
+            var _src = row.input || {};
+            for (var _k in _src) _inp[_k] = _src[_k];
+            _inp.__tid = row.tid || '';
+            _inp.__chan = (_vn === 'mcp__vision__analyze_image'
+                           ? '兜底' : '主');
+            try {
+              var _card = _cb(_inp);
+              var _tp = _g('_tlPlace');
+              if (_tp) _tp(_card, _vn, _src);
+              if (typeof _HG !== 'undefined' && row.tid) {
+                _HG.visionCalls = _HG.visionCalls || {};
+                _HG.visionCalls[row.tid] = _card;
+                var _gg = _HG.grp;
+                if (_gg) {
+                  _gg.counts = _gg.counts || {};
+                  _gg.counts.visionN = (_gg.counts.visionN || 0) + 1;
+                  var _ths = _g('_turnHeadSubPaint');
+                  if (_ths) { try { _ths(_gg); } catch (e) {} }
+                }
+              }
+              var _pt = _g('_hgPeerTimerStart');
+              if (_pt) _pt(_card, Date.now());
+            } catch (e) {}
+          }
+          return;
+        }
         // V3 live 工具行：run 形态建卡（终态回写锚=rowById[tid]）
         var rT = _g('renderToolUse');
         if (rT) { try { rT({ id: row.tid || '', name: row.tool || '',
@@ -239,7 +300,7 @@
           var _t0 = row.startedAt || Date.now();
           var sp = document.createElement('span');
           sp.className = 'hg-tdur-run';
-          sp.style.cssText = 'opacity:.6;font-size:.85em;margin-left:6px';
+          sp.style.cssText = 'opacity:.85;font-size:.85em;margin-left:6px';
           sl.appendChild(sp);
           var _tick = function () {
             if (!sp.isConnected) { clearInterval(sp._tmr); return; }
@@ -255,6 +316,23 @@
       // endThinking——否则段头残留流式滚播尾巴（用户实测「思考结束还残留
       // 思考内容，不统一」）
       if (L.role !== 'thinking' && this._lastRole === 'thinking') {
+        // 收口段打 raw 懒标（V3 _histLazyDrop/Fill raw 路同款语义）：live
+        // 段无标记时收起不敢丢=内容永驻，20 轮后全量 DOM 拖垮开合动画
+        //（用户实测「点开/收起思考明显卡顿」——V3 靠 hist 重建懒化，v4
+        // 全程 live 从不重建）。raw 全文直存段上，fill/drop 原件零改动
+        if (typeof _HG !== 'undefined' && _HG.think && _HG.think.seg
+            && Array.isArray(_HG.histAll)) {
+          var _sg = _HG.think.seg;
+          if (_sg && _sg.dataset.raw == null) {
+            for (var ti = _HG.histAll.length - 1; ti >= 0; ti--) {
+              var _tl = _HG.histAll[ti];
+              if (_tl && _tl.role === 'thinking') {
+                _sg.dataset.raw = String(_tl.text || '');
+                break;
+              }
+            }
+          }
+        }
         var eT = _g('endThinking'), cR = _g('closeRun');
         if (eT) { try { eT(); } catch (e) {} }
         if (cR) { try { cR(); } catch (e) {} }
@@ -277,6 +355,17 @@
   V4Bridge.prototype._upsert = function (row) {
     if (!row) return;
     if (row.kind === 'tool_call') {
+      // 识图终态（V3 sse.js:598 同款）：visionCalls 配对 hit→卡定格+结论
+      // 入卡（md 懒存 vres 点开渲染）；不走普通工具行收口
+      if (typeof _HG !== 'undefined' && _HG.visionCalls && row.tid
+          && _HG.visionCalls[row.tid]) {
+        var _vc = _HG.visionCalls[row.tid];
+        delete _HG.visionCalls[row.tid];
+        var _vr2 = _g('_hgVisionResult');
+        if (_vr2) { try { _vr2(_vc, row.output || '',
+                               row.status === 'error'); } catch (e) {} }
+        return;
+      }
       var r1 = _g('renderOneToolResult');
       if (r1 && row.tid) {
         try { r1({ tool_use_id: row.tid, content: row.output || '',
@@ -297,7 +386,7 @@
                                         : Math.round(_ms / 1000) + 's')
                          : (run.textContent || '0s');
           sl2.innerHTML = (sb2 ? sb2(row.status === 'error' ? 'error' : 'completed') : '')
-            + ' <span class="hg-tdur-run" style="opacity:.6;font-size:.85em">' + _dur + '</span>';
+            + ' <span class="hg-tdur-run" style="opacity:.85;font-size:.85em">' + _dur + '</span>';
         }
       }
       // 账本同步：V3 账本内同 tid 行补终态（供后续整窗重放一致）
@@ -355,9 +444,16 @@
       return;
     }
     if (row.kind === 'vision') {
-      var vr = _g('_hgVisionResult');
-      if (vr && row.tid) { try { vr(row.tid, row.status !== 'error',
-                                   row.prompt || ''); } catch (e) {} }
+      // V3 签名 _hgVisionResult(卡元素, text, err)——a32 前误传 (tid,bool,
+      // prompt) 三参全错位=识图终态链瘫痪（回传 md 消失根因之一）
+      var _vcard = (typeof _HG !== 'undefined' && _HG.visionCalls
+                    && row.tid) ? _HG.visionCalls[row.tid] : null;
+      if (_vcard) {
+        delete _HG.visionCalls[row.tid];
+        var vr = _g('_hgVisionResult');
+        if (vr) { try { vr(_vcard, row.output || row.text || '',
+                           row.status === 'error'); } catch (e) {} }
+      }
     }
   };
 
