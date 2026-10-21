@@ -277,6 +277,15 @@
         if (_sb2) { try { _sb2(false); } catch (e) {} }
         return;
       }
+      // 切模型分割线（V3 sse.js:1184 等价）：renderHistLine 无 model_switched
+      // 分支（V3 live 专有渲染，转写回放不画），走 _hgRowAdd 白入账不显示
+      //（用户实测「切换模型没有在前端显示」）——live 到达直接调 renderSwitch
+      if (row.kind === 'marker' && row.mkind === 'model_switched') {
+        var _rsw = _g('renderSwitch');
+        if (_rsw) { try { _rsw(row.text || ''); } catch (e) {} }
+        this._lastRole = null;
+        return;
+      }
       var L = rowToLine(row);
       if (!L) return;
       if (row.kind === 'tool_call' && row.status === 'running') {
