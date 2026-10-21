@@ -174,8 +174,13 @@
         var tm = j.tidMap || {};
         var ags = j.agents || {};
         _HG.agents = _HG.agents || {};
+        var _seenAid = {};
         for (var tid in tm) {
           var aid = tm[tid];
+          // a57：同 agentId 多 tid（续派/镜像重发）只建一份档案——逐 tid 建
+          // 会让目录出现重复条目（用户实测「每个子代理都有一个重名的」）
+          if (_seenAid[aid]) continue;
+          _seenAid[aid] = tid;
           var ent = ags[aid];
           if (!ent) continue;
           var a = _HG.agents[tid] || (_HG.agents[tid] = {});
