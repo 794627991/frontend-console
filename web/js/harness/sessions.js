@@ -77,7 +77,15 @@
     // v3.5.224（诊断报告「重渲风暴」）：切回静默窗起点——5s 内兜底类全量
     // 重渲（resync/审计自愈）全跳，只留快照命中路的那一次（切回全显已满足）
     _HG.lastSwitchAt = Date.now();
-    if (sid === _HG.sid && _hgFlow.querySelector('.h-msg, .hg-welcome')) {
+    // a59（用户实测「主窗口乱套」根因）：v4 的同会话再入判据不能用 DOM——
+    // 快照是网络往返，flow 空窗期（rebuild 前）判据失效→再入走进清场块把
+    // 账本清空，而下方 v4Switch 同 sid 又早返回不重建=账本(4行)与DOM(21组)
+    // 永久脱节→任何按账本的裁窗/重排把画面打乱。v4 下 store 归属即权威：
+    // 同 sid 且 store 已连=纯早返回；V3 保持 DOM 判据不变
+    if (sid === _HG.sid
+        && ((typeof V4Main !== 'undefined' && V4Main.on()
+             && _HG.v4Cur && _HG.v4Cur.sid === sid)
+            || _hgFlow.querySelector('.h-msg, .hg-welcome'))) {
       // v2.15：点的是当前会话 → 早返回。但 busy 卡死时用户正是靠「重点一下
       // 当前会话」自救，这里不能什么都不做：至少按后端真实值纠偏一次。
       if (sid) {
