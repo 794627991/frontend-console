@@ -2733,6 +2733,12 @@ html {
   font-size: 11px; white-space: nowrap; }
 .h-switch span { flex: 1; border-top: 1px dashed var(--border); }
 .h-switch i { font-style: normal; color: var(--accent); }
+/* a52（用户实测「压缩分割线把会话分成两个工作区」）：压缩线弱化——
+   左对齐单行小字（与时间条/系统提示同视觉层级），去掉全宽居中分割线
+   形态；信息（压缩中秒表/完成规模耗时）全保留 */
+.h-switch[data-hg-compact] { align-self: stretch; width: auto; gap: 6px;
+  padding: 2px 0 2px 14px; margin: 2px 0; font-size: var(--fs-2xs); }
+.h-switch[data-hg-compact] span { border-top: none; flex: 0; }
 /* v2.34：审计警示卡——light 形态回合结算违规（直改超线/跳过 reviewer）。
    红边红字居中卡片：区别于用户/AI 气泡（这是 harness 的裁决）与 h-raw
    噪音行（那条更小更轻）；warn 档唯一出口，auto 档续发前先出这条。 */

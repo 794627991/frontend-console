@@ -43,7 +43,8 @@
     c.classList.toggle('wait', peerWait && !_HG.busy);
     // 状态词+计时（与面板 A 区同口径派生）
     let stTxt;
-    if (_HG.compacting) stTxt = '压缩中';
+    // a52：压缩归属门控（同 :516——只显示本会话的压缩）
+    if (_HG.compacting && _HG.compactSid === _HG.sid) stTxt = '压缩中';
     else if (_HG.busy && agRun) stTxt = '子代理执行中';
     else if (_HG.busy) stTxt = '回复中';
     else if (agRun) stTxt = '子代理后台执行中';
@@ -513,7 +514,8 @@
     // ——与 C 区协作行/输入框提示同语义（仅类名调整，渲染逻辑零变化）
     sec.classList.toggle('wait', peerWait && !_HG.busy);
     let stTxt;
-    if (_HG.compacting) stTxt = '正在压缩上下文';
+    // a52（用户实测「一个会话压缩其他会话胶囊也显示压缩」）：压缩归属门控
+    if (_HG.compacting && _HG.compactSid === _HG.sid) stTxt = '正在压缩上下文';
     else if (_HG.busy && agRun) stTxt = '子代理执行中';
     else if (_HG.busy) stTxt = '回复中';
     else if (agRun) stTxt = '子代理后台执行中';

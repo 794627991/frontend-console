@@ -420,6 +420,20 @@ class V4Feed(object):
                     if d:
                         ds.append(d)
         elif typ == "system":
+            # a52：压缩状态事件（{"type":"system","subtype":"status",
+            # "status":"compacting"|"requesting"}）进 A 区 state——v4 归一后
+            # per-sid 投影天然隔离（V3 全局 _HG.compacting 串台根因消除）；
+            # 前端 bridge 消费置 _HG.compacting/compactT0 并驱动压缩线
+            if data.get("subtype") == "status":
+                _st = data.get("status") or ""
+                if _st == "compacting" and not self.snap["state"].get("compacting"):
+                    self.snap["state"]["compacting"] = True
+                    self.snap["state"]["compactT0"] = ts or int(ts) or 0
+                    ds.append(P.d_state({"compacting": True,
+                                         "compactT0": ts or 0}))
+                elif _st != "compacting" and self.snap["state"].get("compacting"):
+                    self.snap["state"]["compacting"] = False
+                    ds.append(P.d_state({"compacting": False}))
             m = data.get("message") or {}
             md = m.get("model") or ""
             if md:

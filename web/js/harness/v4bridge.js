@@ -547,6 +547,24 @@
       var chip = q ? q('[data-hg-model]') : null;
       if (chip) chip.innerHTML = String(patch.model) + ' ▾';
     }
+    // 压缩状态（a52 归一）：feed per-sid state 驱动 V3 压缩线原件
+    // （renderCompaction 读 _HG.compactT0/compactSid——per-sid 投影天然
+    // 隔离，他会话压缩不串台；compactUsed 沿用 V3 localStorage 口径）
+    if (typeof patch.compacting === 'boolean' && typeof _HG !== 'undefined') {
+      var _rc = _g('renderCompaction');
+      if (patch.compacting) {
+        _HG.compacting = true;
+        _HG.compactSid = _HG.sid;
+        _HG.compactT0 = patch.compactT0 || Date.now();
+        try { _HG.compactUsed = (JSON.parse(
+          localStorage.getItem((typeof _hgCtxKey === 'function' ? _hgCtxKey(_HG.sid) : '') || 'null')
+          || 'null') || {}).used || 0; } catch (e) { _HG.compactUsed = 0; }
+        if (_rc) { try { _rc(false); } catch (e) {} }
+      } else if (_HG.compacting) {
+        _HG.compacting = false;
+        if (_rc) { try { _rc(true); } catch (e) {} }
+      }
+    }
     // 子 pane 结论终稿（一次成型）
     if (this.conclEl && !this.conclDone) {
       var done = (patch.done !== undefined) ? patch.done : st.done;
