@@ -3862,7 +3862,7 @@ html {
   margin: 0 2px; vertical-align: middle; }
 .hg-diffstat .add { color: var(--h-ok); font-style: normal; font-weight: 600; }
 .hg-diffstat .del { color: var(--h-err); font-style: normal; font-weight: 600; }
-.h-tool-failmark { flex: none; font-size: var(--fs-2xs); color: var(--h-err);
+.h-tool-failmark { flex: none; font-size: 11px; line-height: 12px; color: var(--h-err);
   border-bottom: 1px dotted var(--h-err); padding-bottom: 1px; margin-left: 4px; }
 
 /* ---- v3.1 DOM 节省 → v3.5.55 撤除（用户实锤「上翻跳翻不连贯」）----
