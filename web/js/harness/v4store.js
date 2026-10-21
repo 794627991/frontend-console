@@ -63,6 +63,21 @@
     this._teardown();
     this.status = this.seq > 0 && !this._forceSnapshot
       ? 'reconnecting' : 'connecting';
+    // a60R（用户实测 reload 后主窗只剩 live 行，数秒空窗）：冷连接先垫显
+    // 本地持久快照（上一会话期的权威快照，可能过期）——服务端 hydration
+    // 需数秒构建 21 回合窗，空窗期用户看到「只剩当前回合」；垫片立现旧内
+    // 容，权威 snapshot 到达按规则 1 整体覆盖（垫片永不与增量混写）
+    if (!this.seq && this.topic === 'main') {
+      try {
+        var _c = JSON.parse(localStorage.getItem(
+          'hg_v4snap:' + this.sid + ':main') || 'null');
+        if (_c && _c.snapshot && (_c.snapshot.rows || []).length) {
+          this.snap = _c.snapshot;
+          this.seq = _c.toSeq || 0;
+          this._notify({ kind: 'snapshot', snap: this.snap });
+        }
+      } catch (e) { /* 垫片损坏按无处理 */ }
+    }
     this._notify();
     var qs = 'sid=' + encodeURIComponent(this.sid) +
       '&topic=' + encodeURIComponent(this.topic);
@@ -133,6 +148,11 @@
       this.status = 'live';
       this._forceSnapshot = false;
       this._reconcile();
+      // a60R：持久化权威快照（下一轮冷连接的垫片；main topic 限定防超限）
+      if (this.topic === 'main') {
+        try { localStorage.setItem('hg_v4snap:' + this.sid + ':main',
+          JSON.stringify({ snapshot: f.snapshot, toSeq: f.toSeq })); } catch (e) {}
+      }
       this._notify({ kind: 'snapshot', snap: this.snap });
       return;
     }
