@@ -430,23 +430,33 @@
   V4Bridge.prototype._upsert = function (row) {
     if (!row) return;
     if (row.kind === 'tool_call') {
-      // 提问卡终态（a42）：徽章翻已答+回填用户回答（原 JSON 参数行/结果
-      // 平铺行两路全部绕开）
-      if (row.tool === 'mcp__harness__ask_user' && typeof _HG !== 'undefined'
-          && _HG.rowById && _HG.rowById[row.tid]) {
-        var _ac = _HG.rowById[row.tid];
-        var _sl = _ac.querySelector('.h-tslots');
-        var _sb3 = _g('statusBadge');
-        if (_sl) _sl.innerHTML = _sb3
-          ? _sb3(row.status === 'error' ? 'error' : 'completed')
-          : '';
-        var _an = _ac.querySelector('[data-askans]');
-        if (_an) {
-          _an.textContent = row.status === 'error'
-            ? '⚠ 提问失败'
-            : '📝 回答：' + String(row.output || '').trim();
+      // 提问卡终态（a43R）：ask_user 永不进普通工具链——配对 hit→收口；
+      // miss（卡未建/已被整窗重建清掉）→建卡一次成型（含回答）。绝不能
+      // fall through 到 renderOneToolResult：其 rowById miss 分支画「↳文本」
+      // 孤儿平铺行（tools.js:744，用户截图红框实锤）
+      if (row.tool === 'mcp__harness__ask_user') {
+        var _ac = (typeof _HG !== 'undefined' && _HG.rowById)
+          ? _HG.rowById[row.tid] : null;
+        if (!_ac) {
+          this._askCardBuild(row);
+          _ac = (typeof _HG !== 'undefined' && _HG.rowById)
+            ? _HG.rowById[row.tid] : null;
         }
-        delete _HG.rowById[row.tid];
+        if (_ac) {
+          var _sl = _ac.querySelector('.h-tslots');
+          var _sb3 = _g('statusBadge');
+          if (_sl) _sl.innerHTML = _sb3
+            ? _sb3(row.status === 'error' ? 'error' : 'completed')
+            : '';
+          var _an = _ac.querySelector('[data-askans]');
+          if (_an) {
+            _an.textContent = row.status === 'error'
+              ? '⚠ 提问失败'
+              : '📝 回答：' + String(row.output || '').trim();
+          }
+          if (typeof _HG !== 'undefined' && _HG.rowById)
+            delete _HG.rowById[row.tid];
+        }
         return;
       }
       // 识图终态（V3 sse.js:598 同款）：visionCalls 配对 hit→卡定格+结论
