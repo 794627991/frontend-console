@@ -584,6 +584,15 @@ def harness_v4_stream():
         from .transcript import _subagent_transcript_candidates
         paths = _subagent_transcript_candidates(main_dir, csids, agent) \
             if main_dir else []
+        if not paths:
+            # a56 兜底：lineage/session_id 找不到主转写时按 agentKey 直接
+            # 定位（agentId 全局唯一，glob 命中即权威）——回放不再因主转写
+            # 定位失败而空
+            for cand in _g.glob(os.path.join(
+                    os.path.expanduser("~"), ".claude", "projects", "*",
+                    "subagents", "agent-" + agent + ".jsonl")):
+                paths = [cand]
+                break
         feed = v4hub.v4_sub_feed(s.session_id, agent, paths)
     else:
         feed = v4hub.v4_main_feed(s)

@@ -202,7 +202,11 @@ def _hydrate_main(feed, s):
 # ---------------------------------------------------------------------------
 
 def v4_sub_feed(sid, agent_key, hydrate_paths=None):
-    """子 feed 懒建：首次依序尝试 hydrate_paths（三源候选）全量重建。"""
+    """子 feed 懒建：首次依序尝试 hydrate_paths（三源候选）全量重建。
+
+    a56（用户实测「回放点开是空的」）：hydrate 颗粒无果（候选全 miss）时
+    **不缓存**——空 feed 一旦缓存，此后 paths 修正也永远命中空实例（回放
+    永远空白）。下次订阅携修正 paths 重试。"""
     key = (sid, agent_key)
     with _lock:
         feed = _sub_feeds.get(key)
@@ -214,6 +218,8 @@ def v4_sub_feed(sid, agent_key, hydrate_paths=None):
             if p and feed.hydrate_jsonl(p):
                 break
     with _lock:
+        if not feed.snap["rows"]:
+            return feed          # 颗粒无果：不缓存（下次携修正 paths 重试）
         got = _sub_feeds.setdefault(key, feed)
         return got
 
