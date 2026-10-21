@@ -3151,6 +3151,20 @@ html {
   min-width: 0; flex-shrink: 1; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; }
 .h-tool-head .h-vision-state { margin-left: auto; flex-shrink: 0; }
+/* v4.0.0-a42：交互提问卡（h-askcard）——askuser 从 mcp 工具行（原始 JSON
+   参数+结果平铺置底）改为识图同款折叠卡。卡件复用 .h-tool col 全套样式
+   （头部/徽章/折叠体/点开委托零新增），此处只补折叠体内部排版 */
+.h-askcard-q { padding: 8px 12px; border-bottom: 1px dashed var(--border); }
+.h-askcard-q:last-of-type { border-bottom: none; }
+.h-askcard-q > b { display: block; margin-bottom: 6px; font-size: var(--fs-base); }
+.h-askcard-opt { display: flex; gap: 8px; align-items: baseline;
+  padding: 3px 0 3px 10px; font-size: var(--fs-sm); }
+.h-askcard-opt code { flex-shrink: 0; padding: 1px 6px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-radius: 4px; }
+.h-askcard-dsc { color: var(--muted); }
+.h-askcard-ans { padding: 8px 12px; background: color-mix(in srgb, var(--accent) 5%, transparent);
+  border-top: 1px solid var(--border); font-size: var(--fs-sm); white-space: pre-wrap; }
 /* v4.0.0-a36：行头文本基线统一（用户实测「识图 #x 与提示词水平不对齐」）：
    emoji 图标 span 的字体度量把行盒撑到 17-19px、纯文本 15px，center
    对齐下两种盒的文字基线漂移 1-2px。固定行高后同排文本 span 等高同
