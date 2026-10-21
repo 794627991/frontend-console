@@ -155,6 +155,53 @@
       });
     }
     if (snap && snap.state) this._paintState(snap.state, true);
+    // a55：子代理冷查询派生（ZCode registry 域）——镜像事件不落转写，重启/
+    // 重建后投影的 agentline 行永远 running 且缺 hgSubr=假运行+点不开
+    //（用户实测致命三症结）。磁盘唯一真源=/api/harness/agents（readmodel
+    // 现算 agents 表+tidMap），回放卡的状态/hgSubr/档案计时全部从它回填
+    if (!this.opt.sub) this._agentsColdSync();
+  };
+
+  // 冷查询派生：tidMap(tid→agentId)+agents 表 → 行卡 hgSubr/终态徽章+
+  // _HG.agents 档案（目录/胶囊/点开全链复活）
+  V4Bridge.prototype._agentsColdSync = function () {
+    if (typeof _HG === 'undefined' || !_HG.sid) return;
+    var _sid = _HG.sid;
+    fetch('/api/harness/agents?sid=' + encodeURIComponent(_sid))
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j || !j.ok || _HG.sid !== _sid) return;
+        var tm = j.tidMap || {};
+        var ags = j.agents || {};
+        _HG.agents = _HG.agents || {};
+        for (var tid in tm) {
+          var aid = tm[tid];
+          var ent = ags[aid];
+          if (!ent) continue;
+          var a = _HG.agents[tid] || (_HG.agents[tid] = {});
+          a.taskId = aid;
+          a.type = a.type || ent.type || 'Task';
+          if (ent.desc) a.desc = a.desc || ent.desc;
+          var _running = ent.status === 'running';
+          a.done = !_running;
+          a.err = ent.status === 'err';
+          var _t0 = Number(ent.t0) || 0;
+          a.t0 = a.t0 || (_t0 > 1e12 ? _t0 : _t0 * 1000) || Date.now();
+          a.doneAt = a.done ? ((Number(ent.doneAt) || 0) > 1e12
+            ? Number(ent.doneAt) : (Number(ent.doneAt) || 0) * 1000) : 0;
+          // 行卡回写：hgSubr（点开钥匙）+未终态行翻徽章
+          var row = (_HG.rowById || {})[tid];
+          if (row) {
+            if (typeof _hgAgentRowBindAid === 'function')
+              _hgAgentRowBindAid(tid, row);
+            if (a.done && row.dataset.final !== '1'
+                && typeof _hgAgentRowState === 'function')
+              _hgAgentRowState(tid, a.err, ent.brief || '');
+          }
+        }
+        if (typeof renderSideStatus === 'function') renderSideStatus();
+      })
+      .catch(function () {});
   };
 
   // ---- deltas：翻译成 V3 原生入口 ----------------------------------------
