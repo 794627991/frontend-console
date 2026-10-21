@@ -80,6 +80,14 @@ def v4_main_feed(s):
                 log.exception("v4 账本尾部补放失败 sid=%s", sid)
         with _lock:
             old = _main_feeds.get(sid)
+            # a62（用户实测致命「子页开着主窗历史全消失」）：hydration 零产出
+            # 且账本有历史（last_seq>0）=定位失败——空投影**不缓存**（否则
+            # 此后每次重连都发空 snapshot，前端整窗重建把主窗抹成空白）。
+            # 本次请求仍返回（前端有空快照防御），下次冷建重试 hydration
+            if not feed.snap["rows"] and (s.log.last_seq or 0) > 0:
+                log.warning("v4 主投影 hydration 零产出(不缓存) sid=%s seq=%s",
+                            sid, s.log.last_seq)
+                return feed
             if old is None or old.epoch != s.log.epoch:
                 _main_feeds[sid] = feed
                 feed = _main_feeds[sid]
@@ -206,7 +214,10 @@ def v4_sub_feed(sid, agent_key, hydrate_paths=None):
 
     a56（用户实测「回放点开是空的」）：hydrate 颗粒无果（候选全 miss）时
     **不缓存**——空 feed 一旦缓存，此后 paths 修正也永远命中空实例（回放
-    永远空白）。下次订阅携修正 paths 重试。"""
+    永远空白）。下次订阅携修正 paths 重试。
+    a62：hydrate 判据从「文件可读」改为「产出行数」——tasks/*.output 等
+    候选可读但 feed_jsonl_line 零产出（格式不匹配），旧判据会停止尝试
+    后续候选并缓存空实例；逐候选判 rows，空则换下一个。"""
     key = (sid, agent_key)
     with _lock:
         feed = _sub_feeds.get(key)
@@ -215,11 +226,14 @@ def v4_sub_feed(sid, agent_key, hydrate_paths=None):
     feed = F.V4Feed(epoch="sub")
     if hydrate_paths:
         for p in hydrate_paths:
-            if p and feed.hydrate_jsonl(p):
-                break
+            if not p:
+                continue
+            feed.hydrate_jsonl(p)
+            if feed.snap["rows"]:
+                break           # 产出行即权威候选
     with _lock:
         if not feed.snap["rows"]:
-            return feed          # 颗粒无果：不缓存（下次携修正 paths 重试）
+            return feed          # 全候选零产出：不缓存（下次携修正 paths 重试）
         got = _sub_feeds.setdefault(key, feed)
         return got
 

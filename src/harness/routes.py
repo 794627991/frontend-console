@@ -584,16 +584,20 @@ def harness_v4_stream():
         from .transcript import _subagent_transcript_candidates
         paths = _subagent_transcript_candidates(main_dir, csids, agent) \
             if main_dir else []
-        if not paths:
-            # a56 兜底：lineage/session_id 找不到主转写时按 agentKey 直接
-            # 定位（agentId 全局唯一，glob 命中即权威）——回放不再因主转写
-            # 定位失败而空
+        # a62：兜底改为「候选里没有真 subagents 转写就补」——旧判据
+        # `if not paths` 被 tasks/*.output 等可读但不产出的候选挡住（a60
+        # 实测：paths 非空但 hydrate 零行=回放仍空）。真转写两层深：
+        # projects/<项目>/<csid>/subagents/agent-<id>.jsonl
+        _has_real = any(("subagents" in p) and p.endswith(".jsonl")
+                        for p in paths)
+        if not _has_real:
             for pat in (os.path.join("subagents", "agent-" + agent + ".jsonl"),
                         os.path.join("*", "subagents", "agent-" + agent + ".jsonl")):
                 hit = _g.glob(os.path.join(os.path.expanduser("~"),
                                            ".claude", "projects", "*", pat))
                 if hit:
-                    paths = [hit[0]]
+                    paths = [hit[0]] + [p for p in paths
+                                        if "subagents" not in p]
                     break
         feed = v4hub.v4_sub_feed(s.session_id, agent, paths)
     else:

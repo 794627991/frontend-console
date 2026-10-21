@@ -97,6 +97,17 @@
 
   V4Bridge.prototype._rebuild = function (snap) {
     var rows = (snap && snap.rows) || [];
+    // a62（用户实测致命「子页开着主窗历史全消失/新消息 3s 消失」）：空
+    // 快照防御——本会话已有内容而快照零行（feed 冷建 hydration 失败/
+    // 重连竞速）时拒绝整窗重建，保住现有 DOM；服务端同步有不缓存空投影
+    // 的对位防御，下帧权威快照到达自然覆盖
+    if (!rows.length && !this.opt.sub
+        && typeof _HG !== 'undefined'
+        && Array.isArray(_HG.histAll) && _HG.histAll.length) {
+      try { (root.console && console.warn) && console.warn(
+        '[v4bridge] 空快照拒建（保留 ' + _HG.histAll.length + ' 行）'); } catch (e) {}
+      return;
+    }
     var lines = [];
     var _prevMk = null;
     for (var i = 0; i < rows.length; i++) {
@@ -128,6 +139,14 @@
       if (rows[j] && rows[j].kind === 'subagent'
           && rows[j].status === 'running') this._agentFile(rows[j]);
     }
+    // a62 诊断埋点：复现「主窗消失」时可读 window.__v4dbg 定位空/异常快照
+    try {
+      root.__v4dbg = root.__v4dbg || [];
+      root.__v4dbg.push({ t: Date.now(), sub: !!this.opt.sub,
+                          rows: rows.length, lines: lines.length,
+                          turns: (snap && snap.turnsTotal) || 0 });
+      if (root.__v4dbg.length > 30) root.__v4dbg.shift();
+    } catch (e) {}
     var win = _g('_hgHistWinStart');        // V3 20 回合窗口起点
     var start = win ? win(lines, 0) : 0;
     var busy = !!(snap && snap.state && snap.state.busy);
