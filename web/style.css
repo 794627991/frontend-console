@@ -2295,6 +2295,13 @@ html {
    禁横向滚动——长词/长命令/代码一律折行截断,详情点开展开(展开体同禁) */
 .hg-flow, .h-grp, .h-grp-proc, .h-turn-body, .h-tl, .h-tl-grp-body,
 .h-tool-coll, .h-drawer-body, .h-bubble { min-width: 0; max-width: 100%; overflow-x: hidden; }
+/* a27（用户实锤「右缘竖条一闪而过，大丑」）：overflow-x:hidden 使纵向
+   计算值变 auto——组时间线内容比分配高度多几 px（gap/行渲染抖动）就闪现
+   满高滚动条 thumb。这几个布局容器的纵向滚动非设计意图，滚动条隐藏
+   （滚轮仍可微滚，竖条永绝） */
+.h-tl, .h-tl-grp-body, .h-turn-body, .h-grp-proc { scrollbar-width: none; }
+.h-tl::-webkit-scrollbar, .h-tl-grp-body::-webkit-scrollbar,
+.h-turn-body::-webkit-scrollbar, .h-grp-proc::-webkit-scrollbar { display: none; }
 .h-bubble, .h-tool-coll pre, .h-bubble pre, .h-bubble code {
   overflow-wrap: anywhere; word-break: break-word; }
 .h-bubble pre, .h-tool-coll pre { white-space: pre-wrap; }
