@@ -216,21 +216,17 @@ class V4Feed(object):
                 _desc = (data.get("desc") or _inp.get("description") or "")
                 _prev = self._pending_agents.get(_tid) if _tid else None
                 if _prev:
-                    # a54（用户实测致命「8张卡4无名全点不开/计时14s」）：
-                    # readmodel 2s Sync 会重发同 tid 镜像（aid 后到）——旧码
-                    # 每次都建新行=4派发×2=8行且aid空的行永缺hgSubr点不开。
-                    # 改为 upsert 补绑（childTopic/summary 更新，不建新行）
-                    srid, trid = _prev
+                    # a54/a65：readmodel 2s Sync 重发同 tid 镜像（aid 后到）——
+                    # 只 upsert subagent 行（summary/childTopic 补绑），**不建
+                    # tool_call 行**（a65 定案：转写里的 Task tool_use 才是
+                    # 权威卡，镜像建行=同子代理双卡且镜像行永无终态）
+                    srid = _prev[0]
                     _f = {"summary": _desc}
                     if agent:
                         _f["childTopic"] = "sub:" + agent
                     d, _ = self._upsert(srid, **_f)
                     if d:
                         ds.append(d)
-                    d2, _ = self._upsert(trid, input={"description": _desc,
-                                                      "subagent_type": data.get("agent_type") or "Task"})
-                    if d2:
-                        ds.append(d2)
                 else:
                     d, rid = self._row(turn, "subagent", ts, seq,
                                        tid=_tid,
@@ -239,39 +235,23 @@ class V4Feed(object):
                                        summary=_desc,
                                        childTopic="sub:" + agent if agent else "")
                     ds.append(d)
-                    # Task tool_use 行同时开（结论回写锚点）。tid 必带——前端
-                    # renderToolUse/renderOneToolResult 全靠它配对 rowById（缺tid
-                    # =行卡无名/秒表永跑/终态不收口，用户实测致命问题根因）。
-                    # input.description/subagent_type 带上=agentline 卡有名字
-                    td, trid = self._row(turn, "tool_call", ts, seq,
-                                         tid=_tid,
-                                         tool=data.get("tool") or "Task",
-                                         status="running",
-                                         input={"description": _desc,
-                                                "subagent_type": data.get("agent_type") or "Task"},
-                                         startedAt=ts)
-                    ds.append(td)
+                    # a65：不再镜像建 tool_call 行——权威卡=转写 Task tool_use
+                    # （cli_stream 归约建行），镜像行是「永无终态的第二张卡」
+                    # 实测根源。档案回写由前端 bridge 终态帧 childTopic 直取
                     if _tid:
-                        self._pending_agents[_tid] = (rid, trid)
+                        self._pending_agents[_tid] = (rid, None)
             elif t == "subagent_result":
                 tid = data.get("tid") or ""
                 pair = self._pending_agents.pop(tid, None)
                 ok = bool(data.get("ok"))
                 if pair:
-                    srid, trid = pair
+                    srid = pair[0]
                     d, _ = self._upsert(srid,
                                         status="success" if ok else "failed",
                                         summary=data.get("brief") or "",
                                         endedAt=ts)
                     if d:
                         ds.append(d)
-                    d2, _ = self._upsert(trid,
-                                         status="success" if ok else "error",
-                                         output=data.get("brief") or "",
-                                         endedAt=ts,
-                                         dur=data.get("dur"))
-                    if d2:
-                        ds.append(d2)
             elif t == "peer":
                 ds = self._reduce_peer(data, turn, ts, seq)
             elif t == "interrupted":

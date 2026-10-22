@@ -84,8 +84,8 @@ class TestMainReducer(unittest.TestCase):
         self.assertEqual(sub[0]["status"], "success")
         self.assertEqual(sub[0]["childTopic"], "sub:agent_x")
         self.assertEqual(sub[0]["summary"], "结论ABC")
-        self.assertEqual(tool[0]["status"], "success")
-        self.assertEqual(tool[0]["output"], "结论ABC")   # 结论=工具行终态
+        # a65：镜像不再建 tool_call 行——权威卡=转写 Task tool_use
+        self.assertEqual(len(tool), 0)
 
     def test_sub_mirror_filtered_from_main(self):
         """红线：子代理镜像事件绝不进主投影。判据分层对齐 sse.js：
