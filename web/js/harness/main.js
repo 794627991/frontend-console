@@ -1298,6 +1298,21 @@ function buildClaudeHarnessTab(opts = {}) {
   _subPaneEl = _hgQ('[data-hg-subpane]');
   _subTabsEl = _hgQ('[data-hg-subtabs]');
   _subBodyEl = _hgQ('[data-hg-subbody]');
+  // a93（用户实锤「tab 多时只能手动拖滚动条」）：子窗格 tab 条滚轮横向
+  // 滚动——滚动容器是父级 .hg-sub-head（overflow-x:auto）。无溢出/已到
+  // 边时不吞滚轮（放行页面滚动）
+  if (_subTabsEl) {
+    _subTabsEl.addEventListener('wheel', (e) => {
+      const sc = _subTabsEl.parentElement;
+      if (!sc) return;
+      const max = sc.scrollWidth - sc.clientWidth;
+      if (max <= 0) return;
+      const d = (Math.abs(e.deltaY) >= Math.abs(e.deltaX)) ? e.deltaY : e.deltaX;
+      if ((sc.scrollLeft <= 0 && d < 0) || (sc.scrollLeft >= max - 1 && d > 0)) return;
+      sc.scrollLeft += d;
+      e.preventDefault();
+    }, { passive: false });
+  }
   // v2.35（P0-3）：manual=用户手动打开/重开的窗格——回合终结不自动收起，
   // 只有 ✕ 手动关；自动弹出的窗格（Task 起跑）保持原行为（回合终结收起）。
   // v2.38：历史子代理回放窗格——数据源是子代理自己的转写（独立 session
