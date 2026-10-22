@@ -578,10 +578,26 @@
       if (!this.opt.sub && typeof _HG !== 'undefined' && _HG.agents
           && row.tid) {
         var a = _HG.agents[row.tid];
+        if (!a && row.childTopic) {
+          // a64：完成太快时 running 中间帧可能没触发建档（点不开+假运行
+          // 实测根因）——终态帧就地建/补档案
+          a = _HG.agents[row.tid] = {};
+        }
         if (a && !a.done) {
           a.done = true; a.doneAt = Date.now();
           a.err = row.status === 'failed';
           a.result = String(row.summary || '').trim().slice(0, 400);
+          // a64：钥匙终态补发——childTopic 直取 agentId（不依赖镜像重发），
+          // 映射+hgSubr 回写行卡（点开窗格）
+          var _aid2 = String(row.childTopic || '').replace(/^sub:/, '');
+          if (_aid2 && /^[0-9a-zA-Z_-]{8,64}$/.test(_aid2)) {
+            a.taskId = a.taskId || _aid2;
+            _HG.tidMap = _HG.tidMap || {}; _HG.tidMap[row.tid] = _aid2;
+            _HG.aidKey = _HG.aidKey || {};
+            if (!_HG.aidKey[_aid2]) _HG.aidKey[_aid2] = row.tid;
+            if (typeof _hgAgentRowBindAid === 'function')
+              _hgAgentRowBindAid(row.tid, (_HG.rowById || {})[row.tid]);
+          }
         }
       }
       // 行卡终态（V3 agent 单行卡：停表+徽章+摘要+agentId 回绑）
