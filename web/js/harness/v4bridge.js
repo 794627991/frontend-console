@@ -88,6 +88,7 @@
     this._notifyTimer = null;  // a74：subNotify 宽限定时器
     this._t0Note = false;      // a74：空态注记期 t0 是兜底值——首行到达重锚
     this._emptyAt = 0;         // a74：空态注记时刻（20s 零行保险带计时基）
+    this._lastRowAt = 0;        // a77：最近一次行到达时刻（防定格看门狗计时基）
     this._subTick = null;      // 子 pane 秒表 interval（v4 无 V3 tick）
     this.unsub = store.subscribe(function (ev) { self._onEv(ev); });
   }
@@ -834,6 +835,18 @@
         return;
       }
       if (!self._t.done && hp) { try { hp(self._t); } catch (e) {} }
+      // a77 防定格看门狗（用户实测「窗格定格在 45s，代理还在跑」）：运行中
+      // 且 >15s 无新行（无论连接假死/帧丢失/渲染停滞哪种模式——ka 心跳
+      // 只保连接不保数据）→ 强制携权威快照重订阅整窗重对齐。长思考静默期
+      // 重复触发无害（快照同容零变化），自限 15s 一跳
+      if (!self._t.done && self._lastRowAt
+          && Date.now() - self._lastRowAt > 15000) {
+        self._lastRowAt = Date.now();
+        if (self.store && !self.store._closed) {
+          self.store._forceSnapshot = true;
+          self.store._scheduleReconnect();
+        }
+      }
       // a74 保险带：空态注记超 20s 仍零行（连接绑孤儿 feed/静默残滞）——
       // 强制携水位重订阅拿服务端权威（后端 5s 对账为主修，此处兜底）
       if (self._emptyAt && Date.now() - self._emptyAt > 20000
@@ -872,6 +885,7 @@
   V4Bridge.prototype._subAppend = function (n) {
     var t = this._t;
     if (!t || !t.tl) return;
+    this._lastRowAt = Date.now();   // a77：行到达记账（看门狗计时基）
     // 行时刻统一在此记账（思考段时长/轮时长共用）；更晚 ts 到达先回填
     // 开口思考段（V3 回放 :1156 同款）
     var ts = n.ts || 0;
@@ -1116,7 +1130,8 @@
     tb.turns = [];
     this._openTools = [];
     this._firstAt = 0; this._lastAt = 0; this._pend = [];
-    this._conclLocked = false; this._t0Note = false; this._emptyAt = 0;
+    this._conclLocked = false; this._t0Note = false;
+    this._emptyAt = 0; this._lastRowAt = Date.now();
     var scaffold = _g('_subPaneScaffold');
     var t = scaffold ? scaffold(tb, this.opt.type || 'Task', '', this.opt.desc || '')
                      : null;
