@@ -288,8 +288,18 @@
               a.err = ent.status === 'err';
             }
             // interrupted/running：不落定（事件真相保持 running）
+          } else if (!a.err && ent.status === 'err') {
+            // a112R：err 只升不降——已 done(无 err) 的档案，readmodel 的 err
+            // （notification「failed」事实）**采纳升级**并重画行卡（旧后端
+            // 送达回执把行定成 success=脏 done，刷新锁死「完成」实锤；反向
+            // err→done 的降级仍禁止——事件终态不可弱化）
+            a.err = true;
+            var _rowE = (_HG.rowById || {})[tid];
+            if (_rowE && typeof _hgAgentRowState === 'function') {
+              try { _hgAgentRowState(tid, true, ent.brief || ''); } catch (e) {}
+            }
           }
-          // 已 done：readmodel 无权翻回（连 err 语义也不覆盖——feed 事件已定）
+          // 已 done+err：readmodel 无权翻回（连降级也不行——feed 事件已定）
           // a65：结论摘要随档（readmodel brief）——子 pane 结论区回退源与
           // 目录行卡摘要在冷同步会话（重启/切回）同源补齐
           if (!a.result && ent.brief) a.result = String(ent.brief).slice(0, 400);
