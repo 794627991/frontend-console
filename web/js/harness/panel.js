@@ -57,8 +57,15 @@
     const durEl = c.querySelector('[data-hg-caps-dur]');
     if (durEl) {
       let dur = '';
-      if (_HG.busy && _HG.actStart) dur = _hgFmtDur(Math.max(1, Math.round((Date.now() - _HG.actStart) / 1000)));
-      else if (agRun) {
+      if (_HG.busy) {
+        // a92S（用户实锤「时间对不上」）：胶囊计时与回合组头**同源**——
+        // g.t0=回合真实起点（组头「工作中 16m34s」就是它算的）。此前用
+        // _HG.actStart：hold 续挂等路径的 setBusy(true) 不带 sinceMs 会把
+        // 它重置成 now（胶囊 28s vs 组头 16m34s 实锤）；无组时才回落 actStart
+        const _gt0 = (_HG.grp && _HG.grp.t0) || 0;
+        const _t00 = _gt0 || _HG.actStart;
+        if (_t00) dur = _hgFmtDur(Math.max(1, Math.round((Date.now() - _t00) / 1000)));
+      } else if (agRun) {
         const t0 = Math.min(...Object.values(_HG.agents || {}).filter(a => !a.done).map(a => a.t0 || Date.now()));
         dur = _hgFmtDur(Math.max(1, Math.round((Date.now() - t0) / 1000)));
       } else if (peerWait) {
@@ -84,6 +91,22 @@
         const act = String(last.desc || '').replace(/\s+/g, ' ').trim().slice(0, 30)
           || (_AGENT_LABEL[last.type] || last.type || '');
         agEl.textContent = '✦' + list.length + (act ? ' ' + act : '');   // v3.4.68：机器人 emoji 全工程禁绝（用户定调），统一中性星符（02-base Task 图标同款）
+        // a92S：限宽溢出自动往返滚动（挂在既有 1s 重绘节拍上，不加新
+        // interval）——胶囊 max-width 裁不住的长描述 crawls 展示全量，
+        // 悬浮 title 仍列全量清单
+        requestAnimationFrame(() => {
+          try {
+            const max = agEl.scrollWidth - agEl.clientWidth;
+            if (max > 2) {
+              agEl.classList.add('scroll');
+              const ph = Math.floor((Date.now() / 40) % (max * 2));
+              agEl.scrollLeft = ph <= max ? ph : max * 2 - ph;
+            } else {
+              agEl.classList.remove('scroll');
+              agEl.scrollLeft = 0;
+            }
+          } catch (_) {}
+        });
         agEl.title = list.map(a =>
           '· ' + (_AGENT_LABEL[a.type] || a.type || '子代理') +
           (a.desc ? '：' + String(a.desc).replace(/\s+/g, ' ').trim().slice(0, 60) : ''))

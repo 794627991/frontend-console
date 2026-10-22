@@ -3691,6 +3691,8 @@ html {
 .hg-dyn-capsule.wait .hg-caps-dur { color: var(--hgd-wait); }
 .hg-dyn-capsule .hg-caps-ag { flex: 0 1 auto; min-width: 0; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; color: var(--accent); }
+/* a92S：溢出滚动态（panel 溢出检测加类）——去省略号让 scrollLeft 生效 */
+.hg-dyn-capsule .hg-caps-ag.scroll { text-overflow: clip; }
 .hg-dyn-capsule .hg-caps-ctx { flex: none; font-family: var(--font-mono);
   margin-left: 4px;   /* v3.3.14：dur 与 ctx 恒有间距，不依赖容器 gap */
   font-size: 11px; color: var(--accent); }
