@@ -816,7 +816,11 @@ def _subagent_rows_from_jsonl(path):
                     # command 包裹）不是人来向，同样跳过
                     _ut = _txt(content).strip()
                     if (_ut and not _ut.startswith("<")
+                            and not _ut.startswith("[handback-send-enforce]")
                             and not (_SKIP_RE and _SKIP_RE.match(_ut))):
+                        # a78：CLI 强制投递指令（agent 报告写成了正文没调
+                        # SubagentHandback 时注入）是机器噪音不是来向消息——
+                        # 过滤（否则回放双轮+结论双份）
                         _push({"k": "user", "text": _ut[:1200],
                                "ts": o.get("timestamp") or ""})
                     for b in blocks:

@@ -660,7 +660,11 @@ class V4Feed(object):
                                 self._pending_tools[b["id"]] = rid
                 else:
                     t = _txt(content).strip()
-                    if t and not t.startswith("<"):
+                    # a78：[handback-send-enforce] 是 CLI 的强制投递指令（agent
+                    # 报告写成正文没调 SubagentHandback 时注入）——机器噪音，
+                    # 不进行流（否则 pane 多一轮+结论双份）
+                    if t and not t.startswith("<") \
+                            and not t.startswith("[handback-send-enforce]"):
                         d, _ = self._row("s", "user_input", ts, seq, text=t[:1200])
                         ds.append(d)
                     for b in blocks:
