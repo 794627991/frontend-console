@@ -301,9 +301,18 @@
       // agentId 即刻回写行卡（审计F1：切会话后行自带 hgSubr 是回放唯一锚）
       if (typeof _hgAgentRowBindAid === 'function')
         _hgAgentRowBindAid(tid, (_HG.rowById || {})[tid]);
+      // a75（用户要求「主窗口显示子代理实况」对齐 V3）：agentId 到手即开
+      // 实况窗格——sse.js:186 同款（V3 语义：派发后窗格自动呈现思考/工具
+      // 过程，不等用户点胶囊）；_subEnsure 幂等（rpN/3s 节流）
+      var _se = _g('_subEnsure');
+      if (_se) { try { _se(tid); } catch (e) {} }
     }
     var rss = _g('renderSideStatus');
     if (rss) { try { rss(); } catch (e) {} }
+    // a75：胶囊事件级刷新（panel 有 tick 兜底，事件级让「派出→亮、结束→
+    // 灭」即时同步主窗）
+    var _cap = _g('_hgDynCapsulePaint');
+    if (_cap) { try { _cap(); } catch (e) {} }
   };
 
   // 思考段收口（V3 sse.js:335/:339 语义：text 块与 tool_use 块到达前
@@ -633,6 +642,9 @@
       }
       var rss2 = _g('renderSideStatus');
       if (rss2) { try { rss2(); } catch (e) {} }
+      // a75：终态胶囊即时熄灭（与派出时点亮对偶——主窗与子代理同步结束）
+      var _cap2 = _g('_hgDynCapsulePaint');
+      if (_cap2) { try { _cap2(); } catch (e) {} }
       return;
     }
     if (row.kind === 'vision') {
