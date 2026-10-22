@@ -178,27 +178,6 @@
       // 归档轮真源（服务端全量数）：归档条「前 N 轮」不再按尾窗 lines 瞎数
       _HG.histArchiveTurns = (snap && snap.turnsTotal) || 0;
     }
-    // running 态子代理行补建档案（等价 V3 liveAgentsBy 桶恢复）：busy 会话
-    // 切回后胶囊/目录才有「子代理执行中」。完成态不建——回放行卡由
-    // renderHistTool 定格，目录走 registry 冷查询（与 V3 整窗路同口径）
-    // a112S（用户实锤「刷新后运行中代理不同步」）：本循环曾在渲染**之前**
-    // 跑——rowById 空、卡不存在 → _agentFile 的 rowById[aid] 回写/hgSubr/
-    // 摘标/秒表全部落空，纯刷新时无人再补（registry 回绑与重建竞速通常
-    // 抢跑失败；切回场景偶赢竞速=「切回好使刷新不好使」）。挪到渲染之后，
-    // 全部键写入落到真实卡上
-    var render = _g('_histRender');
-    if (render) {
-      // busy 会话切回：noFinalize 留活组（对齐 V3 sessions.js:534）——写死
-      // false 会把进行中的尾组定稿，后续 live delta 落入幽灵新组（用户实测
-      // 「A切B切A 工作组错乱」）
-      try { render(lines, start, { noFinalize: busy }); } catch (e) {
-        (root.console && console.error) && console.error('[v4bridge] rebuild', e);
-      }
-    }
-    for (var jr = 0; jr < rows.length; jr++) {
-      if (rows[jr] && rows[jr].kind === 'subagent'
-          && rows[jr].status === 'running') this._agentFile(rows[jr]);
-    }
     // a62 诊断埋点：复现「主窗消失」时可读 window.__v4dbg 定位空/异常快照
     try {
       root.__v4dbg = root.__v4dbg || [];
@@ -221,6 +200,28 @@
           break;
         }
       }
+    }
+    var render = _g('_histRender');
+    if (render) {
+      // busy 会话切回：noFinalize 留活组（对齐 V3 sessions.js:534）——写死
+      // false 会把进行中的尾组定稿，后续 live delta 落入幽灵新组（用户实测
+      // 「A切B切A 工作组错乱」）
+      try { render(lines, start, { noFinalize: busy }); } catch (e) {
+        (root.console && console.error) && console.error('[v4bridge] rebuild', e);
+      }
+    }
+    // running 态子代理行补建档案（等价 V3 liveAgentsBy 桶恢复）：busy 会话
+    // 切回后胶囊/目录才有「子代理执行中」。完成态不建——回放行卡由
+    // renderHistTool 定格，目录走 registry 冷查询（与 V3 整窗路同口径）
+    // a112S/a113R（用户实锤「刷新后运行中代理不同步」+「刷新后组裂成两
+    // 段」）：循环必须在渲染**之后**（此前在渲染前——rowById 空、卡不存
+    // 在，rowById[aid]/hgSubr/摘标/秒表全落空）；a113 首版把渲染调用一并
+    // 前挪致 start/busy（var 提升=undefined）在调用点未赋值——noFinalize
+    // falsy 误定稿+phResume 建新组=「已工作+空工作中」两段（用户实锤）。
+    // 本版：先算 start/busy → 渲染 → 档案循环，顺序一次到位
+    for (var jr = 0; jr < rows.length; jr++) {
+      if (rows[jr] && rows[jr].kind === 'subagent'
+          && rows[jr].status === 'running') this._agentFile(rows[jr]);
     }
     if (busy) {
       // V3 快照路同款恢复（sessions.js:362）：占位气泡+组头秒表认回接续
