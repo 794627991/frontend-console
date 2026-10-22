@@ -55,6 +55,10 @@
     `</section>`;
   function _subDynOpen() {               // 动态页伪 tab（懒建；胶囊点击的展开面）
     if (!_subPaneEl) return;
+    // a93T（用户定调「点开胶囊后，状态、版本、目录显示，固定顺序排最前」）：
+    // 胶囊展开即三伪 tab 全量在场（_subDirEnsure 头部链式带 _vcsEnsure，
+    // 均不夺焦点），此前只出目录/版本漏状态
+    try { if (typeof _subDirEnsure === 'function') _subDirEnsure(); } catch (_) {}
     if (!_sub.tabs[_SUB_DYN]) {
       const sc = document.createElement('div');
       sc.className = 'hg-sub-msgs hg-dyn-pane'; sc.dataset.tid = _SUB_DYN;
@@ -1324,8 +1328,11 @@
     if (!_subTabsEl) return;
     // v3.3：动态页渲染序恒在队首（order 数组保持插入序不动——_subDrop 的
     // `_sub.active = _sub.order[0]` 兜底行为不被扰动），目录及其余 tab 照旧
-    const _paint = (_sub.tabs[_SUB_DYN] ? [_SUB_DYN] : [])
-      .concat(_sub.order.filter(t => _sub.tabs[t] && t !== _SUB_DYN));
+    // a93T（用户定调）：伪 tab 固定顺序「状态→版本→目录」恒排最前（与创建
+    // 序无关），真实代理 tab 按原 order 跟后
+    const _paint = [_SUB_DYN, _SUB_VCS, _SUB_DIR].filter(t => _sub.tabs[t])
+      .concat(_sub.order.filter(t => _sub.tabs[t]
+        && t !== _SUB_DYN && t !== _SUB_VCS && t !== _SUB_DIR));
     _subTabsEl.innerHTML = _paint.map(t => {
       const tb = _sub.tabs[t];
       const _pseu = (t === _SUB_DIR || t === _SUB_DYN || t === _SUB_VCS);   // 伪 tab：无 dot/无 ✕/悬浮只说视图
