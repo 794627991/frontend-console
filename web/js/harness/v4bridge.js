@@ -597,6 +597,25 @@
             if (!_HG.aidKey[_aid2]) _HG.aidKey[_aid2] = row.tid;
             if (typeof _hgAgentRowBindAid === 'function')
               _hgAgentRowBindAid(row.tid, (_HG.rowById || {})[row.tid]);
+            // a68（用户实测「子代理永远不结束」）：终态直达 v4 子 pane——
+            // feed 尾段丢失/转写无 result 行时 store 永静默，pane 秒表永跑；
+            // 子 pane 定稿+结论兜底（brief=真结论）
+            if (root.V4Main && root.V4Main.subNotify) {
+              try {
+                root.V4Main.subNotify(_aid2, row.status === 'failed',
+                                      String(row.summary || '').slice(0, 400));
+              } catch (e) {}
+            }
+          }
+          // a68：tab 停转（v4 下 V3 的 _subClose 完成链不跑，tb.run 无人清
+          // =tab 永挂运行态绿点）——就地清+重绘
+          var _subG = _g('_sub');
+          var _tbN = _subG && _subG.tabs && _subG.tabs[row.tid];
+          if (_tbN && _tbN.run) {
+            _tbN.run = false;
+            _tbN.err = row.status === 'failed';
+            var _tp = _g('_subTabsPaint');
+            if (_tp) { try { _tp(); } catch (e) {} }
           }
         }
       }
@@ -939,7 +958,7 @@
       var fin = _g('_subTlFinalizeT');
       var durMs = (this._lastAt && t.t0 && this._lastAt > t.t0)
         ? this._lastAt - t.t0 : 0;
-      if (fin) { try { fin(tb, t, { durMs: durMs }); } catch (e) {} }
+      if (fin) { try { fin(tb, t, { durMs: durMs, err: !!st.err }); } catch (e) {} }
       else { t.done = true; }
       // 结论：state.final 单一真源；与末条正文同文不重画（finalize 已上移）。
       // a65 补：转写无 result/handback（全是思考+工具的干话代理）时
@@ -971,6 +990,18 @@
       if (hp) { try { hp(t); } catch (e) {} }
       this._subWatchStart();
     }
+  };
+
+  // a68（用户实测「子代理永远不结束」）：主窗终态直达子 pane——feed 尾段
+  // 丢失（截尾时代冻结）/转写无 result 行时 store 永静默，秒表永跑。主
+  // bridge 收到 subagent 终态帧时经 V4Main.subNotify 调到这里：定稿+停表
+  // +结论兜底（镜像 brief=真结论，a67 同源）；幂等（done 即让位）
+  V4Bridge.prototype.subNotify = function (err, summary) {
+    if (this._closed || !this._t || this._t.done) return;
+    var st = (this.store && this.store.snap
+              && this.store.snap.state) || {};
+    this._subFinish({ done: true, err: !!err,
+                      final: st.final || String(summary || '') });
   };
 
   // 快照整建（子 pane 唯一整窗入口）

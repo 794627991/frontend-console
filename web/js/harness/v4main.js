@@ -174,6 +174,15 @@
     }
   }
 
+  // a68：主窗终态直达子 pane（feed 冻结/转写无 result 行时 store 永静默
+  // ——秒表永跑「永远不结束」的兜底收口通道；bridge 内幂等）
+  function v4SubNotify(agentKey, err, summary) {
+    var e = _subs[agentKey];
+    if (e && e.render && typeof e.render.subNotify === 'function') {
+      try { e.render.subNotify(!!err, summary || ''); } catch (err2) {}
+    }
+  }
+
   root.V4Main = {
     on: v4On,
     switch: v4Switch,
@@ -182,6 +191,7 @@
     markPending: v4MarkPending,
     subOpen: v4SubOpen,
     subClose: v4SubClose,
-    subCloseAll: v4SubCloseAll
+    subCloseAll: v4SubCloseAll,
+    subNotify: v4SubNotify
   };
 })(window);

@@ -50,17 +50,25 @@ def _session_for(cs_dir, csid):
     return None
 
 
-def _push_file(s, fp, aid):
-    """读 fp 自 offset 起的增量整行：喂 v4 子投影 + emit 兼容事件。"""
+def _push_file(s, fp, aid, force=False):
+    """读 fp 自 offset 起的增量整行：喂 v4 子投影 + emit 兼容事件。
+
+    a68（用户实测「子代理过程缺失/结论永不到/永远不结束」根因）：增量
+    截尾（MAX_DELTA_BYTES）只作用于**旧前端镜像事件的载荷**——子 feed
+    喂入必须全量行。子代理转写里 api-request-blob 单行可达数百 KB，一次
+    增量常态超 256KB，旧截尾直接把增量起点跳到文件尾=整段业务行（工具/
+    收尾 handback）永久丢失，feed 冻结在中途（state.final 永空、前端
+    秒表永跑）。V3 无此问题（回放走 /subagent_replay 全量文件）。
+
+    force=True：绕过新鲜窗（订阅时刻的对账自愈用——冻结 feed 重开 pane
+    时全量重推一轮，uuid 去重保证幂等）。"""
     now = time.time()
-    if now - os.path.getmtime(fp) > FRESH_WINDOW_S:
+    if not force and now - os.path.getmtime(fp) > FRESH_WINDOW_S:
         return
     off = _offsets.get(fp, 0)
     sz = os.path.getsize(fp)
     if sz <= off:
         return
-    if sz - off > MAX_DELTA_BYTES:
-        off = sz - MAX_DELTA_BYTES             # 爆量截尾（不推史前）
     with open(fp, "r", encoding="utf-8", errors="replace") as f:
         f.seek(off)
         txt = f.read()
@@ -88,7 +96,8 @@ def _push_file(s, fp, aid):
                 return
     except Exception:
         pass
-    # v4 子投影：逐行解析喂入（子 pane 订阅者由此收 delta 帧）
+    # v4 子投影：逐行解析喂入（子 pane 订阅者由此收 delta 帧）——
+    # a68：全量行不截尾（截尾=业务行永久丢失，见函数头注释）
     try:
         from . import v4hub
         for raw in txt.splitlines():
@@ -102,13 +111,26 @@ def _push_file(s, fp, aid):
             v4hub.v4_sub_ingest(s.session_id, aid, obj)
     except Exception:
         pass
-    # 兼容旧前端（批F 退役）
+    # 兼容旧前端（批F 退役）：载荷防爆照旧截尾
     s.emit({"kind": "event", "data": {
         "type": "subagent_delta",
         "agent": aid,
         "offset": new_off,
         "text": txt[:MAX_DELTA_BYTES],
     }})
+
+
+def push_paths_once(s, aid, paths):
+    """a68：订阅时刻的强制对账——对候选路径全量重推一轮（绕过新鲜窗）。
+    冻结 feed（截尾时代丢的尾段/中途打开-pane 缓存的残缺投影）在用户
+    重开 pane 时由此自愈；uuid 去重保证与既有行幂等。"""
+    for p in paths or []:
+        if not p or not os.path.isfile(p):
+            continue
+        try:
+            _push_file(s, p, aid, force=True)
+        except Exception:
+            pass
 
 
 def _watch_loop():

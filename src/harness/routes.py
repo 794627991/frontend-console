@@ -600,6 +600,14 @@ def harness_v4_stream():
                                         if "subagents" not in p]
                     break
         feed = v4hub.v4_sub_feed(s.session_id, agent, paths)
+        # a68（用户实测「重开 pane 还是残缺/结论永不到」）：订阅时刻强制
+        # 对账一轮——冻结 feed（增量截尾时代丢的尾段）由此自愈，uuid 去重
+        # 幂等；订阅者随后的 deltas 帧自然拿到补回的行与 state.final
+        try:
+            from .subagent_watch import push_paths_once
+            push_paths_once(s, agent, paths)
+        except Exception:
+            pass
     else:
         feed = v4hub.v4_main_feed(s)
     base_epoch = (request.args.get("epoch") or "").strip()
