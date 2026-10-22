@@ -1358,11 +1358,16 @@
     this._conclLocked = false; this._t0Note = false;
     this._emptyAt = 0; this._lastRowAt = Date.now();
     var scaffold = _g('_subPaneScaffold');
-    // a93：头部模型初值取档案（预显配置模型）——曾恒传空串，「审核」后面
-    // 的模型槽从没被喂过；实跑模型由 _subAppend 增量覆盖（V3 同语义）
+    // a93/a93R：头部模型两段式——初值=该代理类型的**预显配置模型**（V3
+    // sse.js:371 同语义，_hgAgentModelPre 读 ~/.claude/agents frontmatter；
+    // 曾恒传空串=零正文纯思考代理头部模型永远空白）；实跑模型由 _subAppend
+    // 增量覆盖（a95R 起 think 行即带，重启后端后纯思考代理也秒得实值）
     var _ag0 = _g('_hgAg') ? _hgAg(this.opt.agent) : null;
+    var _preM = _g('_hgAgentModelPre');
     var t = scaffold ? scaffold(tb, this.opt.type || 'Task',
-                                (_ag0 && _ag0.model) || '', this.opt.desc || '')
+                                (_ag0 && _ag0.model)
+                                  || (_preM ? _preM(this.opt.type || 'Agent') : ''),
+                                this.opt.desc || '')
                      : null;
     if (!t) return;
     t.v4 = true;
