@@ -622,10 +622,15 @@
               } catch (e) {}
             }
           }
-          // a68：tab 停转（v4 下 V3 的 _subClose 完成链不跑，tb.run 无人清
-          // =tab 永挂运行态绿点）——就地清+重绘
+          // a68/a76：tab 停转（v4 下 V3 的 _subClose 完成链不跑，tb.run
+          // 无人清=tab 永挂运行态绿点）——就地清+重绘。tab 键是归一后
+          // agentId（row.tid 是 call tid——a74 的 _agEntry 同款双键解析）
           var _subG = _g('_sub');
-          var _tbN = _subG && _subG.tabs && _subG.tabs[row.tid];
+          var _aidTab = (typeof _HG !== 'undefined' && _HG.tidMap)
+            ? _HG.tidMap[row.tid] : null;
+          var _tbN = _subG && _subG.tabs
+            ? (_subG.tabs[row.tid] || (_aidTab ? _subG.tabs[_aidTab] : null))
+            : null;
           if (_tbN && _tbN.run) {
             _tbN.run = false;
             _tbN.err = row.status === 'failed';
