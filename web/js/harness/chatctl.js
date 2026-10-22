@@ -55,6 +55,26 @@
       return h;
     }).join('');
     _hgListEl.innerHTML = html || '<div class="hg-list-empty">暂无会话</div>';
+    // a87（用户实锤「完全新开的会话，左上角会话显示不对」）：新会话首条
+    // 消息后端派生标题，侧栏列表已显示真名，而头部/连接 tab 还停在占位
+    // （ensureSession 先写「新会话」，v4PaintHeader 在 sessions 刷新前拿
+    // 不到 meta 落「会话」——此后无人回填）。列表每次渲染就地纠偏：当前
+    // 会话标题与头部不同步时，头部+连接 tab 一并刷（v4PaintHeader 标题段
+    // 的等价逻辑，不整头重画避免模型/目录 chip 抖动）
+    try {
+      const _cur = (_HG.sessions || []).find(s => s && s.sid === _HG.sid);
+      const _t = _cur && _cur.title;
+      if (_t && typeof _hgTitleEl !== 'undefined' && _hgTitleEl
+          && _hgTitleEl.textContent !== _t) {
+        _hgTitleEl.textContent = _t;
+        if (typeof _hgConn !== 'undefined' && _hgConn) {
+          _hgConn.meta = _hgConn.meta || {};
+          _hgConn.meta.label = _t;
+          const lb = _hgConn.tab && _hgConn.tab.querySelector('.label');
+          if (lb) lb.textContent = _t;
+        }
+      }
+    } catch (_) {}
   }
   function newChat() {
     saveCache(); switchTo(null);
