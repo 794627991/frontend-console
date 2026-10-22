@@ -486,7 +486,9 @@
     const lv = row.querySelector('.h-ag-live');
     const syncing = lv && String(lv.textContent || '').trim();
     if (syncing) {
-      slot.innerHTML = '<span class="h-tsec">同步中</span>';
+      // a92R（用户定调「同步中也改成徽标样式」）：与运行徽章同款胶囊
+      //（b-run 同色系=运行的子态，仅文案区分）
+      slot.innerHTML = '<span class="h-tbadge b-run">同步中</span>';
       return;
     }
     slot.innerHTML = statusBadge('running') +
