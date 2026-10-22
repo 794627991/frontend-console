@@ -116,6 +116,10 @@ const _H_TOOL_CFG = {
   SendMessage: { mode: 'collapsible', kind: 'agent', badge: '子代理',
     title: i => ['续派', String(i.message || '').split('\n')[0].trim().slice(0, 60)].filter(Boolean).join(' · ') || '子代理续派',
     get: i => String(i.message || '') },
+  // a92S（用户实锤「{} 卡」）：ZCode 会话消息工具族——ListAgents 列 peer
+  // 会话（入参恒空，此前落 Default=JSON.stringify({})={} 卡）；结果正文
+  //（会话清单）走 result 渲染原有链
+  ListAgents:  { mode: 'one-line', kind: 'task', get: () => '列出 peer 会话' },
   AskUserQuestion: { mode: 'collapsible', kind: 'question', title: i => {
       const qs = Array.isArray(i?.questions) ? i.questions : [];
       if (qs.length === 1) return `${qs[0]?.header || '问题'}${i?.answers?.[qs[0]?.question] ? ' — ' + i.answers[qs[0].question] : ''}`;
@@ -128,8 +132,10 @@ const _H_TOOL_CFG = {
   Default:   { mode: 'collapsible', kind: 'default', title: i => {
       for (const k of ['command', 'file_path', 'pattern', 'query', 'url', 'path', 'skill', 'name', 'prompt'])
         if (typeof i?.[k] === 'string' && i[k]) return i[k].slice(0, 80);
+      // a92S：空入参不渲染成 '{}' 裸串（未注册的无参工具=标题只有工具名）
+      if (!i || !Object.keys(i).length) return '';
       try { return JSON.stringify(i).slice(0, 80); } catch(_) { return ''; }
-    }, get: i => { try { return JSON.stringify(i, null, 2); } catch(_) { return String(i); } } },
+    }, get: i => { if (!i || !Object.keys(i).length) return ''; try { return JSON.stringify(i, null, 2); } catch(_) { return String(i); } } },
 };
 function _hCfg(name) { return _H_TOOL_CFG[name] || _H_TOOL_CFG.Default; }
 
