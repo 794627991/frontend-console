@@ -14,10 +14,17 @@
 (function () {
   var B = window.__HG_WORKER__ || '';
   if (!B) return;                        // 未分离：零开销透明层
-  var PRE = ['/api/harness', '/api/hiklink'];
+  // 整段命名空间直连 worker；/api/claude/* 因与 claude_setup（主进程）共享
+  // 前缀，只能精确枚举 claude_default 的端点（与 server.py 的 _CW_CLAUDE_PATHS
+  // + profiles 子前缀同清单，两处必须同步改）
+  var PRE = ['/api/harness', '/api/hiklink', '/api/proxy', '/api/usage',
+             '/api/claude/profiles'];
+  var EXACT = ['/api/claude/api_config', '/api/claude/models_probe',
+               '/api/claude/settings_open', '/api/claude/provision'];
 
   function hit(u) {
     if (typeof u !== 'string' || u.charAt(0) !== '/') return false;
+    if (EXACT.indexOf(u) !== -1) return true;
     for (var i = 0; i < PRE.length; i++) {
       var p = PRE[i];
       if (u === p) return true;

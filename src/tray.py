@@ -453,7 +453,14 @@ def _make_menu_provider(window, on_quit):
         ]
         try:
             from src import proxy as _proxy
-            items.extend(_proxy.tray_menu_items())
+            # 进程隔离（proxy 二期）：proxy 数据面在 worker——菜单段走 HTTP
+            # 桥（状态/操作经 /api/proxy/* 往返）；worker 未就绪跳过该段
+            from src import server as _srv
+            _base = getattr(_srv, "WORKER_BASE", "")
+            if _base:
+                items.extend(_proxy.tray_menu_items_remote(_base))
+            else:
+                items.extend(_proxy.tray_menu_items())
         except Exception:
             _log("Proxy 菜单段构建失败: %s", repr(_exc()))
         items.append(("sep",))

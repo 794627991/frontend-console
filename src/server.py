@@ -116,23 +116,32 @@ from src.vcs import vcs_bp
 app.register_blueprint(vcs_bp)
 
 # 注册 Claude 安装引导 Blueprint（路由 /api/claude/setup_*，联网/离线双通道）
+# （安装引导留主进程：装机期一次性动作，且与文件关联/系统路径打交道）
 from src.claude_setup import claude_setup_bp
 app.register_blueprint(claude_setup_bp)
 
-# 注册代理用量统计积木（路由 /api/usage/*；monkeypatch proxy_core 采集，宿主零侵入）
-from src.proxy_usage import usage_bp
-app.register_blueprint(usage_bp)
+# ——以下三个 Claude 系蓝图随 proxy 二期（用户拍板）移驻 worker 进程：
+#   usage_bp（/api/usage/*，monkeypatch proxy_core 采集——数据面在哪统计
+#   就必须在哪）、claude_default_bp（/api/claude/api_config|profiles|…，
+#   其 re-point 队列与 proxy 同进程才通）、proxy_bp（/api/proxy/*，面板
+#   与数据面同体）。CLAUDE_INLINE=1 恢复原位注册。
+if not CLAUDE_OFFLOAD:
+    # 注册代理用量统计积木（路由 /api/usage/*）
+    from src.proxy_usage import usage_bp
+    app.register_blueprint(usage_bp)
+
+    # 注册 Claude 默认环境/ API 配置 Blueprint（settings.json 铺设与 token 读写）
+    from src.claude_default import claude_default_bp
+    app.register_blueprint(claude_default_bp)
+
+    # 注册 Claude Proxy Blueprint（重试代理+headroom 压缩+Lanz 额度，/api/proxy/*）
+    from src.proxy import proxy_bp, proxy_module_init as _proxy_module_init
+    app.register_blueprint(proxy_bp)
+else:
+    _proxy_module_init = None   # start_background 用（offload 时不在本进程初始化）
 
 # HikLink 机器人积木（独立端口 8766 独立 app；POST /hiklink/robot，宿主零侵入）
 # （进程隔离时不在本进程导入——导入链会拖进 claude_harness 全家；worker 侧承载）
-
-# 注册 Claude 默认环境/ API 配置 Blueprint（settings.json 铺设与 token 读写）
-from src.claude_default import claude_default_bp
-app.register_blueprint(claude_default_bp)
-
-# 注册 Claude Proxy Blueprint（重试代理+headroom 压缩+Lanz 额度，/api/proxy/*）
-from src.proxy import proxy_bp, proxy_module_init
-app.register_blueprint(proxy_bp)
 
 # 注册 Claude Harness Blueprint（stream-json 界面化会话，/api/harness/*）
 # 与 claude 终端（ConPTY TUI）平行的另一条通道，互不影响（铁律4）
@@ -288,11 +297,13 @@ def start_background():
     t = threading.Thread(target=_cleanup, daemon=True)
     t.start()
     # Claude Proxy 模块初始化（启动自愈+压缩模式记忆+额度 worker；不自动启动代理）
-    try:
-        proxy_module_init()
-    except Exception as e:
-        import logging
-        logging.getLogger("claude_proxy").warning("proxy_module_init 失败: %s", e)
+    # ——进程隔离时随 proxy 移驻 worker（worker_app.main 调），本进程跳过
+    if _proxy_module_init is not None:
+        try:
+            _proxy_module_init()
+        except Exception as e:
+            import logging
+            logging.getLogger("claude_proxy").warning("proxy_module_init 失败: %s", e)
     # v2.2.2：机器人重启自恢复——登录凭据持久在 session 文件，重启后状态
     # 接口照报「已登录」，但 ensure_started 只在登录那一刻被调，bot 不会跟
     # 着复活（同事机实锤：登录成功机器人注册出来，重启工具后「未运行」且
@@ -2610,11 +2621,22 @@ else:
     # 前端已由 workerbase.js 直连 worker，这里只兜本机子进程（audit-hook /
     # ask-mcp 等沿用主端口地址的调用方）。worker 未就绪返回 503。
     _CW_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
+    # claude_default 蓝图随 proxy 二期移驻 worker——它与 claude_setup 共享
+    # /api/claude/ 前缀但分属两进程，不能整前缀转：精确枚举其端点+profiles
+    # 一族子前缀（workerbase.js 的 PRE 同清单，两处必须同步改）
+    _CW_CLAUDE_PATHS = ["/api/claude/api_config", "/api/claude/models_probe",
+                        "/api/claude/settings_open", "/api/claude/provision"]
 
     @app.route("/api/harness", methods=_CW_METHODS)
     @app.route("/api/harness/<path:sub>", methods=_CW_METHODS)
     @app.route("/api/hiklink", methods=_CW_METHODS)
     @app.route("/api/hiklink/<path:sub>", methods=_CW_METHODS)
+    @app.route("/api/proxy", methods=_CW_METHODS)
+    @app.route("/api/proxy/<path:sub>", methods=_CW_METHODS)
+    @app.route("/api/usage", methods=_CW_METHODS)
+    @app.route("/api/usage/<path:sub>", methods=_CW_METHODS)
+    @app.route("/api/claude/profiles", methods=_CW_METHODS)
+    @app.route("/api/claude/profiles/<path:sub>", methods=_CW_METHODS)
     def claude_worker_relay(sub=""):
         if not WORKER_BASE:
             return jsonify({"ok": False, "err": "Claude 后端未就绪（worker 未启动）"}), 503
@@ -2622,6 +2644,20 @@ else:
         if request.query_string:
             tgt += "?" + request.query_string.decode("latin-1")
         return redirect(tgt, code=307)
+
+    # claude_default 的四个精确端点（与上面函数体同款,独立函数避免 Flask
+    # 同 endpoint 多装饰器拼错）
+    def _claude_default_relay():
+        if not WORKER_BASE:
+            return jsonify({"ok": False, "err": "Claude 后端未就绪（worker 未启动）"}), 503
+        tgt = WORKER_BASE + request.path
+        if request.query_string:
+            tgt += "?" + request.query_string.decode("latin-1")
+        return redirect(tgt, code=307)
+
+    for _p in _CW_CLAUDE_PATHS:
+        app.add_url_rule(_p, "claude_relay_" + _p.replace("/", "_"),
+                         _claude_default_relay, methods=_CW_METHODS)
 
     @app.route("/api/worker_endpoint")
     def worker_endpoint():

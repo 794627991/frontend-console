@@ -1358,6 +1358,94 @@ def tray_menu_items():
     ]
 
 
+def tray_menu_items_remote(base):
+    """进程隔离形态的托盘 Proxy 段（proxy 数据面在 worker、托盘在主进程）：
+    与 tray_menu_items 同构的菜单树，状态/操作全部经 worker 的
+    /api/proxy/* HTTP 往返。status 取一次缓存 ~2s（一次右键打开菜单时
+    多个 text/checked 求值共享同一次拉取，不风暴）；操作 fire-and-forget。"""
+    import urllib.request
+
+    cache = {"ts": 0.0, "data": None}
+
+    def _st():
+        now = time.time()
+        if cache["data"] is None or now - cache["ts"] > 2.0:
+            try:
+                req = urllib.request.urlopen(base + "/api/proxy/status",
+                                             timeout=1.5)
+                cache["data"] = json.loads(req.read().decode("utf-8", "replace"))
+            except Exception:
+                if cache["data"] is None:
+                    cache["data"] = {}
+            cache["ts"] = now
+        return cache["data"] or {}
+
+    def _post(path, body=None):
+        try:
+            req = urllib.request.Request(
+                base + path, data=json.dumps(body or {}).encode("utf-8"),
+                headers={"Content-Type": "application/json"}, method="POST")
+            urllib.request.urlopen(req, timeout=3).read()
+        except Exception:
+            pass   # 托盘操作失败静默：面板是完整入口，菜单只是快捷方式
+
+    def _header_text():
+        d = _st()
+        return ("Claude Proxy [%s]" % d.get("status")) if d.get("running") \
+            else "Claude Proxy（未启动）"
+
+    def _quota_row():
+        d = _st()
+        ov = d.get("quota_overview")
+        u = d.get("quota_user")
+        if not ov:
+            return "额度: %s" % ("已登录 " + u if u else "未登录/暂无数据")
+        return "今日 外 %s/%s  内 %s/%s" % (
+            _fnum(ov.get("externalDailyUsed") or 0),
+            _fnum(ov.get("externalDailyLimit") or 0),
+            _fnum(ov.get("internalDailyUsed") or 0),
+            _fnum(ov.get("internalDailyLimit") or 0))
+
+    def _toggle_text():
+        return "■ 停止 Claude 代理" if _st().get("running") \
+            else "▶ 启动 Claude 代理"
+
+    def _hr_items():
+        # 装了 headroom 即可选（对齐原工具；代理未跑=只记模式下次启动生效）
+        en = bool(_st().get("headroom_exe"))
+        return [
+            ("item", "完整压缩",
+             lambda: _post("/api/proxy/compression", {"mode": "full"}),
+             {"radio": True, "checked": lambda: _st().get("hr_mode") == "full",
+              "enabled": en}),
+            ("item", "轻量压缩",
+             lambda: _post("/api/proxy/compression", {"mode": "light"}),
+             {"radio": True, "checked": lambda: _st().get("hr_mode") == "light",
+              "enabled": en}),
+            ("item", "关闭压缩",
+             lambda: _post("/api/proxy/compression", {"mode": "off"}),
+             {"radio": True, "checked": lambda: _st().get("hr_mode") == "off",
+              "enabled": True}),
+        ]
+
+    return [
+        ("sep",),
+        ("item", _header_text, None, {"enabled": False}),
+        ("item", _quota_row, None, {"enabled": False}),
+        ("item", "额度立即刷新", lambda: _post("/api/proxy/quota", {}), {}),
+        ("item", _toggle_text,
+         lambda: _post("/api/proxy/stop" if _st().get("running")
+                       else "/api/proxy/start"), {}),
+        ("item", "切换为代理模式",
+         lambda: _post("/api/proxy/mode", {"mode": "proxy"}), {}),
+        ("item", "切换为直连模式",
+         lambda: _post("/api/proxy/mode", {"mode": "direct"}), {}),
+        ("item", "压缩模式", None, {"submenu": _hr_items()}),
+        ("item", "CCR 流压缩（激进·/compact 可能卡死）",
+         lambda: _post("/api/proxy/ccr", {"on": not _st().get("ccr")}), {}),
+    ]
+
+
 def _api_status_text():
     """托盘段头状态字（GUI _refresh 四态平移）。"""
     snap = _ctl.snapshot()
@@ -1425,8 +1513,12 @@ def _tray_tip_loop():
 
 
 def _ensure_tray():
-    """启动代理时开 tooltip 刷新线程（主托盘由 tray.py 管理，这里只写 title）。"""
+    """启动代理时开 tooltip 刷新线程（主托盘由 tray.py 管理，这里只写 title）。
+    worker 形态跳过：worker 进程没有托盘（tray 在主进程），tooltip 线程
+    在 worker 里只会空转（set_tip 无接收方）。"""
     global _tray_tip_thread
+    if os.environ.get("CLAUDE_WORKER") == "1":
+        return
     if _tray_tip_thread is not None and _tray_tip_thread.is_alive():
         return
     _tip_stop.clear()

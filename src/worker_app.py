@@ -78,7 +78,12 @@ def _parent_alive(pid):
 def _stdin_bond():
     """父进程亲缘带：stdin 管道写端在父进程手里，父亡（含被强杀）写端
     关闭 → 读到 EOF → 自杀。与 PID 探活互补：PID 复用骗不过 EOF。手动
-    控制台跑时 stdin 是终端——读到行不退，EOF 才退（不误杀调试场景）。"""
+    控制台跑时 stdin 是终端——读到行不退，EOF 才退（不误杀调试场景）。
+
+    仅在被 manage_start 派生（CLAUDE_WORKER_PARENT_PID 在场=确有父进程
+    持管）时由 main 启用；脱离终端/后台重定向（stdin=/dev/null 立即 EOF）
+    的独立运行形态不启用——那种场景没有可失联的父，PID 探活（pid=0 不
+    自杀）本就不约束。"""
     try:
         st = sys.stdin
         if st is None:
@@ -113,9 +118,21 @@ def build_app():
 
     from src.claude_harness import harness_bp
     from src import hiklink_bot
+    from src.proxy import proxy_bp
+    from src.proxy_usage import usage_bp
+    from src.claude_default import claude_default_bp
 
     app = Flask(__name__)
     app.register_blueprint(harness_bp)
+    # 二期（用户拍板「proxy 搬 worker 做掉，配置不常动」）：Claude proxy
+    # 数据面+面板 API+用量统计+默认环境/凭据配置蓝图随迁——claude 流量的
+    # json 解析/转发烧 worker 的 GIL，主进程只剩串口终端与轻量路由。
+    # claude_default 的 re-point 队列与 proxy 同进程反而更顺（原来跨在
+    # 主进程）；claude_setup（安装引导）留主进程，其内部调 claude_default
+    # 函数属罕见路径，跨进程写竞态用户已接受
+    app.register_blueprint(proxy_bp)
+    app.register_blueprint(usage_bp)
+    app.register_blueprint(claude_default_bp)
 
     # ---- HikLink 机器人路由（自 server.py 随迁，语义不变） ----
     @app.route("/api/hiklink/status")
@@ -142,9 +159,17 @@ def build_app():
 
     @app.route("/worker_shutdown", methods=["POST"])
     def worker_shutdown():
-        """父进程退出链调用（manage_stop）：优雅收尾后自杀——逐会话
-        kill_proc（杀 claude 进程 + 清 peer 注册，防幽灵会话/孤儿 CLI）、
-        停机器人，半秒后 os._exit。硬 terminate 是兜底不是首选。"""
+        """父进程退出链调用（manage_stop）：优雅收尾后自杀——先停 Claude
+        proxy（停额度 worker/headroom/重试代理+base_url 回滚直连，否则
+        claude CLI 会连着一个死端口），再逐会话 kill_proc（杀 claude 进程
+        + 清 peer 注册，防幽灵会话/孤儿 CLI）、停机器人，半秒后 os._exit。
+        硬 terminate 是兜底不是首选（硬杀路径 base_url 不回滚，靠会话侧
+        ensure_direct_if_proxy_down 下次启动自愈）。"""
+        try:
+            from src.proxy import proxy_shutdown
+            proxy_shutdown()
+        except Exception:
+            pass
         try:
             from src.harness.consts import _sessions, _sessions_lock
             with _sessions_lock:
@@ -201,6 +226,14 @@ def main():
     logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
     app = build_app()
+    # worker 身份标记：proxy 的托盘 tooltip 线程等主进程专属集成据此跳过
+    os.environ["CLAUDE_WORKER"] = "1"
+    # Claude Proxy 模块初始化（额度 worker/headroom stats；不自动启动代理）
+    try:
+        from src.proxy import proxy_module_init
+        proxy_module_init()
+    except Exception as e:
+        log.warning("proxy_module_init 失败: %s", e)
     threading.Thread(target=_bot_restore, daemon=True,
                      name="hiklink-bot-restore").start()
     # 子代理 watcher 预热（不预热也能被会话 lifecycle 懒拉起，这里只是
@@ -226,8 +259,10 @@ def main():
     actual = srv.server_port
 
     parent_pid = int(os.environ.get("CLAUDE_WORKER_PARENT_PID") or 0)
-    threading.Thread(target=_stdin_bond, daemon=True,
-                     name="stdin-bond").start()
+    if parent_pid > 0:
+        # 有父（manage_start 派生）：stdin 亲缘带上岗（父亡即 EOF 即自杀）
+        threading.Thread(target=_stdin_bond, daemon=True,
+                         name="stdin-bond").start()
     threading.Thread(target=_parent_watchdog, args=(parent_pid,),
                      daemon=True, name="parent-watchdog").start()
 

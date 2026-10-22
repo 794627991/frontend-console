@@ -910,11 +910,14 @@ def main():
             pass
         # Claude Proxy 收尾（幂等）：停额度 worker/headroom/重试代理，
         # autoswitched 时回滚 base_url 直连——不回滚 Claude Code 会连不上
-        try:
-            from src.proxy import proxy_shutdown
-            proxy_shutdown()
-        except Exception:
-            pass   # proxy 模块异常不拖累主工具退出
+        # （进程隔离时 proxy 在 worker：manage_stop→/worker_shutdown 已内联
+        # proxy_shutdown，主进程模块副本无服务可停，不再调）
+        if os.environ.get("CLAUDE_INLINE") == "1":
+            try:
+                from src.proxy import proxy_shutdown
+                proxy_shutdown()
+            except Exception:
+                pass   # proxy 模块异常不拖累主工具退出
 
     def on_closing():
         if _real_quit["flag"]:
