@@ -26,6 +26,7 @@ conversation-topic-publisher}.ts 的 SSE 化移植（v4 线，2026-10-20 重构�
 """
 import json
 import threading
+import time
 
 from . import v4proto as P
 
@@ -93,6 +94,11 @@ class V4Feed(object):
 
     def __init__(self, epoch="", hydrate=None):
         self._lock = threading.Lock()
+        # 性能批（事件驱动订阅）：帧版本号 + 条件变量——ingest 落账 bump 版本
+        # 并广播，SSE 生成器 wait_frames 阻塞等到有新帧（或对账/keepalive
+        # 到点），空闲期零唤醒（原 sleep(0.03) 轮询每连接每秒醒 33 次）
+        self._cv = threading.Condition()
+        self._ver = 0
         self._reset(epoch, hydrate)
 
     def _reset(self, epoch, hydrate=None):
@@ -100,7 +106,12 @@ class V4Feed(object):
         self.snap = P.new_snapshot(epoch)
         self._row_id = 0
         self._log = []                 # [(seq, [delta,...]), ...]
+        self._seqs = []                # 与 _log 平行的 seq 列表（bisect 游标用）
         self._floor_seq = 0            # log 内最老条目的 seq（0=空）
+        # 帧文本缓存（多订阅者同 (fromSeq,toSeq) 只 json.dumps 一次——同帧
+        # 广播；racy 单槽，最坏重复序列化，无害）。_trim 越窗丢弃时失效
+        self._frm_cache = None         # ((frm, to), sse_text)
+        self._snap_txt = None          # (seq, sse_text)
         self._pending_tools = {}       # tool_use id -> rowId（终态配对）
         self._pending_agents = {}      # Task tool_use id -> (sub行, tool行)
         self._exit_marker_row = None   # 最近 exit marker 行（interrupted 合并锚）
@@ -117,6 +128,10 @@ class V4Feed(object):
         self._seen_uuid = set()
         if hydrate:
             hydrate(self)              # 重建路径直接填 snapshot（不发 delta）
+        # reset 后让所有等待者重新对账（feed 重建=内容全变）
+        with self._cv:
+            self._ver += 1
+            self._cv.notify_all()
 
     # ------------------------------------------------------------------
     # 行构造（reducer 内部）
@@ -343,8 +358,7 @@ class V4Feed(object):
                 return
             P.apply_deltas(self.snap, ds)
             self.snap["seq"] = seq
-            self._log.append((seq, ds))
-            self._trim()
+            self._commit(seq, ds)
 
     def _dup_hist(self, kind, text, at=0):
         # 补放期去重：该行是否已由 hydration 呈现。
@@ -664,8 +678,12 @@ class V4Feed(object):
                                              text=b["text"][:2000], model=model)
                             ds.append(d)
                         elif bt == "thinking" and (b.get("thinking") or "").strip():
+                            # a93R：model 随行——每条 assistant 消息都带
+                            # message.model，只挂 text 行的话「零正文纯思考+
+                            # 工具」的代理（审计类常态）头部模型槽永远空
                             d, _ = self._row("s", "reasoning", ts, seq,
-                                             text=b["thinking"][:2000])
+                                             text=b["thinking"][:2000],
+                                             model=model)
                             ds.append(d)
                         elif bt == "tool_use":
                             if b.get("name") == "SubagentHandback":
@@ -721,13 +739,16 @@ class V4Feed(object):
                 return False
             P.apply_deltas(self.snap, ds)
             self.snap["seq"] = seq
-            self._log.append((seq, ds))
-            self._trim()
+            self._commit(seq, ds)
             return True
 
     def hydrate_jsonl(self, path):
-        """从子代理转写文件全量重建（子投影冷启动）。"""
+        """从子代理转写文件全量重建（子投影冷启动）。
+        性能批：分片水合——每 512 行让行 2ms，长转写（数 MB）不再把 worker
+        GIL 独占秒级（期间其他 feed 的 SSE/ingest 全卡）。正确性不变：
+        逐行顺序喂，只是插入喘气点。"""
         try:
+            n = 0
             with open(path, "r", encoding="utf-8", errors="replace") as f:
                 for raw in f:
                     raw = raw.strip()
@@ -738,33 +759,67 @@ class V4Feed(object):
                     except Exception:
                         continue
                     self.feed_jsonl_line(o)
+                    n += 1
+                    if n % 512 == 0:
+                        time.sleep(0.002)
             self._hydrated = True
             return True
         except OSError:
             return False
 
     # ------------------------------------------------------------------
-    # 订阅帧（拉模式；SSE 生成器每 FLUSH_MS 调用）
+    # 订阅帧（拉模式；SSE 生成器事件驱动——wait_frames 等新帧，不再轮询）
     # ------------------------------------------------------------------
+    def _commit(self, seq, ds):
+        """统一落账：log/seqs 追加 + trim + 广播唤醒。ingest 侧两个入口
+        （信封 apply / feed_jsonl_line）都走这里。调用方已持 self._lock。"""
+        self._log.append((seq, ds))
+        self._seqs.append(seq)
+        self._trim()
+        with self._cv:
+            self._ver += 1
+            self._cv.notify_all()
+
+    def frame_version(self):
+        """当前帧版本号（wait_frames 的配套锚点）。"""
+        with self._cv:
+            return self._ver
+
+    def wait_frames(self, ver, timeout):
+        """阻塞等 ver 之后的新帧（超时返回当时的版本号）。SSE 生成器的
+        事件驱动等待口：空闲期线程挂条件变量上零 CPU，新帧落账即醒。"""
+        with self._cv:
+            if self._ver != ver:
+                return self._ver
+            self._cv.wait(timeout)
+            return self._ver
+
     def _trim(self):
         if len(self._log) > LOG_RETAIN:
             drop = len(self._log) - LOG_RETAIN
             del self._log[:drop]
+            del self._seqs[:drop]
             self._floor_seq = self._log[0][0] if self._log else 0
+            self._frm_cache = None   # 缓存帧的 from 已越窗：失效防引用已删 log
 
     def frames_after(self, after_seq):
         """(after_seq, last] 合并帧。越窗/落后 → None（调用方发 snapshot）。
         epoch 校验由路由层做（base.epoch != feed.epoch → 直接 snapshot）。
+        性能批：bisect 游标定位起点（原线性全扫 O(N)，600 条满窗 17µs/次×
+        每连接每秒 33 次；现 O(log N + 增量)）。
         注意：安静 feed（无新帧）也返回 None——「无新帧」与「不可续传」的
         区分用 can_resume（a92：路由曾把 None 一律当 snapshot，安静会话每次
         重连都被整窗快照=前端全量重渲抹掉 ephemeral 状态）。"""
         with self._lock:
             if after_seq < self._floor_seq:
                 return None
+            import bisect
+            i = bisect.bisect_right(self._seqs, after_seq)
+            if i >= len(self._seqs):
+                return None
             ds = []
-            for seq, dl in self._log:
-                if seq > after_seq:
-                    ds.extend(dl)
+            for seq, dl in self._log[i:]:
+                ds.extend(dl)
             if not ds:
                 return None
             return P.coalesce(ds), self.snap["seq"]

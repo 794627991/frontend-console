@@ -50,6 +50,58 @@ def _session_for(cs_dir, csid):
     return None
 
 
+# ---------------------------------------------------------------------------
+# 性能批（目录缓存 + 空闲退避）：
+# - _ls(dir)：目录清单缓存（dir mtime 不变直接复用，免每秒全量 glob 枚举
+#   ——枚举会触发 Defender 实时扫描放大，实测单轮 1.33ms×每秒）；新建/
+#   删除文件必然改 dir mtime，缓存不会漏新转写
+# - 空闲退避：30s 无任何增量数据时扫描间隔 1s→5s（有数据立即回 1s，
+#   实时感对位 SSE 不变——活跃代理的转写在持续追加，永远处于快档）
+# ---------------------------------------------------------------------------
+_ls_cache = {}              # dir -> (mtime_ns, [names])
+_sid_proj = {}              # session_id -> (ts, proj_dir) 30s TTL 绑定缓存
+_last_data_ts = 0.0         # 最近一次推到增量的时刻（退避档位依据）
+BACKOFF_SLOW_S = 5.0        # 空闲档间隔
+BACKOFF_AFTER_S = 30.0      # 无数据多久进空闲档
+
+
+def _ls(dir_path):
+    """目录清单（mtime 门控缓存）。目录不存在返回 None。"""
+    try:
+        st = os.stat(dir_path)
+        mtime = st.st_mtime_ns
+    except OSError:
+        return None
+    c = _ls_cache.get(dir_path)
+    if c and c[0] == mtime:
+        return c[1]
+    try:
+        names = [e.name for e in os.scandir(dir_path)]
+    except OSError:
+        return None
+    _ls_cache[dir_path] = (mtime, names)
+    return names
+
+
+def _proj_for_session(home, sid):
+    """session_id → 所在 projects/<proj> 目录（30s TTL；会话 jsonl 落位后
+    基本不再变，原每秒每会话全量 glob 是枚举大头）。"""
+    now = time.time()
+    c = _sid_proj.get(sid)
+    if c and now - c[0] < 30.0:
+        return c[1]
+    proj_dir = None
+    proot = _ls(os.path.join(home, ".claude", "projects"))
+    if proot:
+        for d in proot:
+            cand = os.path.join(home, ".claude", "projects", d, sid + ".jsonl")
+            if os.path.isfile(cand):
+                proj_dir = os.path.dirname(cand)
+                break
+    _sid_proj[sid] = (now, proj_dir)
+    return proj_dir
+
+
 def _push_file(s, fp, aid, force=False):
     """读 fp 自 offset 起的增量整行：喂 v4 子投影 + emit 兼容事件。
 
@@ -61,14 +113,15 @@ def _push_file(s, fp, aid, force=False):
     秒表永跑）。V3 无此问题（回放走 /subagent_replay 全量文件）。
 
     force=True：绕过新鲜窗（订阅时刻的对账自愈用——冻结 feed 重开 pane
-    时全量重推一轮，uuid 去重保证幂等）。"""
+    时全量重推一轮，uuid 去重保证幂等）。
+    返回本轮推送字节数（0=无增量；watcher 退避档位的依据）。"""
     now = time.time()
     if not force and now - os.path.getmtime(fp) > FRESH_WINDOW_S:
-        return
+        return 0
     off = _offsets.get(fp, 0)
     sz = os.path.getsize(fp)
     if sz <= off:
-        return
+        return 0
     with open(fp, "r", encoding="utf-8", errors="replace") as f:
         f.seek(off)
         txt = f.read()
@@ -76,14 +129,14 @@ def _push_file(s, fp, aid, force=False):
     if txt and not txt.endswith("\n"):
         cut = txt.rfind("\n")
         if cut < 0:
-            return
+            return 0
         txt = txt[:cut + 1]
         new_off = off + len(txt.encode("utf-8"))
     else:
         new_off = sz if sz == os.path.getsize(fp) else off + len(txt.encode("utf-8"))
     _offsets[fp] = new_off
     if not txt.strip():
-        return
+        return 0
     # v4 子投影：feed 不在（pane 先开、转写后到）且 v4 客户端在场（主投影
     # 或子订阅意向——a74：子 pane 先于主窗订阅/主 store 断连窗口期原闸会
     # 误杀）→ 按需全量 hydrate（a65：转写首行出现即建出有内容的 feed，
@@ -97,7 +150,7 @@ def _push_file(s, fp, aid, force=False):
                 and (v4hub.v4_main_has(s.sid)
                      or v4hub.v4_sub_wanted_has(s.sid, aid)):
             if v4hub.v4_sub_hydrate(s.sid, aid, [fp]):
-                return
+                return sz - off
     except Exception:
         pass
     # v4 子投影：逐行解析喂入（子 pane 订阅者由此收 delta 帧）——
@@ -122,6 +175,7 @@ def _push_file(s, fp, aid, force=False):
         "offset": new_off,
         "text": txt[:MAX_DELTA_BYTES],
     }})
+    return new_off - off
 
 
 def push_paths_once(s, aid, paths):
@@ -138,12 +192,16 @@ def push_paths_once(s, aid, paths):
 
 
 def _watch_loop():
+    global _last_data_ts
     last_clean = 0.0
     while True:
-        time.sleep(WATCH_INTERVAL_S)
+        # 空闲退避：近 30s 推到过增量→1s 快档（实时感不变），否则 5s 慢档
+        interval = WATCH_INTERVAL_S \
+            if time.time() - _last_data_ts < BACKOFF_AFTER_S else BACKOFF_SLOW_S
+        time.sleep(interval)
         try:
             now = time.time()
-            # 周期清 _offsets（终态文件离开新鲜窗后回收内存）
+            # 周期清 _offsets/_ls_cache/_sid_proj（终态文件离开新鲜窗后回收内存）
             if now - last_clean > 300:
                 last_clean = now
                 for p in list(_offsets.keys()):
@@ -152,26 +210,47 @@ def _watch_loop():
                             _offsets.pop(p, None)
                     except OSError:
                         _offsets.pop(p, None)
+                if len(_ls_cache) > 512:
+                    _ls_cache.clear()
+                for k in [k for k, v in _sid_proj.items()
+                          if now - v[0] > 300]:
+                    _sid_proj.pop(k, None)
             home = os.path.expanduser("~")
-            # 只扫有活会话的项目目录（每会话的 projects/<proj> 候选）
+            # 只扫有活会话的项目目录（会话→proj 绑定 30s TTL 缓存，原每秒
+            # 每会话全量 glob projects/*/<sid>.jsonl 是枚举大头）
             proj_dirs = set()
             for s in _iter_sessions():
                 sid = getattr(s, "session_id", None)
                 if not sid:
                     continue
-                for cand in glob.glob(os.path.join(
-                        home, ".claude", "projects", "*", sid + ".jsonl")):
-                    proj_dirs.add(os.path.dirname(cand))
+                pd = _proj_for_session(home, sid)
+                if pd:
+                    proj_dirs.add(pd)
             for proj in proj_dirs:
-                for sub_dir in glob.glob(os.path.join(proj, "*", "subagents")):
-                    csid = os.path.basename(os.path.dirname(sub_dir))
+                # proj/*/subagents：proj 目录清单走 _ls 缓存（mtime 门控），
+                # subagents 子目录存在性用 csid 目录缓存判定（新建子代理
+                # 转写目录必改 csid mtime，不会漏）
+                proot = _ls(proj)
+                if not proot:
+                    continue
+                for csid in proot:
+                    cdir = os.path.join(proj, csid)
+                    sub_dir = os.path.join(cdir, "subagents")
+                    names = _ls(cdir)
+                    if names is None or "subagents" not in names:
+                        continue
                     s = _session_for(sub_dir, csid)
                     if s is None:
                         continue
-                    for fp in glob.glob(os.path.join(sub_dir, "agent-*.jsonl")):
+                    files = _ls(sub_dir) or []
+                    for fn in files:
+                        if not (fn.startswith("agent-") and fn.endswith(".jsonl")):
+                            continue
                         try:
-                            _push_file(s, fp,
-                                       os.path.basename(fp)[len("agent-"):-len(".jsonl")])
+                            n = _push_file(s, os.path.join(sub_dir, fn),
+                                           fn[len("agent-"):-len(".jsonl")])
+                            if n:
+                                _last_data_ts = time.time()
                         except Exception:
                             continue
             # 源②（新版 CLI Agent 工具 tasks/<id>.output）——v4 补的覆盖面
@@ -181,21 +260,22 @@ def _watch_loop():
                     sid = getattr(s, "session_id", None)
                     if not sid:
                         continue
-                    proj_name = None
-                    for cand in glob.glob(os.path.join(
-                            home, ".claude", "projects", "*", sid + ".jsonl")):
-                        proj_name = os.path.basename(os.path.dirname(cand))
-                        break
-                    if not proj_name:
+                    pd = _proj_for_session(home, sid)
+                    if not pd:
                         continue
+                    proj_name = os.path.basename(pd)
                     for csid in [x for x in (
                             list(getattr(s, "lineage", None) or []) + [sid]) if x]:
-                        for fp in glob.glob(os.path.join(
-                                la, "Temp", "claude", proj_name, csid,
-                                "tasks", "*.output")):
+                        tdir = os.path.join(la, "Temp", "claude", proj_name,
+                                            csid, "tasks")
+                        for fn in (_ls(tdir) or []):
+                            if not fn.endswith(".output"):
+                                continue
                             try:
-                                _push_file(s, fp,
-                                           os.path.basename(fp)[:-len(".output")])
+                                n = _push_file(s, os.path.join(tdir, fn),
+                                               fn[:-len(".output")])
+                                if n:
+                                    _last_data_ts = time.time()
                             except Exception:
                                 continue
         except Exception:

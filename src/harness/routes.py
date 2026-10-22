@@ -623,8 +623,32 @@ def harness_v4_stream():
     base_epoch = (request.args.get("epoch") or "").strip()
     base_seq = request.args.get("seq", 0, type=int)
 
-    def _frame(obj):
-        return "event:frame\ndata: %s\n\n" % json.dumps(obj, ensure_ascii=False)
+    def _deltas_text(f, frm, to, deltas):
+        """deltas 帧文本（性能批：同 (from,to) 多订阅者共享一次序列化——
+        racy 单槽缓存挂在 feed 上，最坏重复序列化，无害）。"""
+        c = f._frm_cache
+        if c and c[0] == (frm, to):
+            return c[1]
+        t = "event:frame\ndata: %s\n\n" % json.dumps(
+            {"kind": "deltas", "fromSeq": frm, "toSeq": to, "deltas": deltas},
+            ensure_ascii=False)
+        f._frm_cache = ((frm, to), t)
+        return t
+
+    def _snap_text(f):
+        """snapshot 帧文本（性能批：seq 不变复用上次序列化——冷同步/孤儿
+        对账/重连同 seq 不再重复 dumps 大 JSON）。返回 (text, seq)。"""
+        seq = f.snap.get("seq", 0)
+        c = f._snap_txt
+        if c and c[0] == seq:
+            return c[1], seq
+        w = f.snapshot_wire()
+        seq = w["seq"]
+        t = "event:frame\ndata: %s\n\n" % json.dumps(
+            {"kind": "snapshot", "fromSeq": 0, "toSeq": seq, "snapshot": w},
+            ensure_ascii=False)
+        f._snap_txt = (seq, t)
+        return t, seq
 
     def gen():
         sent = 0
@@ -634,7 +658,7 @@ def harness_v4_stream():
         # 只能等偶然重连——实测窗格空到代理跑完才追平）。循环内 5s 对账点
         # 重取注册表，换了就整窗快照重对齐
         cell = {"feed": feed, "agent": topic[4:] if topic.startswith("sub:") else None,
-                "recheck": 0.0}
+                "recheck": time.time()}
         if base_epoch and base_epoch == feed.epoch and base_seq > 0:
             # a92（用户实锤「同步中刚一显示又被运行中+秒表刷掉」）：安静 feed
             # （无新帧）曾因 frames_after 的 None 二义性被误判为不可续传→整窗
@@ -651,52 +675,60 @@ def harness_v4_stream():
                     {"mode": mode, "epoch": feed.epoch, "seq": to},
                     ensure_ascii=False)
                 if deltas:
-                    yield _frame({"kind": "deltas", "fromSeq": base_seq,
-                                  "toSeq": to, "deltas": deltas})
+                    yield _deltas_text(feed, base_seq, to, deltas)
         if mode == "snapshot":
-            w = feed.snapshot_wire()
-            sent = w["seq"]
+            _t, sent = _snap_text(feed)
             yield "event:ack\ndata: %s\n\n" % json.dumps(
-                {"mode": "snapshot", "epoch": feed.epoch, "seq": w["seq"]},
+                {"mode": "snapshot", "epoch": feed.epoch, "seq": sent},
                 ensure_ascii=False)
-            yield _frame({"kind": "snapshot", "fromSeq": 0, "toSeq": w["seq"],
-                          "snapshot": w})
+            yield _t
         idle = 0.0
         while True:
-            time.sleep(0.03)                  # 30ms 合并窗（FLUSH_MS）
-            # a74：孤儿 feed 对账（每 5s 一次，仅 sub topic）——注册表里的
-            # 正式 feed（watcher hydrate/他端订阅建出）替换孤儿时整窗重发
+            _f = cell["feed"]
+            # 性能批（事件驱动订阅）：阻塞等新帧落账（feed._commit 广播），
+            # 无新帧只睡到对账/keepalive 最近到点——空闲期零唤醒（原
+            # sleep(0.03) 每连接每秒醒 33 次，只为问一句「有新帧吗」）
+            _t_ka = 5.0 - idle
+            if cell["agent"] is not None:
+                _t_ka = min(_t_ka, 5.0 - (time.time() - cell["recheck"]))
+            _tmo = max(0.02, _t_ka)
+            _v = _f.frame_version()
+            _v2 = _f.wait_frames(_v, _tmo)
+            if _v2 != _v:
+                # 30ms 合并窗（FLUSH_MS 语义保留）：醒来再等一小拍，让同一
+                # 突发的连续落账并成一帧发（与原轮询的批效果等价）
+                _f.wait_frames(_v2, 0.03)
+                try:
+                    fr = _f.frames_after(sent)
+                except Exception:
+                    log.exception("v4 stream 取帧失败 sid=%s", s.session_id)
+                    fr = None
+                idle = 0.0
+                if fr is not None:
+                    deltas, to = fr
+                    frm_from = sent
+                    sent = to
+                    if deltas:
+                        yield _deltas_text(_f, frm_from, to, deltas)
+                continue
+            # 超时路径：a74 孤儿 feed 对账（每 5s 一次，仅 sub topic）——
+            # 注册表里的正式 feed（watcher hydrate/他端订阅建出）替换孤儿时
+            # 整窗重发
             if cell["agent"] is not None:
                 try:
                     _now = time.time()
                     if _now - cell["recheck"] >= 5.0:
                         cell["recheck"] = _now
                         _f2 = v4hub.v4_sub_feed(s.sid, cell["agent"], None)
-                        if _f2 is not cell["feed"] and _f2.snap.get("rows"):
+                        if _f2 is not _f and _f2.snap.get("rows"):
                             cell["feed"] = _f2
-                            w = _f2.snapshot_wire()
-                            sent = w["seq"]
-                            yield _frame({"kind": "snapshot", "fromSeq": 0,
-                                          "toSeq": w["seq"], "snapshot": w})
+                            _t, sent = _snap_text(_f2)
+                            yield _t
                             idle = 0.0
                             continue
                 except Exception:
                     pass
-            try:
-                fr = cell["feed"].frames_after(sent)
-            except Exception:
-                log.exception("v4 stream 取帧失败 sid=%s", s.session_id)
-                fr = None
-            if fr is not None:
-                deltas, to = fr
-                frm_from = sent
-                sent = to
-                idle = 0.0
-                if deltas:
-                    yield _frame({"kind": "deltas", "fromSeq": frm_from,
-                                  "toSeq": to, "deltas": deltas})
-                continue
-            idle += 0.03
+            idle = min(idle + _tmo, 5.0)
             if idle >= 5.0:
                 idle = 0.0
                 yield "event:ka\ndata: {}\n\n"
