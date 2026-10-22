@@ -965,7 +965,8 @@
     var kk = row.kind;
     var ts = row.at || 0;
     if (kk === 'user_input') return { r: 'user', text: row.text || '', ts: ts };
-    if (kk === 'assistant_text') return { r: 'text', text: row.text || '', ts: ts };
+    if (kk === 'assistant_text') return { r: 'text', text: row.text || '',
+                                          model: row.model || '', ts: ts };
     if (kk === 'reasoning') return { r: 'think', text: row.text || '', ts: ts };
     if (kk === 'tool_call') {
       var done = row.status && row.status !== 'running';
@@ -1115,6 +1116,17 @@
       return;
     }
     if (n.r === 'text') {
+      // a93（用户需求「审核后面接上实际子代理使用的模型名」）：assistant 行
+      // 自带实跑 model——落档案+刷新头部模型槽（预显配置模型被实跑覆盖，
+      // V3 sse.js:368 同语义）。置于查重早退之前：重复行也要喂模型
+      if (n.model) {
+        var _agM = _g('_hgAg') ? _hgAg(this.opt.agent) : null;
+        if (_agM && _agM.model !== n.model) {
+          _agM.model = n.model;
+          var _mm = t.sc ? t.sc.querySelector('.h-mmodel') : null;
+          if (_mm) _mm.textContent = String(n.model).split('[')[0].trim();
+        }
+      }
       var want = _normWs(n.text);
       var dupT = want && [...(t.sc || t.tl).querySelectorAll('.h-msg.asst[data-raw]')]
         .some(x => { var g = _normWs(x.dataset.raw);
@@ -1319,7 +1331,11 @@
     this._conclLocked = false; this._t0Note = false;
     this._emptyAt = 0; this._lastRowAt = Date.now();
     var scaffold = _g('_subPaneScaffold');
-    var t = scaffold ? scaffold(tb, this.opt.type || 'Task', '', this.opt.desc || '')
+    // a93：头部模型初值取档案（预显配置模型）——曾恒传空串，「审核」后面
+    // 的模型槽从没被喂过；实跑模型由 _subAppend 增量覆盖（V3 同语义）
+    var _ag0 = _g('_hgAg') ? _hgAg(this.opt.agent) : null;
+    var t = scaffold ? scaffold(tb, this.opt.type || 'Task',
+                                (_ag0 && _ag0.model) || '', this.opt.desc || '')
                      : null;
     if (!t) return;
     t.v4 = true;
