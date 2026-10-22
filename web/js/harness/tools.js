@@ -516,7 +516,16 @@
     if (row && row.dataset.final === '1') return;
     const lv = row && row.classList.contains('agentline')
       ? row.querySelector('.h-ag-live') : null;
-    if (lv) lv.textContent = String(txt || '').trim().slice(0, 90);
+    if (lv) {
+      lv.textContent = String(txt || '').trim().slice(0, 90);
+      // a92：实时摘要 memo（aid 键，随卡 hgSubr 跨整窗重建稳定）——重建抹
+      // 掉 ephemeral live 文本时由 _agentFile 回放（「同步中被秒表顶掉」的
+      // 振荡收口）；真终态在 _hgAgentRowState 清 memo
+      const _ak = row.dataset && row.dataset.hgSubr;
+      if (_ak && String(txt || '').trim())
+        (_HG.agLiveMemo || (_HG.agLiveMemo = {}))[_ak] =
+          String(txt || '').trim().slice(0, 90);
+    }
   }
   // v3.5.142（用户批注「保留空间给过程显示」）：过程计数——think/text 增 thinkN、
   // 工具增 toolN，挂 agents 档案（秒表渲染读它；窗格关着也照计）。pid 可能是
@@ -564,6 +573,9 @@
     if (row._agentTimer) { clearInterval(row._agentTimer); row._agentTimer = null; }
     const lv = row.querySelector('.h-ag-live');
     if (lv) lv.textContent = '';
+    // a92：真终态清实时摘要 memo（防重建回放旧摘要）
+    if (row.dataset && row.dataset.hgSubr && _HG.agLiveMemo)
+      delete _HG.agLiveMemo[row.dataset.hgSubr];
     const st = row.querySelector('.h-tslots');
     if (st) {
       if (err) st.innerHTML = statusBadge('error');

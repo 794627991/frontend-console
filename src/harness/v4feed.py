@@ -754,7 +754,10 @@ class V4Feed(object):
 
     def frames_after(self, after_seq):
         """(after_seq, last] 合并帧。越窗/落后 → None（调用方发 snapshot）。
-        epoch 校验由路由层做（base.epoch != feed.epoch → 直接 snapshot）。"""
+        epoch 校验由路由层做（base.epoch != feed.epoch → 直接 snapshot）。
+        注意：安静 feed（无新帧）也返回 None——「无新帧」与「不可续传」的
+        区分用 can_resume（a92：路由曾把 None 一律当 snapshot，安静会话每次
+        重连都被整窗快照=前端全量重渲抹掉 ephemeral 状态）。"""
         with self._lock:
             if after_seq < self._floor_seq:
                 return None
@@ -765,6 +768,14 @@ class V4Feed(object):
             if not ds:
                 return None
             return P.coalesce(ds), self.snap["seq"]
+
+    def can_resume(self, base_seq):
+        """base_seq 是否可续传（未越出保留窗且不超前）。a92：与
+        frames_after 的 None 二义性解耦——安静 feed（无新帧但水位在窗内）
+        应 resume 空转，不该整窗 snapshot。"""
+        with self._lock:
+            return (base_seq >= self._floor_seq
+                    and base_seq <= self.snap["seq"])
 
     def snapshot_wire(self):
         with self._lock:

@@ -376,6 +376,13 @@
         // 工具卡上的终态（旧 feed 把后台派出回执当结果 / 回放 done 形态）
         // 让位。不依赖冷同步（其首次 fetch 有 readmodel 空表竞速窗）
         if (_rowA.dataset.final === '1') delete _rowA.dataset.final;
+        // a92：实时摘要 memo 回放——整窗重建（重连快照等）抹掉 ephemeral
+        // live 文本时在此恢复（aid 键跨重建稳定），槽位下个 tick 回「同步中」
+        var _memo = _HG.agLiveMemo;
+        var _lvR = _memo && _memo[aid]
+          ? _rowA.querySelector('.h-ag-live') : null;
+        if (_lvR && !String(_lvR.textContent || '').trim())
+          _lvR.textContent = _memo[aid];
         var _tr = _g('_hgAgentRowTimerRestart');
         // a88：只传档案 t0（上方已 memo），fresh now 兜底撤——重启链
         // 每次事件携 now 重置秒表的根因；无 t0 时由 restart 侧行上 memo

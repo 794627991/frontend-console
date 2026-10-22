@@ -636,9 +636,16 @@ def harness_v4_stream():
         cell = {"feed": feed, "agent": topic[4:] if topic.startswith("sub:") else None,
                 "recheck": 0.0}
         if base_epoch and base_epoch == feed.epoch and base_seq > 0:
-            fr = feed.frames_after(base_seq)
-            if fr is not None:
-                deltas, to = fr
+            # a92（用户实锤「同步中刚一显示又被运行中+秒表刷掉」）：安静 feed
+            # （无新帧）曾因 frames_after 的 None 二义性被误判为不可续传→整窗
+            # snapshot→前端全量重渲抹掉 ephemeral 状态（live 文本/同步中）。
+            # 水位在窗内即 resume（无新帧就只 ack 空转），越窗才 snapshot
+            if feed.can_resume(base_seq):
+                fr = feed.frames_after(base_seq)
+                if fr is not None:
+                    deltas, to = fr
+                else:
+                    deltas, to = [], feed.last_seq
                 mode, sent = "resume", to
                 yield "event:ack\ndata: %s\n\n" % json.dumps(
                     {"mode": mode, "epoch": feed.epoch, "seq": to},

@@ -92,6 +92,13 @@
         var a = JSON.parse(e.data);
         if (a.epoch) self.epoch = a.epoch;
         if (a.mode === 'snapshot') self._forceSnapshot = false;
+        // a92：resume 零帧（安静 feed 续传）也算连上——否则 status 停在
+        // connecting，15s ACK 判死窗反复重连（服务端 a92 起安静 feed 只
+        // ack 不发帧）
+        if (a.mode === 'resume' && self.status !== 'live') {
+          self.status = 'live';
+          self._notify();
+        }
       } catch (err) { /* ack 损坏：等 frame 或判死 */ }
     });
     es.addEventListener('frame', function (e) {

@@ -219,6 +219,21 @@ class TestMainReducer(unittest.TestCase):
         f.ingest(_env(2, "user_echo", data={"text": "再来"}))
         self.assertEqual([r["kind"] for r in f.snap["rows"]].count("turn_header"), 1)
 
+
+    def test_can_resume_quiet_feed(self):
+        """a92：安静 feed（无新帧）可续传——frames_after 的 None 二义性
+        （无新帧 vs 越窗）曾让路由把每次重连都判成整窗 snapshot。"""
+        f = self._feed()
+        f.ingest(_env(1, "turn_started"))
+        f.ingest(_env(2, "user_echo", data={"text": "hi"}))
+        last = f.last_seq
+        # 无新帧：frames_after None 但 can_resume True（resume 空转）
+        self.assertIsNone(f.frames_after(last))
+        self.assertTrue(f.can_resume(last))
+        # 越出保留窗：两者都不行（snapshot 兜底）
+        f._floor_seq = last + 1
+        self.assertFalse(f.can_resume(last))
+
     def test_replay_dedup_against_hydration(self):
         """水位补放期与 hydration 重叠的用户行不重复渲染。"""
         f = self._feed()
