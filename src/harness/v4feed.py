@@ -244,14 +244,28 @@ class V4Feed(object):
                 tid = data.get("tid") or ""
                 pair = self._pending_agents.pop(tid, None)
                 ok = bool(data.get("ok"))
+                _brief = (data.get("brief") or "").strip()
                 if pair:
                     srid = pair[0]
                     d, _ = self._upsert(srid,
                                         status="success" if ok else "failed",
-                                        summary=data.get("brief") or "",
+                                        summary=_brief,
                                         endedAt=ts)
                     if d:
                         ds.append(d)
+                # a66R：真结论回填权威 tool 行——转写 tool_result 是投递元数据
+                #（"This agent's report was delivered…"），真结论只在镜像 brief
+                # 里；不回填则行卡摘要永远显示元数据（用户实测「没有结论回传」）
+                if _brief and tid:
+                    _trid = next((r["rowId"] for r in self.snap["rows"]
+                                  if r.get("kind") == "tool_call"
+                                  and r.get("tid") == tid), None)
+                    if _trid:
+                        d3, _ = self._upsert(_trid,
+                                             output="✅ " + _brief[:2000],
+                                             endedAt=ts)
+                        if d3:
+                            ds.append(d3)
             elif t == "peer":
                 ds = self._reduce_peer(data, turn, ts, seq)
             elif t == "interrupted":
