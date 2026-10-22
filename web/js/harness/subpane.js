@@ -53,24 +53,29 @@
       `<div class="hg-dyn-sec-head">当前文件</div>` +
       `<div class="hg-dyn-files" data-hg-d-flist></div>` +
     `</section>`;
+  function _subDynEnsure() {             // 动态页懒建（不夺焦点；a93T 运行分支也补建）
+    if (!_subPaneEl || _sub.tabs[_SUB_DYN]) return;
+    const sc = document.createElement('div');
+    sc.className = 'hg-sub-msgs hg-dyn-pane'; sc.dataset.tid = _SUB_DYN;
+    sc.setAttribute('data-hg-dyn', '');
+    sc.innerHTML = _HG_DYN_SKELETON;
+    _sub.tabs[_SUB_DYN] = { label: '动态', type: '__dyn__', desc: '会话动态', sc,
+                            run: false, err: false, replay: false, model: '' };
+    _sub.order.push(_SUB_DYN);
+    _subBodyEl.appendChild(sc);
+    sc.onclick = _hgDynClick;          // 覆盖式绑定（伪 tab 重建不叠加）；先绑 dynEl 再渲（首帧不扑空）
+    dynEl = sc;
+    // 轻审P1 同款（_subDirEnsure 口径）：不夺焦的 tab 必须显式隐藏——漏设会
+    // 与激活 tab 平分 body 高度（空白下半屏）
+    if (_sub.active !== _SUB_DYN) sc.style.display = 'none';
+  }
   function _subDynOpen() {               // 动态页伪 tab（懒建；胶囊点击的展开面）
     if (!_subPaneEl) return;
     // a93T（用户定调「点开胶囊后，状态、版本、目录显示，固定顺序排最前」）：
     // 胶囊展开即三伪 tab 全量在场（_subDirEnsure 头部链式带 _vcsEnsure，
     // 均不夺焦点），此前只出目录/版本漏状态
     try { if (typeof _subDirEnsure === 'function') _subDirEnsure(); } catch (_) {}
-    if (!_sub.tabs[_SUB_DYN]) {
-      const sc = document.createElement('div');
-      sc.className = 'hg-sub-msgs hg-dyn-pane'; sc.dataset.tid = _SUB_DYN;
-      sc.setAttribute('data-hg-dyn', '');
-      sc.innerHTML = _HG_DYN_SKELETON;
-      _sub.tabs[_SUB_DYN] = { label: '动态', type: '__dyn__', desc: '会话动态', sc,
-                              run: false, err: false, replay: false, model: '' };
-      _sub.order.push(_SUB_DYN);
-      _subBodyEl.appendChild(sc);
-      sc.onclick = _hgDynClick;          // 覆盖式绑定（伪 tab 重建不叠加）；先绑 dynEl 再渲（首帧不扑空）
-      dynEl = sc;
-    }
+    _subDynEnsure();
     _subShow(_SUB_DYN); _subTabsPaint(); _subActivate(_SUB_DYN);
     renderSideStatus();
     _hgRolesFetch(); _hgAgentModelsFetch();   // 原 _hgPanelEnterHook 职责随开随拉（点击天然节流）
