@@ -1503,7 +1503,8 @@ class HarnessSession:
                     _aid_m = re.search(r'from "([0-9a-zA-Z_-]{8,64})"', t)
                     self.emit({"kind": "peer", "name": "subagent-handback",
                                "text": t[:12000],
-                               "aid": _aid_m.group(1) if _aid_m else ""})
+                               "aid": _aid_m.group(1) if _aid_m else "",
+                               "tid": tid})
                     continue
                 _mp = t.find("Another Claude session sent a message")
                 if (o.get("origin") or {}).get("kind") != "peer" and _mp > 0:

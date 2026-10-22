@@ -538,9 +538,13 @@ class V4Feed(object):
                     or (_am.group(1) if _am else "")
                     or str(data.get("name") or ""))
             _body = _text.split("[Subagent hand-back]")[-1].strip()
-            _tid = next((r.get("tid") for r in self.snap["rows"]
-                         if r.get("kind") == "subagent"
-                         and (r.get("childTopic") or "") == "sub:" + _aid), "")
+            # a74：tid 精确匹配优先（session.py a72 事件自带 tool_use_id）——
+            # childTopic 依赖 aid 及时分发（未到手时行 childTopic 空=永不命中，
+            # 实测元数据摘要残留根因）；childTopic 匹配保留为兜底
+            _tid = (str(data.get("tid") or "")
+                    or next((r.get("tid") for r in self.snap["rows"]
+                             if r.get("kind") == "subagent"
+                             and (r.get("childTopic") or "") == "sub:" + _aid), ""))
             if _tid:
                 _trid = next((r["rowId"] for r in self.snap["rows"]
                               if r.get("kind") == "tool_call"
