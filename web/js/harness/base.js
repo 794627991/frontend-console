@@ -109,6 +109,13 @@ const _H_TOOL_CFG = {
   // v2.21：派子代理显性化——紫色「子代理」徽章 + 运行秒表 + 完成后报告
   // 摘要（悬停看更多），报告全文收折叠体（完成有内容自动走 renderOneToolResult）
   Task:      { mode: 'collapsible', kind: 'agent', badge: '子代理', title: i => [i.subagent_type || 'Agent', i.description].filter(Boolean).join(' · ') || '子代理', get: i => i.prompt || '' },
+  // a84（用户实锤「SendMessage 渲染成裸 JSON」）：续派行=子代理同款单行卡
+  //（kind:'agent' 走 _hgAgentRowBuild；描述在 tools.js hgToolCard 合成自
+  // message 首行——档案 desc 同源，目录/卡片/窗格三处一致）。此前落 Default
+  // 配置=JSON.stringify 截 80 字符裸串
+  SendMessage: { mode: 'collapsible', kind: 'agent', badge: '子代理',
+    title: i => ['续派', String(i.message || '').split('\n')[0].trim().slice(0, 60)].filter(Boolean).join(' · ') || '子代理续派',
+    get: i => String(i.message || '') },
   AskUserQuestion: { mode: 'collapsible', kind: 'question', title: i => {
       const qs = Array.isArray(i?.questions) ? i.questions : [];
       if (qs.length === 1) return `${qs[0]?.header || '问题'}${i?.answers?.[qs[0]?.question] ? ' — ' + i.answers[qs[0].question] : ''}`;

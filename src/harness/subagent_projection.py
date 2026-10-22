@@ -53,6 +53,10 @@ _RE_XML = {
 _RE_STREAM_RECOVERY = re.compile(r"stream.?recovery", re.I)
 
 FRESH_WINDOW_MS = 120 * 1000   # 子代理转写 mtime 新鲜窗（_bg_alive_probe 同阈）
+# a84：跨代残影终审阈——running 且转写停更超此值=中断（真在跑的代理转写
+# 持续落盘：思考流 token/工具结果每秒都在写，静默 10 分钟=进程必死）。
+# 上一进程时代的残留 running（proc_alive/busy 被新回合污染）由此清出目录
+STALE_RUN_MS = 10 * 60 * 1000
 
 
 def _ts_ms(v):
@@ -580,7 +584,20 @@ def project(facts, child_states=None, liveness=None, external_links=None,
         # （用户实锤「活着 12 个」修复③：旧兜底「busy+进程活保持 running
         # 不猜」被无证据残影全部命中——ACK 已到+转写停更+无完成证据=残影）
         if ent["status"] == "running":
-            if not proc_alive or not busy:
+            # a84（用户实锤「断了再起来子代理残留 41m30s 还在运行中，续派后
+            # 目录 ×2=6 个」）：跨代残影——上一进程时代派出、随进程死亡而死的
+            # 代理，在本进程里 proc_alive/busy 都真（新回合在跑），ENDED 4 的
+            # 两道护栏全被绕过=永久 running。补时间维度终审：转写停更超
+            # STALE_RUN_MS 且无新鲜证据=真在跑的代理转写持续落盘，静默即死
+            # ——无论当前进程/会话状态一律判中断。续派（SendMessage resume）
+            # 后转写复写 → fresh/RUNNING 1 先行命中，不受此条影响
+            _la = int(ent.get("lastActive") or 0)
+            if (aid and not fresh.get(aid) and _la
+                    and (now_ms - _la) > STALE_RUN_MS):
+                ent["status"] = "interrupted"
+                ent["lost"] = True
+                ent["doneAt"] = _la
+            elif not proc_alive or not busy:
                 # 进程死 / 回合越界：CLI 必写完成证据，缺失=中断
                 ent["status"] = "interrupted"
                 ent["lost"] = True

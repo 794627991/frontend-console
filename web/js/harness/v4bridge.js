@@ -487,9 +487,60 @@
           return;
         }
         // V3 live 工具行：run 形态建卡（终态回写锚=rowById[tid]）
+        // a84（用户实锤「sendmessage 后变成 6 个子代理」）：SendMessage 续派
+        // 先行记账（V3 sse.js:450-478 同构）——①包装 tid→真实 agentId 写映射
+        //（_subTid 归一回原子代理 tab/档案）；②一链一档：并入原档（rounds++
+        // 复活/desc=消息首行/tids+=包装 tid），无原档才建独立 collab 档——
+        // 目录从此一链一行，续派不再 ×2；③消息入窗格来向队列（运行中即刻
+        // 可见）。然后再走通用建卡（SendMessage 配置=agentline 同款）
+        if (row.tool === 'SendMessage' && row.input && row.input.to
+            && typeof _HG !== 'undefined') {
+          var _to = String(row.input.to);
+          if (/^[0-9a-zA-Z_-]{4,128}$/.test(_to)) {
+            _HG.tidMap = _HG.tidMap || {};
+            _HG.tidMap[row.tid || ''] = _to;
+            _HG.aidKey = _HG.aidKey || {};
+            if (!_HG.aidKey[_to]) _HG.aidKey[_to] = row.tid || '';
+            var _orig = (_HG.agents || {})[_to] || null;
+            if (!_orig) {
+              for (var _k in (_HG.agents || {})) {
+                var _a0 = _HG.agents[_k];
+                if (_a0 && (_a0.agentId === _to || _a0.taskId === _to
+                    || (_a0.tids || []).indexOf(row.tid || '') >= 0)) {
+                  _orig = _a0; break;
+                }
+              }
+            }
+            var _m1 = String(row.input.message || '').trim().split('\n')[0]
+              .replace(/\s+/g, ' ').slice(0, 60);
+            if (_orig) {
+              _orig.rounds = (_orig.rounds || 1) + 1;
+              _orig.done = false; _orig.doneAt = 0; _orig.err = false;
+              _orig.interrupted = false; _orig.lost = false;
+              if (_m1) _orig.desc = _m1;
+              _orig.tids = _orig.tids || [];
+              if ((_orig.tids || []).indexOf(row.tid || '') < 0)
+                _orig.tids.push(row.tid || '');
+            } else {
+              _HG.agents = _HG.agents || {};
+              _HG.agents[row.tid || ''] = {
+                type: 'SendMessage', desc: _m1, t0: Date.now(),
+                done: false, doneAt: 0, collab: true, bg: true, taskId: _to };
+            }
+            var _sq = _g('_subUserQueue');
+            if (_sq) { try { _sq(_to, String(row.input.message || '')); } catch (e) {} }
+          }
+        }
         var rT = _g('renderToolUse');
         if (rT) { try { rT({ id: row.tid || '', name: row.tool || '',
                              input: row.input || {} }, false); } catch (e) {} }
+        // a84：SendMessage 行=agentline 卡——tidMap 已写，即刻回绑行卡
+        // hgSubr（可点开原子代理窗格；不必等终态）
+        if (row.tool === 'SendMessage' && typeof _HG !== 'undefined'
+            && _HG.rowById && typeof _hgAgentRowBindAid === 'function') {
+          var _sEl = _HG.rowById[row.tid || ''];
+          if (_sEl) { try { _hgAgentRowBindAid(row.tid, _sEl); } catch (e) {} }
+        }
         // 行内运行秒表（用户期望，ZCode toolCall 形态）：行尾「N s」，终态
         // upsert 时 renderOneToolResult 重写 slots 自然替换；interval 挂在
         // span 上、随 DOM 摘除自杀

@@ -635,8 +635,12 @@
     if (cfg.kind === 'askcard') return _hgAskCardBuildV3(o);
     // agent 行：单行任务卡工厂（解剖两轨同源；live 队列/秒表由 caller 挂）
     if (cfg.kind === 'agent') {
+      // a84：SendMessage 续派行的描述=消息首行（input 无 description 字段；
+      // 与档案 desc/目录行同源——V3 sse.js _msg1 同式）
       const d = _hgAgentRowBuild(o.id, inp.subagent_type || inp.agent_type || name,
-        inp.description || '');
+        inp.description || (name === 'SendMessage'
+          ? String(inp.message || '').replace(/\s+/g, ' ').trim().slice(0, 60)
+          : ''));
       if (err) d.classList.add('err');
       if (done) {
         const st = d.querySelector('.h-tslots');

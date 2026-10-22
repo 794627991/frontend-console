@@ -85,6 +85,19 @@
     // v3.4.56（轻审复核 P3 收口）：运行中 live 档案的同 desc 回放条目滤除——
     // restore 时序/重建/快照各路差异全部在产出侧一处收口，目录不再双条
     const _runDescs = new Set();
+    // a84（用户实锤「sendmessage 后变成 6 个子代理」）：档案级链去重——
+    // 同 agentId/taskId 的多把键（原 tid/包装 tid/agentId 冷档）只留第一份
+    //（续派归并在源头：v4bridge _applyOne 并入原档；此处只兜注册表 Sync
+    // 与 live 归并的时序缝隙）。优先保 done=false 的一份：先扫一遍把运行中
+    // 链键收进集合，第二遍产出行时让位
+    const _chainLive = new Set();
+    for (const tid in (_HG.agents || {})) {
+      const a = _HG.agents[tid];
+      if (!a || a.done) continue;
+      const _cid = a.taskId || a.agentId || '';
+      if (_cid) _chainLive.add(_cid);
+    }
+    const _seenIds = new Set();
     for (const tid in (_HG.agents || {})) {
       const a = _HG.agents[tid];
       // v3.5.306b（用户实锤「明明有至少一个设计一个审核的，目录啥都没有」）：
@@ -94,16 +107,18 @@
       // 仍无 id 的保持退出（点开必空的场景不复活）
       if (!a || a.replay) continue;
       if ((a.collab || (a.type || '') === 'Task') && !a.taskId && !a.agentId) continue;
+      // a84：链去重——本档案的链键已有运行中档案在场且本条非运行中=让位；
+      // 双运行中（归并缺失的兜底）也只留先入者
+      {
+        const _cid = a.taskId || a.agentId || '';
+        if (_cid) {
+          if (_chainLive.has(_cid) && a.done) continue;   // 已结束档案让位运行中链
+          if (_seenIds.has(_cid)) continue;               // 双运行中兜底：留先入
+          _seenIds.add(_cid);
+        }
+      }
       if (!a.done && a.desc) _runDescs.add(a.desc);
       rows.push(Object.assign({ tid }, a));
-    }
-    const _seenIds = new Set();
-    for (const tid in (_HG.agents || {})) {
-      const a = _HG.agents[tid];
-      // a58R：同 agentId 的档案 id 集合——回放档与 live 档案同 aid 只留一份
-      //（用户实测「每个子代理都有一个重名的」：已完成同名不挡，双条）
-      const _id = a.taskId || a.agentId || '';
-      if (_id) _seenIds.add(_id);
     }
     for (const a of ((_HG.dyn && _HG.dyn.agentsRpl) || [])) {
       if (a.desc && _runDescs.has(a.desc)) continue;   // v3.4.56:同名回放条目让位运行中
