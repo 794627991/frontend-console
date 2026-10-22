@@ -533,7 +533,10 @@ class V4Feed(object):
             import re as _re
             _am = (_re.search(r'from "([0-9a-zA-Z_-]{8,64})"', _text)
                    or _re.search(r'from-name="([0-9a-zA-Z_-]{8,64})"', _text))
-            _aid = _am.group(1) if _am else str(data.get("name") or "")
+            # a72：session.py 专用事件带 aid 字段（最可靠），正文 from 次之
+            _aid = (str(data.get("aid") or "")
+                    or (_am.group(1) if _am else "")
+                    or str(data.get("name") or ""))
             _body = _text.split("[Subagent hand-back]")[-1].strip()
             _tid = next((r.get("tid") for r in self.snap["rows"]
                          if r.get("kind") == "subagent"

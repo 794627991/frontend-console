@@ -1495,7 +1495,16 @@ class HarnessSession:
                 # 壳在标记之前——CLI 排队注入的固定形态；用户手贴回传原文/贴原始
                 # jsonl 排查问题时通常不带这层壳，不再弹假回传气泡
                 if "[Subagent hand-back]" in t:
-                    continue   # 401：自家子代理交付信封不走回传线
+                    # a72：自家子代理交付信封不走「回传气泡」线（401 原规则
+                    # 保留），但结论本身必须下发给前端——v4 feed 依赖它回填
+                    # 子代理行卡摘要（"This agent's report was delivered" 是
+                    # notification 元数据，真结论只在这里）。emit 专用事件，
+                    # feed _reduce_peer 的 hand-back 分支消费回填后不建行
+                    _aid_m = re.search(r'from "([0-9a-zA-Z_-]{8,64})"', t)
+                    self.emit({"kind": "peer", "name": "subagent-handback",
+                               "text": t[:12000],
+                               "aid": _aid_m.group(1) if _aid_m else ""})
+                    continue
                 _mp = t.find("Another Claude session sent a message")
                 if (o.get("origin") or {}).get("kind") != "peer" and _mp > 0:
                     if t.find("<system-reminder") < 0 or \
