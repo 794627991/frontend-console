@@ -967,7 +967,8 @@
     if (kk === 'user_input') return { r: 'user', text: row.text || '', ts: ts };
     if (kk === 'assistant_text') return { r: 'text', text: row.text || '',
                                           model: row.model || '', ts: ts };
-    if (kk === 'reasoning') return { r: 'think', text: row.text || '', ts: ts };
+    if (kk === 'reasoning') return { r: 'think', text: row.text || '',
+                                     model: row.model || '', ts: ts };
     if (kk === 'tool_call') {
       var done = row.status && row.status !== 'running';
       return { r: 'tool', name: row.tool || '',
@@ -1073,6 +1074,17 @@
         try { _slp(this.opt.agent, _sum); } catch (e) {}
       }
     }
+    // a93R（用户实锤「4 个子代理只显示了一个模型」）：model 消费扩到 think
+    // 行——零正文纯思考+工具的代理（审计类常态）只靠 text 行永远等不到；
+    // 服务端 reasoning 行已随 model（v4feed a93R）
+    if (n.model) {
+      var _agM = _g('_hgAg') ? _hgAg(this.opt.agent) : null;
+      if (_agM && _agM.model !== n.model) {
+        _agM.model = n.model;
+        var _mm = t.sc ? t.sc.querySelector('.h-mmodel') : null;
+        if (_mm) _mm.textContent = String(n.model).split('[')[0].trim();
+      }
+    }
     // 行时刻统一在此记账（思考段时长/轮时长共用）；更晚 ts 到达先回填
     // 开口思考段（V3 回放 :1156 同款）
     var ts = n.ts || 0;
@@ -1116,17 +1128,6 @@
       return;
     }
     if (n.r === 'text') {
-      // a93（用户需求「审核后面接上实际子代理使用的模型名」）：assistant 行
-      // 自带实跑 model——落档案+刷新头部模型槽（预显配置模型被实跑覆盖，
-      // V3 sse.js:368 同语义）。置于查重早退之前：重复行也要喂模型
-      if (n.model) {
-        var _agM = _g('_hgAg') ? _hgAg(this.opt.agent) : null;
-        if (_agM && _agM.model !== n.model) {
-          _agM.model = n.model;
-          var _mm = t.sc ? t.sc.querySelector('.h-mmodel') : null;
-          if (_mm) _mm.textContent = String(n.model).split('[')[0].trim();
-        }
-      }
       var want = _normWs(n.text);
       var dupT = want && [...(t.sc || t.tl).querySelectorAll('.h-msg.asst[data-raw]')]
         .some(x => { var g = _normWs(x.dataset.raw);
