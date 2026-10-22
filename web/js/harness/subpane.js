@@ -1514,7 +1514,11 @@
     // 绝不乱序）；无铺底行=正常首拉全量。账本由铺底成功写（j.size，371/372）
     if (!(aid in _HG.subTail)) {
       const _tbF = _sub.tabs[_subTid(aid)];
-      if (_tbF && (_tbF.rpN || 0) > 0) return;
+      // a79：v4 tab 放行——保险丝防的是 V3 窗格无账本全量重喂乱序；v4
+      // 窗格不消费尾流（尾流只喂主窗行卡实时摘要），且 v4 铺底从不写
+      // subTail 账本（a75 派发即开窗=tab 几乎总早于首次成功拉取，账本
+      // 永缺=保险丝永挡=_subLivePaint 永不执行，主窗卡冻结在初始描述）
+      if (_tbF && (_tbF.rpN || 0) > 0 && !(_tbF.t && _tbF.t.v4)) return;
     }
     if (_subTailBusy[aid]) return;
     _subTailBusy[aid] = true;

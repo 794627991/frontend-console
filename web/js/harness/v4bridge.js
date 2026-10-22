@@ -302,6 +302,17 @@
       // agentId 即刻回写行卡（审计F1：切会话后行自带 hgSubr 是回放唯一锚）
       if (typeof _hgAgentRowBindAid === 'function')
         _hgAgentRowBindAid(tid, (_HG.rowById || {})[tid]);
+      // a79：行卡 agentId 键补写——registry.js:118/sse.js:158（V3 的两处
+      // 写键点）在 v4 下都不跑，rowById 只有 call tid 键；_subLivePaint 按
+      // rowById[agentId] 寻卡，缺键=主窗卡实时摘要永不更新（定格在初始
+      // 描述，子窗格却正常）。_agentFile 随镜像 2s 重发反复执行=乱序自愈
+      var _rowA = (_HG.rowById || {})[tid];
+      if (_rowA && _rowA.classList.contains('agentline')) {
+        _HG.rowById[aid] = _rowA;
+        if (!_rowA.dataset.hgSubr) _rowA.dataset.hgSubr = aid;
+        var _tr = _g('_hgAgentRowTimerRestart');
+        if (_tr) { try { _tr(_rowA, a.t0 || Date.now()); } catch (e) {} }
+      }
       // a75（用户要求「主窗口显示子代理实况」对齐 V3）：agentId 到手即开
       // 实况窗格——sse.js:186 同款（V3 语义：派发后窗格自动呈现思考/工具
       // 过程，不等用户点胶囊）；_subEnsure 幂等（rpN/3s 节流）
