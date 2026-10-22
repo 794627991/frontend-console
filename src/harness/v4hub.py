@@ -43,6 +43,26 @@ _lock = threading.Lock()
 _build_locks = {}           # sid -> 冷建串行锁（复审G1：并发冷建双喂防）
 _main_feeds = {}            # sid -> V4Feed
 _sub_feeds = {}             # (sid, agentKey) -> V4Feed
+# a74：子订阅意向表（FIFO 512）——watcher 按需 hydrate 的闸原本只认主 feed
+# 在场，子 pane 先于主窗订阅/主 store 断连窗口期=闸死（转写出现也无人建
+# feed，孤儿永不愈）。/v4/stream sub 订阅即登记，与主 feed 等价放行
+_sub_wanted = []            # [(sid, agentKey), ...]
+
+
+def v4_sub_want(sid, agent_key):
+    """子 feed 订阅意向登记（/v4/stream sub 分支调用）。"""
+    with _lock:
+        key = (sid, agent_key)
+        if key in _sub_wanted:
+            return
+        _sub_wanted.append(key)
+        while len(_sub_wanted) > 512:
+            _sub_wanted.pop(0)
+
+
+def v4_sub_wanted_has(sid, agent_key):
+    with _lock:
+        return (sid, agent_key) in _sub_wanted
 
 
 def v4_main_feed(s):

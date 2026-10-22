@@ -563,6 +563,9 @@ def harness_v4_stream():
     s = _get_or_create(request.args.get("sid") or "")
     if not s:
         return jsonify({"ok": False, "err": "会话不存在"}), 404
+    # a74：watcher 启动闸补挂——_ensure_gc 原本只在 /connect（v4 流程可不经
+    # connect=子代理转写 watcher 永不启动，按需 hydrate 整链缺席）
+    _ensure_gc()
     topic = (request.args.get("topic") or "main").strip()
     from . import v4hub
     if topic.startswith("sub:"):
@@ -599,6 +602,11 @@ def harness_v4_stream():
                     paths = [hit[0]] + [p for p in paths
                                         if "subagents" not in p]
                     break
+        # a74：子订阅意向登记——watcher 按需 hydrate 的闸与主 feed 等价
+        try:
+            v4hub.v4_sub_want(s.session_id, agent)
+        except Exception:
+            pass
         feed = v4hub.v4_sub_feed(s.session_id, agent, paths)
         # a68（用户实测「重开 pane 还是残缺/结论永不到」）：订阅时刻强制
         # 对账一轮——冻结 feed（增量截尾时代丢的尾段）由此自愈，uuid 去重
@@ -619,6 +627,12 @@ def harness_v4_stream():
     def gen():
         sent = 0
         mode = "snapshot"
+        # a74：子 feed 可替换（订阅时转写未生成=零行不缓存，客户端绑在孤儿
+        # feed 上；watcher 按需 hydrate 建出正式 feed 后客户端收不到任何行，
+        # 只能等偶然重连——实测窗格空到代理跑完才追平）。循环内 5s 对账点
+        # 重取注册表，换了就整窗快照重对齐
+        cell = {"feed": feed, "agent": topic[4:] if topic.startswith("sub:") else None,
+                "recheck": 0.0}
         if base_epoch and base_epoch == feed.epoch and base_seq > 0:
             fr = feed.frames_after(base_seq)
             if fr is not None:
@@ -641,8 +655,26 @@ def harness_v4_stream():
         idle = 0.0
         while True:
             time.sleep(0.03)                  # 30ms 合并窗（FLUSH_MS）
+            # a74：孤儿 feed 对账（每 5s 一次，仅 sub topic）——注册表里的
+            # 正式 feed（watcher hydrate/他端订阅建出）替换孤儿时整窗重发
+            if cell["agent"] is not None:
+                try:
+                    _now = time.time()
+                    if _now - cell["recheck"] >= 5.0:
+                        cell["recheck"] = _now
+                        _f2 = v4hub.v4_sub_feed(s.session_id, cell["agent"], None)
+                        if _f2 is not cell["feed"] and _f2.snap.get("rows"):
+                            cell["feed"] = _f2
+                            w = _f2.snapshot_wire()
+                            sent = w["seq"]
+                            yield _frame({"kind": "snapshot", "fromSeq": 0,
+                                          "toSeq": w["seq"], "snapshot": w})
+                            idle = 0.0
+                            continue
+                except Exception:
+                    pass
             try:
-                fr = feed.frames_after(sent)
+                fr = cell["feed"].frames_after(sent)
             except Exception:
                 log.exception("v4 stream 取帧失败 sid=%s", s.session_id)
                 fr = None

@@ -84,14 +84,16 @@ def _push_file(s, fp, aid, force=False):
     _offsets[fp] = new_off
     if not txt.strip():
         return
-    # v4 子投影：feed 不在（pane 先开、转写后到）且会话有 v4 主投影（=v4
-    # 客户端在场）→ 按需全量 hydrate（a65：转写首行出现即建出有内容的
-    # feed，此后增量续喂；hydrate 已消费全文件，本轮增量跳过防重复，
-    # uuid 去重再兜底）。V3 模式（无主 feed）行为与旧版完全一致
+    # v4 子投影：feed 不在（pane 先开、转写后到）且 v4 客户端在场（主投影
+    # 或子订阅意向——a74：子 pane 先于主窗订阅/主 store 断连窗口期原闸会
+    # 误杀）→ 按需全量 hydrate（a65：转写首行出现即建出有内容的 feed，
+    # 此后增量续喂；hydrate 已消费全文件，本轮增量跳过防重复，uuid 去重
+    # 再兜底）。V3 模式（无主 feed 无意向）行为与旧版完全一致
     try:
         from . import v4hub
         if not v4hub.v4_sub_has(s.session_id, aid) \
-                and v4hub.v4_main_has(s.session_id):
+                and (v4hub.v4_main_has(s.session_id)
+                     or v4hub.v4_sub_wanted_has(s.session_id, aid)):
             if v4hub.v4_sub_hydrate(s.session_id, aid, [fp]):
                 return
     except Exception:

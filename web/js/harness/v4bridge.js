@@ -84,12 +84,17 @@
     this._firstAt = 0;         // 首行时刻（轮时长口径）
     this._lastAt = 0;          // 末行时刻（统一在 _subAppend 记账）
     this._pend = [];           // a70：开口思考段（时长回填用，V3 pend 对位）
+    this._conclLocked = false; // a74：真结论（state.final）锁定后结论区不再动
+    this._notifyTimer = null;  // a74：subNotify 宽限定时器
+    this._t0Note = false;      // a74：空态注记期 t0 是兜底值——首行到达重锚
+    this._emptyAt = 0;         // a74：空态注记时刻（20s 零行保险带计时基）
     this._subTick = null;      // 子 pane 秒表 interval（v4 无 V3 tick）
     this.unsub = store.subscribe(function (ev) { self._onEv(ev); });
   }
 
   V4Bridge.prototype.close = function () {
     if (this.unsub) { this.unsub(); this.unsub = null; }
+    if (this._notifyTimer) { clearTimeout(this._notifyTimer); this._notifyTimer = null; }
     this._subWatchStop();
   };
 
@@ -812,6 +817,16 @@
         return;
       }
       if (!self._t.done && hp) { try { hp(self._t); } catch (e) {} }
+      // a74 保险带：空态注记超 20s 仍零行（连接绑孤儿 feed/静默残滞）——
+      // 强制携水位重订阅拿服务端权威（后端 5s 对账为主修，此处兜底）
+      if (self._emptyAt && Date.now() - self._emptyAt > 20000
+          && self._t.tl && !self._t.tl.children.length) {
+        self._emptyAt = 0;
+        if (self.store && !self.store._closed) {
+          self.store._forceSnapshot = true;
+          self.store._scheduleReconnect();
+        }
+      }
     }, 1000);
   };
   V4Bridge.prototype._subWatchStop = function () {
@@ -847,7 +862,12 @@
     if (ts > 0) {
       this._flushPend(ts);
       this._lastAt = ts;
-      if (!this._firstAt) this._firstAt = ts;
+      if (!this._firstAt) {
+        this._firstAt = ts;
+        // a74：空态注记期的兜底 t0 重锚为首行时刻（真实轮时长）
+        if (this._t0Note && t.t0) { t.t0 = ts; this._t0Note = false; }
+        this._emptyAt = 0;
+      }
     }
     var i, el;
     if (n.r === 'user') {
@@ -982,44 +1002,62 @@
     }
   };
 
+  // 档案条目解析（a74）：tab 键=归一后 agentId，档案键=call tid——aidKey
+  // 反查双键兜底（此前单键查空=档案兜底整链失效，_agentDone 对运行中代理
+  // 误判「已结束」）
+  V4Bridge.prototype._agEntry = function () {
+    if (typeof _HG === 'undefined' || !_HG.agents) return null;
+    return _HG.agents[this.opt.tid]
+      || _HG.agents[((_HG.aidKey || {})[this.opt.tid])]
+      || null;
+  };
+
+  // 结论区单次成型（a74）：真源优先级 st.final（锁定）> 终态 summary/档案
+  // result（可被真源覆盖）> finalize 上移的末条正文。清场重画，绝不追加
+  // 第二个气泡（此前三次收口追出 A15+元数据+真报告三段）
+  V4Bridge.prototype._paintConcl = function (txt, lock) {
+    var t = this._t;
+    if (!t || !t.concl || !txt) return;
+    if (this._conclLocked) return;
+    if (lock) this._conclLocked = true;
+    t.concl.innerHTML = '';
+    var dv = document.createElement('div');
+    dv.className = 'h-msg asst';
+    dv.dataset.raw = String(txt).slice(0, 8000);
+    var md = _g('mdBubble');
+    if (md) { try { dv.appendChild(md(txt)); } catch (e) { dv.textContent = txt; } }
+    else dv.textContent = txt;
+    t.concl.appendChild(dv);
+  };
+
   // 终态收口：done → 定稿+结论；running → 秒表起跑
   V4Bridge.prototype._subFinish = function (st) {
     var tb = this._subTab(), t = this._t;
     if (!tb || !t) return;
     st = st || {};
     var running = !st.done;
-    var ag = (typeof _HG !== 'undefined' && _HG.agents)
-      ? _HG.agents[this.opt.tid] : null;
+    var ag = this._agEntry();
     if (running && ag && ag.done) running = false;   // 档案终态优先（防投影滞后假跑）
     if (!running) {
       this._flushPend(this._lastAt || Date.now());   // a70：末段思考时长回填
       var fin = _g('_subTlFinalizeT');
       var durMs = (this._lastAt && t.t0 && this._lastAt > t.t0)
         ? this._lastAt - t.t0 : 0;
+      // a74：定稿前留住末条正文——finalize 会把它上移结论区；有真结论
+      // （st.final）时正文该留在时间线（结论区由 _paintConcl 独占），
+      // 定稿后再归还（同文则维持上移=V3 形态）
+      var lastEl = (t._lastAsst && t._lastAsst.isConnected) ? t._lastAsst : null;
       if (fin) { try { fin(tb, t, { durMs: durMs, err: !!st.err }); } catch (e) {} }
       else { t.done = true; }
-      // 结论：state.final 单一真源；与末条正文同文不重画（finalize 已上移）。
-      // a65 补：转写无 result/handback（全是思考+工具的干话代理）时
-      // state.final 空——回退档案结论（目录行卡同源），结论区不空窗
-      var finTxt = st.final || '';
-      if (!finTxt) {
-        var agF = (typeof _HG !== 'undefined' && _HG.agents)
-          ? _HG.agents[this.opt.tid] : null;
-        if (agF && agF.result) finTxt = String(agF.result);
+      // 结论真源链：state.final（handback/report，锁定）→ 终态 summary
+      // （a73 起为真结论正文）→ 档案 result——全空时维持 finalize 上移的正文
+      var finTxt = String(st.final || '');
+      if (!finTxt && ag && ag.result) finTxt = String(ag.result);
+      if (finTxt && lastEl && t.concl && t.concl.contains(lastEl)
+          && _normWs(lastEl.dataset.raw) !== _normWs(finTxt)) {
+        try { t.tl.appendChild(lastEl); } catch (e) {}   // 正文归还时间线
       }
-      if (finTxt && t.concl) {
-        var lastA = t.concl.querySelector('.h-msg.asst');
-        var same = lastA && _normWs(lastA.dataset.raw) === _normWs(finTxt);
-        if (!same) {
-          var dv = document.createElement('div');
-          dv.className = 'h-msg asst';
-          dv.dataset.raw = String(finTxt).slice(0, 8000);
-          var md = _g('mdBubble');
-          if (md) { try { dv.appendChild(md(finTxt)); } catch (e) { dv.textContent = finTxt; } }
-          else dv.textContent = finTxt;
-          t.concl.appendChild(dv);
-        }
-      }
+      if (finTxt) this._paintConcl(finTxt, !!st.final);
       this._subWatchStop();
     } else {
       t.done = false;
@@ -1032,14 +1070,23 @@
 
   // a68（用户实测「子代理永远不结束」）：主窗终态直达子 pane——feed 尾段
   // 丢失（截尾时代冻结）/转写无 result 行时 store 永静默，秒表永跑。主
-  // bridge 收到 subagent 终态帧时经 V4Main.subNotify 调到这里：定稿+停表
-  // +结论兜底（镜像 brief=真结论，a67 同源）；幂等（done 即让位）
+  // bridge 收到 subagent 终态帧时经 V4Main.subNotify 调到这里。
+  // a74（实测「结论区混入首条正文+元数据」）：主窗终态常**先于**子 feed
+  // 尾段增量到达——立即定稿会把当时仅有的中途正文上移结论区。改为宽限
+  // 2.5s：等尾段增量（含 handback final）落地自然收口；宽限满仍无 feed
+  // 终态才兜底定稿（summary 只作结论回退，真 final 一到即覆盖锁定）
   V4Bridge.prototype.subNotify = function (err, summary) {
     if (this._closed || !this._t || this._t.done) return;
-    var st = (this.store && this.store.snap
-              && this.store.snap.state) || {};
-    this._subFinish({ done: true, err: !!err,
-                      final: st.final || String(summary || '') });
+    if (this._notifyTimer) return;
+    var self = this;
+    this._notifyTimer = setTimeout(function () {
+      self._notifyTimer = null;
+      if (self._closed || !self._t || self._t.done) return;
+      var st = (self.store && self.store.snap
+                && self.store.snap.state) || {};
+      self._subFinish({ done: true, err: !!err,
+                        final: st.final || String(summary || '') });
+    }, 2500);
   };
 
   // 快照整建（子 pane 唯一整窗入口）
@@ -1052,6 +1099,7 @@
     tb.turns = [];
     this._openTools = [];
     this._firstAt = 0; this._lastAt = 0; this._pend = [];
+    this._conclLocked = false; this._t0Note = false; this._emptyAt = 0;
     var scaffold = _g('_subPaneScaffold');
     var t = scaffold ? scaffold(tb, this.opt.type || 'Task', '', this.opt.desc || '')
                      : null;
@@ -1132,8 +1180,7 @@
   };
 
   V4Bridge.prototype._agentDone = function () {
-    var ag = (typeof _HG !== 'undefined' && _HG.agents)
-      ? _HG.agents[this.opt.tid] : null;
+    var ag = this._agEntry();
     return ag ? !!ag.done : true;   // 档案 miss 保守视为已结束（回放语义）
   };
 
@@ -1141,28 +1188,24 @@
   V4Bridge.prototype._subEmptyNote = function (found, prefix) {
     var t = this._t, tb = this._subTab();
     if (!t || !tb) return;
-    var ag = (typeof _HG !== 'undefined' && _HG.agents)
-      ? _HG.agents[this.opt.tid] : null;
+    var ag = this._agEntry();
     var running = ag ? !ag.done : false;
     var note = document.createElement('div');
     note.className = 'hg-sub-replay-note';
     if (running) {
       note.textContent = (prefix ? prefix + '——' : '') + '转写尚未生成——实况跟随中';
       t.tl.appendChild(note);
+      // a74：t0 只作秒表兜底并打假标——首行到达时重锚首行时刻（此前不重锚
+      // =「已工作」按开窗时刻算，实测 85 秒的轮显示 14 秒）
       t.t0 = (ag && ag.t0) || Date.now();
+      this._t0Note = true;
+      this._emptyAt = Date.now();
       this._subWatchStart();
     } else {
       note.textContent = (prefix ? prefix + '——' : '') +
         (found ? '转写存在但无可回放内容' : '未找到该子代理的转写记录');
       t.tl.appendChild(note);
-      if (ag && ag.result) {
-        var dv = document.createElement('div');
-        dv.className = 'h-msg asst';
-        var md = _g('mdBubble');
-        if (md) { try { dv.appendChild(md(String(ag.result))); } catch (e) { dv.textContent = ag.result; } }
-        else dv.textContent = ag.result;
-        if (t.concl) t.concl.appendChild(dv);
-      }
+      if (ag && ag.result) this._paintConcl(String(ag.result), false);
       this._subFinish({ done: true });
     }
   };
