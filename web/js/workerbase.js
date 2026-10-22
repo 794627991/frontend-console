@@ -24,7 +24,9 @@
 
   function hit(u) {
     if (typeof u !== 'string' || u.charAt(0) !== '/') return false;
-    if (EXACT.indexOf(u) !== -1) return true;
+    // 对抗审修：EXACT 先剥查询串再比对（'/api/claude/api_config?full=1'
+    // 曾漏匹配→退回主进程 307 兜底——功能不坏但白绕一跳，未来加参数即踩中）
+    if (EXACT.indexOf(u.split('?')[0]) !== -1) return true;
     for (var i = 0; i < PRE.length; i++) {
       var p = PRE[i];
       if (u === p) return true;
