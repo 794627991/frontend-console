@@ -145,7 +145,19 @@
       if (rw && rw.kind === 'marker') _prevMk = rw.mkind;
       else _prevMk = null;
       var L = rowToLine(rw);
-      if (L) lines.push(L);
+      if (!L) continue;
+      // a85（用户实锤「思考怎么能这么连续的，一行条太难看」）：相邻 thinking
+      // 行账本归并——feed 逐消息产 reasoning 行，无工具/正文间隔的连续段在
+      // live 路已续接同一抽屉（hist.js live 续接），账本仍逐行；重建转换在
+      // 此并成一行=回放/刷新也只画一个抽屉，时长按首行 ts 到下一非思考行
+      // 的差值（thinkPend 既有机制）自然覆盖整段
+      if (L.role === 'thinking' && lines.length
+          && lines[lines.length - 1].role === 'thinking') {
+        var _pl = lines[lines.length - 1];
+        _pl.text = (_pl.text || '') + '\n\n' + (L.text || '');
+        continue;
+      }
+      lines.push(L);
     }
     if (typeof _HG !== 'undefined' && !this.opt.sub) {
       // 全局账只由主窗 bridge 写（用户实测「归档条恒前1轮」根因：子 pane

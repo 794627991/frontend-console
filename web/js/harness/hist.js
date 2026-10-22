@@ -131,7 +131,12 @@
       // thinking 都是独立块——中间夹的查阅组/工具行不阻断时旧码续用同一
       // seg（_HG.think 存活续接）=「查阅多了思考全连起来」。行前断开，
       // 每块开新段（live 路不受影响：SSE tool_use 分支已 endThinking）
-      _HG.think = null;
+      // a85（用户实锤「思考怎么能这么连续的，一行条太难看」）：断开只属
+      // 回放——v4 管线 live 思考行全走本函数（V3 SSE 是 appendThinking
+      // 直流，不经此），无条件断开把无工具间隔的连续思考段切成一排
+      // 「思考 持续了 N 秒」裸条。live 续接同一抽屉（段间补 \n\n 分隔），
+      // 工具/正文到达时 _closeThink 照常收段；回放侧语义不变
+      if (!l.live) _HG.think = null;
       // v2.24 懒抽屉：历史思考段只建壳（默认收起），点开才渲染 markdown——
       // 大会话重建的大头就是几十 K 字符的 thinking 渲染（渲染体在订阅 case）
       _hgDispatch({ t: 'assistant_thinking', text: l.text,

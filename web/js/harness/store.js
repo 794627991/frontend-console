@@ -144,7 +144,13 @@
         }
         case 'assistant_thinking':
           if (e.live) {
-            closeRun(); appendThinking(e.text || '');
+            closeRun();
+            // a85：续接段补 \n\n 分隔（连续思考行同段流式，原文是独立消息，
+            // 裸拼接会让两句黏成一行；首段直接进，不加前导空行）
+            var _tb = _HG.think && _HG.think.seg && _HG.think.seg.isConnected
+              ? _HG.think.seg.querySelector('.h-think-seg-body') : null;
+            var _cont = _tb && (_tb.textContent || '').length > 0;
+            appendThinking((_cont ? '\n\n' : '') + (e.text || ''));
           } else {
             startThinking(true);
             const _segEl = _HG.think && _HG.think.seg;
