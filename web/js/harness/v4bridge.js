@@ -181,9 +181,23 @@
     // running 态子代理行补建档案（等价 V3 liveAgentsBy 桶恢复）：busy 会话
     // 切回后胶囊/目录才有「子代理执行中」。完成态不建——回放行卡由
     // renderHistTool 定格，目录走 registry 冷查询（与 V3 整窗路同口径）
-    for (var j = 0; j < rows.length; j++) {
-      if (rows[j] && rows[j].kind === 'subagent'
-          && rows[j].status === 'running') this._agentFile(rows[j]);
+    // a112S（用户实锤「刷新后运行中代理不同步」）：本循环曾在渲染**之前**
+    // 跑——rowById 空、卡不存在 → _agentFile 的 rowById[aid] 回写/hgSubr/
+    // 摘标/秒表全部落空，纯刷新时无人再补（registry 回绑与重建竞速通常
+    // 抢跑失败；切回场景偶赢竞速=「切回好使刷新不好使」）。挪到渲染之后，
+    // 全部键写入落到真实卡上
+    var render = _g('_histRender');
+    if (render) {
+      // busy 会话切回：noFinalize 留活组（对齐 V3 sessions.js:534）——写死
+      // false 会把进行中的尾组定稿，后续 live delta 落入幽灵新组（用户实测
+      // 「A切B切A 工作组错乱」）
+      try { render(lines, start, { noFinalize: busy }); } catch (e) {
+        (root.console && console.error) && console.error('[v4bridge] rebuild', e);
+      }
+    }
+    for (var jr = 0; jr < rows.length; jr++) {
+      if (rows[jr] && rows[jr].kind === 'subagent'
+          && rows[jr].status === 'running') this._agentFile(rows[jr]);
     }
     // a62 诊断埋点：复现「主窗消失」时可读 window.__v4dbg 定位空/异常快照
     try {
@@ -206,15 +220,6 @@
           busy = rows[bi].state === 'running';
           break;
         }
-      }
-    }
-    var render = _g('_histRender');
-    if (render) {
-      // busy 会话切回：noFinalize 留活组（对齐 V3 sessions.js:534）——写死
-      // false 会把进行中的尾组定稿，后续 live delta 落入幽灵新组（用户实测
-      // 「A切B切A 工作组错乱」）
-      try { render(lines, start, { noFinalize: busy }); } catch (e) {
-        (root.console && console.error) && console.error('[v4bridge] rebuild', e);
       }
     }
     if (busy) {
