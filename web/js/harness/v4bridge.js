@@ -573,7 +573,12 @@
             _HG.tidMap[row.tid || ''] = _to;
             _HG.aidKey = _HG.aidKey || {};
             if (!_HG.aidKey[_to]) _HG.aidKey[_to] = row.tid || '';
-            var _orig = (_HG.agents || {})[_to] || null;
+            // a92S：归并查找走 _hgAg 单点解析（aidKey/tidMap 桥——冷同步
+            // 起即建）+taskId 直查。曾直查 agents[_to]（agentId 键），重启后
+            // 冷同步档案键是 call tid → 必 miss → 每个续派新建一份档案=
+            // 胶囊「✦8」（4 代理 × 派发/续派两键）的重复档案根源
+            var _hgAgr = _g('_hgAg');
+            var _orig = _hgAgr ? _hgAgr(_to) : ((_HG.agents || {})[_to] || null);
             if (!_orig) {
               for (var _k in (_HG.agents || {})) {
                 var _a0 = _HG.agents[_k];

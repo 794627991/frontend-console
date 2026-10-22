@@ -76,10 +76,10 @@
     const agEl = c.querySelector('[data-hg-caps-ag]');
     if (agEl) {
       if (agRun) {
-        // 冷查询批3（I3 一链一档）：续派归链后一链一档，直接数——
-        // v3.5.317 链去重（_seenLink）退役。胶囊只显示真实任务名（档案 desc）
-        const list = Object.values(_HG.agents || {}).filter(a => !a.done)
-          .sort((x, y) => (x.t0 || 0) - (y.t0 || 0));
+        // a92S：运行链去重（_hgRunChains）——I3「一链一档」靠归链成立，但
+        // 重启/冷同步键空间差异会产生派发键+续派键双档案（4 代理计 ✦8 实锤），
+        // 计数与轮换摘要一律走链去重后的清单
+        const list = _hgRunChains().sort((x, y) => (x.t0 || 0) - (y.t0 || 0));
         const last = list[Math.floor(Date.now() / 4000) % list.length] || {};
         const act = String(last.desc || '').replace(/\s+/g, ' ').trim().slice(0, 30)
           || (_AGENT_LABEL[last.type] || last.type || '');
@@ -121,7 +121,21 @@
     return !!bg && !_ROLE_AGENTS.has(String(type || ''));
   }
   function _hgAgentsRunning() {          // 运行中子代理（Task 已起、未收到完成信号）
-    return Object.values(_HG.agents || {}).some(a => !a.done);
+    return _hgRunChains().length > 0;
+  }
+  // a92S（用户实锤「胶囊又显示 8 个」）：运行链去重——同一代理的派发键与
+  // 续派键（SendMessage 包装 tid）是两份档案，直数=4 代理算 8。按
+  // taskId/agentId 链键去重，一链一计（与目录 _subDirRows 同口径）
+  function _hgRunChains() {
+    const seen = new Set(); const out = [];
+    for (const k in (_HG.agents || {})) {
+      const a = _HG.agents[k];
+      if (!a || a.done) continue;
+      const cid = a.taskId || a.agentId || k;
+      if (seen.has(cid)) continue;
+      seen.add(cid); out.push(a);
+    }
+    return out;
   }
   function _hgPeerLines() {              // 协作转交线（v3.4.88：识图卡 .h-vision 并入——面板/等待/胶囊同源）
     return [..._hgFlow.querySelectorAll('.h-switch[data-peer], .h-tool.h-vision[data-peer]')];
