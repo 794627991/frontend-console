@@ -520,11 +520,44 @@ class V4Feed(object):
         """peer 族（session.py emit {kind:'peer', name, text, to}——name 含
         「识图」=识图会话回传代播）。字段按后端真身取：旧 title/brief 从未
         匹配过（回传正文全丢）；识图发起不在此处——走 cli_stream 的识图
-        tool_use（V3 同源：sse.js 双通道工具名分支建卡起表）。"""
+        tool_use（V3 同源：sse.js 双通道工具名分支建卡起表）。
+
+        a69：hand-back 回传（子代理结论，session.py 跨会话捕获 emit）——
+        text 含 [Subagent hand-back] 标记。提取 from aid+报告正文，回填对应
+        子代理的 tool 行（卡摘要 ✅+正文）+subagent 行（summary），**不建
+        peer_notify 行**（a17 非识图回传不进消息流；此前结论在此被整条丢掉
+        =用户实测「没有任何结论回传」）。"""
         ds = []
+        _text = str(data.get("text") or "")
+        if "[Subagent hand-back]" in _text:
+            import re as _re
+            _am = (_re.search(r'from "([0-9a-zA-Z_-]{8,64})"', _text)
+                   or _re.search(r'from-name="([0-9a-zA-Z_-]{8,64})"', _text))
+            _aid = _am.group(1) if _am else str(data.get("name") or "")
+            _body = _text.split("[Subagent hand-back]")[-1].strip()
+            _tid = next((r.get("tid") for r in self.snap["rows"]
+                         if r.get("kind") == "subagent"
+                         and (r.get("childTopic") or "") == "sub:" + _aid), "")
+            if _tid:
+                _trid = next((r["rowId"] for r in self.snap["rows"]
+                              if r.get("kind") == "tool_call"
+                              and r.get("tid") == _tid), None)
+                if _trid:
+                    d, _ = self._upsert(_trid, output="✅ " + _body[:4000])
+                    if d:
+                        ds.append(d)
+                _srid = next((r["rowId"] for r in self.snap["rows"]
+                              if r.get("kind") == "subagent"
+                              and (r.get("childTopic") or "") == "sub:" + _aid), None)
+                if _srid:
+                    d, _ = self._upsert(_srid, summary=_body[:400],
+                                        status="success", endedAt=ts)
+                    if d:
+                        ds.append(d)
+            return ds
         d, _ = self._row("", "peer_notify", ts, seq,
                          name=data.get("name") or "其他会话",
-                         text=(data.get("text") or "")[:8000],
+                         text=_text[:8000],
                          to=data.get("to") or "")
         ds.append(d)
         return ds
