@@ -500,10 +500,31 @@
     if (!row) {
       const a = typeof _hgAg === 'function' ? _hgAg(pid) : null;
       if (a) row = _rb[a.taskId] || _rb[a.agentId];
+      // a88b：键缺扫卡补键（冷同步 fetch 与重建渲染的竞速洞——一次性
+      // 回绑会 miss 部分卡；本函数每代理 2s tick 必经=最可靠自愈位）
+      if (!row && a && a.taskId && typeof document !== 'undefined') {
+        try {
+          row = document.querySelector(
+            '.h-tool.agentline[data-tid="' + a.taskId + '"]');
+          if (row) { _rb[a.taskId] = row; _rb[pid] = row; }
+        } catch (_) {}
+      }
     }
     // 复审②：终态守卫——完成链 drain（异步）晚于 _hgAgentRowState 定格时，
     // 不把实时摘要写回已完成的行卡（.h-ag-live 本已被清空隐藏）
-    if (row && row.dataset.final === '1') return;
+    // a88b（用户实锤「切会话回来不同步了，消息没有了」）：final 分支改甄别——
+    // 后台派发 ack 让重建路给运行中行打了假完成标（dataset.final），一律早退
+    // =过程文本永停。档案确已 done=真终态照旧早退；档案未 done=假标就地
+    // 摘除继续画（本函数每代理 2s tick 必经=最可靠的自愈位），顺带复活
+    // 运行槽（完成徽章→运行中+秒表/同步中）
+    if (row && row.dataset.final === '1') {
+      const _fa = (_HG.agents || {})[row.dataset.tid]
+        || (typeof _hgAg === 'function' ? _hgAg(pid) : null) || {};
+      if (_fa.done) return;
+      delete row.dataset.final;
+      if (typeof _hgAgentRowTimerRestart === 'function')
+        _hgAgentRowTimerRestart(row, _fa.t0);
+    }
     const lv = row && row.classList.contains('agentline')
       ? row.querySelector('.h-ag-live') : null;
     if (lv) lv.textContent = String(txt || '').trim().slice(0, 90);

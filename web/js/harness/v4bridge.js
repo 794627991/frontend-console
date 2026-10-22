@@ -261,6 +261,13 @@
           var ent = ags[aid];
           if (!ent) continue;
           var a = _HG.agents[tid] || (_HG.agents[tid] = {});
+          // a88b：键桥随冷同步补齐——tidMap/aidKey 此前只在 live 链
+          // （_agentFile/终态帧）写，刷新后没有任何 live 事件前 _hgAg 的
+          // aidKey 反查恒失败 → _subLivePaint 档案解析 null → 过程文本
+          // 自愈链整条断（切会话回来不同步的最后一环）
+          _HG.tidMap = _HG.tidMap || {}; _HG.tidMap[tid] = aid;
+          _HG.aidKey = _HG.aidKey || {};
+          if (!_HG.aidKey[aid]) _HG.aidKey[aid] = tid;
           a.taskId = aid;
           a.type = a.type || ent.type || 'Task';
           if (ent.desc) a.desc = a.desc || ent.desc;
@@ -282,6 +289,16 @@
             if (a.done && row.dataset.final !== '1'
                 && typeof _hgAgentRowState === 'function')
               _hgAgentRowState(tid, a.err, ent.brief || '');
+            // a88b（用户实锤「切会话回来不同步了，消息没有了」）：运行中行
+            // 摘假完成标+秒表复活——后台 ack 让 Agent 行落 success 终态，
+            // 重建路 hgToolCard done 分支打 dataset.final='1'，而
+            // _subLivePaint 见 final 早退=主窗过程同步全停（V3 registry
+            // rebind 有对位逻辑，冷同步自建的合并路漏了）
+            if (_running) {
+              delete row.dataset.final;
+              var _cTr = _g('_hgAgentRowTimerRestart');
+              if (_cTr) { try { _cTr(row, a.t0); } catch (e) {} }
+            }
           }
           // a60：回放档（dyn.agentsRpl）agentId 回填——历史行派生时 aid 未
           // 知=条目 agentId 空，目录点击走 _subDirRowClick isRpl 分支必报
@@ -340,9 +357,23 @@
       // rowById[agentId] 寻卡，缺键=主窗卡实时摘要永不更新（定格在初始
       // 描述，子窗格却正常）。_agentFile 随镜像 2s 重发反复执行=乱序自愈
       var _rowA = (_HG.rowById || {})[tid];
+      // a88b：rowById 缺键自愈——冷同步 fetch 与重建渲染的竞速窗里回绑会
+      // miss（实测 4 张卡只救回 2 张），而 2s Sync 镜像保证本函数持续在跑：
+      // 按 dataset.tid 扫卡补键，找到即走正常回绑链（摘 final+秒表复活）
+      if (!_rowA && typeof document !== 'undefined') {
+        try {
+          _rowA = document.querySelector(
+            '.h-tool.agentline[data-tid="' + tid + '"]');
+          if (_rowA) _HG.rowById[tid] = _rowA;
+        } catch (e) {}
+      }
       if (_rowA && _rowA.classList.contains('agentline')) {
         _HG.rowById[aid] = _rowA;
         if (!_rowA.dataset.hgSubr) _rowA.dataset.hgSubr = aid;
+        // a88b：摘假完成标——重建路吃到后台 ack 终态行会打 dataset.final
+        // （renderHistTool/hgToolCard done 分支），final 不摘=_subLivePaint
+        // 永早退=切会话回来过程同步全停
+        delete _rowA.dataset.final;
         var _tr = _g('_hgAgentRowTimerRestart');
         // a88：只传档案 t0（line 327 已 memo），fresh now 兜底撤——重启链
         // 每次事件携 now 重置秒表的根因；无 t0 时由 restart 侧行上 memo
@@ -636,27 +667,54 @@
                                row.status === 'error'); } catch (e) {} }
         return;
       }
-      var r1 = _g('renderOneToolResult');
-      if (r1 && row.tid) {
-        try { r1({ tool_use_id: row.tid, content: row.output || '',
-                   is_error: row.status === 'error' }); } catch (e) {}
+      // a88b（用户实锤「切会话回来不同步了，消息没有了」）：后台派发 ack
+      // 守卫（V3 tools.js _hgIsBgLaunchAck 同款语义）——run_in_background
+      // 的立即回执（"agent launched successfully… internal"）是「已派出」
+      // 元数据不是任务结果。feed 把 Agent 行 upsert 成 success，本处照常
+      // renderOneToolResult → 卡片定格「完成」+dataset.final='1' →
+      // _subLivePaint 见 final 早退=主窗过程同步全停（切会话回来必现：
+      // 重建恰好吃到这批终态行）。守卫命中：不定格+复活运行 paint
+      var _bgAck = false;
+      if (typeof _HG !== 'undefined' && _HG.rowById && row.tid) {
+        var _bgEl = _HG.rowById[row.tid];
+        if (_bgEl && _bgEl.classList.contains('agentline')) {
+          var _bgArch = (_HG.agents || {})[row.tid] || {};
+          var _bgOut = String(row.output || '').trim();
+          var _sig = /^agent launched successfully/i.test(_bgOut)
+            && _bgOut.indexOf('internal') !== -1;
+          // SendMessage 回执=送达确认是真完成（collab 档 bg 但不守卫）
+          _bgAck = _sig || (!!_bgArch.bg
+            && _bgArch.type !== 'SendMessage' && _bgArch.done === false);
+          if (_bgAck) {
+            _bgArch.done = false; _bgArch.doneAt = 0;
+            var _bgTr = _g('_hgAgentRowTimerRestart');
+            if (_bgTr) { try { _bgTr(_bgEl, _bgArch.t0); } catch (e) {} }
+          }
+        }
       }
-      // 运行秒表收口（a25 泄漏修复）：renderOneToolResult 对 completed 刻意
-      // 不写 slots（P0-1 防噪门）——秒表 span 无人替换=永跳。终态时主动
-      // 换成「徽章+静态耗时」（无 interval）
-      if (typeof _HG !== 'undefined' && _HG.rowById) {
-        var el2 = _HG.rowById[row.tid];
-        var sl2 = el2 && el2.querySelector('.h-tslots');
-        var run = sl2 && sl2.querySelector('.hg-tdur-run');
-        if (run) {
-          var sb2 = _g('statusBadge');
-          var _ms = (row.endedAt && row.startedAt && row.endedAt > row.startedAt)
-            ? row.endedAt - row.startedAt : 0;
-          var _dur = _ms ? (_ms < 10000 ? (_ms / 1000).toFixed(1) + 's'
-                                        : Math.round(_ms / 1000) + 's')
-                         : (run.textContent || '0s');
-          sl2.innerHTML = (sb2 ? sb2(row.status === 'error' ? 'error' : 'completed') : '')
-            + ' <span class="hg-tdur-run" style="opacity:.85;font-size:.85em">' + _dur + '</span>';
+      if (!_bgAck) {
+        var r1 = _g('renderOneToolResult');
+        if (r1 && row.tid) {
+          try { r1({ tool_use_id: row.tid, content: row.output || '',
+                     is_error: row.status === 'error' }); } catch (e) {}
+        }
+        // 运行秒表收口（a25 泄漏修复）：renderOneToolResult 对 completed 刻意
+        // 不写 slots（P0-1 防噪门）——秒表 span 无人替换=永跳。终态时主动
+        // 换成「徽章+静态耗时」（无 interval）
+        if (typeof _HG !== 'undefined' && _HG.rowById) {
+          var el2 = _HG.rowById[row.tid];
+          var sl2 = el2 && el2.querySelector('.h-tslots');
+          var run = sl2 && sl2.querySelector('.hg-tdur-run');
+          if (run) {
+            var sb2 = _g('statusBadge');
+            var _ms = (row.endedAt && row.startedAt && row.endedAt > row.startedAt)
+              ? row.endedAt - row.startedAt : 0;
+            var _dur = _ms ? (_ms < 10000 ? (_ms / 1000).toFixed(1) + 's'
+                                          : Math.round(_ms / 1000) + 's')
+                           : (run.textContent || '0s');
+            sl2.innerHTML = (sb2 ? sb2(row.status === 'error' ? 'error' : 'completed') : '')
+              + ' <span class="hg-tdur-run" style="opacity:.85;font-size:.85em">' + _dur + '</span>';
+          }
         }
       }
       // 失败标记归行（用户定调「不要换行，保持和思考同高度」）：V3 把
