@@ -257,10 +257,17 @@ def _hydrate_main(feed, s):
                     output=l.get("result") or "", tid=l.get("tid") or ""))
                 feed.snap["total"] += 1
             elif role in ("renew", "sysnote", "audit", "exit"):
+                _tx = l.get("text") or ""
+                # a93S（用户定调「这个不显示」）：后台保活探活卡不进投影
+                #（与 v4feed live 侧同滤；hydration 从 audit log 并入的回放行
+                # 同样不落行）
+                if role == "audit" and (_tx.startswith("[保活")
+                                        or _tx.startswith("[限流")):
+                    continue
                 feed._row_id += 1
                 feed.snap["rows"].append(F.P.mk_row(
                     feed._row_id, "", "marker", ts, 0, mkind=role,
-                    text=l.get("text") or ""))
+                    text=_tx))
                 feed.snap["total"] += 1
             elif role == "peer":
                 feed._row_id += 1

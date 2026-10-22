@@ -330,6 +330,12 @@ class V4Feed(object):
                 ds.append(d)
             elif t in ("renew", "audit", "exit", "model_switched"):
                 text = data.get("text") or data.get("msg") or ""
+                # a93S（用户定调「这个不显示」）：后台保活探活卡（[保活]/[限流]
+                # 30/45/60 分钟催促）是监控噪音不进消息流——emit 与 audit log
+                # 保留（V3 警示卡实时可见+审计存档），v4 投影不落行
+                # （live/刷新/回放全干净）
+                if t == "audit" and text.startswith(("[保活", "[限流")):
+                    return
                 d, rid = self._row("", "marker", ts, seq, mkind=t, text=text)
                 ds.append(d)
                 # 记录最近 exit marker 行（interrupted 合并锚；新 exit 覆盖）
