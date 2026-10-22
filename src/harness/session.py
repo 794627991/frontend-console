@@ -1479,6 +1479,17 @@ class HarnessSession:
                 if o.get("type") != "user":
                     continue
                 t = (o.get("message") or {}).get("content")
+                # a79：hand-back 检查必须前置——注入文本不含 "Another Claude
+                # session…" 标记，放在下方 :1488 过滤之后永不可达（a72 误放
+                # 位置实测残留：摘要恒元数据）。emit 专用事件供 v4 feed 回填
+                # 子代理行卡摘要（notification 元数据非真结论）
+                if isinstance(t, str) and "[Subagent hand-back]" in t:
+                    _aid_m = re.search(r'from "([0-9a-zA-Z_-]{8,64})"', t)
+                    self.emit({"kind": "peer", "name": "subagent-handback",
+                               "text": t[:12000],
+                               "aid": _aid_m.group(1) if _aid_m else "",
+                               "tid": tid})
+                    continue
                 # v2.3.2 两形态（用户实锤「模型收到了前台没显示」）：
                 # 独立行=空闲期到达，origin.kind=peer、正文以标记开头（原逻辑）；
                 # 内嵌行=busy 期到达被 CLI 排队，回合结束注入进下一轮用户消息
@@ -1495,17 +1506,7 @@ class HarnessSession:
                 # 壳在标记之前——CLI 排队注入的固定形态；用户手贴回传原文/贴原始
                 # jsonl 排查问题时通常不带这层壳，不再弹假回传气泡
                 if "[Subagent hand-back]" in t:
-                    # a72：自家子代理交付信封不走「回传气泡」线（401 原规则
-                    # 保留），但结论本身必须下发给前端——v4 feed 依赖它回填
-                    # 子代理行卡摘要（"This agent's report was delivered" 是
-                    # notification 元数据，真结论只在这里）。emit 专用事件，
-                    # feed _reduce_peer 的 hand-back 分支消费回填后不建行
-                    _aid_m = re.search(r'from "([0-9a-zA-Z_-]{8,64})"', t)
-                    self.emit({"kind": "peer", "name": "subagent-handback",
-                               "text": t[:12000],
-                               "aid": _aid_m.group(1) if _aid_m else "",
-                               "tid": tid})
-                    continue
+                    continue   # a79：已在上方前置分支 emit（防御性保留，理论不达）
                 _mp = t.find("Another Claude session sent a message")
                 if (o.get("origin") or {}).get("kind") != "peer" and _mp > 0:
                     if t.find("<system-reminder") < 0 or \
