@@ -19,7 +19,7 @@
 import os, sys, time, threading, json, glob, re, base64, subprocess, collections
 from queue import Queue
 
-from flask import Flask, Response, request, jsonify, send_from_directory, g
+from flask import Flask, Response, request, jsonify, send_from_directory, g, redirect
 
 import src.app_state as _st
 from src.app_state import (
@@ -61,6 +61,13 @@ DEBUG_WEB = os.environ.get("HARNESS_DEBUG_WEB") == "1"
 # v4 灰度（run_debug_v4.bat 打开）：服务端把 HARNESS_V4=1 注入页面，
 # 前端 v4main 以 window.__HG_V4__ 为准（localStorage 仍可单独强制）。
 DEBUG_V4 = os.environ.get("HARNESS_V4") == "1"
+# Claude 子系统进程隔离（v4.0.0 串口卡顿根治，用户定调「Claude 随便占，
+# 串口不能卡」）：harness/hiklink 重负载移驻 src/worker_app.py 独立进程，
+# 本进程只留串口终端与轻量路由。CLAUDE_INLINE=1 回落旧单进程形态（排障）。
+# WORKER_BASE 由 main.py 拉起 worker 后回填（""=未就绪），index 注入 +
+# /api/harness、/api/hiklink 的 307 兜底重定向都在请求时读它。
+CLAUDE_OFFLOAD = os.environ.get("CLAUDE_INLINE") != "1"
+WORKER_BASE = ""
 _SRC_WEB = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                          os.pardir, "web"))
 if DEBUG_WEB:
@@ -117,7 +124,7 @@ from src.proxy_usage import usage_bp
 app.register_blueprint(usage_bp)
 
 # HikLink 机器人积木（独立端口 8766 独立 app；POST /hiklink/robot，宿主零侵入）
-from src import hiklink_bot
+# （进程隔离时不在本进程导入——导入链会拖进 claude_harness 全家；worker 侧承载）
 
 # 注册 Claude 默认环境/ API 配置 Blueprint（settings.json 铺设与 token 读写）
 from src.claude_default import claude_default_bp
@@ -129,8 +136,16 @@ app.register_blueprint(proxy_bp)
 
 # 注册 Claude Harness Blueprint（stream-json 界面化会话，/api/harness/*）
 # 与 claude 终端（ConPTY TUI）平行的另一条通道，互不影响（铁律4）
-from src.claude_harness import harness_bp
-app.register_blueprint(harness_bp)
+# ——进程隔离（CLAUDE_OFFLOAD，v4.0.0 串口卡顿根治）：harness 与 HikLink
+# 机器人移驻 worker 独立进程（src/worker_app.py），本进程只挂 307 兜底
+# 重定向（见文件尾 claude_worker_relay）+ 前端 workerbase.js 直连；
+# CLAUDE_INLINE=1 时恢复原位注册（排障通道）
+if CLAUDE_OFFLOAD:
+    _hiklink_bot = None   # /api/hiklink/* 路由不注册（worker 承载）
+else:
+    from src import hiklink_bot as _hiklink_bot
+    from src.claude_harness import harness_bp
+    app.register_blueprint(harness_bp)
 
 # ---- 单实例唤醒通道 ----
 # 二次启动的进程探活旧实例后 POST /api/raise_window，旧实例自弹主窗口
@@ -282,22 +297,24 @@ def start_background():
     # 接口照报「已登录」，但 ensure_started 只在登录那一刻被调，bot 不会跟
     # 着复活（同事机实锤：登录成功机器人注册出来，重启工具后「未运行」且
     # 平台侧永远离线）。有凭据就后台拉起，幂等且失败只记日志不弹窗。
-    def _bot_restore():
-        time.sleep(8)   # 让端口/网络就绪，避开启动高峰
-        try:
-            from src import hiklink_bot as hb
-            d = hb._load_session_file()
-            if d.get("uid") and d.get("password"):
-                ok, msg = hb.ensure_started()
+    # （进程隔离时 bot 在 worker——自恢复随迁 worker_app.main，本进程不起）
+    if not CLAUDE_OFFLOAD:
+        def _bot_restore():
+            time.sleep(8)   # 让端口/网络就绪，避开启动高峰
+            try:
+                from src import hiklink_bot as hb
+                d = hb._load_session_file()
+                if d.get("uid") and d.get("password"):
+                    ok, msg = hb.ensure_started()
+                    import logging
+                    logging.getLogger("hiklink_bot").info(
+                        "启动自恢复机器人: %s (%s)", "成功" if ok else "失败", msg)
+            except Exception as e:
                 import logging
-                logging.getLogger("hiklink_bot").info(
-                    "启动自恢复机器人: %s (%s)", "成功" if ok else "失败", msg)
-        except Exception as e:
-            import logging
-            logging.getLogger("hiklink_bot").warning(
-                "启动自恢复机器人异常: %s", e)
-    threading.Thread(target=_bot_restore, daemon=True,
-                     name="hiklink-bot-restore").start()
+                logging.getLogger("hiklink_bot").warning(
+                    "启动自恢复机器人异常: %s", e)
+        threading.Thread(target=_bot_restore, daemon=True,
+                         name="hiklink-bot-restore").start()
 
 # ============================================================
 # Flask 路由
@@ -346,11 +363,17 @@ def index():
         # 占位符用 __HG_V4FLAG__（与变量名 __HG_V4__ 刻意不同名——子串相同
         # 会让 replace 连变量名一起吃掉：window.__HG_V4__ → window.1，
         # boot 行语法错误整行报废，v4 开关永远读不到（a12 实测根因））
+        # __HG_WBASE__：Claude worker 基址（进程隔离；空串=未分离/未就绪，
+        # workerbase.js 见空串即全透明零开销）。占位符与变量名 __HG_WORKER__
+        # 刻意不同名——同名会被 replace 连变量名一起吃掉（同 __HG_V4FLAG__
+        # 的坑）；请求时读 WORKER_BASE，worker 重启换端口后刷新页面即得新值
         if isinstance(data, bytes):
             data = data.replace(b"__HG_VER__", _HV.encode("utf-8"))
-            return data.replace(b"__HG_V4FLAG__", b"1" if DEBUG_V4 else b"0")
+            data = data.replace(b"__HG_V4FLAG__", b"1" if DEBUG_V4 else b"0")
+            return data.replace(b"__HG_WBASE__", WORKER_BASE.encode("utf-8"))
         data = data.replace("__HG_VER__", _HV)
-        return data.replace("__HG_V4FLAG__", "1" if DEBUG_V4 else "0")
+        data = data.replace("__HG_V4FLAG__", "1" if DEBUG_V4 else "0")
+        return data.replace("__HG_WBASE__", WORKER_BASE)
     if DEBUG_WEB:
         with open(os.path.join(_SRC_WEB, "index.html"), "rb") as f:
             return Response(_inject(f.read()), mimetype="text/html")
@@ -2561,24 +2584,49 @@ def cmd_lib_save():
 
 
 # ---- HikLink 机器人：统一登录状态聚合 + 激活门控（机器人与登录绑定） ----
-@app.route("/api/hiklink/status")
-def hiklink_status():
-    """统一登录 UI 轮询：登录名 + 机器人运行态。"""
-    try:
-        return jsonify({"ok": True, **hiklink_bot.status_snapshot()})
-    except Exception as e:
-        return jsonify({"ok": False, "msg": str(e)})
+# （进程隔离时随 bot 移驻 worker；本进程由 claude_worker_relay 307 兜底）
+if not CLAUDE_OFFLOAD:
+    @app.route("/api/hiklink/status")
+    def hiklink_status():
+        """统一登录 UI 轮询：登录名 + 机器人运行态。"""
+        try:
+            return jsonify({"ok": True, **_hiklink_bot.status_snapshot()})
+        except Exception as e:
+            return jsonify({"ok": False, "msg": str(e)})
+
+    @app.route("/api/hiklink/activate", methods=["POST"])
+    def hiklink_activate():
+        """激活/停用机器人（幂等）。未登录（无统一凭据）时激活会被拒绝。"""
+        j = request.get_json(silent=True) or {}
+        if j.get("stop"):
+            ok, msg = _hiklink_bot.ensure_stopped()
+        else:
+            ok, msg = _hiklink_bot.ensure_started()
+        return jsonify({"ok": ok, "msg": msg})
 
 
-@app.route("/api/hiklink/activate", methods=["POST"])
-def hiklink_activate():
-    """激活/停用机器人（幂等）。未登录（无统一凭据）时激活会被拒绝。"""
-    j = request.get_json(silent=True) or {}
-    if j.get("stop"):
-        ok, msg = hiklink_bot.ensure_stopped()
-    else:
-        ok, msg = hiklink_bot.ensure_started()
-    return jsonify({"ok": ok, "msg": msg})
+else:
+    # ---- Claude worker 兜底重定向（307 保方法保 body）----
+    # 前端已由 workerbase.js 直连 worker，这里只兜本机子进程（audit-hook /
+    # ask-mcp 等沿用主端口地址的调用方）。worker 未就绪返回 503。
+    _CW_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
+
+    @app.route("/api/harness", methods=_CW_METHODS)
+    @app.route("/api/harness/<path:sub>", methods=_CW_METHODS)
+    @app.route("/api/hiklink", methods=_CW_METHODS)
+    @app.route("/api/hiklink/<path:sub>", methods=_CW_METHODS)
+    def claude_worker_relay(sub=""):
+        if not WORKER_BASE:
+            return jsonify({"ok": False, "err": "Claude 后端未就绪（worker 未启动）"}), 503
+        tgt = WORKER_BASE + request.path
+        if request.query_string:
+            tgt += "?" + request.query_string.decode("latin-1")
+        return redirect(tgt, code=307)
+
+    @app.route("/api/worker_endpoint")
+    def worker_endpoint():
+        """前端/诊断用：worker 是否分离、基址是什么（workerbase.js 的对账口）。"""
+        return jsonify({"ok": True, "offload": True, "base": WORKER_BASE})
 
 
 if __name__ == "__main__":

@@ -346,7 +346,79 @@ def _run_audit_hook_mode():
     harness_audit_hook.main()
 
 
+def _run_claude_worker_mode():
+    """--claude-worker 模式：Claude 子系统独立进程（v4.0.0 串口卡顿根治）。
+
+    harness 会话/v4 feed/子代理 watcher/HikLink 机器人在此进程承载，
+    与主进程（串口终端）分 GIL 域——Claude 后端随便烧，串口零影响
+    （用户铁律：流畅第一）。拉起/监护/退出回收在 src.worker_app 的
+    manage_* 侧；本模式必须在单实例锁之前返回（worker 是主实例派生的
+    常驻子进程，不抢 mutex）。stdout 承载 WORKER_READY 就绪协议，
+    windowed 打包下 fd 可能为 None，重包装同 --mcp-ask。"""
+    if sys.stdout is None:
+        try: sys.stdout = open(1, 'w', encoding='utf-8')
+        except Exception: pass
+    from src import worker_app
+    worker_app.main()
+
+
+def _unhook_webview_intercept():
+    """摘除 pywebview 的全 URL WebResourceRequested 拦截（v4.0.0 串口卡顿第一现场）。
+
+    pywebview 6.x 对 '*' 注册 AddWebResourceRequestedFilter(All)：页面每个
+    HTTP 请求（含敲键的 /api/send_raw、终端 SSE）都被 WebView2 拦下、编排到
+    WinForms UI 线程跑 Python 回调，还逐条枚举 header 转 dict。UI 线程一忙，
+    所有请求集体冻结、松手集体放行——用户 trace 实锤：按键 fetch 8ms 发出、
+    响应头批量憋 8.8s/20.1s 后同一毫秒放行；串口日志：回显整批迟到 16~43s。
+    本工具从不用 request_sent/response_received 事件（全库零订阅），拔掉
+    零损失。三重摘除：方法体置空（兜底）+ 注销过滤器（WebView2 不再拦截）
+    + 解绑事件（响应回执不再逐条 marshal 上 UI 线程）。
+    全程 fail-safe：pywebview 版本差异（类名 EdgeChromium/EdgeChrome 皆有）
+    或摘不动时静默放弃，绝不挡启动。"""
+    try:
+        from webview.platforms import edgechromium as _ec
+    except Exception:
+        return   # 非 Edge 后端平台：无此拦截器
+    try:
+        _cls = None
+        for _name in ("EdgeChromium", "EdgeChrome"):
+            _c = getattr(_ec, _name, None)
+            if _c is not None and hasattr(_c, "on_web_resource_request"):
+                _cls = _c
+                break
+        if _cls is None:
+            return
+        def _noop(self, sender, args):
+            return
+        _cls.on_web_resource_request = _noop
+        _cls.on_web_resource_response = _noop
+        _orig_ready = _cls.on_webview_ready
+        def _ready_no_intercept(self, sender, args):
+            _orig_ready(self, sender, args)
+            try:
+                from webview.platforms.winforms import CoreWebView2WebResourceContext
+                cwv = sender.CoreWebView2
+                cwv.RemoveWebResourceRequestedFilter(
+                    "*", CoreWebView2WebResourceContext.All)
+                cwv.WebResourceRequested -= self.on_web_resource_request
+                cwv.WebResourceResponseReceived -= self.on_web_resource_response
+            except Exception:
+                pass   # 旧运行时摘不动：no-op 方法体兜底，代价仅剩空转 marshal
+        _cls.on_webview_ready = _ready_no_intercept
+    except Exception:
+        pass
+
+
 def main():
+    # --claude-worker 模式：Claude 子系统 worker（见 _run_claude_worker_mode；
+    # 必须先于单实例锁——主实例派生的子进程不抢 mutex）
+    if '--claude-worker' in sys.argv:
+        _run_claude_worker_mode()
+        return
+    # --no-claude-worker：回落旧单进程形态（排障通道）。必须在 server 预
+    # 导入线程之前置位——server.py 在 import 时读 CLAUDE_INLINE 定形态
+    if '--no-claude-worker' in sys.argv:
+        os.environ["CLAUDE_INLINE"] = "1"
     # --mcp-ask 模式：交互式提问 MCP server（harness 的 --mcp-config 指过来）
     if '--mcp-ask' in sys.argv:
         _run_mcp_ask_mode()
@@ -446,6 +518,9 @@ def main():
     threading.Thread(target=_preload_server, daemon=True).start()
 
     import webview
+    # 摘除 pywebview 全 URL 拦截（串口卡顿第一现场，见函数注释）——
+    # 必须在 webview.start 之前：拦截器在窗口创建时注册
+    _unhook_webview_intercept()
     # 优化 WebView2 启动：禁用 file url（我们用 HTTP）省浏览器参数；关默认菜单省 UI 初始化
     webview.settings["ALLOW_FILE_URLS"] = False
     webview.settings["SHOW_DEFAULT_MENUS"] = False
@@ -568,6 +643,15 @@ def main():
         return
     # Flask 已就绪，写 endpoint 供 Claude Code 跨会话发现（写早了 MCP 会探活到未就绪的服务）
     write_endpoint(port)
+
+    # Claude 子系统 worker：进程隔离（harness/hiklink 重负载移驻独立进程，
+    # 见 src/worker_app.py 模块注释）。失败不阻塞主工具（Claude 面板不可用，
+    # 串口终端不受影响）；崩溃由 worker 侧 supervisor 自动重启
+    try:
+        from src import worker_app
+        worker_app.manage_start()
+    except Exception as _we:
+        print(f"[警告] Claude worker 拉起失败: {_we}", file=sys.stderr)
 
     # 预热常驻截图窗（延时 10s 拉起，首载 hidden 待命）：第一次热键即 <1s 弹出
     _snip_mod.prewarm(port)
@@ -817,6 +901,13 @@ def main():
         close_all_ports()
         clear_endpoint()
         _clean_webview_cache()
+        # Claude worker 回收（幂等）：terminate + 关 stdin；worker 侧另有
+        # 父进程探活自杀兜底（主进程被强杀也不留孤儿）
+        try:
+            from src import worker_app
+            worker_app.manage_stop()
+        except Exception:
+            pass
         # Claude Proxy 收尾（幂等）：停额度 worker/headroom/重试代理，
         # autoswitched 时回滚 base_url 直连——不回滚 Claude Code 会连不上
         try:
