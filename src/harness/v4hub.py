@@ -15,6 +15,8 @@ hydration）、session.emit 与 watcher 的挂接桥。
 挂接纪律（404 精神）：ingest 只在两处——session.emit（主）与
 watcher/sub 路由（子），新增触发点必须经 v4hub，禁止绕过直调 feed。
 """
+import json
+import os
 import threading
 
 from . import v4feed as F
@@ -210,6 +212,50 @@ def _hydrate_main(feed, s):
                     dur=l.get("dur") or 0, status="done"))
                 feed.snap["total"] += 1
             # sub_open/sub_text/... 不进主投影（红线：子内容只在子 pane）
+        # a81（用户实锤：重启后历史 Task 卡摘要永远显示「This agent's
+        # report was delivered…」投递元数据）：a68 的 hand-back 回填只跑
+        # live 事件，hydration 重建的行吃不到——主转写里 hand-back 注入行
+        # （origin.kind=peer，transcript_for 不含）带 from aid+报告全文，
+        # 而 Task 行的元数据 output 自带同 aid，hydration 时就地配对回填
+        try:
+            import glob as _g
+            import re as _re
+            _hb = {}
+            for _fp in _g.glob(os.path.join(os.path.expanduser("~"), ".claude",
+                                            "projects", "*", s.session_id + ".jsonl")):
+                with open(_fp, "r", encoding="utf-8", errors="replace") as f:
+                    for _ln in f:
+                        if "[Subagent hand-back]" not in _ln:
+                            continue
+                        try:
+                            _o = json.loads(_ln)
+                        except Exception:
+                            continue
+                        _c = (_o.get("message") or {}).get("content")
+                        _t = _c if isinstance(_c, str) else \
+                            next((str(b.get("text") or "") for b in _c
+                                  if isinstance(b, dict)
+                                  and "[Subagent hand-back]" in str(b.get("text") or "")), "") \
+                            if isinstance(_c, list) else ""
+                        if "[Subagent hand-back]" not in _t:
+                            continue
+                        _m = _re.search(r'from[=\\" ]+([0-9a-zA-Z_-]{8,64})', _t)
+                        if _m:
+                            _hb[_m.group(1)] = F.hb_report_body(_t)
+            if _hb:
+                for _r in feed.snap["rows"]:
+                    if _r.get("kind") != "tool_call"                             or _r.get("tool") not in ("Task", "Agent"):
+                        continue
+                    _out = str(_r.get("output") or "")
+                    if "delivered to you as a message from" not in _out:
+                        continue
+                    _m2 = _re.search(
+                        r'delivered to you as a message from .([0-9a-zA-Z_-]{8,64})',
+                        _out)
+                    if _m2 and _m2.group(1) in _hb:
+                        _r["output"] = "✅ " + _hb[_m2.group(1)][:4000]
+        except Exception:
+            pass
         # 水位补放的去重键：hydration 已呈现的历史行不得被账本尾部补放重复
         # （rows 按 rowId 幂等，但 hydration 的行 rowId 与账本 delta 不是同一
         # 命名空间——用内容指纹兜底）

@@ -48,6 +48,19 @@ def _txt(content):
     return ""
 
 
+def hb_report_body(t):
+    """a81：hand-back 注入消息 → 报告正文。CLI 注入的固定安全前言（The
+    text below is the final report...The report follows:）与每行 2 空格的
+    防伪缩进都不是结论内容，剥掉；闭合标签同剥。"""
+    import re as _re
+    body = str(t or "").split("[Subagent hand-back]", 1)[-1]
+    body = body.split("</agent-message>", 1)[0]
+    if "The report follows:" in body[:600]:
+        body = body.split("The report follows:", 1)[1]
+    body = _re.sub(r"(?m)^  ", "", body)
+    return body.strip()
+
+
 def _input_brief(inp, limit=2000):
     """tool_use input → 展示用摘要 JSON（保序截断）。"""
     try:
@@ -430,7 +443,7 @@ class V4Feed(object):
             if _hb is not None:
                 _am = re.search(r'from "([0-9a-zA-Z_-]{8,64})"', _hb)
                 _aid = _am.group(1) if _am else ""
-                _body = _hb.split("[Subagent hand-back]")[-1].strip()
+                _body = hb_report_body(_hb)
                 _tid = next((r.get("tid") for r in self.snap["rows"]
                              if r.get("kind") == "subagent"
                              and r.get("childTopic") == "sub:" + _aid), "") if _aid else ""
@@ -537,7 +550,7 @@ class V4Feed(object):
             _aid = (str(data.get("aid") or "")
                     or (_am.group(1) if _am else "")
                     or str(data.get("name") or ""))
-            _body = _text.split("[Subagent hand-back]")[-1].strip()
+            _body = hb_report_body(_text)
             # a74：tid 精确匹配优先（session.py a72 事件自带 tool_use_id）——
             # childTopic 依赖 aid 及时分发（未到手时行 childTopic 空=永不命中，
             # 实测元数据摘要残留根因）；childTopic 匹配保留为兜底
