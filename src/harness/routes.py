@@ -603,11 +603,13 @@ def harness_v4_stream():
                                         if "subagents" not in p]
                     break
         # a74：子订阅意向登记——watcher 按需 hydrate 的闸与主 feed 等价
+        # a83：feed 注册键统一 harness sid（s.sid）——session_id 会被 CLI
+        # 首 init 从 None 换成 uuid（键漂移=订阅绑孤儿 feed，见 v4hub 文档）
         try:
-            v4hub.v4_sub_want(s.session_id, agent)
+            v4hub.v4_sub_want(s.sid, agent)
         except Exception:
             pass
-        feed = v4hub.v4_sub_feed(s.session_id, agent, paths)
+        feed = v4hub.v4_sub_feed(s.sid, agent, paths)
         # a68（用户实测「重开 pane 还是残缺/结论永不到」）：订阅时刻强制
         # 对账一轮——冻结 feed（增量截尾时代丢的尾段）由此自愈，uuid 去重
         # 幂等；订阅者随后的 deltas 帧自然拿到补回的行与 state.final
@@ -662,7 +664,7 @@ def harness_v4_stream():
                     _now = time.time()
                     if _now - cell["recheck"] >= 5.0:
                         cell["recheck"] = _now
-                        _f2 = v4hub.v4_sub_feed(s.session_id, cell["agent"], None)
+                        _f2 = v4hub.v4_sub_feed(s.sid, cell["agent"], None)
                         if _f2 is not cell["feed"] and _f2.snap.get("rows"):
                             cell["feed"] = _f2
                             w = _f2.snapshot_wire()

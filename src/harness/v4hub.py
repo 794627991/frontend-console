@@ -73,8 +73,16 @@ def v4_main_feed(s):
     初始化（ZCode transcript-hydration 对位）：**transcript hydration 永远
     打底**（CLI 落盘转写是历史权威），账本只补「取水位时刻之后」的在飞事件
     ——重启后账本恢复 seq 水位但事件体不在（实测 v4.0.0-a6 白屏根因：
-    `last_seq>0` 误判为完整账本走重放，投影只剩当前 turn）。"""
-    sid = s.session_id
+    `last_seq>0` 误判为完整账本走重放，投影只剩当前 turn）。
+
+    a83（用户实锤「新会话一直工作中、主窗什么都不显示，后台代理却在跑」）：
+    缓存键必须用 **harness sid（s.sid）**，绝不能用 `s.session_id`（claude
+    uuid）——新会话首回合 session_id 从 None 被 CLI 首个 system/init 换成
+    真 uuid（session.py:1590），键一换 ingest 冷建新 feed 进注册表，用户
+    已绑定的旧键 feed 成孤儿（页面的 SSE gen 循环还挂着它：ka 心跳照跳、
+    帧永远没有，判死/重连全不触发=主窗永久冻结，刷新才拿到新键 feed 的
+    全量快照假愈）。子 feed 键（v4_sub_*）同批换 s.sid。"""
+    sid = s.sid
     with _lock:
         feed = _main_feeds.get(sid)
         blk = _build_locks.get(sid)
@@ -100,6 +108,10 @@ def v4_main_feed(s):
             except Exception:
                 feed._replay = False
                 log.exception("v4 账本尾部补放失败 sid=%s", sid)
+        try:
+            _reconcile_live(feed, s)     # a82：在飞回合状态对账（busy/组头/hold）
+        except Exception:
+            log.exception("v4 冷建对账失败 sid=%s", sid)
         with _lock:
             old = _main_feeds.get(sid)
             # a62（用户实测致命「子页开着主窗历史全消失」）：hydration 零产出
@@ -116,6 +128,60 @@ def v4_main_feed(s):
             else:
                 feed = old               # 锁内仍撞（epoch 竞速）：保留先入者
     return feed
+
+
+def _reconcile_live(feed, s):
+    """a82（用户实测「新会话一直在工作中、主窗却定稿折叠成『已工作 22 分
+    13 秒』」）：冷建后与 session 真源对账，回填在飞回合的投影状态。
+
+    根因：turn_started/turn_hold 是 harness 自产事件，**永不落 CLI 转写**
+    ——hydration（转写打底）天然没有它们；账本补放又只回放水位之后
+    （events_after 严格 >）。后端重启（账本恢复的水位在事件体之上）/回合一
+    进行到一半才首次冷建 feed 时，turn_started 恒在水位之下 → busy/curTurn/
+    _turn_rows/_held 永久丢失 → 前端 state.busy 缺省 false，把在飞回合当已
+    完结定稿折叠（19 张工具卡全被藏起），而后台子代理实际还在跑（后台代理
+    面板可见）。对账：busy 的会话末组头翻回 running、_turn_rows 登记（真
+    turn_complete 到达收口既有组头，而非 _ensure_header 凭空建幽灵空组）、
+    A 区补 busy/curTurn、_held 抑制迟到 result 兜底——「子代理结束，主窗
+    同步结束」的链路由此闭环。"""
+    tid = ""
+    try:
+        tid = (getattr(s, "_turn_id", "") or "").strip()
+    except Exception:
+        pass
+    held = bool(getattr(s, "_held", False))
+    busy = bool(getattr(s, "busy", False)) or bool(tid) or held
+    if not busy:
+        return
+    bs = int(getattr(s, "busy_since", 0) or 0)
+    with feed._lock:
+        rows = feed.snap["rows"]
+        # 翻转条件：转写已覆盖当前回合（末行时刻 ≥ 回合起点-2s 容差）。CLI
+        # 尚未落盘当前回合时不翻——上一轮的定稿组头不能误伤，当前回合组头
+        # 由后续带 turn 的行 _ensure_header 懒建。
+        last_at = max([int(r.get("at") or 0) for r in rows] or [0])
+        hdr = None
+        if rows and (not bs or last_at >= bs - 2000):
+            for r in reversed(rows):
+                if r.get("kind") == "turn_header":
+                    hdr = r
+                    break
+        if hdr is not None:
+            nr = dict(hdr)
+            nr["state"] = "running"
+            if not nr.get("startedAt"):
+                nr["startedAt"] = nr.get("at") or bs
+            nr.pop("endedAt", None)
+            for i, r in enumerate(rows):
+                if r.get("rowId") == nr["rowId"]:
+                    rows[i] = nr
+                    break
+            if tid:
+                feed._turn_rows[tid] = nr["rowId"]
+        feed.snap["state"]["busy"] = True
+        if tid:
+            feed.snap["state"]["curTurn"] = tid
+        feed._held = held
 
 
 def v4_ingest_main(s, env):

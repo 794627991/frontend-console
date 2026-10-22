@@ -91,10 +91,12 @@ def _push_file(s, fp, aid, force=False):
     # 再兜底）。V3 模式（无主 feed 无意向）行为与旧版完全一致
     try:
         from . import v4hub
-        if not v4hub.v4_sub_has(s.session_id, aid) \
-                and (v4hub.v4_main_has(s.session_id)
-                     or v4hub.v4_sub_wanted_has(s.session_id, aid)):
-            if v4hub.v4_sub_hydrate(s.session_id, aid, [fp]):
+        # a83：键统一 harness sid（s.sid）——session_id 被 CLI 首 init 换代
+        # 后 watcher 会喂进另一把键下的新 feed，pane 绑的旧 feed 成孤儿
+        if not v4hub.v4_sub_has(s.sid, aid) \
+                and (v4hub.v4_main_has(s.sid)
+                     or v4hub.v4_sub_wanted_has(s.sid, aid)):
+            if v4hub.v4_sub_hydrate(s.sid, aid, [fp]):
                 return
     except Exception:
         pass
@@ -110,7 +112,7 @@ def _push_file(s, fp, aid, force=False):
                 obj = json.loads(raw)
             except Exception:
                 continue
-            v4hub.v4_sub_ingest(s.session_id, aid, obj)
+            v4hub.v4_sub_ingest(s.sid, aid, obj)
     except Exception:
         pass
     # 兼容旧前端（批F 退役）：载荷防爆照旧截尾

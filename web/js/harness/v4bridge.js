@@ -175,6 +175,18 @@
     var win = _g('_hgHistWinStart');        // V3 20 回合窗口起点
     var start = win ? win(lines, 0) : 0;
     var busy = !!(snap && snap.state && snap.state.busy);
+    // a82 前端对位防御：state.busy 丢失（存量快照/竞态）时，尾组头 running
+    // 同样是「在飞回合」铁证——noFinalize/phResume 判据取并集。宁可多留
+    // 活组（下帧权威帧覆盖）不可误定稿折叠（用户实测：后台代理还在跑，
+    // 19 张工具卡被藏进「已工作 22 分 13 秒」定稿折叠组）
+    if (!busy) {
+      for (var bi = rows.length - 1; bi >= 0; bi--) {
+        if (rows[bi] && rows[bi].kind === 'turn_header') {
+          busy = rows[bi].state === 'running';
+          break;
+        }
+      }
+    }
     var render = _g('_histRender');
     if (render) {
       // busy 会话切回：noFinalize 留活组（对齐 V3 sessions.js:534）——写死

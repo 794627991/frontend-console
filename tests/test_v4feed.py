@@ -323,6 +323,71 @@ class TestHubDedup(unittest.TestCase):
         # _ts_ms 对 CLI 真实格式的存活是上界单调性的前提——不重述旧坑
         del feed, _t
 
+    # ---- a82：冷建对账（在飞回合的 busy/组头/_turn_rows/_held 回填） ----
+
+    def _hydrated_feed(self):
+        """hydration 形态的投影：末组头 state=success（无 startedAt/endedAt），
+        _turn_rows 空、state 空——v4_main_feed 冷建后 reconcile 前的真身。"""
+        feed = F.V4Feed(epoch="e1")
+        feed._row_id += 1
+        feed.snap["rows"].append(P.mk_row(
+            feed._row_id, "t1", "turn_header", 1000, 0, state="success"))
+        feed.snap["total"] += 1
+        feed._row_id += 1
+        feed.snap["rows"].append(P.mk_row(
+            feed._row_id, "t1", "user_input", 1000, 0, text="审"))
+        feed.snap["total"] += 1
+        feed._row_id += 1
+        feed.snap["rows"].append(P.mk_row(
+            feed._row_id, "t1", "tool_call", 1200, 0, tool="Bash",
+            status="success", tid="call_1"))
+        feed.snap["total"] += 1
+        return feed
+
+    def test_reconcile_live_flips_running_and_registers(self):
+        """busy 会话冷建：末组头翻 running + _turn_rows 登记 + A 区 busy/curTurn
+        （用户实测「定稿折叠藏 19 卡」的直接回归）。"""
+        import types
+        feed = self._hydrated_feed()
+        s = types.SimpleNamespace(busy=True, _turn_id="d784783e0000",
+                                  _held=True, busy_since=900)
+        self.H._reconcile_live(feed, s)
+        hdr = feed.snap["rows"][0]
+        self.assertEqual(hdr["state"], "running")
+        self.assertEqual(hdr.get("startedAt"), 1000)
+        self.assertNotIn("endedAt", hdr)
+        self.assertEqual(feed._turn_rows.get("d784783e0000"), hdr["rowId"])
+        self.assertTrue(feed.snap["state"].get("busy"))
+        self.assertEqual(feed.snap["state"].get("curTurn"), "d784783e0000")
+        self.assertTrue(feed._held)
+        # 链路闭环：真 turn_complete 到达 → 收口既有组头（非幽灵新组）+ busy 熄灭
+        feed.ingest(_env(300, "turn_complete", turn="d784783e0000", ts=5000))
+        self.assertEqual(feed.snap["rows"][0]["state"], "success")
+        self.assertFalse(feed.snap["state"].get("busy"))
+
+    def test_reconcile_live_idle_untouched(self):
+        """非 busy 会话冷建：不碰任何状态（历史会话回放不受影响）。"""
+        import types
+        feed = self._hydrated_feed()
+        s = types.SimpleNamespace(busy=False, _turn_id=None,
+                                  _held=False, busy_since=None)
+        self.H._reconcile_live(feed, s)
+        self.assertEqual(feed.snap["rows"][0]["state"], "success")
+        self.assertFalse(feed.snap["state"])
+        self.assertFalse(feed._turn_rows)
+
+    def test_reconcile_live_stale_transcript_no_flip(self):
+        """转写未覆盖当前回合（CLI 未落盘）：末组头不翻（上一轮定稿组头
+        不能误伤），A 区 busy 仍回填。"""
+        import types
+        feed = self._hydrated_feed()
+        s = types.SimpleNamespace(busy=True, _turn_id="aaaabbbbcccc",
+                                  _held=False, busy_since=9999)
+        self.H._reconcile_live(feed, s)
+        self.assertEqual(feed.snap["rows"][0]["state"], "success")
+        self.assertNotIn("aaaabbbbcccc", feed._turn_rows)
+        self.assertTrue(feed.snap["state"].get("busy"))
+
 
 class TestSubFeed(unittest.TestCase):
     def test_jsonl_lines(self):
