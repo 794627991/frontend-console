@@ -235,6 +235,19 @@ class V4Feed(object):
                         ds.append(d2)
                 ds.append(P.d_state({"busy": False}))
             elif t == "subagent_started":
+                # a112（用户实锤「出错的子代理刷新后复活成运行中」）：镜像
+                # 不复活终态链——readmodel 的 2s Sync 按 mtime 新鲜度重发
+                # running 镜像（刚死代理——上下文爆等——转写 mtime 还在
+                # 新鲜窗内即被判跑），若镜像携带的 tid 已有终态 SUB 行
+                # （error/success），即陈旧重发，整条丢弃。判 tid 不判
+                # childTopic：续派 resume（合法复活）带**新包装 tid**，
+                # 不命中终态行——放行
+                _tid0 = data.get("tid") or ""
+                if _tid0 and any(r.get("kind") == "subagent"
+                                 and r.get("tid") == _tid0
+                                 and r.get("status") not in (None, "", "running")
+                                 for r in self.snap["rows"]):
+                    return
                 hd, _hr = self._ensure_header(turn, ts, seq)
                 if hd:
                     ds.append(hd)

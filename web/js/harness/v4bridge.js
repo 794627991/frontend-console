@@ -272,26 +272,34 @@
           a.type = a.type || ent.type || 'Task';
           if (ent.desc) a.desc = a.desc || ent.desc;
           var _running = ent.status === 'running';
-          // a91（用户铁律「子代理后台还在运行，无条件要能够同步」）：
-          // readmodel 的 interrupted 是 mtime 启发式（转写 >2min 没写就判
-          // 断中）——代理长时间思考/长工具不落盘必被误伤。feed 的
-          // subagent 行是事件真相（无终态帧即 running，_agentFile 已置
-          // done=false）：启发式不得覆盖事件真相——interrupted 且档案当前
-          // running 时保持 running（尾流/同步不断），真终态帧/明确 done/err
-          // 才落定
-          if (ent.status === 'interrupted' && a.done === false && !a.err) {
-            // 保持 running：不写 done/doneAt（下方 running 分支照走）
-          } else {
-            a.done = !_running;
-            a.err = ent.status === 'err';
+          // a91/a112（用户铁律「后台还在运行无条件同步」+「出错代理刷新不能
+          // 复活」）：readmodel 的 running/interrupted 都是 mtime 启发式（转写
+          // 新鲜=在跑/停更=中断）——启发式**只能落定、不能翻案**：
+          // ①档案 running + readmodel done/err（通知/结果事实）→ 落定终态
+          // ②档案 running + interrupted（启发式）→ 保持 running（a91：长思考
+          //   不落盘误伤）
+          // ③档案 done/err（feed 终态帧/子 feed 传播的事件真相）+ readmodel
+          //   running（刚死代理转写 mtime 还新鲜，上下文爆类死亡分钟级误判）
+          //   → **保持终态不复活**（曾 a.done=!running 直接翻掉=用户实锤
+          //   「出错的子代理刷新后复活成运行中」）
+          if (!a.done) {
+            if (ent.status === 'done' || ent.status === 'err') {
+              a.done = true;
+              a.err = ent.status === 'err';
+            }
+            // interrupted/running：不落定（事件真相保持 running）
           }
+          // 已 done：readmodel 无权翻回（连 err 语义也不覆盖——feed 事件已定）
           // a65：结论摘要随档（readmodel brief）——子 pane 结论区回退源与
           // 目录行卡摘要在冷同步会话（重启/切回）同源补齐
           if (!a.result && ent.brief) a.result = String(ent.brief).slice(0, 400);
           var _t0 = Number(ent.t0) || 0;
           a.t0 = a.t0 || (_t0 > 1e12 ? _t0 : _t0 * 1000) || Date.now();
-          a.doneAt = a.done ? ((Number(ent.doneAt) || 0) > 1e12
-            ? Number(ent.doneAt) : (Number(ent.doneAt) || 0) * 1000) : 0;
+          // a112：doneAt 只补不清——事件终态的 doneAt 不被 readmodel 空值覆写
+          var _dAt = (Number(ent.doneAt) || 0);
+          _dAt = _dAt > 1e12 ? _dAt : _dAt * 1000;
+          if (a.done) a.doneAt = a.doneAt || _dAt;
+          else a.doneAt = 0;
           // 行卡回写：hgSubr（点开钥匙）+未终态行翻徽章
           var row = (_HG.rowById || {})[tid];
           if (row) {
