@@ -51,7 +51,13 @@
     // 行（thinking 与 tool 同 ts）上恒 false——pend 永不结算=时长永久空白。
     // 放宽为 `>=`：同 ts 差值 0 按 v3.4.44 定调落模糊文案「持续了一小会」，
     // 绝不留空白（宁可模糊不虚增、更不许空白）
-    if (_HG.thinkPend && _ts > 0 && _ts >= _HG.thinkPend.t0) {
+    // a85b（用户实锤「思考连续裸条」）：查阅类工具行不结算思考时长——它们
+    // 被吸收进「🔍 查阅」组不显行，且 v4 重建路把「仅隔查阅行的思考段」
+    // 并成一个抽屉；查阅行若结算 pend，时长会被截到首段查阅前（严重短报）。
+    // 让位后时长=段前真实行 → 段后首个非查阅行，覆盖整段
+    if (_HG.thinkPend && _ts > 0 && _ts >= _HG.thinkPend.t0
+        && !(l.role === 'tool' && typeof _hgIsExplore === 'function'
+             && _hgIsExplore(l.text, l.input))) {
       const _tp = _HG.thinkPend;
       // v3.4.46 真因（用户实锤「思考持续时间全没了」）：回放期 seg 挂游离
       // 缓冲 isConnected 恒 false（v3.2.13 已知事实），旧判据在此把 _te 判

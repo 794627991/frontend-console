@@ -146,16 +146,25 @@
       else _prevMk = null;
       var L = rowToLine(rw);
       if (!L) continue;
-      // a85（用户实锤「思考怎么能这么连续的，一行条太难看」）：相邻 thinking
-      // 行账本归并——feed 逐消息产 reasoning 行，无工具/正文间隔的连续段在
-      // live 路已续接同一抽屉（hist.js live 续接），账本仍逐行；重建转换在
-      // 此并成一行=回放/刷新也只画一个抽屉，时长按首行 ts 到下一非思考行
-      // 的差值（thinkPend 既有机制）自然覆盖整段
-      if (L.role === 'thinking' && lines.length
-          && lines[lines.length - 1].role === 'thinking') {
-        var _pl = lines[lines.length - 1];
-        _pl.text = (_pl.text || '') + '\n\n' + (L.text || '');
-        continue;
+      // a85/a85b（用户实锤「思考怎么能这么连续的，一行条太难看」「刷新还这样」）：
+      // 相邻 thinking 行账本归并——快照里思考行之间隔着**查阅类工具行**
+      // （Read/Grep/只读 Bash，渲染时被吸收进「🔍 查阅」组不显行），视觉上
+      // 思考连排。合并条件放宽为「仅隔查阅类工具」：跨过尾部连续查阅行找
+      // 思考，命中即把旧思考行摘除、合成行放在当前位置（查阅组之后）——
+      // 顺序（查阅组→思考→下个真工具）与时长（到下个非查阅行的 ts 差）
+      // 都自然正确
+      if (L.role === 'thinking' && lines.length) {
+        var _exp = _g('_hgIsExplore');
+        var _j = lines.length - 1;
+        while (_j >= 0 && lines[_j].role === 'tool'
+               && _exp && _exp(lines[_j].text, lines[_j].input)) _j--;
+        if (_j >= 0 && lines[_j].role === 'thinking') {
+          // 原位并入（保留首段行位置）：抽屉渲染在段头，时长锚=段前真实行，
+          // 结算点=段后首个非查阅行（hist.js 已让查阅行不结算）——整段覆盖
+          var _pa = lines[_j];
+          _pa.text = (_pa.text || '') + '\n\n' + (L.text || '');
+          continue;
+        }
       }
       lines.push(L);
     }
@@ -365,13 +374,18 @@
         && Array.isArray(_HG.histAll)) {
       var _sg = _HG.think.seg;
       if (_sg && _sg.dataset.raw == null) {
+        // a85b：raw 收段内**全部**思考行（段跨多行：查阅类工具不收段后，
+        // 一次思考段=账本尾部连续多条 thinking 行，只取末条丢前文）
+        var _parts = [];
         for (var ti = _HG.histAll.length - 1; ti >= 0; ti--) {
           var _tl = _HG.histAll[ti];
           if (_tl && _tl.role === 'thinking') {
-            _sg.dataset.raw = String(_tl.text || '');
-            break;
+            _parts.unshift(String(_tl.text || ''));
+          } else if (_parts.length) {
+            break;   // 已收集到段内容、遇非思考行=段头，收工
           }
         }
+        if (_parts.length) _sg.dataset.raw = _parts.join('\n\n');
       }
     }
     var eT = _g('endThinking'), cR = _g('closeRun');
@@ -460,7 +474,11 @@
       var L = rowToLine(row);
       if (!L) return;
       if (row.kind === 'tool_call' && row.status === 'running') {
-        this._closeThink();   // V3 sse.js:339：tool_use 前收思考段
+        // a85b：查阅类工具不收思考段——它们被吸收进「🔍 查阅」组不渲染可
+        // 见行，收段会把「思考→查阅→思考」切成一排裸条（对齐重建路合并语义）
+        var _expK = _g('_hgIsExplore');
+        if (!(_expK && _expK(row.tool || '', row.input || {})))
+          this._closeThink();   // V3 sse.js:339：tool_use 前收思考段
         // a46：ask_user 不再特判——已在 V3 配置表注册（base.js _H_TOOL_CFG，
         // kind:'question'），renderToolUse 走配置卡，live/回放全场景归一
         // 识图双通道（V3 sse.js:382 同款分流）：识图工具不走普通工具卡——
@@ -575,8 +593,14 @@
         return;
       }
       if (live) L.live = 1;                 // V3 live 语义（动画/占位/组头）
-      // 思考段收口对齐 V3 sse（:335）：正文行到达前收段
-      if (L.role !== 'thinking') this._closeThink();
+      // 思考段收口对齐 V3 sse（:335）：正文行到达前收段；a85b：查阅类工具
+      // 行同样不收（吸收进查阅组不显行，收段=连续思考被切碎）
+      if (L.role !== 'thinking') {
+        var _expG = _g('_hgIsExplore');
+        if (L.role !== 'tool'
+            || !(_expG && _expG(L.text, L.input)))
+          this._closeThink();
+      }
       this._lastRole = L.role;
       var add = _g('_hgRowAdd');
       if (add) { try { add(L); } catch (e) {} }
