@@ -253,10 +253,13 @@ class V4Feed(object):
                                         endedAt=ts)
                     if d:
                         ds.append(d)
-                # a66R：真结论回填权威 tool 行——转写 tool_result 是投递元数据
-                #（"This agent's report was delivered…"），真结论只在镜像 brief
-                # 里；不回填则行卡摘要永远显示元数据（用户实测「没有结论回传」）
-                if _brief and tid:
+                # a66R：真结论回填权威 tool 行——a67 实测修正：CLI 新版
+                # task_notification.summary 本身就是投递元数据（"This agent's
+                # report was delivered…"），真结论在 hand-back 注入消息正文
+                # （下方 user 分支处理）。元数据 brief 不回填（还会误覆盖后台
+                # Bash 行的真实输出——bg bash 完成也走 notification 镜像）
+                if (_brief and tid
+                        and not _brief.startswith("This agent's report was delivered")):
                     _trid = next((r["rowId"] for r in self.snap["rows"]
                                   if r.get("kind") == "tool_call"
                                   and r.get("tid") == tid), None)
@@ -410,6 +413,45 @@ class V4Feed(object):
                         self._pending_tools[b["id"]] = rid
         elif typ == "user":
             m = data.get("message") or {}
+            # a68：子代理结论回传（CLI 新版 hand-back）——注入消息含
+            # [Subagent hand-back] 标记+from aid+报告全文。全文不进消息流
+            #（V3 401 同款），提取正文回填对应子代理的 tool 行（卡摘要）+
+            # subagent 行（summary）——「结论回传」的正道数据源
+            _hb = None
+            _c0 = m.get("content")
+            if isinstance(_c0, str) and "[Subagent hand-back]" in _c0:
+                _hb = _c0
+            elif isinstance(_c0, list):
+                for _b in _c0:
+                    if (isinstance(_b, dict) and _b.get("type") == "text"
+                            and "[Subagent hand-back]" in str(_b.get("text") or "")):
+                        _hb = str(_b.get("text"))
+                        break
+            if _hb is not None:
+                _am = re.search(r'from "([0-9a-zA-Z_-]{8,64})"', _hb)
+                _aid = _am.group(1) if _am else ""
+                _body = _hb.split("[Subagent hand-back]")[-1].strip()
+                _tid = next((r.get("tid") for r in self.snap["rows"]
+                             if r.get("kind") == "subagent"
+                             and r.get("childTopic") == "sub:" + _aid), "") if _aid else ""
+                if _tid:
+                    _trid = next((r["rowId"] for r in self.snap["rows"]
+                                  if r.get("kind") == "tool_call"
+                                  and r.get("tid") == _tid), None)
+                    if _trid:
+                        d, _ = self._upsert(_trid, output="✅ " + _body[:4000])
+                        if d:
+                            ds.append(d)
+                    _srid = next((r["rowId"] for r in self.snap["rows"]
+                                  if r.get("kind") == "subagent"
+                                  and r.get("childTopic") == "sub:" + _aid), None)
+                    if _srid:
+                        d, _ = self._upsert(_srid, summary=_body[:400],
+                                            status="success", endedAt=ts)
+                        if d:
+                            ds.append(d)
+                if not ds:
+                    return ds
             for b in (m.get("content") or []):
                 if isinstance(b, dict) and b.get("type") == "tool_result":
                     rid = self._pending_tools.pop(b.get("tool_use_id"), None)
