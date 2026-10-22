@@ -118,11 +118,8 @@
           _HG.rowById[aid] = row;
           if (!row.dataset.hgSubr) row.dataset.hgSubr = a.taskId;
           try { _hgAgentRowBindAid(aid, row); } catch (_) {}
-          // a88b：摘假完成标（重建路后台 ack 终态行打的 final 挡住
-          // _subLivePaint=切会话回来过程同步全停）+ 秒表复活
-          delete row.dataset.final;
-          // a88：只传档案 t0，fresh now 兜底撤（同 v4bridge 侧——行上 memo
-          // 在 restart 侧兜底，秒表不再被同步链重置）
+          // a88：只传档案 t0，fresh now 兜底撤（行上 memo 在 restart 侧
+          // 兜底，秒表不被同步链重置）
           _hgAgentRowTimerRestart(row, a.t0);
         }
       }

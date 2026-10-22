@@ -119,6 +119,69 @@ class TestMainReducer(unittest.TestCase):
                  if r["kind"] == "assistant_text"]
         self.assertEqual(texts, ["主会话正文", "主链二"])
 
+    def test_bg_agent_ack_does_not_finalize(self):
+        """a90 根修：run_in_background 的 Agent 派发，CLI 立即回执
+        （"agent launched successfully… internal"）不得终结 tool 行——
+        派发时刻定死=主窗卡假完成+过程同步停摆的源头。真终态由
+        subagent_result（真摘要）/hand-back（✅ 报告）翻转。"""
+        f = self._feed()
+        f.ingest(_env(1, "turn_started"))
+        f.ingest(_env(2, "cli_stream", data={
+            "type": "assistant", "message": {"model": "m", "content": [
+                {"type": "tool_use", "id": "tu1", "name": "Agent",
+                 "input": {"description": "审计", "run_in_background": True}}]}}))
+        f.ingest(_env(3, "cli_stream", data={
+            "type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "tu1",
+                 "content": "Agent launched successfully (id agent_aaaabbbbcccc "
+                            "for internal use, not a final result)"}]}}))
+        rows = [r for r in f.snap["rows"] if r["kind"] == "tool_call"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["status"], "running")
+        self.assertFalse(rows[0].get("output"))
+        # 真终态：notification 真摘要 → 行翻 success + ✅ 摘要
+        f.ingest(_env(4, "subagent_started",
+                      data={"task_id": "agent_aaaabbbbcccc", "tid": "tu1",
+                            "desc": "审计"}))
+        f.ingest(_env(5, "subagent_result",
+                      data={"tid": "tu1", "ok": True, "brief": "审计完成：无阻塞问题"}))
+        row = [r for r in f.snap["rows"] if r["kind"] == "tool_call"][0]
+        self.assertEqual(row["status"], "success")
+        self.assertTrue(row["output"].startswith("✅"))
+        self.assertEqual(row["endedAt"], 1000)
+
+    def test_fg_task_result_finalizes_normally(self):
+        """前台 Task（无 run_in_background）：tool_result 就是真结果，
+        照常终结——守卫只打击后台回执，不误伤前台。"""
+        f = self._feed()
+        f.ingest(_env(1, "turn_started"))
+        f.ingest(_env(2, "cli_stream", data={
+            "type": "assistant", "message": {"model": "m", "content": [
+                {"type": "tool_use", "id": "tu2", "name": "Task",
+                 "input": {"description": "速查"}}]}}))
+        f.ingest(_env(3, "cli_stream", data={
+            "type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "tu2",
+                 "content": "查完了：3 处"}]}}))
+        row = [r for r in f.snap["rows"] if r["kind"] == "tool_call"][0]
+        self.assertEqual(row["status"], "success")
+        self.assertEqual(row["output"], "查完了：3 处")
+
+    def test_bg_agent_dispatch_error_finalizes(self):
+        """后台派发失败（回执 is_error）：真失败，照常终结为 error。"""
+        f = self._feed()
+        f.ingest(_env(1, "turn_started"))
+        f.ingest(_env(2, "cli_stream", data={
+            "type": "assistant", "message": {"model": "m", "content": [
+                {"type": "tool_use", "id": "tu3", "name": "Agent",
+                 "input": {"description": "审计", "run_in_background": True}}]}}))
+        f.ingest(_env(3, "cli_stream", data={
+            "type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "tu3",
+                 "is_error": True, "content": "agent not found"}]}}))
+        row = [r for r in f.snap["rows"] if r["kind"] == "tool_call"][0]
+        self.assertEqual(row["status"], "error")
+
     def test_result_fallback_closes_header(self):
         """turn_complete 缺失（CLI 自发回合）时 result 帧兜底收口组头。"""
         f = self._feed()

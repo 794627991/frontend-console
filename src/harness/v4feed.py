@@ -277,7 +277,11 @@ class V4Feed(object):
                                   if r.get("kind") == "tool_call"
                                   and r.get("tid") == tid), None)
                     if _trid:
+                        # a90：真终态带 status/endedAt——ack 被抑制后 tool 行
+                        # 从派发起保持 running，此处是它的终态翻转点（回放/
+                        # 重建按 status 定形态，缺 status=假运行）
                         d3, _ = self._upsert(_trid,
+                                             status="success" if ok else "failed",
                                              output="✅ " + _brief[:2000],
                                              endedAt=ts)
                         if d3:
@@ -452,7 +456,11 @@ class V4Feed(object):
                                   if r.get("kind") == "tool_call"
                                   and r.get("tid") == _tid), None)
                     if _trid:
-                        d, _ = self._upsert(_trid, output="✅ " + _body[:4000])
+                        # a90：hand-back 真结论回填同带终态翻转（bg 代理 ack
+                        # 被抑制后，这里是 tool 行的另一个终态来源）
+                        d, _ = self._upsert(_trid, status="success",
+                                            output="✅ " + _body[:4000],
+                                            endedAt=ts)
                         if d:
                             ds.append(d)
                     _srid = next((r["rowId"] for r in self.snap["rows"]
@@ -472,12 +480,28 @@ class V4Feed(object):
                         continue
                     err = bool(b.get("is_error"))
                     out = _txt(b.get("content"))[:8000]
+                    _tr = next((r for r in self.snap["rows"]
+                                if r["rowId"] == rid), None)
+                    # a90 根修（用户实锤「切会话回来不同步/假完成」的源头）：
+                    # run_in_background 的 Task/Agent 派发后 CLI 立即回一条
+                    # tool_result（"agent launched successfully… for internal
+                    # use…"）——它是「已派出」内部回执，不是任务结果。此处
+                    # 曾无条件终结行（status=success），Agent 行在派发时刻就
+                    # 定死：live 卡片定格「完成」打 dataset.final=过程文本同步
+                    # 全停（_subLivePaint 见 final 早退），重建/切回吃快照同样
+                    # 假完成。真终态=task_notification（subagent_result 镜像，
+                    # 下方回填真摘要）与 hand-back（user 分支回填 ✅ 报告）。
+                    # V3 同款认知：sse.js a.bg 守卫 / tools.js _hgIsBgLaunchAck
+                    if (_tr is not None
+                            and _tr.get("tool") in ("Task", "Agent")
+                            and (_tr.get("input") or {}).get("run_in_background")
+                            and not err):
+                        continue          # 已派出回执：保持 running，等真终态
                     # a48（用户定调「回答形态要 a42 效果」）：ask_user 的
                     # 回答在后端人类可读化——原始 JSON {"问题":"答案"} →
                     # 「📝 回答：问题 → 答案；…」。数据在后端整合（红线），
                     # 前端 live/回放/体全场景直接吃到成品文本
-                    _tn = next((r.get("tool") for r in self.snap["rows"]
-                                if r["rowId"] == rid), "")
+                    _tn = _tr.get("tool") if _tr else ""
                     if _tn == "mcp__harness__ask_user" and not err:
                         try:
                             _oj = json.loads(out)
