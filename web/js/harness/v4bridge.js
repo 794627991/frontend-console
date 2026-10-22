@@ -594,7 +594,10 @@
               _orig.rounds = (_orig.rounds || 1) + 1;
               _orig.done = false; _orig.doneAt = 0; _orig.err = false;
               _orig.interrupted = false; _orig.lost = false;
-              if (_m1) _orig.desc = _m1;
+              // a93S（用户定调「就应该是原封不动的子代理名」）：续派**不改
+              // 名**——原档 desc（真实任务名）保留，消息首行只在原档无名时
+              // 兜底（曾覆写为消息首行=超长名顶爆胶囊+目录全变消息名）
+              if (!_orig.desc && _m1) _orig.desc = _m1;
               _orig.tids = _orig.tids || [];
               if ((_orig.tids || []).indexOf(row.tid || '') < 0)
                 _orig.tids.push(row.tid || '');
@@ -1289,6 +1292,29 @@
       }
       if (finTxt) this._paintConcl(finTxt, !!st.final);
       this._subWatchStop();
+      // a93S（用户实锤「子代理已经返回结论了，怎么还在工作中」）：子 feed
+      // 的 state.done/final=该代理完成的最权威信号（自己转写的 result 行），
+      // 此处向主窗回传——档案收口+行卡定格+胶囊刷新。此前完成信号只有
+      // 主 feed 的 notification 镜像单通道，续派包装 tid 映射断链时主窗
+      // 永远收不到（胶囊多计、tab 恒 run）
+      var _mf = _g('_hgAg') ? _hgAg(this.opt.agent) : null;
+      if (_mf && !_mf.done) {
+        _mf.done = true; _mf.doneAt = Date.now();
+        _mf.err = !!st.err;
+        if (finTxt) _mf.result = String(finTxt).trim().slice(0, 400);
+        var _cap = _g('_hgDynCapsulePaint');
+        if (_cap) { try { _cap(); } catch (e) {} }
+        var _srs = _g('renderSideStatus');
+        if (_srs) { try { _srs(); } catch (e) {} }
+      }
+      var _tidM = (typeof _HG !== 'undefined' && _HG.tidMap) ? _HG.tidMap[this.opt.agent] : null;
+      var _rowSt = (typeof _HG !== 'undefined' && _HG.rowById)
+        ? (_HG.rowById[this.opt.agent] || _HG.rowById[_tidM]) : null;
+      var _ars2 = _g('_hgAgentRowState');
+      if (_ars2 && _rowSt) {
+        try { _ars2(_rowSt.dataset.tid || _tidM, !!st.err,
+                    String(finTxt || '').trim().slice(0, 200)); } catch (e) {}
+      }
     } else {
       t.done = false;
       t.t0 = t.t0 || this._firstAt || Date.now();

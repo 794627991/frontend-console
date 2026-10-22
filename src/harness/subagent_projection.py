@@ -446,8 +446,12 @@ def project(facts, child_states=None, liveness=None, external_links=None,
         if tid not in ent["tids"]:
             ent["tids"].append(tid)
         tid_map[tid] = aid
-        if sm.get("msg1"):
-            ent["desc"] = sm["msg1"][:200]   # 任务名取最新续派轮消息首行
+        # a93S（用户定调「sendmessage 这种名就不应该存在，就应该是原封不动
+        # 的子代理代理名」）：续派**不改名**——desc 保持原派发任务名，消息
+        # 首行只在原档无名时兜底。曾覆写为 msg1（「继续上次未完成的任务：…」
+        # 超长串顶爆胶囊+目录/卡片全变消息名）
+        if sm.get("msg1") and not ent["desc"]:
+            ent["desc"] = sm["msg1"][:200]
 
     # 每条目「最后一轮」的事实序：终态证据（notify/result）只认新轮之后的
     # ——旧轮的 result/notification 不得覆写续派新翻的 running（send 归链
