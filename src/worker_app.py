@@ -45,9 +45,18 @@ log = logging.getLogger("claude_worker")
 
 # ---------------------------------------------------------------------------
 # 父进程探活：父亡即自杀（防孤儿占端口/占内存——「只要不泄露」的兜底层）
+# 双保险：①stdin 亲缘带（_stdin_bond，父进程握管道写端，父亡即 EOF，无
+# PID 复用误判）②父 PID 周期探活（OpenProcess，兜 stdin 不可用的形态）
 # ---------------------------------------------------------------------------
 _STILL_ACTIVE = 259
 _KERNEL32 = ctypes.windll.kernel32
+# 对抗审修：显式原型——HANDLE 是 64 位，默认 c_int restype 会截断句柄
+# （CloseHandle 拿到残句柄=关错对象的风险）
+_KERNEL32.OpenProcess.restype = ctypes.c_void_p
+_KERNEL32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+_KERNEL32.GetExitCodeProcess.argtypes = [
+    ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+_KERNEL32.CloseHandle.argtypes = [ctypes.c_void_p]
 
 
 def _parent_alive(pid):
@@ -60,10 +69,29 @@ def _parent_alive(pid):
     try:
         code = ctypes.c_ulong()
         if not _KERNEL32.GetExitCodeProcess(h, ctypes.byref(code)):
-            return True   # 查不动：保守活着，交给父进程 terminate
+            return True   # 查不动：保守活着，交给 stdin 亲缘带兜底
         return code.value == _STILL_ACTIVE
     finally:
         _KERNEL32.CloseHandle(h)
+
+
+def _stdin_bond():
+    """父进程亲缘带：stdin 管道写端在父进程手里，父亡（含被强杀）写端
+    关闭 → 读到 EOF → 自杀。与 PID 探活互补：PID 复用骗不过 EOF。手动
+    控制台跑时 stdin 是终端——读到行不退，EOF 才退（不误杀调试场景）。"""
+    try:
+        st = sys.stdin
+        if st is None:
+            try:
+                st = open(0, "r", encoding="utf-8")
+            except Exception:
+                return   # 无 stdin 可依的异常形态：仅剩 PID 探活兜底
+        while True:
+            if not st.read(1):
+                log.warning("stdin EOF（父进程已退出），worker 自杀")
+                os._exit(0)
+    except Exception:
+        pass   # 读失败不自杀：误杀比晚杀伤害大
 
 
 def _parent_watchdog(pid):
@@ -74,7 +102,7 @@ def _parent_watchdog(pid):
                 log.warning("父进程 %s 已退出，worker 自杀", pid)
                 os._exit(0)
         except Exception:
-            pass   # 探活自身异常不自杀：误杀比晚杀伤害大
+            pass   # 探活自身异常不自杀：stdin 亲缘带兜底
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +226,8 @@ def main():
     actual = srv.server_port
 
     parent_pid = int(os.environ.get("CLAUDE_WORKER_PARENT_PID") or 0)
+    threading.Thread(target=_stdin_bond, daemon=True,
+                     name="stdin-bond").start()
     threading.Thread(target=_parent_watchdog, args=(parent_pid,),
                      daemon=True, name="parent-watchdog").start()
 
@@ -209,11 +239,13 @@ def main():
 
 
 # ---------------------------------------------------------------------------
-# 父进程侧管理（dev/打包 两形态拉起、就绪握手、崩溃重启、退出回收）
+# 父进程侧管理（dev/打包 两形态拉起、就绪握手、崩溃/挂死重启、退出回收）
 # ---------------------------------------------------------------------------
 _proc = None
 _stop = threading.Event()
 _base = ""
+_last_port = 0            # 最近一次实际端口（respawn 期望值跟随 fallback）
+_hung = 0                 # 连续 health 探活失败计数（挂死检测）
 _lock = threading.Lock()
 
 
@@ -230,18 +262,17 @@ def _spawn_cmd(prefer_port):
     return cmd, env, cwd
 
 
-def _write_endpoint(port):
+def _write_endpoint(port, pid):
     try:
         from src.app_state import DATA_DIR
         with open(os.path.join(DATA_DIR, "claude_worker.json"), "w",
                   encoding="utf-8") as f:
-            json.dump({"pid": _proc.pid if _proc else 0, "port": port},
-                      f)
+            json.dump({"pid": pid or 0, "port": port}, f)
     except Exception:
         pass
 
 
-def _apply_base(port):
+def _apply_base(port, pid):
     global _base
     _base = "http://127.0.0.1:%d" % port
     try:
@@ -249,7 +280,7 @@ def _apply_base(port):
         _srv.WORKER_BASE = _base   # index 注入 + 307 兜底重定向用
     except Exception:
         pass
-    _write_endpoint(port)
+    _write_endpoint(port, pid)
 
 
 def _spawn_once(prefer_port, ready_timeout=25):
@@ -300,36 +331,80 @@ def _spawn_once(prefer_port, ready_timeout=25):
     return p, port
 
 
+def _health_ok():
+    """worker /health 探活（挂死检测：GIL 死锁但进程活着时 poll() 恒活）。"""
+    b = _base
+    if not b:
+        return True
+    try:
+        import urllib.request
+        urllib.request.urlopen(b + "/health", timeout=2).read()
+        return True
+    except Exception:
+        return False
+
+
 def _supervisor(prefer_port):
+    """监护：进程死(poll)/挂死(health 连败)→指数退避重启。
+
+    对抗审修（锁纪律）：spawn 全程在锁外（握手最长 25s，持锁会堵死
+    manage_stop/退出链——实测风险：关工具卡半分钟）；spawn 完成后锁内
+    复查 _stop，已停则就地处决新子进程（不留「停止后又复活」的孤儿）。
+    期望端口跟随最近实际端口（fallback 换过口后续 respawn 不再死磕旧口）。"""
+    global _proc, _last_port, _hung
     backoff = 2.0
-    global _proc
+    tick = 0
     while not _stop.is_set():
         _stop.wait(5)
         if _stop.is_set():
             return
+        tick += 1
         with _lock:
             p = _proc
         if p is not None and p.poll() is None:
-            backoff = 2.0
-            continue
-        # 崩了：退避重启（退避期间前端拿到 503/连接拒绝，SSE 自动重连）
+            restart = False
+            if tick % 3 == 0 and not _health_ok():
+                _hung += 1
+                logging.getLogger("claude_worker").warning(
+                    "worker health 探活失败 %d/2", _hung)
+                if _hung >= 2:
+                    try:
+                        p.kill()
+                    except Exception:
+                        pass
+                    restart = True
+            else:
+                _hung = 0
+            if not restart:
+                backoff = 2.0
+                continue
+            _hung = 0
+        # 进程死(poll)或挂死(health 两连败)→ 退避等待后锁外重启
         _stop.wait(backoff)
         if _stop.is_set():
             return
         try:
+            p2, port = _spawn_once(_last_port or prefer_port)
             with _lock:
-                _proc, port = _spawn_once(prefer_port)
-                _apply_base(port)
+                if _stop.is_set():
+                    try:
+                        p2.kill()
+                    except Exception:
+                        pass
+                    return
+                _proc = p2
+            _apply_base(port, p2.pid)
+            _last_port = port
             backoff = min(backoff * 2, 30.0)
             logging.getLogger("claude_worker").warning(
-                "worker 已重启 port=%s", port)
+                "worker 已重启 port=%s pid=%s", port, p2.pid)
         except Exception as e:
             logging.getLogger("claude_worker").warning("worker 重启失败: %s", e)
 
 
 def manage_start(prefer_port=0):
     """主进程开窗前调用：拉起 worker 并进入监护。失败不抛（终端优先）。"""
-    global _proc
+    global _proc, _last_port
     if os.environ.get("CLAUDE_INLINE") == "1":
         return
     try:
@@ -340,8 +415,9 @@ def manage_start(prefer_port=0):
             prefer_port = s.getsockname()[1]
             s.close()
         _proc, port = _spawn_once(prefer_port)
-        _apply_base(port)
-        threading.Thread(target=_supervisor, args=(port,), daemon=True,
+        _last_port = port
+        _apply_base(port, _proc.pid)
+        threading.Thread(target=_supervisor, args=(prefer_port,), daemon=True,
                          name="claude-worker-supervisor").start()
         import atexit
         atexit.register(manage_stop)
