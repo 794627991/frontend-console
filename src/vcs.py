@@ -192,8 +192,33 @@ def _guard(root, need_tool=None):
 
 _GIT_ST_MAP = {"M": "M", "A": "A", "D": "D", "R": "R", "C": "C", "?": "?", "!": "!"}
 
+# 性能批（VCS 面板卡顿）：status 结果 2s memo——激活时 /status 与 /changes
+# 两端点同拍各跑一次一模一样的 `git status`（每条 0.3~0.5s 热态、冷态
+# Defender 扫 git.exe 可秒级），同拍第二次直接复用。写操作（add/commit/
+# update）即时失效防陈旧闪现。
+_st_memo = {}
+_ST_MEMO_TTL = 2.0
+
+
+def _st_memo_inval(wc=None):
+    if wc is None:
+        _st_memo.clear()
+    else:
+        _st_memo.pop(wc, None)
+
 
 def _git_status(wc):
+    c = _st_memo.get(wc)
+    if c and time.time() - c[0] < _ST_MEMO_TTL:
+        return c[1]
+    res_t = _git_status_run(wc)
+    if len(_st_memo) > 32:
+        _st_memo.clear()
+    _st_memo[wc] = (time.time(), res_t)
+    return res_t
+
+
+def _git_status_run(wc):
     rc, out, err = _run(["git", "-c", "core.quotepath=false",
                          "status", "--porcelain=v1", "-z", "--branch"],
                         wc, VCS_TIMEOUT_RO)
@@ -732,6 +757,7 @@ def vcs_add():
                 os.path.join(wc, *p.split("/")) for p in paths], wc, VCS_TIMEOUT_RW)
         if rc != 0:
             return jsonify({"ok": False, "err": e or out or "add 失败"}), 500
+    _st_memo_inval(wc)   # 写后失效 status memo（性能批）
     return jsonify({"ok": True, "out": (out or "").strip()})
 
 
@@ -756,6 +782,7 @@ def vcs_commit():
                 return jsonify({"ok": False,
                                 "err": (e or out or "commit 失败").strip()}), 500
             m = re.search(r"\[[\s\S]*? ([0-9a-f]{7,40})\]", out)
+            _st_memo_inval(wc)   # 写后失效 status memo（性能批）
             return jsonify({"ok": True, "out": out.strip(),
                             **({"rev": m.group(1)} if m else {})})
         # svn：勾选中未跟踪（?）的先 svn add，再显式 target 提交
@@ -779,6 +806,7 @@ def vcs_commit():
             os.path.join(wc, *p.split("/")) for p in paths], wc, VCS_TIMEOUT_NET)
         if rc != 0:
             return jsonify({"ok": False, "err": e or out or "commit 失败"}), 500
+        _st_memo_inval(wc)   # 写后失效 status memo（性能批）
         return jsonify({"ok": True, "out": (out or "").strip()})
 
 
@@ -806,5 +834,6 @@ def vcs_update():
                             "conflicts": conflicts}), 500
         conflicts = sorted(set(re.findall(r"^\s*C\s+(.+)$", out or "",
                                           flags=re.M)))
+        _st_memo_inval(wc)   # 写后失效 status memo（性能批）
         return jsonify({"ok": True, "out": text[:4000],
                         "conflicts": conflicts})
