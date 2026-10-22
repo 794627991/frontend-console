@@ -694,7 +694,21 @@
   }
   function _dynAgents() {                // C 子代理实况：运行中/60s 内完成/回放历史，点击展开
     const sec = _sec('agents');
-    const list = Object.entries(_HG.agents || {}).map(([id, a]) => Object.assign({ id }, a));
+    // a93S（用户实锤「4 个子代理只显示了一个」反向——归一显示：同代理的
+    // 派发键+续派键双档案在动态页也重复成行）链去重：按 taskId/agentId
+    // 链键合一，运行中的优先保留（与胶囊 _hgRunChains/目录 _subDirRows
+    // 同口径）
+    const _cidOf = (a) => a.taskId || a.agentId || a.id;
+    const _seenC = new Set();
+    const list = Object.entries(_HG.agents || {})
+      .sort((x, y) => ((x[1].done ? 1 : 0) - (y[1].done ? 1 : 0)))   // 运行中优先保留
+      .filter(([id, a]) => {
+        const cid = _cidOf(a);
+        if (cid && _seenC.has(cid)) return false;
+        if (cid) _seenC.add(cid);
+        return true;
+      })
+      .map(([id, a]) => Object.assign({ id }, a));
     const running = list.filter(a => !a.done).sort((x, y) => x.t0 - y.t0);
     const finished = list.filter(a => a.done && Date.now() - a.doneAt < 60000).slice(-5);
     const rplAll = (_HG.dyn && _HG.dyn.agentsRpl) || [];
@@ -808,6 +822,8 @@
       const key = a.replay ? a.rid : a.id;
       // v2.35（P1-4）：模型角标——实跑 model 优先，frontmatter 预显示兜底，
       // 内置代理（无定义文件）标「主链模型」；后台代理加「后台」标
+      // a93S（用户定调「模型名太长挤一行不行，分两行」）：模型换行独立成
+      // 行（flex-basis:100% 次行小字），首行=类型+任务名+耗时
       const mdl = a.model || (_HG.agentModels && _HG.agentModels[a.type]) || '';
       const mdlTxt = a.replay ? '' :
         `<span class="hg-dyn-amdl" title="${esc(mdl ? '子代理模型：' + mdl : '内置/无定义文件代理，按 CLI 行为跑主链模型')}">${esc(mdl || '主链模型')}${a.bg ? ' · 后台' : ''}</span>`;

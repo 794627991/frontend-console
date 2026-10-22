@@ -3890,8 +3890,13 @@ html {
 /* ---- C 子代理实况（E 工具行共用 adot/at/desc/el 内层类，状态色规则两处同写；
    完成=灰点灰耗时——IDE 式「过去了就安静」，运行/失败/中断各自着色） ---- */
 .hg-dyn-agent { display: flex; align-items: center; gap: 6px; font-size: var(--fs-cap);
-  cursor: pointer; border-radius: 5px; padding: 2px 5px;
+  cursor: pointer; border-radius: 5px; padding: 2px 5px; flex-wrap: wrap;
   transition: background-color .15s; }
+/* a93S（用户定调「模型名太长挤一行，分两行显示」）：模型独立次行小字——
+   flex-basis:100% 强制换行，缩进对齐首行文字 */
+.hg-dyn-agent .hg-dyn-amdl { flex: 0 0 100%; order: 9; margin: -2px 0 0 17px;
+  font-size: 10px; color: var(--muted); overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
 .hg-dyn-agent:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
 .hg-dyn-agent + .hg-dyn-agent { margin-top: 2px; }
 .hg-dyn-agent.run .hg-dyn-at { color: var(--fg-bright); font-weight: 600; }
