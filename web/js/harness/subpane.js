@@ -1330,9 +1330,10 @@
       const tb = _sub.tabs[t];
       const _pseu = (t === _SUB_DIR || t === _SUB_DYN || t === _SUB_VCS);   // 伪 tab：无 dot/无 ✕/悬浮只说视图
       // v2.35（P1-4）：模型进 tab（短名+悬浮全名）；tokens 进悬浮（CLI 侧计数）
+      // a93S（用户令「模型名不要在 tab 上显示」）：可见角标撤除，模型只留
+      // 悬浮 tooltip（头部 idline 已有完整模型名）
       const ag = (_HG.agents || {})[t] || {};
       const mdlFull = tb.model || '';
-      const mdlShort = mdlFull.length > 14 ? mdlFull.slice(0, 13) + '…' : mdlFull;
       const ttip = _pseu ? (tb.desc || tb.label)
         : [tb.desc || tb.label,
            mdlFull ? '模型：' + mdlFull : '模型：主链模型（内置/无定义文件）',
@@ -1342,7 +1343,6 @@
         ` data-hg-subtab="${esc(t)}" title="${esc(ttip)}">` +
         (_pseu ? `<span class="hg-sub-dir-tabico">${t === _SUB_DYN ? '◉' : t === _SUB_VCS ? '⎇' : '☰'}</span>` : '<span class="hg-sub-dot"></span>') + esc(tb.label) +
         (tb.replay ? `<span class="hg-sub-rp">回放</span>` : '') +
-        (mdlShort ? `<span class="hg-sub-mdl">${esc(mdlShort)}</span>` : '') +
         // 窗格重设计 P1-1：单-tab ✕——hover 才浮现（CSS 控制），运行中的 tab
         // 提示「任务继续后台跑」防误触焦虑；点击走 _subDrop（tab 条委托分支）
         // v3.2：目录伪 tab 常驻无 ✕（v3.3：动态页同）
