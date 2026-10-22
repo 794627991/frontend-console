@@ -272,8 +272,19 @@
           a.type = a.type || ent.type || 'Task';
           if (ent.desc) a.desc = a.desc || ent.desc;
           var _running = ent.status === 'running';
-          a.done = !_running;
-          a.err = ent.status === 'err';
+          // a91（用户铁律「子代理后台还在运行，无条件要能够同步」）：
+          // readmodel 的 interrupted 是 mtime 启发式（转写 >2min 没写就判
+          // 断中）——代理长时间思考/长工具不落盘必被误伤。feed 的
+          // subagent 行是事件真相（无终态帧即 running，_agentFile 已置
+          // done=false）：启发式不得覆盖事件真相——interrupted 且档案当前
+          // running 时保持 running（尾流/同步不断），真终态帧/明确 done/err
+          // 才落定
+          if (ent.status === 'interrupted' && a.done === false && !a.err) {
+            // 保持 running：不写 done/doneAt（下方 running 分支照走）
+          } else {
+            a.done = !_running;
+            a.err = ent.status === 'err';
+          }
           // a65：结论摘要随档（readmodel brief）——子 pane 结论区回退源与
           // 目录行卡摘要在冷同步会话（重启/切回）同源补齐
           if (!a.result && ent.brief) a.result = String(ent.brief).slice(0, 400);
@@ -289,9 +300,14 @@
             if (a.done && row.dataset.final !== '1'
                 && typeof _hgAgentRowState === 'function')
               _hgAgentRowState(tid, a.err, ent.brief || '');
-            // a88：重建后的运行中行秒表复活（卡片渲染不建 interval， ticking
-            // 由本回绑驱动；V3 registry rebind 同职责）
-            if (_running) {
+            // a91（用户铁律「子代理后台还在运行，无条件要能够同步」）：注册表
+            // （readmodel）是运行态参考，但 interrupted 是 mtime 启发式（代理
+            // 长思考不落盘必误伤）——档案真相=事件（feed subagent 行 running
+            // 已置 done=false）+ 上方 keep 逻辑的合成结果。档案 running 的
+            // 链：行上陈旧终态让位（摘标+运行槽重画），刷新/切回即恢复同步；
+            // 真 done/err（事件终态）不受影响
+            if (!a.done) {
+              if (row.dataset.final === '1') delete row.dataset.final;
               var _cTr = _g('_hgAgentRowTimerRestart');
               if (_cTr) { try { _cTr(row, a.t0); } catch (e) {} }
             }
@@ -356,6 +372,10 @@
       if (_rowA && _rowA.classList.contains('agentline')) {
         _HG.rowById[aid] = _rowA;
         if (!_rowA.dataset.hgSubr) _rowA.dataset.hgSubr = aid;
+        // a91：事件真相就地摘陈旧终态——feed SUB 行 running=代理未完，
+        // 工具卡上的终态（旧 feed 把后台派出回执当结果 / 回放 done 形态）
+        // 让位。不依赖冷同步（其首次 fetch 有 readmodel 空表竞速窗）
+        if (_rowA.dataset.final === '1') delete _rowA.dataset.final;
         var _tr = _g('_hgAgentRowTimerRestart');
         // a88：只传档案 t0（上方已 memo），fresh now 兜底撤——重启链
         // 每次事件携 now 重置秒表的根因；无 t0 时由 restart 侧行上 memo
@@ -716,6 +736,13 @@
       return;
     }
     if (row.kind === 'subagent') {
+      // a91（真凶·用户铁律「子代理后台还在运行，无条件要能够同步」）：本
+      // 分支是**终态收口**，但曾无 status 门——readmodel 2s Sync 重发的
+      // running 镜像帧也走这里，镜像一到就把档案/行卡定死「完成」（清
+      // .h-ag-live+停尾流=「刷新/切会话就不同步」的单点根因；此前的摘标
+      // 补丁全在与它打架）。running 帧的档案刷新由 upserted 分支 _agentFile
+      // 承担，此处只认终态
+      if (row.status === 'running') return;
       // 档案收口（sse.js task_notification 同款）：done/err/result 落档——
       // 胶囊（_hgAgentsRunning 数运行中）与目录读档案，不收口=假运行
       if (!this.opt.sub && typeof _HG !== 'undefined' && _HG.agents
@@ -1013,6 +1040,26 @@
     var t = this._t;
     if (!t || !t.tl) return;
     this._lastRowAt = Date.now();   // a77：行到达记账（看门狗计时基）
+    // a91（用户铁律「子代理后台还在运行，无条件要能够同步」）：主窗行卡
+    // 实时摘要改吃子 pane 同一条增量流（V3 sse.js:409 isSub 分支对位）——
+    // 此前唯一喂入是 V3 HTTP 尾流轮询（_subTailFeed），首轮全量拉的竞速窗
+    // 一旦错过（offset 直达文件尾、无新字节不再重画）live 永不点亮。窗格
+    // 增量/回放水合到达即摘要同步：与窗格内容同源同时刻，天然无条件
+    if (n.r === 'think' || n.r === 'text' || n.r === 'tool') {
+      var _slp = _g('_subLivePaint');
+      if (_slp) {
+        var _sum = null;
+        if (n.r === 'think') _sum = '思考中…';
+        else if (n.r === 'text') _sum = '正文 · ' +
+          String(n.text || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+        else {
+          var _hl = _g('_hToolLabel');
+          _sum = (_hl ? _hl(n.name) : (n.name || '工具')) + ' · ' +
+            String(n.hint || '').slice(0, 64);
+        }
+        try { _slp(this.opt.agent, _sum); } catch (e) {}
+      }
+    }
     // 行时刻统一在此记账（思考段时长/轮时长共用）；更晚 ts 到达先回填
     // 开口思考段（V3 回放 :1156 同款）
     var ts = n.ts || 0;
