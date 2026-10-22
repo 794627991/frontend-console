@@ -344,7 +344,9 @@
         _HG.rowById[aid] = _rowA;
         if (!_rowA.dataset.hgSubr) _rowA.dataset.hgSubr = aid;
         var _tr = _g('_hgAgentRowTimerRestart');
-        if (_tr) { try { _tr(_rowA, a.t0 || Date.now()); } catch (e) {} }
+        // a88：只传档案 t0（line 327 已 memo），fresh now 兜底撤——重启链
+        // 每次事件携 now 重置秒表的根因；无 t0 时由 restart 侧行上 memo
+        if (_tr) { try { _tr(_rowA, a.t0); } catch (e) {} }
       }
       // a75（用户要求「主窗口显示子代理实况」对齐 V3）：agentId 到手即开
       // 实况窗格——sse.js:186 同款（V3 语义：派发后窗格自动呈现思考/工具

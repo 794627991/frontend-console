@@ -118,7 +118,9 @@
           _HG.rowById[aid] = row;
           if (!row.dataset.hgSubr) row.dataset.hgSubr = a.taskId;
           try { _hgAgentRowBindAid(aid, row); } catch (_) {}
-          _hgAgentRowTimerRestart(row, a.t0 || Date.now());
+          // a88：只传档案 t0，fresh now 兜底撤（同 v4bridge 侧——行上 memo
+          // 在 restart 侧兜底，秒表不再被同步链重置）
+          _hgAgentRowTimerRestart(row, a.t0);
         }
       }
       if (!(opts && opts.quiet)) renderSideStatus();

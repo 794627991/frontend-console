@@ -665,6 +665,11 @@
   // （_hgAgentSlotPaint），游离自杀守卫同款
   function _hgAgentRowTimerRestart(r, t0) {
     if (!r || !r.isConnected) return;
+    // a88（用户实锤「秒表永远 0s」）：v4 同步链每次事件都携 fresh now 重启
+    // 计时器——首见时刻记在行上（r._agT0），后续 restart 不再被重置，秒表
+    // 从首次绘制起正常走（同步开始后槽位切「同步中」，见 _hgAgentSlotPaint）
+    if (!t0) t0 = r._agT0 || Date.now();
+    if (!r._agT0) r._agT0 = t0;
     if (r._agentTimer) { clearInterval(r._agentTimer); r._agentTimer = null; }
     _hgAgentSlotPaint(r, t0);
     r._agentTimer = setInterval(() => {

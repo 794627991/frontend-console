@@ -480,8 +480,15 @@
     const a = (_HG.agents || {})[row.dataset.tid] || {};
     // v3.5.269（用户需求「去掉这个计数」）：撤「N思 M工」过程计数显示——
     // 运行槽只留运行徽章+秒表（thinkN/toolN 档案统计保留，仅不显示）
+    // a88（用户实锤「一旦同步子代理消息秒表就不变了，感觉怪怪的」）：行内
+    // 实时活动流（.h-ag-live）有内容=子代理过程已在同步，秒数无意义（v4
+    // 每次同步事件用 fresh now 重启计时器，永远 0s）——此刻只显「同步中」
+    // 不显秒数；秒表只在还没同步前走（用户拍板方案）
+    const lv = row.querySelector('.h-ag-live');
+    const syncing = lv && String(lv.textContent || '').trim();
     slot.innerHTML = statusBadge('running') +
-      ' <span class="h-tsec">' + Math.round((Date.now() - t0) / 1000) + 's</span>';
+      ' <span class="h-tsec">' + (syncing ? '同步中'
+        : Math.round((Date.now() - t0) / 1000) + 's') + '</span>';
   }
   // v3.2.6：行内实时活动流——子代理 think/text/tool 事件到达即刷新（05-subblk
   // 三钩调用；ZCode animateSummaryContent 的静态等价物：最新子动作单行摘要）
