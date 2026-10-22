@@ -182,6 +182,31 @@ class TestMainReducer(unittest.TestCase):
         row = [r for r in f.snap["rows"] if r["kind"] == "tool_call"][0]
         self.assertEqual(row["status"], "error")
 
+    def test_sendmessage_receipt_does_not_finalize(self):
+        """a110S：SendMessage 行卡的语义=续派链——送达回执（resumedAgentId）
+        不终结行；链的 notification（tid=包装 call id）回填真终态。"""
+        f = self._feed()
+        f.ingest(_env(1, "turn_started"))
+        f.ingest(_env(2, "cli_stream", data={
+            "type": "assistant", "message": {"model": "m", "content": [
+                {"type": "tool_use", "id": "sm1", "name": "SendMessage",
+                 "input": {"to": "agent_aaaabbbbcccc",
+                           "message": "继续完成审计"}}]}}))
+        f.ingest(_env(3, "cli_stream", data={
+            "type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "sm1",
+                 "content": "Message delivered to agent_aaaabbbbcccc "
+                            "(resumedAgentId: agent_aaaabbbbcccc)"}]}}))
+        row = [r for r in f.snap["rows"] if r["kind"] == "tool_call"][0]
+        self.assertEqual(row["status"], "running")
+        self.assertFalse(row.get("output"))
+        # 链完成：notification（tid=包装 id）→ 行翻 success + ✅ 真摘要
+        f.ingest(_env(4, "subagent_result",
+                      data={"tid": "sm1", "ok": True, "brief": "审计完成：全部通过"}))
+        row = [r for r in f.snap["rows"] if r["kind"] == "tool_call"][0]
+        self.assertEqual(row["status"], "success")
+        self.assertTrue(row["output"].startswith("✅"))
+
     def test_result_fallback_closes_header(self):
         """turn_complete 缺失（CLI 自发回合）时 result 帧兜底收口组头。"""
         f = self._feed()

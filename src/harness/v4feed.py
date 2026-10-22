@@ -517,6 +517,16 @@ class V4Feed(object):
                             and (_tr.get("input") or {}).get("run_in_background")
                             and not err):
                         continue          # 已派出回执：保持 running，等真终态
+                    # a110S（用户要求「sendmessage 的子代理格也要同步，不能
+                    # 切回来直接显示完成」）：SendMessage 行卡的语义=**续派链**
+                    # 而非该 tool 调用本身——送达回执（resumedAgentId…）只是
+                    # 「已转交」，链在跑它就必须 running+同步。真终态=链的
+                    # task_notification（tid=包装 SendMessage call id，
+                    # subagent_result 回填分支按 tid 扫描精确命中本行）
+                    if (_tr is not None
+                            and _tr.get("tool") == "SendMessage"
+                            and not err):
+                        continue
                     # a48（用户定调「回答形态要 a42 效果」）：ask_user 的
                     # 回答在后端人类可读化——原始 JSON {"问题":"答案"} →
                     # 「📝 回答：问题 → 答案；…」。数据在后端整合（红线），
