@@ -606,7 +606,15 @@ class V4Feed(object):
                             d, rid = self._row("s", "tool_call", ts, seq,
                                                tool=b.get("name") or "",
                                                status="running",
-                                               tid=b.get("id") or "")
+                                               tid=b.get("id") or "",
+                                               # a70（用户实锤「bash 看不到
+                                               # 执行命令/与主窗不一致」）：
+                                               # input 随行——卡头 hint
+                                               # （command/file_path）/diff
+                                               # 改动体/查阅聚组判定全靠它，
+                                               # 与主投影 tool_use 同构
+                                               # （_in_obj 截断防爆同款）
+                                               input=_in_obj(b.get("input") or {}))
                             ds.append(d)
                             if b.get("id"):
                                 self._pending_tools[b["id"]] = rid

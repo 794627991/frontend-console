@@ -344,6 +344,9 @@ class TestSubFeed(unittest.TestCase):
         self.assertEqual([r["kind"] for r in rows],
                          ["user_input", "reasoning", "tool_call"])
         self.assertEqual(rows[2]["status"], "success")
+        # a70：input 随行——子 pane 卡头 hint（command/file_path）/diff 改动
+        # 体/查阅聚组判定全靠它（与主投影 tool_use 同构）
+        self.assertEqual(rows[2]["input"].get("pattern"), "x")
         self.assertEqual(f.snap["state"]["done"], True)
         self.assertEqual(f.snap["state"]["final"], "最终报告")
 

@@ -82,7 +82,8 @@
     this._openTools = [];      // V3 兜底行的 FIFO 结果配对队列
     this._fbTried = false;     // /subagent_replay 兜底只试一次
     this._firstAt = 0;         // 首行时刻（轮时长口径）
-    this._lastAt = 0;
+    this._lastAt = 0;          // 末行时刻（统一在 _subAppend 记账）
+    this._pend = [];           // a70：开口思考段（时长回填用，V3 pend 对位）
     this._subTick = null;      // 子 pane 秒表 interval（v4 无 V3 tick）
     this.unsub = store.subscribe(function (ev) { self._onEv(ev); });
   }
@@ -754,32 +755,35 @@
   function _normWs(s) { return String(s || '').replace(/\s+/g, ''); }
 
   // 归一行：v4 投影行（fromV3=false）与 /subagent_replay 行（true）统一成
-  // 一套渲染器输入——兜底不引入第二形态
+  // 一套渲染器输入——兜底不引入第二形态。ts=行时刻（思考段时长/轮时长
+  // 的事实源；v4=row.at，V3 兜底=Date.parse(row.ts)）
   function _subNorm(row, fromV3) {
     if (!row) return null;
     if (fromV3) {
       var k = row.k;
-      if (k === 'user') return { r: 'user', text: row.text || '' };
-      if (k === 'text') return { r: 'text', text: row.text || '' };
-      if (k === 'think') return { r: 'think', text: row.text || '' };
-      if (k === 'note') return { r: 'note', text: row.text || '' };
+      var ts0 = row.ts ? (Date.parse(row.ts) || 0) : 0;
+      if (k === 'user') return { r: 'user', text: row.text || '', ts: ts0 };
+      if (k === 'text') return { r: 'text', text: row.text || '', ts: ts0 };
+      if (k === 'think') return { r: 'think', text: row.text || '', ts: ts0 };
+      if (k === 'note') return { r: 'note', text: row.text || '', ts: ts0 };
       if (k === 'tool') return { r: 'tool', name: row.name || '',
                                  hint: row.hint || '', tid: row.tid || '',
-                                 input: row.in || null };
+                                 input: row.in || null, ts: ts0 };
       if (k === 'result') return { r: 'result', text: row.text || '',
                                    err: !!row.err };
       return null;
     }
     var kk = row.kind;
-    if (kk === 'user_input') return { r: 'user', text: row.text || '' };
-    if (kk === 'assistant_text') return { r: 'text', text: row.text || '' };
-    if (kk === 'reasoning') return { r: 'think', text: row.text || '' };
+    var ts = row.at || 0;
+    if (kk === 'user_input') return { r: 'user', text: row.text || '', ts: ts };
+    if (kk === 'assistant_text') return { r: 'text', text: row.text || '', ts: ts };
+    if (kk === 'reasoning') return { r: 'think', text: row.text || '', ts: ts };
     if (kk === 'tool_call') {
       var done = row.status && row.status !== 'running';
       return { r: 'tool', name: row.tool || '',
                hint: _toolHintOf(row.input), tid: row.tid || '',
                input: row.input || null, done: !!done,
-               out: row.output || '', err: row.status === 'error' };
+               out: row.output || '', err: row.status === 'error', ts: ts };
     }
     return null;
   }
@@ -814,10 +818,37 @@
     if (this._subTick) { clearInterval(this._subTick); this._subTick = null; }
   };
 
+  // 开口思考段的时长回填（V3 回放 pend 机制对位：段起点挂前一行 ts，
+  // 后续更晚 ts 的行到达时按差值写「持续了 X」——同一 assistant 消息里的
+  // thinking 与 tool_use 同 ts，挂自身 ts 恒 0 秒）
+  V4Bridge.prototype._flushPend = function (tsTo) {
+    if (!this._pend || !this._pend.length) return;
+    var dt = _g('_hgTurnDurTxt');
+    for (var i = 0; i < this._pend.length; i++) {
+      var p = this._pend[i];
+      var te = p.seg.isConnected ? p.seg.querySelector('.h-think-seg-t') : null;
+      if (!te || !p.ts) continue;
+      var dur = tsTo - p.ts;
+      te.textContent = dur >= 3000
+        ? '持续了 ' + (dt ? dt(dur) : Math.round(dur / 1000) + ' 秒')
+        : '持续了一小会';
+    }
+    this._pend = [];
+  };
+
   // 单行追加（含双源查重锚——快照/兜底/delta 三路喂入幂等）
   V4Bridge.prototype._subAppend = function (n) {
     var t = this._t;
     if (!t || !t.tl) return;
+    // 行时刻统一在此记账（思考段时长/轮时长共用）；更晚 ts 到达先回填
+    // 开口思考段（V3 回放 :1156 同款）
+    var ts = n.ts || 0;
+    var prevTs = this._lastAt || 0;
+    if (ts > 0) {
+      this._flushPend(ts);
+      this._lastAt = ts;
+      if (!this._firstAt) this._firstAt = ts;
+    }
     var i, el;
     if (n.r === 'user') {
       var head = String(n.text || '').trim().slice(0, 60);
@@ -878,6 +909,12 @@
       if (ar3) { try { ar3(t, seg); } catch (e) { t.tl.appendChild(seg); } }
       else t.tl.appendChild(seg);
       t.stats.think++;
+      // a70：开口段入 pend（起点=前一行 ts——同消息 thinking/tool_use 同 ts，
+      // 挂自身恒 0 秒；V3 回放 :1220 同款），更晚 ts 行到达或定稿时回填时长
+      if (ts > 0 || prevTs > 0) {
+        this._pend.push({ seg: seg,
+                          ts: (prevTs > 0 && (!ts || prevTs < ts)) ? prevTs : ts });
+      }
       return;
     }
     if (n.r === 'note') {
@@ -955,6 +992,7 @@
       ? _HG.agents[this.opt.tid] : null;
     if (running && ag && ag.done) running = false;   // 档案终态优先（防投影滞后假跑）
     if (!running) {
+      this._flushPend(this._lastAt || Date.now());   // a70：末段思考时长回填
       var fin = _g('_subTlFinalizeT');
       var durMs = (this._lastAt && t.t0 && this._lastAt > t.t0)
         ? this._lastAt - t.t0 : 0;
@@ -1013,7 +1051,7 @@
     sc.innerHTML = '';
     tb.turns = [];
     this._openTools = [];
-    this._firstAt = 0; this._lastAt = 0;
+    this._firstAt = 0; this._lastAt = 0; this._pend = [];
     var scaffold = _g('_subPaneScaffold');
     var t = scaffold ? scaffold(tb, this.opt.type || 'Task', '', this.opt.desc || '')
                      : null;
@@ -1024,12 +1062,8 @@
     var rows = (snap && snap.rows) || [];
     var i, n;
     for (i = 0; i < rows.length; i++) {
-      if (rows[i] && rows[i].at) {
-        if (!this._firstAt) this._firstAt = rows[i].at;
-        this._lastAt = rows[i].at;
-      }
       n = _subNorm(rows[i], false);
-      if (n) this._subAppend(n);
+      if (n) this._subAppend(n);   // 行时刻/思考段 pend 在 append 内统一记账
     }
     if (rows.length) {
       var st = (snap && snap.state) || {};
@@ -1078,13 +1112,8 @@
         if (j && j.ok && j.found && (j.rows || []).length) {
           var rows = j.rows;
           for (var i = 0; i < rows.length; i++) {
-            var ts = rows[i] && rows[i].ts ? Date.parse(rows[i].ts) : 0;
-            if (ts > 0) {
-              if (!self._firstAt) self._firstAt = ts;
-              self._lastAt = ts;
-            }
             var n = _subNorm(rows[i], true);
-            if (n) self._subAppend(n);
+            if (n) self._subAppend(n);   // ts 记账在 append 内统一
           }
           if (self._t && !self._t.t0) self._t.t0 = self._firstAt || 0;
           tb.rpN = rows.length;
@@ -1145,13 +1174,8 @@
     var stickEl = t.sc;
     var stick = stickEl && _g('_subPaneStick') ? _g('_subPaneStick')(stickEl) : true;
     if (d.op === 'row.appended') {
-      var row = d.row;
-      if (row && row.at) {
-        if (!this._firstAt) this._firstAt = row.at;
-        this._lastAt = row.at;
-      }
-      var n = _subNorm(row, false);
-      if (n) this._subAppend(n);
+      var n = _subNorm(d.row, false);
+      if (n) this._subAppend(n);   // ts 记账在 append 内统一
     } else if (d.op === 'row.upserted') {
       if (d.row && d.row.kind === 'tool_call') {
         this._subToolDone(d.row.tid, d.row.output, d.row.status === 'error');
