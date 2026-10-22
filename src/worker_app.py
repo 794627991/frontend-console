@@ -499,6 +499,13 @@ def manage_stop():
         _srv.WORKER_BASE = ""
     except Exception:
         pass
+    try:
+        from src.app_state import DATA_DIR
+        ep = os.path.join(DATA_DIR, "claude_worker.json")
+        if os.path.exists(ep):
+            os.remove(ep)   # 过期档案不清会误导排查（pid 已死/端口已换）
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

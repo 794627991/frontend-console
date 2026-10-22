@@ -14,13 +14,21 @@
 (function () {
   var B = window.__HG_WORKER__ || '';
   if (!B) return;                        // 未分离：零开销透明层
+  // 能力门（对抗版本错位）：proxy/usage/claude_default 族只在新后端
+  // （__HG_WFAM__ 注入 'proxy'）才改写。dev 模式前端从磁盘直读、后端可能
+  // 还是旧进程——旧后端不替换此占位符（残留字面量）≠'proxy'，自动退回
+  // 只改写 harness/hiklink（与旧后端 worker 实际承载精确对齐，不会 404）
+  var FULL = window.__HG_WFAM__ === 'proxy';
   // 整段命名空间直连 worker；/api/claude/* 因与 claude_setup（主进程）共享
   // 前缀，只能精确枚举 claude_default 的端点（与 server.py 的 _CW_CLAUDE_PATHS
   // + profiles 子前缀同清单，两处必须同步改）
-  var PRE = ['/api/harness', '/api/hiklink', '/api/proxy', '/api/usage',
-             '/api/claude/profiles'];
-  var EXACT = ['/api/claude/api_config', '/api/claude/models_probe',
-               '/api/claude/settings_open', '/api/claude/provision'];
+  var PRE = ['/api/harness', '/api/hiklink'];
+  var EXACT = [];
+  if (FULL) {
+    PRE = PRE.concat(['/api/proxy', '/api/usage', '/api/claude/profiles']);
+    EXACT = ['/api/claude/api_config', '/api/claude/models_probe',
+             '/api/claude/settings_open', '/api/claude/provision'];
+  }
 
   function hit(u) {
     if (typeof u !== 'string' || u.charAt(0) !== '/') return false;

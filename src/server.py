@@ -378,13 +378,23 @@ def index():
         # workerbase.js 见空串即全透明零开销）。占位符与变量名 __HG_WORKER__
         # 刻意不同名——同名会被 replace 连变量名一起吃掉（同 __HG_V4FLAG__
         # 的坑）；请求时读 WORKER_BASE，worker 重启换端口后刷新页面即得新值
+        # __HG_WFAMFLAG__：worker 能力标记（注入 'proxy'=worker 已承载
+        # proxy/usage/claude_default 族）。dev 模式前端文件从磁盘直读、后端
+        # 进程可能还是旧代码——新 workerbase 若把 proxy 族改写到旧 worker
+        # （只带 harness）就是全 404（用户实锤「API配置全不显示/代理一直
+        # 检测中」）。旧后端不认此占位符→字面量残留→workerbase 只改写
+        # harness/hiklink，与旧后端实际承载精确对齐。占位符与变量名
+        # __HG_WFAM__ 刻意不同名——同名 replace 会连变量名一起吃掉
+        # （__HG_V4FLAG__ 同款坑，a99F 实测再踩一次）
         if isinstance(data, bytes):
             data = data.replace(b"__HG_VER__", _HV.encode("utf-8"))
             data = data.replace(b"__HG_V4FLAG__", b"1" if DEBUG_V4 else b"0")
-            return data.replace(b"__HG_WBASE__", WORKER_BASE.encode("utf-8"))
+            data = data.replace(b"__HG_WBASE__", WORKER_BASE.encode("utf-8"))
+            return data.replace(b"__HG_WFAMFLAG__", b"proxy" if CLAUDE_OFFLOAD else b"")
         data = data.replace("__HG_VER__", _HV)
         data = data.replace("__HG_V4FLAG__", "1" if DEBUG_V4 else "0")
-        return data.replace("__HG_WBASE__", WORKER_BASE)
+        data = data.replace("__HG_WBASE__", WORKER_BASE)
+        return data.replace("__HG_WFAMFLAG__", "proxy" if CLAUDE_OFFLOAD else "")
     if DEBUG_WEB:
         with open(os.path.join(_SRC_WEB, "index.html"), "rb") as f:
             return Response(_inject(f.read()), mimetype="text/html")
