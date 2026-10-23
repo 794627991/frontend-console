@@ -2378,7 +2378,15 @@ html {
      用户泡 v2.24.4 已按内容自适应，AI 泡却因 width:100% 拉满组宽，
      短回复也是一大条（用户实测「我的消息是变长，但是 AI 的不是）。
      align-items:flex-start 让组内 AI 泡 shrink-to-fit，随文字伸缩 */
-  align-items: flex-start; max-width: min(820px, 100%); }
+  align-items: flex-start; max-width: min(820px, 100%);
+  /* a114（用户实锤「649 张卡的会话滚动/渲染卡」）：回合组级视口裁剪——
+     ZCode TUI viewportCulling 的 DOM 对位（opentui 全量布局+绘制期二分
+     裁剪；Chromium 原生同语义）。屏幕外的组跳过布局/绘制/样式计算，
+     元素仍在文档流：滚动条真实比例/导航轨锚点/Ctrl+F/复制全无损；
+     contain-intrinsic-size 的 auto 让浏览器首渲后记忆每组真实高度，
+     滚动条基本不跳。主窗与子窗格的组同用此类，一并受益 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 600px; }
 .h-grp-proc { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; }
 .h-grp-proc > .h-drawer { flex: 0 1 auto; min-width: 120px; max-width: 100%; }
 .h-grp-proc > .h-drawer.think { flex-shrink: 0; }
