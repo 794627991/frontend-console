@@ -2295,6 +2295,17 @@ html {
    禁横向滚动——长词/长命令/代码一律折行截断,详情点开展开(展开体同禁) */
 .hg-flow, .h-grp, .h-grp-proc, .h-turn-body, .h-tl, .h-tl-grp-body,
 .h-tool-coll, .h-drawer-body, .h-bubble { min-width: 0; max-width: 100%; overflow-x: hidden; }
+/* a118（用户实锤「超长会话所有点开动画掉帧」）：卡体级视口裁剪——折叠态
+   （max-height:0/42vh 裁切）不与视口相交=跳过布局/样式，可见组内几百个
+   折叠卡体不再是 max-height 动画每帧布局的基线税；展开相交即渲染，动画
+   照常。与 .h-grp 组级裁剪（a114）同族，粒度到卡体 */
+.h-tool-coll, .h-think-seg-body, .h-drawer-body {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 240px; }
+/* a118R：重内容开合跳过动画（_hgHeavySkip 点击时判定加类）——动画期间
+   重体每帧全量布局是 10fps 卡顿的真身，直达一次到位 */
+.no-anim, .no-anim .h-tool-coll, .no-anim .h-think-seg-body,
+.no-anim .h-drawer-body { transition: none !important; }
 /* a27（用户实锤「右缘竖条一闪而过，大丑」）：overflow-x:hidden 使纵向
    计算值变 auto——组时间线内容比分配高度多几 px（gap/行渲染抖动）就闪现
    满高滚动条 thumb。这几个布局容器的纵向滚动非设计意图，滚动条隐藏
@@ -3988,6 +3999,17 @@ html {
 /* v2.36 面板/窗格内滚动条收细一档（全局 8px → 6px），与信息密度协调 */
 .hg-dyn-pane::-webkit-scrollbar, .hg-dyn-pane ::-webkit-scrollbar,
 .hg-subpane::-webkit-scrollbar, .hg-subpane ::-webkit-scrollbar { width: 6px; height: 6px; }
+
+/* a118R（用户实锤「主窗刷消息必出粗滚动条，修多次没修到」）：主消息流
+   一直用的是 Windows 经典原生滚动条（~17px 粗条怼在内容右缘，63k px 滚动
+   量恒可见；新消息到达 thumb/轨道重算+内容宽度挤压恢复=肉眼可见的条）。
+   补上与子窗格同款的细滚动条样式——粗条消失，观感与 dyn/子窗格统一 */
+.hg-flowwrap::-webkit-scrollbar, .hg-flowwrap ::-webkit-scrollbar,
+.hg-flow::-webkit-scrollbar, .hg-flow ::-webkit-scrollbar { width: 6px; height: 6px; }
+.hg-flow::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--muted) 45%, transparent);
+  border-radius: 3px; }
+.hg-flow::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+.hg-flow::-webkit-scrollbar-track { background: transparent; }
 
 /* ---- v2.33 子代理实时窗格（聊天区右侧，可拖拽调宽）----
    定位：临时实时镜像视图——主 flow 灰色 sub 行保留，回合终结窗格收起
