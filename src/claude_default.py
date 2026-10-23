@@ -168,7 +168,11 @@ def _write_settings(d):
     # 原子写（tmp+replace）：裸 open("w") 与后台代理联动的字段级写并发时，
     # 会留半截 JSON / 交错覆盖（用户定调：任何情况不能破坏 settings.json）
     p = _settings_path()
-    tmp = p + ".tmp"
+    # P1-7 修复（a116）：tmp 名必须进程+线程唯一。主进程（claude_setup 装
+    # 引导）与 worker（本模块）会同时写同一个 settings.json，共用 p+".tmp"
+    # 时一方的 json.dump 尚未收尾、另一方就 os.replace → 半截内容被替换成
+    # 正式文件（实测 JSONDecodeError，token/模型映射全丢、CLI 起不来）。
+    tmp = "%s.%d.%d.tmp" % (p, os.getpid(), threading.get_ident())
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(d, f, ensure_ascii=False, indent=2)
     os.replace(tmp, p)
@@ -289,7 +293,8 @@ def _preaccept_onboarding():
                     ent["hasTrustDialogAccepted"] = True
                     changed = True
         if changed:
-            tmp = path + ".tmp"
+            # P1-7（a116）：tmp 名进程+线程唯一（跨进程并发写不互相踩）
+            tmp = "%s.%d.%d.tmp" % (path, os.getpid(), threading.get_ident())
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(d, f, ensure_ascii=False)
             os.replace(tmp, path)
@@ -478,7 +483,8 @@ def _read_profiles():
 
 def _write_profiles(d):
     p = _profiles_path()
-    tmp = p + ".tmp"
+    # P1-7（a116）：同 _write_settings，tmp 名进程+线程唯一
+    tmp = "%s.%d.%d.tmp" % (p, os.getpid(), threading.get_ident())
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(d, f, ensure_ascii=False, indent=2)
     os.replace(tmp, p)

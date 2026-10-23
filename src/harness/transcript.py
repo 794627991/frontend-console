@@ -410,7 +410,18 @@ def transcript_for(s):
                                         and _last_u[1] > 0
                                         and set(files) <= set(_last_u[0] or [])):
                                     continue
-                                lines.append({"role": "user", "text": t[:8000], "images": imgs, "files": files,
+                                # N9 修复（a116）：images 的契约是**路径数组**
+                                # （live user_echo 发 list(image_paths)，前端
+                                # hist.js:120 用 (l.files||[]).concat(l.images||[])）。
+                                # 这里只有计数——旧实现把 int 当 images 传下去，
+                                # 前端判成非数组→历史重建时该字段被静默丢弃。
+                                # 改为 imageN=计数、images 留空数组（消除类型污染）。
+                                # 诚实登记：转写里**没有**图片本地路径（CLI 落的是
+                                # base64 块与 Temp 回显），因此重启后照片缩略图
+                                # 仍然不可恢复——本轮只修类型契约，不冒充修复渲染。
+                                lines.append({"role": "user", "text": t[:8000],
+                                              "images": [], "imageN": imgs,
+                                              "files": files,
                                               "ts": o.get("timestamp") or ""})
                                 _last_u = (files, imgs)
                     elif typ == "assistant" and isinstance(content, list):

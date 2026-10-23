@@ -4,6 +4,20 @@ import sys
 sys.path.insert(0, '.')
 from src.server import app
 
+# a116 二十三次全审：v4 流的 wseq 高水位与 BOOT 计数器会**真写 HOME**
+# （`_save_wseq` 同步落盘 + `_next_boot` 落盘）。本冒烟会真打 `/v4/stream`
+# 与写端点，实测跑一轮就在用户 `~/.serialconsole_pro/v4wseq` 留下 BOOT。
+# 与 test_v4feed 的 `_use_temp_wseq_dir()` 同理，这里在**任何请求前**重定向。
+import os as _os
+import tempfile as _tempfile
+_TMP_WSEQ = _tempfile.mkdtemp(prefix="wseq_smoke_")
+import src.eventlog.store as _S
+from src.harness import v4feed as _F
+_S._WSEQ_DIR = _TMP_WSEQ
+_F.V4Feed._boot_path = staticmethod(
+    lambda: _os.path.join(_TMP_WSEQ, "BOOT"))
+_F.V4Feed._boot = None
+
 c = app.test_client()
 rules = []
 for r in app.url_map.iter_rules():
@@ -94,3 +108,14 @@ for path, ms in rules:
             bad.append((m, path, r.status_code, ct[:24]))
 print('总路由:', len(rules), '总方法:', n)
 print('BAD:', bad if bad else '无 — 全部健康(JSON/4xx)')
+# P1-6 修复（a116）：原脚本只 print 不置退出码——offload 形态下 10 条 BAD
+# 仍 EXIT=0，CI/人工都误判绿。另外 offload 形态（默认 CLAUDE_OFFLOAD=True）
+# 下主进程只剩 /<path:sub> 落点，46 条 harness 路由的冒烟覆盖被静默清零
+# （实测 总路由=2 vs inline 46）——此情形必须显式失败而不是假装通过。
+if len(rules) <= 2:
+    print('FAIL: offload 形态下拿到的主进程路由数=%d（harness 路由已迁到 '
+          'worker）——请以 CLAUDE_INLINE=1 运行本冒烟，或改为对 '
+          'worker_app.build_app() 的 url_map 跑同一份规则表' % len(rules))
+    sys.exit(1)
+if bad:
+    sys.exit(1)

@@ -409,10 +409,50 @@ function buildClaudeHarnessTab(opts = {}) {
     if (aSend) { askSubmit(aSend.dataset.hgAskSend); return; }
     const aIgn = e.target.closest('.h-ask-ignore');
     if (aIgn) { askSubmit(aIgn.dataset.hgAskSend, true); return; }
-    const dHead = e.target.closest('.h-drawer-head');
+  // a115R（用户实锤「刷新后展开仍 10fps 级卡顿」）：重内容跳过 max-height
+  // 动画——展开动画期间重体内容每帧全量布局（content-visibility 只救
+  // 「不相交」的折叠态，动画中相交救不了）。
+  // a120Q（用户实锤「思考/bash 展开掉帧没解决」）：旧判据读 body.
+  // scrollHeight——两个坑：①折叠体在 CV 估高下恒 240px 占位（真高从未
+  // 布局），1600px 阈值**从未触发过**＝跳动画一直空转；②实测该读在
+  // 「流内已物化内容多」的状态下付一次全流强制布局（56-86ms 的展开
+  // 卡顿直接来自这行）。改判**内容文本量**（textContent 是 DOM 属性，
+  // CV/布局双盲区免疫，零强制布局）：>6k 字符≈展开体 >1600px 即重卡
+  // 直达开合。selector 含 .h-turn-body：回合体 grid 1fr→0fr 过渡展开=
+  // 百级工具行逐帧物化，同判同治（host 传组元素，no-anim 由 CSS 后代
+  // 选择器命中体内）
+  function _hgHeavySkip(host) {
+    if (!host) return;
+    const body = host.querySelector(
+      '.h-turn-body, .h-tool-coll, .h-drawer-body, .h-think-seg-body');
+    if (!body) return;
+    let heavy = false;
+    try { heavy = (body.textContent || '').length > 6000; } catch (_) {}
+    // a120R（新档案实锤「轻卡展开还是有点卡」）：展开动画期间卡高度逐帧
+    // 变化 → .h-tl flex 容器每帧重走 flex 算法（LayoutNG 逐子测量）——
+    // 档案里动画帧 Layout 42-46ms×2/帧，与卡内容大小无关（241 字符的小卡
+    // 一样 25fps），纯容器规模税。主时间线（.h-tl 直系子行）或所在查阅组
+    // （.h-tl-grp-body——组在主 tl 内，组内卡展开同样逐帧重走外层）行数
+    // >80 即不播动画
+    if (!heavy) {
+      try {
+        const tl = host.closest('.h-tl');
+        const gb = host.closest('.h-tl-grp-body');
+        heavy = (tl && tl.childElementCount > 80)
+             || (gb && gb.childElementCount > 80);
+      } catch (_) {}
+    }
+    if (!heavy) return;
+    host.classList.add('no-anim');
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      host.classList.remove('no-anim');
+    }));
+  }
+  const dHead = e.target.closest('.h-drawer-head');
     if (dHead) {
       const box = dHead.closest('.h-drawer');
       if (box) {
+        if (!box.classList.contains('open')) _hgHeavySkip(box);
         box.classList.toggle('open');
         box.dataset.userToggled = '1';       // 写进 DOM——快照恢复后依然记得用户碰过
         // v3.2.1：撤 _hgSaveOpen 位置键持久化（跨代际碰撞误开新行，用户定调
@@ -426,7 +466,7 @@ function buildClaudeHarnessTab(opts = {}) {
       const seg = sHead.closest('.h-think-seg');
       if (seg) {
         const opening = !seg.classList.contains('open');
-        if (opening) _histLazyFill(seg); else _histLazyDrop(seg);
+        if (opening) { _histLazyFill(seg); _hgHeavySkip(seg); } else _histLazyDrop(seg);
         seg.classList.toggle('open');
       }
       return;
@@ -468,12 +508,21 @@ function buildClaudeHarnessTab(opts = {}) {
       const proc = tnHead.closest('.h-grp-proc');
       const body = proc && proc.querySelector('.h-turn-body');
       if (body) {
+        // a120Q：回合体开合=百级工具行的 grid 过渡逐帧物化（大会话最重的
+        // 展开卡顿）——重体跳动画（textContent 判，展开前体还在场）
+        if (body.classList.contains('closed')) _hgHeavySkip(proc || body);
         body.classList.toggle('closed');
         tnHead.dataset.userToggled = '1';
         if (!body.classList.contains('closed')) {
           // 展开时懒回填顺带触发（组内折叠行仍各自懒加载，这里只管布局态）
           _hgScrollBottom();
         }
+        // a120P：回合体开合=组高巨变（百级工具行）——开合动画（grid 1fr→0fr
+        // 过渡 300ms）落地后重钉该组 CV 估高种子，防下次反物化→物化时按
+        // 旧种子再修一帧（滚动条跳变）
+        const _gp = proc && proc.closest('.h-grp');
+        if (_gp && typeof _hgPinIntrinsicHeights === 'function')
+          setTimeout(() => _hgPinIntrinsicHeights(_gp), 420);
       }
       return;
     }
@@ -500,7 +549,12 @@ function buildClaudeHarnessTab(opts = {}) {
     const ocRow = e.target.closest('.h-tool.oneclick');
     if (ocRow && !e.target.closest('.h-tool-coll')) {
       const opening = !ocRow.classList.contains('open');
-      if (opening) _histLazyFill(ocRow); else _histLazyDrop(ocRow);
+      // a120R（用户实锤「bash 展开还是卡」）：oneclick 专属通道漏挂
+      // heavy-skip——bash 终端卡全走本分支且早退，tHead 分支的跳动画
+      // 永远轮不到；大会话巨时间线（flex 逐帧重走）里 bash 卡动画照样
+      // 25fps。补挂同款判定（textContent>6k 或时间线>80 行=直达开合）
+      if (opening) { _histLazyFill(ocRow); _hgHeavySkip(ocRow); }
+      else _histLazyDrop(ocRow);
       // v3.4.88：识图卡展开时懒填折叠体（完整 prompt+回传全文——不入
       // _histLazyFill 的 hi/raw 账，独立体）
       if (opening && ocRow.classList.contains('h-vision')) _hgVisionFillBody(ocRow);
@@ -538,7 +592,7 @@ function buildClaudeHarnessTab(opts = {}) {
       const row = tHead.closest('.h-tool');
       if (row) {
         const opening = !row.classList.contains('open');
-        if (opening) _histLazyFill(row); else _histLazyDrop(row);
+        if (opening) { _histLazyFill(row); _hgHeavySkip(row); } else _histLazyDrop(row);
         row.classList.toggle('open');
       }
       return;
@@ -2082,9 +2136,19 @@ function buildClaudeHarnessTab(opts = {}) {
     const st = _hgFlow.scrollTop + 80;
     let act = -1;
     if (_atBtm) act = items.length - 1;
-    else for (let k = 0; k < items.length; k++) {
-      const el = items[k].el;
-      if (el && el.isConnected && el.offsetTop <= st) act = k;
+    else {
+      // a120（性能档案实锤「1000+ 消息主窗翻动掉帧」）：旧线性扫对全部
+      // 刻度逐个读 offsetTop——布局脏时每次读都是强制同步重排，几百刻度
+      // ×逐帧＝滚动热路径大头之一。刻度按文档序 offsetTop 单调不减 →
+      // 二分找「最后一个 ≤st」，布局读从 O(n) 降到 O(log n)。失联刻度
+      // 按「不命中」收缩右界（旧码跳过，近似语义不变）
+      let lo = 0, hi = items.length - 1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        const el = items[mid].el;
+        if (el && el.isConnected && el.offsetTop <= st) { act = mid; lo = mid + 1; }
+        else hi = mid - 1;
+      }
     }
     if (act < 0) act = 0;
     const prev = rail.querySelector('.hg-rail-t.act');

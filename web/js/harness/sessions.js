@@ -271,6 +271,9 @@
         const lbl = head && head.querySelector('.h-turn-label');
         if (lbl && lbl.textContent.indexOf('工作中') === 0) lbl.textContent = '已工作';
       });
+      // a120P：快照恢复的 DOM 是全新元素（CV 估高记忆清零）——收体规整后
+      // 高度终态，同 _histRender 尾同款钉高，防切回首翻修正风暴
+      if (typeof _hgPinIntrinsicHeights === 'function') _hgPinIntrinsicHeights(_hgFlow);
       _HG.epoch = c.epoch || null;     // v3.0：代际水位随快照存取（与 seq 同进退）
       // v2.37（P0-A）：窗口账目重建——快照 DOM 是上一次 _histRender 的窗口
       // （histStart 起的尾部段），账目随快照存取（见 saveCache）。histLive

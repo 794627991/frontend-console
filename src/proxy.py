@@ -138,7 +138,9 @@ class BaseUrlManager:
                 skipped.append(os.path.basename(path))
                 continue
             d.setdefault("env", {})["ANTHROPIC_BASE_URL"] = target
-            tmp = path + ".tmp"
+            # P1-7（a116）：tmp 名进程+线程唯一——跨进程并发写同一配置
+            # 文件时共用 path+".tmp" 会互相覆盖成半截 JSON
+            tmp = "%s.%d.%d.tmp" % (path, os.getpid(), threading.get_ident())
             for attempt in range(3):
                 try:
                     if attempt > 0:
@@ -191,7 +193,8 @@ def _remember_direct(url):
     _saved_direct = url
     try:
         # 原子写（tmp+replace）：与并发读/方案切换链路同跑时不留半截文件
-        tmp = PROXY_STATE_PATH + ".tmp"
+        tmp = "%s.%d.%d.tmp" % (PROXY_STATE_PATH, os.getpid(),
+                                 threading.get_ident())
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump({"direct_url": url}, f, ensure_ascii=False, indent=2)
         os.replace(tmp, PROXY_STATE_PATH)

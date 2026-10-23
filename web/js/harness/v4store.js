@@ -27,6 +27,9 @@
     this.status = 'idle';     // idle|connecting|live|reconnecting|closed
     this.epoch = '';
     this.seq = 0;
+    // 二十二次全审：feed 实例身份——游标只在同一实例内有效。
+    // 服务端换实例（重建/TTL/重启）即回 ``，游标一律作废走快照。
+    this.inc = '';
     this.snap = root.V4P.newSnapshot('');
     this.overlay = [];        // [{cmdId, at}] 只喂 watchdog，不渲染
     this._es = null;
@@ -74,6 +77,7 @@
         if (_c && _c.snapshot && (_c.snapshot.rows || []).length) {
           this.snap = _c.snapshot;
           this.seq = _c.toSeq || 0;
+          this.inc = _c.inc || '';
           this._notify({ kind: 'snapshot', snap: this.snap });
         }
       } catch (e) { /* 垫片损坏按无处理 */ }
@@ -82,7 +86,8 @@
     var qs = 'sid=' + encodeURIComponent(this.sid) +
       '&topic=' + encodeURIComponent(this.topic);
     if (this.epoch && this.seq > 0 && !this._forceSnapshot) {
-      qs += '&epoch=' + encodeURIComponent(this.epoch) + '&seq=' + this.seq;
+      qs += '&epoch=' + encodeURIComponent(this.epoch) + '&seq=' + this.seq +
+        '&inc=' + encodeURIComponent(this.inc || '');
     }
     var es = this._es = new EventSource('/api/harness/v4/stream?' + qs);
     this._lastFrameAt = Date.now();
@@ -91,12 +96,24 @@
       try {
         var a = JSON.parse(e.data);
         if (a.epoch) self.epoch = a.epoch;
-        if (a.mode === 'snapshot') self._forceSnapshot = false;
+        if (a.inc) self.inc = a.inc;
+        if (a.mode === 'snapshot') {
+          // a116 二十三次全审（严重，撕裂态）：ack 与 snapshot frame 之间
+          // 若断线，状态会成「inc=新实例、seq=旧游标」——下次重连身份
+          // 判据放行，旧投影吃新实例增量 = 花屏且永不回退快照。
+          // 故 ack 一到就**作废本地游标**：seq 归零 + 强制快照，直到
+          // snapshot frame 落账（_onFrame 里恢复 seq 并清标志）为止。
+          self.seq = 0;
+          self._forceSnapshot = true;
+        }
         // a92：resume 零帧（安静 feed 续传）也算连上——否则 status 停在
         // connecting，15s ACK 判死窗反复重连（服务端 a92 起安静 feed 只
         // ack 不发帧）
         if (a.mode === 'resume' && self.status !== 'live') {
           self.status = 'live';
+          // 服务端判定可续传 → 以它为准，清掉本地「强制快照」意图
+          // （否则安静 feed 只 ack 不发帧时该标志会一直挂着）
+          self._forceSnapshot = false;
           self._notify();
         }
       } catch (err) { /* ack 损坏：等 frame 或判死 */ }
@@ -158,7 +175,8 @@
       // a60R：持久化权威快照（下一轮冷连接的垫片；main topic 限定防超限）
       if (this.topic === 'main') {
         try { localStorage.setItem('hg_v4snap:' + this.sid + ':main',
-          JSON.stringify({ snapshot: f.snapshot, toSeq: f.toSeq })); } catch (e) {}
+          JSON.stringify({ snapshot: f.snapshot, toSeq: f.toSeq,
+            inc: this.inc })); } catch (e) {}
       }
       this._notify({ kind: 'snapshot', snap: this.snap });
       return;
@@ -177,6 +195,10 @@
         this._scheduleReconnect();
         return;
       }
+      // F4 修复（a116）：toSeq 必须严格前进。只校验 fromSeq 时，重连/慢消费
+      // 导致的重复帧会被照单累加（实测同帧连发 3 次 → 文本叠成 XYYYYYY、
+      // seq 不变=无限增殖）。toSeq <= seq 一律视为重复帧丢弃，等下一帧。
+      if (!(f.toSeq > this.seq)) return;
       root.V4P.applyDeltas(this.snap, f.deltas);
       this.seq = f.toSeq;
       this._reconcile();

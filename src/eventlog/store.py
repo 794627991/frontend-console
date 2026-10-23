@@ -14,11 +14,42 @@
 重复 seq，前端守卫整批吞事件（v2.35.2 事故的机制化防线）。
 """
 from collections import deque
+import logging as _logging
+import os
+import re as _re
+import threading as _threading
+
+_log = _logging.getLogger(__name__)
 
 from .types import (SessionEventType, make_envelope, new_epoch,
                     TurnWindowRetention)
 from . import reducer as _reducer
 
+# a116 十六次全审：wseq 高水位独立小文件目录。放 HOME_DIR 下与 meta 同级
+# （用户数据目录，重启存活）；不进 meta 是为了同步写——meta 是全量读写，
+# 每条事件都同步会让流式 token 变成磁盘风暴。
+_WSEQ_DIR = os.path.join(
+    os.path.expanduser("~"), ".serialconsole_pro", "v4wseq")
+
+# a116 十六次全审：`_save_wseq` 的句柄/游标是**跨对象**共享的底层资源
+# （`_commit` 持 feed._lock，`restore` 持 store._lock——两把不同的锁，
+# 会并发进到这里）。lseek+write 是两步操作，并发下会互相穿插导致写错
+# 位置，必须串行化。单把全局锁，临界区只有两次 syscall，开销可忽略。
+_WSEQ_FD_LOCK = _threading.Lock()
+
+
+def _safe_name(sid):
+    """sid → 安全文件名（只保留字母数字与 -_，其余转下划线）。"""
+    return _re.sub(r"[^A-Za-z0-9_-]", "_", str(sid or "anon"))[:80] or "anon"
+
+
+def drop_wseq_file(sid):
+    """会话删除时清掉它的 wseq 高水位文件（否则长期累积孤儿小文件）。
+    幂等：文件不存在不算错。"""
+    try:
+        os.remove(os.path.join(_WSEQ_DIR, "%s.wseq" % _safe_name(sid)))
+    except Exception:
+        pass
 
 # v3.1（#13）microcompact 阈值：保留窗字节总量超过 COMPACT_BYTES 且新回合
 # 已开跑时，把**旧回合**的超大 cli_stream 负载就地折叠（正文/工具输出留
@@ -52,8 +83,132 @@ class SessionEventStore(object):
         self.retention_policy = TurnWindowRetention()
         self.evicted_events = 0
         self._bytes = 0                 # v3.1（#13）：保留窗字节估算（append 累加）
+        # v4 投影投递序号的高水位（a116 十四次全审）。v4 客户端的续传游标
+        # 是「投递序号 wseq」而不是事件 seq，两者空间独立。重建 feed 时
+        # 新起点必须严格大于**上一代发过的任何 wseq**，否则旧游标会合法
+        # 落进新空间（静默丢历史 + rowId 撞号）。账本 seq 无法推算该值
+        # （wseq 与 seq 的偏移逐代累积），必须持久化。
+        self._wseq_hwm = 0
+        # a116 十六次全审（F3-1/F3-2 根修）：wseq 高水位**同步**落独立小文件。
+        # 为什么不能靠 meta 的异步 sync_meta：
+        #   ① 冷建补放走的是 feed.ingest→_commit，不经 v4_ingest_main，
+        #      异步路径根本不知道有变更（实测 40 条补放的 wseq 从不落盘）；
+        #   ② 异步窗口内崩溃，重启 base = persisted+2 可能 ≤ 客户端游标，
+        #      首批新事件拿到已被消费的 wseq → 静默吞消息（实测 lag≥3 丢 1-2 条）。
+        # 独立小文件（每 sid 一个，几十字节）同步写，代价远低于全量 meta
+        # 读盘+合并+原子写；且删除会话时随 meta 一起清，不会复活幽灵。
+        self._wseq_path = os.path.join(_WSEQ_DIR, "%s.wseq" % _safe_name(sid))
+        self._wseq_written = 0          # 已落盘值（避免无变更重复写）
+        self._wseq_fd = None            # 常开的定长覆盖句柄（见 _save_wseq）
+        self._wseq_closed = False       # 会话删除后置位：拒绝重建孤儿文件
+        self._load_wseq()
         self.compacted_events = 0       # microcompact 命中计数（stats/测试观测）
         self.projection = _reducer.initial_projection(sid)
+
+    # ---- wseq 高水位持久化（a116 十六次全审）----
+    @property
+    def wseq_hwm(self):
+        return self._wseq_hwm
+
+    @wseq_hwm.setter
+    def wseq_hwm(self, v):
+        """**同步**落盘：所有写入方（v4feed._commit 的 live 与冷建补放、
+        restore、v4hub）一律经过这里，不存在「某条路径忘了持久化」。
+        只写增长值（`_save_wseq` 内部比 `_wseq_written`）。"""
+        v = int(v or 0)
+        self._wseq_hwm = max(self._wseq_hwm, v)
+        self._save_wseq(self._wseq_hwm)
+
+    def _load_wseq(self):
+        try:
+            with open(self._wseq_path, encoding="utf-8") as f:
+                self.wseq_hwm = max(self._wseq_hwm,
+                                    int((f.read() or "0").strip()))
+        except Exception:
+            pass
+        self._wseq_written = self._wseq_hwm
+
+    def close_wseq(self):
+        """释放常开句柄并**永久关停**本对象的 wseq 落盘（会话删除时调）。
+        幂等。置 `_wseq_closed` 后，在飞的 `_commit` 迟到调 setter 也不会
+        `O_CREAT` 重建孤儿文件（十六次全审，一般级）。"""
+        with _WSEQ_FD_LOCK:
+            self._wseq_closed = True
+            fd, self._wseq_fd = self._wseq_fd, None
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except Exception:
+                    pass
+
+    def _read_disk_wseq(self):
+        """读盘上当前高水位（供跨对象单调守卫用）。失败返回 0。"""
+        try:
+            with open(self._wseq_path, encoding="utf-8") as f:
+                return int((f.read() or "0").strip() or 0)
+        except Exception:
+            return 0
+
+    def _save_wseq(self, v):
+        """同步落盘。**性能关键**：常开 fd + 定长文本覆盖写（实测 0.01ms，
+        而 ``open+write+os.replace`` 是 15ms——流式 token 每秒数十条事件，
+        后者会直接拖垮对话）。
+
+        定长编码：20 位零填充整数。高位补零后写入，读侧 ``int()`` 天然吃
+        前导零；字符串总是 20 字节，``lseek(0)+write`` 完整覆盖旧值，不会
+        出现「新值比旧值短 → 尾部残留旧数字」（如 1000 覆盖 999 变 10009）。
+
+        失败不抛：持久化是正确性增强而非前置条件。但**失败必须留痕**
+        （十六次全审：实测静默失败 → 重启后旧游标被放行 → 40 条消息
+        全部静默丢失且无任何日志）。调用方另有账本 seq 作第二下界，
+        见 v4hub 建 feed 处的 `max(wseq_hwm, last_seq)`。"""
+        v = int(v)
+        blob = ("%020d" % v).encode("ascii")
+        with _WSEQ_FD_LOCK:      # 守卫 + lseek+write 必须整体原子
+            # 单调守卫必须在锁内（十六次全审，一般级）。
+            # 二十一次全审（一般级）：守卫还必须**读当前盘值**——`_wseq_written`
+            # 是每对象私有的，GC 重建窗口内同一 sid 可短暂并存两个 store
+            # （旧对象仍被在飞 `_commit` 持有）→ 旧对象的小值会覆盖新对象的
+            # 大值（实测 a=100,b=500,a=300 后盘上 300）。
+            if not v or v <= self._wseq_written:
+                return
+            if self._wseq_closed:
+                return           # 会话已删除：不再重建孤儿文件
+            disk = self._read_disk_wseq()
+            if disk and v <= disk:
+                self._wseq_written = disk      # 同步本对象视图，避免重复尝试
+                return
+            try:
+                if self._wseq_fd is None:
+                    os.makedirs(_WSEQ_DIR, exist_ok=True)
+                    self._wseq_fd = os.open(
+                        self._wseq_path,
+                        os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0),
+                        0o644)
+                os.lseek(self._wseq_fd, 0, os.SEEK_SET)
+                n = os.write(self._wseq_fd, blob)
+                if n != len(blob):          # 短写（理论上普通文件不会）
+                    raise OSError("short write %r/%r" % (n, len(blob)))
+                self._wseq_written = v
+            except Exception:
+                # 句柄失效（目录被清/权限变/满盘）→ 丢弃，下次重建
+                try:
+                    if self._wseq_fd is not None:
+                        os.close(self._wseq_fd)
+                except Exception:
+                    pass
+                self._wseq_fd = None
+                # 首次失败打一次警告（不刷屏）：这条日志是「持久化已不可信，
+                # 依赖账本 seq 下界兜底」的唯一现场线索。
+                if not getattr(self, "_wseq_warned", False):
+                    self._wseq_warned = True
+                    try:
+                        _log.warning(
+                            "v4 wseq 高水位落盘失败 path=%s（后续降级为"
+                            "账本 seq 下界兜底，不再重复告警）",
+                            self._wseq_path, exc_info=True)
+                    except Exception:
+                        pass
 
     # ---- 基本 view ----
     @property
@@ -229,7 +384,7 @@ class SessionEventStore(object):
             self._floor_seq = self._last_seq
             self.projection = _reducer.initial_projection(self.sid)
 
-    def restore(self, epoch, seq):
+    def restore(self, epoch, seq, wseq_hwm=0):
         """会话对象被重建（闲置回收/重启后 _get_or_create）时续号续代。
 
         meta 有 epoch → 沿用（GC 重建不是日志重写，代际不变，前端快照的
@@ -240,3 +395,6 @@ class SessionEventStore(object):
             self.epoch = epoch or new_epoch()
             self._last_seq = max(self._last_seq, int(seq or 0))
             self._floor_seq = self._last_seq
+            # v4 投递序号高水位跨重启续用（见 __init__ 注释）
+            self.wseq_hwm = max(self.wseq_hwm, int(wseq_hwm or 0))
+            self._save_wseq(self.wseq_hwm)

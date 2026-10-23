@@ -174,6 +174,14 @@ class SubagentReadModel(object):
                         for k, f in enumerate(new):
                             f["i"] = base + k   # 全局事实序（跨增量批单调）
                         self._facts.extend(new)
+                        # P1-8（a116）：send 与它的回执常分属两批，必须对
+                        # 全表重跑后置分类（幂等），否则跨批次 never 成立
+                        try:
+                            from .subagent_projection import \
+                                reclassify_send_results
+                            reclassify_send_results(self._facts)
+                        except Exception:
+                            pass
                 self._main_wm[p] = new_off
                 changed = True
             # ② meta 链接（签名门控）

@@ -619,38 +619,104 @@ def harness_v4_stream():
         except Exception:
             pass
     else:
+        # 严重4 修正（a116 全审）：登记必须在建 feed **之前**。旧顺序
+        # （先 v4_main_feed 再 v4_main_want）让 hydration 的 1.5~4.2s
+        # 窗口内落账的事件被 ingest 门禁判「无订阅者」丢弃——实测
+        # hydration 延时 0.4s 期间 emit 一条，消息行彻底消失。
+        try:
+            v4hub.v4_main_want(s.sid)    # F5：主订阅意向（ingest 门禁放行）
+        except Exception:
+            pass
         feed = v4hub.v4_main_feed(s)
     base_epoch = (request.args.get("epoch") or "").strip()
     base_seq = request.args.get("seq", 0, type=int)
+    # 二十二次全审（结构）：feed **实例身份**。客户端游标只在「同一实例」
+    # 内有效——换了实例（重建/TTL/重启/GC 复活）一律作废走快照。
+    # 这样「旧游标落进新序号空间」在定义上不可能，不依赖任何可失效状态
+    # （持久化文件/时钟/并发取号）。
+    base_inc = (request.args.get("inc") or "").strip()
 
     def _deltas_text(f, frm, to, deltas):
-        """deltas 帧文本（性能批：同 (from,to) 多订阅者共享一次序列化——
-        racy 单槽缓存挂在 feed 上，最坏重复序列化，无害）。"""
+        """deltas 帧文本（性能批：同 (from,to) 多订阅者共享一次序列化）。
+        P2-2 修复 + 严重7 修正（a116 全审）：键加 **_ver**——feed 每次
+        _commit 必 bump 版本，是「内容已变」的充分判据。原键只到
+        (frm,to,len(deltas))，内容变但条数不变即命中旧文本（实测缓存
+        {busy:true} vs 实际 {model:NEWER,busy:true} 键同为 (10,12,1)，
+        第二订阅者永久缺 model）。"""
+        _sig = (frm, to, f.frame_version(), len(deltas))
         c = f._frm_cache
-        if c and c[0] == (frm, to):
+        if c and c[0] == _sig:
             return c[1]
         t = "event:frame\ndata: %s\n\n" % json.dumps(
             {"kind": "deltas", "fromSeq": frm, "toSeq": to, "deltas": deltas},
             ensure_ascii=False)
-        f._frm_cache = ((frm, to), t)
+        f._frm_cache = (_sig, t)
         return t
 
+    def _ack_text(f, mode, to):
+        """ack 帧文本。a116 二十三次全审：**循环内换 feed 也必须回 ack**。
+        身份匹配（inc）落地后，前端只认 ack 送来的 inc；循环内三处换
+        feed（越窗补快照/孤儿替换/epoch 换代）原来只发 frame 不换 inc，
+        前端就拿着旧实例的 inc 配新实例的 seq —— 之后每次重连都被判
+        「身份不匹配」→ 永久退化成一断线就整窗快照。"""
+        return "event:ack\ndata: %s\n\n" % json.dumps(
+            {"mode": mode, "epoch": f.epoch, "seq": to, "inc": f.incarnation},
+            ensure_ascii=False)
+
+    def _snap_pair(f):
+        """snapshot 的 ack 与 frame **必须同批写出**（二十三次全审严重，
+        撕裂态）。两者分两次 yield 会落进两个 TCP chunk（实测 99/208
+        字节）；客户端若在中间断线，状态成 (inc=新实例, seq=旧游标)，
+        下次重连身份判据放行 → 旧投影 + 新实例增量 → 花屏且不回退快照。
+        返回 (ack_text, frame_text)。"""
+        t, sent = _snap_text(f)
+        # **必须把 sent 一并返回**（二十四次全审严重回归）：`sent` 是
+        # `_gen()` 的循环游标，只在这里解包成局部变量会让外层永久停在 0
+        # → poll(0) 恒 None → 每次循环都走「越窗补快照」分支 → **每条消息
+        # 一次整窗重渲**（实测 22 条事件 22 次 snapshot、deltas=0）。
+        return _ack_text(f, "snapshot", sent), t, sent
+
     def _snap_text(f):
-        """snapshot 帧文本（性能批：seq 不变复用上次序列化——冷同步/孤儿
-        对账/重连同 seq 不再重复 dumps 大 JSON）。返回 (text, seq)。"""
+        """snapshot 帧文本（性能批：seq 不变复用上次序列化）。返回 (text, seq)。
+        P2-1 修复 + 严重7 修正（a116 全审）：键用 **_ver**。原键
+        (seq, len(rows), busy, curTurn, ask) 在「迟到 seq 做 row upsert」时
+        完全不变（行数/seq/state 全同）→ 下发快照仍是旧态（实测服务端
+        tool 行已 success/DONE_OUTPUT，两态签名一致，客户端拿 running）。
+        _ver 在每次 _commit 与 _reconcile_live 后递增，覆盖全部内容变更。
+        a119P（用户实测「打开子代理卡顿」）：子 topic 快照加行数尾窗
+        tail=220（与前端时间线上限 _subTlCap 同值）——大子会话（审计代理
+        几千行）21 回合窗仍全量下发＝序列化/传输/解析/渲染全链白干，前端
+        渲染完又裁回 220。total 仍为全量行数，前端据此出示省略条。缓存键
+        per-feed（f._snap_txt），feed 非 main 即 sub，两种形态不会串键"""
         seq = f.snap.get("seq", 0)
+        _sig = (seq, f.frame_version())
         c = f._snap_txt
-        if c and c[0] == seq:
+        if c and c[0] == _sig:
             return c[1], seq
-        w = f.snapshot_wire()
+        if topic.startswith("sub:"):
+            w = f.snapshot_wire(tail_turns=21, tail=220)
+        else:
+            w = f.snapshot_wire()
         seq = w["seq"]
         t = "event:frame\ndata: %s\n\n" % json.dumps(
             {"kind": "snapshot", "fromSeq": 0, "toSeq": seq, "snapshot": w},
             ensure_ascii=False)
-        f._snap_txt = (seq, t)
+        f._snap_txt = (_sig, t)
         return t, seq
 
     def gen():
+        # N5 修复（a116）：生成器全程无 try/finally——客户端断开/异常时
+        # 无清理钩子。MINOR-3（a116 二次全审）：原 finally 是 `pass`，与
+        # 注释「兜底清理」名实不符。但不能在此撤销订阅意向：同一会话可能
+        # 还有其它连接（多标签页/子页），_main_wanted 是会话级不是连接级，
+        # 撤了会让仍在场的连接退回「无订阅」。保留为显式空收尾，注释说清。
+        try:
+            for _chunk in _gen():
+                yield _chunk
+        finally:
+            pass
+
+    def _gen():
         sent = 0
         mode = "snapshot"
         # a74：子 feed 可替换（订阅时转写未生成=零行不缓存，客户端绑在孤儿
@@ -659,29 +725,30 @@ def harness_v4_stream():
         # 重取注册表，换了就整窗快照重对齐
         cell = {"feed": feed, "agent": topic[4:] if topic.startswith("sub:") else None,
                 "recheck": time.time()}
-        if base_epoch and base_epoch == feed.epoch and base_seq > 0:
+        # 二十二次全审：**身份匹配优先**。inc 不匹配（含老客户端不传）
+        # 一律走整窗快照——这是本设计的正确性基石，不能放宽。
+        if (base_inc and base_inc == feed.incarnation
+                and base_epoch and base_epoch == feed.epoch and base_seq > 0):
             # a92（用户实锤「同步中刚一显示又被运行中+秒表刷掉」）：安静 feed
             # （无新帧）曾因 frames_after 的 None 二义性被误判为不可续传→整窗
             # snapshot→前端全量重渲抹掉 ephemeral 状态（live 文本/同步中）。
             # 水位在窗内即 resume（无新帧就只 ack 空转），越窗才 snapshot
-            if feed.can_resume(base_seq):
-                fr = feed.frames_after(base_seq)
-                if fr is not None:
-                    deltas, to = fr
+            # 一般-1（a116 八次全审）：改用 resume_probe 原子裁决
+            # （can_resume + frames_after 同一锁内完成）
+            _ok, _fr, _last = feed.resume_probe(base_seq)
+            if _ok:
+                if _fr is not None:
+                    deltas, to = _fr
                 else:
-                    deltas, to = [], feed.last_seq
+                    deltas, to = [], _last
                 mode, sent = "resume", to
-                yield "event:ack\ndata: %s\n\n" % json.dumps(
-                    {"mode": mode, "epoch": feed.epoch, "seq": to},
-                    ensure_ascii=False)
+                yield _ack_text(feed, mode, to)
                 if deltas:
                     yield _deltas_text(feed, base_seq, to, deltas)
         if mode == "snapshot":
-            _t, sent = _snap_text(feed)
-            yield "event:ack\ndata: %s\n\n" % json.dumps(
-                {"mode": "snapshot", "epoch": feed.epoch, "seq": sent},
-                ensure_ascii=False)
-            yield _t
+            # 二十三次全审（严重，撕裂态）：ack 与 frame 必须同批写出
+            _a, _t, sent = _snap_pair(feed)
+            yield _a + _t
         idle = 0.0
         while True:
             _f = cell["feed"]
@@ -695,21 +762,48 @@ def harness_v4_stream():
             _v = _f.frame_version()
             _v2 = _f.wait_frames(_v, _tmo)
             if _v2 != _v:
-                # 30ms 合并窗（FLUSH_MS 语义保留）：醒来再等一小拍，让同一
-                # 突发的连续落账并成一帧发（与原轮询的批效果等价）
+                # 30ms 合并窗（FLUSH_MS 语义保留）：同突发的连续落账并成一帧
                 _f.wait_frames(_v2, 0.03)
+            # P0-3 修复（a116，a98 性能批引入的丢帧窗口）：原实现只在
+            # `_v2 != _v` 时才取帧。而 yield 写 socket 挂起期间落账的事件
+            # 会把 _ver 提前 bump，下一轮读到的基线已包含它 → 判「无变化」
+            # → 走 ka 路径不调 frames_after → **该帧永久滞留**（实测 200ms
+            # 写耗时 + 10ms 事件间隔 = 40 帧里 16 帧滞留；丢 turn_complete
+            # 则组头永停「工作中」）。修法：无论是否超时都按既有 sent 游标
+            # 取一次帧——真无新帧时 frames_after 返回 None，零成本。
+            _got = False
+            # a116 九次全审根修：迟到事件拿到**新的末尾投递序号**，天然
+            # 落在任何游标之后 → 常规 frames_after 增量路径必然取到，
+            # 不再需要「重对齐/强制整窗快照」。原 resnap 分支（读
+            # `_resnap_ver` 与取帧两步、per-connection rsnap 记账）已随
+            # feed 侧 late 机制一并删除——poll 保留原子取帧语义。
+            try:
+                _fr = _f.poll(sent)
+            except Exception:
+                _fr = None
+                log.exception("v4 stream 取帧失败 sid=%s", s.session_id)
+            if _fr is not None:
+                deltas, to = _fr
+                frm_from = sent
+                sent = to
+                if deltas:
+                    yield _deltas_text(_f, frm_from, to, deltas)
+                    _got = True
+            elif not _f.can_resume(sent):
+                # F4（a116 十次全审）：慢消费/长时间断线后游标越出保留窗
+                # → poll 恒 None、can_resume 恒 False。原实现无此分支，
+                # ka 心跳每 5s 刷新客户端 _lastFrameAt → 前端判死永不触发
+                # → **该连接永久停更**（实测 1200 笔后 poll(1)=None）。
+                # 越窗唯一的自愈手段是整窗快照（toSeq 推进到当前水位）。
                 try:
-                    fr = _f.frames_after(sent)
+                    _a, _t, sent = _snap_pair(_f)
+                    yield _a + _t
+                    _got = True
                 except Exception:
-                    log.exception("v4 stream 取帧失败 sid=%s", s.session_id)
-                    fr = None
+                    log.exception("v4 stream 越窗补快照失败 sid=%s",
+                                  s.session_id)
+            if _got:
                 idle = 0.0
-                if fr is not None:
-                    deltas, to = fr
-                    frm_from = sent
-                    sent = to
-                    if deltas:
-                        yield _deltas_text(_f, frm_from, to, deltas)
                 continue
             # 超时路径：a74 孤儿 feed 对账（每 5s 一次，仅 sub topic）——
             # 注册表里的正式 feed（watcher hydrate/他端订阅建出）替换孤儿时
@@ -722,8 +816,34 @@ def harness_v4_stream():
                         _f2 = v4hub.v4_sub_feed(s.sid, cell["agent"], None)
                         if _f2 is not _f and _f2.snap.get("rows"):
                             cell["feed"] = _f2
-                            _t, sent = _snap_text(_f2)
-                            yield _t
+                            _a, _t, sent = _snap_pair(_f2)
+                            yield _a + _t
+                            idle = 0.0
+                            continue
+                except Exception:
+                    pass
+            else:
+                # S5 修复（a116）：main topic 的 epoch 对账。原实现只对 sub
+                # topic 每 5s 重取注册表，main 把 feed 锁进闭包——/rewind
+                # bump_epoch 后新 feed 进注册表，页面仍绑旧 epoch feed：新事件
+                # 永远到不了（实测「点回滚后主窗不回滚、新消息也不再出现」，
+                # 只能手动刷新）。每 5s 比对 epoch，换代即整窗快照重对齐。
+                try:
+                    _now = time.time()
+                    if _now - cell["recheck"] >= 5.0:
+                        cell["recheck"] = _now
+                        _f2 = v4hub.v4_main_feed(s)
+                        # FATAL-3 修正（a116 二次全审）：判据取**对象身份**
+                        # 换代，不能只比 epoch。零产出临时 feed 与随后建出的
+                        # 正式 feed 的 epoch 同值（都是 s.log.epoch），只比
+                        # epoch 则永不切换 → 已订阅客户端永久绑在空 feed 上
+                        # （实测 client rows=0、can_resume=False、
+                        # frames_after=None，收不到任何 HIST/新行，只能刷新）。
+                        # /rewind 换代同样由身份变化覆盖。
+                        if _f2 is not _f:
+                            cell["feed"] = _f2
+                            _a, _t, sent = _snap_pair(_f2)
+                            yield _a + _t
                             idle = 0.0
                             continue
                 except Exception:
@@ -1468,6 +1588,19 @@ def harness_delete():
         _meta.pop(sid, None)
         _meta_tombstones.add(sid)   # 盘面上那条也别让 _meta_save 合并回来
     _meta_save()
+    # a116 十六次全审：会话删除 → wseq 高水位小文件一并清（否则每删一个
+    # 会话就在 ~/.serialconsole_pro/v4wseq 留一个几十字节的孤儿，长期累积）
+    try:
+        from ..eventlog.store import drop_wseq_file
+        # 先关常开句柄再删文件（Windows 下打开的文件删不掉）
+        try:
+            if s is not None:
+                s.log.store.close_wseq()
+        except Exception:
+            pass
+        drop_wseq_file(sid)
+    except Exception:
+        pass
     return jsonify({"ok": True})
 
 # ---- from claude_harness.py:3582 (_recover_scan) ----

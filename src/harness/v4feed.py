@@ -24,11 +24,24 @@ conversation-topic-publisher}.ts 的 SSE 化移植（v4 线，2026-10-20 重构�
 文本块一次到达（row.delta 预留流式能力，当前主要消费方是 coalesce 后
 的批量 append——协议位留足，CLI 开 partial 即生效）。
 """
+import bisect
 import json
+import logging
+import os
+import re
 import threading
 import time
+import uuid
 
 from . import v4proto as P
+
+log = logging.getLogger(__name__)
+
+# hand-back aid 提取的单一正则（F1 第二缺陷）：真实转写形态是
+# `<agent-message from=\"a4ec4a0433c71b3f4\">`（等号+引号，JSON 内转义），
+# 旧口径 `from "X"`（空格+引号）在 1173 条真实样本上命中 0。
+# session.py:_HB_AID_RE 必须与本式同源（跨模块文本一致，勿单改一处）。
+HB_AID_RE = re.compile(r'from[=\\" ]+([0-9a-zA-Z_-]{8,64})')
 
 FLUSH_MS = 30                  # 订阅帧合并窗口（ZCode continuous profile）
 LOG_RETAIN = 600               # delta log 保留条数（越窗订阅者转 snapshot）
@@ -47,6 +60,45 @@ def _txt(content):
                 parts.append(b.get("text") or "")
         return "\n".join(parts)
     return ""
+
+
+_BG_ACK_RE = re.compile(
+    r"^\s*(?:Async\s+)?agent\s+launched\s+successfully"
+    r"|^\s*\{[^\n]{0,40}\"?agentId\"?\s*:", re.I)
+
+
+def is_bg_ack(text):
+    """后台派发回执判据（P1-7 / FATAL-2 单点）。真实回执两种形态：
+    ① "Async agent launched successfully. (This tool result is internal
+    metadata and not a final result)…"
+    ② JSON 对象 `{"agentId": "...", "status": "success"}`。
+    MAJOR-7 修正（a116 三次全审）：**必须行首锚定**。原实现是三串任意
+    子串匹配，审计/复盘类结论里**提到** "launched successfully"、
+    "for internal use" 的文本会被误判成 ACK → 真完成卡永久 running、
+    秒表永跑（当前 310 条语料侥幸 0 误判，但只要子代理结论引用了 CLI
+    回执就会中招）。v4feed live 与 v4hub hydration 同用本函数。"""
+    return bool(_BG_ACK_RE.search(str(text or "")[:400]))
+
+
+_HB_META_PREFIXES = (    # S7 修复（a116）：元数据判定单点。真实转写里有两种投递元数据文案
+    # （CLI 版本差异），且**多数带 2 空格缩进**——旧实现用 startswith
+    # 直接判，对 36/42 条真实样本失效（v4hub 与 v4feed 还各持一套字面量，
+    # CLI 改文案即分头失效）。统一到本函数，调用方一律先 strip。
+    "This agent's report was delivered",
+    "The agent's report was delivered",
+    "delivered to you as a message from",
+)
+
+
+def hb_is_meta(text):
+    """hand-back/任务回执文本是否为「投递元数据」而非真结论。
+    一般9 修正（a116 全审）：原实现含 `p in s[:200]`，把真结论正文里
+    **提到**该短语的文本也判成元数据丢弃（实测
+    '✅ 结论：CLI 打印了 delivered to you as a message from x' → True）。
+    只保留 strip 后 startswith：只有整段以元数据前缀开头的才是 CLI 的
+    投递说明。"""
+    s = str(text or "").strip()
+    return any(s.startswith(p) for p in _HB_META_PREFIXES)
 
 
 def hb_report_body(t):
@@ -92,22 +144,268 @@ class V4Feed(object):
     """单会话投影 feed（主会话与子代理共用）。线程安全：ingest 与取帧
     并发（ingest 来自 session 线程，取帧来自 SSE 生成器），锁内推进。"""
 
-    def __init__(self, epoch="", hydrate=None):
+    # F1-R（a116 十一次全审）：**进程级** wseq 高水位。任何实例分配 wseq
+    # 都在此推进，任何新实例的起点都不低于它 +1。这样「重建后旧游标落在
+    # 新空间」在定义上不可能——不需要靠调用方推算偏移（账本 seq 与 wseq
+    # 同额增长时，任何固定偏移都会在某个 k 上撞出等号边界）。
+    # N3（十二次全审）：按 **epoch 分桶**。全局单桶会让活跃会话把无关
+    # 会话的起点推得虚高（审计实测 A 写 100k 后 B 的 base=100001），
+    # 数值失真且放大排查难度。桶键 = epoch（同会话重建时 epoch 相同，
+    # 正是需要单调续号的场景）。
+    _hwm = {}
+    _hwm_floor = 0          # 桶淘汰时的全局兜底（被淘汰桶的最大值）
+    _hwm_lock = threading.Lock()
+    # 二十一次全审（严重，墙钟回拨）：墙钟**可回拨**（NTP 校时/手动改钟），
+    # 而回拨量落在「重启耗时 E」的邻域内时，新 base 会掉到旧游标下方 →
+    # 旧游标被判可续传 → 整批消息静默丢失（实测 R ∈ (E - m·1µs, E] 命中）。
+    # 修法：给序号空间加**持久化的启动序号**作高位——每次进程启动 +1，
+    # 与时钟完全无关。`base = boot * STRIDE + (墙钟微秒 % STRIDE)`：
+    #   * 跨重启：boot 递增 ⇒ base 至少跳 STRIDE，远超上代任何水位；
+    #   * 同一启动内：低 STRIDE 位按墙钟微秒递增，仍单调；
+    #   * 回拨：只影响低位（≤1e9 µs = 1000 秒），不可能跨过 boot 高位。
+    _BOOT_STRIDE = 10 ** 9      # 一代内事件数 << 10 亿，绝不溢出
+    # boot 上限：`boot * _BOOT_STRIDE + 低位` 必须严格 < 2^53。
+    # **必须预留整个低位域**（低位取值 0..STRIDE-1）——初版只除了一次，
+    # 导致 74.5% 的低位取值越界（实测 base=9007199400000002 > 2^53-1）。
+    _BOOT_MAX = ((2 ** 53) - 1 - _BOOT_STRIDE) // _BOOT_STRIDE
+    # 最终起点上限 = 2^53-1（JS Number 安全整数）。`_claim_base` 末尾对
+    # max(guess, hi, floor, boot量) 统一兜底——guess 可能来自被污染的
+    # 持久化文件（旧版 boot 用时间戳时留下的 ~1.79e18 大值）。
+    # 最终起点上限，留 100 万条余量——钳制后还要继续 _commit 递增，
+    # 顶格钳会让紧接着的第一条事件就重新越界。
+    _BASE_MAX = (2 ** 53) - 1 - 10 ** 6
+    _boot = None                # 进程内缓存的启动序号（None = 未初始化）
+    _boot_lock = threading.Lock()
+
+    def __init__(self, epoch="", hydrate=None, wseq_base=0):
         self._lock = threading.Lock()
         # 性能批（事件驱动订阅）：帧版本号 + 条件变量——ingest 落账 bump 版本
         # 并广播，SSE 生成器 wait_frames 阻塞等到有新帧（或对账/keepalive
         # 到点），空闲期零唤醒（原 sleep(0.03) 轮询每连接每秒醒 33 次）
         self._cv = threading.Condition()
         self._ver = 0
+        self._wseq_base = self._claim_base(epoch, wseq_base)
         self._reset(epoch, hydrate)
+
+    @classmethod
+    def _claim_base(cls, epoch="", floor_guess=0):
+        """领取本实例的 wseq 起点：**严格大于**任何旧游标可能落到的位置。
+
+        三源取最大，再 +2：
+          ① `floor_guess`（调用方提示，主 feed = 账本 last_seq）
+          ② 同 epoch 桶的 hwm（本进程发过的最大值）
+          ③ 全局兜底 `_hwm_floor`（桶被淘汰后的残留高水位）
+        `floor_guess=0` 且无历史时取 0（首个实例从 1 起编，保持既有语义）。
+
+        为什么是 **+2** 而不是 +1（十三次全审，F1-R 第三形态）：
+        上一代的起点是 `上代账本水位 + 1`，它发过 m 个事件后游标 =
+        `上代水位 + 1 + m`；而本代的账本水位 = `上代水位 + m`（每事件 +1）。
+        于是「旧游标 == 本代账本水位 + 1」**恒成立**——+1 会稳定撞等号，
+        且不随代数消散。+2 使 base = `当前水位 + 2` = 旧游标 + 1，恒安全；
+        又因为每代都以**账本水位**为基准（不是在上代 base 上累加），
+        偏移不会逐代膨胀。
+
+        取等为什么危险：`_in_window` 的下界是 `_wseq_base`，游标 == 起点
+        会被判可续传 → 重建后旧游标合法落进新空间 → 整段历史当增量重放
+        → 前端 rowId 撞号、静默丢行（审计实测吞 10 行）。"""
+        key = epoch or ""
+        with cls._hwm_lock:
+            hi = cls._hwm.get(key, 0)
+            guess = int(floor_guess or 0)
+            # 十八次全审（致命，偏移逐代累积）：`max(持久化值, 账本last_seq)`
+            # 作为 hint 时，持久化一旦失效就退化为 last_seq，而 last_seq
+            # 恒比上代水位小 offset —— offset 每代 +2 且不回退。几代之后
+            # 旧游标（= 上代水位）会**同时**越过 `_wseq_base` 与
+            # `_first_issued`，实测 16~20 条新消息静默丢失。
+            # 根因：把「起点严格递增」寄托在**会被清零的外部状态**上。
+            # 换用**与状态无关的单调源**：墙钟微秒。它跨进程、跨崩溃、
+            # 跨 epoch 天然单调（除系统时钟回拨，见下），不依赖任何持久化
+            # 文件是否可写。数值 1.79e15 < 2^53，JS Number 精确表示无虞。
+            # 时钟回拨兜底：仍与进程内 HWM/提示取 max，保证本进程内不倒退。
+            _wall = int(time.time() * 1000000)
+            # 二十一次全审（严重）：墙钟可回拨 → 用**持久化启动序号**作高位。
+            # 详见类属性 `_BOOT_STRIDE` 处的注释。低位取墙钟微秒对 STRIDE
+            # 取模，保证同一启动内仍按墙钟递增；跨启动由 boot 递增保证跳变。
+            _boot = cls._next_boot()
+            _namespaced = _boot * cls._BOOT_STRIDE + (_wall % cls._BOOT_STRIDE)
+            # 十九次全审（致命）：这里**不能**有 `return 0` 早退。
+            # 原以为「本进程第一代 ⇒ 无旧游标」，但旧游标的真源不止 wseq
+            # 文件——前端把游标存在 `localStorage['hg_v4snap:<sid>:main']`，
+            # 与后端状态完全独立。后端全丢（进程重启 + 盘清 + meta 归零）
+            # 而前端仍持游标时，三条件全 0 → base=0 → 新事件从 1 起编 →
+            # 与旧游标空间重叠（实测主窗 5 条全丢；子 feed epoch 恒 "sub"，
+            # 跨重启 300 行内容错位）。
+            # `base=0` 的唯一用途是「客户端本地无内容」，而 routes 层
+            # `base_seq > 0` 门已保证游标 0 不进 resume_probe——该语义多余。
+            base = max(guess, hi, cls._hwm_floor, _namespaced) + 2
+            # 二十三次全审（一般）：钳制此前只作用于 `_namespaced`（boot
+            # 那一路）。升级自旧版（boot 曾用时间戳）遗留的 wseq 文件里
+            # 可能存着 ~1.79e18 的大值，经 v4hub 的 `_hint` 注入 guess →
+            # base 越过 JS 安全整数，前端 Number 低 3 位归零（实测
+            # base=1792758829942572290 > 2^53-1）。且 `_save_wseq` 的
+            # `v <= _wseq_written` 守卫会让该大值永远留在盘上。此处对
+            # **最终 base** 统一做上限兜底（低位域已由 _BOOT_MAX 预留，
+            # 正常路径不会触顶；触顶说明输入来自被污染的持久化数据）。
+            if base > cls._BASE_MAX:
+                log.warning("v4 wseq 起点越界 %s（来源 guess=%s hi=%s），"
+                            "钳制到 JS 安全整数上限 %s",
+                            base, guess, hi, cls._BASE_MAX)
+                base = cls._BASE_MAX
+            if base > hi:
+                # LRU 语义：重插到末尾（dict 保序），淘汰时先删最久未用的
+                cls._hwm.pop(key, None)
+                cls._hwm[key] = base
+            # 桶数无界防护：超 512 时淘汰**最久未用**的前一半，并把他们
+            # 的最大值汇入全局兜底（单调不减）。
+            if len(cls._hwm) > 512:
+                _dead = list(cls._hwm)[:256]
+                for _k in _dead:
+                    _v = cls._hwm.pop(_k, 0)
+                    if _v > cls._hwm_floor:
+                        cls._hwm_floor = _v
+            return base
+
+    @classmethod
+    def _next_boot(cls):
+        """本进程的启动序号（进程内只算一次，之后缓存）。
+
+        **持久化的**单调计数器：进程启动时读文件 +1 写回。与时钟无关，
+        因此 NTP 校时/手动改钟的回拨不可能让它倒退。
+        写失败时退化为「墙钟秒」（仍单调，只是不再跨重启保证），并打一次
+        告警——不阻塞会话创建。
+        """
+        if cls._boot is not None:
+            return cls._boot
+        with cls._boot_lock:
+            if cls._boot is not None:
+                return cls._boot
+            path = cls._boot_path()
+            cur = 0
+            try:
+                with open(path, encoding="utf-8") as f:
+                    cur = int((f.read() or "0").strip() or 0)
+            except Exception:
+                cur = 0
+            # 二十二次全审（致命，我自己引入的）：boot **必须是小序号**。
+            # 初版 `max(cur, int(time.time())) + 1` 让 boot ≈ 1.79e9，于是
+            # `base = boot*1e9 + 低位` ≈ 1.79e18 —— 超出 JS 安全整数
+            # 9.007e15 两百倍，前端 Number 精度丢失（低 3 位归零），
+            # 游标比较/判等全部失真。
+            # 改用纯小序号：从 1 起编，每次启动 +1。它只需要「跨重启严格
+            # 递增」，不需要任何时间含义。
+            # 二十二次全审（严重）：BOOT 文件被清/损坏时回落到「现存 wseq
+            # 文件的最大 boot 头」——否则 boot 归 1，在时钟回拨叠加时起点
+            # 会掉到旧游标下方（实测 gap -6000 万，靠 `seq > water` 侥幸挡）。
+            nxt = max(cur, cls._boot_floor_from_wseq()) + 1
+            # 二十二次全审（一般）：BOOT 文件被写入极大值时（损坏/人为），
+            # `boot*1e9` 会逼近甚至超出 JS 安全整数 2^53。钳到
+            # `_BOOT_MAX`（2^53 // 1e9 = 9007199），对应 base 上限约 9.0e15。
+            if nxt > cls._BOOT_MAX:
+                try:
+                    log.warning("v4 BOOT 计数超出安全范围 %s，钳制到 %s",
+                                nxt, cls._BOOT_MAX)
+                except Exception:
+                    pass
+                nxt = cls._BOOT_MAX
+            try:
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                tmp = path + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    f.write(str(nxt))
+                os.replace(tmp, path)
+            except Exception:
+                try:
+                    log.warning("v4 boot 序号落盘失败 path=%s；跨重启单调"
+                                "退化为墙钟秒（回拨风险复现）", path,
+                                exc_info=True)
+                except Exception:
+                    pass
+            cls._boot = nxt
+            return nxt
+
+    @classmethod
+    def _boot_floor_from_wseq(cls):
+        """BOOT 文件被清/损坏时的兜底：扫现存 wseq 文件，取它们隐含的
+        boot 高位（`值 // _BOOT_STRIDE`）的最大值。这样即使 BOOT 丢失，
+        只要还有任一会话的 wseq 文件，新 boot 也不会低于上一代。
+        扫描失败/目录不存在 → 0。"""
+        try:
+            d = os.path.dirname(cls._boot_path())
+            best = 0
+            for name in os.listdir(d):
+                if not name.endswith(".wseq"):
+                    continue
+                try:
+                    with open(os.path.join(d, name), encoding="utf-8") as f:
+                        best = max(best, int((f.read() or "0").strip() or 0)
+                                   // cls._BOOT_STRIDE)
+                except Exception:
+                    continue
+            return best
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _boot_path():
+        return os.path.join(
+            os.path.expanduser("~"), ".serialconsole_pro", "v4wseq", "BOOT")
+
+    def _bump_hwm(self, w):
+        """落账后推进本 epoch 桶的高水位（LRU：提到末尾）。"""
+        with self.__class__._hwm_lock:
+            key = self.epoch or ""
+            cls = self.__class__
+            if w > cls._hwm.get(key, 0):
+                cls._hwm.pop(key, None)
+                cls._hwm[key] = w
 
     def _reset(self, epoch, hydrate=None):
         self.epoch = epoch
+        # 二十二次全审（结构）：feed 实例身份。客户端游标必须同时携带
+        # 它——**身份匹配**取代「数值严格单调」。理由：22 轮审计证明
+        # 「起点永远大于旧游标」在「持久化可丢 + 时钟可回拨 + 并发可撞号」
+        # 下不可达（见文档 §5.9）。而身份匹配不依赖任何可失效状态：
+        # 换了实例就是换了空间，客户端游标一律作废走快照。
+        self.incarnation = uuid.uuid4().hex[:16]
         self.snap = P.new_snapshot(epoch)
+        # F1：快照 toSeq 必须从注入起点起步（不能是 0）——客户端拿到的
+        # toSeq 就是它下一次续传的游标，若发 0 会让旧游标「合法」落进新
+        # 空间（同上文丢历史）。
+        self.snap["seq"] = self._wseq_base
         self._row_id = 0
-        self._log = []                 # [(seq, [delta,...]), ...]
-        self._seqs = []                # 与 _log 平行的 seq 列表（bisect 游标用）
-        self._floor_seq = 0            # log 内最老条目的 seq（0=空）
+        self._log = []                 # [(wseq, [delta,...]), ...]
+        self._seqs = []                # 与 _log 平行的 **wseq** 列表（bisect 游标用）
+        # 投递序号（wire seq）与真实事件 seq 分离（a116 九次全审，根修）：
+        #   * 真实 seq（信封里的 store seq）只用于**判重**：同一事件重复摄入
+        #     （补放/live 双喂/重连重放）必须幂等丢弃；
+        #   * wseq 是**投递序号**，单调递增、只增不减，客户端游标/快照 toSeq
+        #     一律用它。迟到事件拿到一个**新的末尾 wseq**，天然落在任何游标
+        #     之后 → frames_after 一定能投递。
+        # 历史教训：曾让 snap["seq"] 同时兼任两者，迟到时靠「哨兵 +1」让快照
+        # 前进——而 store 的 seq 是连续的，哨兵后的水位恰好等于下一笔真实
+        # seq，该真实事件必然再被判「迟到」，此后每个事件都退化为整窗快照
+        # （九次全审实测 16/17 轮全是快照）。分离后该循环不可能发生。
+        # 跨实例单调（F1，a116 十次全审）：wseq **绝不能**每次从 1 重编号。
+        # feed 会被重建（TTL 换空 feed、临时 feed 转正式、进程重启后
+        # lifecycle restore 沿用同一 epoch），而客户端持久化的游标是旧实例
+        # 的 wseq。若新实例从 1 起编，旧游标 3 在新空间里 map 到「第 3 个
+        # 事件」→ resume_probe 返回 ok → 只发增量 → **旧游标之前的行永久
+        # 缺失且永不回退快照**（审计实测丢 3/15 条）。
+        # 解法：起点由调用方注入（主 feed 用账本水位 + 余量，子 feed 用毫秒
+        # 时间戳），保证新实例的 wseq 严格大于任何旧实例发过的值。
+        self._wseq = self._wseq_base    # 最后分配的投递序号（= snap["seq"]）
+        self._seq_set = set()          # 已摄入的**真实** seq（判重）
+        self._seq_fifo = []            # 真实 seq 的到达序（有界回收用）
+        self._resnap_ver = 0           # 保留但恒为 0（分离后无需重对齐）
+        self._late_lo = 0              # 保留字段（恒 0），见下方说明
+        self._late_snap = 0
+        # F1：空 log 时下界必须是**起点**而非 0——否则旧实例的游标（3）
+        # 满足 `3 >= 0` 被判可续传，而新实例从 500 起编 → 3..499 的事件
+        # 永远取不到（审计实测丢 3/15 条）。起点即「本实例已知的最早可
+        # 投递位置」，语义与 _trim 后的 log[0][0] 一致。
+        self._floor_seq = self._wseq_base   # log 内最老条目的 **wseq**
+        # 字段 `_first_issued` 已随判据一并删除（二十一次全审）：撞等号
+        # 风险由 `_claim_base` 的持久化启动序号结构性消除，不再需要此尺。
         # 帧文本缓存（多订阅者同 (fromSeq,toSeq) 只 json.dumps 一次——同帧
         # 广播；racy 单槽，最坏重复序列化，无害）。_trim 越窗丢弃时失效
         self._frm_cache = None         # ((frm, to), sse_text)
@@ -173,6 +471,12 @@ class V4Feed(object):
         ts = env.get("ts") or 0
         ds = []
         with self._lock:
+            # 严重5（a116 全审）：判重必须在应用**之前**——重复摄入若先
+            # apply 再丢弃，投影会二次应用（实测同一 env 喂两次：rows 两份
+            # HELLO）。但**登记**必须在成功之后（F2，十次全审）：
+            # `_commit` 里登记，异常时调用方回队重试仍能放行。
+            if self._seen_seq(seq):
+                return
             if t == "user_echo":
                 self._exit_marker_row = None   # 新回合=合并锚失效
                 if self._dup_hist("user_input", data.get("text"), ts):
@@ -224,16 +528,11 @@ class V4Feed(object):
                         ds.append(d)
                 ds.append(P.d_state({"busy": False}))
                 self._held = False    # 与 turn_complete 对称：hold 不跨回合残留
-            elif t == "interrupted":
-                d, _ = self._row("", "marker", ts, seq,
-                                 mkind="interrupted", text=data.get("text") or "")
-                ds.append(d)
-                rid = self._turn_rows.get(self.snap["state"].get("curTurn"))
-                if rid:
-                    d2, _ = self._upsert(rid, state="cancelled", endedAt=ts)
-                    if d2:
-                        ds.append(d2)
-                ds.append(P.d_state({"busy": False}))
+            # S3 修复（a116）：原首个 `elif t == "interrupted"` 已删除——
+            # 它无条件新建 marker 行并把组头翻 cancelled，使下面 :327 的
+            # 「与 exit 合并为一行」永远是死代码。实测 turn_complete(success)
+            # 之后收到 exit+interrupted 时组头被错误翻成 cancelled，且
+            # marker 双行（正是注释说要避免的孤儿组）。合并版统一收口。
             elif t == "subagent_started":
                 # a112（用户实锤「出错的子代理刷新后复活成运行中」）：镜像
                 # 不复活终态链——readmodel 的 2s Sync 按 mtime 新鲜度重发
@@ -299,8 +598,7 @@ class V4Feed(object):
                 # report was delivered…"），真结论在 hand-back 注入消息正文
                 # （下方 user 分支处理）。元数据 brief 不回填（还会误覆盖后台
                 # Bash 行的真实输出——bg bash 完成也走 notification 镜像）
-                if (_brief and tid
-                        and not _brief.startswith("This agent's report was delivered")):
+                if (_brief and tid and not hb_is_meta(_brief)):
                     _trid = next((r["rowId"] for r in self.snap["rows"]
                                   if r.get("kind") == "tool_call"
                                   and r.get("tid") == tid), None)
@@ -330,6 +628,17 @@ class V4Feed(object):
                                      mkind="interrupted", text=text)
                 if d:
                     ds.append(d)
+                # S3 补充（a116）：组头只在本回合尚未定稿时才翻 cancelled——
+                # 已完成（success/error）的组不得被后到的中断信号改写。
+                rid = self._turn_rows.get(self.snap["state"].get("curTurn"))
+                if rid:
+                    cur = next((r for r in self.snap["rows"]
+                                if r["rowId"] == rid), None)
+                    if cur is None or cur.get("state") not in ("success", "error"):
+                        d2, _ = self._upsert(rid, state="cancelled", endedAt=ts)
+                        if d2:
+                            ds.append(d2)
+                ds.append(P.d_state({"busy": False}))
             elif t == "sysnote":
                 # 系统提示不占位（用户拍板 a39：「系统提示 · 已注入…」气泡
                 # 当时只是没改）——skind 标记 task-notification（后台代理完成
@@ -376,8 +685,7 @@ class V4Feed(object):
             if not ds:
                 return
             P.apply_deltas(self.snap, ds)
-            self.snap["seq"] = seq
-            self._commit(seq, ds)
+            self._commit(seq, ds)          # F4：水位由 _commit 只增维护
 
     def _dup_hist(self, kind, text, at=0):
         # 补放期去重：该行是否已由 hydration 呈现。
@@ -478,7 +786,7 @@ class V4Feed(object):
                         _hb = str(_b.get("text"))
                         break
             if _hb is not None:
-                _am = re.search(r'from "([0-9a-zA-Z_-]{8,64})"', _hb)
+                _am = HB_AID_RE.search(_hb)
                 _aid = _am.group(1) if _am else ""
                 _body = hb_report_body(_hb)
                 _tid = next((r.get("tid") for r in self.snap["rows"]
@@ -525,10 +833,19 @@ class V4Feed(object):
                     # 假完成。真终态=task_notification（subagent_result 镜像，
                     # 下方回填真摘要）与 hand-back（user 分支回填 ✅ 报告）。
                     # V3 同款认知：sse.js a.bg 守卫 / tools.js _hgIsBgLaunchAck
+                    # P1-7 修复（a116）：ACK 判据不能依赖 run_in_background
+                    # 字段——真实样本 194 个 Task/Agent tool_use 里 118 个
+                    # **没有该字段**（CLI 版本差异），138 条 ACK 回执中 98 条
+                    # 属这种形态 → 旧判据漏检 71%，Agent 行在派发时刻即定格
+                    # 「完成」（正是 a90 声称修掉的假完成）。改按**回执文本
+                    # 形态**判定：ACK 文案是 CLI 固定串，与字段无关。
+                    _ack_out = _txt(b.get("content"))[:4000]
+                    _is_ack_txt = is_bg_ack(_ack_out)
                     if (_tr is not None
                             and _tr.get("tool") in ("Task", "Agent")
-                            and (_tr.get("input") or {}).get("run_in_background")
-                            and not err):
+                            and not err
+                            and ((_tr.get("input") or {}).get("run_in_background")
+                                 or _is_ack_txt)):
                         continue          # 已派出回执：保持 running，等真终态
                     # a110S（用户要求「sendmessage 的子代理格也要同步，不能
                     # 切回来直接显示完成」）：SendMessage 行卡的语义=**续派链**
@@ -611,7 +928,7 @@ class V4Feed(object):
         _text = str(data.get("text") or "")
         if "[Subagent hand-back]" in _text:
             import re as _re
-            _am = (_re.search(r'from "([0-9a-zA-Z_-]{8,64})"', _text)
+            _am = (HB_AID_RE.search(_text)
                    or _re.search(r'from-name="([0-9a-zA-Z_-]{8,64})"', _text))
             # a72：session.py 专用事件带 aid 字段（最可靠），正文 from 次之
             _aid = (str(data.get("aid") or "")
@@ -630,7 +947,16 @@ class V4Feed(object):
                               if r.get("kind") == "tool_call"
                               and r.get("tid") == _tid), None)
                 if _trid:
-                    d, _ = self._upsert(_trid, output="✅ " + _body[:4000])
+                    # P1-6 修复（a116）：真结论到达即该链终态——原实现只写
+                    # output 不翻 status/endedAt，而 a111 起 SendMessage 的
+                    # tool_result 回执被一律判为非终态，真终态只认 notification
+                    # 镜像（tid=包装 call id）。真实数据：125 个 SendMessage
+                    # tool_use 里 69 个（55%）无同 tid notification → 那些行
+                    # 永久 running（秒表永跑、轮盘永转），而结论明明已回填。
+                    # 与 _reduce_cli 的 a90 回调同口径：终态翻转 + endedAt。
+                    d, _ = self._upsert(_trid, status="success",
+                                        endedAt=ts,
+                                        output="✅ " + _body[:4000])
                     if d:
                         ds.append(d)
                 _srid = next((r["rowId"] for r in self.snap["rows"]
@@ -652,7 +978,7 @@ class V4Feed(object):
     # ------------------------------------------------------------------
     # 子代理 jsonl 行归约（watcher 增量与 hydrate 共用）
     # ------------------------------------------------------------------
-    def feed_jsonl_line(self, obj):
+    def feed_jsonl_line(self, obj, hydrate=False):
         """CLI 转写 jsonl 单行（dict）→ deltas 入子投影。返回是否消费。"""
         if not isinstance(obj, dict):
             return False
@@ -666,7 +992,10 @@ class V4Feed(object):
             if len(self._seen_uuid) > 4096:
                 self._seen_uuid = set(list(self._seen_uuid)[-4096:])
         ds = []
-        seq = self.snap["seq"] + 1
+        # F4 配套（a116）：seq 必须在锁内分配——锁外 +1 会让并发调用撞号，
+        # 而 _commit 对重复 seq 幂等丢弃（会静默吞掉一条真实事件）。
+        # 这里先占位，进锁后立即重算（uuid 去重在锁外已完成）。
+        seq = 0
         # a65：行时刻优先取行自身 timestamp（ISO/数字两形态）——喂入时刻
         # 是 hydrate/扫描的时钟（全文件同毫秒），据此算的轮时长恒「0 秒」；
         # jsonl 的 timestamp 才是事件真实时刻（V3 回放同源）。缺省回落 now
@@ -685,8 +1014,14 @@ class V4Feed(object):
             pass
         typ = obj.get("type")
         with self._lock:
+            # F4：锁内判重（真实 seq 判重与投递序号分离；jsonl 行 seq 恒为
+            # 0 → 恒放行，重复喂由上面的 uuid 去重闸住）。
+            # F2（十次全审）：登记推迟到 `_commit` 成功后。
+            if self._seen_seq(seq):
+                return False
             if typ == "result":
                 self.snap["state"]["done"] = True
+                self.snap["state"]["_doneAt"] = ts
                 self.snap["state"]["final"] = (obj.get("result") or "")[:8000]
                 self.snap["state"]["err"] = bool(obj.get("is_error"))
                 ds.append(P.d_state({"done": True,
@@ -696,6 +1031,28 @@ class V4Feed(object):
                 m = obj.get("message") or {}
                 content = m.get("content")
                 blocks = content if isinstance(content, list) else []
+                # P2 修复（a116）：代理**重新在活动**时必须复位 done/final
+                # ——续派（SendMessage resume）后 feed 实例按 (sid,agent)
+                # 缓存复用，旧实现的 done 只置 True 不复位，于是续派后的
+                # 任何重建都会立刻定稿新轮头（「已工作 0s」）且后续行落进
+                # 已定稿轮。
+                #
+                # 续派的新一轮起点：user 行、**含文本块**、且 ts 不早于定稿
+                # 时刻。MINOR-6（a116 三次全审）：原用「无 tool_result 块」
+                # 判定，text+tool_result 混合块会漏（判据盲区）；改按「含
+                # 文本」正向判。MINOR-7：同毫秒续派用 >= 而非 >。
+                _prev_done_at = int(self.snap["state"].get("_doneAt") or 0)
+                _is_new_round = False
+                if typ == "user" and self.snap["state"].get("done") \
+                        and ts >= _prev_done_at:
+                    _is_new_round = bool(_txt(content).strip())
+                if _is_new_round:
+                    self.snap["state"]["done"] = False
+                    self.snap["state"]["final"] = ""
+                    self.snap["state"]["err"] = False
+                    self.snap["state"].pop("_doneAt", None)
+                    ds.append(P.d_state({"done": False, "final": "",
+                                         "err": False}))
                 if typ == "assistant":
                     model = m.get("model") or ""
                     for b in blocks:
@@ -724,6 +1081,7 @@ class V4Feed(object):
                                         rep = v
                                 if rep.strip():
                                     self.snap["state"]["final"] = rep[:8000]
+                                    self.snap["state"]["_doneAt"] = ts
                                     ds.append(P.d_state({"final": rep[:8000],
                                                          "done": True}))
                                     continue
@@ -749,6 +1107,19 @@ class V4Feed(object):
                     # 不进行流（否则 pane 多一轮+结论双份）
                     if t and not t.startswith("<") \
                             and not t.startswith("[handback-send-enforce]"):
+                        # a117（用户实锤「第九轮对抗复审：上一轮结论被当
+                        # 本轮结论，本轮还在跑却显示已工作」）：轮界复位——
+                        # 上一轮 result/handback 已置 state.done/final，续派
+                        # 新轮的 user 行到达=新轮开始，状态必须复位。曾不
+                        # 复位：快照/看门狗重订阅携陈旧 done+旧 final 回放
+                        # → 前端 _subFinish 把进行中的新轮定稿+旧结论顶上
+                        # （并经 a96 传播把主窗档案也翻成假完成）
+                        if self.snap["state"].get("done"):
+                            self.snap["state"]["done"] = False
+                            self.snap["state"]["final"] = ""
+                            self.snap["state"]["err"] = False
+                            ds.append(P.d_state({"done": False, "final": "",
+                                                 "err": False}))
                         d, _ = self._row("s", "user_input", ts, seq, text=t[:1200])
                         ds.append(d)
                     for b in blocks:
@@ -767,8 +1138,7 @@ class V4Feed(object):
             if not ds:
                 return False
             P.apply_deltas(self.snap, ds)
-            self.snap["seq"] = seq
-            self._commit(seq, ds)
+            self._commit(seq, ds)          # F4：水位由 _commit 只增维护
             return True
 
     def hydrate_jsonl(self, path):
@@ -787,7 +1157,7 @@ class V4Feed(object):
                         o = json.loads(raw)
                     except Exception:
                         continue
-                    self.feed_jsonl_line(o)
+                    self.feed_jsonl_line(o, hydrate=True)
                     n += 1
                     if n % 512 == 0:
                         time.sleep(0.002)
@@ -795,19 +1165,86 @@ class V4Feed(object):
             return True
         except OSError:
             return False
+        except Exception:
+            # P2-5 修复（a116）：分片水合中途异常会留下半成品 feed，而
+            # v4_sub_feed 只判「rows 非空就缓存」→ 半成品被永久固化。
+            # 显式标记未水合 + 清空，让调用方丢弃重来。
+            log.exception("hydrate_jsonl 中途失败 path=%s", path)
+            self._hydrated = False
+            with self._lock:
+                self.snap["rows"] = []
+                self.snap["total"] = 0
+                # S2（a116 十五次全审）：uuid 去重集也必须清空——它在
+                # feed_jsonl_line 里**先于落账**登记（:838-842），失败重试
+                # 时前半段行会被判「已见过」整段跳过 → 5 行只回填 2 行，
+                # 且返回 True/_hydrated=True → 半成品 feed 被永久缓存
+                # （子代理窗格永久残缺，比不修更隐蔽）。
+                self._seen_uuid = set()
+            return False
 
     # ------------------------------------------------------------------
     # 订阅帧（拉模式；SSE 生成器事件驱动——wait_frames 等新帧，不再轮询）
     # ------------------------------------------------------------------
     def _commit(self, seq, ds):
-        """统一落账：log/seqs 追加 + trim + 广播唤醒。ingest 侧两个入口
-        （信封 apply / feed_jsonl_line）都走这里。调用方已持 self._lock。"""
-        self._log.append((seq, ds))
-        self._seqs.append(seq)
-        self._trim()
+        """统一落账：分配**投递序号 wseq** 并追加，成功后才登记真实 seq
+        判重（a116 九/十次全审）。
+
+        关键不变量：
+          ① `_seqs` 是 wseq 的**严格递增**序列（追加即有序，不再 bisect 插入）
+             → 迟到事件追加到末尾，任何游标都能取到它；
+          ② `snap["seq"]` == 最后一个 wseq，只增不减，只作为客户端游标；
+          ③ 真实 seq 只进判重集，且**登记点在成功之后**（F2）：原实现
+             在 apply 之前登记，一旦 `apply_deltas`/reducer 抛瞬态异常、
+             调用方回队重试（v4hub MAJOR-12 机制）就会被判重拒掉，
+             该事件永久丢失。现在失败即不登记，重试可正常放行。
+        """
+        self._wseq += 1
+        w = self._wseq
+        self._log.append((w, ds))
+        self._seqs.append(w)
+        self.snap["seq"] = w
+        self._bump_hwm(w)          # F1-R：推进进程级高水位（跨实例单调）
+        # 跨**进程**持久化：把 wseq 高水位写回会话账本（随 meta 落盘），
+        # 下一代的起点据此严格递增。仅主 feed 有 log_store（子 feed 为 None，
+        # 其跨重建单调由类级 HWM 承担）。
+        _st = getattr(self, "log_store", None)
+        if _st is not None and w > getattr(_st, "wseq_hwm", 0):
+            try:
+                _st.wseq_hwm = w
+            except Exception:
+                log.exception("v4 wseq_hwm 回写失败")
+        # F2（十次全审）：登记紧跟 append——此刻事件已确定进入 log/游标，
+        # 即便后续 _trim/notify 抛错，投影与 log 也已一致，重试若再应用
+        # 会二次画行，所以必须已登记。反过来（登记在 append 之前）会让
+        # apply 阶段的瞬态异常把事件永久吃掉——两害相权取此。
+        self._remember_seq(seq)
+        try:
+            self._trim()
+        except Exception:
+            log.exception("v4 _trim 失败（不影响本次落账）seq=%s", seq)
         with self._cv:
             self._ver += 1
             self._cv.notify_all()
+        return True
+
+    def _seen_seq(self, seq):
+        """真实 seq 是否已成功摄入。调用方持锁。"""
+        return bool(seq) and seq in self._seq_set
+
+    def _remember_seq(self, seq):
+        """登记真实 seq（**仅在成功落账后**调用）。调用方持锁。
+        有界回收：只保留最近 8192 个真实 seq 的判重能力（内存有界）；
+        更老的重复摄入概率极低（账本 retention=2000 < 8192，实际重放
+        不会触发），且重复后果是「多画一行」而非丢数据。"""
+        if not seq or seq in self._seq_set:
+            return
+        self._seq_set.add(seq)
+        self._seq_fifo.append(seq)
+        if len(self._seq_fifo) > 8192:
+            _drop = len(self._seq_fifo) - 8192
+            for _s in self._seq_fifo[:_drop]:
+                self._seq_set.discard(_s)
+            del self._seq_fifo[:_drop]
 
     def frame_version(self):
         """当前帧版本号（wait_frames 的配套锚点）。"""
@@ -824,44 +1261,142 @@ class V4Feed(object):
             return self._ver
 
     def _trim(self):
+        """裁剪保留窗并**每次**同步 `_floor_seq`。
+
+        F1-R 复发修（a116 十三次全审，致命）：原实现把 floor 更新写在
+        `if len(self._log) > LOG_RETAIN` **块内**——log 非空但未满窗时
+        floor 恒停在 `_wseq_base`，落后于 `_log[0][0]`。于是「旧游标 ==
+        注入起点」在**新实例累计 < 600 事件**这个最常见窗口内被 `>=`
+        放行 → 整段历史当增量重放 → 前端 rowId 撞号、【静默丢行】
+        （审计实测 10 行被吞）。floor 必须无条件反映「本实例已知的最早
+        可投递位置」：有 log 就是首条 wseq，无 log 就是注入起点。
+        """
         if len(self._log) > LOG_RETAIN:
             drop = len(self._log) - LOG_RETAIN
             del self._log[:drop]
             del self._seqs[:drop]
-            self._floor_seq = self._log[0][0] if self._log else 0
+            # a116 九次全审：`_log/_seqs` 现在装的是**投递序号 wseq**，
+            # 与判重用的真实 seq 集合完全无关——这里**不得**再重建
+            # `_seq_set`（旧实现同步重建导致越窗真实 seq 失去判重能力，
+            # 同一事件二次投递会多画一行）。
             self._frm_cache = None   # 缓存帧的 from 已越窗：失效防引用已删 log
+        # 无条件同步（不能放在上面的 if 里，见 docstring）
+        self._floor_seq = (self._log[0][0] if self._log
+                           else self._wseq_base)
 
     def frames_after(self, after_seq):
-        """(after_seq, last] 合并帧。越窗/落后 → None（调用方发 snapshot）。
-        epoch 校验由路由层做（base.epoch != feed.epoch → 直接 snapshot）。
-        性能批：bisect 游标定位起点（原线性全扫 O(N)，600 条满窗 17µs/次×
-        每连接每秒 33 次；现 O(log N + 增量)）。
+        """(after_seq, last] 合并帧（**投递序号**区间）。越窗/落后 → None
+        （调用方发 snapshot）。epoch 校验由路由层做。
+        性能批：bisect 游标定位起点（原线性全扫 O(N)）。
+        a116 九次全审：`_seqs` 严格递增且迟到事件追加在末尾，所以迟到
+        天然落在任何游标之后、常规增量路径必然取到——不再需要补投/重对齐。
         注意：安静 feed（无新帧）也返回 None——「无新帧」与「不可续传」的
-        区分用 can_resume（a92：路由曾把 None 一律当 snapshot，安静会话每次
-        重连都被整窗快照=前端全量重渲抹掉 ephemeral 状态）。"""
+        区分用 can_resume（a92）。"""
         with self._lock:
-            if after_seq < self._floor_seq:
+            if not self._in_window(after_seq):
                 return None
-            import bisect
             i = bisect.bisect_right(self._seqs, after_seq)
-            if i >= len(self._seqs):
-                return None
             ds = []
-            for seq, dl in self._log[i:]:
+            for _w, dl in self._log[i:]:
                 ds.extend(dl)
             if not ds:
                 return None
             return P.coalesce(ds), self.snap["seq"]
 
-    def can_resume(self, base_seq):
-        """base_seq 是否可续传（未越出保留窗且不超前）。a92：与
-        frames_after 的 None 二义性解耦——安静 feed（无新帧但水位在窗内）
-        应 resume 空转，不该整窗 snapshot。"""
-        with self._lock:
-            return (base_seq >= self._floor_seq
-                    and base_seq <= self.snap["seq"])
+    def _in_window(self, seq):
+        """续传游标是否可**完整**续传。调用方持锁。
 
-    def snapshot_wire(self):
+        两个条件必须同时成立：
+
+        ① `seq >= _wseq_base`——不得低于本实例的空间起点。
+        ② 有 log 且 `seq >= _floor_seq - 1`——`_trim` 只保留最近 600 条，
+           floor 之前的增量**已经不存在**。若放行 `floor` 以下的游标，
+           `frames_after` 只会返回 `(floor, last]` 这一截，客户端缺掉的
+           中间段**永远不会补**（实测 700 条后 `frames_after(5)` 返回
+           to=700 看着正常，实际漏掉 5..100）。允许 `floor - 1`：它表示
+           「还没消费 floor 那条」，增量 `(floor-1, last]` 里 floor 本身
+           仍在 log 中，完整。空 log 时无此约束（没有任何内容会漏）。
+
+        关于 `seq == _wseq_base`（S1，十五次全审）：这是**合法**游标，不
+        能不拒。快照 ack 下发的 `toSeq` 就是 `snap["seq"]`，空 feed 时
+        正是 `base`；客户端拿着它回来续传必须被放行，否则「拿快照后
+        断开、期间来一条事件」的每次重连都要重新整窗快照 + 前端全量
+        重渲（a92/MAJOR-10 回归，审计实测 `can_resume(102)=False`）。
+        「旧实例游标恰好等于新 base」这个风险**只能**由 `_claim_base`
+        保证起点严格大于旧游标来消除——那是唯一有信息量的地方。
+        """
+        if seq < self._wseq_base or seq > self.snap["seq"] or seq < 0:
+            return False
+        # 十七次全审（一般级）：撞等号的结构性防线。`base` 是「空间起点」，
+        # 上一代旧游标可能恰好等于它（无条件 max 兜底时 `hint` 取到上代
+        # `last_seq` ⇒ `base = hint + 2` 可能 == 旧游标）。仅靠 base 判定
+        # 会放行 → 旧游标落进新空间 → 静默丢行。用「本代首条」作尺：
+        # 本代已有内容时，任何小于首条的游标都不可能完整续传。
+        # 空 feed 不受限——快照 ack 的 toSeq 恰是 base，必须放行（S1）。
+        # 本代首条判据：凡小于本代首条的游标，都缺了本代已发放的内容，
+        # 不能算「完整续传」。`seq == 0` 的例外在此**不起作用**（`0 <
+        # _wseq_base` 会先被上面的下界判据拒掉）——保留它只是为了让
+        # 判据在「base 恰为 0」的构造型场景里语义自洽；生产路径上
+        # routes 层 `base_seq > 0` 门已保证游标 0 不进 resume_probe。
+        # `_first_issued` 判据已**删除**（二十一次全审）：它防的是「旧游标
+        # 恰好等于本代 base」，而该风险已被 `_claim_base` 的**持久化启动
+        # 序号**从结构上消除——boot 每次进程启动 +1，base 至少跳
+        # `_BOOT_STRIDE`（10 亿），旧游标不可能与新 base 同值。
+        # 保留它反而制造 S1 回归：快照 ack 下发的 toSeq 就是 base，客户端
+        # 持它重连、期间恰来 1 条事件时会被判越窗 → 每次整窗快照 + 前端
+        # 全量重渲（审计实测 rep15）。
+        if self._log and seq < self._floor_seq - 1:
+            return False
+        return True
+
+    def can_resume(self, base_seq):
+        """base_seq（客户端游标 = 投递序号）是否可续传。a92：与
+        frames_after 的 None 二义性解耦——安静 feed（无新帧但水位在窗内）
+        应 resume 空转，不该整窗 snapshot。
+
+        严格 `>` 而非 `>=`（F1-R，a116 十一次全审）：floor 是「本实例已知的
+        最早可投递位置」。游标**等于** floor 意味着客户端已消费到 floor
+        这个位置，而 floor 之前的内容它未必有——feed 换代（重建/重启/TTL）
+        后旧游标恰好落在新 floor 上时，`>=` 会放行 → 只发增量 → 旧游标
+        之前的行永久缺失且（同 epoch）永不回退快照（审计实测丢 E1..E4、
+        重复 E500..E503）。用 `>` 让这种边界一律走整窗快照。"""
+        with self._lock:
+            return self._in_window(base_seq)
+
+    def poll(self, after_seq):
+        """原子取帧（一般-1 保留）。返回 `frame`，与 `frames_after` 同语义
+        （None = 无增量或越窗）。a116 九次全审根修后迟到可正常投递，
+        不再需要 `resnap_ver` 那一层，签名相应简化。"""
+        with self._lock:
+            if not self._in_window(after_seq):
+                return None
+            i = bisect.bisect_right(self._seqs, after_seq)
+            ds = []
+            for _w, dl in self._log[i:]:
+                ds.extend(dl)
+            if not ds:
+                return None
+            return P.coalesce(ds), self.snap["seq"]
+
+    def resume_probe(self, base_seq):
+        """起始续传裁决的原子版（can_resume + frames_after）。
+        返回 `(ok, frame, last)`：
+        - `ok=False` → 调用方发整窗 snapshot；
+        - `ok=True, frame=None` → 可续传但无增量（安静 feed，只 ack）；
+        - `ok=True, frame=(deltas, to)` → 有增量。"""
+        with self._lock:
+            if not self._in_window(base_seq):
+                return False, None, 0
+            i = bisect.bisect_right(self._seqs, base_seq)
+            ds = []
+            for _w, dl in self._log[i:]:
+                ds.extend(dl)
+            last = self.snap["seq"]
+            if not ds:
+                return True, None, last
+            return True, (P.coalesce(ds), last), last
+
+    def snapshot_wire(self, tail_turns=21, tail=0):
         with self._lock:
             # a41c（用户定调「放大不是办法」）：回合窗是唯一裁剪——行数闸
             # 删除（TAIL_ROWS 退役）。投影「行」有天然上界（一轮=思考段+工具
@@ -869,7 +1404,12 @@ class V4Feed(object):
             # 场景；行数闸与回合闸并存必打架（a41 实锤 21 回合恰卡 400 行被
             # 二次裁回 10 轮，a41b 放大只是把打架阈值后挪）。21=V3 窗 20 轮+1
             #（多 1 轮做前端 start>0 归档条判定锚）
-            return P.wire_snapshot(self.snap, tail_turns=21)
+            # a119P（用户实测「打开子代理卡顿」）：tail 出参——子 feed 大子
+            # 会话（审计代理几千行）21 回合窗仍全量下发，前端渲染完又裁回
+            # 220 行＝白干。子 topic 由 routes 传 tail=220（与前端时间线上限
+            # _subTlCap 同值），主流不传维持回合窗唯一裁剪
+            _w = P.wire_snapshot(self.snap, tail_turns=tail_turns, tail=tail)
+            return _w
 
     @property
     def last_seq(self):

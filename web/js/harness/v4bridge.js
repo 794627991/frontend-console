@@ -74,6 +74,11 @@
     this.flow = flowEl;
     this.opt = opt || {};
     this.conclEl = this.opt.conclEl || null;
+    this._conclSel = this.opt.conclEl
+      ? ((this.opt.conclEl.id && '#' + this.opt.conclEl.id)
+         || (this.opt.conclEl.className
+             && '.' + String(this.opt.conclEl.className).trim().split(/\s+/)[0]))
+      : null;
     this.conclDone = false;
     this._lastBusy = undefined;
     this._lastRole = null;
@@ -90,12 +95,61 @@
     this._emptyAt = 0;         // a74：空态注记时刻（20s 零行保险带计时基）
     this._lastRowAt = 0;        // a77：最近一次行到达时刻（防定格看门狗计时基）
     this._subTick = null;      // 子 pane 秒表 interval（v4 无 V3 tick）
+    // a116（用户实锤「超长会话滚动时来新消息卡一下」）：滚动保持期渲染缓冲
+    // ——新行渲染（markdown 解析+建 DOM+布局）实测 80-290ms/条，直接插进
+    // 滚动帧=可感知顿挫。用户正在滚动且不在底部时，行级增量先排队，滚动
+    // 停 200ms（或队列超龄 1.2s 兜底）统一补——贴底跟随不受影响（在底部
+    // 立即渲染）；A 区 state（busy/胶囊）不缓冲照常即时
+    this._pumpQ = [];
+    this._pumpT = 0;
+    this._pumpQAt = 0;
+    this._lastScrollAt = 0;
+    this._scrollNearBottom = true;   // 滚动帧内算好缓存（增量闸只读缓存零布局）
+    if (flowEl && flowEl.addEventListener) {
+      try {
+        flowEl.addEventListener('scroll', function () {
+          self._lastScrollAt = Date.now();
+          try {
+            self._scrollNearBottom = flowEl.scrollHeight - flowEl.scrollTop
+              - flowEl.clientHeight < 140;
+          } catch (e) {}
+        }, { passive: true });
+      } catch (e) {}
+    }
     this.unsub = store.subscribe(function (ev) { self._onEv(ev); });
   }
 
+  // 一般12 修正（a116 全审）：conclEl 在 `_subRebuild`（含 sc.innerHTML=''）
+  // 之后会变成游离节点——写进去用户看不见，注释里「两条通路同口径」不成立。
+  // 写入前按选择器重取，取不到再回落构造时的节点。
+  // MINOR-1（a116 二次全审）：查询必须**限于当前轮**（this._t.el），否则多轮
+  // 子 pane 会命中第一轮的旧结论区（新结论写进看不见的旧节点）。
+  V4Bridge.prototype._conclNode = function () {
+    if (!this.conclEl) return null;
+    if (this._conclSel) {
+      var _scopes = [];
+      if (this._t && this._t.el) _scopes.push(this._t.el);
+      if (this.flow) _scopes.push(this.flow);
+      for (var _i = 0; _i < _scopes.length; _i++) {
+        try {
+          var el = _scopes[_i].querySelector(this._conclSel);
+          if (el) { this.conclEl = el; return el; }
+        } catch (e) {}
+      }
+    }
+    return (this.conclEl.isConnected === false) ? null : this.conclEl;
+  };
+
   V4Bridge.prototype.close = function () {
+    // 全审 P1（a116）：必须置位——下游 5 处（_subApplyOne/_subFinish/
+    // 重连回调等）全部以 _closed 早退，不置位等于守卫全是死条件：切会话
+    // 时在飞的 /subagent_replay 回调仍会写新会话的档案与行卡。
+    this._closed = true;
     if (this.unsub) { this.unsub(); this.unsub = null; }
     if (this._notifyTimer) { clearTimeout(this._notifyTimer); this._notifyTimer = null; }
+    // a116：滚动缓冲队列随关清空（定时器在 _pumpArm 内自清）
+    this._pumpQ = []; this._pumpQAt = 0;
+    if (this._pumpT) { clearTimeout(this._pumpT); this._pumpT = 0; }
     this._subWatchStop();
   };
 
@@ -122,6 +176,8 @@
 
   V4Bridge.prototype._rebuild = function (snap) {
     var rows = (snap && snap.rows) || [];
+    // a116：整窗权威快照到达——滚动缓冲队列里的增量全部作废（快照已含）
+    if (this._pumpQ.length) { this._pumpQ = []; this._pumpQAt = 0; }
     // a62（用户实测致命「子页开着主窗历史全消失/新消息 3s 消失」）：空
     // 快照防御——本会话已有内容而快照零行（feed 冷建 hydration 失败/
     // 重连竞速）时拒绝整窗重建，保住现有 DOM；服务端同步有不缓存空投影
@@ -131,6 +187,24 @@
         && Array.isArray(_HG.histAll) && _HG.histAll.length) {
       try { (root.console && console.warn) && console.warn(
         '[v4bridge] 空快照拒建（保留 ' + _HG.histAll.length + ' 行）'); } catch (e) {}
+      return;
+    }
+    // G4 修复（a116）：拒建判据依赖 _HG.histAll，而切会话时它已被清成
+    // null（sessions.js）→ 守卫失效，接着 _histRender([]) 在 histcache.js
+    // 早退**不清 DOM**（v3.5.196 撤了预清）→ 用户停在上个会话的内容上、
+    // 头部却是新会话，且只有 console.warn 无任何提示。零行且非 sub 时
+    // 显式清空 flow 并给出可见提示。
+    if (!rows.length && !this.opt.sub) {
+      try {
+        var _flowEl = (typeof _HG !== 'undefined' && _HG && _HG.flowEl)
+          || document.querySelector('[data-hg-flow]');
+        if (_flowEl && _flowEl.replaceChildren) _flowEl.replaceChildren();
+        if (typeof _HG !== 'undefined' && _HG) { _HG.histAll = []; _HG.histCursor = 0; }
+        var _note = document.createElement('div');
+        _note.className = 'h-sysnote';
+        _note.textContent = '该会话暂无可显示内容（投影为空，正在同步…）';
+        if (_flowEl) _flowEl.appendChild(_note);
+      } catch (e) {}
       return;
     }
     var lines = [];
@@ -289,7 +363,16 @@
           //   → **保持终态不复活**（曾 a.done=!running 直接翻掉=用户实锤
           //   「出错的子代理刷新后复活成运行中」）
           if (!a.done) {
-            if (ent.status === 'done' || ent.status === 'err') {
+            // P1-5（a116）轮次栅栏：readmodel 的 done/err 必须先越过「本轮
+            // 续派发出的时刻」才可信——否则拿到的是上一轮的终态，会把刚
+            // 复活的链误落定。判据：ent 的 doneAt（或 lastActive）晚于
+            // sendAt 才采纳；无 sendAt（首轮）不受限。
+            var _sat = Number(a.sendAt) || 0;
+            var _eAt = Number(ent.doneAt || ent.lastActive || 0) || 0;
+            _eAt = _eAt > 1e12 ? _eAt : _eAt * 1000;
+            var _staleRound = _sat && _eAt && _eAt < _sat;
+            if (!_staleRound
+                && (ent.status === 'done' || ent.status === 'err')) {
               a.done = true;
               a.err = ent.status === 'err';
             }
@@ -378,7 +461,14 @@
     var _t0v = (typeof _rt === 'number') ? _rt
       : (_rt ? (Date.parse(_rt) || 0) : 0);
     a.t0 = a.t0 || (_t0v || Date.now());
-    a.done = false; a.doneAt = 0;
+    // G2 修复（a116）：只能落定，不能翻案——原实现无条件 a.done=false，
+    // 主 feed 的 SUB 行仍 running（notification 镜像丢失）而子 feed/readmodel
+    // 已把档案落 done 时，任何重连快照/upserted 都会把「完成」翻回「运行中」
+    // （胶囊/目录闪回 + doneAt 清零）。修法就是**不再写这两个字段**——
+    // 原有终态（a.done/a.doneAt）原样保留，无终态证据时天然是 undefined/falsy
+    // =「运行中」。一般11（a116 全审）：原先这里的
+    // `if (!a.done && !a.doneAt) { a.done = false; a.doneAt = 0; }`
+    // 是空操作（前置条件已保证赋值后值不变），删掉以免被误读为真守卫。
     if (aid && /^[0-9a-zA-Z_-]{8,64}$/.test(aid)) {
       a.taskId = aid;
       // sse.js 冷查询批1 同款映射：_hgAg/_subTid 单点解析读它
@@ -465,8 +555,36 @@
   // 体=题目+选项 chip（_toolInputBodyHtml question 分支现成件），回答走
   // result 常规链。真正的归一
 
-  V4Bridge.prototype._applyOne = function (d) {
+  // a116：滚动保持期渲染缓冲的冲刷定时器（构造器注释）——滚动停 200ms 或
+  // 队列超龄 1.2s 统一按序补；快照整窗重建时队列作废（_rebuild 清）
+  V4Bridge.prototype._pumpArm = function () {
+    if (this._pumpT) return;
+    var self = this;
+    this._pumpT = setTimeout(function () {
+      self._pumpT = 0;
+      if (self._closed || !self._pumpQ.length) { self._pumpQ = []; self._pumpQAt = 0; return; }
+      var idle = Date.now() - self._lastScrollAt >= 200;
+      var aged = self._pumpQAt && Date.now() - self._pumpQAt >= 1200;
+      if (!idle && !aged) { self._pumpArm(); return; }
+      var q = self._pumpQ; self._pumpQ = []; self._pumpQAt = 0;
+      for (var i = 0; i < q.length; i++) {
+        try { self._applyOne(q[i], true); } catch (e) {}
+      }
+    }, 200);
+  };
+
+  V4Bridge.prototype._applyOne = function (d, _bypass) {
     var op = d.op;
+    // a116：滚动保持期闸——用户正在滚动且不在底部：行级增量排队缓渲染
+    //（贴底跟随与 state 即时不受影响；_bypass=冲流回放直通）
+    if (!_bypass && (op === 'row.appended' || op === 'row.upserted')
+        && this._lastScrollAt && Date.now() - this._lastScrollAt < 200
+        && !this._scrollNearBottom) {
+      if (!this._pumpQ.length) this._pumpQAt = Date.now();
+      this._pumpQ.push(d);
+      this._pumpArm();
+      return;
+    }
     if (op === 'row.appended') {
       var row = d.row, live = true;
       if (row.kind === 'subagent') { this._agentFile(row); return; }
@@ -618,6 +736,12 @@
               _orig.rounds = (_orig.rounds || 1) + 1;
               _orig.done = false; _orig.doneAt = 0; _orig.err = false;
               _orig.interrupted = false; _orig.lost = false;
+              // P1-5 修复（a116）：续派开新轮的本地时间戳。冷同步规则①
+              // （running + readmodel done/err → 落定）在 readmodel 增量刷新
+              // 追上本次 send 之前拿到的是**上一轮**的 done/err，会把刚复活
+              // 的链直接落定（用户可见：续派后切走再切回，链在跑却显示完成）。
+              // 落定前用它做轮次栅栏。
+              _orig.sendAt = Date.now();
               // a93S（用户定调「就应该是原封不动的子代理名」）：续派**不改
               // 名**——原档 desc（真实任务名）保留，消息首行只在原档无名时
               // 兜底（曾覆写为消息首行=超长名顶爆胶囊+目录全变消息名）
@@ -685,8 +809,28 @@
         this._agentFile(d.row);
       this._upsert(d.row);
     } else if (op === 'row.delta') {
-      var aT = _g('appendThinking');
-      if (aT && d.append) { try { aT(d.append); } catch (e) {} }
+      // P2 修复（a116）：必须按 path 分流。原实现不看 path/rowId 一律
+      // appendThinking——契约允许 text/inputText/summary 三路，服务端一旦
+      // 启用流式（CLI 开 partial）会把工具流/正文流画进思考抽屉。
+      // 当前 src 内无 d_row_delta 发点，故为潜在缺陷的提前封堵。
+      if (d.path === 'text') {
+        var aT = _g('appendThinking');
+        if (aT && d.append) { try { aT(d.append); } catch (e) {} }
+      } else {
+        // inputText/summary：按 rowId 就地更新账本并重绘该行
+        var _r = null;
+        try {
+          var _rows = (this.store && this.store.snap && this.store.snap.rows) || [];
+          for (var _ri = 0; _ri < _rows.length; _ri++) {
+            if (_rows[_ri].rowId === d.rowId) { _r = _rows[_ri]; break; }
+          }
+        } catch (e) {}
+        if (_r && d.append) {
+          // 一般10 修正（a116 全审）：store 已由 V4P.applyDeltas 应用过一次，
+          // 这里再拼会双写（node 复现 'ls -la' → 'ls -la-la'）。只重绘不累加。
+          // 当前无 d_row_delta 发点（属埋雷），保留重绘语义即可。
+        }
+      }
     } else if (op === 'row.removed') {
       // rewind 换代走 epoch（store 重订阅 snapshot），此处仅防御
     } else if (op === 'state.updated') {
@@ -869,15 +1013,16 @@
     if (this.opt.sub) {
       var _sd = (patch.done !== undefined) ? patch.done : st.done;
       var _sf = (patch.final !== undefined) ? patch.final : st.final;
-      if (this.conclEl && !this.conclDone && _sd && _sf) {
+      var _ce = this._conclNode();
+      if (_ce && !this.conclDone && _sd && _sf) {
         this.conclDone = true;
-        this.conclEl.innerHTML = '';
+        _ce.innerHTML = '';
         var _md = _g('mdBubble');
         var _dv = document.createElement('div');
         _dv.className = 'h-msg asst';
         if (_md) { try { _dv.appendChild(_md(_sf)); } catch (e) { _dv.textContent = _sf; } }
         else _dv.textContent = _sf;
-        this.conclEl.appendChild(_dv);
+        _ce.appendChild(_dv);
       }
       return;
     }
@@ -912,7 +1057,12 @@
       _HG.model = patch.model;
       var q = (typeof _hgQ !== 'undefined') ? _hgQ : null;
       var chip = q ? q('[data-hg-model]') : null;
-      if (chip) chip.innerHTML = String(patch.model) + ' ▾';
+      // G5/S9 修复（a116）：模型名来自投影/转写派生文本，必须转义
+      // （同字段 v4main.js:85 与 chatctl.js 都走 esc，此处原为全仓唯一
+      // 未转义的投影文本 innerHTML 写入点）。
+      if (chip) chip.innerHTML = (typeof esc === 'function'
+        ? esc(String(patch.model)) : String(patch.model)
+      ) + ' ▾';
     }
     // 压缩状态（a52 归一）：feed per-sid state 驱动 V3 压缩线原件
     // （renderCompaction 读 _HG.compactT0/compactSid——per-sid 投影天然
@@ -933,18 +1083,19 @@
       }
     }
     // 子 pane 结论终稿（一次成型）
-    if (this.conclEl && !this.conclDone) {
+    var _cce = this._conclNode();
+    if (_cce && !this.conclDone) {
       var done = (patch.done !== undefined) ? patch.done : st.done;
       var txt = (patch.final !== undefined) ? patch.final : st.final;
       if (done && txt) {
         this.conclDone = true;
-        this.conclEl.innerHTML = '';
+        _cce.innerHTML = '';
         var md = _g('mdBubble');
         var dv = document.createElement('div');
         dv.className = 'h-msg asst';
         if (md) { try { dv.appendChild(md(txt)); } catch (e) { dv.textContent = txt; } }
         else dv.textContent = txt;
-        this.conclEl.appendChild(dv);
+        _cce.appendChild(dv);
       }
     }
   };
@@ -1012,11 +1163,26 @@
     return g.tabs[this.opt.tid] || null;
   };
 
-  V4Bridge.prototype._subScrollBottom = function (stick) {
+  V4Bridge.prototype._subScrollBottom = function (stick, settle) {
     var sc = (this._t && this._t.sc) || this.flow;
     if (!sc) return;
     if (stick === false) return;
+    var self = this;
     try { sc.scrollTop = sc.scrollHeight; } catch (e) {}
+    // a119R（用户实锤「重建后视口停在当前轮工作中标头附近」）：整窗重建
+    // 恢复贴底时全部卡体是 content-visibility 估高（240px/卡），真高要靠
+    // 视口相交逐帧物化——一次 scrollTop=scrollHeight 落在**估高的底部**，
+    // 物化后视口被顶到当前轮标头附近。连续 4 帧重钉（约 64ms，用户来不及
+    // 手动滚动）随物化追真底；仅重建恢复路径开启
+    if (settle) {
+      var n = 0;
+      var step = function () {
+        if (self._closed || !sc.isConnected) return;
+        try { sc.scrollTop = sc.scrollHeight; } catch (e) {}
+        if (++n < 4) requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    }
   };
 
   // 秒表（v4 pane 无 V3 tick——健康源=store 连接，1s 只画头）
@@ -1031,13 +1197,20 @@
       }
       if (!self._t.done && hp) { try { hp(self._t); } catch (e) {} }
       // a77 防定格看门狗（用户实测「窗格定格在 45s，代理还在跑」）：运行中
-      // 且 >15s 无新行（无论连接假死/帧丢失/渲染停滞哪种模式——ka 心跳
-      // 只保连接不保数据）→ 强制携权威快照重订阅整窗重对齐。长思考静默期
-      // 重复触发无害（快照同容零变化），自限 15s 一跳
+      // 且 >15s 无新行 → 强制携权威快照重订阅整窗重对齐。
+      // a119R（用户实锤「拉到底部，子代理一来消息滚动跳回工作中标头，
+      // 必现」根修）：加**连接健康闸**——ka/帧还在流（store._lastFrameAt
+      // 持续刷新）就证明服务端推送循环活着、游标取帧零丢失（a116 九次全审
+      // 后 poll 原子语义），行静默=子代理在跑长工具（143 全审实测 198/226
+      // 份子转写有 >15s 静默段），此时强拆只会整窗重建：innerHTML='' 抹掉
+      // 滚动位置与用户展开态（a116 注释原话「每 15s 触发一次整窗重建，滚动
+      // 位置与已展开思考段反复丢失」——当时只修了「增量在流误判」一半，
+      // 工具静默这半没关）。连接真死（ka 12s 未至）才强制重对齐
       if (!self._t.done && self._lastRowAt
           && Date.now() - self._lastRowAt > 15000) {
         self._lastRowAt = Date.now();
-        if (self.store && !self.store._closed) {
+        if (self.store && !self.store._closed
+            && Date.now() - (self.store._lastFrameAt || 0) > 12000) {
           self.store._forceSnapshot = true;
           self.store._scheduleReconnect();
         }
@@ -1076,8 +1249,21 @@
     this._pend = [];
   };
 
-  // 单行追加（含双源查重锚——快照/兜底/delta 三路喂入幂等）
+  // a119（用户实锤「拉到底后子代理一来新消息，滚动条就变位置不贴底」）：
+  // v4 增量通道里只有 tool 行自带贴底（追前量 stick/追后回贴），think/text/
+  // user/note 走 _subTlAppendRow 零跟随——审计类子代理九成是 think/text 行，
+  // 每来一条视口就漂一次，漂超 80px 判距后彻底停跟。统一在通道口收口：
+  // 追前量贴底、追后回贴；水合期跳过（逐行 scroll=布局抖动，_subRebuild
+  // 尾部自有一份收口）；重复行到达时回贴是幂等空操作
   V4Bridge.prototype._subAppend = function (n) {
+    var t0 = this._t;
+    var stick0 = (!this._hydrating && t0 && t0.sc && _g('_subPaneStick'))
+      ? _g('_subPaneStick')(t0.sc) : false;
+    this._subAppendRow(n);
+    if (stick0) this._subScrollBottom();
+  };
+  // 单行追加（含双源查重锚——快照/兜底/delta 三路喂入幂等）
+  V4Bridge.prototype._subAppendRow = function (n) {
     var t = this._t;
     if (!t || !t.tl) return;
     this._lastRowAt = Date.now();   // a77：行到达记账（看门狗计时基）
@@ -1129,9 +1315,17 @@
     var i, el;
     if (n.r === 'user') {
       var head = String(n.text || '').trim().slice(0, 60);
-      var dupU = head && [...t.sc.querySelectorAll('.hg-sub-u')]
-        .some(x => (x.textContent || '').trim().indexOf(head) === 0);
+      // a115：水合期 Set 查重（O(1)）；live 保留前缀扫描（流式安全）
+      var _rp = this._rp;
+      var dupU = false;
+      if (this._hydrating && _rp) {
+        dupU = !!head && Object.prototype.hasOwnProperty.call(_rp.u, 'u:' + head);
+      } else {
+        dupU = head && [...t.sc.querySelectorAll('.hg-sub-u')]
+          .some(x => (x.textContent || '').trim().indexOf(head) === 0);
+      }
       if (dupU) return;
+      if (_rp && head) _rp.u['u:' + head] = 1;
       // 多轮：当前轮有内容则定格开新轮（V3 回放 D6 同款）
       if (t.tl.children.length) {
         var finT = _g('_subTlFinalizeT'), tb0 = this._subTab();
@@ -1156,10 +1350,17 @@
     }
     if (n.r === 'text') {
       var want = _normWs(n.text);
-      var dupT = want && [...(t.sc || t.tl).querySelectorAll('.h-msg.asst[data-raw]')]
-        .some(x => { var g = _normWs(x.dataset.raw);
-                     return !!g && (want.startsWith(g) || g.startsWith(want)); });
+      // a115：水合期 Set 精确查重；live 保留双向前缀扫描
+      var dupT = false;
+      if (this._hydrating && this._rp) {
+        dupT = !!want && Object.prototype.hasOwnProperty.call(this._rp.t, want);
+      } else {
+        dupT = want && [...(t.sc || t.tl).querySelectorAll('.h-msg.asst[data-raw]')]
+          .some(x => { var g = _normWs(x.dataset.raw);
+                       return !!g && (want.startsWith(g) || g.startsWith(want)); });
+      }
       if (dupT) return;
+      if (this._rp && want) this._rp.t[want] = 1;
       var tr = _g('_subTlTextRow');
       el = tr ? tr(n.text, true) : null;
       if (!el) return;
@@ -1174,10 +1375,17 @@
     }
     if (n.r === 'think') {
       var wantK = _normWs(n.text);
-      var dupK = wantK && [...t.tl.querySelectorAll('.h-think-seg[data-raw]')]
-        .some(x => { var g = _normWs(x.dataset.raw);
-                     return !!g && (wantK.startsWith(g) || g.startsWith(wantK)); });
+      // a115：水合期 Set 精确查重；live 保留前缀扫描
+      var dupK = false;
+      if (this._hydrating && this._rp) {
+        dupK = !!wantK && Object.prototype.hasOwnProperty.call(this._rp.k, wantK);
+      } else {
+        dupK = wantK && [...t.tl.querySelectorAll('.h-think-seg[data-raw]')]
+          .some(x => { var g = _normWs(x.dataset.raw);
+                       return !!g && (wantK.startsWith(g) || g.startsWith(wantK)); });
+      }
       if (dupK) return;
+      if (this._rp && wantK) this._rp.k[wantK] = 1;
       var tk = _g('_subTlThinkRow');
       if (!tk) return;
       var seg = tk(n.text || '', '');
@@ -1205,10 +1413,17 @@
       return;
     }
     if (n.r === 'tool') {
-      if (n.tid) {
+      // a115：水合期 Set 查重（曾 querySelector 属性选择器 O(n)/行=O(n²)）
+      if (this._hydrating && this._rp) {
+        if (n.tid) {
+          if (Object.prototype.hasOwnProperty.call(this._rp.tool, n.tid)) return;
+          this._rp.tool[n.tid] = 1;
+        }
+      } else if (n.tid) {
         try {
           if (t.tl.querySelector('.h-tool[data-tuid="' + CSS.escape(n.tid) + '"]')) return;
         } catch (e) {}
+        if (this._rp) this._rp.tool[n.tid] = 1;
       }
       var at2 = _g('_subTlAppendTool');
       if (!at2) return;
@@ -1376,6 +1591,10 @@
     var sc = this.flow;
     var stick = _g('_subPaneStick') ? _g('_subPaneStick')(sc) : true;
     sc.innerHTML = '';
+    // P2 修复（a116）：清掉 V3 tick——_subOpen 在 run 态启动的秒表 interval
+    // 每秒执行「档案未 done 则把 t.done 翻回 false」，与子 feed 的定稿
+    // （a99：state.final 收口）打架=窗格头被翻回「工作中」。
+    if (tb.tick) { try { clearInterval(tb.tick); } catch (e) {} tb.tick = null; }
     tb.turns = [];
     this._openTools = [];
     this._firstAt = 0; this._lastAt = 0; this._pend = [];
@@ -1399,9 +1618,38 @@
     tb.t = t;
     var rows = (snap && snap.rows) || [];
     var i, n;
+    // a119P（用户实测「打开子代理卡顿」）：渲染前先裁到时间线上限——曾
+    // 全量渲染几千行（每行 markdown/diff）再让 _subTlCap 从头删回 220，
+    // 渲染即丢弃＝主线程秒级冻结。服务端快照已携尾窗（routes 子 topic
+    // tail=220），此处对旧后端全量下发的兜底同裁。省略数用快照 total
+    // （全量行数）与实收行数的差——服务端裁过与旧后端全量都能算真值。
+    // 省略条与 _subTlCap 同构（class/dataset 一致），后续 live 增长由
+    // cap 顺着同一条递增，两机制无缝衔接
+    var _cap = 220;
+    var _tot = Math.max((snap && snap.total) || 0, rows.length);
+    if (rows.length > _cap) rows = rows.slice(-_cap);
+    var _omit = Math.max(0, _tot - rows.length);
+    // a115（用户实锤「新消息刷出卡 2s/开大窗格卡 4.8s」）：水合查重改 Set——
+    // 曾每行 querySelectorAll 全窗格扫（user/text/think/tool 四路）＝O(n²)，
+    // 431 行水合 9 万次元素访问+数组分配 churn＝秒级主线程冻结。水合行是
+    // 终态数据（feed 全行投递非流式碎片），精确键查重语义等价；live 路
+    // 保持原前缀扫描（流式安全），两路都入 Set
+    this._rp = { u: {}, t: {}, k: {}, tool: {} };
+    this._hydrating = true;
+    // a119P：裁尾窗后首行时刻改吃快照携带的全量 firstAt（服务端裁剪前
+    // 的真值）——否则大子会话轮时长按尾窗首行算短
+    if (snap && snap.firstAt) this._firstAt = snap.firstAt;
     for (i = 0; i < rows.length; i++) {
       n = _subNorm(rows[i], false);
       if (n) this._subAppend(n);   // 行时刻/思考段 pend 在 append 内统一记账
+    }
+    this._hydrating = false;
+    if (_omit > 0 && t.tl && t.tl.children.length) {
+      var om = document.createElement('div');
+      om.className = 'hg-sub-omit';
+      om.dataset.omitted = String(_omit);
+      om.textContent = '⬆ 已省略 ' + _omit + ' 行';
+      t.tl.insertBefore(om, t.tl.firstChild);
     }
     if (rows.length) {
       var st = (snap && snap.state) || {};
@@ -1417,7 +1665,7 @@
       if (this._t && !this._t.t0) this._t.t0 = this._firstAt || 0;
       this._subFinish(st);
       tb.rpN = rows.length;   // 已铺底：shell 态的 4s ensure 循环构造性消失
-      if (stick) this._subScrollBottom();
+      if (stick) this._subScrollBottom(null, true);   // a119R：多帧重钉追真底
       return;
     }
     // 空快照：三级兜底（无条件显示）
@@ -1449,9 +1697,22 @@
         if (!tb) return;
         if (j && j.ok && j.found && (j.rows || []).length) {
           var rows = j.rows;
+          // a119P：兜底路径同裁——回放转写全量行（几千行级），渲染完再被
+          // _subTlCap 删回 220 ＝白干；直接渲染尾窗+省略条（同 _subRebuild）
+          var _fa2 = rows[0] && rows[0].ts ? (Date.parse(rows[0].ts) || 0) : 0;
+          var _om2 = Math.max(0, rows.length - 220);
+          if (rows.length > 220) rows = rows.slice(-220);
+          if (_fa2 && !self._firstAt) self._firstAt = _fa2;   // 全量首行时刻保真
           for (var i = 0; i < rows.length; i++) {
             var n = _subNorm(rows[i], true);
             if (n) self._subAppend(n);   // ts 记账在 append 内统一
+          }
+          if (_om2 > 0 && self._t && self._t.tl && self._t.tl.children.length) {
+            var om2 = document.createElement('div');
+            om2.className = 'hg-sub-omit';
+            om2.dataset.omitted = String(_om2);
+            om2.textContent = '⬆ 已省略 ' + _om2 + ' 行';
+            self._t.tl.insertBefore(om2, self._t.tl.firstChild);
           }
           if (self._t && !self._t.t0) self._t.t0 = self._firstAt || 0;
           tb.rpN = rows.length;
@@ -1504,6 +1765,12 @@
   V4Bridge.prototype._subApplyOne = function (d) {
     var t = this._t;
     if (!t) return;
+    // G3 修复（a116）：任何 delta 到达都算「数据在流」——看门狗计时基必须
+    // 记账。原实现只在 _subAppend/_subRebuild 记账，于是 row.upserted
+    // （工具收口）/state.updated 期间不刷新 → 真实数据 4.0% 的工具调用
+    // >15s、198/226 份子转写存在 >15s 静默段 → 长工具期每 15s 触发一次
+    // 整窗重建，滚动位置与已展开思考段反复丢失。
+    this._lastRowAt = Date.now();
     var stickEl = t.sc;
     var stick = stickEl && _g('_subPaneStick') ? _g('_subPaneStick')(stickEl) : true;
     if (d.op === 'row.appended') {

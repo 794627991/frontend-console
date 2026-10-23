@@ -168,19 +168,32 @@ def collect_main_facts(lines):
     # (b)resumedAgentId 命中。旧前向判定让「前台回执正文里引用
     # resumedAgentId: xxx」被误判成 SendMessage 回执：前台终态被吞+
     # 幻影条目 running+bg 永跑
-    send_tids = {f["tid"] for f in facts if f["kind"] == "send"}
+    reclassify_send_results(facts)
+    for i, f in enumerate(facts):
+        f["i"] = i   # 全局事实序（行序）——新轮越界判定的基准
+    return facts
+
+
+def reclassify_send_results(facts):
+    """send_result 后置分类（幂等，可对全表重跑）。
+
+    P1-8 修复（a116）：增量读取时 `send` 与它的 tool_result 常分属两批
+    （readmodel 每次只吃新增行）——旧实现只在 collect_main_facts 内部对
+    **本批**做后置分类，于是跨批次永远不成立：续派回执被当普通 result，
+    该轮不被计为 send_result，正在跑的子代理被提前标 done 且 brief 直显
+    一段 JSON。caller 在每批 extend 后对本函数全表重跑一次即可（O(n)，
+    且已分类项因 kind 已非 result 自然跳过）。
+    """
+    send_tids = {f["tid"] for f in facts if f.get("kind") == "send"}
     for f in facts:
-        if f["kind"] != "result" or f["tid"] not in send_tids:
+        if f.get("kind") != "result" or f.get("tid") not in send_tids:
             continue
         m = _RE_RESUMED.search(f.get("text") or "")
         if m:
             f["kind"] = "send_result"
             f["resumed"] = m.group(1)
-            f["ok"] = not f["is_error"]
+            f["ok"] = not f.get("is_error")
             f["text"] = (f.get("text") or "")[:200]
-    for i, f in enumerate(facts):
-        f["i"] = i   # 全局事实序（行序）——新轮越界判定的基准
-    return facts
 
 
 # ---- ② 子代理转写尾探 → 终局状态（ZCode lastChildOutcome 对位） ----
@@ -595,7 +608,15 @@ def project(facts, child_states=None, liveness=None, external_links=None,
             # STALE_RUN_MS 且无新鲜证据=真在跑的代理转写持续落盘，静默即死
             # ——无论当前进程/会话状态一律判中断。续派（SendMessage resume）
             # 后转写复写 → fresh/RUNNING 1 先行命中，不受此条影响
-            _la = int(ent.get("lastActive") or 0)
+            # P1-4 修复（a116）：锚点必须取**子转写尾行时刻**（co.lastActive）
+            # 而非 ent.lastActive——后者在 ENDED4 路径上往往仍等于派发时刻
+            # （只在 RUNNING 分支才吸收 co 值），于是「派发已 >10min + 子转写
+            # 近 3min 无新行（长 Bash/pytest/长思考的静默期）」会被误判
+            # interrupted+lost。真实数据：227 份子转写中 29 份存在 >10min
+            # 文件内间隔，其中 3 份是 tool_use→tool_result 的 14~23 分钟长
+            # 工具执行，间隔后仍在写。co 缺失时才回落 ent.lastActive。
+            _la = int((co or {}).get("lastActive") or 0) \
+                or int(ent.get("lastActive") or 0)
             if (aid and not fresh.get(aid) and _la
                     and (now_ms - _la) > STALE_RUN_MS):
                 ent["status"] = "interrupted"

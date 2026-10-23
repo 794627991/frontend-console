@@ -174,6 +174,10 @@ class HarnessSession:
                 # v3.0：日志代际随元数据落盘——GC 重建沿用（可 resume），
                 # /rewind 换代（客户端旧水位作废，只能 reset 重建）
                 "epoch": self.log.epoch,
+                # a116 十四次全审：v4 投递序号高水位——必须跨重启持久化，
+                # 否则新 feed 起点低于旧客户端游标 → 静默丢历史（详见
+                # v4feed._claim_base 的注释）
+                "wseq": getattr(self.log, "wseq_hwm", 0),
                 # v3.1（#10/#14）：durable 输入账本 + 世代号——重启/闲置回收
                 # 后队列不丢；gen 让 /rewind 后作废旧代条目的判定可跨重启
                 "inbox": _inbox,
@@ -1484,11 +1488,18 @@ class HarnessSession:
                 # 位置实测残留：摘要恒元数据）。emit 专用事件供 v4 feed 回填
                 # 子代理行卡摘要（notification 元数据非真结论）
                 if isinstance(t, str) and "[Subagent hand-back]" in t:
-                    _aid_m = re.search(r'from "([0-9a-zA-Z_-]{8,64})"', t)
+                    # F1 修复（a116）：①`"tid": tid` 引用未定义变量——tid 在本
+                    # 函数任何路径都无赋值，NameError 被函数尾 except 吞掉且
+                    # _tr_off 已推进 → hand-back 事件永不 emit + 同 chunk 后续
+                    # peer 行一并丢。feed 侧 _reduce_peer 已有 childTopic/aid
+                    # 三级兜底，删掉该字段即可。②aid 正则与真实形态
+                    # `from=\"xxx\"` 不符（旧口径 `from "x"` 命中 0/1173），
+                    # 与 v4feed.HB_AID_RE 同源。
+                    from .v4feed import HB_AID_RE as _HB_RE
+                    _aid_m = _HB_RE.search(t)
                     self.emit({"kind": "peer", "name": "subagent-handback",
                                "text": t[:12000],
-                               "aid": _aid_m.group(1) if _aid_m else "",
-                               "tid": tid})
+                               "aid": _aid_m.group(1) if _aid_m else ""})
                     continue
                 # v2.3.2 两形态（用户实锤「模型收到了前台没显示」）：
                 # 独立行=空闲期到达，origin.kind=peer、正文以标记开头（原逻辑）；
@@ -1529,7 +1540,7 @@ class HarnessSession:
                            "name": nm.group(1) if nm else "其他会话",
                            "text": ((body.group(1) if body else t).strip())[:8000]})
         except Exception:
-            pass
+            log.exception("_check_peer_lines 失败（hand-back/peer 行可能丢失）")
 
     def _relay_vision_reply(self, o):
         """v2.3.2：识图会话回传代播——它的 assistant 事件流里出现 SendMessage

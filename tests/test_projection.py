@@ -106,7 +106,12 @@ def test_fg_result_final():
 
 
 def test_send_rounds_and_name():
-    """SendMessage 归链：轮数/翻 running/任务名取最新轮消息首行。"""
+    """SendMessage 归链：轮数/翻 running/任务名保持原派发名。
+
+    a93S（用户定调「sendmessage 这种名就不应该存在，就应该是原封不动的
+    子代理代理名」）：续派**不改名**——desc 保持首轮派发任务名，消息首行
+    只在原档无名时兜底（曾覆写成超长消息首行，顶爆胶囊/目录/卡片）。
+    """
     lines = [
         asst("t5", "Task", {"subagent_type": "reviewer", "description": "首轮审"}),
         res("t5", '{"agentId":"rev_sm_0001"} PASS'),
@@ -117,7 +122,7 @@ def test_send_rounds_and_name():
     p = project(collect_main_facts(lines), liveness=LV)
     a = p["agents"]["rev_sm_0001"]
     ok("续派归链建轮", a["rounds"] == 2 and a["status"] == "running", a)
-    ok("任务名最新轮", a["desc"] == "继续审第二轮", a)
+    ok("任务名保持原派发名", a["desc"] == "首轮审", a)
     ok("sm回执非终态", a["doneAt"] == 0, a)
     # 角色名归链（external_ids）
     lines_r = [
@@ -127,7 +132,7 @@ def test_send_rounds_and_name():
     p3 = project(collect_main_facts(lines + lines_r), liveness=LV,
                  external_ids={"reviewer": "rev_sm_0001"})
     a3 = p3["agents"]["rev_sm_0001"]
-    ok("角色名归链", a3["rounds"] == 3 and a3["desc"] == "第三轮", a3)
+    ok("角色名归链", a3["rounds"] == 3 and a3["desc"] == "首轮审", a3)
 
 
 def test_notify_status_map():

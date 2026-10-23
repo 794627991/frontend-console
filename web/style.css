@@ -2292,9 +2292,17 @@ html {
    收起态组头一行极简（用户：默认只占一小部分），展开不超会话一半 */
 .hg-flow > .h-grp { width: min(820px, 100%); }
 /* v3.1h（用户定调「所有数据不许拖横条,全部自适应」）：消息流全链
-   禁横向滚动——长词/长命令/代码一律折行截断,详情点开展开(展开体同禁) */
-.hg-flow, .h-grp, .h-grp-proc, .h-turn-body, .h-tl, .h-tl-grp-body,
-.h-tool-coll, .h-drawer-body, .h-bubble { min-width: 0; max-width: 100%; overflow-x: hidden; }
+   禁横向滚动——长词/长命令/代码一律折行截断,详情点开展开(展开体同禁)
+   a119（用户实锤「主窗弹新消息瞬间闪出一条又消失,多次没修到」根因）：
+   overflow-x:hidden + visible 组合被 CSS 规范算成 overflow-y:auto——
+   .h-grp/.h-bubble/.h-turn-body 等天生全是滚动容器,弹新消息布局换挡的
+   一帧内容瞬时超高就顶出滚动条随即消失（用户窗 Edge 下是 Fluent 悬浮
+   条,闪现感极强）。真正要竖滚的只有 .hg-flow/.h-tool-coll/.h-drawer-
+   body（保留 hidden）；其余改 overflow-x:clip——裁剪但不构成滚动容器,
+   overflow-y 恢复 visible,条从机制上不可能出现（视觉裁剪与 hidden 全
+   同）。2321 行 .h-tl 系当年已用压条法修过同款,此处补齐并升级去容器 */
+.hg-flow, .h-tool-coll, .h-drawer-body { min-width: 0; max-width: 100%; overflow-x: hidden; }
+.h-grp, .h-grp-proc, .h-turn-body, .h-tl, .h-tl-grp-body, .h-bubble { min-width: 0; max-width: 100%; overflow-x: clip; }
 /* a118（用户实锤「超长会话所有点开动画掉帧」）：卡体级视口裁剪——折叠态
    （max-height:0/42vh 裁切）不与视口相交=跳过布局/样式，可见组内几百个
    折叠卡体不再是 max-height 动画每帧布局的基线税；展开相交即渲染，动画
@@ -2302,10 +2310,40 @@ html {
 .h-tool-coll, .h-think-seg-body, .h-drawer-body {
   content-visibility: auto;
   contain-intrinsic-size: auto 240px; }
+/* a120（性能档案实锤「主窗 1000+ 消息翻动掉帧」，Layout 317 次×56ms 均
+   值）：消息行级视口裁剪——a114 组级 CV 下带超长正文泡（审计报告数千
+   px）的组进视口＝整组一帧内全量 markdown 布局＝帧尖刺；行级 CV 让物化
+   随滚动逐行摊开（嵌套 CV 合法：组被跳过时行随组跳过，组物化后视口外
+   的行仍跳过）。仅主消息流——子窗格 220 行上限已整族豁免（见 a119R），
+   只读流（.hg-ro-flow）不在此列 */
+.hg-flow .h-msg { content-visibility: auto; contain-intrinsic-size: auto 200px; }
+/* a120Q（用户实锤「思考/bash 展开掉帧没解决」）：工具时间线行级裁剪——
+   大会话巨回合打开后时间线千级工具行是裸 DOM（无 CV），展开任一张卡
+   后续全部兄弟行逐帧重排＝展开动画掉帧真身。行级 CV 后展开只动视口内
+   已物化的少量行，屏外全是占位 */
+.hg-flow .h-tl .h-tool { content-visibility: auto; contain-intrinsic-size: auto 28px; }
+/* a120P（实测复现「子窗格一脏→读布局=全文档 22k 对象 89ms 强制重排」）：
+   滚动容器布局隔离——流内任何脏（增量追加/秒表/开卡）不再沿祖先链冒泡
+   到 #document，读布局只冲刷本容器（档案里 317 次全文档布局的主通道）。
+   A/B 实测纯滚动帧率无回归（117→117ms 持平）＝零代价卫生层 */
+.hg-flow, .hg-sub-msgs { contain: layout; }
+/* a120P：钉高期强制物化——_hgPinIntrinsicHeights 渲染收尾临时挂本类关
+   CV 量真高（首读一次付清全量布局，实测 449 元素 175ms），量完即摘 */
+.hg-pin-force .h-grp, .hg-pin-force .h-msg, .hg-pin-force .h-tl .h-tool
+  { content-visibility: visible !important; }
+/* a119R（用户实锤「子窗格拉到底，一来新消息滚动跳回工作中标头，必现」）：
+   子窗格豁免卡体视口裁剪——窗格时间线有 220 行硬上限（_subTlCap），布局
+   零压力；CV 估高（240px/卡）却让 scrollHeight 与贴底判距（80px 窗）全
+   失真：真高几千 px 的思考体按 240px 估，用户在真底时估高差远超 80px →
+   判「不贴底」停止跟随；整窗重建的贴底恢复落在估高底 → 物化后视口停在
+   当前轮「工作中」标头附近。主流大窗（无行数上限）保留 CV 性能红利不动 */
+.hg-sub-msgs .h-tool-coll, .hg-sub-msgs .h-think-seg-body,
+.hg-sub-msgs .h-drawer-body { content-visibility: visible; }
 /* a118R：重内容开合跳过动画（_hgHeavySkip 点击时判定加类）——动画期间
-   重体每帧全量布局是 10fps 卡顿的真身，直达一次到位 */
+   重体每帧全量布局是 10fps 卡顿的真身，直达一次到位
+   a120Q：覆盖回合体（grid 1fr→0fr 过渡）——百级工具行展开同治 */
 .no-anim, .no-anim .h-tool-coll, .no-anim .h-think-seg-body,
-.no-anim .h-drawer-body { transition: none !important; }
+.no-anim .h-drawer-body, .no-anim .h-turn-body { transition: none !important; }
 /* a27（用户实锤「右缘竖条一闪而过，大丑」）：overflow-x:hidden 使纵向
    计算值变 auto——组时间线内容比分配高度多几 px（gap/行渲染抖动）就闪现
    满高滚动条 thumb。这几个布局容器的纵向滚动非设计意图，滚动条隐藏

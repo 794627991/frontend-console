@@ -68,6 +68,11 @@
     // 轻审P1 同款（_subDirEnsure 口径）：不夺焦的 tab 必须显式隐藏——漏设会
     // 与激活 tab 平分 body 高度（空白下半屏）
     if (_sub.active !== _SUB_DYN) sc.style.display = 'none';
+    // P1-1 修复（a116）：新建伪 tab 后必须重绘 tab 条（与 _subDirEnsure
+    // 同口径）。a108 的「胶囊点击且已有运行中代理」分支先跑完 _subReopen×N
+    // 与 _subDirEnsure，再调本函数；漏掉这次重绘 → tab 条停在上一次绘制结果，
+    // 用户只看到「版本/目录」看不到「状态」，正是 a108 声称修掉的现象。
+    try { if (typeof _subTabsPaint === 'function') _subTabsPaint(); } catch (_) {}
   }
   function _subDynOpen() {               // 动态页伪 tab（懒建；胶囊点击的展开面）
     if (!_subPaneEl) return;
@@ -1007,7 +1012,13 @@
     // ——打开必有内容（无条件显示）。fetch 回放/tick follow 在此模式下退役
     if (typeof V4Main !== 'undefined' && V4Main.on()) {
       sc.dataset.replayed = agentId;
-      V4Main.subOpen(sc, agentId, { tid: tid, type: type, desc: desc });
+      // 全审 P2（a116）：传 conclusion 容器——原调用只传 {tid,type,desc}，
+      // v4main.js:150 兜底 null → v4bridge 的两段 conclEl 渲染恒为死代码。
+      // （当前结论由 _paintConcl→t.concl 承担，本传参是让两条通路同口径
+      // 收敛，避免下次改动误判哪条是活的。）
+      var _ctb = _sub.tabs[tid];
+      V4Main.subOpen(sc, agentId, { tid: tid, type: type, desc: desc,
+                                    conclEl: (_ctb && _ctb.t && _ctb.t.concl) || null });
       _sub.manual = true;
       return;
     }

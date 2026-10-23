@@ -14,7 +14,11 @@
   var ROW_KINDS = ['turn_header', 'user_input', 'assistant_text', 'reasoning',
     'tool_call', 'subagent', 'vision', 'peer_notify', 'marker'];
   var TOOL_STATUS = ['streaming_input', 'running', 'success', 'error', 'cancelled'];
-  var STREAM_PATHS = { text: 1, inputText: 1, summary: 1 };
+  // 契约白名单：必须是**自有属性**判断。用对象当集合时 'constructor' /
+  // 'toString' 等原型链名字会命中真值（实测把字符串拼进行字段），而后端
+  // v4proto.py 用 tuple 成员判断会拒绝——双端不一致。改用数组 + indexOf。
+  var STREAM_PATH_LIST = ['text', 'inputText', 'summary'];
+  function _isStreamPath(p) { return STREAM_PATH_LIST.indexOf(p) >= 0; }
 
   function newSnapshot(epoch) {
     return { seq: 0, epoch: epoch || '', state: {}, rows: [], total: 0 };
@@ -57,7 +61,7 @@
       return snap;
     }
     if (op === 'row.delta') {
-      if (!STREAM_PATHS[d.path] || !d.append) return snap;
+      if (!_isStreamPath(d.path) || !d.append) return snap;
       for (i = 0; i < snap.rows.length; i++) {
         r = snap.rows[i];
         if (r.rowId === d.rowId) {
@@ -121,7 +125,8 @@
   }
 
   var V4P = {
-    ROW_KINDS: ROW_KINDS, TOOL_STATUS: TOOL_STATUS, STREAM_PATHS: STREAM_PATHS,
+    ROW_KINDS: ROW_KINDS, TOOL_STATUS: TOOL_STATUS,
+    STREAM_PATHS: { text: 1, inputText: 1, summary: 1 },   // 兼容导出（判据用 _isStreamPath）
     newSnapshot: newSnapshot, mkRow: mkRow,
     applyDelta: applyDelta, applyDeltas: applyDeltas, coalesce: coalesce
   };

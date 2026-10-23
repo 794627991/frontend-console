@@ -188,13 +188,31 @@ def build_app():
         threading.Timer(0.5, os._exit, (0,)).start()
         return jsonify({"ok": True})
 
-    # ---- CORS：页面自身从主进程端口来（前端直连方案的前提） ----
+    # ---- CORS：只放行主进程页面来源（同源 127.0.0.1:8765） ----
+    # 安全修复（a116 全审 P0）：原实现全站 `Access-Control-Allow-Origin: *`
+    # ——浏览器里任一网页脚本都能跨源读 /api/claude/api_config（明文 token）、
+    # 任意路径读 /api/harness/file、跨源驱动 /api/proxy/start|stop 与
+    # /api/harness/send。worker 端口可扫描，改动前主进程无 CORS 头。
+    # 现只回显白名单 Origin（主进程端口 + 本 worker 自身端口）；无 Origin
+    # （同源导航/服务端调用）不设头，浏览器按同源处理。
+    _MAIN_ORIGIN = "http://127.0.0.1:8765"
+
     @app.after_request
     def _cors(resp):
-        resp.headers.setdefault("Access-Control-Allow-Origin", "*")
-        resp.headers.setdefault("Access-Control-Allow-Methods",
-                                "GET, POST, PUT, DELETE, PATCH, OPTIONS")
-        resp.headers.setdefault("Access-Control-Allow-Headers", "*")
+        origin = (request.headers.get("Origin") or "").strip()
+        allow = ""
+        # MAJOR-6 修正（a116 二次全审）：不能放行任意本机端口——本机任一
+        # 网页（http://127.0.0.1:9999 之类）即可跨域读 /api/claude/api_config
+        # （明文 token）并驱动 /api/proxy/start|stop。只白名单主进程页面
+        # 来源与本 worker 自身端口（非 loopback 域名一律不放行）。
+        if origin and (origin == _MAIN_ORIGIN or origin == _base):
+            allow = origin
+        if allow:
+            resp.headers["Access-Control-Allow-Origin"] = allow
+            resp.headers["Vary"] = "Origin"
+            resp.headers["Access-Control-Allow-Methods"] = \
+                "GET, POST, PUT, DELETE, PATCH, OPTIONS"
+            resp.headers["Access-Control-Allow-Headers"] = "*"
         return resp
 
     return app
@@ -398,18 +416,24 @@ def _supervisor(prefer_port):
             p = _proc
         if p is not None and p.poll() is None:
             restart = False
-            if tick % 3 == 0 and not _health_ok():
-                _hung += 1
-                logging.getLogger("claude_worker").warning(
-                    "worker health 探活失败 %d/2", _hung)
-                if _hung >= 2:
-                    try:
-                        p.kill()
-                    except Exception:
-                        pass
-                    restart = True
-            else:
-                _hung = 0
+            # P1-5 修复（a116）：计数清零必须在「本次确实做了 health 检查
+            # 且成功」时发生。原 `if tick%3==0 and not health: ++ else: =0`
+            # ——两次检查之间必有两个非 %3 的 tick 走 else 清零，计数永远
+            # 到不了 2（逐 tick 模拟 60 次恒失败反证：触发点为空集），
+            # worker GIL 挂死（进程活着 poll 恒 None）时永不重启。
+            if tick % 3 == 0:
+                if not _health_ok():
+                    _hung += 1
+                    logging.getLogger("claude_worker").warning(
+                        "worker health 探活失败 %d/2", _hung)
+                    if _hung >= 2:
+                        try:
+                            p.kill()
+                        except Exception:
+                            pass
+                        restart = True
+                else:
+                    _hung = 0
             if not restart:
                 backoff = 2.0
                 continue
@@ -474,8 +498,18 @@ def manage_stop():
         try:
             if base:
                 import urllib.request
-                urllib.request.urlopen(base + "/worker_shutdown", timeout=2).read()
-                p.wait(timeout=3)
+                # P1-2 修复（a116）：原用无 body 的 urlopen（=GET）打
+                # POST-only 的 /worker_shutdown → 405，优雅收尾整段不执行：
+                # proxy_shutdown（停额度/headroom/重试代理 + **base_url 回滚
+                # 直连**）、逐会话 kill_proc、hiklink_bot 全被跳过，紧接着
+                # stdin 关闭让 worker 0.05s 内 os._exit → base_url 长期指向
+                # 已死端口，下次开 Claude Code 直接连不上；claude CLI 成孤儿。
+                _req = urllib.request.Request(
+                    base + "/worker_shutdown", data=b"{}",
+                    headers={"Content-Type": "application/json"},
+                    method="POST")
+                urllib.request.urlopen(_req, timeout=3).read()
+                p.wait(timeout=4)
         except Exception:
             pass
         if p.poll() is None:

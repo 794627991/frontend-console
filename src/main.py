@@ -395,18 +395,41 @@ def _unhook_webview_intercept():
         _orig_ready = _cls.on_webview_ready
         def _ready_no_intercept(self, sender, args):
             _orig_ready(self, sender, args)
-            try:
-                from webview.platforms.winforms import CoreWebView2WebResourceContext
-                cwv = sender.CoreWebView2
-                cwv.RemoveWebResourceRequestedFilter(
-                    "*", CoreWebView2WebResourceContext.All)
-                cwv.WebResourceRequested -= self.on_web_resource_request
-                cwv.WebResourceResponseReceived -= self.on_web_resource_response
-            except Exception:
-                pass   # 旧运行时摘不动：no-op 方法体兜底，代价仅剩空转 marshal
+            # P1-3 修复（a116）：`CoreWebView2WebResourceContext` 在装机的
+            # pywebview 上不在 webview.platforms.winforms（该类属
+            # edgechromium / Microsoft.Web.WebView2.Core），旧 import 抛
+            # ImportError 被下方 except 吞掉 → RemoveWebResourceRequestedFilter
+            # 与事件解绑都没执行，'*' 过滤器仍注册，页面每请求照样编到
+            # WinForms UI 线程（a93 宣称的「串口请求直连」不成立）。
+            # 按可用性逐级取符号，并改用枚举的 All 值兜底。
+            _ctx_all = None
+            for _imp in (
+                    lambda: __import__(
+                        "webview.platforms.edgechromium", fromlist=["x"]
+                    ).CoreWebView2WebResourceContext,
+                    lambda: __import__(
+                        "Microsoft.Web.WebView2.Core",
+                        fromlist=["x"]).CoreWebView2WebResourceContext,
+                    lambda: __import__(
+                        "webview.platforms.winforms", fromlist=["x"]
+                    ).CoreWebView2WebResourceContext):
+                try:
+                    _ctx_all = _imp().All
+                    break
+                except Exception:
+                    continue
+            cwv = sender.CoreWebView2
+            # MINOR-5 修正（a116 二次全审）：兜底值原为 0x7FFFFFFF，但
+            # CoreWebView2WebResourceContext.All 的实测值是 **0**，用
+            # 0x7FFFFFFF 永远匹配不上 → 静默退化为「不摘除」。兜底改 0。
+            cwv.RemoveWebResourceRequestedFilter(
+                "*", _ctx_all if _ctx_all is not None else 0)
+            cwv.WebResourceRequested -= self.on_web_resource_request
+            cwv.WebResourceResponseReceived -= self.on_web_resource_response
         _cls.on_webview_ready = _ready_no_intercept
     except Exception:
-        pass
+        import traceback
+        traceback.print_exc()   # 摘除失败必须可见（串口请求仍会过 UI 线程）
 
 
 def main():

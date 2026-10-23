@@ -18,7 +18,7 @@
 
 ROW_KINDS = (
     "turn_header",     # 回合头（组）：state=running|success|error|cancelled
-    "user_input",      # 用户消息行（文本/files/images 计数）
+    "user_input",      # 用户消息行（文本/files/images 路径数组）
     "assistant_text",  # 助手正文行（可流式 append text）
     "reasoning",       # 思考行（可流式 append text，默认折叠滚播）
     "tool_call",       # 工具行：status 流转，终态带 output/endedAt/dur
@@ -34,6 +34,15 @@ TOOL_STATUS = (
 
 # row.delta 允许的流式路径（行内字符串追加；越界 no-op）
 STREAM_PATHS = ("text", "inputText", "summary")
+
+
+def _deepcopy_json(v):
+    """JSON 语义深拷贝（不引入 copy 依赖；只处理 dict/list/标量）。"""
+    if isinstance(v, dict):
+        return {k: _deepcopy_json(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_deepcopy_json(x) for x in v]
+    return v
 
 
 def new_snapshot(epoch=""):
@@ -96,7 +105,14 @@ def _apply_upserted(snap, row):
 
 
 def _apply_removed(snap, from_row_id):
-    keep = [r for r in snap["rows"] if r["rowId"] < from_row_id]
+    # N6 修复（a116）：rowId 混型（int / str）时 `<` 直接 TypeError。
+    # 统一按「数值优先、否则字符串序」比较——同型时行为与旧实现完全一致。
+    def _lt(a, b):
+        try:
+            return a < b
+        except TypeError:
+            return str(a) < str(b)
+    keep = [r for r in snap["rows"] if _lt(r["rowId"], from_row_id)]
     removed = len(snap["rows"]) - len(keep)
     snap["rows"][:] = keep
     snap["total"] = max(0, snap["total"] - removed)
@@ -213,10 +229,18 @@ def wire_snapshot(snap, tail=0, tail_turns=0):
         rows = rows[-tail:]
     return {
         "seq": snap["seq"], "epoch": snap["epoch"],
-        "state": dict(snap["state"]),
-        "rows": [dict(r) for r in rows],
+        # N7 修复（a116）：state 必须深拷贝——浅拷贝 ({}, []) 里的嵌套对象
+        # 与 delta 共享引用，前端 apply 一次就把服务端快照改脏（实测
+        # {'a': 99} 回写）。
+        "state": _deepcopy_json(snap["state"]),
+        # rows 同样深拷（row 内 input 等嵌套对象与 delta 共享引用）
+        "rows": [_deepcopy_json(r) for r in rows],
         "total": snap["total"],
         "firstRowId": rows[0]["rowId"] if rows else 0,
+        # a119P（用户实测「打开子代理卡顿」）：全量首行时刻（裁剪前）——
+        # 子 topic 行数尾窗裁掉首行后，前端轮时长基（_firstAt）会按尾窗
+        # 首行算短（大子会话「已工作 X」缩水）；携全量首行时刻保真
+        "firstAt": snap["rows"][0].get("at", 0) if snap["rows"] else 0,
         "turnsTotal": sum(1 for r in snap["rows"]
                           if r.get("kind") == "user_input"
                           and str(r.get("text") or "").strip()),

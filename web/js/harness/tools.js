@@ -547,10 +547,24 @@
   // 形态兜底——"launched successfully" + "internal" 双签，防误伤前台真报告）
   function _hgIsBgLaunchAck(row, tr) {
     if (row && !row.classList.contains('agentline')) return false;
+    const t = resultText(tr);
+    // V3-2 修复（a116）：续派回执也必须拦。真实回执形态：
+    //   {"success":true,"resumedAgentId":"aXXX"}  —— 无 run_in_background 字段
+    // 旧判据只查 _HG.agents[tr.tool_use_id].bg（本地续派档案键是 agentId，
+    // 直查恒 miss）与 "agent launched successfully"，实测漏 103/145 真实
+    // 回执 → 续派行被提前定格 data-final=1、徽章翻「完成」、摘要=回执 JSON，
+    // 而链实际仍在跑。
+    if (tr && _HG.peerSent && _HG.peerSent[tr.tool_use_id]) return true;
+    if (/"resumedAgentId"\s*:/.test(t)) return true;
+    if (/"agentId"\s*:/.test(t) && /"success"\s*:\s*true/.test(t)) return true;
     const a = (_HG.agents || {})[tr.tool_use_id];
     if (a && a.bg) return true;
-    const t = resultText(tr);
-    return /^agent launched successfully/i.test(t) && t.indexOf('internal') !== -1;
+    // P2-1 修复（a116）：去掉 `^` 锚定——真实 138 条 ACK 回执全部以
+    // 「Async agent launched successfully.」开头，锚定到 `agent` 首字符
+    // 命中 0/138；且其中 98 条没有 run_in_background 字段（档案 bg 腿也落空）
+    // → 该守卫在 71% 真实回执上恒 false，Agent 行派发即定格「完成」。
+    return /agent launched successfully/i.test(t)
+      || /for internal use|is not a final result/i.test(t);
   }
   // v3.2.31（bug5① 根因修复）：完成摘要与派发描述同文去重——CLI 的
   // task_notification.summary / Task tool_result 常原样复述 input.description
@@ -663,7 +677,18 @@
     // a49：harness 交互提问卡（a42 UI 正式归位 V3 原件——用户定调「要统一
     // 成之前的效果」：❓提问+题干摘要头；体=题目+选项(含说明)+回答区；
     // live 与回放同一构造，配置表 kind:'askcard' 分流到此）
-    if (cfg.kind === 'askcard') return _hgAskCardBuildV3(o);
+    if (cfg.kind === 'askcard') {
+      // V3-1 修复（a116）：必须把公共账挂到行上——原实现直接 return，
+      // 而 hgToolCard 的 `d._cfg = cfg` 在下方（:718），于是
+      // renderOneToolResult 的 `row._cfg || {}` 拿不到 askcard：
+      // ① 专线收口分支不进 → 徽章永远停在 running；
+      // ② 走通用回写 → 原始答案再 append 一份 .h-tool-out 进卡体（显示两遍）。
+      var _ar = _hgAskCardBuildV3(o);
+      _ar._cfg = cfg;
+      _ar._name = name;
+      _ar._id = o.id;
+      return _ar;
+    }
     // agent 行：单行任务卡工厂（解剖两轨同源；live 队列/秒表由 caller 挂）
     if (cfg.kind === 'agent') {
       // a84：SendMessage 续派行的描述=消息首行（input 无 description 字段；

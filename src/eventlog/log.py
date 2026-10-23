@@ -69,8 +69,23 @@ class SessionEventLog(object):
     def bump_epoch(self):
         self.store.bump_epoch()
 
-    def restore(self, epoch, seq):
-        self.store.restore(epoch, seq)
+    def restore(self, epoch, seq, wseq_hwm=0):
+        """对象重建（GC/重启）时续号续代。`wseq_hwm` 是 v4 投递序号高水位
+        （a116 十四次全审）：必须一并直通 store，否则 `_claim_base` 读不到
+        真实高水位、重启后起点回落 → 旧客户端游标落进新空间丢历史。"""
+        self.store.restore(epoch, seq, wseq_hwm)
+
+    # ---- v4 投递序号高水位（a116 十四次全审）----
+    # 必须**代理到 store**：写入方（v4feed._commit）与读取方（v4hub 建 feed、
+    # session.to_meta）都拿的是本门面对象。原实现在门面上挂实例属性，
+    # 而 restore 写的是 store 的同名属性 → 两个对象各存一份，重启永远读 0。
+    @property
+    def wseq_hwm(self):
+        return getattr(self.store, "wseq_hwm", 0)
+
+    @wseq_hwm.setter
+    def wseq_hwm(self, v):
+        self.store.wseq_hwm = int(v or 0)
 
     # ---- 截断全文按需拉取 ----
     def full_output(self, ref):

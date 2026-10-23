@@ -102,7 +102,7 @@ def _proj_for_session(home, sid):
     return proj_dir
 
 
-def _push_file(s, fp, aid, force=False):
+def _push_file(s, fp, aid, force=False, reconcile=False):
     """读 fp 自 offset 起的增量整行：喂 v4 子投影 + emit 兼容事件。
 
     a68（用户实测「子代理过程缺失/结论永不到/永远不结束」根因）：增量
@@ -114,12 +114,25 @@ def _push_file(s, fp, aid, force=False):
 
     force=True：绕过新鲜窗（订阅时刻的对账自愈用——冻结 feed 重开 pane
     时全量重推一轮，uuid 去重保证幂等）。
+    reconcile=True（a119P，用户实测「打开子代理必卡」）：订阅时刻对账的
+    新语义——绕过新鲜窗但**保留 offset 只补间隙**。force 归零=每开一次
+    pane 全量重读整份 MB 级转写+逐行解析，是打开卡顿主源；追平时
+    （offset==size）零成本跳过，有间隙才读且只读间隙。全量完整性由同
+    请求内 v4_sub_feed 的 hydration 兜底（hydrate 整读文件，其命中文件
+    的 offset 由 mark_offsets 直推到尾）。
     返回本轮推送字节数（0=无增量；watcher 退避档位的依据）。"""
     now = time.time()
-    if not force and now - os.path.getmtime(fp) > FRESH_WINDOW_S:
+    if not force and not reconcile \
+            and now - os.path.getmtime(fp) > FRESH_WINDOW_S:
         return 0
     off = _offsets.get(fp, 0)
     sz = os.path.getsize(fp)
+    if force:
+        # S2 修复（a116）：force 的语义是「全量重推」——旧实现在 sz<=off
+        # 时仍早退，而被救的正是 offset 已到文件尾的两类冻结 feed（旧截尾
+        # 时代把 off 跳到 sz；转写长时间打开未追加 sz==off）→ 自愈链恒
+        # no-op。归零后由 uuid 去重保证幂等（子 feed）/内容指纹保证幂等。
+        off = 0
     if sz <= off:
         return 0
     with open(fp, "r", encoding="utf-8", errors="replace") as f:
@@ -178,15 +191,37 @@ def _push_file(s, fp, aid, force=False):
     return new_off - off
 
 
-def push_paths_once(s, aid, paths):
-    """a68：订阅时刻的强制对账——对候选路径全量重推一轮（绕过新鲜窗）。
-    冻结 feed（截尾时代丢的尾段/中途打开-pane 缓存的残缺投影）在用户
-    重开 pane 时由此自愈；uuid 去重保证与既有行幂等。"""
+def mark_offsets(paths):
+    """a119P（用户实测「打开子代理卡顿」）：hydration 已整读的文件，offset
+    直推到文件尾——订阅时刻对账（push_paths_once）与 watcher 后续增量
+    都从尾部续，不再全量重读。只标**产出过行的命中文件**（v4_sub_feed 依
+    序试候选、首个产出即停，未读候选不标——留给对账首读，内容指纹/uuid
+    去重保证幂等）。"""
     for p in paths or []:
         if not p or not os.path.isfile(p):
             continue
         try:
-            _push_file(s, p, aid, force=True)
+            _offsets[p] = os.path.getsize(p)
+        except OSError:
+            pass
+
+
+def push_paths_once(s, aid, paths):
+    """a68：订阅时刻的强制对账——对候选路径重推一轮（绕过新鲜窗）。
+    冻结 feed（截尾时代丢的尾段/中途打开-pane 缓存的残缺投影）在用户
+    重开 pane 时由此自愈；uuid 去重保证与既有行幂等。
+    a119P（用户实测「打开子代理必卡」）：force（offset 归零全量重读）
+    改 reconcile（保留 offset 只补间隙）——审计类子代理转写 MB 级，每开
+    一次 pane 全量重读+逐行解析是打开卡顿主源。追平零成本跳过；冷文件
+    也能补齐缺口。全量兜底由同请求内 v4_sub_feed 的 hydration 承担
+    （hydrate 整读文件，命中文件的 offset 由 mark_offsets 推到尾）；force
+    归零救的「offset 被旧截尾时代跳到尾部」残留在现进程内不可复现
+    （a68 后 offset 只在真读完才前进）。"""
+    for p in paths or []:
+        if not p or not os.path.isfile(p):
+            continue
+        try:
+            _push_file(s, p, aid, reconcile=True)
         except Exception:
             pass
 

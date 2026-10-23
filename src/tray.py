@@ -457,10 +457,23 @@ def _make_menu_provider(window, on_quit):
             # 桥（状态/操作经 /api/proxy/* 往返）；worker 未就绪跳过该段
             from src import server as _srv
             _base = getattr(_srv, "WORKER_BASE", "")
+            # MAJOR-5 修正（a116 二次全审）：inline 排障形态（CLAUDE_INLINE=1
+            # 或 CLAUDE_OFFLOAD=False）下 manage_start 直接 return、
+            # WORKER_BASE 恒空，但 proxy_bp 就注册在**主进程**（server.py），
+            # 本地 tray_menu_items() 完全可用。原实现只判 _base，让该形态
+            # 的代理菜单整段消失（功能回归）。
+            _offload = bool(getattr(_srv, "CLAUDE_OFFLOAD", False))
             if _base:
                 items.extend(_proxy.tray_menu_items_remote(_base))
-            else:
+            elif not _offload:
                 items.extend(_proxy.tray_menu_items())
+            else:
+                # P2-9 修复（a116）：offload 形态下 worker 未就绪时**不得**
+                # 回落到本地 proxy 菜单——其回调（start_proxy/set_mode）会在
+                # 主进程真实执行（绑端口、改 base_url），隔离被绕过且两个
+                # 进程可能同时持有代理状态。只放一行灰字提示。
+                items.append(("item", "（Claude 后端未就绪）", lambda: None,
+                              {"enabled": False}))
         except Exception:
             _log("Proxy 菜单段构建失败: %s", repr(_exc()))
         items.append(("sep",))

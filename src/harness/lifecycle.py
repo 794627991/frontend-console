@@ -36,7 +36,7 @@ def _get_or_create(sid):
         # v2.35.2：事件序号续号；v3.0 连代际一起续——GC 重建不是日志重写，
         # epoch 不变，前端旧 base 仍可 resume；无 epoch 的旧 meta（升级前
         # 落盘）→ restore 内部换新代，前端旧水位作废走一次 snapshot 重建
-        s.log.restore(m.get("epoch"), m.get("seq"))
+        s.log.restore(m.get("epoch"), m.get("seq"), m.get("wseq"))
         # v3.1（#10/#14）：durable 输入账本跨 GC/重启恢复——挂起条目在新对象
         # 里续命，回合终结泵自然接手；世代号一并续（rewind 作废判定不因重建
         # 失忆）。条目结构向后兼容（无 id 的旧数据丢弃）

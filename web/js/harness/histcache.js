@@ -38,6 +38,34 @@
     }
     return lines;
   }
+  // a120P（性能档案+实测双实锤「大会话首翻中位帧 117ms/8fps，二次翻 16.7ms」）：
+  // 初次整窗渲染后 CV 立即把屏外内容反物化回估高占位（600px/组、200px/行），
+  // 估高≠真高 → 用户每次加载后的**首翻**都踩「估高→真高」修正风暴：
+  // scrollHeight 逐帧 ±数百 px 跳变 + 单帧整组 markdown 全量布局（实测
+  // 4 组/1076 工具/445 消息的会话来回翻 302 位置中位帧 117ms）。修：渲染
+  // 收尾**临时关 CV 强制全量物化**（一次性付清布局，实测 449 元素 175ms）
+  // → 量真高写成 inline contain-intrinsic-size 种子 → 复原。此后估高恒=
+  // 真高：翻动零修正（实测同扫法中位 0ms/最大 0.1ms）+反物化占位准确=
+  // 滚动条稳定。'auto' 前缀保留浏览器「上次渲染尺寸」记忆优先权，种子
+  // 只在记忆清零（刷新/快照恢复后的新元素）时兜底。钉高跑在收体/清壳的
+  // 高度终态之后；回合体开合（grid 过渡 300ms）由点击点 420ms 后单组重钉
+  function _hgPinIntrinsicHeights(flow) {
+    if (!flow || !flow.classList) return;
+    flow.classList.add('hg-pin-force');
+    try {
+      const els = flow.querySelectorAll('.h-grp, .h-msg, .h-tl .h-tool');
+      const n = els.length;
+      if (n) {
+        const hs = new Array(n);
+        for (let i = 0; i < n; i++) hs[i] = els[i].offsetHeight;
+        for (let i = 0; i < n; i++) {
+          const h = hs[i];
+          if (h > 0) els[i].style.containIntrinsicSize = 'auto ' + h + 'px';
+        }
+      }
+    } catch (_) {}
+    flow.classList.remove('hg-pin-force');
+  }
   function _histRender(lines, start, opt) {
     // 398-P5a→399-R3：未落盘行保尾（抽 _hgMergeLive，fetch 赋值处同用）
     lines = _hgMergeLive(lines, _HG.histAll, _HG.fetchedSeq);
@@ -256,6 +284,8 @@ if (l && l.live) l.live = 0;   // 398-P5b：重放归一（live 动画/流式语
         const ph = gp.querySelector(":scope > .h-msg.asst.ph");
         if (ph) ph.remove();
       });
+      // a120P：高度终态（收体/清壳后）钉 CV 估高种子——首翻零修正（见函数头）
+      _hgPinIntrinsicHeights(_realFlow);
       // v3.5.226（用户最后通牒「头没了立刻根治」）：活组头**渲染器当场亮**——
       // 不再依赖 phResume 事后补（其 thinkBox 早退分支让无思考段的活组头
       // 永不亮=15:03 复现形态）。busy 真值=noFinalize（调用方传 fetchedBusy
