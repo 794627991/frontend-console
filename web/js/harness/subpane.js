@@ -247,32 +247,23 @@
       if (!a) return;
       // v3.2R1(P2)：无 agentId 本地单 toast 即止——_subReplay('') 内部还会
       // 弹一条，双 banner 2.6s 内相继覆盖
-      if (!a.agentId) { showBanner('该历史子代理无 agentId 记录，无法回放', 2600); return; }
+      // v4.0.1（无条件可点开）：无 agentId 交解析漏斗——回放档 rid 不是
+      // 真 id，挖不出就由漏斗兜底开目录，不再静默弹一句了事
+      if (!a.agentId) { _subResolveOpen(tid, a.type, a.desc); return; }
       _subReplay('rpl:' + tid, a.type, a.desc, a.agentId, true);
       return;
     }
     const a = (_HG.agents || {})[tid];
-    if (!a) return;
+    // v4.0.1（用户硬性要求「无条件能点开任意子代理」）：档案缺失原先是
+    // 静默 return（点了毫无反应）——交给统一的解析漏斗，行上有 tid 就
+    // 一定尝试解析到真实 agentId
+    if (!a) { _subReopen(tid); return; }
     // v3.5.160 全审F3a：幻影档案（unresolved=降级 taskId 无转写）**不分
     // done/运行**一律走解析漏斗——notification 到达即 done:true 而
     // unresolved 保留，done 分支拿包装 taskId 硬开回放=「未找到」+noreplay
     // 锁（用户实锤 b7xvfmyip 形态在已结束入口存活）
-    if (a.unresolved && !a.agentId) {
-      showBanner('正在定位该子代理（扫主会话转写）…', 2500);
-      fetch('/api/harness/subagent_resolve?sid=' + encodeURIComponent(_HG.sid) +
-            '&tid=' + encodeURIComponent(tid))
-        .then(r => r.json()).then(j => {
-          if (j && j.ok === true && j.kind === 'agent' && j.agentId) {
-            a.unresolved = false; a.agentId = j.agentId; a.taskId = j.agentId;
-            _subReplay(tid, a.type, a.desc, j.agentId, true);
-          } else if (j && j.kind === 'task') {
-            showBanner('这是后台命令任务（Bash 后台执行），没有子代理转写', 4000);
-          } else {
-            showBanner('找不到该子代理的转写记录（可能已被清理）', 4000);
-          }
-        }).catch(() => showBanner('子代理定位请求失败', 4000));
-      return;
-    }
+    // v4.0.1：与 _subReopen 的幻影分支收口到同一函数，避免两处漏斗分叉
+    if (a.unresolved && !a.agentId) { _subResolveOpen(tid, a.type, a.desc); return; }
     if (!a.done) {
       // v3.2.6（ZCode 模式）：协作代理运行中——段卡已隐、过程唯一可看面=窗格，
       // 有真实 taskId 即开全量回放+轮询镜像续流（force 重拉）；无 id 回落跳
@@ -280,9 +271,9 @@
       if (a.collab) {
         const aid = a.taskId || a.agentId || '';
         if (aid) { _subReplay(tid, a.type, a.desc, aid, true); return; }
-        // v3.2.6R（审计F4）：无真实 id——段卡已隐，跳段是 display:none 上的
-        // no-op；明确告知（与 agentline 死点击 banner 同口径）
-        showBanner('该协作代理无 agentId 记录，过程暂不可回看', 2600);
+        // v4.0.1（用户硬性要求「无条件能点开任意子代理」）：无真实 id
+        // 不再只弹 banner——走解析漏斗尝试从转写里挖出 agentId
+        _subResolveOpen(tid, a.type, a.desc);
         return;
       }
       // v3.5.324（用户实锤「切会话再切回来，数据没了」）：运行中一律走
@@ -993,7 +984,13 @@
       return;
     }
     agentId = agentId || a.taskId || a.agentId || '';
-    if (!agentId) { showBanner('该子代理没有 agentId 记录，无法回放', 2600); return; }
+    // v4.0.1（用户硬性要求「无条件能点开任意子代理」）：无 agentId 不再
+    // 弹 banner 了事——所有调用方（行卡/目录/胶囊）最后都汇到这里，是
+    // 「点了必有反应」的最后一道关。交回解析漏斗按 tid 挖真实 agentId。
+    if (!agentId) {
+      if (typeof _subResolveOpen === 'function') { _subResolveOpen(tid, type, desc); return; }
+      showBanner('该子代理没有 agentId 记录，无法回放', 2600); return;
+    }
     // v3.5.189（用户实锤「SendMessage 明明活着却显示成了回放」）：tab 态按
     // 档案生死分——活代理=实况 tab（原名+绿点+秒表，镜像续流跟随当前环节），
     // 已结束=回放 tab（置灰徽章）。回放拉底机制不变（运行中也拉全量打底，

@@ -572,7 +572,13 @@ function buildClaudeHarnessTab(opts = {}) {
     const agRow = e.target.closest('.h-tool.agentline');
     if (agRow) {
       const pid = agRow.dataset.tid || '';
-      if (pid && (_HG.agents || {})[pid]) { _subReopen(pid); return; }
+      // v4.0.1（用户硬性要求「无条件能点开任意子代理」）：原先只在档案
+      // （_HG.agents[pid]）存在时才走 _subReopen，档案缺失就直接弹
+      // 「没有 agentId 记录」——但 _subReopen 自己就有完整漏斗
+      //（regSync 重查 → 后端 subagent_resolve 扫转写）。档案缺失恰恰是
+      // 最需要该漏斗的场景，此处却提前放弃，等于把可救的行判死。
+      // 改为**无条件**进漏斗：行上有 tid 就一定尝试解析到真实 agentId。
+      if (pid) { _subReopen(pid); return; }
       let aid = agRow.dataset.hgSubr || '';
       if (!aid) {
         const _ty = agRow.dataset.hgSubType || '', _ds = (agRow.dataset.hgSubDesc || '').slice(0, 40);
@@ -584,7 +590,7 @@ function buildClaudeHarnessTab(opts = {}) {
       //（_subReplay/_subReplay(force,alive)）+miss 时 regSync→resolve 漏斗）
       if (aid) { _subReopen(aid); return; }
       _subDirOpen();
-      showBanner('该子代理行没有 agentId 记录——已打开子智能体目录，可从列表进入', 3000);
+      showBanner('该子代理行没有 taskId/agentId——已打开子智能体目录，可从列表进入', 3000);
       return;
     }
     const tHead = e.target.closest('.h-tool-head');
