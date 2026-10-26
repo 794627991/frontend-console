@@ -273,6 +273,29 @@ class SubagentReadModel(object):
         with self._lock:
             return (self._proj or {}).get("tidMap", {}).get(str(tid or "")) or ""
 
+    def aid_to_tid(self, aid):
+        """v4.0.3：agentId → 首次派发 tid 的反查（tidMap 反向）。
+
+        用途：停止子代理的 task-notification 只带 <task-id>（=agentId）
+        **不带 tool-use-id**——镜像侧要拿到投影行键（tid）才能把 SUB 行
+        从 running 翻到终态，否则胶囊假运行（用户实锤）。
+        多个 tid 映射到同一 aid 时取**最早**一个（dict 保序 = 派发序，
+        首见 tid 是 SUB 行的建行键）。"""
+        k = str(aid or "")
+        if not k:
+            return ""
+        with self._lock:
+            m = (self._proj or {}).get("tidMap", {}) or {}
+            for t, a in m.items():
+                if a == k:
+                    return t
+            # 投影未含（2s Sync 窗口/刚停下）→ 反查 agents 表的 tids 列表
+            ag = ((self._proj or {}).get("agents") or {}).get(k) or {}
+            tids = ag.get("tids") or []
+            if tids:
+                return str(tids[0])
+            return ""
+
 
 _models = {}
 _models_lock = threading.Lock()

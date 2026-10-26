@@ -930,7 +930,19 @@
       // 胶囊（_hgAgentsRunning 数运行中）与目录读档案，不收口=假运行
       if (!this.opt.sub && typeof _HG !== 'undefined' && _HG.agents
           && row.tid) {
-        var a = _HG.agents[row.tid];
+        // v4.0.3（用户实锤「已停止的子代理胶囊还显示运行中」）：原实现
+        // 只直查 _HG.agents[row.tid]。注册表 Sync 之后档案键是 **agentId**
+        // 而 SUB 行的 tid 是 call tid → 直查恒 miss → 新建一个空档案标
+        // done，真正挂着的旧档案（agentId 键）永远 done=false = 胶囊假
+        // 运行（实测 SUB 行已翻 success，胶囊仍显示 2 个在跑）。
+        // 修：先走单点解析 _hgAg（tid/aidKey/tidMap 三件套），miss 再按
+        // childTopic(agentId) 直配，最后才就地建档。
+        var a = (typeof _hgAg === 'function' ? _hgAg(row.tid) : null)
+                || _HG.agents[row.tid];
+        if (!a && row.childTopic) {
+          var _aidC = String(row.childTopic).replace(/^sub:/, '');
+          if (_aidC && _HG.agents[_aidC]) a = _HG.agents[_aidC];
+        }
         if (!a && row.childTopic) {
           // a64：完成太快时 running 中间帧可能没触发建档（点不开+假运行
           // 实测根因）——终态帧就地建/补档案
@@ -939,6 +951,9 @@
         if (a && !a.done) {
           a.done = true; a.doneAt = Date.now();
           a.err = row.status === 'failed';
+          // v4.0.3：停止态（status 已翻 success 但有 stopped 信号）——
+          // 档案带上 interrupted 供目录/行卡画「已停止」而非绿「完成」
+          a.interrupted = !!row.stopped;
           a.result = String(row.summary || '').trim().slice(0, 400);
           // a64：钥匙终态补发——childTopic 直取 agentId（不依赖镜像重发），
           // 映射+hgSubr 回写行卡（点开窗格）

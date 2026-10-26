@@ -584,13 +584,51 @@ class V4Feed(object):
                 tid = data.get("tid") or ""
                 pair = self._pending_agents.pop(tid, None)
                 ok = bool(data.get("ok"))
+                # v4.0.3（用户实锤「已停止的子代理胶囊还显示运行中」）：
+                # 停止 ≠ 失败。stopped 的终态要把 SUB 行从 running 翻成
+                # success（画「已停止」徽章而非红叉）——原实现 ok=False
+                # 会落 failed，用户看到的是出错。
+                _stopped = bool(data.get("stopped"))
+                _st = ("success" if ok or _stopped else "failed")
                 _brief = (data.get("brief") or "").strip()
+                if pair is None:
+                    # v4.0.3 兜底：停止通知可能不带 tool-use-id（session 侧
+                    # 已尽量反查 tid，但冷启动窗口内反查可能落空）——按
+                    # **agentId（task_id/aid）** 找本 feed 里 running 的
+                    # SUB 行，它就是同一个子代理。找不到就放弃（无行可翻）。
+                    # **不能 return**：reducer 的 return 语义是「本条变更
+                    # 生成完毕」而非「跳过剩余分支」——下面 tool 行回填与
+                    # 其它副作用仍需执行。用 _rid_x 是否命中决定是否 upsert。
+                    _aid_x = str(data.get("task_id") or data.get("aid") or "")
+                    _rid_x = None
+                    if _aid_x:
+                        for _r in self.snap["rows"]:
+                            if (_r.get("kind") != "subagent" or _r.get("status")
+                                    not in (None, "", "running")):
+                                continue
+                            if (str(_r.get("childTopic") or "")
+                                    .replace("sub:", "") == _aid_x):
+                                _rid_x = _r.get("rowId")
+                                break
+                    if _rid_x is not None:
+                        # brief 空时**不能**覆盖 summary——停止通知通常不带
+                        # 摘要，写成空串会把行卡标题抹掉（实测派发后变空）。
+                        _f = {"status": _st, "endedAt": ts}
+                        if _stopped:
+                            _f["stopped"] = True    # 前端据此画「已停止」
+                        if _brief:
+                            _f["summary"] = _brief
+                        d, _ = self._upsert(_rid_x, **_f)
+                        if d:
+                            ds.append(d)
                 if pair:
                     srid = pair[0]
-                    d, _ = self._upsert(srid,
-                                        status="success" if ok else "failed",
-                                        summary=_brief,
-                                        endedAt=ts)
+                    _f2 = {"status": _st, "endedAt": ts}
+                    if _stopped:
+                        _f2["stopped"] = True
+                    if _brief:
+                        _f2["summary"] = _brief
+                    d, _ = self._upsert(srid, **_f2)
                     if d:
                         ds.append(d)
                 # a66R：真结论回填权威 tool 行——a67 实测修正：CLI 新版

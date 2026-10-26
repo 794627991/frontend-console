@@ -287,18 +287,31 @@ class HarnessSession:
             # 结算追责（_audit_settle 按线咬：补审/补方案指令自动续发），派发
             # 标记（designer/reviewer）结算时照样核验——追责能力不降，只去掉
             # 中途打断。_audit_settings_path 随之不再生成。
-            # v3.5.314（用户定调恢复事中闸，推翻 v3.5.51 退役决策）：light
-            # 形态恢复 PreToolUse hook 注入——回合内直改**累计**达设计线且
-            # 尚未派 reviewer 时拦下一次并指路派 designer（designFired 一次
-            # 性；reviewed 在场不拦=v3.5.313 豁免语义；strong/mid 不入闸：
-            # 直改常态，回合结算审计兜底）。注入失败照常启动（闸是增强不是
-            # 依赖，结算审计仍在兜底）。
+            # v3.5.314（用户定调恢复事中闸，推翻 v3.5.51 退役决策）：恢复
+            # PreToolUse hook 注入——回合内直改**累计**达设计线且尚未派
+            # reviewer 时拦下一次并指路派 designer（designFired 一次性；
+            # reviewed 在场不拦=v3.5.313 豁免语义）。注入失败照常启动
+            # （闸是增强不是依赖，结算审计仍在兜底）。
+            # v4.0.2（用户实锤「事中闸还是未生效」）：原条件 `not st[2]`
+            # 只给 light 注入——mid 形态（strong 旗）**不注入**。而结算
+            # `_audit_settle` 的设计档分支不区分 strong，mid 照样事后按
+            # 设计线判违规。口径不一致 = 只事后咬、事中从不拦，正是用户
+            # 看到的现象（本机会话实跑 DeepSeek-V4.1-Flash→mid）。
+            # 修：闸与结算**同口径**——只要设计线 > 0 就注入；闸内
+            # audit_gate_check 对 strong 自会走同一判据。去重不是靠不注入，
+            # 而是 designFired 一次性。
             _st_audit = self._audit_state()
-            if _st_audit is not None and not _st_audit[2]:
-                _p = _audit_hook_settings_path()
-                if _p:
-                    self._audit_settings_path = _p
-                    argv += ["--settings", _p]
+            if _st_audit is not None:
+                try:
+                    from .roles import design_limit as _dl
+                    _gate_on = _dl() > 0
+                except Exception:
+                    _gate_on = not _st_audit[2]
+                if _gate_on:
+                    _p = _audit_hook_settings_path()
+                    if _p:
+                        self._audit_settings_path = _p
+                        argv += ["--settings", _p]
         if sys_prompt:
             argv += ["--append-system-prompt", sys_prompt]
         if self.name:
@@ -1185,6 +1198,15 @@ class HarnessSession:
         except Exception:
             return ""
 
+    def _aid_to_tid(self, aid):
+        """v4.0.3：agentId → 派发 tid（停止通知缺 tool-use-id 时的反查）。
+        与 _rm_aid 同纪律：只读缓存不 refresh，异常回空串。"""
+        try:
+            from .subagent_readmodel import get_model
+            return get_model(self.sid).aid_to_tid(aid)
+        except Exception:
+            return ""
+
     def _emit_task_mirror(self, o):
         """CLI 杂讯 → 干净生命周期事件。前端 handleEvent 的 20 段 Task
         解析（协作包装/转交线/段壳）保持不动——镜像事件只喂 reducer 投影
@@ -1197,7 +1219,18 @@ class HarnessSession:
             return
         tid = str(o.get("tool_use_id") or "")
         if not tid:
-            return
+            # v4.0.3（用户实锤「已停止的子代理胶囊还显示运行中」）：停止
+            # 子代理的 task-notification **没有 tool-use-id**，只有
+            # <task-id>（=agentId）。原实现的 `if not tid: return` 直接把
+            # 停止信号扔掉 → 投影里的 SUB 行永远停在 running → 胶囊假运行。
+            # 修：task_notification 缺 tid 时用 task_id（agentId）反查原
+            # 派发 tid，再走同一条终态收口。
+            if sub != "task_notification":
+                return
+            _tid_task = str(o.get("task_id") or "")
+            if not _tid_task:
+                return
+            tid = self._aid_to_tid(_tid_task) or _tid_task
         if sub == "task_started":
             # v3.5.322（复审#1）：只镜像**真子代理**（subagent_type 非空，与
             # 1183 行 _bg_tasks 登记同判据）——CLI 对 run_in_background 的
@@ -1229,8 +1262,19 @@ class HarnessSession:
             self._bg_tasks.pop(tid, None)
             usage = o.get("usage") or {}
             st = str(o.get("status") or "")
+            # v4.0.3（用户实锤「已停止的子代理胶囊还显示运行中」）：停止
+            # 子代理的 notification <status>=stopped（cancelled 同族）——
+            # 原 ok 判据只认 completed/success，stopped 被判成「不正常结束」
+            # 但**仍走 ok=False**，语义上会被当失败。这里显式区分三态：
+            # 正常完成 / 被停（用户主动，非错误） / 失败。
+            _st_l = st.strip().lower()
+            _stopped = _st_l in ("stopped", "cancelled", "canceled",
+                                 "interrupted", "killed")
             self.emit({"kind": "subagent_result", "tid": tid,
-                       "ok": st in ("", "completed", "success"),
+                       "ok": (_st_l in ("", "completed", "success")),
+                       # v4.0.3：新字段——被停≠失败（目录/行卡按它画
+                       # 「已停止」而非红叉）。旧消费者忽略未知键不受伤。
+                       "stopped": _stopped,
                        "brief": str(o.get("summary") or "")[:200],
                        "tokens": usage.get("total_tokens") or 0,
                        "tool_n": usage.get("tool_uses") or 0,

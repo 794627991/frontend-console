@@ -40,6 +40,39 @@ def _audit_nlines(s):
 # 纯文档后缀（小写，含点）——_audit_lines 对这些目标不计行数（见该函数 docstring）
 _AUDIT_DOC_EXTS = (".md", ".markdown", ".mdx", ".txt", ".rst", ".adoc")
 
+# 测试用途路径豁免（v4.0.2，用户拍板「所有测试用途的脚本不应该计算」）：
+# 审计线管的是**程序风险**（会不会把产品搞坏），测试/探针脚本只影响
+# 验证面，写多少行都不进产品。按路径判（目录名 + 文件名前缀）——
+# 项目约定 tests/ 目录、tools/_ 前缀的探针脚本（_probe_*/_stress_*），
+# 以及 test_*.py / *_test.js / *.spec.js 这类命名。
+_AUDIT_TEST_DIRS = ("tests", "testing", "test", "__tests__", "spec",
+                    "e2e", "fixtures")
+_AUDIT_TEST_PREFIX = ("test_", "_probe_", "_stress_", "_selftest", "_smoke",
+                      "_ask_", "_busy_", "_chain_", "_analyze_", "_scan_",
+                      "_white_", "_prof_", "_agents_", "_vision_")
+_AUDIT_TEST_SUFFIX = ("_test.py", "_test.js", "_test.ts", ".test.js",
+                      ".test.ts", ".spec.js", ".spec.ts")
+
+
+def _audit_is_test_path(path):
+    """路径是否属测试用途（命中即不计行数）。大小写不敏感。"""
+    p = str(path or "").replace("\\", "/").lower()
+    if not p:
+        return False           # 取不到路径：保守计入（不敢豁免未知目标）
+    parts = [x for x in p.split("/") if x]
+    if not parts:
+        return False
+    # 目录段命中（tests/ 等；不看最后一段——那是文件名）
+    for seg in parts[:-1]:
+        if seg in _AUDIT_TEST_DIRS:
+            return True
+    name = parts[-1]
+    if name.startswith(_AUDIT_TEST_PREFIX):
+        return True
+    if name.endswith(_AUDIT_TEST_SUFFIX):
+        return True
+    return False
+
 # ---- from claude_harness.py:874 (_audit_lines) ----
 
 
@@ -59,6 +92,8 @@ def _audit_lines(name, inp):
     try:
         path = str(inp.get("file_path") or inp.get("notebook_path") or "")
         if path.lower().endswith(_AUDIT_DOC_EXTS):
+            return 0
+        if _audit_is_test_path(path):
             return 0
         if name == "Edit":
             return max(_audit_nlines(inp.get("old_string")),

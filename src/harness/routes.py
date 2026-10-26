@@ -1074,10 +1074,11 @@ def harness_audit_gate():
                       if x.session_id == csid), None)
         if s is not None:
             st = s._audit_state()
-            # 闸仅 light 形态——strong 主会话直干是设计常态，走回合结算
-            # 审计兜底（_audit_state 第三位 strong 旗分流；旧 strong 会话
-            # 升级前注入的 hook 再来问也在这里被挡下）
-            if st is not None and not st[2]:
+            # v4.0.2（用户实锤「事中闸还是未生效」）：原 `not st[2]` 把
+            # strong(mid) 形态挡在闸外，而结算 `_audit_settle` 的设计档
+            # 不看 strong —— 口径不一致导致 mid 只事后咬。改为与结算同口径：
+            # 闸只看设计线是否启用，形态不再参与。
+            if st is not None:
                 au = s._audit or {}
                 used_l = int(au.get("lines") or 0)
                 fired = bool(au.get("designFired"))

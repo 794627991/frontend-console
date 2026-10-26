@@ -7,9 +7,13 @@
     el.classList.add('hg-flip');
   }
   function statusBadge(st) {
-    // running 蓝 / completed 绿 / error 红 / denied 橙
+    // running 蓝 / completed 绿 / error 红 / denied 橙 / stopped 橙
+    // v4.0.3（用户实锤「已停止的子代理还显示运行中」）：新增 stopped 态——
+    // 用户主动停止不是错误（不红叉）也不是正常完成（不绿勾）。复用既有
+    // b-deny 橙色样式，不新增任何 CSS（用户定调 UI 不再改）。
     const map = { running: ['运行中', 'b-run'], completed: ['完成', 'b-done'],
-                  error: ['出错', 'b-err'], denied: ['拒绝', 'b-deny'] };
+                  error: ['出错', 'b-err'], denied: ['拒绝', 'b-deny'],
+                  stopped: ['已停止', 'b-deny'] };
     const [txt, cls] = map[st] || ['', ''];
     return `<span class="h-tbadge ${cls}">${txt}</span>`;
   }
