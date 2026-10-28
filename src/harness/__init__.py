@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """harness 包 —— v3.0 自 src/claude_harness.py 重构拆分。
 
 旧引用入口 src/claude_harness.py 保留为兼容 shim,新代码建议直接
