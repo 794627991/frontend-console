@@ -67,7 +67,18 @@ def _backend_url():
         return None
 
 
-def _post(path, payload, timeout=10):
+def _post(path, payload, timeout=10, _depth=0):
+    """POST JSON。**显式跟随 307/308**（v4.0.0-a121）。
+
+    根因（用户实锤「提问未被受理：后端返回 307」）：Claude 子系统已 offload
+    到 worker 进程，主进程对 /api/harness/* 回 307 + Location 指向 worker。
+    而 `urllib.request.urlopen` **不会为 POST 自动跟随 307**（重定向会改变
+    请求方法语义，标准库对 POST 一律抛 HTTPError），于是本函数拿到 307 就
+    在 except 分支返回错误——ask_user 全链路失效。
+
+    这里手动跟随一次（307/308 保持原方法与 body，这正是它们的语义），
+    最多 3 跳防环。其余状态码维持原处理。
+    """
     url = _backend_url()
     if not url:
         return None
@@ -81,6 +92,46 @@ def _post(path, payload, timeout=10):
                      # 「提问未被受理：unauthorized」）。带自家标记放行
                      # （字面量与 server._WEBVIEW_UA_MARK 对齐，勿 import
                      # server——会拖起整个 Flask）
+                     "User-Agent": "SerialConsoleProWebView/1"},
+            method="POST")
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8", "replace") or "{}")
+    except urllib.error.HTTPError as e:
+        # 307/308：offload 转发到 worker——保持方法与 body 重放一次
+        if e.code in (307, 308) and _depth < 3:
+            loc = ""
+            try:
+                loc = (e.headers.get("Location") or "").strip()
+            except Exception:
+                loc = ""
+            if loc:
+                # 用相对路径 + Location 的 path 重拼（Location 是绝对 URL，
+                # 直接以其为准）
+                try:
+                    base = _backend_url() or ""
+                    if base and loc.startswith(base):
+                        return _post(loc[len(base):] or path, payload,
+                                     timeout, _depth + 1)
+                    # 跨主机/端口（主进程 → worker）：临时改 override 不可行，
+                    # 这里直接构造完整 URL 请求
+                    return _post_abs(loc, payload, timeout)
+                except Exception:
+                    pass
+        try:
+            return json.loads(e.read().decode("utf-8", "replace") or "{}")
+        except Exception:
+            return {"ok": False, "err": "后端返回 %s" % e.code}
+    except Exception:
+        return None
+
+
+def _post_abs(url, payload, timeout=10):
+    """向绝对 URL POST（重定向目标，往往换端口）。"""
+    try:
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={"Content-Type": "application/json",
                      "User-Agent": "SerialConsoleProWebView/1"},
             method="POST")
         with urllib.request.urlopen(req, timeout=timeout) as r:
