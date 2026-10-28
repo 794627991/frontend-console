@@ -59,3 +59,7 @@ png/
 # 这俩无任何引用，不入库只做本地忽略——vendor 源码包完整性留给本地盘）
 /vendor/markdown-it/dist/markdown-it.js
 /vendor/markdown-it/dist/index.cjs.js
+
+# v2.3.7b WebView2 内置运行时【入库随仓走——铁律：任何机器无条件可打包，零网络】
+# （只忽略 fetch 脚本的 cab 残件；WebView2Fixed/ 本体 git 跟踪）
+/runtime/*.cab

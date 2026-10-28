@@ -445,9 +445,18 @@ def _install_node_from(msi):
         # ——改走 zip 免安装版：解压 %APPDATA%\nodejs + 用户 PATH，零提权
         _log("MSI 安装失败（多为无管理员权限），改用免安装 zip 版（零提权）…")
         cand = []
-        # 离线包解压目录的 zip（install/ 里，与 msi 同目录）
+        # 离线包解压目录的 zip（与 msi 同目录；双布局+版本名通配——a124
+        # 发布中心包的 zip 是 node-v24…-win-x64.zip 与 msi 同层）
         cand.append(os.path.join(os.path.dirname(msi), "node-win-x64.zip"))
         cand.append(os.path.join(os.path.dirname(msi), "node-v24.19.0-win-x64.zip"))
+        try:
+            import glob as _g
+            _z = sorted(_g.glob(os.path.join(
+                os.path.dirname(msi), "node-v*-win-x64.zip")))
+            if _z:
+                cand.append(_z[-1])
+        except Exception:
+            pass
         # 本地资源目录（联网通道）
         lz = _find_installer("node-v*-win-x64.zip")
         if lz:
@@ -693,11 +702,44 @@ def claude_setup_install():
                             zf.extract(name, workdir)
                             if i % 500 == 0:
                                 _log(f"  已解 {i}/{total} …")
-                    git_setup = os.path.join(workdir, "install", "Git.exe")
-                    node_msi = os.path.join(workdir, "install", "node.msi")
-                    pkg_dir = os.path.join(workdir, "claude-code")
-                    if not os.path.isdir(pkg_dir):
-                        raise RuntimeError("包内无 claude-code 目录")
+                    # a124（用户实锤「同事电脑离线包安装报 claude code
+                    # 文件夹不存在」）：包布局双形态兼容。
+                    # · 正典（「制作离线包」按钮产出 claude-offline.zip）：
+                    #   根下 install/Git.exe、install/node.msi、claude-code/、
+                    #   pydeps/
+                    # · 发布中心通道（build._publish_offline_pkg 的
+                    #   前端控制台-offline-pkg.zip）：全部套在 offline_pkg/
+                    #   前缀下，且安装器带版本名（Git-2.55…exe /
+                    #   node-v24…msi / node-v24…zip）。
+                    # 旧实现只认正典路径——同事拿发布中心的包安装，解压后
+                    # 找 <workdir>/claude-code 必落空 →「包内无 claude-code
+                    # 目录」。两种布局、两种命名都认。
+                    def _pkg_path(*segs):
+                        for _base in (workdir,
+                                      os.path.join(workdir, "offline_pkg")):
+                            _p = os.path.join(_base, *segs)
+                            if os.path.exists(_p):
+                                return _p
+                        return None
+
+                    def _pkg_glob(pattern):
+                        import glob as _g
+                        for _base in (workdir,
+                                      os.path.join(workdir, "offline_pkg")):
+                            _hit = sorted(_g.glob(os.path.join(_base, pattern)))
+                            if _hit:
+                                return _hit[-1]
+                        return None
+
+                    pkg_dir = _pkg_path("claude-code")
+                    if not (pkg_dir and os.path.isdir(os.path.join(pkg_dir, "bin"))):
+                        raise RuntimeError(
+                            "包内无 claude-code 目录（支持：claude-offline.zip / "
+                            "前端控制台-offline-pkg.zip 两种布局）")
+                    git_setup = (_pkg_path("install", "Git.exe")
+                                 or _pkg_glob("Git-*.exe"))
+                    node_msi = (_pkg_path("install", "node.msi")
+                                or _pkg_glob("node-v*.msi"))
 
                     # Node / Git：缺才静默装（包内资源）。node.msi 提权失败自动
                     # 转包内 zip 免安装版（离线机器同样可能无管理员）
@@ -715,7 +757,7 @@ def claude_setup_install():
 
                     # 工具 py 依赖补装（包内 pydeps/ 有 wheel 才装——zip 是
                     # 无网机器补依赖的唯一来源；--no-index 绝不联网）
-                    _install_pydeps(os.path.join(workdir, "pydeps"))
+                    _install_pydeps(_pkg_path("pydeps"))   # a124：双布局
 
                     # 铺 claude-code 包到 %APPDATA%\npm\node_modules（npm 标准位）
                     dst = os.path.join(appdata, "npm", "node_modules", "@anthropic-ai",

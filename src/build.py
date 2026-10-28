@@ -89,6 +89,7 @@ def build():
             return dist
         _refresh_offline_claude()   # v3.4.95：离线 claude-code 版本有变即刷新
         _sync_offline_pkg()
+        _bundle_webview2(app_dir)   # v2.3.7a：内置 WebView2 运行时（有则带）
         # v2.3.1 发布前资源加密（web 前端源码/blob → AES-256-GCM 密文，
         # exe 启动 src/secure_boot.py 自解密；第三方库不碰）
         try:
@@ -104,6 +105,37 @@ def build():
     else:
         print("打包失败：未找到 exe")
         return None
+
+
+def _bundle_webview2(app_dir):
+    """v2.3.7b（用户铁律×2「无条件随包；保底包不能是下载的——不能假设
+    构建机有网络」）：WebView2 Fixed Version 运行时**入库随仓走**
+    （runtime/WebView2Fixed/，168 文件 557MB，git 跟踪）——任何机器
+    clone/合入/检出即有，打包无条件带上，全程零网络。
+
+    缺失=仓库不完整/检出异常 → 打包直接失败（绝不出依赖系统运行时的
+    降级包，也绝不在 build 期下载）。版本升级：开发机上人工跑
+    tools/fetch_webview2_fixed.py（那是唯一联网点，跑完随提交入库）。"""
+    src = os.path.join(BASE, "runtime", "WebView2Fixed")
+    if not os.path.isdir(src):
+        raise RuntimeError(
+            "WebView2 内置运行时缺失（runtime/WebView2Fixed/ 不在——仓库"
+            "检出不完整）。按铁律打包中止：运行时已入库，缺失说明 clone/"
+            "合入异常，请修复仓库后重试（不在 build 期下载）")
+    dst = os.path.join(app_dir, "runtime", "WebView2Fixed")
+    if os.path.isdir(dst):
+        shutil.rmtree(dst, ignore_errors=True)
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    shutil.copytree(src, dst)
+    n = sum(len(fs) for _, _, fs in os.walk(dst))
+    if not os.path.isfile(os.path.join(
+            dst, os.listdir(dst)[0], "msedgewebview2.exe")) or n < 100:
+        raise RuntimeError("WebView2 内置运行时不完整（%d 文件）——打包中止"
+                           % n)
+    sz = sum(os.path.getsize(os.path.join(r, f))
+             for r, _, fs in os.walk(dst) for f in fs) / 1024 / 1024
+    print("webview2 内置: WebView2Fixed → 应用包（%d 文件，%.0f MB，"
+          "zip 压缩后约增 1/3）" % (n, sz))
 
 
 def _publish_debug(app_dir):

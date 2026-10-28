@@ -432,6 +432,96 @@ def _unhook_webview_intercept():
         traceback.print_exc()   # 摘除失败必须可见（串口请求仍会过 UI 线程）
 
 
+# ---- WebView2 运行时启动闸（v2.3.7a 用户需求「任何机器都能兼容，宁可包体大」） ----
+# 背景：工具用系统 WebView2（pywebview，不内置浏览器内核），离线/久未更新
+# 机器上运行时缺失或过旧 → 前端（较新 CSS/JS）半渲染半崩——用户实测同事
+# 机界面裁剪破损。方案：随包带 Fixed Version 运行时（runtime/WebView2Fixed/，
+# 微软签名校验过的官方构件），启动时注册表探测系统 Evergreen 版本：
+#   系统 ≥ 最低线 → 用系统（保持 Evergreen 自动更新语义）
+#   缺失/过旧     → 切内置 Fixed Version（零安装零管理员，环境变量
+#                   WEBVIEW2_BROWSER_EXECUTABLE_FOLDER，WebView2 官方加载序）
+#   都没有        → 打印明确指引（此时窗口必然建不起来）
+_WV2_MIN = (109, 0, 1518, 0)   # ES2022/:has/content-visibility 全覆盖的最低线
+_WV2_GUID = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"   # EdgeUpdate Clients 的 WebView2 Runtime
+
+
+def _wv2_system_version():
+    """注册表探测系统 Evergreen WebView2 运行时版本（pv），无则空串。
+    HKLM/HKCU × 32/64 位视图全扫——运行时可能装在任一组合位。"""
+    try:
+        import winreg
+    except ImportError:
+        return ""
+    for root in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+        for wow in (0, winreg.KEY_WOW64_32KEY, winreg.KEY_WOW64_64KEY):
+            try:
+                with winreg.OpenKey(
+                        root,
+                        r"SOFTWARE\Microsoft\EdgeUpdate\Clients\\" + _WV2_GUID,
+                        0, winreg.KEY_READ | wow) as k:
+                    pv, _t = winreg.QueryValueEx(k, "pv")
+                    return str(pv or "")
+            except OSError:
+                continue
+    return ""
+
+
+def _wv2_ver_tuple(pv):
+    try:
+        return tuple(int(x) for x in str(pv).split(".") if x.isdigit())
+    except Exception:
+        return ()
+
+
+def _wv2_fixed_dir():
+    """内置 Fixed Version 运行时目录（含 msedgewebview2.exe 的那层）。
+    发布形：exe 同级 runtime/WebView2Fixed/<...>/msedgewebview2.exe；
+    源码跑：仓库根 runtime/…。两层深度兜底（cab 展开形/手摆形都认）。"""
+    import glob as _gl
+    base = os.path.dirname(os.path.abspath(sys.argv[0]))
+    if getattr(sys, "frozen", False):
+        bases = [base, os.path.dirname(base)]
+    else:
+        bases = [os.path.dirname(os.path.dirname(os.path.abspath(__file__)))]
+    for b in bases:
+        for pat in ("runtime", os.path.join("runtime", "WebView2Fixed")):
+            root = os.path.join(b, pat)
+            if not os.path.isdir(root):
+                continue
+            for depth in range(1, 4):
+                hit = _gl.glob(os.path.join(
+                    root, *(["*"] * depth), "msedgewebview2.exe"))
+                if hit:
+                    return os.path.dirname(hit[0])
+    return ""
+
+
+def _ensure_webview2():
+    """webview.start 之前调用（WebView2 环境变量只在创建期读取）。"""
+    if os.environ.get("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER"):
+        print("[webview2] 环境变量已指定运行时，尊重不覆盖")
+        return
+    pv = _wv2_system_version()
+    vt = _wv2_ver_tuple(pv) if pv else ()
+    if vt and vt >= _WV2_MIN:
+        print("[webview2] 系统 Evergreen %s ≥ %s，用系统运行时"
+              % (pv, ".".join(map(str, _WV2_MIN))))
+        return
+    fixed = _wv2_fixed_dir()
+    if fixed:
+        os.environ["WEBVIEW2_BROWSER_EXECUTABLE_FOLDER"] = fixed
+        print("[webview2] 系统%s → 切内置 Fixed Version：%s"
+              % ("缺失" if not vt else "过旧(%s)" % pv, fixed))
+        return
+    if vt:
+        print("[webview2] ⚠ 系统 %s 低于 %s 且无内置运行时——继续用系统，"
+              "新版前端可能渲染异常" % (pv, ".".join(map(str, _WV2_MIN))))
+    else:
+        print("[webview2] ⚠ 系统无 WebView2 运行时且未随包内置（runtime/"
+              "WebView2Fixed/）——窗口将无法创建；请安装 WebView2 Runtime"
+              " 或使用带内置运行时的完整包")
+
+
 def main():
     # --claude-worker 模式：Claude 子系统 worker（见 _run_claude_worker_mode；
     # 必须先于单实例锁——主实例派生的子进程不抢 mutex）
@@ -1160,6 +1250,7 @@ def main():
     if _wv_debug:
         os.environ.setdefault("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
                               "--remote-debugging-port=9222")
+    _ensure_webview2()   # v2.3.7a：运行时闸——必须在 webview.start 前（创建期读环境变量）
     webview.start(debug=_wv_debug, private_mode=False,
                   storage_path=os.path.join(DATA_DIR, "webview_cache"))
 

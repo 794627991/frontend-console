@@ -1,0 +1,8 @@
+# v2.3.7b：WebView2 内置运行时一律按二进制——禁换行转换（CRLF 转换会损坏 pak/信任列表等数据件）
+runtime/WebView2Fixed/** -text
+*.exe -text
+*.dll -text
+*.pak -text
+*.bin -text
+*.dat -text
+*.cab -text
