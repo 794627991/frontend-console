@@ -184,13 +184,13 @@
       // v3.5.0 判定依据行：实跑名 vs 命中档位（档位匹配静默失败可见化）
       const rs = init.resolved || {};
       const _hitTier = mode === 'light' ? '轻档' : (mode === 'heavy' ? '重档' : '中档');
-      // v3.5.21（用户定调「同档位轻优先，必须能区分」）：实跑模型同时命中
-      // 多档（如轻中同值）时显式标注按轻档算——规则可见，不再含糊
+      // v3.5.21：实跑模型同时命中多档时显式标注按哪档算——规则可见。
+      // a127（用户拍板）：取档顺序改为 重>中>轻（与后端 roles_mode 同序）
       const _norm = s => String(s || '').split('[')[0].trim().toLowerCase();
       const _dmN = _norm(dm);
       const _hits = [rs.light, rs.mid, rs.heavy].filter(t => t && _norm(t) === _dmN);
       const _multi = dm && _hits.length > 1
-        ? `（该模型同时映射 ${_hits.length} 档，按轻>中>重 取轻档）` : '';
+        ? `（该模型同时映射 ${_hits.length} 档，按重>中>轻 取重档）` : '';
       const basisTxt = `实跑 ${dm || '未设置'} → ${_hitTier}${_multi}`;
       // 设计者/审计者槽（v2.53）：读写 designer_model/reviewer_model 新键，
       // 留空=回退重池（heavy_model→自动）——与后端 resolve_agent_models
@@ -212,7 +212,7 @@
             <span class="hg-roles-modeinfo">当前形态：<b>${mode === 'light' ? '轻主力 · 直干+设计+审核' : mode === 'heavy' ? '重主力 · 直干+派发自由（免强制分级）' : '中主力 · 直干+审核兜底'}</b></span>
           </div>
           <details class="hg-roles-more"><summary>工作方式说明</summary>
-            <div>三形态<b>派发都自由</b>（通用子代理按需随时可派），档位差别只在强制项：实跑模型命中<b>轻档</b> = 轻主力——<b>设计+审核必须</b>（分级线全档）；命中<b>中档</b> = 中主力——<b>审核必须</b>（审计线）；命中<b>重档</b> = 重主力——<b>零强制 · 派发随意</b>（最信任档：有想派的随时派，设计/审核/通用子代理都行，强制项一个没有）。档位默认联动 API 配置三槽（Haiku→轻 / Sonnet→中 / Opus→重，换方案自动跟随），下方下拉可显式覆盖。<b>怎么算轻/中/重：实跑模型与哪档值相同（剥 [1M] 后缀、不分大小写）就算哪档；同一模型映射多档时按 轻&gt;中&gt;重 取轻档</b>（轻中同值时算轻主力——想让它当中档，把中档下拉显式选成不同模型）；未匹配任何档按中档。保存后档位/分级线随下条消息热更生效（agents 自动重生成），审核模式立即生效。当前判定：${esc(basisTxt)}。</div>
+            <div>三形态<b>派发都自由</b>（通用子代理按需随时可派），档位差别只在强制项：实跑模型命中<b>轻档</b> = 轻主力——<b>设计+审核必须</b>（分级线全档）；命中<b>中档</b> = 中主力——<b>审核必须</b>（审计线）；命中<b>重档</b> = 重主力——<b>零强制 · 派发随意</b>（最信任档：有想派的随时派，设计/审核/通用子代理都行，强制项一个没有）。档位默认联动 API 配置三槽（Haiku→轻 / Sonnet→中 / Opus→重，换方案自动跟随），下方下拉可显式覆盖。<b>怎么算轻/中/重：实跑模型与哪档值相同（剥 [1M] 后缀、不分大小写）就算哪档；同一模型映射多档时按 重&gt;中&gt;轻 取重档</b>（三槽同值时算重主力——想让它当中档/轻档，把对应下拉显式选成不同模型）；未匹配任何档按中档。保存后档位/分级线随下条消息热更生效（agents 自动重生成），审核模式立即生效。当前判定：${esc(basisTxt)}。</div>
             <div class="hg-roles-sec" style="margin-top:8px;">代理模型细调 <i>默认自动取重档 · 一般无需改</i></div>
             <div class="hg-roles-slot" title="designer：只设计，出方案不干活。留空=回退重档 heavy_model，再按当前方案自动识别">
               <span class="hg-roles-ico des">设</span>
@@ -242,7 +242,7 @@
             <span class="hg-roles-name">重档<i>重主力 · 零强制 · 派发随意</i></span>
             <select name="hg_r_heavy" data-hg-r-heavy>${mkOpts(cfg.heavy_model || '', '默认（Opus 槽：' + (rs.heavy || '未映射') + '）')}</select>
           </div>
-          <div class="hg-roles-note">档位留空 = 联动 API 配置三槽（Haiku→轻 / Sonnet→中 / Opus→重，换方案自动跟随）；也可在此显式选择覆盖默认。<b>同一模型映射多档时按 轻&gt;中&gt;重 优先</b>——如轻中两档同值（图中 flash 场景），实跑该模型算轻档（轻主力）；未匹配按中档</div>
+          <div class="hg-roles-note">档位留空 = 联动 API 配置三槽（Haiku→轻 / Sonnet→中 / Opus→重，换方案自动跟随）；也可在此显式选择覆盖默认。<b>同一模型映射多档时按 重&gt;中&gt;轻 优先</b>——如三槽同值，实跑该模型算重档（重主力）；想让它当中档/轻档，把对应下拉显式选成不同模型；未匹配按中档</div>
 
           <div class="hg-roles-sec">分级线 <i>按回合内直改累计行数 · 不计文件数</i></div>
           <div class="hg-roles-line" title="回合内直改累计 ≤ 此行数的小改（配置/常量/文案/注释级）主会话直接改，免审">

@@ -7,7 +7,7 @@
    审计兜底；两词均无版本代号、无 dev/executor/coder 派发词、无 L 档位
    代号；开关关 → 空串；audit_mode 切换威慑句。
 2. 形态判定（v3.5.0 三档精确匹配）：实跑模型归一化命中 轻/中/重 三档
-   配置值（同值 轻>中>重）；mid 未配时重档值命中按中档（D2：重档须显式
+   配置值（同值 重>中>轻）；mid 未配时重档值命中按中档（D2：重档须显式
    opt-in）；未匹配/无名 → mid 兜底；main_model/light_keywords 退役残留
    不参与判定；tier 解析三档齐/缺省。
 3. 模型池：v3.5.15 起 model_map 不再参与档位（键归识图 /vision 端点），
@@ -117,11 +117,13 @@ check("Opus 槽值命中 → heavy（最信任档）", M(HEAVY_MODEL) == "heavy"
 check("槽值大小写不敏感", M(HEAVY_MODEL.upper()) == "heavy")
 check("未匹配三槽 → mid（安全兜底：多一道审）", M("unknown-model-x") == "mid")
 check("无名 → mid", M(None) == "mid" and M("") == "mid")
-# 同值多槽：轻>中>重
+# 同值多槽：a127 用户拍板改为 重>中>轻
 write_tiers(haiku="same-x", sonnet="same-x", opus="same-x")
-check("同值多槽优先级 轻>中>重（取轻）", M("same-x") == "light")
+check("同值多槽优先级 重>中>轻（取重）", M("same-x") == "heavy")
 write_tiers(sonnet=HEAVY_MODEL, opus=HEAVY_MODEL)
-check("Sonnet==Opus 同值：命中取中档（歧义取中）", M(HEAVY_MODEL) == "mid")
+check("Sonnet==Opus 同值：命中取重档", M(HEAVY_MODEL) == "heavy")
+write_tiers(haiku="same-y", sonnet="same-y", opus=HEAVY_MODEL)
+check("轻==中 同值（重不同）：命中取中档", M("same-y") == "mid")
 # v3.5.19R：显式配置优先于三槽默认（用户纠偏「三槽只是默认，也可随便改」）
 write_tiers(haiku=LIGHT_MODEL, sonnet=MID_MODEL, opus=HEAVY_MODEL)
 write_cfg(enabled=True, light_model=HEAVY_MODEL, heavy_model=LIGHT_MODEL)

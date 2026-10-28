@@ -13,7 +13,8 @@ API 方案改配置即可，不用动代码（v3.5.15 端点映射退役：model
 
 形态（roles_mode，v3.5.0 三档精确匹配）：用户在面板直接配「哪个模型是
 轻/中/重哪一档」——实跑模型名归一化（剥 [1M] 类窗口后缀 + casefold）
-后依次匹配 三档配置值（同值配多档时 轻>中>重），首个命中即该形态：
+后依次匹配 三档配置值（同值配多档时 重>中>轻，a127 用户拍板），首个命
+中即该形态：
 - light 轻档：轻主力——designer+reviewer 双代理 + 分级线全档
   + 回合结算审计（=旧 light 行为；v3.5.51 事中闸退役，中途不拦截）；
 - mid 中档：中主力——直干 + 仅 reviewer 审核兜底（=旧 strong 行为）；
@@ -391,7 +392,9 @@ def roles_mode(model=None):
     """主会话形态（v3.5.19 三档联动 API 配置）：
     实跑模型名归一化（_norm_model：剥 [1M] 后缀 + casefold）后依次匹配
     三槽档位值（resolve_tier_models：Haiku→轻 / Sonnet→中 / Opus→重），
-    同值多档时 轻>中>重：
+    同值多档时 **重>中>轻**（a127 用户拍板：同一模型既配轻又配重时按重算
+    ——配置本意是「这个模型我信得过」，取高档才不浪费信任；早期取轻档
+    导致全同值时永远落轻主力，与用户配重档的意图相反）：
     - "light"：轻主力——designer+reviewer 双代理 + 分级线/结算审计；
     - "mid"：中主力——直干 + reviewer 审核兜底（=旧 strong 行为）；
     - "heavy"：最信任档——直干为主+派发自由（designer/reviewer/通用
@@ -404,12 +407,15 @@ def roles_mode(model=None):
             return "mid"
         n = _norm_model(model)
         light, mid, heavy = resolve_tier_models()
-        if light and n == _norm_model(light):
-            return "light"
-        if mid and n == _norm_model(mid):
-            return "mid"
+        # a127（用户拍板）：同值多档时 重>中>轻。配置本意是「这个模型我
+        # 信得过」，取高档才不浪费信任；取轻档会让「三槽全同值」永远判成
+        # 轻主力（多出分级线约束），与用户显式配重档的意图相反。
         if heavy and n == _norm_model(heavy):
             return "heavy"
+        if mid and n == _norm_model(mid):
+            return "mid"
+        if light and n == _norm_model(light):
+            return "light"
         return "mid"   # 未匹配兜中档（安全：多一道审）
     except Exception:
         return "mid"

@@ -698,7 +698,7 @@ console.log(JSON.stringify(out));
 
 
 class TestRoleBadgeNoFabrication(unittest.TestCase):
-    """a126（用户实锤「我重开后，模型名变成重主力了」）。
+    """a127（用户实锤「我重开后，模型名变成重主力了」）。
 
     消息徽章原本在「本条消息的实跑模型不匹配任何档位」时，兜底成**会话当前
     形态**（`rj.mode`）。于是历史消息（用 DeepSeek）在当前会话跑到重档时，
@@ -729,8 +729,8 @@ console.log(JSON.stringify(out));
         cases = {
             # 历史消息用别的模型 → 不标（原：兜底成「重主力」）
             "unmatched": {"rj": rj, "bare": "DeepSeek-V4.1-Flash-1017"},
-            # 命中轻档（light 与 mid 同值，按代码顺序 light 先判）
-            "light": {"rj": rj, "bare": "Lanz-Medium-V"},
+            # light 与 mid 同值 → a127 起按 重>中>轻 取中档
+            "multi_lm": {"rj": rj, "bare": "Lanz-Medium-V"},
             # 命中重档
             "heavy": {"rj": rj, "bare": "Lanz-Auto"},
             # 带 [1M] 后缀要剥
@@ -746,7 +746,8 @@ console.log(JSON.stringify(out));
         got = _node_eval(script, "web/js/harness/groups.js", cases)
         self.assertEqual(got["unmatched"], "",
                          "未匹配档位仍兜底成会话形态 → 编造归属（重主力）")
-        self.assertIn("轻主力", got["light"])
+        self.assertIn("中主力", got["multi_lm"],
+                      "light/mid 同值应按 重>中>轻 取中档")
         self.assertIn("重主力", got["heavy"])
         self.assertIn("重主力", got["suffix"], "[1M] 后缀未剥离")
         self.assertEqual(got["empty"], "", "无模型名却标了角色")
