@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """架构治理校验（v3.0，对照 ZCode scripts/architecture/ 的 Python 移植）。
 
 用法：
@@ -23,7 +23,7 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-POLICY = os.path.join(ROOT, "architecture-policy.yaml")
+POLICY = os.path.join(ROOT, "docs", "archive", "architecture-policy.yaml")  # a130 根目录归档后随迁
 BASELINE = os.path.join(ROOT, ".architecture-baseline.json")
 
 
