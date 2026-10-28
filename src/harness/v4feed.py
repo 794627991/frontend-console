@@ -1498,7 +1498,7 @@ class V4Feed(object):
 
     def snapshot_wire(self, tail_turns=21, tail=0):
         with self._lock:
-            # a41c（用户定调「放大不是办法」）：回合窗是唯一裁剪——行数闸
+            # a41（用户定调「放大不是办法」）：回合窗是唯一裁剪——行数闸
             # 删除（TAIL_ROWS 退役）。投影「行」有天然上界（一轮=思考段+工具
             # 调用+正文，工具输出截断在字段级非行级），不存在单轮爆行需兜的
             # 场景；行数闸与回合闸并存必打架（a41 实锤 21 回合恰卡 400 行被
@@ -1509,6 +1509,23 @@ class V4Feed(object):
             # 220 行＝白干。子 topic 由 routes 传 tail=220（与前端时间线上限
             # _subTlCap 同值），主流不传维持回合窗唯一裁剪
             _w = P.wire_snapshot(self.snap, tail_turns=tail_turns, tail=tail)
+            # a122（用户实锤「重开窗格：续派消息正常，首条派发消息不见」→
+            # 拍板「必须全有」）：任何裁剪（行数尾窗/回合窗）都不得丢 user_
+            # input 轮次锚点——锚一丢，前端按 user 行切轮的渲染就整轮消失。
+            # 锚点一轮一条、量少（上界 60 防御），全量随窗下发；其余行按窗
+            # 裁。锚点全部落在窗前，prepend 保序。rowId 匹配（wire 行是深拷，
+            # 身份比对永不中=重复锚点）。子 topic 现走主窗同款回合窗（routes
+            # a122），>21 轮代理的窗外锚点由此兜住。
+            # if (tail or tail_turns) and ... → 限定子 feed：主窗的归档条语义
+            # （a24/a41：窗外轮只计数不下发）依赖轮窗裁剪，不得 prepend。
+            if ((tail or (tail_turns and self.epoch == "sub"))
+                    and _w.get("rows")):
+                _rids = {r.get("rowId") for r in _w["rows"]}
+                _anc = [r for r in self.snap["rows"]
+                        if r.get("kind") == "user_input"
+                        and r.get("rowId") not in _rids][-60:]
+                if _anc:
+                    _w["rows"] = [P._deepcopy_json(r) for r in _anc] + _w["rows"]
             return _w
 
     @property

@@ -446,6 +446,17 @@
   // =旧轮定格（已工作 X）+开新轮，消息气泡插新轮前 → 消息N+已工作N+结论N 时序
   function _subUserInto(tb, text) {
     let t = tb.t;
+    // a122（双源合一，对向：v4bridge user 行同款）：子 feed 的 user 增量
+    // （CLI 包装形文本）可能先到并已建轮插泡——原文队列后到时 60 字包含
+    // 比对命中即跳过，不再二次切轮/插泡（防消息重复+幽灵空轮的反向时序）
+    const _h60 = String(text || '').trim().slice(0, 60);
+    if (_h60 && tb.sc) {
+      const _exs = tb.sc.querySelectorAll('.hg-sub-u');
+      for (let _i = _exs.length - 1; _i >= 0; _i--) {
+        const _ex = (_exs[_i].textContent || '').trim();
+        if (_ex && _ex.indexOf(_h60) >= 0) return;
+      }
+    }
     // v3.4R2（复审P5 重修）：pristine=当前轮无工作行且无结论（气泡在 .h-grp 外
     // 不计）——连发消息在同一轮内累积，直到有工作事件/定稿才切新轮；
     // 旧 turns<=1 子句才是残块真驱动因子（上轮修复无效已取证）
@@ -698,7 +709,11 @@
   // _subTlPlace 的 isConnected 判据自愈重建
   function _subTlCap(t) {
     if (!t || !t.tl) return;
-    while (t.tl.children.length > 220) {
+    // a122（用户拍板「必须全有，性能优化参考主窗口」）：v4 轮放宽到 1200
+    // ——子窗格轮组与主窗同享 content-visibility（a114）+ 懒体（data-hg-lazy），
+    // 离屏轮跳过布局/绘制，成本模型与主窗回合渲染一致；V3 轮维持 220 不变。
+    const cap = t.v4 ? 1200 : 220;
+    while (t.tl.children.length > cap) {
       const first = t.tl.firstElementChild;
       if (!first) break;
       if (first.classList.contains('hg-sub-omit')) {
@@ -1339,6 +1354,10 @@
     if (tid !== _SUB_DIR && tid !== _SUB_DYN && tid !== _SUB_VCS) _subScroll(tid);
     if (tid === _SUB_DIR) _subDirPaint();   // v3.2：目录激活即重绘（数据最新）
     if (tid === _SUB_VCS) { try { if (typeof _vcsActivate === 'function') _vcsActivate(); } catch (_) {} }
+    // a122（连接预算）：激活 tab 的 v4 子 store 起流，其余后台 tab pause
+    //（同源 6 连接上限——见 v4main.subFocus 注释；伪 tab 激活=全部 pause）
+    if (typeof V4Main !== 'undefined' && V4Main.on && V4Main.on()
+        && V4Main.subFocus) { try { V4Main.subFocus(tid); } catch (_) {} }
   }
   function _subTabsPaint() {
     if (!_subTabsEl) return;

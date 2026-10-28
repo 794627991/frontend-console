@@ -391,5 +391,78 @@ console.log(JSON.stringify(out));
                         "保险② 在 tid 键下失效 → 本地终态被翻回运行中")
 
 
+class TestColdSyncInterrupted(unittest.TestCase):
+    """a124（用户实锤「我已重开，刚开什么都没干，胶囊还有 52h38m」）。
+
+    `_agentsColdSync` 原规则：interrupted 是 mtime 启发式，只落定 done/err/
+    stopped，interrupted 一律**保持 running**（防长思考不落盘误伤）。但长思考
+    有物理上界——52 小时的「不落盘」不可能是长思考，于是死代理永久占着胶囊。
+
+    修法：interrupted 且档案年龄 > 30min（与 relay _PEER_STALE_MS 同阈值）
+    → 按失联落定（done + interrupted，不置 err）。
+    """
+
+    def test_cases(self):
+        script = r"""
+const fs = require('fs');
+const src = fs.readFileSync(process.argv[1], 'utf8');
+const i = src.indexOf("if (!a.done && ent.status === 'interrupted') {");
+const j = src.indexOf("} else if (!a.err && ent.status === 'err') {", i);
+if (i < 0 || j < 0) { console.log('EXTRACT_FAIL'); process.exit(0); }
+const block = src.slice(i, j);
+const cases = JSON.parse(process.argv[2]);
+const out = {};
+for (const n in cases) {
+  const c = cases[n];
+  const a = Object.assign({ taskId: 'A' }, c.a);
+  new Function('a', 'Date', block)(a, c.__Date);
+  out[n] = [!!a.done, !!a.interrupted, !!a.err, a.doneAt || 0];
+}
+console.log(JSON.stringify(out));
+"""
+        now = 1793169000000
+        H = 3600 * 1000
+        old = now - 52 * H
+
+        # 注入一个 Date.now() 返回固定值的桩（node 里用对象冒充）
+        script = script.replace(
+            "new Function('a', 'Date', block)(a, c.__Date);",
+            "const D = { now: () => " + str(now) + " };\n"
+            "  new Function('a', 'ent', 'Date', block)(a, c.ent, D);")
+        cases = {
+            # 52 小时前的死代理 → 必须落定
+            "dead_52h": {"a": {"t0": 0},
+                         "ent": {"status": "interrupted", "t0": old,
+                                 "doneAt": old + 50000}},
+            # 5 分钟长思考 → 不许误伤
+            "thinking_5m": {"a": {"t0": 0},
+                            "ent": {"status": "interrupted",
+                                    "t0": now - 5 * 60 * 1000,
+                                    "doneAt": now - 5 * 60 * 1000}},
+            # 秒级时间戳也要能识别年龄，且 doneAt 必须同量纲换算
+            "epoch_seconds": {"a": {"t0": 0},
+                              "ent": {"status": "interrupted",
+                                      "t0": old // 1000,
+                                      "doneAt": old // 1000}},
+            # running 不许碰
+            "running": {"a": {"t0": 0},
+                        "ent": {"status": "running", "t0": old}},
+            # 档案自带 t0（已赋值的场景）优先
+            "a_has_t0": {"a": {"t0": old},
+                         "ent": {"status": "interrupted", "t0": 0}},
+        }
+        got = _node_eval(script, "web/js/harness/v4bridge.js", cases)
+        self.assertTrue(got["dead_52h"][0], "52h 死代理未落定 → 胶囊永久假运行")
+        self.assertTrue(got["dead_52h"][1], "落定但丢了 interrupted 字段")
+        self.assertFalse(got["dead_52h"][2], "失联被误标 err")
+        self.assertFalse(got["thinking_5m"][0], "5 分钟长思考被误落定")
+        self.assertTrue(got["epoch_seconds"][0], "秒级时间戳未换 ms → 年龄恒 0")
+        # doneAt 必须与 t0 同量纲（毫秒），否则落进 a122 的 at 判据时被当陈旧值
+        self.assertGreater(got["epoch_seconds"][3], 1e11,
+                           "doneAt 未做秒→毫秒换算")
+        self.assertFalse(got["running"][0], "running 被 error 分支误伤")
+        self.assertTrue(got["a_has_t0"][0], "档案已有 t0 时未生效")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

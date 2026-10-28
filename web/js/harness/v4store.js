@@ -40,6 +40,7 @@
     this._silentTimer = null;
     this._retryTimer = null;
     this._closed = false;
+    this._paused = false;      // a122：后台 tab 断流标记（subFocus 语义）
   }
 
   V4Store.prototype.subscribe = function (fn) {
@@ -61,7 +62,7 @@
   // ---- 连接管理 ----------------------------------------------------------
 
   V4Store.prototype.connect = function () {
-    if (this._closed) return;
+    if (this._closed || this._paused) return;
     var self = this;
     this._teardown();
     this.status = this.seq > 0 && !this._forceSnapshot
@@ -136,7 +137,7 @@
 
   V4Store.prototype._scheduleReconnect = function () {
     var self = this;
-    if (this._closed || this._retryTimer) return;
+    if (this._closed || this._paused || this._retryTimer) return;
     this._teardown();
     this.status = 'reconnecting';
     this._notify();
@@ -158,7 +159,31 @@
     if (this._retryTimer) { clearTimeout(this._retryTimer); this._retryTimer = null; }
     this.status = 'closed';
     this._notify();
+  }
+
+  // a122（连接预算，见 v4main.subFocus）：后台 tab pause——断流清定时器，
+  // 快照/游标/桥接 DOM 全保留；激活 resume 携水位续传（越窗自动整窗快照）。
+  // pause 期间 connect/_scheduleReconnect 全部早退（桥接看门狗的强制重订阅
+  // 也被拦下），不会偷偷把流重新拉起。
+  V4Store.prototype.pause = function () {
+    if (this._closed || this._paused) return;
+    this._paused = true;
+    this._teardown();
+    if (this._retryTimer) { clearTimeout(this._retryTimer); this._retryTimer = null; }
+    this.status = 'paused';
+    this._notify();
   };
+
+  V4Store.prototype.resume = function () {
+    if (this._closed) return;
+    if (!this._paused) {
+      if (this._es) return;          // 已在前台跑着
+      this.connect();                // 从未连过（开在后台）：补连
+      return;
+    }
+    this._paused = false;
+    this.connect();
+  };;
 
   // ---- 帧处理（唯一状态推进路径） ----------------------------------------
 

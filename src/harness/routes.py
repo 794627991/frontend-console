@@ -701,8 +701,14 @@ def harness_v4_stream():
         c = f._snap_txt
         if c and c[0] == _sig:
             return c[1], seq
+        # a122（用户拍板「必须全有，性能优化参考主窗口」）：子 topic 撤掉
+        # a119P 的行数尾窗（tail=220 裁掉了多轮代理首轮 user 行=轮次锚点，
+        # 用户实测「重开窗格续派消息正常、首条派发消息不见」）。改回与主窗
+        # 完全同款：**回合窗**（tail_turns=21）——轮内永不切，锚点天然完整，
+        # 大子会话的渲染开销由前端既有的 content-visibility（a114，子窗格
+        # 轮组同享）+ 懒体（data-hg-lazy）承担，与主窗同一成本模型。
         if topic.startswith("sub:"):
-            w = f.snapshot_wire(tail_turns=21, tail=220)
+            w = f.snapshot_wire(tail_turns=21)
         else:
             w = f.snapshot_wire()
         seq = w["seq"]

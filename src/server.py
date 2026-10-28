@@ -58,9 +58,10 @@ except Exception:
 # 时前端资源直读源码目录 web/（本文件旁），彻底绕过 RES_DIR/_mem_web/一切副本；
 # run_debug.bat 一键启动（先清旧进程残尸，控制台可见伺服模式打印）
 DEBUG_WEB = os.environ.get("HARNESS_DEBUG_WEB") == "1"
-# v4 灰度（run_debug_v4.bat 打开）：服务端把 HARNESS_V4=1 注入页面，
-# 前端 v4main 以 window.__HG_V4__ 为准（localStorage 仍可单独强制）。
-DEBUG_V4 = os.environ.get("HARNESS_V4") == "1"
+# v4 归一管线：a122（用户拍板「启动直接使用 v4 模式」）默认**常开**——前端
+# v4main.v4On 默认 on（URL ?v4=0 / localStorage hg_v4='0' 可显式关）。此处
+# 注入只剩启动横幅如实显示与显式关两个用途：HARNESS_V4=0 注入 0，其余注入 1。
+DEBUG_V4 = os.environ.get("HARNESS_V4") != "0"
 # Claude 子系统进程隔离（v4.0.0 串口卡顿根治，用户定调「Claude 随便占，
 # 串口不能卡」）：harness/hiklink 重负载移驻 src/worker_app.py 独立进程，
 # 本进程只留串口终端与轻量路由。CLAUDE_INLINE=1 回落旧单进程形态（排障）。

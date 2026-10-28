@@ -165,7 +165,20 @@
       }
       return;
     }
-    if (kind === 'snapshot') this._rebuild(ev.snap);
+    if (kind === 'snapshot') {
+      this._rebuild(ev.snap);
+      // a124（用户实锤「我已重开，刚开什么都没干，胶囊还有 52h38m 残留」）：
+      // v4 链路**从不调 _hgRegSync**（v4bridge/v4main/v4store 零调用），而
+      // registry Sync 是 _HG.agents 的唯一权威来源——首个快照前 agents 里只有
+      // `_agentFile` 按 tid 键建的幽灵档（done:false、无终态），后端投影里那条
+      // （agentId 键，status=interrupted）永远收编不进来 → a122 的链判据再对
+      // 也没东西可比，胶囊恒显示运行中。首个快照到达即对齐一次（幂等：Sync
+      // 内部整建 agents，重复调用只重算）。
+      if (!this._regSynced && typeof _hgRegSync === 'function') {
+        this._regSynced = true;
+        try { _hgRegSync(_HG.sid); } catch (e) {}
+      }
+    }
     else if (kind === 'deltas') {
       var ds2 = ev.deltas || [];
       for (var j = 0; j < ds2.length; j++) this._applyOne(ds2[j]);
@@ -388,6 +401,31 @@
               a.interrupted = false;
             }
             // interrupted/running：不落定（事件真相保持 running）
+            //
+            // a124（用户实锤「我已重开，刚开什么都没干，胶囊还有 52h38m」）：
+            // `interrupted` 不落定是为了防「长思考不落盘被误判中断」，但
+            // **长思考有物理上界**。档案已 30 分钟无任何事件（与 relay
+            // _PEER_STALE_MS / panel stale 同阈值）时，「不落盘」不可能还是
+            // 长思考，按失联落定——否则 52 小时前的死代理会永久占着胶囊。
+            // 仍不改写 err（它不是失败），只落 done + interrupted。
+            if (!a.done && ent.status === 'interrupted') {
+              // 注意：此处 a.t0 尚未赋值（在下方 419 行才补），必须取自 ent，
+              // 否则判据恒 0=分支永不进入（实测冷同步重建幽灵档的根因之一）
+              var _iT0 = Number(a.t0 || ent.t0 || ent.lastActive) || 0;
+              if (_iT0 > 0 && _iT0 < 1e12) _iT0 = _iT0 * 1000;
+              if (_iT0 > 0 && (Date.now() - _iT0) > 30 * 60 * 1000) {
+                a.done = true;
+                // doneAt 与 _iT0 同源同量纲：ent.doneAt/lastActive 可能也是
+                // 秒级（历史档案形态），必须换算——否则 doneAt 会比真实值
+                // 小 1000 倍，落进 a122 的 at=max(doneAt,t0,sendAt) 判据时
+                // 被当成远早于 t0 的陈旧终态（链可能被误判为「更早那轮」）。
+                var _iD = Number(ent.doneAt || ent.lastActive) || _iT0;
+                if (_iD > 0 && _iD < 1e12) _iD = _iD * 1000;
+                a.doneAt = _iD || Date.now();
+                a.interrupted = true;
+                a.stopped = false;
+              }
+            }
           } else if (!a.err && ent.status === 'err') {
             // a112R：err 只升不降——已 done(无 err) 的档案，readmodel 的 err
             // （notification「failed」事实）**采纳升级**并重画行卡（旧后端
