@@ -142,7 +142,11 @@ class HarnessSession:
         # 工作中；三级温和探活兜底见 _bg_monitor（分级提示/集空闲置/■中断）——v3.5.182 硬顶退役
         # v3.5.317：slow 键死字段清除（v3.5.183 三档探活改用 p30/p45/p60 后
         # 全仓零读取）
-        self._bg_tasks = {}      # tid → {"t0": epoch, "desc": str}
+        self._bg_tasks = {}      # tid → {"t0","desc","aid","task_id"}
+        # v4.0.4：本进程登记过的真子代理 tid 集——后台 Bash 的
+        # task_notification 也走同一分支，靠它区分，防止把 Bash 工具行当
+        # 子代理收口（会误标工具行终态）。
+        self._sub_tids = set()
         self._held = False
         self._bg_mon_started = False
         self.last_result = None
@@ -300,18 +304,18 @@ class HarnessSession:
             # 修：闸与结算**同口径**——只要设计线 > 0 就注入；闸内
             # audit_gate_check 对 strong 自会走同一判据。去重不是靠不注入，
             # 而是 designFired 一次性。
+            # v4.0.4（复审实锤「启动快照」）：注入条件不能看 design_limit
+            # 的**启动瞬间**值——会话启动后用户改设计线、或启动时形态被误判
+            # 成 heavy（网关改写模型名 → roles_mode 认不出），钩子就永远缺席。
+            # 闸开不开应由 /audit_gate **每次调用实时**判定（它读当时的配置）。
+            # 故：只要审计机制启用（_audit_state 非 None 且非 heavy）就注入；
+            # 实际挡不挡、何时挡全在 hook 侧。注入成本=会话级一次临时文件。
             _st_audit = self._audit_state()
             if _st_audit is not None:
-                try:
-                    from .roles import design_limit as _dl
-                    _gate_on = _dl() > 0
-                except Exception:
-                    _gate_on = not _st_audit[2]
-                if _gate_on:
-                    _p = _audit_hook_settings_path()
-                    if _p:
-                        self._audit_settings_path = _p
-                        argv += ["--settings", _p]
+                _p = _audit_hook_settings_path()
+                if _p:
+                    self._audit_settings_path = _p
+                    argv += ["--settings", _p]
         if sys_prompt:
             argv += ["--append-system-prompt", sys_prompt]
         if self.name:
@@ -330,10 +334,19 @@ class HarnessSession:
                 {"low": 4096, "medium": 10240, "high": 20480, "max": 31999}[self.think])
         _trust_workspace(self.cwd)
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        self._proc = subprocess.Popen(
-            argv, cwd=self.cwd, env=env,
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            creationflags=flags)
+        try:
+            self._proc = subprocess.Popen(
+                argv, cwd=self.cwd, env=env,
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                creationflags=flags)
+        except Exception:
+            # v4.0.6（复审实锤）：Popen 失败时（cwd 不存在/权限/解释器缺失）
+            # 临时 settings 文件已经写盘但没有任何 cleanup 路径 → 每次失败
+            # 泄漏一个 claude_audit_*.json 到 %TEMP%（实测已积 14 个）。
+            # 这里补一次清理再原样抛出。
+            self._audit_settings_cleanup()
+            raise
         self.alive = True
         self.busy = False
         # v2.35：本进程实例已见的 init 事件数——第 2 个起是「新回合起跑」
@@ -1218,19 +1231,20 @@ class HarnessSession:
         if o.get("owned_by_subagent") or o.get("parent_task_id")                 or o.get("parent_tool_use_id") or o.get("agent_id"):
             return
         tid = str(o.get("tool_use_id") or "")
+        _aid_raw = str(o.get("task_id") or "")
         if not tid:
-            # v4.0.3（用户实锤「已停止的子代理胶囊还显示运行中」）：停止
-            # 子代理的 task-notification **没有 tool-use-id**，只有
-            # <task-id>（=agentId）。原实现的 `if not tid: return` 直接把
-            # 停止信号扔掉 → 投影里的 SUB 行永远停在 running → 胶囊假运行。
-            # 修：task_notification 缺 tid 时用 task_id（agentId）反查原
-            # 派发 tid，再走同一条终态收口。
+            # v4.0.3/v4.0.4（用户实锤「已停止的子代理胶囊还显示运行中」）：
+            # 停止子代理的 task-notification **没有 tool-use-id**，只有
+            # <task-id>（=agentId）。v4.0.3 的修法是 agentId→tid 反查，但
+            # 反查有天然空洞：续派链里 agentId 对应多个 tid（最早/最新），
+            # 且 task-id 未必是 agentId（实测有短 id 反例）。**正解是让
+            # agentId 作为一等身份直达投影层**（v4feed 按 childTopic 归并），
+            # 反查只作兜底：反查命中就用 tid，否则 tid 留空、让 aid 承载。
             if sub != "task_notification":
                 return
-            _tid_task = str(o.get("task_id") or "")
-            if not _tid_task:
+            if not _aid_raw:
                 return
-            tid = self._aid_to_tid(_tid_task) or _tid_task
+            tid = self._aid_to_tid(_aid_raw)
         if sub == "task_started":
             # v3.5.322（复审#1）：只镜像**真子代理**（subagent_type 非空，与
             # 1183 行 _bg_tasks 登记同判据）——CLI 对 run_in_background 的
@@ -1239,6 +1253,9 @@ class HarnessSession:
             # 径 _shBg 早有此过滤，投影路径补齐同口径）
             if not str(o.get("subagent_type") or "").strip():
                 return
+            if getattr(self, "_sub_tids", None) is None:
+                self._sub_tids = set()   # 旧实例/测试构造缺属性时惰性补
+            self._sub_tids.add(tid)
             # 冷查询（提交3翻转）：镜像事件附 aid（readmodel 缓存投影的
             # tidMap 归一）——前端收到即更新 tidMap，live 帧归一零延迟；
             # 缓存未含该 tid（ACK/meta 未 flush 窗口）返回空串，2s Sync 收敛
@@ -1254,12 +1271,37 @@ class HarnessSession:
             # CLI 对 run_in_background 的 Bash 也发 is_backgrounded=true
             # （v3.4.43 实锤），fire-and-forget shell 不该锁大回合至硬顶
             if o.get("is_backgrounded") and str(o.get("subagent_type") or "").strip():
+                # v4.0.4：登记项同时存 aid/task_id——notify 缺 tid 时按 aid
+                # 双键 pop（否则登记项永久残留 → _bg_hold_release 的「集空但
+                # hold 未放」永不触发 → 大回合 hold 挂到 60 分钟强催）。
                 self._bg_tasks[tid] = {"t0": time.time(),
-                                       "desc": str(o.get("description") or "")[:80]}
+                                       "desc": str(o.get("description") or "")[:80],
+                                       "aid": _aid,
+                                       "task_id": str(o.get("task_id") or "")}
                 self._bg_monitor_ensure()
         elif sub == "task_notification":
-            # v3.5.123：完成即注销（保活集合收缩；未知 tid 静默跳过）
-            self._bg_tasks.pop(tid, None)
+            # v4.0.6（复审实锤·三选一失效）：真实转写 133 条通知**全部带
+            # <task-id>**，所以「有 task_id 就算子代理」恒真 = 后台 Bash 的
+            # 通知照样放行，v4feed 会把 Bash 工具行改写成「✅ Background
+            # command … completed」，真实输出被覆盖。
+            # 正确判据是**身份**不是有无 task_id：
+            #   ① 本进程见过它的 task_started 且登记为真子代理（_sub_tids）
+            #   ② tid 在 readmodel 的 tidMap 里（跨进程重启仍有效）
+            #   ③ 通知自带 subagent_type
+            # task_id 单独出现**不再**作为放行依据（它就是 Bash 也有的）。
+            _aid_notify = self._rm_aid(tid)
+            _known_sub = bool(tid) and (
+                tid in getattr(self, "_sub_tids", ())
+                or bool(_aid_notify)
+                or bool(str(o.get("subagent_type") or "").strip()))
+            if not _known_sub:
+                # 无 tid 的停止通知（停止子代理形态）仍要往下走——它靠
+                # agentId 归并，v4feed 侧按 childTopic 找行，不会误标工具行
+                # （空 tid 不参与 tool 行回填）。
+                if tid:
+                    return
+                if not _aid_raw:
+                    return
             usage = o.get("usage") or {}
             st = str(o.get("status") or "")
             # v4.0.3（用户实锤「已停止的子代理胶囊还显示运行中」）：停止
@@ -1270,7 +1312,21 @@ class HarnessSession:
             _st_l = st.strip().lower()
             _stopped = _st_l in ("stopped", "cancelled", "canceled",
                                  "interrupted", "killed")
-            self.emit({"kind": "subagent_result", "tid": tid,
+            _t_final = tid or ""
+            if _t_final and getattr(self, "_sub_tids", None):
+                self._sub_tids.discard(_t_final)
+            # v4.0.4：注销保活——精确 tid 优先，缺 tid（停止通知）按 aid 兜底。
+            # v4.0.6（复审实锤）：只 pop 一条会让续派链留下另一条 →
+            # `_bg_hold_release` 的「集空」永假 → hold 挂到 60min 强催。
+            # 故：精确 tid 命中就只删它；否则**删掉该 aid 的全部登记项**
+            # （同一 agentId 的续派链在通知到达时已整体结束）。
+            if not (tid and self._bg_tasks.pop(tid, None) is not None) \
+                    and _aid_raw:
+                for _k, _v in list(self._bg_tasks.items()):
+                    if ((_v or {}).get("aid") == _aid_raw
+                            or (_v or {}).get("task_id") == _aid_raw):
+                        self._bg_tasks.pop(_k, None)
+            self.emit({"kind": "subagent_result", "tid": _t_final,
                        "ok": (_st_l in ("", "completed", "success")),
                        # v4.0.3：新字段——被停≠失败（目录/行卡按它画
                        # 「已停止」而非红叉）。旧消费者忽略未知键不受伤。
@@ -1278,8 +1334,8 @@ class HarnessSession:
                        "brief": str(o.get("summary") or "")[:200],
                        "tokens": usage.get("total_tokens") or 0,
                        "tool_n": usage.get("tool_uses") or 0,
-                       "task_id": str(o.get("task_id") or ""),
-                       "aid": self._rm_aid(tid)})
+                       "task_id": _aid_raw,
+                       "aid": _aid_raw or self._rm_aid(tid)})
 
     # ---- 事件层 ----
 

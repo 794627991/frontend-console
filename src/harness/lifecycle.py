@@ -59,7 +59,11 @@ def _get_or_create(sid):
 def _gc_loop():
     """闲置回收：活进程闲置超阈 kill（元数据/缓冲保留）。60s 一轮，daemon。
     v2.14：识图会话不参与回收——它是常驻配角，被回收后主会话发消息会
-    突然找不到人（peer 名字消失）；顺带这轮把它救活。"""
+    突然找不到人（peer 名字消失）；顺带这轮把它救活。
+    内存批（用户定调「可点开 ≠ 永久驻留」）：闲置会话的三份重缓冲在此
+    延迟回收——① v4 投影 feed（v4hub.v4_reap_idle，无订阅者 + 宽限无
+    落账才收，重开走既有冷建链）② readmodel 事实表（真源=磁盘，下次
+    /agents 冷重建——冷查询设计本义，跨会话不再累积全文）。"""
     while True:
         time.sleep(60)
         try:
@@ -71,6 +75,35 @@ def _gc_loop():
                     continue
                 if s.alive and not s.busy and (now - s.last_active) > _IDLE_KILL_S * 1000:
                     s.kill_proc()
+            # ① v4 feed 闲置回收（订阅者在场/活跃 feed 恒受保护）
+            try:
+                from . import v4hub
+                v4hub.v4_reap_idle()
+            except Exception:
+                pass
+            # ② readmodel：进程已死或不活、且不再 busy 的会话回收，另加
+            # 新鲜度护栏（对抗审 B-P2：用户停留查看已结束会话的目录时，
+            # /agents 轮询还在打 model——刚刷过的（<10 分钟）不收，防
+            # 「每 60s 丢一次缓存→下轮轮询全量重扫 55MB」的循环；
+            # 真闲置的模型无人刷，照收不误）
+            try:
+                from .subagent_readmodel import _models, _models_lock
+                _now_s = time.time()
+                with _models_lock:
+                    for s in objs:
+                        if getattr(s, "is_vision", False) \
+                                or getattr(s, "hidden", False):
+                            continue
+                        if s.busy or s.alive:
+                            continue
+                        _sid = getattr(s, "sid", None)
+                        _m = _models.get(_sid)
+                        if _m is not None and _now_s - getattr(
+                                _m, "_last_refresh_at", 0.0) < 600.0:
+                            continue
+                        _models.pop(_sid, None)
+            except Exception:
+                pass
         except Exception:
             pass
 

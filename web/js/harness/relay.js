@@ -152,9 +152,24 @@
     _hgScrollBottom();
   }
   function renderRenew(text) {
+    // a118（用户定调「压缩不许分割回合」）：组在场挂组时间线（时序与思考/
+    // 工具同列，v3.2.27 renderAudit 同款）；组外（compact 先于任何用户消息
+    // 的罕见形态）维持旧根部居中分割线
     const d = document.createElement('div'); d.className = 'h-switch hg-renew';
     d.innerHTML = '<span></span><i>♻️ ' + esc(text) + '</i><span></span>';
-    addRow(d);
+    // v4.0.6（复审实锤）：不再信任 histBuilding——重建期 _HG.grp 可能指向
+    // 即将被 replaceChildren 丢弃的旧 DOM，append 进去等于丢失。只认已连接。
+    const g = (_HG.grp && _HG.grp.root && _HG.grp.root.isConnected) ? _HG.grp : null;
+    if (g && g.tl) {
+      _tlExpFlush(!!_HG.openState);
+      // 同上：空组/纯思考组的 tl 是内联 display:none——直接 append 会困在
+      // 不可见容器里（旧 addRow 恒可见）。同 _sysRowIntoGroup 的翻显处理。
+      if (g.tl.style.display === 'none') g.tl.style.display = '';
+      g.tl.appendChild(d);
+      _hgScrollBottom();   // 组内分支不再走 addRow，需自补贴底
+    } else {
+      addRow(d);
+    }
   }
   function renderAudit(text) {
     // v3.2.27（用户定调「警告记录到工作区内，不许分割消息流」）：审计警示

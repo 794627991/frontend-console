@@ -584,7 +584,9 @@
   }
   // v3.2.6：单行任务卡定格（task_notification 路径——tool_result 丢失时的
   // 状态收口；与 renderOneToolResult 正常路径幂等互备）
-  function _hgAgentRowState(tid, err, brief) {
+  // v4.0.4（用户实锤「停止子代理后胶囊还显示运行」）＋stopped 第四参：
+  // 被停≠失败——画「已停止」橙徽而非红叉（用户视角：是我主动停的）。
+  function _hgAgentRowState(tid, err, brief, stopped) {
     const row = (_HG.rowById || {})[tid];
     if (!row || !row.classList.contains('agentline')) return;
     // v3.5.142：终态唯一停表收口——ack 守卫（renderOneToolResult 头部）生效后
@@ -598,7 +600,8 @@
       delete _HG.agLiveMemo[row.dataset.hgSubr];
     const st = row.querySelector('.h-tslots');
     if (st) {
-      if (err) st.innerHTML = statusBadge('error');
+      if (stopped && !err) st.innerHTML = statusBadge('stopped');
+      else if (err) st.innerHTML = statusBadge('error');
       else {
         const b = String(brief || '').trim();
         st.innerHTML = statusBadge('completed') + (b && !_hgBriefDupDesc(row.dataset.hgSubDesc, b)
@@ -705,7 +708,8 @@
       if (done) {
         const st = d.querySelector('.h-tslots');
         const _running = !!o.running;
-        if (st) st.innerHTML = statusBadge(err ? 'error' : (_running ? 'running' : 'completed'));
+        if (st) st.innerHTML = statusBadge(err ? 'error'
+          : (o.stopped ? 'stopped' : (_running ? 'running' : 'completed')));
         if (!_running) d.dataset.final = '1';
       }
       d.dataset.hgAgline = '1';
@@ -741,7 +745,7 @@
       (argH ? `<span class="h-tool-arg"${argTitle ? ` title="${argTitle}"` : ''}>${argH}</span>` : '') +
       (secH ? `<span class="h-tool-sec">${secH}</span>` : '') +
       (cfg.kind === 'bash' ? `<span class="h-tool-copy" role="button" title="复制命令">复制</span>` : '') +
-      `<span class="h-tslots">${done ? statusBadge(err ? 'error' : 'completed') : ''}</span></button>` +
+      `<span class="h-tslots">${done ? statusBadge(err ? 'error' : (o.stopped ? 'stopped' : 'completed')) : ''}</span></button>` +
       `<div class="h-tool-coll">${hgToolBody(cfg, inp, { done, err, dln: o.dln, result: o.result, summary: o.summary, cmd: _cmdFull })}</div>`;
     // 公共账（两轨同挂——renderOneToolResult/_subTlPoll/快照认回全消费）
     d._cfg = cfg;

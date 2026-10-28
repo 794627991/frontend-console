@@ -56,6 +56,7 @@ class SubagentReadModel(object):
         self._projects_root = projects_root or os.path.join(
             os.path.expanduser("~"), ".claude", "projects")
         self._lock = threading.Lock()
+        self._last_refresh_at = 0.0   # 内存批：最近 refresh 时刻（闲置回收的新鲜度护栏）
         self._main_wm = {}       # path → offset（缩水重扫由 _line_chunks 报）
         self._facts = []
         self._meta_links = {}    # tid → agentId（meta.json toolUseId）
@@ -134,6 +135,7 @@ class SubagentReadModel(object):
 
     def refresh(self, s, force=False):
         with self._lock:
+            self._last_refresh_at = time.time()   # 内存批：回收护栏的「在用」证据
             paths, csids = self._main_paths(s)
             main_dir = os.path.dirname(paths[-1]) if paths else None
             # ① 主文件增量吸收（全审G1：任一文件缩水——/rewind 物理截断是
@@ -273,28 +275,37 @@ class SubagentReadModel(object):
         with self._lock:
             return (self._proj or {}).get("tidMap", {}).get(str(tid or "")) or ""
 
-    def aid_to_tid(self, aid):
-        """v4.0.3：agentId → 首次派发 tid 的反查（tidMap 反向）。
+    def aids_to_tids(self, aid):
+        """v4.0.4：agentId → 全部派发 tid（tidMap 反向 + agents.tids）。
 
-        用途：停止子代理的 task-notification 只带 <task-id>（=agentId）
+        用途：停止子代理的 task-notification 只带 <task-id>（=agentId），
         **不带 tool-use-id**——镜像侧要拿到投影行键（tid）才能把 SUB 行
-        从 running 翻到终态，否则胶囊假运行（用户实锤）。
-        多个 tid 映射到同一 aid 时取**最早**一个（dict 保序 = 派发序，
-        首见 tid 是 SUB 行的建行键）。"""
+        从 running 翻终态。
+
+        v4.0.4 修正（复审实锤）：v4.0.3 的 `aid_to_tid` 只返回**最早**一个
+        tid。续派链（SendMessage 多轮）里同一 agentId 对应多个 tid，当前在
+        跑的是**最新**那个——返回最早会关错行（关到早已终态的旧行），而真
+        在跑的行继续假运行。改为返回全部，由投影层按「仍是 running 的那行」
+        自行挑（v4feed 按 childTopic 归并是主路，本反查只作兜底）。"""
         k = str(aid or "")
         if not k:
-            return ""
+            return []
         with self._lock:
+            out = []
             m = (self._proj or {}).get("tidMap", {}) or {}
             for t, a in m.items():
-                if a == k:
-                    return t
-            # 投影未含（2s Sync 窗口/刚停下）→ 反查 agents 表的 tids 列表
+                if a == k and t not in out:
+                    out.append(str(t))
             ag = ((self._proj or {}).get("agents") or {}).get(k) or {}
-            tids = ag.get("tids") or []
-            if tids:
-                return str(tids[0])
-            return ""
+            for t in (ag.get("tids") or []):
+                if t and str(t) not in out:
+                    out.append(str(t))
+            return out
+
+    def aid_to_tid(self, aid):
+        """兼容旧调用：取**最后一个** tid（续派链里最新=当前轮），无则空串。"""
+        r = self.aids_to_tids(aid)
+        return r[-1] if r else ""
 
 
 _models = {}

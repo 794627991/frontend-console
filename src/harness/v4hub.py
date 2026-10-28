@@ -95,7 +95,7 @@ def v4_sub_wanted_has(sid, agent_key):
         return (sid, agent_key) in _sub_wanted
 
 
-def v4_main_feed(s):
+def v4_main_feed(s, acquire=False):
     """主 feed 懒建（feed 与 session 同生命周期；epoch 跟随账本）。
 
     初始化（ZCode transcript-hydration 对位）：**transcript hydration 永远
@@ -109,10 +109,16 @@ def v4_main_feed(s):
     真 uuid（session.py:1590），键一换 ingest 冷建新 feed 进注册表，用户
     已绑定的旧键 feed 成孤儿（页面的 SSE gen 循环还挂着它：ka 心跳照跳、
     帧永远没有，判死/重连全不触发=主窗永久冻结，刷新才拿到新键 feed 的
-    全量快照假愈）。子 feed 键（v4_sub_*）同批换 s.sid。"""
+    全量快照假愈）。子 feed 键（v4_sub_*）同批换 s.sid。
+    acquire=True（内存批，对抗审 A-P1）：所有返回路径的订阅计数在 hub
+    锁内原子完成（含 TTL 复用/零产出临时/注册竞速各口），调用方随后
+    sub_release；不采纳返回实例时必须自行 release。"""
     sid = s.sid
     with _lock:
         feed = _main_feeds.get(sid)
+        if acquire and feed is not None \
+                and feed.epoch == s.log.epoch:
+            feed.sub_acquire()   # 锁内原子：reap 候选扫描同锁（快路径）
         blk = _build_locks.get(sid)
         # 严重8 修正（a116 全审）+ MAJOR-4（a116 二次全审）：
         # 零产出块挡 (a62「空投影不缓存」) 返回的临时 feed 不入册，而 routes
@@ -129,6 +135,8 @@ def v4_main_feed(s):
         _prev_empty = None
         if _e is not None and _e[0] == s.log.epoch:
             if time.time() - _e[1] < _EMPTY_TTL:
+                if acquire:
+                    _e[2].sub_acquire()   # 临时实例同锁配对（不入册，reap 不可见）
                 return _e[2]
             if _e[2].snap["rows"]:
                 _prev_empty = _e[2]      # 有过 live 行：重建后需从 0 重放
@@ -141,6 +149,9 @@ def v4_main_feed(s):
         # 同一事件——先存者补放窗与后存者 live ingest 重叠=行双画）
         with _lock:
             feed = _main_feeds.get(sid)
+            if acquire and feed is not None \
+                    and feed.epoch == s.log.epoch:
+                feed.sub_acquire()       # 双检早退口：锁内原子计数
             _building.add(sid)           # 严重4：冷建窗口内 emit 不得丢
             _building_pending.setdefault(sid, [])
         try:
@@ -293,6 +304,8 @@ def v4_main_feed(s):
                                 "seq=%s", sid, s.log.last_seq)
                     # 严重8/MAJOR-4：TTL 窗内复用本次结果，避免循环全量水化
                     _empty_feeds[sid] = (s.log.epoch, time.time(), feed)
+                    if acquire:
+                        feed.sub_acquire()   # 零产出临时口：锁内配对
                     return feed
                 if old is None or old.epoch != s.log.epoch:
                     _main_feeds[sid] = feed
@@ -300,6 +313,8 @@ def v4_main_feed(s):
                     _empty_feeds.pop(sid, None)  # 正式入册：清零产出缓存
                 else:
                     feed = old           # 锁内仍撞（epoch 竞速）：保留先入者
+                if acquire:
+                    feed.sub_acquire()   # 注册竞速口：给最终胜者计数
         finally:
             # 全审（a116）：add/discard 必须成对覆盖所有返回与异常路径——
             # 泄漏会让门禁对该 sid 永久放行，更糟的是该 sid 此后所有 emit
@@ -679,7 +694,7 @@ def _hydrate_main(feed, s):
 # 子代理 feed
 # ---------------------------------------------------------------------------
 
-def v4_sub_feed(sid, agent_key, hydrate_paths=None):
+def v4_sub_feed(sid, agent_key, hydrate_paths=None, acquire=False):
     """子 feed 懒建：首次依序尝试 hydrate_paths（三源候选）全量重建。
 
     a56（用户实测「回放点开是空的」）：hydrate 颗粒无果（候选全 miss）时
@@ -687,11 +702,16 @@ def v4_sub_feed(sid, agent_key, hydrate_paths=None):
     永远空白）。下次订阅携修正 paths 重试。
     a62：hydrate 判据从「文件可读」改为「产出行数」——tasks/*.output 等
     候选可读但 feed_jsonl_line 零产出（格式不匹配），旧判据会停止尝试
-    后续候选并缓存空实例；逐候选判 rows，空则换下一个。"""
+    后续候选并缓存空实例；逐候选判 rows，空则换下一个。
+    acquire=True（内存批，对抗审 A-P1）：**取引用与订阅计数在 hub 锁内
+    原子完成**——调用方（/v4/stream）随后才 sub_release。返回的实例
+    （在册或零产出临时）计数已 +1，调用方不采纳时必须自行 release。"""
     key = (sid, agent_key)
     with _lock:
         feed = _sub_feeds.get(key)
         if feed is not None:
+            if acquire:
+                feed.sub_acquire()   # 锁内原子：v4_reap_idle 候选扫描同锁
             return feed
     # F1-R（a116 十一次全审）：子 feed 起点交给 V4Feed 的**类级高水位**
     # 分配（wseq_base=0 → 取 max(0, 进程 hwm+1)）。原实现用毫秒时间戳
@@ -719,8 +739,12 @@ def v4_sub_feed(sid, agent_key, hydrate_paths=None):
             pass
     with _lock:
         if not feed.snap["rows"]:
+            if acquire:
+                feed.sub_acquire()   # 临时实例（不入册）同样配对计数
             return feed          # 全候选零产出：不缓存（下次携修正 paths 重试）
         got = _sub_feeds.setdefault(key, feed)
+        if acquire:
+            got.sub_acquire()        # 胜者（竞速输给在册实例时是旧者）
         return got
 
 
@@ -776,6 +800,90 @@ def v4_drop_session(sid):
     """会话删除/回收时清全部 feed。"""
     v4_drop_main(sid)
     v4_drop_sub(sid)
+
+
+# 内存批（用户定调「子代理可无条件点开 ≠ feed 永久驻留」）：无订阅者的
+# feed 延迟回收。原状主/子 feed 只在显式 /delete 清——长期运行的工具进程
+# 里每个开过的会话都留下一份全量投影（实测 8×2.6MB 子转写=30MB、大主
+# 会话 8320 行=67MB），跨会话累积无上界。
+_SUB_FEED_GRACE_S = 600.0     # 子 feed：无订阅者且 10 分钟无落账
+_MAIN_FEED_GRACE_S = 900.0    # 主 feed：无订阅者且 15 分钟无落账（大会话
+                              # 冷建贵，宽限放长）
+
+
+def v4_reap_idle(now=None):
+    """闲置 feed 回收（lifecycle._gc_loop 每 60s 调用一次）。
+
+    回收判据（同时成立才收）：
+      ① feed 当前无 SSE 订阅者（_subs_n==0——pane 关/页切走/无 v4 客户端；
+         连接中的 pane 恒受保护，重连窗口远小于宽限）
+      ② 距最后一次落账超过宽限——运行中代理的 feed 持续被 watcher 喂入
+         增量、busy 会话的主 feed 持续被 emit 喂，天然免收（零抖动）
+      ③ 主 feed 额外要求会话不在 busy（busy 期事件在流，天然不满足 ②；
+         此闸是 busy 翻转 TOCTOU 的第二道防线）
+    回收后的重开路径即既有冷建（功能不变，用户红线「必须能点开」）：
+    子 pane 点击 → v4_sub_feed(paths) 全量 hydrate；主窗切回 →
+    v4_main_feed 冷建（hydration+账本重放）。在飞订阅者的换 feed 感知由
+    既有 5s 对账整窗快照自愈链承担（a74 孤儿替换 / FATAL-3 身份比对）。
+
+    门禁处置（对抗审 B-P1 修正，主/子**有意不对称**）：
+    - 主 feed：**保留 `_main_wanted`**。harness 自产镜像事件
+      （subagent_started/subagent_result/turn_*）**永不落 CLI 转写**——
+      无人观看期迟到的这类事件若被门禁丢弃，其 seq 在重开冷建的水位之下
+      （`events_after` 严格 >），投影内永久缺失。保留门禁 → 下一条 emit
+      经 v4_ingest_main 触发冷建并就地 ingest 自己，窗口内事件逐条自愈；
+      这不是抖动：重建一次后 feed 存活，静默期再无重建。
+    - 子 feed：**对称清 `_sub_wanted`**。子投影真源=转写文件（hydrate
+      全量重建权威），watcher 门禁留键会在「续派/迟到 flush 每写一行」
+      时无人观看地全量重析 MB 级转写（建了又收的 IO 循环）；重开 pane
+      时 routes 会重新登记，链路无损。
+    - `_empty_feeds`：零产出临时 feed 同窗回收（TTL 复用语义不受影响
+      ——过期本就重建）。
+    """
+    now = time.time() if now is None else now
+    # ① hub 锁内快照候选（不持锁查 _sessions——两把锁的获取序必须单向）
+    with _lock:
+        cand_sub = [k for k, fd in _sub_feeds.items()
+                    if fd.subs_n() == 0
+                    and now - fd.last_ingest_at > _SUB_FEED_GRACE_S]
+        cand_main = [sid for sid, fd in _main_feeds.items()
+                     if fd.subs_n() == 0
+                     and now - fd.last_ingest_at > _MAIN_FEED_GRACE_S]
+        stale_empty = [sid for sid, e in _empty_feeds.items()
+                       if now - e[1] > _MAIN_FEED_GRACE_S]
+    if not cand_sub and not cand_main and not stale_empty:
+        return
+    # ② 主 feed 候选过会话 busy 闸（锁外独立取 _sessions）
+    idle_main = []
+    for sid in cand_main:
+        s = v4_session_for(sid)
+        if s is None or not bool(getattr(s, "busy", False)):
+            idle_main.append(sid)
+    # ③ 二次校验后回收（快照与查会话之间可能有新订阅/新落账，重验才收）
+    with _lock:
+        for k in cand_sub:
+            fd = _sub_feeds.get(k)
+            if fd is None or fd.subs_n() > 0 \
+                    or now - fd.last_ingest_at <= _SUB_FEED_GRACE_S:
+                continue
+            _sub_feeds.pop(k, None)
+            try:
+                _sub_wanted.remove(k)   # 对称关门禁（见 docstring；重订阅再登记）
+            except ValueError:
+                pass
+        for sid in idle_main:
+            fd = _main_feeds.get(sid)
+            if fd is None or fd.subs_n() > 0 \
+                    or now - fd.last_ingest_at <= _MAIN_FEED_GRACE_S:
+                continue
+            _main_feeds.pop(sid, None)
+            # 注意：**不 discard `_main_wanted`**——迟到的转写外镜像事件
+            # 靠它维持入投影的通路（见 docstring 对抗审 B-P1）
+            _empty_feeds.pop(sid, None)
+        for sid in stale_empty:
+            e = _empty_feeds.get(sid)
+            if e is not None and now - e[1] > _MAIN_FEED_GRACE_S:
+                _empty_feeds.pop(sid, None)
 
 
 def v4_session_for(sid):

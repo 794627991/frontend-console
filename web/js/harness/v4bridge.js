@@ -251,6 +251,11 @@
       _HG.epoch = (snap && snap.epoch) || _HG.epoch;
       // 归档轮真源（服务端全量数）：归档条「前 N 轮」不再按尾窗 lines 瞎数
       _HG.histArchiveTurns = (snap && snap.turnsTotal) || 0;
+      // 内存批（对抗审 C-P0）：v4 模式 saveCache 不再写快照缓存（webview
+      // 内存批），sessions.js 的 dirty 判据失去 cache 项——「首条消息已发、
+      // jsonl 尚未 flush」的窄窗内 has_history 仍 false，chip 点击会走
+      // 误删分支。快照有行=会话有内容是数据到达时刻的铁证，就地补置
+      if (lines.length) _HG.dirty = true;
     }
     // a62 诊断埋点：复现「主窗消失」时可读 window.__v4dbg 定位空/异常快照
     try {
@@ -372,9 +377,15 @@
             _eAt = _eAt > 1e12 ? _eAt : _eAt * 1000;
             var _staleRound = _sat && _eAt && _eAt < _sat;
             if (!_staleRound
-                && (ent.status === 'done' || ent.status === 'err')) {
+                && (ent.status === 'done' || ent.status === 'err'
+                    || ent.status === 'stopped')) {
               a.done = true;
               a.err = ent.status === 'err';
+              // v4.0.4（复审实锤）：stopped 是**确定性事实**（用户主动停），
+              // 与 interrupted（mtime 启发式猜测）不同——必须落定，否则
+              // 刷新/切会话后又回退成「运行中」。
+              a.stopped = ent.status === 'stopped';
+              a.interrupted = false;
             }
             // interrupted/running：不落定（事件真相保持 running）
           } else if (!a.err && ent.status === 'err') {
@@ -406,7 +417,7 @@
               _hgAgentRowBindAid(tid, row);
             if (a.done && row.dataset.final !== '1'
                 && typeof _hgAgentRowState === 'function')
-              _hgAgentRowState(tid, a.err, ent.brief || '');
+              _hgAgentRowState(tid, a.err, ent.brief || '', !!a.stopped);
             // a91（用户铁律「子代理后台还在运行，无条件要能够同步」）：注册表
             // （readmodel）是运行态参考，但 interrupted 是 mtime 启发式（代理
             // 长思考不落盘必误伤）——档案真相=事件（feed subagent 行 running
@@ -873,7 +884,9 @@
           var _dur = _ms ? (_ms < 10000 ? (_ms / 1000).toFixed(1) + 's'
                                         : Math.round(_ms / 1000) + 's')
                          : (run.textContent || '0s');
-          sl2.innerHTML = (sb2 ? sb2(row.status === 'error' ? 'error' : 'completed') : '')
+          sl2.innerHTML = (sb2 ? sb2(row.status === 'error' ? 'error'
+                                     : (row.status === 'cancelled' ? 'stopped'
+                                        : 'completed')) : '')
             + ' <span class="hg-tdur-run" style="opacity:.85;font-size:.85em">' + _dur + '</span>';
         }
       }
@@ -951,8 +964,10 @@
         if (a && !a.done) {
           a.done = true; a.doneAt = Date.now();
           a.err = row.status === 'failed';
-          // v4.0.3：停止态（status 已翻 success 但有 stopped 信号）——
-          // 档案带上 interrupted 供目录/行卡画「已停止」而非绿「完成」
+          // v4.0.3/v4.0.6：停止态落档——stopped 是一等字段（目录/行卡/
+          // 胶囊都读它）；interrupted 只留给「失联」语义。原实现只写
+          // interrupted，v4 主链上新引入的 a.stopped 从未落档。
+          a.stopped = !!row.stopped || row.status === 'cancelled';
           a.interrupted = !!row.stopped;
           a.result = String(row.summary || '').trim().slice(0, 400);
           // a64：钥匙终态补发——childTopic 直取 agentId（不依赖镜像重发），
@@ -993,10 +1008,15 @@
         }
       }
       // 行卡终态（V3 agent 单行卡：停表+徽章+摘要+agentId 回绑）
+      // v4.0.5（复审实锤）：这是 v4 下 SUB 行**唯一**的终态行卡收口点，
+      // 原只传 err → 停止的 SUB 行（status=cancelled / row.stopped=true）
+      // 被画成绿「完成」，与目录的「已中断」自相矛盾。第四参补 stopped。
       var ars = _g('_hgAgentRowState');
       if (ars && row.tid) {
-        try { ars(row.tid, row.status === 'failed', row.summary || ''); }
-        catch (e) {}
+        try {
+          ars(row.tid, row.status === 'failed', row.summary || '',
+              !!row.stopped || row.status === 'cancelled');
+        } catch (e) {}
       }
       var rss2 = _g('renderSideStatus');
       if (rss2) { try { rss2(); } catch (e) {} }
@@ -1167,7 +1187,10 @@
       return { r: 'tool', name: row.tool || '',
                hint: _toolHintOf(row.input), tid: row.tid || '',
                input: row.input || null, done: !!done,
-               out: row.output || '', err: row.status === 'error', ts: ts };
+               out: row.output || '',
+               err: row.status === 'error',
+               // v4.0.5：cancelled 不能在重建后画成「完成」
+               stopped: row.status === 'cancelled' || !!row.stopped, ts: ts };
     }
     return null;
   }
@@ -1446,19 +1469,19 @@
       var stick = stickEl ? _g('_subPaneStick') && _g('_subPaneStick')(stickEl) : true;
       try { at2(t, n.name, n.hint, n.tid, n.input); } catch (e) {}
       this._openTools.push(n);
-      if (n.done) this._subToolDone(n.tid, n.out, n.err);
+      if (n.done) this._subToolDone(n.tid, n.out, n.err, n.stopped);
       else if (stick) this._subScrollBottom();
       return;
     }
     if (n.r === 'result') {   // V3 兜底行的 FIFO 配对
       var w = this._openTools.shift();
-      if (w) this._subToolDone(w.tid, n.text, n.err);
+      if (w) this._subToolDone(w.tid, n.text, n.err, n.stopped);
     }
   };
 
   // 工具终态回点（tuid 精确优先；V3 兜底无 tid 行 FIFO；全 miss 静默——
   // 完整结果在工具卡折叠体，孤儿摘要不裸落时间线（V3 v3.4.65 同口径））
-  V4Bridge.prototype._subToolDone = function (tid, out, err) {
+  V4Bridge.prototype._subToolDone = function (tid, out, err, stopped) {
     var t = this._t;
     if (!t || !t.tl) return;
     var row = null;
@@ -1477,7 +1500,11 @@
     row.classList.toggle('err', !!err);
     var slots = row.querySelector('.h-tslots');
     var sb = _g('statusBadge');
-    if (slots && sb) slots.innerHTML = sb(err ? 'error' : 'completed');
+    // v4.0.6（复审实锤）：子窗格工具行原恒画 completed——被停的工具
+    // （status=cancelled）显示绿「完成」。stopped 优先于完成、低于出错。
+    if (slots && sb) {
+      slots.innerHTML = sb(err ? 'error' : (stopped ? 'stopped' : 'completed'));
+    }
     var full = String(out || '').trim();
     var coll = row.querySelector('.h-tool-coll');
     var quiet = !err && row.dataset.hgKind === 'diff' && !!row.querySelector('.h-diff');
@@ -1566,8 +1593,16 @@
         ? (_HG.rowById[this.opt.agent] || _HG.rowById[_tidM]) : null;
       var _ars2 = _g('_hgAgentRowState');
       if (_ars2 && _rowSt) {
-        try { _ars2(_rowSt.dataset.tid || _tidM, !!st.err,
-                    String(finTxt || '').trim().slice(0, 200)); } catch (e) {}
+        // v4.0.6（复审实锤）：子窗格终态收口原不传 stopped——而 _subFinish
+        // 的 st.err 对被停恒 false，2.5s 后重画会把主 feed 刚画好的「已停止」
+        // 翻回绿「完成」。档案或行上带 stopped 时必须透传。
+        try {
+          var _aSt = (typeof _hgAg === 'function' ? _hgAg(this.opt.agent) : null)
+                     || ((_HG.agents || {})[this.opt.agent]) || {};
+          _ars2(_rowSt.dataset.tid || _tidM, !!st.err,
+                String(finTxt || '').trim().slice(0, 200),
+                !!(_aSt && (_aSt.stopped || _aSt.interrupted)));
+        } catch (e) {}
       }
     } else {
       t.done = false;
@@ -1673,7 +1708,9 @@
         if (rows[i] && rows[i].kind === 'tool_call'
             && rows[i].status && rows[i].status !== 'running') {
           this._subToolDone(rows[i].tid, rows[i].output,
-                            rows[i].status === 'error');
+                            rows[i].status === 'error',
+                            rows[i].status === 'cancelled'
+                              || !!rows[i].stopped);
         }
       }
       // 首 t0=首行时刻（V3 回放 P3a 同口径）
@@ -1793,7 +1830,8 @@
       if (n) this._subAppend(n);   // ts 记账在 append 内统一
     } else if (d.op === 'row.upserted') {
       if (d.row && d.row.kind === 'tool_call') {
-        this._subToolDone(d.row.tid, d.row.output, d.row.status === 'error');
+        this._subToolDone(d.row.tid, d.row.output, d.row.status === 'error',
+                          d.row.status === 'cancelled' || !!d.row.stopped);
       }
     } else if (d.op === 'state.updated') {
       var p = d.patch || {};

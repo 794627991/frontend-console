@@ -188,24 +188,29 @@ def build_app():
         threading.Timer(0.5, os._exit, (0,)).start()
         return jsonify({"ok": True})
 
-    # ---- CORS：只放行主进程页面来源（同源 127.0.0.1:8765） ----
+    # ---- CORS：只放行主进程页面来源（父进程注入的真实端口）+ 本 worker 自身 ----
     # 安全修复（a116 全审 P0）：原实现全站 `Access-Control-Allow-Origin: *`
     # ——浏览器里任一网页脚本都能跨源读 /api/claude/api_config（明文 token）、
     # 任意路径读 /api/harness/file、跨源驱动 /api/proxy/start|stop 与
     # /api/harness/send。worker 端口可扫描，改动前主进程无 CORS 头。
-    # 现只回显白名单 Origin（主进程端口 + 本 worker 自身端口）；无 Origin
-    # （同源导航/服务端调用）不设头，浏览器按同源处理。
-    _MAIN_ORIGIN = "http://127.0.0.1:8765"
+    # a117（用户实锤「重启后 Claude 面板全挂、会话列表空」）：a116 的白名单
+    # **双死**——① _MAIN_ORIGIN 硬编码 8765，而主进程端口每次启动动态随机
+    #（实测 63382/61580 各不相同）恒不命中；② _base 在 worker 进程内从未
+    # 初始化（只有父进程侧 manage_start 会设它，worker 侧恒空串）恒不命中。
+    # 白名单两条全死=零放行=合法主页面也被全拦（sessions 拉不到=「会话
+    # 没了」假象，数据无损）。修：主来源改吃父进程注入的
+    # CLAUDE_WORKER_MAIN_ORIGIN（manage_start 在主进程 write_endpoint(port)
+    # 之后调用，真实端口在手）；worker 侧 main() 绑定后回填全局 _base。
+    # 维持 MAJOR-6 安全判定：**不**放宽为「任意 loopback 端口」——本机
+    # 恶意网页（http://127.0.0.1:9999 之类）依旧全拦，白名单精确到
+    # 主页面来源 + worker 自身两个；无 Origin（同源/服务端调用）不设头
+    _MAIN_ORIGIN = (os.environ.get("CLAUDE_WORKER_MAIN_ORIGIN") or "").strip()
 
     @app.after_request
     def _cors(resp):
         origin = (request.headers.get("Origin") or "").strip()
         allow = ""
-        # MAJOR-6 修正（a116 二次全审）：不能放行任意本机端口——本机任一
-        # 网页（http://127.0.0.1:9999 之类）即可跨域读 /api/claude/api_config
-        # （明文 token）并驱动 /api/proxy/start|stop。只白名单主进程页面
-        # 来源与本 worker 自身端口（非 loopback 域名一律不放行）。
-        if origin and (origin == _MAIN_ORIGIN or origin == _base):
+        if origin and (origin == _MAIN_ORIGIN or (_base and origin == _base)):
             allow = origin
         if allow:
             resp.headers["Access-Control-Allow-Origin"] = allow
@@ -275,6 +280,10 @@ def main():
                 continue
             raise
     actual = srv.server_port
+    # a117：worker 侧回填自身来源（_cors 白名单第二条此前恒空串——模块级
+    # _base 只有父进程侧 manage_start 会设，worker 进程内从未初始化）
+    global _base
+    _base = "http://127.0.0.1:%d" % actual
 
     parent_pid = int(os.environ.get("CLAUDE_WORKER_PARENT_PID") or 0)
     if parent_pid > 0:
@@ -297,6 +306,7 @@ def main():
 _proc = None
 _stop = threading.Event()
 _base = ""
+_MAIN_PORT = 0            # a117：主进程服务端口（CORS 白名单注入用；manage_start 传入）
 _last_port = 0            # 最近一次实际端口（respawn 期望值跟随 fallback）
 _hung = 0                 # 连续 health 探活失败计数（挂死检测）
 _lock = threading.Lock()
@@ -306,6 +316,9 @@ def _spawn_cmd(prefer_port):
     env = dict(os.environ)
     env["CLAUDE_WORKER_PORT"] = str(prefer_port)
     env["CLAUDE_WORKER_PARENT_PID"] = str(os.getpid())
+    # a117：主页面真实来源随拉起注入（主进程端口动态随机，硬编码必死）
+    if _MAIN_PORT:
+        env["CLAUDE_WORKER_MAIN_ORIGIN"] = "http://127.0.0.1:%d" % _MAIN_PORT
     if getattr(sys, "frozen", False):
         cmd = [sys.executable, "--claude-worker"]
         cwd = None
@@ -461,9 +474,13 @@ def _supervisor(prefer_port):
             logging.getLogger("claude_worker").warning("worker 重启失败: %s", e)
 
 
-def manage_start(prefer_port=0):
-    """主进程开窗前调用：拉起 worker 并进入监护。失败不抛（终端优先）。"""
-    global _proc, _last_port
+def manage_start(prefer_port=0, main_port=0):
+    """主进程开窗前调用：拉起 worker 并进入监护。失败不抛（终端优先）。
+    main_port（a117）：主进程服务端口——worker CORS 白名单的注入源（主页面
+    来源动态随机，硬编码必拦；调用点在 write_endpoint(port) 之后端口在手）。"""
+    global _proc, _last_port, _MAIN_PORT
+    if main_port:
+        _MAIN_PORT = main_port
     if os.environ.get("CLAUDE_INLINE") == "1":
         return
     try:

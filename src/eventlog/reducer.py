@@ -87,8 +87,12 @@ def apply_event(proj, ev):
         cur = ag.get(str(ev.get("tid") or ""))
         if cur is not None:
             nxt = dict(cur)
+            # v4.0.4：被停≠失败——stopped 单独记旗，不置 err（用户主动
+            # 停止画红叉是错的；err 只留给真失败）
+            _stopped = bool(ev.get("stopped"))
             nxt.update({"done": True,
-                        "err": not bool(ev.get("ok", True)),   # 镜像事件带 ok（成功语义）
+                        "stopped": _stopped,
+                        "err": (not bool(ev.get("ok", True))) and not _stopped,
                         "tokens": ev.get("tokens") or nxt.get("tokens") or 0,
                         "tool_n": ev.get("tool_n") or nxt.get("tool_n") or 0,
                         "brief": (ev.get("brief") or "")[:200]})

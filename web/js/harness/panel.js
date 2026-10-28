@@ -388,7 +388,7 @@
         // v3.5.145（全审F1）：主会话流单行卡同步终态收口（停秒表+徽章）——
         // _hgAgentRowState 是终态唯一停表点，幂等（notification 已到时档案
         // done 本分支不进；正常路 renderOneToolResult 先到已收，重入无害）
-        _hgAgentRowState(id, !!a.err, a.result || '');
+        _hgAgentRowState(id, !!a.err, a.result || '', !!a.stopped);
         swept = true;
       }
     }
@@ -473,7 +473,8 @@
         `${a.t0 ? new Date(a.t0).toTimeString().slice(0, 8) : '—'} → ` +
         `${a.doneAt ? new Date(a.doneAt).toTimeString().slice(0, 8) : (a.done ? '历史' : '运行中')}</span></div>` +
       `<div class="hg-dyn-kv"><span class="k">耗时</span><span class="v">${dur}` +
-        `${a.interrupted ? ' · 已中断' : a.err ? ' · 失败' : ''}</span></div>` +
+        `${a.interrupted ? ' · 已中断' : (a.stopped ? ' · 已停止'
+                                            : (a.err ? ' · 失败' : ''))}</span></div>` +
       (a.desc ? `<div class="hg-dyn-agres">${esc(a.desc)}</div>` : '') +
       (a.result ? `<div class="hg-dyn-agres">${esc(a.result)}</div>` : '') +
       // v2.38：回放入口——带 agentId 的已完成代理（含历史条目）可开回放
@@ -799,13 +800,16 @@
       }
       // v2.36：中断态补 halt 修饰类（点/文字/耗时转橙，与失败红区分；仅类名）
       const cls = a.replay ? 'hist' : !a.done ? 'run'
-        : (a.err ? (a.interrupted ? 'fail halt' : 'fail') : 'done');
+        : (a.err ? (a.interrupted ? 'fail halt' : 'fail')
+           : (a.stopped ? 'halt' : 'done'));
       let el;
       // v2.59：渲染时即算实际耗时——innerHTML 重建每 3-4s 一批（事件驱动），
       // 硬编码 '0s' 占位要等下一轮 1s tick 才修正=时间反复归零（用户实锤）
       if (!a.done) el = `<b class="hg-dyn-el" data-t0="${a.t0}">${a.t0 ? _hgFmtDur(Math.max(1, Math.round((Date.now() - a.t0) / 1000))) : '0s'}</b>`;
       else if (a.replay) el = '<b class="hg-dyn-el">历史</b>';
       else if (a.err) el = `<b class="hg-dyn-el">${a.interrupted ? '已中断' : '失败'}</b>`;
+      // v4.0.6（复审实锤）：被停 ≠ 完成——目录行不能画成绿色耗时
+      else if (a.stopped) el = '<b class="hg-dyn-el">已停止</b>';
       else el = `<b class="hg-dyn-el">${a.t0 ? _hgFmtDur(Math.max(1, Math.round((a.doneAt - a.t0) / 1000))) : '完成'}</b>`;
       const key = a.replay ? a.rid : a.id;
       // v2.35（P1-4）：模型角标——实跑 model 优先，frontmatter 预显示兜底，

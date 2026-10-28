@@ -136,15 +136,21 @@ def test_send_rounds_and_name():
 
 
 def test_notify_status_map():
-    """notification status 词表：failed→err / stopped→interrupted / 未知→done。"""
+    """notification status 词表：failed→err / stopped→stopped / 未知→done。
+
+    v4.0.4：stopped 原归 interrupted——但 interrupted 在本模块是 **mtime
+    启发式的猜测**（转写停更），stopped 是确定性事实（用户主动停）。混一
+    会让前端「interrupted 不落定」把已停代理又显示回运行中。
+    """
     base = [
         asst("t8", "Task", {"subagent_type": "Explore", "description": "词表",
                             "run_in_background": True}),
         res("t8", "agentId: exp_map_0001 started"),
     ]
     f = collect_main_facts(base)
-    for st, want in (("failed", "err"), ("stopped", "interrupted"),
-                     ("cancelled", "interrupted"), ("weird_value", "done")):
+    for st, want in (("failed", "err"), ("stopped", "stopped"),
+                     ("cancelled", "stopped"), ("interrupted", "interrupted"),
+                     ("weird_value", "done")):
         a = project(collect_main_facts(base + [notify_xml(
             "t8", "exp_map_0001", st)]), liveness=LV)["agents"]["exp_map_0001"]
         ok("notify词表-%s" % st, a["status"] == want, (st, a))

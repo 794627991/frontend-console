@@ -179,6 +179,10 @@
     // 分支把这条历史会话 DELETE 掉并杀掉其进程（实测可复现：打开历史会话、
     // 不发消息、点模型 → 会话从列表消失）。这里改为按「目标会话是否已落盘」
     // 判定：缓存里有 or 服务端标记 has_history 的会话，都不是可丢弃的新会话。
+    // 内存批（对抗审 C-P0）：v4 模式快照缓存不再写入（saveCache 门禁），
+    // 本行的 cache 项保护随之消失——v4 的 dirty 由 v4bridge._rebuild 在
+    // 数据到达时（快照有行）补置 true，比切换时刻判定更准（首条消息已发、
+    // jsonl 尚未 flush 的窄窗内 has_history 仍 false，但快照必有行）
     _HG.dirty = !!(sid && (_HG.cache[sid] || _hgHasHistory(sid)));
     // v2.15：busy 不能跨会话沿用。旧实现只重置 _HG.alive，busy 靠下面那次
     // events 请求的 .then(setBusy) 纠偏，而 catch 把失败整个吞掉 —— 请求

@@ -45,33 +45,82 @@ _AUDIT_DOC_EXTS = (".md", ".markdown", ".mdx", ".txt", ".rst", ".adoc")
 # 验证面，写多少行都不进产品。按路径判（目录名 + 文件名前缀）——
 # 项目约定 tests/ 目录、tools/_ 前缀的探针脚本（_probe_*/_stress_*），
 # 以及 test_*.py / *_test.js / *.spec.js 这类命名。
-_AUDIT_TEST_DIRS = ("tests", "testing", "test", "__tests__", "spec",
-                    "e2e", "fixtures")
-_AUDIT_TEST_PREFIX = ("test_", "_probe_", "_stress_", "_selftest", "_smoke",
-                      "_ask_", "_busy_", "_chain_", "_analyze_", "_scan_",
-                      "_white_", "_prof_", "_agents_", "_vision_")
+# v4.0.4（复审实锤逃逸）：原实现只看「任意段命中」，三条实测逃逸——
+#   tests/../src/harness/session.py → 豁免（产品代码！）
+#   src/tests/../audit.py          → 豁免
+#   src/_scan_big.py               → 豁免（前缀无目录域）
+# 修法：normpath 消 .. → 锚定仓库根 → 只认**相对仓库根的首段**目录，
+# 前缀探针组限定 tools/（本项目私有约定，外溢即逃逸面）。
+_AUDIT_TEST_DIRS = ("tests", "testing", "test", "__tests__", "e2e",
+                    "fixtures")   # spec 退役：本仓库无证据，specs/ 是文档
+_AUDIT_TEST_PREFIX_ANY = ("test_",)          # 业界命名契约，全仓库生效
+_AUDIT_TEST_PREFIX_TOOLS = ("_probe_", "_stress_", "_selftest", "_smoke",
+                            "_ask_", "_busy_", "_chain_", "_analyze_",
+                            "_scan_", "_white_", "_prof_", "_agents_",
+                            "_vision_")      # 本项目 tools/ 私有约定
 _AUDIT_TEST_SUFFIX = ("_test.py", "_test.js", "_test.ts", ".test.js",
                       ".test.ts", ".spec.js", ".spec.ts")
 
 
+def _audit_normalize(path):
+    """规范化路径：消 `..`/`.`/重复分隔符，统一正斜杠小写。
+
+    v4.0.5（复审实锤）：**不能锚定「运行时代码所在目录」**。审计代码跑在
+    后端进程里，而会话 cwd 可能是 worktree / 用户项目 / 发布版 exe 内——
+    实测 `_SRC_DIR` 上一级作根会让 worktree 里 `tests/test_x.py` 照样计
+    501 行（需求1 在多数场景失效）。逃逸面只需 normpath 就能堵：
+    `tests/../src/harness/session.py` → `src/harness/session.py`，不再含
+    测试段，自然计入。
+    """
+    try:
+        p = os.path.normpath(str(path or "")).replace("\\", "/")
+    except Exception:
+        return ""
+    return p.lower()
+
+
+def _audit_prefixed(name, prefixes):
+    """文件名是否命中前缀组。`_probe_` 同时匹配 `_probe.py`（尾下划线可省）
+    ——探针脚本既有 `_probe_gate.py` 也有 `_probe.py` 两种叫法，边界必须
+    是「点或下划线」（防 `_probeable.py` 这类误伤）。"""
+    for pre in prefixes:
+        if name.startswith(pre):
+            return True
+        base = pre.rstrip("_")
+        if base != pre and name.startswith(base) \
+                and name[len(base):len(base) + 1] in (".", "_"):
+            return True
+    return False
+
+
 def _audit_is_test_path(path):
-    """路径是否属测试用途（命中即不计行数）。大小写不敏感。"""
-    p = str(path or "").replace("\\", "/").lower()
-    if not p:
+    """路径是否属测试用途（命中即不计行数）。大小写不敏感。
+
+    三级判据（v4.0.5）：① normpath 消 `..` 后仍含测试目录段；② 文件名前缀
+    （`test_` 全仓；`_probe_`/`_scan_` 等探针组限 `tools/`）；③ 测试后缀。
+    深层同名目录（`src/tests/`）按「测试根就在路径中」处理——本项目不存在
+    名为 tests 的产品目录，且目录域判据过窄会让用户项目里的
+    `pkg/tests/test_x.py` 失效（需求1 的本意就是测试脚本别计入）。
+    """
+    rel = _audit_normalize(path)
+    if not rel:
         return False           # 取不到路径：保守计入（不敢豁免未知目标）
-    parts = [x for x in p.split("/") if x]
+    parts = [x for x in rel.split("/") if x and x != "."]
     if not parts:
         return False
-    # 目录段命中（tests/ 等；不看最后一段——那是文件名）
+    # ① 目录段命中测试根（不看最后一段——那是文件名）
     for seg in parts[:-1]:
         if seg in _AUDIT_TEST_DIRS:
             return True
     name = parts[-1]
-    if name.startswith(_AUDIT_TEST_PREFIX):
+    # ② 前缀：test_ 全仓；探针组只认 tools/ 父目录，或根级单文件名
+    if _audit_prefixed(name, _AUDIT_TEST_PREFIX_ANY):
         return True
-    if name.endswith(_AUDIT_TEST_SUFFIX):
-        return True
-    return False
+    if (len(parts) > 1 and parts[-2] == "tools") or len(parts) == 1:
+        if _audit_prefixed(name, _AUDIT_TEST_PREFIX_TOOLS):
+            return True
+    # ③ 后缀（命名契约，全仓）
+    return name.endswith(_AUDIT_TEST_SUFFIX)
 
 # ---- from claude_harness.py:874 (_audit_lines) ----
 

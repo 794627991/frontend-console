@@ -181,13 +181,24 @@ def _push_file(s, fp, aid, force=False, reconcile=False):
             v4hub.v4_sub_ingest(s.sid, aid, obj)
     except Exception:
         pass
-    # 兼容旧前端（批F 退役）：载荷防爆照旧截尾
-    s.emit({"kind": "event", "data": {
-        "type": "subagent_delta",
-        "agent": aid,
-        "offset": new_off,
-        "text": txt[:MAX_DELTA_BYTES],
-    }})
+    # 兼容旧前端（批F 退役）：载荷防爆照旧截尾。
+    # 内存批（多子代理实锤：账本 deque(maxlen=2000) 每条至多 256KB、
+    # microcompact 只折 cli_stream 的 message.content 块折不到本形态，
+    # 实测 2000×60KB=370MB 常驻）：**无 V3 SSE 订阅者时不 emit**——v4
+    # 模式主窗不 openSSE（v4main 全权接管）、子 pane 走 /v4/stream，
+    # 本事件零消费者，进账本纯属白吃。V3 前端在场（bus 有订阅者）照发，
+    # 旧管线零变化；has_subscribers 查询异常时保守照发（宁可多吃不可断流）
+    try:
+        _has_v3 = bool(s.log.bus.has_subscribers())
+    except Exception:
+        _has_v3 = True
+    if _has_v3:
+        s.emit({"kind": "event", "data": {
+            "type": "subagent_delta",
+            "agent": aid,
+            "offset": new_off,
+            "text": txt[:MAX_DELTA_BYTES],
+        }})
     return new_off - off
 
 

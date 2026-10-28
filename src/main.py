@@ -670,9 +670,11 @@ def main():
     # Claude 子系统 worker：进程隔离（harness/hiklink 重负载移驻独立进程，
     # 见 src/worker_app.py 模块注释）。失败不阻塞主工具（Claude 面板不可用，
     # 串口终端不受影响）；崩溃由 worker 侧 supervisor 自动重启
+    # main_port（a117）：主页面真实来源随拉起注入 worker CORS 白名单——
+    # 端口动态随机，worker 侧硬编码必拦（用户实锤「重启后全挂/会话空」）
     try:
         from src import worker_app
-        worker_app.manage_start()
+        worker_app.manage_start(main_port=port)
     except Exception as _we:
         print(f"[警告] Claude worker 拉起失败: {_we}", file=sys.stderr)
 

@@ -133,7 +133,11 @@
     subagent_result(p, it, fx) {
       if (it.aid && it.tid) { _HG.tidMap = _HG.tidMap || {}; _HG.tidMap[it.tid] = it.aid; }
       const a = p.agents[it.tid];
-      if (a) Object.assign(a, { done: true, err: !it.ok,
+      // v4.0.4：被停≠失败——err 只在「非 ok 且非 stopped」时置位，
+      // 否则目录/行卡会把用户主动停止画成红叉。
+      if (a) Object.assign(a, { done: true,
+                                stopped: !!it.stopped,
+                                err: !it.ok && !it.stopped,
                                 tokens: it.tokens || a.tokens || 0,
                                 toolN: it.tool_n || a.toolN || 0,
                                 brief: String(it.brief || '').slice(0, 200) });

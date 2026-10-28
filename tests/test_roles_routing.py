@@ -383,8 +383,11 @@ check("已派 designer → 设计档不触发（v3.5.53 零强制零拦截）",
       G(200, designed=True) == (False, None),
       str(G(200, designed=True)))
 b, m2 = G(200, designed=False, reviewed=True)
-check("已派 reviewer 不豁免设计档（两档独立）",
-      b and "设计线" in m2, m2 or "")
+# v3.5.314 定稿口径（与 v3.5.313 结算同源）：审计链已建立（reviewer 在场）
+# → 设计档豁免，回修/审计驱动迭代不再被拦。旧断言「两档独立、reviewer 不
+# 豁免设计档」与实现及用户拍板冲突，属测试滞后（HEAD 上即失败）。
+check("已派 reviewer → 设计档豁免（v3.5.314 与结算同口径）",
+      (not b) and not m2, str((b, m2)))
 check("设计线 0 → 设计档不拦（审计档独立仍在）",
       "设计线" not in (G(500, designed=False,
           cfg={"l1_max_lines": 100, "l2_max_lines": 200,
@@ -456,17 +459,18 @@ for fn in ("executor.md", "coder.md", "designer.md", "dev.md", "reviewer.md"):
 # 「只装 reviewer」的 mid 行为用三档配置 + MID_MODEL 验证
 write_cfg(enabled=True, light_model=LIGHT_MODEL, mid_model=MID_MODEL,
           heavy_model=HEAVY_MODEL)
-hr.install_roles_agents(MID_MODEL)       # mid（=旧 strong：只装 reviewer）
+hr.install_roles_agents(MID_MODEL)       # mid（v4.0.4：reviewer + designer）
 check("mid 清退役三角色",
       not any(os.path.exists(os.path.join(ad, fn)) for fn in
               ("executor.md", "coder.md", "dev.md")))
-check("mid 只装 reviewer", os.path.isfile(os.path.join(ad, "reviewer.md")))
-check("mid 下 designer.md 共存不删（light 在用文件）",
+check("mid 装 reviewer", os.path.isfile(os.path.join(ad, "reviewer.md")))
+check("mid 也装 designer（v4.0.4 事中闸指路，否则闸一开就死锁）",
       os.path.isfile(os.path.join(ad, "designer.md")))
 with open(os.path.join(ad, "designer.md"), encoding="utf-8") as f:
     dmd_old = f.read()
-check("mid 不动 designer 内容（仍是旧装）", dmd_old == "---\nname: designer\n---\nold")
-check("mid ensure_roles_ready 只查 reviewer",
+check("mid 覆盖旧 designer 内容（不再共存保留）",
+      dmd_old != "---\nname: designer\n---\nold")
+check("mid ensure_roles_ready 不再报告缺失",
       hr.ensure_roles_ready(MID_MODEL) == [])
 hr.install_roles_agents(LIGHT_MODEL)     # light
 check("light 装 designer+reviewer",
@@ -481,7 +485,7 @@ check("heavy 双装 designer+reviewer（派发自由，v3.5.16）",
       and os.path.isfile(os.path.join(ad, "reviewer.md")))
 check("heavy ensure_roles_ready 查双文件", hr.ensure_roles_ready(POOL_HEAVY) == [])
 hr.install_roles_agents(MID_MODEL)       # mid
-check("mid 只装 reviewer（designer 共存保留，v2.37 原则）",
+check("mid 装 reviewer + designer（v4.0.4）",
       os.path.isfile(os.path.join(ad, "reviewer.md"))
       and os.path.isfile(os.path.join(ad, "designer.md")))
 write_cfg(enabled=True, light_model=POOL_LIGHT, heavy_model=POOL_HEAVY)
@@ -490,7 +494,8 @@ with open(os.path.join(ad, "designer.md"), encoding="utf-8") as f:
     dmd = f.read()
 with open(os.path.join(ad, "reviewer.md"), encoding="utf-8") as f:
     rmd = f.read()
-check("roundtrip 后 designer 内容已刷新（非旧装）", dmd != dmd_old)
+check("roundtrip 后 designer 内容已刷新（非手工旧装）",
+      dmd != "---\nname: designer\n---\nold")
 check("designer md 取重池模型（槽空回退）",
       "model: %s" % POOL_HEAVY in dmd and "name: designer" in dmd)
 check("reviewer md 取重池模型（槽空回退）", "model: %s" % POOL_HEAVY in rmd)

@@ -198,30 +198,82 @@
               }
               if (sub === 'task_notification' && !a.done) {
                 a.done = true; a.doneAt = Date.now();
-                a.err = !!(o.status && o.status !== 'completed'
-                           && o.status !== 'success');
+                // v4.0.4（用户实锤「停止子代理后胶囊还显示运行」）：停止
+                // ≠ 失败。原判据只排 completed/success，stopped 落 err=true
+                // → 红叉。三态：正常完成 / 被停（用户主动）/ 失败。
+                const _stl = String(o.status || '').toLowerCase();
+                a.stopped = _stl === 'stopped' || _stl === 'cancelled'
+                  || _stl === 'canceled' || _stl === 'killed';
+                a.err = !_stl ? false : (_stl !== 'completed'
+                  && _stl !== 'success' && !a.stopped);
                 a.result = String(o.summary || '').trim().slice(0, 400) || a.result;
                 _subClose(tid, a.err);
                 // v3.2.6：单行任务卡定格（tool_result 丢失的兜底路径也要收
                 // 徽章；正常路径 renderOneToolResult 先到，此处幂等覆写）
-                _hgAgentRowState(tid, a.err, a.result);
+                _hgAgentRowState(tid, a.err, a.result, a.stopped);
               }
             }
             renderSideStatus();
           } else if (sub === 'task_notification') {
             // v3.4.52：跨会话完成信号入桶——档案被切会话清场时，运行中档案
             // 在 liveAgentsBy 桶里，直达桶内置 done（防切回后假运行）
+            // v4.0.4：停止 ≠ 失败（三态）；本分支 tid 必为真值（外层守卫），
+            // 无 tid 的停止通知走**下方顶层分支**（否则永远不可达）。
+            const _stlN = String(o.status || '').toLowerCase();
+            const _stoppedN = _stlN === 'stopped' || _stlN === 'cancelled'
+              || _stlN === 'canceled' || _stlN === 'killed';
             for (const _ls in (_HG.liveAgentsBy || {})) {
               const _la = _HG.liveAgentsBy[_ls][tid];
               if (_la && !_la.done) {
                 _la.done = true; _la.doneAt = Date.now();
-                _la.err = !!(o.status && o.status !== 'completed' && o.status !== 'success');
+                _la.stopped = _stoppedN;
+                _la.err = !_stlN ? false : (_stlN !== 'completed'
+                  && _stlN !== 'success' && !_stoppedN);
                 _la.result = String(o.summary || '').trim().slice(0, 400) || _la.result;
                 break;
               }
             }
             // 批2（迁出主窗）：档案缺失的段头定格兜底退役——段不存在；
             // 切会话往返场景由上方 liveAgentsBy 桶置 done（防假运行）承接
+          }
+        }
+        // v4.0.4（复审实锤·死代码修复）：**没有 tool_use_id** 的完成/停止
+        // 通知（实测 92 条停止通知的形态）走不到上面任何一个 `tid &&` 分支
+        // ——原实现在 tid 守卫内部写多键定位=永不可达，需求3 在 V3 管线仍
+        // 不成立。这里提到顶层，按 task_id（=agentId）定位档案并即时收口。
+        if (sub === 'task_notification' && !tid) {
+          const _aidN = String(o.task_id || '');
+          if (_aidN) {
+            const _stl2 = String(o.status || '').toLowerCase();
+            const _stop2 = _stl2 === 'stopped' || _stl2 === 'cancelled'
+              || _stl2 === 'canceled' || _stl2 === 'killed';
+            const _done2 = (x) => {
+              x.done = true; x.doneAt = Date.now();
+              x.stopped = _stop2;
+              x.err = !_stl2 ? false : (_stl2 !== 'completed'
+                && _stl2 !== 'success' && !_stop2);
+              x.result = String(o.summary || '').trim().slice(0, 400) || x.result;
+            };
+            const _keys2 = [((_HG.aidKey || {})[_aidN] || ''), _aidN]
+              .filter((x, i, arr) => x && arr.indexOf(x) === i);
+            let _hit2 = false;
+            for (const _ls in (_HG.liveAgentsBy || {})) {
+              for (const _k of _keys2) {
+                const _la = _HG.liveAgentsBy[_ls][_k];
+                if (_la && !_la.done) { _done2(_la); _hit2 = true; break; }
+              }
+              if (_hit2) break;
+            }
+            for (const _k of _keys2) {
+              const _a2 = (_HG.agents || {})[_k];
+              if (_a2 && !_a2.done) {
+                _done2(_a2);
+                try { _hgAgentRowState(_k, _a2.err, _a2.result, _a2.stopped); }
+                catch (_) {}
+                break;
+              }
+            }
+            renderSideStatus();
           }
         }
         // v2.37（P1-F②）：协作包装的完成通知——严格按名配对定格对应转交线
@@ -1110,7 +1162,7 @@
       // R1（流式/重渲统一试点）：杂项行走 FEV dispatch（渲染归 entries 订阅，
       // renderRenew/renderAudit/renderRaw 渲染函数本体不动=UI 零变）；编排
       // （grpFinalize 等）保留在分支内归 R6 回合状态机
-      else if (it.kind === 'renew') { grpFinalize(true); _hgDispatch({ t: 'renew', text: it.text }); }
+      else if (it.kind === 'renew') { _hgDispatch({ t: 'renew', text: it.text }); }   // a118：撤 grpFinalize——compact 是长跑回合中途事件不许分割（hist 侧同步，v3.2.27 审计同款定调）
       // v2.34：审计警示（light 回合结算违规）——回合已终结，定稿当前组再出红卡
       else if (it.kind === 'audit') { _hgDispatch({ t: 'audit', text: it.text }); _hgScrollBottom(); }   // v3.2.27：撤 grpFinalize——警示入工作区不分割回合
       else if (it.kind === 'raw') _hgDispatch({ t: 'raw', text: it.text });
@@ -1203,6 +1255,28 @@
     // 此刻入库会把 B 的内容写进 A(_HG.sid) 的快照；RO 中关页/切换路径防御
     if (_HG.readonly) return;
     if (!_HG.sid) return;
+    // 内存批（用户实锤「webview2 进程内存吃不少」）：v4 管线**零读点**——
+    // switchTo 的 v4 分支（sessions.js:200）在快照恢复（:212）之前就
+    // return，懒填路径也被 _histFetch 的 v4 守卫拦死。而快照本体是整个
+    // 主窗 flow 的 innerHTML（大会话每份数十 MB、上限 10 份），v4 模式
+    // 每次切会话照写不误=纯浪费数百 MB 渲染器内存。改：v4 在场不写，
+    // 并把存量快照（V3 时代遗留）一并排空——需要时（关掉 v4 回 V3）
+    // 由 transcript 重渲路径自然重建
+    if (typeof V4Main !== 'undefined' && V4Main.on) {
+      try {
+        if (V4Main.on()) {
+          const warm = _HG.cacheWarm || (_HG.cacheWarm = {});
+          for (const k of Object.keys(_HG.cache)) {
+            if (warm[k]) continue;
+            warm[k] = setTimeout(() => {
+              delete warm[k];
+              delete _HG.cache[k];
+            }, 30000);
+          }
+          return;
+        }
+      } catch (_) {}
+    }
     // 轻审 P2（v3.4.60）：重建窗口期（_hgSseRebuild/_hgReloadFlow 清场后
     // transcript fetch 在途）不入库——此刻 flow 是空/残的，且重建入口的
     // delete cache 会被这次入库击穿，切回恢复出空白工作区。
@@ -1211,6 +1285,11 @@
     // v2.37（P0-A）：窗口账目随快照存——恢复路径重建 histStart/histLive，
     // 使滚动扩收机制在快照态重新成立（此前快照恢复后 histLive=false 且
     // histStart 丢失，上滑扩段被 v2.35.2 的门拦死，历史够不着）
+    // 内存批（对抗审 C-P1）：覆盖写前先 delete 重插——JS 对象键序=插入
+    // 序，旧实现覆盖已有键不挪位，下方两个淘汰循环把「首插序」当 LRU 序
+    // 用，会把刚存的新鲜快照当最旧淘汰。delete 后重插即恢复「最近」语义
+    // （顺带修正 v2.25 计数 LRU 的同款隐患）
+    delete _HG.cache[_HG.sid];
     _HG.cache[_HG.sid] = { html: _hgFlow.innerHTML, seq: _HG.seq,
                            epoch: _HG.epoch || null,
                            // v3.4.61：dock 待答面板随快照走（dock 在 flow 外不吃
@@ -1264,14 +1343,38 @@
     // v3.1：keep-warm（对照 ZCode 延迟销毁）——超限快照不再即时 delete，
     // 保温 30s 后销毁；期间切回（A→B→A 快切）直接命中热快照零重建，
     // 切回动作本身会取消销毁定时器。稳态内存不变（30s 后照删）。
+    // 内存批（用户问「有没有使用上限」）：计数 LRU 之外加**字节预算**——
+    // 10 份 × 数十 MB 的计数上限在大会话场景仍是数百 MB。预算 1600 万
+    // 字符（JS 字符串 UTF-16 ≈ 32MB 堆），超预算从最旧份开始保温销毁，
+    // 至少保住最新一份（当前会话切回秒开）
     const keys = Object.keys(_HG.cache);
     const warm = _HG.cacheWarm || (_HG.cacheWarm = {});
-    for (const k of keys.slice(0, Math.max(0, keys.length - 10))) {
-      if (warm[k]) continue;               // 已在保温期
+    const _warmEvict = (k) => {
+      if (warm[k]) return;                 // 已在保温期
       warm[k] = setTimeout(() => {
         delete warm[k];
         delete _HG.cache[k];
       }, 30000);
+    };
+    for (const k of keys.slice(0, Math.max(0, keys.length - 10))) _warmEvict(k);
+    const _BUDGET = 16 * 1024 * 1024;      // 字符预算（≈32MB UTF-16 堆）
+    let _tot = 0;
+    for (const k of keys) {
+      const c = _HG.cache[k];
+      _tot += ((c && c.html && c.html.length) || 0)
+            + ((c && c.askPanel && c.askPanel.length) || 0);
+    }
+    if (_tot > _BUDGET && !_HG._cacheBudgetWarned) {
+      _HG._cacheBudgetWarned = true;       // 内存批（对抗审 C-P2）：一次性诊断
+      try { console.warn('[harness] 快照缓存超预算 ' +
+        Math.round(_tot / 1048576) + 'MB > 32MB，最旧快照将延迟 30s 淘汰'); } catch (_) {}
+    }
+    for (let i = 0; i < keys.length - 1 && _tot > _BUDGET; i++) {
+      const c = _HG.cache[keys[i]];
+      if (!c) continue;
+      _tot -= ((c.html && c.html.length) || 0)
+            + ((c.askPanel && c.askPanel.length) || 0);
+      _warmEvict(keys[i]);
     }
   }
   function _histPrefixFp(lines, n) {

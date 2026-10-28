@@ -805,10 +805,13 @@
                       _tgt.done = true; _tgt.doneAt = Date.now();
                       _tgt.result = String(_fin.text || _tgt.result || '').slice(0, 2000);
                       _tgt.err = !!_fin.err;
+                      // v4.0.4：子转写 final 行 err=false 时也可能是被用户停的
+                      // （不是真完成）——档案自带 stopped 时优先按停止画。
                       try {
                         const _rowF = (_HG.rowById || {})[cur.tid0] || (_HG.rowById || {})[tid];
                         if (_rowF && typeof _hgAgentRowState === 'function')
-                          _hgAgentRowState(cur.tid0 || tid, !!_fin.err, _tgt.result);
+                          _hgAgentRowState(cur.tid0 || tid, !!_fin.err,
+                                            _tgt.result, !!_tgt.stopped);
                       } catch (_) {}
                       if (t && !t.done) { t.done = true; t.durTxt = ''; _subTlHeadPaint(t); }
                     }

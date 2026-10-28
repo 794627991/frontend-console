@@ -498,8 +498,20 @@ def install_roles_agents(model=None):
         "本代理。",
         reviewer_m, _REVIEWER_BODY, tools=_TOOLS_REVIEW)
     if mode == "mid":
-        # 中主力：主会话直干，只装审计兜底的 reviewer（designer 共存不清）
-        wanted = {"reviewer.md": _reviewer_md}
+        # 中主力：主会话直干，审计兜底 reviewer + **designer 按需**。
+        # v4.0.4（复审实锤死锁）：事中闸对 mid 同样生效（设计线达线即拦，
+        # 指路「先派 designer」），但 mid 原只装 reviewer.md——闸一开就叫
+        # 派一个不存在的代理，Task 报错且无法满足，整回合废掉。mid 的
+        # designer 是「被闸唤起的按需角色」，不是常态派发义务。
+        wanted = {
+            "designer.md": _agent_md(
+                "designer",
+                "设计者：只设计，绝不干活——架构/模块划分/关键决"
+                "策/风险/依赖顺序的框架方案；不写代码不改文件不跑实现。需"
+                "要高水平方案时派此代理，并把已知上下文尽可能带上。",
+                designer_m, _DESIGNER_BODY, tools=_TOOLS_DESIGN),
+            "reviewer.md": _reviewer_md,
+        }
     else:
         # light / heavy：双装（heavy 派发自由，v3.5.16）
         wanted = {
@@ -553,7 +565,7 @@ def ensure_roles_ready(model=None):
         return []
     d = _agents_dir_guard(_agents_dir())
     _m = roles_mode(model)
-    need = ["reviewer.md"] if _m == "mid" else ["designer.md", "reviewer.md"]
+    need = ["designer.md", "reviewer.md"]   # v4.0.4：mid 也需 designer（闸指路）
     missing = [fn for fn in need if not os.path.isfile(os.path.join(d, fn))]
     install_roles_agents(model)
     if missing:
@@ -800,8 +812,10 @@ def roles_bridge_text(model=None):
             % (l1, l2l, design_line, designer_m, reviewer_m, audit_note)
         )
     # mid 分支：中档模型主会话=干活者，直干为主+派发自由（强制项=审核）；
-    # 只保留审计兜底——回合内直改累计超审计线（数字嵌词热更）触发回合
-    # 结算审计（audit_verdict strong 分支：超线未派 reviewer=违规）。
+    # 审计兜底——回合内直改累计超审计线（数字嵌词热更）触发回合结算审计
+    # （audit_verdict strong 分支：超线未派 reviewer=违规）。
+    # v4.0.4：补设计线段——事中闸对 mid 生效（达设计线未派 designer 拦一次），
+    # 引导词不写模型被拦时不知道有这条线，第一反应重试=体验断崖。
     cfg = roles_cfg()
     _l1, _l2f, l2l = audit_limits(cfg)
     if str(cfg.get("audit_mode") or "auto") != "off":
@@ -812,6 +826,12 @@ def roles_bridge_text(model=None):
                       "保留免重读），新审计目标才新开")
     else:
         audit_note = "大改不派 reviewer 审计就答复用户属重大流程违规"
+    _dl_mid = design_limit(cfg)
+    _design_note = ("- 设计闸（%s）：回合内直改累计达 %d 行且尚未审计时会被"
+                    "**中途拦截一次**——先派 designer 出框架方案（带目标/"
+                    "约束/已试方案/文件+行号/验收标准），按方案继续；本回合"
+                    "只提醒这一次，之后自由直改。\n" % ("开", _dl_mid)
+                    if _dl_mid > 0 else "")
     return (
         "【主会话直干（你=干活者）】\n"
         "本会话用中档模型直接干活：需求承接、方案、编码、debug、杂活通常由你"
@@ -820,11 +840,12 @@ def roles_bridge_text(model=None):
         "质量纪律：\n"
         "- 动手前先想清楚：需求边界、实现路径、风险点；复杂改动先在回复里"
         "列出方案要点再实施。\n"
+        "%s"
         "- 审计兜底（%s）：回合内直改累计超过审计线（回合累计 ≤%d 行）"
         "即触发审计——须派 reviewer 对抗审计（只审不改，PASS/FAIL），FAIL "
         "自己修复后复审再答复用户。\n"
         "- 改完自测通过再交；遵守项目既有代码风格与约定。\n"
         "- 回合终点纪律：完成后，最后一条消息必须是给用户的结论汇总（做了"
         "什么、自测与审核结果、用户需要做什么），不得静默结束回合。\n"
-        % (audit_note, l2l)
+        % (_design_note, audit_note, l2l)
     )

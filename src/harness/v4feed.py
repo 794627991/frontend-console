@@ -410,6 +410,12 @@ class V4Feed(object):
         # 广播；racy 单槽，最坏重复序列化，无害）。_trim 越窗丢弃时失效
         self._frm_cache = None         # ((frm, to), sse_text)
         self._snap_txt = None          # (seq, sse_text)
+        # 内存批（用户定调「可无条件点开 ≠ 永久驻留」）：SSE 订阅者计数 +
+        # 最后落账时刻——v4hub.v4_reap_idle 的回收判据。计数在 /v4/stream
+        # 生成器首尾增减（含循环内换 feed 的配对迁移）；last_ingest_at 由
+        # _commit 推进（活跃 feed 永不满足闲置判据，运行中代理零误收）
+        self._subs_n = 0
+        self.last_ingest_at = time.time()
         self._pending_tools = {}       # tool_use id -> rowId（终态配对）
         self._pending_agents = {}      # Task tool_use id -> (sub行, tool行)
         self._exit_marker_row = None   # 最近 exit marker 行（interrupted 合并锚）
@@ -589,9 +595,36 @@ class V4Feed(object):
                 # success（画「已停止」徽章而非红叉）——原实现 ok=False
                 # 会落 failed，用户看到的是出错。
                 _stopped = bool(data.get("stopped"))
-                _st = ("success" if ok or _stopped else "failed")
+                # v4.0.4（复审实锤语义虚报）：stopped 不再伪装成 success。
+                # v4proto 词表里有 "cancelled"，用它表达「被主动停」——
+                # success 会被摘要/统计消费方误读成「有交付结论」。
+                _st = ("cancelled" if _stopped
+                       else ("success" if ok else "failed"))
                 _brief = (data.get("brief") or "").strip()
+                # v4.0.6（复审实锤）：空 tid 的停止通知只按 aid 翻 SUB 行，
+                # 权威 Task tool 行（tid 非空）却永停 running——F5/切回按
+                # hydration 重建仍是假运行。反过来，空 tid 也不能直接拿去
+                # 查 tool_call 行（会误中 tid 为空的行）。这里用 **aid 反查
+                # 该子代理对应的 tool 行**：SUB 行的 childTopic==sub:<aid>，
+                # 同 aid 的 tool 行就是它的派发卡。
+                _tool_tid = tid
+                if not _tool_tid:
+                    _aid_t = str(data.get("task_id") or data.get("aid") or "")
+                    if _aid_t:
+                        for _r in self.snap["rows"]:
+                            if (_r.get("kind") == "subagent"
+                                    and str(_r.get("childTopic") or "")
+                                    .replace("sub:", "") == _aid_t
+                                    and _r.get("tid")):
+                                _tool_tid = _r.get("tid")
+                                break
                 if pair is None:
+                    # v4.0.6：空 tid 时上面 pop("") 落空，而该子代理的旧
+                    # 派发键（_tool_tid）仍留在 _pending_agents —— 本函数只有
+                    # 一处 pop（全库唯一），残留会跨会话累积。这里按反查到
+                    # 的 tid 补一次清理。
+                    if _tool_tid:
+                        self._pending_agents.pop(_tool_tid, None)
                     # v4.0.3 兜底：停止通知可能不带 tool-use-id（session 侧
                     # 已尽量反查 tid，但冷启动窗口内反查可能落空）——按
                     # **agentId（task_id/aid）** 找本 feed 里 running 的
@@ -636,18 +669,30 @@ class V4Feed(object):
                 # report was delivered…"），真结论在 hand-back 注入消息正文
                 # （下方 user 分支处理）。元数据 brief 不回填（还会误覆盖后台
                 # Bash 行的真实输出——bg bash 完成也走 notification 镜像）
-                if (_brief and tid and not hb_is_meta(_brief)):
+                # v4.0.6（复审实锤）：原门控要求 `_brief` 非空才翻 tool 行
+                # 终态——但停止通知**通常不带 summary**，于是 Task 工具行
+                # 永停 running，F5/切回重建后主窗 SUB 行又变绿「完成」。
+                # 停止 = 必须翻（用固定文案）；正常完成仍按 brief 门控防
+                # 元数据误覆盖后台 Bash 行的真实输出。
+                _flip_tool = (_stopped and _tool_tid) or (
+                    _brief and _tool_tid and not hb_is_meta(_brief))
+                if _flip_tool:
                     _trid = next((r["rowId"] for r in self.snap["rows"]
                                   if r.get("kind") == "tool_call"
-                                  and r.get("tid") == tid), None)
+                                  and r.get("tid") == _tool_tid), None)
                     if _trid:
                         # a90：真终态带 status/endedAt——ack 被抑制后 tool 行
                         # 从派发起保持 running，此处是它的终态翻转点（回放/
                         # 重建按 status 定形态，缺 status=假运行）
-                        d3, _ = self._upsert(_trid,
-                                             status="success" if ok else "failed",
-                                             output="✅ " + _brief[:2000],
-                                             endedAt=ts)
+                        # v4.0.4：被停的 tool 行标 cancelled（不是 failed =
+                        # 出错，也不是 success = 有交付）
+                        d3, _ = self._upsert(
+                            _trid,
+                            status=("cancelled" if _stopped
+                                    else ("success" if ok else "failed")),
+                            output=("⏹ 已停止" if _stopped
+                                    else "✅ " + _brief[:2000]),
+                            endedAt=ts)
                         if d3:
                             ds.append(d3)
             elif t == "peer":
@@ -1241,6 +1286,7 @@ class V4Feed(object):
         self._log.append((w, ds))
         self._seqs.append(w)
         self.snap["seq"] = w
+        self.last_ingest_at = time.time()   # 内存批：回收判据（活跃即免收）
         self._bump_hwm(w)          # F1-R：推进进程级高水位（跨实例单调）
         # 跨**进程**持久化：把 wseq 高水位写回会话账本（随 meta 落盘），
         # 下一代的起点据此严格递增。仅主 feed 有 log_store（子 feed 为 None，
@@ -1288,6 +1334,22 @@ class V4Feed(object):
         """当前帧版本号（wait_frames 的配套锚点）。"""
         with self._cv:
             return self._ver
+
+    # ---- 订阅者计数（内存批：v4hub.v4_reap_idle 的回收判据）----
+    def sub_acquire(self):
+        """/v4/stream 生成器入场 +1（含循环内换 feed 的迁入）。"""
+        with self._lock:
+            self._subs_n += 1
+
+    def sub_release(self):
+        """生成器退场 -1（下限 0：防御性配对，早退路径多 release 不致负）。"""
+        with self._lock:
+            if self._subs_n > 0:
+                self._subs_n -= 1
+
+    def subs_n(self):
+        with self._lock:
+            return self._subs_n
 
     def wait_frames(self, ver, timeout):
         """阻塞等 ver 之后的新帧（超时返回当时的版本号）。SSE 生成器的

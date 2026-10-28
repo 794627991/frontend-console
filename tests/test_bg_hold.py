@@ -217,3 +217,50 @@ if __name__ == "__main__":
               test_stale_hold_repair):
         f()
         print(f.__name__, "PASS")
+
+
+def test_bg_chain_hold_released_by_aid_notification():
+    """v4.0.6（复审实锤）：续派链同 aid 多条登记，无 tid 停止通知必须全清。
+
+    原实现按 aid 扫描命中第一条就 break → 留下的登记项使
+    `_held and not _bg_tasks` 永假 → hold 挂到 60min 强催。
+    """
+    s = _mk_session()
+    s.emit = lambda o: None
+    s._bg_monitor_ensure = lambda: None
+    s._rm_aid = lambda tid: ""      # 反查落空（冷启动窗口）
+    for tid in ("tuE1", "tuE2"):
+        s._emit_task_mirror({"subtype": "task_started", "tool_use_id": tid,
+                             "subagent_type": "designer",
+                             "is_backgrounded": True, "task_id": "aE",
+                             "description": "续派链"})
+    assert "tuE1" in s._bg_tasks and "tuE2" in s._bg_tasks
+    # 无 tool_use_id 的停止通知，只带 task_id=aE
+    s._emit_task_mirror({"subtype": "task_notification",
+                         "tool_use_id": "", "task_id": "aE",
+                         "status": "stopped"})
+    assert s._bg_tasks == {}, \
+        "续派链残留 %r → hold 永不释放（挂到 60min 强催）" % (s._bg_tasks,)
+    print("bg chain hold released PASS")
+
+
+def test_bg_shell_notification_does_not_emit_subagent_result():
+    """v4.0.6（复审实锤）：后台 Bash 的通知不得当子代理收口。
+
+    真实转写 133 条通知**全部带 <task-id>**，原「有 task_id 就算子代理」
+    判据恒真 → Bash 工具行被改写成「✅ Background command … completed」，
+    真实输出被覆盖。
+    """
+    s = _mk_session()
+    got = []
+    s.emit = lambda o: got.append(o)
+    s._bg_monitor_ensure = lambda: None
+    s._rm_aid = lambda tid: ""
+    # 后台 Bash：无 subagent_type、tid 不在 _sub_tids
+    s._emit_task_mirror({"subtype": "task_notification",
+                         "tool_use_id": "call_bash", "task_id": "b70rl2xmr",
+                         "status": "completed",
+                         "summary": 'Background command "下载" completed'})
+    assert not [x for x in got if x.get("kind") == "subagent_result"], \
+        "后台 Bash 通知被当成子代理结果发出（会误标 Bash 工具行）"
+    print("bg shell filtered PASS")

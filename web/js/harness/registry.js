@@ -17,6 +17,11 @@
       t0: e.t0 || 0,
       done: e.status !== 'running',
       err: e.status === 'err',
+      // v4.0.5（复审实锤）：注册表条目必须能表达「用户主动停掉」这一
+      // **确定性事实**（后端 _status_from_notify 已单列 stopped）。原先只认
+      // interrupted，导致每次 2s Sync / F5 后 a.stopped 被整体替换丢失，
+      // 「已停止」被抹成「完成」。
+      stopped: e.status === 'stopped',
       interrupted: e.status === 'interrupted',
       doneAt: e.doneAt || 0,
       bg: !!e.bg, rounds: e.rounds || 1,
@@ -89,6 +94,7 @@
             { type: jAg[k].type, desc: jAg[k].desc, t0: jAg[k].t0,
               done: jAg[k].status !== 'running',
               err: jAg[k].status === 'err',
+              stopped: jAg[k].status === 'stopped',
               interrupted: jAg[k].status === 'interrupted',
               doneAt: jAg[k].doneAt, bg: !!jAg[k].bg, sid: sid, reg: true },
             { found: false });
@@ -96,6 +102,16 @@
         }
         const loc = _hgRegToLocal(jAg[k], sid);
         if (modelBy[k]) loc.model = modelBy[k];
+        // v4.0.6（复审实锤）：本地已有的「已停止」事实不得被 Sync 抹掉
+        // ——通知未 flush 时后端条目仍报 running，整条替换会把
+        // stopped 清成 false，目录/行卡重回「运行中」或「完成」。
+        // 单向：本地 true 恒保留；后端 stopped 由 _hgRegToLocal 自己带。
+        const _lv = live[k];
+        if (_lv && _lv.stopped && !loc.stopped) {
+          loc.stopped = true;
+          loc.done = true;
+          loc.err = false;
+        }
         agents[k] = loc;
       }
       // live 独有条目（注册表快照未含——瞬时在途）：保留原键原样

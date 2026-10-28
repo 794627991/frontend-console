@@ -85,7 +85,7 @@ class TestStreamIncarnation(unittest.TestCase):
         _R._get_or_create = lambda sid: self.stub
         from src.harness import v4hub
         self._o_feed = v4hub.v4_main_feed
-        v4hub.v4_main_feed = lambda s: self.feed
+        v4hub.v4_main_feed = lambda s, acquire=False: self.feed
         self._poked = False
         self._o_mark = getattr(v4hub, "mark_main_wanted", None)
         if self._o_mark:
@@ -151,7 +151,7 @@ class TestAtomicPair(unittest.TestCase):
         _R._get_or_create = lambda sid: self.stub
         from src.harness import v4hub
         self._o_feed = v4hub.v4_main_feed
-        v4hub.v4_main_feed = lambda s: self.feed
+        v4hub.v4_main_feed = lambda s, acquire=False: self.feed
         self._poked = False
         self._o_mark = getattr(v4hub, "mark_main_wanted", None)
         if self._o_mark:

@@ -20,6 +20,7 @@
       id: l.tid || ('ag' + (hi != null ? hi : 'r' + (++_HG.uidN))),
       name: l.text, input: l.input || {}, phase: 'done',
       err: !!l.err, hi: hi,
+      stopped: !!l.stopped,   // v4.0.5：重建态保留「已停止」（否则画成完成）
       dln: (l.dln && Array.isArray(l.dln) && l.dln[0]) ? l.dln[0] : undefined,
       summary: l.summary, result: (l.err || ((_H_TOOL_CFG[l.text] || {}).defaultOpen)) ? l.result : undefined,
       running: _agKind ? _hgLiveAgentRunning((l.input || {}).description) : false,
@@ -94,9 +95,12 @@
         : { t: 'turn_exit', text: l.text, hist: true });
     }
     else if (l.role === 'renew') {    // v2.27.23：超窗续命注入折叠为一行分割线
-      // R1（流式/重渲统一）：走同一 FEV dispatch——live/hist 同一 handlers
-      // →同一渲染函数，对齐补丁（v3.2.4R F3）退役为 dispatch 的统一编排
-      grpFinalize(true, { hist: true, endTs: _HG.histActTs || 0 });
+      // a118（用户实锤「压缩把所有思考啥的都分割开了，不要分割」）：撤
+      // grpFinalize——v3.2.27 审计卡同款定调（「记录到工作区内，不许分割
+      // 消息流」）。compact 是长跑回合的中途事件（实测 20h 审计马拉松被
+      // 4 次 compact 切成 4 段「已工作」头，转写里 compact 前后没有任何
+      // 新用户消息，分割纯由本行定稿造成）。分割线改挂当前组时间线
+      // （renderRenew 内判组，时序落在思考/工具之间），live 侧 sse.js 同步
       _hgDispatch({ t: 'renew', text: l.text });
     }
     else if (l.role === 'audit') {    // v2.34：审计警示卡回放（v2.34.1 与实时同文本，

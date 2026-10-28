@@ -162,8 +162,15 @@ def collect_main_facts(lines):
                 txt = _content_text(b.get("content"))
                 tid = str(b.get("tool_use_id") or "")
                 err = bool(b.get("is_error"))
+                # 内存批：回执文本截断入档——facts 表 append-only 随会话永驻，
+                # 旧实现整段保留 tool_result 全文（Bash/Read 输出几十 KB 常态，
+                # 多子代理会话主转写几乎全是工具行）。本表全部消费方的取值
+                # 都在前缀：_agent_id_from_receipt（ACK/JSON 回执都在头部）、
+                # reclassify 的 resumedAgentId（回执形态）、project 的
+                # brief [:200] 与 launched successfully 判定（CLI ACK 固定
+                # 开头文案）。2000 与 v4feed 的 brief 口径同值。
                 facts.append({"kind": "result", "tid": tid,
-                              "text": txt, "is_error": err, "ts": ts})
+                              "text": txt[:2000], "is_error": err, "ts": ts})
     # 全审S2：send_result 后置分类——回执文本必须 (a)tid 有对应 send 事实
     # (b)resumedAgentId 命中。旧前向判定让「前台回执正文里引用
     # resumedAgentId: xxx」被误判成 SendMessage 回执：前台终态被吞+
@@ -323,13 +330,22 @@ def _agent_id_from_receipt(txt, bg=False):
 
 
 def _status_from_notify(st):
-    """notification <status> → done/err/interrupted（未知值保守归 done）。"""
+    """notification <status> → done/err/stopped/interrupted（未知值保守归 done）。
+
+    v4.0.4（复审实锤「事实与启发式混一」）：`stopped` 原与 cancelled 一起
+    归 `interrupted`。但 interrupted 在本模块里是 **mtime 启发式的猜测**
+    （转写停更=以为中断），而 stopped 是**确定性事实**（用户/系统主动停）。
+    混成一个值导致前端无法区分：v4bridge 明确「interrupted 不落定（保持
+    running）」——于是用户主动停掉的代理刷新后又变回运行中。二者必须分开。
+    """
     s = str(st or "").strip().lower()
     if s in ("completed", "success", ""):
         return "done"
     if s in ("failed", "error"):
         return "err"
-    if s in ("cancelled", "canceled", "stopped", "interrupted"):
+    if s in ("cancelled", "canceled", "stopped", "killed"):
+        return "stopped"
+    if s in ("interrupted",):
         return "interrupted"
     return "done"
 

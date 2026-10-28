@@ -609,7 +609,14 @@ def harness_v4_stream():
             v4hub.v4_sub_want(s.sid, agent)
         except Exception:
             pass
-        feed = v4hub.v4_sub_feed(s.sid, agent, paths)
+        # 内存批（对抗审 A-P1）：acquire=True——取引用与订阅计数在 hub 锁内
+        # 原子完成，杜绝「handler 拿到引用→reap 恰好收走→gen 绑孤儿」竞窗。
+        # 本连接的 release 统一在 gen 的 finally（cell["feed"] 当前值）
+        # v4.0.7（自查实证）：此处**不**取订阅计数——HEAD 请求/生成器
+        # 未被消费的响应，Flask 根本不会启动生成器，finally 永不执行 →
+        # 计数永久 +1（实测 HEAD 后 n=1、GET+close 后 n=0）。计数改在
+        # gen() 首行获取，与 finally 同函数配对。
+        feed = v4hub.v4_sub_feed(s.sid, agent, paths, acquire=False)
         # a68（用户实测「重开 pane 还是残缺/结论永不到」）：订阅时刻强制
         # 对账一轮——冻结 feed（增量截尾时代丢的尾段）由此自愈，uuid 去重
         # 幂等；订阅者随后的 deltas 帧自然拿到补回的行与 state.final
@@ -627,7 +634,8 @@ def harness_v4_stream():
             v4hub.v4_main_want(s.sid)    # F5：主订阅意向（ingest 门禁放行）
         except Exception:
             pass
-        feed = v4hub.v4_main_feed(s)
+        # 内存批（对抗审 A-P1）：同 sub 分支——锁内原子取引用+计数
+        feed = v4hub.v4_main_feed(s, acquire=False)
     base_epoch = (request.args.get("epoch") or "").strip()
     base_seq = request.args.get("seq", 0, type=int)
     # 二十二次全审（结构）：feed **实例身份**。客户端游标只在「同一实例」
@@ -704,27 +712,41 @@ def harness_v4_stream():
         f._snap_txt = (_sig, t)
         return t, seq
 
+    # a74：子 feed 可替换（订阅时转写未生成=零行不缓存，客户端绑在孤儿
+    # feed 上；watcher 按需 hydrate 建出正式 feed 后客户端收不到任何行，
+    # 只能等偶然重连——实测窗格空到代理跑完才追平）。循环内 5s 对账点
+    # 重取注册表，换了就整窗快照重对齐。
+    # 内存批：cell 提升到 gen/_gen 两层闭包共享。订阅计数**在 gen() 内**
+    # （见下），handler 只拿引用——HEAD/未消费响应不启动生成器也就不计数。
+    cell = {"feed": feed,
+            "agent": topic[4:] if topic.startswith("sub:") else None,
+            "recheck": time.time()}
+
     def gen():
         # N5 修复（a116）：生成器全程无 try/finally——客户端断开/异常时
         # 无清理钩子。MINOR-3（a116 二次全审）：原 finally 是 `pass`，与
         # 注释「兜底清理」名实不符。但不能在此撤销订阅意向：同一会话可能
         # 还有其它连接（多标签页/子页），_main_wanted 是会话级不是连接级，
-        # 撤了会让仍在场的连接退回「无订阅」。保留为显式空收尾，注释说清。
+        # 撤了会让仍在场的连接退回「无订阅」。
+        # v4.0.7（自查实证）：计数必须在这里取——handler 里取的话，
+        # HEAD 请求/未被消费的流响应根本不会启动生成器，finally 永不执行，
+        # 计数永久 +1（实测 HEAD 后 n=1、GET+close 后 n=0）。
+        # acquire=True 在本函数首行**原子重取**当前 feed：防「handler 取
+        # 引用 → reap 恰好收走 → 绑到已回收实例」的竞窗，且与 finally
+        # 的 cell["feed"] 严格 1:1（_gen 内换 feed 时做配对迁移）。
+        cell["feed"] = (v4hub.v4_sub_feed(s.sid, cell["agent"], None,
+                                          acquire=True)
+                        if cell["agent"] is not None
+                        else v4hub.v4_main_feed(s, acquire=True))
         try:
             for _chunk in _gen():
                 yield _chunk
         finally:
-            pass
+            cell["feed"].sub_release()
 
     def _gen():
         sent = 0
         mode = "snapshot"
-        # a74：子 feed 可替换（订阅时转写未生成=零行不缓存，客户端绑在孤儿
-        # feed 上；watcher 按需 hydrate 建出正式 feed 后客户端收不到任何行，
-        # 只能等偶然重连——实测窗格空到代理跑完才追平）。循环内 5s 对账点
-        # 重取注册表，换了就整窗快照重对齐
-        cell = {"feed": feed, "agent": topic[4:] if topic.startswith("sub:") else None,
-                "recheck": time.time()}
         # 二十二次全审：**身份匹配优先**。inc 不匹配（含老客户端不传）
         # 一律走整窗快照——这是本设计的正确性基石，不能放宽。
         if (base_inc and base_inc == feed.incarnation
@@ -813,13 +835,24 @@ def harness_v4_stream():
                     _now = time.time()
                     if _now - cell["recheck"] >= 5.0:
                         cell["recheck"] = _now
-                        _f2 = v4hub.v4_sub_feed(s.sid, cell["agent"], None)
+                        # 内存批：acquire=True 锁内原子取引用+计数；不采纳
+                        # （同实例/零产出临时）时立即退还，防计数虚高
+                        _f2 = v4hub.v4_sub_feed(s.sid, cell["agent"], None,
+                                                acquire=True)
                         if _f2 is not _f and _f2.snap.get("rows"):
+                            _f.sub_release()
                             cell["feed"] = _f2
                             _a, _t, sent = _snap_pair(_f2)
                             yield _a + _t
                             idle = 0.0
                             continue
+                        # v4.0.6（自查实锤）：acquire=True 已给 **_f2 计数 +1**，
+                        # 凡「不采纳」都要退还。原实现只覆盖 `_f2 is not _f`，
+                        # 漏了 `_f2 is _f`（在册同实例：每 5s 对账再加 1 永不
+                        # 退还）→ subs_n 单调虚高 → 该 feed 永不回收（内存
+                        # 优化对子 feed 整体失效）。
+                        if _f2 is _f or not _f2.snap.get("rows"):
+                            _f2.sub_release()
                 except Exception:
                     pass
             else:
@@ -832,7 +865,8 @@ def harness_v4_stream():
                     _now = time.time()
                     if _now - cell["recheck"] >= 5.0:
                         cell["recheck"] = _now
-                        _f2 = v4hub.v4_main_feed(s)
+                        # 内存批：acquire=True 锁内原子取引用+计数
+                        _f2 = v4hub.v4_main_feed(s, acquire=True)
                         # FATAL-3 修正（a116 二次全审）：判据取**对象身份**
                         # 换代，不能只比 epoch。零产出临时 feed 与随后建出的
                         # 正式 feed 的 epoch 同值（都是 s.log.epoch），只比
@@ -841,11 +875,13 @@ def harness_v4_stream():
                         # frames_after=None，收不到任何 HIST/新行，只能刷新）。
                         # /rewind 换代同样由身份变化覆盖。
                         if _f2 is not _f:
+                            _f.sub_release()
                             cell["feed"] = _f2
                             _a, _t, sent = _snap_pair(_f2)
                             yield _a + _t
                             idle = 0.0
                             continue
+                        _f2.sub_release()   # 同实例：本连接已持计数，退还刚取
                 except Exception:
                     pass
             idle = min(idle + _tmo, 5.0)
