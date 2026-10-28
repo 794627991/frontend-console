@@ -1873,9 +1873,20 @@
           if (rows.length > 220) rows = _subTailTurns(rows, 21);
           var _om2 = Math.max(0, _tot2 - rows.length);
           if (_fa2 && !self._firstAt) self._firstAt = _fa2;   // 全量首行时刻保真
-          for (var i = 0; i < rows.length; i++) {
-            var n = _subNorm(rows[i], true);
-            if (n) self._subAppend(n);   // ts 记账在 append 内统一
+          // a128（用户实测 perf 档案实锤「长会话胶囊点开卡顿 600ms」）：兜底
+          // 渲染必须挂 _hydrating 旗——旧路径按 live 语义逐行跑：行行
+          // querySelectorAll 查重（O(n²)）+ _subPaneStick 逐行读滚动几何
+          // （次次强排全文档布局，长会话主窗 90k 节点=每行几十 ms）＝单帧
+          // 600ms 长任务。挂旗后走 Set 精确查重 + 跳过逐行贴底（与快照
+          // 水合同一条快速路）。
+          self._hydrating = true;
+          try {
+            for (var i = 0; i < rows.length; i++) {
+              var n = _subNorm(rows[i], true);
+              if (n) self._subAppend(n);   // ts 记账在 append 内统一
+            }
+          } finally {
+            self._hydrating = false;
           }
           if (_om2 > 0 && self._t && self._t.tl && self._t.tl.children.length) {
             var om2 = document.createElement('div');
