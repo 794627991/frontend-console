@@ -345,22 +345,26 @@ const a1 = src.indexOf('async function _hgRegSync(', a0);
 if (a0 < 0 || a1 < 0) { console.log('EXTRACT_FAIL'); process.exit(0); }
 const helpers = src.slice(a0, a1);           // _regFence/_regCid/_regLiveOf
 
-const b0 = src.indexOf('const _lv = _regLiveOf(k, live);');
+const b0 = src.indexOf('const _sAt0 = _sendAtFor(k, jAg[k]);');
 const b1 = src.indexOf('agents[k] = loc;', b0);
 if (b0 < 0 || b1 < 0) { console.log('EXTRACT_FAIL'); process.exit(0); }
 const loop = src.slice(b0, b1 + 'agents[k] = loc;'.length);
 
 const c = JSON.parse(process.argv[2]);
 const _HG = { tidMap: c.tidMap || {}, aidKey: c.aidKey || {} };
-const fn = new Function('_HG', 'k', 'jAg', 'live', 'loc0', 'sendBy',
-  '_sendAtFor', 'agents', helpers + `
-  const loc = loc0;
+// 循环体现在自带 `const _sAt0 = ...` 与 `const loc = _hgRegToLocal(...)`，
+// 模板不再重复声明（否则 SyntaxError: Identifier 'loc' has already been declared）
+const fn = new Function('_HG', 'k', 'jAg', 'live', 'sendBy', '_sendAtFor',
+  'agents', '_hgRegToLocal', '_regLiveOf', '_regFence', '_regCid', 'sid',
+  helpers + `
   const modelBy = {};
   ${loop}
   return loc;`);
-const sendBy = {};
-const _sendAtFor = (k2) => sendBy[k2] || 0;
-const out = fn(_HG, c.key, c.proj, c.live, c.loc0, sendBy, _sendAtFor, {});
+const sendBy = c.sendBy || {};
+const _sendAtFor = (k2, e) => sendBy[(e && e.agentId) || k2] || 0;
+const out = fn(_HG, c.key, c.proj, c.live, sendBy, _sendAtFor, {},
+  (e, sid2, sAt) => Object.assign({}, e, c.loc0), () => c.__lv || null,
+  () => false, (k2) => k2, 'S');
 console.log(JSON.stringify(out));
 """
         S = T + 100000
@@ -391,23 +395,123 @@ console.log(JSON.stringify(out));
                         "保险② 在 tid 键下失效 → 本地终态被翻回运行中")
 
 
-class TestColdSyncInterrupted(unittest.TestCase):
-    """a124（用户实锤「我已重开，刚开什么都没干，胶囊还有 52h38m」）。
+class TestInterruptedStale(unittest.TestCase):
+    """a125（用户实锤「我已重开，刚开什么都没干，胶囊还有 52h38m」）。
 
-    `_agentsColdSync` 原规则：interrupted 是 mtime 启发式，只落定 done/err/
-    stopped，interrupted 一律**保持 running**（防长思考不落盘误伤）。但长思考
-    有物理上界——52 小时的「不落盘」不可能是长思考，于是死代理永久占着胶囊。
+    两条链（registry Sync 与 v4bridge._agentsColdSync）都拉
+    /api/harness/agents 写 _HG.agents。判据必须**共用**
+    `_regInterruptedStale`：不一致就会「谁后到谁赢」——原
+    `_hgRegToLocal` 的 `done: e.status !== 'running'` 无条件把 interrupted
+    落 done，5 分钟长思考被当成完成（a91 用户铁律被破）。
 
-    修法：interrupted 且档案年龄 > 30min（与 relay _PEER_STALE_MS 同阈值）
-    → 按失联落定（done + interrupted，不置 err）。
+    阈值 30min（与 relay._PEER_STALE_MS / panel stale 同口径）。
     """
 
     def test_cases(self):
         script = r"""
 const fs = require('fs');
 const src = fs.readFileSync(process.argv[1], 'utf8');
-const i = src.indexOf("if (!a.done && ent.status === 'interrupted') {");
-const j = src.indexOf("} else if (!a.err && ent.status === 'err') {", i);
+const i = src.indexOf('var _REG_STALE_MS');
+const j = src.indexOf('function _hgRegToLocal(', i);
+if (i < 0 || j < 0) { console.log('EXTRACT_FAIL'); process.exit(0); }
+const fn = new Function('Date', src.slice(i, j) +
+  '; return _regInterruptedStale;')({ now: () => Date.now() });
+const cases = JSON.parse(process.argv[2]);
+const out = {};
+for (const n in cases) out[n] = fn(cases[n]);
+console.log(JSON.stringify(out));
+"""
+        now = 1793169000000
+        H = 3600 * 1000
+        script = script.replace("Date.now() });", str(now) + " };");
+        script = script.replace("({ now: () => " + str(now) + " };",
+                                "({ now: () => " + str(now) + " })")
+        cases = {
+            # 52 小时前 → 确定性失联
+            "dead_52h": {"status": "interrupted", "t0": now - 52 * H},
+            # 5 分钟长思考 → 不许误伤（a91）
+            "thinking_5m": {"status": "interrupted", "t0": now - 5 * 60 * 1000},
+            # 25 分钟仍在阈内
+            "thinking_25m": {"status": "interrupted",
+                             "t0": now - 25 * 60 * 1000},
+            # 35 分钟已过闸
+            "stale_35m": {"status": "interrupted", "t0": now - 35 * 60 * 1000},
+            # 秒级时间戳
+            "epoch_seconds": {"status": "interrupted",
+                              "t0": (now - 52 * H) // 1000},
+            # lastActive 优先于 t0（t0 常是本地补建时刻）
+            "lastActive_wins": {"status": "interrupted", "t0": now,
+                                "lastActive": now - 52 * H},
+            # 非 interrupted 一律不管
+            "running": {"status": "running", "t0": now - 52 * H},
+            "done": {"status": "done", "t0": now - 52 * H},
+            # 无任何时间戳 → 不落定（无从判断）
+            "no_time": {"status": "interrupted"},
+        }
+        got = _node_eval(script, "web/js/harness/registry.js", cases)
+        self.assertTrue(got["dead_52h"], "52h 死代理未判失联 → 胶囊永久假运行")
+        self.assertFalse(got["thinking_5m"], "5 分钟长思考被误判失联（a91）")
+        self.assertFalse(got["thinking_25m"], "25 分钟仍在阈内被误判")
+        self.assertTrue(got["stale_35m"], "35 分钟未过闸")
+        self.assertTrue(got["epoch_seconds"], "秒级时间戳未换算 → 年龄恒 0")
+        self.assertTrue(got["lastActive_wins"],
+                        "t0 是本地补建时刻时年龄恒 0，必须优先取 lastActive")
+        self.assertFalse(got["running"], "running 被误判")
+        self.assertFalse(got["done"], "done 不该进此判据")
+        self.assertFalse(got["no_time"], "无时间戳却判失联")
+
+    def test_reg_to_local_uses_gate(self):
+        """Sync 侧必须走同一闸，不能 `status !== 'running'` 无条件落 done。"""
+        script = r"""
+const fs = require('fs');
+const src = fs.readFileSync(process.argv[1], 'utf8');
+const i = src.indexOf('var _REG_STALE_MS');
+const j = src.indexOf('function _hgAg(', i);
+if (i < 0 || j < 0) { console.log('EXTRACT_FAIL'); process.exit(0); }
+const helper = src.slice(i, j);
+const cases = JSON.parse(process.argv[2]);
+const out = {};
+for (const n in cases) {
+  const fn = new Function('Date', '_HG', helper +
+    '; return _hgRegToLocal;')({ now: () => Date.now() }, { sid: 'S' });
+  const r = fn(cases[n], 'S');
+  out[n] = [!!r.done, !!r.interrupted, r.doneAt || 0];
+}
+console.log(JSON.stringify(out));
+"""
+        now = 1793169000000
+        H = 3600 * 1000
+        script = script.replace("({ now: () => Date.now() }, { sid: 'S' })",
+                                "({ now: () => " + str(now) + " }, { sid: 'S' })")
+        cases = {
+            "intr_fresh": {"status": "interrupted", "t0": now - 5 * 60 * 1000},
+            "intr_stale": {"status": "interrupted", "t0": now - 52 * H,
+                           "doneAt": now - 52 * H + 50000},
+            "done_now": {"status": "done", "t0": now - H,
+                         "doneAt": now - H},
+            "running": {"status": "running", "t0": now - H},
+        }
+        got = _node_eval(script, "web/js/harness/registry.js", cases)
+        self.assertFalse(got["intr_fresh"][0],
+                         "Sync 把 5 分钟长思考无条件落 done（a91 被破）")
+        self.assertTrue(got["intr_stale"][0], "52h 失联未落定")
+        self.assertTrue(got["intr_stale"][2] > 1e11, "失联档 doneAt 量纲不对")
+        self.assertTrue(got["done_now"][0], "正常 done 被误改")
+        self.assertFalse(got["running"][0], "running 被落定")
+
+
+    def test_coldsync_sendat_fence(self):
+        """a124 复审：冷同步落定必须被 sendAt 栅栏挡住。
+
+        场景：续派后新轮刚起（sendAt=1 分钟前），后端投影还报 interrupted
+        （t0/lastActive 停在上一轮，52h 前）→ 若不看 sendAt，刚复活的链会被
+        当成 52h 死档落定（审计实测 resumed_1m 被误杀）。
+        """
+        script = r"""
+const fs = require('fs');
+const src = fs.readFileSync(process.argv[1], 'utf8');
+const i = src.indexOf('var _iStaleFn = _g(');
+const j = src.indexOf('} else if (!a.err && ent.status === ', i);
 if (i < 0 || j < 0) { console.log('EXTRACT_FAIL'); process.exit(0); }
 const block = src.slice(i, j);
 const cases = JSON.parse(process.argv[2]);
@@ -415,53 +519,178 @@ const out = {};
 for (const n in cases) {
   const c = cases[n];
   const a = Object.assign({ taskId: 'A' }, c.a);
-  new Function('a', 'Date', block)(a, c.__Date);
-  out[n] = [!!a.done, !!a.interrupted, !!a.err, a.doneAt || 0];
+  const staleFn = (e) => !!c.__stale;
+  new Function('a', 'ent', '_g', '_HG', block)(
+    a, c.ent, (n2) => (n2 === '_regInterruptedStale' ? staleFn : null),
+    { sid: 'S' });
+  out[n] = [!!a.done, !!a.interrupted, a.doneAt || 0];
 }
 console.log(JSON.stringify(out));
 """
         now = 1793169000000
         H = 3600 * 1000
-        old = now - 52 * H
-
-        # 注入一个 Date.now() 返回固定值的桩（node 里用对象冒充）
-        script = script.replace(
-            "new Function('a', 'Date', block)(a, c.__Date);",
-            "const D = { now: () => " + str(now) + " };\n"
-            "  new Function('a', 'ent', 'Date', block)(a, c.ent, D);")
         cases = {
-            # 52 小时前的死代理 → 必须落定
-            "dead_52h": {"a": {"t0": 0},
-                         "ent": {"status": "interrupted", "t0": old,
-                                 "doneAt": old + 50000}},
-            # 5 分钟长思考 → 不许误伤
-            "thinking_5m": {"a": {"t0": 0},
-                            "ent": {"status": "interrupted",
-                                    "t0": now - 5 * 60 * 1000,
-                                    "doneAt": now - 5 * 60 * 1000}},
-            # 秒级时间戳也要能识别年龄，且 doneAt 必须同量纲换算
-            "epoch_seconds": {"a": {"t0": 0},
+            # 无续派 + 失联 → 落定
+            "stale_no_send": {"a": {}, "__stale": True,
                               "ent": {"status": "interrupted",
-                                      "t0": old // 1000,
-                                      "doneAt": old // 1000}},
-            # running 不许碰
-            "running": {"a": {"t0": 0},
-                        "ent": {"status": "running", "t0": old}},
-            # 档案自带 t0（已赋值的场景）优先
-            "a_has_t0": {"a": {"t0": old},
-                         "ent": {"status": "interrupted", "t0": 0}},
+                                      "lastActive": now - 52 * H}},
+            # 续派后（sendAt 比投影时间新）→ 不许落定
+            "resumed_1m": {"a": {"sendAt": now - 60 * 1000}, "__stale": True,
+                           "ent": {"status": "interrupted",
+                                   "lastActive": now - 52 * H}},
+            # 续派很久以前、投影也老旧 → 失联成立，可落定
+            "resumed_long_ago": {"a": {"sendAt": now - 60 * H}, "__stale": True,
+                                 "ent": {"status": "interrupted",
+                                         "lastActive": now - 52 * H}},
+            # 未过闸 → 不落定
+            "not_stale": {"a": {}, "__stale": False,
+                          "ent": {"status": "interrupted", "lastActive": now}},
         }
         got = _node_eval(script, "web/js/harness/v4bridge.js", cases)
-        self.assertTrue(got["dead_52h"][0], "52h 死代理未落定 → 胶囊永久假运行")
-        self.assertTrue(got["dead_52h"][1], "落定但丢了 interrupted 字段")
-        self.assertFalse(got["dead_52h"][2], "失联被误标 err")
-        self.assertFalse(got["thinking_5m"][0], "5 分钟长思考被误落定")
-        self.assertTrue(got["epoch_seconds"][0], "秒级时间戳未换 ms → 年龄恒 0")
-        # doneAt 必须与 t0 同量纲（毫秒），否则落进 a122 的 at 判据时被当陈旧值
-        self.assertGreater(got["epoch_seconds"][3], 1e11,
-                           "doneAt 未做秒→毫秒换算")
-        self.assertFalse(got["running"][0], "running 被 error 分支误伤")
-        self.assertTrue(got["a_has_t0"][0], "档案已有 t0 时未生效")
+        self.assertTrue(got["stale_no_send"][0], "失联未落定")
+        self.assertFalse(got["resumed_1m"][0],
+                         "续派后被误落定 → 新轮被误杀")
+        self.assertTrue(got["resumed_long_ago"][0],
+                        "续派很久前、投影更旧时应可落定")
+        self.assertFalse(got["not_stale"][0], "未过闸却落定")
+
+
+class TestSyncSideConsistency(unittest.TestCase):
+    """a124 复审残留 A/B（严重）：Sync 链还有两个写点没走闸。
+
+    A) pending 分支原写 `jAg[k].status !== 'running'` 无条件落 done —— 绕过
+       interrupted 的 30min 失联闸，长思考误伤在**第三个写点**复发。
+    B) Sync 主路缺 sendAt 栅栏 —— 刚续派的链被落定，而冷同步侧因
+       `if (!a.done)` 跳过，栅栏永无机会纠正（「谁后到谁赢」仍成立）。
+    """
+
+    def test_pending_branch_uses_gate(self):
+        now = 1793169000000
+        H = 3600 * 1000
+        reg = open(os.path.join(ROOT, "web/js/harness/registry.js"),
+                   encoding="utf-8").read()
+        i = reg.index("if (k.indexOf('pending:') === 0)")
+        seg = reg[i:i + 2200]
+        self.assertIn("_regInterruptedStale(", seg,
+                      "pending 分支未走失联闸 → 长思考被无条件判完成（a91）")
+        self.assertNotIn("done: _pMiss ? false : (jAg[k].status !== 'running')",
+                         seg, "pending 分支仍是无条件落 done")
+
+    def test_sync_gate_has_sendat_fence(self):
+        """_regInterruptedStale 必须支持 sAt 参数，且主路传了它。"""
+        now = 1793169000000
+        H = 3600 * 1000
+        script = r"""
+const fs = require('fs');
+const src = fs.readFileSync(process.argv[1], 'utf8');
+const i = src.indexOf('var _REG_STALE_MS');
+const j = src.indexOf('function _hgAg(', i);
+if (i < 0 || j < 0) { console.log('EXTRACT_FAIL'); process.exit(0); }
+const fn = new Function('Date', src.slice(i, j) +
+  '; return _regInterruptedStale;')({ now: () => Date.now() });
+const c = JSON.parse(process.argv[2]);
+const out = {};
+for (const n in c) out[n] = fn(c[n].e, c[n].sAt);
+console.log(JSON.stringify(out));
+"""
+        script = script.replace("({ now: () => Date.now() })",
+                                "({ now: () => " + str(now) + " })")
+        cases = {
+            # 失联 52h，无续派 → 落定
+            "stale": {"e": {"status": "interrupted", "lastActive": now - 52 * H}},
+            # 失联 52h 但刚续派（投影停在上一轮）→ 不许落定
+            "resumed": {"e": {"status": "interrupted", "lastActive": now - 52 * H},
+                        "sAt": now - 60 * 1000},
+            # 续派很久以前、投影更旧 → 可落定
+            "resumed_old": {"e": {"status": "interrupted",
+                                  "lastActive": now - 52 * H},
+                            "sAt": now - 60 * H},
+            # 5min 长思考即使无续派也不落定
+            "thinking": {"e": {"status": "interrupted",
+                               "t0": now - 5 * 60 * 1000}},
+        }
+        got = _node_eval(script, "web/js/harness/registry.js", cases)
+        self.assertTrue(got["stale"], "失联未落定")
+        self.assertFalse(got["resumed"],
+                         "Sync 侧缺 sendAt 栅栏 → 刚续派的链被落定")
+        self.assertTrue(got["resumed_old"], "续派很久前应可落定")
+        self.assertFalse(got["thinking"], "长思考被误判失联")
+        # 主路必须真的把 sAt 传进去
+        reg = open(os.path.join(ROOT, "web/js/harness/registry.js"),
+                   encoding="utf-8").read()
+        self.assertIn("_hgRegToLocal(jAg[k], sid, _sAt0)", reg,
+                      "Sync 主路未把 sendAt 传给判据")
+
+
+    def test_sparse_pending_finds_send_at(self):
+        """a124 复审残留（一般级）：稀疏 pending 条目要能反查到 sendAt。
+
+        后端未回填 agentId 时投影键只有 `pending:<tid>`，而 sendBy 是按 live
+        档的 agentId 存 → 直接 `_regCid` 退回裸 tid，键对不上、栅栏静默失效
+        （实测 done=true，期望 false）。修法：主键 miss 时用 live 档 cid 反扫。
+        """
+        script = r"""
+const fs = require('fs');
+const src = fs.readFileSync(process.argv[1], 'utf8');
+const a0 = src.indexOf('var _REG_STALE_MS');
+const a1 = src.indexOf('async function _hgRegSync(', a0);
+if (a0 < 0 || a1 < 0) { console.log('EXTRACT_FAIL'); process.exit(0); }
+const helpers = src.slice(a0, a1);
+const b0 = src.indexOf('      const sendBy = {};');
+const b1 = src.indexOf('      const agents = {};', b0);
+if (b0 < 0 || b1 < 0) { console.log('EXTRACT_FAIL'); process.exit(0); }
+const sendBlock = src.slice(b0, b1);
+
+const c = JSON.parse(process.argv[2]);
+const tidMap = {};
+function regCid(k, a) {
+  let key = String(k || '');
+  if (key.indexOf('pending:') === 0) key = key.slice(8);
+  return String((a && (a.taskId || a.agentId)) || tidMap[key] || key || '');
+}
+const fn = new Function('_HG', 'live', '_regCid', '_regLiveOf',
+  helpers + '\n' + sendBlock + '\nreturn _sendAtFor;');
+const out = {};
+for (const n in c) {
+  const cc = c[n];
+  const g = fn({ tidMap: {}, aidKey: {} }, cc.live, regCid, regLiveOf);
+  out[n] = { sAt: g(cc.key, cc.entry) };
+}
+console.log(JSON.stringify(out));
+"""
+        # live 档键是 tid，agentId 在 taskId 字段
+        script = script.replace("c.__regLiveOf", "regLiveOf")
+        script = script.replace(
+            "const fn = new Function(",
+            "function regLiveOf(k, live) {\n"
+            "  let key = String(k || '');\n"
+            "  if (key.indexOf('pending:') === 0) key = key.slice(8);\n"
+            "  if (live[key]) return live[key];\n"
+            "  for (const lk in live) { if (regCid(lk, live[lk]) === key) return live[lk]; }\n"
+            "  return null;\n"
+            "}\nconst fn = new Function(")
+        S = T + 100000
+        cases = {
+            "sparse": {"key": "pending:call_q",
+                       "entry": {"status": "interrupted", "lastActive": T},
+                       "live": {"call_q": {"taskId": "aQ", "done": False,
+                                           "sendAt": S}}},
+            # 有 agentId 的正常条目（主键直接命中）
+            "normal": {"key": "aQ",
+                       "entry": {"agentId": "aQ", "status": "interrupted",
+                                 "lastActive": T},
+                       "live": {"call_q": {"taskId": "aQ", "done": False,
+                                           "sendAt": S}}},
+            # 无续派 → 0
+            "no_send": {"key": "pending:call_z",
+                        "entry": {"status": "interrupted", "lastActive": T},
+                        "live": {}},
+        }
+        got = _node_eval(script, "web/js/harness/registry.js", cases)
+        self.assertEqual(got["sparse"]["sAt"], S,
+                         "稀疏 pending 未反查到 sendAt → 栅栏静默失效")
+        self.assertEqual(got["normal"]["sAt"], S, "常规条目未取到 sendAt")
+        self.assertEqual(got["no_send"]["sAt"], 0, "无续派却返回了 sendAt")
 
 
 if __name__ == "__main__":

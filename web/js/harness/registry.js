@@ -8,22 +8,54 @@
   //   ③ _hgRegSyncSoon：事件驱动 debounce（SSE 子代理事件后 2s 收敛）
   // 单点解析纪律（防归一层屎山再生）：键桥接只许走 _hgAg/_subTid/tidMap
   // 三件套——禁止在任何消费点新增 dual-lookup（链扫描/三向反查）。
-  function _hgRegToLocal(e, sid) {
+  // a125（用户实锤「我已重开，刚开什么都没干，胶囊还有 52h38m」）：
+  // `interrupted` 是转写 mtime 启发式（a91），只能落定、不能翻案——但
+  // **长思考有物理上界**。超过 30min 无任何事件时「不落盘」不可能还是长
+  // 思考，按失联落定（阈值与 relay._PEER_STALE_MS / panel stale 一致）。
+  // registry Sync 与 v4bridge._agentsColdSync 共用本判据（后者经 _g 取），
+  // 否则两条链拉同一接口、谁后到谁赢：Sync 无闸会把 5 分钟长思考直接落
+  // done（a91「后台在跑无条件同步」被破）。
+  var _REG_STALE_MS = 30 * 60 * 1000;
+  // sAt（可选）= 本轮续派发出的时刻。给了就带轮次栅栏：服务端时间早于它
+  // = 看到的是**上一轮**的终态（续派新轮刚起、投影没追上），不得落定。
+  // 三处写点（_hgRegToLocal 主路 / pending 分支 / v4bridge 冷同步）共用
+  // 同一个实现，否则「谁后到谁赢」——Sync 无栅栏会把刚复活的链落定，
+  // 而冷同步的栅栏因 `if (!a.done)` 永远没机会纠正。
+  function _regInterruptedStale(e, sAt) {
+    if (!e || String(e.status || '') !== 'interrupted') return false;
+    // 必须取**服务端**时间：本地 a.t0 常是补建时刻（_agentFile 的
+    // `|| Date.now()` 兜底、SendMessage 档 t0:Date.now()），年龄恒≈0
+    var t = Number(e.lastActive || e.t0 || e.doneAt) || 0;
+    if (t > 0 && t < 1e12) t = t * 1000;
+    if (!t) return false;
+    var _sat = Number(sAt) || 0;
+    if (_sat && t < _sat) return false;      // 上一轮的终态
+    return (Date.now() - t) > _REG_STALE_MS;
+  }
+  function _hgRegToLocal(e, sid, sAt) {
     // 注册表条目 → 前端档案形态。status 四态映射 done/err/interrupted；
     // taskId/agentId 统一=agentId（归一在后端已完成，前端不再反查）
+    // a124：interrupted **只有过了 30min 失联闸**才算 done——原实现
+    // `e.status !== 'running'` 无条件落 done，把长思考中的代理判成完成
+    // （a91 用户铁律「后台还在运行无条件同步」被破）。
+    // sAt 给了就一并带轮次栅栏（见 _regInterruptedStale 注释）。
+    var _intr = e.status === 'interrupted';
+    var _intrStale = _intr && _regInterruptedStale(e, sAt);
+    var _done = (e.status === 'running') ? false
+      : (_intr ? _intrStale : true);
     return {
       type: e.type || 'Task',
       desc: e.desc || '',
       t0: e.t0 || 0,
-      done: e.status !== 'running',
+      done: _done,
       err: e.status === 'err',
       // v4.0.5（复审实锤）：注册表条目必须能表达「用户主动停掉」这一
       // **确定性事实**（后端 _status_from_notify 已单列 stopped）。原先只认
       // interrupted，导致每次 2s Sync / F5 后 a.stopped 被整体替换丢失，
       // 「已停止」被抹成「完成」。
       stopped: e.status === 'stopped',
-      interrupted: e.status === 'interrupted',
-      doneAt: e.doneAt || 0,
+      interrupted: _intr,
+      doneAt: _done ? (e.doneAt || 0) : 0,
       bg: !!e.bg, rounds: e.rounds || 1,
       taskId: e.agentId || '', agentId: e.agentId || '',
       tids: (e.tids && e.tids.slice) ? e.tids.slice() : [],
@@ -162,8 +194,18 @@
       // 投影键 → sendAt 的同一套归一：pending:<tid> 剥前缀再经 tidMap，
       // 裸 tid 经 tidMap，agentId 自指。key 归一不一致 = 栅栏对那一类条目
       // 永不生效（实锤：pending 条目直接落键、sendAt 丢失）。
-      const _sendAtFor = (k, loc) => sendBy[
-        String((loc && (loc.taskId || loc.agentId)) || _regCid(k, null))] || 0;
+      // 注意：不能依赖 loc（它就是 _hgRegToLocal 的产物），直接用投影条目
+      // 的 agentId/归一键算。
+      // a124 复审残留：稀疏 pending 条目无 agentId（后端未回填），`_regCid`
+      // 退回裸 tid 而 sendBy 是按 live 档 agentId 存的 → 键对不上、栅栏静默
+      // 失效（实测 done=true，期望 false）。补反向查：用 live 档的 cid 反扫。
+      const _sendAtFor = (k, e) => {
+        const byAid = String((e && e.agentId) || '') || _regCid(k, null);
+        if (sendBy[byAid]) return sendBy[byAid];
+        const lv = _regLiveOf(k, live);          // live 表（Sync 前的本地档）
+        const cid = lv ? _regCid('', lv) : '';
+        return (cid && sendBy[cid]) || 0;
+      };
       const agents = {};
       const jAg = j.agents || {};
       for (const k in jAg) {
@@ -178,23 +220,34 @@
           if (_pAid && jAg[_pAid]) continue;
           // a122（三修）：pending 条目同样要带 sendAt 与栅栏——本项目按
           // `_pk` 落键，sendBy 也按归一后的 cid 存，键必须一致
-          const _pSAt = sendBy[_regCid(k, null)];
+          const _pSAt = _sendAtFor(k, jAg[k]);
           const _pMiss = _regFence(jAg[k].status,
                                    Number(jAg[k].doneAt || 0) || 0,
                                    _pSAt, _regLiveOf(k, live));
+          // a124 复审（严重）：pending 分支原写 `jAg[k].status !== 'running'`
+          // 无条件落 done —— 绕过了 interrupted 的 30min 失联闸，a91 长思考
+          // 误伤在 Sync 链的**第三个写点**复发（_regFence 不认 interrupted，
+          // 兜不回来）。改走与主路同一判据。
+          const _pIntr = jAg[k].status === 'interrupted';
+          const _pDone0 = (jAg[k].status === 'running') ? false
+            : (_pIntr ? _regInterruptedStale(jAg[k], _pSAt) : true);
           agents[_pk] = Object.assign(
             { type: jAg[k].type, desc: jAg[k].desc, t0: jAg[k].t0,
-              done: _pMiss ? false : (jAg[k].status !== 'running'),
+              done: _pMiss ? false : _pDone0,
               err: _pMiss ? false : (jAg[k].status === 'err'),
               stopped: _pMiss ? false : (jAg[k].status === 'stopped'),
-              interrupted: _pMiss ? false : (jAg[k].status === 'interrupted'),
+              interrupted: _pMiss ? false : _pIntr,
               sendAt: _pSAt || 0,
-              doneAt: _pMiss ? 0 : jAg[k].doneAt,
+              doneAt: (_pMiss || !_pDone0) ? 0 : jAg[k].doneAt,
               bg: !!jAg[k].bg, sid: sid, reg: true },
             { found: false });
           continue;
         }
-        const loc = _hgRegToLocal(jAg[k], sid);
+        // a124：sendAt 提前算好并传给 _hgRegToLocal——interrupted 的 30min
+        // 失联闸必须带轮次栅栏，否则 Sync 侧会把刚续派的链落定（而冷同步
+        // 侧因 `if (!a.done)` 跳过，栅栏永无机会纠正＝「谁后到谁赢」）。
+        const _sAt0 = _sendAtFor(k, jAg[k]);
+        const loc = _hgRegToLocal(jAg[k], sid, _sAt0);
         if (modelBy[k]) loc.model = modelBy[k];
         // v4.0.6（复审实锤）：本地已有的「已停止」事实不得被 Sync 抹掉
         // ——通知未 flush 时后端条目仍报 running，整条替换会把
@@ -222,7 +275,7 @@
         // ③ sendAt 取值必须与 sendBy 写入用**同一套键归一**：投影键可能是
         //    agentId / pending:<tid> / 裸 tid，只查 sendBy[k] 会让 pending
         //    条目永不命中（实测），等于栅栏对它们不存在。
-        const _sAt = _sendAtFor(k, loc);
+        const _sAt = _sAt0;
         if (_sAt) {
           loc.sendAt = _sAt;
           const _fence = _regFence(jAg[k].status,
