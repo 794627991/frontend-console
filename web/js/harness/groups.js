@@ -854,8 +854,14 @@
       if (_mm && _n(_res.light) === _mm) _lab = '轻主力';
       else if (_mm && _n(_res.heavy) === _mm) _lab = '重主力';
       else if (_mm && _n(_res.mid) === _mm) _lab = '中主力';
-      if (!_lab) _lab = rj.mode === 'light' ? '轻主力' : rj.mode === 'heavy' ? '重主力' : '中主力';
-      roleB = `<span class="h-mmodel" style="margin-right:6px;" title="三角色形态下的主会话角色">${_lab}</span>`;
+      // a126（用户实锤「重开后模型名变成重主力了」）：**不再兜底成会话当前
+      // 形态**。兜底出来的标签是编造的归属——历史消息用的是 DeepSeek 而当前
+      // 会话跑到 Heavy 槽，于是每条历史都被烙上「重主力」，而实际模型名紧跟
+      // 其后，读起来就像「模型名叫重主力」。本函数开头就立了「不编造归属」
+      // 的规矩（无 model 只画头像），映射不中同理：宁可不标。
+      if (_lab) {
+        roleB = `<span class="h-mmodel" style="margin-right:6px;" title="三角色形态下的主会话角色">${_lab}</span>`;
+      }
     }
     meta.innerHTML = `<span class="h-ava ${_hgAvaCls(bare || 'AI')}">${esc((bare || 'AI').charAt(0).toUpperCase())}</span>` +
       roleB +

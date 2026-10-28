@@ -63,10 +63,14 @@ def _node_eval(script, file_rel, cases):
     if not NODE:
         raise unittest.SkipTest("node 不可用")
     fd = os.path.join(ROOT, file_rel)
+    # encoding 必须显式指定：Windows 默认 GBK，node 输出含中文（轻主力/重主力）
+    # 会抛 UnicodeDecodeError，且 r.stdout 变 None → strip() 崩
     r = subprocess.run([NODE, "-e", script, fd, json.dumps(cases)],
-                       capture_output=True, text=True, timeout=60)
+                       capture_output=True, text=True, timeout=60,
+                       encoding="utf-8", errors="replace")
     assert r.returncode == 0, r.stderr
-    raw = r.stdout.strip().splitlines()[-1] if r.stdout.strip() else ""
+    raw = (r.stdout or "").strip().splitlines()
+    raw = raw[-1] if raw else ""
     # 先判原文再 json.loads——否则抽取失败时报的是 JSONDecodeError，看不出根因
     assert "EXTRACT_FAIL" not in raw, \
         "源码抽取失败（函数被改名/定位注释动了？）：%s" % file_rel
@@ -691,6 +695,62 @@ console.log(JSON.stringify(out));
                          "稀疏 pending 未反查到 sendAt → 栅栏静默失效")
         self.assertEqual(got["normal"]["sAt"], S, "常规条目未取到 sendAt")
         self.assertEqual(got["no_send"]["sAt"], 0, "无续派却返回了 sendAt")
+
+
+class TestRoleBadgeNoFabrication(unittest.TestCase):
+    """a126（用户实锤「我重开后，模型名变成重主力了」）。
+
+    消息徽章原本在「本条消息的实跑模型不匹配任何档位」时，兜底成**会话当前
+    形态**（`rj.mode`）。于是历史消息（用 DeepSeek）在当前会话跑到重档时，
+    每条都被烙上「重主力」，紧跟其后的才是真实模型名——读起来就像模型名叫
+    「重主力」。同函数开头就立了「不编造归属」的规矩（无 model 只画头像），
+    映射不中同理：宁可不标。
+    """
+
+    def test_cases(self):
+        script = r"""
+const fs = require('fs');
+const src = fs.readFileSync(process.argv[1], 'utf8');
+// 抽出徽章判定那段（if (rj && rj.ok ... 到 meta.innerHTML 之前）
+const i = src.indexOf('const rj = _hgRolesCache;');
+const j = src.indexOf("meta.innerHTML =", i);
+if (i < 0 || j < 0) { console.log('EXTRACT_FAIL'); process.exit(0); }
+const block = src.slice(i, j);
+const c = JSON.parse(process.argv[2]);
+const fn = new Function('_hgRolesCache', 'bare', block + '\nreturn roleB;');
+const out = {};
+for (const n in c) out[n] = fn(c[n].rj, c[n].bare);
+console.log(JSON.stringify(out));
+"""
+        rj = {"ok": True, "mode": "heavy",
+              "roles": {"enabled": True},
+              "resolved": {"light": "Lanz-Medium-V", "mid": "Lanz-Medium-V",
+                           "heavy": "Lanz-Auto"}}
+        cases = {
+            # 历史消息用别的模型 → 不标（原：兜底成「重主力」）
+            "unmatched": {"rj": rj, "bare": "DeepSeek-V4.1-Flash-1017"},
+            # 命中轻档（light 与 mid 同值，按代码顺序 light 先判）
+            "light": {"rj": rj, "bare": "Lanz-Medium-V"},
+            # 命中重档
+            "heavy": {"rj": rj, "bare": "Lanz-Auto"},
+            # 带 [1M] 后缀要剥
+            "suffix": {"rj": rj, "bare": "Lanz-Auto[1M]"},
+            # 无模型名 → 不标
+            "empty": {"rj": rj, "bare": ""},
+            # 三角色关闭 → 不标
+            "disabled": {"rj": {"ok": True, "mode": "heavy",
+                                "roles": {"enabled": False},
+                                "resolved": rj["resolved"]},
+                         "bare": "Lanz-Auto"},
+        }
+        got = _node_eval(script, "web/js/harness/groups.js", cases)
+        self.assertEqual(got["unmatched"], "",
+                         "未匹配档位仍兜底成会话形态 → 编造归属（重主力）")
+        self.assertIn("轻主力", got["light"])
+        self.assertIn("重主力", got["heavy"])
+        self.assertIn("重主力", got["suffix"], "[1M] 后缀未剥离")
+        self.assertEqual(got["empty"], "", "无模型名却标了角色")
+        self.assertEqual(got["disabled"], "", "三角色关闭却标了角色")
 
 
 if __name__ == "__main__":
