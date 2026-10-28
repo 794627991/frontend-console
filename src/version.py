@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """版本单一源（v2.27.22 起升级功能配套）。
 
 此前版本号散布硬编码在 main/mcp_server/server/serial_cli 多处，改版要逐个
@@ -10,4 +10,4 @@ v2.3.0：打包形态 onefile → onedir（治 exe 卡慢：启动免解压 52MB
 原地读），发布/升级形态随之 exe → zip。2.2.x onefile 旧版无 zip 升级
 能力，升到本版需手动换装一次（发 zip 给同事解压覆盖），此后全程自动。
 """
-APP_VERSION = "2.3.7"
+APP_VERSION = "2.4.0"
