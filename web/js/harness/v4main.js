@@ -108,7 +108,21 @@
       try { _cur.store.close(); } catch (e) {}
     }
     _cur = null;
-    if (typeof _HG !== 'undefined') _HG.v4Cur = null;
+    if (typeof _HG !== 'undefined') {
+      _HG.v4Cur = null;
+      // a123（审计）：v4 不连旧流 → store.js 的 _hgCompactionEnd 兜底
+      // （压缩结束事件丢失时收口）在此路不可达。切会话/关库时若仍在压缩态，
+      // 1s 秒表会跨会话常驻自转，且回原会话恒显「正在压缩上下文 · 已 Nm」。
+      // 这里直接复位三字段+清表——**不调** _hgCompactionEnd：它会置
+      // compactResume（「压缩完回该会话要 reopen 回合组」的标记），而此刻
+      // 压缩并未结束，置了会让回原会话时误 reopen。
+      if (_HG.compactTimer) {
+        try { clearInterval(_HG.compactTimer); } catch (e) {}
+        _HG.compactTimer = null;
+      }
+      _HG.compacting = false;
+      _HG.compactSid = null;
+    }
   }
 
   // ---- 发送对账（overlay：不含文本、不渲染，只喂 watchdog） -----------------
@@ -126,6 +140,26 @@
   // ---- 子代理窗格（同管线：独立 store 订阅 sub topic） -----------------------
 
   var _subs = {};       // container → {store, render}
+
+  // a122（用户实锤「窗格一直开着，续派后新内容不显示」根因：连接饿死）：
+  // WebView2/Chromium 同源 HTTP/1.1 连接上限 6 条——proxy 状态流+主窗 v4 流
+  // 已占 2，每个打开的子代理 tab 再各占 1 条 EventSource，用户「同时 ≤3 个
+  // 子代理」惯例下正好满额；续派时代理的（重）连接在浏览器排队队尾静默
+  // 等slot——无数据无报错，窗格冻结在旧内容（实机复现：关掉两个无关 tab
+  // 后窗格立刻恢复）。结构修：**只有激活 tab 保持流**，后台 tab pause 断流
+  // （DOM/游标保留，激活即携水位续传）。最坏连接数 = proxy+main+1 子 = 3。
+  var _subFocusKey = null;
+
+  function v4SubFocus(agentKey) {
+    if (!agentKey) return;
+    _subFocusKey = agentKey;
+    for (var k in _subs) {
+      var e = _subs[k];
+      if (!e || !e.store) continue;
+      if (k === agentKey) { try { e.store.resume(); } catch (err) {} }
+      else { try { e.store.pause(); } catch (err) {} }
+    }
+  }
 
   function v4SubOpen(el, agentKey, opt) {
     opt = opt || {};
@@ -151,7 +185,8 @@
     });
     _subs[(el.dataset && el.dataset.v4Key) || agentKey] = _subs[agentKey] =
       { store: store, render: render, el: el };
-    store.connect();
+    // a122：开 tab 即聚焦——本 tab 起流、其余后台 tab pause（连接预算见上）
+    v4SubFocus(agentKey);
     return true;
   }
 
@@ -192,6 +227,7 @@
     subOpen: v4SubOpen,
     subClose: v4SubClose,
     subCloseAll: v4SubCloseAll,
-    subNotify: v4SubNotify
+    subNotify: v4SubNotify,
+    subFocus: v4SubFocus
   };
 })(window);

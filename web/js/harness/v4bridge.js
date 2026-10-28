@@ -1107,13 +1107,35 @@
       if (patch.compacting) {
         _HG.compacting = true;
         _HG.compactSid = _HG.sid;
+        // a122（用户实锤「压缩不读秒，一直 0s」）：v4 路由下 1s 秒表此前
+        // 只由 V3 sse.js 的 status 分支建立，v4bridge 只渲染一次 → 秒数
+        // 冻在 0。这里补同款定时器（幂等：已在跑则不重建；_compactionEnd /
+        // 离开压缩态统一 clearInterval）。
+        // 只从「非压缩态→压缩态」边沿进入（v4feed 侧有 not compacting 守卫），
+        // 每次进入都是新一次压缩，起点无条件刷新
         _HG.compactT0 = patch.compactT0 || Date.now();
         try { _HG.compactUsed = (JSON.parse(
           localStorage.getItem((typeof _hgCtxKey === 'function' ? _hgCtxKey(_HG.sid) : '') || 'null')
           || 'null') || {}).used || 0; } catch (e) { _HG.compactUsed = 0; }
         if (_rc) { try { _rc(false); } catch (e) {} }
+        // 无条件重建（不靠 _HG.compactTimer 真值防重入）：本函数可能被
+        // 重放态反复调用，先清后建保证任何时刻只有一个在跑。三处退出路径
+        // （下方 else 分支、定时器体内自清、relay._hgCompactionEnd）都已
+        // 顺手把 compactTimer 置 null，此处不依赖它们的行为。
+        // 重复到达同一压缩态只会重置「当前时刻→下次 tick」，秒数不倒退
+        // （compactT0 保持不变）。
+        if (typeof setInterval === 'function') {
+          if (_HG.compactTimer) { try { clearInterval(_HG.compactTimer); } catch (e) {} }
+          _HG.compactTimer = setInterval(function () {
+            if (!_HG.compacting) {
+              clearInterval(_HG.compactTimer); _HG.compactTimer = null; return;
+            }
+            if (_rc) { try { _rc(false); } catch (e) {} }
+          }, 1000);
+        }
       } else if (_HG.compacting) {
         _HG.compacting = false;
+        if (_HG.compactTimer) { clearInterval(_HG.compactTimer); _HG.compactTimer = null; }
         if (_rc) { try { _rc(true); } catch (e) {} }
       }
     }
@@ -1159,6 +1181,33 @@
   // 归一行：v4 投影行（fromV3=false）与 /subagent_replay 行（true）统一成
   // 一套渲染器输入——兜底不引入第二形态。ts=行时刻（思考段时长/轮时长
   // 的事实源；v4=row.at，V3 兜底=Date.parse(row.ts)）
+  // a122（用户拍板「必须全有，性能优化参考主窗口」）：子窗格裁剪改**回合窗**
+  // ——与主窗/服务端 wire_snapshot 同口径：保最后 21 个完整轮（第 22 个
+  // user 行为窗起点，多带 1 轮），轮内永不切（首派消息=轮锚点天然在场）；
+  // 窗外仍全量保留 user 锚点（一轮一锚，上界 60 与服务端同值）——多轮代理
+  // 每一轮的消息都可见，性能由 content-visibility（a114 子窗格轮组同享）
+  // + 懒体承担，与主窗同一成本模型。兼容两形态：v4 快照行 kind=
+  // 'user_input'；V3 回放行 k='user'。
+  function _subTailTurns(rows, maxTurns) {
+    var isAnc = function (r) {
+      return !!r && ((r.kind === 'user_input')
+        || (r.kind === undefined && r.k === 'user'
+            && String(r.text || '').trim()));
+    };
+    var start = 0, cnt = 0;
+    for (var i = rows.length - 1; i > 0; i--) {
+      if (isAnc(rows[i])) {
+        cnt++;
+        if (cnt > maxTurns) { start = i; break; }
+      }
+    }
+    if (start === 0) return rows;          // 全量在窗内：零裁剪
+    var anc = [];
+    for (var j = 0; j < start; j++) if (isAnc(rows[j])) anc.push(rows[j]);
+    if (anc.length > 60) anc = anc.slice(-60);
+    return anc.concat(rows.slice(start));
+  }
+
   function _subNorm(row, fromV3) {
     if (!row) return null;
     if (fromV3) {
@@ -1343,6 +1392,9 @@
     if (ts > 0) {
       this._flushPend(ts);
       this._lastAt = ts;
+      // a122：当前轮 t0 未锚定的（队列侧建轮/_subTurnNew 无参）以本行时刻
+      // 锚定——否则秒表恒「工作中 0s」
+      if (!t.t0) t.t0 = ts;
       if (!this._firstAt) {
         this._firstAt = ts;
         // a74：空态注记期的兜底 t0 重锚为首行时刻（真实轮时长）
@@ -1353,17 +1405,48 @@
     var i, el;
     if (n.r === 'user') {
       var head = String(n.text || '').trim().slice(0, 60);
+      // a122（用户实锤「续派后没有新思考过程/消息重复/幽灵空轮」）：来向
+      // 消息双源合一。主窗 SendMessage 行先到 → _subUserQueue 已把**原文**
+      // 气泡插入并切轮（kit 侧 tb.t 换新，桥的 this._t 未跟）；子 feed 的
+      // user 增量后到，文本是 CLI 包装形（"The coordinator sent a message
+      // while you were working: <原文>"）——旧查重拿包装前缀对原文气泡
+      // 永不命中 → 二次切轮+再插一条气泡=幽灵空轮（「工作中 0s」冻结）
+      // +消息重复。剥包装后比对：命中=采用 kit 已开的轮（this._t=tb.t，
+      // 不建轮不插泡），后续思考/工具行自然落进该轮。
+      var _mw = String(n.text || '').match(
+        /^The coordinator sent a message while you were working:\s*([\s\S]*)$/);
+      var headRaw = _mw ? _mw[1].trim().slice(0, 60) : '';
       // a115：水合期 Set 查重（O(1)）；live 保留前缀扫描（流式安全）
       var _rp = this._rp;
       var dupU = false;
       if (this._hydrating && _rp) {
         dupU = !!head && Object.prototype.hasOwnProperty.call(_rp.u, 'u:' + head);
+        if (!dupU && headRaw)
+          dupU = Object.prototype.hasOwnProperty.call(_rp.u, 'u:' + headRaw);
       } else {
         dupU = head && [...t.sc.querySelectorAll('.hg-sub-u')]
           .some(x => (x.textContent || '').trim().indexOf(head) === 0);
+        if (!dupU && headRaw) {
+          var _ubs = t.sc.querySelectorAll('.hg-sub-u');
+          for (var _ui = 0; _ui < _ubs.length; _ui++) {
+            var _ex = (_ubs[_ui].textContent || '').trim();
+            if (_ex && _ex.indexOf(headRaw) === 0) { dupU = true; break; }
+          }
+        }
       }
-      if (dupU) return;
+      if (dupU) {
+        var _tbD = this._subTab();
+        if (_tbD && _tbD.t && _tbD.t !== t) {
+          this._t = _tbD.t;   // 采用队列路径已开的轮
+          this._t.v4 = true;  // a122：v4 轮标记（_subTlCap 放宽等的判据）
+          // a122：队列侧 _subTurnNew 无参 → t0=0，无人锚定=秒表恒「0s」。
+          // 采用时以最近行时刻兜底锚定（后续行到达在 ts 记账处覆写）
+          if (!this._t.t0) this._t.t0 = this._lastAt || Date.now();
+        }
+        return;
+      }
       if (_rp && head) _rp.u['u:' + head] = 1;
+      if (_rp && headRaw) _rp.u['u:' + headRaw] = 1;
       // 多轮：当前轮有内容则定格开新轮（V3 回放 D6 同款）
       if (t.tl.children.length) {
         var finT = _g('_subTlFinalizeT'), tb0 = this._subTab();
@@ -1677,7 +1760,8 @@
     // cap 顺着同一条递增，两机制无缝衔接
     var _cap = 220;
     var _tot = Math.max((snap && snap.total) || 0, rows.length);
-    if (rows.length > _cap) rows = rows.slice(-_cap);
+    // a122：行数裁剪退役，改回合窗（旧后端全量下发的兜底也同口径）
+    if (rows.length > _cap) rows = _subTailTurns(rows, 21);
     var _omit = Math.max(0, _tot - rows.length);
     // a115（用户实锤「新消息刷出卡 2s/开大窗格卡 4.8s」）：水合查重改 Set——
     // 曾每行 querySelectorAll 全窗格扫（user/text/think/tool 四路）＝O(n²)，
@@ -1752,8 +1836,10 @@
           // a119P：兜底路径同裁——回放转写全量行（几千行级），渲染完再被
           // _subTlCap 删回 220 ＝白干；直接渲染尾窗+省略条（同 _subRebuild）
           var _fa2 = rows[0] && rows[0].ts ? (Date.parse(rows[0].ts) || 0) : 0;
-          var _om2 = Math.max(0, rows.length - 220);
-          if (rows.length > 220) rows = rows.slice(-220);
+          // a122：兜底回放同改回合窗（全量行裁最后 21 轮，锚点全保留）
+          var _tot2 = rows.length;
+          if (rows.length > 220) rows = _subTailTurns(rows, 21);
+          var _om2 = Math.max(0, _tot2 - rows.length);
           if (_fa2 && !self._firstAt) self._firstAt = _fa2;   // 全量首行时刻保真
           for (var i = 0; i < rows.length; i++) {
             var n = _subNorm(rows[i], true);

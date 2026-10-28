@@ -629,7 +629,10 @@
     _HG.compactResume = _HG.compactSid || null;
     _HG.compacting = false;
     _HG.compactSid = null;
+    // a122：清完必须置 null——v4bridge 的 v4 秒表以 _HG.compactTimer 真值
+    // 判断是否需要重建，遗留陈旧 id 会让它误判「已在跑」而永不再起表
     clearInterval(_HG.compactTimer);
+    _HG.compactTimer = null;
     renderCompaction(true);
     // v2.27.4：status 恢复事件若丢（result 兜底到这里），活动词一并退出特殊态
     actWord(null);

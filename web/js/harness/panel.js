@@ -150,14 +150,32 @@
   // 续派键（SendMessage 包装 tid）是两份档案，直数=4 代理算 8。按
   // taskId/agentId 链键去重，一链一计（与目录 _subDirRows 同口径）
   function _hgRunChains() {
-    const seen = new Set(); const out = [];
+    // a122（用户实锤「子代理明明结束了，胶囊还显示」）：同链多档时按
+    // **最新生命周期事件**定运行态，不能先到先占。实测：live 残留档
+    // call_xxx（done:false、doneAt:0、47h 前建）先于权威档 a57ea…
+    // （done:true/interrupted）被遍历到，占住 cid 后把终态档挡在 seen 外
+    // → 胶囊恒「子代理执行中」。
+    // 判据：每条记录的「最近事件时刻」= max(doneAt||0, t0||0, sendAt||0)。
+    // 必须含 sendAt —— 生产续派是**就地复活原档**（v4bridge.js:747-755：
+    // done=false/doneAt=0，**不改 t0**，只写 sendAt=现在）。若只取
+    // max(doneAt,t0)，首轮被 _hgAgentsSweep 落成 done 的档（doneAt=收尾时刻
+    // 晚于 t0）会赢过刚复活的同一条记录，链被误判成已结束、胶囊不显示。
+    // 平局时 done 优先（终态档 doneAt 可能为 0，见 subagent_projection
+    // 「endedAt 缺失取 0」——此时不靠键序碰运气）。
+    const best = new Map();
     for (const k in (_HG.agents || {})) {
       const a = _HG.agents[k];
-      if (!a || a.done) continue;
+      if (!a) continue;
       const cid = a.taskId || a.agentId || k;
-      if (seen.has(cid)) continue;
-      seen.add(cid); out.push(a);
+      const at = Math.max(a.doneAt || 0, a.t0 || 0, a.sendAt || 0);
+      const prev = best.get(cid);
+      if (!prev || at > prev.at
+          || (at === prev.at && !!a.done && !prev.a.done)) {
+        best.set(cid, { a, at });
+      }
     }
+    const out = [];
+    best.forEach((v) => { if (!v.a.done) out.push(v.a); });
     return out;
   }
   function _hgPeerLines() {              // 协作转交线（v3.4.88：识图卡 .h-vision 并入——面板/等待/胶囊同源）

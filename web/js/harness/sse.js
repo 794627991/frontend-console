@@ -103,6 +103,12 @@
             if (_orig3) {
               // 并入原档：保活（续派轮在跑）+desc 兜底 +tids 补包装 tid
               _orig3.done = false; _orig3.doneAt = 0; _orig3.err = false;
+              // a122（复审）：轮次栅栏时间戳——与 v4bridge.js:755 同构。
+              // 判据（panel._hgRunChains / registry 清理）用
+              // max(doneAt,t0,sendAt) 定链的当前状态；本次是**就地复活**
+              // 原档、不动 t0，不写 sendAt 就会被同链残留 done 档
+              // （doneAt 晚于 t0）压过 → 真在跑的代理反而不显示。
+              _orig3.sendAt = Date.now();
               if (!_orig3.desc && o.description) _orig3.desc = o.description;
               _orig3.tids = _orig3.tids || [];
               if (_orig3.tids.indexOf(tid) < 0) _orig3.tids.push(tid);
@@ -136,6 +142,7 @@
             const _m2 = typeof _hgAg === 'function' ? _hgAg(tid) : null;
             if (_m2) {
               _m2.done = false; _m2.doneAt = 0;
+              _m2.sendAt = Date.now();   // a122：轮次栅栏，同 v4bridge.js:755
               if (o.is_backgrounded) _m2.bg = true;
               a = _m2;
             }
@@ -320,7 +327,10 @@
             renderCompaction(false);
             clearInterval(_HG.compactTimer);
             _HG.compactTimer = setInterval(() => {
-              if (!_HG.compacting) return clearInterval(_HG.compactTimer);
+              // a122：退出时置 null（与 v4bridge 的判定口径对齐）
+              if (!_HG.compacting) {
+                clearInterval(_HG.compactTimer); _HG.compactTimer = null; return;
+              }
               renderCompaction(false);
             }, 1000);
           }
@@ -516,6 +526,7 @@
                 if (_orig) {
                   _orig.rounds = (_orig.rounds || 1) + 1;
                   _orig.done = false; _orig.doneAt = 0; _orig.err = false;
+                  _orig.sendAt = Date.now();   // a122：轮次栅栏，同 v4bridge.js:755
                   _orig.desc = _msg1 || _orig.desc;
                   _orig.tids = _orig.tids || [];
                   if (_orig.tids.indexOf(b.id) < 0) _orig.tids.push(b.id);

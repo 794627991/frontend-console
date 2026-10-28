@@ -364,5 +364,84 @@ class TestStoppedSubagentCloses(unittest.TestCase):
                       "_subFinish 未传 stopped → 2.5s 后行卡翻回「完成」")
 
 
+    def test_v4_compaction_ticker(self):
+        """a122（用户实锤「压缩不读秒，一直 0s」）：v4 管线必须自建秒表。
+
+        v4bridge 原先只置 compactT0 渲染一次，1s 定时器只有 V3 sse.js 的
+        status 分支建 → v4 下秒数恒 0。断言：v4 分支必须起 setInterval，
+        且离开压缩态必须 clearInterval（否则定时器泄漏、rAF 永跑）。
+        """
+        src = open(os.path.join(ROOT, "web/js/harness/v4bridge.js"),
+                   encoding="utf-8").read()
+        i = src.index("if (typeof patch.compacting === 'boolean'")
+        seg = src[i:i + 1400]
+        self.assertIn("setInterval", seg,
+                      "v4 压缩分支未起 1s 秒表 → 秒数冻在 0")
+        self.assertIn("clearInterval", seg,
+                      "v4 压缩结束未清定时器 → 泄漏")
+        self.assertIn("compactTimer", seg)
+        # 清定时器必须置 null：三处 clearInterval（sse/relay/v4bridge）任一
+        # 漏置 null，遗留的陈旧 id 会让「已在跑？」判定永远为真 → 秒表不起来
+        for rel, anchor in (("web/js/harness/relay.js", "function _hgCompactionEnd()"),
+                            ("web/js/harness/sse.js", "if (o.status === 'compacting')")):
+            s2 = open(os.path.join(ROOT, rel), encoding="utf-8").read()
+            j = s2.index(anchor)
+            self.assertIn("_HG.compactTimer = null", s2[j:j + 900],
+                          rel + " 清定时器未置 null → v4 秒表判定失效")
+
+    def test_run_chains_picks_latest_not_first(self):
+        """a122：胶囊假运行——同链幽灵档先被遍历到会占住 cid。
+
+        实测实体：live 残留档（键=tool_use_id、done:false、doneAt:0）与权威
+        档（done:true/interrupted）共链，旧实现 `if (seen.has(cid)) continue`
+        先到先占 → 胶囊恒「子代理执行中」。判据必须按「最近事件时刻」
+        （doneAt||t0）取最大者定运行态。
+        """
+        src = open(os.path.join(ROOT, "web/js/harness/panel.js"),
+                   encoding="utf-8").read()
+        i = src.index("function _hgRunChains()")
+        seg = src[i:src.index("function _hgPeerLines()")]
+        self.assertNotIn("if (seen.has(cid)) continue", seg,
+                         "仍是先到先占判据 → 幽灵档可占住 cid")
+        # 判据必须含 sendAt：生产续派是就地复活原档（不改 t0，只写 sendAt），
+        # 只取 max(doneAt,t0) 会把刚复活的链判成上一轮已结束（审计实锤）
+        self.assertIn("a.sendAt", seg,
+                      "未计入 sendAt → 续派复活后被误判为已结束")
+        self.assertIn("doneAt", seg, "未按最近事件时刻定运行态")
+        self.assertIn("best", seg)
+        self.assertIn("at === prev.at", seg,
+                      "平局未做 done 优先（终态档 doneAt 可为 0）")
+        # 前提事实防漂移：复活只写 sendAt，绝不动 t0
+        vb = open(os.path.join(ROOT, "web/js/harness/v4bridge.js"),
+                  encoding="utf-8").read()
+        k = vb.index("_orig.done = false; _orig.doneAt = 0;")
+        self.assertIn("_orig.sendAt", vb[k:k + 500],
+                      "复活未写 sendAt → 轮次栅栏失效")
+        self.assertNotIn("_orig.t0 =", vb[k:k + 500],
+                         "复活改了 t0 → 判据前提失效")
+        # Sync 侧同口径清理幽灵档（否则目录/计数仍见假运行条目）
+        reg = open(os.path.join(ROOT, "web/js/harness/registry.js"),
+                   encoding="utf-8").read()
+        self.assertIn("b.done && b.k !== k", reg,
+                      "Sync 未清理同链幽灵档 → 目录/胶囊仍假运行")
+        self.assertIn("a.sendAt", reg, "Sync 清理判据漏 sendAt")
+
+    def test_v4_close_resets_compaction(self):
+        """a122（审计）：v4 不连旧流，压缩结束事件丢失时无人收口。
+
+        必须在 v4Close 直接复位三字段——且**不能**调 _hgCompactionEnd
+        （它会置 compactResume，压缩未结束就置 = 回原会话误 reopen）。
+        """
+        src = open(os.path.join(ROOT, "web/js/harness/v4main.js"),
+                   encoding="utf-8").read()
+        i = src.index("function v4Close()")
+        seg = src[i:i + 900]
+        self.assertIn("_HG.compacting = false", seg)
+        self.assertIn("_HG.compactSid = null", seg)
+        self.assertIn("compactTimer = null", seg)
+        self.assertNotIn("_hgCompactionEnd()", seg,
+                         "误用 _hgCompactionEnd → 置 compactResume 致误 reopen")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

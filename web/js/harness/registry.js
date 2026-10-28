@@ -46,6 +46,76 @@
     return null;
   }
   let _regSyncSeq = 0;
+  // a122：轮次栅栏判定（纯函数，便于行为级回归）。
+  // 返回 true = 投影的终态属于**上一轮**，不得落定、要翻回运行中。
+  // 三道保险：
+  //   ① 只认确定性终态（done/err/stopped）。interrupted 是转写 mtime
+  //      启发式（a91），拿它当栅栏会把「续派后静默死亡」的链每轮翻回。
+  //   ② 本地已有终态事实时不翻回——否则 v4.0.6「本地 stopped 不得被 Sync
+  //      抹掉」被推翻，回合收尾 _hgAgentsSweep 落的 done 也会在下次 2s
+  //      Sync 消失。判据含「时间证据缺失」：doneAt 为 0 的老档案（有损
+  //      重建/histcache）没有任何时间凭证说明它是上一轮的，一律按「不得
+  //      被翻回」处理（保守方向）。续派复活会显式写 done=false+sendAt，
+  //      不会走到这道保险，因此不会卡住本该落定的链。
+  //   ③ 必须有 sendAt（没续派过就无栅栏可言）。
+  function _regFence(st, eAt, sAt, lv) {
+    const s = String(st || '');
+    if (!sAt) return false;
+    if (!(s === 'done' || s === 'err' || s === 'stopped')) return false;
+    if (!eAt || eAt >= sAt) return false;
+    if (lv && lv.done) {
+      const _d = Number(lv.doneAt) || 0;
+      if (!_d || _d >= sAt) return false;
+    }
+    return true;
+  }
+  function _regCid(k, a) {
+    let key = String(k || '');
+    if (key.indexOf('pending:') === 0) key = key.slice(8);
+    const tm = (_HG.tidMap || {})[key];
+    return String((a && (a.taskId || a.agentId)) || tm || key || '');
+  }
+  // a122（四修）：按任意键形态（agentId / tid / pending:<tid> / 包装 tid）
+  // 在 live 表里定位档案。live 期档案是 **tid 键**建的，而投影键是
+  // agentId——只 `live[k]` 会在首个 Sync 之前恒 undefined，让 v4.0.6
+  // （本地 stopped 不得被抹）与保险② 同时失效。解析顺序：
+  //   直配 → tidMap 归链（tid→aid 得 aid 键，aid→?) → aidKey 反查（aid→首次 tid）
+  // → 反向扫 cid（包装 tid / 无映射的稀疏档）。
+  // a122（五修）：同链多档择一。原实现「第一条命中即返回」，而 aidKey 记的
+  // 是**首次** tid（sse.js:100 `if (!aidKey[_real])` 只写一次）、反向扫取
+  // 插入序最早 → 系统性偏向最旧残留档。实测：call_1{done:true,doneAt:0} +
+  // call_2{done:false,sendAt:S}，aidKey={A:'call_1'} → 返回 call_1，保险②
+  // 反过来把本轮真在跑的链判成已结束（缺陷的反向回归）。
+  // 判据与本文件幽灵档清理 / panel._hgRunChains 统一：
+  //   at = max(doneAt, t0, **sendAt**)，平局 done 优先。
+  function _regPick(prev, cand) {
+    if (!cand) return prev;
+    const at = Math.max(cand.doneAt || 0, cand.t0 || 0, cand.sendAt || 0);
+    if (!prev) return { a: cand, at: at };
+    if (at > prev.at || (at === prev.at && cand.done && !prev.a.done)) {
+      return { a: cand, at: at };
+    }
+    return prev;
+  }
+  function _regLiveOf(k, live) {
+    if (!live) return null;
+    let key = String(k || '');
+    if (key.indexOf('pending:') === 0) key = key.slice(8);
+    const tm = (_HG.tidMap || {});
+    const aid = tm[key];
+    const ak = (_HG.aidKey || {})[key];
+    // **必须全量收集后择一**：只按 aidKey 命中就提前 return 会漏掉同链的
+    // 新活档（aidKey 只记首次 tid），正是本次要修的反向回归。
+    let best = null;
+    best = _regPick(best, live[key]);
+    if (aid) best = _regPick(best, live[aid]);
+    if (ak) best = _regPick(best, live[ak]);
+    for (const lk in live) {
+      const a = live[lk];
+      if (a && _regCid(lk, a) === key) best = _regPick(best, a);
+    }
+    return best ? best.a : null;
+  }
   async function _hgRegSync(sid, opts) {
     if (!sid) return;
     const seq = ++_regSyncSeq;
@@ -78,6 +148,22 @@
         const aid = (_HG.tidMap[k] || a.taskId || a.agentId || k) || '';
         if (aid && !modelBy[aid]) modelBy[aid] = a.model;
       }
+      // a122（复审）：按 agentId 回填续派的轮次栅栏时间戳。判据
+      // （panel._hgRunChains / 下方清理块）用 max(doneAt,t0,sendAt)，
+      // 而 _hgRegToLocal 从投影重建时不带 sendAt——一次 Sync 就会把刚
+      // 复活的链的栅栏抹掉，随后立刻被上一轮的 done 判成已结束。
+      const sendBy = {};
+      for (const k in live) {
+        const a = live[k];
+        if (!a || !a.sendAt) continue;
+        const aid = _regCid(k, a);
+        if (aid && !(sendBy[aid] > a.sendAt)) sendBy[aid] = a.sendAt;
+      }
+      // 投影键 → sendAt 的同一套归一：pending:<tid> 剥前缀再经 tidMap，
+      // 裸 tid 经 tidMap，agentId 自指。key 归一不一致 = 栅栏对那一类条目
+      // 永不生效（实锤：pending 条目直接落键、sendAt 丢失）。
+      const _sendAtFor = (k, loc) => sendBy[
+        String((loc && (loc.taskId || loc.agentId)) || _regCid(k, null))] || 0;
       const agents = {};
       const jAg = j.agents || {};
       for (const k in jAg) {
@@ -90,13 +176,21 @@
           const _pk = k.slice(8);
           const _pAid = (_HG.tidMap || {})[_pk];
           if (_pAid && jAg[_pAid]) continue;
+          // a122（三修）：pending 条目同样要带 sendAt 与栅栏——本项目按
+          // `_pk` 落键，sendBy 也按归一后的 cid 存，键必须一致
+          const _pSAt = sendBy[_regCid(k, null)];
+          const _pMiss = _regFence(jAg[k].status,
+                                   Number(jAg[k].doneAt || 0) || 0,
+                                   _pSAt, _regLiveOf(k, live));
           agents[_pk] = Object.assign(
             { type: jAg[k].type, desc: jAg[k].desc, t0: jAg[k].t0,
-              done: jAg[k].status !== 'running',
-              err: jAg[k].status === 'err',
-              stopped: jAg[k].status === 'stopped',
-              interrupted: jAg[k].status === 'interrupted',
-              doneAt: jAg[k].doneAt, bg: !!jAg[k].bg, sid: sid, reg: true },
+              done: _pMiss ? false : (jAg[k].status !== 'running'),
+              err: _pMiss ? false : (jAg[k].status === 'err'),
+              stopped: _pMiss ? false : (jAg[k].status === 'stopped'),
+              interrupted: _pMiss ? false : (jAg[k].status === 'interrupted'),
+              sendAt: _pSAt || 0,
+              doneAt: _pMiss ? 0 : jAg[k].doneAt,
+              bg: !!jAg[k].bg, sid: sid, reg: true },
             { found: false });
           continue;
         }
@@ -106,11 +200,41 @@
         // ——通知未 flush 时后端条目仍报 running，整条替换会把
         // stopped 清成 false，目录/行卡重回「运行中」或「完成」。
         // 单向：本地 true 恒保留；后端 stopped 由 _hgRegToLocal 自己带。
-        const _lv = live[k];
+        // a122（四修）：**多键解析**。live 期档案以 tid 为键（v4bridge/sse
+        // 建档），投影键是 agentId——只有「上一次 Sync 已重建成 agentId 键」
+        // 后才对齐。首个 Sync 前只用 live[k] 恒 undefined，本地 stopped 与
+        // 保险② 双双失效（实测：用户主动停止的档被翻回运行中）。
+        const _lv = _regLiveOf(k, live);
         if (_lv && _lv.stopped && !loc.stopped) {
           loc.stopped = true;
           loc.done = true;
           loc.err = false;
+        }
+        // a122（复审·三修）：轮次栅栏——投影报终态但时刻早于本轮续派发出
+        // 时刻 = 拿到的是**上一轮**的终态（投影滞后一轮），不得落定。
+        //
+        // 三道保险（缺任一条都会制造比原缺陷更糟的回归）：
+        // ① 只对**确定性**终态生效。interrupted 是转写 mtime 启发式（a91），
+        //    拿它作栅栏依据会把「续派后静默死亡」的链每轮翻回运行中。
+        // ② 本地已有更晚的终态事实（done 且 doneAt >= sendAt）时不得翻回
+        //    —— 否则 v4.0.6「本地 stopped 不得被 Sync 抹掉」被整条推翻，
+        //    且回合收尾 _hgAgentsSweep 落的 done 会在下一次 2s Sync 消失。
+        // ③ sendAt 取值必须与 sendBy 写入用**同一套键归一**：投影键可能是
+        //    agentId / pending:<tid> / 裸 tid，只查 sendBy[k] 会让 pending
+        //    条目永不命中（实测），等于栅栏对它们不存在。
+        const _sAt = _sendAtFor(k, loc);
+        if (_sAt) {
+          loc.sendAt = _sAt;
+          const _fence = _regFence(jAg[k].status,
+                                   Number(jAg[k].doneAt || 0) || 0,
+                                   _sAt, _lv);
+          if (_fence) {
+            loc.done = false;
+            loc.doneAt = 0;
+            loc.err = false;
+            loc.stopped = false;
+            loc.interrupted = false;
+          }
         }
         agents[k] = loc;
       }
@@ -122,6 +246,33 @@
         if (a && aid && agents[aid]) continue;   // 已归并进 agentId 键
         agents[k] = a;
       }
+      // a122（用户实锤「子代理明明结束了，胶囊还显示」）：同链幽灵档清理。
+      // 实体：live 期残留档（键=tool_use_id、done:false、doneAt:0）与权威档
+      // （键=agentId、done:true）共链，两者都在 agents 里 → 胶囊/目录把已结束
+      // 的链当运行中。判据与 _hgRunChains 同源：一链内「最近事件时刻」
+      // max(doneAt, t0, **sendAt**) 最大的那条是真实状态；它已 done 就删掉
+      // 同链其余未完成档。sendAt 必须计入——续派就地复活原档不改 t0，只写
+      // sendAt；漏了它会把刚复活的链当上一轮残留删掉。平局 done 优先。
+      (function () {
+        const bestBy = {};
+        for (const k in agents) {
+          const a = agents[k];
+          if (!a) continue;
+          const cid = a.taskId || a.agentId || k;
+          const at = Math.max(a.doneAt || 0, a.t0 || 0, a.sendAt || 0);
+          const cur = bestBy[cid];
+          if (!cur || at > cur.at
+              || (at === cur.at && !!a.done && !cur.done)) {
+            bestBy[cid] = { k: k, at: at, done: !!a.done };
+          }
+        }
+        for (const k in agents) {
+          const a = agents[k];
+          if (!a || a.done) continue;
+          const b = bestBy[a.taskId || a.agentId || k];
+          if (b && b.done && b.k !== k) delete agents[k];
+        }
+      })();
       _HG.agents = agents;
       // 视图联动：行卡回绑（agentline 秒表复活/运行徽章覆写假完成）——
       // 注册表 running 条目按 taskId 找行
