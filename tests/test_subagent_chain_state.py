@@ -148,24 +148,21 @@ class TestSyncCleanup(unittest.TestCase):
 class TestRenewStampCoverage(unittest.TestCase):
     """a122 复审：sendAt 必须覆盖**全部**就地复活点，不只 v4 一条。
 
-    V3 是默认管线（v4main.js 里 v4 默认关）。四处复活点任何一处漏写
-    sendAt，同链残留 done 档就会压过刚复活的运行档 —— 真在跑的代理不显示。
-    这几处嵌在事件处理闭包里难以单独执行，退而用「复位语句附近必须出现
-    sendAt」的形式守护（判据本身的行为已由 TestRunChains 行为级覆盖）。
+    a138：V4 唯一基准（sse.js 旧事件链随批G 退役）——复活点只剩 v4bridge
+    一处 + registry Sync（后者由 test_sync_fence_and_carry 单独守护）。
+    任何一处漏写 sendAt，同链残留 done 档就会压过刚复活的运行档 —— 真在
+    跑的代理不显示。这几处嵌在事件处理闭包里难以单独执行，退而用「复位
+    语句附近必须出现 sendAt」的形式守护（判据本身的行为已由 TestRunChains
+    行为级覆盖）。
     """
 
     def test_all_renew_sites_write_send_at(self):
-        sse = open(os.path.join(ROOT, "web/js/harness/sse.js"),
-                   encoding="utf-8").read()
         vb = open(os.path.join(ROOT, "web/js/harness/v4bridge.js"),
                   encoding="utf-8").read()
         # 锚定**赋值形态**（不是裸 "sendAt"）：注释里出现「不写 sendAt」
         # 之类的字样不该让断言误通过——复审实锤过这个漏洞。
         import re as _re
         sites = [
-            (sse, "_orig3.done = false; _orig3.doneAt = 0;", "_orig3", "sse task_started 归并"),
-            (sse, "_m2.done = false; _m2.doneAt = 0;", "_m2", "sse 包装 task_started 归并"),
-            (sse, "_orig.done = false; _orig.doneAt = 0;", "_orig", "sse SendMessage 归并"),
             (vb, "_orig.done = false; _orig.doneAt = 0;", "_orig", "v4bridge SendMessage 归并"),
         ]
         for src, anchor, var, label in sites:

@@ -422,24 +422,6 @@ _hgRailSync(); } catch (_) {}
       return true;
     } catch(_) { return false; }
   }
-  async function _histRefresh(sidAt, _startIgnored) {
-    if (typeof _HG !== 'undefined' && _HG.v4Cur) return null;   // v4：同 _histFetch 守卫
-    try {
-      const r = await fetch(`/api/harness/transcript?sid=${encodeURIComponent(sidAt)}`);
-      const j = await r.json();
-      if (!j.ok || _HG.sid !== sidAt) return;   // 会话已切走，弃
-      if (_HG.busy) return;   // v3.2.1R2(R2-2)：fetch 在途时用户发送消息——重渲会抹掉活组/新消息泡（07-hist 懒填同款守卫）
-      _HG.fetchedSeq = j.lines_seq || 0;   // 399-N1：水位=读窗前快照（_histFetch 同步；R2 的 j.seq 版本在读→应答窗内反向）
-      const lines = j.lines || [];
-      // 394 单账游标制：DOM/游标有效时只泵账尾差量（前缀一致性）；游标无效
-      //（冷启动/降级/失配）→ 整窗（原行为，_histRender 内部对齐游标）
-      if (_HG.histLive && !_HG.histStale && !_HG.histDirty && (_HG.histCursor || 0) > 0
-          && (_HG.histCursor || 0) <= lines.length) {   // 398-P3：脏账（有未回流 fetch 的 live 行）禁泵——长度≠对齐（审 P3 工具行错位演算）
-        _HG.histAll = lines;
-        _histPump();
-      } else _histRender(lines, 0);
-    } catch(_) {}
-  }
   // v3.2.7（用户定调「只读模式退役」）：_roDeps/_roEnter/_roExit 整体退役——
   // 更早历史一律上滑/点击扩段进现有 ZCode 渲染器（_histRefresh 大窗口重渲），
   // 到 HIST_CAP 硬顶后提示条指向左侧会话列表。22-readonly.js 模块保留在盘

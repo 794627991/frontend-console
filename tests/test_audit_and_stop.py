@@ -322,23 +322,11 @@ class TestStoppedSubagentCloses(unittest.TestCase):
         复审实锤：上一版把多键定位写进了 `} else if (tid && !_shBg) {` 内部
         ——只有 tid 真值才可能进入 = 死代码。v4.0.6 再把断言从「缩进字面量
         匹配」改成**括号深度计算**：折行/格式化不影响结论。
+        a138：sse.js 旧事件链已随批G 退役——无 tid 停止收口的**行为**由本类
+        上方的 feed 级测试覆盖（_pending_agents 清除 + SUB 行 cancelled），
+        前端侧 v4bridge 的多键解析（_hgAg/agents/childTopic）不受 tid 守卫
+        独占；原 sse.js 源码形态断言随旧链一并退役。
         """
-        src = open(os.path.join(ROOT, "web/js/harness/sse.js"),
-                   encoding="utf-8").read()
-        anchor = "sub === 'task_notification' && !tid"
-        i = src.index(anchor)
-        head = src.rindex("if (", 0, i)          # 该分支 if 的起点
-        guard = src.index("else if (tid && !_shBg) {")
-        self.assertLess(guard, head, "该分支出现在 tid 守卫之前？")
-        # 守卫块必须在本分支之前**闭合**：统计守卫起点到本分支起点之间的
-        # 花括号净值。>0 表示仍嵌套在守卫块内（=死代码）；==0 表示已闭合。
-        seg = src[guard:head]
-        self.assertEqual(seg.count("}"), seg.count("{"),
-                         "tid 守卫块未在本分支之前闭合 → 本分支仍在守卫内")
-        # 且该分支必须真的去定位档案（不是空块）
-        seg = src[i:i + 1500]
-        self.assertIn("task_id", seg)
-        self.assertIn("_hgAgentRowState", seg)
 
     def test_cold_sync_keeps_stopped(self):
         """v4.0.6：Sync 不得抹掉本地已停止事实（后端未 flush 时仍报 running）。"""
@@ -380,10 +368,10 @@ class TestStoppedSubagentCloses(unittest.TestCase):
         self.assertIn("clearInterval", seg,
                       "v4 压缩结束未清定时器 → 泄漏")
         self.assertIn("compactTimer", seg)
-        # 清定时器必须置 null：三处 clearInterval（sse/relay/v4bridge）任一
-        # 漏置 null，遗留的陈旧 id 会让「已在跑？」判定永远为真 → 秒表不起来
-        for rel, anchor in (("web/js/harness/relay.js", "function _hgCompactionEnd()"),
-                            ("web/js/harness/sse.js", "if (o.status === 'compacting')")):
+        # 清定时器必须置 null：两处 clearInterval（relay/v4bridge）任一漏置
+        # null，遗留的陈旧 id 会让「已在跑？」判定永远为真 → 秒表不起来
+        # （sse.js 锚点已随批G 退役——compacting 定时器清置只剩这两处）
+        for rel, anchor in (("web/js/harness/relay.js", "function _hgCompactionEnd()"),):
             s2 = open(os.path.join(ROOT, rel), encoding="utf-8").read()
             j = s2.index(anchor)
             self.assertIn("_HG.compactTimer = null", s2[j:j + 900],

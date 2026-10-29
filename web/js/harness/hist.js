@@ -269,13 +269,6 @@
       const sidAt = _HG.sid;
       _histFetch(sidAt).then(ok => {
         if (!ok || _HG.sid !== sidAt) return;
-        const c = _HG.cache[sidAt] || {};
-        if (c.histFp === 'stale'
-            || (c.histFp != null && _histPrefixFp(_HG.histAll, _HG.histStart | 0) !== c.histFp)) {
-          if (!_HG.busy) _histRender(_HG.histAll, Math.max(0, Math.min(_HG.histStart | 0, _HG.histAll.length)));
-          else { _HG.histAll = null; _HG.histStale = true; _HG.histCursor = 0; }
-          return;
-        }
         fill();
       });
       return;

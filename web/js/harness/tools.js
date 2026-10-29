@@ -833,16 +833,6 @@
     //（非 sub 前置块 hgToolCard 已 return；子代理工具帧走 SSE 状态层摘要+
     // _subTailFeed 转写通道，不再进段/窗格镜像）
   }
-  function renderToolResult(o) {
-    const c = o.message && o.message.content;
-    const blocks = Array.isArray(c) ? c : [];
-    // v2.15：一条 user 消息可携带多个 tool_result（并行工具调用一次全回）。
-    // 旧实现用 find() 只取首个 → 其余工具行永远停在「运行中」，结果与错误
-    // 都不显示。后端 transcript_for 也是按 trs 全量遍历的，这里对齐。
-    const trs = blocks.filter(b => b && b.type === 'tool_result');
-    if (!trs.length) return;
-    for (const tr of trs) renderOneToolResult(tr);
-  }
   function renderOneToolResult(tr) {
     const row = _HG.rowById[tr.tool_use_id];
     // v3.5.142：bg 派发 ack 不翻完成——见 _hgIsBgLaunchAck。命中即静默

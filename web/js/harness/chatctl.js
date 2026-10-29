@@ -107,8 +107,7 @@
     _hgCwdEl.textContent = (j.cwd || '').split(/[\\/]/).pop() || '~';
     // a132：把后端回的 cwd 一并传给 v4——此刻 _HG.sessions 还没刷新到本
     // 会话，v4PaintHeader 查不到 meta 会把工程路径画成空白
-    if (typeof V4Main !== 'undefined' && V4Main.on()) V4Main.switch(j.sid, false, j.cwd);
-    else openSSE(j.sid, 0);
+    V4Main.switch(j.sid, false, j.cwd);
     refreshSessions();
     return j.sid;
   }
@@ -135,7 +134,7 @@
     setBusy(true);
     // v4 归一管线（批F）：命令上行带 cmd 锚——成功 ACK 即 markPending，
     // 投影 2s 内未回显本命令则自动重订阅恢复权威投影（绝不重放/伪造）
-    const _v4cmd = (typeof V4Main !== 'undefined' && V4Main.on()) ? V4Main.newCmd() : null;
+    const _v4cmd = V4Main.newCmd();
     try {
       const r = await fetch('/api/harness/send', {method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({sid, text, images, files, cmd: _v4cmd})});
@@ -170,9 +169,7 @@
       // 先回（本地快）、user_echo 后到（30ms 合帧），phResume 建的组 20ms 后
       // 被 echo 的 renderUser→grpFinalize 定稿=data-dur 20ms「已工作 0 秒」
       // 孤儿（devtools 实锤 t0 …707/f-ts …727）。v4 的组头/占位由 echo 后
-      // 内容行链自建（用户实测「工作中 Ns」正常即证据），此处跳过；V3 保留
-      if (!(typeof V4Main !== 'undefined' && V4Main.on()))
-        try { phResume(true); } catch (_) {}
+      // 内容行链自建（用户实测「工作中 Ns」正常即证据），此处跳过
       refreshSessions();
       return true;
     } catch(e) {

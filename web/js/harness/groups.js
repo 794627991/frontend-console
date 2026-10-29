@@ -595,6 +595,7 @@
     _turnHeadShow(g);                       // 重启秒表（定稿已清 headTimer）
     return g;
   }
+
   // v3.2：回合工时文案（ZCode formatConversationWorkDuration 口径：N 秒/N 分 N 秒/N 时 N 分）
   function _hgTurnDurTxt(ms) {
     let s = Math.max(0, Math.round(ms / 1000));
@@ -789,18 +790,6 @@
       _hgRailSync();   // v3.2.10：live 新回合入轨（历史路径在 _histRender 尾统一 sync）
     }
     return d;
-  }
-  function _hgEchoDup(it) {
-    const us = _hgFlow.querySelectorAll('.h-msg.user');
-    const last = us[us.length - 1];
-    if (!last) return false;
-    if ((last.dataset.rtext || '').trim() !== (it.text || '').trim()) return false;
-    try {
-      const ra = JSON.parse(last.dataset.ratts || '{}');
-      if ((ra.images || []).join('\u0001') !== (it.images || []).join('\u0001')) return false;
-      if ((ra.files || []).join('\u0001') !== (it.files || []).join('\u0001')) return false;
-    } catch (_) { return false; }
-    return true;
   }
   function _hgAvaCls(name) {
     const c = (String(name || '?').charCodeAt(0) || 63) % 5;

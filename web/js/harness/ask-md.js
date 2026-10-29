@@ -296,45 +296,19 @@ function askRender(it) {
     // 丢痕），面板随即收缩消失（不再折叠成卡占消息流）
     // v4.0.0-a44（用户实测「回答完问题后才出现的平铺行」）：结果行退役——
     // 信息已由消息流提问卡（h-askcard）回答区承载；V3 无卡保留留痕行
-    if (!(typeof V4Main !== 'undefined' && V4Main.on()))
-      _hgAskResultRow(it.req_id || '', ans, qs, ign);
     if (card) _hgAskDismiss(card);
   }
   // v3.4.61：flow 结果行——dim 单行「✓ 问题 → 答案 [共 N 题]」复用 .h-ask-sum
   // 的 span 族；按 req_id 幂等（data-hg-askr）；override 供失效路（已失效/已随
   // 会话中断失效）改写文案。落点=当前活组根（ask 属回合中途暂停，答后续跑同
   // 组），组不活兜底 flow 根
-  function _hgAskResultRow(reqId, ans, qs, ign, override) {
-    if (!reqId) return;
-    if (_hgFlow.querySelector(`[data-hg-askr="${CSS.escape(reqId)}"]`)) return;
-    const _qk = q0 => (q0 && q0.question) || ('问题' + (qs.indexOf(q0) + 1));
-    const firstQ = qs.length ? _qk(qs[0]) : (Object.keys(ans || {})[0] || '提问');
-    const row = document.createElement('div');
-    row.className = 'h-ask-rs';
-    row.dataset.hgAskr = reqId;
-    row.title = (qs.length ? qs : Object.keys(ans || {}).map(k => ({ question: k })))
-      .map(q => _qk(q) + ' → ' + ((ans || {})[_qk(q)] || '（无作答）')).join('\n');
-    row.innerHTML = `<span class="h-ask-sum-ok">✓</span>` +
-      (override || ign ? `<span class="h-ask-sum-q">${esc(override || '已忽略此提问')}</span>`
-        : `<span class="h-ask-sum-q">${esc(firstQ)}</span>` +
-          `<span class="h-ask-sum-arw">→</span>` +
-          `<b class="h-ask-sum-a">${esc(String((ans || {})[firstQ] || '已提交'))}</b>`) +
-      (qs.length > 1 ? `<span class="h-ask-sum-n">共 ${qs.length} 题</span>` : '');
-    const g = (_HG.grp && _HG.grp.root && _HG.grp.root.isConnected) ? _HG.grp.root : _hgFlow;
-    g.appendChild(row);
-    _hgScrollBottom();
-  }
-  // v3.4.61：面板收缩——先定 maxHeight 固化当前高度再加 hg-out 类（max-height
   // 过渡必须有起点数值；none→0 不播动画），240ms 后 remove（setTimeout 不用
   // transitionend——tab 后台 transitionend 不触发）；空 dock 收 .on；贴底联动
   function _hgAskDismiss(panel, override) {
     _hgAskHeadSync();   // v3.5.241：面板收缩→刷副位
     if (!panel || !panel.isConnected) return;
     panel.classList.add('done');
-    // v4.0.0-a45（用户实测「出现已失效几个字」）：失效路结果行同 a44 退役
-    // ——v4 提问卡回答区已承载状态，dock 失效不留痕；V3 保留
-    if (!(typeof V4Main !== 'undefined' && V4Main.on()))
-      _hgAskResultRow(panel.dataset.hgAsk || '', {}, askQs(panel), false, override || '已失效');
+    // v4.0.0-a45：失效路结果行同 a44 退役（v4 唯一基准，a138 删尽）
     try { panel.style.maxHeight = panel.offsetHeight + 'px'; void panel.offsetWidth; } catch (_) {}
     panel.classList.add('hg-out');
     setTimeout(() => {
@@ -354,33 +328,6 @@ function askRender(it) {
     _hgAskDockEl.classList.toggle('on', !!_hgAskDockEl.querySelector('.h-ask:not(.done)'));
     const p = _hgAskDockEl.querySelector('.h-ask:not(.done)');
     if (p) { try { askCheckDone(p); } catch (_) {} }
-  }
-  // v3.4.61：冷开/重建路的待答问题同步——transcript 路 seq 已跳过 ask 帧（不
-  // 重放），面板靠后端快照拉回（/ask/poll 空 req_id 分支）。三挂点：switchTo
-  // 冷开 / _hgSseRebuild / _hgReloadFlow。失败静默（SSE 活流仍可能在场）
-  function _hgAskSync(sid) {
-    if (!sid) return;
-    fetch('/api/harness/ask/poll', { method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sid }) })
-      .then(r => r.json())
-      .then(j => {
-        if (!j || !j.ok || _HG.sid !== sid) return;   // 归属守卫：fetch 在途切走竞速
-        const pend = _hgAskDockEl && _hgAskDockEl.querySelector('.h-ask:not(.done)');
-        if (!j.found) { if (pend) _hgAskDismiss(pend, '已失效'); return; }
-        if (j.done) {
-          if (pend && pend.dataset.hgAsk === j.req_id)
-            askDone({ req_id: j.req_id, answer: j.answer });   // 他窗已答/错过 ask_done 帧
-          else if (pend) _hgAskDismiss(pend, '已失效');
-          return;
-        }
-        // 未答且题面在场——异 req_id 的在场面板（跨会话僵尸/后端单槽换新）
-        // 先 dismiss，再 askRender（幂等：同 req_id 未 done 不重建，保半选）
-        if (j.req_id && Array.isArray(j.questions) && j.questions.length) {
-          if (pend && pend.dataset.hgAsk !== j.req_id) _hgAskDismiss(pend, '已失效');
-          askRender({ req_id: j.req_id, title: j.title || '', questions: j.questions });
-        }
-      }).catch(() => {});
   }
   // v3.0 高亮缓存池（对照 ZCode shikiHighlighter.ts:56 的指纹 key + 结果
   // 缓存）：key=语言:长度:首100:尾100（不存全文防 key 本身膨胀）；命中直接

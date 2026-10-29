@@ -204,62 +204,6 @@
     p.entries.push(entry);
     fx.push({ op: 'render_entries' });
   }
-  function _hgProjEvent(it) {
-    // SSE 信封入口（onmessage 每帧先过这里再走 legacy 分派）——R0 起为
-    // _hgReduce（纯）+ fx 执行的兼容壳；_hgDispatch（27-store）是统一
-    // 管线的正式入口（FEV 直达 _hgReduce 同一函数）
-    if (!_HG.proj) _HG.proj = _hgProjInit(it && it.sid);
-    const fx = [];
-    _hgReduce(_HG.proj, it, fx);
-    for (let i = 0; i < fx.length; i++) _hgRunFx(fx[i]);
-  }
-  function _hgProjSeed(j) {
-    // /events 响应的 proj+queue 种子（切会话/轮询兜底路径）
-    if (!j) return;
-    if (j.proj) {
-      const base = _hgProjInit(j.proj.sid);
-      _HG.proj = Object.assign(base, j.proj);
-      _HG.proj.turnTools = Object.assign(_hgEmptyTools(), j.proj.turn_tools || {});
-      _HG.proj.toolsTotal = Object.assign(_hgEmptyTools(), j.proj.tools_total || {});
-      _hgProjAgentsSeed(j.proj);
-      renderSideStatus();
-    }
-  }
-  // v3.5.317：服务端真源接线——proj.agents 里仍在跑（done:false）的子代理
-  // 补种进 _HG.liveAgentsBy[sid] 桶。此前刷新（F5）/关 tab 后内存桶全灭，
-  // _hgLiveAgentsRestore 空转 no-op，运行中子代理被 hist 工厂盖「completed」
-  // 假完成徽章、subagent_tail 轮询也因无档案停喂——后端投影（事件流归约
-  // 的服务端真相）一直随 /events 下发却零消费。补种后既有 restore 全链
-  // （行回绑/秒表复活/目录/胶囊）自动工作。桶内已有更富的前端档案时不覆盖
-  // （只有 done 翻转由既有通知路径负责）。
-  function _hgProjAgentsSeed(proj) {
-    const sid = proj && proj.sid;
-    const pa = proj && proj.agents;
-    if (!sid || !pa) return;
-    let seeded = 0;
-    _HG.liveAgentsBy = _HG.liveAgentsBy || {};
-    const tgt = _HG.liveAgentsBy[sid] = _HG.liveAgentsBy[sid] || {};
-    for (const tid in pa) {
-      const a = pa[tid];
-      // v3.5.322（复审#3）：live 档案已在场即跳过——/events 在途响应的 proj
-      // 快照可能早于刚到达的完成信号（task_notification/SSE ack 重放建档），
-      // 贫快照种入并经 restore 覆写会把刚 done 的代理复活成假运行
-      if (!a || a.done || tgt[tid]
-          || ((_HG.agents || {})[tid])) continue;
-      tgt[tid] = {
-        type: a.type || 'Task', desc: a.desc || '',
-        t0: a.t0 || 0, done: false, doneAt: 0,
-        bg: !!a.bg, taskId: a.task_id || a.taskId || '',
-        err: false, sid: sid, projSeed: true };
-      seeded++;
-    }
-    if (seeded) {
-      // 当前就是本会话 → 立即回填（restore 内部自建 _HG.agents 并行回绑/
-      // 秒表复活；F5 冷开路 hist 工厂已先跑完盖了假完成徽章，此处是覆写
-      // 运行态的唯一时机。行卡 miss 无害——档案先进目录/胶囊，行回绑幂等）
-      if (_HG.sid === sid) _hgLiveAgentsRestore(sid);
-    }
-  }
   async function _hgQueueSeed(sid) {
     // 切会话：拉服务端账本初始化本地队列（durable 队列的真源在后端，
     // 本地数组只是渲染缓存——事件驱动保持同步）

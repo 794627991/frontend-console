@@ -8,25 +8,17 @@
  *   subpane 子窗格        → v4SubOpen(el, agentKey)：子会话独立 store（同管线
  *                           delta 直推，替代 _subReplay 轮询全量重建）
  *
- * 开关：a122（用户拍板「启动直接使用 v4 模式」）默认**常开**。回滚通道：
- * ?v4=0 或 localStorage.hg_v4='0' 显式关（旧开启式 ?v4=1 / hg_v4='1' /
- * 服务端注入 __HG_V4__ 语义保留但不再必要）。
+ * 开关：a138（用户拍板「V4 唯一基准，不允许存在开关」）起 v4On 恒 true——
+ * ?v4=0 / localStorage hg_v4 / 服务端 __HG_V4__ 注入等回退通道已全量退役。
  */
 (function (root) {
   'use strict';
 
   function v4On() {
-    // _HG 是 state.js 的 let 全局（不挂 window）——裸标识符沿作用域链解析
-    if (typeof _HG === 'undefined') return false;
-    if (_HG.v4 !== undefined) return !!_HG.v4;
-    // a122：默认开。显式关仅两条：URL ?v4=0 / localStorage.hg_v4='0'
-    var off = /[?&]v4=0(?:&|$)/.test(location.search)
-      || (function () { try { return localStorage.getItem('hg_v4') === '0'; }
-          catch (e) { return false; } })();
-    var on = !off;
-    _HG.v4 = on;
-    return on;
+    // a138：V4 唯一基准。函数保留只为兼容存量调用点的 typeof 守卫，恒真。
+    return true;
   }
+
 
   // ---- 主窗 store/render 单例 ----------------------------------------------
 
