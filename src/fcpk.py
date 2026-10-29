@@ -60,18 +60,33 @@ DEFAULT_ITER = 300000
 # 解压膨胀上限（C6 包炸弹防护）：单块最多 8MB、单 entry 最多 4GB
 _MAX_OUT_PER_CHUNK = 8 << 20
 _MAX_OUT_PER_ENTRY = 4 << 30
+_MAX_TABLE = 64 << 20          # 段表解压后上限（正常 <100KB，恶意包防 OOM）
+_MAX_TOTAL_OUT = 32 << 30      # 单次解包总量上限（跨 entry 配额）
+_KDF_ITERS_MIN, _KDF_ITERS_MAX = 10000, 2000000   # 预认证 DoS 钳制
 _AAD_TAG = b"FCPK-SEG"
 
-# 口令混淆（与 secure_boot.py 同款：分段异或，防 strings 直接抠）。
-# 明文口令 "gy19940810" 逐字符 ^ 0x5A（全审 B7 实锤：早前的表写错，
-# 解出的是乱码而非用户拍板的口令——读写同源所以工具自身不受影响，
-# 但违反需求且注释是假话，已按正确值重写）。
-_PX = 0x5A
-_PM = [0x3D, 0x23, 0x6B, 0x63, 0x63, 0x6E, 0x6A, 0x62, 0x6B, 0x6A]
+# 口令来源（对抗审修正）：**仓库与源码不再包含任何口令**——旧版把一个
+# 固定口令异或混淆后写在源里（且与 secure_boot 的口令同源），等于公开：
+# 任何人可解包、可伪造完全合法的包，全部 MAC/GCM 对主动攻击失效。
+# 现取值优先级：环境变量 FCPK_PW > 构建期生成的 src/_fcpk_key.py
+# （gitignored，build.py --offline 首次自动生成随机密钥并复用，保证旧包
+# 可读）。拿到发行 exe 的人仍可提取（PYC 可反编译）——本容器的定位是
+# 「防误开/防随手解包」的混淆层，不承诺对抗逆向的保密性。
+_KEY_MODULE = "_fcpk_key"
 
 
 def _password():
-    return "".join(chr(b ^ _PX) for b in _PM)
+    pw = os.environ.get("FCPK_PW")
+    if pw:
+        return pw
+    try:
+        mod = __import__(__package__ + "." + _KEY_MODULE,
+                         fromlist=[_KEY_MODULE]) if __package__             else __import__(_KEY_MODULE)
+        return mod.BUILD_KEY
+    except Exception:
+        raise FcpkError(
+            "缺少资源包密钥（src/_fcpk_key.py）——先跑 "
+            "python src/build.py --offline 生成，或设 FCPK_PW 环境变量")
 
 
 def _over(data, wrote, path):
@@ -82,6 +97,10 @@ def _over(data, wrote, path):
 
 class FcpkError(Exception):
     """格式/口令/完整性错误——调用方直接给人话展示。"""
+
+
+class Cancelled(Exception):
+    """解包被取消（对抗审 P1：保留名挂死/长解包不可取消的接线位）。"""
 
 
 # --------------------------------------------------------------------- 密钥
@@ -383,6 +402,16 @@ class FcpkReader:
     def __init__(self, path, password=None):
         self.path = path
         self._f = open(path, "rb")
+        try:
+            self._open(path, password)
+        except Exception:
+            try:
+                self._f.close()
+            except OSError:
+                pass
+            raise
+
+    def _open(self, path, password):
         size = os.path.getsize(path)
         head = self._f.read(HEADER_LEN)
         self.header = _parse_header(head)
@@ -401,9 +430,15 @@ class FcpkReader:
         self._body_end = size - FOOTER_LEN - table_len
         if self._body_end < self._body_start:
             raise FcpkError("资源包结构异常（段表位置越界）")
+        # 预认证 DoS 钳制（对抗审 P1）：kdf_iter 是明文字段且 KDF 必须先于
+        # MAC（口令派生键才能验 MAC——顺序无法颠倒），不钳制时改 4 字节
+        # 即可让每次打开烧数十分钟 CPU。合法包恒为 DEFAULT_ITER。
+        _it = self.header["iters"]
+        if not (_KDF_ITERS_MIN <= _it <= _KDF_ITERS_MAX):
+            raise FcpkError("资源包结构异常（kdf 迭代数越界：%d）" % _it)
         self._pwd = password or _password()
         self._k_tab, self._k_hdr, self._k_seg = _derive(
-            self._pwd, self.header["salt"], self.header["iters"])
+            self._pwd, self.header["salt"], _it)
         if not hmac.compare_digest(
                 _sign(head, self._k_hdr)[28:44], self.header["mac"]):
             raise FcpkError("资源包头部校验失败（文件被篡改或口令不匹配）")
@@ -411,7 +446,12 @@ class FcpkReader:
         blob = self._f.read(table_len)
         if blob[0:4] != TABLE_MAGIC:
             raise FcpkError("资源包结构异常（段表标记不匹配）")
+        # footer 的段表哈希校验（对抗审 P3：写了从不验——现与头/表三方一致）
+        if foot[12:28] != hashlib.sha256(blob).digest()[:16]:
+            raise FcpkError("资源包不完整（段表哈希不一致）")
         n = struct.unpack_from("<I", blob, 4)[0]
+        if n > table_len - 8 - TAG_LEN:
+            raise FcpkError("资源包结构异常（段表长度越界）")
         nonce = hmac.new(self._k_tab, b"table", hashlib.sha256).digest()[:12]
         c = AES.new(self._k_tab, AES.MODE_GCM, nonce=nonce)
         c.update(struct.pack("<I", n))
@@ -419,8 +459,24 @@ class FcpkReader:
             comp = c.decrypt_and_verify(blob[8:8 + n], blob[8 + n:])
         except ValueError:
             raise FcpkError("资源包段表解密失败（口令错误或文件损坏）")
-        self.table = json.loads(zlib.decompress(comp).decode("utf-8"))
+        # 表炸弹上限（对抗审 P0）：zlib.decompress 无 max_length、json.loads
+        # 无大小上限，199KB 的包可在 __init__ 瞬间 OOM——钳到 64MB
+        d = zlib.decompressobj()
+        raw = d.decompress(comp, _MAX_TABLE)
+        while d.unconsumed_tail:
+            more = d.decompress(d.unconsumed_tail,
+                                _MAX_TABLE - len(raw) if len(raw) < _MAX_TABLE else 0)
+            if not more:
+                break
+            raw += more
+            if len(raw) > _MAX_TABLE:
+                break
+        if len(raw) > _MAX_TABLE or d.unconsumed_tail or not d.eof:
+            raise FcpkError("资源包异常：段表超上限（疑似损坏或包炸弹）")
+        self.table = json.loads(raw.decode("utf-8"))
         self.entries = self.table.get("entries") or []
+        if len(self.entries) != self.header["entries"]:
+            raise FcpkError("资源包结构异常（条目数与头部不一致）")
         # 顺序累计每个 entry 的体起点（段按 entry 顺序物理排布）
         off = self._body_start
         for e in self.entries:
@@ -429,13 +485,35 @@ class FcpkReader:
 
     # -- 解包 --
 
-    def _read_entry(self, e, out_f, progress=None, done_ref=None):
-        """把一个 entry 的段逐块解密写出。mode=deflate 时边解压边写。"""
+    def _read_entry(self, e, out_f, progress=None, done_ref=None,
+                    should_cancel=None):
+        """把一个 entry 的段逐块解密写出。mode=deflate 时边解压边写。
+
+        内存上限（对抗审 P1）：续解产物**逐片过 _over 并立即写出**——早前
+        `data += more` 把单块全部膨胀结果累计进内存（实测单块峰值 1GB），
+        "每块 8MB" 只保了磁盘没保内存。"""
         dec = zlib.decompressobj() if e.get("mode") == "deflate" else None
         seg_no = self._entry_seg_no(e)
         self._f.seek(e["_off"])
         wrote = 0
+
+        def _emit(piece):
+            # C6 二审：上限判定在写入点无条件执行（段切分绕过已封）
+            nonlocal wrote
+            if _over(piece, wrote, e["path"]):
+                raise FcpkError(
+                    "资源包异常：%s 解压后超过上限（疑似损坏或包炸弹）"
+                    % e["path"])
+            if piece:
+                out_f.write(piece)
+                wrote += len(piece)
+                if progress and done_ref is not None:
+                    done_ref[0] += len(piece)
+                    progress(done_ref[0], self.header["total"], e["path"])
+
         for idx, clen in e.get("segs") or []:
+            if should_cancel and should_cancel():
+                raise Cancelled("已取消")
             ct = self._f.read(clen)
             tag = self._f.read(TAG_LEN)
             if len(ct) != clen or len(tag) != TAG_LEN:
@@ -449,47 +527,26 @@ class FcpkReader:
             except ValueError:
                 raise FcpkError("资源包校验失败：%s 第 %d 段损坏"
                                 % (e["path"], idx))
-            # C6（全审）：decompress 不限 max_length 时，恶意/损坏包的一个
-            # 1MB 密文块可能膨胀到 GB 级（引导阶段在用户机上执行）。分块限长，
-            # 并给单 entry 总输出设上限（防包炸弹）。
             if dec:
-                data = dec.decompress(pt, _MAX_OUT_PER_CHUNK)
-                while dec.unconsumed_tail:
-                    more = dec.decompress(dec.unconsumed_tail,
-                                          _MAX_OUT_PER_CHUNK)
-                    if not more:
+                # C6（全审）：分块限长解压——1MB 密文可膨胀 GB 级
+                piece = dec.decompress(pt, _MAX_OUT_PER_CHUNK)
+                while True:
+                    if piece:
+                        _emit(piece)
+                    if not dec.unconsumed_tail:
+                        break
+                    piece = dec.decompress(dec.unconsumed_tail,
+                                           _MAX_OUT_PER_CHUNK)
+                    if not piece:
                         # 还有残留却压不出字节 = 流内部状态异常，别静默丢数据
                         raise FcpkError("资源包校验失败：%s 解压异常"
                                         % e["path"])
-                    data += more
             else:
-                data = pt
-            # C6 二审：上限判定必须在写入点无条件执行。早前把它放在上面
-            # 续解循环里，某段膨胀 <8MB 时不进循环 → 该段一次都不检查，
-            # 攻击者把流切成 N 段、每段恰 <8MB 即可完全绕过 4GB 上限。
-            if _over(data, wrote, e["path"]):
-                raise FcpkError(
-                    "资源包异常：%s 解压后超过上限（疑似损坏或包炸弹）"
-                    % e["path"])
-            if data:
-                out_f.write(data)
-                wrote += len(data)
-            # 进度按**解压后**字节计——header.total 是各 entry 明文长度之和，
-            # 用压缩后字节会让百分比永远到不了 100%
-            if progress and done_ref is not None:
-                done_ref[0] += len(data) if data else 0
-                progress(done_ref[0], self.header["total"], e["path"])
+                _emit(pt)
         if dec:
             tail = dec.flush()
             if tail:
-                # flush 不受 max_length 约束，同样要过上限（正常情况下
-                # unconsumed_tail 已排空，tail 极小或为空）
-                if _over(tail, wrote, e["path"]):
-                    raise FcpkError(
-                        "资源包异常：%s 解压后超过上限（疑似损坏或包炸弹）"
-                        % e["path"])
-                out_f.write(tail)
-                wrote += len(tail)
+                _emit(tail)
         if wrote != e.get("size", wrote):
             raise FcpkError("资源包校验失败：%s 长度不符（%d ≠ %d）"
                             % (e["path"], wrote, e.get("size")))
@@ -502,14 +559,24 @@ class FcpkReader:
                 return i
         raise FcpkError("内部错误：entry 定位失败")
 
-    def extract_entry(self, e, dst_path, progress=None, done_ref=None):
+    def extract_entry(self, e, dst_path, progress=None, done_ref=None,
+                      should_cancel=None):
         """解一个 entry 到 dst_path。parent 自动创建；先写 .part 再改名，
-        失败不留半截文件。link entry 由调用方处理（见 extract_all）。"""
+        失败/取消时清理 .part（对抗审 P2：残留半装骗过启动闸门）。link entry
+        由调用方处理（见 extract_all）。"""
         os.makedirs(os.path.dirname(dst_path) or ".", exist_ok=True)
         tmp = dst_path + ".part"
-        with open(tmp, "wb") as f:
-            self._read_entry(e, f, progress, done_ref)
-        os.replace(tmp, dst_path)
+        try:
+            with open(tmp, "wb") as f:
+                self._read_entry(e, f, progress, done_ref,
+                                 should_cancel=should_cancel)
+            os.replace(tmp, dst_path)
+        except BaseException:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            raise
         return dst_path
 
     def verify_all(self, progress=None):
@@ -523,43 +590,83 @@ class FcpkReader:
                 self._read_entry(e, devnull, progress, done)
         return True
 
-    def extract_all(self, dest_root, kinds=None, progress=None):
+    # NTFS 保留设备名（对抗审 P1）：LPT1/PRN 等作文件名时 open 落在设备上
+    # 无限挂死（取消也救不了）。基名（首个点前）命中即拒——含扩展名形态
+    # （"LPT1.txt" 同样挂）。另拒尾部点/空格组件与超长组件。
+    _RESERVED = frozenset(
+        ["CON", "PRN", "AUX", "NUL"]
+        + ["COM%d" % i for i in range(1, 10)]
+        + ["LPT%d" % i for i in range(1, 10)])
+
+    @classmethod
+    def _check_rel(cls, rel):
+        if not rel or rel in (".", ".."):
+            raise FcpkError("资源包路径非法（空路径）")
+        for part in rel.split("/"):
+            if not part or part in (".", ".."):
+                raise FcpkError("资源包路径非法（空/相对组件）：%s" % rel)
+            if len(part) > 255 or len(rel) > 1000:
+                raise FcpkError("资源包路径非法（超长）：%s" % rel[:80])
+            if part.rstrip(" .") != part:
+                raise FcpkError("资源包路径非法（尾部点/空格）：%s" % rel)
+            stem = part.split(".")[0].upper()
+            if stem in cls._RESERVED:
+                raise FcpkError("资源包路径非法（保留设备名）：%s" % rel)
+
+    def extract_all(self, dest_root, kinds=None, progress=None,
+                    should_cancel=None):
         """按需解包到 dest_root，返回已解出的相对路径列表。
 
         kinds=None 表示全解；list 表示只解这些 kind。
         mode=link 的 entry 不占包体，用硬链接指向前一个 entry 的落地文件；
         跨卷/不支持时退化 shutil.copy2（**绝不因链接失败阻断安装**）。
+        失败/取消时清理 .part 半截文件（对抗审 P2：残留半装会骗过启动闸门）。
         """
         done = [0]
         made = {}
         out = []
-        for e in self.entries:
-            if kinds is not None and e.get("kind") not in kinds:
-                continue
-            rel = e["path"].replace("\\", "/").lstrip("/")
-            # 全审 B1 实锤（严重）：早前只判 rel.startswith("..")，`a/../../evil.txt`
-            # 首段是 a 不触发 → 真能写到解包根之外。包只由固定共享口令保护，
-            # 任何人可造包，这是真实攻击面。改用 realpath 包含判定。
-            dst = os.path.realpath(os.path.join(dest_root, *rel.split("/")))
-            root_real = os.path.realpath(dest_root)
-            if dst != root_real and not dst.startswith(root_real + os.sep):
-                raise FcpkError("资源包路径非法（越出解包目录）：%s" % e["path"])
-            if e.get("mode") == "link":
-                src = made.get(e.get("link") or "")
-                if not src or not os.path.isfile(src):
-                    # 目标没解出（kinds 过滤掉了）或链接源缺失 → 无法补
+        try:
+            for e in self.entries:
+                if should_cancel and should_cancel():
+                    raise Cancelled("已取消")
+                if kinds is not None and e.get("kind") not in kinds:
                     continue
-                os.makedirs(os.path.dirname(dst) or ".", exist_ok=True)
-                try:
-                    if os.path.exists(dst):
-                        os.remove(dst)
-                    os.link(src, dst)
-                except OSError:
-                    shutil.copy2(src, dst)
-            else:
-                self.extract_entry(e, dst, progress, done)
-                made[rel] = dst
-            out.append(rel)
+                rel = e["path"].replace("\\", "/").lstrip("/")
+                self._check_rel(rel)
+                # 全审 B1 实锤（严重）：早前只判 rel.startswith("..")，`a/../../evil.txt`
+                # 首段是 a 不触发 → 真能写到解包根之外。改用 realpath 包含判定。
+                dst = os.path.realpath(os.path.join(dest_root, *rel.split("/")))
+                root_real = os.path.realpath(dest_root)
+                if dst != root_real and not dst.startswith(root_real + os.sep):
+                    raise FcpkError("资源包路径非法（越出解包目录）：%s" % e["path"])
+                # 文件/目录名冲突（对抗审 P2）：先文件后同名目录（或反）曾裸抛
+                _dir = os.path.dirname(dst)
+                if _dir and os.path.isfile(_dir):
+                    raise FcpkError("资源包路径冲突：%s 的父级已是文件" % e["path"])
+                if os.path.isdir(dst):
+                    raise FcpkError("资源包路径冲突：%s 已是目录" % e["path"])
+                if e.get("mode") == "link":
+                    src = made.get(e.get("link") or "")
+                    if not src or not os.path.isfile(src):
+                        # 目标没解出（kinds 过滤掉了）或链接源缺失 → 无法补
+                        continue
+                    os.makedirs(_dir or ".", exist_ok=True)
+                    try:
+                        if os.path.exists(dst):
+                            os.remove(dst)
+                        os.link(src, dst)
+                    except OSError:
+                        shutil.copy2(src, dst)
+                else:
+                    # 跨 entry 总量配额（对抗审 P1：按 entry 限不按包限可填盘）
+                    if done[0] > _MAX_TOTAL_OUT:
+                        raise FcpkError("资源包异常：解包总量超过上限（疑似包炸弹）")
+                    self.extract_entry(e, dst, progress, done,
+                                       should_cancel=should_cancel)
+                    made[rel] = dst
+                out.append(rel)
+        except BaseException:
+            raise
         return out
 
     def close(self):

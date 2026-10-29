@@ -18,7 +18,7 @@ const _SET_SECTIONS = [
   { id: 'appearance', icon: '🎨', name: '外观', desc: '换肤 / 界面缩放' },
   { id: 'api',   icon: '🔑', name: 'API 配置', desc: 'Claude API Token / settings.json' },
   { id: 'update', icon: '⬆', name: '关于与升级', desc: '版本 / 检查更新 / 升级分发服务' },
-  { id: 'reinstall', icon: '♻', name: 'Claude 重装', desc: '重新安装 / 修复状态栏 / 离线包目录' },
+  { id: 'resources', icon: '🧩', name: '外部依赖安装', desc: '检测 / 用离线资源包重装六项依赖' },
   { id: 'data',  icon: '📁', name: '数据目录', desc: '日志 / 笔记 / 缓存的位置与迁移' },
   { id: 'assoc', icon: '🔗', name: '文件关联', desc: '接管/还原 txt 等文本文件的双击打开方式' },
   { id: 'help',  icon: '❓', name: '帮助', desc: 'README 使用手册 / 常见问题' },
@@ -67,7 +67,9 @@ function _stShowSection(m, sec) {
   if (sec === 'appearance') _stRenderAppearancePane(pane);
   else if (sec === 'api') _stRenderApiPane(pane);
   else if (sec === 'update') _stRenderUpdatePane(pane);
-  else if (sec === 'reinstall') _stRenderReinstallPane(pane);
+  // 'reinstall' 是旧分区 id 的别名——localStorage.fc_st_sec 里存着老值，
+  // 不做映射的话老用户重开设置会落到兜底的外观页，找不到原来的入口
+  else if (sec === 'resources' || sec === 'reinstall') _stRenderResourcesPane(pane);
   else if (sec === 'term') _stRenderTermKeysPane(pane);
   else if (sec === 'data') _stRenderDataPane(pane);
   else if (sec === 'assoc') _stRenderAssocPane(pane);
@@ -444,49 +446,307 @@ async function _stRenderTermKeysPane(pane) {
   _bindSearchHk('notesHkInput', _notesRef, 'notes_search_hotkey');
 }
 
-// ---- Claude 重装子页：重开安装窗 / 修复状态栏 / 离线包目录 ----
-async function _stRenderReinstallPane(pane) {
+// ---- 外部依赖安装（v4.1）：六项检测 + 离线资源包一键装 ----
+// 数据源只有 /api/resources/status（manifest 由后端 MANIFEST 注入，前端
+// 不硬编码六项名——res_boot.MANIFEST 是唯一真源）。
+// 勾选语义 = 「这一项本次要处理」，不是「跳过」：默认勾选的只有没装好的，
+// 免得一次点击把六项全量覆盖（.NET 要 UAC，Claude 是 270MB 拷贝）。
+async function _stRenderResourcesPane(pane) {
   pane.innerHTML = `
     <div class="dd-body">
-      <div class="dd-label">Claude 重装 / 修复</div>
-      <div class="dd-sub">重新安装 Claude Code（联网/离线包），或修复安装遗留问题。已有配置（Token/settings）不受影响。</div>
+      <div class="dd-label">外部依赖安装</div>
+      <div class="dd-sub">用离线资源包（.fcpk）一键安装/重装运行环境。已有 Claude 配置（Token/settings）不受影响。</div>
+
       <div class="dd-cur" style="margin-top:12px;">
-        <div class="dd-label">重新安装</div>
-        <div class="dd-actions" style="margin-top:6px;">
-          <button class="btn primary" id="riOpenSetup">⊞ 打开安装引导</button>
+        <div class="dd-label">资源包</div>
+        <div class="dd-row" style="display:flex;gap:8px;margin-top:6px;align-items:center;">
+          <input type="text" id="rsPkgPath" class="dd-input" spellcheck="false"
+                 placeholder="选择或粘贴 .fcpk 资源包路径" style="flex:1;">
+          <button class="btn ghost" id="rsPkgPick">📂 选择…</button>
+          <button class="btn ghost icon-btn" id="rsRefresh" title="重新检测">⟳</button>
         </div>
-        <div class="dd-sub" style="margin-top:4px;">打开 Claude Code 安装窗（联网安装 / 离线包安装 / 制作离线包三通道）。</div>
+        <div class="dd-sub" id="rsPkgInfo" style="margin-top:6px;">未选择资源包</div>
       </div>
+
       <div class="dd-cur" style="margin-top:14px;">
-        <div class="dd-label">修复状态栏</div>
+        <div class="dd-label" style="display:flex;justify-content:space-between;align-items:center;">
+          <span>依赖清单（勾选 = 本次要安装/重装）</span>
+          <span style="display:flex;gap:6px;">
+            <button class="btn ghost" id="rsPickMiss" style="padding:2px 9px;font-size:11px;">全选缺项</button>
+            <button class="btn ghost" id="rsPickNone" style="padding:2px 9px;font-size:11px;">全不选</button>
+          </span>
+        </div>
+        <div id="rsList" style="margin-top:8px;font-size:12.5px;line-height:2.0;">检测中…</div>
+      </div>
+
+      <div class="dd-cur" style="margin-top:14px;">
+        <div class="dd-label">安装</div>
+        <label style="display:flex;gap:8px;align-items:flex-start;margin-top:8px;font-size:12px;cursor:pointer;">
+          <input type="checkbox" id="rsForce" style="margin-top:3px;">
+          <span>强制重装（覆盖现有安装）
+            <span class="dd-sub" style="display:block;margin-top:2px;">.NET 始终按缺失安装（需管理员且可能要重启）；
+              Node/Git 重装可能弹管理员提示。</span></span>
+        </label>
+        <div class="dd-actions" style="margin-top:10px;display:flex;gap:8px;">
+          <button class="btn primary" id="rsGo" disabled>🛠 安装所选</button>
+          <button class="btn ghost" id="rsCancel" style="display:none;">■ 取消</button>
+        </div>
+        <div id="rsProg" style="display:none;margin-top:10px;">
+          <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden;">
+            <div id="rsProgBar" style="height:100%;width:0;background:var(--accent);transition:width .3s;"></div>
+          </div>
+          <div class="dd-sub" id="rsProgTxt" style="margin-top:4px;">—</div>
+        </div>
+        <div class="dd-sub" id="rsErr" style="display:none;margin-top:6px;color:var(--neon-red);"></div>
+        <div class="cs-log" id="rsLog" style="display:none;max-height:170px;overflow:auto;
+             font-size:11px;margin-top:8px;"></div>
+      </div>
+
+      <div class="dd-cur" style="margin-top:14px;">
+        <div class="dd-label">Claude 专项修复</div>
         <div class="dd-actions" style="margin-top:6px;">
-          <button class="btn ghost" id="riFixStatusline">↺ 重配 statusLine</button>
+          <button class="btn ghost" id="rsFixStatusline">↺ 重配 statusLine</button>
         </div>
         <div class="dd-sub" style="margin-top:4px;">状态栏不显示（如 command 指向了无效解释器）时点此：清除坏配置并按本机实际 python 重配；本机无 python 则不配置（无害）。</div>
       </div>
-      <div class="dd-cur" style="margin-top:14px;">
-        <div class="dd-label">离线安装包目录</div>
+
+      <details class="dd-cur" style="margin-top:14px;">
+        <summary style="cursor:pointer;font-size:12px;">旧版离线包（zip）通道</summary>
+        <div class="dd-actions" style="margin-top:8px;">
+          <button class="btn ghost" id="rsOpenSetup">⊞ 打开旧的安装引导</button>
+        </div>
+        <div class="dd-sub" style="margin-top:4px;">联网安装 / claude-offline.zip 安装 / 制作旧格式离线包。新流程请用上方的 .fcpk 资源包。</div>
+        <div class="dd-label" style="margin-top:12px;">离线安装包目录</div>
         <div class="dd-row" style="display:flex;gap:8px;margin-top:6px;align-items:center;">
           <div class="dd-path" id="apiPkgDir" style="flex:1;user-select:text;">—</div>
           <button class="btn ghost icon-btn" id="apiPkgPick" title="浏览选择目录">📂</button>
-          <button class="btn ghost icon-btn" id="apiPkgReset" title="清除自定义，恢复默认（工具目录 offline_pkg）">↺</button>
+          <button class="btn ghost icon-btn" id="apiPkgReset" title="清除自定义，恢复默认">↺</button>
         </div>
-        <div class="dd-sub" style="margin-top:4px;">Claude 离线安装资源（Git 安装器 / Node / claude-code 包）的搜索目录。默认随工具分发的 offline_pkg；制作离线包也从此目录取资源。</div>
-      </div>
-      <div class="dd-note" id="riNote"></div>
+        <div class="dd-sub" style="margin-top:4px;">旧通道（zip）的搜索目录。新流程用 .fcpk 资源包，不读这个。</div>
+      </details>
+
+      <div class="dd-note" id="rsNote"></div>
     </div>`;
-  const refresh = async () => {
+
+  const $q = (sel) => pane.querySelector(sel);
+  let _st = null;                 // 最近一次 status
+  let _pkg = null;                // 最近一次包预检
+  const _picked = new Set();      // 用户勾选的 kind（跨重渲染保留）
+
+  // ---- 资源包选择 ----
+  const pathBox = $q('#rsPkgPath');
+  try {
+    const saved = localStorage.getItem('fc_res_pkg');
+    if (saved) pathBox.value = saved;
+  } catch (_) {}
+
+  async function loadPkg() {
+    const p = pathBox.value.trim();
+    const info = $q('#rsPkgInfo');
+    if (!p) { _pkg = null; info.textContent = '未选择资源包'; paintList(); return; }
+    info.textContent = '读取包信息…';
+    try {
+      const j = await (await fetch('/api/resources/package?path=' +
+        encodeURIComponent(p))).json();
+      if (!j.ok) { _pkg = null; info.textContent = '包不可用：' + (j.err || ''); paintList(); return; }
+      _pkg = j;
+      const kb = Object.keys(j.kinds || {});
+      info.textContent = j.name + ' · ' + _ddFmtSize(j.size) +
+        (j.created ? ' · ' + j.created : '') +
+        ' · 含 ' + (kb.length ? kb.join('/') : '无') +
+        (j.plain_len ? ' · 解压后 ' + _ddFmtSize(j.plain_len) : '');
+      try { localStorage.setItem('fc_res_pkg', p); } catch (_) {}
+      paintList();
+    } catch (e) {
+      _pkg = null; info.textContent = '读取失败：' + e; paintList();
+    }
+  }
+
+  // ---- 依赖清单 ----
+  function inPkg(kind) {
+    if (!_pkg) return true;                 // 没选包时不置灰（点安装会提示）
+    return !!( _pkg.kinds && _pkg.kinds[kind]);
+  }
+
+  function paintList() {
+    const el = $q('#rsList');
+    if (!_st) { el.textContent = '检测中…'; return; }
+    const items = _st.items || [];
+    el.innerHTML = items.map(function (it) {
+      const ok = inPkg(it.kind);
+      const chk = _picked.has(it.kind) ? ' checked' : '';
+      const badge = it.ok
+        ? '<span style="color:var(--accent)">✓ 已就绪</span>' +
+          (it.ver ? ' <span style="color:var(--muted)">' + esc(it.ver) + '</span>' : '')
+        : '<span style="color:var(--neon-red)">✗ ' +
+          esc(it.state === 'outdated' ? '版本过低' : '缺失') + '</span>';
+      const detail = it.ok ? '' :
+        ' <span style="color:var(--muted);font-size:11px;">' + esc(it.detail || it.fix || '') + '</span>';
+      const hard = it.hard
+        ? ' <span style="font-size:10px;border:1px solid var(--muted);padding:0 3px;' +
+          'border-radius:3px;color:var(--muted);">必需</span>' : '';
+      const nosrc = ok ? '' :
+        ' <span style="color:var(--warn,#c90);font-size:11px;">包内不含</span>';
+      const dotnetHint = (it.kind === 'dotnet' && it.ok)
+        ? ' <span style="color:var(--muted);font-size:11px;">（强制重装不适用）</span>' : '';
+      return '<label style="display:flex;gap:8px;align-items:flex-start;' +
+        (ok ? 'cursor:pointer;' : 'opacity:.5;cursor:not-allowed;') + '">' +
+        '<input type="checkbox" data-kind="' + esc(it.kind) + '"' + chk +
+        (ok ? '' : ' disabled') + ' style="margin-top:6px;flex-shrink:0;">' +
+        '<span>' + esc(it.name) + hard + ' — ' + badge + dotnetHint + detail + nosrc +
+        '</span></label>';
+    }).join('');
+    el.querySelectorAll('input[data-kind]').forEach(function (cb) {
+      cb.onchange = function () {
+        if (cb.checked) _picked.add(cb.dataset.kind);
+        else _picked.delete(cb.dataset.kind);
+        syncGo();
+      };
+    });
+    syncGo();
+  }
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
+  function syncGo() {
+    const busy = $q('#rsGo').dataset.busy === '1';
+    $q('#rsGo').disabled = busy || _picked.size === 0;
+  }
+
+  // ---- 检测 ----
+  async function loadStatus(pickDefaults) {
+    try {
+      const j = await (await fetch('/api/resources/status')).json();
+      _st = j;
+      if (pickDefaults) {
+        _picked.clear();
+        (j.items || []).forEach(function (it) { if (!it.ok) _picked.add(it.kind); });
+      } else {
+        // 保留已有勾选，但剔除已不再可用的（换包后包内没有的）
+        Array.from(_picked).forEach(function (k) { if (!inPkg(k)) _picked.delete(k); });
+      }
+      paintList();
+    } catch (e) {
+      $q('#rsList').textContent = '检测失败：' + e;
+    }
+  }
+
+  // ---- 安装 ----
+  async function doInstall() {
+    const path = pathBox.value.trim();
+    if (!path) { showBanner('请先选择 .fcpk 资源包', 4000, true); return; }
+    const kinds = Array.from(_picked);
+    if (!kinds.length) return;
+    const force = $q('#rsForce').checked;
+    // 强制重装 + 勾了已就绪项 → 二次确认（这是要覆盖人家能用的安装）
+    if (force) {
+      const ready = kinds.filter(function (k) {
+        const it = (_st.items || []).filter(function (x) { return x.kind === k; })[0];
+        return it && it.ok;
+      });
+      if (ready.length) {
+        const ok = await _ddConfirm('强制重装',
+          '将覆盖以下已就绪的项：' + ready.join('、') +
+          '\n\n.Node/Git 可能弹管理员提示；Claude 会先备份再替换（失败自动回滚）。继续？');
+        if (!ok) return;
+      }
+    }
+    const logEl = $q('#rsLog'), errEl = $q('#rsErr'), prog = $q('#rsProg');
+    logEl.style.display = ''; logEl.innerHTML = '';
+    errEl.style.display = 'none';
+    prog.style.display = '';
+    $q('#rsProgBar').style.width = '0';
+    $q('#rsProgTxt').textContent = '准备…';
+    $q('#rsGo').dataset.busy = '1'; syncGo();
+    $q('#rsCancel').style.display = '';
+    if (typeof window.ResPanel === 'undefined' || !window.ResPanel.install) {
+      errEl.style.display = ''; errEl.textContent = '前端未加载 resources.js';
+      return;
+    }
+    window.ResPanel.install({
+      path: path, kinds: kinds, force: force,
+      onLog: function (msg) {
+        const d = document.createElement('div');
+        d.textContent = msg;
+        logEl.appendChild(d);
+        logEl.scrollTop = logEl.scrollHeight;
+      },
+      onTick: function (s) {
+        const tot = s.total || 0, cur = s.bytes || 0;
+        const pct = tot ? Math.min(100, Math.round(cur * 100 / tot)) : 0;
+        $q('#rsProgBar').style.width = pct + '%';
+        $q('#rsProgTxt').textContent = (s.phase || '') +
+          (tot ? ' · ' + _ddFmtSize(cur) + ' / ' + _ddFmtSize(tot) + ' (' + pct + '%)' : '') +
+          (s.cancelling ? ' · 正在取消…' : '');
+      },
+      onDone: function (r) {
+        $q('#rsGo').dataset.busy = '';
+        $q('#rsCancel').style.display = 'none';
+        syncGo();
+        prog.style.display = 'none';
+        if (r.ok) {
+          showBanner('资源安装完成');
+          loadStatus(false);
+        } else {
+          errEl.style.display = '';
+          errEl.textContent = r.err || '安装失败';
+          if (r.cancelled) showBanner('已取消安装', 4000);
+          loadStatus(false);
+        }
+      }
+    });
+  }
+
+  // ---- 事件 ----
+  $q('#rsPkgPick').onclick = async function () {
+    let p = '';
+    try {
+      if (window.pywebview && pywebview.api && pywebview.api.pick_any) {
+        const r = await pywebview.api.pick_any();
+        p = (typeof r === 'string') ? r : ((r && r.path) || '');
+      }
+    } catch (_) {}
+    if (!p) p = window.prompt('资源包完整路径（*.fcpk）：', pathBox.value || '') || '';
+    if (!p) return;
+    pathBox.value = p.trim();
+    loadPkg();
+  };
+  pathBox.onchange = loadPkg;
+  $q('#rsRefresh').onclick = async function () {
+    await loadStatus(false);
+    if (pathBox.value.trim()) loadPkg();
+  };
+  $q('#rsPickMiss').onclick = function () {
+    _picked.clear();
+    ((_st && _st.items) || []).forEach(function (it) {
+      if (!it.ok && inPkg(it.kind)) _picked.add(it.kind);
+    });
+    paintList();
+  };
+  $q('#rsPickNone').onclick = function () { _picked.clear(); paintList(); };
+  $q('#rsGo').onclick = doInstall;
+  $q('#rsCancel').onclick = function () {
+    if (window.ResPanel && window.ResPanel.cancel) window.ResPanel.cancel();
+    $q('#rsProgTxt').textContent = '正在取消…';
+  };
+
+  // 旧通道（保留原逻辑，只是折叠起来）
+  const refreshPkgDir = async () => {
     try {
       const st = await (await fetch('/api/claude/setup_status')).json();
-      pane.querySelector('#apiPkgDir').textContent = st.offline_pkg_dir || '默认（工具目录 offline_pkg）';
-    } catch(_) {}
+      $q('#apiPkgDir').textContent = st.offline_pkg_dir || '默认（工具目录 offline_pkg）';
+    } catch (_) {}
   };
-  refresh();
-  pane.querySelector('#riOpenSetup').onclick = () => {
+  refreshPkgDir();
+  $q('#rsOpenSetup').onclick = () => {
     $('settingsModal').classList.remove('show');
     openClaudeSetup();
   };
-  pane.querySelector('#riFixStatusline').onclick = async () => {
+  $q('#rsFixStatusline').onclick = async () => {
     const ok = await _ddConfirm('重配 statusLine',
       '清除 settings.json 中现有 statusLine 配置并按本机 python 重配？找不到 python 时不配置（状态栏不显示，无害）。');
     if (!ok) return;
@@ -498,7 +758,7 @@ async function _stRenderReinstallPane(pane) {
       showBanner(j.ok ? ('已完成：' + (j.notes || []).join('、')) : '重配失败', 6000, !j.ok);
     } catch(e) { showBanner('重配失败: ' + e, 4000, true); }
   };
-  pane.querySelector('#apiPkgPick').onclick = async () => {
+  $q('#apiPkgPick').onclick = async () => {
     try {
       const dir = await pywebview.api.pick_dir();
       if (!dir) return;
@@ -507,17 +767,21 @@ async function _stRenderReinstallPane(pane) {
       const j = await r.json();
       if (!j.ok) { showBanner('设置失败: ' + (j.err || ''), 4000, true); return; }
       showBanner('离线安装包目录已更新');
-      refresh();
+      refreshPkgDir();
     } catch(e) { showBanner('目录选择器不可用，或请求失败: ' + e, 4000, true); }
   };
-  pane.querySelector('#apiPkgReset').onclick = async () => {
+  $q('#apiPkgReset').onclick = async () => {
     try {
       await fetch('/api/claude/setup_pkg_dir', {method:'POST',
         headers:{'Content-Type':'application/json'}, body: JSON.stringify({dir: ''})});
       showBanner('已恢复默认离线包目录');
-      refresh();
+      refreshPkgDir();
     } catch(_) {}
   };
+
+  // 首次：检测 + 按默认规则勾选；有已保存的包路径则顺带预检
+  await loadStatus(true);
+  if (pathBox.value.trim()) loadPkg();
 }
 
 // ---- API 配置子页（v2.25 重排）：配置方案最前（最常用）→ API 配置表单 → 底部操作 ----

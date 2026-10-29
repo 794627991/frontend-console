@@ -53,7 +53,12 @@
   function resPaint() {
     var bar = document.getElementById(_resBarId);
     var miss = _resMissing();
-    if (!miss.length) { if (bar) bar.remove(); return; }
+    if (!miss.length) {
+      if (bar) bar.remove();
+      // 对抗审 P2：红条撤了要把让出的顶部空间还回去（36px 白缝）
+      document.body.style.paddingTop = '';
+      return;
+    }
     var hard = miss.filter(function (m) { return m.hard; });
     var names = miss.map(function (m) { return m.name; }).join(' / ');
     var text = (miss.length === 1 ? '缺少 ' : '缺少 ') + names +
@@ -115,7 +120,7 @@
       '<div class="head"><strong>运行环境资源</strong>' +
       '<div class="head-actions"><button class="btn ghost icon-btn" ' +
       'data-res-close>✕</button></div></div>' +
-      '<div style="padding:16px 20px;display:flex;flex-direction:column;gap:12px;">' +
+      '<div data-res-body style="padding:16px 20px;display:flex;flex-direction:column;gap:12px;">' +
       '<div data-res-list style="font-size:12px;line-height:1.9;">检测中…</div>' +
       '<div data-res-log class="cs-log" style="display:none;max-height:160px;' +
       'overflow:auto;font-size:11px;"></div>' +
@@ -136,18 +141,35 @@
       renderList(m, null);
       resRefresh().then(function (st) { renderList(m, st); });
     };
+    // 对抗审 P3：window.prompt 在 WebView2 下可能被禁用（file-tree.js:36 /
+    // tftp.js:220 自家先例明说不能用）——改内联输入框兜底
+    var manualPath = function (cb) {
+      var prev = m.querySelector('.res-manual');
+      if (prev) { prev.remove(); return; }
+      var row = document.createElement('div');
+      row.className = 'res-manual';
+      row.style.cssText = 'display:flex;gap:8px;margin:8px 0;';
+      row.innerHTML = '<input data-res-inp placeholder="资源包完整路径（*.fcpk）" ' +
+        'style="flex:1;padding:6px 8px;border:1px solid #ccc;border-radius:4px">' +
+        '<button class="btn sm" data-res-ok>安装</button>';
+      m.querySelector('[data-res-body]').appendChild(row);
+      var inp = row.querySelector('[data-res-inp]');
+      inp.focus();
+      row.querySelector('[data-res-ok]').onclick = function () {
+        var v = (inp.value || '').trim();
+        if (v) { row.remove(); cb(v); }
+      };
+      inp.onkeydown = function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); row.querySelector('[data-res-ok]').click(); }
+      };
+    };
     m.querySelector('[data-res-path]').onclick = function () {
-      var p = window.prompt('资源包完整路径（*.fcpk）：', '');
-      if (p) startInstall(m, p.trim());
+      manualPath(function (p) { startInstall(m, p); });
     };
     m.querySelector('[data-res-go]').onclick = function () {
       _resPickFile().then(function (p) {
-        if (!p) {
-          var manual = window.prompt('未取到文件选择器。请粘贴资源包完整路径：', '');
-          if (!manual) return;
-          p = manual.trim();
-        }
-        startInstall(m, p);
+        if (p) { startInstall(m, p); return; }
+        manualPath(function (v) { startInstall(m, v); });
       });
     };
     renderList(m, _resState);
@@ -173,6 +195,49 @@
       '<span style="color:var(--muted)">（无资源清单）</span>';
   }
 
+  // 全应用只该有一个安装任务（后端 _state 单例，第二个 POST 得 409）。
+  // 红条面板与设置页共用同一轮询器——opts 里注入各自的 DOM 回调。
+  function _resRun(opts) {
+    var o = opts || {};
+    var onLog = o.onLog || function () {};
+    var onTick = o.onTick || function () {};
+    var onDone = o.onDone || function () {};
+    if (_resPollTimer) { clearInterval(_resPollTimer); _resPollTimer = null; }
+    return _resFetch('/api/resources/install', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        path: o.path, kinds: o.kinds || null, force: !!o.force
+      })
+    }).then(function (j) {
+      if (!j.ok) { onDone({ ok: false, err: j.err || '启动失败' }); return j; }
+      // 后端 log 是累积数组，每轮都全量返回——用游标只投递新增行，
+      // 否则日志会一轮比一轮多（N 行被重放 N 次）
+      var seen = 0;
+      _resPollTimer = setInterval(function () {
+        _resFetch('/api/resources/poll').then(function (s) {
+          onTick(s);
+          var lg = s.log || [];
+          for (; seen < lg.length; seen++) onLog(lg[seen].msg, s);
+          if (!s.done) return;
+          clearInterval(_resPollTimer); _resPollTimer = null;
+          onDone({ ok: !!s.ok_done, err: s.err || '', result: s.result,
+                   cancelled: /取消/.test(s.err || '') });
+          if (s.ok_done) resRefresh();
+        });
+      }, 700);
+      return j;
+    }).catch(function (e) {
+      onDone({ ok: false, err: String(e) });
+      return { ok: false, err: String(e) };
+    });
+  }
+
+  function resCancel() {
+    return _resFetch('/api/resources/cancel', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
   function startInstall(root, path) {
     var logEl = root.querySelector('[data-res-log]');
     var errEl = root.querySelector('[data-res-err]');
@@ -182,35 +247,24 @@
     logEl.innerHTML = '';
     errEl.style.display = 'none';
     go.disabled = manual.disabled = true;
-    _resFetch('/api/resources/install', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: path })
-    }).then(function (j) {
-      if (!j.ok) {
+    _resRun({
+      path: path,
+      onLog: function (msg) {
+        var d = document.createElement('div');
+        d.textContent = msg;
+        logEl.appendChild(d);
+        logEl.scrollTop = logEl.scrollHeight;
+      },
+      onDone: function (r) {
         go.disabled = manual.disabled = false;
-        errEl.style.display = '';
-        errEl.textContent = j.err || '启动失败';
-        return;
+        if (r.ok) {
+          if (typeof notifyPop === 'function') notifyPop('资源包安装完成', 3000);
+          resRefresh().then(function (st) { renderList(root, st); });
+        } else {
+          errEl.style.display = '';
+          errEl.textContent = r.err || '安装失败';
+        }
       }
-      if (_resPollTimer) clearInterval(_resPollTimer);
-      _resPollTimer = setInterval(function () {
-        _resFetch('/api/resources/poll').then(function (s) {
-          logEl.innerHTML = (s.log || []).map(function (l) {
-            return '<div>' + _resEsc(l.msg) + '</div>';
-          }).join('');
-          logEl.scrollTop = logEl.scrollHeight;
-          if (!s.done) return;
-          clearInterval(_resPollTimer); _resPollTimer = null;
-          go.disabled = manual.disabled = false;
-          if (s.ok_done) {
-            if (typeof notifyPop === 'function') notifyPop('资源包安装完成', 3000);
-            resRefresh().then(function (st) { renderList(root, st); });
-          } else {
-            errEl.style.display = '';
-            errEl.textContent = s.err || '安装失败';
-          }
-        });
-      }, 700);
     });
   }
 
@@ -232,5 +286,6 @@
     boot();
   }
 
-  window.ResPanel = { open: resOpenPanel, refresh: resRefresh };
+  window.ResPanel = { open: resOpenPanel, refresh: resRefresh,
+                      install: _resRun, cancel: resCancel };
 })();

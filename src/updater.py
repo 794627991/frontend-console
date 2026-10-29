@@ -166,6 +166,11 @@ def _write_bat(parent_dir, app_name, exe_name, staging_root):
         # 安装凭据）也必须搬回。全审 B6 实锤：早前只搬 data/，升级后新目录里
         # 没有运行时 → 硬拦再次触发，用户每升一次版就要重装 700MB 资源包。
         'if exist "' + bak + DBSN + 'offline_runtime" move "' + bak + DBSN + 'offline_runtime" "' + app_rel + DBSN + 'offline_runtime" >nul',
+        # 对抗审 P1：旧包（≤2.4.0-a133 形态）的随包 runtime/WebView2Fixed
+        # 也要搬回——否则 v2.3.7「无条件随包」保护的无网机器升级后
+        # runtime/ 没了、offline_runtime/ 又不存在 → 被闸门硬拦，而可用
+        # 运行时正躺在备份目录里没人认（重下 674MB 是唯一出路）
+        'if exist "' + bak + DBSN + 'runtime" move "' + bak + DBSN + 'runtime" "' + app_rel + DBSN + 'runtime" >nul',
         'start "" "' + app_rel + DBSN + exe_name + '"',
         'rd /s /q "' + app_name + '.update" 2>nul',
         '>> "' + log + '" echo 升级完成',

@@ -988,9 +988,40 @@ class _Handler(BaseHTTPRequestHandler):
     def _file(self, path, ctype):
         try:
             size = os.path.getsize(path)
+            # 对抗审 P2：706MB 资源包无断点续传——断线从零重来。支持
+            # Range: bytes=start-end / bytes=start-（206 + Content-Range）
+            rng = (self.headers.get("Range") or "").strip()
+            m = re.match(r"bytes=(\d+)-(\d*)$", rng) if rng else None
+            if m:
+                start = min(int(m.group(1)), max(0, size - 1))
+                end = int(m.group(2)) if m.group(2) else size - 1
+                end = min(end, size - 1)
+                self.send_response(206)
+                self.send_header("Content-Range",
+                                 "bytes %d-%d/%d" % (start, end, size))
+                self.send_header("Accept-Ranges", "bytes")
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(end - start + 1))
+                self.send_header("Content-Disposition",
+                                 "attachment; filename=download.bin; "
+                                 "filename*=UTF-8''%s"
+                                 % quote(os.path.basename(path)))
+                self.end_headers()
+                if self.command != "HEAD":
+                    with open(path, "rb") as f:
+                        f.seek(start)
+                        left = end - start + 1
+                        while left > 0:
+                            chunk = f.read(min(1 << 18, left))
+                            if not chunk:
+                                break
+                            self.wfile.write(chunk)
+                            left -= len(chunk)
+                return
             self.send_response(200)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(size))
+            self.send_header("Accept-Ranges", "bytes")
             # manifest 短缓存（发布后 1 分钟内必见）；exe 长缓存（文件名含版本号，内容不可变）
             self.send_header("Cache-Control",
                              "max-age=%d" % (_MAX_AGE if ctype.startswith("application/json")

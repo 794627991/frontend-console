@@ -194,7 +194,9 @@ class _Progress:
             f = self._call(3, ctypes.c_long, wintypes.HWND, ctypes.c_void_p,
                            wintypes.DWORD, wintypes.LPCWSTR, ctypes.c_void_p,
                            wintypes.DWORD)
-            return (f(self._p, None, None, PROGDLG_NORMAL, None, None, 0)
+            # 对抗审实锤：title 形参从未传入（恒 None）→ 对话框无标题
+            return (f(self._p, None, None, PROGDLG_NORMAL, None,
+                      (title or None), 0)
                     & 0xFFFFFFFF) == 0
         except Exception:
             return False
@@ -211,8 +213,13 @@ class _Progress:
         if not self._ok:
             return
         try:
-            self._call(10, ctypes.c_long, wintypes.LPCWSTR, wintypes.BOOL,
-                       ctypes.c_void_p)(self._p, t, keep, None)
+            # 对抗审实锤（每次调用都访问违例被吞）：SetLine 签名是
+            # (DWORD iLine, LPCWSTR pwzText, BOOL fCompactPath,
+            #  VARIANT_BOOL* PathRes)——早前漏传首参 iLine，文本被当行号
+            # 解引用 → 0x1 读违例，「当前文件」从未显示过
+            self._call(10, ctypes.c_long, wintypes.DWORD, wintypes.LPCWSTR,
+                       wintypes.BOOL, ctypes.c_void_p)(
+                self._p, 1, t, keep, None)
         except Exception:
             pass
 
@@ -222,6 +229,21 @@ class _Progress:
         try:
             self._call(9, ctypes.c_long, ctypes.c_ulonglong,
                        ctypes.c_ulonglong)(self._p, int(done), int(total))
+        except Exception:
+            pass
+
+    def release(self):
+        """IUnknown::Release + CoUninitialize（对抗审 P3：COM 生命周期收尾）。"""
+        if not self._ok:
+            return
+        try:
+            self._call(2, ctypes.c_ulong)(self._p)
+        except Exception:
+            pass
+        self._p = ctypes.c_void_p()
+        self._ok = False
+        try:
+            ctypes.windll.ole32.CoUninitialize()
         except Exception:
             pass
 

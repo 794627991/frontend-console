@@ -51,6 +51,18 @@ def build():
         app_dir = os.path.join(app_dir, APP_NAME)
     dist = os.path.join(app_dir, APP_NAME + ".exe")
     if os.path.exists(dist):
+        # 对抗审计 P0 复发防线（v2.4.0 曾把 pythonnet/runtime 99 个文件剔掉
+        # 发出死包）：发布 zip 前强制校验关键目录在场，缺了直接 FAIL 停发
+        _guards = [
+            os.path.join(app_dir, "_internal", "pythonnet", "runtime"),
+            os.path.join(app_dir, "_internal", "webview", "lib"),
+            os.path.join(app_dir, "web", "index.html"),
+        ]
+        for g in _guards:
+            if not os.path.exists(g):
+                raise SystemExit("[发布守卫] 关键内容缺失：%s ——禁止发布，"
+                                 "请检查 skip_top/打包配置后重打" % g)
+        print("[发布守卫] 关键内容校验通过（pythonnet/webview/web）")
         sz = sum(os.path.getsize(os.path.join(r, f))
                  for r, _, fs in os.walk(app_dir) for f in fs) / 1024 / 1024
         print(f"\n打包成功: {app_dir} ({sz:.1f} MB)")
@@ -383,13 +395,21 @@ def _sync_offline_pkg():
 # v4.1：统一离线资源包 .fcpk（用户拍板：WebView2 移出发布包，格式统一+加密）
 # ---------------------------------------------------------------------------
 
-def _offline_sources():
+def _offline_sources(kinds=None):
     """收集离线资源清单。返回 [(src_path, arcname, kind, mode, link_from)]。
+
+    kinds=None 收全量；否则只收这些 kind（用户拍板：默认全量，需要时可只打
+    某几项，如 --kinds claude 单独出 270MB 的小包给只缺 Claude 的同事）。
 
     mode 取舍（实测压缩率）：.msi/.zip/.whl 已压缩过（1.01~1.05，再压反而
     变大）→ raw；.exe/.dll 值得压（Git 1.03 但 exe 本体可变、webview2 的
     msedge.dll 0.61、claude.exe 0.57）→ 只有明确的 DLL/EXE 用 deflate。
     """
+    want = set(kinds) if kinds else None
+
+    def _take(k):
+        return want is None or k in want
+
     src = os.path.join(BASE, "dist", "offline_pkg")
     out = []
     if os.path.isdir(src):
@@ -412,9 +432,10 @@ def _offline_sources():
                 kind = "dotnet"
             else:
                 continue
-            out.append((p, "install/" + name, kind, mode, None))
+            if _take(kind):
+                out.append((p, "install/" + name, kind, mode, None))
         cc = os.path.join(src, "claude-code")
-        if os.path.isdir(cc):
+        if os.path.isdir(cc) and _take("claude"):
             # 全审 B4 实锤（严重）：早前只收 .exe/.node/.dll，把
             # package.json / cli-wrapper.cjs / install.cjs / LICENSE 等全丢了
             # ——装出来是「只有两个 exe 的空壳」，claude 起不来、版本号也读
@@ -439,13 +460,13 @@ def _offline_sources():
                             link = first_exe
                     out.append((p, arc, "claude", mode, link))
         pd = os.path.join(src, "pydeps")
-        if os.path.isdir(pd):
+        if os.path.isdir(pd) and _take("pydeps"):
             for f in sorted(os.listdir(pd)):
                 p = os.path.join(pd, f)
                 if os.path.isfile(p):
                     out.append((p, "pydeps/" + f, "pydeps", "raw", None))
     wv = os.path.join(BASE, "runtime", "WebView2Fixed")
-    if os.path.isdir(wv):
+    if os.path.isdir(wv) and _take("webview2"):
         for r, ds, fs in os.walk(wv):
             ds.sort()
             for f in sorted(fs):
@@ -457,26 +478,53 @@ def _offline_sources():
     return out
 
 
-def _build_offline_fcpk():
-    """产出 dist/releases/<应用名>-资源包.fcpk。
-    指纹（清单摘要）不变则沿用；写完立即全量验签，坏包绝不发布。"""
+def _ensure_fcpk_key():
+    """对抗审计修正：仓库不再携带口令——首次 --offline 生成随机密钥到
+    gitignored 的 src/_fcpk_key.py，之后复用（旧包可读）。"""
+    import secrets
+    kp = os.path.join(BASE, "src", "_fcpk_key.py")
+    if os.path.isfile(kp):
+        return kp
+    pw = secrets.token_hex(16)
+    with open(kp, "w", encoding="utf-8") as f:
+        f.write("# -*- coding: utf-8 -*-\n"
+                "# build.py 自动生成（勿提交勿手改）\n"
+                "BUILD_KEY = %r\n" % pw)
+    print("[fcpk] 已生成资源包密钥 src/_fcpk_key.py（gitignored）")
+    return kp
+
+
+def _build_offline_fcpk(kinds=None, quiet=False):
+    _ensure_fcpk_key()
+    """产出 dist/releases/<应用名>-资源包.fcpk（或 -资源包-<kinds>.fcpk）。
+
+    kinds=None 打全量；给列表则只打这些。指纹（清单摘要）不变则沿用；
+    写完立即全量验签，坏包绝不发布。
+
+    子集包文件名带 kinds 后缀——否则只打 claude 的小包会覆盖掉 706MB 的
+    全量包（用户下次装机拿到的就只剩 claude 了）。
+    """
     import hashlib
     sys.path.insert(0, BASE)
     from src import fcpk
-    files = _offline_sources()
+    files = _offline_sources(kinds)
     if not files:
-        print("资源包: 无可用资源（dist/offline_pkg 与 runtime/WebView2Fixed 都不在），跳过")
+        print("资源包: 无可用资源（dist/offline_pkg 与 runtime/WebView2Fixed 都不在"
+              + ("，或不含 %s" % ",".join(kinds) if kinds else "") + "），跳过")
         return None
     rel = os.path.join(BASE, "dist", "releases")
     os.makedirs(rel, exist_ok=True)
-    dst = os.path.join(rel, "%s-资源包.fcpk" % APP_NAME)
+    suffix = ("-" + "-".join(kinds)) if kinds else ""
+    dst = os.path.join(rel, "%s-资源包%s.fcpk" % (APP_NAME, suffix))
     h = hashlib.sha256()
     for p, arc, kind, mode, link in files:
         st = os.stat(p)
         h.update(("%s|%s|%d|%d" % (arc, kind, st.st_size,
                                    int(st.st_mtime))).encode("utf-8"))
     fp = h.hexdigest()[:16]
-    fp_file = os.path.join(rel, "offline-pkg.fingerprint")
+    # 指纹文件按产物分开——共用一份会让「刚打完 claude 子集包」把全量包的
+    # 指纹覆盖掉，下次全量打包的续用判定就永远失效（白跑几分钟重打 706MB）
+    fp_file = os.path.join(rel, "offline-pkg%s.fingerprint" % suffix)
     try:
         with open(fp_file, encoding="utf-8") as f:
             old = f.read().strip()
@@ -523,5 +571,58 @@ def _build_offline_fcpk():
     return dst
 
 
+def offline_main(argv):
+    """只打离线资源包，不跑 PyInstaller（用户拍板：命令行 + bat 入口）。
+
+    用法：
+      python src/build.py --offline                打全量（6 项）
+      python src/build.py --offline --kinds claude 只打 claude
+      python src/build.py --offline --kinds claude,node --out D:\\交付
+
+    为什么单独一个入口：完整打包要跑 PyInstaller（几分钟）+ 资源加密 +
+    发布 zip，只想补一个资源包时没必要全跑；而且这东西是给「已经发出去的
+    工具」补环境用的，与发布包版本不必同步。
+    """
+    import argparse
+    import glob
+    ap = argparse.ArgumentParser(
+        prog="build.py --offline",
+        description="只打离线资源包（.fcpk），不打包 exe")
+    ap.add_argument("--offline", action="store_true", help="离线资源包模式")
+    ap.add_argument("--kinds", default="",
+                    help="只打这些资源，逗号分隔：webview2,dotnet,node,git,"
+                         "claude,pydeps（默认全量）")
+    ap.add_argument("--out", default="",
+                    help="额外复制一份到该目录（可选）")
+    args = ap.parse_args(argv)
+
+    kinds = [k.strip() for k in args.kinds.split(",") if k.strip()]
+    valid = {"webview2", "dotnet", "node", "git", "claude", "pydeps"}
+    bad = [k for k in kinds if k not in valid]
+    if bad:
+        print("未知资源：%s（可选：%s）" % (",".join(bad), ",".join(sorted(valid))))
+        return 2
+
+    print("=" * 46)
+    print("  离线资源包（%s）" % ("全量" if not kinds else ",".join(kinds)))
+    print("=" * 46)
+    dst = _build_offline_fcpk(kinds)
+    if not dst:
+        print("[失败] 资源包未产出")
+        return 1
+    # 清理同名的历史子集包之外不做任何删除——全量包与子集包可以共存
+    if args.out:
+        os.makedirs(args.out, exist_ok=True)
+        tgt = os.path.join(args.out, os.path.basename(dst))
+        shutil.copy2(dst, tgt)
+        print("已复制到：%s" % tgt)
+    print("\n[成功] %s（%.1f MB）"
+          % (dst, os.path.getsize(dst) / 1024 / 1024))
+    print("把这个文件发给需要的同事，工具里「设置 → 外部依赖安装」选它即可。")
+    return 0
+
+
 if __name__ == "__main__":
+    if "--offline" in sys.argv:
+        sys.exit(offline_main(sys.argv[1:]))
     build()

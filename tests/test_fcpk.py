@@ -239,5 +239,105 @@ def main():
     return 0
 
 
+def _hard_suite():
+    """对抗审计修复回归：表炸弹 / KDF 钳制 / 保留名 / 取消 / 冲突 / 内存。"""
+    def _mk(d, entries, password="p"):
+        pkg = os.path.join(d, "h.fcpk")
+        w = fcpk.FcpkWriter(pkg, password=password)
+        for arc, data in entries:
+            w.add_bytes(data, arc)
+        w.close()
+        return pkg
+
+    # 表炸弹：段表解压后 >64MB（path 填 200MB 的 A）→ 打开即拒不 OOM
+    with tempfile.TemporaryDirectory() as d:
+        pkg = _mk(d, [("A" * (200 << 20), b"x")])
+        try:
+            fcpk.FcpkReader(pkg, password="p")
+            check("表炸弹钳制", False, "打开未拒绝")
+        except Exception as e:
+            check("表炸弹钳制", "超上限" in str(e) or "段表" in str(e), str(e)[:60])
+
+    # KDF 钳制：iters 改 20 亿 → 立即拒绝（不烧 CPU）
+    import struct
+    with tempfile.TemporaryDirectory() as d:
+        pkg = _mk(d, [("a", b"1")])
+        with open(pkg, "r+b") as f:
+            f.seek(8)
+            f.write(struct.pack("<I", 2000000000))
+        try:
+            fcpk.FcpkReader(pkg, password="p")
+            check("KDF 钳制", False, "未拒绝")
+        except fcpk.FcpkError as e:
+            check("KDF 钳制", "迭代数越界" in str(e), str(e)[:60])
+
+    # 保留设备名
+    with tempfile.TemporaryDirectory() as d:
+        pkg = _mk(d, [("LPT1.txt", b"x")])
+        r = fcpk.FcpkReader(pkg, password="p")
+        try:
+            try:
+                r.extract_all(d)
+                check("保留名拒绝", False, "未拒绝")
+            except fcpk.FcpkError as e:
+                check("保留名拒绝", "保留设备名" in str(e), str(e)[:60])
+        finally:
+            r.close()
+
+    # 取消：中途取消 → Cancelled 且无 .part 残留
+    with tempfile.TemporaryDirectory() as d:
+        pkg = _mk(d, [("f%d" % i, b"n" * 10) for i in range(5)])
+        r = fcpk.FcpkReader(pkg, password="p")
+        try:
+            calls = [0]
+
+            def cancel():
+                calls[0] += 1
+                return calls[0] > 2
+            try:
+                r.extract_all(d, should_cancel=cancel)
+                check("中途取消", False, "未取消")
+            except fcpk.Cancelled:
+                left = [f for f in os.listdir(d) if f.endswith(".part")]
+                check("中途取消无 .part 残留", left == [], str(left))
+        finally:
+            r.close()
+
+    # 文件/目录冲突
+    with tempfile.TemporaryDirectory() as d:
+        pkg = _mk(d, [("x", b"f"), ("x/y", b"g")])
+        r = fcpk.FcpkReader(pkg, password="p")
+        try:
+            try:
+                r.extract_all(d)
+                check("路径冲突拒绝", False, "未拒绝")
+            except fcpk.FcpkError as e:
+                check("路径冲突拒绝", "冲突" in str(e), str(e)[:60])
+        finally:
+            r.close()
+
+    # 大块 deflate 内存逐片：512MB 零压缩块解包不超 ~2x 块上限
+    # （不真做 512MB——用 8MB 验证逐片路径正确即可）
+    with tempfile.TemporaryDirectory() as d:
+        pkg = os.path.join(d, "big.fcpk")
+        # add_bytes 不走压缩（压缩只在 add_file 的 _file_chunks）——
+        # 用临时文件 + add_file(deflate) 走真实压缩路径
+        big = os.path.join(d, "big_src.bin")
+        with open(big, "wb") as f:
+            f.write(bytes(16 << 20))
+        w = fcpk.FcpkWriter(pkg, password="p")
+        w.add_file(big, "big.bin", mode="deflate")
+        w.close()
+        r = fcpk.FcpkReader(pkg, password="p")
+        try:
+            got = r.extract_all(d)
+            out = os.path.join(d, "big.bin")
+            check("大块 deflate 解包", os.path.isfile(out)
+                  and os.path.getsize(out) == (16 << 20), str(got))
+        finally:
+            r.close()
+
+
 if __name__ == "__main__":
+    _hard_suite()
     sys.exit(main())

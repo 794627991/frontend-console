@@ -101,11 +101,16 @@ def probe_webview2():
 
 
 def _wv2_system_version():
-    """注册表探测系统 Evergreen WebView2（HKLM/HKCU × 32/64 视图全扫）。"""
+    """注册表探测系统 Evergreen WebView2（HKLM/HKCU × 32/64 视图全扫）。
+
+    对抗审 P2-1 修正：早前**首个命中即返回**（HKLM 先于 HKCU）——HKLM 存
+    陈旧 per-machine 108 + HKCU 有新 per-user 133 的双写场景会误判 outdated
+    硬拦一台实际可用的机器。全扫取版本最大者。"""
     try:
         import winreg
     except ImportError:
         return ""
+    best, best_t = "", ()
     for root in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
         for wow in (0, winreg.KEY_WOW64_32KEY, winreg.KEY_WOW64_64KEY):
             try:
@@ -113,10 +118,13 @@ def _wv2_system_version():
                         root,
                         r"SOFTWARE\Microsoft\EdgeUpdate\Clients\\" + _WV2_GUID,
                         0, winreg.KEY_READ | wow) as k:
-                    return str(winreg.QueryValueEx(k, "pv")[0] or "")
+                    pv = str(winreg.QueryValueEx(k, "pv")[0] or "")
+                    t = _ver_tuple(pv)
+                    if pv and t > best_t:
+                        best, best_t = pv, t
             except OSError:
                 continue
-    return ""
+    return best
 
 
 def _ver_tuple(v):
@@ -142,14 +150,31 @@ def wv2_fixed_dir():
              os.path.join(base, "runtime"),
              os.path.join(os.path.dirname(base), "offline_runtime", "webview2"),
              os.path.join(os.path.dirname(base), "runtime", "WebView2Fixed")]
+    import re as _re
     for root in roots:
         if not os.path.isdir(root):
+            continue
+        # 对抗审 P0：offline_runtime 只认完成标记（.wv2ok 由 res_install 在
+        # 解包全程成功+关键文件校验后写入）——半装/损坏的「exe 在 DLL 缺」
+        # 不再骗过闸门；旧随包 runtime/（无人会半装）维持存在性判定
+        _need_mark = ("offline_runtime" in root)
+        if _need_mark and not os.path.isfile(
+                os.path.join(os.path.dirname(root), ".wv2ok")):
             continue
         for depth in range(1, 6):       # offline_runtime/webview2/<ver>/x.exe = 3 层
             hit = sorted(_gl.glob(os.path.join(
                 root, *(["*"] * depth), "msedgewebview2.exe")))
-            if hit:
-                return os.path.dirname(hit[0])
+            if not hit:
+                continue
+            # 对抗审 P2：版本取新不取字典序（"109"<"133" 曾取旧弃新）；
+            # fixed 目录同样过 WV2_MIN 下限（v88 老随包不再无条件放行）
+            def _vt(p):
+                m = _re.search(r"(\d+(?:\.\d+){2,3})", os.path.basename(
+                    os.path.dirname(p)))
+                return _ver_tuple(m.group(1)) if m else ()
+            ok_hits = [h for h in hit if _vt(h) >= WV2_MIN] or hit
+            best = max(ok_hits, key=_vt)
+            return os.path.dirname(best)
     return ""
 
 
@@ -290,6 +315,10 @@ def _now():
     return datetime.datetime.now().isoformat(timespec="seconds")
 
 
+_HARD = ("webview2", "dotnet")   # 硬资源：不可忽略（启动闸门拦的就是它们）
+_state_lock = __import__("threading").Lock()
+
+
 def _state_file():
     return os.path.join(app_dir(), "offline_runtime", ".fcpk.json")
 
@@ -304,18 +333,20 @@ def _read_state():
 
 
 def _write_state(d):
-    """合并写（只覆盖给定键，别把已装清单抹掉）。"""
-    cur = _read_state()
-    cur.update(d or {})
-    p = _state_file()
-    try:
-        os.makedirs(os.path.dirname(p), exist_ok=True)
-        tmp = p + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(cur, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, p)
-    except OSError:
-        pass
+    """合并写（只覆盖给定键，别把已装清单抹掉）。锁内读改写——并发
+    /status 轮询与安装收尾曾互相覆盖（对抗审 P2）。"""
+    with _state_lock:
+        cur = _read_state()
+        cur.update(d or {})
+        p = _state_file()
+        try:
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            tmp = p + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(cur, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, p)
+        except OSError:
+            pass
 
 
 # --------------------------------------------------------------------- 闸门
@@ -486,23 +517,39 @@ def _restart_self():
     import subprocess
     import tempfile
     import time
-    rel_args = sys.argv[1:]
+    # 对抗审 P2：早前 rel_args 丢了 argv[0]——源码形态拉起的是裸 python
+    # （REPL 挂死）；现 frozen 用 exe 本身、源码用 [python, main.py]
+    if getattr(sys, "frozen", False):
+        relaunch = [sys.executable] + list(sys.argv[1:])
+    else:
+        relaunch = ([sys.executable, os.path.abspath(sys.argv[0])]
+                    + list(sys.argv[1:]))
     try:
         bat = os.path.join(tempfile.gettempdir(),
                            "fcpk_restart_%d.bat" % os.getpid())
         lines = ["@echo off",
                  "timeout /t 2 /nobreak >nul",
                  'start "" "%s"%s' % (
-                     sys.executable,
-                     "".join(' "%s"' % a for a in rel_args)),
+                     relaunch[0],
+                     "".join(' "%s"' % a for a in relaunch[1:])),
                  'del "%~f0"']
-        with open(bat, "w", encoding="mbcs", errors="replace") as f:
-            f.write("\r\n".join(lines) + "\r\n")
+        # 对抗审 P2：mbcs+replace 会把非 ACP 字符（emoji 等）写成 '?'——
+        # 拉起失败且本进程已退出=工具消失。mbcs 编不进的路径直接放弃
+        # bat 重启（进程内 0.2s 兜底竞速仍可能赢），并让调用方知道
+        body = "\r\n".join(lines) + "\r\n"
+        try:
+            body.encode("mbcs")
+        except UnicodeEncodeError:
+            raise OSError("重启路径含当前代码页无法编码的字符")
+        with open(bat, "w", encoding="mbcs") as f:
+            f.write(body)
         subprocess.Popen([bat], shell=True,
                          creationflags=getattr(subprocess,
                                                "CREATE_NO_WINDOW", 0))
     except Exception:
-        pass
+        # 对抗审 P2：Popen 失败早前照样退出=承诺重启后静默失约——
+        # 抛回调用方决定（msgbox 告知手动重启）
+        raise OSError("重启脚本启动失败，请手动重新打开工具")
     try:
         import src.main as _m
         mut = getattr(_m, "mutex", None)

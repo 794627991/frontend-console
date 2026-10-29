@@ -60,7 +60,8 @@ def read_manifest(path):
         r.close()
 
 
-def install_from(path, kinds=None, log=None, progress=None, should_cancel=None):
+def install_from(path, kinds=None, log=None, progress=None, should_cancel=None,
+                 force=False):
     """从 `.fcpk` 安装资源。
 
     path     : 资源包文件
@@ -70,6 +71,10 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None):
     should_cancel : callable() -> bool，每个 kind 开始前与解包块之间查询；
                     返回 True 则抛 InstallCancelled（全审 C1：早前进度条的
                     「取消」按钮完全没接线，用户点了安装照跑还自动重启）
+    force    : 强制重装（用户需求「一键重装对应依赖」）。只对 node/git 生效：
+               它们平时「已存在就跳过」，force 时重跑安装器。
+               dotnet **始终忽略 force**——已满足时强装要管理员 + 重启，
+               收益为零；webview2/claude/pydeps 本就恒覆盖/幂等，无需区分。
 
     返回 {"installed": [...], "skipped": [...], "errors": {kind: msg}}
     单个资源装失败**不中断**其余——某个装不上（比如无管理员装不了 .NET）
@@ -109,14 +114,16 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None):
         staging = tempfile.mkdtemp(prefix="fcpk_stage_")
         _ck()
         if "webview2" in plan:
-            _install_webview2(reader, staging, cur, say, prog, res)
+            _install_webview2(reader, staging, cur, say, prog, res,
+                              should_cancel=should_cancel)
             plan.remove("webview2")
         # 其余资源解到同一 staging（安装器需要同目录，如 node zip 与 msi 同层）
         rest = [k for k in plan]
         if rest:
             say("解包安装资源（%s）…" % "/".join(rest))
             reader.extract_all(staging, kinds=rest,
-                               progress=lambda d, t, p: prog(d, t, p))
+                               progress=lambda d, t, p: prog(d, t, p),
+                               should_cancel=should_cancel)
         total = info.get("plain_len") or 1
         for k in rest:
             _ck()
@@ -125,7 +132,7 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None):
                 res["skipped"].append(k)
                 continue
             try:
-                if fn(staging, say):
+                if fn(staging, say, force):
                     res["installed"].append(k)
                     say("✓ %s 完成" % k)
                 else:
@@ -142,6 +149,8 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None):
                         "errors": res["errors"]}
         _merge_state(writer_state)
         return res
+    except fcpk.Cancelled:
+        raise InstallCancelled("用户取消安装")
     finally:
         reader.close()
         if staging and os.path.isdir(staging):
@@ -150,30 +159,98 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None):
 
 # ------------------------------------------------------------------ 各资源
 
-def _install_webview2(reader, staging, cur, say, prog, res):
-    """WebView2 是纯解包——不跑安装器（Fixed Version 免安装，设环境变量即用）。
-    直接解到离线运行时常驻位，装完删掉包内其余安装器省空间。
+WV2_MARKER = ".wv2ok"          # 完整性标记：解包全程成功才写（对抗审 P0）
 
-    注意落点：包内 arcname 已是 `webview2/...`，所以解到 runtime_root()
-    本身（不是 runtime_root()/webview2，那会多套一层 webview2/webview2/）。"""
+
+def _install_webview2(reader, staging, cur, say, prog, res, should_cancel=None):
+    """WebView2 是纯解包——不跑安装器（Fixed Version 免安装，设环境变量即用）。
+
+    对抗审 P0 修正：早前直落 runtime_root()，断电/取消/坏段留下「exe 在
+    DLL 缺」的半棵树——而闸门只探测 msedgewebview2.exe 存在性，半装被
+    判「已装」后**永无自愈路径**（建窗深处无声崩溃）。现改为：旧目录先
+    备份让位 → 解包 → 校验关键文件 → 写完成标记；失败恢复备份并清半成品。
+    闸门侧（res_boot）只认标记。
+
+    落点：包内 arcname 已是 `webview2/...`，解到 runtime_root() 本身
+    （不是 runtime_root()/webview2，那会多套一层 webview2/webview2/）。"""
     root = runtime_root()
     os.makedirs(root, exist_ok=True)
-    say("解出 WebView2 运行时 → %s …" % os.path.join(root, "webview2"))
-    got = reader.extract_all(root, kinds=["webview2"],
-                             progress=lambda d, t, p: prog(d, t, p))
-    if not any(p.endswith("msedgewebview2.exe") for p in got):
-        raise InstallError("包内 WebView2 运行时不完整（缺 msedgewebview2.exe）")
+    mark = os.path.join(root, WV2_MARKER)
+    cur_dir = os.path.join(root, "webview2")
+    if os.path.isfile(mark) and os.path.isdir(cur_dir):
+        say("· WebView2 已完整安装，跳过（删 offline_runtime/.wv2ok 可重装）")
+        return False
+    bak = ""
+    if os.path.isdir(cur_dir):
+        import time
+        bak = cur_dir + ".old-%d" % int(time.time())
+        say("  现有运行时已备份 → %s" % os.path.basename(bak))
+        try:
+            os.replace(cur_dir, bak)
+        except OSError as e:
+            raise InstallError("无法替换现有运行时（可能正在使用）：%s" % e)
+    try:
+        if os.path.isfile(mark):
+            os.remove(mark)
+        say("解出 WebView2 运行时 → %s …" % cur_dir)
+        got = reader.extract_all(root, kinds=["webview2"],
+                                 progress=lambda d, t, p: prog(d, t, p),
+                                 should_cancel=should_cancel)
+        if not any(p.endswith("msedgewebview2.exe") for p in got):
+            raise InstallError("包内 WebView2 运行时不完整（缺 msedgewebview2.exe）")
+        _verify_wv2_tree(root)
+        with open(mark, "w", encoding="utf-8") as f:
+            f.write("ok")
+    except BaseException:
+        # 半成品清理（对抗审 P0：半装骗闸门）——尽力而为，恢复优先
+        shutil.rmtree(cur_dir, ignore_errors=True)
+        try:
+            if os.path.isfile(mark):
+                os.remove(mark)
+        except OSError:
+            pass
+        if bak and os.path.isdir(bak) and not os.path.isdir(cur_dir):
+            try:
+                os.replace(bak, cur_dir)
+                say("  已恢复原运行时")
+            except OSError:
+                pass
+        raise
+    if bak:
+        shutil.rmtree(bak, ignore_errors=True)
     res["installed"].append("webview2")
     say("✓ webview2 完成（%d 个文件）" % len(got))
+    return True
 
 
-def _install_dotnet(staging, say):
+def _verify_wv2_tree(root):
+    """切换前校验关键文件在场（配合 GCM 段验签，防「exe 在 DLL 缺」）。"""
+    import glob as _gl
+    hits = _gl.glob(os.path.join(root, "webview2", "*",
+                                 "msedgewebview2.exe"))
+    if not hits:
+        raise InstallError("WebView2 解包校验失败（未找到 msedgewebview2.exe）")
+    ver_dir = os.path.dirname(hits[0])
+    for key in ("EBWebView", "msedge.dll"):
+        if not (_gl.glob(os.path.join(ver_dir, key))
+                or _gl.glob(os.path.join(ver_dir, "*", key))):
+            raise InstallError("WebView2 解包校验失败（缺 %s）——疑似损坏包"
+                               % key)
+
+
+def _install_dotnet(staging, say, force=False):
     """跑 ndp481 安装器。已满足则跳过。
-    装 .NET 需要管理员；失败不致命——res_boot 下次探测仍会判缺失。"""
+    装 .NET 需要管理员；失败不致命——res_boot 下次探测仍会判缺失。
+
+    force 刻意**不生效**：已满足时强装要管理员 + 可能要重启，收益为零。
+    这条不要「优化」掉。"""
     from src.res_boot import probe_dotnet
     st = probe_dotnet()[0]
     if st == "ok":
-        say("· .NET Framework 已满足当前版本，跳过")
+        if force:
+            say("· .NET 不支持强制重装（需管理员且可能要重启），按缺失安装")
+        else:
+            say("· .NET Framework 已满足当前版本，跳过")
         return False
     exe = _find(staging, "ndp481")
     if not exe:
@@ -183,19 +260,30 @@ def _install_dotnet(staging, say):
     r = subprocess.run([exe, "/q", "/norestart"], timeout=1200,
                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     say("安装器退出码 %d" % r.returncode)
-    # 3010 = 成功但需重启，属正常
-    if r.returncode not in (0, 3010):
+    # 3010 = 成功但需重启（对抗审 P2：早前 3010 也立即复验——重启前注册表
+    # 必然未更新必报失败，把用户锁进重试循环；现 3010 直接判成功并明说）
+    if r.returncode == 3010:
+        say("✓ .NET 安装成功（需重启 Windows 后生效）")
+        return True
+    if r.returncode != 0:
+        if r.returncode in (1603, 5, 740):
+            raise InstallError(
+                ".NET 安装被拒（退出码 %d，多因无管理员权限）——请以管理员"
+                "身份运行工具后重试，或手动安装 .NET Framework 4.8.1"
+                % r.returncode)
         raise InstallError("安装器退出码 %d（0/3010 为成功）" % r.returncode)
     if probe_dotnet()[0] != "ok":
         raise InstallError(".NET 装完仍未检测到——可能要重启后再试")
     return True
 
 
-def _install_node(staging, say):
+def _install_node(staging, say, force=False):
     from src import claude_setup as cs
-    if shutil.which("node.exe") or shutil.which("node"):
+    if not force and (shutil.which("node.exe") or shutil.which("node")):
         say("· Node 已存在，跳过")
         return False
+    if force and (shutil.which("node.exe") or shutil.which("node")):
+        say("· Node 已存在，强制重装（MSI 就地升级；无权限时退化为解压覆盖）")
     msi = _find(staging, "node-v", ".msi")
     if not msi:
         raise InstallError("包内无 Node 安装器")
@@ -205,11 +293,13 @@ def _install_node(staging, say):
     return True
 
 
-def _install_git(staging, say):
+def _install_git(staging, say, force=False):
     from src import claude_setup as cs
-    if cs._git_ok():
+    if not force and cs._git_ok():
         say("· Git 已存在，跳过")
         return False
+    if force and cs._git_ok():
+        say("· Git 已存在，强制重装（Inno 静默覆盖）")
     exe = _find(staging, "Git-", ".exe")
     if not exe:
         raise InstallError("包内无 Git 安装器")
@@ -219,7 +309,7 @@ def _install_git(staging, say):
     return True
 
 
-def _install_claude(staging, say):
+def _install_claude(staging, say, force=False):
     """铺 claude-code 包到 %APPDATA%\\npm\\node_modules（npm 标准位）+ shim。
 
     全审 B4/B5 实锤（严重）两处修正：
@@ -269,14 +359,19 @@ def _install_claude(staging, say):
         say("  验证 claude --version …")
         cs._verify_claude_runs(os.path.join(dst, "bin", "claude.exe"))
     except Exception:
-        # 失败回滚：删掉半成品，把备份搬回来
+        # 失败回滚（对抗审 P1）：早前 rmtree(ignore_errors) 后目录非空时
+        # os.replace(目录) 必败且被静默吞——现有安装被毁还不报。现：清不净
+        # 就把半成品改名让路，恢复失败必须说出来
         shutil.rmtree(dst, ignore_errors=True)
         if bak and os.path.isdir(bak):
             try:
+                if os.path.isdir(dst):
+                    import time as _t
+                    os.replace(dst, dst + ".broken-%d" % int(_t.time()))
                 os.replace(bak, dst)
                 say("  已回滚到原有安装")
-            except OSError:
-                pass
+            except OSError as e:
+                say("  ⚠ 回滚失败：%s（原备份仍在 %s）" % (e, bak))
         raise
     if bak:
         shutil.rmtree(bak, ignore_errors=True)
@@ -318,7 +413,7 @@ def _copy_tree_with_links(src, dst):
             seen[key] = dp
 
 
-def _install_pydeps(staging, say):
+def _install_pydeps(staging, say, force=False):
     from src import claude_setup as cs
     d = os.path.join(staging, "pydeps")
     if not os.path.isdir(d):
