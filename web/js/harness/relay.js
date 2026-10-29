@@ -87,7 +87,15 @@
       g.tl.appendChild(d);
       _hgScrollBottom();   // 组内分支不再走 addRow，需自补贴底
     } else {
-      addRow(d);
+      // a147（深攻 P2）：组外窗口回落最后一个组的时间线（renderAudit 同款
+      // ——机器续接间隙到达的分割线不再错位挂根级）
+      const lg = [..._hgFlow.querySelectorAll('.h-grp')].pop() || null;
+      const lt = lg && lg.querySelector('.h-tl');
+      if (lt) {
+        if (lt.style.display === 'none') lt.style.display = '';
+        lt.appendChild(d);
+        _hgScrollBottom();
+      } else addRow(d);
     }
   }
   function renderAudit(text) {
@@ -104,7 +112,15 @@
       _tlExpFlush(!!_HG.openState);
       g.tl.appendChild(d);
     } else {
-      addRow(d);
+      // a147（深攻 P2）：组外窗口（机器续接的 finalize→reopen 间隙）曾落
+      // flow 根级=时序错位——回落最后一个组的时间线，真正无组再走根级
+      const lg = [..._hgFlow.querySelectorAll('.h-grp')].pop() || null;
+      const lt = lg && lg.querySelector('.h-tl');
+      if (lt) {
+        if (lt.style.display === 'none') lt.style.display = '';
+        lt.appendChild(d);
+        _hgScrollBottom();
+      } else addRow(d);
     }
   }
   // v3.3.2(D6/D7)：机器注入（task-notification/system-reminder）弱化行——

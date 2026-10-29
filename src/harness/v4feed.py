@@ -506,6 +506,15 @@ class V4Feed(object):
                 ds = self._reduce_cli(data, turn, ts, seq)
             elif t == "turn_started":
                 if turn and turn not in self._turn_rows:
+                    if self._merge_turn and not self._last_turn_rid:
+                        # a147（深攻 P1·冷建重放窗）：并回旗在而目标头缺失
+                        # （hydration 冷建不设 _last_turn_rid，machine_turn 与
+                        # turn_started 同窗重放）——扫快照末个组头作并回目标
+                        # （与 _reconcile_live 同判据），回合仍不拆分
+                        _h = next((r for r in reversed(self.snap["rows"])
+                                   if r.get("kind") == "turn_header"), None)
+                        if _h is not None:
+                            self._last_turn_rid = _h["rowId"]
                     if self._merge_turn and self._last_turn_rid:
                         # a144（用户铁律）：审计续发提升出的新回合并回原组头
                         # ——un-finalize 重开（前端 _hgTurnReopen 认回秒表），
@@ -517,8 +526,12 @@ class V4Feed(object):
                         # ——直接替换，防多次续接翻倍（对抗审 P2-1）
                         _pm = (_prev or {}).get("activeMs") or 0
                         self._merge_base_ms[self._last_turn_rid] = _pm
+                        # reopened=机器续接背书：前端信任后端直接重开
+                        # （间隙重建后的新 bridge 无 _lastFinRoot 身份记忆，
+                        # 深攻 P1 曾因此拆分）
                         d, _ = self._upsert(self._last_turn_rid,
-                                            state="running", endedAt=0)
+                                            state="running", endedAt=0,
+                                            reopened=1)
                         if d:
                             ds.append(d)
                     else:

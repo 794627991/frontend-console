@@ -416,6 +416,13 @@
     // 2s 内纠偏（bg 真跑被误收的场景由此翻正，A5 净改善；幂等拉取无副作用）
     if (swept && typeof _hgRegSyncSoon === 'function') _hgRegSyncSoon(_HG.sid);
   }
+  function _hgTurnMend(durMs) {         // a147：并回回合二次收口——ring 末条改全量工时
+    const d = _hgDyn();
+    const last = d.turns[d.turns.length - 1];
+    if (last && durMs > 0) last.dur = Math.round(durMs / 1000);
+    d.turnTools = 0;                    // 段尾工具数清零（防顺延污染下一回合条目）
+    renderSideStatus();
+  }
   function _hgTurnEnd(st, durMs) {       // 回合记账 ring（≤10）；dur 优先事件值（网关常缺失→本地差值）
     const d = _hgDyn();
     const dur = (durMs > 0) ? durMs : Date.now() - (_HG.actStart || Date.now());

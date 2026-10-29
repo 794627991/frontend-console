@@ -688,6 +688,16 @@ class HarnessSession:
         try:
             ok, err = self.send_message(text, boundary=False)
             if not ok:
+                # a147（深攻 P2-1）：busy 抢占竞态（CAS 输给 CLI 自发回合/
+                # 用户抢发）曾静默丢指令且 fired_at 水位不再补触发——busy
+                # 类拒发入队，泵提升再走 send_message（标记照发，并回不变）
+                if err and "正在回复" in str(err):
+                    try:
+                        self.queue_admit(text)
+                        log.info("[审计] busy 竞态，补审指令已入队")
+                        return
+                    except Exception:
+                        pass
                 log.warning("[审计] 补审续发未发出：%s", err)
         except Exception as e:
             log.warning("[审计] 补审续发异常：%s", e)

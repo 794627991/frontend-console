@@ -962,19 +962,17 @@
     if (row.kind === 'turn_header') {
       if (row.state === 'running'
           && !(typeof _HG !== 'undefined' && _HG && _HG.grp)) {
-        // a144R（用户铁律「闸不得拆分回合」）：机器续接（审计续发指令并回
-        // 原组头）的 un-finalize——重开**刚定稿的那个组**（v3.3.2 reopen
-        // 语义：摘 finalized、秒表按定稿工时累计链续走）。身份校验（对抗审
-        // 二轮 P2-3）：DOM 末组必须就是本 bridge 上次 finalize 的组——空壳
-        // 被摘后末组是更早的用户回合，认回=内容串进别人的组，宁可让渲染器
-        // 兜底新建组（视觉仍是连续流）
+        // a147：reopened=后端并回背书（machine_turn 机器续接的 un-finalize，
+        // 重开刚定稿的组=v3.3.2 reopen 语义，秒表按累计链续走）。有身份记忆
+        // （_lastFinRoot）则校验 DOM 末组防误开他人组；无记忆（间隙重建/
+        // 切回后的新 bridge——深攻 P1 曾因此拆分）信任后端直接重开
         var _fr = this._lastFinRoot || null;
         var _dl = null;
         try {
           var _gs2 = this.flow.querySelectorAll(':scope > .h-grp');
           _dl = _gs2.length ? _gs2[_gs2.length - 1] : null;
         } catch (e) {}
-        if (_fr && _dl === _fr) {
+        if (row.reopened && (_fr ? _dl === _fr : true)) {
           var _ro = _g('_hgTurnReopen');
           if (_ro) { try { _ro(true); } catch (e) {} }
           this._mergedRid = row.rowId;   // 并回回合二次收口不双记（P2-4）
@@ -991,15 +989,20 @@
         if (g && !hasWork && g.root && g.root.parentNode) {
           try { g.root.parentNode.removeChild(g.root); } catch (e) {}
           if (_HG.grp === g) _HG.grp = null;
+          this._lastFinRoot = null;   // a147：摘组即失身份记忆（防陈旧匹配）
         } else if (fin && hasWork) {
           this._lastFinRoot = (g && g.root) || null;   // 供并回身份校验
           try { fin(false, { turnEnd: true,
                              endTs: row.endedAt || Date.now() }); } catch (e) {}
           // 对抗审 P2-3/P2-5（a142）：正常回合收口补回合记账与识图清算
           // （V3 _hgTurnWrapup 的职责，随其删除丢失）——dur 优先事件值，
-          // 网关缺失时 _hgTurnEnd 内部回落本地差值。并回回合（P2-4）：
-          // t1 收口已记过账，二次收口只重定稿不双记
-          if (row.rowId !== this._mergedRid) {
+          // 网关缺失时 _hgTurnEnd 内部回落本地差值。并回回合（a147·E）：
+          // 不再整体跳过（回合史只记首段+turnTools 顺延污染）——改为修正
+          // ring 末条的全量工时并清段尾工具数
+          if (row.rowId === this._mergedRid) {
+            var _tm = _g('_hgTurnMend');
+            if (_tm) { try { _tm(row.activeMs || 0); } catch (e) {} }
+          } else {
             var _te = _g('_hgTurnEnd');
             if (_te) { try { _te(row.state === 'error' ? 'error'
                               : (row.state === 'cancelled' ? 'interrupt' : 'ok'),

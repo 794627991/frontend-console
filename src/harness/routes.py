@@ -343,6 +343,13 @@ def harness_rewind():
     # 出 500 HTML（违反全路由 JSON 错误形态）。先杀，截断失败也返回 400
     s.kill_proc(quiet=True)
     s.last_result = None                     # 用量缓存失效（守卫/窗口判定重算）
+    # a147（深攻 P2）：quiet 杀吞 exit/turn_error → _turn_id 悬挂会让
+    # _reconcile_live 恒判 busy（末组头假「工作中」）且下回合 send 复用旧
+    # tid 不发 turn_started——随杀即清
+    try:
+        s._turn_id = ""
+    except Exception:
+        pass
     try:
         if anchor:
             # v2.28.16 消息级回滚主路径：文本锚点（气泡正文前缀）

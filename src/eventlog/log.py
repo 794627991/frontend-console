@@ -33,9 +33,6 @@ class SessionEventLog(object):
         return self.store.floor_seq
 
 
-    def stats(self):
-        return self.store.stats()
-
     # ---- 写入（HarnessSession.emit 的全部职责）----
     def emit(self, item, turn=None):
         """协议出口统一截断 → 锁内盖章落 store。返回已盖章事件。"""

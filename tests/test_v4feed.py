@@ -2042,6 +2042,24 @@ class TestMachineTurnMerge(_HWMTestCase):
         self.assertEqual(len(heads), 1)
         self.assertEqual(heads[0]["activeMs"], 1800, "二次并接 1500+300 不翻倍")
 
+    def test_cold_replay_fallback_merges(self):
+        """a147（深攻 P1·冷建重放窗）：并回旗在而 _last_turn_rid 缺失（hydration
+        冷建不设它，machine_turn 与 turn_started 同窗重放）——扫快照末组头
+        作并回目标，不拆分；upsert 带 reopened 背书字段。"""
+        f = _mkfeed("e1")
+        self._t1_done(f)
+        f._last_turn_rid = None            # 模拟 hydration 冷建后的状态
+        f.ingest(_env(4, "machine_turn"))
+        f.ingest(_env(5, "turn_started", turn="t2"))
+        heads = [r for r in f.snap["rows"] if r["kind"] == "turn_header"]
+        self.assertEqual(len(heads), 1, "冷建重放窗仍须并回（不拆分）")
+        self.assertEqual(heads[0]["state"], "running")
+        self.assertEqual(heads[0].get("reopened"), 1, "并回 upsert 须带背书字段")
+        f.ingest(_env(6, "turn_complete", turn="t2", data={"duration_ms": 500}))
+        heads = [r for r in f.snap["rows"] if r["kind"] == "turn_header"]
+        self.assertEqual(len(heads), 1)
+        self.assertEqual(heads[0]["activeMs"], 1500)
+
     def test_user_echo_cancels_merge_flag(self):
         f = _mkfeed("e1")
         self._t1_done(f)
