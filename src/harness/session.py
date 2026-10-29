@@ -934,17 +934,22 @@ class HarnessSession:
                 self.busy = False
                 return False, "发送失败：%s" % e
             self.last_active = int(time.time() * 1000)
+            # v2.34.2（R1）：判定收窄到 _AUDIT_MSG_PREFIX（_audit_settle 续发
+            # 消息的唯一句式开头）——不定标题、不画用户气泡（警示已由
+            # _audit_settle 的 kind='audit' 事件先行呈现）。用户手打「[审计]…」
+            # 开头的普通消息不命中，照常走 user_echo 画气泡。
+            _audit_msg = (text or "").lstrip().startswith(_AUDIT_MSG_PREFIX)
+            # a144R（对抗审 P0 修正）：机器续发指令——先发 machine_turn 标记
+            # 再 _turn_start，v4feed 据此把即将开始的回合并回上一组头
+            # （用户铁律「闸不得拆分回合」）。标记先于 turn_started 到达 feed
+            if _audit_msg:
+                self.emit({"kind": "machine_turn"})
             # v3.0：stdin 写成功即回合起跑（turn_started 先于 user_echo/renew，
             # 信封 turn 字段从本回合第一条事件起生效）
             self._turn_start()
             # v3.5.101（全审P2）：边界清零挂在 stdin 写成功后——消息真进了
             # 回合账才清（拒发路径不清，在飞大回合账本不丢）
             _audit_boundary_reset()
-            # v2.34.2（R1）：判定收窄到 _AUDIT_MSG_PREFIX（_audit_settle 续发
-            # 消息的唯一句式开头）——不定标题、不画用户气泡（警示已由
-            # _audit_settle 的 kind='audit' 事件先行呈现）。用户手打「[审计]…」
-            # 开头的普通消息不命中，照常走 user_echo 画气泡。
-            _audit_msg = (text or "").lstrip().startswith(_AUDIT_MSG_PREFIX)
             # 首条消息定标题（微信式：会话标题=首句）
             if not self.title and text and not _audit_msg:
                 self.title = re_title(text)

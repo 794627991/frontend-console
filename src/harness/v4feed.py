@@ -419,11 +419,12 @@ class V4Feed(object):
         self._pending_agents = {}      # Task tool_use id -> (sub行, tool行)
         self._exit_marker_row = None   # 最近 exit marker 行（interrupted 合并锚）
         self._turn_rows = {}           # turnId -> turn_header rowId
-        # a144（用户铁律「闸不得拆分回合」）：机器续接回合并回原组头的账
-        self._machine_q = set()        # 机器注入（审计续发）排队条目 id
+        # a144R（用户铁律「闸不得拆分回合」）：机器续接回合并回原组头的账
+        # 触发=send_message 对审计续发指令先发的 machine_turn 标记（结算时
+        # busy 已落、直发不走队列——a144 借队列事件判定是死路，对抗审 P0）
         self._merge_turn = False       # 下一 turn_started 并回上一回合
         self._last_turn_rid = None     # 最近组头 rowId（并回目标）
-        self._merge_base_ms = {}       # rid -> 已累计工时（多次续接链式累加）
+        self._merge_base_ms = {}       # rid -> 前段已记工时（多次续接链式）
         self._hydrate = hydrate        # 冷启动重建回调（snapshot 空时调用）
         self._hydrated = False
         self._hyd_keys = set()         # hydration 已呈现行的内容指纹（去重）
@@ -488,6 +489,7 @@ class V4Feed(object):
             if self._seen_seq(seq):
                 return
             if t == "user_echo":
+                self._merge_turn = False   # a144R：用户手打=回合边界（铁律），撤并回旗
                 self._exit_marker_row = None   # 新回合=合并锚失效
                 if self._dup_hist("user_input", data.get("text"), ts):
                     return                # 补放与 hydration 重叠：不重画
@@ -511,8 +513,10 @@ class V4Feed(object):
                         self._turn_rows[turn] = self._last_turn_rid
                         _prev = next((r for r in self.snap["rows"]
                                       if r["rowId"] == self._last_turn_rid), None)
+                        # 行上 activeMs 已含前段总量（上次收尾写回 base+dur）
+                        # ——直接替换，防多次续接翻倍（对抗审 P2-1）
                         _pm = (_prev or {}).get("activeMs") or 0
-                        self._merge_base_ms[self._last_turn_rid] =                             self._merge_base_ms.get(self._last_turn_rid, 0) + _pm
+                        self._merge_base_ms[self._last_turn_rid] = _pm
                         d, _ = self._upsert(self._last_turn_rid,
                                             state="running", endedAt=0)
                         if d:
@@ -534,15 +538,16 @@ class V4Feed(object):
                     if hd:
                         ds.append(hd)
                 if rid:
+                    _flds = {"state": "success", "endedAt": ts}
                     _ms = data.get("duration_ms")
-                    if rid in self._merge_base_ms:
-                        _ms = self._merge_base_ms[rid] + (_ms or 0)
-                    d, _ = self._upsert(rid, state="success",
-                                        endedAt=ts,
-                                        activeMs=_ms)
+                    if _ms is not None:   # 生产 turn_complete 无 duration——
+                        _flds["activeMs"] = (self._merge_base_ms.get(rid, 0) + _ms
+                                             if rid in self._merge_base_ms else _ms)
+                    d, _ = self._upsert(rid, **_flds)
                     if d:
                         ds.append(d)
                 self._held = False
+                self._merge_turn = False   # a144R：收尾即清（旗不跨回合残留）
                 ds.append(P.d_state({"busy": False}))
             elif t == "turn_hold":
                 # 后台子代理在飞：result 已到但回合未完（session 不发
@@ -793,19 +798,11 @@ class V4Feed(object):
                     "ask_done": {"req_id": data.get("req_id") or "",
                                  "answer": data.get("answer")},
                 }))
+            elif t == "machine_turn":
+                # a144R：机器续接标记（send_message 直发路径，先于本回合的
+                # turn_started）——下一回合不建新组头
+                self._merge_turn = True
             elif t in ("input_admitted", "input_promoted", "input_discarded"):
-                # a144：机器注入识别——审计/设计闸续发指令（前缀唯一）入队
-                # 记 id，提升时刻置并回旗（该输入拉起的新回合不建新组头）
-                _qid = data.get("id")
-                if t == "input_admitted":
-                    if str(data.get("text") or "").startswith(_AUDIT_MSG_PREFIX):
-                        self._machine_q.add(_qid)
-                elif t == "input_promoted":
-                    if _qid in self._machine_q:
-                        self._machine_q.discard(_qid)
-                        self._merge_turn = True
-                else:
-                    self._machine_q.discard(_qid)
                 # queue 真源在 durable 排队账本；仅当事件携带全量 queue 时才
                 # 更新 A 区（否则等路由订阅时冷填）
                 if isinstance(data.get("queue"), list):
@@ -1035,12 +1032,13 @@ class V4Feed(object):
                 return ds
             rid = self._turn_rows.get(turn) if turn else None
             if rid:
+                _flds = {"state": "error" if data.get("is_error") else "success",
+                         "endedAt": ts}
                 _ms = data.get("duration_ms")
-                if rid in self._merge_base_ms:
-                    _ms = self._merge_base_ms[rid] + (_ms or 0)
-                d, _ = self._upsert(rid, state="error" if data.get("is_error")
-                                    else "success", endedAt=ts,
-                                    activeMs=_ms)
+                if _ms is not None:   # 不带时长则保真（CLI result 兜底刚写的值）
+                    _flds["activeMs"] = (self._merge_base_ms.get(rid, 0) + _ms
+                                         if rid in self._merge_base_ms else _ms)
+                d, _ = self._upsert(rid, **_flds)
                 if d:
                     ds.append(d)
         return ds

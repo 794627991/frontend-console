@@ -962,12 +962,23 @@
     if (row.kind === 'turn_header') {
       if (row.state === 'running'
           && !(typeof _HG !== 'undefined' && _HG && _HG.grp)) {
-        // a144（用户铁律「闸不得拆分回合」）：机器续接（审计续发指令并回
-        // 原组头）的 un-finalize——重开刚定稿的组（v3.3.2 reopen 语义：
-        // 摘 finalized、秒表按定稿工时累计链续走）。仅无活组时动——正常
-        // running 头不走 upserted 路无此帧，快照路不经此处
-        var _ro = _g('_hgTurnReopen');
-        if (_ro) { try { _ro(true); } catch (e) {} }
+        // a144R（用户铁律「闸不得拆分回合」）：机器续接（审计续发指令并回
+        // 原组头）的 un-finalize——重开**刚定稿的那个组**（v3.3.2 reopen
+        // 语义：摘 finalized、秒表按定稿工时累计链续走）。身份校验（对抗审
+        // 二轮 P2-3）：DOM 末组必须就是本 bridge 上次 finalize 的组——空壳
+        // 被摘后末组是更早的用户回合，认回=内容串进别人的组，宁可让渲染器
+        // 兜底新建组（视觉仍是连续流）
+        var _fr = this._lastFinRoot || null;
+        var _dl = null;
+        try {
+          var _gs2 = this.flow.querySelectorAll(':scope > .h-grp');
+          _dl = _gs2.length ? _gs2[_gs2.length - 1] : null;
+        } catch (e) {}
+        if (_fr && _dl === _fr) {
+          var _ro = _g('_hgTurnReopen');
+          if (_ro) { try { _ro(true); } catch (e) {} }
+          this._mergedRid = row.rowId;   // 并回回合二次收口不双记（P2-4）
+        }
       }
       if (row.state && row.state !== 'running') {
         // 空壳守卫（用户实测 a21「已工作 0 秒」幽灵组）：组内无思考/工具/
@@ -981,15 +992,19 @@
           try { g.root.parentNode.removeChild(g.root); } catch (e) {}
           if (_HG.grp === g) _HG.grp = null;
         } else if (fin && hasWork) {
+          this._lastFinRoot = (g && g.root) || null;   // 供并回身份校验
           try { fin(false, { turnEnd: true,
                              endTs: row.endedAt || Date.now() }); } catch (e) {}
           // 对抗审 P2-3/P2-5（a142）：正常回合收口补回合记账与识图清算
           // （V3 _hgTurnWrapup 的职责，随其删除丢失）——dur 优先事件值，
-          // 网关缺失时 _hgTurnEnd 内部回落本地差值
-          var _te = _g('_hgTurnEnd');
-          if (_te) { try { _te(row.state === 'error' ? 'error'
-                            : (row.state === 'cancelled' ? 'interrupt' : 'ok'),
-                              row.activeMs || 0); } catch (e) {} }
+          // 网关缺失时 _hgTurnEnd 内部回落本地差值。并回回合（P2-4）：
+          // t1 收口已记过账，二次收口只重定稿不双记
+          if (row.rowId !== this._mergedRid) {
+            var _te = _g('_hgTurnEnd');
+            if (_te) { try { _te(row.state === 'error' ? 'error'
+                              : (row.state === 'cancelled' ? 'interrupt' : 'ok'),
+                                row.activeMs || 0); } catch (e) {} }
+          }
           var _vs2 = _g('_hgVisionSweep');
           if (_vs2) { try { _vs2(true); } catch (e) {} }
         }
