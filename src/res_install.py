@@ -111,20 +111,42 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None,
                 res["skipped"].append(k)
                 say("跳过 %s：包内不含该资源" % k)
 
+        # 全审 N5：进度总量必须按**本次要装的子集**算。早前一律用整包
+        # plain_len，只装 pydeps（10MB）时分母是 1.07GB → 进度条几乎停在
+        # 0%，最后一跳才硬拉满，形同虚设。
+        # mode=link 的 entry 不产生进度字节（只做硬链接，见 fcpk.extract_all），
+        # 计入分母会让进度永远到不了 100%（实测全量包 link 重复计重 258MB）。
+        sub_total = sum(int(e.get("size") or 0) for e in reader.entries
+                        if e.get("kind") in set(plan)
+                        and e.get("mode") != "link") or 1
+
         staging = tempfile.mkdtemp(prefix="fcpk_stage_")
         _ck()
         if "webview2" in plan:
-            _install_webview2(reader, staging, cur, say, prog, res,
-                              should_cancel=should_cancel)
+            # 返回值 False = 已完成跳过（没解包，不产生进度字节）→ 把它
+            # 的体量从分母里扣掉，否则单装 webview2 时进度条只能到 ~0%
+            # 再被末尾硬拉满（复审实测跳过时 557MB 白占分母）
+            if not _install_webview2(reader, staging, cur, say, prog, res,
+                                     should_cancel=should_cancel,
+                                     total=sub_total):
+                sub_total = max(1, sub_total - sum(
+                    int(e.get("size") or 0) for e in reader.entries
+                    if e.get("kind") == "webview2"
+                    and e.get("mode") != "link"))
             plan.remove("webview2")
         # 其余资源解到同一 staging（安装器需要同目录，如 node zip 与 msi 同层）
         rest = [k for k in plan]
         if rest:
             say("解包安装资源（%s）…" % "/".join(rest))
+            # 从已解出的字节起步——extract_all 内部 done 从 0 计，不加重
+            # 基准的话 webview2 解完后再解 rest，进度条会往回跳（N5 实测
+            # 4MB → 1MB）
+            base = cur[0]
             reader.extract_all(staging, kinds=rest,
-                               progress=lambda d, t, p: prog(d, t, p),
+                               progress=lambda d, t, p: prog(
+                                   base + d, sub_total, p),
                                should_cancel=should_cancel)
-        total = info.get("plain_len") or 1
+        total = sub_total or 1
         for k in rest:
             _ck()
             fn = _INSTALLERS.get(k)
@@ -162,7 +184,8 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None,
 WV2_MARKER = ".wv2ok"          # 完整性标记：解包全程成功才写（对抗审 P0）
 
 
-def _install_webview2(reader, staging, cur, say, prog, res, should_cancel=None):
+def _install_webview2(reader, staging, cur, say, prog, res, should_cancel=None,
+                      total=None):
     """WebView2 是纯解包——不跑安装器（Fixed Version 免安装，设环境变量即用）。
 
     对抗审 P0 修正：早前直落 runtime_root()，断电/取消/坏段留下「exe 在
@@ -194,7 +217,8 @@ def _install_webview2(reader, staging, cur, say, prog, res, should_cancel=None):
             os.remove(mark)
         say("解出 WebView2 运行时 → %s …" % cur_dir)
         got = reader.extract_all(root, kinds=["webview2"],
-                                 progress=lambda d, t, p: prog(d, t, p),
+                                 progress=lambda d, t, p: prog(
+                                     d, total or t, p),
                                  should_cancel=should_cancel)
         if not any(p.endswith("msedgewebview2.exe") for p in got):
             raise InstallError("包内 WebView2 运行时不完整（缺 msedgewebview2.exe）")

@@ -508,7 +508,6 @@ def _password_fingerprint():
 
 
 def _build_offline_fcpk(kinds=None, quiet=False):
-    _ensure_fcpk_key()
     """产出 dist/releases/<应用名>-资源包.fcpk（或 -资源包-<kinds>.fcpk）。
 
     kinds=None 打全量；给列表则只打这些。指纹（清单摘要）不变则沿用；
@@ -517,6 +516,7 @@ def _build_offline_fcpk(kinds=None, quiet=False):
     子集包文件名带 kinds 后缀——否则只打 claude 的小包会覆盖掉 706MB 的
     全量包（用户下次装机拿到的就只剩 claude 了）。
     """
+    _ensure_fcpk_key()          # N6：必须在 docstring 之后，否则文档串失效
     import hashlib
     sys.path.insert(0, BASE)
     from src import fcpk

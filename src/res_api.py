@@ -19,7 +19,8 @@ res_bp = Blueprint("resources", __name__)
 _lock = threading.Lock()
 _state = {"running": False, "phase": "", "log": [], "done": False,
           "ok": False, "err": "", "ts": 0.0, "result": None,
-          "cancel": False, "total": 0, "done_bytes": 0, "cur": ""}
+          "cancel": False, "total": 0, "done_bytes": 0, "cur": "",
+          "cancelled": False}
 
 # 包预检缓存：FcpkReader 要跑 PBKDF2 30 万轮（0.1~0.3s），设置页每次
 # 选包/重检测都会问一次，按 (path, mtime, size) 缓存
@@ -131,7 +132,22 @@ def res_install_api():
     from src import fcpk, res_install
     d = request.get_json(force=True, silent=True) or {}
     path = str(d.get("path") or "").strip()
-    kinds = d.get("kinds") or None
+    # 全审 N4：kinds 的语义必须区分「没传/传 null」和「传了空数组」。
+    # `d.get("kinds") or None` 会把 [] 归成 None → 装全部六项，任何误传
+    # 空数组的调用方都会得到「全量覆盖」这个最重后果。
+    # 注意判定必须是 `is not None` 而不是 `"kinds" in d`：红条/安装弹窗
+    # （resources.js 的 startInstall）恒带 `kinds: null` 表示「全装」，
+    # 用 in 判定会把这条并列主路径整个打成 400（复审实打复现）。
+    kinds = d.get("kinds")
+    if kinds is not None:
+        from src.res_install import ORDER as _ORDER
+        if not isinstance(kinds, list) or not kinds:
+            return jsonify({"ok": False, "err": "未选择任何资源"}), 400
+        # 未知 kind 安静滤掉会让用户「点了安装、日志说完成、什么都没装」
+        bad = [k for k in kinds if k not in _ORDER]
+        if bad:
+            return jsonify({"ok": False,
+                            "err": "未知资源：%s" % ",".join(map(str, bad))}), 400
     force = bool(d.get("force"))
     if not path or not fcpk.is_fcpk(path):
         return jsonify({"ok": False, "err": "请选择 .fcpk 资源包"}), 400
@@ -143,7 +159,8 @@ def res_install_api():
             return jsonify({"ok": False, "err": "已有安装任务在运行"}), 409
         _state.update(running=True, phase="准备", log=[], done=False, ok=False,
                       err="", ts=time.time(), result=None, cancel=False,
-                      total=info.get("plain_len") or 0, done_bytes=0, cur="")
+                      total=info.get("plain_len") or 0, done_bytes=0, cur="",
+                      cancelled=False)
 
     def should_cancel():
         return bool(_state.get("cancel"))
@@ -165,7 +182,8 @@ def res_install_api():
                           err="; ".join("%s: %s" % kv for kv in errs.items()),
                           phase="完成" if not errs else "部分失败")
         except res_install.InstallCancelled:
-            _state.update(done=True, ok=False, err="已取消安装", phase="已取消")
+            _state.update(done=True, ok=False, err="已取消安装", phase="已取消",
+                          cancelled=True)
             _log("用户取消安装")
         except Exception as e:
             _state.update(done=True, ok=False, err=str(e)[:400], phase="失败")
@@ -194,4 +212,5 @@ def res_poll():
                     "ok_done": _state["ok"], "err": _state["err"],
                     "result": _state["result"],
                     "total": _state["total"], "bytes": _state["done_bytes"],
-                    "cur": _state["cur"], "cancelling": _state["cancel"]})
+                    "cur": _state["cur"], "cancelling": _state["cancel"],
+                    "cancelled": _state["cancelled"]})

@@ -40,8 +40,10 @@ if "%ARGS%"=="" (
   echo       claude,node  （打两项）
   echo.
   set /p KINDINPUT=  请输入（回车=全量）:
-  if defined KINDINPUT set "ARGS=--kinds %KINDINPUT%"
 )
+rem 全审 N1：cmd 对括号块做解析期一次性展开，块内 %KINDINPUT% 在进块前就已换成旧值
+rem （空）——无论输入什么都会变成 "--kinds "。必须把这一行移到块外。
+if defined KINDINPUT set "ARGS=--kinds %KINDINPUT%"
 
 echo ==============================================
 echo   离线资源包打包

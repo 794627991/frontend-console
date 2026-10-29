@@ -667,35 +667,48 @@ async function _stRenderResourcesPane(pane) {
       errEl.style.display = ''; errEl.textContent = '前端未加载 resources.js';
       return;
     }
+    // 全审 N2 实锤（严重）：安装中切到别的设置分区时，#stPane 被整体替换，
+    // 这些元素消失 → 回调里 $q('#rsProgBar').style 抛 TypeError → 该轮 .then
+    // 中断、`if (!s.done) return` 与 onDone 全被跳过 → 轮询继续跑但永不收尾，
+    // 切回来时按钮永久禁用。每个回调先探活，DOM 更新一律可选。
+    const alive = () => !!$q('#rsGo');
     window.ResPanel.install({
       path: path, kinds: kinds, force: force,
       onLog: function (msg) {
+        if (!alive()) return;
         const d = document.createElement('div');
         d.textContent = msg;
         logEl.appendChild(d);
         logEl.scrollTop = logEl.scrollHeight;
       },
       onTick: function (s) {
+        if (!alive()) return;
+        const bar = $q('#rsProgBar'), txt = $q('#rsProgTxt');
         const tot = s.total || 0, cur = s.bytes || 0;
         const pct = tot ? Math.min(100, Math.round(cur * 100 / tot)) : 0;
-        $q('#rsProgBar').style.width = pct + '%';
-        $q('#rsProgTxt').textContent = (s.phase || '') +
+        if (bar) bar.style.width = pct + '%';
+        if (txt) txt.textContent = (s.phase || '') +
           (tot ? ' · ' + _ddFmtSize(cur) + ' / ' + _ddFmtSize(tot) + ' (' + pct + '%)' : '') +
           (s.cancelling ? ' · 正在取消…' : '');
       },
       onDone: function (r) {
-        $q('#rsGo').dataset.busy = '';
-        $q('#rsCancel').style.display = 'none';
-        syncGo();
-        prog.style.display = 'none';
+        // 结算先做（不管 DOM 还在不在），再尽力更新界面
+        if (alive()) {
+          $q('#rsGo').dataset.busy = '';
+          $q('#rsCancel').style.display = 'none';
+          syncGo();
+          prog.style.display = 'none';
+          if (!r.ok) {
+            errEl.style.display = '';
+            errEl.textContent = r.err || '安装失败';
+          }
+        }
         if (r.ok) {
           showBanner('资源安装完成');
-          loadStatus(false);
+          if (alive()) loadStatus(false);
         } else {
-          errEl.style.display = '';
-          errEl.textContent = r.err || '安装失败';
           if (r.cancelled) showBanner('已取消安装', 4000);
-          loadStatus(false);
+          if (alive()) loadStatus(false);
         }
       }
     });

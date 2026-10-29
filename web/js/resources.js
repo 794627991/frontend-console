@@ -197,6 +197,15 @@
 
   // 全应用只该有一个安装任务（后端 _state 单例，第二个 POST 得 409）。
   // 红条面板与设置页共用同一轮询器——opts 里注入各自的 DOM 回调。
+  // 回调一律包住：调用方（设置页）在安装中切分区会让它的 DOM 引用失效，
+  // 抛出的 TypeError 会中断这一轮 .then，导致 done 结算与 onDone 永不执行、
+  // 轮询定时器空转（全审 N2）。这里兜住，保证结算链不被 UI 异常打断。
+  function _safe(fn, arg) {
+    try { fn(arg); } catch (e) {
+      if (window.console) console.warn('res callback:', e);
+    }
+  }
+
   function _resRun(opts) {
     var o = opts || {};
     var onLog = o.onLog || function () {};
@@ -209,25 +218,31 @@
         path: o.path, kinds: o.kinds || null, force: !!o.force
       })
     }).then(function (j) {
-      if (!j.ok) { onDone({ ok: false, err: j.err || '启动失败' }); return j; }
+      if (!j.ok) { _safe(onDone, { ok: false, err: j.err || '启动失败' }); return j; }
       // 后端 log 是累积数组，每轮都全量返回——用游标只投递新增行，
       // 否则日志会一轮比一轮多（N 行被重放 N 次）
       var seen = 0;
       _resPollTimer = setInterval(function () {
         _resFetch('/api/resources/poll').then(function (s) {
-          onTick(s);
+          _safe(onTick, s);
           var lg = s.log || [];
-          for (; seen < lg.length; seen++) onLog(lg[seen].msg, s);
+          for (; seen < lg.length; seen++) _safe(onLog, lg[seen].msg);
           if (!s.done) return;
           clearInterval(_resPollTimer); _resPollTimer = null;
-          onDone({ ok: !!s.ok_done, err: s.err || '', result: s.result,
-                   cancelled: /取消/.test(s.err || '') });
+          // 取消用后端显式字段判定——早前 /取消/.test(s.err) 会把任何
+          // 含「取消」二字的真实失败误报成「已取消安装」（全审 N3）
+          _safe(onDone, { ok: !!s.ok_done, err: s.err || '', result: s.result,
+                          cancelled: !!s.cancelled });
           if (s.ok_done) resRefresh();
+        }).catch(function (e) {
+          // 轮询本身失败（后端重启等）也要收尾，否则定时器永不停
+          clearInterval(_resPollTimer); _resPollTimer = null;
+          _safe(onDone, { ok: false, err: '轮询失败：' + e });
         });
       }, 700);
       return j;
     }).catch(function (e) {
-      onDone({ ok: false, err: String(e) });
+      _safe(onDone, { ok: false, err: String(e) });
       return { ok: false, err: String(e) };
     });
   }
