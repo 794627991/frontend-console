@@ -960,6 +960,15 @@
       return;
     }
     if (row.kind === 'turn_header') {
+      if (row.state === 'running'
+          && !(typeof _HG !== 'undefined' && _HG && _HG.grp)) {
+        // a144（用户铁律「闸不得拆分回合」）：机器续接（审计续发指令并回
+        // 原组头）的 un-finalize——重开刚定稿的组（v3.3.2 reopen 语义：
+        // 摘 finalized、秒表按定稿工时累计链续走）。仅无活组时动——正常
+        // running 头不走 upserted 路无此帧，快照路不经此处
+        var _ro = _g('_hgTurnReopen');
+        if (_ro) { try { _ro(true); } catch (e) {} }
+      }
       if (row.state && row.state !== 'running') {
         // 空壳守卫（用户实测 a21「已工作 0 秒」幽灵组）：组内无思考/工具/
         // 正文时摘除整组而非定稿——定稿空组=「已工作 0 秒」裸壳

@@ -2002,5 +2002,69 @@ class TestIncarnation(unittest.TestCase):
         self.assertLess(f.snap["seq"], 2 ** 53, "补事件后再次越界")
 
 
+class TestMachineTurnMerge(_HWMTestCase):
+    """a144（用户铁律「闸不得拆分回合」）：审计/设计闸续发指令提升出的
+    新回合并回原组头——不建第二个 turn_header，工时链式累计。"""
+
+    def test_audit_continuation_merges_into_original_turn(self):
+        f = _mkfeed("e1")
+        # 回合 1：正常起跑与收尾（工时 1000ms）
+        f.ingest(_env(1, "turn_started"))
+        f.ingest(_env(2, "user_echo", data={"text": "开始"}))
+        f.ingest(_env(3, "turn_complete", data={"duration_ms": 1000}))
+        heads = [r for r in f.snap["rows"] if r["kind"] == "turn_header"]
+        self.assertEqual(len(heads), 1)
+        self.assertEqual(heads[0]["state"], "success")
+        self.assertEqual(heads[0]["activeMs"], 1000)
+
+        # 审计续发指令入队（前缀机器注入；text 在信封顶层）
+        f.ingest({"seq": 4, "ts": 4000, "epoch": "e1", "sid": "s1",
+                  "turn": "t1", "type": "input_admitted",
+                  "kind": "input_admitted", "id": "q1",
+                  "text": "[审计] 本回合检测到:直改 2343 行",
+                  "data": {"queue": []}})
+        # 普通用户排队消息不得命中（无前缀）
+        f.ingest({"seq": 5, "ts": 4100, "epoch": "e1", "sid": "s1",
+                  "turn": "t1", "type": "input_admitted",
+                  "kind": "input_admitted", "id": "q2",
+                  "text": "用户手打的追问", "data": {"queue": []}})
+        # 回合终结泵提升：q1 先（并回旗），q2 后（普通——新回合照建头）
+        f.ingest({"seq": 6, "ts": 4200, "epoch": "e1", "sid": "s1",
+                  "turn": "t1", "type": "input_promoted",
+                  "kind": "input_promoted", "id": "q1", "data": {}})
+        f.ingest(_env(7, "turn_started", turn="t2"))
+        heads = [r for r in f.snap["rows"] if r["kind"] == "turn_header"]
+        self.assertEqual(len(heads), 1, "续审回合不得新建组头（回合不拆分）")
+        self.assertEqual(heads[0]["state"], "running", "并回后组头须重开")
+        self.assertEqual(heads[0]["endedAt"], 0)
+        # t2 的内容行与收尾都落到同一头
+        f.ingest(_env(8, "cli_stream", turn="t2",
+                      data={"type": "assistant", "message": {"model": "m",
+                             "content": [{"type": "text", "text": "补审中"}]}}))
+        f.ingest(_env(9, "turn_complete", turn="t2", data={"duration_ms": 500}))
+        heads = [r for r in f.snap["rows"] if r["kind"] == "turn_header"]
+        self.assertEqual(len(heads), 1)
+        self.assertEqual(heads[0]["state"], "success")
+        self.assertEqual(heads[0]["activeMs"], 1500,
+                         "工时须链式累计（1000+500），不得只记末段")
+
+    def test_plain_promoted_input_still_splits(self):
+        f = _mkfeed("e1")
+        f.ingest(_env(1, "turn_started"))
+        f.ingest(_env(2, "user_echo", data={"text": "问"}))
+        f.ingest(_env(3, "turn_complete", data={"duration_ms": 100}))
+        f.ingest({"seq": 4, "ts": 4000, "epoch": "e1", "sid": "s1",
+                  "turn": "t1", "type": "input_admitted",
+                  "kind": "input_admitted", "id": "q9",
+                  "text": "普通排队消息", "data": {"queue": []}})
+        f.ingest({"seq": 5, "ts": 4100, "epoch": "e1", "sid": "s1",
+                  "turn": "t1", "type": "input_promoted",
+                  "kind": "input_promoted", "id": "q9", "data": {}})
+        f.ingest(_env(6, "turn_started", turn="t2"))
+        heads = [r for r in f.snap["rows"] if r["kind"] == "turn_header"]
+        self.assertEqual(len(heads), 2,
+                         "用户手打消息仍是回合边界（铁律），照常新起组头")
+
+
 if __name__ == "__main__":
     unittest.main()
