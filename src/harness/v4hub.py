@@ -424,6 +424,10 @@ def _reconcile_live(feed, s):
                     break
             if tid:
                 feed._turn_rows[tid] = nr["rowId"]
+            # a146（对抗审收口 P2-1）：回填并回目标——冷建重放窗口里
+            # machine_turn 已落账、turn_started 在水位之上时，补放的
+            # turn_started 靠它并回原头，不再拆分
+            feed._last_turn_rid = nr["rowId"]
         feed.snap["state"]["busy"] = True
         if tid:
             feed.snap["state"]["curTurn"] = tid
