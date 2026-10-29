@@ -131,15 +131,13 @@
     if (!lv) return;
     for (const t in lv) {
       const a = lv[t];
-      // a155 观测点位1：桶 running 档即将被已落的冷查询终态条目顶掉——
-      // sendAt（轮次栅栏）随之丢失的入口。零行为变化，只记账
+      // a155R 观测点位1：桶 running 档即将被已落的冷查询终态条目顶掉——
+      // sendAt（轮次栅栏）随之丢失的入口。零行为变化，只弹通知
       const _cur = (_HG.agents || {})[t];
       if (!a.done && _cur && (_cur.done || _cur.err || _cur.stopped)) {
         if (typeof _hgSyncAudit === 'function')
-          _hgSyncAudit('bucket-dropped', t, String(_cur.doneAt || 0) + '/' + String(_cur.sendAt || 0), {
-            bucket: { desc: a.desc, taskId: a.taskId, sendAt: a.sendAt, t0: a.t0 },
-            cold: { doneAt: _cur.doneAt, err: _cur.err, stopped: _cur.stopped, sendAt: _cur.sendAt }
-          });
+          _hgSyncAudit('切回会话', t, '运行中的子代理档案被旧状态覆盖（'
+            + (a.desc || '').slice(0, 30) + '）');
       }
       if (a.done || (_HG.agents || {})[t]) { delete lv[t]; continue; }
       _HG.agents = _HG.agents || {};

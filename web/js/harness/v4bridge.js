@@ -1740,16 +1740,12 @@
     var running = !st.done;
     var ag = this._agEntry();
     if (running && ag && ag.done) {
-      // a155 观测点位2：子 feed 还在流（st.done=false）但档案说 done——
-      // 窗格即将定稿。此即用户症状的发生点，记下档案长相（sendAt 有无/
-      // 新旧）供与点位1 拼根因。零行为变化
+      // a155R 观测点位2：子 feed 还在流（st.done=false）但档案说 done——
+      // 窗格即将定稿。此即用户症状的发生点，弹通知取证。零行为变化
       try {
         if (typeof _hgSyncAudit === 'function')
-          _hgSyncAudit('pane-finalized', this.opt.agent,
-            String(ag.doneAt || 0) + '/' + String(ag.sendAt || 0) + '/' + String(ag.t0 || 0),
-            { feedDone: false, feedFinal: !!st.final,
-              ag: { doneAt: ag.doneAt, err: ag.err, stopped: ag.stopped,
-                    interrupted: ag.interrupted, sendAt: ag.sendAt, t0: ag.t0 } });
+          _hgSyncAudit('窗格定稿', this.opt.agent,
+            '「' + String(ag.desc || '').slice(0, 30) + '」显示完成但进程仍在输出');
       } catch (_) {}
       running = false;   // 档案终态优先（防投影滞后假跑）
     }

@@ -46,27 +46,14 @@ let _subX;
 let visIndEl;
 let visBtnEl;
 
-  // a155：子代理切会话同步观测（用户拍板：先埋点不动逻辑）。
-  // 症状=低概率「切走再切回，还在跑的子代理窗格显示完成/已停止」。
-  // 诊断定位的三叉根因（见会话档案）：①桶 running 档被冷查询 done 条目
-  // 顶掉（sendAt 随之丢）②sendAt 栅栏丢失后 readmodel 陈旧 done 畅通
-  // ③readmodel 持续误判。两个点位（sessions 桶清理 / v4bridge 窗格定稿）
-  // 拼起来可分辨：点位2 触发且 sendAt 缺失=①或②，点位1 是否先行区分之；
-  // sendAt 在场且 > doneAt 仍定稿=③（栅栏判据没覆盖的写点）。
-  // 零行为变化：只记账。环形 50 条 + console.warn 双出口，同键指纹去重
-  // （2s 周期 Sync 不刷屏）；复现时控制台截图或 _HG._syncAudit 导出即铁证
-  function _hgSyncAudit(kind, tid, fp, info) {
+  // a155R（用户拍板：notifyPop 通知即可，console/账本那套太复杂）：子代理
+  // 切会话同步观测——触发时弹一条带 ✗ 的通知（notifyPop 自带同文去重，
+  // 2s 周期 Sync 不刷屏），同时把最后一条存 _HG._syncLast 供随手查。
+  // 零行为变化：只弹通知。复现时截图通知即可定位（kind 区分入口/症状点）
+  function _hgSyncAudit(kind, tid, msg) {
     try {
-      _HG._syncAudit = _HG._syncAudit || { log: [], seen: {} };
-      const key = kind + '|' + tid;
-      if (_HG._syncAudit.seen[key] === fp) return;
-      _HG._syncAudit.seen[key] = fp;
-      const rec = Object.assign(
-        { at: new Date().toISOString().slice(11, 23), kind: kind, tid: String(tid) },
-        info || {});
-      _HG._syncAudit.log.push(rec);
-      if (_HG._syncAudit.log.length > 50) _HG._syncAudit.log.shift();
-      console.warn('[子代理同步观测]', rec);
+      _HG._syncLast = { at: Date.now(), kind: kind, tid: String(tid) };
+      showBanner('子代理同步观测[' + kind + '] ' + msg + '——若与实际状态不符，请截图此通知', 6000, true);
     } catch (_) {}
   }
 
