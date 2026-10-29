@@ -76,7 +76,7 @@ def main():
         sys.exit(0)                       # 找不到后端：闸失效，放行
     try:
         q = urllib.parse.quote(csid, safe="")
-        # v3.4.98：补门禁标记 UA（与 mcp_server/serial_cli/ask_mcp 同款）——
+        # v3.4.98：补门禁标记 UA（与 mcp_server/ask_mcp 同款）——
         # 93e 起 /api/* 无标记一律 403，本闸查询静默失败=直改超线不拦
         # （fail-open；8cbe99b 修了三家自家子进程，这里是被漏掉的第四家）
         req = urllib.request.Request(

@@ -13,7 +13,7 @@ def _resource_base():
 RES_DIR = _resource_base()
 
 # ---- home 锚点（用户定调：只有这两样放 home，data_dir 只管数据）----
-# endpoint.json：MCP 服务发现锚点，路径必须固定（main/mcp_server/serial_cli/
+# endpoint.json：MCP 服务发现锚点，路径必须固定（main/mcp_server/
 #   harness_ask_mcp 各自本地定义 STATE_DIR=HOME_DIR 读写它，不随数据目录走）
 # config.json：配置本体（含 data_dir），也需稳定位置——数据目录本身由它决定，
 #   不能随数据目录搬。用户指定的 data_dir 只是现有数据所在，不含这两样。
@@ -64,7 +64,7 @@ except Exception as e:
     logging.getLogger("app_state").error(
         "数据目录创建失败：%s（%s）——请检查路径权限", DATA_DIR, e)
 # ⚠ 命名陷阱：本处 STATE_DIR=数据目录（mm_probe/迁移逻辑用）；而 main/
-# mcp_server/serial_cli/harness_ask_mcp 各自本地定义的 STATE_DIR=HOME_DIR
+# mcp_server/harness_ask_mcp 各自本地定义的 STATE_DIR=HOME_DIR
 # （endpoint.json 锚点）。同名不同义，互不相干——endpoint/config 永远固定
 # HOME_DIR，不随 data_dir 迁移（用户定调：指定目录只是数据所在）
 STATE_DIR = DATA_DIR

@@ -114,15 +114,6 @@ def hb_report_body(t):
     return body.strip()
 
 
-def _input_brief(inp, limit=2000):
-    """tool_use input → 展示用摘要 JSON（保序截断）。"""
-    try:
-        s = json.dumps(inp, ensure_ascii=False)
-    except Exception:
-        s = str(inp)
-    return s[:limit]
-
-
 def _in_obj(inp, cap=4000):
     """tool_use input → 可渲染对象（浅拷贝，超长字符串值截断防爆）。"""
     if not isinstance(inp, dict):
@@ -396,7 +387,8 @@ class V4Feed(object):
         self._wseq = self._wseq_base    # 最后分配的投递序号（= snap["seq"]）
         self._seq_set = set()          # 已摄入的**真实** seq（判重）
         self._seq_fifo = []            # 真实 seq 的到达序（有界回收用）
-        self._resnap_ver = 0           # 保留但恒为 0（分离后无需重对齐）
+        self._resnap_ver = 0           # 保留但恒为 0（分离后无需重对齐）——
+                                        # test_v4feed F4/late_seq 两处以它为不变量探针
         self._late_lo = 0              # 保留字段（恒 0），见下方说明
         self._late_snap = 0
         # F1：空 log 时下界必须是**起点**而非 0——否则旧实例的游标（3）
@@ -748,7 +740,7 @@ class V4Feed(object):
                     self._exit_marker_row = rid
             elif t == "ask":
                 # 交互提问进 A 区（V3 形态=挂 dock 的 askRender 面板，非消息行）；
-                # 前端 v4view paintState 消费。幂等：askRender 同 req_id 查重。
+                # 前端 v4bridge paintState 消费。幂等：askRender 同 req_id 查重。
                 ds.append(P.d_state({"ask": {
                     "req_id": data.get("req_id") or "",
                     "title": data.get("title") or "",

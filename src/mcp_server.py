@@ -62,7 +62,7 @@ import urllib.error
 import urllib.parse
 import subprocess
 
-# ---- 服务发现（与 serial_cli.py 共用 endpoint.json） ----
+# ---- 服务发现（endpoint.json，工具启动时写入；serial_cli.py 已删） ----
 STATE_DIR = os.path.join(os.path.expanduser("~"), ".serialconsole_pro")
 ENDPOINT_FILE = os.path.join(STATE_DIR, "endpoint.json")
 

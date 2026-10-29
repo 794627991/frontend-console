@@ -274,38 +274,6 @@
     } catch(_) {}
   }
 
-  // ==================== v3.1 ZCode 式回合摘要行（「查阅 · N 搜索 · N 文件」）====================
-  function _hgTurnSumRow() {
-    // result 到达时插入：本回合工具构成摘要（数据源=投影 turnTools，live
-    // 事件归约；回放路径无事件流不补——历史行没有，新回合有，逐步稠密）
-    const tt = (_HG.proj && _HG.proj.turnTools) || null;
-    if (!tt || !tt.calls) return;
-    const parts = [];
-    if (tt.searches) parts.push(tt.searches + ' 搜索');
-    if (tt.reads) parts.push(tt.reads + ' 文件');
-    if (tt.edits) parts.push(tt.edits + ' 编辑');
-    if (tt.bash) parts.push(tt.bash + ' 命令');
-    if (tt.agents) parts.push(tt.agents + ' 子代理');
-    if (!parts.length) return;
-    // v3.5.203b（用户实锤「查阅·1编辑·8命令 重复 3 次」）：幂等——result
-    // 帧在 SSE snapshot 重放/切回回放重建时会被再次处理（10-sse:645/899
-    // 两处调用），原无条件 insertBefore 每次叠一条。组内已有摘要行则原位
-    // 更新文本，绝不重插
-    const g = _HG.grp || [..._hgFlow.querySelectorAll('.h-grp')].pop();
-    const hb = g && (g.headBody || (g.querySelector && g.querySelector('.h-turn-body')));
-    if (!hb) return;
-    const txt = '🔍 查阅 · ' + parts.map(esc).join(' · ');
-    const old = hb.querySelector(':scope > .h-turnsum .h-turnsum-pill');
-    if (old) { old.textContent = txt; return; }
-    const d = document.createElement('div');
-    d.className = 'h-turnsum';
-    d.innerHTML = '<span class="h-turnsum-pill">' + txt + '</span>';
-    // v3.2.20（用户实锤回合末「莫名其妙的残留胶囊」）：不再挂消息流根
-    // （悬在最终结论/回滚钮之后像残留）——挂回合体内顶部，展开过程即见，
-    // 收起态根区干净
-    hb.insertBefore(d, hb.firstChild);
-  }
-
   // ==================== v3.1 流底 spinner（ZCode 式运行指示行）====================
   function _hgSpinShow(b) {
     let el = _hgFlow.querySelector(':scope > .hg-spin-row');

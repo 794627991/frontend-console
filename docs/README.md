@@ -15,7 +15,6 @@
 │   ├── main.py                      桌面应用入口（pywebview + Flask）
 │   ├── server.py                    HTTP 后端（多串口/SSH + AI 接入层）
 │   ├── mcp_server.py                MCP stdio server（Claude Code 集成）
-│   ├── serial_cli.py                命令行直连桥（buf/send/watch）
 │   ├── build.py                     PyInstaller 打包脚本
 │   ├── app_state.py                 共享状态 + 路径常量
 │   ├── base_conn.py / serial_conn.py / ssh_conn.py   连接层

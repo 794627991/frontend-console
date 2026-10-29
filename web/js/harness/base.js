@@ -216,7 +216,6 @@ const _HG = {
   holdRes: null,        // v3.5.130：hold 期中间 result 帧存档（真收尾 turn_complete
                         // 补收尾序列用：冻结工时/中断标记/ctx 环数据）
   histBuilding: false,  // v3.2.13：原子渲染（游离缓冲）进行中——isConnected 判据的缓冲期豁免（grpEnsure/_tlPlace/_tlExpFlush）
-  imgSrv: null,         // 图片服务路径标记（后端 /api/harness/img/<sid>/file）
   activity: null,       // 活动指示 {start, verbTimer, tickTimer}
   actStart: 0,
   echoFast: null,       // 已退役（纯 ZCode 式无乐观渲染）——字段保留防旧快照读取炸
