@@ -1126,6 +1126,12 @@
 
   V4Bridge.prototype._paintState = function (patch, isSnapshot) {
     var st = (this.store && this.store.snap && this.store.snap.state) || {};
+    // a152：TPS state → _HG.tps + 重画圆环（title 悬浮展示；环本体不变）
+    if (patch.tps !== undefined && !this.opt.sub) {
+      _HG.tps = patch.tps;
+      var _rr = _g('_hgDrawCtxRing');
+      if (_rr && _HG.ctxRing) { try { _rr(_HG.ctxRing.used, _HG.ctxRing.max); } catch (e) {} }
+    }
     // 子 pane 的 A 区只消费结论终稿——busy/ask/queue/model 全是主窗语义，
     // 子投影 patch 不得外溢（同 _rebuild 全局账守卫）
     if (this.opt.sub) {

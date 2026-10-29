@@ -2002,6 +2002,53 @@ class TestIncarnation(unittest.TestCase):
         self.assertLess(f.snap["seq"], 2 ** 53, "补事件后再次越界")
 
 
+class TestTpsState(_HWMTestCase):
+    """a152：TPS 投影——主窗 output/duration、子代理只累计。"""
+
+    def test_result_usage_projects_tps(self):
+        f = _mkfeed("e1")
+        f.ingest(_env(1, "turn_started"))
+        f.ingest(_env(2, "cli_stream", data={"type": "assistant", "message": {
+            "model": "m", "content": [{"type": "text", "text": "答"}]}}))
+        f.ingest(_env(3, "cli_stream", data={
+            "type": "result", "duration_ms": 30000,
+            "usage": {"output_tokens": 1200, "input_tokens": 50000}}))
+        tps = f.snap["state"].get("tps")
+        self.assertTrue(tps, "tps state 未投影")
+        self.assertEqual(tps["last"], 40.0, "1200/30s 应为 40.0")
+        self.assertEqual(tps["toks"], 1200)
+        self.assertEqual(tps["all"], 1200)
+        self.assertEqual(tps["sub"], 0)
+
+    def test_subagent_tokens_accumulate_only(self):
+        f = _mkfeed("e1")
+        f.ingest(_env(1, "turn_started"))
+        f.ingest(_env(2, "subagent_started", data={
+            "tid": "tu1", "agent_type": "reviewer", "desc": "d",
+            "bg": False, "task_id": "ag1"}))
+        f.ingest(_env(3, "subagent_result", data={
+            "tid": "tu1", "ok": True, "brief": "b",
+            "tokens": 5000, "tool_n": 4, "task_id": "ag1"}))
+        tps = f.snap["state"].get("tps")
+        self.assertEqual(tps["sub"], 5000, "子代理 token 应累计")
+        self.assertEqual(tps["last"], 0, "子代理不得进主窗 TPS")
+
+    def test_multi_turn_accumulates(self):
+        f = _mkfeed("e1")
+        f.ingest(_env(1, "turn_started"))
+        f.ingest(_env(2, "cli_stream", data={
+            "type": "result", "duration_ms": 10000,
+            "usage": {"output_tokens": 300}}))
+        f.ingest(_env(3, "turn_started", turn="t2"))
+        f.ingest(_env(4, "cli_stream", turn="t2", data={
+            "type": "result", "duration_ms": 20000,
+            "usage": {"output_tokens": 800}}))
+        tps = f.snap["state"].get("tps")
+        self.assertEqual(tps["all"], 1100)
+        self.assertEqual(tps["last"], 40.0, "第二回合 800/20s")
+        self.assertEqual(tps["toks"], 800)
+
+
 class TestMachineTurnMerge(_HWMTestCase):
     """a144R（用户铁律「闸不得拆分回合」）：审计/设计闸续发指令（send_message
     直发、先发 machine_turn 标记）拉起的新回合并回原组头——不建第二个

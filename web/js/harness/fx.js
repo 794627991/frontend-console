@@ -88,6 +88,20 @@
       ? `当前上下文 ${fmtTok(used)} / ${fmtTok(ctxMax)} tokens（${Math.round(pct)}%）`
       : (note || '上下文用量：首轮回复后统计');
     _hgCostEl.classList.toggle('warn', pct >= 80);
+    // a152：记忆最近一次读数（TPS state 到达时 v4bridge 借它重画 title）
+    _HG.ctxRing = { used: used, max: ctxMax };
+    // a152：圆环悬浮追加 TPS（主窗=最近回合产出速度；子代理只累计展示
+    // ——独立进程独立上下文，不进主窗 TPS 口径）
+    if (used > 0) {
+      const tps = _HG.tps;
+      if (tps && tps.last) {
+        _hgCostEl.title += '\n' + (_HG.busy ? '上回合' : '最近回合') +
+          ' ' + tps.last + ' tok/s（输出 ' + fmtTok(tps.toks) +
+          ' / ' + Math.round(tps.toks / tps.last) + 's）';
+      }
+      if (tps && tps.all) _hgCostEl.title += '\n本会话累计输出 ' + fmtTok(tps.all) + ' tok';
+      if (tps && tps.sub) _hgCostEl.title += '\n子代理累计 ' + fmtTok(tps.sub) + ' tok（独立上下文，不计入上行速度）';
+    }
     _hgDynDirty();   // v2.32 面板：上下文行跟随（localStorage 即数据总线，零新轮询）
   }
   function renderCtxRing(o) {

@@ -425,6 +425,11 @@ class V4Feed(object):
         self._merge_turn = False       # 下一 turn_started 并回上一回合
         self._last_turn_rid = None     # 最近组头 rowId（并回目标）
         self._merge_base_ms = {}       # rid -> 前段已记工时（多次续接链式）
+        # a152：TPS 账（上下文圆环悬浮展示）。口径：主窗 TPS=本回合
+        # output_tokens/duration_ms（只算产出——total 含输入会虚高到无意义）；
+        # 子代理 token 不进主窗 TPS（独立进程独立上下文，并行路数不固定，
+        # 合并=系统总吞吐而非会话速度），只累计展示
+        self._tps = {"last": 0, "toks": 0, "all": 0, "sub": 0}
         self._hydrate = hydrate        # 冷启动重建回调（snapshot 空时调用）
         self._hydrated = False
         self._hyd_keys = set()         # hydration 已呈现行的内容指纹（去重）
@@ -628,6 +633,12 @@ class V4Feed(object):
                     if _tid:
                         self._pending_agents[_tid] = (rid, None)
             elif t == "subagent_result":
+                # a152：子代理 token 累计进 A 区（task_notification 的
+                # total_tokens 真源；不含主窗 TPS——见 _reset 口径注释）
+                _stoks = int(data.get("tokens") or 0)
+                if _stoks > 0:
+                    self._tps["sub"] += _stoks
+                    ds.append(P.d_state({"tps": dict(self._tps)}))
                 tid = data.get("tid") or ""
                 pair = self._pending_agents.pop(tid, None)
                 ok = bool(data.get("ok"))
@@ -1054,6 +1065,16 @@ class V4Feed(object):
                 d, _ = self._upsert(rid, **_flds)
                 if d:
                     ds.append(d)
+            # a152：TPS——result 帧 usage.output_tokens / duration_ms（两值
+            # 都是 CLI 权威源；合并续接回合天然按段增量对齐）
+            _u = data.get("usage") or {}
+            _ot = int(_u.get("output_tokens") or 0)
+            if _ot > 0:
+                self._tps["toks"] = _ot
+                self._tps["all"] += _ot
+                if _ms:
+                    self._tps["last"] = round(_ot * 1000.0 / _ms, 1)
+                ds.append(P.d_state({"tps": dict(self._tps)}))
         return ds
 
     def _reduce_peer(self, data, turn, ts, seq):
