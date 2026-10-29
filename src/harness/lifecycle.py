@@ -115,43 +115,11 @@ def _ensure_gc():
     if not _gc_started:
         _gc_started = True
         threading.Thread(target=_gc_loop, daemon=True).start()
-        threading.Thread(target=_peer_poll_loop, daemon=True).start()
         try:
             from .subagent_watch import ensure_started as _sub_watch_start
             _sub_watch_start()   # 405 批A：子代理转写 watcher（delta 推送，ZCode subscribe 对位）
         except Exception:
             pass
 
-# ---- from claude_harness.py:2197 (_peer_poll_loop) ----
-
-
-def _peer_poll_loop():
-    """回传兜底轮询（v2.27.19）：_check_peer_lines 只在进程 stdout 有
-    assistant/result 事件时被触发，而 claude -p 进程回完 result 就退出——
-    peer 回传到达时进程多半已死，CLI 只把消息排队写进 jsonl
-    （attachment.type=queued_command），永远没人扫。用户实测：转交线计时
-    13 分钟不落、📥 气泡不出现，回传"凭空消失"。
-    这里 5s 一轮扫全部「前端在看」的会话（有 SSE 客户端），即使进程死了
-    也照常补扫 jsonl 尾部，peer 行照样 emit。不看的会话不扫——不产生
-    事件也就无需实时性，等用户切回来打开 SSE，下一轮自然补上。"""
-    while True:
-        time.sleep(5)
-        try:
-            with _sessions_lock:
-                objs = list(_sessions.values())
-            for s in objs:
-                if getattr(s, "is_vision", False) or getattr(s, "hidden", False):
-                    continue
-                try:
-                    # v3.0 收编后 s.clients/clients_lock 已随 SSE 改造退役——
-                    # 旧引用 AttributeError 被下面 except 吞成 watching=False，
-                    # 轮询兜底整体死路（peer 回传静默丢失）。改问 bus 订阅者
-                    watching = s.log.bus.has_subscribers()
-                except Exception:
-                    watching = False
-                if not watching:
-                    continue
-                # 有事件缓冲序列号，前端重连时用 after_seq 续传不丢
-                s._check_peer_lines()
-        except Exception:
-            pass
+# （_peer_poll_loop 回传兜底轮询已随批G 退役：v4 下无旧 SSE 订阅者，循环
+#  恒空转；peer 回传由 session reader 路径 _check_peer_lines 覆盖）

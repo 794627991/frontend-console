@@ -9,12 +9,10 @@
   SessionEventType   事件类型常量清单（契约单一源）
   reduce_events      事件段 → 投影（冷重建/测试）
   PROTOCOL_LIMITS    协议参数（截断/stash 上限）
-  SUBSCRIBER_BUFFER / KEEPALIVE_S   订阅 buffer / 心跳间隔
 """
 from .types import (SessionEventType, TRANSIENT_SESSION_EVENT_TYPES,
                     new_epoch, new_turn_id, type_for_kind)
 from .store import SessionEventStore
-from .bus import SessionBus, sse_frames, SUBSCRIBER_BUFFER, KEEPALIVE_S
 from .truncate import ToolOutputStash, truncate_tool_output, PROTOCOL_LIMITS
 from .reducer import initial_projection, apply_event, reduce_events
 from .log import SessionEventLog
@@ -22,8 +20,7 @@ from .log import SessionEventLog
 __all__ = [
     "SessionEventType", "TRANSIENT_SESSION_EVENT_TYPES",
     "new_epoch", "new_turn_id", "type_for_kind",
-    "SessionEventStore", "SessionBus", "sse_frames",
-    "SUBSCRIBER_BUFFER", "KEEPALIVE_S",
+    "SessionEventStore",
     "ToolOutputStash", "truncate_tool_output", "PROTOCOL_LIMITS",
     "initial_projection", "apply_event", "reduce_events",
     "SessionEventLog",

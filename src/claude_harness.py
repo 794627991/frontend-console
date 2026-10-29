@@ -115,7 +115,6 @@ from src.harness.lifecycle import (  # noqa: F401
     _gc_loop,
     _gc_started,
     _get_or_create,
-    _peer_poll_loop,
     log,
 )
 from src.harness.transcript import (  # noqa: F401
@@ -153,7 +152,6 @@ from src.harness.routes import (  # noqa: F401
     harness_connect,
     harness_ctx,
     harness_delete,
-    harness_events,
     harness_file,
     harness_files,
     harness_get_prompt,
@@ -163,8 +161,6 @@ from src.harness.routes import (  # noqa: F401
     harness_mcp_list,
     harness_mm_probe,
     harness_models,
-    harness_peer_pair_log,
-    harness_peer_result_check,
     harness_recover,
     harness_recoverable,
     harness_rename,
@@ -178,7 +174,6 @@ from src.harness.routes import (  # noqa: F401
     harness_set_vision,
     harness_skill_zh_translate,
     harness_skills,
-    harness_stream,
     harness_subagent_replay,
     harness_subagent_tail,
     harness_transcript,

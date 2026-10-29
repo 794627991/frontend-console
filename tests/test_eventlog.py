@@ -31,7 +31,6 @@ sys.path.insert(0, ROOT)
 
 from src.eventlog import (SessionEventLog, SessionEventType, reduce_events,
                           PROTOCOL_LIMITS)
-from src.eventlog.bus import SUBSCRIBER_BUFFER, KEEPALIVE_S
 
 _PASS, _FAIL = [], []
 
@@ -92,42 +91,7 @@ def main():
     check("淘汰后计数器不回拨（floor 前的 seq 不再复用）",
           sm.emit({"kind": "raw", "text": "n"})["seq"] == 16)
 
-    print("== 4. SSE 帧协议 ==")
-    fp = SessionEventLog("fp")
-    for i in range(3):
-        fp.emit({"kind": "raw", "text": "f%d" % i})
-    sub, mode, replay = fp.subscribe(base_epoch=fp.epoch, base_seq=1)
-    check("subscribe 判 resume 且回放 (1,3]", mode == "resume"
-          and [e["seq"] for e in replay] == [2, 3])
-    # 接缝去重：订阅后（快照前）新事件进队列，帧生成器按 seq 跳过重发
-    fp.bus.publish(fp.store.append({"kind": "raw", "text": "live"},
-                                   turn=None))
-    gen = fp.frames(sub, mode, replay)
-    f_ack = next(gen)
-    check("首帧 event: ack 且 mode 正确",
-          f_ack.startswith("event: ack") and '"resume"' in f_ack, f_ack[:60])
-    body = [next(gen) for _ in range(3)]
-    import re as _re
-    seqs_got = [_re.search(r'"seq": (\d+)', b).group(1) for b in body]
-    check("回放+live 帧序无重复", seqs_got == ["2", "3", "4"], repr(seqs_got))
-    check("空闲心跳 event: ka", next(gen).startswith("event: ka"))
-    check("ka 间隔对照 ZCode 5s", KEEPALIVE_S == 5)
-    check("订阅者 buffer 对照 ZCode 500", SUBSCRIBER_BUFFER == 500)
-    # 慢订阅者：灌满 buffer → 清积压投 reset
-    for i in range(SUBSCRIBER_BUFFER + 50):
-        fp.bus.publish({"kind": "raw", "text": "flood", "seq": 1000 + i})
-    got = sub.queue.get(timeout=1)
-    check("溢出投递 reset 控制帧", got.get("__control__") == "reset", repr(got)[:60])
-    sub2, mode2, replay2 = fp.subscribe(base_epoch="bogus", base_seq=0)
-    g2 = fp.frames(sub2, mode2, replay2)
-    check("reset 模式 ack 后即 reset 帧并断流",
-          next(g2).startswith("event: ack") and next(g2).startswith("event: reset"))
-    try:
-        next(g2)
-        ended = False
-    except StopIteration:
-        ended = True
-    check("reset 模式生成器终止", ended)
+    # （§4 SSE 帧协议已随批G 退役——bus//stream 旧链删除）
 
     print("== 5. 工具输出截断 ==")
     tr = SessionEventLog("tr")

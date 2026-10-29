@@ -61,15 +61,8 @@ def _use_temp_wseq_dir():
 _use_temp_wseq_dir()
 
 
-def _sub_line(i):
-    """产出一行能进子投影的 assistant 文本行（带 uuid/timestamp）。"""
-    import json
-    import uuid
-    return json.dumps({
-        "type": "assistant", "uuid": str(uuid.uuid4()),
-        "timestamp": "2026-10-26T09:00:%02dZ" % (i % 60),
-        "message": {"model": "m", "content": [
-            {"type": "text", "text": "行 %d" % i}]}})
+# （_Bus/_Log/_Sess 桩与 TestWatchEmitGate 已随批G 退役：subagent_delta
+#  账本门禁连同旧 SSE 链删除；_sub_line 亦无他用）
 
 
 class TestSubCounter(unittest.TestCase):
@@ -262,77 +255,6 @@ class TestReapIdle(_HubTestCase):
         # acquire 必须在 try 之前、finally 里有 release
         self.assertLess(seg.index("acquire=True"), seg.index("try:"))
         self.assertIn("sub_release()", seg)
-
-
-class _Bus(object):
-    def __init__(self, has):
-        self._has = has
-
-    def has_subscribers(self):
-        if self._has is Exception:
-            raise Exception("bus boom")
-        return self._has
-
-
-class _Log(object):
-    def __init__(self, bus):
-        self.bus = bus
-        self.emitted = []
-
-    def emit(self, item):
-        self.emitted.append(item)
-        return item
-
-
-class _Sess(object):
-    def __init__(self, log):
-        self.log = log
-        self.sid = "sw"
-
-    def emit(self, item):
-        return self.log.emit(item)
-
-
-class TestWatchEmitGate(unittest.TestCase):
-    """subagent_delta 账本门禁：无 V3 消费者不进账本（370MB 级常驻根除）。"""
-
-    def test_no_subscribers_no_emit(self):
-        import tempfile
-        with tempfile.TemporaryDirectory() as d:
-            fp = os.path.join(d, "agent-ag1.jsonl")
-            with open(fp, "w", encoding="utf-8") as f:
-                f.write(_sub_line(0) + "\n")
-            W._offsets.pop(fp, None)
-            log = _Log(_Bus(False))
-            n = W._push_file(_Sess(log), fp, "ag1", reconcile=True)
-            self.assertGreater(n, 0)   # 增量照常消费（v4 子投影喂入不受影响）
-            self.assertEqual(log.emitted, [])   # 但不进账本（零消费者）
-
-    def test_with_subscribers_emits(self):
-        import tempfile
-        with tempfile.TemporaryDirectory() as d:
-            fp = os.path.join(d, "agent-ag1.jsonl")
-            with open(fp, "w", encoding="utf-8") as f:
-                f.write(_sub_line(0) + "\n")
-            W._offsets.pop(fp, None)
-            log = _Log(_Bus(True))
-            n = W._push_file(_Sess(log), fp, "ag1", reconcile=True)
-            self.assertGreater(n, 0)
-            self.assertEqual(len(log.emitted), 1)
-            self.assertEqual(log.emitted[0]["data"]["type"], "subagent_delta")
-
-    def test_bus_error_fallback_emits(self):
-        """has_subscribers 抛错 → 保守照发（宁可多吃不可断流）。"""
-        import tempfile
-        with tempfile.TemporaryDirectory() as d:
-            fp = os.path.join(d, "agent-ag1.jsonl")
-            with open(fp, "w", encoding="utf-8") as f:
-                f.write(_sub_line(0) + "\n")
-            W._offsets.pop(fp, None)
-            log = _Log(_Bus(Exception))
-            n = W._push_file(_Sess(log), fp, "ag1", reconcile=True)
-            self.assertGreater(n, 0)
-            self.assertEqual(len(log.emitted), 1)
 
 
 class TestFactsTruncation(unittest.TestCase):

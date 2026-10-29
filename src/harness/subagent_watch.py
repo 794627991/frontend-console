@@ -29,7 +29,6 @@ log = logging.getLogger(__name__)
 
 WATCH_INTERVAL_S = 1.0     # 检测间隔（实时感对位 SSE）
 FRESH_WINDOW_S = 120.0     # 只看 mtime 新鲜的转写（终态零开销）
-MAX_DELTA_BYTES = 262144   # 单文件单轮推送上限（256KB 防爆）
 
 _started = False
 _offsets = {}              # abs path -> 已推字节 offset
@@ -106,9 +105,8 @@ def _push_file(s, fp, aid, force=False, reconcile=False):
     """读 fp 自 offset 起的增量整行：喂 v4 子投影 + emit 兼容事件。
 
     a68（用户实测「子代理过程缺失/结论永不到/永远不结束」根因）：增量
-    截尾（MAX_DELTA_BYTES）只作用于**旧前端镜像事件的载荷**——子 feed
-    喂入必须全量行。子代理转写里 api-request-blob 单行可达数百 KB，一次
-    增量常态超 256KB，旧截尾直接把增量起点跳到文件尾=整段业务行（工具/
+    喂入必须全量行（子代理转写里 api-request-blob 单行可达数百 KB，
+    截尾直接把增量起点跳到文件尾=整段业务行（工具/
     收尾 handback）永久丢失，feed 冻结在中途（state.final 永空、前端
     秒表永跑）。V3 无此问题（回放走 /subagent_replay 全量文件）。
 
@@ -181,24 +179,8 @@ def _push_file(s, fp, aid, force=False, reconcile=False):
             v4hub.v4_sub_ingest(s.sid, aid, obj)
     except Exception:
         pass
-    # 兼容旧前端（批F 退役）：载荷防爆照旧截尾。
-    # 内存批（多子代理实锤：账本 deque(maxlen=2000) 每条至多 256KB、
-    # microcompact 只折 cli_stream 的 message.content 块折不到本形态，
-    # 实测 2000×60KB=370MB 常驻）：**无 V3 SSE 订阅者时不 emit**——v4
-    # 模式主窗不 openSSE（v4main 全权接管）、子 pane 走 /v4/stream，
-    # 本事件零消费者，进账本纯属白吃。V3 前端在场（bus 有订阅者）照发，
-    # 旧管线零变化；has_subscribers 查询异常时保守照发（宁可多吃不可断流）
-    try:
-        _has_v3 = bool(s.log.bus.has_subscribers())
-    except Exception:
-        _has_v3 = True
-    if _has_v3:
-        s.emit({"kind": "event", "data": {
-            "type": "subagent_delta",
-            "agent": aid,
-            "offset": new_off,
-            "text": txt[:MAX_DELTA_BYTES],
-        }})
+    # （旧前端 subagent_delta 镜像事件已随批G 退役——v4 子 pane 走 /v4/stream
+    #  的 sub topic，账本门禁与 256KB 载荷截尾一并删除）
     return new_off - off
 
 

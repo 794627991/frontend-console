@@ -58,10 +58,8 @@ except Exception:
 # 时前端资源直读源码目录 web/（本文件旁），彻底绕过 RES_DIR/_mem_web/一切副本；
 # run_debug.bat 一键启动（先清旧进程残尸，控制台可见伺服模式打印）
 DEBUG_WEB = os.environ.get("HARNESS_DEBUG_WEB") == "1"
-# v4 归一管线：a122（用户拍板「启动直接使用 v4 模式」）默认**常开**——前端
-# v4main.v4On 默认 on（URL ?v4=0 / localStorage hg_v4='0' 可显式关）。此处
-# 注入只剩启动横幅如实显示与显式关两个用途：HARNESS_V4=0 注入 0，其余注入 1。
-DEBUG_V4 = os.environ.get("HARNESS_V4") != "0"
+# （v4 归一管线 a137 起唯一基准：HARNESS_V4 / __HG_V4__ 注入与 v4=0 回退
+#  通道已随批G 全量退役，前端 v4main 不再有开关）
 # Claude 子系统进程隔离（v4.0.0 串口卡顿根治，用户定调「Claude 随便占，
 # 串口不能卡」）：harness/hiklink 重负载移驻 src/worker_app.py 独立进程，
 # 本进程只留串口终端与轻量路由。CLAUDE_INLINE=1 回落旧单进程形态（排障）。
@@ -372,13 +370,10 @@ def index():
     except Exception:
         _HV = "0"
     def _inject(data):
-        # 占位符用 __HG_V4FLAG__（与变量名 __HG_V4__ 刻意不同名——子串相同
-        # 会让 replace 连变量名一起吃掉：window.__HG_V4__ → window.1，
-        # boot 行语法错误整行报废，v4 开关永远读不到（a12 实测根因））
         # __HG_WBASE__：Claude worker 基址（进程隔离；空串=未分离/未就绪，
         # workerbase.js 见空串即全透明零开销）。占位符与变量名 __HG_WORKER__
-        # 刻意不同名——同名会被 replace 连变量名一起吃掉（同 __HG_V4FLAG__
-        # 的坑）；请求时读 WORKER_BASE，worker 重启换端口后刷新页面即得新值
+        # 刻意不同名——同名会被 replace 连变量名一起吃掉；请求时读 WORKER_BASE，
+        # worker 重启换端口后刷新页面即得新值
         # __HG_WFAMFLAG__：worker 能力标记（注入 'proxy'=worker 已承载
         # proxy/usage/claude_default 族）。dev 模式前端文件从磁盘直读、后端
         # 进程可能还是旧代码——新 workerbase 若把 proxy 族改写到旧 worker
@@ -389,11 +384,9 @@ def index():
         # （__HG_V4FLAG__ 同款坑，a99F 实测再踩一次）
         if isinstance(data, bytes):
             data = data.replace(b"__HG_VER__", _HV.encode("utf-8"))
-            data = data.replace(b"__HG_V4FLAG__", b"1" if DEBUG_V4 else b"0")
             data = data.replace(b"__HG_WBASE__", WORKER_BASE.encode("utf-8"))
             return data.replace(b"__HG_WFAMFLAG__", b"proxy" if CLAUDE_OFFLOAD else b"")
         data = data.replace("__HG_VER__", _HV)
-        data = data.replace("__HG_V4FLAG__", "1" if DEBUG_V4 else "0")
         data = data.replace("__HG_WBASE__", WORKER_BASE)
         return data.replace("__HG_WFAMFLAG__", "proxy" if CLAUDE_OFFLOAD else "")
     if DEBUG_WEB:
