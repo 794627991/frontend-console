@@ -23,7 +23,6 @@ _log = _logging.getLogger(__name__)
 
 from .types import (SessionEventType, make_envelope, new_epoch,
                     TurnWindowRetention)
-from . import reducer as _reducer
 
 # a116 十六次全审：wseq 高水位独立小文件目录。放 HOME_DIR 下与 meta 同级
 # （用户数据目录，重启存活）；不进 meta 是为了同步写——meta 是全量读写，
@@ -103,7 +102,6 @@ class SessionEventStore(object):
         self._wseq_closed = False       # 会话删除后置位：拒绝重建孤儿文件
         self._load_wseq()
         self.compacted_events = 0       # microcompact 命中计数（stats/测试观测）
-        self.projection = _reducer.initial_projection(sid)
 
     # ---- wseq 高水位持久化（a116 十六次全审）----
     @property
@@ -256,7 +254,6 @@ class SessionEventStore(object):
             evict_turns = self.retention_policy.on_append(env, now_ms)
             if evict_turns:
                 self._evict_transient(set(evict_turns))
-            self.projection = _reducer.apply_event(self.projection, env)
             return env
 
     # ---- microcompact（#13）----
@@ -351,26 +348,11 @@ class SessionEventStore(object):
         return res[-limit:] if limit else res
 
     def snapshot(self):
+        """事件缓冲浅拷贝（测试/巡检访问器；旧 SSE 订阅协议的
+        resume_mode 三态判定已随批G 退役，v4 客户端由 /v4/stream 的
+        ack 三态 + epoch 对账承担同职责）。"""
         with self._lock:
             return list(self._events)
-
-    # ---- 断点续传判定（对照 conversation-topic-publisher.ts:743-788）----
-    def resume_mode(self, base_epoch, base_seq):
-        """三态：resume（补 delta）/ snapshot（清场重放保留窗）/ reset（转写重建）。
-
-        - base 未带（epoch 为空）→ snapshot：客户端没有可声明的一致水位
-        - epoch 不匹配 → reset：日志已被重写（/rewind），事件流无法表达真源，
-          客户端必须走 transcript 重建
-        - base_seq 落在保留窗内 [floor, last] → resume
-        - base_seq 越过 last（不可能的一致态）→ snapshot 兜底
-        """
-        if base_epoch and base_epoch != self.epoch:
-            return "reset"
-        if not base_epoch:
-            return "snapshot"
-        if self._floor_seq <= base_seq <= self._last_seq:
-            return "resume"
-        return "snapshot"
 
     # ---- 日志重写 ----
     def bump_epoch(self, epoch=None):
@@ -382,7 +364,6 @@ class SessionEventStore(object):
             self._events.clear()
             self._bytes = 0                 # 缓冲清空，字节估算归零（#13）
             self._floor_seq = self._last_seq
-            self.projection = _reducer.initial_projection(self.sid)
 
     def restore(self, epoch, seq, wseq_hwm=0):
         """会话对象被重建（闲置回收/重启后 _get_or_create）时续号续代。

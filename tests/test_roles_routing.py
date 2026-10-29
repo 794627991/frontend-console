@@ -274,7 +274,8 @@ write_cfg(enabled=True, light_model=POOL_LIGHT, heavy_model=POOL_HEAVY)
 
 # ============ 6. 指纹热更 ============
 print("[6] 指纹热更")
-from src.claude_harness import _bridge_fp, _audit_lines
+from src.harness.bridges import _bridge_fp
+from src.harness.audit import _audit_lines
 fp1 = _bridge_fp(LIGHT_MODEL)
 write_cfg(enabled=True, light_model=POOL_LIGHT, heavy_model=POOL_HEAVY,
           l2_max_lines=150)
@@ -571,7 +572,7 @@ hr.update_roles_cfg({"enabled": True})
 
 # ============ 13. 派发/续派识别 ============
 print("[13] 派发/续派识别")
-from src.claude_harness import _audit_dispatch_role as D
+from src.harness.audit import _audit_dispatch_role as D
 check("Task 按名计 designer", D("Task", {"subagent_type": "designer"}) == "designer")
 check("Agent 按名计 reviewer", D("Agent", {"subagent_type": "reviewer"}) == "reviewer")
 check("Task dev 已退役不计", D("Task", {"subagent_type": "dev"}) is None)
@@ -588,7 +589,7 @@ check("发 main 不计", D("SendMessage", {"to": "main"}) is None)
 check("无关工具不计", D("Edit", {"file_path": "x"}) is None)
 
 # _audit_tally 集成：SendMessage 续派 + Task 记 pending + result 回填映射
-from src.claude_harness import HarnessSession as _HS
+from src.harness.session import HarnessSession as _HS
 _fake = types.SimpleNamespace(_audit={"lines": 0, "files": [],
                                       "designer": False, "reviewer": False,
                                       "streak": 0, "ids": {}, "pending": {}})

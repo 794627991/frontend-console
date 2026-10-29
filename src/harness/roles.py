@@ -319,7 +319,7 @@ def resolve_role_models(models=None, default=None):
     if models is None:
         try:
             # 惰性导入防循环（claude_harness 也 import 本模块）
-            from ..claude_harness import available_models as _am
+            from ..harness.models import available_models as _am
             d = _am()
             models, default = d.get("models") or [], d.get("default")
         except Exception:

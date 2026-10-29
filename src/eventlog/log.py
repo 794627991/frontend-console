@@ -32,9 +32,6 @@ class SessionEventLog(object):
     def floor_seq(self):
         return self.store.floor_seq
 
-    @property
-    def projection(self):
-        return self.store.projection
 
     def stats(self):
         return self.store.stats()

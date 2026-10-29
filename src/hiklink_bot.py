@@ -38,7 +38,9 @@ from platform import architecture, node, system
 from urllib.parse import urlencode
 from urllib.request import ProxyHandler, build_opener, HTTPSHandler
 
-from src import claude_harness as ch
+from src.harness.lifecycle import _get_or_create
+from src.harness.session import HarnessSession
+from src.harness.consts import _sessions, _sessions_lock
 from src.app_state import DATA_DIR
 
 log = logging.getLogger("hiklink_bot")
@@ -721,14 +723,14 @@ class HikLinkBotController:
         之前每条消息新建一个会话（用户实锤列表十几个小助理）就是缺了这步。"""
         s = None
         if self._sid:
-            s = ch._get_or_create(self._sid)
+            s = _get_or_create(self._sid)
         if s is not None:
             if not s.alive:
                 s.revive_if_dead()
             if s.alive:
                 return s
         new_sid = uuid.uuid4().hex
-        s = ch.HarnessSession(new_sid, cwd=os.path.expanduser("~"),
+        s = HarnessSession(new_sid, cwd=os.path.expanduser("~"),
                               title="前端小助手（HikLink）")
         try:
             s.start()
@@ -736,8 +738,8 @@ class HikLinkBotController:
             log.error("HikLink harness 会话启动失败: %s", e)
             return None
         s.sync_meta()
-        with ch._sessions_lock:
-            ch._sessions[new_sid] = s
+        with _sessions_lock:
+            _sessions[new_sid] = s
         self._sid = new_sid
         self._save_sid()
         return s

@@ -116,7 +116,7 @@ def _parent_watchdog(pid):
 def build_app():
     from flask import Flask, jsonify, request
 
-    from src.claude_harness import harness_bp
+    from src.harness.routes import harness_bp
     from src import hiklink_bot
     from src.proxy import proxy_bp
     from src.proxy_usage import usage_bp

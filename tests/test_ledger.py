@@ -57,9 +57,8 @@ def main():
     ks = kinds(s)
     check("事件流 input_admitted ×3",
           ks.count("input_admitted") == 3)
-    check("投影 inbox 3 条（id 对齐）",
-          sorted(x["id"] for x in s.log.store.projection["inbox"])
-          == sorted([q1, q2, q3]))
+    check("队列账本 id 对齐",
+          sorted(x["id"] for x in s.queue_list()) == sorted([q1, q2, q3]))
     check("queue_discard 精确摘除", s.queue_discard(q2, "user") is True
           and [e["text"] for e in s.queue_list()] == ["任务A", "任务C"])
     check("discard 不存在条目返回 False", s.queue_discard("nope") is False)
@@ -223,10 +222,9 @@ def main():
     sr = [e for e in snap if e.get("kind") == "subagent_result"]
     check("镜像事件成对落流",
           len(st) == 1 and len(sr) == 1 and st[0]["agent_type"] == "reviewer")
-    a = s.log.store.projection["agents"].get("tu9")
-    check("镜像驱动 agents 投影收尾",
-          a and a["done"] is True and a["err"] is False
-          and a["tokens"] == 4200 and a["tool_n"] == 3)
+    check("镜像收尾事件携带用量与成功态",
+          sr[0].get("ok") is True and sr[0].get("tokens") == 4200
+          and sr[0].get("tool_n") == 3 and sr[0].get("task_id") == "ag9")
 
     print("=" * 56)
     print("通过 %d / 失败 %d" % (len(_PASS), len(_FAIL)))

@@ -29,8 +29,7 @@ import threading
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from src.eventlog import (SessionEventLog, SessionEventType, reduce_events,
-                          PROTOCOL_LIMITS)
+from src.eventlog import (SessionEventLog, SessionEventType, PROTOCOL_LIMITS)
 
 _PASS, _FAIL = [], []
 
@@ -80,14 +79,6 @@ def main():
         sm.emit({"kind": "raw", "text": "e%d" % i})
     check("保留窗滑出推进 floor", sm.floor_seq == 5 and sm.last_seq == 15,
           "floor=%s last=%s" % (sm.floor_seq, sm.last_seq))
-    check("base 在窗内 → resume",
-          sm.store.resume_mode(sm.epoch, 10) == "resume")
-    check("base 落窗外 → snapshot",
-          sm.store.resume_mode(sm.epoch, 2) == "snapshot")
-    check("base 越过 last → snapshot",
-          sm.store.resume_mode(sm.epoch, 99) == "snapshot")
-    check("base 缺省（无 epoch）→ snapshot", sm.store.resume_mode(None, 10) == "snapshot")
-    check("epoch 不匹配 → reset", sm.store.resume_mode("bogus", 10) == "reset")
     check("淘汰后计数器不回拨（floor 前的 seq 不再复用）",
           sm.emit({"kind": "raw", "text": "n"})["seq"] == 16)
 
@@ -131,39 +122,7 @@ def main():
             first_ref = r
     check("stash LRU 逐出（最早 ref 取不回）", tr.full_output(first_ref) is None)
 
-    print("== 6. 投影归约 ==")
-    evs = [
-        {"kind": "turn_started", "turn": "t1", "seq": 1},
-        {"kind": "user_echo", "turn": "t1", "seq": 2},
-        {"kind": "event", "turn": "t1", "seq": 3,
-         "data": {"type": "assistant", "message": {"content": []}}},
-        {"kind": "turn_complete", "turn": "t1", "seq": 4},
-        {"kind": "turn_started", "turn": "t2", "seq": 5},
-        {"kind": "turn_error", "turn": "t2", "text": "进程崩溃", "seq": 6},
-        {"kind": "future_x", "seq": 7},
-    ]
-    from src.eventlog import initial_projection
-    p = initial_projection("pj")
-    for e in evs:
-        p = __import__("src.eventlog", fromlist=["apply_event"]).apply_event(p, e)
-    check("turn 计数=2 且终态 idle", p["turn_count"] == 2 and p["status"] == "idle")
-    check("turn_error 落 last_error", p["last_error"] == "进程崩溃")
-    check("未知类型不崩且推进 last_seq", p["last_seq"] == 7)
-    p2 = reduce_events("pj", evs)
-    check("整段归约与逐条一致（live/replay 共用）",
-          p2["turn_count"] == p["turn_count"] and p2["status"] == p["status"]
-          and p2["last_seq"] == p["last_seq"])
-    # 新 turn 清旧错误（ZCode 源头清理语义）
-    p3 = __import__("src.eventlog", fromlist=["apply_event"]).apply_event(
-        p, {"kind": "turn_started", "turn": "t3", "seq": 8})
-    check("新 turn 清旧 last_error", p3["last_error"] is None
-          and p3["status"] == "running")
-    # 集成：store.append 内嵌归约（增量真源）
-    it = SessionEventLog("it")
-    it.emit({"kind": "turn_started"}, turn="t1")
-    it.emit({"kind": "user_echo", "text": "q"}, turn="t1")
-    check("store 增量投影=running 且 turn 在场",
-          it.projection["status"] == "running" and it.projection["turn"])
+    # （§6 投影归约已随批G 退役——reducer.py 整文件删除）
 
     print("== 7. 换代与重建 ==")
     rw = SessionEventLog("rw")
@@ -171,18 +130,13 @@ def main():
         rw.emit({"kind": "raw", "text": "r%d" % i})
     old_epoch = rw.epoch
     rw.bump_epoch()
-    check("bump 后旧 epoch → reset",
-          rw.store.resume_mode(old_epoch, 3) == "reset")
-    check("bump 后同代 base 也只能 snapshot（缓冲已清）",
-          rw.store.resume_mode(rw.epoch, 3) == "snapshot")
     nxt = rw.emit({"kind": "raw", "text": "after"})
     check("换代后 seq 续不回拨", nxt["seq"] == 6 and nxt["epoch"] == rw.epoch)
     gc1 = SessionEventLog("gc")
     eg = gc1.emit({"kind": "raw", "text": "x"})
     gc2 = SessionEventLog("gc")
     gc2.restore(gc1.epoch, eg["seq"])
-    check("GC 重建同代续号 → resume",
-          gc2.store.resume_mode(gc1.epoch, eg["seq"]) == "resume")
+    check("GC 重建同代续号", gc2.epoch == gc1.epoch and gc2.last_seq == eg["seq"])
     gc3 = SessionEventLog("gc3")
     gc3.restore(None, 42)
     gc4 = SessionEventLog("gc3")
@@ -190,60 +144,8 @@ def main():
     check("旧 meta 无 epoch → 各自换新代（前端水位作废走 snapshot）",
           gc3.epoch != gc4.epoch)
 
-    print("== 8. v3.1 新事件：子代理镜像 / 输入账本 / 工具计数 ==")
-    # 镜像事件信封：kind→type 恒等映射，reducer 落 agents 投影
-    log8 = SessionEventLog("s8", retention=100)
-    log8.emit({"kind": "subagent_started", "tid": "tu1",
-               "agent_type": "reviewer", "desc": "审计 harness 拆分",
-               "bg": False, "task_id": "ag1"})
-    p8 = log8.store.projection
-    check("subagent_started 落 agents 投影",
-          p8["agents"].get("tu1", {}).get("type") == "reviewer"
-          and p8["agents"]["tu1"]["done"] is False)
-    log8.emit({"kind": "subagent_result", "tid": "tu1", "ok": False,
-               "brief": "FAIL: 3 处违规", "tokens": 12000, "tool_n": 7})
-    p8 = log8.store.projection
-    a8 = p8["agents"]["tu1"]
-    check("subagent_result 收尾（err/brief/用量）",
-          a8["done"] is True and a8["err"] is True
-          and a8["tokens"] == 12000 and "FAIL" in a8["brief"])
-    # 输入账本投影：admitted → inbox 追加；promoted/discarded → 摘除
-    log8.emit({"kind": "input_admitted", "id": "q1", "text": "继续任务A", "gen": 0})
-    log8.emit({"kind": "input_admitted", "id": "q2", "text": "继续任务B", "gen": 0})
-    check("input_admitted ×2 → inbox 两条",
-          [x["id"] for x in log8.store.projection["inbox"]] == ["q1", "q2"])
-    log8.emit({"kind": "input_promoted", "id": "q1"})
-    check("input_promoted 摘除队首",
-          [x["id"] for x in log8.store.projection["inbox"]] == ["q2"])
-    log8.emit({"kind": "input_discarded", "id": "q2", "reason": "rewind"})
-    check("input_discarded 清空 inbox", log8.store.projection["inbox"] == [])
-    # 工具计数：主链 tool_use 进桶（Read/Grep/Edit/Bash/Task 各归各位），
-    # 子代理事件（parent_tool_use_id）不计
-    log8.emit({"kind": "turn_started"})
-    log8.emit({"kind": "event", "data": {"type": "assistant", "message": {"content": [
-        {"type": "tool_use", "id": "t1", "name": "Read", "input": {}},
-        {"type": "tool_use", "id": "t2", "name": "Grep", "input": {}},
-        {"type": "tool_use", "id": "t3", "name": "Edit", "input": {}},
-        {"type": "tool_use", "id": "t4", "name": "Bash", "input": {}},
-        {"type": "tool_use", "id": "t5", "name": "Task", "input": {}}]}}})
-    log8.emit({"kind": "event", "data": {"type": "assistant",
-               "parent_tool_use_id": "tu1", "message": {"content": [
-        {"type": "tool_use", "id": "t6", "name": "Bash", "input": {}}]}}})
-    tt8 = log8.store.projection["turn_tools"]
-    check("主链 tool_use 计数（1文件/1搜索/1编辑/1命令/1子代理）",
-          tt8["calls"] == 5 and tt8["reads"] == 1 and tt8["searches"] == 1
-          and tt8["edits"] == 1 and tt8["bash"] == 1 and tt8["agents"] == 1)
-    check("子代理内部调用不计主回合计数", tt8["calls"] == 5)
-    log8.emit({"kind": "turn_complete"})
-    p8 = log8.store.projection
-    check("turn_complete 定格 last_turn_tools 摘要",
-          p8["last_turn_tools"]["calls"] == 5 and p8["tools_total"]["calls"] == 5)
-    log8.emit({"kind": "turn_started"})
-    check("新回合开窗清零 turn_tools",
-          log8.store.projection["turn_tools"]["calls"] == 0
-          and log8.store.projection["tools_total"]["calls"] == 5)
-    check("live 增量与 reduce_events 重放一致（8 号段）",
-          reduce_events("s8", log8.store.snapshot()) == log8.store.projection)
+    # （§8 投影断言已随批G 退役——reducer/projection 删除；镜像事件
+    #  行为级覆盖在 test_ledger §5 与 test_v4feed）
 
     print("== 9. microcompact（旧回合超大负载折叠）==")
     from src.eventlog.store import COMPACT_BYTES, _fold_text

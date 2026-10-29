@@ -152,7 +152,7 @@ if CLAUDE_OFFLOAD:
     _hiklink_bot = None   # /api/hiklink/* 路由不注册（worker 承载）
 else:
     from src import hiklink_bot as _hiklink_bot
-    from src.claude_harness import harness_bp
+    from src.harness.routes import harness_bp
     app.register_blueprint(harness_bp)
 
 # ---- 单实例唤醒通道 ----

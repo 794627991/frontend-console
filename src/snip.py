@@ -657,7 +657,7 @@ def launch_window(port):
                 if not raw:
                     continue
                 import uuid
-                from src.claude_harness import _UPLOAD_DIR
+                from src.harness.consts import _UPLOAD_DIR
                 os.makedirs(_UPLOAD_DIR, exist_ok=True)
                 path = os.path.join(_UPLOAD_DIR, "%s_snip.png" % uuid.uuid4().hex[:8])
                 with open(path, "wb") as f:
@@ -683,7 +683,7 @@ def save_png(data_url):
         return False, "图像数据为空"
     try:
         import uuid
-        from src.claude_harness import _UPLOAD_DIR
+        from src.harness.consts import _UPLOAD_DIR
         os.makedirs(_UPLOAD_DIR, exist_ok=True)
         path = os.path.join(_UPLOAD_DIR, "%s_snip.png" % uuid.uuid4().hex[:8])
         with open(path, "wb") as f:
