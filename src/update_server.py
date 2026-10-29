@@ -168,11 +168,13 @@ def _versions():
 
 
 def _offline_pkg():
-    """离线资源包单独通道（<应用名>-offline-pkg.zip，v2.3.3 及之前带
-    -v<ver> 尾巴也兼容识别，多份取最新）。不进版本清单/更新日志——它不是
-    应用版本，只是无外网机器的部署资源（Git/Node/claude-code/Python 依赖，
-    与工具版本无关，包名不带版本号）。sha1 不提供：manifest 刻意不收
-    离线包（updater 不能推它），424MB 大文件也不宜每请求现算。"""
+    """离线资源包单独通道。v4.1 起统一为加密的 `<应用名>-资源包.fcpk`
+    （含 WebView2/dotnet/node/git/claude/pydeps，自定义容器，必须用工具装）；
+    仍兼容旧的标准 zip（`-offline-pkg.zip`，v2.3.3 及之前带 -v<ver>）。
+
+    不进版本清单/更新日志——它不是应用版本，只是无外网机器的部署资源。
+    sha1 不提供：manifest 刻意不收它（updater 不能把它当应用更新推下去），
+    700MB 级大文件也不宜每请求现算。"""
     root = _releases_dir()
     try:
         names = os.listdir(root)
@@ -180,21 +182,27 @@ def _offline_pkg():
         return None
     best = None
     for n in sorted(names):
-        if not (n.endswith(".zip") and "-offline-pkg" in n):
+        is_new = n.endswith(".fcpk") and "-资源包" in n
+        is_old = n.endswith(".zip") and "-offline-pkg" in n
+        if not (is_new or is_old):
             continue
         p = os.path.join(root, n)
         try:
             st = os.stat(p)
         except OSError:
             continue
-        if best and st.st_mtime <= best[1]:
+        # 新版优先（同 mtime 时 fcpk 胜出）
+        rank = 1 if is_new else 0
+        if best and (st.st_mtime, rank) <= best[1]:
             continue
-        ver = n.rsplit("-v", 1)[-1][:-4] if "-v" in n else ""
-        best = (n, st.st_mtime, st.st_size, ver)
+        ver = n.rsplit("-v", 1)[-1][:-4] if ("-v" in n and n.endswith(".zip")) else ""
+        best = (n, (st.st_mtime, rank), st.st_size, ver,
+                "fcpk" if is_new else "zip")
     if not best:
         return None
     return {"file": best[0], "version": best[3], "size": best[2],
-            "mtime": int(best[1] * 1000), "url": "/" + quote(best[0])}
+            "mtime": int(best[1][0] * 1000), "format": best[4],
+            "url": "/" + quote(best[0])}
 
 
 # ---------------------------------------------------------------------------
@@ -867,8 +875,11 @@ async function load(){
         +'<div style="font-size:14px;font-weight:650">🧰 离线资源包'
         +'<span style="font-size:11px;font-weight:400;color:var(--muted);margin-left:8px">OFFLINE PKG</span></div>'
         +'<div style="font-size:12px;color:var(--muted);margin-top:5px">📅 '+fmtTs(j.offline.mtime)+' · 📦 '+fmtSize(j.offline.size)
-        +' · 无外网机器部署资源（Git / Node / claude-code / Python 依赖），与工具版本无关，独立下载</div></div>'
-        +'<button class="btn" data-dl="'+esc(j.offline.url)+'" data-n="'+esc(j.offline.file)+'" style="flex-shrink:0">⬇ 下载离线包</button></div>';
+        +(j.offline.format==='fcpk'
+          ?' · 无外网机器部署资源（WebView2 / .NET / Node / Git / claude-code / Python 依赖），加密资源包，<b style="color:var(--fg)">须用工具安装（双击打不开）</b>'
+          :' · 无外网机器部署资源（Git / Node / claude-code / Python 依赖），与工具版本无关')
+        +'</div></div>'
+        +'<button class="btn" data-dl="'+esc(j.offline.url)+'" data-n="'+esc(j.offline.file)+'" style="flex-shrink:0">⬇ 下载'+(j.offline.format==='fcpk'?'资源包':'离线包')+'</button></div>';
     }
     const rest=j.items.slice(1);
     if(rest.length){
@@ -1068,7 +1079,7 @@ class _Handler(BaseHTTPRequestHandler):
 
         # 版本包文件：manifest/整包下载双通道共用，不做登录校验
         # （同事工具无浏览器态；完整性由 manifest sha1 保证）
-        if name.endswith(".zip") or name.endswith(".exe"):
+        if name.endswith((".zip", ".exe", ".fcpk")):
             p = _safe_path(root, name)
             if p and os.path.isfile(p):
                 self._file(p, "application/octet-stream")

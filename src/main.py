@@ -474,26 +474,14 @@ def _wv2_ver_tuple(pv):
 
 
 def _wv2_fixed_dir():
-    """内置 Fixed Version 运行时目录（含 msedgewebview2.exe 的那层）。
-    发布形：exe 同级 runtime/WebView2Fixed/<...>/msedgewebview2.exe；
-    源码跑：仓库根 runtime/…。两层深度兜底（cab 展开形/手摆形都认）。"""
-    import glob as _gl
-    base = os.path.dirname(os.path.abspath(sys.argv[0]))
-    if getattr(sys, "frozen", False):
-        bases = [base, os.path.dirname(base)]
-    else:
-        bases = [os.path.dirname(os.path.dirname(os.path.abspath(__file__)))]
-    for b in bases:
-        for pat in ("runtime", os.path.join("runtime", "WebView2Fixed")):
-            root = os.path.join(b, pat)
-            if not os.path.isdir(root):
-                continue
-            for depth in range(1, 4):
-                hit = _gl.glob(os.path.join(
-                    root, *(["*"] * depth), "msedgewebview2.exe"))
-                if hit:
-                    return os.path.dirname(hit[0])
-    return ""
+    """内置/解包出的 Fixed Version 运行时目录（含 msedgewebview2.exe 那层）。
+
+    v4.1（用户拍板）：运行时改由离线资源包解到 <app>/offline_runtime/webview2/，
+    探测顺序必须先查它再查老的 runtime/——升级早期两处并存时否则会用旧版。
+    深度 1..5（offline_runtime/webview2/<ver>/…/msedgewebview2.exe）。
+    """
+    from src.res_boot import wv2_fixed_dir as _find
+    return _find()
 
 
 def _ensure_webview2():
@@ -517,9 +505,20 @@ def _ensure_webview2():
         print("[webview2] ⚠ 系统 %s 低于 %s 且无内置运行时——继续用系统，"
               "新版前端可能渲染异常" % (pv, ".".join(map(str, _WV2_MIN))))
     else:
-        print("[webview2] ⚠ 系统无 WebView2 运行时且未随包内置（runtime/"
-              "WebView2Fixed/）——窗口将无法创建；请安装 WebView2 Runtime"
-              " 或使用带内置运行时的完整包")
+        # v4.1：运行时改由离线资源包解到 offline_runtime/webview2/。
+        # 闸门（res_boot.preflight_gate）正常已拦住此路；走到这里是旁路
+        # 启动（--no-claude-worker 等）或闸门异常放行——弹原生提示并继续，
+        # 窗口大概率建不出来，至少给用户看得懂的原因。
+        print("[webview2] ⚠ 系统无 WebView2 运行时且离线资源包未安装"
+              "（offline_runtime/webview2/）——窗口将无法创建；"
+              "请用工具目录下的 .fcpk 资源包安装")
+        try:
+            from src.res_ui import msgbox, MB_OK, MB_ICONERROR
+            msgbox("系统缺少 WebView2 运行时，且未安装离线资源包。\n\n"
+                   "请重新启动工具，按提示选择 .fcpk 资源包安装。",
+                   "前端控制台", MB_OK | MB_ICONERROR)
+        except Exception:
+            pass
 
 
 def main():
@@ -610,6 +609,40 @@ def main():
     from src.deps_bootstrap import bootstrap_if_needed, selftest_once
     if not bootstrap_if_needed():
         return
+    # v4.1（用户拍板）：硬资源闸门——必须在 `import webview` 之前。
+    # WebView2 缺失/过旧、.NET Framework < 4.8.1 时窗口根本建不出来（后者
+    # 连 import webview 都抛异常），所以这里用 Win32 原生对话框引导用户装
+    # 离线资源包，装完自动重启；用户取消或安装失败则本进程退出。
+    try:
+        from src.res_boot import preflight_gate
+        if not preflight_gate():
+            return
+    except Exception as _e:
+        # 全审 B3：早前这里是「吞异常放行」，最坏链路是用户选了半截包 →
+        # 抛异常 → 放行 → 走到「窗口建不出来」的莫名状态。改为：先自己
+        # 复查一遍 WebView2 是否真的可用——能用才放行（闸门故障不该锁死
+        # 老机器），不能用就明确告诉用户原因再退出。
+        import traceback
+        traceback.print_exc()
+        try:
+            from src.res_boot import probe_webview2, probe_dotnet
+            st_wv = probe_webview2()[0]
+            st_net = probe_dotnet()[0]
+        except Exception:
+            st_wv = st_net = "unknown"
+        if st_wv == "ok" and st_net in ("ok", "unknown"):
+            print("[res_boot] 闸门异常但运行环境可用，继续启动")
+        else:
+            try:
+                from src.res_ui import msgbox, MB_OK, MB_ICONERROR
+                msgbox("启动前检查运行环境时出错，且当前环境不满足要求。\n\n"
+                       "错误：%r\nWebView2：%s / .NET：%s\n\n"
+                       "请重新双击工具，按提示选择 .fcpk 资源包安装。"
+                       % (_e, st_wv, st_net),
+                       "前端控制台", MB_OK | MB_ICONERROR)
+            except Exception:
+                pass
+            return
     # 自依赖自检（每机一次）：全通过写标记不再测；有缺失则把清单传给
     # 前端——每次启动都提醒哪些功能不可用，直到用户用离线包补装
     # （exe 分发恒通过，标记写过后零开销）

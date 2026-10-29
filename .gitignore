@@ -64,6 +64,9 @@ png/
 # （只忽略 fetch 脚本的 cab 残件；WebView2Fixed/ 本体 git 跟踪）
 /runtime/*.cab
 
+# v4.1：离线资源包解包落点（WebView2 Fixed Version 等，运行时生成，几百 MB 不入库）
+/offline_runtime/
+
 # ---- 仓库瘦身（D 批）：.ua 产物库出库（用户拍板：vendor 不瘦身，保持原样）----
 # 代码分析工具 .ua 的产物库（knowledge-graph/.trash 中间产物——本地工具数据，不入库）
 /.ua/

@@ -89,7 +89,9 @@ def build():
             return dist
         _refresh_offline_claude()   # v3.4.95：离线 claude-code 版本有变即刷新
         _sync_offline_pkg()
-        _bundle_webview2(app_dir)   # v2.3.7a：内置 WebView2 运行时（有则带）
+        # v4.1（用户拍板）：不再 _bundle_webview2 随包带运行时——改为打进
+        # 统一离线资源包 .fcpk（含 WebView2/dotnet/node/git/claude/pydeps）。
+        # 发布包随之从 318MB 降到约 65MB。
         # v2.3.1 发布前资源加密（web 前端源码/blob → AES-256-GCM 密文，
         # exe 启动 src/secure_boot.py 自解密；第三方库不碰）
         try:
@@ -100,7 +102,7 @@ def build():
         except Exception as e:
             print("⚠ 资源加密失败（发布 zip 将含明文 web）:", e)
         _publish(app_dir)
-        _publish_offline_pkg()   # v3.4.97：离线资源包同步进 releases（发布页可下载）
+        _build_offline_fcpk()    # v4.1：统一加密离线资源包（.fcpk）
         return dist
     else:
         print("打包失败：未找到 exe")
@@ -108,7 +110,10 @@ def build():
 
 
 def _bundle_webview2(app_dir):
-    """v2.3.7b（用户铁律×2「无条件随包；保底包不能是下载的——不能假设
+    """【v4.1 已退役，保留以便回滚】WebView2 改为打进 .fcpk 资源包，
+    发布包不再随带。回滚：skip_dirs 去掉 "runtime" + 主流程恢复调用。
+
+    v2.3.7b（用户铁律×2「无条件随包；保底包不能是下载的——不能假设
     构建机有网络」）：WebView2 Fixed Version 运行时**入库随仓走**
     （runtime/WebView2Fixed/，168 文件 557MB，git 跟踪）——任何机器
     clone/合入/检出即有，打包无条件带上，全程零网络。
@@ -174,11 +179,21 @@ def _publish(app_dir):
     dst = os.path.join(rel, ver_name)
     # 压缩应用目录（顶层带「前端控制台/」壳——同事解压即得同名目录，
     # updater 解压后按唯一壳目录定位应用根）
-    skip_dirs = {".update", "data"}          # 运行时产物不进发布包
+    # v4.1（用户拍板）：runtime/ 不再进发布包——WebView2 移入统一离线资源包
+    # （.fcpk），发布包 318MB → 65MB。缺运行时的机器启动时由 res_boot 闸门
+    # 引导装包。回滚只需把下面的顶层 runtime 剔除删掉并恢复 _bundle_webview2。
+    #
+    # 全审 A2 实锤（严重）：早前用 {".update","data","runtime"} 做**裸目录名**
+    # 匹配，对任意深度生效，把 _internal/pythonnet/runtime/（Python.Runtime.dll
+    # 等 99 个文件）一并剔掉 → 发布包里 pythonnet 条目为 0 → import clr 失败
+    # → `import webview` 抛异常，窗口根本建不出来。必须只跳过应用目录**顶层**
+    # 的那三个目录。
+    skip_top = {".update", "data", "runtime"}
     skip_files = {"update.bat"}
     with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
         for r, ds, fs in os.walk(app_dir):
-            ds[:] = [d for d in ds if d not in skip_dirs]
+            if os.path.normpath(r) == os.path.normpath(app_dir):
+                ds[:] = [d for d in ds if d not in skip_top]
             for f in fs:
                 if f in skip_files:
                     continue
@@ -234,7 +249,10 @@ def _publish(app_dir):
 
 
 def _publish_offline_pkg():
-    """v3.4.97（用户需求「offline_pkg 同步到 release 形成压缩包，发布页
+    """【v4.1 已退役，保留以便回滚】旧的标准 zip 离线包通道，被
+    _build_offline_fcpk（加密统一格式）取代。
+
+    v3.4.97（用户需求「offline_pkg 同步到 release 形成压缩包，发布页
     同步提供」）：dist/offline_pkg → dist/releases/<应用名>-offline-pkg.zip。
     不带版本号（用户定调：离线包内容是 Git/Node/claude-code/依赖，与工具
     版本无关）。发布中心 _offline_pkg() 单独通道列出——同事端门户即见
@@ -358,6 +376,152 @@ def _sync_offline_pkg():
         shutil.copy2(src_rd, dst_rd)
     except OSError:
         pass
+
+
+
+# ---------------------------------------------------------------------------
+# v4.1：统一离线资源包 .fcpk（用户拍板：WebView2 移出发布包，格式统一+加密）
+# ---------------------------------------------------------------------------
+
+def _offline_sources():
+    """收集离线资源清单。返回 [(src_path, arcname, kind, mode, link_from)]。
+
+    mode 取舍（实测压缩率）：.msi/.zip/.whl 已压缩过（1.01~1.05，再压反而
+    变大）→ raw；.exe/.dll 值得压（Git 1.03 但 exe 本体可变、webview2 的
+    msedge.dll 0.61、claude.exe 0.57）→ 只有明确的 DLL/EXE 用 deflate。
+    """
+    src = os.path.join(BASE, "dist", "offline_pkg")
+    out = []
+    if os.path.isdir(src):
+        for name in sorted(os.listdir(src)):
+            p = os.path.join(src, name)
+            if not os.path.isfile(p):
+                continue
+            low = name.lower()
+            if low.endswith((".msi", ".zip", ".whl", ".tar.gz")):
+                mode = "raw"
+            elif low.endswith(".exe"):
+                mode = "deflate"
+            else:
+                continue
+            if low.startswith("git-"):
+                kind = "git"
+            elif low.startswith("node-"):
+                kind = "node"
+            elif low.startswith("ndp481"):
+                kind = "dotnet"
+            else:
+                continue
+            out.append((p, "install/" + name, kind, mode, None))
+        cc = os.path.join(src, "claude-code")
+        if os.path.isdir(cc):
+            # 全审 B4 实锤（严重）：早前只收 .exe/.node/.dll，把
+            # package.json / cli-wrapper.cjs / install.cjs / LICENSE 等全丢了
+            # ——装出来是「只有两个 exe 的空壳」，claude 起不来、版本号也读
+            # 不到，还会把用户现有可用安装 rmtree 掉。改为**整目录全收**：
+            # 已压缩的二进制用 deflate，其余（json/js/md）用 raw。
+            first_exe = None
+            for r, ds, fs in os.walk(cc):
+                ds.sort()
+                for f in sorted(fs):
+                    p = os.path.join(r, f)
+                    arc = ("claude-code/"
+                           + os.path.relpath(p, cc).replace("\\", "/"))
+                    low = f.lower()
+                    mode = ("deflate" if low.endswith(
+                        (".exe", ".dll", ".node", ".cjs", ".js", ".json"))
+                        else "raw")
+                    link = None
+                    if low == "claude.exe":
+                        if first_exe is None:
+                            first_exe = arc
+                        else:
+                            link = first_exe
+                    out.append((p, arc, "claude", mode, link))
+        pd = os.path.join(src, "pydeps")
+        if os.path.isdir(pd):
+            for f in sorted(os.listdir(pd)):
+                p = os.path.join(pd, f)
+                if os.path.isfile(p):
+                    out.append((p, "pydeps/" + f, "pydeps", "raw", None))
+    wv = os.path.join(BASE, "runtime", "WebView2Fixed")
+    if os.path.isdir(wv):
+        for r, ds, fs in os.walk(wv):
+            ds.sort()
+            for f in sorted(fs):
+                p = os.path.join(r, f)
+                arc = "webview2/" + os.path.relpath(p, wv).replace("\\", "/")
+                low = f.lower()
+                mode = "deflate" if low.endswith((".exe", ".dll")) else "raw"
+                out.append((p, arc, "webview2", mode, None))
+    return out
+
+
+def _build_offline_fcpk():
+    """产出 dist/releases/<应用名>-资源包.fcpk。
+    指纹（清单摘要）不变则沿用；写完立即全量验签，坏包绝不发布。"""
+    import hashlib
+    sys.path.insert(0, BASE)
+    from src import fcpk
+    files = _offline_sources()
+    if not files:
+        print("资源包: 无可用资源（dist/offline_pkg 与 runtime/WebView2Fixed 都不在），跳过")
+        return None
+    rel = os.path.join(BASE, "dist", "releases")
+    os.makedirs(rel, exist_ok=True)
+    dst = os.path.join(rel, "%s-资源包.fcpk" % APP_NAME)
+    h = hashlib.sha256()
+    for p, arc, kind, mode, link in files:
+        st = os.stat(p)
+        h.update(("%s|%s|%d|%d" % (arc, kind, st.st_size,
+                                   int(st.st_mtime))).encode("utf-8"))
+    fp = h.hexdigest()[:16]
+    fp_file = os.path.join(rel, "offline-pkg.fingerprint")
+    try:
+        with open(fp_file, encoding="utf-8") as f:
+            old = f.read().strip()
+    except OSError:
+        old = ""
+    if old == fp and os.path.isfile(dst):
+        print("资源包: 内容未变，沿用 %s（%d MB）"
+              % (os.path.basename(dst), os.path.getsize(dst) // 1024 // 1024))
+        return dst
+    total = sum(os.path.getsize(p) for p, *_ in files) / 1024 / 1024
+    print("资源包: 打包 %d 个文件 / %.0f MB（加密 + 压缩，需数分钟）…"
+          % (len(files), total))
+    resources = []
+    for kind in ("webview2", "dotnet", "node", "git", "claude", "pydeps"):
+        n = sum(1 for x in files if x[2] == kind)
+        if n:
+            resources.append({"kind": kind, "files": n})
+    w = fcpk.FcpkWriter(dst, resources=resources)
+    try:
+        for p, arc, kind, mode, link in files:
+            w.add_file(p, arc, kind=kind, mode=mode, link_from=link)
+        w.close()
+    except Exception as e:
+        print("资源包: 打包失败 %s" % e)
+        # C4（全审）：早前删的是最终产物 dst，而写入用的是 dst+".building"
+        # ——中途失败会把上一版可用的 673MB 好包删掉。只清临时文件。
+        for _tmp in (dst + ".building", dst + ".tmp2"):
+            try:
+                os.remove(_tmp)
+            except OSError:
+                pass
+        return None
+    print("资源包: 验签 …")
+    r = fcpk.FcpkReader(dst)
+    r.verify_all()
+    r.close()
+    try:
+        with open(fp_file, "w", encoding="utf-8") as f:
+            f.write(fp)
+    except OSError:
+        pass
+    sz = os.path.getsize(dst)
+    print("资源包: 已发布 → %s (%d MB)" % (dst, sz // 1024 // 1024))
+    return dst
+
 
 if __name__ == "__main__":
     build()

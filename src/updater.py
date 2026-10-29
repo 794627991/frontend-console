@@ -162,6 +162,10 @@ def _write_bat(parent_dir, app_name, exe_name, staging_root):
         '>> "' + log + '" echo 新版本已就位',
         # data/（用户数据：凭据/会话/命令库）从备份搬回——没有则跳过
         'if exist "' + bak + DBSN + 'data" move "' + bak + DBSN + 'data" "' + app_rel + DBSN + 'data" >nul',
+        # offline_runtime/（v4.1：离线资源包解出的 WebView2 运行时 + .fcpk.json
+        # 安装凭据）也必须搬回。全审 B6 实锤：早前只搬 data/，升级后新目录里
+        # 没有运行时 → 硬拦再次触发，用户每升一次版就要重装 700MB 资源包。
+        'if exist "' + bak + DBSN + 'offline_runtime" move "' + bak + DBSN + 'offline_runtime" "' + app_rel + DBSN + 'offline_runtime" >nul',
         'start "" "' + app_rel + DBSN + exe_name + '"',
         'rd /s /q "' + app_name + '.update" 2>nul',
         '>> "' + log + '" echo 升级完成',

@@ -119,6 +119,10 @@ app.register_blueprint(vcs_bp)
 from src.claude_setup import claude_setup_bp
 app.register_blueprint(claude_setup_bp)
 
+# v4.1（用户拍板）：离线资源状态/安装（统一 .fcpk 资源包的软提示与一键装）
+from src.res_api import res_bp
+app.register_blueprint(res_bp)
+
 # ——以下三个 Claude 系蓝图随 proxy 二期（用户拍板）移驻 worker 进程：
 #   usage_bp（/api/usage/*，monkeypatch proxy_core 采集——数据面在哪统计
 #   就必须在哪）、claude_default_bp（/api/claude/api_config|profiles|…，

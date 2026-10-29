@@ -39,6 +39,7 @@ a = Analysis(
         'Crypto', 'Crypto.Cipher', 'Crypto.PublicKey', 'Crypto.Util.Padding',
         'Crypto.Util.number', 'Crypto.Cipher.PKCS1_v1_5',  # CAS 登录 RSA 加密
         'Crypto.Cipher.AES', 'Crypto.PublicKey.RSA',
+        # v4.1：fcpk 资源包 AES-GCM 走 Crypto.Cipher.AES（上面已列）；
         'Crypto.Hash.HMAC', 'Crypto.Signature.PKCS1_v1_5',            # pycryptodome（代理 CAS + 资源解密）
         'PIL', 'PIL.Image', 'PIL.ImageDraw', 'PIL.ImageFont',
         'PIL.ImageGrab',                 # v3.5.26：snip.py 延迟导入（函数内 import，静态分析收不到——发布版截图 --grab 分支 ImportError 实锤）
