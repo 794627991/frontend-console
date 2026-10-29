@@ -937,21 +937,6 @@ function buildClaudeHarnessTab(opts = {}) {
   _hgCtxInFlight = false;
   setInterval(() => { if (!document.hidden) _hgCtxPoll(); }, 5000);
 
-  // v2.26:busy 状态自愈——SSE 事件丢失/断线重连竞态会让前端 _HG.busy 与
-  // 后端真实状态脱节(用户实锤「AI 在工作但显示未在应答」,活动指示器消失)。
-  // 5s 轮询会话列表纠偏,指示器永远反映后端真实 busy;计时起点同步用
-  // busy_since(切会话回来不清零,用户实锤)。
-  setInterval(() => {
-    // v3.5.50：只读模式早退——RO 期间 busy 自愈会 setBusy 抢渲染权
-    if (_HG.readonly) return;
-    if (document.hidden || !_HG.sid || !_HG.sse) return;
-    fetch('/api/harness/sessions').then(r => r.json()).then(j => {
-      if (!j || !j.ok) return;
-      const s = (j.sessions || []).find(x => x.sid === _HG.sid);
-      if (s && !!s.busy !== _HG.busy) setBusy(!!s.busy, s.busy_since);
-    }).catch(() => {});
-  }, 5000);
-
   // ==================== CLI 事件 → 渲染 ====================
 
   // ==================== SSE ====================
@@ -1048,7 +1033,13 @@ function buildClaudeHarnessTab(opts = {}) {
       const j = await r.json();
       if (!j.ok) { showBanner('回滚失败：' + (j.err || '未知'), 3600, true); return; }
       showBanner('⏪ ' + j.msg, 3600);
-      await _hgReloadFlow();
+      // v4-only：回滚换代走 epoch——不再跑 V3 重渲链，携水位强制重订阅让
+      // 服务端裁决 snapshot 接管（换代提示行由后端 emit 落新 feed，随快照到达）
+      var _c = _HG.v4Cur;
+      if (_c && _c.sid === _HG.sid && !_c.store._closed) {
+        _c.store._forceSnapshot = true;
+        _c.store._scheduleReconnect();
+      }
     } catch(err) { showBanner('回滚失败：' + err, 3000, true); }
     btn.disabled = false;
   }
@@ -2206,17 +2197,7 @@ function buildClaudeHarnessTab(opts = {}) {
         behavior: _HG.readonly ? 'auto' : 'smooth' });
       return;
     }
-    // 未渲染回合：先扩窗到该行（histStart=该行号——_histRender 的段头回退
-    // 只对 sub_ 行生效，user 行精确落位），渲染完成凭章定位
-    if (it.hi >= 0 && !_HG.busy && !_histBusy && _HG.sid && _HG.histAll) {
-      _histBusy = true;
-      const sidAt = _HG.sid;
-      _histRefresh(sidAt, it.hi).then(() => {
-        _histBusy = false;
-        if (_HG.sid !== sidAt) return;
-        const el = _hgFlow.querySelector('.h-msg.user[data-turn-hi="' + it.hi + '"]');
-        if (el) el.scrollIntoView({ block: 'start' });
-      });
-    }
+    // v4-only：未渲染回合（20 回合窗口外）由归档条入口承载——不再走
+    // V3 的 _histRefresh 扩窗重拉（v4 下恒 no-op，已随批G 退役）
   });
   }

@@ -899,11 +899,8 @@
       // v3.2.30：冲 live 来向消息队列（tid 键 + 已绑 agentId 键）
       _subUserFlush(tid);
       if (_ag.taskId) _subUserFlush(_ag.taskId);
-      if (_sub.tabs[tid].run) {
-        _sub.tabs[tid].t.t0 = _ag.t0 || Date.now();
-        _subTlHeadPaint(_sub.tabs[tid].t);
-        _subTlTickStart(tid);
-      }
+      // v4-only：秒表/头画/定稿收口全由 v4bridge 子引擎驱动（自有 _subTick，
+      // 快照整建时接管），此处不再起 V3 tick（曾与 state.final 定稿打架，a116）
     }
     _subShow(tid); _subTabsPaint(); _subActivate(tid);
   }
