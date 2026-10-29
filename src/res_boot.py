@@ -178,10 +178,11 @@ def wv2_fixed_dir():
                 m = _re.search(r"(\d+(?:\.\d+){2,3})", os.path.basename(
                     os.path.dirname(p)))
                 return _ver_tuple(m.group(1)) if m else ()
-            ok_hits = [h for h in hit if _vt(h) >= WV2_MIN]
-            if not ok_hits:
-                continue        # 对抗审二轮 P2-1：全低于下限不回退（probe 侧判 outdated）
-            best = max(ok_hits, key=_vt)
+            # 对抗审三轮 P2-A：不过滤直接取最新返回——版本下限由
+            # probe_webview2 统一判（这里过滤会让 probe 的「版本过低」
+            # 分支变死代码，用户装了旧版包得到的是 missing 而非 outdated，
+            # 重装同版死循环）
+            best = max(hit, key=_vt)
             return os.path.dirname(best)
     return ""
 

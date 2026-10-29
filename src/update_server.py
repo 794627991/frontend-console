@@ -14,7 +14,7 @@ http://<本机内网IP>:8765/ 看版本/下整包，同事的工具也从同一�
 项目 web/ 目录（发布机丢了前端资源也能跑）；路径限定 dist/releases；
 0.0.0.0 监听，首次启动防火墙弹窗需允许。
 """
-import os, sys, json, time, html, secrets, threading, socket
+import os, sys, json, time, html, re, secrets, threading, socket
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import unquote, quote
 

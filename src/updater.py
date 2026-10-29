@@ -136,8 +136,11 @@ def _write_bat(parent_dir, app_name, exe_name, staging_root):
     bat = os.path.join(parent_dir, _BAT)
     log = "update_log.txt"
     BS = '\\'
-    NL = '\\r\\n'
-    DBSN = '\\\\'
+    # 对抗审三轮 P0-B 实锤：v3.5.292 起这里的 '\\r\\n' 是字面 4 字符 \r\n
+    # （不是 CRLF）——join 产物是单行尸 bat，升级链命令从未逐行执行过。
+    # 改 chr() 构造杜绝再犯，并加结构断言（行数>=30）防复发
+    NL = chr(13) + chr(10)
+    DBSN = chr(92) * 2
     body = NL.join([
         '@echo off',
         'chcp 936 >nul',
@@ -193,7 +196,10 @@ def _write_bat(parent_dir, app_name, exe_name, staging_root):
         'pause',
         'del "%~f0"',
     ]) + NL
-    with open(bat, "w", encoding="gbk") as f:
+    # 对抗审三轮 P0-B：结构断言——行数不足=join 产物是单行尸（v3.5.292
+    # 起 NL 双转义 bug 从「断言全过」眼皮底下存活至今，断的是子串不是结构）
+    assert body.count(NL) >= 30, "update.bat 行结构异常（%d 行）" % body.count(NL)
+    with open(bat, "w", encoding="gbk", newline="") as f:
         f.write(body)
     return bat
 def apply_update():
