@@ -131,13 +131,14 @@
     if (!lv) return;
     for (const t in lv) {
       const a = lv[t];
-      // a155R 观测点位1：桶 running 档即将被已落的冷查询终态条目顶掉——
-      // sendAt（轮次栅栏）随之丢失的入口。零行为变化，只弹通知
+      // a155R2 观测点位1：桶 running 档即将被已落的冷查询终态条目顶掉——
+      // sendAt（轮次栅栏）随之丢失的入口。零行为变化，记 ⓘ 诊断日志
       const _cur = (_HG.agents || {})[t];
       if (!a.done && _cur && (_cur.done || _cur.err || _cur.stopped)) {
         if (typeof _hgSyncAudit === 'function')
-          _hgSyncAudit('切回会话', t, '运行中的子代理档案被旧状态覆盖（'
-            + (a.desc || '').slice(0, 30) + '）');
+          _hgSyncAudit('切回覆盖', t, '桶档running sendAt=' + (a.sendAt || 0)
+            + ' ← 冷查终态 doneAt=' + (_cur.doneAt || 0)
+            + ' err=' + !!_cur.err + ' stopped=' + !!_cur.stopped);
       }
       if (a.done || (_HG.agents || {})[t]) { delete lv[t]; continue; }
       _HG.agents = _HG.agents || {};

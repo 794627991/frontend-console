@@ -46,14 +46,17 @@ let _subX;
 let visIndEl;
 let visBtnEl;
 
-  // a155R（用户拍板：notifyPop 通知即可，console/账本那套太复杂）：子代理
-  // 切会话同步观测——触发时弹一条带 ✗ 的通知（notifyPop 自带同文去重，
-  // 2s 周期 Sync 不刷屏），同时把最后一条存 _HG._syncLast 供随手查。
-  // 零行为变化：只弹通知。复现时截图通知即可定位（kind 区分入口/症状点）
+  // a155R2（用户指路：走既有 ⓘ 诊断弹窗——顶栏小圆钮，点击显示版本+
+  // 诊断日志流水）：子代理切会话同步观测写进 _hgDiag 环形日志，触发时
+  // 静默记录，点 ⓘ 即看。_syncSeen 同状态去重（子引擎每帧状态推进都会
+  // 重入点位，不去重会把 60 条诊断刷成同一句）。零行为变化：只记日志
   function _hgSyncAudit(kind, tid, msg) {
     try {
-      _HG._syncLast = { at: Date.now(), kind: kind, tid: String(tid) };
-      showBanner('子代理同步观测[' + kind + '] ' + msg + '——若与实际状态不符，请截图此通知', 6000, true);
+      var fp = kind + '|' + msg;
+      _HG._syncSeen = _HG._syncSeen || {};
+      if (_HG._syncSeen[tid] === fp) return;
+      _HG._syncSeen[tid] = fp;
+      _hgDiag('子代理同步·' + kind, msg + '（tid=' + tid + '）');
     } catch (_) {}
   }
 

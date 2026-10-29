@@ -1740,12 +1740,14 @@
     var running = !st.done;
     var ag = this._agEntry();
     if (running && ag && ag.done) {
-      // a155R 观测点位2：子 feed 还在流（st.done=false）但档案说 done——
-      // 窗格即将定稿。此即用户症状的发生点，弹通知取证。零行为变化
+      // a155R2 观测点位2：子 feed 还在流（st.done=false）但档案说 done——
+      // 窗格即将定稿。此即用户症状的发生点，记 ⓘ 诊断日志。零行为变化
       try {
         if (typeof _hgSyncAudit === 'function')
           _hgSyncAudit('窗格定稿', this.opt.agent,
-            '「' + String(ag.desc || '').slice(0, 30) + '」显示完成但进程仍在输出');
+            'feed流中档案done doneAt=' + (ag.doneAt || 0)
+            + ' sendAt=' + (ag.sendAt || 0) + ' err=' + !!ag.err
+            + ' stopped=' + !!ag.stopped + ' interrupted=' + !!ag.interrupted);
       } catch (_) {}
       running = false;   // 档案终态优先（防投影滞后假跑）
     }
