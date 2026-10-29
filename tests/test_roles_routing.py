@@ -632,7 +632,7 @@ check("子代理事件（parent_tool_use_id）不计", not _fake._audit["reviewe
 print("[14] /roles 端点")
 try:
     from flask import Flask
-    import src.claude_harness as _ch
+    import src.harness.routes as _ch
     _app = Flask(__name__)
     _app.register_blueprint(_ch.harness_bp)
     _c = _app.test_client()

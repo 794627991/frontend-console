@@ -687,6 +687,13 @@
         if (_sw) { try { _sw(true); } catch (e) {} }
         var _sb2 = _g('setBusy');
         if (_sb2) { try { _sb2(false); } catch (e) {} }
+        // 对抗审 P1-2（a141）：interrupted marker 到达即通知 stopGen「事件到了」
+        // ——旧 sse.js:1227 的派发点随批G 迁移至此，缺失则每次 ■ 停止 2.3s 后
+        // 必弹假「中断事件超时」banner（chatctl stopGen 的 gotEvent 恒 false）
+        if (row.mkind === 'interrupted') {
+          try { document.dispatchEvent(
+            new CustomEvent('hg-interrupted', {detail: _HG.sid})); } catch (e) {}
+        }
         return;
       }
       // 切模型分割线（V3 sse.js:1184 等价）：renderHistLine 无 model_switched

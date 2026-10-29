@@ -110,6 +110,9 @@
     // v4 归一管线：清场与状态账完成后全权接管——store connect 收 snapshot
     // 整建 + delta 增量（新建会话 UI 由 v4Switch(null) 自带；旧 openSSE/
     // histFetch/快照恢复/冷开重拉路径已随批G 退役）
+    // 对抗审 P1-1（a141）：ask dock 是全局单件——切会话必须清空，否则 A 的
+    // 待答卡悬浮在 B 上、提交还带错 sid；切回 A 由 feed state.ask 重建
+    _hgAskDockRestore('');
     V4Main.switch(sid, keepInput);
   }
   // v3.4.52（致命双会话实锤「全部变成回放了但是实际是在工作的」）：切走时
