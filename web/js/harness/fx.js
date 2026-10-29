@@ -100,6 +100,8 @@
           ' / ' + Math.round(tps.toks / tps.last) + 's）';
       }
       if (tps && tps.all) _hgCostEl.title += '\n本会话累计输出 ' + fmtTok(tps.all) + ' tok';
+      if (tps && tps.liveToks && _HG.busy)
+        _hgCostEl.title += '\n（含生成中 ~' + fmtTok(tps.liveToks) + ' tok，估值——回合结束落准）';
       if (tps && tps.sub) _hgCostEl.title += '\n子代理累计 ' + fmtTok(tps.sub) + ' tok（独立上下文，不计入上行速度）';
     }
     _hgDynDirty();   // v2.32 面板：上下文行跟随（localStorage 即数据总线，零新轮询）

@@ -2033,6 +2033,36 @@ class TestTpsState(_HWMTestCase):
         self.assertEqual(tps["sub"], 5000, "子代理 token 应累计")
         self.assertEqual(tps["last"], 0, "子代理不得进主窗 TPS")
 
+    def test_live_ctx_tracking(self):
+        """a153：assistant usage→ctxLive 基准；流式字符→liveToks 估；result 落真值。"""
+        f = _mkfeed("e1")
+        f.ingest(_env(1, "turn_started"))
+        # 首个 assistant 块：usage 输入侧 50000 + 200 字符文本（liveToks=50 未过 32 档→先不估）
+        f.ingest(_env(2, "cli_stream", data={"type": "assistant", "message": {
+            "model": "m", "usage": {"input_tokens": 50000, "output_tokens": 10},
+            "content": [{"type": "text", "text": "x" * 200}]}}))
+        tps = f.snap["state"].get("tps")
+        self.assertEqual(tps["ctxLive"], 50000, "assistant usage 输入侧应即时入 ctxLive")
+        # 第二块：再 +1000 字符（累计 1200 字符 → liveToks=300 ≥32 档）
+        f.ingest(_env(3, "cli_stream", data={"type": "assistant", "message": {
+            "model": "m",
+            "content": [{"type": "text", "text": "y" * 1000}]}}))
+        tps = f.snap["state"].get("tps")
+        self.assertEqual(tps["liveToks"], 300, "1200 字符 //4 = 300")
+        # result：真值 60000 覆盖 ctxLive，估値清零
+        f.ingest(_env(4, "cli_stream", data={
+            "type": "result", "duration_ms": 10000,
+            "usage": {"output_tokens": 400, "input_tokens": 60000}}))
+        tps = f.snap["state"].get("tps")
+        self.assertEqual(tps["ctxLive"], 60000)
+        self.assertEqual(tps["liveToks"], 0, "result 后估値应清零")
+        # 新回合：字符账归零
+        f.ingest(_env(5, "turn_started", turn="t2"))
+        f.ingest(_env(6, "cli_stream", turn="t2", data={"type": "assistant", "message": {
+            "model": "m", "content": [{"type": "text", "text": "z" * 400}]}}))
+        tps = f.snap["state"].get("tps")
+        self.assertEqual(tps["liveToks"], 100, "新回合 400//4=100（上一回合的 300 已清）")
+
     def test_multi_turn_accumulates(self):
         f = _mkfeed("e1")
         f.ingest(_env(1, "turn_started"))

@@ -429,7 +429,9 @@ class V4Feed(object):
         # output_tokens/duration_ms（只算产出——total 含输入会虚高到无意义）；
         # 子代理 token 不进主窗 TPS（独立进程独立上下文，并行路数不固定，
         # 合并=系统总吞吐而非会话速度），只累计展示
-        self._tps = {"last": 0, "toks": 0, "all": 0, "sub": 0}
+        self._tps = {"last": 0, "toks": 0, "all": 0, "sub": 0,
+                     "ctxLive": 0, "liveToks": 0}
+        self._live_chars = 0         # a153：本回合肥式字符账（估 liveToks）
         self._hydrate = hydrate        # 冷启动重建回调（snapshot 空时调用）
         self._hydrated = False
         self._hyd_keys = set()         # hydration 已呈现行的内容指纹（去重）
@@ -548,6 +550,7 @@ class V4Feed(object):
                         self._turn_rows[turn] = rid
                         self._last_turn_rid = rid
                     self._merge_turn = False
+                self._live_chars = 0       # a153：新回合肥字账归零
                 ds.append(P.d_state({"busy": True, "curTurn": turn}))
             elif t == "turn_complete":
                 rid = self._turn_rows.get(turn)
@@ -897,19 +900,34 @@ class V4Feed(object):
             hd, _hr = self._ensure_header(turn, ts, seq, model)
             if hd:
                 ds.append(hd)
+            # a153：实时上下文——assistant 事件自带上一次 API 调用的 usage
+            # （输入侧=此刻真实上下文），比 5s 轮询的 jsonl 尾扫更即时；
+            # 同回合逐块累计字符给「生成中」估値（result 真值到达即覆盖）
+            _uu = m.get("usage") or {}
+            _in = (_uu.get("input_tokens") or 0)                 + (_uu.get("cache_read_input_tokens") or 0)                 + (_uu.get("cache_creation_input_tokens") or 0)
+            if isinstance(_in, int) and _in > 0:
+                self._tps["ctxLive"] = _in
+                ds.append(P.d_state({"tps": dict(self._tps)}))
             for b in (m.get("content") or []):
                 if not isinstance(b, dict):
                     continue
                 bt = b.get("type")
                 if bt == "text" and (b.get("text") or "").strip():
+                    self._live_chars += len(b["text"])
                     d, _ = self._row(turn, "assistant_text", ts, seq,
                                      text=b["text"], model=model)
                     ds.append(d)
                 elif bt == "thinking" and (b.get("thinking") or "").strip():
+                    self._live_chars += len(b["thinking"])
                     d, _ = self._row(turn, "reasoning", ts, seq,
                                      text=b["thinking"])
                     ds.append(d)
                 elif bt == "tool_use":
+                    try:
+                        self._live_chars += len(json.dumps(
+                            b.get("input") or {}, ensure_ascii=False))
+                    except Exception:
+                        pass
                     name = b.get("name") or ""
                     d, rid = self._row(turn, "tool_call", ts, seq,
                                        tool=name, status="running",
@@ -919,6 +937,13 @@ class V4Feed(object):
                     ds.append(d)
                     if b.get("id"):
                         self._pending_tools[b["id"]] = rid
+            # a153：流式估値入 A 区（4 字符≈1 token，中英混合口径）——
+            # 在内容循环**之后**发射（含本块字符，不滞后一拍）；32 token
+            # 一档防抖（行级事件天然限频，无需定时器）
+            _est = self._live_chars // 4
+            if _est >= 32 and _est != self._tps.get("liveToks"):
+                self._tps["liveToks"] = _est
+                ds.append(P.d_state({"tps": dict(self._tps)}))
         elif typ == "user":
             m = data.get("message") or {}
             # a68：子代理结论回传（CLI 新版 hand-back）——注入消息含
@@ -1074,7 +1099,14 @@ class V4Feed(object):
                 self._tps["all"] += _ot
                 if _ms:
                     self._tps["last"] = round(_ot * 1000.0 / _ms, 1)
-                ds.append(P.d_state({"tps": dict(self._tps)}))
+            # a153：result 的 usage 输入侧=回合后真实上下文（即时刷新，
+            # 不等 5s 轮询）；估値清零
+            _fin = (_u.get("input_tokens") or 0)                 + (_u.get("cache_read_input_tokens") or 0)                 + (_u.get("cache_creation_input_tokens") or 0)
+            if isinstance(_fin, int) and _fin > 0:
+                self._tps["ctxLive"] = _fin
+            self._live_chars = 0
+            self._tps["liveToks"] = 0
+            ds.append(P.d_state({"tps": dict(self._tps)}))
         return ds
 
     def _reduce_peer(self, data, turn, ts, seq):

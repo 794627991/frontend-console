@@ -1126,11 +1126,20 @@
 
   V4Bridge.prototype._paintState = function (patch, isSnapshot) {
     var st = (this.store && this.store.snap && this.store.snap.state) || {};
-    // a152：TPS state → _HG.tps + 重画圆环（title 悬浮展示；环本体不变）
+    // a152/a153：TPS/实时上下文 state → _HG.tps + 重画圆环。busy 时环值
+    // = ctxLive（assistant usage 真值基准）+ liveToks（流式字符估值）——
+    // 单条长回复期间环持续增长，不再「回合结束才跳变」；result 到达落真值
     if (patch.tps !== undefined && !this.opt.sub) {
+      var _oldLive = (_HG.tps && _HG.tps.liveToks) || 0;
       _HG.tps = patch.tps;
+      var t = _HG.tps || {};
+      var live = t.ctxLive || 0, est = t.liveToks || 0;
       var _rr = _g('_hgDrawCtxRing');
-      if (_rr && _HG.ctxRing) { try { _rr(_HG.ctxRing.used, _HG.ctxRing.max); } catch (e) {} }
+      if (_rr && _HG.ctxRing) {
+        var base = live > 0 ? live : _HG.ctxRing.used;
+        if (est > 0 && (_HG.busy || est !== _oldLive)) base += est;
+        try { _rr(base, _HG.ctxRing.max); } catch (e) {}
+      }
     }
     // 子 pane 的 A 区只消费结论终稿——busy/ask/queue/model 全是主窗语义，
     // 子投影 patch 不得外溢（同 _rebuild 全局账守卫）
