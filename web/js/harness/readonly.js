@@ -8,12 +8,12 @@
 // （退出 / 会话列表抽屉——含主窗口 20 条外的过往会话）。
 //
 // 机制（稳定优先，designer 方案定稿）：
-// 进入 = _HG.readonly=sid + roViewSid → 断主 SSE（close + 置 null，防
-//   看门狗重开）→ _hgFlow 指向 RO 容器 → 隐藏 side/flowwrap/card-wrap →
-//   fetch transcript 走 _histRender 渲染。
+// 进入 = _HG.readonly=sid + roViewSid → 断 v4 投影 store（V4Main.close，
+//   防 delta 画进 RO 视图）→ _hgFlow 指向 RO 容器 → 隐藏 side/flowwrap/
+//   card-wrap → fetch transcript 走 _histRender 渲染。
 // 退出 = 清 readonly/roViewSid → rail 归位 → _hgFlow 指回主 flow →
-//   _hgSseRebuild(主 sid) 全量重建 + openSSE 断点续传——后台跑的会话
-//   实时事件零丢失（进程始终活着，只是前端事件流暂时断开）。
+//   V4Main.switch(anchor) 投影快照整窗重建（旧 _hgSseRebuild+openSSE
+//   断点续传已随批G 退役）。
 // 跨会话跳转（抽屉点其他会话）= RO_view：同场重渲（不回主视图）。
 // 变更类操作（回滚/重发/编辑重发）在主层 handler 内被 readonly 守卫拦截。
 // ============================================================
@@ -34,9 +34,7 @@ function RO_enter(sid, deps) {
   // v3.5.53（复核问题1 修复配套）：anchorSid=进入只读时的主会话——退出
   // rebuild 判定用锚（浏览过多档会话后 readonly 已非锚值，不能拿它判定）
   _ro = { sid, anchorSid: sid, gen: 1, dgen: 1, fc, fc2, snapPeerSent: _HG.peerSent };
-  // 断主 SSE：close 后必须置 null——看门狗（5s 巡检 _HG.sse）否则强制重开，
-  // live 事件灌进 RO 视图（designer P0-1）
-  if (_HG.sse) { try { _HG.sse.close(); } catch (_) {} _HG.sse = null; }
+  // （旧主 SSE 断连块已随批G 退役——v4 下 _HG.sse 恒 null，看门狗亦不存）
   // v4：投影 store 同步断开（否则 delta 持续画进 RO 视图）；RO_exit 由
   // V4Main.switch 重建
   try { V4Main.close(); } catch (_) {}
@@ -224,13 +222,12 @@ function RO_exit(force) {
   if (roSub) roSub.style.display = roSubDisp;
   // _hgFlow 指回主 flow（rebuild 的 resetLocal 清的是它）
   _hgFlow = document.querySelector('[data-hg-flow]');
-  // v3.5.215（用户实锤「退出只读也有白屏过程」）：退出不再走 _hgSseRebuild
-  // （其 resetLocal 清场→fetch→重放的等待窗=白屏，与切会话白屏同构）——
-  // 主 flow 旧 DOM 本就完整（RO 只隐藏未清空），改为无清场恢复：
-  // ①旧 DOM 直接显示（无白屏）②后台拉转写有增长→窗口重渲一次做对
-  // （keepDom 原子换入；busy 传 noFinalize+phResume 接秒表——与切回路径
-  // 完全同款语义）③openSSE 带 seq 断点续传（RO 期间 SSE 帧零丢失）。
-  // force=true 仅供关 tab 濒死路径
+  // v3.5.215（用户实锤「退出只读也有白屏过程」）：退出不做清场重放——
+  // 主 flow 旧 DOM 本就完整（RO 只隐藏未清空），先直接显示（无白屏），
+  // 后台拉转写有增长→窗口重渲一次做对（keepDom 原子换入；busy 传
+  // noFinalize+phResume 接秒表），末尾 V4Main.switch 以投影快照权威覆盖
+  // （旧 _hgSseRebuild/openSSE 断点续传已随批G 退役）。force=true 仅供
+  // 关 tab 濒死路径
   if (!force && anchor && _HG.sid === anchor) {
     if (typeof _histFetch === 'function') {
       _histFetch(anchor).then((ok) => {

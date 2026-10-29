@@ -57,7 +57,6 @@ function _harnessClose(portId) {
     _HG.readonly = null; _HG.roViewSid = null;
     try { window.HgRO && window.HgRO.exit(true); } catch(_) {}
   }
-  if (_HG.sse) { try { _HG.sse.close(); } catch(_) {} _HG.sse = null; }
   _HG.conn = null; _HG.sid = null; _HG.cache = {};
   _HG.rowById = {}; _HG.run = null;   // 批4：subRows/subBlk 段档随段退役删除
   // v2.15：补齐残留态复位。旧实现只清了上面这几个，重开 tab 后 dirty/busy/

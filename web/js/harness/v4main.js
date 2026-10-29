@@ -92,6 +92,19 @@
         if (typeof _hgSaveCwd === 'function') { try { _hgSaveCwd(mcwd); } catch (e) {} }
         if (typeof projChipLabel === 'function') { try { projChipLabel(); } catch (e) {} }
       }
+      // 对抗审 P2-4（a142）：权限/思考档芯片随会话恢复（对齐 V3 尾段
+      // sessions.js:600-604，v4 分流曾丢——显示上一会话的档位值）
+      if (meta) {
+        if (meta.permission && meta.permission !== _HG.perm) {
+          _HG.perm = meta.permission;
+          if (typeof permChipLabel === 'function') { try { permChipLabel(); } catch (e) {} }
+        }
+        var _st = meta.think || null;
+        if (_st !== _HG.thinkLv) {
+          _HG.thinkLv = _st;
+          if (typeof thinkChipLabel === 'function') { try { thinkChipLabel(); } catch (e) {} }
+        }
+      }
       if (typeof renderList === 'function') renderList();
       if (typeof renderQueue === 'function') renderQueue();
       if (typeof refreshSidebar === 'function') refreshSidebar();

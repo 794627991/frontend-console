@@ -213,7 +213,7 @@
         if (_flowEl && _flowEl.replaceChildren) _flowEl.replaceChildren();
         if (typeof _HG !== 'undefined' && _HG) { _HG.histAll = []; _HG.histCursor = 0; }
         var _note = document.createElement('div');
-        _note.className = 'h-sysnote';
+        _note.className = 'h-sysnote h-v4empty';
         _note.textContent = '该会话暂无可显示内容（投影为空，正在同步…）';
         if (_flowEl) _flowEl.appendChild(_note);
       } catch (e) {}
@@ -629,6 +629,10 @@
       return;
     }
     if (op === 'row.appended') {
+      // 对抗审 P2-1（a142）：G4 空投影注记在有真实内容到达即摘除——
+      // 原先只有 hideWelcome 兜 .hg-welcome，注记会挂到下次整窗重建
+      var _g4 = this.flow.querySelector(':scope > .h-v4empty');
+      if (_g4) { try { _g4.remove(); } catch (e) {} }
       var row = d.row, live = true;
       if (row.kind === 'subagent') { this._agentFile(row); return; }
       // 识图回传代播（V3 relay/store peer_return 原件链）：name 含「识图」
@@ -966,6 +970,14 @@
         } else if (fin && hasWork) {
           try { fin(false, { turnEnd: true,
                              endTs: row.endedAt || Date.now() }); } catch (e) {}
+          // 对抗审 P2-3/P2-5（a142）：正常回合收口补回合记账与识图清算
+          // （V3 _hgTurnWrapup 的职责，随其删除丢失）——dur 优先事件值，
+          // 网关缺失时 _hgTurnEnd 内部回落本地差值
+          var _te = _g('_hgTurnEnd');
+          if (_te) { try { _te(row.state === 'error' ? 'error' : 'ok',
+                              row.activeMs || 0); } catch (e) {} }
+          var _vs2 = _g('_hgVisionSweep');
+          if (_vs2) { try { _vs2(true); } catch (e) {} }
         }
       }
       return;
@@ -1173,9 +1185,10 @@
           }, 1000);
         }
       } else if (_HG.compacting) {
-        _HG.compacting = false;
-        if (_HG.compactTimer) { clearInterval(_HG.compactTimer); _HG.compactTimer = null; }
-        if (_rc) { try { _rc(true); } catch (e) {} }
+        // 对抗审 P3-4（a142）：统一走 _hgCompactionEnd——原内联清理漏了
+        // compactResume 归属传递与 actWord 退出；该函数自带幂等门
+        var _ce = _g('_hgCompactionEnd');
+        if (_ce) { try { _ce(); } catch (e) {} }
       }
     }
     // 子 pane 结论终稿（一次成型）

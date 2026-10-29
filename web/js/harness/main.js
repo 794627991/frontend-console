@@ -937,6 +937,20 @@ function buildClaudeHarnessTab(opts = {}) {
   _hgCtxInFlight = false;
   setInterval(() => { if (!document.hidden) _hgCtxPoll(); }, 5000);
 
+  // busy 自愈（a142 复装·v4 版）：事件丢失/竞态让 _HG.busy 与后端脱节时
+  // 5s 轮询会话列表纠偏（v2.26 原版；其 `!_HG.sse` 门在 v4 下恒死随批G
+  // 删除，对抗审 P3-3 裁定恢复安全网——门改为 v4 投影 store 在场，只读
+  // 期/无会话期照旧不跑）
+  setInterval(() => {
+    if (_HG.readonly) return;
+    if (document.hidden || !_HG.sid || !_HG.v4Cur) return;
+    fetch('/api/harness/sessions').then(r => r.json()).then(j => {
+      if (!j || !j.ok) return;
+      const s = (j.sessions || []).find(x => x.sid === _HG.sid);
+      if (s && !!s.busy !== _HG.busy) setBusy(!!s.busy, s.busy_since);
+    }).catch(() => {});
+  }, 5000);
+
   // ==================== CLI 事件 → 渲染 ====================
 
   // ==================== SSE ====================

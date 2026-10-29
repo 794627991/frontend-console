@@ -122,7 +122,6 @@
     _HG.histAll = lines;
     _HG.histStart = start;
     _HG.histLive = true;   // v2.35.2：窗口渲染完成——histAll/DOM 建立对应，滚动扩收自此放行
-    _HG.histStale = false; // v2.43.2（R2-缺口A）：本次渲染 DOM/hi/hEnd 账目全新一致——降级态解除
     // v3.2.11（用户实锤「滚动条抽搐」）：原子渲染——全部行先落**游离缓冲**再
     // 一次性换入。旧实现逐行 append 活 DOM，几百行渲染期间滚动条逐帧长高
     // （抽搐）且锚定前的中间态可被绘制（上滑扩段打断滚动手势=「必须往下

@@ -6,19 +6,15 @@
    （前端按它分派不受影响）、未知 kind 前向透传。
 2. seq 并发安全：8 线程 × 200 条并发 emit——严格递增、无重复、缓冲有序
    （v2.x seq 在锁外分配的竞态回归防线）。
-3. 断点续传三态：resume（base 落在 [floor, last]）/ snapshot（base 无效
-   或缺失）/ reset（epoch 不匹配）；保留窗滑出推进 floor_seq；计数器
-   只增不减（淘汰/换代不回拨）。
-4. SSE 帧协议：ack 帧形状、resume 回放段、接缝去重（订阅后并发 publish
-   不丢不重）、慢订阅者溢出 → reset 控制帧、ka 心跳在空闲时发出。
+3. 保留窗：滑出推进 floor_seq；计数器只增不减（淘汰/换代不回拨）。
+   （§3 resume 三态与 §4 SSE 帧协议已随批G 退役——bus//stream 删除，
+   v4 客户端由 /v4/stream 的 ack 三态 + epoch 对账承担同职责）
 5. 工具输出截断：超 64KB 头尾各 32KB + 中间标记 + truncated 元数据；
    多字节安全（切点落 UTF-8 字符中间不炸）；小输出零拷贝直通；
    stash LRU 逐出后全文 404 语义（get None）。
-6. 投影归约：turn_started/complete/error 推 status、turn 计数、last_error
-   源头清理；未知类型只 bump 不崩（前向兼容）；对同一事件段 reduce_events
-   与增量 apply 结果一致（live/replay 共用同一归约）。
-7. 换代与重建：bump_epoch（rewind）后旧 epoch 只能 reset、seq 续不回拨；
-   restore（GC 重建）同代续号可 resume、旧 meta 无 epoch 换新代。
+   （§6 投影归约已随批G 退役——reducer.py 整文件删除）
+7. 换代与重建：bump_epoch（rewind）后 seq 续不回拨、缓冲清空；
+   restore（GC 重建）同代续号、旧 meta 无 epoch 换新代。
 
 直接 `py tests/test_eventlog.py` 运行。纯内存测试，不碰 ~/.serialconsole_pro。
 """

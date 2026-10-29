@@ -725,6 +725,16 @@ class V4Feed(object):
                 d, _ = self._row("", "marker", ts, seq, mkind=t, text=text,
                                  skind=_sk)
                 ds.append(d)
+            elif t == "raw":
+                # 对抗审 P2-2（a142）：raw 提示行（/rewind 换代 ⏪ 行、CLI
+                # stderr 良性提示）——V3 由 store 'raw'→renderRaw 渲染，
+                # v4 曾无分支静默丢弃；marker(mkind='raw') 走 rowToLine
+                # L.role='raw' → renderHistLine → renderRaw 原件恢复显示
+                text = data.get("text") or ""
+                if text:
+                    d, _ = self._row("", "marker", ts, seq, mkind="raw",
+                                     text=text)
+                    ds.append(d)
             elif t in ("renew", "audit", "exit", "model_switched"):
                 text = data.get("text") or data.get("msg") or ""
                 # a93S（用户定调「这个不显示」）：后台保活探活卡（[保活]/[限流]

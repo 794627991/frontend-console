@@ -241,7 +241,9 @@
       if (!still) return;
       // ACK 后投影静默超窗：不重放不伪造，携水位重订阅恢复权威投影
       self._forceSnapshot = true;
-      if (self.status === 'live') self._scheduleReconnect();
+      // 对抗审 P3-2（a142）：connecting 态卡死同样重连——_scheduleReconnect
+      // 自带 closed/paused/防重入门；原 live 门让极端竞速下首帧等 ACK_MS
+      self._scheduleReconnect();
     }, WATCHDOG_MS);
   };
 

@@ -186,7 +186,6 @@ const _HG = {
   perm: 'auto',         // v2.20：权限模式 auto|confirm（新会话 connect 带上）
   thinkLv: null,        // v2.20：思考等级 null|low|medium|high|max（勿与 think 思考段混淆）
   cache: {},            // sid -> {html, seq}（气泡快照）
-  sse: null,
   busy: false, alive: false,
   atts: [],
   pop: null,            // 'skill' | 'model' | 'file' | null
@@ -209,7 +208,6 @@ const _HG = {
   histAll: null,        // 当前会话全量 transcript 行（多段渲染源）
   histStart: 0,         // 已渲染起点 index（0=全量）
   histLive: false,      // v2.35.2：histAll 是否经窗口渲染建立 DOM 对应（快照恢复的懒填不算——滚动扩收的放行门）
-  histStale: false,     // v2.43.2（R2-缺口A）：降级标记——已确认漂移但忙碌未重渲，saveCache 存 'stale' 哨兵、恢复强制重渲
   archivedTurns: 0,     // v3.5.61：主窗口已归档轮数（归档提示文案用，切会话清零重算）
   hold: false,          // v3.5.123：大回合保活旗——后台子代理在飞时后端发 turn_hold，
                         // busy 保持工作中（中间 result 不落 busy），turn_complete 清

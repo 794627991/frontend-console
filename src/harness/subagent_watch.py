@@ -4,7 +4,7 @@
 v4 职责（ZCode ingestDetachedLiveSession 对位）：扫「新鲜子代理转写」的
 增量行 → 逐行解析喂 v4 子投影（v4hub.v4_sub_ingest）→ 子 pane 的
 /v4/stream sub:<agent> 订阅者收到 delta 帧（子代理实时刷新红线的数据面）。
-旧 emit `subagent_delta` 事件保留（旧前端兼容；批F 旧管线退役时一并下线）。
+旧 emit `subagent_delta` 事件已随批G 退役（a137，v4 唯一数据链）。
 
 扫描覆盖两源（三源候选的③+②；源①旧版 CLI 罕见，由子 feed hydrate 兜底）：
 - 源③ projects/<proj>/<csid>/subagents/agent-<id>.jsonl（SendMessage 续派）
@@ -18,7 +18,6 @@ v4 职责（ZCode ingestDetachedLiveSession 对位）：扫「新鲜子代理转
 - watcher 全局单线程 daemon，随 lifecycle 启动（_gc_loop 同款挂法），
   任何单轮异常静默（watcher 永不死）。
 """
-import glob
 import json
 import os
 import threading

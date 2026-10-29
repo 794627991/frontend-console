@@ -9,7 +9,7 @@ WebResourceRequested 拦截（页面每个请求都要过 WinForms UI 线程的 
 响应头批量憋 8.8s/20.1s 后同一毫秒放行；串口日志：回显整批迟到 16~43s）。
 
 本进程承载全部 Claude 系重负载——同进程内随便烧，烧不到主进程的串口：
-- harness 蓝图（会话 / v4 feed / 子代理 watcher，from src.claude_harness）
+- harness 蓝图（会话 / v4 feed / 子代理 watcher，from src.harness.routes）
 - HikLink 机器人（bot 依赖 harness 会话，随迁 /api/hiklink/* 状态/激活
   路由 + 重启自恢复；8766 webhook app 跟 bot 走）
 
