@@ -316,17 +316,8 @@ class TestStoppedSubagentCloses(unittest.TestCase):
         self.assertNotIn("call_y", f._pending_agents,
                          "空 tid 路径没清 _pending_agents（跨会话累积）")
 
-    def test_no_tid_stop_branch_is_reachable(self):
-        """v4.0.5/v4.0.6：无 tid 的停止收口必须**在 tid 守卫外**且可达。
-
-        复审实锤：上一版把多键定位写进了 `} else if (tid && !_shBg) {` 内部
-        ——只有 tid 真值才可能进入 = 死代码。v4.0.6 再把断言从「缩进字面量
-        匹配」改成**括号深度计算**：折行/格式化不影响结论。
-        a138：sse.js 旧事件链已随批G 退役——无 tid 停止收口的**行为**由本类
-        上方的 feed 级测试覆盖（_pending_agents 清除 + SUB 行 cancelled），
-        前端侧 v4bridge 的多键解析（_hgAg/agents/childTopic）不受 tid 守卫
-        独占；原 sse.js 源码形态断言随旧链一并退役。
-        """
+    # （test_no_tid_stop_branch_is_reachable 已删——a138 退役 sse.js 后成
+    #  空壳；无 tid 停止收口的行为由本类上方的 feed 级测试覆盖）
 
     def test_cold_sync_keeps_stopped(self):
         """v4.0.6：Sync 不得抹掉本地已停止事实（后端未 flush 时仍报 running）。"""
@@ -368,9 +359,8 @@ class TestStoppedSubagentCloses(unittest.TestCase):
         self.assertIn("clearInterval", seg,
                       "v4 压缩结束未清定时器 → 泄漏")
         self.assertIn("compactTimer", seg)
-        # 清定时器必须置 null：两处 clearInterval（relay/v4bridge）任一漏置
-        # null，遗留的陈旧 id 会让「已在跑？」判定永远为真 → 秒表不起来
-        # （sse.js 锚点已随批G 退役——compacting 定时器清置只剩这两处）
+        # 清定时器必须置 null：主清点在 relay._hgCompactionEnd（a142 起
+        # v4 压缩收口统一走它）；v4bridge 定时器体内另有自清（不在本守卫）
         for rel, anchor in (("web/js/harness/relay.js", "function _hgCompactionEnd()"),):
             s2 = open(os.path.join(ROOT, rel), encoding="utf-8").read()
             j = s2.index(anchor)

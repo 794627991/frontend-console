@@ -775,8 +775,10 @@
       // 时接管），不起 V3 tick（曾与 state.final 定稿打架，a116）。即时头画
       // 保留（对抗审 P3-1/a142）：run 态先按档案 t0 画一次头，消除首快照
       // 到达前秒表冻结在 0s 的空窗——秒表跳动由 bridge 的 _subTick 接管
-      if (_sub.tabs[tid].run) {
-        _sub.tabs[tid].t.t0 = _ag.t0 || Date.now();
+      if (_sub.tabs[tid].run && _ag.t0) {
+        // 二轮审6：档案 t0 才预置——miss 时保持 t0=0 让 _subRebuild 锚到
+        // 首行真实 ts（v3.5.191r3 铁律：t0 缺失不编造，编造=秒表虚起算）
+        _sub.tabs[tid].t.t0 = _ag.t0;
         _subTlHeadPaint(_sub.tabs[tid].t);
       }
     }

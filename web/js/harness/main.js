@@ -1656,6 +1656,9 @@ function buildClaudeHarnessTab(opts = {}) {
         if (_HG.liveAgentsBy) delete _HG.liveAgentsBy[sid];
         delete _HG.attsBy[sid];   // v2.3.0：暂存附件随会话清
         delete _HG.queues[sid];   // v2.25：排队草稿随会话清（审计 §三.9）
+        // 二轮 P1-2：v4 权威快照垫片键随会话删清（数十~数百 KB/会话，
+        // WebView2 同源 ~5MB 配额，不删则 a60R 冷启垫片静默失效）
+        try { localStorage.removeItem('hg_v4snap:' + sid + ':main'); } catch(_) {}
         try { localStorage.removeItem('hg-open:' + sid); localStorage.removeItem('hg-ctx:' + sid); } catch(_) {}   // v2.16：连开合/用量记录一起清
         if (_HG.sid === sid) switchTo(null); else refreshSessions();
       } else if (act.dataset.act === 'rename') {

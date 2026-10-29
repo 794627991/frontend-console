@@ -57,6 +57,11 @@ function _harnessClose(portId) {
     _HG.readonly = null; _HG.roViewSid = null;
     try { window.HgRO && window.HgRO.exit(true); } catch(_) {}
   }
+  // 二轮 P1-1：主 v4 store 随 tab 销毁关闭（EventSource/silentTimer 泄漏 +
+  // RO force 路径曾给垂死 tab 反向新开流——readonly.exit 已加 !force 门）
+  if (typeof V4Main !== 'undefined' && V4Main.close) {
+    try { V4Main.close(); } catch(_) {}
+  }
   _HG.conn = null; _HG.sid = null; _HG.cache = {};
   _HG.rowById = {}; _HG.run = null;   // 批4：subRows/subBlk 段档随段退役删除
   // v2.15：补齐残留态复位。旧实现只清了上面这几个，重开 tab 后 dirty/busy/

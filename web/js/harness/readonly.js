@@ -258,7 +258,8 @@ function RO_exit(force) {
     // 投影 store 接管恢复（snapshot 重建为权威形态，覆盖上方过渡渲染）
     { const _tgt = anchor || _HG.sid;
       if (_tgt) V4Main.switch(_tgt); }
-  } else if (_HG.sid) {
+  } else if (!force && _HG.sid) {
+    // 二轮 P1-1：force=关 tab 濒死路径不得重开投影流（shell 侧随关 V4Main.close）
     V4Main.switch(_HG.sid);
   }
 }

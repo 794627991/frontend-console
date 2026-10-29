@@ -214,6 +214,7 @@
         if (typeof _HG !== 'undefined' && _HG) { _HG.histAll = []; _HG.histCursor = 0; }
         var _note = document.createElement('div');
         _note.className = 'h-sysnote h-v4empty';
+        this._g4Gone = false;   // 二轮 P2-1：置旗后 appended 路免重复扫描
         _note.textContent = '该会话暂无可显示内容（投影为空，正在同步…）';
         if (_flowEl) _flowEl.appendChild(_note);
       } catch (e) {}
@@ -631,8 +632,11 @@
     if (op === 'row.appended') {
       // 对抗审 P2-1（a142）：G4 空投影注记在有真实内容到达即摘除——
       // 原先只有 hideWelcome 兜 .hg-welcome，注记会挂到下次整窗重建
-      var _g4 = this.flow.querySelector(':scope > .h-v4empty');
-      if (_g4) { try { _g4.remove(); } catch (e) {} }
+      if (this._g4Gone !== true) {   // 一次性摘除，此后 O(1) 直通
+        var _g4 = this.flow.querySelector(':scope > .h-v4empty');
+        if (_g4) { try { _g4.remove(); } catch (e) {} }
+        this._g4Gone = true;
+      }
       var row = d.row, live = true;
       if (row.kind === 'subagent') { this._agentFile(row); return; }
       // 识图回传代播（V3 relay/store peer_return 原件链）：name 含「识图」
@@ -974,7 +978,8 @@
           // （V3 _hgTurnWrapup 的职责，随其删除丢失）——dur 优先事件值，
           // 网关缺失时 _hgTurnEnd 内部回落本地差值
           var _te = _g('_hgTurnEnd');
-          if (_te) { try { _te(row.state === 'error' ? 'error' : 'ok',
+          if (_te) { try { _te(row.state === 'error' ? 'error'
+                            : (row.state === 'cancelled' ? 'interrupt' : 'ok'),
                               row.activeMs || 0); } catch (e) {} }
           var _vs2 = _g('_hgVisionSweep');
           if (_vs2) { try { _vs2(true); } catch (e) {} }

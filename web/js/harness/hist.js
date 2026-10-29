@@ -78,6 +78,11 @@
       _hgDispatch({ t: 'peer_return', name: l.name, text: l.text,
                     to: l.to, tid: l.tid, hist: true });
     }
+    else if (l.role === 'raw') {      // a143：raw 提示行（rewind ⏪/CLI stderr）
+      // 对抗审二轮审2：v4feed marker(mkind='raw')→rowToLine L.role='raw' 曾无
+      // 分支静默丢弃——dispatch 进 entries 由 renderRaw 渲染（live/回放同路）
+      _hgDispatch({ t: 'raw', text: l.text });
+    }
     else if (l.role === 'sysnote') {  // v3.3.2(D6)：机器注入弱化行历史回看
       // 不定稿不 renderUser——历史侧回合合并自动成立（历史组只在 user 行定稿）
       // F7（全审）：接线 dispatch——R1「七类进 entries」至此真七类（此前

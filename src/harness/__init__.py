@@ -1,7 +1,7 @@
 ﻿# -*- coding: utf-8 -*-
 """harness 包 —— v3.0 自 src/claude_harness.py 重构拆分。
 
-旧引用入口 src/claude_harness.py 兼容 shim 已随批G 退役（a140），
+旧引用入口 src/claude_harness.py 兼容 shim 已随 B 激进批退役（a140），
 一律 from src.harness.xxx import ...。各模块职责见各自 docstring。
 """
 # harness 版本单一源（v3.5.0+ 用户拍板「与工具版本分离」——harness 迭代
