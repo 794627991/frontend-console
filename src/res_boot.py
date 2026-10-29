@@ -94,7 +94,13 @@ def probe_webview2():
         # `webview2`（前端显示「WebView2 运行时 webview2」）。fixed 本身就是
         # 版本目录 Microsoft.WebView2.FixedVersionRuntime.<ver>.x64，从它抽版本。
         v = _fixed_ver(fixed)
-        return "ok", v, "离线包运行时"
+        # 对抗审二轮 P2-1：fixed 目录也过 WV2_MIN（与系统 Evergreen 同口径
+        # ——低版本离线运行时不再无条件放行）
+        if _ver_tuple(v) >= WV2_MIN:
+            return "ok", v, "离线包运行时"
+        if not pv:
+            return "outdated", v, "离线包运行时版本过低（需 ≥%s）" % ".".join(
+                map(str, WV2_MIN))
     if pv:
         return "outdated", pv, "系统版本过低（需 ≥%s）" % ".".join(map(str, WV2_MIN))
     return "missing", "", "系统未安装，资源包也未解出"
@@ -172,7 +178,9 @@ def wv2_fixed_dir():
                 m = _re.search(r"(\d+(?:\.\d+){2,3})", os.path.basename(
                     os.path.dirname(p)))
                 return _ver_tuple(m.group(1)) if m else ()
-            ok_hits = [h for h in hit if _vt(h) >= WV2_MIN] or hit
+            ok_hits = [h for h in hit if _vt(h) >= WV2_MIN]
+            if not ok_hits:
+                continue        # 对抗审二轮 P2-1：全低于下限不回退（probe 侧判 outdated）
             best = max(ok_hits, key=_vt)
             return os.path.dirname(best)
     return ""
@@ -330,6 +338,22 @@ def _read_state():
         return d if isinstance(d, dict) else {}
     except Exception:
         return {}
+
+
+def _pop_state(key):
+    """锁内单键删除（对抗审二轮 P3-3：read-pop-write 快照回写会覆盖并发写）。"""
+    with _state_lock:
+        cur = _read_state()
+        cur.pop(key, None)
+        p = _state_file()
+        try:
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            tmp = p + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(cur, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, p)
+        except OSError:
+            pass
 
 
 def _write_state(d):

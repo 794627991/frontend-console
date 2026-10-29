@@ -284,22 +284,32 @@ def _hard_suite():
         finally:
             r.close()
 
-    # 取消：中途取消 → Cancelled 且无 .part 残留
+    # 取消：多块大 entry 的**块级**中途取消 → Cancelled 且无 .part 残留
+    # （对抗审二轮 P3-5：早前恰在 entry 边界触发，.part 清理路径没走到）
     with tempfile.TemporaryDirectory() as d:
-        pkg = _mk(d, [("f%d" % i, b"n" * 10) for i in range(5)])
+        big = os.path.join(d, "src.bin")
+        with open(big, "wb") as f:
+            f.write(bytes(6 << 20))          # 6MB → 6 个 1MB 块
+        pkg = os.path.join(d, "c.fcpk")
+        w = fcpk.FcpkWriter(pkg, password="p")
+        w.add_file(big, "big.bin", mode="raw")
+        w.add_bytes(b"tail", "t.txt")
+        w.close()
         r = fcpk.FcpkReader(pkg, password="p")
         try:
             calls = [0]
 
             def cancel():
                 calls[0] += 1
-                return calls[0] > 2
+                return calls[0] > 3          # 第 4 次块级检查起取消（大 entry 中途）
             try:
                 r.extract_all(d, should_cancel=cancel)
-                check("中途取消", False, "未取消")
+                check("块级中途取消", False, "未取消")
             except fcpk.Cancelled:
                 left = [f for f in os.listdir(d) if f.endswith(".part")]
-                check("中途取消无 .part 残留", left == [], str(left))
+                check("块级取消无 .part 残留", left == [], str(left))
+                check("块级取消确在大 entry 中途",
+                      calls[0] > 3, "calls=%d" % calls[0])
         finally:
             r.close()
 

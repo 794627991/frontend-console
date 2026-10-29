@@ -25,6 +25,9 @@ MAIN = os.path.join(BASE, "src", "main.py")
 ICON = os.path.join(BASE, "ico", "app.ico")
 
 def build():
+    # 对抗审 P1-2：密钥必须在 encrypt_pkg（cython 收编 src/*.py）之前就绪
+    # ——否则首发包的 exe 里没有密钥模块，用户机读不了同批产出的 .fcpk
+    _ensure_fcpk_key()
     if not os.path.exists(ICON):
         print("图标不存在，跳过图标")
         icon_arg = []
@@ -56,7 +59,7 @@ def build():
         _guards = [
             os.path.join(app_dir, "_internal", "pythonnet", "runtime"),
             os.path.join(app_dir, "_internal", "webview", "lib"),
-            os.path.join(app_dir, "web", "index.html"),
+            os.path.join(app_dir, "_internal", "web", "index.html"),
         ]
         for g in _guards:
             if not os.path.exists(g):
@@ -200,7 +203,7 @@ def _publish(app_dir):
     # 等 99 个文件）一并剔掉 → 发布包里 pythonnet 条目为 0 → import clr 失败
     # → `import webview` 抛异常，窗口根本建不出来。必须只跳过应用目录**顶层**
     # 的那三个目录。
-    skip_top = {".update", "data", "runtime"}
+    skip_top = {".update", "data", "runtime", "offline_runtime"}
     skip_files = {"update.bat"}
     with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
         for r, ds, fs in os.walk(app_dir):
@@ -494,6 +497,16 @@ def _ensure_fcpk_key():
     return kp
 
 
+def _password_fingerprint():
+    """口令指纹（进资源包指纹——口令换了必须重打，旧包新 exe 读不了）。"""
+    import hashlib as _hl
+    from src.fcpk import _password
+    try:
+        return _hl.sha256(_password().encode("utf-8")).hexdigest()[:12]
+    except Exception:
+        return "nokey"
+
+
 def _build_offline_fcpk(kinds=None, quiet=False):
     _ensure_fcpk_key()
     """产出 dist/releases/<应用名>-资源包.fcpk（或 -资源包-<kinds>.fcpk）。
@@ -521,6 +534,9 @@ def _build_offline_fcpk(kinds=None, quiet=False):
         st = os.stat(p)
         h.update(("%s|%s|%d|%d" % (arc, kind, st.st_size,
                                    int(st.st_mtime))).encode("utf-8"))
+    # 密钥变更也要触发重打（对抗审二轮：口令换仓后旧包读不了，指纹却不变
+    # → 沿用旧口令包=新 exe 配旧包必失败）
+    h.update(_password_fingerprint().encode("utf-8"))
     fp = h.hexdigest()[:16]
     # 指纹文件按产物分开——共用一份会让「刚打完 claude 子集包」把全量包的
     # 指纹覆盖掉，下次全量打包的续用判定就永远失效（白跑几分钟重打 706MB）

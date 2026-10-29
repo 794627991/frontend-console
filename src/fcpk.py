@@ -459,18 +459,19 @@ class FcpkReader:
             comp = c.decrypt_and_verify(blob[8:8 + n], blob[8 + n:])
         except ValueError:
             raise FcpkError("资源包段表解密失败（口令错误或文件损坏）")
-        # 表炸弹上限（对抗审 P0）：zlib.decompress 无 max_length、json.loads
-        # 无大小上限，199KB 的包可在 __init__ 瞬间 OOM——钳到 64MB
+        # 表炸弹上限（对抗审 P0 + 二轮 P0-1）：zlib 的 max_length=0 语义是
+        # **无限制**——首轮恰返回 64MB 后传 0 会让后续调用一口吃完全部膨胀
+        # （实测 2MB 包→4GB RSS 后才报错）。修：每轮**先查余量再解**，
+        # 余量≤0 立即拒，绝不以 0 为 max_length 调用
         d = zlib.decompressobj()
         raw = d.decompress(comp, _MAX_TABLE)
         while d.unconsumed_tail:
-            more = d.decompress(d.unconsumed_tail,
-                                _MAX_TABLE - len(raw) if len(raw) < _MAX_TABLE else 0)
+            if len(raw) >= _MAX_TABLE:
+                raise FcpkError("资源包异常：段表超上限（疑似损坏或包炸弹）")
+            more = d.decompress(d.unconsumed_tail, _MAX_TABLE - len(raw))
             if not more:
                 break
             raw += more
-            if len(raw) > _MAX_TABLE:
-                break
         if len(raw) > _MAX_TABLE or d.unconsumed_tail or not d.eof:
             raise FcpkError("资源包异常：段表超上限（疑似损坏或包炸弹）")
         self.table = json.loads(raw.decode("utf-8"))

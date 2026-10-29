@@ -178,9 +178,7 @@ def res_install_api():
             # read-modify-write 互相覆盖（陈旧 last_probe 复活、红条多挂 60s）
             try:
                 from src import res_boot
-                cur = res_boot._read_state()
-                cur.pop("last_probe", None)
-                res_boot._write_state(cur)
+                res_boot._pop_state("last_probe")
             except Exception:
                 pass
 

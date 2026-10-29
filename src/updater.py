@@ -145,7 +145,7 @@ def _write_bat(parent_dir, app_name, exe_name, staging_root):
         'if exist "' + log + '" del "' + log + '"',
         '>> "' + log + '" echo === 升级开始 ===',
         # 杀残留自家实例（主进程已请求退出；兜底双开/僵尸进程占文件）
-        'taskkill /f /im "' + exe_name + '" 2>nul',
+        'taskkill /f /im "' + exe_name + '" 2>nul','taskkill /f /im msedgewebview2.exe 2>nul',
         # ren 重试循环：最长 30s（15x2s）——等 claude 子进程/杀软释放文件
         'set /a tries=0',
         ':retry',

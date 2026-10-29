@@ -993,8 +993,13 @@ class _Handler(BaseHTTPRequestHandler):
             rng = (self.headers.get("Range") or "").strip()
             m = re.match(r"bytes=(\d+)-(\d*)$", rng) if rng else None
             if m:
-                start = min(int(m.group(1)), max(0, size - 1))
+                start = int(m.group(1))
                 end = int(m.group(2)) if m.group(2) else size - 1
+                # 对抗审二轮 P3-1：反转区间/越界起点一律 416（曾算出负长度）
+                if start >= size or end < start:
+                    self._text(416, '{"ok":false,"err":"range not satisfiable"}',
+                               "application/json; charset=utf-8")
+                    return
                 end = min(end, size - 1)
                 self.send_response(206)
                 self.send_header("Content-Range",
