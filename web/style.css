@@ -2981,6 +2981,31 @@ html {
 .hg-ctx-pct { font-size: var(--fs-sm); white-space: nowrap; }
 .hg-cost.warn { color: var(--neon-orange, #d29922); }
 .hg-cost.warn .hg-ctx-pct { color: var(--neon-red, #e06c75); font-weight: 600; }
+/* a154：上下文容量卡（仿 ZCode，圆环点击弹出，fx.js _hgCtxCardToggle） */
+.hg-ctx-card { position: fixed; z-index: 320; width: 310px; max-width: calc(100vw - 16px);
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px;
+  padding: 14px 16px; box-shadow: 0 8px 28px rgba(0,0,0,.45);
+  font-family: var(--font-ui); font-size: var(--fs-base, 12px); color: var(--fg); }
+.hg-ctx-head { display: flex; justify-content: space-between; align-items: baseline;
+  margin-bottom: 10px; }
+.hg-ctx-head b { font-size: var(--fs-lg); }
+.hg-ctx-head span { color: var(--muted); font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums; }
+.hg-ctx-bar { height: 8px; border-radius: 999px; background: var(--border);
+  overflow: hidden; margin-bottom: 12px; }
+.hg-ctx-bar i { display: block; height: 100%; border-radius: 999px;
+  transition: width .3s; }
+.hg-ctx-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+.hg-ctx-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
+  flex-shrink: 0; }
+.hg-ctx-dot.est { background: var(--muted); }
+.hg-ctx-name { flex: 1; }
+.hg-ctx-val { color: var(--muted); font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums; }
+.hg-ctx-line { padding-top: 6px; }
+.hg-ctx-dim { color: var(--muted); font-size: var(--fs-sm, 11px); }
+.hg-ctx-foot { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border);
+  color: var(--muted); font-size: var(--fs-sm, 11px); line-height: 1.5; }
 /* v2.19：图标换成 SVG（旧的字符 ➤/■ 基线不齐、■ 还是窄长条，用户嫌丑）。
    两个 svg 常驻 DOM，靠 .stop 切换显隐，避免改 DOM 引起重排。 */
 .hg-send { width: 32px; height: 32px; flex-shrink: 0; border-radius: 50%;

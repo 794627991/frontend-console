@@ -46,6 +46,7 @@
   const _HG_CTX_FALLBACK = 256000;
   function _hgCtxKey(sid) { return 'hg-ctx:' + sid; }
   function _hgCtxRestore(sid) {
+    _HG.ctxParts = null;   // a154：分类估算随会话走，旧会话的 sys/mcp 估值不残留
     let v = null;
     if (sid) { try { v = JSON.parse(localStorage.getItem(_hgCtxKey(sid)) || 'null'); } catch(_) {} }
     const s = _HG.sessions.find(x => x.sid === sid);
@@ -105,6 +106,16 @@
       if (tps && tps.sub) _hgCostEl.title += '\n子代理累计 ' + fmtTok(tps.sub) + ' tok（独立上下文，不计入上行速度）';
     }
     _hgDynDirty();   // v2.32 面板：上下文行跟随（localStorage 即数据总线，零新轮询）
+    // a154：圆环可点——弹出上下文容量卡（仿 ZCode）。绑在 _hgCostEl 本体，
+    // innerHTML 重画只换子节点不杀父监听，绑一次即可
+    if (!_hgCostEl._hgCtxCardBound) {
+      _hgCostEl._hgCtxCardBound = true;
+      _hgCostEl.style.cursor = 'pointer';
+      _hgCostEl.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        _hgCtxCardToggle();
+      });
+    }
   }
   function renderCtxRing(o) {
     const u = o.usage || {};
@@ -153,6 +164,10 @@
       .then(r => r.json())
       .then(j => {
         if (!j || !j.ok || j.sid !== _HG.sid) return;
+        // a154：容量卡分类估算（系统提示词/MCP 工具，后端 /ctx 附带）——
+        // 搭既有 5s 轮询车，零新增请求
+        if (j.sysTok !== undefined || j.mcpTok !== undefined)
+          _HG.ctxParts = { sys: j.sysTok || 0, mcp: j.mcpTok || 0 };
         // v2.20：中断轮次没有 result → 接口 window=0 → 前端曾退 256K 假分母
         // （1M 模型显示成 /256K，84% 虚高）。模型名带窗口线索（glm-5.3[1M]）
         // 时按名推断，兜住没有任何 result 校准过的会话。
@@ -168,6 +183,86 @@
                         modelUsage: win ? { _w: { contextWindow: win } } : null });
       }).catch(() => {})
       .finally(() => { _hgCtxInFlight = false; });
+  }
+  // ---- a154：上下文容量卡（仿 ZCode，用户需求）----------------------------
+  // 数据零新增：用量=ctxRing+liveToks（a153 实时链）、缓存命中率=v4feed
+  // tps.hit（result 帧三输入分量累计）、分类=系统提示词/MCP 工具后端估算
+  // （/ctx sysTok/mcpTok）+ 消息=余量。我们是 CLI 的壳——CLI 内部的基础
+  // 系统提示与内置工具 schema 拿不到，故分类标「估」不装精确（ZCode 自组
+  // prompt 所以精确；额度区是其订阅限制，自托管网关无此概念，不仿）
+  let _hgCtxCardEl = null, _hgCtxCardTimer = null;
+  function _hgCtxCardFmt(n) {
+    return n >= 1000000 ? (n / 1000000).toFixed(1) + 'M'
+         : n >= 1000 ? (n / 1000).toFixed(1) + 'K' : String(Math.round(n));
+  }
+  function _hgCtxCardTpl() {
+    const r = _HG.ctxRing || {}, t = _HG.tps || {};
+    const est = (_HG.busy && t.liveToks) || 0;
+    const used = Math.max(0, r.used || 0);
+    const shown = used + est;              // 与环同口径：busy 时含生成中估值
+    const max = r.max || _HG_CTX_FALLBACK;
+    const pct = Math.min(100, shown / max * 100);
+    const barCol = pct >= 95 ? 'var(--neon-red, #e06c75)'
+                 : pct >= 80 ? 'var(--neon-orange, #d29922)' : 'var(--accent)';
+    const parts = _HG.ctxParts || { sys: 0, mcp: 0 };
+    const msg = Math.max(0, shown - parts.sys - parts.mcp);
+    const row = (name, tok, est_) => {
+      const p = shown > 0 ? (tok / shown * 100).toFixed(1) : '0.0';
+      return `<div class="hg-ctx-row"><i class="hg-ctx-dot${est_ ? ' est' : ''}"></i>` +
+        `<span class="hg-ctx-name">${name}</span>` +
+        `<span class="hg-ctx-val">${_hgCtxCardFmt(tok)} · ${p}%${est_ ? '*' : ''}</span></div>`;
+    };
+    const tpsBits = [];
+    if (t.last) tpsBits.push(`最近 ${t.last} tok/s`);
+    if (t.all) tpsBits.push(`累计输出 ${_hgCtxCardFmt(t.all)}`);
+    if (t.sub) tpsBits.push(`子代理 ${_hgCtxCardFmt(t.sub)}`);
+    return `<div class="hg-ctx-head"><b>上下文容量</b><span>${(used > 0 || est > 0) ?
+        `${_hgCtxCardFmt(shown)}/${_hgCtxCardFmt(max)}（${Math.round(pct)}%）` :
+        '首轮回复后统计'}</span></div>` +
+      `<div class="hg-ctx-bar"><i style="width:${pct}%;background:${barCol}"></i></div>` +
+      `<div class="hg-ctx-rows">` +
+        row('消息', msg, false) +
+        row('系统提示词', parts.sys, true) +
+        row('MCP 工具', parts.mcp, true) +
+      `</div>` +
+      `<div class="hg-ctx-line">缓存命中率 ${t.hit > 0 ? t.hit + '%' : '—'}` +
+        `<span class="hg-ctx-dim">（本会话累计）</span></div>` +
+      (tpsBits.length ? `<div class="hg-ctx-line">${tpsBits.join(' · ')}</div>` : '') +
+      (est > 0 ? `<div class="hg-ctx-dim">含生成中 ~${_hgCtxCardFmt(est)}（估值，回合结束落准）</div>` : '') +
+      `<div class="hg-ctx-foot">* 分类为估算：系统提示词/MCP 工具按注入内容量得，` +
+      `消息 = 总量 − 前两项（CLI 内部构成不暴露）</div>`;
+  }
+  function _hgCtxCardRender() {
+    if (_hgCtxCardEl) _hgCtxCardEl.innerHTML = _hgCtxCardTpl();
+  }
+  function _hgCtxCardAway(ev) {
+    if (_hgCtxCardEl && !_hgCtxCardEl.contains(ev.target) &&
+        !_hgCostEl.contains(ev.target)) _hgCtxCardClose();
+  }
+  function _hgCtxCardKey(ev) {
+    if (ev.key === 'Escape') _hgCtxCardClose();
+  }
+  function _hgCtxCardClose() {
+    if (_hgCtxCardTimer) { clearInterval(_hgCtxCardTimer); _hgCtxCardTimer = null; }
+    document.removeEventListener('mousedown', _hgCtxCardAway);
+    document.removeEventListener('keydown', _hgCtxCardKey);
+    if (_hgCtxCardEl) { _hgCtxCardEl.remove(); _hgCtxCardEl = null; }
+  }
+  function _hgCtxCardToggle() {
+    if (_hgCtxCardEl) { _hgCtxCardClose(); return; }
+    const el = document.createElement('div');
+    el.className = 'hg-ctx-card';
+    el.innerHTML = _hgCtxCardTpl();
+    document.body.appendChild(el);
+    const rc = _hgCostEl.getBoundingClientRect();
+    const st = el.style;
+    // 锚定：右缘对齐圆环、卡底在圆环上方（ZCode 同款上浮）；极窄窗右缘钳 8px
+    st.right = Math.max(8, Math.round(window.innerWidth - rc.right)) + 'px';
+    st.bottom = Math.round(window.innerHeight - rc.top + 10) + 'px';
+    _hgCtxCardEl = el;
+    _hgCtxCardTimer = setInterval(_hgCtxCardRender, 1000);  // 开着就活着（a153 实时链）
+    document.addEventListener('mousedown', _hgCtxCardAway);
+    document.addEventListener('keydown', _hgCtxCardKey);
   }
   function setBusy(b, sinceMs) {
     // v3.5.50：只读模式守卫——RO 期间主会话事件流已断（SSE close），主视图

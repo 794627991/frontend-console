@@ -430,8 +430,13 @@ class V4Feed(object):
         # 子代理 token 不进主窗 TPS（独立进程独立上下文，并行路数不固定，
         # 合并=系统总吞吐而非会话速度），只累计展示
         self._tps = {"last": 0, "toks": 0, "all": 0, "sub": 0,
-                     "ctxLive": 0, "liveToks": 0}
+                     "ctxLive": 0, "liveToks": 0, "hit": 0}
         self._live_chars = 0         # a153：本回合肥式字符账（估 liveToks）
+        # a154：缓存命中账（容量卡「缓存命中率」行）——result 帧三输入分量
+        # 的会话累计：cache_read / 全部输入。累计口径=「本会话平均」，摊平
+        # 首回合必 miss 的单回合抖动
+        self._cache_r = 0
+        self._cache_n = 0
         self._hydrate = hydrate        # 冷启动重建回调（snapshot 空时调用）
         self._hydrated = False
         self._hyd_keys = set()         # hydration 已呈现行的内容指纹（去重）
@@ -1104,6 +1109,12 @@ class V4Feed(object):
             _fin = (_u.get("input_tokens") or 0)                 + (_u.get("cache_read_input_tokens") or 0)                 + (_u.get("cache_creation_input_tokens") or 0)
             if isinstance(_fin, int) and _fin > 0:
                 self._tps["ctxLive"] = _fin
+            # a154：缓存命中率累计（只在 result 帧记——assistant 中间帧的
+            # usage 是过程值，重复入账会虚高）
+            if isinstance(_fin, int) and _fin > 0:
+                self._cache_r += (_u.get("cache_read_input_tokens") or 0)
+                self._cache_n += _fin
+                self._tps["hit"] = round(self._cache_r * 100.0 / self._cache_n, 1)
             self._live_chars = 0
             self._tps["liveToks"] = 0
             ds.append(P.d_state({"tps": dict(self._tps)}))

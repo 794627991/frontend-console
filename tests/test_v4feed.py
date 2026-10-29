@@ -2078,6 +2078,34 @@ class TestTpsState(_HWMTestCase):
         self.assertEqual(tps["last"], 40.0, "第二回合 800/20s")
         self.assertEqual(tps["toks"], 800)
 
+    def test_cache_hit_rate_accumulates(self):
+        """a154：缓存命中率（容量卡行）——result 帧三输入分量的会话累计，
+        assistant 中间帧 usage 是过程值不得入账（重复入账会虚高）。"""
+        f = _mkfeed("e1")
+        f.ingest(_env(1, "turn_started"))
+        f.ingest(_env(2, "cli_stream", data={"type": "assistant", "message": {
+            "model": "m",
+            "usage": {"input_tokens": 100, "cache_read_input_tokens": 99900},
+            "content": [{"type": "text", "text": "答"}]}}))
+        tps = f.snap["state"].get("tps")
+        self.assertEqual(tps.get("hit"), 0, "assistant 中间帧不得入缓存账")
+        # 首回合 result：read 95000 / 全部输入 100000 → 95.0%
+        f.ingest(_env(3, "cli_stream", data={
+            "type": "result", "duration_ms": 10000,
+            "usage": {"output_tokens": 400, "input_tokens": 2000,
+                      "cache_read_input_tokens": 95000,
+                      "cache_creation_input_tokens": 3000}}))
+        tps = f.snap["state"].get("tps")
+        self.assertEqual(tps["hit"], 95.0)
+        # 次回合：累计 read 194000 / 累计 200000 → 97.0%（平均口径摊平单回合抖动）
+        f.ingest(_env(4, "turn_started", turn="t2"))
+        f.ingest(_env(5, "cli_stream", turn="t2", data={
+            "type": "result", "duration_ms": 5000,
+            "usage": {"output_tokens": 100, "input_tokens": 1000,
+                      "cache_read_input_tokens": 99000}}))
+        tps = f.snap["state"].get("tps")
+        self.assertEqual(tps["hit"], 97.0)
+
 
 class TestMachineTurnMerge(_HWMTestCase):
     """a144R（用户铁律「闸不得拆分回合」）：审计/设计闸续发指令（send_message

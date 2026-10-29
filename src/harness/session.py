@@ -80,6 +80,9 @@ class HarnessSession:
         self.busy = False
         self.busy_since = None   # 本轮处理计时起点 ms（busy 时有效，供前端恢复计时）
         self.bridge_fp = None    # 注入时的识图引导词指纹（send 前热更检测，见 start()）
+        # a154：最近一次注入的 --append-system-prompt 字符数（容量卡分类
+        # 估算用；start() 每次组装后落账）
+        self.sys_prompt_chars = 0
         self.renewed_at = 0      # v2.27.15：最近一次超窗续命的事件位点（HikLink 等待基准用）
         # v3.5.286：切模型后的首条消息前置口径声明（set_model 写入；真正的
         # 上下文注入点——emit sysnote 只进前端事件流，CLI 模型上下文=jsonl
@@ -316,6 +319,9 @@ class HarnessSession:
                 if _p:
                     self._audit_settings_path = _p
                     argv += ["--settings", _p]
+        # a154：容量卡分类估算——记注入长度（CLI 内部还有自己的基础系统
+        # 提示与内置工具 schema，那些拿不到，不入账）
+        self.sys_prompt_chars = len(sys_prompt or "")
         if sys_prompt:
             argv += ["--append-system-prompt", sys_prompt]
         if self.name:

@@ -459,9 +459,33 @@ def harness_ctx():
     if not s.session_id:
         return jsonify({"ok": True, "used": 0, "window": 0, "sid": s.sid})
     used, window, compacted = _session_ctx_used(s)
+    # a154：容量卡分类估算——系统提示词（session.start 落账的注入长度，
+    # 中文重 3 字符/token 保守取 3）+ MCP 工具 schema（我们注册的，可量）
+    sys_chars = getattr(s, "sys_prompt_chars", 0) or 0
     return jsonify({"ok": True, "used": used, "window": window, "sid": s.sid,
                     "compacted": compacted,
-                    "model": s.model or available_models().get("default") or ""})
+                    "model": s.model or available_models().get("default") or "",
+                    "sysTok": max(1, round(sys_chars / 3)) if sys_chars else 0,
+                    "mcpTok": _mcp_tok_est()})
+
+
+# a154：MCP 工具 schema token 估算（容量卡分类行）。_TOOLS 是进程内静态
+# 结构，量一次记忆；3 字符/token 同 sysTok 口径
+_MCP_TOK_EST = None
+
+
+def _mcp_tok_est():
+    global _MCP_TOK_EST
+    if _MCP_TOK_EST is None:
+        from . import ask_mcp, vision_mcp
+        n = 0
+        for _m in (ask_mcp, vision_mcp):
+            try:
+                n += len(json.dumps(_m._TOOLS, ensure_ascii=False))
+            except Exception:
+                pass        # schema 量不到就不冒充精确，分类余量自然吸收
+        _MCP_TOK_EST = max(1, n // 3)
+    return _MCP_TOK_EST
 
 # ---- from claude_harness.py:2934 (harness_set_model) ----
 
