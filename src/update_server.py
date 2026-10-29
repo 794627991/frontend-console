@@ -117,7 +117,7 @@ def _versions():
         if n.startswith("notes-v") and n.endswith(".md"):
             try:
                 with open(os.path.join(root, n), encoding="utf-8") as f:
-                    notes[n[7:-3]] = f.read().strip()[:500]
+                    notes[n[7:-3]] = f.read().strip()[:4000]
             except OSError:
                 pass
     try:

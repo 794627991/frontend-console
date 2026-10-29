@@ -83,7 +83,7 @@ def check_update():
     has = _ver_tuple(latest) > _ver_tuple(cur)
     return {"ok": True, "current": cur, "configured": True,
             "latest": latest, "has_update": has,
-            "notes": (m.get("notes") or "")[:500],
+            "notes": (m.get("notes") or "")[:4000],
             "size": m.get("size") or 0, "date": m.get("date") or "",
             "file": m.get("file") or ""}
 

@@ -192,12 +192,15 @@ def _publish(app_dir):
     # 两犯后整条路拆除）：只认打包前写好的 RELEASE_NOTES.md；没写就留空，
     # 发布页该版显示「未写更新说明」。归档 notes-v<ver>.md 供门户更新日志
     # 逐版展示。
+    # v4.0.1：截断线 500→4000——新画的发布说明 1305 字，500 会在第一条
+    # 主线中间切断（用户实锤发布页说明被拦腰截断）。发布页/更新弹窗两侧
+    # 本来就是 max-height+滚动区，放宽上限只是少丢内容，不会撑破版面。
     notes = ""
     notes_path = os.path.join(BASE, "RELEASE_NOTES.md")
     if os.path.exists(notes_path):
         try:
             with open(notes_path, encoding="utf-8") as f:
-                notes = f.read().strip()[:500]
+                notes = f.read().strip()[:4000]
         except OSError:
             pass
     if notes:
