@@ -219,10 +219,11 @@ function skRenderHome() {
 }
 
 function skRowCard(r) {
+  // v4.0.1（用户拍板）：技能名不翻译——卡片标题恒显原名，中文名只在
+  // 与原名不同（老缓存遗留）时才作副行，避免 zh_name==name 的重复行
   return '<div class="sk-card" data-sk-key="' + _skEsc(r.key) + '" title="' + _skEsc(r.desc || r.skill) + '">' +
     _skIcon(r.name) +
-    '<div class="sk-card-m"><div class="sk-card-n"><b>' + _skEsc(r.zh_name || r.name) + '</b>' +
-    (r.zh_name && r.zh_name !== r.name ? '<i class="sk-en">' + _skEsc(r.name) + '</i>' : '') +
+    '<div class="sk-card-m"><div class="sk-card-n"><b>' + _skEsc(r.name) + '</b>' +
     '</div>' +
     '<div class="sk-card-d">' + _skEsc(r.zh_desc || r.desc || r.source) + '</div>' +
     '<div class="sk-card-f"><span>' + _skEsc(r.source) + '</span><span>⬇ ' + _skEsc(r.installs || '-') + '</span></div></div>' +
@@ -425,6 +426,9 @@ function skOpenDetail(key) {
       if (!r.ok) { el.innerHTML = '<div class="sk-empty">详情拉取失败</div>'; return; }
       SK.det = r.detail;
       skRenderDetail();
+      // v4.0.1（用户拍板「未翻译的就后台翻译」）：进详情即静默译正文，
+      // 译好再重渲（期间照常显示原文，不阻塞阅读、不弹错误）
+      if (!SK.det.body_zh) skBodyZhAuto();
     });
 }
 
@@ -470,8 +474,7 @@ function skRenderDetail() {
   el.innerHTML =
     '<div class="sk-sec sk-det-h">' +
       _skIcon(d.name, 40) +
-      '<div class="sk-card-m"><div class="sk-card-n"><b>' + _skEsc(d.zh_name || d.name) + '</b>' +
-        (isLocal ? '' : '<i class="sk-en">' + _skEsc(d.name) + '</i>') +
+      '<div class="sk-card-m"><div class="sk-card-n"><b>' + _skEsc(d.name) + '</b>' +
         (d.disabled ? '<u class="sk-offtag">已禁用</u>' : '') + '</div>' +
         '<div class="sk-card-d">' + _skEsc(d.zh_desc || d.desc || '') + '</div>' +
         '<div class="sk-card-f"><span>' + (isLocal
@@ -484,7 +487,7 @@ function skRenderDetail() {
           ? '<button class="sk-btn sm" data-sk-zh>' + (SK.detZh ? '看英文' : (d.body_zh ? '看中文' : '翻译正文')) + '</button>' +
             '<button class="sk-btn sm danger" data-sk-uninstall="' + _skEsc(d.name) + '">卸载</button>'
           : '<button class="sk-btn sm" data-sk-zh>' + (SK.detZh ? '看英文' : (d.body_zh ? '看中文' : '翻译正文')) + '</button>' +
-            '<button class="sk-btn sm pri" data-sk-do-install>' + (d.zh_name ? '重装' : '安装') + '</button>') +
+            '<button class="sk-btn sm pri" data-sk-do-install>' + (d.desc || d.zh_desc ? '重装' : '安装') + '</button>') +
       '</span>' +
     '</div>' +
     (gloss || (SK.detZh && d.body_zh) ? '<div class="sk-review"><b>安装前校阅（' + (SK.detZh ? '中文译文' : '') + '）</b>' + gloss + '</div>' : '') +
@@ -503,7 +506,32 @@ function skOpenLocal(name) {
     SK.det = { key: 'local:' + name, name: r.name, md: r.md, desc: r.desc,
                disabled: r.disabled, dir: r.dir, local: true };
     skRenderDetail();
+    if (!SK.det.body_zh) skBodyZhAuto();   // v4.0.1：本地技能同样后台译正文
   });
+}
+
+// v4.0.1：后台正文翻译——不占按钮、不弹提示；失败静默（用户仍可手动点
+// 「翻译正文」重试）。译完只在还停在同一篇详情时重渲，避免串稿。
+function skBodyZhAuto() {
+  const d = SK.det;
+  if (!d || d._zhAsking) return;
+  d._zhAsking = true;
+  const ask = d.local ? { kind: 'body', local: d.name }
+    : (() => { const parts = d.key.split('/');
+        return { kind: 'body', owner: parts[0], repo: parts[1], skill: parts[2] }; })();
+  _skFetch('/api/skills/translate', { method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(ask) })
+    .then(r => {
+      d._zhAsking = false;
+      if (!r.ok || !r.body_zh) return;
+      d.body_zh = r.body_zh;
+      if (SK.det === d && SK.view === 'detail') {
+        SK.detZh = true;      // 后台译好即切中文态，按钮变「看英文」
+        skRenderDetail();
+      }
+    })
+    .catch(() => { d._zhAsking = false; });
 }
 
 function skDetailZh() {

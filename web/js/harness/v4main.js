@@ -32,7 +32,7 @@
 
   var _cur = null;      // {sid, store, render}
 
-  function v4Switch(sid, keepInput) {
+  function v4Switch(sid, keepInput, cwdHint) {
     v4Close();
     if (!sid) {
       // a53（用户实测致命「新建会话点不开了」）：switchTo(null) 的 v4 分流
@@ -62,10 +62,10 @@
     // 兼容旧链路的状态账（部分基元读这些字段）
     _HG.sid = sid;
     // switchTo 公共尾巴（标头/模型/cwd/列表）被 v4 分流短路——此处补齐
-    v4PaintHeader(sid, keepInput);
+    v4PaintHeader(sid, keepInput, cwdHint);
   }
 
-  function v4PaintHeader(sid, keepInput) {
+  function v4PaintHeader(sid, keepInput, cwdHint) {
     var meta = null;
     for (var i = 0; i < (_HG.sessions || []).length; i++)
       if (_HG.sessions[i] && _HG.sessions[i].sid === sid) { meta = _HG.sessions[i]; break; }
@@ -86,11 +86,15 @@
           if (mEl) mEl.innerHTML = (typeof esc === 'function' ? esc(sm) : sm) + ' ▾';
         }
       }
+      // a132（用户实锤「会话首条，不切会话的话工程路径显示不出来」）：
+      // 新会话刚建时 _HG.sessions 里还没有这一条（refreshSessions 的异步
+      // 往返没回来），meta=null → cwd 被画成空串，必须切走再切回才恢复。
+      // ensureSession 手里有后端回的 j.cwd，用 cwdHint 兜住首帧。
+      var mcwd = (meta && meta.cwd) || cwdHint || '';
       if (typeof _hgCwdEl !== 'undefined' && _hgCwdEl)
-        _hgCwdEl.textContent = (meta && meta.cwd) || '';
+        _hgCwdEl.textContent = mcwd;
       // 项目 chip 跟随会话 cwd（对齐 V3 sessions.js:581——切回历史会话恢复
       // 该会话目录；v4 分流短路了冷开路此段，chip 停在默认项目）
-      var mcwd = (meta && meta.cwd) || '';
       if (mcwd) {
         _HG.cwd = mcwd;
         if (typeof _hgSaveCwd === 'function') { try { _hgSaveCwd(mcwd); } catch (e) {} }

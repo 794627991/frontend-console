@@ -105,7 +105,9 @@
     _HG.sid = j.sid; _HG.seq = 0; _HG.alive = true;
     _hgTitleEl.textContent = '新会话';
     _hgCwdEl.textContent = (j.cwd || '').split(/[\\/]/).pop() || '~';
-    if (typeof V4Main !== 'undefined' && V4Main.on()) V4Main.switch(j.sid);
+    // a132：把后端回的 cwd 一并传给 v4——此刻 _HG.sessions 还没刷新到本
+    // 会话，v4PaintHeader 查不到 meta 会把工程路径画成空白
+    if (typeof V4Main !== 'undefined' && V4Main.on()) V4Main.switch(j.sid, false, j.cwd);
     else openSSE(j.sid, 0);
     refreshSessions();
     return j.sid;

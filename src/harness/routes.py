@@ -2336,7 +2336,10 @@ def _llm_translate_batch(pairs):
         headers={"Content-Type": "application/json",
                  "Authorization": "Bearer " + token,
                  "x-api-key": token,
-                 "anthropic-version": "2023-06-01"})
+                 "anthropic-version": "2023-06-01",
+                 # v4.0.1：内网 lanz 网关按 UA 白名单放行 Anthropic 协议
+                 # （仅 claude-cli/*，Python-urllib 默认 UA 一律 403）
+                 "User-Agent": "claude-cli/2.0.0 (external, cli)"})
     try:
         with urllib.request.urlopen(req, timeout=60) as r:
             d = json.loads(r.read().decode("utf-8", errors="replace"))

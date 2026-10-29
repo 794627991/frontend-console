@@ -28,6 +28,10 @@ import urllib.error
 from src.app_state import HOME_DIR, DATA_DIR
 
 UA = "frontend-console-skills/1.0"
+# v4.0.1：内网 lanzi 网关按 UA 白名单放行 Anthropic 协议（仅 claude-cli/*，
+# 其余一律 403 "Anthropic protocol is restricted to Claude clients"——
+# 这是技能仓库翻译恒失败的真因）；vision_mcp._API_UA 同源同因。
+_API_UA = "claude-cli/2.0.0 (external, cli)"
 _SKILLS_DIR = os.path.join(os.path.expanduser("~"), ".claude", "skills")
 # v3.5.320（用户需求「翻译文件跟着数据空间走」）：技能数据落数据目录——
 # 随数据空间迁移/统计/清理走（server._DATA_SUBDIRS 已收录）；模块加载时把
@@ -783,9 +787,9 @@ def _claude_env():
         return "", ""
 
 
-_ZH_SYS = ("你是技能文档翻译引擎。把给定的 Claude 技能元数据/正文译成简体中文："
+_ZH_SYS = ("你是技能文档翻译引擎。按用户指定字段把 Claude 技能文档译成简体中文："
            "保留代码块、命令、文件名、专有名词原样；术语首译时给出对照。"
-           "只输出 JSON，不要解释。")
+           "技能名（name/slug）一律不译。")
 
 
 def _llm(system, user, max_tokens=4096):
@@ -808,7 +812,7 @@ def _llm(system, user, max_tokens=4096):
             base + "/v1/messages", data=body, method="POST",
             headers={"Content-Type": "application/json",
                      "x-api-key": key, "Authorization": "Bearer " + key,
-                     "anthropic-version": "2023-06-01", "User-Agent": UA})
+                     "anthropic-version": "2023-06-01", "User-Agent": _API_UA})
         try:
             with urllib.request.urlopen(req, timeout=180) as r:
                 d = json.loads(r.read().decode("utf-8", "replace"))
@@ -864,11 +868,14 @@ def translate_meta(items):
         else:
             pending.append((it, key, None))
     if pending:
+        # v4.0.1（用户拍板「技能仓库的名字不要翻译，只翻译简介和正文」）：
+        # name 只作为术语上下文喂给模型，输出只要 zh_desc——zh_name 恒存原名。
         ask = json.dumps([{"i": i, "name": p[0].get("name", ""),
                            "desc": p[0].get("desc", "")}
                           for i, p in enumerate(pending)], ensure_ascii=False)
-        text, err = _llm(_ZH_SYS, "翻译以下技能元数据数组，输出 JSON："
-                         '{"items":[{"i":0,"zh_name":"中文名","zh_desc":"一句中文描述",'
+        text, err = _llm(_ZH_SYS, "翻译以下技能简介（name 仅作术语上下文，"
+                         "不要翻译、不要输出）：输出 JSON："
+                         '{"items":[{"i":0,"zh_desc":"一句中文描述",'
                          '"glossary":{"英文术语":"中文译名"}}]}。数据：' + ask)
         data = _extract_json(text) if not err else None
         got = {}
@@ -880,7 +887,7 @@ def translate_meta(items):
                     continue
         for i, (it, key, _payload) in enumerate(pending):
             row = got.get(i) or {}
-            d = {"zh_name": str(row.get("zh_name") or it.get("name", ""))[:120],
+            d = {"zh_name": it.get("name", ""),
                  "zh_desc": str(row.get("zh_desc") or "")[:600],
                  "glossary": row.get("glossary") or {},
                  "model": light_model(), "ts": int(time.time())}

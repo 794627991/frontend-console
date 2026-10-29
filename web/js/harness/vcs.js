@@ -555,6 +555,11 @@
       // v3.5.251（用户定调）：当前 Claude 会话工程目录并入（去重——文件树
       // 已含时不再列）；AI 正在操作的工程不看文件树也能直接看它的 git/svn
       if (_HG.cwd && !roots.includes(_HG.cwd)) roots.push(_HG.cwd);
+      // v4.0.1（用户拍板「已打开的工程，不用必须在文件树打开就能看 git」）：
+      // 所有会话的工程目录都进候选——后端 _project_roots 同口径放行
+      for (const s of (_HG.sessions || [])) {
+        if (s && s.cwd && !roots.includes(s.cwd)) roots.push(s.cwd);
+      }
       if (!_HG.vcs.root) {
         const saved = localStorage.getItem('hg-vcs-root');
         _HG.vcs.root = (saved && roots.includes(saved)) ? saved
@@ -880,9 +885,11 @@
       if (sel) {
         fetch('/api/tree/roots').then(r => r.json()).then(j => {
           const roots = (j && j.ok) ? (j.roots || []) : [];
-          // v3.5.251：同 _vcsReload——会话 cwd 并入去重（否则 cwd 型 root
-          // 不在文件树 roots 里，会被下一行强改成 roots[0]）
+          // v4.0.1：会话工程目录同样并入（后端 _project_roots 同口径放行
+          // ——已打开的工程不必先在文件树登记）
           if (_HG.cwd && !roots.includes(_HG.cwd)) roots.push(_HG.cwd);
+          for (const s of (_HG.sessions || []))
+            if (s && s.cwd && !roots.includes(s.cwd)) roots.push(s.cwd);
           if (!roots.includes(_HG.vcs.root) && roots.length) _HG.vcs.root = roots[0];
           sel.innerHTML = roots.map(r0 =>
             `<option value="${esc(r0)}"${r0 === _HG.vcs.root ? ' selected' : ''}>${esc(r0)}</option>`).join('')

@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 from flask import Blueprint, jsonify, request
 
 from src import app_state as _st
-from src.file_tree import _under_roots
+from src.file_tree import _under_roots, _under_roots_or_projects
 
 vcs_bp = Blueprint("vcs", __name__)
 
@@ -134,9 +134,10 @@ def _wc_root(path):
     """解析 path 所属工作副本。返回 (vcs, wc_dir, err)：
     - vcs ∈ {'git','svn'}，wc_dir 为仓库根绝对路径（登记根子树内）
     - vcs=None：err 带原因（不在登记根内 / 非版本控制目录 / 仓库根越界）"""
-    p = _under_roots(path)
+    p = _under_roots_or_projects(path)
     if not p:
-        return None, None, "路径不在文件树已登记目录内——请先在左侧文件树打开该工程目录"
+        return None, None, ("路径不在文件树已登记目录内，也不是已打开的工程"
+                            "——请先在左侧文件树打开该工程目录")
     cur = p
     for _ in range(8):                      # 向上最多 8 跳找标记
         if os.path.exists(os.path.join(cur, ".git")):
@@ -160,9 +161,8 @@ def _wc_root(path):
                     cand = m.group(1).strip() if m else None
                 if cand:
                     cand = os.path.abspath(cand)
-                    if _under_roots(cand) and (
-                            cand == _under_roots(cand) or
-                            cand.startswith(_under_roots(cand) + os.sep)):
+                    pc = _under_roots_or_projects(cand)
+                    if pc and (cand == pc or cand.startswith(pc + os.sep)):
                         if os.path.exists(os.path.join(cand, ".git")):
                             return "git", cand, None
                         if os.path.isdir(os.path.join(cand, ".svn")):

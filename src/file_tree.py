@@ -39,12 +39,52 @@ def _save_tree_roots(roots):
     _save_config({**_load_config(), "tree_roots": list(dict.fromkeys(roots))})
 
 
+def _project_roots():
+    """已打开的 Claude 会话工程目录（v4.0.1）。
+
+    用户拍板「已打开的工程，不用必须在文件树打开，只要打开了就可以显示
+    git」——版本面板/工作区能看到的工程，不止文件树登记的根。数据源取
+    会话元数据里出现过的 cwd（老会话也认，切走过的不丢）。
+    仍与 _tree_roots 同口径：过滤不存在的目录、abspath 归一。"""
+    out = []
+    try:
+        from .harness import meta as _m
+        _m._meta_load()
+        for v in list(_m._meta.values()):
+            c = str((v or {}).get("cwd") or "").strip()
+            if not c:
+                continue
+            p = os.path.abspath(c)
+            if p not in out and os.path.isdir(p):
+                out.append(p)
+    except Exception:
+        pass
+    return out
+
+
 def _under_roots(path):
     """安全门卫：path 必须在某登记根或其子树内，返回归一化路径，否则 None。"""
     if not path:
         return None
     p = os.path.abspath(str(path).strip().strip('"').strip("'"))
     for root in _tree_roots():
+        if p == root or p.startswith(root + os.sep):
+            return p
+    return None
+
+
+def _under_roots_or_projects(path):
+    """版本面板专用门卫：文件树登记根 **或** 已打开会话工程目录。
+    与 _under_roots 分开——文件树枚举仍只认登记根（枚举目录 = 把磁盘变
+    可浏览列表，不能因为开过会话就放开）；git/svn 只读查看工程目录本身
+    是用户已明确打开的路径，不会扩大枚举面。"""
+    p = _under_roots(path)
+    if p:
+        return p
+    if not path:
+        return None
+    p = os.path.abspath(str(path).strip().strip('"').strip("'"))
+    for root in _project_roots():
         if p == root or p.startswith(root + os.sep):
             return p
     return None
