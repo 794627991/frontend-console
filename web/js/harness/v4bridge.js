@@ -1136,9 +1136,15 @@
       var live = t.ctxLive || 0, est = t.liveToks || 0;
       var _rr = _g('_hgDrawCtxRing');
       if (_rr && _HG.ctxRing) {
-        var base = live > 0 ? live : _HG.ctxRing.used;
+        // a154R（对抗审 P0）：真值锚先于 _rr 取——_hgDrawCtxRing 会把入参
+        // used 无条件写回 _HG.ctxRing，若画完再取原值已被「真值+估值」污染；
+        // ctxLive=0（网关不给 assistant usage）时每拍都在污染值上叠累计 est
+        // → 环随拍双计虚涨。画布显示含估、备忘只记真值
+        var _tru = live > 0 ? live : _HG.ctxRing.used;
+        var base = _tru;
         if (est > 0 && (_HG.busy || est !== _oldLive)) base += est;
         try { _rr(base, _HG.ctxRing.max); } catch (e) {}
+        _HG.ctxRing.used = _tru;
       }
     }
     // 子 pane 的 A 区只消费结论终稿——busy/ask/queue/model 全是主窗语义，

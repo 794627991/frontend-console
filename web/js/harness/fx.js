@@ -232,8 +232,19 @@
       `<div class="hg-ctx-foot">* 分类为估算：系统提示词/MCP 工具按注入内容量得，` +
       `消息 = 总量 − 前两项（CLI 内部构成不暴露）</div>`;
   }
+  function _hgCtxCardPlace() {
+    if (!_hgCtxCardEl) return;
+    const rc = _hgCostEl.getBoundingClientRect();
+    const st = _hgCtxCardEl.style;
+    // 锚定：右缘对齐圆环、卡底在圆环上方（ZCode 同款上浮）；极窄窗右缘钳 8px。
+    // a154R（对抗审）：1s tick 里也重锚——窗口 resize 后圆环挪位，卡片不再悬空
+    st.right = Math.max(8, Math.round(window.innerWidth - rc.right)) + 'px';
+    st.bottom = Math.round(window.innerHeight - rc.top + 10) + 'px';
+  }
   function _hgCtxCardRender() {
-    if (_hgCtxCardEl) _hgCtxCardEl.innerHTML = _hgCtxCardTpl();
+    if (!_hgCtxCardEl) return;
+    _hgCtxCardEl.innerHTML = _hgCtxCardTpl();
+    _hgCtxCardPlace();
   }
   function _hgCtxCardAway(ev) {
     if (_hgCtxCardEl && !_hgCtxCardEl.contains(ev.target) &&
@@ -254,12 +265,8 @@
     el.className = 'hg-ctx-card';
     el.innerHTML = _hgCtxCardTpl();
     document.body.appendChild(el);
-    const rc = _hgCostEl.getBoundingClientRect();
-    const st = el.style;
-    // 锚定：右缘对齐圆环、卡底在圆环上方（ZCode 同款上浮）；极窄窗右缘钳 8px
-    st.right = Math.max(8, Math.round(window.innerWidth - rc.right)) + 'px';
-    st.bottom = Math.round(window.innerHeight - rc.top + 10) + 'px';
     _hgCtxCardEl = el;
+    _hgCtxCardPlace();
     _hgCtxCardTimer = setInterval(_hgCtxCardRender, 1000);  // 开着就活着（a153 实时链）
     document.addEventListener('mousedown', _hgCtxCardAway);
     document.addEventListener('keydown', _hgCtxCardKey);

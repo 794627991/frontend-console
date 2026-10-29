@@ -2981,8 +2981,10 @@ html {
 .hg-ctx-pct { font-size: var(--fs-sm); white-space: nowrap; }
 .hg-cost.warn { color: var(--neon-orange, #d29922); }
 .hg-cost.warn .hg-ctx-pct { color: var(--neon-red, #e06c75); font-weight: 600; }
-/* a154：上下文容量卡（仿 ZCode，圆环点击弹出，fx.js _hgCtxCardToggle） */
-.hg-ctx-card { position: fixed; z-index: 320; width: 310px; max-width: calc(100vw - 16px);
+/* a154：上下文容量卡（仿 ZCode，圆环点击弹出，fx.js _hgCtxCardToggle）。
+   z-index 95：普通内容之上、通用模态（100）与确认框（200）之下——
+   对抗审修正（原 320 会压顶一切弹窗） */
+.hg-ctx-card { position: fixed; z-index: 95; width: 310px; max-width: calc(100vw - 16px);
   background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px;
   padding: 14px 16px; box-shadow: 0 8px 28px rgba(0,0,0,.45);
   font-family: var(--font-ui); font-size: var(--fs-base, 12px); color: var(--fg); }
