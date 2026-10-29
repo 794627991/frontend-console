@@ -1,9 +1,0 @@
-{
-  "projectRoot": "D:/AI/串口控制台Pro",
-  "batchFiles": [
-    {"path": "README.md", "language": "markdown", "sizeLines": 51, "fileCategory": "docs"},
-    {"path": "run.bat", "language": "batch", "sizeLines": 3, "fileCategory": "script"},
-    {"path": "todo.md", "language": "markdown", "sizeLines": 192, "fileCategory": "docs"}
-  ],
-  "batchImportData": {"README.md": [], "run.bat": [], "todo.md": []}
-}

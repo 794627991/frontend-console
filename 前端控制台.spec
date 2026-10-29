@@ -13,7 +13,9 @@ _winpty_bins = [
 ]
 
 a = Analysis(
-    ['D:/AI/串口控制台Pro/src/main.py'],
+    # 相对路径（build.py 固定 cwd=项目根调 PyInstaller，与 datas 的相对写法同基准；
+    # 原绝对路径指向旧仓名「串口控制台Pro」，仓库改名后靠 cwd 兜底才没炸）
+    ['src/main.py'],
     pathex=[],
     binaries=_winpty_bins,
     datas=[('web', 'web'), ('ico', 'ico'), ('vendor', 'vendor'),
@@ -85,7 +87,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['D:/AI/串口控制台Pro/ico/app.ico'],
+    icon=['ico/app.ico'],
 )
 
 # v2.3.0 onedir 模式（用户定调，治 exe 卡慢根因）：onefile 每次启动解压

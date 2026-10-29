@@ -1,9 +1,0 @@
-{
-  "projectRoot": "D:/AI/串口控制台Pro",
-  "batchFiles": [
-    {"path": "src/app_state.py", "language": "python", "sizeLines": 225, "fileCategory": "code"},
-    {"path": "src/editor_files.py", "language": "python", "sizeLines": 382, "fileCategory": "code"},
-    {"path": "src/log_index.py", "language": "python", "sizeLines": 344, "fileCategory": "code"}
-  ],
-  "batchImportData": {"src/app_state.py": [], "src/editor_files.py": ["src/app_state.py"], "src/log_index.py": ["src/app_state.py"]}
-}
