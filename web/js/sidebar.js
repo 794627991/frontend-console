@@ -119,6 +119,8 @@ function closeConnection(portId) {
     if (conn.term) { try { conn.term.dispose(); } catch(e){} }
     // 微批发送的 pending 定时器清理（防关闭后误发）
     if (conn._sendTimer) { clearTimeout(conn._sendTimer); conn._sendTimer = null; }
+    // 自绘滚动条清理（terminal-core _termSbInit 的周期兜底计时器；DOM 随 wrap.remove 走）
+    if (conn._sb) { clearInterval(conn._sb.timer); conn._sb = null; }
     // 移除串口搜索分栏的 document 级监听器，避免泄漏
     if (conn.termSplitMove) document.removeEventListener('mousemove', conn.termSplitMove);
     if (conn.termSplitUp) document.removeEventListener('mouseup', conn.termSplitUp);

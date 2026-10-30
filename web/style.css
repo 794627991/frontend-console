@@ -1300,21 +1300,19 @@
   .xterm-bottom-pad { flex-shrink: 0; height: 18px; background: var(--term-bg); }  /* 底部留白 1 行高，与终端底色一致 */
   .xterm-wrap .xterm { height: 100%; }
   .xterm-wrap .xterm-viewport { overflow-y: auto !important; }
-  /* 终端滚动条（用户需求：矩形+加宽）。终局方案（CDP 实测用户实例得出）：
-     WebView2 156 的 Fluent overlay 绘制层会压掉 ::-webkit-scrollbar 的
-     宽度（布局 gutter 18px 已生效但绘制仍是 ~5px 悬浮细条）；标准属性
-     scrollbar-color 一出手 Chromium 即放弃 Fluent 渲染回退简单滚动条
-     （常驻矩形），启动参数禁特性那条路不稳定（同名开关/loader 版本行为
-     漂移）已弃。webkit 规则保留兜底（旧内核仍走它） */
-  .xterm-wrap .xterm-viewport { scrollbar-color: #8fa3bf transparent; }
-  .xterm-wrap .xterm-viewport::-webkit-scrollbar { width: 18px !important; height: 18px !important; }
-  .xterm-wrap .xterm-viewport::-webkit-scrollbar-thumb {
-    background: color-mix(in srgb, var(--muted) 55%, transparent) !important;
-    border-radius: 0 !important; min-height: 48px; }
-  .xterm-wrap .xterm-viewport::-webkit-scrollbar-thumb:hover {
-    background: var(--muted) !important; }
-  .xterm-wrap .xterm-viewport::-webkit-scrollbar-track {
-    background: color-mix(in srgb, var(--border) 30%, transparent); }
+  /* 终端滚动条终局（自绘）：WebView2 156 Fluent 绘制层无视一切 CSS 宽度
+     （像素实测 webkit width:30→画 4px / thin→2px / scrollbar-color→1px），
+     原生视觉全隐（0 宽连 1px 都不画），滚动行为保留；滚动条本体由
+     terminal-core.js _termSbInit 自绘（.hg-term-sb），宽高颜色全自控 */
+  .xterm-wrap .xterm-viewport { scrollbar-width: none !important; scrollbar-color: auto !important; }
+  .xterm-wrap .xterm-viewport::-webkit-scrollbar { width: 0 !important; height: 0 !important; }
+  .hg-term-sb { position: absolute; top: 4px; right: 3px; bottom: 4px; width: 14px;
+    z-index: 6; }
+  .hg-term-sb-th { position: absolute; left: 1px; right: 1px; min-height: 36px;
+    background: color-mix(in srgb, var(--muted) 60%, transparent);
+    border-radius: 2px; cursor: ns-resize; }
+  .hg-term-sb-th:hover { background: var(--muted); }
+  .hg-term-sb-th:active { background: var(--accent); }
   /* xterm 行高/字号与原终端一致 */
   .xterm-wrap .xterm-rows { font-family: var(--font-mono); }
 

@@ -1,3 +1,68 @@
+// ===== 自绘终端滚动条（终局方案）========================================
+// WebView2 156 的 Fluent overlay 绘制层无视一切 CSS 宽度控制——像素级实测
+// （CDP 截屏逐列数）：::-webkit-scrollbar width:30 画出来 4px、
+// scrollbar-width:thin 2px、scrollbar-color 单独 1px，布局 gutter 让位但
+// 绘制层恒 2~4px。故原生滚动条视觉隐藏（width:0 连 1px 都不画），DOM
+// 自绘 14px 可拖拽条：宽高/颜色/拖拽全自控。xterm 虚拟滚动=viewport 滚
+// 动区高度按总行数铺，scrollTop 直写即滚（terminal-core 既有跳底同路）
+function _termSbInit(conn) {
+  const wrap = conn.xtermWrap;
+  if (!wrap || conn._sb) return;
+  const sb = document.createElement('div');
+  sb.className = 'hg-term-sb';
+  const th = document.createElement('div');
+  th.className = 'hg-term-sb-th';
+  sb.appendChild(th);
+  wrap.appendChild(sb);
+  const vp = () => wrap.querySelector('.xterm-viewport');
+  const paint = () => {
+    if (!wrap.isConnected) return;
+    const v = vp();
+    if (!v) return;
+    const sh = v.scrollHeight, ch = v.clientHeight;
+    if (sh <= ch + 4) { sb.style.display = 'none'; return; }
+    sb.style.display = '';
+    const trackH = sb.clientHeight;
+    if (trackH <= 0) return;
+    const thH = Math.max(36, Math.round(ch / sh * trackH));
+    const maxTop = trackH - thH;
+    th.style.height = thH + 'px';
+    th.style.top = (maxTop > 0 ? v.scrollTop / (sh - ch) * maxTop : 0) + 'px';
+  };
+  conn._sb = { el: sb, th: th, timer: 0, paint: paint };
+  sb.addEventListener('mousedown', (e) => {
+    const v = vp();
+    if (!v) return;
+    e.preventDefault();
+    const trackH = sb.clientHeight, thH = th.offsetHeight;
+    const maxTop = trackH - thH;
+    if (e.target === th) {
+      const startY = e.clientY, startScroll = v.scrollTop;
+      const move = (ev) => {
+        if (maxTop <= 0) return;
+        v.scrollTop = startScroll +
+          (ev.clientY - startY) / maxTop * (v.scrollHeight - v.clientHeight);
+      };
+      const up = () => {
+        removeEventListener('mousemove', move);
+        removeEventListener('mouseup', up);
+      };
+      addEventListener('mousemove', move);
+      addEventListener('mouseup', up);
+    } else {
+      // 点轨道空白处：向该方向翻 ~90% 视口
+      const y = e.clientY - sb.getBoundingClientRect().top;
+      const cur = parseFloat(th.style.top) || 0;
+      v.scrollTop += (y < cur ? -1 : 1) * v.clientHeight * 0.9;
+    }
+  });
+  // scroll 不冒泡但捕获相位经过祖先——wrap 上接住即时刷；
+  // 400ms 周期兜底（xterm 滚动区高度变化不总伴随 scroll 事件）
+  wrap.addEventListener('scroll', (e) => { if (e.target === vp()) paint(); }, true);
+  conn._sb.timer = setInterval(paint, 400);
+  paint();
+}
+
 function buildTerminal(portId, meta) {
   // 标签
   const tab = document.createElement('div');
@@ -138,6 +203,7 @@ function buildTerminal(portId, meta) {
   conn.term.loadAddon(conn.search);
   try { conn.term.loadAddon(new WebLinksAddon.WebLinksAddon()); } catch(e) {}
   conn.term.open(conn.xtermWrap);
+  _termSbInit(conn);   // 自绘滚动条（WebView2 156 Fluent 绘制层无视 CSS 宽度，见函数头注释）
   // v3.5.116（清 DevTools Issues 剩余 2 条）：xterm 库内部建的键盘捕获框
   // 无 name/id 每连接告警一条——open() 后运行时补 name，纯 DOM 属性追加，
   // xterm 的事件监听与 textarea 引用不受影响（不改 vendor 源码）
