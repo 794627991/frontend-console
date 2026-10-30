@@ -1279,15 +1279,17 @@ def main():
     # 挑战/UA 三代）系对需求的误读叠加过度工程，连带 403 过四家内部子进
     # 程，已整体拆除——HTTP 服务恢复仅绑 127.0.0.1 的开放原状。
     from src.server import DEBUG_WEB as _dbg_web
-    # 终端滚动条实锤修复（用户两轮反馈+截图）：CSS width 14/18px 均不生效但
-    # border-radius 生效 = WebView2 Fluent overlay 滚动条特性压制（overlay
-    # 模式宽度由系统定 ~4px 悬浮细条，::-webkit-scrollbar 的 width 被忽略，
-    # thumb 颜色/圆角仍应用）。禁掉特性恢复经典渲染，CSS 宽度回归权威
-    # （终端 18px 矩形 / 全局 8px）。与 debug 参数合并成一条参数串——同名
-    # switch 后者覆盖前者，不能分两条 --disable-features 写
-    _wv_args = ("--disable-features=msOverlayScrollbarWinStyle,"
-                "msOverlayScrollbarWinStyleAnimation")
-    if _wv_debug:
+    # 终端滚动条实锤修复（滚动条宽度 CSS 不生效系列）。本机实验链（win32
+    # 实测）：①WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS 在 pywebview/.NET 链
+    # 生效（--user-agent 标记注入成功）②同名开关冲突时环境变量**覆盖**
+    # pywebview props 的值（双 remote-debugging-port 实测 env 赢）——故本
+    # 串必须带回 pywebview 原有的 ElasticOverscroll，且 overlay 特性名按
+    # 多候选超集禁（msOverlayScrollbarWinStyle 系 Win11 Fluent 名，新版
+    # WebView2 可能改认上游总开关 OverlayScrollbar）
+    _feat = ("ElasticOverscroll,msOverlayScrollbarWinStyle,"
+             "msOverlayScrollbarWinStyleAnimation,OverlayScrollbar")
+    _wv_args = "--disable-features=" + _feat
+    if _dbg_web:
         _wv_args += " --remote-debugging-port=9222"
     os.environ.setdefault("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", _wv_args)
     _ensure_webview2()   # v2.3.7a：运行时闸——必须在 webview.start 前（创建期读环境变量）
