@@ -1300,11 +1300,13 @@
   .xterm-bottom-pad { flex-shrink: 0; height: 18px; background: var(--term-bg); }  /* 底部留白 1 行高，与终端底色一致 */
   .xterm-wrap .xterm { height: 100%; }
   .xterm-wrap .xterm-viewport { overflow-y: auto !important; }
-  /* 终端滚动条（用户需求）：矩形+加宽。width 已上屏（overlay 特性禁用后
-     经典渲染回归）；第三轮实锤=thumb 高度仅 1px——xterm 虚拟滚动的滚动
-     区高度=总行数×行高，长日志把 thumb 比例压没了（overlay 模式本有
-     系统最小长度保护）。min-height 钳住可抓性；配色与会话流滚动条同款
-     （var(--muted) 混色），比 --border 浅灰更可见 */
+  /* 终端滚动条（用户需求：矩形+加宽）。终局方案（CDP 实测用户实例得出）：
+     WebView2 156 的 Fluent overlay 绘制层会压掉 ::-webkit-scrollbar 的
+     宽度（布局 gutter 18px 已生效但绘制仍是 ~5px 悬浮细条）；标准属性
+     scrollbar-color 一出手 Chromium 即放弃 Fluent 渲染回退简单滚动条
+     （常驻矩形），启动参数禁特性那条路不稳定（同名开关/loader 版本行为
+     漂移）已弃。webkit 规则保留兜底（旧内核仍走它） */
+  .xterm-wrap .xterm-viewport { scrollbar-color: #8fa3bf transparent; }
   .xterm-wrap .xterm-viewport::-webkit-scrollbar { width: 18px !important; height: 18px !important; }
   .xterm-wrap .xterm-viewport::-webkit-scrollbar-thumb {
     background: color-mix(in srgb, var(--muted) 55%, transparent) !important;
