@@ -17,7 +17,11 @@
    ②通配归一（radius/shadow 清零）会把原 box-shadow 聚焦光环一起
      清掉——每种风格必须补 :focus-visible 轮廓，否则键盘导航不可见；
    ③以后 style.css 新增组件若带渐变/圆角/阴影形态，需来自查本层
-     是否要补对应风格覆盖，否则该组件在非默认风格下「露原形」。
+     是否要补对应风格覆盖，否则该组件在非默认风格下「露原形」；
+   ④可读性矩阵（用户定规）：任何风格 × 任何配色（含深度搭配块），
+     文字/图标级对比 ≥4.5（弱化字 ≥3.0），新增风格的每个固定色值
+     必须对它的落底算过 WCAG 对比度；形态层用 var() 的组合天然
+     继承主题自身的达标对（style.css 主题块已全量审计达标）。
    ============================================================ */
 
 /* ---- 公共：风格选择器（设置页外观子页，功能样式与风格无关） ---- */
@@ -87,12 +91,14 @@ html[data-style="swiss"] .dd-label { font-weight: 900; letter-spacing: 0.5px; }
 
 /* ---- 瑞士调色微调（铁律①）：仅配套 paper 配色下生效 ----
    红点缀 + 近黑边框 + 终端白底黑字（--term-* 由 theme.js
-   _termThemeFor 读 computed 值，覆盖即自动进 xterm） */
+   _termThemeFor 读 computed 值，覆盖即自动进 xterm）。
+   红取 #d10018 而非正红 #e3001b：白字/纸底对比 4.0 → 5.5+，
+   过可读性矩阵（铁律④），视觉仍足量瑞士红 */
 html[data-style="swiss"][data-theme="paper"] {
-  --accent: #e3001b;
-  --accent-2: #b30016;
+  --accent: #d10018;
+  --accent-2: #a80013;
   --on-accent: #ffffff;
-  --accent-glow: rgba(227, 0, 27, 0.22);
+  --accent-glow: rgba(209, 0, 24, 0.22);
   --border: #1f1f1f;
   --border-glow: #1f1f1f;
   --shadow-glow: none;
