@@ -1867,15 +1867,20 @@
   /* 工具面板滚动条（用户需求：常显小丑→平时隐形，悬浮对应面板才浮现）——
      只动侧栏/文件树/TFTP 目录这些工具面板，终端自绘条/会话流/设置页不波及。
      Fluent 绘制层 thumb 宽度恒细（~4px）不可控，但颜色可控：默认全透明
-     =「渐隐」，容器 :hover 时显色 =「悬浮工作区再现」 */
+     =「渐隐」，容器 :hover 时显色 =「悬浮工作区再现」。
+     容器清单含 CDP 实测真身：recent-list（最近列表）、tftp-list（transfers/
+     files 共用基类——溢出条目挂基类时子类选择器不命中,用户截图实锤） */
   .port-list::-webkit-scrollbar-thumb, .tree-roots::-webkit-scrollbar-thumb,
+  .recent-list::-webkit-scrollbar-thumb,
   .tftp-list::-webkit-scrollbar-thumb, .tftp-transfers::-webkit-scrollbar-thumb,
   .tftp-files::-webkit-scrollbar-thumb { background: transparent; }
   .port-list:hover::-webkit-scrollbar-thumb, .tree-roots:hover::-webkit-scrollbar-thumb,
+  .recent-list:hover::-webkit-scrollbar-thumb,
   .tftp-list:hover::-webkit-scrollbar-thumb, .tftp-transfers:hover::-webkit-scrollbar-thumb,
   .tftp-files:hover::-webkit-scrollbar-thumb {
     background: color-mix(in srgb, var(--muted) 55%, transparent); }
   .port-list:hover::-webkit-scrollbar-thumb:hover, .tree-roots:hover::-webkit-scrollbar-thumb:hover,
+  .recent-list:hover::-webkit-scrollbar-thumb:hover,
   .tftp-list:hover::-webkit-scrollbar-thumb:hover, .tftp-transfers:hover::-webkit-scrollbar-thumb:hover,
   .tftp-files:hover::-webkit-scrollbar-thumb:hover {
     background: var(--muted); }
