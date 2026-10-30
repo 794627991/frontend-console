@@ -132,7 +132,7 @@ function showBanner(msg, ms=4000, isErr=false) {
 // 不吃 transition,渐隐只能自绘 DOM 才能做）。面板需 position:relative
 // （CSS 已给六容器配好）。内容不溢出自动隐藏；拖拽锁 sb-drag 防拖出面板
 // 时条闪没；400ms 周期兜底（列表增删不触发 scroll 事件）。返回清理函数
-const _HG_FADE_SB_VER = 5;   // 挂载实例版本：行为变更时递增——旧实例自动拆重建
+const _HG_FADE_SB_VER = 6;   // 挂载实例版本：行为变更时递增——旧实例自动拆重建
 function _hgFadeSb(el) {
   if (el && el._hgFadeSb && el._hgFadeSb.ver !== _HG_FADE_SB_VER) {
     // 旧版本实例在位（页面 JS 缓存半新半旧的第三层：函数实例本身——服务端
@@ -217,56 +217,50 @@ function _hgFadeSb(el) {
     if (!dragging) sb.classList.remove('sb-drag');
   });
   el.addEventListener('scroll', paint, { passive: true });
-  const timer = setInterval(paint, 400);
+  // v6 性能事故复盘（trace 实锤 44500 次 paint/145s）：每容器独立 400ms
+  // interval 废除——改由全局单 600ms 循环统一刷（托管 IIFE）+scroll 即时
   paint();
-  Object.assign(el._hgFadeSb, { sb, timer, anchor });   // ver 已在开头写入
-  return () => { clearInterval(timer); sb.remove(); delete el._hgFadeSb; };
+  Object.assign(el._hgFadeSb, { sb, paint, anchor });   // ver 已在开头写入
+  return () => { sb.remove(); delete el._hgFadeSb; };
 }
 
-// ---- 渐隐条全局自动托管（用户拍板：除终端宽条外全站统一）----------------
-// MutationObserver 扫增量 + 定时兜底轮：任何「overflow-y 可滚 + 未托管 +
-// 非豁免」元素自动挂条（55+ 静态容器与动态容器一网打尽）。历史坑全避开：
-// ①EXCLUDE 提前 return 会短路整棵子树扫描（scanAll 的 root=body 命中
-// 豁免名单=静态容器全漏挂）——豁免只判目标自身 ②初始时序空洞——多轮
-// 兜底扫描 ③高频 DOM（终端输出）狂触发回调——80ms 合并批处理
+// ---- 渐隐滚动条全局托管（惰性事件驱动,用户拍板全站统一）----------------
+// 性能事故复盘重构（用户 trace 铁证：145s 录制窗 Layout 100.9s/1 万次,
+// scanAll 单次 18.5s×5 + paint 44500 次 + observer 批 155 次——旧架构
+// 「主动扫描」三宗罪：全 DOM getComputedStyle 强制样式计算、每容器独立
+// interval、MutationObserver 增量同款逐节点样式读）。新架构零主动扫描：
+// ①pointerover 委托——鼠标走到哪沿祖先链找最近可滚容器即挂（单事件 ≤
+//   链深次样式读,成本分摊到交互时刻；滚动条本就 hover 才显示,惰性挂载
+//   与显隐语义天然对齐,零错过）
+// ②全局单 interval 600ms 统一 paint 已挂载容器（断连容器自动出册）
+// ③启动零扫描——首帧不再有 18.5s 的布局核弹
 (function () {
   const EXCLUDE = '.xterm-viewport, .hg-fade-sb, .hg-fade-sb-th, .hg-term-sb';
-  const tryAdopt = (n) => {
-    if (!n || n.nodeType !== 1 || n._hgFadeSb) return;
-    if (n.matches && n.matches(EXCLUDE)) return;
-    const c = getComputedStyle(n);
-    if (c.overflowY === 'auto' || c.overflowY === 'scroll') _hgFadeSb(n);
-  };
-  const adopt = (root) => {
-    if (!root || root.nodeType !== 1) return;
-    tryAdopt(root);
-    if (root.querySelectorAll) {
-      root.querySelectorAll('*').forEach(tryAdopt);
-    }
-  };
-  const scanAll = () => { if (document.body) adopt(document.body); };
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', scanAll);
-  } else {
-    scanAll();
-  }
-  setTimeout(scanAll, 600);
-  setTimeout(scanAll, 1500);
-  setInterval(scanAll, 10000);   // 低频兜底：晚建的容器/被清 _hgFadeSb 的重建
-  let pend = null;
-  const mo = new MutationObserver(muts => {
-    if (pend) return;
-    pend = setTimeout(() => {
-      pend = null;
-      for (const m of muts) {
-        if (m.type !== 'childList') continue;
-        for (const n of m.addedNodes) {
-          if (n.nodeType === 1 && !n._hgFadeSb) adopt(n);
+  const _hosts = new Set();
+  document.addEventListener('pointerover', (e) => {
+    let n = e.target;
+    while (n && n !== document.body && n.nodeType === 1) {
+      if (n._hgFadeSb) return;   // 链上已托管——最近可滚祖先已覆盖,快速路径
+      if (!n.matches(EXCLUDE)) {
+        let oy;
+        try { oy = getComputedStyle(n).overflowY; } catch (_) { return; }
+        if (oy === 'auto' || oy === 'scroll') {
+          _hgFadeSb(n);
+          if (n._hgFadeSb) { _hosts.add(n); return; }
         }
       }
-    }, 80);
-  });
-  mo.observe(document.documentElement, { childList: true, subtree: true });
+      n = n.parentElement;
+    }
+  }, { passive: true });
+  setInterval(() => {
+    for (const el of _hosts) {
+      if (!el.isConnected || !el._hgFadeSb || !el._hgFadeSb.paint) {
+        _hosts.delete(el);
+        continue;
+      }
+      try { el._hgFadeSb.paint(); } catch (_) {}
+    }
+  }, 600);
 })();
 function fmtTs(ms) {
   const d = new Date(ms);
