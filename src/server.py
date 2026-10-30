@@ -964,6 +964,7 @@ def api_theme():
         cfg = _load_config()
         tk = cfg.get("term_keys", {})
         return jsonify({"ok": True, "theme": cfg.get("theme", "deepblue"),
+                        "style": cfg.get("style", "default"),
                         "data_dir_prompted": bool(cfg.get("data_dir_prompted")),
                         "calc_history": _calc_hist_clean(cfg.get("calc_history", [])),
                         "close_to_tray": bool(cfg.get("close_to_tray", True)),
@@ -1058,6 +1059,12 @@ def api_theme():
     theme = (data.get("theme") or "").strip()
     if theme:
         _save_config({**_load_config(), "theme": theme})
+    # 风格维度（v4.1 桥接层 skins.css/skin.js）：与 theme 正交，字符集
+    # 白名单防脏配置（合法 id 由前端 STYLES 表约束，后端不枚举——后续
+    # 批次追加风格不用改这里）
+    style = (data.get("style") or "").strip()
+    if style and re.fullmatch(r"[a-z0-9-]{1,24}", style):
+        _save_config({**_load_config(), "style": style})
     return jsonify({"ok": True, "theme": theme or _load_config().get("theme", "deepblue")})
 
 

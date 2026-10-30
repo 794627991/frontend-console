@@ -105,9 +105,12 @@ function _stRenderHelpPane(pane) {
   };
 }
 
-// ---- 外观子页：换肤（原 theme 页整块搬入）+ 界面缩放 ----
+// ---- 外观子页：风格（v4.1 桥接维度）+ 换肤（原 theme 页整块搬入）+ 界面缩放 ----
 function _stRenderAppearancePane(pane) {
-  pane.innerHTML = `<div class="dd-body"><div class="dd-label">配色主题</div><div class="set-theme-grid" id="stThemeGrid"></div>
+  pane.innerHTML = `<div class="dd-body"><div class="dd-label">界面风格</div>
+    <div class="set-style-row" id="stStyleRow"></div>
+    <div class="dd-note">形态/质感维度（圆角·阴影·字体·装饰），叠加在配色之上即时生效；切风格自动带配套配色，之后仍可单独换色。</div>
+    <div class="dd-label" style="margin-top:10px">配色主题</div><div class="set-theme-grid" id="stThemeGrid"></div>
     <div class="dd-note">整窗即时换色（终端/编辑器/阅读面同步）；顶栏「🎨 换肤」按钮同样可用。</div>
     <div class="dd-cur" style="margin-top:8px;">
       <div class="dd-label">界面缩放</div>
@@ -120,6 +123,24 @@ function _stRenderAppearancePane(pane) {
       <div class="dd-sub">整个界面等比缩放（80%–130%）。也可用 Ctrl+= / Ctrl+- 调终端字号，Ctrl+0 全部恢复默认。</div>
     </div></div>`;
   const grid = pane.querySelector('#stThemeGrid');
+  // 风格行（v4.1 桥接层 skin.js）：逐个胶囊，点选即切（联动配套配色）
+  const styleRow = pane.querySelector('#stStyleRow');
+  if (styleRow && typeof STYLES !== 'undefined') {
+    const curStyle = document.documentElement.getAttribute('data-style') || 'default';
+    STYLES.forEach(s => {
+      const b = document.createElement('button');
+      b.className = 'btn ghost style-chip' + (s.id === curStyle ? ' active' : '');
+      b.textContent = s.name;
+      b.title = s.desc;
+      b.onclick = () => {
+        if (typeof applyStyle !== 'function') return;
+        applyStyle(s.id, true);
+        showBanner(s.id === 'default' ? '已切回默认风格' : '已切换风格：' + s.name);
+        _stRenderAppearancePane(pane);   // 重渲染刷新选中态与配套配色高亮
+      };
+      styleRow.appendChild(b);
+    });
+  }
   const cur = document.documentElement.getAttribute('data-theme') || 'deepblue';
   const zoomVal = pane.querySelector('#apZoomVal');
   const syncZoom = () => { zoomVal.textContent = (typeof uiZoom === 'number' ? uiZoom : 100) + '%'; };
