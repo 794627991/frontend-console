@@ -1320,8 +1320,12 @@
      _hgFadeSb(el)（内容不溢出自动隐藏;拖拽锁防拖出面板闪没） */
   .port-list, .recent-list, .tree-roots,
   .tftp-list, .tftp-transfers, .tftp-files { position: relative; }
-  .port-list, .recent-list, .tree-roots,
-  .tftp-list, .tftp-transfers, .tftp-files::-webkit-scrollbar { width: 0; }
+  /* 隐藏原生滚动条视觉（注意：::-webkit-scrollbar 后缀必须逐个写全——
+     逗号组里裸类名会被应用 width:0 把整个面板压成 0 宽（文字一字一行
+     竖排,用户截图实锤的严重 bug 根因） */
+  .port-list::-webkit-scrollbar, .recent-list::-webkit-scrollbar,
+  .tree-roots::-webkit-scrollbar, .tftp-list::-webkit-scrollbar,
+  .tftp-transfers::-webkit-scrollbar, .tftp-files::-webkit-scrollbar { width: 0; height: 0; }
   .port-list, .recent-list, .tree-roots,
   .tftp-list, .tftp-transfers, .tftp-files { scrollbar-width: none; scrollbar-color: auto; }
   .hg-fade-sb { position: absolute; top: 4px; right: 2px; bottom: 4px; width: 10px;
