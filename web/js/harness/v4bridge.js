@@ -153,6 +153,21 @@
     this._subWatchStop();
   };
 
+  // 内网缺陷报告修复（回合导航导轨切终端后失效）：v4 是唯一渲染管线但
+  // 全程不调 _hgRailSync——DOM 重建后 railItems 里的元素引用全部失联
+  // （isConnected=false），点击静默 return=「刻度还在点了没反应」。本函数
+  // 是 v4 渲染完成后的导轨同步入口：快照整建同步调、delta 收尾 debounce
+  // （流式 delta 高频，全量扫 user 气泡 + 重建刻度 DOM 一次足够）
+  var _railSoonT = 0;
+  function _railAfterRender() {
+    if (_railSoonT) return;
+    _railSoonT = setTimeout(function () {
+      _railSoonT = 0;
+      var f = _g('_hgRailSync');
+      if (f) { try { f(); } catch (e) {} }
+    }, 250);
+  }
+
   V4Bridge.prototype._onEv = function (ev) {
     var kind = ev && ev.kind;
     // a65（红线：子代理内容绝不进主窗）：子 pane 全部事件走独立渲染引擎
@@ -181,6 +196,7 @@
     else if (kind === 'deltas') {
       var ds2 = ev.deltas || [];
       for (var j = 0; j < ds2.length; j++) this._applyOne(ds2[j]);
+      _railAfterRender();   // 内网报告修复：delta 渲染收尾同步导轨（debounce）
     }
   };
 
@@ -335,6 +351,10 @@
     //（用户实测致命三症结）。磁盘唯一真源=/api/harness/agents（readmodel
     // 现算 agents 表+tidMap），回放卡的状态/hgSubr/档案计时全部从它回填
     if (!this.opt.sub) this._agentsColdSync();
+    // 内网报告修复（P0）：快照整建=消息 DOM 全量重换，导轨元素引用全部
+    // 失联——渲染完成即同步（同步调，快照低频）
+    var _rs = _g('_hgRailSync');
+    if (_rs) { try { _rs(); } catch (e) {} }
   };
 
   // 冷查询派生：tidMap(tid→agentId)+agents 表 → 行卡 hgSubr/终态徽章+

@@ -46,6 +46,13 @@
     }
     var flow = (typeof _hgFlow !== 'undefined') ? _hgFlow : null;   // let 全局
     if (!flow) return;
+    // 内网报告修复（P2）：connect 前先失效旧导轨——旧刻度+旧 railItems 在
+    // 重建完成前是「可见但点了必失联」的窗口期，先撤下避免误导点击
+    _HG.railItems = null;
+    if (typeof _hgRailEl !== 'undefined' && _hgRailEl) {
+      _hgRailEl.classList.remove('show');
+      _hgRailEl.innerHTML = '';
+    }
     var store = new root.V4Store(sid, 'main');
     var render = new root.V4Bridge(store, flow, { live: true });
     _cur = { sid: sid, store: store, render: render };

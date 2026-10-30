@@ -2098,8 +2098,10 @@ function buildClaudeHarnessTab(opts = {}) {
     // 轨被灌爆。窗口外回合的入口是归档条→只读模式，轨只显示 DOM 在场的回合。
     // ② 已渲染区：flow 里的 user 气泡（盖章或快照旧 DOM 都认）
     _hgFlow.querySelectorAll('.h-msg.user').forEach(el => {
-      items.push({ hi: +(el.dataset.turnHi || -1), el,
-        txt: (el.textContent || '').replace(/\s+/g, ' ').trim() });
+      // 内网报告修复（P1）：turnHi 是可重定位的稳定标识——v4 重建 DOM 后
+      // el 引用失联时按 data-turn-hi 重找（见 _hgRailBind），不再存死引用
+      items.push({ hi: +(el.dataset.turnHi || -1), key: el.dataset.turnHi || '',
+        el, txt: (el.textContent || '').replace(/\s+/g, ' ').trim() });
     });
     if (items.length < 2) {
       rail.classList.remove('show'); rail.innerHTML = '';
@@ -2196,8 +2198,28 @@ function buildClaudeHarnessTab(opts = {}) {
   if (_hgRailEl) _hgRailEl.addEventListener('click', (e) => {
     const t = e.target.closest('.hg-rail-t');
     if (!t) return;
-    const it = _HG.railItems && _HG.railItems[+t.dataset.rk];
+    let it = _HG.railItems && _HG.railItems[+t.dataset.rk];
     if (!it) return;
+    // 内网报告修复（P1）：失联不静默——①按稳定标识重找（v4 重建 DOM 后
+    // el 失联但 data-turn-hi 还在）②重找失败再全量重同步一次按序号重取
+    // ③仍失败给可见反馈（「点了没反应」是这类缺陷最难自助定位的形态）
+    if ((!it.el || !it.el.isConnected) && it.key) {
+      const rel = _hgFlow.querySelector(`.h-msg.user[data-turn-hi="${it.key}"]`);
+      if (rel) it.el = rel;   // 顺手修缓存
+    }
+    if (!it.el || !it.el.isConnected) {
+      try { _hgRailSync(); } catch (_) {}
+      it = (_HG.railItems || [])[+t.dataset.rk];
+      if (!it) return;
+      if ((!it.el || !it.el.isConnected) && it.key) {
+        const rel2 = _hgFlow.querySelector(`.h-msg.user[data-turn-hi="${it.key}"]`);
+        if (rel2) it.el = rel2;
+      }
+      if (!it.el || !it.el.isConnected) {
+        try { showBanner('该回合已不在当前视图，请刷新页面重试', 4000, true); } catch (_) {}
+        return;
+      }
+    }
     // v3.5.207b（用户要求「点导轨点到底部就到底部，点到中间就到中间」）：
     // ①末刻度=视口贴 flow 底（原 block:'start' 只把最后回合头对齐视口顶，
     // 实测尾差 339px=「点了底部没到底」）；②RO 只读长内容（193 轮/10 万
