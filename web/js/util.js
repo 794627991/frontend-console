@@ -132,8 +132,18 @@ function showBanner(msg, ms=4000, isErr=false) {
 // 不吃 transition,渐隐只能自绘 DOM 才能做）。面板需 position:relative
 // （CSS 已给六容器配好）。内容不溢出自动隐藏；拖拽锁 sb-drag 防拖出面板
 // 时条闪没；400ms 周期兜底（列表增删不触发 scroll 事件）。返回清理函数
+const _HG_FADE_SB_VER = 3;   // 挂载实例版本：行为变更时递增——旧实例自动拆重建
 function _hgFadeSb(el) {
+  if (el && el._hgFadeSb && el._hgFadeSb.ver !== _HG_FADE_SB_VER) {
+    // 旧版本实例在位（页面 JS 缓存半新半旧的第三层：函数实例本身——服务端
+    // 文件再新,页面内存里跑的还是旧函数,旧实例占位新挂载永不重入,用户实锤
+    // 「修了效果一样」）。拆旧建新,行为变更递增版本号即生效
+    clearInterval(el._hgFadeSb.timer);
+    if (el._hgFadeSb.sb) el._hgFadeSb.sb.remove();
+    delete el._hgFadeSb;
+  }
   if (!el || el._hgFadeSb) return () => {};
+  el._hgFadeSb = { ver: _HG_FADE_SB_VER };
   // 轨道定位自给自足：.hg-fade-sb 的 top/bottom 绝对定位依赖宿主
   // position:relative（CSS 提供）。CSS 缓存半新半旧时宿主没有 relative
   // → 轨道高度 0 → paint 短路 → thumb 钉在顶端（用户实锤「滚动不跟随,
@@ -205,7 +215,7 @@ function _hgFadeSb(el) {
   el.addEventListener('scroll', paint, { passive: true });
   const timer = setInterval(paint, 400);
   paint();
-  el._hgFadeSb = { sb, timer };
+  Object.assign(el._hgFadeSb, { sb, timer });   // ver 已在开头写入
   return () => { clearInterval(timer); sb.remove(); delete el._hgFadeSb; };
 }
 function fmtTs(ms) {
