@@ -1279,6 +1279,7 @@ def main():
     # 挑战/UA 三代）系对需求的误读叠加过度工程，连带 403 过四家内部子进
     # 程，已整体拆除——HTTP 服务恢复仅绑 127.0.0.1 的开放原状。
     from src.server import DEBUG_WEB as _dbg_web
+    _wv_debug = _dbg_web      # 1296 行 webview.start(debug=…) 引用（f3adc75 改环境变量块时误删此行→NameError 启动即崩，用户实锤）
     # 终端滚动条实锤修复（滚动条宽度 CSS 不生效系列）。本机实验链（win32
     # 实测）：①WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS 在 pywebview/.NET 链
     # 生效（--user-agent 标记注入成功）②同名开关冲突时环境变量**覆盖**
