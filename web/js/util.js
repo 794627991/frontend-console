@@ -126,6 +126,63 @@ function notifyPop(msg, ms=4000, isErr=false, type) {
 function showBanner(msg, ms=4000, isErr=false) {
   notifyPop(msg, ms, isErr);
 }
+
+// ---- 工具面板渐隐滚动条（用户需求：常显小丑→悬浮工作区渐显）------------
+// 通用自绘：原生滚动条视觉已由 CSS 隐藏（Fluent 绘制层宽度不可控+伪元素
+// 不吃 transition,渐隐只能自绘 DOM 才能做）。面板需 position:relative
+// （CSS 已给六容器配好）。内容不溢出自动隐藏；拖拽锁 sb-drag 防拖出面板
+// 时条闪没；400ms 周期兜底（列表增删不触发 scroll 事件）。返回清理函数
+function _hgFadeSb(el) {
+  if (!el || el._hgFadeSb) return () => {};
+  const sb = document.createElement('div');
+  sb.className = 'hg-fade-sb';
+  const th = document.createElement('div');
+  th.className = 'hg-fade-sb-th';
+  sb.appendChild(th);
+  el.appendChild(sb);
+  const paint = () => {
+    if (!el.isConnected) return;
+    const sh = el.scrollHeight, ch = el.clientHeight;
+    if (sh <= ch + 4) { sb.style.display = 'none'; return; }
+    sb.style.display = '';
+    const trackH = sb.clientHeight;
+    if (trackH <= 0) return;
+    const thH = Math.max(32, Math.round(ch / sh * trackH));
+    const maxTop = trackH - thH;
+    th.style.height = thH + 'px';
+    th.style.top = (maxTop > 0 ? el.scrollTop / (sh - ch) * maxTop : 0) + 'px';
+  };
+  sb.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    const trackH = sb.clientHeight, thH = th.offsetHeight;
+    const maxTop = trackH - thH;
+    if (e.target === th) {
+      sb.classList.add('sb-drag');
+      const startY = e.clientY, startScroll = el.scrollTop;
+      const move = (ev) => {
+        if (maxTop <= 0) return;
+        el.scrollTop = startScroll +
+          (ev.clientY - startY) / maxTop * (el.scrollHeight - el.clientHeight);
+      };
+      const up = () => {
+        sb.classList.remove('sb-drag');
+        removeEventListener('mousemove', move);
+        removeEventListener('mouseup', up);
+      };
+      addEventListener('mousemove', move);
+      addEventListener('mouseup', up);
+    } else {
+      const y = e.clientY - sb.getBoundingClientRect().top;
+      const cur = parseFloat(th.style.top) || 0;
+      el.scrollTop += (y < cur ? -1 : 1) * el.clientHeight * 0.9;
+    }
+  });
+  el.addEventListener('scroll', paint, { passive: true });
+  const timer = setInterval(paint, 400);
+  paint();
+  el._hgFadeSb = { sb, timer };
+  return () => { clearInterval(timer); sb.remove(); delete el._hgFadeSb; };
+}
 function fmtTs(ms) {
   const d = new Date(ms);
   return d.toLocaleTimeString('zh-CN', {hour12:false}) + '.' + String(ms % 1000).padStart(3,'0');

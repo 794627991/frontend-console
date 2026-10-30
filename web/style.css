@@ -1313,6 +1313,25 @@
     border-radius: 2px; cursor: ns-resize; }
   .hg-term-sb-th:hover { background: var(--muted); }
   .hg-term-sb-th:active { background: var(--accent); }
+  /* ---- 工具面板渐隐滚动条（用户需求：常显小丑→悬浮工作区渐显）----
+     通用自绘（原生条视觉隐藏,WebView2 Fluent 层宽度不可控是前轮实测结论）。
+     与终端 .hg-term-sb 同族不同类：面板版 10px 胶囊、opacity 过渡渐隐
+     （原生伪元素不吃 transition,自绘 DOM 才能做渐隐）。挂载=util.js
+     _hgFadeSb(el)（内容不溢出自动隐藏;拖拽锁防拖出面板闪没） */
+  .port-list, .recent-list, .tree-roots,
+  .tftp-list, .tftp-transfers, .tftp-files { position: relative; }
+  .port-list, .recent-list, .tree-roots,
+  .tftp-list, .tftp-transfers, .tftp-files::-webkit-scrollbar { width: 0; }
+  .port-list, .recent-list, .tree-roots,
+  .tftp-list, .tftp-transfers, .tftp-files { scrollbar-width: none; scrollbar-color: auto; }
+  .hg-fade-sb { position: absolute; top: 4px; right: 2px; bottom: 4px; width: 10px;
+    z-index: 5; opacity: 0; transition: opacity .35s ease; pointer-events: none; }
+  .hg-fade-host:hover > .hg-fade-sb, .hg-fade-sb.sb-drag { opacity: 1; pointer-events: auto; }
+  .hg-fade-sb-th { position: absolute; left: 2px; right: 2px; min-height: 32px;
+    background: color-mix(in srgb, var(--muted) 40%, transparent);
+    border-radius: 999px; cursor: ns-resize; }
+  .hg-fade-host:hover > .hg-fade-sb > .hg-fade-sb-th:hover { background: color-mix(in srgb, var(--muted) 85%, transparent); }
+  .hg-fade-sb-th:active { background: var(--accent); }
   /* xterm 行高/字号与原终端一致 */
   .xterm-wrap .xterm-rows { font-family: var(--font-mono); }
 
@@ -1864,26 +1883,12 @@
   /* 滚动条交角（横/纵交汇的右下角方块）：Chromium 默认白色——文件树加横向
      滚动后暴露（用户截图实锤"右下角白了一块"），全局补暗底 */
   ::-webkit-scrollbar-corner { background: transparent; }
-  /* 工具面板滚动条（用户需求：常显小丑→平时隐形，悬浮对应面板才浮现）——
-     只动侧栏/文件树/TFTP 目录这些工具面板，终端自绘条/会话流/设置页不波及。
-     Fluent 绘制层 thumb 宽度恒细（~4px）不可控，但颜色可控：默认全透明
-     =「渐隐」，容器 :hover 时显色 =「悬浮工作区再现」。
-     容器清单含 CDP 实测真身：recent-list（最近列表）、tftp-list（transfers/
-     files 共用基类——溢出条目挂基类时子类选择器不命中,用户截图实锤） */
+  /* 工具面板原生滚动条 thumb 已由 .hg-fade-sb 自绘渐隐条替代（上 1300 段）——
+     原生视觉保留透明兜底（自绘脚本未跑时面板仍可滚,只是没有可见条） */
   .port-list::-webkit-scrollbar-thumb, .tree-roots::-webkit-scrollbar-thumb,
   .recent-list::-webkit-scrollbar-thumb,
   .tftp-list::-webkit-scrollbar-thumb, .tftp-transfers::-webkit-scrollbar-thumb,
   .tftp-files::-webkit-scrollbar-thumb { background: transparent; }
-  .port-list:hover::-webkit-scrollbar-thumb, .tree-roots:hover::-webkit-scrollbar-thumb,
-  .recent-list:hover::-webkit-scrollbar-thumb,
-  .tftp-list:hover::-webkit-scrollbar-thumb, .tftp-transfers:hover::-webkit-scrollbar-thumb,
-  .tftp-files:hover::-webkit-scrollbar-thumb {
-    background: color-mix(in srgb, var(--muted) 55%, transparent); }
-  .port-list:hover::-webkit-scrollbar-thumb:hover, .tree-roots:hover::-webkit-scrollbar-thumb:hover,
-  .recent-list:hover::-webkit-scrollbar-thumb:hover,
-  .tftp-list:hover::-webkit-scrollbar-thumb:hover, .tftp-transfers:hover::-webkit-scrollbar-thumb:hover,
-  .tftp-files:hover::-webkit-scrollbar-thumb:hover {
-    background: var(--muted); }
 
   /* 横幅通知：右下角冒泡（不占布局空间——之前顶部横幅显示/消失会挤压
      .main 高度导致 xterm 尺寸跳动、UI 位移观感差，改为 fixed 悬浮） */
