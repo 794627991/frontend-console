@@ -139,9 +139,16 @@ function _hgFadeSb(el) {
   const th = document.createElement('div');
   th.className = 'hg-fade-sb-th';
   sb.appendChild(th);
+  // paint 自愈：宿主 innerHTML 整体重写（renderRecentList 等）会把条连根
+  // 抹掉（用户实锤「条没了无论如何看不到」）——每拍检查不在 DOM 就重插。
+  // sb/th 引用保持不变（监听/样式全在,重插零成本）
   el.appendChild(sb);
+  const ensureInDom = () => {
+    if (sb.parentNode !== el) el.appendChild(sb);
+  };
   const paint = () => {
     if (!el.isConnected) return;
+    ensureInDom();
     const sh = el.scrollHeight, ch = el.clientHeight;
     if (sh <= ch + 4) { sb.style.display = 'none'; return; }
     sb.style.display = '';
