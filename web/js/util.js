@@ -224,34 +224,56 @@ function _hgFadeSb(el) {
   return () => { sb.remove(); delete el._hgFadeSb; };
 }
 
-// ---- 渐隐滚动条全局托管（惰性事件驱动,用户拍板全站统一）----------------
-// 性能事故复盘重构（用户 trace 铁证：145s 录制窗 Layout 100.9s/1 万次,
-// scanAll 单次 18.5s×5 + paint 44500 次 + observer 批 155 次——旧架构
-// 「主动扫描」三宗罪：全 DOM getComputedStyle 强制样式计算、每容器独立
-// interval、MutationObserver 增量同款逐节点样式读）。新架构零主动扫描：
-// ①pointerover 委托——鼠标走到哪沿祖先链找最近可滚容器即挂（单事件 ≤
-//   链深次样式读,成本分摊到交互时刻；滚动条本就 hover 才显示,惰性挂载
-//   与显隐语义天然对齐,零错过）
-// ②全局单 interval 600ms 统一 paint 已挂载容器（断连容器自动出册）
-// ③启动零扫描——首帧不再有 18.5s 的布局核弹
+// ---- 渐隐滚动条全局托管（用户拍板全站统一）--------------------------------
+// 性能事故复盘（用户 trace 铁证：145s 窗 Layout 100.9s/1 万次,scanAll 单次
+// 18.5s×5 + paint 44500 次——主动扫描三宗罪：全 DOM getComputedStyle、每
+// 容器独立 interval、observer 增量逐节点样式读）→ 惰性事件驱动。
+// v7 补启动粗条闪变（用户截图实锤：启动时原生粗条可见,悬浮才换细条——
+// 惰性挂载的固有窗口期）：scroll/capture 委托零成本发现溢出容器——任何
+// 容器「滚动或内容增删引发 scroll 信号」即被捕获挂条,启动即接管,粗条
+// 窗口只在「从未滚动且鼠标未到」的面板残留（此时它也无从被看见,无感）。
+// pointerover 保留兜底（纯 hover 未滚场景）。
 (function () {
   const EXCLUDE = '.xterm-viewport, .hg-fade-sb, .hg-fade-sb-th, .hg-term-sb';
   const _hosts = new Set();
+  const tryMount = (n) => {
+    if (!n || n.nodeType !== 1 || n._hgFadeSb) return false;
+    if (n.matches && n.matches(EXCLUDE)) return false;
+    let oy;
+    try { oy = getComputedStyle(n).overflowY; } catch (_) { return false; }
+    if (oy !== 'auto' && oy !== 'scroll') return false;
+    _hgFadeSb(n);
+    if (n._hgFadeSb) { _hosts.add(n); return true; }
+    return false;
+  };
+  // 滚动捕获委托：滚动事件沿捕获相位从 document 顶下来,第一个命中目标
+  // 即溢出容器本身——零遍历成本,启动后任何滚动信号都即时接管
+  document.addEventListener('scroll', (e) => {
+    tryMount(e.target);
+  }, { capture: true, passive: true });
+  // 静态区填充捕获（启动粗条窗口的第二路径）：目录文件/最近列表是启动期
+  // innerHTML 填充——只涨 scrollHeight 不发 scroll 事件。轻量 observer 只盯
+  // 侧栏子树（tftp/sidebar,低频区,终端热区不observe）
+  const _bootMo = new MutationObserver(() => {
+    document.querySelectorAll('.tftp-list, .tftp-transfers, .tftp-files, .recent-list, .port-list, .tree-roots')
+      .forEach(tryMount);
+  });
+  const _bootArm = () => {
+    const side = document.querySelector('.sidebar');
+    if (side) _bootMo.observe(side, { childList: true, subtree: true });
+    else setTimeout(_bootArm, 500);
+  };
+  _bootArm();
+  // hover 兜底（未滚动纯悬浮场景）
   document.addEventListener('pointerover', (e) => {
     let n = e.target;
     while (n && n !== document.body && n.nodeType === 1) {
-      if (n._hgFadeSb) return;   // 链上已托管——最近可滚祖先已覆盖,快速路径
-      if (!n.matches(EXCLUDE)) {
-        let oy;
-        try { oy = getComputedStyle(n).overflowY; } catch (_) { return; }
-        if (oy === 'auto' || oy === 'scroll') {
-          _hgFadeSb(n);
-          if (n._hgFadeSb) { _hosts.add(n); return; }
-        }
-      }
+      if (n._hgFadeSb) return;
+      if (tryMount(n)) return;
       n = n.parentElement;
     }
   }, { passive: true });
+  // 全局单循环统一 paint 已挂载容器（断连自动出册）
   setInterval(() => {
     for (const el of _hosts) {
       if (!el.isConnected || !el._hgFadeSb || !el._hgFadeSb.paint) {
