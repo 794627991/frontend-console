@@ -134,6 +134,11 @@ function showBanner(msg, ms=4000, isErr=false) {
 // 时条闪没；400ms 周期兜底（列表增删不触发 scroll 事件）。返回清理函数
 function _hgFadeSb(el) {
   if (!el || el._hgFadeSb) return () => {};
+  // 轨道定位自给自足：.hg-fade-sb 的 top/bottom 绝对定位依赖宿主
+  // position:relative（CSS 提供）。CSS 缓存半新半旧时宿主没有 relative
+  // → 轨道高度 0 → paint 短路 → thumb 钉在顶端（用户实锤「滚动不跟随,
+  // 条被固定在最顶」）。inline 直写,不再依赖任何 CSS 到位
+  if (getComputedStyle(el).position === 'static') el.style.position = 'relative';
   const sb = document.createElement('div');
   sb.className = 'hg-fade-sb';
   const th = document.createElement('div');
@@ -153,7 +158,20 @@ function _hgFadeSb(el) {
     if (sh <= ch + 4) { sb.style.display = 'none'; return; }
     sb.style.display = '';
     const trackH = sb.clientHeight;
-    if (trackH <= 0) return;
+    if (trackH <= 0) {
+      // 轨道仍 0 高（定位异常兜底）：改用宿主可视高直接算,条不再失联
+      const fallback = Math.max(40, ch - 8);
+      if (sb.style.top === '' && sb.style.bottom === '') {
+        sb.style.top = '4px'; sb.style.bottom = '4px';
+      }
+      if (fallback <= 0) return;
+      const thH = Math.max(32, Math.round(ch / sh * fallback));
+      const maxTop = fallback - thH;
+      th.style.height = thH + 'px';
+      th.style.top = (maxTop > 0 ? el.scrollTop / (sh - ch) * maxTop : 0) + 'px';
+      sb.style.height = fallback + 'px';
+      return;
+    }
     const thH = Math.max(32, Math.round(ch / sh * trackH));
     const maxTop = trackH - thH;
     th.style.height = thH + 'px';
