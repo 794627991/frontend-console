@@ -1279,10 +1279,17 @@ def main():
     # 挑战/UA 三代）系对需求的误读叠加过度工程，连带 403 过四家内部子进
     # 程，已整体拆除——HTTP 服务恢复仅绑 127.0.0.1 的开放原状。
     from src.server import DEBUG_WEB as _dbg_web
-    _wv_debug = _dbg_web
+    # 终端滚动条实锤修复（用户两轮反馈+截图）：CSS width 14/18px 均不生效但
+    # border-radius 生效 = WebView2 Fluent overlay 滚动条特性压制（overlay
+    # 模式宽度由系统定 ~4px 悬浮细条，::-webkit-scrollbar 的 width 被忽略，
+    # thumb 颜色/圆角仍应用）。禁掉特性恢复经典渲染，CSS 宽度回归权威
+    # （终端 18px 矩形 / 全局 8px）。与 debug 参数合并成一条参数串——同名
+    # switch 后者覆盖前者，不能分两条 --disable-features 写
+    _wv_args = ("--disable-features=msOverlayScrollbarWinStyle,"
+                "msOverlayScrollbarWinStyleAnimation")
     if _wv_debug:
-        os.environ.setdefault("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
-                              "--remote-debugging-port=9222")
+        _wv_args += " --remote-debugging-port=9222"
+    os.environ.setdefault("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", _wv_args)
     _ensure_webview2()   # v2.3.7a：运行时闸——必须在 webview.start 前（创建期读环境变量）
     webview.start(debug=_wv_debug, private_mode=False,
                   storage_path=os.path.join(DATA_DIR, "webview_cache"))
