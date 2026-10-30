@@ -37,6 +37,8 @@ function _termSbInit(conn) {
     const trackH = sb.clientHeight, thH = th.offsetHeight;
     const maxTop = trackH - thH;
     if (e.target === th) {
+      // 拖拽锁：鼠标可能拖出终端区（:hover 失效）——锁显防条中途闪没
+      sb.classList.add('sb-drag');
       const startY = e.clientY, startScroll = v.scrollTop;
       const move = (ev) => {
         if (maxTop <= 0) return;
@@ -44,6 +46,7 @@ function _termSbInit(conn) {
           (ev.clientY - startY) / maxTop * (v.scrollHeight - v.clientHeight);
       };
       const up = () => {
+        sb.classList.remove('sb-drag');
         removeEventListener('mousemove', move);
         removeEventListener('mouseup', up);
       };
