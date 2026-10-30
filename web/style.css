@@ -1326,11 +1326,22 @@
   .tftp-list, .tftp-transfers, .tftp-files { scrollbar-width: none; scrollbar-color: auto; }
   .hg-fade-sb { position: absolute; top: 4px; right: 2px; bottom: 4px; width: 10px;
     z-index: 5; opacity: 0; transition: opacity .35s ease; pointer-events: none; }
-  .hg-fade-host:hover > .hg-fade-sb, .hg-fade-sb.sb-drag { opacity: 1; pointer-events: auto; }
+  /* 宿主 hover 用兄弟/后代组合不了（sb 是宿主子元素）——直接容器 :hover
+     （.hg-fade-host 类由 _hgFadeSb 挂载时加上，标记用） */
+  .port-list:hover > .hg-fade-sb, .recent-list:hover > .hg-fade-sb,
+  .tree-roots:hover > .hg-fade-sb, .tftp-list:hover > .hg-fade-sb,
+  .tftp-transfers:hover > .hg-fade-sb, .tftp-files:hover > .hg-fade-sb,
+  .hg-fade-sb.sb-drag { opacity: 1; pointer-events: auto; }
   .hg-fade-sb-th { position: absolute; left: 2px; right: 2px; min-height: 32px;
     background: color-mix(in srgb, var(--muted) 40%, transparent);
     border-radius: 999px; cursor: ns-resize; }
-  .hg-fade-host:hover > .hg-fade-sb > .hg-fade-sb-th:hover { background: color-mix(in srgb, var(--muted) 85%, transparent); }
+  .port-list:hover > .hg-fade-sb > .hg-fade-sb-th:hover,
+  .recent-list:hover > .hg-fade-sb > .hg-fade-sb-th:hover,
+  .tree-roots:hover > .hg-fade-sb > .hg-fade-sb-th:hover,
+  .tftp-list:hover > .hg-fade-sb > .hg-fade-sb-th:hover,
+  .tftp-transfers:hover > .hg-fade-sb > .hg-fade-sb-th:hover,
+  .tftp-files:hover > .hg-fade-sb > .hg-fade-sb-th:hover {
+    background: color-mix(in srgb, var(--muted) 85%, transparent); }
   .hg-fade-sb-th:active { background: var(--accent); }
   /* xterm 行高/字号与原终端一致 */
   .xterm-wrap .xterm-rows { font-family: var(--font-mono); }
