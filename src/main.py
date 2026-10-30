@@ -1279,20 +1279,14 @@ def main():
     # 挑战/UA 三代）系对需求的误读叠加过度工程，连带 403 过四家内部子进
     # 程，已整体拆除——HTTP 服务恢复仅绑 127.0.0.1 的开放原状。
     from src.server import DEBUG_WEB as _dbg_web
-    _wv_debug = _dbg_web      # 1296 行 webview.start(debug=…) 引用（f3adc75 改环境变量块时误删此行→NameError 启动即崩，用户实锤）
-    # 终端滚动条实锤修复（滚动条宽度 CSS 不生效系列）。本机实验链（win32
-    # 实测）：①WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS 在 pywebview/.NET 链
-    # 生效（--user-agent 标记注入成功）②同名开关冲突时环境变量**覆盖**
-    # pywebview props 的值（双 remote-debugging-port 实测 env 赢）——故本
-    # 串必须带回 pywebview 原有的 ElasticOverscroll，且 overlay 特性名按
-    # 多候选超集禁（msOverlayScrollbarWinStyle 系 Win11 Fluent 名，新版
-    # WebView2 可能改认上游总开关 OverlayScrollbar）
-    _feat = ("ElasticOverscroll,msOverlayScrollbarWinStyle,"
-             "msOverlayScrollbarWinStyleAnimation,OverlayScrollbar")
-    _wv_args = "--disable-features=" + _feat
-    if _dbg_web:
-        _wv_args += " --remote-debugging-port=9222"
-    os.environ.setdefault("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", _wv_args)
+    _wv_debug = _dbg_web
+    # 滚动条系列终局复盘：启动参数禁 overlay 特性（f3adc75 超集）已退役——
+    # 与 CSS scrollbar-color（踢掉 Fluent 绘制的正解）叠加会把滚动条打成
+    # 1~2px 畸形（两机制打架，用户实锤）；单独用它也没能稳定送达命令行
+    # （同步时序/loader 行为漂移两轮不稳）。debug 调试端口恢复历史原状
+    if _wv_debug:
+        os.environ.setdefault("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+                              "--remote-debugging-port=9222")
     _ensure_webview2()   # v2.3.7a：运行时闸——必须在 webview.start 前（创建期读环境变量）
     webview.start(debug=_wv_debug, private_mode=False,
                   storage_path=os.path.join(DATA_DIR, "webview_cache"))
