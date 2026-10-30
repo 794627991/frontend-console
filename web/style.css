@@ -1872,15 +1872,15 @@
   #cmdEditModal .box { width: 420px; }
   #cmdEditCmd { font-family: var(--font-mono); }
 
-  /* 滚动条 */
-  ::-webkit-scrollbar { width: 8px; height: 8px; }
-  ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
-  ::-webkit-scrollbar-thumb:hover { background: var(--border-glow); }
-  /* 滚动条交角（横/纵交汇的右下角方块）：Chromium 默认白色——文件树加横向
-     滚动后暴露（用户截图实锤"右下角白了一块"），全局补暗底 */
+  /* 滚动条：全站原生条一律视觉隐藏（对抗审定案「条统一」的最后一块）——
+     CDP 像素实测：scrollbar-width:none 连 WebView2 Fluent 绘制层都能彻底
+     藏住（注入前右缘 8 列淡色 thumb 残影,注入后全零）。滚动行为不受影响
+     （滚轮照滚）；视觉唯一来源=自绘条（终端 14px 宽条 + 渐隐胶囊,惰性
+     挂载——未挂载容器无条,与渐隐语义天然一致:未悬浮本就该隐形） */
+  * { scrollbar-width: none; }
+  ::-webkit-scrollbar { width: 0; height: 0; }
+  ::-webkit-scrollbar-track, ::-webkit-scrollbar-thumb,
   ::-webkit-scrollbar-corner { background: transparent; }
-  /* 原生滚动条视觉已全站由 .hg-fade-sb-host 标记统一隐藏（上 1300 段） */
 
   /* 横幅通知：右下角冒泡（不占布局空间——之前顶部横幅显示/消失会挤压
      .main 高度导致 xterm 尺寸跳动、UI 位移观感差，改为 fixed 悬浮） */

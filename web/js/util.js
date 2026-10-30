@@ -253,9 +253,12 @@ function _hgFadeSb(el) {
   }, { capture: true, passive: true });
   // 静态区填充捕获（启动粗条窗口的第二路径）：目录文件/最近列表是启动期
   // innerHTML 填充——只涨 scrollHeight 不发 scroll 事件。轻量 observer 只盯
-  // 侧栏子树（tftp/sidebar,低频区,终端热区不observe）
+  // 侧栏子树（低频区,终端热区不observe）;查询范围=侧栏内（O(数百)）——
+  // 对抗审修正:曾误写 document.querySelectorAll 全局扫（O(全文档)×每秒）
   const _bootMo = new MutationObserver(() => {
-    document.querySelectorAll('.tftp-list, .tftp-transfers, .tftp-files, .recent-list, .port-list, .tree-roots')
+    const side = document.querySelector('.sidebar');
+    if (!side) return;
+    side.querySelectorAll('.tftp-list, .tftp-transfers, .tftp-files, .recent-list, .port-list, .tree-roots')
       .forEach(tryMount);
   });
   const _bootArm = () => {
