@@ -1306,14 +1306,12 @@
      terminal-core.js _termSbInit 自绘（.hg-term-sb），宽高颜色全自控 */
   .xterm-wrap .xterm-viewport { scrollbar-width: none !important; scrollbar-color: auto !important; }
   .xterm-wrap .xterm-viewport::-webkit-scrollbar { width: 0 !important; height: 0 !important; }
-  .hg-term-sb { position: absolute; top: 6px; right: 2px; bottom: 6px; width: 10px;
-    z-index: 6; opacity: 0; transition: opacity .4s ease;
-    pointer-events: none; }   /* 隐藏态不拦截点击；hover/拖拽态再开 */
-  .xterm-wrap:hover .hg-term-sb, .hg-term-sb.sb-drag { opacity: 1; pointer-events: auto; }
-  .hg-term-sb-th { position: absolute; left: 2px; right: 2px; min-height: 36px;
-    background: color-mix(in srgb, var(--muted) 45%, transparent);
-    border-radius: 999px; cursor: ns-resize; }
-  .hg-term-sb-th:hover { background: color-mix(in srgb, var(--muted) 80%, transparent); }
+  .hg-term-sb { position: absolute; top: 4px; right: 3px; bottom: 4px; width: 14px;
+    z-index: 6; }
+  .hg-term-sb-th { position: absolute; left: 1px; right: 1px; min-height: 36px;
+    background: color-mix(in srgb, var(--muted) 60%, transparent);
+    border-radius: 2px; cursor: ns-resize; }
+  .hg-term-sb-th:hover { background: var(--muted); }
   .hg-term-sb-th:active { background: var(--accent); }
   /* xterm 行高/字号与原终端一致 */
   .xterm-wrap .xterm-rows { font-family: var(--font-mono); }
