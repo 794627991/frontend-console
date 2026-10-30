@@ -106,5 +106,241 @@ html[data-style="swiss"][data-theme="paper"] {
   --term-fg: #1a1a1a;
 }
 
+/* ============================================================
+   风格 · 极光玻璃（Aurora Glass）  批次2 · 配套 onedark
+   深空底 + 流动极光 + 玻璃卡片（半透明/blur/高光描边）
+   性能红线：backdrop-filter 只上侧栏/弹窗/横幅卡片层——
+   终端区（.xterm-wrap 系）永不模糊；极光动画只用 transform
+   （合成器层），无 background-position 类逐帧重绘
+   ============================================================ */
+html[data-style="aurora"] body::before { display: none; }   /* 科技网格退场 */
+/* 极光层：双光斑 blur 缓移（rgba 白系高光为跨主题装饰色，
+   铁律④：图形级可见即可，非文字载体） */
+html[data-style="aurora"] body::after {
+  display: block; content: ""; position: fixed; inset: 0;
+  pointer-events: none; z-index: 0; filter: blur(64px);
+  background:
+    radial-gradient(420px 300px at 12% 8%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 70%),
+    radial-gradient(380px 280px at 88% 30%, color-mix(in srgb, var(--accent-2) 26%, transparent), transparent 70%),
+    radial-gradient(520px 360px at 45% 105%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 70%);
+  animation: sk-aurora 26s ease-in-out infinite alternate;
+}
+@keyframes sk-aurora {
+  from { transform: translate(0, 0) scale(1); }
+  to   { transform: translate(48px, 28px) scale(1.12); }
+}
+/* 玻璃卡片层：半透明 + blur + 顶部高光描边（浅深主题通吃的白高光） */
+html[data-style="aurora"] .sidebar,
+html[data-style="aurora"] .modal,
+html[data-style="aurora"] .banner {
+  background: color-mix(in srgb, var(--bg-panel) 72%, transparent);
+  backdrop-filter: blur(14px);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+html[data-style="aurora"] .modal,
+html[data-style="aurora"] .banner {
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.10) !important;
+}
+
+/* ============================================================
+   风格 · 磷光终端（Phosphor CRT）  批次2 · 配套 darkgreen
+   静态扫描线 + CRT 暗角 + 等宽 UI + 磷光辉光（小范围）
+   性能红线：扫描线/暗角全静态（background-position 动画是逐帧
+   重绘核弹，工作界面长亮不做）；text-shadow 只上标题/选中态等
+   小面积元素，绝不全局通配
+   ============================================================ */
+html[data-style="crt"] { --font-ui: "Cascadia Code", "JetBrains Mono", Consolas, monospace; }
+/* body::before（原科技网格）→ 扫描线；body::after → 暗角 */
+html[data-style="crt"] body::before {
+  background-image: repeating-linear-gradient(0deg,
+    transparent 0 2px, rgba(0, 0, 0, 0.16) 2px 4px);
+  background-size: auto; opacity: 1;
+}
+html[data-style="crt"] body::after {
+  display: block; content: ""; position: fixed; inset: 0;
+  pointer-events: none; z-index: 9999;
+  background: radial-gradient(ellipse at center, transparent 58%, rgba(0, 0, 0, 0.42) 100%);
+}
+/* 磷光辉光：小面积（logo 版本号/选中 sheet/主按钮） */
+html[data-style="crt"] .logo .ver,
+html[data-style="crt"] .sidebar-sheet-tab.active,
+html[data-style="crt"] .btn.primary {
+  text-shadow: 0 0 8px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+/* 全直角感的老机壳：微圆角归一（2px） */
+html[data-style="crt"] * { border-radius: 2px !important; }
+html[data-style="crt"] *:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* ============================================================
+   风格 · 合成波 '84（Synthwave）  批次2 · 配套 rose
+   霓虹渐变按钮 + 底部透视网格地平线（静态）+ 霓虹 tab 线
+   渐变是本风格语言（瑞士「平涂纪律」在此不适用）；
+   网格静态无动画，transform 都不跑——零重绘零合成负担
+   ============================================================ */
+html[data-style="synth"] body::before { display: none; }
+/* 网格地平线：底部低透明度透视网格，装饰级 */
+html[data-style="synth"] body::after {
+  display: block; content: ""; position: fixed; left: -20%; right: -20%;
+  bottom: -6%; height: 34%; pointer-events: none; z-index: 0;
+  transform: perspective(240px) rotateX(58deg); transform-origin: top center;
+  background:
+    repeating-linear-gradient(90deg, color-mix(in srgb, var(--accent) 20%, transparent) 0 1.5px, transparent 1.5px 46px),
+    repeating-linear-gradient(0deg, color-mix(in srgb, var(--accent-2) 16%, transparent) 0 1.5px, transparent 1.5px 28px);
+}
+/* 霓虹主按钮：粉紫渐变 + 外辉光 */
+html[data-style="synth"] .btn.primary {
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: var(--on-accent);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+/* tab 线与选中态霓虹化 */
+html[data-style="synth"] .tab.active::after { background: var(--accent); }
+html[data-style="synth"] .sidebar-sheet-tab.active {
+  text-shadow: 0 0 8px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+html[data-style="synth"] .logo .ver {
+  font-style: italic; letter-spacing: 2px;
+  text-shadow: 0 0 8px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+/* ============================================================
+   风格 · 航电 HUD（Avionics）  批次2 · 配套 amber
+   琥珀单色纪律 + 等宽全 UI + 左缘刻度尺 + 缓扫琥珀带
+   扫描带动画用 transform（合成器层）；角括号只上横幅
+   （banner 伪元素空闲已核）
+   ============================================================ */
+html[data-style="hud"] { --font-ui: "Cascadia Code", "JetBrains Mono", Consolas, monospace; }
+/* body::before（原网格）→ 左缘刻度尺 */
+html[data-style="hud"] body::before {
+  background-image: repeating-linear-gradient(180deg,
+    color-mix(in srgb, var(--accent) 45%, transparent) 0 1px, transparent 1px 12px);
+  background-size: 5px auto; opacity: 1; inset: 0 auto 0 0; width: 5px;
+}
+/* body::after → 缓慢下扫的琥珀带（transform 动画） */
+html[data-style="hud"] body::after {
+  display: block; content: ""; position: fixed; left: 0; right: 0; top: -70px;
+  height: 52px; pointer-events: none; z-index: 0;
+  background: linear-gradient(180deg, transparent,
+    color-mix(in srgb, var(--accent) 8%, transparent), transparent);
+  animation: sk-hud 5s linear infinite;
+}
+@keyframes sk-hud { from { transform: translateY(0); } to { transform: translateY(103vh); } }
+/* 直角 + 琥珀描边纪律 */
+html[data-style="hud"] * { border-radius: 0 !important; }
+html[data-style="hud"] *:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* 横幅角括号（航电框）+ 标签字距 */
+html[data-style="hud"] .banner {
+  position: relative; border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+}
+html[data-style="hud"] .banner::before,
+html[data-style="hud"] .banner::after {
+  content: ""; position: absolute; width: 11px; height: 11px;
+  border: 2px solid var(--accent);
+}
+html[data-style="hud"] .banner::before { top: -2px; left: -2px; border-right: none; border-bottom: none; }
+html[data-style="hud"] .banner::after { bottom: -2px; right: -2px; border-left: none; border-top: none; }
+html[data-style="hud"] .dd-label,
+html[data-style="hud"] .sidebar-sheet-tab { letter-spacing: 2px; }
+
+/* ============================================================
+   风格 · 新粗野（Neo-Brutalism）  批次3 · 配套 apricot
+   全直角 + 近黑粗边 + 硬位移阴影（正面清单）+ 黄底黑字主按钮
+   硬阴影全静态；:active 位移是 transform（不触发重排）
+   ============================================================ */
+html[data-style="brutal"] * { border-radius: 0 !important; }
+html[data-style="brutal"] *:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
+/* 硬阴影正面清单（通配会把文字级元素也打上阴影——灾难，禁） */
+html[data-style="brutal"] .btn,
+html[data-style="brutal"] .modal,
+html[data-style="brutal"] .banner,
+html[data-style="brutal"] .port-item.active,
+html[data-style="brutal"] .sidebar-sheet-tab.active {
+  box-shadow: 4px 4px 0 var(--fg) !important;
+}
+html[data-style="brutal"] .btn:active { transform: translate(3px, 3px); box-shadow: 0 0 0 var(--fg) !important; }
+/* 主按钮：黄底黑字（红底白字对比不够过矩阵，黄黑是粗野经典且双达标） */
+html[data-style="brutal"] .btn.primary { background: #ffd23f; color: #1a1a1a; }
+html[data-style="brutal"] .cmd-add button { background: #ffd23f; color: #1a1a1a; }
+
+/* ============================================================
+   风格 · 仪器面板（Instrument Panel）  批次3 · 配套 warmgray
+   金属渐变面板 + LED 呼吸 + 物理按压 + 丝印字
+   LED 动画 opacity（合成器层）；按压 translateY
+   ============================================================ */
+html[data-style="instrument"] .topbar {
+  background: linear-gradient(180deg, var(--bg-card), var(--bg-panel));
+  border-bottom: 1px solid var(--border-glow);
+}
+html[data-style="instrument"] .btn {
+  background: linear-gradient(180deg, var(--bg-card), var(--bg-input));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--fg) 12%, transparent),
+              0 2px 0 var(--bg-deep);
+}
+html[data-style="instrument"] .btn:active { transform: translateY(2px); box-shadow: inset 0 1px 0 color-mix(in srgb, var(--fg) 12%, transparent); }
+html[data-style="instrument"] .btn.primary {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 85%, white), var(--accent));
+}
+/* tab 激活线 → LED 圆点呼吸（复用既有 ::after，覆盖其形态） */
+html[data-style="instrument"] .tab.active::after {
+  width: 6px; height: 6px; left: 50%; transform: translateX(-50%); border-radius: 50% !important;
+  background: var(--accent); bottom: 5px;
+  box-shadow: 0 0 8px var(--accent);
+  animation: sk-led 1.6s ease-in-out infinite;
+}
+@keyframes sk-led { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+/* 丝印字：小字号 + 宽字距 */
+html[data-style="instrument"] .dd-label,
+html[data-style="instrument"] .sidebar-sheet-tab {
+  letter-spacing: 2.5px; text-transform: uppercase; font-size: 10px;
+}
+
+/* ============================================================
+   风格 · 墨韵（Ink Wabi-sabi）  批次3 · 配套 paper
+   近直角微圆 + 淡墨边 + 按钮宽字距 + 朱印 logo
+   ============================================================ */
+html[data-style="ink"] * { border-radius: 3px !important; }
+html[data-style="ink"] .btn { letter-spacing: 4px; }
+html[data-style="ink"] .topbar { border-bottom-width: 1px; }
+/* 朱印：logo 图标换成朱砂方印（img 隐藏 + ::after 铺字） */
+html[data-style="ink"] .logo .icon { position: relative; }
+html[data-style="ink"] .logo .icon img { visibility: hidden; }
+html[data-style="ink"] .logo .icon::after {
+  content: "信"; position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--accent); color: #ffffff;
+  font-size: 13px; border-radius: 3px;
+}
+
+/* ---- 深度搭配调色块（铁律①+④：过可读性矩阵） ---- */
+
+/* HUD × amber：纯正琥珀单色化（#ffb000 亮琥珀配深字/深棕底均高对比） */
+html[data-style="hud"][data-theme="amber"] {
+  --accent: #ffb000;
+  --accent-2: #cc8f00;
+  --on-accent: #140f00;
+  --accent-glow: rgba(255, 176, 0, 0.3);
+  --border: #6e4e1e;
+  --border-glow: #8a6428;
+}
+
+/* Brutal × apricot：近黑粗边 + 深红强调（红底白字 4.9，黄钮黑字 12+） */
+html[data-style="brutal"][data-theme="apricot"] {
+  --accent: #cc3d3d;
+  --accent-2: #a83030;
+  --on-accent: #ffffff;
+  --border: #1a1a1a;
+  --border-glow: #1a1a1a;
+}
+
+/* Ink × paper：朱砂红 + 淡墨边（朱印红/宣纸底 6+；墨线取笔记面板
+   同款 #c3bcae——浅纸面上 1.48 可见且不抢戏） */
+html[data-style="ink"][data-theme="paper"] {
+  --accent: #a63b2a;
+  --accent-2: #8a2f22;
+  --on-accent: #ffffff;
+  --border: #c3bcae;
+  --border-glow: #b5ad99;
+}
+
 /* 保留不动的功能性渐变（备忘）：.tree-row 缩进条纹、.tftp 进度条
    动画、两处 mask-image 遮罩——语义与风格无关 */

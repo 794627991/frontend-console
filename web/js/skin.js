@@ -17,8 +17,13 @@
 const STYLES = [
   { id: 'default', name: '默认',   desc: '现有科技风（基准形态）', theme: '' },
   { id: 'swiss',   name: '瑞士排版', desc: '白底黑字 · 全直角 · 粗黑结构线 · 红点缀', theme: 'paper' },
-  // 批次2：aurora 极光玻璃 / crt 磷光终端 / synth 合成波 / hud 航电
-  // 批次3：brutal 新粗野 / instrument 仪器面板 / ink 墨韵（逐套追加）
+  { id: 'aurora',  name: '极光玻璃', desc: '深空底 · 流动极光 · 玻璃卡片半透明', theme: 'onedark' },
+  { id: 'crt',     name: '磷光终端', desc: '扫描线 · 暗角 · 等宽 · 磷光辉光', theme: 'darkgreen' },
+  { id: 'synth',   name: '合成波',  desc: '落日霓虹 · 透视网格地平线 · 辉光按钮', theme: 'rose' },
+  { id: 'hud',     name: '航电 HUD', desc: '琥珀单色 · 等宽全 UI · 刻度尺 · 扫描带', theme: 'amber' },
+  { id: 'brutal',  name: '新粗野',  desc: '全直角 · 粗黑边 · 硬位移阴影 · 黄底黑字钮', theme: 'apricot' },
+  { id: 'instrument', name: '仪器面板', desc: '金属渐变 · LED 呼吸 · 物理按压 · 丝印字', theme: 'warmgray' },
+  { id: 'ink',     name: '墨韵',   desc: '淡墨边 · 朱印 logo · 按钮宽字距', theme: 'paper' },
 ];
 let _curStyle = 'default';
 let _prevTheme = null;      // 切入风格那一刻的配色；切回 default 恢复（见包装）
