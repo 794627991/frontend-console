@@ -386,13 +386,19 @@ def index():
         # harness/hiklink，与旧后端实际承载精确对齐。占位符与变量名
         # __HG_WFAM__ 刻意不同名——同名 replace 会连变量名一起吃掉
         # （__HG_V4FLAG__ 同款坑，a99F 实测再踩一次）
+        # __HG_DBGF__：debug 页标志（DEBUG_WEB=1 注入 '1'，正式版空串）——
+        # 前端只在 debug 版注册 pagehide 断连钩子（正式版无 F5 能力无此需求，
+        # 用户定调：刷新清连接是调试机专属行为）。占位符与变量名 __HG_DBG__
+        # 刻意不同名——同名 replace 连变量名一起吃（__HG_V4FLAG__ 同款坑）
         if isinstance(data, bytes):
             data = data.replace(b"__HG_VER__", _HV.encode("utf-8"))
             data = data.replace(b"__HG_WBASE__", WORKER_BASE.encode("utf-8"))
-            return data.replace(b"__HG_WFAMFLAG__", b"proxy" if CLAUDE_OFFLOAD else b"")
+            data = data.replace(b"__HG_WFAMFLAG__", b"proxy" if CLAUDE_OFFLOAD else b"")
+            return data.replace(b"__HG_DBGF__", b"1" if DEBUG_WEB else b"")
         data = data.replace("__HG_VER__", _HV)
         data = data.replace("__HG_WBASE__", WORKER_BASE)
-        return data.replace("__HG_WFAMFLAG__", "proxy" if CLAUDE_OFFLOAD else "")
+        data = data.replace("__HG_WFAMFLAG__", "proxy" if CLAUDE_OFFLOAD else "")
+        return data.replace("__HG_DBGF__", "1" if DEBUG_WEB else "")
     if DEBUG_WEB:
         with open(os.path.join(_SRC_WEB, "index.html"), "rb") as f:
             return Response(_inject(f.read()), mimetype="text/html")
@@ -749,6 +755,20 @@ def api_disconnect():
         p.close()
         return jsonify({"ok": True})
     return jsonify({"ok": False, "err": "未找到该串口"}), 404
+
+
+@app.route("/api/reload_disconnect", methods=["POST"])
+def api_reload_disconnect():
+    """debug 页刷新清场（用户定调）：正式发布版禁用前端刷新（无 F5），
+    只有调试机（HARNESS_DEBUG_WEB=1）能刷新——刷新瞬间页面来不及发
+    disconnect，串口/SSH 句柄滞留后端进程占口（CDP 强刷实测 COM10 被
+    自身后端占用）。pagehide sendBeacon 打到这里，全部连接即刻回收；
+    正式版即使手工 POST 也 404（双门：前端不注册钩子 + 后端 DEBUG_WEB）
+    """
+    if not DEBUG_WEB:
+        return jsonify({"ok": False, "err": "仅调试模式"}), 404
+    close_all_ports()
+    return jsonify({"ok": True})
 
 @app.route("/api/reconnect", methods=["POST"])
 def api_reconnect():

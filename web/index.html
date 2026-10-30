@@ -1,7 +1,18 @@
 ﻿<!doctype html>
 <html lang="zh-CN">
 <head>
-<script>window._HG_VER='v__HG_VER__';window.__HG_WORKER__='__HG_WBASE__';window.__HG_WFAM__='__HG_WFAMFLAG__';console.log('[harness] boot '+window._HG_VER+' [v4]'+(window.__HG_WORKER__?' [worker '+window.__HG_WORKER__+']':''));</script>
+<script>window._HG_VER='v__HG_VER__';window.__HG_WORKER__='__HG_WBASE__';window.__HG_WFAM__='__HG_WFAMFLAG__';window.__HG_DBG__=__HG_DBGF__==='1';console.log('[harness] boot '+window._HG_VER+' [v4]'+(window.__HG_WORKER__?' [worker '+window.__HG_WORKER__+']':''));</script>
+<script>
+/* debug 页刷新清场（用户定调：刷新能力只有 debug 版有，正式版无此担忧）：
+   pagehide 瞬间 sendBeacon 通知后端回收全部串口/SSH 连接——否则句柄
+   滞留后端进程，重开串口报「被占用」（CDP 强刷 COM10 实锤）。beacon
+   由浏览器保证在页面卸载后送达；正常关闭工具同样触发=顺手全清，无副作用 */
+if (window.__HG_DBG__) {
+  window.addEventListener('pagehide', function () {
+    try { navigator.sendBeacon('/api/reload_disconnect'); } catch (_) {}
+  });
+}
+</script>
 <script src="web/js/workerbase.js?v=__HG_VER__"></script>
 <script>
 /* v3.5.187 DevTools console 环形缓冲 hook（designer 方案 5.3）：
