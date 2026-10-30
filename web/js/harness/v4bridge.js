@@ -351,8 +351,12 @@
     //（用户实测致命三症结）。磁盘唯一真源=/api/harness/agents（readmodel
     // 现算 agents 表+tidMap），回放卡的状态/hgSubr/档案计时全部从它回填
     if (!this.opt.sub) this._agentsColdSync();
-    // 内网报告修复（P0）：快照整建=消息 DOM 全量重换，导轨元素引用全部
-    // 失联——渲染完成即同步（同步调，快照低频）
+    // 内网报告修复（P0）：快照整建后同步导轨。对抗审实测修正——报告称
+    // 「v4 全程不调 _hgRailSync」不确（_histRender 尾部本有调用）；但在
+    // 旧实例复现判据实测：railItems 11/11 全失联且与切终端无关（基线即
+    // 失联）,真实根因=某未定位的漏同步路径（DOM 被换而 sync 未跟）。
+    // 本调用 + delta 收尾 debounce + main.js 点击兜底重同步（P1）三层
+    // 防线覆盖该未知路径：漏了这里,点击时也会被重同步救活
     var _rs = _g('_hgRailSync');
     if (_rs) { try { _rs(); } catch (e) {} }
   };
