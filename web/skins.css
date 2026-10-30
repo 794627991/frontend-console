@@ -172,35 +172,43 @@ html[data-style="crt"] * { border-radius: 2px !important; }
 html[data-style="crt"] *:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* ============================================================
-   风格 · 合成波 '84（Synthwave）  批次2 · 配套 rose
-   霓虹渐变按钮 + 底部透视网格地平线（静态）+ 霓虹 tab 线
-   渐变是本风格语言（瑞士「平涂纪律」在此不适用）；
-   网格静态无动画，transform 都不跑——零重绘零合成负担
+   风格 · 合成波 '84（Synthwave）  批次2 v2 重做 · 配套 onedark
+   暗夜紫底 + 底缘渐隐网格 + 霓虹辉光点缀
+   v1 教训（用户实锤「太丑」）：海报式大装饰（34% 高透视旋转
+   网格横穿工作区）在工作界面是噪声——装饰只许贴底缘渐隐、
+   霓虹只上按钮/边框辉光，底色交给 onedark 暗紫夜
    ============================================================ */
 html[data-style="synth"] body::before { display: none; }
-/* 网格地平线：底部低透明度透视网格，装饰级 */
+/* 底缘网格：无透视、只占底部 16%、mask 向上渐隐（装饰级透明度） */
 html[data-style="synth"] body::after {
-  display: block; content: ""; position: fixed; left: -20%; right: -20%;
-  bottom: -6%; height: 34%; pointer-events: none; z-index: 0;
-  transform: perspective(240px) rotateX(58deg); transform-origin: top center;
+  display: block; content: ""; position: fixed; left: 0; right: 0;
+  bottom: 0; height: 16%; pointer-events: none; z-index: 0;
   background:
-    repeating-linear-gradient(90deg, color-mix(in srgb, var(--accent) 20%, transparent) 0 1.5px, transparent 1.5px 46px),
-    repeating-linear-gradient(0deg, color-mix(in srgb, var(--accent-2) 16%, transparent) 0 1.5px, transparent 1.5px 28px);
+    repeating-linear-gradient(90deg, color-mix(in srgb, var(--accent) 16%, transparent) 0 1px, transparent 1px 42px),
+    repeating-linear-gradient(0deg, color-mix(in srgb, var(--accent-2) 14%, transparent) 0 1px, transparent 1px 24px);
+  -webkit-mask-image: linear-gradient(to top, black 30%, transparent 100%);
+  mask-image: linear-gradient(to top, black 30%, transparent 100%);
 }
-/* 霓虹主按钮：粉紫渐变 + 外辉光 */
+/* 氛围：暗夜纵向渐变（紫向更深紫，微弱天空感） */
+html[data-style="synth"] body {
+  background: linear-gradient(180deg, var(--bg) 0%, var(--bg-deep) 100%);
+}
+/* 霓虹主按钮：纯霓虹紫底白字（渐变钮粉端白字对比 3.2 过不了矩阵，
+   渐变让位给双色外辉光；白字 on #a63cf0 = 4.6 组件级已算） */
 html[data-style="synth"] .btn.primary {
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  color: var(--on-accent);
-  box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 40%, transparent);
+  background: var(--accent-2);
+  color: #ffffff;
+  box-shadow: 0 0 16px color-mix(in srgb, var(--accent) 38%, transparent),
+              0 0 4px color-mix(in srgb, var(--accent-2) 50%, transparent);
 }
 /* tab 线与选中态霓虹化 */
 html[data-style="synth"] .tab.active::after { background: var(--accent); }
 html[data-style="synth"] .sidebar-sheet-tab.active {
-  text-shadow: 0 0 8px color-mix(in srgb, var(--accent) 55%, transparent);
+  text-shadow: 0 0 8px color-mix(in srgb, var(--accent) 50%, transparent);
 }
 html[data-style="synth"] .logo .ver {
   font-style: italic; letter-spacing: 2px;
-  text-shadow: 0 0 8px color-mix(in srgb, var(--accent) 55%, transparent);
+  text-shadow: 0 0 8px color-mix(in srgb, var(--accent) 50%, transparent);
 }
 
 /* ============================================================
@@ -312,6 +320,18 @@ html[data-style="ink"] .logo .icon::after {
 }
 
 /* ---- 深度搭配调色块（铁律①+④：过可读性矩阵） ---- */
+
+/* Synth × onedark：霓虹粉/紫 accent + 紫黑终端
+   （#ff2fd6 粉底配深紫字 5.3——亮粉配白字物理上不可能过线；
+   紫钮白字在组件级已算 4.6；紫黑终端 15+） */
+html[data-style="synth"][data-theme="onedark"] {
+  --accent: #ff2fd6;
+  --accent-2: #a63cf0;
+  --on-accent: #1a0b2e;
+  --accent-glow: rgba(255, 47, 214, 0.3);
+  --term-bg: #150b26;
+  --term-fg: #f0e6ff;
+}
 
 /* HUD × amber：纯正琥珀单色化（#ffb000 亮琥珀配深字/深棕底均高对比） */
 html[data-style="hud"][data-theme="amber"] {
