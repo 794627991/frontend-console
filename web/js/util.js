@@ -132,7 +132,7 @@ function showBanner(msg, ms=4000, isErr=false) {
 // 不吃 transition,渐隐只能自绘 DOM 才能做）。面板需 position:relative
 // （CSS 已给六容器配好）。内容不溢出自动隐藏；拖拽锁 sb-drag 防拖出面板
 // 时条闪没；400ms 周期兜底（列表增删不触发 scroll 事件）。返回清理函数
-const _HG_FADE_SB_VER = 4;   // 挂载实例版本：行为变更时递增——旧实例自动拆重建
+const _HG_FADE_SB_VER = 5;   // 挂载实例版本：行为变更时递增——旧实例自动拆重建
 function _hgFadeSb(el) {
   if (el && el._hgFadeSb && el._hgFadeSb.ver !== _HG_FADE_SB_VER) {
     // 旧版本实例在位（页面 JS 缓存半新半旧的第三层：函数实例本身——服务端
@@ -143,6 +143,7 @@ function _hgFadeSb(el) {
     delete el._hgFadeSb;
   }
   if (!el || el._hgFadeSb) return () => {};
+  el.classList.add('hg-fade-sb-host');   // v5：CSS 通配标记（隐藏原生条）
   // v4 结构修正（用户实锤「条随内容滚出去/消失」）：absolute 子元素放在
   // 滚动容器**内部**会随内容一起被滚走（CSS 经典坑；终端条无此问题是挂
   // 在不滚的 .xterm-wrap 上）。改为挂「非滚动的父级锚点」，按宿主 rect
@@ -221,6 +222,52 @@ function _hgFadeSb(el) {
   Object.assign(el._hgFadeSb, { sb, timer, anchor });   // ver 已在开头写入
   return () => { clearInterval(timer); sb.remove(); delete el._hgFadeSb; };
 }
+
+// ---- 渐隐条全局自动托管（用户拍板：除终端宽条外全站统一）----------------
+// MutationObserver 扫增量 + 定时兜底轮：任何「overflow-y 可滚 + 未托管 +
+// 非豁免」元素自动挂条（55+ 静态容器与动态容器一网打尽）。历史坑全避开：
+// ①EXCLUDE 提前 return 会短路整棵子树扫描（scanAll 的 root=body 命中
+// 豁免名单=静态容器全漏挂）——豁免只判目标自身 ②初始时序空洞——多轮
+// 兜底扫描 ③高频 DOM（终端输出）狂触发回调——80ms 合并批处理
+(function () {
+  const EXCLUDE = '.xterm-viewport, .hg-fade-sb, .hg-fade-sb-th, .hg-term-sb';
+  const tryAdopt = (n) => {
+    if (!n || n.nodeType !== 1 || n._hgFadeSb) return;
+    if (n.matches && n.matches(EXCLUDE)) return;
+    const c = getComputedStyle(n);
+    if (c.overflowY === 'auto' || c.overflowY === 'scroll') _hgFadeSb(n);
+  };
+  const adopt = (root) => {
+    if (!root || root.nodeType !== 1) return;
+    tryAdopt(root);
+    if (root.querySelectorAll) {
+      root.querySelectorAll('*').forEach(tryAdopt);
+    }
+  };
+  const scanAll = () => { if (document.body) adopt(document.body); };
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', scanAll);
+  } else {
+    scanAll();
+  }
+  setTimeout(scanAll, 600);
+  setTimeout(scanAll, 1500);
+  setInterval(scanAll, 10000);   // 低频兜底：晚建的容器/被清 _hgFadeSb 的重建
+  let pend = null;
+  const mo = new MutationObserver(muts => {
+    if (pend) return;
+    pend = setTimeout(() => {
+      pend = null;
+      for (const m of muts) {
+        if (m.type !== 'childList') continue;
+        for (const n of m.addedNodes) {
+          if (n.nodeType === 1 && !n._hgFadeSb) adopt(n);
+        }
+      }
+    }, 80);
+  });
+  mo.observe(document.documentElement, { childList: true, subtree: true });
+})();
 function fmtTs(ms) {
   const d = new Date(ms);
   return d.toLocaleTimeString('zh-CN', {hour12:false}) + '.' + String(ms % 1000).padStart(3,'0');

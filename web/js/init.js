@@ -17,9 +17,7 @@ refreshGlobalStatus();
 connectAiSSE();
 refreshMcpInfo();
 loadRecentList();  // 最近打开列表（SSH/串口/文件 快捷重开）
-// 工具面板渐隐滚动条（用户需求：常显小丑→悬浮工作区渐显；util.js _hgFadeSb）
-['portList', 'recentList', 'treeRoots', 'tftpTransfers', 'tftpFiles']
-  .forEach(id => { const el = document.getElementById(id); if (el) _hgFadeSb(el); });
+// 渐隐滚动条已全站自动托管（util.js MutationObserver,含工具面板全部容器）
 if (typeof monacoWarmup === 'function') monacoWarmup();  // v2.2.2：空闲预热编辑器引擎，首开文件不再数秒白屏
 
 // 自依赖提醒（每启动一次，直到用户用离线包补装）：缺哪个库 → 哪些功能不可用。

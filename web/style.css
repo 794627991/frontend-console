@@ -1313,38 +1313,20 @@
     border-radius: 2px; cursor: ns-resize; }
   .hg-term-sb-th:hover { background: var(--muted); }
   .hg-term-sb-th:active { background: var(--accent); }
-  /* ---- 工具面板渐隐滚动条（用户需求：常显小丑→悬浮工作区渐显）----
-     通用自绘（原生条视觉隐藏,WebView2 Fluent 层宽度不可控是前轮实测结论）。
-     与终端 .hg-term-sb 同族不同类：面板版 10px 胶囊、opacity 过渡渐隐
-     （原生伪元素不吃 transition,自绘 DOM 才能做渐隐）。挂载=util.js
-     _hgFadeSb(el)（内容不溢出自动隐藏;拖拽锁防拖出面板闪没） */
-  .port-list, .recent-list, .tree-roots,
-  .tftp-list, .tftp-transfers, .tftp-files { position: relative; }
-  /* 隐藏原生滚动条视觉（注意：::-webkit-scrollbar 后缀必须逐个写全——
-     逗号组里裸类名会被应用 width:0 把整个面板压成 0 宽（文字一字一行
-     竖排,用户截图实锤的严重 bug 根因） */
-  .port-list::-webkit-scrollbar, .recent-list::-webkit-scrollbar,
-  .tree-roots::-webkit-scrollbar, .tftp-list::-webkit-scrollbar,
-  .tftp-transfers::-webkit-scrollbar, .tftp-files::-webkit-scrollbar { width: 0; height: 0; }
-  .port-list, .recent-list, .tree-roots,
-  .tftp-list, .tftp-transfers, .tftp-files { scrollbar-width: none; scrollbar-color: auto; }
+  /* ---- 渐隐滚动条（全站统一,用户拍板；终端 14px 宽条除外）------------
+     v4 结构：条挂非滚动锚点（滚动容器内部 absolute 会被内容滚走）；
+     挂载=util.js _hgFadeSb（ver5,自动托管 observer 全站铺开）。
+     .hg-fade-sb-host=挂载标记：隐藏原生条（Fluent 层宽度不可控是前轮
+     实测结论）。显隐由 JS mouseenter/leave 挂摘 sb-drag 类驱动 */
+  .hg-fade-sb-host { scrollbar-width: none; scrollbar-color: auto; }
+  .hg-fade-sb-host::-webkit-scrollbar { width: 0; height: 0; }
   .hg-fade-sb { position: absolute; top: 4px; right: 2px; bottom: 4px; width: 10px;
     z-index: 5; opacity: 0; transition: opacity .35s ease; pointer-events: none; }
-  /* 宿主 hover 用兄弟/后代组合不了（sb 是宿主子元素）——直接容器 :hover
-     （.hg-fade-host 类由 _hgFadeSb 挂载时加上，标记用） */
-  .port-list:hover > .hg-fade-sb, .recent-list:hover > .hg-fade-sb,
-  .tree-roots:hover > .hg-fade-sb, .tftp-list:hover > .hg-fade-sb,
-  .tftp-transfers:hover > .hg-fade-sb, .tftp-files:hover > .hg-fade-sb,
   .hg-fade-sb.sb-drag { opacity: 1; pointer-events: auto; }
   .hg-fade-sb-th { position: absolute; left: 2px; right: 2px; min-height: 32px;
     background: color-mix(in srgb, var(--muted) 40%, transparent);
     border-radius: 999px; cursor: ns-resize; }
-  .port-list:hover > .hg-fade-sb > .hg-fade-sb-th:hover,
-  .recent-list:hover > .hg-fade-sb > .hg-fade-sb-th:hover,
-  .tree-roots:hover > .hg-fade-sb > .hg-fade-sb-th:hover,
-  .tftp-list:hover > .hg-fade-sb > .hg-fade-sb-th:hover,
-  .tftp-transfers:hover > .hg-fade-sb > .hg-fade-sb-th:hover,
-  .tftp-files:hover > .hg-fade-sb > .hg-fade-sb-th:hover {
+  .hg-fade-sb.sb-drag > .hg-fade-sb-th:hover {
     background: color-mix(in srgb, var(--muted) 85%, transparent); }
   .hg-fade-sb-th:active { background: var(--accent); }
   /* xterm 行高/字号与原终端一致 */
@@ -1898,12 +1880,7 @@
   /* 滚动条交角（横/纵交汇的右下角方块）：Chromium 默认白色——文件树加横向
      滚动后暴露（用户截图实锤"右下角白了一块"），全局补暗底 */
   ::-webkit-scrollbar-corner { background: transparent; }
-  /* 工具面板原生滚动条 thumb 已由 .hg-fade-sb 自绘渐隐条替代（上 1300 段）——
-     原生视觉保留透明兜底（自绘脚本未跑时面板仍可滚,只是没有可见条） */
-  .port-list::-webkit-scrollbar-thumb, .tree-roots::-webkit-scrollbar-thumb,
-  .recent-list::-webkit-scrollbar-thumb,
-  .tftp-list::-webkit-scrollbar-thumb, .tftp-transfers::-webkit-scrollbar-thumb,
-  .tftp-files::-webkit-scrollbar-thumb { background: transparent; }
+  /* 原生滚动条视觉已全站由 .hg-fade-sb-host 标记统一隐藏（上 1300 段） */
 
   /* 横幅通知：右下角冒泡（不占布局空间——之前顶部横幅显示/消失会挤压
      .main 高度导致 xterm 尺寸跳动、UI 位移观感差，改为 fixed 悬浮） */
