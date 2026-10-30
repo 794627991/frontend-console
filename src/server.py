@@ -394,11 +394,13 @@ def index():
             data = data.replace(b"__HG_VER__", _HV.encode("utf-8"))
             data = data.replace(b"__HG_WBASE__", WORKER_BASE.encode("utf-8"))
             data = data.replace(b"__HG_WFAMFLAG__", b"proxy" if CLAUDE_OFFLOAD else b"")
-            return data.replace(b"__HG_DBGF__", b"1" if DEBUG_WEB else b"")
+            # 带引号注入（前端 __HG_DBGF__==='1' 字符串严格比较——裸 1 会
+            # 1==='1' 恒 false，钩子永不注册=刷新清场整个死链，用户实锤）
+            return data.replace(b"__HG_DBGF__", b"'1'" if DEBUG_WEB else b"''")
         data = data.replace("__HG_VER__", _HV)
         data = data.replace("__HG_WBASE__", WORKER_BASE)
         data = data.replace("__HG_WFAMFLAG__", "proxy" if CLAUDE_OFFLOAD else "")
-        return data.replace("__HG_DBGF__", "1" if DEBUG_WEB else "")
+        return data.replace("__HG_DBGF__", "'1'" if DEBUG_WEB else "''")
     if DEBUG_WEB:
         with open(os.path.join(_SRC_WEB, "index.html"), "rb") as f:
             return Response(_inject(f.read()), mimetype="text/html")
