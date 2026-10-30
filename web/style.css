@@ -1300,8 +1300,9 @@
   .xterm-bottom-pad { flex-shrink: 0; height: 18px; background: var(--term-bg); }  /* 底部留白 1 行高，与终端底色一致 */
   .xterm-wrap .xterm { height: 100%; }
   .xterm-wrap .xterm-viewport { overflow-y: auto !important; }
-  /* 终端滚动条（用户需求）：比全局 8px 加宽好抓 + 矩形（全局是 4px 圆角） */
-  .xterm-viewport::-webkit-scrollbar { width: 14px; height: 14px; }
+  /* 终端滚动条（用户需求）：比全局 8px 加宽好抓 + 矩形（全局是 4px 圆角）；
+     14px 用户反馈仍偏细 → 18px（Windows 常规滚动条宽度档） */
+  .xterm-viewport::-webkit-scrollbar { width: 18px; height: 18px; }
   .xterm-viewport::-webkit-scrollbar-thumb {
     background: var(--border); border-radius: 0; }
   .xterm-viewport::-webkit-scrollbar-thumb:hover { background: var(--border-glow); }
