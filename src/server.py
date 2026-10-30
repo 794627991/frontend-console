@@ -422,7 +422,12 @@ def index():
 @app.route("/web/<path:fn>")
 def web_files(fn):
     if DEBUG_WEB:
-        return send_from_directory(_SRC_WEB, fn)
+        # 调试模式禁缓存（?v= 依赖 HARNESS_VERSION 手动 bump,源码热改期间
+        # URL 恒定 → WebView 命中旧缓存 → 「改了没效果」连环坑的总根,用户
+        # 实锤多轮）。no-store 保证每次直读源码目录最新文件
+        resp = send_from_directory(_SRC_WEB, fn)
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
     try:
         r = _mem_web("web/" + fn)
     except Exception:

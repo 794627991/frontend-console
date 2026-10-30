@@ -132,7 +132,7 @@ function showBanner(msg, ms=4000, isErr=false) {
 // 不吃 transition,渐隐只能自绘 DOM 才能做）。面板需 position:relative
 // （CSS 已给六容器配好）。内容不溢出自动隐藏；拖拽锁 sb-drag 防拖出面板
 // 时条闪没；400ms 周期兜底（列表增删不触发 scroll 事件）。返回清理函数
-const _HG_FADE_SB_VER = 3;   // 挂载实例版本：行为变更时递增——旧实例自动拆重建
+const _HG_FADE_SB_VER = 4;   // 挂载实例版本：行为变更时递增——旧实例自动拆重建
 function _hgFadeSb(el) {
   if (el && el._hgFadeSb && el._hgFadeSb.ver !== _HG_FADE_SB_VER) {
     // 旧版本实例在位（页面 JS 缓存半新半旧的第三层：函数实例本身——服务端
@@ -143,45 +143,40 @@ function _hgFadeSb(el) {
     delete el._hgFadeSb;
   }
   if (!el || el._hgFadeSb) return () => {};
+  // v4 结构修正（用户实锤「条随内容滚出去/消失」）：absolute 子元素放在
+  // 滚动容器**内部**会随内容一起被滚走（CSS 经典坑；终端条无此问题是挂
+  // 在不滚的 .xterm-wrap 上）。改为挂「非滚动的父级锚点」，按宿主 rect
+  // 动态定位——锚点不滚,条稳定悬浮。显隐改 JS mouseenter/leave 挂
+  // sb-drag 类（借既有显形规则,不依赖新 CSS 到达）
+  const anchor = el.parentElement || el;
+  if (anchor === el) return () => {};   // 无父级（不该发生）放弃托管
+  if (getComputedStyle(anchor).position === 'static') anchor.style.position = 'relative';
   el._hgFadeSb = { ver: _HG_FADE_SB_VER };
-  // 轨道定位自给自足：.hg-fade-sb 的 top/bottom 绝对定位依赖宿主
-  // position:relative（CSS 提供）。CSS 缓存半新半旧时宿主没有 relative
-  // → 轨道高度 0 → paint 短路 → thumb 钉在顶端（用户实锤「滚动不跟随,
-  // 条被固定在最顶」）。inline 直写,不再依赖任何 CSS 到位
-  if (getComputedStyle(el).position === 'static') el.style.position = 'relative';
   const sb = document.createElement('div');
   sb.className = 'hg-fade-sb';
   const th = document.createElement('div');
   th.className = 'hg-fade-sb-th';
   sb.appendChild(th);
-  // paint 自愈：宿主 innerHTML 整体重写（renderRecentList 等）会把条连根
-  // 抹掉（用户实锤「条没了无论如何看不到」）——每拍检查不在 DOM 就重插。
-  // sb/th 引用保持不变（监听/样式全在,重插零成本）
-  el.appendChild(sb);
+  anchor.appendChild(sb);
+  // 自愈：宿主 innerHTML 整体重写不影响（条在锚点上不在宿主里），锚点
+  // innerHTML 重写时重插
   const ensureInDom = () => {
-    if (sb.parentNode !== el) el.appendChild(sb);
+    if (sb.parentNode !== anchor) anchor.appendChild(sb);
   };
+  let dragging = false;   // 拖拽期间宿主 mouseleave 不收条
   const paint = () => {
-    if (!el.isConnected) return;
+    if (!el.isConnected || !anchor.isConnected) return;
     ensureInDom();
     const sh = el.scrollHeight, ch = el.clientHeight;
     if (sh <= ch + 4) { sb.style.display = 'none'; return; }
     sb.style.display = '';
-    const trackH = sb.clientHeight;
-    if (trackH <= 0) {
-      // 轨道仍 0 高（定位异常兜底）：改用宿主可视高直接算,条不再失联
-      const fallback = Math.max(40, ch - 8);
-      if (sb.style.top === '' && sb.style.bottom === '') {
-        sb.style.top = '4px'; sb.style.bottom = '4px';
-      }
-      if (fallback <= 0) return;
-      const thH = Math.max(32, Math.round(ch / sh * fallback));
-      const maxTop = fallback - thH;
-      th.style.height = thH + 'px';
-      th.style.top = (maxTop > 0 ? el.scrollTop / (sh - ch) * maxTop : 0) + 'px';
-      sb.style.height = fallback + 'px';
-      return;
-    }
+    // 条相对锚点定位：宿主可视区映射（每拍校准,布局变化自适应）
+    const er = el.getBoundingClientRect(), ar = anchor.getBoundingClientRect();
+    const top = Math.max(0, er.top - ar.top + 4);
+    const trackH = Math.max(40, er.height - 8);
+    sb.style.top = top + 'px';
+    sb.style.bottom = 'auto';
+    sb.style.height = trackH + 'px';
     const thH = Math.max(32, Math.round(ch / sh * trackH));
     const maxTop = trackH - thH;
     th.style.height = thH + 'px';
@@ -192,6 +187,7 @@ function _hgFadeSb(el) {
     const trackH = sb.clientHeight, thH = th.offsetHeight;
     const maxTop = trackH - thH;
     if (e.target === th) {
+      dragging = true;
       sb.classList.add('sb-drag');
       const startY = e.clientY, startScroll = el.scrollTop;
       const move = (ev) => {
@@ -200,7 +196,8 @@ function _hgFadeSb(el) {
           (ev.clientY - startY) / maxTop * (el.scrollHeight - el.clientHeight);
       };
       const up = () => {
-        sb.classList.remove('sb-drag');
+        dragging = false;
+        if (!hovering) sb.classList.remove('sb-drag');
         removeEventListener('mousemove', move);
         removeEventListener('mouseup', up);
       };
@@ -212,10 +209,16 @@ function _hgFadeSb(el) {
       el.scrollTop += (y < cur ? -1 : 1) * el.clientHeight * 0.9;
     }
   });
+  let hovering = false;
+  el.addEventListener('mouseenter', () => { hovering = true; sb.classList.add('sb-drag'); paint(); });
+  el.addEventListener('mouseleave', () => {
+    hovering = false;
+    if (!dragging) sb.classList.remove('sb-drag');
+  });
   el.addEventListener('scroll', paint, { passive: true });
   const timer = setInterval(paint, 400);
   paint();
-  Object.assign(el._hgFadeSb, { sb, timer });   // ver 已在开头写入
+  Object.assign(el._hgFadeSb, { sb, timer, anchor });   // ver 已在开头写入
   return () => { clearInterval(timer); sb.remove(); delete el._hgFadeSb; };
 }
 function fmtTs(ms) {
