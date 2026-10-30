@@ -3,14 +3,20 @@
    ============================================================
    架构（用户拍板「桥接」）：style.css 主体零改动，全部风格样式以
    html[data-style="X"] 高优先级覆盖实现，本文件承载全部增量。
-   与 data-theme（配色维度）正交：skin.js 切风格时联动配套配色走
-   applyTheme 现成通道（终端 16 色 / Monaco / claude 深浅全部随之，
-   本层不碰任何 JS）。调色板只做「风格微调」，整窗配色由配套
-   data-theme 提供（瑞士 → paper）。
+   与 data-theme（配色维度）正交：skin.js 仅在「点击切风格」那一刻
+   联动配套配色（走 applyTheme 现成通道），此后换色完全自由——
+   「任意配色 × 本风格形态」都必须自洽（用户实锤教训：调色微调
+   曾 !important 锁死在 data-style 上，切深色配色后红 accent/
+   白终端底不跟随 → 全窗不统一）。
+
    两条铁律（桥接层的税，维护者必读）：
-   ①通配归一（radius/shadow 清零）会把原 box-shadow 聚焦光环一起
+   ①调色微调只准挂 html[data-style="X"][data-theme="配套"] 组合
+     选择器（specificity 0,2,2 稳压主题块 0,1,1，无需 !important）；
+     data-style 单挂的块只准放形态/装饰，颜色一律 var(--*) 跟随
+     当前配色——永不硬编码色值；
+   ②通配归一（radius/shadow 清零）会把原 box-shadow 聚焦光环一起
      清掉——每种风格必须补 :focus-visible 轮廓，否则键盘导航不可见；
-   ②以后 style.css 新增组件若带渐变/圆角/阴影形态，需来自查本层
+   ③以后 style.css 新增组件若带渐变/圆角/阴影形态，需来自查本层
      是否要补对应风格覆盖，否则该组件在非默认风格下「露原形」。
    ============================================================ */
 
@@ -24,73 +30,75 @@
 
 /* ============================================================
    风格 · 瑞士排版（Swiss / International Typographic Style）
-   排版驱动：白底 / 黑字 / 单红点缀 / 全直角 / 零阴影 / 粗黑结构线
+   排版驱动：全直角 / 零阴影 / 粗结构线 / 单 accent 点缀
+   形态与配色正交：结构线一律走 var(--fg)/var(--border)——浅色
+   配色下近黑、深色配色下亮灰，任何主题下都单色统一
    ============================================================ */
-
-/* 配套配色 paper（skin.js 联动切换），此处仅瑞士微调：
-   红色 accent + 近黑边框 + 终端白底黑字（--term-* 由 theme.js
-   _termThemeFor 读 computed 值，覆盖即自动进 xterm）。
-   !important：与 html[data-theme] 的变量块 specificity 平级（0,1,1），
-   靠加载顺序赢太脆（style.css 必须在前——index.html 已如此），显式
-   压制防未来调整引用顺序时静默失效 */
-html[data-style="swiss"] {
-  --accent: #e3001b !important;
-  --accent-2: #b30016 !important;
-  --on-accent: #ffffff !important;
-  --accent-glow: rgba(227, 0, 27, 0.22) !important;
-  --border: #1f1f1f !important;
-  --border-glow: #1f1f1f !important;
-  --shadow-glow: none !important;
-  --term-bg: #ffffff !important;
-  --term-fg: #1a1a1a !important;
-}
 
 /* 形态归一：全直角 + 零阴影。滚动条胶囊/圆钮/LED 一并变方——瑞士
    直角纪律自洽，无例外名单；功能性 mask-image 不受影响 */
 html[data-style="swiss"] * { border-radius: 0 !important; box-shadow: none !important; }
 
-/* 聚焦补偿（铁律①）：原光环是 box-shadow，已被通配清掉 */
-html[data-style="swiss"] *:focus-visible { outline: 2px solid #1f1f1f; outline-offset: 1px; }
+/* 聚焦补偿（铁律②）：原光环是 box-shadow，已被通配清掉 */
+html[data-style="swiss"] *:focus-visible { outline: 2px solid var(--fg); outline-offset: 1px; }
 
-/* 背景：科技感 accent 网格 → 瑞士细灰竖线网格（28px 间隔） */
+/* 背景：科技感 accent 网格 → 细竖线网格（结构线色 5% 混入，深浅
+   配色都成立；color-mix 同款用法 style.css 已有先例） */
 html[data-style="swiss"] body::before {
-  background-image: linear-gradient(90deg, rgba(31, 31, 31, 0.05) 1px, transparent 1px);
+  background-image: linear-gradient(90deg,
+    color-mix(in srgb, var(--fg) 5%, transparent) 1px, transparent 1px);
   background-size: 28px 28px;
   opacity: 1;
 }
 html[data-style="swiss"] body::after { display: none; }
 
-/* 顶栏：渐变面板 → 纯白 + 2px 粗黑基线（瑞士海报的结构线） */
+/* 顶栏：渐变面板 → 平涂 + 2px 粗基线（瑞士海报的结构线） */
 html[data-style="swiss"] .topbar {
-  background: #ffffff;
-  border-bottom: 2px solid #1f1f1f;
+  background: var(--bg-panel);
+  border-bottom: 2px solid var(--border);
 }
 
-/* 主操作按钮：accent 渐变 → 瑞士红平涂 */
-html[data-style="swiss"] .btn.primary { background: #e3001b; color: #ffffff; }
-html[data-style="swiss"] .cmd-add button { background: #e3001b; color: #ffffff; }
+/* 主操作按钮：accent 渐变 → accent 平涂（点缀色纪律：只准平涂） */
+html[data-style="swiss"] .btn.primary { background: var(--accent); color: var(--on-accent); }
+html[data-style="swiss"] .cmd-add button { background: var(--accent); color: var(--on-accent); }
 
-/* 次级选中态（连接类型/认证开关）：渐变高亮 → 黑底白字 */
+/* 次级选中态（连接类型/认证开关）：渐变高亮 → 反色块（fg/bg 互换，
+   深浅配色自动正确） */
 html[data-style="swiss"] .conn-type-btn.active,
-html[data-style="swiss"] .conn-auth-btn.active { background: #1f1f1f; color: #ffffff; }
+html[data-style="swiss"] .conn-auth-btn.active { background: var(--fg); color: var(--bg); }
 
-/* 端口列表激活项：蓝渐变内辉 → 浅灰底 + 红色左标（印刷定位块） */
+/* 端口列表激活项：渐变内辉 → 卡片底 + accent 左标（印刷定位块） */
 html[data-style="swiss"] .port-item.active {
-  background: #f2f2f2;
-  border-left: 3px solid #e3001b;
+  background: var(--bg-card);
+  border-left: 3px solid var(--accent);
 }
 
-/* tab 激活底线：accent 渐变 → 纯黑 2px */
-html[data-style="swiss"] .tab.active::after { background: #1f1f1f; }
+/* tab 激活底线：渐变 → 结构线实色 */
+html[data-style="swiss"] .tab.active::after { background: var(--fg); }
 
-/* AI 头像：紫蓝渐变辉光 → 黑底（去装饰，保字） */
-html[data-style="swiss"] .ai-head .ai-icon { background: #1f1f1f; }
+/* AI 头像：紫蓝渐变辉光 → 反色块（去装饰，保字） */
+html[data-style="swiss"] .ai-head .ai-icon { background: var(--fg); }
 
-/* 频谱条填充：accent 渐变 → 近黑（数据可视化黑白纪律） */
-html[data-style="swiss"] .freq-bar .fill { background: #1f1f1f; }
+/* 频谱条填充：渐变 → 结构线实色（数据可视化单色纪律） */
+html[data-style="swiss"] .freq-bar .fill { background: var(--fg); }
 
 /* 排版字重：设置页分区标签上 900 黑字（海报字阶的克制版） */
 html[data-style="swiss"] .dd-label { font-weight: 900; letter-spacing: 0.5px; }
+
+/* ---- 瑞士调色微调（铁律①）：仅配套 paper 配色下生效 ----
+   红点缀 + 近黑边框 + 终端白底黑字（--term-* 由 theme.js
+   _termThemeFor 读 computed 值，覆盖即自动进 xterm） */
+html[data-style="swiss"][data-theme="paper"] {
+  --accent: #e3001b;
+  --accent-2: #b30016;
+  --on-accent: #ffffff;
+  --accent-glow: rgba(227, 0, 27, 0.22);
+  --border: #1f1f1f;
+  --border-glow: #1f1f1f;
+  --shadow-glow: none;
+  --term-bg: #ffffff;
+  --term-fg: #1a1a1a;
+}
 
 /* 保留不动的功能性渐变（备忘）：.tree-row 缩进条纹、.tftp 进度条
    动画、两处 mask-image 遮罩——语义与风格无关 */

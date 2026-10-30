@@ -4,11 +4,13 @@
 // skins.css 以 html[data-style] 覆盖实现，本文件只做机制——挂属性、
 // 联动配色、持久化。
 //
-// 联动策略（一石三鸟）：非 default 风格切换时自动切配套配色主题
-// （applyTheme 现成通道白嫖三件事：xterm 16 色亮暗由 _isLight 判定、
-// Monaco 深浅、claude 会话 --settings 热重载全部随之）。终端配色
-// 读 computed --term-bg/--term-fg（skins.css 变量覆盖即生效），本
-// 文件不碰终端。用户切风格后仍可单独换配色（换色不动风格）。
+// 联动策略（教训修正版）：联动只发生在「点击切风格」那一刻（一次性
+// 动作）——切入非 default 风格时带配套配色（applyTheme 现成通道白嫖
+// 三件事：xterm 16 色亮暗、Monaco 深浅、claude 会话热重载），此后
+// 换色完全自由；启动恢复不做联动（config 里 theme 已是联动后或用户
+// 后来手选的值，强拉配套色会把用户的选择覆盖掉——首版实锤）。
+// 切回 default 恢复「切入前配色」，但用户在风格期间手动换过色则不
+// 恢复（尊重最新选择，靠包装 applyTheme 感知手动操作）。
 // 持久化搭 /api/theme 顺车（config.json style 键；localStorage 按
 // origin 隔离不可用——Flask 随机端口，theme.js 注释有实锤）。
 // ============================================================
@@ -19,7 +21,18 @@ const STYLES = [
   // 批次3：brutal 新粗野 / instrument 仪器面板 / ink 墨韵（逐套追加）
 ];
 let _curStyle = 'default';
-let _prevTheme = null;   // 切入风格那一刻的配色；切回 default 恢复（回到切入前状态）
+let _prevTheme = null;      // 切入风格那一刻的配色；切回 default 恢复（见包装）
+let _skinLinking = false;   // 联动切色标志——区分本模块的联动与用户手动换色
+
+// 包装 applyTheme：用户手动换色（非本模块联动）即解除旧配色记忆，
+// 「切回 default 恢复切入前配色」只对没动过配色的会话成立。
+// theme.js 顶层 function 声明挂在全局对象上，后加载的本文件重赋值
+// 后，theme.js/settings.js 内部裸调用同样走到包装（词法解析到全局）。
+const _applyThemeCore = window.applyTheme;
+window.applyTheme = function (id, persist) {
+  if (!_skinLinking) _prevTheme = null;
+  return _applyThemeCore(id, persist);
+};
 
 function applyStyle(id, persist) {
   if (!STYLES.some(s => s.id === id)) id = 'default';
@@ -27,17 +40,21 @@ function applyStyle(id, persist) {
   const st = STYLES.find(s => s.id === id);
   if (id === 'default') {
     document.documentElement.removeAttribute('data-style');
-    if (_prevTheme && typeof applyTheme === 'function') {
-      applyTheme(_prevTheme, true);
+    if (_prevTheme) {
+      _skinLinking = true;
+      _applyThemeCore(_prevTheme, true);
+      _skinLinking = false;
       _prevTheme = null;
     }
   } else {
     document.documentElement.setAttribute('data-style', id);
-    if (st.theme && typeof applyTheme === 'function') {
+    if (st.theme) {
       const cur = document.documentElement.getAttribute('data-theme') || 'deepblue';
       if (cur !== st.theme) {
         if (!_prevTheme) _prevTheme = cur;
-        applyTheme(st.theme, true);
+        _skinLinking = true;
+        _applyThemeCore(st.theme, true);   // 联动即持久化，重启 theme/style 一致
+        _skinLinking = false;
       }
     }
   }
@@ -49,10 +66,7 @@ function applyStyle(id, persist) {
   }
 }
 
-// 启动恢复：与 theme.js initTheme 并发（两份 async fetch 同源竞速）——
-// 必须等 initTheme 把 data-theme 挂上之后再联动，否则本侧先挂
-// data-style=swiss 联动切 paper，theme 后到会把配色覆盖回深色存档
-// （瑞士形态 + 深空蓝配色的崩坏组合）。轮询等属性出现，上限 3s。
+// 启动恢复：只挂风格属性，不联动配色（见联动策略）。
 (async function initStyle() {
   let style = '';
   try {
@@ -61,6 +75,8 @@ function applyStyle(id, persist) {
     if (j.ok && j.style) style = j.style;
   } catch (_) {}
   if (!style || style === 'default') return;
+  // 等 theme.js initTheme 先挂好 data-theme 再挂风格：两份 async fetch
+  // 竞速，skin 先挂会让「切入前配色」误记为存档前的默认值
   for (let i = 0; i < 60; i++) {
     if (document.documentElement.hasAttribute('data-theme')) break;
     await new Promise(res => setTimeout(res, 50));
