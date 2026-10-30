@@ -134,6 +134,7 @@ function showBanner(msg, ms=4000, isErr=false) {
 // 时条闪没；400ms 周期兜底（列表增删不触发 scroll 事件）。返回清理函数
 function _hgFadeSb(el) {
   if (!el || el._hgFadeSb) return () => {};
+  el.classList.add('hg-fade-sb-host');   // CSS 全靠此标记（隐藏原生条+hover 渐显）
   const sb = document.createElement('div');
   sb.className = 'hg-fade-sb';
   const th = document.createElement('div');
@@ -190,6 +191,51 @@ function _hgFadeSb(el) {
   el._hgFadeSb = { sb, timer };
   return () => { clearInterval(timer); sb.remove(); delete el._hgFadeSb; };
 }
+
+// ---- 渐隐条全局自动托管（用户拍板：除终端宽条外全站统一渐隐样式）--------
+// MutationObserver 扫 DOM 增量：任何「overflow-y 可滚 + 未托管 + 非豁免」
+// 的元素自动挂条（55+ 静态容器与未来动态容器一网打尽,不再逐个手挂）。
+// 豁免清单：终端 viewport（14px 常显宽条专属）、hg-fade-sb 自身（绝对定
+// 位不滚）、document/body（页面级滚动由浏览器管）。observer 自身挂载
+// 也会触发回调——_hgFadeSb 里已去重,零开销重入
+(function () {
+  const EXCLUDE = '.xterm-viewport, .hg-fade-sb, .hg-term-sb';
+  const adopt = (root) => {
+    if (root.nodeType !== 1) return;
+    // EXCLUDE 只用于判定目标自身,不得提前 return 整棵子树——scanAll 的
+    // root=body 会命中豁免名单里的 body,之前整树扫描被跳过（静态容器
+    // 全部漏挂,pane A 测试实锤）
+    if (root.matches && root.matches(EXCLUDE)) return;
+    if (root.matches && root.matches('.hg-fade-sb-host')) return;   // 已托管
+    const cs = getComputedStyle(root);
+    const oy = cs.overflowY;
+    if ((oy === 'auto' || oy === 'scroll')) {
+      if (!root._hgFadeSb) _hgFadeSb(root);
+      return;   // 自身是滚容器:子树由它的托管 paint 覆盖,不再下钻
+    }
+    if (root.querySelectorAll) {
+      root.querySelectorAll('*').forEach(n => {
+        if (n._hgFadeSb || (n.matches && n.matches(EXCLUDE))) return;
+        const c = getComputedStyle(n);
+        if ((c.overflowY === 'auto' || c.overflowY === 'scroll')) _hgFadeSb(n);
+      });
+    }
+  };
+  const scanAll = () => adopt(document.body);
+  // 初始扫描：脚本执行点 body 可能未就绪/内容未灌入——DOMContentLoaded +
+  // 两个延时兜底轮（实测初始扫描有时序空洞,pane 静态溢出未挂,用户页面复现）
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', scanAll);
+  } else {
+    scanAll();
+  }
+  setTimeout(scanAll, 600);
+  setTimeout(scanAll, 1500);
+  const mo = new MutationObserver(muts => {
+    for (const m of muts) for (const n of m.addedNodes) adopt(n);
+  });
+  mo.observe(document.documentElement, { childList: true, subtree: true });
+})();
 function fmtTs(ms) {
   const d = new Date(ms);
   return d.toLocaleTimeString('zh-CN', {hour12:false}) + '.' + String(ms % 1000).padStart(3,'0');
