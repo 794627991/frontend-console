@@ -106,7 +106,7 @@ def hex_save():
 #   高熵（随机/代码段）→ SequenceMatcher 直比（实测随机 8MB 1.4s，插删
 #   字节级定位）；低熵（0x00/0xFF 大段填充——SM 会卡死，实测 512KB 全零
 #   110s+ 跑不完）→ 256B 块哈希 LCS 锚定（块哈希全等=字节全等，零误差）。
-DIFF_LIMIT = 128 * 1024 * 1024   # 单文件上限 128MB（前端不再整读大文件，可放宽）
+DIFF_LIMIT = 128 * 1024 * 1024   # 全量路/流式路分界（≤128MB 全量算法；以上流式分级扫描）
 DIFF_CTX = 64                    # 相邻差异间隔 ≤ 此值并成一块
 DIFF_RESCAN = 1024               # 等长路大差异块阈值：超过则做移位探测
 DIFF_PROBE = 256                 # 移位探测用的段头样本长度
@@ -320,6 +320,183 @@ def _bin_diff_blocks(a, b):
     return out
 
 # ============================================================
+# 大文件流式对比（v3：GB 级生产文件，用户需求"上 G 的 2 进制生产文件"）
+# 全量 read 路内存 2×文件 + 哈希列表，GB 档不可行。流式分级扫描：
+#   等长（固件烧录对比主场景）：
+#     L0 1MB 块流式 memcmp（C 级切片比较跳相同段，吞吐≈磁盘）
+#     → 差异 1MB 块内 4KB 子块 memcmp 再跳 → 差异子块内逐字节+64B 合并
+#     （口径与 _seq_scan 一致）。内存恒定 O(4KB)，时间线性。
+#   不等长：前后缀锚定（流式）→ 中间段块哈希 patience 锚定（两遍：
+#     流式哈希一遍出锚点，锚点区间 seek 读精修一遍）。
+# 等长路的移位探测（DIFF_RESCAN 错位解释）不进流式路——大差异整块
+# 报，粒度损失可接受（生产对比关心"哪里不同"而非错位美化）。
+# ============================================================
+DIFF_LIMIT_LARGE = 8 * 1024 * 1024 * 1024   # 流式路上限 8GB（内存恒定，超此值提示）
+_LCH = 1 << 20     # L0 块 1MB
+_LSUB = 4096       # L1 子块
+
+def _diff_scan_region(pa, pb, s0, e1, out):
+    """区间 [s0, e1) 分级扫描：相同 4KB 子块整跳（memcmp），差异子块逐
+    字节 + DIFF_CTX 合并；跨子块边界未闭合差异由 pending 携带并块。"""
+    pend = None   # [start, end) 未闭合差异区间（end 不含）
+    with open(pa, "rb") as fa, open(pb, "rb") as fb:
+        fa.seek(s0); fb.seek(s0)
+        off = s0
+        while off < e1:
+            ba = fa.read(_LSUB); bb = fb.read(_LSUB)
+            L = min(len(ba), len(bb))
+            if L and ba[:L] == bb[:L]:
+                off += L
+                continue
+            k = 0
+            while k < L:
+                if ba[k] != bb[k]:
+                    s = e = k
+                    while k < L and (ba[k] != bb[k] or k - e <= DIFF_CTX):
+                        if ba[k] != bb[k]:
+                            e = k
+                        k += 1
+                    a0, a1 = off + s, off + e + 1
+                    if pend and a0 - pend[1] <= DIFF_CTX:
+                        pend[1] = a1
+                    else:
+                        if pend:
+                            out.append(("replace", pend[0], pend[1], pend[0], pend[1]))
+                        pend = [a0, a1]
+                else:
+                    k += 1
+            off += L
+    if pend:
+        out.append(("replace", pend[0], pend[1], pend[0], pend[1]))
+
+def _diff_large_equal(pa, pb, n):
+    """等长大文件：L0 差异块索引 → 相邻差异块连组 → 组内分级扫描。"""
+    idx = []
+    with open(pa, "rb") as fa, open(pb, "rb") as fb:
+        off = 0
+        while off < n:
+            ba = fa.read(_LCH); bb = fb.read(_LCH)
+            if ba != bb:
+                idx.append(off)
+            off += _LCH
+    out = []
+    i = 0
+    while i < len(idx):
+        j = i
+        while j + 1 < len(idx) and idx[j + 1] == idx[j] + _LCH:
+            j += 1
+        # 组间天然隔 ≥1MB 相同段（> DIFF_CTX），不需跨组合并
+        _diff_scan_region(pa, pb, idx[i], min(idx[j] + _LCH, n), out)
+        i = j + 1
+    return out
+
+def _stream_common_prefix(pa, pb, limit):
+    """流式公共前缀长度（1MB 块 memcmp 跳，末块逐字节收口）。"""
+    with open(pa, "rb") as fa, open(pb, "rb") as fb:
+        p = 0
+        while p < limit:
+            ch = min(_LCH, limit - p)
+            fa.seek(p); fb.seek(p)
+            a, b = fa.read(ch), fb.read(ch)
+            if a == b:
+                p += ch
+                continue
+            for t in range(min(len(a), len(b))):
+                if a[t] != b[t]:
+                    return p + t
+            return p + t
+        return p
+
+def _stream_common_suffix(pa, pb, limit, n, m):
+    """流式公共后缀长度（不越过已占用的前缀 limit）。"""
+    with open(pa, "rb") as fa, open(pb, "rb") as fb:
+        s = 0
+        while s < limit:
+            ch = min(_LCH, limit - s)
+            fa.seek(n - s - ch); fb.seek(m - s - ch)
+            a, b = fa.read(ch), fb.read(ch)
+            if a == b:
+                s += ch
+                continue
+            for t in range(min(len(a), len(b))):
+                if a[t] != b[t]:
+                    return s + t
+            return s + t
+        return s
+
+def _stream_block_hashes(path, start, length, bs):
+    """区间流式块哈希列表（不保留文件内容，内存 O(哈希条目)）。"""
+    import hashlib
+    out = []
+    with open(path, "rb") as f:
+        f.seek(start)
+        rem = length
+        while rem > 0:
+            ch = min(bs, rem)
+            buf = f.read(ch)
+            if len(buf) < ch:
+                break   # 文件异常截断：按已有块算
+            out.append(hashlib.blake2b(buf, digest_size=8).digest())
+            rem -= ch
+    return out
+
+def _diff_large_unequal(pa, pb, n, m):
+    """不等长大文件：流式前后缀锚定 → 中间段块哈希 patience 锚定（对齐
+    _bin_diff_blocks 不等长路的算法结构，数据源改为流式/区间读）。"""
+    p = _stream_common_prefix(pa, pb, min(n, m))
+    s = _stream_common_suffix(pa, pb, min(n, m) - p, n, m)
+    out = []
+    ca_len, cb_len = n - p - s, m - p - s
+    if ca_len <= 0 and cb_len <= 0:
+        return out
+    if ca_len <= 0:
+        out.append(("insert", n, n, p, p + cb_len))
+        return out
+    if cb_len <= 0:
+        out.append(("delete", p, p + ca_len, m, m))
+        return out
+    # 中间段块哈希（BS=1024：GB 档哈希条目 ~百万级，内存可控；锚点粒度
+    # 比全量路的 256B 粗——大文件场景锚点只需定位差异区，粗粒度可接受）
+    BS = 1024
+    ha = _stream_block_hashes(pa, p, ca_len, BS)
+    hb = _stream_block_hashes(pb, p, cb_len, BS)
+    from collections import Counter
+    cnt_a, cnt_b = Counter(ha), Counter(hb)
+    pos_b = {}
+    for j, h in enumerate(hb):
+        if cnt_b[h] == 1 and cnt_a.get(h) == 1:
+            pos_b[h] = j
+    seq = [(i, pos_b[ha[i]]) for i in range(len(ha))
+           if cnt_a[ha[i]] == 1 and ha[i] in pos_b]
+    import bisect
+    tails, tidx, prev = [], [], []
+    for k, (i, j) in enumerate(seq):
+        t = bisect.bisect_left(tails, j)
+        prev.append(tidx[t - 1] if t > 0 else -1)
+        if t == len(tails): tails.append(j); tidx.append(k)
+        else: tails[t] = j; tidx[t] = k
+    lis = []
+    k = tidx[-1] if tidx else -1
+    while k >= 0:
+        lis.append(seq[k]); k = prev[k]
+    lis.reverse()
+    anchors = [(-1, -1)] + lis + [(len(ha), len(hb))]
+    with open(pa, "rb") as fa, open(pb, "rb") as fb:
+        def _read_a(a0, a1):
+            fa.seek(p + a0); return fa.read(a1 - a0)
+        def _read_b(b0, b1):
+            fb.seek(p + b0); return fb.read(b1 - b0)
+        for (ai, aj), (bi, bj) in zip(anchors, anchors[1:]):
+            i1, i2 = ai + 1, bi
+            j1, j2 = aj + 1, bj
+            if i1 >= i2 and j1 >= j2:
+                continue
+            ra = _read_a(i1 * BS, min(i2 * BS, ca_len))
+            rb = _read_b(j1 * BS, min(j2 * BS, cb_len))
+            _refine_region(ra, rb, p + i1 * BS, p + j1 * BS, out)
+    return out
+
+# ============================================================
 # 流畅度隔离（项目第一守则）：diff 计算是纯 Python 重 CPU（100MB ~8s），
 # 放 Flask 主进程会持 GIL 卡死全局（弹窗 3s/日志库 10s 的元凶，用户两次
 # 严厉投诉）。线程没用——GIL 照样锁主进程，必须独立【进程】。
@@ -332,11 +509,23 @@ _DIFF_POOL = None
 _DIFF_POOL_LOCK = __import__("threading").Lock()
 
 def _diff_worker(pa, pb):
-    """子进程入口：读文件 + 跑 diff（全部在独立进程，主进程零 CPU 占用）。"""
-    with open(pa, "rb") as f: ba = f.read()
-    with open(pb, "rb") as f: bb = f.read()
+    """子进程入口：读文件 + 跑 diff（全部在独立进程，主进程零 CPU 占用）。
+    ≤128MB 走全量路（实测标定的算法不动）；以上走流式分级扫描（内存恒定，
+    GB 级生产文件可对比）。"""
+    sa, sb = os.path.getsize(pa), os.path.getsize(pb)
+    if max(sa, sb) > DIFF_LIMIT_LARGE:
+        raise ValueError(
+            f"文件过大（流式对比上限 8GB）：A {sa / 1073741824:.2f}GB B {sb / 1073741824:.2f}GB")
+    if sa <= DIFF_LIMIT and sb <= DIFF_LIMIT:
+        with open(pa, "rb") as f: ba = f.read()
+        with open(pb, "rb") as f: bb = f.read()
+        blocks = _bin_diff_blocks(ba, bb)
+    elif sa == sb:
+        blocks = _diff_large_equal(pa, pb, sa)
+    else:
+        blocks = _diff_large_unequal(pa, pb, sa, sb)
     return [{"op": op, "a_start": i1, "a_end": i2, "b_start": j1, "b_end": j2}
-            for op, i1, i2, j1, j2 in _bin_diff_blocks(ba, bb)]
+            for op, i1, i2, j1, j2 in blocks]
 
 def _diff_pool():
     global _DIFF_POOL
@@ -358,6 +547,7 @@ atexit.register(_diff_pool_shutdown)
 def bin_diff():
     """字节级对比两份二进制文件。body: {a, b} → 差异块列表（offset 相对 A/B 各自）。
     返回 blocks: [{op, a_start, a_end, b_start, b_end}]（end 不含），equal 段不返回。
+    ≤128MB 全量算法；以上流式分级扫描（v3：GB 级生产文件，内存恒定）。
     计算全程在独立子进程跑（首守则：对比再重也不许卡主进程 UI）。"""
     data = request.get_json(force=True, silent=True) or {}
     pa, pb = _real_path(data.get("a")), _real_path(data.get("b"))
@@ -365,12 +555,12 @@ def bin_diff():
         return jsonify({"ok": False, "err": "文件不存在"}), 400
     try:
         sa, sb = os.path.getsize(pa), os.path.getsize(pb)
-        if sa > DIFF_LIMIT or sb > DIFF_LIMIT:
+        if max(sa, sb) > DIFF_LIMIT_LARGE:
             return jsonify({"ok": False, "err":
-                f"文件过大（上限 128MB）：A {sa/1048576:.1f}MB B {sb/1048576:.1f}MB"}), 400
+                f"文件过大（流式对比上限 8GB）：A {sa / 1073741824:.2f}GB B {sb / 1073741824:.2f}GB"}), 400
     except OSError as e:
         return jsonify({"ok": False, "err": str(e)}), 400
-    # 子进程跑 diff（100MB 也要 ~8s，主进程这期间照常服务弹窗/日志库）
+    # 子进程跑 diff（大文件线性耗时：1GB ≈ 数秒~数十秒，主进程照常服务）
     try:
         blocks = _diff_pool().submit(_diff_worker, pa, pb).result()
     except Exception as e:
