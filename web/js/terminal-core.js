@@ -488,6 +488,14 @@ function buildTerminal(portId, meta) {
 }
 
 function switchTab(portId) {
+  // 来路记录（v4.1：关闭当前 tab 应回「来时的 tab」而非排序首位——claude
+  // 会话 + 已开文件的组合下，关 diff 后回排序首位会顶到文件 tab，用户实锤
+  // 回不到 claude 界面）。只在真实切换且旧 tab 仍存活时记录（关 tab 回切时
+  // 旧 active 已出册，天然不污染）
+  if (typeof activePortId !== 'undefined' && activePortId !== portId &&
+      connections[activePortId]) {
+    window._hgTabBack = activePortId;
+  }
   activePortId = portId;
   // 标签
   tabs.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.portId === portId));

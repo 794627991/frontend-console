@@ -1187,7 +1187,18 @@ function _edCloseNow(conn) {
     if (ka[0] !== kb[0]) return ka[0] - kb[0];
     return ka[1] < kb[1] ? -1 : ka[1] > kb[1] ? 1 : 0;
   });
-  if (remaining.length) switchTab(remaining[0]);
+  // v4.1：关闭的是当前活动 tab → 优先回「来时的 tab」（switchTab 记录），
+  // 来路已关/无来路才回排序首位。claude 会话开对比的流：claude → diff →
+  // 关 diff 应回 claude，旧逻辑回排序首位会被已开的文件 tab 顶掉（用户实锤）。
+  // 关的不是活动 tab：不动激活态（旧逻辑无条件切排序首位，关后台 tab 也把
+  // 用户拽走）
+  const back = window._hgTabBack;
+  window._hgTabBack = null;
+  if (remaining.length) {
+    if (activePortId === conn.portId) {
+      switchTab(back && connections[back] ? back : remaining[0]);
+    }
+  }
   else {
     activePortId = null;
     termArea.innerHTML = '<div class="empty-state"><div class="big-icon">📡</div><div class="title">暂无连接</div><div class="desc">点击顶部「新建连接」选择串口或 SSH，支持同时监控多个连接。每个连接独立标签页，互不干扰。</div></div>';
@@ -1960,6 +1971,14 @@ async function openDroppedFiles(paths) {
   if (openDroppedFiles._last && openDroppedFiles._last.s === _sig && _now - openDroppedFiles._last.t < 2000) return;
   openDroppedFiles._last = { s: _sig, t: _now };
   window.__dragProbe && __dragProbe('js-recv ' + paths.length + '个');
+  // 对比弹窗优先（对齐 openDroppedFile 既有语义，v3.5.73 建多文件通道时
+  // 漏抄此分支）：弹窗在开，拖入文件填 A/B 栏——否则下一行 harness 判定
+  // 抢跑，claude 会话活动时拖对比文件会被整组挂成对话附件（用户实锤）
+  const dm = typeof $ === 'function' && $('diffPickModal');
+  if (dm && dm.classList.contains('show') && typeof window._diffPickDrop === 'function') {
+    for (const p of paths.slice(0, 2)) window._diffPickDrop(p);   // 依次填 A/B，多出的丢弃
+    return;
+  }
   const harnessActive = activePortId && connections[activePortId] &&
     connections[activePortId].meta && connections[activePortId].meta.kind === 'harness';
   if (harnessActive && typeof window.harnessAddFilesByPath === 'function') {
