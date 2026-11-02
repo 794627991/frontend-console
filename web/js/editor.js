@@ -586,6 +586,16 @@ const _CODE_OUTLINE = {
     { re: /^(class)\s+([A-Za-z_]\w*)/, lv: 1, kind: '类' },
     { re: /^(\s*)def\s+([A-Za-z_]\w*)/, lv: 2, kind: '函数', indent: true },
   ],
+  // a220：Shell（.sh/.bash 强需求）——tree-sitter bash 失败时的正则兜底。
+  // 此前 .sh 不在表内：ts 偶发失败（wasm 加载竞态/异常）即回落井号规则，
+  // #!/bin/sh 与 # 注释全变「标题」条目——函数全丢（用户实锤「解析异常」）
+  sh: [
+    // 三种形式：foo() 独行（{ 下行）/ foo() { 同行 / function bar { 无括号
+    // （无括号时必须行尾 { ——否则单词命令 true/exit 误报）
+    { re: /^\s*(?:function\s+)?([A-Za-z_][\w.-]*)\s*\(\s*\)\s*\{?\s*$/, lv: 1, kind: '函数' },
+    { re: /^\s*(?:function\s+)?([A-Za-z_][\w.-]*)\s*\{\s*$/, lv: 1, kind: '函数' },
+    { re: /^\s*([A-Za-z_][\w.-]*(?:\s*\|\s*[A-Za-z_*][\w.-]*)*)\)\s*$/, lv: 2, kind: '分支' },
+  ],
   // C/C++/Java/JS/TS/C#/Go/Rust… 大括号语言：类型/函数定义行（简化启发式）
   c: [
     { re: /^(?:typedef\s+)?struct\s+([A-Za-z_]\w*)/, lv: 1, kind: '结构体' },
@@ -599,6 +609,7 @@ const _CODE_OUTLINE_EXT = {
   '.c': 'c', '.h': 'c', '.cpp': 'c', '.hpp': 'c', '.cc': 'c', '.cxx': 'c', '.hh': 'c', '.hxx': 'c',
   '.java': 'c', '.cs': 'c', '.go': 'c', '.rs': 'c', '.swift': 'c', '.scala': 'c', '.kotlin': 'c',
   '.js': 'c', '.ts': 'c', '.php': 'c', '.m': 'c', '.mm': 'c',
+  '.sh': 'sh', '.bash': 'sh',
 };
 function _outlineCodeEntries(src, ext) {
   const parserKey = _CODE_OUTLINE_EXT[(ext || '').toLowerCase()];
