@@ -220,8 +220,14 @@ function buildClaudeHarnessTab(opts = {}) {
         const lines = (_HG.diag || []).slice().reverse();
         const _v = 'harness ' + (window._HG_VER || '?')
           + (window._APP_VER ? ' · 工具 v' + window._APP_VER : '');
+        // a226：ⓘ 独占——上次 ⓘ 通知还在栈就先撤（连点只保持一条，不再
+        // 叠成通知墙盖住右下功能区）；驻留 12s→8s
+        const stack = (typeof _notifyStack === 'function' && _notifyStack()) || null;
+        if (stack) [...stack.children].forEach(n => {
+          if ((n.querySelector('.n-title') || {}).textContent.startsWith('版本 harness')) _notifyDismiss(n);
+        });
         showBanner('版本 ' + _v + ' · 诊断日志（最新在前）：' + perf + '<br>' + (lines.length
-          ? lines.slice(0, 14).map(esc).join('<br>') : '（空）'), 12000);
+          ? lines.slice(0, 14).map(esc).join('<br>') : '（空）'), 8000);
       } catch (e) { try { showBanner('诊断日志读取失败：' + e, 4000, true); } catch (_) {} }
     };
     const topEl = _hgQ('.hg-top');

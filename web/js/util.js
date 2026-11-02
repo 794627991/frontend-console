@@ -57,7 +57,7 @@ function _notifyMount(d, ms) {
   // 栈封顶 6 条：超出丢最旧（FIFO）——连环点 20 个快捷打开时不能让转圈
   // 通知盖满半屏（铁律①流畅/可用性）。被丢的条若是常驻任务(无 timer)，
   // 后续 notifyTaskDone 会静默 no-op（DOM 已 remove，_closed 检查兜住）
-  while (stack.children.length >= 6) {
+  while (stack.children.length >= 4) {   // a226：封顶降 4（通知墙最大面积减半）
     const oldest = stack.children[stack.children.length - 1];   // column-reverse: 最旧在最后
     _notifyDismiss(oldest);
     if (stack.children.length >= 8) oldest.remove();   // 防御:dismiss 是动画退出,极端时强移
@@ -118,6 +118,10 @@ function notifyPop(msg, ms=4000, isErr=false, type) {
   const d = _notifyBuild({title: msg, isErr, type});
   d.querySelector('.n-state').innerHTML = isErr ? '✗' : '✓';
   d.querySelector('.n-close').onclick = () => _notifyDismiss(d);
+  // a226（用户实锤「ⓘ 连点卡死、通知不消失、点哪都没反应」）：通知体
+  // 点击即关——12s 常驻通知墙曾盖住右下功能区且只有小 ✕ 可点，误以为
+  // 工具死锁；现在点通知任意处即消失
+  d.onclick = (e) => { if (!e.target.closest('.n-close')) _notifyDismiss(d); };
   _notifyMount(d, ms || 4000);
   return d;
 }
