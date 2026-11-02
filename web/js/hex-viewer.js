@@ -123,10 +123,13 @@ async function buildHexViewerTab(path, name) {
   connections[portId] = conn;
 
   // ---- 数据加载 ----
+  // a237 P2：分块循环全部走可中止 fetch（_edCloseNow abort）——关 tab 后
+  // 只读大文件的整读/搜索不再空转 2000+ 串行请求拉完整个文件
+  conn._hxAbort = new AbortController();
   const fetchChunk = async (offset, length) => {
     const r = await fetch('/api/hex/read', {method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({path, offset, length})});
+      body: JSON.stringify({path, offset, length}), signal: conn._hxAbort.signal});
     const j = await r.json();
     if (!j.ok) throw new Error(j.err || 'read fail');
     return Uint8Array.from(atob(j.data), c => c.charCodeAt(0));
@@ -233,7 +236,11 @@ async function buildHexViewerTab(path, name) {
       _hxUpdateInfo(conn);
     }
   });
-  document.addEventListener('mouseup', () => { conn._dragging = false; });
+  // a237 P1：mouseup 挂 document（拖出画布也要结束拖选）但必须存 conn——
+  // 匿名闭包会钉死 conn.bytes（可编辑文件整读 ≤16MB）+ 脱离 wrap，
+  // _edCloseNow 统一摘除
+  conn._hxUp = () => { conn._dragging = false; };
+  document.addEventListener('mouseup', conn._hxUp);
   conn.canvas.addEventListener('dblclick', e => {
     // 双击字节 = 取消选区回单光标
     const cell = e.target.closest('[data-hx-i]');
@@ -630,14 +637,22 @@ function _hxSearchBuf(buf, pat, base, hits) {
 }
 async function _hxSearchAll(conn, pat) {
   const hits = [];
-  if (conn.bytes) {
-    _hxSearchBuf(conn.bytes, pat, 0, hits);
-  } else {
-    for (let ci = 0; ci * HEX_CHUNK < conn.size; ci++) {
-      const b = await conn.fetchChunk(ci * HEX_CHUNK, HEX_CHUNK);
-      _hxSearchBuf(b, pat, ci * HEX_CHUNK, hits);
-      if (hits.length > 500) break;
+  try {
+    if (conn.bytes) {
+      _hxSearchBuf(conn.bytes, pat, 0, hits);
+    } else {
+      for (let ci = 0; ci * HEX_CHUNK < conn.size; ci++) {
+        // a237 P2：关 tab（_hxAbort）/重开同路径后旧循环立即停——
+        // 此前会按 512KB/块把 1GB 文件 2000+ 次串行拉完，纯空转
+        if (connections[conn.portId] !== conn) return hits;
+        const b = await conn.fetchChunk(ci * HEX_CHUNK, HEX_CHUNK);
+        _hxSearchBuf(b, pat, ci * HEX_CHUNK, hits);
+        if (hits.length > 500) break;
+      }
     }
+  } catch (e) {
+    if (e && e.name === 'AbortError') return hits;   // 关 tab 中止，静默
+    throw e;
   }
   return hits;
 }

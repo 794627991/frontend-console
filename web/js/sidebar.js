@@ -124,6 +124,18 @@ function closeConnection(portId) {
     // 移除串口搜索分栏的 document 级监听器，避免泄漏
     if (conn.termSplitMove) document.removeEventListener('mousemove', conn.termSplitMove);
     if (conn.termSplitUp) document.removeEventListener('mouseup', conn.termSplitUp);
+    // a237 P1（第5轮A4）：面板类 tab（proxy/claude 等）从侧栏 ✕ 关闭落本函数，
+    // 此前不清轮询定时器——proxy 的 pollTimer（3s /api/proxy/status）+
+    // tickTimer（1s）空转到退出，脱离 DOM 的 display 残留让面板自停条件
+    // 永不成立。对齐 _edCloseNow 的清理面
+    if (conn.pollTimer) { clearInterval(conn.pollTimer); conn.pollTimer = null; }
+    if (conn.tickTimer) { clearInterval(conn.tickTimer); conn.tickTimer = null; }
+    if (conn.diskWatchTimer) { clearInterval(conn.diskWatchTimer); conn.diskWatchTimer = null; }
+    // a237 P3：一次性微批/高亮定时器补清（200-500ms 悬挂窗口内不该再触发；
+    // _kwTimer 到期还会在已 dispose 的 term 上抛未捕获异常）
+    if (conn._resizeTimer) { clearTimeout(conn._resizeTimer); conn._resizeTimer = null; }
+    if (conn._writeFlushTimer) { clearTimeout(conn._writeFlushTimer); conn._writeFlushTimer = null; }
+    if (conn._kwTimer) { clearTimeout(conn._kwTimer); conn._kwTimer = null; }
     conn.tab.remove();
     conn.wrap.remove();
     delete connections[portId];

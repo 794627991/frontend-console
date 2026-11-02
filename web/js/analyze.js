@@ -96,29 +96,44 @@ function renderAnalyze() {
   const conn = connections[activePortId];
   if (!conn || !conn.term) return;
   // 统计已加载行（从 xterm buffer 读取）
-  const lines = [];
   const buf = conn.term.buffer.active;
-  for (let r = 0; r < buf.length; r++) {
+  // a237 P2（第5轮A4）：此前每轮（5s/切tab）全量 translateToString 10 万行
+  // + 40 万次正则——满 scrollback 时纯 GC 垃圾制造机。改为：未顶格时增量
+  // 扫描（_anaRow 锚安全，无移位）、无新行直接复用计数；顶格（length 恒停
+  // 在 scrollback+rows，内容仍 shift）时移位锚不可靠，维持全量保正确性
+  const cap = conn.term.rows + ((conn.term.options && conn.term.options.scrollback) || 0);
+  const capped = buf.length >= cap;
+  const havePrev = conn._anaCounts && conn._anaRow !== undefined;
+  if (!capped && havePrev && buf.length === conn._anaRow) {
+    _renderAnaCards(conn._anaCounts);   // 静态缓冲：零成本复用
+    return;
+  }
+  const fromRow = (!capped && havePrev) ? conn._anaRow : 0;
+  const counts = (!capped && havePrev) ? conn._anaCounts : {error:0, warning:0, info:0, success:0};
+  for (let r = fromRow; r < buf.length; r++) {
     const ln = buf.getLine(r);
-    if (ln) lines.push(ln.translateToString(true));
-  }
-  let err = 0, warn = 0, info = 0, ok = 0;
-  for (const t of lines) {
+    if (!ln) continue;
+    const t = ln.translateToString(true);
     const low = t.toLowerCase();
-    if (ANALYZE_RE.error.test(low)) err++;
-    if (ANALYZE_RE.warning.test(low)) warn++;
-    if (ANALYZE_RE.info.test(low)) info++;
-    if (ANALYZE_RE.success.test(low)) ok++;
+    if (ANALYZE_RE.error.test(low)) counts.error++;
+    if (ANALYZE_RE.warning.test(low)) counts.warning++;
+    if (ANALYZE_RE.info.test(low)) counts.info++;
+    if (ANALYZE_RE.success.test(low)) counts.success++;
   }
+  conn._anaCounts = counts;
+  conn._anaRow = buf.length;
+  _renderAnaCards(counts);
+}
+function _renderAnaCards(c) {
   $('statCards').innerHTML = `
     <div class="stat-card err" data-kw="error" style="cursor:pointer" title="点击查看最近 ERROR 条目">
-      <div class="label">ERROR</div><div class="value">${err}</div></div>
+      <div class="label">ERROR</div><div class="value">${c.error}</div></div>
     <div class="stat-card warn" data-kw="warning" style="cursor:pointer" title="点击查看最近 WARNING 条目">
-      <div class="label">WARNING</div><div class="value">${warn}</div></div>
+      <div class="label">WARNING</div><div class="value">${c.warning}</div></div>
     <div class="stat-card info" data-kw="info" style="cursor:pointer" title="点击查看最近 INFO 条目">
-      <div class="label">INFO</div><div class="value">${info}</div></div>
+      <div class="label">INFO</div><div class="value">${c.info}</div></div>
     <div class="stat-card ok" data-kw="success" style="cursor:pointer" title="点击查看最近 SUCCESS 条目">
-      <div class="label">SUCCESS</div><div class="value">${ok}</div></div>
+      <div class="label">SUCCESS</div><div class="value">${c.success}</div></div>
   `;
   // 点击统计卡片 → 下方列表显示该类别最近条目（不弹 banner）
   $('statCards').querySelectorAll('.stat-card').forEach(card => {

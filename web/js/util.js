@@ -287,6 +287,9 @@ function _hgFadeSb(el) {
   setInterval(() => {
     for (const el of _hosts) {
       if (!el.isConnected || !el._hgFadeSb || !el._hgFadeSb.paint) {
+        // a237 P3：出册同时摘自绘条本体——宿主被单独 remove（而非父层
+        // innerHTML 重建）时，条以内联样式残留在 anchor 上成幽灵可见
+        if (el._hgFadeSb && el._hgFadeSb.sb) { try { el._hgFadeSb.sb.remove(); } catch (_) {} }
         _hosts.delete(el);
         continue;
       }

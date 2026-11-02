@@ -33,7 +33,10 @@ function highlightNewKw(conn) {
   // 单次扫描卡几百 ms~秒级、主线程被占死导致输入积压（多开卡顿实锤主因）。
   const kwColors = {};
   for (const cls in KW_COLOR) kwColors[cls] = kwColor(cls);
-  const buf = conn.term.buffer.active;
+  // a237 P3：dispose 后的 term 访问 buffer.active 抛异常——关 tab 后 250ms
+  // 悬挂窗口内到期时不再产生未捕获异常噪音（closeConnection 已补 clearTimeout，此处双保险）
+  let buf;
+  try { buf = conn.term.buffer.active; } catch (_) { return; }
   const totalRows = buf.length;
   // 增量扫描窗口：只扫自上次以来的新行 + 回溯 1 行防跨行漏扫。
   // 单次写入超大（如 loadBuffer 500 行）时窗口同样生效——首次从 0 开始全量属正常。

@@ -23,6 +23,9 @@ function _initTabDrag(tab) {
   tab.addEventListener('dragover', e => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
+    // a237 P3：拖拽中源 tab 被关闭（dragend 不触发）——元素已脱离文档即
+    // 清拖拽态，防旧元素被钉到下次拖拽
+    if (_tabDrag.el && !_tabDrag.el.isConnected) { _tabDrag.el = null; _tabDrag.over = null; }
     if (!_tabDrag.el || _tabDrag.el === tab) return;
     _tabDrag.over = tab;
     const r = tab.getBoundingClientRect();

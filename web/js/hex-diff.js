@@ -438,14 +438,16 @@ async function buildHexDiffTab(aPath, bPath) {
     };
   });
   // F7/Shift+F7 导航（与文本 diff 一致）
-  document.addEventListener('keydown', e => {
+  // a237 P2：存 conn 由 _edCloseNow 统一摘除（匿名挂载钉死脱离的双栏 wrap）
+  conn._bdKey = e => {
     if (activePortId !== portId) return;
     if (e.key === 'F7') {
       e.preventDefault();
       const btn = wrap.querySelector(e.shiftKey ? '[data-hxd-action="nav-prev"]' : '[data-hxd-action="nav-next"]');
       if (btn) btn.click();
     }
-  });
+  };
+  document.addEventListener('keydown', conn._bdKey);
 
   notifyTaskDone(nid, {ok:true, title:'二进制对比已打开', detail:label});
   switchTab(portId);

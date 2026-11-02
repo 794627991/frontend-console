@@ -15,6 +15,11 @@
 // 二进制判定：任一文件含 NUL 或解码替换符>5% 即视为二进制（hex-viewer 的
 // 后缀白名单方案不适用——对比入口拿到的可能是任意路径）。
 const _binCheckCache = new Map();
+// a237 P3：缓存封顶 512（路径→bool）——无上限时长跑每对比一个新文件永久 +1 条
+function _binCheckRemember(p, v) {
+  if (_binCheckCache.size >= 512) _binCheckCache.delete(_binCheckCache.keys().next().value);
+  _binCheckCache.set(p, v);
+}
 async function _diffIsBinary(aPath, bPath) {
   const check = async (p) => {
     if (_binCheckCache.has(p)) return _binCheckCache.get(p);
@@ -32,7 +37,7 @@ async function _diffIsBinary(aPath, bPath) {
         }
       }
     } catch (_) { bin = true; }
-    _binCheckCache.set(p, bin);
+    _binCheckRemember(p, bin);
     return bin;
   };
   return (await check(aPath)) || (await check(bPath));
@@ -252,7 +257,8 @@ async function buildDiffViewerTab(aPath, bPath) {
   });
 
   // 键盘兜底：F7/Shift+F7 跳差异（焦点在工具栏时 Monaco 自带 keybinding 不触发）
-  document.addEventListener('keydown', e => {
+  // a237 P2：存 conn 由 _edCloseNow 统一摘除（匿名挂载钉死 conn + 脱离 wrap）
+  conn._dvKey = e => {
     if (activePortId !== portId) return;
     if (e.key === 'F7') {
       e.preventDefault();
@@ -261,7 +267,8 @@ async function buildDiffViewerTab(aPath, bPath) {
         conn.diffEd.goToDiff(e.shiftKey ? 'previous' : 'next');
       } catch (_) {}
     }
-  });
+  };
+  document.addEventListener('keydown', conn._dvKey);
 
   notifyTaskDone(nid, {ok:true, title:'对比已打开', detail:label});
   switchTab(portId);

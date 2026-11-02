@@ -743,7 +743,11 @@ function connectSSE(portId, conn) {
   };
   conn.sse.onerror = () => {
     conn.sse.close();
-    setTimeout(() => { if (connections[portId]) connectSSE(portId, conn); }, 2000);
+    // a237 P2：重连必须验「身份」而非仅键存在——错误后 2s 窗口内关 tab 再
+    // 重开同 portId（串口快速重连常态）时，旧 conn 会在此被复活挂上第二条
+    // SSE：旧 conn 图被永久钉住 + onmessage 找到新 conn → 终端收到双份数据。
+    // 同文件 237/579/719 行同款校验，此处原先漏掉
+    setTimeout(() => { if (connections[portId] === conn) connectSSE(portId, conn); }, 2000);
   };
 }
 

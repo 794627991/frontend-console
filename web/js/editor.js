@@ -268,7 +268,10 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
   // 快捷键 Ctrl+S / Ctrl+Shift+S：挂 document 全局生效——
   // 之前挂 wrap 上，焦点必须落在编辑区（block 内）keydown 才冒泡到 wrap，
   // 点了工具栏/大纲后按 Ctrl+S 失灵。全局监听只在「当前活动 tab 是本编辑器」时处理。
-  document.addEventListener('keydown', e => {
+  // a237 P0：handler 必须存 conn——匿名闭包会把整个 conn 图（savedData 全文/
+  // undo 快照栈/脱离的 wrap）钉到 document 上，关闭 tab 后无从移除，开关
+  // 大文件 ×N 次即数百 MB 永久驻留（_edCloseNow 统一摘除）
+  conn._docKey = e => {
     if (activePortId !== portId) return;
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
       e.preventDefault();
@@ -307,7 +310,8 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
       }
       return;
     }
-  });
+  };
+  document.addEventListener('keydown', conn._docKey);
   switchTab(portId);
   refreshSidebar();
   if (typeof treeDecoRefresh === 'function') treeDecoRefresh();   // a213 P2：打开即着色
@@ -1206,6 +1210,16 @@ function _edCloseNow(conn) {
   // 查找分栏 splitter 的 document 级拖拽监听移除（防泄漏，同 closeLogViewer）
   if (conn._edSplitMove) document.removeEventListener('mousemove', conn._edSplitMove);
   if (conn._edSplitUp) document.removeEventListener('mouseup', conn._edSplitUp);
+  // a237 P0/P1/P2（第5轮A4）：per-tab 的 document 级监听器统一摘除——
+  // keydown（编辑器 Ctrl+S/Ctrl+F/slash；diff/bindiff 的 F7/导航）与
+  // hex 的拖选 mouseup。匿名挂载无从移除，会把 conn 图（全文/字节缓冲/
+  // 脱离 wrap）永久钉死在 document 上，开关 tab ×N 即累积驻留
+  if (conn._docKey) document.removeEventListener('keydown', conn._docKey);
+  if (conn._dvKey) document.removeEventListener('keydown', conn._dvKey);
+  if (conn._bdKey) document.removeEventListener('keydown', conn._bdKey);
+  if (conn._hxUp) document.removeEventListener('mouseup', conn._hxUp);
+  // a237 P2：hex 只读大文件的后台分块拉取中止（关 tab 即停，防 2000+ 串行 fetch 空转到文件尾）
+  if (conn._hxAbort) { try { conn._hxAbort.abort(); } catch(e){} }
   // DiffEditor（diff tab）：编辑器与两侧 model 一并销毁（防泄漏 + 关 tab 后仍触发 onDidUpdateDiff）
   if (conn.diffEd) {
     try {
