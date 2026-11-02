@@ -888,7 +888,7 @@
   /* 根行：文件夹名 + hover 删根 ✕（仿 .recent-item .actions 显隐模式） */
   /* 不能加 overflow:hidden —— 它会让本行自己成为 sticky 的滚动容器，下面 .root-x 的
      position:sticky 就再也钉不住了。行宽是 max-content，本来也裁不到任何东西。 */
-  .tree-root-head { padding: 5px 6px; border-radius: 6px; cursor: pointer; display: flex;
+  .tree-root-head { padding: 0 6px; height: 22px; border-radius: 6px; cursor: pointer; display: flex;
     align-items: center; gap: 5px; font-size: 11px; font-weight: 600;
     color: var(--fg-bright); font-family: var(--font-mono); white-space: nowrap; }
   .tree-root-head:hover { background: var(--bg-card); }
@@ -904,9 +904,11 @@
   /* 树节点行（含根行展开复用同结构）；箭头 ▶ 旋转 90° 成 ▼（transform 免字符切换重排）。
      white-space:nowrap + 不截断——横向超宽交给 .tree-roots overflow-x 滚动（深层名字
      完整可见，用户实锤 6~7 层被尾部省略号裁掉） */
-  .tree-row { padding: 3px 6px; border-radius: 6px; cursor: pointer; display: flex;
+  /* v3 虚拟化：行定高 22px（_TV.ROW_H 锚，改动需同步 JS）+ absolute
+     （top=i*22 由 JS），left:0；min-width:100% 保 hover 背景撑满列宽 */
+  .tree-row { padding: 0 6px; height: 22px; border-radius: 6px; cursor: pointer; display: flex;
     align-items: center; gap: 5px; font-size: 11px; font-family: var(--font-mono);
-    white-space: nowrap; width: max-content; min-width: 100%; }
+    white-space: nowrap; width: max-content; min-width: 100%; position: absolute; }
   .tree-row:hover { background: var(--bg-card); }
   .tree-row.active { background: linear-gradient(135deg, rgba(0,212,255,0.14), transparent); }
   .tree-row .arrow { width: 10px; flex-shrink: 0; font-size: 8px; color: var(--muted);
@@ -916,8 +918,12 @@
   .tree-root-head { width: max-content; min-width: 100%; }
   .tree-row svg, .tree-root-head svg { flex-shrink: 0; }
   .tree-children { display: grid; }
-  .tree-more { padding: 4px 8px; font-size: 10px; color: var(--muted); font-family: var(--font-mono);
-    white-space: nowrap; width: max-content; min-width: 100%; }
+  .tree-more { padding: 0 8px; height: 22px; display: flex; align-items: center;
+    font-size: 10px; color: var(--muted); font-family: var(--font-mono);
+    white-space: nowrap; width: max-content; min-width: 100%; position: absolute; }
+  /* v3 虚拟化：sizer 撑总高/总宽（宽度=全树最深行估算，横滚可达） */
+  .tree-sizer { position: relative; }
+  .tree-children { display: grid; }
   /* 缩进梯度：data-depth 属性选择器（免逐行内联 style）。
      不再 6 层封顶——封顶时深层全挤在 88px 分不清父子（用户实锤层级不明）。
      每层 14px；层级参考线用行内伪元素画在 t-name 左缘，往上是 n 层竖线 */
@@ -959,7 +965,6 @@
       var(--border) 0 1px, transparent 1px 14px);
     pointer-events: none;
   }
-  .tree-row { position: relative; }
 
   /* ===== 程序员计算器（仿 Marvell Register Analyzer + 计算器）===== */
   .bc-body { padding: 14px 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }

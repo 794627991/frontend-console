@@ -62,6 +62,163 @@ function _treeInlineDirInput() {
 }
 
 // ---- 根列表渲染（每根一行头 + 可展开根节点）----
+
+const _TV = {
+  roots: [],            // [{path, name}]
+  open: new Set(),      // 展开的目录 path
+  cache: new Map(),     // path -> {entries, truncated} | {err}
+  rows: [],             // 扁平行 [{t, path, name, dir, depth, open, n, msg}]
+  idx: new Map(),       // path -> 行号（对焦 O(1)）
+  seq: new Map(),       // path -> fetch 序号（防乱序，v2 的 children 级同款）
+  active: '',           // 当前选中文件行（虚拟化后 class 态必须进数据）
+  rendered: [-1, -1],
+  ROW_H: 22, BUF: 12,
+  raf: 0,
+};
+
+function _tvPad(depth) { return 6 + depth * 14; }
+
+// ---- 扁平行数组推导（DFS）+ 索引/宽度估算 ----
+function _tvRebuild() {
+  const rows = [];
+  for (const root of _TV.roots) {
+    rows.push({ t: 'root', path: root.path, name: root.name, dir: true,
+                depth: 0, open: _TV.open.has(root.path) });
+    _tvPush(rows, root.path, 1);
+  }
+  _TV.rows = rows;
+  _TV.idx = new Map(rows.map((r, i) => [r.path, i]));
+  _TV.rendered = [-1, -1];
+  _tvPaint();
+}
+
+function _tvPush(rows, path, depth) {
+  if (!_TV.open.has(path)) return;
+  const c = _TV.cache.get(path);
+  if (!c) { rows.push({ t: 'loading', path, depth }); return; }
+  if (c.err) { rows.push({ t: 'err', depth, msg: c.err }); return; }
+  for (const e of c.entries) {
+    rows.push({ t: e.dir ? 'dir' : 'file', path: e.path, name: e.name,
+                dir: !!e.dir, depth, open: _TV.open.has(e.path) });
+    if (e.dir) _tvPush(rows, e.path, depth + 1);
+  }
+  if (c.truncated) rows.push({ t: 'more', depth, n: c.truncated });
+}
+
+// ---- 窗口渲染（hex-diff 同款窗口模式：innerHTML 重建，行数 ~50 成本可忽略）----
+function _tvRowHtml(r, i) {
+  const top = i * _TV.ROW_H;
+  const pad = _tvPad(r.depth);
+  const st = `top:${top}px;left:0;padding-left:${pad}px;` + (r.depth > 20 ? '' : '');
+  if (r.t === 'loading')
+    return `<div class="tree-more" style="top:${top}px;left:0;padding-left:${pad}px">加载中…</div>`;
+  if (r.t === 'err')
+    return `<div class="tree-more" style="top:${top}px;left:0;padding-left:${pad}px">${esc(r.msg || '读取失败')}</div>`;
+  if (r.t === 'more')
+    return `<div class="tree-more" style="top:${top}px;left:0;padding-left:${pad}px">…还有 ${Number(r.n).toLocaleString()} 项未显示</div>`;
+  const arrow = r.dir
+    ? `<span class="arrow"${r.open ? ' style="transform:rotate(90deg)"' : ''}>▶</span>` : '<span class="arrow"></span>';
+  const icon = r.t === 'root' ? dirIconHtml(r.open, 14)
+             : r.dir ? dirIconHtml(r.open, 13) : fileIconHtml(r.name, 13);
+  const active = r.path === _TV.active ? ' active' : '';
+  const rootX = r.t === 'root'
+    ? `<span class="root-x" title="从文件树移除该文件夹（不删除磁盘文件）">✕</span>` : '';
+  return `<div class="tree-row${r.t === 'root' ? ' tree-root-head' : ''}${active}" data-path="${esc(r.path)}"` +
+    (r.dir ? ' data-dir="1"' : '') + ` data-depth="${r.depth}"` +
+    (r.t === 'root' ? ' data-notrunc="1"' : '') +
+    ` style="${st}">${arrow}${icon}<span class="t-name" title="${esc(r.path)}">${esc(r.name)}</span>${rootX}</div>`;
+}
+
+function _tvPaint() {
+  const host = $('treeRoots');
+  if (!host) return;
+  const total = _TV.rows.length;
+  let sizer = host.querySelector('.tree-sizer');
+  if (!sizer) {
+    sizer = document.createElement('div');
+    sizer.className = 'tree-sizer';
+    host.appendChild(sizer);
+  }
+  if (!total) {
+    sizer.innerHTML = host.querySelector('.tree-empty') ? '' : '';
+    return;
+  }
+  // sizer 宽度：全树最深+最长行的估算（mono 11px ≈ 7.2px/字符，含箭头图标 42px
+  // 余量）——撑出横滚让深层长名完整可达（用户实锤语义：不许省略号裁名）
+  let wMax = 0;
+  for (const r of _TV.rows) {
+    if (!r.name) continue;
+    const w = _tvPad(r.depth) + r.name.length * 7.2 + 60;
+    if (w > wMax) wMax = w;
+  }
+  sizer.style.height = (total * _TV.ROW_H) + 'px';
+  sizer.style.minWidth = Math.max(100, Math.round(wMax)) + 'px';
+  const first = Math.max(0, Math.floor(host.scrollTop / _TV.ROW_H) - _TV.BUF);
+  const count = Math.ceil(host.clientHeight / _TV.ROW_H) + _TV.BUF * 2;
+  const from = first, to = Math.min(total, first + count);
+  if (from === _TV.rendered[0] && to === _TV.rendered[1] && sizer.children.length) return;
+  let html = '';
+  for (let i = from; i < to; i++) html += _tvRowHtml(_TV.rows[i], i);
+  sizer.innerHTML = html;
+  _TV.rendered = [from, to];
+}
+
+// ---- 展开 / 折叠（数据操作 + 重建；fetch 按 path 记 seq 防乱序）----
+async function _tvExpand(path) {
+  _TV.open.add(path);
+  const seq = (_TV.seq.get(path) || 0) + 1;
+  _TV.seq.set(path, seq);
+  _tvRebuild();          // loading 行立即出现
+  let j;
+  try {
+    const r = await fetch('/api/tree/list', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({path, hidden: _treeShowHidden})});
+    j = await r.json();
+  } catch(e) {
+    if (_TV.seq.get(path) === seq) { _TV.cache.set(path, {err: '读取失败'}); _tvRebuild(); }
+    return;
+  }
+  if (_TV.seq.get(path) !== seq) return;   // 后发请求已覆盖，本次作废
+  if (!j.ok) { _TV.cache.set(path, {err: j.err || '读取失败'}); _tvRebuild(); return; }
+  _TV.cache.set(path, {entries: j.entries || [], truncated: j.truncated || 0});
+  _tvRebuild();
+  _tvFocus(path, true);  // 展开对焦：父行钉视口 + 子行首行露出（v2 语义）
+}
+
+function _tvCollapse(path) {
+  _TV.open.delete(path);
+  _TV.cache.delete(path);   // 折叠即弃缓存（v2 只读视图不缓存，同款）
+  _tvRebuild();
+  _tvFocus(path);           // 折叠对焦被折叠行
+}
+
+// ---- 对焦（v2 _treeReveal 语义的虚拟化版：纵向行号判据，横向按缩进深度）----
+function _tvFocus(path, firstChild) {
+  const host = $('treeRoots');
+  const i = _TV.idx.get(path);
+  if (!host || i === undefined) return;
+  const H = _TV.ROW_H, vpad = 40;
+  let minTop = i * H, maxBottom = minTop + H;
+  if (firstChild) {
+    const c = _TV.rows[i + 1];   // 子层首行（或 loading/截断行）
+    if (c) maxBottom = (i + 1) * H + H;
+  }
+  let vy = host.scrollTop;
+  if (minTop < host.scrollTop) vy = Math.max(0, minTop - vpad);
+  else if (maxBottom > host.scrollTop + host.clientHeight)
+    vy = Math.max(0, maxBottom - host.clientHeight + vpad);
+  // 横向：子层缩进左缘（首元素真实左缘 ≈ 行 padding）双向滚入
+  const depth = (_TV.rows[i] || {}).depth || 0;
+  const left = _tvPad(depth + 1);
+  let hx = host.scrollLeft;
+  if (left > host.scrollLeft + host.clientWidth) hx = Math.max(0, left - 24);
+  else if (left < host.scrollLeft) hx = Math.max(0, left - 24);
+  if (hx !== host.scrollLeft || vy !== host.scrollTop)
+    host.scrollTo({ left: hx, top: vy, behavior: 'smooth' });
+}
+
+// ---- 根列表 ----
 async function refreshTree() {
   const host = $('treeRoots');
   if (!host) return;
@@ -73,184 +230,65 @@ async function refreshTree() {
     if (j.ok) roots = j.roots || [];
   } catch(e) { return; }
   if (!roots.length) {
-    host.innerHTML = `<div class="tree-empty">点击上方「打开文件夹」选择目录，<br>或直接把文件夹拖进窗口</div>`;
+    _TV.roots = []; _TV.open.clear(); _TV.cache.clear();
+    _tvRebuild();
+    const host2 = $('treeRoots');
+    let s = host2.querySelector('.tree-sizer');
+    if (s) s.remove();
+    host2.innerHTML = `<div class="tree-empty">点击上方「打开文件夹」选择目录，<br>或直接把文件夹拖进窗口</div>`;
     return;
   }
-  let html = '';
-  for (const root of roots) {
-    const name = root.split(/[\\/]/).pop() || root;
-    html += `
-      <div class="tree-root" data-root="${esc(root)}">
-        <div class="tree-root-head" data-path="${esc(root)}" data-dir="1" data-depth="0" data-notrunc="1">
-          <span class="arrow">▶</span>${dirIconHtml(false, 14)}
-          <span class="t-name" title="${esc(root)}">${esc(name)}</span>
-          <span class="root-x" title="从文件树移除该文件夹（不删除磁盘文件）">✕</span>
-        </div>
-      </div>`;
-  }
-  host.innerHTML = html;
+  // v2.59 同语义：刷新 = 收起态复位（展开集/缓存清空）
+  _TV.roots = roots.map(p => ({ path: p, name: (p.split(/[\\/]/).pop() || p) }));
+  _TV.open.clear();
+  _TV.cache.clear();
+  _TV.rendered = [-1, -1];
+  _tvRebuild();
+  host.scrollTop = 0;
 }
 
-// ---- 显示隐藏文件开关（VSCode files.exclude 同款语义）----
-// 关（默认）：. 开头条目不显示也不算"还有 N 项"；开：全部显示。
-// 切换后重拉所有【已展开】目录——open 态留在 dataset.open 上，重拉即保留展开层级。
+// ---- 显示隐藏文件开关（展开集整体重拉，全部落账后一次重建）----
 let _treeShowHidden = false;
 function _treeSyncHiddenBtn() {
   const btn = $('treeHidden');
   btn.textContent = _treeShowHidden ? '隐藏' : '显示';
-  btn.classList.toggle('primary', _treeShowHidden);   // 按下态：青色主按钮
+  btn.classList.toggle('primary', _treeShowHidden);
   btn.title = _treeShowHidden ? '当前显示隐藏文件，点击隐藏 . 开头条目' : '显示 . 开头的隐藏文件';
 }
-function _treeToggleHidden() {
+async function _treeToggleHidden() {
   _treeShowHidden = !_treeShowHidden;
   _treeSyncHiddenBtn();
-  // 展开态收集：所有 data-open=1 的行重新拉子层（children 已存在则直接复用容器）
-  document.querySelectorAll('#treeRoots [data-open="1"]').forEach(row => {
-    delete row.dataset.open;   // 让 _treeToggle 走"展开"分支（reload 语义）
-    _treeToggle(row, true);
-  });
-}
-// ---- 展开目录：children 容器插到【行后】（不是 root 末尾）——
-// 之前 append 到 .tree-root 末尾，多目录展开后 children 按展开时间堆叠，
-// 树序错乱（子项"跑"到别的目录下面，用户实锤报层级反直觉）。
-// reload=true（隐藏文件开关切换）：容器已存在直接重拉内容，不动 open/图标态。
-async function _treeToggle(row, reload) {
-  const path = row.dataset.path;
-  if (row.dataset.open === '1') {   // 折叠：销毁子 DOM（只读视图不缓存）
-    const ch = row.parentElement.querySelector(`.tree-children[data-parent="${_cssEsc(path)}"]`);
-    if (ch) ch.remove();
-    delete row.dataset.open;
-    const ar = row.querySelector('.arrow'); if (ar) ar.style.transform = '';
-    const ic = row.querySelector('svg'); if (ic) ic.outerHTML = dirIconHtml(false, 14);
-    // 折叠后对焦被折叠的行：深层折叠回浅层时左/上滚回父行（双向对焦）
-    _treeReveal(row);
-    return;
-  }
-  // 展开：容器插到本行正下方（树序 = 行序，天然正确）
-  const depth = (+row.dataset.depth || 0) + 1;
-  let ch = row.parentElement.querySelector(`.tree-children[data-parent="${_cssEsc(path)}"]`);
-  if (!ch) {
-    ch = document.createElement('div');
-    ch.className = 'tree-children';
-    ch.dataset.parent = path;
-    row.after(ch);   // 行后插入——不在 root 末尾堆叠
-  }
-  ch.innerHTML = '<div class="tree-more">加载中…</div>';
-  row.dataset.open = '1';
-  const ar = row.querySelector('.arrow'); if (ar) ar.style.transform = 'rotate(90deg)';
-  const ic = row.querySelector('svg'); if (ic) ic.outerHTML = dirIconHtml(true, 14);  // 防乱序记在【ch 自己】身上：隐藏开关快速切换/连点展开时旧响应不覆盖新内容。
-  // 不能用全局计数——展开 A 目录后展开 B，A 的响应回来就被全局 seq 判"过期"，
-  // A 永远停在加载中（用户实锤：根节点一直加载中）。
-  ch.dataset.seq = String((+ch.dataset.seq || 0) + 1);
-  const seq = +ch.dataset.seq;
-  let j;
-  try {
-    const r = await fetch('/api/tree/list', {method:'POST',
-      headers:{'Content-Type':'application/json'}, body: JSON.stringify({path, hidden: _treeShowHidden})});
-    j = await r.json();
-  } catch(e) { if (+ch.dataset.seq === seq && ch.isConnected) ch.innerHTML = '<div class="tree-more">读取失败</div>'; return; }
-  if (+ch.dataset.seq !== seq || !ch.isConnected) return;   // 已有更新请求/容器已销毁，本次作废
-  if (!j.ok) { ch.innerHTML = `<div class="tree-more">${esc(j.err || '读取失败')}</div>`; return; }
-  if (!j.entries.length) { ch.innerHTML = '<div class="tree-more">（空目录）</div>'; return; }
-  let html = '';
-  for (const e of j.entries) {
-    // 超 20 层 CSS 梯度兜不住时行内补缩进（14px/层，与 CSS 梯度同节拍）
-    const dp = depth > 20 ? ` padding-left:${6 + depth * 14}px;` : '';
-    if (e.dir) {
-      html += `<div class="tree-row" data-path="${esc(e.path)}" data-dir="1" data-depth="${depth}"${dp ? ` style="${dp.trim()}"` : ''}>
-        <span class="arrow">▶</span>${dirIconHtml(false, 13)}<span class="t-name" title="${esc(e.path)}">${esc(e.name)}</span></div>`;
-    } else {
-      html += `<div class="tree-row" data-path="${esc(e.path)}" data-depth="${depth}"${dp ? ` style="${dp.trim()}"` : ''}>
-        <span class="arrow"></span>${fileIconHtml(e.name, 13)}<span class="t-name" title="${esc(e.path)}">${esc(e.name)}</span></div>`;
-    }
-  }
-  if (j.truncated) html += `<div class="tree-more">…还有 ${Number(j.truncated).toLocaleString()} 项未显示</div>`;
-  ch.innerHTML = html;
-  // 自动对焦：展开后子层若超出可视右缘，横滚到子层起点（详细见 _treeReveal）
-  _treeReveal(ch, true);
+  const paths = [..._TV.open];
+  await Promise.all(paths.map(async p => {
+    const seq = (_TV.seq.get(p) || 0) + 1;
+    _TV.seq.set(p, seq);
+    try {
+      const r = await fetch('/api/tree/list', {method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({path: p, hidden: _treeShowHidden})});
+      const j = await r.json();
+      if (_TV.seq.get(p) !== seq) return;
+      if (j.ok) _TV.cache.set(p, {entries: j.entries || [], truncated: j.truncated || 0});
+    } catch(_) {}
+  }));
+  _tvRebuild();
 }
 
-// 通用对焦：把目标滚入横向+纵向可视区。
-// 关键坑①：行有 min-width:100%（hover 高亮撑满列宽），border-box 全从内容原点
-// x≈0 起、缩进藏在 padding 里——量行左缘恒得 0。必须量行内【第一个元素】
-// （箭头/图标）的真实内容左缘。
-// 关键坑②：对焦是双向的——折叠/点父行回浅层时内容在左缘外，要能【往左】滚；
-// 纵向同理（子层展开后父行可能滚出上下视口）。前版只处理"往右"，用户实锤
-// 回不去父目录、纵向也不动。
-// target=row（对焦该行，折叠/点行时）；target=ch+children 模式（展开时）
-// 展开时纵向只对焦【父行+子层第一行】——不是整个子层：多文件目录（几百项）
-// 整层对焦会把 maxBottom 推到子层末尾，滚到最底把父行顶出视口（用户实锤
-// "打开很多文件的文件夹极大幅滑动，文件夹本身被顶没了"）。父行必须钉在
-// 可视区内（用户刚点的就是它），子层从第一行露出即达意。
-function _treeReveal(target, focusChildren) {
-  const scroller = $('treeRoots');
-  if (!scroller || !target || !target.isConnected) return;
-  let rows;
-  if (target.dataset && target.dataset.notrunc === '1') {
-    // 非截断行（根行）：行宽已受控，横向不需要对焦，只滚纵向
-    return _treeRevealRows(scroller, [], [target]);
-  }
-  if (focusChildren && target.querySelectorAll) {
-    const kids = target.querySelectorAll('.tree-row');
-    // 纵向目标：父行 + 子层第一行
-    const parentRow = target.classList && target.classList.contains('tree-row')
-      ? target : target.closest('.tree-row');
-    const vRows = [];
-    if (parentRow) vRows.push(parentRow);
-    if (kids.length) vRows.push(kids[0]);
-    // 横向用全部子行算左右极值（深缩进+长名的右缘/左缘判断）
-    return _treeRevealRows(scroller, Array.from(kids), vRows);
-  }
-  rows = [target];
-  return _treeRevealRows(scroller, rows, rows);
-}
-function _treeRevealRows(scroller, hRows, vRows) {
-  if (!hRows.length || !vRows.length) return;
-  const base = scroller.getBoundingClientRect().left;
-  const baseY = scroller.getBoundingClientRect().top;
-  let maxRight = 0, minLeft = Infinity, minTop = Infinity, maxBottom = 0;
-  for (const r of hRows) {
-    const rc = r.getBoundingClientRect();
-    const first = r.firstElementChild;   // 箭头/图标 span = 内容真实左缘
-    const left = (first ? first.getBoundingClientRect().left : rc.left)
-                 - base + scroller.scrollLeft;
-    const right = rc.right - base + scroller.scrollLeft;
-    if (right > maxRight) maxRight = right;
-    if (left < minLeft) minLeft = left;
-  }
-  for (const r of vRows) {
-    const rc = r.getBoundingClientRect();
-    const top = rc.top - baseY + scroller.scrollTop;
-    if (top < minTop) minTop = top;
-    if (top + rc.height > maxBottom) maxBottom = top + rc.height;
-  }
-  const pad = 24, vpad = 40;
-  // 横向：内容超出任意一侧视口就滚（双向）
-  let hx = scroller.scrollLeft;
-  if (maxRight > scroller.scrollLeft + scroller.clientWidth) hx = Math.max(0, minLeft - pad);
-  else if (minLeft < scroller.scrollLeft) hx = Math.max(0, minLeft - pad);
-  // 纵向：只保证【vRows】（父行+子层第一行）可见——子层其余部分随自然滚动浏览
-  let vy = scroller.scrollTop;
-  if (minTop < scroller.scrollTop) vy = Math.max(0, minTop - vpad);
-  else if (maxBottom > scroller.scrollTop + scroller.clientHeight) vy = Math.max(0, maxBottom - scroller.clientHeight + vpad);
-  if (hx === scroller.scrollLeft && vy === scroller.scrollTop) return;
-  // 弱平滑（流畅第一守则：动画短、不挡交互）
-  scroller.scrollTo({ left: hx, top: vy, behavior: 'smooth' });
-}
+// ---- 滚动：rAF 节流窗口重渲 ----
+$('treeRoots').addEventListener('scroll', () => {
+  if (_TV.raf) return;
+  _TV.raf = requestAnimationFrame(() => { _TV.raf = 0; _tvPaint(); });
+}, { passive: true });
 
-// 属性选择器里的路径转义（data-parent 含引号/反斜杠时的 CSS 转义）
-function _cssEsc(s) { return String(s).replace(/["\\]/g, '\\$&'); }
-
-// ---- 事件委托：整个 pane 一个 listener ----
+// ---- 事件委托（click/contextmenu 语义与 v2 一致）----
 $('treePane').addEventListener('click', async e => {
-  // 删根 ✕ 优先拦截（在 .tree-root-head 内，closest .tree-row 会先命中头行）
   const x = e.target.closest('.root-x');
   if (x) {
     e.stopPropagation();
-    const root = x.closest('.tree-root').dataset.root;
+    const path = x.closest('[data-path]').dataset.path;
     try {
       const r = await fetch('/api/tree/remove_root', {method:'POST',
-        headers:{'Content-Type':'application/json'}, body: JSON.stringify({path: root})});
+        headers:{'Content-Type':'application/json'}, body: JSON.stringify({path})});
       const j = await r.json();
       if (j.ok) refreshTree(); else showBanner(j.err || '移除失败', 4000, true);
     } catch(err) { showBanner('移除失败: ' + err, 4000, true); }
@@ -258,18 +296,21 @@ $('treePane').addEventListener('click', async e => {
   }
   const row = e.target.closest('[data-path]');
   if (!row) return;
-  if (row.dataset.dir === '1') { _treeToggle(row); return; }
-  // 文件：openFileSmart 自动分流（hex/编辑器/日志查看器），与拖拽打开同链路
+  const path = row.dataset.path;
+  if (row.dataset.dir === '1') {
+    // 根行（无缓存记录的 path 且在 roots）也走同一开关
+    if (_TV.open.has(path)) _tvCollapse(path);
+    else _tvExpand(path);
+    return;
+  }
   if (typeof openFileSmart === 'function') {
-    $('treePane').querySelectorAll('.tree-row.active').forEach(el => el.classList.remove('active'));
-    row.classList.add('active');
-    openFileSmart(row.dataset.path, 'auto');
-    _treeReveal(row);   // 点文件也对焦（深层文件点开时滚入可视区）
+    _TV.active = path;
+    _tvPaint();
+    openFileSmart(path, 'auto');
+    _tvFocus(path);
   }
 });
 
-// ---- 树行右键：在资源管理器中定位（文件选中它，目录直接打开）----
-// 复用 search.js 的 #ctxMenu 与 .ctx-item 样式（UI 风格统一，铁律2）
 $('treePane').addEventListener('contextmenu', e => {
   const row = e.target.closest('[data-path]');
   if (!row) return;
@@ -296,11 +337,10 @@ $('treePane').addEventListener('contextmenu', e => {
 
 $('treeAddRoot').onclick = () => pickTreeDir();
 $('treeHidden').onclick = () => _treeToggleHidden();
-$('treeRefresh').onclick = () => {   // v2.59：刷新目录——重扫根列表更新状态（收起态一并复位）
+$('treeRefresh').onclick = () => {
   refreshTree();
   showBanner('目录已刷新', 1600);
 };
-_treeSyncHiddenBtn();   // 初始文案（HTML 静态写「显示」，JS 兜底同步）
+_treeSyncHiddenBtn();
 
-// 启动：拉根列表（DOM 在 index.html 静态存在，config 持久化的根直接恢复）
 refreshTree();
