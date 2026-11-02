@@ -81,7 +81,10 @@ def _stream(scope, pattern, use_regex, smart_case, max_hits):
         yield _sse({"type": "error", "err": "未找到 vendor/rg.exe（搜索不可用）"})
         return
     cmd = [RG_EXE, "--json", "--no-messages", "--max-filesize", FILE_SIZE_CAP,
-           "--max-count", "50"]
+           "--max-count", "50",
+           # a218：默认排除依赖/版本库目录（裸目录无 .gitignore 时也排除，
+           # 与 VSCode 搜索默认行为对齐）
+           "-g", "!node_modules/**", "-g", "!.git/**", "-g", "!vendor/**"]
     if not use_regex:
         cmd.append("--fixed-strings")
     else:
@@ -109,11 +112,16 @@ def _stream(scope, pattern, use_regex, smart_case, max_hits):
         hits = files = 0
         truncated = False
         cur_file = None
+        _idle = 0
         while True:
             try:
                 raw = _q1.get(timeout=0.5)
             except _q.Empty:
+                _idle += 1
+                if _idle % 4 == 0:   # a218：每 ~2s 扫描进度心跳（冷 IO 期不再死等）
+                    yield _sse({"type": "progress", "files": files, "hits": hits})
                 continue
+            _idle = 0
             if raw is None:
                 break
             if hits >= max_hits or files >= MAX_FILES:

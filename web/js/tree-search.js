@@ -91,10 +91,9 @@
     let aborted = false;
     st.ctrl.signal.addEventListener('abort', () => { aborted = true; });
     try {
-      for (const sc of scopes) {
-        if (aborted) break;
-        await one(sc, q, () => aborted);
-      }
+      // a218：多根并行（原逐根 await 串行——N 根=N 倍总时长；rg 各自独立
+      // 子进程，并行只受 IO 上限，与 VSCode 全仓搜索同语义）
+      await Promise.all(scopes.map(sc => one(sc, q, () => aborted)));
     } catch (e) {
       if (!aborted) statEl.textContent = '搜索失败: ' + e;
     }
@@ -138,6 +137,11 @@
   let curFileEl = null, curFileHead = null, curFilePath = '', curFileCount = 0;   // a213 审计 P2：head 独立引用（curFileEl 链式插入后变 hit 行，querySelector 计数失效→恒 1）
   function onEvent(ev, q) {
     if (ev.type === 'error') { statEl.textContent = '错误：' + ev.err; return; }
+    if (ev.type === 'progress') {
+      // 冷 IO 扫描期心跳：不再白屏死等（可点取消）
+      if (st.ctrl) statEl.textContent = '扫描中… ' + ev.files + ' 文件 · ' + st.hits + ' 命中';
+      return;
+    }
     if (ev.type === 'file') {
       st.files++;
       curFilePath = ev.path; curFileCount = 0;
