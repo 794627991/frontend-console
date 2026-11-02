@@ -132,6 +132,20 @@ def tree_add_root():
     if not os.path.isdir(p):
         return jsonify({"ok": False, "err": "目录不存在"}), 400
     roots = _tree_roots()
+    # 对抗审 a206C P3：嵌套根拒绝——D:\work 与 D:\work\sub 同时登记会使
+    # 同一 path 双行渲染（open/cache/idx 按 path 共享，两处同开同拉、
+    # 对焦恒跳靠后行）。精确重复上面已挡，这里挡父子包含（双向）
+    def _nested(a, b):
+        try:
+            return os.path.commonpath([a, b]) in (a, b) and a != b
+        except ValueError:
+            return False   # 跨盘符 commonpath 抛错——不可能嵌套
+    for r in roots:
+        if _nested(p, r):
+            inside = (r in p and p != r)
+            msg = "嵌套根：%s %s已登记根 %s——请先移除旧根再添加，或添加未覆盖的兄弟目录" % (
+                p, "位于" if inside else "覆盖了", r)
+            return jsonify({"ok": False, "err": msg}), 400
     if p not in roots:
         roots.append(p)
         _save_tree_roots(roots)

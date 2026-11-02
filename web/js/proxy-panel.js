@@ -376,22 +376,11 @@ function buildProxyTab() {
       hrStatsEl.style.color = 'var(--accent)';
       return;
     }
-    let reqs = 0, hit = null;
-    // 对抗审 a205R：/__bili/stats 字段为 requests/cacheHitPct（无 hitPct）；
-    // 压缩节省 tokensSaved 不在此接口——后端 stats() 已合并 /__bili/sessions
-    // 汇总进 totals.tokensSaved
-    let saved = 0;
-    try {
-      const tot = st.totals || {};
-      saved = tot.tokensSaved || 0;
-    } catch (_) {}
-    try {
-      const sess = st.sessions || [];
-      for (const x of sess) {
-        reqs += x.requests || 0;
-        if (typeof x.cacheHitPct === 'number') hit = x.cacheHitPct;
-      }
-    } catch (_) {}
+    // 对抗审 a206A 口径统一：reqs/saved 同源 /__bili/sessions 汇总（含历史
+    // 会话），hit 为活会话 cached/input 全局比——后端 totals 三键直供
+    const tot = st.totals || {};
+    const reqs = tot.requests || 0, saved = tot.tokensSaved || 0;
+    const hit = typeof tot.cacheHitPct === 'number' ? tot.cacheHitPct : null;
     hrStatsEl.textContent = `bili :18788 | ${_pxFnum(reqs)} 请求 | 压缩节省 ${_pxTok(saved)} token` +
       (hit !== null ? ` | 缓存命中 ${hit}%` : '');
     hrStatsEl.style.color = saved ? 'var(--accent)' : 'var(--muted)';
@@ -583,12 +572,8 @@ function buildProxyTab() {
     m.classList.add('show');
   }
 
-  // ---- headroom 压缩配置弹窗（仿原工具 _hr_mode_dialog，模式卡+CCR+预览）----
-  // off 永远可选（代理未跑时=只记模式下次启动生效，原工具同款降级）；
-  // full/light 在 headroom 缺失时禁用。应用一次 POST {mode, ccr} 同改。
-  // bili 压缩配置弹窗（a201 换代自 headroom 弹窗；模式卡+CCR+预览）
-  // off 永远可选（代理未跑时=只记模式下次启动生效）；on 在 bili 缺失时禁用
-  // bili 压缩配置弹窗（a201 换代自 headroom；模式卡+CCR+预览）
+  // ---- bili 压缩配置弹窗（a201 换代自 headroom；模式卡+预览）----
+  // off 永远可选（代理未跑=只记模式下次启动生效）；on 在 bili 缺失时禁用
   const HR_CARDS = [
     ['on', '开启压缩', '模型驱动分层压缩', '收益: tier-1/2/3 分层蒸馏（可逆，decompress 可恢复原文），子代理独立压缩命名空间，缓存友好设计（健康线 95-97% 命中）\n减益: 需 Node >=22 + npm install -g billion-context；压缩调用占少量 token（健康线 <=2%）'],
     ['off', '关闭压缩', '不启动 bili', '收益: 零额外内存、零冷启动等待\n减益: 无任何压缩收益，流量原样过重试代理'],
@@ -630,8 +615,8 @@ function buildProxyTab() {
       document.body.appendChild(m);
     }
     const cards = m.querySelectorAll('[data-hr-card]');
-    // 初始态：预选当前模式/CCR；on 需已装 billion-context 且代理在跑
-    // （与后端 apply_hr_mode 拒绝口径一致）；off 永远可选
+    // 初始态：预选当前模式；on 需已装 billion-context 且代理在跑（与后
+    // 端 apply_bili_mode 拒绝口径一致）；off 永远可选
     const canFull = hasHr && !!j.running;
     cards.forEach(lab => {
       const rb = lab.querySelector('input');

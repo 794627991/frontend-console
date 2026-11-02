@@ -151,6 +151,25 @@ class BaseUrlManager:
             env = d.get("env")
             old = env.get("ANTHROPIC_BASE_URL") if isinstance(env, dict) else None
             if old == target:
+                # 对抗审 a206A P2：base_url 已就位仍要校正 DISABLE_AUTO_
+                # COMPACT（外部工具/手改 settings 丢键时自愈）——原样 continue
+                # 会把缺键永远留在那
+                if isinstance(env, dict):
+                    want = "/bili/" in target
+                    has = env.get("DISABLE_AUTO_COMPACT") == "1"
+                    if want != has:
+                        if want:
+                            env["DISABLE_AUTO_COMPACT"] = "1"
+                        else:
+                            env.pop("DISABLE_AUTO_COMPACT", None)
+                        tmp = "%s.%d.%d.tmp" % (path, os.getpid(), threading.get_ident())
+                        try:
+                            with open(tmp, "w", encoding="utf-8") as f:
+                                json.dump(d, f, indent=2, ensure_ascii=False)
+                                f.write(chr(10))
+                            os.replace(tmp, path)
+                        except OSError:
+                            pass
                 skipped.append(os.path.basename(path))
                 continue
             d.setdefault("env", {})["ANTHROPIC_BASE_URL"] = target
@@ -586,9 +605,10 @@ class BiliController:
             r = urllib.request.urlopen(
                 "http://127.0.0.1:%d/__bili/stats" % BILI_PORT, timeout=2)
             d = json.loads(r.read().decode("utf-8"))
-            # 对抗审 a205R：压缩节省（tokensSaved）不在 /stats——在 /__bili/
-            # sessions 的会话条目里；命中率字段是 cacheHitPct 非 hitPct。
-            # 合并拉取：本地回环两次 GET，5s 周期成本可忽略
+            # 对抗审 a205R+a206A：压缩节省（tokensSaved）不在 /stats——在
+            # /__bili/sessions（含历史会话）里。a206A 统一口径：reqs/saved
+            # 同源取 /sessions（历史+活），命中率从 /stats 活会话的
+            # cached/input 总和算全局比——不再混两个口径在一条统计里
             try:
                 r2 = urllib.request.urlopen(
                     "http://127.0.0.1:%d/__bili/sessions" % BILI_PORT, timeout=2)
@@ -597,7 +617,16 @@ class BiliController:
                 if isinstance(items, list):
                     d["totals"] = {"tokensSaved": sum(
                         int(x.get("tokensSaved") or 0) for x in items
-                        if isinstance(x, dict))}
+                        if isinstance(x, dict)),
+                        "requests": sum(int(x.get("requests") or 0)
+                                        for x in items if isinstance(x, dict))}
+            except Exception:
+                pass
+            try:
+                cin = sum(int(x.get("inputTokens") or 0) for x in d.get("sessions") or [])
+                cch = sum(int(x.get("cachedTokens") or 0) for x in d.get("sessions") or [])
+                if cin > 0:
+                    d.setdefault("totals", {})["cacheHitPct"] = round(cch * 100 / cin)
             except Exception:
                 pass
             return d
@@ -1224,40 +1253,14 @@ def re_point_upstream(new_direct_url, was_proxy=None, notify=True, _epoch=None):
             _proxy_notify()
         return True, "代理上游已跟随切换（base_url 保持直连）"
     new_path = urlsplit(new_direct_url).path or "/"
+    # 对抗审 a206A：headroom 时代上游烘死在 env 里需重拉——bili 是 URL
+    # 前缀模式，上游每请求从 /bili/<upstream> 解码，_bili_url() 已随新方
+    # 案求值，重切 base_url 即完成切换，零停机零重拉（旧重拉分支只制造
+    # 5s+ 停机窗口，已拆）
     if (_bili.ping_existing() and _bili_mode != "off" and new_path != old_path):
-        # headroom 上游含旧网关路径，路径变了不重拉 → 打旧路径上新网关 404。
-        # 先指 37349 保会话；后台重拉 headroom，就绪后**条件**升 8787——
-        # 期间用户又切方案/手动切直连（epoch 变了或 base_url 已非自家入口）
-        # 时不覆盖，由后续动作收尾（apply_bili_mode 的 worker 是无条件
-        # apply(_bili_url())，会顶掉手动直连，故此处自写不复用）
-        _bmgr.apply(_retry_url())
+        _bmgr.apply(_bili_url())
         _autoswitched = True
-        bili_mode_snap = _bili_mode
-
-        def _hr_worker():
-            global _autoswitched
-            _switch_busy_inc()   # headroom 重拉期间也算「未稳定」，禁止再切
-            try:
-                if _epoch is not None and _epoch != _repoint_seq:
-                    return   # 排队期间有更新动作：重拉作废
-                _bili.stop()
-                _bili.start(bili_mode_snap)
-                _wait_bili_ready()
-                with _switch_lock:
-                    if _epoch is not None and _epoch != _repoint_seq:
-                        return
-                    # 只有链路仍处于代理意图（base_url=自家入口）才升 8787
-                    if _is_own_proxy_url(_bmgr.read_current_url()):
-                        _bmgr.apply(_bili_url())
-                        _autoswitched = True
-                log.info("方案切换：headroom 已按新路径重启")
-            except Exception as e:
-                log.warning("方案切换后重启 headroom 失败，维持重试代理: %s", e)
-            finally:
-                _switch_busy_dec()
-
-        threading.Thread(target=_hr_worker, daemon=True).start()
-        msg = "代理上游已切换，headroom 按新路径重启中"
+        msg = "代理上游已切换（压缩链路零停机跟随）"
     else:
         target = _proxy_mode_url()
         _bmgr.apply(target)
@@ -1689,6 +1692,14 @@ def proxy_shutdown(force_rollback=False):
     try:
         if _quota is not None:
             _quota.stop()
+    except Exception:
+        pass
+    # 对抗审 a206A P2：回滚先行——原顺序先停 bili（proc.wait 可达 5s）再回
+    # base_url，退出窗口内 CC 请求打死端口。先切直连（毫秒级）再停进程
+    try:
+        if force_rollback or _autoswitched:
+            _bmgr.apply(_direct_url())
+            _autoswitched = False
     except Exception:
         pass
     try:

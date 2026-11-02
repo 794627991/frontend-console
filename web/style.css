@@ -884,7 +884,6 @@
   }
   .tree-roots { flex: 1; min-height: 0; overflow-y: auto; overflow-x: auto; padding: 4px 8px 8px; }
   .tree-empty { padding: 30px 10px; font-size: 10px; color: var(--muted); text-align: center; line-height: 1.8; }
-  .tree-root { margin-bottom: 2px; }
   /* 根行：文件夹名 + hover 删根 ✕（仿 .recent-item .actions 显隐模式） */
   /* 不能加 overflow:hidden —— 它会让本行自己成为 sticky 的滚动容器，下面 .root-x 的
      position:sticky 就再也钉不住了。行宽是 max-content，本来也裁不到任何东西。 */
@@ -917,37 +916,16 @@
   .tree-row .t-name { min-width: 0; }
   .tree-root-head { width: max-content; min-width: 100%; }
   .tree-row svg, .tree-root-head svg { flex-shrink: 0; }
-  .tree-children { display: grid; }
+  
   .tree-more { padding: 0 8px; height: 22px; display: flex; align-items: center;
     font-size: 10px; color: var(--muted); font-family: var(--font-mono);
     white-space: nowrap; width: max-content; min-width: 100%; position: absolute; }
   /* v3 虚拟化：sizer 撑总高/总宽（宽度=全树最深行估算，横滚可达） */
   .tree-sizer { position: relative; }
   .tree-children { display: grid; }
-  /* 缩进梯度：data-depth 属性选择器（免逐行内联 style）。
-     不再 6 层封顶——封顶时深层全挤在 88px 分不清父子（用户实锤层级不明）。
-     每层 14px；层级参考线用行内伪元素画在 t-name 左缘，往上是 n 层竖线 */
-  .tree-row[data-depth="0"] { padding-left: 6px; }
-  .tree-row[data-depth="1"] { padding-left: 20px; }
-  .tree-row[data-depth="2"] { padding-left: 34px; }
-  .tree-row[data-depth="3"] { padding-left: 48px; }
-  .tree-row[data-depth="4"] { padding-left: 62px; }
-  .tree-row[data-depth="5"] { padding-left: 76px; }
-  .tree-row[data-depth="6"] { padding-left: 90px; }
-  .tree-row[data-depth="7"] { padding-left: 104px; }
-  .tree-row[data-depth="8"] { padding-left: 118px; }
-  .tree-row[data-depth="9"] { padding-left: 132px; }
-  .tree-row[data-depth="10"] { padding-left: 146px; }
-  .tree-row[data-depth="11"] { padding-left: 160px; }
-  .tree-row[data-depth="12"] { padding-left: 174px; }
-  .tree-row[data-depth="13"] { padding-left: 188px; }
-  .tree-row[data-depth="14"] { padding-left: 202px; }
-  .tree-row[data-depth="15"] { padding-left: 216px; }
-  .tree-row[data-depth="16"] { padding-left: 230px; }
-  .tree-row[data-depth="17"] { padding-left: 244px; }
-  .tree-row[data-depth="18"] { padding-left: 258px; }
-  .tree-row[data-depth="19"] { padding-left: 272px; }
-  .tree-row[data-depth="20"] { padding-left: 286px; }
+  /* 缩进：v3 虚拟化起全部由 _tvRowHtml 行内 style 提供（a206C：原 20 条
+     padding 梯度选择器被行内永久覆盖成死规则，删除；data-depth 属性仍被
+     下方 ::before 层级参考线消费，属性保留） */
   /* 层级参考线：每条树行在名字左侧画 depth 条竖线（VSCode indent guides 同款语义），
      10% 亮度不抢焦点，层级归属一眼可辨 */
   .tree-row[data-depth="1"]::before, .tree-row[data-depth="2"]::before,

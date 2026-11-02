@@ -425,6 +425,20 @@ def _prep_bili_dir():
             # 对抗审 a206B P2：半截 zip 永久卡死重跑（存在性检查放行坏档，
             # zipfile 每次抛 BadZipFile）——.part 下载完再原子改名
             urllib.request.urlretrieve(url, zpath + ".part")
+            # 对抗审 a206B P3：官方 SHASUMS256.txt 原产地校验（企业 MITM 换
+            # 合法 zip 无 CRC 兜底的场景）
+            import hashlib
+            h = hashlib.sha256(open(zpath + ".part", "rb").read()).hexdigest()
+            sums = urllib.request.urlopen(
+                "https://nodejs.org/dist/v%s/SHASUMS256.txt" % BILI_NODE_VERSION,
+                timeout=30).read().decode()
+            expect = next((l.split()[0] for l in sums.splitlines()
+                           if l.strip().endswith(
+                               "node-v%s-win-x64.zip" % BILI_NODE_VERSION)), "")
+            if expect and h.lower() != expect.lower():
+                os.remove(zpath + ".part")
+                raise SystemExit("[bili] ✗ node.zip 校验失败（shasum 不符，"
+                                 "可能传输损坏或被代理替换）——已删除可重试")
             os.replace(zpath + ".part", zpath)
         with zipfile.ZipFile(zpath) as z:
             member = "node-v%s-win-x64/node.exe" % BILI_NODE_VERSION
@@ -434,9 +448,27 @@ def _prep_bili_dir():
         print("[bili] node.exe 就位")
     if not os.path.isfile(entry):
         print("[bili] npm install billion-context@%s …" % BILI_NPM_VERSION)
-        subprocess.run(["npm", "install", "--prefix", root,
-                        "billion-context@%s" % BILI_NPM_VERSION],
-                       check=True, shell=True)
+        # 对抗审 a206B P3：无 npm 机器上裸 CalledProcessError 回溯→人话指引
+        try:
+            subprocess.run(["npm", "install", "--prefix", root,
+                            "billion-context@%s" % BILI_NPM_VERSION],
+                           check=True, shell=True)
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            raise SystemExit("[bili] ✗ npm 安装失败（%s）。打包机需先装 "
+                             "Node.js ≥22（自带 npm）再运行 --prep-bili" % e)
+        # 对抗审 a206B P2-5：npm 写入的 package.json 是 ^caret 浮动——lock
+        # 被删时重跑会静默漂到最新 0.1.x。改写为精确版本钉死
+        pj = os.path.join(root, "package.json")
+        try:
+            import json as _j
+            d = _j.load(open(pj, encoding="utf-8"))
+            deps = d.get("dependencies") or {}
+            if deps.get("billion-context") != BILI_NPM_VERSION:
+                deps["billion-context"] = BILI_NPM_VERSION
+                _j.dump(d, open(pj, "w", encoding="utf-8"), indent=2)
+                print("[bili] package.json 已钉精确版本 %s" % BILI_NPM_VERSION)
+        except Exception:
+            pass
     print("[bili] 组装完成 → %s" % root)
 
 
@@ -483,7 +515,9 @@ def _offline_sources(kinds=None):
         if os.path.isdir(bl) and _take("bili"):
             # a201 内置压缩引擎：Node 便携运行时 + billion-context 依赖树
             # （组装见 _prep_bili_dir）。整目录全收（claude-code 同款教训：
-            # 挑扩展名会丢 package.json 等命脉文件，装出空壳）
+            # 挑扩展名会丢 package.json 等命脉文件，装出空壳）。
+            # 对抗审 a206B P3：.ts/.map/.mjs 等 ~48MB 高可压文本原走 raw，
+            # deflate 后包体省 30MB+
             for r, ds, fs in os.walk(bl):
                 ds.sort()
                 # 对抗审 a206B P2：junction 下钻防护（os.path.islink 对 Windows
@@ -496,7 +530,8 @@ def _offline_sources(kinds=None):
                     arc = "bili/" + os.path.relpath(p2, bl).replace("\\", "/")
                     low = f.lower()
                     mode = ("deflate" if low.endswith(
-                        (".exe", ".dll", ".node", ".cjs", ".js", ".json"))
+                        (".exe", ".dll", ".node", ".cjs", ".js", ".json",
+                         ".ts", ".cts", ".mts", ".mjs", ".map"))
                         else "raw")
                     out.append((p2, arc, "bili", mode, None))
         cc = os.path.join(src, "claude-code")

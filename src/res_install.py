@@ -24,9 +24,10 @@ import tempfile
 from src import fcpk
 
 # 各 kind 在包内的目录前缀（与打包侧一致）
-_KIND_DIRS = {"webview2": "webview2/", "bili": "bili/", "dotnet": "install/",
-              "node": "install/", "git": "install/",
-              "claude": "claude-code/", "pydeps": "pydeps/"}
+# 对抗审 a206B P3：_KIND_DIRS 全仓无消费（死配置）——包内前缀与释放路径
+# 的一致性由打包/安装两侧约定保证（build.py 的 arc 前缀 ↔ 各 installer
+# 的落位），此处删除防误导。约定备忘：webview2→webview2/、bili→bili/、
+# dotnet/node/git→install/、claude→claude-code/、pydeps→pydeps/
 
 # 安装顺序：先决条件在前
 ORDER = ["dotnet", "webview2", "node", "git", "claude", "bili", "pydeps"]
@@ -120,7 +121,17 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None,
                         if e.get("kind") in set(plan)
                         and e.get("mode") != "link") or 1
 
-        staging = tempfile.mkdtemp(prefix="fcpk_stage_")
+        # 对抗审 a206B P2/P3：staging 挪到 exe 同盘——原 %TEMP% 跨盘时
+        # claude-code 长路径（实测树内最长 175 字符 + TEMP 前缀 60 = 236/260，
+        # 内网默认 LongPaths=0 时再长一点即爆）且任何整目录 move 必跨卷；
+        # 同盘短前缀双防。exe 目录不可写时回退 TEMP（降级不阻断）
+        try:
+            from src.res_boot import app_dir as _ad
+            _stage_base = os.path.join(_ad(), ".fcpk_stage")
+            os.makedirs(_stage_base, exist_ok=True)
+            staging = tempfile.mkdtemp(prefix="s_", dir=_stage_base)
+        except OSError:
+            staging = tempfile.mkdtemp(prefix="fcpk_stage_")
         _ck()
         # 对抗审 a206B P1：staging 在 %TEMP%（常为 C 盘）而工具常解压在
         # D/E 盘——整目录 os.replace 跨卷必炸（WinError 17 实测）。bili 改
