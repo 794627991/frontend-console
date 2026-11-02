@@ -3769,7 +3769,7 @@ html {
   overflow-y: auto; font-variant-numeric: tabular-nums; }
 
 /* ---- v3.2.31 会话动态胶囊：分屏唯一开关的角部浮标 ----
-   胶囊常驻 harness wrap 内（跨 tab 天然隐藏），色板全走 --hgd-*/主题变量，
+   胶囊常驻 harness wrap 内（跨 tab 天然隐藏），色板全走 hgd 系列主题变量，
    零写死色；秒表 tabular-nums。 */
 
 .hg-dyn-capsule {
