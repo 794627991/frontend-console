@@ -95,6 +95,7 @@ if (window.__HG_DBG__) {
       <div class="sidebar-sheet-tab active" data-sheet="open">打开 <span class="count" id="portCount">0</span></div>
       <div class="sidebar-sheet-tab" data-sheet="recent">最近</div>
       <div class="sidebar-sheet-tab" data-sheet="tree">文件树</div>
+    <div class="sidebar-sheet-tab" data-sheet="search">搜索</div>
     </div>
     <div class="sidebar-sheet-pane active" data-sheet="open">
       <div class="port-list" id="portList">
@@ -116,7 +117,18 @@ if (window.__HG_DBG__) {
           <button class="btn ghost" id="treeRefresh" title="刷新目录：重扫所有根文件夹并更新状态">⟳</button>
         </div>
         <div class="tree-roots" id="treeRoots"></div>
+      
+    <div class="sidebar-sheet-pane" data-sheet="search">
+      <div class="ts-bar">
+        <input type="text" class="ts-q" data-ts-q placeholder="搜索文件内容…（Enter 开始）" spellcheck="false">
+        <button class="ts-tg" data-ts-case title="区分大小写（默认智能大小写）">Aa</button>
+        <button class="ts-tg" data-ts-rex title="正则模式">.*</button>
+        <button class="ts-tg" data-ts-fn title="函数定义模式（跨 C/C++/Python/JS/Shell）">fn</button>
       </div>
+      <div class="ts-scope" data-ts-scope title="点击重置为全部根">范围：全部根</div>
+      <div class="ts-results" data-ts-results><div class="ts-empty">输入关键词回车搜索（ripgrep 引擎）</div></div>
+      <div class="ts-stat" data-ts-stat></div>
+    </div></div>
     </div>
     <!-- 侧边栏底部 TFTP 面板（高度可拖拽调节）：设备与 PC 互传文件 -->
     <div class="tftp-resizer" id="tftpResizer" title="拖动调节 TFTP 面板高度">⣿</div>
@@ -469,6 +481,7 @@ if (window.__HG_DBG__) {
 <script src="web/js/ctx-menu.js?v=__HG_VER__"></script>
 <script src="web/js/file-tree.js?v=__HG_VER__"></script>
 <script src="web/js/tree-fileops.js?v=__HG_VER__"></script>
+<script src="web/js/tree-search.js?v=__HG_VER__"></script>
 <script src="web/js/bit-calc.js"></script>
 <script src="web/js/proxy-panel.js"></script>
 <script src="web/js/proxy-usage.js"></script>

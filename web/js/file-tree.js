@@ -184,6 +184,35 @@ function treeInvalidate(dirPath) {
 }
 window.treeInvalidate = treeInvalidate;
 
+// a209批3：reveal 到树（搜索结果点击文件头定位）——逐父段展开到目标，
+// 期间显示 loading（复用展开态）；目标不可达（截断/权限）时提示
+async function treeReveal(path) {
+  const BS = String.fromCharCode(92);
+  const norm = String(path).split(BS).join('/');
+  const segs = norm.split('/').filter(Boolean);
+  // 从已展开的最深祖先开始逐层展开
+  let cur = '';
+  for (let i = 0; i < segs.length; i++) {
+    cur = cur ? cur + '/' + segs[i] : segs[i];
+    // 规范化比对（Windows 盘符大小写不敏感按原路径拼）
+    if (i === segs.length - 1) break;
+    const dirPath = cur;
+    if (!_TV.open.has(dirPath)) {
+      _tvExpand(dirPath);
+      // 等待 cache 落地（拉取完成）——轮询 2s 兜底
+      const t0 = Date.now();
+      while (!_TV.cache.has(dirPath) && Date.now() - t0 < 2000) {
+        await new Promise(r => setTimeout(r, 80));
+      }
+    }
+  }
+  _TV.active = path;
+  _TV.rendered = [-1, -1];
+  _tvPaint();
+  _tvFocus(path);
+}
+window.treeReveal = treeReveal;
+
 function _tvPaint() {
   const host = $('treeRoots');
   if (!host) return;

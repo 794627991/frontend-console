@@ -42,6 +42,7 @@ from src.httpfile import httpfile_bp, _hfs, _Handler as _hfs_handler
 from src.editor_files import edit_bp
 from src.hex_files import hex_bp
 from src.file_tree import tree_bp
+from src.tree_search import tree_search_bp
 
 
 app = Flask(__name__)
@@ -109,6 +110,7 @@ app.register_blueprint(assoc_bp)
 
 # 注册文件树工作区 Blueprint（路由 /api/tree/*，根目录登记制安全模型）
 app.register_blueprint(tree_bp)
+app.register_blueprint(tree_search_bp)
 
 # 注册版本控制 Blueprint（路由 /api/vcs/*，git/svn 查看+常用写；沿文件树登记根安全模型）
 from src.vcs import vcs_bp

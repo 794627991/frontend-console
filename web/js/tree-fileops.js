@@ -159,6 +159,9 @@
         try { navigator.clipboard.writeText(relPath(path)); showBanner('已复制相对路径', 1600); } catch (_) {}
       } });
     }
+    if (isDir && typeof window.tsSearchIn === 'function') {
+      items.push({ icon: '🔍', label: '在此文件夹中搜索', action: () => window.tsSearchIn(path) });
+    }
     if (isRoot) {
       items.push({ icon: '✕', label: '移除根（不删文件）', action: () => {
         fetch('/api/tree/remove_root', { method: 'POST',
