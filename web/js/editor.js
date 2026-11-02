@@ -575,6 +575,9 @@ function _edUpdateInfo(conn) {
     const p = conn.extPath || '';
     conn.pathEl.textContent = p;
     conn.pathEl.title = p;
+    // a229 自检 E1：站内文件无路径——空 span 仍吃 margin-left:auto 会抢
+    // lv-info 的右贴位（统计信息错位左移）。无路径即隐（display 收放）
+    conn.pathEl.style.display = p ? '' : 'none';
   }
   _edRenderOutline(conn);   // 大纲面板开着时同步刷新（内容/块变化即更新）
 }
