@@ -189,13 +189,17 @@ async function _tvExpand(path) {
 }
 
 function _tvCollapse(path) {
-  // 对抗审 a206C：v2 折叠销毁整棵子树 DOM=后代展开态随之消失；扁平化后
-  // open/cache/seq 只删自身会残留后代——重展开陈旧数据直接可见（无 loading
-  // 无重拉）且三张 Map 无界增长。按路径前缀清后代（含自身），语义对齐 v2
-  const pre = path.replace(/[\/]+$/, '') + '/';
+  // a208 实锤修复（用户报「展开后点不回去」）：原 a206C 版两个坑——
+  // ①[..._TV.cache] 把 Map 展开成 [key, value] 二元组数组（Set 展开才是
+  // 元素），k.startsWith 直接 TypeError 中断收起整链；②尾部斜杠正则在
+  // 转义损耗下只匹配 / 不匹配 \（Windows 尾分隔符不吃）。改为
+  // .keys() 迭代 + 零正则循环去尾
+  let pre = path;
+  while (pre.endsWith('/') || pre.endsWith('\\')) pre = pre.slice(0, -1);
+  pre += '/';
   for (const k of [..._TV.open]) if (k === path || k.startsWith(pre)) _TV.open.delete(k);
-  for (const k of [..._TV.cache]) if (k === path || k.startsWith(pre)) _TV.cache.delete(k);
-  for (const k of [..._TV.seq]) if (k === path || k.startsWith(pre)) _TV.seq.delete(k);
+  for (const k of [..._TV.cache.keys()]) if (k === path || k.startsWith(pre)) _TV.cache.delete(k);
+  for (const k of [..._TV.seq.keys()]) if (k === path || k.startsWith(pre)) _TV.seq.delete(k);
   _tvRebuild();
   _tvFocus(path);           // 折叠对焦被折叠行
 }
