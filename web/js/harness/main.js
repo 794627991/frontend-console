@@ -226,8 +226,8 @@ function buildClaudeHarnessTab(opts = {}) {
         if (stack) [...stack.children].forEach(n => {
           if ((n.querySelector('.n-title') || {}).textContent.startsWith('版本 harness')) _notifyDismiss(n);
         });
-        showBanner('版本 ' + _v + ' · 诊断日志（最新在前）：' + perf + '<br>' + (lines.length
-          ? lines.slice(0, 14).map(esc).join('<br>') : '（空）'), 8000);
+        showBanner('版本 ' + _v + ' · 诊断日志（最新在前）：' + perf + '\n' + (lines.length
+          ? lines.slice(0, 14).map(esc).join('\n') : '（空）'), 8000);
       } catch (e) { try { showBanner('诊断日志读取失败：' + e, 4000, true); } catch (_) {} }
     };
     const topEl = _hgQ('.hg-top');

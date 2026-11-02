@@ -292,6 +292,17 @@ def tree_fileops():
             fp = _under_roots(str(data.get("path") or ""))
             if not fp or not os.path.exists(fp):
                 return jsonify({"ok": False, "err": "路径不存在"}), 404
+            # a231 审计 P2：SHFileOperation+ALLOWUNDO 对网络路径（UNC/映射盘）
+            # 不经回收站直接永久删且返回成功——前端承诺「可恢复」静默失效。
+            # 网络根上一律拒绝，引导资源管理器操作
+            try:
+                import ctypes as _ct
+                _drive = fp[:3] if fp[1:2] == ":" else None   # 'X:' 形式；UNC 走前缀判定
+                if fp.startswith("\\\\") or (_drive and _ct.windll.kernel32.GetDriveTypeW(_drive) == 4):
+                    return jsonify({"ok": False, "err":
+                        "网络路径的删除不经回收站（不可恢复），请在资源管理器中操作"}), 400
+            except Exception:
+                pass
             if fp in _tree_roots():
                 return jsonify({"ok": False, "err": "根目录请用「移除根」（不删磁盘文件）"}), 400
             ok, err = _recycle_to_trash(fp)

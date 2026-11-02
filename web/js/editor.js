@@ -489,8 +489,7 @@ function _edMarkDirty(conn) {
     const dirty = cur !== conn.savedData;
     if (dirty !== conn.dirty) {
       conn.dirty = dirty; _edMarkTab(conn);
-      if (typeof treeDecoRefresh === 'function') treeDecoRefresh();   // a213 审计 P2：.note 分支联动
-      if (typeof treeDecoRefresh === 'function') treeDecoRefresh();   // a209批1：树 dirty 橙点联动
+      if (typeof treeDecoRefresh === 'function') treeDecoRefresh();   // a231 去重（原相邻双调）   // a213 审计 P2：.note 分支联动
     }
     _edUpdateInfo(conn);
     return;
@@ -1907,7 +1906,7 @@ async function openFileSmart(path, mode, opts) {
     // a213 审计 P1：新开分支 buildEditorTab 同步返回时 monaco 尚未创建
     // （_edInitContent 异步）——原实现恒 no-op。轮询等待就绪（80ms 步进，
     // 3s 兜底——与 notes-nav nnOpenAndJump 同思路）
-    if (!conn || !o || !o.line) return;
+    if (!conn || !o || !o.line || conn.isNote) return;   // .note 无 monaco，白轮 3s
     const t0 = Date.now();
     const tryJump = () => {
       const m = conn.monaco;
@@ -1919,7 +1918,9 @@ async function openFileSmart(path, mode, opts) {
         } catch (_) {}
         return;
       }
-      if (Date.now() - t0 < 3000 && conn.isConnected !== false) setTimeout(tryJump, 80);
+      // a231 审计 P3：conn.isConnected 从未被赋值（恒真死代码）——改按
+      // connections 注册表存活性判（关 tab 即停轮询）
+      if (Date.now() - t0 < 3000 && connections[conn.portId] === conn) setTimeout(tryJump, 80);
     };
     tryJump();
   };

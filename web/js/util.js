@@ -57,10 +57,12 @@ function _notifyMount(d, ms) {
   // 栈封顶 6 条：超出丢最旧（FIFO）——连环点 20 个快捷打开时不能让转圈
   // 通知盖满半屏（铁律①流畅/可用性）。被丢的条若是常驻任务(无 timer)，
   // 后续 notifyTaskDone 会静默 no-op（DOM 已 remove，_closed 检查兜住）
-  while (stack.children.length >= 4) {   // a226：封顶降 4（通知墙最大面积减半）
-    const oldest = stack.children[stack.children.length - 1];   // column-reverse: 最旧在最后
-    _notifyDismiss(oldest);
-    if (stack.children.length >= 8) oldest.remove();   // 防御:dismiss 是动画退出,极端时强移
+  // a231 审计 P0：原 while 靠 _notifyDismiss 的 200ms 异步 remove 减计数——
+  // 同步循环里定时器不派发、live HTMLCollection 长度不变 → 无限循环整页冻结
+  // （第 5 条并发通知必触发）。同步摘除；DOM 首位才是最旧（column-reverse
+  // 只反转视觉不反转 DOM 序——旧注释判错，原代码丢的是最新通知）
+  while (stack.children.length >= 4) {
+    stack.children[0].remove();
   }
   stack.appendChild(d);
   // 入场动画（CSS .notify 定义）后自动消失（ms=0 常驻，由任务完成时关闭）
