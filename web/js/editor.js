@@ -67,7 +67,7 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
     for (const pid in connections) {
       const c = connections[pid];
       if (c && c.meta && c.meta.kind === 'editor' && c.meta.label === name) {
-        switchTab(pid); return;
+        switchTab(pid); return c;   // a209批1：去重分支也返回 conn（openFileSmart 行号跳转需要拿到实例）
       }
     }
   }
@@ -210,6 +210,7 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
           conn.usedEnc = j.used_enc;
           window._edLastUsedEnc = j.used_enc;
           conn.dirty = false;
+    if (typeof treeDecoRefresh === 'function') treeDecoRefresh();
           if (conn.monaco) {
             const pos = conn.monaco.getPosition();
             conn.monaco.setValue(j.text);
@@ -482,7 +483,10 @@ function _edMarkDirty(conn) {
     // 纯文本精确比对字符串（Monaco/textarea 同源）
     const cur = conn.monaco ? conn.monaco.getValue() : (conn.ta ? conn.ta.value : '');
     const dirty = cur !== conn.savedData;
-    if (dirty !== conn.dirty) { conn.dirty = dirty; _edMarkTab(conn); }
+    if (dirty !== conn.dirty) {
+      conn.dirty = dirty; _edMarkTab(conn);
+      if (typeof treeDecoRefresh === 'function') treeDecoRefresh();   // a209批1：树 dirty 橙点联动
+    }
     _edUpdateInfo(conn);
     return;
   }
@@ -874,7 +878,8 @@ async function edSave(conn) {
     const j = await r.json();
     if (!j.ok) { showBanner(j.err || '保存失败', 4000, true); return; }
     conn.savedData = content;
-    conn.dirty = false; _edMarkTab(conn); _edUpdateInfo(conn);
+    conn.dirty = false;
+    if (typeof treeDecoRefresh === 'function') treeDecoRefresh(); _edMarkTab(conn); _edUpdateInfo(conn);
     // 自己刚保存的：刷新 mtime 基准，磁盘检测不误报自己的写入
     if (conn.fileMtime) {
       const sq = conn.extPath
@@ -978,7 +983,8 @@ async function _edCheckDiskChanged(conn) {
           try { conn.monaco.setPosition(pos); conn.monaco.revealLineInCenter(pos.lineNumber); } catch(_) {}
         } else if (conn.ta) conn.ta.value = j2.text;
         conn.savedData = content;
-        conn.dirty = false; _edMarkTab(conn); _edUpdateInfo(conn);
+        conn.dirty = false;
+    if (typeof treeDecoRefresh === 'function') treeDecoRefresh(); _edMarkTab(conn); _edUpdateInfo(conn);
         conn.fileMtime = j2.mtime;
         conn._fileGoneWarned = false;
         showBanner('已重新加载 ' + conn.meta.label, 2000);
@@ -1075,6 +1081,7 @@ function edRenamePrompt(conn) {
         conn.savedData = content;
         conn.onDisk = true;
         conn.dirty = false;
+    if (typeof treeDecoRefresh === 'function') treeDecoRefresh();
         showBanner('已保存 ' + j.name, 1500);
       } catch(e) { showBanner('保存失败: ' + e, 4000, true); }
     } else {
@@ -1182,6 +1189,7 @@ function _edCloseNow(conn) {
   }
   conn.tab.remove(); conn.wrap.remove();
   delete connections[conn.portId];
+  if (typeof treeDecoRefresh === 'function') treeDecoRefresh();   // a209批1：树 open/dirty 装饰联动
   const remaining = Object.keys(connections).sort((a, b) => {
     const ka = sortKeyFn(a), kb = sortKeyFn(b);
     if (ka[0] !== kb[0]) return ka[0] - kb[0];
@@ -1863,7 +1871,20 @@ function _edUndoInit(conn) {
 // mode: 'auto'（默认按大小规则）| 'edit' | 'view' | 'hex'
 // 规则：未知/二进制类型 → 弹窗让选（二进制/阅读器/编辑器）；
 //       已知文本：<20M 编辑器；20~30M 弹窗提示选（默认建议阅读器）；>30M 强制阅读器。
-async function openFileSmart(path, mode) {
+// a209批1：第三参 opts（可选，6 个既有调用点零感知）：{line, col}——打开后落点
+// 到指定行列（文件树搜索跳转/树 reveal 用）。Monaco revealLineNearTop +
+// setPosition 语义与 notes-nav nnJumpLine 同源（4 处先例）；col 缺省 1
+async function openFileSmart(path, mode, opts) {
+  const jump = (conn, o) => {
+    if (!conn || !o || !o.line) return;
+    try {
+      if (conn.monaco && conn.monaco.revealLineNearTop) {
+        conn.monaco.revealLineNearTop(o.line);
+        conn.monaco.setPosition({ lineNumber: o.line, column: o.col || 1 });
+        try { conn.monaco.focus(); } catch (_) {}
+      }
+    } catch (_) {}
+  };
   const name = path.split(/[\/]/).pop().toLowerCase();
   const dot = name.lastIndexOf('.');
   const ext = dot > 0 ? name.slice(dot) : name;
@@ -1897,7 +1918,10 @@ async function openFileSmart(path, mode) {
       window._edLastUsedEnc = j.used_enc || null;
       if (typeof _recentAdd === 'function') _recentAdd({type:'file', key:'file:'+j.name, label:j.name, data:{kind:'edit', name:j.name, path:path, extPath: path}});
       const _c = buildEditorTab(j.name, j.text, path, j.mtime || null);
-      if (_c) _c.usedEnc = j.used_enc || null;
+      if (_c) {
+        _c.usedEnc = j.used_enc || null;
+        jump(_c, opts);   // 新开即跳；去重分支（switchTab 已返回 conn）同跳
+      }
       return;
     }
     // 后端仍拒（真二进制/超限/不存在）：二进制改切 hex（阅读器看乱码没意义），其余降级阅读器

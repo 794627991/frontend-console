@@ -910,6 +910,11 @@
     white-space: nowrap; width: max-content; min-width: 100%; position: absolute; }
   .tree-row:hover { background: var(--bg-card); }
   .tree-row.active { background: linear-gradient(135deg, rgba(0,212,255,0.14), transparent); }
+  /* a209批1 decorations：dirty 橙点（右缘，与编辑器 tab 同色系）、已打开文件名着色 */
+  .tree-row .tree-dot-dirty { margin-left: auto; padding-left: 12px; color: var(--neon-orange);
+    font-size: 9px; flex-shrink: 0; }
+  .tree-row.tree-open .t-name { color: var(--accent); }
+  .tree-row.tree-open .tree-dot-dirty { margin-left: 0; padding-left: 6px; }
   .tree-row .arrow { width: 10px; flex-shrink: 0; font-size: 8px; color: var(--muted);
     display: inline-flex; align-items: center; justify-content: center;
     transition: transform 0.15s; user-select: none; }
@@ -1402,6 +1407,9 @@
   .ctx-item.disabled { color: var(--muted); cursor: default; }
   .ctx-item.disabled:hover { background: transparent; color: var(--muted); }
   .ctx-sep { height: 1px; background: var(--border); margin: 5px 0; }
+  /* a209批1：右键菜单快捷键列（VSCode 式右侧灰字） */
+  .ctx-item .ctx-kbd { margin-left: auto; padding-left: 18px; color: var(--muted);
+    font-size: 10px; font-family: var(--font-mono); }
 
   /* ===== 串口搜索分栏（仿日志查看器 .log-search-*） ===== */
   .term-search-splitter { height: 5px; background: var(--border); cursor: row-resize; flex-shrink: 0; display: none; transition: background 0.15s; }

@@ -72,6 +72,8 @@ const _TV = {
   seq: new Map(),       // path -> fetch 序号（防乱序，v2 的 children 级同款）
   active: '',           // 当前选中文件行（虚拟化后 class 态必须进数据）
   rendered: [-1, -1],
+  decos: new Map(),    // a209批1：path -> {open, dirty}（编辑器联动装饰，paint 前现算）
+  focus: '',           // a209批4 预留：键盘导航焦点行
   wMax: 0,             // 全树最宽行估算（rebuild 算一次；对抗审 a205R：原在
                        // paint 每帧全扫 rows，6301 行树滚动即每帧 O(n) 白耗）
   ROW_H: 22, BUF: 12,
@@ -132,13 +134,55 @@ function _tvRowHtml(r, i) {
   const icon = r.t === 'root' ? dirIconHtml(r.open, 14)
              : r.dir ? dirIconHtml(r.open, 13) : fileIconHtml(r.name, 13);
   const active = r.path === _TV.active ? ' active' : '';
+  const deco = (r.t === 'file' && _TV.decos.get(r.path)) || {};
+  const openCls = deco.open ? ' tree-open' : '';
+  const dot = deco.dirty ? '<span class="tree-dot-dirty" title="未保存修改">●</span>' : '';
   const rootX = r.t === 'root'
     ? `<span class="root-x" title="从文件树移除该文件夹（不删除磁盘文件）">✕</span>` : '';
-  return `<div class="tree-row${r.t === 'root' ? ' tree-root-head' : ''}${active}" data-path="${esc(r.path)}"` +
+  return `<div class="tree-row${r.t === 'root' ? ' tree-root-head' : ''}${active}${openCls}" data-path="${esc(r.path)}"` +
     (r.dir ? ' data-dir="1"' : '') + ` data-depth="${r.depth}"` +
     (r.t === 'root' ? ' data-notrunc="1"' : '') +
-    ` style="${st}">${arrow}${icon}<span class="t-name" title="${esc(r.path)}">${esc(r.name)}</span>${rootX}</div>`;
+    ` style="${st}">${arrow}${icon}<span class="t-name" title="${esc(r.path)}">${esc(r.name)}</span>${dot}${rootX}</div>`;
 }
+
+// a209批1：编辑器联动装饰现算（editor conn 的 extPath/dirty）。dirty/保存变化
+// 走 treeDecoRefresh 轻刷新（只重算 decos + 失效窗口重渲，不动 rows/idx）
+function _tvDecosCalc() {
+  const m = new Map();
+  try {
+    for (const pid in connections) {
+      const c = connections[pid];
+      if (!c || !c.meta || c.meta.kind !== 'editor' || !c.extPath) continue;
+      const d = m.get(c.extPath) || {};
+      d.open = true;
+      if (c.dirty) d.dirty = true;
+      m.set(c.extPath, d);
+    }
+  } catch (_) {}
+  _TV.decos = m;
+}
+function treeDecoRefresh() {
+  _tvDecosCalc();
+  _TV.rendered = [-1, -1];
+  _tvPaint();
+}
+window.treeDecoRefresh = treeDecoRefresh;
+
+// a209批2 预留：局部失效（文件操作后只重拉受影响目录，保留其余展开态）
+function treeInvalidate(dirPath) {
+  const p = String(dirPath || '');
+  if (!p) return;
+  _TV.cache.delete(p);
+  if (_TV.open.has(p)) {
+    _tvExpand(p);   // 展开态：重拉（内部 seq 自增防旧响应）
+  } else {
+    const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf(String.fromCharCode(92)));
+    const parent = i > 0 ? p.slice(0, i) : '';
+    if (parent && _TV.cache.has(parent)) _TV.cache.delete(parent);
+    _tvRebuild();
+  }
+}
+window.treeInvalidate = treeInvalidate;
 
 function _tvPaint() {
   const host = $('treeRoots');
@@ -366,5 +410,6 @@ $('treeRefresh').onclick = () => {
   showBanner('目录已刷新', 1600);
 };
 _treeSyncHiddenBtn();
+_tvDecosCalc();          // a209批1：初始装饰（后续由 editor.js 调 treeDecoRefresh）
 
 refreshTree();
