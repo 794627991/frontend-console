@@ -249,6 +249,7 @@ window.treeReveal = treeReveal;
 function _tvPaint() {
   const host = $('treeRoots');
   if (!host) return;
+  if (host.dataset.editing) return;   // a231: 内联编辑中不冲掉 input（否则 editing 锁死）
   const total = _TV.rows.length;
   let sizer = host.querySelector('.tree-sizer');
   if (!sizer) {
@@ -336,7 +337,8 @@ function _tvFocus(path, firstChild) {
     // 子层首行=下一行且深度更大（对抗审 a206C：空目录/末行时下一行是
     // 兄弟或根，不得纳入对焦）
     const me = _TV.rows[i], c = _TV.rows[i + 1];
-    if (c && me && c.depth > me.depth) maxBottom = (i + 2) * H;
+    if (c && me && c.depth > me.depth)
+      maxBottom = (tops[i + 1] !== undefined ? tops[i + 1] : (i + 1) * H) + H;
   }
   let vy = host.scrollTop;
   if (minTop < host.scrollTop) vy = Math.max(0, minTop - vpad);

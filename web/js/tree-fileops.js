@@ -68,6 +68,7 @@
         const cutLen = String(oldP).length;
         const tail = String(c.extPath).slice(cutLen).replace(/^[/\\]/, '');
         c.extPath = String(newP) + String(c.extPath).charAt(cutLen) + tail;
+        if (c.tab) c.tab.title = c.extPath;
       }
     }
     if (typeof treeDecoRefresh === 'function') treeDecoRefresh();
@@ -107,8 +108,11 @@
     inp.style.cssText = 'position:relative;display:block;width:62%;font:11px var(--font-mono);' +
       'background:var(--bg-input);color:var(--fg);border:1px solid var(--accent);' +
       'border-radius:4px;padding:2px 6px;outline:none;z-index:5;margin:2px 0 2px ' +
-      ((+((anchorRow || {}).style || {}).paddingLeft || 6) + 14) + 'px';
+      ((parseInt(((anchorRow || {}).style || {}).paddingLeft, 10) || 6) + 14) + 'px';
+    let done = false;
     const finish = (ok) => {
+      if (done) return;
+      done = true;
       delete host.dataset.editing;
       const v = inp.value.trim();
       inp.remove();
@@ -227,12 +231,13 @@
     } else return false;
     // a213 审计 P2：empty/more 行无 path——落在其上永久卡死。沿方向找
     // 下一个有效行
+    const down = e.key === 'ArrowDown';
     let j = i, r = null;
     for (let k = 0; k < T.rows.length; k++) {
-      j += 1;
       if (j < 0 || j >= T.rows.length) break;
       const cand = T.rows[j];
       if (cand && cand.path && cand.t !== 'loading' && cand.t !== 'err') { r = cand; break; }
+      j += down ? 1 : -1;
     }
     if (r) {
       T.active = r.path;
