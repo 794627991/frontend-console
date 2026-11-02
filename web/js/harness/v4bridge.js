@@ -1154,7 +1154,6 @@
     // = ctxLive（assistant usage 真值基准）+ liveToks（流式字符估值）——
     // 单条长回复期间环持续增长，不再「回合结束才跳变」；result 到达落真值
     if (patch.tps !== undefined && !this.opt.sub) {
-      var _oldLive = (_HG.tps && _HG.tps.liveToks) || 0;
       _HG.tps = patch.tps;
       var t = _HG.tps || {};
       var live = t.ctxLive || 0, est = t.liveToks || 0;
@@ -1166,7 +1165,10 @@
         // → 环随拍双计虚涨。画布显示含估、备忘只记真值
         var _tru = live > 0 ? live : _HG.ctxRing.used;
         var base = _tru;
-        if (est > 0 && (_HG.busy || est !== _oldLive)) base += est;
+        // v4.1：估值只在 busy 叠加——原「est !== _oldLive」分支让回合结束
+        // 后迟到的 tps 尾帧再叠一次残留 liveToks（下一拍归零），回合收尾
+        // 瞬间读数先涨后落（用户实锤「途中跳变」的收尾变体）
+        if (_HG.busy && est > 0) base += est;
         try { _rr(base, _HG.ctxRing.max); } catch (e) {}
         _HG.ctxRing.used = _tru;
       }

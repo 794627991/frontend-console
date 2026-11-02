@@ -179,6 +179,21 @@
           if (j.compacted) _hgDrawCtxRing(0, win || _HG_CTX_FALLBACK, '上下文已压缩 · 首轮回复后统计');
           return;
         }
+        // v4.1（用户实锤「上下文途中跳变」）：busy 期间轮询让位实时链——
+        // tps 帧画「真值+生成中估值」（ctxLive+liveToks，随流增长），轮询
+        // 此前每 5s 用纯 jsonl 真值（无估值）重画，两条链口径交替，读数规
+        // 律性回落再涨（跳变观感）。busy 只做数据面更新不动画：分母校正
+        // （含 settings 级 window）+ 真值锚单调刷新（jsonl usage 可能比
+        // ctxLive 新）+ 记忆；空闲期照旧 renderCtxRing 画环落准。
+        if (_HG.busy) {
+          if (!_HG.ctxRing) _HG.ctxRing = { used: 0, max: win || _HG_CTX_FALLBACK };
+          if (win && win !== _HG.ctxRing.max) _HG.ctxRing.max = win;
+          if (j.used > (_HG.ctxRing.used || 0)) _HG.ctxRing.used = j.used;
+          try { localStorage.setItem(_hgCtxKey(sid), JSON.stringify(
+            { used: j.used, max: win || _HG.ctxRing.max,
+              model: j.model || _HG.model || '' })); } catch (_) {}
+          return;
+        }
         renderCtxRing({ usage: { input_tokens: j.used },
                         modelUsage: win ? { _w: { contextWindow: win } } : null });
       }).catch(() => {})
