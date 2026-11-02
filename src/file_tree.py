@@ -131,6 +131,19 @@ def tree_add_root():
     p = os.path.abspath(str(data.get("path") or "").strip().strip('"').strip("'"))
     if not os.path.isdir(p):
         return jsonify({"ok": False, "err": "目录不存在"}), 400
+    # a234 黑盒穿透修复：系统目录/盘根/UNC 管理共享拒登记——曾可加
+    # System32 后 search 全盘读文件内容、加 c$ 后 touch 全盘写
+    _wl = os.environ.get("WINDIR", r"C:\Windows").lower()
+    _pl = p.lower()
+    _danger = (
+        p.startswith("\\\\")                                    # UNC 一律拒（本地工具无网络目录需求）
+        or _pl == "c:\\" or _pl == "d:\\" or _pl.endswith(":\\")  # 盘根
+        or _pl.startswith(_wl)                                      # Windows 目录及子树
+        or _pl.startswith("c:\program files")                   # Program Files
+        or _pl.startswith("c:\programdata"))
+    if _danger:
+        return jsonify({"ok": False, "err":
+            "系统/网络/盘根路径不允许登记为工作区根（安全限制）"}), 400
     roots = _tree_roots()
     # 对抗审 a206C P3：嵌套根拒绝——D:\work 与 D:\work\sub 同时登记会使
     # 同一 path 双行渲染（open/cache/idx 按 path 共享，两处同开同拉、
@@ -156,7 +169,10 @@ def tree_add_root():
 def tree_remove_root():
     """取消登记一个根（原样对照 config 列表；归一后比对）。"""
     data = request.get_json(force=True, silent=True) or {}
-    p = os.path.abspath(str(data.get("path") or "").strip().strip('"').strip("'"))
+    _raw = str(data.get("path") or "").strip().strip('"').strip("'")
+    if not _raw:
+        return jsonify({"ok": False, "err": "缺少 path 参数"}), 400   # a234: 空 body 曾误删主根
+    p = os.path.abspath(_raw)
     roots = [r for r in _tree_roots() if r != p]
     _save_tree_roots(roots)
     return jsonify({"ok": True, "roots": roots})
@@ -172,6 +188,8 @@ def tree_list():
         return jsonify({"ok": False, "err": "路径不在文件树根目录内"}), 400
     if not os.path.isdir(p):
         return jsonify({"ok": False, "err": "目录不存在或已移除"}), 400
+    if not _under_roots(os.path.realpath(p)):   # a234: junction 指根外拒
+        return jsonify({"ok": False, "err": "路径包含指向根外的链接"}), 400
     entries, err = _list_dir(p, bool(data.get("hidden")))
     if entries is None:
         return jsonify({"ok": False, "err": f"读取失败：{err}"}), 400
@@ -214,6 +232,43 @@ def _recycle_to_trash(path):
     return True, ""
 
 
+def _is_reparse(path):
+    """junction/符号链接检测（a234 黑盒穿透修复）：根内 junction 指向根外时，
+    fileops 全部 op 曾能穿过它读/写/删根外文件（mklink /J 实测穿透）。"""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+        attrs = ctypes.windll.kernel32.GetFileAttributesW(str(path))
+        return attrs != -1 and (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0
+    except Exception:
+        return False
+
+
+def _resolve_real(path):
+    """解析到最终真实路径（穿透 junction 链）——fileops 守卫须验真实路径。"""
+    try:
+        return os.path.realpath(str(path))
+    except Exception:
+        return str(path)
+
+
+def _guard_ops_path(path):
+    """fileops 统一守卫：根白名单 + 真实路径也须在根内（堵 junction 逃逸）+
+    NUL 字节/超长拒绝。返回 (guarded_path, err)。"""
+    p = str(path or "")
+    if "\x00" in p or len(p) > 1024:
+        return None, "参数无效"
+    fp = _under_roots(p)
+    if not fp:
+        return None, None   # 白名单拒绝——由调用方返回 404/400
+    real = _resolve_real(fp)
+    # 真实路径也必须在根内（junction 指根外→real 在根外→拒）
+    if not _under_roots(real):
+        return None, "路径包含指向根外的链接（junction/symlink），禁止操作"
+    return fp, None
+
+
 def _parent_dir(path):
     return os.path.dirname(os.path.abspath(path))
 
@@ -231,7 +286,8 @@ def tree_fileops():
     op = str(data.get("op") or "").strip()
     try:
         if op == "mkdir":
-            d = _under_roots(str(data.get("dir") or ""))
+            d, gerr = _guard_ops_path(data.get("dir"))
+            if gerr: return jsonify({"ok": False, "err": gerr}), 400
             if not d:
                 return jsonify({"ok": False, "err": "目录不在已登记根内"}), 400
             if os.path.exists(d):
@@ -239,7 +295,10 @@ def tree_fileops():
             os.makedirs(d)
             return jsonify({"ok": True, "parent": _parent_dir(d)})
         if op == "touch":
-            base = _under_roots(str(data.get("dir") or ""))
+            base, gerr = _guard_ops_path(data.get("dir"))
+            if gerr: return jsonify({"ok": False, "err": gerr}), 400
+            if not base:
+                return jsonify({"ok": False, "err": "目录不在已登记根内"}), 400
             name = str(data.get("name") or "").strip()
             # a213 审计 P3：冒号一并拒——'d:foo' 会被 os.path.join 丢弃 base
             # 跨盘建文件（实测穿越白名单）
@@ -252,7 +311,10 @@ def tree_fileops():
                 f.write("")
             return jsonify({"ok": True, "parent": base})
         if op == "rename":
-            fp = _under_roots(str(data.get("path") or ""))
+            fp, gerr = _guard_ops_path(data.get("path"))
+            if gerr: return jsonify({"ok": False, "err": gerr}), 400
+            if not fp:
+                return jsonify({"ok": False, "err": "路径不在已登记根内"}), 404
             name = str(data.get("name") or "").strip()
             if not fp or not name or "/" in name or os.sep in name or ":" in name or name in (".", ".."):
                 return jsonify({"ok": False, "err": "参数无效"}), 400
@@ -268,8 +330,10 @@ def tree_fileops():
             return jsonify({"ok": True, "parent": os.path.dirname(fp),
                             "old": fp, "new": tp})
         if op == "copy":
-            fp = _under_roots(str(data.get("path") or ""))
-            d = _under_roots(str(data.get("dir") or ""))
+            fp, gerr = _guard_ops_path(data.get("path"))
+            if gerr: return jsonify({"ok": False, "err": gerr}), 400
+            d, gerr2 = _guard_ops_path(data.get("dir"))
+            if gerr2: return jsonify({"ok": False, "err": gerr2}), 400
             if not fp or not d or not os.path.exists(fp):
                 return jsonify({"ok": False, "err": "参数无效或原路径不存在"}), 400
             # a213 审计 P2：自嵌递归防护（src 是 dst 祖先 → copytree 自我
@@ -289,8 +353,11 @@ def tree_fileops():
                 shutil.copy2(fp, tp)
             return jsonify({"ok": True, "parent": d})
         if op == "delete":
-            fp = _under_roots(str(data.get("path") or ""))
-            if not fp or not os.path.exists(fp):
+            fp, gerr = _guard_ops_path(data.get("path"))
+            if gerr: return jsonify({"ok": False, "err": gerr}), 400
+            if not fp:
+                return jsonify({"ok": False, "err": "路径不存在"}), 404
+            if not os.path.exists(fp):
                 return jsonify({"ok": False, "err": "路径不存在"}), 404
             # a231 审计 P2：SHFileOperation+ALLOWUNDO 对网络路径（UNC/映射盘）
             # 不经回收站直接永久删且返回成功——前端承诺「可恢复」静默失效。

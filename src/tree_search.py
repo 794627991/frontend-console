@@ -55,6 +55,8 @@ def tree_search():
     scope = _under_roots(str(data.get("scope") or ""))
     if not scope:
         return jsonify({"ok": False, "err": "搜索范围不在已登记根内"}), 400
+    if not _under_roots(os.path.realpath(scope)):   # a234: junction 逃逸拒
+        return jsonify({"ok": False, "err": "搜索范围包含指向根外的链接"}), 400
     smart_case = not bool(data.get("case"))       # 默认 smart-case（全小写=忽略大小写）
     use_regex = bool(data.get("regex")) or str(data.get("mode")) == "function"
     max_hits = min(int(data.get("maxResults") or MAX_HITS), 5000)
