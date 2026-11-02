@@ -422,7 +422,10 @@ def _prep_bili_dir():
         zpath = os.path.join(BASE, "dist", "node-v%s-win-x64.zip" % BILI_NODE_VERSION)
         if not os.path.isfile(zpath):
             print("[bili] 下载 %s …" % url)
-            urllib.request.urlretrieve(url, zpath)
+            # 对抗审 a206B P2：半截 zip 永久卡死重跑（存在性检查放行坏档，
+            # zipfile 每次抛 BadZipFile）——.part 下载完再原子改名
+            urllib.request.urlretrieve(url, zpath + ".part")
+            os.replace(zpath + ".part", zpath)
         with zipfile.ZipFile(zpath) as z:
             member = "node-v%s-win-x64/node.exe" % BILI_NODE_VERSION
             with z.open(member) as src, open(node_exe, "wb") as dst:
@@ -483,6 +486,11 @@ def _offline_sources(kinds=None):
             # 挑扩展名会丢 package.json 等命脉文件，装出空壳）
             for r, ds, fs in os.walk(bl):
                 ds.sort()
+                # 对抗审 a206B P2：junction 下钻防护（os.path.islink 对 Windows
+                # junction 返回 False，须查 reparse 属性）——npm workspaces/
+                # pnpm 场景会产生 junction，下钻即重复条目+超长路径炸解包
+                ds[:] = [d for d in ds
+                         if not (os.stat(os.path.join(r, d)).st_file_attributes or 0) & 0x400]
                 for f in sorted(fs):
                     p2 = os.path.join(r, f)
                     arc = "bili/" + os.path.relpath(p2, bl).replace("\\", "/")

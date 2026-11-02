@@ -392,8 +392,7 @@ function buildProxyTab() {
         if (typeof x.cacheHitPct === 'number') hit = x.cacheHitPct;
       }
     } catch (_) {}
-    const ccrTxt = j.ccr ? ' | CCR 开' : '';
-    hrStatsEl.textContent = `bili :18788${ccrTxt} | ${_pxFnum(reqs)} 请求 | 压缩节省 ${_pxTok(saved)} token` +
+    hrStatsEl.textContent = `bili :18788 | ${_pxFnum(reqs)} 请求 | 压缩节省 ${_pxTok(saved)} token` +
       (hit !== null ? ` | 缓存命中 ${hit}%` : '');
     hrStatsEl.style.color = saved ? 'var(--accent)' : 'var(--muted)';
   }
@@ -403,7 +402,7 @@ function buildProxyTab() {
     // 选择动作全部进弹窗（仿原工具 _hr_mode_dialog）
     conn.hrState = j;
     const lab = { on: '开启压缩', off: '关闭' }[j.bili_mode] || '—';
-    hrCfgBtn.textContent = '压缩模式：' + lab + (j.ccr && j.bili_mode !== 'off' ? ' · CCR' : '');
+    hrCfgBtn.textContent = '压缩模式：' + lab;
     hrCfgBtn.title = j.running ? '选择压缩策略（应用立即生效）'
       : '重试代理未启动：开启压缩需先启动代理（关闭可直接记住）';
   }
@@ -620,10 +619,7 @@ function buildProxyTab() {
                   <span class="px-hr-card-d">${esc(d)}</span>
                 </label>`).join('')}
             </div>
-            <div class="px-hr-ccr">
-              <label><input type="checkbox" name="px_hr_ccr" data-hr-ccr> CCR 流压缩</label>
-              <span data-hr-ccr-hint></span>
-            </div>
+            <!-- 对抗审 a206A：CCR 勾选退役（headroom 特性，bili 无此开关） -->
             <div class="px-hint" style="margin:10px 0 0;">${esc(HR_NOTE)}</div>
           </div>
           <div style="display:flex;gap:10px;justify-content:flex-end;padding:12px 18px 16px;">
@@ -634,8 +630,6 @@ function buildProxyTab() {
       document.body.appendChild(m);
     }
     const cards = m.querySelectorAll('[data-hr-card]');
-    const ccrEl = m.querySelector('[data-hr-ccr]');
-    const hintEl = m.querySelector('[data-hr-ccr-hint]');
     // 初始态：预选当前模式/CCR；on 需已装 billion-context 且代理在跑
     // （与后端 apply_hr_mode 拒绝口径一致）；off 永远可选
     const canFull = hasHr && !!j.running;
@@ -647,20 +641,7 @@ function buildProxyTab() {
     });
     m.querySelector('[data-hr-warn]').innerHTML = hasHr ? ''
       : '<div style="color:var(--neon-orange);font-size:12px;margin-bottom:8px;">⚠ 未检测到 billion-context（需 Node ≥22 + npm install -g billion-context），压缩不可用；重启工具可再试</div>';
-    ccrEl.checked = !!j.ccr;
-    const syncCcr = () => {
-      const mode = (m.querySelector('[data-hr-card] input:checked') || {}).value || 'off';
-      const dis = mode === 'off' || !hasHr;
-      ccrEl.disabled = dis;
-      m.querySelector('.px-hr-ccr').classList.toggle('px-dis', dis);
-      hintEl.textContent = dis ? (mode === 'off' ? '（bili 不启动，无意义）' : '（未安装 billion-context）')
-        : (ccrEl.checked ? '激进压缩 · /compact 可能卡死' : '保守 · 稳定');
-      hintEl.style.color = dis ? 'var(--muted)' : (ccrEl.checked ? 'var(--neon-orange)' : 'var(--muted)');
-    };
-    // 每次打开重绑（_ddConfirm 同款坑：闭包复用旧 resolve）
-    cards.forEach(lab => { lab.querySelector('input').onchange = syncCcr; });
-    ccrEl.onchange = syncCcr;
-    syncCcr();
+    // CCR 勾选已退役（对抗审 a206A：headroom 特性对 bili 无效，空开关）
     const close = () => m.classList.remove('show');
     m.querySelector('[data-hr-x]').onclick = close;
     m.querySelector('[data-hr-cancel]').onclick = close;
@@ -672,7 +653,7 @@ function buildProxyTab() {
       try {
         const r = await fetch('/api/proxy/compression', {method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({mode, ccr: ccrEl.checked})});
+          body: JSON.stringify({mode})});
         const jj = await r.json();
         _msg(jj.ok ? (mode === 'off' ? '已关闭压缩'
              : (j.running ? '切换中（bili 启动中，就绪自动切压缩链路）'

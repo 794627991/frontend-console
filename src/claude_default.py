@@ -803,7 +803,7 @@ def claude_profiles_apply():
             env = snap.get("env")
             prof_base = env.get("ANTHROPIC_BASE_URL") if isinstance(env, dict) else None
             if prof_base and str(prof_base).startswith(
-                    ("http://127.0.0.1:37349", "http://127.0.0.1:8787")):
+                    ("http://127.0.0.1:37349", "http://127.0.0.1:18788", "http://127.0.0.1:8787")):
                 env["ANTHROPIC_BASE_URL"] = DEFAULT_BASE_URL   # 脏快照回默认网关
                 prof_base = DEFAULT_BASE_URL
             _write_settings(snap)                     # v2.22：整份替换
@@ -913,7 +913,7 @@ def _sanitize_prev_profile(d):
     except Exception:
         return
     if not real or str(real).startswith(
-            ("http://127.0.0.1:37349", "http://127.0.0.1:8787")):
+            ("http://127.0.0.1:37349", "http://127.0.0.1:18788", "http://127.0.0.1:8787")):
         return   # 无记忆或记忆本身是代理地址：无从净化，不动方案
     for p in d.get("profiles") or []:
         if p.get("name") != active:
@@ -922,7 +922,7 @@ def _sanitize_prev_profile(d):
         env = (snap or {}).get("env")
         if isinstance(env, dict) and str(
                 env.get("ANTHROPIC_BASE_URL", "")).startswith(
-                ("http://127.0.0.1:37349", "http://127.0.0.1:8787")):
+                ("http://127.0.0.1:37349", "http://127.0.0.1:18788", "http://127.0.0.1:8787")):
             env["ANTHROPIC_BASE_URL"] = real
             _write_profiles(d)
         break
@@ -933,7 +933,7 @@ def _sync_proxy_upstream(prof_base, was_proxy=None):
     重指上游 + base_url 切回代理入口，逻辑在 proxy.queue_re_point。
     was_proxy=写回 settings 前捕获的「是否代理模式」，见 claude_profiles_apply。"""
     if not prof_base or str(prof_base).startswith(
-            ("http://127.0.0.1:37349", "http://127.0.0.1:8787")):
+            ("http://127.0.0.1:37349", "http://127.0.0.1:18788", "http://127.0.0.1:8787")):
         return   # 旧格式方案没存 base_url 或已净化：拿不到新网关，不联动
     try:
         from src import proxy as _proxy

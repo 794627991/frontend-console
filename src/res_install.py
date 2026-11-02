@@ -122,6 +122,20 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None,
 
         staging = tempfile.mkdtemp(prefix="fcpk_stage_")
         _ck()
+        # 对抗审 a206B P1：staging 在 %TEMP%（常为 C 盘）而工具常解压在
+        # D/E 盘——整目录 os.replace 跨卷必炸（WinError 17 实测）。bili 改
+        # webview2 同款：直接解到 runtime_root()（arc 前缀 bili/ 天然落
+        # offline_runtime/bili/），不经 staging 不 move
+        if "bili" in plan:
+            bili_root = runtime_root()
+            os.makedirs(bili_root, exist_ok=True)
+            say("解包 billion-context（Node 运行时 + 依赖树）…")
+            reader.extract_all(bili_root, kinds=["bili"],
+                               progress=lambda d, t, p2: prog(
+                                   cur[0] + d, sub_total, p2),
+                               should_cancel=should_cancel)
+            _install_bili(bili_root, say, force)
+            plan.remove("bili")
         if "webview2" in plan:
             # 返回值 False = 已完成跳过（没解包，不产生进度字节）→ 把它
             # 的体量从分母里扣掉，否则单装 webview2 时进度条只能到 ~0%
@@ -449,53 +463,53 @@ def _install_pydeps(staging, say, force=False):
     return True
 
 
-def _install_bili(staging, say, force=False):
-    """billion-context 压缩引擎：纯解包（a201 内置方案——Node 便携运行时
-    node.exe + npm 依赖树整目录，解到 offline_runtime/bili/ 即用，零安装器）。
-    webview2 同款防半装：旧目录备份让位 → 移入 → 校验 node.exe 与
-    dist/index.js → 写完成标记；失败恢复备份。删 .biliok 可重装。"""
-    root = runtime_root()
-    os.makedirs(root, exist_ok=True)
+def _install_bili(root, say, force=False):
+    """billion-context 安装收尾：extract_all 已把 bili/ 树解到 runtime_root()
+    （对抗审 a206B：不再从 staging 整目录 move——跨卷必炸）。本函数做三件事：
+    ①运行中拒绝（bili 在跑时升级=从运行进程脚下抽走 node_modules，实测
+    exe 镜像锁不阻止目录改名，其余 12k 文件会被 rmtree 删光——压缩链路
+    静默损坏）；②关键文件校验 + .biliok 标记；③让 proxy 重探（装完即可
+    用，不重启）。"""
     mark = os.path.join(root, ".biliok")
     cur_dir = os.path.join(root, "bili")
     if os.path.isfile(mark) and os.path.isdir(cur_dir) and not force:
         say("· billion-context 已完整安装，跳过（删 offline_runtime/.biliok 可重装）")
+        _bili_reprobe(say)
         return False
-    src_dir = os.path.join(staging, "bili")
-    if not os.path.isdir(src_dir):
-        raise InstallError("包内无 bili/ 资源")
-    bak = ""
-    if os.path.isdir(cur_dir):
-        import time
-        bak = cur_dir + ".old-%d" % int(time.time())
-        say("  现有 bili 已备份 → %s" % os.path.basename(bak))
-        try:
-            os.replace(cur_dir, bak)
-        except OSError as e:
-            raise InstallError("无法替换现有 bili（可能正在运行）：%s" % e)
-    try:
-        os.replace(src_dir, cur_dir)
-        node_exe = os.path.join(cur_dir, "node.exe")
-        entry = os.path.join(cur_dir, "node_modules", "billion-context",
-                             "dist", "index.js")
-        if not (os.path.isfile(node_exe) and os.path.isfile(entry)):
-            raise InstallError("bili 资源不完整（缺 node.exe 或 dist/index.js）")
-        with open(mark, "w", encoding="utf-8") as f:
-            f.write(_now())
-        if bak:
-            import shutil
-            shutil.rmtree(bak, ignore_errors=True)
-        return True
-    except Exception:
-        # 半装回滚：清残 + 恢复备份
+    node_exe = os.path.join(cur_dir, "node.exe")
+    entry = os.path.join(cur_dir, "node_modules", "billion-context",
+                         "dist", "index.js")
+    if not (os.path.isfile(node_exe) and os.path.isfile(entry)):
+        # extract_all 半途（取消/坏段）——清残不写标记，下次自愈重装
         import shutil
         shutil.rmtree(cur_dir, ignore_errors=True)
-        if bak:
-            try:
-                os.replace(bak, cur_dir)
-            except OSError:
-                pass
-        raise
+        raise InstallError("bili 资源不完整（缺 node.exe 或 dist/index.js）")
+    # 运行中升级防护：18788 活着 = bili 在跑（升级=抽梯，先拒）
+    import socket as _sk
+    try:
+        with _sk.socket(_sk.AF_INET, _sk.SOCK_STREAM) as _s:
+            _s.settimeout(0.4)
+            if _s.connect_ex(("127.0.0.1", 18788)) == 0:
+                raise InstallError("billion-context 正在运行——请先在代理面板"
+                                   "把压缩模式切为关闭（或退出工具）再升级")
+    except OSError:
+        pass
+    with open(mark, "w", encoding="utf-8") as f:
+        f.write(_now())
+    say("✓ billion-context 就位（Node 运行时 + 依赖树）")
+    _bili_reprobe(say)
+    return True
+
+
+def _bili_reprobe(say=None):
+    """装完即时重探（对抗审 a206B P2）：proxy 的 BILI_NODE/ENTRY/ERR 是
+    模块加载时一次性赋值——不重探则装完仍报"未安装"，需重启工具。"""
+    try:
+        from src import proxy as _px
+        _px.bili_reprobe()
+        if say: say("· 压缩引擎检测已刷新（无需重启工具）")
+    except Exception as e:
+        if say: say("· 压缩引擎检测刷新失败（重启工具后生效）：%s" % e)
 
 
 _INSTALLERS = {"dotnet": _install_dotnet, "node": _install_node,

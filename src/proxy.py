@@ -48,7 +48,13 @@ log = logging.getLogger("claude_proxy")
 # Claude Code → bili(18788，/bili/ URL 前缀代理) → 37349(重试代理) → lanz。
 # base_url = PROXY_URL（bili 入口+/bili/+retry 绝对 URL——bili 是 URL 前缀
 # 模式，上游编在地址里，不经环境变量）
-PROXY_URL = "http://127.0.0.1:18788/bili/http://127.0.0.1:37349"
+def _bili_url():
+    """bili 入口 base_url：/bili/ 前缀 + 重试代理【完整地址含网关路径】。
+    对抗审 a206A P0 实锤（echo 探针实证）：bili 对 /bili/<upstream> 之后
+    的路径逐字透传不补前缀——原常量裸写 37349 丢了 /v3/anthropic/model，
+    CC 请求会打到 lanz 的 HTML 页（API 全量不可用）。且上游随方案切换可
+    变，必须函数化（_retry_url 运行时求值），不能是模块级常量"""
+    return "http://127.0.0.1:%d/bili/%s" % (BILI_PORT, _retry_url())
 DEFAULT_DIRECT_URL = "http://lanz.hikvision.com/v3/anthropic/model"
 LISTEN_HOST = "127.0.0.1"
 LISTEN_PORT = 37349
@@ -56,7 +62,8 @@ LISTEN_PORT = 37349
 BILI_PORT = 18788
 # 外联铁闸（内网部署）：bili 默认每 3 分钟查 npm 自动更新 + advisory 轮询
 # （命中缺陷版本会强制安装）——环境变量注入硬关，只跑锁定安装版
-BILI_ENV_LOCKDOWN = {"ACP_AUTO_UPDATE": "0", "BILI_ADVISORY_CHECK": "0"}
+BILI_ENV_LOCKDOWN = {"ACP_AUTO_UPDATE": "0", "BILI_ADVISORY_CHECK": "0",
+                      "BILI_RELEASE_NOTES_CHECK": "0"}   # 第三轮询器（对抗审 a206A 补）
 BILI_READY_TIMEOUT = 90
 
 # 模式：on/off 两档（headroom 的 full/light 档随其退役——bili 阈值体系
@@ -181,7 +188,11 @@ class BaseUrlManager:
 
 # ---- 直连地址：记忆 / 求值（v2.26 去写死核心）---------------------------
 PROXY_STATE_PATH = os.path.join(DATA_DIR, "proxy_state.json")
-_OWN_PROXY_PREFIXES = ("http://127.0.0.1:37349", "http://127.0.0.1:18788")
+# 对抗审 a206A P2：8787 保留识别（headroom 时代残留的 base_url 需被
+# 自愈/回滚清理，且防 _direct_url 把死 8787 当直连真源毒化记忆）——
+# 只作前缀识别，不再监听
+_OWN_PROXY_PREFIXES = ("http://127.0.0.1:37349", "http://127.0.0.1:18788",
+                       "http://127.0.0.1:8787")
 
 
 def _is_own_proxy_url(url):
@@ -361,12 +372,18 @@ def load_bili_mode():
             return mode
     except (ValueError, OSError):
         pass
-    # headroom 旧模式文件迁移（full/light→on）——读到即转存新文件，旧文件保留
+    # headroom 旧模式文件迁移（full/light→on）：读到即落盘新文件（对抗审
+    # a206A：原注释称"转存"实际从不落盘——旧文件被清理后迁移来源消失）
     try:
         with open(_HR_MODE_PATH_LEGACY, encoding="utf-8") as f:
             old_mode = (json.load(f) or {}).get("mode")
         if old_mode in _BILI_MODE_FROM_HR:
-            return _BILI_MODE_FROM_HR[old_mode]
+            new_mode = _BILI_MODE_FROM_HR[old_mode]
+            try:
+                _write_mode_file({"mode": new_mode})
+            except OSError:
+                pass
+            return new_mode
     except (ValueError, OSError):
         pass
     return None
@@ -469,6 +486,14 @@ def _detect_bili_cmd():
 BILI_NODE, BILI_ENTRY, BILI_ERR = _detect_bili_cmd()
 
 
+def bili_reprobe():
+    """重探 bili 可用性（res_install 装完资源包即调——模块级三元组是一次性
+    赋值，不重探则装完仍显示"未安装"需重启工具，对抗审 a206B P2）"""
+    global BILI_NODE, BILI_ENTRY, BILI_ERR
+    BILI_NODE, BILI_ENTRY, BILI_ERR = _detect_bili_cmd()
+    return bool(BILI_NODE and BILI_ENTRY)
+
+
 # ---- BiliController（GUI:533-660 平移）----------------------------
 class BiliController:
     def __init__(self):
@@ -496,8 +521,9 @@ class BiliController:
                 if 200 <= r.status < 300:
                     return True
             except urllib.error.HTTPError as e:
-                if 500 <= e.code < 600:
-                    return True
+                # 对抗审 a206A P1：headroom 时代 5xx≈活着但坏了；bili 的
+                # /__bili/health 启动期正是返 503（starting）——5xx=True 会把
+                # 未就绪判成就绪，就绪门形同虚设。bili 语义只认 2xx
                 continue
             except Exception:
                 continue
@@ -513,7 +539,7 @@ class BiliController:
         with self._lock:
             return self.proc
 
-    def start(self, mode="on", ccr=None):
+    def start(self, mode="on"):
         with self._lock:
             if self.running:
                 if self.proc is None:
@@ -598,7 +624,7 @@ class BiliController:
             except Exception:
                 pass
         self._err_file = self._out_file = None
-        log.info("headroom 子进程已停止")
+        log.info("bili 子进程已停止")
 
 
 # ---- LanzQuotaWorker（GUI:3371-3544 平移；emit → 直写模块缓存）--------
@@ -914,7 +940,7 @@ def _proxy_mode_url():
     """代理模式目标 base_url：off→37349 直连重试代理；压缩在跑→bili 入口。"""
     if _bili_mode == "off" or not _bili.ping_existing():
         return _retry_url()
-    return PROXY_URL
+    return _bili_url()
 
 
 def start_proxy(bili_mode=None):
@@ -953,13 +979,13 @@ def start_proxy(bili_mode=None):
                 _autoswitched = True
             if mode != "off":
                 try:
-                    _bili.start(mode, ccr=_ccr)
+                    _bili.start(mode)
                     _wait_bili_ready()
-                    if _bmgr.read_current_url() != PROXY_URL:
-                        _bmgr.apply(PROXY_URL)
+                    if _bmgr.read_current_url() != _bili_url():
+                        _bmgr.apply(_bili_url())
                         _autoswitched = True
                 except Exception as e:   # 失败不回滚重试代理，无压缩继续跑
-                    log.warning("headroom 启动失败，继续无压缩运行: %s", e)
+                    log.warning("bili 启动失败，继续无压缩运行: %s", e)
         finally:
             _bili_switching = False
             _proxy_notify()   # 状态可能变化（就绪/失败），广播给前端
@@ -1203,7 +1229,7 @@ def re_point_upstream(new_direct_url, was_proxy=None, notify=True, _epoch=None):
         # 先指 37349 保会话；后台重拉 headroom，就绪后**条件**升 8787——
         # 期间用户又切方案/手动切直连（epoch 变了或 base_url 已非自家入口）
         # 时不覆盖，由后续动作收尾（apply_bili_mode 的 worker 是无条件
-        # apply(PROXY_URL)，会顶掉手动直连，故此处自写不复用）
+        # apply(_bili_url())，会顶掉手动直连，故此处自写不复用）
         _bmgr.apply(_retry_url())
         _autoswitched = True
         bili_mode_snap = _bili_mode
@@ -1215,14 +1241,14 @@ def re_point_upstream(new_direct_url, was_proxy=None, notify=True, _epoch=None):
                 if _epoch is not None and _epoch != _repoint_seq:
                     return   # 排队期间有更新动作：重拉作废
                 _bili.stop()
-                _bili.start(bili_mode_snap, ccr=_ccr)
+                _bili.start(bili_mode_snap)
                 _wait_bili_ready()
                 with _switch_lock:
                     if _epoch is not None and _epoch != _repoint_seq:
                         return
                     # 只有链路仍处于代理意图（base_url=自家入口）才升 8787
                     if _is_own_proxy_url(_bmgr.read_current_url()):
-                        _bmgr.apply(PROXY_URL)
+                        _bmgr.apply(_bili_url())
                         _autoswitched = True
                 log.info("方案切换：headroom 已按新路径重启")
             except Exception as e:
@@ -1283,7 +1309,7 @@ def apply_bili_mode(mode, ccr=None):
             try:
                 _bili.start(mode, ccr=_ccr)
                 _wait_bili_ready()
-                _bmgr.apply(PROXY_URL)
+                _bmgr.apply(_bili_url())
                 _autoswitched = True
                 log.info("压缩模式切换 -> %s（base_url -> 8787）", mode)
             except Exception as e:
@@ -1405,9 +1431,8 @@ def tray_menu_items():
         ("item", "切换为代理模式", lambda: set_mode("proxy"), {}),
         ("item", "切换为直连模式", lambda: set_mode("direct"), {}),
         ("item", "压缩模式", None, {"submenu": _hr_items()}),
-        ("item", "CCR 流压缩（激进·/compact 可能卡死）",
-         lambda: apply_bili_mode(_bili_mode, ccr=not _ccr),
-         {"checked": lambda: _ccr, "enabled": has_bili and _ctl.running}),
+        # 对抗审 a206A：CCR 菜单退役——BiliController.start 的 ccr 形参
+        # 零引用（a201 换代时功能随 headroom env 摘除），开关卖的是空操作
     ]
 
 
@@ -1490,8 +1515,7 @@ def tray_menu_items_remote(base):
         ("item", "切换为直连模式",
          lambda: _post("/api/proxy/mode", {"mode": "direct"}), {}),
         ("item", "压缩模式", None, {"submenu": _hr_items()}),
-        ("item", "CCR 流压缩（激进·/compact 可能卡死）",
-         lambda: _post("/api/proxy/ccr", {"on": not _st().get("ccr")}), {}),
+        # 对抗审 a206A：CCR 菜单退役（同 tray_menu_items 注）
     ]
 
 
@@ -1596,16 +1620,18 @@ def ensure_direct_if_proxy_down(origin="startup"):
     """base_url 指向自家代理但对应入口没在跑 → 立即恢复直连。
 
     工具启动自愈与 claude 会话启动前（claude_harness HarnessSession.start）
-    共用：强杀后 base_url 卡在 127.0.0.1:37349/8787，用户不点「启动代理」
+    共用：强杀后 base_url 卡在自家代理端口，用户不点「启动代理」
     直接开 Claude 会话时，claude 进程读到的就是死端口——起进程前先修好。
-    按 base_url 实际指向的端口验活（此前任一入口活着就跳过，8787 活着会
-    漏修指向 37349 死端口的场景）。幂等；直连 base_url 时零开销直接返回。
+    按 base_url 实际指向验活（bili 入口按 /bili/ 特征判）。幂等；直连
+    base_url 时零开销直接返回。
     """
     try:
         cur = _bmgr.read_current_url()
         if not _is_own_proxy_url(cur):
             return False
-        alive = _bili.ping_existing() if ":8787" in cur else _ctl.ping_existing()
+        # 对抗审 a206A P1：原 ":8787" 子串对新 URL（18788）永不命中——bili 崩
+        # 溃后自愈实际去 ping 37349，CC 永久连死端口。URL 特征判 "/bili/"
+        alive = _bili.ping_existing() if "/bili/" in cur else _ctl.ping_existing()
         if alive:
             return False
         # 确认接管（此时才作废排队任务——此检查每次会话启动前都跑，
@@ -1623,7 +1649,10 @@ def proxy_module_init():
     """server.py start_background 时调（不自动启动代理——按需启动）：
     读记忆的压缩模式/CCR；启动自愈；建额度 worker。"""
     global _bili_mode, _ccr
-    m = load_bili_mode()
+    # 对抗审 a206A P0 实锤：a201 机械替换时删了赋值行没换新——load 结果
+    # 成死存储，_bili_mode 恒 None：记忆 off 被静默反转、CCR 开关失灵、
+    # 面板恒显"—"（活动实例 bili_mode:null 实证）。默认 on（用户拍板直接上）
+    _bili_mode = load_bili_mode() or "on"
     _ccr = load_ccr()
     # v2.26：启动自愈已移除（用户定）——自愈只发生在「启动 claude 会话前」
     # （HarnessSession.start → ensure_direct_if_proxy_down），且以代理实际

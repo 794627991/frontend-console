@@ -94,7 +94,7 @@ function _tvRebuild() {
   for (const r of rows) {
     if (!r.name) continue;
     const w = _tvPad(r.depth) + r.name.length * 7.2 + 60;
-    if (w > _TV.wMax) wMax = _TV.wMax = w;
+    if (w > _TV.wMax) _TV.wMax = w;
   }
   _TV.rendered = [-1, -1];
   _tvPaint();
@@ -105,6 +105,7 @@ function _tvPush(rows, path, depth) {
   const c = _TV.cache.get(path);
   if (!c) { rows.push({ t: 'loading', path, depth }); return; }
   if (c.err) { rows.push({ t: 'err', depth, msg: c.err }); return; }
+  if (!c.entries.length) { rows.push({ t: 'empty', depth }); return; }
   for (const e of c.entries) {
     rows.push({ t: e.dir ? 'dir' : 'file', path: e.path, name: e.name,
                 dir: !!e.dir, depth, open: _TV.open.has(e.path) });
@@ -124,6 +125,8 @@ function _tvRowHtml(r, i) {
     return `<div class="tree-more" style="top:${top}px;left:0;padding-left:${pad}px">${esc(r.msg || '读取失败')}</div>`;
   if (r.t === 'more')
     return `<div class="tree-more" style="top:${top}px;left:0;padding-left:${pad}px">…还有 ${Number(r.n).toLocaleString()} 项未显示</div>`;
+  if (r.t === 'empty')
+    return `<div class="tree-more" style="top:${top}px;left:0;padding-left:${pad}px">（空目录）</div>`;
   const arrow = r.dir
     ? `<span class="arrow"${r.open ? ' style="transform:rotate(90deg)"' : ''}>▶</span>` : '<span class="arrow"></span>';
   const icon = r.t === 'root' ? dirIconHtml(r.open, 14)
@@ -186,8 +189,13 @@ async function _tvExpand(path) {
 }
 
 function _tvCollapse(path) {
-  _TV.open.delete(path);
-  _TV.cache.delete(path);   // 折叠即弃缓存（v2 只读视图不缓存，同款）
+  // 对抗审 a206C：v2 折叠销毁整棵子树 DOM=后代展开态随之消失；扁平化后
+  // open/cache/seq 只删自身会残留后代——重展开陈旧数据直接可见（无 loading
+  // 无重拉）且三张 Map 无界增长。按路径前缀清后代（含自身），语义对齐 v2
+  const pre = path.replace(/[\/]+$/, '') + '/';
+  for (const k of [..._TV.open]) if (k === path || k.startsWith(pre)) _TV.open.delete(k);
+  for (const k of [..._TV.cache]) if (k === path || k.startsWith(pre)) _TV.cache.delete(k);
+  for (const k of [..._TV.seq]) if (k === path || k.startsWith(pre)) _TV.seq.delete(k);
   _tvRebuild();
   _tvFocus(path);           // 折叠对焦被折叠行
 }
@@ -200,8 +208,10 @@ function _tvFocus(path, firstChild) {
   const H = _TV.ROW_H, vpad = 40;
   let minTop = i * H, maxBottom = minTop + H;
   if (firstChild) {
-    const c = _TV.rows[i + 1];   // 子层首行（或 loading/截断行）
-    if (c) maxBottom = (i + 1) * H + H;
+    // 子层首行=下一行且深度更大（对抗审 a206C：空目录/末行时下一行是
+    // 兄弟或根，不得纳入对焦）
+    const me = _TV.rows[i], c = _TV.rows[i + 1];
+    if (c && me && c.depth > me.depth) maxBottom = (i + 2) * H;
   }
   let vy = host.scrollTop;
   if (minTop < host.scrollTop) vy = Math.max(0, minTop - vpad);
@@ -279,6 +289,12 @@ $('treeRoots').addEventListener('scroll', () => {
   if (_TV.raf) return;
   _TV.raf = requestAnimationFrame(() => { _TV.raf = 0; _tvPaint(); });
 }, { passive: true });
+// 对抗审 a206C：sheet 隐藏期 clientHeight=0（首绘兜底 24 行）→ 切回/
+// 窗口 resize 时无 scroll 事件，窗口不重算出现空带。ResizeObserver 一次
+// 挂载兜住两类容器尺寸变化（幂等 paint，守卫挡重复）
+try {
+  new ResizeObserver(() => _tvPaint()).observe($('treeRoots'));
+} catch (_) {}
 
 // ---- 事件委托（click/contextmenu 语义与 v2 一致）----
 $('treePane').addEventListener('click', async e => {
@@ -304,7 +320,11 @@ $('treePane').addEventListener('click', async e => {
     return;
   }
   if (typeof openFileSmart === 'function') {
+    // 对抗审 a206C P1（CDP 实证）：active 写数据后 _tvPaint 的窗口判重
+    // 守卫早退（from/to 未变）→ 高亮到不了 DOM；滚动/展开时才跳现且滞后
+    // 一拍。active-only 变更必须失效窗口强制重渲
     _TV.active = path;
+    _TV.rendered = [-1, -1];
     _tvPaint();
     openFileSmart(path, 'auto');
     _tvFocus(path);
