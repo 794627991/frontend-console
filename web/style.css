@@ -5029,3 +5029,10 @@ span.nn-hl-t { background: color-mix(in srgb, #3fb950 15%, transparent);
     border-top: 1px solid var(--border); min-height: 24px; }
   .ts-stat.run { color: var(--accent); cursor: pointer; }
   .ts-stat.run::after { content: '（点击取消）'; }
+
+  /* ===== a225：文件树根行路径小字（多根同名 trunk 一眼可辨） ===== */
+  .tree-root-wrap { position: absolute; left: 0; }
+  .tree-root-path { height: 14px; line-height: 14px; padding: 0 6px 0 26px;
+    font: 9.5px var(--font-mono); color: var(--muted); opacity: 0.75;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    direction: rtl; text-align: left; user-select: none; }

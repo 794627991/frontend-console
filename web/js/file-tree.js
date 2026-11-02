@@ -101,8 +101,23 @@ function _tvRebuild() {
     const w = _tvPad(r.depth) + r.name.length * 7.2 + 60;
     if (w > _TV.wMax) _TV.wMax = w;
   }
+  _tvTops();
   _TV.rendered = [-1, -1];
   _tvPaint();
+}
+
+// a225：累计高度数组（根行=36px 含路径子行，其余 22px）。top(i)=tops[i]，
+// 总高=末项+末行高；scrollTop→行号用二分（_tvPaint）
+function _tvTops() {
+  const n = _TV.rows.length;
+  const tops = new Array(n);
+  let y = 0;
+  for (let i = 0; i < n; i++) {
+    tops[i] = y;
+    y += _TV.ROW_H + (_TV.rows[i].t === 'root' ? 14 : 0);
+  }
+  _TV.tops = tops;
+  _TV.totalH = y;
 }
 
 function _tvPush(rows, path, depth) {
@@ -120,8 +135,10 @@ function _tvPush(rows, path, depth) {
 }
 
 // ---- 窗口渲染（hex-diff 同款窗口模式：innerHTML 重建，行数 ~50 成本可忽略）----
+// a225：行高不恒定（根行=名字行+路径小字行共 36px）——top 取累计高度数组
+// _TV.tops（rebuild 时 O(n) 算一次）；scrollTop→行号换算在 _tvPaint 二分
 function _tvRowHtml(r, i) {
-  const top = i * _TV.ROW_H;
+  const top = _TV.tops ? _TV.tops[i] : i * _TV.ROW_H;
   const pad = _tvPad(r.depth);
   const st = `top:${top}px;left:0;padding-left:${pad}px;`;
   if (r.t === 'loading')
@@ -142,9 +159,16 @@ function _tvRowHtml(r, i) {
   const dot = deco.dirty ? '<span class="tree-dot-dirty" title="未保存修改">●</span>' : '';
   const rootX = r.t === 'root'
     ? `<span class="root-x" title="从文件树移除该文件夹（不删除磁盘文件）">✕</span>` : '';
-  return `<div class="tree-row${r.t === 'root' ? ' tree-root-head' : ''}${active}${openCls}" data-path="${esc(r.path)}"` +
+  // a225：根行=双行容器（名字行 + 路径小字行）——多根同名场景（两个 trunk
+  // 都叫 src 但实际路径不同）一眼可辨；路径灰显不抢焦点，hover 全路径
+  if (r.t === 'root') {
+    return `<div class="tree-root-wrap" data-path="${esc(r.path)}" style="top:${top}px;left:0;width:max-content;min-width:100%">` +
+      `<div class="tree-row tree-root-head${active}" data-dir="1" data-depth="0" data-notrunc="1"` +
+      ` style="position:relative;left:0;top:0;padding-left:6px;">${arrow}${icon}<span class="t-name" title="${esc(r.path)}">${esc(r.name)}</span>${dot}${rootX}</div>` +
+      `<div class="tree-root-path">${esc(r.path)}</div></div>`;
+  }
+  return `<div class="tree-row${active}${openCls}" data-path="${esc(r.path)}"` +
     (r.dir ? ' data-dir="1"' : '') + ` data-depth="${r.depth}"` +
-    (r.t === 'root' ? ' data-notrunc="1"' : '') +
     ` style="${st}">${arrow}${icon}<span class="t-name" title="${esc(r.path)}">${esc(r.name)}</span>${dot}${rootX}</div>`;
 }
 
@@ -235,11 +259,20 @@ function _tvPaint() {
   if (!total) { sizer.innerHTML = ''; return; }
   // sizer 宽度用 rebuild 预计算值（撑横滚让深层长名完整可达——用户实锤
   // 语义：不许省略号裁名）
-  sizer.style.height = (total * _TV.ROW_H) + 'px';
+  sizer.style.height = (_TV.totalH || total * _TV.ROW_H) + 'px';
   sizer.style.minWidth = Math.max(100, Math.round(_TV.wMax)) + 'px';
-  const first = Math.max(0, Math.floor(host.scrollTop / _TV.ROW_H) - _TV.BUF);
-  const count = Math.ceil(host.clientHeight / _TV.ROW_H) + _TV.BUF * 2;
-  const from = first, to = Math.min(total, first + count);
+  // a225：scrollTop→行号二分 tops（行高不恒定）
+  const tops = _TV.tops || [];
+  let lo = 0, hi = total - 1, from = 0;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if ((tops[mid] || 0) <= host.scrollTop) { from = mid; lo = mid + 1; }
+    else hi = mid - 1;
+  }
+  from = Math.max(0, from - _TV.BUF);
+  let to = from;
+  const visBottom = host.scrollTop + host.clientHeight + _TV.BUF * _TV.ROW_H;
+  while (to < total && (tops[to] || 0) < visBottom) to++;
   if (from === _TV.rendered[0] && to === _TV.rendered[1] && sizer.children.length) return;
   let html = '';
   for (let i = from; i < to; i++) html += _tvRowHtml(_TV.rows[i], i);
@@ -295,7 +328,10 @@ function _tvFocus(path, firstChild) {
   const i = _TV.idx.get(path);
   if (!host || i === undefined) return;
   const H = _TV.ROW_H, vpad = 40;
-  let minTop = i * H, maxBottom = minTop + H;
+  const tops = _TV.tops || [];
+  const minTop = (tops[i] !== undefined) ? tops[i] : i * H;
+  let maxBottom = minTop + H;
+  if ((_TV.rows[i] || {}).t === 'root') maxBottom += 14;   // 根行含路径子行
   if (firstChild) {
     // 子层首行=下一行且深度更大（对抗审 a206C：空目录/末行时下一行是
     // 兄弟或根，不得纳入对焦）
