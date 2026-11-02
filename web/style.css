@@ -796,10 +796,18 @@
   .sidebar-sheet-tab.active {
     color: var(--accent); background: var(--bg-card); border-color: var(--border-glow);
   }
+  /* a224：计数改右上角角标（绝对定位不占行宽——4 tab 均分后 ~52px 塞不下
+     「打开+徽标」，flex-shrink 收缩会把徽标裁一半，用户实锤截图）。
+     tab 需 position:relative 承载；徽标 ≥3 位数时缩字距自适配 */
+  .sidebar-sheet-tab { position: relative; }
   .sidebar-sheet-tab .count {
+    position: absolute; top: -4px; right: 2px;
     background: var(--bg-input); border: 1px solid var(--border);
-    border-radius: 10px; padding: 0 6px; font-size: 10px; margin-left: 0;
-    flex-shrink: 1; overflow: hidden; text-overflow: ellipsis; max-width: 3.2em;
+    border-radius: 8px; padding: 0 4px; font-size: 9px; line-height: 14px;
+    min-width: 14px; text-align: center; color: var(--muted);
+  }
+  .sidebar-sheet-tab.active .count {
+    color: var(--accent); border-color: var(--accent-glow);
   }
   .sidebar-sheet-pane { display: none; flex: 1; min-height: 0; flex-direction: column; }
   .sidebar-sheet-pane.active { display: flex; }
