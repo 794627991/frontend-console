@@ -160,7 +160,7 @@ def build_app():
     @app.route("/worker_shutdown", methods=["POST"])
     def worker_shutdown():
         """父进程退出链调用（manage_stop）：优雅收尾后自杀——先停 Claude
-        proxy（停额度 worker/headroom/重试代理+base_url 回滚直连，否则
+        proxy（停额度 worker/bili 压缩/重试代理+base_url 回滚直连，否则
         claude CLI 会连着一个死端口），再逐会话 kill_proc（杀 claude 进程
         + 清 peer 注册，防幽灵会话/孤儿 CLI）、停机器人，半秒后 os._exit。
         硬 terminate 是兜底不是首选（硬杀路径 base_url 不回滚，靠会话侧
@@ -251,7 +251,7 @@ def main():
     app = build_app()
     # worker 身份标记：proxy 的托盘 tooltip 线程等主进程专属集成据此跳过
     os.environ["CLAUDE_WORKER"] = "1"
-    # Claude Proxy 模块初始化（额度 worker/headroom stats；不自动启动代理）
+    # Claude Proxy 模块初始化（额度 worker/bili stats；不自动启动代理）
     try:
         from src.proxy import proxy_module_init
         proxy_module_init()
@@ -517,7 +517,7 @@ def manage_stop():
                 import urllib.request
                 # P1-2 修复（a116）：原用无 body 的 urlopen（=GET）打
                 # POST-only 的 /worker_shutdown → 405，优雅收尾整段不执行：
-                # proxy_shutdown（停额度/headroom/重试代理 + **base_url 回滚
+                # proxy_shutdown（停额度/bili/重试代理 + **base_url 回滚
                 # 直连**）、逐会话 kill_proc、hiklink_bot 全被跳过，紧接着
                 # stdin 关闭让 worker 0.05s 内 os._exit → base_url 长期指向
                 # 已死端口，下次开 Claude Code 直接连不上；claude CLI 成孤儿。

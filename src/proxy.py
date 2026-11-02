@@ -1,12 +1,13 @@
 ﻿# -*- coding: utf-8 -*-
 """Claude Proxy 合入模块（原 D:/AI/proxy 独立工具，tkinter 版去 GUI 平移）。
 
-链路：Claude Code → 8787(headroom 压缩) → 37349(重试代理) → lanz.hikvision.com
+链路：Claude Code → 18788(billion-context 压缩，/bili/ URL 前缀代理) → 37349(重试代理) → lanz.hikvision.com
+（a201 前：8787 headroom 压缩，已退役——用户拍板"headroom 实际根本不用了，直接顶掉"）
 
 组件（全部从 claude_proxy_gui_headroom.pyw 平移，去 tkinter）：
 - BaseUrlManager     读写 ~/.claude/settings*.json 的 ANTHROPIC_BASE_URL（原子写原样保留）
 - ProxyController    重试代理生命周期（core.create_server + daemon 线程）
-- HeadroomController headroom 压缩层子进程托管（8787）
+- BiliController billion-context 压缩层子进程托管（18788；a201 前为 headroom 8787）
 - LanzQuotaWorker    额度查询后台线程（emit 直写模块缓存，无 root.after）
 - proxy_bp           Flask 蓝图：/api/proxy/* 给前端面板
 - tray_menu_items()  Proxy 托盘段——并入主工具托盘（用户定：托盘合成一个，
@@ -41,27 +42,35 @@ log = logging.getLogger("claude_proxy")
 # proxy_state.json，停止/退出/启动自愈恢复记忆值；代理入口 = 本地端口 + 直连
 # 地址的路径（转发路径原样透传，只换 host:port，两边天然对齐）。
 # DEFAULT_DIRECT_URL 仅在记忆与当前值都拿不到时兜底。
-PROXY_URL = "http://127.0.0.1:8787"
+# v4.0.0-a201：压缩层换代——headroom（headroom-ai，8787）退役，换
+# billion-context（bili，模型驱动分层压缩，https://github.com/ranxianglei/
+# billion-context，MIT+署名条款：产品须可见标注）。链路不变思路：
+# Claude Code → bili(18788，/bili/ URL 前缀代理) → 37349(重试代理) → lanz。
+# base_url = PROXY_URL（bili 入口+/bili/+retry 绝对 URL——bili 是 URL 前缀
+# 模式，上游编在地址里，不经环境变量）
+PROXY_URL = "http://127.0.0.1:18788/bili/http://127.0.0.1:37349"
 DEFAULT_DIRECT_URL = "http://lanz.hikvision.com/v3/anthropic/model"
 LISTEN_HOST = "127.0.0.1"
 LISTEN_PORT = 37349
 
-HEADROOM_PORT = 8787
-HEADROOM_ENV_EXTRA = {"HEADROOM_RETRY_MAX_ATTEMPTS": "1",
-                      "HEADROOM_MODE": "token",
-                      "HEADROOM_NO_CCR": "1"}
-PIP_PKG_SPEC = "headroom-ai[all]"
-HEADROOM_READY_TIMEOUT = 90
+BILI_PORT = 18788
+# 外联铁闸（内网部署）：bili 默认每 3 分钟查 npm 自动更新 + advisory 轮询
+# （命中缺陷版本会强制安装）——环境变量注入硬关，只跑锁定安装版
+BILI_ENV_LOCKDOWN = {"ACP_AUTO_UPDATE": "0", "BILI_ADVISORY_CHECK": "0"}
+BILI_READY_TIMEOUT = 90
 
-HEADROOM_MODES = {
-    "full":  {"label": "完整压缩（ML + 结构化）", "env": {}},
-    "light": {"label": "轻量压缩（仅结构化，省 ~400MB 内存）",
-              "env": {"HEADROOM_DISABLE_KOMPRESS": "1"}},
-    "off":   {"label": "关闭压缩（headroom 不启动）", "env": None},
+# 模式：on/off 两档（headroom 的 full/light 档随其退役——bili 阈值体系
+# 用默认值：50K 增长软提醒 / 75% 强制压缩 / 95% 紧急截断工具输出）
+BILI_MODES = {
+    "on":  {"label": "开启压缩（billion-context 分层压缩）", "env": {}},
+    "off": {"label": "关闭压缩（bili 不启动）", "env": None},
 }
+# headroom 时代旧模式文件的迁移映射（full/light→on；旧文件读到即迁移）
+_BILI_MODE_FROM_HR = {"full": "on", "light": "on", "off": "off"}
 
 CLAUDE_DIR = os.path.join(os.path.expanduser("~"), ".claude")
-HEADROOM_MODE_PATH = os.path.join(CLAUDE_DIR, "headroom_mode.json")
+BILI_MODE_PATH = os.path.join(CLAUDE_DIR, "bili_mode.json")
+_HR_MODE_PATH_LEGACY = os.path.join(CLAUDE_DIR, "headroom_mode.json")
 CLAUDE_SETTINGS_PATHS = (
     os.path.join(CLAUDE_DIR, "settings.local.json"),
     os.path.join(CLAUDE_DIR, "settings.json"),
@@ -138,6 +147,14 @@ class BaseUrlManager:
                 skipped.append(os.path.basename(path))
                 continue
             d.setdefault("env", {})["ANTHROPIC_BASE_URL"] = target
+            # bili 独占压缩联动（a201）：base_url 指向 bili（/bili/ 前缀）时写
+            # DISABLE_AUTO_COMPACT=1 关掉 Claude Code 自带自动压缩（bili 分层
+            # 压缩接管，两者叠加会互相打断前缀缓存）；切走（off/直连/回滚）
+            # 自动移除——所有切换路径（start/stop/mode/自愈）都过 apply，单点收口
+            if "/bili/" in target:
+                d["env"]["DISABLE_AUTO_COMPACT"] = "1"
+            else:
+                d["env"].pop("DISABLE_AUTO_COMPACT", None)
             # P1-7（a116）：tmp 名进程+线程唯一——跨进程并发写同一配置
             # 文件时共用 path+".tmp" 会互相覆盖成半截 JSON
             tmp = "%s.%d.%d.tmp" % (path, os.getpid(), threading.get_ident())
@@ -147,6 +164,10 @@ class BaseUrlManager:
                         with open(path, encoding="utf-8") as f:
                             d = json.load(f)
                         d.setdefault("env", {})["ANTHROPIC_BASE_URL"] = target
+                        if "/bili/" in target:
+                            d["env"]["DISABLE_AUTO_COMPACT"] = "1"
+                        else:
+                            d["env"].pop("DISABLE_AUTO_COMPACT", None)
                     with open(tmp, "w", encoding="utf-8") as f:
                         json.dump(d, f, indent=2, ensure_ascii=False)
                         f.write("\n")
@@ -160,11 +181,11 @@ class BaseUrlManager:
 
 # ---- 直连地址：记忆 / 求值（v2.26 去写死核心）---------------------------
 PROXY_STATE_PATH = os.path.join(DATA_DIR, "proxy_state.json")
-_OWN_PROXY_PREFIXES = ("http://127.0.0.1:37349", "http://127.0.0.1:8787")
+_OWN_PROXY_PREFIXES = ("http://127.0.0.1:37349", "http://127.0.0.1:18788")
 
 
 def _is_own_proxy_url(url):
-    """base_url 是否指向自家代理入口（37349 重试代理 / 8787 headroom）。"""
+    """base_url 是否指向自家代理入口（37349 重试代理 / 18788 bili）。"""
     return bool(url) and str(url).startswith(_OWN_PROXY_PREFIXES)
 
 
@@ -331,13 +352,21 @@ class ProxyController:
 
 
 # ---- 压缩模式持久化（GUI:468-529 原样）--------------------------------
-def load_headroom_mode():
+def load_bili_mode():
     try:
-        with open(HEADROOM_MODE_PATH, encoding="utf-8") as f:
+        with open(BILI_MODE_PATH, encoding="utf-8") as f:
             d = json.load(f)
         mode = d.get("mode")
-        if mode in HEADROOM_MODES:
+        if mode in BILI_MODES:
             return mode
+    except (ValueError, OSError):
+        pass
+    # headroom 旧模式文件迁移（full/light→on）——读到即转存新文件，旧文件保留
+    try:
+        with open(_HR_MODE_PATH_LEGACY, encoding="utf-8") as f:
+            old_mode = (json.load(f) or {}).get("mode")
+        if old_mode in _BILI_MODE_FROM_HR:
+            return _BILI_MODE_FROM_HR[old_mode]
     except (ValueError, OSError):
         pass
     return None
@@ -345,7 +374,7 @@ def load_headroom_mode():
 
 def load_ccr():
     try:
-        with open(HEADROOM_MODE_PATH, encoding="utf-8") as f:
+        with open(BILI_MODE_PATH, encoding="utf-8") as f:
             return bool(json.load(f).get("ccr"))
     except (ValueError, OSError):
         return False
@@ -354,24 +383,24 @@ def load_ccr():
 def _write_mode_file(updates):
     d = {}
     try:
-        with open(HEADROOM_MODE_PATH, encoding="utf-8") as f:
+        with open(BILI_MODE_PATH, encoding="utf-8") as f:
             old = json.load(f)
         if isinstance(old, dict):
             d.update(old)
     except (ValueError, OSError):
         pass
     d.update(updates)
-    with open(HEADROOM_MODE_PATH, "w", encoding="utf-8") as f:
+    with open(BILI_MODE_PATH, "w", encoding="utf-8") as f:
         json.dump(d, f, ensure_ascii=False, indent=2)
 
 
-def save_headroom_mode(mode, remember=True):
+def save_bili_mode(mode, remember=True):
     try:
-        if remember and mode in HEADROOM_MODES:
+        if remember and mode in BILI_MODES:
             _write_mode_file({"mode": mode})
         else:
             try:
-                os.remove(HEADROOM_MODE_PATH)
+                os.remove(BILI_MODE_PATH)
             except OSError:
                 pass
     except OSError as e:
@@ -385,49 +414,45 @@ def save_ccr(enabled):
         log.warning("保存 CCR 开关失败: %s", e)
 
 
-# ---- headroom.exe 定位（GUI:86-172 平移）------------------------------
-def _detect_headroom_exe():
-    if getattr(__import__("sys"), "frozen", False):
-        roots = []
-        home = os.path.expanduser("~")
-        _PY = os.path.join(home, "AppData", "Local", "Programs", "Python")
-        if os.path.isdir(_PY):
-            roots.append(_PY)
-        for pf in (r"C:\Program Files\Python39", r"C:\Program Files\Python310",
-                   r"C:\Program Files\Python311", r"C:\Program Files\Python312",
-                   r"C:\Program Files\Python313", r"C:\Program Files\Python314"):
-            if os.path.isdir(pf):
-                roots.append(pf)
-        for root in roots:
-            subs = []
-            for ver in sorted(os.listdir(root), reverse=True):
-                d = os.path.join(root, ver)
-                if os.path.isdir(d) and not ver.startswith("_"):
-                    subs.append(d)
-            if os.path.exists(os.path.join(root, "python.exe")):
-                subs.append(root)
-            for d in subs:
-                cand = os.path.join(d, "Scripts", "headroom.exe")
-                if os.path.isfile(cand):
-                    return cand
-        import shutil
-        p = shutil.which("headroom")
-        return p
-    # 源码运行：从当前解释器同目录 Scripts 推导；找不到再 which 兜底
-    import sys
-    cand = os.path.join(os.path.dirname(sys.executable),
-                        "Scripts", "headroom.exe")
-    if os.path.isfile(cand):
-        return cand
-    import shutil
-    return shutil.which("headroom")
+# ---- bili 定位（Node≥22 + npm 全局 billion-context）--------------------
+# headroom 时代是 pip 包 exe；bili 是 npm 包（Node ≥22 硬要求，20 会崩在
+# 自举 SQLite）。定位链：npm prefix -g 的 bili.cmd → PATH which 兜底。
+# Node 版本一并校验，不达标给可读错误（前端展示装 Node 22+ 的指引）。
+def _detect_bili_cmd():
+    import shutil, subprocess
+    def _node_ok():
+        try:
+            exe = shutil.which("node")
+            if not exe:
+                return None, "未找到 node（billion-context 需 Node.js ≥ 22）"
+            out = subprocess.run([exe, "--version"], capture_output=True,
+                                 text=True, timeout=10).stdout.strip().lstrip("v")
+            major = int(out.split(".")[0]) if out.split(".")[0].isdigit() else 0
+            if major < 22:
+                return None, "node %s 过旧（billion-context 需 ≥ 22，SQLite 引擎在 20 崩）" % out
+            return exe, None
+        except Exception as e:
+            return None, "node 检测失败: %s" % e
+    node_exe, node_err = _node_ok()
+    if not node_exe:
+        return node_err   # str = 错误信息（调用方展示）；非路径
+    # bili 定位：npm 全局 bin（Windows 是 bili.cmd）
+    try:
+        prefix = subprocess.run(["npm", "prefix", "-g"], capture_output=True,
+                                text=True, timeout=15).stdout.strip().splitlines()[-1]
+        cand = os.path.join(prefix, "bili.cmd")
+        if os.path.isfile(cand):
+            return cand
+    except Exception:
+        pass
+    p = shutil.which("bili")
+    return p if p else "未找到 billion-context（npm install -g billion-context 后重试，或把压缩模式设为关闭）"
+
+BILI_CMD = _detect_bili_cmd()
 
 
-HEADROOM_EXE = _detect_headroom_exe()
-
-
-# ---- HeadroomController（GUI:533-660 平移）----------------------------
-class HeadroomController:
+# ---- BiliController（GUI:533-660 平移）----------------------------
+class BiliController:
     def __init__(self):
         self.proc = None
         self._err_file = None
@@ -435,7 +460,7 @@ class HeadroomController:
         self._lock = threading.Lock()
 
     @staticmethod
-    def port_in_use(port=HEADROOM_PORT):
+    def port_in_use(port=BILI_PORT):
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.settimeout(0.3)
@@ -444,9 +469,9 @@ class HeadroomController:
             return False
 
     @staticmethod
-    def ping_existing(port=HEADROOM_PORT):
+    def ping_existing(port=BILI_PORT):
         import urllib.request, urllib.error
-        for path in ("/livez", "/healthz", "/stats"):
+        for path in ("/__bili/health", "/__bili/stats"):
             try:
                 r = urllib.request.urlopen(
                     "http://127.0.0.1:%d%s" % (port, path), timeout=1)
@@ -470,57 +495,54 @@ class HeadroomController:
         with self._lock:
             return self.proc
 
-    def start(self, mode="full", ccr=None):
+    def start(self, mode="on", ccr=None):
         with self._lock:
             if self.running:
                 if self.proc is None:
-                    log.info("headroom: 8787 已有实例在跑，复用（不接管）")
+                    log.info("bili: %d 已有实例在跑，复用（不接管）", BILI_PORT)
                 return
             if self.port_in_use():
-                raise RuntimeError("端口 %d 已被其他程序占用（非 headroom）"
-                                   % HEADROOM_PORT)
-            if not HEADROOM_EXE or not os.path.exists(HEADROOM_EXE):
-                raise RuntimeError("未找到 headroom.exe（本机未安装）\n"
-                                   "pip install %s 后重试，或把压缩模式设为关闭"
-                                   % PIP_PKG_SPEC)
+                raise RuntimeError("端口 %d 已被其他程序占用（非 billion-context）"
+                                   % BILI_PORT)
+            # BILI_CMD 是路径或错误信息串（Node 缺失/版本低/未装 bili）
+            if not BILI_CMD or not os.path.exists(BILI_CMD):
+                raise RuntimeError(str(BILI_CMD) if BILI_CMD else
+                                   "未找到 billion-context")
             env = dict(os.environ)
-            env["ANTHROPIC_TARGET_API_URL"] = _retry_url()
-            env.update(HEADROOM_ENV_EXTRA)
-            if ccr:
-                env.pop("HEADROOM_NO_CCR", None)
-            mode_env = HEADROOM_MODES.get(mode, {}).get("env") or {}
-            env.update(mode_env)
+            env.update(BILI_ENV_LOCKDOWN)   # 关 npm 自动更新 + advisory 轮询（内网铁闸）
             creationflags = 0x08000000 if os.name == "nt" else 0
-            err_path = os.path.join(DATA_DIR, "headroom_stderr.log")
-            out_path = os.path.join(DATA_DIR, "headroom_stdout.log")
+            err_path = os.path.join(DATA_DIR, "bili_stderr.log")
+            out_path = os.path.join(DATA_DIR, "bili_stdout.log")
             os.makedirs(DATA_DIR, exist_ok=True)
             self._err_file = open(err_path, "w", encoding="utf-8", errors="replace")
             self._out_file = open(out_path, "w", encoding="utf-8", errors="replace")
+            # bili 是 URL 前缀代理：上游编在 base_url 的 /bili/<upstream> 里
+            # （PROXY_URL），不经环境变量；--host 显式钉回环
             self.proc = subprocess.Popen(
-                [HEADROOM_EXE, "proxy", "--port", str(HEADROOM_PORT)],
+                [BILI_CMD, "--host", "127.0.0.1", "--port", str(BILI_PORT)],
                 env=env, creationflags=creationflags,
                 stdout=self._out_file, stderr=self._err_file)
-            log.info("headroom 已拉起 pid=%s 模式=%s 上游=%s",
-                     self.proc.pid, mode, env["ANTHROPIC_TARGET_API_URL"])
+            log.info("bili 已拉起 pid=%s 模式=%s（上游经 PROXY_URL 前缀）",
+                     self.proc.pid, mode)
 
     def startup_error(self):
         """读 stderr 尾部（启动失败诊断，前端展示）。"""
         try:
-            with open(os.path.join(DATA_DIR, "headroom_stderr.log"),
+            with open(os.path.join(DATA_DIR, "bili_stderr.log"),
                       encoding="utf-8", errors="replace") as f:
                 return "\n".join(f.read().splitlines()[-12:])
         except OSError:
             return ""
 
     def stats(self):
-        """拉 headroom /stats 拿压缩统计（GUI:677-690 平移）。
+        """拉 bili /__bili/stats 拿压缩统计。
         返回 dict 或 None（不在线/超时），字段随 headroom 版本差异由调用方 .get 兜底。"""
         if not self.running:
             return None
         try:
             import urllib.request
             r = urllib.request.urlopen(
-                "http://127.0.0.1:%d/stats" % HEADROOM_PORT, timeout=2)
+                "http://127.0.0.1:%d/__bili/stats" % BILI_PORT, timeout=2)
             return json.loads(r.read().decode("utf-8"))
         except Exception:
             return None
@@ -711,7 +733,7 @@ class LanzQuotaWorker:
 # ==== 模块级单例与状态（仿 tftp.py `_tftp` 模式）========================
 _bmgr = BaseUrlManager()
 _ctl = ProxyController()
-_hr = HeadroomController()
+_bili = BiliController()
 _quota_state = {}       # {"kind":..., "payload":..., "ts":...} 最新一次 emit（msg 提示用）
 _quota_login = None     # 登录态独立槽 {"state": online/logging/error/fetch_err, "user":...}
                          # （与 _quota_state 分槽：data 事件不再覆盖登录态——
@@ -726,38 +748,38 @@ _cred_cache = None       # 凭据磁盘缓存（save/clear 时刷新；status 1s
 _cred_cached = False     # 缓存是否已初始化（None=无凭据 也是合法值）
 
 _autoswitched = False    # 工具自动改过 base_url → 退出时回滚直连
-_hr_switching = False
-_headroom_mode = None    # 当前压缩模式（init 时从记忆文件读）
+_bili_switching = False
+_bili_mode = None    # 当前压缩模式（init 时从记忆文件读）
 _ccr = False
 _tray_tip_thread = None
 _tip_stop = threading.Event()
 _shutdown_done = False
-_hr_stats_cache = None        # headroom /stats 最近一次结果（5s 缓存线程写，
+_bili_stats_cache = None        # headroom /stats 最近一次结果（5s 缓存线程写，
                               # status 1s 轮询只读——/stats 拉取 2s 超时不能同步做）
-_hr_stats_ts = 0.0
+_bili_stats_ts = 0.0
 
 
-def _hr_stats_loop():
+def _bili_stats_loop():
     """headroom 压缩统计缓存线程：headroom 模式在（非 off）就 5s 拉 /stats
     （GUI _refresh_headroom 平移，但这里是后台循环天然防堆积，不会像 GUI 每秒探测）。
     条件不绑 _ctl.running：headroom 可独立于自家重试代理在线（端口 37349 被
     外部实例占、或 headroom 复用外部实例）——绑死则 stats 永远 null，
-    面板卡「stats 拉取中/失败」（用户实锤）。_hr.stats() 内部自判 running。"""
-    global _hr_stats_cache, _hr_stats_ts
+    面板卡「stats 拉取中/失败」（用户实锤）。_bili.stats() 内部自判 running。"""
+    global _bili_stats_cache, _bili_stats_ts
     while not _tip_stop.is_set():
         try:
-            if _headroom_mode != "off":
-                _hr_stats_cache = _hr.stats()
-                _hr_stats_ts = time.time()
+            if _bili_mode != "off":
+                _bili_stats_cache = _bili.stats()
+                _bili_stats_ts = time.time()
             else:
-                _hr_stats_cache = None
+                _bili_stats_cache = None
         except Exception:
             pass
         _tip_stop.wait(5)
 
 
-def _ensure_hr_stats_thread():
-    t = threading.Thread(target=_hr_stats_loop, daemon=True)
+def _ensure_bili_stats_thread():
+    t = threading.Thread(target=_bili_stats_loop, daemon=True)
     t.start()
     return t
 
@@ -841,36 +863,36 @@ def _ensure_quota_worker():
         _quota = LanzQuotaWorker(_quota_emit)
 
 
-# ---- 启停/模式核心操作（GUI _on_toggle/_set_mode/_apply_hr_mode 平移）--
-def _wait_headroom_ready(timeout=HEADROOM_READY_TIMEOUT):
+# ---- 启停/模式核心操作（GUI _on_toggle/_set_mode/_apply_bili_mode 平移）--
+def _wait_bili_ready(timeout=BILI_READY_TIMEOUT):
     """等 headroom /livez 就绪（GUI:2622-2641 原样）。Popen 返回≠可服务。"""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        proc = _hr.proc_snapshot()
+        proc = _bili.proc_snapshot()
         if proc is not None and proc.poll() is not None:
             raise RuntimeError("headroom 子进程启动即退出 (code=%s)\n%s"
-                               % (proc.returncode, _hr.startup_error()))
-        if _hr.ping_existing():
-            log.info("headroom 已就绪 :%d", HEADROOM_PORT)
+                               % (proc.returncode, _bili.startup_error()))
+        if _bili.ping_existing():
+            log.info("headroom 已就绪 :%d", BILI_PORT)
             return
         time.sleep(0.5)
-    raise RuntimeError("headroom %ds 内未就绪\n%s" % (timeout, _hr.startup_error()))
+    raise RuntimeError("headroom %ds 内未就绪\n%s" % (timeout, _bili.startup_error()))
 
 
 def _proxy_mode_url():
     """代理模式目标 base_url：off→37349 直连重试代理；压缩在跑→8787（GUI:2694）。"""
-    if _headroom_mode == "off" or not _hr.ping_existing():
+    if _bili_mode == "off" or not _bili.ping_existing():
         return _retry_url()
     return PROXY_URL
 
 
-def start_proxy(hr_mode=None):
+def start_proxy(bili_mode=None):
     """启动重试代理 + headroom（按模式）+ 切 base_url（GUI _on_toggle 平移）。
-    hr_mode=None 用当前记忆模式；显式传 "off" 可本次跳过 headroom（省内存）。
+    bili_mode=None 用当前记忆模式；显式传 "off" 可本次跳过 headroom（省内存）。
     headroom 冷启动慢 → 后台线程等就绪再补切 8787，期间先切 37349 会话不中断。
     返回 (ok, msg)。"""
-    global _autoswitched, _hr_switching
-    mode = _headroom_mode if hr_mode is None else hr_mode
+    global _autoswitched, _bili_switching
+    mode = _bili_mode if bili_mode is None else bili_mode
     if _ctl.running:
         return True, "已在运行"
     if _ctl.port_in_use():
@@ -881,10 +903,10 @@ def start_proxy(hr_mode=None):
         _ctl.start()
     except Exception as e:   # 绑定失败等——给面板可读消息，别让 Flask 吞成 500
         return False, str(e)
-    _hr_switching = True
+    _bili_switching = True
 
     def _worker():
-        global _hr_switching
+        global _bili_switching
         try:
             # 先记忆当前直连地址（非代理值才记——恢复的真源），再切 37349
             # 直连重试代理（不等 headroom，会话立即可用）
@@ -900,20 +922,20 @@ def start_proxy(hr_mode=None):
                 _autoswitched = True
             if mode != "off":
                 try:
-                    _hr.start(mode, ccr=_ccr)
-                    _wait_headroom_ready()
+                    _bili.start(mode, ccr=_ccr)
+                    _wait_bili_ready()
                     if _bmgr.read_current_url() != PROXY_URL:
                         _bmgr.apply(PROXY_URL)
                         _autoswitched = True
                 except Exception as e:   # 失败不回滚重试代理，无压缩继续跑
                     log.warning("headroom 启动失败，继续无压缩运行: %s", e)
         finally:
-            _hr_switching = False
+            _bili_switching = False
             _proxy_notify()   # 状态可能变化（就绪/失败），广播给前端
     threading.Thread(target=_worker, daemon=True).start()
     _ensure_tray()
     _proxy_notify()
-    return True, "启动中（headroom 冷启动可达 10-30s）"
+    return True, "启动中（bili 冷启动需就绪探测，期间先走 37349 不断会话）"
 
 
 def ensure_proxy_for_claude():
@@ -924,7 +946,7 @@ def ensure_proxy_for_claude():
         try:
             if _ctl.running or _ctl.ping_existing():
                 return   # 已在跑（含外部自家实例）：直接复用
-            ok, msg = start_proxy(hr_mode="off")
+            ok, msg = start_proxy(bili_mode="off")
             if not ok:
                 # 端口被占等失败：确保 base_url 没卡在自家代理端口上
                 try:
@@ -957,7 +979,7 @@ def stop_proxy():
     幂等。"""
     global _autoswitched
     _bump_repoint_epoch()   # 代理都停了：排队中的方案联动不得再动 base_url
-    _hr.stop()
+    _bili.stop()
     _ctl.stop()
     try:
         cur = _bmgr.read_current_url()
@@ -1100,7 +1122,7 @@ def re_point_upstream(new_direct_url, was_proxy=None, notify=True, _epoch=None):
     （零停机，不 stop/start server）。base_url 此前指代理入口（=代理在链路上）则继续指代理入口
     只是换了真身；本在直连模式则不动 base_url，只换代理上游。headroom 在
     跑且新网关路径不同：其上游 env 是启动时烘死的，必须重拉——借
-    apply_hr_mode 整套（停旧拉新+等就绪+切 8787），期间 base_url 先指
+    apply_bili_mode 整套（停旧拉新+等就绪+切 8787），期间 base_url 先指
     37349 会话不中断。代理没在跑：只记忆，不动 base_url。返回 (ok, msg)。
     was_proxy：调用方（profiles/apply）在整份写回 settings **之前**判得的
     「base_url 是否指代理入口」——传入则优先，不传才现读（调用时 settings
@@ -1145,15 +1167,15 @@ def re_point_upstream(new_direct_url, was_proxy=None, notify=True, _epoch=None):
             _proxy_notify()
         return True, "代理上游已跟随切换（base_url 保持直连）"
     new_path = urlsplit(new_direct_url).path or "/"
-    if (_hr.ping_existing() and _headroom_mode != "off" and new_path != old_path):
+    if (_bili.ping_existing() and _bili_mode != "off" and new_path != old_path):
         # headroom 上游含旧网关路径，路径变了不重拉 → 打旧路径上新网关 404。
         # 先指 37349 保会话；后台重拉 headroom，就绪后**条件**升 8787——
         # 期间用户又切方案/手动切直连（epoch 变了或 base_url 已非自家入口）
-        # 时不覆盖，由后续动作收尾（apply_hr_mode 的 worker 是无条件
+        # 时不覆盖，由后续动作收尾（apply_bili_mode 的 worker 是无条件
         # apply(PROXY_URL)，会顶掉手动直连，故此处自写不复用）
         _bmgr.apply(_retry_url())
         _autoswitched = True
-        hr_mode_snap = _headroom_mode
+        bili_mode_snap = _bili_mode
 
         def _hr_worker():
             global _autoswitched
@@ -1161,9 +1183,9 @@ def re_point_upstream(new_direct_url, was_proxy=None, notify=True, _epoch=None):
             try:
                 if _epoch is not None and _epoch != _repoint_seq:
                     return   # 排队期间有更新动作：重拉作废
-                _hr.stop()
-                _hr.start(hr_mode_snap, ccr=_ccr)
-                _wait_headroom_ready()
+                _bili.stop()
+                _bili.start(bili_mode_snap, ccr=_ccr)
+                _wait_bili_ready()
                 with _switch_lock:
                     if _epoch is not None and _epoch != _repoint_seq:
                         return
@@ -1190,34 +1212,34 @@ def re_point_upstream(new_direct_url, was_proxy=None, notify=True, _epoch=None):
     return True, msg
 
 
-def apply_hr_mode(mode, ccr=None):
-    """运行时切压缩模式（GUI _apply_hr_mode/_done 平移）。
+def apply_bili_mode(mode, ccr=None):
+    """运行时切压缩模式（GUI _apply_bili_mode/_done 平移）。
     off：停 headroom 同步切 37349；full/light：停旧拉新，后台线程等就绪切 8787，
     失败回退 off 并同步记忆文件。"""
-    global _headroom_mode, _hr_switching, _ccr, _autoswitched
+    global _bili_mode, _bili_switching, _ccr, _autoswitched
     if ccr is not None:
         _ccr = bool(ccr)
         save_ccr(_ccr)
-    if mode not in HEADROOM_MODES:
+    if mode not in BILI_MODES:
         return False, "未知压缩模式"
     # 原版行为（用户实锤顺序）：headroom 的上游是重试代理，代理没跑时
     # 拉 headroom 无意义 → 只记模式，下次启动代理时自动拉起（托盘路径）。
     # off（关闭压缩）永远立即生效。面板弹窗另有 running 门槛防误点。
     if mode != "off" and not _ctl.running:
-        _headroom_mode = mode
-        save_headroom_mode(mode, remember=True)
+        _bili_mode = mode
+        save_bili_mode(mode, remember=True)
         log.info("压缩模式 -> %s（代理未运行，下次启动生效）", mode)
         return True, "已记住，下次启动代理时生效"
-    if _hr_switching:
+    if _bili_switching:
         return False, "压缩模式切换进行中，请稍候"
-    _hr_switching = True
+    _bili_switching = True
 
     def _worker():
-        global _headroom_mode, _hr_switching, _autoswitched
+        global _bili_mode, _bili_switching, _autoswitched
         try:
-            _headroom_mode = mode
-            save_headroom_mode(mode, remember=True)
-            _hr.stop()
+            _bili_mode = mode
+            save_bili_mode(mode, remember=True)
+            _bili.stop()
             if mode == "off":
                 # 代理在跑才把 base_url 指回 37349；没在跑时只改记忆
                 # ——否则 base_url 指向空端口，Claude Code 直接连不上
@@ -1228,21 +1250,21 @@ def apply_hr_mode(mode, ccr=None):
                          "，直连重试代理" if _ctl.running else "，代理未跑不动 base_url")
                 return
             try:
-                _hr.start(mode, ccr=_ccr)
-                _wait_headroom_ready()
+                _bili.start(mode, ccr=_ccr)
+                _wait_bili_ready()
                 _bmgr.apply(PROXY_URL)
                 _autoswitched = True
                 log.info("压缩模式切换 -> %s（base_url -> 8787）", mode)
             except Exception as e:
                 # 失败回退 off：记忆与实际运行状态一致（不能让"记住的模式"
                 # 与实际脱节，重启后又试图拉起拉不起来的模式）
-                _headroom_mode = "off"
-                save_headroom_mode("off", remember=True)
+                _bili_mode = "off"
+                save_bili_mode("off", remember=True)
                 log.warning("切换到 %s 失败，回退直连: %s", mode, e)
                 _bmgr.apply(_retry_url())
                 _autoswitched = True
         finally:
-            _hr_switching = False
+            _bili_switching = False
     threading.Thread(target=_worker, daemon=True).start()
     return True, "切换中"
 
@@ -1321,21 +1343,18 @@ def tray_menu_items():
     返回原生菜单描述树（("item", text, cb, opts) / ("sep",)），text/checked
     可传函数 → 打开菜单时求值最新状态；未启动时启停行自动降级。
     与 pystray.MenuItem(fn) 签名兼容：函数项被调时收一个 None 参数。"""
-    has_headroom = bool(HEADROOM_EXE) and os.path.exists(HEADROOM_EXE)
+    has_bili = bool(BILI_CMD) and os.path.exists(BILI_CMD)
 
     def _hr_items():
-        # 未启动重试代理时压缩项置灰（headroom 需要 37349 做上游）；
+        # 未启动重试代理时压缩项置灰（bili 的上游是 37349）；
         # 关闭压缩永远可点——用于启动前把记忆里的模式改成 off
-        en = has_headroom   # 对齐原工具：装了 headroom 即可选，代理未跑=只记模式下次启动生效
+        en = has_bili   # 装了 billion-context 即可选，代理未跑=只记模式下次启动生效
         return [
-            ("item", "完整压缩", lambda: apply_hr_mode("full"),
-             {"radio": True, "checked": lambda: _headroom_mode == "full",
+            ("item", "开启压缩", lambda: apply_bili_mode("on"),
+             {"radio": True, "checked": lambda: _bili_mode == "on",
               "enabled": en}),
-            ("item", "轻量压缩", lambda: apply_hr_mode("light"),
-             {"radio": True, "checked": lambda: _headroom_mode == "light",
-              "enabled": en}),
-            ("item", "关闭压缩", lambda: apply_hr_mode("off"),
-             {"radio": True, "checked": lambda: _headroom_mode == "off"}),
+            ("item", "关闭压缩", lambda: apply_bili_mode("off"),
+             {"radio": True, "checked": lambda: _bili_mode == "off"}),
         ]
 
     def _toggle_text():
@@ -1356,8 +1375,8 @@ def tray_menu_items():
         ("item", "切换为直连模式", lambda: set_mode("direct"), {}),
         ("item", "压缩模式", None, {"submenu": _hr_items()}),
         ("item", "CCR 流压缩（激进·/compact 可能卡死）",
-         lambda: apply_hr_mode(_headroom_mode, ccr=not _ccr),
-         {"checked": lambda: _ccr, "enabled": has_headroom and _ctl.running}),
+         lambda: apply_bili_mode(_bili_mode, ccr=not _ccr),
+         {"checked": lambda: _ccr, "enabled": has_bili and _ctl.running}),
     ]
 
 
@@ -1414,20 +1433,16 @@ def tray_menu_items_remote(base):
             else "▶ 启动 Claude 代理"
 
     def _hr_items():
-        # 装了 headroom 即可选（对齐原工具；代理未跑=只记模式下次启动生效）
-        en = bool(_st().get("headroom_exe"))
+        # 装了 billion-context 即可选（代理未跑=只记模式下次启动生效）
+        en = bool(_st().get("bili_cmd"))
         return [
-            ("item", "完整压缩",
-             lambda: _post("/api/proxy/compression", {"mode": "full"}),
-             {"radio": True, "checked": lambda: _st().get("hr_mode") == "full",
-              "enabled": en}),
-            ("item", "轻量压缩",
-             lambda: _post("/api/proxy/compression", {"mode": "light"}),
-             {"radio": True, "checked": lambda: _st().get("hr_mode") == "light",
+            ("item", "开启压缩",
+             lambda: _post("/api/proxy/compression", {"mode": "on"}),
+             {"radio": True, "checked": lambda: _st().get("bili_mode") == "on",
               "enabled": en}),
             ("item", "关闭压缩",
              lambda: _post("/api/proxy/compression", {"mode": "off"}),
-             {"radio": True, "checked": lambda: _st().get("hr_mode") == "off",
+             {"radio": True, "checked": lambda: _st().get("bili_mode") == "off",
               "enabled": True}),
         ]
 
@@ -1559,7 +1574,7 @@ def ensure_direct_if_proxy_down(origin="startup"):
         cur = _bmgr.read_current_url()
         if not _is_own_proxy_url(cur):
             return False
-        alive = _hr.ping_existing() if ":8787" in cur else _ctl.ping_existing()
+        alive = _bili.ping_existing() if ":8787" in cur else _ctl.ping_existing()
         if alive:
             return False
         # 确认接管（此时才作废排队任务——此检查每次会话启动前都跑，
@@ -1576,9 +1591,8 @@ def ensure_direct_if_proxy_down(origin="startup"):
 def proxy_module_init():
     """server.py start_background 时调（不自动启动代理——按需启动）：
     读记忆的压缩模式/CCR；启动自愈；建额度 worker。"""
-    global _headroom_mode, _ccr
-    m = load_headroom_mode()
-    _headroom_mode = m if m else "light"   # 无记忆默认 light（省内存版）
+    global _bili_mode, _ccr
+    m = load_bili_mode()
     _ccr = load_ccr()
     # v2.26：启动自愈已移除（用户定）——自愈只发生在「启动 claude 会话前」
     # （HarnessSession.start → ensure_direct_if_proxy_down），且以代理实际
@@ -1586,7 +1600,7 @@ def proxy_module_init():
     # 额度 worker（有凭据自动登录；无凭据建了等 POST 唤醒）
     _ensure_quota_worker()
     # headroom /stats 缓存线程（代理运行时 5s 拉，status 只读缓存）
-    _ensure_hr_stats_thread()
+    _ensure_bili_stats_thread()
     # atexit 兜底回滚（Ctrl-C/强杀等 proxy_shutdown 没走的路径）
     atexit.register(_atexit_rollback)
 
@@ -1596,7 +1610,7 @@ def _atexit_rollback():
     try:
         cur = _bmgr.read_current_url()
         if _is_own_proxy_url(cur):
-            if not (_ctl.ping_existing() or _hr.ping_existing()):
+            if not (_ctl.ping_existing() or _bili.ping_existing()):
                 _bmgr.apply(_direct_url())
                 log.info("atexit 兜底: 已切回直连")
     except Exception:
@@ -1618,7 +1632,7 @@ def proxy_shutdown(force_rollback=False):
     except Exception:
         pass
     try:
-        _hr.stop()
+        _bili.stop()
         # 同步停 server（阻塞 ~0.2s 确保端口释放）
         srv = _ctl.server
         ev = _ctl.stop_event
@@ -1750,17 +1764,17 @@ def _status_payload():
                                 _ctl.server.upstream_port)
                      if _ctl.running and _ctl.server is not None
                      else "%s:%d" % _upstream_of(_direct_url())[:2]),
-        "hr_mode": _headroom_mode,
-        "hr_running": _hr.running if _headroom_mode != "off" else False,
-        "hr_switching": _hr_switching,
+        "bili_mode": _bili_mode,
+        "bili_running": _bili.running if _bili_mode != "off" else False,
+        "bili_switching": _bili_switching,
         "ccr": _ccr,
         # v2.27.20：重试策略当前值（面板「重试配置」按钮文案用——原独立
         # 工具有此配置入口，合入面板时漏了，用户实锤「配置接口没了」）
         "retry_cfg": dict(core.RETRY_CFG),
         # v2.2.2：同事机无 headroom 时 _detect 返回 None，exists(None) 抛
         # TypeError 炸掉整个 status（面板「状态获取失败」）——先判 None
-        "headroom_exe": bool(HEADROOM_EXE) and os.path.exists(HEADROOM_EXE),
-        "hr_stats": _hr_stats_cache,
+        "bili_cmd": bool(BILI_CMD) and os.path.exists(BILI_CMD),
+        "bili_stats": _bili_stats_cache,
         "quota_kind": qkind,
         "quota_payload": qpayload,
         "quota_login": qlogin,
@@ -1806,8 +1820,8 @@ def _api_mode():
 @proxy_bp.route("/api/proxy/compression", methods=["POST"])
 def _api_compression():
     j = request.get_json(silent=True) or {}
-    # ccr 缺省 None=不改（apply_hr_mode 内部判），配置弹窗一次带 {mode, ccr} 同改
-    ok, msg = apply_hr_mode(j.get("mode", ""), ccr=j.get("ccr"))
+    # ccr 缺省 None=不改（apply_bili_mode 内部判），配置弹窗一次带 {mode, ccr} 同改
+    ok, msg = apply_bili_mode(j.get("mode", ""), ccr=j.get("ccr"))
     return jsonify({"ok": ok, "msg": msg})
 
 
@@ -1857,7 +1871,7 @@ def _api_retry():
 @proxy_bp.route("/api/proxy/ccr", methods=["POST"])
 def _api_ccr():
     j = request.get_json(silent=True) or {}
-    ok, msg = apply_hr_mode(_headroom_mode, ccr=bool(j.get("on")))
+    ok, msg = apply_bili_mode(_bili_mode, ccr=bool(j.get("on")))
     return jsonify({"ok": ok, "msg": msg})
 
 

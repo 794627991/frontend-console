@@ -3,7 +3,7 @@
 // - tab 骨架同 bit-calc（模式 A：单例 + connections 表 + tab/wrap DOM）
 // - 后端 src/proxy.py：/api/proxy/status|start|stop|mode|compression|ccr|quota|credentials
 // - 轮询：tab 激活时 1s（面板可见才轮询，切走停止——流畅守则）
-// - 链路：Claude Code → 8787(headroom 压缩) → 37349(重试代理) → lanz 内网网关
+// - 链路：Claude Code → 18788(billion-context 压缩) → 37349(重试代理) → lanz 内网网关
 // ============================================================
 
 function _pxFnum(n) {
@@ -66,19 +66,19 @@ function buildProxyTab() {
           <div class="px-hist" data-px-hist><div class="px-hint">代理启动后这里显示每个请求的模型/tokens/耗时（429 重试过的标红）</div></div>
         </div>
 
-        <!-- headroom 压缩：一个配置按钮 + 状态条（内联 radio 易误点——
+        <!-- billion-context 压缩：一个配置按钮 + 状态条（内联 radio 易误点——
              改原版弹窗式：点按钮才出模式选择，主界面只读不选） -->
         <div class="px-sec">
-          <div class="px-sec-title">headroom 压缩</div>
+          <div class="px-sec-title">billion-context 压缩</div>
           <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px;">
             <button class="lv-btn" data-px-hr-cfg style="min-width:170px;">压缩模式：—</button>
             <span class="px-hr-stats" data-px-hr-stats style="font-family:var(--font-mono);font-size:12px;color:var(--muted);"></span>
           </div>
-          <div class="px-hint">点「压缩模式」选择策略并立即生效：停旧 headroom → 按新模式拉起（冷启动 10-30s）→ 就绪自动切 base_url。失败自动回退关闭压缩。主模型 Lanz-Auto 带签名 thinking 不可压缩，压缩收益主要来自子代理与工具输出。</div>
+          <div class="px-hint">点「压缩模式」选择策略并立即生效：停旧实例 → 拉起 billion-context → 就绪自动切 base_url（期间走重试代理不断会话）。失败自动回退关闭压缩。模型驱动分层压缩（可逆，decompress 可恢复原文）；签名 thinking 块逐字节透传不可压缩，收益主要来自子代理与工具输出。需 Node ≥22 + npm install -g billion-context。</div>
         </div>
 
         <!-- 重试策略：原独立工具「重试配置」弹窗的能力回归（合入时漏带）。
-             一个配置按钮 + 只读说明，编辑进弹窗（与 headroom 同款防误点） -->
+             一个配置按钮 + 只读说明，编辑进弹窗（与压缩配置同款防误点） -->
         <div class="px-sec">
           <div class="px-sec-title">重试策略</div>
           <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px;">
@@ -115,7 +115,7 @@ function buildProxyTab() {
           <div data-px-quota-rank></div>
         </div>
 
-        <div class="px-hint" data-px-chain>链路：Claude Code → headroom(8787，压缩) → 重试代理(37349，429/5xx 自动重试) → 上游网关。退出工具自动停代理并回滚 base_url；异常退出下次启动自愈。</div>
+        <div class="px-hint" data-px-chain>链路：Claude Code → billion-context(18788，/bili/ 前缀压缩代理) → 重试代理(37349，429/5xx 自动重试) → 上游网关。退出工具自动停代理并回滚 base_url；异常退出下次启动自愈。压缩引擎 github.com/ranxianglei/billion-context（MIT，按条款署名）。</div>
         <div class="px-hint" data-px-direct>原 base_url（直连网关）：-</div>
       </div>
 
@@ -363,26 +363,31 @@ function buildProxyTab() {
   }
 
   function _renderHrStats(j) {
-    // headroom 压缩统计条（老 GUI hr_label 平移：在线 :8787 │ 已处理 N │ 压缩节省 X (Y%)）
-    if (!j.hr_running) {
-      hrStatsEl.textContent = 'headroom: 未运行（无压缩，仅重试代理）';
+    // bili 压缩统计条：/__bili/stats 的 sessions 维度聚合（a201 换代——
+    // headroom 的 agent_usage 结构随其退役；字段缺省 .get 口径兜底）
+    if (!j.bili_running) {
+      hrStatsEl.textContent = 'bili: 未运行（无压缩，仅重试代理）';
       hrStatsEl.style.color = 'var(--muted)';
       return;
     }
-    const st = j.hr_stats;
+    const st = j.bili_stats;
     if (!st) {
-      hrStatsEl.textContent = 'headroom: 在线 :8787（stats 拉取中/失败）';
+      hrStatsEl.textContent = 'bili: 在线 :18788（stats 拉取中/失败）';
       hrStatsEl.style.color = 'var(--accent)';
       return;
     }
-    const agents = (st.agent_usage || {}).agents || [];
-    const ag = agents[0] || {};
-    const saved = ag.tokens_saved || ((st.cost || {}).total_tokens_saved) || 0;
-    const before = ag.before_tokens || 0;
-    const pct = before ? (saved * 100 / before).toFixed(1) + '%' : '-';
-    const modeTxt = j.hr_mode && j.hr_mode !== 'full' ? ` │ 模式 ${j.hr_mode}` : '';
-    const ccrTxt = j.ccr ? ' │ CCR 开' : '';
-    hrStatsEl.textContent = `headroom :8787${modeTxt}${ccrTxt}  │ 已处理 ${_pxFnum(ag.requests || 0)} 请求 │ 压缩节省 ${_pxTok(saved)} token (${pct})`;
+    let reqs = 0, saved = 0, hit = null;
+    try {
+      const sess = st.sessions || [];
+      for (const x of sess) {
+        reqs += x.requests || 0;
+        saved += x.tokensSaved || 0;
+        if (typeof x.hitPct === 'number') hit = x.hitPct;
+      }
+    } catch (_) {}
+    const ccrTxt = j.ccr ? ' | CCR 开' : '';
+    hrStatsEl.textContent = `bili :18788${ccrTxt} | ${_pxFnum(reqs)} 请求 | 压缩节省 ${_pxTok(saved)} token` +
+      (hit !== null ? ` | 缓存命中 ${hit}%` : '');
     hrStatsEl.style.color = saved ? 'var(--accent)' : 'var(--muted)';
   }
 
@@ -390,10 +395,10 @@ function buildProxyTab() {
     // 主面板不再摆 radio（易误点——用户实锤）：只更新配置按钮文案，
     // 选择动作全部进弹窗（仿原工具 _hr_mode_dialog）
     conn.hrState = j;
-    const lab = { full: '完整压缩', light: '轻量压缩', off: '关闭' }[j.hr_mode] || '—';
-    hrCfgBtn.textContent = '压缩模式：' + lab + (j.ccr && j.hr_mode !== 'off' ? ' · CCR' : '');
+    const lab = { on: '开启压缩', off: '关闭' }[j.bili_mode] || '—';
+    hrCfgBtn.textContent = '压缩模式：' + lab + (j.ccr && j.bili_mode !== 'off' ? ' · CCR' : '');
     hrCfgBtn.title = j.running ? '选择压缩策略（应用立即生效）'
-      : '重试代理未启动：full/light 需先启动代理才能应用（off 可直接记住）';
+      : '重试代理未启动：开启压缩需先启动代理（关闭可直接记住）';
   }
 
   async function _poll() {
@@ -425,9 +430,9 @@ function buildProxyTab() {
       _renderHrStats(j);
       _setHrUI(j);
       _setRetryUI(j);
-      if (!j.headroom_exe && (j.hr_mode === 'full' || j.hr_mode === 'light')) {
+      if (!j.bili_cmd && j.bili_mode === 'on') {
         msgEl.dataset.keep = '1';
-        _msg('未找到 headroom.exe（pip install headroom-ai[all]），压缩不可用；重试代理不受影响', true);
+        _msg('未找到 billion-context（需 Node ≥22 + npm install -g billion-context），压缩不可用；重试代理不受影响', true);
       }
     } catch(e) {
       // 网络/解析失败同样不静默——连不上的原因要上屏
@@ -575,17 +580,19 @@ function buildProxyTab() {
   // ---- headroom 压缩配置弹窗（仿原工具 _hr_mode_dialog，模式卡+CCR+预览）----
   // off 永远可选（代理未跑时=只记模式下次启动生效，原工具同款降级）；
   // full/light 在 headroom 缺失时禁用。应用一次 POST {mode, ccr} 同改。
+  // bili 压缩配置弹窗（a201 换代自 headroom 弹窗；模式卡+CCR+预览）
+  // off 永远可选（代理未跑时=只记模式下次启动生效）；on 在 bili 缺失时禁用
+  // bili 压缩配置弹窗（a201 换代自 headroom；模式卡+CCR+预览）
   const HR_CARDS = [
-    ['full', '完整压缩', 'ML + 结构化 · ~570MB', '收益: 压缩率最高（文本 Kompress + 结构化全开）\n减益: 内存 ~570MB（ML 模型常驻），冷启动 ~15s'],
-    ['light', '轻量压缩', '仅结构化 · ~150MB', '收益: 内存 ~150MB（省 ~400MB），冷启动快\n减益: 文本类压缩归零，工具/日志/表格压缩保留（实测子代理仍 ~20%+）'],
-    ['off', '关闭压缩', '不启动 headroom', '收益: 零额外内存、零冷启动等待\n减益: 无任何压缩收益，流量原样过重试代理'],
+    ['on', '开启压缩', '模型驱动分层压缩', '收益: tier-1/2/3 分层蒸馏（可逆，decompress 可恢复原文），子代理独立压缩命名空间，缓存友好设计（健康线 95-97% 命中）\n减益: 需 Node >=22 + npm install -g billion-context；压缩调用占少量 token（健康线 <=2%）'],
+    ['off', '关闭压缩', '不启动 bili', '收益: 零额外内存、零冷启动等待\n减益: 无任何压缩收益，流量原样过重试代理'],
   ];
-  const HR_NOTE = '注: 主模型 Lanz-Auto 带签名 thinking 块不可压缩，任何模式下主会话压缩都接近 0%；'
-    + '压缩收益主要来自子代理（Lanz-Medium 实测 27%）与工具输出。';
+  const HR_NOTE = '注: 签名 thinking 块逐字节透传（签名校验要求），主会话该部分不可压缩；'
+    + '收益主要来自子代理（独立压缩命名空间）与工具输出（95% 紧急截断）。';
 
   function _hrCfgModal() {
     const j = conn.hrState || {};
-    const hasHr = !!j.headroom_exe;
+    const hasHr = !!j.bili_cmd;
     let m = $('pxHrModal');
     if (!m) {
       m = document.createElement('div');
@@ -593,7 +600,7 @@ function buildProxyTab() {
       m.id = 'pxHrModal';
       m.innerHTML = `
         <div class="box" style="max-width:600px;">
-          <div class="head"><strong>headroom 压缩配置</strong>
+          <div class="head"><strong>billion-context 压缩配置</strong>
             <div class="head-actions"><button class="btn ghost icon-btn" data-hr-x>✕</button></div></div>
           <div style="padding:14px 18px 4px;">
             <div data-hr-warn></div>
@@ -622,24 +629,24 @@ function buildProxyTab() {
     const cards = m.querySelectorAll('[data-hr-card]');
     const ccrEl = m.querySelector('[data-hr-ccr]');
     const hintEl = m.querySelector('[data-hr-ccr-hint]');
-    // 初始态：预选当前模式/CCR；full/light 需已装 headroom 且代理在跑
+    // 初始态：预选当前模式/CCR；on 需已装 billion-context 且代理在跑
     // （与后端 apply_hr_mode 拒绝口径一致）；off 永远可选
     const canFull = hasHr && !!j.running;
     cards.forEach(lab => {
       const rb = lab.querySelector('input');
-      rb.checked = rb.value === (j.hr_mode || 'off');
+      rb.checked = rb.value === (j.bili_mode || 'off');
       lab.classList.toggle('px-dis', !canFull && rb.value !== 'off');
       rb.disabled = !canFull && rb.value !== 'off';
     });
     m.querySelector('[data-hr-warn]').innerHTML = hasHr ? ''
-      : '<div style="color:var(--neon-orange);font-size:12px;margin-bottom:8px;">⚠ 未检测到 headroom.exe（pip install headroom-ai[all]），压缩不可用；重启工具可再试</div>';
+      : '<div style="color:var(--neon-orange);font-size:12px;margin-bottom:8px;">⚠ 未检测到 billion-context（需 Node ≥22 + npm install -g billion-context），压缩不可用；重启工具可再试</div>';
     ccrEl.checked = !!j.ccr;
     const syncCcr = () => {
       const mode = (m.querySelector('[data-hr-card] input:checked') || {}).value || 'off';
       const dis = mode === 'off' || !hasHr;
       ccrEl.disabled = dis;
       m.querySelector('.px-hr-ccr').classList.toggle('px-dis', dis);
-      hintEl.textContent = dis ? (mode === 'off' ? '（headroom 不启动，无意义）' : '（未安装 headroom）')
+      hintEl.textContent = dis ? (mode === 'off' ? '（bili 不启动，无意义）' : '（未安装 billion-context）')
         : (ccrEl.checked ? '激进压缩 · /compact 可能卡死' : '保守 · 稳定');
       hintEl.style.color = dis ? 'var(--muted)' : (ccrEl.checked ? 'var(--neon-orange)' : 'var(--muted)');
     };
@@ -661,7 +668,7 @@ function buildProxyTab() {
           body: JSON.stringify({mode, ccr: ccrEl.checked})});
         const jj = await r.json();
         _msg(jj.ok ? (mode === 'off' ? '已关闭压缩'
-             : (j.running ? '切换中（headroom 冷启动 10-30s，就绪自动切 8787）'
+             : (j.running ? '切换中（bili 启动中，就绪自动切压缩链路）'
                           : '已记住，启动代理后生效（下次启动自动拉起）'))
              : (jj.msg || '切换失败'), !jj.ok);
         if (jj.ok) { close(); _poll(); }
