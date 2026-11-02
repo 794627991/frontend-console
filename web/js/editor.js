@@ -110,6 +110,7 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
           <option value="latin-1">Latin-1</option>
         </select>
         <span class="lv-info" data-ed-info></span>
+        <span class="ed-path" data-ed-path title=""></span>
       </div>
       <div class="ed-main">
         <div class="ed-outline" style="display:none;">
@@ -149,6 +150,7 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
     tab, wrap,
     holder: wrap.querySelector('.ed-holder'),
     infoEl: wrap.querySelector('[data-ed-info]'),
+    pathEl: wrap.querySelector('[data-ed-path]'),
     outline: wrap.querySelector('.ed-outline'),
     outlineList: wrap.querySelector('.ed-outline-list'),
     outlineStats: wrap.querySelector('.ed-outline-stats'),
@@ -567,6 +569,13 @@ function _edHideLightbox() {
 // ---- 状态栏：块数/字符数 + 保存态 ----
 function _edUpdateInfo(conn) {
   conn.infoEl.textContent = _edStatText(conn) + _edStateText(conn);
+  // a222（用户批注「希望显示文件的路径」）：工具栏右侧常显完整路径——
+  // 站内 files/ 显示相对名；外部文件显绝对路径。hover title 同值
+  if (conn.pathEl) {
+    const p = conn.extPath || '';
+    conn.pathEl.textContent = p;
+    conn.pathEl.title = p;
+  }
   _edRenderOutline(conn);   // 大纲面板开着时同步刷新（内容/块变化即更新）
 }
 
