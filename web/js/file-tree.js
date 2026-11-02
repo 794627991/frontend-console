@@ -72,6 +72,8 @@ const _TV = {
   seq: new Map(),       // path -> fetch 序号（防乱序，v2 的 children 级同款）
   active: '',           // 当前选中文件行（虚拟化后 class 态必须进数据）
   rendered: [-1, -1],
+  wMax: 0,             // 全树最宽行估算（rebuild 算一次；对抗审 a205R：原在
+                       // paint 每帧全扫 rows，6301 行树滚动即每帧 O(n) 白耗）
   ROW_H: 22, BUF: 12,
   raf: 0,
 };
@@ -88,6 +90,12 @@ function _tvRebuild() {
   }
   _TV.rows = rows;
   _TV.idx = new Map(rows.map((r, i) => [r.path, i]));
+  _TV.wMax = 0;
+  for (const r of rows) {
+    if (!r.name) continue;
+    const w = _tvPad(r.depth) + r.name.length * 7.2 + 60;
+    if (w > _TV.wMax) wMax = _TV.wMax = w;
+  }
   _TV.rendered = [-1, -1];
   _tvPaint();
 }
@@ -109,7 +117,7 @@ function _tvPush(rows, path, depth) {
 function _tvRowHtml(r, i) {
   const top = i * _TV.ROW_H;
   const pad = _tvPad(r.depth);
-  const st = `top:${top}px;left:0;padding-left:${pad}px;` + (r.depth > 20 ? '' : '');
+  const st = `top:${top}px;left:0;padding-left:${pad}px;`;
   if (r.t === 'loading')
     return `<div class="tree-more" style="top:${top}px;left:0;padding-left:${pad}px">加载中…</div>`;
   if (r.t === 'err')
@@ -139,20 +147,11 @@ function _tvPaint() {
     sizer.className = 'tree-sizer';
     host.appendChild(sizer);
   }
-  if (!total) {
-    sizer.innerHTML = host.querySelector('.tree-empty') ? '' : '';
-    return;
-  }
-  // sizer 宽度：全树最深+最长行的估算（mono 11px ≈ 7.2px/字符，含箭头图标 42px
-  // 余量）——撑出横滚让深层长名完整可达（用户实锤语义：不许省略号裁名）
-  let wMax = 0;
-  for (const r of _TV.rows) {
-    if (!r.name) continue;
-    const w = _tvPad(r.depth) + r.name.length * 7.2 + 60;
-    if (w > wMax) wMax = w;
-  }
+  if (!total) { sizer.innerHTML = ''; return; }
+  // sizer 宽度用 rebuild 预计算值（撑横滚让深层长名完整可达——用户实锤
+  // 语义：不许省略号裁名）
   sizer.style.height = (total * _TV.ROW_H) + 'px';
-  sizer.style.minWidth = Math.max(100, Math.round(wMax)) + 'px';
+  sizer.style.minWidth = Math.max(100, Math.round(_TV.wMax)) + 'px';
   const first = Math.max(0, Math.floor(host.scrollTop / _TV.ROW_H) - _TV.BUF);
   const count = Math.ceil(host.clientHeight / _TV.ROW_H) + _TV.BUF * 2;
   const from = first, to = Math.min(total, first + count);
@@ -208,9 +207,10 @@ function _tvFocus(path, firstChild) {
   if (minTop < host.scrollTop) vy = Math.max(0, minTop - vpad);
   else if (maxBottom > host.scrollTop + host.clientHeight)
     vy = Math.max(0, maxBottom - host.clientHeight + vpad);
-  // 横向：子层缩进左缘（首元素真实左缘 ≈ 行 padding）双向滚入
+  // 横向：双向滚入——展开对焦子层缩进左缘（depth+1）；折叠/点行对焦
+  // 本行左缘（depth；对抗审 a205R：原恒 +1，折叠回浅层横滚偏一层）
   const depth = (_TV.rows[i] || {}).depth || 0;
-  const left = _tvPad(depth + 1);
+  const left = _tvPad(firstChild ? depth + 1 : depth);
   let hx = host.scrollLeft;
   if (left > host.scrollLeft + host.clientWidth) hx = Math.max(0, left - 24);
   else if (left < host.scrollLeft) hx = Math.max(0, left - 24);

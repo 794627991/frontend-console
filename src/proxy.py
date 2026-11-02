@@ -419,8 +419,13 @@ def save_ccr(enabled):
 # billion-context 完整依赖树——内网零外联零安装。系统兜底（开发机）：
 # PATH node ≥22 + npm 全局包。BILI_NODE/BILI_ENTRY 是启动二元组（路径或
 # None），BILI_ERR 为不可用原因（前端展示装机指引）。
-BILI_RUNTIME = os.path.join(DATA_DIR, "..", "offline_runtime", "bili")
-BILI_RUNTIME = os.path.normpath(BILI_RUNTIME)
+# 对抗审 a205R 实锤：释放落点权威是 res_boot.app_dir()（与 res_install.
+# runtime_root/res_boot.wv2_fixed_dir 同源）——原写 DATA_DIR/../ 在 frozen
+# 布局下错位，内置检测永远落空。延迟 import 防循环（res_boot 仅标准库）
+def _bili_runtime_dir():
+    from src.res_boot import app_dir
+    return os.path.join(app_dir(), "offline_runtime", "bili")
+BILI_RUNTIME = _bili_runtime_dir()
 
 def _detect_bili_cmd():
     import shutil, subprocess
@@ -554,7 +559,22 @@ class BiliController:
             import urllib.request
             r = urllib.request.urlopen(
                 "http://127.0.0.1:%d/__bili/stats" % BILI_PORT, timeout=2)
-            return json.loads(r.read().decode("utf-8"))
+            d = json.loads(r.read().decode("utf-8"))
+            # 对抗审 a205R：压缩节省（tokensSaved）不在 /stats——在 /__bili/
+            # sessions 的会话条目里；命中率字段是 cacheHitPct 非 hitPct。
+            # 合并拉取：本地回环两次 GET，5s 周期成本可忽略
+            try:
+                r2 = urllib.request.urlopen(
+                    "http://127.0.0.1:%d/__bili/sessions" % BILI_PORT, timeout=2)
+                j2 = json.loads(r2.read().decode("utf-8"))
+                items = j2.get("sessions") if isinstance(j2, dict) else j2
+                if isinstance(items, list):
+                    d["totals"] = {"tokensSaved": sum(
+                        int(x.get("tokensSaved") or 0) for x in items
+                        if isinstance(x, dict))}
+            except Exception:
+                pass
+            return d
         except Exception:
             return None
 
@@ -876,22 +896,22 @@ def _ensure_quota_worker():
 
 # ---- 启停/模式核心操作（GUI _on_toggle/_set_mode/_apply_bili_mode 平移）--
 def _wait_bili_ready(timeout=BILI_READY_TIMEOUT):
-    """等 headroom /livez 就绪（GUI:2622-2641 原样）。Popen 返回≠可服务。"""
+    """等 bili /__bili/health 就绪。Popen 返回≠可服务。"""
     deadline = time.time() + timeout
     while time.time() < deadline:
         proc = _bili.proc_snapshot()
         if proc is not None and proc.poll() is not None:
-            raise RuntimeError("headroom 子进程启动即退出 (code=%s)\n%s"
+            raise RuntimeError("bili 子进程启动即退出 (code=%s)\n%s"
                                % (proc.returncode, _bili.startup_error()))
         if _bili.ping_existing():
-            log.info("headroom 已就绪 :%d", BILI_PORT)
+            log.info("bili 已就绪 :%d", BILI_PORT)
             return
         time.sleep(0.5)
-    raise RuntimeError("headroom %ds 内未就绪\n%s" % (timeout, _bili.startup_error()))
+    raise RuntimeError("bili %ds 内未就绪\n%s" % (timeout, _bili.startup_error()))
 
 
 def _proxy_mode_url():
-    """代理模式目标 base_url：off→37349 直连重试代理；压缩在跑→8787（GUI:2694）。"""
+    """代理模式目标 base_url：off→37349 直连重试代理；压缩在跑→bili 入口。"""
     if _bili_mode == "off" or not _bili.ping_existing():
         return _retry_url()
     return PROXY_URL
@@ -1257,7 +1277,7 @@ def apply_bili_mode(mode, ccr=None):
                 if _ctl.running:
                     _bmgr.apply(_retry_url())
                     _autoswitched = True
-                log.info("压缩模式切换 -> off（headroom 已停%s）",
+                log.info("压缩模式切换 -> off（bili 已停%s）",
                          "，直连重试代理" if _ctl.running else "，代理未跑不动 base_url")
                 return
             try:

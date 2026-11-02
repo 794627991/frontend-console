@@ -376,13 +376,20 @@ function buildProxyTab() {
       hrStatsEl.style.color = 'var(--accent)';
       return;
     }
-    let reqs = 0, saved = 0, hit = null;
+    let reqs = 0, hit = null;
+    // 对抗审 a205R：/__bili/stats 字段为 requests/cacheHitPct（无 hitPct）；
+    // 压缩节省 tokensSaved 不在此接口——后端 stats() 已合并 /__bili/sessions
+    // 汇总进 totals.tokensSaved
+    let saved = 0;
+    try {
+      const tot = st.totals || {};
+      saved = tot.tokensSaved || 0;
+    } catch (_) {}
     try {
       const sess = st.sessions || [];
       for (const x of sess) {
         reqs += x.requests || 0;
-        saved += x.tokensSaved || 0;
-        if (typeof x.hitPct === 'number') hit = x.hitPct;
+        if (typeof x.cacheHitPct === 'number') hit = x.cacheHitPct;
       }
     } catch (_) {}
     const ccrTxt = j.ccr ? ' | CCR 开' : '';
