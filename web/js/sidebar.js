@@ -195,7 +195,7 @@ function refreshSidebar() {
         <span class="led"></span>
         <div class="info">
           <div class="name">${(isDirty ? '*' : '') + esc(conn.meta.label || pid)}</div>
-          <div class="desc">${((isEdit && conn.meta.kind === 'editor') || isClaude || isHarness) ? descText : esc(descText)} · <span class="baud" data-rows>${isEdit ? rowCount : rowCount + ' 行'}</span></div>
+          <div class="desc" title="${conn.extPath ? esc(conn.extPath) : ''}">${((isEdit && conn.meta.kind === 'editor') || isClaude || isHarness) ? descText : esc(descText)} · <span class="baud" data-rows>${isEdit ? rowCount : rowCount + ' 行'}</span></div>
         </div>
         <div class="actions"><button data-close="${pid}" title="${isLog ? '关闭' : '断开'}">✕</button></div>
       `;
