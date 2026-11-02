@@ -377,7 +377,7 @@ def tree_fileops():
                 return jsonify({"ok": False, "err": err}), 500
             return jsonify({"ok": True, "parent": _parent_dir(fp), "deleted": fp})
         return jsonify({"ok": False, "err": "未知操作 %r" % op}), 400
-    except OSError as e:
+    except (OSError, RecursionError, ValueError) as e:   # a235: 4096 段路径 makedirs 递归爆（原只捕 OSError→HTML 500）
         return jsonify({"ok": False, "err": str(e)}), 500
 
 

@@ -98,7 +98,7 @@ function _tvRebuild() {
   _TV.wMax = 0;
   for (const r of rows) {
     if (!r.name) continue;
-    const w = _tvPad(r.depth) + r.name.length * 7.2 + 60;
+    const w = _tvPad(r.depth) + Math.min(r.name.length, 4096) * 7.2 + 60;   // a235: 敌意超长名封顶（5MB 名曾致 907ms 布局逼近红线）
     if (w > _TV.wMax) _TV.wMax = w;
   }
   _tvTops();
