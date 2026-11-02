@@ -847,6 +847,10 @@ _bili_stats_ts = 0.0
 
 
 def _bili_stats_loop():
+    """统计轮询（5s）+ a230 压缩链自愈：bili 中途死掉（崩溃/被杀）时
+    base_url 仍指 18788 空端口——正在跑的会话全断且无人救（用户实锤
+    「开启后请求 0、会话无响应」）。每拍检测：/bili/ 链 + bili 不通
+    → 自动回滚直连（复用 ensure_direct_if_proxy_down 的既有自愈）。"""
     """headroom 压缩统计缓存线程：headroom 模式在（非 off）就 5s 拉 /stats
     （GUI _refresh_headroom 平移，但这里是后台循环天然防堆积，不会像 GUI 每秒探测）。
     条件不绑 _ctl.running：headroom 可独立于自家重试代理在线（端口 37349 被
@@ -858,8 +862,21 @@ def _bili_stats_loop():
             if _bili_mode != "off":
                 _bili_stats_cache = _bili.stats()
                 _bili_stats_ts = time.time()
+                # a230 自愈：统计拉取失败=不可达——若 base_url 在 bili 链上
+                # 即回直连（首拍失败容忍，连续两拍才动——避免启动窗口误切）
+                if _bili_stats_cache is None:
+                    _bili_down = getattr(_bili_stats_loop, "_down", 0) + 1
+                    _bili_stats_loop._down = _bili_down
+                    if _bili_down >= 2:
+                        try:
+                            ensure_direct_if_proxy_down()
+                        except Exception:
+                            pass
+                else:
+                    _bili_stats_loop._down = 0
             else:
                 _bili_stats_cache = None
+                _bili_stats_loop._down = 0
         except Exception:
             pass
         _tip_stop.wait(5)
