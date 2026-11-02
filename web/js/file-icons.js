@@ -138,7 +138,7 @@ const FILE_ICON_EXT = {
 
 // 生成文件类型图标 HTML(inline SVG)。name: 文件名或带后缀的路径
 function fileIconHtml(name, size) {
-  const n = (name || '').toLowerCase();
+  const n = String(name || '').toLowerCase();   // a236: 非字符串 name 防御（后端脏数据曾致渲染链 TypeError 树窗停更）
   const dot = n.lastIndexOf('.');
   const ext = dot > 0 ? n.slice(dot) : '';
   const key = FILE_ICON_EXT[ext] || '_default';

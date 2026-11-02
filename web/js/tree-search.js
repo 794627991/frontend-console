@@ -126,6 +126,10 @@
         signal: st.ctrl.signal,
       }).then(r => {
         if (!r.ok) {   // a233 P2: 400/5xx 非 SSE 被静默吞
+          // a234 复审：只写 statEl 文案无效——run 尾会无条件重写 statEl（同一轮
+          // 微任务，中间无 paint），终态仍「0 命中」。错误必须走 st.errMsg 让
+          // run 尾以「错误：HTTP xxx」呈现
+          st.errMsg = 'HTTP ' + r.status;
           statEl.textContent = '部分根搜索失败: HTTP ' + r.status;
           return resolve();
         }
@@ -159,6 +163,8 @@
       return;
     }
     if (ev.type === 'file') {
+      // a236 fuzz P3: 组头无封顶曾致万级文件=万级 DOM（200 承诺被打穿）
+      if (st.domMatches >= DOM_CAP && resEl.children.length >= DOM_CAP) { st.files++; return; }
       st.files++;
       curFilePath = ev.path; curFileCount = 0;
       const head = document.createElement('div');

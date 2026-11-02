@@ -126,7 +126,18 @@ function _tvPush(rows, path, depth) {
   if (!c) { rows.push({ t: 'loading', path, depth }); return; }
   if (c.err) { rows.push({ t: 'err', depth, msg: c.err }); return; }
   if (!c.entries.length) { rows.push({ t: 'empty', depth }); return; }
-  for (const e of c.entries) {
+  // a236 fuzz P2: 后端重复 path（嵌套根天然产生）曾致 48 行同 active+跳转
+  // /操作目标分裂——入缓存前按 path 去重（保持后写胜并入语义）；
+  // P1 纵深：name 强转 String（非字符串曾致 fileIconHtml TypeError）
+  const seen = new Set();
+  const entries = [];
+  for (const raw of c.entries) {
+    if (!raw || raw.path === undefined || seen.has(raw.path)) continue;
+    seen.add(raw.path);
+    entries.push({ dir: !!raw.dir, name: String(raw.name || ''),
+                   path: String(raw.path) });
+  }
+  for (const e of entries) {
     rows.push({ t: e.dir ? 'dir' : 'file', path: e.path, name: e.name,
                 dir: !!e.dir, depth, open: _TV.open.has(e.path) });
     if (e.dir) _tvPush(rows, e.path, depth + 1);
