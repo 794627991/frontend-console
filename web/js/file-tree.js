@@ -162,7 +162,7 @@ function _tvRowHtml(r, i) {
   // a225：根行=双行容器（名字行 + 路径小字行）——多根同名场景（两个 trunk
   // 都叫 src 但实际路径不同）一眼可辨；路径灰显不抢焦点，hover 全路径
   if (r.t === 'root') {
-    return `<div class="tree-root-wrap" data-path="${esc(r.path)}" style="top:${top}px;left:0;width:max-content;min-width:100%">` +
+    return `<div class="tree-root-wrap" data-path="${esc(r.path)}" data-dir="1" style="top:${top}px;left:0;width:max-content;min-width:100%">` +
       `<div class="tree-row tree-root-head${active}" data-dir="1" data-depth="0" data-notrunc="1"` +
       ` style="position:relative;left:0;top:0;padding-left:6px;">${arrow}${icon}<span class="t-name" title="${esc(r.path)}">${esc(r.name)}</span>${dot}${rootX}</div>` +
       `<div class="tree-root-path">${esc(r.path)}</div></div>`;
