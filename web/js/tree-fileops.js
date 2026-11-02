@@ -25,6 +25,7 @@
     }
     return best;
   }
+  window._treeRootOf = rootOf;   // a209批4：sidebar 副行相对路径判定用
   function relPath(path) {
     const root = rootOf(path);
     return root && path !== root ? String(path).slice(root.length + 1).split(SEP).join('/') : path;
@@ -173,7 +174,58 @@
   });
 
   // ---- 快捷键（树聚焦时；作用于 active 行——点击/右键即设）----
+  // a209批4：↑↓←→ 键盘导航（VSCode 树同款）——focus 行即 active 行
+  function navKey(e) {
+    const T = window._TV;
+    if (!T || !T.rows.length) return false;
+    let i = T.idx.get(T.active);
+    if (i === undefined) i = -1;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      i = Math.min(T.rows.length - 1, i + 1);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      i = Math.max(0, i <= 0 ? 0 : i - 1);
+    } else if (e.key === 'ArrowRight') {
+      const r = T.rows[i];
+      if (r && r.dir && !T.open.has(r.path)) {
+        e.preventDefault();
+        const el = document.querySelector('#treeRoots [data-path="' + CSS.escape(r.path) + '"]');
+        if (el) el.click();
+      } else if (r) { e.preventDefault(); navKey({ key: 'ArrowDown', preventDefault(){} }); }
+      return true;
+    } else if (e.key === 'ArrowLeft') {
+      const r = T.rows[i];
+      if (r && r.dir && T.open.has(r.path)) {
+        e.preventDefault();
+        const el = document.querySelector('#treeRoots [data-path="' + CSS.escape(r.path) + '"]');
+        if (el) el.click();
+      } else if (r && r.depth > 0) {
+        // 跳到父行
+        for (let j = i - 1; j >= 0; j--) {
+          if (T.rows[j].depth < r.depth && T.rows[j].dir) {
+            e.preventDefault();
+            const p = T.rows[j].path;
+            T.active = p; T.rendered = [-1, -1];
+            if (typeof _tvPaint === 'function') _tvPaint();
+            if (typeof _tvFocus === 'function') _tvFocus(p);
+            break;
+          }
+        }
+      }
+      return true;
+    } else return false;
+    const r = T.rows[i];
+    if (r && r.path && r.t !== 'loading' && r.t !== 'err') {
+      T.active = r.path;
+      T.rendered = [-1, -1];
+      if (typeof _tvPaint === 'function') _tvPaint();
+      if (typeof _tvFocus === 'function') _tvFocus(r.path);
+    }
+    return true;
+  }
   $('treePane').addEventListener('keydown', e => {
+    if (navKey(e)) return;
     const path = window._TV && _TV.active;
     if (!path) return;
     const el = document.querySelector('#treeRoots [data-path="' + CSS.escape(path) + '"]');

@@ -76,6 +76,7 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
   tab.className = 'tab';
   tab.dataset.portId = portId;
   tab.innerHTML = `<span class="led"></span><span class="tab-ico">${fileIconHtml(name || '.note', 14)}</span><span class="label">${esc(name || '未命名')}</span><span class="baud"></span><span class="close" title="关闭">✕</span>`;
+  if (extPath) tab.title = extPath;   // a209批4：悬浮显完整路径
   tab.onclick = (e) => { if (e.target.classList.contains('close')) { e.stopPropagation(); closeEditorTab(portId); return; } switchTab(portId); };
   // 双击 tab 标题 → 快捷改名（外部文件禁用——保持原路径）
   tab.querySelector('.label').ondblclick = (e) => {

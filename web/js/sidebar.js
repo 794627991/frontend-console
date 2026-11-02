@@ -180,7 +180,14 @@ function refreshSidebar() {
                     : conn.meta.kind === 'bindiff' ? '🔀 bin 对比'
                     : isEdit ? (conn.meta.kind === 'hex' ? '🔧 hex' : '🔀 对比')
                     : isLog ? '📜 日志' : '';
-      const descText = isSSH ? `SSH · ${conn.meta.host || ''}` : isTelnet ? `Telnet · ${conn.meta.host || ''}` : (isEdit || isLog) ? edIcon : isClaude ? `<span class="claude-ico"></span> Claude · ${(conn.meta.cwd || '').split(/[\\\\/]/).pop() || ''}` : isHarness ? `<span class="claude-ico"></span> Claude 对话 · ${(conn.meta.cwd || '').split(/[\\\\/]/).pop() || ''}` : `${conn.meta.baud || ''} baud`;
+      // a209批4：编辑器/hex/对比外部文件副行显示【相对根路径】（用户点名
+      //「打开的文件显示具体路径」）——VSCode OPEN EDITORS 同款信息密度
+      const _pathTail = conn.extPath
+        ? ((typeof _treeRootOf === 'function' && _treeRootOf(conn.extPath))
+            ? String(conn.extPath).slice(_treeRootOf(conn.extPath).length + 1)
+            : String(conn.extPath))
+        : '';
+      const descText = isSSH ? `SSH · ${conn.meta.host || ''}` : isTelnet ? `Telnet · ${conn.meta.host || ''}` : (isEdit || isLog) ? (conn.extPath ? esc(_pathTail) : edIcon) : isClaude ? `<span class="claude-ico"></span> Claude · ${(conn.meta.cwd || '').split(/[\\\\/]/).pop() || ''}` : isHarness ? `<span class="claude-ico"></span> Claude 对话 · ${(conn.meta.cwd || '').split(/[\\\\/]/).pop() || ''}` : `${conn.meta.baud || ''} baud`;
       const rowCount = conn.term ? conn.term.buffer.active.length : (conn.logState ? conn.logState.total : (isEdit ? _edStatText(conn) : 0));
       // 编辑器类 tab：未保存时名字带 * + dirty 类（led 橙色，与 _edMarkTab 同步）
       const isDirty = isEdit && conn.dirty;
