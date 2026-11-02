@@ -776,6 +776,10 @@
     flex: 1; text-align: center; font-size: 11px; font-weight: 600; letter-spacing: 1px;
     color: var(--muted); padding: 6px 0; border-radius: 6px; cursor: pointer;
     border: 1px solid transparent; transition: all 0.2s; text-transform: uppercase;
+    /* a216：第 4 个 tab 后均宽变窄——文字+计数换行把 tab 撑高（用户实锤）。
+       flex 单行居中永不折行；计数徽标随窄宽自动收缩 */
+    display: flex; align-items: center; justify-content: center; gap: 4px;
+    white-space: nowrap; min-width: 0; overflow: hidden;
   }
   .sidebar-sheet-tab:hover { color: var(--fg); background: var(--bg-card); }
   .sidebar-sheet-tab.active {
@@ -783,7 +787,8 @@
   }
   .sidebar-sheet-tab .count {
     background: var(--bg-input); border: 1px solid var(--border);
-    border-radius: 10px; padding: 0 6px; font-size: 10px; margin-left: 2px;
+    border-radius: 10px; padding: 0 6px; font-size: 10px; margin-left: 0;
+    flex-shrink: 1; overflow: hidden; text-overflow: ellipsis; max-width: 3.2em;
   }
   .sidebar-sheet-pane { display: none; flex: 1; min-height: 0; flex-direction: column; }
   .sidebar-sheet-pane.active { display: flex; }
