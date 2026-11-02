@@ -179,6 +179,121 @@ def tree_list():
                     "truncated": err if isinstance(err, int) else 0})
 
 
+# ============================================================
+# a209批2：文件操作（对标 VSCode Explorer 右键全家桶）
+# 单端点多操作，全部过 _under_roots 门卫（白名单语义不变）；
+# delete 走系统回收站（SHFileOperationW + FOF_ALLOWUNDO，可恢复，
+# 零新依赖纯 ctypes）；根目录本体不可删（只可 remove_root）。
+# ============================================================
+def _recycle_to_trash(path):
+    """移入系统回收站。返回 (ok, err)。纯 ctypes，Windows only。"""
+    import ctypes
+    from ctypes import wintypes
+
+    class _SHFILEOPSTRUCTW(ctypes.Structure):
+        _fields_ = [("hwnd", wintypes.HWND), ("wFunc", ctypes.c_uint),
+                    ("pFrom", ctypes.c_wchar_p), ("pTo", ctypes.c_wchar_p),
+                    ("fFlags", ctypes.c_ushort),
+                    ("fAnyOperationsAborted", wintypes.BOOL),
+                    ("hNameMappings", ctypes.c_void_p),
+                    ("lpszProgressTitle", ctypes.c_wchar_p)]
+
+    op = _SHFILEOPSTRUCTW()
+    op.hwnd = None
+    op.wFunc = 3                    # FO_DELETE
+    op.pFrom = str(path) + "\0\0"  # pFrom 需双 NUL 结尾（ctypes c_wchar_p 只补一个）
+    op.fFlags = 0x40 | 0x10 | 0x4   # FOF_ALLOWUNDO | NOCONFIRMATION | SILENT
+    try:
+        rc = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
+    except Exception as e:
+        return False, str(e)
+    if rc != 0:
+        return False, "系统回收站操作失败（code=%d）" % rc
+    if op.fAnyOperationsAborted:
+        return False, "操作被系统中止"
+    return True, ""
+
+
+def _parent_dir(path):
+    return os.path.dirname(os.path.abspath(path))
+
+
+@tree_bp.route("/api/tree/fileops", methods=["POST"])
+def tree_fileops():
+    """文件操作：{op: mkdir|touch|rename|copy|delete, ...}。
+    - mkdir  {dir}                新建目录
+    - touch  {dir, name}          新建空文件
+    - rename {path, name}         同目录改名（name 禁含路径分隔符）
+    - copy   {path, dir}          复制文件/目录到目标目录
+    - delete {path}               移入系统回收站（可恢复）
+    响应 {ok, parent}（parent=受影响目录，前端 treeInvalidate 用）。"""
+    data = request.get_json(force=True, silent=True) or {}
+    op = str(data.get("op") or "").strip()
+    try:
+        if op == "mkdir":
+            d = _under_roots(str(data.get("dir") or ""))
+            if not d:
+                return jsonify({"ok": False, "err": "目录不在已登记根内"}), 400
+            if os.path.exists(d):
+                return jsonify({"ok": False, "err": "已存在同名目录"}), 400
+            os.makedirs(d)
+            return jsonify({"ok": True, "parent": _parent_dir(d)})
+        if op == "touch":
+            base = _under_roots(str(data.get("dir") or ""))
+            name = str(data.get("name") or "").strip()
+            if not base or not name or "/" in name or os.sep in name:
+                return jsonify({"ok": False, "err": "参数无效（名字禁含分隔符）"}), 400
+            fp = os.path.join(base, name)
+            if os.path.exists(fp):
+                return jsonify({"ok": False, "err": "已存在同名文件"}), 400
+            with open(fp, "w", encoding="utf-8") as f:
+                f.write("")
+            return jsonify({"ok": True, "parent": base})
+        if op == "rename":
+            fp = _under_roots(str(data.get("path") or ""))
+            name = str(data.get("name") or "").strip()
+            if not fp or not name or "/" in name or os.sep in name or name in (".", ".."):
+                return jsonify({"ok": False, "err": "参数无效"}), 400
+            roots = _tree_roots()
+            if fp in roots:
+                return jsonify({"ok": False, "err": "根目录请用「移除根」（不可改名）"}), 400
+            if not os.path.exists(fp):
+                return jsonify({"ok": False, "err": "原路径不存在"}), 404
+            tp = os.path.join(os.path.dirname(fp), name)
+            if os.path.exists(tp):
+                return jsonify({"ok": False, "err": "目标名已存在"}), 400
+            os.rename(fp, tp)
+            return jsonify({"ok": True, "parent": os.path.dirname(fp),
+                            "old": fp, "new": tp})
+        if op == "copy":
+            fp = _under_roots(str(data.get("path") or ""))
+            d = _under_roots(str(data.get("dir") or ""))
+            if not fp or not d or not os.path.exists(fp):
+                return jsonify({"ok": False, "err": "参数无效或原路径不存在"}), 400
+            import shutil
+            tp = os.path.join(d, os.path.basename(fp))
+            if os.path.exists(tp):
+                return jsonify({"ok": False, "err": "目标已存在同名项"}), 400
+            if os.path.isdir(fp):
+                shutil.copytree(fp, tp)
+            else:
+                shutil.copy2(fp, tp)
+            return jsonify({"ok": True, "parent": d})
+        if op == "delete":
+            fp = _under_roots(str(data.get("path") or ""))
+            if not fp or not os.path.exists(fp):
+                return jsonify({"ok": False, "err": "路径不存在"}), 404
+            if fp in _tree_roots():
+                return jsonify({"ok": False, "err": "根目录请用「移除根」（不删磁盘文件）"}), 400
+            ok, err = _recycle_to_trash(fp)
+            if not ok:
+                return jsonify({"ok": False, "err": err}), 500
+            return jsonify({"ok": True, "parent": _parent_dir(fp), "deleted": fp})
+        return jsonify({"ok": False, "err": "未知操作 %r" % op}), 400
+    except OSError as e:
+        return jsonify({"ok": False, "err": str(e)}), 500
+
+
 @tree_bp.route("/api/tree/reveal", methods=["POST"])
 def tree_reveal():
     """在系统资源管理器中打开并定位到该条目（文件=选中它，目录=打开它）。

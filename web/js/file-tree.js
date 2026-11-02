@@ -379,29 +379,7 @@ $('treePane').addEventListener('click', async e => {
   }
 });
 
-$('treePane').addEventListener('contextmenu', e => {
-  const row = e.target.closest('[data-path]');
-  if (!row) return;
-  e.preventDefault();
-  const path = row.dataset.path;
-  const isDir = row.dataset.dir === '1';
-  const m = $('ctxMenu');
-  m.innerHTML = `<div class="ctx-item" data-act="reveal">📂 在资源管理器中${isDir ? '打开' : '显示'}</div>`;
-  m.style.display = 'block';
-  m.style.left = Math.min(e.clientX, window.innerWidth - m.offsetWidth - 4) + 'px';
-  m.style.top = Math.min(e.clientY, window.innerHeight - m.offsetHeight - 4) + 'px';
-  m.querySelectorAll('.ctx-item').forEach(it => {
-    it.onclick = async () => {
-      hideCtxMenu();
-      try {
-        const r = await fetch('/api/tree/reveal', {method:'POST',
-          headers:{'Content-Type':'application/json'}, body: JSON.stringify({path})});
-        const j = await r.json();
-        if (!j.ok) showBanner(j.err || '打开失败', 4000, true);
-      } catch(err) { showBanner('打开失败: ' + err, 4000, true); }
-    };
-  });
-});
+// a209批2：contextmenu/快捷键/文件操作移驻 tree-fileops.js（命令层独立）
 
 $('treeAddRoot').onclick = () => pickTreeDir();
 $('treeHidden').onclick = () => _treeToggleHidden();
