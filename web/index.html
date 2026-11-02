@@ -89,7 +89,7 @@ if (window.__HG_DBG__) {
 <!-- 主布局 -->
 <div class="main">
   <!-- 左侧串口列表 -->
-  <div class="sidebar">
+  <div class="sidebar" id="sidebar">
     <!-- 侧栏三 sheet：打开（活动连接/文件） / 最近（快捷重开） / 文件树（工作区） -->
     <div class="sidebar-sheets">
       <div class="sidebar-sheet-tab active" data-sheet="open">打开 <span class="count" id="portCount">0</span></div>
@@ -461,6 +461,7 @@ if (window.__HG_DBG__) {
 <script src="web/js/highlight.js"></script>
 <script src="web/js/history.js"></script>
 <script src="web/js/sidebar.js"></script>
+<script src="web/js/sidebar-resize.js?v=__HG_VER__"></script>
 <script src="web/js/logs-modal.js"></script>
 <script src="web/js/replay.js"></script>
 <script src="web/js/search.js"></script>

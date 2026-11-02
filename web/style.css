@@ -760,6 +760,11 @@
   }
 
   /* ===== 左侧串口列表 ===== */
+  /* a219：侧栏宽度可拖拽（3px 命中区 + hover 显形——同 tftp resizer 语言） */
+  .sidebar-resizer { width: 4px; flex-shrink: 0; cursor: col-resize;
+    background: transparent; margin-left: -1px; z-index: 5; }
+  .sidebar-resizer:hover, .sidebar-resizer.dragging {
+    background: color-mix(in srgb, var(--accent) 45%, transparent); }
   .sidebar {
     width: 220px; flex-shrink: 0;
     background: var(--bg-panel);

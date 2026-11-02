@@ -967,6 +967,7 @@ def api_theme():
         tk = cfg.get("term_keys", {})
         return jsonify({"ok": True, "theme": cfg.get("theme", "deepblue"),
                         "style": cfg.get("style", "default"),
+                        "sidebar_w": int(cfg.get("sidebar_w") or 0),
                         "data_dir_prompted": bool(cfg.get("data_dir_prompted")),
                         "calc_history": _calc_hist_clean(cfg.get("calc_history", [])),
                         "close_to_tray": bool(cfg.get("close_to_tray", True)),
@@ -1067,6 +1068,14 @@ def api_theme():
     style = (data.get("style") or "").strip()
     if style and re.fullmatch(r"[a-z0-9-]{1,24}", style):
         _save_config({**_load_config(), "style": style})
+    # a219：侧栏宽度记忆（180~1920 钳制防脏值）
+    if "sidebar_w" in data:
+        try:
+            _w = int(data["sidebar_w"])
+            if 180 <= _w <= 1920:
+                _save_config({**_load_config(), "sidebar_w": _w})
+        except (TypeError, ValueError):
+            pass
     return jsonify({"ok": True, "theme": theme or _load_config().get("theme", "deepblue")})
 
 
