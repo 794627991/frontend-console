@@ -22,7 +22,7 @@ from .consts import _PROMPTS_KEY, _PROMPTS_LEGACY_KEY, _SKILL_ZH_FILE, _UPLOAD_D
 from .meta import _meta, _meta_load, _meta_lock, _meta_save, _meta_tombstones
 from .models import available_models
 from .prompts import _prompt_matches_project, _prompts_load, _prompts_save
-from .session import HarnessSession, _session_ctx_used
+from .session import HarnessSession, _session_ctx_used, _session_ctx_window
 from .transcript import _subagent_rows_for, _subagent_transcript_candidates, transcript_for
 from .vision import _MM_PROBE_LOCK, _VISION_KEY, _mm_probe_key, _mm_probe_model, _mm_probed_load, _model_is_multimodal, _vision_load, _vision_save
 
@@ -459,6 +459,16 @@ def harness_ctx():
     if not s.session_id:
         return jsonify({"ok": True, "used": 0, "window": 0, "sid": s.sid})
     used, window, compacted = _session_ctx_used(s)
+    # v4.1：window 叠完整判定链（_session_ctx_window：网关实报→settings.json
+    # 的 CLAUDE_CODE_MAX_CONTEXT_TOKENS→模型名→兜底）。此前只取 last_result
+    # 的 modelUsage——回合途中（会话尚无 result / 新会话首轮）window=0，
+    # 前端模型名不带 [1M] 退 256K 假分母（用户 settings 配 500K 实锤：
+    # 途中显示 /256.0K (100%)，回合结束 result 校准才回 /500K）。
+    # max 叠加：有实报用实报，无实报 settings 兜底，两头都不落空。
+    try:
+        window = max(window, _session_ctx_window(s))
+    except Exception:
+        pass
     # a154：容量卡分类估算——系统提示词（session.start 落账的注入长度，
     # 中文重 3 字符/token 保守取 3）+ MCP 工具 schema（我们注册的，可量）
     sys_chars = getattr(s, "sys_prompt_chars", 0) or 0
