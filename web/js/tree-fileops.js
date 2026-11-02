@@ -15,12 +15,19 @@
     const i = Math.max(String(p).lastIndexOf('/'), String(p).lastIndexOf(SEP));
     return i > 0 ? String(p).slice(0, i) : '';
   };
-  const normPre = (p) => String(p).replace(/[\/\\]+$/, '') + '/';
+  // a213 审计 P1：原 pre 只拼 '/'——extPath 反斜杠 startsWith 恒 false，
+  // 目录级 rename/delete 子孙联动全灭（改后 tab 按旧路径保存=旧位置复活）。
+  // 归一化前缀比较（双斜杠统一）
+  const normKey = (x) => String(x).split(SEP).join('/');
+  const isUnder = (child, dir) => {
+    const c = normKey(child), d = normKey(dir).replace(/\/$/, '');
+    return c === d || c.startsWith(d + '/');
+  };
 
   function rootOf(path) {
     let best = '';
     for (const r of (window._TV ? _TV.roots : [])) {
-      if (path === r.path || normPre(path).startsWith(normPre(r.path)))
+      if (normKey(path) === normKey(r.path) || isUnder(path, r.path))
         if (!best || r.path.length > best.length) best = r.path;
     }
     return best;
@@ -45,7 +52,7 @@
 
   // ---- 打开 tab 联动（重命名/删除后防幽灵 tab）----
   function tabsAfterRename(oldP, newP) {
-    const pre = normPre(oldP);
+
     for (const pid in connections) {
       const c = connections[pid];
       if (!c || !c.extPath) continue;
@@ -55,18 +62,22 @@
         if (c.meta) c.meta.label = nm;
         const lb = c.tab && c.tab.querySelector('.label');
         if (lb) lb.textContent = (c.dirty ? '*' : '') + nm;
-      } else if (c.extPath.startsWith(pre)) {
-        c.extPath = normPre(newP) + c.extPath.slice(pre.length);
+        if (c.tab) c.tab.title = newP;   // a213 审计 P3：悬浮路径同步
+      } else if (isUnder(c.extPath, oldP) && c.extPath !== oldP) {
+        // 归一改写：新前缀 + 旧相对尾巴（保持 extPath 原生分隔符形态）
+        const cutLen = String(oldP).length;
+        const tail = String(c.extPath).slice(cutLen).replace(/^[/\\]/, '');
+        c.extPath = String(newP) + String(c.extPath).charAt(cutLen) + tail;
       }
     }
     if (typeof treeDecoRefresh === 'function') treeDecoRefresh();
   }
   function tabsAfterDelete(delP) {
-    const pre = normPre(delP);
+
     for (const pid of Object.keys(connections)) {
       const c = connections[pid];
       if (!c || !c.extPath) continue;
-      if (c.extPath === delP || c.extPath.startsWith(pre)) {
+      if (c.extPath === delP || isUnder(c.extPath, delP)) {
         try { closeEditorTab(pid); } catch (_) {}
       }
     }
@@ -123,8 +134,7 @@
     const path = row.dataset.path;
     const isDir = row.dataset.dir === '1';
     const isRoot = row.classList.contains('tree-root-head');
-    const join = (d, n) => dirName(d) ? d + '/' + n : d + n;   // d 可能带尾分隔符
-    const items = [];
+      const items = [];
     if (isDir) {
       items.push(
         { icon: '📄', label: '新建文件', action: () => inlineInput(row, '', v =>
@@ -215,8 +225,16 @@
       }
       return true;
     } else return false;
-    const r = T.rows[i];
-    if (r && r.path && r.t !== 'loading' && r.t !== 'err') {
+    // a213 审计 P2：empty/more 行无 path——落在其上永久卡死。沿方向找
+    // 下一个有效行
+    let j = i, r = null;
+    for (let k = 0; k < T.rows.length; k++) {
+      j += 1;
+      if (j < 0 || j >= T.rows.length) break;
+      const cand = T.rows[j];
+      if (cand && cand.path && cand.t !== 'loading' && cand.t !== 'err') { r = cand; break; }
+    }
+    if (r) {
       T.active = r.path;
       T.rendered = [-1, -1];
       if (typeof _tvPaint === 'function') _tvPaint();
@@ -225,6 +243,9 @@
     return true;
   }
   $('treePane').addEventListener('keydown', e => {
+    // a213 审计 P2：工具栏按钮在 treePane 内——焦点在 button/input 时按键
+    // 交还原生行为（按钮 Enter 激活），不劫持
+    if (e.target.closest('button, input')) return;
     if (navKey(e)) return;
     const path = window._TV && _TV.active;
     if (!path) return;

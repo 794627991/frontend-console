@@ -79,6 +79,9 @@ const _TV = {
   ROW_H: 22, BUF: 12,
   raf: 0,
 };
+window._TV = _TV;   // a213 审计 P0：顶层 const 不进 window——tree-fileops/
+                    // tree-search 读 window._TV 全 undefined（键盘/相对路径/
+                    // 全根搜索三链死读的根因，三审计交叉实锤）
 
 function _tvPad(depth) { return 6 + depth * 14; }
 
@@ -179,7 +182,11 @@ function treeInvalidate(dirPath) {
     const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf(String.fromCharCode(92)));
     const parent = i > 0 ? p.slice(0, i) : '';
     if (parent && _TV.cache.has(parent)) _TV.cache.delete(parent);
-    _tvRebuild();
+    // a213 审计 P1：原 else 只清缓存不重拉——父目录展开态下 rebuild 后子层
+    // 恒 loading 行无人 fetch，树卡「加载中」（未展开目录上新建即触发）。
+    // 父展开则重拉；收起态清缓存即可（下次展开自然拉新）
+    if (parent && _TV.open.has(parent)) _tvExpand(parent);
+    else _tvRebuild();
   }
 }
 window.treeInvalidate = treeInvalidate;
@@ -187,16 +194,18 @@ window.treeInvalidate = treeInvalidate;
 // a209批3：reveal 到树（搜索结果点击文件头定位）——逐父段展开到目标，
 // 期间显示 loading（复用展开态）；目标不可达（截断/权限）时提示
 async function treeReveal(path) {
-  const BS = String.fromCharCode(92);
-  const norm = String(path).split(BS).join('/');
-  const segs = norm.split('/').filter(Boolean);
-  // 从已展开的最深祖先开始逐层展开
-  let cur = '';
-  for (let i = 0; i < segs.length; i++) {
-    cur = cur ? cur + '/' + segs[i] : segs[i];
-    // 规范化比对（Windows 盘符大小写不敏感按原路径拼）
-    if (i === segs.length - 1) break;
-    const dirPath = cur;
+  // a213 审计 P1：原实现 norm 正斜杠逐段拼——与树键（后端 scandir 恒反斜杠）
+  // 形成双键空间：open/cache 写幽灵正斜杠键、行推导永不命中（reveal 无效+
+  // 同目录双 cache 污染）。改为原路径逐 dirname 上溯，键与树完全同形
+  const chain = [];
+  let cur = String(path);
+  while (true) {
+    const i = Math.max(cur.lastIndexOf('/'), cur.lastIndexOf(String.fromCharCode(92)));
+    if (i <= 0) break;
+    cur = cur.slice(0, i);
+    chain.unshift(cur);
+  }
+  for (const dirPath of chain) {
     if (!_TV.open.has(dirPath)) {
       _tvExpand(dirPath);
       // 等待 cache 落地（拉取完成）——轮询 2s 兜底
@@ -267,12 +276,15 @@ function _tvCollapse(path) {
   // 元素），k.startsWith 直接 TypeError 中断收起整链；②尾部斜杠正则在
   // 转义损耗下只匹配 / 不匹配 \（Windows 尾分隔符不吃）。改为
   // .keys() 迭代 + 零正则循环去尾
-  let pre = path;
-  while (pre.endsWith('/') || pre.endsWith('\\')) pre = pre.slice(0, -1);
-  pre += '/';
-  for (const k of [..._TV.open]) if (k === path || k.startsWith(pre)) _TV.open.delete(k);
-  for (const k of [..._TV.cache.keys()]) if (k === path || k.startsWith(pre)) _TV.cache.delete(k);
-  for (const k of [..._TV.seq.keys()]) if (k === path || k.startsWith(pre)) _TV.seq.delete(k);
+  // a213 审计 P3（a208 遗留）：pre 拼的是 '/' 而树键反斜杠——后代清理在
+  // Windows 恒空转（只删本级）。归一化比较（双斜杠统一正斜杠）
+  const _BS = String.fromCharCode(92);
+  const _nk = (x) => String(x).split(_BS).join('/');
+  const _self = _nk(path);
+  const _pre = _self + '/';
+  for (const k of [..._TV.open]) if (_nk(k) === _self || _nk(k).startsWith(_pre)) _TV.open.delete(k);
+  for (const k of [..._TV.cache.keys()]) if (_nk(k) === _self || _nk(k).startsWith(_pre)) _TV.cache.delete(k);
+  for (const k of [..._TV.seq.keys()]) if (_nk(k) === _self || _nk(k).startsWith(_pre)) _TV.seq.delete(k);
   _tvRebuild();
   _tvFocus(path);           // 折叠对焦被折叠行
 }

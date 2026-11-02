@@ -62,7 +62,9 @@ def tree_search():
     if str(data.get("mode")) == "function":
         pattern = _func_regex(q)
     else:
-        pattern = q if use_regex else re.escape(q)
+        # a213 审计 P1：非正则模式追加 --fixed-strings——原再 re.escape 是
+        # 双重转义，'open(file)'/'config.json' 等含元字符查询恒 0 命中
+        pattern = q
 
     return Response(_stream(scope, pattern, use_regex, smart_case, max_hits),
                     mimetype="text/event-stream",
@@ -90,13 +92,31 @@ def _stream(scope, pattern, use_regex, smart_case, max_hits):
     cmd += ["-e", pattern, scope]
     creationflags = 0x08000000 if os.name == "nt" else 0   # CREATE_NO_WINDOW
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                             creationflags=creationflags, env=dict(os.environ, RG_UTF8="1"))
+                             creationflags=creationflags)
+    # a213 审计 P2：原直接 iter(readline)——rg 静默期阻塞 readline，客户端
+    # 断开的 GeneratorExit 无 yield 点可投递，取消停不掉直到自然 EOF。读移
+    # 后台线程推 queue，主生成器 0.5s 超时轮询——断开即刻可达 terminate
+    import queue as _q
+    _q1 = _q.Queue()
+    def _reader():
+        try:
+            for raw in iter(proc.stdout.readline, b""):
+                _q1.put(raw)
+        finally:
+            _q1.put(None)
+    threading.Thread(target=_reader, daemon=True).start()
     try:
         hits = files = 0
         truncated = False
         cur_file = None
-        for raw in iter(proc.stdout.readline, b""):
-            if hits >= max_hits or files > MAX_FILES:
+        while True:
+            try:
+                raw = _q1.get(timeout=0.5)
+            except _q.Empty:
+                continue
+            if raw is None:
+                break
+            if hits >= max_hits or files >= MAX_FILES:
                 truncated = True
                 break
             try:
@@ -112,7 +132,21 @@ def _stream(scope, pattern, use_regex, smart_case, max_hits):
             elif t == "match":
                 d = ev.get("data") or {}
                 line_no = d.get("line_number")
+                # a213 审计 P2：非 UTF-8 文件 rg 输出 lines.bytes（base64）
+                # 而无 text——原取 text 恒空串（前端只见行号的空命中行）。
+                # bytes 回退解码：utf-8 失败试 GB18030（域内中文文件主形态）
                 txt = (d.get("lines") or {}).get("text", "")
+                if not txt:
+                    import base64 as _b64
+                    b64 = (d.get("lines") or {}).get("bytes", "")
+                    if b64:
+                        try:
+                            txt = _b64.b64decode(b64).decode("utf-8")
+                        except UnicodeDecodeError:
+                            try:
+                                txt = _b64.b64decode(b64).decode("gb18030", "replace")
+                            except Exception:
+                                txt = ""
                 txt = txt.rstrip("\r\n")
                 # 截窗（长行防 SSE 帧爆炸）
                 if len(txt) > 240:
@@ -130,6 +164,10 @@ def _stream(scope, pattern, use_regex, smart_case, max_hits):
                             "col": col, "text": txt})
             elif t == "done":
                 break
+        rc = proc.wait()
+        if rc == 2:
+            yield _sse({"type": "error", "err": "正则表达式无效"})
+            return
         yield _sse({"type": "summary", "hits": hits, "files": files,
                     "truncated": truncated})
     except GeneratorExit:

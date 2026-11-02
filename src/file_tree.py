@@ -202,7 +202,7 @@ def _recycle_to_trash(path):
     op.hwnd = None
     op.wFunc = 3                    # FO_DELETE
     op.pFrom = str(path) + "\0\0"  # pFrom 需双 NUL 结尾（ctypes c_wchar_p 只补一个）
-    op.fFlags = 0x40 | 0x10 | 0x4   # FOF_ALLOWUNDO | NOCONFIRMATION | SILENT
+    op.fFlags = 0x40 | 0x10 | 0x4 | 0x400   # ALLOWUNDO|NOCONFIRMATION|SILENT|NOERRORUI（a213 审计 P3：失败不弹系统框阻塞请求线程）
     try:
         rc = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
     except Exception as e:
@@ -241,8 +241,10 @@ def tree_fileops():
         if op == "touch":
             base = _under_roots(str(data.get("dir") or ""))
             name = str(data.get("name") or "").strip()
-            if not base or not name or "/" in name or os.sep in name:
-                return jsonify({"ok": False, "err": "参数无效（名字禁含分隔符）"}), 400
+            # a213 审计 P3：冒号一并拒——'d:foo' 会被 os.path.join 丢弃 base
+            # 跨盘建文件（实测穿越白名单）
+            if not base or not name or "/" in name or os.sep in name or ":" in name:
+                return jsonify({"ok": False, "err": "参数无效（名字禁含分隔符/冒号）"}), 400
             fp = os.path.join(base, name)
             if os.path.exists(fp):
                 return jsonify({"ok": False, "err": "已存在同名文件"}), 400
@@ -252,7 +254,7 @@ def tree_fileops():
         if op == "rename":
             fp = _under_roots(str(data.get("path") or ""))
             name = str(data.get("name") or "").strip()
-            if not fp or not name or "/" in name or os.sep in name or name in (".", ".."):
+            if not fp or not name or "/" in name or os.sep in name or ":" in name or name in (".", ".."):
                 return jsonify({"ok": False, "err": "参数无效"}), 400
             roots = _tree_roots()
             if fp in roots:
@@ -270,6 +272,13 @@ def tree_fileops():
             d = _under_roots(str(data.get("dir") or ""))
             if not fp or not d or not os.path.exists(fp):
                 return jsonify({"ok": False, "err": "参数无效或原路径不存在"}), 400
+            # a213 审计 P2：自嵌递归防护（src 是 dst 祖先 → copytree 自我
+            # 递归炸 500 + 493 层垃圾——实测复现）
+            try:
+                if os.path.commonpath([fp, d]) == os.path.abspath(fp):
+                    return jsonify({"ok": False, "err": "不能把目录复制到自身内部"}), 400
+            except ValueError:
+                pass
             import shutil
             tp = os.path.join(d, os.path.basename(fp))
             if os.path.exists(tp):

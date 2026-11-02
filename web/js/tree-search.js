@@ -20,6 +20,8 @@
   const resEl = document.querySelector('[data-ts-results]');
   const statEl = document.querySelector('[data-ts-stat]');
 
+  let runSeq = 0;       // a213 审计 P3：重搜竞态——旧 run 收尾不得覆写新状态
+  let lastTruncated = false;
   const st = {
     scope: '',          // '' = 全部根
     caseOn: false, regexOn: false, fnOn: false,
@@ -77,6 +79,8 @@
     cancel();
     st.ctrl = new AbortController();
     st.files = 0; st.hits = 0; st.domMatches = 0;
+    lastTruncated = false;
+    const mySeq = ++runSeq;
     resEl.innerHTML = '';
     statEl.textContent = '搜索中…';
     statEl.classList.add('run');
@@ -94,10 +98,12 @@
     } catch (e) {
       if (!aborted) statEl.textContent = '搜索失败: ' + e;
     }
+    if (mySeq !== runSeq) return;   // 已被更新搜索取代——不覆写新状态
     statEl.classList.remove('run');
     statEl.textContent = (aborted ? '已取消 · ' : '') +
       st.files + ' 文件 / ' + st.hits + ' 命中 · ' +
-      ((Date.now() - t0) / 1000).toFixed(1) + 's';
+      ((Date.now() - t0) / 1000).toFixed(1) + 's' +
+      (lastTruncated ? '（已达限额截断）' : '');
   }
 
   function one(scope, q, isAborted) {
@@ -129,7 +135,7 @@
     });
   }
 
-  let curFileEl = null, curFilePath = '', curFileCount = 0;
+  let curFileEl = null, curFileHead = null, curFilePath = '', curFileCount = 0;   // a213 审计 P2：head 独立引用（curFileEl 链式插入后变 hit 行，querySelector 计数失效→恒 1）
   function onEvent(ev, q) {
     if (ev.type === 'error') { statEl.textContent = '错误：' + ev.err; return; }
     if (ev.type === 'file') {
@@ -146,12 +152,12 @@
         if (typeof treeReveal === 'function') treeReveal(ev.path);
       };
       resEl.appendChild(head);
-      curFileEl = head;
+      curFileEl = head; curFileHead = head;
       return;
     }
     if (ev.type === 'match') {
       st.hits++; curFileCount++;
-      const fn = curFileEl && curFileEl.querySelector('.ts-fn');
+      const fn = curFileHead && curFileHead.querySelector('.ts-fn');
       if (fn) fn.textContent = curFileCount;
       if (st.domMatches >= DOM_CAP) {
         if (st.domMatches === DOM_CAP) {
@@ -182,8 +188,8 @@
       }
       return;
     }
-    if (ev.type === 'summary' && ev.truncated) {
-      statEl.textContent += '（已达限额截断）';
+    if (ev.type === 'summary') {
+      if (ev.truncated) lastTruncated = true;   // a213 P3：run 尾部统一拼（原被整行覆盖）
     }
   }
 

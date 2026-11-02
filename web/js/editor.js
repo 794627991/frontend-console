@@ -308,6 +308,7 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
   });
   switchTab(portId);
   refreshSidebar();
+  if (typeof treeDecoRefresh === 'function') treeDecoRefresh();   // a213 P2：打开即着色
   return conn;
 }
 
@@ -486,6 +487,7 @@ function _edMarkDirty(conn) {
     const dirty = cur !== conn.savedData;
     if (dirty !== conn.dirty) {
       conn.dirty = dirty; _edMarkTab(conn);
+      if (typeof treeDecoRefresh === 'function') treeDecoRefresh();   // a213 审计 P2：.note 分支联动
       if (typeof treeDecoRefresh === 'function') treeDecoRefresh();   // a209批1：树 dirty 橙点联动
     }
     _edUpdateInfo(conn);
@@ -509,7 +511,8 @@ function _edMarkDirty(conn) {
       if (dirty !== conn.dirty) { conn.dirty = dirty; _edMarkTab(conn); }
       _edUpdateInfo(conn);
     } catch (_) {
-      if (!conn.dirty) { conn.dirty = true; _edMarkTab(conn); }
+      if (!conn.dirty) { conn.dirty = true; _edMarkTab(conn);
+        if (typeof treeDecoRefresh === 'function') treeDecoRefresh(); }   // a213 P2
       _edUpdateInfo(conn);
     }
   }, 300);
@@ -994,6 +997,7 @@ async function _edCheckDiskChanged(conn) {
       // 保留内存版：标记 dirty（有改动状态），用户之后自行覆盖保存（写回时
       // mtime 基准更新）或另存为。不动 savedData——脏检测基准仍是打开时内容。
       conn.dirty = true; _edMarkTab(conn); _edUpdateInfo(conn);
+      if (typeof treeDecoRefresh === 'function') treeDecoRefresh();   // a213 P2：保留内存版
       showBanner('已保留内存版并标记改动——可「保存」覆盖磁盘或「另存为」保留两版', 4000);
     }
     // ignore：什么都不动，diskWatchAsked 已记录本次 mtime，同一改动不再弹
@@ -1877,14 +1881,24 @@ function _edUndoInit(conn) {
 // setPosition 语义与 notes-nav nnJumpLine 同源（4 处先例）；col 缺省 1
 async function openFileSmart(path, mode, opts) {
   const jump = (conn, o) => {
+    // a213 审计 P1：新开分支 buildEditorTab 同步返回时 monaco 尚未创建
+    // （_edInitContent 异步）——原实现恒 no-op。轮询等待就绪（80ms 步进，
+    // 3s 兜底——与 notes-nav nnOpenAndJump 同思路）
     if (!conn || !o || !o.line) return;
-    try {
-      if (conn.monaco && conn.monaco.revealLineNearTop) {
-        conn.monaco.revealLineNearTop(o.line);
-        conn.monaco.setPosition({ lineNumber: o.line, column: o.col || 1 });
-        try { conn.monaco.focus(); } catch (_) {}
+    const t0 = Date.now();
+    const tryJump = () => {
+      const m = conn.monaco;
+      if (m && m.revealLineNearTop) {
+        try {
+          m.revealLineNearTop(o.line);
+          m.setPosition({ lineNumber: o.line, column: o.col || 1 });
+          try { m.focus(); } catch (_) {}
+        } catch (_) {}
+        return;
       }
-    } catch (_) {}
+      if (Date.now() - t0 < 3000 && conn.isConnected !== false) setTimeout(tryJump, 80);
+    };
+    tryJump();
   };
   const name = path.split(/[\/]/).pop().toLowerCase();
   const dot = name.lastIndexOf('.');
