@@ -48,13 +48,22 @@
     return parts.map((x, i) => i === 0 ? esc(x) : '<mark>' + esc(q) + '</mark>' + esc(x)).join('');
   }
 
-  // ---- 工具条交互 ----
+  // ---- 工具条交互（a221：条件变化立即重搜——VSCode 语义，无需回车确定）----
   function bindToggle(el, key) {
-    el.onclick = () => { st[key] = !st[key]; el.classList.toggle('on', st[key]); };
+    el.onclick = () => {
+      st[key] = !st[key]; el.classList.toggle('on', st[key]);
+      if (qEl.value.trim()) run();   // 已有关键词：切换即按新模式重搜
+    };
   }
   bindToggle(caseEl, 'caseOn');
   bindToggle(rexEl, 'regexOn');
   bindToggle(fnEl, 'fnOn');
+  // 输入防抖 400ms 自动搜（VSCode 同款即时感；Enter 仍可立即触发、Esc 取消）
+  let _deb = 0;
+  qEl.addEventListener('input', () => {
+    clearTimeout(_deb);
+    _deb = setTimeout(() => { if (qEl.value.trim()) run(); }, 400);
+  });
   scopeEl.onclick = () => {
     st.scope = '';
     scopeEl.textContent = '范围：全部根';
