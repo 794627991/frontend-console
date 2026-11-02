@@ -398,6 +398,45 @@ def _sync_offline_pkg():
 # v4.1：统一离线资源包 .fcpk（用户拍板：WebView2 移出发布包，格式统一+加密）
 # ---------------------------------------------------------------------------
 
+# ---- a201：bili 资源组装（打包机联网跑一次，产物进 dist/offline_pkg/bili/）----
+BILI_NPM_VERSION = "0.1.204"        # 锁定版（0.1.x 高频迭代，不跟 master）
+BILI_NODE_VERSION = "22.14.0"       # LTS（≥22 硬要求）
+
+def _prep_bili_dir():
+    """组装内置压缩引擎资源：Node 便携运行时 node.exe + billion-context
+    完整依赖树。npm install --prefix 产出 node_modules（含全部依赖），
+    node.exe 从官方 zip 抽取（win-x64 zip 里 node.exe 自含全部内置模块）。
+    幂等：目录已存在且关键文件齐则跳过。"""
+    import subprocess, zipfile, urllib.request
+    root = os.path.join(BASE, "dist", "offline_pkg", "bili")
+    node_exe = os.path.join(root, "node.exe")
+    entry = os.path.join(root, "node_modules", "billion-context",
+                         "dist", "index.js")
+    if os.path.isfile(node_exe) and os.path.isfile(entry):
+        print("[bili] 已组装，跳过（删 %s 可重跑）" % root)
+        return
+    os.makedirs(root, exist_ok=True)
+    if not os.path.isfile(node_exe):
+        url = ("https://nodejs.org/dist/v%s/node-v%s-win-x64.zip"
+               % (BILI_NODE_VERSION, BILI_NODE_VERSION))
+        zpath = os.path.join(BASE, "dist", "node-v%s-win-x64.zip" % BILI_NODE_VERSION)
+        if not os.path.isfile(zpath):
+            print("[bili] 下载 %s …" % url)
+            urllib.request.urlretrieve(url, zpath)
+        with zipfile.ZipFile(zpath) as z:
+            member = "node-v%s-win-x64/node.exe" % BILI_NODE_VERSION
+            with z.open(member) as src, open(node_exe, "wb") as dst:
+                import shutil as _sh
+                _sh.copyfileobj(src, dst)
+        print("[bili] node.exe 就位")
+    if not os.path.isfile(entry):
+        print("[bili] npm install billion-context@%s …" % BILI_NPM_VERSION)
+        subprocess.run(["npm", "install", "--prefix", root,
+                        "billion-context@%s" % BILI_NPM_VERSION],
+                       check=True, shell=True)
+    print("[bili] 组装完成 → %s" % root)
+
+
 def _offline_sources(kinds=None):
     """收集离线资源清单。返回 [(src_path, arcname, kind, mode, link_from)]。
 
@@ -437,6 +476,21 @@ def _offline_sources(kinds=None):
                 continue
             if _take(kind):
                 out.append((p, "install/" + name, kind, mode, None))
+        bl = os.path.join(src, "bili")
+        if os.path.isdir(bl) and _take("bili"):
+            # a201 内置压缩引擎：Node 便携运行时 + billion-context 依赖树
+            # （组装见 _prep_bili_dir）。整目录全收（claude-code 同款教训：
+            # 挑扩展名会丢 package.json 等命脉文件，装出空壳）
+            for r, ds, fs in os.walk(bl):
+                ds.sort()
+                for f in sorted(fs):
+                    p2 = os.path.join(r, f)
+                    arc = "bili/" + os.path.relpath(p2, bl).replace("\\", "/")
+                    low = f.lower()
+                    mode = ("deflate" if low.endswith(
+                        (".exe", ".dll", ".node", ".cjs", ".js", ".json"))
+                        else "raw")
+                    out.append((p2, arc, "bili", mode, None))
         cc = os.path.join(src, "claude-code")
         if os.path.isdir(cc) and _take("claude"):
             # 全审 B4 实锤（严重）：早前只收 .exe/.node/.dll，把
@@ -554,7 +608,7 @@ def _build_offline_fcpk(kinds=None, quiet=False):
     print("资源包: 打包 %d 个文件 / %.0f MB（加密 + 压缩，需数分钟）…"
           % (len(files), total))
     resources = []
-    for kind in ("webview2", "dotnet", "node", "git", "claude", "pydeps"):
+    for kind in ("webview2", "dotnet", "node", "git", "claude", "bili", "pydeps"):
         n = sum(1 for x in files if x[2] == kind)
         if n:
             resources.append({"kind": kind, "files": n})
@@ -607,13 +661,18 @@ def offline_main(argv):
     ap.add_argument("--offline", action="store_true", help="离线资源包模式")
     ap.add_argument("--kinds", default="",
                     help="只打这些资源，逗号分隔：webview2,dotnet,node,git,"
-                         "claude,pydeps（默认全量）")
+                         "bili,claude,pydeps（默认全量）；--prep-bili 先组装 bili 资源")
+    ap.add_argument("--prep-bili", action="store_true",
+                    help="先组装 bili 资源（node.exe + billion-context 依赖树，需联网）")
     ap.add_argument("--out", default="",
                     help="额外复制一份到该目录（可选）")
     args = ap.parse_args(argv)
 
+    if getattr(args, "prep_bili", False):
+        _prep_bili_dir()
+        return
     kinds = [k.strip() for k in args.kinds.split(",") if k.strip()]
-    valid = {"webview2", "dotnet", "node", "git", "claude", "pydeps"}
+    valid = {"webview2", "dotnet", "node", "git", "claude", "bili", "pydeps"}
     bad = [k for k in kinds if k not in valid]
     if bad:
         print("未知资源：%s（可选：%s）" % (",".join(bad), ",".join(sorted(valid))))

@@ -414,41 +414,54 @@ def save_ccr(enabled):
         log.warning("保存 CCR 开关失败: %s", e)
 
 
-# ---- bili 定位（Node≥22 + npm 全局 billion-context）--------------------
-# headroom 时代是 pip 包 exe；bili 是 npm 包（Node ≥22 硬要求，20 会崩在
-# 自举 SQLite）。定位链：npm prefix -g 的 bili.cmd → PATH which 兜底。
-# Node 版本一并校验，不达标给可读错误（前端展示装 Node 22+ 的指引）。
+# ---- bili 定位（a201 内置方案：offline_runtime/bili 优先，系统兜底）----
+# 内置（.fcpk 资源包 kind=bili 释放）：node.exe 便携运行时 + node_modules/
+# billion-context 完整依赖树——内网零外联零安装。系统兜底（开发机）：
+# PATH node ≥22 + npm 全局包。BILI_NODE/BILI_ENTRY 是启动二元组（路径或
+# None），BILI_ERR 为不可用原因（前端展示装机指引）。
+BILI_RUNTIME = os.path.join(DATA_DIR, "..", "offline_runtime", "bili")
+BILI_RUNTIME = os.path.normpath(BILI_RUNTIME)
+
 def _detect_bili_cmd():
     import shutil, subprocess
-    def _node_ok():
-        try:
-            exe = shutil.which("node")
-            if not exe:
-                return None, "未找到 node（billion-context 需 Node.js ≥ 22）"
+    # 1. 内置运行时（.biliok 标记 + 关键文件齐全才算数——半装不认）
+    node_exe = os.path.join(BILI_RUNTIME, "node.exe")
+    entry = os.path.join(BILI_RUNTIME, "node_modules", "billion-context",
+                         "dist", "index.js")
+    if (os.path.isfile(os.path.join(BILI_RUNTIME, "..", ".biliok"))
+            and os.path.isfile(node_exe) and os.path.isfile(entry)):
+        return node_exe, entry, None
+    # 2. 系统 node ≥22 + npm 全局 billion-context（开发机兜底）
+    try:
+        exe = shutil.which("node")
+        if exe:
             out = subprocess.run([exe, "--version"], capture_output=True,
                                  text=True, timeout=10).stdout.strip().lstrip("v")
             major = int(out.split(".")[0]) if out.split(".")[0].isdigit() else 0
-            if major < 22:
-                return None, "node %s 过旧（billion-context 需 ≥ 22，SQLite 引擎在 20 崩）" % out
-            return exe, None
-        except Exception as e:
-            return None, "node 检测失败: %s" % e
-    node_exe, node_err = _node_ok()
-    if not node_exe:
-        return node_err   # str = 错误信息（调用方展示）；非路径
-    # bili 定位：npm 全局 bin（Windows 是 bili.cmd）
-    try:
-        prefix = subprocess.run(["npm", "prefix", "-g"], capture_output=True,
-                                text=True, timeout=15).stdout.strip().splitlines()[-1]
-        cand = os.path.join(prefix, "bili.cmd")
-        if os.path.isfile(cand):
-            return cand
-    except Exception:
-        pass
-    p = shutil.which("bili")
-    return p if p else "未找到 billion-context（npm install -g billion-context 后重试，或把压缩模式设为关闭）"
+            if major >= 22:
+                try:
+                    prefix = subprocess.run(["npm", "prefix", "-g"],
+                                             capture_output=True, text=True,
+                                             timeout=15).stdout.strip().splitlines()[-1]
+                    g_entry = os.path.join(prefix, "node_modules",
+                                           "billion-context", "dist", "index.js")
+                    if os.path.isfile(g_entry):
+                        return exe, g_entry, None
+                    why = "npm 全局未装 billion-context"
+                except Exception:
+                    why = "npm 检测失败"
+            else:
+                why = "node %s 过旧（需 ≥22）" % out
+        else:
+            why = "未找到 node"
+    except Exception as e:
+        why = "node 检测失败: %s" % e
+    return None, None, (
+        "billion-context 不可用（%s）。内置方案：用 .fcpk 资源包安装"
+        "（含 Node 运行时+依赖全量，内网零外联）；或自装 Node ≥22 后 "
+        "npm install -g billion-context" % why)
 
-BILI_CMD = _detect_bili_cmd()
+BILI_NODE, BILI_ENTRY, BILI_ERR = _detect_bili_cmd()
 
 
 # ---- BiliController（GUI:533-660 平移）----------------------------
@@ -504,10 +517,8 @@ class BiliController:
             if self.port_in_use():
                 raise RuntimeError("端口 %d 已被其他程序占用（非 billion-context）"
                                    % BILI_PORT)
-            # BILI_CMD 是路径或错误信息串（Node 缺失/版本低/未装 bili）
-            if not BILI_CMD or not os.path.exists(BILI_CMD):
-                raise RuntimeError(str(BILI_CMD) if BILI_CMD else
-                                   "未找到 billion-context")
+            if not BILI_NODE or not BILI_ENTRY:
+                raise RuntimeError(BILI_ERR or "未找到 billion-context")
             env = dict(os.environ)
             env.update(BILI_ENV_LOCKDOWN)   # 关 npm 自动更新 + advisory 轮询（内网铁闸）
             creationflags = 0x08000000 if os.name == "nt" else 0
@@ -519,7 +530,7 @@ class BiliController:
             # bili 是 URL 前缀代理：上游编在 base_url 的 /bili/<upstream> 里
             # （PROXY_URL），不经环境变量；--host 显式钉回环
             self.proc = subprocess.Popen(
-                [BILI_CMD, "--host", "127.0.0.1", "--port", str(BILI_PORT)],
+                [BILI_NODE, BILI_ENTRY, "--host", "127.0.0.1", "--port", str(BILI_PORT)],
                 env=env, creationflags=creationflags,
                 stdout=self._out_file, stderr=self._err_file)
             log.info("bili 已拉起 pid=%s 模式=%s（上游经 PROXY_URL 前缀）",
@@ -1343,7 +1354,7 @@ def tray_menu_items():
     返回原生菜单描述树（("item", text, cb, opts) / ("sep",)），text/checked
     可传函数 → 打开菜单时求值最新状态；未启动时启停行自动降级。
     与 pystray.MenuItem(fn) 签名兼容：函数项被调时收一个 None 参数。"""
-    has_bili = bool(BILI_CMD) and os.path.exists(BILI_CMD)
+    has_bili = bool(BILI_NODE and BILI_ENTRY)
 
     def _hr_items():
         # 未启动重试代理时压缩项置灰（bili 的上游是 37349）；
@@ -1434,7 +1445,7 @@ def tray_menu_items_remote(base):
 
     def _hr_items():
         # 装了 billion-context 即可选（代理未跑=只记模式下次启动生效）
-        en = bool(_st().get("bili_cmd"))
+        en = bool(_st().get("bili_ready"))
         return [
             ("item", "开启压缩",
              lambda: _post("/api/proxy/compression", {"mode": "on"}),
@@ -1773,7 +1784,7 @@ def _status_payload():
         "retry_cfg": dict(core.RETRY_CFG),
         # v2.2.2：同事机无 headroom 时 _detect 返回 None，exists(None) 抛
         # TypeError 炸掉整个 status（面板「状态获取失败」）——先判 None
-        "bili_cmd": bool(BILI_CMD) and os.path.exists(BILI_CMD),
+        "bili_ready": bool(BILI_NODE and BILI_ENTRY),
         "bili_stats": _bili_stats_cache,
         "quota_kind": qkind,
         "quota_payload": qpayload,

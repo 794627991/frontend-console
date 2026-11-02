@@ -24,12 +24,12 @@ import tempfile
 from src import fcpk
 
 # 各 kind 在包内的目录前缀（与打包侧一致）
-_KIND_DIRS = {"webview2": "webview2/", "dotnet": "install/",
+_KIND_DIRS = {"webview2": "webview2/", "bili": "bili/", "dotnet": "install/",
               "node": "install/", "git": "install/",
               "claude": "claude-code/", "pydeps": "pydeps/"}
 
 # 安装顺序：先决条件在前
-ORDER = ["dotnet", "webview2", "node", "git", "claude", "pydeps"]
+ORDER = ["dotnet", "webview2", "node", "git", "claude", "bili", "pydeps"]
 
 
 class InstallError(Exception):
@@ -449,7 +449,57 @@ def _install_pydeps(staging, say, force=False):
     return True
 
 
+def _install_bili(staging, say, force=False):
+    """billion-context 压缩引擎：纯解包（a201 内置方案——Node 便携运行时
+    node.exe + npm 依赖树整目录，解到 offline_runtime/bili/ 即用，零安装器）。
+    webview2 同款防半装：旧目录备份让位 → 移入 → 校验 node.exe 与
+    dist/index.js → 写完成标记；失败恢复备份。删 .biliok 可重装。"""
+    root = runtime_root()
+    os.makedirs(root, exist_ok=True)
+    mark = os.path.join(root, ".biliok")
+    cur_dir = os.path.join(root, "bili")
+    if os.path.isfile(mark) and os.path.isdir(cur_dir) and not force:
+        say("· billion-context 已完整安装，跳过（删 offline_runtime/.biliok 可重装）")
+        return False
+    src_dir = os.path.join(staging, "bili")
+    if not os.path.isdir(src_dir):
+        raise InstallError("包内无 bili/ 资源")
+    bak = ""
+    if os.path.isdir(cur_dir):
+        import time
+        bak = cur_dir + ".old-%d" % int(time.time())
+        say("  现有 bili 已备份 → %s" % os.path.basename(bak))
+        try:
+            os.replace(cur_dir, bak)
+        except OSError as e:
+            raise InstallError("无法替换现有 bili（可能正在运行）：%s" % e)
+    try:
+        os.replace(src_dir, cur_dir)
+        node_exe = os.path.join(cur_dir, "node.exe")
+        entry = os.path.join(cur_dir, "node_modules", "billion-context",
+                             "dist", "index.js")
+        if not (os.path.isfile(node_exe) and os.path.isfile(entry)):
+            raise InstallError("bili 资源不完整（缺 node.exe 或 dist/index.js）")
+        with open(mark, "w", encoding="utf-8") as f:
+            f.write(_now())
+        if bak:
+            import shutil
+            shutil.rmtree(bak, ignore_errors=True)
+        return True
+    except Exception:
+        # 半装回滚：清残 + 恢复备份
+        import shutil
+        shutil.rmtree(cur_dir, ignore_errors=True)
+        if bak:
+            try:
+                os.replace(bak, cur_dir)
+            except OSError:
+                pass
+        raise
+
+
 _INSTALLERS = {"dotnet": _install_dotnet, "node": _install_node,
+               "bili": _install_bili,
                "git": _install_git, "claude": _install_claude,
                "pydeps": _install_pydeps}
 

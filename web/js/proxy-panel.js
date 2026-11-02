@@ -430,7 +430,7 @@ function buildProxyTab() {
       _renderHrStats(j);
       _setHrUI(j);
       _setRetryUI(j);
-      if (!j.bili_cmd && j.bili_mode === 'on') {
+      if (!j.bili_ready && j.bili_mode === 'on') {
         msgEl.dataset.keep = '1';
         _msg('未找到 billion-context（需 Node ≥22 + npm install -g billion-context），压缩不可用；重试代理不受影响', true);
       }
@@ -592,7 +592,7 @@ function buildProxyTab() {
 
   function _hrCfgModal() {
     const j = conn.hrState || {};
-    const hasHr = !!j.bili_cmd;
+    const hasHr = !!j.bili_ready;
     let m = $('pxHrModal');
     if (!m) {
       m = document.createElement('div');
