@@ -835,6 +835,7 @@ _cred_cached = False     # 缓存是否已初始化（None=无凭据 也是合�
 
 _autoswitched = False    # 工具自动改过 base_url → 退出时回滚直连
 _bili_switching = False
+_bili_last_err = ""      # a203：最近一次压缩模式切换失败原因（前端展示，成功则清空）
 _bili_mode = None    # 当前压缩模式（init 时从记忆文件读）
 _ccr = False
 _tray_tip_thread = None
@@ -1295,7 +1296,7 @@ def apply_bili_mode(mode, ccr=None):
     _bili_switching = True
 
     def _worker():
-        global _bili_mode, _bili_switching, _autoswitched
+        global _bili_mode, _bili_switching, _autoswitched, _bili_last_err
         try:
             _bili_mode = mode
             save_bili_mode(mode, remember=True)
@@ -1310,10 +1311,17 @@ def apply_bili_mode(mode, ccr=None):
                          "，直连重试代理" if _ctl.running else "，代理未跑不动 base_url")
                 return
             try:
-                _bili.start(mode, ccr=_ccr)
+                # a203：这里原写 _bili.start(mode, ccr=_ccr)——BiliController.start
+                # 的签名是 start(self, mode="on")，没有 ccr（ccr 是 headroom 时代的
+                # 特性，a206A 已退役）。多传一个关键字参数直接 TypeError，被
+                # 下面 except 接住后静默回退 off —— 表现为「点开启压缩完全没
+                # 反应」：接口返 ok「切换中」、bili_mode 永远是 off、base_url
+                # 不动。runtime 切换与启动路径（:1011）保持一致。
+                _bili.start(mode)
                 _wait_bili_ready()
                 _bmgr.apply(_bili_url())
                 _autoswitched = True
+                _bili_last_err = ""      # a203：成功即清空上次失败原因
                 log.info("压缩模式切换 -> %s（base_url -> 8787）", mode)
             except Exception as e:
                 # 失败回退 off：记忆与实际运行状态一致（不能让"记住的模式"
@@ -1321,6 +1329,16 @@ def apply_bili_mode(mode, ccr=None):
                 _bili_mode = "off"
                 save_bili_mode("off", remember=True)
                 log.warning("切换到 %s 失败，回退直连: %s", mode, e)
+                # a203：回退必须留证据。原样只有一行 log.warning —— 前端拿到
+                # ok「切换中」后再查状态只看到 off，用户完全不知道为什么
+                # （a201/202 的 ccr TypeError 就这样藏了两天）。这次改成把
+                # 原因同时塞进状态字段，前端弹窗直接显示。
+                try:
+                    _bili_last_err = "%s 切换失败：%s" % (mode, e)
+                    if _bili.startup_error():
+                        _bili_last_err += "\n" + _bili.startup_error()
+                except Exception:
+                    pass
                 _bmgr.apply(_retry_url())
                 _autoswitched = True
         finally:
@@ -1838,6 +1856,7 @@ def _status_payload():
         "bili_mode": _bili_mode,
         "bili_running": _bili.running if _bili_mode != "off" else False,
         "bili_switching": _bili_switching,
+        "bili_last_err": _bili_last_err,   # a203：切换失败原因（前端弹窗展示）
         "ccr": _ccr,
         # v2.27.20：重试策略当前值（面板「重试配置」按钮文案用——原独立
         # 工具有此配置入口，合入面板时漏了，用户实锤「配置接口没了」）

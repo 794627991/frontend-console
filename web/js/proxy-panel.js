@@ -428,6 +428,13 @@ function buildProxyTab() {
       if (!j.bili_ready && j.bili_mode === 'on') {
         msgEl.dataset.keep = '1';
         _msg('未找到 billion-context（需 Node ≥22 + npm install -g billion-context），压缩不可用；重试代理不受影响', true);
+      } else if (j.bili_last_err) {
+        // a203：后端切换失败会静默回退 off，原样只留一行 log——用户只看到
+        // 「点了没反应」。把原因顶到面板上（切成功后后端清空该字段）。
+        msgEl.dataset.keep = '1';
+        _msg(j.bili_last_err, true);
+      } else if (msgEl.dataset.keep === '1') {
+        delete msgEl.dataset.keep;      // 失败原因消失后别一直挂着
       }
     } catch(e) {
       // 网络/解析失败同样不静默——连不上的原因要上屏
