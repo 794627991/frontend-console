@@ -75,7 +75,6 @@
     const VB = 24, R = 10, C = 2 * Math.PI * R;
     const col = pct >= 95 ? 'var(--neon-red, #e06c75)'
               : pct >= 80 ? 'var(--neon-orange, #d29922)' : 'var(--accent)';
-    const fmtTok = n => n >= 1000 ? (n / 1000).toFixed(1) + 'K' : n;
     _hgCostEl.innerHTML =
       `<svg class="hg-ctx-ring" viewBox="0 0 ${VB} ${VB}">` +
       `<circle cx="${VB / 2}" cy="${VB / 2}" r="${R}" fill="none" stroke="var(--border)" stroke-width="3"/>` +
@@ -83,37 +82,24 @@
       ` stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - pct / 100)}"` +
       ` stroke-linecap="round" transform="rotate(-90 ${VB / 2} ${VB / 2})"/></svg>` +
       `<span class="hg-ctx-pct">${Math.round(pct)}%</span>`;
-    // v2.20：0 用量（新会话/未统计）不冒充 256K 假窗口，title 直说待统计；
-    // v2.21：note 允许调用方替换占位说明（压缩后待首轮）
-    _hgCostEl.title = used > 0
-      ? `当前上下文 ${fmtTok(used)} / ${fmtTok(ctxMax)} tokens（${Math.round(pct)}%）`
-      : (note || '上下文用量：首轮回复后统计');
+    // a1375（用户拍板）：纯文本 title 废止——悬浮直接弹容量卡（下方 hover
+    // 绑定），卡片内容是 title 的超集（TPS/子代理/估值明细都在卡内）；
+    // 「已压缩待首轮」类状态由卡片头部「首轮回复后统计」分支承担
     _hgCostEl.classList.toggle('warn', pct >= 80);
-    // a152：记忆最近一次读数（TPS state 到达时 v4bridge 借它重画 title）
     _HG.ctxRing = { used: used, max: ctxMax };
-    // a152：圆环悬浮追加 TPS（主窗=最近回合产出速度；子代理只累计展示
-    // ——独立进程独立上下文，不进主窗 TPS 口径）
-    if (used > 0) {
-      const tps = _HG.tps;
-      if (tps && tps.last) {
-        _hgCostEl.title += '\n' + (_HG.busy ? '上回合' : '最近回合') +
-          ' ' + tps.last + ' tok/s（输出 ' + fmtTok(tps.toks) +
-          ' / ' + Math.round(tps.toks / tps.last) + 's）';
-      }
-      if (tps && tps.all) _hgCostEl.title += '\n本会话累计输出 ' + fmtTok(tps.all) + ' tok';
-      if (tps && tps.liveToks && _HG.busy)
-        _hgCostEl.title += '\n（含生成中 ~' + fmtTok(tps.liveToks) + ' tok，估值——回合结束落准）';
-      if (tps && tps.sub) _hgCostEl.title += '\n子代理累计 ' + fmtTok(tps.sub) + ' tok（独立上下文，不计入上行速度）';
-    }
     _hgDynDirty();   // v2.32 面板：上下文行跟随（localStorage 即数据总线，零新轮询）
-    // a154：圆环可点——弹出上下文容量卡（仿 ZCode）。绑在 _hgCostEl 本体，
-    // innerHTML 重画只换子节点不杀父监听，绑一次即可
+    // a1375：悬浮即显容量卡（用户拍板：替代点击弹出）。进出双向短延迟：
+    // 快速扫过不闪卡（入 180ms）、滑向卡片途中不误关（出 260ms——卡片贴
+    // 圆环上方，间隙极小）；innerHTML 重画只换子节点不杀父监听，绑一次即可
     if (!_hgCostEl._hgCtxCardBound) {
       _hgCostEl._hgCtxCardBound = true;
-      _hgCostEl.style.cursor = 'pointer';
-      _hgCostEl.addEventListener('click', function (ev) {
-        ev.stopPropagation();
-        _hgCtxCardToggle();
+      _hgCostEl.addEventListener('mouseenter', function () {
+        clearTimeout(_hgCtxHoverT);
+        _hgCtxHoverT = setTimeout(_hgCtxCardOpen, 180);
+      });
+      _hgCostEl.addEventListener('mouseleave', function () {
+        clearTimeout(_hgCtxHoverT);
+        _hgCtxHoverT = setTimeout(_hgCtxCardClose, 260);
       });
     }
   }
@@ -205,7 +191,7 @@
   // （/ctx sysTok/mcpTok）+ 消息=余量。我们是 CLI 的壳——CLI 内部的基础
   // 系统提示与内置工具 schema 拿不到，故分类标「估」不装精确（ZCode 自组
   // prompt 所以精确；额度区是其订阅限制，自托管网关无此概念，不仿）
-  let _hgCtxCardEl = null, _hgCtxCardTimer = null;
+  let _hgCtxCardEl = null, _hgCtxCardTimer = null, _hgCtxHoverT = 0;
   function _hgCtxCardFmt(n) {
     return n >= 1000000 ? (n / 1000000).toFixed(1) + 'M'
          : n >= 1000 ? (n / 1000).toFixed(1) + 'K' : String(Math.round(n));
@@ -269,19 +255,27 @@
     if (ev.key === 'Escape') _hgCtxCardClose();
   }
   function _hgCtxCardClose() {
+    clearTimeout(_hgCtxHoverT);
     if (_hgCtxCardTimer) { clearInterval(_hgCtxCardTimer); _hgCtxCardTimer = null; }
     document.removeEventListener('mousedown', _hgCtxCardAway);
     document.removeEventListener('keydown', _hgCtxCardKey);
     if (_hgCtxCardEl) { _hgCtxCardEl.remove(); _hgCtxCardEl = null; }
   }
-  function _hgCtxCardToggle() {
-    if (_hgCtxCardEl) { _hgCtxCardClose(); return; }
+  function _hgCtxCardOpen() {
+    if (_hgCtxCardEl) return;
     const el = document.createElement('div');
     el.className = 'hg-ctx-card';
     el.innerHTML = _hgCtxCardTpl();
     document.body.appendChild(el);
     _hgCtxCardEl = el;
     _hgCtxCardPlace();
+    // a1375：卡体也是 hover 域——从圆环滑入卡不关（取消关闭延迟），
+    // 离开卡才收（点击别处/Escape 依旧可关，_hgCtxCardAway/_hgCtxCardKey）
+    el.addEventListener('mouseenter', function () { clearTimeout(_hgCtxHoverT); });
+    el.addEventListener('mouseleave', function () {
+      clearTimeout(_hgCtxHoverT);
+      _hgCtxHoverT = setTimeout(_hgCtxCardClose, 200);
+    });
     _hgCtxCardTimer = setInterval(_hgCtxCardRender, 1000);  // 开着就活着（a153 实时链）
     document.addEventListener('mousedown', _hgCtxCardAway);
     document.addEventListener('keydown', _hgCtxCardKey);
