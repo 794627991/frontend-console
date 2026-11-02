@@ -84,7 +84,7 @@ def _stream(scope, pattern, use_regex, smart_case, max_hits):
            "--max-count", "50",
            # a218：默认排除依赖/版本库目录（裸目录无 .gitignore 时也排除，
            # 与 VSCode 搜索默认行为对齐）
-           "-g", "!node_modules/**", "-g", "!.git/**", "-g", "!vendor/**"]
+           "-g", "!node_modules", "-g", "!.git", "-g", "!vendor"]
     if not use_regex:
         cmd.append("--fixed-strings")
     else:
@@ -126,6 +126,7 @@ def _stream(scope, pattern, use_regex, smart_case, max_hits):
                 break
             if hits >= max_hits or files >= MAX_FILES:
                 truncated = True
+                proc.terminate()   # a233 审计 P1: 熔断即杀——原 wait() 无限挂到 rg 自然结束（实测 64s）且 close() 失效
                 break
             try:
                 ev = json.loads(raw.decode("utf-8", "replace"))
@@ -145,11 +146,13 @@ def _stream(scope, pattern, use_regex, smart_case, max_hits):
                 # bytes 回退解码：utf-8 失败试 GB18030（域内中文文件主形态）
                 txt = (d.get("lines") or {}).get("text", "")
                 if not txt:
-                    import base64 as _b64
+                    import base64 as _b64, binascii
                     b64 = (d.get("lines") or {}).get("bytes", "")
                     if b64:
                         try:
                             txt = _b64.b64decode(b64).decode("utf-8")
+                        except binascii.Error:
+                            txt = ""   # a233 P3: base64 损坏（非 Unicode 错）曾逃出生成器断流
                         except UnicodeDecodeError:
                             try:
                                 txt = _b64.b64decode(b64).decode("gb18030", "replace")

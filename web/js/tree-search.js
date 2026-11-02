@@ -68,6 +68,7 @@
     st.scope = '';
     scopeEl.textContent = '范围：全部根';
     scopeEl.title = '点击重置为全部根';
+    if (qEl.value.trim()) run();   // a233 P3: 重置即重搜
   };
 
   // 对外入口：右键「在此文件夹中搜索」预填范围并聚焦（tree-fileops 扩展点）
@@ -90,13 +91,15 @@
     st.files = 0; st.hits = 0; st.domMatches = 0;
     lastTruncated = false;
     const mySeq = ++runSeq;
+    st.errMsg = '';
+    clearTimeout(_deb);   // a233 P3: 立即 run 清残留防抖（原双搜）
     resEl.innerHTML = '';
     statEl.textContent = '搜索中…';
     statEl.classList.add('run');
     const t0 = Date.now();
     // 逐根搜索（scope 空时循环全部根；有 scope 单根）
     const scopes = st.scope ? [st.scope] : roots().map(r => r.path);
-    if (!scopes.length) { statEl.textContent = '未登记任何根目录（文件树先添加文件夹）'; return; }
+    if (!scopes.length) { statEl.textContent = '未登记任何根目录（文件树先添加文件夹）'; statEl.classList.remove('run'); return; }
     let aborted = false;
     st.ctrl.signal.addEventListener('abort', () => { aborted = true; });
     try {
@@ -108,10 +111,10 @@
     }
     if (mySeq !== runSeq) return;   // 已被更新搜索取代——不覆写新状态
     statEl.classList.remove('run');
-    statEl.textContent = (aborted ? '已取消 · ' : '') +
+    statEl.textContent = st.errMsg ? ('错误：' + st.errMsg) : ((aborted ? '已取消 · ' : '') +
       st.files + ' 文件 / ' + st.hits + ' 命中 · ' +
       ((Date.now() - t0) / 1000).toFixed(1) + 's' +
-      (lastTruncated ? '（已达限额截断）' : '');
+      (lastTruncated ? '（已达限额截断）' : ''));
   }
 
   function one(scope, q, isAborted) {
@@ -122,6 +125,10 @@
         body: JSON.stringify({ q, scope, case: st.caseOn, regex: st.regexOn, mode: st.fnOn ? 'function' : 'text' }),
         signal: st.ctrl.signal,
       }).then(r => {
+        if (!r.ok) {   // a233 P2: 400/5xx 非 SSE 被静默吞
+          statEl.textContent = '部分根搜索失败: HTTP ' + r.status;
+          return resolve();
+        }
         const reader = r.body.getReader();
         const dec = new TextDecoder();
         let buf = '';
@@ -145,7 +152,7 @@
 
   let curFileEl = null, curFileHead = null, curFilePath = '', curFileCount = 0;   // a213 审计 P2：head 独立引用（curFileEl 链式插入后变 hit 行，querySelector 计数失效→恒 1）
   function onEvent(ev, q) {
-    if (ev.type === 'error') { statEl.textContent = '错误：' + ev.err; return; }
+    if (ev.type === 'error') { st.errMsg = ev.err; return; }   // a233: run 尾统一展示
     if (ev.type === 'progress') {
       // 冷 IO 扫描期心跳：不再白屏死等（可点取消）
       if (st.ctrl) statEl.textContent = '扫描中… ' + ev.files + ' 文件 · ' + st.hits + ' 命中';

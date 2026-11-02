@@ -16,7 +16,8 @@
   const MIN = 180;
   const maxW = () => Math.floor(window.screen.width / 3);
   const apply = (w) => {
-    const v = Math.max(MIN, Math.min(w, maxW()));
+    // a233 P2-5: 视口钳（原只看主屏 1/3，小窗/分屏 main 被挤没）
+    const v = Math.max(MIN, Math.min(w, maxW(), window.innerWidth - 120));
     sb.style.width = v + 'px';
     return v;
   };
@@ -36,7 +37,7 @@
     if (!dragging) return;
     apply(startW + (e.clientX - startX));
   });
-  document.addEventListener('mouseup', () => {
+  const endDrag = () => {
     if (!dragging) return;
     dragging = false;
     bar.classList.remove('dragging');
@@ -45,7 +46,11 @@
       fetch('/api/theme', { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sidebar_w: sb.offsetWidth }) });
     } catch (_) {}
-  });
+  };
+  document.addEventListener('mouseup', endDrag);
+  // a233 P2-3: mouseup 被吞（Alt+Tab）→ dragging 永真+userSelect 锁死——Escape/失焦双兜底
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && dragging) endDrag(); });
+  window.addEventListener('blur', () => { if (dragging) endDrag(); });
   // 窗口 resize 时钳回上限内
   window.addEventListener('resize', () => {
     if (sb.offsetWidth > maxW()) apply(maxW());

@@ -84,6 +84,7 @@ function notifyTask({type, icon, title, detail}) {
   const d = _notifyBuild({icon, type, title, detail});
   d.querySelector('.n-state').innerHTML = '<span class="n-spin"></span>';
   d.querySelector('.n-close').onclick = () => _notifyDismiss(d);
+  d.onclick = (e) => { if (!e.target.closest('.n-close')) _notifyDismiss(d); };   // a233 P2: 点体即关（a226 漏任务型）
   _notifyMount(d, 0);   // 常驻直到 done
   return d;
 }
