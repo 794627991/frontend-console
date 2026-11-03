@@ -890,8 +890,18 @@
 
   /* ===== 文件树面板（类 VSCode 工作区：多根 + 懒加载）===== */
   .tree-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-  .tree-actions { padding: 8px 8px 4px; display: flex; gap: 4px; align-items: center; }
-  .tree-actions .btn { flex: 1; font-size: 11px; }
+  /* a257R（用户实锤：窄宽度下按钮被裁不可见）：工具条改可换行——按钮
+     flex-basis 跟内容、绝不收缩裁字，放不下就整体换行，任何宽度全部
+     可见。宽度过剩时「打开文件夹」伸展占满余宽（保持原观感） */
+  .tree-actions { padding: 8px 8px 4px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
+    container-type: inline-size; }   /* a257R：容器查询锚——极窄时主钮收图标 */
+  .tree-actions .btn { flex: 0 1 auto; font-size: 11px; }
+  .tree-actions .btn#treeAddRoot { flex: 1 1 auto; }
+  /* 侧栏最小 180px（resize.js MIN），148px 以下只可能出现在极端窗口——
+     主钮丢文字保图标，任何宽度不裁切不出界 */
+  @container (max-width: 148px) {
+    .tree-actions .btn#treeAddRoot .lbl { display: none; }
+  }
   /* a256：VSCode Explorer 操作组——图标钮（新建文件/文件夹/展开⇄收起）。
      图标 currentColor 跟随前景色，hover 青 glow 与 .btn ghost 同语言；
      收紧内边距保持与文字钮同一视觉高度 */
