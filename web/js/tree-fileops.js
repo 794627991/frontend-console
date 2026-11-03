@@ -86,14 +86,60 @@
   }
 
   // ---- 删除（统一入口：确认弹窗 + 回收站 + tab 联动）----
+  // a257（用户实锤：原生 confirm 不可接受）：工具自有暗色弹窗——危险风格
+  // （红色标题图标 + danger 按钮），Enter 确认 / Esc 取消 / 点遮罩取消
+  function confirmDeleteUI(path) {
+    return new Promise(resolve => {
+      let m = document.getElementById('treeDelModal');
+      if (!m) {
+        m = document.createElement('div');
+        m.className = 'modal';
+        m.id = 'treeDelModal';
+        m.innerHTML = `
+          <div class="box" style="max-width:420px;">
+            <div class="head"><strong style="display:inline-flex;align-items:center;gap:8px;">
+              <span style="color:var(--neon-red);font-size:14px;">🗑</span>删除确认</strong>
+              <div class="head-actions"><button class="btn ghost icon-btn" id="treeDelClose">✕</button></div>
+            </div>
+            <div style="padding:16px 20px;">
+              <div style="font-size:12px;color:var(--muted);margin-bottom:6px;">将删除：</div>
+              <div id="treeDelName" style="font-size:13px;color:var(--fg-bright);font-family:var(--font-mono);font-weight:600;word-break:break-all;margin-bottom:6px;"></div>
+              <div id="treeDelPath" style="font-size:10px;color:var(--muted);font-family:var(--font-mono);word-break:break-all;margin-bottom:14px;"></div>
+              <div style="font-size:11px;line-height:1.7;color:var(--neon-orange,var(--muted));border-left:2px solid var(--border);padding-left:10px;">
+                本地盘移入回收站可恢复；网络/映射盘为永久删除
+              </div>
+              <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px;">
+                <button class="btn ghost" id="treeDelNo">取消</button>
+                <button class="btn danger" id="treeDelYes" style="font-weight:600;">删 除</button>
+              </div>
+            </div>
+          </div>`;
+        document.body.appendChild(m);
+        m.addEventListener('mousedown', e => {   // 点遮罩=取消（mousedown 而非 click：box 内冒泡不算）
+          if (e.target === m) m._finish && m._finish(false);
+        });
+        document.addEventListener('keydown', e => {
+          if (!m.classList.contains('show')) return;
+          if (e.key === 'Escape') { e.preventDefault(); m._finish && m._finish(false); }
+          else if (e.key === 'Enter') { e.preventDefault(); m._finish && m._finish(true); }
+        });
+      }
+      m.querySelector('#treeDelName').textContent = baseName(path);
+      m.querySelector('#treeDelPath').textContent = path;
+      m._finish = v => { m.classList.remove('show'); m._finish = null; resolve(v); };
+      m.querySelector('#treeDelYes').onclick = () => m._finish && m._finish(true);
+      m.querySelector('#treeDelNo').onclick = () => m._finish && m._finish(false);
+      m.querySelector('#treeDelClose').onclick = () => m._finish && m._finish(false);
+      m.classList.add('show');
+      const yes = m.querySelector('#treeDelYes');
+      setTimeout(() => yes.focus(), 50);   // 焦点给删除钮：Enter 直删，Esc 取消
+    });
+  }
+  window._treeConfirmDelete = confirmDeleteUI;   // 验证/复用口
   async function doDelete(path) {
-    // a252（复审F3）：UNC/网络路径=永久删；映射盘（Y:\…）Windows 上也不经
-    // 回收站——前端无法区分映射盘，文案如实两可，不再单方面承诺"可恢复"
-    if (window.confirm('删除：' + baseName(path) +
-        '\n（本地盘移入回收站可恢复；网络/映射盘为永久删除）')) {
-      const j = await fileops({ op: 'delete', path });
-      if (j) tabsAfterDelete(path);
-    }
+    if (!(await confirmDeleteUI(path))) return;
+    const j = await fileops({ op: 'delete', path });
+    if (j) tabsAfterDelete(path);
   }
   function doRename(rowEl, path) {
     inlineInput(rowEl, baseName(path), (v) => {
