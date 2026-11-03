@@ -38,6 +38,11 @@ class TftpServer:
         self.sock = None
         self.transfers = []       # 最近传输列表（新→旧）
         self._lock = threading.Lock()
+        # a265（用户实锤串口敲键 1s+ 卡顿）：网络根（Y:\nfs）逐文件 stat 一轮
+        # 130~200ms，前端每秒轮询全量打网络盘；NFS 抖动时单次挂起秒级→浏览器
+        # 同源 6 连接池被慢轮询+SSE 占满→串口按键 POST 在浏览器侧排队（后端
+        # 本身 4ms）。2.5s TTL 缓存 + 异常回退旧表，轮询基本零盘压
+        self._files_cache = None   # (ts, list)
 
     @staticmethod
     def _resolve_default_dir():
@@ -113,15 +118,25 @@ class TftpServer:
         if not os.path.isdir(path):
             return False, f"目录不存在: {path}"
         self.root_dir = path
+        self._files_cache = None   # a265：切根立即失效缓存
         self._remember_default(path)   # v2.25：记住为默认，下次启动自动回到这里
         return True, path
 
     def status(self):
         with self._lock:
+            now = time.time()
+            if self._files_cache and now - self._files_cache[0] < 2.5:
+                files = self._files_cache[1]   # a265：TTL 内直接用缓存（不打盘）
+            else:
+                try:
+                    files = self._list_files()
+                except Exception:
+                    files = (self._files_cache or (0, []))[1]   # 网络盘抖动：回退旧表不挂起
+                self._files_cache = (now, files)
             return {
                 "running": self.running,
                 "root_dir": self.root_dir,
-                "files": self._list_files(),
+                "files": files,
                 "transfers": [{
                     "kind": t.kind, "filename": t.filename, "peer": "%s:%s" % t.peer,
                     "bytes": t.bytes_done, "total": t.total,

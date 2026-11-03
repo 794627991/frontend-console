@@ -48,7 +48,7 @@ async function refreshTftp() {
           thtml += transfers.map(t => {
             const active = t.status !== 'done' && t.status !== 'error';
             // get=设备下载(RRQ,有total)，put=设备上传(WRQ,total可能null)
-            const icon = t.status === 'done' ? '✓' : t.status === 'error' ? '✗' : (t.kind === 'get' ? '⬆' : '⬇');
+            const icon = t.status === 'done' ? '✓' : t.status === 'error' ? '✗' : (t.kind === 'get' ? ICO.upload : ICO.download);
             const hasTotal = active && t.total;
             const pct = hasTotal ? Math.min(100, Math.round(t.bytes / t.total * 100)) : 0;
             const size = t.status === 'done'
@@ -86,7 +86,7 @@ async function refreshTftp() {
         if (files.length) {
           fhtml += files.map(f => `
             <div class="tftp-file" title="${esc(f.name)} · ${_fmtSize(f.size)}">
-              <span class="icon">📄</span>
+              <span class="icon">${ICO.file}</span>
               <span class="name">${esc(f.name)}</span>
               <span class="size">${_fmtSize(f.size)}</span>
             </div>`).join('');
@@ -267,7 +267,17 @@ refreshTftp();
 // 传输进度刷新：空闲 2s 兜底，进行中 0.5s 抓进度。
 // 关键：active 状态用 JS 变量从 status 响应记录，不查 DOM——传输刚启动时 DOM 还没
 // 渲染出 active 项，查 DOM 会漏掉前 10s 进度（设备升完才显示结果的根因）。
-setInterval(() => { if (!_tftpActive) refreshTftp(); }, 2000);       // 空闲兜底
+// a265（用户实锤串口敲键 1s+）：空闲轮询加可见性门控——页面后台/面板收起
+// 时停轮。TFTP 根在网络盘（Y:\nfs）时每次 status 都是 30+ 次网络 stat，
+// 慢轮询会占满浏览器同源 6 连接池，把串口按键 POST 挤成秒级排队。
+// 进行中（_tftpActive）不受门控：进度必须跟。
+setInterval(() => {
+  if (_tftpActive) return;
+  if (document.hidden) return;
+  const pane = $('tftpPane');
+  if (pane && pane.offsetHeight === 0) return;   // 面板收起
+  refreshTftp();
+}, 2000);       // 空闲兜底
 setInterval(() => { if (_tftpActive) refreshTftp(); }, 500);          // 进行中抓进度
 
 // 初始化
