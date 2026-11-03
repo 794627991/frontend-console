@@ -4526,7 +4526,11 @@ html {
 /* ---- a262（用户实锤：收起行左色条 34/25/28 三长不齐，连宽也不齐 2/2/3px）
   三类收起行统一为定长 30px × 2px、垂直居中的左色条（::before 定位条，
   原 border-left 收起态退位透明但保留占位几何——▸ 盒 12px/图标列 32px
-  基准全不动）。展开态仍走整高边框：展开卡内容多行，定长条会断节 ---- */
+  基准全不动）。展开态仍走整高边框：展开卡内容多行，定长条会断节。
+  a263R（用户实锤「极光玻璃下条直接看不见」）：.h-tool 基类自带
+  overflow:hidden（:2710 旧抽屉防溢出）——left:-2px 的外挂条被裁成
+  隐形（任何皮肤都裁，极光玻璃最先发现）。条挪进盒内 left:0（落在
+  2px 透明边框槽内侧，三类同列对齐） ---- */
 /* ① bash/Edit 等工具收起行（含分屏）；err 非 col 行同退位防双线 */
 .hg-flow .h-tl .h-tool.col:not(.open),
 .hg-sub-body .h-tl .h-tool.col:not(.open),
@@ -4541,7 +4545,7 @@ html {
 .hg-sub-body .h-tl .h-tool.col:not(.open)::before,
 .hg-flow .h-tl .h-tool.oneclick:not(.open)::before,
 .hg-sub-body .h-tl .h-tool.oneclick:not(.open)::before {
-  content: ''; position: absolute; left: -2px; top: calc(50% - 15px);
+  content: ''; position: absolute; left: 0; top: calc(50% - 15px);
   width: 2px; height: 30px; border-radius: 1px;
   background: var(--h-accent, var(--accent));
 }
@@ -4556,7 +4560,7 @@ html {
   border-left-color: transparent; position: relative; min-height: 30px;
 }
 .h-tl-grp:not(.open)::before {
-  content: ''; position: absolute; left: -2px; top: calc(50% - 15px);
+  content: ''; position: absolute; left: 0; top: calc(50% - 15px);
   width: 2px; height: 30px; border-radius: 1px;
   background: var(--border);
 }
@@ -4568,7 +4572,7 @@ html {
   overflow: visible;
 }
 .h-think-seg:not(.open)::before {
-  content: ''; position: absolute; left: -2px; top: calc(50% - 15px);
+  content: ''; position: absolute; left: 0; top: calc(50% - 15px);
   width: 2px; height: 30px; border-radius: 1px;
   background: var(--h-violet, #8957e5);
 }
