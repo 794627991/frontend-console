@@ -14,14 +14,14 @@ function _ddFmtSize(n) {
 
 // ---- 设置弹窗骨架：左导航 + 右内容区（分区懒渲染）----
 const _SET_SECTIONS = [
-  { id: 'term',  icon: '⌨', name: '终端设置', desc: '字号 / 快捷键映射 / 自动复制' },
-  { id: 'appearance', icon: '🎨', name: '外观', desc: '换肤 / 界面缩放' },
-  { id: 'api',   icon: '🔑', name: 'API 配置', desc: 'Claude API Token / settings.json' },
-  { id: 'update', icon: '⬆', name: '关于与升级', desc: '版本 / 检查更新 / 升级分发服务' },
-  { id: 'resources', icon: '🧩', name: '外部依赖安装', desc: '检测 / 用离线资源包重装六项依赖' },
-  { id: 'data',  icon: '📁', name: '数据目录', desc: '日志 / 笔记 / 缓存的位置与迁移' },
-  { id: 'assoc', icon: '🔗', name: '文件关联', desc: '接管/还原 txt 等文本文件的双击打开方式' },
-  { id: 'help',  icon: '❓', name: '帮助', desc: 'README 使用手册 / 常见问题' },
+  { id: 'term',  icon: ICO16.keyboard, name: '终端设置', desc: '字号 / 快捷键映射 / 自动复制' },
+  { id: 'appearance', icon: ICO16.palette, name: '外观', desc: '换肤 / 界面缩放' },
+  { id: 'api',   icon: ICO16.key, name: 'API 配置', desc: 'Claude API Token / settings.json' },
+  { id: 'update', icon: ICO16.upload, name: '关于与升级', desc: '版本 / 检查更新 / 升级分发服务' },
+  { id: 'resources', icon: ICO16.puzzle, name: '外部依赖安装', desc: '检测 / 用离线资源包重装六项依赖' },
+  { id: 'data',  icon: ICO16.folder, name: '数据目录', desc: '日志 / 笔记 / 缓存的位置与迁移' },
+  { id: 'assoc', icon: ICO16.link, name: '文件关联', desc: '接管/还原 txt 等文本文件的双击打开方式' },
+  { id: 'help',  icon: ICO16.help, name: '帮助', desc: 'README 使用手册 / 常见问题' },
 ];
 
 function _stModal() {
@@ -33,7 +33,7 @@ function _stModal() {
   m.innerHTML = `
     <div class="box set-box">
       <div class="head">
-        <strong>⚙ 设置</strong>
+        <strong><span style="vertical-align:-2.5px">${ICO16.gear}</span> 设置</strong>
         <div class="head-actions"><button class="btn ghost icon-btn" id="stClose">✕</button></div>
       </div>
       <div class="set-body">
@@ -83,7 +83,7 @@ function _stRenderHelpPane(pane) {
     <div class="dd-body">
       <div class="dd-label">帮助文档</div>
       <div class="dd-row" style="display:flex;gap:8px;margin-top:6px;">
-        <button class="btn primary" id="hpOpenReadme">📖 打开 README 使用手册</button>
+        <button class="btn primary" id="hpOpenReadme"><span style="vertical-align:-2.5px">${ICO16.book}</span> 打开 README 使用手册</button>
       </div>
       <div class="dd-sub">工具内直接打开（markdown 渲染），含快速上手 / 全功能说明 / 常见问题。</div>
       <div class="dd-cur" style="margin-top:14px;">
@@ -489,7 +489,7 @@ async function _stRenderResourcesPane(pane) {
         <div class="dd-row" style="display:flex;gap:8px;margin-top:6px;align-items:center;">
           <input type="text" id="rsPkgPath" class="dd-input" spellcheck="false"
                  placeholder="选择或粘贴 .fcpk 资源包路径" style="flex:1;">
-          <button class="btn ghost" id="rsPkgPick">📂 选择…</button>
+          <button class="btn ghost" id="rsPkgPick"><span style="vertical-align:-2.5px">${ICO16.folderOpen}</span> 选择…</button>
           <button class="btn ghost icon-btn" id="rsRefresh" title="重新检测">⟳</button>
         </div>
         <div class="dd-sub" id="rsPkgInfo" style="margin-top:6px;">未选择资源包</div>
@@ -515,7 +515,7 @@ async function _stRenderResourcesPane(pane) {
               Node/Git 重装可能弹管理员提示。</span></span>
         </label>
         <div class="dd-actions" style="margin-top:10px;display:flex;gap:8px;">
-          <button class="btn primary" id="rsGo" disabled>🛠 安装所选</button>
+          <button class="btn primary" id="rsGo" disabled><span style="vertical-align:-2.5px">${ICO16.wrench}</span> 安装所选</button>
           <button class="btn ghost" id="rsCancel" style="display:none;">■ 取消</button>
         </div>
         <div id="rsProg" style="display:none;margin-top:10px;">
@@ -546,7 +546,7 @@ async function _stRenderResourcesPane(pane) {
         <div class="dd-label" style="margin-top:12px;">离线安装包目录</div>
         <div class="dd-row" style="display:flex;gap:8px;margin-top:6px;align-items:center;">
           <div class="dd-path" id="apiPkgDir" style="flex:1;user-select:text;">—</div>
-          <button class="btn ghost icon-btn" id="apiPkgPick" title="浏览选择目录">📂</button>
+          <button class="btn ghost icon-btn" id="apiPkgPick" title="浏览选择目录">${ICO16.folderOpen}</button>
           <button class="btn ghost icon-btn" id="apiPkgReset" title="清除自定义，恢复默认">↺</button>
         </div>
         <div class="dd-sub" style="margin-top:4px;">旧通道（zip）的搜索目录。新流程用 .fcpk 资源包，不读这个。</div>
@@ -856,7 +856,7 @@ async function _stRenderApiPane(pane) {
           <input type="text" id="profName" class="dd-input" spellcheck="false"
                  placeholder="${NEW ? '必填——新配置将保存为这个方案名' : '方案名，如：配置1 / 智谱 / 中转站'}" style="flex:1;${NEW ? 'border-color:var(--accent);' : ''}">
           <button class="btn ghost" id="profSaveCur" title="把当前 settings.json 整份（含 Token、网关、模型映射等）存为方案"
-                  style="${NEW ? 'display:none;' : ''}">💾 存当前为方案</button>
+                  style="${NEW ? 'display:none;' : ''}"><span style="vertical-align:-2.5px">${ICO16.save}</span> 存当前为方案</button>
         </div>
         <div class="dd-sub" style="margin-top:8px;">每个方案是 settings.json 的完整快照（网关不同，模型映射也不同）。切换整份替换——已开着的 Claude 会话进程不变，新会话起效。</div>
       </div>
@@ -880,7 +880,7 @@ async function _stRenderApiPane(pane) {
           <input type="text" id="apiBaseUrl" class="dd-input" spellcheck="false"
                  placeholder="http://…（留空保持不变）" style="flex:1;">
           <button class="btn ghost" id="apiProbe" title="按上面的 BASE_URL + Token 向网关拉取可用模型列表"
-                  style="flex-shrink:0;white-space:nowrap;">🔍 获取模型</button>
+                  style="flex-shrink:0;white-space:nowrap;"><span style="vertical-align:-2.5px">${ICO16.search}</span> 获取模型</button>
         </div>
         <div class="dd-sub" id="apiProbeOut" style="margin-top:6px;">${_stApiModels ? '已获取 ' + _stApiModels.length + ' 个模型——模型映射框可下拉选择' : '获取模型后，模型映射框可直接下拉选择'}</div>
         <div class="dd-label" style="margin-top:12px;">模型映射（MODEL 与 _NAME 成对写入，留空不改）</div>
@@ -920,12 +920,12 @@ async function _stRenderApiPane(pane) {
         <div class="dd-sub" style="margin-top:6px;">压缩窗口/最大上下文 = tokens（如 200000）；压缩阈值 = 用量百分比（如 85）。这三项决定「用到多少 tokens 才自动压缩」。</div>
       </div>
       <div class="dd-row" style="display:flex;align-items:center;gap:10px;margin-top:14px;">
-        <button class="btn primary" id="apiSaveAll">${NEW ? '💾 保存为新方案' : '💾 保存配置'}</button>
+        <button class="btn primary" id="apiSaveAll">${NEW ? '<span style="vertical-align:-2.5px">' + ICO16.save + '</span> 保存为新方案' : '<span style="vertical-align:-2.5px">' + ICO16.save + '</span> 保存配置'}</button>
         ${NEW ? '<button class="btn ghost" id="apiNewCancel">取消新建</button>' : ''}
         <span class="dd-sub" style="margin:0;">保存后新开的 Claude 会话生效（运行中的会话不变）。</span>
       </div>
       <div class="dd-actions" style="margin-top:16px;">
-        <button class="btn ghost" id="apiOpenSettings" title="在工具内打开 settings.json（Monaco 编辑）">📂 打开 settings.json</button>
+        <button class="btn ghost" id="apiOpenSettings" title="在工具内打开 settings.json（Monaco 编辑）"><span style="vertical-align:-2.5px">${ICO16.folderOpen}</span> 打开 settings.json</button>
         <button class="btn ghost" id="apiProvision" title="恢复 Claude 默认配置（settings 缺省项补全 + statusline 重铺；已有配置不动，statusline 强制覆盖）">↺ 恢复 Claude 默认配置</button>
       </div>
       <div class="dd-note" id="apiNote"></div>
@@ -1160,7 +1160,7 @@ async function _stRenderApiPane(pane) {
         <div title="${esc((p.token_masked || '未设 Token') + ' · ' + (p.base_url || '默认网关'))}" style="display:flex;align-items:center;gap:12px;padding:9px 12px;border:1px solid ${p.legacy ? 'var(--neon-yellow, orange);' : 'var(--border);'}border-radius:8px;${p.name === j.active ? 'border-color:var(--neon-green);' : ''}">
           <b style="flex-shrink:0;max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(p.name)}</b>
           <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:11px;">${esc(p.base_url || '默认网关')}${p.token_masked ? ' · ' + esc(p.token_masked) : ''}</span>
-          ${p.legacy ? '<span style="color:orange;font-size:11px;flex-shrink:0;" title="只存了 Token/网关——切换不会带模型映射，配好后重新『存当前为方案』升级">⚠ 旧格式</span>' : ''}
+          ${p.legacy ? '<span style="color:orange;font-size:11px;flex-shrink:0;" title="只存了 Token/网关——切换不会带模型映射，配好后重新『存当前为方案』升级"><span style="vertical-align:-2.5px">' + ICO16.warn + '</span> 旧格式</span>' : ''}
           ${p.name === j.active
             ? '<span style="color:var(--neon-green);font-size:11px;flex-shrink:0;">● 当前</span>'
             : `<button class="btn ghost" data-prof="${esc(p.name)}" style="flex-shrink:0;${j.switching ? 'opacity:.5;cursor:not-allowed;' : ''}"${j.switching ? ' disabled' : ''}>${j.switching ? '切换中…' : '应用'}</button>`}
@@ -1310,7 +1310,7 @@ async function _stRenderUpdatePane(pane) {
         const mb = j.size ? ' · ' + (j.size / 1048576).toFixed(1) + ' MB' : '';
         res.innerHTML = `<div style="margin-bottom:6px;">✨ 发现新版本 <b>v${esc(j.latest)}</b>${mb}${j.date ? ' · ' + esc(j.date) : ''}</div>` +
           (j.notes ? `<div class="dd-sub" style="max-height:120px;overflow:auto;white-space:pre-wrap;">${esc(j.notes)}</div>` : '') +
-          `<button class="btn primary" id="upApply" style="margin-top:8px;">⬆ 立即升级</button>`;
+          `<button class="btn primary" id="upApply" style="margin-top:8px;"><span style="vertical-align:-2.5px">${ICO16.upload}</span> 立即升级</button>`;
         res.querySelector('#upApply').onclick = () => _stDoApply(res);
       } else if (j.configured) {
         res.innerHTML = `✅ 已是最新版本（v${esc(j.current)}${j.latest ? '，服务器最新 v' + esc(j.latest) : ''}）`;
@@ -1393,13 +1393,13 @@ function _stRenderDataPane(pane) {
         <div class="dd-label">修改到</div>
         <div class="dd-row">
           <input type="text" id="ddNewPath" class="dd-input" spellcheck="false" placeholder="如 D:\\前端控制台">
-          <button class="btn ghost icon-btn" id="ddPick" title="浏览选择目录">📂</button>
+          <button class="btn ghost icon-btn" id="ddPick" title="浏览选择目录">${ICO16.folderOpen}</button>
         </div>
         <div class="dd-sub">默认建议：<span id="ddDefault" style="font-family:var(--font-mono);"></span>（数据跟工具目录走，备份工具目录即备份全部；endpoint/config 留 home）</div>
         <div id="ddCheckMsg" class="dd-msg"></div>
       </div>
       <div class="dd-actions">
-        <button class="btn ghost" id="ddOpenCur">📂 打开当前目录</button>
+        <button class="btn ghost" id="ddOpenCur"><span style="vertical-align:-2.5px">${ICO16.folderOpen}</span> 打开当前目录</button>
         <span style="flex:1"></span>
         <button class="btn primary" id="ddMigrate" disabled>迁移数据</button>
       </div>
@@ -1533,7 +1533,7 @@ async function _ddRefreshUsage(pane) {
       `<b style="font-weight:500;flex-shrink:0;">${esc(u.name || k)}</b>` +
       `<span style="font-size:11px;color:var(--muted);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${POLICY[k] || ''}">${POLICY[k] || ''}</span>` +
       `<span style="font-variant-numeric:tabular-nums;color:var(--fg);flex-shrink:0;">${_ddFmtSize(u.bytes)}</span>` +
-      `<button class="btn ghost icon-btn" data-ddclean="${k}" title="手动清理 ${esc(u.name || k)}" style="font-size:12px;flex-shrink:0;">🧹</button>` +
+      `<button class="btn ghost icon-btn" data-ddclean="${k}" title="手动清理 ${esc(u.name || k)}" style="font-size:12px;flex-shrink:0;">${ICO16.trash}</button>` +
       `</div>` +
       `<div style="font-family:var(--font-mono);font-size:11px;color:var(--muted);margin-top:3px;word-break:break-all;">${esc(u.path)}</div>` +
       `</div>`).join('');

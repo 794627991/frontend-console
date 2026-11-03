@@ -203,7 +203,7 @@
       `<input type="date" name="hg_vcs_hdate_${k}" class="hg-vcs-hdate" data-vcs-hq="${k}" title="${ph}">`;
     ov.innerHTML =
       `<div class="hg-modal hg-modal-vcslog">` +
-        `<div class="hg-modal-title">📜 提交历史 · ${esc(D.vcs || '')}${D.branch ? ' · ⎇ ' + esc(D.branch) : ''}</div>` +
+        `<div class="hg-modal-title"><span style="vertical-align:-2.5px">${ICO16.log}</span> 提交历史 · ${esc(D.vcs || '')}${D.branch ? ' · ⎇ ' + esc(D.branch) : ''}</div>` +
         `<div class="hg-vcs-htool">` +
           `<input name="hg_vcs_hsearch" class="hg-vcs-hsearch" data-vcs-hq="text" placeholder="${isSvn ? '🔍 关键字（svn 整串匹配，含作者/日期）' : '🔍 关键字（多词 AND，含正文）'}" spellcheck="false">` +
           (isSvn ? '' :
@@ -813,7 +813,7 @@
       (_HG.vcs.out ? `<div class="hg-vcs-out"><div class="hg-vcs-out-t">上次命令输出</div><pre>${esc(_HG.vcs.out.slice(0, 4000))}</pre></div>` : '') +
       // v3.5.265（Q3 首选嫌疑缓解）：busy 期置灰同时给明确提示（旧=静默灰
       // 按钮，svn 扫描窗内点击零反馈=「点了不弹窗」的主观来源）
-      `<div class="hg-vcs-acts"><button class="btn ghost" name="hg_vcs_logbtn" ${canOp ? '' : 'disabled'} title="${_HG.vcs.busy ? '状态扫描中，稍候再点' : ''}">📜 提交历史${_HG.vcs.busy ? '（扫描中…）' : ''}</button>` +
+      `<div class="hg-vcs-acts"><button class="btn ghost" name="hg_vcs_logbtn" ${canOp ? '' : 'disabled'} title="${_HG.vcs.busy ? '状态扫描中，稍候再点' : ''}"><span style="vertical-align:-2.5px">${ICO16.log}</span> 提交历史${_HG.vcs.busy ? '（扫描中…）' : ''}</button>` +
       `<button class="btn ghost" name="hg_vcs_refresh" ${_HG.vcs.busy ? 'disabled' : ''}>⟳ 刷新</button></div>` +
       // v3.5.133（用户拍板「面板只显示最近20条」）：内嵌列表 20 封顶，全量
       // 走「提交历史」弹窗（_vcsHistOpen）
@@ -1012,7 +1012,7 @@
       `<div class="hg-modal"><div class="hg-modal-title">提交 ${selPaths.length} 个文件（${esc(D.vcs || '')}）</div>` +
       `<div class="hg-modal-body">` +
       selPaths.map(f => `<div class="hg-vcs-cfile"><span class="hg-vcs-st ${_VCS_ST_CLS[f.st] || 'm'}">${esc(f.st)}</span>${esc(f.rel)}</div>`).join('') +
-      (nNew ? `<div class="hg-vcs-cnew">⚠ 其中 ${nNew} 个新文件将自动 ${D.vcs === 'svn' ? 'svn add' : 'git add'} 纳入</div>` : '') +
+      (nNew ? `<div class="hg-vcs-cnew"><span style="vertical-align:-2.5px">${ICO16.warn}</span> 其中 ${nNew} 个新文件将自动 ${D.vcs === 'svn' ? 'svn add' : 'git add'} 纳入</div>` : '') +
       `<textarea name="hg_vcs_msg" class="hg-vcs-msg" rows="3" placeholder="提交说明（必填，Ctrl+Enter 提交）" spellcheck="false"></textarea>` +
       `</div><div class="hg-modal-acts"></div></div>`;
     const acts = ov.querySelector('.hg-modal-acts');

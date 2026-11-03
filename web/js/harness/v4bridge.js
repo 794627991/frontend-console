@@ -1933,7 +1933,13 @@
       var om = document.createElement('div');
       om.className = 'hg-sub-omit';
       om.dataset.omitted = String(_omit);
-      om.textContent = '⬆ 已省略 ' + _omit + ' 行';
+      // a261：图标位换 SVG——动态计数走 DOM 构建（textContent 不吃 HTML）
+      om.textContent = '';
+      var _omIco = document.createElement('span');
+      _omIco.style.verticalAlign = '-2.5px';
+      _omIco.innerHTML = ICO16.upload;
+      om.appendChild(_omIco);
+      om.appendChild(document.createTextNode(' 已省略 ' + _omit + ' 行'));
       t.tl.insertBefore(om, t.tl.firstChild);
     }
     if (rows.length) {
@@ -2011,7 +2017,13 @@
             var om2 = document.createElement('div');
             om2.className = 'hg-sub-omit';
             om2.dataset.omitted = String(_om2);
-            om2.textContent = '⬆ 已省略 ' + _om2 + ' 行';
+            // a261：图标位换 SVG——动态计数走 DOM 构建（textContent 不吃 HTML）
+            om2.textContent = '';
+            var _omIco2 = document.createElement('span');
+            _omIco2.style.verticalAlign = '-2.5px';
+            _omIco2.innerHTML = ICO16.upload;
+            om2.appendChild(_omIco2);
+            om2.appendChild(document.createTextNode(' 已省略 ' + _om2 + ' 行'));
             self._t.tl.insertBefore(om2, self._t.tl.firstChild);
           }
           if (self._t && !self._t.t0) self._t.t0 = self._firstAt || 0;

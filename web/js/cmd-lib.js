@@ -34,7 +34,7 @@ async function renderCmdPane() {
           ${showName ? `<span class="name">${esc(c.name)}</span><span class="cmd-sub">${esc(c.cmd)}</span>` : `<span class="cmd-no-name">＋ 备注</span><span class="cmd-sub">${esc(c.cmd)}</span>`}
         </span>
         <button class="run" data-i="${i}">发送</button>
-        <button class="edit" data-i="${i}" title="编辑">✎</button>
+        <button class="edit" data-i="${i}" title="编辑">${ICO.pencil}</button>
         <button class="del" data-i="${i}" title="删除">✕</button>
       </div>`;
     }).join('');

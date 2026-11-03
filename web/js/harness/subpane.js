@@ -540,7 +540,7 @@
     // 懒渲染三件套与主链同款（pane 委托 _histLazyFill/_histLazyDrop 处置）
     seg.dataset.hgLazy = '1';
     seg.innerHTML = '<button class="h-think-seg-head"><span class="h-chev">▸</span>' +
-      '<span class="h-think-seg-name">🧠 思考</span>' +
+      '<span class="h-think-seg-name"><span style="vertical-align:-2.5px">' + ICO16.brain + '</span> 思考</span>' +
       `<span class="h-think-seg-t">${esc(durTxt || '')}</span></button>` +
       '<div class="h-think-seg-body"></div>';
     return seg;
@@ -616,7 +616,7 @@
         grpEl.className = 'h-tl-grp';   // v3.2.19：生而收起（主链 _tlPlace 同款）
         grpEl.innerHTML =
           `<button class="h-tl-grp-head"><span class="h-chev">▸</span>` +
-          `<span class="h-tl-grp-name">🔍 查阅</span>` +
+          `<span class="h-tl-grp-name"><span style="vertical-align:-2.5px">${ICO16.search}</span> 查阅</span>` +
           `<span class="h-tl-grp-sum"></span></button>` +
           `<div class="h-tl-grp-body"></div>`;
         t.tl.appendChild(grpEl);
@@ -693,14 +693,20 @@
       if (!first) break;
       if (first.classList.contains('hg-sub-omit')) {
         first.dataset.omitted = String((+first.dataset.omitted || 0) + 1);
-        first.textContent = `⬆ 已省略 ${first.dataset.omitted} 行`;
+        // a261：图标位换 SVG——动态计数走 DOM 构建（textContent 不吃 HTML）
+        first.textContent = '';
+        const _omIco = document.createElement('span');
+        _omIco.style.verticalAlign = '-2.5px';
+        _omIco.innerHTML = ICO16.upload;
+        first.appendChild(_omIco);
+        first.appendChild(document.createTextNode(` 已省略 ${first.dataset.omitted} 行`));
         const victim = first.nextElementSibling;
         if (victim) victim.remove(); else first.remove();
       } else {
         const om = document.createElement('div');
         om.className = 'hg-sub-omit';
         om.dataset.omitted = '1';
-        om.textContent = '⬆ 已省略 1 行';
+        om.innerHTML = '<span style="vertical-align:-2.5px">' + ICO16.upload + '</span> 已省略 1 行';   // a261：纯静态串装 SVG 图标
         t.tl.insertBefore(om, first);
         first.remove();
       }

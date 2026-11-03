@@ -102,7 +102,7 @@ function _harnessClose(portId) {
   if (remaining.length) switchTab(remaining[0]);
   else {
     activePortId = null;
-    termArea.innerHTML = '<div class="empty-state"><div class="big-icon">📡</div><div class="title">暂无连接</div><div class="desc">点击顶部「新建连接」选择串口或 SSH，支持同时监控多个连接。每个连接独立标签页，互不干扰。</div></div>';
+    termArea.innerHTML = '<div class="empty-state"><div class="big-icon"><svg width="30" height="30" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="12.2" r="1.1"/><path d="M5 9.2a4.2 4.2 0 0 1 6 0"/><path d="M2.7 6.9a7.5 7.5 0 0 1 10.6 0"/></svg></div><div class="title">暂无连接</div><div class="desc">点击顶部「新建连接」选择串口或 SSH，支持同时监控多个连接。每个连接独立标签页，互不干扰。</div></div>';   // a261：信号 path 同库 signal 字形（30px 空态大图标）
   }
   refreshSidebar();
 }

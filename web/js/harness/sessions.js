@@ -204,7 +204,7 @@
       <div class="hg-welcome">
         <div class="hg-welcome-ico"><span class="claude-ico big"></span></div>
         <div class="hg-welcome-title">你好，我是 Claude</div>
-        <div class="hg-welcome-desc">直接输入开始新对话，或从左侧选择历史会话继续。<br>支持 📎 附件、@ 文件引用、⚡ 技能、🧠 模型切换。</div>
+        <div class="hg-welcome-desc">直接输入开始新对话，或从左侧选择历史会话继续。<br>支持 <span style="vertical-align:-2.5px">${ICO16.clip}</span> 附件、@ 文件引用、<span style="vertical-align:-2.5px">${ICO16.zap}</span> 技能、<span style="vertical-align:-2.5px">${ICO16.brain}</span> 模型切换。</div>
       </div>`;
   }
   function _hgMm(m) {
@@ -282,8 +282,8 @@
         `<span class="hg-q-grip" data-i="${i}" title="拖动排序（按住抓手上下拖）">⠿</span>` +
         `<span class="hg-q-text">${esc(t || '（空）')}</span>` +
         `<button class="hg-q-act" data-qact="now" data-i="${i}" title="中断当前回复，立即发送这条">↑ 立即</button>` +
-        `<button class="hg-q-act" data-qact="edit" data-i="${i}" title="放回输入框编辑">✎</button>` +
-        `<button class="hg-q-act" data-qact="del" data-i="${i}" title="丢弃">🗑</button>` +
+        `<button class="hg-q-act" data-qact="edit" data-i="${i}" title="放回输入框编辑">${ICO.pencil}</button>` +
+        `<button class="hg-q-act" data-qact="del" data-i="${i}" title="丢弃">${ICO.trash}</button>` +
         `</div>`;
     }).join('');
   }

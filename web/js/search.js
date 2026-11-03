@@ -114,13 +114,13 @@ function showCtxMenu(x, y, conn) {
   const m = _ctxMenu();
   const hasSel = !!(conn.term && conn.term.getSelection());
   m.innerHTML = [
-    `<div class="ctx-item${hasSel ? '' : ' disabled'}" data-act="copySel">📋 复制选中</div>`,
-    `<div class="ctx-item" data-act="copyAll">📋 复制全部内容</div>`,
-    `<div class="ctx-item" data-act="paste">📥 粘贴到终端</div>`,
+    `<div class="ctx-item${hasSel ? '' : ' disabled'}" data-act="copySel"><span class="ctx-ico">${ICO16.copy}</span>复制选中</div>`,
+    `<div class="ctx-item" data-act="copyAll"><span class="ctx-ico">${ICO16.copy}</span>复制全部内容</div>`,
+    `<div class="ctx-item" data-act="paste"><span class="ctx-ico">${ICO16.download}</span>粘贴到终端</div>`,
     `<div class="ctx-sep"></div>`,
-    `<div class="ctx-item" data-act="findAll">🔍 查找全部（高亮跳转 + 命中列表）</div>`,
+    `<div class="ctx-item" data-act="findAll"><span class="ctx-ico">${ICO16.search}</span>查找全部（高亮跳转 + 命中列表）</div>`,
     `<div class="ctx-sep"></div>`,
-    `<div class="ctx-item" data-act="clear">⌫ 清屏</div>`,
+    `<div class="ctx-item" data-act="clear"><span class="ctx-ico">⌫</span>清屏</div>`,
   ].join('');
   // 定位（防溢出右下边界）
   m.style.display = 'block';

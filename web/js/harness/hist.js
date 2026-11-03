@@ -362,8 +362,8 @@
     // v2.20 修复：旧代码无条件加 anim，而定稿/重建后没人摘，已完成的会话
     // 组头还在闪（用户实测）。定稿侧 grpFinalize 也会重写为纯文本兜底。
     if (g.think.title) g.think.title.innerHTML = hist
-      ? '🧠 思考 ' + n + ' 次'
-      : '🧠 思考 <span class="hg-think-anim">' + n + ' 次</span>';
+      ? '<span style="vertical-align:-2.5px">' + ICO16.brain + '</span> 思考 ' + n + ' 次'
+      : '<span style="vertical-align:-2.5px">' + ICO16.brain + '</span> 思考 <span class="hg-think-anim">' + n + ' 次</span>';
     const seg = document.createElement('div');
     // v2.24 懒抽屉：历史段默认收起（点开才渲染正文）；流式段保持展开
     // v3.2.19（用户定调「执行过程中默认不展开」）：实况思考段也默认收起
@@ -378,7 +378,7 @@
     }
     seg.innerHTML =
       `<button class="h-think-seg-head"><span class="h-chev">▸</span>` +
-      `<span class="h-think-seg-name">🧠 思考</span>` +
+      `<span class="h-think-seg-name"><span style="vertical-align:-2.5px">${ICO16.brain}</span> 思考</span>` +
       `<span class="h-think-seg-t" data-hg-seg-t data-hg-think-t></span>` +
       `<span class="h-think-dot">·</span>` +
       `<span class="h-think-prev" data-hg-think-prev></span></button>` +

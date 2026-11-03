@@ -38,7 +38,10 @@
   function permChipLabel() {
     const b = _hgQ('[data-hg-perm]');
         if (b) {
-      b.textContent = _HG.perm === 'confirm' ? '🛡︎ 变更前确认 ▾' : '🛡︎';   // FE0E=文本渲染（随 CSS 色）
+      // a261：SVG 图标（ICO.shield）；确认态显字提醒（v3.4.27 语义不变）
+      b.innerHTML = _HG.perm === 'confirm'
+        ? (window.ICO ? ICO.shield : '') + ' 变更前确认 ▾'
+        : (window.ICO ? ICO.shield : '');
       b.classList.toggle('perm-confirm', _HG.perm === 'confirm');   // v3.4.31：确认态橙色醒目
     }   // v3.4.27（用户定调）：权限 chip 图标模式——默认态不显字，非默认显字提醒
   }

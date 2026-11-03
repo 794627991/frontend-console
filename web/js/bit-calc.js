@@ -167,7 +167,7 @@ function buildBitCalcTab() {
   const tab = document.createElement('div');
   tab.className = 'tab';
   tab.dataset.portId = portId;
-  tab.innerHTML = `<span class="led"></span><span class="tab-ico">🧮</span><span class="label">程序员计算器</span><span class="baud"></span><span class="close" title="关闭">✕</span>`;
+  tab.innerHTML = `<span class="led"></span><span class="tab-ico">${ICO16.calc}</span><span class="label">程序员计算器</span><span class="baud"></span><span class="close" title="关闭">✕</span>`;
   tab.onclick = (e) => { if (e.target.classList.contains('close')) { e.stopPropagation(); closeEditorTab(portId); return; } switchTab(portId); };
 
   const wrap = document.createElement('div');
@@ -231,8 +231,8 @@ function buildBitCalcTab() {
                  双双拉满把下方文件哈希挤走（用户实锤布局问题） -->
             <div class="bc-box">
               <div class="bc-sheets">
-                <div class="bc-sheet-tab active" data-bcsheet="ts">⏱ 时间戳</div>
-                <div class="bc-sheet-tab" data-bcsheet="hist">🕘 历史</div>
+                <div class="bc-sheet-tab active" data-bcsheet="ts"><span style="vertical-align:-2.5px">${ICO16.clock}</span> 时间戳</div>
+                <div class="bc-sheet-tab" data-bcsheet="hist"><span style="vertical-align:-2.5px">${ICO16.restore}</span> 历史</div>
                 <span style="flex:1"></span>
                 <button class="lv-btn" data-bc-hist-clear title="清空全部历史" style="display:none;">清空</button>
               </div>
@@ -260,8 +260,8 @@ function buildBitCalcTab() {
         <div class="bc-hash" data-bc-hash
              style="border:1px dashed var(--border);border-radius:8px;padding:10px 12px;">
           <div style="display:flex;align-items:center;gap:8px;">
-            <span style="font-weight:600;font-size:12px;">🔒 文件哈希</span>
-            <button class="lv-btn" data-bc-hash-pick title="选择文件计算哈希">📂 打开文件</button>
+            <span style="font-weight:600;font-size:12px;"><span style="vertical-align:-2.5px">${ICO16.lock}</span> 文件哈希</span>
+            <button class="lv-btn" data-bc-hash-pick title="选择文件计算哈希"><span style="vertical-align:-2.5px">${ICO16.folderOpen}</span> 打开文件</button>
             <span data-bc-hash-file style="color:var(--muted);font-size:12px;font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">拖入文件到此处，或点「打开文件」</span>
           </div>
           <div data-bc-hash-result style="display:none;margin-top:8px;font-family:var(--font-mono);font-size:12px;line-height:1.9;">

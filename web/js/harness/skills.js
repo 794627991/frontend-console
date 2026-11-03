@@ -43,7 +43,7 @@ function skRepoOpen() {
         '<div class="sk-title"><b>技能仓库</b><span id="skSub">发现 · 安装 · 管理 Claude 技能</span></div>' +
         '<span class="sk-status" id="skStatus"></span>' +
         '<input class="sk-search" id="skSearch" placeholder="搜索技能（支持中文，自动英译）…">' +
-        '<button class="sk-btn" data-sk-import title="导入离线包（内网一键安装）">📦 导入离线包</button>' +
+        '<button class="sk-btn" data-sk-import title="导入离线包（内网一键安装）"><span style="vertical-align:-2.5px">' + ICO16.package + '</span> 导入离线包</button>' +
         '<input type="file" id="skFile" accept=".zip" style="display:none">' +
       '</div>' +
       '<div class="sk-body" id="skBody"></div>';
@@ -226,7 +226,7 @@ function skRowCard(r) {
     '<div class="sk-card-m"><div class="sk-card-n"><b>' + _skEsc(r.name) + '</b>' +
     '</div>' +
     '<div class="sk-card-d">' + _skEsc(r.zh_desc || r.desc || r.source) + '</div>' +
-    '<div class="sk-card-f"><span>' + _skEsc(r.source) + '</span><span>⬇ ' + _skEsc(r.installs || '-') + '</span></div></div>' +
+    '<div class="sk-card-f"><span>' + _skEsc(r.source) + '</span><span><span style="vertical-align:-2.5px">' + ICO16.download + '</span> ' + _skEsc(r.installs || '-') + '</span></div></div>' +
     '<button class="sk-btn sm pri" data-sk-install="' + _skEsc(r.key) + '">安装</button></div>';
 }
 
@@ -480,7 +480,7 @@ function skRenderDetail() {
         '<div class="sk-card-f"><span>' + (isLocal
           ? _skEsc('本地 · ' + (d.dir || '').split('\\').slice(-1)[0])
           : _skEsc(d.owner + '/' + d.repo)) + '</span>' +
-        (isLocal ? '' : '<span>⬇ ' + _skEsc(d.installs || '-') + '</span>') + '</div></div>' +
+        (isLocal ? '' : '<span><span style="vertical-align:-2.5px">' + ICO16.download + '</span> ' + _skEsc(d.installs || '-') + '</span>') + '</div></div>' +
       (trend ? trend : '') +
       '<span class="sk-ops">' +
         (isLocal

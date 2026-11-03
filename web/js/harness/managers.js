@@ -103,8 +103,10 @@
           const j = await r.json();
           if (j && j.ok) {
             // v2.28.1 两态：inline ✅ 真多模态 / mcp 🔧 走 MCP 通道（默认）
-            const icon = j.mode === 'inline' ? '✅' : '🔧';
-            probeOut.textContent = icon + ' ' + (j.msg || '') + (j.cached ? '（缓存）' : '');
+            const icon = j.mode === 'inline'
+              ? '<span style="vertical-align:-2.5px">' + ICO16.check + '</span>'
+              : '<span style="vertical-align:-2.5px">' + ICO16.gear + '</span>';   // a261：状态图标位（动态 msg 走 esc 防 注入）
+            probeOut.innerHTML = icon + ' ' + esc(j.msg || '') + (j.cached ? '（缓存）' : '');
             if (j.mode === 'inline') {
               const cur = (mmEl.value || '').split(/[,，;；\n]/).map(s => s.trim()).filter(Boolean);
               if (!cur.some(x => m === x || m.startsWith(x) || x.startsWith(m)))
@@ -205,7 +207,7 @@
       const l1 = numOr(cfg.l1_max_lines, 100);
       const l2l = numOr(cfg.l2_max_lines, 200);
       const dln = numOr(cfg.design_max_lines, 200);
-      ov.innerHTML = `<div class="hg-modal hg-modal-vision hg-roles"><div class="hg-modal-title">👥 三角色配置<span class="hg-roles-mode">${modeTxt}</span></div>
+      ov.innerHTML = `<div class="hg-modal hg-modal-vision hg-roles"><div class="hg-modal-title"><span style="vertical-align:-2.5px">${ICO16.users}</span> 三角色配置<span class="hg-roles-mode">${modeTxt}</span></div>
         <div class="hg-modal-body">
           <div class="hg-roles-top">
             <label class="hg-vision-switch"><input type="checkbox" data-hg-r-on${cfg.enabled ? ' checked' : ''} name="hg_r_on"> 启用三角色</label>
@@ -313,7 +315,7 @@
       const ov = document.createElement('div');
       ov.className = 'hg-modal-ov';
       const list = items.map(it => ({ ...it }));   // 工作副本，保存才落库
-      ov.innerHTML = `<div class="hg-modal hg-modal-prompt"><div class="hg-modal-title">📜 自定义提示词</div>
+      ov.innerHTML = `<div class="hg-modal hg-modal-prompt"><div class="hg-modal-title"><span style="vertical-align:-2.5px">${ICO16.log}</span> 自定义提示词</div>
         <div class="hg-modal-body hg-prompt-hint">会话启动时注入（新建/复活）。🌐 全局对所有会话生效；📁 项目只对目录名匹配的会话生效（填目录名如「串口控制台Pro」）。备注是给自己看的标签。</div>
         <div class="hg-prompt-list"></div>
         <div class="hg-modal-acts"></div></div>`;
@@ -334,7 +336,7 @@
             `<option value="project"${it.scope === 'project' ? ' selected' : ''}>📁 项目</option>` +
             `</select>` +
             `<input class="hg-prompt-proj" placeholder="目录名" value="${esc(it.project || '')}"${it.scope === 'project' ? '' : ' style="display:none"'}${it.active === false ? ' title="当前项目不匹配（不会注入本会话）"' : ''} name="hg_prompt_proj">` +
-            `<button class="hg-prompt-onoff" title="启用/停用">${it.enabled ? '🟢' : '⚪'}</button>` +
+            `<button class="hg-prompt-onoff" title="启用/停用">${it.enabled ? ICO.dotOn : ICO.dotOff}</button>` +
             `<button class="hg-prompt-del" title="删除">✕</button></div>` +
             `<textarea name="hg_prompt_ta" class="hg-prompt-ta" spellcheck="false" placeholder="提示词正文…"></textarea>`;
           const ta = card.querySelector('.hg-prompt-ta');

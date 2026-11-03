@@ -43,9 +43,9 @@ async function buildHexViewerTab(path, name) {
   wrap.innerHTML = `
     <div class="editor">
       <div class="log-viewer-toolbar">
-        <button class="lv-btn" data-hx-action="save" title="Ctrl+S">💾 保存</button>
+        <button class="lv-btn" data-hx-action="save" title="Ctrl+S"><span style="vertical-align:-2.5px">${ICO16.save}</span> 保存</button>
         <button class="lv-btn" data-hx-action="goto" title="跳转偏移（支持 0x 前缀）">⤓ 跳转</button>
-        <button class="lv-btn" data-hx-action="find" title="Ctrl+F 搜索（hex 字节或文本）">🔍 搜索</button>
+        <button class="lv-btn" data-hx-action="find" title="Ctrl+F 搜索（hex 字节或文本）"><span style="vertical-align:-2.5px">${ICO16.search}</span> 搜索</button>
         <select name="hx_view" class="hx-view-sel" data-hx-view title="查看方式：进制 × 位宽分组（HxD 同款）">
           <option value="8" selected>十六进制(8 位)</option>
           <option value="16">十六进制(16 位)</option>

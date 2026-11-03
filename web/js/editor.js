@@ -107,13 +107,13 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
   wrap.innerHTML = `
     <div class="editor">
       <div class="log-viewer-toolbar">
-        <button class="lv-btn" data-ed-action="save" title="Ctrl+S">💾 保存</button>
+        <button class="lv-btn" data-ed-action="save" title="Ctrl+S"><span style="vertical-align:-2.5px">${ICO16.save}</span> 保存</button>
         <button class="lv-btn" data-ed-action="saveas" title="Ctrl+Shift+S">另存为…</button>
         <button class="lv-btn" data-ed-action="rename" title="双击标签页标题可快捷改名">重命名</button>
-        <button class="lv-btn" data-ed-action="search" title="Ctrl+F 全局搜索（支持正则/排除）">🔍 搜索</button>
-        <button class="lv-btn" data-ed-action="outline" title="显示/隐藏右侧大纲面板">☰ 大纲</button>
-        <button class="lv-btn" data-ed-action="links" title="显示/隐藏双链面板（链入/链出/标签）">🔗 链接</button>
-        <button class="lv-btn" data-ed-action="exportmd" title="导出为 Markdown（同目录同名 .md，图片相对路径）">⤓ .md</button>
+        <button class="lv-btn" data-ed-action="search" title="Ctrl+F 全局搜索（支持正则/排除）">${ICO16.search} 搜索</button>
+        <button class="lv-btn" data-ed-action="outline" title="显示/隐藏右侧大纲面板">${ICO16.note} 大纲</button>
+        <button class="lv-btn" data-ed-action="links" title="显示/隐藏双链面板（链入/链出/标签）">${ICO16.link} 链接</button>
+        <button class="lv-btn" data-ed-action="exportmd" title="导出为 Markdown（同目录同名 .md，图片相对路径）">${ICO16.download} .md</button>
         <select name="ed_enc" class="lv-btn ed-enc-sel" data-ed-enc title="文件编码（切换后按所选编码重新读取；保存按当前编码回写）" style="display:none;">
           <option value="">编码：自动</option>
           <option value="utf-8">UTF-8</option>
@@ -133,7 +133,7 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
           <div class="ed-outline-stats"></div>
         </div>
         <div class="ed-links" style="display:none;">
-          <div class="ed-links-head">🔗 链接</div>
+          <div class="ed-links-head"><span style="vertical-align:-2.5px">${ICO16.link}</span> 链接</div>
           <div class="ed-links-list"></div>
         </div>
         <div class="ed-scroll">
@@ -197,7 +197,7 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
     pvBtn.className = 'lv-btn';
     pvBtn.dataset.edAction = 'mdpreview';
     pvBtn.title = '显示/隐藏 Markdown 预览分栏';
-    pvBtn.textContent = '👁 预览';
+    pvBtn.innerHTML = '<span style="vertical-align:-2.5px">' + ICO16.eye + '</span> 预览';   // a261：纯静态串，textContent→innerHTML 装 SVG 图标
     wrap.querySelector('[data-ed-action="search"]').after(pvBtn);
     _mdBindSplitter(wrap);
   }
@@ -1019,7 +1019,7 @@ function _edDiskChangedModal(conn, diskMtime) {
           <button class="btn ghost" id="edDcKeep" style="width:100%;text-align:left;">
             ✎ 保留内存版（标记为有改动，之后可覆盖保存 / 另存为）</button>
           <button class="btn ghost" id="edDcIgnore" style="width:100%;text-align:left;color:var(--muted);">
-            ⏭ 忽略本次（继续编辑，下次改动再提醒）</button>
+            <span style="vertical-align:-2.5px">${ICO16.next}</span> 忽略本次（继续编辑，下次改动再提醒）</button>
         </div>
       </div>`;
     document.body.appendChild(m);
@@ -1322,7 +1322,7 @@ function _edCloseNow(conn) {
   }
   else {
     activePortId = null;
-    termArea.innerHTML = '<div class="empty-state"><div class="big-icon">📡</div><div class="title">暂无连接</div><div class="desc">点击顶部「新建连接」选择串口或 SSH，支持同时监控多个连接。每个连接独立标签页，互不干扰。</div></div>';
+    termArea.innerHTML = '<div class="empty-state"><div class="big-icon"><svg width="30" height="30" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 2.5v3M10.5 2.5v3"/><path d="M4 5.5h8v2a4 4 0 0 1-8 0z"/><path d="M8 11.5v2"/></svg></div><div class="title">暂无连接</div><div class="desc">点击顶部「新建连接」选择串口或 SSH，支持同时监控多个连接。每个连接独立标签页，互不干扰。</div></div>';
   }
   refreshSidebar();  // 同步左侧列表
 }
@@ -1340,9 +1340,9 @@ function newFileMenuShow(anchor) {
   const menu = document.createElement('div');
   menu.className = 'nf-menu';
   menu.innerHTML = `
-    <div class="nf-item" data-ext=".note"><b>📝 笔记</b><span>块式编辑，可贴图（.note）</span></div>
-    <div class="nf-item" data-ext=".txt"><b>📄 纯文本</b><span>.txt</span></div>
-    <div class="nf-item" data-ext=".md"><b>📝 Markdown</b><span>.md</span></div>
+    <div class="nf-item" data-ext=".note"><b><span style="vertical-align:-2.5px">${ICO16.note}</span> 笔记</b><span>块式编辑，可贴图（.note）</span></div>
+    <div class="nf-item" data-ext=".txt"><b><span style="vertical-align:-2.5px">${ICO16.file}</span> 纯文本</b><span>.txt</span></div>
+    <div class="nf-item" data-ext=".md"><b><span style="vertical-align:-2.5px">${ICO16.note}</span> Markdown</b><span>.md</span></div>
     <div class="nf-custom">
       <input class="nf-ext-inp" data-nf-ext placeholder="自定义后缀，如 .log / .csv" spellcheck="false" name="hg_nf_ext">
       <button class="btn ghost nf-ext-go" data-nf-go>新建</button>
@@ -1392,11 +1392,11 @@ async function showFilesModal() {
     modal.innerHTML = `
       <div class="box">
         <div class="head">
-          <strong>📝 笔记</strong>
+          <strong><span style="vertical-align:-2.5px">${ICO16.note}</span> 笔记</strong>
           <div class="head-actions">
-            <button class="btn ghost" id="filesSearchBtn" title="全库搜索（Ctrl+Alt+F）">🔍 搜索</button>
+            <button class="btn ghost" id="filesSearchBtn" title="全库搜索（Ctrl+Alt+F）"><span style="vertical-align:-2.5px">${ICO16.search}</span> 搜索</button>
             <button class="btn ghost" id="filesNew" title="新建笔记（不落盘，保存时才写文件）">＋ 新建笔记</button>
-            <button class="btn ghost icon-btn" id="filesOpenDir" title="在资源管理器中打开 files/ 目录">📁</button>
+            <button class="btn ghost icon-btn" id="filesOpenDir" title="在资源管理器中打开 files/ 目录">${ICO16.folderOpen}</button>
             <button class="btn ghost icon-btn" id="filesClose">✕</button>
           </div>
         </div>
@@ -1424,8 +1424,8 @@ async function showFilesModal() {
       d.dataset.name = f.name;   // v3.5.298：标签筛选按文件名过滤（notes-nav.js）
       const dt = new Date(f.mtime*1000);
       const kb = f.size >= 1024 ? (f.size/1024).toFixed(1) + ' KB' : f.size + ' B';
-      const icon = f.name.toLowerCase().endsWith('.note') ? '📝' : (f.name.toLowerCase().endsWith('.txt') ? '📄' : '📄');
-      d.innerHTML = `<span>${icon} ${esc(f.name)}<br><span class="sz">${dt.toLocaleString('zh-CN')} · ${kb}</span></span>
+      const icon = f.name.toLowerCase().endsWith('.note') ? ICO16.note : ICO16.file;
+      d.innerHTML = `<span><span style="vertical-align:-2.5px">${icon}</span> ${esc(f.name)}<br><span class="sz">${dt.toLocaleString('zh-CN')} · ${kb}</span></span>
         <span class="item-actions">
           <span class="act-btn open" data-open="${esc(f.name)}" title="打开编辑此文件">✎ 编辑</span>
         </span>`;
@@ -1896,13 +1896,13 @@ function _showOpenModeDialog(path, sizeBytes, withHex) {
             <div id="openModeDesc" style="color:var(--muted);font-size:12px;line-height:1.6;margin-bottom:16px;word-break:break-all;"></div>
             <div style="display:flex;flex-direction:column;gap:10px;">
               <button class="btn" id="openModeHex" style="padding:10px 14px;text-align:left;justify-content:flex-start;">
-                🔢 二进制打开<small style="color:var(--muted);font-weight:400;">　16 进制查看/编辑（任意文件）</small>
+                ${ICO16.hex} 二进制打开<small style="color:var(--muted);font-weight:400;">　16 进制查看/编辑（任意文件）</small>
               </button>
               <button class="btn" id="openModeView" style="padding:10px 14px;text-align:left;justify-content:flex-start;">
-                📖 阅读器打开<small style="color:var(--muted);font-weight:400;">　虚拟列表，大文件流畅（只读+搜索）</small>
+                ${ICO16.book} 阅读器打开<small style="color:var(--muted);font-weight:400;">　虚拟列表，大文件流畅（只读+搜索）</small>
               </button>
               <button class="btn" id="openModeEdit" style="padding:10px 14px;text-align:left;justify-content:flex-start;">
-                ✏️ 编辑器打开<small style="color:var(--muted);font-weight:400;">　Monaco，可编辑保存</small>
+                ${ICO16.pencil} 编辑器打开<small style="color:var(--muted);font-weight:400;">　Monaco，可编辑保存</small>
               </button>
             </div>
           </div>

@@ -794,7 +794,7 @@
       let endedN = 0;
       try { endedN = _subDirRows().ended.length; } catch(_) {}
       _dirBtn.hidden = false;
-      _dirBtn.innerHTML = `⏱ 已结束 ${endedN} ›`;
+      _dirBtn.innerHTML = `<span style="vertical-align:-2.5px">${ICO16.clock}</span> 已结束 ${endedN} ›`;
     }
     sec.hidden = !show.length && !peers.length && !(_dirBtn && (list.length || rplAll.length));
     if (sec.hidden) return;

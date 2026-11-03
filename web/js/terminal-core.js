@@ -81,13 +81,13 @@ function buildTerminal(portId, meta) {
   wrap.innerHTML = `
     ${meta.kind === 'claude' ? '' : `
     <div class="term-toolbar">
-      <button class="lv-btn term-tb-pause" title="暂停/恢复滚屏">⏸ 暂停</button>
+      <button class="lv-btn term-tb-pause" title="暂停/恢复滚屏"><span style="vertical-align:-2.5px">${ICO16.pause}</span> 暂停</button>
       <button class="lv-btn term-tb-clear" title="清屏（只清显示，缓冲历史不丢）">⊘ 清屏</button>
-      <button class="lv-btn term-tb-newlog" title="从此刻起记录到新日志文件">＋📋 新日志</button>
+      <button class="lv-btn term-tb-newlog" title="从此刻起记录到新日志文件">＋<span style="vertical-align:-2.5px">${ICO16.clipboard}</span> 新日志</button>
       <button class="lv-btn term-tb-ctrlc" title="发送 Ctrl-C 中断">^C</button>
       <button class="lv-btn term-tb-ctrld" title="发送 Ctrl-D (EOF)">^D</button>
       <button class="lv-btn term-tb-jump" title="跳到底部跟随实时 (Ctrl+End)">⤓ 跳底</button>
-      <button class="lv-btn term-tb-ts" title="时间戳注入：新输出行首加 [HH:MM:SS.mmm]，排障定位用">⏱ 时间戳</button>
+      <button class="lv-btn term-tb-ts" title="时间戳注入：新输出行首加 [HH:MM:SS.mmm]，排障定位用"><span style="vertical-align:-2.5px">${ICO16.clock}</span> 时间戳</button>
     </div>`}
     <div class="output-wrap">
       <div class="xterm-wrap" data-xterm="${portId}"></div>
@@ -122,7 +122,10 @@ function buildTerminal(portId, meta) {
   if (!_noTb) {
     tb.pause.onclick = () => {
       conn.paused = !conn.paused;
-      tb.pause.textContent = conn.paused ? '▶ 继续' : '⏸ 暂停';
+      // a261：两态都是纯静态串（图标+文案），textContent→innerHTML 保住 SVG 图标
+      tb.pause.innerHTML = conn.paused
+        ? '<span style="vertical-align:-2.5px">' + ICO16.play + '</span> 继续'
+        : '<span style="vertical-align:-2.5px">' + ICO16.pause + '</span> 暂停';
       tb.pause.classList.toggle('active', conn.paused);
       if (!conn.paused) { conn.autoScroll = true; try { conn.term.scrollToBottom(); } catch(e){} }
     };
@@ -422,7 +425,7 @@ function buildTerminal(portId, meta) {
     disc.className = 'disc-overlay';
     disc.innerHTML = `
       <div class="disc-box">
-        <div class="disc-icon">📴</div>
+        <div class="disc-icon"><svg width="32" height="32" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 2.5v3M10.5 2.5v3"/><path d="M4 5.5h8v2a4 4 0 0 1-8 0z"/><path d="M8 11.5v2"/><path d="M2.5 13.5l11-11"/></svg></div>
         <div class="disc-title">连接已断开</div>
         <div class="disc-detail" data-disc-detail>—</div>
         <div class="disc-actions">

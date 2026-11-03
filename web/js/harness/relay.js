@@ -75,7 +75,7 @@
     // 工具同列，v3.2.27 renderAudit 同款）；组外（compact 先于任何用户消息
     // 的罕见形态）维持旧根部居中分割线
     const d = document.createElement('div'); d.className = 'h-switch hg-renew';
-    d.innerHTML = '<span></span><i>♻️ ' + esc(text) + '</i><span></span>';
+    d.innerHTML = '<span></span><i><span style="vertical-align:-2.5px">' + ICO16.refresh + '</span> ' + esc(text) + '</i><span></span>';
     // v4.0.6（复审实锤）：不再信任 histBuilding——重建期 _HG.grp 可能指向
     // 即将被 replaceChildren 丢弃的旧 DOM，append 进去等于丢失。只认已连接。
     const g = (_HG.grp && _HG.grp.root && _HG.grp.root.isConnected) ? _HG.grp : null;
@@ -230,20 +230,20 @@
     if (src) {
       let disp = src;
       try { disp = decodeURIComponent(String(src).split('?')[0].split('/').pop() || src); } catch (_) {}
-      srcChip = `<div class="h-vision-src" title="${esc(src)}">📎 ${esc(String(disp).slice(0, 60))}` +
+      srcChip = `<div class="h-vision-src" title="${esc(src)}"><span style="vertical-align:-2.5px">${ICO16.clip}</span> ${esc(String(disp).slice(0, 60))}` +
         ` <span class="h-vision-chan">${esc(el.dataset.vchan || '主')}</span></div>`;
     }
     const res = el.dataset.vres;
     coll.innerHTML =
-      '<div class="h-vision-req"><div class="h-vision-lb">📤 发给 MCP 的提示词</div>' +
+      '<div class="h-vision-req"><div class="h-vision-lb"><span style="vertical-align:-2.5px">' + ICO16.upload + '</span> 发给 MCP 的提示词</div>' +
       `<pre class="h-vision-pre">${esc(el.dataset.vprompt || '（旧转写未记录提示词）')}</pre>` + srcChip + '</div>' +
-      '<div class="h-vision-res"><div class="h-vision-lb">📥 回传结论</div>' +
+      '<div class="h-vision-res"><div class="h-vision-lb"><span style="vertical-align:-2.5px">' + ICO16.download + '</span> 回传结论</div>' +
       '<div class="h-vision-md"></div></div>';
     const md = coll.querySelector('.h-vision-md');
     if (md) {
       if (res != null && res !== '') { try { md.innerHTML = renderMd(res); } catch (_) { md.textContent = res; } }
       else md.innerHTML = '<span class="h-vision-empty">' +
-        (el.dataset.verr === '1' ? '⚠ 识图失败' : '（未回传）') + '</span>';
+        (el.dataset.verr === '1' ? '<span style="vertical-align:-2.5px">' + ICO16.warn + '</span> 识图失败' : '（未回传）') + '</span>';
     }
   }
   function _hgVisionSweep(dead) {
@@ -307,7 +307,7 @@
     // v2.35.2（P1 多槽）：不再「新转交接管旧等待」——每条线自己的计时器自己
     // 走（此前新线会停掉旧线的表，旧线读秒冻死在半途；并发转交各对各的线）
     const d = document.createElement('div'); d.className = 'h-switch';
-    d.innerHTML = '<span></span><i>📤 已转交 ' + esc(to || '其他会话') +
+    d.innerHTML = '<span></span><i><span style="vertical-align:-2.5px">' + ICO16.upload + '</span> 已转交 ' + esc(to || '其他会话') +
       ' · 等待结论回传 · <b class="hg-peer-t">0s</b></i><span></span>';
     addRow(d);
     const t0 = t0ms || Date.now();        // v2.3.2：历史重建传行内 ts（真实起点）
@@ -338,7 +338,7 @@
     _hgPeerLineStop(el);
     const i = el.querySelector('i');
     const dur = _hgFmtDur((Date.now() - (+(el.dataset.t0 || 0) || Date.now())) / 1000);
-    if (i) i.innerHTML = '📤 已转交 · 📥 已回传 · 用时 ' + dur;
+    if (i) i.innerHTML = '<span style="vertical-align:-2.5px">' + ICO16.upload + '</span> 已转交 · <span style="vertical-align:-2.5px">' + ICO16.download + '</span> 已回传 · 用时 ' + dur;
     el.dataset.done = String(Date.now());
     // v2.41：定格即已回传——清 unknown/stale 残留标记。不清则迟到的真实
     // 回传打在 unknown 线上后标记滞留：面板 C 区过滤（不显 unknown/stale 线）
@@ -378,7 +378,7 @@
           const i = el.querySelector('i');
           if (i) {
             const nm = el.dataset.peer || '其他会话';
-            i.innerHTML = '📤 已转交 ' + esc(nm) + ' · 疑似残留，点击核实（等待超 30 分钟）';
+            i.innerHTML = '<span style="vertical-align:-2.5px">' + ICO16.upload + '</span> 已转交 ' + esc(nm) + ' · 疑似残留，点击核实（等待超 30 分钟）';
           }
         }
       }

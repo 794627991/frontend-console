@@ -84,7 +84,7 @@
     thinkBox.className = 'h-drawer think';
     thinkBox.innerHTML =
       `<button class="h-drawer-head"><span class="h-chev">▸</span>` +
-      `<span class="h-drawer-title">🧠 思考</span>` +
+      `<span class="h-drawer-title"><span style="vertical-align:-2.5px">${ICO16.brain}</span> 思考</span>` +
       `<span class="h-tslots" data-hg-dslots></span></button>` +
       `<div class="h-drawer-body"></div>`;
     // v3.2：ZCode 式回合闭合结构——turn-head 是折叠触发行（工作中 Ns/已工作 X ›），
@@ -385,7 +385,7 @@
     // 无思考段的组（空壳抽屉）不动，别把初始标题改写成「思考 0 次」。
     const _segN = thinkSegCount(g);
     if (g.think.title && _segN > 0)
-      g.think.title.innerHTML = '🧠 思考 ' + _segN + ' 次';
+      g.think.title.innerHTML = '<span style="vertical-align:-2.5px">' + ICO16.brain + '</span> 思考 ' + _segN + ' 次';
     if (g.think.stats) g.think.stats.innerHTML = '<span class="h-tbadge b-done">完成</span>';
     if (g.exec && g.exec.slots) g.exec.slots.innerHTML = '<span class="h-tbadge b-done">完成</span>';
     // v3.2：回合折叠头定稿——文案三态（工作中→已工作/已停止），工时优先
@@ -693,7 +693,7 @@
     _hgFlow.querySelectorAll(':scope > .h-archive-hint').forEach(x => x.remove());
     const hint = document.createElement('div');
     hint.className = 'h-archive-hint';
-    hint.innerHTML = '⬆ 前 ' + _HG.archivedTurns + ' 轮已归档——点击进入只读模式查看';
+    hint.innerHTML = '<span style="vertical-align:-2.5px">' + ICO16.upload + '</span> 前 ' + _HG.archivedTurns + ' 轮已归档——点击进入只读模式查看';
     hint.style.cursor = 'pointer';
     hint.onclick = () => document.dispatchEvent(new CustomEvent('hg-ro-enter'));
     _hgFlow.insertBefore(hint, _hgFlow.firstChild);
@@ -772,9 +772,9 @@
     // v3.1h（用户定调）：与 AI 消息同构——hover 下方右对齐浮现；
     // 复制 + 重发 + 编辑后重发（原文/附件填回输入框）
     acts.innerHTML =
-      '<button class="h-mico h-ucopy" title="复制这条消息">📋</button>' +
+      '<button class="h-mico h-ucopy" title="复制这条消息">' + ICO.copy + '</button>' +
       '<button class="h-mact h-resend" title="重发这条消息">↻</button>' +
-      '<button class="h-mact h-edit" title="编辑后重发（原文+附件填回输入框）">✎</button>';
+      '<button class="h-mact h-edit" title="编辑后重发（原文+附件填回输入框）">' + ICO.pencil + '</button>';
     d.appendChild(acts);
     if (live !== false) d.classList.add('hg-enter');   // 动画批C：live 新行淡入（hist 重建 live=false 不播）
     addRow(d);
@@ -863,14 +863,14 @@
     bar.className = 'hg-msg-acts';
     d.dataset.rtext = String(text);   // v3.1h:AI 消息源文本——复制/编辑后发送取用
     bar.innerHTML =
-      '<button class="hg-mico h-acopy" title="复制这条回复">📋</button>' +
+      '<button class="hg-mico h-acopy" title="复制这条回复">' + ICO.copy + '</button>' +
       // v3.4.95（用户需求）：全部收起——图标不落文字，点它把所有展开的回合
       // 折叠体（含当前活跃组）一口气收起；行为走 flow 委托（20-main）
       '<button class="hg-mico" data-hg-collapse title="收起全部工作区">' +
       '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
       'stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">' +
       '<path d="M17 11l-5-5-5 5"/><path d="M17 18l-5-5-5 5"/></svg></button>' +
-      '<button class="hg-mact" data-hg-rewind title="回滚到本条所在回合结束：之后的全部丢弃（自动全量备份）">⏪ 回滚到这里</button>';
+      '<button class="hg-mact" data-hg-rewind title="回滚到本条所在回合结束：之后的全部丢弃（自动全量备份）"><span style="vertical-align:-2.5px">' + ICO16.restore + '</span> 回滚到这里</button>';
     // v3.4.42（用户实锤「一起贴紧啊」）：署名行与动作条合并一行贴住气泡——
     // 署名左、钮右（原两行纵排：动作条虽贴气泡、署名又另起一行）。附带修掉
     // hover 时动作条独立占行把消息撑高的跳动

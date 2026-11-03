@@ -61,7 +61,7 @@ function RO_enter(sid, deps) {
   root.innerHTML =
     '<div class="hg-ro-bar">' +
       '<button class="hg-ro-btn" data-ro-list title="全部会话列表（含主窗口外的过往会话）">☰ 会话</button>' +
-      '<b class="hg-ro-title">📖 只读模式 · ' + esc(meta.title || sid.slice(-6)) + '</b>' +
+      '<b class="hg-ro-title"><span style="vertical-align:-2.5px">' + ICO16.book + '</span> 只读模式 · ' + esc(meta.title || sid.slice(-6)) + '</b>' +
       '<span class="hg-ro-hint">只看历史 · 后台照常运行 · 点子代理行开分屏回放</span>' +
       '<button class="hg-ro-btn hg-ro-exit" data-ro-exit title="退出只读，回到正常会话（自动补齐后台期间的消息）">✕ 退出只读</button>' +
     '</div>' +
@@ -186,7 +186,16 @@ function RO_drawerRender() {
         // cur 类和标题都是进 RO 时写死的，切会话后视觉停在进入时会话）
         const t2 = el.querySelector('.hg-ro-dtitle');
         const tb = _ro.root.querySelector('.hg-ro-title');
-        if (tb && t2) tb.textContent = '📖 只读模式 · ' + t2.textContent;
+        // a261：图标位换 SVG——动态标题走 DOM 构建（textContent 不吃 HTML，
+        // 防注入口径与旧代码一致）
+        if (tb && t2) {
+          tb.textContent = '';
+          const _ico = document.createElement('span');
+          _ico.style.verticalAlign = '-2.5px';
+          _ico.innerHTML = ICO16.book;
+          tb.appendChild(_ico);
+          tb.appendChild(document.createTextNode(' 只读模式 · ' + t2.textContent));
+        }
         _ro.drawerList.querySelectorAll('[data-ro-dsid]').forEach(el2 =>
           el2.classList.toggle('cur', el2.dataset.roDsid === dsid));
         RO_view(dsid);

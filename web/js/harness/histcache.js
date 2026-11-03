@@ -343,7 +343,7 @@ if (l && l.live) l.live = 0;   // 398-P5b：重放归一（live 动画/流式语
         if (archived > 0) {
           const hint = document.createElement('div');
           hint.className = 'h-archive-hint';
-          hint.innerHTML = '⬆ 前 ' + archived + ' 轮已归档——点击进入只读模式查看';
+          hint.innerHTML = '<span style="vertical-align:-2.5px">' + ICO16.upload + '</span> 前 ' + archived + ' 轮已归档——点击进入只读模式查看';
           hint.style.cursor = 'pointer';
           hint.onclick = () => document.dispatchEvent(new CustomEvent('hg-ro-enter'));
           _realFlow.insertBefore(hint, _realFlow.firstChild);

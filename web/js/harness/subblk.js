@@ -22,7 +22,7 @@
       (v && typeof v.dln === 'number') ? v.dln : undefined)}</div>`;
     if (cfg.kind === 'todo') return todoHtml(v && v.todos || v);
     if (cfg.kind === 'question') return (v || []).map(_hgQ =>
-      `<div class="t-item"><span>❓</span><span><b>${esc(_hgQ.header || '')}</b> ${esc(_hgQ.question || '')}${(_hgQ.options || []).map(o => `<span class="q-opt">${esc(typeof o === 'string' ? o : o.label)}</span>`).join('')}</span></div>`).join('');
+      `<div class="t-item"><span>${ICO16.help}</span><span><b>${esc(_hgQ.header || '')}</b> ${esc(_hgQ.question || '')}${(_hgQ.options || []).map(o => `<span class="q-opt">${esc(typeof o === 'string' ? o : o.label)}</span>`).join('')}</span></div>`).join('');
     // a63（用户实锤「bash 复制的内容 __init__ 变 init」）：命令是代码不是
     // markdown——md 渲染把 __x__ 解析成粗体（textContent 丢下划线）、# 变
     // 标题、* 变斜体，展示与复制（取 DOM 文本）双坏。bash 族走纯文本 pre

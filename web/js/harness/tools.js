@@ -212,9 +212,10 @@
     return h || '<div class="d-info">(无文本差异)</div>';
   }
   function todoHtml(todos) {
-    const ICO = { completed: '✅', in_progress: '🔄', pending: '⬜' };
+    // a261：emoji 状态符换库 SVG（局部名让位全局 ICO——原局部 const ICO 遮蔽同名全局图标库）
+    const _TODO_ST = { completed: ICO.check, in_progress: ICO.refresh, pending: ICO.square };
     return (todos || []).map(t =>
-      `<div class="t-item"><span>${ICO[t.status] || '⬜'}</span><span>${esc(t.activeForm || t.content || t.subject || '')}</span></div>`).join('');
+      `<div class="t-item"><span>${_TODO_ST[t.status] || ICO.square}</span><span>${esc(t.activeForm || t.content || t.subject || '')}</span></div>`).join('');
   }
   // v3.3.7（P5 自愈）：回合终结时空 input 的 bash 行从转写回填真实命令——
   // live 丢 input 是 CLI/网关流异常（转写恒完整），行存令失不再靠「重开会话
@@ -408,7 +409,7 @@
         grpEl.className = 'h-tl-grp';   // v3.2.19（用户定调「执行过程中默认不展开」）：生而收起——运行态活字照上组头，点击展开
         grpEl.innerHTML =
           `<button class="h-tl-grp-head"><span class="h-chev">▸</span>` +
-          `<span class="h-tl-grp-name">🔍 查阅</span>` +
+          `<span class="h-tl-grp-name"><span style="vertical-align:-2.5px">${ICO16.search}</span> 查阅</span>` +
           `<span class="h-tl-grp-sum"></span></button>` +
           `<div class="h-tl-grp-body"></div>`;
         g.tl.appendChild(grpEl);
@@ -665,9 +666,9 @@
       }
       h += `</div>`;
     }
-    h += `<div class="h-askcard-ans" data-askans>${
-      o.err ? '⚠ 提问失败'
-        : (o.phase === 'run' ? '⏳ 等待回答…'
+    h += `<div class="h-askcard-ans" data-askans">${
+      o.err ? '<span style="vertical-align:-2.5px">' + ICO16.warn + '</span> 提问失败'
+        : (o.phase === 'run' ? '<span style="vertical-align:-2.5px">' + ICO16.clock + '</span> 等待回答…'
           : (() => { const _at = String(o.result || '').trim();
             return _at.indexOf('📝 回答：') === 0 ? esc(_at)
               : '📝 回答：' + esc(_at); })())}</div>`;

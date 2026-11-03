@@ -88,7 +88,7 @@
       const url = a.isImg ? _attUrl(a) : '';
       return `<span class="hg-att-chip">` + (a.isImg
         ? `<img class="hg-att-thumb" src="${esc(url)}" alt="" title="${esc(a.name)}" data-img="${esc(url)}" onerror="this.style.display='none'">`
-        : `<span class="hg-att-ico">📄</span>`) +
+        : `<span class="hg-att-ico">${ICO16.file}</span>`) +
         `<span class="hg-att-name" title="${esc(a.name)}">${esc(a.name)}</span>` +
         `<button class="hg-att-x" data-i="${i}" title="移除">✕</button></span>`;
     }).join('');

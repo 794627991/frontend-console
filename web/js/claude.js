@@ -94,9 +94,9 @@ async function openClaudeSetup() {
           <div id="csLog" class="cs-log" style="display:none;"></div>
         </div>
         <div class="actions" style="padding:0 20px 16px;display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;">
-          <button class="btn ghost" id="csPack" title="把 Git 安装器 + Node MSI + claude-code 包 + 工具依赖打成一个 zip，拷到无网机器离线安装">📦 制作离线包</button>
-          <button class="btn primary" id="csOfflineZip" title="选择 claude-offline.zip，工具自行解压静默安装（无网机器用这个）">📂 离线包安装</button>
-          <button class="btn primary" id="csOnline" title="npm install -g @anthropic-ai/claude-code（需联网 + Node）">🌐 联网安装</button>
+          <button class="btn ghost" id="csPack" title="把 Git 安装器 + Node MSI + claude-code 包 + 工具依赖打成一个 zip，拷到无网机器离线安装"><span style="vertical-align:-2.5px">${ICO16.package}</span> 制作离线包</button>
+          <button class="btn primary" id="csOfflineZip" title="选择 claude-offline.zip，工具自行解压静默安装（无网机器用这个）"><span style="vertical-align:-2.5px">${ICO16.folderOpen}</span> 离线包安装</button>
+          <button class="btn primary" id="csOnline" title="npm install -g @anthropic-ai/claude-code（需联网 + Node）"><span style="vertical-align:-2.5px">${ICO16.globe}</span> 联网安装</button>
         </div>
       </div>`;
     document.body.appendChild(m);
@@ -133,9 +133,9 @@ async function _csDetectRender() {
       const _cur = st.version || '';
       const _pkgV = st.pkg_version || '';
       const _up = _pkgV && _cur && _pkgV !== _cur
-        ? ` —— 包源 v${esc(_pkgV)}${_cmpVer(_pkgV, _cur) > 0 ? ' 较新，可选「📂 离线包安装」升级' : ' 不高于当前版'}` : '';
+        ? ` —— 包源 v${esc(_pkgV)}${_cmpVer(_pkgV, _cur) > 0 ? ' 较新，可选「离线包安装」升级' : ' 不高于当前版'}` : '';
       res.push(row('Claude CLI 已安装' + (_cur ? `（当前 v${esc(_cur)}）` : ''), true,
-        '升级 = 下方「📂 离线包安装」选新版 claude-offline.zip 换装' + _up));
+        '升级 = 下方「离线包安装」选新版 claude-offline.zip 换装' + _up));
     }
     res.push(row('Node.js / npm', st.node && st.npm, st.node ? '' : '离线包安装会静默补装'));
     res.push(row('Git', st.git, st.git ? '' : '离线包安装会静默补装'));
@@ -321,7 +321,7 @@ function _claudeSessionCard(s, opts = {}) {
       <span class="cdir${hasNote ? ' noted' : ''}">${esc(s.title || s.summary || dirName)}</span>
       ${opts.ext ? '<span class="cstate">外部</span>' : ''}
       <span class="ctime">${esc(opts.time || '')}</span>
-      <button class="note-btn" data-note="${esc(s.session_id)}" title="改备注（显示优先）">✎</button>
+      <button class="note-btn" data-note="${esc(s.session_id)}" title="改备注（显示优先）">${ICO.pencil}</button>
     </div>
     <div class="srow2"><span class="sum">${esc(s.title ? (s.summary || dirName) : dirName)}</span><span class="sid">${esc((s.session_id || '').slice(0, 8))}</span></div>
   </div>`;

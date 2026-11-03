@@ -149,7 +149,7 @@ function closeConnection(portId) {
     switchTab(remaining[0]);
   } else {
     activePortId = null;
-    termArea.innerHTML = '<div class="empty-state"><div class="big-icon">📡</div><div class="title">暂无连接</div><div class="desc">点击顶部「新建连接」选择串口或 SSH，支持同时监控多个连接。每个连接独立标签页，互不干扰。</div></div>';
+    termArea.innerHTML = '<div class="empty-state"><div class="big-icon"><svg width="30" height="30" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 2.5v3M10.5 2.5v3"/><path d="M4 5.5h8v2a4 4 0 0 1-8 0z"/><path d="M8 11.5v2"/></svg></div><div class="title">暂无连接</div><div class="desc">点击顶部「新建连接」选择串口或 SSH，支持同时监控多个连接。每个连接独立标签页，互不干扰。</div></div>';
   }
   refreshSidebar();
   refreshGlobalStatus();
@@ -191,11 +191,13 @@ function refreshSidebar() {
       const isEdit = conn.meta.kind === 'editor' || conn.meta.kind === 'hex' || conn.meta.kind === 'diff' || conn.meta.kind === 'bindiff';
       const isClaude = conn.meta.kind === 'claude';
       const isHarness = conn.meta.kind === 'harness';
-      // 编辑类 tab desc 前缀用后缀专属 SVG 图标（file-icons.js），hex/对比/日志保留 emoji
+      // 编辑类 tab desc 前缀用后缀专属 SVG 图标（file-icons.js）；hex/对比/日志
+      // 用 icons.js 线性图标（a261：emoji 退役；内联位加 vertical-align 对齐）
       const edIcon = (isEdit && conn.meta.kind === 'editor') ? fileIconHtml(conn.meta.label || '', 12) + ' 笔记'
-                    : conn.meta.kind === 'bindiff' ? '🔀 bin 对比'
-                    : isEdit ? (conn.meta.kind === 'hex' ? '🔧 hex' : '🔀 对比')
-                    : isLog ? '📜 日志' : '';
+                    : conn.meta.kind === 'bindiff' ? '<span style="vertical-align:-2.5px">' + ICO16.compare + '</span> bin 对比'
+                    : isEdit ? (conn.meta.kind === 'hex' ? '<span style="vertical-align:-2.5px">' + ICO16.wrench + '</span> hex'
+                              : '<span style="vertical-align:-2.5px">' + ICO16.compare + '</span> 对比')
+                    : isLog ? '<span style="vertical-align:-2.5px">' + ICO16.log + '</span> 日志' : '';
       // a209批4：编辑器/hex/对比外部文件副行显示【相对根路径】（用户点名
       //「打开的文件显示具体路径」）——VSCode OPEN EDITORS 同款信息密度
       const _pathTail = conn.extPath
@@ -211,7 +213,7 @@ function refreshSidebar() {
         <span class="led"></span>
         <div class="info">
           <div class="name">${(isDirty ? '*' : '') + esc(conn.meta.label || pid)}</div>
-          <div class="desc" title="${conn.extPath ? esc(conn.extPath) : ''}">${((isEdit && conn.meta.kind === 'editor') || isClaude || isHarness) ? descText : esc(descText)} · <span class="baud" data-rows>${isEdit ? rowCount : rowCount + ' 行'}</span></div>
+          <div class="desc" title="${conn.extPath ? esc(conn.extPath) : ''}">${(isEdit || isLog || isClaude || isHarness) ? descText : esc(descText)} · <span class="baud" data-rows>${isEdit ? rowCount : rowCount + ' 行'}</span></div>
         </div>
         <div class="actions"><button data-close="${pid}" title="${isLog ? '关闭' : '断开'}">✕</button></div>
       `;
@@ -450,7 +452,7 @@ $('btnRefreshPorts').onclick = async () => { await loadPorts(); showBanner('串�
 // ============================================================
 // 最近打开（SSH/串口/文件 快捷重开，后端 config.json 持久化 + 自动去重）
 // ============================================================
-const RECENT_ICON = { claude: '<span class="claude-ico"></span>', ssh: '🔗', serial: '🔌', telnet: '🖥' };  // 类型区分图标（claude 用官方星形标志；file 按后缀动态生成 fileIconHtml）
+const RECENT_ICON = { claude: '<span class="claude-ico"></span>', ssh: '<span style="vertical-align:-2.5px">' + ICO16.link + '</span>', serial: '<span style="vertical-align:-2.5px">' + ICO16.plug + '</span>', telnet: '<span style="vertical-align:-2.5px">' + ICO16.monitor + '</span>' };  // 类型区分图标（claude 用官方星形标志；file 按后缀动态生成 fileIconHtml）
 const RECENT_TYPE_NAME = { claude: 'Claude 会话', ssh: 'SSH', serial: '串口', telnet: 'Telnet', file: '文件' };
 let _recentList = [];
 

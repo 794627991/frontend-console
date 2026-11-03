@@ -43,8 +43,11 @@ function _dragOverlayText() {
   if (kind === 'claude') return '<span class="claude-ico"></span> 松开把路径发给 Claude';
   // v2.2.1：对话 tab 拖入 → 加为对话附件（与 openDroppedFile 分发同步）
   if (kind === 'harness') return '<span class="claude-ico"></span> 松开添加为 Claude 对话附件';
-  if (kind === 'editor' && c.isNote && c.editor) return '📝 松开插入到笔记';
-  return '📄 松开以打开文件';
+  // a261：水印图标 SVG 化（引 icons.js note/file 字形，20px 配 22px 文案）；
+  // 图标+文案包一层 span 保住内部空格（遮罩是 flex，裸 svg 会成独立 flex 项贴死文字）
+  if (kind === 'editor' && c.isNote && c.editor)
+    return '<span><svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px"><path d="M4 2.5h4.5L12 6v7.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1z"/><path d="M8.5 2.5V6H12"/><path d="M5.5 8.5h5M5.5 11h3.5"/></svg> 松开插入到笔记</span>';
+  return '<span><svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px"><path d="M4 2.5h4.5L12 6v7.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1z"/><path d="M8.5 2.5V6H12"/></svg> 松开以打开文件</span>';
 }
 function showDragOverlay(show) {
   if (show && !_dragOverlay) {
@@ -139,7 +142,7 @@ function buildLogViewer(path) {
   wrap.innerHTML = `
     <div class="log-viewer">
       <div class="log-viewer-toolbar">
-        <button class="lv-btn" data-lv-action="search">🔍 搜索</button>
+        <button class="lv-btn" data-lv-action="search"><span style="vertical-align:-2.5px">${ICO16.search}</span> 搜索</button>
         <button class="lv-btn" data-lv-action="top" title="跳到开头">⤒ 顶部</button>
         <button class="lv-btn" data-lv-action="bottom" title="跳到末尾">⤓ 底部</button>
         <span class="lv-info" data-lv-info></span>
@@ -729,7 +732,7 @@ function closeLogViewer(portId) {
   if (remaining.length) switchTab(remaining[0]);
   else {
     activePortId = null;
-    termArea.innerHTML = '<div class="empty-state"><div class="big-icon">📡</div><div class="title">暂无连接</div><div class="desc">点击顶部「新建连接」选择串口或 SSH，支持同时监控多个连接。每个连接独立标签页，互不干扰。</div></div>';
+    termArea.innerHTML = '<div class="empty-state"><div class="big-icon"><svg width="30" height="30" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 2.5v3M10.5 2.5v3"/><path d="M4 5.5h8v2a4 4 0 0 1-8 0z"/><path d="M8 11.5v2"/></svg></div><div class="title">暂无连接</div><div class="desc">点击顶部「新建连接」选择串口或 SSH，支持同时监控多个连接。每个连接独立标签页，互不干扰。</div></div>';
   }
   refreshSidebar();
   refreshGlobalStatus();
