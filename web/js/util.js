@@ -275,7 +275,12 @@ let activePortId = null;
   }
   const close = () => { if (list) { list.remove(); list = null; } };
   btn.onclick = e => { e.stopPropagation(); if (list) close(); else buildList(); };
-  document.addEventListener('click', e => { if (list && !list.contains(e.target) && e.target !== btn) close(); });
+  // 第9轮盲测缺陷2（中）：冒泡阶段监听被 tab ✕ handler 的 stopPropagation 拦截
+  // ——列表开着点 ✕ 时 tab 被穿透关闭且列表不收。改捕获阶段（先于目标执行）
+  // + stopPropagation：首击只关列表，不激活/不关闭所点目标（标准 outside-click）
+  document.addEventListener('click', e => {
+    if (list && !list.contains(e.target) && e.target !== btn) { close(); e.stopPropagation(); }
+  }, true);
 
   // ===== 抽屉模式渲染 =====
   let drawerBar = null;
@@ -332,7 +337,9 @@ let activePortId = null;
       btn.dataset.group = g;
       // 第7轮盲测P2：title 只挂 active span 时，窄视口让位态 span 宽 0——悬停
       // 胶囊任何位置都无 tooltip。挂胶囊整体：有活跃名显名，无则显组名
-      btn.title = activeLbl || _groupLabel(g);
+      // 第9轮盲测缺陷5（低）：title 只有活跃名——窄形态只剩 title 时丢类型/数量
+      // 信息。改为完整语义：类型名 · N 个 · 活跃：xxx
+      btn.title = _groupLabel(g) + ' · ' + pids.length + ' 个' + (activeLbl ? ' · 活跃：' + activeLbl : '');
       btn.innerHTML =
         `<span class="tab-drawer-icon">${_groupIcon(g)}</span>` +
         `<span class="tab-drawer-label">${esc(_groupLabel(g))}</span>` +
@@ -430,8 +437,9 @@ let activePortId = null;
     groupList.className = 'tab-overflow-list show';
     document.body.appendChild(groupList);
     _groupRenderItems(group, anchorEl);
-    _groupDocClose = e => { if (groupList && !groupList.contains(e.target)) _groupCloseList(); };
-    setTimeout(() => document.addEventListener('click', _groupDocClose), 0);
+    // 第9轮缺陷2 同锤：捕获阶段 + stopPropagation，首击只关列表不穿透
+    _groupDocClose = e => { if (groupList && !groupList.contains(e.target)) { _groupCloseList(); e.stopPropagation(); } };
+    setTimeout(() => document.addEventListener('click', _groupDocClose, true), 0);
   }
 
   // switchTab 时更新抽屉显示（由 terminal-core.js 调用）
@@ -446,7 +454,15 @@ let activePortId = null;
       _groupCloseList();
     }
   })).observe(tabsEl, { childList: true });
-  window.addEventListener('resize', checkOverflow);
+  // 第9轮盲测缺陷1（高）：1280→400 直达时 resize 瞬间 checkOverflow 读到侧栏
+  // transition（width .3s）中间态算错 has/tight → ⋮ 误隐藏；2s interval 虽会
+  // 兜底但前台有 2s 空窗（盲测环境 interval 被宿主节流则"持续丢失"）。
+  // resize 后 400ms（transition 完成）补一脚同步真值
+  window.addEventListener('resize', () => { checkOverflow(); setTimeout(checkOverflow, 400); });
+  // 第9轮盲测缺陷4（低）：Esc 能关右键菜单却关不掉 ⋮/抽屉列表——行为统一
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { if (list) close(); if (groupList) _groupCloseList(); }
+  });
   setInterval(checkOverflow, 2000);
   checkOverflow();
 })();
