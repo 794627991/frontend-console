@@ -255,6 +255,13 @@
     // a213 审计 P2：工具栏按钮在 treePane 内——焦点在 button/input 时按键
     // 交还原生行为（按钮 Enter 激活），不劫持
     if (e.target.closest('button, input')) return;
+    // a256：新建快捷键（树面板聚焦时作用域内生效，不与全局冲突）
+    if (e.ctrlKey && !e.altKey && (e.key === 'n' || e.key === 'N')) {
+      e.preventDefault();
+      if (e.shiftKey) doNewFolder();
+      else doNewFile();
+      return;
+    }
     if (navKey(e)) return;
     const path = window._TV && _TV.active;
     if (!path) return;
@@ -271,6 +278,120 @@
       else if (typeof openFileSmart === 'function') openFileSmart(path, 'auto');
     }
   });
+  // ---- a256：VSCode Explorer 工具条——新建文件/文件夹 + 一键展开⇄收起 ----
+  // 目标目录解析：active 是目录→自身；是文件→父目录；无选中→第一个根。
+  // 空树不给建（提示先打开文件夹——与空态引导一致）
+  function targetDir() {
+    const T = window._TV;
+    if (!T || !T.roots.length) {
+      showBanner('请先「打开文件夹」添加一个根目录', 3200, true);
+      const b = $('treeAddRoot'); if (b) b.focus();
+      return null;
+    }
+    const p = T.active && T.idx && T.idx.has(T.active) ? T.active : null;
+    const row = p ? T.rows[T.idx.get(p)] : null;
+    if (row && row.dir) return row.path;
+    if (p) return dirName(p) || T.roots[0].path;   // 文件→父目录（父必开过）
+    return T.roots[0].path;
+  }
+  // 展开目标目录（若可见且未展开），确保新条目落点可见
+  function ensureOpen(dir) {
+    const T = window._TV;
+    if (!T || T.open.has(dir)) return;
+    const row = T.idx && T.idx.get(dir) !== undefined ? T.rows[T.idx.get(dir)] : null;
+    if (row && row.dir && typeof _tvExpand === 'function') _tvExpand(dir);
+  }
+  const joinPath = (d, n) => d.replace(/[\\/]+$/, '') + '/' + n;
+  function doNewFile() {
+    const d = targetDir();
+    if (!d) return;
+    ensureOpen(d);
+    inlineInput(null, '', async v => {
+      const j = await fileops({ op: 'touch', dir: d, name: v }, '已新建 ' + v);
+      if (j && typeof openFileSmart === 'function')
+        openFileSmart(joinPath(d, v), 'auto');   // VSCode 同款：建完即开
+    });
+  }
+  function doNewFolder() {
+    const d = targetDir();
+    if (!d) return;
+    ensureOpen(d);
+    inlineInput(null, '', async v => {
+      const j = await fileops({ op: 'mkdir', dir: joinPath(d, v) }, '已新建 ' + v);
+      if (j) ensureOpen(joinPath(d, v));   // 建完展开新文件夹（空目录提示立现）
+    });
+  }
+  // 一键展开⇄收起（智能切换）：
+  // 有展开项→全部收起（先快照）；全收→有快照恢复快照（未缓存的目录补拉取），
+  // 无快照→展开各根第一层。绝不无界递归展开（大目录树 Y:\nfs 场景安全）
+  function doToggleExpand() {
+    const T = window._TV;
+    if (!T || !T.roots.length) { showBanner('请先「打开文件夹」添加一个根目录', 3200, true); return; }
+    if (T.open.size) {
+      T._lastOpen = new Set(T.open);
+      T.open.clear();
+      T.cache.clear();
+      T.rendered = [-1, -1];
+      if (typeof _tvRebuild === 'function') _tvRebuild();
+      const host = $('treeRoots');
+      if (host) host.scrollTop = 0;
+      return;
+    }
+    if (T._lastOpen && T._lastOpen.size) {
+      T.open = new Set(T._lastOpen);
+      T.rendered = [-1, -1];
+      if (typeof _tvRebuild === 'function') _tvRebuild();
+      // 恢复时被清掉的缓存逐目录补拉（_tvExpand 幂等：已在 open 只触发拉取）
+      for (const p of T.open) {
+        if (!T.cache.has(p) && typeof _tvExpand === 'function') _tvExpand(p);
+      }
+      return;
+    }
+    for (const r of T.roots) {
+      if (typeof _tvExpand === 'function') _tvExpand(r.path);
+    }
+  }
+  // 图标/提示态同步：包一层 _tvRebuild（所有结构变更必经）——有展开项显
+  // 「全部收起」态（accent 高亮），全收显「展开」态
+  const _ICO_COLLECT = '<path d="M3 5.5h6M3 10.5h6"/><path d="M10.3 9.2l2.4-2.4 2.4 2.4"/>';
+  const _ICO_EXPAND = '<path d="M3 5.5h6M3 10.5h6"/><path d="M10.3 5.6l2.4 2.4 2.4-2.4"/>';
+  const _ICO_EXPAND_ROOTS = '<path d="M3 4h7M3 7.5h7M3 11h7"/><path d="M11.2 8.6l2-2 2 2M13.2 6.6v4.8"/>';
+  function syncToggleIcon() {
+    const b = $('treeCollapse');
+    if (!b) return;
+    const T = window._TV || {};
+    const svg = b.querySelector('svg');
+    if (!svg) return;
+    if (T.open && T.open.size) {
+      svg.innerHTML = _ICO_COLLECT;
+      b.classList.add('on');
+      b.title = '全部收起（当前 ' + T.open.size + ' 项展开）\n再次点击：恢复收起前状态';
+    } else if (T._lastOpen && T._lastOpen.size) {
+      svg.innerHTML = _ICO_EXPAND;
+      b.classList.remove('on');
+      b.title = '展开（恢复上次展开的 ' + T._lastOpen.size + ' 项）';
+    } else {
+      svg.innerHTML = _ICO_EXPAND_ROOTS;
+      b.classList.remove('on');
+      b.title = '展开各根目录第一层';
+    }
+  }
+  try {
+    const _rb = window._tvRebuild;
+    if (_rb) {
+      window._tvRebuild = function () {
+        const r = _rb.apply(this, arguments);
+        syncToggleIcon();
+        return r;
+      };
+    }
+  } catch (_) {}
+  const bNF = $('treeNewFile'), bNFd = $('treeNewFolder'), bCol = $('treeCollapse');
+  if (bNF) bNF.onclick = doNewFile;
+  if (bNFd) bNFd.onclick = doNewFolder;
+  if (bCol) bCol.onclick = doToggleExpand;
+  window._treeToggleExpand = doToggleExpand;   // 验证/测试口
+
   const tr = $('treeRoots');
   if (tr) { tr.tabIndex = 0; tr.style.outline = 'none'; }
 })();
