@@ -233,38 +233,16 @@ function buildClaudeHarnessTab(opts = {}) {
     const topEl = _hgQ('.hg-top');
     if (topEl) topEl.insertBefore(dgBtn, topEl.querySelector('.hg-vis-ind') || topEl.lastElementChild);
   } catch (_) {}
-  // a276 批2a（ZCode #9 滚动零几何读）：缓存 scrollHeight/clientHeight，
-  // 滚动路径只读 scrollTop（零布局成本）。缓存三路刷新：RO 容器尺寸变化 +
-  // 渲染后钩子 + 切回 tab。旧法每帧读 scrollHeight=强制同步布局（a271 追踪
-  // 419 次 Layout 中 262 次滚动触发）——a271 的 rAF 合帧只减了频率，这里
-  // 根治为零
-  let _flowGeom = { h: 0, vh: 0 };   // 缓存：scrollHeight, clientHeight
-  const _flowGeomRefresh = () => {
-    _flowGeom.h = _hgFlow.scrollHeight;
-    _flowGeom.vh = _hgFlow.clientHeight;
-    // a276R（用户实锤批2b 导致导轨失效）：RO 在每次内容变化都触发（流式
-    // token/工具展开/图片加载），这里如果 null 化 railCacheTops，下一次
-    // _hgRailActive 重建时 content-visibility:auto 的估高值又进来=缓存被
-    // 污染（a273R 的根因复发）。导轨缓存失效只留 railSync/onResumePoll
-    // 两个可信时机（tab 可见期间+布局稳定后），RO 只刷几何缓存
-  };
-  // RO 盯容器尺寸（内容增减/窗口 resize 都会变）
-  try {
-    new ResizeObserver(() => _flowGeomRefresh()).observe(_hgFlow);
-  } catch (_) {}
-  _flowGeomRefresh();   // 初始
-
   // a271（性能追踪实锤：滚动 handler 同步读 scrollHeight/scrollTop → 419 次
-  // Layout 中 262 次被滚动事件强制同步触发 = 翻页一卡一卡真身）。rAF 合帧 +
-  // a276 缓存几何（scrollTop 以外零 DOM 读）
+  // Layout 中 262 次被滚动事件强制同步触发 = 翻页一卡一卡真身）。rAF 合帧：
+  // 读几何挪进 requestAnimationFrame（与渲染同帧合并，多次 scroll 一帧只算一次）
   let _scrollRaf = 0;
   _hgFlow.addEventListener('scroll', () => {
     if (_scrollRaf) return;
     _scrollRaf = requestAnimationFrame(() => {
       _scrollRaf = 0;
       if (_HG.noScroll) return;   // 历史重建的程序性 scrollTop 写入不污染粘底态
-      // a276：只读 scrollTop（零布局），scrollHeight/clientHeight 走缓存
-      const gap = _flowGeom.h - _hgFlow.scrollTop - _flowGeom.vh;
+      const gap = _hgFlow.scrollHeight - _hgFlow.scrollTop - _hgFlow.clientHeight;
       if (gap < 120) _HG.stickBtm = true;
       else if (gap > 150) _HG.stickBtm = false;
     });
@@ -275,14 +253,12 @@ function buildClaudeHarnessTab(opts = {}) {
     // 就被拉到最下面」）。force=true（自己发消息、切会话回底）不受限。
     // v3.4.67：粘底跟读优先——stickBtm（渲染前在底）时无条件拽底，大块渲染
     // 把底推远也不再误判；仅用户真翻上去（scroll 判 >150 置假）才回旧判据。
-    // a276：scrollHeight 用缓存（写 scrollTop 本身不触发布局，但读 scrollHeight 会）
-    _flowGeomRefresh();   // 写之前刷一次——拽底语义优先精确（这是低频路径，非滚动热路径）
     if (!force && !_HG.stickBtm &&
-        _flowGeom.h - _hgFlow.scrollTop - _flowGeom.vh > 150) return;
-    _hgFlow.scrollTop = _flowGeom.h;
+        _hgFlow.scrollHeight - _hgFlow.scrollTop - _hgFlow.clientHeight > 150) return;
+    _hgFlow.scrollTop = _hgFlow.scrollHeight;
     // 布局二次兜底：活动指示条弹出/气泡内图片加载等会在同帧稍后改变 flow 高度，
     // 下一帧再滚一次，保证"发送后我的消息在底部"（v2.5 用户反馈修复）
-    requestAnimationFrame(() => { _flowGeomRefresh(); _hgFlow.scrollTop = _flowGeom.h; });
+    requestAnimationFrame(() => { _hgFlow.scrollTop = _hgFlow.scrollHeight; });
   };
 
   // ==================== 交互式提问卡片（v2.17）====================
@@ -1119,20 +1095,23 @@ function buildClaudeHarnessTab(opts = {}) {
   }
   // v3.5.50：同上（async 变更类 handler）
   _hgFlow.addEventListener('click', _hgFlowClick2);
-  // a271：rAF 合帧 + a276 缓存几何（同 236 行处，scrollTop 以外零 DOM 读）
+  // a271：rAF 合帧（同 236 行处追踪实锤——scroll 事件里同步读 scrollHeight
+  // = 强制同步布局；本 handler 原 passive:true 只解掉了 preventDefault 警告，
+  // 几何读仍逐事件同步。合帧后 60Hz 滚动每帧至多 1 次读）
   let _scrollRaf2 = 0;
   _hgFlow.addEventListener('scroll', () => {
     if (_scrollRaf2) return;
     _scrollRaf2 = requestAnimationFrame(() => {
       _scrollRaf2 = 0;
-      // v3.2.8：一键跳底钮显隐——a276 用缓存几何算距底
+      // v3.2.8：一键跳底钮显隐——离底 >350px 浮现（任何渲染态都要刷新）
       if (_hgJumpBtm) {
-        const _dj = _flowGeom.h - _hgFlow.scrollTop - _flowGeom.vh;
+        const _dj = _hgFlow.scrollHeight - _hgFlow.scrollTop - _hgFlow.clientHeight;
         _hgJumpBtm.classList.toggle('show', _dj > 350);
       }
-      _hgRailActiveRaf();   // v3.2.10：轨当前项跟随视口（内部用缓存 tops）
+      _hgRailActiveRaf();   // v3.2.10：轨当前项跟随视口
       // v2.35.2（P0 切会话信息丢失根因）：histLive 门（语义同前，详见 git 史）
       if (!_HG.histAll || !_HG.histLive || _HG.busy || _histBusy) return;
+      const shown = _HG.histAll.length - _HG.histStart;
       // v3.2.12：扩段/收缩分支随分页退役——恒全量渲染（详见 git 史）
     });
   }, { passive: true });
@@ -2125,9 +2104,10 @@ function buildClaudeHarnessTab(opts = {}) {
   // 期间 offsetTop 全归零，立即算必错）
   _hgConn.onResumePoll = () => {
     if (_HG.conn === _hgConn) _hgInput.focus();
-    // a276R2：切回时同步刷几何缓存（RO 可能还没回调，_flowGeom 停在全零）
+    // a273R2：切回不再清缓存——保留 tab 可见期间建立的可信 offsetTop，
+    // 布局没变（没新消息）缓存依然正确；有新消息 railSync 自然失效重建。
+    // 双 rAF 后只重算活动刻度
     requestAnimationFrame(() => requestAnimationFrame(() => {
-      _flowGeomRefresh();
       try { _hgRailActiveRaf(); } catch (_) {}
     }));
   };
@@ -2210,10 +2190,6 @@ function buildClaudeHarnessTab(opts = {}) {
     const rail = _hgRailEl;
     const items = _HG.railItems;
     if (!rail || !items || !items.length) return;
-    // a276R2（用户实锤导轨仍失效）：RO 在 display:none→flex 切换时异步回调，
-    // _flowGeom 可能还停在全零（h=0,vh=0）→ _atBtm 恒 true=永远点末刻度。
-    // 守卫：几何缓存全零=布局未回填，同步刷一次（低频路径，只在切回/首次）
-    if (!_flowGeom.h || !_flowGeom.vh) _flowGeomRefresh();
     // a273R（用户精确描述「只在最上和最下」）：切 tab 后 offsetTop 在
     // content-visibility:auto 元素上返回估高（contain-intrinsic-size）而非
     // 真实位置——中间刻度估高 > scrollTop+80，二分全不命中=兜底 act=0。
@@ -2224,8 +2200,7 @@ function buildClaudeHarnessTab(opts = {}) {
         (it.el && it.el.isConnected) ? it.el.offsetTop : -1);
     }
     const tops = _HG.railCacheTops;
-    // a276 批2a：贴底特判用缓存几何（scrollHeight/clientHeight 零 DOM 读）
-    const _atBtm = _flowGeom.h - _hgFlow.scrollTop - _flowGeom.vh <= 4;
+    const _atBtm = _hgFlow.scrollHeight - _hgFlow.scrollTop - _hgFlow.clientHeight <= 4;
     const st = _hgFlow.scrollTop + 80;
     let act = -1;
     if (_atBtm) act = items.length - 1;
@@ -2243,7 +2218,7 @@ function buildClaudeHarnessTab(opts = {}) {
       // 自愈：二分落空（act<0/0）但 scrollTop 明显不在顶部=布局数据不可信
       if (act <= 0 && _hgFlow.scrollTop > 200 && items.length > 2) {
         const ratio = _hgFlow.scrollTop /
-          Math.max(1, _flowGeom.h - _flowGeom.vh);
+          Math.max(1, _hgFlow.scrollHeight - _hgFlow.clientHeight);
         act = Math.min(items.length - 1, Math.max(0,
           Math.round(ratio * (items.length - 1))));
         // 顺手用当前滚动位置修正缓存（下次二分直接命中）
