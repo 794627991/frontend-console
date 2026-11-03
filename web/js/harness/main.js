@@ -2099,7 +2099,15 @@ function buildClaudeHarnessTab(opts = {}) {
 
   // ==================== 轻量模态（铁律2）====================
 
-  _hgConn.onResumePoll = () => { if (_HG.conn === _hgConn) _hgInput.focus(); };
+  // a272R（用户实锤刷新后仍复现）：switchTab 切回走的是 conn.onResumePoll——
+  // 这里是切回时的权威钩子。双 rAF 等布局回填后重算活动刻度（display:none
+  // 期间 offsetTop 全归零，立即算必错）
+  _hgConn.onResumePoll = () => {
+    if (_HG.conn === _hgConn) _hgInput.focus();
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      try { _hgRailActiveRaf(); } catch (_) {}
+    }));
+  };
 
   // ==================== 初始 ====================
   showWelcome();
