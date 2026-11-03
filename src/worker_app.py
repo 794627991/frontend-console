@@ -75,6 +75,20 @@ def _parent_alive(pid):
         _KERNEL32.CloseHandle(h)
 
 
+def _suicide_with_rollback(reason):
+    """父亡自杀前尽力回滚 base_url（a238 P2-3 第5轮A3）。
+    worker 里活着 bili(18788)+重试代理(37349)——主进程被强杀后 os._exit 跳过
+    一切清理，settings.json 的 ANTHROPIC_BASE_URL 仍指向死端口，外部终端跑
+    claude 全部打死端口且无人提示。回滚是毫秒级文件写，失败也不挡自杀。"""
+    try:
+        from src.proxy import proxy_shutdown
+        proxy_shutdown(force_rollback=True)
+    except Exception:
+        pass
+    log.warning("%s，worker 自杀", reason)
+    os._exit(0)
+
+
 def _stdin_bond():
     """父进程亲缘带：stdin 管道写端在父进程手里，父亡（含被强杀）写端
     关闭 → 读到 EOF → 自杀。与 PID 探活互补：PID 复用骗不过 EOF。手动
@@ -93,8 +107,7 @@ def _stdin_bond():
                 return   # 无 stdin 可依的异常形态：仅剩 PID 探活兜底
         while True:
             if not st.read(1):
-                log.warning("stdin EOF（父进程已退出），worker 自杀")
-                os._exit(0)
+                _suicide_with_rollback("stdin EOF（父进程已退出）")
     except Exception:
         pass   # 读失败不自杀：误杀比晚杀伤害大
 
@@ -104,8 +117,7 @@ def _parent_watchdog(pid):
         time.sleep(3)
         try:
             if not _parent_alive(pid):
-                log.warning("父进程 %s 已退出，worker 自杀", pid)
-                os._exit(0)
+                _suicide_with_rollback("父进程 %d 已退出" % pid)
         except Exception:
             pass   # 探活自身异常不自杀：stdin 亲缘带兜底
 
@@ -472,6 +484,9 @@ def _supervisor(prefer_port):
                 "worker 已重启 port=%s pid=%s", port, p2.pid)
         except Exception as e:
             logging.getLogger("claude_worker").warning("worker 重启失败: %s", e)
+            # a238 P3-4：失败同样增长退避——原仅成功路径翻倍，失败时 backoff
+            # 恒 2s → 每 ~7s 一次真实进程生灭循环（Popen+25s 等待）常驻 churn
+            backoff = min(backoff * 2, 30.0)
 
 
 def manage_start(prefer_port=0, main_port=0):

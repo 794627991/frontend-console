@@ -189,7 +189,7 @@ def _scan(force=False):
         if size > _MAX_FILE:
             skipped += 1
             continue
-        text, err, _enc = _read_text(p, max_bytes=_MAX_FILE)
+        text, err, _enc, _bom = _read_text(p, max_bytes=_MAX_FILE)
         if err:
             continue
         try:
@@ -474,7 +474,7 @@ def notes_export_md():
         return jsonify({"ok": False, "err": "非法文件名"}), 400
     blocks = data.get("blocks")
     if blocks is None:
-        raw, err, _enc = _read_text(src)
+        raw, err, _enc, _bom = _read_text(src)
         if err:
             return jsonify({"ok": False, "err": err}), 400
         try:

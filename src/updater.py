@@ -63,6 +63,14 @@ def _fetch_manifest(base, timeout=5):
             raise ValueError("manifest 缺字段 %s" % k)
     if not str(m.get("file", "")).lower().endswith(".zip"):
         raise ValueError("发布包不是 zip 形态（v2.3.0 起仅支持 zip）")
+    # a238 P0-2（第5轮A1）：file 字段白名单——仅允许纯文件名。此前无校验：
+    # manifest 的 file 含 ../ 或绝对分量时，apply 的 os.path.join(staging, file)
+    # 会把任意字节写到 staging 外任意路径（含开机启动目录），且 sha1 校验
+    # 发生在写盘之后，不匹配也只清 staging、逃逸文件永久留存
+    fn = str(m.get("file", ""))
+    if (os.path.basename(fn) != fn or "/" in fn or "\\" in fn
+            or ":" in fn or fn in (".", "..") or fn.startswith(".")):
+        raise ValueError("manifest 的 file 字段非法（仅允许纯 zip 文件名）")
     return m
 
 

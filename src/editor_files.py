@@ -97,37 +97,57 @@ def ed_default_name():
 def _read_text(path, max_bytes=30 * 1024 * 1024, enc=None):
     """读文本文件。超限拒绝（30MB 上限——前端 >30MB 已强制走阅读器，
     20~30MB 用户在弹窗里明确选了编辑器才到这里，Monaco 还能扛）。
-    enc 指定编码（编辑器编码下拉手动切）时直接用之——用户说了算，不探测。
+    enc 指定编码（编辑器编码下拉手动切）时 strict 解码——选错编码直接报错，
+    不再 replace 产出 FFFD 乱码（a238 P2-1：replace 读+保存会把 U+FFFD 固化，
+    原字节不可逆丢失）。
     自动探测：utf-8-sig → GB18030 回退（Windows ANSI 中文主流，BSP 常见，
     GBK 超集，能完整解码无 FFRD 才采纳）→ errors=replace 保底。
-    返回 (text, err, used_enc)。"""
+    a238（第5轮A2）编码管线三修：
+    - newline='' 保留 \\r\\n（原 universal newlines 把 CRLF 全读成 LF，
+      保存后整文件 EOL 被改写，git diff 爆红/.reg 解析失败）
+    - 探测并回显 has_bom（utf-8-sig 读掉 BOM 后保存不回补，.ps1/.csv 杀手）
+    - UTF-16/32 BOM 直接拒（utf-8 解码器对 UTF-16LE 会"成功"产出 NUL
+      混杂乱码——保存即报废原文件；白名单后缀分支原先完全不做 NUL 探测）
+    返回 (text, err, used_enc, has_bom)。"""
     size = os.path.getsize(path)
     if size > max_bytes:
-        return None, f"文件过大（{size/1024/1024:.1f}MB > 30MB 上限）", None
+        return None, f"文件过大（{size/1024/1024:.1f}MB > 30MB 上限）", None, False
+    try:
+        with open(path, "rb") as f:
+            head = f.read(4)
+    except OSError as e:
+        return None, str(e), None, False
+    if head[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        return None, "UTF-16 文件不支持文本编辑（请用十六进制查看器打开）", None, False
+    if head[:4] in (b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff"):
+        return None, "UTF-32 文件不支持文本编辑（请用十六进制查看器打开）", None, False
+    has_bom = head.startswith(b"\xef\xbb\xbf")
     if enc:
         try:
             # GB2312 在 Python 无独立 codec（gb2312 即 gbk 别名子集），统一升 gb18030 兼容最广
             real = "gb18030" if enc.lower() in ("gb2312", "gbk", "gb18030") else enc.lower()
-            with open(path, "r", encoding=real, errors="replace") as f:
-                return f.read(), None, real
+            with open(path, "r", encoding=real, errors="strict", newline="") as f:
+                return f.read(), None, real, has_bom
+        except UnicodeDecodeError as e:
+            return None, f"按 {real} 解码失败（选错编码？）：{e}", None, False
         except (LookupError, OSError) as e:
-            return None, f"编码无效：{e}", None
-    with open(path, "r", encoding="utf-8-sig") as f:
+            return None, f"编码无效：{e}", None, False
+    with open(path, "r", encoding="utf-8-sig", newline="") as f:
         try:
-            return f.read(), None, "utf-8-sig"
+            return f.read(), None, "utf-8-sig", has_bom
         except UnicodeDecodeError:
             pass
     # GB18030 回退：能完整解码（无替换符）才信任——GBK 误读 utf-8 文件
     # 也会"成功"但出乱码，FFPD 无是采纳的必要条件
     try:
-        with open(path, "r", encoding="gb18030", errors="strict") as f:
+        with open(path, "r", encoding="gb18030", errors="strict", newline="") as f:
             t = f.read()
-        if "�" not in t:
-            return t, None, "gb18030"
+        if "\ufffd" not in t:
+            return t, None, "gb18030", has_bom
     except (UnicodeDecodeError, ValueError):
         pass
-    with open(path, "r", encoding="utf-8", errors="replace") as f2:
-        return f2.read(), None, "utf-8(replace)"
+    with open(path, "r", encoding="utf-8", errors="replace", newline="") as f2:
+        return f2.read(), None, "utf-8(replace)", has_bom
 
 
 # ---- 外部文件（拖入的任意文本文件）可编辑支持 ----
@@ -157,19 +177,20 @@ def _ext_of(p):
 def _safe_ext_path(path, force=False):
     """校验外部绝对路径：必须是文本后缀白名单内的已存在文件。通过返回绝对路径。
     force=True（用户在打开方式弹窗明确选了编辑器）：后缀不在白名单时做 NUL 字节探测，
-    开头 8KB 含 NUL 判二进制仍拒，否则按文本放行（去后缀的 json 等曾在此被拒）。"""
+    开头 8KB 含 NUL 判二进制仍拒，否则按文本放行（去后缀的 json 等曾在此被拒）。
+    a238 P1-4（第5轮A2）：白名单分支同样做 NUL 探测——此前「认识的后缀」直接
+    跳过探测，无 BOM 的 UTF-16 .txt 会被 utf-8 解码器"成功"读成 NUL 混杂乱码，
+    保存即报废原文件（倒挂：认识的后缀反而更危险）。正常文本文件开头 8KB
+    不含 NUL，误伤率为零。"""
     if not path or len(path) < 3 or ":" not in path and not path.startswith("\\\\"):
+        return None
+    p = os.path.abspath(path)
+    if not os.path.isfile(p) or _looks_binary(p):
         return None
     if _ext_of(path) not in _EXT_TEXT:
         if not force:
             return None
-        p = os.path.abspath(path)
-        if not os.path.isfile(p) or _looks_binary(p):
-            return None
         return p
-    p = os.path.abspath(path)
-    if not os.path.isfile(p):
-        return None
     return p
 
 
@@ -210,20 +231,21 @@ def ed_open():
         p = _safe_ext_path(ext_path, force)
         if not p:
             return jsonify({"ok": False, "err": "不支持的文件类型或文件不存在"}), 400
-        text, err, used = _read_text(p, enc=enc)
+        text, err, used, has_bom = _read_text(p, enc=enc)
         if err:
             return jsonify({"ok": False, "err": err}), 400
         return jsonify({"ok": True, "name": os.path.basename(p), "path": p,
-                        "text": text, "used_enc": used,
+                        "text": text, "used_enc": used, "has_bom": has_bom,
                         "mtime": os.path.getmtime(p), "size": os.path.getsize(p)})
     name = request.args.get("name", "")
     p = _safe_path(name)
     if not p or not os.path.isfile(p):
         return jsonify({"ok": False, "err": "文件不存在"}), 404
-    text, err, used = _read_text(p, enc=enc)
+    text, err, used, has_bom = _read_text(p, enc=enc)
     if err:
         return jsonify({"ok": False, "err": err}), 400
     return jsonify({"ok": True, "name": name, "text": text, "used_enc": used,
+                    "has_bom": has_bom,
                     "mtime": os.path.getmtime(p), "size": os.path.getsize(p)})
 
 
@@ -247,40 +269,26 @@ def ed_stat():
     return jsonify({"ok": True, "mtime": st.st_mtime, "size": st.st_size})
 
 
-@edit_bp.route("/api/ed/save", methods=["POST"])
-def ed_save():
-    """覆盖保存：{name, text}（files/ 内）或 {path, text}（外部绝对路径，拖入文件）。
-    前端在关闭前保证已确认脏状态。"""
-    data = request.get_json(force=True, silent=True) or {}
-    text = data.get("text", "")
-    # 外部绝对路径分支：写回原文件（白名单后缀 + 原子替换）
-    ext_path = (data.get("path") or "").strip()
-    if ext_path:
-        # 打开时按内容探测放行过的文件（无后缀文本），保存也放行（同一文件，内容已在前端展示过）
-        if _ext_of(ext_path) not in _EXT_TEXT and _looks_binary(os.path.abspath(ext_path)):
-            return jsonify({"ok": False, "err": "不支持的文件类型"}), 400
-        p = os.path.abspath(ext_path)
-        tmp = p + ".tmp"
-        try:
-            with open(tmp, "w", encoding="utf-8", newline="") as f:
-                f.write(text)
-            os.replace(tmp, p)
-        except Exception as e:
-            try:
-                if os.path.exists(tmp):
-                    os.remove(tmp)
-            except Exception:
-                pass
-            return jsonify({"ok": False, "err": str(e)}), 500
-        return jsonify({"ok": True, "path": p})
-    p = _safe_path(data.get("name", ""))
-    if not p:
-        return jsonify({"ok": False, "err": "非法文件名"}), 400
-    text = data.get("text", "")
-    # 先写临时文件再原子替换：保存中途崩溃/断电不留半个文件
-    tmp = p + ".tmp"
+def _write_text_atomic(p, text, enc=None, bom=False):
+    """原子写文本（tmp+os.replace）。a238（第5轮A2）编码管线：
+    - enc 含 gb（gb2312/gbk/gb18030）→ 按 gb18030 回写（打开什么编码存什么
+      编码——此前恒 utf-8，GBK 文件 Ctrl+S 即整文件静默转码）
+    - bom=True → utf-8-sig 回补 BOM（此前 utf-8-sig 读掉 BOM、保存即剥离）
+    - newline='' 原样写（EOL 由前端按打开时原样还原）
+    - tmp 名带 pid/纳秒（同文件并发保存不再交叉写同一 tmp）
+    返回 (ok, err)。"""
+    real = "utf-8"
+    if enc:
+        e = str(enc).lower()
+        real = "gb18030" if e in ("gb2312", "gbk", "gb18030") or e.startswith("gb") else e
+    # utf-8-sig 编码器无条件写 BOM——bom=False 会被无视（实测实锤：无 BOM 的
+    # utf-8-sig 探测文件保存后被强加 BOM）。统一归一到 utf-8，由 bom 决定升 sig
+    if real == "utf-8-sig":
+        real = "utf-8"
+    out_enc = "utf-8-sig" if (bom and real == "utf-8") else real
+    tmp = "%s.%d.%d.tmp" % (p, os.getpid(), time.time_ns() % 10**9)
     try:
-        with open(tmp, "w", encoding="utf-8", newline="") as f:
+        with open(tmp, "w", encoding=out_enc, newline="") as f:
             f.write(text)
         os.replace(tmp, p)
     except Exception as e:
@@ -289,8 +297,56 @@ def ed_save():
                 os.remove(tmp)
         except Exception:
             pass
-        return jsonify({"ok": False, "err": str(e)}), 500
-    return jsonify({"ok": True, "name": data.get("name")})
+        return False, str(e)
+    return True, None
+
+
+@edit_bp.route("/api/ed/save", methods=["POST"])
+def ed_save():
+    """覆盖保存：{name, text}（files/ 内）或 {path, text}（外部绝对路径，拖入文件）。
+    a238（第5轮A2）：
+    - enc/bom：按打开时的编码与 BOM 状态回写（GBK 文件不再被静默转 UTF-8）
+    - expect_mtime：打开时的磁盘 mtime（外部路径）——不一致返回 409 conflict，
+      防外部程序改动被内存旧内容覆盖（lost-update）
+    - 外部 path 必须绝对路径（相对路径落点是进程 CWD，onefile 打包=TEMP）
+    前端在关闭前保证已确认脏状态。"""
+    data = request.get_json(force=True, silent=True) or {}
+    text = data.get("text", "")
+    if not isinstance(text, str):
+        return jsonify({"ok": False, "err": "text 必须是字符串"}), 400
+    save_enc = str(data.get("enc") or "").strip() or None
+    save_bom = bool(data.get("bom"))
+    # 外部绝对路径分支：写回原文件（白名单后缀 + 原子替换）
+    ext_path = (data.get("path") or "").strip()
+    if ext_path:
+        if not os.path.isabs(ext_path):   # a238 P3-8：相对路径的落点是进程 CWD（打包态 TEMP，重启即焚）
+            return jsonify({"ok": False, "err": "路径必须是绝对路径"}), 400
+        # 打开时按内容探测放行过的文件（无后缀文本），保存也放行（同一文件，内容已在前端展示过）
+        if _ext_of(ext_path) not in _EXT_TEXT and _looks_binary(os.path.abspath(ext_path)):
+            return jsonify({"ok": False, "err": "不支持的文件类型"}), 400
+        p = os.path.abspath(ext_path)
+        # a238 P2-2：mtime CAS——磁盘已被外部改动（mtime 与打开时不一致）则 409，
+        # 前端弹「磁盘已变化」三选（重开/覆盖/另存），不静默覆盖
+        expect_mtime = data.get("expect_mtime")
+        if expect_mtime is not None:
+            try:
+                cur_mtime = os.path.getmtime(p)
+            except OSError:
+                return jsonify({"ok": False, "err": "文件已不存在", "conflict": True}), 409
+            if abs(float(expect_mtime) - cur_mtime) > 0.001:
+                return jsonify({"ok": False, "err": "磁盘文件已被其他程序修改",
+                                "conflict": True}), 409
+        ok, err = _write_text_atomic(p, text, save_enc, save_bom)
+        if not ok:
+            return jsonify({"ok": False, "err": err}), 500
+        return jsonify({"ok": True, "path": p, "mtime": os.path.getmtime(p)})
+    p = _safe_path(data.get("name", ""))
+    if not p:
+        return jsonify({"ok": False, "err": "非法文件名"}), 400
+    ok, err = _write_text_atomic(p, text, save_enc, save_bom)
+    if not ok:
+        return jsonify({"ok": False, "err": err}), 500
+    return jsonify({"ok": True, "name": data.get("name"), "mtime": os.path.getmtime(p)})
 
 
 @edit_bp.route("/api/ed/save_as", methods=["POST"])
@@ -304,18 +360,9 @@ def ed_save_as():
     if os.path.exists(p):
         return jsonify({"ok": False, "err": "同名文件已存在"}), 409
     text = data.get("text", "")
-    tmp = p + ".tmp"
-    try:
-        with open(tmp, "w", encoding="utf-8", newline="") as f:
-            f.write(text)
-        os.replace(tmp, p)
-    except Exception as e:
-        try:
-            if os.path.exists(tmp):
-                os.remove(tmp)
-        except Exception:
-            pass
-        return jsonify({"ok": False, "err": str(e)}), 500
+    ok, err = _write_text_atomic(p, text)   # a238：统一原子写（tmp 名带 pid/ns）
+    if not ok:
+        return jsonify({"ok": False, "err": err}), 500
     return jsonify({"ok": True, "name": name})
 
 

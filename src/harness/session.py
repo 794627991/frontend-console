@@ -942,13 +942,20 @@ class HarnessSession:
                 content.append({"type": "text", "text": full_text})
             else:
                 content = full_text
-            try:
-                payload = {"type": "user", "message": {"role": "user", "content": content}}
-                self._proc.stdin.write((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
-                self._proc.stdin.flush()
-            except Exception as e:
+            payload = {"type": "user", "message": {"role": "user", "content": content}}
+        # ---- 锁外写 stdin（a238 P2-2 第5轮A3）----
+        # 挂死的 CLI 不读 stdin 时管道写无限阻塞（>64KB 即触）——写发生在
+        # _busy_lock 内会把锁永久钉死：interrupt/kill/rewind/close 全部排队
+        # 挂起，会话只能重启进程解。锁外写：kill 可及，写失败回滚 busy。
+        # busy 已占位，并发 send 在锁内即被「正在回复中」挡下，语义不变
+        try:
+            self._proc.stdin.write((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
+            self._proc.stdin.flush()
+        except Exception as e:
+            with self._busy_lock:
                 self.busy = False
-                return False, "发送失败：%s" % e
+            return False, "发送失败：%s" % e
+        with self._busy_lock:
             self.last_active = int(time.time() * 1000)
             # v2.34.2（R1）：判定收窄到 _AUDIT_MSG_PREFIX（_audit_settle 续发
             # 消息的唯一句式开头）——不定标题、不画用户气泡（警示已由
@@ -983,7 +990,7 @@ class HarnessSession:
                 self.emit({"kind": "user_echo", "text": text or "",
                            "images": list(image_paths or []), "files": list(file_paths or []),
                            "cmd": cmd or ""})   # v4：overlay 对账锚（前端 store reconcile）
-            return True, None
+        return True, None
 
     def interrupt(self):
         """中断当前回复：kill 进程（claude 中断语义无 stdin 通道，杀进程即停），

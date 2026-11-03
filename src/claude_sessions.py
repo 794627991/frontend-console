@@ -379,9 +379,18 @@ def export_session_transcript(session_id):
         return None, None
     cwd = None
     lines = []
+    # a238 P3-7（第5轮A3）：护栏——数百 MB 的超长会话转写在单请求内全量
+    # IO+解析+jsonify 会阻塞 werkzeug 线程数十秒（内存≈文件 2-3 倍）。
+    # 双上限：读满 50MB 或 20 万行即停，头部加截断标记行
+    _MAX_BYTES, _MAX_LINES = 50 * 1024 * 1024, 200000
+    _read_bytes, _truncated = 0, False
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
             for raw in f:
+                _read_bytes += len(raw)
+                if _read_bytes > _MAX_BYTES or len(lines) >= _MAX_LINES:
+                    _truncated = True
+                    break
                 raw = raw.strip()
                 if not raw:
                     continue
@@ -420,6 +429,10 @@ def export_session_transcript(session_id):
                         lines.append({"role": "system", "text": "会话摘要：" + t[:300]})
     except OSError:
         return None, None
+    if _truncated:
+        lines.append({"role": "system",
+                      "text": "……（会话过长，仅导出前 %d 条 / %.0fMB，完整记录请直接看 jsonl）"
+                              % (len(lines), _MAX_BYTES / 1024 / 1024)})
     return lines, cwd
 
 

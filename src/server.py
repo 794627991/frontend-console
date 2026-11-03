@@ -883,10 +883,22 @@ def api_history():
         return jsonify({"history": []})
     return jsonify({"history": p.get_history()})
 
+
+def _q_int(key, default=0, lo=None, hi=None):
+    """query 整数安全转换（a238 P3：原裸 int() 对非数字参数抛 ValueError →
+    Flask HTML 500）。非法值回落 default，再按 lo/hi 钳制。"""
+    try:
+        v = int(request.args.get(key, default))
+    except (TypeError, ValueError):
+        v = default
+    if lo is not None: v = max(lo, v)
+    if hi is not None: v = min(hi, v)
+    return v
+
 @app.route("/api/buffer")
 def api_buffer():
     port_id = request.args.get("port_id")
-    n = int(request.args.get("n", 500))
+    n = _q_int("n", 500, lo=1)
     before_seq = request.args.get("before_seq")
     with _ports_lock:
         p = _ports.get(port_id)
@@ -906,7 +918,7 @@ def api_search():
     """在指定串口的 buf 全量搜索关键字。"""
     port_id = request.args.get("port_id")
     q = request.args.get("q", "")
-    limit = int(request.args.get("limit", 200))
+    limit = _q_int("limit", 200, lo=1)
     before_seq = request.args.get("before_seq")
     bs = int(before_seq) if before_seq else 0
     with _ports_lock:
@@ -1191,10 +1203,12 @@ def api_log_dir_open():
     """用系统资源管理器打开日志目录。WebView2 拦截 file:// 协议，必须后端调 explorer。"""
     try:
         data = request.get_json(force=True, silent=True) or {}
-        target = (data.get("dir") or LOG_DIR).strip()
-        if not target:
-            target = LOG_DIR
-        os.makedirs(target, exist_ok=True)
+        d = data.get("dir")
+        target = (str(d).strip() if isinstance(d, str) and d.strip() else LOG_DIR)
+        # a238 P2：去掉 makedirs——「打开目录」不该有创建目录的写副作用
+        # （原实现可在任意路径凭空建目录树）；目录不存在就 404
+        if not os.path.isdir(target):
+            return jsonify({"ok": False, "err": "目录不存在"}), 404
         # os.startfile 在 pywebview Flask 线程里可能静默失败，改用 explorer.exe 更可靠
         import subprocess
         subprocess.Popen(["explorer.exe", target], close_fds=True)
@@ -1210,7 +1224,7 @@ def api_open_url():
     http://proxy.py，点击后 ERR_NAME_NOT_RESOLVED 占满窗口、无返回入口）。
     前端拦截一切 <a> 点击走这里，WebView 永不离开应用页面。只放行 http(s)。"""
     data = request.get_json(force=True, silent=True) or {}
-    url = (data.get("url") or "").strip()
+    url = str(data.get("url") or "").strip()   # a238 P3：非字符串（数字/数组）原会 .strip() 崩 500
     if not (url.startswith("http://") or url.startswith("https://")):
         return jsonify({"ok": False, "err": "仅支持 http(s) 链接"}), 400
     try:
@@ -1237,7 +1251,7 @@ def api_update_state():
 @app.route("/api/update/url", methods=["POST"])
 def api_update_url():
     data = request.get_json(force=True, silent=True) or {}
-    u = (data.get("url") or "").strip()
+    u = str(data.get("url") or "").strip()   # a238 P3：同 open_url 的非字符串防崩
     if u and not u.startswith("http://") and not u.startswith("https://"):
         return jsonify({"ok": False, "err": "地址需以 http(s):// 开头"}), 400
     from src.updater import _cfg_url
@@ -1418,23 +1432,63 @@ def api_data_dir_usage():
         return jsonify({"ok": False, "err": str(e)}), 500
 
 
+# ---- 数据目录迁移/校验的公共防线（a238 第5轮A1：P0-1/P1-1/P1-5）----
+# 迁移家族曾用「字符串前缀比对」判嵌套——abspath 不解析 reparse point，
+# 目标是当前数据目录的 junction 别名时判定被穿透：复制阶段 dst 解析回源
+# 自身、校验恒过，切换后 rmtree 把唯一数据本体删光（全量灭失）。另外
+# UNC 目标一次 POST 即把全部凭据/笔记外传 SMB 再删本地原件
+_migrate_lock = threading.Lock()   # a238 P1-2：迁移互斥（并发二次迁移删新副本）
+
+
+def _migrate_target_err(target):
+    """迁移目标预检。返回 None=通过，否则错误文案。"""
+    if not isinstance(target, str) or not target.strip():
+        return "路径无效"
+    target = target.strip()
+    # UNC / 设备命名空间（\\\\、\\?\\、\\.\\）一律拒：网络路径的删除不经
+    # 回收站、凭据会被整体外传（对齐 fileops 家族「UNC 拒」）
+    if target.startswith("\\\\") or target.startswith("//"):
+        return "不支持网络路径（UNC）作为数据目录"
+    drive = os.path.splitdrive(target)[0]
+    if drive.startswith("\\\\"):
+        return "不支持网络路径（UNC）作为数据目录"
+    return None
+
+
+def _paths_nested(a, b):
+    """嵌套判定（realpath 双侧解析）：a/b 任一互为祖先即 True。"""
+    try:
+        ra, rb = os.path.realpath(a).lower(), os.path.realpath(b).lower()
+    except Exception:
+        ra, rb = os.path.abspath(a).lower(), os.path.abspath(b).lower()
+    return ra.startswith(rb + os.sep) or rb.startswith(ra + os.sep)
+
+
 @app.route("/api/data_dir/check", methods=["POST"])
 def api_data_dir_check():
     """校验候选目录：可创建、可写、不在 C 盘给出提醒但允许（用户自己选的）。
     返回迁移预览：会迁哪些子目录、各多少条目。"""
     data = request.get_json(force=True, silent=True) or {}
     target = (data.get("dir") or "").strip()
-    if not target or len(target) < 3 or ":" not in target:
+    err = _migrate_target_err(target)
+    if err:
+        return jsonify({"ok": False, "err": err}), 400
+    if len(target) < 3 or ":" not in target:
         return jsonify({"ok": False, "err": "路径无效（需绝对路径，如 D:\\前端控制台）"}), 400
+    # \\?\C:\... 设备前缀绕 C 盘提醒——剥掉前缀按真实盘符判
+    _naked = target[4:] if target.startswith("\\\\?\\") else target
     target = os.path.abspath(target)
-    if os.path.abspath(DATA_DIR).lower() == target.lower():
+    if os.path.realpath(DATA_DIR).lower() == os.path.realpath(target).lower():
         return jsonify({"ok": False, "err": "这就是当前数据目录"}), 400
-    cur = os.path.abspath(DATA_DIR).lower()
-    # 嵌套判定：目标在当前目录内（或反过来）都拒绝——迁移后 rmtree 旧目录
-    # 会把嵌套在内的新副本一起删掉，全量数据丢失
-    tgt = target.lower()
-    if tgt.startswith(cur + os.sep) or cur.startswith(tgt + os.sep):
+    # 嵌套判定（a238：realpath 双侧——junction 别名穿透字符串比对是 P0 灭失链第一环）
+    if _paths_nested(DATA_DIR, target):
         return jsonify({"ok": False, "err": "目标目录不能与当前数据目录互相嵌套（会导致删除旧目录时连带删除新数据）"}), 400
+    # 目标已是 reparse 别名（junction/symlink）：复制会解析回源自身、校验恒过
+    try:
+        if os.path.exists(target) and os.path.realpath(target) != os.path.normpath(target):
+            return jsonify({"ok": False, "err": "目标路径是链接/联接（junction），请填真实目录"}), 400
+    except Exception:
+        pass
     try:
         os.makedirs(target, exist_ok=True)
     except Exception as e:
@@ -1442,7 +1496,7 @@ def api_data_dir_check():
     if not os.access(target, os.W_OK):
         return jsonify({"ok": False, "err": "目录不可写"}), 400
     warnings = []
-    if target.upper().startswith("C:"):
+    if _naked.upper().startswith("C:"):
         warnings.append("目标在 C 盘（数据默认应放其他盘，确认要放 C 盘吗？）")
     preview = []
     for s in _DATA_SUBDIRS:
@@ -1471,14 +1525,39 @@ def api_data_dir_migrate():
     import shutil
     data = request.get_json(force=True, silent=True) or {}
     target = (data.get("dir") or "").strip()
-    if not target or os.path.abspath(target).lower() == os.path.abspath(DATA_DIR).lower():
+    err = _migrate_target_err(target)
+    if err:
+        return jsonify({"ok": False, "err": err}), 400
+    # a238 P1-2：迁移互斥（Flask threaded=True 下 GB 级复制分钟级窗口内，
+    # 第二个并发迁移会在中途读到已切换的全局 DATA_DIR，把 A 刚建好的新副本
+    # 当旧目录 rmtree）。non-blocking：迁移中直接 409
+    if not _migrate_lock.acquire(blocking=False):
+        return jsonify({"ok": False, "err": "已有迁移在进行中，请等待完成"}), 409
+    try:
+        return _do_data_dir_migrate(target)
+    finally:
+        _migrate_lock.release()
+
+
+def _do_data_dir_migrate(target):
+    """迁移本体（调用方已持 _migrate_lock）。"""
+    global DATA_DIR, STATE_DIR, CMD_LIB_FILE, LOG_DIR
+    import shutil
+    # a238 P1-2：源/旧目录在入口快照一次——中途全局被切（防御纵深）不再影响本次
+    src_data_dir = os.path.abspath(DATA_DIR)
+    old_data_dir = src_data_dir
+    if os.path.realpath(target).lower() == os.path.realpath(src_data_dir).lower():
         return jsonify({"ok": False, "err": "目标与当前目录相同"}), 400
     target = os.path.abspath(target)
-    cur = os.path.abspath(DATA_DIR).lower()
-    # 嵌套判定：目标嵌套在当前目录内（或当前目录嵌套在目标内）都拒绝——
-    # 迁移完成 rmtree(old_data_dir) 会把嵌套在内的新副本一并删除
-    if target.lower().startswith(cur + os.sep) or cur.startswith(target.lower() + os.sep):
+    # a238 P0-1：嵌套判定 realpath 双侧（junction 别名穿透字符串比对 → rmtree 灭失）
+    if _paths_nested(src_data_dir, target):
         return jsonify({"ok": False, "err": "目标目录不能与当前数据目录互相嵌套（会导致删除旧目录时连带删除新数据）"}), 400
+    # 目标已是 reparse 别名：复制会解析回源自身、校验恒过（a238 P0-1 第二环）
+    try:
+        if os.path.exists(target) and os.path.realpath(target) != os.path.normpath(target):
+            return jsonify({"ok": False, "err": "目标路径是链接/联接（junction），请填真实目录"}), 400
+    except Exception:
+        pass
     try:
         os.makedirs(target, exist_ok=True)
     except Exception as e:
@@ -1488,7 +1567,7 @@ def api_data_dir_migrate():
     copied = []
     try:
         for s in _DATA_SUBDIRS:
-            src = os.path.join(DATA_DIR, s)
+            src = os.path.join(src_data_dir, s)
             if not os.path.isdir(src):
                 continue
             # 分级（用户口径）：cmdlib/笔记 严格校验（必须完整）；logs 尽力复制；
@@ -1499,7 +1578,13 @@ def api_data_dir_migrate():
             os.makedirs(dst, exist_ok=True)
             n = 0
             skipped = 0
-            for root, dirs, files in os.walk(src):
+            # a238 P1-5：walk 剪 reparse point（junction 环挂死/外部树整拷——
+            # data_hygiene._files_in 同款剪枝）
+            _src_real = os.path.realpath(src)
+            for root, dirs, files in os.walk(src, onerror=lambda e: None):
+                dirs[:] = [d for d in dirs
+                           if os.path.realpath(os.path.join(root, d))
+                           .startswith(_src_real + os.sep)]
                 rel = os.path.relpath(root, src)
                 droot = dst if rel == "." else os.path.join(dst, rel)
                 os.makedirs(droot, exist_ok=True)
@@ -1525,7 +1610,7 @@ def api_data_dir_migrate():
         # 根级关键配置（cmdlib.json/retry_config.json 及一切 *.json）：
         # 严格校验逐个迁——大小不一致直接判迁移失败，不切换
         for s in _data_root_json_files():
-            sf = os.path.join(DATA_DIR, s)
+            sf = os.path.join(src_data_dir, s)
             if not os.path.isfile(sf):
                 continue
             df = os.path.join(target, s)
@@ -1537,8 +1622,14 @@ def api_data_dir_migrate():
     except Exception as e:
         return jsonify({"ok": False, "err": f"迁移失败（未切换，数据仍在原处）: {e}",
                         "copied": copied}), 500
+    # rmtree 前终检（a238 P0-1 第三环防御纵深）：旧/新目录 realpath 必须互不
+    # 相同、互不嵌套——任何一环被绕过都在这里挡住「删除唯一数据本体」
+    if os.path.realpath(old_data_dir).lower() == os.path.realpath(target).lower() \
+            or _paths_nested(old_data_dir, target):
+        return jsonify({"ok": False, "err": "安全校验未通过（新旧目录解析后重合），已取消删除旧目录",
+                        "dir": target, "copied": copied, "deleted": False,
+                        "old_dir": old_data_dir}), 500
     # 复制校验全过 → 切换运行时 + 持久化
-    old_data_dir = os.path.abspath(DATA_DIR)
     # 日志目录合一：迁移后固定走新 data/logs（清掉旧 log_dir 配置，只留一个 logs）
     new_log_dir = os.path.join(target, "logs")
     _st.DATA_DIR = target
@@ -1557,6 +1648,35 @@ def api_data_dir_migrate():
         _ef.IMAGES_DIR = os.path.join(_ef.FILES_DIR, "images")
     except Exception:
         pass
+    # a238 P1-4：其余按值缓存 DATA_DIR 的模块一并 patch（skills_repo/proxy/
+    # hiklink_bot/proxy_usage——此前迁移后写回复活的旧目录，数据精神分裂）
+    try:
+        import src.skills_repo as _sr
+        _sr.DATA_DIR = target
+        _sr._CACHE_DIR = os.path.join(target, "skill_cache")
+        _sr._ZH_DIR = os.path.join(target, "skill_zh")
+        _sr._EXPORT_DIR = os.path.join(target, "skill_exports")
+    except Exception:
+        pass
+    try:
+        import src.proxy as _px
+        _px.DATA_DIR = target
+        _px.LANZ_CRED_PATH = os.path.join(target, "lanz_credentials.json")
+        _px.PROXY_STATE_PATH = os.path.join(target, "proxy_state.json")
+    except Exception:
+        pass
+    try:
+        import src.hiklink_bot as _hk
+        _hk.DATA_DIR = target
+        _hk.SESSION_PATH = os.path.join(target, "hiklink_session.json")
+    except Exception:
+        pass
+    try:
+        import src.proxy_usage as _pu
+        _pu.DATA_DIR = target
+        _pu.USAGE_PATH = os.path.join(target, "proxy_usage.json")
+    except Exception:
+        pass
     # 日志索引缓存全部失效（路径已变）
     with _log_index_lock:
         _log_index_cache.clear()
@@ -1572,11 +1692,15 @@ def api_data_dir_migrate():
 @app.route("/api/open_log_file", methods=["POST"])
 def api_open_log_file():
     """在资源管理器中打开日志目录并选中指定日志文件（仅 Windows 支持 /select）。"""
-    data = request.get_json(force=True)
+    data = request.get_json(force=True, silent=True) or {}
     name = data.get("name")
-    if not name:
+    if not name or not isinstance(name, str):
         return jsonify({"ok": False, "err": "need name"}), 400
-    path = os.path.join(LOG_DIR, name)
+    # a238 P3（第5轮A1）：日志家族统一防线——此前裸 os.path.join(LOG_DIR, name)，
+    # ../ 或绝对分量可对任意路径做存在性探测 + explorer /select 弹窗骚扰
+    path = _resolve_log_path(name)
+    if not path:
+        return jsonify({"ok": False, "err": "not found"}), 404
     try:
         if not os.path.isfile(path):
             return jsonify({"ok": False, "err": "not found"}), 404
@@ -1597,8 +1721,14 @@ def api_log_read(name):
     path = _resolve_log_path(name)
     if not path:
         return jsonify({"ok": False, "err": "not found"}), 404
+    # a238 P3-4：整读加 30MB 上限（原 G 级外部日志单请求内存爆点；/api/read_text
+    # 有限额而此处漏）——超限只取前 30MB 并打截断标记
+    _cap = 30 * 1024 * 1024
     with open(path, "r", encoding="utf-8", errors="replace") as f:
-        return Response(f.read(), mimetype="text/plain")
+        text = f.read(_cap + 1)
+    if len(text) > _cap:
+        text = text[:_cap] + "\n\n……（超过 30MB 上限，已截断——请用日志查看器分页打开）"
+    return Response(text, mimetype="text/plain")
 
 @app.route("/api/replay/<name>")
 def api_replay(name):
@@ -1630,8 +1760,8 @@ def api_replay_page():
     """回放分页取行：name + offset(0-based) + limit。行数据按需拉取，
     前端永不持有全量行。limit 上限 5000（播放前进一屏足够）。"""
     name = request.args.get("name", "")
-    offset = int(request.args.get("offset", 0))
-    limit = min(int(request.args.get("limit", 500)), 5000)
+    offset = _q_int("offset", 0, lo=0)
+    limit = _q_int("limit", 500, lo=1, hi=5000)
     path = _resolve_log_path(name)
     if not path:
         return jsonify({"ok": False, "err": "not found"}), 404
@@ -1646,7 +1776,7 @@ def api_replay_seek():
     """按时间戳定位回放起始行号：name + ts(毫秒)。
     二分 O(log n)，前端拖拽进度条时无需全量扫描。"""
     name = request.args.get("name", "")
-    ts_ms = int(request.args.get("ts", 0))
+    ts_ms = _q_int("ts", 0, lo=0)
     path = _resolve_log_path(name)
     if not path:
         return jsonify({"ok": False, "err": "not found"}), 404
@@ -1685,8 +1815,8 @@ def api_log_count():
 def api_log_page():
     """按行号分页读取日志。name=日志名或绝对路径，offset=起始行(0-based)，limit=行数。"""
     name = request.args.get("name", "")
-    offset = int(request.args.get("offset", 0))
-    limit = int(request.args.get("limit", 100))
+    offset = _q_int("offset", 0, lo=0)
+    limit = _q_int("limit", 100, lo=1)
     limit = min(limit, 500)  # 单次上限防大请求
     path = _resolve_log_path(name)
     if not path:
@@ -1703,8 +1833,8 @@ def api_log_search():
     name = request.args.get("name", "")
     q = request.args.get("q", "")
     exclude = request.args.get("exclude", "")
-    offset = int(request.args.get("offset", 0))
-    limit = int(request.args.get("limit", 200))
+    offset = _q_int("offset", 0, lo=0)
+    limit = _q_int("limit", 200, lo=1)
     count_total = request.args.get("count_total", "1") != "0"
     path = _resolve_log_path(name)
     if not path:
@@ -1720,8 +1850,8 @@ def api_log_search_page():
     name = request.args.get("name", "")
     q = request.args.get("q", "")
     exclude = request.args.get("exclude", "")
-    hit_start = int(request.args.get("hit_start", 0))
-    count = int(request.args.get("count", 500))
+    hit_start = _q_int("hit_start", 0, lo=0)
+    count = _q_int("count", 500, lo=1)
     path = _resolve_log_path(name)
     if not path:
         return jsonify({"ok": False, "err": "not found"}), 404
@@ -1939,7 +2069,7 @@ def ai_status():
 def ai_buffer():
     """AI 获取指定串口的缓冲（可指定行数）。"""
     port_id = request.args.get("port_id")
-    n = int(request.args.get("n", 200))
+    n = _q_int("n", 200, lo=1)
     with _ports_lock:
         p = _ports.get(port_id)
     if not p:
@@ -1953,7 +2083,7 @@ def ai_buffer():
 @app.route("/api/ai/recent")
 def ai_recent():
     """AI 获取所有已连接串口最近的输出（各取最后 N 行）。"""
-    n = int(request.args.get("n", 50))
+    n = _q_int("n", 50, lo=1)
     result = {}
     with _ports_lock:
         all_ports = list(_ports.items())
@@ -2174,7 +2304,7 @@ def ai_ports():
 def ai_observe():
     """Claude Code 直连用：一次返回状态 + 各串口最近 N 行，减少往返。
     可选 ?n=50 控制每个串口取多少行。"""
-    n = int(request.args.get("n", 50))
+    n = _q_int("n", 50, lo=1)
     with _ports_lock:
         all_ports = list(_ports.items())
     status = {}

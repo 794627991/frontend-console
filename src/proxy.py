@@ -139,69 +139,74 @@ class BaseUrlManager:
 
     def apply(self, target):
         changed, skipped = [], []
-        for path in CLAUDE_SETTINGS_PATHS:
-            if not os.path.exists(path):
-                continue
-            try:
-                with open(path, encoding="utf-8") as f:
-                    d = json.load(f)
-            except (ValueError, OSError, AttributeError) as e:
-                log.warning("读取 %s 失败，跳过: %s", path, e)
-                continue
-            env = d.get("env")
-            old = env.get("ANTHROPIC_BASE_URL") if isinstance(env, dict) else None
-            if old == target:
-                # 对抗审 a206A P2：base_url 已就位仍要校正 DISABLE_AUTO_
-                # COMPACT（外部工具/手改 settings 丢键时自愈）——原样 continue
-                # 会把缺键永远留在那
-                if isinstance(env, dict):
-                    want = "/bili/" in target
-                    has = env.get("DISABLE_AUTO_COMPACT") == "1"
-                    if want != has:
-                        if want:
-                            env["DISABLE_AUTO_COMPACT"] = "1"
-                        else:
-                            env.pop("DISABLE_AUTO_COMPACT", None)
-                        tmp = "%s.%d.%d.tmp" % (path, os.getpid(), threading.get_ident())
-                        try:
-                            with open(tmp, "w", encoding="utf-8") as f:
-                                json.dump(d, f, indent=2, ensure_ascii=False)
-                                f.write(chr(10))
-                            os.replace(tmp, path)
-                        except OSError:
-                            pass
-                skipped.append(os.path.basename(path))
-                continue
-            d.setdefault("env", {})["ANTHROPIC_BASE_URL"] = target
-            # bili 独占压缩联动（a201）：base_url 指向 bili（/bili/ 前缀）时写
-            # DISABLE_AUTO_COMPACT=1 关掉 Claude Code 自带自动压缩（bili 分层
-            # 压缩接管，两者叠加会互相打断前缀缓存）；切走（off/直连/回滚）
-            # 自动移除——所有切换路径（start/stop/mode/自愈）都过 apply，单点收口
-            if "/bili/" in target:
-                d["env"]["DISABLE_AUTO_COMPACT"] = "1"
-            else:
-                d["env"].pop("DISABLE_AUTO_COMPACT", None)
-            # P1-7（a116）：tmp 名进程+线程唯一——跨进程并发写同一配置
-            # 文件时共用 path+".tmp" 会互相覆盖成半截 JSON
-            tmp = "%s.%d.%d.tmp" % (path, os.getpid(), threading.get_ident())
-            for attempt in range(3):
+        # a238 P2-1（第5轮A3）：apply 全程持 switch_lock（RLock，re_point 重入
+        # 安全）——「读文件→改字段→整份 os.replace」与 claude_profiles_apply 的
+        # 整份写回交错时，基于旧内容合并的 JSON 会把新方案的 token/模型映射
+        # 静默顶回旧值（六处调用点单独加锁不如这一处收口）
+        with _switch_lock:
+            for path in CLAUDE_SETTINGS_PATHS:
+                if not os.path.exists(path):
+                    continue
                 try:
-                    if attempt > 0:
-                        with open(path, encoding="utf-8") as f:
-                            d = json.load(f)
-                        d.setdefault("env", {})["ANTHROPIC_BASE_URL"] = target
-                        if "/bili/" in target:
-                            d["env"]["DISABLE_AUTO_COMPACT"] = "1"
-                        else:
-                            d["env"].pop("DISABLE_AUTO_COMPACT", None)
-                    with open(tmp, "w", encoding="utf-8") as f:
-                        json.dump(d, f, indent=2, ensure_ascii=False)
-                        f.write("\n")
-                    os.replace(tmp, path)
-                    changed.append("%s: %s -> %s" % (os.path.basename(path), old, target))
-                    break
-                except OSError:
-                    time.sleep(0.2)
+                    with open(path, encoding="utf-8") as f:
+                        d = json.load(f)
+                except (ValueError, OSError, AttributeError) as e:
+                    log.warning("读取 %s 失败，跳过: %s", path, e)
+                    continue
+                env = d.get("env")
+                old = env.get("ANTHROPIC_BASE_URL") if isinstance(env, dict) else None
+                if old == target:
+                    # 对抗审 a206A P2：base_url 已就位仍要校正 DISABLE_AUTO_
+                    # COMPACT（外部工具/手改 settings 丢键时自愈）——原样 continue
+                    # 会把缺键永远留在那
+                    if isinstance(env, dict):
+                        want = "/bili/" in target
+                        has = env.get("DISABLE_AUTO_COMPACT") == "1"
+                        if want != has:
+                            if want:
+                                env["DISABLE_AUTO_COMPACT"] = "1"
+                            else:
+                                env.pop("DISABLE_AUTO_COMPACT", None)
+                            tmp = "%s.%d.%d.tmp" % (path, os.getpid(), threading.get_ident())
+                            try:
+                                with open(tmp, "w", encoding="utf-8") as f:
+                                    json.dump(d, f, indent=2, ensure_ascii=False)
+                                    f.write(chr(10))
+                                os.replace(tmp, path)
+                            except OSError:
+                                pass
+                    skipped.append(os.path.basename(path))
+                    continue
+                d.setdefault("env", {})["ANTHROPIC_BASE_URL"] = target
+                # bili 独占压缩联动（a201）：base_url 指向 bili（/bili/ 前缀）时写
+                # DISABLE_AUTO_COMPACT=1 关掉 Claude Code 自带自动压缩（bili 分层
+                # 压缩接管，两者叠加会互相打断前缀缓存）；切走（off/直连/回滚）
+                # 自动移除——所有切换路径（start/stop/mode/自愈）都过 apply，单点收口
+                if "/bili/" in target:
+                    d["env"]["DISABLE_AUTO_COMPACT"] = "1"
+                else:
+                    d["env"].pop("DISABLE_AUTO_COMPACT", None)
+                # P1-7（a116）：tmp 名进程+线程唯一——跨进程并发写同一配置
+                # 文件时共用 path+".tmp" 会互相覆盖成半截 JSON
+                tmp = "%s.%d.%d.tmp" % (path, os.getpid(), threading.get_ident())
+                for attempt in range(3):
+                    try:
+                        if attempt > 0:
+                            with open(path, encoding="utf-8") as f:
+                                d = json.load(f)
+                            d.setdefault("env", {})["ANTHROPIC_BASE_URL"] = target
+                            if "/bili/" in target:
+                                d["env"]["DISABLE_AUTO_COMPACT"] = "1"
+                            else:
+                                d["env"].pop("DISABLE_AUTO_COMPACT", None)
+                        with open(tmp, "w", encoding="utf-8") as f:
+                            json.dump(d, f, indent=2, ensure_ascii=False)
+                            f.write("\n")
+                        os.replace(tmp, path)
+                        changed.append("%s: %s -> %s" % (os.path.basename(path), old, target))
+                        break
+                    except OSError:
+                        time.sleep(0.2)
         return changed, skipped
 
 
@@ -835,6 +840,7 @@ _cred_cached = False     # 缓存是否已初始化（None=无凭据 也是合�
 
 _autoswitched = False    # 工具自动改过 base_url → 退出时回滚直连
 _bili_switching = False
+_bili_switch_guard = threading.Lock()   # a238 P3-2：切换标志 check+set 原子化
 _bili_last_err = ""      # a203：最近一次压缩模式切换失败原因（前端展示，成功则清空）
 _bili_mode = None    # 当前压缩模式（init 时从记忆文件读）
 _ccr = False
@@ -997,17 +1003,23 @@ def start_proxy(bili_mode=None):
     返回 (ok, msg)。"""
     global _autoswitched, _bili_switching
     mode = _bili_mode if bili_mode is None else bili_mode
-    if _ctl.running:
-        return True, "已在运行"
-    if _ctl.port_in_use():
-        if _ctl.ping_existing():
-            return False, "already_running"   # 外部自家实例在跑（前端降级展示，复用不杀）
-        return False, "端口 %d 被其他程序占用，无法启动" % LISTEN_PORT
-    try:
-        _ctl.start()
-    except Exception as e:   # 绑定失败等——给面板可读消息，别让 Flask 吞成 500
-        return False, str(e)
-    _bili_switching = True
+    # a238 P3-2：check+set 原子化（模块锁）——原先两步无锁，压缩切换 90s 窗口
+    # 内并发的 start/第二次 compression 请求双双穿过；start 也不检查标志，
+    # 会 ping 到正在被 stop 的垂死实例记「复用」随即翻车
+    with _bili_switch_guard:
+        if _bili_switching:
+            return False, "压缩层切换进行中，请稍候"
+        if _ctl.running:
+            return True, "已在运行"
+        if _ctl.port_in_use():
+            if _ctl.ping_existing():
+                return False, "already_running"   # 外部自家实例在跑（前端降级展示，复用不杀）
+            return False, "端口 %d 被其他程序占用，无法启动" % LISTEN_PORT
+        try:
+            _ctl.start()
+        except Exception as e:   # 绑定失败等——给面板可读消息，别让 Flask 吞成 500
+            return False, str(e)
+        _bili_switching = True
 
     def _worker():
         global _bili_switching
@@ -1031,8 +1043,18 @@ def start_proxy(bili_mode=None):
                     if _bmgr.read_current_url() != _bili_url():
                         _bmgr.apply(_bili_url())
                         _autoswitched = True
-                except Exception as e:   # 失败不回滚重试代理，无压缩继续跑
-                    log.warning("bili 启动失败，继续无压缩运行: %s", e)
+                except Exception as e:
+                    # a238 P3-3：对齐 apply_bili_mode 的回退面——原只 log，节点
+                    # 滞留（idle node 常驻）且 mode 仍记 on（第 91s 起来也永不
+                    # 补切链路，压缩静默失效白占内存）
+                    log.warning("bili 启动失败，回退无压缩: %s", e)
+                    try:
+                        _bili.stop()
+                        save_bili_mode("off")
+                        global _bili_last_err
+                        _bili_last_err = str(e)[:200]
+                    except Exception:
+                        pass
         finally:
             _bili_switching = False
             _proxy_notify()   # 状态可能变化（就绪/失败），广播给前端
@@ -1308,9 +1330,11 @@ def apply_bili_mode(mode, ccr=None):
         save_bili_mode(mode, remember=True)
         log.info("压缩模式 -> %s（代理未运行，下次启动生效）", mode)
         return True, "已记住，下次启动代理时生效"
-    if _bili_switching:
-        return False, "压缩模式切换进行中，请稍候"
-    _bili_switching = True
+    # a238 P3-2：check+set 进锁（与 start_proxy 同一把 guard，交叉并发全挡）
+    with _bili_switch_guard:
+        if _bili_switching:
+            return False, "压缩模式切换进行中，请稍候"
+        _bili_switching = True
 
     def _worker():
         global _bili_mode, _bili_switching, _autoswitched, _bili_last_err

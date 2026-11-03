@@ -59,14 +59,28 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
                       : ((draftExt || '.note').toLowerCase() === '.note');
   // 外部 .note 入口（拖入/最近打开）传的是 /api/ed/open 返回的 JSON 字符串：
   // 不解析则 _edInitContent 判非对象 → 空块初始化 → Ctrl+S 把原文件覆盖成空笔记
+  let _noteCorrupted = false;
   if (isNote && typeof content === 'string' && content.trim()) {
-    try { content = JSON.parse(content); } catch (_) { content = null; }
+    try { content = JSON.parse(content); } catch (_) {
+      content = null;
+      _noteCorrupted = true;   // a238 P2-4：损坏的 .note（截断/手改坏）不能静默空开——条件反射 Ctrl+S 会把可救内容覆盖成空笔记
+    }
+    if (content && (typeof content !== 'object' || Array.isArray(content))) {
+      content = null; _noteCorrupted = true;   // JSON 合法但非笔记对象（数组/数字）同样按损坏处理
+    }
   }
   // 已打开同名文件 → 切过去
+  // a238 P1-5（第5轮A2）：外部文件去重必须「全路径相等」——原先只比 label
+  // （=basename），E:\proj2\a.c 会被 D:\bsp\a.c 的旧 tab 劫持：用户以为打开了
+  // 新文件，编辑后 Ctrl+S 内容写进第一个文件（写错文件，无任何视觉征兆）
   if (name) {
     for (const pid in connections) {
       const c = connections[pid];
       if (c && c.meta && c.meta.kind === 'editor' && c.meta.label === name) {
+        if (extPath || c.extPath) {
+          if (String(c.extPath || '') === String(extPath || '')) { switchTab(pid); return c; }
+          continue;   // 同名不同路径：不劫持，新开 tab
+        }
         switchTab(pid); return c;   // a209批1：去重分支也返回 conn（openFileSmart 行号跳转需要拿到实例）
       }
     }
@@ -219,7 +233,8 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
             conn.monaco.setValue(j.text);
             try { conn.monaco.setPosition(pos); conn.monaco.revealLineInCenter(pos.lineNumber); } catch (_) {}
           } else if (conn.ta) conn.ta.value = j.text;
-          conn.savedData = conn.monaco ? conn.monaco.getValue() : (conn.ta ? conn.ta.value : j.text);
+          _edSetBase(conn, j.text);   // a238：EOL 基线归一 + _eol 探测
+          conn.hasBom = !!j.has_bom;  // a238 P1-3：切编码后 BOM 状态跟随重读结果
           conn.fileMtime = j.mtime || conn.fileMtime;   // 重读了磁盘：基准同步，防误报
           encSel.dataset.cur = enc;
           showBanner('已按 ' + (j.used_enc || '自动探测') + ' 重新读取', 2500);
@@ -231,6 +246,13 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
   // v3.5.297：.note 正文 Ctrl+点击 [[双链]] 跳转（notes-nav.js，捕获期委托）
   if (typeof nnBindWikiClick === 'function') { try { nnBindWikiClick(conn); } catch (_) {} }
   _edInitContent(conn, content);
+  // a238 P2-4：损坏的 .note 以空笔记打开后强制置脏（关闭/切换时必弹确认）+
+  // 显式警示——否则条件反射 Ctrl+S 会原子覆盖掉磁盘上可救的半截 JSON
+  if (_noteCorrupted) {
+    conn.dirty = true;
+    showBanner('⚠ ' + (name || extPath || '笔记') + ' 内容已损坏（非合法笔记 JSON），以空白打开——直接保存会覆盖原文件，建议先「另存为」抢救内容', 9000, true);
+    _edMarkTab(conn);
+  }
   // 搜索分栏事件：回车搜索（Shift+回车跳下一个）、排除框回车、折叠按钮
   const qEl = wrap.querySelector('.ed-search-q');
   qEl.addEventListener('keydown', e => {
@@ -471,7 +493,8 @@ async function _edInitContent(conn, content) {
       conn.ta.addEventListener('click', () => _edUpdateInfo(conn));
       if (isMd) _mdRenderPreview(conn);
     }
-    conn.savedData = conn.monaco ? conn.monaco.getValue() : conn.ta.value;
+    _edSetBase(conn, typeof content === 'string' ? content
+      : (conn.monaco ? conn.monaco.getValue() : conn.ta.value));   // a238：EOL 基线（草稿 null→空串）
   }
   _edUpdateInfo(conn);
 }
@@ -486,11 +509,30 @@ async function _edGetContent(conn) {
 }
 
 // ---- 脏检测：当前内容 vs 上次保存 ----
+// a238 P1-2（第5轮A2）：EOL 基线管理——后端读侧已 newline='' 保留 \r\n；
+// Monaco 的 model EOL 跟随内容、getValue 按 model EOL 返回，textarea 的
+// value 被浏览器归一为 \n（HTML 规范）。统一策略：基线（savedData）与比对
+// 都归一为 \n，保存发送前按打开时探测的 _eol 重展开——CRLF 文件保存后
+// 不再被整文件改写成 LF（git diff 爆红/.reg 解析失败的主因）
+function _edNormEol(s) { return String(s).replace(/\r\n/g, '\n'); }
+function _edSetBase(conn, content) {
+  if (!conn.isNote && typeof content === 'string') {
+    if (content.indexOf('\r\n') >= 0) conn._eol = 'crlf';
+    else if (!conn._eol) conn._eol = 'lf';
+    conn.savedData = _edNormEol(content);
+  } else {
+    conn.savedData = content;   // .note 对象 / 空内容
+  }
+}
+function _edOutText(conn, content) {
+  if (conn.isNote || conn._eol !== 'crlf' || typeof content !== 'string') return content;
+  return content.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n');
+}
 function _edMarkDirty(conn) {
   if (!conn.isNote) {
-    // 纯文本精确比对字符串（Monaco/textarea 同源）
+    // 纯文本精确比对字符串（Monaco/textarea 同源；比对统一归一化 EOL）
     const cur = conn.monaco ? conn.monaco.getValue() : (conn.ta ? conn.ta.value : '');
-    const dirty = cur !== conn.savedData;
+    const dirty = _edNormEol(cur) !== conn.savedData;
     if (dirty !== conn.dirty) {
       conn.dirty = dirty; _edMarkTab(conn);
       if (typeof treeDecoRefresh === 'function') treeDecoRefresh();   // a231 去重（原相邻双调）   // a213 审计 P2：.note 分支联动
@@ -891,34 +933,45 @@ async function openEditorFile(nameOrPath) {
     if (typeof _recentAdd === 'function') _recentAdd({type:'file', key:'file:'+name, label:name, data:{kind:'edit', name:name, path:nameOrPath, extPath: isExtPath ? nameOrPath : ''}});
     window._edLastUsedEnc = isExtPath ? (j.used_enc || null) : null;
     const _c = buildEditorTab(name, content, isExtPath ? nameOrPath : null, j.mtime || null);
-    if (_c) _c.usedEnc = j.used_enc || null;
+    if (_c) { _c.usedEnc = j.used_enc || null; _c.hasBom = !!j.has_bom; }   // a238：BOM 状态随打开结果记录（保存回补依据）
   } catch(e) { notifyTaskDone(nid, {ok:false, title:'打开失败', detail:String(e), ms:5000}); }
 }
 
 // ---- 保存：草稿/未落盘 → tab 标题原地改名（定名即保存）；已落盘 → 覆盖保存 ----
-async function edSave(conn) {
+async function edSave(conn, _forceOverwrite) {
   if (!conn.onDisk) { edRenamePrompt(conn); return; }
   const content = await _edGetContent(conn);
   if (content === null) { showBanner('读取内容失败', 4000, true); return; }
-  const text = conn.isNote ? JSON.stringify(content) : content;
+  const text = _edOutText(conn, conn.isNote ? JSON.stringify(content) : content);
   try {
     // 外部文件（拖入）：写回原绝对路径；站内文件：按名写 files/
-    const body = conn.extPath ? {path: conn.extPath, text} : {name: conn.meta.label, text};
+    // a238（第5轮A2）：enc/bom 按打开时的编码状态回写（GBK 文件不再被静默
+    // 转 UTF-8）；expect_mtime = 打开基准 mtime，磁盘被外部改动时后端 409
+    const body = conn.extPath
+      ? {path: conn.extPath, text,
+         enc: (conn.usedEnc && !conn.isNote) ? conn.usedEnc : undefined,
+         bom: !!conn.hasBom && !conn.isNote,
+         expect_mtime: (_forceOverwrite || conn.fileMtime == null) ? undefined : conn.fileMtime}
+      : {name: conn.meta.label, text};
     const r = await fetch('/api/ed/save', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
     const j = await r.json();
-    if (!j.ok) { showBanner(j.err || '保存失败', 4000, true); return; }
-    conn.savedData = content;
-    conn.dirty = false;
-    if (typeof treeDecoRefresh === 'function') treeDecoRefresh(); _edMarkTab(conn); _edUpdateInfo(conn);
-    // 自己刚保存的：刷新 mtime 基准，磁盘检测不误报自己的写入
-    if (conn.fileMtime) {
-      const sq = conn.extPath
-        ? '/api/ed/stat?path=' + encodeURIComponent(conn.extPath)
-        : '/api/ed/stat?name=' + encodeURIComponent(conn.meta.label);
-      fetch(sq).then(r => r.json()).then(sj => {
-        if (sj.ok) { conn.fileMtime = sj.mtime; conn.diskWatchAsked = null; conn._fileGoneWarned = false; }
-      }).catch(() => {});
+    if (r.status === 409 && j.conflict) {
+      // 保存撞上外部改动（lost-update 防线）：复用磁盘改动三选弹窗
+      // reload=丢弃内存取磁盘版 / keep=用内存覆盖磁盘（强制） / ignore=放弃保存
+      const pick = await _edDiskChangedModal(conn, null);
+      if (pick === 'reload') { _edReloadFromDisk(conn); return; }
+      if (pick === 'keep') { conn.fileMtime = null; return edSave(conn, true); }   // 无基准=跳过 CAS 强制覆盖
+      return;   // ignore：不保存
     }
+    if (!j.ok) { showBanner(j.err || '保存失败', 4000, true); return; }
+    _edSetBase(conn, content);
+    // a238 P2-3：不再硬写 dirty=false——保存往返期间的新击键会被误标干净，
+    // 关 tab 时 dirty=false 不弹确认直接丢字。以刚保存内容为基线重比对
+    _edMarkDirty(conn);
+    if (typeof treeDecoRefresh === 'function') treeDecoRefresh(); _edMarkTab(conn); _edUpdateInfo(conn);
+    // a238 P3-1：保存响应直接带新 mtime（原二次异步 stat 失败会让下轮轮询
+    // 把自己的保存误判为外部改动）
+    if (j.mtime) { conn.fileMtime = j.mtime; conn.diskWatchAsked = null; conn._fileGoneWarned = false; }
     showBanner('已保存 ' + (conn.extPath || conn.meta.label), 1500);
     // v3.5.297：保存后反链面板自动刷新（链入/链出与磁盘内容保持一致）
     if (typeof nnRefreshLinksIfOpen === 'function') { try { nnRefreshLinksIfOpen(conn); } catch (_) {} }
@@ -994,31 +1047,7 @@ async function _edCheckDiskChanged(conn) {
     const choice = await _edDiskChangedModal(conn, j.mtime);
     conn._dcAsking = false;
     if (choice === 'reload') {
-      // 重读磁盘（同编码切换链路）：内容/基准/脏标志一起刷新
-      try {
-        const enc = conn.usedEnc || '';
-        const oq = (conn.extPath
-          ? '/api/ed/open?force=1&path=' + encodeURIComponent(conn.extPath)
-          : '/api/ed/open?name=' + encodeURIComponent(conn.meta.label))
-          + (enc ? '&enc=' + encodeURIComponent(enc) : '');
-        const r2 = await fetch(oq);
-        const j2 = await r2.json();
-        if (!j2.ok) { showBanner('重读失败：' + (j2.err || ''), 4000, true); return; }
-        let content = j2.text;
-        if (conn.isNote) { try { content = JSON.parse(j2.text); } catch(_) { content = { blocks: [] }; } }
-        if (conn.editor) { conn.editor.render(content); }
-        else if (conn.monaco) {
-          const pos = conn.monaco.getPosition();
-          conn.monaco.setValue(j2.text);
-          try { conn.monaco.setPosition(pos); conn.monaco.revealLineInCenter(pos.lineNumber); } catch(_) {}
-        } else if (conn.ta) conn.ta.value = j2.text;
-        conn.savedData = content;
-        conn.dirty = false;
-    if (typeof treeDecoRefresh === 'function') treeDecoRefresh(); _edMarkTab(conn); _edUpdateInfo(conn);
-        conn.fileMtime = j2.mtime;
-        conn._fileGoneWarned = false;
-        showBanner('已重新加载 ' + conn.meta.label, 2000);
-      } catch(e) { showBanner('重读失败: ' + e, 4000, true); }
+      await _edReloadFromDisk(conn);
     } else if (choice === 'keep') {
       // 保留内存版：标记 dirty（有改动状态），用户之后自行覆盖保存（写回时
       // mtime 基准更新）或另存为。不动 savedData——脏检测基准仍是打开时内容。
@@ -1028,6 +1057,36 @@ async function _edCheckDiskChanged(conn) {
     }
     // ignore：什么都不动，diskWatchAsked 已记录本次 mtime，同一改动不再弹
   } catch(_) {}   // stat 网络失败静默（下轮再查）
+}
+
+// 重读磁盘（同编码切换链路）：内容/基准/脏标志一起刷新。
+// a238：从 _edCheckDiskChanged 抽出——保存撞外部改动（409）选「重载」时复用
+async function _edReloadFromDisk(conn) {
+  try {
+    const enc = conn.usedEnc || '';
+    const oq = (conn.extPath
+      ? '/api/ed/open?force=1&path=' + encodeURIComponent(conn.extPath)
+      : '/api/ed/open?name=' + encodeURIComponent(conn.meta.label))
+      + (enc ? '&enc=' + encodeURIComponent(enc) : '');
+    const r2 = await fetch(oq);
+    const j2 = await r2.json();
+    if (!j2.ok) { showBanner('重读失败：' + (j2.err || ''), 4000, true); return; }
+    let content = j2.text;
+    if (conn.isNote) { try { content = JSON.parse(j2.text); } catch(_) { content = { blocks: [] }; } }
+    if (conn.editor) { conn.editor.render(content); }
+    else if (conn.monaco) {
+      const pos = conn.monaco.getPosition();
+      conn.monaco.setValue(j2.text);
+      try { conn.monaco.setPosition(pos); conn.monaco.revealLineInCenter(pos.lineNumber); } catch(_) {}
+    } else if (conn.ta) conn.ta.value = j2.text;
+    _edSetBase(conn, content);
+    conn.hasBom = !!j2.has_bom;
+    conn.dirty = false;
+    if (typeof treeDecoRefresh === 'function') treeDecoRefresh(); _edMarkTab(conn); _edUpdateInfo(conn);
+    conn.fileMtime = j2.mtime;
+    conn._fileGoneWarned = false;
+    showBanner('已重新加载 ' + conn.meta.label, 2000);
+  } catch(e) { showBanner('重读失败: ' + e, 4000, true); }
 }
 
 // ---- 另存为：同样走 tab 原地改名（改名确认后即另存为新文件）----
@@ -1103,13 +1162,13 @@ function edRenamePrompt(conn) {
       // 草稿：定名保存（含当前内容，保存后才算落盘）
       const content = await _edGetContent(conn);
       if (content === null) { showBanner('读取内容失败', 4000, true); _edMarkTab(conn); return; }
-      const text = conn.isNote ? JSON.stringify(content) : content;
+      const text = _edOutText(conn, conn.isNote ? JSON.stringify(content) : content);
       try {
         const r = await fetch('/api/ed/save_as', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({new_name: nn, text})});
         const j = await r.json();
         if (!j.ok) { showBanner(j.err || '保存失败', 4000, true); _edMarkTab(conn); return; }
         conn.meta.label = j.name;
-        conn.savedData = content;
+        _edSetBase(conn, content);   // a238：EOL 基线（新名落盘沿用当前 EOL/编码状态）
         conn.onDisk = true;
         conn.dirty = false;
     if (typeof treeDecoRefresh === 'function') treeDecoRefresh();
@@ -2159,7 +2218,7 @@ async function _edInsertImageFromPath(path) {
     const j2 = await (await fetch('/api/ed/proxy_img', {method:'POST',
       headers:{'Content-Type':'application/json'}, body: JSON.stringify({path})})).json();
     if (!j2.ok) { showBanner('读取图片失败：' + (j2.err || path), 4000, true); return true; }
-    blob = await (await fetch('/api/ed/img_data/' + j2.url.split('/').pop())).blob();
+    blob = await (await fetch('/api/ed/img/' + j2.url.split('/').pop())).blob();   // a238 P2-7：原 img_data 路由不存在（404 JSON 被当 Blob 上传→魔数必拒→拖图恒失败），正确路由是 /api/ed/img/
   }
   const ext = (path.split('.').pop() || '').toLowerCase();
   const file = new File([blob], 'img.' + ext, {type: 'image/' + (ext === 'jpg' ? 'jpeg' : ext)});

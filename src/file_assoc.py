@@ -226,7 +226,7 @@ def assoc_status():
 def assoc_takeover():
     """接管：{exts: [".txt", ...]}。注册各后缀专属 ProgId + 指向。"""
     data = request.get_json(force=True, silent=True) or {}
-    exts = data.get("exts") or []
+    exts = data.get("exts") if isinstance(data.get("exts"), list) else []   # a238 P3：非列表（int/str）原 for-in 崩
     exts = [e for e in exts if e in ASSOC_EXTS]
     if not exts:
         return jsonify({"ok": False, "err": "未选择有效后缀"})
@@ -244,7 +244,7 @@ def assoc_takeover():
 def assoc_restore():
     """还原：{exts: [".txt", ...]}。恢复备份原值；全部还原后删全部 ProgId。"""
     data = request.get_json(force=True, silent=True) or {}
-    exts = data.get("exts") or []
+    exts = data.get("exts") if isinstance(data.get("exts"), list) else []   # a238 P3：非列表（int/str）原 for-in 崩
     exts = [e for e in exts if e in ASSOC_EXTS]
     if not exts:
         return jsonify({"ok": False, "err": "未选择有效后缀"})

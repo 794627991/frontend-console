@@ -104,11 +104,18 @@ def _alive(url, timeout=1.0):
         return False
 
 
+_launch_cool_until = [0.0]   # a238 P3-6：拉起失败后的冷却截止（模型对失败
+#                             的典型反应是连续重试——每次 Popen+25s 等待的 churn
+#                             由冷却压制，60s 内直接快速失败）
+
+
 def _ensure_backend():
     """确保工具后端在跑。没开则拉起，最多等 25s。返回 (url, info) 或 (None, None)。"""
     url, info = _find_endpoint()
     if url and _alive(url):
         return url, info
+    if time.time() < _launch_cool_until[0]:
+        return None, None   # 冷却期：上轮拉起刚失败，不再 Popen
     # 拉起工具：优先源码 main.py（始终最新），其次 exe（可能旧版本）
     launched = False
     for candidate in _EXE_CANDIDATES:
@@ -136,6 +143,7 @@ def _ensure_backend():
         except Exception:
             pass
     if not launched:
+        _launch_cool_until[0] = time.time() + 60
         return None, None
     # 轮询等就绪
     for _ in range(50):
@@ -143,6 +151,7 @@ def _ensure_backend():
         url, info = _find_endpoint()
         if url and _alive(url):
             return url, info
+    _launch_cool_until[0] = time.time() + 60   # 25s 未就绪：失败冷却
     return None, None
 
 
@@ -1029,6 +1038,16 @@ _TOOLS = [
 ]
 
 
+_RETRY_SAFE_TOOLS = {
+    # a238 P3-5：URLError 重试白名单——只读/幂等工具。connect_*/send_*/
+    # tftp_*/disconnect 均有副作用，重试会二次执行（burst 双发/重复握手）
+    "observe", "list_ports", "get_buffer", "read_log", "search_log",
+    "list_open_logs", "compare_files", "diff_logs", "tftp_status",
+    "devtools_console", "devtools_dom", "devtools_eval",
+    "devtools_network", "devtools_screenshot",
+}
+
+
 def _dispatch(url, name, args):
     """分发工具调用。返回字符串结果。"""
     # 缺必填参数时给出明确提示，而非抛 KeyError（AI 偶尔会漏参数）
@@ -1188,6 +1207,11 @@ def main():
                     raise _BackendError(_httperr_msg(e)) from None
                 except urllib.error.URLError:
                     # 后端可能刚重启/瞬断（连接拒绝/超时等，非 HTTP 状态错误）：失效缓存，重新发现后端并重试一次
+                    # a238 P3-5（第5轮A3）：仅重试只读工具——URLError 也覆盖
+                    # 「请求已达、响应丢失」形态，connect_ssh/send_burst 这类
+                    # 非幂等调用重试=串口时间线二次发送/重复握手
+                    if name not in _RETRY_SAFE_TOOLS:
+                        raise
                     _url_cache[0] = None
                     url = get_url()
                     if not url:

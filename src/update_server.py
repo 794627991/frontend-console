@@ -1130,13 +1130,23 @@ class _Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(min(n, 4096)).decode("utf-8")) if n else {}
         except Exception:
             body = {}
+        # a238 P3：JSON 数组/字符串顶替对象时 (body or {}).get 抛 AttributeError →
+        # BaseHTTPRequestHandler 打 traceback；统一归一到 dict
+        if not isinstance(body, dict):
+            body = {}
         if raw == "api/login":
             time.sleep(0.3)   # 轻微节流：暴力试密码的成本下限
-            if str((body or {}).get("password") or "") != _portal_password():
+            # a238 P3：常数时间比较（secrets.compare_digest）
+            _pw = str(body.get("password") or "")
+            if not secrets.compare_digest(_pw, _portal_password()):
                 self._json(401, {"ok": False, "err": "密码不对"})
                 return
             tok = secrets.token_urlsafe(24)
-            _sessions[tok] = time.time() + _SESSION_TTL
+            # a238 P3：登录路径顺手清过期 token（字典长开服务无界增长）
+            _now = time.time()
+            for k in [k for k, exp in _sessions.items() if exp < _now]:
+                _sessions.pop(k, None)
+            _sessions[tok] = _now + _SESSION_TTL
             self._json(200, {"ok": True}, [("Set-Cookie",
                           "fc_token=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=%d"
                           % (tok, _SESSION_TTL))])
@@ -1187,9 +1197,12 @@ def stop():
         srv, _server = _server, None
     if srv is not None:
         # v2.2.1 同步收尾（原异步 shutdown）：热重载要立刻重新 bind 同端口，
-        # 等旧 listener 干净退出再返回（最多 2s）
+        # 等旧 listener 干净退出再返回
+        # a238 P2（第5轮A1）：BaseServer.shutdown 签名是 (self)——传 timeout=
+        # 必抛 TypeError 且被 except 吞掉，serve_forever 线程从未被真正停过，
+        # 热重载 rebind 撞旧线程的「端口被占用」假报错由此而来
         try:
-            srv.shutdown(timeout=2)
+            srv.shutdown()
         except Exception:
             pass
         try:
