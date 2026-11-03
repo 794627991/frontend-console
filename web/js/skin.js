@@ -78,6 +78,7 @@ function applyStyle(id, persist) {
     const r = await fetch('/api/theme');
     const j = await r.json();
     if (j.ok && j.style) style = j.style;
+    if (j.ok && j.perf_mode) document.documentElement.setAttribute('data-perf', '');
   } catch (_) {}
   if (!style || style === 'default') return;
   // 等 theme.js initTheme 先挂好 data-theme 再挂风格：两份 async fetch
@@ -88,3 +89,18 @@ function applyStyle(id, persist) {
   }
   applyStyle(style, false);
 })();
+
+// a278 性能模式开关：关极光 blur / backdrop-filter / 全屏光斑动画
+// （虚机 GPU 合成大头，devtools 追踪 GPUTask 1331ms 实锤）。持久化搭
+// /api/theme 顺车（perf_mode 键）。
+function togglePerfMode(on) {
+  const el = document.documentElement;
+  if (on === undefined) on = !el.hasAttribute('data-perf');
+  el.toggleAttribute('data-perf', on);
+  try {
+    fetch('/api/theme', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ perf_mode: on }) });
+  } catch (_) {}
+  return on;
+}
+window.togglePerfMode = togglePerfMode;

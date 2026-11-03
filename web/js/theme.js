@@ -245,6 +245,18 @@ function applyFontSettings(termFs, zoom, persist) {
       });
     }
     menu.appendChild(cols);
+    // a278 性能模式开关（极光玻璃 GPU 合成优化——虚机 GPU 每帧 blur 大户）
+    const perf = document.createElement('button');
+    perf.className = 'btn ghost';
+    perf.style.cssText = 'width:100%;margin-top:8px;padding:6px 10px;font-size:11px;text-align:left;';
+    const syncPerf = () => {
+      const on = document.documentElement.hasAttribute('data-perf');
+      perf.innerHTML = (on ? ICO16.zap : ICO16.eyeOff) + ' 性能模式：' + (on ? '<b style="color:var(--accent)">已开启</b>' : '已关闭')
+        + '<small style="color:var(--muted);font-weight:400;">　关极光 blur/光斑动画（虚机 GPU 推荐）</small>';
+    };
+    perf.onclick = () => { togglePerfMode(); syncPerf(); };
+    syncPerf();
+    menu.appendChild(perf);
   }
   // 顶栏「换肤」按钮已按用户要求移除（主题入口走 logo 机器人 → 设置面板「外观主题」）。
   // renderMenu 保留给潜在调用方；themeMenu DOM 保留无害（display:none）。

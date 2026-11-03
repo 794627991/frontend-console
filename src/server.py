@@ -1076,8 +1076,11 @@ def api_theme():
                         "snip_hotkey": cfg.get("snip_hotkey", "ctrl+alt+a"),
                         # v3.5.310 可配置搜索快捷键（页面内 keydown，非系统热键）
                         "doc_search_hotkey": cfg.get("doc_search_hotkey", "ctrl+f"),
-                        "notes_search_hotkey": cfg.get("notes_search_hotkey", "ctrl+alt+f")})
+                        "notes_search_hotkey": cfg.get("notes_search_hotkey", "ctrl+alt+f"),
+                        "perf_mode": bool(cfg.get("perf_mode", False))})
     data = request.get_json(force=True) or {}
+    if "perf_mode" in data:
+        _save_config({**_load_config(), "perf_mode": bool(data["perf_mode"])})
     if "data_dir_prompted" in data:
         # 仅写引导标记的轻请求（不带 theme 字段）
         _save_config({**_load_config(), "data_dir_prompted": bool(data["data_dir_prompted"])})

@@ -112,6 +112,8 @@ html[data-style="swiss"][data-theme="paper"] {
    性能红线：backdrop-filter 只上侧栏/弹窗/横幅卡片层——
    终端区（.xterm-wrap 系）永不模糊；极光动画只用 transform
    （合成器层），无 background-position 类逐帧重绘
+   a278 性能模式（data-perf）：虚机 GPU 上 backdrop-filter 是每帧
+   大头（用户 devtools 追踪实锤 GPUTask 1331ms），关 blur 保流畅
    ============================================================ */
 html[data-style="aurora"] body::before { display: none; }   /* 科技网格退场 */
 /* 极光层：双光斑 blur 缓移（rgba 白系高光为跨主题装饰色，
@@ -125,6 +127,8 @@ html[data-style="aurora"] body::after {
     radial-gradient(520px 360px at 45% 105%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 70%);
   animation: sk-aurora 26s ease-in-out infinite alternate;
 }
+/* a278 性能模式：极光光斑也停（每帧合成 64px blur 的全屏层=虚机 GPU 大户） */
+html[data-style="aurora"][data-perf] body::after { display: none; }
 @keyframes sk-aurora {
   from { transform: translate(0, 0) scale(1); }
   to   { transform: translate(48px, 28px) scale(1.12); }
@@ -136,6 +140,13 @@ html[data-style="aurora"] .banner {
   background: color-mix(in srgb, var(--bg-panel) 72%, transparent);
   backdrop-filter: blur(14px);
   border-color: rgba(255, 255, 255, 0.16);
+}
+/* a278 性能模式：关 backdrop-filter，背景提高到不透明度补偿 */
+html[data-style="aurora"][data-perf] .sidebar,
+html[data-style="aurora"][data-perf] .modal,
+html[data-style="aurora"][data-perf] .banner {
+  background: color-mix(in srgb, var(--bg-panel) 96%, transparent);
+  backdrop-filter: none;
 }
 html[data-style="aurora"] .modal,
 html[data-style="aurora"] .banner {
