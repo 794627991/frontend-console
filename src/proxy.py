@@ -1024,6 +1024,10 @@ def start_proxy(bili_mode=None):
 
     def _worker():
         global _bili_switching
+        # a246 P3（a238复审）：捕获 repoint epoch——stop_proxy/手动接管会 bump。
+        # 此前 worker 就绪后无条件 apply：用户中途点停止，90s 后 bili 就绪仍把
+        # base_url 拉回已停的代理端口=死链。作废后不再拉回，就绪实例顺手停掉
+        _ep = _repoint_seq
         try:
             # 先记忆当前直连地址（非代理值才记——恢复的真源），再切 37349
             # 直连重试代理（不等 headroom，会话立即可用）
@@ -1034,6 +1038,9 @@ def start_proxy(bili_mode=None):
                 # 方案快照找回真源并落盘，此后恢复不再依赖方案文件
                 _remember_direct(_direct_url())
             target = _retry_url()
+            if _ep != _repoint_seq:
+                log.info("启动中途 base_url 已被停止/接管，放弃重试代理切换")
+                return
             if cur != target:
                 _bmgr.apply(target)
                 _autoswitched = True
@@ -1041,6 +1048,13 @@ def start_proxy(bili_mode=None):
                 try:
                     _bili.start(mode)
                     _wait_bili_ready()
+                    if _ep != _repoint_seq:
+                        log.info("bili 就绪但 repoint 已作废（stop/手动接管），不切回代理入口")
+                        try:
+                            _bili.stop()
+                        except Exception:
+                            pass
+                        return
                     if _bmgr.read_current_url() != _bili_url():
                         _bmgr.apply(_bili_url())
                         _autoswitched = True

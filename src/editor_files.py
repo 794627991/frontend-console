@@ -66,6 +66,11 @@ def _safe_path(name):
     允许外部绝对路径（打开 files 外的文件）由调用方单独校验，这里只管站内。"""
     if not _NAME_RE.match(name or ""):
         return None
+    # a246 P3（a244复审）：_NAME_RE 放行 "con.txt" 等设备名——open(tmp) 内容
+    # 静默丢弃+replace 失败=500。站内名与外部路径同一防线
+    from src.app_state import reject_win_devpath
+    if reject_win_devpath(name):
+        return None
     p = os.path.normpath(os.path.join(FILES_DIR, name))
     if not os.path.realpath(p).startswith(os.path.realpath(FILES_DIR) + os.sep):
         return None  # 穿越尝试（. 不会被 _NAME_RE 放行，双保险）
@@ -288,6 +293,11 @@ def _write_text_atomic(p, text, enc=None, bom=False):
     # utf-8-sig 探测文件保存后被强加 BOM）。统一归一到 utf-8，由 bom 决定升 sig
     if real == "utf-8-sig":
         real = "utf-8"
+    # a246 P3（a238复审）：codec 白名单——读侧拒 UTF-16/32（BOM+NUL 双拒），
+    # 写侧却接受任意 codec（政策矛盾）。白名单=前端下拉全集（gb* 已归一），
+    # 其余（utf-16/utf-32/任意串）一律拒
+    if real not in ("utf-8", "gb18030", "big5", "latin-1"):
+        return False, f"不支持的保存编码: {enc}"
     out_enc = "utf-8-sig" if (bom and real == "utf-8") else real
     tmp = "%s.%d.%d.tmp" % (p, os.getpid(), time.time_ns() % 10**9)
     try:
@@ -335,6 +345,10 @@ def ed_save():
         # 前端弹「磁盘已变化」三选（重开/覆盖/另存），不静默覆盖
         expect_mtime = data.get("expect_mtime")
         if expect_mtime is not None:
+            # a246 P3（a238复审）：非数值（str/dict 等）此前 float() 抛 ValueError→500，
+            # 统一 400
+            if not isinstance(expect_mtime, (int, float)) or isinstance(expect_mtime, bool):
+                return jsonify({"ok": False, "err": "expect_mtime 必须是数值"}), 400
             try:
                 cur_mtime = os.path.getmtime(p)
             except OSError:

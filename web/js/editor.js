@@ -114,7 +114,7 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
         <button class="lv-btn" data-ed-action="outline" title="显示/隐藏右侧大纲面板">☰ 大纲</button>
         <button class="lv-btn" data-ed-action="links" title="显示/隐藏双链面板（链入/链出/标签）">🔗 链接</button>
         <button class="lv-btn" data-ed-action="exportmd" title="导出为 Markdown（同目录同名 .md，图片相对路径）">⤓ .md</button>
-        <select name="ed_enc" class="lv-btn ed-enc-sel" data-ed-enc title="文件编码（切换后按所选编码重新读取；保存始终写 UTF-8）" style="display:none;">
+        <select name="ed_enc" class="lv-btn ed-enc-sel" data-ed-enc title="文件编码（切换后按所选编码重新读取；保存按当前编码回写）" style="display:none;">
           <option value="">编码：自动</option>
           <option value="utf-8">UTF-8</option>
           <option value="gb2312">GB2312</option>
@@ -210,7 +210,7 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
     if (encSel) {
       encSel.style.display = '';
       const _ue = window._edLastUsedEnc || '';
-      encSel.title = '当前编码：' + (_ue || '自动探测') + '（切换后按所选编码重新读取原文件；保存始终写 UTF-8）';
+      encSel.title = '当前编码：' + (_ue || '自动探测') + '（切换后按所选编码重新读取原文件；保存按当前编码回写）';
       if (_ue === 'gb18030' || _ue === 'gbk') encSel.value = 'gbk';
       encSel.onchange = async () => {
         if (conn.dirty) {
@@ -223,7 +223,12 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
                     (enc ? '&enc=' + encodeURIComponent(enc) : '');
           const r = await fetch(q);
           const j = await r.json();
-          if (!j.ok) { showBanner('重读失败：' + (j.err || ''), 4000, true); return; }
+          // a246 P3（a238复审）：重读失败回拨下拉——文件仍是旧编码，下拉
+          // 却停在新选择上=状态失同步
+          if (!j.ok) {
+            encSel.value = encSel.dataset.cur || '';
+            showBanner('重读失败：' + (j.err || ''), 4000, true); return;
+          }
           conn.usedEnc = j.used_enc;
           window._edLastUsedEnc = j.used_enc;
           conn.dirty = false;
@@ -965,7 +970,10 @@ async function edSave(conn, _forceOverwrite) {
       // reload=丢弃内存取磁盘版 / keep=用内存覆盖磁盘（强制） / ignore=放弃保存
       const pick = await _edDiskChangedModal(conn, null);
       if (pick === 'reload') { _edReloadFromDisk(conn); return; }
-      if (pick === 'keep') { conn.fileMtime = null; return edSave(conn, true); }   // 无基准=跳过 CAS 强制覆盖
+      // a246 P3（a238复审）：不再置 fileMtime=null——_forceOverwrite 已让 body
+      // 跳过 expect_mtime（CAS），null 反而有害：强制保存失败后基准丢失，
+      // 磁盘改动检测对该 tab 永久失效。成功路径下方 j.mtime 会刷新基准
+      if (pick === 'keep') { return edSave(conn, true); }
       return;   // ignore：不保存
     }
     if (!j.ok) { showBanner(j.err || '保存失败', 4000, true); return; }

@@ -339,5 +339,9 @@ def reject_win_devpath(path):
     if "\x00" in s:
         return True
     base = os.path.basename(s.rstrip(chr(92) + "/"))   # \ 与 /（避免源码转义歧义）
-    stem = base.split(".")[0].rstrip(". ") if "." in base else base.rstrip(". ")
+    # a246 P3-a（a244复审）：先剥整名尾部点/空格（Windows 语义），再取首段，
+    # 不再二次 rstrip——"con .txt"（点前含空格）是合法文件名而非 CON 设备，
+    # 旧算法剥掉内空格误杀；"CON.txt"/"con." 仍正确拒
+    b = base.rstrip(". ")
+    stem = b.split(".")[0] if "." in b else b
     return stem.upper() in _WIN_RESERVED
