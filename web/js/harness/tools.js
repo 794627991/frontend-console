@@ -724,9 +724,10 @@
     d.style.setProperty('--h-accent', _H_KIND_COLOR[cfg.kind] || 'var(--border)');
     const title = typeof cfg.title === 'function' ? cfg.title(inp) : (cfg.title || label);
     const badges = _hgToolBadges(name, inp);
-    // a275 批1b：summary 在手=头部已能看到结果摘要，体可懒；无 summary=体是
-    // 唯一信息载体，不能懒（点开前用户至少要能看到输出预览）
-    const x_hasSummary = !!(o.summary || (o.result !== undefined && String(o.result || '').trim()));
+    // a275R 批1b（DOM 只降 14% → 收紧）：旧 x_hasSummary 判据太宽——几乎所有
+    // 工具都有 result（哪怕"成功"一行字），懒路径基本不触发。改为：历史行
+    // 完成态一律空体（头部已有图标+标题+参数摘要+状态徽章=折叠态全部可见
+    // 信息；体是展开才需要的详情——ZCode 同款语义，#26 懒挂载）
     let argH = '', argTitle = '';
     let _cmdFull = '';
     if (cfg.kind === 'bash') {
@@ -752,7 +753,7 @@
       `<span class="h-tslots">${done ? statusBadge(err ? 'error' : (o.stopped ? 'stopped' : 'completed')) : ''}</span></button>` +
       // a275 批1b（ZCode #26 懒挂载）：历史行（hi≠null）且非错误非 defaultOpen
       // → 空体+懒标（_histLazyFill 点开现建）。live 行（hi=null）照旧即填
-      `<div class="h-tool-coll">${(o.hi != null && !err && !cfg.defaultOpen && !x_hasSummary)
+      `<div class="h-tool-coll">${(o.hi != null && !err && !cfg.defaultOpen)
         ? '' : hgToolBody(cfg, inp, { done, err, dln: o.dln, result: o.result, summary: o.summary, cmd: _cmdFull })}</div>`;
     // 公共账（两轨同挂——renderOneToolResult/_subTlPoll/快照认回全消费）
     d._cfg = cfg;
