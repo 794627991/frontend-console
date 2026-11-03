@@ -339,9 +339,10 @@ def reject_win_devpath(path):
     if "\x00" in s:
         return True
     base = os.path.basename(s.rstrip(chr(92) + "/"))   # \ 与 /（避免源码转义歧义）
-    # a246 P3-a（a244复审）：先剥整名尾部点/空格（Windows 语义），再取首段，
-    # 不再二次 rstrip——"con .txt"（点前含空格）是合法文件名而非 CON 设备，
-    # 旧算法剥掉内空格误杀；"CON.txt"/"con." 仍正确拒
+    # a250 P1（a247/a248复审实测推翻 a247 前提）：Windows 剥组件尾空白后与设备名
+    # 比对——本机(win 19045)实测 "CON .txt" 家族 open() 内容写入控制台、read()
+    # 永久阻塞（=a239 挂线程洞）。首段必须再 rstrip 点空格；a247 的"点前空格
+    # =合法文件名"论断错误，其"解锁"的全是设备路径。整名预剥保留（无害）。
     b = base.rstrip(". ")
-    stem = b.split(".")[0] if "." in b else b
+    stem = b.split(".")[0].rstrip(". ") if "." in b else b
     return stem.upper() in _WIN_RESERVED

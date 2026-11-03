@@ -1021,13 +1021,14 @@ def start_proxy(bili_mode=None):
         except Exception as e:   # 绑定失败等——给面板可读消息，别让 Flask 吞成 500
             return False, str(e)
         _bili_switching = True
+        # a250 P3（a247/a248复审）：epoch 在主线程 spawn 前捕获——若在线程首条
+        # 语句捕获，guard 释放到线程启动的亚毫秒窗内 stop 已 bump，worker 反而
+        # 拿到"新值"自认有效
+        _ep0 = _repoint_seq
 
     def _worker():
-        global _bili_switching
-        # a246 P3（a238复审）：捕获 repoint epoch——stop_proxy/手动接管会 bump。
-        # 此前 worker 就绪后无条件 apply：用户中途点停止，90s 后 bili 就绪仍把
-        # base_url 拉回已停的代理端口=死链。作废后不再拉回，就绪实例顺手停掉
-        _ep = _repoint_seq
+        global _bili_switching, _autoswitched   # a250：原漏声明 global，赋值落局部，停止回滚判断从未生效
+        _ep = _ep0
         try:
             # 先记忆当前直连地址（非代理值才记——恢复的真源），再切 37349
             # 直连重试代理（不等 headroom，会话立即可用）
@@ -1038,26 +1039,29 @@ def start_proxy(bili_mode=None):
                 # 方案快照找回真源并落盘，此后恢复不再依赖方案文件
                 _remember_direct(_direct_url())
             target = _retry_url()
-            if _ep != _repoint_seq:
-                log.info("启动中途 base_url 已被停止/接管，放弃重试代理切换")
-                return
-            if cur != target:
-                _bmgr.apply(target)
-                _autoswitched = True
+            # a250 P3：检查+apply 同锁原子化（_switch_lock 与 _bmgr.apply 内部
+            # 同把 RLock 可重入；stop/手动接管的 apply 也在锁内 → 全序正确，
+            # 杜绝检查后 apply 前 bump 穿透的 TOCTOU）
+            with _switch_lock:
+                if _ep != _repoint_seq:
+                    log.info("启动中途 base_url 已被停止/接管/切方案，放弃重试代理切换")
+                    return
+                if cur != target:
+                    _bmgr.apply(target)
+                    _autoswitched = True
             if mode != "off":
                 try:
                     _bili.start(mode)
                     _wait_bili_ready()
-                    if _ep != _repoint_seq:
-                        log.info("bili 就绪但 repoint 已作废（stop/手动接管），不切回代理入口")
-                        try:
-                            _bili.stop()
-                        except Exception:
-                            pass
-                        return
-                    if _bmgr.read_current_url() != _bili_url():
-                        _bmgr.apply(_bili_url())
-                        _autoswitched = True
+                    # a250 P3：作废不再杀 bili——epoch 同为切方案所 bump，杀掉会让
+                    # 压缩静默失效到下次重启；实例保留（面板状态一致），仅不拉回入口
+                    with _switch_lock:
+                        if _ep != _repoint_seq:
+                            log.info("bili 就绪但 base_url 已被停止/接管/切方案，不切回代理入口（bili 实例保留）")
+                            return
+                        if _bmgr.read_current_url() != _bili_url():
+                            _bmgr.apply(_bili_url())
+                            _autoswitched = True
                 except Exception as e:
                     # a238 P3-3：对齐 apply_bili_mode 的回退面——原只 log，节点
                     # 滞留（idle node 常驻）且 mode 仍记 on（第 91s 起来也永不
