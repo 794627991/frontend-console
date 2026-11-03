@@ -5216,3 +5216,34 @@ span.nn-hl-t { background: color-mix(in srgb, #3fb950 15%, transparent);
   border-top: 1px solid var(--border); background: var(--bg-card); flex-shrink: 0; }
 .ov-pdf-search-results { font-size: 10px; color: var(--muted); flex: 1;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
+
+/* ===== a284: Tab 栏溢出优化 ===== */
+/* tab-bar-actions 钉右缘：tab 溢出时按钮不消失 */
+.tab-bar-actions { position: sticky; right: 0; z-index: 5;
+  background: var(--bg-panel); box-shadow: -4px 0 8px -4px var(--bg-panel); }
+/* 溢出下拉按钮 */
+.tab-overflow-btn { position: sticky; right: 0; z-index: 5;
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: 5px;
+  color: var(--muted); font-size: 13px; cursor: pointer; padding: 3px 8px; margin-left: 2px; flex-shrink: 0; }
+.tab-overflow-btn:hover { color: var(--accent); border-color: var(--accent); }
+/* tab 栏滚动条可见（薄但不隐形） */
+.tabs::-webkit-scrollbar { height: 3px; }
+.tabs::-webkit-scrollbar-track { background: transparent; }
+.tabs::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.tabs::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+/* 文件树横向滚动条可见 */
+.tree-roots::-webkit-scrollbar { height: 5px; width: 5px; }
+.tree-roots::-webkit-scrollbar-track { background: transparent; }
+.tree-roots::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.tree-roots::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+/* 溢出下拉列表 */
+.tab-overflow-list { position: fixed; z-index: 9999; background: var(--bg-card);
+  border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 28px rgba(0,0,0,.5);
+  padding: 4px; min-width: 200px; max-height: 300px; overflow-y: auto; display: none; }
+.tab-overflow-list.show { display: block; }
+.tab-overflow-item { display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+  border-radius: 5px; cursor: pointer; font-size: 11px; color: var(--fg); }
+.tab-overflow-item:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.tab-overflow-item.active { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); }
+.tab-overflow-item .ov-close { margin-left: auto; opacity: 0.5; padding: 2px 4px; border-radius: 3px; }
+.tab-overflow-item .ov-close:hover { opacity: 1; color: var(--neon-red); }

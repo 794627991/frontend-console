@@ -19,6 +19,77 @@ document.documentElement.toggleAttribute('data-document-hidden', document.hidden
 
 let connections = {};   // port_id -> conn（含 term/fit/search/xtermWrap/sse 等）
 let activePortId = null;
+
+// a284: Tab 栏溢出优化——鼠标滚轮→横向滚动 + 溢出下拉按钮
+;(function _tabOverflowInit() {
+  const tabsEl = document.getElementById('tabs');
+  if (!tabsEl) return;
+  // 滚轮 → 横向滚动（tab 栏上滚动不用找横向滚动条）
+  tabsEl.addEventListener('wheel', e => {
+    if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+      e.preventDefault();
+      tabsEl.scrollLeft += e.deltaY;
+    }
+  }, { passive: false });
+
+  // 溢出下拉按钮（tab 放不下时显示，点击列出所有 tab）
+  const btn = document.getElementById('tabOverflowBtn');
+  if (!btn) return;
+  let list = null;
+  const checkOverflow = () => {
+    const has = tabsEl.scrollWidth > tabsEl.clientWidth;
+    btn.style.display = has ? '' : 'none';
+  };
+  const buildList = () => {
+    if (list) list.remove();
+    list = document.createElement('div');
+    list.className = 'tab-overflow-list';
+    const items = [];
+    for (const pid in connections) {
+      const c = connections[pid];
+      if (!c || !c.tab) continue;
+      items.push(c);
+    }
+    list.innerHTML = items.map(c => {
+      const lbl = (c.meta && c.meta.label) || pid;
+      const act = pid === activePortId ? ' active' : '';
+      return `<div class="tab-overflow-item${act}" data-pid="${esc(pid)}">` +
+        `<span style="flex-shrink:0;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(lbl)}</span>` +
+        `<span class="ov-close" data-close="${esc(pid)}" title="关闭">✕</span></div>`;
+    }).join('');
+    document.body.appendChild(list);
+    // 定位到按钮下方
+    const br = btn.getBoundingClientRect();
+    list.style.top = (br.bottom + 4) + 'px';
+    list.style.right = (window.innerWidth - br.right) + 'px';
+    list.classList.add('show');
+    // 点击 tab 跳转 / 点击 ✕ 关闭
+    list.querySelectorAll('.tab-overflow-item').forEach(item => {
+      item.onclick = e => {
+        const closeEl = e.target.closest('[data-close]');
+        if (closeEl) {
+          e.stopPropagation();
+          const pid = closeEl.dataset.close;
+          closeEditorTab(pid);
+          buildList(); // 重建列表
+          if (!Object.keys(connections).length) close();
+          return;
+        }
+        switchTab(item.dataset.pid);
+        close();
+      };
+    });
+  };
+  const close = () => { if (list) { list.remove(); list = null; } };
+  btn.onclick = e => { e.stopPropagation(); if (list) close(); else buildList(); };
+  document.addEventListener('click', e => { if (list && !list.contains(e.target)) close(); });
+  // 初始检查 + tab 增删时检查 + 窗口 resize + 3s 兜底（sticky 定位可能影响 scrollWidth 计算）
+  new MutationObserver(() => requestAnimationFrame(checkOverflow))
+    .observe(tabsEl, { childList: true });
+  window.addEventListener('resize', checkOverflow);
+  setInterval(checkOverflow, 3000);
+  checkOverflow();
+})();
 let aiSse = null;
 
 // banner 已改右下角悬浮冒泡，不占布局空间，无需再重 fit 终端。
