@@ -1253,6 +1253,9 @@
      却无收缩约束——空间不足时和旧 label 一样把 ✕ 顶出 tab。空间不足优先
      压缩 baud（次要信息），label 已有 .label 省略号 */
   .tab .baud { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  /* 第7轮盲测P6：label 收缩到 6px 时连"…"都装不下（标题区全空白无法辨识）——
+     保底 8px 至少渲染省略号 */
+  .tab .label { min-width: 8px; }
   .tab:hover { color: var(--fg); background: var(--bg-card); }
   .tab.active {
     color: var(--accent); background: var(--bg);
@@ -1267,7 +1270,9 @@
   .tab.active .led { background: var(--neon-green); box-shadow: 0 0 6px var(--neon-green); }
   /* tab 图标（📝/📜/🔢）：独立于 led——旧版把 emoji 塞进 .led 里，撑满圆点位置
      挡住状态灯；拆开后 led 恢复圆点语义 */
-  .tab .tab-ico { font-size: 12px; flex-shrink: 0; line-height: 1; display: inline-flex; align-items: center; }
+  /* 第7轮盲测P1 终修：原 flex-shrink:0 在同权重后位覆盖了新加的可缩规则
+     （顺序坑）——直接在本条放开收缩：图标纯装饰让位功能键 ✕（a285 原值 0） */
+  .tab .tab-ico { font-size: 12px; flex-shrink: 1; min-width: 0; overflow: hidden; line-height: 1; display: inline-flex; align-items: center; }
   /* 文件类型 SVG 图标(file-icons.js):随文字基线对齐 */
   svg.fi { vertical-align: -2px; flex-shrink: 0; }
   /* tab 拖拽排序视觉态（tab-drag.js）：拖动中半透明，落点前/后指示线 */

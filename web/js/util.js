@@ -44,6 +44,10 @@ let activePortId = null;
     log: ICO16.log, office: ICO16.folderOpen, proxy: ICO16.gear, bitcalc: ICO16.calc,
   };
   const _groupOf = c => (c.meta && c.meta.kind) || 'other';
+  // 第7轮盲测P5：列表/抽屉组序对齐标签栏的 sortKey 类型序（串口→SSH→日志→
+  // 编辑器类→Claude→…），原来跟 connections 插入序导致"Claude 在日志前"不一致
+  const _GROUP_ORDER = { serial: 0, ssh: 1, telnet: 1, log: 2, diff: 3, editor: 3,
+    hex: 3, bindiff: 3, office: 3, bitcalc: 3, note: 3, claude: 4, harness: 5, proxy: 6 };
   const _groupLabel = k => _GROUP_LABEL[k] || '其他';
   const _groupIcon = k => _GROUP_ICON[k] || ICO16.file;
   // 统一关闭：直接点 tab 自己的 ✕——各模块（terminal=后端断连/editor=脏确认/
@@ -182,13 +186,24 @@ let activePortId = null;
   // ===== 平铺模式（Chrome）：自动收缩 + ⋮ 溢出 =====
   function checkOverflow() {
     const has = tabsEl.scrollWidth > tabsEl.clientWidth;
+    // 第7轮盲测P3：flex 压缩能把 tab 全压到 28px 图标态而不触发 scrollWidth
+    // 溢出——无标题无 ✕ 又无 ⋮ 兜底，用户完全无法辨识 tab。tab 压破 50px
+    // （标题将不可读）即视为需要 ⋮
+    const tight = [...tabsEl.querySelectorAll('.tab')].some(t => {
+      const w = t.getBoundingClientRect().width;
+      return w > 0 && w < 50;
+    });
     const count = Object.keys(connections).filter(k => connections[k] && connections[k].tab).length;
-    btn.style.display = has || (_tabMode === 'drawer' && count > 0) ? '' : 'none';
+    btn.style.display = has || tight || (_tabMode === 'drawer' && count > 0) ? '' : 'none';
     btn.textContent = '⋮ ' + count;
   }
 
   // ===== 分组下拉 =====
   function buildList() {
+    // 第7轮盲测P7：已无任何 tab 时不再重建列表（防离屏幽灵列表），直接收起
+    if (!Object.keys(connections).some(k => connections[k] && connections[k].tab)) {
+      close(); checkOverflow(); return;
+    }
     if (list) list.remove();
     list = document.createElement('div');
     list.className = 'tab-overflow-list';
@@ -201,6 +216,7 @@ let activePortId = null;
       if (!groups[g]) { groups[g] = []; order.push(g); }
       groups[g].push({ pid, c });
     }
+    order.sort((a, b) => (_GROUP_ORDER[a] ?? 9) - (_GROUP_ORDER[b] ?? 9));
     let html = '';
     order.forEach(g => {
       html += `<div class="tab-overflow-group">${esc(_groupLabel(g))} · ${groups[g].length}</div>`;
@@ -305,6 +321,7 @@ let activePortId = null;
       if (!groups[g]) { groups[g] = []; order.push(g); }
       groups[g].push(pid);
     }
+    order.sort((a, b) => (_GROUP_ORDER[a] ?? 9) - (_GROUP_ORDER[b] ?? 9));
     order.forEach(g => {
       const pids = groups[g];
       const active = pids.find(p => p === activePortId);
@@ -313,6 +330,9 @@ let activePortId = null;
       const btn = document.createElement('div');
       btn.className = 'tab-drawer' + (active ? ' active' : '');
       btn.dataset.group = g;
+      // 第7轮盲测P2：title 只挂 active span 时，窄视口让位态 span 宽 0——悬停
+      // 胶囊任何位置都无 tooltip。挂胶囊整体：有活跃名显名，无则显组名
+      btn.title = activeLbl || _groupLabel(g);
       btn.innerHTML =
         `<span class="tab-drawer-icon">${_groupIcon(g)}</span>` +
         `<span class="tab-drawer-label">${esc(_groupLabel(g))}</span>` +
