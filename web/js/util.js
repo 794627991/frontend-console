@@ -20,59 +20,73 @@ document.documentElement.toggleAttribute('data-document-hidden', document.hidden
 let connections = {};   // port_id -> conn（含 term/fit/search/xtermWrap/sse 等）
 let activePortId = null;
 
-// a284: Tab 栏溢出优化——鼠标滚轮→横向滚动 + 溢出下拉按钮
+// a285: Tab 栏优雅溢出——不滚动，tab 自动收缩 + 溢出按类型分组下拉
 ;(function _tabOverflowInit() {
   const tabsEl = document.getElementById('tabs');
   if (!tabsEl) return;
-  // 滚轮 → 横向滚动（tab 栏上滚动不用找横向滚动条）
-  tabsEl.addEventListener('wheel', e => {
-    if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
-      e.preventDefault();
-      tabsEl.scrollLeft += e.deltaY;
-    }
-  }, { passive: false });
-
-  // 溢出下拉按钮（tab 放不下时显示，点击列出所有 tab）
   const btn = document.getElementById('tabOverflowBtn');
   if (!btn) return;
   let list = null;
+
+  // 类型分组标签
+  const _GROUP_LABEL = {
+    serial: '串口', ssh: 'SSH', telnet: 'Telnet',
+    claude: 'Claude', harness: 'Claude 对话',
+    editor: '编辑器', hex: 'Hex', diff: '文件对比', bindiff: '二进制对比',
+    log: '日志', office: '文件查看', proxy: '代理面板',
+  };
+  const _groupOf = c => _GROUP_LABEL[(c.meta && c.meta.kind) || ''] || '其他';
+
   const checkOverflow = () => {
     const has = tabsEl.scrollWidth > tabsEl.clientWidth;
     btn.style.display = has ? '' : 'none';
+    btn.textContent = has ? '⋮ ' + Object.keys(connections).filter(k => connections[k] && connections[k].tab).length : '⋮';
   };
+
   const buildList = () => {
     if (list) list.remove();
     list = document.createElement('div');
     list.className = 'tab-overflow-list';
-    const items = [];
+
+    // 按类型分组
+    const groups = {};
+    const order = [];
     for (const pid in connections) {
       const c = connections[pid];
       if (!c || !c.tab) continue;
-      items.push(c);
+      const g = _groupOf(c);
+      if (!groups[g]) { groups[g] = []; order.push(g); }
+      groups[g].push({ pid, c });
     }
-    list.innerHTML = items.map(c => {
-      const lbl = (c.meta && c.meta.label) || pid;
-      const act = pid === activePortId ? ' active' : '';
-      return `<div class="tab-overflow-item${act}" data-pid="${esc(pid)}">` +
-        `<span style="flex-shrink:0;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(lbl)}</span>` +
-        `<span class="ov-close" data-close="${esc(pid)}" title="关闭">✕</span></div>`;
-    }).join('');
+
+    let html = '';
+    order.forEach(g => {
+      html += `<div class="tab-overflow-group">${esc(g)} · ${groups[g].length}</div>`;
+      html += groups[g].map(({ pid, c }) => {
+        const lbl = (c.meta && c.meta.label) || pid;
+        const act = pid === activePortId ? ' active' : '';
+        return `<div class="tab-overflow-item${act}" data-pid="${esc(pid)}">` +
+          `<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(lbl)}</span>` +
+          `<span class="ov-close" data-close="${esc(pid)}" title="关闭">✕</span></div>`;
+      }).join('');
+    });
+    list.innerHTML = html;
     document.body.appendChild(list);
-    // 定位到按钮下方
+
+    // 定位
     const br = btn.getBoundingClientRect();
     list.style.top = (br.bottom + 4) + 'px';
-    list.style.right = (window.innerWidth - br.right) + 'px';
+    list.style.right = Math.max(8, window.innerWidth - br.right) + 'px';
     list.classList.add('show');
-    // 点击 tab 跳转 / 点击 ✕ 关闭
+
     list.querySelectorAll('.tab-overflow-item').forEach(item => {
       item.onclick = e => {
         const closeEl = e.target.closest('[data-close]');
         if (closeEl) {
           e.stopPropagation();
-          const pid = closeEl.dataset.close;
-          closeEditorTab(pid);
-          buildList(); // 重建列表
-          if (!Object.keys(connections).length) close();
+          closeEditorTab(closeEl.dataset.close);
+          buildList();
+          if (!Object.keys(connections).some(k => connections[k] && connections[k].tab)) close();
           return;
         }
         switchTab(item.dataset.pid);
@@ -82,12 +96,11 @@ let activePortId = null;
   };
   const close = () => { if (list) { list.remove(); list = null; } };
   btn.onclick = e => { e.stopPropagation(); if (list) close(); else buildList(); };
-  document.addEventListener('click', e => { if (list && !list.contains(e.target)) close(); });
-  // 初始检查 + tab 增删时检查 + 窗口 resize + 3s 兜底（sticky 定位可能影响 scrollWidth 计算）
+  document.addEventListener('click', e => { if (list && !list.contains(e.target) && e.target !== btn) close(); });
   new MutationObserver(() => requestAnimationFrame(checkOverflow))
     .observe(tabsEl, { childList: true });
   window.addEventListener('resize', checkOverflow);
-  setInterval(checkOverflow, 3000);
+  setInterval(checkOverflow, 2000);
   checkOverflow();
 })();
 let aiSse = null;
