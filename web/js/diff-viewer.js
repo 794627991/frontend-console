@@ -431,6 +431,21 @@ function _diffCtxNameOf(p) {
   return (p.startsWith('files/') ? p.slice(6) : p.split(/[\\/]/).pop());
 }
 
+// ---- a260：树右键对比入口（与 tab 右键共享 _diffCtxA 状态，两侧互通——
+// 树上选 A、tab 上比，或反过来，都行）----
+function diffPickSetA(path) {
+  _diffCtxA = path;
+  showBanner(`已选为对比 A（基准）：${_diffCtxNameOf(path)}。到另一文件上右键「与选进行对比」`, 4000);
+}
+function diffPickCompare(path) {
+  if (!_diffCtxA || _diffCtxA === path) return false;
+  const a = _diffCtxA;
+  _diffCtxA = null;   // 用完即清（避免残留指向已删/已改文件）
+  buildDiffViewerTab(a, path);
+  return true;
+}
+function diffPickA() { return _diffCtxA; }
+
 // 右键菜单主体（样式与终端右键菜单同源）
 function _showDiffCtxMenu(x, y, pid) {
   const m = $('ctxMenu');

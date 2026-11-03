@@ -260,6 +260,7 @@
     del: _ico('<path d="M3 4.5h10"/><path d="M6.5 4.5v-1a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1v1"/><path d="M4.5 4.5l.7 8a1 1 0 0 0 1 .9h3.6a1 1 0 0 0 1-.9l.7-8"/><path d="M6.7 7.5v3.2M9.3 7.5v3.2"/>'),
     copy: _ico('<rect x="5.5" y="5.5" width="8" height="8" rx="1"/><path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/>'),
     search: _ico('<circle cx="7" cy="7" r="4.2"/><path d="M10.2 10.2L14 14"/>'),
+    compare: _ico('<rect x="1.5" y="4" width="5.5" height="8.5" rx="1"/><rect x="9" y="3.5" width="5.5" height="8.5" rx="1"/><path d="M7.6 8h1.6M8.2 6.8L9.4 8l-1.2 1.2"/>'),
     removeRoot: _ico('<path d="M2.5 11.5v-7a1 1 0 0 1 1-1h2.6l1.4 1.8h4a1 1 0 0 1 1 1v1.2"/><path d="M2.5 11.5l1.2-3.7h9.6l1 3.7z"/><path d="M6.2 12.3h3.6"/>')
   };
 
@@ -288,6 +289,20 @@
     } else {
       items.push({ icon: CI.openFile, label: '打开', action: () =>
         typeof openFileSmart === 'function' && openFileSmart(path, 'auto') });
+      // a260（用户实锤：树右键对比）——与 tab 右键共享 A 状态（diff-viewer.js
+      // 的 _diffCtxA），树上选 A、tab 上比（或反过来）互通
+      if (typeof diffPickSetA === 'function') {
+        const a = typeof diffPickA === 'function' ? diffPickA() : null;
+        const isA = a === path;
+        const aName = a && typeof _diffCtxNameOf === 'function' ? _diffCtxNameOf(a) : '';
+        items.push(
+          { sep: true },
+          { icon: CI.compare, label: '选择以进行对比' + (isA ? '（当前 A）' : ''),
+            disabled: isA, action: () => diffPickSetA(path) },
+          { icon: CI.compare,
+            label: a && !isA ? '与选对比（A：' + aName + '）' : '与选进行对比' + (!a ? '（未选 A）' : ''),
+            disabled: !a || isA, action: () => diffPickCompare(path) });
+      }
     }
     items.push({ icon: CI.reveal, label: '在资源管理器中' + (isDir ? '打开' : '显示'), action: async () => {
       try {
