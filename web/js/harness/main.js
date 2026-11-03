@@ -233,11 +233,19 @@ function buildClaudeHarnessTab(opts = {}) {
     const topEl = _hgQ('.hg-top');
     if (topEl) topEl.insertBefore(dgBtn, topEl.querySelector('.hg-vis-ind') || topEl.lastElementChild);
   } catch (_) {}
+  // a271（性能追踪实锤：滚动 handler 同步读 scrollHeight/scrollTop → 419 次
+  // Layout 中 262 次被滚动事件强制同步触发 = 翻页一卡一卡真身）。rAF 合帧：
+  // 读几何挪进 requestAnimationFrame（与渲染同帧合并，多次 scroll 一帧只算一次）
+  let _scrollRaf = 0;
   _hgFlow.addEventListener('scroll', () => {
-    if (_HG.noScroll) return;   // 历史重建的程序性 scrollTop 写入不污染粘底态
-    const gap = _hgFlow.scrollHeight - _hgFlow.scrollTop - _hgFlow.clientHeight;
-    if (gap < 120) _HG.stickBtm = true;
-    else if (gap > 150) _HG.stickBtm = false;
+    if (_scrollRaf) return;
+    _scrollRaf = requestAnimationFrame(() => {
+      _scrollRaf = 0;
+      if (_HG.noScroll) return;   // 历史重建的程序性 scrollTop 写入不污染粘底态
+      const gap = _hgFlow.scrollHeight - _hgFlow.scrollTop - _hgFlow.clientHeight;
+      if (gap < 120) _HG.stickBtm = true;
+      else if (gap > 150) _HG.stickBtm = false;
+    });
   });
   _hgScrollBottom = (force) => {
     if (_HG.noScroll) return;   // v2.16：历史重建期间不滚（几百行逐行 append 会反复重排）
@@ -1078,28 +1086,25 @@ function buildClaudeHarnessTab(opts = {}) {
   }
   // v3.5.50：同上（async 变更类 handler）
   _hgFlow.addEventListener('click', _hgFlowClick2);
+  // a271：rAF 合帧（同 236 行处追踪实锤——scroll 事件里同步读 scrollHeight
+  // = 强制同步布局；本 handler 原 passive:true 只解掉了 preventDefault 警告，
+  // 几何读仍逐事件同步。合帧后 60Hz 滚动每帧至多 1 次读）
+  let _scrollRaf2 = 0;
   _hgFlow.addEventListener('scroll', () => {
-    // v3.2.8：一键跳底钮显隐——离底 >350px 浮现（任何渲染态都要刷新，
-    // 先于下方 histLive 门）
-    if (_hgJumpBtm) {
-      const _dj = _hgFlow.scrollHeight - _hgFlow.scrollTop - _hgFlow.clientHeight;
-      _hgJumpBtm.classList.toggle('show', _dj > 350);
-    }
-    _hgRailActiveRaf();   // v3.2.10：轨当前项跟随视口
-    // v2.35.2（P0 切会话信息丢失根因）：histLive 门——histAll 只有在真正的
-    // 窗口渲染（_histRender，含扩/收缩重渲）之后才与 DOM 建立对应关系；
-    // 快照恢复路径的懒段补填（_histFetch）也会填 histAll，但 histStart 停在
-    // 0、DOM 是快照内容——此时滚动窗口判定（shown=全长-0>100 且在底部 →
-    // 收缩重渲）会把刚恢复的消息流整个炸掉重拉转写（用户实锤「切走再切回
-    // 全部重新刷新」）。非窗口态一律不进扩/收缩分支；懒段展开按 hi 索引取
-    // 数据不受影响。
-    if (!_HG.histAll || !_HG.histLive || _HG.busy || _histBusy) return;
-    const nearTop = _hgFlow.scrollTop <= 100;   // v3.2.11：60→100——滚轮惯性/拖动条贴近顶部时更稳触发扩段
-    const distBottom = _hgFlow.scrollHeight - _hgFlow.scrollTop - _hgFlow.clientHeight;
-    const shown = _HG.histAll.length - _HG.histStart;
-    // v3.2.12：扩段/收缩分支随分页退役——恒全量渲染，滚动条天然覆盖全部
-    // 历史（往上滑即是历史，无需加载步进；ZCode 靠虚拟化，我们靠折叠回合
-    // +懒增强+原子渲染控 DOM）
+    if (_scrollRaf2) return;
+    _scrollRaf2 = requestAnimationFrame(() => {
+      _scrollRaf2 = 0;
+      // v3.2.8：一键跳底钮显隐——离底 >350px 浮现（任何渲染态都要刷新）
+      if (_hgJumpBtm) {
+        const _dj = _hgFlow.scrollHeight - _hgFlow.scrollTop - _hgFlow.clientHeight;
+        _hgJumpBtm.classList.toggle('show', _dj > 350);
+      }
+      _hgRailActiveRaf();   // v3.2.10：轨当前项跟随视口
+      // v2.35.2（P0 切会话信息丢失根因）：histLive 门（语义同前，详见 git 史）
+      if (!_HG.histAll || !_HG.histLive || _HG.busy || _histBusy) return;
+      const shown = _HG.histAll.length - _HG.histStart;
+      // v3.2.12：扩段/收缩分支随分页退役——恒全量渲染（详见 git 史）
+    });
   }, { passive: true });
   // v3.5.61（用户拍板「入口重复了，按钮不要」）：顶栏「📖 只读模式」按钮已撤
   // ——唯一入口=归档提示点击（04-groups 经全局事件转发，fc/fc2 闭包内私有）
