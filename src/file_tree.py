@@ -14,7 +14,6 @@
 - 单层超 LIST_CAP 截断 + truncated 计数，防万级目录撑爆前端 DOM
 """
 import os
-import re
 from flask import Blueprint, request, jsonify
 
 from src.app_state import _load_config, _save_config
@@ -149,24 +148,9 @@ def tree_add_root():
     p = os.path.abspath(str(data.get("path") or "").strip().strip('"').strip("'"))
     if not os.path.isdir(p):
         return jsonify({"ok": False, "err": "目录不存在"}), 400
-    # a234 黑盒穿透修复：系统目录/盘根拒登记——曾可加 System32 后 search
-    # 全盘读文件内容。a242（用户实锤）：UNC/网络盘**放开**——内网源码服务
-    # 器是核心场景（映射盘 Y: 与 \\server\share 两形态等价合法），仅拒管
-    # 理共享（c$/admin$/ipc$ 仍属系统面）
-    _wl = os.environ.get("WINDIR", r"C:\Windows").lower()
-    _pl = p.lower()
-    # 管理共享判定：UNC 第三段（共享名）为 c$/d$/…/admin$/ipc$
-    _share = p.split("\\")[2] if p.startswith("\\\\") and len(p.split("\\")) > 3 else ""
-    _mgmt = bool(re.fullmatch(r"[a-z]$", _share) or _share in ("admin$", "ipc$"))
-    _danger = (
-        _mgmt                                                        # 管理共享拒（\\host\c$ 等）
-        or _pl == "c:\\" or _pl == "d:\\" or _pl.endswith(":\\")  # 盘根
-        or _pl.startswith(_wl)                                      # Windows 目录及子树
-        or _pl.startswith("c:\\program files")                   # Program Files
-        or _pl.startswith("c:\\programdata"))
-    if _danger:
-        return jsonify({"ok": False, "err":
-            "系统/网络/盘根路径不允许登记为工作区根（安全限制）"}), 400
+    # a249（用户定规·最后通牒）：路径位置黑名单整体拆除——权限所有者的访问
+    # 权由操作系统管，工具层面零限制（盘根/Windows/Program Files/管理共享
+    # 均可登记，a234 的"安全限制"口径作废）。剩余校验只有存在性与嵌套去重
     roots = _tree_roots()
     # 对抗审 a206C P3：嵌套根拒绝——D:\work 与 D:\work\sub 同时登记会使
     # 同一 path 双行渲染（open/cache/idx 按 path 共享，两处同开同拉、
@@ -390,17 +374,10 @@ def tree_fileops():
                 return jsonify({"ok": False, "err": "路径不存在"}), 404
             if not os.path.exists(fp):
                 return jsonify({"ok": False, "err": "路径不存在"}), 404
-            # a231 审计 P2：SHFileOperation+ALLOWUNDO 对网络路径（UNC/映射盘）
-            # 不经回收站直接永久删且返回成功——前端承诺「可恢复」静默失效。
-            # 网络根上一律拒绝，引导资源管理器操作
-            try:
-                import ctypes as _ct
-                _drive = fp[:3] if fp[1:2] == ":" else None   # 'X:' 形式；UNC 走前缀判定
-                if fp.startswith("\\\\") or (_drive and _ct.windll.kernel32.GetDriveTypeW(_drive) == 4):
-                    return jsonify({"ok": False, "err":
-                        "网络路径的删除不经回收站（不可恢复），请在资源管理器中操作"}), 400
-            except Exception:
-                pass
+            # a249（用户定规）：网络路径（UNC/映射盘）删除放行——权限所有者的
+            # 文件操作工具层面零限制。如实语义：SHFileOperation+ALLOWUNDO 对
+            # 网络路径=永久删（不经回收站），前端确认弹窗已按网络路径提示
+            # 不可恢复（a231 的"一律拒绝引导资源管理器"口径作废）
             if fp in _tree_roots():
                 return jsonify({"ok": False, "err": "根目录请用「移除根」（不删磁盘文件）"}), 400
             ok, err = _recycle_to_trash(fp)

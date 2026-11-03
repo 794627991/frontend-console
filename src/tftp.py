@@ -190,8 +190,20 @@ class TftpServer:
             elif opt == b"tsize":
                 want_oack = True  # tsize 也需 OACK 回应
             i += 2
-        # 防路径穿越：只允许 root_dir 下的直接文件名
-        if not filename or os.path.basename(filename) != filename or filename in (".", ".."):
+        # a249（用户定规）：文件名可含子目录相对路径（sub/x.bin）——此前仅根
+        # 直连文件名是工具层限制。唯一边界=不得逃出你选的根：拒绝对绝路径/
+        # UNC 与 .. 回溯段，realpath 双侧 containment 兜底（junction 也逃不出）
+        if not filename or filename in (".", ".."):
+            self._send_err(self.sock, peer, 1, "bad filename")
+            return
+        _seg = filename.replace("\\", "/").split("/")
+        if os.path.isabs(filename) or ".." in _seg or _seg[0] == "":
+            self._send_err(self.sock, peer, 1, "bad filename")
+            return
+        local = os.path.join(self.root_dir, * _seg)
+        _lr = os.path.normcase(os.path.realpath(self.root_dir))
+        _ll = os.path.normcase(os.path.realpath(local))
+        if not (_ll == _lr or _ll.startswith(_lr + os.sep)):
             self._send_err(self.sock, peer, 1, "bad filename")
             return
         # 设备名防挂死（CON/COM1 等 open() 永久阻塞）——只拦伪设备，不拦真实
@@ -200,7 +212,6 @@ class TftpServer:
         if reject_win_devpath(filename):
             self._send_err(self.sock, peer, 2, "access denied")
             return
-        local = os.path.join(self.root_dir, filename)
         if opcode == self.OP_RRQ:
             if not os.path.isfile(local):
                 self._send_err(self.sock, peer, 1, "file not found")
@@ -336,19 +347,15 @@ class TftpServer:
         设备带选项时先发 OACK（设备回 ACK(0) 后开始发 DATA），否则回 ACK(0) 起步。
         最后一块判定 len(data) < blksize 即终止（RFC 1350 正确，短块/空块即终止）。
         超时放弃前发 ERROR，让设备立即 abort 而非死等。
-        a239（第5轮B2-P1B）：目标文件已存在一律拒绝（os.replace 静默覆盖曾可让
-        LAN 任意主机改写桌面 .bat/.lnk——覆盖是重瞄准劫持链的落地原语）；
-        tmp 名加 peer 端口（不同设备并发传同名文件不再交叉写坏）。"""
-        if os.path.exists(path):
-            # 此刻数据 socket 尚未建立——先建临时 socket 回 ERROR(6)（文件已存在）
-            # 让设备端立即停止而非死等重传，再标记失败返回
-            _e = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            try:
-                self._send_err(_e, t.peer, 6, "文件已存在，拒绝覆盖")
-            finally:
-                _e.close()
-            t.status = "error"; t.err = "目标已存在，拒绝覆盖"
-            return
+        a249（用户定规）：已存在文件直接覆盖（tmp 收全后原子替换——旧内容
+        在新内容完整收到前始终完好在盘，不怕半截）；此前 a239 的 ERROR 6
+        拒覆盖属工具层限制，按"权限所有者零限制"拆除。tmp 名带 peer 端口
+        （不同设备并发传同名文件不交叉写坏）。"""
+        # 子目录写入：设备可传 sub/x.bin——父目录不存在则建（零限制语义）
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+        except OSError:
+            pass
         tmp = None   # a239：OACK 阶段异常时 except 清理的未定义防护
         ds = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         ds.settimeout(3.0)

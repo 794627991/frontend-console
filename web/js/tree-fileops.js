@@ -87,7 +87,12 @@
 
   // ---- 删除（统一入口：确认弹窗 + 回收站 + tab 联动）----
   async function doDelete(path) {
-    if (!window.confirm('移入回收站：' + baseName(path) + '\n（可从系统回收站恢复）')) return;
+    // a249（用户定规）：UNC/网络路径删除放行（不再拒），仅如实提示不可恢复
+    const net = /^\\\\|^\/\//.test(path);
+    const msg = net
+      ? '删除：' + baseName(path) + '\n（网络路径不经回收站，删除后不可恢复）'
+      : '移入回收站：' + baseName(path) + '\n（可从系统回收站恢复）';
+    if (!window.confirm(msg)) return;
     const j = await fileops({ op: 'delete', path });
     if (j) tabsAfterDelete(path);
   }
