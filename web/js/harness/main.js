@@ -2104,6 +2104,9 @@ function buildClaudeHarnessTab(opts = {}) {
   // 期间 offsetTop 全归零，立即算必错）
   _hgConn.onResumePoll = () => {
     if (_HG.conn === _hgConn) _hgInput.focus();
+    // a273R：切回时清掉 offsetTop 缓存（display:none 期间估高全错），
+    // 双 rAF 等布局回填后重算+重建缓存
+    _HG.railCacheTops = null;
     requestAnimationFrame(() => requestAnimationFrame(() => {
       try { _hgRailActiveRaf(); } catch (_) {}
     }));
@@ -2161,6 +2164,7 @@ function buildClaudeHarnessTab(opts = {}) {
       '<button class="hg-rail-pg dn" title="更近" hidden>▼</button>';
     _hgRailPagers(rail);
     _HG.railItems = items;
+    _HG.railCacheTops = null;   // a273R：条目重建，位置缓存同步失效
     rail.classList.add('show');
     _hgRailActive();
   }
@@ -2186,43 +2190,36 @@ function buildClaudeHarnessTab(opts = {}) {
     const rail = _hgRailEl;
     const items = _HG.railItems;
     if (!rail || !items || !items.length) return;
-    // v3.2.15（用户实锤「翻到底了刻度不在底」）：贴底特判——末回合正文比
-    // 锚线阈值高时，offsetTop<=scrollTop+80 的判据永远够不到最后一枚，
-    // 绝对贴底（≤4px 余量）直接点亮最后一枚
+    // a273R（用户精确描述「只在最上和最下」）：切 tab 后 offsetTop 在
+    // content-visibility:auto 元素上返回估高（contain-intrinsic-size）而非
+    // 真实位置——中间刻度估高 > scrollTop+80，二分全不命中=兜底 act=0。
+    // 修：预计算 offsetTop 缓存（_hgRailCacheTops），二分在纯数值上跑。
+    // 缓存刷新时机：切回 tab（onResumePoll）+ railSync 重建后 + 首次调用
+    if (!_HG.railCacheTops || _HG.railCacheTops.length !== items.length) {
+      _HG.railCacheTops = items.map(it =>
+        (it.el && it.el.isConnected) ? it.el.offsetTop : -1);
+    }
+    const tops = _HG.railCacheTops;
     const _atBtm = _hgFlow.scrollHeight - _hgFlow.scrollTop - _hgFlow.clientHeight <= 4;
     const st = _hgFlow.scrollTop + 80;
     let act = -1;
     if (_atBtm) act = items.length - 1;
     else {
-      // a120（性能档案实锤「1000+ 消息主窗翻动掉帧」）：旧线性扫对全部
-      // 刻度逐个读 offsetTop——布局脏时每次读都是强制同步重排，几百刻度
-      // ×逐帧＝滚动热路径大头之一。刻度按文档序 offsetTop 单调不减 →
-      // 二分找「最后一个 ≤st」，布局读从 O(n) 降到 O(log n)。失联刻度
-      // 按「不命中」收缩右界（旧码跳过，近似语义不变）
       let lo = 0, hi = items.length - 1;
       while (lo <= hi) {
         const mid = (lo + hi) >> 1;
-        const el = items[mid].el;
-        if (el && el.isConnected && el.offsetTop <= st) { act = mid; lo = mid + 1; }
+        if (tops[mid] >= 0 && tops[mid] <= st) { act = mid; lo = mid + 1; }
         else hi = mid - 1;
       }
     }
     if (act < 0) act = 0;
     const prev = rail.querySelector('.hg-rail-t.act');
-    // v3.5.211c（跟随失效根因）：三段式后 rail.children=[▲,scroll,▼]——
-    // children[act] 取到按钮而非刻度，act 高亮全丢。刻度在 .hg-rail-scroll
-    // 的 children 里（旧结构回退 rail.children 兼容）
     const _rsc2 = rail.querySelector('.hg-rail-scroll');
     const cur = _rsc2 ? _rsc2.children[act] : rail.children[act];
     if (prev === cur) return;
     if (prev) prev.classList.remove('act');
     if (cur) {
       cur.classList.add('act');
-      // 轨自滚跟随（居中）——v3.5.211b（用户实锤「跟随效果没有了」）：
-      // 三段式后 cur.offsetTop 相对 rail（含▲按钮高），滚动容器是内层
-      // .hg-rail-scroll——换算 cur 相对滚动容器：curTop - scTop0；且把
-      // 抢位阈值从 clientHeight/2 收紧到 40px（原半屏阈值=小幅滚动永远
-      // 不跟随，观感即「跟随没了」）；轨自身在滚动（用户翻轨）时不抢位
       const _rsc = rail.querySelector('.hg-rail-scroll');
       if (_rsc) {
         const want = (cur.offsetTop - _rsc.offsetTop) - _rsc.clientHeight / 2;
