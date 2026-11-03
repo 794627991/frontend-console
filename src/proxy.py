@@ -452,7 +452,24 @@ def save_ccr(enabled):
     try:
         _write_mode_file({"ccr": bool(enabled)})
     except OSError as e:
-        log.warning("保存 CCR 开关失败: %s", e)
+        log.warning("保存 CCR 状态失败: %s", e)
+
+
+def load_proxy_autostart():
+    """a251（用户需求：开启后保存开启状态）：上次代理在跑（记忆 autostart）
+    → 本次工具启动自动拉起。与压缩模式同居 BILI_MODE_PATH 一个文件。"""
+    try:
+        with open(BILI_MODE_PATH, encoding="utf-8") as f:
+            return bool(json.load(f).get("autostart"))
+    except (ValueError, OSError):
+        return False
+
+
+def set_proxy_autostart(on):
+    try:
+        _write_mode_file({"autostart": bool(on)})
+    except OSError as e:
+        log.warning("保存代理自启状态失败: %s", e)
 
 
 # ---- bili 定位（a201 内置方案：offline_runtime/bili 优先，系统兜底）----
@@ -1020,6 +1037,8 @@ def start_proxy(bili_mode=None):
             _ctl.start()
         except Exception as e:   # 绑定失败等——给面板可读消息，别让 Flask 吞成 500
             return False, str(e)
+        # a251：代理跑起来了 → 记自启（下次工具启动自动拉起；stop 清除）
+        set_proxy_autostart(True)
         _bili_switching = True
         # a250 P3（a247/a248复审）：epoch 在主线程 spawn 前捕获——若在线程首条
         # 语句捕获，guard 释放到线程启动的亚毫秒窗内 stop 已 bump，worker 反而
@@ -1027,7 +1046,7 @@ def start_proxy(bili_mode=None):
         _ep0 = _repoint_seq
 
     def _worker():
-        global _bili_switching, _autoswitched   # a250：原漏声明 global，赋值落局部，停止回滚判断从未生效
+        global _bili_switching, _autoswitched, _bili_mode, _bili_last_err
         _ep = _ep0
         try:
             # 先记忆当前直连地址（非代理值才记——恢复的真源），再切 37349
@@ -1066,11 +1085,13 @@ def start_proxy(bili_mode=None):
                     # a238 P3-3：对齐 apply_bili_mode 的回退面——原只 log，节点
                     # 滞留（idle node 常驻）且 mode 仍记 on（第 91s 起来也永不
                     # 补切链路，压缩静默失效白占内存）
-                    log.warning("bili 启动失败，回退无压缩: %s", e)
+                    # a251（用户需求：如果能用就保存开启状态）：运行态回退 off
+                    # + 留证，但**不再抹记忆文件**——瞬时失败不该永久丢用户偏好，
+                    # 下次启动按记忆再试
+                    _bili_mode = "off"
+                    log.warning("bili 启动失败，本次回退无压缩（记忆保留）: %s", e)
                     try:
                         _bili.stop()
-                        save_bili_mode("off")
-                        global _bili_last_err
                         _bili_last_err = str(e)[:200]
                     except Exception:
                         pass
@@ -1110,19 +1131,22 @@ def ensure_proxy_for_claude():
                     return
                 time.sleep(1)
             log.warning("Claude 联动：代理 30s 未就绪，停用并切回直连")
-            stop_proxy()
+            stop_proxy(remember=False)   # a251：内部回退，不清自启偏好
         finally:
             _proxy_notify()   # 无论结果如何，广播一次让前端同步
     threading.Thread(target=_worker, daemon=True).start()
 
 
-def stop_proxy():
+def stop_proxy(remember=True):
     """停止代理（GUI stop_proxy 平移）：headroom + 重试代理一起停，
     base_url 还指着自家代理（37349/8787）就一律切回直连——含手动
     「切换为代理模式」的路径（用户实锤：点停止的同时应切直连，
     之前只在 _autoswitched 时回滚，手动切过代理模式的会停在死端口）。
-    幂等。"""
+    幂等。a251：remember=True（用户动作）才清自启记忆；内部自动停
+    （Claude 联动 30s 超时等）传 False——失败回退不抹用户偏好。"""
     global _autoswitched
+    if remember:
+        set_proxy_autostart(False)
     _bump_repoint_epoch()   # 代理都停了：排队中的方案联动不得再动 base_url
     _bili.stop()
     _ctl.stop()
@@ -1384,11 +1408,10 @@ def apply_bili_mode(mode, ccr=None):
                 _bili_last_err = ""      # a203：成功即清空上次失败原因
                 log.info("压缩模式切换 -> %s（base_url -> 8787）", mode)
             except Exception as e:
-                # 失败回退 off：记忆与实际运行状态一致（不能让"记住的模式"
-                # 与实际脱节，重启后又试图拉起拉不起来的模式）
+                # 失败回退 off（运行态）：a251 起不再把 off 写进记忆文件——
+                # 记忆=用户偏好，实际拉不起来时运行态回退+留证，下次再试
                 _bili_mode = "off"
-                save_bili_mode("off", remember=True)
-                log.warning("切换到 %s 失败，回退直连: %s", mode, e)
+                log.warning("切换到 %s 失败，本次回退直连（记忆保留）: %s", mode, e)
                 # a203：回退必须留证据。原样只有一行 log.warning —— 前端拿到
                 # ok「切换中」后再查状态只看到 off，用户完全不知道为什么
                 # （a201/202 的 ccr TypeError 就这样藏了两天）。这次改成把
@@ -1742,6 +1765,19 @@ def proxy_module_init():
     _ensure_quota_worker()
     # headroom /stats 缓存线程（代理运行时 5s 拉，status 只读缓存）
     _ensure_bili_stats_thread()
+    # a251（用户需求：开启后保存开启状态）：上次代理在跑（记忆 autostart）
+    # → 后台自动拉起（延迟避开启动高峰；失败只记日志，不阻塞不弹窗）。
+    # 压缩模式按记忆文件自动带上（瞬时失败不再抹记忆，见 start/apply 的
+    # 失败回退——记忆的是用户偏好，实际拉不起来时运行态回退 off+留证）
+    if load_proxy_autostart():
+        def _auto_restore():
+            time.sleep(6)
+            try:
+                ok, msg = start_proxy()
+                log.info("代理自启恢复: %s (%s)", "成功" if ok else "失败", msg)
+            except Exception as e:
+                log.warning("代理自启恢复异常: %s", e)
+        threading.Thread(target=_auto_restore, daemon=True).start()
     # atexit 兜底回滚（Ctrl-C/强杀等 proxy_shutdown 没走的路径）
     atexit.register(_atexit_rollback)
 
