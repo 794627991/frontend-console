@@ -20,7 +20,7 @@ import threading
 
 from flask import Blueprint, request, Response, jsonify
 
-from src.file_tree import _under_roots
+from src.file_tree import _under_roots, _under_roots_real
 
 tree_search_bp = Blueprint("tree_search", __name__)
 
@@ -55,7 +55,7 @@ def tree_search():
     scope = _under_roots(str(data.get("scope") or ""))
     if not scope:
         return jsonify({"ok": False, "err": "搜索范围不在已登记根内"}), 400
-    if not _under_roots(os.path.realpath(scope)):   # a234: junction 逃逸拒
+    if not _under_roots_real(scope):   # a234 junction 拒；a242 双侧归一（网络盘）
         return jsonify({"ok": False, "err": "搜索范围包含指向根外的链接"}), 400
     smart_case = not bool(data.get("case"))       # 默认 smart-case（全小写=忽略大小写）
     use_regex = bool(data.get("regex")) or str(data.get("mode")) == "function"

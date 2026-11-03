@@ -45,9 +45,24 @@ def _default_data_dir():
     return cand
 
 def _load_home_config():
+    """读 home 锚点 config.json；损坏时自动回退 .bak（a242：进程强杀半写/
+    磁盘异常后的自愈——上一版由 cfg_commit 滚动留底），再不行回空配置。"""
     try:
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
+    except Exception:
+        pass
+    try:
+        with open(CONFIG_FILE + ".bak", "r", encoding="utf-8") as f:
+            d = json.load(f)
+        logging.getLogger("app_state").warning(
+            "config.json 损坏，已从 .bak 自动恢复")
+        try:
+            import shutil as _sh
+            _sh.copyfile(CONFIG_FILE + ".bak", CONFIG_FILE)
+        except OSError:
+            pass
+        return d
     except Exception:
         return {}
 
@@ -172,7 +187,10 @@ def cfg_read():
 def cfg_commit(mutator):
     """原子读-改-写 config.json（锁内整事务）。mutator(d) 就地修改 d。
     返回 (ok, err)。读方语义：锁外热路径读不加锁（GIL 下瞬时陈旧可容忍），
-    关键在坏文件已被 cfg_read 隔离、写方全部串行。"""
+    关键在坏文件已被 cfg_read 隔离、写方全部串行。
+    a242：替换成功后把**上一版**内容留底到 config.json.bak（滚动一份）——
+    误操作（清空 recent/roots 的端点被意外触发）与半写损坏后可手工恢复。
+    上一版的字节在替换前从盘上读（本次写失败不动 .bak）。"""
     import time as _time
     with _CONFIG_LOCK:
         d = cfg_read()
@@ -183,6 +201,12 @@ def cfg_commit(mutator):
             if isinstance(r, dict):
                 d = r
             os.makedirs(HOME_DIR, exist_ok=True)
+            _prev = None
+            try:
+                with open(CONFIG_FILE, "rb") as f:
+                    _prev = f.read()   # 上一版字节（替换前留底）
+            except OSError:
+                pass
             tmp = "%s.tmp.%d.%d" % (CONFIG_FILE, os.getpid(), threading.get_ident())
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(d, f, ensure_ascii=False, indent=1)
@@ -191,6 +215,12 @@ def cfg_commit(mutator):
             except PermissionError:
                 _time.sleep(0.08)   # 目标被读句柄/杀软短暂持有：重试一次
                 os.replace(tmp, CONFIG_FILE)
+            if _prev:
+                try:
+                    with open(CONFIG_FILE + ".bak", "wb") as f:
+                        f.write(_prev)
+                except OSError:
+                    pass
             return True, None
         except Exception as e:
             return False, str(e)

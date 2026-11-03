@@ -14,6 +14,7 @@
 - 单层超 LIST_CAP 截断 + truncated 计数，防万级目录撑爆前端 DOM
 """
 import os
+import re
 from flask import Blueprint, request, jsonify
 
 from src.app_state import _load_config, _save_config
@@ -70,6 +71,23 @@ def _under_roots(path):
     for root in _tree_roots():
         if p == root or p.startswith(root + os.sep):
             return p
+    return None
+
+
+def _under_roots_real(path):
+    """a242（用户实锤：NFS 网络盘打不开）：网络映射盘（盘符形态）的 realpath
+    会解析成 UNC 形态（反斜杠 server 形态），与登记的字面根比对恒失败——
+    a234 的单侧 realpath 检查把全部网络盘目录展开/操作误杀为「指向根外的
+    链接」。修法：根与目标双侧 realpath 后比对；junction 逃逸语义不变
+    （真指根外时目标的 real 不落在任何根的 real 之下）。"""
+    try:
+        rp = os.path.realpath(str(path))
+    except Exception:
+        return None
+    for root in _tree_roots():
+        rr = _resolve_real(root)
+        if rp == rr or rp.startswith(rr + os.sep) or rp.startswith(rr.replace(os.sep, "/") + "/"):
+            return rp
     return None
 
 
@@ -131,12 +149,17 @@ def tree_add_root():
     p = os.path.abspath(str(data.get("path") or "").strip().strip('"').strip("'"))
     if not os.path.isdir(p):
         return jsonify({"ok": False, "err": "目录不存在"}), 400
-    # a234 黑盒穿透修复：系统目录/盘根/UNC 管理共享拒登记——曾可加
-    # System32 后 search 全盘读文件内容、加 c$ 后 touch 全盘写
+    # a234 黑盒穿透修复：系统目录/盘根拒登记——曾可加 System32 后 search
+    # 全盘读文件内容。a242（用户实锤）：UNC/网络盘**放开**——内网源码服务
+    # 器是核心场景（映射盘 Y: 与 \\server\share 两形态等价合法），仅拒管
+    # 理共享（c$/admin$/ipc$ 仍属系统面）
     _wl = os.environ.get("WINDIR", r"C:\Windows").lower()
     _pl = p.lower()
+    # 管理共享判定：UNC 第三段（共享名）为 c$/d$/…/admin$/ipc$
+    _share = p.split("\\")[2] if p.startswith("\\\\") and len(p.split("\\")) > 3 else ""
+    _mgmt = bool(re.fullmatch(r"[a-z]$", _share) or _share in ("admin$", "ipc$"))
     _danger = (
-        p.startswith("\\\\")                                    # UNC 一律拒（本地工具无网络目录需求）
+        _mgmt                                                        # 管理共享拒（\\host\c$ 等）
         or _pl == "c:\\" or _pl == "d:\\" or _pl.endswith(":\\")  # 盘根
         or _pl.startswith(_wl)                                      # Windows 目录及子树
         or _pl.startswith("c:\\program files")                   # Program Files
@@ -188,7 +211,7 @@ def tree_list():
         return jsonify({"ok": False, "err": "路径不在文件树根目录内"}), 400
     if not os.path.isdir(p):
         return jsonify({"ok": False, "err": "目录不存在或已移除"}), 400
-    if not _under_roots(os.path.realpath(p)):   # a234: junction 指根外拒
+    if not _under_roots_real(p):   # a234 junction 拒；a242 双侧归一（网络盘 realpath 变形态误杀）
         return jsonify({"ok": False, "err": "路径包含指向根外的链接"}), 400
     entries, err = _list_dir(p, bool(data.get("hidden")))
     if entries is None:
@@ -266,8 +289,9 @@ def _guard_ops_path(path):
     if not fp:
         return None, None   # 白名单拒绝——由调用方返回 404/400
     real = _resolve_real(fp)
-    # 真实路径也必须在根内（junction 指根外→real 在根外→拒）
-    if not _under_roots(real):
+    # 真实路径也必须在根内（junction 指根外→real 在根外→拒）；
+    # a242 双侧归一（网络盘盘符/UNC 两形态等价）
+    if not _under_roots_real(fp):
         return None, "路径包含指向根外的链接（junction/symlink），禁止操作"
     return fp, None
 
