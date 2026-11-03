@@ -54,12 +54,10 @@ if (window.__HG_DBG__) {
 <link rel="stylesheet" href="web/skins.css?v=__HG_VER__">
 <link rel="stylesheet" href="vendor/xterm.min.css">
 <link rel="stylesheet" href="vendor/hljs/atom-one-dark.min.css">
-<script src="vendor/xterm.min.js"></script>
-<script src="vendor/xterm-addon-fit.min.js"></script>
-<script src="vendor/xterm-addon-search.min.js"></script>
-<script src="vendor/xterm-addon-web-links.min.js"></script>
-<script src="vendor/xterm-addon-webgl.min.js"></script>
-<script src="vendor/hljs/highlight.min.js"></script>
+<!-- a244：xterm/hljs 六个 vendor 脚本原先在 head——同步 head 脚本阻塞
+     body 首屏绘制（LCP 元素 div.desc 要等 ~500KB JS 解析完才画，实测
+     3.23s）。挪到 body 尾脚本块首部：执行顺序不变（仍先于 terminal-core/
+     highlight 等消费者），首屏不再等它们。 -->
 </head>
 <body>
 
@@ -439,6 +437,14 @@ if (window.__HG_DBG__) {
 <!-- Ctrl+右键上下文菜单（单例，由 JS 填充内容+定位） -->
 <div id="ctxMenu" class="ctx-menu"></div>
 
+<!-- a244：从 head 挪来的 xterm/hljs vendor 块（见 head 处注释），保持在
+     所有消费者脚本（terminal-core.js/highlight.js 等）之前，执行序不变 -->
+<script src="vendor/xterm.min.js"></script>
+<script src="vendor/xterm-addon-fit.min.js"></script>
+<script src="vendor/xterm-addon-search.min.js"></script>
+<script src="vendor/xterm-addon-web-links.min.js"></script>
+<script src="vendor/xterm-addon-webgl.min.js"></script>
+<script src="vendor/hljs/highlight.min.js"></script>
 <script src="vendor/editorjs.umd.js"></script>
 <script src="vendor/editorjs-header.umd.js"></script>
 <script src="vendor/editorjs-list.umd.js"></script>

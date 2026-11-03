@@ -184,6 +184,9 @@ def _safe_ext_path(path, force=False):
     不含 NUL，误伤率为零。"""
     if not path or len(path) < 3 or ":" not in path and not path.startswith("\\\\"):
         return None
+    from src.app_state import reject_win_devpath
+    if reject_win_devpath(path):   # a239：CON 等设备名 open() 永久阻塞 worker 线程
+        return None
     p = os.path.abspath(path)
     if not os.path.isfile(p) or _looks_binary(p):
         return None
@@ -321,6 +324,9 @@ def ed_save():
     if ext_path:
         if not os.path.isabs(ext_path):   # a238 P3-8：相对路径的落点是进程 CWD（打包态 TEMP，重启即焚）
             return jsonify({"ok": False, "err": "路径必须是绝对路径"}), 400
+        from src.app_state import reject_win_devpath
+        if reject_win_devpath(ext_path):   # a239：CON/COM1 写入永久阻塞（黑盒实测 30 并发泄漏 30 线程）
+            return jsonify({"ok": False, "err": "路径包含 Windows 保留设备名"}), 400
         # 打开时按内容探测放行过的文件（无后缀文本），保存也放行（同一文件，内容已在前端展示过）
         if _ext_of(ext_path) not in _EXT_TEXT and _looks_binary(os.path.abspath(ext_path)):
             return jsonify({"ok": False, "err": "不支持的文件类型"}), 400

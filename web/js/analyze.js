@@ -97,20 +97,14 @@ function renderAnalyze() {
   if (!conn || !conn.term) return;
   // 统计已加载行（从 xterm buffer 读取）
   const buf = conn.term.buffer.active;
-  // a237 P2（第5轮A4）：此前每轮（5s/切tab）全量 translateToString 10 万行
-  // + 40 万次正则——满 scrollback 时纯 GC 垃圾制造机。改为：未顶格时增量
-  // 扫描（_anaRow 锚安全，无移位）、无新行直接复用计数；顶格（length 恒停
-  // 在 scrollback+rows，内容仍 shift）时移位锚不可靠，维持全量保正确性
-  const cap = conn.term.rows + ((conn.term.options && conn.term.options.scrollback) || 0);
-  const capped = buf.length >= cap;
-  const havePrev = conn._anaCounts && conn._anaRow !== undefined;
-  if (!capped && havePrev && buf.length === conn._anaRow) {
-    _renderAnaCards(conn._anaCounts);   // 静态缓冲：零成本复用
-    return;
-  }
-  const fromRow = (!capped && havePrev) ? conn._anaRow : 0;
-  const counts = (!capped && havePrev) ? conn._anaCounts : {error:0, warning:0, info:0, success:0};
-  for (let r = fromRow; r < buf.length; r++) {
+  // a243（复审 F1/F2/F3）：回退 a237 的增量计数——终端缓冲的三种变异使
+  // 「length 锚」不可靠：a) 清屏/reset 使 length 塌缩（锚越界→计数冻结陈旧）；
+  // b) CR/EL/ED2 原地重写不改变 length（复用分支冻结计数）；c) vim/htop 的
+  // alt-screen 往返（锚跨缓冲共享→双倍计数）。正确性优先（用户铁律），
+  // 恢复每轮全量扫描；性能代价=分析面板打开时 5s 一次（面板关闭零成本，
+  // init.js 门控不变）
+  const counts = {error:0, warning:0, info:0, success:0};
+  for (let r = 0; r < buf.length; r++) {
     const ln = buf.getLine(r);
     if (!ln) continue;
     const t = ln.translateToString(true);
@@ -120,8 +114,6 @@ function renderAnalyze() {
     if (ANALYZE_RE.info.test(low)) counts.info++;
     if (ANALYZE_RE.success.test(low)) counts.success++;
   }
-  conn._anaCounts = counts;
-  conn._anaRow = buf.length;
   _renderAnaCards(counts);
 }
 function _renderAnaCards(c) {

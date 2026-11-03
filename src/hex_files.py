@@ -17,6 +17,9 @@ hex_bp = Blueprint("hexfiles", __name__)
 READ_CHUNK = 512 * 1024   # 单次读取上限 512KB（大文件分块窗口加载）
 
 def _real_path(path):
+    from src.app_state import reject_win_devpath
+    if reject_win_devpath(path):   # a239：CON 等设备名 open/getsize 永久阻塞 worker 线程
+        return None
     p = os.path.abspath((path or "").strip().strip('"').strip("'"))
     if not os.path.isfile(p):
         return None

@@ -270,6 +270,10 @@ function _tvPaint() {
     sizer.className = 'tree-sizer';
     host.appendChild(sizer);
   }
+  // a244（用户实锤截图）：空态提示是 refreshTree 用 innerHTML 塞进 host 的
+  // 兄弟节点，添加首个根后 sizer 重建渲染，但残留的 .tree-empty 无人清
+  // ——树与"点击上方打开文件夹"共存。所有渲染路径必经此处，统一拔除。
+  if (total) { const e = host.querySelector('.tree-empty'); if (e) e.remove(); }
   if (!total) { sizer.innerHTML = ''; return; }
   // sizer 宽度用 rebuild 预计算值（撑横滚让深层长名完整可达——用户实锤
   // 语义：不许省略号裁名）
