@@ -1246,6 +1246,10 @@
   }
   .tab .label { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
   .tab .close { flex-shrink: 0; }
+  /* 第4轮盲测问题2（第二凶手）：终端 tab 的 baud span（@9600）同为 flex item
+     却无收缩约束——空间不足时和旧 label 一样把 ✕ 顶出 tab。空间不足优先
+     压缩 baud（次要信息），label 已有 .label 省略号 */
+  .tab .baud { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .tab:hover { color: var(--fg); background: var(--bg-card); }
   .tab.active {
     color: var(--accent); background: var(--bg);
@@ -1362,7 +1366,7 @@
   .xterm-wrap .xterm-rows { font-family: var(--font-mono); }
 
   /* ===== Ctrl+右键上下文菜单 ===== */
-  .ctx-menu { position: fixed; z-index: 9999; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 28px rgba(0,0,0,.5), 0 0 0 1px rgba(0,212,255,0.08); padding: 5px 0; min-width: 190px; display: none; font-size: 12px; user-select: none; }
+  .ctx-menu { position: fixed; z-index: 10000; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 28px rgba(0,0,0,.5), 0 0 0 1px rgba(0,212,255,0.08); padding: 5px 0; min-width: 190px; display: none; font-size: 12px; user-select: none; }
 
   /* ===== 换肤弹层（a278R 退役；theme-item/swatch/info/check 被 settings 外观子页复用，保留） ===== */
   /* theme-cols/theme-group-head 也随弹层退役——settings 用自己的 .set-theme-cols/.set-theme-group */
@@ -5309,6 +5313,9 @@ span.nn-hl-t { background: color-mix(in srgb, #3fb950 15%, transparent);
 .tab-drawer-active { color: var(--fg); font-size: 10px; opacity: .75;
   max-width: 130px; overflow: hidden; text-overflow: ellipsis;
   flex: 0 1 auto; min-width: 0; }
+/* 第4轮盲测问题4：min-width:auto（=min-content）阻止 flex item 收缩到内容宽以下，
+   text-overflow:ellipsis 因此失效——活跃名被胶囊 overflow:hidden 硬切（无…）。
+   min-width:0 解锁收缩，省略号生效 */
 .tab-drawer.active .tab-drawer-active { opacity: 1; color: var(--accent); }
 /* Pin 固定 tab：右上角小圆点标记 + 常驻最左。盲测实锤（极窄视口）：不能
    flex-shrink:0——固定 tab 全宽 220px 不缩会盖住被压扁的抽屉栏（400px 下

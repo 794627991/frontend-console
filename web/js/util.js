@@ -98,8 +98,13 @@ let activePortId = null;
     if (conn && conn.tab) {
       conn.tab.classList.toggle('pinned', _pinned.has(pid));
       if (_pinned.has(pid)) {
-        // 固定 tab 移到最前
-        tabsEl.insertBefore(conn.tab, tabsEl.firstChild);
+        // 固定 tab 插入固定区末尾（第4轮盲测：Chrome 习惯是追加到固定组最后，
+        // 而非最前——原 firstChild 插法导致"最新固定者排最左"与主流相反）
+        const pinnedEls = [...tabsEl.querySelectorAll('.tab.pinned')];
+        const ref = pinnedEls.length
+          ? pinnedEls[pinnedEls.length - 1].nextSibling
+          : tabsEl.firstChild;
+        tabsEl.insertBefore(conn.tab, ref);
       } else {
         // 第2轮盲测实锤：取消固定后停在原地（仍固定 tab 之前）——
         // 破坏"固定区在最左"的排序不变量。移回非固定区：最后一个固定 tab 之后
@@ -309,7 +314,9 @@ let activePortId = null;
         `<span class="tab-drawer-icon">${_groupIcon(g)}</span>` +
         `<span class="tab-drawer-label">${esc(_groupLabel(g))}</span>` +
         `<span class="tab-drawer-count">${pids.length}</span>` +
-        (activeLbl ? `<span class="tab-drawer-active" title="${esc(activeLbl)}">${esc(activeLbl.slice(0, 12))}</span>` : '');
+        // 第4轮盲测：活跃名不用 JS slice 硬砍（"root@10.0.0."即 12 字符截断产物，
+        // 无省略号）——完整交给 CSS（max-width:130px + ellipsis），title 悬浮看全名
+        (activeLbl ? `<span class="tab-drawer-active" title="${esc(activeLbl)}">${esc(activeLbl)}</span>` : '');
       // 点击 → 分组下拉
       btn.onclick = e => {
         e.stopPropagation();

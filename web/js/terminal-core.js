@@ -68,7 +68,10 @@ function buildTerminal(portId, meta) {
   const tab = document.createElement('div');
   tab.className = 'tab';
   tab.dataset.portId = portId;
-  tab.innerHTML = `<span class="led"></span><span>${esc(meta.label || portId)}</span><span style="color:var(--muted);font-size:10px;">${meta.kind === 'ssh' || meta.kind === 'claude' || meta.kind === 'telnet' ? '' : '@'+meta.baud}</span> <span class="close" title="关闭">✕</span>`;
+  // 第4轮盲测实锤（高）：label 裸 span 无 .label 类（无 overflow/min-width:0 约束）——
+  // tab 压缩时文本不收缩把 ✕ 顶出 tab 被 overflow:hidden 裁掉（6 tab 时 5/6 的 ✕ 不可见
+  // 不可点）。补 .label 类与全站其他 tab（editor/hex/log/...）对齐，省略号生效 ✕ 保位
+  tab.innerHTML = `<span class="led"></span><span class="label">${esc(meta.label || portId)}</span><span class="baud" style="color:var(--muted);font-size:10px;">${meta.kind === 'ssh' || meta.kind === 'claude' || meta.kind === 'telnet' ? '' : '@'+meta.baud}</span> <span class="close" title="关闭">✕</span>`;
   tab.onclick = (e) => {
     if (e.target.classList.contains('close')) { e.stopPropagation(); closeConnection(portId); return; }
     switchTab(portId);
