@@ -724,6 +724,9 @@
     d.style.setProperty('--h-accent', _H_KIND_COLOR[cfg.kind] || 'var(--border)');
     const title = typeof cfg.title === 'function' ? cfg.title(inp) : (cfg.title || label);
     const badges = _hgToolBadges(name, inp);
+    // a275 批1b：summary 在手=头部已能看到结果摘要，体可懒；无 summary=体是
+    // 唯一信息载体，不能懒（点开前用户至少要能看到输出预览）
+    const x_hasSummary = !!(o.summary || (o.result !== undefined && String(o.result || '').trim()));
     let argH = '', argTitle = '';
     let _cmdFull = '';
     if (cfg.kind === 'bash') {
@@ -747,7 +750,10 @@
       (secH ? `<span class="h-tool-sec">${secH}</span>` : '') +
       (cfg.kind === 'bash' ? `<span class="h-tool-copy" role="button" title="复制命令">复制</span>` : '') +
       `<span class="h-tslots">${done ? statusBadge(err ? 'error' : (o.stopped ? 'stopped' : 'completed')) : ''}</span></button>` +
-      `<div class="h-tool-coll">${hgToolBody(cfg, inp, { done, err, dln: o.dln, result: o.result, summary: o.summary, cmd: _cmdFull })}</div>`;
+      // a275 批1b（ZCode #26 懒挂载）：历史行（hi≠null）且非错误非 defaultOpen
+      // → 空体+懒标（_histLazyFill 点开现建）。live 行（hi=null）照旧即填
+      `<div class="h-tool-coll">${(o.hi != null && !err && !cfg.defaultOpen && !x_hasSummary)
+        ? '' : hgToolBody(cfg, inp, { done, err, dln: o.dln, result: o.result, summary: o.summary, cmd: _cmdFull })}</div>`;
     // 公共账（两轨同挂——renderOneToolResult/_subTlPoll/快照认回全消费）
     d._cfg = cfg;
     d._name = name;

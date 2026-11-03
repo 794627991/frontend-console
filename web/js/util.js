@@ -7,6 +7,16 @@ const portList = $('portList');
 const tabs = $('tabs');
 const termArea = $('termArea');
 
+// a275 批1c（ZCode #33 DOM 泄漏防线）：页面不可见时全局禁 CSS 动画——
+// Chromium 隐藏期不出帧，CSSTransition 无法结算，被虚拟列表/折叠收起的
+// 元素被 DocumentTimeline 强引用拖住整棵子树无法 GC（ZCode 实测隐藏期
+// 23.5 万节点不回收）。hidden 时加 <html data-document-hidden>，
+// CSS 侧全局 transition:none/animation:none
+document.addEventListener('visibilitychange', () => {
+  document.documentElement.toggleAttribute('data-document-hidden', document.hidden);
+});
+document.documentElement.toggleAttribute('data-document-hidden', document.hidden);
+
 let connections = {};   // port_id -> conn（含 term/fit/search/xtermWrap/sse 等）
 let activePortId = null;
 let aiSse = null;

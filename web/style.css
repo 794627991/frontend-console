@@ -5122,3 +5122,8 @@ span.nn-hl-t { background: color-mix(in srgb, #3fb950 15%, transparent);
   color: var(--muted); font-size: var(--fs-xs); padding: 8px 0; cursor: pointer;
   text-align: center; border-top: 1px solid var(--border); margin-top: 4px; }
 .hg-sub-dir-more:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
+
+/* a275 批1c（ZCode #33）：页面不可见时全局禁动画——hidden 期 Chromium
+   不出帧，CSSTransition 无法结算，被折叠/收起的元素被 DocumentTimeline
+   强引用拖住整棵子树无法 GC（ZCode 实测 23.5 万节点泄漏） */
+[data-document-hidden] * { transition: none !important; animation: none !important; }
