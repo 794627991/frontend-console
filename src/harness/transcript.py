@@ -128,6 +128,11 @@ def transcript_for(s):
     def _parse_one(path, lines, call_by_id):
         """解析一个 session 的 jsonl，行追加进 lines。返回是否读到文件。"""
         nonlocal _last_u
+        # a274（用户实锤消息×2渲染）：CLI（v2.1.300 实锤）会同时写流式事件
+        # 和最终事件——UUID+时间戳相同但 JSON 序列化略异（字节差 30B），两条
+        # 都落盘。渲染层忠实渲染每行 → 消息×2。按 UUID 去重只留首条。
+        # （跨代共用：lineage 串接多代 jsonl 时同一 call_by_id 键也可能重复）
+        _seen_uuids = set()
         try:
             with open(path, "r", encoding="utf-8", errors="replace") as f:
                 for raw in f:
@@ -140,6 +145,12 @@ def transcript_for(s):
                         o = json.loads(raw)
                     except Exception:
                         continue
+                    # a274：UUID 去重（CLI 双写防线）——同 UUID 第二条直接跳过
+                    _uuid = o.get("uuid")
+                    if _uuid:
+                        if _uuid in _seen_uuids:
+                            continue
+                        _seen_uuids.add(_uuid)
                     typ = o.get("type")
                     if o.get("isSynthetic") or o.get("parent_tool_use_id"):
                         continue
