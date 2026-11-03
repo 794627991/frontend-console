@@ -2078,9 +2078,14 @@ async function openFileSmart(path, mode, opts) {
   const name = path.split(/[\/]/).pop().toLowerCase();
   const dot = name.lastIndexOf('.');
   const ext = dot > 0 ? name.slice(dot) : name;
-  // a280：Office 文件（docx/pdf/xlsx/pptx）直接分发到专用查看器——
-  // 不走文本/编辑器/弹窗流程
-  if (typeof openOfficeFile === 'function' && openOfficeFile(path)) return;
+  // a280→a281R：Office 文件分发——先同步判扩展名（_officeKindOf 返回非空
+  // 才是 Office 文件），再调 async 的 openOfficeFile。原写法直接调
+  // openOfficeFile(path) 当同步用——async 函数返回 Promise 恒真，导致
+  // 所有文件都被拦截、编辑器路径永远不可达（用户实锤 .md 都打不开）
+  if (typeof _officeKindOf === 'function' && _officeKindOf(path)) {
+    openOfficeFile(path);   // async，自己管 tab 创建，不需要 await
+    return;
+  }
   const isText = _DROP_TEXT_EXT.has(ext) || name === 'makefile' || name === 'readme';
   // 探测大小（失败按 0 处理走编辑器尝试）
   let size = 0, isTextSrv = isText;
