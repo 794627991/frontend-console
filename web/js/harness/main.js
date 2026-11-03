@@ -233,16 +233,33 @@ function buildClaudeHarnessTab(opts = {}) {
     const topEl = _hgQ('.hg-top');
     if (topEl) topEl.insertBefore(dgBtn, topEl.querySelector('.hg-vis-ind') || topEl.lastElementChild);
   } catch (_) {}
+  // a276 批2a（ZCode #9 滚动零几何读）：缓存 scrollHeight/clientHeight，
+  // 滚动路径只读 scrollTop（零布局成本）。缓存三路刷新：RO 容器尺寸变化 +
+  // 渲染后钩子 + 切回 tab。旧法每帧读 scrollHeight=强制同步布局（a271 追踪
+  // 419 次 Layout 中 262 次滚动触发）——a271 的 rAF 合帧只减了频率，这里
+  // 根治为零
+  let _flowGeom = { h: 0, vh: 0 };   // 缓存：scrollHeight, clientHeight
+  const _flowGeomRefresh = () => {
+    _flowGeom.h = _hgFlow.scrollHeight;
+    _flowGeom.vh = _hgFlow.clientHeight;
+  };
+  // RO 盯容器尺寸（内容增减/窗口 resize 都会变）
+  try {
+    new ResizeObserver(() => _flowGeomRefresh()).observe(_hgFlow);
+  } catch (_) {}
+  _flowGeomRefresh();   // 初始
+
   // a271（性能追踪实锤：滚动 handler 同步读 scrollHeight/scrollTop → 419 次
-  // Layout 中 262 次被滚动事件强制同步触发 = 翻页一卡一卡真身）。rAF 合帧：
-  // 读几何挪进 requestAnimationFrame（与渲染同帧合并，多次 scroll 一帧只算一次）
+  // Layout 中 262 次被滚动事件强制同步触发 = 翻页一卡一卡真身）。rAF 合帧 +
+  // a276 缓存几何（scrollTop 以外零 DOM 读）
   let _scrollRaf = 0;
   _hgFlow.addEventListener('scroll', () => {
     if (_scrollRaf) return;
     _scrollRaf = requestAnimationFrame(() => {
       _scrollRaf = 0;
       if (_HG.noScroll) return;   // 历史重建的程序性 scrollTop 写入不污染粘底态
-      const gap = _hgFlow.scrollHeight - _hgFlow.scrollTop - _hgFlow.clientHeight;
+      // a276：只读 scrollTop（零布局），scrollHeight/clientHeight 走缓存
+      const gap = _flowGeom.h - _hgFlow.scrollTop - _flowGeom.vh;
       if (gap < 120) _HG.stickBtm = true;
       else if (gap > 150) _HG.stickBtm = false;
     });
@@ -253,12 +270,14 @@ function buildClaudeHarnessTab(opts = {}) {
     // 就被拉到最下面」）。force=true（自己发消息、切会话回底）不受限。
     // v3.4.67：粘底跟读优先——stickBtm（渲染前在底）时无条件拽底，大块渲染
     // 把底推远也不再误判；仅用户真翻上去（scroll 判 >150 置假）才回旧判据。
+    // a276：scrollHeight 用缓存（写 scrollTop 本身不触发布局，但读 scrollHeight 会）
+    _flowGeomRefresh();   // 写之前刷一次——拽底语义优先精确（这是低频路径，非滚动热路径）
     if (!force && !_HG.stickBtm &&
-        _hgFlow.scrollHeight - _hgFlow.scrollTop - _hgFlow.clientHeight > 150) return;
-    _hgFlow.scrollTop = _hgFlow.scrollHeight;
+        _flowGeom.h - _hgFlow.scrollTop - _flowGeom.vh > 150) return;
+    _hgFlow.scrollTop = _flowGeom.h;
     // 布局二次兜底：活动指示条弹出/气泡内图片加载等会在同帧稍后改变 flow 高度，
     // 下一帧再滚一次，保证"发送后我的消息在底部"（v2.5 用户反馈修复）
-    requestAnimationFrame(() => { _hgFlow.scrollTop = _hgFlow.scrollHeight; });
+    requestAnimationFrame(() => { _flowGeomRefresh(); _hgFlow.scrollTop = _flowGeom.h; });
   };
 
   // ==================== 交互式提问卡片（v2.17）====================
@@ -1095,23 +1114,20 @@ function buildClaudeHarnessTab(opts = {}) {
   }
   // v3.5.50：同上（async 变更类 handler）
   _hgFlow.addEventListener('click', _hgFlowClick2);
-  // a271：rAF 合帧（同 236 行处追踪实锤——scroll 事件里同步读 scrollHeight
-  // = 强制同步布局；本 handler 原 passive:true 只解掉了 preventDefault 警告，
-  // 几何读仍逐事件同步。合帧后 60Hz 滚动每帧至多 1 次读）
+  // a271：rAF 合帧 + a276 缓存几何（同 236 行处，scrollTop 以外零 DOM 读）
   let _scrollRaf2 = 0;
   _hgFlow.addEventListener('scroll', () => {
     if (_scrollRaf2) return;
     _scrollRaf2 = requestAnimationFrame(() => {
       _scrollRaf2 = 0;
-      // v3.2.8：一键跳底钮显隐——离底 >350px 浮现（任何渲染态都要刷新）
+      // v3.2.8：一键跳底钮显隐——a276 用缓存几何算距底
       if (_hgJumpBtm) {
-        const _dj = _hgFlow.scrollHeight - _hgFlow.scrollTop - _hgFlow.clientHeight;
+        const _dj = _flowGeom.h - _hgFlow.scrollTop - _flowGeom.vh;
         _hgJumpBtm.classList.toggle('show', _dj > 350);
       }
-      _hgRailActiveRaf();   // v3.2.10：轨当前项跟随视口
+      _hgRailActiveRaf();   // v3.2.10：轨当前项跟随视口（内部用缓存 tops）
       // v2.35.2（P0 切会话信息丢失根因）：histLive 门（语义同前，详见 git 史）
       if (!_HG.histAll || !_HG.histLive || _HG.busy || _histBusy) return;
-      const shown = _HG.histAll.length - _HG.histStart;
       // v3.2.12：扩段/收缩分支随分页退役——恒全量渲染（详见 git 史）
     });
   }, { passive: true });
@@ -2200,7 +2216,8 @@ function buildClaudeHarnessTab(opts = {}) {
         (it.el && it.el.isConnected) ? it.el.offsetTop : -1);
     }
     const tops = _HG.railCacheTops;
-    const _atBtm = _hgFlow.scrollHeight - _hgFlow.scrollTop - _hgFlow.clientHeight <= 4;
+    // a276 批2a：贴底特判用缓存几何（scrollHeight/clientHeight 零 DOM 读）
+    const _atBtm = _flowGeom.h - _hgFlow.scrollTop - _flowGeom.vh <= 4;
     const st = _hgFlow.scrollTop + 80;
     let act = -1;
     if (_atBtm) act = items.length - 1;
@@ -2218,7 +2235,7 @@ function buildClaudeHarnessTab(opts = {}) {
       // 自愈：二分落空（act<0/0）但 scrollTop 明显不在顶部=布局数据不可信
       if (act <= 0 && _hgFlow.scrollTop > 200 && items.length > 2) {
         const ratio = _hgFlow.scrollTop /
-          Math.max(1, _hgFlow.scrollHeight - _hgFlow.clientHeight);
+          Math.max(1, _flowGeom.h - _flowGeom.vh);
         act = Math.min(items.length - 1, Math.max(0,
           Math.round(ratio * (items.length - 1))));
         // 顺手用当前滚动位置修正缓存（下次二分直接命中）
