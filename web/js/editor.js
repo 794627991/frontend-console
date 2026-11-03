@@ -862,16 +862,23 @@ function _edRenderOutline(conn) {
       return entries;
     })();
     if (mdOutline && mdOutline.length) {
-      // a282R：renderEntries 的折叠逻辑用 e.depth（不是 e.level）做嵌套判定
-      const withNesting = mdOutline.map((e, i) => {
-        let childCount = 0;
-        for (let j = i + 1; j < mdOutline.length && mdOutline[j].level > e.level; j++) childCount++;
-        return { ...e, depth: e.level, kids: childCount > 0 ? [] : undefined };
+      // a282R2：直接渲染（不走 renderEntries 闭包——其生成守卫/折叠逻辑
+      // 与 md 条目形状不完全兼容导致空渲染 IAB 实锤两次）
+      conn.outlineList.innerHTML = mdOutline.map((e, i) =>
+        `<div class="ed-outline-item" data-i="${i}" style="padding-left:${(e.level-1)*12+8}px">${esc(e.text || '(无标题)')}</div>`
+      ).join('');
+      conn.outlineList.querySelectorAll('.ed-outline-item').forEach(item => {
+        item.onclick = () => {
+          const e = mdOutline[+item.dataset.i];
+          if (!e || !conn.monaco) return;
+          conn.monaco.revealLineInCenter(e.line);
+          conn.monaco.setPosition({ lineNumber: e.line, column: 1 });
+        };
       });
-      if (!renderEntries(withNesting)) {
-        conn.outlineList.innerHTML = '<div class="ed-outline-empty">暂无标题行<br>用 # 井号标题组织内容后在此生成目录</div>';
-        conn.outlineStats.innerHTML = '';
-      }
+      const hCount = {};
+      mdOutline.forEach(e => { hCount['H' + e.level] = (hCount['H' + e.level] || 0) + 1; });
+      conn.outlineStats.innerHTML = Object.entries(hCount)
+        .map(([k, v]) => `<span class="ed-outline-stat">${k} ${v}</span>`).join('');
     } else {
       conn.outlineList.innerHTML = '<div class="ed-outline-empty">暂无标题行<br>用 # 井号标题组织内容后在此生成目录</div>';
       conn.outlineStats.innerHTML = '';
