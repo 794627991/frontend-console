@@ -42,7 +42,11 @@ class TftpServer:
         # 130~200ms，前端每秒轮询全量打网络盘；NFS 抖动时单次挂起秒级→浏览器
         # 同源 6 连接池被慢轮询+SSE 占满→串口按键 POST 在浏览器侧排队（后端
         # 本身 4ms）。2.5s TTL 缓存 + 异常回退旧表，轮询基本零盘压
+        # a267（devtools 追踪实锤 NFS 挂起 110s）：TTL 过期改为**立即回旧表+
+        # 后台线程异步刷新**——旧版过期后在 self._lock 内进 _list_files，NFS
+        # 挂多久锁就持多久，连缓存命中者也全堵。刷新中标志防重复派工
         self._files_cache = None   # (ts, list)
+        self._files_refreshing = False
 
     @staticmethod
     def _resolve_default_dir():
@@ -119,19 +123,43 @@ class TftpServer:
             return False, f"目录不存在: {path}"
         self.root_dir = path
         self._files_cache = None   # a265：切根立即失效缓存
+        self._files_refreshing = False
         self._remember_default(path)   # v2.25：记住为默认，下次启动自动回到这里
         return True, path
+
+    def _files_refresh(self):
+        """a267：后台刷新文件表（status 的 TTL 过期分支派工）。无论成败收尾
+        清 refreshing 标志并落缓存（失败保留旧表内容——列表已回给用户，
+        缓存时间戳前移防每 2s 重派：NFS 长挂时最多 2.5s 派一次刷新线程）。"""
+        try:
+            files = self._list_files()
+        except Exception:
+            files = None
+        with self._lock:
+            if files is not None:
+                self._files_cache = (time.time(), files)
+            elif self._files_cache is not None:
+                self._files_cache = (time.time(), self._files_cache[1])
+            self._files_refreshing = False
 
     def status(self):
         with self._lock:
             now = time.time()
-            if self._files_cache and now - self._files_cache[0] < 2.5:
-                files = self._files_cache[1]   # a265：TTL 内直接用缓存（不打盘）
+            cached = self._files_cache
+            if cached and now - cached[0] < 2.5:
+                files = cached[1]        # TTL 内：缓存直接回，零盘压
+            elif cached is not None:
+                # a267：TTL 过期但**有旧表**——立即回旧表（绝不进 NFS），
+                # 后台线程刷新；刷新中不重复派工。NFS 挂 100s 也只堵那一个
+                # 后台线程，所有 status 调用毫秒级返回
+                files = cached[1]
+                if not self._files_refreshing:
+                    self._files_refreshing = True
+                    threading.Thread(target=self._files_refresh, daemon=True).start()
             else:
-                try:
-                    files = self._list_files()
-                except Exception:
-                    files = (self._files_cache or (0, []))[1]   # 网络盘抖动：回退旧表不挂起
+                # 冷启动无旧表：只能同步拉一次（拉不到给空表，不挂请求线程
+                # ——_list_files 自带 try/except 返回 []）
+                files = self._list_files()
                 self._files_cache = (now, files)
             return {
                 "running": self.running,

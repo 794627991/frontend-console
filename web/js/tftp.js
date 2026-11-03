@@ -10,9 +10,15 @@ function _fmtSize(n) {
   if (n >= 1024) return (n / 1024).toFixed(1) + 'KB';
   return n + 'B';
 }
+let _tftpPollBusy = false;   // a267：在飞守卫——上个请求没回来不发下一个（防挂起请求堆满连接池）
 async function refreshTftp() {
+  if (_tftpPollBusy) return;   // devtools 追踪实锤：NFS 挂起时 2s 轮询堆了 49 个排队请求
+  _tftpPollBusy = true;
+  // a267：4s 超时自断——服务器/网络盘挂死时主动放弃，别占着连接池等
+  const _ac = new AbortController();
+  const _tm = setTimeout(() => _ac.abort(), 4000);
   try {
-    const r = await fetch('/api/tftp/status');
+    const r = await fetch('/api/tftp/status', { signal: _ac.signal });
     const j = await r.json();
     if (!j.ok) return;
     _tftpRunning = j.running;
@@ -96,7 +102,10 @@ async function refreshTftp() {
       }
       filesEl.innerHTML = fhtml;
     }
-  } catch(e) {}
+  } catch(e) {} finally {
+    clearTimeout(_tm);
+    _tftpPollBusy = false;
+  }
 }
 // 分区标题点击折叠/展开（事件委托，绑定到两个容器；状态 localStorage 记忆）
 [$('tftpTransfers'), $('tftpFiles')].forEach(el => {

@@ -668,12 +668,17 @@ def api_connect():
                 except Exception:
                     pass
                 return jsonify({"ok": False, "err": msg}), 500
+            # a267：close 移出 _ports_lock（同串口分支）
+            _dup = None
             with _ports_lock:
                 if port_id in _ports:   # 极端并发：两次同目标连接都成功了，后到者关掉
-                    try: p.close()
-                    except Exception: pass
-                    return jsonify({"ok": False, "err": f"{port_id} 已连接"}), 400
-                _ports[port_id] = p
+                    _dup = p
+                else:
+                    _ports[port_id] = p
+            if _dup is not None:
+                try: _dup.close()
+                except Exception: pass
+                return jsonify({"ok": False, "err": f"{port_id} 已连接"}), 400
         finally:
             _drop_connecting(port_id)
         # SSH invoke_shell 自带 shell，不主动 send \r
@@ -761,13 +766,17 @@ def api_connect():
             try:
                 p = ClaudeConnection(cwd=cwd, resume=resume, port_id=port_id,
                                      light_theme=light_theme, agents=agents)
+                # a267：close 移出 _ports_lock（同串口分支——锁内关卡全局 API）
+                _dup = None
                 with _ports_lock:
                     if port_id in _ports:   # 双检：占位期间被并发抢先（理论上占位已挡）
-                        if p is not None:
-                            try: p.close()
-                            except Exception: pass
-                        return jsonify({"ok": False, "err": "该会话已在工具内打开"}), 400
-                    _ports[port_id] = p
+                        _dup = p
+                    else:
+                        _ports[port_id] = p
+                if _dup is not None:
+                    try: _dup.close()
+                    except Exception: pass
+                    return jsonify({"ok": False, "err": "该会话已在工具内打开"}), 400
             except Exception as e:
                 # 构造内 start() 已 spawn PTY+读线程，异常必须 close 兜底（同 SSH/串口模式）
                 _ports.pop(port_id, None)
@@ -804,12 +813,19 @@ def api_connect():
                     try: p.close()
                     except Exception: pass
                 return jsonify({"ok": False, "err": str(e)}), 500
+            # a267（用户 devtools 追踪实锤 wait=109s）：p.close() 关劣化 COM 口
+            # 可卡驱动级百秒——绝不能在 _ports_lock 内关（全局 API 全堵）。
+            # 先锁内查重，命中则锁外关闭
+            _dup = None
             with _ports_lock:
                 if port_id in _ports:
-                    try: p.close()
-                    except Exception: pass
-                    return jsonify({"ok": False, "err": f"{port} 已连接"}), 400
-                _ports[port_id] = p
+                    _dup = p
+                else:
+                    _ports[port_id] = p
+            if _dup is not None:
+                try: _dup.close()
+                except Exception: pass
+                return jsonify({"ok": False, "err": f"{port} 已连接"}), 400
         finally:
             _drop_connecting(port_id)
         # 触发提示符
