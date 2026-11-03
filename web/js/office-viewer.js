@@ -4,11 +4,13 @@
 // 入口：openFileSmart 按扩展名分发 → openOfficeFile(path, ext)
 // ============================================================
 const _OFFICE_EXTS = {
-  docx: 'word', doc: 'word',
+  docx: 'word',
   pdf: 'pdf',
   xlsx: 'excel', xls: 'excel', csv: 'excel',
-  pptx: 'ppt', ppt: 'ppt',
+  pptx: 'ppt',
 };
+// 注意：.doc（旧格式）和 .ppt（旧格式）不进来——docx-preview 只吃 .docx，
+// 旧格式传进去会挂死渲染线程（用户实锤打开 .doc 工具卡死）
 
 function _officeKindOf(path) {
   const m = path.toLowerCase().match(/\.([a-z0-9]+)$/);
@@ -19,6 +21,16 @@ async function openOfficeFile(path) {
   const kind = _officeKindOf(path);
   if (!kind) return false;
   const name = path.split(/[\\/]/).pop();
+  // a280R：先查文件大小——>10MB 的 docx 渲染会卡死前端（用户实锤）
+  try {
+    const fi = await fetch('/api/file_info', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({path})});
+    const fj = await fi.json();
+    if (fj.ok && fj.size > 10 * 1024 * 1024) {
+      showBanner(`${name} ${(fj.size/1024/1024).toFixed(1)}MB 过大（>10MB 上限），请用资源管理器打开`, 5000, true);
+      return true;
+    }
+  } catch (_) {}
   const portId = 'office:' + path + ':' + Date.now();
 
   // 去重：同文件已开则切过去
@@ -101,7 +113,7 @@ async function _ovRender(kind, buf, body, wrap, conn) {
   body.innerHTML = '<div class="office-err">不支持的文件类型</div>';
 }
 
-// Word (.docx)
+// Word (.docx) — 仅 .docx；.doc 旧格式不支持（docx-preview 只吃 OOXML）
 async function _ovRenderDocx(buf, body, wrap, conn) {
   if (typeof docx === 'undefined') {
     body.innerHTML = '<div class="office-err">docx-preview 库未加载（vendor/docx-preview 缺失）</div>';
@@ -110,13 +122,24 @@ async function _ovRenderDocx(buf, body, wrap, conn) {
   body.innerHTML = '<div class="docx-container"></div>';
   const container = body.firstChild;
   try {
+    // a280R：超时保护——渲染卡死时 10s 后放弃并提示（防工具冻死）
+    const timeout = setTimeout(() => {
+      if (container._rendering) {
+        container._rendering = false;
+        body.innerHTML = '<div class="office-err">Word 渲染超时（文件可能过大或格式异常），请用资源管理器打开</div>';
+      }
+    }, 10000);
+    container._rendering = true;
     await docx.renderAsync(buf, container, null, {
       inWrapper: true, breakPages: true, renderHeaders: true, renderFooters: true,
       useBase64URL: true, ignoreLastRenderedPageBreak: false,
     });
-    // 主题：docx-preview 输出自带样式（白色 Word 底），容器层叠主题色
+    container._rendering = false;
+    clearTimeout(timeout);
     container.classList.add('docx-themed');
   } catch (e) {
+    container._rendering = false;
+    clearTimeout(timeout);
     body.innerHTML = `<div class="office-err">Word 渲染失败: ${esc(String(e).slice(0, 200))}</div>`;
   }
 }

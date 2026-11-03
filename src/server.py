@@ -524,7 +524,10 @@ def api_office_read():
     if not os.path.isabs(q) or not os.path.isfile(q):
         return jsonify({"ok": False, "err": "文件不存在"}), 400
     _ext = os.path.splitext(q)[1].lower().lstrip(".")
-    if _ext not in ("docx", "doc", "pdf", "xlsx", "xls", "csv", "pptx", "ppt"):
+    # a280R：.doc/.ppt 旧二进制格式不支持（前端库只吃 OOXML），拒了防卡死
+    if _ext in ("doc", "ppt"):
+        return jsonify({"ok": False, "err": f".{_ext} 是旧格式，暂只支持 .{_ext}x（OOXML）"}), 400
+    if _ext not in ("docx", "pdf", "xlsx", "xls", "csv", "pptx"):
         return jsonify({"ok": False, "err": f"不支持的文件类型: .{_ext}"}), 400
     try:
         size = os.path.getsize(q)
