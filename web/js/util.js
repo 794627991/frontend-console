@@ -777,6 +777,10 @@ function sortKeyFn(pid) {
   if (pid.startsWith('edit:')) return [3, pid];  // 编辑器：字典序（排在日志后）
   if (pid.startsWith('claude:')) return [4, pid];  // claude 终端：字典序（排在编辑器后）
   if (pid.startsWith('harness:')) return [5, pid];  // claude harness 对话：字典序（排在 claude 终端后）
+  // 第8轮盲测缺陷2：bitcalc/proxy 原落默认桶（SSH 前）与 ⋮ 列表组序
+  // （编辑器类/代理）矛盾——补齐桶位对齐 _GROUP_ORDER
+  if (pid.startsWith('bitcalc:')) return [3, pid];  // 计算器：编辑器类桶
+  if (pid.startsWith('proxy:')) return [6, pid];    // 代理面板：最后
   return [1, pid];  // SSH：字典序
 }
 

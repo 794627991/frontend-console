@@ -1248,14 +1248,21 @@
     overflow: hidden; text-overflow: ellipsis;
   }
   .tab .label { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-  .tab .close { flex-shrink: 0; }
+  /* 第8轮盲测缺陷1（高·终修）：✕ 占 flex 流位 → tab 压到 42~48px（固定开销
+     59px 装不下）时 ✕ 被挤出 tab 边界——图标可见（透明背景透出）但点击命中
+     右邻 tab（后兄弟绘制在上层），点 ✕ 关不掉还切走视图。终修：✕ 退出 flex
+     流改绝对定位钉右上——任何宽度都钉在 tab 内、永不溢出、点击永远命中自身 */
+  .tab { position: relative; }
+  .tab .close { position: absolute; right: 3px; top: 50%; transform: translateY(-50%); z-index: 1; }
   /* 第4轮盲测问题2（第二凶手）：终端 tab 的 baud span（@9600）同为 flex item
      却无收缩约束——空间不足时和旧 label 一样把 ✕ 顶出 tab。空间不足优先
      压缩 baud（次要信息），label 已有 .label 省略号 */
   .tab .baud { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-  /* 第7轮盲测P6：label 收缩到 6px 时连"…"都装不下（标题区全空白无法辨识）——
-     保底 8px 至少渲染省略号 */
+  /* 第7轮盲测P6：label 收缩到 6px 时连"…"都装不下——保底 8px 渲染省略号。
+     第8轮缺陷1 配套：✕ 改 overlay 后 label 区右侧预留 ✕ 位，宽 tab 防叠字 */
   .tab .label { min-width: 8px; }
+  .tab .label, .tab .baud, .tab .tab-ico { padding-right: 0; }
+  .tab { padding-right: 22px; }
   .tab:hover { color: var(--fg); background: var(--bg-card); }
   .tab.active {
     color: var(--accent); background: var(--bg);
@@ -1849,7 +1856,9 @@
   #openModeModal .btn small { margin-left: 8px; font-size: 11px; }
   .modal .box {
     background: var(--bg-panel); border: 1px solid var(--border-glow); border-radius: 12px;
-    width: 640px; max-height: 78vh; display: flex; flex-direction: column;
+    /* 第8轮盲测缺陷3：窄视口（400px）下固定宽被裁两侧无法看全——min() 收缩
+       （各弹窗通用，宽视口行为不变） */
+    width: min(640px, 94vw); max-height: 78vh; display: flex; flex-direction: column;
     box-shadow: 0 0 40px rgba(0,212,255,0.1);
   }
   .modal .head { padding: 14px 18px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; gap: 10px; }
