@@ -44,10 +44,11 @@ function _initTabDrag(tab) {
     const src = _tabDrag.el;
     // 第9轮盲测缺陷3（中）：未固定 tab 拖到固定 tab 之前会破坏"固定组最左"
     // 不变量（且不被纠正）。防护：未固定源落进固定区（目标固定且落前半）时，
-    // 改插到最后一个固定 tab 之后——保持固定区完整
+    // 改插到最后一个固定 tab 之后——保持固定区完整。第10轮缺陷3：后半
+    // （落在固定 tab 右半）同样插进固定簇中间——去掉 before 条件统一挡板
     const srcPinned = src.classList.contains('pinned');
     const tgtPinned = tab.classList.contains('pinned');
-    if (!srcPinned && tgtPinned && before) {
+    if (!srcPinned && tgtPinned) {
       const pinnedEls = [...tabs.querySelectorAll('.tab.pinned')];
       const ref = pinnedEls.length ? pinnedEls[pinnedEls.length - 1].nextSibling : tab;
       tabs.insertBefore(src, ref);

@@ -275,11 +275,19 @@ let activePortId = null;
   }
   const close = () => { if (list) { list.remove(); list = null; } };
   btn.onclick = e => { e.stopPropagation(); if (list) close(); else buildList(); };
-  // 第9轮盲测缺陷2（中）：冒泡阶段监听被 tab ✕ handler 的 stopPropagation 拦截
-  // ——列表开着点 ✕ 时 tab 被穿透关闭且列表不收。改捕获阶段（先于目标执行）
-  // + stopPropagation：首击只关列表，不激活/不关闭所点目标（标准 outside-click）
+  // 第9轮缺陷2：冒泡监听被 ✕ handler 的 stopPropagation 拦截 → 改捕获+stop。
+  // 第10轮缺陷1/2（高，上轮回归）：捕获监听把 _tabClose 的合成 click（点列表 ✕ →
+  // 内部 closeEl.click()，target 在列表外）误判为外部点击——close+stop 拦死了
+  // 关闭链（tab 关不掉、列表被关）；同理拦截右键菜单项动作（菜单残留）。
+  // 放行两类：isTrusted=false 的程序化点击（内部逻辑链）；ctxMenu 弹开期间的
+  // 菜单项点击（菜单交互优先，动作执行后自行收起）
   document.addEventListener('click', e => {
-    if (list && !list.contains(e.target) && e.target !== btn) { close(); e.stopPropagation(); }
+    if (!e.isTrusted) return;
+    if (!list || list.contains(e.target) || e.target === btn) return;
+    close();
+    const m = document.getElementById('ctxMenu');
+    if (m && m.style.display === 'block' && m.contains(e.target)) return;
+    e.stopPropagation();
   }, true);
 
   // ===== 抽屉模式渲染 =====
@@ -437,8 +445,15 @@ let activePortId = null;
     groupList.className = 'tab-overflow-list show';
     document.body.appendChild(groupList);
     _groupRenderItems(group, anchorEl);
-    // 第9轮缺陷2 同锤：捕获阶段 + stopPropagation，首击只关列表不穿透
-    _groupDocClose = e => { if (groupList && !groupList.contains(e.target)) { _groupCloseList(); e.stopPropagation(); } };
+    // 第9轮缺陷2 同锤 + 第10轮缺陷1/2 同修：合成点击与菜单交互放行（见上方 ⋮ 列表监听注释）
+    _groupDocClose = e => {
+      if (!e.isTrusted) return;
+      if (!groupList || groupList.contains(e.target)) return;
+      _groupCloseList();
+      const m = document.getElementById('ctxMenu');
+      if (m && m.style.display === 'block' && m.contains(e.target)) return;
+      e.stopPropagation();
+    };
     setTimeout(() => document.addEventListener('click', _groupDocClose, true), 0);
   }
 
