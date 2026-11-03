@@ -288,6 +288,12 @@ def _write_text_atomic(p, text, enc=None, bom=False):
     real = "utf-8"
     if enc:
         e = str(enc).lower()
+        # a248 F6（a245/a246复审）：探测兜底形态 "utf-8(replace)"（非法 utf-8 且
+        # 解不进 GB 系的文件）此前被当 codec 直通 → LookupError 500，该文件从此
+        # 一次都存不了。归一为基底编码：按编辑器里显示的内容（含替换符）落
+        # utf-8，正是用户所见即所存
+        if e.endswith(")") and "(" in e:
+            e = e.split("(", 1)[0]
         real = "gb18030" if e in ("gb2312", "gbk", "gb18030") or e.startswith("gb") else e
     # utf-8-sig 编码器无条件写 BOM——bom=False 会被无视（实测实锤：无 BOM 的
     # utf-8-sig 探测文件保存后被强加 BOM）。统一归一到 utf-8，由 bom 决定升 sig

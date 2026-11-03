@@ -1610,6 +1610,23 @@ def api_data_dir_migrate():
         _migrate_lock.release()
 
 
+def _mig_copy_atomic(sf, df):
+    """a248（a245复审F1）：迁移拷贝 tmp+os.replace 原子化——copy2 直写目标，
+    中途失败（磁盘满/杀软锁）留半截文件：首轮好副本被毁 + 下次重试
+    exists(df) 跳拷 + 大小校验恒败 = 该目标目录永久迁移死锁。"""
+    import shutil
+    tmp = "%s.migtmp.%d.%d" % (df, os.getpid(), time.time_ns() % 10**9)
+    try:
+        shutil.copy2(sf, tmp)
+        os.replace(tmp, df)
+    finally:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
+
+
 def _do_data_dir_migrate(target):
     """迁移本体（调用方已持 _migrate_lock）。"""
     global DATA_DIR, STATE_DIR, CMD_LIB_FILE, LOG_DIR
@@ -1653,6 +1670,7 @@ def _do_data_dir_migrate(target):
             os.makedirs(dst, exist_ok=True)
             n = 0
             skipped = 0
+            conflicts = 0   # a248 F2：目标预放旧版被源当前版保真另存的条数
             # a238 P1-5：walk 剪 reparse point（junction 环挂死/外部树整拷——
             # data_hygiene._files_in 同款剪枝）
             _src_real = os.path.realpath(src)
@@ -1667,10 +1685,19 @@ def _do_data_dir_migrate(target):
                     sf, df = os.path.join(root, fn), os.path.join(droot, fn)
                     try:
                         if not os.path.exists(df):   # 不覆盖目标已有文件（目标可能已有数据）
-                            shutil.copy2(sf, df)
+                            _mig_copy_atomic(sf, df)
                         # 校验：大小一致（copy2 保元数据，大小校验足够可靠且快）
                         if os.path.getsize(sf) != os.path.getsize(df):
-                            raise RuntimeError(f"校验失败: {df} 与源大小不一致")
+                            if strict:
+                                raise RuntimeError(f"校验失败: {df} 与源大小不一致")
+                            # a248（a245复审F2）：目标预放同名旧文件且与源不一致——
+                            # 原先静默 skipped，rmtree 后源的当前版被删、目标旧版
+                            # 胜出=数据倒退。改为冲突保真：源当前版另存
+                            # .migrate-conflict，两边都不丢
+                            _mig_copy_atomic(sf, df + ".migrate-conflict")
+                            skipped += 1
+                            conflicts += 1
+                            continue
                         n += 1
                     except RuntimeError:
                         if strict:
@@ -1681,7 +1708,9 @@ def _do_data_dir_migrate(target):
                             skipped += 1
                         else:
                             raise
-            copied.append({"name": s, "files": n, **({"skipped": skipped} if skipped else {})})
+            copied.append({"name": s, "files": n,
+                           **({"skipped": skipped} if skipped else {}),
+                           **({"conflicts": conflicts} if conflicts else {})})
         # 根级关键配置（cmdlib.json/retry_config.json 及一切 *.json）：
         # 严格校验逐个迁——大小不一致直接判迁移失败，不切换
         for s in _data_root_json_files():
@@ -1690,7 +1719,7 @@ def _do_data_dir_migrate(target):
                 continue
             df = os.path.join(target, s)
             if not os.path.exists(df):
-                shutil.copy2(sf, df)
+                _mig_copy_atomic(sf, df)
             if os.path.getsize(sf) != os.path.getsize(df):
                 raise RuntimeError(f"校验失败: {df} 与源大小不一致")
             copied.append({"name": s, "files": 1})
@@ -1740,7 +1769,7 @@ def _do_data_dir_migrate(target):
                         except OSError:
                             pass
                         try:
-                            shutil.copy2(sf, df)   # 窗口内新写入：源是最新意图，覆盖
+                            _mig_copy_atomic(sf, df)   # 窗口内新写入：源是最新意图，原子覆盖
                             late += 1
                             if os.path.getsize(sf) != os.path.getsize(df):
                                 raise RuntimeError(f"校验失败: {df} 与源大小不一致")
@@ -1767,7 +1796,7 @@ def _do_data_dir_migrate(target):
                         continue
                 except OSError:
                     pass
-                shutil.copy2(sf, df)
+                _mig_copy_atomic(sf, df)
                 late += 1
                 if os.path.getsize(sf) != os.path.getsize(df):
                     raise RuntimeError(f"校验失败: {df} 与源大小不一致")
@@ -1838,7 +1867,9 @@ def _do_data_dir_migrate(target):
     cfg = {**_load_config(), "data_dir": target, "log_dir": new_log_dir}
     _save_config(cfg)
     # ---- 校验已过（cmdlib/笔记严格校验，log 尽力、缓存仅搬壳），直接删旧目录 ----
-    # 用户口径：不要旧目录备份，迁移完自动删。锁定文件残留由关工具自动清。
+    # 用户口径：不要旧目录备份，迁移完自动删。注意（a245复审F5）：被打开句柄
+    # 锁定的文件（活跃日志）rmtree 删不掉会残留在旧目录，直到写端重开——
+    # ignore_errors 不中断，残留无害但不会自动清理
     shutil.rmtree(old_data_dir, ignore_errors=True)
     return jsonify({"ok": True, "dir": target, "copied": copied,
                     "deleted": True, "residual": 0, "late_copies": late_total,
