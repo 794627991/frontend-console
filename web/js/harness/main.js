@@ -2125,10 +2125,9 @@ function buildClaudeHarnessTab(opts = {}) {
   // 期间 offsetTop 全归零，立即算必错）
   _hgConn.onResumePoll = () => {
     if (_HG.conn === _hgConn) _hgInput.focus();
-    // a273R2：切回不再清缓存——保留 tab 可见期间建立的可信 offsetTop，
-    // 布局没变（没新消息）缓存依然正确；有新消息 railSync 自然失效重建。
-    // 双 rAF 后只重算活动刻度
+    // a276R2：切回时同步刷几何缓存（RO 可能还没回调，_flowGeom 停在全零）
     requestAnimationFrame(() => requestAnimationFrame(() => {
+      _flowGeomRefresh();
       try { _hgRailActiveRaf(); } catch (_) {}
     }));
   };
@@ -2211,6 +2210,10 @@ function buildClaudeHarnessTab(opts = {}) {
     const rail = _hgRailEl;
     const items = _HG.railItems;
     if (!rail || !items || !items.length) return;
+    // a276R2（用户实锤导轨仍失效）：RO 在 display:none→flex 切换时异步回调，
+    // _flowGeom 可能还停在全零（h=0,vh=0）→ _atBtm 恒 true=永远点末刻度。
+    // 守卫：几何缓存全零=布局未回填，同步刷一次（低频路径，只在切回/首次）
+    if (!_flowGeom.h || !_flowGeom.vh) _flowGeomRefresh();
     // a273R（用户精确描述「只在最上和最下」）：切 tab 后 offsetTop 在
     // content-visibility:auto 元素上返回估高（contain-intrinsic-size）而非
     // 真实位置——中间刻度估高 > scrollTop+80，二分全不命中=兜底 act=0。
