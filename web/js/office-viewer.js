@@ -81,6 +81,8 @@ async function openOfficeFile(path) {
     dirty: false,
   };
   connections[portId] = conn;
+  switchTab(portId);   // a282R3：先切 tab 让 wrap display:flex——PDF 的 canvas
+                       // 上下文在 display:none 下可能挂起（docx/xlsx 不受影响）。用户等待时至少能看到工具栏
 
   // 加载文件并渲染
   const body = wrap.querySelector('[data-ov-body]');
@@ -97,7 +99,6 @@ async function openOfficeFile(path) {
   } catch (e) {
     body.innerHTML = `<div class="office-err">加载失败: ${esc(String(e))}</div>`;
   }
-  switchTab(portId);
   return true;
 }
 window.openOfficeFile = openOfficeFile;
