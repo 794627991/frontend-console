@@ -348,8 +348,10 @@ def start_background():
 #   的 urllib 请求无 Origin 或同源，均放行）
 _LOCAL_HOST_RE = re.compile(
     r"^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$", re.I)
+# 复审 F5：不放宽为任意 loopback 端口——本机恶意页面（http://127.0.0.1:9999）
+# 依旧全拦（对齐 worker a116 同款标准）。动态端口号启动时已知，见 _guard
 _LOCAL_ORIGIN_RE = re.compile(
-    r"^https?://(127\.0\.0\.1|localhost|\[::1\])(:\d+)?/?$", re.I)
+    r"^https?://(127\.0\.0\.1|localhost|\[::1\])/?$", re.I)
 
 
 @app.before_request
@@ -360,8 +362,12 @@ def _guard_local_origin():
             return jsonify({"ok": False, "err": "forbidden host"}), 403
         if request.method in ("POST", "PUT", "DELETE", "PATCH"):
             origin = (request.headers.get("Origin") or "").strip()
-            if origin and not _LOCAL_ORIGIN_RE.match(origin):
-                return jsonify({"ok": False, "err": "forbidden origin"}), 403
+            if origin:
+                # 主页面同源（host 已过上面白名单，是本机随机端口的真身）；
+                # 其余 loopback 端口（本机其他 Web 页面）一律拒——对齐 worker a116
+                _own = "http://" + host
+                if origin.rstrip("/") != _own and not _LOCAL_ORIGIN_RE.match(origin):
+                    return jsonify({"ok": False, "err": "forbidden origin"}), 403
             # a239（第5轮B1）：顶层真值非对象的 JSON（"x"/123/true/[...]）此前
             # 在 12 个端点打穿 500 HTML——`(get_json(silent=True) or {})` 防不住
             # truthy 非 dict。此处一处收口：能解析且非 dict 一律 400。
@@ -741,11 +747,27 @@ def api_connect():
                 while f"claude:{n}" in _ports:
                     n += 1
                 port_id = f"claude:{n}"
+        # a239（第5轮A3-P3-8）：ConPTY spawn 在杀软实时扫描下可达秒级，构造
+        # 移出全局 _ports_lock（SSH/串口/telnet 已同款移出——锁内 spawn 期间
+        # /api/status、/api/send、全部 _ports 读写排队，正是 210 行注释的事故
+        # 形态）。占位防同目标重入，锁内复查登记
+        if not _acquire_connecting(port_id):
+            return jsonify({"ok": False, "err": "该会话正在打开中，请稍候"}), 400
+        try:
+            with _ports_lock:
+                if port_id in _ports:
+                    return jsonify({"ok": False, "err": "该会话已在工具内打开"}), 400
             p = None   # 预置防 NameError（同 SSH 分支）
             try:
                 p = ClaudeConnection(cwd=cwd, resume=resume, port_id=port_id,
                                      light_theme=light_theme, agents=agents)
-                _ports[port_id] = p
+                with _ports_lock:
+                    if port_id in _ports:   # 双检：占位期间被并发抢先（理论上占位已挡）
+                        if p is not None:
+                            try: p.close()
+                            except Exception: pass
+                        return jsonify({"ok": False, "err": "该会话已在工具内打开"}), 400
+                    _ports[port_id] = p
             except Exception as e:
                 # 构造内 start() 已 spawn PTY+读线程，异常必须 close 兜底（同 SSH/串口模式）
                 _ports.pop(port_id, None)
@@ -753,6 +775,8 @@ def api_connect():
                     try: p.close()
                     except Exception: pass
                 return jsonify({"ok": False, "err": _humanize_claude_error(e)}), 500
+        finally:
+            _drop_connecting(port_id)
         return jsonify({"ok": True, "port_id": port_id, "kind": "claude",
                         "cwd": cwd, "resume": resume,
                         "msg": f"claude 已启动（{'恢复会话 ' + resume[:8] if resume else '新会话'}）"})

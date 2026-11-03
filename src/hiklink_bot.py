@@ -21,6 +21,7 @@
 宿主接入点仅 server.py 一行 import（模块导入即自动连接，失败静默不影响主工具）。
 """
 import base64
+import collections   # a239: OrderedDict 保序去重
 import hashlib
 import json
 import logging
@@ -338,7 +339,7 @@ class HikLinkBot:
         self._stop = threading.Event()
         self._thread = None
         self._lock = threading.Lock()
-        self._last_trans = set()
+        self._last_trans = collections.OrderedDict()   # a239 B2-P3: 保序去重（set 无序截断可能丢掉最近的 transId，服务端重推即重复执行指令）
 
     def _trans(self):
         return str(uuid.uuid4())
@@ -515,11 +516,17 @@ class HikLinkBot:
             if _cur_uid and _sess and not _sess.lower().startswith(_cur_uid.lower()):
                 log.warning("拒绝非机主会话消息: session=%s sender=%s",
                             _sess[:10], data.get("sender"))
+                # 复审 F4：拒绝路径不得留置 self.session_id——reply/push 全用该
+                # 字段，一旦改指攻击者会话，此后机主的全部任务输出都投给攻击者
+                # （输出劫持）。回执临时直发目标会话，机主会话原样保留
+                _saved_sess = self.session_id
                 try:
-                    self.session_id = _sess   # 回执要投回该会话才可见
+                    self.session_id = _sess
                     self.reply("⚠ 该机器人仅响应机主（%s）本人的指令" % _cur_uid)
                 except Exception:
                     pass
+                finally:
+                    self.session_id = _saved_sess
                 return
             self.session_id = msg.get("session") or self.session_id
             self._save_last_session()
@@ -531,9 +538,9 @@ class HikLinkBot:
             trans_id = msg.get("transId") or self._trans()
             if trans_id in self._last_trans:
                 return
-            self._last_trans.add(trans_id)
-            if len(self._last_trans) > 200:
-                self._last_trans = set(list(self._last_trans)[-100:])
+            self._last_trans[trans_id] = True
+            while len(self._last_trans) > 200:   # a239: FIFO 淘汰最旧（保最近去重窗口）
+                self._last_trans.popitem(last=False)
             if self.on_command:
                 try:
                     self.on_command(text, trans_id)
@@ -914,6 +921,8 @@ class HikLinkBotController:
         with self._lock:
             if self._busy_hl:
                 self._queue.append(text)
+                if len(self._queue) > 50:   # a239 B2-P3: 上限防 IM 刷消息内存增长
+                    self._queue = self._queue[-50:]
                 self.bot.reply("⏳ 当前有任务在跑（已 %ds），这条已排队：%s"
                                % (int(time.time() - self._t0), text[:80]))
                 return
@@ -1131,7 +1140,16 @@ def clear_account():
     def mutate(d):
         for k in ("uid", "password", "robot_num", "app_secret", "robot_name"):
             d.pop(k, None)
-    return _update_session_file(mutate)
+    ok = _update_session_file(mutate)
+    # a239 B2-P2: 登出后 .bak 仍留全套凭据（密码+appSecret）无人清——
+    # _update_session_file 写前 copy2 留底是为「主文件损坏回滚」，登出场景
+    # 语义反转（敏感数据应彻底清除），直接删除
+    try:
+        if os.path.exists(SESSION_PATH + ".bak"):
+            os.remove(SESSION_PATH + ".bak")
+    except OSError:
+        pass
+    return ok
 
 
 def status_snapshot():

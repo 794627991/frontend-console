@@ -847,6 +847,7 @@ _ccr = False
 _tray_tip_thread = None
 _tip_stop = threading.Event()
 _shutdown_done = False
+_liveness_cache = {"ts": 0.0, "already": False, "busy": False}   # a239 A3-P3-9: 端口判活 2s 缓存（status 轮询防 ping 堆积）
 _bili_stats_cache = None        # headroom /stats 最近一次结果（5s 缓存线程写，
                               # status 1s 轮询只读——/stats 拉取 2s 超时不能同步做）
 _bili_stats_ts = 0.0
@@ -1876,13 +1877,18 @@ def _status_payload():
         rank = list(_quota_rank)
         qts = _quota_ts
     cred = _get_credentials()
+    # a239（第5轮A3-P3-9）：判活结果 2s 缓存——18788/37349 被「accept 不响应」
+    # 的本机进程占住时，ping 两连发 1s 超时会让 3s 轮询的 status 请求持续
+    # 堆积；数据面已有 5s stats 缓存同款思路
+    _now = time.time()
+    if _liveness_cache["ts"] < _now - 2:
+        _ar = (not _ctl.running and _ctl.port_in_use() and _ctl.ping_existing())
+        _liveness_cache.update(ts=_now, already=_ar, busy=(not _ctl.running and _ctl.port_in_use() and not _ar))
     data = {
         "ok": True,
         "running": _ctl.running,
-        "already_running": (not _ctl.running and _ctl.port_in_use()
-                            and _ctl.ping_existing()),
-        "port_busy": (not _ctl.running and _ctl.port_in_use()
-                      and not _ctl.ping_existing()),
+        "already_running": _liveness_cache["already"],
+        "port_busy": _liveness_cache["busy"],
         "status": st,
         "snapshot": snap,
         "base_url": _bmgr.read_current_url(),

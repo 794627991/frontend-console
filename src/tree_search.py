@@ -82,13 +82,19 @@ def _stream(scope, pattern, use_regex, smart_case, max_hits):
     if not os.path.isfile(RG_EXE):
         yield _sse({"type": "error", "err": "未找到 vendor/rg.exe（搜索不可用）"})
         return
-    cmd = [RG_EXE, "--json", "--no-messages", "--crlf",   # a239 B4: CRLF 文件 $ 锚定静默漏检（Windows 文本主流形态） "--max-filesize", FILE_SIZE_CAP,
+    # a239 B4 + 复审F1/F3：--crlf 让 $ 锚定命中 CRLF 文件（Windows 主流形态），
+    # 但它同时禁用正则里的字面 \r（rg rc=2 硬错被 --no-messages 静默=零命中）。
+    # 折衷：仅文本模式（非正则）传 --crlf——正则模式用户自己写 \r?$ 最准。
+    # 复审F1：注释吞参事故——--max-filesize 回归（a235 资源边界不能拆）
+    cmd = [RG_EXE, "--json", "--no-messages",
+           "--max-filesize", FILE_SIZE_CAP,
            "--max-count", "50",
            # a218：默认排除依赖/版本库目录（裸目录无 .gitignore 时也排除，
            # 与 VSCode 搜索默认行为对齐）
            "-g", "!node_modules", "-g", "!.git", "-g", "!vendor"]
     if not use_regex:
         cmd.append("--fixed-strings")
+        cmd.append("--crlf")
     else:
         cmd.append("--engine")  # auto：回退到 rust 引擎不支持回溯的特性
         cmd.append("auto")

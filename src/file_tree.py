@@ -321,7 +321,9 @@ def tree_fileops():
             if not fp:
                 return jsonify({"ok": False, "err": "路径不在已登记根内"}), 404
             name = str(data.get("name") or "").strip()
-            if not fp or not name or "/" in name or os.sep in name or ":" in name or name in (".", ".."):
+            # 复审 F7：rename 的新名同样过设备名检查（touch 已过，此处漏）
+            from src.app_state import reject_win_devpath as _rwd
+            if not fp or not name or "/" in name or os.sep in name or ":" in name or name in (".", "..")                     or _rwd(os.path.join(os.path.dirname(fp), name)):
                 return jsonify({"ok": False, "err": "参数无效"}), 400
             roots = _tree_roots()
             if fp in roots:

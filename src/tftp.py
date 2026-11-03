@@ -115,12 +115,41 @@ class TftpServer:
             )
         return cls._DENY_PREFIXES
 
+    _FILE_DENY = None   # 复审 F2：数据面敏感文件名清单（读走=token 泄露，写入=劫持执行）
+
+    @classmethod
+    def _file_denied(cls, filename):
+        """RRQ/WRQ 单文件黑名单：登入脚本/凭据/工具 shim。根目录合法时这些
+        文件也不该经 TFTP 出入（改写 .bashrc = 等价任意执行）。"""
+        if cls._FILE_DENY is None:
+            cls._FILE_DENY = (
+                ".bashrc", ".bash_profile", ".profile", ".zshrc",
+                ".npmrc", ".gitconfig", ".netrc", ".wgetrc",
+                "id_rsa", "id_ed25519", "authorized_keys", "known_hosts",
+                "claude.cmd", "claude.ps1", "claude",
+                "settings.json",
+            )
+        low = str(filename or "").lower()
+        return low in cls._FILE_DENY or low.endswith((".pem", ".pfx", ".key"))
+
     @classmethod
     def _dir_denied(cls, path):
+        """复审 F2 修正：方向反转——候选根若把敏感目录**包含在内**（根是敏感
+        目录的祖先，如整个 home、C:\\Users、C:\\）即拒。原先只拦「根在敏感
+        目录之内」，祖先根全穿透（home/C:/Startup 实测放行）。"""
         p = os.path.normcase(os.path.normpath(os.path.abspath(path)))
+        p_drive = p.rstrip("\\") + os.sep   # 盘根形（C:）与普通形统一：尾部保证有分隔符
         for d in cls._deny_prefixes():
-            if p == d or p.startswith(d + os.sep):
+            if d == p or d.startswith(p_drive):
+                return True   # 敏感目录 d 落在候选根 p 之下（或相等）
+        # 根自身是 junction/符号链接别名也拒——normcase 双侧比（realpath 返回
+        # 磁盘真实大小写，与用户输入大小写差 != 别名；真 junction 时二者指向
+        # 不同路径仍可检出）
+        try:
+            if os.path.exists(p) and os.path.normcase(os.path.realpath(p)) != os.path.normcase(os.path.abspath(p)):
                 return True
+        except Exception:
+            pass
         return False
 
     def set_dir(self, path):
@@ -225,6 +254,12 @@ class TftpServer:
         if not filename or os.path.basename(filename) != filename or filename in (".", ".."):
             self._send_err(self.sock, peer, 1, "bad filename")
             return
+        # 复审 F2：数据面逐文件黑名单——根被重瞄准后，穿越 set_dir 防线的
+        # 存量目录（config 记忆）里敏感单文件也要拒（.bashrc/.npmrc/凭据类）
+        from .app_state import reject_win_devpath
+        if reject_win_devpath(filename) or self._file_denied(filename):
+            self._send_err(self.sock, peer, 2, "access denied")
+            return
         local = os.path.join(self.root_dir, filename)
         if opcode == self.OP_RRQ:
             if not os.path.isfile(local):
@@ -267,9 +302,15 @@ class TftpServer:
         """
         ds = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         ds.settimeout(3.0)  # 3s（tftpy 5s×3 对嵌入式太松，1s 太紧，3s×5 折中）
+        _fh = None
         try:
-            with open(path, "rb") as f:
-                payload = f.read()
+            # a239 B2-P3-1：tsize 元信息要总长，seek(0,2) 取；数据体不整读
+            # （GB 级固件 × 并发传输=内存尖峰）——send 循环按需分块读，
+            # 句柄存活到 finally 收尾
+            _fh = open(path, "rb")
+            _fh.seek(0, 2)
+            t.total = _fh.tell()
+            _fh.seek(0)
             block = 1
             off = 0
             # ---- OACK 握手：设备带选项时先确认协商值，设备回 ACK(0) 再传 DATA ----
@@ -296,7 +337,8 @@ class TftpServer:
                     # 陈旧包静默丢弃
             # ---- 传数据块 ----
             while off < t.total or (off == 0 and block == 1):  # 空文件也发一个块
-                chunk = payload[off:off + blksize]
+                _fh.seek(off)
+                chunk = _fh.read(blksize)   # a239 B2-P3-1: 按需分块读（原整文件入内存）
                 pkt = struct.pack("!HH", self.OP_DATA, block) + chunk
                 retries = 0
                 ds.sendto(pkt, t.peer)
@@ -344,6 +386,10 @@ class TftpServer:
             t.status = "error"; t.err = str(e)
         finally:
             ds.close()
+            try:
+                if _fh: _fh.close()   # a239: 分块读的文件句柄随传输收尾
+            except Exception:
+                pass
 
     def _recv_file(self, path, t, blksize, want_oack):
         """WRQ：收设备数据写入文件。

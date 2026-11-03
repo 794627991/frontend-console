@@ -304,7 +304,9 @@ def reject_win_devpath(path):
         s = str(path)
     except Exception:
         return True
-    if not s or "\x00" in s:
+    if not s:
+        return False   # F10: 空路径=缺参语义，交调用方原校验
+    if "\x00" in s:
         return True
     base = os.path.basename(s.rstrip(chr(92) + "/"))   # \ 与 /（避免源码转义歧义）
     stem = base.split(".")[0].rstrip(". ") if "." in base else base.rstrip(". ")

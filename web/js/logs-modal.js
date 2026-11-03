@@ -54,7 +54,7 @@ async function loadLogsList() {
       d.querySelector('[data-view]').onclick = (ev) => { ev.stopPropagation(); $('logsModal').classList.remove('show'); buildLogViewer(l.name); };
       list.appendChild(d);
     });
-  } catch(e) { list.innerHTML = '加载失败'; }
+  } catch(e) { if (_myReq === window._logsLseq) list.innerHTML = '加载失败'; }   // 复审F8: 旧请求失败晚到不覆盖新结果
 }
 $('btnLogs').onclick = async () => {
   $('logsModal').classList.add('show');
