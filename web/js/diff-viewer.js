@@ -91,9 +91,24 @@ async function _diffReadFile(path) {
   if (path.startsWith('files/')) url = '/api/ed/open?name=' + encodeURIComponent(path.slice(6));
   // 其余（绝对路径 / 日志库裸名）走 read_text：_resolve_log_path 两种都认
   else url = '/api/read_text?q=' + encodeURIComponent(path);
-  const r = await fetch(url);
-  const j = await r.json();
+  let r = await fetch(url);
+  let j = await r.json();
   if (!j.ok) return { err: j.err || '读取失败' };
+  // a261R（用户实锤：对比中文乱码、单独打开正常）：旧后端 read_text 按 UTF-8
+  // replace 强解 GBK 文件→乱码。检测到替换符即换「单独打开」的同源端点
+  // ed/open?force=1（a238 编码探测链：utf-8 严格→GB 系无 FFFD 才采纳），
+  // 旧后端立即可用；新后端 read_text 自带探测则此分支不触发
+  const bad = (j.text.match(/\uFFFD/g) || []).length;
+  if (bad > 0 && !path.startsWith('files/')) {
+    try {
+      const r2 = await fetch('/api/ed/open?force=1&path=' + encodeURIComponent(path));
+      const j2 = await r2.json();
+      if (j2.ok && typeof j2.text === 'string' &&
+          (j2.text.match(/\uFFFD/g) || []).length < bad) {
+        j = { ok: true, name: j2.name || j.name, text: j2.text };
+      }
+    } catch (_) {}
+  }
   return { name: j.name || path.split(/[\\/]/).pop(), text: j.text };
 }
 
