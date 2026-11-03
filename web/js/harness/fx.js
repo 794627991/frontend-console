@@ -154,8 +154,6 @@
         // 搭既有 5s 轮询车，零新增请求
         if (j.sysTok !== undefined || j.mcpTok !== undefined)
           _HG.ctxParts = { sys: j.sysTok || 0, mcp: j.mcpTok || 0 };
-        // a254（用户报告 §6.5）：该模型的显式窗口覆盖（0=自动链）
-        if (j.cfg_window !== undefined) _HG.ctxCfgWin = j.cfg_window || 0;
         // v2.20：中断轮次没有 result → 接口 window=0 → 前端曾退 256K 假分母
         // （1M 模型显示成 /256K，84% 虚高）。模型名带窗口线索（glm-5.3[1M]）
         // 时按名推断，兜住没有任何 result 校准过的会话。
@@ -219,19 +217,8 @@
     if (t.last) tpsBits.push(`最近 ${t.last} tok/s`);
     if (t.all) tpsBits.push(`累计输出 ${_hgCtxCardFmt(t.all)}`);
     if (t.sub) tpsBits.push(`子代理 ${_hgCtxCardFmt(t.sub)}`);
-    // a254（用户报告《上下文窗口写死256K》§6.5）：窗口设置器——分母不再
-    // 只能靠网关/settings 自动链，卡上直接选档或自定义（写 config.json
-    // harness_ctx_window 按模型记忆，最高优先判定）
-    const cfgW = _HG.ctxCfgWin || 0;
-    const opts = [262144, 500000, 1048576, 2097152];
-    const sel = `<select data-hg-ctxwin title="上下文窗口判定优先级：此处显式设置 > 网关实报 > settings.json > 模型名[1M] > 兜底256K">
-      <option value="0"${cfgW ? '' : ' selected'}>自动（网关/设置）</option>` +
-      opts.map(w => `<option value="${w}"${cfgW === w ? ' selected' : ''}>${_hgCtxCardFmt(w)}</option>`).join('') +
-      `<option value="-1"${cfgW && !opts.includes(cfgW) ? ' selected' : ''}>自定义…</option></select>`;
-    const cst = cfgW && !opts.includes(cfgW)
-      ? `<span data-hg-ctxwin-c style="margin-left:6px;"><input type="number" min="10000" step="1000" value="${cfgW}" style="width:82px;background:var(--bg-input);color:var(--fg);border:1px solid var(--border);border-radius:4px;font-size:10px;padding:1px 4px;"> <button class="btn ghost" data-hg-ctxwin-ok style="padding:1px 8px;font-size:10px;">确定</button></span>`
-      : `<span data-hg-ctxwin-c style="display:none;margin-left:6px;"><input type="number" min="10000" step="1000" placeholder="tokens" style="width:82px;background:var(--bg-input);color:var(--fg);border:1px solid var(--border);border-radius:4px;font-size:10px;padding:1px 4px;"> <button class="btn ghost" data-hg-ctxwin-ok style="padding:1px 8px;font-size:10px;">确定</button></span>`;
-    const winRow = `<div class="hg-ctx-line hg-ctx-win">上下文窗口 ${sel}${cst}</div>`;
+    // a264（用户定调）：窗口选择器移除——窗口只走自动链（网关实报→
+    // settings.json→[1M]→兜底），不提供用户选项
     return `<div class="hg-ctx-head"><b>上下文容量</b><span>${(used > 0 || est > 0) ?
         `${_hgCtxCardFmt(shown)}/${_hgCtxCardFmt(max)}（${Math.round(pct)}%）` :
         '首轮回复后统计'}</span></div>` +
@@ -245,7 +232,6 @@
         `<span class="hg-ctx-dim">（本会话累计）</span></div>` +
       (tpsBits.length ? `<div class="hg-ctx-line">${tpsBits.join(' · ')}</div>` : '') +
       (est > 0 ? `<div class="hg-ctx-dim">含生成中 ~${_hgCtxCardFmt(est)}（估值，回合结束落准）</div>` : '') +
-      winRow +
       `<div class="hg-ctx-foot">* 分类为估算：系统提示词/MCP 工具按注入内容量得，` +
       `消息 = 总量 − 前两项（CLI 内部构成不暴露）</div>`;
   }
@@ -260,55 +246,8 @@
   }
   function _hgCtxCardRender() {
     if (!_hgCtxCardEl) return;
-    // a254：交互中不重建 innerHTML——窗口下拉/自定义输入被 1s 重渲冲掉会
-    // 闪断（select 正开着就被替换）。焦点在卡内时只重锚位置
-    if (_hgCtxCardEl.contains(document.activeElement)) { _hgCtxCardPlace(); return; }
     _hgCtxCardEl.innerHTML = _hgCtxCardTpl();
     _hgCtxCardPlace();
-  }
-  // a254（报告 §6.5）：窗口设置——写 config.json harness_ctx_window（按模型，
-  // 最高优先判定），0=清覆盖回自动链
-  async function _hgCtxWinPost(w) {
-    try {
-      const r = await fetch('/api/harness/ctx_window', {method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({sid: _HG.sid, window: w})});
-      const j = await r.json();
-      if (!j.ok) { showBanner(j.err || '设置失败', 3000, true); return; }
-      _HG.ctxCfgWin = w;
-      if (w) {
-        if (_HG.ctxRing) _HG.ctxRing.max = Math.max(_HG.ctxRing.max || 0, w);
-        try {   // localStorage 记录同步分母，防旧 max 复活（v2.27.16 只按模型归属守卫）
-          const k = _hgCtxKey(_HG.sid);
-          const rec = JSON.parse(localStorage.getItem(k) || 'null') || {};
-          if (!w || !rec.max || w > rec.max) { rec.max = w; localStorage.setItem(k, JSON.stringify(rec)); }
-        } catch (_) {}
-      }
-      showBanner(w ? '上下文窗口已设为 ' + _hgCtxCardFmt(w) + '（模型 ' + j.model + '）'
-                   : '已恢复自动窗口（网关实报/设置）', 2600);
-      _hgCtxPoll();
-    } catch (e) { showBanner('设置失败: ' + e, 3000, true); }
-  }
-  function _hgCtxWinChange(ev) {
-    const card = _hgCtxCardEl;
-    if (!card) return;
-    const selEl = ev.target.closest('[data-hg-ctxwin]');
-    if (selEl && ev.target === selEl) {
-      if (selEl.value === '-1') {
-        const row = card.querySelector('[data-hg-ctxwin-c]');
-        if (row) { row.style.display = ''; row.querySelector('input').focus(); }
-        return;
-      }
-      _hgCtxWinPost(+selEl.value);
-      return;
-    }
-    if (ev.target.closest('[data-hg-ctxwin-ok]')) {
-      const inp = card.querySelector('[data-hg-ctxwin-c] input');
-      const v = parseInt(inp && inp.value, 10);
-      if (!v || v < 10000) { showBanner('窗口取值范围 10K~100M tokens', 3000, true); return; }
-      _hgCtxWinPost(v);
-      return;
-    }
   }
   function _hgCtxCardAway(ev) {
     if (_hgCtxCardEl && !_hgCtxCardEl.contains(ev.target) &&
@@ -339,7 +278,6 @@
       clearTimeout(_hgCtxHoverT);
       _hgCtxHoverT = setTimeout(_hgCtxCardClose, 200);
     });
-    el.addEventListener('change', _hgCtxWinChange);   // a254：窗口设置器（委托）
     _hgCtxCardTimer = setInterval(_hgCtxCardRender, 1000);  // 开着就活着（a153 实时链）
     document.addEventListener('mousedown', _hgCtxCardAway);
     document.addEventListener('keydown', _hgCtxCardKey);
