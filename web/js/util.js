@@ -99,8 +99,11 @@ let activePortId = null;
       conn.tab.classList.toggle('pinned', _pinned.has(pid));
       if (_pinned.has(pid)) {
         // 固定 tab 插入固定区末尾（第4轮盲测：Chrome 习惯是追加到固定组最后，
-        // 而非最前——原 firstChild 插法导致"最新固定者排最左"与主流相反）
-        const pinnedEls = [...tabsEl.querySelectorAll('.tab.pinned')];
+        // 而非最前——原 firstChild 插法导致"最新固定者排最左"与主流相反）。
+        // 第5轮盲测实锤：classList.toggle 先把自身计入 .pinned——不排除自身的话
+        // ref=自身.nextSibling，insertBefore(自身,自身.nextSibling)=原地不动
+        // （平铺模式 pin 永不移位；抽屉模式"看似最左"只是前面的 tab 全隐藏）
+        const pinnedEls = [...tabsEl.querySelectorAll('.tab.pinned')].filter(t => t !== conn.tab);
         const ref = pinnedEls.length
           ? pinnedEls[pinnedEls.length - 1].nextSibling
           : tabsEl.firstChild;
