@@ -174,14 +174,26 @@ class TftpServer:
             }
 
     def _list_files(self):
-        """root_dir 下的文件列表（供前端/MCP 预览可传输内容）。"""
+        """root_dir 下的文件列表（供前端/MCP 预览可传输内容）。
+        a269（用户问「NFS 为啥抽风、能不能限制」）：旧版 listdir + 每文件
+        isfile + stat = 每文件 2 次网络往返——33 个文件 ≈ 66 次 SMB RTT，
+        健康链路 130~200ms（实测基线）；共享服务器/虚机网络一抖动，Windows
+        SMB 客户端逐次阻塞到内部超时（追踪实锤 3.8s→110s）。改 os.scandir：
+        Windows 目录枚举（FindFirstFileW）自带 size/mtime，entry.stat 读
+        枚举缓存零额外网络——**整表 1 次往返**，挂起窗口缩小 ~66 倍。"""
         try:
             out = []
-            for fn in sorted(os.listdir(self.root_dir)):
-                fp = os.path.join(self.root_dir, fn)
-                if os.path.isfile(fp):
-                    st = os.stat(fp)
-                    out.append({"name": fn, "size": st.st_size, "mtime": int(st.st_mtime)})
+            with os.scandir(self.root_dir) as it:
+                for e in it:
+                    try:
+                        if not e.is_file(follow_symlinks=False):
+                            continue
+                        st = e.stat(follow_symlinks=False)   # Windows：枚举缓存直读
+                        out.append({"name": e.name, "size": st.st_size,
+                                    "mtime": int(st.st_mtime)})
+                    except OSError:
+                        continue   # 网络盘上单条目半路失联：跳过不拖垮整表
+            out.sort(key=lambda x: x["name"])
             return out[:200]
         except Exception:
             return []
