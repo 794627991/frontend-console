@@ -148,7 +148,12 @@ async function buildHexViewerTab(path, name) {
       }
       if (isIhex) {
         if (typeof intelHexParse !== 'function') throw new Error('Intel HEX 解析器未加载');
-        const parsed = intelHexParse(new TextDecoder().decode(raw));
+        const _text = new TextDecoder().decode(raw);
+        // a239（第5轮A2-P2-6）：捕获 type 03/05 记录原文（start address/boot 入口）
+        // ——镜像模型放不下它们，重序列化会丢；保存时在 EOF 前原样回吐
+        conn._ihexExtra = _text.split(/\r?\n/).filter(l =>
+          /^:[0-9A-Fa-f]{6}0[35]/.test(l) && l.length >= 11);   // TT=03/05（LL+AAAA 后第7-8位；原 {8} 连 type 都吞了永不命中）
+        const parsed = intelHexParse(_text);
         raw = parsed.data;   // 0xFF 填充空洞的连续镜像
         conn.size = raw.length;
       }
@@ -734,6 +739,15 @@ async function _hxSave(conn) {
                (off & 0xFFFF).toString(16).toUpperCase().padStart(4, '0') + '00' + data + chk + '\n';
       }
       out += ':00000001FF\n';
+      // a239（第5轮A2-P2-6）：Intel HEX 保真——原文件的非数据记录（type 03
+      // start address / type 05 start linear address，boot 入口）在镜像模型里
+      // 没有位置，重新序列化会永久丢失（部分烧录器行为改变）。打开时捕获
+      // 原行，保存在 EOF 前原样回吐
+      const _meta = conn._ihexExtra || [];
+      if (_meta.length) {
+        const bodyEnd = out.length - ':00000001FF\n'.length;
+        out = out.slice(0, bodyEnd) + _meta.join('\n') + '\n' + ':00000001FF\n';
+      }
       b64 = btoa(out);
     } else {
       let s = '';

@@ -1067,8 +1067,37 @@ def main():
             except Exception:
                 pass   # proxy 模块异常不拖累主工具退出
 
+    def _dirty_quit_check(window):
+        """真退出前的未保存检查（a239 第5轮A2-P2-5）：dirty tab > 0 时同步
+        MessageBox 确认——此前托盘退出/直退对全部脏 tab 静默清零（编辑半天
+        一点退出全没）。返回 True=继续退出，False=取消。"""
+        dirty = []
+        try:
+            import json as _json2
+            r = window.evaluate_js(
+                "JSON.stringify(Object.values(connections)"
+                ".filter(c=>c&&c.dirty).map(c=>String((c.meta||{}).label||c.portId)))")
+            dirty = _json2.loads(r or "[]")
+        except Exception:
+            dirty = []   # 探测失败不拦退出（保可用优先）
+        if not dirty:
+            return True
+        try:
+            import ctypes
+            names = "、".join(dirty[:5]) + ("…" if len(dirty) > 5 else "")
+            # MB_OKCANCEL | MB_ICONWARNING | MB_SETFOREGROUND | MB_TOPMOST
+            rc = ctypes.windll.user32.MessageBoxW(
+                0, "还有 %d 个未保存的文件（%s）。\n\n确定退出将丢弃这些修改。" % (len(dirty), names),
+                "前端控制台 · 未保存确认", 0x50041)
+            return rc == 1   # IDOK
+        except Exception:
+            return True
+
     def on_closing():
         if _real_quit["flag"]:
+            if not _dirty_quit_check(window):
+                _real_quit.update(flag=False)   # 用户取消：撤销退出标记继续用
+                return False
             from src.tray import quit_tray
             quit_tray()
             _do_real_cleanup()
@@ -1082,6 +1111,8 @@ def main():
         except Exception:
             tray_enabled = True
         if not tray_enabled:
+            if not _dirty_quit_check(window):
+                return False   # 取消退出：窗口保留
             _do_real_cleanup()
             return True
         # 关闭到托盘全流程在后台线程做（closing 回调零阻塞）。
