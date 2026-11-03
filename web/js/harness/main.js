@@ -242,6 +242,9 @@ function buildClaudeHarnessTab(opts = {}) {
   const _flowGeomRefresh = () => {
     _flowGeom.h = _hgFlow.scrollHeight;
     _flowGeom.vh = _hgFlow.clientHeight;
+    // a276 批2b：容器尺寸变了=消息位置全变了——同步失效导轨 tops 缓存
+    // （下次 _hgRailActive 按需重建，此时布局已稳定 offsetTop 是真值）
+    if (_HG.railCacheTops) _HG.railCacheTops = null;
   };
   // RO 盯容器尺寸（内容增减/窗口 resize 都会变）
   try {
