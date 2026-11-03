@@ -144,10 +144,14 @@ async function _ovPdfInit(conn, path, wrap) {
   const pagesEl = wrap.querySelector('[data-ov-pages]');
   const infoEl = wrap.querySelector('[data-ov-info]');
   try {
-    // 关键：用 url 让 pdf.js 自己流式加载（支持 range 请求，100MB 文件
-    // 不需要整读进内存——pdf.js 按需拉取页面数据）
-    const url = '/api/office/read?path=' + encodeURIComponent(path);
-    const task = pdfjsLib.getDocument({ url, rangeChunkSize: 65536 });
+    // a283R：先 fetch 整个文件到 ArrayBuffer 再传给 pdf.js（data 模式）——
+    // url 模式下 page.render() 内部要按需拉字体/图片资源，在我们的 API
+    // 端点上会挂起。data 模式全部数据已在内存，render 零网络依赖。
+    // 大文件牺牲一些首屏时间换取渲染可靠性。
+    const resp = await fetch('/api/office/read?path=' + encodeURIComponent(path));
+    if (!resp.ok) throw new Error('文件读取失败 ' + resp.status);
+    const buf = await resp.arrayBuffer();
+    const task = pdfjsLib.getDocument({ data: buf });
     conn._pdfTask = task;
     const pdf = await task.promise;
     conn._pdfDoc = pdf;
