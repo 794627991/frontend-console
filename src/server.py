@@ -1154,10 +1154,16 @@ def api_theme():
                         "doc_search_hotkey": cfg.get("doc_search_hotkey", "ctrl+f"),
                         "notes_search_hotkey": cfg.get("notes_search_hotkey", "ctrl+alt+f"),
                         "perf_mode": bool(cfg.get("perf_mode", False)),
-                        "md_preview_theme": cfg.get("md_preview_theme", "auto")})
+                        "md_preview_theme": cfg.get("md_preview_theme", "auto"),
+                        # a286: Tab 栏模式——flat=Chrome 平铺收缩 / drawer=分组抽屉
+                        "tab_mode": cfg.get("tab_mode", "flat")})
     data = request.get_json(force=True) or {}
     if "perf_mode" in data:
         _save_config({**_load_config(), "perf_mode": bool(data["perf_mode"])})
+    if "tab_mode" in data:
+        # 白名单：只认 flat/drawer，防脏配置
+        if str(data["tab_mode"]).strip() in ("flat", "drawer"):
+            _save_config({**_load_config(), "tab_mode": str(data["tab_mode"]).strip()})
     if "md_preview_theme" in data:
         v = str(data["md_preview_theme"]).strip()
         if v in ("auto", "dark", "light", "paper", "github", "dracula",

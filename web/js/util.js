@@ -20,7 +20,7 @@ document.documentElement.toggleAttribute('data-document-hidden', document.hidden
 let connections = {};   // port_id -> conn（含 term/fit/search/xtermWrap/sse 等）
 let activePortId = null;
 
-// a285: Tab 栏优雅溢出——不滚动，tab 自动收缩 + 溢出按类型分组下拉
+// a286: Tab 栏终极方案——双模式（Chrome 平铺 / Edge 分组抽屉）+ Pin
 ;(function _tabOverflowInit() {
   const tabsEl = document.getElementById('tabs');
   if (!tabsEl) return;
@@ -28,27 +28,124 @@ let activePortId = null;
   if (!btn) return;
   let list = null;
 
-  // 类型分组标签
+  // ===== 配置 =====
+  let _tabMode = 'flat';          // 'flat' = Chrome 平铺 | 'drawer' = 分组抽屉
+  let _pinned = new Set();         // 固定的 portId
   const _GROUP_LABEL = {
     serial: '串口', ssh: 'SSH', telnet: 'Telnet',
-    claude: 'Claude', harness: 'Claude 对话',
-    editor: '编辑器', hex: 'Hex', diff: '文件对比', bindiff: '二进制对比',
-    log: '日志', office: '文件查看', proxy: '代理面板',
+    claude: 'Claude', harness: 'Claude',
+    editor: '编辑器', hex: 'Hex', diff: '对比', bindiff: 'Bin对比',
+    log: '日志', office: '文件', proxy: '代理',
   };
-  const _groupOf = c => _GROUP_LABEL[(c.meta && c.meta.kind) || ''] || '其他';
+  const _GROUP_ICON = {
+    serial: ICO16.plug, ssh: ICO16.terminal, telnet: ICO16.terminal,
+    claude: ICO16.zap, harness: ICO16.zap,
+    editor: ICO16.file, hex: ICO16.hex, diff: ICO16.compare, bindiff: ICO16.compare,
+    log: ICO16.log, office: ICO16.folderOpen, proxy: ICO16.gear,
+  };
+  const _groupOf = c => (c.meta && c.meta.kind) || 'other';
+  const _groupLabel = k => _GROUP_LABEL[k] || '其他';
+  const _groupIcon = k => _GROUP_ICON[k] || ICO16.file;
+  // 统一关闭：直接点 tab 自己的 ✕——各模块（terminal=后端断连/editor=脏确认/
+  // log/harness/office...）的关闭语义由各自 handler 负责，零重复实现零误判
+  const _tabClose = pid => {
+    const c = connections[pid];
+    const closeEl = c && c.tab && c.tab.querySelector('.close');
+    if (closeEl) closeEl.click();
+  };
 
-  const checkOverflow = () => {
+  // 从 config 恢复模式
+  (async () => {
+    try {
+      const j = await (await fetch('/api/theme')).json();
+      if (j.ok && j.tab_mode) _tabMode = j.tab_mode;
+    } catch (_) {}
+    applyMode();
+  })();
+  window._tabSetMode = (m) => {
+    _tabMode = m;
+    try { fetch('/api/theme', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ tab_mode: m })}); } catch (_) {}
+    applyMode();
+  };
+  window._tabGetMode = () => _tabMode;
+
+  // ===== 模式应用 =====
+  function applyMode() {
+    tabsEl.classList.toggle('drawer-mode', _tabMode === 'drawer');
+    rebuild();
+  }
+
+  // ===== Pin =====
+  window._tabTogglePin = (pid) => {
+    if (_pinned.has(pid)) _pinned.delete(pid); else _pinned.add(pid);
+    const conn = connections[pid];
+    if (conn && conn.tab) {
+      conn.tab.classList.toggle('pinned', _pinned.has(pid));
+      // 固定 tab 移到最前
+      if (_pinned.has(pid)) {
+        tabsEl.insertBefore(conn.tab, tabsEl.firstChild);
+      }
+    }
+    rebuild(true);
+    showBanner(_pinned.has(pid) ? '已固定标签页' : '已取消固定', 1500);
+  };
+
+  // Tab 右键统一菜单（固定 + 关闭 + 文件类 tab 的快捷对比项）。
+  // a286 注：文件 tab 的对比菜单原由 diff-viewer.js 的 #tabs contextmenu 提供，
+  // 两边都渲染进 #ctxMenu 会互相覆盖——本 handler 先注册先执行，统一拼菜单
+  // 并打 _tabMenuHandled 标记，diff-viewer.js 侧见到标记即让位（功能不丢，只是并进来了）
+  tabsEl.addEventListener('contextmenu', e => {
+    const tabEl = e.target.closest('.tab');
+    if (!tabEl) return;
+    e.preventDefault();
+    e._tabMenuHandled = true;
+    const pid = tabEl.dataset.portId;
+    const conn = connections[pid];
+    const lbl = conn && conn.meta ? conn.meta.label || pid : pid;
+    const isPinned = _pinned.has(pid);
+    if (typeof buildCtxMenu !== 'function') return;
+    const items = [];
+    // 文件类 tab：并入 diff-viewer 的对比项（状态逻辑复用其全局函数）
+    const diffPath = (typeof _diffCtxPathOf === 'function') ? _diffCtxPathOf(pid) : null;
+    if (diffPath) {
+      const a = (typeof diffPickA === 'function') ? diffPickA() : null;
+      const isA = diffPath === a;
+      items.push(
+        { icon: ICO16.compare, label: '选择以进行对比' + (isA ? '（当前 A）' : ''),
+          disabled: isA,
+          action: () => { if (typeof diffPickSetA === 'function') diffPickSetA(diffPath); } },
+        { icon: ICO16.compare, label: '与选进行对比' + (!a ? '（未选 A）' : ''),
+          disabled: !a || isA,
+          action: () => { if (typeof diffPickCompare === 'function') diffPickCompare(diffPath); } },
+        { sep: true },
+      );
+    }
+    items.push(
+      { icon: ICO16.pin,
+        label: isPinned ? '取消固定' : '固定标签页',
+        action: () => _tabTogglePin(pid) },
+      { sep: true },
+      { icon: ICO16.x, label: '关闭「' + lbl.slice(0, 20) + '」',
+        action: () => _tabClose(pid) },
+    );
+    buildCtxMenu(e.clientX, e.clientY, items);
+  });
+  // 注：不挂 dblclick 固定——tab 标题双击已被「快捷改名」占用（editor.js），不抢
+
+  // ===== 平铺模式（Chrome）：自动收缩 + ⋮ 溢出 =====
+  function checkOverflow() {
     const has = tabsEl.scrollWidth > tabsEl.clientWidth;
-    btn.style.display = has ? '' : 'none';
-    btn.textContent = has ? '⋮ ' + Object.keys(connections).filter(k => connections[k] && connections[k].tab).length : '⋮';
-  };
+    const count = Object.keys(connections).filter(k => connections[k] && connections[k].tab).length;
+    btn.style.display = has || (_tabMode === 'drawer' && count > 0) ? '' : 'none';
+    btn.textContent = '⋮ ' + count;
+  }
 
-  const buildList = () => {
+  // ===== 分组下拉 =====
+  function buildList() {
     if (list) list.remove();
     list = document.createElement('div');
     list.className = 'tab-overflow-list';
-
-    // 按类型分组
     const groups = {};
     const order = [];
     for (const pid in connections) {
@@ -58,33 +155,30 @@ let activePortId = null;
       if (!groups[g]) { groups[g] = []; order.push(g); }
       groups[g].push({ pid, c });
     }
-
     let html = '';
     order.forEach(g => {
-      html += `<div class="tab-overflow-group">${esc(g)} · ${groups[g].length}</div>`;
+      html += `<div class="tab-overflow-group">${esc(_groupLabel(g))} · ${groups[g].length}</div>`;
       html += groups[g].map(({ pid, c }) => {
         const lbl = (c.meta && c.meta.label) || pid;
         const act = pid === activePortId ? ' active' : '';
+        const pin = _pinned.has(pid) ? ICO16.pin + ' ' : '';
         return `<div class="tab-overflow-item${act}" data-pid="${esc(pid)}">` +
-          `<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(lbl)}</span>` +
+          `<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center;gap:4px;">${pin}<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(lbl)}</span></span>` +
           `<span class="ov-close" data-close="${esc(pid)}" title="关闭">✕</span></div>`;
       }).join('');
     });
     list.innerHTML = html;
     document.body.appendChild(list);
-
-    // 定位
     const br = btn.getBoundingClientRect();
     list.style.top = (br.bottom + 4) + 'px';
     list.style.right = Math.max(8, window.innerWidth - br.right) + 'px';
     list.classList.add('show');
-
     list.querySelectorAll('.tab-overflow-item').forEach(item => {
       item.onclick = e => {
         const closeEl = e.target.closest('[data-close]');
         if (closeEl) {
           e.stopPropagation();
-          closeEditorTab(closeEl.dataset.close);
+          _tabClose(closeEl.dataset.close);
           buildList();
           if (!Object.keys(connections).some(k => connections[k] && connections[k].tab)) close();
           return;
@@ -93,12 +187,155 @@ let activePortId = null;
         close();
       };
     });
-  };
+  }
   const close = () => { if (list) { list.remove(); list = null; } };
   btn.onclick = e => { e.stopPropagation(); if (list) close(); else buildList(); };
   document.addEventListener('click', e => { if (list && !list.contains(e.target) && e.target !== btn) close(); });
-  new MutationObserver(() => requestAnimationFrame(checkOverflow))
-    .observe(tabsEl, { childList: true });
+
+  // ===== 抽屉模式渲染 =====
+  let drawerBar = null;
+  let _lastSig = '';   // 渲染签名：防 MutationObserver 自触发死循环
+  function _sig() {
+    const parts = [];
+    for (const pid in connections) {
+      const c = connections[pid];
+      if (!c || !c.tab) continue;
+      parts.push(pid + ':' + _groupOf(c) + ':' + (_pinned.has(pid) ? 1 : 0));
+    }
+    return _tabMode + '|' + activePortId + '|' + parts.join(',');
+  }
+  function rebuild(force) {
+    const sig = _sig();
+    if (!force && sig === _lastSig) return;
+    _lastSig = sig;
+    // 清旧抽屉
+    if (drawerBar) { drawerBar.remove(); drawerBar = null; }
+    // 显示/隐藏原生 tab
+    const isDrawer = _tabMode === 'drawer';
+    tabsEl.querySelectorAll('.tab').forEach(t => {
+      const pid = t.dataset.portId;
+      t.style.display = isDrawer && !_pinned.has(pid) ? 'none' : '';
+    });
+    if (!isDrawer) { checkOverflow(); return; }
+
+    // 建抽屉栏
+    drawerBar = document.createElement('div');
+    drawerBar.className = 'tab-drawer-bar';
+    const groups = {};
+    const order = [];
+    for (const pid in connections) {
+      const c = connections[pid];
+      if (!c || !c.tab || _pinned.has(pid)) continue;
+      const g = _groupOf(c);
+      if (!groups[g]) { groups[g] = []; order.push(g); }
+      groups[g].push(pid);
+    }
+    order.forEach(g => {
+      const pids = groups[g];
+      const active = pids.find(p => p === activePortId);
+      const activeLbl = active && connections[active] && connections[active].meta ?
+        connections[active].meta.label || '' : '';
+      const btn = document.createElement('div');
+      btn.className = 'tab-drawer' + (active ? ' active' : '');
+      btn.dataset.group = g;
+      btn.innerHTML =
+        `<span class="tab-drawer-icon">${_groupIcon(g)}</span>` +
+        `<span class="tab-drawer-label">${esc(_groupLabel(g))}</span>` +
+        `<span class="tab-drawer-count">${pids.length}</span>` +
+        (activeLbl ? `<span class="tab-drawer-active" title="${esc(activeLbl)}">${esc(activeLbl.slice(0, 12))}</span>` : '');
+      // 点击 → 分组下拉
+      btn.onclick = e => {
+        e.stopPropagation();
+        buildGroupList(g, pids, btn);
+      };
+      drawerBar.appendChild(btn);
+    });
+    // 插到右缘 sticky 区（tab-bar-actions/⋮）之前——与所有 tab 的插入位一致
+    const anchor = tabsEl.querySelector('.tab-bar-actions') || btn;
+    tabsEl.insertBefore(drawerBar, anchor);
+    checkOverflow();
+  }
+
+  // 分组下拉（点抽屉弹出该组的 tab 列表）
+  // 注：所有关闭路径统一走 _groupCloseList，保证 document 监听必摘除
+  // （旧写法 null 判定后监听永不自摘，开 N 次漏 N 个）
+  let groupList = null, _groupDocClose = null;
+  function _groupCloseList() {
+    if (groupList) { groupList.remove(); groupList = null; }
+    if (_groupDocClose) { document.removeEventListener('click', _groupDocClose); _groupDocClose = null; }
+  }
+  function _groupRenderItems(group, anchorEl) {
+    const pids = Object.keys(connections).filter(p => {
+      const c = connections[p];
+      return c && c.tab && !_pinned.has(p) && _groupOf(c) === group;
+    });
+    if (!pids.length) { _groupCloseList(); return; }
+    groupList.dataset.group = group;
+    groupList.innerHTML = `<div class="tab-overflow-group">${esc(_groupLabel(group))} · ${pids.length}</div>` +
+      pids.map(pid => {
+        const c = connections[pid];
+        const lbl = (c && c.meta && c.meta.label) || pid;
+        const act = pid === activePortId ? ' active' : '';
+        const pin = _pinned.has(pid) ? ' pinned' : '';
+        return `<div class="tab-overflow-item${act}${pin}" data-pid="${esc(pid)}">` +
+          `<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(lbl)}</span>` +
+          `<span class="ov-pin" data-pin="${esc(pid)}" title="${_pinned.has(pid) ? '取消固定' : '固定到标签栏'}">${ICO16.pin}</span>` +
+          `<span class="ov-close" data-close="${esc(pid)}" title="关闭">✕</span></div>`;
+      }).join('');
+    const br = anchorEl.getBoundingClientRect();
+    groupList.style.top = (br.bottom + 4) + 'px';
+    groupList.style.left = Math.max(4, Math.min(br.left, window.innerWidth - 260)) + 'px';
+    groupList.querySelectorAll('.tab-overflow-item').forEach(item => {
+      item.onclick = e => {
+        const closeEl = e.target.closest('[data-close]');
+        if (closeEl) {
+          e.stopPropagation();
+          _tabClose(closeEl.dataset.close);
+          // 异步关闭（脏确认）后 MutationObserver 兜底刷新；先同步刷一次
+          const g = groupList ? groupList.dataset.group : null;
+          const anc = anchorEl;
+          if (g) _groupRenderItems(g, anc);
+          rebuild();
+          return;
+        }
+        const pinEl = e.target.closest('[data-pin]');
+        if (pinEl) {
+          e.stopPropagation();
+          const g = groupList ? groupList.dataset.group : null;
+          const anc = anchorEl;
+          _tabTogglePin(pinEl.dataset.pin);
+          // 固定后该 pid 移出本组：组空则关列表，否则重渲（锚点仍是原抽屉）
+          if (groupList && g) _groupRenderItems(g, anc);
+          return;
+        }
+        switchTab(item.dataset.pid);
+        _groupCloseList();
+      };
+    });
+  }
+  function buildGroupList(group, pids, anchorEl) {
+    if (groupList && groupList.dataset.group === group) { _groupCloseList(); return; }
+    _groupCloseList();
+    groupList = document.createElement('div');
+    groupList.className = 'tab-overflow-list show';
+    document.body.appendChild(groupList);
+    _groupRenderItems(group, anchorEl);
+    _groupDocClose = e => { if (groupList && !groupList.contains(e.target)) _groupCloseList(); };
+    setTimeout(() => document.addEventListener('click', _groupDocClose), 0);
+  }
+
+  // switchTab 时更新抽屉显示（由 terminal-core.js 调用）
+  window._tabDrawerUpdate = () => rebuild();
+
+  // 连接增删时重渲染 + 刷新打开中的下拉（脏确认等异步关闭后列表不残留）
+  new MutationObserver(() => requestAnimationFrame(() => {
+    rebuild();
+    if (list) buildList();
+    if (groupList) {
+      // 抽屉本体已重建，锚点失效——直接关（用户重开一次即可，避免悬浮错位）
+      _groupCloseList();
+    }
+  })).observe(tabsEl, { childList: true });
   window.addEventListener('resize', checkOverflow);
   setInterval(checkOverflow, 2000);
   checkOverflow();

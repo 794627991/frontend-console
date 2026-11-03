@@ -506,6 +506,10 @@ function switchTab(portId) {
   termArea.querySelectorAll('.term-area').forEach(w => w.style.display = w.dataset.portId === portId ? 'flex' : 'none');
   // 侧边栏
   portList.querySelectorAll('.port-item').forEach(p => p.classList.toggle('active', p.dataset.portId === portId));
+
+  // a286: 抽屉模式下更新各分组头的显示（活跃 tab 名显示在抽屉上）
+  if (window._tabDrawerUpdate) _tabDrawerUpdate(portId);
+
   // 切换后重新 fit 并聚焦 xterm（等 display:flex 生效后再 fit，否则算出 0 尺寸）
   const conn = connections[portId];
   if (conn) {

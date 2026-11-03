@@ -130,6 +130,14 @@ function _stRenderAppearancePane(pane) {
       <div class="dd-sub">关闭极光玻璃的毛玻璃/光斑动画（虚机 GPU 推荐）——显著降低每帧 GPU 合成开销。</div>
     </div>
     <div class="dd-cur" style="margin-top:8px;">
+      <div class="dd-label">Tab 模式</div>
+      <div class="dd-row" style="display:flex;gap:6px;margin-top:6px;">
+        <button class="btn ghost" id="apTabFlat" style="flex:1;"></button>
+        <button class="btn ghost" id="apTabDrawer" style="flex:1;"></button>
+      </div>
+      <div class="dd-sub">平铺=Chrome 式自动收缩+溢出分组下拉；抽屉=同类 tab 收进一个抽屉（点开选择），常用 tab 可右键固定常驻。</div>
+    </div>
+    <div class="dd-cur" style="margin-top:8px;">
       <div class="dd-label">MD 预览主题</div>
       <div class="dd-row" style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;" id="stMdPvRow"></div>
       <div class="dd-sub">Markdown 预览面板的配色（独立于全局主题，随时可改）。</div>
@@ -190,6 +198,20 @@ function _stRenderAppearancePane(pane) {
     };
     perfBtn.onclick = () => { togglePerfMode(); syncPerf(); };
     syncPerf();
+  }
+  // a286 Tab 模式切换（平铺收缩 / 分组抽屉）
+  const flatBtn = pane.querySelector('#apTabFlat'), drawerBtn = pane.querySelector('#apTabDrawer');
+  if (flatBtn && drawerBtn && typeof window._tabSetMode === 'function') {
+    const syncTabMode = () => {
+      const m = window._tabGetMode ? window._tabGetMode() : 'flat';
+      flatBtn.className = 'btn ghost' + (m === 'flat' ? ' active' : '');
+      drawerBtn.className = 'btn ghost' + (m === 'drawer' ? ' active' : '');
+      flatBtn.textContent = '平铺';
+      drawerBtn.textContent = '分组抽屉';
+    };
+    flatBtn.onclick = () => { window._tabSetMode('flat'); syncTabMode(); };
+    drawerBtn.onclick = () => { window._tabSetMode('drawer'); syncTabMode(); };
+    syncTabMode();
   }
   const zoomVal = pane.querySelector('#apZoomVal');
   const syncZoom = () => { zoomVal.textContent = (typeof uiZoom === 'number' ? uiZoom : 100) + '%'; };

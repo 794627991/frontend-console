@@ -5248,9 +5248,52 @@ span.nn-hl-t { background: color-mix(in srgb, #3fb950 15%, transparent);
 .tab-overflow-item.active { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); }
 .tab-overflow-item .ov-close { margin-left: auto; opacity: 0.5; padding: 2px 4px; border-radius: 3px; }
 .tab-overflow-item .ov-close:hover { opacity: 1; color: var(--neon-red); }
+/* a286: 列表行内固定钮（抽屉模式下唯一入口）+ 已固定行标记 */
+.tab-overflow-item .ov-pin { display: inline-flex; align-items: center; padding: 2px 4px;
+  border-radius: 3px; opacity: 0.4; color: var(--muted); flex-shrink: 0; }
+.tab-overflow-item .ov-pin:hover { opacity: 1; color: var(--accent); }
+.tab-overflow-item.pinned .ov-pin { opacity: 1; color: var(--accent); }
 
 /* a285: 溢出下拉分组头 */
 .tab-overflow-group { font-size: 9px; font-weight: 600; color: var(--muted);
   padding: 6px 10px 3px; letter-spacing: 1px; text-transform: uppercase;
   border-bottom: 1px solid var(--border); margin-bottom: 2px; }
 .tab-overflow-group:first-child { padding-top: 3px; }
+
+/* ============================================================
+   a286: Tab 双模式——分组抽屉（Edge 风）+ Pin 固定
+   平铺模式（默认）= a285 Chrome 收缩方案不变；
+   抽屉模式 = 同类 tab 收进抽屉（图标+类型+数量+活跃名），
+   固定的 tab 始终平铺在抽屉左侧，双模式设置里可切。
+   ============================================================ */
+/* 抽屉容器：插在 tabs flex 行内（固定 tab 之后、⋮ 之前） */
+.tab-drawer-bar { display: flex; align-items: center; gap: 4px;
+  flex: 0 1 auto; min-width: 0; overflow: hidden; margin-left: 4px; }
+/* 单个抽屉：pill 形，icon+类型+计数+活跃 tab 名 */
+.tab-drawer { display: flex; align-items: center; gap: 6px;
+  padding: 5px 10px; border-radius: 6px; cursor: pointer;
+  font-size: 11px; color: var(--muted); white-space: nowrap;
+  background: var(--bg-card); border: 1px solid var(--border);
+  min-width: 0; flex: 0 1 auto; overflow: hidden;
+  transition: color .2s, border-color .2s; }
+.tab-drawer:hover { color: var(--fg); border-color: var(--muted); }
+.tab-drawer.active { color: var(--accent); border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-card)); }
+.tab-drawer-icon { display: inline-flex; align-items: center; flex-shrink: 0; }
+.tab-drawer-label { font-weight: 600; flex-shrink: 0; }
+/* 计数徽章：小圆角底，一眼看出该组有几个 */
+.tab-drawer-count { font-size: 9px; padding: 1px 5px; border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 8%, transparent); flex-shrink: 0; }
+.tab-drawer.active .tab-drawer-count { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+/* 活跃 tab 缩略名：抽屉里当前选中项的名字（用户要的"本体显示缩略信息"） */
+.tab-drawer-active { color: var(--fg); font-size: 10px; opacity: .75;
+  max-width: 130px; overflow: hidden; text-overflow: ellipsis;
+  flex: 0 1 auto; min-width: 0; }
+.tab-drawer.active .tab-drawer-active { opacity: 1; color: var(--accent); }
+/* Pin 固定 tab：右上角小圆点标记 + 不参与收缩（固定的意义就是保持可点） */
+.tab.pinned { flex-shrink: 0; min-width: 64px; position: relative; }
+.tab.pinned::before { content: ""; position: absolute; top: 3px; right: 3px;
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 5px var(--accent); }
+/* 抽屉模式下 tabs 行内只剩固定 tab + 抽屉 + ⋮，间距稍开更清晰 */
+.tabs.drawer-mode { gap: 4px; }

@@ -547,7 +547,10 @@ function _showDiffCtxMenu(x, y, pid) {
 
 // 委托绑定：#tabs 上右键文件类 tab → 快捷对比菜单（终端 tab 右键不动——
 // 终端是 Ctrl+右键菜单，普通右键留给 xterm 自身行为）
+// a286：对比项已并入 util.js 的 tab 右键统一菜单（那边先注册先执行并打
+// _tabMenuHandled 标记）——这里让位，防止两边都渲染 #ctxMenu 互相覆盖
 document.getElementById('tabs').addEventListener('contextmenu', e => {
+  if (e._tabMenuHandled) return;
   const tabEl = e.target.closest('.tab');
   if (!tabEl) return;
   const pid = tabEl.dataset.portId;
