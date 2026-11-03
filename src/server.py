@@ -1633,6 +1633,8 @@ def _do_data_dir_migrate(target):
     if not os.access(target, os.W_OK):
         return jsonify({"ok": False, "err": "目标目录不可写"}), 400
     copied = []
+    # a244 P1（a238 复审残留）：迁移窗口起点——复制期间源目录的新写入靠它判定
+    t0 = time.time()
     try:
         for s in _DATA_SUBDIRS:
             src = os.path.join(src_data_dir, s)
@@ -1689,6 +1691,86 @@ def _do_data_dir_migrate(target):
             copied.append({"name": s, "files": 1})
     except Exception as e:
         return jsonify({"ok": False, "err": f"迁移失败（未切换，数据仍在原处）: {e}",
+                        "copied": copied}), 500
+    # a244 P1（a238 复审残留）：复制与 rmtree 之间存在分钟级窗口（GB 级数据），
+    # 窗口内新写入源目录的文件（保存笔记/追加日志/改 cmdlib）——首轮 walk 已走过
+    # 的位置不会重拷，rmtree 却照删 = 新写入被静默删除。rmtree 前二次增量补拷：
+    # ctime/mtime 任一 >= t0 的文件覆盖重拷（copy2 保 mtime，首轮已拷的旧文件
+    # 不会误判）。固定点收敛最多 3 轮（持续追加的活跃日志容忍尾差）；files/ 与
+    # 根级 json 仍严格校验；webview_cache 跳过（缓存可再生，删了不算丢数据）。
+    late_total = 0
+    try:
+        for _catch_round in range(3):
+            late = 0
+            for s in _DATA_SUBDIRS:
+                if s == "webview_cache":
+                    continue
+                src = os.path.join(src_data_dir, s)
+                if not os.path.isdir(src):
+                    continue
+                dst = os.path.join(target, s)
+                strict = (s == "files")
+                _src_real = os.path.realpath(src)
+                for root, dirs, files in os.walk(src, onerror=lambda e: None):
+                    dirs[:] = [d for d in dirs
+                               if os.path.realpath(os.path.join(root, d))
+                               .startswith(_src_real + os.sep)]
+                    rel = os.path.relpath(root, src)
+                    droot = dst if rel == "." else os.path.join(dst, rel)
+                    os.makedirs(droot, exist_ok=True)
+                    for fn in files:
+                        sf, df = os.path.join(root, fn), os.path.join(droot, fn)
+                        try:
+                            st = os.stat(sf)
+                        except OSError:
+                            continue   # 窗口内又被删：源里已无，随 rmtree 走
+                        if max(st.st_ctime, st.st_mtime) < t0:
+                            continue   # 窗口前已有：首轮已处理
+                        try:
+                            # 已补拷到最新（copy2 保 mtime）：本轮无变化，跳过——
+                            # 否则窗口内文件 mtime 恒>=t0，固定点永不收敛
+                            if os.path.exists(df) and os.path.getsize(df) == st.st_size \
+                                    and os.path.getmtime(df) == st.st_mtime:
+                                continue
+                        except OSError:
+                            pass
+                        try:
+                            shutil.copy2(sf, df)   # 窗口内新写入：源是最新意图，覆盖
+                            late += 1
+                            if os.path.getsize(sf) != os.path.getsize(df):
+                                raise RuntimeError(f"校验失败: {df} 与源大小不一致")
+                        except RuntimeError:
+                            if strict:
+                                raise
+                        except (PermissionError, OSError):
+                            if strict:
+                                raise
+            for s in _data_root_json_files():
+                sf = os.path.join(src_data_dir, s)
+                if not os.path.isfile(sf):
+                    continue
+                try:
+                    st = os.stat(sf)
+                except OSError:
+                    continue
+                if max(st.st_ctime, st.st_mtime) < t0:
+                    continue
+                df = os.path.join(target, s)
+                try:
+                    if os.path.exists(df) and os.path.getsize(df) == st.st_size \
+                            and os.path.getmtime(df) == st.st_mtime:
+                        continue
+                except OSError:
+                    pass
+                shutil.copy2(sf, df)
+                late += 1
+                if os.path.getsize(sf) != os.path.getsize(df):
+                    raise RuntimeError(f"校验失败: {df} 与源大小不一致")
+            late_total += late
+            if not late:
+                break
+    except Exception as e:
+        return jsonify({"ok": False, "err": f"迁移失败（未切换，数据仍在原处）: 增量补拷 {e}",
                         "copied": copied}), 500
     # rmtree 前终检（a238 P0-1 第三环防御纵深）：旧/新目录 realpath 必须互不
     # 相同、互不嵌套——任何一环被绕过都在这里挡住「删除唯一数据本体」
@@ -1754,7 +1836,7 @@ def _do_data_dir_migrate(target):
     # 用户口径：不要旧目录备份，迁移完自动删。锁定文件残留由关工具自动清。
     shutil.rmtree(old_data_dir, ignore_errors=True)
     return jsonify({"ok": True, "dir": target, "copied": copied,
-                    "deleted": True, "residual": 0,
+                    "deleted": True, "residual": 0, "late_copies": late_total,
                     "old_dir": old_data_dir, "note": "旧目录已删除"})
 
 @app.route("/api/open_log_file", methods=["POST"])
