@@ -704,7 +704,7 @@ function buildBitCalcTab() {
       hashRowsEl.innerHTML = HASH_NAMES.map(([k, n]) =>
         `<div style="display:flex;gap:8px;align-items:baseline;">
            <span style="color:var(--muted);width:56px;flex-shrink:0;">${n}</span>
-           <span data-bc-hash-v="${j[k]}" style="word-break:break-all;cursor:pointer;" title="点击复制">${esc(j[k])}</span>
+           <span data-bc-hash-v="${esc(j[k])}" style="word-break:break-all;cursor:pointer;" title="点击复制">${esc(j[k])}</span>
          </div>`).join('');
       hashResultEl.style.display = '';
       hashRowsEl.querySelectorAll('[data-bc-hash-v]').forEach(el => {

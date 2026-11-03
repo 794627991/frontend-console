@@ -133,8 +133,8 @@ async function _csDetectRender() {
       const _cur = st.version || '';
       const _pkgV = st.pkg_version || '';
       const _up = _pkgV && _cur && _pkgV !== _cur
-        ? ` —— 包源 v${_pkgV}${_cmpVer(_pkgV, _cur) > 0 ? ' 较新，可选「📂 离线包安装」升级' : ' 不高于当前版'}` : '';
-      res.push(row('Claude CLI 已安装' + (_cur ? `（当前 v${_cur}）` : ''), true,
+        ? ` —— 包源 v${esc(_pkgV)}${_cmpVer(_pkgV, _cur) > 0 ? ' 较新，可选「📂 离线包安装」升级' : ' 不高于当前版'}` : '';
+      res.push(row('Claude CLI 已安装' + (_cur ? `（当前 v${esc(_cur)}）` : ''), true,
         '升级 = 下方「📂 离线包安装」选新版 claude-offline.zip 换装' + _up));
     }
     res.push(row('Node.js / npm', st.node && st.npm, st.node ? '' : '离线包安装会静默补装'));
@@ -142,7 +142,7 @@ async function _csDetectRender() {
     // 离线包（zip 单文件）——本机找得到包源才能制作；安装时用户自选 zip 文件
     const canPack = !!(st.pkg_dir || st.git_installer || st.node_installer);
     res.push(row('离线包制作源', canPack,
-      canPack ? [st.git_installer, st.node_installer].filter(Boolean).map(p => p.split('\\\\').pop()).join(' + ') +
+      canPack ? [st.git_installer, st.node_installer].filter(Boolean).map(p => esc(String(p).split(/[\\\/]/).pop())).join(' + ') +   // a239 B3-P3: 原 split('\\\\') 按双反斜杠分割永不命中单反斜杠路径（basename 剥离失效=全路径进 innerHTML）；补 esc
         (st.pkg_dir ? (st.git_installer ? ' + ' : '') + 'claude-code' + mb : '')
       : '未找到安装器资源（Git exe / Node MSI）——只能联网安装'));
     el.innerHTML = res.join('');

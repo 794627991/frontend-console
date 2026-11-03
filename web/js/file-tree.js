@@ -134,7 +134,9 @@ function _tvPush(rows, path, depth) {
   for (const raw of c.entries) {
     if (!raw || raw.path === undefined || seen.has(raw.path)) continue;
     seen.add(raw.path);
-    entries.push({ dir: !!raw.dir, name: String(raw.name || ''),
+    let _nm = raw.name;   // a239 B4-P3: 敌意 toString() 副作用防护（String(raw.name) 可被劫持抛出穿透 rebuild）
+    if (typeof _nm !== 'string') { try { _nm = String(_nm == null ? '' : _nm); } catch (_) { _nm = ''; } }
+    entries.push({ dir: !!raw.dir, name: _nm,
                    path: String(raw.path) });
   }
   for (const e of entries) {

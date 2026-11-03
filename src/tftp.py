@@ -46,7 +46,7 @@ class TftpServer:
             with open(_st.CONFIG_FILE, "r", encoding="utf-8") as f:
                 d = str((json.load(f) or {}).get("tftp_default_dir") or "")
             d = d.strip().strip('"').strip("'")
-            if d and os.path.isdir(d):
+            if d and os.path.isdir(d) and not TftpServer._dir_denied(d):   # a239：记忆目录同样过黑名单（被 CSRF 换过的目录重启不再复活）
                 return os.path.normpath(d)
         except Exception:
             pass
@@ -88,15 +88,59 @@ class TftpServer:
             self.sock = None
         return True, "已停止"
 
+    # a239（第5轮B2-P1B）：TFTP/HFS 根目录黑名单——服务 bind 0.0.0.0 对全内网
+    # 开放读写，根目录被切到敏感位置（经 CSRF/MCP 提示注入即可换目录）时，
+    # LAN 攻击者可覆盖 claude.cmd 等劫持执行、读走凭据文件。默认 Desktop 属
+    # 产品意图（内网互传）；以下位置一律拒绝
+    _DENY_PREFIXES = None
+
+    @classmethod
+    def _deny_prefixes(cls):
+        if cls._DENY_PREFIXES is None:
+            home = os.path.expanduser("~")
+            windir = os.environ.get("SystemRoot", r"C:\Windows")
+            pf = os.environ.get("ProgramFiles", r"C:\Program Files")
+            pf86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+            pub = os.environ.get("PUBLIC", r"C:\Users\Public")
+            cls._DENY_PREFIXES = tuple(
+                os.path.normcase(os.path.normpath(p))
+                for p in (
+                    os.path.join(os.environ.get("APPDATA", ""), "npm"),
+                    os.path.join(home, ".claude"),
+                    os.path.join(home, ".serialconsole_pro"),
+                    os.path.join(home, ".ssh"),
+                    windir, pf, pf86, pub,
+                    os.path.join(os.path.dirname(os.path.dirname(windir)), "ProgramData"),
+                ) if p and (":" in p or p.startswith("\\\\"))
+            )
+        return cls._DENY_PREFIXES
+
+    @classmethod
+    def _dir_denied(cls, path):
+        p = os.path.normcase(os.path.normpath(os.path.abspath(path)))
+        for d in cls._deny_prefixes():
+            if p == d or p.startswith(d + os.sep):
+                return True
+        return False
+
     def set_dir(self, path):
         """切换 TFTP 根目录（运行中也可切）。
-        容错：strip 空格、去首尾引号（手输常见）、末尾反斜杠规范化。"""
+        容错：strip 空格、去首尾引号（手输常见）、末尾反斜杠规范化。
+        a239：UNC 与系统敏感目录拒绝（服务对全内网开放，根目录=LAN 读写面）。"""
         path = (path or "").strip().strip('"').strip("'")
         if not path:
             return False, "目录不能为空"
+        if path.startswith("\\\\") or path.startswith("//"):
+            return False, "不支持网络路径（UNC）作为 TFTP 目录"
+        from .app_state import reject_win_devpath
+        if reject_win_devpath(path):
+            return False, "路径包含 Windows 保留设备名"
         # 绝对路径规范化（末尾反斜杠）；相对路径原样交 isdir 判断，避免误拼 cwd 掩盖错误
         if os.path.isabs(path):
             path = os.path.normpath(path)
+        if self._dir_denied(path):
+            return False, ("该目录在敏感位置（系统/凭据/程序目录），"
+                           "不允许作为内网共享根——请选普通数据目录")
         if not os.path.isdir(path):
             return False, f"目录不存在: {path}"
         self.root_dir = path
@@ -305,7 +349,21 @@ class TftpServer:
         """WRQ：收设备数据写入文件。
         设备带选项时先发 OACK（设备回 ACK(0) 后开始发 DATA），否则回 ACK(0) 起步。
         最后一块判定 len(data) < blksize 即终止（RFC 1350 正确，短块/空块即终止）。
-        超时放弃前发 ERROR，让设备立即 abort 而非死等。"""
+        超时放弃前发 ERROR，让设备立即 abort 而非死等。
+        a239（第5轮B2-P1B）：目标文件已存在一律拒绝（os.replace 静默覆盖曾可让
+        LAN 任意主机改写桌面 .bat/.lnk——覆盖是重瞄准劫持链的落地原语）；
+        tmp 名加 peer 端口（不同设备并发传同名文件不再交叉写坏）。"""
+        if os.path.exists(path):
+            # 此刻数据 socket 尚未建立——先建临时 socket 回 ERROR(6)（文件已存在）
+            # 让设备端立即停止而非死等重传，再标记失败返回
+            _e = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                self._send_err(_e, t.peer, 6, "文件已存在，拒绝覆盖")
+            finally:
+                _e.close()
+            t.status = "error"; t.err = "目标已存在，拒绝覆盖"
+            return
+        tmp = None   # a239：OACK 阶段异常时 except 清理的未定义防护
         ds = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         ds.settimeout(3.0)
         try:
@@ -332,7 +390,7 @@ class TftpServer:
             else:
                 ds.sendto(struct.pack("!HH", self.OP_ACK, 0), t.peer)
             block = 1
-            tmp = path + ".tftp.part"
+            tmp = "%s.%d.tftp.part" % (path, t.peer[1])   # a239：peer 端口隔离——并发传同名文件不交叉写坏
             with open(tmp, "wb") as f:
                 # 若 OACK 后设备直接发了 DATA(1)，先处理首包
                 if first_pkt is not None:
@@ -379,7 +437,8 @@ class TftpServer:
             t.status = "done"
         except Exception as e:
             t.status = "error"; t.err = str(e)
-            try: os.remove(path + ".tftp.part")
+            try:
+                if tmp: os.remove(tmp)
             except OSError: pass
         finally:
             ds.close()

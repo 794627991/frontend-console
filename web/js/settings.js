@@ -224,8 +224,13 @@ async function _stRenderTermKeysPane(pane) {
   let docHk = 'ctrl+f';
   let notesHk = 'ctrl+alt+f';
 
+  // a239 B3-P2: 探活令牌——await 期间用户切到别的分区时，本渲染的迟到
+  // innerHTML 会整体覆盖新分区内容（左导航与右侧内容分裂）
+  const _mySec = Symbol('termKeys');
+  pane._stSec = _mySec;
   try {
     const j = await (await fetch('/api/theme')).json();
+    if (pane._stSec !== _mySec) return;   // 已被别的分区渲染接管
     if (j.ok && j.term_keys) tk = j.term_keys;
     if (j.ok) closeToTray = j.close_to_tray !== false;   // 缺省=开（config 旧版无此键）
     if (j.ok && j.claude_ui_mode) claudeUiMode = j.claude_ui_mode;   // Claude 入口分派：harness=界面化 / cli=终端
@@ -233,6 +238,7 @@ async function _stRenderTermKeysPane(pane) {
     if (j.ok && typeof j.doc_search_hotkey === 'string') docHk = j.doc_search_hotkey || 'ctrl+f';
     if (j.ok && typeof j.notes_search_hotkey === 'string') notesHk = j.notes_search_hotkey || 'ctrl+alt+f';
   } catch(_) {}
+  if (pane._stSec !== _mySec) return;
   pane.innerHTML = `
     <div class="dd-body">
       <div class="dd-label">终端设置</div>
@@ -241,7 +247,7 @@ async function _stRenderTermKeysPane(pane) {
         <div class="dd-label">终端字号</div>
         <div class="dd-row" style="display:flex;gap:8px;margin-top:6px;align-items:center;">
           <button class="btn ghost" id="tkFontOut" title="缩小">－</button>
-          <span id="tkFontVal" style="font-family:var(--font-mono);min-width:56px;text-align:center;">${(typeof termFontSize === 'number' ? termFontSize : tk.term_font_size) || 13} px</span>
+          <span id="tkFontVal" style="font-family:var(--font-mono);min-width:56px;text-align:center;">${Number(typeof termFontSize === 'number' ? termFontSize : tk.term_font_size) || 13} px</span>
           <button class="btn ghost" id="tkFontIn" title="放大">＋</button>
           <button class="btn ghost" id="tkFontReset" title="恢复 13px">↺ 重置</button>
         </div>
@@ -1014,12 +1020,16 @@ async function _stRenderApiPane(pane) {
   // 改了 BASE_URL 或 Token，上次拉到的列表就是别的网关的了——立即作废
   pane.querySelector('#apiBaseUrl').addEventListener('input', invalidateModels);
   tokEl.addEventListener('input', invalidateModels);
-  document.addEventListener('click', (e) => {
+  // a239 B3-P3: 关闭监听单例化——原每次渲染都 addEventListener 一枚到 document，
+  // 旧闭包永不摘（长会话无限累积）；用共享标记 + 重绑前先移除
+  if (pane._mdlPopCloser) document.removeEventListener('click', pane._mdlPopCloser);
+  pane._mdlPopCloser = (e) => {
     if (!mdlPop) return;
     if (mdlPop.contains(e.target)) return;                              // 点列表项：选择逻辑自己处理
     if (e.target.closest && e.target.closest('[data-mk]')) return;      // 点另一个框：focus 已重开浮层
     closeMdlPop();
-  });
+  };
+  document.addEventListener('click', pane._mdlPopCloser);
   // ---- [1M] 开关：给该档模型名加/去 [1M] 后缀（网关按此后缀给百万级上下文）----
   function sync1mState() {
     pane.querySelectorAll('[data-mk1m]').forEach(btn => {
@@ -1545,7 +1555,7 @@ async function _ddRefreshUsage(pane) {
         pending = b.dataset.ddclean;
         bar.style.display = 'flex';
         bar.querySelector('#ddCleanTip').innerHTML =
-          `清理「${(j.targets[pending] || {}).name || pending}」：${POLICY[pending] || ''}` +
+          `清理「${esc((j.targets[pending] || {}).name || pending)}」：${POLICY[pending] || ''}` +
           (DANGER[pending] ? `<br>⚠ ${DANGER[pending]}` : '');
       };
     });

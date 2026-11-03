@@ -178,6 +178,10 @@ function refreshSidebar() {
     portList.innerHTML = '';
     ids.forEach(pid => {
       const conn = connections[pid];
+      // a239 B4-P2: 畸形 conn（meta 缺失）跳过本行而非抛 TypeError——原实现
+      // 在 forEach 中段抛出会留下「计数已写、列表空白」的撕裂态（5s 轮询
+      // 每轮重抛，侧栏永久空白）
+      if (!conn || !conn.meta) { console.warn('skip malformed conn', pid); return; }
       const item = document.createElement('div');
       item.className = 'port-item connected' + (pid === activePortId ? ' active' : '');
       item.dataset.portId = pid;

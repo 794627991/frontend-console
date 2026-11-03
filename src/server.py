@@ -335,6 +335,47 @@ def start_background():
 # ============================================================
 # Flask 路由
 # ============================================================
+# a239（第5轮B2-P1A）：全站 Origin/Host 校验——主进程此前对任何来源的
+# POST 都照单全收（get_json(force=True) 使 text/plain 跨源"简单请求"也能
+# 解析 JSON）：远程网页可 CSRF 驱动 skills/install（往 ~/.claude/skills 落
+# SKILL.md=持久提示注入）、tftp/set_dir 重瞄准、claude_setup 执行任意 zip
+# 安装器；DNS-rebinding（Host 无校验）还放开读面。对照 worker 进程 a116
+# 已修同款，主进程漏网至今。
+# 规则：
+# - Host 必须 127.0.0.1[:port] / localhost[:port] / [::1]（拦 rebinding）
+# - 写方法（POST/PUT/DELETE/PATCH）带 Origin 头时，必须 http(s)://127.0.0.1
+#   或 localhost 任意端口（WebView2 内同源 fetch / snip 独立窗 / worker / MCP
+#   的 urllib 请求无 Origin 或同源，均放行）
+_LOCAL_HOST_RE = re.compile(
+    r"^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$", re.I)
+_LOCAL_ORIGIN_RE = re.compile(
+    r"^https?://(127\.0\.0\.1|localhost|\[::1\])(:\d+)?/?$", re.I)
+
+
+@app.before_request
+def _guard_local_origin():
+    try:
+        host = (request.host or "").strip()
+        if not _LOCAL_HOST_RE.match(host):
+            return jsonify({"ok": False, "err": "forbidden host"}), 403
+        if request.method in ("POST", "PUT", "DELETE", "PATCH"):
+            origin = (request.headers.get("Origin") or "").strip()
+            if origin and not _LOCAL_ORIGIN_RE.match(origin):
+                return jsonify({"ok": False, "err": "forbidden origin"}), 403
+            # a239（第5轮B1）：顶层真值非对象的 JSON（"x"/123/true/[...]）此前
+            # 在 12 个端点打穿 500 HTML——`(get_json(silent=True) or {})` 防不住
+            # truthy 非 dict。此处一处收口：能解析且非 dict 一律 400。
+            # multipart/form 上传跳过——get_json 会消费 stream 破坏文件解析
+            _ct = (request.content_type or "")
+            if "multipart" not in _ct and "form-" not in _ct:
+                j = request.get_json(force=True, silent=True)
+                if j is not None and not isinstance(j, dict):
+                    return jsonify({"ok": False, "err": "请求体必须是 JSON 对象"}), 400
+    except Exception:
+        return jsonify({"ok": False, "err": "bad request"}), 400
+    return None
+
+
 @app.after_request
 def _no_cache_static(resp):
     """静态资源(web/ 下的 JS/CSS)禁缓存：开发迭代频繁，WebView2 若缓存旧 JS，
@@ -1116,6 +1157,9 @@ def api_hash_file():
     body: {path} —— 一次流式读，同时算 MD5/SHA1/SHA256/SHA512/CRC32。
     大文件分块（8MB/块）不占内存。路径规则与 hex_files 同款：绝对路径 + 已存在。"""
     data = request.get_json(force=True, silent=True) or {}
+    from src.app_state import reject_win_devpath
+    if reject_win_devpath(data.get("path")):   # a239：CON 等设备名 open/getsize 永久阻塞
+        return jsonify({"ok": False, "err": "路径包含 Windows 保留设备名"}), 400
     p = os.path.abspath((data.get("path") or "").strip().strip('"').strip("'"))
     if not os.path.isfile(p):
         return jsonify({"ok": False, "err": "文件不存在"}), 400
@@ -1878,6 +1922,9 @@ def api_file_info():
     body: {path: 绝对路径}。目录返回 {ok, is_dir: true}（拖文件夹进窗口
     → 设为文件树根，之前对目录返回 err 会误导前端弹"打开方式"窗）。"""
     data = request.get_json(force=True, silent=True) or {}
+    from src.app_state import reject_win_devpath
+    if reject_win_devpath(data.get("path")):   # a239：CON 等设备名 open/getsize 永久阻塞
+        return jsonify({"ok": False, "err": "路径包含 Windows 保留设备名"}), 400
     p = (data.get("path") or "").strip()
     if not p:
         return jsonify({"ok": False, "err": "路径为空"}), 400
@@ -2001,6 +2048,9 @@ def api_read_text():
     日志库内文件名（log tab 的 meta.path 可能是裸名）走 _resolve_log_path 解析；
     其余绝对路径直接读（对比任意文本都有意义，只挡目录/不存在/超限）。"""
     q = request.args.get("q", "")
+    from src.app_state import reject_win_devpath
+    if reject_win_devpath(q):   # a239：设备名防线（黑盒 CON 实测挂死线程）
+        return jsonify({"ok": False, "err": "路径包含 Windows 保留设备名"}), 400
     path = _resolve_log_path(q)
     if path is None:
         return jsonify({"ok": False, "err": "文件不存在或不可读"}), 400

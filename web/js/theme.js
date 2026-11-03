@@ -289,8 +289,8 @@ function _openCustomPanel(forceLight) {
   const ov = document.createElement('div');
   ov.className = 'ct-overlay';
   const rows = CT_FIELDS.map(([k, name]) => `
-    <div class="ct-row"><input type="color" name="ct_ck_${k}" data-ck="${k}" value="${_customData[k] || '#000000'}">
-      <input type="text" name="ct_ck_t_${k}" data-ck-t="${k}" spellcheck="false" value="${_customData[k] || ''}" placeholder="--${k}">
+    <div class="ct-row"><input type="color" name="ct_ck_${k}" data-ck="${k}" value="${esc(_customData[k] || '#000000')}">
+      <input type="text" name="ct_ck_t_${k}" data-ck-t="${k}" spellcheck="false" value="${esc(_customData[k] || '')}" placeholder="--${k}">
       <span>${name}</span></div>`).join('');
   ov.innerHTML = `<div class="ct-panel">
     <div class="ct-title">🎨 自定义主题 <span style="font-size:11px;color:var(--muted);font-weight:400;">改动即时预览，保存后跨启动生效</span></div>

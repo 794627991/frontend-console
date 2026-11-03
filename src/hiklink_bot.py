@@ -502,6 +502,25 @@ class HikLinkBot:
             except Exception:
                 data = {}
             text = (data.get("asrText") or "").strip()
+            # a239（第5轮B2-P1C）：发送者鉴权——此前任何能给机器人发消息的
+            # HikLink 用户都可驱动本机 Claude 会话（文本直进 stdin，ask 桥还可
+            # 替答确认）。session 标识以 uid 起头（_announce_online 同款判据），
+            # 非本人会话一律拒绝并回执
+            _sess = str(msg.get("session") or "")
+            try:
+                _cur_uid = (_load_session_file().get("uid")
+                            or (_controller._creds()[0] if _controller else "")) or ""
+            except Exception:
+                _cur_uid = ""
+            if _cur_uid and _sess and not _sess.lower().startswith(_cur_uid.lower()):
+                log.warning("拒绝非机主会话消息: session=%s sender=%s",
+                            _sess[:10], data.get("sender"))
+                try:
+                    self.session_id = _sess   # 回执要投回该会话才可见
+                    self.reply("⚠ 该机器人仅响应机主（%s）本人的指令" % _cur_uid)
+                except Exception:
+                    pass
+                return
             self.session_id = msg.get("session") or self.session_id
             self._save_last_session()
             log.info("收到消息: sender=%s text=%r", data.get("sender"),

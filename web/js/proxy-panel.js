@@ -276,7 +276,7 @@ function buildProxyTab() {
 
   function _setQStatus(text, cls) {
     // 状态点统一风格：绿=在线 黄=进行中 红=失败 灰=无（老 GUI 同款语义）
-    qStatusEl.innerHTML = text ? `<span class="px-badge ${cls}">${text}</span>` : '';
+    qStatusEl.innerHTML = text ? `<span class="px-badge ${cls}">${esc(text)}</span>` : '';   // a239 B3-P3: j.msg 直通统一转义
   }
 
   function _setQButtons(state) {
@@ -339,7 +339,7 @@ function buildProxyTab() {
     if (models.length) {
       html += '<div class="px-q-models">' + models.map(m => {
         const hot = m.limit && m.used / m.limit >= 0.85;
-        return `<div class="px-q-model ${hot ? 'px-q-hot' : ''}"><span class="px-q-mk">${m.name}</span>` +
+        return `<div class="px-q-model ${hot ? 'px-q-hot' : ''}"><span class="px-q-mk">${esc(m.name)}</span>` +   // a239 B3-P2: 外部网关数据必过 esc
           `<span>已用 ${_pxFnum(m.used)}</span><span>还剩 ${_pxFnum(m.remain)}</span><span>${m.pct}%</span></div>`;
       }).join('') + '</div>';
     }

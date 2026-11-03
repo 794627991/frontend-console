@@ -139,8 +139,8 @@ def tree_add_root():
         p.startswith("\\\\")                                    # UNC 一律拒（本地工具无网络目录需求）
         or _pl == "c:\\" or _pl == "d:\\" or _pl.endswith(":\\")  # 盘根
         or _pl.startswith(_wl)                                      # Windows 目录及子树
-        or _pl.startswith("c:\program files")                   # Program Files
-        or _pl.startswith("c:\programdata"))
+        or _pl.startswith("c:\\program files")                   # Program Files
+        or _pl.startswith("c:\\programdata"))
     if _danger:
         return jsonify({"ok": False, "err":
             "系统/网络/盘根路径不允许登记为工作区根（安全限制）"}), 400
@@ -255,10 +255,13 @@ def _resolve_real(path):
 
 def _guard_ops_path(path):
     """fileops 统一守卫：根白名单 + 真实路径也须在根内（堵 junction 逃逸）+
-    NUL 字节/超长拒绝。返回 (guarded_path, err)。"""
+    NUL 字节/超长/Windows 设备名拒绝。返回 (guarded_path, err)。"""
     p = str(path or "")
     if "\x00" in p or len(p) > 1024:
         return None, "参数无效"
+    from src.app_state import reject_win_devpath
+    if reject_win_devpath(p):   # a239：CON/COM1 等传给 open/makedirs 永久阻塞 worker 线程
+        return None, "路径包含 Windows 保留设备名，禁止操作"
     fp = _under_roots(p)
     if not fp:
         return None, None   # 白名单拒绝——由调用方返回 404/400
@@ -301,9 +304,11 @@ def tree_fileops():
                 return jsonify({"ok": False, "err": "目录不在已登记根内"}), 400
             name = str(data.get("name") or "").strip()
             # a213 审计 P3：冒号一并拒——'d:foo' 会被 os.path.join 丢弃 base
-            # 跨盘建文件（实测穿越白名单）
-            if not base or not name or "/" in name or os.sep in name or ":" in name:
-                return jsonify({"ok": False, "err": "参数无效（名字禁含分隔符/冒号）"}), 400
+            # 跨盘建文件（实测穿越白名单）；a239：设备名拒（touch 一个 CON 会挂死线程）
+            from src.app_state import reject_win_devpath
+            if not base or not name or "/" in name or os.sep in name or ":" in name \
+                    or reject_win_devpath(os.path.join(base, name)):
+                return jsonify({"ok": False, "err": "参数无效（名字禁含分隔符/冒号/设备名）"}), 400
             fp = os.path.join(base, name)
             if os.path.exists(fp):
                 return jsonify({"ok": False, "err": "已存在同名文件"}), 400

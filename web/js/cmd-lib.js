@@ -1,4 +1,5 @@
 let _cmdLibCache = null;
+let _cmdDragFrom = -1;   // a239 B3-P2: 拖拽源索引（模块级——旧闭包残留会按陈旧索引错序保存）
 async function loadCmdLib() {
   if (_cmdLibCache) return _cmdLibCache;
   try {
@@ -54,11 +55,13 @@ async function renderCmdPane() {
     // 改变鼠标下元素 → 移动-触发-再移动循环，UI 疯狂抖动且最终落点错位。
     // 正确做法：拖动过程中完全不动 DOM，只高亮当前悬停条目标记落点方向；
     // drop 时按鼠标位置（条目中线判断前/后）一次性重排数组并保存。
-    let dragFrom = -1;
+    // a239 B3-P2: 拖拽状态提为模块级 + 容器监听单例化——原每次渲染都往持久
+    // 容器 libEl 追加一套 dragover/drop/dragleave（10 次渲染=每帧 10 份全列表
+    // 布局查询），且旧闭包 dragFrom 残留会在重渲染后按陈旧索引二次 splice
     libEl.querySelectorAll('.cmd-item').forEach((item, i) => {
       item.draggable = true;
       item.addEventListener('dragstart', e => {
-        dragFrom = i;
+        _cmdDragFrom = i;
         item.classList.add('dragging');
         e.dataTransfer.effectAllowed = 'move';
         try { e.dataTransfer.setData('text/plain', String(i)); } catch (_) {}  // Firefox 必需
@@ -66,10 +69,16 @@ async function renderCmdPane() {
       item.addEventListener('dragend', () => {
         item.classList.remove('dragging');
         libEl.querySelectorAll('.cmd-item').forEach(el => el.classList.remove('drop-before', 'drop-after'));
-        dragFrom = -1;
+        _cmdDragFrom = -1;
       });
     });
-    libEl.addEventListener('dragover', e => {
+    // a239 B3-P2：先卸上一套容器监听再绑（引用存 libEl._cmdDragHandlers）——
+    // 状态已提为模块级 _cmdDragFrom，新一套闭包无过时引用
+    if (libEl._cmdDragHandlers) {
+      libEl._cmdDragHandlers.forEach(([ev, fn]) => libEl.removeEventListener(ev, fn));
+    }
+    libEl._cmdDragHandlers = [];
+    const _onDragOver = e => {
       e.preventDefault();  // 允许 drop
       e.dataTransfer.dropEffect = 'move';
       const items = Array.from(libEl.querySelectorAll('.cmd-item:not(.dragging)'));
@@ -82,13 +91,13 @@ async function renderCmdPane() {
       if (!target) return;
       const r = target.getBoundingClientRect();
       target.classList.add(e.clientY < r.top + r.height / 2 ? 'drop-before' : 'drop-after');
-    });
-    libEl.addEventListener('drop', async e => {
+    };
+    const _onDrop = async e => {
       e.preventDefault();
-      if (dragFrom < 0) return;
+      if (_cmdDragFrom < 0) return;
       const items = Array.from(libEl.querySelectorAll('.cmd-item'));
-      const dragEl = items[dragFrom];
-      if (!dragEl) { dragFrom = -1; return; }
+      const dragEl = items[_cmdDragFrom];
+      if (!dragEl) { _cmdDragFrom = -1; return; }
       // 找鼠标悬停的目标条目及前/后
       let toIdx = -1, before = false;
       for (let i = 0; i < items.length; i++) {
@@ -98,26 +107,30 @@ async function renderCmdPane() {
           toIdx = i; before = e.clientY < r.top + r.height / 2; break;
         }
       }
-      if (toIdx < 0) { dragFrom = -1; return; }  // 没落在任何条目上：不换
+      if (toIdx < 0) { _cmdDragFrom = -1; return; }  // 没落在任何条目上：不换
       // 数组重排：splice 拿出起点，再按目标索引（扣除起点被移除的影响）插回
       const old = await loadCmdLib();
-      const [moved] = old.splice(dragFrom, 1);
-      if (!moved) { dragFrom = -1; renderCmdPane(); return; }
+      const [moved] = old.splice(_cmdDragFrom, 1);
+      if (!moved) { _cmdDragFrom = -1; renderCmdPane(); return; }
       // 计算插入位：目标是 drop 前半 → 插它前；后半 → 插它后。
       // dragFrom < toIdx 时目标条目在移除后前移了一位，需修正。
       let insertAt = toIdx + (before ? 0 : 1);
-      if (dragFrom < toIdx) insertAt -= 1;
+      if (_cmdDragFrom < toIdx) insertAt -= 1;
       old.splice(insertAt, 0, moved);
       await saveCmdLib(old);
-      dragFrom = -1;
+      _cmdDragFrom = -1;
       renderCmdPane();
-    });
-    libEl.addEventListener('dragleave', e => {
+    };
+    const _onDragLeave = e => {
       // 拖出列表区域：清落点标记（dragleave 会冒泡子元素，仅当真正离开列表时清）
       if (!libEl.contains(e.relatedTarget)) {
         libEl.querySelectorAll('.cmd-item').forEach(el => el.classList.remove('drop-before', 'drop-after'));
       }
-    });
+    };
+    libEl.addEventListener('dragover', _onDragOver);
+    libEl.addEventListener('drop', _onDrop);
+    libEl.addEventListener('dragleave', _onDragLeave);
+    libEl._cmdDragHandlers.push(['dragover', _onDragOver], ['drop', _onDrop], ['dragleave', _onDragLeave]);
   }
   // 最近命令
   if (activePortId) {

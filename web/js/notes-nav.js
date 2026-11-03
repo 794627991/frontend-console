@@ -55,6 +55,7 @@ async function nnDoSearch() {
   const q = ov.querySelector('#nnSearchQ').value.trim();
   if (!q) return;
   res.innerHTML = '<div class="nn-search-empty">搜索中…</div>';
+  const _myReq = ++window._nnLseq || (window._nnLseq = 1);   // a239 B3-P3: 连续两次搜索旧响应晚到不再覆盖新结果
   let j;
   try {
     const r = await fetch('/api/notes/search', { method: 'POST',
@@ -63,7 +64,8 @@ async function nnDoSearch() {
         case: ov.querySelector('#nnSearchCase').checked,
         regex: ov.querySelector('#nnSearchRe').checked }) });
     j = await r.json();
-  } catch (e) { res.innerHTML = '<div class="nn-search-empty">搜索失败: ' + esc(String(e)) + '</div>'; return; }
+  } catch (e) { if (_myReq === window._nnLseq) res.innerHTML = '<div class="nn-search-empty">搜索失败: ' + esc(String(e)) + '</div>'; return; }
+  if (_myReq !== window._nnLseq) return;
   if (!j.ok) { res.innerHTML = '<div class="nn-search-empty">' + esc(j.err || '搜索失败') + '</div>'; return; }
   if (!j.files.length) { res.innerHTML = '<div class="nn-search-empty">没有命中</div>'; return; }
   const _hl = (sn, marks) => {

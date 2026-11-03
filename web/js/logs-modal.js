@@ -32,8 +32,10 @@ async function loadLogsList() {
   try {
     const sortSel = $('logsSort');
     const sort = sortSel ? sortSel.value : 'time_desc';
+    const _myReq = ++window._logsLseq || (window._logsLseq = 1);   // a239 B3-P3: 响应乱序令牌——连续切排序时旧响应晚到不再覆盖新结果
     const r = await fetch('/api/logs?sort=' + encodeURIComponent(sort));
     const j = await r.json();
+    if (_myReq !== window._logsLseq) return;
     logsDirPath = j.dir || '';
     list.innerHTML = '';
     if (!j.logs.length) { list.innerHTML = '<div style="padding:20px;color:var(--muted);">暂无日志</div>'; return; }

@@ -288,3 +288,24 @@ def _broadcast_to_ai(item):
                     q.put_nowait(item)
                 except Exception:
                     pass
+
+
+# ---- Windows 保留设备名防线（a239 第5轮B1：CON/COM1 等设备名传给 open() 会
+# 永久阻塞 worker 线程——flask threaded 下 30 并发即泄漏 30 线程不可回收）----
+_WIN_RESERVED = ({"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"}
+                 | {"COM%d" % i for i in range(1, 10)}
+                 | {"LPT%d" % i for i in range(1, 10)})
+
+
+def reject_win_devpath(path):
+    """路径含 NUL 或 basename 命中 Windows 保留设备名 → True（调用方 400 拒）。
+    CON.txt 这类「带扩展名的设备名」同样会打开设备，按去扩展名判定。"""
+    try:
+        s = str(path)
+    except Exception:
+        return True
+    if not s or "\x00" in s:
+        return True
+    base = os.path.basename(s.rstrip(chr(92) + "/"))   # \ 与 /（避免源码转义歧义）
+    stem = base.split(".")[0].rstrip(". ") if "." in base else base.rstrip(". ")
+    return stem.upper() in _WIN_RESERVED

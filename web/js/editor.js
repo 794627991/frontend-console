@@ -1975,6 +1975,7 @@ function _edUndoInit(conn) {
 // 到指定行列（文件树搜索跳转/树 reveal 用）。Monaco revealLineNearTop +
 // setPosition 语义与 notes-nav nnJumpLine 同源（4 处先例）；col 缺省 1
 async function openFileSmart(path, mode, opts) {
+  if (typeof path !== 'string' || !path) return;   // a239 B4-P3: null/undefined 原在 .split 抛未捕获 rejection
   const jump = (conn, o) => {
     // a213 审计 P1：新开分支 buildEditorTab 同步返回时 monaco 尚未创建
     // （_edInitContent 异步）——原实现恒 no-op。轮询等待就绪（80ms 步进，

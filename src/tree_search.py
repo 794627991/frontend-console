@@ -82,7 +82,7 @@ def _stream(scope, pattern, use_regex, smart_case, max_hits):
     if not os.path.isfile(RG_EXE):
         yield _sse({"type": "error", "err": "未找到 vendor/rg.exe（搜索不可用）"})
         return
-    cmd = [RG_EXE, "--json", "--no-messages", "--max-filesize", FILE_SIZE_CAP,
+    cmd = [RG_EXE, "--json", "--no-messages", "--crlf",   # a239 B4: CRLF 文件 $ 锚定静默漏检（Windows 文本主流形态） "--max-filesize", FILE_SIZE_CAP,
            "--max-count", "50",
            # a218：默认排除依赖/版本库目录（裸目录无 .gitignore 时也排除，
            # 与 VSCode 搜索默认行为对齐）
