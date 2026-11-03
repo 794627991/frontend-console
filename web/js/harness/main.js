@@ -2104,9 +2104,9 @@ function buildClaudeHarnessTab(opts = {}) {
   // 期间 offsetTop 全归零，立即算必错）
   _hgConn.onResumePoll = () => {
     if (_HG.conn === _hgConn) _hgInput.focus();
-    // a273R：切回时清掉 offsetTop 缓存（display:none 期间估高全错），
-    // 双 rAF 等布局回填后重算+重建缓存
-    _HG.railCacheTops = null;
+    // a273R2：切回不再清缓存——保留 tab 可见期间建立的可信 offsetTop，
+    // 布局没变（没新消息）缓存依然正确；有新消息 railSync 自然失效重建。
+    // 双 rAF 后只重算活动刻度
     requestAnimationFrame(() => requestAnimationFrame(() => {
       try { _hgRailActiveRaf(); } catch (_) {}
     }));
@@ -2205,11 +2205,33 @@ function buildClaudeHarnessTab(opts = {}) {
     let act = -1;
     if (_atBtm) act = items.length - 1;
     else {
+      // a273R2：offsetTop 在 content-visibility:auto + display:none 切换后
+      // 不可信（估高≠真高）。双轨策略：有**可信缓存**（tab 可见期间建的）
+      // 用缓存二分；无缓存/缓存可疑（结果落 0 但 scrollTop 不小）用
+      // scroll 比例近似定位——近似保证中间跟随，宁可偏差不丢跟随
       let lo = 0, hi = items.length - 1;
       while (lo <= hi) {
         const mid = (lo + hi) >> 1;
         if (tops[mid] >= 0 && tops[mid] <= st) { act = mid; lo = mid + 1; }
         else hi = mid - 1;
+      }
+      // 自愈：二分落空（act<0/0）但 scrollTop 明显不在顶部=布局数据不可信
+      if (act <= 0 && _hgFlow.scrollTop > 200 && items.length > 2) {
+        const ratio = _hgFlow.scrollTop /
+          Math.max(1, _hgFlow.scrollHeight - _hgFlow.clientHeight);
+        act = Math.min(items.length - 1, Math.max(0,
+          Math.round(ratio * (items.length - 1))));
+        // 顺手用当前滚动位置修正缓存（下次二分直接命中）
+        if (act > 0 && act < items.length) {
+          const el = items[act] && items[act].el;
+          if (el && el.isConnected) {
+            // 从近似锚点向两侧扩散，用真实 offsetTop 重建局部缓存
+            for (let k = 0; k < items.length; k++) {
+              const e2 = items[k] && items[k].el;
+              if (e2 && e2.isConnected) tops[k] = e2.offsetTop;
+            }
+          }
+        }
       }
     }
     if (act < 0) act = 0;
