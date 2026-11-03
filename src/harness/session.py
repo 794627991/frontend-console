@@ -2126,6 +2126,9 @@ def _session_ctx_window(s):
     """413：窗口判定优先级链（用户报告《上下文窗口写死256K问题》根治——
     旧版只看模型名 [1M] 后缀，其余一律写死 262144，用户 settings.json 配
     500K 完全不被读取=263K 被按 256K 拒发）。取值顺序，第一个可用生效：
+      0. 用户显式按模型映射：config.json harness_ctx_window（报告 §6.1——
+         a254 补上；容量卡可设，报告 §6.5 的 UI 入口落此键）。显式配置最高
+         优先：允许故意配小于实报的窗口以提前触发压缩
       1. 网关实报：last_result.modelUsage[].contextWindow（模型真实能力，
          数据已有——_session_ctx_used 同源字段，此前算了未用于判定）
       2. 用户设置：settings.json 的 CLAUDE_CODE_MAX_CONTEXT_TOKENS /
@@ -2135,6 +2138,20 @@ def _session_ctx_window(s):
     注意与 v2.27.22 的张力：实报名会剥后缀，但实报的 contextWindow 是网关
     上报的真实窗口数（非名字推断），值本身可信且高于名字推断——1M 场景
     网关实报 ≥1048576 自然胜出，不冲突。"""
+    # 0. 用户显式按模型映射（"*" 通配任意模型）
+    try:
+        from src.app_state import cfg_read
+        _m = (cfg_read() or {}).get("harness_ctx_window") or {}
+        if isinstance(_m, dict):
+            for name in ("*", s.model, available_models().get("default"),
+                         s._eff_model()):
+                if not name:
+                    continue
+                v = str(_m.get(name) or "").strip()
+                if v.isdigit() and int(v) > 0:
+                    return int(v)
+    except Exception:
+        pass
     # 1. 网关实报（最权威）
     try:
         mu = (getattr(s, "last_result", None) or {}).get("modelUsage") or {}

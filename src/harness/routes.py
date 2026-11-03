@@ -472,11 +472,63 @@ def harness_ctx():
     # a154：容量卡分类估算——系统提示词（session.start 落账的注入长度，
     # 中文重 3 字符/token 保守取 3）+ MCP 工具 schema（我们注册的，可量）
     sys_chars = getattr(s, "sys_prompt_chars", 0) or 0
+    # a254（报告 §6.5 UI 入口）：回传该模型的显式覆盖值（无覆盖=0）——
+    # 容量卡设置器据此显示当前态（自动 vs 具体档位）
+    cfg_win = 0
+    try:
+        from src.app_state import cfg_read
+        _m = (cfg_read() or {}).get("harness_ctx_window") or {}
+        if isinstance(_m, dict):
+            for name in (s.model, available_models().get("default")):
+                if not name:
+                    continue
+                v = str(_m.get(name) or "").strip()
+                if v.isdigit() and int(v) > 0:
+                    cfg_win = int(v)
+                    break
+    except Exception:
+        pass
     return jsonify({"ok": True, "used": used, "window": window, "sid": s.sid,
                     "compacted": compacted,
                     "model": s.model or available_models().get("default") or "",
                     "sysTok": max(1, round(sys_chars / 3)) if sys_chars else 0,
-                    "mcpTok": _mcp_tok_est()})
+                    "mcpTok": _mcp_tok_est(),
+                    "cfg_window": cfg_win})
+
+
+@harness_bp.route("/ctx_window", methods=["POST"])
+def harness_ctx_window_set():
+    """容量卡窗口设置（用户报告《上下文窗口写死256K》§6.5 UI 入口）。
+    body: {sid, window}——window=具体 tokens 按当前模型名写入
+    config.json harness_ctx_window（最高优先判定）；window=0/缺省 清除
+    该模型覆盖，回自动链（网关实报→settings.json→[1M]→兜底）。"""
+    data = request.get_json(force=True, silent=True) or {}
+    s = _get_or_create((data.get("sid") or "").strip())
+    if not s:
+        return jsonify({"ok": False, "err": "会话不存在"}), 404
+    model = s.model or available_models().get("default") or ""
+    if not model:
+        return jsonify({"ok": False, "err": "无法确定当前模型名"}), 400
+    from src.app_state import cfg_commit
+    w = data.get("window") or 0
+    if w:
+        try:
+            w = int(w)
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "err": "window 必须是整数"}), 400
+        if not (10000 <= w <= 100000000):
+            return jsonify({"ok": False, "err": "窗口取值范围 10K~100M tokens"}), 400
+
+        def _set(d):
+            d.setdefault("harness_ctx_window", {})[model] = w
+        cfg_commit(_set)
+    else:
+        w = 0
+
+        def _rm(d):
+            (d.get("harness_ctx_window") or {}).pop(model, None)
+        cfg_commit(_rm)
+    return jsonify({"ok": True, "model": model, "window": w})
 
 
 # a154：MCP 工具 schema token 估算（容量卡分类行）。_TOOLS 是进程内静态
