@@ -2107,6 +2107,17 @@ def _session_ctx_used(s):
                     break
         except OSError:
             pass
+    # a255（用户实锤「1.3M/500.0K 假 100%」）：last_result 兜底分支的 usage
+    # 可能是 CLI/网关的累计口径（jsonl 缺失会话无权威校准）。单轮真实用量
+    # 物理不可能超窗（超窗 API 直接报错不会有 success）——超窗判坏数据归零
+    # （前端显示「首轮回复后统计」，下轮 jsonl 校准自愈），不再把 1.3M 画在
+    # 500K 分母上
+    try:
+        _w = _session_ctx_window(s)
+        if _w and used > _w:
+            used = 0
+    except Exception:
+        pass
     return used, window, compacted
 
 # ---- from claude_harness.py:2901 (_CTX_WINDOW_1M) ----

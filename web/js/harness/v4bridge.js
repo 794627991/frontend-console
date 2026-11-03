@@ -1153,10 +1153,19 @@
     // a152/a153：TPS/实时上下文 state → _HG.tps + 重画圆环。busy 时环值
     // = ctxLive（assistant usage 真值基准）+ liveToks（流式字符估值）——
     // 单条长回复期间环持续增长，不再「回合结束才跳变」；result 到达落真值
-    if (patch.tps !== undefined && !this.opt.sub) {
+      if (patch.tps !== undefined && !this.opt.sub) {
       _HG.tps = patch.tps;
       var t = _HG.tps || {};
       var live = t.ctxLive || 0, est = t.liveToks || 0;
+      // a255（用户实锤 1.3M/500.0K 假 100%）：CLI result 帧的 usage 可能是
+      // 全回合/全会话累计口径（v2.20 实测 ~20轮×70K≈1.4M，与本次 1.3M 同
+      // 签名）——单轮真实用量物理不可能超窗。renderCtxRing 早有此守卫
+      // （v2.20），ctxLive 这条路漏了：累计值直写环=恒 100% 红条。超窗即
+      // 判坏数据丢弃，环保留 jsonl 真值（5s 轮询链）
+      if (live > 0 && _HG.ctxRing && _HG.ctxRing.max > 0 && live > _HG.ctxRing.max) {
+        live = 0;
+        t.ctxLive = 0;
+      }
       var _rr = _g('_hgDrawCtxRing');
       if (_rr && _HG.ctxRing) {
         // a154R（对抗审 P0）：真值锚先于 _rr 取——_hgDrawCtxRing 会把入参
