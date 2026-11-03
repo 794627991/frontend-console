@@ -142,14 +142,72 @@
     if (j) tabsAfterDelete(path);
   }
   function doRename(rowEl, path) {
-    inlineInput(rowEl, baseName(path), (v) => {
+    inlineInputEdit(path, true, baseName(path), (v) => {
       if (v === baseName(path)) return;
       fileops({ op: 'rename', path, name: v }).then(j => { if (j) tabsAfterRename(path, j.new); });
     });
   }
 
-  // ---- 内联输入（新建/重命名；树内 input 先例 _treeInlineDirInput——WebView2 可能禁 prompt）----
-  function inlineInput(anchorRow, initial, onOk) {
+  // ---- 内联输入（a258：VSCode 同款定位）-----------------------------------
+  // 重命名：输入框覆盖在行内（名字位置，行高内垂直居中）
+  // 新建：  输入框落在目标文件夹行的**下一行**、缩进一级——VSCode 的"在
+  //         文件夹里创建"就是把这个位置给你看。老版固定在树顶=完全看不出
+  //         会建到哪里（用户实锤）
+  // path 解析不出行号时回退树顶（老行为兜底）
+  function rowIndexOf(path) {
+    return window._TV && _TV.idx ? _TV.idx.get(path) : undefined;
+  }
+  function inlineInputEdit(path, overlay, initial, onOk) {
+    const host = $('treeRoots');
+    if (!host || host.dataset.editing) return;
+    const T = window._TV;
+    const idx = rowIndexOf(path);
+    if (idx === undefined || !T.rows[idx]) { inlineInputTop(initial, onOk); return; }
+    host.dataset.editing = '1';
+    const r = T.rows[idx];
+    const tops = T.tops || [];
+    const rowTop = (tops[idx] !== undefined) ? tops[idx] : idx * T.ROW_H;
+    const rowH = r.t === 'root' ? 36 : T.ROW_H;
+    const IH = 20;   // 输入框高（行 22 内嵌）
+    const top = overlay ? rowTop + Math.max(1, Math.round((rowH - IH) / 2))
+                        : rowTop + rowH + 1;
+    const pad = (typeof _tvPad === 'function' ? _tvPad(overlay ? r.depth : r.depth + 1) : 6 + r.depth * 14);
+    const inp = document.createElement('input');
+    inp.value = initial || '';
+    inp.placeholder = overlay ? '' : '输入名称，Enter 确认';
+    inp.style.cssText = 'position:absolute;top:' + top + 'px;left:' + (pad + 4) + 'px;right:12px;height:' + IH + 'px;' +
+      'font:11px var(--font-mono);background:var(--bg-input);color:var(--fg);' +
+      'border:1px solid var(--accent);border-radius:4px;padding:0 6px;outline:none;z-index:6;';
+    // 滚动到输入框可见
+    const vh = host.clientHeight || 300;
+    if (top < host.scrollTop + 4) host.scrollTop = Math.max(0, top - 6);
+    else if (top + IH + 6 > host.scrollTop + vh) host.scrollTop = top + IH + 6 - vh;
+    let done = false;
+    const finish = (ok) => {
+      if (done) return;
+      done = true;
+      delete host.dataset.editing;
+      const v = inp.value.trim();
+      inp.remove();
+      if (ok && v) onOk(v);
+      if (typeof _tvPaint === 'function') _tvPaint();
+    };
+    inp.addEventListener('keydown', e => {
+      e.stopPropagation();
+      if (e.key === 'Enter') finish(true);
+      else if (e.key === 'Escape') finish(false);
+    });
+    inp.addEventListener('blur', () => finish(false));
+    const sizer = host.querySelector('.tree-sizer') || host;
+    sizer.appendChild(inp);
+    // 新建在末行下方时把 sizer 撑高一拍，防输入框落在可视区外
+    const minH = top + IH + 6;
+    const curH = parseInt(sizer.style.height, 10) || 0;
+    if (curH < minH) sizer.style.height = minH + 'px';
+    inp.focus(); inp.select();
+  }
+  // 老兜底：树顶输入（行号不可解析时）
+  function inlineInputTop(initial, onOk) {
     const host = $('treeRoots');
     if (!host || host.dataset.editing) return;
     host.dataset.editing = '1';
@@ -157,8 +215,7 @@
     inp.value = initial || '';
     inp.style.cssText = 'position:relative;display:block;width:62%;font:11px var(--font-mono);' +
       'background:var(--bg-input);color:var(--fg);border:1px solid var(--accent);' +
-      'border-radius:4px;padding:2px 6px;outline:none;z-index:5;margin:2px 0 2px ' +
-      ((parseInt(((anchorRow || {}).style || {}).paddingLeft, 10) || 6) + 14) + 'px';
+      'border-radius:4px;padding:2px 6px;outline:none;z-index:5;margin:2px 0 2px 20px';
     let done = false;
     const finish = (ok) => {
       if (done) return;
@@ -179,6 +236,17 @@
     sizer.insertBefore(inp, sizer.firstChild);
     inp.focus(); inp.select();
   }
+  // 展开目录并等缓存落账（新建前奏：保证输入框落点行存在）
+  async function prepDirForCreate(dir) {
+    const T = window._TV;
+    if (!T) return;
+    if (!T.open.has(dir) && typeof _tvExpand === 'function') _tvExpand(dir);
+    for (let i = 0; i < 25 && !T.cache.has(dir); i++)
+      await new Promise(r => setTimeout(r, 100));
+    // 目标行滚入视口（_tvFocus 只滚动不改选中）
+    if (typeof _tvFocus === 'function') { try { _tvFocus(dir); } catch (_) {} }
+    await new Promise(r => setTimeout(r, 60));
+  }
 
   // ---- 右键命令表 ----
   $('treePane').addEventListener('contextmenu', e => {
@@ -191,10 +259,16 @@
       const items = [];
     if (isDir) {
       items.push(
-        { icon: '📄', label: '新建文件', action: () => inlineInput(row, '', v =>
-            fileops({ op: 'touch', dir: path, name: v }, '已新建 ' + v)) },
-        { icon: '📁', label: '新建文件夹', action: () => inlineInput(row, '', v =>
-            fileops({ op: 'mkdir', dir: path + '/' + v }, '已新建 ' + v)) },
+        { icon: '📄', label: '新建文件', action: async () => {
+            await prepDirForCreate(path);
+            inlineInputEdit(path, false, '', v =>
+              fileops({ op: 'touch', dir: path, name: v }, '已新建 ' + v));
+          } },
+        { icon: '📁', label: '新建文件夹', action: async () => {
+            await prepDirForCreate(path);
+            inlineInputEdit(path, false, '', v =>
+              fileops({ op: 'mkdir', dir: path + '/' + v }, '已新建 ' + v));
+          } },
         { sep: true });
     } else {
       items.push({ icon: '📂', label: '打开', action: () =>
@@ -351,20 +425,22 @@
   function doNewFile() {
     const d = targetDir();
     if (!d) return;
-    ensureOpen(d);
-    inlineInput(null, '', async v => {
-      const j = await fileops({ op: 'touch', dir: d, name: v }, '已新建 ' + v);
-      if (j && typeof openFileSmart === 'function')
-        openFileSmart(joinPath(d, v), 'auto');   // VSCode 同款：建完即开
+    prepDirForCreate(d).then(() => {
+      inlineInputEdit(d, false, '', async v => {
+        const j = await fileops({ op: 'touch', dir: d, name: v }, '已新建 ' + v);
+        if (j && typeof openFileSmart === 'function')
+          openFileSmart(joinPath(d, v), 'auto');   // VSCode 同款：建完即开
+      });
     });
   }
   function doNewFolder() {
     const d = targetDir();
     if (!d) return;
-    ensureOpen(d);
-    inlineInput(null, '', async v => {
-      const j = await fileops({ op: 'mkdir', dir: joinPath(d, v) }, '已新建 ' + v);
-      if (j) ensureOpen(joinPath(d, v));   // 建完展开新文件夹（空目录提示立现）
+    prepDirForCreate(d).then(() => {
+      inlineInputEdit(d, false, '', async v => {
+        const j = await fileops({ op: 'mkdir', dir: joinPath(d, v) }, '已新建 ' + v);
+        if (j) ensureOpen(joinPath(d, v));   // 建完展开新文件夹（空目录提示立现）
+      });
     });
   }
   // 一键展开⇄收起（智能切换）：

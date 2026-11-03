@@ -405,11 +405,18 @@ async function refreshTree() {
 
 // ---- 显示隐藏文件开关（展开集整体重拉，全部落账后一次重建）----
 let _treeShowHidden = false;
+// a258：眼睛图标两态（工具条 SVG 统一——文字钮退役）
+const _EYE_SVG = (on) => '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">' +
+  (on
+    ? '<path d="M1.8 8s2.4-4.2 6.2-4.2S14.2 8 14.2 8s-2.4 4.2-6.2 4.2S1.8 8 1.8 8z"/><circle cx="8" cy="8" r="2.1"/>'
+    : '<path d="M1.8 8s2.4-4.2 6.2-4.2c1.5 0 2.8.5 3.9 1.2"/><path d="M14.2 8s-2.4 4.2-6.2 4.2c-1.5 0-2.8-.5-3.9-1.2"/><path d="M2.5 13.5l11-11"/>') +
+  '</svg>';
 function _treeSyncHiddenBtn() {
   const btn = $('treeHidden');
-  btn.textContent = _treeShowHidden ? '隐藏' : '显示';
-  btn.classList.toggle('primary', _treeShowHidden);
-  btn.title = _treeShowHidden ? '当前显示隐藏文件，点击隐藏 . 开头条目' : '显示 . 开头的隐藏文件';
+  if (!btn) return;
+  btn.innerHTML = _EYE_SVG(_treeShowHidden);
+  btn.classList.toggle('on', _treeShowHidden);
+  btn.title = _treeShowHidden ? '隐藏文件显示中（. 开头条目）——点击隐藏' : '显示 . 开头的隐藏文件';
 }
 async function _treeToggleHidden() {
   _treeShowHidden = !_treeShowHidden;

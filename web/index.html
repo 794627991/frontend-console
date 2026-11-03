@@ -111,34 +111,45 @@ if (window.__HG_DBG__) {
       <div class="tree-pane" id="treePane">
         <div class="tree-actions">
           <button class="btn ghost" id="treeAddRoot" title="选择文件夹加入文件树（也可直接拖文件夹进窗口）">📂 <span class="lbl">打开文件夹</span></button>
-          <span class="ta-sep"></span>
-          <!-- a256：VSCode Explorer 同款操作组——新建文件/文件夹 + 一键展开收起（智能切换） -->
-          <button class="btn ghost ta-ico" id="treeNewFile" tabindex="0"
-            title="新建文件（Ctrl+N）&#10;在选中项所在文件夹创建；未选中时创建在第一个根&#10;创建后直接在编辑器打开（VSCode 同款）">
-            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M4 2.5h4.5L12 6v6.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1z"/>
-              <path d="M8.5 2.5V6H12"/>
-              <path d="M11.5 9v5M9 11.5h5"/>
-            </svg>
-          </button>
-          <button class="btn ghost ta-ico" id="treeNewFolder" tabindex="0"
-            title="新建文件夹（Ctrl+Shift+N）&#10;在选中项所在文件夹创建；未选中时创建在第一个根">
-            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M2.5 11.5v-7a1 1 0 0 1 1-1h2.6l1.4 1.8h4a1 1 0 0 1 1 1v1.2"/>
-              <path d="M2.5 11.5l1.2-3.7h9.6l1 3.7z"/>
-              <path d="M12.5 10v4M10.5 12h4"/>
-            </svg>
-          </button>
-          <button class="btn ghost ta-ico" id="treeCollapse" tabindex="0"
-            title="全部收起（有展开项时）&#10;再次点击：恢复上次展开状态 / 无记录时展开各根第一层">
-            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M3 5.5h6M3 10.5h6"/>
-              <path d="M10.3 9.2l2.4-2.4 2.4 2.4"/>
-            </svg>
-          </button>
-          <span class="ta-sep"></span>
-          <button class="btn ghost" id="treeHidden" title="显示/隐藏 . 开头的隐藏文件">显示</button>
-          <button class="btn ghost" id="treeRefresh" title="刷新目录：重扫所有根文件夹并更新状态">⟳</button>
+          <!-- a258：两行式图标条——五枚统一 15px 线性 SVG 等宽分布（VSCode Explorer 节奏） -->
+          <div class="ta-row">
+            <button class="btn ghost" id="treeNewFile" tabindex="0"
+              title="新建文件（Ctrl+N）&#10;输入框出现在选中文件夹内（VSCode 同款）&#10;创建后直接在编辑器打开">
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4 2.5h4.5L12 6v6.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1z"/>
+                <path d="M8.5 2.5V6H12"/>
+                <path d="M11.5 9v5M9 11.5h5"/>
+              </svg>
+            </button>
+            <button class="btn ghost" id="treeNewFolder" tabindex="0"
+              title="新建文件夹（Ctrl+Shift+N）&#10;输入框出现在选中文件夹内（VSCode 同款）">
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M2.5 11.5v-7a1 1 0 0 1 1-1h2.6l1.4 1.8h4a1 1 0 0 1 1 1v1.2"/>
+                <path d="M2.5 11.5l1.2-3.7h9.6l1 3.7z"/>
+                <path d="M12.5 10v4M10.5 12h4"/>
+              </svg>
+            </button>
+            <button class="btn ghost" id="treeCollapse" tabindex="0"
+              title="全部收起（有展开项时）&#10;再次点击：恢复上次展开状态 / 无记录时展开各根第一层">
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 5.5h6M3 10.5h6"/>
+                <path d="M10.3 9.2l2.4-2.4 2.4 2.4"/>
+              </svg>
+            </button>
+            <button class="btn ghost" id="treeHidden" tabindex="0" title="显示 . 开头的隐藏文件">
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M1.8 8s2.4-4.2 6.2-4.2c1.5 0 2.8.5 3.9 1.2"/>
+                <path d="M14.2 8s-2.4 4.2-6.2 4.2c-1.5 0-2.8-.5-3.9-1.2"/>
+                <path d="M2.5 13.5l11-11"/>
+              </svg>
+            </button>
+            <button class="btn ghost" id="treeRefresh" tabindex="0" title="刷新目录：重扫所有根文件夹并更新状态">
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/>
+                <path d="M13.7 1.8v2.7h-2.7"/>
+              </svg>
+            </button>
+          </div>
         </div>
         <div class="tree-roots" id="treeRoots"></div>
       </div>

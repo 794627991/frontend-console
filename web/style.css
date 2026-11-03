@@ -890,43 +890,24 @@
 
   /* ===== 文件树面板（类 VSCode 工作区：多根 + 懒加载）===== */
   .tree-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-  /* a257R（用户实锤：窄宽度下按钮被裁不可见）：工具条改可换行——按钮
-     flex-basis 跟内容、绝不收缩裁字，放不下就整体换行，任何宽度全部
-     可见。宽度过剩时「打开文件夹」伸展占满余宽（保持原观感） */
-  .tree-actions { padding: 8px 8px 4px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
-    container-type: inline-size; }   /* a257R：容器查询锚——极窄时主钮收图标 */
-  .tree-actions .btn { flex: 0 1 auto; font-size: 11px; }
-  .tree-actions .btn#treeAddRoot { flex: 1 1 auto; }
-  /* 侧栏最小 180px（resize.js MIN），148px 以下只可能出现在极端窗口——
-     主钮丢文字保图标，任何宽度不裁切不出界 */
+  /* 工具条主样式见下方 a258 两行式块（此处仅保留历史锚点注释） */
+  /* a258（用户定调）：两行式工具条——主钮「打开文件夹」独占一行全宽，
+     五枚图标钮等宽分布一行（VSCode Explorer 同款节奏）。任何宽度零裁切：
+     图标条内部可换行（等宽钮成排落位，不散乱）；<148px 主钮丢文字保图标 */
+  .tree-actions { padding: 8px 8px 4px; display: flex; flex-direction: column; gap: 5px;
+    container-type: inline-size; }
+  .tree-actions .btn { font-size: 11px; }
+  .tree-actions .btn#treeAddRoot { width: 100%; }
+  .ta-row { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+  .ta-row .btn { flex: 1 1 0; min-width: 34px; padding: 6px 4px; line-height: 1;
+    display: inline-flex; align-items: center; justify-content: center; }
+  .ta-row .btn svg { display: block; }
+  .ta-row .btn.on { color: var(--accent); border-color: var(--accent-glow); }
   @container (max-width: 148px) {
     .tree-actions .btn#treeAddRoot .lbl { display: none; }
   }
-  /* a256：VSCode Explorer 操作组——图标钮（新建文件/文件夹/展开⇄收起）。
-     图标 currentColor 跟随前景色，hover 青 glow 与 .btn ghost 同语言；
-     收紧内边距保持与文字钮同一视觉高度 */
-  .tree-actions .btn.ta-ico { flex: 0 0 auto; padding: 6px 7px; line-height: 1;
-    display: inline-flex; align-items: center; justify-content: center; }
-  .tree-actions .btn.ta-ico svg { display: block; }
-  .tree-actions .btn.ta-ico.on { color: var(--accent); border-color: var(--accent-glow); }
-  .ta-sep { flex: 0 0 auto; width: 1px; align-self: stretch; margin: 3px 3px;
-    background: var(--border); }
   /* 键盘焦点环（a256 快捷键配套）：Tab 聚到树面板时内描边提示键盘导航可用 */
   #treeRoots:focus-visible { box-shadow: inset 0 0 0 1px var(--border-glow); border-radius: 8px; }
-  /* v2.59：刷新纯图标钮——更小一档，不吃 flex:1（用户实锤太大） */
-  .tree-actions .btn#treeRefresh { flex: 0 0 auto; padding: 6px 7px; font-size: 10px;
-    line-height: 1; }
-  /* 显示/隐藏开关：比「打开文件夹」小一档（flex 收缩 + 小字号），不占 flex:1 */
-  .tree-actions .btn#treeHidden { flex: 0 0 auto; padding: 6px 8px; font-size: 10px; }
-  /* v2.59：刷新纯图标钮——更小一档，不吃 flex:1（用户实锤太大） */
-  .tree-actions .btn#treeRefresh { flex: 0 0 auto; padding: 6px 7px; font-size: 10px;
-    line-height: 1; }
-  /* 按下态（隐藏文件显示中）：accent 描边+青字高亮，不用 .primary 青底——
-     青底配 on-accent 深字小字号下看不清（用户实锤） */
-  .tree-actions .btn#treeHidden.primary {
-    color: var(--accent); border-color: var(--accent); background: var(--bg-card);
-    box-shadow: 0 0 0 1px var(--accent-glow);
-  }
   .tree-roots { flex: 1; min-height: 0; overflow-y: auto; overflow-x: auto; padding: 4px 8px 8px; }
   .tree-empty { padding: 30px 10px; font-size: 10px; color: var(--muted); text-align: center; line-height: 1.8; }
   /* 根行：文件夹名 + hover 删根 ✕（仿 .recent-item .actions 显隐模式） */
