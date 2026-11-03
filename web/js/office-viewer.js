@@ -242,7 +242,7 @@ function _ovXlsxSheet(conn, body) {
 // PPT (.pptx) — 暂无成熟纯前端库，显示信息+提示
 async function _ovRenderPptx(buf, body, wrap, conn) {
   body.innerHTML = `<div class="office-ppt-placeholder">
-    <div style="font-size:32px;margin-bottom:12px;">📊</div>
+    <div style="margin-bottom:12px;">${window.ICO ? ICO16.note : ''}</div>
     <div style="font-size:14px;color:var(--fg);margin-bottom:8px;">PowerPoint 文件</div>
     <div style="font-size:11px;color:var(--muted);line-height:1.6;">
       文件大小: ${(buf.byteLength / 1024).toFixed(0)} KB<br>

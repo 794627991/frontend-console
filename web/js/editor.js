@@ -256,7 +256,7 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
     if (mdSel) {
       mdSel.style.display = '';
       mdSel.innerHTML = _MD_PV_THEMES.map(t =>
-        `<option value="${t.id}"${(_mdPvTheme || 'auto') === t.id ? ' selected' : ''}>🎨 ${t.name}</option>`
+        `<option value="${t.id}"${(_mdPvTheme || 'auto') === t.id ? ' selected' : ''}>${t.name}</option>`
       ).join('');
       mdSel.onchange = () => {
         _mdPvSetTheme(mdSel.value);
@@ -837,42 +837,47 @@ function _edRenderOutline(conn) {
       return;
     }
     if (_CODE_OUTLINE_EXT[ext]) { finishCode(); return; }
-    // md/txt/其余：# 井号规则
-    const lines = src.split('\n');
-    const entries = [];
-    const types = { '标题': 0, '列表': 0, '代码': 0, '引用': 0 };
-    let inCode = false;
-    for (let i = 0; i < lines.length; i++) {
-      const t = lines[i];
-      if (/^\s*```/.test(t)) { inCode = !inCode; types['代码']++; continue; }
-      if (inCode) continue;
-      const m = /^(#{1,6})\s+(.*)$/.exec(t);
-      if (m) { entries.push({ level: m[1].length, text: m[2].trim(), line: i + 1 }); types['标题']++; }
-      else if (/^\s*[-*+]\s/.test(t) || /^\s*\d+\.\s/.test(t)) types['列表']++;
-      else if (/^\s*>/.test(t)) types['引用']++;
+    // md/txt：a282 大纲重写——markdown-it 令牌化替代正则手写
+    // （旧法三大缺陷：代码块内 # 误判/setext 标题不识别/层级嵌套不可折叠。
+    // markdown-it 的 token 有 type+tag+map+level，天然正确处理以上全部）
+    const mdOutline = (() => {
+      const md = _mdInstance();
+      if (!md) return null;
+      const tokens = md.parse(src, {});
+      const entries = [];
+      for (let i = 0; i < tokens.length; i++) {
+        const tk = tokens[i];
+        if (tk.type !== 'heading_open') continue;
+        // 下一个 token 是 inline，其 children[0].content = 标题文本
+        const inline = tokens[i + 1];
+        const text = inline && inline.children
+          ? inline.children.map(c => c.content || '').join('').trim()
+          : (inline ? inline.content || '' : '');
+        // map = [起始行, 结束行]（0-based）——+1 变 1-based 行号
+        const line = (tk.map && tk.map[0] != null) ? tk.map[0] + 1 : 0;
+        // tag = h1~h6 → level
+        const level = parseInt((tk.tag || 'h1').slice(1)) || 1;
+        entries.push({ level, text: text || '(无标题)', line, kids: undefined });
+      }
+      return entries;
+    })();
+    if (mdOutline && mdOutline.length) {
+      // 用 JSON 大纲同款 renderEntries（有 kids 字段时可折叠——md 标题天然
+      // 嵌套：H1 > H2 > H3，给每个有子标题的条目挂 kids 标记）
+      const withNesting = mdOutline.map((e, i) => {
+        // 找子标题：后续条目中 level > e.level 的连续段
+        let childCount = 0;
+        for (let j = i + 1; j < mdOutline.length && mdOutline[j].level > e.level; j++) childCount++;
+        return { ...e, kids: childCount > 0 ? [] : undefined };
+      });
+      if (!renderEntries(withNesting)) {
+        conn.outlineList.innerHTML = '<div class="ed-outline-empty">暂无标题行<br>用 # 井号标题组织内容后在此生成目录</div>';
+        conn.outlineStats.innerHTML = '';
+      }
+    } else {
+      conn.outlineList.innerHTML = '<div class="ed-outline-empty">暂无标题行<br>用 # 井号标题组织内容后在此生成目录</div>';
+      conn.outlineStats.innerHTML = '';
     }
-    conn.outlineList.innerHTML = entries.length
-      ? entries.map((e, i) =>
-          `<div class="ed-outline-item" data-i="${i}" style="padding-left:${(e.level-1)*12+8}px">${esc(e.text || '(无标题)')}</div>`).join('')
-      : '<div class="ed-outline-empty">暂无标题行<br>用 # 井号标题（md）或标题块组织内容后在此生成目录</div>';
-    conn.outlineList.querySelectorAll('.ed-outline-item').forEach(item => {
-      item.onclick = () => {
-        const e = entries[+item.dataset.i];
-        if (!e) return;
-        if (conn.monaco) { conn.monaco.revealLineInCenter(e.line); conn.monaco.setPosition({ lineNumber: e.line, column: 1 }); }
-        else if (conn.ta) {
-          let pos = 0;
-          for (let i = 0; i < e.line - 1; i++) pos += lines[i].length + 1;
-          conn.ta.focus();
-          conn.ta.setSelectionRange(pos, pos);
-          const lineH = parseFloat(getComputedStyle(conn.ta).lineHeight) || 20;
-          conn.ta.scrollTop = Math.max(0, (e.line - 5) * lineH);
-        }
-      };
-    });
-    conn.outlineStats.innerHTML = Object.entries(types)
-      .filter(([, v]) => v)
-      .map(([k, v]) => `<span class="ed-outline-stat">${esc(k)} ${v}</span>`).join('');
     return;
   }
   if (!conn.isNote) return;

@@ -562,7 +562,7 @@ def api_office_read():
     """a280：Office 查看器读文件（docx/pdf/xlsx）。q=绝对路径。
     白名单扩展名 + 已登记根内 + 设备名/目录校验。返回原始字节。"""
     from src.app_state import reject_win_devpath
-    q = request.args.get("q", "")
+    q = request.args.get("path", "") or request.args.get("q", "")
     if reject_win_devpath(q):
         return jsonify({"ok": False, "err": "路径包含 Windows 保留设备名"}), 400
     if not os.path.isabs(q) or not os.path.isfile(q):
