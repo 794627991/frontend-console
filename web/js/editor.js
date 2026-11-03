@@ -1625,9 +1625,34 @@ function _mdBindSplitter(wrap) {
     document.addEventListener('mouseup', up);
   });
 }
+// a279 批1：MD 预览主题色独立配置（auto/dark/light/paper）
+let _mdPvTheme = '';
+function _mdPvApplyTheme(pv) {
+  const t = _mdPvTheme || 'auto';
+  pv.classList.remove('md-pv-dark', 'md-pv-light');
+  if (t === 'dark') pv.classList.add('md-pv-dark');
+  else if (t === 'light') pv.classList.add('md-pv-light');
+  else if (t === 'auto') {
+    const th = document.documentElement.getAttribute('data-theme') || 'deepblue';
+    const darks = ['deepblue','onedark','darkgreen','dracula','amber','celadon','rose'];
+    pv.classList.add(darks.includes(th) ? 'md-pv-dark' : 'md-pv-light');
+  }
+  // paper = 不挂类（走默认 --note-* 恒亮护眼）
+}
+(async () => {
+  try {
+    const j = await (await fetch('/api/theme')).json();
+    if (j.ok && j.md_preview_theme) _mdPvTheme = j.md_preview_theme;
+  } catch (_) {}
+})();
+window._mdPvSetTheme = (t) => {
+  _mdPvTheme = t;
+  document.querySelectorAll('.ed-md-preview').forEach(_mdPvApplyTheme);
+};
 function _mdRenderPreview(conn) {
   const pv = conn.wrap.querySelector('.ed-md-preview');
   if (!pv) return;
+  _mdPvApplyTheme(pv);   // a279：每次渲染同步主题类
   _mdBindPvScroll(conn, pv);   // 预览自身滚动 → 源码跟随（只绑一次）
   const src = conn.monaco ? conn.monaco.getValue() : (conn.ta ? conn.ta.value : '');
   const ps = pv.scrollTop, psL = pv.scrollLeft;   // 重建前的位置：重建后还原，避免预览跳回顶部

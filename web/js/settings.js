@@ -128,6 +128,11 @@ function _stRenderAppearancePane(pane) {
         <button class="btn ghost" id="apPerfToggle" style="width:100%;text-align:left;padding:8px 12px;"></button>
       </div>
       <div class="dd-sub">关闭极光玻璃的毛玻璃/光斑动画（虚机 GPU 推荐）——显著降低每帧 GPU 合成开销。</div>
+    </div>
+    <div class="dd-cur" style="margin-top:8px;">
+      <div class="dd-label">MD 预览主题</div>
+      <div class="dd-row" style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;" id="stMdPvRow"></div>
+      <div class="dd-sub">Markdown 预览面板的配色（独立于全局主题，随时可改）。</div>
     </div></div>`;
   const grid = pane.querySelector('#stThemeGrid');
   // 风格行（v4.1 桥接层 skin.js）：逐个胶囊，点选即切（联动配套配色）
@@ -146,6 +151,31 @@ function _stRenderAppearancePane(pane) {
         _stRenderAppearancePane(pane);   // 重渲染刷新选中态与配套配色高亮
       };
       styleRow.appendChild(b);
+    });
+  }
+  // a279 批1：MD 预览主题选择器（auto/dark/light/paper）
+  const mdPvRow = pane.querySelector('#stMdPvRow');
+  if (mdPvRow && typeof _mdPvSetTheme === 'function') {
+    const opts = [
+      { id: 'auto',  name: '跟随全局' },
+      { id: 'dark',  name: '暗色' },
+      { id: 'light', name: '亮色' },
+      { id: 'paper', name: '护眼纸色' },
+    ];
+    // 当前值：从 editor.js 的全局变量读（比 DOM 查类更准——可能还没打开过 .md）
+    const cur = opts.find(o => o.id === (_mdPvTheme || 'auto')) ? (_mdPvTheme || 'auto') : 'auto';
+    opts.forEach(o => {
+      const b = document.createElement('button');
+      b.className = 'btn ghost style-chip' + (o.id === cur ? ' active' : '');
+      b.textContent = o.name;
+      b.onclick = () => {
+        _mdPvSetTheme(o.id);
+        try { fetch('/api/theme', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ md_preview_theme: o.id }) }); } catch (_) {}
+        showBanner('MD 预览主题：' + o.name);
+        _stRenderAppearancePane(pane);
+      };
+      mdPvRow.appendChild(b);
     });
   }
   const cur = document.documentElement.getAttribute('data-theme') || 'deepblue';

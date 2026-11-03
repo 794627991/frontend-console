@@ -5116,3 +5116,17 @@ span.nn-hl-t { background: color-mix(in srgb, #3fb950 15%, transparent);
    不出帧，CSSTransition 无法结算，被折叠/收起的元素被 DocumentTimeline
    强引用拖住整棵子树无法 GC（ZCode 实测 23.5 万节点泄漏） */
 [data-document-hidden] * { transition: none !important; animation: none !important; }
+
+/* ===== a279 批1：MD 预览主题色独立配置（用户定调：不跟随全局，可随时改） =====
+   四档：auto（跟随全局暗亮）/ dark / light / paper（护眼=旧版恒亮纸色）
+   实现方式：.ed-md-preview 挂主题类，覆盖 --note-* 变量 */
+.ed-md-preview.md-pv-dark {
+  --note-bg: #1e1f24; --note-bg-card: #26272e; --note-border: #3a3b42;
+  --note-fg: #d4d4d8; --note-muted: #8b8b94;
+}
+.ed-md-preview.md-pv-light {
+  --note-bg: #ffffff; --note-bg-card: #f5f5f5; --note-border: #e0e0e0;
+  --note-fg: #24292e; --note-muted: #6a737d;
+}
+/* paper = 不挂类，走 :root/主题的默认 --note-*（恒亮护眼纸色） */
+/* auto = JS 判断当前 data-theme 亮暗后挂 dark 或 light */

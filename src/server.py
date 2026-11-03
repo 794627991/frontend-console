@@ -1077,10 +1077,15 @@ def api_theme():
                         # v3.5.310 可配置搜索快捷键（页面内 keydown，非系统热键）
                         "doc_search_hotkey": cfg.get("doc_search_hotkey", "ctrl+f"),
                         "notes_search_hotkey": cfg.get("notes_search_hotkey", "ctrl+alt+f"),
-                        "perf_mode": bool(cfg.get("perf_mode", False))})
+                        "perf_mode": bool(cfg.get("perf_mode", False)),
+                        "md_preview_theme": cfg.get("md_preview_theme", "auto")})
     data = request.get_json(force=True) or {}
     if "perf_mode" in data:
         _save_config({**_load_config(), "perf_mode": bool(data["perf_mode"])})
+    if "md_preview_theme" in data:
+        v = str(data["md_preview_theme"]).strip()
+        if v in ("auto", "dark", "light", "paper"):
+            _save_config({**_load_config(), "md_preview_theme": v})
     if "data_dir_prompted" in data:
         # 仅写引导标记的轻请求（不带 theme 字段）
         _save_config({**_load_config(), "data_dir_prompted": bool(data["data_dir_prompted"])})
