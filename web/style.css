@@ -4523,6 +4523,56 @@ html {
   flex-direction: column; gap: 3px; }
 .h-tl-grp.open > .h-tl-grp-body { display: flex; }
 
+/* ---- a262（用户实锤：收起行左色条 34/25/28 三长不齐，连宽也不齐 2/2/3px）
+  三类收起行统一为定长 30px × 2px、垂直居中的左色条（::before 定位条，
+  原 border-left 收起态退位透明但保留占位几何——▸ 盒 12px/图标列 32px
+  基准全不动）。展开态仍走整高边框：展开卡内容多行，定长条会断节 ---- */
+/* ① bash/Edit 等工具收起行（含分屏）；err 非 col 行同退位防双线 */
+.hg-flow .h-tl .h-tool.col:not(.open),
+.hg-sub-body .h-tl .h-tool.col:not(.open),
+.hg-flow .h-tl .h-tool.oneclick:not(.open),
+.hg-sub-body .h-tl .h-tool.oneclick:not(.open),
+.hg-flow .h-tl .h-tool.err:not(.open),
+.hg-sub-body .h-tl .h-tool.err:not(.open) {
+  border-left-color: transparent;
+  min-height: 30px;   /* 行不低于条：条不溢出戳邻行 */
+}
+.hg-flow .h-tl .h-tool.col:not(.open)::before,
+.hg-sub-body .h-tl .h-tool.col:not(.open)::before,
+.hg-flow .h-tl .h-tool.oneclick:not(.open)::before,
+.hg-sub-body .h-tl .h-tool.oneclick:not(.open)::before {
+  content: ''; position: absolute; left: -2px; top: calc(50% - 15px);
+  width: 2px; height: 30px; border-radius: 1px;
+  background: var(--h-accent, var(--accent));
+}
+.hg-flow .h-tl .h-tool.col.err:not(.open)::before,
+.hg-sub-body .h-tl .h-tool.col.err:not(.open)::before,
+.hg-flow .h-tl .h-tool.err:not(.open)::before,
+.hg-sub-body .h-tl .h-tool.err:not(.open)::before {
+  background: var(--neon-red, #e06c75);
+}
+/* ② 查阅聚组（收起态=组头行） */
+.h-tl-grp:not(.open) {
+  border-left-color: transparent; position: relative; min-height: 30px;
+}
+.h-tl-grp:not(.open)::before {
+  content: ''; position: absolute; left: -2px; top: calc(50% - 15px);
+  width: 2px; height: 30px; border-radius: 1px;
+  background: var(--border);
+}
+/* ③ 思考段（收起态；原 3px 紫边——统一为 2px 定长条）。收起态放行
+   overflow：基类 hidden 会裁掉负偏移的 ::before 条（收起时无 body
+   可裁，展开态恢复 hidden 管动画裁切） */
+.h-think-seg:not(.open) {
+  border-left: 2px solid transparent; position: relative; min-height: 30px;
+  overflow: visible;
+}
+.h-think-seg:not(.open)::before {
+  content: ''; position: absolute; left: -2px; top: calc(50% - 15px);
+  width: 2px; height: 30px; border-radius: 1px;
+  background: var(--h-violet, #8957e5);
+}
+
 /* ---- diff 行号列（截图1 编辑卡：行号 + 绿底新增 + 竖条）----
    v3.2R1：选择器提为 .h-tool-coll .h-diff .d-*（真实结构是
    .h-tool-coll > .h-diff > .d-*）并显式覆盖 padding——与旧 .h-diff .d-*
