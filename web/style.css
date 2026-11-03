@@ -5189,3 +5189,30 @@ span.nn-hl-t { background: color-mix(in srgb, #3fb950 15%, transparent);
   --note-bg: #e8f5f0; --note-bg-card: #d5ede5; --note-border: #a8d5c5;
   --note-fg: #1a3c32; --note-muted: #5a8a7a;
 }
+
+/* ===== a283 Office Viewer Pro（PDF 极致性能 + 搜索 + 目录） ===== */
+.ov-pdf { flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--bg-panel); }
+.ov-pdf-toolbar { display: flex; align-items: center; gap: 6px; padding: 5px 10px;
+  border-bottom: 1px solid var(--border); flex-shrink: 0; flex-wrap: wrap; }
+.ov-pdf-main { flex: 1; display: flex; min-height: 0; }
+.ov-pdf-outline { width: 220px; flex-shrink: 0; overflow-y: auto;
+  border-right: 1px solid var(--border); padding: 6px 0; }
+.ov-pdf-outline-head { font-size: 10px; font-weight: 600; color: var(--muted);
+  padding: 4px 10px 6px; letter-spacing: 1px; }
+.ov-pdf-outline-item { font-size: 11px; color: var(--fg); padding: 3px 8px;
+  cursor: pointer; border-radius: 4px; line-height: 1.4; word-break: break-all; }
+.ov-pdf-outline-item:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--accent); }
+.ov-pdf-pages { flex: 1; overflow-y: auto; overflow-x: auto; padding: 12px;
+  display: flex; flex-direction: column; align-items: center; outline: none; }
+.ov-pdf-page { margin-bottom: 10px; position: relative; display: flex;
+  flex-direction: column; align-items: center; min-height: 200px; width: fit-content; }
+.ov-pdf-page-loading { display: flex; align-items: center; justify-content: center;
+  width: 100%; min-height: 200px; color: var(--muted); font-size: 12px;
+  font-family: var(--font-mono); background: var(--bg-card); border-radius: 4px; }
+.ov-pdf-canvas { box-shadow: 0 2px 8px rgba(0,0,0,0.2); display: block; }
+.ov-pdf-page-label { font-size: 9px; color: var(--muted); text-align: center;
+  padding: 2px 0; font-family: var(--font-mono); }
+.ov-pdf-searchbar { display: none; align-items: center; gap: 6px; padding: 4px 10px;
+  border-top: 1px solid var(--border); background: var(--bg-card); flex-shrink: 0; }
+.ov-pdf-search-results { font-size: 10px; color: var(--muted); flex: 1;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
