@@ -46,7 +46,7 @@ class TftpServer:
             with open(_st.CONFIG_FILE, "r", encoding="utf-8") as f:
                 d = str((json.load(f) or {}).get("tftp_default_dir") or "")
             d = d.strip().strip('"').strip("'")
-            if d and os.path.isdir(d) and not TftpServer._dir_denied(d):   # a239：记忆目录同样过黑名单（被 CSRF 换过的目录重启不再复活）
+            if d and os.path.isdir(d):   # a246：目录黑名单按用户拍板拆除（不再限制任何目录）
                 return os.path.normpath(d)
         except Exception:
             pass
@@ -88,88 +88,28 @@ class TftpServer:
             self.sock = None
         return True, "已停止"
 
-    # a239（第5轮B2-P1B）：TFTP/HFS 根目录黑名单——服务 bind 0.0.0.0 对全内网
-    # 开放读写，根目录被切到敏感位置（经 CSRF/MCP 提示注入即可换目录）时，
-    # LAN 攻击者可覆盖 claude.cmd 等劫持执行、读走凭据文件。默认 Desktop 属
-    # 产品意图（内网互传）；以下位置一律拒绝
-    _DENY_PREFIXES = None
-
-    @classmethod
-    def _deny_prefixes(cls):
-        if cls._DENY_PREFIXES is None:
-            home = os.path.expanduser("~")
-            windir = os.environ.get("SystemRoot", r"C:\Windows")
-            pf = os.environ.get("ProgramFiles", r"C:\Program Files")
-            pf86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
-            pub = os.environ.get("PUBLIC", r"C:\Users\Public")
-            cls._DENY_PREFIXES = tuple(
-                os.path.normcase(os.path.normpath(p))
-                for p in (
-                    os.path.join(os.environ.get("APPDATA", ""), "npm"),
-                    os.path.join(home, ".claude"),
-                    os.path.join(home, ".serialconsole_pro"),
-                    os.path.join(home, ".ssh"),
-                    windir, pf, pf86, pub,
-                    os.path.join(os.path.dirname(os.path.dirname(windir)), "ProgramData"),
-                ) if p and (":" in p or p.startswith("\\\\"))
-            )
-        return cls._DENY_PREFIXES
-
-    _FILE_DENY = None   # 复审 F2：数据面敏感文件名清单（读走=token 泄露，写入=劫持执行）
-
-    @classmethod
-    def _file_denied(cls, filename):
-        """RRQ/WRQ 单文件黑名单：登入脚本/凭据/工具 shim。根目录合法时这些
-        文件也不该经 TFTP 出入（改写 .bashrc = 等价任意执行）。"""
-        if cls._FILE_DENY is None:
-            cls._FILE_DENY = (
-                ".bashrc", ".bash_profile", ".profile", ".zshrc",
-                ".npmrc", ".gitconfig", ".netrc", ".wgetrc",
-                "id_rsa", "id_ed25519", "authorized_keys", "known_hosts",
-                "claude.cmd", "claude.ps1", "claude",
-                "settings.json",
-            )
-        low = str(filename or "").lower()
-        return low in cls._FILE_DENY or low.endswith((".pem", ".pfx", ".key"))
-
-    @classmethod
-    def _dir_denied(cls, path):
-        """复审 F2 修正：方向反转——候选根若把敏感目录**包含在内**（根是敏感
-        目录的祖先，如整个 home、C:\\Users、C:\\）即拒。原先只拦「根在敏感
-        目录之内」，祖先根全穿透（home/C:/Startup 实测放行）。"""
-        p = os.path.normcase(os.path.normpath(os.path.abspath(path)))
-        p_drive = p.rstrip("\\") + os.sep   # 盘根形（C:）与普通形统一：尾部保证有分隔符
-        for d in cls._deny_prefixes():
-            if d == p or d.startswith(p_drive):
-                return True   # 敏感目录 d 落在候选根 p 之下（或相等）
-        # 根自身是 junction/符号链接别名也拒——normcase 双侧比（realpath 返回
-        # 磁盘真实大小写，与用户输入大小写差 != 别名；真 junction 时二者指向
-        # 不同路径仍可检出）
-        try:
-            if os.path.exists(p) and os.path.normcase(os.path.realpath(p)) != os.path.normcase(os.path.abspath(p)):
-                return True
-        except Exception:
-            pass
-        return False
+    # a246（用户拍板）：目录/文件名黑名单整体拆除——"不允许任何限制我"。
+    # 原判定（a239/a241 引入）把 Desktop 重定向（OneDrive reparse point）的
+    # 正常工作目录误判成"敏感位置"，实锤拦截用户选根。威胁模型（CSRF 换根
+    # +LAN 攻击者）已由 server.py 的 Host/Origin 双校验（a239）在入口挡住，
+    # 这里不再叠加第二道对用户可见的限制。仅保留 reject_win_devpath——
+    # 它只拦 CON/COM1 等伪设备名（防 open() 永久阻塞挂死线程），不拦任何
+    # 真实可用路径。
 
     def set_dir(self, path):
         """切换 TFTP 根目录（运行中也可切）。
         容错：strip 空格、去首尾引号（手输常见）、末尾反斜杠规范化。
-        a239：UNC 与系统敏感目录拒绝（服务对全内网开放，根目录=LAN 读写面）。"""
+        a246：UNC 与目录位置限制按用户拍板拆除（"不允许任何限制我"）；
+        仅保留 Windows 保留设备名拒绝（防 open() 挂死，不拦真实目录）。"""
         path = (path or "").strip().strip('"').strip("'")
         if not path:
             return False, "目录不能为空"
-        if path.startswith("\\\\") or path.startswith("//"):
-            return False, "不支持网络路径（UNC）作为 TFTP 目录"
         from .app_state import reject_win_devpath
         if reject_win_devpath(path):
             return False, "路径包含 Windows 保留设备名"
         # 绝对路径规范化（末尾反斜杠）；相对路径原样交 isdir 判断，避免误拼 cwd 掩盖错误
         if os.path.isabs(path):
             path = os.path.normpath(path)
-        if self._dir_denied(path):
-            return False, ("该目录在敏感位置（系统/凭据/程序目录），"
-                           "不允许作为内网共享根——请选普通数据目录")
         if not os.path.isdir(path):
             return False, f"目录不存在: {path}"
         self.root_dir = path
@@ -254,10 +194,10 @@ class TftpServer:
         if not filename or os.path.basename(filename) != filename or filename in (".", ".."):
             self._send_err(self.sock, peer, 1, "bad filename")
             return
-        # 复审 F2：数据面逐文件黑名单——根被重瞄准后，穿越 set_dir 防线的
-        # 存量目录（config 记忆）里敏感单文件也要拒（.bashrc/.npmrc/凭据类）
+        # 设备名防挂死（CON/COM1 等 open() 永久阻塞）——只拦伪设备，不拦真实
+        # 文件；文件名黑名单已按用户拍板拆除（a246）
         from .app_state import reject_win_devpath
-        if reject_win_devpath(filename) or self._file_denied(filename):
+        if reject_win_devpath(filename):
             self._send_err(self.sock, peer, 2, "access denied")
             return
         local = os.path.join(self.root_dir, filename)

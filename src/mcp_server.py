@@ -1041,9 +1041,11 @@ _TOOLS = [
 _RETRY_SAFE_TOOLS = {
     # a238 P3-5：URLError 重试白名单——只读/幂等工具。connect_*/send_*/
     # tftp_*/disconnect 均有副作用，重试会二次执行（burst 双发/重复握手）
+    # a245 P2（a238复审）：devtools_eval 移出——它执行任意 JS（点击/提交/
+    # 改 DOM），断连重试=副作用二次执行，与其余 devtools_* 只读族不同类
     "observe", "list_ports", "get_buffer", "read_log", "search_log",
     "list_open_logs", "compare_files", "diff_logs", "tftp_status",
-    "devtools_console", "devtools_dom", "devtools_eval",
+    "devtools_console", "devtools_dom",
     "devtools_network", "devtools_screenshot",
 }
 

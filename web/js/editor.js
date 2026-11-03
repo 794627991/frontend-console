@@ -952,7 +952,12 @@ async function edSave(conn, _forceOverwrite) {
          enc: (conn.usedEnc && !conn.isNote) ? conn.usedEnc : undefined,
          bom: !!conn.hasBom && !conn.isNote,
          expect_mtime: (_forceOverwrite || conn.fileMtime == null) ? undefined : conn.fileMtime}
-      : {name: conn.meta.label, text};
+      : {name: conn.meta.label, text,
+         // a245 P2（a238复审）：站内 files/ 分支同样回传 enc/bom——后端早已
+         // 接收（_write_text_atomic 按 enc 回写），此前漏发=GBK 站内文件保存
+         // 被静默转 UTF-8。笔记（editorjs JSON）恒 utf-8，与 extPath 分支同排除
+         enc: (conn.usedEnc && !conn.isNote) ? conn.usedEnc : undefined,
+         bom: !!conn.hasBom && !conn.isNote};
     const r = await fetch('/api/ed/save', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
     const j = await r.json();
     if (r.status === 409 && j.conflict) {

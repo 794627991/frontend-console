@@ -1553,7 +1553,10 @@ def api_data_dir_check():
         return jsonify({"ok": False, "err": "目标目录不能与当前数据目录互相嵌套（会导致删除旧目录时连带删除新数据）"}), 400
     # 目标已是 reparse 别名（junction/symlink）：复制会解析回源自身、校验恒过
     try:
-        if os.path.exists(target) and os.path.realpath(target) != os.path.normpath(target):
+        # a245 P2（a238复审）：normcase 双侧——realpath 返回盘上真实大小写，
+        # normpath 保留用户输入大小写，直比会把 D:\Data 误判成链接（同 tftp 修法）
+        if os.path.exists(target) and \
+                os.path.normcase(os.path.realpath(target)) != os.path.normcase(os.path.normpath(target)):
             return jsonify({"ok": False, "err": "目标路径是链接/联接（junction），请填真实目录"}), 400
     except Exception:
         pass
@@ -1622,7 +1625,9 @@ def _do_data_dir_migrate(target):
         return jsonify({"ok": False, "err": "目标目录不能与当前数据目录互相嵌套（会导致删除旧目录时连带删除新数据）"}), 400
     # 目标已是 reparse 别名：复制会解析回源自身、校验恒过（a238 P0-1 第二环）
     try:
-        if os.path.exists(target) and os.path.realpath(target) != os.path.normpath(target):
+        # a245 P2（a238复审）：normcase 双侧比对，防大小写假阳性误拒真实目录
+        if os.path.exists(target) and \
+                os.path.normcase(os.path.realpath(target)) != os.path.normcase(os.path.normpath(target)):
             return jsonify({"ok": False, "err": "目标路径是链接/联接（junction），请填真实目录"}), 400
     except Exception:
         pass
