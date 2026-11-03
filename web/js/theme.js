@@ -192,85 +192,9 @@ function applyFontSettings(termFs, zoom, persist) {
     e.preventDefault();
   });
 
-  const menu = $('themeMenu');
-  function renderMenu() {
-    const cur = document.documentElement.getAttribute('data-theme') || 'deepblue';
-    menu.innerHTML = '';
-    // v2.25：两系并列 + 逐行对齐——grid 显式定位（暗色第 N 项与亮色第 N 项
-    // 同一行轨道，等高 stretch），描述行数不同也不再左右错位
-    const cols = document.createElement('div');
-    cols.className = 'theme-cols';
-    const put = (el, row, colIdx) => {
-      el.style.gridRow = String(row);
-      el.style.gridColumn = colIdx === 0 ? '1' : '2';
-      cols.appendChild(el);
-    };
-    // 自定义两入口沉底并肩（两列项数不同，避免底部空一格）
-    const customRow = Math.max(
-      THEMES.filter(t => t.group === 'dark').length,
-      THEMES.filter(t => t.group === 'light').length) + 2;
-    for (const [g, label] of [['dark', '暗色系'], ['light', '亮色系']]) {
-      const colIdx = g === 'dark' ? 0 : 1;
-      const head = document.createElement('div');
-      head.className = 'theme-group-head';
-      head.textContent = label;
-      put(head, 1, colIdx);
-      // active 判定：custom 家族按 light 标志归列——旧式 t.id===cur 会把暗色
-      // 自定义恒点亮（cur 归一后就是 'custom'），两个入口同时打勾（用户实测）
-      const isCur = (t) => {
-        if (cur === 'custom') {
-          const lt = _isLight('custom');
-          return t.id === 'custom' ? !lt : t.id === 'custom-light' && lt;
-        }
-        return t.id === cur;
-      };
-      THEMES.filter(t => t.group === g).forEach((t, i) => {
-        const isCustomEntry = t.id === 'custom' || t.id === 'custom-light';
-        const item = document.createElement('div');
-        item.className = 'theme-item' + (isCur(t) ? ' active' : '');
-        item.innerHTML = `<div class="theme-swatch" data-theme="${t.id}"></div>
-          <div class="theme-info"><div class="name">${t.name}</div><div class="desc">${t.desc}</div></div>
-          ${isCur(t) ? '<span class="theme-check">✓</span>' : ''}`;
-        item.onclick = () => {
-          if (isCustomEntry) {
-            applyTheme('custom', true);
-            _openCustomPanel(t.id === 'custom-light');
-            renderMenu();
-            return;
-          }
-          applyTheme(t.id, true);
-          renderMenu(); showBanner('已切换主题：' + t.name);
-        };
-        put(item, isCustomEntry ? customRow : i + 2, colIdx);
-      });
-    }
-    menu.appendChild(cols);
-    // a278 性能模式开关（极光玻璃 GPU 合成优化——虚机 GPU 每帧 blur 大户）
-    const perf = document.createElement('button');
-    perf.className = 'btn ghost';
-    perf.style.cssText = 'width:100%;margin-top:8px;padding:6px 10px;font-size:11px;text-align:left;';
-    const syncPerf = () => {
-      const on = document.documentElement.hasAttribute('data-perf');
-      perf.innerHTML = (on ? ICO16.zap : ICO16.eyeOff) + ' 性能模式：' + (on ? '<b style="color:var(--accent)">已开启</b>' : '已关闭')
-        + '<small style="color:var(--muted);font-weight:400;">　关极光 blur/光斑动画（虚机 GPU 推荐）</small>';
-    };
-    perf.onclick = () => { togglePerfMode(); syncPerf(); };
-    syncPerf();
-    menu.appendChild(perf);
-  }
-  // 顶栏「换肤」按钮已按用户要求移除（主题入口走 logo 机器人 → 设置面板「外观主题」）。
-  // renderMenu 保留给潜在调用方；themeMenu DOM 保留无害（display:none）。
-  const btnTheme = $('btnTheme');
-  if (btnTheme) {
-    btnTheme.onclick = (e) => {
-      e.stopPropagation();
-      const show = menu.classList.toggle('show');
-      if (show) renderMenu();
-    };
-    document.addEventListener('click', e => {
-      if (!menu.contains(e.target) && e.target !== btnTheme) menu.classList.remove('show');
-    });
-  }
+  // a278R（用户实锤：旧换肤弹窗死代码清掉）：renderMenu/themeMenu/btnTheme
+  // 整块退役——主题入口已迁设置面板「外观」子页（settings.js），顶栏按钮
+  // 早已移除，零外部消费者（grep 实证）。性能模式开关也已迁设置面板。
 })();
 
 // ---- 自定义主题调色面板（v2.25）----

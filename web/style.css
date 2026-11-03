@@ -1349,19 +1349,8 @@
   /* ===== Ctrl+右键上下文菜单 ===== */
   .ctx-menu { position: fixed; z-index: 9999; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 28px rgba(0,0,0,.5), 0 0 0 1px rgba(0,212,255,0.08); padding: 5px 0; min-width: 190px; display: none; font-size: 12px; user-select: none; }
 
-  /* ===== 换肤弹层 ===== */
-  .theme-menu { position: fixed; top: 46px; right: 12px; z-index: 9998; display: none;
-    background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
-    box-shadow: 0 8px 28px rgba(0,0,0,0.5); padding: 5px; min-width: 560px; max-height: 70vh; overflow-y: auto;
-    user-select: none; }
-  .theme-menu.show { display: block; }
-  /* v2.25：暗色/亮色两系并列 + 逐行对齐——grid 行轨道让同行两项等高 */
-  .theme-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 6px;
-    align-items: stretch; }
-  .theme-cols .theme-item { padding: 7px 8px; }
-  .theme-cols .theme-info .desc { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .theme-group-head { padding: 8px 10px 3px; font-size: 10px; color: var(--muted);
-    font-weight: 600; letter-spacing: 1px; user-select: none; }
+  /* ===== 换肤弹层（a278R 退役；theme-item/swatch/info/check 被 settings 外观子页复用，保留） ===== */
+  /* theme-cols/theme-group-head 也随弹层退役——settings 用自己的 .set-theme-cols/.set-theme-group */
   .theme-group-head:first-child { padding-top: 4px; }
   .theme-item { display: flex; align-items: center; gap: 10px; padding: 7px 10px;
     border-radius: 6px; cursor: pointer; }
