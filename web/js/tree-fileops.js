@@ -87,14 +87,13 @@
 
   // ---- 删除（统一入口：确认弹窗 + 回收站 + tab 联动）----
   async function doDelete(path) {
-    // a249（用户定规）：UNC/网络路径删除放行（不再拒），仅如实提示不可恢复
-    const net = /^\\\\|^\/\//.test(path);
-    const msg = net
-      ? '删除：' + baseName(path) + '\n（网络路径不经回收站，删除后不可恢复）'
-      : '移入回收站：' + baseName(path) + '\n（可从系统回收站恢复）';
-    if (!window.confirm(msg)) return;
-    const j = await fileops({ op: 'delete', path });
-    if (j) tabsAfterDelete(path);
+    // a252（复审F3）：UNC/网络路径=永久删；映射盘（Y:\…）Windows 上也不经
+    // 回收站——前端无法区分映射盘，文案如实两可，不再单方面承诺"可恢复"
+    if (window.confirm('删除：' + baseName(path) +
+        '\n（本地盘移入回收站可恢复；网络/映射盘为永久删除）')) {
+      const j = await fileops({ op: 'delete', path });
+      if (j) tabsAfterDelete(path);
+    }
   }
   function doRename(rowEl, path) {
     inlineInput(rowEl, baseName(path), (v) => {

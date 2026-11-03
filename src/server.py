@@ -1697,17 +1697,16 @@ def _do_data_dir_migrate(target):
                             # 原先静默 skipped，rmtree 后源的当前版被删、目标旧版
                             # 胜出=数据倒退。改为冲突保真：源当前版另存
                             # .migrate-conflict，两边都不丢。
-                            # a250（F-3闭环）：df 是用户预放版（非我方拷贝）——记入
-                            # conflicted 集，pass2 若需覆盖 df 先保真预放版；另存
-                            # 失败不再静默（conflict_errs 计数入响应）
+                            # a252（复审F5）：另存失败必须中止——计数后照删旧目录
+                            # =该文件当前版全盘无副本（保真承诺在失败路径失效）
                             try:
                                 _mig_copy_atomic(sf, df + ".migrate-conflict")
-                                skipped += 1
-                                conflicts += 1
-                                conflicted.add(os.path.relpath(sf, src_data_dir))
-                            except (PermissionError, OSError):
-                                skipped += 1
-                                conflict_errs += 1
+                            except (PermissionError, OSError) as ce:
+                                raise RuntimeError(
+                                    f"冲突保真另存失败（未切换未删除，数据仍在原处）: {df} {ce}")
+                            skipped += 1
+                            conflicts += 1
+                            conflicted.add(os.path.relpath(sf, src_data_dir))
                             continue
                         n += 1
                     except RuntimeError:
@@ -1784,10 +1783,14 @@ def _do_data_dir_migrate(target):
                             # 源又有新写入——直接覆盖=预放版无副本被毁（与冲突保真
                             # 自相矛盾）。先保真预放版再覆盖
                             if os.path.relpath(sf, src_data_dir) in conflicted and os.path.exists(df):
-                                try:
-                                    _mig_copy_atomic(df, df + ".migrate-conflict-pre")
-                                except (PermissionError, OSError):
-                                    conflict_errs += 1
+                                # a252（复审F5）：首轮已保真的 -pre 不再覆盖——
+                                # 活跃文件第 2 轮再进此分支时把原件顶掉=保真失效
+                                _pre = df + ".migrate-conflict-pre"
+                                if not os.path.exists(_pre):
+                                    try:
+                                        _mig_copy_atomic(df, _pre)
+                                    except (PermissionError, OSError):
+                                        conflict_errs += 1
                             _mig_copy_atomic(sf, df)   # 窗口内新写入：源是最新意图，原子覆盖
                             late += 1
                             if os.path.getsize(sf) != os.path.getsize(df):

@@ -197,13 +197,18 @@ class TftpServer:
             self._send_err(self.sock, peer, 1, "bad filename")
             return
         _seg = filename.replace("\\", "/").split("/")
-        if os.path.isabs(filename) or ".." in _seg or _seg[0] == "":
+        # a252：空段（首段/中段/尾段，如 "sub/"、"a//b"）一律拒——尾空段会让
+        # WRQ 收完全文件后 replace 到目录上白跑一趟
+        if os.path.isabs(filename) or ".." in _seg or any(s == "" for s in _seg):
             self._send_err(self.sock, peer, 1, "bad filename")
             return
-        local = os.path.join(self.root_dir, * _seg)
+        local = os.path.join(self.root_dir, *_seg)
         _lr = os.path.normcase(os.path.realpath(self.root_dir))
+        # a252（复审F1）：盘根 realpath 自带尾分隔符，再拼 os.sep 成双分隔符
+        # → 盘根作 TFTP 根时一切文件名恒拒。归一后再当前缀
+        _lrp = _lr if _lr.endswith(os.sep) else _lr + os.sep
         _ll = os.path.normcase(os.path.realpath(local))
-        if not (_ll == _lr or _ll.startswith(_lr + os.sep)):
+        if not (_ll == _lr or _ll.startswith(_lrp)):
             self._send_err(self.sock, peer, 1, "bad filename")
             return
         # 设备名防挂死（CON/COM1 等 open() 永久阻塞）——只拦伪设备，不拦真实

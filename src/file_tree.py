@@ -62,13 +62,21 @@ def _project_roots():
     return out
 
 
+def _root_prefix(root):
+    """a252（a249/a250复审F2）：根前缀归一——abspath('C:\\') 保留尾分隔符，
+    再拼 os.sep 会得 'C:\\\\' 双分隔符，盘根登记后所有子路径判定恒败。
+    盘根不再拼；普通根/UNC 根拼一个。"""
+    r = root if root.endswith(os.sep) else root + os.sep
+    return r
+
+
 def _under_roots(path):
     """安全门卫：path 必须在某登记根或其子树内，返回归一化路径，否则 None。"""
     if not path:
         return None
     p = os.path.abspath(str(path).strip().strip('"').strip("'"))
     for root in _tree_roots():
-        if p == root or p.startswith(root + os.sep):
+        if p == root or p.startswith(_root_prefix(root)):
             return p
     return None
 
@@ -78,14 +86,17 @@ def _under_roots_real(path):
     会解析成 UNC 形态（反斜杠 server 形态），与登记的字面根比对恒失败——
     a234 的单侧 realpath 检查把全部网络盘目录展开/操作误杀为「指向根外的
     链接」。修法：根与目标双侧 realpath 后比对；junction 逃逸语义不变
-    （真指根外时目标的 real 不落在任何根的 real 之下）。"""
+    （真指根外时目标的 real 不落在任何根的 real 之下）。
+    a252：前缀经 _root_prefix 归一（盘根 realpath 自带尾分隔符）。"""
     try:
         rp = os.path.realpath(str(path))
     except Exception:
         return None
     for root in _tree_roots():
         rr = _resolve_real(root)
-        if rp == rr or rp.startswith(rr + os.sep) or rp.startswith(rr.replace(os.sep, "/") + "/"):
+        rrf = rr.replace(os.sep, "/")               # 前斜杠形态（a242 兼容分支）
+        rrf = rrf if rrf.endswith("/") else rrf + "/"
+        if rp == rr or rp.startswith(_root_prefix(rr)) or rp.startswith(rrf):
             return rp
     return None
 
@@ -102,7 +113,7 @@ def _under_roots_or_projects(path):
         return None
     p = os.path.abspath(str(path).strip().strip('"').strip("'"))
     for root in _project_roots():
-        if p == root or p.startswith(root + os.sep):
+        if p == root or p.startswith(_root_prefix(root)):   # a252：盘根尾分隔符归一
             return p
     return None
 
