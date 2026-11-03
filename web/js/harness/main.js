@@ -920,6 +920,15 @@ function buildClaudeHarnessTab(opts = {}) {
       _hgLeftNearBottom = false;
       requestAnimationFrame(() => requestAnimationFrame(() => _hgScrollBottom(true)));
     }
+    // a272（用户实锤「打开终端再切回 claude 导轨立即异常」）：claude 容器
+    // display:none 期间 layout 全部归零——切回瞬间 _hgRailActive 的 offsetTop
+    // 二分全读到 0/stale 值，act 判定错乱（贴底特判也可能读到旧 scrollHeight）。
+    // 切回显示后双 rAF（等布局回填）重算一次活动刻度
+    if (_hgWrap.style.display !== 'none') {
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        try { _hgRailActiveRaf(); } catch (_) {}
+      }));
+    }
   }).observe(_hgWrap, { attributes: true, attributeFilter: ['style'] });
   // 活动思考段组头状态：本组尚无 AI 正文时脉动「思考中…」，其余实时计时
   // v2.18.1：组级判据（全局 asstText 在正文切组后语义漂移——新组思考该重新脉动）
