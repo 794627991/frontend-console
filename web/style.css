@@ -5163,3 +5163,29 @@ span.nn-hl-t { background: color-mix(in srgb, #3fb950 15%, transparent);
 .xlsx-table-wrap th { background: var(--bg-card); font-weight: 600; }
 /* ppt 占位 */
 .office-ppt-placeholder { text-align: center; padding: 60px 20px; }
+
+/* a281：MD 预览扩展配色（工具栏下拉 10 档） */
+.ed-md-preview.md-pv-github {
+  --note-bg: #0d1117; --note-bg-card: #161b22; --note-border: #30363d;
+  --note-fg: #c9d1d9; --note-muted: #8b949e;
+}
+.ed-md-preview.md-pv-dracula {
+  --note-bg: #282a36; --note-bg-card: #343746; --note-border: #44475a;
+  --note-fg: #f8f8f2; --note-muted: #6272a4;
+}
+.ed-md-preview.md-pv-solarized {
+  --note-bg: #002b36; --note-bg-card: #073642; --note-border: #586e75;
+  --note-fg: #93a1a1; --note-muted: #657b83;
+}
+.ed-md-preview.md-pv-nord {
+  --note-bg: #2e3440; --note-bg-card: #3b4252; --note-border: #4c566a;
+  --note-fg: #d8dee9; --note-muted: #7b88a1;
+}
+.ed-md-preview.md-pv-sepia {
+  --note-bg: #f4ecd8; --note-bg-card: #ede0c8; --note-border: #d4c4a0;
+  --note-fg: #5b4636; --note-muted: #8c7a6b;
+}
+.ed-md-preview.md-pv-mint {
+  --note-bg: #e8f5f0; --note-bg-card: #d5ede5; --note-border: #a8d5c5;
+  --note-fg: #1a3c32; --note-muted: #5a8a7a;
+}

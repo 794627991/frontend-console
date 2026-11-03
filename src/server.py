@@ -1106,7 +1106,8 @@ def api_theme():
         _save_config({**_load_config(), "perf_mode": bool(data["perf_mode"])})
     if "md_preview_theme" in data:
         v = str(data["md_preview_theme"]).strip()
-        if v in ("auto", "dark", "light", "paper"):
+        if v in ("auto", "dark", "light", "paper", "github", "dracula",
+                 "solarized", "nord", "sepia", "mint"):
             _save_config({**_load_config(), "md_preview_theme": v})
     if "data_dir_prompted" in data:
         # 仅写引导标记的轻请求（不带 theme 字段）

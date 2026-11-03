@@ -123,6 +123,8 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
           <option value="big5">Big5</option>
           <option value="latin-1">Latin-1</option>
         </select>
+        <select name="ed_mdtheme" class="lv-btn ed-mdtheme-sel" data-ed-mdtheme title="MD 预览配色（即时生效）" style="display:none;">
+        </select>
         <span class="lv-info" data-ed-info></span>
         <span class="ed-path" data-ed-path title=""></span>
       </div>
@@ -213,6 +215,7 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
       encSel.title = '当前编码：' + (_ue || '自动探测') + '（切换后按所选编码重新读取原文件；保存按当前编码回写）';
       if (_ue === 'gb18030' || _ue === 'gbk') encSel.value = 'gbk';
       encSel.onchange = async () => {
+        // （编码切换逻辑续，见下方）
         if (conn.dirty) {
           const ok = await _edConfirm('切换编码会放弃未保存的修改，继续？');
           if (!ok) { encSel.value = encSel.dataset.cur || ''; return; }
@@ -244,6 +247,20 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
           encSel.dataset.cur = enc;
           showBanner('已按 ' + (j.used_enc || '自动探测') + ' 重新读取', 2500);
         } catch(e) { showBanner('重读失败: ' + e, 4000, true); }
+      };
+    }
+  }
+  // a281：MD 预览配色下拉——.md 文件才显示，选项从 _MD_PV_THEMES 填充
+  if ((name || '').toLowerCase().endsWith('.md')) {
+    const mdSel = wrap.querySelector('[data-ed-mdtheme]');
+    if (mdSel) {
+      mdSel.style.display = '';
+      mdSel.innerHTML = _MD_PV_THEMES.map(t =>
+        `<option value="${t.id}"${(_mdPvTheme || 'auto') === t.id ? ' selected' : ''}>🎨 ${t.name}</option>`
+      ).join('');
+      mdSel.onchange = () => {
+        _mdPvSetTheme(mdSel.value);
+        showBanner('MD 预览配色：' + (_MD_PV_THEMES.find(t => t.id === mdSel.value) || {}).name, 1800);
       };
     }
   }
@@ -1626,16 +1643,30 @@ function _mdBindSplitter(wrap) {
   });
 }
 // a279 批1：MD 预览主题色独立配置（auto/dark/light/paper）
+// a281：MD 预览配色方案（工具栏下拉，比设置面板的 4 档更丰富）
+const _MD_PV_THEMES = [
+  { id: 'auto',       name: '跟随全局' },
+  { id: 'dark',       name: '暗色' },
+  { id: 'light',      name: '亮色' },
+  { id: 'paper',      name: '护眼纸色' },
+  { id: 'github',     name: 'GitHub' },
+  { id: 'dracula',    name: 'Dracula' },
+  { id: 'solarized',  name: 'Solarized 暗' },
+  { id: 'nord',       name: 'Nord' },
+  { id: 'sepia',      name: '复古棕' },
+  { id: 'mint',       name: '薄荷绿' },
+];
 let _mdPvTheme = '';
 function _mdPvApplyTheme(pv) {
   const t = _mdPvTheme || 'auto';
-  pv.classList.remove('md-pv-dark', 'md-pv-light');
-  if (t === 'dark') pv.classList.add('md-pv-dark');
-  else if (t === 'light') pv.classList.add('md-pv-light');
-  else if (t === 'auto') {
+  // a281：清所有主题类再挂当前（新增配色全部走 .md-pv-<id>）
+  pv.className = pv.className.replace(/\s*md-pv-\S+/g, '');
+  if (t === 'auto') {
     const th = document.documentElement.getAttribute('data-theme') || 'deepblue';
     const darks = ['deepblue','onedark','darkgreen','dracula','amber','celadon','rose'];
     pv.classList.add(darks.includes(th) ? 'md-pv-dark' : 'md-pv-light');
+  } else if (t !== 'paper') {
+    pv.classList.add('md-pv-' + t);
   }
   // paper = 不挂类（走默认 --note-* 恒亮护眼）
 }
@@ -1645,9 +1676,15 @@ function _mdPvApplyTheme(pv) {
     if (j.ok && j.md_preview_theme) _mdPvTheme = j.md_preview_theme;
   } catch (_) {}
 })();
-window._mdPvSetTheme = (t) => {
+window._mdPvSetTheme = (t, persist) => {
   _mdPvTheme = t;
   document.querySelectorAll('.ed-md-preview').forEach(_mdPvApplyTheme);
+  // 同步所有工具栏下拉
+  document.querySelectorAll('[data-ed-mdtheme]').forEach(sel => { sel.value = t; });
+  if (persist !== false) {
+    try { fetch('/api/theme', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ md_preview_theme: t }) }); } catch (_) {}
+  }
 };
 function _mdRenderPreview(conn) {
   const pv = conn.wrap.querySelector('.ed-md-preview');
