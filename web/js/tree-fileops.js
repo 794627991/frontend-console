@@ -98,7 +98,7 @@
         m.innerHTML = `
           <div class="box" style="max-width:420px;">
             <div class="head"><strong style="display:inline-flex;align-items:center;gap:8px;">
-              <span style="color:var(--neon-red);font-size:14px;">🗑</span>删除确认</strong>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="var(--neon-red)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5h10"/><path d="M6.5 4.5v-1a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1v1"/><path d="M4.5 4.5l.7 8a1 1 0 0 0 1 .9h3.6a1 1 0 0 0 1-.9l.7-8"/><path d="M6.7 7.5v3.2M9.3 7.5v3.2"/></svg>删除确认</strong>
               <div class="head-actions"><button class="btn ghost icon-btn" id="treeDelClose">✕</button></div>
             </div>
             <div style="padding:16px 20px;">
@@ -248,6 +248,21 @@
     await new Promise(r => setTimeout(r, 60));
   }
 
+  // ---- a259：右键菜单图标全套 SVG（emoji 退役；14px 线性描边与工具条
+  // 同语言，currentColor 跟随 hover 变色）----
+  const _ico = d => '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">' + d + '</svg>';
+  const CI = {
+    newFile: _ico('<path d="M4 2.5h4.5L12 6v6.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1z"/><path d="M8.5 2.5V6H12"/><path d="M11.5 9v5M9 11.5h5"/>'),
+    newFolder: _ico('<path d="M2.5 11.5v-7a1 1 0 0 1 1-1h2.6l1.4 1.8h4a1 1 0 0 1 1 1v1.2"/><path d="M2.5 11.5l1.2-3.7h9.6l1 3.7z"/><path d="M12.5 10v4M10.5 12h4"/>'),
+    openFile: _ico('<path d="M4 2.5h4.5L12 6v7.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1z"/><path d="M8.5 2.5V6H12"/><path d="M6.4 12l3.2-3.2M9.6 11.7V9.1H7"/>'),
+    reveal: _ico('<path d="M1.8 12.5l1.4-4.4h9.9l1.1 4.4z"/><path d="M2.5 12.5V4.5a1 1 0 0 1 1-1h2.6l1.4 1.8h4a1 1 0 0 1 1 1v1.8"/>'),
+    rename: _ico('<path d="M9.7 3.3l3 3L6.5 12.5l-3.5.9.9-3.5z"/><path d="M8.5 4.5l3 3"/>'),
+    del: _ico('<path d="M3 4.5h10"/><path d="M6.5 4.5v-1a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1v1"/><path d="M4.5 4.5l.7 8a1 1 0 0 0 1 .9h3.6a1 1 0 0 0 1-.9l.7-8"/><path d="M6.7 7.5v3.2M9.3 7.5v3.2"/>'),
+    copy: _ico('<rect x="5.5" y="5.5" width="8" height="8" rx="1"/><path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/>'),
+    search: _ico('<circle cx="7" cy="7" r="4.2"/><path d="M10.2 10.2L14 14"/>'),
+    removeRoot: _ico('<path d="M2.5 11.5v-7a1 1 0 0 1 1-1h2.6l1.4 1.8h4a1 1 0 0 1 1 1v1.2"/><path d="M2.5 11.5l1.2-3.7h9.6l1 3.7z"/><path d="M6.2 12.3h3.6"/>')
+  };
+
   // ---- 右键命令表 ----
   $('treePane').addEventListener('contextmenu', e => {
     const row = e.target.closest('[data-path]');
@@ -259,22 +274,22 @@
       const items = [];
     if (isDir) {
       items.push(
-        { icon: '📄', label: '新建文件', action: async () => {
+        { icon: CI.newFile, label: '新建文件', action: async () => {
             await prepDirForCreate(path);
             inlineInputEdit(path, false, '', v =>
               fileops({ op: 'touch', dir: path, name: v }, '已新建 ' + v));
           } },
-        { icon: '📁', label: '新建文件夹', action: async () => {
+        { icon: CI.newFolder, label: '新建文件夹', action: async () => {
             await prepDirForCreate(path);
             inlineInputEdit(path, false, '', v =>
               fileops({ op: 'mkdir', dir: path + '/' + v }, '已新建 ' + v));
           } },
         { sep: true });
     } else {
-      items.push({ icon: '📂', label: '打开', action: () =>
+      items.push({ icon: CI.openFile, label: '打开', action: () =>
         typeof openFileSmart === 'function' && openFileSmart(path, 'auto') });
     }
-    items.push({ icon: '📁', label: '在资源管理器中' + (isDir ? '打开' : '显示'), action: async () => {
+    items.push({ icon: CI.reveal, label: '在资源管理器中' + (isDir ? '打开' : '显示'), action: async () => {
       try {
         const r = await fetch('/api/tree/reveal', { method: 'POST',
           headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path }) });
@@ -285,24 +300,24 @@
     if (!isRoot) {
       items.push(
         { sep: true },
-        { icon: '✏️', label: '重命名', shortcut: 'F2', action: () => doRename(row, path) },
-        { icon: '🗑', label: '删除（入回收站）', shortcut: 'Del', action: () => doDelete(path) });
+        { icon: CI.rename, label: '重命名', shortcut: 'F2', action: () => doRename(row, path) },
+        { icon: CI.del, label: '删除（入回收站）', shortcut: 'Del', action: () => doDelete(path) });
     }
     items.push(
       { sep: true },
-      { icon: '📋', label: '复制路径', action: () => {
+      { icon: CI.copy, label: '复制路径', action: () => {
         try { navigator.clipboard.writeText(path); showBanner('已复制路径', 1600); } catch (_) {}
       } });
     if (!isRoot) {
-      items.push({ icon: '📋', label: '复制相对路径', action: () => {
+      items.push({ icon: CI.copy, label: '复制相对路径', action: () => {
         try { navigator.clipboard.writeText(relPath(path)); showBanner('已复制相对路径', 1600); } catch (_) {}
       } });
     }
     if (isDir && typeof window.tsSearchIn === 'function') {
-      items.push({ icon: '🔍', label: '在此文件夹中搜索', action: () => window.tsSearchIn(path) });
+      items.push({ icon: CI.search, label: '在此文件夹中搜索', action: () => window.tsSearchIn(path) });
     }
     if (isRoot) {
-      items.push({ icon: '✕', label: '移除根（不删文件）', action: () => {
+      items.push({ icon: CI.removeRoot, label: '移除根（不删文件）', action: () => {
         fetch('/api/tree/remove_root', { method: 'POST',
           headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path }) })
           .then(r => r.json()).then(j => { if (j.ok && typeof refreshTree === 'function') refreshTree(); });

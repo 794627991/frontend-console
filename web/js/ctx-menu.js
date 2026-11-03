@@ -17,7 +17,9 @@ function buildCtxMenu(x, y, items) {
   m.innerHTML = items.map(it => it.sep
     ? '<div class="ctx-sep"></div>'
     : `<div class="ctx-item${it.disabled ? ' disabled' : ''}" data-act="${esc(it.act || it.label)}">` +
-      (it.icon ? `${it.icon} ` : '') + esc(it.label) +
+      // a259：图标装进固定 16×16 居中盒（.ctx-ico）——SVG/emoji 统一光学
+      // 对齐（不再与文本基线错位）；icon 原样插入（SVG 字符串），label 转义
+      (it.icon ? `<span class="ctx-ico">${it.icon}</span>` : '') + esc(it.label) +
       (it.shortcut ? ` <span class="ctx-kbd">${esc(it.shortcut)}</span>` : '') +
       '</div>').join('');
   m.style.display = 'block';

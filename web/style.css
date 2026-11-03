@@ -1429,6 +1429,11 @@
     background: var(--bg-input); border: 1px solid var(--border); border-radius: 5px; color: var(--fg); }
   .ct-row span { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .ctx-item { padding: 8px 16px; cursor: pointer; display: flex; align-items: center; gap: 10px; color: var(--fg); transition: background 0.12s, color 0.12s; }
+  /* a259：图标盒——固定 16×16 居中，SVG（currentColor 随 hover 变色）与
+     文本光学对齐；无图标项不占位（label 仍与有图标项文本对齐靠 ico 盒宽） */
+  .ctx-item .ctx-ico { width: 16px; height: 16px; flex: 0 0 16px;
+    display: inline-flex; align-items: center; justify-content: center; }
+  .ctx-item .ctx-ico svg { display: block; }
   .ctx-item:hover { background: var(--accent); color: var(--on-accent); }
   .ctx-item.disabled { color: var(--muted); cursor: default; }
   .ctx-item.disabled:hover { background: transparent; color: var(--muted); }
