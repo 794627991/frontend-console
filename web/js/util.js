@@ -35,13 +35,13 @@ let activePortId = null;
     serial: '串口', ssh: 'SSH', telnet: 'Telnet',
     claude: 'Claude', harness: 'Claude',
     editor: '编辑器', hex: 'Hex', diff: '对比', bindiff: 'Bin对比',
-    log: '日志', office: '文件', proxy: '代理',
+    log: '日志', office: '文件', proxy: '代理', bitcalc: '计算器',
   };
   const _GROUP_ICON = {
     serial: ICO16.plug, ssh: ICO16.terminal, telnet: ICO16.terminal,
     claude: ICO16.zap, harness: ICO16.zap,
     editor: ICO16.file, hex: ICO16.hex, diff: ICO16.compare, bindiff: ICO16.compare,
-    log: ICO16.log, office: ICO16.folderOpen, proxy: ICO16.gear,
+    log: ICO16.log, office: ICO16.folderOpen, proxy: ICO16.gear, bitcalc: ICO16.calc,
   };
   const _groupOf = c => (c.meta && c.meta.kind) || 'other';
   const _groupLabel = k => _GROUP_LABEL[k] || '其他';
@@ -53,6 +53,17 @@ let activePortId = null;
     const closeEl = c && c.tab && c.tab.querySelector('.close');
     if (closeEl) closeEl.click();
   };
+  // 关闭即清 pin（捕获阶段，先于各模块 handler、不 stopPropagation 不影响关闭）：
+  // 覆盖 tab ✕ / 右键菜单 / 列表 ✕ 全部路径（都落 .close click）。不清的话串口
+  // pid 稳定可重合——关 COM2 后重开同 pid 会被旧 pin 命中，出现"无圆点却不进
+  // 抽屉组"的怪状态。取消脏确认时 tab 回来 pin 已摘，代价仅是重新固定一次
+  tabsEl.addEventListener('click', e => {
+    if (!e.target.classList || !e.target.classList.contains('close')) return;
+    const tabEl = e.target.closest('.tab');
+    if (!tabEl || !tabEl.dataset.portId) return;
+    _pinned.delete(tabEl.dataset.portId);
+    tabEl.classList.remove('pinned');
+  }, true);
 
   // 从 config 恢复模式
   (async () => {
@@ -98,9 +109,13 @@ let activePortId = null;
   tabsEl.addEventListener('contextmenu', e => {
     const tabEl = e.target.closest('.tab');
     if (!tabEl) return;
+    const pid = tabEl.dataset.portId;
+    // 未注册 connections 的 tab（如 hex-diff 二进制对比的"计算中"临时 tab）：
+    // 关闭/固定对其均无效，弹菜单只会给用户"点了没反应"的假按钮——
+    // 直接 return 保持原生右键行为（与 a285 时代一致）
+    if (!pid || !connections[pid]) return;
     e.preventDefault();
     e._tabMenuHandled = true;
-    const pid = tabEl.dataset.portId;
     const conn = connections[pid];
     const lbl = conn && conn.meta ? conn.meta.label || pid : pid;
     const isPinned = _pinned.has(pid);
@@ -205,16 +220,22 @@ let activePortId = null;
     return _tabMode + '|' + activePortId + '|' + parts.join(',');
   }
   function rebuild(force) {
+    // 先清死 pid：关闭的固定 tab 残留 _pinned（串口 pid 稳定可重合——重开
+    // 同名串口会被旧 pin 命中，出现"无圆点却不进抽屉组"的怪状态）
+    for (const p of _pinned) if (!connections[p]) _pinned.delete(p);
     const sig = _sig();
     if (!force && sig === _lastSig) return;
     _lastSig = sig;
     // 清旧抽屉
     if (drawerBar) { drawerBar.remove(); drawerBar = null; }
-    // 显示/隐藏原生 tab
+    // 显示/隐藏原生 tab。只隐藏「已注册 connections」的——hex-diff 的
+    // 二进制对比"计算中"临时 tab 不注册 connections（算完自移除），
+    // 无条件隐藏会让它在抽屉模式下凭空消失（平铺模式可见，行为退化）
     const isDrawer = _tabMode === 'drawer';
     tabsEl.querySelectorAll('.tab').forEach(t => {
       const pid = t.dataset.portId;
-      t.style.display = isDrawer && !_pinned.has(pid) ? 'none' : '';
+      const known = pid && connections[pid];
+      t.style.display = (isDrawer && known && !_pinned.has(pid)) ? 'none' : '';
     });
     if (!isDrawer) { checkOverflow(); return; }
 
@@ -265,6 +286,10 @@ let activePortId = null;
     if (_groupDocClose) { document.removeEventListener('click', _groupDocClose); _groupDocClose = null; }
   }
   function _groupRenderItems(group, anchorEl) {
+    // 锚点防脱离：✕/📌 分支里 _tabClose→switchTab→rebuild 或 _tabTogglePin→rebuild(true)
+    // 都会重建 drawerBar，旧抽屉按钮随即脱离 DOM——此时 getBoundingClientRect()
+    // 返回全 0，列表会闪跳到屏幕左上角。脱离即关列表（与 MutationObserver 兜底一致）
+    if (!anchorEl || !anchorEl.isConnected) { _groupCloseList(); return; }
     const pids = Object.keys(connections).filter(p => {
       const c = connections[p];
       return c && c.tab && !_pinned.has(p) && _groupOf(c) === group;
