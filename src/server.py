@@ -513,6 +513,50 @@ def favicon():
 def api_ports():
     return jsonify({"ports": list_ports(), "bauds": COMMON_BAUDS})
 
+_office_convert_cache = {}   # 源路径 mtime → 转换后路径（同文件不重复转）
+
+def _office_convert_legacy(path, ext):
+    """a281：.doc/.ppt 旧格式 → .docx/.pptx（Word/PowerPoint COM 自动转换）。
+    转换结果缓存在 %TEMP%/office_conv/（按源文件 mtime 失效）。
+    需要 Office 已安装；未安装返回 None 由调用方提示。"""
+    import subprocess, tempfile
+    key = os.path.abspath(path).lower() + ":" + str(os.path.getmtime(path))
+    if key in _office_convert_cache:
+        cached = _office_convert_cache[key]
+        if os.path.isfile(cached):
+            return cached
+    conv_dir = os.path.join(tempfile.gettempdir(), "office_conv")
+    os.makedirs(conv_dir, exist_ok=True)
+    dst = os.path.join(conv_dir, os.path.splitext(os.path.basename(path))[0] + ext + "x")
+    if os.path.isfile(dst):
+        _office_convert_cache[key] = dst
+        return dst
+    app_name = "Word.Application" if ext == "doc" else "PowerPoint.Application"
+    fmt = 16 if ext == "doc" else 24   # 16=wdFormatXMLDocument, 24=ppSaveAsOpenXMLPresentation
+    ps_script = (
+        f"$app = New-Object -ComObject {app_name}; "
+        f"$app.Visible = $false; "
+        f"$doc = $app.Documents.Open('{path}'); "
+        f"$doc.SaveAs([ref]'{dst}', [ref]{fmt}); "
+        f"$doc.Close(); $app.Quit()"
+    ) if ext == "doc" else (
+        f"$app = New-Object -ComObject {app_name}; "
+        f"$app.Visible = $false; "
+        f"$pres = $app.Presentations.Open('{path}'); "
+        f"$pres.SaveAs('{dst}', {fmt}); "
+        f"$pres.Close(); $app.Quit()"
+    )
+    try:
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", ps_script],
+            capture_output=True, timeout=30, creationflags=0x08000000)
+        if r.returncode == 0 and os.path.isfile(dst) and os.path.getsize(dst) > 0:
+            _office_convert_cache[key] = dst
+            return dst
+    except Exception:
+        pass
+    return None
+
 @app.route("/api/office/read")
 def api_office_read():
     """a280：Office 查看器读文件（docx/pdf/xlsx）。q=绝对路径。
@@ -524,9 +568,16 @@ def api_office_read():
     if not os.path.isabs(q) or not os.path.isfile(q):
         return jsonify({"ok": False, "err": "文件不存在"}), 400
     _ext = os.path.splitext(q)[1].lower().lstrip(".")
-    # a280R：.doc/.ppt 旧二进制格式不支持（前端库只吃 OOXML），拒了防卡死
+    # a281：.doc/.ppt 旧格式支持——服务端 Word COM 自动转 .docx 后交给前端渲染
     if _ext in ("doc", "ppt"):
-        return jsonify({"ok": False, "err": f".{_ext} 是旧格式，暂只支持 .{_ext}x（OOXML）"}), 400
+        try:
+            converted = _office_convert_legacy(q, _ext)
+            if converted:
+                with open(converted, "rb") as f:
+                    return f.read(), 200, {"Content-Type": "application/octet-stream"}
+            return jsonify({"ok": False, "err": f"转换失败（需要安装 Word/PowerPoint 或手动另存为 .{_ext}x）"}), 400
+        except Exception as e:
+            return jsonify({"ok": False, "err": f"旧格式转换失败: {e}"}), 400
     if _ext not in ("docx", "pdf", "xlsx", "xls", "csv", "pptx"):
         return jsonify({"ok": False, "err": f"不支持的文件类型: .{_ext}"}), 400
     try:

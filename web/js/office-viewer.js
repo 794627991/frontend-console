@@ -4,13 +4,11 @@
 // 入口：openFileSmart 按扩展名分发 → openOfficeFile(path, ext)
 // ============================================================
 const _OFFICE_EXTS = {
-  docx: 'word',
+  docx: 'word', doc: 'word',
   pdf: 'pdf',
   xlsx: 'excel', xls: 'excel', csv: 'excel',
-  pptx: 'ppt',
+  pptx: 'ppt', ppt: 'ppt',
 };
-// 注意：.doc（旧格式）和 .ppt（旧格式）不进来——docx-preview 只吃 .docx，
-// 旧格式传进去会挂死渲染线程（用户实锤打开 .doc 工具卡死）
 
 function _officeKindOf(path) {
   const m = path.toLowerCase().match(/\.([a-z0-9]+)$/);
@@ -113,7 +111,7 @@ async function _ovRender(kind, buf, body, wrap, conn) {
   body.innerHTML = '<div class="office-err">不支持的文件类型</div>';
 }
 
-// Word (.docx) — 仅 .docx；.doc 旧格式不支持（docx-preview 只吃 OOXML）
+// Word (.docx / .doc——.doc 后端自动转 .docx 再返回)
 async function _ovRenderDocx(buf, body, wrap, conn) {
   if (typeof docx === 'undefined') {
     body.innerHTML = '<div class="office-err">docx-preview 库未加载（vendor/docx-preview 缺失）</div>';
