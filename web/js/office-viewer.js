@@ -119,9 +119,9 @@ async function _ovRenderDocx(buf, body, wrap, conn) {
   }
   body.innerHTML = '<div class="docx-container"></div>';
   const container = body.firstChild;
+  let _timeout = null;   // a282R：声明在 try 外——catch 块里 clearTimeout 引用不到 try 内的 const
   try {
-    // a280R：超时保护——渲染卡死时 10s 后放弃并提示（防工具冻死）
-    const timeout = setTimeout(() => {
+    _timeout = setTimeout(() => {
       if (container._rendering) {
         container._rendering = false;
         body.innerHTML = '<div class="office-err">Word 渲染超时（文件可能过大或格式异常），请用资源管理器打开</div>';
@@ -133,11 +133,11 @@ async function _ovRenderDocx(buf, body, wrap, conn) {
       useBase64URL: true, ignoreLastRenderedPageBreak: false,
     });
     container._rendering = false;
-    clearTimeout(timeout);
+    clearTimeout(_timeout);
     container.classList.add('docx-themed');
   } catch (e) {
     container._rendering = false;
-    clearTimeout(timeout);
+    if (_timeout) clearTimeout(_timeout);
     body.innerHTML = `<div class="office-err">Word 渲染失败: ${esc(String(e).slice(0, 200))}</div>`;
   }
 }

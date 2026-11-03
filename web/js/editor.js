@@ -862,13 +862,11 @@ function _edRenderOutline(conn) {
       return entries;
     })();
     if (mdOutline && mdOutline.length) {
-      // 用 JSON 大纲同款 renderEntries（有 kids 字段时可折叠——md 标题天然
-      // 嵌套：H1 > H2 > H3，给每个有子标题的条目挂 kids 标记）
+      // a282R：renderEntries 的折叠逻辑用 e.depth（不是 e.level）做嵌套判定
       const withNesting = mdOutline.map((e, i) => {
-        // 找子标题：后续条目中 level > e.level 的连续段
         let childCount = 0;
         for (let j = i + 1; j < mdOutline.length && mdOutline[j].level > e.level; j++) childCount++;
-        return { ...e, kids: childCount > 0 ? [] : undefined };
+        return { ...e, depth: e.level, kids: childCount > 0 ? [] : undefined };
       });
       if (!renderEntries(withNesting)) {
         conn.outlineList.innerHTML = '<div class="ed-outline-empty">暂无标题行<br>用 # 井号标题组织内容后在此生成目录</div>';
