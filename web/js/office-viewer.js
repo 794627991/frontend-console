@@ -233,12 +233,14 @@ async function _ovPdfRenderPage(conn, pageNum) {
     canvas.width = Math.floor(viewport.width);
     canvas.height = Math.floor(viewport.height);
     canvas.style.maxWidth = '100%';
-    const ctx = canvas.getContext('2d');
-    await page.render({ canvasContext: ctx, viewport }).promise;
+    // a283R2：先挂 DOM 再 render——detached canvas 的 2D context 在
+    // VMware 虚拟桌面上可能挂起（用户实锤 page.render 不返回）
     el.innerHTML = '';
     el.appendChild(canvas);
     const label = document.createElement('div');
     label.className = 'ov-pdf-page-label';
+    const ctx = canvas.getContext('2d');
+    await page.render({ canvasContext: ctx, viewport }).promise;
     label.textContent = pageNum + ' / ' + conn._pdfDoc.numPages;
     el.appendChild(label);
     el.style.minHeight = Math.round(viewport.height) + 'px';
