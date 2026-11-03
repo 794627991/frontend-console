@@ -71,3 +71,6 @@ png/
 # 代码分析工具 .ua 的产物库（knowledge-graph/.trash 中间产物——本地工具数据，不入库）
 /.ua/
 src/_fcpk_key.py
+
+# ZCode 会话工作区（计划/临时脚本/验证产物，本地工具数据，不入库）
+/.zcode/
