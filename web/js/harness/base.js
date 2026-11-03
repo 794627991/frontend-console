@@ -34,21 +34,23 @@ function _hgNormalizeFences(text) {
   return text.replace(/```[ \t]*([^\n\r]+?)[ \t]*```/g, '`$1`');
 }
 
-// ---- 工具图标（emoji 版，避免引图标库）----
+// ---- 工具图标（a261：emoji 全数换全站 SVG 图标库；✦ 星符为用户定调的
+//      全站约定保留）----
 const _H_TOOL_ICO = {
-  Read: '📖', Write: '✍️', Edit: '✏️', MultiEdit: '✏️', NotebookEdit: '📓',
-  Bash: '💻', PowerShell: '🖥️', Grep: '🔍', Glob: '📂',
-  WebFetch: '🌐', WebSearch: '🔎', Task: '✦', Agent: '✦',   // v3.3.12：机器人 emoji 太丑（用户定调），换中性星符 ✦
-  TodoWrite: '📝', TodoRead: '📋', AskUserQuestion: '❓',
-  mcp__harness__ask_user: '❓',   // v4.0.0-a46：harness 交互提问（归一 V3 配置卡）
-  TaskCreate: '📌', TaskUpdate: '📌', TaskList: '📌', TaskGet: '📌',
-  Skill: '🧩', EnterPlanMode: '🗺️', ExitPlanMode: '🗺️', exit_plan_mode: '🗺️',
+  Read: ICO16.book, Write: ICO16.pencil, Edit: ICO16.pencil, MultiEdit: ICO16.pencil, NotebookEdit: ICO16.note,
+  Bash: ICO16.terminal, PowerShell: ICO16.terminal, Grep: ICO16.search, Glob: ICO16.folderOpen,
+  WebFetch: ICO16.globe, WebSearch: ICO16.search, Task: '✦', Agent: '✦',   // v3.3.12：机器人 emoji 太丑（用户定调），换中性星符 ✦（文本符号保留）
+  TodoWrite: ICO16.note, TodoRead: ICO16.log, AskUserQuestion: ICO16.help,
+  mcp__harness__ask_user: ICO16.help,   // v4.0.0-a46：harness 交互提问（归一 V3 配置卡）
+  TaskCreate: ICO16.pin, TaskUpdate: ICO16.pin, TaskList: ICO16.pin, TaskGet: ICO16.pin,
+  Skill: ICO16.puzzle, EnterPlanMode: ICO16.map, ExitPlanMode: ICO16.map, exit_plan_mode: ICO16.map,
 };
 function _hToolIco(name) {
   const n = name || '';
-  if (_H_TOOL_ICO[n]) return _H_TOOL_ICO[n];
-  if (n.indexOf('mcp__') === 0) return '🔌';
-  return '🔧';
+  const ico = _H_TOOL_ICO[n] || (n.indexOf('mcp__') === 0 ? ICO16.plug : ICO16.gear);
+  // '✦' 等纯文本星符原样返回；SVG 图标包 inline 对齐 span（行头文本基线）
+  return ico.charCodeAt(0) === 60   // '<'
+    ? '<span style="vertical-align:-2.5px">' + ico + '</span>' : ico;
 }
 // mcp__server__tool → tool (server)（源 toolConfigs.ts formatToolName；server 名可含 _，取最后一个 __ 切）
 function _hToolLabel(name) {
@@ -137,7 +139,19 @@ const _H_TOOL_CFG = {
       try { return JSON.stringify(i).slice(0, 80); } catch(_) { return ''; }
     }, get: i => { if (!i || !Object.keys(i).length) return ''; try { return JSON.stringify(i, null, 2); } catch(_) { return String(i); } } },
 };
-function _hCfg(name) { return _H_TOOL_CFG[name] || _H_TOOL_CFG.Default; }
+function _hCfg(name) {
+  if (_H_TOOL_CFG[name]) return _H_TOOL_CFG[name];
+  // a263（用户实锤：MCP 工具行显示截断的入参 JSON 很难看）——未注册的
+  // mcp__server__tool 标题改用工具名（mcp__serial__send_burst →
+  // 「serial · send_burst」），入参摘要不再当标题（点开卡片看完整入参，
+  // Default.get 展开体不变）。已注册工具（Bash/Read 等含 MCP 端 ask_user
+  // 显式注册项）不受影响——bash 保持既有风格
+  if (/^mcp__/i.test(name)) {
+    const pretty = name.replace(/^mcp__/i, '').split('__').filter(Boolean).join(' · ');
+    return Object.assign({}, _H_TOOL_CFG.Default, { title: () => pretty });
+  }
+  return _H_TOOL_CFG.Default;
+}
 
 // 工具类别 → 折叠组左边框色（源 CollapsibleDisplay borderColorMap）
 const _H_KIND_COLOR = {
