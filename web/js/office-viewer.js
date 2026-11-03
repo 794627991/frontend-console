@@ -149,9 +149,13 @@ async function _ovRenderPdf(buf, body, wrap, conn) {
     body.innerHTML = '<div class="office-err">pdf.js 库未加载（vendor/pdfjs 缺失）</div>';
     return;
   }
-  pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.js';
+  // a282R4：Worker 在 openOfficeFile 异步上下文中可能静默挂起（直接
+  // evaluate 调用则完美工作——疑与 worker 加载时序/fire-and-forget 上下文
+  // 有关）。禁 Worker 走主线程渲染（慢 ~2x 但零依赖零时序问题）
   try {
-    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+    const pdf = await pdfjsLib.getDocument({ data: buf,
+      useWorkerFetch: false, isEvalSupported: false,
+      disableAutoFetch: true, disableStream: true }).promise;
     conn._pdfDoc = pdf;
     conn._pdfPage = 1;
     conn._pdfZoom = 1.0;
