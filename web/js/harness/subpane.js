@@ -137,7 +137,8 @@
     for (const a of ((_HG.dyn && _HG.dyn.agentsRpl) || [])) {
       if (a.desc && _runDescs.has(a.desc)) continue;   // v3.4.56:同名回放条目让位运行中
       if (a.agentId && _seenIds.has(a.agentId)) continue;   // a58R：同 aid 档案在场，回放档让位
-      if ((a.doneAt || a.t0 || 0) < _dayStart) continue;   // v3.5.147：当天闸
+      // v3.5.147 当天闸已拆（a273 用户需求「不限当天，超 20 默认收起」）——
+      // 全量进列表，渲染层负责折叠
       // v3.5.306b：Task/协作回放条目同款放行（有 agentId 可回放即进，同上）
       if ((a.type || '') === 'Task' && !a.agentId) continue;
       // rid 补发（与 _dynAgents 同款持久发号——条目点击按 rid 回查存档）
@@ -148,10 +149,13 @@
     // 后端 send 归链（Sync），目录天然一链一行——v3.5.322 链合并块退役
     const running = rows.filter(r => !r.done)
       .sort((x, y) => (x.t0 || 0) - (y.t0 || 0));
-    const ended = rows.filter(r => r.done && (r.doneAt || r.t0 || 0) >= _dayStart)
-      .sort((x, y) => (y.doneAt || 0) - (x.doneAt || 0)).slice(0, 50);
+    // a273（用户需求）：不限当天——已结束全量按时间倒序；>20 条默认只显
+    // 前 20，渲染层给「展开全部」钮（_subDirPaint 消费 _dirExpanded）
+    const ended = rows.filter(r => r.done)
+      .sort((x, y) => (y.doneAt || y.t0 || 0) - (x.doneAt || x.t0 || 0));
     return { running, ended };
   }
+  let _dirExpanded = false;   // a273：已结束区折叠态（>20 条时默认收起）
   function _subDirRowHtml(r) {
     // 状态三态（对照 StatusIcon）：运行 spinner / 成功 ✓ / 失败 ✗ / 中断 ⏹
     const _run = !r.done;
@@ -190,14 +194,26 @@
     const tb = _sub.tabs[_SUB_DIR];
     if (!tb || _sub.active !== _SUB_DIR || !tb.sc) return;
     const { running, ended } = _subDirRows();
+    // a273：>20 条默认收起（前 20 + 「展开全部」钮）；点击展开/收起
+    const _MAX = 20;
+    const _folded = !_dirExpanded && ended.length > _MAX;
+    const _shown = _folded ? ended.slice(0, _MAX) : ended;
     tb.sc.innerHTML =
       `<div class="hg-sub-dir-head">子智能体目录</div>` +
       `<div class="hg-sub-dir-sec">正在运行 · ${running.length}</div>` +
       (running.length ? running.map(_subDirRowHtml).join('')
         : `<div class="hg-sub-dir-empty">没有正在运行的子智能体</div>`) +
-      `<div class="hg-sub-dir-sec">已结束（今天） · ${ended.length}</div>` +
-      (ended.length ? ended.map(_subDirRowHtml).join('')
-        : `<div class="hg-sub-dir-empty">今天还没有已结束的子智能体</div>`);
+      `<div class="hg-sub-dir-sec">已结束 · ${ended.length}${_folded ? `（显示前 ${_MAX}）` : ''}</div>` +
+      (_shown.length ? _shown.map(_subDirRowHtml).join('')
+        : `<div class="hg-sub-dir-empty">还没有已结束的子智能体</div>`) +
+      (ended.length > _MAX
+        ? `<button class="hg-sub-dir-more" data-hg-dir-toggle="${_folded ? 'open' : 'close'}">` +
+          `${_folded ? `▼ 展开全部（还有 ${ended.length - _MAX} 个）` : `▲ 收起`}</button>` : '');
+    const _tg = tb.sc.querySelector('[data-hg-dir-toggle]');
+    if (_tg) _tg.onclick = () => {
+      _dirExpanded = _tg.dataset.hgDirToggle === 'open';
+      _subDirPaint();
+    };
     // v3.2.6：有运行行才起 1s 重绘（秒表走字）；目录失活/运行清空自停
     // v3.5.147：后台任务退出目录（用户拍板），tick 条件同步收窄
     if (running.length && !_subDirTick) {

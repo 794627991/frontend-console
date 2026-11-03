@@ -5116,3 +5116,9 @@ span.nn-hl-t { background: color-mix(in srgb, #3fb950 15%, transparent);
     font: 9.5px var(--font-mono); color: var(--muted); opacity: 0.75;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     direction: rtl; text-align: left; user-select: none; }
+
+/* a273：子代理目录「展开全部/收起」钮（>20 条折叠） */
+.hg-sub-dir-more { display: block; width: 100%; border: none; background: transparent;
+  color: var(--muted); font-size: var(--fs-xs); padding: 8px 0; cursor: pointer;
+  text-align: center; border-top: 1px solid var(--border); margin-top: 4px; }
+.hg-sub-dir-more:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
