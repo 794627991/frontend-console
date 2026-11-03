@@ -121,6 +121,13 @@ function _stRenderAppearancePane(pane) {
         <button class="btn ghost" id="apZoomReset" title="恢复 100%">↺ 重置</button>
       </div>
       <div class="dd-sub">整个界面等比缩放（80%–130%）。也可用 Ctrl+= / Ctrl+- 调终端字号，Ctrl+0 全部恢复默认。</div>
+    </div>
+    <div class="dd-cur" style="margin-top:8px;">
+      <div class="dd-label">性能模式</div>
+      <div class="dd-row" style="margin-top:6px;">
+        <button class="btn ghost" id="apPerfToggle" style="width:100%;text-align:left;padding:8px 12px;"></button>
+      </div>
+      <div class="dd-sub">关闭极光玻璃的毛玻璃/光斑动画（虚机 GPU 推荐）——显著降低每帧 GPU 合成开销。</div>
     </div></div>`;
   const grid = pane.querySelector('#stThemeGrid');
   // 风格行（v4.1 桥接层 skin.js）：逐个胶囊，点选即切（联动配套配色）
@@ -142,6 +149,18 @@ function _stRenderAppearancePane(pane) {
     });
   }
   const cur = document.documentElement.getAttribute('data-theme') || 'deepblue';
+  // a278 性能模式开关（极光玻璃 GPU 合成优化）
+  const perfBtn = pane.querySelector('#apPerfToggle');
+  if (perfBtn && typeof togglePerfMode === 'function') {
+    const syncPerf = () => {
+      const on = document.documentElement.hasAttribute('data-perf');
+      perfBtn.innerHTML = (window.ICO16 ? (on ? ICO16.zap : ICO16.eyeOff) + ' ' : '')
+        + (on ? '<b style="color:var(--accent)">已开启</b>' : '已关闭')
+        + '<small style="color:var(--muted);font-weight:400;">　' + (on ? '毛玻璃/光斑已关闭' : '点击关闭 GPU 密集特效') + '</small>';
+    };
+    perfBtn.onclick = () => { togglePerfMode(); syncPerf(); };
+    syncPerf();
+  }
   const zoomVal = pane.querySelector('#apZoomVal');
   const syncZoom = () => { zoomVal.textContent = (typeof uiZoom === 'number' ? uiZoom : 100) + '%'; };
   syncZoom();
