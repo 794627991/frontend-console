@@ -280,13 +280,21 @@ refreshTftp();
 // 时停轮。TFTP 根在网络盘（Y:\nfs）时每次 status 都是 30+ 次网络 stat，
 // 慢轮询会占满浏览器同源 6 连接池，把串口按键 POST 挤成秒级排队。
 // 进行中（_tftpActive）不受门控：进度必须跟。
+// a268（用户实锤「TFTP/HFS 关了轮询还在跑」）：停机不再 2s 轮询——启停/
+// 切目录都有显式 refreshTftp，高频轮询只在运行中有意义。停机留 10s 慢速
+// 哨兵（捕获 MCP/外部启停），三档频率：传输中 0.5s > 运行中 2s > 停机 10s。
 setInterval(() => {
-  if (_tftpActive) return;
+  if (!_tftpRunning || _tftpActive) return;      // 仅运行中且无传输
   if (document.hidden) return;
   const pane = $('tftpPane');
   if (pane && pane.offsetHeight === 0) return;   // 面板收起
   refreshTftp();
-}, 2000);       // 空闲兜底
+}, 2000);       // 运行中空闲
+setInterval(() => {
+  if (_tftpRunning || _tftpActive) return;       // 仅停机态
+  if (document.hidden) return;
+  refreshTftp();
+}, 10000);      // 停机哨兵：外部/MCP 启停兜底
 setInterval(() => { if (_tftpActive) refreshTftp(); }, 500);          // 进行中抓进度
 
 // 初始化
