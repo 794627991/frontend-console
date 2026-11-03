@@ -5031,8 +5031,21 @@ span.nn-hl-t { background: color-mix(in srgb, #3fb950 15%, transparent);
   .ts-stat.run { color: var(--accent); cursor: pointer; }
   .ts-stat.run::after { content: '（点击取消）'; }
 
-  /* ===== a225：文件树根行路径小字（多根同名 trunk 一眼可辨） ===== */
-  .tree-root-wrap { position: absolute; left: 0; display: block; height: auto; padding: 0; }
+  /* ===== a225：文件树根行路径小字（多根同名 trunk 一眼可辨） =====
+     a253（用户定调）：wrap 改 grid——名字行/路径行占左列两行，✕ 独占右列
+     跨两行 align-self:center（名字+路径是一个整体，✕ 应整体垂直居中；
+     此前 ✕ 在名字行内只跟首行居中，视觉上偏在整体顶部）。行高恒 22+14=36
+     （_tvTops 按 36 锚定，勿改） */
+  .tree-root-wrap { position: absolute; left: 0; display: grid;
+    grid-template-columns: minmax(0, max-content) auto;
+    grid-template-rows: 22px 14px; height: auto; padding: 0; gap: 0; }
+  .tree-root-wrap > .tree-row { grid-column: 1; grid-row: 1; }
+  .tree-root-wrap > .tree-root-path { grid-column: 1; grid-row: 2; }
+  /* 跨全宽两行（非独占右列）：sticky 的约束矩形=自身网格区域，独占窄右列
+     时区域随长名字滚出可视区 → ✕ 跟着滚走（a236"长名够不到"回归）。跨
+     全宽后区域恒覆盖可视区，sticky 右钉有效；justify-self:end 落右缘 */
+  .tree-root-wrap > .root-x { grid-column: 1 / 3; grid-row: 1 / 3;
+    align-self: center; justify-self: end; }
   .tree-root-path { height: 14px; line-height: 14px; padding: 0 6px 0 26px;
     font: 9.5px var(--font-mono); color: var(--muted); opacity: 0.75;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;

@@ -174,11 +174,13 @@ function _tvRowHtml(r, i) {
     ? `<span class="root-x" title="从文件树移除该文件夹（不删除磁盘文件）">✕</span>` : '';
   // a225：根行=双行容器（名字行 + 路径小字行）——多根同名场景（两个 trunk
   // 都叫 src 但实际路径不同）一眼可辨；路径灰显不抢焦点，hover 全路径
+  // a253（用户定调）：✕ 挪到 wrap 层、跨两行整体垂直居中——名字+路径是
+  // 一个整体，✕ 只跟名字行居中时视觉上"跑到了上面"
   if (r.t === 'root') {
     return `<div class="tree-root-wrap tree-root-head" data-path="${esc(r.path)}" data-dir="1" style="top:${top}px;left:0;width:max-content;min-width:100%">` +
       `<div class="tree-row tree-root-head${active}" data-dir="1" data-depth="0" data-notrunc="1"` +
-      ` style="position:relative;left:0;top:0;padding-left:6px;">${arrow}${icon}<span class="t-name" title="${esc(r.path)}">${esc(r.name)}</span>${dot}${rootX}</div>` +
-      `<div class="tree-root-path">${esc(r.path)}</div></div>`;
+      ` style="position:relative;left:0;top:0;padding-left:6px;">${arrow}${icon}<span class="t-name" title="${esc(r.path)}">${esc(r.name)}</span>${dot}</div>` +
+      `<div class="tree-root-path">${esc(r.path)}</div>${rootX}</div>`;
   }
   return `<div class="tree-row${active}${openCls}" data-path="${esc(r.path)}"` +
     (r.dir ? ' data-dir="1"' : '') + ` data-depth="${r.depth}"` +
