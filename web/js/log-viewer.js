@@ -729,7 +729,13 @@ function closeLogViewer(portId) {
     if (ka[0] !== kb[0]) return ka[0] - kb[0];
     return ka[1] < kb[1] ? -1 : ka[1] > kb[1] ? 1 : 0;
   });
-  if (remaining.length) switchTab(remaining[0]);
+  // 对齐 _edCloseNow/closeConnection（v4.1 同锤修复的漏网路径）：关非活动 tab
+  // 不动激活态；关活动 tab 优先回「来时的 tab」，无来路才回排序首位
+  const back = window._hgTabBack;
+  window._hgTabBack = null;
+  if (remaining.length) {
+    if (activePortId === portId) switchTab(back && connections[back] ? back : remaining[0]);
+  }
   else {
     activePortId = null;
     termArea.innerHTML = '<div class="empty-state"><div class="big-icon"><svg width="30" height="30" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 2.5v3M10.5 2.5v3"/><path d="M4 5.5h8v2a4 4 0 0 1-8 0z"/><path d="M8 11.5v2"/></svg></div><div class="title">暂无连接</div><div class="desc">点击顶部「新建连接」选择串口或 SSH，支持同时监控多个连接。每个连接独立标签页，互不干扰。</div></div>';

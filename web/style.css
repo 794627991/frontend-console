@@ -1215,7 +1215,18 @@
      display:flex/flex-direction:column 泄漏进去，文字层被列布局重排，
      字形下移溢出 24px 盒被 overflow:hidden 裁掉下半截（用户"折叠条文字
      被裁"两个版本的真凶）。改用 #main .center 限定作用域。 */
-  .main > .center { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  /* 第2轮盲测实锤（高）：min-width:0 让 center 在窄视口被固定宽侧栏(220)+AI面板(340)
+     挤到 0~16px——tab 栏（含固定 tab/抽屉/⋮ 唯一逃生口）整体不可见不可点。
+     保底 300px：极窄时 AI 面板右侧让位被裁（用户可折叠它换空间），tab 栏始终可用；
+     正常宽度（≥900px）不触发，零影响。html/body overflow:hidden 兜底不出横滚动条 */
+  .main > .center { flex: 1; display: flex; flex-direction: column; min-width: 300px; }
+  /* 极窄视口（<560px）侧栏也参与让位：侧栏 JS 拖拽写的是内联宽，必须 !important
+     才能压住；130px 侧栏 + 260px center = 390px，400px 视口也能装下完整 tab 栏。
+     恢复宽度后本块失效，内联拖拽宽度自动回来，侧栏拖拽体验不受影响 */
+  @media (max-width: 560px) {
+    .sidebar { width: 130px !important; }
+    .main > .center { min-width: 260px; }
+  }
   .tabs {
     display: flex; align-items: center; gap: 2px;
     padding: 6px 8px 0; background: var(--bg-panel);

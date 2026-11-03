@@ -93,9 +93,17 @@ let activePortId = null;
     const conn = connections[pid];
     if (conn && conn.tab) {
       conn.tab.classList.toggle('pinned', _pinned.has(pid));
-      // 固定 tab 移到最前
       if (_pinned.has(pid)) {
+        // 固定 tab 移到最前
         tabsEl.insertBefore(conn.tab, tabsEl.firstChild);
+      } else {
+        // 第2轮盲测实锤：取消固定后停在原地（仍固定 tab 之前）——
+        // 破坏"固定区在最左"的排序不变量。移回非固定区：最后一个固定 tab 之后
+        const pinnedEls = [...tabsEl.querySelectorAll('.tab.pinned')];
+        const ref = pinnedEls.length
+          ? pinnedEls[pinnedEls.length - 1].nextSibling
+          : tabsEl.firstChild;
+        tabsEl.insertBefore(conn.tab, ref);
       }
     }
     // 盲测实锤（高）：pin 是用户的顺序意图，必须像手动拖拽一样让位——
@@ -184,12 +192,15 @@ let activePortId = null;
     let html = '';
     order.forEach(g => {
       html += `<div class="tab-overflow-group">${esc(_groupLabel(g))} · ${groups[g].length}</div>`;
+      // 第2轮盲测实锤：⋮ 列表与抽屉列表行为对齐——补 📌 固定钮（原来只显
+      // 示固定图标不可点，抽屉列表可点，不一致）+ 右键菜单（原来没有）
       html += groups[g].map(({ pid, c }) => {
         const lbl = (c.meta && c.meta.label) || pid;
         const act = pid === activePortId ? ' active' : '';
-        const pin = _pinned.has(pid) ? ICO16.pin + ' ' : '';
-        return `<div class="tab-overflow-item${act}" data-pid="${esc(pid)}">` +
-          `<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center;gap:4px;">${pin}<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(lbl)}</span></span>` +
+        const pinCls = _pinned.has(pid) ? ' pinned' : '';
+        return `<div class="tab-overflow-item${act}${pinCls}" data-pid="${esc(pid)}">` +
+          `<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(lbl)}</span>` +
+          `<span class="ov-pin" data-pin="${esc(pid)}" title="${_pinned.has(pid) ? '取消固定' : '固定到标签栏'}">${ICO16.pin}</span>` +
           `<span class="ov-close" data-close="${esc(pid)}" title="关闭">✕</span></div>`;
       }).join('');
     });
@@ -200,6 +211,13 @@ let activePortId = null;
     list.style.right = Math.max(8, window.innerWidth - br.right) + 'px';
     list.classList.add('show');
     list.querySelectorAll('.tab-overflow-item').forEach(item => {
+      // 第2轮盲测实锤：⋮ 列表项右键无反应（抽屉列表有）——挂同一统一菜单
+      item.oncontextmenu = e => {
+        e.preventDefault();
+        e.stopPropagation();
+        close();
+        _tabCtxMenu(e.clientX, e.clientY, item.dataset.pid);
+      };
       item.onclick = e => {
         const closeEl = e.target.closest('[data-close]');
         if (closeEl) {
@@ -212,6 +230,13 @@ let activePortId = null;
             close();
             checkOverflow();
           }
+          return;
+        }
+        const pinEl = e.target.closest('[data-pin]');
+        if (pinEl) {
+          e.stopPropagation();
+          _tabTogglePin(pinEl.dataset.pin);
+          buildList();
           return;
         }
         switchTab(item.dataset.pid);
