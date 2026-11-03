@@ -63,6 +63,10 @@ let activePortId = null;
     if (!tabEl || !tabEl.dataset.portId) return;
     _pinned.delete(tabEl.dataset.portId);
     tabEl.classList.remove('pinned');
+    // 第3轮盲测实锤：关闭后 ⋮ 计数/抽屉胶囊滞留旧值数秒——后台 rAF 节流时
+    // MutationObserver 兜底不跑。同步关闭路径（终端类）在下一 tick 同步刷，
+    // 计数/胶囊即刻正确；脏确认路径 tab 未删，刷新无害
+    setTimeout(() => { checkOverflow(); rebuild(); }, 0);
   }, true);
 
   // 从 config 恢复模式
@@ -211,11 +215,12 @@ let activePortId = null;
     list.style.right = Math.max(8, window.innerWidth - br.right) + 'px';
     list.classList.add('show');
     list.querySelectorAll('.tab-overflow-item').forEach(item => {
-      // 第2轮盲测实锤：⋮ 列表项右键无反应（抽屉列表有）——挂同一统一菜单
+      // 第2轮盲测实锤：⋮ 列表项右键无反应（抽屉列表有）——挂同一统一菜单。
+      // 第3轮盲测：右键时保持列表开着（连续对多项右键不必重开）；点菜单项
+      // 后由 document click 兜底收起（操作完成）
       item.oncontextmenu = e => {
         e.preventDefault();
         e.stopPropagation();
-        close();
         _tabCtxMenu(e.clientX, e.clientY, item.dataset.pid);
       };
       item.onclick = e => {
@@ -353,11 +358,12 @@ let activePortId = null;
     groupList.style.left = Math.max(4, Math.min(br.left, window.innerWidth - 260)) + 'px';
     groupList.querySelectorAll('.tab-overflow-item').forEach(item => {
       // 盲测实锤：抽屉模式下 tab 全隐藏，文件类 tab 的对比入口不可达——
-      // 列表项右键挂同一统一菜单（tab 上右键的完整等价物）
+      // 列表项右键挂同一统一菜单（tab 上右键的完整等价物）。
+      // 第3轮盲测：右键时保持列表开着（与 ⋮ 列表一致）；点菜单项后由
+      // _groupDocClose 兜底收起
       item.oncontextmenu = e => {
         e.preventDefault();
         e.stopPropagation();
-        _groupCloseList();
         _tabCtxMenu(e.clientX, e.clientY, item.dataset.pid);
       };
       item.onclick = e => {

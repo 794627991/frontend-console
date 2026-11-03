@@ -5237,10 +5237,19 @@ span.nn-hl-t { background: color-mix(in srgb, #3fb950 15%, transparent);
 .tab-bar-actions { position: sticky; right: 0; z-index: 5;
   background: var(--bg-panel); box-shadow: -4px 0 8px -4px var(--bg-panel); }
 /* 溢出下拉按钮 */
+/* 第3轮盲测：背景改不透明（bg-panel 同色）+ 左缘阴影——平铺模式 sticky 滚动时
+   覆盖最右被裁 tab 变为 Chrome 式"有意遮挡"（可点区=可见区），而非透明叠字 */
 .tab-overflow-btn { position: sticky; right: 0; z-index: 5;
-  background: var(--bg-card); border: 1px solid var(--border); border-radius: 5px;
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: 5px;
   color: var(--muted); font-size: 13px; cursor: pointer; padding: 3px 8px;
-  margin-left: 2px; flex-shrink: 0; white-space: nowrap; }
+  margin-left: 2px; flex-shrink: 0; white-space: nowrap;
+  box-shadow: -8px 0 10px -6px rgba(0,0,0,.45); }
+/* 第3轮盲测（抽屉模式 400px）：⋮/actions 的 sticky right + z-index 浮在抽屉
+   胶囊上方——最右胶囊被 ⋮ 整个盖住不可点。抽屉模式 tab 行不滚动（全部收进
+   胶囊，无溢出滚动语义），sticky 无意义——改 static 消除覆盖，空间不足时由
+   .tabs overflow:hidden 裁剪 + ⋮ 列表兜底访问 */
+.tabs.drawer-mode .tab-overflow-btn,
+.tabs.drawer-mode .tab-bar-actions { position: static; box-shadow: none; }
 .tab-overflow-btn:hover { color: var(--accent); border-color: var(--accent); }
 /* tab 栏滚动条可见（薄但不隐形） */
 /* 文件树横向滚动条可见 */
