@@ -81,24 +81,27 @@ async function openOfficeFile(path) {
     dirty: false,
   };
   connections[portId] = conn;
-  switchTab(portId);   // a282R3：先切 tab 让 wrap display:flex——PDF 的 canvas
-                       // 上下文在 display:none 下可能挂起（docx/xlsx 不受影响）。用户等待时至少能看到工具栏
+  switchTab(portId);
 
-  // 加载文件并渲染
-  const body = wrap.querySelector('[data-ov-body]');
-  const info = wrap.querySelector('[data-ov-info]');
-  try {
-    const resp = await fetch('/api/office/read?path=' + encodeURIComponent(path));
-    if (!resp.ok) {
-      body.innerHTML = `<div class="office-err">文件读取失败（${resp.status}）</div>`;
-      return true;
+  // a282R5：async 链在 DOM 事件回调（openFileSmart→此函数）内可能被
+  // 中断（pdf.js 挂起疑与此有关——docx/xlsx 同路径正常说明不是数据问题）。
+  // setTimeout(0) 跳出事件上下文，在干净的宏任务中执行 fetch+渲染
+  setTimeout(async () => {
+    const body = wrap.querySelector('[data-ov-body]');
+    const info = wrap.querySelector('[data-ov-info]');
+    try {
+      const resp = await fetch('/api/office/read?path=' + encodeURIComponent(path));
+      if (!resp.ok) {
+        body.innerHTML = `<div class="office-err">文件读取失败（${resp.status}）</div>`;
+        return;
+      }
+      const buf = await resp.arrayBuffer();
+      info.textContent = (buf.byteLength / 1024).toFixed(0) + ' KB';
+      await _ovRender(kind, buf, body, wrap, conn);
+    } catch (e) {
+      body.innerHTML = `<div class="office-err">加载失败: ${esc(String(e))}</div>`;
     }
-    const buf = await resp.arrayBuffer();
-    info.textContent = (buf.byteLength / 1024).toFixed(0) + ' KB';
-    await _ovRender(kind, buf, body, wrap, conn);
-  } catch (e) {
-    body.innerHTML = `<div class="office-err">加载失败: ${esc(String(e))}</div>`;
-  }
+  }, 0);
   return true;
 }
 window.openOfficeFile = openOfficeFile;
