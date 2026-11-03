@@ -242,9 +242,11 @@ function buildClaudeHarnessTab(opts = {}) {
   const _flowGeomRefresh = () => {
     _flowGeom.h = _hgFlow.scrollHeight;
     _flowGeom.vh = _hgFlow.clientHeight;
-    // a276 批2b：容器尺寸变了=消息位置全变了——同步失效导轨 tops 缓存
-    // （下次 _hgRailActive 按需重建，此时布局已稳定 offsetTop 是真值）
-    if (_HG.railCacheTops) _HG.railCacheTops = null;
+    // a276R（用户实锤批2b 导致导轨失效）：RO 在每次内容变化都触发（流式
+    // token/工具展开/图片加载），这里如果 null 化 railCacheTops，下一次
+    // _hgRailActive 重建时 content-visibility:auto 的估高值又进来=缓存被
+    // 污染（a273R 的根因复发）。导轨缓存失效只留 railSync/onResumePoll
+    // 两个可信时机（tab 可见期间+布局稳定后），RO 只刷几何缓存
   };
   // RO 盯容器尺寸（内容增减/窗口 resize 都会变）
   try {
