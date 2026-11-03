@@ -98,6 +98,10 @@ let activePortId = null;
         tabsEl.insertBefore(conn.tab, tabsEl.firstChild);
       }
     }
+    // 盲测实锤（高）：pin 是用户的顺序意图，必须像手动拖拽一样让位——
+    // 否则 init.js 每 30s 的 refreshSidebar 会按类型桶自动重排，
+    // 把固定 tab 从最左排回 sortKey 序（无操作状态下自发重排）
+    if (typeof _tabManualOrder === 'function') _tabManualOrder();
     rebuild(true);
     showBanner(_pinned.has(pid) ? '已固定标签页' : '已取消固定', 1500);
   };
@@ -106,17 +110,10 @@ let activePortId = null;
   // a286 注：文件 tab 的对比菜单原由 diff-viewer.js 的 #tabs contextmenu 提供，
   // 两边都渲染进 #ctxMenu 会互相覆盖——本 handler 先注册先执行，统一拼菜单
   // 并打 _tabMenuHandled 标记，diff-viewer.js 侧见到标记即让位（功能不丢，只是并进来了）
-  tabsEl.addEventListener('contextmenu', e => {
-    const tabEl = e.target.closest('.tab');
-    if (!tabEl) return;
-    const pid = tabEl.dataset.portId;
-    // 未注册 connections 的 tab（如 hex-diff 二进制对比的"计算中"临时 tab）：
-    // 关闭/固定对其均无效，弹菜单只会给用户"点了没反应"的假按钮——
-    // 直接 return 保持原生右键行为（与 a285 时代一致）
-    if (!pid || !connections[pid]) return;
-    e.preventDefault();
-    e._tabMenuHandled = true;
+  // 盲测实锤：抽屉模式下 tab 隐藏，对比入口不可达——列表项也挂同一菜单（_tabCtxMenu 公共化）
+  function _tabCtxMenu(x, y, pid) {
     const conn = connections[pid];
+    if (!conn) return;
     const lbl = conn && conn.meta ? conn.meta.label || pid : pid;
     const isPinned = _pinned.has(pid);
     if (typeof buildCtxMenu !== 'function') return;
@@ -136,15 +133,29 @@ let activePortId = null;
         { sep: true },
       );
     }
+    // 盲测实锤：长文件名 slice 硬截断易误导——超长加省略号
+    const short = lbl.length > 20 ? lbl.slice(0, 18) + '…' : lbl;
     items.push(
       { icon: ICO16.pin,
         label: isPinned ? '取消固定' : '固定标签页',
         action: () => _tabTogglePin(pid) },
       { sep: true },
-      { icon: ICO16.x, label: '关闭「' + lbl.slice(0, 20) + '」',
+      { icon: ICO16.x, label: '关闭「' + short + '」',
         action: () => _tabClose(pid) },
     );
-    buildCtxMenu(e.clientX, e.clientY, items);
+    buildCtxMenu(x, y, items);
+  }
+  tabsEl.addEventListener('contextmenu', e => {
+    const tabEl = e.target.closest('.tab');
+    if (!tabEl) return;
+    const pid = tabEl.dataset.portId;
+    // 未注册 connections 的 tab（如 hex-diff 二进制对比的"计算中"临时 tab）：
+    // 关闭/固定对其均无效，弹菜单只会给用户"点了没反应"的假按钮——
+    // 直接 return 保持原生右键行为（与 a285 时代一致）
+    if (!pid || !connections[pid]) return;
+    e.preventDefault();
+    e._tabMenuHandled = true;
+    _tabCtxMenu(e.clientX, e.clientY, pid);
   });
   // 注：不挂 dblclick 固定——tab 标题双击已被「快捷改名」占用（editor.js），不抢
 
@@ -195,7 +206,12 @@ let activePortId = null;
           e.stopPropagation();
           _tabClose(closeEl.dataset.close);
           buildList();
-          if (!Object.keys(connections).some(k => connections[k] && connections[k].tab)) close();
+          // 盲测实锤：列表里关掉最后一个 tab 后 ⋮ 残留旧计数（"⋮ 1"）——
+          // rAF/interval 在后台节流时兜底不可靠，关闭路径同步刷一次
+          if (!Object.keys(connections).some(k => connections[k] && connections[k].tab)) {
+            close();
+            checkOverflow();
+          }
           return;
         }
         switchTab(item.dataset.pid);
@@ -311,6 +327,14 @@ let activePortId = null;
     groupList.style.top = (br.bottom + 4) + 'px';
     groupList.style.left = Math.max(4, Math.min(br.left, window.innerWidth - 260)) + 'px';
     groupList.querySelectorAll('.tab-overflow-item').forEach(item => {
+      // 盲测实锤：抽屉模式下 tab 全隐藏，文件类 tab 的对比入口不可达——
+      // 列表项右键挂同一统一菜单（tab 上右键的完整等价物）
+      item.oncontextmenu = e => {
+        e.preventDefault();
+        e.stopPropagation();
+        _groupCloseList();
+        _tabCtxMenu(e.clientX, e.clientY, item.dataset.pid);
+      };
       item.onclick = e => {
         const closeEl = e.target.closest('[data-close]');
         if (closeEl) {

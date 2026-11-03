@@ -5290,8 +5290,11 @@ span.nn-hl-t { background: color-mix(in srgb, #3fb950 15%, transparent);
   max-width: 130px; overflow: hidden; text-overflow: ellipsis;
   flex: 0 1 auto; min-width: 0; }
 .tab-drawer.active .tab-drawer-active { opacity: 1; color: var(--accent); }
-/* Pin 固定 tab：右上角小圆点标记 + 不参与收缩（固定的意义就是保持可点） */
-.tab.pinned { flex-shrink: 0; min-width: 64px; position: relative; }
+/* Pin 固定 tab：右上角小圆点标记 + 常驻最左。盲测实锤（极窄视口）：不能
+   flex-shrink:0——固定 tab 全宽 220px 不缩会盖住被压扁的抽屉栏（400px 下
+   抽屉被挤为 0 宽）。改为与普通 tab 一样参与收缩（min-width:28px），
+   固定语义 = 排最前 + 常驻可见 + 圆点标记，不是"永不缩窄" */
+.tab.pinned { flex-shrink: 1; min-width: 28px; max-width: 220px; position: relative; }
 .tab.pinned::before { content: ""; position: absolute; top: 3px; right: 3px;
   width: 5px; height: 5px; border-radius: 50%;
   background: var(--accent); box-shadow: 0 0 5px var(--accent); }
