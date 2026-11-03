@@ -1865,7 +1865,9 @@ const _DROP_TEXT_EXT = new Set(['.txt','.note','.md','.json','.csv','.ini','.cfg
   '.bashrc','.zshrc','.profile','.dockerignore']);
 // ---- 文件打开方式选择弹窗（20~30M 提示用；小于 20M 用户主动选阅读器也复用）----
 // mode: 'ask' 弹窗让选（含二进制选项）；'edit' 直接编辑器；'view' 直接阅读器；'hex' 直接二进制
-function _showOpenModeDialog(path, sizeMB, withHex) {
+// a242：大小显示复用全局 _fmtSize（tftp.js 定义，加载序在后覆盖同名）——
+// GB 档已在 tftp.js 侧补齐，此处不再重复定义
+function _showOpenModeDialog(path, sizeBytes, withHex) {
   return new Promise(resolve => {
     let m = $('openModeModal');
     if (!m) {
@@ -1901,8 +1903,8 @@ function _showOpenModeDialog(path, sizeMB, withHex) {
     m.querySelector('#openModeHex').onclick = () => finish('hex');
     m.querySelector('#openModeHex').style.display = withHex ? '' : 'none';   // 仅未知/二进制类型显示二进制选项
     m.querySelector('#openModeDesc').textContent =
-      `${path}${sizeMB != null ? `（${sizeMB}MB）` : ''}\n` +
-      (sizeMB != null && sizeMB > 20
+      `${path}${sizeBytes != null ? `（${_fmtSize(sizeBytes)}）` : ''}\n` +
+      (sizeBytes != null && sizeBytes > 20 * 1024 * 1024
         ? '文件超过 20MB：编辑器打开可能卡顿（Monaco 分词内存约为文件 3~5 倍），建议用阅读器。'
         : (withHex ? '未知类型文件，选择打开方式：' : '选择打开方式：'));
     m.classList.add('show');
@@ -2013,9 +2015,9 @@ async function openFileSmart(path, mode, opts) {
   // 决策
   let how = mode || 'auto';
   if (how === 'auto') {
-    if (!isTextSrv) how = await _showOpenModeDialog(path, MB ? MB.toFixed(1) : null, true);  // 未知类型：弹窗选（二进制/阅读器/编辑器）
+    if (!isTextSrv) how = await _showOpenModeDialog(path, size || null, true);  // 未知类型：弹窗选（a242：传字节，B/KB/MB/GB 自适应显示）
     else if (MB > 30) how = 'view';                        // >30M 强制阅读器（Monaco 必卡）
-    else if (MB > 20) how = await _showOpenModeDialog(path, MB.toFixed(1), false);  // 20~30M 提示选
+    else if (MB > 20) how = await _showOpenModeDialog(path, size, false);  // 20~30M 提示选
     else how = 'edit';                                     // <20M 默认编辑器
     if (!how) return;                                      // 用户关掉了弹窗
   }

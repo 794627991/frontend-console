@@ -10,6 +10,19 @@
 import os, sys, threading, json, time
 import urllib.request
 
+# a242（用户实锤「运行中自己重启」取证）：faulthandler 全程挂载——native 层
+# 崩溃（C 扩展/WebView2/ctypes）无 Python traceback 直接蒸发进程，此后任何
+# 致命信号都会把全线程栈写到 crash_dump.log，现场不再丢失
+try:
+    import faulthandler as _fh
+    _CRASH_LOG = os.path.join(os.path.expanduser("~"), ".serialconsole_pro",
+                              "crash_dump.log")
+    os.makedirs(os.path.dirname(_CRASH_LOG), exist_ok=True)
+    _fh.enable(file=open(_CRASH_LOG, "a", encoding="utf-8", errors="replace"),
+               all_threads=True)
+except Exception:
+    pass
+
 # 所有源码都在 src/ 下，import src.* 需要项目根在 sys.path（python src/main.py 时根不在 path）
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
@@ -1069,8 +1082,11 @@ def main():
 
     def _dirty_quit_check(window):
         """真退出前的未保存检查（a239 第5轮A2-P2-5）：dirty tab > 0 时同步
-        MessageBox 确认——此前托盘退出/直退对全部脏 tab 静默清零（编辑半天
-        一点退出全没）。返回 True=继续退出，False=取消。"""
+        MessageBox 确认——此前托盘退出对全部脏 tab 静默清零。
+        ⚠ 只能在**后台线程**调用：evaluate_js 内部 Invoke 封送回 UI 线程，
+        在 closing 回调（UI 线程）里同步调 = 自锁死锁（a242 用户实锤
+        「运行中自己重启」的定位：窗口挂死被杀 → MCP 拉起新实例）。
+        返回 True=继续退出，False=取消。"""
         dirty = []
         try:
             import json as _json2
@@ -1093,11 +1109,19 @@ def main():
         except Exception:
             return True
 
+    def _quit_with_check(window):
+        """托盘「退出」回调（_hide_async 后台线程执行——evaluate_js 安全）：
+        先脏检查，用户确认才置退出标记+销毁窗口。"""
+        if not _dirty_quit_check(window):
+            return   # 取消：不动标记，窗口保持托盘隐藏态可唤出
+        _real_quit.update(flag=True)
+        _try_destroy(window)
+
     def on_closing():
         if _real_quit["flag"]:
-            if not _dirty_quit_check(window):
-                _real_quit.update(flag=False)   # 用户取消：撤销退出标记继续用
-                return False
+            # a242：脏检查已前移到 _quit_with_check（后台线程）——closing 的
+            # UI 线程不再做任何 JS 探测（死锁源）。取消退出时这里也不再有
+            # JS 调用，直接阻止销毁
             from src.tray import quit_tray
             quit_tray()
             _do_real_cleanup()
@@ -1111,8 +1135,10 @@ def main():
         except Exception:
             tray_enabled = True
         if not tray_enabled:
-            if not _dirty_quit_check(window):
-                return False   # 取消退出：窗口保留
+            # a242（用户实锤「运行中自己重启」定位）：closing 回调跑在 UI 线程，
+            # evaluate_js 内部 Invoke 回 UI 线程 = 自锁（窗口挂死被杀 → MCP 拉起
+            # 新实例 = 观感「自己重启」）。直退路径不再做 JS 探测（保可用），
+            # 脏检查只在托盘退出的后台线程做（_quit_with_check）
             _do_real_cleanup()
             return True
         # 关闭到托盘全流程在后台线程做（closing 回调零阻塞）。
@@ -1144,8 +1170,7 @@ def main():
         from src.tray import hide_to_tray
         ok = hide_to_tray(
             window,
-            on_quit=lambda: (_real_quit.update(flag=True),
-                              _try_destroy(window)),
+            on_quit=lambda: _quit_with_check(window),
         )
         if not ok:
             return   # 无托盘环境：closing 已拦但没建起托盘——用户无唤出入口。

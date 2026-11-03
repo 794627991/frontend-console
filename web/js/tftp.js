@@ -5,6 +5,7 @@ let _tftpFilesKey = '';      // 文件区脏检查 key（只在文件集变化�
 let _tftpActive = false;     // 有进行中传输（轮询频率切换，不查 DOM)
 function _fmtSize(n) {
   if (n == null) return '';
+  if (n >= 1024 ** 3) return (n / 1024 ** 3).toFixed(2) + 'GB';   // a242：GB 档（全局共享函数，打开方式弹窗同用）
   if (n >= 1048576) return (n / 1048576).toFixed(1) + 'MB';
   if (n >= 1024) return (n / 1024).toFixed(1) + 'KB';
   return n + 'B';
