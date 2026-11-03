@@ -181,7 +181,7 @@ async function buildHexDiffTab(aPath, bPath) {
   const loadTab = document.createElement('div');
   loadTab.className = 'tab';
   loadTab.dataset.portId = portId0;
-  loadTab.innerHTML = `<span class="led"></span><span class="tab-ico">⏳</span><span class="label">${esc((aPath.split(/[\\/]/).pop() + ' ↔ ' + bPath.split(/[\\/]/).pop()))}</span><span class="baud"></span><span class="close" title="关闭">✕</span>`;
+  loadTab.innerHTML = `<span class="led"></span><span class="tab-ico">${ICO16.hourglass}</span><span class="label">${esc((aPath.split(/[\\/]/).pop() + ' ↔ ' + bPath.split(/[\\/]/).pop()))}</span><span class="baud"></span><span class="close" title="关闭">✕</span>`;
   loadTab.onclick = (e) => { if (e.target.classList.contains('close')) { e.stopPropagation(); loadTab.remove(); return; } };
   const es0 = termArea.querySelector('.empty-state');
   if (es0) es0.remove();
@@ -220,6 +220,7 @@ async function buildHexDiffTab(aPath, bPath) {
         <button class="lv-btn" data-hxd-action="nav-prev" title="上一处差异">▲ 上一处</button>
         <button class="lv-btn" data-hxd-action="nav-next" title="下一处差异">▼ 下一处</button>
         <button class="lv-btn" data-hxd-action="only-diff" title="只看差异行（其余行隐藏，行号保留真实偏移）">≡ 只看差异</button>
+        <button class="lv-btn" data-hxd-action="totext" title="切换为文本对比（Monaco 双栏 diff，当前两文件不变）">${window.ICO ? ICO16.compare : ''} 文本对比</button>
         <span class="lv-info" data-hxd-info>对比中…</span>
       </div>
       <div class="hxd-main">
@@ -416,7 +417,13 @@ async function buildHexDiffTab(aPath, bPath) {
   wrap.querySelectorAll('.lv-btn').forEach(btn => {
     btn.onclick = () => {
       const act = btn.dataset.hxdAction;
-      if (act === 'nav-prev' || act === 'nav-next') {
+      if (act === 'totext') {
+        // a261：切换文本对比——同两文件强制文本模式重开（本 tab 关闭防重复）
+        const a = aPath, b = bPath;
+        closeEditorTab(portId);
+        if (typeof buildDiffViewerTab === 'function') buildDiffViewerTab(a, b, true);
+      }
+      else if (act === 'nav-prev' || act === 'nav-next') {
         if (!j.blocks.length) return;
         let k = conn._navIdx;
         k = act === 'nav-next' ? Math.min(k + 1, j.blocks.length - 1) : Math.max(k - 1, 0);

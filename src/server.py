@@ -2211,7 +2211,11 @@ def ai_diff_logs():
 def api_read_text():
     """对比用读文本：q=文件名或绝对路径。
     日志库内文件名（log tab 的 meta.path 可能是裸名）走 _resolve_log_path 解析；
-    其余绝对路径直接读（对比任意文本都有意义，只挡目录/不存在/超限）。"""
+    其余绝对路径直接读（对比任意文本都有意义，只挡目录/不存在/超限）。
+    a261（用户实锤 run.bat 被误判二进制）：中文 bat 常为 GBK——旧实现 utf-8
+    replace 强解出 >5% 替换符→前端误判二进制。改为：NUL 字节判二进制
+    （前 64KB），文本走 utf-8 严格→gb18030 严格→replace 三级探测，GBK
+    文件正确还原中文；bin 标志显式回传，前端不再猜。"""
     q = request.args.get("q", "")
     from src.app_state import reject_win_devpath
     if reject_win_devpath(q):   # a239：设备名防线（黑盒 CON 实测挂死线程）
@@ -2224,7 +2228,19 @@ def api_read_text():
             data = f.read(30 * 1024 * 1024 + 1)
         if len(data) > 30 * 1024 * 1024:
             return jsonify({"ok": False, "err": "文件过大（>30MB 上限）"}), 400
-        return jsonify({"ok": True, "name": os.path.basename(path), "text": data.decode("utf-8", errors="replace")})
+        if b"\x00" in data[:65536]:
+            return jsonify({"ok": False, "err": "二进制文件", "bin": True}), 400
+        enc_used = "utf-8"
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            try:
+                text = data.decode("gb18030")
+                enc_used = "gb18030"
+            except UnicodeDecodeError:
+                text = data.decode("utf-8", errors="replace")
+        return jsonify({"ok": True, "name": os.path.basename(path),
+                        "text": text, "enc": enc_used})
     except Exception as e:
         return jsonify({"ok": False, "err": str(e)}), 400
 

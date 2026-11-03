@@ -27,20 +27,62 @@ async function _diffIsBinary(aPath, bPath) {
     try {
       const r = await fetch('/api/read_text?q=' + encodeURIComponent(p));
       const j = await r.json();
-      if (!j.ok) bin = true;   // 读不了（二进制被拒/文件大）→ 当二进制交给 hex diff 试
-      else {
-        const t = j.text;
-        if (t.indexOf('\x00') >= 0) bin = true;
-        else {
-          const bad = (t.match(/�/g) || []).length;
-          if (t.length && bad / t.length > 0.05) bin = true;
-        }
-      }
+      if (!j.ok) bin = true;          // 读失败（超限等）→ 交 hex diff 试
+      else if (j.bin) bin = true;     // a261：服务端 NUL 探测权威标志
+      // 旧后端兼容兜底：无 bin 标志时文本含 NUL 判二进制（新后端探测更准）
+      else if (typeof j.text === 'string' && j.text.indexOf('\x00') >= 0) bin = true;
+      // 旧"替换符>5%"启发式已删——GBK 等非 UTF-8 文本被误判二进制（用户实锤
+      // run.bat GBK 中文）；编码探测移到服务端（utf-8→gb18030→replace）
     } catch (_) { bin = true; }
     _binCheckRemember(p, bin);
     return bin;
   };
   return (await check(aPath)) || (await check(bPath));
+}
+
+// a261（用户需求：文本/二进制对比可选）：检测为二进制时弹方式选择器。
+// 返回 'text' | 'hex' | 'cancel'
+function _diffModeChoose(aPath, bPath) {
+  return new Promise(resolve => {
+    let m = document.getElementById('diffModeModal');
+    if (!m) {
+      m = document.createElement('div');
+      m.className = 'modal';
+      m.id = 'diffModeModal';
+      m.innerHTML = `
+        <div class="box" style="max-width:400px;">
+          <div class="head"><strong>选择对比方式</strong>
+            <div class="head-actions"><button class="btn ghost icon-btn" id="diffModeClose">✕</button></div>
+          </div>
+          <div style="padding:16px 20px;">
+            <div id="diffModeNames" style="font-family:var(--font-mono);font-size:12px;color:var(--fg-bright);word-break:break-all;margin-bottom:10px;"></div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:14px;">检测到二进制内容（含 NUL 字节）。文本对比可能显示乱码，字节级对比逐字节高亮。</div>
+            <div style="display:flex;gap:10px;justify-content:flex-end;">
+              <button class="btn ghost" id="diffModeCancel">取消</button>
+              <button class="btn ghost" id="diffModeText">强制文本对比</button>
+              <button class="btn primary" id="diffModeHex">二进制对比（推荐）</button>
+            </div>
+          </div>
+        </div>`;
+      document.body.appendChild(m);
+      const fin = v => { m.classList.remove('show'); m._fin && (m._fin(v), m._fin = null); };
+      m.querySelector('#diffModeHex').onclick = () => fin('hex');
+      m.querySelector('#diffModeText').onclick = () => fin('text');
+      m.querySelector('#diffModeCancel').onclick = () => fin('cancel');
+      m.querySelector('#diffModeClose').onclick = () => fin('cancel');
+      document.addEventListener('keydown', e => {
+        if (!m.classList.contains('show')) return;
+        if (e.key === 'Escape') { e.preventDefault(); m._fin && (m._fin('cancel'), m._fin = null); m.classList.remove('show'); }
+      });
+    }
+    const nm = (p) => esc(String(p).split(/[\\/]/).pop());
+    m.querySelector('#diffModeNames').textContent =
+      String(aPath).split(/[\\/]/).pop() + ' ↔ ' + String(bPath).split(/[\\/]/).pop();
+    m._fin = resolve;
+    m.classList.add('show');
+    const hex = m.querySelector('#diffModeHex');
+    setTimeout(() => hex.focus(), 50);
+  });
 }
 
 async function _diffReadFile(path) {
@@ -90,10 +132,13 @@ function _diffCountLines(conn, first) {
 
 // ---- 构建对比 tab：aPath/bPath 绝对路径 ----
 // 复用打开：同 A/B 组合已开 → 直接切过去
-async function buildDiffViewerTab(aPath, bPath) {
-  // 二进制文件分流：文本 diff（Monaco）读二进制是乱码，走字节级 hex diff
-  if (typeof buildHexDiffTab === 'function' && await _diffIsBinary(aPath, bPath)) {
-    return buildHexDiffTab(aPath, bPath);
+async function buildDiffViewerTab(aPath, bPath, _forceText) {
+  // 二进制分流（a261：检测到二进制时用户可选——文本强制/二进制/取消）
+  if (!_forceText && typeof buildHexDiffTab === 'function' && await _diffIsBinary(aPath, bPath)) {
+    const pick = await _diffModeChoose(aPath, bPath);
+    if (pick === 'cancel') return null;
+    if (pick === 'hex') return buildHexDiffTab(aPath, bPath);
+    // 'text'：落穿到文本对比（强制）
   }
   for (const pid in connections) {
     const c = connections[pid];
@@ -136,6 +181,7 @@ async function buildDiffViewerTab(aPath, bPath) {
         <span class="lv-sep"></span>
         <button class="lv-btn" data-diff-action="wrap" title="切换超长行折行">↩ 折行</button>
         <button class="lv-btn" data-diff-action="collapse" title="折叠未变化区域（只看差异段）">⇕ 折叠未变</button>
+        <button class="lv-btn" data-diff-action="tohex" title="切换为二进制对比（逐字节高亮，当前两文件不变）">${window.ICO ? ICO16.hex : ''} 二进制对比</button>
         <span class="lv-info" data-diff-info>对比中…</span>
       </div>
       <div class="ed-main">
@@ -206,7 +252,13 @@ async function buildDiffViewerTab(aPath, bPath) {
   wrap.querySelectorAll('.lv-btn').forEach(btn => {
     btn.onclick = () => {
       const act = btn.dataset.diffAction;
-      if (act === 'swap') {
+      if (act === 'tohex') {
+        // a261：切换二进制对比——同两文件重开 hex 对比（本 tab 关闭防重复）
+        const a = conn.aPath, b = conn.bPath;
+        closeEditorTab(portId);
+        if (typeof buildHexDiffTab === 'function') buildHexDiffTab(a, b);
+      }
+      else if (act === 'swap') {
         // 交换 A/B：互换 model + 路径/文件名/标题（BSP 常用：反转"正常 vs 异常"基准方向）
         const { original, modified } = conn.diffEd.getModel();
         conn.diffEd.setModel({ original: modified, modified: original });
@@ -294,7 +346,7 @@ function _diffPickModal() {
   m.innerHTML = `
     <div class="box" style="max-width:720px;">
       <div class="head">
-        <strong>🔀 文件对比</strong>
+        <strong><span style="vertical-align:-2.5px">${ICO16.compare}</span> 文件对比</strong>
         <div class="head-actions">
           <button class="btn ghost" id="diffPickClear" title="清空两栏重新选">清空</button>
           <button class="btn ghost icon-btn" id="diffPickClose">✕</button>
@@ -307,7 +359,7 @@ function _diffPickModal() {
             <div class="diff-pick-zone">
               <div class="diff-pick-empty">点击选择文件<br>或把文件拖到这里</div>
               <div class="diff-pick-file" style="display:none;">
-                <span class="ico">📄</span><span class="fname"></span><span class="rm" title="移除">✕</span>
+                <span class="ico">${ICO16.file}</span><span class="fname"></span><span class="rm" title="移除">✕</span>
               </div>
             </div>
           </div>
@@ -317,7 +369,7 @@ function _diffPickModal() {
             <div class="diff-pick-zone">
               <div class="diff-pick-empty">点击选择文件<br>或把文件拖到这里</div>
               <div class="diff-pick-file" style="display:none;">
-                <span class="ico">📄</span><span class="fname"></span><span class="rm" title="移除">✕</span>
+                <span class="ico">${ICO16.file}</span><span class="fname"></span><span class="rm" title="移除">✕</span>
               </div>
             </div>
           </div>
@@ -455,8 +507,8 @@ function _showDiffCtxMenu(x, y, pid) {
   const noA = !_diffCtxA;
   const sameAsA = path && _diffCtxA && path === _diffCtxA;
   m.innerHTML = [
-    `<div class="ctx-item${isA ? ' disabled' : ''}" data-act="pickA">🔀 选择以进行对比${isA ? '（当前 A）' : ''}</div>`,
-    `<div class="ctx-item${(noA || sameAsA) ? ' disabled' : ''}" data-act="pickB" title="${noA ? '先在另一文件上「选择以进行对比」' : ''}">🔀 与选进行对比${noA ? '（未选 A）' : ''}</div>`,
+    `<div class="ctx-item${isA ? ' disabled' : ''}" data-act="pickA"><span class="ctx-ico">${ICO16.compare}</span>选择以进行对比${isA ? '（当前 A）' : ''}</div>`,
+    `<div class="ctx-item${(noA || sameAsA) ? ' disabled' : ''}" data-act="pickB" title="${noA ? '先在另一文件上「选择以进行对比」' : ''}"><span class="ctx-ico">${ICO16.compare}</span>与选进行对比${noA ? '（未选 A）' : ''}</div>`,
   ].join('');
   m.style.display = 'block';
   const mw = m.offsetWidth, mh = m.offsetHeight;
