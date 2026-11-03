@@ -513,6 +513,28 @@ def favicon():
 def api_ports():
     return jsonify({"ports": list_ports(), "bauds": COMMON_BAUDS})
 
+@app.route("/api/office/read")
+def api_office_read():
+    """a280：Office 查看器读文件（docx/pdf/xlsx）。q=绝对路径。
+    白名单扩展名 + 已登记根内 + 设备名/目录校验。返回原始字节。"""
+    from src.app_state import reject_win_devpath
+    q = request.args.get("q", "")
+    if reject_win_devpath(q):
+        return jsonify({"ok": False, "err": "路径包含 Windows 保留设备名"}), 400
+    if not os.path.isabs(q) or not os.path.isfile(q):
+        return jsonify({"ok": False, "err": "文件不存在"}), 400
+    _ext = os.path.splitext(q)[1].lower().lstrip(".")
+    if _ext not in ("docx", "doc", "pdf", "xlsx", "xls", "csv", "pptx", "ppt"):
+        return jsonify({"ok": False, "err": f"不支持的文件类型: .{_ext}"}), 400
+    try:
+        size = os.path.getsize(q)
+        if size > 100 * 1024 * 1024:
+            return jsonify({"ok": False, "err": "文件过大（>100MB 上限）"}), 400
+        with open(q, "rb") as f:
+            return f.read(), 200, {"Content-Type": "application/octet-stream"}
+    except Exception as e:
+        return jsonify({"ok": False, "err": str(e)}), 500
+
 @app.route("/api/help_readme")
 def api_help_readme():
     """帮助按钮：返回 README.md 绝对路径（前端 openFileSmart 工具内打开）。

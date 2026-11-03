@@ -2041,6 +2041,9 @@ async function openFileSmart(path, mode, opts) {
   const name = path.split(/[\/]/).pop().toLowerCase();
   const dot = name.lastIndexOf('.');
   const ext = dot > 0 ? name.slice(dot) : name;
+  // a280：Office 文件（docx/pdf/xlsx/pptx）直接分发到专用查看器——
+  // 不走文本/编辑器/弹窗流程
+  if (typeof openOfficeFile === 'function' && openOfficeFile(path)) return;
   const isText = _DROP_TEXT_EXT.has(ext) || name === 'makefile' || name === 'readme';
   // 探测大小（失败按 0 处理走编辑器尝试）
   let size = 0, isTextSrv = isText;
