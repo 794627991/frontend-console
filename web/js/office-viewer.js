@@ -528,13 +528,23 @@ async function _ovRenderDocx(buf, body, wrap, conn) {
 function _ovDocxHeadsBySize(container) {
   const ps = [...container.querySelectorAll('p')].filter(p => (p.textContent || '').trim().length >= 2);
   if (ps.length < 8) return [];   // 段落太少不猜
-  const sizes = ps.map(p => parseFloat(getComputedStyle(p).fontSize)).filter(x => x > 0).sort((a, b) => a - b);
+  // docx-preview 把 run 字号放段内 span 的内联 style（p 级 computed 恒默认
+  // 13px，实测 span=29.3px）——字号取「段内最大 span 字号」，无 span 回落 p 级
+  const fsOf = p => {
+    let mx = 0;
+    p.querySelectorAll('span[style*="font-size"]').forEach(sp => {
+      const v = parseFloat(sp.style.fontSize) || 0;
+      if (v > mx) mx = v;
+    });
+    return mx || parseFloat(getComputedStyle(p).fontSize);
+  };
+  const sizes = ps.map(fsOf).filter(x => x > 0).sort((a, b) => a - b);
   const mid = sizes[Math.floor(sizes.length / 2)] || 12;
   const thr = mid * 1.2;
   const cands = [];
   for (const p of ps) {
     const txt = (p.textContent || '').trim();
-    const fs = parseFloat(getComputedStyle(p).fontSize);
+    const fs = fsOf(p);
     if (fs >= thr && txt.length <= 60) {
       p.dataset.ovHfs = fs;
       cands.push(p);
