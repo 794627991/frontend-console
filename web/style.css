@@ -1272,8 +1272,11 @@
     border-color: var(--border); border-bottom-color: var(--bg);
     position: relative;
   }
+  /* a294：bottom -1px 悬挑被 overflow:hidden 的容器裁剪——用户实锤"claude 拖进
+     抽屉中间后 active 不高亮"（drawerBar overflow:hidden 裁掉底边线）。内贴 bottom:0
+     任何容器里都完整渲染 */
   .tab.active::after {
-    content: ""; position: absolute; bottom: -1px; left: 0; right: 0; height: 2px;
+    content: ""; position: absolute; bottom: 0; left: 0; right: 0; height: 2px;
     background: linear-gradient(90deg, var(--accent), transparent);
   }
   .tab .led { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
