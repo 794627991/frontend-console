@@ -1289,14 +1289,16 @@
      落点指示线加粗发光脉冲（用户实锤：v1 细线无动画手感差） */
   .tab.dragging { opacity: 0.4; }
   .tab.drop-before, .tab.drop-after { position: relative; }
+  /* a293：指示线改画在元素【内部边缘】——v2 的 -3px 悬挑被 .tabs 的
+     overflow:hidden 裁剪（用户实锤"多数时候不高亮"）。内缘 + 内发光不裁剪 */
   .tab.drop-before::after, .tab.drop-after::after,
   .tab-drawer.drop-before::after, .tab-drawer.drop-after::after {
     content: ""; position: absolute; top: 2px; bottom: 2px; width: 3px;
     border-radius: 2px; background: var(--accent);
     box-shadow: 0 0 8px 2px color-mix(in srgb, var(--accent) 65%, transparent);
     animation: tabDropPulse 0.9s ease-in-out infinite; pointer-events: none; z-index: 6; }
-  .tab.drop-before::after, .tab-drawer.drop-before::after { left: -3px; }
-  .tab.drop-after::after, .tab-drawer.drop-after::after { right: -3px; }
+  .tab.drop-before::after, .tab-drawer.drop-before::after { left: 0; }
+  .tab.drop-after::after, .tab-drawer.drop-after::after { right: 0; }
   @keyframes tabDropPulse {
     0%, 100% { opacity: 1; box-shadow: 0 0 8px 2px color-mix(in srgb, var(--accent) 65%, transparent); }
     50% { opacity: 0.55; box-shadow: 0 0 4px 1px color-mix(in srgb, var(--accent) 35%, transparent); }
