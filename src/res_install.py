@@ -186,6 +186,9 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None,
             _bili_size = sum(int(e.get("size") or 0) for e in reader.entries
                              if e.get("kind") == "bili"
                              and e.get("mode") != "link")
+            # a340R（第11轮 P3-2）：基准在 try 外保存（except 里要用，
+            # 写在 else 分支内会 UnboundLocalError）。
+            _bili_base0 = cur[0]
             try:
                 bili_root = runtime_root()
                 os.makedirs(bili_root, exist_ok=True)
@@ -240,7 +243,7 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None,
                     # （实测解完 200MB 后 cur[0]=20100MB）。后面的 webview2/rest
                     # 都以 cur[0] 为基准 → 进度条全程 100% 静止。
                     # 必须在解包前取一次基准，与 rest 分支（base = cur[0]）同构。
-                    _bili_base = cur[0]
+                    _bili_base = _bili_base0
                     reader.extract_all(bili_root, kinds=["bili"],
                                        progress=lambda d, t, p2: prog(
                                            _bili_base + d, sub_total, p2),
@@ -263,8 +266,8 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None,
                 sub_total = max(1, sub_total - _bili_size)
                 # a339R（第10轮 P3-4）：中途失败时 cur[0] 停在中间值，
                 # 而分母已整块扣掉 → 后续 webview2 的 `_base = cur[0]` 会
-                # 取到虚高的值，进度条先满后跳。回滚到基准。
-                cur[0] = 0
+                # 取到虚高的值，进度条先满后跳。回滚到进入 bili 前的基准。
+                cur[0] = _bili_base0
             plan.remove("bili")
         if "webview2" in plan:
             # 返回值 False = 已完成跳过（没解包，不产生进度字节）→ 把它

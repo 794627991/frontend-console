@@ -17,9 +17,11 @@ a337R（第8轮 P1/P2-2/P2-3/P2-4）：上一版挪进 fcpk.py 又踩了两个�
 
 import re
 
-# 子集包语义关键字（与 res_install.ORDER + 常见中文别名对齐）
-_SUBSET_KW = (r"拓展|扩展|claude|基础|node|git|dotnet|webview2|onlyoffice|"
-              r"bili|pydeps|office")
+# 子集包语义关键字（与 res_install.ORDER + 常见中文别名对齐）。
+# a340R（第11轮 P2-1）：英文短词加词边界——`digital`/`legit` 含 git、
+# `nodejs` 含 node，无边界会把 `前端控制台-digital资源包.fcpk` 判成子集。
+_SUBSET_KW = (r"拓展|扩展|claude|基础|onlyoffice|webview2|dotnet|bili|"
+              r"pydeps|(?<![a-z])(?:node|git|office)(?![a-z])")
 
 # 浏览器重名下载形态：`资源包 (1).fcpk` / `资源包（2）.fcpk`。
 # 序号**必须**处在空白/括号里——`资源包2.fcpk` 可能是用户手改的子集包，
@@ -36,9 +38,14 @@ _RE_VER = re.compile(r"资源包[-_]v\d+(?:\.\d+)*\.fcpk$")
 #     门户会把子集包发给同事（a325R 修掉的死锁循环复活）；
 #   · 剥离用空串而不是 `-`——原 `sub("-")` 会产生 `资源包--拓展`，让 ① 的
 #     `资源包[-_]?` 精确分支永远不命中，只是靠兜底侥幸判对。
-_RE_COPYWORD = re.compile(r"(?:[-_]?(?:副本|copy)\d*(?=[-_]|\.))+")
+_RE_COPYWORD = re.compile(r"(?:[-_]?(?:副本|copy)\d{0,3})+(?=[-_]|\.)")
 # 纯「重名副本」整名（剥完副本词只剩主名）——含序号、多重副本
 _RE_ONLY_COPY = re.compile(r"资源包[-_]*\.fcpk$")
+# 备份/历史文件（a340R 第11轮 P1-2）：`资源包备份.fcpk` 与主包同 rank，
+# mtime 更新就会顶掉真主包被门户发给同事——这正是 _offline_pkg docstring
+# 点名要防的形态，上一轮的 startswith("资源包") 无条件放行把它漏了。
+_RE_BACKUP = re.compile(r"资源包[^-_.]*(备份|bak|backup|old|旧)|"
+                        r"[-_.](备份|bak|backup|old|旧)\.fcpk$")
 
 
 def _norm(s):
@@ -55,18 +62,28 @@ def is_res_pkg(name, require_prefix=None):
     `"-资源包" in name` —— 分裂从分类转移到了**可见性**：用户把包改名成
     `资源包.fcpk` 时闸门选得中、门户看不见。统一到这里，两边都只问它。
 
-    a339R（第10轮 P3-3）：门户放宽门槛后会误纳 `别家工具-资源包.fcpk`、
-    `资源包备份.fcpk` 这类同目录文件。传 require_prefix（应用名）可要求
-    basename 以 `<应用名>-` 开头，或以 `资源包` 开头（用户去掉前缀的形态）。
+    a339R（第10轮）：门户放宽门槛后会误纳 `别家工具-资源包.fcpk`。传
+    require_prefix（应用名）可要求 basename 以 `<应用名>-` 开头。
+    a340R（第11轮 P1-1）：前缀比对必须先过 _norm —— 否则用户把包改名成
+    `前端控制台 - 资源包.fcpk`（带空格）或全角连字符 `－` 时，闸门能自动
+    找到并装成功、门户却看不见，可见性口径第三次分裂。
+    a340R（第11轮 P1-2）：备份/历史文件（`资源包备份`、`-副本.old`…）一律
+    不算发行包——它与主包同 rank，mtime 更新就会顶掉真主包发给同事。
     """
     if not name:
         return False
     b = str(name).replace("\\", "/").rsplit("/", 1)[-1].lower()
     if not (b.endswith(".fcpk") and "资源包" in b):
         return False
+    nb = _norm(b)
+    if _RE_BACKUP.search(nb):
+        return False
     if require_prefix:
-        pre = str(require_prefix).lower() + "-"
-        if not (b.startswith(pre) or b.startswith("资源包")):
+        _pn = _norm(str(require_prefix).lower())
+        # `前端控制台-资源包` / `前端控制台（资源包）`（括号被 _norm 去掉）/
+        # 用户去掉应用名前缀的 `资源包`
+        if not (nb.startswith(_pn + "-") or nb.startswith(_pn + "资源包")
+                or nb.startswith("资源包")):
             return False
     return True
 
@@ -91,8 +108,11 @@ def pkg_class(name):
     # ① 子集关键字最先判。a339R（第10轮 P2-2）：不再要求关键字紧跟在
     #    `资源包[-_]?` 之后——`资源包（副本）拓展`、`资源包2024-拓展` 这类
     #    中间夹了副本词/数字的形态会被漏判成全量（危险方向：子集顶替主包）。
-    #    只要名字里有子集关键字就判子集（保守方向）。
-    if re.search(r"(?:%s)" % _SUBSET_KW, t2):
+    #    a340R（第11轮 P2-1）：但**只能在「资源包」之后找**——原实现搜全名，
+    #    `前端控制台-office文档-资源包.fcpk`（关键字在资源包之前、实为全量）
+    #    会被判成子集；英文短词还要加词边界（digital 含 git、legit 含 git）。
+    _i = t2.find("资源包")
+    if _i >= 0 and re.search(_SUBSET_KW, t2[_i:]):
         return "subset"
     # ② 全量形态：浏览器重名副本 / 带版本后缀 / 剥掉副本词后只剩主名
     if _RE_COPY.search(b) or _RE_VER.search(t) or _RE_ONLY_COPY.search(t2):
