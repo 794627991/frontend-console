@@ -134,7 +134,9 @@ def autofind_fcpk():
                 # 完整路径做 `"资源包" in p`，工具解压在含"资源包"的目录里时，
                 # 同目录别家的 other-tool.fcpk 也会被选中。
                 _bn = os.path.basename(p).lower()
-                # a341R：闸门也要前缀过滤，否则同目录别家的资源包会被选走
+                # a341R：闸门也要前缀过滤，否则同目录别家的资源包会被选走。
+                # a342R（第13轮 P2-1）：但**不**过滤备份——闸门的目标是
+                # "找到能用的包"，唯一一份包叫 `-备份` 时必须还能装。
                 _r = _rk(_bn, require_prefix=_AN)
                 if _r < 0:
                     continue
@@ -142,7 +144,18 @@ def autofind_fcpk():
     if not cands:
         return ""
     # 先按 rank 降序、再按 mtime 降序（rank 高者不受 mtime 影响）
-    cands.sort(key=lambda t: (t[0], os.path.getmtime(t[1])), reverse=True)
+    # a342R（第13轮 P2-2）：getmtime 必须容错——Desktop/Downloads 常被 OneDrive
+    # 重定向或杀软隔离，glob 与 stat 之间文件消失会让整条闸门兜底路径抛异常，
+    # 用户看到的是"复查运行环境"而不是"包找不到"。
+    def _mt(p):
+        try:
+            return os.path.getmtime(p)
+        except OSError:
+            return 0.0
+    cands = [c for c in cands if os.path.exists(c[1])]
+    if not cands:
+        return ""
+    cands.sort(key=lambda t: (t[0], _mt(t[1])), reverse=True)
     return cands[0][1]
 
 

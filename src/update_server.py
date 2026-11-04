@@ -23,7 +23,10 @@ PORT = 8765
 # 同目录的 `别家工具-资源包.fcpk` / `资源包备份.fcpk` 会被误当成发行包发给
 # 同事。要求 basename 以本应用名开头。a341R：常量挪到 src.pkgname，与闸门
 # 共用（原先只有门户有，闸门会把别家的包选走）。
-from src.pkgname import APP_NAME
+try:
+    from src.pkgname import APP_NAME
+except ImportError:      # 单文件运行（python src/update_server.py）时无包上下文
+    APP_NAME = "前端控制台"
 _MAX_AGE = 60          # manifest 缓存友好：发布后同事 1 分钟内必见新版
 _SESSION_TTL = 12 * 3600
 _DEFAULT_PWD = "888888"
@@ -219,7 +222,7 @@ def _offline_pkg():
             # 重名副本/`-副本`/`-v2`/备份) > 子集包(1)。只分 full/subset 时，
             # `资源包-副本副本.fcpk`（mtime 更新）与备份包都会与真主包同档，
             # 按 mtime 抢赢后把错包发给同事——这是连续三轮的同一类事故。
-            rank = _pr(n, require_prefix=APP_NAME)
+            rank = _pr(n, require_prefix=APP_NAME, filter_backup=True)
             if rank < 0:
                 continue
         else:

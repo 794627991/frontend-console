@@ -1711,7 +1711,8 @@ def api_update_server_toggle():
             us_old._server = None       # 半途炸时兜底：状态至少是「已停」
         # 依赖方先重载（version → updater → update_server）；未导入过的
         # 首次导入也走同一路径（坏代码在 import 阶段就能报出来）
-        for mod in ("src.version", "src.updater", "src.update_server"):
+        for mod in ("src.pkgname", "src.version", "src.updater",
+                    "src.update_server"):
             m = sys.modules.get(mod)
             if m is not None:
                 importlib.reload(m)

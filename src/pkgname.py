@@ -26,7 +26,7 @@ APP_NAME = "前端控制台"
 # 子集包语义关键字。英文短词加词边界——`digital`/`legit` 含 git、
 # `nodejs` 含 node，无边界会把 `前端控制台-digital资源包.fcpk` 判成子集。
 _SUBSET_KW = (r"拓展|扩展|claude|基础|onlyoffice|webview2|dotnet|bili|"
-              r"pydeps|(?<![a-z])(?:node|git|office)s?(?![a-z])")
+              r"pydeps|(?<![a-z])(?:node|git|office)(?:js|s)?(?![a-z])")
 
 # 浏览器重名下载：`资源包 (1).fcpk`。序号必须在空白/括号里。
 _RE_COPY = re.compile(r"资源包[ \t]*[()（）][ \t]*\d+[ \t]*[)）][ \t]*\.fcpk$")
@@ -56,7 +56,7 @@ def _base(name):
     return str(name or "").replace("\\", "/").rsplit("/", 1)[-1].lower()
 
 
-def is_res_pkg(name, require_prefix=None):
+def is_res_pkg(name, require_prefix=None, filter_backup=False):
     """是不是资源包文件名（两侧共用的前置判定）。
 
     a338R（第9轮）：原先 autofind 判 `"资源包" in name`、门户判
@@ -64,18 +64,19 @@ def is_res_pkg(name, require_prefix=None):
     闸门选得中、门户看不见。
     a340R（第11轮）：前缀比对必须先过 _norm（`前端控制台 - 资源包.fcpk`
     闸门能找到、门户看不见）。
-    a341R（第12轮）：
-      · 前缀补下划线形态 `前端控制台_资源包.fcpk`；
-      · 备份过滤只在传了 require_prefix（门户）时生效——闸门不能因为
-        唯一一份包叫 `-old` 就找不到。
+    a341R（第12轮）：前缀补下划线形态、把前缀过滤下沉到这里。
+    a342R（第13轮 P2-1，实锤）：备份过滤原先绑在 require_prefix 上，而闸门
+    也传了 require_prefix=APP_NAME —— 「闸门不过滤备份」从未成立：同事机
+    唯一一份包叫 `-备份`/`-bak2` 时闸门直接返回空，提示"工具无法启动"。
+    现拆成独立开关 filter_backup，只有门户传 True。
     """
     b = _base(name)
     if not (b.endswith(".fcpk") and "资源包" in b):
         return False
     nb = _norm(b)
+    if filter_backup and _RE_BACKUP.search(nb):
+        return False
     if require_prefix:
-        if _RE_BACKUP.search(nb):
-            return False
         _pn = _norm(str(require_prefix).lower())
         _rest = nb[len(_pn):] if nb.startswith(_pn) else None
         if _rest is None:
@@ -88,7 +89,7 @@ def is_res_pkg(name, require_prefix=None):
     return True
 
 
-def pkg_rank(name, require_prefix=None):
+def pkg_rank(name, require_prefix=None, filter_backup=False):
     """选包优先级（a341R 第12轮）：同名同类里必须让「正牌」赢。
 
     前三轮反复出现的真实事故都是**同 rank 按 mtime 竞争**：`资源包-副本副本`
@@ -100,7 +101,8 @@ def pkg_rank(name, require_prefix=None):
       1 = 子集包
       -1 = 不可见（不是资源包 / 前缀不符 / 门户侧的备份文件）
     """
-    if not is_res_pkg(name, require_prefix=require_prefix):
+    if not is_res_pkg(name, require_prefix=require_prefix,
+                      filter_backup=filter_backup):
         return -1
     cls = pkg_class(name)
     if cls is None:
@@ -156,7 +158,8 @@ def pkg_class(name):
         return "subset"                    # `资源包-拓展` / `资源包2024-拓展`
     if re.search(r"(?:%s)[-_]?$" % _SUBSET_KW, before):
         return "subset"
-    # 右侧带了任意 tag（`-2024` / `-1` / `-2024.01.01`）一律当子集；
-    # 只有无分隔符的纯数字尾巴（`资源包2`）按全量——它更像浏览器重名，
-    # 而 build.py 产出的子集包永远带 `-`。
-    return "subset" if set(after[:1]) & set("-_.") else "full"
+    # a342R（第13轮 P2-3，实锤）：右侧是**无名 tag**（`-2024` / `-old` / `-1`
+    # / `.old`）时判 full —— 用户把旧版全量改名留档是常规操作，判成子集会让
+    # 它与真子集同档、重新回到 mtime 抢包（本轮 P2-3 端到端已复现）。
+    # build.py 产出的子集包永远带关键字（`-基础/-claude/-拓展/…`），不受影响。
+    return "full"
