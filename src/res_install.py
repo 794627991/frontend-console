@@ -30,7 +30,8 @@ from src import fcpk
 # dotnet/node/git→install/、claude→claude-code/、pydeps→pydeps/
 
 # 安装顺序：先决条件在前
-ORDER = ["dotnet", "webview2", "node", "git", "claude", "bili", "pydeps"]
+ORDER = ["dotnet", "webview2", "node", "git", "claude", "bili",
+           "onlyoffice", "pydeps"]
 
 
 class InstallError(Exception):
@@ -523,10 +524,30 @@ def _bili_reprobe(say=None):
         if say: say("· 压缩引擎检测刷新失败（重启工具后生效）：%s" % e)
 
 
-_INSTALLERS = {"dotnet": _install_dotnet, "node": _install_node,
-               "bili": _install_bili,
-               "git": _install_git, "claude": _install_claude,
-               "pydeps": _install_pydeps}
+def _install_onlyoffice(staging, say, force=False):
+    """OnlyOffice DS（a309R：word/excel/ppt 全功能编辑）。可选组件——
+    已装跳过；包内安装器静默装（Inno /VERYSILENT，弹 UAC 确认框约 10 分钟
+    含字体生成）。失败只记 errors 不阻断其余资源（res_install 编排语义）"""
+    from src.res_boot import probe_onlyoffice
+    st, _v, _m = probe_onlyoffice()
+    if st == "ok":
+        say("· OnlyOffice DS 已安装（localhost:80 在线），跳过")
+        return False
+    if force:
+        say("· OnlyOffice 强制重装（静默覆盖）")
+    exe = _find(staging, "onlyoffice-documentserver", ".exe")
+    if not exe:
+        raise InstallError("包内无 OnlyOffice 安装器")
+    import subprocess as _sp
+    say("静默安装 OnlyOffice DS（873MB，含字体生成约 10 分钟）…")
+    say("  ⚠ 将弹 UAC 提权确认框，请点「是」")
+    rc = _sp.call([exe, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
+                  creationflags=0x08000000, timeout=1800)
+    st2, _v2, _m2 = probe_onlyoffice()
+    if rc != 0 and st2 != "ok":
+        raise InstallError("OnlyOffice 安装失败（退出码 %s）——可手动安装：%s"
+                           % (rc, exe))
+    return True
 
 
 # ------------------------------------------------------------------ 工具
@@ -553,3 +574,11 @@ def _now():
 def _merge_state(d):
     from src import res_boot
     res_boot._write_state(d)
+
+
+_INSTALLERS = {"dotnet": _install_dotnet, "node": _install_node,
+               "bili": _install_bili,
+               "git": _install_git, "claude": _install_claude,
+               "onlyoffice": _install_onlyoffice,
+               "pydeps": _install_pydeps}
+

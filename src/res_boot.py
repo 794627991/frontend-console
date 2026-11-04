@@ -56,6 +56,9 @@ MANIFEST = [
      "fix": "离线资源包内复制安装"},
     {"kind": "pydeps", "name": "工具 Python 依赖", "hard": False,
      "fix": "离线资源包内 wheel 补装"},
+    # a309R：OnlyOffice DS（word/excel/ppt 全功能编辑，可选）——探测 80 口
+    {"kind": "onlyoffice", "name": "OnlyOffice 全功能编辑", "hard": False,
+     "fix": "离线资源包内静默安装（约 10 分钟，弹 UAC 确认）"},
 ]
 
 
@@ -238,6 +241,19 @@ def probe_claude():
         return "missing", "", ""
 
 
+def probe_onlyoffice():
+    """OnlyOffice DS 探测：80 口 healthcheck（服务在装好的机器常驻）。
+    a309R：DS 是 Windows 服务，装了即监听 80——比查目录/注册表可靠"""
+    import urllib.request
+    try:
+        with urllib.request.urlopen("http://localhost/healthcheck", timeout=2) as r:
+            if r.status == 200:
+                return "ok", "Document Server", ""
+    except Exception:
+        pass
+    return "missing", "", ""
+
+
 def probe_pydeps():
     """工具自身 pip 依赖：只测发布包里也可能缺的那几个（exe 分发恒 ok）。"""
     need = [("paramiko", "SSH"), ("winpty", "内嵌终端")]
@@ -254,6 +270,7 @@ def probe_pydeps():
 
 _PROBES = {"webview2": probe_webview2, "dotnet": probe_dotnet,
            "node": probe_node, "git": probe_git, "claude": probe_claude,
+           "onlyoffice": probe_onlyoffice,
            "pydeps": probe_pydeps}
 
 

@@ -309,15 +309,8 @@ def claude_setup_offline_pack():
                             _log(f"  claude-code 已打包 {n} 个文件…")
                 _log(f"claude-code 打包完成，共 {n} 个文件")
                 _pack_pydeps(zf)
-                # a309（用户令：OnlyOffice 进离线包随包发布——全功能编辑依赖）：
-                # vendor/onlyoffice 安装包 916MB 加进 zip；没有则提示跳过
-                _oo = os.path.join(_pkg_root(), "vendor", "onlyoffice",
-                                   "onlyoffice-documentserver.exe")
-                if os.path.isfile(_oo):
-                    _log(f"加入 OnlyOffice DS 安装包（{os.path.getsize(_oo)//1024//1024} MB，全功能编辑用）…")
-                    zf.write(_oo, "install/onlyoffice-documentserver.exe")
-                else:
-                    _log("跳过 OnlyOffice：vendor/onlyoffice 无安装包（本机已有 DS 也可用）")
+                # OnlyOffice 不进旧 zip 通道（a309R 改道：全走 .fcpk 加密链路，
+                # 见 build._offline_sources kind=onlyoffice + res_install._install_onlyoffice）
             _setup_state.update(done=True, ok=True, phase="打包完成")
             _log(f"完成：{zip_path}（{os.path.getsize(zip_path)//1024//1024} MB）")
         except Exception as e:
@@ -786,36 +779,7 @@ def claude_setup_install():
                     _make_npm_shims(dst)
                     _ensure_npm_path()
 
-                    # a309（用户令：OnlyOffice 随离线包分发安装——word/excel/ppt
-                    # 全功能编辑依赖）。包内 install/onlyoffice-documentserver.exe
-                    # 存在且本机未装（80 端口 healthcheck 不通）才静默安装；
-                    # 已装/包内没有都跳过（可选组件不阻塞 claude 安装）
-                    try:
-                        _oo = (_pkg_path("install", "onlyoffice-documentserver.exe")
-                               or _pkg_glob("onlyoffice-documentserver*.exe"))
-                        _oo_installed = False
-                        try:
-                            import urllib.request
-                            with urllib.request.urlopen("http://localhost/healthcheck", timeout=2) as _r:
-                                _oo_installed = _r.status == 200
-                        except Exception:
-                            pass
-                        if _oo_installed:
-                            _log("OnlyOffice DS 已安装（localhost:80 在线），跳过")
-                        elif _oo and os.path.isfile(_oo):
-                            _log(f"静默安装 OnlyOffice DS（{os.path.getsize(_oo)//1024//1024} MB，"
-                                 f"含字体生成约 10 分钟）…")
-                            _log("  ⚠ 将弹 UAC 提权确认框，请点「是」")
-                            rc = subprocess.call([_oo, "/VERYSILENT", "/SUPPRESSMSGBOXES",
-                                                  "/NORESTART"],
-                                                 creationflags=0x08000000, timeout=1800)
-                            _log(f"  OnlyOffice 安装器退出码 {rc}"
-                                 f"{'（成功）' if rc == 0 else '（非零——可手动安装：' + _oo + '）'}")
-                        else:
-                            _log("跳过 OnlyOffice：包内无安装包（全功能编辑不可用，"
-                                 "内置查看/编辑不受影响）")
-                    except Exception as _ooe:
-                        _log(f"OnlyOffice 安装步骤跳过（{_ooe}）——不影响 claude 安装")
+                    # OnlyOffice 安装走 .fcpk 通道（a309R：res_install._install_onlyoffice）
             finally:
                 # 清理临时目录（zip 解包 / 联网下载的安装器）
                 if os.path.isdir(dl_dir):

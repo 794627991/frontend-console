@@ -103,7 +103,6 @@ def build():
             _publish_debug(app_dir)
             return dist
         _refresh_offline_claude()   # v3.4.95：离线 claude-code 版本有变即刷新
-        _sync_onlyoffice()           # a309：OnlyOffice DS 安装包进离线资源
         _sync_offline_pkg()
         # v4.1（用户拍板）：不再 _bundle_webview2 随包带运行时——改为打进
         # 统一离线资源包 .fcpk（含 WebView2/dotnet/node/git/claude/pydeps）。
@@ -374,24 +373,6 @@ def _refresh_offline_claude():
             print(f"⚠ claude-code 刷新失败 (robocopy rc={rc}):", dst)
 
 
-def _sync_onlyoffice():
-    """a309（用户令：OnlyOffice 进离线包随发布）：vendor/onlyoffice 安装包
-    （916MB）→ offline_pkg/install/onlyoffice-documentserver.exe。幂等：已在
-    跳过；无源提示（打包机没跑过下载脚本则发布不含 DS——可后补再发）"""
-    src = os.path.join(BASE, "vendor", "onlyoffice", "onlyoffice-documentserver.exe")
-    for dst in (os.path.join(BASE, "offline_pkg", "install", "onlyoffice-documentserver.exe"),
-                os.path.join(BASE, "dist", "offline_pkg", "install", "onlyoffice-documentserver.exe")):
-        if os.path.isfile(dst):
-            print(f"onlyoffice: 已存在 {dst}，跳过")
-            continue
-        if os.path.isfile(src):
-            os.makedirs(os.path.dirname(dst), exist_ok=True)
-            print(f"onlyoffice: 复制安装包 → {dst}（916MB 需几分钟）…")
-            shutil.copy2(src, dst)
-        else:
-            print(f"onlyoffice: 无 {src}——发布不含 DS（全功能编辑离线不可用）")
-
-
 def _sync_offline_pkg():
     """确保 dist/offline_pkg 与项目根 offline_pkg 同步（随包离线安装资源：
     Git 安装器 / Node MSI / claude-code 包，Claude 离线安装用）。
@@ -578,6 +559,13 @@ def _offline_sources(kinds=None):
                         else:
                             link = first_exe
                     out.append((p, arc, "claude", mode, link))
+        # a309R：OnlyOffice DS 安装包（kind=onlyoffice）——直接从 vendor 收，
+        # 不复制进 offline_pkg（916MB 复制两份纯浪费）。打包机没下载过则包不含
+        oo = os.path.join(BASE, "vendor", "onlyoffice",
+                          "onlyoffice-documentserver.exe")
+        if os.path.isfile(oo) and _take("onlyoffice"):
+            out.append((oo, "install/onlyoffice-documentserver.exe",
+                        "onlyoffice", "raw", None))
         pd = os.path.join(src, "pydeps")
         if os.path.isdir(pd) and _take("pydeps"):
             for f in sorted(os.listdir(pd)):
@@ -670,7 +658,8 @@ def _build_offline_fcpk(kinds=None, quiet=False):
     print("资源包: 打包 %d 个文件 / %.0f MB（加密 + 压缩，需数分钟）…"
           % (len(files), total))
     resources = []
-    for kind in ("webview2", "dotnet", "node", "git", "claude", "bili", "pydeps"):
+    for kind in ("webview2", "dotnet", "node", "git", "claude", "bili",
+                 "onlyoffice", "pydeps"):
         n = sum(1 for x in files if x[2] == kind)
         if n:
             resources.append({"kind": kind, "files": n})
