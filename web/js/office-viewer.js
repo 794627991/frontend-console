@@ -529,10 +529,20 @@ function _ovDocxOutline(body, container, conn) {
   const bar = document.createElement('div');
   bar.className = 'ov-docx-outline';
   // a300：目录栏 fixed 视口级（不随文档滚走）——top 精确对齐 body 的视口顶
-  const br = body.getBoundingClientRect();
-  bar.style.top = Math.max(0, Math.round(br.top)) + 'px';
-  bar.style.left = Math.max(0, Math.round(br.left)) + 'px';
+  const place = () => {
+    const br2 = body.getBoundingClientRect();
+    bar.style.top = Math.max(0, Math.round(br2.top)) + 'px';
+    bar.style.left = Math.max(0, Math.round(br2.left)) + 'px';
+  };
+  place();
   bar.style.bottom = '0';
+  // a309R2 M4（审查实锤：侧栏拖宽后大纲栏漂移 237px 压侧栏）——ResizeObserver
+  // 盯 body 布局变化重定位；挂 conn 供关 tab 时 disconnect
+  try {
+    const ro = new ResizeObserver(place);
+    ro.observe(body);
+    conn._outlineRO = ro;
+  } catch (_) {}
   // a302R：目录栏改 MD 大纲同款——完全隐藏/显示（用户令："我要全隐藏，
   // 类似 md 预览大纲那种效果，新增一个按钮的事情"）。工具栏「☰ 大纲」钮切换，
   // 隐藏后文档占满全宽（margin-left 归零，非 44px 窄条）
@@ -613,9 +623,10 @@ async function _ovRenderXlsx(buf, body, wrap, conn) {
     const _ob = conn.wrap.querySelector('[data-ov-body]');
     if (_ob && typeof _ovSbMount === 'function') _ovSbMount(_ob);
     // openpyxl 等工具写的公式无缓存值（<v></v> 空串）——读入后全表现算一遍，
-    // 公式格立即显示计算值（而非空）；重算会触发一次重渲染
+    // 公式格立即显示计算值（而非空）。M7（审查实锤：打开即 persist 会把白名单
+    // 外公式 VLOOKUP 等的缓存 v 清零落盘）——只算只显示，不写回
     _ovXlsxRecalcAll(conn);
-    if (conn._aoa.some(row => row.some(c => c && c.f))) { _ovXlsxPersist(conn); _ovXlsxRenderTable(conn); }
+    if (conn._aoa.some(row => row.some(c => c && c.f))) { _ovXlsxRenderTable(conn); }
   } catch (e) {
     body.innerHTML = '<div class="office-err">Excel 渲染失败: ' + esc(String(e).slice(0, 200)) + '</div>';
   }
@@ -680,7 +691,12 @@ function _ovXlsxWriteAoa(conn, aoa) {
     row.map(c => (c && c.f) ? (c.v !== undefined ? c.v : 0) : (c ? c.v : null))));   // v 优先（w 是显示文本，写了数字变 t=str）
   for (let r = 0; r < aoa.length; r++) for (let c = 0; c < (aoa[r] || []).length; c++) {
     const cell = aoa[r][c];
-    if (cell && cell.f) { ws[XLSX.utils.encode_cell({ r, c })] = cell; }
+    if (cell && cell.f) {
+      // H3（审查实锤：存出 <f>=SUM(...)</f> 双等号——OOXML 的 <f> 不含前导
+      // =，SheetJS 原样写入即公式损坏）。写回前剥 =（内部表示保留 = 前缀）
+      const out = Object.assign({}, cell, { f: String(cell.f).replace(/^=/, '') });
+      ws[XLSX.utils.encode_cell({ r, c })] = out;
+    }
   }
   if (old && old['!merges']) ws['!merges'] = old['!merges'];
   if (old && old['!cols']) ws['!cols'] = old['!cols'];
@@ -851,10 +867,14 @@ function _ovXlsxRenderTable(conn) {
       td.textContent = (show === undefined || show === null) ? '' : String(show);
       td.dataset.r = r; td.dataset.c = c;
       if (cell && cell.f) td.classList.add('hasf');
-      td.addEventListener('focus', () => { if (cell && cell.f) td.textContent = cell.f; conn._sel = { r, c }; });
+      td.addEventListener('focus', () => {
+        conn._editBase = String(show);   // M6：记原显示值——blur 与它比对（无编辑不 snapshot）
+        if (cell && cell.f) td.textContent = cell.f;
+        conn._sel = { r, c };
+      });
       td.addEventListener('blur', () => {
         const txt = td.textContent.trim();
-        if (txt === String(show)) return;   // 未变
+        if (txt === (conn._editBase !== undefined ? conn._editBase : String(show))) return;   // M6：与 focus 时原值比对
         _ovXlsxSnapshot(conn);
         const num = parseFloat(txt);
         if (txt === '') conn._aoa[r][c] = null;
@@ -865,7 +885,10 @@ function _ovXlsxRenderTable(conn) {
         else conn._aoa[r][c] = { t: 's', v: txt, w: txt };
         _ovXlsxRecalcAll(conn);
         _ovXlsxPersist(conn);
-        _ovXlsxRenderTable(conn);
+        // M5（审查实锤：同步重建把用户正点击的下一格 detach——每次编辑后要
+        // 点两次才能进下一格）。重建延迟到 rAF：本次 click 先落在旧 DOM，
+        // 重建后焦点自然恢复
+        requestAnimationFrame(() => _ovXlsxRenderTable(conn));
       });
       td.addEventListener('keydown', e => {
         if (e.key === 'Enter') { e.preventDefault(); td.blur(); }
@@ -894,9 +917,8 @@ function _ovXlsxRecalcAll(conn) {
   (conn._aoa || []).forEach(row => row.forEach(cell => {
     if (cell && cell.f) {
       const v = _ovXlsxEval(cell.f, conn);
-      cell._cv = (v !== null) ? v : '?';
-      cell.v = (v !== null) ? v : 0;
-      cell.w = String(cell._cv);
+      if (v !== null) { cell._cv = v; cell.v = v; cell.w = String(v); }
+      else { cell._cv = '?'; /* M7：eval 失败保留原 v/w——不置 0（原缓存值 Excel 算的，比 0 强） */ }
     }
   }));
 }
@@ -915,7 +937,10 @@ function _ovXlsxBindBar(conn, body) {
     if (act === 'save') {
       try {
         b.disabled = true; b.textContent = '保存中…';
-        const out = XLSX.write(conn._wb, { bookType: 'xlsx', type: 'array' });
+        // H5（审查实锤：CSV 被写回 xlsx 二进制——扩展名仍 .csv 双不开）：
+        // 按原扩展选 bookType
+        const isCsv = /\.csv$/i.test(conn.officePath || '');
+        const out = XLSX.write(conn._wb, { bookType: isCsv ? 'csv' : 'xlsx', type: 'array' });
         const resp = await fetch('/api/office/write?path=' + encodeURIComponent(conn.officePath), { method: 'POST', body: out });
         const j = await resp.json();
         if (j.ok) {

@@ -29,8 +29,10 @@
     host[key] = st;
 
     const paint = () => {
-      // rAF 合并（每帧最多一次）
-      if (st.lastPaint) { requestAnimationFrame(st.lastPaint); return; }
+      // rAF 合并（每帧最多一次）——已挂起直接 return（审查 M3 实锤：
+      // 旧写法把 rAF 句柄当回调再传 rAF，paint 抛 TypeError → show() 不
+      // 执行 → .on 不加 → 宽条永不显形，用户只看到 Fluent 窄条闪烁）
+      if (st.lastPaint) return;
       st.lastPaint = requestAnimationFrame(() => {
         st.lastPaint = 0;
         const sh = host.scrollHeight, ch = host.clientHeight;
@@ -93,7 +95,7 @@
     host[key] = st;
 
     const paint = () => {
-      if (st.lastPaint) { requestAnimationFrame(st.lastPaint); return; }
+      if (st.lastPaint) return;
       st.lastPaint = requestAnimationFrame(() => {
         st.lastPaint = 0;
         const sw = host.scrollWidth, cw = host.clientWidth;

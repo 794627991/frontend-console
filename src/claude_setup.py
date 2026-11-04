@@ -258,11 +258,6 @@ def _pack_pydeps(zf):
 
 
 @claude_setup_bp.route("/api/claude/setup_offline_pack", methods=["POST"])
-def _pkg_root():
-    """工具根目录（src/ 上一级）——打包资源（vendor/ 等）定位用"""
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-
 def claude_setup_offline_pack():
     """把 Git 安装器 + Node MSI + claude-code 目录 + 工具 py 依赖打成 zip。
     body: {out_dir} —— zip 输出目录（前端弹原生目录选择）。

@@ -527,23 +527,29 @@ def _office_convert_legacy(path, ext):
             return cached
     conv_dir = os.path.join(tempfile.gettempdir(), "office_conv")
     os.makedirs(conv_dir, exist_ok=True)
-    dst = os.path.join(conv_dir, os.path.splitext(os.path.basename(path))[0] + ext + "x")
+    # a309R2 M2（审查实锤：同名不同目录缓存碰撞——打开 A 显示 B 的 PDF）：
+    # 文件名加全路径哈希前缀，碰撞面消除
+    import hashlib as _hl
+    _tag = _hl.md5(os.path.abspath(path).lower().encode("utf-8")).hexdigest()[:10]
+    dst = os.path.join(conv_dir, _tag + "_" + os.path.splitext(os.path.basename(path))[0] + ext + "x")
     if os.path.isfile(dst):
         _office_convert_cache[key] = dst
         return dst
     app_name = "Word.Application" if ext == "doc" else "PowerPoint.Application"
     fmt = 16 if ext == "doc" else 24   # 16=wdFormatXMLDocument, 24=ppSaveAsOpenXMLPresentation
+    _p = path.replace("'", "''")   # H2：PS 单引号转义（RCE 防注入）
+    _d = dst.replace("'", "''")
     ps_script = (
         f"$app = New-Object -ComObject {app_name}; "
         f"$app.Visible = $false; "
-        f"$doc = $app.Documents.Open('{path}'); "
-        f"$doc.SaveAs([ref]'{dst}', [ref]{fmt}); "
+        f"$doc = $app.Documents.Open('{_p}'); "
+        f"$doc.SaveAs([ref]'{_d}', [ref]{fmt}); "
         f"$doc.Close(); $app.Quit()"
     ) if ext == "doc" else (
         f"$app = New-Object -ComObject {app_name}; "
         f"$app.Visible = $false; "
-        f"$pres = $app.Presentations.Open('{path}'); "
-        f"$pres.SaveAs('{dst}', {fmt}); "
+        f"$pres = $app.Presentations.Open('{_p}'); "
+        f"$pres.SaveAs('{_d}', {fmt}); "
         f"$pres.Close(); $app.Quit()"
     )
     try:
@@ -598,18 +604,22 @@ def _office_topdf(path):
             return cached
     conv_dir = os.path.join(tempfile.gettempdir(), "office_conv")
     os.makedirs(conv_dir, exist_ok=True)
-    dst = os.path.join(conv_dir, os.path.splitext(os.path.basename(path))[0] + ".pdf")
+    import hashlib as _hl   # M2 同款：路径哈希前缀防同名碰撞
+    _tag = _hl.md5(os.path.abspath(path).lower().encode("utf-8")).hexdigest()[:10]
+    dst = os.path.join(conv_dir, _tag + "_" + os.path.splitext(os.path.basename(path))[0] + ".pdf")
     is_word = os.path.splitext(path)[1].lower().lstrip(".") in ("doc", "docx")
     app_name = "Word.Application" if is_word else "PowerPoint.Application"
     fmt = 17 if is_word else 32   # wdFormatPDF / ppSaveAsPDF
+    _p = path.replace("'", "''")   # H2：PS 单引号转义（RCE 防注入）
+    _d = dst.replace("'", "''")
     if is_word:
         ps = (f"$app = New-Object -ComObject {app_name}; $app.Visible = $false; "
-              f"$doc = $app.Documents.Open('{path}'); $doc.SaveAs([ref]'{dst}', [ref]{fmt}); "
+              f"$doc = $app.Documents.Open('{_p}'); $doc.SaveAs([ref]'{_d}', [ref]{fmt}); "
               f"$doc.Close(); $app.Quit()")
     else:
         ps = (f"$app = New-Object -ComObject {app_name}; $app.Visible = $false; "
-              f"$pres = $app.Presentations.Open('{path}', $true, $false, $false); "
-              f"$pres.SaveAs('{dst}', {fmt}); $pres.Close(); $app.Quit()")
+              f"$pres = $app.Presentations.Open('{_p}', $true, $false, $false); "
+              f"$pres.SaveAs('{_d}', {fmt}); $pres.Close(); $app.Quit()")
     try:
         r = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
                            capture_output=True, timeout=60, creationflags=0x08000000)
