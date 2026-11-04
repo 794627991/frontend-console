@@ -118,15 +118,22 @@ async function monacoCreate(holder, value, langName, absPath) {
   }
   try {
     const monaco = await monacoInit();
-    // a333：同路径复用 model（Monaco 按 uri 全局复用；退出释放见 dispose 链）
+    // a333：同路径复用 model（Monaco 按 uri 全局复用；退出释放见 dispose 链）。
+    // R15-2 双保险：复用但内容不匹配（关 tab 未 dispose 的陈旧 model）时
+    // setValue 对齐磁盘真值——绝不拿旧内容顶替新读的 value
     let model = null;
     if (absPath) {
       try {
         const uri = monaco.Uri.file(absPath);
-        model = monaco.editor.getModel(uri) ||
-                monaco.editor.createModel(
-                  typeof value === 'string' ? value : '',
-                  monacoLangFor(langName), uri);
+        model = monaco.editor.getModel(uri);
+        if (model) {
+          const want = typeof value === 'string' ? value : '';
+          if (model.getValue() !== want) model.setValue(want);
+        } else {
+          model = monaco.editor.createModel(
+            typeof value === 'string' ? value : '',
+            monacoLangFor(langName), uri);
+        }
       } catch (_) { model = null; }
     }
     const opts = {

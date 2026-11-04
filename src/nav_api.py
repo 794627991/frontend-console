@@ -4,6 +4,7 @@
 任务槽复刻 res_api 形态（状态独立、单任务、poll 轮询、协作式取消、
 seq 日志）；查询端点无状态直答。门卫：索引根必须在文件树登记根内
 （_under_roots + _under_roots_real，与 tree 系 API 同源）。"""
+import os
 import threading
 import time
 
@@ -136,14 +137,22 @@ def nav_cancel():
 
 @nav_bp.route("/api/nav/delete", methods=["POST"])
 def nav_delete():
-    """删除某根的索引库。body {root}"""
+    """删除某根的索引库。body {root}
+    R15-7：运行中建库拒删（build 线程正在写库目录，删=竞态崩溃）。
+    R15-5：工程路径已不可达（换盘/移动）时门卫必拒——但库删除本身不依赖
+    路径有效性：库存在即允许删（否则孤儿库永远删不掉）。"""
     from src import nav_index
     d = request.get_json(force=True, silent=True) or {}
     root = str(d.get("root") or "").strip()
     if not root:
         return jsonify({"ok": False, "err": "缺 root"}), 400
-    if not _guard(root):
-        return jsonify({"ok": False, "err": "目录不在文件树登记根内"}), 400
+    with _lock:
+        if _state["running"]:
+            return jsonify({"ok": False, "err": "索引任务运行中，稍后再删"}), 409
+    has_lib = any(l["root"].lower() == os.path.normcase(os.path.abspath(root))
+                  for l in nav_index.list_libs())
+    if not has_lib and not _guard(root):
+        return jsonify({"ok": False, "err": "目录不在文件树登记根内且无对应索引库"}), 400
     return jsonify({"ok": nav_index.delete_lib(root)})
 
 

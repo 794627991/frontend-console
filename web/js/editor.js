@@ -1312,6 +1312,17 @@ function _edCloseNow(conn) {
   if (conn.editor) { try { conn.editor.destroy(); } catch(e){} }
   // Monaco 同理（停掉 onDidChangeModelContent，防关 tab 后仍触发脏检测）
   if (conn.monaco) { try { conn.monaco.dispose(); } catch(e){} }
+  // R15-2（实锤：model 陈旧覆盖磁盘）：a333 起带 uri 的 model 在全局
+  // registry 复用——关 tab 必须 dispose，否则重开时 getModel 拿旧内容、
+  // 外部修改被旧值覆盖（数据丢失链）。md 分栏/其他实例同 uri 亦然
+  if (conn.monaco || conn.extPath) {
+    try {
+      if (window.monaco && monaco.editor && conn.extPath) {
+        const _m = monaco.editor.getModel(monaco.Uri.file(conn.extPath));
+        if (_m) _m.dispose();
+      }
+    } catch(e) {}
+  }
   // 查找分栏 splitter 的 document 级拖拽监听移除（防泄漏，同 closeLogViewer）
   if (conn._edSplitMove) document.removeEventListener('mousemove', conn._edSplitMove);
   if (conn._edSplitUp) document.removeEventListener('mouseup', conn._edSplitUp);

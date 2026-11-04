@@ -183,7 +183,9 @@ def delete_lib(root):
 
 def rebind(old_root, new_root):
     """工程移动/换盘后的重新关联。校验防误绑：新根存在 + 记录的编译文件
-    抽样仍在（白名单键相对路径拼新根）+ 代码文件数量级吻合。"""
+    抽样仍在（白名单键相对路径拼新根）+ 代码文件数量级吻合。
+    R15-4（实锤：rebind 撞已建库状态分裂）：目标库已存在时拒绝（先删后
+    绑）；meta 落盘放到目录改名之后（改名失败不留半改状态）。"""
     old_root, new_root = os.path.abspath(old_root), os.path.abspath(new_root)
     ld = lib_dir(old_root)
     meta = _read_json(os.path.join(ld, "meta.json"))
@@ -192,6 +194,9 @@ def rebind(old_root, new_root):
         return False, "旧索引不存在"
     if not os.path.isdir(new_root):
         return False, "新路径不存在"
+    new_ld = lib_dir(new_root)
+    if os.path.abspath(new_ld) != os.path.abspath(ld) and os.path.isdir(new_ld):
+        return False, "新路径已有自己的索引库——请先删除旧库再重关联"
     compiled = mf.get("compiled") or {}
     sample = list(compiled.keys())[:5]
     if sample:
@@ -200,11 +205,13 @@ def rebind(old_root, new_root):
         if ok < max(1, len(sample) - 1):
             return False, "校验失败：新路径下找不到索引记录的源文件（%d/%d）——不是同一个工程？" % (ok, len(sample))
     meta["root"] = new_root
-    _write_json(os.path.join(ld, "meta.json"), meta)
-    new_ld = lib_dir(new_root)
     if os.path.abspath(new_ld) != os.path.abspath(ld):
         os.makedirs(os.path.dirname(new_ld), exist_ok=True)
-        os.replace(ld, new_ld)
+        os.replace(ld, new_ld)          # 目录整体改名（meta 改名后再写新库）
+        _write_json(os.path.join(new_ld, "meta.json"), meta)
+    else:
+        _write_json(os.path.join(ld, "meta.json"), meta)
+    _invalidate_cache()
     return True, "已关联到 " + new_root
 
 
@@ -367,6 +374,14 @@ def build(root, log=None, progress=None, should_cancel=None):
         raise RuntimeError("ctags 超时（60 分钟）——目录过大？")
     if not os.path.isfile(tags_tmp):
         raise RuntimeError("ctags 未产出 tags：%s" % (r.stderr or "")[:200])
+    # R15-3（实锤：取消被吞）：ctags 阻塞期不查取消——跑完立即补查，
+    # 已取消则不落盘 tags/不写 meta（半成品库会被 status 误判 indexed）
+    if should_cancel and should_cancel():
+        try:
+            os.remove(tags_tmp)
+        except OSError:
+            pass
+        raise Cancelled()
     os.replace(tags_tmp, tags)
     tag_lines = 0
     with open(tags, encoding="utf-8", errors="replace") as f:
@@ -395,7 +410,7 @@ def build(root, log=None, progress=None, should_cancel=None):
             if should_cancel and should_cancel():
                 raise Cancelled()
             done += 1
-            if done % 500 == 0:
+            if done % 100 == 0:
                 prog(78 + 20 * done / max(1, len(o_files)), "符号表 %d/%d" % (done, len(o_files)))
             o_abs = os.path.join(root, orel.replace("/", os.sep))
             try:
