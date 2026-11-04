@@ -1233,6 +1233,9 @@
     border-bottom: 1px solid var(--border); flex-shrink: 0;
     overflow: hidden;   /* a285：优雅方案——不滚动不滚动条，tab 自动收缩+溢出进 ⋮ 下拉 */
   }
+  /* a291：draggable 由 CSS 统一（buildTerminal 造的终端 tab 从不调
+     _initTabDrag——v1 时代串口/claude tab 根本拖不了；容器级 v2 只需可拖+一次绑定） */
+  .tab, .tab-drawer { -webkit-user-drag: element; user-select: none; }
   .tab {
     display: flex; align-items: center; gap: 6px;
     /* 第6轮盲测 B1（高）：固定开销账——padding28+led6+gap24+✕15≈73px，tab 压到
@@ -1282,10 +1285,22 @@
   .tab .tab-ico { font-size: 12px; flex-shrink: 1; min-width: 0; overflow: hidden; line-height: 1; display: inline-flex; align-items: center; }
   /* 文件类型 SVG 图标(file-icons.js):随文字基线对齐 */
   svg.fi { vertical-align: -2px; flex-shrink: 0; }
-  /* tab 拖拽排序视觉态（tab-drag.js）：拖动中半透明，落点前/后指示线 */
-  .tab.dragging { opacity: 0.45; }
-  .tab.drop-before { box-shadow: -2px 0 0 0 var(--accent); }
-  .tab.drop-after { box-shadow: 2px 0 0 0 var(--accent); }
+  /* tab 拖拽排序视觉态（tab-drag v2 容器级吸附）：拖动中半透明+缩起，
+     落点指示线加粗发光脉冲（用户实锤：v1 细线无动画手感差） */
+  .tab.dragging { opacity: 0.4; }
+  .tab.drop-before, .tab.drop-after { position: relative; }
+  .tab.drop-before::after, .tab.drop-after::after,
+  .tab-drawer.drop-before::after, .tab-drawer.drop-after::after {
+    content: ""; position: absolute; top: 2px; bottom: 2px; width: 3px;
+    border-radius: 2px; background: var(--accent);
+    box-shadow: 0 0 8px 2px color-mix(in srgb, var(--accent) 65%, transparent);
+    animation: tabDropPulse 0.9s ease-in-out infinite; pointer-events: none; z-index: 6; }
+  .tab.drop-before::after, .tab-drawer.drop-before::after { left: -3px; }
+  .tab.drop-after::after, .tab-drawer.drop-after::after { right: -3px; }
+  @keyframes tabDropPulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 8px 2px color-mix(in srgb, var(--accent) 65%, transparent); }
+    50% { opacity: 0.55; box-shadow: 0 0 4px 1px color-mix(in srgb, var(--accent) 35%, transparent); }
+  }
   /* 未保存视觉态（编辑器/笔记/hex tab）：led 变橙色 + 标题着色——比纯 * 更显眼，
      tab 与左栏列表同一套（.dirty 类由 _edMarkTab / refreshSidebar 同步维护） */
   .tab.dirty .led { background: var(--neon-orange, #f5a623); box-shadow: 0 0 6px var(--neon-orange, #f5a623); }

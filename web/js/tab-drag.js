@@ -1,69 +1,149 @@
 // ============================================================
-// tab 拖拽排序：拖动 tab 到目标位置（所有类型通用）。
-// 用户手动拖过之后，refreshSidebar 的自动重排（sortKeyFn）让位——
-// 不再自动重排，尊重用户顺序（新 tab 仍默认排末尾）。
-// HTML5 drag API：dragstart 记源，dragover 定位落点（前/后半判断），drop 移 DOM。
+// tab 拖拽排序 v2（用户实锤：v1 手感极差——事件绑在每个 tab 上，必须贴着
+// 目标才能拖，间隙/胶囊区无反馈，指示线也没有）。
+// v2 = 浏览器级手感：
+//   - 容器级委托（#tabs 一次绑定）：拖动经过整个 tab 栏任何位置都有反馈；
+//   - 最近间隙吸附：按鼠标 x 找最近的"可落点元素边缘"（tab + 抽屉胶囊都算），
+//     不需要精确贴着某个元素——拖到两个 tab 之间的空隙照样吸附落点；
+//   - 指示线常显 + 发光脉冲动画（所见即所得的落点）；
+//   - 固定区挡板保留（未固定源拖进固定簇 → 自动挡到固定组后，指示线也
+//     显示真实落点，不骗用户）；
+//   - 胶囊作为一等落点（tab 可拖到任意胶囊前/后，与 a286R20 行为一致）。
 // ============================================================
-const _tabDrag = { el: null, over: null };
+const _tabDrag = { el: null, marker: null };   // marker = 当前指示线挂在哪个元素+哪侧
 
-function _initTabDrag(tab) {
-  tab.draggable = true;
-  tab.addEventListener('dragstart', e => {
-    _tabDrag.el = tab;
-    window.__tabDragSrc = tab;   // 暴露给抽屉胶囊的 drop（跨模块，dragend 清）
-    tab.classList.add('dragging');
-    e.dataTransfer.effectAllowed = 'move';
-    try { e.dataTransfer.setData('text/plain', tab.dataset.portId); } catch(_) {}
-  });
-  tab.addEventListener('dragend', () => {
-    window.__tabDragSrc = null;
-    tab.classList.remove('dragging');
-    document.querySelectorAll('.tab.drop-before, .tab.drop-after').forEach(t =>
-      t.classList.remove('drop-before', 'drop-after'));
-    _tabDrag.el = null; _tabDrag.over = null;
-  });
-  tab.addEventListener('dragover', e => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    // a237 P3：拖拽中源 tab 被关闭（dragend 不触发）——元素已脱离文档即
-    // 清拖拽态，防旧元素被钉到下次拖拽
-    if (_tabDrag.el && !_tabDrag.el.isConnected) { _tabDrag.el = null; _tabDrag.over = null; }
-    if (!_tabDrag.el || _tabDrag.el === tab) return;
-    _tabDrag.over = tab;
-    const r = tab.getBoundingClientRect();
-    const before = e.clientX < r.left + r.width / 2;
-    document.querySelectorAll('.tab.drop-before, .tab.drop-after').forEach(t => {
-      if (t !== tab) t.classList.remove('drop-before', 'drop-after');
-    });
-    tab.classList.toggle('drop-before', before);
-    tab.classList.toggle('drop-after', !before);
-  });
-  tab.addEventListener('drop', e => {
-    e.preventDefault();
-    if (!_tabDrag.el || _tabDrag.el === tab) return;
-    const r = tab.getBoundingClientRect();
-    const before = e.clientX < r.left + r.width / 2;
-    const src = _tabDrag.el;
-    // 第9轮盲测缺陷3（中）：未固定 tab 拖到固定 tab 之前会破坏"固定组最左"
-    // 不变量（且不被纠正）。防护：未固定源落进固定区（目标固定且落前半）时，
-    // 改插到最后一个固定 tab 之后——保持固定区完整。第10轮缺陷3：后半
-    // （落在固定 tab 右半）同样插进固定簇中间——去掉 before 条件统一挡板
-    const srcPinned = src.classList.contains('pinned');
-    const tgtPinned = tab.classList.contains('pinned');
-    if (!srcPinned && tgtPinned) {
-      const pinnedEls = [...tabs.querySelectorAll('.tab.pinned')];
-      const ref = pinnedEls.length ? pinnedEls[pinnedEls.length - 1].nextSibling : tab;
-      tabs.insertBefore(src, ref);
-    } else if (before) tabs.insertBefore(src, tab);
-    else tabs.insertBefore(src, tab.nextSibling);
-    tab.classList.remove('drop-before', 'drop-after');
-    _tabManualOrder();   // 标记手动排序，自动重排让位
+// 可落点元素：可见的 tab + 抽屉胶囊（pinned tab 位置由挡板接管，仍可作为
+// 视觉锚点——真实落点会被挡板修正并同步指示线）
+function _dragDroppables() {
+  return [...tabs.querySelectorAll('.tab, .tab-drawer')].filter(el => {
+    if (el === _tabDrag.el) return false;
+    const r = el.getBoundingClientRect();
+    return el.style.display !== 'none' && r.width > 0;
   });
 }
 
-let _tabOrderManual = false;   // 用户拖过一次后 true，refreshSidebar 不再自动重排
+// 吸附判定：鼠标 x → 最近的元素边缘（返回 {el, before}）
+function _dragSnap(clientX) {
+  const els = _dragDroppables();
+  if (!els.length) return null;
+  let best = null, bestDist = Infinity;
+  for (const el of els) {
+    const r = el.getBoundingClientRect();
+    // 每个元素两个候选边缘：左（before）/右（after），取全栏最近
+    for (const [x, before] of [[r.left, true], [r.right, false]]) {
+      const d = Math.abs(clientX - x);
+      if (d < bestDist) { bestDist = d; best = { el, before }; }
+    }
+  }
+  return best;
+}
+
+// 挡板修正：未固定源要落进固定簇 → 真实落点 = 最后一个固定 tab 之后
+function _dragGuard(src, snap) {
+  if (!snap) return snap;
+  if (src.classList.contains('pinned') || !snap.el.classList.contains('tab')) return snap;
+  // 目标是固定 tab（无论前/后半）→ 挡到最后固定后
+  if (snap.el.classList.contains('pinned')) {
+    const pinned = [...tabs.querySelectorAll('.tab.pinned')].filter(p => p !== src);
+    const last = pinned[pinned.length - 1];
+    if (last) return { el: last, before: false, guarded: true };
+  }
+  return snap;
+}
+
+// 指示线渲染（清除旧的，挂新的；容器级重画代替 v1 的 per-tab 切换）
+function _dragMarker(snap) {
+  document.querySelectorAll('.drop-before, .drop-after').forEach(t =>
+    t.classList.remove('drop-before', 'drop-after'));
+  _tabDrag.marker = null;
+  if (!snap) return;
+  snap.el.classList.add(snap.before ? 'drop-before' : 'drop-after');
+  _tabDrag.marker = snap;
+}
+
+// 执行落位
+function _dragCommit(src, snap) {
+  if (!snap) return false;
+  const ref = snap.before ? snap.el : snap.el.nextSibling;
+  tabs.insertBefore(src, ref);
+  _tabManualOrder();
+  return true;
+}
+
+let _dragInited = false;
+function _initTabDrag(tab) {
+  // 各模块创建 tab 时调用（传参）——draggable 必须预置才能发起拖拽
+  if (tab) tab.draggable = true;
+  if (_dragInited) return;
+  _dragInited = true;
+  const cont = document.getElementById('tabs');
+  if (!cont) return;
+
+  cont.addEventListener('dragstart', e => {
+    const el = e.target.closest('.tab, .tab-drawer');
+    if (!el) return;
+    _tabDrag.el = el;
+    window.__tabDragSrc = el.classList.contains('tab') ? el : null;   // 仅 tab（util 兼容）
+    el.classList.add('dragging');
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      try { e.dataTransfer.setData('text/plain', el.dataset.portId || el.dataset.group || ''); } catch(_) {}
+    }
+  });
+
+  cont.addEventListener('dragend', () => {
+    window.__tabDragSrc = null;
+    if (_tabDrag.el) _tabDrag.el.classList.remove('dragging');
+    _dragMarker(null);
+    _tabDrag.el = null;
+  });
+
+  // 容器级 dragover：任何位置都可放——吸附 + 指示线实时跟随
+  cont.addEventListener('dragover', e => {
+    // a237 P3：拖拽中源被关（dragend 不触发）——脱离文档即清态
+    if (_tabDrag.el && !_tabDrag.el.isConnected) {
+      _tabDrag.el = null; _dragMarker(null);
+    }
+    if (!_tabDrag.el) return;
+    e.preventDefault();               // 持续 preventDefault → drop 可触发
+    // 合成 DragEvent 无 dataTransfer（自动化测试）——真实拖拽必有，防御即可
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    const snap = _dragGuard(_tabDrag.el, _dragSnap(e.clientX));
+    // 只在落点变化时重画（避免每帧 DOM 抖动）
+    if (!_tabDrag.marker ||
+        _tabDrag.marker.el !== (snap && snap.el) ||
+        _tabDrag.marker.before !== (snap && snap.before)) {
+      _dragMarker(snap);
+    }
+  });
+
+  cont.addEventListener('drop', e => {
+    e.preventDefault();
+    if (!_tabDrag.el) return;
+    const src = _tabDrag.el;
+    const snap = _dragGuard(src, _dragSnap(e.clientX));
+    let ok = false;
+    if (src.classList.contains('tab-drawer')) {
+      // 胶囊换序：限制在抽屉栏内（防 rebuild 冲掉），落位后同步用户组序
+      const bar = document.querySelector('.tab-drawer-bar');
+      if (snap && bar && snap.el !== src) {
+        bar.insertBefore(src, bar.contains(snap.el) ? (snap.before ? snap.el : snap.el.nextSibling) : bar.firstChild);
+        if (typeof window._ovSyncGroupOrder === 'function') window._ovSyncGroupOrder();
+        ok = true;
+      }
+    } else {
+      ok = _dragCommit(src, snap);
+      // tab 落进抽屉栏内（胶囊间）→ 打用户放置标（a286R20 语义：rebuild 归位绕行）
+      if (ok && snap && snap.el.classList.contains('tab-drawer')) src.dataset.userPlaced = '1';
+    }
+    _dragMarker(null);
+    _tabDrag.el = null;
+    window.__tabDragSrc = null;
+  });
+}
+
+let _tabOrderManual = false;   // 用户拖过一次后 true（refreshSidebar 已退役但保留语义）
 function _tabManualOrder() { _tabOrderManual = true; }
-// 关掉最后一个 tab（回到空态）后重置——下次打开恢复默认排序
 function _maybeResetTabOrder() {
   if (!document.querySelector('#tabs .tab')) _tabOrderManual = false;
 }

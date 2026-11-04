@@ -297,6 +297,7 @@ let activePortId = null;
   }, true);
 
   // 从抽屉栏 DOM 读当前胶囊序写回 _userGroupOrder（拖拽换序后调用；rebuild 按此渲染）
+  window._ovSyncGroupOrder = _syncGroupOrder;   // tab-drag v2 胶囊换序后同步组序
   function _syncGroupOrder() {
     _userGroupOrder.length = 0;
     document.querySelectorAll('.tab-drawer-bar .tab-drawer').forEach(d =>
@@ -397,41 +398,9 @@ let activePortId = null;
         e.stopPropagation();
         buildGroupList(g, pids, btn);
       };
-      // 用户实锤：抽屉模式下 tab 拖不到抽屉前后、胶囊也拖不动——补齐位置不变量
-      // 的手动排序自由：a) 胶囊自身可拖（dragstart）在抽屉栏内与其他胶囊换序
-      // （序持久化 _userGroupOrder，rebuild 尊重）；b) 胶囊作为 drop 目标接收
-      // tab（单例插到胶囊前/后；固定 tab 不接收——固定区不变量优先）
+      // 拖拽已并入 tab-drag v2 容器级（吸附+指示线+胶囊换序+tab 落胶囊前后
+      // +固定区挡板），此处仅预置 draggable（发起拖拽的前提）
       btn.draggable = true;
-      btn.addEventListener('dragstart', e => {
-        window.__drawerDrag = btn;
-        try { e.dataTransfer.setData('text/plain', 'drawer:' + g); } catch(_) {}
-        e.dataTransfer.effectAllowed = 'move';
-      });
-      btn.addEventListener('dragend', () => { window.__drawerDrag = null; });
-      btn.addEventListener('dragover', e => {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-      });
-      btn.addEventListener('drop', e => {
-        e.preventDefault();
-        const r = btn.getBoundingClientRect();
-        const before = e.clientX < r.left + r.width / 2;
-        const srcTab = window.__tabDragSrc || null;
-        const srcDrawer = window.__drawerDrag;
-        if (srcDrawer && srcDrawer !== btn) {
-          // 胶囊换序：立即 DOM + 持久化组序
-          drawerBar.insertBefore(srcDrawer, before ? btn : btn.nextSibling);
-          _syncGroupOrder();
-        } else if (srcTab && srcTab.draggable && !srcTab.classList.contains('pinned')) {
-          // 单例 tab 插到胶囊前/后（进抽屉栏内或其边缘——BAR 内 tab 正常显示）。
-          // 打"用户放置"标：rebuild 的单例归位循环（新开单例默认挪栏前）必须
-          // 绕过用户手动放过的——位置只认用户的手
-          srcTab.dataset.userPlaced = '1';
-          drawerBar.insertBefore(srcTab, before ? btn : btn.nextSibling);
-        }
-        // pinned tab 拖到胶囊上：不响应（固定区完整优先）
-        window.__drawerDrag = null;
-      });
       drawerBar.appendChild(btn);
     });
     // 插到右缘 sticky 区（tab-bar-actions/⋮）之前——与所有 tab 的插入位一致
