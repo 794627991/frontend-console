@@ -372,12 +372,16 @@ let activePortId = null;
     // 插到右缘 sticky 区（tab-bar-actions/⋮）之前——与所有 tab 的插入位一致
     const anchor = tabsEl.querySelector('.tab-bar-actions') || btn;
     tabsEl.insertBefore(drawerBar, anchor);
-    // 单例 tab 挪到抽屉栏之前（视觉序：固定区 → 单例平铺 → 抽屉；幂等，
-    // 已在位不动。DOM 变更触发 observer 但 sig 不含位置 → 无循环）
+    // 单例 tab 保证在抽屉栏之前（视觉序：固定区 → 单例平铺 → 抽屉）。
+    // 用户实锤：原判断 nextSibling !== drawerBar 要求单例「紧贴」抽屉栏——
+    // 每次切换 tab 的 rebuild 都把拖拽过的单例按打开序强制归位（claude 拖到
+    // 第三位，切个 tab 就跳回第一）。改为只判断「是否在抽屉栏之前」：
+    // 在前就不动（用户拖拽序保留），仅落在栏后的（新开的）才挪到栏前
     for (const pid in connections) {
       const c = connections[pid];
       if (!c || !c.tab || _pinned.has(pid) || !_SINGLE_KINDS.has(_groupOf(c))) continue;
-      if (c.tab.nextSibling !== drawerBar) tabsEl.insertBefore(c.tab, drawerBar);
+      const alreadyBefore = c.tab.compareDocumentPosition(drawerBar) & Node.DOCUMENT_POSITION_FOLLOWING;
+      if (!alreadyBefore) tabsEl.insertBefore(c.tab, drawerBar);
     }
     checkOverflow();
   }
