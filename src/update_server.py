@@ -169,6 +169,27 @@ def _versions():
     return items
 
 
+def pkg_class(name):
+    """资源包分类（a335R，第6轮对抗审 P1-4）：门户与 res_ui.autofind_fcpk
+    必须用同一套口径，否则会出现「门户说是子集包不让用、闸门却自动选中它」
+    这类分裂。返回 'full' | 'subset' | None。
+
+    判定只看 basename（目录名不参与——第5轮 P2-1 的教训）：
+      full   : `…资源包.fcpk`，或不带子集后缀的 `资源包-v<数字>[.数字]*.fcpk`
+      subset : 其余含 `资源包-` 的（`-资源包-拓展`、`-资源包-claude` …）
+    """
+    b = name.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    if not (b.endswith(".fcpk") and "资源包" in b):
+        return None
+    if b.endswith("资源包.fcpk"):
+        return "full"
+    if re.search(r"资源包-v\d+(?:\.\d+)*\.fcpk$", b):
+        return "full"
+    if "资源包-" in b:
+        return "subset"
+    return None
+
+
 def _offline_pkg():
     """离线资源包单独通道。v4.1 起统一为加密的 `<应用名>-资源包.fcpk`。
     旧 zip（`-offline-pkg.zip`）通道已退役（用户令「彻底退役，不要了」），
@@ -195,7 +216,7 @@ def _offline_pkg():
     best = None
     for n in sorted(names):
         _ln = n.lower()
-        is_new = _ln.endswith(".fcpk") and "-资源包" in n
+        is_new = _ln.endswith(".fcpk") and "-资源包" in _ln
         is_old = _ln.endswith(".zip") and "-offline-pkg" in _ln
         if not (is_new or is_old):
             continue
@@ -205,9 +226,13 @@ def _offline_pkg():
         except OSError:
             continue
         if is_new:
-            # 子集包命名：`xxx-资源包-拓展.fcpk` / `-资源包-claude.fcpk`
-            # a332R：大小写不敏感（glob 在 Windows 不区分，但 endswith 区分）
-            rank = 2 if _ln.endswith("-资源包.fcpk") else 1
+            # a335R（第6轮 P1-4）：分类统一走 pkg_class，与 res_ui.autofind
+            # 同口径——原来两边各写一套正则，导致 `-资源包-v2.fcpk`（真全量）
+            # 在门户被标成子集包、在闸门却被当主包。
+            _cls = pkg_class(n)
+            if _cls is None:
+                continue
+            rank = 2 if _cls == "full" else 1
         else:
             rank = 0
         if best and (rank, st.st_mtime) <= (best[1][0], best[1][1]):

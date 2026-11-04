@@ -230,11 +230,15 @@ def res_install_api():
                 _soft = "、".join(_name.get(k, k) for k in _absent_all
                                   if k not in _hard)
                 if _hard_absent:
-                    errs["资源包不完整"] = (
-                        "所选资源包不含以下必需资源：%s。请换完整的"
-                        "「前端控制台-资源包.fcpk」（子集包装不全）"
-                        % "、".join(_hard_absent))
-                    _log(errs["资源包不完整"])
+                    # a335R（第6轮 P2-1）：hard 与 soft 同时缺失时原来只报 hard，
+                    # 用户换包后仍不知道 bili/node 等也没进包。软项信息一并带上。
+                    _msg = ("所选资源包不含以下必需资源：%s。请换完整的"
+                            "「前端控制台-资源包.fcpk」（子集包装不全）"
+                            % "、".join(_hard_absent))
+                    if _soft:
+                        _msg += "；另外也缺（相关功能将不可用）：%s" % _soft
+                    errs["资源包不完整"] = _msg
+                    _log(_msg)
                 elif _soft:
                     # 软项缺失不判失败（非必需，用户可能只想装其中几项），
                     # 但必须如实告知，不能一句"完成"盖过去

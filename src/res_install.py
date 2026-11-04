@@ -163,12 +163,47 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None,
         if "bili" in plan:
             bili_root = runtime_root()
             os.makedirs(bili_root, exist_ok=True)
-            say("解包 billion-context（Node 运行时 + 依赖树）…")
-            reader.extract_all(bili_root, kinds=["bili"],
-                               progress=lambda d, t, p2: prog(
-                                   cur[0] + d, sub_total, p2),
-                               should_cancel=should_cancel)
-            _install_bili(bili_root, say, force)
+            # a335R（第6轮对抗审 P1-2/P2-3）：三条顺序问题一起修：
+            #  ① 原来先无条件解包 200MB 覆盖现有树、再问"是否已装"——已装时
+            #    白解一遍，且若 18788 正在跑就是从运行进程脚下换 node_modules；
+            #  ② 解包中断（取消/坏段/文件占用）只留半新树、旧 .biliok 仍在 →
+            #    下次判"已完整"永久跳过，坏树再也不自愈；
+            #  ③ 这段不在 per-kind try 内 → 一个软资源失败拖垮整套安装，
+            #    与 docstring 明写的「单个资源失败不中断其余」冲突。
+            # 现在：先快判（已装且非 force 则整段跳过，不解包）→ 解包前
+            # 作废 marker → 解包+校验包在 try 内。
+            try:
+                if not force and os.path.isfile(
+                        os.path.join(bili_root, ".biliok")) and os.path.isdir(
+                        os.path.join(bili_root, "bili")):
+                    say("· billion-context 已完整安装，跳过解包"
+                        "（删 offline_runtime/.biliok 可重装）")
+                    _bili_reprobe(say)
+                    res["skipped"].append("bili")
+                else:
+                    _bili_mark = os.path.join(bili_root, ".biliok")
+                    if os.path.isfile(_bili_mark):
+                        try:
+                            os.remove(_bili_mark)   # 解包前先作废：中途失败即不完整
+                        except OSError:
+                            pass
+                    say("解包 billion-context（Node 运行时 + 依赖树）…")
+                    reader.extract_all(bili_root, kinds=["bili"],
+                                       progress=lambda d, t, p2: prog(
+                                           cur[0] + d, sub_total, p2),
+                                       should_cancel=should_cancel)
+                    _install_bili(bili_root, say, True)   # marker 已删，必须真装
+                    res["installed"].append("bili")
+            except Exception as e:
+                res["errors"]["bili"] = str(e)[:300]
+                say("✗ bili 失败：%s" % (e,))
+                # 半新树：删掉 marker 保证下次自愈（_install_bili 内部也会清）
+                try:
+                    _m = os.path.join(bili_root, ".biliok")
+                    if os.path.isfile(_m):
+                        os.remove(_m)
+                except OSError:
+                    pass
             plan.remove("bili")
         if "webview2" in plan:
             # 返回值 False = 已完成跳过（没解包，不产生进度字节）→ 把它

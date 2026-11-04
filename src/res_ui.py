@@ -123,22 +123,28 @@ def autofind_fcpk():
               os.path.join(os.path.expanduser("~"), "Downloads")):
         if d and os.path.isdir(d):
             for p in glob.glob(os.path.join(d, "*.fcpk")):
-                # a334R（第5轮 P2-1，实锤）：名字判定必须用 basename——原实现
-                # 拿完整路径做 `"资源包" in p`，工具解压在含"资源包"的目录里
-                # （如 <tmp>/资源包-老包/app）时，同目录别家的 other-tool.fcpk
-                # 也会被当成本工具的包选中 → inspect 报"资源包有问题"。
+                # a334R（第5轮 P2-1）：名字判定必须用 basename——原实现拿
+                # 完整路径做 `"资源包" in p`，工具解压在含"资源包"的目录里时，
+                # 同目录别家的 other-tool.fcpk 也会被选中。
+                # a335R（第6轮 P1-4/P2-4）：分类统一走 update_server.pkg_class，
+                # 与门户同口径；同时兼容浏览器重名下载形态（`…资源包 (1).fcpk`
+                # / `…资源包 - 副本.fcpk`）——这些不会被 pkg_class 认出，
+                # 但确实是主包，单独按「含资源包、不含子集后缀」归主包。
                 _bn = os.path.basename(p).lower()
                 if not (_bn.endswith(".fcpk") and "资源包" in _bn):
                     continue
-                # a333R：口径与 _offline_pkg 统一——只要求含「资源包」，不强制
-                # 「-资源包.fcpk」的横杠形态。a334R（第5轮 P2-2）：`-资源包-v2`
-                # 这类带版本后缀的是**全量包的新版**，不能当子集——原来落到
-                # sub 桶与真子集同权按 mtime 竞争，子集赢了就复发原始死循环。
-                if _bn.endswith("资源包.fcpk") or re.search(
-                        r"资源包-v\d+(\.\d+)*\.fcpk$", _bn):
+                try:
+                    from src.update_server import pkg_class as _pc
+                    _cls = _pc(_bn)
+                except Exception:
+                    _cls = None
+                if _cls == "full":
                     main.append(p)
-                elif "资源包-" in _bn:
+                elif _cls == "subset":
                     sub.append(p)
+                elif "资源包-" not in _bn:
+                    # 浏览器重命名（空格/括号/副本）→ 视为全量主包
+                    main.append(p)
     cands = main or sub
     if not cands:
         return ""

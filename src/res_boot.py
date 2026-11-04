@@ -59,6 +59,11 @@ MANIFEST = [
     # a309R：OnlyOffice DS（word/excel/ppt 全功能编辑，可选）——探测 80 口
     {"kind": "onlyoffice", "name": "OnlyOffice 全功能编辑", "hard": False,
      "fix": "离线资源包内静默安装（约 10 分钟，弹 UAC 确认）"},
+    # a335R（第6轮 P2-2）：bili 在 res_install.ORDER 里却不在 MANIFEST——
+    # 200MB 的可选组件，设置页勾不到、红条也不显示，缺了只能靠一次 8 秒
+    # popup 偶然告知。补进清单（软项，判据同 proxy._detect_bili_cmd）。
+    {"kind": "bili", "name": "billion-context 压缩引擎", "hard": False,
+     "fix": "离线资源包内解包（约 200MB，代理面板开关控制启用）"},
 ]
 
 
@@ -268,10 +273,24 @@ def probe_pydeps():
     return "ok", "", ""
 
 
+def probe_bili():
+    """billion-context 引擎探测（a335R）：与 proxy._detect_bili_cmd 同判据——
+    runtime_root()/.biliok + bili/node.exe + bili/node_modules/billion-context/
+    dist/index.js 三件齐全才算装好。不 import proxy（会把整条代理链拉进来）。"""
+    base = os.path.join(app_dir(), "offline_runtime")
+    mark = os.path.join(base, ".biliok")
+    cur = os.path.join(base, "bili")
+    entry = os.path.join(cur, "node_modules", "billion-context",
+                         "dist", "index.js")
+    if os.path.isfile(mark) and os.path.isfile(os.path.join(cur, "node.exe"))             and os.path.isfile(entry):
+        return "ok", "", ""
+    return "missing", "", ""
+
+
 _PROBES = {"webview2": probe_webview2, "dotnet": probe_dotnet,
            "node": probe_node, "git": probe_git, "claude": probe_claude,
            "onlyoffice": probe_onlyoffice,
-           "pydeps": probe_pydeps}
+           "pydeps": probe_pydeps, "bili": probe_bili}
 
 
 def _run_ver(argv, timeout=8):
