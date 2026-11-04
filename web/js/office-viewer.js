@@ -378,6 +378,15 @@ function _ovPdfBindControls(conn, wrap) {
     });
     // 立即渲染当前页
     _ovPdfRenderPage(conn, conn._pdfCurrent);
+    // R5-3（实锤：缩放后相邻页永久占位）：IO 只在相交状态变化时回调——缩放
+    // 前后都在视口±rootMargin 内的页永不重发。按 rect 主动渲染当前相交页
+    const vr = pagesEl.getBoundingClientRect();
+    const m = vr.height * 2;   // 与 IO rootMargin(200%) 对齐
+    conn._pdfPageEls.forEach((el, i) => {
+      if (i + 1 === conn._pdfCurrent) return;   // 已渲染
+      const r = el.getBoundingClientRect();
+      if (r.bottom > vr.top - m && r.top < vr.bottom + m) _ovPdfRenderPage(conn, i + 1);
+    });
   };
   wrap.querySelector('[data-ov-zoomin]').onclick = () => setZoom(conn._pdfZoom + 0.25);
   wrap.querySelector('[data-ov-zoomout]').onclick = () => setZoom(conn._pdfZoom - 0.25);
@@ -839,8 +848,10 @@ function _ovXlsxEval(formula, conn) {
 }
 function _ovXlsxSnapshot(conn) {
   // R4-2（实锤：undo 跨 sheet 覆盖）：快照必须带 sheet 归属——旧格式只有
-  // aoa，S1 编辑后切 S2 撤销会把 S1 快照整体灌进 S2 落盘
-  conn._undo.push(JSON.stringify({ idx: conn._sheetIdx, aoa: conn._aoa }));
+  // aoa，S1 编辑后切 S2 撤销会把 S1 快照整体灌进 S2 落盘。
+  // R5-1（实锤：跨表恢复 origin 串表）：org 必须随快照——undo 的 persist
+  // 发生在 renderTable 刷新 _refOrigin 之前，用错表 origin 整表错位落盘
+  conn._undo.push(JSON.stringify({ idx: conn._sheetIdx, aoa: conn._aoa, org: conn._refOrigin }));
   if (conn._undo.length > 50) conn._undo.shift();
 }
 function _ovXlsxRenderTabs(conn) {
@@ -1078,6 +1089,12 @@ function _ovXlsxBindBar(conn, body) {
         const idx = Array.isArray(s) ? conn._sheetIdx : s.idx;   // 旧格式（纯数组）按当前表
         const aoa = Array.isArray(s) ? s : s.aoa;
         if (idx !== conn._sheetIdx) { conn._sheetIdx = idx; _ovXlsxRenderTabs(conn); }   // R4-2：先归位 sheet 再恢复
+        // R5-1：origin 先归位再 persist——旧格式快照无 org 时从目标表 !ref 推兜底
+        conn._refOrigin = s.org || (() => {
+          const ws0 = conn._wb.Sheets[conn._wb.SheetNames[idx]];
+          const rr = ws0 && ws0['!ref'] ? XLSX.utils.decode_range(ws0['!ref']) : null;
+          return rr ? rr.s : { r: 0, c: 0 };
+        })();
         conn._aoa = aoa; _ovXlsxRecalcAll(conn); _ovXlsxPersist(conn); _ovXlsxRenderTable(conn);
       }
       return;
@@ -1091,6 +1108,17 @@ function _ovXlsxBindBar(conn, body) {
         // R4-4（实锤：.xls 被写 xlsx 字节）：按扩展选 bookType——.xls 走
         // biff8（Excel 97-2003），否则 Excel 报"格式与扩展名不匹配"
         const bt = isCsv ? 'csv' : (/\.xls$/i.test(conn.officePath || '') ? 'biff8' : 'xlsx');
+        // R5-2（实锤：.xls 保存公式/样式静默丢失）：SheetJS 社区版 biff8 写
+        // 不保公式与样式（公式降级死值、cellStyles 丢）——保存前检测公式格，
+        // 有则确认警示，用户可拒绝保真转 .xlsx 链路
+        if (bt === 'biff8') {
+          const hasFormula = Object.values(conn._wb.Sheets).some(ws =>
+            Object.keys(ws).some(k => k[0] !== '!' && ws[k] && ws[k].f));
+          if (hasFormula && !confirm('该 .xls（Excel 97-2003）包含公式。\n此格式保存会丢失全部公式（转为静态值）与样式，建议取消后另存 .xlsx。\n\n仍要保存吗？')) {
+            b.disabled = false; b.textContent = '保存';
+            return;
+          }
+        }
         const out = XLSX.write(conn._wb, { bookType: bt, type: 'array' });
         const resp = await fetch('/api/office/write?path=' + encodeURIComponent(conn.officePath), { method: 'POST', body: out });
         const j = await resp.json();
