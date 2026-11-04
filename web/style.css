@@ -5229,12 +5229,7 @@ span.nn-hl-t { background: color-mix(in srgb, #3fb950 15%, transparent);
    它也藏了——用户实锤"看不到左右滚动条"）；行高/列宽手动拖拽手柄 */
 .xlsx-table-wrap { position: absolute; top: 74px; left: 0; right: 0; bottom: 0;
   overflow: auto; background: var(--bg); }
-/* 滚动条豁免全站隐藏规则（!important 压 scrollbar-width / ::-webkit-scrollbar） */
-.xlsx-table-wrap { scrollbar-width: auto !important; }
-.xlsx-table-wrap::-webkit-scrollbar { width: 10px !important; height: 10px !important; }
-.xlsx-table-wrap::-webkit-scrollbar-track { background: color-mix(in srgb, var(--bg-panel) 80%, transparent); }
-.xlsx-table-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; border: 2px solid var(--bg); }
-.xlsx-table-wrap::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+/* a316：xlsx 滚动条同样全隐——自绘条统一（a295 豁免段退役） */
 .xlsx-table-wrap::-webkit-scrollbar-corner { background: transparent; }
 /* 单元格：默认自动换行（文字多→多行→行高自动撑开） */
 .xlsx-edit-table td { white-space: pre-wrap; word-break: break-word; vertical-align: top; }
@@ -5306,21 +5301,16 @@ span.nn-hl-t { background: color-mix(in srgb, #3fb950 15%, transparent);
   （ov-scrollbar.js，office 打开时挂载 _ovSbMount） */
 /* a314（用户令：删自绘条）——恢复 webkit 原生条但强制 14px 宽（能压多宽压
    多宽；Fluent 覆盖层若仍画细条，至少原生条本身宽大可抓） */
-/* a315 单条宽条治本：scrollbar-color 非 auto 值踢掉 WebView2 Fluent 覆盖层
-  （项目历史 f3adc75 复盘结论："CSS scrollbar-color 是踢掉 Fluent 绘制的正解"——
-   Fluent 无视 webkit 宽度自己画细条，auto+webkit = 宽细双条叠加，用户实锤）。
-   设具体色后 Fluent 退出，webkit 14px 条唯一绘制 = 单条宽大可抓 */
+/* a316 终局：scrollbar-color 具体色在用户机仍被 Fluent 叠细条（实锤）——
+   回到终端唯一验证过的全隐：scrollbar-width:none（Fluent 在 none 下不画）。
+   滚动条本体 = ov-sb.js 自绘（直接移植终端 _termSbInit，用户认可"终端条
+   都好好的"）：常驻显示 + 400ms 兜底重绘 + thumb 拖拽/轨道翻页 */
 .office-body, .ov-pdf-main, .xlsx-table-wrap {
-  scrollbar-width: auto !important;
-  scrollbar-color: color-mix(in srgb, var(--muted) 60%, transparent) transparent !important;
+  scrollbar-width: none !important;
+  scrollbar-color: auto !important;
 }
-.office-body::-webkit-scrollbar, .ov-pdf-main::-webkit-scrollbar, .xlsx-table-wrap::-webkit-scrollbar { width: 14px !important; height: 14px !important; }
-.office-body::-webkit-scrollbar-track, .ov-pdf-main::-webkit-scrollbar-track { background: transparent; }
-.office-body::-webkit-scrollbar-thumb, .ov-pdf-main::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--muted) 60%, transparent);
-  border-radius: 3px; border: 2px solid var(--bg); }
-.office-body::-webkit-scrollbar-thumb:hover, .ov-pdf-main::-webkit-scrollbar-thumb:hover { background: var(--muted); }
-.office-body::-webkit-scrollbar-corner, .ov-pdf-main::-webkit-scrollbar-corner { background: transparent; }
+.xlsx-table-wrap, .ov-pdf-main { position: relative; }
+.ov-term-sb { position: absolute !important; top: 4px !important; right: 3px !important; }
 .office-err { color: var(--neon-red); font-size: 12px; padding: 20px; text-align: center; }
 .office-loading { color: var(--muted); font-size: 12px; padding: 40px; }
 /* docx：Word 底白页 + 主题容器底色 */
