@@ -1337,7 +1337,8 @@ function _edCloseNow(conn) {
   // _dsEditor：OnlyOffice 编辑器实例（内部 iframe/websocket 不销毁即常驻）；
   // _pdfTask/_pdfDoc：pdf.js 文档与 worker（100MB 级 PDF 关 tab 不清即驻留）；
   // _pdfIO：页面虚拟化 IntersectionObserver；_outlineRO：docx 大纲栏
-  // ResizeObserver；_ovSbV/_ovSbH 挂在滚动容器元素上（淡出 setTimeout 清理）
+  // ResizeObserver（a314 自绘条已删，_ovSbV/H 挂载点不再产生——清理段保留
+  // 防御旧引用，无害）
   if (conn._dsEditor) { try { conn._dsEditor.destroyEditor(); } catch(e){} conn._dsEditor = null; }
   if (conn._pdfTask) { try { conn._pdfTask.destroy(); } catch(e){} conn._pdfTask = null; conn._pdfDoc = null; }
   if (conn._pdfIO) { try { conn._pdfIO.disconnect(); } catch(e){} conn._pdfIO = null; }

@@ -684,9 +684,10 @@ function showBanner(msg, ms=4000, isErr=false) {
 // 不吃 transition,渐隐只能自绘 DOM 才能做）。面板需 position:relative
 // （CSS 已给六容器配好）。内容不溢出自动隐藏；拖拽锁 sb-drag 防拖出面板
 // 时条闪没；400ms 周期兜底（列表增删不触发 scroll 事件）。返回清理函数
-const _HG_FADE_SB_VER = 8;   // 挂载实例版本：行为变更时递增——旧实例自动拆重建
+const _HG_FADE_SB_VER = 9;   // 挂载实例版本：行为变更时递增——旧实例自动拆重建
                              // v7：补横向条（用户实锤「文件树横向滚动条没有」）
                              // v8：修鼠标上条抽搐（宿主/条互相触发 enter/leave 死循环）
+                             // v9：修 v8 引入的「渐隐消失」——lastPt 陈旧坐标致条永不隐藏
 function _hgFadeSb(el) {
   if (el && el._hgFadeSb && el._hgFadeSb.ver !== _HG_FADE_SB_VER) {
     // 旧版本实例在位（页面 JS 缓存半新半旧的第三层：函数实例本身——服务端
@@ -832,20 +833,16 @@ function _hgFadeSb(el) {
   // 已关而收不到）。
   let hovering = false;
   let hideTimer = 0;
-  // 鼠标是否物理落在条/宿主上——enter/leave 事件在 pointer-events 切换时
-  // 会漏发（条变 none 后浏览器不再派 enter；变回 auto 时若鼠标已在其上，
-  // 补发 leave 而不是 enter）。所以定时器到点必须**主动复查几何位置**，
-  // 不能只靠事件计数。
-  const overEl = (n, e) => {
-    if (!n || !e) return false;
-    const r = n.getBoundingClientRect();
-    return e.clientX >= r.left && e.clientX <= r.right &&
-           e.clientY >= r.top && e.clientY <= r.bottom;
-  };
-  let lastPt = null;
-  const track = (e) => { lastPt = { clientX: e.clientX, clientY: e.clientY }; };
-  const isOverAny = () =>
-    overEl(el, lastPt) || overEl(sb, lastPt) || overEl(sbh, lastPt);
+  // v9（用户实锤「渐隐效果又没了」）：v8 用 lastPt（最后一次 mousemove 坐标）
+  // 做几何复查是错的——mousemove 只挂在宿主/条上，鼠标一旦移出就再没有新
+  // 坐标，lastPt 永远停在离开前那个「在宿主内」的位置，定时器到点恒判
+  // isOverAny()=true，条永不隐藏（实测 12 容器里 6 个 hovered:false 却
+  // sbDrag:true）。改用浏览器自己维护的 :hover 真值：它随真实指针位置变，
+  // 鼠标移出窗口/Alt+Tab 也会清，且不依赖任何事件记录。
+  // 注意条在非 drag 态是 pointer-events:none（不参与命中测试→:hover 恒假），
+  // 但那时条本就该藏，无碍；drag 态条 pointer-events:auto，:hover 可判。
+  const _hov = (n) => !!(n && n.matches && n.matches(':hover'));
+  const isOverAny = () => _hov(el) || _hov(sb) || _hov(sbh);
   const show = () => {
     hovering = true;
     if (hideTimer) { clearTimeout(hideTimer); hideTimer = 0; }
@@ -858,16 +855,13 @@ function _hgFadeSb(el) {
     if (hideTimer) clearTimeout(hideTimer);
     hideTimer = setTimeout(() => {
       hideTimer = 0;
-      // 关键复查：鼠标几何上仍在宿主/条上就继续亮着（事件漏发兜底）
+      // 关键复查：真实指针仍在宿主/条上就继续亮着（enter/leave 漏发兜底）
       if (dragging || draggingH || hovering || isOverAny()) return;
       sb.classList.remove('sb-drag'); sbh.classList.remove('sb-drag');
     }, 260);
   };
   el.addEventListener('mouseenter', show);
   el.addEventListener('mouseleave', hideSoon);
-  el.addEventListener('mousemove', track, { passive: true });
-  sb.addEventListener('mousemove', track, { passive: true });
-  sbh.addEventListener('mousemove', track, { passive: true });
   sb.addEventListener('mouseenter', show);
   sb.addEventListener('mouseleave', hideSoon);
   sbh.addEventListener('mouseenter', show);
