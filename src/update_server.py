@@ -169,9 +169,10 @@ def _versions():
 
 def _offline_pkg():
     """离线资源包单独通道。v4.1 起统一为加密的 `<应用名>-资源包.fcpk`
-    （含 WebView2/dotnet/node/git/claude/pydeps，自定义容器，必须用工具装）。
-    旧 zip（`-offline-pkg.zip`）只作历史 n 天兼容读取——该通道已退役
-    （用户令「彻底退役，不要了」），不再产出新 zip。
+    （含 WebView2/dotnet/node/git/claude/pydeps/onlyoffice，自定义容器，
+    必须用工具装）。旧 zip（`-offline-pkg.zip`）通道已退役（用户令「彻底
+    退役，不要了」），不再产出新 zip——仅在没有 fcpk 时回退兼容读取历史
+    release 目录里遗留的 zip。
 
     不进版本清单/更新日志——它不是应用版本，只是无外网机器的部署资源。
     sha1 不提供：manifest 刻意不收它（updater 不能把它当应用更新推下去），
@@ -192,17 +193,19 @@ def _offline_pkg():
             st = os.stat(p)
         except OSError:
             continue
-        # 新版优先（同 mtime 时 fcpk 胜出）
+        # a32x（对抗审 P2）：旧实现用 (mtime, rank) 排序——mtime 不同的旧 zip
+        # 会直接压过 fcpk，门户又把按钮写回「下载离线包」，与「通道已退役」
+        # 自相矛盾。改为 fcpk **恒优先**：只要存在 fcpk 就永不选 zip。
         rank = 1 if is_new else 0
-        if best and (st.st_mtime, rank) <= best[1]:
+        if best and (rank, st.st_mtime) <= (best[1][0], best[1][1]):
             continue
         ver = n.rsplit("-v", 1)[-1][:-4] if ("-v" in n and n.endswith(".zip")) else ""
-        best = (n, (st.st_mtime, rank), st.st_size, ver,
+        best = (n, (rank, st.st_mtime), st.st_size, ver,
                 "fcpk" if is_new else "zip")
     if not best:
         return None
     return {"file": best[0], "version": best[3], "size": best[2],
-            "mtime": int(best[1][0] * 1000), "format": best[4],
+            "mtime": int(best[1][1] * 1000), "format": best[4],
             "url": "/" + quote(best[0])}
 
 
@@ -683,7 +686,7 @@ _PORTAL_HTML = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
         <text x="620" y="42" text-anchor="middle" fill="currentColor" font-size="13" font-weight="600">③ 自动拉起 Claude</text>
         <text x="620" y="62" text-anchor="middle" fill="#8899aa" font-size="11">API Token 配好即用</text>
       </svg>
-      <p><b>怎么配：</b>在「设置 → 外部依赖安装」里选资源包（.fcpk），勾选 Claude CLI / Node / Git 等六项一键装（无网机器把资源包拷过去即可）。装好即用。<br>
+      <p><b>怎么配：</b>在「设置 → 外部依赖安装」里选资源包（.fcpk），勾选所需项一键装（无网机器把资源包拷过去即可）。装好即用。<br>
       <b>API 接入：</b>需要 Anthropic 兼容 API 的（企业内网网关 / 智谱等），在 Claude 对话页的接入引导里填 <b>Base URL + API Token</b>（支持 settings.json 同源自动读取）；官方账号用户装好 CLI 登录即可。<br>
       <b>提示：</b>工具页左下角有「Claude」状态徽章，绿色=通道就绪。之后每个会话页签就是一个独立 AI，互不干扰。</p>
     </div>

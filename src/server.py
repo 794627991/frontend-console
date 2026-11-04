@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 前端控制台 v2.2.0 —— 多串口/SSH 后端 + AI 接入层
@@ -339,8 +339,8 @@ def start_background():
 # a239（第5轮B2-P1A）：全站 Origin/Host 校验——主进程此前对任何来源的
 # POST 都照单全收（get_json(force=True) 使 text/plain 跨源"简单请求"也能
 # 解析 JSON）：远程网页可 CSRF 驱动 skills/install（往 ~/.claude/skills 落
-# SKILL.md=持久提示注入）、tftp/set_dir 重瞄准、claude_setup 执行任意 zip
-# 安装器；DNS-rebinding（Host 无校验）还放开读面。对照 worker 进程 a116
+# SKILL.md=持久提示注入）、tftp/set_dir 重瞄准（claude_setup 执行任意 zip
+# 安装器这一面已随 a32x 退役）；DNS-rebinding（Host 无校验）还放开读面。对照 worker 进程 a116
 # 已修同款，主进程漏网至今。
 # 规则：
 # - Host 必须 127.0.0.1[:port] / localhost[:port] / [::1]（拦 rebinding）

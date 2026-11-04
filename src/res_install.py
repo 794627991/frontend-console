@@ -83,6 +83,12 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None,
     不该把已经装好的 Node 也回滚。
     """
     say = log or (lambda _m: None)
+    # a32x（对抗审 P1）：cs._log 的旧读者（/api/claude/setup_poll）已随 zip
+    # 通道退役删除，但 _install_node_from/_install_git_from/_install_pydeps/
+    # _download 里 27 处排障日志仍在走 _log。把 say 灌进它的 sink，这些
+    # "msiexec 退出码 1603""改用免安装 zip""pip 尾部输出"才会显示在安装面板
+    from src import claude_setup as _cs
+    _cs._log_sink = say
     cur = [0]
 
     def prog(done, total, label=""):
@@ -203,6 +209,12 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None,
         reader.close()
         if staging and os.path.isdir(staging):
             shutil.rmtree(staging, ignore_errors=True)
+        # P1：安装结束必须摘 sink，否则离开本函数后 _log 仍往已死的 say 推
+        try:
+            from src import claude_setup as _cs2
+            _cs2._log_sink = None
+        except Exception:
+            pass
 
 
 # ------------------------------------------------------------------ 各资源

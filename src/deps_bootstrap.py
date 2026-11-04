@@ -89,8 +89,9 @@ def _ensure_pip():
 
 
 def _wheels_dir():
-    """离线 wheel 目录：离线整合包解包后的 pydeps/（.fcpk 资源包的 pydeps kind
-    落地位）。存在且含 wheel 才返回，否则 None。"""
+    """离线 wheel 目录：仓库根 pydeps/（源码分发场景手工放置的 wheel）。
+    .fcpk 资源包的 pydeps kind 由 res_install 直接交给 pip --find-links，
+    不落这个目录。存在且含 wheel 才返回，否则 None。"""
     d = os.path.join(_ROOT, "pydeps")
     try:
         if os.path.isdir(d) and any(

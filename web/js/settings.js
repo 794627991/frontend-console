@@ -18,7 +18,7 @@ const _SET_SECTIONS = [
   { id: 'appearance', icon: ICO16.palette, name: '外观', desc: '换肤 / 界面缩放' },
   { id: 'api',   icon: ICO16.key, name: 'API 配置', desc: 'Claude API Token / settings.json' },
   { id: 'update', icon: ICO16.upload, name: '关于与升级', desc: '版本 / 检查更新 / 升级分发服务' },
-  { id: 'resources', icon: ICO16.puzzle, name: '外部依赖安装', desc: '检测 / 用离线资源包重装六项依赖' },
+  { id: 'resources', icon: ICO16.puzzle, name: '外部依赖安装', desc: '检测 / 用离线资源包重装运行时依赖' },
   { id: 'data',  icon: ICO16.folder, name: '数据目录', desc: '日志 / 笔记 / 缓存的位置与迁移' },
   { id: 'assoc', icon: ICO16.link, name: '文件关联', desc: '接管/还原 txt 等文本文件的双击打开方式' },
   { id: 'help',  icon: ICO16.help, name: '帮助', desc: 'README 使用手册 / 常见问题' },
@@ -546,11 +546,11 @@ async function _stRenderTermKeysPane(pane) {
   _bindSearchHk('notesHkInput', _notesRef, 'notes_search_hotkey');
 }
 
-// ---- 外部依赖安装（v4.1）：六项检测 + 离线资源包一键装 ----
+// ---- 外部依赖安装（v4.1）：运行时依赖检测 + 离线资源包一键装 ----
 // 数据源只有 /api/resources/status（manifest 由后端 MANIFEST 注入，前端
-// 不硬编码六项名——res_boot.MANIFEST 是唯一真源）。
+// 不硬编码项名——res_boot.MANIFEST 是唯一真源）。
 // 勾选语义 = 「这一项本次要处理」，不是「跳过」：默认勾选的只有没装好的，
-// 免得一次点击把六项全量覆盖（.NET 要 UAC，Claude 是 270MB 拷贝）。
+// 免得一次点击把全部项覆盖（.NET 要 UAC，Claude 是 270MB 拷贝）。
 async function _stRenderResourcesPane(pane) {
   pane.innerHTML = `
     <div class="dd-body">

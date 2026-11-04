@@ -140,8 +140,8 @@ def build_app():
     # 数据面+面板 API+用量统计+默认环境/凭据配置蓝图随迁——claude 流量的
     # json 解析/转发烧 worker 的 GIL，主进程只剩串口终端与轻量路由。
     # claude_default 的 re-point 队列与 proxy 同进程反而更顺（原来跨在
-    # 主进程）；claude_setup（安装引导）留主进程，其内部调 claude_default
-    # 函数属罕见路径，跨进程写竞态用户已接受
+    # 主进程）；claude_setup 的模块级安装原语被 res_install 复用，但无端点
+    # 无状态，留在哪个进程都无所谓（a32x 起旧 zip 安装引导通道已退役）
     app.register_blueprint(proxy_bp)
     app.register_blueprint(usage_bp)
     app.register_blueprint(claude_default_bp)

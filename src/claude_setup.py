@@ -1,10 +1,17 @@
 # -*- coding: utf-8 -*-
-"""Claude CLI 安装引导（联网 / 离线双通道）。
+"""Win 侧运行时安装原语（供 src/res_install.py 的 .fcpk 资源包安装复用）。
 
-首次打开 Claude 检测不到 CLI 时，前端弹安装引导窗：
-- 联网通道：npm install -g @anthropic-ai/claude-code（需要 node/npm）
-- 离线通道：制作整合包（Git 安装器 + Node MSI + %APPDATA%\\npm 里的
-  claude-code 目录打包成 zip），无网机器上解包静默装。
+a32x（用户令「旧版离线包（zip）通道彻底退役，不要了」）：本模块原先注册的
+五个 HTTP 端点（setup_status/setup_poll/setup_pkg_dir/setup_offline_pack/
+setup_install）与前端安装引导窗已全部删除，现在**不注册任何端点、没有 UI**。
+依赖安装统一走「设置 → 外部依赖安装」的 .fcpk 资源包，或 res_install 的
+在线安装通道。
+
+保留的是被复用的安装原语（那些逻辑经过多轮实机验证，重写只会引入回归）：
+- Node/Git 静默安装（MSI 1603 无权限自动退化为免安装 zip）
+- claude-code 铺包 + npm shim + PATH（HKCU）
+- 工具 pip 依赖离线补装（--no-index --find-links，绝不联网）
+- claude --version 硬验证（装上≠能跑）
 
 安全/边界：安装器只写 HKCU PATH（与 file_assoc 同一约束），MSI/EXE
 静默参数全部走官方 documented 开关，绝不碰 pythonw（铁律3）。
@@ -15,32 +22,43 @@ import os
 import shutil
 import subprocess
 import sys
-import threading
 import time
 import zipfile
 
-from flask import Blueprint, jsonify, request
-
-from .claude_conn import _resolve_claude_exe, ClaudeNotFoundError
+from flask import Blueprint
 
 claude_setup_bp = Blueprint("claude_setup", __name__)
 
-# 安装任务状态（单例：同一时刻只允许一个安装/打包任务在跑）
-_setup_lock = threading.Lock()
-_setup_state = {"running": False, "phase": "", "log": [], "done": False, "ok": False,
-                "err": "", "ts": 0, "need_api": False}
+# a32x（对抗审 P1）：旧 UI 的 /api/claude/setup_poll 删除后，_log 原本的唯一
+# 读者消失了——27 处排障关键日志（"msiexec 退出码 1603""改用免安装 zip""pip
+# 尾部输出"）全进了无人读的缓冲区，等于把排障能力整体删掉。改为：
+#   ① 保留环形缓冲（便于异常时 dump）
+#   ② 支持注入 sink——res_install 安装时把 say 塞进来，日志直接进资源包
+#      安装面板的实时日志流，用户看得见
+_log_sink = None
+# 内部诊断日志缓冲（a32x：旧 /api/claude/setup_poll 已删——现在只有 _log_sink
+# 注入的消费者能看到；无 sink 时仅留 500 条环形缓冲供异常时 dump）
+_setup_state = {"log": []}
 
 
 def _log(msg):
-    _setup_state["log"].append({"t": time.time(), "msg": str(msg)})
+    s = str(msg)
+    _setup_state["log"].append({"t": time.time(), "msg": s})
     if len(_setup_state["log"]) > 500:
         del _setup_state["log"][:-500]
+    sink = _log_sink
+    if sink is not None:
+        try:
+            sink(s)
+        except Exception:
+            pass     # sink 坏掉不能影响安装主流程
 
 
 # ---- 资源探测 ----
 
 # 离线资源搜索位（按优先级）：
-# 1. 用户自定义目录（config.json offline_pkg_dir——设置界面/安装窗手动选）
+# 1. 用户自定义目录（config.json 的 offline_pkg_dir——a32x 起 UI 入口已随
+#    旧 zip 通道退役，只保留"高级用户手工改 config.json"这条路）
 # 2. 工具同目录 offline_pkg/（随包分发的离线安装资源，dist 打包时带上）
 # 不再写死 D:\AI\安装环境（用户定：那只是本机的资源目录，别的机器没有）。
 
@@ -151,7 +169,7 @@ def _git_ok():
 # 解包后按 --no-index --find-links 离线补装
 _TOOL_DEPS = ["flask", "pyserial", "pywebview", "paramiko", "pywinpty"]
 
-# 官方下载位（联网通道资源目录没安装器时用；版本与 D:\AI\安装环境 对齐）
+# 官方下载位（在线安装通道：本地资源目录没安装器时才走；版本与 D:\AI\安装环境 对齐）
 _NODE_URL = "https://nodejs.org/dist/v24.19.0/node-v24.19.0-x64.msi"
 # 免安装 zip（MSI 提权失败 1603 的兜底，零权限解压即用）
 _NODE_ZIP_URL = "https://nodejs.org/dist/v24.19.0/node-v24.19.0-win-x64.zip"
@@ -186,35 +204,10 @@ def _download(url, dst):
         except OSError:
             pass
         raise RuntimeError(
-            f"下载失败（{e}）——请检查网络；"
-            f"无网环境请改用「📂 离线包安装」（选 claude-offline.zip）") from e
+            f"下载失败（{e}）——请检查网络。无网环境请让发布者在资源包内"
+            f"附带对应安装器（node 的 .msi 或 node-v*-win-x64.zip / Git-*.exe）"
+            f"后重新制作 .fcpk 包") from e
     return dst
-
-
-def _preflight_urls():
-    """联网安装预检：所有要下载的 URL 先 HEAD 探一遍（小白用户——别等
-    下载到一半才发现 404）。返回 (ok, 消息)。已有本机资源的项跳过对应 URL。"""
-    import urllib.request
-    checks = []
-    if not (shutil.which("node.exe") or shutil.which("node")):
-        checks.append(("Node.js MSI", _NODE_URL))
-        checks.append(("Node.js 免安装包", _NODE_ZIP_URL))
-    if not _git_ok():
-        checks.append(("Git", _GIT_URL))
-    if not checks:
-        _log("Node/Git 本机已有，无需下载")
-        return True, ""
-    _log(f"预检下载地址（{len(checks)} 项）…")
-    for name, url in checks:
-        try:
-            req = urllib.request.Request(url, method="HEAD")
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                if resp.status != 200:
-                    return False, f"{name} 下载地址失效（HTTP {resp.status}）"
-            _log(f"  ✓ {name} 地址正常")
-        except Exception as e:
-            return False, f"{name} 无法访问（{e}）——请检查网络后重试"
-    return True, ""
 
 
 def _install_node_if_missing(dl_dir):
@@ -291,7 +284,7 @@ def _install_node_from(msi):
                 cand.append(_z[-1])
         except Exception:
             pass
-        # 本地资源目录（联网通道）
+        # 本地资源目录（在线安装通道优先用）
         lz = _find_installer("node-v*-win-x64.zip")
         if lz:
             cand.append(lz)
