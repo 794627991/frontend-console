@@ -864,8 +864,18 @@ function _ovXlsxSnapshot(conn) {
   // R4-2（实锤：undo 跨 sheet 覆盖）：快照必须带 sheet 归属——旧格式只有
   // aoa，S1 编辑后切 S2 撤销会把 S1 快照整体灌进 S2 落盘。
   // R5-1（实锤：跨表恢复 origin 串表）：org 必须随快照——undo 的 persist
-  // 发生在 renderTable 刷新 _refOrigin 之前，用错表 origin 整表错位落盘
-  conn._undo.push(JSON.stringify({ idx: conn._sheetIdx, aoa: conn._aoa, org: conn._refOrigin }));
+  // 发生在 renderTable 刷新 _refOrigin 之前，用错表 origin 整表错位落盘。
+  // R8-1（实锤：undo 不回滚行高列宽）：插删行的平移态也要随快照回滚——
+  // 桶（用户拖拽）+ !rows/!cols（ws 侧）一并入快照，否则拖过的行高在
+  // 撤销插行后永久漂到下一行并落盘
+  const sh = conn._wb.Sheets[conn._wb.SheetNames[conn._sheetIdx]];
+  conn._undo.push(JSON.stringify({
+    idx: conn._sheetIdx, aoa: conn._aoa, org: conn._refOrigin,
+    rowH: (conn._rowH || {})[conn._sheetIdx] || null,
+    colW: (conn._colW || {})[conn._sheetIdx] || null,
+    rows: sh && sh['!rows'] ? JSON.parse(JSON.stringify(sh['!rows'])) : null,
+    cols: sh && sh['!cols'] ? JSON.parse(JSON.stringify(sh['!cols'])) : null,
+  }));
   if (conn._undo.length > 50) conn._undo.shift();
 }
 function _ovXlsxRenderTabs(conn) {
@@ -1109,6 +1119,13 @@ function _ovXlsxBindBar(conn, body) {
           const rr = ws0 && ws0['!ref'] ? XLSX.utils.decode_range(ws0['!ref']) : null;
           return rr ? rr.s : { r: 0, c: 0 };
         })();
+        // R8-1：行高列宽桶 + ws 侧 !rows/!cols 一并回滚（快照法覆盖面比
+        // 反向平移完整；旧格式快照无这些键时跳过维持旧行为）
+        if (s.rowH) { if (!conn._rowH) conn._rowH = {}; conn._rowH[idx] = s.rowH; }
+        if (s.colW) { if (!conn._colW) conn._colW = {}; conn._colW[idx] = s.colW; }
+        const shT = conn._wb.Sheets[conn._wb.SheetNames[idx]];
+        if (shT && s.rows) shT['!rows'] = s.rows;
+        if (shT && s.cols) shT['!cols'] = s.cols;
         conn._aoa = aoa; _ovXlsxRecalcAll(conn); _ovXlsxPersist(conn); _ovXlsxRenderTable(conn);
       }
       return;
@@ -1191,6 +1208,12 @@ function _ovXlsxBindBar(conn, body) {
     }
     if (act === 'insrow') conn._aoa.splice(Math.max(r !== undefined ? r : 0, 0), 0, (conn._aoa[0] || []).map(() => null));
     if (act === 'delrow') { if (r !== undefined && conn._aoa[r]) conn._aoa.splice(r, 1); else if (conn._aoa.length) conn._aoa.pop(); }
+    // R8-2（实锤：无选中删末行 !rows 残留）：pop 路径的 splice 被
+    // rr!==undefined 挡住——统一按删后行数截断，被删行的 hpx 不再被
+    // 后续加行继承落盘
+    if (act === 'delrow' && sh && sh['!rows'] &&
+        sh['!rows'].length > org.r + conn._aoa.length)
+      sh['!rows'].length = org.r + conn._aoa.length;
     if (act === 'inscol') conn._aoa.forEach(row => row.splice(Math.max(c, 0), 0, null));
     if (act === 'delcol') conn._aoa.forEach(row => { if (row[c] !== undefined) row.splice(c, 1); });
     _ovXlsxRecalcAll(conn); _ovXlsxPersist(conn); _ovXlsxRenderTable(conn);

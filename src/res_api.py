@@ -182,7 +182,8 @@ def res_install_api():
         _state.update(done_bytes=int(done_b or 0),
                       total=int(total_b or _state["total"] or 0),
                       cur=label or "",
-                      phase="安装 %s" % (label or ""))
+                      # R8-4：完成态不走「安装 %s」模板（否则显示「安装 完成」）
+                      phase=(label if label == "完成" else "安装 %s" % (label or "")))
 
     def work():
         try:
@@ -248,7 +249,31 @@ def res_latest():
     if kind != "claude":
         return jsonify({"ok": False, "err": "暂只支持 claude 的在线升级检查"}), 400
     from src.claude_setup import _pkg_version, _claude_pkg_dir
-    current = _pkg_version(_claude_pkg_dir())
+    import os as _os
+    import subprocess as _sp
+    # R8-3（实锤：current 读到打包镜像）：_claude_pkg_dir 优先 offline_assets
+    # 离线镜像——升级判断必须以「本机 npm 实装」为基准（实装已新仍弹升级/
+    # 实装落后却显示已是最新，双向误判）。镜像只在实装缺失时兜底
+    current = ""
+    for c in (_os.path.join(_os.environ.get("APPDATA", ""), "npm",
+                            "node_modules", "@anthropic-ai", "claude-code"),):
+        v = _pkg_version(c)
+        if v:
+            current = v
+            break
+    if not current:
+        try:   # npm prefix 自定义过的机器
+            out = _sp.check_output(["npm", "root", "-g"], text=True,
+                                   stderr=_sp.DEVNULL, timeout=15).strip()
+            if out:
+                v = _pkg_version(_os.path.join(out, "@anthropic-ai",
+                                               "claude-code"))
+                if v:
+                    current = v
+        except Exception:
+            pass
+    if not current:
+        current = _pkg_version(_claude_pkg_dir())
     latest, err = "", ""
     try:
         import json as _json

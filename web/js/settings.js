@@ -812,8 +812,13 @@ async function _stRenderResourcesPane(pane) {
         const tot = s.total || 0, cur = s.bytes || 0;
         const pct = tot ? Math.min(100, Math.round(cur * 100 / tot)) : 0;
         if (bar) bar.style.width = pct + '%';
+        // R8-4：在线模式 done/total 是 kind 计数——按「x / n 项」展示，
+        // 不走字节格式化（离线模式才是字节数）
+        const sizeTxt = online
+          ? (cur + ' / ' + tot + ' 项')
+          : (_ddFmtSize(cur) + ' / ' + _ddFmtSize(tot));
         if (txt) txt.textContent = (s.phase || '') +
-          (tot ? ' · ' + _ddFmtSize(cur) + ' / ' + _ddFmtSize(tot) + ' (' + pct + '%)' : '') +
+          (tot ? ' · ' + sizeTxt + ' (' + pct + '%)' : '') +
           (s.cancelling ? ' · 正在取消…' : '');
       },
       onDone: function (r) {
