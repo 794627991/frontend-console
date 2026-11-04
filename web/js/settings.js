@@ -861,7 +861,7 @@ async function _stRenderResourcesPane(pane) {
   };
   $q('#rsFixStatusline').onclick = async () => {
     const ok = await _ddConfirm('重配 statusLine',
-      '清除 settings.json 中现有 statusLine 配置并按本机 python 重配？找不到 python 时不配置（状态栏不显示，无害）。');
+      '清除 settings.json 中现有 statusLine 配置并按本机 python 重配？找不到 python 时不配置（状态栏不显示，无害）。\n\n（顺带补全其它缺省项与自带 MCP 注册/授权）');
     if (!ok) return;
     try {
       const r = await fetch('/api/claude/provision', {method:'POST',
@@ -999,7 +999,7 @@ async function _stRenderApiPane(pane) {
       </div>
       <div class="dd-actions" style="margin-top:16px;">
         <button class="btn ghost" id="apiOpenSettings" title="在工具内打开 settings.json（Monaco 编辑）"><span>${ICO16.folderOpen}</span> 打开 settings.json</button>
-        <button class="btn ghost" id="apiProvision" title="恢复 Claude 默认配置（settings 缺省项补全 + statusline 重铺；已有配置不动，statusline 强制覆盖）">↺ 恢复 Claude 默认配置</button>
+        <button class="btn ghost" id="apiProvision" title="恢复 Claude 默认配置（settings 缺省项补全 + statusline 重铺 + 自带 MCP 注册/授权；已有配置不动，statusline 强制覆盖）">↺ 恢复 Claude 默认配置</button>
       </div>
       <div class="dd-note" id="apiNote"></div>
     </div>`;
@@ -1303,7 +1303,7 @@ async function _stRenderApiPane(pane) {
   };
   pane.querySelector('#apiProvision').onclick = async () => {
     const ok = await _ddConfirm('恢复 Claude 默认配置',
-      '补全 settings.json 缺省项（已有配置不动）并重铺 statusline.py？');
+      '补全 settings.json 缺省项（已有配置不动）+ 重铺 statusline.py + 把工具自带的 MCP（serial-console-pro）注册进 ~/.claude.json 并授权？\n\n同事机器装完工具后 Claude Code 里用不了自带 MCP，点这个即可修好。');
     if (!ok) return;
     try {
       const r = await fetch('/api/claude/provision', {method:'POST',
