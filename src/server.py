@@ -649,7 +649,9 @@ def _ds_jwt_secret():
         "C:/Program Files (x86)/ONLYOFFICE/DocumentServer/config/local.json",
     ):
         try:
-            with open(pth, "r", encoding="utf-8") as f:
+            # utf-8-sig：PowerShell Set-Content -Encoding UTF8 写 BOM——
+            # utf-8 裸读抛 JSONDecodeError → secret 永远读不到 → 误报 jwt_hint（实锤）
+            with open(pth, "r", encoding="utf-8-sig") as f:
                 cfg = _json.load(f)
             return (cfg.get("services", {}).get("CoAuthoring", {})
                       .get("secret", {}).get("inbox", {}).get("string")
