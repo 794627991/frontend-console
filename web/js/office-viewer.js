@@ -94,6 +94,7 @@ async function openOfficeFile(path) {
           <span class="office-title">${esc(name)}</span>
           <span class="office-info" data-ov-info>加载中…</span>
           <span style="flex:1"></span>
+          <button class="btn ghost" data-ov-outline-btn title="显示/隐藏目录大纲" style="display:none;">☰ 大纲</button>
           <button class="btn ghost" data-ov-dsedit title="OnlyOffice 全功能编辑（需本机安装，未装给安装指引）">✎ 全功能编辑</button>
         </div>
         <div class="office-body" data-ov-body><div class="office-loading">正在加载文件…</div></div>
@@ -530,16 +531,20 @@ function _ovDocxOutline(body, container, conn) {
   bar.style.top = Math.max(0, Math.round(br.top)) + 'px';
   bar.style.left = Math.max(0, Math.round(br.left)) + 'px';
   bar.style.bottom = '0';
-  // a301：目录栏可折叠（用户令：默认打开，可收起）——标题行点击切换；
-  // 收起后文档占满全宽（去 margin-left 让位）
-  bar.innerHTML = '<div class="ov-docx-outline-title" title="点击收起/展开目录">目录 ▾</div>';
-  const title = bar.querySelector('.ov-docx-outline-title');
-  title.style.cursor = 'pointer';
-  title.onclick = () => {
-    const collapsed = bar.classList.toggle('collapsed');
-    title.textContent = collapsed ? '目录 ▸' : '目录 ▾';
-    container.classList.toggle('outline-off', collapsed);
-  };
+  // a302R：目录栏改 MD 大纲同款——完全隐藏/显示（用户令："我要全隐藏，
+  // 类似 md 预览大纲那种效果，新增一个按钮的事情"）。工具栏「☰ 大纲」钮切换，
+  // 隐藏后文档占满全宽（margin-left 归零，非 44px 窄条）
+  bar.innerHTML = '<div class="ov-docx-outline-title">目录</div>';
+  const obBtn = conn.wrap.querySelector('[data-ov-outline-btn]');
+  if (obBtn) {
+    obBtn.style.display = '';
+    obBtn.onclick = () => {
+      const show = bar.style.display === 'none';
+      bar.style.display = show ? '' : 'none';
+      obBtn.classList.toggle('active', show);
+      bar.classList.toggle('hidden', !show);
+    };
+  }
   const items = heads.map((h, i) => {
     const m = /docx_heading(\d)/.exec(h.className);
     const d = document.createElement('div');
