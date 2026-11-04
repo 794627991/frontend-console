@@ -106,6 +106,91 @@ function _stRenderHelpPane(pane) {
 }
 
 // ---- 外观子页：风格（v4.1 桥接维度）+ 换肤（原 theme 页整块搬入）+ 界面缩放 ----
+// a346：代码跳转快捷键卡片（外观 pane 尾部）——三个录制框：点击→按下
+// 组合键→显示；保存 POST /api/theme {nav_keys} → NavJump.applyKeys 热应用
+function _stNavKeysCard(pane) {
+  const row = pane.querySelector('#stNavKeysRow');
+  if (!row) return;
+  const DEF = { def: 'f12', ref: 'shift+f12', sym: 'ctrl+t' };
+  const NAMES = { def: '转到定义', ref: '查找引用', sym: '工作区符号' };
+  const keys = { ...DEF, ...(window.NavJump ? NavJump.getKeys() : {}) };
+  const fields = {};
+  ['def', 'ref', 'sym'].forEach(k => {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'display:flex;flex-direction:column;gap:4px;align-items:center;';
+    const lab = document.createElement('span');
+    lab.textContent = NAMES[k];
+    lab.style.cssText = 'font-size:12px;color:var(--muted);';
+    const inp = document.createElement('button');
+    inp.className = 'btn ghost';
+    inp.style.cssText = 'min-width:120px;font-family:var(--font-mono);';
+    inp.textContent = (window.NavJump ? NavJump.keyLabel(keys[k]) : keys[k]);
+    let recording = false;
+    inp.onclick = () => {
+      if (recording) { recording = false; inp.textContent = NavJump.keyLabel(keys[k]); return; }
+      recording = true;
+      inp.textContent = '按下组合键…';
+      const onKey = e => {
+        e.preventDefault(); e.stopPropagation();
+        if (e.key === 'Escape') { recording = false; inp.textContent = NavJump.keyLabel(keys[k]); return; }
+        if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return;   // 等主键
+        const parts = [];
+        if (e.ctrlKey || e.metaKey) parts.push('ctrl');
+        if (e.shiftKey) parts.push('shift');
+        if (e.altKey) parts.push('alt');
+        const main = (e.key || '').toLowerCase();
+        if (!/^[a-z0-9]|^f[1-9][0-9]?$/.test(main)) return;   // 只收字母/数字/F 键
+        parts.push(main);
+        keys[k] = parts.join('+');
+        recording = false;
+        inp.textContent = NavJump.keyLabel(keys[k]);
+        syncSave();
+      };
+      const once = ev2 => { if (!recording) { document.removeEventListener('keydown', onKey, true); } };
+      document.addEventListener('keydown', onKey, true);
+      setTimeout(() => document.removeEventListener('keydown', onKey, true), 15000);
+    };
+    fields[k] = inp;
+    wrap.appendChild(lab); wrap.appendChild(inp);
+    row.appendChild(wrap);
+  });
+  const save = document.createElement('button');
+  save.className = 'btn primary';
+  save.textContent = '保存';
+  save.style.display = 'none';
+  const reset = document.createElement('button');
+  reset.className = 'btn ghost';
+  reset.textContent = '↺ 恢复默认';
+  reset.onclick = async () => {
+    ['def', 'ref', 'sym'].forEach(k => keys[k] = DEF[k]);
+    await saveNow();
+  };
+  function syncSave() {
+    const vals = Object.values(keys);
+    const clash = new Set(vals).size !== 3;
+    save.style.display = '';
+    save.disabled = clash;
+    save.textContent = clash ? '⚠ 快捷键冲突' : '保存';
+  }
+  async function saveNow() {
+    try {
+      const r = await fetch('/api/theme', { method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nav_keys: keys }) });
+      const j = await r.json();
+      if (!j.ok) { showBanner('保存失败：' + (j.err || ''), 4000, true); return; }
+      if (window.NavJump && NavJump.applyKeys) NavJump.applyKeys(keys);
+      showBanner('跳转快捷键已生效：' +
+        NavJump.keyLabel(keys.def) + ' / ' + NavJump.keyLabel(keys.ref) + ' / ' + NavJump.keyLabel(keys.sym), 4000);
+      save.style.display = 'none';
+      ['def', 'ref', 'sym'].forEach(k => fields[k].textContent = NavJump.keyLabel(keys[k]));
+    } catch (e) { showBanner('保存失败: ' + e, 4000, true); }
+  }
+  save.onclick = saveNow;
+  row.appendChild(save);
+  row.appendChild(reset);
+}
+
 function _stRenderAppearancePane(pane) {
   pane.innerHTML = `<div class="dd-body"><div class="dd-label">界面风格</div>
     <div class="set-style-row" id="stStyleRow"></div>
@@ -141,6 +226,11 @@ function _stRenderAppearancePane(pane) {
       <div class="dd-label">MD 预览主题</div>
       <div class="dd-row" style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;" id="stMdPvRow"></div>
       <div class="dd-sub">Markdown 预览面板的配色（独立于全局主题，随时可改）。</div>
+    </div>
+    <div class="dd-cur" style="margin-top:8px;">
+      <div class="dd-label">代码跳转快捷键</div>
+      <div class="dd-row" style="display:flex;gap:10px;margin-top:8px;flex-wrap:wrap;align-items:center;" id="stNavKeysRow"></div>
+      <div class="dd-sub">编辑器内：转到定义 / 查找所有引用 / 工作区符号搜索（按符号名搜全库，跨文件找函数）。点击输入框后按下新组合键，保存即时生效；编辑器右键菜单同样可用这三项。</div>
     </div></div>`;
   const grid = pane.querySelector('#stThemeGrid');
   // 风格行（v4.1 桥接层 skin.js）：逐个胶囊，点选即切（联动配套配色）
@@ -187,6 +277,8 @@ function _stRenderAppearancePane(pane) {
     });
   }
   const cur = document.documentElement.getAttribute('data-theme') || 'deepblue';
+  // a346：代码跳转快捷键（录制框 + 保存热应用）
+  _stNavKeysCard(pane);
   // a278 性能模式开关（极光玻璃 GPU 合成优化）
   const perfBtn = pane.querySelector('#apPerfToggle');
   if (perfBtn && typeof togglePerfMode === 'function') {

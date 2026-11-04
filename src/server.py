@@ -1375,6 +1375,10 @@ def api_theme():
                         "notes_search_hotkey": cfg.get("notes_search_hotkey", "ctrl+alt+f"),
                         "perf_mode": bool(cfg.get("perf_mode", False)),
                         "md_preview_theme": cfg.get("md_preview_theme", "auto"),
+                        # a346: 代码跳转快捷键（nav.js 消费；形如 'f12'/'ctrl+t'）
+                        "nav_keys": cfg.get("nav_keys", {"def": "f12",
+                                                         "ref": "shift+f12",
+                                                         "sym": "ctrl+t"}),
                         # a286: Tab 栏模式——flat=Chrome 平铺收缩 / drawer=分组抽屉
                         "tab_mode": cfg.get("tab_mode", "flat")})
     data = request.get_json(force=True) or {}
@@ -1449,6 +1453,21 @@ def api_theme():
             _hk_updates[_hk_field] = _v
     if _hk_updates:
         _save_config({**_load_config(), **_hk_updates})
+    # a346：代码跳转快捷键（def=转定义 ref=查引用 sym=工作区符号）——与
+    # 搜索热键同法：仅落 config（nav.js 页面内 keydown 消费+热应用），
+    # 白名单校验三键齐全、格式同 _HK_RE、互不冲突
+    if "nav_keys" in data and isinstance(data["nav_keys"], dict):
+        nk = data["nav_keys"]
+        _nk_out = {}
+        for _nk_k in ("def", "ref", "sym"):
+            _v = str(nk.get(_nk_k) or "").strip().lower()
+            if not _HK_RE.match(_v):
+                return jsonify({"ok": False,
+                                "err": "nav_keys.%s 格式非法（形如 ctrl+t）" % _nk_k}), 400
+            _nk_out[_nk_k] = _v
+        if len(set(_nk_out.values())) != 3 or "" in _nk_out.values():
+            return jsonify({"ok": False, "err": "三个跳转快捷键不能为空且互不冲突"}), 400
+        _save_config({**_load_config(), "nav_keys": _nk_out})
     if "custom_theme" in data and isinstance(data["custom_theme"], dict):
         # v2.25 自定义主题调色：键白名单 + 值格式校验（#rgb/#rrgggb、light 布尔），
         # 防 config 被塞脏数据（与 term_keys 白名单同思路）

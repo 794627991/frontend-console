@@ -262,16 +262,85 @@
     return null;
   }
 
+  // ---- 可配置键位（a346）：默认 F12 / Shift+F12 / Ctrl+T，设置页可改 ----
+  const NAV_KEYS = { def: 'f12', ref: 'shift+f12', sym: 'ctrl+t' };
+
+  function loadNavKeys() {
+    fetch('/api/theme').then(r => r.json()).then(j => {
+      if (j && j.nav_keys && j.nav_keys.def) {
+        applyKeys(j.nav_keys);
+      }
+    }).catch(() => {});
+  }
+
+  function keyLabel(spec) {
+    return spec.split('+').map(p => p.length <= 1 ? p.toUpperCase() :
+      ({ ctrl: 'Ctrl', shift: 'Shift', alt: 'Alt', meta: 'Meta' }[p] || p)).join('+');
+  }
+
+  function matchKey(e, spec) {
+    // spec 形如 'ctrl+shift+f12'——末段主键（大小写不敏感），ctrl/meta 视
+    // 为同一修饰键（Windows 无区分意义）；要求修饰键精确匹配（避免配了
+    // F12 却被 Ctrl+F12 误触）
+    const parts = spec.split('+');
+    const main = parts[parts.length - 1].toLowerCase();
+    const key = (e.key || '').toLowerCase();
+    if (!key || key !== main) return false;
+    const wantCtrl = parts.includes('ctrl') || parts.includes('meta');
+    const wantShift = parts.includes('shift');
+    const wantAlt = parts.includes('alt');
+    const hasCtrl = !!(e.ctrlKey || e.metaKey);
+    return hasCtrl === wantCtrl && e.shiftKey === wantShift && e.altKey === wantAlt;
+  }
+
+  // Monaco KeyCode 映射（addAction 右键菜单显示快捷键文本用）
+  function monacoKeybinding(spec) {
+    try {
+      const parts = spec.split('+');
+      const main = parts[parts.length - 1];
+      let kb = 0;
+      if (parts.includes('ctrl')) kb |= monaco.KeyMod.CtrlCmd;
+      if (parts.includes('shift')) kb |= monaco.KeyMod.Shift;
+      if (parts.includes('alt')) kb |= monaco.KeyMod.Alt;
+      const KC = monaco.KeyCode;
+      const map = { f1: KC.F1, f2: KC.F2, f3: KC.F3, f4: KC.F4, f5: KC.F5, f6: KC.F6,
+                    f7: KC.F7, f8: KC.F8, f9: KC.F9, f10: KC.F10, f11: KC.F11, f12: KC.F12 };
+      if (map[main] !== undefined) kb |= map[main];
+      else if (main.length === 1) {
+        const A = 'A'.charCodeAt(0), Z = 'Z'.charCodeAt(0), c = main.toUpperCase().charCodeAt(0);
+        if (c >= A && c <= Z) kb |= monaco.KeyCode.KeyA + (c - A);
+        else return null;
+      } else return null;
+      return kb;
+    } catch (_) { return null; }
+  }
+
   // 顶层等待 Monaco 就绪后注册（c/cpp/python/javascript）
   function bindEditor(ed) {
     // R15-1：Ctrl+Click 自定义跳转（standalone Monaco 原生 uri 链无内容
     // 服务——见 provideDefinition 注释）
     try {
       ed.onMouseDown(function (e) {
-        if (e.event.ctrlKey && e.event.leftButton && e.target.position) {
+        if (e.event.ctrlKey && e.target.position) {
           gotoDefinition(ed);
         }
       });
+    } catch (_) {}
+    // a346：右键菜单三项（Monaco addAction 自动挂 contextMenu + 显示快捷键）
+    try {
+      if (ed._navActions) ed._navActions.forEach(a => { try { a.dispose(); } catch (_) {} });
+      ed._navActions = [];
+      const add = (id, label, spec, fn) => {
+        const kb = monacoKeybinding(spec);
+        const opts = { id: 'nav.' + id, label: label + '（' + keyLabel(spec) + '）',
+                       contextMenuGroupId: 'navigation', contextMenuOrder: 1.1,
+                       run: function (edt) { fn(edt); } };
+        if (kb) opts.keybindings = [kb];
+        ed._navActions.push(ed.addAction(opts));
+      };
+      add('def', '转到定义', NAV_KEYS.def, gotoDefinition);
+      add('ref', '查找所有引用', NAV_KEYS.ref, findReferences);
+      add('sym', '工作区符号搜索', NAV_KEYS.sym, showWorkspaceSymbols);
     } catch (_) {}
   }
 
@@ -289,8 +358,16 @@
     } catch (_) {}
   }
 
-  // 全局键位：F12 转定义 / Shift+F12 查引用 / Ctrl+T 工作区符号
-  // （capture 拦截——F12 原生开发者工具键、Ctrl+T 原生新标签页都被占位）
+  // a346：热应用（设置页保存后调用；重挂各编辑器的右键 action 文案）
+  function applyKeys(cfg) {
+    ['def', 'ref', 'sym'].forEach(k => { if (cfg[k]) NAV_KEYS[k] = String(cfg[k]); });
+    try {
+      (monaco.editor.getEditors() || []).forEach(bindEditor);
+    } catch (_) {}
+  }
+
+  // 全局键位（capture 拦截——F12 原生开发者工具键、Ctrl+T 原生新标签页
+  // 都被占位；键位来自 NAV_KEYS 可配置）
   function bindGlobalKeys() {
     document.addEventListener('keydown', function (e) {
       // R16-5：候选/引用/符号三面板统一 Esc 关闭（面板 DOM 非焦点，
@@ -318,24 +395,21 @@
             try { return x.hasTextFocus(); } catch (_) { return false; }
           })
         : null;
-      if (e.key === 'F12' && ed) {
-        e.preventDefault();
-        e.stopPropagation();
-        if (e.shiftKey) findReferences(ed);
-        else gotoDefinition(ed);
-        return;
+      if (ed && matchKey(e, NAV_KEYS.def)) {
+        e.preventDefault(); e.stopPropagation(); gotoDefinition(ed); return;
       }
-      if ((e.ctrlKey || e.metaKey) && (e.key === 't' || e.key === 'T')) {
-        if (!ed) return;
-        e.preventDefault();
-        e.stopPropagation();
-        showWorkspaceSymbols(ed);
+      if (ed && matchKey(e, NAV_KEYS.ref)) {
+        e.preventDefault(); e.stopPropagation(); findReferences(ed); return;
+      }
+      if (ed && matchKey(e, NAV_KEYS.sym)) {
+        e.preventDefault(); e.stopPropagation(); showWorkspaceSymbols(ed);
       }
     }, true);
   }
 
   function boot() {
     bindGlobalKeys();
+    loadNavKeys();   // a346：配置键位（加载后热应用）
     if (typeof monacoInit !== 'function') return;
     monacoInit().then(registerAll).catch(function () {});
   }
@@ -559,6 +633,7 @@
     }, 800);
   }
 
-  // 供 file-tree.js 右键入口 + editor 检测复用
-  window.NavJump = { registerAll: registerAll, ui: ui };
+  // 供 file-tree.js 右键入口 + editor 检测复用 + 设置页热应用
+  window.NavJump = { registerAll: registerAll, ui: ui, applyKeys: applyKeys,
+                     getKeys: () => ({ ...NAV_KEYS }), keyLabel: keyLabel };
 })();
