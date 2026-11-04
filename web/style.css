@@ -449,6 +449,11 @@
      容器级规则选择器更具体会覆盖本条，现有各区外观不变。 */
   .lv-btn { background: var(--bg-input); border: 1px solid var(--border); color: var(--fg);
     border-radius: 4px; padding: 4px 12px; font-size: 12px; cursor: pointer; white-space: nowrap; }
+  /* a303：编辑器工具栏 lv-btn 统一 flex 对齐（用户实锤：SVG 与文字不齐很丑）——
+     图标+文字同行 flex 居中，去掉各按钮里散落的 vertical-align hack */
+  .ed-toolbar .lv-btn { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; }
+  .ed-toolbar .lv-btn svg { display: block; flex-shrink: 0; }
+  .ed-toolbar .ed-mdtheme-sel, .ed-toolbar .ed-enc-sel { display: inline-flex; align-items: center; }
   .lv-btn:hover { border-color: var(--accent); color: var(--accent); }
   .lv-btn:disabled { opacity: .45; cursor: not-allowed; }
   .log-viewer-toolbar .lv-btn { background: var(--bg-input); border: 1px solid var(--border); color: var(--fg); border-radius: 4px; padding: 3px 10px; font-size: 12px; cursor: pointer; }

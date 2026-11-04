@@ -195,12 +195,18 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
     // 分隔条必须显式设 'block'——inline 起始是 display:none，设 '' 会回落到
     // inline 的 none（不走 CSS），永远不可见（上一轮拖不动的根因）
     wrap.querySelector('.ed-md-splitter').style.display = 'block';
-    const pvBtn = document.createElement('button');
-    pvBtn.className = 'lv-btn';
-    pvBtn.dataset.edAction = 'mdpreview';
-    pvBtn.title = '显示/隐藏 Markdown 预览分栏';
-    pvBtn.innerHTML = '<span style="vertical-align:-2.5px">' + ICO16.eye + '</span> 预览';   // a261：纯静态串，textContent→innerHTML 装 SVG 图标
-    wrap.querySelector('[data-ed-action="search"]').after(pvBtn);
+    // a303：预览按钮改三态下拉（用户令：只显示原文 / 只显示预览 / 同步显示）
+    const pvSel = document.createElement('select');
+    pvSel.className = 'lv-btn';
+    pvSel.dataset.edAction = 'mdmode';
+    pvSel.title = '编辑/预览布局模式';
+    pvSel.innerHTML =
+      '<option value="both">☐ 同步显示</option>' +
+      '<option value="src">☐ 只显示原文</option>' +
+      '<option value="pv">☐ 只显示预览</option>';
+    wrap.querySelector('[data-ed-action="search"]').after(pvSel);
+    conn._mdMode = 'both';
+    pvSel.onchange = () => _mdApplyMode(conn, pvSel.value);
     _mdBindSplitter(wrap);
   }
   connections[portId] = conn;
@@ -1667,6 +1673,31 @@ const _MD_PV_THEMES = [
   { id: 'mint',       name: '薄荷绿' },
 ];
 let _mdPvTheme = '';
+// a303：MD 布局三态（用户令）：src=只原文（预览藏）/ pv=只预览（编辑器藏）/
+// both=同步分栏（默认）。编辑器列 ed-scroll 与预览列 ed-md-preview 显隐切换
+function _mdApplyMode(conn, mode) {
+  conn._mdMode = mode;
+  const wrap = conn.wrap;
+  const pv = wrap.querySelector('.ed-md-preview');
+  const sp = wrap.querySelector('.ed-md-splitter');
+  const scroll = wrap.querySelector('.ed-scroll');
+  if (!pv || !scroll) return;
+  if (mode === 'src') {
+    pv.style.display = 'none';
+    if (sp) sp.style.display = 'none';
+    scroll.style.display = '';
+  } else if (mode === 'pv') {
+    pv.style.display = '';
+    if (sp) sp.style.display = 'none';
+    scroll.style.display = 'none';
+    _mdRenderPreview(conn);
+  } else {
+    pv.style.display = '';
+    if (sp) sp.style.display = 'block';
+    scroll.style.display = '';
+    _mdRenderPreview(conn);
+  }
+}
 function _mdPvApplyTheme(pv) {
   const t = _mdPvTheme || 'auto';
   // a281：清所有主题类再挂当前（新增配色全部走 .md-pv-<id>）
