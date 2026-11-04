@@ -523,7 +523,16 @@ function _ovDocxOutline(body, container, conn) {
   bar.style.top = Math.max(0, Math.round(br.top)) + 'px';
   bar.style.left = Math.max(0, Math.round(br.left)) + 'px';
   bar.style.bottom = '0';
-  bar.innerHTML = '<div class="ov-docx-outline-title">目录</div>';
+  // a301：目录栏可折叠（用户令：默认打开，可收起）——标题行点击切换；
+  // 收起后文档占满全宽（去 margin-left 让位）
+  bar.innerHTML = '<div class="ov-docx-outline-title" title="点击收起/展开目录">目录 ▾</div>';
+  const title = bar.querySelector('.ov-docx-outline-title');
+  title.style.cursor = 'pointer';
+  title.onclick = () => {
+    const collapsed = bar.classList.toggle('collapsed');
+    title.textContent = collapsed ? '目录 ▸' : '目录 ▾';
+    container.classList.toggle('outline-off', collapsed);
+  };
   const items = heads.map((h, i) => {
     const m = /docx_heading(\d)/.exec(h.className);
     const d = document.createElement('div');
