@@ -203,9 +203,12 @@ def _test_visibility():
 
 
 def _e2e(cases):
-    """cases: [(label, [(filename, mtime)], 期望)]，期望可为
+    """cases: [(label, [(filename, mtime[, size])], 期望)]，期望可为
     `文件名`（两侧一致）或 `(门户期望, 闸门期望)`。
-    门户与闸门各跑一次真实选包逻辑。"""
+    门户与闸门各跑一次真实选包逻辑。
+
+    a348R（第19轮）：三元组的 size 用于验证同档决胜——副本/备份与原件
+    字节相同，按 mtime 会被它们的"下载时间更新"顶掉；按大小决胜则赢不了。"""
     from src import res_ui, update_server
 
     for label, files, want in cases:
@@ -219,10 +222,10 @@ def _e2e(cases):
             # a343R（第14轮 P1-3）：必须同时桩搜索目录——否则会读真实
             # ~/Desktop、~/Downloads（发布者桌面常放着资源包，测试必假红）
             res_ui._search_dirs = lambda d=d: (d,)
-            for n, mt in files:
+            for n, mt, *rest in files:
                 p = os.path.join(d, n)
                 with open(p, "wb") as f:
-                    f.write(b"x")
+                    f.write(b"x" * (rest[0] if rest else 1))
                 os.utime(p, (mt, mt))
             por = update_server._offline_pkg()
             got_por = por["file"] if por else None
@@ -325,6 +328,25 @@ def _test_e2e():
         ("旧版全量-old + 子集(子集新)",
          [("前端控制台-资源包-old.fcpk", 1e9), (S, 2e9)],
          "前端控制台-资源包-old.fcpk"),
+
+        # a348R（第19轮）：同档决胜按**大小**而非 mtime。
+        # 副本/备份与原件字节相同 → 无论 mtime 多新都赢不了；
+        # 真要换新版（体积不同）时仍能正确取代。
+        ("同档副本:小者mtime新(应取大的)",
+         [("前端控制台-资源包-副本.fcpk", 3e9, 300),
+          ("前端控制台-资源包-copy.fcpk", 1e9, 100)],
+         "前端控制台-资源包-副本.fcpk"),
+        ("同档副本:大者mtime新(取大的)",
+         [("前端控制台-资源包-副本.fcpk", 1e9, 100),
+          ("前端控制台-资源包-copy.fcpk", 3e9, 300)],
+         "前端控制台-资源包-copy.fcpk"),
+        ("同档子集:大者mtime旧(取大的)",
+         [("前端控制台-资源包-拓展.fcpk", 3e9, 300),
+          ("前端控制台-资源包-claude.fcpk", 1e9, 100)],
+         "前端控制台-资源包-拓展.fcpk"),
+        # 真主包 mtime 更旧、体积更小，但 rank=3 必须压过 rank=2 的副本
+        ("新版副本更大也不压正牌",
+         [(P, 1e9, 100), ("前端控制台-资源包-副本.fcpk", 3e9, 900)], P),
     ])
 
 

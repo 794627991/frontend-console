@@ -233,13 +233,19 @@ def _offline_pkg():
         rank = _pr(n, require_prefix=APP_NAME, filter_backup=True)
         if rank < 0:
             continue
-        if best and (rank, st.st_mtime) <= (best[1][0], best[1][1]):
+        # a348R（第19轮）：同档决胜改用**文件大小**而非 mtime。
+        # 所有"副本/备份/改名版顶掉真主包"的事故（第7~18轮反复出现）都依赖
+        # 一个前提：派生件的 mtime 更新。而副本/备份与原件**字节完全相同**，
+        # 按大小决胜它们永远赢不了；真要换包（如新版更大的包）大小会变，
+        # 仍能正确取代。mtime 只在大小也相同时才用（同一内容的重复下载）。
+        if best and (rank, st.st_size, st.st_mtime) <= (
+                best[1][0], best[1][1], best[1][2]):
             continue
-        best = (n, (rank, st.st_mtime), st.st_size, "", "fcpk")
+        best = (n, (rank, st.st_size, st.st_mtime), st.st_size, "", "fcpk")
     if not best:
         return None
     return {"file": best[0], "version": best[3], "size": best[2],
-            "mtime": int(best[1][1] * 1000), "format": best[4],
+            "mtime": int(best[1][2] * 1000), "format": best[4],
             # a345R（第16轮）：subset 不能用 rank==1 推断——备份全量也是 1，
             # 会被误标成「子集包，不能用于全新机器」。用分类函数判。
             "subset": _cls(best[0]) == "subset",

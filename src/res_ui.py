@@ -167,10 +167,18 @@ def autofind_fcpk():
             return os.path.getmtime(p)
         except OSError:
             return 0.0
+
+    def _sz(p):
+        # a348R（第19轮）：同档决胜用大小而非 mtime——副本/备份与原件字节
+        # 相同，按 mtime 会被它们顶掉（第7~18轮反复复发的同一类事故）
+        try:
+            return os.path.getsize(p)
+        except OSError:
+            return 0
     cands = [c for c in cands if os.path.exists(c[1])]
     if not cands:
         return ""
-    cands.sort(key=lambda t: (t[0], _mt(t[1])), reverse=True)
+    cands.sort(key=lambda t: (t[0], _sz(t[1]), _mt(t[1])), reverse=True)
     return cands[0][1]
 
 
