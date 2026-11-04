@@ -48,6 +48,9 @@ let activePortId = null;
   // 编辑器类→Claude→…），原来跟 connections 插入序导致"Claude 在日志前"不一致
   const _GROUP_ORDER = { serial: 0, ssh: 1, telnet: 1, log: 2, diff: 3, editor: 3,
     hex: 3, bindiff: 3, office: 3, bitcalc: 3, note: 3, claude: 4, harness: 5, proxy: 6 };
+  // 用户需求：单例类型（claude 终端/计算器/代理面板——只会存在一个实例）在
+  // 抽屉模式下不收进抽屉，直接平铺显示——收进抽屉要点两次才能到达，没意义
+  const _SINGLE_KINDS = new Set(['claude', 'bitcalc', 'proxy']);
   const _groupLabel = k => _GROUP_LABEL[k] || '其他';
   const _groupIcon = k => _GROUP_ICON[k] || ICO16.file;
   // 统一关闭：直接点 tab 自己的 ✕——各模块（terminal=后端断连/editor=脏确认/
@@ -318,7 +321,9 @@ let activePortId = null;
     tabsEl.querySelectorAll('.tab').forEach(t => {
       const pid = t.dataset.portId;
       const known = pid && connections[pid];
-      t.style.display = (isDrawer && known && !_pinned.has(pid)) ? 'none' : '';
+      // 单例 kind（claude/计算器/代理）不隐藏——直接平铺，一点即达
+      const single = known && _SINGLE_KINDS.has(_groupOf(connections[pid]));
+      t.style.display = (isDrawer && known && !single && !_pinned.has(pid)) ? 'none' : '';
     });
     if (!isDrawer) { checkOverflow(); return; }
 
@@ -331,6 +336,7 @@ let activePortId = null;
       const c = connections[pid];
       if (!c || !c.tab || _pinned.has(pid)) continue;
       const g = _groupOf(c);
+      if (_SINGLE_KINDS.has(g)) continue;   // 单例不进抽屉（平铺直达）
       if (!groups[g]) { groups[g] = []; order.push(g); }
       groups[g].push(pid);
     }
@@ -365,6 +371,13 @@ let activePortId = null;
     // 插到右缘 sticky 区（tab-bar-actions/⋮）之前——与所有 tab 的插入位一致
     const anchor = tabsEl.querySelector('.tab-bar-actions') || btn;
     tabsEl.insertBefore(drawerBar, anchor);
+    // 单例 tab 挪到抽屉栏之前（视觉序：固定区 → 单例平铺 → 抽屉；幂等，
+    // 已在位不动。DOM 变更触发 observer 但 sig 不含位置 → 无循环）
+    for (const pid in connections) {
+      const c = connections[pid];
+      if (!c || !c.tab || _pinned.has(pid) || !_SINGLE_KINDS.has(_groupOf(c))) continue;
+      if (c.tab.nextSibling !== drawerBar) tabsEl.insertBefore(c.tab, drawerBar);
+    }
     checkOverflow();
   }
 
