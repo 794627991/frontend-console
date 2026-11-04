@@ -41,6 +41,7 @@ DEPS = [
     ("pywebview", ("webview",  True,  "桌面窗口（WebView2）")),
     ("paramiko",  ("paramiko", False, "SSH 远程连接")),
     ("pywinpty",  ("winpty",   False, "内嵌 Claude 终端（ConPTY）")),
+    ("pyelftools", ("elftools", False, "代码跳转索引（读 .o 符号表）")),
 ]
 
 # 清华镜像（默认源失败时兜底：无网/超时/被墙设备常见）

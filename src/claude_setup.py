@@ -168,7 +168,8 @@ def _git_ok():
 
 # 工具自身 pip 依赖（与 deps_bootstrap.DEPS 一致）——资源包的 pydeps kind
 # 解包后按 --no-index --find-links 离线补装
-_TOOL_DEPS = ["flask", "pyserial", "pywebview", "paramiko", "pywinpty"]
+_TOOL_DEPS = ["flask", "pyserial", "pywebview", "paramiko", "pywinpty",
+              "pyelftools"]
 
 # 官方下载位（在线安装通道：本地资源目录没安装器时才走；版本与 D:\AI\安装环境 对齐）
 _NODE_URL = "https://nodejs.org/dist/v24.19.0/node-v24.19.0-x64.msi"

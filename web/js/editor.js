@@ -477,7 +477,7 @@ async function _edInitContent(conn, content) {
       // Monaco（VSCode 同款内核）：语法高亮/内置查找替换/行号/minimap
       // 失败自动降级 textarea（vendor 缺失/异常时保可用）
       try {
-        conn.monaco = await monacoCreate(conn.holder, typeof content === 'string' ? content : '', conn.meta.label);
+        conn.monaco = await monacoCreate(conn.holder, typeof content === 'string' ? content : '', conn.meta.label, conn.extPath || null);
         conn.monaco.onDidChangeModelContent(() => { _edMarkDirty(conn); conn._edSrcVer = (conn._edSrcVer || 0) + 1; });
         conn.monaco.onDidChangeCursorPosition(() => _edUpdateInfo(conn));
       } catch(e) {
@@ -488,7 +488,7 @@ async function _edInitContent(conn, content) {
       // .md：Monaco 源码编辑 + markdown-it 实时预览分栏
       try {
         // 分栏容器：预览列插到 ed-scroll 之后（HTML 已在 buildEditorTab 预置 ed-md-preview）
-        conn.monaco = await monacoCreate(conn.holder, typeof content === 'string' ? content : '', conn.meta.label);
+        conn.monaco = await monacoCreate(conn.holder, typeof content === 'string' ? content : '', conn.meta.label, conn.extPath || null);
         conn.monaco.onDidChangeModelContent(() => { _edMarkDirty(conn); conn._edSrcVer = (conn._edSrcVer || 0) + 1; _mdRenderPreview(conn); });
         conn.monaco.onDidChangeCursorPosition(() => _edUpdateInfo(conn));
         conn.monaco.onDidScrollChange(() => {   // 源码滚动 → 预览跟着滚

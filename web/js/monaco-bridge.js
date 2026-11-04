@@ -103,7 +103,9 @@ function monacoSyncTheme() {
 
 // ---- 创建编辑器实例（editor.js 调用入口）----
 // holder: 容器 div；返回 monaco editor 实例（调用方存 conn.monaco）
-async function monacoCreate(holder, value, langName) {
+// absPath（a333）：文件绝对路径——传则建带 uri 的 model（跳转 provider
+// 靠 model.uri 还原文件路径做组件上下文/库反查）；无则旧行为（inmemory）
+async function monacoCreate(holder, value, langName, absPath) {
   // v2.2.2：引擎未就绪时的加载占位——exe(onefile) 下资源从 TEMP 解压目录
   // 读，慢机器首开引擎要数秒，空容器看着像白屏（同事机实锤「白屏、切一下
   // 别处才刷出来」）。占位条明示加载中，加载完自动移除
@@ -116,7 +118,18 @@ async function monacoCreate(holder, value, langName) {
   }
   try {
     const monaco = await monacoInit();
-    const ed = monaco.editor.create(holder, {
+    // a333：同路径复用 model（Monaco 按 uri 全局复用；退出释放见 dispose 链）
+    let model = null;
+    if (absPath) {
+      try {
+        const uri = monaco.Uri.file(absPath);
+        model = monaco.editor.getModel(uri) ||
+                monaco.editor.createModel(
+                  typeof value === 'string' ? value : '',
+                  monacoLangFor(langName), uri);
+      } catch (_) { model = null; }
+    }
+    const opts = {
     value: typeof value === 'string' ? value : '',
     language: monacoLangFor(langName),
     theme: _monacoThemeName(),
@@ -135,7 +148,9 @@ async function monacoCreate(holder, value, langName) {
     unicodeHighlight: { ambiguousCharacters: false },  // 中文标点不标黄
     scrollbar: { verticalScrollbarSize: 10, horizontalScrollbarSize: 10 },
     padding: { top: 8, bottom: 60 },
-  });
+  };
+    if (model) { opts.model = model; delete opts.value; delete opts.language; }
+    const ed = monaco.editor.create(holder, opts);
     return ed;
   } finally {
     if (ph) ph.remove();

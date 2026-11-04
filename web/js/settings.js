@@ -1641,6 +1641,7 @@ async function _ddRefreshUsage(pane) {
       idx: '按策略：删 3 天未用的索引',
       cache: '清理可重建缓存（运行中被占用的文件自动跳过）',
       ask: '按策略：保留最近 500 个',
+      nav: '删除全部代码索引（文件树右键可重建）',
     };
     const DANGER = {
       uploads: '全部清空后，历史会话里引用的图片将失效',

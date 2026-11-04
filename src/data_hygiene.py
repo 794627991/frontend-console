@@ -130,6 +130,11 @@ def usage_stats(force=False):
         "cache": {"path": os.path.join(cache_root, "EBWebView"), "bytes": cache_bytes,
                   "name": "WebView 缓存（可重建）"},
         "ask": {"path": ask, "bytes": _dir_size(ask), "name": "提问状态"},
+        # a333：代码跳转索引（ctags tags + 白名单 + ELF 符号表——可重建的
+        # 衍生数据，手动建/删走文件树右键，存储感知可见可清）
+        "nav": {"path": os.path.join(st.DATA_DIR, "nav"),
+                "bytes": _dir_size(os.path.join(st.DATA_DIR, "nav")),
+                "name": "代码跳转索引（各工程符号库）"},
     }
     data = {
         "user": {"path": st.DATA_DIR, "bytes": _dir_size(st.DATA_DIR)},
@@ -148,7 +153,7 @@ def usage_stats(force=False):
 # 目标只含**衍生数据**（附件/日志/索引/缓存/提问状态）——笔记、命令库、
 # 配置等用户数据永远不出现在这里
 
-_CLEANABLE = ("uploads", "logs", "idx", "cache", "ask")
+_CLEANABLE = ("uploads", "logs", "idx", "cache", "ask", "nav")
 
 
 def _files_in(root, suffix=None):
@@ -269,6 +274,24 @@ def manual_clean(target, mode):
             if _try_rm(p):
                 removed += 1
                 freed += sz
+
+    elif target == "nav":
+        # a333：代码跳转索引——全部可重建（重跑右键建索引即恢复）。
+        # policy 与 all 等价（整库删除，没有"部分保留"语义）；清后让查询
+        # 缓存失效，跳转自动回到 no-index 态
+        import shutil as _sh2
+        from src import nav_index as _ni
+        root = os.path.join(st.DATA_DIR, "nav")
+        if os.path.isdir(root):
+            before = _dir_size(root)
+            for name in os.listdir(root):
+                _sh2.rmtree(os.path.join(root, name), ignore_errors=True)
+            freed += max(0, before - (_dir_size(root) if os.path.exists(root) else 0))
+            removed += 1
+        try:
+            _ni._invalidate_cache()
+        except Exception:
+            pass
 
     return removed, freed
 

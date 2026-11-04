@@ -329,6 +329,11 @@
     if (isDir && typeof window.tsSearchIn === 'function') {
       items.push({ icon: CI.search, label: '在此文件夹中搜索', action: () => window.tsSearchIn(path) });
     }
+    // a333：代码跳转索引（手动触发唯一入口——弹层内探测三态：无代码/
+    // 可建 / 已建（重建·删除）；绝不自动建库）
+    if (isDir && typeof window.NavJump === 'object' && window.NavJump.ui) {
+      items.push({ icon: CI.search, label: '代码索引…', action: () => window.NavJump.ui(path) });
+    }
     if (isRoot) {
       items.push({ icon: CI.removeRoot, label: '移除根（不删文件）', action: () => {
         fetch('/api/tree/remove_root', { method: 'POST',

@@ -126,6 +126,10 @@ app.register_blueprint(claude_setup_bp)
 from src.res_api import res_bp
 app.register_blueprint(res_bp)
 
+# a333：代码跳转索引（ctags + 编译白名单 + ELF 符号表；手动建库）
+from src.nav_api import nav_bp
+app.register_blueprint(nav_bp)
+
 # ——以下三个 Claude 系蓝图随 proxy 二期（用户拍板）移驻 worker 进程：
 #   usage_bp（/api/usage/*，monkeypatch proxy_core 采集——数据面在哪统计
 #   就必须在哪）、claude_default_bp（/api/claude/api_config|profiles|…，

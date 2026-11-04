@@ -1,5 +1,5 @@
 {
-  "updated": "2026-11-04 19:03:45",
+  "updated": "2026-11-05 00:16:13",
   "items": [
     {
       "kind": "git",
@@ -71,8 +71,8 @@
     {
       "kind": "pydeps",
       "dir": "pydeps/",
-      "files": 22,
-      "size": 10029251,
+      "files": 23,
+      "size": 10230429,
       "wheels": [
         "bcrypt-5.0.0-cp39-abi3-win_amd64.whl",
         "blinker-1.9.0-py3-none-any.whl",
@@ -88,6 +88,7 @@
         "markupsafe-3.0.3-cp314-cp314-win_amd64.whl",
         "paramiko-5.0.0-py3-none-any.whl",
         "pycparser-3.0-py3-none-any.whl",
+        "pyelftools-0.33-py3-none-any.whl",
         "pynacl-1.6.2-cp38-abi3-win_amd64.whl",
         "pyserial-3.5-py2.py3-none-any.whl",
         "pythonnet-3.1.0-cp310.cp311.cp312.cp313.cp314-none-win32.win_amd64.whl",
