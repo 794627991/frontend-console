@@ -137,6 +137,10 @@ function _stNavKeysCard(pane) {
       if (onKey) { stopRec(); return; }   // 录制中再点=取消
       inp.textContent = '按下组合键…';
       onKey = e => {
+        // R22-1（实锤：录制监听残留吞键）：切分区（pane 重渲染 inp 脱离）
+        // 或点 ✕ 关设置弹窗（modal 失去 .show）时监听仍在——最长 15s 全局
+        // capture 吞掉终端/编辑器按键。首次按键即自检自摘
+        if (!inp.isConnected || !inp.closest('.modal.show')) { stopRec(); return; }
         e.preventDefault(); e.stopPropagation();
         if (e.key === 'Escape') { stopRec(); return; }
         if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return;   // 等主键
