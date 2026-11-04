@@ -52,6 +52,8 @@ let activePortId = null;
   // 不收进抽屉，直接平铺显示——收进抽屉要点两次才能到达，没意义。
   // 用户实锤：工具里"Claude"入口开的是 harness kind（Claude 对话），必须一起收
   const _SINGLE_KINDS = new Set(['claude', 'harness', 'bitcalc', 'proxy']);
+  // 用户拖过的胶囊组序（位置不变量：拖过的组永远按用户序渲染，新组按默认序附后）
+  const _userGroupOrder = [];
   const _groupLabel = k => _GROUP_LABEL[k] || '其他';
   const _groupIcon = k => _GROUP_ICON[k] || ICO16.file;
   // 统一关闭：直接点 tab 自己的 ✕——各模块（terminal=后端断连/editor=脏确认/
@@ -294,6 +296,13 @@ let activePortId = null;
     e.stopPropagation();
   }, true);
 
+  // 从抽屉栏 DOM 读当前胶囊序写回 _userGroupOrder（拖拽换序后调用；rebuild 按此渲染）
+  function _syncGroupOrder() {
+    _userGroupOrder.length = 0;
+    document.querySelectorAll('.tab-drawer-bar .tab-drawer').forEach(d =>
+      _userGroupOrder.push(d.dataset.group));
+  }
+
   // ===== 抽屉模式渲染 =====
   let drawerBar = null;
   let _lastSig = '';   // 渲染签名：防 MutationObserver 自触发死循环
@@ -313,8 +322,22 @@ let activePortId = null;
     const sig = _sig();
     if (!force && sig === _lastSig) return;
     _lastSig = sig;
-    // 清旧抽屉
-    if (drawerBar) { drawerBar.remove(); drawerBar = null; }
+    // 清旧抽屉。先救出住在栏内的 tab（用户拖进胶囊间的单例）——旧栏 remove
+    // 会连带丢弃它们。记录每个 tab 的锚胶囊（其前面最近的组，null=在首个
+    // 胶囊前），新栏建成后精确放回同组胶囊之后——用户拖的粒度（哪个胶囊
+    // 前/后）跨 rebuild 保真
+    let _barResidents = [];
+    if (drawerBar) {
+      _barResidents = [...drawerBar.querySelectorAll('.tab')].map(t => {
+        let g = null, el = t;
+        while ((el = el.previousElementSibling)) {
+          if (el.classList.contains('tab-drawer')) { g = el.dataset.group; break; }
+        }
+        return { t, g };
+      });
+      _barResidents.forEach(({ t }) => tabsEl.insertBefore(t, drawerBar.nextSibling));
+      drawerBar.remove(); drawerBar = null;
+    }
     // 显示/隐藏原生 tab。只隐藏「已注册 connections」的——hex-diff 的
     // 二进制对比"计算中"临时 tab 不注册 connections（算完自移除），
     // 无条件隐藏会让它在抽屉模式下凭空消失（平铺模式可见，行为退化）
@@ -341,7 +364,14 @@ let activePortId = null;
       if (!groups[g]) { groups[g] = []; order.push(g); }
       groups[g].push(pid);
     }
-    order.sort((a, b) => (_GROUP_ORDER[a] ?? 9) - (_GROUP_ORDER[b] ?? 9));
+    // 用户拖过的组按 _userGroupOrder 排（位置不变量），未拖过的新组按默认类型序附后
+    order.sort((a, b) => {
+      const ia = _userGroupOrder.indexOf(a), ib = _userGroupOrder.indexOf(b);
+      if (ia !== -1 && ib !== -1) return ia - ib;
+      if (ia !== -1) return -1;
+      if (ib !== -1) return 1;
+      return (_GROUP_ORDER[a] ?? 9) - (_GROUP_ORDER[b] ?? 9);
+    });
     order.forEach(g => {
       const pids = groups[g];
       const active = pids.find(p => p === activePortId);
@@ -367,11 +397,55 @@ let activePortId = null;
         e.stopPropagation();
         buildGroupList(g, pids, btn);
       };
+      // 用户实锤：抽屉模式下 tab 拖不到抽屉前后、胶囊也拖不动——补齐位置不变量
+      // 的手动排序自由：a) 胶囊自身可拖（dragstart）在抽屉栏内与其他胶囊换序
+      // （序持久化 _userGroupOrder，rebuild 尊重）；b) 胶囊作为 drop 目标接收
+      // tab（单例插到胶囊前/后；固定 tab 不接收——固定区不变量优先）
+      btn.draggable = true;
+      btn.addEventListener('dragstart', e => {
+        window.__drawerDrag = btn;
+        try { e.dataTransfer.setData('text/plain', 'drawer:' + g); } catch(_) {}
+        e.dataTransfer.effectAllowed = 'move';
+      });
+      btn.addEventListener('dragend', () => { window.__drawerDrag = null; });
+      btn.addEventListener('dragover', e => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+      });
+      btn.addEventListener('drop', e => {
+        e.preventDefault();
+        const r = btn.getBoundingClientRect();
+        const before = e.clientX < r.left + r.width / 2;
+        const srcTab = window.__tabDragSrc || null;
+        const srcDrawer = window.__drawerDrag;
+        if (srcDrawer && srcDrawer !== btn) {
+          // 胶囊换序：立即 DOM + 持久化组序
+          drawerBar.insertBefore(srcDrawer, before ? btn : btn.nextSibling);
+          _syncGroupOrder();
+        } else if (srcTab && srcTab.draggable && !srcTab.classList.contains('pinned')) {
+          // 单例 tab 插到胶囊前/后（进抽屉栏内或其边缘——BAR 内 tab 正常显示）。
+          // 打"用户放置"标：rebuild 的单例归位循环（新开单例默认挪栏前）必须
+          // 绕过用户手动放过的——位置只认用户的手
+          srcTab.dataset.userPlaced = '1';
+          drawerBar.insertBefore(srcTab, before ? btn : btn.nextSibling);
+        }
+        // pinned tab 拖到胶囊上：不响应（固定区完整优先）
+        window.__drawerDrag = null;
+      });
       drawerBar.appendChild(btn);
     });
     // 插到右缘 sticky 区（tab-bar-actions/⋮）之前——与所有 tab 的插入位一致
     const anchor = tabsEl.querySelector('.tab-bar-actions') || btn;
     tabsEl.insertBefore(drawerBar, anchor);
+    // 栏内居民放回：锚组胶囊之后（组已消失的放栏后）——精确还原用户放置
+    _barResidents.forEach(({ t, g }) => {
+      if (!t.isConnected) return;   // 居民已被关掉
+      const cap = g !== null
+        ? drawerBar.querySelector('.tab-drawer[data-group="' + CSS.escape(g) + '"]')
+        : drawerBar.querySelector('.tab-drawer');   // 原"首个胶囊前"→新首个胶囊前
+      if (cap) drawerBar.insertBefore(t, g !== null ? cap.nextSibling : cap);
+      else tabsEl.insertBefore(t, drawerBar.nextSibling);
+    });
     // 单例 tab 保证在抽屉栏之前（视觉序：固定区 → 单例平铺 → 抽屉）。
     // 用户实锤：原判断 nextSibling !== drawerBar 要求单例「紧贴」抽屉栏——
     // 每次切换 tab 的 rebuild 都把拖拽过的单例按打开序强制归位（claude 拖到
@@ -380,7 +454,12 @@ let activePortId = null;
     for (const pid in connections) {
       const c = connections[pid];
       if (!c || !c.tab || _pinned.has(pid) || !_SINGLE_KINDS.has(_groupOf(c))) continue;
-      const alreadyBefore = c.tab.compareDocumentPosition(drawerBar) & Node.DOCUMENT_POSITION_FOLLOWING;
+      if (c.tab.dataset.userPlaced) continue;   // 用户手动放过的（拖到胶囊前后）不动
+      // 在位 = 在抽屉栏之前 或 在抽屉栏内部（用户拖进栏内的不许被 rebuild 拽出；
+      // compareDocumentPosition 对祖先返回 PRECEDING|CONTAINS 而非 FOLLOWING，需先判 contains）
+      const insideBar = drawerBar.contains(c.tab);
+      const alreadyBefore = insideBar ||
+        (c.tab.compareDocumentPosition(drawerBar) & Node.DOCUMENT_POSITION_FOLLOWING);
       if (!alreadyBefore) tabsEl.insertBefore(c.tab, drawerBar);
     }
     checkOverflow();

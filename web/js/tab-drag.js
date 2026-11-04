@@ -10,11 +10,13 @@ function _initTabDrag(tab) {
   tab.draggable = true;
   tab.addEventListener('dragstart', e => {
     _tabDrag.el = tab;
+    window.__tabDragSrc = tab;   // 暴露给抽屉胶囊的 drop（跨模块，dragend 清）
     tab.classList.add('dragging');
     e.dataTransfer.effectAllowed = 'move';
     try { e.dataTransfer.setData('text/plain', tab.dataset.portId); } catch(_) {}
   });
   tab.addEventListener('dragend', () => {
+    window.__tabDragSrc = null;
     tab.classList.remove('dragging');
     document.querySelectorAll('.tab.drop-before, .tab.drop-after').forEach(t =>
       t.classList.remove('drop-before', 'drop-after'));
