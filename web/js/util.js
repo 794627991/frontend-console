@@ -48,9 +48,10 @@ let activePortId = null;
   // 编辑器类→Claude→…），原来跟 connections 插入序导致"Claude 在日志前"不一致
   const _GROUP_ORDER = { serial: 0, ssh: 1, telnet: 1, log: 2, diff: 3, editor: 3,
     hex: 3, bindiff: 3, office: 3, bitcalc: 3, note: 3, claude: 4, harness: 5, proxy: 6 };
-  // 用户需求：单例类型（claude 终端/计算器/代理面板——只会存在一个实例）在
-  // 抽屉模式下不收进抽屉，直接平铺显示——收进抽屉要点两次才能到达，没意义
-  const _SINGLE_KINDS = new Set(['claude', 'bitcalc', 'proxy']);
+  // 用户需求：单例类型（claude/计算器/代理——只会存在一个实例）在抽屉模式下
+  // 不收进抽屉，直接平铺显示——收进抽屉要点两次才能到达，没意义。
+  // 用户实锤：工具里"Claude"入口开的是 harness kind（Claude 对话），必须一起收
+  const _SINGLE_KINDS = new Set(['claude', 'harness', 'bitcalc', 'proxy']);
   const _groupLabel = k => _GROUP_LABEL[k] || '其他';
   const _groupIcon = k => _GROUP_ICON[k] || ICO16.file;
   // 统一关闭：直接点 tab 自己的 ✕——各模块（terminal=后端断连/editor=脏确认/

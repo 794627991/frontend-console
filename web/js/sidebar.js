@@ -257,6 +257,10 @@ function refreshSidebar() {
   // 尊重用户顺序；全部 tab 关闭回到空态时重置（下次恢复默认排序）
   if (typeof _maybeResetTabOrder === 'function') _maybeResetTabOrder();
   if (typeof _tabOrderManual !== 'undefined' && _tabOrderManual) return;
+  // 用户实锤（串口 tab 位置自己跳变）：30s 轮询的自动重排不认 pinned——固定过
+  // 的 tab 被 sortKey 打散出固定区（"固定区最左"不变量被静默破坏）。pin 本身
+  // 就是用户的顺序意图：存在固定 tab 时视为已定制，不自动重排（与拖拽让位同语义）
+  if (document.querySelector('#tabs .tab.pinned')) return;
   const tabEls = Array.from(tabs.querySelectorAll('.tab'));
   const curIds = tabEls.map(t => t.dataset.portId);
   const wantIds = ids.concat(curIds.filter(id => !connections[id]));
