@@ -12,6 +12,7 @@ MessageBoxW / GetOpenFileNameW / IProgressDialog 三条原生 API 上做。
 """
 import ctypes
 import os
+import re
 import sys
 from ctypes import wintypes
 
@@ -122,20 +123,21 @@ def autofind_fcpk():
               os.path.join(os.path.expanduser("~"), "Downloads")):
         if d and os.path.isdir(d):
             for p in glob.glob(os.path.join(d, "*.fcpk")):
-                # a332R（第3轮对抗审 P3-1）：只认本工具的包——`-资源包.fcpk`
-                # 主包与 `-资源包-*.fcpk` 子集包。早前把任意 *.fcpk（别家的、
-                # 用户自命名的备份）都当子集兜底自动选中，闸门 inspect 后才
-                # 报"资源包有问题"，用户以为是包坏了而不是"没找到本工具的包"。
-                _lp = p.lower()
-                if not (_lp.endswith(".fcpk") and "资源包" in _lp):
+                # a334R（第5轮 P2-1，实锤）：名字判定必须用 basename——原实现
+                # 拿完整路径做 `"资源包" in p`，工具解压在含"资源包"的目录里
+                # （如 <tmp>/资源包-老包/app）时，同目录别家的 other-tool.fcpk
+                # 也会被当成本工具的包选中 → inspect 报"资源包有问题"。
+                _bn = os.path.basename(p).lower()
+                if not (_bn.endswith(".fcpk") and "资源包" in _bn):
                     continue
-                # a333R（第4轮 P3-4）：口径与 _offline_pkg 统一——只要求含
-                # 「资源包」，不强制「-资源包.fcpk」的横杠形态（用户可能存成
-                # `资源包.fcpk` / `前端控制台资源包.fcpk`）。主包=不带后缀项，
-                # 子集包=`资源包-xxx.fcpk`。
-                if _lp.endswith("资源包.fcpk"):
+                # a333R：口径与 _offline_pkg 统一——只要求含「资源包」，不强制
+                # 「-资源包.fcpk」的横杠形态。a334R（第5轮 P2-2）：`-资源包-v2`
+                # 这类带版本后缀的是**全量包的新版**，不能当子集——原来落到
+                # sub 桶与真子集同权按 mtime 竞争，子集赢了就复发原始死循环。
+                if _bn.endswith("资源包.fcpk") or re.search(
+                        r"资源包-v\d+(\.\d+)*\.fcpk$", _bn):
                     main.append(p)
-                elif "资源包-" in _lp:
+                elif "资源包-" in _bn:
                     sub.append(p)
     cands = main or sub
     if not cands:

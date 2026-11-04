@@ -790,6 +790,11 @@ async function _stRenderResourcesPane(pane) {
     $q('#rsCancel').style.display = '';
     if (typeof window.ResPanel === 'undefined' || !window.ResPanel.install) {
       errEl.style.display = ''; errEl.textContent = '前端未加载 resources.js';
+      // a334R（第5轮 P3-2）：这条路径不走 onDone，busy 必须在这里清——
+      // 否则 #rsGo/#rsOnlineGo 永久灰，用户只能刷新整页。
+      $q('#rsGo').dataset.busy = ''; syncGo();
+      $q('#rsCancel').style.display = 'none';
+      prog.style.display = 'none';
       return;
     }
     // 全审 N2 实锤（严重）：安装中切到别的设置分区时，#stPane 被整体替换，

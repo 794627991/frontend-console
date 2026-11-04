@@ -131,7 +131,7 @@ def _versions():
         # v2.3.0：发布形态 zip（onedir 应用目录打包）；旧 .exe 历史包也列出（可下载）
         # a333R（第4轮 P1）：大小写不敏感——Windows 上 .ZIP/.EXE 同样可下载
         _ln2 = n.lower()
-        if not ((_ln2.endswith(".zip") or _ln2.endswith(".exe")) and "-v" in n):
+        if not ((_ln2.endswith(".zip") or _ln2.endswith(".exe")) and "-v" in _ln2):
             continue
         # 离线资源包不是应用版本（用户定调「离线包和实际包分开」）：留着会与
         # 整包同版本号并列、按文件名序抢 hero 卡位还错挂整包 sha1——主清单
@@ -196,7 +196,7 @@ def _offline_pkg():
     for n in sorted(names):
         _ln = n.lower()
         is_new = _ln.endswith(".fcpk") and "-资源包" in n
-        is_old = _ln.endswith(".zip") and "-offline-pkg" in n
+        is_old = _ln.endswith(".zip") and "-offline-pkg" in _ln
         if not (is_new or is_old):
             continue
         p = os.path.join(root, n)

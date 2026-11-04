@@ -232,7 +232,11 @@
       // 条目就走 seq；全部无 seq（旧后端/混合状态）才退回下标游标。原实现
       // 对无 seq 条目既不跳过也不推进，同一行会每 700ms 重放一次。
       var seenSeq = 0, seenIdx = 0, resMode = null;   // a333R：模式锁定
-      _resPollTimer = setInterval(function () {
+      // a334R（第5轮 P2-3，实测窄窗口）：所有清理只清**自己的** timer。
+      // 原来回调内 clearInterval(_resPollTimer) 读的是全局当前值——A 的飞行中
+      // poll 晚于 B 的启动返回时，会把 B 刚建的 timer 掐掉，B 的 onDone 永不
+      // 执行，设置页 busy 永久卡住。
+      var myTimer = setInterval(function () {
         _resFetch('/api/resources/poll').then(function (s) {
           _safe(onTick, s);
           var lg = s.log || [];
@@ -258,7 +262,8 @@
             _safe(onLog, it && it.msg);
           }
           if (!s.done) return;
-          clearInterval(_resPollTimer); _resPollTimer = null;
+          clearInterval(myTimer);
+          if (_resPollTimer === myTimer) _resPollTimer = null;
           // 取消用后端显式字段判定——早前 /取消/.test(s.err) 会把任何
           // 含「取消」二字的真实失败误报成「已取消安装」（全审 N3）
           _safe(onDone, { ok: !!s.ok_done, err: s.err || '', result: s.result,
@@ -266,10 +271,12 @@
           if (s.ok_done) resRefresh();
         }).catch(function (e) {
           // 轮询本身失败（后端重启等）也要收尾，否则定时器永不停
-          clearInterval(_resPollTimer); _resPollTimer = null;
+          clearInterval(myTimer);
+          if (_resPollTimer === myTimer) _resPollTimer = null;
           _safe(onDone, { ok: false, err: '轮询失败：' + e });
         });
       }, 700);
+      _resPollTimer = myTimer;
       return j;
     }).catch(function (e) {
       _safe(onDone, { ok: false, err: String(e) });

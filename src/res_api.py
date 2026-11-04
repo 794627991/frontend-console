@@ -212,19 +212,27 @@ def res_install_api():
             # 原来只勾 pydeps/node 而两者都 absent 时仍报"完成"；红条全装路径
             # 也会漏掉 soft 项。现在按 MANIFEST 里被请求的 kind 求交集，
             # 文案区分硬/软（硬=装不全不能用，软=相关功能不可用）。
+            # a334R（第5轮 P1-1，实锤盲区）：全集必须用 res_install.ORDER 而不是
+            # MANIFEST——bili 在 ORDER 里但不在 MANIFEST 里（红条也不探测它），
+            # 只按 MANIFEST 求交集会把 bili 缺失彻底静默，恰好是本条要修的
+            # "一句完成盖过去"。MANIFEST 只用来取中文名，缺名的用 kind 兜底。
             try:
                 from src.res_boot import MANIFEST as _MF
-                _soft = "、".join(
-                    (m.get("name") or m.get("kind")) for m in _MF
-                    if m.get("kind") in (res.get("absent") or [])
-                    and not m.get("hard"))
-                _hard_absent = [
-                    (m.get("name") or m.get("kind")) for m in _MF
-                    if m.get("kind") in (res.get("absent") or [])
-                    and m.get("hard")]
+                from src.res_install import ORDER as _ORDER
+                _absent = set(res.get("absent") or [])
+                _name = {m.get("kind"): (m.get("name") or m.get("kind"))
+                         for m in _MF}
+                _name.setdefault("bili", "billion-context 压缩引擎")
+                _hard = {m.get("kind") for m in _MF if m.get("hard")}
+                _absent_all = [k for k in _ORDER if k in _absent]
+                _hard_absent = [_name.get(k, k) for k in _absent_all
+                                if k in _hard]
+                _soft = "、".join(_name.get(k, k) for k in _absent_all
+                                  if k not in _hard)
                 if _hard_absent:
                     errs["资源包不完整"] = (
-                        "所选资源包不含以下必需资源：%s。请换完整的资源包"
+                        "所选资源包不含以下必需资源：%s。请换完整的"
+                        "「前端控制台-资源包.fcpk」（子集包装不全）"
                         % "、".join(_hard_absent))
                     _log(errs["资源包不完整"])
                 elif _soft:
