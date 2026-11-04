@@ -555,6 +555,7 @@ function openRecentItem(it) {
     // 之前一律 openDroppedFile 按绝对路径请求，后端拒收相对名 →「不支持的文件类型或文件不存在」。
     const d = it.data || {};
     if ((d.kind === 'diff' || d.kind === 'bindiff') && d.a && d.b) buildDiffViewerTab(d.a, d.b);   // 文件对比（文本/二进制）：A/B 两份快速重开
+    else if (d.kind === 'office' && d.path) openOfficeFile(d.path);   // a302：word/excel/ppt 快速重开（office viewer tab）
     else if (d.kind === 'hex' && d.path) buildHexViewerTab(d.path, d.name || it.label);   // bin/二进制：hex 模式快速重开
     else if (d.extPath && typeof openDroppedFile === 'function') openDroppedFile(d.extPath, true);   // true=快捷打开：跳过"活动 tab 是 claude 就灌路径进终端"分支
     else if (d.kind === 'log') buildLogViewer(d.name || d.path);

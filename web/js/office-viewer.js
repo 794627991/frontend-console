@@ -67,6 +67,13 @@ async function openOfficeFile(path) {
 
   const conn = { portId, meta: { kind: 'office', label: name }, tab, wrap, officePath: path, officeKind: kind, dirty: false };
   connections[portId] = conn;
+  // a302：Office 文件也记入最近打开（用户实锤：word/excel/ppt 打开后最近列表
+  // 不显示——_recentAdd 只在编辑器/拖拽文本路径调用，office 分发早于它们）。
+  // kind:'office' 交给 openRecentItem → openDroppedFile → 再回 openOfficeFile（闭环）
+  if (typeof _recentAdd === 'function') {
+    _recentAdd({ type: 'file', key: 'file:' + path, label: name,
+      data: { kind: 'office', name, path, extPath: path } });
+  }
 
   if (kind === 'pdf' || kind === 'ppt') {
     // PDF Pro：专用 UI（工具栏+侧栏+虚拟化页面区）。
