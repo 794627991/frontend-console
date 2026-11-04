@@ -1153,6 +1153,42 @@ function _ovXlsxBindBar(conn, body) {
       return;
     }
     _ovXlsxSnapshot(conn);
+    // R7-1（实锤：插删行/列后行高列宽错位）：aoa 平移时行高列宽两套
+    // 索引必须同移——用户桶（aoa 下标键）平移 + 当前表 !rows/!cols 数组按
+    // 全局行/列号（ORG 偏移）splice，否则拖过的行高套错行、错位 hpx 落盘
+    const sh = conn._wb.Sheets[conn._wb.SheetNames[conn._sheetIdx]];
+    const org = conn._refOrigin || { r: 0, c: 0 };
+    const shiftBk = (bk, at, del) => {   // 桶键平移：del=删 at 位，否则 ≥at 上移
+      const out = {};
+      for (const k in bk) {
+        const i = +k;
+        if (del) { if (i === at) continue; out[i > at ? i - 1 : i] = bk[k]; }
+        else out[i >= at ? i + 1 : i] = bk[k];
+      }
+      return out;
+    };
+    if (act === 'insrow' || act === 'delrow') {
+      const rr = act === 'insrow' ? Math.max(r !== undefined ? r : 0, 0) : r;
+      if (conn._rowH && conn._rowH[conn._sheetIdx] && rr !== undefined)
+        conn._rowH[conn._sheetIdx] = shiftBk(conn._rowH[conn._sheetIdx], rr, act === 'delrow');
+      else if (conn._rowH && act === 'delrow' && rr === undefined && conn._rowH[conn._sheetIdx]) {
+        const bk = conn._rowH[conn._sheetIdx];   // 末行 pop：键 = 桶最大键时才删
+        const mx = Math.max(...Object.keys(bk).map(Number));
+        if (conn._aoa.length - 1 === mx) delete bk[mx];
+      }
+      if (sh && sh['!rows'] && rr !== undefined) {
+        if (act === 'insrow') sh['!rows'].splice(org.r + rr, 0, undefined);
+        else sh['!rows'].splice(org.r + rr, 1);
+      }
+    }
+    if (act === 'inscol' || act === 'delcol') {
+      if (conn._colW && conn._colW[conn._sheetIdx])
+        conn._colW[conn._sheetIdx] = shiftBk(conn._colW[conn._sheetIdx], c, act === 'delcol');
+      if (sh && sh['!cols']) {
+        if (act === 'inscol') sh['!cols'].splice(org.c + c, 0, undefined);
+        else sh['!cols'].splice(org.c + c, 1);
+      }
+    }
     if (act === 'insrow') conn._aoa.splice(Math.max(r !== undefined ? r : 0, 0), 0, (conn._aoa[0] || []).map(() => null));
     if (act === 'delrow') { if (r !== undefined && conn._aoa[r]) conn._aoa.splice(r, 1); else if (conn._aoa.length) conn._aoa.pop(); }
     if (act === 'inscol') conn._aoa.forEach(row => row.splice(Math.max(c, 0), 0, null));
