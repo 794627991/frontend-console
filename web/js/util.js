@@ -406,15 +406,19 @@ let activePortId = null;
     // 插到右缘 sticky 区（tab-bar-actions/⋮）之前——与所有 tab 的插入位一致
     const anchor = tabsEl.querySelector('.tab-bar-actions') || btn;
     tabsEl.insertBefore(drawerBar, anchor);
-    // 栏内居民放回：锚组胶囊之后（组已消失的放栏后）——精确还原用户放置
-    _barResidents.forEach(({ t, g }) => {
-      if (!t.isConnected) return;   // 居民已被关掉
+    // 栏内居民放回：锚组胶囊之后（组已消失的放栏后）——精确还原用户放置。
+    // a299 关键：正序插同一锚点会反转相对顺序（[claude,计算器] 都 insertBefore
+    // 到 serial 后 → 先插 claude 再插计算器顶到它前面 = 点击 tab 触发 rebuild 后
+    // "计算器/claude"跳变的根因）。倒序插（后进先出）保持原相对顺序
+    for (let i = _barResidents.length - 1; i >= 0; i--) {
+      const { t, g } = _barResidents[i];
+      if (!t.isConnected) continue;   // 居民已被关掉
       const cap = g !== null
         ? drawerBar.querySelector('.tab-drawer[data-group="' + CSS.escape(g) + '"]')
         : drawerBar.querySelector('.tab-drawer');   // 原"首个胶囊前"→新首个胶囊前
       if (cap) drawerBar.insertBefore(t, g !== null ? cap.nextSibling : cap);
       else tabsEl.insertBefore(t, drawerBar.nextSibling);
-    });
+    }
     // 单例 tab 保证在抽屉栏之前（视觉序：固定区 → 单例平铺 → 抽屉）。
     // 用户实锤：原判断 nextSibling !== drawerBar 要求单例「紧贴」抽屉栏——
     // 每次切换 tab 的 rebuild 都把拖拽过的单例按打开序强制归位（claude 拖到

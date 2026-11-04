@@ -62,25 +62,25 @@ function _dragMarker(snap) {
   _tabDrag.marker = snap;
 }
 
-// 执行落位。用户实锤两个炸点：
+// 执行落位。用户实锤三炸点：
 //   ① snap.el 是抽屉胶囊（drawerBar 的子节点，不是 tabs 直接子级）——
 //     tabs.insertBefore(src, 胶囊) 直接 NotFoundError → 拖进抽屉中间永远失败；
 //   ② snap.el.nextSibling 为 null（末尾胶囊后半）→ insertBefore(src, null)
-//     = appendChild，tab 被追加到 tabs 末尾——排到 ⋮ 按钮后面去了。
-// 修：锚点归一——胶囊锚点落进 drawerBar 内部（tab 进 BAR 是 a286R20 合法行为，
-// 打 userPlaced 标）；null ref 落到 tab-bar-actions 之前（tab 区末尾、按钮前）
+//     = appendChild，tab 被追加到 tabs 末尾——排到 ⋮ 按钮后面去了；
+//   ③ 锚点是【已在抽屉栏内部的 tab】（如 claude 拖进栏后，计算器再拖到它前后）
+//     —— a293 只判了胶囊，栏内 tab 走 tabs 分支被 ref 归一弹回 actions 前，
+//     表现为"拖到串口后面不行"。
+// 修：锚在 drawerBar 内（无论胶囊还是 tab）→ 一律落进栏内 + userPlaced 标
 function _dragCommit(src, snap) {
   if (!snap) return false;
   const anchorEl = snap.el;
-  // 胶囊（或 drawerBar 内的任何锚点）：落进抽屉栏内部
-  if (anchorEl.classList.contains('tab-drawer')) {
-    const bar = anchorEl.closest('.tab-drawer-bar') || document.querySelector('.tab-drawer-bar');
-    if (bar) {
-      bar.insertBefore(src, snap.before ? anchorEl : anchorEl.nextSibling);
-      src.dataset.userPlaced = '1';   // rebuild 的单例归位循环绕行（位置只认用户的手）
-      _tabManualOrder();
-      return true;
-    }
+  const anchorBar = anchorEl.closest ? anchorEl.closest('.tab-drawer-bar') : null;
+  if (anchorBar) {
+    // 胶囊或栏内 tab 锚点：在锚所在容器内落位（顺序与指示线所见一致）
+    anchorBar.insertBefore(src, snap.before ? anchorEl : anchorEl.nextSibling);
+    src.dataset.userPlaced = '1';   // rebuild 的单例归位循环绕行（位置只认用户的手）
+    _tabManualOrder();
+    return true;
   }
   // tabs 直接子级锚点：ref 归一（null/异层级 → tab-bar-actions 之前，绝不 appendChild）
   let ref = snap.before ? anchorEl : anchorEl.nextSibling;
