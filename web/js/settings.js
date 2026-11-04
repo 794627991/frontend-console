@@ -713,7 +713,12 @@ async function _stRenderResourcesPane(pane) {
       _st = j;
       if (pickDefaults) {
         _picked.clear();
-        (j.items || []).forEach(function (it) { if (!it.ok) _picked.add(it.kind); });
+        // a336R（第7轮 P2-4）：用户点过「忽略」的软资源不该被默认勾上——
+        // 否则每次打开设置页都提示安装他明确不需要的东西
+        const ign = j.ignored || [];
+        (j.items || []).forEach(function (it) {
+          if (!it.ok && ign.indexOf(it.kind) < 0) _picked.add(it.kind);
+        });
       } else {
         // 保留已有勾选，但剔除已不再可用的（换包后包内没有的）
         Array.from(_picked).forEach(function (k) { if (!inPkg(k)) _picked.delete(k); });
@@ -872,8 +877,10 @@ async function _stRenderResourcesPane(pane) {
   };
   $q('#rsPickMiss').onclick = function () {
     _picked.clear();
+    const ign = (_st && _st.ignored) || [];
     ((_st && _st.items) || []).forEach(function (it) {
-      if (!it.ok && inPkg(it.kind)) _picked.add(it.kind);
+      // a336R（第7轮 P2-4）：已忽略的软资源不参与「全选缺项」
+      if (!it.ok && ign.indexOf(it.kind) < 0 && inPkg(it.kind)) _picked.add(it.kind);
     });
     paintList();
   };

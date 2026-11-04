@@ -488,11 +488,12 @@ BILI_RUNTIME = _bili_runtime_dir()
 def _detect_bili_cmd():
     import shutil, subprocess
     # 1. 内置运行时（.biliok 标记 + 关键文件齐全才算数——半装不认）
+    # a336R（第7轮 P1-4）：判据抽到 res_boot.bili_ok，三处共用一份
+    from src.res_boot import bili_ok
     node_exe = os.path.join(BILI_RUNTIME, "node.exe")
     entry = os.path.join(BILI_RUNTIME, "node_modules", "billion-context",
                          "dist", "index.js")
-    if (os.path.isfile(os.path.join(BILI_RUNTIME, "..", ".biliok"))
-            and os.path.isfile(node_exe) and os.path.isfile(entry)):
+    if bili_ok():
         return node_exe, entry, None
     # 2. 系统 node ≥22 + npm 全局 billion-context（开发机兜底）
     try:

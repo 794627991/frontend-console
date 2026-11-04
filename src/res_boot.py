@@ -273,16 +273,27 @@ def probe_pydeps():
     return "ok", "", ""
 
 
-def probe_bili():
-    """billion-context 引擎探测（a335R）：与 proxy._detect_bili_cmd 同判据——
-    runtime_root()/.biliok + bili/node.exe + bili/node_modules/billion-context/
-    dist/index.js 三件齐全才算装好。不 import proxy（会把整条代理链拉进来）。"""
-    base = os.path.join(app_dir(), "offline_runtime")
-    mark = os.path.join(base, ".biliok")
+def bili_ok(base=None):
+    """billion-context 内置运行时是否完整（a336R 第7轮 P1-4：三处判据统一）。
+
+    base 是 `offline_runtime` 目录（marker `.biliok` 就在它下面，树在
+    `bili/`）。res_install / res_boot.probe_bili / proxy._detect_bili_cmd
+    原先各写一份，任何一处改判据都会分裂成「面板说装好了、代理说没装」。
+    本模块只依赖标准库，两侧都已 import 它，放这里零新增依赖。
+    """
+    if base is None:
+        base = os.path.join(app_dir(), "offline_runtime")
     cur = os.path.join(base, "bili")
-    entry = os.path.join(cur, "node_modules", "billion-context",
-                         "dist", "index.js")
-    if os.path.isfile(mark) and os.path.isfile(os.path.join(cur, "node.exe"))             and os.path.isfile(entry):
+    return (os.path.isfile(os.path.join(base, ".biliok"))
+            and os.path.isfile(os.path.join(cur, "node.exe"))
+            and os.path.isfile(os.path.join(cur, "node_modules",
+                                            "billion-context", "dist",
+                                            "index.js")))
+
+
+def probe_bili():
+    """billion-context 引擎探测（a335R；a336R 判据并入 bili_ok）。"""
+    if bili_ok():
         return "ok", "", ""
     return "missing", "", ""
 

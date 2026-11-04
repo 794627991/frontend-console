@@ -222,7 +222,6 @@ def res_install_api():
                 _absent = set(res.get("absent") or [])
                 _name = {m.get("kind"): (m.get("name") or m.get("kind"))
                          for m in _MF}
-                _name.setdefault("bili", "billion-context 压缩引擎")
                 _hard = {m.get("kind") for m in _MF if m.get("hard")}
                 _absent_all = [k for k in _ORDER if k in _absent]
                 _hard_absent = [_name.get(k, k) for k in _absent_all

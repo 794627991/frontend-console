@@ -133,18 +133,24 @@ def autofind_fcpk():
                 _bn = os.path.basename(p).lower()
                 if not (_bn.endswith(".fcpk") and "资源包" in _bn):
                     continue
+                # a336R（第7轮 P1-1）：pkg_class 已挪到 src.fcpk——原先是
+                # `from src.update_server import pkg_class`，而 update_server
+                # 被 cythonize_build 的 _EXCLUDE 排除出发布包，frozen 机上
+                # 必 ImportError → 这里 whole 落到 fallback，静默丢包子集。
+                # a336R（第7轮 P2-3）：判不出时按归一化名兜底（吃下浏览器
+                # 重名的空白/括号/副本形态），与门户 _offline_pkg 同构。
                 try:
-                    from src.update_server import pkg_class as _pc
+                    from src.fcpk import pkg_class as _pc
                     _cls = _pc(_bn)
                 except Exception:
                     _cls = None
+                if _cls is None:
+                    _t = re.sub(r"[\s()（）]+", "", _bn)
+                    _cls = "subset" if "资源包-" in _t else "full"
                 if _cls == "full":
                     main.append(p)
-                elif _cls == "subset":
+                else:
                     sub.append(p)
-                elif "资源包-" not in _bn:
-                    # 浏览器重命名（空格/括号/副本）→ 视为全量主包
-                    main.append(p)
     cands = main or sub
     if not cands:
         return ""

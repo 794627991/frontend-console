@@ -188,6 +188,46 @@ def is_fcpk(path):
         return False
 
 
+def pkg_class(name):
+    """资源包分类：'full' | 'subset' | None。
+
+    a336R（第7轮 P1-1，实锤回归）：本函数原先放在 update_server.py，而该模块
+    被 tools/cythonize_build.py 的 _EXCLUDE 排除出发布包——frozen 机上
+    `from src.update_server import pkg_class` 必然 ImportError，autofind 落到
+    fallback 分支把 `-资源包-拓展` / `-资源包-v2` 全丢掉，同事机明明有包却
+    报「没有选择资源包」。挪到 fcpk.py（两侧本就依赖、零副作用、发布包内存在）。
+
+    判定只看 basename（目录名不参与——第5轮 P2-1 的教训），且归一化空白：
+    浏览器重名下载会产出 `资源包 (1).fcpk` / `资源包 - 副本.fcpk`。
+
+      full   : `…资源包.fcpk`（含重名空白变体）
+               或 `资源包-v<数字>[.数字]*.fcpk`（用户给新版全量包带版本后缀）
+      subset : 其余含 `资源包-` 的（`-资源包-拓展`、`-资源包-claude` …）
+    """
+    import re as _re
+    b = name.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    if not b.endswith(".fcpk"):
+        return None
+    # 归一化空白 / 括号，吃下浏览器重名下载的形态（`资源包 (1).fcpk`）
+    t = _re.sub(r"[\s()（）]+", "", b)
+    if "资源包" not in t:
+        return None
+    # a336R（第7轮 P2-3）：归一化后 `资源包 (1).fcpk` 变成 `资源包1.fcpk`，
+    # 原先只认 `资源包.fcpk` 会漏 → 允许结尾带数字的重名序号
+    if _re.search(r"资源包\d*\.fcpk$", t):
+        return "full"
+    if _re.search(r"资源包-v\d+(?:\.\d+)*\.fcpk$", t):
+        return "full"
+    if "资源包-" in t:
+        # `资源包-副本` / `资源包-拓展` 之类：Windows 副本名归一化后也是这个形态，
+        # 故在这里再区分一次——副本/重名类没有子集语义关键字时按全量算
+        if _re.search(r"资源包-(副本|copy|\d+)[^/]*\.fcpk$", t) and \
+                not _re.search(r"资源包-(拓展|claude|基础|onlyoffice|bili)", t):
+            return "full"
+        return "subset"
+    return None
+
+
 def inspect(path):
     """只读探测（不派生密钥、不解密）：大小/条数/是否截断。
     表在末尾，所以「是否完整」只需看 footer——比读完整个包快。
