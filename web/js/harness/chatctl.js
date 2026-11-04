@@ -98,7 +98,7 @@
         _HG.cwd = null; _hgSaveCwd(null); projChipLabel();
         return ensureSession();
       }
-      if (j.err && j.err.includes('未检测到 claude')) { openClaudeSetup(); }
+      if (j.err && j.err.includes('未检测到 claude')) { openSettingsPanel('resources'); }
       showBanner(j.err || '会话创建失败', 3500, true);
       return null;
     }

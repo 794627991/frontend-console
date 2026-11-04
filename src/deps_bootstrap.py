@@ -89,8 +89,8 @@ def _ensure_pip():
 
 
 def _wheels_dir():
-    """离线 wheel 目录：离线整合包（claude_setup._pack_pydeps）解包后的 pydeps/。
-    存在且含 wheel 才返回，否则 None。"""
+    """离线 wheel 目录：离线整合包解包后的 pydeps/（.fcpk 资源包的 pydeps kind
+    落地位）。存在且含 wheel 才返回，否则 None。"""
     d = os.path.join(_ROOT, "pydeps")
     try:
         if os.path.isdir(d) and any(

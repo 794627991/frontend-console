@@ -169,8 +169,9 @@ def _versions():
 
 def _offline_pkg():
     """离线资源包单独通道。v4.1 起统一为加密的 `<应用名>-资源包.fcpk`
-    （含 WebView2/dotnet/node/git/claude/pydeps，自定义容器，必须用工具装）；
-    仍兼容旧的标准 zip（`-offline-pkg.zip`，v2.3.3 及之前带 -v<ver>）。
+    （含 WebView2/dotnet/node/git/claude/pydeps，自定义容器，必须用工具装）。
+    旧 zip（`-offline-pkg.zip`）只作历史 n 天兼容读取——该通道已退役
+    （用户令「彻底退役，不要了」），不再产出新 zip。
 
     不进版本清单/更新日志——它不是应用版本，只是无外网机器的部署资源。
     sha1 不提供：manifest 刻意不收它（updater 不能把它当应用更新推下去），
@@ -676,13 +677,13 @@ _PORTAL_HTML = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
         <path d="M 218 46 H 262" stroke="url(#g1)" stroke-width="1.5" marker-end="url(#ar1)"/>
         <rect x="270" y="18" width="200" height="56" rx="10" fill="none" stroke="url(#g1)" stroke-width="1.5"/>
         <text x="370" y="42" text-anchor="middle" fill="currentColor" font-size="13" font-weight="600">② 引导安装（缺啥装啥）</text>
-        <text x="370" y="62" text-anchor="middle" fill="#8899aa" font-size="11">联网安装 / 离线包一键装</text>
+        <text x="370" y="62" text-anchor="middle" fill="#8899aa" font-size="11">资源包一键装</text>
         <path d="M 478 46 H 522" stroke="url(#g1)" stroke-width="1.5"/>
         <rect x="530" y="18" width="180" height="56" rx="10" fill="none" stroke="url(#g1)" stroke-width="1.5"/>
         <text x="620" y="42" text-anchor="middle" fill="currentColor" font-size="13" font-weight="600">③ 自动拉起 Claude</text>
         <text x="620" y="62" text-anchor="middle" fill="#8899aa" font-size="11">API Token 配好即用</text>
       </svg>
-      <p><b>怎么配：</b>首次打开工具会自动弹出「安装 Claude Code」引导——自动检测 Claude CLI / Node / Git 三样环境，缺什么引导装什么（有网一键联网装，无网机器点「制作离线包」拷到目标机器装）。检测全勾后自动拉起 Claude。<br>
+      <p><b>怎么配：</b>在「设置 → 外部依赖安装」里选资源包（.fcpk），勾选 Claude CLI / Node / Git 等六项一键装（无网机器把资源包拷过去即可）。装好即用。<br>
       <b>API 接入：</b>需要 Anthropic 兼容 API 的（企业内网网关 / 智谱等），在 Claude 对话页的接入引导里填 <b>Base URL + API Token</b>（支持 settings.json 同源自动读取）；官方账号用户装好 CLI 登录即可。<br>
       <b>提示：</b>工具页左下角有「Claude」状态徽章，绿色=通道就绪。之后每个会话页签就是一个独立 AI，互不干扰。</p>
     </div>

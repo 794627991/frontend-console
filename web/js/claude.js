@@ -23,8 +23,8 @@ async function connectClaude(opts = {}) {
       body: JSON.stringify(body)});
     const j = await r.json();
     if (!j.ok) {
-      // claude CLI 缺失 → 弹安装引导窗（联网/离线双通道），不再只弹 banner
-      if (j.err && j.err.includes('未检测到 claude')) { notifyTaskDone(nid, {ok:false, title:'claude 未安装', detail:'已弹安装引导'}); openClaudeSetup(); return j; }
+      // claude CLI 缺失 → 去设置页用 .fcpk 资源包装（走「外部依赖安装」）
+      if (j.err && j.err.includes('未检测到 claude')) { notifyTaskDone(nid, {ok:false, title:'claude 未安装', detail:'已打开依赖安装页'}); openSettingsPanel('resources'); return j; }
       notifyTaskDone(nid, {ok:false, title:'claude 启动失败', detail:j.err || '未知错误', ms:6000}); return j;
     }
     const portId = j.port_id;
@@ -68,177 +68,13 @@ async function connectClaude(opts = {}) {
   }
 }
 
-// ============================================================
-// Claude 安装引导窗：首次打开检测不到 CLI 时弹出。
-// 双通道：联网（npm install -g）/ 离线（打包资源静默装：Git+Node+claude-code）。
-// 后端 src/claude_setup.py；日志轮询 /api/claude/setup_poll。
-// ============================================================
-
-let _csPollTimer = null;
-
-async function openClaudeSetup() {
-  let m = $('claudeSetupModal');
-  if (!m) {
-    m = document.createElement('div');
-    m.className = 'modal';
-    m.id = 'claudeSetupModal';
-    m.innerHTML = `
-      <div class="box" style="width:560px;">
-        <div class="head">
-          <strong>安装 Claude Code</strong>
-          <div class="head-actions"><button class="btn ghost icon-btn" id="csClose">✕</button></div>
-        </div>
-        <div style="padding:16px 20px;display:flex;flex-direction:column;gap:12px;">
-          <div id="csDetect" style="font-size:12px;line-height:1.8;"></div>
-          <div id="csErr" style="color:var(--neon-red);font-size:11px;display:none;"></div>
-          <div id="csLog" class="cs-log" style="display:none;"></div>
-        </div>
-        <div class="actions" style="padding:0 20px 16px;display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;">
-          <button class="btn ghost" id="csPack" title="把 Git 安装器 + Node MSI + claude-code 包 + 工具依赖打成一个 zip，拷到无网机器离线安装"><span>${ICO16.package}</span> 制作离线包</button>
-          <button class="btn primary" id="csOfflineZip" title="选择 claude-offline.zip，工具自行解压静默安装（无网机器用这个）"><span>${ICO16.folderOpen}</span> 离线包安装</button>
-          <button class="btn primary" id="csOnline" title="npm install -g @anthropic-ai/claude-code（需联网 + Node）"><span>${ICO16.globe}</span> 联网安装</button>
-        </div>
-      </div>`;
-    document.body.appendChild(m);
-    $('csClose').onclick = () => { _csStopPoll(); m.classList.remove('show'); };
-    $('csPack').onclick = () => _csPickPackDir();
-    $('csOfflineZip').onclick = () => _csPickZip();
-    $('csOnline').onclick = () => _csStart('online');
-  }
-  m.classList.add('show');
-  _csDetectRender();
-}
-
-async function _csDetectRender() {
-  const el = $('csDetect');
-  el.innerHTML = '<span style="color:var(--muted)">检测中…</span>';
-  // v3.5.29：semver 比较（升级提示用）——a>b 返 1
-  const _cmpVer = (a, b) => {
-    const pa = String(a || '').split('.'), pb = String(b || '').split('.');
-    for (let i = 0; i < 3; i++) {
-      const x = parseInt(pa[i], 10) || 0, y = parseInt(pb[i], 10) || 0;
-      if (x !== y) return x > y ? 1 : -1;
-    }
-    return 0;
-  };
-  try {
-    const st = await (await fetch('/api/claude/setup_status')).json();
-    const row = (label, ok, extra='') =>
-      `<div>${ok ? '<span style="color:var(--accent)">✓</span>' : '<span style="color:var(--neon-red)">✗</span>'} ${label}${extra ? ` <span style="color:var(--muted);font-size:11px;">${extra}</span>` : ''}</div>`;
-    const mb = st.pkg_size ? ` · ${(st.pkg_size/1024/1024).toFixed(0)} MB` : '';
-    const res = [];
-    if (st.claude) {
-      // v3.5.29（用户实锤「找不到升级方式」）：已安装时显示当前版本+离线包
-      // 版本对比——「离线包安装」就是升级通道（选新包直接换装）
-      const _cur = st.version || '';
-      const _pkgV = st.pkg_version || '';
-      const _up = _pkgV && _cur && _pkgV !== _cur
-        ? ` —— 包源 v${esc(_pkgV)}${_cmpVer(_pkgV, _cur) > 0 ? ' 较新，可选「离线包安装」升级' : ' 不高于当前版'}` : '';
-      res.push(row('Claude CLI 已安装' + (_cur ? `（当前 v${esc(_cur)}）` : ''), true,
-        '升级 = 下方「离线包安装」选新版 claude-offline.zip 换装' + _up));
-    }
-    res.push(row('Node.js / npm', st.node && st.npm, st.node ? '' : '离线包安装会静默补装'));
-    res.push(row('Git', st.git, st.git ? '' : '离线包安装会静默补装'));
-    // 离线包（zip 单文件）——本机找得到包源才能制作；安装时用户自选 zip 文件
-    const canPack = !!(st.pkg_dir || st.git_installer || st.node_installer);
-    res.push(row('离线包制作源', canPack,
-      canPack ? [st.git_installer, st.node_installer].filter(Boolean).map(p => esc(String(p).split(/[\\\/]/).pop())).join(' + ') +   // a239 B3-P3: 原 split('\\\\') 按双反斜杠分割永不命中单反斜杠路径（basename 剥离失效=全路径进 innerHTML）；补 esc
-        (st.pkg_dir ? (st.git_installer ? ' + ' : '') + 'claude-code' + mb : '')
-      : '未找到安装器资源（Git exe / Node MSI）——只能联网安装'));
-    el.innerHTML = res.join('');
-    // 联网按钮始终显示：Node/Git 缺了会自动静默补装（下载官方安装器）
-    $('csOnline').style.display = '';
-    // 离线包安装始终可选（用户自己选 zip 文件，与本机资源无关）
-    $('csOfflineZip').style.display = '';
-    // 制作按钮：本机找得到源才显示
-    $('csPack').style.display = canPack ? '' : 'none';
-  } catch (e) {
-    el.innerHTML = '<span style="color:var(--neon-red)">检测失败: ' + esc(String(e)) + '</span>';
-  }
-}
-
-function _csStopPoll() {
-  if (_csPollTimer) { clearInterval(_csPollTimer); _csPollTimer = null; }
-}
-
-function _csStart(mode, extra) {
-  const api = mode === 'pack' ? '/api/claude/setup_offline_pack' : '/api/claude/setup_install';
-  const body = extra || (mode === 'online' ? {mode:'online'} : {mode:'offline'});
-  const logEl = $('csLog');
-  logEl.style.display = '';
-  logEl.innerHTML = '';
-  ['csPack','csOfflineZip','csOnline'].forEach(id => $(id).disabled = true);
-  fetch(api, {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify(body)})
-    .then(r => r.json())
-    .then(j => {
-      if (!j.ok) { $('csErr').style.display = ''; $('csErr').textContent = j.err || '启动失败'; return; }
-      _csStopPoll();
-      _csPollTimer = setInterval(async () => {
-        try {
-          const s = await (await fetch('/api/claude/setup_poll')).json();
-          logEl.innerHTML = (s.log || []).map(l =>
-            `<div>${esc(l.msg)}</div>`).join('');
-          logEl.scrollTop = logEl.scrollHeight;
-          if (s.done) {
-            _csStopPoll();
-            ['csPack','csOfflineZip','csOnline'].forEach(id => $(id).disabled = false);
-            if (s.ok) {
-              if (s.need_api) {
-                // 首次安装完成且没填 Token → 弹 API 配置（必填，不直接拉起 claude）
-                showBanner('安装完成——请填入 API Token');
-                $('claudeSetupModal').classList.remove('show');
-                setTimeout(() => openSettingsPanel('api'), 400);
-              } else {
-                showBanner('Claude Code 安装完成');
-                _csDetectRender();
-                // 装好后直接拉起 claude（用户点安装就是为了用）
-                setTimeout(() => { $('claudeSetupModal').classList.remove('show'); connectClaude(); }, 800);
-              }
-            } else {
-              $('csErr').style.display = '';
-              $('csErr').textContent = s.err || '安装失败';
-            }
-          }
-        } catch(_) {}
-      }, 700);
-    })
-    .catch(e => {
-      ['csPack','csOfflineZip','csOnline'].forEach(id => $(id).disabled = false);
-      $('csErr').style.display = ''; $('csErr').textContent = '请求失败: ' + e;
-    });
-}
-
-function _csPickPackDir() {  // 打包输出目录：pywebview 原生目录选择（pick_dir 已有），默认桌面
-  if (window.pywebview && window.pywebview.api && window.pywebview.api.pick_dir) {
-    window.pywebview.api.pick_dir().then(d => {
-      _csStart('pack', {out_dir: d || ''});
-    }).catch(() => showBanner('目录选择失败', 3000, true));
-  } else {
-    _csStart('pack', {out_dir: ''});   // 后端默认桌面
-  }
-}
-
-function _csPickZip() {
-  // 前端文件选择：pywebview 原生对话框（pick_any，不限制类型，返回 str）
-  if (window.pywebview && window.pywebview.api && window.pywebview.api.pick_any) {
-    window.pywebview.api.pick_any().then(p => {
-      const path = Array.isArray(p) ? p[0] : p;
-      if (path && /\.zip$/i.test(path)) _csStart('offline', {mode:'offline', zip_path:path});
-      else if (path) showBanner('请选择 claude-offline.zip 离线包', 3000, true);
-    }).catch(() => showBanner('文件选择失败', 3000, true));
-  } else {
-    // pywebview bridge 不可用（纯浏览器调试态）：退回原生 input[type=file]
-    const inp = document.createElement('input');
-    inp.type = 'file'; inp.accept = '.zip';
-    inp.onchange = () => {
-      const f = inp.files[0];
-      // 浏览器态拿不到绝对路径（fakepath）——提示走后端通道
-      if (f) showBanner('WebView 桥不可用：请在工具窗口内操作', 3000, true);
-    };
-    inp.click();
-  }
-}
+// a32x（用户令「这个通道彻底退役，不要了」）：旧版离线包（zip）安装引导
+// 整窗删除——openClaudeSetup / _csDetectRender / _csStart / _csPickPackDir /
+// _csPickZip / _csStopPoll 全部去掉。后端
+// /api/claude/setup_status|setup_install|setup_offline_pack|setup_pkg_dir|setup_poll
+// 同步退役；依赖安装统一走「设置 → 外部依赖安装」的 .fcpk 资源包。
+// 注意：src/claude_setup.py 里的 _install_node_from/_install_git_from/
+// _make_npm_shims/_install_pydeps/_verify_claude_runs 仍被 res_install 复用，保留。
 
 // ============================================================
 // Claude 面板（第 2 期）：运行中会话 / 历史会话（点击恢复）/ 技能

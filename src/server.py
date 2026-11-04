@@ -116,8 +116,9 @@ app.register_blueprint(tree_search_bp)
 from src.vcs import vcs_bp
 app.register_blueprint(vcs_bp)
 
-# 注册 Claude 安装引导 Blueprint（路由 /api/claude/setup_*，联网/离线双通道）
-# （安装引导留主进程：装机期一次性动作，且与文件关联/系统路径打交道）
+# 注册 Claude 安装引导 Blueprint：a32x 起该蓝图已无任何端点（旧 zip 安装
+# 通道彻底退役，用户令「这个通道彻底退役，不要了」）——保留注册仅为兼容，
+# 实际依赖安装走下方 res_bp（.fcpk 资源包）。
 from src.claude_setup import claude_setup_bp
 app.register_blueprint(claude_setup_bp)
 

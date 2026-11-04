@@ -610,21 +610,6 @@ async function _stRenderResourcesPane(pane) {
         <div class="dd-sub" style="margin-top:4px;">状态栏不显示（如 command 指向了无效解释器）时点此：清除坏配置并按本机实际 python 重配；本机无 python 则不配置（无害）。</div>
       </div>
 
-      <details class="dd-cur" style="margin-top:14px;">
-        <summary style="cursor:pointer;font-size:12px;">旧版离线包（zip）通道</summary>
-        <div class="dd-actions" style="margin-top:8px;">
-          <button class="btn ghost" id="rsOpenSetup">⊞ 打开旧的安装引导</button>
-        </div>
-        <div class="dd-sub" style="margin-top:4px;">联网安装 / claude-offline.zip 安装 / 制作旧格式离线包。新流程请用上方的 .fcpk 资源包。</div>
-        <div class="dd-label" style="margin-top:12px;">离线安装包目录</div>
-        <div class="dd-row" style="display:flex;gap:8px;margin-top:6px;align-items:center;">
-          <div class="dd-path" id="apiPkgDir" style="flex:1;user-select:text;">—</div>
-          <button class="btn ghost icon-btn" id="apiPkgPick" title="浏览选择目录">${ICO16.folderOpen}</button>
-          <button class="btn ghost icon-btn" id="apiPkgReset" title="清除自定义，恢复默认">↺</button>
-        </div>
-        <div class="dd-sub" style="margin-top:4px;">旧通道（zip）的搜索目录。新流程用 .fcpk 资源包，不读这个。</div>
-      </details>
-
       <div class="dd-note" id="rsNote"></div>
     </div>`;
 
@@ -847,18 +832,6 @@ async function _stRenderResourcesPane(pane) {
     $q('#rsProgTxt').textContent = '正在取消…';
   };
 
-  // 旧通道（保留原逻辑，只是折叠起来）
-  const refreshPkgDir = async () => {
-    try {
-      const st = await (await fetch('/api/claude/setup_status')).json();
-      $q('#apiPkgDir').textContent = st.offline_pkg_dir || '默认（工具目录 offline_pkg）';
-    } catch (_) {}
-  };
-  refreshPkgDir();
-  $q('#rsOpenSetup').onclick = () => {
-    $('settingsModal').classList.remove('show');
-    openClaudeSetup();
-  };
   $q('#rsFixStatusline').onclick = async () => {
     const ok = await _ddConfirm('重配 statusLine',
       '清除 settings.json 中现有 statusLine 配置并按本机 python 重配？找不到 python 时不配置（状态栏不显示，无害）。\n\n（顺带补全其它缺省项与自带 MCP 注册/授权）');
@@ -871,27 +844,6 @@ async function _stRenderResourcesPane(pane) {
       showBanner(j.ok ? ('已完成：' + (j.notes || []).join('、')) : '重配失败', 6000, !j.ok);
     } catch(e) { showBanner('重配失败: ' + e, 4000, true); }
   };
-  $q('#apiPkgPick').onclick = async () => {
-    try {
-      const dir = await pywebview.api.pick_dir();
-      if (!dir) return;
-      const r = await fetch('/api/claude/setup_pkg_dir', {method:'POST',
-        headers:{'Content-Type':'application/json'}, body: JSON.stringify({dir})});
-      const j = await r.json();
-      if (!j.ok) { showBanner('设置失败: ' + (j.err || ''), 4000, true); return; }
-      showBanner('离线安装包目录已更新');
-      refreshPkgDir();
-    } catch(e) { showBanner('目录选择器不可用，或请求失败: ' + e, 4000, true); }
-  };
-  $q('#apiPkgReset').onclick = async () => {
-    try {
-      await fetch('/api/claude/setup_pkg_dir', {method:'POST',
-        headers:{'Content-Type':'application/json'}, body: JSON.stringify({dir: ''})});
-      showBanner('已恢复默认离线包目录');
-      refreshPkgDir();
-    } catch(_) {}
-  };
-
   // 首次：检测 + 按默认规则勾选；有已保存的包路径则顺带预检
   await loadStatus(true);
   if (pathBox.value.trim()) loadPkg();

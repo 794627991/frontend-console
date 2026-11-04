@@ -32,9 +32,9 @@ if (typeof monacoWarmup === 'function') monacoWarmup();  // v2.2.2：空闲预�
     const ok = await _ddConfirm('部分功能不可用',
       `检测到缺少运行库：\n${lines}\n\n` +
       `需${(j.missing_req||[]).length ? '必需' : ''}库缺失会导致对应功能无法使用。\n` +
-      `有离线包（claude-offline.zip）？点「确定」选择离线包补装（含工具依赖）；\n` +
+      `点「确定」去「设置 → 外部依赖安装」用 .fcpk 资源包一键补装；\n` +
       `点「取消」本次跳过（下次启动仍会提醒）。`);
-    if (ok) openClaudeSetup();
+    if (ok) openSettingsPanel('resources');
   } catch(_) {}
 })();
 

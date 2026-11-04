@@ -111,8 +111,11 @@ async function openOfficeFile(path) {
   termArea.appendChild(wrap);
   switchTab(portId);
 
-  if (kind !== 'pdf') {
-    // docx/xlsx/ppt 用 setTimeout 跳出事件上下文
+  // a32x（用户实锤 pptx 打开 Uncaught TypeError: Cannot set properties of
+  // null）：ppt 与 pdf 同走 _ovPdfBuildUI（上面的 78 行分支已把 wrap.innerHTML
+  // 换成 PDF UI，DOM 里根本没有 [data-ov-body]）——此处只排了 'pdf'，ppt 仍
+  // 进简单 UI 分支，querySelector 拿到 null 后 body.innerHTML 必炸。
+  if (kind !== 'pdf' && kind !== 'ppt') {
     setTimeout(async () => {
       const body = wrap.querySelector('[data-ov-body]');
       const info = wrap.querySelector('[data-ov-info]');
