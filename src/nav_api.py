@@ -184,3 +184,50 @@ def nav_definition():
         return jsonify({"ok": True, **res})
     except Exception as e:
         return jsonify({"ok": False, "err": str(e)[:200]}), 200
+
+
+@nav_bp.route("/api/nav/symbols")
+def nav_symbols():
+    """工作区符号面板（Ctrl+T）。?file=&q=&limit="""
+    from src import nav_index
+    f = (request.args.get("file") or "").strip()
+    q = (request.args.get("q") or "").strip()
+    try:
+        limit = min(100, max(10, int(request.args.get("limit") or 50)))
+    except ValueError:
+        limit = 50
+    if not f:
+        return jsonify({"ok": False, "err": "缺 file"}), 400
+    try:
+        return jsonify(nav_index.symbols(f, q, limit))
+    except Exception as e:
+        return jsonify({"ok": False, "err": str(e)[:200]}), 200
+
+
+@nav_bp.route("/api/nav/references")
+def nav_references():
+    """引用查找（Shift+F12）。?file=&symbol="""
+    from src import nav_index
+    f = (request.args.get("file") or "").strip()
+    sym = (request.args.get("symbol") or "").strip()
+    if not f or not sym:
+        return jsonify({"ok": False, "err": "缺 file/symbol"}), 400
+    try:
+        return jsonify(nav_index.references(f, sym))
+    except Exception as e:
+        return jsonify({"ok": False, "err": str(e)[:200]}), 200
+
+
+@nav_bp.route("/api/nav/import_nm", methods=["POST"])
+def nav_import_nm():
+    """批3：Linux 侧 nm -A 清单导入（可选增强）。body {root, file}"""
+    from src import nav_index
+    d = request.get_json(force=True, silent=True) or {}
+    root = str(d.get("root") or "").strip()
+    nmf = str(d.get("file") or "").strip()
+    if not root or not nmf:
+        return jsonify({"ok": False, "err": "缺 root/file"}), 400
+    if not _guard(root):
+        return jsonify({"ok": False, "err": "目录不在文件树登记根内"}), 400
+    ok, msg = nav_index.import_nm_list(root, nmf)
+    return jsonify({"ok": ok, "err": "" if ok else msg, "msg": msg})

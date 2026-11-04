@@ -92,8 +92,9 @@ def _dir_size(root):
 
 def shallow_probe(root):
     """右键菜单「可建判定」：浅层抽样找代码文件。秒级，不扫全树。
-    返回 {has_code, code_files, dirs_scanned}。"""
-    hits, scanned = 0, 0
+    返回 {has_code, code_files, dirs_scanned, cmd_hits, o_hits}——
+    cmd/o 浅层命中供 status 做粗粒度 stale 判定（批3）。"""
+    hits, cmd_hits, o_hits, scanned = 0, 0, 0, 0
     try:
         roots = [(root, 0)]
         while roots and scanned < _PROBE_MAX_DIRS:
@@ -110,9 +111,14 @@ def shallow_probe(root):
                     _, ext = os.path.splitext(name)
                     if ext.lower() in CODE_EXTS:
                         hits += 1
-                        if hits >= 60:      # 够下结论了
-                            return {"has_code": True, "code_files": hits,
-                                    "dirs_scanned": scanned}
+                    elif name.lower().endswith(".cmd"):
+                        cmd_hits += 1
+                    elif name.lower().endswith(".o"):
+                        o_hits += 1
+                    if hits >= 60:      # 够下结论了
+                        return {"has_code": True, "code_files": hits,
+                                "dirs_scanned": scanned,
+                                "cmd_hits": cmd_hits, "o_hits": o_hits}
                 elif os.path.isdir(p) and name not in _SKIP_DIRS:
                     subdirs.append((p, depth + 1))
             # 深度优先策略：常见代码目录名是强信号（kernel/drivers/serial
@@ -127,9 +133,10 @@ def shallow_probe(root):
             elif depth < 3:
                 roots.extend(others[:4])
         return {"has_code": hits > 0, "code_files": hits,
-                "dirs_scanned": scanned}
+                "dirs_scanned": scanned, "cmd_hits": cmd_hits, "o_hits": o_hits}
     except Exception:
-        return {"has_code": False, "code_files": 0, "dirs_scanned": scanned}
+        return {"has_code": False, "code_files": 0, "dirs_scanned": 0,
+                "cmd_hits": 0, "o_hits": 0}
 
 
 def status(root):
@@ -143,6 +150,14 @@ def status(root):
            "lib_dir": ld if meta else ""}
     if meta:
         sizes = meta.get("sizes") or {}
+        # 批3 stale 粗判：建库时记的 .cmd 计数与浅层现采对比——浅层命中
+        # 显著多于建库记录（基线重新编译过）即提示重建（不自动）
+        stale = False
+        if meta.get("cmd_count", 0) == 0 and (probe.get("cmd_hits", 0) > 0):
+            stale = True     # 建库时无产物、现在有了——白名单可升级
+        elif meta.get("cmd_count", 0) > 0 and probe.get("cmd_hits", 0) == 0:
+            stale = True     # 建库时有、现在浅层一个没有——树可能换了
+        out["stale"] = stale
         out["meta"] = {
             "built_at": meta.get("built_at", ""),
             "code_files": meta.get("code_files", 0),
@@ -533,6 +548,172 @@ def find_lib_for(file_path):
         return None, None
     ld = os.path.join(_nav_root(), best["lib"])
     return ld, best
+
+
+def symbols(file_path, q, limit=50):
+    """工作区符号面板（Ctrl+T）：按发起文件反查库，前缀/子串匹配。
+    返回 [{name, rel, line, kind, in_build, dist}]（按 前缀命中>子串>
+    路径近 排序）。"""
+    ld, lib = find_lib_for(file_path)
+    if not ld:
+        return {"ok": False, "err": "no-index", "items": []}
+    tags = _load_tags(ld)
+    mf = _load_json_cached(ld, "manifest.json", _manifest_cache)
+    compiled = mf.get("compiled") or {}
+    root = lib["root"]
+    qlow = (q or "").strip().lower()
+    if not qlow:
+        return {"ok": True, "items": [], "mode": "empty"}   # 空查询不给全量
+    exact, prefix, substr = [], [], []
+    for name in tags:
+        nl = name.lower()
+        if nl == qlow:
+            exact.append(name)
+        elif nl.startswith(qlow):
+            prefix.append(name)
+        elif qlow in nl:
+            substr.append(name)
+    out = []
+
+    def push(name):
+        for path, lineno, kind in tags[name][:2]:
+            rel = path.replace(os.sep, "/")
+            if os.path.isabs(path):
+                rel = os.path.relpath(path, root).replace(os.sep, "/")
+            base_ok = None
+            for ext in _UNIT_EXTS:
+                if rel.lower().endswith(ext):
+                    base_ok = rel in compiled
+                    break
+            out.append({"name": name, "rel": rel,
+                        "path": os.path.join(root, rel.replace("/", os.sep)),
+                        "line": lineno, "kind": kind, "in_build": base_ok,
+                        "dist": _common_depth(file_path,
+                                              os.path.join(root, rel.replace("/", os.sep)))})
+
+    for name in exact[:limit]:
+        push(name)
+    for name in prefix[:limit * 2]:
+        if len(out) >= limit:
+            break
+        push(name)
+    for name in substr[:limit * 2]:
+        if len(out) >= limit:
+            break
+        push(name)
+    out.sort(key=lambda c: (0 if c["in_build"] else 1, -c["dist"]))
+    return {"ok": True, "items": out[:limit], "mode": "ok"}
+
+
+def import_nm_list(root, nm_file):
+    """批3：Linux 侧 `find -name '*.o' | xargs nm -A --defined-only > syms.txt`
+    输出清单的导入（可选增强——符号级消歧对齐真机）。格式：
+    `rel/path.o: 00000000 T funcname`。合并进库的 symbols.json。"""
+    root = os.path.abspath(root)
+    ld = lib_dir(root)
+    if not os.path.isfile(os.path.join(ld, "meta.json")):
+        return False, "该目录没有索引库——先建索引"
+    mf = _read_json(os.path.join(ld, "manifest.json")) or {}
+    compiled = mf.get("compiled") or {}
+    def _norm_o(x):
+        x = x.replace(os.sep, "/").lower()
+        return x[:-2] if x.endswith(".o") else x
+    o_rel_to_src = {_norm_o(info["o"]): srel for srel, info in compiled.items()}
+    syms = (_read_json(os.path.join(ld, "symbols.json")) or {}).get("symbols") or {}
+    n_line = n_used = 0
+    try:
+        with open(nm_file, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                n_line += 1
+                # 形态：path.o: [addr] [TtDdBbRrCcWw] name
+                m = re.match(r"^(.+?\.o):\s+(?:[0-9a-fA-F]+\s+)?([A-Za-z])\s+(\S+)$",
+                             line.rstrip("\n"))
+                if not m:
+                    continue
+                orel, typ, name = m.group(1), m.group(2), m.group(3)
+                if typ not in "TtDdBbRrCcWw" or not name or name[0] in "$.":
+                    continue
+                srel = o_rel_to_src.get(_norm_o(orel))
+                if not srel:
+                    # 直接文件名兜底（nm 输出路径形态多样）
+                    base = _norm_o(orel).rsplit("/", 1)[-1]
+                    hits = [v for k, v in compiled.items()
+                            if _norm_o(v.get("o") or "").rsplit("/", 1)[-1] == base]
+                    srel = hits[0] if len(hits) == 1 else None
+                if not srel:
+                    continue
+                lst = syms.setdefault(name, [])
+                if srel not in lst:
+                    lst.append(srel)
+                n_used += 1
+    except OSError as e:
+        return False, "读清单失败：%s" % e
+    _write_json(os.path.join(ld, "symbols.json"),
+                {"version": 1, "symbols": syms, "nm_imported": True})
+    with open(os.path.join(ld, "meta.json"), encoding="utf-8") as f:
+        meta = json.load(f)
+    meta["symbols"] = len(syms)
+    meta["nm_imported"] = True
+    _write_json(os.path.join(ld, "meta.json"), meta)
+    _invalidate_cache()
+    return True, "导入 %d 行 / 生效 %d 符号（总 %d）" % (n_line, n_used, len(syms))
+
+
+def references(file_path, symbol, limit=200):
+    """引用查找（Shift+F12）：rg 在库根内搜符号词法出现，排除定义行本身
+    （definition 候选的 path+line），返回 [{rel,line,snippet,in_build}]。"""
+    ld, lib = find_lib_for(file_path)
+    if not ld:
+        return {"ok": False, "err": "no-index", "items": []}
+    root = lib["root"]
+    rg = os.path.join(os.path.dirname(_CTAGS_EXE), "..", "rg.exe")
+    rg = os.path.normpath(rg)
+    if not os.path.isfile(rg):
+        return {"ok": False, "err": "rg.exe 缺失", "items": []}
+    import subprocess as _sp
+    cmd = [rg, "--json", "--no-messages", "-w", symbol,
+           "-g", "*.c", "-g", "*.h", "-g", "*.cpp", "-g", "*.hpp",
+           "-g", "*.cc", "-g", "*.py", "-g", "*.js", "-g", "*.ts",
+           "--max-count", "30", root]
+    try:
+        r = _sp.run(cmd, capture_output=True, timeout=120,
+                    creationflags=0x08000000, env={"LC_ALL": "C", **os.environ})
+    except Exception as e:
+        return {"ok": False, "err": "rg 失败：%s" % e, "items": []}
+    # 定义行集合（排除）
+    dres = definition(file_path, symbol)
+    deflines = {(os.path.normcase(c["path"]), c["line"])
+                for c in (dres.get("candidates") or [])}
+    mf = _load_json_cached(ld, "manifest.json", _manifest_cache)
+    compiled = mf.get("compiled") or {}
+    items = []
+    import json as _json
+    for line in (r.stdout or b"").decode("utf-8", "replace").splitlines():
+        if len(items) >= limit:
+            break
+        try:
+            evt = _json.loads(line)
+        except ValueError:
+            continue
+        if evt.get("type") != "match":
+            continue
+        data = evt.get("data") or {}
+        p = (data.get("path") or {}).get("text", "")
+        ln = data.get("line_number") or 0
+        if not p:
+            continue
+        rel = os.path.relpath(p, root).replace(os.sep, "/")
+        if (os.path.normcase(p), ln) in deflines:
+            continue
+        in_build = None
+        for ext in _UNIT_EXTS:
+            if rel.lower().endswith(ext):
+                in_build = rel in compiled
+                break
+        items.append({"rel": rel, "path": p, "line": ln,
+                      "snippet": ((data.get("lines") or {}).get("text") or "").strip()[:160],
+                      "in_build": in_build})
+    return {"ok": True, "items": items, "defs": len(deflines)}
 
 
 def definition(file_path, symbol):
