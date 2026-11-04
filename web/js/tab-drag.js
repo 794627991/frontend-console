@@ -112,9 +112,15 @@ function _initTabDrag(tab) {
     }
   });
 
-  cont.addEventListener('dragend', () => {
+  cont.addEventListener('dragend', e => {
     window.__tabDragSrc = null;
+    // a296 真凶修复：drop 处理器已把 _tabDrag.el 置 null——若只依赖它清 dragging，
+    // 类永远残留（opacity:0.4 半透明压住 active 高亮 = 用户实锤"claude 高亮有问题"）。
+    // 双保险：_tabDrag.el + 事件目标链 + 全栏兜底扫拖拽类
+    const t = (e.target && e.target.closest ? e.target.closest('.tab, .tab-drawer') : null);
     if (_tabDrag.el) _tabDrag.el.classList.remove('dragging');
+    if (t) t.classList.remove('dragging');
+    document.querySelectorAll('.dragging').forEach(x => x.classList.remove('dragging'));
     _dragMarker(null);
     _tabDrag.el = null;
   });
@@ -158,6 +164,7 @@ function _initTabDrag(tab) {
       if (ok && snap && snap.el.classList.contains('tab-drawer')) src.dataset.userPlaced = '1';
     }
     _dragMarker(null);
+    if (_tabDrag.el) _tabDrag.el.classList.remove('dragging');   // dragend 可能不来（drop 到自定义目标），此处先清
     _tabDrag.el = null;
     window.__tabDragSrc = null;
   });

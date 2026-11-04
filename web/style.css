@@ -5430,3 +5430,15 @@ span.nn-hl-t { background: color-mix(in srgb, #3fb950 15%, transparent);
   background: var(--accent); box-shadow: 0 0 5px var(--accent); }
 /* 抽屉模式下 tabs 行内只剩固定 tab + 抽屉 + ⋮，间距稍开更清晰 */
 .tabs.drawer-mode { gap: 4px; }
+/* a296：用户实锤——claude 拖进抽屉栏内部后 active 高亮看不出来（视觉评审确认：
+   底边线在 bar 内布局中被弱化 + 文字对比不足）。栏内 tab 的 active 用和胶囊同款
+   的边框+背景+发光增强，任何位置一眼可辨 */
+.tab-drawer-bar .tab.active {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-card));
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  box-shadow: 0 0 10px -2px color-mix(in srgb, var(--accent) 45%, transparent);
+  font-weight: 600;
+}
+.tab-drawer-bar .tab.active::after { display: none; }   /* 有边框+发光，底边线多余 */
