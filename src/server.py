@@ -20,6 +20,9 @@ import os, sys, time, threading, json, glob, re, base64, subprocess, collections
 from queue import Queue
 
 from flask import Flask, Response, request, jsonify, send_from_directory, g, redirect
+import threading as _threading
+# a346/R21-6：/api/theme 的 nav_keys 段 read-modify-write 并发锁
+_nav_keys_lock = _threading.Lock()
 
 import src.app_state as _st
 from src.app_state import (
@@ -1454,9 +1457,11 @@ def api_theme():
     if _hk_updates:
         _save_config({**_load_config(), **_hk_updates})
     # a346：代码跳转快捷键（def=转定义 ref=查引用 sym=工作区符号）——与
-    # 搜索热键同法：仅落 config（nav.js 页面内 keydown 消费+热应用），
-    # 白名单校验三键齐全、格式同 _HK_RE、互不冲突
+    # 搜索热键同法：仅落 config（nav.js 页面内 keydown 消费+热应用）。
+    # R21-3：主键白名单收紧（单字母/数字/f1-f12——录制框旧正则只锚首字符
+    # 时 enter 等被落库，改键后该键无法输入）。R21-6：写入加锁防并发丢更新
     if "nav_keys" in data and isinstance(data["nav_keys"], dict):
+        import re as _re2
         nk = data["nav_keys"]
         _nk_out = {}
         for _nk_k in ("def", "ref", "sym"):
@@ -1464,10 +1469,15 @@ def api_theme():
             if not _HK_RE.match(_v):
                 return jsonify({"ok": False,
                                 "err": "nav_keys.%s 格式非法（形如 ctrl+t）" % _nk_k}), 400
+            _main = _v.split("+")[-1]
+            if not _re2.fullmatch(r"f([1-9]|1[0-2])|[a-z0-9]", _main):
+                return jsonify({"ok": False,
+                                "err": "nav_keys.%s 主键只支持 字母/数字/F1-F12" % _nk_k}), 400
             _nk_out[_nk_k] = _v
         if len(set(_nk_out.values())) != 3 or "" in _nk_out.values():
             return jsonify({"ok": False, "err": "三个跳转快捷键不能为空且互不冲突"}), 400
-        _save_config({**_load_config(), "nav_keys": _nk_out})
+        with _nav_keys_lock:
+            _save_config({**_load_config(), "nav_keys": _nk_out})
     if "custom_theme" in data and isinstance(data["custom_theme"], dict):
         # v2.25 自定义主题调色：键白名单 + 值格式校验（#rgb/#rrgggb、light 布尔），
         # 防 config 被塞脏数据（与 term_keys 白名单同思路）

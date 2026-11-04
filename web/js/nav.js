@@ -274,8 +274,8 @@
   }
 
   function keyLabel(spec) {
-    return spec.split('+').map(p => p.length <= 1 ? p.toUpperCase() :
-      ({ ctrl: 'Ctrl', shift: 'Shift', alt: 'Alt', meta: 'Meta' }[p] || p)).join('+');
+    return spec.split('+').map(p =>
+      ({ ctrl: 'Ctrl', shift: 'Shift', alt: 'Alt', meta: 'Meta' }[p] || p.toUpperCase())).join('+');
   }
 
   function matchKey(e, spec) {
@@ -318,15 +318,23 @@
   // 顶层等待 Monaco 就绪后注册（c/cpp/python/javascript）
   function bindEditor(ed) {
     // R15-1：Ctrl+Click 自定义跳转（standalone Monaco 原生 uri 链无内容
-    // 服务——见 provideDefinition 注释）
-    try {
-      ed.onMouseDown(function (e) {
-        if (e.event.ctrlKey && e.target.position) {
-          gotoDefinition(ed);
-        }
-      });
-    } catch (_) {}
-    // a346：右键菜单三项（Monaco addAction 自动挂 contextMenu + 显示快捷键）
+    // 服务——见 provideDefinition 注释）。R21-2（实锤：监听累积泄漏）：
+    // bindEditor 会被 onDidCreateEditor/loadNavKeys/registerAll/applyKeys
+    // 多路触发——单实例只绑一次，否则 Ctrl+Click 一次发 N 个并发请求
+    if (!ed._navMouseBound) {
+      ed._navMouseBound = true;
+      try {
+        ed.onMouseDown(function (e) {
+          if (e.event.ctrlKey && e.target.position) {
+            gotoDefinition(ed);
+          }
+        });
+      } catch (_) {}
+    }
+    // a346：右键菜单三项（Monaco addAction 自动挂 contextMenu + 显示快捷键）。
+    // R21-1（高，实锤：冷启动从未注册）：onDidCreateEditor 的 fire 发生在
+    // 编辑器构造完成前——同步 addAction 静默无效（disposable 有、菜单无）。
+    // defer 到下一拍注册（实测有效）；applyKeys 重挂走同函数天然复用
     try {
       if (ed._navActions) ed._navActions.forEach(a => { try { a.dispose(); } catch (_) {} });
       ed._navActions = [];
@@ -336,7 +344,10 @@
                        contextMenuGroupId: 'navigation', contextMenuOrder: 1.1,
                        run: function (edt) { fn(edt); } };
         if (kb) opts.keybindings = [kb];
-        ed._navActions.push(ed.addAction(opts));
+        const doAdd = () => {
+          try { ed._navActions.push(ed.addAction(opts)); } catch (_) {}
+        };
+        setTimeout(doAdd, 0);
       };
       add('def', '转到定义', NAV_KEYS.def, gotoDefinition);
       add('ref', '查找所有引用', NAV_KEYS.ref, findReferences);

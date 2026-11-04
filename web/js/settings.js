@@ -113,7 +113,10 @@ function _stNavKeysCard(pane) {
   if (!row) return;
   const DEF = { def: 'f12', ref: 'shift+f12', sym: 'ctrl+t' };
   const NAMES = { def: '转到定义', ref: '查找引用', sym: '工作区符号' };
-  const keys = { ...DEF, ...(window.NavJump ? NavJump.getKeys() : {}) };
+  const NJ = window.NavJump || null;
+  // R21-5：NavJump 缺失（nav.js 加载失败）时也要能看能存——文案兜底
+  const lbl = s => NJ && NJ.keyLabel ? NJ.keyLabel(s) : s;
+  const keys = { ...DEF, ...(NJ && NJ.getKeys ? NJ.getKeys() : {}) };
   const fields = {};
   ['def', 'ref', 'sym'].forEach(k => {
     const wrap = document.createElement('div');
@@ -124,31 +127,37 @@ function _stNavKeysCard(pane) {
     const inp = document.createElement('button');
     inp.className = 'btn ghost';
     inp.style.cssText = 'min-width:120px;font-family:var(--font-mono);';
-    inp.textContent = (window.NavJump ? NavJump.keyLabel(keys[k]) : keys[k]);
-    let recording = false;
+    inp.textContent = lbl(keys[k]);
+    let onKey = null;      // R21-4：录制监听统一管理（录完/超时/再点必摘）
+    const stopRec = () => {
+      if (onKey) { document.removeEventListener('keydown', onKey, true); onKey = null; }
+      inp.textContent = lbl(keys[k]);
+    };
     inp.onclick = () => {
-      if (recording) { recording = false; inp.textContent = NavJump.keyLabel(keys[k]); return; }
-      recording = true;
+      if (onKey) { stopRec(); return; }   // 录制中再点=取消
       inp.textContent = '按下组合键…';
-      const onKey = e => {
+      onKey = e => {
         e.preventDefault(); e.stopPropagation();
-        if (e.key === 'Escape') { recording = false; inp.textContent = NavJump.keyLabel(keys[k]); return; }
+        if (e.key === 'Escape') { stopRec(); return; }
         if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return;   // 等主键
         const parts = [];
         if (e.ctrlKey || e.metaKey) parts.push('ctrl');
         if (e.shiftKey) parts.push('shift');
         if (e.altKey) parts.push('alt');
         const main = (e.key || '').toLowerCase();
-        if (!/^[a-z0-9]|^f[1-9][0-9]?$/.test(main)) return;   // 只收字母/数字/F 键
+        // R21-3（实锤：白名单过宽）：旧正则只锚首字符——enter/tab 等被录成
+        // 主键导致改键后无法输入。完整匹配：单字母/数字 或 f1-f12
+        if (!/^(f([1-9]|1[0-2])|[a-z0-9])$/.test(main)) {
+          showBanner('只支持 字母/数字/F1-F12 作主键（' + main + ' 不适用）', 2600, true);
+          return;
+        }
         parts.push(main);
         keys[k] = parts.join('+');
-        recording = false;
-        inp.textContent = NavJump.keyLabel(keys[k]);
+        stopRec();
         syncSave();
       };
-      const once = ev2 => { if (!recording) { document.removeEventListener('keydown', onKey, true); } };
       document.addEventListener('keydown', onKey, true);
-      setTimeout(() => document.removeEventListener('keydown', onKey, true), 15000);
+      setTimeout(() => { if (onKey) { stopRec(); showBanner('录制超时已取消', 2000); } }, 15000);
     };
     fields[k] = inp;
     wrap.appendChild(lab); wrap.appendChild(inp);
@@ -179,11 +188,10 @@ function _stNavKeysCard(pane) {
         body: JSON.stringify({ nav_keys: keys }) });
       const j = await r.json();
       if (!j.ok) { showBanner('保存失败：' + (j.err || ''), 4000, true); return; }
-      if (window.NavJump && NavJump.applyKeys) NavJump.applyKeys(keys);
-      showBanner('跳转快捷键已生效：' +
-        NavJump.keyLabel(keys.def) + ' / ' + NavJump.keyLabel(keys.ref) + ' / ' + NavJump.keyLabel(keys.sym), 4000);
+      if (NJ && NJ.applyKeys) NJ.applyKeys(keys);
+      showBanner('跳转快捷键已生效：' + lbl(keys.def) + ' / ' + lbl(keys.ref) + ' / ' + lbl(keys.sym), 4000);
       save.style.display = 'none';
-      ['def', 'ref', 'sym'].forEach(k => fields[k].textContent = NavJump.keyLabel(keys[k]));
+      ['def', 'ref', 'sym'].forEach(k => fields[k].textContent = lbl(keys[k]));
     } catch (e) { showBanner('保存失败: ' + e, 4000, true); }
   }
   save.onclick = saveNow;
