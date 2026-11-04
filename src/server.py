@@ -557,6 +557,186 @@ def _office_convert_legacy(path, ext):
         pass
     return None
 
+_office_pdf_cache = {}
+
+@app.route("/api/office/write", methods=["POST"])
+def api_office_write():
+    """a290 全功能：Office 编辑保存写回。body=原始文件字节，path=绝对路径。
+    白名单扩展名 + 设备名校验（与 read 同源），备份 .bak 一次。"""
+    from src.app_state import reject_win_devpath
+    q = request.args.get("path", "") or request.args.get("q", "")
+    if reject_win_devpath(q):
+        return jsonify({"ok": False, "err": "路径包含 Windows 保留设备名"}), 400
+    if not os.path.isabs(q) or not os.path.isfile(q):
+        return jsonify({"ok": False, "err": "文件不存在"}), 400
+    _ext = os.path.splitext(q)[1].lower().lstrip(".")
+    if _ext not in ("xlsx", "xls", "csv", "docx"):
+        return jsonify({"ok": False, "err": f"不支持写回的类型: .{_ext}"}), 400
+    data = request.get_data()
+    if not data or len(data) > 100 * 1024 * 1024:
+        return jsonify({"ok": False, "err": "内容为空或过大"}), 400
+    try:
+        bak = q + ".bak"
+        if not os.path.isfile(bak):
+            import shutil
+            shutil.copy2(q, bak)   # 首次保存前备份一次（防编辑事故）
+        with open(q, "wb") as f:
+            f.write(data)
+        return jsonify({"ok": True, "size": len(data)})
+    except Exception as e:
+        return jsonify({"ok": False, "err": f"写回失败: {e}"}), 400
+
+def _office_topdf(path):
+    """a290 全功能 Office：Word/PowerPoint COM 导出 PDF（保真查看的唯一靠谱链）——
+    PPT 纯前端渲染库不成熟（用户实锤全打不开），转 PDF 后走前端 PDF Pro 引擎
+    （虚拟化/搜索/缩放/翻页全都有）。缓存按 mtime 失效，同 _office_convert。"""
+    import subprocess, tempfile
+    key = os.path.abspath(path).lower() + ":pdf:" + str(os.path.getmtime(path))
+    if key in _office_pdf_cache:
+        cached = _office_pdf_cache[key]
+        if os.path.isfile(cached):
+            return cached
+    conv_dir = os.path.join(tempfile.gettempdir(), "office_conv")
+    os.makedirs(conv_dir, exist_ok=True)
+    dst = os.path.join(conv_dir, os.path.splitext(os.path.basename(path))[0] + ".pdf")
+    is_word = os.path.splitext(path)[1].lower().lstrip(".") in ("doc", "docx")
+    app_name = "Word.Application" if is_word else "PowerPoint.Application"
+    fmt = 17 if is_word else 32   # wdFormatPDF / ppSaveAsPDF
+    if is_word:
+        ps = (f"$app = New-Object -ComObject {app_name}; $app.Visible = $false; "
+              f"$doc = $app.Documents.Open('{path}'); $doc.SaveAs([ref]'{dst}', [ref]{fmt}); "
+              f"$doc.Close(); $app.Quit()")
+    else:
+        ps = (f"$app = New-Object -ComObject {app_name}; $app.Visible = $false; "
+              f"$pres = $app.Presentations.Open('{path}', $true, $false, $false); "
+              f"$pres.SaveAs('{dst}', {fmt}); $pres.Close(); $app.Quit()")
+    try:
+        r = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                           capture_output=True, timeout=60, creationflags=0x08000000)
+        if r.returncode == 0 and os.path.isfile(dst) and os.path.getsize(dst) > 0:
+            _office_pdf_cache[key] = dst
+            return dst
+    except Exception:
+        pass
+    return None
+
+# ================= a290 全功能：OnlyOffice Document Server 集成 =================
+# 用户令"允许大依赖，要全功能编辑"——docx/xlsx/pptx 的真·全功能编辑（Office 级
+# 保真、协同格式兼容）只有 OnlyOffice DS 可达。本机安装桌面版 DS（免费）后自动
+# 探测启用；未装则前端按钮给安装指引（现有预览/编辑链照常可用）。
+
+_DS_CANDIDATES = ["http://localhost:80", "http://localhost:8080", "http://127.0.0.1:80", "http://localhost:8888"]
+
+def _ds_probe():
+    """探测本机 Document Server（/healthcheck，1s 超时）。返回可用基址或 None。"""
+    import urllib.request
+    for base in _DS_CANDIDATES:
+        try:
+            req = urllib.request.Request(base + "/healthcheck", method="GET")
+            with urllib.request.urlopen(req, timeout=1) as r:
+                if r.status == 200:
+                    return base
+        except Exception:
+            continue
+    return None
+
+def _ds_jwt_secret():
+    """尝试读 DS local.json 的 JWT secret（v7.2+ 默认开 JWT；读不到返回 None
+    ——前端配置将不带签名，需用户在 DS 配置关校验或复制 secret 到 config）。"""
+    import json as _json
+    for pth in (
+        "C:/Program Files/ONLYOFFICE/DocumentServer/config/local.json",
+        "C:/Program Files (x86)/ONLYOFFICE/DocumentServer/config/local.json",
+    ):
+        try:
+            with open(pth, "r", encoding="utf-8") as f:
+                cfg = _json.load(f)
+            return (cfg.get("services", {}).get("CoAuthoring", {})
+                      .get("secret", {}).get("inbox", {}).get("string")
+                    or cfg.get("services", {}).get("CoAuthoring", {})
+                      .get("secret", {}).get("session", {}).get("string"))
+        except Exception:
+            continue
+    return None
+
+def _jwt_hs256(payload, secret):
+    """自包含 HS256 JWT（无第三方依赖；DS 校验用）。"""
+    import base64, hashlib, hmac as _hmac, json as _json, time
+    def b64u(b):
+        return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+    header = b64u(_json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
+    body = b64u(_json.dumps({**payload, "iat": int(time.time())}).encode())
+    sig = b64u(_hmac.new(secret.encode(), f"{header}.{body}".encode(), hashlib.sha256).digest())
+    return f"{header}.{body}.{sig}"
+
+@app.route("/api/office/ds/config")
+def api_office_ds_config():
+    """生成 OnlyOffice 编辑器配置（探测 DS → 文档配置 + JWT）。"""
+    from src.app_state import reject_win_devpath
+    q = request.args.get("path", "") or request.args.get("q", "")
+    if reject_win_devpath(q) or not os.path.isabs(q) or not os.path.isfile(q):
+        return jsonify({"ok": False, "err": "文件不存在"}), 400
+    base = _ds_probe()
+    if not base:
+        return jsonify({"ok": False, "err": "未检测到 OnlyOffice Document Server",
+                        "install_hint": "安装免费桌面版后重启工具：https://www.onlyoffice.com/zh/download-docs.aspx#docs-community （选 Document Server for Windows）"})
+    ext = os.path.splitext(q)[1].lower().lstrip(".")
+    doc_type = {"docx": "word", "doc": "word", "xlsx": "cell", "xls": "cell",
+                "pptx": "slide", "ppt": "slide", "csv": "cell"}.get(ext)
+    if not doc_type:
+        return jsonify({"ok": False, "err": f"OnlyOffice 不支持 .{ext}"}), 400
+    host = request.host_url.rstrip("/")
+    key = f"{os.path.abspath(q).lower()}:{os.path.getmtime(q)}:{os.path.getsize(q)}"
+    cfg = {
+        "documentType": doc_type,
+        "document": {
+            "fileType": ext,
+            "key": key,
+            "title": os.path.basename(q),
+            "url": host + "/api/office/read?path=" + _quote_url(q),
+            "permissions": {"edit": True, "download": True, "print": True},
+        },
+        "editorConfig": {
+            "lang": "zh-CN",
+            "mode": "edit",
+            "callbackUrl": host + "/api/office/ds/callback?path=" + _quote_url(q),
+            "user": {"id": "local", "name": "本机"},
+        },
+        "type": "desktop",
+    }
+    secret = _ds_jwt_secret()
+    if secret:
+        cfg["token"] = _jwt_hs256(cfg, secret)
+        return jsonify({"ok": True, "dsUrl": base, "config": cfg, "jwt": True})
+    return jsonify({"ok": True, "dsUrl": base, "config": cfg, "jwt": False,
+                    "jwt_hint": "未读到 DS 的 JWT secret——若打开报错(token)，在 DS 的 local.json 里关掉 JWT 校验（services.CoAuthoring.token.enable.browser/inbox/outbox=false）后重启 DS"})
+
+def _quote_url(u):
+    from urllib.parse import quote
+    return quote(u)
+
+@app.route("/api/office/ds/callback", methods=["POST"])
+def api_office_ds_callback():
+    """OnlyOffice 保存回调：status=2(编辑完成)/6(强制保存) 时从 DS 的 url 拉新文件写回。"""
+    from src.app_state import reject_win_devpath
+    import urllib.request, shutil
+    q = request.args.get("path", "") or request.args.get("q", "")
+    if reject_win_devpath(q) or not os.path.isfile(q):
+        return jsonify({"error": 1}), 400
+    try:
+        j = request.get_json(force=True) or {}
+        if j.get("status") in (2, 6) and j.get("url"):
+            tmp = q + ".dsdown"
+            urllib.request.urlretrieve(j["url"], tmp)
+            if os.path.isfile(tmp) and os.path.getsize(tmp) > 0:
+                bak = q + ".bak"
+                if not os.path.isfile(bak):
+                    shutil.copy2(q, bak)
+                os.replace(tmp, q)
+        return jsonify({"error": 0})
+    except Exception:
+        return jsonify({"error": 1})
+
 @app.route("/api/office/read")
 def api_office_read():
     """a280：Office 查看器读文件（docx/pdf/xlsx）。q=绝对路径。
@@ -568,6 +748,14 @@ def api_office_read():
     if not os.path.isabs(q) or not os.path.isfile(q):
         return jsonify({"ok": False, "err": "文件不存在"}), 400
     _ext = os.path.splitext(q)[1].lower().lstrip(".")
+    # a290 全功能：?aspdf=1 → COM 导出 PDF（pptx/ppt/docx/doc）——PPT 打开的
+    # 唯一保真链，docx 也可走（打印/严格版式场景）
+    if request.args.get("aspdf") and _ext in ("pptx", "ppt", "docx", "doc"):
+        pdf = _office_topdf(q)
+        if not pdf:
+            return jsonify({"ok": False, "err": "PDF 导出失败（需要安装 Office；PowerPoint/Word 会后台启动转换）"}), 400
+        with open(pdf, "rb") as f:
+            return f.read(), 200, {"Content-Type": "application/pdf"}
     # a281：.doc/.ppt 旧格式支持——服务端 Word COM 自动转 .docx 后交给前端渲染
     if _ext in ("doc", "ppt"):
         try:
