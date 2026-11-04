@@ -969,7 +969,14 @@ function _ovXlsxBindColGrip(conn, grip, c) {
                  cc.customwidth !== undefined || cc.customWidth !== undefined)) {
         ['wpx', 'wch', 'width', 'MDW', 'customwidth', 'customWidth']
           .forEach(k => { delete cc[k]; });
-        if (!Object.keys(cc).length) sh['!cols'][ci] = undefined;
+        // R13-1（实锤：.xls 复位出零宽列）：biff8 读端对每列硬塞默认键
+        // {level:0, hidden:false}——残留非空不置 undefined，写端会为该列
+        // 落盘 width=0 的 COLINFO（视觉隐藏级）。残留仅零值默认键时同样
+        // 置空；hidden:true / level≠0（用户显式设置）保留
+        const rem = Object.keys(cc);
+        const onlyDefaults = rem.every(k =>
+          (k === 'level' && !cc[k]) || (k === 'hidden' && !cc[k]));
+        if (!rem.length || onlyDefaults) sh['!cols'][ci] = undefined;
       }
     }
     _ovXlsxRenderTable(conn);
