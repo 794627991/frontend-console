@@ -131,7 +131,7 @@
       'justify-content:flex-end;gap:8px;flex-wrap:wrap;">' +
       '<button class="btn ghost" data-res-refresh>⟳ 重新检测</button>' +
       '<button class="btn ghost" data-res-path>手动输入路径…</button>' +
-      '<button class="btn primary" data-res-go><span style="vertical-align:-2.5px">' + ICO16.folderOpen + '</span> 选择资源包安装</button>' +
+      '<button class="btn primary" data-res-go><span>' + ICO16.folderOpen + '</span> 选择资源包安装</button>' +
       '</div></div>';
     document.body.appendChild(m);
     var close = function () { m.remove(); };

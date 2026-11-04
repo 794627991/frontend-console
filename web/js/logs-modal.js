@@ -45,8 +45,8 @@ async function loadLogsList() {
       const dt = new Date(l.mtime*1000);
       d.innerHTML = `<span>${esc(l.name)}<br><span class="sz">${dt.toLocaleString('zh-CN')} · ${(l.size/1024).toFixed(1)} KB</span></span>
         <span class="item-actions">
-          <span class="act-btn open" data-view="${esc(l.name)}" title="在工具内打开此日志"><span style="vertical-align:-2.5px">${ICO16.log}</span> 打开</span>
-          <span class="act-btn open" data-open="${esc(l.name)}" title="在资源管理器中定位此文件"><span style="vertical-align:-2.5px">${ICO16.folder}</span> 定位</span>
+          <span class="act-btn open" data-view="${esc(l.name)}" title="在工具内打开此日志"><span>${ICO16.log}</span> 打开</span>
+          <span class="act-btn open" data-open="${esc(l.name)}" title="在资源管理器中定位此文件"><span>${ICO16.folder}</span> 定位</span>
           <span class="act-btn" data-replay="${esc(l.name)}" title="回放此日志">▶ 回放</span>
         </span>`;
       d.querySelector('[data-replay]').onclick = (ev) => { ev.stopPropagation(); $('logsModal').classList.remove('show'); openReplay(l.name); };

@@ -107,7 +107,7 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
   wrap.innerHTML = `
     <div class="editor">
       <div class="log-viewer-toolbar">
-        <button class="lv-btn" data-ed-action="save" title="Ctrl+S"><span style="vertical-align:-2.5px">${ICO16.save}</span> 保存</button>
+        <button class="lv-btn" data-ed-action="save" title="Ctrl+S"><span>${ICO16.save}</span> 保存</button>
         <button class="lv-btn" data-ed-action="saveas" title="Ctrl+Shift+S">另存为…</button>
         <button class="lv-btn" data-ed-action="rename" title="双击标签页标题可快捷改名">重命名</button>
         <button class="lv-btn" data-ed-action="search" title="Ctrl+F 全局搜索（支持正则/排除）">${ICO16.search} 搜索</button>
@@ -135,7 +135,7 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
           <div class="ed-outline-stats"></div>
         </div>
         <div class="ed-links" style="display:none;">
-          <div class="ed-links-head"><span style="vertical-align:-2.5px">${ICO16.link}</span> 链接</div>
+          <div class="ed-links-head"><span>${ICO16.link}</span> 链接</div>
           <div class="ed-links-list"></div>
         </div>
         <div class="ed-scroll">
@@ -1052,7 +1052,7 @@ function _edDiskChangedModal(conn, diskMtime) {
           <button class="btn ghost" id="edDcKeep" style="width:100%;text-align:left;">
             ✎ 保留内存版（标记为有改动，之后可覆盖保存 / 另存为）</button>
           <button class="btn ghost" id="edDcIgnore" style="width:100%;text-align:left;color:var(--muted);">
-            <span style="vertical-align:-2.5px">${ICO16.next}</span> 忽略本次（继续编辑，下次改动再提醒）</button>
+            <span>${ICO16.next}</span> 忽略本次（继续编辑，下次改动再提醒）</button>
         </div>
       </div>`;
     document.body.appendChild(m);
@@ -1373,9 +1373,9 @@ function newFileMenuShow(anchor) {
   const menu = document.createElement('div');
   menu.className = 'nf-menu';
   menu.innerHTML = `
-    <div class="nf-item" data-ext=".note"><b><span style="vertical-align:-2.5px">${ICO16.note}</span> 笔记</b><span>块式编辑，可贴图（.note）</span></div>
-    <div class="nf-item" data-ext=".txt"><b><span style="vertical-align:-2.5px">${ICO16.file}</span> 纯文本</b><span>.txt</span></div>
-    <div class="nf-item" data-ext=".md"><b><span style="vertical-align:-2.5px">${ICO16.note}</span> Markdown</b><span>.md</span></div>
+    <div class="nf-item" data-ext=".note"><b><span>${ICO16.note}</span> 笔记</b><span>块式编辑，可贴图（.note）</span></div>
+    <div class="nf-item" data-ext=".txt"><b><span>${ICO16.file}</span> 纯文本</b><span>.txt</span></div>
+    <div class="nf-item" data-ext=".md"><b><span>${ICO16.note}</span> Markdown</b><span>.md</span></div>
     <div class="nf-custom">
       <input class="nf-ext-inp" data-nf-ext placeholder="自定义后缀，如 .log / .csv" spellcheck="false" name="hg_nf_ext">
       <button class="btn ghost nf-ext-go" data-nf-go>新建</button>
@@ -1425,9 +1425,9 @@ async function showFilesModal() {
     modal.innerHTML = `
       <div class="box">
         <div class="head">
-          <strong><span style="vertical-align:-2.5px">${ICO16.note}</span> 笔记</strong>
+          <strong><span>${ICO16.note}</span> 笔记</strong>
           <div class="head-actions">
-            <button class="btn ghost" id="filesSearchBtn" title="全库搜索（Ctrl+Alt+F）"><span style="vertical-align:-2.5px">${ICO16.search}</span> 搜索</button>
+            <button class="btn ghost" id="filesSearchBtn" title="全库搜索（Ctrl+Alt+F）"><span>${ICO16.search}</span> 搜索</button>
             <button class="btn ghost" id="filesNew" title="新建笔记（不落盘，保存时才写文件）">＋ 新建笔记</button>
             <button class="btn ghost icon-btn" id="filesOpenDir" title="在资源管理器中打开 files/ 目录">${ICO16.folderOpen}</button>
             <button class="btn ghost icon-btn" id="filesClose">✕</button>
@@ -1458,7 +1458,7 @@ async function showFilesModal() {
       const dt = new Date(f.mtime*1000);
       const kb = f.size >= 1024 ? (f.size/1024).toFixed(1) + ' KB' : f.size + ' B';
       const icon = f.name.toLowerCase().endsWith('.note') ? ICO16.note : ICO16.file;
-      d.innerHTML = `<span><span style="vertical-align:-2.5px">${icon}</span> ${esc(f.name)}<br><span class="sz">${dt.toLocaleString('zh-CN')} · ${kb}</span></span>
+      d.innerHTML = `<span><span>${icon}</span> ${esc(f.name)}<br><span class="sz">${dt.toLocaleString('zh-CN')} · ${kb}</span></span>
         <span class="item-actions">
           <span class="act-btn open" data-open="${esc(f.name)}" title="打开编辑此文件">✎ 编辑</span>
         </span>`;

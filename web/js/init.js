@@ -94,7 +94,7 @@ function _fcUpdateModal(j) {
   const mb = j.size ? (j.size / 1048576).toFixed(1) + ' MB' : '';
   m.innerHTML = `
     <div class="box" style="max-width:440px;">
-      <div class="head"><strong><span style="vertical-align:-2.5px">${ICO16.star}</span> 发现新版本 v${j.latest}</strong>
+      <div class="head"><strong><span>${ICO16.star}</span> 发现新版本 v${j.latest}</strong>
         <div class="head-actions"><button class="btn ghost icon-btn" data-fc-x>✕</button></div></div>
       <div style="padding:14px 18px 4px;font-size:12.5px;line-height:1.7;color:var(--fg);">
         <div style="margin-bottom:8px;color:var(--muted);">当前 v${j.current} → 新版 v${j.latest}${mb ? ' · ' + mb : ''}${j.date ? ' · ' + j.date : ''}</div>
@@ -103,7 +103,7 @@ function _fcUpdateModal(j) {
       </div>
       <div style="display:flex;gap:10px;justify-content:flex-end;padding:12px 18px 16px;">
         <button class="btn ghost" data-fc-later>稍后提醒</button>
-        <button class="btn primary" data-fc-go><span style="vertical-align:-2.5px">${ICO16.upload}</span> 立即升级</button>
+        <button class="btn primary" data-fc-go><span>${ICO16.upload}</span> 立即升级</button>
       </div>
     </div>`;
   document.body.appendChild(m);

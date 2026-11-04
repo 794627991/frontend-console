@@ -84,13 +84,13 @@ function buildTerminal(portId, meta) {
   wrap.innerHTML = `
     ${meta.kind === 'claude' ? '' : `
     <div class="term-toolbar">
-      <button class="lv-btn term-tb-pause" title="暂停/恢复滚屏"><span style="vertical-align:-2.5px">${ICO16.pause}</span> 暂停</button>
+      <button class="lv-btn term-tb-pause" title="暂停/恢复滚屏"><span>${ICO16.pause}</span> 暂停</button>
       <button class="lv-btn term-tb-clear" title="清屏（只清显示，缓冲历史不丢）">⊘ 清屏</button>
-      <button class="lv-btn term-tb-newlog" title="从此刻起记录到新日志文件">＋<span style="vertical-align:-2.5px">${ICO16.clipboard}</span> 新日志</button>
+      <button class="lv-btn term-tb-newlog" title="从此刻起记录到新日志文件">＋<span>${ICO16.clipboard}</span> 新日志</button>
       <button class="lv-btn term-tb-ctrlc" title="发送 Ctrl-C 中断">^C</button>
       <button class="lv-btn term-tb-ctrld" title="发送 Ctrl-D (EOF)">^D</button>
       <button class="lv-btn term-tb-jump" title="跳到底部跟随实时 (Ctrl+End)">⤓ 跳底</button>
-      <button class="lv-btn term-tb-ts" title="时间戳注入：新输出行首加 [HH:MM:SS.mmm]，排障定位用"><span style="vertical-align:-2.5px">${ICO16.clock}</span> 时间戳</button>
+      <button class="lv-btn term-tb-ts" title="时间戳注入：新输出行首加 [HH:MM:SS.mmm]，排障定位用"><span>${ICO16.clock}</span> 时间戳</button>
     </div>`}
     <div class="output-wrap">
       <div class="xterm-wrap" data-xterm="${portId}"></div>
@@ -127,8 +127,8 @@ function buildTerminal(portId, meta) {
       conn.paused = !conn.paused;
       // a261：两态都是纯静态串（图标+文案），textContent→innerHTML 保住 SVG 图标
       tb.pause.innerHTML = conn.paused
-        ? '<span style="vertical-align:-2.5px">' + ICO16.play + '</span> 继续'
-        : '<span style="vertical-align:-2.5px">' + ICO16.pause + '</span> 暂停';
+        ? '<span>' + ICO16.play + '</span> 继续'
+        : '<span>' + ICO16.pause + '</span> 暂停';
       tb.pause.classList.toggle('active', conn.paused);
       if (!conn.paused) { conn.autoScroll = true; try { conn.term.scrollToBottom(); } catch(e){} }
     };

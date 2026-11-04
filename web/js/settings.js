@@ -33,7 +33,7 @@ function _stModal() {
   m.innerHTML = `
     <div class="box set-box">
       <div class="head">
-        <strong><span style="vertical-align:-2.5px">${ICO16.gear}</span> 设置</strong>
+        <strong><span>${ICO16.gear}</span> 设置</strong>
         <div class="head-actions"><button class="btn ghost icon-btn" id="stClose">✕</button></div>
       </div>
       <div class="set-body">
@@ -83,7 +83,7 @@ function _stRenderHelpPane(pane) {
     <div class="dd-body">
       <div class="dd-label">帮助文档</div>
       <div class="dd-row" style="display:flex;gap:8px;margin-top:6px;">
-        <button class="btn primary" id="hpOpenReadme"><span style="vertical-align:-2.5px">${ICO16.book}</span> 打开 README 使用手册</button>
+        <button class="btn primary" id="hpOpenReadme"><span>${ICO16.book}</span> 打开 README 使用手册</button>
       </div>
       <div class="dd-sub">工具内直接打开（markdown 渲染），含快速上手 / 全功能说明 / 常见问题。</div>
       <div class="dd-cur" style="margin-top:14px;">
@@ -562,7 +562,7 @@ async function _stRenderResourcesPane(pane) {
         <div class="dd-row" style="display:flex;gap:8px;margin-top:6px;align-items:center;">
           <input type="text" id="rsPkgPath" class="dd-input" spellcheck="false"
                  placeholder="选择或粘贴 .fcpk 资源包路径" style="flex:1;">
-          <button class="btn ghost" id="rsPkgPick"><span style="vertical-align:-2.5px">${ICO16.folderOpen}</span> 选择…</button>
+          <button class="btn ghost" id="rsPkgPick"><span>${ICO16.folderOpen}</span> 选择…</button>
           <button class="btn ghost icon-btn" id="rsRefresh" title="重新检测">⟳</button>
         </div>
         <div class="dd-sub" id="rsPkgInfo" style="margin-top:6px;">未选择资源包</div>
@@ -588,7 +588,7 @@ async function _stRenderResourcesPane(pane) {
               Node/Git 重装可能弹管理员提示。</span></span>
         </label>
         <div class="dd-actions" style="margin-top:10px;display:flex;gap:8px;">
-          <button class="btn primary" id="rsGo" disabled><span style="vertical-align:-2.5px">${ICO16.wrench}</span> 安装所选</button>
+          <button class="btn primary" id="rsGo" disabled><span>${ICO16.wrench}</span> 安装所选</button>
           <button class="btn ghost" id="rsCancel" style="display:none;">■ 取消</button>
         </div>
         <div id="rsProg" style="display:none;margin-top:10px;">
@@ -929,7 +929,7 @@ async function _stRenderApiPane(pane) {
           <input type="text" id="profName" class="dd-input" spellcheck="false"
                  placeholder="${NEW ? '必填——新配置将保存为这个方案名' : '方案名，如：配置1 / 智谱 / 中转站'}" style="flex:1;${NEW ? 'border-color:var(--accent);' : ''}">
           <button class="btn ghost" id="profSaveCur" title="把当前 settings.json 整份（含 Token、网关、模型映射等）存为方案"
-                  style="${NEW ? 'display:none;' : ''}"><span style="vertical-align:-2.5px">${ICO16.save}</span> 存当前为方案</button>
+                  style="${NEW ? 'display:none;' : ''}"><span>${ICO16.save}</span> 存当前为方案</button>
         </div>
         <div class="dd-sub" style="margin-top:8px;">每个方案是 settings.json 的完整快照（网关不同，模型映射也不同）。切换整份替换——已开着的 Claude 会话进程不变，新会话起效。</div>
       </div>
@@ -953,7 +953,7 @@ async function _stRenderApiPane(pane) {
           <input type="text" id="apiBaseUrl" class="dd-input" spellcheck="false"
                  placeholder="http://…（留空保持不变）" style="flex:1;">
           <button class="btn ghost" id="apiProbe" title="按上面的 BASE_URL + Token 向网关拉取可用模型列表"
-                  style="flex-shrink:0;white-space:nowrap;"><span style="vertical-align:-2.5px">${ICO16.search}</span> 获取模型</button>
+                  style="flex-shrink:0;white-space:nowrap;"><span>${ICO16.search}</span> 获取模型</button>
         </div>
         <div class="dd-sub" id="apiProbeOut" style="margin-top:6px;">${_stApiModels ? '已获取 ' + _stApiModels.length + ' 个模型——模型映射框可下拉选择' : '获取模型后，模型映射框可直接下拉选择'}</div>
         <div class="dd-label" style="margin-top:12px;">模型映射（MODEL 与 _NAME 成对写入，留空不改）</div>
@@ -993,12 +993,12 @@ async function _stRenderApiPane(pane) {
         <div class="dd-sub" style="margin-top:6px;">压缩窗口/最大上下文 = tokens（如 200000）；压缩阈值 = 用量百分比（如 85）。这三项决定「用到多少 tokens 才自动压缩」。</div>
       </div>
       <div class="dd-row" style="display:flex;align-items:center;gap:10px;margin-top:14px;">
-        <button class="btn primary" id="apiSaveAll">${NEW ? '<span style="vertical-align:-2.5px">' + ICO16.save + '</span> 保存为新方案' : '<span style="vertical-align:-2.5px">' + ICO16.save + '</span> 保存配置'}</button>
+        <button class="btn primary" id="apiSaveAll">${NEW ? '<span>' + ICO16.save + '</span> 保存为新方案' : '<span>' + ICO16.save + '</span> 保存配置'}</button>
         ${NEW ? '<button class="btn ghost" id="apiNewCancel">取消新建</button>' : ''}
         <span class="dd-sub" style="margin:0;">保存后新开的 Claude 会话生效（运行中的会话不变）。</span>
       </div>
       <div class="dd-actions" style="margin-top:16px;">
-        <button class="btn ghost" id="apiOpenSettings" title="在工具内打开 settings.json（Monaco 编辑）"><span style="vertical-align:-2.5px">${ICO16.folderOpen}</span> 打开 settings.json</button>
+        <button class="btn ghost" id="apiOpenSettings" title="在工具内打开 settings.json（Monaco 编辑）"><span>${ICO16.folderOpen}</span> 打开 settings.json</button>
         <button class="btn ghost" id="apiProvision" title="恢复 Claude 默认配置（settings 缺省项补全 + statusline 重铺；已有配置不动，statusline 强制覆盖）">↺ 恢复 Claude 默认配置</button>
       </div>
       <div class="dd-note" id="apiNote"></div>
@@ -1233,7 +1233,7 @@ async function _stRenderApiPane(pane) {
         <div title="${esc((p.token_masked || '未设 Token') + ' · ' + (p.base_url || '默认网关'))}" style="display:flex;align-items:center;gap:12px;padding:9px 12px;border:1px solid ${p.legacy ? 'var(--neon-yellow, orange);' : 'var(--border);'}border-radius:8px;${p.name === j.active ? 'border-color:var(--neon-green);' : ''}">
           <b style="flex-shrink:0;max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(p.name)}</b>
           <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:11px;">${esc(p.base_url || '默认网关')}${p.token_masked ? ' · ' + esc(p.token_masked) : ''}</span>
-          ${p.legacy ? '<span style="color:orange;font-size:11px;flex-shrink:0;" title="只存了 Token/网关——切换不会带模型映射，配好后重新『存当前为方案』升级"><span style="vertical-align:-2.5px">' + ICO16.warn + '</span> 旧格式</span>' : ''}
+          ${p.legacy ? '<span style="color:orange;font-size:11px;flex-shrink:0;" title="只存了 Token/网关——切换不会带模型映射，配好后重新『存当前为方案』升级"><span>' + ICO16.warn + '</span> 旧格式</span>' : ''}
           ${p.name === j.active
             ? '<span style="color:var(--neon-green);font-size:11px;flex-shrink:0;">● 当前</span>'
             : `<button class="btn ghost" data-prof="${esc(p.name)}" style="flex-shrink:0;${j.switching ? 'opacity:.5;cursor:not-allowed;' : ''}"${j.switching ? ' disabled' : ''}>${j.switching ? '切换中…' : '应用'}</button>`}
@@ -1383,7 +1383,7 @@ async function _stRenderUpdatePane(pane) {
         const mb = j.size ? ' · ' + (j.size / 1048576).toFixed(1) + ' MB' : '';
         res.innerHTML = `<div style="margin-bottom:6px;">✨ 发现新版本 <b>v${esc(j.latest)}</b>${mb}${j.date ? ' · ' + esc(j.date) : ''}</div>` +
           (j.notes ? `<div class="dd-sub" style="max-height:120px;overflow:auto;white-space:pre-wrap;">${esc(j.notes)}</div>` : '') +
-          `<button class="btn primary" id="upApply" style="margin-top:8px;"><span style="vertical-align:-2.5px">${ICO16.upload}</span> 立即升级</button>`;
+          `<button class="btn primary" id="upApply" style="margin-top:8px;"><span>${ICO16.upload}</span> 立即升级</button>`;
         res.querySelector('#upApply').onclick = () => _stDoApply(res);
       } else if (j.configured) {
         res.innerHTML = `✅ 已是最新版本（v${esc(j.current)}${j.latest ? '，服务器最新 v' + esc(j.latest) : ''}）`;
@@ -1472,7 +1472,7 @@ function _stRenderDataPane(pane) {
         <div id="ddCheckMsg" class="dd-msg"></div>
       </div>
       <div class="dd-actions">
-        <button class="btn ghost" id="ddOpenCur"><span style="vertical-align:-2.5px">${ICO16.folderOpen}</span> 打开当前目录</button>
+        <button class="btn ghost" id="ddOpenCur"><span>${ICO16.folderOpen}</span> 打开当前目录</button>
         <span style="flex:1"></span>
         <button class="btn primary" id="ddMigrate" disabled>迁移数据</button>
       </div>

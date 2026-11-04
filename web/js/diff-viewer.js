@@ -361,7 +361,7 @@ function _diffPickModal() {
   m.innerHTML = `
     <div class="box" style="max-width:720px;">
       <div class="head">
-        <strong><span style="vertical-align:-2.5px">${ICO16.compare}</span> 文件对比</strong>
+        <strong><span>${ICO16.compare}</span> 文件对比</strong>
         <div class="head-actions">
           <button class="btn ghost" id="diffPickClear" title="清空两栏重新选">清空</button>
           <button class="btn ghost icon-btn" id="diffPickClose">✕</button>

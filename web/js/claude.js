@@ -94,9 +94,9 @@ async function openClaudeSetup() {
           <div id="csLog" class="cs-log" style="display:none;"></div>
         </div>
         <div class="actions" style="padding:0 20px 16px;display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;">
-          <button class="btn ghost" id="csPack" title="把 Git 安装器 + Node MSI + claude-code 包 + 工具依赖打成一个 zip，拷到无网机器离线安装"><span style="vertical-align:-2.5px">${ICO16.package}</span> 制作离线包</button>
-          <button class="btn primary" id="csOfflineZip" title="选择 claude-offline.zip，工具自行解压静默安装（无网机器用这个）"><span style="vertical-align:-2.5px">${ICO16.folderOpen}</span> 离线包安装</button>
-          <button class="btn primary" id="csOnline" title="npm install -g @anthropic-ai/claude-code（需联网 + Node）"><span style="vertical-align:-2.5px">${ICO16.globe}</span> 联网安装</button>
+          <button class="btn ghost" id="csPack" title="把 Git 安装器 + Node MSI + claude-code 包 + 工具依赖打成一个 zip，拷到无网机器离线安装"><span>${ICO16.package}</span> 制作离线包</button>
+          <button class="btn primary" id="csOfflineZip" title="选择 claude-offline.zip，工具自行解压静默安装（无网机器用这个）"><span>${ICO16.folderOpen}</span> 离线包安装</button>
+          <button class="btn primary" id="csOnline" title="npm install -g @anthropic-ai/claude-code（需联网 + Node）"><span>${ICO16.globe}</span> 联网安装</button>
         </div>
       </div>`;
     document.body.appendChild(m);

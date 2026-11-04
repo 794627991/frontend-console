@@ -448,7 +448,10 @@
      默认白底——白底黑字落在暗色主题上（用户实锤 UI 风格不一致，铁律②）。
      容器级规则选择器更具体会覆盖本条，现有各区外观不变。 */
   .lv-btn { background: var(--bg-input); border: 1px solid var(--border); color: var(--fg);
-    border-radius: 4px; padding: 4px 12px; font-size: 12px; cursor: pointer; white-space: nowrap; }
+    border-radius: 4px; padding: 4px 12px; font-size: 12px; cursor: pointer; white-space: nowrap;
+    display: inline-flex; align-items: center; gap: 5px; }   /* a308：与 .btn 同款对齐 */
+  .lv-btn svg { display: block; flex-shrink: 0; }
+  select.lv-btn { gap: 3px; }   /* select 天然有箭头，gap 略小 */
   /* a303：编辑器工具栏 lv-btn 统一 flex 对齐（用户实锤：SVG 与文字不齐很丑）——
      图标+文字同行 flex 居中，去掉各按钮里散落的 vertical-align hack */
   .ed-toolbar .lv-btn { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; }
@@ -746,7 +749,11 @@
     background: var(--bg-card); color: var(--fg); border: 1px solid var(--border);
     border-radius: 6px; padding: 6px 14px; font-size: 12px; cursor: pointer;
     font-family: var(--font-ui); transition: all 0.2s; white-space: nowrap;
+    /* a308 全站统一：含图标按钮 inline-flex 垂直居中（用户实锤 54 处
+       vertical-align hack 导致字体贴底/不居中——删 hack 后由此规则接管） */
+    display: inline-flex; align-items: center; gap: 5px;
   }
+  .btn svg { display: block; flex-shrink: 0; }
   .btn:hover { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 8px var(--accent-glow); }
   .btn.primary {
     background: linear-gradient(135deg, var(--accent), var(--accent-2));

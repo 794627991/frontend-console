@@ -142,7 +142,7 @@ function buildLogViewer(path) {
   wrap.innerHTML = `
     <div class="log-viewer">
       <div class="log-viewer-toolbar">
-        <button class="lv-btn" data-lv-action="search"><span style="vertical-align:-2.5px">${ICO16.search}</span> 搜索</button>
+        <button class="lv-btn" data-lv-action="search"><span>${ICO16.search}</span> 搜索</button>
         <button class="lv-btn" data-lv-action="top" title="跳到开头">⤒ 顶部</button>
         <button class="lv-btn" data-lv-action="bottom" title="跳到末尾">⤓ 底部</button>
         <span class="lv-info" data-lv-info></span>

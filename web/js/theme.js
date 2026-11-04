@@ -229,7 +229,7 @@ function _openCustomPanel(forceLight) {
       <input type="text" name="ct_ck_t_${k}" data-ck-t="${k}" spellcheck="false" value="${esc(_customData[k] || '')}" placeholder="--${k}">
       <span>${name}</span></div>`).join('');
   ov.innerHTML = `<div class="ct-panel">
-    <div class="ct-title"><span style="vertical-align:-2.5px">${ICO16.palette}</span> 自定义主题 <span style="font-size:11px;color:var(--muted);font-weight:400;">改动即时预览，保存后跨启动生效</span></div>
+    <div class="ct-title"><span>${ICO16.palette}</span> 自定义主题 <span style="font-size:11px;color:var(--muted);font-weight:400;">改动即时预览，保存后跨启动生效</span></div>
     <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);margin-bottom:6px;">
       <input type="checkbox" name="ct_light" data-ct-light${_customData.light ? ' checked' : ''}> 亮色模式（终端换浅底深字）
     </label>
@@ -238,7 +238,7 @@ function _openCustomPanel(forceLight) {
       <button class="btn ghost" data-ct-pick>取当前主题色</button>
       <button class="btn ghost" data-ct-dracula>Dracula 示例</button>
       <button class="btn ghost" data-ct-reset>恢复深空蓝默认</button>
-      <button class="btn ghost" data-ct-ini><span style="vertical-align:-2.5px">${ICO16.download}</span> 导入 MobaXterm ini</button>
+      <button class="btn ghost" data-ct-ini><span>${ICO16.download}</span> 导入 MobaXterm ini</button>
     </div>
     <div data-ct-ini-box style="display:none;margin-top:8px;">
       <textarea name="ct_ini_txt" data-ct-ini-txt class="hg-vision-prompt" spellcheck="false" style="min-height:110px;"
@@ -249,7 +249,7 @@ function _openCustomPanel(forceLight) {
       </div>
     </div>
     <div style="display:flex;gap:8px;margin-top:14px;align-items:center;">
-      <button class="btn primary" data-ct-save><span style="vertical-align:-2.5px">${ICO16.save}</span> 保存主题</button>
+      <button class="btn primary" data-ct-save><span>${ICO16.save}</span> 保存主题</button>
       <span class="ct-msg" style="font-size:11px;color:var(--muted);"></span>
     </div>
   </div>`;

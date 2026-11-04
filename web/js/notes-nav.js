@@ -15,7 +15,7 @@ function nnSearchShow() {
     ov.id = 'nnSearchOv';
     ov.innerHTML = `
       <div class="box nn-search-box">
-        <div class="head"><strong><span style="vertical-align:-2.5px">${ICO16.search}</span> 全库搜索</strong>
+        <div class="head"><strong><span>${ICO16.search}</span> 全库搜索</strong>
           <div class="head-actions"><span class="nn-search-hint">Ctrl+Alt+F</span>
             <button class="btn ghost icon-btn" id="nnSearchClose">✕</button></div></div>
         <div class="nn-search-bar">
@@ -81,7 +81,7 @@ async function nnDoSearch() {
     (j.truncated ? '（已达上限，仅显示部分）' : '') +
     (j.skipped_big ? ` · ${esc(String(j.skipped_big))} 个超大文件未纳入` : '') + '</div>';
   for (const f of j.files) {
-    html += `<div class="nn-search-file"><div class="nn-search-fh" data-nnfile="${esc(f.name)}"><span style="vertical-align:-2.5px">${ICO16.file}</span> ${esc(f.name)}</div>`;
+    html += `<div class="nn-search-file"><div class="nn-search-fh" data-nnfile="${esc(f.name)}"><span>${ICO16.file}</span> ${esc(f.name)}</div>`;
     for (const h of f.hits) {
       html += `<div class="nn-search-hit" data-nnfile="${esc(f.name)}" data-nnline="${esc(String(h.line))}">` +
         `<span class="nn-search-ln">${esc(String(h.line))}</span><span class="nn-search-sn">` +
@@ -202,7 +202,7 @@ async function nnRefreshLinks(conn) {
   html += `<div class="ed-links-sec">链入（${j.incoming.length}）</div>`;
   html += j.incoming.length
     ? j.incoming.map(x => _row('ed-links-in',
-        `<span class="ed-links-name" data-nnopen="${esc(x.from)}" data-nnline="${esc(String(x.at_line || 1))}" title="${esc(x.snippet)}"><span style="vertical-align:-2.5px">${ICO16.file}</span> ${esc(x.from)}</span>` +
+        `<span class="ed-links-name" data-nnopen="${esc(x.from)}" data-nnline="${esc(String(x.at_line || 1))}" title="${esc(x.snippet)}"><span>${ICO16.file}</span> ${esc(x.from)}</span>` +
         `<span class="ed-links-cnt">×${esc(String(x.count))}</span>`)).join('')
     : '<div class="ed-links-none">没有其他笔记引用本文</div>';
   // 链出
@@ -210,10 +210,10 @@ async function nnRefreshLinks(conn) {
   html += j.outgoing.length
     ? j.outgoing.map(x => x.resolved
         ? _row('ed-links-out',
-            `<span class="ed-links-name" data-nnopen="${esc(x.resolved)}" data-nnline="1" title="点击打开"><span style="vertical-align:-2.5px">${ICO16.file}</span> ${esc(x.target)}</span>` +
+            `<span class="ed-links-name" data-nnopen="${esc(x.resolved)}" data-nnline="1" title="点击打开"><span>${ICO16.file}</span> ${esc(x.target)}</span>` +
             `<span class="ed-links-cnt">×${esc(String(x.count))}</span>`)
         : _row('ed-links-missing',
-            `<span class="ed-links-name miss" data-nnnew="${esc(x.target)}" title="目标不存在，点击新建"><span style="vertical-align:-2.5px">${ICO16.warn}</span> ${esc(x.target)}</span>` +
+            `<span class="ed-links-name miss" data-nnnew="${esc(x.target)}" title="目标不存在，点击新建"><span>${ICO16.warn}</span> ${esc(x.target)}</span>` +
             `<span class="ed-links-cnt">未创建</span>`)).join('')
     : '<div class="ed-links-none">本文没有 [[]] 双链（正文中写 [[目标名]] 即可链接）</div>';
   // 本文标签
