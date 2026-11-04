@@ -326,12 +326,18 @@ async function _ovPdfRenderPage(conn, pageNum) {
     label.className = 'ov-pdf-page-label';
     const ctx = canvas.getContext('2d');
     await page.render({ canvasContext: ctx, viewport }).promise;
+    // R6-3（实锤：缩放连按双 label）：await 期间 setZoom 可能已清 innerHTML
+    // 重建并另启渲染——本任务 canvas 已 detached 即过期，跳过 label 追加
+    if (!canvas.isConnected) return;
     label.textContent = pageNum + ' / ' + conn._pdfDoc.numPages;
     el.appendChild(label);
     el.style.minHeight = Math.round(viewport.height) + 'px';
   } catch (e) {
-    el.innerHTML = `<div class="office-err">页面 ${pageNum} 渲染失败</div>`;
-    conn._pdfRendered.delete(pageNum);
+    // 过期任务的失败不应把新任务的画布打成错误占位——el 里 canvas 还在就别覆盖
+    if (!el.querySelector('canvas')) {
+      el.innerHTML = `<div class="office-err">页面 ${pageNum} 渲染失败</div>`;
+      conn._pdfRendered.delete(pageNum);
+    }
   }
 }
 
@@ -739,6 +745,12 @@ function _ovXlsxAoa(conn) {
   }
   return aoa;
 }
+// R6-2（实锤：行高/列宽跨表串表）：_rowH/_colW 按 sheetIdx 分桶——此前挂
+// conn 单实例，S1 拖的行高会写进 S2 的 !rows 落盘、S1 自己的调整反而丢
+function _ovXlsxSizeBk(conn, which) {
+  if (!conn[which]) conn[which] = {};
+  return conn[which][conn._sheetIdx] || (conn[which][conn._sheetIdx] = {});
+}
 function _ovXlsxWriteAoa(conn, aoa) {
   const name = conn._wb.SheetNames[conn._sheetIdx];
   const old = conn._wb.Sheets[name];
@@ -788,15 +800,17 @@ function _ovXlsxWriteAoa(conn, aoa) {
   // H4：行高迁移（旧 ws 的 !rows + 用户拖拽 _rowH 覆盖）——此前一律丢。
   // R4-3：_rowH/_colW 键是 aoa 下标，!rows/!cols 数组下标是真实行/列号——平移
   const rows = (old && old['!rows']) ? old['!rows'].slice() : [];
-  if (conn._rowH) for (const k in conn._rowH) {
-    const ri = ORG.r + +k; rows[ri] = Object.assign({}, rows[ri], { hpx: conn._rowH[k] });
+  const rowH = (conn._rowH || {})[conn._sheetIdx];
+  if (rowH) for (const k in rowH) {
+    const ri = ORG.r + +k; rows[ri] = Object.assign({}, rows[ri], { hpx: rowH[k] });
   }
   if (rows.length) ws['!rows'] = rows;
-  // a295 用户拖拽的列宽同样落盘
-  if (conn._colW) {
+  // a295 用户拖拽的列宽同样落盘（R6-2：当前表桶）
+  const colW = (conn._colW || {})[conn._sheetIdx];
+  if (colW) {
     const cols = ws['!cols'] ? ws['!cols'].slice() : [];
-    for (const k in conn._colW) {
-      const ci = ORG.c + +k; cols[ci] = Object.assign({}, cols[ci], { wpx: conn._colW[k] });
+    for (const k in colW) {
+      const ci = ORG.c + +k; cols[ci] = Object.assign({}, cols[ci], { wpx: colW[k] });
     }
     ws['!cols'] = cols;
   }
@@ -880,7 +894,7 @@ function _ovXlsxBindColGrip(conn, grip, c) {
       const w = Math.max(36, Math.round(startW + ev.clientX - startX));
       th.style.width = w + 'px';
       cells.forEach(td => { if (td) { td.style.width = w + 'px'; td.style.maxWidth = w + 'px'; } });
-      conn._colW[c] = w;
+      _ovXlsxSizeBk(conn, '_colW')[c] = w;   // R6-2：按 sheet 分桶
       grip.classList.add('on');
     };
     const up = () => {
@@ -892,7 +906,7 @@ function _ovXlsxBindColGrip(conn, grip, c) {
     document.addEventListener('mouseup', up);
   });
   grip.addEventListener('dblclick', () => {
-    delete conn._colW[c];
+    delete _ovXlsxSizeBk(conn, '_colW')[c];
     _ovXlsxRenderTable(conn);
   });
 }
@@ -905,7 +919,7 @@ function _ovXlsxBindRowGrip(conn, grip, r) {
     const move = ev => {
       const h = Math.max(20, Math.round(startH + ev.clientY - startX));
       tr.style.height = h + 'px';
-      conn._rowH[r] = h;
+      _ovXlsxSizeBk(conn, '_rowH')[r] = h;   // R6-2：按 sheet 分桶
       grip.classList.add('on');
     };
     const up = () => {
@@ -917,7 +931,7 @@ function _ovXlsxBindRowGrip(conn, grip, r) {
     document.addEventListener('mouseup', up);
   });
   grip.addEventListener('dblclick', () => {
-    delete conn._rowH[r];
+    delete _ovXlsxSizeBk(conn, '_rowH')[r];
     _ovXlsxRenderTable(conn);
   });
 }
@@ -937,7 +951,7 @@ function _ovXlsxRenderTable(conn) {
   (conn._aoa[0] || []).forEach((_, c) => {
     const th = document.createElement('th');
     th.textContent = XLSX.utils.encode_col(c);
-    const w = conn._colW[c];
+    const w = _ovXlsxSizeBk(conn, '_colW')[c];   // R6-2：当前表桶
     if (w) th.style.width = w + 'px';
     const grip = document.createElement('div');
     grip.className = 'x-col-grip';
@@ -962,7 +976,7 @@ function _ovXlsxRenderTable(conn) {
     const rh = document.createElement('td');
     rh.className = 'xlsx-row-head'; rh.textContent = r + 1;
     rh.style.position = 'relative';
-    const hRow = conn._rowH[r];
+    const hRow = _ovXlsxSizeBk(conn, '_rowH')[r];   // R6-2：当前表桶
     if (hRow) { tr.style.height = hRow + 'px'; }
     rh.onclick = () => {
       table.querySelectorAll('tr').forEach(x => x.classList.remove('selrow'));
@@ -1108,16 +1122,21 @@ function _ovXlsxBindBar(conn, body) {
         // R4-4（实锤：.xls 被写 xlsx 字节）：按扩展选 bookType——.xls 走
         // biff8（Excel 97-2003），否则 Excel 报"格式与扩展名不匹配"
         const bt = isCsv ? 'csv' : (/\.xls$/i.test(conn.officePath || '') ? 'biff8' : 'xlsx');
-        // R5-2（实锤：.xls 保存公式/样式静默丢失）：SheetJS 社区版 biff8 写
-        // 不保公式与样式（公式降级死值、cellStyles 丢）——保存前检测公式格，
-        // 有则确认警示，用户可拒绝保真转 .xlsx 链路
-        if (bt === 'biff8') {
-          const hasFormula = Object.values(conn._wb.Sheets).some(ws =>
-            Object.keys(ws).some(k => k[0] !== '!' && ws[k] && ws[k].f));
-          if (hasFormula && !confirm('该 .xls（Excel 97-2003）包含公式。\n此格式保存会丢失全部公式（转为静态值）与样式，建议取消后另存 .xlsx。\n\n仍要保存吗？')) {
-            b.disabled = false; b.textContent = '保存';
-            return;
-          }
+        // R5-2 + R6-1（实锤：写层能力边界静默丢数据）：SheetJS 社区版 write
+        // 不保 .xls 的公式/样式，也不保 .xlsx 的单元格填充样式（cell.s 的
+        // patternType）——保存前检测，confirm 警示可拒（建议 ✎ 全功能编辑）
+        const sheetsArr = Object.values(conn._wb.Sheets);
+        const cellKeys = ws => Object.keys(ws).filter(k => k[0] !== '!');
+        const hasFormula = sheetsArr.some(ws => cellKeys(ws).some(k => ws[k] && ws[k].f));
+        const hasFill = sheetsArr.some(ws => cellKeys(ws).some(k =>
+          ws[k] && ws[k].s && ws[k].s.patternType && ws[k].s.patternType !== 'none'));
+        let warn = null;
+        if (bt === 'biff8' && hasFormula) warn = '该 .xls（Excel 97-2003）包含公式。\n此格式保存会丢失全部公式（转为静态值）与样式，建议取消后另存 .xlsx。\n\n仍要保存吗？';
+        else if (bt === 'biff8' && hasFill) warn = '该 .xls（Excel 97-2003）包含单元格颜色/填充。\n此格式保存会丢失样式，建议取消后另存 .xlsx。\n\n仍要保存吗？';
+        else if (bt === 'xlsx' && hasFill) warn = '该表格包含单元格颜色/填充样式。\n内置表格引擎保存会丢失这些样式（建议取消后用 ✎ 全功能编辑保存）。\n\n仍要保存吗？';
+        if (warn && !confirm(warn)) {
+          b.disabled = false; b.textContent = '保存';
+          return;
         }
         const out = XLSX.write(conn._wb, { bookType: bt, type: 'array' });
         const resp = await fetch('/api/office/write?path=' + encodeURIComponent(conn.officePath), { method: 'POST', body: out });
