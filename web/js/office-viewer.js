@@ -752,6 +752,9 @@ function _ovXlsxWriteAoa(conn, aoa) {
       if (oc && !oc.f && oc.v === cell.v) { ws[addr] = oc; continue; }
       if (oc && oc.z && !cell.z) cell.z = oc.z;   // 编辑过的格保数字格式（改日期格的值）
       if (oc && oc.l && !cell.l) cell.l = oc.l;   // 改超链接格显示文本不丢链接
+      // a319R3 实锤：z/l 拷到 cell 上却没写回——aoa_to_sheet 的裸值对象留在
+      // ws[addr]，格式/超链接全丢。编辑过的格整对象落盘
+      ws[addr] = cell;
     }
   }
   if (old && old['!merges']) ws['!merges'] = old['!merges'];
@@ -797,8 +800,10 @@ function _ovXlsxEval(formula, conn) {
   });
   js = js.replace(/\b([A-Z]+)(\d+)\b/g, (m, col, row) =>
     String(cellVal(parseInt(row, 10) - 1, XLSX.utils.decode_col(col))));
-  // 安全白名单校验（仅数字/运算/Math.min max）
-  if (!/^[\d+\-*/(). ,]*$/.test(js.replace(/Math\.(min|max)/g, 'X'))) return null;
+  // 安全白名单校验（仅数字/运算/Math.min max）。a319R3 实锤：占位符 'X' 不在
+  // 白名单字符类 → MIN/MAX 公式必被拒。占位改 '#' 并入白名单（'#' 非合法公式
+  // 字符，恶意输入带 # 也过不了 Function 语法——catch 兜底返回 null）
+  if (!/^[\d+\-*/(). ,#]*$/.test(js.replace(/Math\.(min|max)/g, '#'))) return null;
   try {
     const v = Function('"use strict";return (' + js + ')')();
     return (typeof v === 'number' && isFinite(v)) ? v : null;
@@ -960,11 +965,23 @@ function _ovXlsxRenderTable(conn) {
         }   // M6：与 focus 时展示文本比对（a309R3：含公式文本）
         _ovXlsxSnapshot(conn);
         const num = parseFloat(txt);
+        // a319R3：日期格输日期样文本 → Excel 序列数（t:'n' + 继承 z），Excel 里
+        // 打开仍是日期而非文本。仅当格本身带日期格式 z 时转（普通格输 2025-1-1
+        // 存文本，尊重用户原样）
+        const oldCell = conn._aoa[r][c];
+        const dm = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:[ T](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$/.exec(txt);
+        const isDateCell = oldCell && typeof oldCell.z === 'string' && /[ymdhs]/i.test(oldCell.z) && !/general/i.test(oldCell.z);
         if (txt === '') conn._aoa[r][c] = null;
         else if (txt.startsWith('=')) {
           const cv = _ovXlsxEval(txt, conn);
           conn._aoa[r][c] = { t: 'n', v: cv !== null ? cv : 0, f: txt, w: String(cv !== null ? cv : txt), _cv: cv !== null ? cv : '?' };
-        } else if (!isNaN(num) && /^[-+\d.eE]+$/.test(txt)) conn._aoa[r][c] = { t: 'n', v: num, w: txt };
+        } else if (isDateCell && dm) {
+          const d = Date.UTC(+dm[1], +dm[2] - 1, +dm[3], +(dm[4] || 0), +(dm[5] || 0), +(dm[6] || 0));
+          conn._aoa[r][c] = { t: 'n', v: Math.round((d / 86400000 + 25569) * 1e8) / 1e8, z: oldCell.z, w: txt };
+        } else if (!isNaN(num) && /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(txt)) conn._aoa[r][c] = { t: 'n', v: num, w: txt };
+        // a319R3 实锤：旧正则 [-+\d.eE]+ 会把日期样文本 2025-1-1 整串放行，
+        // parseFloat 只吃到 2025 → 日期被存成数字 2025。收紧为单一数字字面量，
+        // 2025-1-1 走文本分支原样保存
         else conn._aoa[r][c] = { t: 's', v: txt, w: txt };
         _ovXlsxRecalcAll(conn);
         _ovXlsxPersist(conn);
