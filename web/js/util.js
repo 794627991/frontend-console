@@ -893,7 +893,11 @@ function _hgFadeSb(el) {
   const EXCLUDE = '.xterm-viewport, .hg-fade-sb, .hg-fade-sb-th, .hg-term-sb';
   const _hosts = new Set();
   const tryMount = (n) => {
-    if (!n || n.nodeType !== 1 || n._hgFadeSb) return false;
+    // v9：这里原先 `|| n._hgFadeSb` 直接 return，把 _hgFadeSb() 内部的版本
+    // 拆重建逻辑彻底挡死——已挂载容器永远停在旧 ver（实测页面里全是 ver:8，
+    // 改了代码毫无效果）。改为只放过「已是最新 ver」的，旧 ver 放进去重建。
+    if (!n || n.nodeType !== 1) return false;
+    if (n._hgFadeSb && n._hgFadeSb.ver === _HG_FADE_SB_VER) return false;
     if (n.matches && n.matches(EXCLUDE)) return false;
     let cs;
     try { cs = getComputedStyle(n); } catch (_) { return false; }
