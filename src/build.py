@@ -103,6 +103,7 @@ def build():
             _publish_debug(app_dir)
             return dist
         _refresh_offline_claude()   # v3.4.95：离线 claude-code 版本有变即刷新
+        _sync_onlyoffice()           # a309：OnlyOffice DS 安装包进离线资源
         _sync_offline_pkg()
         # v4.1（用户拍板）：不再 _bundle_webview2 随包带运行时——改为打进
         # 统一离线资源包 .fcpk（含 WebView2/dotnet/node/git/claude/pydeps）。
@@ -371,6 +372,24 @@ def _refresh_offline_claude():
                               "/NJS", "/NP"], timeout=1800)
         if rc > 7:   # 0-7 均为成功档
             print(f"⚠ claude-code 刷新失败 (robocopy rc={rc}):", dst)
+
+
+def _sync_onlyoffice():
+    """a309（用户令：OnlyOffice 进离线包随发布）：vendor/onlyoffice 安装包
+    （916MB）→ offline_pkg/install/onlyoffice-documentserver.exe。幂等：已在
+    跳过；无源提示（打包机没跑过下载脚本则发布不含 DS——可后补再发）"""
+    src = os.path.join(BASE, "vendor", "onlyoffice", "onlyoffice-documentserver.exe")
+    for dst in (os.path.join(BASE, "offline_pkg", "install", "onlyoffice-documentserver.exe"),
+                os.path.join(BASE, "dist", "offline_pkg", "install", "onlyoffice-documentserver.exe")):
+        if os.path.isfile(dst):
+            print(f"onlyoffice: 已存在 {dst}，跳过")
+            continue
+        if os.path.isfile(src):
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            print(f"onlyoffice: 复制安装包 → {dst}（916MB 需几分钟）…")
+            shutil.copy2(src, dst)
+        else:
+            print(f"onlyoffice: 无 {src}——发布不含 DS（全功能编辑离线不可用）")
 
 
 def _sync_offline_pkg():
