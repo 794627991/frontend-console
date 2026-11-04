@@ -518,6 +518,11 @@ function _ovDocxOutline(body, container, conn) {
   const scroller = body;   // office-body 是滚动容器
   const bar = document.createElement('div');
   bar.className = 'ov-docx-outline';
+  // a300：目录栏 fixed 视口级（不随文档滚走）——top 精确对齐 body 的视口顶
+  const br = body.getBoundingClientRect();
+  bar.style.top = Math.max(0, Math.round(br.top)) + 'px';
+  bar.style.left = Math.max(0, Math.round(br.left)) + 'px';
+  bar.style.bottom = '0';
   bar.innerHTML = '<div class="ov-docx-outline-title">目录</div>';
   const items = heads.map((h, i) => {
     const m = /docx_heading(\d)/.exec(h.className);

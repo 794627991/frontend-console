@@ -5242,9 +5242,13 @@ span.nn-hl-t { background: color-mix(in srgb, #3fb950 15%, transparent);
   padding: 0 10px; border-bottom: 1px solid var(--border); flex-shrink: 0;
   position: relative; z-index: 4; background: var(--bg-panel); }
 /* a290 全功能：docx 目录索引侧栏（绝对定位悬浮左缘，不挤文档宽度） */
-.ov-docx-outline { position: absolute; left: 0; top: 0; bottom: 0; width: 200px;
-  background: color-mix(in srgb, var(--bg-panel) 92%, transparent);
-  border-right: 1px solid var(--border); z-index: 3;
+/* a300：目录栏改 position:fixed（视口级）——原 absolute 在滚动的 office-body
+   内，文档一滚目录跟着滚走（用户实锤"翻页把索引翻走"）。fixed 相对视口钉住；
+   left 取 tab 栏下整体左缘，top 从 office 工具栏底开始（工具栏高 36px+tab 栏
+   高度由运行时 JS 算，CSS 给安全默认，JS 挂载时精确设置 top） */
+.ov-docx-outline { position: fixed; left: 0; top: 90px; bottom: 0; width: 200px;
+  background: color-mix(in srgb, var(--bg-panel) 96%, transparent);
+  border-right: 1px solid var(--border); z-index: 30;
   overflow-y: auto; padding: 8px 0; font-size: 11px;
   backdrop-filter: blur(6px); }
 .ov-docx-outline-title { font-weight: 700; color: var(--muted); padding: 4px 12px 8px;
@@ -5260,8 +5264,23 @@ span.nn-hl-t { background: color-mix(in srgb, #3fb950 15%, transparent);
 .ov-docx-outline-item.cur { color: var(--accent); border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
 /* 有目录时文档主体右移避让 */
 .office-body:has(.ov-docx-outline) .docx-container { margin-left: 200px; }
+/* a300：office 滚动条显式豁免全站隐藏（用户令：宽大的条好抓，终端同款 14px） */
 .office-body { flex: 1; min-height: 0; overflow: auto; padding: 12px; position: relative;
   display: flex; flex-direction: column; align-items: center; }
+.office-body { scrollbar-width: auto !important; }
+.office-body::-webkit-scrollbar { width: 14px !important; height: 14px !important; }
+.office-body::-webkit-scrollbar-track { background: transparent; }
+.office-body::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--muted) 60%, transparent);
+  border-radius: 3px; border: 2px solid var(--bg); }
+.office-body::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+.office-body::-webkit-scrollbar-corner { background: transparent; }
+/* PDF 主阅读区（ov-pdf-main）同款宽条 */
+.ov-pdf-main { scrollbar-width: auto !important; }
+.ov-pdf-main::-webkit-scrollbar { width: 14px !important; height: 14px !important; }
+.ov-pdf-main::-webkit-scrollbar-track { background: transparent; }
+.ov-pdf-main::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--muted) 60%, transparent);
+  border-radius: 3px; border: 2px solid var(--bg); }
+.ov-pdf-main::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 .office-err { color: var(--neon-red); font-size: 12px; padding: 20px; text-align: center; }
 .office-loading { color: var(--muted); font-size: 12px; padding: 40px; }
 /* docx：Word 底白页 + 主题容器底色 */
