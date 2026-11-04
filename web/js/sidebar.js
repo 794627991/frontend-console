@@ -252,27 +252,16 @@ function refreshSidebar() {
       if (el.textContent !== t) el.textContent = t;
     });
   }
-  // 标签栏同序重排（复用全局 sortKeyFn）——当前顺序已一致时跳过，不动 DOM。
-  // 用户手动拖过 tab（_tabOrderManual，tab-drag.js）后让位：不再自动重排，
-  // 尊重用户顺序；全部 tab 关闭回到空态时重置（下次恢复默认排序）
-  if (typeof _maybeResetTabOrder === 'function') _maybeResetTabOrder();
-  if (typeof _tabOrderManual !== 'undefined' && _tabOrderManual) return;
-  // 用户实锤（串口 tab 位置自己跳变）：30s 轮询的自动重排不认 pinned——固定过
-  // 的 tab 被 sortKey 打散出固定区（"固定区最左"不变量被静默破坏）。pin 本身
-  // 就是用户的顺序意图：存在固定 tab 时视为已定制，不自动重排（与拖拽让位同语义）
-  if (document.querySelector('#tabs .tab.pinned')) return;
-  const tabEls = Array.from(tabs.querySelectorAll('.tab'));
-  const curIds = tabEls.map(t => t.dataset.portId);
-  const wantIds = ids.concat(curIds.filter(id => !connections[id]));
-  const needSort = curIds.length !== wantIds.length || curIds.some((id, i) => id !== wantIds[i]);
-  if (needSort) {
-    tabEls.sort((a, b) => {
-      const ka = sortKeyFn(a.dataset.portId), kb = sortKeyFn(b.dataset.portId);
-      return ka[0] !== kb[0] ? ka[0] - kb[0] : (ka[1] < kb[1] ? -1 : ka[1] > kb[1] ? 1 : 0);
-    });
-    const actions = tabs.querySelector('.tab-bar-actions');
-    tabEls.forEach(t => tabs.insertBefore(t, actions));
-  }
+  // 【tab 位置不变量·用户铁律】tab 栏永不自动重排——除非用户手动移动（拖拽/
+  // 固定/取消固定），位置永远保持打开时的落位（Chrome/所有浏览器的行为）。
+  // 历史演进（均已退役）：
+  //   v1 按类型桶自动重排（与侧栏列表同序）→ 用户新开的 tab 30s 内从末尾
+  //     "跳"到类型组位置（乱七八糟的跳变源头）；
+  //   v2 拖拽/pin 后让位 + a286R16 有 pinned 不重排——挡住了大部分但仍存在
+  //     "无 pin 未拖拽"场景的重排跳变；
+  //   v3（本条）整段重排退役：侧栏列表仍按类型排序展示（那是列表自己的排序），
+  //     tab 栏只认用户的手。sortKeyFn/_tabOrderManual 保留定义（其他调用方
+  //     仍在用），仅此处不再重排
 }
 let _sidebarKey = '';
 
