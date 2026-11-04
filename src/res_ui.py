@@ -117,11 +117,13 @@ def autofind_fcpk():
     import glob
     # a339R（第10轮 P3-2）：导入提到循环外一次性做——原实现写在双层 for 内，
     # 一个坏 pyd 会让「所有目录都不可用」且只表现为"你把包放错地方了"。
+    # a341R（第12轮）：改用 pkg_rank 排序——原实现只分 main/sub 两档、同档按
+    # mtime 取胜，于是 `资源包-副本副本`（新）会顶掉真主包、备份包同理。
     try:
-        from src.pkgname import is_res_pkg as _is_res, pkg_class as _pc
+        from src.pkgname import pkg_rank as _rk, APP_NAME as _AN
     except Exception:
         return ""
-    main, sub = [], []
+    cands = []
     base = _app_dir()
     for d in (base, os.path.dirname(base),
               os.path.join(os.path.expanduser("~"), "Desktop"),
@@ -131,23 +133,17 @@ def autofind_fcpk():
                 # a334R（第5轮 P2-1）：名字判定必须用 basename——原实现拿
                 # 完整路径做 `"资源包" in p`，工具解压在含"资源包"的目录里时，
                 # 同目录别家的 other-tool.fcpk 也会被选中。
-                # a336R（第7轮 P1-1）：分类函数原先在 update_server，而它被
-                # cythonize_build 的 _EXCLUDE 排除出发布包 —— frozen 机上必
-                # ImportError，自动找包静默失效。
-                # a337R（第8轮 P2-3）：实现落到零依赖的 src.pkgname。
-                # a338R（第9轮）：前置可见性与门户统一走 is_res_pkg。
                 _bn = os.path.basename(p).lower()
-                if not _is_res(_bn):
+                # a341R：闸门也要前缀过滤，否则同目录别家的资源包会被选走
+                _r = _rk(_bn, require_prefix=_AN)
+                if _r < 0:
                     continue
-                if _pc(_bn) == "subset":
-                    sub.append(p)
-                else:
-                    main.append(p)
-    cands = main or sub
+                cands.append((_r, p))
     if not cands:
         return ""
-    cands.sort(key=lambda p: os.path.getmtime(p), reverse=True)
-    return cands[0]
+    # 先按 rank 降序、再按 mtime 降序（rank 高者不受 mtime 影响）
+    cands.sort(key=lambda t: (t[0], os.path.getmtime(t[1])), reverse=True)
+    return cands[0][1]
 
 
 def _app_dir():

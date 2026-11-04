@@ -21,9 +21,9 @@ from urllib.parse import unquote, quote
 PORT = 8765
 # a339R（第10轮 P3-3）：门户放宽可见性门槛后（判「含资源包」而非「-资源包」），
 # 同目录的 `别家工具-资源包.fcpk` / `资源包备份.fcpk` 会被误当成发行包发给
-# 同事。要求 basename 以本应用名开头（或以「资源包」开头——用户去掉前缀的
-# 形态）。不 import build.APP_NAME：build.py 不进发布包。
-APP_NAME = "前端控制台"
+# 同事。要求 basename 以本应用名开头。a341R：常量挪到 src.pkgname，与闸门
+# 共用（原先只有门户有，闸门会把别家的包选走）。
+from src.pkgname import APP_NAME
 _MAX_AGE = 60          # manifest 缓存友好：发布后同事 1 分钟内必见新版
 _SESSION_TTL = 12 * 3600
 _DEFAULT_PWD = "888888"
@@ -179,16 +179,13 @@ def _offline_pkg():
     旧 zip（`-offline-pkg.zip`）通道已退役（用户令「彻底退役，不要了」），
     不再产出新 zip——仅在没有 fcpk 时回退兼容读取历史 release 目录里的 zip。
 
-    a325R（第2轮对抗审 P1）：rank 必须区分**主包与子集包**。本目录实测同时
-    存在 `-资源包.fcpk`（全量 1.7GB）与 `-资源包-拓展.fcpk`（只有 onlyoffice，
-    916MB 且 mtime 更新），旧逻辑同 rank 按 mtime 取 → 门户把子集包当"离线
-    资源包"发给同事 → 缺 WebView2/.NET 的新机器装完仍缺，启动闸门再拦，
-    且下述 res_boot 的死循环会跟着触发。现改为：
-      rank 2 = 主包（`pkg_class(n) == "full"`——含重名副本/版本后缀形态）
-      rank 1 = 子集包（`pkg_class(n) == "subset"`）
+    a341R（第12轮）：档位扩到三档——连续三轮的事故都是「同档按 mtime 抢」：
+      rank 3 = 正牌主包（`pkg_rank(n) == 3`）
+      rank 2 = 派生全量（重名副本 / `-副本` 链 / `-v2` 尾巴 / 备份文件）
+      rank 1 = 子集包
       rank 0 = 历史 zip
-    主包存在时，子集包永不顶替。可见性与分类统一由 src.pkgname 判定
-    （a338R/a339R：两侧口径分裂过三轮，别再各写一套）。
+    只有 rank 相同时才比 mtime。可见性与分类统一由 src.pkgname 判定
+    （第 8~12 轮出现过四轮口径分裂，别再各写一套正则）。
 
     不进版本清单/更新日志——它不是应用版本，只是无外网机器的部署资源。
     sha1 不提供：manifest 刻意不收它（updater 不能把它当应用更新推下去），
@@ -203,10 +200,12 @@ def _offline_pkg():
     # 原先这里判 `"-资源包" in _ln`、闸门判 `"资源包" in _bn` —— 分裂从分类
     # 转移到了可见性：用户把包改名成 `资源包.fcpk` 时闸门选得中、门户看不见。
     # 现统一走 pkgname.is_res_pkg。
-    from src.pkgname import pkg_class as _pc, is_res_pkg as _is_res
+    from src.pkgname import pkg_rank as _pr, is_res_pkg as _is_res
     for n in sorted(names):
         _ln = n.lower()
-        is_new = _is_res(n, require_prefix=APP_NAME)
+        # a341R（第12轮）：前缀过滤与备份过滤放到 rank 里判，这里只做兜底
+        # 可见性（保证 is_old 分支不受影响）
+        is_new = _is_res(n)
         is_old = _ln.endswith(".zip") and "-offline-pkg" in _ln
         if not (is_new or is_old):
             continue
@@ -216,14 +215,13 @@ def _offline_pkg():
         except OSError:
             continue
         if is_new:
-            # a335R（第6轮 P1-4）：分类统一走 pkg_class，与 res_ui.autofind
-            # 同口径——原来两边各写一套正则，导致 `-资源包-v2.fcpk`（真全量）
-            # 在门户被标成子集包、在闸门却被当主包。
-            # a336R（第7轮 P1-1）：pkg_class 不在本文件了——本模块不进发布包。
-            # a337R（第8轮 P2-3/P2-4）：实现挪到零依赖的 src.pkgname（本模块
-            # 顶层不 import fcpk，否则门户为了分个类就要背上 Crypto），且
-            # pkg_class 对资源包永不返回 None → 这里不再需要 fallback。
-            rank = 2 if _pc(n) == "full" else 1
+            # a341R（第12轮）：rank 从两档扩到三档——正牌主包(3) > 派生全量(2，
+            # 重名副本/`-副本`/`-v2`/备份) > 子集包(1)。只分 full/subset 时，
+            # `资源包-副本副本.fcpk`（mtime 更新）与备份包都会与真主包同档，
+            # 按 mtime 抢赢后把错包发给同事——这是连续三轮的同一类事故。
+            rank = _pr(n, require_prefix=APP_NAME)
+            if rank < 0:
+                continue
         else:
             rank = 0
         if best and (rank, st.st_mtime) <= (best[1][0], best[1][1]):
