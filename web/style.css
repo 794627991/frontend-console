@@ -5306,8 +5306,15 @@ span.nn-hl-t { background: color-mix(in srgb, #3fb950 15%, transparent);
   （ov-scrollbar.js，office 打开时挂载 _ovSbMount） */
 /* a314（用户令：删自绘条）——恢复 webkit 原生条但强制 14px 宽（能压多宽压
    多宽；Fluent 覆盖层若仍画细条，至少原生条本身宽大可抓） */
-.office-body, .ov-pdf-main { scrollbar-width: auto !important; }
-.office-body::-webkit-scrollbar, .ov-pdf-main::-webkit-scrollbar { width: 14px !important; height: 14px !important; }
+/* a315 单条宽条治本：scrollbar-color 非 auto 值踢掉 WebView2 Fluent 覆盖层
+  （项目历史 f3adc75 复盘结论："CSS scrollbar-color 是踢掉 Fluent 绘制的正解"——
+   Fluent 无视 webkit 宽度自己画细条，auto+webkit = 宽细双条叠加，用户实锤）。
+   设具体色后 Fluent 退出，webkit 14px 条唯一绘制 = 单条宽大可抓 */
+.office-body, .ov-pdf-main, .xlsx-table-wrap {
+  scrollbar-width: auto !important;
+  scrollbar-color: color-mix(in srgb, var(--muted) 60%, transparent) transparent !important;
+}
+.office-body::-webkit-scrollbar, .ov-pdf-main::-webkit-scrollbar, .xlsx-table-wrap::-webkit-scrollbar { width: 14px !important; height: 14px !important; }
 .office-body::-webkit-scrollbar-track, .ov-pdf-main::-webkit-scrollbar-track { background: transparent; }
 .office-body::-webkit-scrollbar-thumb, .ov-pdf-main::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--muted) 60%, transparent);
