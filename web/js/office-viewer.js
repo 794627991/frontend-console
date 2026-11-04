@@ -1120,12 +1120,21 @@ function _ovXlsxBindBar(conn, body) {
           return rr ? rr.s : { r: 0, c: 0 };
         })();
         // R8-1：行高列宽桶 + ws 侧 !rows/!cols 一并回滚（快照法覆盖面比
-        // 反向平移完整；旧格式快照无这些键时跳过维持旧行为）
+        // 反向平移完整；旧格式快照无这些键时跳过维持旧行为）。
+        // R9-1（实锤：快照 null 不清后续产生的数组）：ws 侧用 `in` 判键——
+        // 快照时无尺寸数组（null）就删掉目标表后来拖拽产生的数组，否则
+        // 已撤销的行高列宽越过撤销落盘、界面与文件永久脱节
         if (s.rowH) { if (!conn._rowH) conn._rowH = {}; conn._rowH[idx] = s.rowH; }
         if (s.colW) { if (!conn._colW) conn._colW = {}; conn._colW[idx] = s.colW; }
         const shT = conn._wb.Sheets[conn._wb.SheetNames[idx]];
-        if (shT && s.rows) shT['!rows'] = s.rows;
-        if (shT && s.cols) shT['!cols'] = s.cols;
+        if (shT && 'rows' in s) {
+          if (s.rows) shT['!rows'] = s.rows;
+          else delete shT['!rows'];
+        }
+        if (shT && 'cols' in s) {
+          if (s.cols) shT['!cols'] = s.cols;
+          else delete shT['!cols'];
+        }
         conn._aoa = aoa; _ovXlsxRecalcAll(conn); _ovXlsxPersist(conn); _ovXlsxRenderTable(conn);
       }
       return;
