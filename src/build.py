@@ -611,13 +611,14 @@ def _password_fingerprint():
         return "nokey"
 
 
-def _build_offline_fcpk(kinds=None, quiet=False):
-    """产出 dist/releases/<应用名>-资源包.fcpk（或 -资源包-<kinds>.fcpk）。
+def _build_offline_fcpk(kinds=None, quiet=False, tag=""):
+    """产出 dist/releases/<应用名>-资源包.fcpk（或 -资源包-<tag>.fcpk）。
 
-    kinds=None 打全量；给列表则只打这些。指纹（清单摘要）不变则沿用；
+    kinds=None 打全量；给列表则只打这些。tag 是文件名后缀（preset 传中文
+    档名如「基础」，--kinds 传逗号串）。指纹（清单摘要）不变则沿用；
     写完立即全量验签，坏包绝不发布。
 
-    子集包文件名带 kinds 后缀——否则只打 claude 的小包会覆盖掉 706MB 的
+    子集包文件名带后缀——否则只打 claude 的小包会覆盖掉 706MB 的
     全量包（用户下次装机拿到的就只剩 claude 了）。
     """
     _ensure_fcpk_key()          # N6：必须在 docstring 之后，否则文档串失效
@@ -631,7 +632,7 @@ def _build_offline_fcpk(kinds=None, quiet=False):
         return None
     rel = os.path.join(BASE, "dist", "releases")
     os.makedirs(rel, exist_ok=True)
-    suffix = ("-" + "-".join(kinds)) if kinds else ""
+    suffix = ("-" + tag) if tag else ""
     dst = os.path.join(rel, "%s-资源包%s.fcpk" % (APP_NAME, suffix))
     h = hashlib.sha256()
     for p, arc, kind, mode, link in files:
@@ -654,9 +655,9 @@ def _build_offline_fcpk(kinds=None, quiet=False):
         print("资源包: 内容未变，沿用 %s（%d MB）"
               % (os.path.basename(dst), os.path.getsize(dst) // 1024 // 1024))
         return dst
-    total = sum(os.path.getsize(p) for p, *_ in files) / 1024 / 1024
+    total_bytes = sum(os.path.getsize(p) for p, *_ in files)
     print("资源包: 打包 %d 个文件 / %.0f MB（加密 + 压缩，需数分钟）…"
-          % (len(files), total))
+          % (len(files), total_bytes / 1024 / 1024))
     resources = []
     for kind in ("webview2", "dotnet", "node", "git", "claude", "bili",
                  "onlyoffice", "pydeps"):
@@ -665,8 +666,20 @@ def _build_offline_fcpk(kinds=None, quiet=False):
             resources.append({"kind": kind, "files": n})
     w = fcpk.FcpkWriter(dst, resources=resources)
     try:
+        # 进度条：按已写字节/总字节单行刷新（706MB~1.6GB 数分钟，只有首尾
+        # 两行输出的黑盒体验被用户实锤）。每 pct 变化节流打印
+        done_bytes = 0
+        last_pct = -1
         for p, arc, kind, mode, link in files:
             w.add_file(p, arc, kind=kind, mode=mode, link_from=link)
+            done_bytes += os.path.getsize(p)
+            pct = int(done_bytes * 100 / total_bytes) if total_bytes else 100
+            if pct != last_pct:
+                print("\r资源包: 写入中 %3d%%  (%d / %d MB)"
+                      % (pct, done_bytes // 1048576, total_bytes // 1048576),
+                      end="", flush=True)
+                last_pct = pct
+        print()
         w.close()
     except Exception as e:
         print("资源包: 打包失败 %s" % e)
@@ -696,8 +709,11 @@ def offline_main(argv):
     """只打离线资源包，不跑 PyInstaller（用户拍板：命令行 + bat 入口）。
 
     用法：
-      python src/build.py --offline                打全量（6 项）
-      python src/build.py --offline --kinds claude 只打 claude
+      python src/build.py --offline                    打全量（八项）
+      python src/build.py --offline --preset base      基础资源包
+      python src/build.py --offline --preset claude    claude 包
+      python src/build.py --offline --preset ext       额外拓展包
+      python src/build.py --offline --kinds claude     自定义只打某几项
       python src/build.py --offline --kinds claude,node --out D:\\交付
 
     为什么单独一个入口：完整打包要跑 PyInstaller（几分钟）+ 资源加密 +
@@ -706,13 +722,30 @@ def offline_main(argv):
     """
     import argparse
     import glob
+    # 四档预设（用户需求：全量 / 基础 / claude / 额外拓展）。分组语义：
+    #   基础 = 工具本体运行环境；claude = Claude 生态（CLI + 运行时 + 版本
+    #   控制 + bili 内置引擎）；拓展 = OnlyOffice 全功能 Office 编辑。
+    #   要调整分组改这里即可（安装端按 kind 装包，与分组无关）。
+    presets = {
+        "full":   {"label": "",       "kinds": None,
+                   "desc": "全量（八项全含）"},
+        "base":   {"label": "基础",    "kinds": ["webview2", "dotnet", "pydeps"],
+                   "desc": "基础资源包（WebView2 + .NET + Python 依赖——工具本体环境）"},
+        "claude": {"label": "claude", "kinds": ["claude", "node", "git", "bili"],
+                   "desc": "claude 包（Claude CLI + Node + Git + bili 内置引擎）"},
+        "ext":    {"label": "拓展",    "kinds": ["onlyoffice"],
+                   "desc": "额外拓展包（OnlyOffice——Word/Excel/PPT 全功能编辑）"},
+    }
     ap = argparse.ArgumentParser(
         prog="build.py --offline",
         description="只打离线资源包（.fcpk），不打包 exe")
     ap.add_argument("--offline", action="store_true", help="离线资源包模式")
+    ap.add_argument("--preset", default="",
+                    choices=sorted(presets),
+                    help="四档预设：full 全量 / base 基础 / claude / ext 额外拓展")
     ap.add_argument("--kinds", default="",
-                    help="只打这些资源，逗号分隔：webview2,dotnet,node,git,"
-                         "bili,claude,pydeps（默认全量）；--prep-bili 先组装 bili 资源")
+                    help="自定义只打这些资源，逗号分隔：webview2,dotnet,node,git,"
+                         "bili,claude,onlyoffice,pydeps；--preset 优先")
     ap.add_argument("--prep-bili", action="store_true",
                     help="先组装 bili 资源（node.exe + billion-context 依赖树，需联网）")
     ap.add_argument("--out", default="",
@@ -722,17 +755,28 @@ def offline_main(argv):
     if getattr(args, "prep_bili", False):
         _prep_bili_dir()
         return
-    kinds = [k.strip() for k in args.kinds.split(",") if k.strip()]
-    valid = {"webview2", "dotnet", "node", "git", "claude", "bili", "pydeps"}
-    bad = [k for k in kinds if k not in valid]
-    if bad:
-        print("未知资源：%s（可选：%s）" % (",".join(bad), ",".join(sorted(valid))))
-        return 2
+    if args.preset and args.preset != "full":
+        pr = presets[args.preset]
+        kinds = pr["kinds"]
+        tag = pr["label"]
+        title = pr["desc"]
+    elif args.preset == "full":
+        kinds, tag, title = None, "", "全量（八项全含）"
+    else:
+        kinds = [k.strip() for k in args.kinds.split(",") if k.strip()]
+        valid = {"webview2", "dotnet", "node", "git", "claude", "bili",
+                 "onlyoffice", "pydeps"}
+        bad = [k for k in kinds if k not in valid]
+        if bad:
+            print("未知资源：%s（可选：%s）" % (",".join(bad), ",".join(sorted(valid))))
+            return 2
+        tag = "-".join(kinds)
+        title = ",".join(kinds) if kinds else "全量"
 
     print("=" * 46)
-    print("  离线资源包（%s）" % ("全量" if not kinds else ",".join(kinds)))
+    print("  离线资源包（%s）" % title)
     print("=" * 46)
-    dst = _build_offline_fcpk(kinds)
+    dst = _build_offline_fcpk(kinds, tag=tag)
     if not dst:
         print("[失败] 资源包未产出")
         return 1
