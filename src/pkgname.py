@@ -31,7 +31,7 @@ _SUBSET_KW = (r"拓展|扩展|claude|基础|onlyoffice|webview2|dotnet|bili|"
 # 浏览器重名下载：`资源包 (1).fcpk`。序号必须在空白/括号里。
 _RE_COPY = re.compile(r"资源包[ \t]*[()（）][ \t]*\d+[ \t]*[)）][ \t]*\.fcpk$")
 # 版本尾巴：`-v2` / `-v2.1`（放右侧判定，见 pkg_class）
-_RE_VER = re.compile(r"[-_]v\d+(?:\.\d+)+|[-_]v\d+$")
+_RE_VER = re.compile(r"[-_]v\d+(?:\.\d+)*")
 # 副本链：`-副本`、`- 副本 (2)`、`-副本副本`、`-copy2`。
 # 序号用 `\d*`（不限长）——限长会让 `-副本2024` 剥不掉、整名落兜底判子集；
 # lookahead 放在重复组**外**，否则第二个副本词紧贴第一个时整组首次迭代即失败。
@@ -59,7 +59,7 @@ _RE_COPYWORD = re.compile(r"(?:[-_]?(?:副本|copy)\d*)+(?=[-_]|\.)")
 # `旧` 除上述外还接受「版」「包」（旧版、旧包），但拒绝「旧金山」「怀旧」。
 _RE_BACKUP = re.compile(r"(?:^|[-_.]|资源包)备份(?:$|[-_.\d]|资源包)|"
                         r"(?<![a-z])(?:bak|backup)\d*(?![a-z])")
-_RE_OLD = re.compile(r"(?:^|[-_.]|资源包)旧(?:$|[-_.\d版包])|"
+_RE_OLD = re.compile(r"(?:^|[-_.]|资源包)旧(?:$|[-_.\d版包]|资源包)|"
                      r"(?<![a-z])old(?![a-z])")
 
 
@@ -144,9 +144,9 @@ def pkg_rank(name, require_prefix=None, filter_backup=False):
         # 闸门也一刀切 —— 用户唯一一份包是 `-资源包-基础-备份.fcpk` 时工具
         # 直接起不来。而 build.py 的 base 预设（webview2+dotnet+pydeps）恰好
         # 就是 MANIFEST 里全部三个硬项，它**能**救急。
-        # 档位差：备份全量(1) > 备份子集(0)——「两份备份」取全量；
-        # 「只有备份子集」仍能装。备份全量与普通子集同档(1)。
-        return 0 if _bk else 1
+        # 档位差：备份全量(1) > 备份子集(0)；改名/留档子集(0) 让位于正规子集(1)。
+        # 「只有备份子集」仍能装（它是唯一候选）。
+        return 1 if (not _bk and not pkg_derived(name)) else 0
     if _bk:
         return 1                     # 备份全量：与正规子集同档，让位于全量
     # 没有应用名前缀（闸门的救急路径）：降一档，别压过带前缀的正规包
@@ -185,16 +185,28 @@ def pkg_derived(name):
         return False
     if re.fullmatch(r"v\d+(?:\.\d+)*", after):
         return True
+    # a347R（第18轮 P1-2，实锤回归）：右侧没有子集关键字 ⇒ 是**无名 tag**
+    # （`-2024` / `-1` / `-2024.09`），即用户把旧版全量改名留档。
+    # 上一版把「剥掉关键字+版本尾后只剩数字」当正规产物，`-2024` 因此
+    # 被判成 rank 3 正牌，与真主包按 mtime 抢且不报"可能不是最新"。
+    if not re.search(_SUBSET_KW, after):
+        return True
     # a346R（第17轮 P2-1）：正规子集（`-基础`/`-拓展`/`-claude`…）是
     # build.py --preset 的唯一规范产物，不算留档；但 `-基础-old`、
     # `-拓展-2024`、`-拓展-v3` 剥掉关键字后还剩无名 tag → 是留档。
-    # 剥掉子集关键字与版本尾后，剩下的**只有分隔符/数字** ⇒ 正规产物。
-    # `-拓展-2024` 的 2024 是版本/日期尾巴，仍算正规；`-基础-old`、
-    # `-拓展-v3` 剥完还剩字母 → 留档。
+    # a347R（第18轮 P3-2）：剥掉子集关键字与版本/日期尾后，剩下能**独立成段**
+    # 的字母才算留档。`-拓展-bakery` / `-拓展-旧金山` 是带注释的正规子集，
+    # 不该被门户打上"派生/留档包"（与第16轮"旧金山/备份中心不误杀"同口径）。
     rest = re.sub(_SUBSET_KW, "", after)
     rest = re.sub(r"v\d+(?:\.\d+)*", "", rest)
-    rest = re.sub(r"[-_.\d]", "", rest)
-    return bool(rest)
+    rest = re.sub(r"[-_.\d]", " ", rest).strip()
+    # 剩下的每一段都必须是「已认可的无名 tag」才算留档：纯数字已在上一步
+    # 抹掉；含字母/中文的段——只有 old / 旧 / 备份 类才是留档标记，
+    # 其余（bakery / 旧金山 / 备份中心 之类）是注释，属正规子集。
+    for seg in rest.split():
+        if _RE_BACKUP.search(seg) or _RE_OLD.search(seg):
+            return True
+    return False
 
 
 def pkg_class(name):

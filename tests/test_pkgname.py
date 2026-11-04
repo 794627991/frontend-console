@@ -140,7 +140,9 @@ def _test_rank_consistency():
 
 def _test_derived():
     """第16轮 P2-1：正规子集包不是留档，门户不能同时报"子集"和"派生"。"""
-    for n in ("前端控制台-资源包-基础.fcpk", "前端控制台-资源包-拓展.fcpk",
+    for n in ("前端控制台-资源包-拓展-bakery.fcpk",   # 第18轮 P3-2：带注释的子集
+              "前端控制台-资源包-拓展-旧金山.fcpk",
+              "前端控制台-资源包-基础.fcpk", "前端控制台-资源包-拓展.fcpk",
               "前端控制台-资源包-claude.fcpk", "前端控制台-资源包-bili.fcpk"):
         check("derived=False %s" % n, pkg_derived(n) is False)
     for n in ("前端控制台-资源包-副本.fcpk", "前端控制台-资源包-v2.fcpk",
@@ -149,10 +151,13 @@ def _test_derived():
               "前端控制台-备份资源包.fcpk", "前端控制台-旧-资源包.fcpk",
               "前端控制台-old-资源包.fcpk",
               # 第17轮 P2-1：改名子集必须算留档（否则与正规子集同档抢包）
-              "前端控制台-资源包-基础-old.fcpk"):
+              "前端控制台-资源包-基础-old.fcpk",
+              # 第18轮 P1-1/P1-2
+              "前端控制台-旧资源包.fcpk",
+              "前端控制台-资源包-2024.fcpk",
+              "前端控制台-资源包-1.fcpk"):
         check("derived=True %s" % n, pkg_derived(n) is True)
-    for n in ("前端控制台-资源包-拓展-2024.fcpk",     # 日期/版本尾是正规产物
-              "前端控制台-资源包-拓展-v3.fcpk"):
+    for n in ("前端控制台-资源包-拓展-2024.fcpk",):   # 日期尾是正规产物
         check("derived=False %s" % n, pkg_derived(n) is False)
     check("正牌主包 derived=False", pkg_derived("前端控制台-资源包.fcpk") is False)
 
@@ -244,6 +249,7 @@ def _test_offline_fields():
         (["前端控制台-资源包-拓展.fcpk"], True, False),
         (["前端控制台-资源包-old.fcpk"], False, True),
         (["前端控制台-资源包-基础-old.fcpk"], True, True),
+        (["前端控制台-资源包-2024.fcpk"], False, True),
     ]
     for files, want_sub, want_der in cases:
         d = tempfile.mkdtemp(prefix="pkgname_f_")
@@ -297,9 +303,15 @@ def _test_e2e():
          [(P, 1e9), ("前端控制台-备份资源包.fcpk", 3e9)], P),
         ("主包+左侧旧(旧新)",
          [(P, 1e9), ("前端控制台-旧-资源包.fcpk", 3e9)], P),
+        ("主包+旧资源包连写(旧新)",
+         [(P, 1e9), ("前端控制台-旧资源包.fcpk", 3e9)], P),
+        ("主包+-2024(日期新)",
+         [(P, 1e9), ("前端控制台-资源包-2024.fcpk", 3e9)], P),
 
         # 第16轮：备份全量与正规子集同档(1)——备份件是完整包，内容上强于
         # 子集，同档按 mtime 取它是可接受的；关键是它绝不能压过正牌主包。
+        ("改名子集让位于正规子集",
+         [(S, 1e9), ("前端控制台-资源包-基础-old.fcpk", 3e9)], S),
         ("备份+子集(同档取新的)",
          [("前端控制台-资源包备份.fcpk", 3e9), (S, 1e9)],
          # 门户排除备份 → 只剩子集；闸门同档按 mtime → 备份（完整包）
