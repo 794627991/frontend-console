@@ -955,6 +955,20 @@ function _ovXlsxBindColGrip(conn, grip, c) {
   });
   grip.addEventListener('dblclick', () => {
     delete _ovXlsxSizeBk(conn, '_colW')[c];
+    // R11-2（实锤：persist 烙值后复位不回退）：桶键删除只影响后续渲染，
+    // ws 侧被 persist 烙进 !cols 的 wpx 需同步清——否则复位后保存仍落盘
+    // customWidth 残值
+    const sh = conn._wb.Sheets[conn._wb.SheetNames[conn._sheetIdx]];
+    if (sh && sh['!cols']) {
+      const rr = sh['!ref'] ? XLSX.utils.decode_range(sh['!ref']) : null;
+      const ci = c + (rr ? rr.s.c : 0);
+      if (sh['!cols'][ci] && sh['!cols'][ci].wpx !== undefined) {
+        delete sh['!cols'][ci].wpx;
+        delete sh['!cols'][ci].customWidth;
+        delete sh['!cols'][ci].wch;
+        if (!Object.keys(sh['!cols'][ci]).length) sh['!cols'][ci] = undefined;
+      }
+    }
     _ovXlsxRenderTable(conn);
   });
 }
@@ -980,6 +994,18 @@ function _ovXlsxBindRowGrip(conn, grip, r) {
   });
   grip.addEventListener('dblclick', () => {
     delete _ovXlsxSizeBk(conn, '_rowH')[r];
+    // R11-2：同列复位——清 ws !rows 烙值（ORG 偏移到全局行号）
+    const sh = conn._wb.Sheets[conn._wb.SheetNames[conn._sheetIdx]];
+    if (sh && sh['!rows']) {
+      const rr = sh['!ref'] ? XLSX.utils.decode_range(sh['!ref']) : null;
+      const ri = r + (rr ? rr.s.r : 0);
+      if (sh['!rows'][ri] && sh['!rows'][ri].hpx !== undefined) {
+        delete sh['!rows'][ri].hpx;
+        delete sh['!rows'][ri].customHeight;
+        delete sh['!rows'][ri].hpt;
+        if (!Object.keys(sh['!rows'][ri]).length) sh['!rows'][ri] = undefined;
+      }
+    }
     _ovXlsxRenderTable(conn);
   });
 }
@@ -1150,7 +1176,13 @@ function _ovXlsxBindBar(conn, body) {
         const s = JSON.parse(snap);
         const idx = Array.isArray(s) ? conn._sheetIdx : s.idx;   // 旧格式（纯数组）按当前表
         const aoa = Array.isArray(s) ? s : s.aoa;
-        if (idx !== conn._sheetIdx) { conn._sheetIdx = idx; _ovXlsxRenderTabs(conn); }   // R4-2：先归位 sheet 再恢复
+        // R4-2：先归位 sheet 再恢复。R11-1（实锤：换表第二入口漏防）：
+        // undo 跨表归位同切表 onclick 一样要清选中态——SB 的 _selRow 残留
+        // 会让归位后的 SA「－行」误删同位行
+        if (idx !== conn._sheetIdx) {
+          conn._sheetIdx = idx; conn._selRow = undefined; conn._sel = null;
+          _ovXlsxRenderTabs(conn);
+        }
         // R5-1：origin 先归位再 persist——旧格式快照无 org 时从目标表 !ref 推兜底
         conn._refOrigin = s.org || (() => {
           const ws0 = conn._wb.Sheets[conn._wb.SheetNames[idx]];
