@@ -435,8 +435,12 @@ function buildBitCalcTab() {
       if (kpMode === 'dec') {
         const v = _bcEvalExprF(src);
         if (!isFinite(v)) throw new Error('结果非有限数');
-        // 智能精度：整数结果不带小数尾巴；小数最多 12 位去尾零
-        exprRes.textContent = '= ' + (Number.isInteger(v) ? String(v) : String(Number(v.toPrecision(12))));
+        // 用户需求：DEC 科学模式按 = 也要联动上面的位数计算器（hex 模式一直可以）。
+        // 小数域→整数域寄存器用向零截断（程序员语义），完整值在结果行保留不丢
+        conn.value = BigInt(Math.trunc(v));
+        render();
+        // 智能精度：整数结果不带小数尾巴；小数最多 12 位去尾零（位格为截断整数）
+        exprRes.textContent = '= ' + (Number.isInteger(v) ? String(v) : String(Number(v.toPrecision(12))) + ' · 位格 ' + conn.value);
         exprRes.classList.remove('err');
       } else {
         conn.value = _bcEvalExpr(src, conn.bits);
