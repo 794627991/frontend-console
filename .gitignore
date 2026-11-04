@@ -78,3 +78,6 @@ src/_fcpk_key.py
 /offline_assets/*
 !/offline_assets/MANIFEST.json
 # a326 起 onlyoffice 装在 offline_assets/onlyoffice/（旧 vendor/onlyoffice 已迁空）
+# a348R：该空壳目录仅剩 `.download-ok` 下载标记，被 `git add -A` 误纳入过一次；
+# 显式忽略，防止残留标记再次进库。
+/vendor/onlyoffice/
