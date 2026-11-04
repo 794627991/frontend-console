@@ -153,6 +153,10 @@ def nav_delete():
     with _lock:
         if _state["running"]:
             return jsonify({"ok": False, "err": "索引任务运行中，稍后再删"}), 409
+        # R18-1（实锤：delete 漏接 importing 互斥）：导入中删库 → 导入线程
+        # makedirs 复活库目录写孤儿 symbols.json（不可见、无法 UI 清理）
+        if _state["importing"]:
+            return jsonify({"ok": False, "err": "nm 清单导入进行中，稍后再删"}), 409
     has_lib = any(l["root"].lower() == os.path.normcase(os.path.abspath(root))
                   for l in nav_index.list_libs())
     if not has_lib and not _guard(root):

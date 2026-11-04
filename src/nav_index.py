@@ -704,8 +704,7 @@ def references(file_path, symbol, limit=200):
     cmd = [rg, "--json", "--no-messages", "--no-ignore", "-F",
            "-g", "*.c", "-g", "*.h", "-g", "*.cpp", "-g", "*.hpp",
            "-g", "*.cc", "-g", "*.py", "-g", "*.js", "-g", "*.ts",
-           "-g", "!**/node_modules/**", "-g", "!**/.git/**",
-           "--max-count", "30"]
+           "-g", "!**/node_modules/**", "-g", "!**/.git/**"]
     # R17-8（实锤：operator 类假阳性）：-w 的词边界语义只对纯标识符符号
     # 成立（operator+ 的 + 非词字符，-w 判界异常）——纯标识符才加 -w
     if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", symbol):
@@ -723,9 +722,14 @@ def references(file_path, symbol, limit=200):
     mf = _load_json_cached(ld, "manifest.json", _manifest_cache)
     compiled = mf.get("compiled") or {}
     items = []
+    truncated = False
     import json as _json
+    # R18-2（实锤：单文件静默截断）：去掉 rg 每文件 --max-count（哨兵探测
+    # 被定义行排除占配额绕不过）——rg 不限，全局 limit 断点即截断标记
+    # （stdout 万条 JSON ~2MB 可接受，rg 120s 超时保底）
     for line in (r.stdout or b"").decode("utf-8", "replace").splitlines():
         if len(items) >= limit:
+            truncated = True
             break
         try:
             evt = _json.loads(line)
@@ -749,7 +753,8 @@ def references(file_path, symbol, limit=200):
         items.append({"rel": rel, "path": p, "line": ln,
                       "snippet": ((data.get("lines") or {}).get("text") or "").strip()[:160],
                       "in_build": in_build})
-    return {"ok": True, "items": items, "defs": len(deflines)}
+    return {"ok": True, "items": items, "defs": len(deflines),
+            "truncated": truncated}
 
 
 def definition(file_path, symbol):

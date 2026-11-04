@@ -220,7 +220,8 @@
     const card = document.createElement('div');
     card.className = 'dd-cur';
     card.style.cssText = 'width:720px;max-width:94vw;max-height:64vh;overflow:auto;padding:14px 16px;border-radius:12px;background:var(--bg-panel);border:1px solid var(--border);box-shadow:0 12px 40px rgba(0,0,0,.4);';
-    const title = _h('div', '「' + word + '」的引用 ' + ((j.items && j.items.length) || 0) + ' 处（定义行已排除）');
+    const title = _h('div', '「' + word + '」的引用 ' + ((j.items && j.items.length) || 0) + ' 处（定义行已排除）'
+      + (j.truncated ? ' · ⚠ 单文件超 30 处已截断' : ''));
     title.style.cssText = 'font-weight:600;margin-bottom:8px;';
     card.appendChild(title);
     if (!j.ok || !j.items || !j.items.length) {
