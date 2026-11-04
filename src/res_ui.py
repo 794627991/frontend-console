@@ -133,9 +133,15 @@ def autofind_fcpk():
     # a341R（第12轮）：改用 pkg_rank 排序——原实现只分 main/sub 两档、同档按
     # mtime 取胜，于是 `资源包-副本副本`（新）会顶掉真主包、备份包同理。
     try:
-        from src.pkgname import pkg_rank as _rk, APP_NAME as _AN
+        from src.pkgname import (pkg_rank as _rk, APP_NAME as _AN,
+                                 pkg_pref as _pf, pkg_backup as _bk)
     except Exception:
         return ""
+    # a342R（第13轮 P2-2）：stat 必须容错——Desktop/Downloads 常被 OneDrive
+    # 重定向或杀软隔离，glob 与 stat 之间文件消失会让整条闸门兜底路径抛异常，
+    # 用户看到的是"复查运行环境"而不是"包找不到"。
+    # a349R（第20轮 P3-3）：容错方式从「返回 0」改为「剔除该候选」——
+    # 返回 0 会让 stat 失败者排最后而非消失，唯一候选时会被选中再报错。
     cands = []
     for d in _search_dirs():
         if d and os.path.isdir(d):
@@ -155,31 +161,25 @@ def autofind_fcpk():
                 _r = _rk(_bn, require_prefix=_AN)
                 if _r < 0:
                     continue
-                cands.append((_r, p))
+                # a349R（第20轮 P3-3）：stat 失败的候选直接剔除。原实现
+                # _sz/_mt 吞 OSError 返回 0，唯一候选 stat 失败时会被选中
+                # 再弹「资源包有问题」。
+                try:
+                    _s, _m = os.path.getsize(p), os.path.getmtime(p)
+                except OSError:
+                    continue
+                cands.append((_r, _pf(_bn), 1 if _bk(_bn) else 0, p, _s, _m))
     if not cands:
         return ""
-    # 先按 rank 降序、再按 mtime 降序（rank 高者不受 mtime 影响）
-    # a342R（第13轮 P2-2）：getmtime 必须容错——Desktop/Downloads 常被 OneDrive
-    # 重定向或杀软隔离，glob 与 stat 之间文件消失会让整条闸门兜底路径抛异常，
-    # 用户看到的是"复查运行环境"而不是"包找不到"。
-    def _mt(p):
-        try:
-            return os.path.getmtime(p)
-        except OSError:
-            return 0.0
-
-    def _sz(p):
-        # a348R（第19轮）：同档决胜用大小而非 mtime——副本/备份与原件字节
-        # 相同，按 mtime 会被它们顶掉（第7~18轮反复复发的同一类事故）
-        try:
-            return os.path.getsize(p)
-        except OSError:
-            return 0
-    cands = [c for c in cands if os.path.exists(c[1])]
-    if not cands:
-        return ""
-    cands.sort(key=lambda t: (t[0], _sz(t[1]), _mt(t[1])), reverse=True)
-    return cands[0][1]
+    # a349R（第20轮 P1-1）：排序键 = rank > 备份完整包 > 语义优先分 > size > mtime。
+    # a348 用 size 做主键导致「874MB 拓展包」压过「641MB 基础包」→ 装完仍缺
+    # webview2/dotnet → 死循环。语义分把 基础(3)>claude(2)>拓展(1) 排好。
+    # a349R（第20轮 P3-2）：先按文件名升序稳定排序，再按主键降序稳定排序——
+    # 主键全等时保留**文件名字典序最小**的那个，与门户（sorted(names) 升序
+    # 遍历 + 只保留最大）完全一致。
+    cands.sort(key=lambda t: os.path.basename(t[3]))
+    cands.sort(key=lambda t: (t[0], t[2], t[1], t[4], t[5]), reverse=True)
+    return cands[0][3]
 
 
 def _app_dir():

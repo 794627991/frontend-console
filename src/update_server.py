@@ -187,8 +187,9 @@ def _offline_pkg():
       rank 2 = 派生全量（重名副本 / `-副本` 链 / `-v2` 尾巴 / 无应用名前缀）
       rank 1 = 子集包
       （备份件在门户侧不可见；zip 通道已退役，不再作为回退）
-    只有 rank 相同时才比 mtime。可见性与分类统一由 src.pkgname 判定
-    （第 8~12 轮出现过四轮口径分裂，别再各写一套正则）。
+    a349R（第20轮）：同档决胜不再是 mtime，也不是大小，而是 pkgname.pkg_pref
+    的语义分（子集 基础>claude>拓展，全量按版本号，备份先行）。可见性与
+    分类统一由 src.pkgname 判定（第 8~12 轮出现过四轮口径分裂，别再各写一套正则）。
 
     不进版本清单/更新日志——它不是应用版本，只是无外网机器的部署资源。
     sha1 不提供：manifest 刻意不收它（updater 不能把它当应用更新推下去），
@@ -203,7 +204,8 @@ def _offline_pkg():
     # 才允许回退。原实现把 zip 与「被过滤掉的备份 fcpk」同置 rank，mtime 决胜
     # 时 zip 会赢，门户就把 3.9 时代的旧格式包发给同事（客户端根本不认）。
     from src.pkgname import (pkg_rank as _pr, pkg_derived as _derived,
-                             pkg_class as _cls, is_res_pkg as _is_res)
+                             pkg_class as _cls, is_res_pkg as _is_res,
+                             pkg_pref as _pref, pkg_backup as _bk)
     # a338R（第9轮 P2-3）：可见性判定必须与闸门（res_ui.autofind_fcpk）同口径。
     # 原先这里判 `"-资源包" in _ln`、闸门判 `"资源包" in _bn` —— 分裂从分类
     # 转移到了可见性：用户把包改名成 `资源包.fcpk` 时闸门选得中、门户看不见。
@@ -233,19 +235,19 @@ def _offline_pkg():
         rank = _pr(n, require_prefix=APP_NAME, filter_backup=True)
         if rank < 0:
             continue
-        # a348R（第19轮）：同档决胜改用**文件大小**而非 mtime。
-        # 所有"副本/备份/改名版顶掉真主包"的事故（第7~18轮反复出现）都依赖
-        # 一个前提：派生件的 mtime 更新。而副本/备份与原件**字节完全相同**，
-        # 按大小决胜它们永远赢不了；真要换包（如新版更大的包）大小会变，
-        # 仍能正确取代。mtime 只在大小也相同时才用（同一内容的重复下载）。
-        if best and (rank, st.st_size, st.st_mtime) <= (
-                best[1][0], best[1][1], best[1][2]):
+        # a349R（第20轮 P1-1，实锤）：a348 的「按大小决胜」方向错了——体积与
+        # "能不能装上"无关，641MB 的 `-基础`（含 webview2+dotnet 两个硬项）
+        # 被 874MB 的 `-拓展`（只有 onlyoffice）压掉，装完仍缺 → 死循环。
+        # 改用语义优先分 pkg_pref：子集按 基础>claude>拓展，全量按版本号；
+        # 备份全量（完整包）先于正规子集；size/mtime 只做最后兜底。
+        key = (rank, 1 if _bk(n) else 0, _pref(n), st.st_size, st.st_mtime)
+        if best and key <= best[1]:
             continue
-        best = (n, (rank, st.st_size, st.st_mtime), st.st_size, "", "fcpk")
+        best = (n, key, st.st_size, "", "fcpk")
     if not best:
         return None
     return {"file": best[0], "version": best[3], "size": best[2],
-            "mtime": int(best[1][2] * 1000), "format": best[4],
+            "mtime": int(best[1][4] * 1000), "format": best[4],
             # a345R（第16轮）：subset 不能用 rank==1 推断——备份全量也是 1，
             # 会被误标成「子集包，不能用于全新机器」。用分类函数判。
             "subset": _cls(best[0]) == "subset",

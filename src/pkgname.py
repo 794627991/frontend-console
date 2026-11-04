@@ -162,6 +162,64 @@ def pkg_rank(name, require_prefix=None, filter_backup=False):
     return 3                         # 正牌主包
 
 
+def pkg_backup(name):
+    """是不是备份件（a349R 第20轮）。
+
+    备份全量（rank 1）与正规子集（rank 1）同档，但它是**完整包**，
+    装它一定能满足启动闸门的硬项（webview2/dotnet），理应优先。
+    单列一个决胜维度，不再塞进 pkg_pref 的数值里。
+    """
+    return bool(_RE_BACKUP.search(_norm(_base(name))))
+
+
+# 子集包的语义分组（与 build.py 的 presets 对齐）。
+# 顺序有意义：base 含 webview2+dotnet 两个硬项，是唯一能让工具起来的子集。
+_PREF_BASE = re.compile(r"基础|(?<![a-z])base(?![a-z])|webview2|dotnet|pydeps")
+_PREF_CLAUDE = re.compile(r"claude|(?<![a-z])node(?:js)?(?![a-z0-9])"
+                          r"|(?<![a-z])git(?![a-z])|bili")
+_PREF_EXT = re.compile(r"拓展|扩展|(?<![a-z])ext(?![a-z])|onlyoffice")
+
+# 规范名形：`<前缀>-资源包.fcpk` / `资源包.fcpk`。
+# 变体（`（资源包）`、` - 资源包`、`前端控制台资源包`）在正牌档里让位于它。
+_CANON = re.compile(r"(?:^|[-_])资源包\.fcpk$")
+
+
+def pkg_pref(name):
+    """同档内的语义优先分（越高越优先）。**只在 rank 相同**时有意义。
+
+    a349R（第20轮 P1-1，实锤）：a348 用「文件大小」做同档决胜，方向根本
+    错了——体积与"能不能装上"无关。实测 `-基础`(641MB，含 webview2+dotnet
+    两个硬项) 被 `-拓展`(874MB，只有 onlyoffice) 按大小压掉 → 装完仍缺
+    → 弹「工具无法启动」→ 再点还是同一个包，**确定性死循环**。
+    a348 之前按 mtime 至少"重打的基础包更新就能自愈"，a348 把这条路封死了。
+
+    现按语义分档内决胜：
+      子集：基础(3.0，含硬项) > claude(2.0) > 拓展(1.0) > 其它(0.5)
+      全量：带版本尾(v2/v2.1)取其自然数值，规范名 0.9，其余 0
+            —— `-2024`/`-1` 这类无名 tag 是旧版留档，不得压过 `-v2`
+    """
+    b = _base(name)
+    t = _norm(b)
+    cls = pkg_class(name)
+    if cls == "subset":
+        if _PREF_BASE.search(t):
+            return 3.0
+        if _PREF_CLAUDE.search(t):
+            return 2.0
+        if _PREF_EXT.search(t):
+            return 1.0
+        return 0.5
+    m = re.search(r"v(\d+(?:\.\d+)*)", t)
+    if m:
+        try:
+            return float(m.group(1))
+        except ValueError:
+            return 0.0
+    if _CANON.search(b):
+        return 0.9          # 正牌规范名，压过带空格/全角/括号的变体
+    return 0.0
+
+
 def pkg_derived(name):
     """是不是"派生/留档"包：重名副本、副本链、版本尾巴、备份件。
 

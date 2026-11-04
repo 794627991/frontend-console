@@ -329,31 +329,90 @@ def _test_e2e():
          [("前端控制台-资源包-old.fcpk", 1e9), (S, 2e9)],
          "前端控制台-资源包-old.fcpk"),
 
-        # a348R（第19轮）：同档决胜按**大小**而非 mtime。
-        # 副本/备份与原件字节相同 → 无论 mtime 多新都赢不了；
-        # 真要换新版（体积不同）时仍能正确取代。
-        ("同档副本:小者mtime新(应取大的)",
-         [("前端控制台-资源包-副本.fcpk", 3e9, 300),
-          ("前端控制台-资源包-copy.fcpk", 1e9, 100)],
-         "前端控制台-资源包-副本.fcpk"),
-        ("同档副本:大者mtime新(取大的)",
-         [("前端控制台-资源包-副本.fcpk", 1e9, 100),
-          ("前端控制台-资源包-copy.fcpk", 3e9, 300)],
-         "前端控制台-资源包-copy.fcpk"),
-        ("同档子集:大者mtime旧(取大的)",
-         [("前端控制台-资源包-拓展.fcpk", 3e9, 300),
-          ("前端控制台-资源包-claude.fcpk", 1e9, 100)],
-         "前端控制台-资源包-拓展.fcpk"),
+        # a348R（第19轮）→ a349R（第20轮）推翻：同档决胜**不是**按大小。
+        # 体积与"能不能装上"无关——`-基础`(641MB) 含 webview2+dotnet 两个
+        # 硬项，`-拓展`(874MB) 只有 onlyoffice。按大小选拓展包 → 装完仍缺
+        # → 死循环。以下用例把「体积大但语义靠后」作为期望失败方向。
+        ("同档子集:基础(小) vs 拓展(大)",
+         [("前端控制台-资源包-拓展.fcpk", 3e9, 874),
+          ("前端控制台-资源包-基础.fcpk", 1e9, 641)],
+         "前端控制台-资源包-基础.fcpk"),
+        ("同档子集:基础(旧) vs 拓展(新)",
+         [("前端控制台-资源包-基础.fcpk", 1e9, 641),
+          ("前端控制台-资源包-拓展.fcpk", 3e9, 874)],
+         "前端控制台-资源包-基础.fcpk"),
+        ("同档子集:claude vs 拓展",
+         [("前端控制台-资源包-claude.fcpk", 1e9, 848),
+          ("前端控制台-资源包-拓展.fcpk", 3e9, 874)],
+         "前端控制台-资源包-claude.fcpk"),
+        # 派生档：无名 tag（-2024，旧版留档）不得压过带版本尾的 -v2，
+        # 即使它体积更大、mtime 更新。
+        ("派生档:-2024(大,新) 让位 -v2(小,旧)",
+         [("前端控制台-资源包-2024.fcpk", 3e9, 2000),
+          ("前端控制台-资源包-v2.fcpk", 1e9, 1800)],
+         "前端控制台-资源包-v2.fcpk"),
+        # 正牌档：规范名压过括号变体（体积/mtime 全相同也不让 mtime 决胜）
+        ("正牌档:规范名 vs 括号变体",
+         [("前端控制台-资源包.fcpk", 1e9, 1000),
+          ("前端控制台（资源包）.fcpk", 9e9, 1000)],
+         "前端控制台-资源包.fcpk"),
         # 真主包 mtime 更旧、体积更小，但 rank=3 必须压过 rank=2 的副本
         ("新版副本更大也不压正牌",
          [(P, 1e9, 100), ("前端控制台-资源包-副本.fcpk", 3e9, 900)], P),
     ])
 
 
+def _test_pref():
+    """a349R（第20轮 P1-1）：同档决胜用语义分，不是体积。
+
+    子集：基础(3) > claude(2) > 拓展(1) > 其它(0.5)。基础包是唯一含
+    webview2+dotnet 两个硬项的 preset，必须无条件优先——否则装完仍缺。
+    """
+    from src.pkgname import pkg_pref, pkg_backup
+    order = [
+        ("前端控制台-资源包-基础.fcpk", 3.0),
+        ("前端控制台-资源包-webview2-dotnet.fcpk", 3.0),
+        ("前端控制台-资源包-pydeps.fcpk", 3.0),
+        ("前端控制台-资源包-claude.fcpk", 2.0),
+        ("前端控制台-资源包-bili.fcpk", 2.0),
+        ("前端控制台-资源包-node.fcpk", 2.0),
+        ("前端控制台-资源包-拓展.fcpk", 1.0),
+        ("前端控制台-资源包-OnlyOffice.fcpk", 1.0),
+    ]
+    for n, want in order:
+        check("pref %s=%s" % (n, want), pkg_pref(n) == want,
+              "got %r" % pkg_pref(n))
+    check("pref 基础 > claude > 拓展",
+          pkg_pref("前端控制台-资源包-基础.fcpk")
+          > pkg_pref("前端控制台-资源包-claude.fcpk")
+          > pkg_pref("前端控制台-资源包-拓展.fcpk"))
+    # 全量：带版本尾按自然序号；无名 tag（-2024/-1）不得压过 -v2
+    check("pref -v2 > -2024",
+          pkg_pref("前端控制台-资源包-v2.fcpk")
+          > pkg_pref("前端控制台-资源包-2024.fcpk"))
+    check("pref -v2.1 > -v2",
+          pkg_pref("前端控制台-资源包-v2.1.fcpk")
+          > pkg_pref("前端控制台-资源包-v2.fcpk"))
+    check("pref 规范名 > 括号变体",
+          pkg_pref("前端控制台-资源包.fcpk")
+          > pkg_pref("前端控制台（资源包）.fcpk"))
+    check("pref 规范名 > 副本",
+          pkg_pref("前端控制台-资源包.fcpk")
+          > pkg_pref("前端控制台-资源包-副本.fcpk"))
+    # 备份判定（与 pkg_derived 解耦，供 rank=1 档内决胜）
+    check("backup=True 资源包备份", pkg_backup("前端控制台-资源包备份.fcpk"))
+    check("backup=True 左侧备份", pkg_backup("前端控制台-备份资源包.fcpk"))
+    check("backup=False 正规子集",
+          not pkg_backup("前端控制台-资源包-拓展.fcpk"))
+    check("backup=False 备份中心",
+          not pkg_backup("前端控制台-资源包-备份中心.fcpk"))
+
+
 def main():
     for title, fn in (("分类期望表", _test_class),
                       ("rank 一致性", _test_rank_consistency),
                       ("derived 判定", _test_derived),
+                      ("语义优先分", _test_pref),
                       ("可见性口径", _test_visibility),
                       ("门户字段", _test_offline_fields),
                       ("端到端选包", _test_e2e)):
