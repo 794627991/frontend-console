@@ -224,9 +224,10 @@
     title.style.cssText = 'font-weight:600;margin-bottom:8px;';
     card.appendChild(title);
     if (!j.ok || !j.items || !j.items.length) {
-      // R16-9：rg 失败/无库等 err 透出（此前统一显示"无引用命中"吞真错）
-      const d = _h('div', !j.ok ? ('查询失败：' + (j.err || '')) :
-                         (j.err === 'no-index' ? '该文件不在索引库内' : '无引用命中'));
+      // R16-9：err 透出。R17-6（实锤：no-index 文案死分支）：no-index 时
+      // j.ok=False——分支顺序先判 err 值再判 ok
+      const d = _h('div', j.err === 'no-index' ? '该文件不在索引库内' :
+                         (!j.ok ? ('查询失败：' + (j.err || '')) : '无引用命中'));
       d.style.cssText = 'color:var(--muted);padding:8px;';
       card.appendChild(d);
     }
@@ -297,7 +298,18 @@
         let closed = false;
         if (document.getElementById('navCandsPanel')) { _closeCands(); closed = true; }
         if (document.getElementById('navSymPanel')) { _closeSym(); closed = true; }
-        if (closed) { e.preventDefault(); e.stopPropagation(); }
+        if (closed) {
+          e.preventDefault();
+          e.stopPropagation();
+          // R17-7（实锤：Esc 不还焦点）：面板关闭后把焦点还给可见编辑器，
+          // 否则后续 F12/Shift+F12 因 hasTextFocus 落空完全哑火
+          try {
+            const ed2 = monaco.editor.getEditors().find(function (x) {
+              return x.getDomNode() && x.getDomNode().offsetParent;
+            });
+            if (ed2) ed2.focus();
+          } catch (_) {}
+        }
         return;
       }
       const ed = window.monaco && monaco.editor && monaco.editor.getEditors

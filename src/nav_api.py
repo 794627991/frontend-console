@@ -16,7 +16,7 @@ _lock = threading.Lock()
 _state = {"running": False, "phase": "", "log": [], "done": False,
           "ok": False, "err": "", "ts": 0.0, "result": None, "cancel": False,
           "percent": 0, "cur": "", "cancelled": False, "log_seq": 0,
-          "root": ""}
+          "root": "", "importing": False}
 
 
 def _log(msg):
@@ -79,9 +79,13 @@ def nav_build():
     if not _guard(root):
         return jsonify({"ok": False, "err": "目录不在文件树登记根内"}), 400
     with _lock:
+        # R17-2（实锤：互斥只挡单向）：导入进行中（大清单秒级窗口）启动
+        # build 会非确定互覆 symbols/meta——双向互斥
         if _state["running"]:
             return jsonify({"ok": False,
                             "err": "已有索引任务在运行（%s）" % _state["root"]}), 409
+        if _state["importing"]:
+            return jsonify({"ok": False, "err": "nm 清单导入进行中，稍后再建"}), 409
         _state.update(running=True, phase="准备", log=[], done=False, ok=False,
                       err="", ts=time.time(), result=None, cancel=False,
                       percent=0, cur="", cancelled=False, log_seq=0, root=root)
@@ -235,15 +239,22 @@ def nav_import_nm():
     with _lock:
         if _state["running"]:
             return jsonify({"ok": False, "err": "索引任务运行中，稍后再导入"}), 409
-    if not os.path.isfile(nmf):
-        return jsonify({"ok": False, "err": "清单文件不存在"}), 400
+        if _state["importing"]:
+            return jsonify({"ok": False, "err": "已有导入进行中"}), 409
+        _state["importing"] = True
     try:
-        if os.path.getsize(nmf) > 100 * 1048576:
-            return jsonify({"ok": False, "err": "清单过大（>100MB）"}), 400
-    except OSError:
-        return jsonify({"ok": False, "err": "清单不可读"}), 400
-    try:
-        ok, msg = nav_index.import_nm_list(root, nmf)
-    except Exception as e:
-        return jsonify({"ok": False, "err": "导入失败：%s" % str(e)[:150]}), 200
-    return jsonify({"ok": ok, "err": "" if ok else msg, "msg": msg})
+        if not os.path.isfile(nmf):
+            return jsonify({"ok": False, "err": "清单文件不存在"}), 400
+        try:
+            if os.path.getsize(nmf) > 100 * 1048576:
+                return jsonify({"ok": False, "err": "清单过大（>100MB）"}), 400
+        except OSError:
+            return jsonify({"ok": False, "err": "清单不可读"}), 400
+        try:
+            ok, msg = nav_index.import_nm_list(root, nmf)
+        except Exception as e:
+            return jsonify({"ok": False, "err": "导入失败：%s" % str(e)[:150]}), 200
+        return jsonify({"ok": ok, "err": "" if ok else msg, "msg": msg})
+    finally:
+        with _lock:
+            _state["importing"] = False

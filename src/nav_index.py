@@ -155,8 +155,12 @@ def status(root):
         # 显著多于建库记录（基线重新编译过）即提示重建（不自动）
         # R16-4（实锤：O= 输出树误报）：out/ 不在浅探测 hint 链——建库时有
         # 产物、浅层探不到 ≠ 树换了。反向判定删除，只保留"建库无产物现在
-        # 浅层有"的升级提示（这是确定的增量信息）
-        stale = bool(meta.get("cmd_count", 0) == 0 and probe.get("cmd_hits", 0) > 0)
+        # 浅层有"的升级提示（这是确定的增量信息）。
+        # R17-4（实锤：计数口径不一）：cmd_count=解析成功数（受路径形态
+        # 影响），probe.cmd_hits=文件名计数——同口径比较用 cmd_files
+        # （建库时发现的 .cmd 文件总数，旧库无此键回退 cmd_count）
+        cmd_files = meta.get("cmd_files", meta.get("cmd_count", 0))
+        stale = bool(cmd_files == 0 and probe.get("cmd_hits", 0) > 0)
         out["stale"] = stale
         out["meta"] = {
             "built_at": meta.get("built_at", ""),
@@ -322,23 +326,28 @@ def build(root, log=None, progress=None, should_cancel=None):
     prog(2, "扫描编译产物")
     compiled = {}       # rel_src_posix -> {"o": rel_o, "src": "cmd"|"omap"|"bmap"}
     o_files = []        # 相对 .o（符号表阶段用）
-    cmd_count = o_count = 0
+    cmd_count = cmd_files = o_count = 0
     unit_by_base = {}   # basename（无后缀）-> [rel, ...] 编译单元源文件
     pending_o = []      # 未被 .cmd/同目录覆盖的 .o
     for abs_p, rel in _walk_files(root, should_cancel):
         low = rel.rsplit("/", 1)[-1].lower()
         if low.endswith(".cmd"):
+            cmd_files += 1           # R17-4：文件名计数（stale 同口径）
             src = _parse_cmd_file(abs_p)
             if src and os.path.isfile(src):
                 srel = os.path.relpath(src, root).replace(os.sep, "/")
                 base, _ = os.path.splitext(rel)
                 # R16-1（高，实锤：Kbuild 点前缀幻影路径）：Kbuild 命名是
                 # `.foo.o.cmd`（隐藏文件）——splitext 只剥 .cmd 得 `.foo.o`，
-                # 幻影点让阶段 3/nm 导入的 .o 映射两连 miss，symbols.json
-                # 全空（符号级消歧整体失效）。剥**文件名**的点前缀
-                dsep, fbase = base.rsplit("/", 1)
-                if fbase.startswith("."):
-                    base = dsep + "/" + fbase[1:]
+                # 幻影点让阶段 3/nm 导入的 .o 映射两连 miss。剥**文件名**
+                # 的点前缀。R17-1（实锤：顶层 .cmd 崩）：rsplit 二元 unpack
+                # 对不含 / 的顶层路径抛 ValueError 建库必败——先判含 /
+                if "/" in base:
+                    dsep, fbase = base.rsplit("/", 1)
+                    if fbase.startswith("."):
+                        base = dsep + "/" + fbase[1:]
+                elif base.startswith("."):
+                    base = base[1:]
                 compiled.setdefault(srel, {"o": base, "src": "cmd"})
                 cmd_count += 1
         elif low.endswith(".o"):
@@ -449,17 +458,25 @@ def build(root, log=None, progress=None, should_cancel=None):
                 if srel and srel not in lst:
                     lst.append(srel)
         say("  符号表：%d 符号 / %d 个 .o" % (len(symbols), used))
+    # R17-5：重建前检出旧 nm 导入（写 symbols.json 之前读——之后读到的
+    # 已是新数据，提示永假的坑踩过）
+    _had_nm = bool((_read_json(os.path.join(ld, "symbols.json")) or {}).get("nm_imported"))
     _write_json(os.path.join(ld, "symbols.json"),
                 {"version": 1, "symbols": symbols})
 
     meta = {"version": 1, "root": root,
             "built_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             "langs": NAV_LANGS, "code_files": tag_lines,
-            "cmd_count": cmd_count, "o_count": o_count,
+            "cmd_count": cmd_count, "cmd_files": cmd_files, "o_count": o_count,
             "symbols": len(symbols),
             "sizes": {"tags": os.path.getsize(tags) if os.path.isfile(tags) else 0,
                       "manifest": os.path.getsize(os.path.join(ld, "manifest.json")),
                       "symbols": os.path.getsize(os.path.join(ld, "symbols.json"))}}
+    # R17-5（实锤：重建静默清空 nm 增强数据）：nm 导入的符号映射随
+    # symbols.json 覆盖丢失——检出并明确提示（不自动合并：旧映射基于
+    # 旧 manifest，正确性无法保证）
+    if _had_nm:
+        say("⚠ 此前导入的 nm 符号清单已随重建清空——需要请从弹层重新导入")
     _write_json(os.path.join(ld, "meta.json"), meta)
     prog(100, "完成")
     say("✓ 索引完成：%d 符号 / 白名单 %d 文件 / 库 %.1f MB"
@@ -678,10 +695,22 @@ def references(file_path, symbol, limit=200):
     if not os.path.isfile(rg):
         return {"ok": False, "err": "rg.exe 缺失", "items": []}
     import subprocess as _sp
-    cmd = [rg, "--json", "--no-messages", "--no-ignore", "-w", "-F", "--", symbol,
+    # R17-3（实锤：引用域分裂）：--no-ignore 打开了被忽略目录却没有对应
+    # 排除——与 ctags 的 --exclude=.git/node_modules 对齐（否则 F12 与
+    # Shift+F12 口径反向分裂，node_modules 淹没结果）。
+    # R17-3b（R16-3 引入的真根因）：`--` 终结符曾放在 symbol 前——其后
+    # 所有 -g/--max-count 全被当路径参数，include/exclude 从未生效。
+    # 正确序：全部选项在前，`--` 只紧贴 pattern+root
+    cmd = [rg, "--json", "--no-messages", "--no-ignore", "-F",
            "-g", "*.c", "-g", "*.h", "-g", "*.cpp", "-g", "*.hpp",
            "-g", "*.cc", "-g", "*.py", "-g", "*.js", "-g", "*.ts",
-           "--max-count", "30", root]
+           "-g", "!**/node_modules/**", "-g", "!**/.git/**",
+           "--max-count", "30"]
+    # R17-8（实锤：operator 类假阳性）：-w 的词边界语义只对纯标识符符号
+    # 成立（operator+ 的 + 非词字符，-w 判界异常）——纯标识符才加 -w
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", symbol):
+        cmd.append("-w")
+    cmd += ["--", symbol, root]
     try:
         r = _sp.run(cmd, capture_output=True, timeout=120,
                     creationflags=0x08000000, env={"LC_ALL": "C", **os.environ})
