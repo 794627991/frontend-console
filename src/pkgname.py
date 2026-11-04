@@ -48,8 +48,13 @@ _RE_COPYWORD = re.compile(r"(?:[-_]?(?:副本|copy)\d*)+(?=[-_]|\.)")
 #     用户按 `-副本2024` 的习惯把旧包命名成 `-旧2` 时门户会把旧版发出去；
 #   · 中英对齐：`旧版/旧包` 与英文 `old` 同义，都归「派生」档（rank 2），
 #     不再一个可见一个隐藏。
-_RE_BACKUP = re.compile(r"备份|(?<![a-z])(?:bak|backup)\d*(?![a-z])|"
-                        r"旧版本|旧包|[-_.]旧(?:[版包\d]|[-_.]|$)|资源包旧")
+# a345R（第16轮）最终形态：备份词必须**独立成段**（前后是分隔符/边界），
+# 避免 `备份中心`/`双备份切换`/`bakery` 误伤；`资源包旧` 必须后接边界，
+# 避免 `（旧金山）` 归一化后被误杀。`旧版/旧包` 已移出——它们与英文
+# `old` 同义，属「派生」档（rank 2、门户可见），不再一个可见一个隐藏。
+_RE_BACKUP = re.compile(r"(?:^|[-_.]|资源包)备份(?:$|[-_.\d])|"
+                        r"(?<![a-z])(?:bak|backup)\d*(?![a-z])|"
+                        r"资源包旧(?:$|[-_.版包\d])")
 
 
 def _norm(s):
@@ -127,12 +132,15 @@ def pkg_rank(name, require_prefix=None, filter_backup=False):
         return -1
     _bk = bool(_RE_BACKUP.search(_norm(_base(name))))
     if cls == "subset":
-        # a344R（第15轮 P1-2）：备份**子集**不可见——原先与备份全量同档靠
-        # mtime 抢，选中它时装完仍缺 WebView2/.NET，回到「装完还拦」。
-        # 子集本来就救不了急（缺硬资源），没有必要给它留后门。
-        return -1 if _bk else 1
+        # a345R（第16轮 P1-1，实锤回归）：上一版让备份子集直接不可见，结果
+        # 闸门也一刀切 —— 用户唯一一份包是 `-资源包-基础-备份.fcpk` 时工具
+        # 直接起不来。而 build.py 的 base 预设（webview2+dotnet+pydeps）恰好
+        # 就是 MANIFEST 里全部三个硬项，它**能**救急。
+        # 改回档位差：备份全量(1) > 备份子集(0)——「两份备份」取全量；
+        # 「只有备份子集」仍能装。备份全量与普通子集同档(1)，优先级相同。
+        return 0 if _bk else 1
     if _bk:
-        return 0                     # 备份全量：能救急，但让位于任何正规包
+        return 1                     # 备份全量：与正规子集同档，让位于全量
     # 没有应用名前缀（闸门的救急路径）：降一档，别压过带前缀的正规包
     if require_prefix:
         _pn = _norm(str(require_prefix).lower())
@@ -163,6 +171,12 @@ def pkg_derived(name):
         return True
     if _RE_BACKUP.search(t):
         return True
+    # a345R（第16轮 P2-1）：正规子集包（`-基础`/`-拓展`/`-claude`…）是
+    # build.py --preset 的唯一规范产物，不是留档。门户会同时渲染
+    # 「子集包…」和「派生/留档包…」两条提示，自相矛盾。
+    if pkg_class(name) == "subset":
+        return False
+    # 只有**无名 tag**（`-2024` / `-old` / `-1`）才算改名留档
     core = _RE_COPYWORD.sub("", t)[:-5]
     i = core.find("资源包")
     return bool(i >= 0 and core[i + 3:].lstrip("-_."))

@@ -203,7 +203,7 @@ def _offline_pkg():
     # 才允许回退。原实现把 zip 与「被过滤掉的备份 fcpk」同置 rank，mtime 决胜
     # 时 zip 会赢，门户就把 3.9 时代的旧格式包发给同事（客户端根本不认）。
     from src.pkgname import (pkg_rank as _pr, pkg_derived as _derived,
-                             is_res_pkg as _is_res)
+                             pkg_class as _cls, is_res_pkg as _is_res)
     # a338R（第9轮 P2-3）：可见性判定必须与闸门（res_ui.autofind_fcpk）同口径。
     # 原先这里判 `"-资源包" in _ln`、闸门判 `"资源包" in _bn` —— 分裂从分类
     # 转移到了可见性：用户把包改名成 `资源包.fcpk` 时闸门选得中、门户看不见。
@@ -240,7 +240,9 @@ def _offline_pkg():
         return None
     return {"file": best[0], "version": best[3], "size": best[2],
             "mtime": int(best[1][1] * 1000), "format": best[4],
-            "subset": best[1][0] == 1,     # 子集包：门户应如实标注
+            # a345R（第16轮）：subset 不能用 rank==1 推断——备份全量也是 1，
+            # 会被误标成「子集包，不能用于全新机器」。用分类函数判。
+            "subset": _cls(best[0]) == "subset",
             # a343R（第14轮 P3-2）：派生/留档包（rank 2）与备份件（rank 0）
             # 也要能标注——它们可能是旧版本，不该被当成最新完整包
             # a344R（第15轮 P3-1）：derived 只由派生特征判定，不再用 rank

@@ -16,7 +16,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from src import pkgname
-from src.pkgname import pkg_class, pkg_rank, is_res_pkg
+from src.pkgname import pkg_class, pkg_rank, pkg_derived, is_res_pkg
 
 _PASS, _FAIL = [], []
 _APP = pkgname.APP_NAME
@@ -110,18 +110,36 @@ def _test_rank_consistency():
     check("rank/class 无矛盾", not bad, bad[:5])
     check("正牌主包 rank=3", pkg_rank("前端控制台-资源包.fcpk") == 3)
     check("副本 rank=2", pkg_rank("前端控制台-资源包-副本.fcpk") == 2)
-    check("备份全量 rank=0（能救急但让位）",
-          pkg_rank("前端控制台-资源包备份.fcpk") == 0)
-    # 第15轮 P1-2：备份子集不得与备份全量同档（会同档 mtime 抢，装完仍缺硬资源）
-    check("备份子集不可见",
-          pkg_rank("前端控制台-资源包-拓展-备份.fcpk",
-                   require_prefix=_APP) == -1)
+    check("备份全量 rank=1（与正规子集同档，低于正牌主包）",
+          pkg_rank("前端控制台-资源包备份.fcpk", require_prefix=_APP) == 1
+          and pkg_rank("前端控制台-资源包备份.fcpk", require_prefix=_APP)
+          < pkg_rank("前端控制台-资源包.fcpk", require_prefix=_APP))
+    # 第16轮 P1-1：备份全量(1) 必须压过备份子集(0)——"两份备份"取全量；
+    # 但备份子集仍可见（唯一一份时闸门要能装，base 预设含全部硬项）
+    check("备份全量 > 备份子集",
+          pkg_rank("前端控制台-资源包备份.fcpk", require_prefix=_APP)
+          > pkg_rank("前端控制台-资源包-拓展-备份.fcpk",
+                     require_prefix=_APP))
+    check("备份子集闸门仍可见",
+          pkg_rank("前端控制台-资源包-基础-备份.fcpk",
+                   require_prefix=_APP) >= 0)
     # 第15轮 P2-1：bak/backup 词边界，正常命名不误杀
     check("bakery 不误杀",
           pkg_rank("前端控制台-资源包-bakery.fcpk", require_prefix=_APP) == 2)
     check("旧金山 不误杀",
           pkg_rank("前端控制台-资源包-旧金山.fcpk", require_prefix=_APP) == 2)
     check("子集 rank=1", pkg_rank("前端控制台-资源包-拓展.fcpk") == 1)
+
+
+def _test_derived():
+    """第16轮 P2-1：正规子集包不是留档，门户不能同时报"子集"和"派生"。"""
+    for n in ("前端控制台-资源包-基础.fcpk", "前端控制台-资源包-拓展.fcpk",
+              "前端控制台-资源包-claude.fcpk", "前端控制台-资源包-bili.fcpk"):
+        check("derived=False %s" % n, pkg_derived(n) is False)
+    for n in ("前端控制台-资源包-副本.fcpk", "前端控制台-资源包-v2.fcpk",
+              "前端控制台-资源包-old.fcpk", "前端控制台-资源包备份.fcpk"):
+        check("derived=True %s" % n, pkg_derived(n) is True)
+    check("正牌主包 derived=False", pkg_derived("前端控制台-资源包.fcpk") is False)
 
 
 def _test_visibility():
@@ -138,13 +156,16 @@ def _test_visibility():
             ("资源包备份.fcpk", False),
             ("前端控制台-资源包备份.fcpk", False),
             ("前端控制台-资源包.bak2.fcpk", False),
-            ("前端控制台-资源包-旧版本-v2.fcpk", False),
+            ("前端控制台-资源包-旧版本-v2.fcpk", True),   # 第16轮 P2-2：与 -old 对齐
             ("前端控制台-资源包-副本-备份-v2.fcpk", False),   # 第14轮 P1-1
             ("前端控制台-资源包-拓展-备份-v2.fcpk", False),
             ("前端控制台-备份-资源包.fcpk", False),           # 第14轮 P1-2
             ("前端控制台-资源包-旧金山.fcpk", True),          # 不误杀
             ("前端控制台-资源包-office365.fcpk", True),
-            ("前端控制台-资源包-拓展-备份.fcpk", False)]:
+            ("前端控制台-资源包-拓展-备份.fcpk", False),
+            ("前端控制台-资源包-备份中心.fcpk", True),    # 第16轮 P2-4：不误伤
+            ("前端控制台-资源包-双备份切换.fcpk", True),
+            ("前端控制台-资源包（旧金山）.fcpk", True)]:  # 第16轮 P2-3
         got = is_res_pkg(n, require_prefix=_APP, filter_backup=True)
         check("portal 可见 %s" % n, got == want, "got %r" % got)
         ck += 1
@@ -228,10 +249,12 @@ def _test_e2e():
          [("前端控制台-资源包-拓展-备份.fcpk", 3e9),
           ("前端控制台-资源包备份.fcpk", 1e9)],
          (None, "前端控制台-资源包备份.fcpk")),
-        ("备份+子集(子集该赢)",
-         [("前端控制台-资源包备份.fcpk", 3e9), (S, 1e9)], S),
-        ("无前缀备份+带前缀子集",
-         [("资源包备份.fcpk", 3e9), (S, 1e9)], S),
+        # 第16轮：备份全量与正规子集同档(1)——备份件是完整包，内容上强于
+        # 子集，同档按 mtime 取它是可接受的；关键是它绝不能压过正牌主包。
+        ("备份+子集(同档取新的)",
+         [("前端控制台-资源包备份.fcpk", 3e9), (S, 1e9)],
+         # 门户排除备份 → 只剩子集；闸门同档按 mtime → 备份（完整包）
+         (S, "前端控制台-资源包备份.fcpk")),
         ("只有备份(闸门要能选、门户不能)",
          [("前端控制台-资源包备份.fcpk", 1e9)],
          (None, "前端控制台-资源包备份.fcpk")),
@@ -247,6 +270,7 @@ def _test_e2e():
 def main():
     for title, fn in (("分类期望表", _test_class),
                       ("rank 一致性", _test_rank_consistency),
+                      ("derived 判定", _test_derived),
                       ("可见性口径", _test_visibility),
                       ("端到端选包", _test_e2e)):
         print("[%s]" % title)
