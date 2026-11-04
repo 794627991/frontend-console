@@ -220,7 +220,10 @@ def nav_references():
 
 @nav_bp.route("/api/nav/import_nm", methods=["POST"])
 def nav_import_nm():
-    """批3：Linux 侧 nm -A 清单导入（可选增强）。body {root, file}"""
+    """批3：Linux 侧 nm -A 清单导入（可选增强）。body {root, file}
+    R16-6：与 build 互斥（并发写 symbols.json 交错丢数据）。
+    R16-7：库/meta 异常统一 200 人话（不留 500）。
+    R16-8：清单文件存在性+大小上限（防巨文件/不存在路径 500）。"""
     from src import nav_index
     d = request.get_json(force=True, silent=True) or {}
     root = str(d.get("root") or "").strip()
@@ -229,5 +232,18 @@ def nav_import_nm():
         return jsonify({"ok": False, "err": "缺 root/file"}), 400
     if not _guard(root):
         return jsonify({"ok": False, "err": "目录不在文件树登记根内"}), 400
-    ok, msg = nav_index.import_nm_list(root, nmf)
+    with _lock:
+        if _state["running"]:
+            return jsonify({"ok": False, "err": "索引任务运行中，稍后再导入"}), 409
+    if not os.path.isfile(nmf):
+        return jsonify({"ok": False, "err": "清单文件不存在"}), 400
+    try:
+        if os.path.getsize(nmf) > 100 * 1048576:
+            return jsonify({"ok": False, "err": "清单过大（>100MB）"}), 400
+    except OSError:
+        return jsonify({"ok": False, "err": "清单不可读"}), 400
+    try:
+        ok, msg = nav_index.import_nm_list(root, nmf)
+    except Exception as e:
+        return jsonify({"ok": False, "err": "导入失败：%s" % str(e)[:150]}), 200
     return jsonify({"ok": ok, "err": "" if ok else msg, "msg": msg})

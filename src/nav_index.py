@@ -71,7 +71,8 @@ def _read_json(p):
 
 def _write_json(p, obj):
     os.makedirs(os.path.dirname(p), exist_ok=True)
-    tmp = p + ".tmp"
+    # R16-6：tmp 唯一化（build/import_nm 并发写同库时固定名交错覆盖）
+    tmp = "%s.%d.tmp" % (p, threading.get_ident())
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(obj, f, ensure_ascii=False)
     os.replace(tmp, p)
@@ -152,11 +153,10 @@ def status(root):
         sizes = meta.get("sizes") or {}
         # 批3 stale 粗判：建库时记的 .cmd 计数与浅层现采对比——浅层命中
         # 显著多于建库记录（基线重新编译过）即提示重建（不自动）
-        stale = False
-        if meta.get("cmd_count", 0) == 0 and (probe.get("cmd_hits", 0) > 0):
-            stale = True     # 建库时无产物、现在有了——白名单可升级
-        elif meta.get("cmd_count", 0) > 0 and probe.get("cmd_hits", 0) == 0:
-            stale = True     # 建库时有、现在浅层一个没有——树可能换了
+        # R16-4（实锤：O= 输出树误报）：out/ 不在浅探测 hint 链——建库时有
+        # 产物、浅层探不到 ≠ 树换了。反向判定删除，只保留"建库无产物现在
+        # 浅层有"的升级提示（这是确定的增量信息）
+        stale = bool(meta.get("cmd_count", 0) == 0 and probe.get("cmd_hits", 0) > 0)
         out["stale"] = stale
         out["meta"] = {
             "built_at": meta.get("built_at", ""),
@@ -332,6 +332,13 @@ def build(root, log=None, progress=None, should_cancel=None):
             if src and os.path.isfile(src):
                 srel = os.path.relpath(src, root).replace(os.sep, "/")
                 base, _ = os.path.splitext(rel)
+                # R16-1（高，实锤：Kbuild 点前缀幻影路径）：Kbuild 命名是
+                # `.foo.o.cmd`（隐藏文件）——splitext 只剥 .cmd 得 `.foo.o`，
+                # 幻影点让阶段 3/nm 导入的 .o 映射两连 miss，symbols.json
+                # 全空（符号级消歧整体失效）。剥**文件名**的点前缀
+                dsep, fbase = base.rsplit("/", 1)
+                if fbase.startswith("."):
+                    base = dsep + "/" + fbase[1:]
                 compiled.setdefault(srel, {"o": base, "src": "cmd"})
                 cmd_count += 1
         elif low.endswith(".o"):
@@ -576,7 +583,7 @@ def symbols(file_path, q, limit=50):
     out = []
 
     def push(name):
-        for path, lineno, kind in tags[name][:2]:
+        for path, lineno, kind in tags[name][:6]:   # R16-10：与 F12 候选口径拉近
             rel = path.replace(os.sep, "/")
             if os.path.isabs(path):
                 rel = os.path.relpath(path, root).replace(os.sep, "/")
@@ -671,7 +678,7 @@ def references(file_path, symbol, limit=200):
     if not os.path.isfile(rg):
         return {"ok": False, "err": "rg.exe 缺失", "items": []}
     import subprocess as _sp
-    cmd = [rg, "--json", "--no-messages", "-w", symbol,
+    cmd = [rg, "--json", "--no-messages", "--no-ignore", "-w", "-F", "--", symbol,
            "-g", "*.c", "-g", "*.h", "-g", "*.cpp", "-g", "*.hpp",
            "-g", "*.cc", "-g", "*.py", "-g", "*.js", "-g", "*.ts",
            "--max-count", "30", root]

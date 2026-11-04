@@ -224,7 +224,9 @@
     title.style.cssText = 'font-weight:600;margin-bottom:8px;';
     card.appendChild(title);
     if (!j.ok || !j.items || !j.items.length) {
-      const d = _h('div', j.err === 'no-index' ? '该文件不在索引库内' : '无引用命中');
+      // R16-9：rg 失败/无库等 err 透出（此前统一显示"无引用命中"吞真错）
+      const d = _h('div', !j.ok ? ('查询失败：' + (j.err || '')) :
+                         (j.err === 'no-index' ? '该文件不在索引库内' : '无引用命中'));
       d.style.cssText = 'color:var(--muted);padding:8px;';
       card.appendChild(d);
     }
@@ -289,6 +291,15 @@
   // （capture 拦截——F12 原生开发者工具键、Ctrl+T 原生新标签页都被占位）
   function bindGlobalKeys() {
     document.addEventListener('keydown', function (e) {
+      // R16-5：候选/引用/符号三面板统一 Esc 关闭（面板 DOM 非焦点，
+      // input 级监听盖不全——document capture 兜底）
+      if (e.key === 'Escape') {
+        let closed = false;
+        if (document.getElementById('navCandsPanel')) { _closeCands(); closed = true; }
+        if (document.getElementById('navSymPanel')) { _closeSym(); closed = true; }
+        if (closed) { e.preventDefault(); e.stopPropagation(); }
+        return;
+      }
       const ed = window.monaco && monaco.editor && monaco.editor.getEditors
         ? monaco.editor.getEditors().find(function (x) {
             try { return x.hasTextFocus(); } catch (_) { return false; }
