@@ -703,29 +703,114 @@ function _ovXlsxRenderTabs(conn) {
     tabs.appendChild(b);
   });
 }
+// a295：列宽/行高拖拽（document 级 move/up，拖完套样式+记尺寸；双击复位）
+function _ovXlsxBindColGrip(conn, grip, c) {
+  grip.addEventListener('mousedown', e => {
+    e.preventDefault(); e.stopPropagation();
+    const th = grip.parentElement;
+    const holder = conn.wrap.querySelector('[data-xa-table]');
+    const table = holder.querySelector('table');
+    const startX = e.clientX;
+    const cells = table ? [...table.querySelectorAll('tr')].map(tr => tr.children[c + 1]) : [];
+    const startW = th.getBoundingClientRect().width;
+    const move = ev => {
+      const w = Math.max(36, Math.round(startW + ev.clientX - startX));
+      th.style.width = w + 'px';
+      cells.forEach(td => { if (td) { td.style.width = w + 'px'; td.style.maxWidth = w + 'px'; } });
+      conn._colW[c] = w;
+      grip.classList.add('on');
+    };
+    const up = () => {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+      grip.classList.remove('on');
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  });
+  grip.addEventListener('dblclick', () => {
+    delete conn._colW[c];
+    _ovXlsxRenderTable(conn);
+  });
+}
+function _ovXlsxBindRowGrip(conn, grip, r) {
+  grip.addEventListener('mousedown', e => {
+    e.preventDefault(); e.stopPropagation();
+    const tr = grip.closest('tr');
+    const startX = e.clientY;
+    const startH = tr.getBoundingClientRect().height;
+    const move = ev => {
+      const h = Math.max(20, Math.round(startH + ev.clientY - startX));
+      tr.style.height = h + 'px';
+      conn._rowH[r] = h;
+      grip.classList.add('on');
+    };
+    const up = () => {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+      grip.classList.remove('on');
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  });
+  grip.addEventListener('dblclick', () => {
+    delete conn._rowH[r];
+    _ovXlsxRenderTable(conn);
+  });
+}
+
 function _ovXlsxRenderTable(conn) {
   const body = conn.wrap.querySelector('[data-ov-body]');
   const holder = body.querySelector('[data-xa-table]');
   conn._aoa = _ovXlsxAoa(conn);
   const table = document.createElement('table');
   table.className = 'xlsx-edit-table';
+  // a295：用户列宽/行高（拖拽手柄写入；渲染时套用）。纯 DOM 构建（innerHTML
+  // 拼接会丢手柄的事件绑定）
+  if (!conn._colW) conn._colW = {};
+  if (!conn._rowH) conn._rowH = {};
   const hr = document.createElement('tr');
-  hr.innerHTML = '<th></th>' + (conn._aoa[0] || []).map((_, c) =>
-    '<th>' + XLSX.utils.encode_col(c) + '</th>').join('') + '<th style="width:26px;cursor:pointer" title="加一列">＋</th>';
-  hr.querySelector('th:last-child').onclick = () => {
+  hr.appendChild(document.createElement('th'));   // 角格
+  (conn._aoa[0] || []).forEach((_, c) => {
+    const th = document.createElement('th');
+    th.textContent = XLSX.utils.encode_col(c);
+    const w = conn._colW[c];
+    if (w) th.style.width = w + 'px';
+    const grip = document.createElement('div');
+    grip.className = 'x-col-grip';
+    grip.title = '拖动调整列宽（双击复位）';
+    _ovXlsxBindColGrip(conn, grip, c);
+    th.appendChild(grip);
+    hr.appendChild(th);
+  });
+  const addColTh = document.createElement('th');
+  addColTh.style.cssText = 'width:26px;cursor:pointer';
+  addColTh.title = '加一列';
+  addColTh.textContent = '＋';
+  addColTh.onclick = () => {
     _ovXlsxSnapshot(conn);
     conn._aoa.forEach(row => row.push(null));
     _ovXlsxPersist(conn); _ovXlsxRenderTable(conn);
   };
+  hr.appendChild(addColTh);
   table.appendChild(hr);
   conn._aoa.forEach((row, r) => {
     const tr = document.createElement('tr');
     const rh = document.createElement('td');
     rh.className = 'xlsx-row-head'; rh.textContent = r + 1;
+    rh.style.position = 'relative';
+    const hRow = conn._rowH[r];
+    if (hRow) { tr.style.height = hRow + 'px'; }
     rh.onclick = () => {
       table.querySelectorAll('tr').forEach(x => x.classList.remove('selrow'));
       tr.classList.add('selrow'); conn._selRow = r;
     };
+    // a295：行高拖拽手柄（行首格底缘）
+    const rgrip = document.createElement('div');
+    rgrip.className = 'x-row-grip';
+    rgrip.title = '拖动调整行高（双击复位）';
+    _ovXlsxBindRowGrip(conn, rgrip, r);
+    rh.appendChild(rgrip);
     tr.appendChild(rh);
     row.forEach((cell, c) => {
       const td = document.createElement('td');

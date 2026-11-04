@@ -5194,17 +5194,41 @@ span.nn-hl-t { background: color-mix(in srgb, #3fb950 15%, transparent);
   border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .office-title { font-size: 12px; color: var(--fg-bright); font-family: var(--font-mono); }
 .office-info { font-size: 10px; color: var(--muted); }
-/* a290R：自建 Excel 编辑网格（横向+纵向滚动条齐全，用户实锤缺左右拖动条） */
+/* a295：Excel 编辑网格——滚动条显式恢复（全站 * { scrollbar-width:none } 把
+   它也藏了——用户实锤"看不到左右滚动条"）；行高/列宽手动拖拽手柄 */
 .xlsx-table-wrap { position: absolute; top: 74px; left: 0; right: 0; bottom: 0;
   overflow: auto; background: var(--bg); }
+/* 滚动条豁免全站隐藏规则（!important 压 scrollbar-width / ::-webkit-scrollbar） */
+.xlsx-table-wrap { scrollbar-width: auto !important; }
+.xlsx-table-wrap::-webkit-scrollbar { width: 10px !important; height: 10px !important; }
+.xlsx-table-wrap::-webkit-scrollbar-track { background: color-mix(in srgb, var(--bg-panel) 80%, transparent); }
+.xlsx-table-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; border: 2px solid var(--bg); }
+.xlsx-table-wrap::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+.xlsx-table-wrap::-webkit-scrollbar-corner { background: transparent; }
+/* 单元格：默认自动换行（文字多→多行→行高自动撑开） */
+.xlsx-edit-table td { white-space: pre-wrap; word-break: break-word; vertical-align: top; }
+.xlsx-edit-table td:focus { white-space: pre-wrap; }
+/* 列宽拖拽手柄：表头格右缘 6px 竖条 */
+.xlsx-edit-table th { position: relative; }
+.x-col-grip { position: absolute; top: 0; right: 0; bottom: 0; width: 6px;
+  cursor: col-resize; z-index: 3; }
+.x-col-grip:hover, .x-col-grip.on { background: color-mix(in srgb, var(--accent) 55%, transparent); }
+/* 行高拖拽手柄：行首格底缘 5px 横条 */
+.x-row-grip { position: absolute; left: 0; right: 0; bottom: 0; height: 5px;
+  cursor: row-resize; z-index: 3; }
+.x-row-grip:hover, .x-row-grip.on { background: color-mix(in srgb, var(--accent) 55%, transparent); }
 .xlsx-edit-table { border-collapse: collapse; font-size: 12px; font-family: var(--font-mono);
-  background: var(--bg-card); min-width: 100%; }
+  background: var(--bg-card); min-width: 100%;
+  /* a295：fixed 布局——列宽严格由 th 决定（auto 布局会按内容重新分配，
+     拖拽列宽 delta 被吃掉，实测 60px 拖动只生效 19px） */
+  table-layout: fixed; }
 .xlsx-edit-table th { position: sticky; top: 0; z-index: 2; background: var(--bg-panel);
     color: var(--muted); font-weight: 600; padding: 3px 10px; border: 1px solid var(--border);
     font-size: 10px; min-width: 72px; }
 .xlsx-edit-table td { border: 1px solid var(--border); padding: 3px 10px; min-width: 72px;
-    max-width: 320px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    color: var(--fg); outline: none; }
+    color: var(--fg); outline: none;
+    /* a295：自动换行在此条直接声明（白名单实测有继承来的 nowrap 压 pre-wrap） */
+    white-space: pre-wrap !important; word-break: break-word; vertical-align: top; }
 .xlsx-edit-table td:focus { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent);
     background: color-mix(in srgb, var(--accent) 6%, var(--bg-card)); white-space: normal; }
 .xlsx-edit-table td.hasf { color: var(--accent); }
