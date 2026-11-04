@@ -582,3 +582,173 @@ _INSTALLERS = {"dotnet": _install_dotnet, "node": _install_node,
                "onlyoffice": _install_onlyoffice,
                "pydeps": _install_pydeps}
 
+
+# ------------------------------------------------------------------ 在线安装
+# a326 批2（用户需求：有网时工具内直接装，不强制离线包）。URL 与
+# offline_assets/MANIFEST.json 同源；离线包通道不受任何影响。
+
+ONLINE_URLS = {
+    "node": "https://nodejs.org/dist/v24.19.0/node-v24.19.0-x64.msi",
+    "node_zip": "https://nodejs.org/dist/v24.19.0/node-v24.19.0-win-x64.zip",
+    "git": ("https://github.com/git-for-windows/git/releases/download/"
+            "v2.55.0.windows.5/Git-2.55.0.5-64-bit.exe"),
+    "dotnet": ("https://download.visualstudio.microsoft.com/download/pr/"
+               "6a893f45-0810-4b11-9051-3b9ef0d1cf0e/4d6923c759e4cc4d34438f2b"
+               "57f4c06/ndp481-x86-x64-allos-enu.exe"),
+    # WebView2 Evergreen standalone 引导器（微软官方稳定 fwlink；Fixed 版
+    # 直链 2025-01 起下架，在线场景 Evergreen 由系统自更新维护）
+    "webview2": "https://go.microsoft.com/fwlink/p/?LinkId=2124703",
+}
+# 无稳定官方直链的 kind（在线通道明确跳过并指路离线包）
+ONLINE_UNSUPPORTED = {"bili", "onlyoffice"}
+
+
+def net_check(kinds=None):
+    """在线安装预检：各 URL 小超时 HEAD（部分 CDN 拒 HEAD 时小 GET 兜底）。
+    返回 {kind: {"ok": bool, "code": int, "err": str}}。给前端禁用态用。"""
+    import urllib.request
+    want = list(kinds) if kinds else ["node", "git", "dotnet", "webview2"]
+    out = {}
+    for k in want:
+        if k in ONLINE_UNSUPPORTED:
+            out[k] = {"ok": False, "code": 0,
+                      "err": "无官方稳定直链——请用离线包安装"}
+            continue
+        if k == "claude":   # npm registry（走 install 时的 node）；预检含 node
+            out[k] = net_check(["node"]).get("node", {"ok": False, "code": 0,
+                                                      "err": "?"})
+            continue
+        url = ONLINE_URLS.get(k)
+        if not url:
+            out[k] = {"ok": False, "code": 0, "err": "未知资源"}
+            continue
+        code, err = 0, ""
+        try:
+            req = urllib.request.Request(url, method="HEAD",
+                                         headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                code = resp.status
+        except Exception as e:
+            # 有些 CDN 拒 HEAD（400/405）——range 小 GET 再判
+            try:
+                req = urllib.request.Request(
+                    url, headers={"Range": "bytes=0-0",
+                                  "User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    code = resp.status
+            except Exception as e2:
+                err = str(getattr(e2, "reason", e2) or e2)[:120]
+        out[k] = {"ok": code in (200, 206), "code": code, "err": err}
+    return out
+
+
+def install_online(kinds, log=None, progress=None, should_cancel=None,
+                   force=False):
+    """在线安装依赖（有网直接装）。镜像 install_from 的约定：
+    log/progress/should_cancel/单 kind 容错/返回结构。
+
+    - node/git：cs._install_*_if_missing（本地 offline_assets 资源优先，
+      缺则官方直链下载；MSI 提权失败自动 zip 兜底）
+    - claude：确保 node → npm install -g @anthropic-ai/claude-code（免提权
+      prefix）→ 运行验证
+    - dotnet：下载 ndp481 → 复用 _install_dotnet 静默装
+    - webview2：下载 Evergreen standalone → /silent /install
+    - pydeps：源码形态 pip 在线装；exe 形态不支持（引导离线包）
+    - bili/onlyoffice：无稳定直链，skipped 指路离线包
+    """
+    from src import claude_setup as cs
+    say = log or (lambda _m: None)
+    cur = [0]
+
+    def prog(done, total, label=""):
+        cur[0] = done
+        if progress:
+            progress(done, total, label)
+
+    def _ck():
+        if should_cancel and should_cancel():
+            raise InstallCancelled("用户取消安装")
+
+    want = [k for k in ORDER if k in set(kinds)]
+    res = {"installed": [], "skipped": [], "errors": {}}
+    dl_dir = os.path.join(tempfile.gettempdir(), "fc_online_install")
+    os.makedirs(dl_dir, exist_ok=True)
+
+    # claude_setup 的日志/下载进度接到本次 say（monkeypatch，finally 还原）
+    orig_log = cs._log
+    cs._log = say
+    try:
+        import subprocess as _sp
+        total = len(want) or 1
+        for k in want:
+            _ck()
+            try:
+                ok = False
+                if k == "bili" or k == "onlyoffice":
+                    say("跳过 %s：官方无稳定直链——请用离线包装（四档预设含该项）" % k)
+                elif k == "pydeps":
+                    if getattr(__import__("sys"), "frozen", False):
+                        raise InstallError("exe 形态不支持在线装 pydeps——请用离线包")
+                    say("pip 在线安装工具依赖 %s …" % cs._TOOL_DEPS)
+                    import sys as _sys
+                    r = _sp.run([_sys.executable, "-m", "pip", "install",
+                                 *cs._TOOL_DEPS],
+                                capture_output=True, text=True, timeout=900)
+                    for line in (r.stdout or "").splitlines()[-5:]:
+                        say("  " + line)
+                    if r.returncode != 0:
+                        raise InstallError("pip 退出码 %s" % r.returncode)
+                    ok = True
+                elif k == "node":
+                    say("在线安装 Node（本地资源优先，缺则官方直链）…")
+                    ok = bool(cs._install_node_if_missing(dl_dir))
+                elif k == "git":
+                    say("在线安装 Git（本地资源优先，缺则官方直链）…")
+                    ok = bool(cs._install_git_if_missing(dl_dir))
+                elif k == "claude":
+                    say("在线安装 Claude CLI：确保 Node → npm install -g …")
+                    cs._install_node_if_missing(dl_dir)
+                    cs._npm_install_global()
+                    from src.res_boot import probe_claude
+                    st, v, _m = probe_claude()
+                    if st != "ok":
+                        raise InstallError("npm 装完但 claude 不可用（%s）" % v)
+                    ok = True
+                elif k == "dotnet":
+                    say("下载 .NET 4.8.1 安装器（约 74MB，内网代理可能拦微软 CDN）…")
+                    exe = os.path.join(dl_dir, "ndp481-online.exe")
+                    cs._download(ONLINE_URLS["dotnet"], exe)
+                    ok = bool(_install_dotnet(dl_dir, say, force))
+                elif k == "webview2":
+                    say("下载 WebView2 Evergreen 引导器（微软 fwlink）…")
+                    exe = os.path.join(dl_dir, "MicrosoftEdgeWebview2Setup.exe")
+                    cs._download(ONLINE_URLS["webview2"], exe)
+                    say("静默安装 WebView2 Evergreen …")
+                    rc = _sp.call([exe, "/silent", "/install"],
+                                  creationflags=0x08000000, timeout=600)
+                    from src.res_boot import probe_webview2
+                    st, v, _m = probe_webview2()
+                    if st != "ok" and rc != 0:
+                        raise InstallError("WebView2 安装失败（退出码 %s）" % rc)
+                    ok = st == "ok"
+                if ok:
+                    res["installed"].append(k)
+                    say("✓ %s 完成" % k)
+                elif k not in res["errors"] and k not in ("bili", "onlyoffice"):
+                    res["skipped"].append(k)
+            except InstallCancelled:
+                raise
+            except Exception as e:
+                res["errors"][k] = str(e)[:300]
+                say("✗ %s 失败：%s（无网/被代理拦请改用离线包安装）" % (k, e))
+            prog(min(cur[0] + 1, total), total, k)
+        prog(total, total, "完成")
+        _merge_state({"installed_at": _now(), "package": "在线安装",
+                      "installed": res["installed"],
+                      "skipped": res["skipped"],
+                      "errors": res["errors"]})
+        return res
+    finally:
+        cs._log = orig_log
+        # 下载目录留给后续增量安装复用（几 MB~百 MB 级，TEMP 自清理范畴）
+

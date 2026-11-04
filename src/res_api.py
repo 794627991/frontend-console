@@ -128,15 +128,21 @@ def res_cancel():
 
 @res_bp.route("/api/resources/install", methods=["POST"])
 def res_install_api():
-    """后台装资源包。body: {path, kinds?, force?}"""
+    """后台装资源包。body: {path, kinds?, force?, mode?: 'online'}
+
+    a326 批2：mode='online' 走在线安装（有网直接装，不要求 path/离线包）；
+    默认（无 mode 或 'offline'）维持原离线包流程不变。两者共用同一任务槽
+    与 poll 通道——正在跑时任一模式再点都 409。
+    """
     from src import fcpk, res_install
     d = request.get_json(force=True, silent=True) or {}
     path = str(d.get("path") or "").strip()
+    online = str(d.get("mode") or "offline") == "online"
     # 全审 N4：kinds 的语义必须区分「没传/传 null」和「传了空数组」。
     # `d.get("kinds") or None` 会把 [] 归成 None → 装全部六项，任何误传
     # 空数组的调用方都会得到「全量覆盖」这个最重后果。
-    # 注意判定必须是 `is not None` 而不是 `"kinds" in d`：红条/安装弹窗
-    # （resources.js 的 startInstall）恒带 `kinds: null` 表示「全装」，
+    # 注意判定必须是 `is not None` 而不是 `"kinds" in d`：
+    # 红条/安装弹窗（resources.js 的 startInstall）恒带 `kinds: null` 表示「全装」，
     # 用 in 判定会把这条并列主路径整个打成 400（复审实打复现）。
     kinds = d.get("kinds")
     if kinds is not None:
@@ -148,18 +154,25 @@ def res_install_api():
         if bad:
             return jsonify({"ok": False,
                             "err": "未知资源：%s" % ",".join(map(str, bad))}), 400
+    elif online:
+        # 在线模式没有「全装」默认（各 kind 网络可用性不一）——必须显式勾选
+        return jsonify({"ok": False, "err": "在线安装必须指定 kinds"}), 400
     force = bool(d.get("force"))
-    if not path or not fcpk.is_fcpk(path):
-        return jsonify({"ok": False, "err": "请选择 .fcpk 资源包"}), 400
-    info = fcpk.inspect(path)
-    if not info.get("ok"):
-        return jsonify({"ok": False, "err": info.get("err") or "资源包无法读取"}), 400
+    if not online:
+        if not path or not fcpk.is_fcpk(path):
+            return jsonify({"ok": False, "err": "请选择 .fcpk 资源包"}), 400
+        info = fcpk.inspect(path)
+        if not info.get("ok"):
+            return jsonify({"ok": False, "err": info.get("err") or "资源包无法读取"}), 400
+        total0 = info.get("plain_len") or 0
+    else:
+        total0 = len(kinds)
     with _lock:
         if _state["running"]:
             return jsonify({"ok": False, "err": "已有安装任务在运行"}), 409
         _state.update(running=True, phase="准备", log=[], done=False, ok=False,
                       err="", ts=time.time(), result=None, cancel=False,
-                      total=info.get("plain_len") or 0, done_bytes=0, cur="",
+                      total=total0, done_bytes=0, cur="",
                       cancelled=False)
 
     def should_cancel():
@@ -173,10 +186,16 @@ def res_install_api():
 
     def work():
         try:
-            _state["phase"] = "解包安装"
-            res = res_install.install_from(
-                path, kinds=kinds, log=_log, progress=on_prog,
-                should_cancel=should_cancel, force=force)
+            if online:
+                _state["phase"] = "在线安装"
+                res = res_install.install_online(
+                    kinds, log=_log, progress=on_prog,
+                    should_cancel=should_cancel, force=force)
+            else:
+                _state["phase"] = "解包安装"
+                res = res_install.install_from(
+                    path, kinds=kinds, log=_log, progress=on_prog,
+                    should_cancel=should_cancel, force=force)
             errs = res.get("errors") or {}
             _state.update(done=True, ok=not errs, result=res,
                           err="; ".join("%s: %s" % kv for kv in errs.items()),
@@ -202,6 +221,55 @@ def res_install_api():
 
     threading.Thread(target=work, daemon=True).start()
     return jsonify({"ok": True})
+
+
+@res_bp.route("/api/resources/net_check")
+def res_net_check():
+    """a326 批2：在线安装预检（各官方直链连通性）——前端禁用态依据。
+    缓存 60s（每次点开设置页不重复探）。"""
+    import time as _t
+    with _lock:
+        cached = _state.get("net_check")
+        if cached and _t.time() - cached[0] < 60:
+            return jsonify({"ok": True, "net": cached[1], "cached": True})
+    from src.res_install import net_check as _nc
+    net = _nc()
+    with _lock:
+        _state["net_check"] = (_t.time(), net)
+    return jsonify({"ok": True, "net": net, "cached": False})
+
+
+@res_bp.route("/api/resources/latest")
+def res_latest():
+    """a326 批3：claude 在线升级检查。npm registry JSON 直查（不依赖 npm
+    命令，秒回）；current 零进程开销读本机 package.json（d05df34 同款）。
+    upgradable = latest 严格大于 current（semver 分段数字比较）。"""
+    kind = request.args.get("kind", "claude")
+    if kind != "claude":
+        return jsonify({"ok": False, "err": "暂只支持 claude 的在线升级检查"}), 400
+    from src.claude_setup import _pkg_version, _claude_pkg_dir
+    current = _pkg_version(_claude_pkg_dir())
+    latest, err = "", ""
+    try:
+        import json as _json
+        import urllib.request
+        req = urllib.request.Request(
+            "https://registry.npmjs.org/@anthropic-ai/claude-code/latest",
+            headers={"User-Agent": "fc-upgrade-check"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            latest = (_json.load(r) or {}).get("version") or ""
+    except Exception as e:
+        err = "查询 npm registry 失败（%s）——无网/被拦时请用离线包升级" % str(e)[:100]
+
+    def _vt(v):
+        try:
+            return tuple(int(x) for x in v.split(".") if x.isdigit())
+        except Exception:
+            return ()
+
+    upgradable = bool(latest and current and _vt(latest) > _vt(current))
+    return jsonify({"ok": not err, "kind": kind, "current": current,
+                    "latest": latest, "upgradable": upgradable, "err": err})
 
 
 @res_bp.route("/api/resources/poll")

@@ -587,10 +587,12 @@ async function _stRenderResourcesPane(pane) {
             <span class="dd-sub" style="display:block;margin-top:2px;">.NET 始终按缺失安装（需管理员且可能要重启）；
               Node/Git 重装可能弹管理员提示。</span></span>
         </label>
-        <div class="dd-actions" style="margin-top:10px;display:flex;gap:8px;">
-          <button class="btn primary" id="rsGo" disabled><span>${ICO16.wrench}</span> 安装所选</button>
+        <div class="dd-actions" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn primary" id="rsGo" disabled><span>${ICO16.wrench}</span> 📦 离线包安装所选</button>
+          <button class="btn ghost" id="rsOnlineGo" disabled title="">⬇ 在线安装所选</button>
           <button class="btn ghost" id="rsCancel" style="display:none;">■ 取消</button>
         </div>
+        <div class="dd-sub" id="rsNetInfo" style="display:none;margin-top:6px;">—</div>
         <div id="rsProg" style="display:none;margin-top:10px;">
           <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden;">
             <div id="rsProgBar" style="height:100%;width:0;background:var(--accent);transition:width .3s;"></div>
@@ -700,6 +702,8 @@ async function _stRenderResourcesPane(pane) {
   function syncGo() {
     const busy = $q('#rsGo').dataset.busy === '1';
     $q('#rsGo').disabled = busy || _picked.size === 0;
+    const og = $q('#rsOnlineGo');
+    if (og) og.disabled = busy || _picked.size === 0;
   }
 
   // ---- 检测 ----
@@ -720,12 +724,48 @@ async function _stRenderResourcesPane(pane) {
     }
   }
 
+  // ---- 在线可用性（a326 批2：net_check 禁用态）----
+  let _net = null;   // {kind: {ok, code, err}}
+  async function loadNet() {
+    try {
+      const j = await (await fetch('/api/resources/net_check')).json();
+      if (!j.ok) return;
+      _net = j.net || {};
+      const el = $q('#rsNetInfo');
+      if (!el) return;
+      const parts = Object.keys(_net).map(function (k) {
+        const v = _net[k];
+        return (v.ok ? '✓' : '✗') + ' ' + k;
+      });
+      el.style.display = '';
+      el.textContent = '在线源连通性：' + parts.join('　') +
+        '（✗ = 无网/被代理拦，请用离线包）';
+      syncGo();
+    } catch (_) { /* 静默——离线机器不该被报错刷屏 */ }
+  }
+  function netOk(k) {
+    if (k === 'claude') return !!(_net && _net.node && _net.node.ok);
+    if (k === 'pydeps') return !!(_net && _net.node && _net.node.ok);   // pip 走 pypi，与 node 探测同网络面
+    return !!(_net && _net[k] && _net[k].ok);
+  }
+
   // ---- 安装 ----
-  async function doInstall() {
+  async function doInstall(mode) {
+    const online = mode === 'online';
     const path = pathBox.value.trim();
-    if (!path) { showBanner('请先选择 .fcpk 资源包', 4000, true); return; }
+    if (!online && !path) { showBanner('请先选择 .fcpk 资源包', 4000, true); return; }
     const kinds = Array.from(_picked);
     if (!kinds.length) return;
+    if (online) {
+      const off = kinds.filter(function (k) { return !netOk(k); });
+      const un = kinds.filter(function (k) { return k === 'bili' || k === 'onlyoffice'; });
+      if (un.length) { showBanner(un.join('、') + ' 无官方稳定直链——请用离线包安装', 5000, true); return; }
+      if (off.length) {
+        const ok = await _ddConfirm('部分源不可达',
+          '以下资源的在线源当前不可达，大概率会失败：' + off.join('、') + '\n\n仍要尝试？（无网/被代理拦建议改用离线包）');
+        if (!ok) return;
+      }
+    }
     const force = $q('#rsForce').checked;
     // 强制重装 + 勾了已就绪项 → 二次确认（这是要覆盖人家能用的安装）
     if (force) {
@@ -745,7 +785,7 @@ async function _stRenderResourcesPane(pane) {
     errEl.style.display = 'none';
     prog.style.display = '';
     $q('#rsProgBar').style.width = '0';
-    $q('#rsProgTxt').textContent = '准备…';
+    $q('#rsProgTxt').textContent = online ? '在线安装准备…' : '准备…';
     $q('#rsGo').dataset.busy = '1'; syncGo();
     $q('#rsCancel').style.display = '';
     if (typeof window.ResPanel === 'undefined' || !window.ResPanel.install) {
@@ -758,7 +798,7 @@ async function _stRenderResourcesPane(pane) {
     // 切回来时按钮永久禁用。每个回调先探活，DOM 更新一律可选。
     const alive = () => !!$q('#rsGo');
     window.ResPanel.install({
-      path: path, kinds: kinds, force: force,
+      path: online ? '' : path, kinds: kinds, force: force, mode: online ? 'online' : 'offline',
       onLog: function (msg) {
         if (!alive()) return;
         const d = document.createElement('div');
@@ -826,7 +866,8 @@ async function _stRenderResourcesPane(pane) {
     paintList();
   };
   $q('#rsPickNone').onclick = function () { _picked.clear(); paintList(); };
-  $q('#rsGo').onclick = doInstall;
+  $q('#rsGo').onclick = () => doInstall('offline');
+  $q('#rsOnlineGo').onclick = () => doInstall('online');
   $q('#rsCancel').onclick = function () {
     if (window.ResPanel && window.ResPanel.cancel) window.ResPanel.cancel();
     $q('#rsProgTxt').textContent = '正在取消…';
@@ -844,9 +885,50 @@ async function _stRenderResourcesPane(pane) {
       showBanner(j.ok ? ('已完成：' + (j.notes || []).join('、')) : '重配失败', 6000, !j.ok);
     } catch(e) { showBanner('重配失败: ' + e, 4000, true); }
   };
-  // 首次：检测 + 按默认规则勾选；有已保存的包路径则顺带预检
+  // 首次：检测 + 按默认规则勾选；有已保存的包路径则顺带预检 + 在线源连通性
   await loadStatus(true);
   if (pathBox.value.trim()) loadPkg();
+  loadNet();
+  loadClaudeLatest();
+
+  // ---- claude 在线升级（a326 批3）：已装 vs npm registry 最新 ----
+  async function loadClaudeLatest() {
+    try {
+      const r = await fetch('/api/resources/latest?kind=claude');
+      const j = await r.json();
+      const host = $q('#rsClaudeUp');
+      if (host) host.remove();
+      if (!j.ok || !j.latest) return;
+      const box = $q('#rsList');
+      if (!box) return;
+      const el = document.createElement('div');
+      el.id = 'rsClaudeUp';
+      el.style.cssText = 'margin-top:6px;padding:6px 10px;border:1px dashed var(--border);border-radius:6px;font-size:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;';
+      const cur = j.current || '未装';
+      el.innerHTML = '<span>Claude CLI 版本：已装 <b>' + esc(cur) + '</b> · npm 最新 <b>' +
+        esc(j.latest) + '</b></span>';
+      if (j.upgradable) {
+        const b = document.createElement('button');
+        b.className = 'btn ghost';
+        b.style.cssText = 'padding:2px 10px;font-size:11px;';
+        b.textContent = '⬆ 在线升级到 ' + j.latest;
+        b.onclick = async () => {
+          const ok = await _ddConfirm('在线升级 Claude CLI',
+            'npm install -g @anthropic-ai/claude-code（免提权，覆盖安装 ' + esc(cur) + ' → ' + esc(j.latest) + '）？\n\n需联网；升级中 Claude 会话请先保存。');
+          if (!ok) return;
+          _picked.clear(); _picked.add('claude'); paintList();
+          doInstall('online');
+        };
+        el.appendChild(b);
+      } else {
+        const s = document.createElement('span');
+        s.className = 'dd-sub';
+        s.textContent = '（已是最新）';
+        el.appendChild(s);
+      }
+      box.appendChild(el);
+    } catch (_) { /* 无网静默 */ }
+  }
 }
 
 // ---- API 配置子页（v2.25 重排）：配置方案最前（最常用）→ API 配置表单 → 底部操作 ----

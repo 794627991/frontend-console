@@ -215,7 +215,8 @@
     return _resFetch('/api/resources/install', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        path: o.path, kinds: o.kinds || null, force: !!o.force
+        path: o.path, kinds: o.kinds || null, force: !!o.force,
+        mode: o.mode || 'offline'   // a326 批2：online 走在线安装（无需 path）
       })
     }).then(function (j) {
       if (!j.ok) { _safe(onDone, { ok: false, err: j.err || '启动失败' }); return j; }
