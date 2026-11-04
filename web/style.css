@@ -5229,7 +5229,6 @@ span.nn-hl-t { background: color-mix(in srgb, #3fb950 15%, transparent);
    它也藏了——用户实锤"看不到左右滚动条"）；行高/列宽手动拖拽手柄 */
 .xlsx-table-wrap { position: absolute; top: 74px; left: 0; right: 0; bottom: 0;
   overflow: auto; background: var(--bg); }
-/* a316：xlsx 滚动条同样全隐——自绘条统一（a295 豁免段退役） */
 .xlsx-table-wrap::-webkit-scrollbar-corner { background: transparent; }
 /* 单元格：默认自动换行（文字多→多行→行高自动撑开） */
 .xlsx-edit-table td { white-space: pre-wrap; word-break: break-word; vertical-align: top; }
@@ -5295,22 +5294,12 @@ span.nn-hl-t { background: color-mix(in srgb, #3fb950 15%, transparent);
 /* a300：office 滚动条显式豁免全站隐藏（用户令：宽大的条好抓，终端同款 14px） */
 .office-body { flex: 1; min-height: 0; overflow: auto; padding: 12px; position: relative;
   display: flex; flex-direction: column; align-items: center; }
-/* a306 终局：webkit 条压不住 WebView2 Fluent 细条（hover 显形，用户实锤
-   "不好抓的细条还存在"）——改终端 a237 同款路线：原生层彻底隐藏
-  （scrollbar-width:none 连 Fluent 绘制层都能藏住）+ JS 自绘 14px 宽条
-  （ov-scrollbar.js，office 打开时挂载 _ovSbMount） */
 /* a314（用户令：删自绘条）——恢复 webkit 原生条但强制 14px 宽（能压多宽压
    多宽；Fluent 覆盖层若仍画细条，至少原生条本身宽大可抓） */
-/* a316 终局：scrollbar-color 具体色在用户机仍被 Fluent 叠细条（实锤）——
-   回到终端唯一验证过的全隐：scrollbar-width:none（Fluent 在 none 下不画）。
-   滚动条本体 = ov-sb.js 自绘（直接移植终端 _termSbInit，用户认可"终端条
-   都好好的"）：常驻显示 + 400ms 兜底重绘 + thumb 拖拽/轨道翻页 */
-.office-body, .ov-pdf-main, .xlsx-table-wrap {
-  scrollbar-width: none !important;
-  scrollbar-color: auto !important;
-}
-.xlsx-table-wrap, .ov-pdf-main { position: relative; }
-.ov-term-sb { position: absolute !important; top: 4px !important; right: 3px !important; }
+/* a319（用户最终拍板：自绘条彻底删除，接受原生条）——office 三容器回归
+   浏览器默认滚动条：scrollbar-width auto，无任何自定义/自绘/覆盖。
+   Fluent 覆盖层就是 WebView2 的默认形态，接受它 */
+.office-body, .ov-pdf-main, .xlsx-table-wrap { scrollbar-width: auto; }
 .office-err { color: var(--neon-red); font-size: 12px; padding: 20px; text-align: center; }
 .office-loading { color: var(--muted); font-size: 12px; padding: 40px; }
 /* docx：Word 底白页 + 主题容器底色 */

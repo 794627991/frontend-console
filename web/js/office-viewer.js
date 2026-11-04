@@ -512,8 +512,6 @@ async function _ovRenderDocx(buf, body, wrap, conn) {
     // a290 全功能：docx 目录索引侧栏——从渲染 DOM 提取 h1-h6（docx-preview 按
     // Word 标题样式映射 heading），点击跳转 + 滚动高亮当前节
     _ovDocxOutline(body, container, conn);
-    // a316：终端同款自绘滚动条（移植 _termSbInit，原生层 none 全隐）
-    if (typeof _ovSbMount === 'function') _ovSbMount(body);
   } catch (e) {
     container._rendering = false;
     if (_timeout) clearTimeout(_timeout);
@@ -664,8 +662,6 @@ async function _ovRenderXlsx(buf, body, wrap, conn) {
     _ovXlsxBindBar(conn, body);
     _ovXlsxRenderTabs(conn);
     _ovXlsxRenderTable(conn);
-    const _sbHost = conn.wrap.querySelector('[data-ov-body]');
-    if (_sbHost && typeof _ovSbMount === 'function') _ovSbMount(_sbHost);
     // openpyxl 等工具写的公式无缓存值（<v></v> 空串）——读入后全表现算一遍，
     // 公式格立即显示计算值（而非空）。M7（审查实锤：打开即 persist 会把白名单
     // 外公式 VLOOKUP 等的缓存 v 清零落盘）——只算只显示，不写回
