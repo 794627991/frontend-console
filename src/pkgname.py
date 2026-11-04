@@ -42,7 +42,14 @@ _RE_COPYWORD = re.compile(r"(?:[-_]?(?:副本|copy)\d*)+(?=[-_]|\.)")
 # 被判成 rank 3 正牌。现改为**全串搜索备份词**（不限位置）。
 # 不含英文 `old`（`-old` 是"要发的旧版全量"的常见命名，误杀会让闸门空手）；
 # `旧` 限定为 `旧版/旧包/-旧/_旧/旧.fcpk`，避免误伤「怀旧」「旧金山」。
-_RE_BACKUP = re.compile(r"备份|bak|backup|旧版本|旧包|[-_.]旧[版包]|[-_.]旧[-_.]")
+# a344R（第15轮 P2-1/P2-2/P2-3）三处收紧：
+#   · 英文 bak/backup 加词边界——`bakery`/`baked`/`abak` 是正常命名，原先误杀；
+#   · 中文 `旧` 补回 `旧2`/`（旧）`/`资源包旧` 形态——上一版收紧过头，
+#     用户按 `-副本2024` 的习惯把旧包命名成 `-旧2` 时门户会把旧版发出去；
+#   · 中英对齐：`旧版/旧包` 与英文 `old` 同义，都归「派生」档（rank 2），
+#     不再一个可见一个隐藏。
+_RE_BACKUP = re.compile(r"备份|(?<![a-z])(?:bak|backup)\d*(?![a-z])|"
+                        r"旧版本|旧包|[-_.]旧(?:[版包\d]|[-_.]|$)|资源包旧")
 
 
 def _norm(s):
@@ -118,10 +125,14 @@ def pkg_rank(name, require_prefix=None, filter_backup=False):
     cls = pkg_class(name)
     if cls is None:
         return -1
-    if _RE_BACKUP.search(_norm(_base(name))):
-        return 0                     # 备份件：能救急，但永远让位
+    _bk = bool(_RE_BACKUP.search(_norm(_base(name))))
     if cls == "subset":
-        return 1
+        # a344R（第15轮 P1-2）：备份**子集**不可见——原先与备份全量同档靠
+        # mtime 抢，选中它时装完仍缺 WebView2/.NET，回到「装完还拦」。
+        # 子集本来就救不了急（缺硬资源），没有必要给它留后门。
+        return -1 if _bk else 1
+    if _bk:
+        return 0                     # 备份全量：能救急，但让位于任何正规包
     # 没有应用名前缀（闸门的救急路径）：降一档，别压过带前缀的正规包
     if require_prefix:
         _pn = _norm(str(require_prefix).lower())
@@ -134,10 +145,27 @@ def pkg_rank(name, require_prefix=None, filter_backup=False):
     after = core[i + 3:].lstrip("-_.") if i >= 0 else ""
     # a341R：副本词在下面 core 里已被剥掉，必须回原始 t 上判存在性
     if (_RE_COPY.search(b) or _RE_VER.search(b) or _RE_COPYWORD.search(t)
-            or after or _RE_BACKUP.search(t)
-            or re.search(r"(?:备份|bak|backup|旧)\d*\.fcpk$", t)):
-        return 2                     # 重名副本 / 副本链 / 版本尾巴 / 备份 → 派生
+            or after or re.search(r"(?:备份|bak|backup|旧)\d*\.fcpk$", t)):
+        return 2                     # 重名副本 / 副本链 / 版本尾巴 → 派生
     return 3                         # 正牌主包
+
+
+def pkg_derived(name):
+    """是不是"派生/留档"包：重名副本、副本链、版本尾巴、备份件。
+
+    a344R（第15轮 P3-1）：门户原先用 `rank == 2` 推断，把**无应用名前缀的
+    正牌包**也算成派生（它只是因为"没前缀"被降档）。两个语义必须分开：
+    rank 是"选谁"，derived 是"要不要提示用户这可能不是最新完整包"。
+    """
+    b = _base(name)
+    t = _norm(b)
+    if _RE_COPY.search(b) or _RE_VER.search(b) or _RE_COPYWORD.search(t):
+        return True
+    if _RE_BACKUP.search(t):
+        return True
+    core = _RE_COPYWORD.sub("", t)[:-5]
+    i = core.find("资源包")
+    return bool(i >= 0 and core[i + 3:].lstrip("-_."))
 
 
 def pkg_class(name):

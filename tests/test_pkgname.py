@@ -8,6 +8,7 @@
 纯标准库 + 打桩目录，不碰真实数据。直接 `python tests/test_pkgname.py`。
 """
 import os
+import shutil
 import sys
 import tempfile
 
@@ -109,8 +110,17 @@ def _test_rank_consistency():
     check("rank/class 无矛盾", not bad, bad[:5])
     check("正牌主包 rank=3", pkg_rank("前端控制台-资源包.fcpk") == 3)
     check("副本 rank=2", pkg_rank("前端控制台-资源包-副本.fcpk") == 2)
-    check("备份 rank=0（能救急但让位）",
+    check("备份全量 rank=0（能救急但让位）",
           pkg_rank("前端控制台-资源包备份.fcpk") == 0)
+    # 第15轮 P1-2：备份子集不得与备份全量同档（会同档 mtime 抢，装完仍缺硬资源）
+    check("备份子集不可见",
+          pkg_rank("前端控制台-资源包-拓展-备份.fcpk",
+                   require_prefix=_APP) == -1)
+    # 第15轮 P2-1：bak/backup 词边界，正常命名不误杀
+    check("bakery 不误杀",
+          pkg_rank("前端控制台-资源包-bakery.fcpk", require_prefix=_APP) == 2)
+    check("旧金山 不误杀",
+          pkg_rank("前端控制台-资源包-旧金山.fcpk", require_prefix=_APP) == 2)
     check("子集 rank=1", pkg_rank("前端控制台-资源包-拓展.fcpk") == 1)
 
 
@@ -133,7 +143,8 @@ def _test_visibility():
             ("前端控制台-资源包-拓展-备份-v2.fcpk", False),
             ("前端控制台-备份-资源包.fcpk", False),           # 第14轮 P1-2
             ("前端控制台-资源包-旧金山.fcpk", True),          # 不误杀
-            ("前端控制台-资源包-office365.fcpk", True)]:
+            ("前端控制台-资源包-office365.fcpk", True),
+            ("前端控制台-资源包-拓展-备份.fcpk", False)]:
         got = is_res_pkg(n, require_prefix=_APP, filter_backup=True)
         check("portal 可见 %s" % n, got == want, "got %r" % got)
         ck += 1
@@ -179,6 +190,7 @@ def _e2e(cases):
             update_server._releases_dir = old_releases
             res_ui._app_dir = old_app
             res_ui._search_dirs = old_dirs
+            shutil.rmtree(d, ignore_errors=True)
         w_por, w_af = want if isinstance(want, tuple) else (want, want)
         check("e2e[%s] 门户" % label, got_por == w_por,
               "got %r want %r" % (got_por, w_por))
@@ -212,6 +224,10 @@ def _test_e2e():
                               ("前端控制台-资源包-claude.fcpk", 2e9)],
          "前端控制台-资源包-claude.fcpk"),
         # 门户排除备份，闸门必须还能选（否则唯一一份包装不上）
+        ("两份备份(全量 vs 子集)",
+         [("前端控制台-资源包-拓展-备份.fcpk", 3e9),
+          ("前端控制台-资源包备份.fcpk", 1e9)],
+         (None, "前端控制台-资源包备份.fcpk")),
         ("备份+子集(子集该赢)",
          [("前端控制台-资源包备份.fcpk", 3e9), (S, 1e9)], S),
         ("无前缀备份+带前缀子集",
