@@ -51,6 +51,9 @@ _CLASS_CASES = {
     "前端控制台-资源包-2024.fcpk": "full",   # 无名 tag（旧版全量留档）
     "前端控制台-资源包-old.fcpk": "full",
     "前端控制台-资源包-1.fcpk": "full",
+    "前端控制台-资源包-office365.fcpk": "full",   # office 后接数字不算子集
+    "前端控制台-资源包-gitlab.fcpk": "full",
+    "前端控制台-资源包-node_modules.fcpk": "subset",
     "前端控制台-office文档-资源包.fcpk": "full",   # 关键字在左但非紧贴
     "前端控制台-digital资源包.fcpk": "full",       # digital 含 git
     "前端控制台-legit资源包.fcpk": "full",
@@ -106,7 +109,8 @@ def _test_rank_consistency():
     check("rank/class 无矛盾", not bad, bad[:5])
     check("正牌主包 rank=3", pkg_rank("前端控制台-资源包.fcpk") == 3)
     check("副本 rank=2", pkg_rank("前端控制台-资源包-副本.fcpk") == 2)
-    check("备份 rank=2", pkg_rank("前端控制台-资源包备份.fcpk") == 2)
+    check("备份 rank=0（能救急但让位）",
+          pkg_rank("前端控制台-资源包备份.fcpk") == 0)
     check("子集 rank=1", pkg_rank("前端控制台-资源包-拓展.fcpk") == 1)
 
 
@@ -124,7 +128,12 @@ def _test_visibility():
             ("资源包备份.fcpk", False),
             ("前端控制台-资源包备份.fcpk", False),
             ("前端控制台-资源包.bak2.fcpk", False),
-            ("前端控制台-资源包-旧版本-v2.fcpk", False)]:
+            ("前端控制台-资源包-旧版本-v2.fcpk", False),
+            ("前端控制台-资源包-副本-备份-v2.fcpk", False),   # 第14轮 P1-1
+            ("前端控制台-资源包-拓展-备份-v2.fcpk", False),
+            ("前端控制台-备份-资源包.fcpk", False),           # 第14轮 P1-2
+            ("前端控制台-资源包-旧金山.fcpk", True),          # 不误杀
+            ("前端控制台-资源包-office365.fcpk", True)]:
         got = is_res_pkg(n, require_prefix=_APP, filter_backup=True)
         check("portal 可见 %s" % n, got == want, "got %r" % got)
         ck += 1
@@ -138,6 +147,7 @@ def _test_visibility():
               is_res_pkg(n, require_prefix=_APP, filter_backup=False))
     check("闸门仍排除别家工具",
           not is_res_pkg("别家工具-资源包.fcpk", require_prefix=_APP))
+    check("可见性汇总", ok == ck and ck > 0, (ok, ck))
 
 
 def _e2e(cases):
@@ -150,9 +160,13 @@ def _e2e(cases):
         d = tempfile.mkdtemp(prefix="pkgname_e2e_")
         old_releases = update_server._releases_dir
         old_app = res_ui._app_dir
+        old_dirs = res_ui._search_dirs
         try:
             update_server._releases_dir = lambda d=d: d
             res_ui._app_dir = lambda d=d: d
+            # a343R（第14轮 P1-3）：必须同时桩搜索目录——否则会读真实
+            # ~/Desktop、~/Downloads（发布者桌面常放着资源包，测试必假红）
+            res_ui._search_dirs = lambda d=d: (d,)
             for n, mt in files:
                 p = os.path.join(d, n)
                 with open(p, "wb") as f:
@@ -164,6 +178,7 @@ def _e2e(cases):
         finally:
             update_server._releases_dir = old_releases
             res_ui._app_dir = old_app
+            res_ui._search_dirs = old_dirs
         w_por, w_af = want if isinstance(want, tuple) else (want, want)
         check("e2e[%s] 门户" % label, got_por == w_por,
               "got %r want %r" % (got_por, w_por))
@@ -197,6 +212,10 @@ def _test_e2e():
                               ("前端控制台-资源包-claude.fcpk", 2e9)],
          "前端控制台-资源包-claude.fcpk"),
         # 门户排除备份，闸门必须还能选（否则唯一一份包装不上）
+        ("备份+子集(子集该赢)",
+         [("前端控制台-资源包备份.fcpk", 3e9), (S, 1e9)], S),
+        ("无前缀备份+带前缀子集",
+         [("资源包备份.fcpk", 3e9), (S, 1e9)], S),
         ("只有备份(闸门要能选、门户不能)",
          [("前端控制台-资源包备份.fcpk", 1e9)],
          (None, "前端控制台-资源包备份.fcpk")),

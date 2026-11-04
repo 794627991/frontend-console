@@ -106,6 +106,19 @@ def pick_fcpk(initial_dir=None):
     return buf.value or ""
 
 
+def _search_dirs():
+    """自动找包的候选目录（a343R 第14轮 P1-3：抽出来供测试打桩）。
+
+    原实现把四个目录内联在 autofind_fcpk 里，测试只能桩 _app_dir，
+    仍会读真实 `~/Desktop`、`~/Downloads` —— 发布者桌面放着资源包是
+    本项目的正常工作流，于是「判据固化」的测试在同事机上必假红。
+    """
+    base = _app_dir()
+    return (base, os.path.dirname(base),
+            os.path.join(os.path.expanduser("~"), "Desktop"),
+            os.path.join(os.path.expanduser("~"), "Downloads"))
+
+
 def autofind_fcpk():
     """文件对话框不可用时的兜底：在常见位置按名找 *.fcpk。
 
@@ -124,10 +137,7 @@ def autofind_fcpk():
     except Exception:
         return ""
     cands = []
-    base = _app_dir()
-    for d in (base, os.path.dirname(base),
-              os.path.join(os.path.expanduser("~"), "Desktop"),
-              os.path.join(os.path.expanduser("~"), "Downloads")):
+    for d in _search_dirs():
         if d and os.path.isdir(d):
             for p in glob.glob(os.path.join(d, "*.fcpk")):
                 # a334R（第5轮 P2-1）：名字判定必须用 basename——原实现拿
@@ -137,6 +147,11 @@ def autofind_fcpk():
                 # a341R：闸门也要前缀过滤，否则同目录别家的资源包会被选走。
                 # a342R（第13轮 P2-1）：但**不**过滤备份——闸门的目标是
                 # "找到能用的包"，唯一一份包叫 `-备份` 时必须还能装。
+                # a343R（第14轮 P2-5）：目录也可能叫 *.fcpk（解压残留/
+                # OneDrive 占位），必须验 isfile，否则闸门选中目录后
+                # fcpk.is_fcpk 打不开
+                if not os.path.isfile(p):
+                    continue
                 _r = _rk(_bn, require_prefix=_AN)
                 if _r < 0:
                     continue

@@ -26,7 +26,7 @@ APP_NAME = "前端控制台"
 # 子集包语义关键字。英文短词加词边界——`digital`/`legit` 含 git、
 # `nodejs` 含 node，无边界会把 `前端控制台-digital资源包.fcpk` 判成子集。
 _SUBSET_KW = (r"拓展|扩展|claude|基础|onlyoffice|webview2|dotnet|bili|"
-              r"pydeps|(?<![a-z])(?:node|git|office)(?:js|s)?(?![a-z])")
+              r"pydeps|(?<![a-z])(?:node|git|office)(?:js|s)?(?![a-z0-9])")
 
 # 浏览器重名下载：`资源包 (1).fcpk`。序号必须在空白/括号里。
 _RE_COPY = re.compile(r"资源包[ \t]*[()（）][ \t]*\d+[ \t]*[)）][ \t]*\.fcpk$")
@@ -36,13 +36,13 @@ _RE_VER = re.compile(r"[-_]v\d+(?:\.\d+)+|[-_]v\d+$")
 # 序号用 `\d*`（不限长）——限长会让 `-副本2024` 剥不掉、整名落兜底判子集；
 # lookahead 放在重复组**外**，否则第二个副本词紧贴第一个时整组首次迭代即失败。
 _RE_COPYWORD = re.compile(r"(?:[-_]?(?:副本|copy)\d*)+(?=[-_]|\.)")
-# 备份/历史文件。只在门户（require_prefix）过滤：这类文件与主包同 rank，
-# mtime 更新会顶掉真主包发给同事。闸门不过滤——它的目标是"找到能用的包"，
-# 用户把唯一一份包命名成 `-old` 时不能因此装不上。
-# 注意不含英文 `old`（`-old` 常被当作"要发的旧版全量"，误杀会让闸门空手）；
-# `旧` 只在紧跟「资源包」或作文件名尾部时才算备份。
-_RE_BACKUP = re.compile(r"资源包[-_.]?(?:备份|bak|backup|旧)|"
-                        r"(?:备份|bak|backup|旧)\d*\.fcpk$")
+# 备份/历史文件。a343R（第14轮 P1-1/P1-2）：原实现只认「紧跟资源包」或
+# 「文件名结尾」两种位置，`资源包-副本-备份-v2.fcpk`（备份词后面还挂版本尾）
+# 整个漏判 → 门户把它当主包发出去；`备份-资源包.fcpk`（备份词在左侧）则
+# 被判成 rank 3 正牌。现改为**全串搜索备份词**（不限位置）。
+# 不含英文 `old`（`-old` 是"要发的旧版全量"的常见命名，误杀会让闸门空手）；
+# `旧` 限定为 `旧版/旧包/-旧/_旧/旧.fcpk`，避免误伤「怀旧」「旧金山」。
+_RE_BACKUP = re.compile(r"备份|bak|backup|旧版本|旧包|[-_.]旧[版包]|[-_.]旧[-_.]")
 
 
 def _norm(s):
@@ -97,9 +97,20 @@ def pkg_rank(name, require_prefix=None, filter_backup=False):
     不够——副本/备份/带版本尾巴的包也是 full，但绝不该顶替正牌。
 
       3 = 正牌主包（`<前缀>-资源包.fcpk`，无副本词、无版本尾巴）
-      2 = 派生全量（重名副本 / `-副本` 链 / `-v2` 版本尾巴 / 备份文件）
+      2 = 派生全量（重名副本 / `-副本` 链 / `-v2` / `-2024` 这类无名 tag，
+          以及「没有应用名前缀」的包——闸门允许它救急，但不该压过正牌）
       1 = 子集包
+      0 = 备份/历史件（`备份`/`bak`/`旧版`，任意位置）
       -1 = 不可见（不是资源包 / 前缀不符 / 门户侧的备份文件）
+
+    a343R（第14轮 P1-2/P2-3）：备份档降到 0 —— 原先把备份件算进派生全量(2)，
+    于是 `备份-资源包.fcpk`、无前缀的 `资源包备份.fcpk` 都能压过带前缀的
+    真子集包，闸门装错包后复查仍缺硬资源，回到「装完还拦」的老死循环。
+    降到 0 后：只存在备份件时它仍会被选中（救急），一旦有正牌或子集就让位。
+
+    注意：本函数内部的 `pkg_class(name)` **不传** require_prefix —— class 描述
+    的是"这个文件是什么"，与"这个部署该不该看见它"是两件事。调用方判断可见性
+    请用返回的 -1，不要直接调 pkg_class。
     """
     if not is_res_pkg(name, require_prefix=require_prefix,
                       filter_backup=filter_backup):
@@ -107,8 +118,15 @@ def pkg_rank(name, require_prefix=None, filter_backup=False):
     cls = pkg_class(name)
     if cls is None:
         return -1
+    if _RE_BACKUP.search(_norm(_base(name))):
+        return 0                     # 备份件：能救急，但永远让位
     if cls == "subset":
         return 1
+    # 没有应用名前缀（闸门的救急路径）：降一档，别压过带前缀的正规包
+    if require_prefix:
+        _pn = _norm(str(require_prefix).lower())
+        if not _norm(_base(name)).startswith(_pn):
+            return 2
     b = _base(name)
     t = _norm(b)
     core = _RE_COPYWORD.sub("", t)[:-5]

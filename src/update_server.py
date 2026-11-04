@@ -199,11 +199,16 @@ def _offline_pkg():
     except OSError:
         return None
     best = None
+    # a343R（第14轮 P2-1）：zip 通道已退役——只有目录里**一个资源包都没有**时
+    # 才允许回退。原实现把 zip 与「被过滤掉的备份 fcpk」同置 rank，mtime 决胜
+    # 时 zip 会赢，门户就把 3.9 时代的旧格式包发给同事（客户端根本不认）。
+    # 必须预扫（sorted 顺序里 zip 可能排在 fcpk 之前）。
+    from src.pkgname import pkg_rank as _pr, is_res_pkg as _is_res
+    _has_fcpk = any(_is_res(n) for n in names)
     # a338R（第9轮 P2-3）：可见性判定必须与闸门（res_ui.autofind_fcpk）同口径。
     # 原先这里判 `"-资源包" in _ln`、闸门判 `"资源包" in _bn` —— 分裂从分类
     # 转移到了可见性：用户把包改名成 `资源包.fcpk` 时闸门选得中、门户看不见。
     # 现统一走 pkgname.is_res_pkg。
-    from src.pkgname import pkg_rank as _pr, is_res_pkg as _is_res
     for n in sorted(names):
         _ln = n.lower()
         # a341R（第12轮）：前缀过滤与备份过滤放到 rank 里判，这里只做兜底
@@ -213,6 +218,11 @@ def _offline_pkg():
         if not (is_new or is_old):
             continue
         p = os.path.join(root, n)
+        # a343R（第14轮 P2-5）：同名**目录**也会命中 glob/文件名判定
+        # （解压残留、OneDrive 占位），门户会把它当 0 字节资源包展示，
+        # 点下载直接 500
+        if not os.path.isfile(p):
+            continue
         try:
             st = os.stat(p)
         except OSError:
@@ -227,6 +237,8 @@ def _offline_pkg():
                 continue
         else:
             rank = 0
+        if is_old and _has_fcpk:
+            continue          # 有资源包就轮不到退役的 zip
         if best and (rank, st.st_mtime) <= (best[1][0], best[1][1]):
             continue
         ver = n.rsplit("-v", 1)[-1][:-4] if ("-v" in n and n.endswith(".zip")) else ""
@@ -237,6 +249,9 @@ def _offline_pkg():
     return {"file": best[0], "version": best[3], "size": best[2],
             "mtime": int(best[1][1] * 1000), "format": best[4],
             "subset": best[1][0] == 1,     # 子集包：门户应如实标注
+            # a343R（第14轮 P3-2）：派生/留档包（rank 2）与备份件（rank 0）
+            # 也要能标注——它们可能是旧版本，不该被当成最新完整包
+            "derived": best[1][0] in (0, 2),
             "url": "/" + quote(best[0])}
 
 
@@ -915,6 +930,9 @@ async function load(){
           : (j.offline.format==='fcpk'
             ?' · 无外网机器部署资源（WebView2 / .NET / Node / Git / claude-code / Python 依赖 / OnlyOffice），加密资源包，<b style="color:var(--fg)">须用工具安装（双击打不开）</b>'
             :' · 无外网机器部署资源（Git / Node / claude-code / Python 依赖），与工具版本无关'))
+        +(j.offline.derived
+          ? '<br><b style="color:#e8a33d">这是派生/留档包（副本、改名版本或备份），可能不是最新完整包</b>'
+          : '')
         +'</div></div>'
         +'<button class="btn" data-dl="'+esc(j.offline.url)+'" data-n="'+esc(j.offline.file)+'" style="flex-shrink:0">⬇ 下载'+(j.offline.format==='fcpk'?'资源包':'离线包')+'</button></div>';
     }
