@@ -860,6 +860,38 @@ function _ovXlsxEval(formula, conn) {
     return (typeof v === 'number' && isFinite(v)) ? v : null;
   } catch (_) { return null; }
 }
+// R10-2（实锤：纯拖拽后直接保存丢尺寸）：拖行高/列宽只写桶，不触发
+// persist——save 分支需先把各表桶合并进 ws 再 write
+function _ovXlsxMergeSizes(conn) {
+  const idxs = new Set(
+    Object.keys(conn._rowH || {}).concat(Object.keys(conn._colW || {})));
+  idxs.forEach(iS => {
+    const idx = +iS;
+    const sh = conn._wb.Sheets[conn._wb.SheetNames[idx]];
+    if (!sh) return;
+    const rr = sh['!ref'] ? XLSX.utils.decode_range(sh['!ref']) : null;
+    const org = rr ? rr.s : { r: 0, c: 0 };
+    const rowH = conn._rowH[idx] || {};
+    if (Object.keys(rowH).length) {
+      const rows = (sh['!rows'] || []).slice();
+      for (const k in rowH) {
+        const ri = org.r + +k;
+        rows[ri] = Object.assign({}, rows[ri], { hpx: rowH[k] });
+      }
+      sh['!rows'] = rows;
+    }
+    const colW = conn._colW[idx] || {};
+    if (Object.keys(colW).length) {
+      const cols = (sh['!cols'] || []).slice();
+      for (const k in colW) {
+        const ci = org.c + +k;
+        cols[ci] = Object.assign({}, cols[ci], { wpx: colW[k] });
+      }
+      sh['!cols'] = cols;
+    }
+  });
+}
+
 function _ovXlsxSnapshot(conn) {
   // R4-2（实锤：undo 跨 sheet 覆盖）：快照必须带 sheet 归属——旧格式只有
   // aoa，S1 编辑后切 S2 撤销会把 S1 快照整体灌进 S2 落盘。
@@ -886,7 +918,9 @@ function _ovXlsxRenderTabs(conn) {
     const b = document.createElement('button');
     b.className = 'btn ghost' + (i === conn._sheetIdx ? ' active' : '');
     b.textContent = name;
-    b.onclick = () => { conn._sheetIdx = i; _ovXlsxRenderTabs(conn); _ovXlsxRenderTable(conn); };
+    // R10-1（实锤：切表选中态残留）：SA 选行/聚焦格后切 SB，界面无任何
+    // 高亮但 _selRow/_sel 残留——「－行」会误删 SB 同位行。切表必清
+    b.onclick = () => { conn._sheetIdx = i; conn._selRow = undefined; conn._sel = null; _ovXlsxRenderTabs(conn); _ovXlsxRenderTable(conn); };
     tabs.appendChild(b);
   });
 }
@@ -1164,6 +1198,8 @@ function _ovXlsxBindBar(conn, body) {
           b.disabled = false; b.textContent = '保存';
           return;
         }
+        // R10-2：纯拖拽（无编辑→无 persist）时桶还没进 ws——写盘前合并
+        _ovXlsxMergeSizes(conn);
         const out = XLSX.write(conn._wb, { bookType: bt, type: 'array' });
         const resp = await fetch('/api/office/write?path=' + encodeURIComponent(conn.officePath), { method: 'POST', body: out });
         const j = await resp.json();
