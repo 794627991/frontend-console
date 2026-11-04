@@ -55,6 +55,11 @@ _CLASS_CASES = {
     "前端控制台-资源包-office365.fcpk": "full",   # office 后接数字不算子集
     "前端控制台-资源包-gitlab.fcpk": "full",
     "前端控制台-资源包-node_modules.fcpk": "subset",
+    # 第17轮：让位词在「资源包」左侧的连写形态（P1-1/P1-2 的实测盲区）
+    "前端控制台-备份资源包.fcpk": "full",
+    "前端控制台-旧-资源包.fcpk": "full",
+    "前端控制台-old-资源包.fcpk": "full",
+    "前端控制台-备份资源包-拓展.fcpk": "subset",
     "前端控制台-office文档-资源包.fcpk": "full",   # 关键字在左但非紧贴
     "前端控制台-digital资源包.fcpk": "full",       # digital 含 git
     "前端控制台-legit资源包.fcpk": "full",
@@ -103,9 +108,11 @@ def _test_rank_consistency():
         r, c = pkg_rank(n), pkg_class(n)
         if r < 0:
             continue
-        if c == "full" and r == 1:
-            bad.append((n, r, c))
+        # rank 1 既可能是子集，也可能是"备份全量"（与正规子集同档）——
+        # 只禁止 subset 被排到派生档（2/3）及以上
         if c == "subset" and r in (2, 3):
+            bad.append((n, r, c))
+        if c == "full" and r == 0:
             bad.append((n, r, c))
     check("rank/class 无矛盾", not bad, bad[:5])
     check("正牌主包 rank=3", pkg_rank("前端控制台-资源包.fcpk") == 3)
@@ -137,8 +144,16 @@ def _test_derived():
               "前端控制台-资源包-claude.fcpk", "前端控制台-资源包-bili.fcpk"):
         check("derived=False %s" % n, pkg_derived(n) is False)
     for n in ("前端控制台-资源包-副本.fcpk", "前端控制台-资源包-v2.fcpk",
-              "前端控制台-资源包-old.fcpk", "前端控制台-资源包备份.fcpk"):
+              "前端控制台-资源包-old.fcpk", "前端控制台-资源包备份.fcpk",
+              # 第17轮 P1-1/P1-2：左侧连写
+              "前端控制台-备份资源包.fcpk", "前端控制台-旧-资源包.fcpk",
+              "前端控制台-old-资源包.fcpk",
+              # 第17轮 P2-1：改名子集必须算留档（否则与正规子集同档抢包）
+              "前端控制台-资源包-基础-old.fcpk"):
         check("derived=True %s" % n, pkg_derived(n) is True)
+    for n in ("前端控制台-资源包-拓展-2024.fcpk",     # 日期/版本尾是正规产物
+              "前端控制台-资源包-拓展-v3.fcpk"):
+        check("derived=False %s" % n, pkg_derived(n) is False)
     check("正牌主包 derived=False", pkg_derived("前端控制台-资源包.fcpk") is False)
 
 
@@ -206,6 +221,7 @@ def _e2e(cases):
                 os.utime(p, (mt, mt))
             por = update_server._offline_pkg()
             got_por = por["file"] if por else None
+
             got_af = os.path.basename(res_ui.autofind_fcpk()) or None
         finally:
             update_server._releases_dir = old_releases
@@ -217,6 +233,34 @@ def _e2e(cases):
               "got %r want %r" % (got_por, w_por))
         check("e2e[%s] 闸门" % label, got_af == w_af,
               "got %r want %r" % (got_af, w_af))
+
+
+def _test_offline_fields():
+    """第17轮 P3-1：`subset`/`derived` 字段此前零断言。"""
+    import src.update_server as us
+    P = "前端控制台-资源包.fcpk"
+    cases = [
+        ([P], False, False),
+        (["前端控制台-资源包-拓展.fcpk"], True, False),
+        (["前端控制台-资源包-old.fcpk"], False, True),
+        (["前端控制台-资源包-基础-old.fcpk"], True, True),
+    ]
+    for files, want_sub, want_der in cases:
+        d = tempfile.mkdtemp(prefix="pkgname_f_")
+        old = us._releases_dir
+        try:
+            us._releases_dir = lambda d=d: d
+            for n in files:
+                p = os.path.join(d, n)
+                with open(p, "wb") as f:
+                    f.write(b"x")
+            r = us._offline_pkg()
+        finally:
+            us._releases_dir = old
+            shutil.rmtree(d, ignore_errors=True)
+        tag = files[0]
+        check("field subset %s" % tag, bool(r) and r["subset"] == want_sub, r)
+        check("field derived %s" % tag, bool(r) and r["derived"] == want_der, r)
 
 
 def _test_e2e():
@@ -249,6 +293,11 @@ def _test_e2e():
          [("前端控制台-资源包-拓展-备份.fcpk", 3e9),
           ("前端控制台-资源包备份.fcpk", 1e9)],
          (None, "前端控制台-资源包备份.fcpk")),
+        ("主包+左侧备份(备份新)",
+         [(P, 1e9), ("前端控制台-备份资源包.fcpk", 3e9)], P),
+        ("主包+左侧旧(旧新)",
+         [(P, 1e9), ("前端控制台-旧-资源包.fcpk", 3e9)], P),
+
         # 第16轮：备份全量与正规子集同档(1)——备份件是完整包，内容上强于
         # 子集，同档按 mtime 取它是可接受的；关键是它绝不能压过正牌主包。
         ("备份+子集(同档取新的)",
@@ -272,6 +321,7 @@ def main():
                       ("rank 一致性", _test_rank_consistency),
                       ("derived 判定", _test_derived),
                       ("可见性口径", _test_visibility),
+                      ("门户字段", _test_offline_fields),
                       ("端到端选包", _test_e2e)):
         print("[%s]" % title)
         fn()

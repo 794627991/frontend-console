@@ -52,9 +52,15 @@ _RE_COPYWORD = re.compile(r"(?:[-_]?(?:副本|copy)\d*)+(?=[-_]|\.)")
 # 避免 `备份中心`/`双备份切换`/`bakery` 误伤；`资源包旧` 必须后接边界，
 # 避免 `（旧金山）` 归一化后被误杀。`旧版/旧包` 已移出——它们与英文
 # `old` 同义，属「派生」档（rank 2、门户可见），不再一个可见一个隐藏。
-_RE_BACKUP = re.compile(r"(?:^|[-_.]|资源包)备份(?:$|[-_.\d])|"
-                        r"(?<![a-z])(?:bak|backup)\d*(?![a-z])|"
-                        r"资源包旧(?:$|[-_.版包\d])")
+# a346R（第17轮 P1-1/P1-2/P2-2）：**左右对称**——"让位词"不论出现在「资源包」
+# 左侧还是右侧都要认。第 14~16 轮三个 P1 都是同一件事换形态复发：
+#   `备份-资源包`(14轮) → `备份资源包`(17轮) → `旧-资源包`(17轮)。
+# 现在规定：备份词前后必须是 串首/分隔符/数字/「资源包」/结尾；
+# `旧` 除上述外还接受「版」「包」（旧版、旧包），但拒绝「旧金山」「怀旧」。
+_RE_BACKUP = re.compile(r"(?:^|[-_.]|资源包)备份(?:$|[-_.\d]|资源包)|"
+                        r"(?<![a-z])(?:bak|backup)\d*(?![a-z])")
+_RE_OLD = re.compile(r"(?:^|[-_.]|资源包)旧(?:$|[-_.\d版包])|"
+                     r"(?<![a-z])old(?![a-z])")
 
 
 def _norm(s):
@@ -130,31 +136,29 @@ def pkg_rank(name, require_prefix=None, filter_backup=False):
     cls = pkg_class(name)
     if cls is None:
         return -1
-    _bk = bool(_RE_BACKUP.search(_norm(_base(name))))
+    b = _base(name)
+    t = _norm(b)
+    _bk = bool(_RE_BACKUP.search(t))
     if cls == "subset":
         # a345R（第16轮 P1-1，实锤回归）：上一版让备份子集直接不可见，结果
         # 闸门也一刀切 —— 用户唯一一份包是 `-资源包-基础-备份.fcpk` 时工具
         # 直接起不来。而 build.py 的 base 预设（webview2+dotnet+pydeps）恰好
         # 就是 MANIFEST 里全部三个硬项，它**能**救急。
-        # 改回档位差：备份全量(1) > 备份子集(0)——「两份备份」取全量；
-        # 「只有备份子集」仍能装。备份全量与普通子集同档(1)，优先级相同。
+        # 档位差：备份全量(1) > 备份子集(0)——「两份备份」取全量；
+        # 「只有备份子集」仍能装。备份全量与普通子集同档(1)。
         return 0 if _bk else 1
     if _bk:
         return 1                     # 备份全量：与正规子集同档，让位于全量
     # 没有应用名前缀（闸门的救急路径）：降一档，别压过带前缀的正规包
     if require_prefix:
         _pn = _norm(str(require_prefix).lower())
-        if not _norm(_base(name)).startswith(_pn):
+        if not t.startswith(_pn):
             return 2
-    b = _base(name)
-    t = _norm(b)
-    core = _RE_COPYWORD.sub("", t)[:-5]
-    i = core.find("资源包")
-    after = core[i + 3:].lstrip("-_.") if i >= 0 else ""
-    # a341R：副本词在下面 core 里已被剥掉，必须回原始 t 上判存在性
-    if (_RE_COPY.search(b) or _RE_VER.search(b) or _RE_COPYWORD.search(t)
-            or after or re.search(r"(?:备份|bak|backup|旧)\d*\.fcpk$", t)):
-        return 2                     # 重名副本 / 副本链 / 版本尾巴 → 派生
+    # a346R（第17轮 P2-1）：派生判定统一走 pkg_derived——原先把
+    # 副本/版本尾/无名 tag 在这里重复写一遍，与 pkg_derived 两处维护，
+    # 于是 `-基础-old`（子集 + 旧 tag）被判成正牌子集、与正规子集同档抢包。
+    if pkg_derived(name):
+        return 2
     return 3                         # 正牌主包
 
 
@@ -169,17 +173,28 @@ def pkg_derived(name):
     t = _norm(b)
     if _RE_COPY.search(b) or _RE_VER.search(b) or _RE_COPYWORD.search(t):
         return True
-    if _RE_BACKUP.search(t):
+    # 让位词左右对称扫（第17轮 P1-1/P1-2：`备份资源包`、`旧-资源包`）
+    if _RE_BACKUP.search(t) or _RE_OLD.search(t):
         return True
-    # a345R（第16轮 P2-1）：正规子集包（`-基础`/`-拓展`/`-claude`…）是
-    # build.py --preset 的唯一规范产物，不是留档。门户会同时渲染
-    # 「子集包…」和「派生/留档包…」两条提示，自相矛盾。
-    if pkg_class(name) == "subset":
-        return False
-    # 只有**无名 tag**（`-2024` / `-old` / `-1`）才算改名留档
     core = _RE_COPYWORD.sub("", t)[:-5]
     i = core.find("资源包")
-    return bool(i >= 0 and core[i + 3:].lstrip("-_."))
+    if i < 0:
+        return False
+    after = core[i + 3:].lstrip("-_.")
+    if not after:
+        return False
+    if re.fullmatch(r"v\d+(?:\.\d+)*", after):
+        return True
+    # a346R（第17轮 P2-1）：正规子集（`-基础`/`-拓展`/`-claude`…）是
+    # build.py --preset 的唯一规范产物，不算留档；但 `-基础-old`、
+    # `-拓展-2024`、`-拓展-v3` 剥掉关键字后还剩无名 tag → 是留档。
+    # 剥掉子集关键字与版本尾后，剩下的**只有分隔符/数字** ⇒ 正规产物。
+    # `-拓展-2024` 的 2024 是版本/日期尾巴，仍算正规；`-基础-old`、
+    # `-拓展-v3` 剥完还剩字母 → 留档。
+    rest = re.sub(_SUBSET_KW, "", after)
+    rest = re.sub(r"v\d+(?:\.\d+)*", "", rest)
+    rest = re.sub(r"[-_.\d]", "", rest)
+    return bool(rest)
 
 
 def pkg_class(name):
