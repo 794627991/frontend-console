@@ -686,7 +686,11 @@ def api_office_ds_config():
     if not doc_type:
         return jsonify({"ok": False, "err": f"OnlyOffice 不支持 .{ext}"}), 400
     host = request.host_url.rstrip("/")
-    key = f"{os.path.abspath(q).lower()}:{os.path.getmtime(q)}:{os.path.getsize(q)}"
+    # a298：key 必须是安全短串（字母数字-_)。旧 key=完整路径:mtime:size——含中文/
+    # 盘符/冒号，DS 把 key 用作 doc 服务路由 shardkey，特殊字符直接 400（用户
+    # 实锤全打不开：ws/polling 全 400）。改 md5(路径+mtime+size) 哈希
+    import hashlib
+    key = hashlib.md5(f"{os.path.abspath(q).lower()}:{os.path.getmtime(q)}:{os.path.getsize(q)}".encode("utf-8")).hexdigest()[:20]
     cfg = {
         "documentType": doc_type,
         "document": {
