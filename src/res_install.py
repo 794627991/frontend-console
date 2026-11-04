@@ -261,6 +261,10 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None,
                 say("✗ bili 失败：%s" % (e,))
                 # 失败时该 kind 的字节不会再产生，从分母扣掉（同 webview2）
                 sub_total = max(1, sub_total - _bili_size)
+                # a339R（第10轮 P3-4）：中途失败时 cur[0] 停在中间值，
+                # 而分母已整块扣掉 → 后续 webview2 的 `_base = cur[0]` 会
+                # 取到虚高的值，进度条先满后跳。回滚到基准。
+                cur[0] = 0
             plan.remove("bili")
         if "webview2" in plan:
             # 返回值 False = 已完成跳过（没解包，不产生进度字节）→ 把它

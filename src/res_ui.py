@@ -115,6 +115,12 @@ def autofind_fcpk():
     装完仍缺 → 闸门再拦 → 死循环。优先主包（`-资源包.fcpk`），子集包（
     `-资源包-*.fcpk`）只在没有主包时才用。"""
     import glob
+    # a339R（第10轮 P3-2）：导入提到循环外一次性做——原实现写在双层 for 内，
+    # 一个坏 pyd 会让「所有目录都不可用」且只表现为"你把包放错地方了"。
+    try:
+        from src.pkgname import is_res_pkg as _is_res, pkg_class as _pc
+    except Exception:
+        return ""
     main, sub = [], []
     base = _app_dir()
     for d in (base, os.path.dirname(base),
@@ -129,16 +135,7 @@ def autofind_fcpk():
                 # cythonize_build 的 _EXCLUDE 排除出发布包 —— frozen 机上必
                 # ImportError，自动找包静默失效。
                 # a337R（第8轮 P2-3）：实现落到零依赖的 src.pkgname。
-                # a338R（第9轮 P2-3/P3）：前置可见性与门户统一走 is_res_pkg
-                # （原先这边判 `"资源包" in _bn`、门户判 `"-资源包" in _ln`，
-                # 改名成 `资源包.fcpk` 时闸门选得中、门户看不见）；导入失败
-                # 直接返回空串，绝不降级成「全归主包」（那正是把子集包当
-                # 主包选中的方向）。
-                try:
-                    from src.pkgname import is_res_pkg as _is_res, \
-                        pkg_class as _pc
-                except Exception:
-                    return ""
+                # a338R（第9轮）：前置可见性与门户统一走 is_res_pkg。
                 _bn = os.path.basename(p).lower()
                 if not _is_res(_bn):
                     continue

@@ -19,6 +19,11 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import unquote, quote
 
 PORT = 8765
+# a339R（第10轮 P3-3）：门户放宽可见性门槛后（判「含资源包」而非「-资源包」），
+# 同目录的 `别家工具-资源包.fcpk` / `资源包备份.fcpk` 会被误当成发行包发给
+# 同事。要求 basename 以本应用名开头（或以「资源包」开头——用户去掉前缀的
+# 形态）。不 import build.APP_NAME：build.py 不进发布包。
+APP_NAME = "前端控制台"
 _MAX_AGE = 60          # manifest 缓存友好：发布后同事 1 分钟内必见新版
 _SESSION_TTL = 12 * 3600
 _DEFAULT_PWD = "888888"
@@ -179,10 +184,11 @@ def _offline_pkg():
     916MB 且 mtime 更新），旧逻辑同 rank 按 mtime 取 → 门户把子集包当"离线
     资源包"发给同事 → 缺 WebView2/.NET 的新机器装完仍缺，启动闸门再拦，
     且下述 res_boot 的死循环会跟着触发。现改为：
-      rank 2 = 主包（文件名精确 `<任意>-资源包.fcpk`）
-      rank 1 = 子集包（`-资源包-*.fcpk`）
+      rank 2 = 主包（`pkg_class(n) == "full"`——含重名副本/版本后缀形态）
+      rank 1 = 子集包（`pkg_class(n) == "subset"`）
       rank 0 = 历史 zip
-    主包存在时，子集包永不顶替。
+    主包存在时，子集包永不顶替。可见性与分类统一由 src.pkgname 判定
+    （a338R/a339R：两侧口径分裂过三轮，别再各写一套）。
 
     不进版本清单/更新日志——它不是应用版本，只是无外网机器的部署资源。
     sha1 不提供：manifest 刻意不收它（updater 不能把它当应用更新推下去），
@@ -200,7 +206,7 @@ def _offline_pkg():
     from src.pkgname import pkg_class as _pc, is_res_pkg as _is_res
     for n in sorted(names):
         _ln = n.lower()
-        is_new = _is_res(n)
+        is_new = _is_res(n, require_prefix=APP_NAME)
         is_old = _ln.endswith(".zip") and "-offline-pkg" in _ln
         if not (is_new or is_old):
             continue
