@@ -125,25 +125,24 @@ def autofind_fcpk():
                 # a334R（第5轮 P2-1）：名字判定必须用 basename——原实现拿
                 # 完整路径做 `"资源包" in p`，工具解压在含"资源包"的目录里时，
                 # 同目录别家的 other-tool.fcpk 也会被选中。
-                # a335R（第6轮 P1-4/P2-4）：分类统一走 update_server.pkg_class，
-                # 与门户同口径；同时兼容浏览器重名下载形态（`…资源包 (1).fcpk`
-                # / `…资源包 - 副本.fcpk`）——这些不会被 pkg_class 认出，
-                # 但确实是主包，单独按「含资源包、不含子集后缀」归主包。
-                _bn = os.path.basename(p).lower()
-                if not (_bn.endswith(".fcpk") and "资源包" in _bn):
-                    continue
                 # a336R（第7轮 P1-1）：分类函数原先在 update_server，而它被
                 # cythonize_build 的 _EXCLUDE 排除出发布包 —— frozen 机上必
                 # ImportError，自动找包静默失效。
-                # a337R（第8轮 P2-3）：实现落到零依赖的 src.pkgname，且对
-                # 任何资源包名永不返回 None → 这里不再各写 fallback（两侧
-                # 各写一份同构兜底正是口径分裂的来源）。
+                # a337R（第8轮 P2-3）：实现落到零依赖的 src.pkgname。
+                # a338R（第9轮 P2-3/P3）：前置可见性与门户统一走 is_res_pkg
+                # （原先这边判 `"资源包" in _bn`、门户判 `"-资源包" in _ln`，
+                # 改名成 `资源包.fcpk` 时闸门选得中、门户看不见）；导入失败
+                # 直接返回空串，绝不降级成「全归主包」（那正是把子集包当
+                # 主包选中的方向）。
                 try:
-                    from src.pkgname import pkg_class as _pc
-                    _cls = _pc(_bn)
+                    from src.pkgname import is_res_pkg as _is_res, \
+                        pkg_class as _pc
                 except Exception:
-                    _cls = None
-                if _cls == "subset":
+                    return ""
+                _bn = os.path.basename(p).lower()
+                if not _is_res(_bn):
+                    continue
+                if _pc(_bn) == "subset":
                     sub.append(p)
                 else:
                     main.append(p)

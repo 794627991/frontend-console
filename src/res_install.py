@@ -234,9 +234,16 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None,
                                 "（文件被占用或无权限）——本次跳过 bili，"
                                 "请关闭杀软/释放占用后重试")
                     say("解包 billion-context（Node 运行时 + 依赖树）…")
+                    # a338R（第9轮 P2-1，实锤）：extract_all 的 progress 传的是
+                    # **它自己从 0 起的累计字节**，而 prog() 内部又会 `cur[0]=done`
+                    # ——写成 `prog(cur[0] + d, ...)` 会自我叠加成平方增长
+                    # （实测解完 200MB 后 cur[0]=20100MB）。后面的 webview2/rest
+                    # 都以 cur[0] 为基准 → 进度条全程 100% 静止。
+                    # 必须在解包前取一次基准，与 rest 分支（base = cur[0]）同构。
+                    _bili_base = cur[0]
                     reader.extract_all(bili_root, kinds=["bili"],
                                        progress=lambda d, t, p2: prog(
-                                           cur[0] + d, sub_total, p2),
+                                           _bili_base + d, sub_total, p2),
                                        should_cancel=should_cancel)
                     _install_bili(bili_root, say, True)
                     try:

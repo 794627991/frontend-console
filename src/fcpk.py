@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """`.fcpk` 离线资源包格式核心（v4.1，用户拍板：统一自定义加密容器）。
 
 为什么不用标准 zip + 密码（用户否决 pyzipper）：
@@ -186,18 +186,6 @@ def is_fcpk(path):
             return f.read(4) == MAGIC
     except OSError:
         return False
-
-
-def pkg_class(name):
-    """资源包分类：'full' | 'subset' | None。
-
-    实现已抽到 src/pkgname.py（零依赖）。原因见那里的模块 docstring：
-    a336R 把它挪进本文件后，门户（发布机可能没装 pycryptodome）为了分个类
-    就被绑上 Crypto，api/versions 会直接 500；且三处调用方各自写 fallback
-    必然再次分裂。这里 re-export 只为兼容旧调用方。
-    """
-    from src.pkgname import pkg_class as _pc
-    return _pc(name)
 
 
 def inspect(path):

@@ -193,9 +193,14 @@ def _offline_pkg():
     except OSError:
         return None
     best = None
+    # a338R（第9轮 P2-3）：可见性判定必须与闸门（res_ui.autofind_fcpk）同口径。
+    # 原先这里判 `"-资源包" in _ln`、闸门判 `"资源包" in _bn` —— 分裂从分类
+    # 转移到了可见性：用户把包改名成 `资源包.fcpk` 时闸门选得中、门户看不见。
+    # 现统一走 pkgname.is_res_pkg。
+    from src.pkgname import pkg_class as _pc, is_res_pkg as _is_res
     for n in sorted(names):
         _ln = n.lower()
-        is_new = _ln.endswith(".fcpk") and "-资源包" in _ln
+        is_new = _is_res(n)
         is_old = _ln.endswith(".zip") and "-offline-pkg" in _ln
         if not (is_new or is_old):
             continue
@@ -212,7 +217,6 @@ def _offline_pkg():
             # a337R（第8轮 P2-3/P2-4）：实现挪到零依赖的 src.pkgname（本模块
             # 顶层不 import fcpk，否则门户为了分个类就要背上 Crypto），且
             # pkg_class 对资源包永不返回 None → 这里不再需要 fallback。
-            from src.pkgname import pkg_class as _pc
             rank = 2 if _pc(n) == "full" else 1
         else:
             rank = 0
