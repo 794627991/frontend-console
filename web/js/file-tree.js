@@ -257,7 +257,6 @@ async function treeReveal(path) {
   _TV.active = path;
   _TV.rendered = [-1, -1];
   _tvPaint();
-  _tvFocus(path);
 }
 window.treeReveal = treeReveal;
 
@@ -320,7 +319,6 @@ async function _tvExpand(path) {
   if (!j.ok) { _TV.cache.set(path, {err: j.err || '读取失败'}); _tvRebuild(); return; }
   _TV.cache.set(path, {entries: j.entries || [], truncated: j.truncated || 0});
   _tvRebuild();
-  _tvFocus(path, true);  // 展开对焦：父行钉视口 + 子行首行露出（v2 语义）
 }
 
 function _tvCollapse(path) {
@@ -339,40 +337,11 @@ function _tvCollapse(path) {
   for (const k of [..._TV.cache.keys()]) if (_nk(k) === _self || _nk(k).startsWith(_pre)) _TV.cache.delete(k);
   for (const k of [..._TV.seq.keys()]) if (_nk(k) === _self || _nk(k).startsWith(_pre)) _TV.seq.delete(k);
   _tvRebuild();
-  _tvFocus(path);           // 折叠对焦被折叠行
 }
 
-// ---- 对焦（v2 _treeReveal 语义的虚拟化版：纵向行号判据，横向按缩进深度）----
-function _tvFocus(path, firstChild) {
-  const host = $('treeRoots');
-  const i = _TV.idx.get(path);
-  if (!host || i === undefined) return;
-  const H = _TV.ROW_H, vpad = 40;
-  const tops = _TV.tops || [];
-  const minTop = (tops[i] !== undefined) ? tops[i] : i * H;
-  let maxBottom = minTop + H;
-  if ((_TV.rows[i] || {}).t === 'root') maxBottom += 14;   // 根行含路径子行
-  if (firstChild) {
-    // 子层首行=下一行且深度更大（对抗审 a206C：空目录/末行时下一行是
-    // 兄弟或根，不得纳入对焦）
-    const me = _TV.rows[i], c = _TV.rows[i + 1];
-    if (c && me && c.depth > me.depth)
-      maxBottom = (tops[i + 1] !== undefined ? tops[i + 1] : (i + 1) * H) + H;
-  }
-  let vy = host.scrollTop;
-  if (minTop < host.scrollTop) vy = Math.max(0, minTop - vpad);
-  else if (maxBottom > host.scrollTop + host.clientHeight)
-    vy = Math.max(0, maxBottom - host.clientHeight + vpad);
-  // 横向：双向滚入——展开对焦子层缩进左缘（depth+1）；折叠/点行对焦
-  // 本行左缘（depth；对抗审 a205R：原恒 +1，折叠回浅层横滚偏一层）
-  const depth = (_TV.rows[i] || {}).depth || 0;
-  const left = _tvPad(firstChild ? depth + 1 : depth);
-  let hx = host.scrollLeft;
-  if (left > host.scrollLeft + host.clientWidth) hx = Math.max(0, left - 24);
-  else if (left < host.scrollLeft) hx = Math.max(0, left - 24);
-  if (hx !== host.scrollLeft || vy !== host.scrollTop)
-    host.scrollTo({ left: hx, top: vy, behavior: 'smooth' });
-}
+// a3xx（用户定调「跟随我都说了，全删，说全删就要全删，别留」）：
+// _tvFocus 整套删除——点树项/展开/折叠后的自动滚动跟随全部去掉。
+// 原来纵横向都跟随；用户两次明确要求删干净，不留半套。
 
 // ---- 根列表 ----
 async function refreshTree() {
@@ -480,8 +449,7 @@ $('treePane').addEventListener('click', async e => {
     _TV.rendered = [-1, -1];
     _tvPaint();
     openFileSmart(path, 'auto');
-    _tvFocus(path);
-  }
+    }
 });
 
 // a209批2：contextmenu/快捷键/文件操作移驻 tree-fileops.js（命令层独立）

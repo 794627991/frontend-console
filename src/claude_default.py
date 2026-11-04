@@ -24,6 +24,10 @@ claude_default_bp = Blueprint("claude_default", __name__)
 # 内网模型网关（写死——API 配置界面只显示不可改）
 DEFAULT_BASE_URL = "http://lanz.hikvision.com/v3/anthropic/model"
 
+# 本工具在 Claude Code 里的 MCP server 名（settings 授权与 .claude.json 条目
+# 都用它，改名必须同步 src/mcp_server.py 的 serverInfo.name）
+MCP_SERVER_NAME = "serial-console-pro"
+
 
 def _claude_dir():
     return os.path.join(os.path.expanduser("~"), ".claude")
@@ -58,7 +62,9 @@ DEFAULT_SETTINGS = {
         "command": "",
     },
     "permissions": {
-        "allow": [],
+        # 工具自带 MCP 的授权（v4 后半补：原来空数组，同事机器上工具在
+        # Claude Code 里完全用不了——连 server 条目都没有，更别说授权）
+        "allow": ["mcp__serial-console-pro", "mcp__serial-console-pro__*"],
         "defaultMode": "auto",
     },
     "outputStyle": "Concise",
@@ -253,6 +259,14 @@ def provision_defaults(force_statusline=False, reset_statusline=False):
     if changed:
         _write_settings(cur)
         notes.append("settings.json 已补全缺省项")
+    # 2b. MCP 自注册 + 授权（用户实锤「同事设备没写 mcp__serial-console-pro，
+    #     导致工具自带的 MCP 功能用不了」）：幂等，只补缺不覆盖已有条目
+    try:
+        n_mcp = _register_self_mcp()
+        if n_mcp:
+            notes.append("MCP 已注册：" + "，".join(n_mcp))
+    except Exception as e:
+        notes.append("MCP 自注册失败（不影响使用）：%s" % (e,))
     # 3. ~/.claude.json 首次确认位（默认授权——别的用户开箱不弹确认）：
     #    onboarding/主题/信任已见等布尔全部预置 true；新建 projects 条目也带
     #    hasTrustDialogAccepted（工作区 trust 不再问）。只补缺不覆盖。
@@ -262,6 +276,81 @@ def provision_defaults(force_statusline=False, reset_statusline=False):
     except Exception as e:
         notes.append(f"首次确认预置失败（不影响使用）：{e}")
     return True, notes
+
+
+def _register_self_mcp():
+    """把本工具注册成 Claude Code 的 MCP server，并授权它的工具。
+
+    用户实锤（v4 后半）：同事机器上没写 mcp__serial-console-pro，工具自带的
+    串口/日志/DevTools 能力在 Claude Code 里完全用不了。根因是从来没做过
+    「自注册」——本机那条是手工填的，分发出去当然没有。
+
+    两处都要写：
+      1. ~/.claude.json 的 mcpServers：server 条目本身
+      2. ~/.claude/settings.json 的 permissions.allow：工具调用授权
+         （只写 server 不写 allow，用户每次调工具都要点确认，等于没用）
+
+    exe 形态下 command 用 sys.executable + --mcp（main.py 有此模式）；
+    源码形态用 python + src/mcp_server.py。只补缺不覆盖——用户可能自己改过
+    路径（例如本机指向 D:\\AI\\前端控制台Pro），不覆盖才安全。
+
+    返回实际写入的项（空列表=已就绪，无需改动）。
+    """
+    import sys
+    done = []
+    # ---- 1. server 条目（~/.claude.json）----
+    if getattr(sys, "frozen", False):
+        cmd, args = sys.executable, ["--mcp"]
+    else:
+        here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        cmd = sys.executable or "python"
+        args = [os.path.join(here, "src", "mcp_server.py")]
+    entry = {"type": "stdio", "command": cmd, "args": args,
+             "env": {"PYTHONIOENCODING": "utf-8"}}
+
+    cj = os.path.join(os.path.expanduser("~"), ".claude.json")
+    try:
+        with open(cj, encoding="utf-8") as f:
+            d = json.load(f)
+        if not isinstance(d, dict):
+            d = {}
+    except Exception:
+        d = {}
+    servers = d.get("mcpServers")
+    if not isinstance(servers, dict):
+        servers = {}
+    if not servers.get(MCP_SERVER_NAME):
+        servers[MCP_SERVER_NAME] = entry
+        d["mcpServers"] = servers
+        _atomic_json(cj, d)
+        done.append("mcpServers")
+    # ---- 2. 授权（~/.claude/settings.json permissions.allow）----
+    cur = _read_settings()
+    perms = cur.get("permissions")
+    if not isinstance(perms, dict):
+        perms = cur["permissions"] = {"allow": [], "defaultMode": "auto"}
+    allow = perms.get("allow")
+    if not isinstance(allow, list):
+        allow = perms["allow"] = []
+    # 两条都加：精确名（只授权本 server）+ 通配（Claude Code 升级后工具名
+    # 可能带后缀，如 mcp__serial-console-pro__send_command 已由精确名覆盖；
+    # 这里再补一条前缀通配防漏）。用户本机就是这么写的，照抄。
+    want = ["mcp__%s" % MCP_SERVER_NAME, "mcp__%s__*" % MCP_SERVER_NAME]
+    miss = [w for w in want if w not in allow]
+    if miss:
+        allow.extend(miss)
+        _write_settings(cur)
+        done.append("permissions")
+    return done
+
+
+def _atomic_json(path, obj):
+    """tmp+replace 原子写（与 _preaccept_onboarding 同款）。"""
+    import threading
+    tmp = "%s.%d.%d.tmp" % (path, os.getpid(), threading.get_ident())
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
 
 
 def _preaccept_onboarding():

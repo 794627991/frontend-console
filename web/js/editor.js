@@ -1333,6 +1333,21 @@ function _edCloseNow(conn) {
       if (m) { m.original.dispose(); m.modified.dispose(); }
     } catch(e){}
   }
+  // a309R3 M8（第2轮审查）：office tab 资源清理（参照 hex/editor 同模式）——
+  // _dsEditor：OnlyOffice 编辑器实例（内部 iframe/websocket 不销毁即常驻）；
+  // _pdfTask/_pdfDoc：pdf.js 文档与 worker（100MB 级 PDF 关 tab 不清即驻留）；
+  // _pdfIO：页面虚拟化 IntersectionObserver；_outlineRO：docx 大纲栏
+  // ResizeObserver；_ovSbV/_ovSbH 挂在滚动容器元素上（淡出 setTimeout 清理）
+  if (conn._dsEditor) { try { conn._dsEditor.destroyEditor(); } catch(e){} conn._dsEditor = null; }
+  if (conn._pdfTask) { try { conn._pdfTask.destroy(); } catch(e){} conn._pdfTask = null; conn._pdfDoc = null; }
+  if (conn._pdfIO) { try { conn._pdfIO.disconnect(); } catch(e){} conn._pdfIO = null; }
+  if (conn._outlineRO) { try { conn._outlineRO.disconnect(); } catch(e){} conn._outlineRO = null; }
+  if (conn.wrap) {
+    conn.wrap.querySelectorAll('[data-ov-body], [data-ov-pages]').forEach(h => {
+      if (h._ovSbV) { clearTimeout(h._ovSbV.hideT); h._ovSbV = null; }
+      if (h._ovSbH) { clearTimeout(h._ovSbH.hideT); h._ovSbH = null; }
+    });
+  }
   conn.tab.remove(); conn.wrap.remove();
   delete connections[conn.portId];
   if (typeof treeDecoRefresh === 'function') treeDecoRefresh();   // a209批1：树 open/dirty 装饰联动

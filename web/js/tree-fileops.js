@@ -243,8 +243,6 @@
     if (!T.open.has(dir) && typeof _tvExpand === 'function') _tvExpand(dir);
     for (let i = 0; i < 25 && !T.cache.has(dir); i++)
       await new Promise(r => setTimeout(r, 100));
-    // 目标行滚入视口（_tvFocus 只滚动不改选中）
-    if (typeof _tvFocus === 'function') { try { _tvFocus(dir); } catch (_) {} }
     await new Promise(r => setTimeout(r, 60));
   }
 
@@ -376,7 +374,6 @@
             const p = T.rows[j].path;
             T.active = p; T.rendered = [-1, -1];
             if (typeof _tvPaint === 'function') _tvPaint();
-            if (typeof _tvFocus === 'function') _tvFocus(p);
             break;
           }
         }
@@ -397,7 +394,6 @@
       T.active = r.path;
       T.rendered = [-1, -1];
       if (typeof _tvPaint === 'function') _tvPaint();
-      if (typeof _tvFocus === 'function') _tvFocus(r.path);
     }
     return true;
   }

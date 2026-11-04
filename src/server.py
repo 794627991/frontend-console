@@ -736,14 +736,25 @@ def api_office_ds_callback():
     """OnlyOffice 保存回调：status=2(编辑完成)/6(强制保存) 时从 DS 的 url 拉新文件写回。"""
     from src.app_state import reject_win_devpath
     import urllib.request, shutil
+    from urllib.parse import urlparse
     q = request.args.get("path", "") or request.args.get("q", "")
     if reject_win_devpath(q) or not os.path.isfile(q):
+        return jsonify({"error": 1}), 400
+    # M1（a309R3 第2轮实锤）：本端点无鉴权可被任意本地页面 POST——
+    # ① 扩展名白名单（与 read/write 对齐），此前 canary.txt 任意文件可被覆写；
+    # ② url 必须 http(s)：urlretrieve 收 file:// 即任意本地文件读取→覆写目标
+    _ext = os.path.splitext(q)[1].lower().lstrip(".")
+    if _ext not in ("docx", "doc", "xlsx", "xls", "csv", "pptx", "ppt"):
         return jsonify({"error": 1}), 400
     try:
         j = request.get_json(force=True) or {}
         if j.get("status") in (2, 6) and j.get("url"):
+            u = j["url"]
+            pu = urlparse(u)
+            if pu.scheme not in ("http", "https") or not pu.netloc:
+                return jsonify({"error": 1}), 400
             tmp = q + ".dsdown"
-            urllib.request.urlretrieve(j["url"], tmp)
+            urllib.request.urlretrieve(u, tmp)
             if os.path.isfile(tmp) and os.path.getsize(tmp) > 0:
                 bak = q + ".bak"
                 if not os.path.isfile(bak):

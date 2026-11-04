@@ -405,6 +405,9 @@ let activePortId = null;
     });
     // 插到右缘 sticky 区（tab-bar-actions/⋮）之前——与所有 tab 的插入位一致
     const anchor = tabsEl.querySelector('.tab-bar-actions') || btn;
+    // L1（a309R3 第2轮）：一个可分组都没有时不建空抽屉栏——空 bar 虽 0x0
+    // 不可见，但 flex margin 仍占 4px 幽灵间隙，且选择器语义污染
+    if (!order.length) { drawerBar = null; checkOverflow(); return; }
     tabsEl.insertBefore(drawerBar, anchor);
     // 栏内居民放回：锚组胶囊之后（组已消失的放栏后）——精确还原用户放置。
     // a299 关键：正序插同一锚点会反转相对顺序（[claude,计算器] 都 insertBefore
@@ -681,7 +684,9 @@ function showBanner(msg, ms=4000, isErr=false) {
 // 不吃 transition,渐隐只能自绘 DOM 才能做）。面板需 position:relative
 // （CSS 已给六容器配好）。内容不溢出自动隐藏；拖拽锁 sb-drag 防拖出面板
 // 时条闪没；400ms 周期兜底（列表增删不触发 scroll 事件）。返回清理函数
-const _HG_FADE_SB_VER = 6;   // 挂载实例版本：行为变更时递增——旧实例自动拆重建
+const _HG_FADE_SB_VER = 8;   // 挂载实例版本：行为变更时递增——旧实例自动拆重建
+                             // v7：补横向条（用户实锤「文件树横向滚动条没有」）
+                             // v8：修鼠标上条抽搐（宿主/条互相触发 enter/leave 死循环）
 function _hgFadeSb(el) {
   if (el && el._hgFadeSb && el._hgFadeSb.ver !== _HG_FADE_SB_VER) {
     // 旧版本实例在位（页面 JS 缓存半新半旧的第三层：函数实例本身——服务端
@@ -689,6 +694,7 @@ function _hgFadeSb(el) {
     // 「修了效果一样」）。拆旧建新,行为变更递增版本号即生效
     clearInterval(el._hgFadeSb.timer);
     if (el._hgFadeSb.sb) el._hgFadeSb.sb.remove();
+    if (el._hgFadeSb.sbh) el._hgFadeSb.sbh.remove();
     delete el._hgFadeSb;
   }
   if (!el || el._hgFadeSb) return () => {};
@@ -708,29 +714,58 @@ function _hgFadeSb(el) {
   th.className = 'hg-fade-sb-th';
   sb.appendChild(th);
   anchor.appendChild(sb);
+  // v7 横向条：同一锚点上的第二条（class 换 hg-fade-sbh，CSS 走横排）
+  const sbh = document.createElement('div');
+  sbh.className = 'hg-fade-sb hg-fade-sbh';
+  const thh = document.createElement('div');
+  thh.className = 'hg-fade-sb-th';
+  sbh.appendChild(thh);
+  anchor.appendChild(sbh);
   // 自愈：宿主 innerHTML 整体重写不影响（条在锚点上不在宿主里），锚点
   // innerHTML 重写时重插
   const ensureInDom = () => {
     if (sb.parentNode !== anchor) anchor.appendChild(sb);
+    if (sbh.parentNode !== anchor) anchor.appendChild(sbh);
   };
   let dragging = false;   // 拖拽期间宿主 mouseleave 不收条
+  let draggingH = false;
   const paint = () => {
     if (!el.isConnected || !anchor.isConnected) return;
     ensureInDom();
-    const sh = el.scrollHeight, ch = el.clientHeight;
-    if (sh <= ch + 4) { sb.style.display = 'none'; return; }
-    sb.style.display = '';
-    // 条相对锚点定位：宿主可视区映射（每拍校准,布局变化自适应）
     const er = el.getBoundingClientRect(), ar = anchor.getBoundingClientRect();
-    const top = Math.max(0, er.top - ar.top + 4);
-    const trackH = Math.max(40, er.height - 8);
-    sb.style.top = top + 'px';
-    sb.style.bottom = 'auto';
-    sb.style.height = trackH + 'px';
-    const thH = Math.max(32, Math.round(ch / sh * trackH));
-    const maxTop = trackH - thH;
-    th.style.height = thH + 'px';
-    th.style.top = (maxTop > 0 ? el.scrollTop / (sh - ch) * maxTop : 0) + 'px';
+    // ---- 纵向 ----
+    const sh = el.scrollHeight, ch = el.clientHeight;
+    if (sh <= ch + 4) { sb.style.display = 'none'; }
+    else {
+      sb.style.display = '';
+      // 条相对锚点定位：宿主可视区映射（每拍校准,布局变化自适应）
+      const top = Math.max(0, er.top - ar.top + 4);
+      const trackH = Math.max(40, er.height - 8);
+      sb.style.top = top + 'px';
+      sb.style.bottom = 'auto';
+      sb.style.height = trackH + 'px';
+      const thH = Math.max(32, Math.round(ch / sh * trackH));
+      const maxTop = trackH - thH;
+      th.style.height = thH + 'px';
+      th.style.top = (maxTop > 0 ? el.scrollTop / (sh - ch) * maxTop : 0) + 'px';
+    }
+    // ---- 横向 ----
+    const sw = el.scrollWidth, cw = el.clientWidth;
+    if (sw <= cw + 4) { sbh.style.display = 'none'; return; }
+    sbh.style.display = '';
+    const left = Math.max(0, er.left - ar.left + 2);
+    // 有纵向条时右缘让开它，两条不打架
+    const trackW = Math.max(40, er.width - 4 - (sb.style.display === 'none' ? 0 : 8));
+    sbh.style.left = left + 'px';
+    sbh.style.right = 'auto';
+    sbh.style.width = trackW + 'px';
+    // 贴宿主自身底缘（不是锚点底缘——树宿主上方还有工具条，锚点更高）
+    sbh.style.top = Math.max(0, er.bottom - ar.top - 10) + 'px';
+    sbh.style.bottom = 'auto';
+    const thW = Math.max(32, Math.round(cw / sw * trackW));
+    const maxLeft = trackW - thW;
+    thh.style.width = thW + 'px';
+    thh.style.left = (maxLeft > 0 ? el.scrollLeft / (sw - cw) * maxLeft : 0) + 'px';
   };
   sb.addEventListener('mousedown', (e) => {
     e.preventDefault();
@@ -759,18 +794,96 @@ function _hgFadeSb(el) {
       el.scrollTop += (y < cur ? -1 : 1) * el.clientHeight * 0.9;
     }
   });
-  let hovering = false;
-  el.addEventListener('mouseenter', () => { hovering = true; sb.classList.add('sb-drag'); paint(); });
-  el.addEventListener('mouseleave', () => {
-    hovering = false;
-    if (!dragging) sb.classList.remove('sb-drag');
+  sbh.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    const trackW = sbh.clientWidth, thW = thh.offsetWidth;
+    const maxLeft = trackW - thW;
+    if (e.target === thh) {
+      draggingH = true;
+      sbh.classList.add('sb-drag');
+      const startX = e.clientX, startScroll = el.scrollLeft;
+      const move = (ev) => {
+        if (maxLeft <= 0) return;
+        el.scrollLeft = startScroll +
+          (ev.clientX - startX) / maxLeft * (el.scrollWidth - el.clientWidth);
+      };
+      const up = () => {
+        draggingH = false;
+        if (!hovering) sbh.classList.remove('sb-drag');
+        removeEventListener('mousemove', move);
+        removeEventListener('mouseup', up);
+      };
+      addEventListener('mousemove', move);
+      addEventListener('mouseup', up);
+    } else {
+      const x = e.clientX - sbh.getBoundingClientRect().left;
+      const cur = parseFloat(thh.style.left) || 0;
+      el.scrollLeft += (x < cur ? -1 : 1) * el.clientWidth * 0.9;
+    }
   });
+  // v8 抽搐修复（用户实锤「鼠标放上去抽搐、时隐时现、拉不动」）：
+  // 只看宿主的 mouseenter/leave 是死循环——条**覆盖在宿主上方**（挂在
+  // 锚点里、z-index:5），鼠标移到条上 → 宿主触发 mouseleave → 摘 sb-drag
+  // → 条变 pointer-events:none → 鼠标穿透回宿主 → mouseenter → 条再出来
+  // → 再 mouseleave…… 一帧一循环。
+  // 正解：进条/出条也要算「还在悬停区」。条是宿主的兄弟位（同在锚点上），
+  // 用条的 mouseenter/leave 续命；另外用 mousemove 兜底（鼠标直接从宿主
+  // 划到条上时，宿主的 leave 先到，条自己的 enter 可能因 pointer-events
+  // 已关而收不到）。
+  let hovering = false;
+  let hideTimer = 0;
+  // 鼠标是否物理落在条/宿主上——enter/leave 事件在 pointer-events 切换时
+  // 会漏发（条变 none 后浏览器不再派 enter；变回 auto 时若鼠标已在其上，
+  // 补发 leave 而不是 enter）。所以定时器到点必须**主动复查几何位置**，
+  // 不能只靠事件计数。
+  const overEl = (n, e) => {
+    if (!n || !e) return false;
+    const r = n.getBoundingClientRect();
+    return e.clientX >= r.left && e.clientX <= r.right &&
+           e.clientY >= r.top && e.clientY <= r.bottom;
+  };
+  let lastPt = null;
+  const track = (e) => { lastPt = { clientX: e.clientX, clientY: e.clientY }; };
+  const isOverAny = () =>
+    overEl(el, lastPt) || overEl(sb, lastPt) || overEl(sbh, lastPt);
+  const show = () => {
+    hovering = true;
+    if (hideTimer) { clearTimeout(hideTimer); hideTimer = 0; }
+    sb.classList.add('sb-drag'); sbh.classList.add('sb-drag');
+    paint();
+  };
+  const hideSoon = () => {
+    hovering = false;
+    if (dragging || draggingH) return;      // 拖拽中绝不收条
+    if (hideTimer) clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => {
+      hideTimer = 0;
+      // 关键复查：鼠标几何上仍在宿主/条上就继续亮着（事件漏发兜底）
+      if (dragging || draggingH || hovering || isOverAny()) return;
+      sb.classList.remove('sb-drag'); sbh.classList.remove('sb-drag');
+    }, 260);
+  };
+  el.addEventListener('mouseenter', show);
+  el.addEventListener('mouseleave', hideSoon);
+  el.addEventListener('mousemove', track, { passive: true });
+  sb.addEventListener('mousemove', track, { passive: true });
+  sbh.addEventListener('mousemove', track, { passive: true });
+  sb.addEventListener('mouseenter', show);
+  sb.addEventListener('mouseleave', hideSoon);
+  sbh.addEventListener('mouseenter', show);
+  sbh.addEventListener('mouseleave', hideSoon);
   el.addEventListener('scroll', paint, { passive: true });
+  // wheel 处理需要从「条」反查宿主（条在锚点上、不在宿主里），挂个反向指针
+  sb._hgFadeCtrl = { host: el };
+  sbh._hgFadeCtrl = { host: el };
   // v6 性能事故复盘（trace 实锤 44500 次 paint/145s）：每容器独立 400ms
   // interval 废除——改由全局单 600ms 循环统一刷（托管 IIFE）+scroll 即时
   paint();
-  Object.assign(el._hgFadeSb, { sb, paint, anchor });   // ver 已在开头写入
-  return () => { sb.remove(); delete el._hgFadeSb; };
+  Object.assign(el._hgFadeSb, { sb, sbh, paint, anchor });   // ver 已在开头写入
+  return () => {
+    if (hideTimer) clearTimeout(hideTimer);
+    sb.remove(); sbh.remove(); delete el._hgFadeSb;
+  };
 }
 
 // ---- 渐隐滚动条全局托管（用户拍板全站统一）--------------------------------
@@ -788,9 +901,15 @@ function _hgFadeSb(el) {
   const tryMount = (n) => {
     if (!n || n.nodeType !== 1 || n._hgFadeSb) return false;
     if (n.matches && n.matches(EXCLUDE)) return false;
-    let oy;
-    try { oy = getComputedStyle(n).overflowY; } catch (_) { return false; }
-    if (oy !== 'auto' && oy !== 'scroll') return false;
+    let cs;
+    try { cs = getComputedStyle(n); } catch (_) { return false; }
+    // v7：横向也要接管——早前只认 overflowY，overflow-x:auto 的容器
+    // （文件树 .tree-roots / 搜索列表 .ts-results）永远挂不上，横向条
+    // 自然没有
+    const oy = cs.overflowY, ox = cs.overflowX;
+    const okY = (oy === 'auto' || oy === 'scroll');
+    const okX = (ox === 'auto' || ox === 'scroll');
+    if (!okY && !okX) return false;
     _hgFadeSb(n);
     if (n._hgFadeSb) { _hosts.add(n); return true; }
     return false;
@@ -825,13 +944,58 @@ function _hgFadeSb(el) {
       n = n.parentElement;
     }
   }, { passive: true });
+  // v7 鼠标靠近横条即横向滚动（用户需求：鼠标贴在底部横条附近时滚轮横滚，
+  // 离开就恢复竖向正常滚动）。
+  // 为什么不用 hover 区域的 CSS/元素判据：横条默认 opacity:0 + pointer-events:
+  // none，鼠标「靠近」时它还没显形，必须自己算距离。判据用**锚点矩形底部
+  // 上方一条带**（横条住在锚点上，宿主底部不一定等于它）——48px 给足容错，
+  // 又不至于把「正在看列表中部」误判成横滚意图。
+  const WHEEL_BAND = 48;
+  document.addEventListener('wheel', (e) => {
+    if (e.ctrlKey || e.shiftKey || e.altKey) return;   // 组合键让给原生语义
+    // 终端区永不劫持（xterm 自己有滚轮语义与半屏滚动）
+    if (e.target && e.target.closest &&
+        e.target.closest('.xterm, .xterm-viewport, .xterm-screen')) return;
+    // 找最近的已挂载宿主（自绘条系统内）。条本身挂在锚点上、不在宿主里
+    // ——鼠标停在条上滚轮时 e.target 是条，必须能从条找回宿主
+    let n = e.target, host = null;
+    while (n && n !== document.body && n.nodeType === 1) {
+      if (n._hgFadeCtrl) { host = n._hgFadeCtrl.host; break; }
+      if (n._hgFadeSb) { host = n; break; }
+      n = n.parentElement;
+    }
+    if (!host || !host.isConnected) return;
+    // 仅有横向溢出才谈得上横滚
+    if (host.scrollWidth <= host.clientWidth + 4) return;
+    const ar = (host._hgFadeSb.anchor || host).getBoundingClientRect();
+    const er = host.getBoundingClientRect();
+    const baseBottom = Math.min(ar.bottom, er.bottom);
+    // 指针在底部横滚带内 + 目标方向是竖向 → 转成横向
+    if (e.clientY < baseBottom - WHEEL_BAND || e.clientY > baseBottom + 8) return;
+    const d = Math.abs(e.deltaY) > Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+    if (!d) return;
+    // deltaMode：0=像素 1=行 2=页。行模式（部分鼠标/驱动）下 deltaY 是 ±3，
+    // 直接当像素滚等于没动；按 40px/行折算，与竖向手感对齐
+    const px = e.deltaMode === 1 ? d * 40 : (e.deltaMode === 2 ? d * host.clientWidth : d);
+    const before = host.scrollLeft;
+    host.scrollLeft += px;
+    if (host.scrollLeft !== before) {
+      e.preventDefault();     // 真的滚到了才吃掉，到头了让回竖向
+      if (host._hgFadeSb.paint) host._hgFadeSb.paint();
+    }
+    // 已经在最左/最右：不吃事件，竖向滚动照常（用户要求「远离时正常竖向」）
+  }, { passive: false });
   // 全局单循环统一 paint 已挂载容器（断连自动出册）
   setInterval(() => {
     for (const el of _hosts) {
       if (!el.isConnected || !el._hgFadeSb || !el._hgFadeSb.paint) {
         // a237 P3：出册同时摘自绘条本体——宿主被单独 remove（而非父层
         // innerHTML 重建）时，条以内联样式残留在 anchor 上成幽灵可见
-        if (el._hgFadeSb && el._hgFadeSb.sb) { try { el._hgFadeSb.sb.remove(); } catch (_) {} }
+        // v7：竖条与横条都要摘，漏了横条会在旧锚点上留一条孤儿
+        if (el._hgFadeSb) {
+          if (el._hgFadeSb.sb) { try { el._hgFadeSb.sb.remove(); } catch (_) {} }
+          if (el._hgFadeSb.sbh) { try { el._hgFadeSb.sbh.remove(); } catch (_) {} }
+        }
         _hosts.delete(el);
         continue;
       }

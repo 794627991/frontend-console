@@ -41,6 +41,10 @@ function _dragSnap(clientX) {
 // 挡板修正：未固定源要落进固定簇 → 真实落点 = 最后一个固定 tab 之后
 function _dragGuard(src, snap) {
   if (!snap) return snap;
+  // L2（a309R3 第2轮审查）：胶囊源只认抽屉栏内锚点——拖到主栏 tab 前后时
+  // 指示线宣称可落，drop 实际却归位到栏首（误导）。锚不在栏内 → 无落点，
+  // 指示线隐藏 + drop 无操作
+  if (src.classList.contains('tab-drawer') && !(snap.el.closest && snap.el.closest('.tab-drawer-bar'))) return null;
   if (src.classList.contains('pinned') || !snap.el.classList.contains('tab')) return snap;
   // 目标是固定 tab（无论前/后半）→ 挡到最后固定后。
   // 注意：src 自己可能带 pinned 类（拖动中 unpin 竞态）——只挡真 pinned 目标

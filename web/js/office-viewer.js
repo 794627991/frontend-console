@@ -521,10 +521,42 @@ async function _ovRenderDocx(buf, body, wrap, conn) {
   }
 }
 
+// a311：字号启发式标题识别（文档无标准 Heading 样式时的兜底）。
+// 算法：统计全部段落字号取中位数 → 比中位数大 ≥20% 且文字 ≤60 字的段落视为
+// 标题候选；层级 = 按候选字号降序分档（最大档 lv1、次档 lv2、其余 lv3）。
+// 返回带 dataset.ovHlvl 的 p 列表（_ovDocxOutline 的 lv 提取优先读它）
+function _ovDocxHeadsBySize(container) {
+  const ps = [...container.querySelectorAll('p')].filter(p => (p.textContent || '').trim().length >= 2);
+  if (ps.length < 8) return [];   // 段落太少不猜
+  const sizes = ps.map(p => parseFloat(getComputedStyle(p).fontSize)).filter(x => x > 0).sort((a, b) => a - b);
+  const mid = sizes[Math.floor(sizes.length / 2)] || 12;
+  const thr = mid * 1.2;
+  const cands = [];
+  for (const p of ps) {
+    const txt = (p.textContent || '').trim();
+    const fs = parseFloat(getComputedStyle(p).fontSize);
+    if (fs >= thr && txt.length <= 60) {
+      p.dataset.ovHfs = fs;
+      cands.push(p);
+    }
+  }
+  if (cands.length < 2 || cands.length > ps.length * 0.4) return [];   // 太多=误判（满页大字）
+  // 字号分档（去重字号降序 → 前 3 档 = lv1/2/3）
+  const lvls = [...new Set(cands.map(p => p.dataset.ovHfs))].map(Number).sort((a, b) => b - a).slice(0, 3);
+  cands.forEach(p => { p.dataset.ovHlvl = String(Math.min(3, lvls.indexOf(Number(p.dataset.ovHfs)) + 1)); });
+  return cands;
+}
+
 function _ovDocxOutline(body, container, conn) {
-  // docx-preview 渲染 Word 标题样式为 <p class="docx_heading1..6">（不是 h 标签）
-  const heads = [...container.querySelectorAll('[class*="docx_heading"]')];
-  if (heads.length < 2) return;   // 没有标题结构不建栏
+  // docx-preview 渲染 Word 标题样式为 <p class="docx_heading1..6">（不是 h 标签）。
+  // a311（用户实锤"大纲没了"）：Y 盘 H11 文档标题用的是自定义样式（渲染出
+  // docx_743 数字类，无 heading 类）→ 栏消失。兜底：无 heading 类时按字号
+  // 启发式识别标题（正文中位数字号 ×1.25 以上的独立短段 ≈ 标题），字号分档映射层级
+  let heads = [...container.querySelectorAll('[class*="docx_heading"]')];
+  if (heads.length < 2) {
+    heads = _ovDocxHeadsBySize(container);
+  }
+  if (heads.length < 2) return;   // 真没有标题结构不建栏
   const scroller = body;   // office-body 是滚动容器
   const bar = document.createElement('div');
   bar.className = 'ov-docx-outline';
@@ -559,8 +591,9 @@ function _ovDocxOutline(body, container, conn) {
   }
   const items = heads.map((h, i) => {
     const m = /docx_heading(\d)/.exec(h.className);
+    const lvl = (m && m[1]) || h.dataset.ovHlvl || 3;
     const d = document.createElement('div');
-    d.className = 'ov-docx-outline-item lv' + (m ? m[1] : 3);
+    d.className = 'ov-docx-outline-item lv' + lvl;
     d.textContent = (h.textContent || '').trim().slice(0, 40) || '(无标题)';
     d.onclick = () => h.scrollIntoView({ behavior: 'smooth', block: 'start' });
     bar.appendChild(d);
@@ -593,7 +626,9 @@ async function _ovRenderXlsx(buf, body, wrap, conn) {
   if (typeof XLSX === 'undefined') { body.innerHTML = '<div class="office-err">SheetJS 库未加载</div>'; return; }
   try {
     const data = new Uint8Array(buf);
-    const wb = XLSX.read(data, { type: 'array' });
+    // H4（a309R3）：cellNF 保留数字格式 z（日期/货币显示的落盘载体）、cellStyles
+    // 保留样式 s 与 !rows/!cols——保存写回不再剥格式（配合 _ovXlsxWriteAoa 迁移）
+    const wb = XLSX.read(data, { type: 'array', cellNF: true, cellStyles: true });
     conn._wb = wb; conn._sheetIdx = 0; conn._undo = [];
     // SheetJS 丢的无缓存公式从 xml 补捞（每 sheet 一张 addr→公式 表）
     conn._zipFormulas = {};
@@ -691,15 +726,45 @@ function _ovXlsxWriteAoa(conn, aoa) {
     row.map(c => (c && c.f) ? (c.v !== undefined ? c.v : 0) : (c ? c.v : null))));   // v 优先（w 是显示文本，写了数字变 t=str）
   for (let r = 0; r < aoa.length; r++) for (let c = 0; c < (aoa[r] || []).length; c++) {
     const cell = aoa[r][c];
-    if (cell && cell.f) {
+    if (!cell) continue;
+    const addr = XLSX.utils.encode_cell({ r, c });
+    const oc = old ? old[addr] : null;
+    if (cell.f) {
       // H3（审查实锤：存出 <f>=SUM(...)</f> 双等号——OOXML 的 <f> 不含前导
       // =，SheetJS 原样写入即公式损坏）。写回前剥 =（内部表示保留 = 前缀）
-      const out = Object.assign({}, cell, { f: String(cell.f).replace(/^=/, '') });
-      ws[XLSX.utils.encode_cell({ r, c })] = out;
+      const f = String(cell.f).replace(/^=/, '');
+      // H4（a309R3 审查实锤：保存丢数字格式/日期/超链接）：公式与缓存值都
+      // 未变的格 → 整格沿用旧对象（z/s/t/l/w 全保）——aoa_to_sheet 重建只
+      // 有裸值，格式信息只在旧 ws 的格对象上
+      if (oc && oc.f === f && oc.v === cell.v) { ws[addr] = oc; continue; }
+      const out = Object.assign({}, cell, { f });
+      if (oc && oc.z && !out.z) out.z = oc.z;   // 编辑过的公式格也保数字格式
+      if (oc && oc.l && !out.l) out.l = oc.l;
+      ws[addr] = out;
+    } else {
+      // H4：非公式格值未变 → 整格沿用旧对象（z 数字格式/日期/超链接 l/
+      // 文本型数字 t='s' 全保——「007」不再被写成数值 7）
+      if (oc && !oc.f && oc.v === cell.v) { ws[addr] = oc; continue; }
+      if (oc && oc.z && !cell.z) cell.z = oc.z;   // 编辑过的格保数字格式（改日期格的值）
+      if (oc && oc.l && !cell.l) cell.l = oc.l;   // 改超链接格显示文本不丢链接
     }
   }
   if (old && old['!merges']) ws['!merges'] = old['!merges'];
   if (old && old['!cols']) ws['!cols'] = old['!cols'];
+  // H4：行高迁移（旧 ws 的 !rows + 用户拖拽 _rowH 覆盖）——此前一律丢
+  const rows = (old && old['!rows']) ? old['!rows'].slice() : [];
+  if (conn._rowH) for (const k in conn._rowH) {
+    const ri = +k; rows[ri] = Object.assign({}, rows[ri], { hpx: conn._rowH[k] });
+  }
+  if (rows.length) ws['!rows'] = rows;
+  // a295 用户拖拽的列宽同样落盘
+  if (conn._colW) {
+    const cols = ws['!cols'] ? ws['!cols'].slice() : [];
+    for (const k in conn._colW) {
+      const ci = +k; cols[ci] = Object.assign({}, cols[ci], { wpx: conn._colW[k] });
+    }
+    ws['!cols'] = cols;
+  }
   conn._wb.Sheets[name] = ws;
 }
 // 公式求值（安全子集：数字/单元格引用/区间 + +-*/() 与 SUM/AVG/AVERAGE/MIN/MAX/COUNT）
@@ -868,13 +933,26 @@ function _ovXlsxRenderTable(conn) {
       td.dataset.r = r; td.dataset.c = c;
       if (cell && cell.f) td.classList.add('hasf');
       td.addEventListener('focus', () => {
-        conn._editBase = String(show);   // M6：记原显示值——blur 与它比对（无编辑不 snapshot）
-        if (cell && cell.f) td.textContent = cell.f;
+        // M6 + a309R3 实锤（第2轮）：_editBase 必须记「focus 后展示的文本」。
+        // 公式格 focus 会把格内容换成公式本体——SheetJS 读入的 f 无 '=' 前缀，
+        // 旧实现对「显示值」比对必不等 → 未编辑的 blur 把公式当用户输入写成
+        // 文本格（公式损毁 + undo 污染）。展示统一补 '='（与编辑输入一致），
+        // _editBase 同步取该文本——未编辑 blur 即无操作
+        let base = String(show);
+        if (cell && cell.f) {
+          base = '=' + String(cell.f).replace(/^=/, '');
+          td.textContent = base;
+        }
+        conn._editBase = base;
         conn._sel = { r, c };
       });
       td.addEventListener('blur', () => {
         const txt = td.textContent.trim();
-        if (txt === (conn._editBase !== undefined ? conn._editBase : String(show))) return;   // M6：与 focus 时原值比对
+        if (txt === (conn._editBase !== undefined ? conn._editBase : String(show))) {
+          // 未编辑：恢复显示值（focus 时公式格被换成公式文本，无编辑不重建表格）
+          td.textContent = (show === undefined || show === null) ? '' : String(show);
+          return;
+        }   // M6：与 focus 时展示文本比对（a309R3：含公式文本）
         _ovXlsxSnapshot(conn);
         const num = parseFloat(txt);
         if (txt === '') conn._aoa[r][c] = null;
