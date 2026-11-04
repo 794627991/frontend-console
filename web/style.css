@@ -564,8 +564,12 @@
   .monaco-editor .diff-hidden-lines .center > div:last-child { flex: 1; }
 
   /* ---- .md 分栏预览（markdown-it 渲染列）---- */
+  /* a305：只显示预览模式（_mdApplyMode 'pv'）预览列须撑满全宽——原固定
+     width:50% 在编辑器列隐藏后右侧留 50% 空洞（黑块）。加 .mdpv-full 模式类 */
   .ed-md-preview { width: 50%; flex-shrink: 0; border-left: 1px solid var(--border);
     overflow-y: auto; background: var(--note-bg); padding: 16px 20px; }
+  .ed-md-preview.mdpv-full { width: 100%; border-left: none; }
+  .ed-md-preview.mdpv-full .md-preview-body { max-width: 900px; margin: 0 auto; }   /* 阅读态居中限宽（超宽屏不摊大饼） */
   /* md 分屏拖拽分隔条：拖动自由调分屏比例（同串口搜索分栏 splitter 交互）。
      默认 flex 显示——显隐由 JS 控制 inline display（buildEditorTab 里 .md 才设 ''），
      CSS 不写 display:none，否则 JS 设 '' 会回落到这里的 none 导致永远不可见（曾中招） */

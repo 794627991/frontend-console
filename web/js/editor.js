@@ -1684,15 +1684,18 @@ function _mdApplyMode(conn, mode) {
   if (!pv || !scroll) return;
   if (mode === 'src') {
     pv.style.display = 'none';
+    pv.classList.remove('mdpv-full');
     if (sp) sp.style.display = 'none';
     scroll.style.display = '';
   } else if (mode === 'pv') {
     pv.style.display = '';
+    pv.classList.add('mdpv-full');   // a305：撑满全宽（原 50% 定宽留右侧黑块）
     if (sp) sp.style.display = 'none';
     scroll.style.display = 'none';
     _mdRenderPreview(conn);
   } else {
     pv.style.display = '';
+    pv.classList.remove('mdpv-full');   // both 模式回 50% 分栏
     if (sp) sp.style.display = 'block';
     scroll.style.display = '';
     _mdRenderPreview(conn);
