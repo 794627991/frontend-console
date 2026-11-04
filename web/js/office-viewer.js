@@ -301,6 +301,9 @@ async function _ovPdfInit(conn, path, wrap) {
     _ovPdfRenderPage(conn, 1);
 
   } catch (e) {
+    // a32x（对抗审 P3）：失败时把工具栏那句「首次转换需启动 PowerPoint，
+    // 请稍候…」一并改掉，否则「转换中」与「加载失败」同时挂着自相矛盾
+    infoEl.textContent = '加载失败';
     pagesEl.innerHTML = `<div class="office-err">PDF 加载失败: ${esc(String(e).slice(0, 200))}</div>`;
   }
 }
@@ -498,12 +501,13 @@ function _ovPdfOutlineRender(conn, wrap, items, depth) {
 }
 
 // ============================================================
-// docx / xlsx / ppt（a280 引擎，非 PDF 路径）
+// docx / xlsx（a280 引擎，非 PDF 路径）
+// a32x：ppt 已不走这里——openOfficeFile 入口就把 ppt 交给 _ovPdfBuildUI
+// （COM 转 PDF 后由 PDF 引擎渲染）。原 kind==='ppt' 分支是死代码，已删。
 // ============================================================
 async function _ovRenderSimple(kind, buf, body, wrap, conn) {
   if (kind === 'word') return _ovRenderDocx(buf, body, wrap, conn);
   if (kind === 'excel') return _ovRenderXlsx(buf, body, wrap, conn);
-  if (kind === 'ppt') return _ovRenderPptx(buf, body, wrap, conn);
   body.innerHTML = '<div class="office-err">不支持的文件类型</div>';
 }
 
@@ -1265,9 +1269,3 @@ function _ovXlsxBindBar(conn, body) {
   };
 }
 
-async function _ovRenderPptx(buf, body, wrap, conn) {
-  // a290：PPT 正常流程在 openOfficeFile 入口已拦截走 PDF Pro UI（COM 转 PDF），
-  // 此函数仅为旧 tab 残留的防御提示
-  body.innerHTML = `<div class="office-err" style="padding:24px;">请关闭此 tab 重新打开——
-    PPT 现在以 PDF 引擎打开（保真渲染+搜索+缩放，首次转换需启动 PowerPoint）。</div>`;
-}

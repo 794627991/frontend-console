@@ -88,6 +88,10 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None,
     # _download 里 27 处排障日志仍在走 _log。把 say 灌进它的 sink，这些
     # "msiexec 退出码 1603""改用免安装 zip""pip 尾部输出"才会显示在安装面板
     from src import claude_setup as _cs
+    # a325R（第2轮对抗审 P1）：保存旧值并在 finally 恢复。原来无条件置 None，
+    # 且注入点在同 try 之外——inspect 失败 / FcpkReader 构造抛错时 finally 根本
+    # 不执行，sink 永久残留指向已结束任务的 say，后续日志全灌进死回调。
+    _prev_sink = _cs._log_sink
     _cs._log_sink = say
     cur = [0]
 
@@ -98,18 +102,23 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None,
 
     info = fcpk.inspect(path)
     if not info.get("ok"):
+        _cs._log_sink = _prev_sink
         raise InstallError(info.get("err") or "资源包无法读取")
     say("资源包：%.0f MB，%d 个文件" % (info["size"] / 1048576.0,
                                        info.get("entries", 0)))
 
     want = [k for k in ORDER if (kinds is None or k in kinds)]
-    res = {"installed": [], "skipped": [], "errors": {}}
+    res = {"installed": [], "skipped": [], "errors": {}, "absent": []}
 
     def _ck():
         if should_cancel and should_cancel():
             raise InstallCancelled("用户取消安装")
 
-    reader = fcpk.FcpkReader(path)
+    try:
+        reader = fcpk.FcpkReader(path)
+    except Exception:
+        _cs._log_sink = _prev_sink
+        raise
     staging = None
     try:
         have = {e["kind"] for e in reader.entries}
@@ -117,6 +126,10 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None,
         for k in want:
             if k not in have:
                 res["skipped"].append(k)
+                # a325R：单独记「包内根本没有」，与「已存在无需安装」区分开。
+                # 调用方（res_boot 的启动闸门）必须能看出"这个包装不全"，
+                # 否则会误判成功 → 重启 → 再拦 → 死循环。
+                res["absent"].append(k)
                 say("跳过 %s：包内不含该资源" % k)
 
         # 全审 N5：进度总量必须按**本次要装的子集**算。早前一律用整包
@@ -209,12 +222,8 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None,
         reader.close()
         if staging and os.path.isdir(staging):
             shutil.rmtree(staging, ignore_errors=True)
-        # P1：安装结束必须摘 sink，否则离开本函数后 _log 仍往已死的 say 推
-        try:
-            from src import claude_setup as _cs2
-            _cs2._log_sink = None
-        except Exception:
-            pass
+        # a325R：恢复而不是置 None——嵌套/重复调用时不误摘外层 sink
+        _cs._log_sink = _prev_sink
 
 
 # ------------------------------------------------------------------ 各资源
@@ -697,7 +706,11 @@ def install_online(kinds, log=None, progress=None, should_cancel=None,
             try:
                 ok = False
                 if k == "bili" or k == "onlyoffice":
+                    # a325R（第2轮对抗审 P2）：原来只 say 一句，ok=False 又
+                    # 被下面的显式排除挡住——三项结果都不记，res.result 里
+                    # 凭空消失，落盘的 installed/skipped 与实际不符。
                     say("跳过 %s：官方无稳定直链——请用离线包装（四档预设含该项）" % k)
+                    res["skipped"].append(k)
                 elif k == "pydeps":
                     if getattr(__import__("sys"), "frozen", False):
                         raise InstallError("exe 形态不支持在线装 pydeps——请用离线包")
@@ -713,10 +726,41 @@ def install_online(kinds, log=None, progress=None, should_cancel=None,
                     ok = True
                 elif k == "node":
                     say("在线安装 Node（本地资源优先，缺则官方直链）…")
-                    ok = bool(cs._install_node_if_missing(dl_dir))
+                    # a325R（对抗审 P2）：_install_node_if_missing 一看到已装就
+                    # return True，force 完全无效，却报「✓ node 完成」。force
+                    # 时改走 _install_node_from（真跑安装器）。
+                    if force:
+                        say("  强制重装：重跑 Node 安装器（可能弹管理员提示）")
+                        _msi = cs._find_installer("node-v*.msi")
+                        if not (_msi and os.path.isfile(_msi)):
+                            cs._install_node_if_missing(dl_dir)   # 缺安装器先补
+                            _msi = cs._find_installer("node-v*.msi")
+                        if _msi and os.path.isfile(_msi):
+                            cs._install_node_from(_msi)
+                        else:
+                            raise InstallError(
+                                "强制重装 Node 需要安装器（node-v*.msi）——"
+                                "本地资源目录没有，请改用离线资源包")
+                        ok = bool(shutil.which("node.exe") or shutil.which("node"))
+                    else:
+                        ok = bool(cs._install_node_if_missing(dl_dir))
                 elif k == "git":
                     say("在线安装 Git（本地资源优先，缺则官方直链）…")
-                    ok = bool(cs._install_git_if_missing(dl_dir))
+                    if force:
+                        say("  强制重装：重跑 Git 安装器（可能弹管理员提示）")
+                        _gx = cs._find_installer("Git-*.exe")
+                        if not (_gx and os.path.isfile(_gx)):
+                            cs._install_git_if_missing(dl_dir)
+                            _gx = cs._find_installer("Git-*.exe")
+                        if _gx and os.path.isfile(_gx):
+                            cs._install_git_from(_gx)
+                        else:
+                            raise InstallError(
+                                "强制重装 Git 需要安装器（Git-*.exe）——"
+                                "本地资源目录没有，请改用离线资源包")
+                        ok = bool(cs._git_ok())
+                    else:
+                        ok = bool(cs._install_git_if_missing(dl_dir))
                 elif k == "claude":
                     say("在线安装 Claude CLI：确保 Node → npm install -g …")
                     cs._install_node_if_missing(dl_dir)

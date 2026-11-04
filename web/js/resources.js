@@ -220,14 +220,23 @@
       })
     }).then(function (j) {
       if (!j.ok) { _safe(onDone, { ok: false, err: j.err || '启动失败' }); return j; }
-      // 后端 log 是累积数组，每轮都全量返回——用游标只投递新增行，
-      // 否则日志会一轮比一轮多（N 行被重放 N 次）
-      var seen = 0;
+      // 后端 log 是累积数组（超 400 条会裁剪头部）——不能用数组下标做游标，
+      // 否则裁剪后下标恒失效、尾部日志永不投递（a325R 实锤：面板像卡死）。
+      // 改用后端单调递增的 seq 增量投递。
+      var seenSeq = 0;
       _resPollTimer = setInterval(function () {
         _resFetch('/api/resources/poll').then(function (s) {
           _safe(onTick, s);
           var lg = s.log || [];
-          for (; seen < lg.length; seen++) _safe(onLog, lg[seen].msg);
+          for (var i = 0; i < lg.length; i++) {
+            var it = lg[i];
+            var sq = (it && typeof it.seq === 'number') ? it.seq : null;
+            if (sq !== null) {
+              if (sq <= seenSeq) continue;
+              seenSeq = sq;
+            }
+            _safe(onLog, it && it.msg);
+          }
           if (!s.done) return;
           clearInterval(_resPollTimer); _resPollTimer = null;
           // 取消用后端显式字段判定——早前 /取消/.test(s.err) 会把任何

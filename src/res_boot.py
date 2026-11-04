@@ -504,7 +504,22 @@ def _run_install_with_ui(path):
             res = res_install.install_from(path, kinds=need, log=log,
                                            progress=prog,
                                            should_cancel=should_cancel)
-            errs = res.get("errors") or {}
+            errs = dict(res.get("errors") or {})
+            # a325R（第2轮对抗审 P1，实锤死循环）：包内缺 kind 时 install_from
+            # 只往 res["skipped"] 里记，errors 为空 → state["ok"]=True → 弹
+            # 「安装完成，正在重启」→ 重启后闸门硬拦仍在 → 再次选包 → 再跳，
+            # 每轮白等一次解包。用户拿到子集包（如只有 onlyoffice 的拓展包）
+            # 就必然踩。必需项在包内不存在必须判失败（已存在的那些走 skipped
+            # 但不在 absent 里，属正常，不能误判）。
+            absent = [k for k in need if k in (res.get("absent") or [])]
+            if absent:
+                names = [m.get("name") or m.get("kind") for m in MANIFEST
+                         if m.get("kind") in absent]
+                errs["__missing__"] = (
+                    "所选资源包不含以下必需资源：%s。请换完整的"
+                    "「前端控制台-资源包.fcpk」（子集包装不全）"
+                    % "、".join(names or absent))
+                log(errs["__missing__"])
             state["ok"] = not errs
             state["err"] = "; ".join("%s: %s" % kv for kv in errs.items())
             state["res"] = res

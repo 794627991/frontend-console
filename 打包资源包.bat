@@ -78,8 +78,8 @@ exit /b 0
 echo.
 echo ==============================================
 echo [失败] 资源包未产出，看上面的报错
-echo   常见原因：dist/offline_pkg 缺安装器，
-echo             或 runtime/WebView2Fixed 不在
+echo   常见原因：offline_assets/install 缺安装器，
+echo             或 offline_assets/webview2 不在
 echo ==============================================
 pause
 exit /b 1

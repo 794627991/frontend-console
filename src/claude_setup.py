@@ -59,7 +59,8 @@ def _log(msg):
 # 离线资源搜索位（按优先级）：
 # 1. 用户自定义目录（config.json 的 offline_pkg_dir——a32x 起 UI 入口已随
 #    旧 zip 通道退役，只保留"高级用户手工改 config.json"这条路）
-# 2. 工具同目录 offline_pkg/（随包分发的离线安装资源，dist 打包时带上）
+# 2. 工具同目录 offline_pkg/ —— a326 起资源已统一迁入 offline_assets/，
+#    这里仅作历史遗留目录兼容读取（新装机器上没有这个目录）
 # 不再写死 D:\AI\安装环境（用户定：那只是本机的资源目录，别的机器没有）。
 
 
@@ -86,7 +87,7 @@ def _offline_pkg_dirs():
             dirs.append(custom)
     except Exception:
         pass
-    # 2. 工具同目录 offline_pkg/（随包资源——无 config 也有）
+    # 2. 工具同目录 offline_pkg/（a326 起仅历史遗留兼容读取）
     app_dir = _app_dir()
     dirs.append(os.path.join(app_dir, "offline_pkg"))
     dirs.append(os.path.join(app_dir, "dist", "offline_pkg"))

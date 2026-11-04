@@ -107,15 +107,23 @@ def pick_fcpk(initial_dir=None):
 
 
 def autofind_fcpk():
-    """文件对话框不可用时的兜底：在常见位置按名找 *.fcpk（取最新一个）。"""
+    """文件对话框不可用时的兜底：在常见位置按名找 *.fcpk。
+
+    a325R（第2轮对抗审 P1）：原实现取 mtime 最新的任意 *.fcpk——同目录放着
+    `前端控制台-资源包.fcpk`（全量）与 `前端控制台-资源包-拓展.fcpk`（子集，
+    通常最后打、mtime 更新）时，会自动选中子集包 → 缺 WebView2/.NET 的新机器
+    装完仍缺 → 闸门再拦 → 死循环。优先主包（`-资源包.fcpk`），子集包（
+    `-资源包-*.fcpk`）只在没有主包时才用。"""
     import glob
-    cands = []
+    main, sub = [], []
     base = _app_dir()
     for d in (base, os.path.dirname(base),
               os.path.join(os.path.expanduser("~"), "Desktop"),
               os.path.join(os.path.expanduser("~"), "Downloads")):
         if d and os.path.isdir(d):
-            cands.extend(glob.glob(os.path.join(d, "*.fcpk")))
+            for p in glob.glob(os.path.join(d, "*.fcpk")):
+                (main if p.endswith("-资源包.fcpk") else sub).append(p)
+    cands = main or sub
     if not cands:
         return ""
     cands.sort(key=lambda p: os.path.getmtime(p), reverse=True)

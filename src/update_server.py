@@ -168,11 +168,19 @@ def _versions():
 
 
 def _offline_pkg():
-    """离线资源包单独通道。v4.1 起统一为加密的 `<应用名>-资源包.fcpk`
-    （含 WebView2/dotnet/node/git/claude/pydeps/onlyoffice，自定义容器，
-    必须用工具装）。旧 zip（`-offline-pkg.zip`）通道已退役（用户令「彻底
-    退役，不要了」），不再产出新 zip——仅在没有 fcpk 时回退兼容读取历史
-    release 目录里遗留的 zip。
+    """离线资源包单独通道。v4.1 起统一为加密的 `<应用名>-资源包.fcpk`。
+    旧 zip（`-offline-pkg.zip`）通道已退役（用户令「彻底退役，不要了」），
+    不再产出新 zip——仅在没有 fcpk 时回退兼容读取历史 release 目录里的 zip。
+
+    a325R（第2轮对抗审 P1）：rank 必须区分**主包与子集包**。本目录实测同时
+    存在 `-资源包.fcpk`（全量 1.7GB）与 `-资源包-拓展.fcpk`（只有 onlyoffice，
+    916MB 且 mtime 更新），旧逻辑同 rank 按 mtime 取 → 门户把子集包当"离线
+    资源包"发给同事 → 缺 WebView2/.NET 的新机器装完仍缺，启动闸门再拦，
+    且下述 res_boot 的死循环会跟着触发。现改为：
+      rank 2 = 主包（文件名精确 `<任意>-资源包.fcpk`）
+      rank 1 = 子集包（`-资源包-*.fcpk`）
+      rank 0 = 历史 zip
+    主包存在时，子集包永不顶替。
 
     不进版本清单/更新日志——它不是应用版本，只是无外网机器的部署资源。
     sha1 不提供：manifest 刻意不收它（updater 不能把它当应用更新推下去），
@@ -193,10 +201,11 @@ def _offline_pkg():
             st = os.stat(p)
         except OSError:
             continue
-        # a32x（对抗审 P2）：旧实现用 (mtime, rank) 排序——mtime 不同的旧 zip
-        # 会直接压过 fcpk，门户又把按钮写回「下载离线包」，与「通道已退役」
-        # 自相矛盾。改为 fcpk **恒优先**：只要存在 fcpk 就永不选 zip。
-        rank = 1 if is_new else 0
+        if is_new:
+            # 子集包命名：`xxx-资源包-拓展.fcpk` / `-资源包-claude.fcpk`
+            rank = 2 if n.endswith("-资源包.fcpk") else 1
+        else:
+            rank = 0
         if best and (rank, st.st_mtime) <= (best[1][0], best[1][1]):
             continue
         ver = n.rsplit("-v", 1)[-1][:-4] if ("-v" in n and n.endswith(".zip")) else ""
@@ -206,6 +215,7 @@ def _offline_pkg():
         return None
     return {"file": best[0], "version": best[3], "size": best[2],
             "mtime": int(best[1][1] * 1000), "format": best[4],
+            "subset": best[1][0] == 1,     # 子集包：门户应如实标注
             "url": "/" + quote(best[0])}
 
 

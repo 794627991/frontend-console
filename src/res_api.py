@@ -20,7 +20,7 @@ _lock = threading.Lock()
 _state = {"running": False, "phase": "", "log": [], "done": False,
           "ok": False, "err": "", "ts": 0.0, "result": None,
           "cancel": False, "total": 0, "done_bytes": 0, "cur": "",
-          "cancelled": False}
+          "cancelled": False, "log_seq": 0}
 
 # 包预检缓存：FcpkReader 要跑 PBKDF2 30 万轮（0.1~0.3s），设置页每次
 # 选包/重检测都会问一次，按 (path, mtime, size) 缓存
@@ -28,7 +28,14 @@ _pkg_cache = {}
 
 
 def _log(msg):
-    _state["log"].append({"t": time.time(), "msg": str(msg)})
+    # a325R（第2轮对抗审 P2）：原来只截到 400 条，前端用**数组下标**做游标
+    # （`for (; seen < lg.length; seen++)`）——一旦超过 400 行，数组长度恒为
+    # 400，`seen` 已 ≥ 400 就永不投递，最需要看的尾部（pip 输出、claude
+    # --version 失败原因）全部消失，面板像卡死。改为每条带单调 seq，前端按
+    # seq 增量投递，绕开"数组被裁剪导致下标失效"。
+    _state["log_seq"] = _state.get("log_seq", 0) + 1
+    _state["log"].append({"t": time.time(), "seq": _state["log_seq"],
+                          "msg": str(msg)})
     if len(_state["log"]) > 400:
         del _state["log"][:-400]
 
@@ -173,7 +180,7 @@ def res_install_api():
         _state.update(running=True, phase="准备", log=[], done=False, ok=False,
                       err="", ts=time.time(), result=None, cancel=False,
                       total=total0, done_bytes=0, cur="",
-                      cancelled=False)
+                      cancelled=False, log_seq=0)
 
     def should_cancel():
         return bool(_state.get("cancel"))
@@ -306,4 +313,5 @@ def res_poll():
                     "result": _state["result"],
                     "total": _state["total"], "bytes": _state["done_bytes"],
                     "cur": _state["cur"], "cancelling": _state["cancel"],
-                    "cancelled": _state["cancelled"]})
+                    "cancelled": _state["cancelled"],
+                    "log_seq": _state.get("log_seq", 0)})
