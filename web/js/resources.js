@@ -211,7 +211,6 @@
     var onLog = o.onLog || function () {};
     var onTick = o.onTick || function () {};
     var onDone = o.onDone || function () {};
-    if (_resPollTimer) { clearInterval(_resPollTimer); _resPollTimer = null; }
     return _resFetch('/api/resources/install', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -219,21 +218,33 @@
         mode: o.mode || 'offline'   // a326 批2：online 走在线安装（无需 path）
       })
     }).then(function (j) {
+      // a333R（第4轮 P1-2，实测 UI 卡死）：清理必须放在启动成功之后。
+      // 原来无条件先 clear——`_resPollTimer` 是模块级单例，设置页与红条面板
+      // 共用。A 任务跑到一半时点红条再装 → 后端 409 → 这里直接 return，
+      // A 的 timer 已被清 → A 的 onDone 永不执行 → 设置页 #rsGo 的 busy 标记
+      // 恒为 1，两个安装按钮永久灰。后端任务照跑，只是 UI 卡死。
       if (!j.ok) { _safe(onDone, { ok: false, err: j.err || '启动失败' }); return j; }
+      if (_resPollTimer) { clearInterval(_resPollTimer); _resPollTimer = null; }
       // 后端 log 是累积数组（超 400 条会裁剪头部）——不能用数组下标做游标，
       // 否则裁剪后下标恒失效、尾部日志永不投递（a325R 实锤：面板像卡死）。
       // 改用后端单调递增的 seq 增量投递。
       // a332R（第3轮对抗审 P2-2）：整轮判断用哪种游标——只要本轮有带 seq 的
       // 条目就走 seq；全部无 seq（旧后端/混合状态）才退回下标游标。原实现
       // 对无 seq 条目既不跳过也不推进，同一行会每 700ms 重放一次。
-      var seenSeq = 0, seenIdx = 0;
+      var seenSeq = 0, seenIdx = 0, resMode = null;   // a333R：模式锁定
       _resPollTimer = setInterval(function () {
         _resFetch('/api/resources/poll').then(function (s) {
           _safe(onTick, s);
           var lg = s.log || [];
-          var useSeq = false;
-          for (var k = 0; k < lg.length; k++)
-            if (lg[k] && typeof lg[k].seq === 'number') { useSeq = true; break; }
+          // a333R（第4轮 P3-2）：模式一旦确定就锁死，不再每轮重算。原来每轮
+          // 重新判断，若后端形态翻转（有 seq → 无 seq），另一套游标还是 0，
+          // 会把整段日志重放一次。实测三轮 seq→无→无 投递 ["a","b","a","b","c"]。
+          if (resMode === null && lg.length) {
+            resMode = 'idx';
+            for (var k = 0; k < lg.length; k++)
+              if (lg[k] && typeof lg[k].seq === 'number') { resMode = 'seq'; break; }
+          }
+          var useSeq = (resMode !== 'idx');
           for (var i = 0; i < lg.length; i++) {
             var it = lg[i];
             if (useSeq) {
@@ -251,7 +262,7 @@
           // 取消用后端显式字段判定——早前 /取消/.test(s.err) 会把任何
           // 含「取消」二字的真实失败误报成「已取消安装」（全审 N3）
           _safe(onDone, { ok: !!s.ok_done, err: s.err || '', result: s.result,
-                          cancelled: !!s.cancelled });
+                          cancelled: !!s.cancelled, note: s.note || '' });
           if (s.ok_done) resRefresh();
         }).catch(function (e) {
           // 轮询本身失败（后端重启等）也要收尾，否则定时器永不停
@@ -292,7 +303,9 @@
       onDone: function (r) {
         go.disabled = manual.disabled = false;
         if (r.ok) {
-          if (typeof notifyPop === 'function') notifyPop('资源包安装完成', 3000);
+          if (typeof notifyPop === 'function')
+            notifyPop(r.note ? ('资源包安装完成 · ' + r.note) : '资源包安装完成',
+                      r.note ? 8000 : 3000);
           resRefresh().then(function (st) { renderList(root, st); });
         } else {
           errEl.style.display = '';

@@ -834,7 +834,9 @@ async function _stRenderResourcesPane(pane) {
           }
         }
         if (r.ok) {
-          showBanner('资源安装完成');
+          // a333R：软项缺失不判失败，但必须如实告知（原来说"完成"盖过去了）
+          showBanner(r.note ? ('资源安装完成 · ' + r.note) : '资源安装完成',
+                     r.note ? 9000 : 4500);
           if (alive()) loadStatus(false);
         } else {
           if (r.cancelled) showBanner('已取消安装', 4000);

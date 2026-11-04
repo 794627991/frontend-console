@@ -129,7 +129,9 @@ def _versions():
         pass
     for n in names:
         # v2.3.0：发布形态 zip（onedir 应用目录打包）；旧 .exe 历史包也列出（可下载）
-        if not ((n.endswith(".zip") or n.endswith(".exe")) and "-v" in n):
+        # a333R（第4轮 P1）：大小写不敏感——Windows 上 .ZIP/.EXE 同样可下载
+        _ln2 = n.lower()
+        if not ((_ln2.endswith(".zip") or _ln2.endswith(".exe")) and "-v" in n):
             continue
         # 离线资源包不是应用版本（用户定调「离线包和实际包分开」）：留着会与
         # 整包同版本号并列、按文件名序抢 hero 卡位还错挂整包 sha1——主清单
@@ -194,7 +196,7 @@ def _offline_pkg():
     for n in sorted(names):
         _ln = n.lower()
         is_new = _ln.endswith(".fcpk") and "-资源包" in n
-        is_old = n.endswith(".zip") and "-offline-pkg" in n
+        is_old = _ln.endswith(".zip") and "-offline-pkg" in n
         if not (is_new or is_old):
             continue
         p = os.path.join(root, n)
@@ -1133,7 +1135,9 @@ class _Handler(BaseHTTPRequestHandler):
 
         # 版本包文件：manifest/整包下载双通道共用，不做登录校验
         # （同事工具无浏览器态；完整性由 manifest sha1 保证）
-        if name.endswith((".zip", ".exe", ".fcpk")):
+        # a333R（第4轮 P1-1，实测死链）：这里漏了 lower——_offline_pkg 能把
+        # `…-资源包.FCPK` 认成主包并在门户展示，但点下载必 404。
+        if name.lower().endswith((".zip", ".exe", ".fcpk")):
             p = _safe_path(root, name)
             if p and os.path.isfile(p):
                 self._file(p, "application/octet-stream")

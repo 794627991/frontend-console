@@ -127,9 +127,15 @@ def autofind_fcpk():
                 # 用户自命名的备份）都当子集兜底自动选中，闸门 inspect 后才
                 # 报"资源包有问题"，用户以为是包坏了而不是"没找到本工具的包"。
                 _lp = p.lower()
-                if _lp.endswith("-资源包.fcpk"):
+                if not (_lp.endswith(".fcpk") and "资源包" in _lp):
+                    continue
+                # a333R（第4轮 P3-4）：口径与 _offline_pkg 统一——只要求含
+                # 「资源包」，不强制「-资源包.fcpk」的横杠形态（用户可能存成
+                # `资源包.fcpk` / `前端控制台资源包.fcpk`）。主包=不带后缀项，
+                # 子集包=`资源包-xxx.fcpk`。
+                if _lp.endswith("资源包.fcpk"):
                     main.append(p)
-                elif "-资源包-" in _lp and _lp.endswith(".fcpk"):
+                elif "资源包-" in _lp:
                     sub.append(p)
     cands = main or sub
     if not cands:

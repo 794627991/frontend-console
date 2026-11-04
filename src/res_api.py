@@ -180,7 +180,7 @@ def res_install_api():
         _state.update(running=True, phase="准备", log=[], done=False, ok=False,
                       err="", ts=time.time(), result=None, cancel=False,
                       total=total0, done_bytes=0, cur="",
-                      cancelled=False, log_seq=0)
+                      cancelled=False, log_seq=0, note="")
 
     def should_cancel():
         return bool(_state.get("cancel"))
@@ -208,18 +208,30 @@ def res_install_api():
             # a332R（第3轮对抗审 P2-1）：absent 只接进了启动闸门（res_boot），
             # 设置页这条路径没接——选了子集包时 hard 项缺失、errors 为空，
             # 界面照弹"资源包安装完成"，红条刷新后仍在，用户以为装好了。
-            # 与 res_boot 同一判定：MANIFEST 里 hard 的项若"包内根本没有"即失败。
+            # a333R（第4轮 P2-1）：判据从「只看 hard」放宽为「本次请求的项」——
+            # 原来只勾 pydeps/node 而两者都 absent 时仍报"完成"；红条全装路径
+            # 也会漏掉 soft 项。现在按 MANIFEST 里被请求的 kind 求交集，
+            # 文案区分硬/软（硬=装不全不能用，软=相关功能不可用）。
             try:
                 from src.res_boot import MANIFEST as _MF
-                _hard = [m["kind"] for m in _MF if m.get("hard")]
-                _absent = [k for k in _hard if k in (res.get("absent") or [])]
-                if _absent:
-                    _names = [m.get("name") or m.get("kind") for m in _MF
-                              if m.get("kind") in _absent]
-                    errs["__missing__"] = (
+                _soft = "、".join(
+                    (m.get("name") or m.get("kind")) for m in _MF
+                    if m.get("kind") in (res.get("absent") or [])
+                    and not m.get("hard"))
+                _hard_absent = [
+                    (m.get("name") or m.get("kind")) for m in _MF
+                    if m.get("kind") in (res.get("absent") or [])
+                    and m.get("hard")]
+                if _hard_absent:
+                    errs["资源包不完整"] = (
                         "所选资源包不含以下必需资源：%s。请换完整的资源包"
-                        % "、".join(_names or _absent))
-                    _log(errs["__missing__"])
+                        % "、".join(_hard_absent))
+                    _log(errs["资源包不完整"])
+                elif _soft:
+                    # 软项缺失不判失败（非必需，用户可能只想装其中几项），
+                    # 但必须如实告知，不能一句"完成"盖过去
+                    _state["note"] = "以下资源包内没有，相关功能不可用：%s" % _soft
+                    _log(_state["note"])
             except Exception:
                 pass
             _state.update(done=True, ok=not errs, result=res,
@@ -331,4 +343,5 @@ def res_poll():
                     "total": _state["total"], "bytes": _state["done_bytes"],
                     "cur": _state["cur"], "cancelling": _state["cancel"],
                     "cancelled": _state["cancelled"],
-                    "log_seq": _state.get("log_seq", 0)})
+                    "log_seq": _state.get("log_seq", 0),
+                    "note": _state.get("note", "")})

@@ -515,11 +515,11 @@ def _run_install_with_ui(path):
             if absent:
                 names = [m.get("name") or m.get("kind") for m in MANIFEST
                          if m.get("kind") in absent]
-                errs["__missing__"] = (
+                errs["资源包不完整"] = (
                     "所选资源包不含以下必需资源：%s。请换完整的"
                     "「前端控制台-资源包.fcpk」（子集包装不全）"
                     % "、".join(names or absent))
-                log(errs["__missing__"])
+                log(errs["资源包不完整"])
             state["ok"] = not errs
             state["err"] = "; ".join("%s: %s" % kv for kv in errs.items())
             state["res"] = res
