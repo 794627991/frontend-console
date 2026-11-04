@@ -132,8 +132,8 @@ function _stRenderAppearancePane(pane) {
     <div class="dd-cur" style="margin-top:8px;">
       <div class="dd-label">Tab 模式</div>
       <div class="dd-row" style="display:flex;gap:6px;margin-top:6px;">
-        <button class="btn ghost" id="apTabFlat" style="flex:1;"></button>
-        <button class="btn ghost" id="apTabDrawer" style="flex:1;"></button>
+        <button class="btn ghost style-chip" id="apTabFlat" style="flex:1;"></button>
+        <button class="btn ghost style-chip" id="apTabDrawer" style="flex:1;"></button>
       </div>
       <div class="dd-sub">平铺=Chrome 式自动收缩+溢出分组下拉；抽屉=同类 tab 收进一个抽屉（点开选择），常用 tab 可右键固定常驻。</div>
     </div>
@@ -204,8 +204,10 @@ function _stRenderAppearancePane(pane) {
   if (flatBtn && drawerBtn && typeof window._tabSetMode === 'function') {
     const syncTabMode = () => {
       const m = window._tabGetMode ? window._tabGetMode() : 'flat';
-      flatBtn.className = 'btn ghost' + (m === 'flat' ? ' active' : '');
-      drawerBtn.className = 'btn ghost' + (m === 'drawer' ? ' active' : '');
+      // style-chip.active 才有选中视觉（accent 边框+文字+粗体）——原裸 btn ghost
+      // 的 active 无任何样式，用户看不出选中了哪个（用户实锤）
+      flatBtn.className = 'btn ghost style-chip' + (m === 'flat' ? ' active' : '');
+      drawerBtn.className = 'btn ghost style-chip' + (m === 'drawer' ? ' active' : '');
       flatBtn.textContent = '平铺';
       drawerBtn.textContent = '分组抽屉';
     };
