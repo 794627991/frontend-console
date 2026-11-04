@@ -12,7 +12,6 @@ MessageBoxW / GetOpenFileNameW / IProgressDialog 三条原生 API 上做。
 """
 import ctypes
 import os
-import re
 import sys
 from ctypes import wintypes
 
@@ -133,24 +132,21 @@ def autofind_fcpk():
                 _bn = os.path.basename(p).lower()
                 if not (_bn.endswith(".fcpk") and "资源包" in _bn):
                     continue
-                # a336R（第7轮 P1-1）：pkg_class 已挪到 src.fcpk——原先是
-                # `from src.update_server import pkg_class`，而 update_server
-                # 被 cythonize_build 的 _EXCLUDE 排除出发布包，frozen 机上
-                # 必 ImportError → 这里 whole 落到 fallback，静默丢包子集。
-                # a336R（第7轮 P2-3）：判不出时按归一化名兜底（吃下浏览器
-                # 重名的空白/括号/副本形态），与门户 _offline_pkg 同构。
+                # a336R（第7轮 P1-1）：分类函数原先在 update_server，而它被
+                # cythonize_build 的 _EXCLUDE 排除出发布包 —— frozen 机上必
+                # ImportError，自动找包静默失效。
+                # a337R（第8轮 P2-3）：实现落到零依赖的 src.pkgname，且对
+                # 任何资源包名永不返回 None → 这里不再各写 fallback（两侧
+                # 各写一份同构兜底正是口径分裂的来源）。
                 try:
-                    from src.fcpk import pkg_class as _pc
+                    from src.pkgname import pkg_class as _pc
                     _cls = _pc(_bn)
                 except Exception:
                     _cls = None
-                if _cls is None:
-                    _t = re.sub(r"[\s()（）]+", "", _bn)
-                    _cls = "subset" if "资源包-" in _t else "full"
-                if _cls == "full":
-                    main.append(p)
-                else:
+                if _cls == "subset":
                     sub.append(p)
+                else:
+                    main.append(p)
     cands = main or sub
     if not cands:
         return ""

@@ -208,14 +208,12 @@ def _offline_pkg():
             # a335R（第6轮 P1-4）：分类统一走 pkg_class，与 res_ui.autofind
             # 同口径——原来两边各写一套正则，导致 `-资源包-v2.fcpk`（真全量）
             # 在门户被标成子集包、在闸门却被当主包。
-            # a336R（第7轮 P1-1/P2-2）：pkg_class 已挪到 src.fcpk（update_server
-            # 本身不进发布包，函数放这里 frozen 机 import 不到）；认不出的名字
-            # 按「含资源包、无子集后缀」兜底成 full，与 autofind 同构。
-            from src.fcpk import pkg_class as _pc
-            _cls = _pc(n)
-            if _cls is None:
-                _cls = "subset" if "资源包-" in _ln else "full"
-            rank = 2 if _cls == "full" else 1
+            # a336R（第7轮 P1-1）：pkg_class 不在本文件了——本模块不进发布包。
+            # a337R（第8轮 P2-3/P2-4）：实现挪到零依赖的 src.pkgname（本模块
+            # 顶层不 import fcpk，否则门户为了分个类就要背上 Crypto），且
+            # pkg_class 对资源包永不返回 None → 这里不再需要 fallback。
+            from src.pkgname import pkg_class as _pc
+            rank = 2 if _pc(n) == "full" else 1
         else:
             rank = 0
         if best and (rank, st.st_mtime) <= (best[1][0], best[1][1]):

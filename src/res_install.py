@@ -161,8 +161,6 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None,
         # webview2 同款：直接解到 runtime_root()（arc 前缀 bili/ 天然落
         # offline_runtime/bili/），不经 staging 不 move
         if "bili" in plan:
-            bili_root = runtime_root()
-            os.makedirs(bili_root, exist_ok=True)
             # a335R（第6轮对抗审 P1-2/P2-3）：三条顺序问题一起修：
             #  ① 原来先无条件解包 200MB 覆盖现有树、再问"是否已装"——已装时
             #    白解一遍，且若 18788 正在跑就是从运行进程脚下换 node_modules；
@@ -170,22 +168,29 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None,
             #    下次判"已完整"永久跳过，坏树再也不自愈；
             #  ③ 这段不在 per-kind try 内 → 一个软资源失败拖垮整套安装，
             #    与 docstring 明写的「单个资源失败不中断其余」冲突。
-            # a336R（第7轮 P1-2/P1-3/P1-4/P2-1）再修四处：
-            #  ④ 运行中探测必须提到 extract_all **之前**——原先在 _install_bili
-            #    里，那时 200MB 树已被覆盖，检测到在跑也晚了（正是要防的抽梯）；
-            #  ⑤ marker 不再 os.remove 而是改名作废：解包失败时旧树可能仍完好，
-            #    删掉 marker 等于把一个好树标成坏树（下次白重装 200MB）；
-            #  ⑥ 取消异常必须先于 Exception 捕；否则用户点取消被当成 bili
-            #    失败，整套安装继续跑下去；
-            #  ⑦ 快判跳过时没解包 → 该 kind 的字节要从进度分母扣掉（照
-            #    webview2 的写法），否则只装 bili 已就位的包时进度条停在 0%。
+            # a336R（第7轮）：运行中探测前置、取消异常顺序、进度分母。
+            # a337R（第8轮 P1-1/P2-1/P2-5/P3-3）再修四处：
+            #  ⑧ **放弃"失败时恢复 marker"**：判据是"关键文件在不在"，但
+            #    extract_all 是逐文件覆盖同一目录，node.exe（顶层）先被换、
+            #    dist/index.js（深处）后被换——两者都在 ≠ 树是完整的旧版，
+            #    恰恰是最典型的混合态。恢复 marker 会把混合树标成"已完整"
+            #    永久跳过且不可自愈，比白重装 200MB 贵得多。改为：只要动过
+            #    解包，marker 就作废（改名 .bad 留痕，下次自愈重装）。
+            #  ⑨ marker 作废失败不能再 pass —— 带病解包正是第②条要堵的洞，
+            #    改名失败就硬删，硬删也失败则该 kind 直接判失败、不碰树。
+            #  ⑩ runtime_root() 的 makedirs 挪进 try（装在 Program Files 等
+            #    只读位置时不能拖垮整套安装）。
+            #  ⑪ 删掉 _install_bili 里的二次运行中探测（前置已覆盖；解包后
+            #    再抛错只会留下已被破坏的树）。
             from src.res_boot import bili_ok as _bili_ok
-            _bili_mark = os.path.join(bili_root, ".biliok")
-            _bili_bad = _bili_mark + ".bad"
             _bili_size = sum(int(e.get("size") or 0) for e in reader.entries
                              if e.get("kind") == "bili"
                              and e.get("mode") != "link")
             try:
+                bili_root = runtime_root()
+                os.makedirs(bili_root, exist_ok=True)
+                _bili_mark = os.path.join(bili_root, ".biliok")
+                _bili_bad = _bili_mark + ".bad"
                 if not force and _bili_ok(bili_root):
                     say("· billion-context 已完整安装，跳过解包"
                         "（删 offline_runtime/.biliok 可重装）")
@@ -207,38 +212,33 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None,
                         raise InstallError(
                             "billion-context 正在运行——请先在代理面板把"
                             "压缩模式切为关闭（或退出工具）再升级")
-                    # 作废 marker（改名而非删除：失败时好树还能救回）
-                    _had_mark = False
+                    # 解包前**必须**让 marker 失效：任何中途失败都不能留下
+                    # "半新树 + 有效 marker"。改名成功即留痕；改名失败硬删；
+                    # 都失败则不碰树、直接判该 kind 失败。
                     if os.path.isfile(_bili_mark):
+                        _gone = False
                         try:
                             if os.path.isfile(_bili_bad):
                                 os.remove(_bili_bad)
                             os.replace(_bili_mark, _bili_bad)
-                            _had_mark = True
+                            _gone = True
                         except OSError:
-                            pass
+                            try:
+                                os.remove(_bili_mark)
+                                _gone = True
+                            except OSError:
+                                _gone = False
+                        if not _gone:
+                            raise InstallError(
+                                "无法作废旧安装标记 offline_runtime/.biliok"
+                                "（文件被占用或无权限）——本次跳过 bili，"
+                                "请关闭杀软/释放占用后重试")
                     say("解包 billion-context（Node 运行时 + 依赖树）…")
-                    try:
-                        reader.extract_all(bili_root, kinds=["bili"],
-                                           progress=lambda d, t, p2: prog(
-                                               cur[0] + d, sub_total, p2),
-                                           should_cancel=should_cancel)
-                        _install_bili(bili_root, say, True)
-                    except BaseException:
-                        # 半新树：旧树关键文件还在就把 marker 恢复（那说明
-                        # 失败发生在解包早期，树还是老的完整版）
-                        try:
-                            if _had_mark and os.path.isfile(_bili_bad) and \
-                                    os.path.isfile(os.path.join(
-                                        bili_root, "bili", "node.exe")) and \
-                                    os.path.isfile(os.path.join(
-                                        bili_root, "bili", "node_modules",
-                                        "billion-context", "dist",
-                                        "index.js")):
-                                os.replace(_bili_bad, _bili_mark)
-                        except OSError:
-                            pass
-                        raise
+                    reader.extract_all(bili_root, kinds=["bili"],
+                                       progress=lambda d, t, p2: prog(
+                                           cur[0] + d, sub_total, p2),
+                                       should_cancel=should_cancel)
+                    _install_bili(bili_root, say, True)
                     try:
                         if os.path.isfile(_bili_bad):
                             os.remove(_bili_bad)
@@ -252,6 +252,8 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None,
             except Exception as e:
                 res["errors"]["bili"] = str(e)[:300]
                 say("✗ bili 失败：%s" % (e,))
+                # 失败时该 kind 的字节不会再产生，从分母扣掉（同 webview2）
+                sub_total = max(1, sub_total - _bili_size)
             plan.remove("bili")
         if "webview2" in plan:
             # 返回值 False = 已完成跳过（没解包，不产生进度字节）→ 把它
@@ -349,9 +351,13 @@ def _install_webview2(reader, staging, cur, say, prog, res, should_cancel=None,
         if os.path.isfile(mark):
             os.remove(mark)
         say("解出 WebView2 运行时 → %s …" % cur_dir)
+        # a337R（第8轮 P3-1）：进度必须从当前累计字节起算。bili 分支在
+        # webview2 之前跑（解完 cur[0]≈200MB），原先这里 `d` 从 0 起 →
+        # 进度条从 ~12% 跳回 0%（对比 rest 分支的 `base = cur[0]`）。
+        _base = cur[0]
         got = reader.extract_all(root, kinds=["webview2"],
                                  progress=lambda d, t, p: prog(
-                                     d, total or t, p),
+                                     _base + d, total or t, p),
                                  should_cancel=should_cancel)
         if not any(p.endswith("msedgewebview2.exe") for p in got):
             raise InstallError("包内 WebView2 运行时不完整（缺 msedgewebview2.exe）")
@@ -603,14 +609,16 @@ def _install_bili(root, say, force=False):
         import shutil
         shutil.rmtree(cur_dir, ignore_errors=True)
         raise InstallError("bili 资源不完整（缺 node.exe 或 dist/index.js）")
-    # 运行中升级防护：18788 活着 = bili 在跑（升级=抽梯，先拒）
+    # a337R（第8轮 P3-3）：原先这里还有一次 18788 运行中探测并在忙碌时抛错。
+    # 那时树已被完全覆盖，破坏已经发生；前置探测（extract_all 之前）才是
+    # 有效防线。这里保留一次探测但只告警，绝不抛错。
     import socket as _sk
     try:
         with _sk.socket(_sk.AF_INET, _sk.SOCK_STREAM) as _s:
             _s.settimeout(0.4)
             if _s.connect_ex(("127.0.0.1", 18788)) == 0:
-                raise InstallError("billion-context 正在运行——请先在代理面板"
-                                   "把压缩模式切为关闭（或退出工具）再升级")
+                say("⚠ billion-context 进程正在运行，本次已覆盖其文件——"
+                    "请在代理面板关闭压缩模式后重启工具再试")
     except OSError:
         pass
     with open(mark, "w", encoding="utf-8") as f:
