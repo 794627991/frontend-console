@@ -707,6 +707,9 @@ async function _ovXlsxFormulasFromZip(buf, sheetName) {
 function _ovXlsxAoa(conn) {
   const ws = conn._wb.Sheets[conn._wb.SheetNames[conn._sheetIdx]];
   const R = XLSX.utils.decode_range(ws['!ref'] || 'A1');
+  // R4-3（实锤：!ref 起点非 A1 全表错位）：记起点偏移——aoa 下标 0 基对应
+  // 真实 (R.s.r, R.s.c)，写回/公式引用/行列尺寸都要按此平移
+  conn._refOrigin = { r: R.s.r, c: R.s.c };
   const aoa = [];
   const sn = conn._wb.SheetNames[conn._sheetIdx];
   for (let r = R.s.r; r <= R.e.r; r++) {
@@ -727,12 +730,21 @@ function _ovXlsxAoa(conn) {
 function _ovXlsxWriteAoa(conn, aoa) {
   const name = conn._wb.SheetNames[conn._sheetIdx];
   const old = conn._wb.Sheets[name];
-  const ws = XLSX.utils.aoa_to_sheet(aoa.map(row =>
-    row.map(c => (c && c.f) ? (c.v !== undefined ? c.v : 0) : (c ? c.v : null))));   // v 优先（w 是显示文本，写了数字变 t=str）
+  // R4-3：起点偏移（!ref=B2:C3 的表 aoa[0][0] 即 B2）。优先 _refOrigin
+  // （_ovXlsxAoa 记录），无则从旧表 !ref 推，再退 A1
+  const ORG = conn._refOrigin || (() => {
+    const rr = old && old['!ref'] ? XLSX.utils.decode_range(old['!ref']) : null;
+    return rr ? rr.s : { r: 0, c: 0 };
+  })();
+  const AC = (r, c) => XLSX.utils.encode_cell({ r: ORG.r + r, c: ORG.c + c });   // aoa 下标 → 真实地址
+  // R4-3 根治：aoa_to_sheet 传全 null 只借空表骨架——若让它写值，ORG 非 0 时
+  // 残影位 (r,c) 与邻格正确位 (r-1,c-1) 重叠，事后删残影会误删已写的正确格。
+  // 所有格一律走下方循环按 AC 写（值/沿用/格式迁移三态）
+  const ws = XLSX.utils.aoa_to_sheet(aoa.map(row => row.map(() => null)));
   for (let r = 0; r < aoa.length; r++) for (let c = 0; c < (aoa[r] || []).length; c++) {
     const cell = aoa[r][c];
     if (!cell) continue;
-    const addr = XLSX.utils.encode_cell({ r, c });
+    const addr = AC(r, c);
     const oc = old ? old[addr] : null;
     if (cell.f) {
       // H3（审查实锤：存出 <f>=SUM(...)</f> 双等号——OOXML 的 <f> 不含前导
@@ -745,6 +757,7 @@ function _ovXlsxWriteAoa(conn, aoa) {
       const out = Object.assign({}, cell, { f });
       if (oc && oc.z && !out.z) out.z = oc.z;   // 编辑过的公式格也保数字格式
       if (oc && oc.l && !out.l) out.l = oc.l;
+      if (oc && oc.s && !out.s) out.s = oc.s;   // R4-5：现算值≠缓存时样式 s 同样迁移（黄底/加粗等）
       ws[addr] = out;
     } else {
       // H4：非公式格值未变 → 整格沿用旧对象（z 数字格式/日期/超链接 l/
@@ -752,6 +765,7 @@ function _ovXlsxWriteAoa(conn, aoa) {
       if (oc && !oc.f && oc.v === cell.v) { ws[addr] = oc; continue; }
       if (oc && oc.z && !cell.z) cell.z = oc.z;   // 编辑过的格保数字格式（改日期格的值）
       if (oc && oc.l && !cell.l) cell.l = oc.l;   // 改超链接格显示文本不丢链接
+      if (oc && oc.s && !cell.s) cell.s = oc.s;   // R4-5：编辑过的格保样式 s
       // a319R3 实锤：z/l 拷到 cell 上却没写回——aoa_to_sheet 的裸值对象留在
       // ws[addr]，格式/超链接全丢。编辑过的格整对象落盘
       ws[addr] = cell;
@@ -759,19 +773,28 @@ function _ovXlsxWriteAoa(conn, aoa) {
   }
   if (old && old['!merges']) ws['!merges'] = old['!merges'];
   if (old && old['!cols']) ws['!cols'] = old['!cols'];
-  // H4：行高迁移（旧 ws 的 !rows + 用户拖拽 _rowH 覆盖）——此前一律丢
+  // H4：行高迁移（旧 ws 的 !rows + 用户拖拽 _rowH 覆盖）——此前一律丢。
+  // R4-3：_rowH/_colW 键是 aoa 下标，!rows/!cols 数组下标是真实行/列号——平移
   const rows = (old && old['!rows']) ? old['!rows'].slice() : [];
   if (conn._rowH) for (const k in conn._rowH) {
-    const ri = +k; rows[ri] = Object.assign({}, rows[ri], { hpx: conn._rowH[k] });
+    const ri = ORG.r + +k; rows[ri] = Object.assign({}, rows[ri], { hpx: conn._rowH[k] });
   }
   if (rows.length) ws['!rows'] = rows;
   // a295 用户拖拽的列宽同样落盘
   if (conn._colW) {
     const cols = ws['!cols'] ? ws['!cols'].slice() : [];
     for (const k in conn._colW) {
-      const ci = +k; cols[ci] = Object.assign({}, cols[ci], { wpx: conn._colW[k] });
+      const ci = ORG.c + +k; cols[ci] = Object.assign({}, cols[ci], { wpx: conn._colW[k] });
     }
     ws['!cols'] = cols;
+  }
+  // R4-3：!ref 按真实起点 + aoa 尺寸直造（全 null 骨架的 !ref 不可信；
+  // 加行/加列后范围自然跟着长）
+  if (aoa.length && (aoa[0] || []).length) {
+    ws['!ref'] = XLSX.utils.encode_range({
+      s: { r: ORG.r, c: ORG.c },
+      e: { r: ORG.r + aoa.length - 1, c: ORG.c + aoa[0].length - 1 }
+    });
   }
   conn._wb.Sheets[name] = ws;
 }
@@ -779,7 +802,9 @@ function _ovXlsxWriteAoa(conn, aoa) {
 function _ovXlsxEval(formula, conn) {
   const aoa = conn._aoa;
   const cellVal = (r, c) => {
-    const cell = aoa[r] && aoa[r][c];
+    // R4-3：公式引用是真实坐标，aoa 下标 0 基——按 _refOrigin 平移取值
+    const o = conn._refOrigin || { r: 0, c: 0 };
+    const cell = aoa[r - o.r] && aoa[r - o.r][c - o.c];
     if (!cell) return 0;
     if (typeof cell.v === 'number') return cell.v;
     const n = parseFloat(cell.v);
@@ -810,7 +835,9 @@ function _ovXlsxEval(formula, conn) {
   } catch (_) { return null; }
 }
 function _ovXlsxSnapshot(conn) {
-  conn._undo.push(JSON.stringify(conn._aoa));
+  // R4-2（实锤：undo 跨 sheet 覆盖）：快照必须带 sheet 归属——旧格式只有
+  // aoa，S1 编辑后切 S2 撤销会把 S1 快照整体灌进 S2 落盘
+  conn._undo.push(JSON.stringify({ idx: conn._sheetIdx, aoa: conn._aoa }));
   if (conn._undo.length > 50) conn._undo.shift();
 }
 function _ovXlsxRenderTabs(conn) {
@@ -948,7 +975,7 @@ function _ovXlsxRenderTable(conn) {
         // 旧实现对「显示值」比对必不等 → 未编辑的 blur 把公式当用户输入写成
         // 文本格（公式损毁 + undo 污染）。展示统一补 '='（与编辑输入一致），
         // _editBase 同步取该文本——未编辑 blur 即无操作
-        let base = String(show);
+        let base = (show === undefined || show === null) ? '' : String(show);
         if (cell && cell.f) {
           base = '=' + String(cell.f).replace(/^=/, '');
           td.textContent = base;
@@ -958,7 +985,10 @@ function _ovXlsxRenderTable(conn) {
       });
       td.addEventListener('blur', () => {
         const txt = td.textContent.trim();
-        if (txt === (conn._editBase !== undefined ? conn._editBase : String(show))) {
+        // R4-1（实锤：带空格文本点一下就走）：比对用未 trim 原文——旧代码
+        // trim 后的 txt 对未 trim 的 _editBase，'  padded  ' 格点一下即被判
+        // "已编辑"存成 'padded'，纯空格格被清 null。未编辑判定必须字节相等
+        if (td.textContent === (conn._editBase !== undefined ? conn._editBase : ((show === undefined || show === null) ? '' : String(show)))) {
           // 未编辑：恢复显示值（focus 时公式格被换成公式文本，无编辑不重建表格）
           td.textContent = (show === undefined || show === null) ? '' : String(show);
           return;
@@ -971,13 +1001,22 @@ function _ovXlsxRenderTable(conn) {
         const oldCell = conn._aoa[r][c];
         const dm = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:[ T](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$/.exec(txt);
         const isDateCell = oldCell && typeof oldCell.z === 'string' && /[ymdhs]/i.test(oldCell.z) && !/general/i.test(oldCell.z);
+        // R4-6（实锤：非法日期静默进位）：Date.UTC 对 2025-13-45 自动进位成
+        // 2026-02-14——回读各分量必须与输入一致，否则不转（走文本分支原样保存）
+        let serial = null;
+        if (isDateCell && dm) {
+          const t = Date.UTC(+dm[1], +dm[2] - 1, +dm[3], +(dm[4] || 0), +(dm[5] || 0), +(dm[6] || 0));
+          const D = new Date(t);
+          if (D.getUTCFullYear() === +dm[1] && D.getUTCMonth() === +dm[2] - 1 && D.getUTCDate() === +dm[3] &&
+              (!dm[4] || (D.getUTCHours() === +dm[4] && D.getUTCMinutes() === +dm[5] && (!dm[6] || D.getUTCSeconds() === +dm[6]))))
+            serial = Math.round((t / 86400000 + 25569) * 1e8) / 1e8;
+        }
         if (txt === '') conn._aoa[r][c] = null;
         else if (txt.startsWith('=')) {
           const cv = _ovXlsxEval(txt, conn);
           conn._aoa[r][c] = { t: 'n', v: cv !== null ? cv : 0, f: txt, w: String(cv !== null ? cv : txt), _cv: cv !== null ? cv : '?' };
-        } else if (isDateCell && dm) {
-          const d = Date.UTC(+dm[1], +dm[2] - 1, +dm[3], +(dm[4] || 0), +(dm[5] || 0), +(dm[6] || 0));
-          conn._aoa[r][c] = { t: 'n', v: Math.round((d / 86400000 + 25569) * 1e8) / 1e8, z: oldCell.z, w: txt };
+        } else if (serial !== null) {
+          conn._aoa[r][c] = { t: 'n', v: serial, z: oldCell.z, w: txt };
         } else if (!isNaN(num) && /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(txt)) conn._aoa[r][c] = { t: 'n', v: num, w: txt };
         // a319R3 实锤：旧正则 [-+\d.eE]+ 会把日期样文本 2025-1-1 整串放行，
         // parseFloat 只吃到 2025 → 日期被存成数字 2025。收紧为单一数字字面量，
@@ -1031,7 +1070,13 @@ function _ovXlsxBindBar(conn, body) {
     const r = conn._selRow, c = conn._sel ? conn._sel.c : 0;
     if (act === 'undo') {
       const snap = conn._undo.pop();
-      if (snap) { conn._aoa = JSON.parse(snap); _ovXlsxRecalcAll(conn); _ovXlsxPersist(conn); _ovXlsxRenderTable(conn); }
+      if (snap) {
+        const s = JSON.parse(snap);
+        const idx = Array.isArray(s) ? conn._sheetIdx : s.idx;   // 旧格式（纯数组）按当前表
+        const aoa = Array.isArray(s) ? s : s.aoa;
+        if (idx !== conn._sheetIdx) { conn._sheetIdx = idx; _ovXlsxRenderTabs(conn); }   // R4-2：先归位 sheet 再恢复
+        conn._aoa = aoa; _ovXlsxRecalcAll(conn); _ovXlsxPersist(conn); _ovXlsxRenderTable(conn);
+      }
       return;
     }
     if (act === 'save') {
@@ -1040,7 +1085,10 @@ function _ovXlsxBindBar(conn, body) {
         // H5（审查实锤：CSV 被写回 xlsx 二进制——扩展名仍 .csv 双不开）：
         // 按原扩展选 bookType
         const isCsv = /\.csv$/i.test(conn.officePath || '');
-        const out = XLSX.write(conn._wb, { bookType: isCsv ? 'csv' : 'xlsx', type: 'array' });
+        // R4-4（实锤：.xls 被写 xlsx 字节）：按扩展选 bookType——.xls 走
+        // biff8（Excel 97-2003），否则 Excel 报"格式与扩展名不匹配"
+        const bt = isCsv ? 'csv' : (/\.xls$/i.test(conn.officePath || '') ? 'biff8' : 'xlsx');
+        const out = XLSX.write(conn._wb, { bookType: bt, type: 'array' });
         const resp = await fetch('/api/office/write?path=' + encodeURIComponent(conn.officePath), { method: 'POST', body: out });
         const j = await resp.json();
         if (j.ok) {
