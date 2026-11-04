@@ -727,20 +727,19 @@ def install_online(kinds, log=None, progress=None, should_cancel=None,
                 elif k == "node":
                     say("在线安装 Node（本地资源优先，缺则官方直链）…")
                     # a325R（对抗审 P2）：_install_node_if_missing 一看到已装就
-                    # return True，force 完全无效，却报「✓ node 完成」。force
-                    # 时改走 _install_node_from（真跑安装器）。
+                    # return True，force 完全无效。force 走 _install_node_from
+                    # 真跑安装器。R12-2（实锤：装好却报失败）：不再回头
+                    # _find_installer（dl_dir 不在其搜索位且下载名对不上
+                    # pattern 必 miss）——本地 miss 直接官方直链下到明确
+                    # 路径并用它装
                     if force:
                         say("  强制重装：重跑 Node 安装器（可能弹管理员提示）")
                         _msi = cs._find_installer("node-v*.msi")
                         if not (_msi and os.path.isfile(_msi)):
-                            cs._install_node_if_missing(dl_dir)   # 缺安装器先补
-                            _msi = cs._find_installer("node-v*.msi")
-                        if _msi and os.path.isfile(_msi):
-                            cs._install_node_from(_msi)
-                        else:
-                            raise InstallError(
-                                "强制重装 Node 需要安装器（node-v*.msi）——"
-                                "本地资源目录没有，请改用离线资源包")
+                            _msi = os.path.join(dl_dir, "node-v24.19.0-x64.msi")
+                            if not os.path.isfile(_msi):
+                                cs._download(ONLINE_URLS["node"], _msi)
+                        cs._install_node_from(_msi)
                         ok = bool(shutil.which("node.exe") or shutil.which("node"))
                     else:
                         ok = bool(cs._install_node_if_missing(dl_dir))
@@ -748,16 +747,13 @@ def install_online(kinds, log=None, progress=None, should_cancel=None,
                     say("在线安装 Git（本地资源优先，缺则官方直链）…")
                     if force:
                         say("  强制重装：重跑 Git 安装器（可能弹管理员提示）")
+                        # R12-2：同 node——直链兜底，不问 _find_installer
                         _gx = cs._find_installer("Git-*.exe")
                         if not (_gx and os.path.isfile(_gx)):
-                            cs._install_git_if_missing(dl_dir)
-                            _gx = cs._find_installer("Git-*.exe")
-                        if _gx and os.path.isfile(_gx):
-                            cs._install_git_from(_gx)
-                        else:
-                            raise InstallError(
-                                "强制重装 Git 需要安装器（Git-*.exe）——"
-                                "本地资源目录没有，请改用离线资源包")
+                            _gx = os.path.join(dl_dir, "Git-64-bit.exe")
+                            if not os.path.isfile(_gx):
+                                cs._download(ONLINE_URLS["git"], _gx)
+                        cs._install_git_from(_gx)
                         ok = bool(cs._git_ok())
                     else:
                         ok = bool(cs._install_git_if_missing(dl_dir))

@@ -956,17 +956,20 @@ function _ovXlsxBindColGrip(conn, grip, c) {
   grip.addEventListener('dblclick', () => {
     delete _ovXlsxSizeBk(conn, '_colW')[c];
     // R11-2（实锤：persist 烙值后复位不回退）：桶键删除只影响后续渲染，
-    // ws 侧被 persist 烙进 !cols 的 wpx 需同步清——否则复位后保存仍落盘
-    // customWidth 残值
+    // ws 侧被 persist 烙进 !cols 的尺寸键需同步清。R12-1（实锤：键名
+    // 错配）：SheetJS 读入 <col customWidth="1" width="30"/> 产出的是
+    // 小写 customwidth + width + MDW——清键要大小写双形态连根拔，否则
+    // 复位后保存 customWidth 原样复活（行侧 hpt/hpx 全中无此问题）
     const sh = conn._wb.Sheets[conn._wb.SheetNames[conn._sheetIdx]];
     if (sh && sh['!cols']) {
       const rr = sh['!ref'] ? XLSX.utils.decode_range(sh['!ref']) : null;
       const ci = c + (rr ? rr.s.c : 0);
-      if (sh['!cols'][ci] && sh['!cols'][ci].wpx !== undefined) {
-        delete sh['!cols'][ci].wpx;
-        delete sh['!cols'][ci].customWidth;
-        delete sh['!cols'][ci].wch;
-        if (!Object.keys(sh['!cols'][ci]).length) sh['!cols'][ci] = undefined;
+      const cc = sh['!cols'][ci];
+      if (cc && (cc.wpx !== undefined || cc.width !== undefined ||
+                 cc.customwidth !== undefined || cc.customWidth !== undefined)) {
+        ['wpx', 'wch', 'width', 'MDW', 'customwidth', 'customWidth']
+          .forEach(k => { delete cc[k]; });
+        if (!Object.keys(cc).length) sh['!cols'][ci] = undefined;
       }
     }
     _ovXlsxRenderTable(conn);
