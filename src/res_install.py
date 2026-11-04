@@ -78,7 +78,10 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None,
                dotnet **始终忽略 force**——已满足时强装要管理员 + 重启，
                收益为零；webview2/claude/pydeps 本就恒覆盖/幂等，无需区分。
 
-    返回 {"installed": [...], "skipped": [...], "errors": {kind: msg}}
+    返回 {"installed": [...], "skipped": [...], "errors": {kind: msg},
+          "absent": [...]}
+    其中 absent 是「请求了但包内根本没有」的 kind（与 skipped 里「已存在
+    无需安装」的项区分）——调用方必须据此判失败，否则子集包会被误判成功。
     单个资源装失败**不中断**其余——某个装不上（比如无管理员装不了 .NET）
     不该把已经装好的 Node 也回滚。
     """
@@ -691,7 +694,9 @@ def install_online(kinds, log=None, progress=None, should_cancel=None,
             raise InstallCancelled("用户取消安装")
 
     want = [k for k in ORDER if k in set(kinds)]
-    res = {"installed": [], "skipped": [], "errors": {}}
+    # a332R（P3-2）：与 install_from 保持同一返回结构（含 absent），
+    # 否则调用方要做两套判定。在线通道不存在"包内缺资源"，恒为空。
+    res = {"installed": [], "skipped": [], "errors": {}, "absent": []}
     dl_dir = os.path.join(tempfile.gettempdir(), "fc_online_install")
     os.makedirs(dl_dir, exist_ok=True)
 

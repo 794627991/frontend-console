@@ -122,7 +122,15 @@ def autofind_fcpk():
               os.path.join(os.path.expanduser("~"), "Downloads")):
         if d and os.path.isdir(d):
             for p in glob.glob(os.path.join(d, "*.fcpk")):
-                (main if p.endswith("-资源包.fcpk") else sub).append(p)
+                # a332R（第3轮对抗审 P3-1）：只认本工具的包——`-资源包.fcpk`
+                # 主包与 `-资源包-*.fcpk` 子集包。早前把任意 *.fcpk（别家的、
+                # 用户自命名的备份）都当子集兜底自动选中，闸门 inspect 后才
+                # 报"资源包有问题"，用户以为是包坏了而不是"没找到本工具的包"。
+                _lp = p.lower()
+                if _lp.endswith("-资源包.fcpk"):
+                    main.append(p)
+                elif "-资源包-" in _lp and _lp.endswith(".fcpk"):
+                    sub.append(p)
     cands = main or sub
     if not cands:
         return ""

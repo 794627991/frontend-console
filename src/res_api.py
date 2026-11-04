@@ -204,7 +204,24 @@ def res_install_api():
                 res = res_install.install_from(
                     path, kinds=kinds, log=_log, progress=on_prog,
                     should_cancel=should_cancel, force=force)
-            errs = res.get("errors") or {}
+            errs = dict(res.get("errors") or {})
+            # a332R（第3轮对抗审 P2-1）：absent 只接进了启动闸门（res_boot），
+            # 设置页这条路径没接——选了子集包时 hard 项缺失、errors 为空，
+            # 界面照弹"资源包安装完成"，红条刷新后仍在，用户以为装好了。
+            # 与 res_boot 同一判定：MANIFEST 里 hard 的项若"包内根本没有"即失败。
+            try:
+                from src.res_boot import MANIFEST as _MF
+                _hard = [m["kind"] for m in _MF if m.get("hard")]
+                _absent = [k for k in _hard if k in (res.get("absent") or [])]
+                if _absent:
+                    _names = [m.get("name") or m.get("kind") for m in _MF
+                              if m.get("kind") in _absent]
+                    errs["__missing__"] = (
+                        "所选资源包不含以下必需资源：%s。请换完整的资源包"
+                        % "、".join(_names or _absent))
+                    _log(errs["__missing__"])
+            except Exception:
+                pass
             _state.update(done=True, ok=not errs, result=res,
                           err="; ".join("%s: %s" % kv for kv in errs.items()),
                           phase="完成" if not errs else "部分失败")

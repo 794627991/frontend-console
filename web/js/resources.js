@@ -223,17 +223,26 @@
       // 后端 log 是累积数组（超 400 条会裁剪头部）——不能用数组下标做游标，
       // 否则裁剪后下标恒失效、尾部日志永不投递（a325R 实锤：面板像卡死）。
       // 改用后端单调递增的 seq 增量投递。
-      var seenSeq = 0;
+      // a332R（第3轮对抗审 P2-2）：整轮判断用哪种游标——只要本轮有带 seq 的
+      // 条目就走 seq；全部无 seq（旧后端/混合状态）才退回下标游标。原实现
+      // 对无 seq 条目既不跳过也不推进，同一行会每 700ms 重放一次。
+      var seenSeq = 0, seenIdx = 0;
       _resPollTimer = setInterval(function () {
         _resFetch('/api/resources/poll').then(function (s) {
           _safe(onTick, s);
           var lg = s.log || [];
+          var useSeq = false;
+          for (var k = 0; k < lg.length; k++)
+            if (lg[k] && typeof lg[k].seq === 'number') { useSeq = true; break; }
           for (var i = 0; i < lg.length; i++) {
             var it = lg[i];
-            var sq = (it && typeof it.seq === 'number') ? it.seq : null;
-            if (sq !== null) {
-              if (sq <= seenSeq) continue;
+            if (useSeq) {
+              var sq = (it && typeof it.seq === 'number') ? it.seq : 0;
+              if (sq <= seenSeq) continue;      // 无 seq 的条目在 seq 模式下跳过
               seenSeq = sq;
+            } else {
+              if (i < seenIdx) continue;
+              seenIdx = i + 1;
             }
             _safe(onLog, it && it.msg);
           }

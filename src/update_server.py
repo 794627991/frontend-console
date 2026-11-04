@@ -192,7 +192,8 @@ def _offline_pkg():
         return None
     best = None
     for n in sorted(names):
-        is_new = n.endswith(".fcpk") and "-资源包" in n
+        _ln = n.lower()
+        is_new = _ln.endswith(".fcpk") and "-资源包" in n
         is_old = n.endswith(".zip") and "-offline-pkg" in n
         if not (is_new or is_old):
             continue
@@ -203,7 +204,8 @@ def _offline_pkg():
             continue
         if is_new:
             # 子集包命名：`xxx-资源包-拓展.fcpk` / `-资源包-claude.fcpk`
-            rank = 2 if n.endswith("-资源包.fcpk") else 1
+            # a332R：大小写不敏感（glob 在 Windows 不区分，但 endswith 区分）
+            rank = 2 if _ln.endswith("-资源包.fcpk") else 1
         else:
             rank = 0
         if best and (rank, st.st_mtime) <= (best[1][0], best[1][1]):
@@ -889,9 +891,11 @@ async function load(){
         +'<div style="font-size:14px;font-weight:650">🧰 离线资源包'
         +'<span style="font-size:11px;font-weight:400;color:var(--muted);margin-left:8px">OFFLINE PKG</span></div>'
         +'<div style="font-size:12px;color:var(--muted);margin-top:5px">📅 '+fmtTs(j.offline.mtime)+' · 📦 '+fmtSize(j.offline.size)
-        +(j.offline.format==='fcpk'
-          ?' · 无外网机器部署资源（WebView2 / .NET / Node / Git / claude-code / Python 依赖），加密资源包，<b style="color:var(--fg)">须用工具安装（双击打不开）</b>'
-          :' · 无外网机器部署资源（Git / Node / claude-code / Python 依赖），与工具版本无关')
+        +(j.offline.subset
+          ? ' · <b style="color:#e8a33d">子集包——只含部分资源，不能用于全新机器</b>，请让发布者上传完整资源包'
+          : (j.offline.format==='fcpk'
+            ?' · 无外网机器部署资源（WebView2 / .NET / Node / Git / claude-code / Python 依赖 / OnlyOffice），加密资源包，<b style="color:var(--fg)">须用工具安装（双击打不开）</b>'
+            :' · 无外网机器部署资源（Git / Node / claude-code / Python 依赖），与工具版本无关'))
         +'</div></div>'
         +'<button class="btn" data-dl="'+esc(j.offline.url)+'" data-n="'+esc(j.offline.file)+'" style="flex-shrink:0">⬇ 下载'+(j.offline.format==='fcpk'?'资源包':'离线包')+'</button></div>';
     }
