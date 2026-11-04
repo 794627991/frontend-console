@@ -5278,20 +5278,24 @@ span.nn-hl-t { background: color-mix(in srgb, #3fb950 15%, transparent);
 /* a300：office 滚动条显式豁免全站隐藏（用户令：宽大的条好抓，终端同款 14px） */
 .office-body { flex: 1; min-height: 0; overflow: auto; padding: 12px; position: relative;
   display: flex; flex-direction: column; align-items: center; }
-.office-body { scrollbar-width: auto !important; }
-.office-body::-webkit-scrollbar { width: 14px !important; height: 14px !important; }
-.office-body::-webkit-scrollbar-track { background: transparent; }
-.office-body::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--muted) 60%, transparent);
-  border-radius: 3px; border: 2px solid var(--bg); }
-.office-body::-webkit-scrollbar-thumb:hover { background: var(--muted); }
-.office-body::-webkit-scrollbar-corner { background: transparent; }
-/* PDF 主阅读区（ov-pdf-main）同款宽条 */
-.ov-pdf-main { scrollbar-width: auto !important; }
-.ov-pdf-main::-webkit-scrollbar { width: 14px !important; height: 14px !important; }
-.ov-pdf-main::-webkit-scrollbar-track { background: transparent; }
-.ov-pdf-main::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--muted) 60%, transparent);
-  border-radius: 3px; border: 2px solid var(--bg); }
-.ov-pdf-main::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+/* a306 终局：webkit 条压不住 WebView2 Fluent 细条（hover 显形，用户实锤
+   "不好抓的细条还存在"）——改终端 a237 同款路线：原生层彻底隐藏
+  （scrollbar-width:none 连 Fluent 绘制层都能藏住）+ JS 自绘 14px 宽条
+  （ov-scrollbar.js，office 打开时挂载 _ovSbMount） */
+.office-body, .ov-pdf-main { scrollbar-width: none !important; scrollbar-color: auto !important; }
+.office-body::-webkit-scrollbar, .ov-pdf-main::-webkit-scrollbar { width: 0 !important; height: 0 !important; }
+/* 自绘宽条（终端 .hg-term-sb 同款视觉语言）：默认透明，滚动/悬停显形渐隐 */
+.ov-sb { position: absolute; z-index: 40; opacity: 0; transition: opacity .25s; }
+.ov-sb.on { opacity: 1; }
+.ov-sb-v { top: 4px; bottom: 18px; right: 3px; width: 14px; }
+.ov-sb-h { left: 4px; right: 18px; bottom: 3px; height: 14px; }
+.ov-sb-th { position: absolute; border-radius: 3px;
+  background: color-mix(in srgb, var(--muted) 60%, transparent);
+  cursor: ns-resize; }
+.ov-sb-h .ov-sb-th { cursor: ew-resize; }
+.ov-sb-th:hover, .ov-sb-th.drag { background: var(--muted); }
+.ov-sb-v .ov-sb-th { left: 1px; right: 1px; }
+.ov-sb-h .ov-sb-th { top: 1px; bottom: 1px; }
 .office-err { color: var(--neon-red); font-size: 12px; padding: 20px; text-align: center; }
 .office-loading { color: var(--muted); font-size: 12px; padding: 40px; }
 /* docx：Word 底白页 + 主题容器底色 */

@@ -512,6 +512,8 @@ async function _ovRenderDocx(buf, body, wrap, conn) {
     // a290 全功能：docx 目录索引侧栏——从渲染 DOM 提取 h1-h6（docx-preview 按
     // Word 标题样式映射 heading），点击跳转 + 滚动高亮当前节
     _ovDocxOutline(body, container, conn);
+    // a306：自绘宽滚动条（终端同款，原生细条已 CSS 藏）
+    if (typeof _ovSbMount === 'function') _ovSbMount(body);
   } catch (e) {
     container._rendering = false;
     if (_timeout) clearTimeout(_timeout);
@@ -607,6 +609,9 @@ async function _ovRenderXlsx(buf, body, wrap, conn) {
     _ovXlsxBindBar(conn, body);
     _ovXlsxRenderTabs(conn);
     _ovXlsxRenderTable(conn);
+    // a306：xlsx 编辑区外层（office-body）挂自绘宽条
+    const _ob = conn.wrap.querySelector('[data-ov-body]');
+    if (_ob && typeof _ovSbMount === 'function') _ovSbMount(_ob);
     // openpyxl 等工具写的公式无缓存值（<v></v> 空串）——读入后全表现算一遍，
     // 公式格立即显示计算值（而非空）；重算会触发一次重渲染
     _ovXlsxRecalcAll(conn);
