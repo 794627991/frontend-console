@@ -72,6 +72,9 @@ def _offline_pkg_dirs():
     app_dir = _app_dir()
     dirs.append(os.path.join(app_dir, "offline_pkg"))
     dirs.append(os.path.join(app_dir, "dist", "offline_pkg"))
+    # a326：源码场景的统一资源目录（仓库 offline_assets/；exe 场景无此目录，
+    # isdir 检查自然跳过）
+    dirs.append(os.path.join(app_dir, "offline_assets"))
     # 去重保序
     seen, out = set(), []
     for d in dirs:

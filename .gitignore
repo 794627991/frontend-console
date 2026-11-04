@@ -74,4 +74,7 @@ src/_fcpk_key.py
 
 # ZCode 会话工作区（计划/临时脚本/验证产物，本地工具数据，不入库）
 /.zcode/
-vendor/onlyoffice/
+# a326：离线资源统一目录（本体不入库，仅清单入库）
+/offline_assets/*
+!/offline_assets/MANIFEST.json
+# a326 起 onlyoffice 装在 offline_assets/onlyoffice/（旧 vendor/onlyoffice 已迁空）

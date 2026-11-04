@@ -103,7 +103,14 @@ def build():
             _publish_debug(app_dir)
             return dist
         _refresh_offline_claude()   # v3.4.95：离线 claude-code 版本有变即刷新
-        _sync_offline_pkg()
+        # a326：offline_pkg 三处分散资源已统一迁入 offline_assets/（MANIFEST
+        # 入库、本体 gitignore），旧 _sync_offline_pkg 双目录同步随之退役；
+        # 其尾部的 README 随包复制挪到这里
+        try:
+            shutil.copy2(os.path.join(BASE, "README.md"),
+                         os.path.join(BASE, "dist", APP_NAME, "README.md"))
+        except OSError:
+            pass
         # v4.1（用户拍板）：不再 _bundle_webview2 随包带运行时——改为打进
         # 统一离线资源包 .fcpk（含 WebView2/dotnet/node/git/claude/pydeps）。
         # 发布包随之从 318MB 降到约 65MB。
@@ -129,19 +136,21 @@ def _bundle_webview2(app_dir):
     发布包不再随带。回滚：skip_dirs 去掉 "runtime" + 主流程恢复调用。
 
     v2.3.7b（用户铁律×2「无条件随包；保底包不能是下载的——不能假设
-    构建机有网络」）：WebView2 Fixed Version 运行时**入库随仓走**
-    （runtime/WebView2Fixed/，168 文件 557MB，git 跟踪）——任何机器
-    clone/合入/检出即有，打包无条件带上，全程零网络。
+    构建机有网络」）：WebView2 Fixed Version 运行时随仓走——a326 起
+    本体迁 offline_assets/webview2/（不入 git），MANIFEST.json 入库记录
+    版本与获取方式，新检出机器按清单跑 tools/fetch_webview2_fixed.py
+    恢复后再打包。
 
-    缺失=仓库不完整/检出异常 → 打包直接失败（绝不出依赖系统运行时的
-    降级包，也绝不在 build 期下载）。版本升级：开发机上人工跑
-    tools/fetch_webview2_fixed.py（那是唯一联网点，跑完随提交入库）。"""
-    src = os.path.join(BASE, "runtime", "WebView2Fixed")
+    缺失=资源未恢复 → 打包直接失败（绝不出依赖系统运行时的降级包，
+    也绝不在 build 期下载）。版本升级：开发机上人工跑
+    tools/fetch_webview2_fixed.py（那是唯一联网点，跑完更新清单提交）。"""
+    src = os.path.join(BASE, "offline_assets", "webview2")
     if not os.path.isdir(src):
         raise RuntimeError(
-            "WebView2 内置运行时缺失（runtime/WebView2Fixed/ 不在——仓库"
-            "检出不完整）。按铁律打包中止：运行时已入库，缺失说明 clone/"
-            "合入异常，请修复仓库后重试（不在 build 期下载）")
+            "WebView2 内置运行时缺失（offline_assets/webview2/ 不在——新"
+            "检出仓库无资源本体）。按铁律打包中止：按 offline_assets/"
+            "MANIFEST.json 跑 tools/fetch_webview2_fixed.py 恢复后重试"
+            "（不在 build 期下载）")
     dst = os.path.join(app_dir, "runtime", "WebView2Fixed")
     if os.path.isdir(dst):
         shutil.rmtree(dst, ignore_errors=True)
@@ -263,75 +272,12 @@ def _publish(app_dir):
           "需把 zip 发给同事手动解压换装一次（2.3.0 起全程自动）")
 
 
-def _publish_offline_pkg():
-    """【v4.1 已退役，保留以便回滚】旧的标准 zip 离线包通道，被
-    _build_offline_fcpk（加密统一格式）取代。
-
-    v3.4.97（用户需求「offline_pkg 同步到 release 形成压缩包，发布页
-    同步提供」）：dist/offline_pkg → dist/releases/<应用名>-offline-pkg.zip。
-    不带版本号（用户定调：离线包内容是 Git/Node/claude-code/依赖，与工具
-    版本无关）。发布中心 _offline_pkg() 单独通道列出——同事端门户即见
-    即下。指纹（文件数+大小+mtime 汇总）不变则沿用；指纹未变但旧带版本
-    号的包还在（v2.3.3 及之前的名），直接改名收编不重压（几百 MB 级）。
-    刻意不写 manifest.json——自动更新器只认主应用包，离线资源绝不能被
-    当应用更新推下去。"""
-    import zipfile
-    src = os.path.join(BASE, "dist", "offline_pkg")
-    if not os.path.isdir(src):
-        print("offline-pkg: dist/offline_pkg 不存在，跳过")
-        return
-    rel = os.path.join(BASE, "dist", "releases")
-    os.makedirs(rel, exist_ok=True)
-    dst = os.path.join(rel, "%s-offline-pkg.zip" % APP_NAME)
-    n_files = total = 0
-    for r, _, fs in os.walk(src):
-        for f in fs:
-            try:
-                st = os.stat(os.path.join(r, f))
-            except OSError:
-                continue
-            n_files += 1
-            total += st.st_size + int(st.st_mtime)
-    fp = "%d-%d" % (n_files, total)
-    fp_file = os.path.join(rel, "offline-pkg.fingerprint")
-    try:
-        with open(fp_file, encoding="utf-8") as f:
-            old = f.read().strip()
-    except OSError:
-        old = ""
-    if old == fp:
-        if os.path.isfile(dst):
-            print("offline-pkg: 内容未变，沿用 %s" % os.path.basename(dst))
-            return
-        # 内容未变只是改了名（v2.3.3 及之前带 -v<ver>）：最新一份旧包直接
-        # 改名收编，不重压
-        olds = sorted(
-            (n for n in os.listdir(rel)
-             if n.startswith("%s-offline-pkg-v" % APP_NAME) and n.endswith(".zip")),
-            key=lambda n: os.path.getmtime(os.path.join(rel, n)))
-        if olds:
-            os.replace(os.path.join(rel, olds[-1]), dst)
-            print("offline-pkg: 内容未变，旧包改名收编 → %s" % os.path.basename(dst))
-            return
-    print("offline-pkg: 压缩 dist/offline_pkg → releases（几百 MB 需几分钟）…")
-    with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as z:
-        for r, _, fs in os.walk(src):
-            for f in fs:
-                p = os.path.join(r, f)
-                z.write(p, os.path.join("offline_pkg", os.path.relpath(p, src)))
-    try:
-        with open(fp_file, "w", encoding="utf-8") as f:
-            f.write(fp)
-    except OSError:
-        pass
-    print("offline-pkg: 已发布 → %s (%d MB)" % (dst, os.path.getsize(dst) // 1024 // 1024))
-
 
 def _refresh_offline_claude():
     """v3.4.95（用户需求「打包时 claude 版本也重新更新，如果有变化的话」）：
-    本机 npm 全局的 @anthropic-ai/claude-code 与 offline_pkg/claude-code
-    比对版本，不同则镜像刷新（根目录源 + dist 镜像两份）——离线安装资源
-    不再停留在首次打包时的旧版。找不到本机安装（CI/未装）静默跳过。"""
+    本机 npm 全局的 @anthropic-ai/claude-code 与 offline_assets/claude-code
+    比对版本，不同则 robocopy /MIR 镜像刷新——离线安装资源不再停留在首次
+    打包时的旧版。找不到本机安装（CI/未装）静默跳过。"""
     import json
     cands = [
         os.path.join(os.environ.get("APPDATA", ""), "npm", "node_modules",
@@ -354,43 +300,17 @@ def _refresh_offline_claude():
                 return json.load(f).get("version") or ""
         except Exception:
             return ""
-    src_v = _ver(src)
-    # 版本基准取两处任一现存（根目录源或 dist 镜像——本机常只有 dist 份）
-    dst_v = (_ver(os.path.join(BASE, "offline_pkg", "claude-code"))
-             or _ver(os.path.join(BASE, "dist", "offline_pkg", "claude-code")))
+    dst = os.path.join(BASE, "offline_assets", "claude-code")
+    src_v, dst_v = _ver(src), _ver(dst)
     if not src_v or src_v == dst_v:
         print(f"offline claude-code: {dst_v or '无'} 与本机一致，无需刷新")
         return
-    for dst in (os.path.join(BASE, "offline_pkg", "claude-code"),
-                os.path.join(BASE, "dist", "offline_pkg", "claude-code")):
-        if not os.path.isdir(os.path.dirname(dst)):
-            continue
-        print(f"offline claude-code: {dst_v or '无'} → {src_v} 刷新 {dst} …")
-        # robocopy /MIR 镜像（几百 MB 级，Windows 自带，比 copytree 快且可续传）
-        rc = subprocess.call(["robocopy", src, dst, "/MIR", "/NFL", "/NDL", "/NJH",
-                              "/NJS", "/NP"], timeout=1800)
-        if rc > 7:   # 0-7 均为成功档
-            print(f"⚠ claude-code 刷新失败 (robocopy rc={rc}):", dst)
-
-
-def _sync_offline_pkg():
-    """确保 dist/offline_pkg 与项目根 offline_pkg 同步（随包离线安装资源：
-    Git 安装器 / Node MSI / claude-code 包，Claude 离线安装用）。
-    v2.3.0 onedir：offline_pkg 旁挂在 dist/ 级（不进应用目录——发布 zip
-    只有应用本体几十 MB，离线资源几百 MB 单独按需分发）。"""
-    src_pkg = os.path.join(BASE, "offline_pkg")
-    dst_pkg = os.path.join(BASE, "dist", "offline_pkg")
-    if os.path.isdir(src_pkg) and not os.path.isdir(dst_pkg):
-        print("复制 offline_pkg → dist/（Claude 离线安装资源，几百 MB 需几分钟）…")
-        shutil.copytree(src_pkg, dst_pkg)
-        print("offline_pkg 已同步到 dist/")
-    # README 放进应用目录（随 zip 分发，解压即可翻阅）
-    src_rd = os.path.join(BASE, "README.md")
-    dst_rd = os.path.join(BASE, "dist", APP_NAME, "README.md")
-    try:
-        shutil.copy2(src_rd, dst_rd)
-    except OSError:
-        pass
+    print(f"offline claude-code: {dst_v or '无'} → {src_v} 刷新 …")
+    # robocopy /MIR 镜像（几百 MB 级，Windows 自带，比 copytree 快且可续传）
+    rc = subprocess.call(["robocopy", src, dst, "/MIR", "/NFL", "/NDL", "/NJH",
+                          "/NJS", "/NP"], timeout=1800)
+    if rc > 7:   # 0-7 均为成功档
+        print(f"⚠ claude-code 刷新失败 (robocopy rc={rc})")
 
 
 
@@ -398,7 +318,7 @@ def _sync_offline_pkg():
 # v4.1：统一离线资源包 .fcpk（用户拍板：WebView2 移出发布包，格式统一+加密）
 # ---------------------------------------------------------------------------
 
-# ---- a201：bili 资源组装（打包机联网跑一次，产物进 dist/offline_pkg/bili/）----
+# ---- a201：bili 资源组装（打包机联网跑一次，产物进 offline_assets/bili/）----
 BILI_NPM_VERSION = "0.1.204"        # 锁定版（0.1.x 高频迭代，不跟 master）
 BILI_NODE_VERSION = "22.14.0"       # LTS（≥22 硬要求）
 
@@ -408,7 +328,7 @@ def _prep_bili_dir():
     node.exe 从官方 zip 抽取（win-x64 zip 里 node.exe 自含全部内置模块）。
     幂等：目录已存在且关键文件齐则跳过。"""
     import subprocess, zipfile, urllib.request
-    root = os.path.join(BASE, "dist", "offline_pkg", "bili")
+    root = os.path.join(BASE, "offline_assets", "bili")
     node_exe = os.path.join(root, "node.exe")
     entry = os.path.join(root, "node_modules", "billion-context",
                          "dist", "index.js")
@@ -487,11 +407,12 @@ def _offline_sources(kinds=None):
     def _take(k):
         return want is None or k in want
 
-    src = os.path.join(BASE, "dist", "offline_pkg")
+    src = os.path.join(BASE, "offline_assets")
     out = []
-    if os.path.isdir(src):
-        for name in sorted(os.listdir(src)):
-            p = os.path.join(src, name)
+    inst = os.path.join(src, "install")
+    if os.path.isdir(inst):
+        for name in sorted(os.listdir(inst)):
+            p = os.path.join(inst, name)
             if not os.path.isfile(p):
                 continue
             low = name.lower()
@@ -511,6 +432,7 @@ def _offline_sources(kinds=None):
                 continue
             if _take(kind):
                 out.append((p, "install/" + name, kind, mode, None))
+    if os.path.isdir(src):
         bl = os.path.join(src, "bili")
         if os.path.isdir(bl) and _take("bili"):
             # a201 内置压缩引擎：Node 便携运行时 + billion-context 依赖树
@@ -559,9 +481,9 @@ def _offline_sources(kinds=None):
                         else:
                             link = first_exe
                     out.append((p, arc, "claude", mode, link))
-        # a309R：OnlyOffice DS 安装包（kind=onlyoffice）——直接从 vendor 收，
-        # 不复制进 offline_pkg（916MB 复制两份纯浪费）。打包机没下载过则包不含
-        oo = os.path.join(BASE, "vendor", "onlyoffice",
+        # a309R：OnlyOffice DS 安装包（kind=onlyoffice）——a326 迁入
+        # offline_assets/onlyoffice/。打包机没下载过则包不含
+        oo = os.path.join(src, "onlyoffice",
                           "onlyoffice-documentserver.exe")
         if os.path.isfile(oo) and _take("onlyoffice"):
             out.append((oo, "install/onlyoffice-documentserver.exe",
@@ -572,7 +494,7 @@ def _offline_sources(kinds=None):
                 p = os.path.join(pd, f)
                 if os.path.isfile(p):
                     out.append((p, "pydeps/" + f, "pydeps", "raw", None))
-    wv = os.path.join(BASE, "runtime", "WebView2Fixed")
+    wv = os.path.join(BASE, "offline_assets", "webview2")
     if os.path.isdir(wv) and _take("webview2"):
         for r, ds, fs in os.walk(wv):
             ds.sort()
@@ -627,7 +549,8 @@ def _build_offline_fcpk(kinds=None, quiet=False, tag=""):
     from src import fcpk
     files = _offline_sources(kinds)
     if not files:
-        print("资源包: 无可用资源（dist/offline_pkg 与 runtime/WebView2Fixed 都不在"
+        print("资源包: 无可用资源（offline_assets/ 不在或为空——新检出仓库按"
+              " offline_assets/MANIFEST.json 恢复资源本体"
               + ("，或不含 %s" % ",".join(kinds) if kinds else "") + "），跳过")
         return None
     rel = os.path.join(BASE, "dist", "releases")
@@ -702,7 +625,118 @@ def _build_offline_fcpk(kinds=None, quiet=False, tag=""):
         pass
     sz = os.path.getsize(dst)
     print("资源包: 已发布 → %s (%d MB)" % (dst, sz // 1024 // 1024))
+    _write_offline_manifest()
     return dst
+
+
+def _write_offline_manifest():
+    """a326（用户需求：资源本体不入 git，清单入 git）：扫描 offline_assets/
+    生成 MANIFEST.json——新检出机器按清单的 url/note 恢复资源本体。
+    单文件条目记 sha256（安装器类 <100MB）；目录类（claude-code/bili/
+    webview2）记 version+文件数+总大小，不逐文件哈希（1.2 万文件太慢）。
+    """
+    import hashlib
+    import json
+    import time
+    A = os.path.join(BASE, "offline_assets")
+    if not os.path.isdir(A):
+        print("manifest: offline_assets/ 不存在，跳过")
+        return None
+
+    def _sha256(p):
+        h = hashlib.sha256()
+        with open(p, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        return h.hexdigest()
+
+    def _dirstat(d):
+        n = sz = 0
+        for r, _, fs in os.walk(d):
+            for f in fs:
+                try:
+                    sz += os.path.getsize(os.path.join(r, f)); n += 1
+                except OSError:
+                    pass
+        return n, sz
+
+    def _pkgver(d):
+        try:
+            with open(os.path.join(d, "package.json"), encoding="utf-8") as f:
+                return json.load(f).get("version") or ""
+        except Exception:
+            return ""
+
+    items = []
+    inst = os.path.join(A, "install")
+    urls = {  # 在线恢复/在线安装同源（a326 批2 在线安装复用）
+        "git": "https://github.com/git-for-windows/git/releases/download/"
+               "v2.55.0.windows.5/Git-2.55.0.5-64-bit.exe",
+        "node": "https://nodejs.org/dist/v24.19.0/node-v24.19.0-x64.msi",
+        "dotnet": "https://download.visualstudio.microsoft.com/download/pr/"
+                  "6a893f45-0810-4b11-9051-3b9ef0d1cf0e/4d6923c759e4cc4d34438f"
+                  "2b57f4c06/ndp481-x86-x64-allos-enu.exe",
+    }
+    if os.path.isdir(inst):
+        for name in sorted(os.listdir(inst)):
+            p = os.path.join(inst, name)
+            if not os.path.isfile(p):
+                continue
+            low = name.lower()
+            kind = ("git" if low.startswith("git-") else
+                    "node" if low.startswith("node-") else
+                    "dotnet" if low.startswith("ndp481") else
+                    "onlyoffice" if "onlyoffice" in low else None)
+            if not kind:
+                continue
+            items.append({"kind": kind, "file": "install/" + name,
+                          "size": os.path.getsize(p), "sha256": _sha256(p),
+                          "url": urls.get(kind, ""),
+                          "note": "官方直链，在线安装同源" if urls.get(kind)
+                                  else "官网下载页获取"})
+    oo = os.path.join(A, "onlyoffice", "onlyoffice-documentserver.exe")
+    if os.path.isfile(oo):
+        items.append({"kind": "onlyoffice", "file": "onlyoffice/"
+                      "onlyoffice-documentserver.exe",
+                      "size": os.path.getsize(oo), "sha256": _sha256(oo),
+                      "url": "https://www.onlyoffice.com/download.aspx",
+                      "note": "DS 安装器；在线安装用官方 download.aspx 直链"})
+    for kind, sub in (("claude", "claude-code"), ("bili", "bili"),
+                      ("webview2", "webview2")):
+        d = os.path.join(A, sub)
+        if not os.path.isdir(d):
+            continue
+        n, sz = _dirstat(d)
+        items.append({
+            "kind": kind, "dir": sub + "/", "files": n, "size": sz,
+            "version": (_pkgver(d) if kind in ("claude", "bili") else
+                        (sorted(os.listdir(d))[0] if kind == "webview2"
+                         and os.listdir(d) else "")),
+            "url": ("https://www.npmjs.com/package/@anthropic-ai/claude-code"
+                    if kind == "claude" else
+                    "https://www.npmjs.com/package/billion-context"
+                    if kind == "bili" else
+                    "tools/fetch_webview2_fixed.py 按版本下载（微软已下架直链）"),
+            "note": "npm 包整树镜像" if kind in ("claude", "bili")
+                    else "Fixed Version 运行时，恢复脚本见 url",
+        })
+    pd = os.path.join(A, "pydeps")
+    if os.path.isdir(pd):
+        wheels = sorted(f for f in os.listdir(pd) if f.endswith(".whl"))
+        if wheels:
+            n, sz = _dirstat(pd)
+            items.append({"kind": "pydeps", "dir": "pydeps/", "files": n,
+                          "size": sz, "wheels": wheels,
+                          "url": "pip download（requirements 见 wheel 名）",
+                          "note": "离线 wheel 池，在线安装走 pip"})
+    mf = {"updated": time.strftime("%Y-%m-%d %H:%M:%S"), "items": items,
+          "note": "资源本体不入 git；本清单入库。新检出机器按各 item 的 "
+                  "url/note 恢复 offline_assets/ 后才能打离线包。"}
+    path = os.path.join(A, "MANIFEST.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(mf, f, ensure_ascii=False, indent=2)
+    print("manifest: %d 项已刷新 → %s（记得提交）" % (len(items), path))
+    return path
 
 
 def offline_main(argv):
@@ -748,10 +782,15 @@ def offline_main(argv):
                          "bili,claude,onlyoffice,pydeps；--preset 优先")
     ap.add_argument("--prep-bili", action="store_true",
                     help="先组装 bili 资源（node.exe + billion-context 依赖树，需联网）")
+    ap.add_argument("--manifest", action="store_true",
+                    help="只刷新 offline_assets/MANIFEST.json（资源清单入库用）")
     ap.add_argument("--out", default="",
                     help="额外复制一份到该目录（可选）")
     args = ap.parse_args(argv)
 
+    if getattr(args, "manifest", False):
+        _write_offline_manifest()
+        return 0
     if getattr(args, "prep_bili", False):
         _prep_bili_dir()
         return

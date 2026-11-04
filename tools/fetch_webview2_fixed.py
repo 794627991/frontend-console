@@ -16,8 +16,9 @@ v2.3.7a（用户需求「任何机器都能兼容，宁可包体大」）：
     python tools/fetch_webview2_fixed.py 133.0.3065.92
 
 产物：
-    runtime/WebView2Fixed/Microsoft.WebView2.FixedVersionRuntime.<ver>.x64/
-    （build.py _bundle_webview2 随包带上；src.main _ensure_webview2 启动切换）
+    offline_assets/webview2/Microsoft.WebView2.FixedVersionRuntime.<ver>.x64/
+    （a326 起资源统一目录，本体不入 git、MANIFEST.json 记录版本；
+     build.py _bundle_webview2 随包带上；src.main _ensure_webview2 启动切换）
 """
 import os
 import subprocess
@@ -63,7 +64,8 @@ def main():
     ver = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_VER
     url = DL.format(v=ver)
     cab = os.path.join(BASE, "runtime", "webview2-fixed.cab")
-    dst_root = os.path.join(BASE, "runtime", "WebView2Fixed")
+    # a326：资源统一目录 offline_assets/webview2/（本体不入库，MANIFEST 记录）
+    dst_root = os.path.join(BASE, "offline_assets", "webview2")
     os.makedirs(dst_root, exist_ok=True)
     # 已下载过的 cab 直接复用（urlretrieve 断点续传不支持，重下 250MB 冤枉）
     if os.path.isfile(cab) and os.path.getsize(cab) > 50 * 1024 * 1024:
