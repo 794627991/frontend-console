@@ -124,9 +124,11 @@ function buildLogViewer(path, gotoLine) {   // R28-5：gotoLine 行定位（大�
   }
   // 若已打开同名日志，切过去（a371R：gotoLine 一并透传——原 return 丢弃，
   // 跳转已打开的大文件时定位静默失效）
+  // a374：路径归一化比较——正/反斜杠形态差异会击穿去重偷开双胞胎 tab
   const _gotoLine = (typeof gotoLine === 'number' && gotoLine > 0) ? Math.floor(gotoLine) : 0;
+  const _np = p => String(p || '').replace(/\\/g, '/').toLowerCase();
   for (const pid in connections) {
-    if (connections[pid].meta && connections[pid].meta.kind === 'log' && connections[pid].meta.path === path) {
+    if (connections[pid].meta && connections[pid].meta.kind === 'log' && _np(connections[pid].meta.path) === _np(path)) {
       switchTab(pid);
       if (_gotoLine > 0) gotoLogLine(connections[pid], _gotoLine);
       return;

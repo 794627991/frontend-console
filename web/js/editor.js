@@ -73,12 +73,18 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
   // a238 P1-5（第5轮A2）：外部文件去重必须「全路径相等」——原先只比 label
   // （=basename），E:\proj2\a.c 会被 D:\bsp\a.c 的旧 tab 劫持：用户以为打开了
   // 新文件，编辑后 Ctrl+S 内容写进第一个文件（写错文件，无任何视觉征兆）
+  // a374（用户实锤：引用面板跳转概率性"漂移"）：精确比对被斜杠形态击穿——
+  // 文件树/拖拽入口传 D:/ 正斜杠，引用/定义面板的 path 来自后端（D:\ 反
+  // 斜杠）——去重失效偷开同名双胞胎 tab，两个 tab 各记各的光标，跳转在
+  // 双胞胎间横跳=「点了 2174 停在 469」假象。归一化（反斜杠→正斜杠+小写）
+  // 后比较：Windows 路径大小写不敏感
+  const _normPath = p => String(p || '').replace(/\\/g, '/').toLowerCase();
   if (name) {
     for (const pid in connections) {
       const c = connections[pid];
-      if (c && c.meta && c.meta.kind === 'editor' && c.meta.label === name) {
+      if (c && c.meta && c.meta.kind === 'editor' && String(c.meta.label).toLowerCase() === String(name).toLowerCase()) {
         if (extPath || c.extPath) {
-          if (String(c.extPath || '') === String(extPath || '')) { switchTab(pid); return c; }
+          if (_normPath(c.extPath) === _normPath(extPath)) { switchTab(pid); return c; }
           continue;   // 同名不同路径：不劫持，新开 tab
         }
         switchTab(pid); return c;   // a209批1：去重分支也返回 conn（openFileSmart 行号跳转需要拿到实例）

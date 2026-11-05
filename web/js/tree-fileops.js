@@ -18,7 +18,7 @@
   // a213 审计 P1：原 pre 只拼 '/'——extPath 反斜杠 startsWith 恒 false，
   // 目录级 rename/delete 子孙联动全灭（改后 tab 按旧路径保存=旧位置复活）。
   // 归一化前缀比较（双斜杠统一）
-  const normKey = (x) => String(x).split(SEP).join('/');
+  const normKey = (x) => String(x).split(SEP).join('/').toLowerCase();   // a374：+小写（Windows 大小写不敏感）
   const isUnder = (child, dir) => {
     const c = normKey(child), d = normKey(dir).replace(/\/$/, '');
     return c === d || c.startsWith(d + '/');
@@ -56,7 +56,7 @@
     for (const pid in connections) {
       const c = connections[pid];
       if (!c || !c.extPath) continue;
-      if (c.extPath === oldP) {
+      if (normKey(c.extPath) === normKey(oldP)) {   // a374：斜杠形态免疫（面板反斜杠/树正斜杠）
         c.extPath = newP;
         const nm = baseName(newP);
         if (c.meta) c.meta.label = nm;
