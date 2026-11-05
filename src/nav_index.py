@@ -71,7 +71,7 @@ def _read_json(p):
 
 def _write_json(p, obj):
     os.makedirs(os.path.dirname(p), exist_ok=True)
-    # R16-6：tmp 唯一化（build/import_nm 并发写同库时固定名交错覆盖）
+    # tmp 唯一化（并发写同库时固定名交错覆盖）
     tmp = "%s.%d.tmp" % (p, threading.get_ident())
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(obj, f, ensure_ascii=False)
@@ -480,9 +480,6 @@ def build(root, log=None, progress=None, should_cancel=None):
                 if srel and srel not in lst:
                     lst.append(srel)
         say("  符号表：%d 符号 / %d 个 .o" % (len(symbols), used))
-    # R17-5：重建前检出旧 nm 导入（写 symbols.json 之前读——之后读到的
-    # 已是新数据，提示永假的坑踩过）
-    _had_nm = bool((_read_json(os.path.join(ld, "symbols.json")) or {}).get("nm_imported"))
     _write_json(os.path.join(ld, "symbols.json"),
                 {"version": 1, "symbols": symbols})
 
@@ -494,11 +491,6 @@ def build(root, log=None, progress=None, should_cancel=None):
             "sizes": {"tags": os.path.getsize(tags) if os.path.isfile(tags) else 0,
                       "manifest": os.path.getsize(os.path.join(ld, "manifest.json")),
                       "symbols": os.path.getsize(os.path.join(ld, "symbols.json"))}}
-    # R17-5（实锤：重建静默清空 nm 增强数据）：nm 导入的符号映射随
-    # symbols.json 覆盖丢失——检出并明确提示（不自动合并：旧映射基于
-    # 旧 manifest，正确性无法保证）
-    if _had_nm:
-        say("⚠ 此前导入的 nm 符号清单已随重建清空——需要请从弹层重新导入")
     _write_json(os.path.join(ld, "meta.json"), meta)
     prog(100, "完成")
     say("✓ 索引完成：%d 符号 / 白名单 %d 文件 / 库 %.1f MB"
@@ -650,59 +642,6 @@ def symbols(file_path, q, limit=50):
     out.sort(key=lambda c: (0 if c["in_build"] else 1, -c["dist"]))
     return {"ok": True, "items": out[:limit], "mode": "ok"}
 
-
-def import_nm_list(root, nm_file):
-    """批3：Linux 侧 `find -name '*.o' | xargs nm -A --defined-only > syms.txt`
-    输出清单的导入（可选增强——符号级消歧对齐真机）。格式：
-    `rel/path.o: 00000000 T funcname`。合并进库的 symbols.json。"""
-    root = os.path.abspath(root)
-    ld = lib_dir(root)
-    if not os.path.isfile(os.path.join(ld, "meta.json")):
-        return False, "该目录没有索引库——先建索引"
-    mf = _read_json(os.path.join(ld, "manifest.json")) or {}
-    compiled = mf.get("compiled") or {}
-    def _norm_o(x):
-        x = x.replace(os.sep, "/").lower()
-        return x[:-2] if x.endswith(".o") else x
-    o_rel_to_src = {_norm_o(info["o"]): srel for srel, info in compiled.items()}
-    syms = (_read_json(os.path.join(ld, "symbols.json")) or {}).get("symbols") or {}
-    n_line = n_used = 0
-    try:
-        with open(nm_file, encoding="utf-8", errors="replace") as f:
-            for line in f:
-                n_line += 1
-                # 形态：path.o: [addr] [TtDdBbRrCcWw] name
-                m = re.match(r"^(.+?\.o):\s+(?:[0-9a-fA-F]+\s+)?([A-Za-z])\s+(\S+)$",
-                             line.rstrip("\n"))
-                if not m:
-                    continue
-                orel, typ, name = m.group(1), m.group(2), m.group(3)
-                if typ not in "TtDdBbRrCcWw" or not name or name[0] in "$.":
-                    continue
-                srel = o_rel_to_src.get(_norm_o(orel))
-                if not srel:
-                    # 直接文件名兜底（nm 输出路径形态多样）
-                    base = _norm_o(orel).rsplit("/", 1)[-1]
-                    hits = [v for k, v in compiled.items()
-                            if _norm_o(v.get("o") or "").rsplit("/", 1)[-1] == base]
-                    srel = hits[0] if len(hits) == 1 else None
-                if not srel:
-                    continue
-                lst = syms.setdefault(name, [])
-                if srel not in lst:
-                    lst.append(srel)
-                n_used += 1
-    except OSError as e:
-        return False, "读清单失败：%s" % e
-    _write_json(os.path.join(ld, "symbols.json"),
-                {"version": 1, "symbols": syms, "nm_imported": True})
-    with open(os.path.join(ld, "meta.json"), encoding="utf-8") as f:
-        meta = json.load(f)
-    meta["symbols"] = len(syms)
-    meta["nm_imported"] = True
-    _write_json(os.path.join(ld, "meta.json"), meta)
-    _invalidate_cache()
-    return True, "导入 %d 行 / 生效 %d 符号（总 %d）" % (n_line, n_used, len(syms))
 
 
 def references(file_path, symbol, limit=200):
