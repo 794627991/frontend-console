@@ -796,9 +796,6 @@ def definition(file_path, symbol):
             if k.lower() == low:
                 cands = v
                 break
-    if not cands:
-        return {"symbol": symbol, "auto": False, "mode": "not-found",
-                "candidates": []}
     mf = _load_json_cached(ld, "manifest.json", _manifest_cache)
     compiled = mf.get("compiled") or {}
     syms = _load_json_cached(ld, "symbols.json", _symbols_cache).get("symbols") or {}
@@ -809,6 +806,29 @@ def definition(file_path, symbol):
     nm_srcs = syms.get(symbol)
     if nm_srcs and len(nm_srcs) == 1:
         nm_lock = nm_srcs[0]
+
+    # a362（用户实锤「nm 符号映射为什么没实现」）：SDK 场景 .o 是闭源
+    # 预编译（符号在 .o 里、源文件里没有同名定义）→ ctags tags 无此条
+    # → 旧流直接 not-found，nm 映射建好了却无候选可锁。修复：tags 无
+    # 候选但 nm 有唯一源映射时，以该源文件生成候选（行号在源内文本搜
+    # 索兜底，无则 1）
+    if not cands and nm_srcs:
+        cands = []
+        for srel in nm_srcs[:5]:
+            sabs = os.path.join(root, srel.replace("/", os.sep))
+            ln = 1
+            try:
+                with open(sabs, encoding="utf-8", errors="replace") as f:
+                    for i, line in enumerate(f, 1):
+                        if symbol in line:
+                            ln = i
+                            break
+            except OSError:
+                pass
+            cands.append((sabs, ln, ""))
+    if not cands:
+        return {"symbol": symbol, "auto": False, "mode": "not-found",
+                "candidates": []}
 
     out = []
     for path, lineno, kind in cands:
