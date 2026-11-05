@@ -95,6 +95,14 @@ function _tvRebuild() {
   }
   _TV.rows = rows;
   _TV.idx = new Map(rows.map((r, i) => [r.path, i]));
+  // a382R（第3轮审计 P3-2）：大小写不敏感索引。treeReveal 的兜底查找原先
+  // 每次全表遍历 + 逐键 toLowerCase（万级行 × 每次切编辑器 tab 都触发），
+  // 建表后是 O(1)。
+  _TV.idxLower = new Map();
+  for (const r of rows) {
+    const _l = String(r.path).toLowerCase();
+    if (!_TV.idxLower.has(_l)) _TV.idxLower.set(_l, r.path);
+  }
   _TV.wMax = 0;
   for (const r of rows) {
     if (!r.name) continue;
@@ -253,6 +261,13 @@ async function treeReveal(path, opts) {
            _np.toLowerCase().startsWith(rp.toLowerCase() + '\\');
   });
   if (!inRoot) return false;
+  // a382R（第3轮审计 P2-3，实锤）：大小写兜底只修了末端的 idx 查找，而
+  // 父目录逐级展开仍用原样大小写。后端 _under_roots 是**大小写敏感**的前缀
+  // 比较，且 os.path.abspath 在 Windows 上不规范化盘符大小写——Monaco 给的
+  // 小写盘符 d:\... 会直接 400「路径不在文件树根目录内」，目标永远进不了
+  // idx，末端兜底也扫不到。
+  // 修法：逐级往下走时用**父目录 cache 里的真实条目名**重建路径，这样每一
+  // 层 expansions 的键都是磁盘真实大小写，与树键完全同形。
   const chain = [];
   let cur = _np;
   while (true) {
@@ -264,7 +279,12 @@ async function treeReveal(path, opts) {
     cur = cur.slice(0, i);
     chain.unshift(cur);
   }
-  for (const dirPath of chain) {
+  // 逐级展开：每层都用上一层的真实条目名纠正大小写。
+  // realCur 是「已确认大小写正确」的当前路径，初始取 chain[0]（根层，根
+  // 路径本身已在 _TV.roots 里，正是真实大小写）。
+  let realCur = chain.length ? chain[0] : _np;
+  for (let ci = 0; ci < chain.length; ci++) {
+    const dirPath = realCur;
     if (!_TV.open.has(dirPath)) {
       _tvExpand(dirPath);
       // 等待 cache 落地（拉取完成）——轮询 2s 兜底
@@ -276,19 +296,41 @@ async function treeReveal(path, opts) {
         if (o._seq !== undefined && o._seq !== _tvRevealSeq) return false;
       }
     }
+    if (ci + 1 >= chain.length) break;          // 最后一层没有子段要纠正
+    // 在 dirPath 的 cache 条目里按大小写不敏感找下一段，拿它的真实名
+    const want = chain[ci + 1].slice(dirPath.length + 1);
+    const c = _TV.cache.get(dirPath);
+    const ent = c && c.entries ? c.entries.filter(function (e) {
+      return e && String(e.name).toLowerCase() === want.toLowerCase();
+    })[0] : null;
+    realCur = ent ? ent.path : chain[ci + 1];
   }
+  // 目标文件本身也按同样规则纠正（父目录 cache 里找文件名）
+  // a382R：chain 为空表示文件直接在根目录下——此时父目录就是根，
+  // 不能用 _np 自己当父目录（realCur 会等于文件路径本身）。
+  let realTarget = _np;
+  {
+    const parent = _np.slice(0, _np.lastIndexOf('\\'));
+    const parentReal = chain.length ? realCur : parent;
+    const c = _TV.cache.get(parentReal);
+    const want = _np.slice(parentReal.length + 1);
+    if (c && c.entries) {
+      const ent = c.entries.filter(function (e) {
+        return e && String(e.name).toLowerCase() === want.toLowerCase();
+      })[0];
+      if (ent) realTarget = ent.path;
+    }
+  }
+  const _npReal = realTarget;
   // a375R（审计 P2-2）：落笔前再比一次序号
   if (o._seq !== undefined && o._seq !== _tvRevealSeq) return false;
   // a380R（第2轮审计 P3-3）：_TV.idx 的键来自 os.scandir（磁盘真实大小写），
   // 而归一路径的盘符/目录大小写可能与之不同（Monaco 的 modelFilePath 给的是
   // 小写盘符）。直接 get 会扑空 → 高亮画不出来还弹「不在树中」的误报。
-  // 先精确命中，再退回大小写不敏感的唯一匹配。
-  let _key = _np;
+  // 先精确命中（用逐层纠正后的真实大小写），再退回大小写不敏感索引。
+  let _key = _npReal;
   if (!_TV.idx.has(_key)) {
-    const _low = _np.toLowerCase();
-    for (const _p of _TV.idx.keys()) {
-      if (_p.toLowerCase() === _low) { _key = _p; break; }
-    }
+    _key = (_TV.idxLower && _TV.idxLower.get(_npReal.toLowerCase())) || _npReal;
   }
   _TV.active = _key;
   _TV.rendered = [-1, -1];

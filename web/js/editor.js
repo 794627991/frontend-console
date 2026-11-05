@@ -2295,24 +2295,6 @@ async function openFileSmart(path, mode, opts) {
   const name = path.split(/[\/\\]/).pop().toLowerCase();   // R31-2：反斜杠路径（面板条目）也能切出文件名
   const dot = name.lastIndexOf('.');
   const ext = dot > 0 ? name.slice(dot) : name;
-  // a280→a281R：Office 文件分发——先同步判扩展名（_officeKindOf 返回非空
-  // 才是 Office 文件），再调 async 的 openOfficeFile。原写法直接调
-  // openOfficeFile(path) 当同步用——async 函数返回 Promise 恒真，导致
-  // 所有文件都被拦截、编辑器路径永远不可达（用户实锤 .md 都打不开）
-  if (typeof _officeKindOf === 'function' && _officeKindOf(path)) {
-    // a375R：必须返回真值——否则 _jumpOpen 把 undefined 当失败，Office 文件的
-    // 跳转永远不记历史（回到上一个定义时无法用 Alt+←）。
-    // a380R（第2轮审计 P3-1）：透明传 openOfficeFile 的 Promise，别写死 true。
-    // 它在「文件不存在/超过 10MB 预检」时只弹 banner 并返回 false，写死 true
-    // 会让这两个失败照样被记进导航历史。openFileSmart 是 async，返回 Promise
-    // 调用方（_jumpOpen/navJumpTo）本来就按异步处理。
-    const _op = openOfficeFile(path);
-    if (_op && typeof _op.then === 'function') {
-      return _op.then(function (ok) { return !!ok; })
-                .catch(function () { return false; });
-    }
-    return true;
-  }
   const isText = _DROP_TEXT_EXT.has(ext) || name === 'makefile' || name === 'readme';
   // 探测大小与内容分级（失败按 0/未知处理走编辑器尝试）
   let size = 0, isTextSrv = isText, kindSrv = '', existsSrv = true;
@@ -2320,7 +2302,12 @@ async function openFileSmart(path, mode, opts) {
     const r = await fetch('/api/file_info', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path})});
     const j = await r.json();
     if (j.ok) { size = j.size; isTextSrv = j.is_text; kindSrv = j.kind || ''; }
-    else if (/不存在|not found/i.test(j.err || '')) existsSrv = false;
+    // a382R（第3轮审计 P3-1）：设备名/空路径的报错文案不含「不存在」，
+    // 会漏过这个闸门继续走后面的降级链，最后误弹「该文件是二进制」。
+    // 后端 /api/file_info 的失败文案只有这四种，一并认。
+    else if (/不存在|not found|保留设备名|路径为空/i.test(j.err || '')) {
+      existsSrv = false;
+    }
   } catch(e) {}
   // a380R（第2轮审计 P1-1 补充）：文件不存在时上面探测会失败（size=0、
   // 无 kind），继续走决策只会弹一个无意义的「选择打开方式」再失败。
@@ -2328,6 +2315,24 @@ async function openFileSmart(path, mode, opts) {
   if (!existsSrv) {
     if (!(opts && opts.noFallback)) showBanner('文件不存在或已被删除：' + path, 4000, true);
     return false;
+  }
+  // a280→a281R：Office 文件分发——先同步判扩展名（_officeKindOf 返回非空
+  // 才是 Office 文件），再调 async 的 openOfficeFile。原写法直接调
+  // openOfficeFile(path) 当同步用——async 函数返回 Promise 恒真，导致
+  // 所有文件都被拦截、编辑器路径永远不可达（用户实锤 .md 都打不开）
+  // a382R（第3轮审计 P2-1）：本分支**必须放在存在性检查之后**。原先它排
+  // 在 file_info 探测前，于是「导航历史回退到已删除的 .docx」根本走不到
+  // 上面那道 existsSrv 闸门 —— 照样建一个 error tab 并返回 true。
+  if (typeof _officeKindOf === 'function' && _officeKindOf(path)) {
+    // a375R：必须返回真值——否则 _jumpOpen 把 undefined 当失败，Office 文件的
+    // 跳转永远不记历史（回到上一个定义时无法用 Alt+←）。
+    // a380R：透明传 openOfficeFile 的 Promise，别写死 true。
+    const _op = openOfficeFile(path);
+    if (_op && typeof _op.then === 'function') {
+      return _op.then(function (ok) { return !!ok; })
+                .catch(function () { return false; });
+    }
+    return true;
   }
   const MB = size / 1024 / 1024;
   // a357R（用户定调）：打开方式的选择权交给用户。
