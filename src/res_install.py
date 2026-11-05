@@ -549,19 +549,22 @@ def _install_codegraph(staging, say, force=False, prog=None):
             src, dst,
             progress=(lambda n, t: prog(n, t, "复制 codegraph")) if prog else None)
     except Exception:
-        # R34-3（实锤：dst 半写时 not isdir(dst) 过严不还原——残缺安装被
-        # 幂等判断读残缺 package.json 误判「已是最新」永久化）：dst 缺
-        # node.exe（含半写/空）即视为不完整，还原备份
-        _bad = not os.path.isfile(os.path.join(dst, "node.exe"))
-        if bak and os.path.isdir(bak) and _bad:
-            try:
-                if os.path.isdir(dst):
-                    import shutil as _sh2
-                    _sh2.rmtree(dst, ignore_errors=True)
+        # R34-3R（复验维持实锤：node.exe 是 walk+sorted 复制顺序第一个文件，
+        # 多数失败形态它已落盘 →「缺 node.exe」判定恒 False 不还原——残缺
+        # 安装被幂等判断读残缺 package.json 误判「已是最新」永久化）。
+        # 失败分支无条件清场：有 bak 恒还原；无 bak 清掉残缺 dst（下次
+        # 重装全新复制，不落半成品）
+        try:
+            import shutil as _sh2
+            if os.path.isdir(dst):
+                _sh2.rmtree(dst, ignore_errors=True)
+            if bak and os.path.isdir(bak):
                 os.replace(bak, dst)   # 失败自动搬回（claude B4 同款）
                 say("  安装失败，已还原原有 codegraph")
-            except OSError:
-                pass
+            else:
+                say("  安装失败，已清除残缺副本")
+        except OSError:
+            pass
         raise
     if bak:
         import shutil as _sh
