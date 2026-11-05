@@ -19,7 +19,7 @@ import zipfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from src.editor_files import _looks_binary, _safe_ext_path
+from src.editor_files import _looks_binary, _safe_ext_path, _text_kind
 
 _PASS, _FAIL = [], []
 
@@ -67,6 +67,33 @@ def main():
         check("短 zip（内容接近纯文本也必须拒）", _looks_binary(z))
         check("后缀是 .exe 但内容像文本 → 仍判二进制",
               _looks_binary(_mk(d, "g.exe", b"hello world\n" * 100)))
+
+        # ---- 三档分级（a357R：选择权交给用户）----
+        check("纯文本 → text",
+              _text_kind(_mk(d, "k1.log", b"hello\n" * 500)) == "text")
+        check("半数不可读 → mixed",
+              _text_kind(_mk(d, "k2.unk", b"abc\x00\x01\x02" * 400)) == "mixed")
+        check("几乎全不可读 → binary",
+              _text_kind(_mk(d, "k3.unk",
+                             b"\x00\x01\x02\x03\x04" * 2000 + b"x" * 100))
+              == "binary")
+        check("mixed 不是 binary", not _looks_binary(
+            _mk(d, "k4.unk", b"abc\x00\x01\x02" * 400)))
+
+        # ---- 放行规则：用户明确选编辑器时，非结构文件都放行 ----
+        mixed_p = _mk(d, "k5.unk", b"abc\x00\x01\x02" * 400)
+        check("mixed 默认不放行", not _safe_ext_path(mixed_p))
+        check("mixed 用户选了编辑器 → 放行",
+              bool(_safe_ext_path(mixed_p, force=True)))
+        bin_p = _mk(d, "k6.unk", b"\x00\x01\x02\x03\x04" * 2000 + b"x" * 100)
+        check("内容像二进制 用户选了编辑器 → 放行",
+              bool(_safe_ext_path(bin_p, force=True)))
+        # 结构文件即使 force 也拒：编辑器写成文本 = 毁文件
+        check("exe 即使 force 也拒",
+              not _safe_ext_path(_mk(d, "k7.exe", b"hello\n" * 500), force=True))
+        check("zip 即使 force 也拒",
+              not _safe_ext_path(_mk(d, "k8.zip", b"PK\x03\x04" + b"\x00" * 500),
+                                 force=True))
 
         # ---- 真实二进制样本（仓库自带）----
         for rel in ("vendor/rg.exe", "vendor/ctags/ctags.exe"):

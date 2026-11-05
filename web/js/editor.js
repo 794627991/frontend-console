@@ -2023,7 +2023,7 @@ const _DROP_TEXT_EXT = new Set(['.txt','.note','.md','.json','.csv','.ini','.cfg
 // mode: 'ask' 弹窗让选（含二进制选项）；'edit' 直接编辑器；'view' 直接阅读器；'hex' 直接二进制
 // a242：大小显示复用全局 _fmtSize（tftp.js 定义，加载序在后覆盖同名）——
 // GB 档已在 tftp.js 侧补齐，此处不再重复定义
-function _showOpenModeDialog(path, sizeBytes, withHex) {
+function _showOpenModeDialog(path, sizeBytes, withHex, why) {
   return new Promise(resolve => {
     let m = $('openModeModal');
     if (!m) {
@@ -2062,7 +2062,11 @@ function _showOpenModeDialog(path, sizeBytes, withHex) {
       `${path}${sizeBytes != null ? `（${_fmtSize(sizeBytes)}）` : ''}\n` +
       (sizeBytes != null && sizeBytes > 20 * 1024 * 1024
         ? '文件超过 20MB：编辑器打开可能卡顿（Monaco 分词内存约为文件 3~5 倍），建议用阅读器。'
-        : (withHex ? '未知类型文件，选择打开方式：' : '选择打开方式：'));
+        : (why === 'mixed'
+            ? '文件里既有可读文本，也有不少无法识别的字节（常见于串口抓的日志、被截断的文件）。用编辑器打开可能看到零星乱码，保存会原样写回；用十六进制可逐字节核对。'
+            : (why === 'binary'
+                ? '检测到大量无法识别的字节，多半是二进制文件。编辑器打开通常会显示乱码，脚本/文档类文件反而可能是编码问题——按需要选。'
+                : (withHex ? '未知类型文件，选择打开方式：' : '选择打开方式：'))));
     m.classList.add('show');
   });
 }
@@ -2177,18 +2181,24 @@ async function openFileSmart(path, mode, opts) {
     return;
   }
   const isText = _DROP_TEXT_EXT.has(ext) || name === 'makefile' || name === 'readme';
-  // 探测大小（失败按 0 处理走编辑器尝试）
-  let size = 0, isTextSrv = isText;
+  // 探测大小与内容分级（失败按 0/未知处理走编辑器尝试）
+  let size = 0, isTextSrv = isText, kindSrv = '';
   try {
     const r = await fetch('/api/file_info', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path})});
     const j = await r.json();
-    if (j.ok) { size = j.size; isTextSrv = j.is_text; }
+    if (j.ok) { size = j.size; isTextSrv = j.is_text; kindSrv = j.kind || ''; }
   } catch(e) {}
   const MB = size / 1024 / 1024;
-  // 决策
+  // a357R（用户定调）：打开方式的选择权交给用户。
+  //   text   → 直接进编辑器（少量坏字节不影响阅读）
+  //   mixed  → 弹窗让用户选（可识别与不可识别都不少，猜不准就别替用户猜）
+  //   binary → 默认十六进制，但弹窗仍给阅读器/编辑器（结构文件除外）
   let how = mode || 'auto';
   if (how === 'auto') {
-    if (!isTextSrv) how = await _showOpenModeDialog(path, size || null, true);  // 未知类型：弹窗选（a242：传字节，B/KB/MB/GB 自适应显示）
+    if (kindSrv === 'mixed') how = await _showOpenModeDialog(path, size || null, true, 'mixed');
+    else if (kindSrv === 'binary' || !isTextSrv) {
+      how = await _showOpenModeDialog(path, size || null, true, 'binary');
+    }
     else if (MB > 30) how = 'view';                        // >30M 强制阅读器（Monaco 必卡）
     else if (MB > 20) how = await _showOpenModeDialog(path, size, false);  // 20~30M 提示选
     else how = 'edit';                                     // <20M 默认编辑器

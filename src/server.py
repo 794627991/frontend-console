@@ -2469,13 +2469,14 @@ def api_file_info():
         return jsonify({"ok": True, "is_dir": True})
     if not os.path.isfile(p):
         return jsonify({"ok": False, "err": "文件不存在"}), 400
-    from src.editor_files import _EXT_TEXT, _ext_of, _looks_binary
-    # a356R：后缀不在白名单时补内容探测——此前只看后缀，串口日志改个
-    # 后缀名（或 .LOG 之类大小写/变体）就被判"非文本"，前端弹打开方式
-    # 对话框而非直接进编辑器。内容判定与编辑器侧同一个函数，口径一致。
-    _is_text = _ext_of(p) in _EXT_TEXT or not _looks_binary(p)
+    from src.editor_files import _EXT_TEXT, _ext_of, _text_kind
+    # a357R：把内容分级透给前端——'text' 直接进编辑器；'mixed' 弹打开方式
+    # 对话框让用户自己选（用户定调：至少能选，不能强制只给一种）；'binary'
+    # 默认十六进制，但对话框仍给阅读器/编辑器选项（除 _EXT_BIN 结构文件）。
+    _kind = _text_kind(p)
+    _is_text = _kind == "text" or (_kind == "mixed" and _ext_of(p) in _EXT_TEXT)
     return jsonify({"ok": True, "size": os.path.getsize(p),
-                    "is_text": _is_text})
+                    "is_text": _is_text, "kind": _kind})
 
 
 @app.route("/api/ai/diff_logs", methods=["POST"])

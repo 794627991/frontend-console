@@ -181,24 +181,35 @@ def _ext_of(p):
 
 def _safe_ext_path(path, force=False):
     """校验外部绝对路径：必须是文本后缀白名单内的已存在文件。通过返回绝对路径。
-    force=True（用户在打开方式弹窗明确选了编辑器）：后缀不在白名单时做 NUL 字节探测，
-    开头 8KB 含 NUL 判二进制仍拒，否则按文本放行（去后缀的 json 等曾在此被拒）。
-    a238 P1-4（第5轮A2）：白名单分支同样做 NUL 探测——此前「认识的后缀」直接
+    force=True（用户在打开方式弹窗明确选了编辑器）：后缀不在白名单、内容
+    处在歧义区（mixed）、或内容像二进制但后缀不是结构文件，都放行——用户
+    说了算（a357R 用户定调：至少用户能选，不能强制只给一种打开方式）。
+    唯一硬拒的是 _EXT_BIN 里的结构文件：编辑器把它写成文本等于毁文件，
+    这不是「打开方式」的范畴。
+    a238 P1-4（第5轮A2）：白名单分支同样做文本判定——此前「认识的后缀」直接
     跳过探测，无 BOM 的 UTF-16 .txt 会被 utf-8 解码器"成功"读成 NUL 混杂乱码，
-    保存即报废原文件（倒挂：认识的后缀反而更危险）。正常文本文件开头 8KB
-    不含 NUL，误伤率为零。"""
+    保存即报废原文件（倒挂：认识的后缀反而更危险）。"""
     if not path or len(path) < 3 or ":" not in path and not path.startswith("\\\\"):
         return None
     from src.app_state import reject_win_devpath
     if reject_win_devpath(path):   # a239：CON 等设备名 open() 永久阻塞 worker 线程
         return None
     p = os.path.abspath(path)
-    if not os.path.isfile(p) or _looks_binary(p):
+    if not os.path.isfile(p):
         return None
-    if _ext_of(path) not in _EXT_TEXT:
-        if not force:
+    kind = _text_kind(p)
+    if kind == "binary":
+        # a357R（用户定调「至少用户能选」）：结构文件（.exe/.zip/.png…）一律
+        # 拒——编码成文本保存必坏，那不是打开方式问题而是把文件毁了。
+        # 但「内容看着像二进制」的普通文件（后缀不在 _EXT_BIN）在用户明确
+        # 选了编辑器时放行：可能是编码特殊/被截断的文本，用户有权自己判断。
+        if _ext_of(path) in _EXT_BIN:
             return None
-        return p
+        return p if force else None
+    if kind == "mixed":
+        return p if force else None
+    if _ext_of(path) not in _EXT_TEXT and not force:
+        return None
     return p
 
 
@@ -215,36 +226,52 @@ _EXT_BIN = {
 }
 
 
+def _text_kind(path, probe=32768):
+    """文本程度分级：'text' | 'mixed' | 'binary'（a357R）。
+
+    用户定调：判到少量二进制字符、大量可识别字符 → 正常打开；大量二进制、
+    少量可识别 → **让用户选**，不能强制只给一种打开方式。
+
+      后缀在 _EXT_BIN         → 'binary'（结构文件，编辑器保存必坏）
+      可读占比 < 25%          → 'binary'（termbin 抓的压缩包、图片等）
+      25% <= 可读占比 < 90%   → 'mixed' （歧义区：交给用户选）
+      可读占比 >= 90%         → 'text'  （串口日志的零星坏字节落这一档）
+    """
+    if _ext_of(str(path)) in _EXT_BIN:
+        return "binary"
+    try:
+        with open(path, "rb") as f:
+            b = f.read(probe)
+    except OSError:
+        return "binary"
+    if not b:
+        return "text"
+    ok = sum(1 for c in b if c in (9, 10, 13) or 0x20 <= c <= 0x7E or c >= 0x80)
+    ratio = ok / len(b)
+    if ratio >= 0.90:
+        return "text"
+    if ratio >= 0.25:
+        return "mixed"
+    return "binary"
+
+
 def _looks_binary(path, probe=32768):
-    """是不是二进制文件。
+    """是不是二进制文件（= _text_kind 判定为 binary）。
 
     早期判据是「开头 8KB 含 \\x00 即二进制」（git 同款），对串口抓的 BSP 启动
     日志误杀极重：采集链路偶发丢字节会在行首/行中插入零星 NUL，实测一份
     121KB 的启动日志只有 661 个 NUL（0.54%），除此之外全是可读文本，用户
     却连编辑器都打不开、被强行切到十六进制查看器。
 
-    现两道判据：
-      ① 后缀在 _EXT_BIN 里 → 直接二进制（内容碰巧像文本的 zip/小图不能开；
-         编辑器保存会重排字节，结构必坏）
-      ② 否则按「可读字符占比」判（同 uchardet / file(1) 的思路）：
-         可读 = tab/LF/CR + 0x20..0x7E + >=0x80（UTF-8/GBK 多字节高位）
-         占比 >= 90% 视为文本。
+    现按可读字符占比分三档，见 _text_kind。这里只回答「binary 吗」；
+    需要区分「歧义区」的调用方请直接用 _text_kind。
+
     实测区分度：串口日志 99.4% / rg.exe 59% / ctags.exe 70%。只看前 32KB。
 
     注意 UTF-16/32 仍由 _read_text 的 BOM 分支拒绝——那里判的是编码能否
     正确往返，与这里「是不是给人看的文本」是两回事。
     """
-    if _ext_of(str(path)) in _EXT_BIN:
-        return True
-    try:
-        with open(path, "rb") as f:
-            b = f.read(probe)
-    except OSError:
-        return True
-    if not b:
-        return False
-    ok = sum(1 for c in b if c in (9, 10, 13) or 0x20 <= c <= 0x7E or c >= 0x80)
-    return ok * 10 < len(b) * 9          # < 90% 才判二进制
+    return _text_kind(path, probe) == "binary"
 
 
 @edit_bp.route("/api/ed/list")
@@ -379,8 +406,11 @@ def ed_save():
         from src.app_state import reject_win_devpath
         if reject_win_devpath(ext_path):   # a239：CON/COM1 写入永久阻塞（黑盒实测 30 并发泄漏 30 线程）
             return jsonify({"ok": False, "err": "路径包含 Windows 保留设备名"}), 400
-        # 打开时按内容探测放行过的文件（无后缀文本），保存也放行（同一文件，内容已在前端展示过）
-        if _ext_of(ext_path) not in _EXT_TEXT and _looks_binary(os.path.abspath(ext_path)):
+        # a357R：保存的放行口径必须与打开一致——用户在弹窗里明确选了编辑器
+        # （打开走 force=1），保存时再按「有没有 NUL」拒掉就是把人晾在半路：
+        # 改了半天的内容存不回去。唯一仍拒的是 _EXT_BIN 结构文件（写入文本
+        # 即毁文件），而那类文件在打开时就已经被挡住了。
+        if _ext_of(ext_path) in _EXT_BIN:
             return jsonify({"ok": False, "err": "不支持的文件类型"}), 400
         p = os.path.abspath(ext_path)
         # a238 P2-2：mtime CAS——磁盘已被外部改动（mtime 与打开时不一致）则 409，
