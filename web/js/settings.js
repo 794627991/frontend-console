@@ -248,8 +248,14 @@ function _stNavKeysCard(pane) {
     } catch (e) { showBanner('保存失败: ' + e, 4000, true); }
   }
   save.onclick = saveNow;
-  row.appendChild(save);
-  row.appendChild(reset);
+  // a378（用户实锤对齐丑）：save/reset 原混在键位 wrap 行里——键位是
+  // 「标签+按钮」列且 6+ 列必换行，跨行后按钮浮在行中错位。独立成
+  // 右对齐操作行（与设置页其他保存按钮同风格），键位区纯键位
+  const act = document.createElement('div');
+  act.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:10px;';
+  act.appendChild(save);
+  act.appendChild(reset);
+  row.after(act);
 }
 
 function _stRenderAppearancePane(pane) {
@@ -288,14 +294,6 @@ function _stRenderAppearancePane(pane) {
       <div class="dd-row" style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;" id="stMdPvRow"></div>
       <div class="dd-sub">Markdown 预览面板的配色（独立于全局主题，随时可改）。</div>
     </div>
-    <div class="dd-cur" style="margin-top:8px;">
-      <div class="dd-label">CPU 优先</div>
-      <div class="dd-row" style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;" id="stBoostRow"></div>
-      <label style="display:flex;gap:8px;align-items:center;margin-top:8px;font-size:12px;cursor:pointer;">
-        <input type="checkbox" id="stBoostPower">
-        <span>同时切换 Windows 高性能电源计划<span class="dd-sub" style="display:block;">（改系统全局设置；关闭或退出工具时还原原计划。笔记本耗电增加）</span></span>
-      </label>
-      <div class="dd-sub">工具进程 + 全部 WebView2 渲染进程提优先级——CPU 满载争抢时（并行编译/虚拟机等）界面不被挤压。标准档日常无感无风险；高档激进争抢；关闭还原 Normal。</div>
     </div></div>`;
   const grid = pane.querySelector('#stThemeGrid');
   // 风格行（v4.1 桥接层 skin.js）：逐个胶囊，点选即切（联动配套配色）
@@ -343,7 +341,6 @@ function _stRenderAppearancePane(pane) {
   }
   const cur = document.documentElement.getAttribute('data-theme') || 'deepblue';
   // a346：代码跳转快捷键已移到「终端设置」（a359R：与其它快捷键配置放一起）
-  _stBoostCard(pane);
   // a278 性能模式开关（极光玻璃 GPU 合成优化）
   const perfBtn = pane.querySelector('#apPerfToggle');
   if (perfBtn && typeof togglePerfMode === 'function') {
@@ -535,8 +532,17 @@ async function _stRenderTermKeysPane(pane) {
         <div class="dd-sub" style="margin-top:4px;">录制与截图快捷键同款（Esc 取消）。两键请勿设成相同组合——撞车时全库搜索（页面捕获层）优先。</div>
       </div>
       <div class="dd-cur" style="margin-top:8px;">
+        <div class="dd-label">CPU 优先</div>
+        <div class="dd-row" style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;" id="stBoostRow"></div>
+        <label style="display:flex;gap:8px;align-items:center;margin-top:8px;font-size:12px;cursor:pointer;">
+          <input type="checkbox" id="stBoostPower">
+          <span>同时切换 Windows 高性能电源计划<span class="dd-sub" style="display:block;">（改系统全局设置；关闭或退出工具时还原原计划。笔记本耗电增加）</span></span>
+        </label>
+        <div class="dd-sub">工具进程 + 全部 WebView2 渲染进程提优先级——CPU 满载争抢时（并行编译/虚拟机等）界面不被挤压。标准档日常无感无风险；高档激进争抢；关闭还原 Normal。</div>
+      </div>
+      <div class="dd-cur" style="margin-top:8px;">
         <div class="dd-label">代码跳转快捷键</div>
-        <div class="dd-row" style="display:flex;gap:10px;margin-top:8px;flex-wrap:wrap;align-items:center;" id="stNavKeysRow"></div>
+        <div class="dd-row" style="display:flex;gap:10px;margin-top:8px;flex-wrap:wrap;align-items:flex-start;" id="stNavKeysRow"></div>
         <div class="dd-sub">编辑器内：转到定义 / 查找所有引用 / 工作区符号搜索（按符号名搜全库，跨文件找函数）。点击输入框后按下新组合键，保存即时生效；编辑器右键菜单同样可用这三项。</div>
       </div>
       <div class="dd-cur" style="margin-top:8px;">
@@ -709,6 +715,7 @@ async function _stRenderTermKeysPane(pane) {
   // a359R（用户定调）：代码跳转快捷键属于「快捷键配置」，与截图/搜索快捷键
   // 放在同一页（原来挂在外观 pane，位置不对）。渲染时机与其他快捷键一致。
   _stNavKeysCard(pane);
+  _stBoostCard(pane);   // a378：CPU 优先随用户令移入终端设置
 }
 
 // ---- 外部依赖安装（v4.1）：运行时依赖检测 + 离线资源包一键装 ----
@@ -1646,7 +1653,7 @@ async function _stRenderUpdatePane(pane) {
       tgl.textContent = j.running ? '■ 停止分发服务' : '▶ 开启分发服务';
       const ver = j.code_ver ? ` · 代码 v${esc(j.code_ver)}` : '';
       $p('upSrvInfo').innerHTML = j.running
-        ? `${ICO16.dotOn} 运行中 · 已发布 <b>${esc(j.published || '（无版本——先跑打包.bat）')}</b>${ver}<br>` +
+        ? `<span style="color:var(--neon-green);vertical-align:-2px">${ICO16.dotOn}</span> 运行中 · 已发布 <b>${esc(j.published || '（无版本——先跑打包.bat）')}</b>${ver}<br>` +
           `同事升级地址（发给同事）：<span style="font-family:var(--font-monospace,monospace);user-select:all;">${esc(j.url)}</span>`
         : `⚪ 未运行 · 分发目录 ${esc(j.dir)}${ver}`;
     } catch(_) { $p('upSrvInfo').textContent = '状态获取失败'; }

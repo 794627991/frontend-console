@@ -2092,6 +2092,9 @@
    与 dd-label 自带 margin-bottom 双向叠加——间距错落不齐。统一规则：
    区块间间距由 dd-body 的 16px gap 管；内联 margin-top 归零后仍兼容（取大值）。 */
 .dd-cur { margin-top: 0 !important; }
+/* a378（用户令美化）：设置页各功能分块间细分割线 */
+#stPane .dd-cur + .dd-cur { border-top: 1px solid var(--border) !important;
+  padding-top: 14px !important; margin-top: 14px !important; }
 .dd-cur .dd-label { margin-bottom: 6px; }
 .dd-cur .dd-row { margin-top: 0 !important; }
 .dd-cur .dd-label + .dd-row { margin-top: 6px; }   /* 标题下首个操作行统一 6px */

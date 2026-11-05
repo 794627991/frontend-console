@@ -336,7 +336,7 @@
             `<option value="project"${it.scope === 'project' ? ' selected' : ''}>项目（按目录名匹配）</option>` +
             `</select>` +
             `<input class="hg-prompt-proj" placeholder="目录名" value="${esc(it.project || '')}"${it.scope === 'project' ? '' : ' style="display:none"'}${it.active === false ? ' title="当前项目不匹配（不会注入本会话）"' : ''} name="hg_prompt_proj">` +
-            `<button class="hg-prompt-onoff" title="启用/停用">${it.enabled ? ICO.dotOn : ICO.dotOff}</button>` +
+            `<button class="hg-prompt-onoff" title="启用/停用">${it.enabled ? '<span style="color:var(--neon-green);display:inline-flex;vertical-align:-2px">' + ICO.dotOn + '</span>' : ICO.dotOff}</button>` +
             `<button class="hg-prompt-del" title="删除">✕</button></div>` +
             `<textarea name="hg_prompt_ta" class="hg-prompt-ta" spellcheck="false" placeholder="提示词正文…"></textarea>`;
           const ta = card.querySelector('.hg-prompt-ta');
