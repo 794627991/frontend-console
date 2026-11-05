@@ -149,7 +149,7 @@ function _stNavKeysCard(pane) {
   const row = pane.querySelector('#stNavKeysRow');
   if (!row) return;
   const DEF = { def: 'f12', ref: 'shift+f12', sym: 'ctrl+t',
-                back: 'ctrl+arrowleft', fwd: 'ctrl+arrowright' };
+                back: 'alt+arrowleft', fwd: 'alt+arrowright' };
   const NAMES = { def: '转到定义', ref: '查找引用', sym: '工作区符号',
                   back: '后退', fwd: '前进' };
   const NJ = window.NavJump || null;
@@ -229,7 +229,7 @@ function _stNavKeysCard(pane) {
   };
   function syncSave() {
     const vals = Object.values(keys);
-    const clash = new Set(vals).size !== 3;
+    const clash = new Set(vals).size !== vals.length;   // a375：键位 3→5 时没跟上，5 键互异仍恒报冲突
     save.style.display = '';
     save.disabled = clash;
     save.textContent = clash ? '快捷键冲突' : '保存';

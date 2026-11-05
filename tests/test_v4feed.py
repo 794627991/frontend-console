@@ -219,7 +219,7 @@ class TestMainReducer(_HWMTestCase):
                       data={"tid": "tu1", "ok": True, "brief": "审计完成：无阻塞问题"}))
         row = [r for r in f.snap["rows"] if r["kind"] == "tool_call"][0]
         self.assertEqual(row["status"], "success")
-        self.assertTrue(row["output"].startswith("✅"))
+        self.assertIn("审计完成", row["output"])
         self.assertEqual(row["endedAt"], 1000)
 
     def test_fg_task_result_finalizes_normally(self):
@@ -277,7 +277,7 @@ class TestMainReducer(_HWMTestCase):
                       data={"tid": "sm1", "ok": True, "brief": "审计完成：全部通过"}))
         row = [r for r in f.snap["rows"] if r["kind"] == "tool_call"][0]
         self.assertEqual(row["status"], "success")
-        self.assertTrue(row["output"].startswith("✅"))
+        self.assertIn("审计完成", row["output"])
 
     def test_result_fallback_closes_header(self):
         """turn_complete 缺失（CLI 自发回合）时 result 帧兜底收口组头。"""

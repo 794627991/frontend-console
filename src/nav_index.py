@@ -389,7 +389,7 @@ def build(root, log=None, progress=None, should_cancel=None):
     say("  编译白名单：%d 个源文件（.cmd %d / .o %d）"
         % (len(compiled), cmd_count, o_count))
     if not compiled:
-        say("  ⚠ 未发现构建产物——跳转按启发式排序（基线编译后重建可精确化）")
+        say("  未发现构建产物——跳转按启发式排序（基线编译后重建可精确化）")
 
     # ---- 阶段 2：ctags 全量 ----
     say("阶段 2/3：ctags 全量索引（%s）…" % NAV_LANGS)
@@ -498,7 +498,7 @@ def build(root, log=None, progress=None, should_cancel=None):
         import elftools  # noqa: F401
         sym_ok = True
     except ImportError:
-        say("  ⚠ pyelftools 未安装——跳过符号级消歧（不影响跳转，白名单仍生效）")
+        say("  pyelftools 未安装——跳过符号级消歧（不影响跳转，白名单仍生效）")
     o_rel_to_src = {}
     for srel, info in compiled.items():
         o_rel_to_src[info["o"]] = srel

@@ -672,7 +672,7 @@ def _hydrate_main(feed, s):
                         r'delivered to you as a message from .([0-9a-zA-Z_-]{8,64})',
                         _out)
                     if _m2 and _m2.group(1) in _hb:
-                        _r["output"] = "✅ " + _hb[_m2.group(1)][:4000]
+                        _r["output"] = _hb[_m2.group(1)][:4000]
         except Exception:
             # 致命1（a116 全审）：原 `except Exception: pass` 让 NameError
             # 级别的缺陷（`re` 未在模块导入）完全静默——a81/a68 的 Task 卡

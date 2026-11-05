@@ -577,7 +577,7 @@ def _install_claude(staging, say, force=False, prog=None):
                 os.replace(bak, dst)
                 say("  已回滚到原有安装")
             except OSError as e:
-                say("  ⚠ 回滚失败：%s（原备份仍在 %s）" % (e, bak))
+                say("  回滚失败：%s（原备份仍在 %s）" % (e, bak))
         raise
     if bak:
         shutil.rmtree(bak, ignore_errors=True)
@@ -685,7 +685,7 @@ def _install_bili(root, say, force=False):
         with _sk.socket(_sk.AF_INET, _sk.SOCK_STREAM) as _s:
             _s.settimeout(0.4)
             if _s.connect_ex(("127.0.0.1", 18788)) == 0:
-                say("⚠ billion-context 进程正在运行，本次已覆盖其文件——"
+                say("billion-context 进程正在运行，本次已覆盖其文件——"
                     "请在代理面板关闭压缩模式后重启工具再试")
     except OSError:
         pass
@@ -723,7 +723,7 @@ def _install_onlyoffice(staging, say, force=False):
         raise InstallError("包内无 OnlyOffice 安装器")
     import subprocess as _sp
     say("静默安装 OnlyOffice DS（873MB，含字体生成约 10 分钟）…")
-    say("  ⚠ 将弹 UAC 提权确认框，请点「是」")
+    say("  将弹 UAC 提权确认框，请点「是」")
     rc = _sp.call([exe, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
                   creationflags=0x08000000, timeout=1800)
     st2, _v2, _m2 = probe_onlyoffice()

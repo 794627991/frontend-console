@@ -751,7 +751,7 @@ class V4Feed(object):
                             status=("cancelled" if _stopped
                                     else ("success" if ok else "failed")),
                             output=("⏹ 已停止" if _stopped
-                                    else "✅ " + _brief[:2000]),
+                                    else _brief[:2000]),
                             endedAt=ts)
                         if d3:
                             ds.append(d3)
@@ -980,7 +980,7 @@ class V4Feed(object):
                         # a90：hand-back 真结论回填同带终态翻转（bg 代理 ack
                         # 被抑制后，这里是 tool 行的另一个终态来源）
                         d, _ = self._upsert(_trid, status="success",
-                                            output="✅ " + _body[:4000],
+                                            output=_body[:4000],
                                             endedAt=ts)
                         if d:
                             ds.append(d)
@@ -1039,7 +1039,8 @@ class V4Feed(object):
                         continue
                     # a48（用户定调「回答形态要 a42 效果」）：ask_user 的
                     # 回答在后端人类可读化——原始 JSON {"问题":"答案"} →
-                    # 「📝 回答：问题 → 答案；…」。数据在后端整合（红线），
+                    # 「回答：问题 → 答案；…」（a375：去 emoji——前端 a373 已改无 emoji 前缀
+                    # 幂等契约，产出端同步）。数据在后端整合（红线），
                     # 前端 live/回放/体全场景直接吃到成品文本
                     _tn = _tr.get("tool") if _tr else ""
                     if _tn == "mcp__harness__ask_user" and not err:
@@ -1051,7 +1052,7 @@ class V4Feed(object):
                                     for k, v in _oj.items()) or out
                         except Exception:
                             pass
-                        out = "📝 回答：" + out
+                        out = "回答：" + out
                     d, _ = self._upsert(
                         rid, status="error" if err else "success",
                         output=out,
@@ -1163,7 +1164,7 @@ class V4Feed(object):
                     # 与 _reduce_cli 的 a90 回调同口径：终态翻转 + endedAt。
                     d, _ = self._upsert(_trid, status="success",
                                         endedAt=ts,
-                                        output="✅ " + _body[:4000])
+                                        output=_body[:4000])
                     if d:
                         ds.append(d)
                 _srid = next((r["rowId"] for r in self.snap["rows"]

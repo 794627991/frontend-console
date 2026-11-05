@@ -253,7 +253,7 @@ def _install_page_html(missing, base_url_assets=""):
 </style></head>
 <body>
 <div class="box">
-  <h1><span class="icon">📦</span>首次启动 · 安装依赖</h1>
+  <h1>首次启动 · 安装依赖</h1>
   <div class="sub">检测到缺少以下运行库，正在自动安装（约 1~2 分钟，仅需一次）</div>
   <div id="list">{items}</div>
   <div class="progress"><div class="bar" id="bar"></div></div>

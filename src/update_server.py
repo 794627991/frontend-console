@@ -571,7 +571,7 @@ _LOGIN_HTML = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
   <button class="btn" id="go">进入</button>
   <div class="sub" style="margin:22px 0 0;">默认密码 __DEFPWD__（发布者可在工具 设置→关于与升级 中修改）</div>
 </div></div>
-<button class="btn ghost skinbtn" id="skin" title="切换界面风格">🎨 换肤</button>
+<button class="btn ghost skinbtn" id="skin" title="切换界面风格">换肤</button>
 <canvas id="fxCanvas"></canvas>
 <div class="fx-glow"></div>
 <script>
@@ -671,7 +671,7 @@ const SKINS=[['dark','璃青'],['paper','素白'],['term','终端']];
 let _fcCur=localStorage.getItem('fc_skin')||'dark';
 if(!SKINS.some(s=>s[0]===_fcCur))_fcCur='dark';
 function _fcSkinApply(){document.body.dataset.skin=_fcCur;
-  const b=document.getElementById('skin');if(b)b.textContent='🎨 '+SKINS.find(s=>s[0]===_fcCur)[1];}
+  const b=document.getElementById('skin');if(b)b.textContent=SKINS.find(s=>s[0]===_fcCur)[1];}
 _fcSkinApply();
 document.getElementById('skin').onclick=()=>{
   _fcCur=SKINS[(SKINS.findIndex(s=>s[0]===_fcCur)+1)%SKINS.length][0];
@@ -784,8 +784,8 @@ _PORTAL_HTML = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
     以后有新版工具会自动检查、一键升级（旧版自动备份为 .bak 可回退）。
   </div>
   <div class="pgtabs">
-    <button class="pgtab on" data-pg="dl" onclick="pgSwitch('dl')">📦 版本下载</button>
-    <button class="pgtab" data-pg="mn" onclick="pgSwitch('mn')">📖 工具说明书</button>
+    <button class="pgtab on" data-pg="dl" onclick="pgSwitch('dl')">版本下载</button>
+    <button class="pgtab" data-pg="mn" onclick="pgSwitch('mn')">工具说明书</button>
   </div>
   <div id="pg-dl"><div id="body"><div class="empty">版本加载中…</div></div></div>
   <div id="pg-mn" style="display:none">
@@ -793,16 +793,16 @@ _PORTAL_HTML = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
       <h2>前端控制台 —— 一站式嵌入式调试工作台</h2>
       <p>常用工具全部集成 × Claude AI 深度赋能，装一个顶一堆</p>
     </div>
-    <div class="mn-sec"><b>✨ 产品亮点</b></div>
+    <div class="mn-sec"><b>产品亮点</b></div>
     <div class="mn-grid">
-      <div class="mn-card"><b>🔩 调试工具全家桶</b>串口 · SSH · Telnet · TFTP · HFS 文件服务，一个窗口全搞定</div>
-      <div class="mn-card"><b>📄 大文件友好</b>1GB+ 级日志阅读器（缩放虚拟列表，再大也不卡）、文本编辑器、二进制查看、文件对比、程序员计算器</div>
-      <div class="mn-card"><b>🤖 Claude AI 深度集成</b>AI 会话多开并行、子代理全程实况跟随、任务/审计/复盘体系，AI 直接帮你操作和排查</div>
-      <div class="mn-card"><b>👥 三角色智能体（可分配模型）</b>轻/中/重三档形态，主会话 / 设计者 / 审计者三槽模型各自分配，审计模式与分级线可调</div>
-      <div class="mn-card"><b>👁 内置 MCP 识图</b>截图发给 AI 即懂——真多模态模型直读，其余自动走内置识图通道，面板一键配置</div>
-      <div class="mn-card"><b>🛡 稳定性基建</b>请求看门狗（超时自动打断+留证）、SSE 断线水位续传、会话恢复、热更新带备份回退</div>
+      <div class="mn-card"><b>调试工具全家桶</b>串口 · SSH · Telnet · TFTP · HFS 文件服务，一个窗口全搞定</div>
+      <div class="mn-card"><b>大文件友好</b>1GB+ 级日志阅读器（缩放虚拟列表，再大也不卡）、文本编辑器、二进制查看、文件对比、程序员计算器</div>
+      <div class="mn-card"><b>Claude AI 深度集成</b>AI 会话多开并行、子代理全程实况跟随、任务/审计/复盘体系，AI 直接帮你操作和排查</div>
+      <div class="mn-card"><b>三角色智能体（可分配模型）</b>轻/中/重三档形态，主会话 / 设计者 / 审计者三槽模型各自分配，审计模式与分级线可调</div>
+      <div class="mn-card"><b>内置 MCP 识图</b>截图发给 AI 即懂——真多模态模型直读，其余自动走内置识图通道，面板一键配置</div>
+      <div class="mn-card"><b>稳定性基建</b>请求看门狗（超时自动打断+留证）、SSE 断线水位续传、会话恢复、热更新带备份回退</div>
     </div>
-    <div class="mn-sec"><b>🚀 快速上手 · 三个配置</b></div>
+    <div class="mn-sec"><b>快速上手 · 三个配置</b></div>
     <div class="mn-step">
       <div class="mn-step-t">1️⃣ 接入 Claude Code —— 让 AI 在工具里跑起来</div>
       <svg class="mn-svg" viewBox="0 0 720 96" xmlns="http://www.w3.org/2000/svg">
@@ -833,14 +833,14 @@ _PORTAL_HTML = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
         <text x="95" y="50" text-anchor="middle" fill="currentColor" font-size="12">截图拖进会话</text>
         <path d="M 190 46 H 300" stroke="#4f8fff" stroke-width="1.5"/>
         <rect x="308" y="18" width="120" height="56" rx="28" fill="none" stroke="#8957e5" stroke-width="1.5"/>
-        <text x="368" y="50" text-anchor="middle" fill="currentColor" font-size="13" font-weight="600">🤖 AI 识图</text>
+        <text x="368" y="50" text-anchor="middle" fill="currentColor" font-size="13" font-weight="600">AI 识图</text>
         <path d="M 436 46 H 546" stroke="#8957e5" stroke-width="1.5"/>
         <rect x="554" y="18" width="160" height="56" rx="10" fill="none" stroke="#3fb950" stroke-width="1.5"/>
         <text x="634" y="50" text-anchor="middle" fill="currentColor" font-size="12">分析结论 / 修改建议</text>
       </svg>
-      <p><b>怎么配：</b>工具页点 <b>👁 识图配置</b> 按钮（Claude 会话页输入区上方）→<br>
+      <p><b>怎么配：</b>工具页点 <b>识图配置</b> 按钮（Claude 会话页输入区上方）→<br>
       ① 勾选「<b>启用识图</b>」；<br>
-      ② 「识图模型」下拉选择一个多模态模型（如 glm-5.3-flash，带 👁 标记的都是）；<br>
+      ② 「识图模型」下拉选择一个多模态模型（如 glm-5.3-flash，带识图标记的都是）；<br>
       ③ 企业内网 / 自建网关用户：展开高级配置填专用 <b>端点 + 密钥</b>（留空自动跟随主会话 API）；<br>
       ④ 点「保存」——即改即生效，无需重启。<br>
       <b>智能通道：</b>真多模态模型（如 glm-5.3）AI 直接看图；非多模态模型自动走内置 MCP 识图通道——<b>切换模型无需改任何配置</b>，工具自动判定。<br>
@@ -860,14 +860,14 @@ _PORTAL_HTML = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
         <text x="360" y="45" text-anchor="middle" fill="#8899aa" font-size="11">派出任务</text>
         <text x="360" y="95" text-anchor="middle" fill="#8899aa" font-size="11">回报结论</text>
       </svg>
-      <p><b>怎么配：</b>工具页点 <b>👥 三角色</b> 按钮 →<br>
+      <p><b>怎么配：</b>工具页点 <b>三角色</b> 按钮 →<br>
       ① 打开「<b>启用三角色</b>」开关；<br>
       ② 三档模型槽各自下拉分配：<b>主会话模型</b>（调度与干活）/ <b>设计者</b>（出方案，可配强模型）/ <b>审计者</b>（复核把关，可配快模型省钱）——<b>三个槽可以用不同模型</b>；<br>
       ③ 审计模式与分级线可调（直改多少行触发审计由你定）；<br>
       ④ 点「保存」——<b>下条消息热更生效，无需重启</b>。<br>
       <b>效果：</b>之后派任务时 AI 自动分工——设计者出方案、执行者落地、审计者复核打回，全程在窗格里实时可见，各角色干完自动汇报。</p>
     </div>
-    <div class="mn-sec"><b>💡 提示</b></div>
+    <div class="mn-sec"><b>提示</b></div>
     <p class="mn-tip">识图与三角色均支持按 API 方案独立配置（切方案各配各的）；所有配置即改即生效，无需重启。</p>
   </div>
 </div>
@@ -878,7 +878,7 @@ function pgSwitch(pg){
   document.getElementById('pg-mn').style.display = pg === 'mn' ? '' : 'none';
 }
 </script>
-<button class="btn ghost skinbtn" id="skin" title="切换界面风格">🎨 换肤</button>
+<button class="btn ghost skinbtn" id="skin" title="切换界面风格">换肤</button>
 <canvas id="fxCanvas"></canvas>
 <div class="fx-glow"></div>
 <script>
@@ -978,7 +978,7 @@ const SKINS=[['dark','璃青'],['paper','素白'],['term','终端']];
 let _fcCur=localStorage.getItem('fc_skin')||'dark';
 if(!SKINS.some(s=>s[0]===_fcCur))_fcCur='dark';
 function _fcSkinApply(){document.body.dataset.skin=_fcCur;
-  const b=document.getElementById('skin');if(b)b.textContent='🎨 '+SKINS.find(s=>s[0]===_fcCur)[1];}
+  const b=document.getElementById('skin');if(b)b.textContent=SKINS.find(s=>s[0]===_fcCur)[1];}
 _fcSkinApply();
 document.getElementById('skin').onclick=()=>{
   _fcCur=SKINS[(SKINS.findIndex(s=>s[0]===_fcCur)+1)%SKINS.length][0];
@@ -999,7 +999,7 @@ async function load(){
     let h='<div class="card hero"><div class="lab">LATEST RELEASE · 最新版本</div>'
       +'<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap"><h2>v'+esc(top.version)+'</h2>'
       +'<span class="badge">LATEST</span></div>'
-      +'<div class="meta"><span>📅 '+fmtTs(top.mtime)+'</span><span>📦 '+fmtSize(top.size)+'</span>'
+      +'<div class="meta"><span>'+fmtTs(top.mtime)+'</span><span>'+fmtSize(top.size)+'</span>'
       +(top.sha1?'<span class="sha" title="'+esc(top.sha1)+'">sha1 '+esc(top.sha1.slice(0,12))+'…</span>':'')+'</div>'
       +(top.notes?mdRender(top.notes,'notes')
         :'<div class="notes plain" style="color:var(--muted)">（本版未写更新说明——发布者在项目根 RELEASE_NOTES.md 写好后重新打包，说明会随版本带上）</div>')
@@ -1010,9 +1010,9 @@ async function load(){
     if(j.offline&&j.offline.url){
       h+='<div class="card" style="padding:16px 22px;margin-bottom:28px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">'
         +'<div style="flex:1;min-width:240px">'
-        +'<div style="font-size:14px;font-weight:650">🧰 离线资源包'
+        +'<div style="font-size:14px;font-weight:650">离线资源包'
         +'<span style="font-size:11px;font-weight:400;color:var(--muted);margin-left:8px">OFFLINE PKG</span></div>'
-        +'<div style="font-size:12px;color:var(--muted);margin-top:5px">📅 '+fmtTs(j.offline.mtime)+' · 📦 '+fmtSize(j.offline.size)
+        +'<div style="font-size:12px;color:var(--muted);margin-top:5px">'+fmtTs(j.offline.mtime)+' · '+fmtSize(j.offline.size)
         +(j.offline.subset
           ? ' · <b style="color:#e8a33d">子集包——只含部分资源，不能用于全新机器</b>，请让发布者上传完整资源包'
           : (j.offline.format==='fcpk'
