@@ -396,6 +396,11 @@ def build(root, log=None, progress=None, should_cancel=None):
            "--fields=+Kn", "--extras=+f",
            "-R", "-f", tags_tmp,
            "--exclude=.git", "--exclude=node_modules",
+           # a369R（用户令：ctags 同样套用隐藏排除）：ctags 只内置跳 .git/
+           # .svn 等少数目录——.history/.idea 和 .hidden.c 实测全收。glob
+           # 通配 --exclude=.* 一网打尽（实测：.history/.idea/.hidden.c 全
+           # 排、src 正常收）
+           "--exclude=.*",
            root]
     # a361（用户实锤：30% 死等无文件进度）：大库 ctags 阶段数分钟只有一句
     # "ctags 索引"——心跳线程监控 tags.tmp 增长，每 3 秒报已写 MB，死等变
@@ -878,6 +883,19 @@ def definition(file_path, symbol):
         )
 
     out.sort(key=rank)
+    # a369R：定义候选镜像去重（引用侧 a368 同款）——dist 类发布镜像是
+    # 源码完整拷贝，同名同 kind 的镜像副本让 F12 弹 N 个"多候选"实际是
+    # 同一符号。按 basename+kind 去重保留排序最前者（源码本体近镜像远）
+    if len(out) > 1:
+        _seen = set()
+        _ded = []
+        for cand in out:
+            key = (os.path.basename(cand["rel"]).lower(), cand.get("kind") or "")
+            if key in _seen:
+                continue
+            _seen.add(key)
+            _ded.append(cand)
+        out = _ded
     first = out[0]
     # auto 直跳：nm 锁定，或唯一 in_build 候选，或同文件 static
     others = out[1:]
