@@ -276,7 +276,14 @@ async function treeReveal(path, opts) {
     // 嵌套根时取更深的那个（长匹配优先）
     return _tvNormPath(b.path).length - _tvNormPath(a.path).length;
   })[0];
-  const rootReal = _tvNormPath(_root.path).replace(/\\+$/, '');
+  // a385R（第5轮审计 P1 实锤）：这里**不能**去掉尾分隔符。盘根注册为
+  // `D:\` 时，`_tvNormPath` 特意保留尾分隔符（否则 'D:\' 与 'D:' 同形），
+  // 而下面无条件 `.replace(/\\+$/,'')` 又把它剥成 `D:` —— 后端
+  // `os.path.abspath('D:')` 会解析成**当前进程 cwd**，第一轮就展开完全
+  // 无关的目录列表，本轮要修的小写定位在盘根场景 100% 复现。
+  // 保留原样后 `segs = _np.slice(rootReal.length)` 对 `D:\AI\x.py` 得
+  // `AI\x.py`，切分正确；普通根本就无尾分隔符，不受影响。
+  const rootReal = _tvNormPath(_root.path);
   // 从根到目标文件的逐段路径（根之后的部分）
   const segs = _np.slice(rootReal.length).split('\\').filter(Boolean);
   // 逐层展开：parent 从根开始，每展开一层就按 cache 里的真实名纠正下一段
