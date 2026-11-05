@@ -745,7 +745,7 @@ async function _stRenderResourcesPane(pane) {
         </div>
         <div class="dd-sub" id="rsNetInfo" style="display:none;margin-top:6px;">—</div>
         <div id="rsProg" style="display:none;margin-top:10px;">
-          <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden;">
+          <div id="rsProgWrap" style="height:6px;background:var(--border);border-radius:3px;overflow:hidden;position:relative;">
             <div id="rsProgBar" style="height:100%;width:0;background:var(--accent);transition:width .3s;"></div>
           </div>
           <div class="dd-sub" id="rsProgTxt" style="margin-top:4px;">—</div>
@@ -970,6 +970,18 @@ async function _stRenderResourcesPane(pane) {
       onTick: function (s) {
         if (!alive()) return;
         const bar = $q('#rsProgBar'), txt = $q('#rsProgTxt');
+        const wrap = $q('#rsProgWrap');
+        // a355R（第21轮）：不确定进度（跑外部安装器/复制上万小文件）——
+        // 百分比无意义，改成流动条纹 + 文案里的等待秒数。否则用户看到
+        // 一条不动的 0% 进度条，以为卡死（实测 OnlyOffice 静默安装 10 分钟）。
+        if (s.indeterminate) {
+          if (wrap) wrap.classList.add('indeterminate');
+          if (bar) bar.style.width = '100%';
+          if (txt) txt.textContent = (s.phase || '正在安装') +
+            (s.cancelling ? ' · 正在取消…' : '');
+          return;
+        }
+        if (wrap) wrap.classList.remove('indeterminate');
         const tot = s.total || 0, cur = s.bytes || 0;
         const pct = tot ? Math.min(100, Math.round(cur * 100 / tot)) : 0;
         if (bar) bar.style.width = pct + '%';

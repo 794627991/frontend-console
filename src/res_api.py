@@ -180,15 +180,20 @@ def res_install_api():
         _state.update(running=True, phase="准备", log=[], done=False, ok=False,
                       err="", ts=time.time(), result=None, cancel=False,
                       total=total0, done_bytes=0, cur="",
+                      indeterminate=False,
                       cancelled=False, log_seq=0, note="")
 
     def should_cancel():
         return bool(_state.get("cancel"))
 
     def on_prog(done_b, total_b, label):
-        _state.update(done_bytes=int(done_b or 0),
-                      total=int(total_b or _state["total"] or 0),
+        # a355R（第21轮）：done_b=None 表示不确定进度（跑外部安装器/复制
+        # 上万小文件）——百分比没意义，前端按 indeterminate 渲染。
+        indet = done_b is None
+        _state.update(done_bytes=(0 if indet else int(done_b or 0)),
+                      total=(0 if indet else int(total_b or _state["total"] or 0)),
                       cur=label or "",
+                      indeterminate=indet,
                       # R8-4：完成态不走「安装 %s」模板（否则显示「安装 完成」）
                       phase=(label if label == "完成" else "安装 %s" % (label or "")))
 
@@ -352,6 +357,7 @@ def res_poll():
                     "ok_done": _state["ok"], "err": _state["err"],
                     "result": _state["result"],
                     "total": _state["total"], "bytes": _state["done_bytes"],
+                    "indeterminate": bool(_state.get("indeterminate")),
                     "cur": _state["cur"], "cancelling": _state["cancel"],
                     "cancelled": _state["cancelled"],
                     "log_seq": _state.get("log_seq", 0),

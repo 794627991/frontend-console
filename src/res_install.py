@@ -20,6 +20,8 @@ dotnet 必须在最前：它不是给工具用的，而是给 pywebview 的 pyth
 import os
 import shutil
 import tempfile
+import threading
+import time
 
 from src import fcpk
 
@@ -99,7 +101,10 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None,
     cur = [0]
 
     def prog(done, total, label=""):
-        cur[0] = done
+        # a355R（第21轮）：done=None 表示「不确定进度」阶段（跑外部安装器、
+        # 复制上万小文件），前端显示流动条纹而不是一个不动的百分比。
+        if done is not None:
+            cur[0] = done
         if progress:
             progress(done, total, label)
 
@@ -301,7 +306,20 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None,
                 res["skipped"].append(k)
                 continue
             try:
-                if fn(staging, say, force):
+                # a355R（第21轮）：安装器阶段没有字节进度可报（跑外部 exe /
+                # 复制上万小文件，几分钟到十几分钟），此前前端进度条一动不动，
+                # 形同卡死。这里先推一条「不确定进度」（done=None），装完再
+                # 回到字节口径。只有支持回调的安装器才传，其余保持原签名。
+                if fn in _PROGRESSIVE:
+                    ok = fn(staging, say, force, prog=prog)
+                else:
+                    _beat = _Heartbeat(prog, k)
+                    _beat.start()
+                    try:
+                        ok = fn(staging, say, force)
+                    finally:
+                        _beat.stop()
+                if ok:
                     res["installed"].append(k)
                     say("✓ %s 完成" % k)
                 else:
@@ -310,6 +328,9 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None,
             except Exception as e:
                 res["errors"][k] = str(e)[:300]
                 say("✗ %s 失败：%s" % (k, e))
+            finally:
+                # 回到字节口径：下个 kind 的进度从真实累计值继续
+                prog(cur[0], total, "")
         prog(total, total, "完成")
         writer_state = {"installed_at": _now(),
                         "package": os.path.basename(path),
@@ -486,7 +507,7 @@ def _install_git(staging, say, force=False):
     return True
 
 
-def _install_claude(staging, say, force=False):
+def _install_claude(staging, say, force=False, prog=None):
     """铺 claude-code 包到 %APPDATA%\\npm\\node_modules（npm 标准位）+ shim。
 
     全审 B4/B5 实锤（严重）两处修正：
@@ -525,7 +546,15 @@ def _install_claude(staging, say, force=False):
     os.makedirs(os.path.dirname(dst), exist_ok=True)
 
     try:
-        _copy_tree_with_links(src, dst)
+        # a355R（第21轮）：复制 685MB / 12000+ 小文件在 Windows 上要几分钟，
+        # 此前没有任何反馈。按文件数报进度（字节口径在这里失真：硬链接不
+        # 产生字节，剩下几万个 link 会让百分比永远差一截）。
+        if prog:
+            prog(None, 0, "复制 claude-code（%d 个文件）" % _count_files(src))
+        _copy_tree_with_links(
+            src, dst,
+            progress=(lambda n, t: prog(n, t, "复制 claude-code"))
+            if prog else None)
         cs._make_npm_shims(dst)
         cs._ensure_npm_path()
         try:
@@ -555,7 +584,18 @@ def _install_claude(staging, say, force=False):
     return True
 
 
-def _copy_tree_with_links(src, dst):
+def _count_files(root):
+    """目录树里的文件数（进度分母用；数不清按 0 处理，只影响显示）。"""
+    n = 0
+    try:
+        for _r, _d, fs in os.walk(root):
+            n += len(fs)
+    except OSError:
+        pass
+    return n
+
+
+def _copy_tree_with_links(src, dst, progress=None):
     """复制目录树，**保留包内的同内容去重**（fcpk 写入时的 link entry）。
 
     打包侧对两个字节相同的 claude.exe 只存一份、另一条标 link；解到
@@ -563,8 +603,15 @@ def _copy_tree_with_links(src, dst):
     两份独立文件（270MB×2）。做法：先按 size+inode 记录「已复制源」，
     目标树上遇到同 inode 的源就 os.link 到已落地的那个；跨卷失败退
     化 copy2。绝不因链接失败阻断安装。
+
+    a355R（第21轮）：加 progress(n, total)——claude 685MB / 12000+ 小文件
+    的复制在 Windows 上要几分钟，此前**零反馈**，用户只能硬等（实锤：
+    设置页进度条停在解包完成的位置一动不动）。按文件数推进，不按字节——
+    os.link 不产生字节、按字节算末尾几万个链接会让进度永远差一点。
     """
     os.makedirs(dst, exist_ok=True)
+    total = _count_files(src)
+    done = 0
     seen = {}       # (st_dev, st_ino) -> 已落地的目标路径
     for r, ds, fs in os.walk(src):
         ds.sort()
@@ -574,20 +621,27 @@ def _copy_tree_with_links(src, dst):
         for f in sorted(fs):
             sp = os.path.join(r, f)
             dp = os.path.join(out_dir, f)
+            done += 1
             try:
                 st = os.stat(sp)
             except OSError:
+                if progress:
+                    progress(done, total)
                 continue
             key = (st.st_dev, st.st_ino)
             prev = seen.get(key)
             if prev and os.path.isfile(prev):
                 try:
                     os.link(prev, dp)
+                    if progress:
+                        progress(done, total)
                     continue
                 except OSError:
                     pass        # 跨卷/不支持 → 落到下面正常复制
             shutil.copy2(sp, dp)
             seen[key] = dp
+            if progress:
+                progress(done, total)
 
 
 def _install_pydeps(staging, say, force=False):
@@ -709,6 +763,42 @@ _INSTALLERS = {"dotnet": _install_dotnet, "node": _install_node,
                "git": _install_git, "claude": _install_claude,
                "onlyoffice": _install_onlyoffice,
                "pydeps": _install_pydeps}
+# a355R（第21轮）：支持进度回调的安装器（claude 是逐文件复制，能报真实
+# 文件数；其余是跑外部安装器或 pip，只能报「不确定进度」+ 心跳）。
+_PROGRESSIVE = {_install_claude}
+
+# 安装器名称（前端「不确定进度」提示用）
+_INSTALL_LABEL = {"dotnet": ".NET Framework", "node": "Node.js", "git": "Git",
+                  "onlyoffice": "OnlyOffice（约 10 分钟，请留意 UAC 弹窗）",
+                  "pydeps": "Python 依赖"}
+
+
+class _Heartbeat:
+    """跑外部安装器期间的「心跳」：每 2 秒推一次不确定进度。
+
+    a355R（第21轮）：`subprocess.call(exe, /VERYSILENT)` 会阻塞 10 分钟，
+    期间零进度事件，前端进度条静止不动，用户以为卡死。心跳只改文案里的
+    秒数，不碰百分比（done=None）。
+    """
+    def __init__(self, prog, kind):
+        self.prog = prog
+        self.label = _INSTALL_LABEL.get(kind, kind)
+        self._stop = threading.Event()
+        self._th = None
+
+    def start(self):
+        def _run():
+            t0 = time.time()
+            while not self._stop.wait(2.0):
+                self.prog(None, 0, "%s · 已等待 %d 秒"
+                          % (self.label, int(time.time() - t0)))
+        self._th = threading.Thread(target=_run, daemon=True)
+        self._th.start()
+
+    def stop(self):
+        self._stop.set()
+        if self._th:
+            self._th.join(timeout=2.0)
 # 注：bili 不走这张表——它的落点在 runtime_root()（不经 staging/move），
 # 由 install_from 单独分支处理（a336R 第7轮 P3-1：原表里的 bili 是死路径）
 
