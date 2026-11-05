@@ -112,7 +112,7 @@ function syncOpenLogs() {
 }
 
 // 构建日志查看 tab（类似 buildTerminal，但用虚拟列表替代 xterm）
-function buildLogViewer(path) {
+function buildLogViewer(path, gotoLine) {   // R28-5：gotoLine 行定位（大文件跳转）
   const name = path.split(/[\\\/]/).pop();
   const portId = 'log:' + name + ':' + Date.now();
   // 记入最近打开（文件类型，快捷重开走日志查看器；key 用文件名归一——
@@ -122,10 +122,14 @@ function buildLogViewer(path) {
     const isExt = /^[a-zA-Z]:[\\/]|\\\\/.test(path);
     _recentAdd({type:'file', key:'file:'+name, label:name, data:{kind:'log', name:name, path:path, extPath: isExt ? path : ''}});
   }
-  // 若已打开同名日志，切过去
+  // 若已打开同名日志，切过去（a371R：gotoLine 一并透传——原 return 丢弃，
+  // 跳转已打开的大文件时定位静默失效）
+  const _gotoLine = (typeof gotoLine === 'number' && gotoLine > 0) ? Math.floor(gotoLine) : 0;
   for (const pid in connections) {
     if (connections[pid].meta && connections[pid].meta.kind === 'log' && connections[pid].meta.path === path) {
-      switchTab(pid); return;
+      switchTab(pid);
+      if (_gotoLine > 0) gotoLogLine(connections[pid], _gotoLine);
+      return;
     }
   }
   // 建 tab
@@ -178,6 +182,7 @@ function buildLogViewer(path) {
   // conn 对象
   const conn = {
     portId,  // 用于 await 后校验当前 conn 是否仍存活（防止用户在索引期间关闭/切换日志 tab）
+    gotoLine: _gotoLine,   // R28-5：行定位（索引完成后滚动+闪烁）
     meta: { kind: 'log', label: name, path },
     tab, wrap,
     vlist: wrap.querySelector('.vlist'),
@@ -305,8 +310,50 @@ async function openLogInViewer(conn) {
     conn.vlistInner.style.height = Math.min(naturalH, MAX_SCROLL_H) + 'px';
     conn.statusEl.textContent = `共 ${ls.total.toLocaleString()} 行` + (ls.scaled ? ' · 缩放模式' : '');
     renderLogSlice(conn);
+    // R28-5（实锤：大文件行定位丢失）：外部传入 gotoLine（跳转/引用点击
+    // 大于 30M 文件时降级到此）——滚动到目标行并闪烁标记（a371R 与已打开
+    // 去重分支统一走 gotoLogLine）
+    if (conn.gotoLine > 0 && conn.gotoLine <= ls.total) {
+      const _ln = conn.gotoLine;
+      conn.gotoLine = 0;
+      gotoLogLine(conn, _ln);
+    }
     syncOpenLogs();  // 索引完成，带 total 再同步一次
   } catch(e) { if (connections[conn.portId] === conn) conn.statusEl.textContent = '加载失败：' + e; }
+}
+
+// a371R：行定位统一入口（索引完成消费 + 已打开去重分支复用）——滚动到
+// 目标行、闪烁标记、状态条"已定位"提示存活 3.2s。索引未完成（total=0）
+// 时挂 conn.gotoLine 等索引回调消费
+function gotoLogLine(conn, line) {
+  const ls = conn.logState;
+  if (!ls || !ls.total) { conn.gotoLine = line; return; }   // 索引未完，挂起
+  if (line <= 0 || line > ls.total) return;
+  conn.vlist.scrollTop = logRowToScroll(conn, line - 1);
+  ls._pendingFlash = line - 1;   // flash 由 renderLogSlice 渲染落地拍消费
+  renderLogSlice(conn);
+  // a371R 兜底：目标行本就在渲染区间（scrollTop 未变）时 renderLogSlice
+  // 区间相同 early return，渲染拍不来——250ms 后补一拍（渲染拍先到则
+  // _pendingFlash 已置空，这里自然跳过）
+  setTimeout(() => {
+    if (connections[conn.portId] !== conn || ls._pendingFlash == null) return;
+    const rowEl = conn.vlistInner.querySelector('[data-row="' + ls._pendingFlash + '"]');
+    if (rowEl) {
+      rowEl.classList.add('lv-goto-flash');
+      const _re = rowEl;
+      setTimeout(() => _re.classList.remove('lv-goto-flash'), 2600);
+      ls._pendingFlash = null;
+    }
+  }, 250);
+  // renderLogSlice 是 async：文案等首拍落地（80ms）再刷；跨区间 fetch 期间
+  // 显示区间还是旧值，但 scroll→renderLogSlice 完成后会带 _locNote 重拼兜底
+  conn._locNote = '已定位第 ' + line + ' 行';
+  setTimeout(() => { if (connections[conn.portId] === conn) refreshLogStatus(conn); }, 80);
+  setTimeout(() => {
+    if (connections[conn.portId] !== conn) return;
+    conn._locNote = '';
+    refreshLogStatus(conn);
+  }, 3200);
 }
 
 // scrollTop → 行号（缩放末页可达映射）
@@ -416,7 +463,26 @@ async function renderLogSlice(conn) {
     const keepFrom = renderStart - HIST_CACHE_MAX / 2, keepTo = endRow + HIST_CACHE_MAX / 2;
     for (const k of ls.rows.keys()) { if (k < keepFrom || k > keepTo) ls.rows.delete(k); }
   }
-  conn.statusEl.textContent = `共 ${ls.total.toLocaleString()} 行 · 显示 ${renderStart}-${endRow-1}` + (ls.scaled ? ' · 缩放' : '');
+  // a371R：行定位闪烁——渲染落地这拍消费（跨区间 fetch 耗时不可预估，
+  // 固定延时挂 flash 会扑空：DOM 还是旧区间 querySelector 落空）
+  if (ls._pendingFlash != null) {
+    const rowEl = vp.querySelector('[data-row="' + ls._pendingFlash + '"]');
+    if (rowEl) {
+      rowEl.classList.add('lv-goto-flash');
+      const _re = rowEl;
+      setTimeout(() => _re.classList.remove('lv-goto-flash'), 2600);
+      ls._pendingFlash = null;
+    }
+  }
+  refreshLogStatus(conn);
+}
+
+// a371R：状态条统一刷新（renderLogSlice / 行定位挂载与清除共用）——
+// _locNote（行定位提示，存活 3.2s 与闪烁同步）在这里拼接，避免直接
+// textContent += 被 scroll→renderLogSlice 异步重写覆盖
+function refreshLogStatus(conn) {
+  const ls = conn.logState;
+  conn.statusEl.textContent = `共 ${ls.total.toLocaleString()} 行 · 显示 ${ls.renderedStart}-${ls.renderedEnd-1}` + (ls.scaled ? ' · 缩放' : '') + (conn._locNote ? ' · ' + conn._locNote : '');
 }
 
 // 跳到日志某行（居中）。curRow 指定时同时高亮该行（搜索结果点击/跳转用）

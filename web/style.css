@@ -5496,3 +5496,14 @@ span.nn-hl-t { background: color-mix(in srgb, #3fb950 15%, transparent);
   font-weight: 600;
 }
 .tab-drawer-bar .tab.active::after { display: none; }   /* 有边框+发光，底边线多余 */
+
+/* R28-5：大文件（>30M 阅读器形态）跳转定位闪烁——行号透传链的视觉落点 */
+.log-viewer .lv-goto-flash {
+  animation: lvGotoFlash 0.9s ease-out 3;
+  outline: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+@keyframes lvGotoFlash {
+  0%, 100% { background: transparent; }
+  45% { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+}

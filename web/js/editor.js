@@ -2206,7 +2206,7 @@ async function openFileSmart(path, mode, opts) {
   }
 
   if (how === 'hex') { buildHexViewerTab(path, name); return; }
-  if (how === 'view') { buildLogViewer(path); return; }
+  if (how === 'view') { buildLogViewer(path, opts && opts.line); return; }   // R28-5：行号透传
   // edit：未知类型用户硬选编辑器——超 20M 后端会拒（大小前提由后端硬上限兜底），拒则降级
   try {
     // force=1：无后缀/未知类型按内容探测放行（去后缀的 json 等曾直接被白名单拒）
@@ -2230,7 +2230,7 @@ async function openFileSmart(path, mode, opts) {
     }
     showBanner('编辑器无法打开（' + (j.err || '未知错误') + '），已切换阅读器', 4000, true);
   } catch(e) { showBanner('打开失败: ' + e, 4000, true); return; }
-  buildLogViewer(path);
+  buildLogViewer(path, opts && opts.line);   // R28-5：降级阅读器同款行号透传
 }
 
 // v3.5.76（拖附件 4s+ 根修）：pywebview 的 on('drop') 只注册 drop 不取消

@@ -191,13 +191,58 @@ def build(root, log=None, progress=None, should_cancel=None):
 
 
 def sync(root, log=None, should_cancel=None):
-    """增量同步（代码大改后；秒级）。"""
+    """增量同步（代码大改后；秒级）。
+    R28-1（实锤：sync 取消假动作）：已安装分支原走 _run（subprocess.run
+    无中断）——cancel 置位后任务照常跑完（600 文件全量 diff 10-19s 实测）。
+    改 Popen+句柄注入，取消时 kill（build 同款链）"""
     say = log or (lambda _m: None)
     st = status(root)
     if not st.get("installed"):
         return build(root, log, should_cancel=should_cancel)
     say("codegraph sync（增量）…")
-    rc, out = _run(["sync"], root, timeout=600)
+    import subprocess as _sp
+    import threading as _th
+    exe = _cg_exe()
+    if not exe:
+        return False, "codegraph 命令不存在"
+    _stop = _th.Event()
+    _proc = [None]
+    def _watch():
+        # 取消监视线程：cancel 即杀子进程
+        while not _stop.wait(1.0):
+            if should_cancel and should_cancel():
+                _stop.set()
+                try:
+                    if _proc[0]:
+                        _proc[0].kill()
+                except Exception:
+                    pass
+                return
+    _wt = _th.Thread(target=_watch, daemon=True)
+    _wt.start()
+    try:
+        proc = _sp.Popen([exe, "sync"], cwd=root,
+                         stdout=_sp.PIPE, stderr=_sp.STDOUT,
+                         creationflags=0x08000000)
+        _proc[0] = proc
+        out = proc.communicate(timeout=590)[0]
+        rc = proc.returncode
+    except _sp.TimeoutExpired:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        return False, "codegraph sync 超时"
+    finally:
+        _stop.set()
+        _proc[0] = None
+    if should_cancel and should_cancel():
+        raise CgCancelled("用户取消 codegraph sync")
+    try:
+        txt = (out or b"").decode("utf-8", "replace")
+    except Exception:
+        txt = ""
+    out = txt
     if rc != 0:
         # sync 对空 diff 也可能非零？宽松：重查 status 确认仍健康
         st2 = status(root)
