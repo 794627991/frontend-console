@@ -323,7 +323,7 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
   if (!conn.isNote) {
     let _ov = null;
     if (conn.extPath) {
-      try { _ov = (JSON.parse(localStorage.getItem('hg-ed-lang-override') || '{}') || {})[conn.extPath] || null; } catch (_) {}
+      try { _ov = (JSON.parse(localStorage.getItem('hg-ed-lang-override') || '{}') || {})[_edNormPath(conn.extPath)] || null; } catch (_) {}   // R31-1：记忆键归一（斜杠形态免疫）
     }
     if (!_ov && typeof content === 'string' && typeof detectLangByShebang === 'function'
         && typeof monacoLangFor === 'function' && monacoLangFor(conn.meta.label) === 'plaintext') {
@@ -430,6 +430,9 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
 // a376：语法高亮语言下拉——手动覆盖按后缀的自动判定（无后缀脚本场景）。
 // 切换即 setModelLanguage 生效（不重建编辑器）；按 extPath 记忆
 // （localStorage hg-ed-lang-override），「自动」清记忆。幂等：显示态即已绑
+// R31-1：路径归一化（模块级——buildEditorTab 去重 _normPath 与语言记忆键共用口径）
+function _edNormPath(p) { return String(p || '').replace(/\\/g, '/').toLowerCase(); }
+
 function _edBindLangSel(conn) {
   const sel = conn.langSel;
   if (!sel || !conn.monaco) return;
@@ -442,7 +445,8 @@ function _edBindLangSel(conn) {
     if (conn.extPath) {
       try {
         const m = JSON.parse(localStorage.getItem('hg-ed-lang-override') || '{}') || {};
-        if (sel.value) m[conn.extPath] = sel.value; else delete m[conn.extPath];
+        const k = _edNormPath(conn.extPath);   // R31-1：读写同键归一
+        if (sel.value) m[k] = sel.value; else delete m[k];
         localStorage.setItem('hg-ed-lang-override', JSON.stringify(m));
       } catch (_) {}
     }
@@ -2288,7 +2292,7 @@ async function openFileSmart(path, mode, opts) {
     };
     tryJump();
   };
-  const name = path.split(/[\/]/).pop().toLowerCase();
+  const name = path.split(/[\/\\]/).pop().toLowerCase();   // R31-2：反斜杠路径（面板条目）也能切出文件名
   const dot = name.lastIndexOf('.');
   const ext = dot > 0 ? name.slice(dot) : name;
   // a280→a281R：Office 文件分发——先同步判扩展名（_officeKindOf 返回非空

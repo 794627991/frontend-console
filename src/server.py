@@ -1383,8 +1383,8 @@ def api_theme():
                         "nav_keys": cfg.get("nav_keys", {"def": "f12",
                                                          "ref": "shift+f12",
                                                          "sym": "ctrl+t",
-                                                         "back": "ctrl+arrowleft",
-                                                         "fwd": "ctrl+arrowright"}),
+                                                         "back": "alt+arrowleft",
+                                                         "fwd": "alt+arrowright"}),
                         # a286: Tab 栏模式——flat=Chrome 平铺收缩 / drawer=分组抽屉
                         "tab_mode": cfg.get("tab_mode", "flat"),
                         # a357：CPU 优先提升（perf_boost）——level: normal/above_normal/high

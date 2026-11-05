@@ -42,8 +42,8 @@
   // ============================================================
   // a360R（用户需求2，VSCode 同款）：导航历史 back / forward
   // VSCode 的命令是 workbench.action.navigateBack / navigateForward，默认
-  // Alt+← / Alt+→（macOS Ctrl+- / Ctrl+Shift+-）。这里按用户要求默认给
-  // Ctrl+← / Ctrl+→，键位可在设置页录制修改（与 F12 那三项放一起）。
+  // Alt+← / Alt+→（macOS Ctrl+- / Ctrl+Shift+-）。默认与 VSCode 一致用 Alt+← / Alt+→，键位可在设置页录制修改
+  // （与 F12 那三项放一起）。
   //
   // 语义照抄 VSCode：
   //   · 栈里存「位置」{portId, path, line, col}，不是文件——同一文件的两个
@@ -355,7 +355,7 @@
 
   // ---- 可配置键位（a346）：默认 F12 / Shift+F12 / Ctrl+T，设置页可改 ----
   const NAV_KEYS = { def: 'f12', ref: 'shift+f12', sym: 'ctrl+t',
-                     back: 'ctrl+arrowleft', fwd: 'ctrl+arrowright' };
+                     back: 'alt+arrowleft', fwd: 'alt+arrowright' };
 
   function loadNavKeys() {
     fetch('/api/theme').then(r => r.json()).then(j => {
