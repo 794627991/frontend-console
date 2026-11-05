@@ -41,7 +41,11 @@ DEPS = [
     ("pywebview", ("webview",  True,  "桌面窗口（WebView2）")),
     ("paramiko",  ("paramiko", False, "SSH 远程连接")),
     ("pywinpty",  ("winpty",   False, "内嵌 Claude 终端（ConPTY）")),
-    ("pyelftools", ("elftools", False, "代码跳转索引（读 .o 符号表）")),
+    # a356 紧急回撤（用户实锤：内网机打不开工具）：pyelftools 曾列入本表——
+    # 但本闸门对可选库缺失同样阻断启动（missing=req+opt 全进引导页），
+    # 内网无外网 pip 装不上 → 工具永远卡在首启安装页。跳转索引（nav_index）
+    # 对缺库本就自动降级（符号层跳过、白名单照常）——预装毫无必要；
+    # 需要时随 .fcpk 资源包的 pydeps 离线装。严禁再把非命脉库加进本表
 ]
 
 # 清华镜像（默认源失败时兜底：无网/超时/被墙设备常见）
@@ -422,9 +426,15 @@ def _restart_process():
 
 def bootstrap_if_needed():
     """main.py 启动早期调用。缺库时引导安装并重启进程；不缺直接返回继续启动。
-    返回 True = 应继续启动；False = 已重启/应退出（调用方 return）。"""
+    返回 True = 应继续启动；False = 已重启/应退出（调用方 return）。
+    a356 铁律：只有**必需库**缺失才进引导安装——可选库（paramiko/pywinpty）
+    缺失只 print 提示、绝不阻断启动（pyelftools 内网事故的根因就是可选库
+    也被算进 missing 拉起引导页，无外网装不上=工具永远打不开）。"""
     miss_req, miss_opt = check_deps()
-    missing = miss_req + miss_opt
+    if miss_opt:
+        print("[deps] 可选库缺失（不阻断，需要时用离线资源包补装）：%s"
+              % ", ".join(p for p, _ in miss_opt))
+    missing = miss_req
     if not missing:
         return True
 
