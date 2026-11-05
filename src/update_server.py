@@ -716,7 +716,7 @@ _MD_OPTS = ("{html:false,linkify:false,typographer:false,"
 
 # 门户 Markdown 渲染的兜底脚本：markdown-it 未注入（文件缺失/读取失败）时
 # 退回纯文本——绝不能让页面白屏或把裸 markdown 当正文塞进去。
-_MD_BOOT = """<script>
+_MD_BOOT = """
 window.__md=null;
 (function(){
   try{
@@ -742,7 +742,7 @@ function mdRender(txt,cls,attrs){
     return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
   })+'</div>';
 }
-</script>""" % _MD_OPTS
+""" % _MD_OPTS
 
 
 def _md_lib_path():
