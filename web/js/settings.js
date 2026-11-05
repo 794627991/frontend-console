@@ -148,16 +148,16 @@ function _stBoostCard(pane) {
 function _stNavKeysCard(pane) {
   const row = pane.querySelector('#stNavKeysRow');
   if (!row) return;
-  const DEF = { def: 'f12', ref: 'shift+f12', sym: 'ctrl+t',
+  const DEF = { def: 'f12', ref: 'shift+f12', sym: 'ctrl+t', fsym: 'ctrl+shift+o',
                 back: 'alt+arrowleft', fwd: 'alt+arrowright' };
-  const NAMES = { def: '转到定义', ref: '查找引用', sym: '工作区符号',
+  const NAMES = { def: '转到定义', ref: '查找引用', sym: '工作区符号', fsym: '文件内符号',
                   back: '后退', fwd: '前进' };
   const NJ = window.NavJump || null;
   // R21-5：NavJump 缺失（nav.js 加载失败）时也要能看能存——文案兜底
   const lbl = s => NJ && NJ.keyLabel ? NJ.keyLabel(s) : s;
   const keys = { ...DEF, ...(NJ && NJ.getKeys ? NJ.getKeys() : {}) };
   const fields = {};
-  const _ORDER = ['def', 'ref', 'sym', 'back', 'fwd'];
+  const _ORDER = ['def', 'ref', 'sym', 'fsym', 'back', 'fwd'];
   _ORDER.forEach(k => {
     const wrap = document.createElement('div');
     wrap.style.cssText = 'display:flex;flex-direction:column;gap:4px;align-items:center;';

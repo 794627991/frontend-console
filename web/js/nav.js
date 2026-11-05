@@ -314,6 +314,88 @@
     });
   }
 
+  // a383（VSCode Ctrl+Shift+O）：文件内符号速跳——当前文件大纲，空查询给
+  // 全量（按行号排），输入即过滤，点击/回车跳行
+  function showFileSymbols(ed) {
+    _closeCands();
+    _closeSym();
+    const ov = document.createElement('div');
+    ov.id = 'navSymPanel';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.25);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding-top:10vh;';
+    ov.addEventListener('mousedown', function (e) { if (e.target === ov) _closeSym(); });
+    const card = document.createElement('div');
+    card.className = 'dd-cur';
+    card.style.cssText = 'width:560px;max-width:92vw;max-height:62vh;display:flex;flex-direction:column;padding:12px 14px;border-radius:12px;background:var(--bg-panel);border:1px solid var(--border);box-shadow:0 12px 40px rgba(0,0,0,.4);';
+    const input = document.createElement('input');
+    input.className = 'dd-input';
+    input.placeholder = '文件内符号（函数/类/成员，输入过滤；回车跳首项）…';
+    input.style.cssText = 'width:100%;box-sizing:border-box;';
+    card.appendChild(input);
+    const list = document.createElement('div');
+    list.style.cssText = 'margin-top:8px;overflow:auto;flex:1;';
+    card.appendChild(list);
+    ov.appendChild(card);
+    document.body.appendChild(ov);
+    input.focus();
+    const file = ed && ed.getModel() ? modelFilePath(ed.getModel()) : '';
+    let all = [];
+    let selIdx = 0;
+    const render = () => {
+      list.innerHTML = '';
+      const rows = [];
+      all.forEach(function (it, idx) {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;gap:10px;align-items:center;padding:4px 8px;border-radius:6px;cursor:pointer;' +
+          (idx === selIdx ? 'background:var(--border);' : '');
+        const k = _h('span', (it.kind || '?'));
+        k.style.cssText = 'font-size:10.5px;color:var(--accent);flex-shrink:0;min-width:64px;';
+        const n = _h('span', it.name);
+        n.style.cssText = 'font-family:var(--font-mono);font-size:12.5px;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;';
+        const ln = _h('span', ':' + (it.line || 1));
+        ln.style.cssText = 'font-family:var(--font-mono);font-size:11px;color:var(--muted);flex-shrink:0;';
+        row.appendChild(k); row.appendChild(n); row.appendChild(ln);
+        row.onclick = () => { _closeSym(); openFileSmart(it.path, 'auto', { line: Math.max(1, it.line || 1), col: 1, selectLine: true }); };
+        list.appendChild(row);
+        rows.push(row);
+      });
+      if (rows[selIdx]) try { rows[selIdx].scrollIntoView({ block: 'nearest' }); } catch (_) {}
+    };
+    // 数据：一次拉全量（空 q），前端本地过滤（响应快）
+    fetch('/api/nav/symbols?scope=file&file=' + encodeURIComponent(file) + '&q=')
+      .then(r => r.json()).then(j => {
+        if (!j.ok || !j.items) {
+          const d = _h('div', j.err === 'no-index' ? '该文件不在索引库内（先在文件树右键建索引）' : '无符号');
+          d.style.cssText = 'color:var(--muted);font-size:12px;padding:8px;';
+          list.appendChild(d);
+          return;
+        }
+        all = j.items;
+        render();
+      }).catch(() => {});
+    input.addEventListener('input', function () {
+      const q = input.value.trim().toLowerCase();
+      selIdx = 0;
+      fetch('/api/nav/symbols?scope=file&file=' + encodeURIComponent(file) +
+            '&q=' + encodeURIComponent(q))
+        .then(r => r.json()).then(j => {
+          if (input.value.trim().toLowerCase() !== q) return;
+          all = (j && j.items) || [];
+          render();
+        }).catch(() => {});
+    });
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') { e.stopPropagation(); _closeSym(); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); selIdx = Math.min(all.length - 1, selIdx + 1); render(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); selIdx = Math.max(0, selIdx - 1); render(); }
+      else if (e.key === 'Enter' && all[selIdx]) {
+        e.preventDefault();
+        const it = all[selIdx];
+        _closeSym();
+        openFileSmart(it.path, 'auto', { line: Math.max(1, it.line || 1), col: 1, selectLine: true });
+      }
+    });
+  }
+
   function _closeSym() {
     if (_symTimer) { clearTimeout(_symTimer); _symTimer = null; }
     const el = document.getElementById('navSymPanel');
@@ -397,6 +479,7 @@
 
   // ---- 可配置键位（a346）：默认 F12 / Shift+F12 / Ctrl+T，设置页可改 ----
   const NAV_KEYS = { def: 'f12', ref: 'shift+f12', sym: 'ctrl+t',
+                     fsym: 'ctrl+shift+o',   // a383：文件内符号（VSCode Ctrl+Shift+O）
                      back: 'alt+arrowleft', fwd: 'alt+arrowright' };
 
   function loadNavKeys() {
@@ -490,7 +573,45 @@
       add('def', '转到定义', NAV_KEYS.def, gotoDefinition);
       add('ref', '查找所有引用', NAV_KEYS.ref, findReferences);
       add('sym', '工作区符号搜索', NAV_KEYS.sym, showWorkspaceSymbols);
+      add('fsym', '文件内符号', NAV_KEYS.fsym, showFileSymbols);
     } catch (_) {}
+  }
+
+  // a383（VSCode Hover）：悬停看定义——kind 徽标+定义签名（3 行摘要）+
+  // 路径:行号。词级缓存（60s）防高频悬停打爆后端
+  const _hoverCache = new Map();
+  function _hoverDef(file, word) {
+    const key = file + '|' + word;
+    const hit = _hoverCache.get(key);
+    if (hit && Date.now() - hit.t < 60000) return Promise.resolve(hit.d);
+    return fetch('/api/nav/definition?file=' + encodeURIComponent(file) +
+                 '&symbol=' + encodeURIComponent(word))
+      .then(r => r.json()).then(j => {
+        const d = j && j.ok ? j : null;
+        if (_hoverCache.size > 120) _hoverCache.clear();
+        _hoverCache.set(key, { t: Date.now(), d });
+        return d;
+      }).catch(() => null);
+  }
+  function provideHover(model, position) {
+    try {
+      const word = model.getWordAtPosition(position);
+      if (!word || !word.word || word.word.length < 2) return null;
+      const file = modelFilePath(model);
+      if (!/^[A-Za-z]:/.test(file)) return null;
+      return _hoverDef(file, word.word).then(j => {
+        if (!j || !j.candidates || !j.candidates.length) return null;
+        const c = j.candidates[0];
+        const md = { value: '' };
+        md.value = '**' + word.word + '** `' + (c.kind || 'symbol') + '`' +
+          (c.in_build === true ? ' ✓编译内' : '') + (c.file_local ? ' ·本文件' : '') + '\n\n' +
+          '```\n' + (c.snippet || '') + '\n```\n\n' +
+          '`' + c.rel + ' :' + c.line + '`';
+        return { range: new monaco.Range(position.lineNumber, word.startColumn,
+                                         position.lineNumber, word.endColumn),
+                 contents: [{ isTrusted: false }, md] };
+      });
+    } catch (_) { return null; }
   }
 
   function registerAll() {
@@ -499,6 +620,11 @@
         monaco.languages.registerDefinitionProvider(lang, {
           provideDefinition: provideDefinition,
         });
+        try {
+          monaco.languages.registerHoverProvider(lang, {   // a383：悬停看定义
+            provideHover: provideHover,
+          });
+        } catch (_) {}
       } catch (e) { /* 语言 ID 未注册（该版本 Monaco 无此语言）——跳过 */ }
     });
     try {
@@ -509,7 +635,7 @@
 
   // a346：热应用（设置页保存后调用；重挂各编辑器的右键 action 文案）
   function applyKeys(cfg) {
-    ['def', 'ref', 'sym', 'back', 'fwd'].forEach(k => {
+    ['def', 'ref', 'sym', 'fsym', 'back', 'fwd'].forEach(k => {
       if (cfg[k]) NAV_KEYS[k] = String(cfg[k]);
     });
     try {
@@ -554,6 +680,10 @@
       }
       if (ed && matchKey(e, NAV_KEYS.sym)) {
         e.preventDefault(); e.stopPropagation(); showWorkspaceSymbols(ed);
+        return;
+      }
+      if (ed && matchKey(e, NAV_KEYS.fsym)) {   // a383：Ctrl+Shift+O 文件内符号
+        e.preventDefault(); e.stopPropagation(); showFileSymbols(ed);
       }
       // a360R（用户需求2）：导航历史 back / forward。
       // a375R（第1轮审计 P2-4/P1-1）：接管范围要精确——不能一律放行，也不能

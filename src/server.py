@@ -1382,7 +1382,7 @@ def api_theme():
                         # a360R：加 back/fwd（导航历史后退/前进）
                         "nav_keys": cfg.get("nav_keys", {"def": "f12",
                                                          "ref": "shift+f12",
-                                                         "sym": "ctrl+t",
+                                                         "sym": "ctrl+t", "fsym": "ctrl+shift+o",
                                                          "back": "alt+arrowleft",
                                                          "fwd": "alt+arrowright"}),
                         # a286: Tab 栏模式——flat=Chrome 平铺收缩 / drawer=分组抽屉

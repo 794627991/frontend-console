@@ -284,10 +284,11 @@ def nav_symbols():
         limit = min(100, max(10, int(request.args.get("limit") or 50)))
     except ValueError:
         limit = 50
+    scope = (request.args.get("scope") or "").strip()   # a383：file=文件内符号（Ctrl+Shift+O）
     if not f:
         return jsonify({"ok": False, "err": "缺 file"}), 400
     try:
-        return jsonify(nav_index.symbols(f, q, limit))
+        return jsonify(nav_index.symbols(f, q, limit if scope != "file" else 500, scope=scope))
     except Exception as e:
         return jsonify({"ok": False, "err": str(e)[:200]}), 200
 

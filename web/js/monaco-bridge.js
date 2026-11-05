@@ -167,6 +167,11 @@ async function monacoCreate(holder, value, langName, absPath, langOverride) {
     wordWrap: 'on',               // 超长行自动换行（同旧 textarea 行为）
     renderWhitespace: 'selection',
     tabSize: 4,
+    // a383（VSCode 对标 #7/#8）：粘滞滚动——长函数滚动时函数头钉顶；
+    // 括号对着色+缩进/括号参考线——深嵌套老 C 代码可读性
+    stickyScroll: { enabled: true },
+    bracketPairColorization: { enabled: true },
+    guides: { indentation: true, bracketPairs: true },
     // 20MB 上限文件防卡：大文件关 minimap/花哨渲染
     largeFileSize: 5 * 1024 * 1024,
     mouseWheelScrollSensitivity: 1,

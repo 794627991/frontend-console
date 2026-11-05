@@ -586,6 +586,13 @@ def _load_tags(ld):
                             lineno = int(seg[5:])
                         except ValueError:
                             pass
+                    elif not kind and seg and ":" not in seg and seg != "file":
+                        # a383（存量 bug 实锤）：本库 ctags --fields=+Kn 产长名
+                        # 裸值 kind（class/variable/function…，不带 kind: 前缀）
+                        # ——旧解析恒空：符号面板徽标一直空白、definition 的
+                        # file_local 优先级从未生效。裸段里除 kind 外只有
+                        # extras=f 的 'file' 标记，可安全识别
+                        kind = seg
                 data.setdefault(name, []).append((path, lineno, kind))
     except OSError:
         data = {}
@@ -635,7 +642,7 @@ def find_lib_for(file_path):
     return ld, best
 
 
-def symbols(file_path, q, limit=50):
+def symbols(file_path, q, limit=50, **kwargs):
     """工作区符号面板（Ctrl+T）：按发起文件反查库，前缀/子串匹配。
     返回 [{name, rel, line, kind, in_build, dist}]（按 前缀命中>子串>
     路径近 排序）。"""
@@ -647,6 +654,25 @@ def symbols(file_path, q, limit=50):
     compiled = mf.get("compiled") or {}
     root = lib["root"]
     qlow = (q or "").strip().lower()
+    # a383（Ctrl+Shift+O 文件内符号）：scope=file 精确到本文件，空查询给
+    # 全量（按行号排——文件大纲语义），有 q 时子串过滤
+    if kwargs.get("scope") == "file":
+        target = os.path.normcase(os.path.normpath(file_path))
+        out = []
+        for name in tags:
+            for path, lineno, kind in tags[name]:
+                if os.path.normcase(os.path.normpath(path)) != target:
+                    continue
+                if not kind or name == os.path.basename(path):
+                    break   # extras=f 的文件名自条目（kind 空）不入大纲
+                if qlow and qlow not in name.lower():
+                    break
+                out.append({"name": name, "rel": os.path.basename(path),
+                            "path": path, "line": lineno, "kind": kind,
+                            "in_build": None, "dist": 0})
+                break
+        out.sort(key=lambda c: c["line"])
+        return {"ok": True, "items": out[:limit], "mode": "file"}
     if not qlow:
         return {"ok": True, "items": [], "mode": "empty"}   # 空查询不给全量
     exact, prefix, substr = [], [], []
@@ -950,6 +976,28 @@ def definition(file_path, symbol):
             _seen.add(key)
             _ded.append(cand)
         out = _ded
+    # a383（Hover 悬停看定义）：前几个候选附源码摘要（定义行+下 2 行）——
+    # 按文件分组各读一次，逐行读到目标行号（大文件不整读）
+    try:
+        _by_file = {}
+        for _c in out[:5]:
+            _by_file.setdefault(_c["path"], []).append(_c)
+        for _fp, _cs in _by_file.items():
+            _need = max(_c["line"] for _c in _cs) + 2
+            _lines = []
+            try:
+                with open(_fp, encoding="utf-8", errors="replace") as _f:
+                    for _i, _ln in enumerate(_f, 1):
+                        if _i > _need:
+                            break
+                        _lines.append(_ln.rstrip())
+            except OSError:
+                continue
+            for _c in _cs:
+                _st = max(0, _c["line"] - 1)
+                _c["snippet"] = (chr(10).join(_lines[_st:_st + 3])).strip()[:300]
+    except Exception:
+        pass
     first = out[0]
     # auto 直跳：nm 锁定，或唯一 in_build 候选，或同文件 static
     others = out[1:]
