@@ -440,11 +440,14 @@ def _agent_md(name, description, model, body, tools=None):
 # reviewer 定位「只审不改」——排除 Write/Edit/MultiEdit/NotebookEdit（此
 # 只读限制不动）与 Task（禁派子代理，与 designer 同规）；Bash 保留（取证
 # 纪律要求能跑的验证实际跑）。
+# 用户实锤（主会话调内置 AskUserQuestion 报 No such tool）：headless 下该
+# 工具不存在——frontmatter 声明它是给模型的诱饵（信了就调、调了必炸）。
+# 子代理提问同走自建 MCP（主进程注册，Task 子代理共享）：换成真名
 _TOOLS_DESIGN = ("Read, Write, Edit, MultiEdit, NotebookEdit, Bash, Glob, "
                  "Grep, WebFetch, WebSearch, TodoWrite, SendMessage, "
-                 "AskUserQuestion")
+                 "mcp__harness__ask_user")
 _TOOLS_REVIEW = ("Read, Bash, Glob, Grep, WebFetch, WebSearch, "
-                 "TodoWrite, SendMessage, AskUserQuestion")
+                 "TodoWrite, SendMessage, mcp__harness__ask_user")
 
 
 # 本工具托管的五个角色文件名（同名自建 agent 会被覆盖/清掉，记录在案）。

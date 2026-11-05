@@ -27,7 +27,10 @@ def ask_bridge_text():
         "- 什么时候不用：纯知识问答、你自己能查证的事实、无意义的「要不要继续」"
         "式确认。\n"
         "- 一个问题的可选项 2-4 个，每个选项配一句说明（用户看说明做判断）。\n"
-        "- 调用后你会停在那里等，不要在同一轮里又自己把方案做了。"
+        "- 调用后你会停在那里等，不要在同一轮里又自己把方案做了。\n"
+        "- 【禁令·高频失误】内置工具名 AskUserQuestion 在本环境（headless）不\n"
+        "  存在——你的训练记忆里有它，调了必报「No such tool available」。提问\n"
+        "  一律且只能用 mcp__harness__ask_user，看见这两个词就想起这条。"
     )
 
 # ---- from claude_harness.py:338 (confirm_bridge_text) ----
