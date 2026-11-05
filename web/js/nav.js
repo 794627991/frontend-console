@@ -130,8 +130,16 @@
         r.then(function (ok) {
           // a380R（第2轮审计 P3-2）：'cancelled' = 用户在打开方式弹窗里取消，
           // 不是不可达——游标退回原位，不报跳过、不继续找。
-          if (ok === 'cancelled') { NAV_HIST.cur = prevCur; return; }
-          if (!ok) { _navStep(dir, left); }
+          // a381R（第3轮审计）：prevCur 是幂等的过期快照——用户等弹窗期间
+          // 若又按了别的键，cur 已经变了，此时无条件赋值会把游标改回去。
+          // 只在「游标仍停在我这一格」时才回退。
+          if (ok === 'cancelled') {
+            if (NAV_HIST.cur === next) NAV_HIST.cur = prevCur;
+            return;
+          }
+          // a381R：异步失败继续找时，若用户在等待期间又按了键（cur 已变），
+          // 继续沿原方向跳会覆盖用户的新操作——只在没被打断时继续。
+          if (!ok) { if (NAV_HIST.cur === next) _navStep(dir, left); }
         }).catch(function () {});
       }
       return;
@@ -854,6 +862,28 @@
     const bRe = _h('button', ICO16.refresh + ' 重建', true);
     bRe.className = 'btn primary';
     bRe.onclick = () => _startBuild(card, path);
+    // a390：查询后端三档切换（重建按钮左侧下拉；sqlite 走任务槽带进度）
+    const bkSel = _h('select');
+    bkSel.title = '查询后端：内存全量（小库最快·占内存）/ readtags（零建库·约0.2s/次）/ sqlite（大库·0~4ms·低内存）';
+    bkSel.style.cssText = 'padding:2px 6px;font-size:11px;margin-left:6px;';
+    const _curBk = m.backend || (m.code_files >= 200000 ? 'sqlite' : 'memory');
+    bkSel.innerHTML = [['memory', '内存全量'], ['readtags', 'readtags'], ['sqlite', 'sqlite']]
+      .map(([v, n2]) => `<option value="${v}"${_curBk === v ? ' selected' : ''}>${n2}</option>`).join('');
+    bkSel.onchange = async () => {
+      const v = bkSel.value;
+      if (typeof _ddConfirm === 'function' &&
+          !(await _ddConfirm('切换查询模式', v === 'sqlite'
+            ? '构建 sqlite 快查索引（大库约 1 分钟，一次性；查询 0~4ms/内存 ~50MB）？'
+            : `切到 ${v} 模式（删除 tags.db 立即生效）？`))) { _renderState(card, path, j, st); return; }
+      try {
+        const r = await fetch('/api/nav/reindex', { method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ root: path, backend: v }) });
+        const d2 = await r.json();
+        showBanner(d2.ok ? '查询模式切换中（任务槽执行）' : ('切换失败：' + (d2.err || '')), 3000, !d2.ok);
+      } catch (e) { showBanner('切换失败: ' + e, 3000, true); }
+    };
+    btns.insertBefore(bkSel, btns.lastChild);
     const bDel = _h('button', ICO16.trash + ' 删除索引', true);
     bDel.className = 'btn ghost';
     bDel.style.color = '#e5484d';
