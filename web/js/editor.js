@@ -118,8 +118,8 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
         <button class="lv-btn" data-ed-action="rename" title="双击标签页标题可快捷改名">重命名</button>
         <button class="lv-btn" data-ed-action="search" title="Ctrl+F 全局搜索（支持正则/排除）">${ICO16.search} 搜索</button>
         <button class="lv-btn" data-ed-action="outline" title="显示/隐藏右侧大纲面板">${ICO16.note} 大纲</button>
-        <button class="lv-btn" data-ed-action="links" title="显示/隐藏双链面板（链入/链出/标签）">${ICO16.link} 链接</button>
-        <button class="lv-btn" data-ed-action="exportmd" title="导出为 Markdown（同目录同名 .md，图片相对路径）">${ICO16.download} .md</button>
+        <button class="lv-btn" data-ed-action="links" title="显示/隐藏双链面板（链入/链出/标签）" style="display:none;">${ICO16.link} 链接</button>
+        <button class="lv-btn" data-ed-action="exportmd" title="导出为 Markdown（同目录同名 .md，图片相对路径）" style="display:none;">${ICO16.download} .md</button>
         <select name="ed_enc" class="lv-btn ed-enc-sel" data-ed-enc title="文件编码（切换后按所选编码重新读取；保存按当前编码回写）" style="display:none;">
           <option value="">编码：自动</option>
           <option value="utf-8">UTF-8</option>
@@ -129,7 +129,7 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
           <option value="big5">Big5</option>
           <option value="latin-1">Latin-1</option>
         </select>
-        <select name="ed_mdtheme" class="lv-btn ed-mdtheme-sel" data-ed-mdtheme title="MD 预览配色（即时生效）" style="display:none;">
+        <select name="ed_mdtheme" class="lv-btn ed-mdtheme-sel" data-ed-mdtheme title="预览/笔记配色（即时生效）" style="display:none;">
         </select>
         <select name="ed_lang" class="lv-btn ed-lang-sel" data-ed-lang title="语法高亮语言（覆盖按后缀自动判定；按文件路径记忆）" style="display:none;">
           <option value="">语言：自动</option>
@@ -290,8 +290,9 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
       };
     }
   }
-  // a281：MD 预览配色下拉——.md 文件才显示，选项从 _MD_PV_THEMES 填充
-  if ((name || '').toLowerCase().endsWith('.md')) {
+  // a281：MD 预览配色下拉——.md 显示；a377（用户需求）：笔记同款可选预览配色
+  // （.ed-scroll 消费同一批 --note-* 变量，md-pv-<id> 类直接生效）
+  if ((name || '').toLowerCase().endsWith('.md') || isNote) {
     const mdSel = wrap.querySelector('[data-ed-mdtheme]');
     if (mdSel) {
       mdSel.style.display = '';
@@ -300,8 +301,18 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
       ).join('');
       mdSel.onchange = () => {
         _mdPvSetTheme(mdSel.value);
-        showBanner('MD 预览配色：' + (_MD_PV_THEMES.find(t => t.id === mdSel.value) || {}).name, 1800);
+        showBanner('预览配色：' + (_MD_PV_THEMES.find(t => t.id === mdSel.value) || {}).name, 1800);
       };
+      if (isNote) {
+        // a377：链接/导出 .md 是笔记专属功能（用户令：编辑器等其他形态不显示）
+        ['[data-ed-action="links"]', '[data-ed-action="exportmd"]'].forEach(q => {
+          const b = wrap.querySelector(q);
+          if (b) b.style.display = '';
+        });
+        // 笔记打开即应用当前配色
+        const sc = wrap.querySelector('.ed-scroll');
+        if (sc && typeof _mdPvApplyTheme === 'function') { try { _mdPvApplyTheme(sc); } catch (_) {} }
+      }
     }
   }
   // 初始化编辑区（异步：Editor.js 实例化）
@@ -1867,6 +1878,7 @@ function _mdPvApplyTheme(pv) {
 window._mdPvSetTheme = (t, persist) => {
   _mdPvTheme = t;
   document.querySelectorAll('.ed-md-preview').forEach(_mdPvApplyTheme);
+  document.querySelectorAll('.ed-scroll').forEach(_mdPvApplyTheme);   // a377：笔记编辑区同主题
   // 同步所有工具栏下拉
   document.querySelectorAll('[data-ed-mdtheme]').forEach(sel => { sel.value = t; });
   if (persist !== false) {
