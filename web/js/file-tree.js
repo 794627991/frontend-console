@@ -69,6 +69,7 @@ const _TV = {
   cache: new Map(),     // path -> {entries, truncated} | {err}
   rows: [],             // 扁平行 [{t, path, name, dir, depth, open, n, msg}]
   idx: new Map(),       // path -> 行号（对焦 O(1)）
+  idxLower: new Map(),  // a382R：path.toLowerCase() -> 真实 path（大小写兜底 O(1)）
   seq: new Map(),       // path -> fetch 序号（防乱序，v2 的 children 级同款）
   active: '',           // 当前选中文件行（虚拟化后 class 态必须进数据）
   rendered: [-1, -1],
