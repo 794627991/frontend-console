@@ -230,9 +230,15 @@ function _stNavKeysCard(pane) {
   function syncSave() {
     const vals = Object.values(keys);
     const clash = new Set(vals).size !== vals.length;   // a375：键位 3→5 时没跟上，5 键互异仍恒报冲突
-    save.style.display = '';
+    _showSave(true);
     save.disabled = clash;
     save.textContent = clash ? '快捷键冲突' : '保存';
+  }
+  // a380R（用户实锤：恢复默认与工作区符号列差 13px）：save 隐藏时只藏按钮，
+  // 占位标签列（3px+gap）仍占位把恢复默认推偏——整列联动显隐
+  function _showSave(show) {
+    save.style.display = show ? '' : 'none';
+    if (save.parentElement) save.parentElement.style.display = show ? '' : 'none';
   }
   async function saveNow() {
     try {
@@ -243,7 +249,7 @@ function _stNavKeysCard(pane) {
       if (!j.ok) { showBanner('保存失败：' + (j.err || ''), 4000, true); return; }
       if (NJ && NJ.applyKeys) NJ.applyKeys(keys);
       showBanner('跳转快捷键已生效：' + lbl(keys.def) + ' / ' + lbl(keys.ref) + ' / ' + lbl(keys.sym), 4000);
-      save.style.display = 'none';
+      _showSave(false);
       _ORDER.forEach(k => fields[k].textContent = lbl(keys[k]));
     } catch (e) { showBanner('保存失败: ' + e, 4000, true); }
   }
@@ -252,9 +258,9 @@ function _stNavKeysCard(pane) {
   // 与键位同款「标签+按钮」列放进同一 wrap 流——换行后与相邻键位（前进）
   // 自然同行对齐，不再是独立行甩右侧。save 初始 display:none 不占位，
   // 改动时出现挤入流内
-  const _actCol = (btn) => {
+  const _actCol = (btn, hidden) => {
     const w = document.createElement('div');
-    w.style.cssText = 'display:flex;flex-direction:column;gap:4px;align-items:center;';
+    w.style.cssText = 'display:' + (hidden ? 'none' : 'flex') + ';flex-direction:column;gap:4px;align-items:center;';
     const ph = document.createElement('span');
     ph.textContent = '\u00a0';
     ph.style.cssText = 'font-size:12px;color:var(--muted);';   // 与键位标签同款字号=同高
@@ -264,7 +270,7 @@ function _stNavKeysCard(pane) {
     if (keyBtn0) btn.style.height = keyBtn0.offsetHeight + 'px';   // 同高（↺ glyph 行高偏 1px，运行时对齐自适应）
     row.appendChild(w);
   };
-  _actCol(save);
+  _actCol(save, true);   // save 初始整列隐藏（display:none 不占位）
   _actCol(reset);
 }
 
