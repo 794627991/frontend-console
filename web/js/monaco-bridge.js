@@ -90,6 +90,7 @@ function monacoInit() {
         };
         require(['vs/nls.messages.zh-cn', 'vs/editor/editor.main'], () => {
           const monaco = window.monaco;
+          _monacoDefinePlusThemes(monaco);   // a387：增强主题（函数/宏/类型配色）
           _monacoApplyTheme(monaco);
           resolve(monaco);
         }, err => reject(err));
@@ -106,11 +107,38 @@ const MONACO_LIGHT_THEMES = new Set(['paper', 'dawn', 'mint', 'apricot']);
 function _monacoThemeName() {
   const t = document.documentElement.getAttribute('data-theme') || 'deepblue';
   // v2.25：custom 跟随自定义主题的亮暗标志（theme.js _isLight 同源数据）
+  // a387：返回增强主题（fcpk-plus/fcpk-plus-dark）——vs/vs-dark 基底 +
+  // VSCode Dark+/Light+ 同款的函数/宏（黄 #DCDCAA）与类型（青绿 #4EC9B0）色
   if (t === 'custom') {
     const d = (typeof _customData !== 'undefined' && _customData) || {};
-    return d.light ? 'vs' : 'vs-dark';
+    return d.light ? 'fcpk-plus' : 'fcpk-plus-dark';
   }
-  return MONACO_LIGHT_THEMES.has(t) ? 'vs' : 'vs-dark';
+  return MONACO_LIGHT_THEMES.has(t) ? 'fcpk-plus' : 'fcpk-plus-dark';
+}
+// a387：增强主题定义（monacoInit 后注册一次）——inherit 继承全部基底规则，
+// 只补 entity.name.function / entity.name.type 两类（C 补丁 token 的消费端；
+// 其他语言（Python def 名/JS 函数名）的内置 tokenizer 若未来也产这些 token 同样受益
+function _monacoDefinePlusThemes(monaco) {
+  try {
+    monaco.editor.defineTheme('fcpk-plus-dark', {
+      base: 'vs-dark', inherit: true,
+      rules: [
+        { token: 'entity.name.function', foreground: 'DCDCAA' },          // VSCode Dark+ 函数/宏黄
+        { token: 'entity.name.function.preprocessor', foreground: 'DCDCAA' },
+        { token: 'entity.name.type', foreground: '4EC9B0' },              // VSCode Dark+ 类型青绿
+      ],
+      colors: {}
+    });
+    monaco.editor.defineTheme('fcpk-plus', {
+      base: 'vs', inherit: true,
+      rules: [
+        { token: 'entity.name.function', foreground: '795E26' },          // VSCode Light+ 函数/宏棕黄
+        { token: 'entity.name.function.preprocessor', foreground: '795E26' },
+        { token: 'entity.name.type', foreground: '267F99' },              // VSCode Light+ 类型蓝绿
+      ],
+      colors: {}
+    });
+  } catch (_) {}
 }
 function _monacoApplyTheme(monaco) {
   monaco.editor.setTheme(_monacoThemeName());
