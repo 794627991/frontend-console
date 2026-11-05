@@ -18,16 +18,43 @@ import shutil
 import subprocess
 
 
-def _cg_exe():
+def _cg_argv():
+    """完整启动 argv 前缀（a386 用户令工具内置——工作机无 npm 实锤）：
+    ①安装态/npm 态 bundle（node.exe + lib 自带运行时，标准 APPDATA 位）
+    ②开发态 offline_assets/codegraph/
+    ③npm which codegraph（真全局安装，cmd shim 形态）
+    返回 list 或 None。bundle 直启 = bin/codegraph.cmd 的等价展开
+    （node.exe --liftoff-only lib/dist/bin/codegraph.js）"""
+    appdata = os.environ.get("APPDATA", "")
+    _cands = []
+    if appdata:
+        _nm = os.path.join(appdata, "npm", "node_modules", "@colbymchenry")
+        # ①工具资源包安装位（res_install 直铺）②npm 全局嵌套位
+        # （@colbymchenry/codegraph 主包内嵌平台包）
+        _cands.append(os.path.join(_nm, "codegraph-win32-x64"))
+        _cands.append(os.path.join(_nm, "codegraph", "node_modules",
+                                   "@colbymchenry", "codegraph-win32-x64"))
+    _cands.append(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "offline_assets", "codegraph"))
+    for root in _cands:
+        node = os.path.join(root, "node.exe")
+        js = os.path.join(root, "lib", "dist", "bin", "codegraph.js")
+        if os.path.isfile(node) and os.path.isfile(js):
+            return [node, "--liftoff-only", "--disable-warning=ExperimentalWarning", js]
     p = shutil.which("codegraph")
-    return p
+    return [p] if p else None
+
+
+def _cg_exe():
+    """兼容旧调用：返回首个可执行路径（bundle 场景=node.exe）"""
+    argv = _cg_argv()
+    return argv[0] if argv else None
 
 
 def _run(args, root, timeout=3600):
     """跑 codegraph 子命令（cwd=root）。返回 (rc, stdout+stderr)。"""
-    exe = _cg_exe()
-    if not exe:
-        return -1, "codegraph 命令不存在（npm install -g codegraph 安装）"
+    if not _cg_argv():
+        return -1, "codegraph 不可用（工具资源包安装 codegraph 后可用）"
     root = os.path.abspath(root)
     if not os.path.isdir(root):
         return -1, "目录不存在：%s" % root
@@ -37,7 +64,7 @@ def _run(args, root, timeout=3600):
         # reader 线程 UnicodeDecodeError → stdout=None → installed=True
         # files=0 幽灵态；index --force 输出 not initialized 却 rc=0 假成功。
         # 必须显式 UTF-8 + replace
-        r = subprocess.run([exe] + args, cwd=root, capture_output=True,
+        r = subprocess.run(_cg_argv() + args, cwd=root, capture_output=True,
                            text=True, encoding="utf-8", errors="replace",
                            timeout=timeout,
                            creationflags=0x08000000)
@@ -49,7 +76,7 @@ def _run(args, root, timeout=3600):
 
 
 def available():
-    return bool(_cg_exe())
+    return bool(_cg_argv())
 
 
 def status(root):
@@ -58,7 +85,7 @@ def status(root):
     status 会报父级的数字。先守卫本目录 .codegraph 存在才认 installed"""
     if not available():
         return {"ok": False, "installed": False,
-                "err": "codegraph 未安装（npm install -g codegraph）"}
+                "err": "codegraph 未安装（设置→外部依赖安装，或重装资源包）"}
     if not os.path.isdir(os.path.join(root, ".codegraph")):
         return {"ok": True, "installed": False}
     rc, out = _run(["status"], root, timeout=60)
@@ -128,11 +155,10 @@ def build(root, log=None, progress=None, should_cancel=None):
                 say("  codegraph 数据 %.0f MB…" % mb)
     _hb_t = _th.Thread(target=_hb, daemon=True)
     _hb_t.start()
-    exe = _cg_exe()
     proc = None
     try:
-        if not exe:
-            return False, "codegraph 命令不存在"
+        if not _cg_argv():
+            return False, "codegraph 不可用（工具资源包安装后可用）"
         # a368R（用户定调：隐藏目录优先排除）：codegraph 实测会收
         # .history/x.c 这类隐藏目录文件（files 表实锤）。CLI 无 --exclude
         # 参数（help 实核）——官方机制是工程根 codegraph.json 的 exclude
@@ -157,7 +183,7 @@ def build(root, log=None, progress=None, should_cancel=None):
                     _json2.dump(cfg, f, ensure_ascii=False, indent=2)
         except Exception:
             pass
-        proc = _sp.Popen([exe, action, "--force"], cwd=root,
+        proc = _sp.Popen(_cg_argv() + [action, "--force"], cwd=root,
                          stdout=_sp.PIPE, stderr=_sp.STDOUT,
                          creationflags=0x08000000)
         _proc[0] = proc
@@ -202,9 +228,8 @@ def sync(root, log=None, should_cancel=None):
     say("codegraph sync（增量）…")
     import subprocess as _sp
     import threading as _th
-    exe = _cg_exe()
-    if not exe:
-        return False, "codegraph 命令不存在"
+    if not _cg_argv():
+        return False, "codegraph 不可用（工具资源包安装后可用）"
     _stop = _th.Event()
     _proc = [None]
     def _watch():
@@ -221,7 +246,7 @@ def sync(root, log=None, should_cancel=None):
     _wt = _th.Thread(target=_watch, daemon=True)
     _wt.start()
     try:
-        proc = _sp.Popen([exe, "sync"], cwd=root,
+        proc = _sp.Popen(_cg_argv() + ["sync"], cwd=root,
                          stdout=_sp.PIPE, stderr=_sp.STDOUT,
                          creationflags=0x08000000)
         _proc[0] = proc

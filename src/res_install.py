@@ -33,7 +33,7 @@ from src import fcpk
 
 # 安装顺序：先决条件在前
 ORDER = ["dotnet", "webview2", "node", "git", "claude", "bili",
-           "onlyoffice", "pydeps"]
+           "codegraph", "onlyoffice", "pydeps"]
 
 
 class InstallError(Exception):
@@ -507,6 +507,64 @@ def _install_git(staging, say, force=False):
     return True
 
 
+def _install_codegraph(staging, say, force=False, prog=None):
+    """a386（用户令工具内置）：codegraph 平台 bundle 铺到 %APPDATA%\\npm\\
+    node_modules\\@colbymchenry\\codegraph-win32-x64（npm 标准位——用户日后
+    npm install -g 可无缝覆盖升级；bundle 自带 node.exe，零 npm 依赖运行）。
+    幂等：版本相同跳过；旧版本先备份成功后删（claude 同款 B4 教训）。"""
+    import json
+    import time
+    src = os.path.join(staging, "codegraph")
+    if not os.path.isfile(os.path.join(src, "node.exe")):
+        raise InstallError("包内无 codegraph 目录（缺 node.exe）——资源包版本过旧")
+
+    def _ver(d):
+        try:
+            with open(os.path.join(d, "lib", "package.json"), encoding="utf-8") as f:
+                return json.load(f).get("version") or ""
+        except Exception:
+            return ""
+
+    appdata = os.environ.get("APPDATA", "")
+    if not appdata:
+        raise InstallError("无 APPDATA 环境变量")
+    dst = os.path.join(appdata, "npm", "node_modules", "@colbymchenry",
+                       "codegraph-win32-x64")
+    if not force and _ver(src) and _ver(src) == _ver(dst):
+        say("codegraph %s 已是最新，跳过" % _ver(dst))
+        return
+    say("复制 codegraph → %s（约 250MB）…" % dst)
+    bak = ""
+    if os.path.isdir(dst):
+        bak = dst + ".old-%d" % int(time.time())
+        try:
+            os.replace(dst, bak)
+        except OSError as e:
+            raise InstallError("无法替换现有 codegraph（可能正在运行）：%s" % e)
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    try:
+        if prog:
+            prog(None, 0, "复制 codegraph（%d 个文件）" % _count_files(src))
+        _copy_tree_with_links(
+            src, dst,
+            progress=(lambda n, t: prog(n, t, "复制 codegraph")) if prog else None)
+    except Exception:
+        if bak and os.path.isdir(bak) and not os.path.isdir(dst):
+            try:
+                os.replace(bak, dst)   # 失败自动搬回（claude B4 同款）
+                say("  安装失败，已还原原有 codegraph")
+            except OSError:
+                pass
+        raise
+    if bak:
+        import shutil as _sh
+        try:
+            _sh.rmtree(bak)
+        except OSError:
+            pass
+    say("✓ codegraph %s 安装完成" % _ver(dst))
+
+
 def _install_claude(staging, say, force=False, prog=None):
     """铺 claude-code 包到 %APPDATA%\\npm\\node_modules（npm 标准位）+ shim。
 
@@ -761,6 +819,7 @@ def _merge_state(d):
 
 _INSTALLERS = {"dotnet": _install_dotnet, "node": _install_node,
                "git": _install_git, "claude": _install_claude,
+               "codegraph": _install_codegraph,
                "onlyoffice": _install_onlyoffice,
                "pydeps": _install_pydeps}
 # a355R（第21轮）：支持进度回调的安装器（claude 是逐文件复制，能报真实
@@ -769,6 +828,7 @@ _PROGRESSIVE = {_install_claude}
 
 # 安装器名称（前端「不确定进度」提示用）
 _INSTALL_LABEL = {"dotnet": ".NET Framework", "node": "Node.js", "git": "Git",
+                  "codegraph": "Claude 代码图引擎（codegraph）",
                   "onlyoffice": "OnlyOffice（约 10 分钟，请留意 UAC 弹窗）",
                   "pydeps": "Python 依赖"}
 

@@ -103,6 +103,7 @@ def build():
             _publish_debug(app_dir)
             return dist
         _refresh_offline_claude()   # v3.4.95：离线 claude-code 版本有变即刷新
+        _refresh_offline_codegraph()   # a386：codegraph 同款（用户令工具内置——工作机无 npm 实锤）
         # a326：offline_pkg 三处分散资源已统一迁入 offline_assets/（MANIFEST
         # 入库、本体 gitignore），旧 _sync_offline_pkg 双目录同步随之退役；
         # 其尾部的 README 随包复制挪到这里
@@ -271,6 +272,55 @@ def _publish(app_dir):
     print("  ⚠ v2.2.x 及更早的 onefile 旧版无法自动升级到 zip 形态——"
           "需把 zip 发给同事手动解压换装一次（2.3.0 起全程自动）")
 
+
+
+def _refresh_offline_codegraph():
+    """a386（用户实锤「说好的工具内置呢」）：codegraph 本体从 npm 全局刷到
+    offline_assets/codegraph/（平台 bundle：node.exe + lib，自带运行时——
+    同事机零 npm 依赖）。与 claude-code 同款版本比对 + robocopy 镜像。"""
+    import json
+    cands = [
+        os.path.join(os.environ.get("APPDATA", ""), "npm", "node_modules",
+                     "@colbymchenry", "codegraph", "node_modules",
+                     "@colbymchenry", "codegraph-win32-x64"),
+    ]
+    try:
+        out = subprocess.check_output(["npm", "root", "-g"], text=True,
+                                      stderr=subprocess.DEVNULL, timeout=20).strip()
+        if out:
+            cands.append(os.path.join(out, "@colbymchenry", "codegraph",
+                                      "node_modules", "@colbymchenry",
+                                      "codegraph-win32-x64"))
+    except Exception:
+        pass
+    src = next((c for c in cands
+                if os.path.isfile(os.path.join(c, "node.exe"))
+                and os.path.isdir(os.path.join(c, "lib"))), None)
+    if not src:
+        print("offline codegraph: 未找到本机安装，跳过版本刷新")
+        return
+
+    def _ver(d):
+        try:
+            with open(os.path.join(d, "lib", "package.json"), encoding="utf-8") as f:
+                return json.load(f).get("version") or ""
+        except Exception:
+            try:
+                with open(os.path.join(d, "package.json"), encoding="utf-8") as f:
+                    return json.load(f).get("version") or ""
+            except Exception:
+                return ""
+
+    dst = os.path.join(BASE, "offline_assets", "codegraph")
+    src_v, dst_v = _ver(src), _ver(dst)
+    if not src_v or src_v == dst_v:
+        print(f"offline codegraph: {dst_v or '无'} 与本机一致，无需刷新")
+        return
+    print(f"offline codegraph: {dst_v or '无'} → {src_v} 刷新 …")
+    rc = subprocess.call(["robocopy", src, dst, "/MIR", "/NFL", "/NDL", "/NJH",
+                          "/NJS", "/NP"], creationflags=0x08000000)
+    # robocopy 0-7 都是成功码
+    print(f"offline codegraph: 刷新完成（robocopy rc={rc}）")
 
 
 def _refresh_offline_claude():
@@ -456,6 +506,23 @@ def _offline_sources(kinds=None):
                          ".ts", ".cts", ".mts", ".mjs", ".map"))
                         else "raw")
                     out.append((p2, arc, "bili", mode, None))
+        cg = os.path.join(src, "codegraph")
+        if os.path.isdir(cg) and _take("codegraph"):
+            # a386：codegraph 平台 bundle（node.exe+lib 自带运行时）整目录
+            # 全收（bili/claude 同款教训：挑扩展名装出空壳）
+            for r, ds, fs in os.walk(cg):
+                ds.sort()
+                ds[:] = [d for d in ds
+                         if not (os.stat(os.path.join(r, d)).st_file_attributes or 0) & 0x400]
+                for f in sorted(fs):
+                    p2 = os.path.join(r, f)
+                    arc = "codegraph/" + os.path.relpath(p2, cg).replace("\\", "/")
+                    low = f.lower()
+                    mode = ("deflate" if low.endswith(
+                        (".exe", ".dll", ".node", ".cjs", ".js", ".json",
+                         ".ts", ".cts", ".mts", ".mjs", ".map"))
+                        else "raw")
+                    out.append((p2, arc, "codegraph", mode, None))
         cc = os.path.join(src, "claude-code")
         if os.path.isdir(cc) and _take("claude"):
             # 全审 B4 实锤（严重）：早前只收 .exe/.node/.dll，把

@@ -1,5 +1,5 @@
 {
-  "updated": "2026-11-05 11:13:51",
+  "updated": "2026-11-05 19:44:08",
   "items": [
     {
       "kind": "git",
@@ -99,6 +99,15 @@
       ],
       "url": "pip download（requirements 见 wheel 名）",
       "note": "离线 wheel 池，在线安装走 pip"
+    },
+    {
+      "kind": "codegraph",
+      "dir": "codegraph/",
+      "files": 941,
+      "size": 261470246,
+      "version": "1.6.0",
+      "url": "https://www.npmjs.com/package/@colbymchenry/codegraph",
+      "note": "发布机 npm i -g @colbymchenry/codegraph 后跑 src/build.py _refresh_offline_codegraph 恢复（平台 bundle win32-x64：node.exe+lib 自带运行时）"
     }
   ],
   "note": "资源本体不入 git；本清单入库。新检出机器按各 item 的 url/note 恢复 offline_assets/ 后才能打离线包。"

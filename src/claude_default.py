@@ -358,9 +358,10 @@ def _register_codegraph_mcp():
     用户手改配置）。前提：npm 全局 codegraph 可执行（工具的「Claude 代码图」
     用它建索引，会话侧 serve --mcp 消费）。未装时静默跳过（弹层有安装提示）。
     幂等只补缺不覆盖。"""
-    import shutil
-    if not shutil.which("codegraph"):
-        return []   # 未装（同事设备装后首次 provision 自动补）
+    from src import nav_codegraph as _ncg
+    _argv = _ncg._cg_argv()
+    if not _argv:
+        return []   # 未装（同事设备装资源包后首次 provision 自动补）
     done = []
     cj = os.path.join(os.path.expanduser("~"), ".claude.json")
     try:
@@ -374,8 +375,10 @@ def _register_codegraph_mcp():
     if not isinstance(servers, dict):
         servers = {}
     if not servers.get("codegraph"):
-        servers["codegraph"] = {"type": "stdio", "command": "codegraph",
-                                "args": ["serve", "--mcp"]}
+        # a386：内置 bundle 绝对路径直启（node.exe --liftoff-only
+        # codegraph.js serve --mcp）——不依赖 npm shim 在 PATH
+        servers["codegraph"] = {"type": "stdio", "command": _argv[0],
+                                "args": _argv[1:] + ["serve", "--mcp"]}
         d["mcpServers"] = servers
         _atomic_json(cj, d)
         done.append("mcpServers")
