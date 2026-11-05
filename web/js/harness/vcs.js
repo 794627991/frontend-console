@@ -640,6 +640,7 @@
         _j1ok = true;
         _HG.vcs.data.files = j1.files || [];
         _HG.vcs.data.truncated = j1.truncated || 0;
+        _HG.vcs.data.symlink_hidden = j1.symlink_hidden || 0;   // vcs-report：网络盘符号链接误报过滤计数
         _HG.vcs.data.changes_timeout = false;
         _HG.vcs.data.changes_shallow = true;   // 头部保持「全树扫描中」
         _vcsPaint();
@@ -657,6 +658,7 @@
           } else {
             _HG.vcs.data.files = j2.files || [];
             _HG.vcs.data.truncated = j2.truncated || 0;
+            _HG.vcs.data.symlink_hidden = j2.symlink_hidden || 0;   // vcs-report：网络盘符号链接误报过滤计数
             _HG.vcs.data.changes_timeout = false;
             _HG.vcs.data.changes_shallow = false;
           }
@@ -861,7 +863,8 @@
     const _chgTxt = (D.changes_pending && (_HG.vcs.chgBusy || D.changes_shallow)) ? '全树扫描中…'
       : D.changes_timeout ? '改动数未获取（扫描超时）'
       : `${(D.files || []).length - _svnU.length} 个改动` +
-        (_svnU.length ? `（另有 ${_svnU.length} 个未版本控制）` : '');
+        (_svnU.length ? `（另有 ${_svnU.length} 个未版本控制）` : '') +
+        (D.symlink_hidden ? `（已隐藏 ${D.symlink_hidden} 项网络盘符号链接误报）` : '');
     return `<div class="hg-vcs-head"><span class="hg-vcs-badge ${esc(D.vcs)}">${esc(D.vcs)}</span>` +
       `<span class="hg-vcs-branch">⎇ ${esc(D.branch || '(未知)')}${esc(rev)}${esc(ab)}</span>` +
       `<span class="hg-vcs-count">${_chgTxt}</span></div>`;

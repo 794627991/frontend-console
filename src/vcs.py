@@ -130,6 +130,63 @@ def _tmp_materialize(data, name_hint):
     return path
 
 
+def _is_git_wc(d):
+    """有效 git 工作副本判定（vcs-report 问题1：空 .git 残留目录曾被
+    exists() 误判成 git 仓库——.svn 检查永远轮不到，g10_trunk 实锤）。
+    .git 是文件（worktree/submodule）看 gitdir: 前缀；是目录看 HEAD+objects"""
+    g = os.path.join(d, ".git")
+    if os.path.isfile(g):
+        try:
+            with open(g, encoding="utf-8", errors="replace") as f:
+                return f.read(16).startswith("gitdir:")
+        except OSError:
+            return False
+    return (os.path.isdir(g)
+            and os.path.exists(os.path.join(g, "HEAD"))
+            and os.path.isdir(os.path.join(g, "objects")))
+
+
+def _is_svn_wc(d):
+    """有效 svn 1.7+ 工作副本判定（.svn/wc.db 存在）"""
+    s_ = os.path.join(d, ".svn")
+    return os.path.isdir(s_) and os.path.exists(os.path.join(s_, "wc.db"))
+
+
+def _is_network_drive(path):
+    """网络盘判定（vcs-report 问题2/3：SMB 盘展开 Unix 符号链接成实体
+    文件——svn 报海量 M/~/! 误报）。DRIVE_REMOTE=4"""
+    try:
+        import ctypes
+        drive = os.path.splitdrive(os.path.abspath(path))[0]
+        if not drive or len(drive) != 2:
+            return False
+        return ctypes.windll.kernel32.GetDriveTypeW(drive + "\\") == 4
+    except Exception:
+        return False
+
+
+def _svn_symlink_paths(wc):
+    """svn 1.7+ 符号链接全量清单（一次 SQL，零进程创建）：NODES 表
+    svn:special 属性即符号链接（pristine 内容 'link <target>'）。
+    只读 URI 连接不锁库；SQLITE_BUSY（svn 正写）→ 空集=不过滤（安全侧）"""
+    db = os.path.join(wc, ".svn", "wc.db")
+    if not os.path.isfile(db):
+        return set()
+    try:
+        import sqlite3
+        con = sqlite3.connect("file:%s?mode=ro" % db.replace("\\", "/"),
+                              uri=True, timeout=3)
+        try:
+            rows = con.execute(
+                "SELECT local_relpath FROM NODES "
+                "WHERE op_depth=0 AND properties LIKE '%svn:special%'").fetchall()
+            return set(r[0].replace("\\", "/") for r in rows if r and r[0])
+        finally:
+            con.close()
+    except Exception:
+        return set()
+
+
 def _wc_root(path):
     """解析 path 所属工作副本。返回 (vcs, wc_dir, err)：
     - vcs ∈ {'git','svn'}，wc_dir 为仓库根绝对路径（登记根子树内）
@@ -140,9 +197,9 @@ def _wc_root(path):
                             "——请先在左侧文件树打开该工程目录")
     cur = p
     for _ in range(8):                      # 向上最多 8 跳找标记
-        if os.path.exists(os.path.join(cur, ".git")):
+        if _is_git_wc(cur):                 # vcs-report 问题1：结构验证（空 .git 残留不再误判）
             return "git", cur, None
-        if os.path.isdir(os.path.join(cur, ".svn")):
+        if _is_svn_wc(cur):
             return "svn", cur, None
         parent = os.path.dirname(cur)
         if parent == cur:
@@ -163,9 +220,9 @@ def _wc_root(path):
                     cand = os.path.abspath(cand)
                     pc = _under_roots_or_projects(cand)
                     if pc and (cand == pc or cand.startswith(pc + os.sep)):
-                        if os.path.exists(os.path.join(cand, ".git")):
+                        if _is_git_wc(cand):
                             return "git", cand, None
-                        if os.path.isdir(os.path.join(cand, ".svn")):
+                        if _is_svn_wc(cand):
                             return "svn", cand, None
                     return None, None, "仓库根（%s）在文件树登记根之外——请把仓库根目录加入左侧文件树" % cand
     return None, None, "该目录不是 git / svn 工作副本"
@@ -320,9 +377,28 @@ def _svn_changes(wc, depth=None):
                               **({"old_rel": old} if old else {})})
     except ET.ParseError as e:
         return None, "svn status 输出解析失败：%s" % e
+    # vcs-report 问题2/3（用户实锤：SMB 盘 218 条误报 vs Linux 9 条真实）：
+    # SMB 默认把 Unix 符号链接展开成实体文件——svn 报 M（内容=链接定义 vs
+    # 目标内容）；~/! 是类型变更/目标不可达。网络盘上按 wc.db 的 svn:special
+    # 清单过滤（绝不静默：symlink_hidden 透出，前端提示）
+    sym_hidden = 0
+    if files and _is_network_drive(wc):
+        sym = _svn_symlink_paths(wc)
+        sym_low = {x.lower() for x in sym}
+        kept = []
+        for f in files:
+            if f["st"] in ("!", "~"):        # !（missing）误报；~ 未入映射表防御
+                sym_hidden += 1
+                continue
+            if f["st"] == "M" and (f["rel"] in sym or f["rel"].lower() in sym_low):
+                sym_hidden += 1
+                continue
+            kept.append(f)
+        files = kept
     truncated = max(0, len(files) - FILES_CAP)
     return {"files": files[:FILES_CAP], "truncated": truncated,
-            "shallow": bool(depth)}, None
+            "shallow": bool(depth),
+            **({"symlink_hidden": sym_hidden} if sym_hidden else {})}, None
 
 
 def _svn_status(wc):
