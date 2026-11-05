@@ -198,7 +198,11 @@ function buildTerminal(portId, meta) {
     lineHeight: 1.0,
     cursorBlink: true,
     cursorStyle: 'bar',
-    scrollback: 100000,       // 大回滚缓冲，配合后端分页
+    // 内存实锤修复（用户 10.7GB 渲染进程）：DOM 渲染器把回滚区全量渲染成
+    // DOM 节点——100000 行 × 子代理多终端（20 轮审查输出）单终端即滚满
+    // 10 万节点（实测终端区 12.8 万节点）。降为 10000：屏内回滚近千屏仍
+    // 富余，更早历史走后端日志分页（本就为此设计）——DOM 上限降 90%
+    scrollback: 10000,
     allowProposedApi: true,
     convertEol: false,        // 保留原始 \r\n，设备输出原样
     theme: _termThemeFor(document.documentElement.getAttribute('data-theme') || 'deepblue'),
