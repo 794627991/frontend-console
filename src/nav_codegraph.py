@@ -32,8 +32,14 @@ def _run(args, root, timeout=3600):
     if not os.path.isdir(root):
         return -1, "目录不存在：%s" % root
     try:
+        # R26-1（高，实锤：GBK 解码崩 → 幽灵态+假成功）：codegraph 输出恒含
+        # UTF-8 非 ASCII（em dash/⚠/中文路径）——中文 Windows 默认 GBK 下
+        # reader 线程 UnicodeDecodeError → stdout=None → installed=True
+        # files=0 幽灵态；index --force 输出 not initialized 却 rc=0 假成功。
+        # 必须显式 UTF-8 + replace
         r = subprocess.run([exe] + args, cwd=root, capture_output=True,
-                           text=True, timeout=timeout,
+                           text=True, encoding="utf-8", errors="replace",
+                           timeout=timeout,
                            creationflags=0x08000000)
         return r.returncode, (r.stdout or "") + (r.stderr or "")
     except subprocess.TimeoutExpired:
@@ -47,10 +53,14 @@ def available():
 
 
 def status(root):
-    """解析 codegraph status → {ok, installed, files, nodes, edges, db_mb, err}"""
+    """解析 codegraph status → {ok, installed, files, nodes, edges, db_mb, err}
+    R26-3（实锤：向上递归误报）：codegraph 按祖先目录定位索引——子目录
+    status 会报父级的数字。先守卫本目录 .codegraph 存在才认 installed"""
     if not available():
         return {"ok": False, "installed": False,
                 "err": "codegraph 未安装（npm install -g codegraph）"}
+    if not os.path.isdir(os.path.join(root, ".codegraph")):
+        return {"ok": True, "installed": False}
     rc, out = _run(["status"], root, timeout=60)
     if rc != 0:
         # status 在未 init 时 rc 可能非 0 且输出 "Not initialized"

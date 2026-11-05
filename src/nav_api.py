@@ -233,7 +233,9 @@ def nav_cg_build():
 
 @nav_bp.route("/api/nav/cg_delete", methods=["POST"])
 def nav_cg_delete():
-    """删除工程的 codegraph 索引。body {root}"""
+    """删除工程的 codegraph 索引。body {root}
+    R26-4（实锤：缺运行互斥）：build 运行中可删——uninit 与 index 并发
+    操作同一 DB。对齐 nav_delete 的 R15-7 防护"""
     from src import nav_codegraph as cg
     d = request.get_json(force=True, silent=True) or {}
     root = str(d.get("root") or "").strip()
@@ -241,6 +243,9 @@ def nav_cg_delete():
         return jsonify({"ok": False, "err": "缺 root"}), 400
     if not _guard(root):
         return jsonify({"ok": False, "err": "目录不在文件树登记根内"}), 400
+    with _lock:
+        if _state["running"]:
+            return jsonify({"ok": False, "err": "索引任务运行中，稍后再删"}), 409
     ok, msg = cg.remove(root)
     return jsonify({"ok": ok, "err": "" if ok else msg, "msg": msg})
 

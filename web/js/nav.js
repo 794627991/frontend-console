@@ -629,9 +629,11 @@
       .then(r => r.json())
       .then(j => {
         if (!j.ok) { showBanner('启动失败：' + (j.err || ''), 4000, true); return; }
-        showBanner('codegraph 任务进行中（复用索引进度面板）', 2500);
-        // 复用 ctags 的进度面板：poll 同一通道
-        NavJump.ui(path);   // 重开弹层会显示进行中？—— poll 面板独立更直接
+        // R26-2（实锤：codegraph 任务 UI 零反馈）：真开进度面板——与
+        // ctags 建库同款（轮询同通道，日志/进度/取消/完成通知全有）
+        const panel = document.getElementById('navIdxPanel');
+        const card = panel && panel.firstChild;
+        if (card) _renderProgress(card, path);
       })
       .catch(e => showBanner('启动失败: ' + e, 4000, true));
   }
