@@ -478,6 +478,7 @@ async function _edInitContent(conn, content) {
       // 失败自动降级 textarea（vendor 缺失/异常时保可用）
       try {
         conn.monaco = await monacoCreate(conn.holder, typeof content === 'string' ? content : '', conn.meta.label, conn.extPath || null);
+        try { conn._m = conn.monaco.getModel(); } catch(_) {}
         conn.monaco.onDidChangeModelContent(() => { _edMarkDirty(conn); conn._edSrcVer = (conn._edSrcVer || 0) + 1; });
         conn.monaco.onDidChangeCursorPosition(() => _edUpdateInfo(conn));
       } catch(e) {
@@ -489,6 +490,7 @@ async function _edInitContent(conn, content) {
       try {
         // 分栏容器：预览列插到 ed-scroll 之后（HTML 已在 buildEditorTab 预置 ed-md-preview）
         conn.monaco = await monacoCreate(conn.holder, typeof content === 'string' ? content : '', conn.meta.label, conn.extPath || null);
+        try { conn._m = conn.monaco.getModel(); } catch(_) {}
         conn.monaco.onDidChangeModelContent(() => { _edMarkDirty(conn); conn._edSrcVer = (conn._edSrcVer || 0) + 1; _mdRenderPreview(conn); });
         conn.monaco.onDidChangeCursorPosition(() => _edUpdateInfo(conn));
         conn.monaco.onDidScrollChange(() => {   // 源码滚动 → 预览跟着滚
@@ -1314,12 +1316,20 @@ function _edCloseNow(conn) {
   if (conn.monaco) { try { conn.monaco.dispose(); } catch(e){} }
   // R15-2（实锤：model 陈旧覆盖磁盘）：a333 起带 uri 的 model 在全局
   // registry 复用——关 tab 必须 dispose，否则重开时 getModel 拿旧内容、
-  // 外部修改被旧值覆盖（数据丢失链）。md 分栏/其他实例同 uri 亦然
+  // 外部修改被旧值覆盖（数据丢失链）。md 分栏/其他实例同 uri 亦然。
+  // 内存诊断实锤补刀：无 extPath 的 inmemory model（新建文件/.bat 等）
+  // 此前永不 dispose——connections 清空后 model registry 仍残留（实测
+  // 0 tab 存活 2 model），长会话下 Monaco model/worker 累积。统一：uri
+  // model 按 extPath dispose；inmemory model 按实例当前 model dispose
   if (conn.monaco || conn.extPath) {
     try {
-      if (window.monaco && monaco.editor && conn.extPath) {
-        const _m = monaco.editor.getModel(monaco.Uri.file(conn.extPath));
-        if (_m) _m.dispose();
+      if (window.monaco && monaco.editor) {
+        if (conn.extPath) {
+          const _m = monaco.editor.getModel(monaco.Uri.file(conn.extPath));
+          if (_m) _m.dispose();
+        } else if (conn._m) {
+          conn._m.dispose();
+        }
       }
     } catch(e) {}
   }
