@@ -202,13 +202,49 @@ def _safe_ext_path(path, force=False):
     return p
 
 
-def _looks_binary(path, probe=8192):
-    """NUL 字节探测（git 同款判法）：开头 probe 字节含 \\x00 判二进制。"""
+# 明确的二进制后缀：即使内容碰巧接近纯文本（短 zip / 小图标 / 已压缩数据）
+# 也不该灌进文本编辑器——保存会破坏结构。只塞进编辑器，不涉及安全。
+_EXT_BIN = {
+    ".exe", ".dll", ".sys", ".ocx", ".lib", ".obj", ".o", ".a", ".so", ".bin",
+    ".zip", ".7z", ".rar", ".gz", ".tgz", ".bz2", ".xz", ".cab", ".msi", ".iso",
+    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp", ".tif", ".tiff",
+    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+    ".mp3", ".mp4", ".avi", ".mkv", ".wav", ".flac",
+    ".pyc", ".pyd", ".class", ".jar", ".woff", ".woff2", ".ttf", ".otf",
+    ".fcpk", ".db", ".sqlite", ".dat",
+}
+
+
+def _looks_binary(path, probe=32768):
+    """是不是二进制文件。
+
+    早期判据是「开头 8KB 含 \\x00 即二进制」（git 同款），对串口抓的 BSP 启动
+    日志误杀极重：采集链路偶发丢字节会在行首/行中插入零星 NUL，实测一份
+    121KB 的启动日志只有 661 个 NUL（0.54%），除此之外全是可读文本，用户
+    却连编辑器都打不开、被强行切到十六进制查看器。
+
+    现两道判据：
+      ① 后缀在 _EXT_BIN 里 → 直接二进制（内容碰巧像文本的 zip/小图不能开；
+         编辑器保存会重排字节，结构必坏）
+      ② 否则按「可读字符占比」判（同 uchardet / file(1) 的思路）：
+         可读 = tab/LF/CR + 0x20..0x7E + >=0x80（UTF-8/GBK 多字节高位）
+         占比 >= 90% 视为文本。
+    实测区分度：串口日志 99.4% / rg.exe 59% / ctags.exe 70%。只看前 32KB。
+
+    注意 UTF-16/32 仍由 _read_text 的 BOM 分支拒绝——那里判的是编码能否
+    正确往返，与这里「是不是给人看的文本」是两回事。
+    """
+    if _ext_of(str(path)) in _EXT_BIN:
+        return True
     try:
         with open(path, "rb") as f:
-            return b"\x00" in f.read(probe)
+            b = f.read(probe)
     except OSError:
         return True
+    if not b:
+        return False
+    ok = sum(1 for c in b if c in (9, 10, 13) or 0x20 <= c <= 0x7E or c >= 0x80)
+    return ok * 10 < len(b) * 9          # < 90% 才判二进制
 
 
 @edit_bp.route("/api/ed/list")
