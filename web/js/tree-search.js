@@ -175,7 +175,10 @@
         // 切树 sheet + reveal 定位
         const tab = document.querySelector('.sidebar-sheet-tab[data-sheet="tree"]');
         if (tab) tab.click();
-        if (typeof treeReveal === 'function') treeReveal(ev.path);
+        // a377R（第2轮审计）：必须走 window.treeReveal（包装版）——内部
+        // treeReveal 不带并发序号，快速连点多个文件头时先发慢完成的会把
+        // 高亮覆盖回旧目标。
+        if (typeof window.treeReveal === 'function') window.treeReveal(ev.path);
       };
       resEl.appendChild(head);
       curFileEl = head; curFileHead = head;

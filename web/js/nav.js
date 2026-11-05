@@ -103,13 +103,15 @@
     return true;
   }
 
-  function _navStep(dir) {
+  function _navStep(dir, budget) {
     // a375R（审计 P2-3，VSCode 同款）：目标文件已删除/不可达时，**跳过该项
     // 继续沿方向移动**，游标停在真正能到的那一项——不会出现「按了没反应，
-    // 还多开一个空 tab」。最多连跳 MAX 次防死循环。
+    // 还多开一个空 tab」。
+    // a377R（第2轮审计）：异步分支里递归 _navStep 时，`n` 是每次调用的局部
+    // 变量 → 重置为 0，理论上可无限递归。改为**传预算**，每次递归减一。
     const s = NAV_HIST.stack;
-    let n = 0;
-    while (s.length && n++ < NAV_HIST.MAX) {
+    let left = (budget === undefined ? NAV_HIST.MAX : budget);
+    while (s.length && left-- > 0) {
       const next = NAV_HIST.cur + dir;
       if (next < 0) { showBanner('已经是最早的位置', 1800); return; }
       if (next > s.length - 1) { showBanner('已经是最新的位置', 1800); return; }
@@ -122,9 +124,10 @@
       }
       if (r && typeof r.then === 'function') {
         // 异步通道：拿到结果后再决定是否继续跳（先返回，避免卡住按键）
+        // 预算一并传下去——异步失败继续找的时候不能再从 MAX 重新数
         r.then(function (ok) {
-          if (!ok) { _navStep(dir); }
-        });
+          if (!ok) { _navStep(dir, left); }
+        }).catch(function () {});
       }
       return;
     }
