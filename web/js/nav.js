@@ -552,29 +552,9 @@
       _closePanel();
     };
     btns.insertBefore(bDel, btns.lastChild);
-    // 批3：nm 清单可选导入（Linux 侧 find -name '*.o' | xargs nm -A
-    // --defined-only > syms.txt 拷回后导入——符号级消歧对齐真机）
-    const bNm = _h('button', '📥 导入 nm 清单…');
-    bNm.className = 'btn ghost';
-    bNm.onclick = async () => {
-      let f = '';
-      try {
-        if (window.pywebview && pywebview.api && pywebview.api.pick_any) {
-          const r = await pywebview.api.pick_any();
-          f = (typeof r === 'string') ? r : ((r && r.path) || '');
-        }
-      } catch (_) {}
-      if (!f) f = window.prompt('nm -A 清单文件路径（syms.txt）：', '') || '';
-      if (!f) return;
-      try {
-        const r = await fetch('/api/nav/import_nm', { method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ root: path, file: f.trim() }) });
-        const d = await r.json();
-        showBanner(d.ok ? ('nm 清单导入完成：' + d.msg) : ('导入失败：' + (d.err || d.msg)), 5000, !d.ok);
-      } catch (e) { showBanner('导入失败: ' + e, 4000, true); }
-    };
-    btns.insertBefore(bNm, btns.lastChild);
+    // nm 清单导入按钮已删（用户实锤「说好全自动怎么还要导入」）：符号级
+    // 消歧的主路是建库时 pyelftools 直读 .o——全自动；Linux 侧导清单的
+    // 边缘场景不值得一个按钮（API 端点保留，需要时可程序化调用）
     btns.insertBefore(bRe, btns.lastChild);
     // ---- Claude 代码图（codegraph，喂 claude 会话；与上方 ctags 跳转索引独立）----
     _renderCodegraph(st, path, btns);
