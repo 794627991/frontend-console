@@ -248,14 +248,24 @@ function _stNavKeysCard(pane) {
     } catch (e) { showBanner('保存失败: ' + e, 4000, true); }
   }
   save.onclick = saveNow;
-  // a378（用户实锤对齐丑）：save/reset 原混在键位 wrap 行里——键位是
-  // 「标签+按钮」列且 6+ 列必换行，跨行后按钮浮在行中错位。独立成
-  // 右对齐操作行（与设置页其他保存按钮同风格），键位区纯键位
-  const act = document.createElement('div');
-  act.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:10px;';
-  act.appendChild(save);
-  act.appendChild(reset);
-  row.after(act);
+  // a378R（用户实锤：恢复默认要与其他键位同水平线对齐）：save/reset 包成
+  // 与键位同款「标签+按钮」列放进同一 wrap 流——换行后与相邻键位（前进）
+  // 自然同行对齐，不再是独立行甩右侧。save 初始 display:none 不占位，
+  // 改动时出现挤入流内
+  const _actCol = (btn) => {
+    const w = document.createElement('div');
+    w.style.cssText = 'display:flex;flex-direction:column;gap:4px;align-items:center;';
+    const ph = document.createElement('span');
+    ph.textContent = '\u00a0';
+    ph.style.cssText = 'font-size:12px;color:var(--muted);';   // 与键位标签同款字号=同高
+    w.appendChild(ph); w.appendChild(btn);
+    btn.style.minWidth = '120px';   // 与键位按钮同宽，行内齐整
+    const keyBtn0 = row.querySelector('button.btn');
+    if (keyBtn0) btn.style.height = keyBtn0.offsetHeight + 'px';   // 同高（↺ glyph 行高偏 1px，运行时对齐自适应）
+    row.appendChild(w);
+  };
+  _actCol(save);
+  _actCol(reset);
 }
 
 function _stRenderAppearancePane(pane) {
