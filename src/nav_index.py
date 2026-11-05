@@ -174,6 +174,9 @@ def status(root):
             "o_count": meta.get("o_count", 0),
             "size": sum(sizes.values()),
             "root_reachable": os.path.isdir(meta.get("root", root)),
+            # R35-5（实锤：UI 档位下拉数据链断裂）：backend 必须下发
+            "backend": meta.get("backend", ""),
+            "backend_auto": bool(meta.get("backend_auto")),
         }
     return out
 
@@ -656,10 +659,12 @@ def _build_tag_db(tags_path, db_path, say=None, prog=None):
         if rows:
             con.executemany("INSERT INTO t VALUES(?,?,?,?)", rows)
         con.commit()
-        prog(96, "sqlite 建索引")
+        if prog:
+            prog(96, "sqlite 建索引")
         say("  建索引（name/path）…")
         con.execute("CREATE INDEX idx_name ON t(name)")
         con.execute("CREATE INDEX idx_path ON t(path)")
+        con.execute("CREATE INDEX idx_lower ON t(lower(name))")   # R35-1：不敏感前缀/子串
         con.commit()
     finally:
         con.close()
@@ -682,6 +687,16 @@ class _TagDB(object):
         except Exception:
             pass
         self._lock = threading.Lock()
+        # R35-4：构造即探测（损坏 db/缺表立即失败 → _get_tagdb 回退）。
+        # 探测失败必须自关（fd 泄漏会锁住 db 文件——WinError 32 实锤）
+        try:
+            self._con.execute("SELECT 1 FROM t LIMIT 1").fetchall()
+        except Exception:
+            try:
+                self._con.close()
+            except Exception:
+                pass
+            raise
 
     def _q(self, sql, args=()):
         with self._lock:
@@ -696,16 +711,29 @@ class _TagDB(object):
                        "WHERE lower(name)=?", (name.lower(),))
 
     def prefix(self, q, limit):
+        # R35-1：大小写不敏感前缀（原全 dict 行为同款——B-tree 范围扫没了对
+        # 应形态，lower 截断比较走 idx_lower；无该索引的旧库退全表扫仍可用）
         return self._q("SELECT name, path, line, kind FROM t "
-                       "WHERE name>=? AND name<? LIMIT ?",
-                       (q, q + "\uffff", limit))
+                       "WHERE substr(lower(name), 1, ?) = ? LIMIT ?",
+                       (len(q), q.lower(), limit))
 
     def substring(self, q, limit):
         return self._q("SELECT name, path, line, kind FROM t "
-                       "WHERE name LIKE ? LIMIT ?", ("%" + q + "%", limit))
+                       "WHERE lower(name) LIKE ? LIMIT ?",
+                       ("%" + q.lower() + "%", limit))
 
     def by_path(self, path):
-        return self._q("SELECT name, line, kind FROM t WHERE path=?", (path,))
+        # R35-6：tags 内为绝对正斜杠原样形态——反斜杠/盘符大小写形态兜底
+        rows = self._q("SELECT name, line, kind FROM t WHERE path=?", (path,))
+        if rows:
+            return rows
+        p2 = path.replace(os.sep, "/")
+        if p2 != path:
+            rows = self._q("SELECT name, line, kind FROM t WHERE path=?", (p2,))
+            if rows:
+                return rows
+        return self._q("SELECT name, line, kind FROM t WHERE path=?",
+                       (os.path.normcase(p2),))
 
     def files(self):
         return set(r[0] for r in self._q("SELECT DISTINCT path FROM t"))
@@ -873,6 +901,10 @@ def _open_tags(ld):
 
 
 def _get_tagdb(ld):
+    """R35-3（并发三缺陷重写）：①缓存命中锁内直返；②竞态双建时后来者
+    弃用自建（关自己的）；③换库不立即关旧连接（在途查询可能持有——
+    close 会杀在途 execute）——挂 orphan 列表，_close_tagdb 统一回收
+    （切库低频，进程生命周期最多滞留数个连接，sqlite fd 便宜）"""
     db_p = os.path.join(ld, "tags.db")
     tags_p = os.path.join(ld, "tags")
     if not os.path.isfile(db_p) or not os.path.isfile(tags_p):
@@ -882,22 +914,53 @@ def _get_tagdb(ld):
     except OSError:
         return None
     with _cache_lock:
-        if _tagdb_cache["key"] == key:
+        if _tagdb_cache["key"] == key and _tagdb_cache["db"]:
             return _tagdb_cache["db"]
-    old = _tagdb_cache["db"]
-    db = _TagDB(db_p)
+    db = None
+    try:
+        db = _TagDB(db_p)
+    except Exception:
+        # R35-4（实锤：db 损坏不回退——注释只承诺"缺失"）：构造/探测失败
+        # 返回 None → _open_tags 回退 readtags（四接口不再 DatabaseError 500）
+        return None
     with _cache_lock:
+        if _tagdb_cache["key"] == key and _tagdb_cache["db"]:
+            db.close()          # 他者先到——弃用自己的
+            return _tagdb_cache["db"]
+        if _tagdb_cache["db"]:
+            _tagdb_orphans.append(_tagdb_cache["db"])
         _tagdb_cache["key"] = key
         _tagdb_cache["db"] = db
-    if old:
-        old.close()
     return db
+
+
+_tagdb_orphans = []
+
+
+def _close_tagdb():
+    """R35-2（实锤：切档删 tags.db 被自身 mmap 连接挡死 WinError 32）：
+    关闭当前+孤儿连接并清缓存——reindex 删 db / build 重建前必调"""
+    with _cache_lock:
+        cur = _tagdb_cache["db"]
+        _tagdb_cache["key"] = None
+        _tagdb_cache["db"] = None
+        orphans = list(_tagdb_orphans)
+        del _tagdb_orphans[:]
+    for d in ([cur] if cur else []) + orphans:
+        try:
+            d.close()
+        except Exception:
+            pass
 
 
 _meta_cache_for_backend = {"key": None, "data": None}
 
 
 def _invalidate_cache():
+    try:
+        _close_tagdb()   # R35-2：索引重建后旧连接必须先关（Windows 删 db 挡死）
+    except Exception:
+        pass
     with _cache_lock:
         _tags_cache["key"] = None
         _symbols_cache["key"] = None
@@ -1014,16 +1077,20 @@ def symbols(file_path, q, limit=50, **kwargs):
             out.append({"name": name2, "rel": _base,
                         "path": file_path, "line": lineno2, "kind": kind2,
                         "in_build": None, "dist": 0})
-        if not out and _be.by_path(target.replace("/", os.sep)):
-            pass   # 反斜杠形态兜底已由 by_path 内部 normcase 处理（memory 档）
         out.sort(key=lambda c: c["line"])
         return {"ok": True, "items": out[:limit], "mode": "file"}
     if not qlow:
         return {"ok": True, "items": [], "mode": "empty"}   # 空查询不给全量
-    exact = [qlow] if _be.lookup(qlow) else []
-    prefix = list(dict.fromkeys(r[0] for r in _be.prefix(qlow, limit * 2)))
-    substr = [] if (len(exact) + len(prefix) >= limit) else         list(dict.fromkeys(r[0] for r in _be.substring(qlow, limit * 2)))
-    substr = [n2 for n2 in substr if n2 not in set(exact) and n2 not in set(prefix)]
+    # R35-1（实锤：三分类从大小写不敏感变敏感——q='Application' 零结果）：
+    # exact 用 lookup_ci（原名族），prefix/substring 后端按 lower 比对
+    _exact_names = {r[0] for r in _be.lookup_ci(qlow)}
+    exact = list(_exact_names)
+    prefix = [n2 for n2 in dict.fromkeys(
+        r[0] for r in _be.prefix(qlow, limit * 2)) if n2 not in _exact_names]
+    substr = [] if (len(exact) + len(prefix) >= limit) else \
+        list(dict.fromkeys(r[0] for r in _be.substring(qlow, limit * 2)))
+    _seen = _exact_names | set(prefix)
+    substr = [n2 for n2 in substr if n2 not in _seen]
     out = []
 
     def push(name):
