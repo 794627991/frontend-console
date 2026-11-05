@@ -548,7 +548,8 @@ def build(root, log=None, progress=None, should_cancel=None):
 
 # ------------------------------------------------------------------ 查询
 
-_tags_cache = {"key": None, "data": None}   # (lib, mtime) -> {name:[entries]}
+_tags_cache = {"key": None, "data": None}
+_file_sym_cache = {"key": None, "inv": {}}   # R33-1：file→[(name,line,kind)] 倒排（key 同 _tags_cache）   # (lib, mtime) -> {name:[entries]}
 _tags_files_cache = {"key": None, "set": set()}   # R28-4：references 用文件路径集（mtime 缓存）
 _symbols_cache = {"key": None, "data": None}
 _manifest_cache = {"key": None, "data": None}
@@ -657,20 +658,32 @@ def symbols(file_path, q, limit=50, **kwargs):
     # a383（Ctrl+Shift+O 文件内符号）：scope=file 精确到本文件，空查询给
     # 全量（按行号排——文件大纲语义），有 q 时子串过滤
     if kwargs.get("scope") == "file":
+        # R33-1（P2 实锤：110MB 库全 tags 遍历+每条目 normpath，面板每键
+        # 0.5-2.2s）：file→符号倒排缓存（与 _tags_cache 同 mtime 键——tags
+        # 重建自动失效），一次遍历换 O(本文件符号) 查询
+        global _file_sym_cache
+        with _cache_lock:
+            _fk = _tags_cache["key"]
+            if _file_sym_cache["key"] != _fk:
+                inv = {}
+                for name2, entries in tags.items():
+                    for path2, lineno2, kind2 in entries:
+                        k2 = os.path.normcase(os.path.normpath(path2))
+                        inv.setdefault(k2, []).append((name2, lineno2, kind2))
+                _file_sym_cache = {"key": _fk, "inv": inv}
         target = os.path.normcase(os.path.normpath(file_path))
+        _base = os.path.basename(file_path)
         out = []
-        for name in tags:
-            for path, lineno, kind in tags[name]:
-                if os.path.normcase(os.path.normpath(path)) != target:
-                    continue
-                if not kind or name == os.path.basename(path):
-                    break   # extras=f 的文件名自条目（kind 空）不入大纲
-                if qlow and qlow not in name.lower():
-                    break
-                out.append({"name": name, "rel": os.path.basename(path),
-                            "path": path, "line": lineno, "kind": kind,
-                            "in_build": None, "dist": 0})
-                break
+        for name2, lineno2, kind2 in _file_sym_cache["inv"].get(target, []):
+            # R33-2（实锤：同名多定义只显第一处）：条件定义/重构残留的
+            # 同名多处全收（不再首条即断）；kind 空的文件名自条目剔除
+            if not kind2 or name2 == _base:
+                continue
+            if qlow and qlow not in name2.lower():
+                continue
+            out.append({"name": name2, "rel": _base,
+                        "path": file_path, "line": lineno2, "kind": kind2,
+                        "in_build": None, "dist": 0})
         out.sort(key=lambda c: c["line"])
         return {"ok": True, "items": out[:limit], "mode": "file"}
     if not qlow:

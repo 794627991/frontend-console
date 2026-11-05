@@ -256,8 +256,7 @@ function _stNavKeysCard(pane) {
       const j = await r.json();
       if (!j.ok) { showBanner('保存失败：' + (j.err || ''), 4000, true); return; }
       if (NJ && NJ.applyKeys) NJ.applyKeys(keys);
-      showBanner('跳转快捷键已生效：' + lbl(keys.def) + ' / ' + lbl(keys.ref) + ' / '
-                 + lbl(keys.sym) + ' / ' + lbl(keys.back) + ' / ' + lbl(keys.fwd), 4000);
+      showBanner('跳转快捷键已生效：' + _ORDER.map(k => lbl(keys[k])).join(' / '), 4000);   // R33-4：全键拼（fsym 曾漏）
       _showSave(false);
       _ORDER.forEach(k => fields[k].textContent = lbl(keys[k]));
     } catch (e) { showBanner('保存失败: ' + e, 4000, true); }

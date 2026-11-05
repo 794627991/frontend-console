@@ -370,18 +370,20 @@
           return;
         }
         all = j.items;
+        _full = j.items;   // R33-1：全量留底供本地过滤
         render();
       }).catch(() => {});
+    // R33-1（实锤：每键打后端，110MB 库每发 0.5-2.2s）：首拉已取全量
+    // （limit 500），输入改为本地过滤（与注释本意一致）——0 后端流量
+    let _full = [];
     input.addEventListener('input', function () {
-      const q = input.value.trim().toLowerCase();
-      selIdx = 0;
-      fetch('/api/nav/symbols?scope=file&file=' + encodeURIComponent(file) +
-            '&q=' + encodeURIComponent(q))
-        .then(r => r.json()).then(j => {
-          if (input.value.trim().toLowerCase() !== q) return;
-          all = (j && j.items) || [];
-          render();
-        }).catch(() => {});
+      if (_symTimer) clearTimeout(_symTimer);
+      _symTimer = setTimeout(() => {
+        const q = input.value.trim().toLowerCase();
+        selIdx = 0;
+        all = q ? _full.filter(it => it.name.toLowerCase().includes(q)) : _full;
+        render();
+      }, 160);
     });
     input.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') { e.stopPropagation(); _closeSym(); }
@@ -605,7 +607,9 @@
         const md = { value: '' };
         md.value = '**' + word.word + '** `' + (c.kind || 'symbol') + '`' +
           (c.in_build === true ? ' ✓编译内' : '') + (c.file_local ? ' ·本文件' : '') + '\n\n' +
-          '```\n' + (c.snippet || '') + '\n```\n\n' +
+          // R33-3（实锤：snippet 内 0 缩进裸 ``` 截断代码块——CommonMark
+          // 闭合栏不得长于开栏）：四反引号围栏，源码内 ``` 无法误闭合
+          '````\n' + (c.snippet || '') + '\n````\n\n' +
           '`' + c.rel + ' :' + c.line + '`';
         return { range: new monaco.Range(position.lineNumber, word.startColumn,
                                          position.lineNumber, word.endColumn),
