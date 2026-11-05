@@ -33,12 +33,31 @@ const MONACO_LANG = {
   '.graphql': 'graphql', '.gql': 'graphql', '.ipynb': 'json', '.nix': 'plaintext',
 };
 
-function monacoLangFor(name) {
+function monacoLangFor(name, override) {
+  // a376（用户需求：无后缀文件手动选语言）：override=用户手动选择/
+  // shebang 探测结果，优先于按后缀判定；null/空=纯自动
+  if (override) return override;
   const n = (name || '').toLowerCase();
   if (n === 'makefile' || n === 'readme') return 'makefile';
   const i = n.lastIndexOf('.');
   return MONACO_LANG[i > 0 ? n.slice(i) : ''] || 'plaintext';
 }
+
+// a376：shebang 自动探测——无后缀脚本（S03partitions 这类）首行声明解释器
+// 时自动按对应语言渲染。仅在后缀判不出真语言（plaintext）时启用，
+// 有后缀文件行为不变
+function detectLangByShebang(text) {
+  const first = String(text || '').split('\n', 1)[0] || '';
+  if (!/^#!/.test(first)) return null;
+  if (/\b(bash|zsh|ksh|ash|dash|sh)\b/.test(first)) return 'shell';
+  if (/\bpython/.test(first)) return 'python';
+  if (/\bperl\b/.test(first)) return 'perl';
+  if (/\bnode\b/.test(first)) return 'javascript';
+  if (/\bruby\b/.test(first)) return 'ruby';
+  if (/\blua\b/.test(first)) return 'lua';
+  return null;
+}
+window.detectLangByShebang = detectLangByShebang;
 
 // AMD loader：路径指向本地 /vendor/monaco/min/vs（与 npm 包目录结构一致）
 // worker 走 MainThread chunk（Cross-origin 隔离 off 下唯一可行方案）
@@ -105,7 +124,7 @@ function monacoSyncTheme() {
 // holder: 容器 div；返回 monaco editor 实例（调用方存 conn.monaco）
 // absPath（a333）：文件绝对路径——传则建带 uri 的 model（跳转 provider
 // 靠 model.uri 还原文件路径做组件上下文/库反查）；无则旧行为（inmemory）
-async function monacoCreate(holder, value, langName, absPath) {
+async function monacoCreate(holder, value, langName, absPath, langOverride) {
   // v2.2.2：引擎未就绪时的加载占位——exe(onefile) 下资源从 TEMP 解压目录
   // 读，慢机器首开引擎要数秒，空容器看着像白屏（同事机实锤「白屏、切一下
   // 别处才刷出来」）。占位条明示加载中，加载完自动移除
@@ -132,13 +151,13 @@ async function monacoCreate(holder, value, langName, absPath) {
         } else {
           model = monaco.editor.createModel(
             typeof value === 'string' ? value : '',
-            monacoLangFor(langName), uri);
+            monacoLangFor(langName, langOverride), uri);
         }
       } catch (_) { model = null; }
     }
     const opts = {
     value: typeof value === 'string' ? value : '',
-    language: monacoLangFor(langName),
+    language: monacoLangFor(langName, langOverride),
     theme: _monacoThemeName(),
     automaticLayout: true,        // 容器尺寸变化自动重排（分栏/折叠免手动 layout）
     fontSize: 13,

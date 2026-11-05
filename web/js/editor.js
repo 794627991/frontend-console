@@ -131,6 +131,32 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
         </select>
         <select name="ed_mdtheme" class="lv-btn ed-mdtheme-sel" data-ed-mdtheme title="MD 预览配色（即时生效）" style="display:none;">
         </select>
+        <select name="ed_lang" class="lv-btn ed-lang-sel" data-ed-lang title="语法高亮语言（覆盖按后缀自动判定；按文件路径记忆）" style="display:none;">
+          <option value="">语言：自动</option>
+          <option value="shell">Shell</option>
+          <option value="python">Python</option>
+          <option value="c">C</option>
+          <option value="cpp">C++</option>
+          <option value="makefile">Makefile</option>
+          <option value="javascript">JavaScript</option>
+          <option value="typescript">TypeScript</option>
+          <option value="json">JSON</option>
+          <option value="yaml">YAML</option>
+          <option value="xml">XML</option>
+          <option value="html">HTML</option>
+          <option value="css">CSS</option>
+          <option value="sql">SQL</option>
+          <option value="java">Java</option>
+          <option value="rust">Rust</option>
+          <option value="go">Go</option>
+          <option value="bat">Batch</option>
+          <option value="powershell">PowerShell</option>
+          <option value="perl">Perl</option>
+          <option value="lua">Lua</option>
+          <option value="markdown">Markdown</option>
+          <option value="ini">INI</option>
+          <option value="plaintext">纯文本</option>
+        </select>
         <span class="lv-info" data-ed-info></span>
         <span class="ed-path" data-ed-path title=""></span>
       </div>
@@ -186,6 +212,8 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
     dirty: false,
     extPath: extPath || null,  // 外部绝对路径：保存写回原文件，另存为/重命名禁用
     usedEnc: null,             // 打开文件实际用的编码（编码下拉切换时重读）
+    langSel: wrap.querySelector('[data-ed-lang]'),   // a376：语言下拉（手动覆盖高亮）
+    langOverride: null,        // a376：null=自动（后缀/shebang）；字符串=用户手选 Monaco 语言 ID
     fileMtime: fileMtime || null,   // 磁盘 mtime 基准（后台改动检测，_edWatchDisk 用）
     diskWatchTimer: null,      // 检测定时器（tab 可见才开，切走停——流畅守则）
     diskWatchAsked: null,      // 已弹窗提醒的 mtime（同一次外部改动不重复弹）
@@ -279,6 +307,19 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
   // 初始化编辑区（异步：Editor.js 实例化）
   // v3.5.297：.note 正文 Ctrl+点击 [[双链]] 跳转（notes-nav.js，捕获期委托）
   if (typeof nnBindWikiClick === 'function') { try { nnBindWikiClick(conn); } catch (_) {} }
+  // a376：高亮语言决策——手动记忆（按路径 localStorage）> shebang 探测
+  // （仅后缀判不出真语言=plaintext 时启用，有后缀文件行为不变）> 后缀自动
+  if (!conn.isNote) {
+    let _ov = null;
+    if (conn.extPath) {
+      try { _ov = (JSON.parse(localStorage.getItem('hg-ed-lang-override') || '{}') || {})[conn.extPath] || null; } catch (_) {}
+    }
+    if (!_ov && typeof content === 'string' && typeof detectLangByShebang === 'function'
+        && typeof monacoLangFor === 'function' && monacoLangFor(conn.meta.label) === 'plaintext') {
+      _ov = detectLangByShebang(content);
+    }
+    conn.langOverride = _ov || null;
+  }
   _edInitContent(conn, content);
   // a238 P2-4：损坏的 .note 以空笔记打开后强制置脏（关闭/切换时必弹确认）+
   // 显式警示——否则条件反射 Ctrl+S 会原子覆盖掉磁盘上可救的半截 JSON
@@ -375,6 +416,32 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
 }
 
 // ---- 编辑区初始化：.note 建 Editor.js；.txt 建 textarea ----
+// a376：语法高亮语言下拉——手动覆盖按后缀的自动判定（无后缀脚本场景）。
+// 切换即 setModelLanguage 生效（不重建编辑器）；按 extPath 记忆
+// （localStorage hg-ed-lang-override），「自动」清记忆。幂等：显示态即已绑
+function _edBindLangSel(conn) {
+  const sel = conn.langSel;
+  if (!sel || !conn.monaco) return;
+  if (sel.dataset.bound) { sel.value = conn.langOverride || ''; return; }
+  sel.dataset.bound = '1';
+  sel.style.display = '';
+  sel.value = conn.langOverride || '';
+  sel.onchange = () => {
+    conn.langOverride = sel.value || null;
+    if (conn.extPath) {
+      try {
+        const m = JSON.parse(localStorage.getItem('hg-ed-lang-override') || '{}') || {};
+        if (sel.value) m[conn.extPath] = sel.value; else delete m[conn.extPath];
+        localStorage.setItem('hg-ed-lang-override', JSON.stringify(m));
+      } catch (_) {}
+    }
+    try {
+      window.monaco.editor.setModelLanguage(conn.monaco.getModel(),
+        monacoLangFor(conn.meta.label, conn.langOverride));
+    } catch (_) {}
+  };
+}
+
 async function _edInitContent(conn, content) {
   if (conn.isNote) {
     try {
@@ -483,10 +550,11 @@ async function _edInitContent(conn, content) {
       // Monaco（VSCode 同款内核）：语法高亮/内置查找替换/行号/minimap
       // 失败自动降级 textarea（vendor 缺失/异常时保可用）
       try {
-        conn.monaco = await monacoCreate(conn.holder, typeof content === 'string' ? content : '', conn.meta.label, conn.extPath || null);
+        conn.monaco = await monacoCreate(conn.holder, typeof content === 'string' ? content : '', conn.meta.label, conn.extPath || null, conn.langOverride || null);
         try { conn._m = conn.monaco.getModel(); } catch(_) {}
         conn.monaco.onDidChangeModelContent(() => { _edMarkDirty(conn); conn._edSrcVer = (conn._edSrcVer || 0) + 1; });
         conn.monaco.onDidChangeCursorPosition(() => _edUpdateInfo(conn));
+        _edBindLangSel(conn);   // a376：语言下拉显示+绑定（幂等）
       } catch(e) {
         showBanner('Monaco 加载失败，已降级纯文本：' + e, 6000, true);
         conn.monaco = null;
@@ -495,10 +563,11 @@ async function _edInitContent(conn, content) {
       // .md：Monaco 源码编辑 + markdown-it 实时预览分栏
       try {
         // 分栏容器：预览列插到 ed-scroll 之后（HTML 已在 buildEditorTab 预置 ed-md-preview）
-        conn.monaco = await monacoCreate(conn.holder, typeof content === 'string' ? content : '', conn.meta.label, conn.extPath || null);
+        conn.monaco = await monacoCreate(conn.holder, typeof content === 'string' ? content : '', conn.meta.label, conn.extPath || null, conn.langOverride || null);
         try { conn._m = conn.monaco.getModel(); } catch(_) {}
         conn.monaco.onDidChangeModelContent(() => { _edMarkDirty(conn); conn._edSrcVer = (conn._edSrcVer || 0) + 1; _mdRenderPreview(conn); });
         conn.monaco.onDidChangeCursorPosition(() => _edUpdateInfo(conn));
+        _edBindLangSel(conn);   // a376：语言下拉显示+绑定（幂等）
         conn.monaco.onDidScrollChange(() => {   // 源码滚动 → 预览跟着滚
           // v2.25：这次源码滚动若是「预览→源码」同步自己写的，别再回灌预览——
           // 回灌按标题锚点定位，会把用户在两锚之间的自由位置拽回锚点顶
