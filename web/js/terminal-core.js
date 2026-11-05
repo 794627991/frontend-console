@@ -198,11 +198,12 @@ function buildTerminal(portId, meta) {
     lineHeight: 1.0,
     cursorBlink: true,
     cursorStyle: 'bar',
-    // 内存实锤修复（用户 10.7GB 渲染进程）：DOM 渲染器把回滚区全量渲染成
-    // DOM 节点——100000 行 × 子代理多终端（20 轮审查输出）单终端即滚满
-    // 10 万节点（实测终端区 12.8 万节点）。降为 10000：屏内回滚近千屏仍
-    // 富余，更早历史走后端日志分页（本就为此设计）——DOM 上限降 90%
-    scrollback: 10000,
+    // scrollback 回滚深度 = 单终端 DOM 节点上限（xterm DOM 渲染器把回滚区
+    // 全量渲染成节点）。10.7GB 事故实测：多终端 × 长输出（claude CLI 跑
+    // 20 轮子代理审查）单终端滚到 5.5 万节点、终端区合计 12.8 万。
+    // 用户拍板（2026-11-05）：保留 10 万行长回滚，内存控制靠用后关闭
+    // 终端 tab（关闭即删 DOM，实测 CPU 立即恢复；进程内存需重启工具归还）
+    scrollback: 100000,
     allowProposedApi: true,
     convertEol: false,        // 保留原始 \r\n，设备输出原样
     theme: _termThemeFor(document.documentElement.getAttribute('data-theme') || 'deepblue'),
