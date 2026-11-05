@@ -1383,7 +1383,10 @@ def api_theme():
                                                          "ref": "shift+f12",
                                                          "sym": "ctrl+t"}),
                         # a286: Tab 栏模式——flat=Chrome 平铺收缩 / drawer=分组抽屉
-                        "tab_mode": cfg.get("tab_mode", "flat")})
+                        "tab_mode": cfg.get("tab_mode", "flat"),
+                        # a357：CPU 优先提升（perf_boost）——level: normal/above_normal/high
+                        "boost": {"level": (cfg.get("boost") or {}).get("level", "normal"),
+                                  "power_plan": bool((cfg.get("boost") or {}).get("power_plan"))}})
     data = request.get_json(force=True) or {}
     if "perf_mode" in data:
         _save_config({**_load_config(), "perf_mode": bool(data["perf_mode"])})
@@ -1478,6 +1481,15 @@ def api_theme():
             return jsonify({"ok": False, "err": "三个跳转快捷键不能为空且互不冲突"}), 400
         with _nav_keys_lock:
             _save_config({**_load_config(), "nav_keys": _nk_out})
+    # a357：CPU 优先提升——白名单档位 + 即时应用（含电源计划还原语义）
+    if "boost" in data and isinstance(data["boost"], dict):
+        from src import perf_boost as _pb
+        lv = str(data["boost"].get("level") or "normal")
+        if lv not in ("normal", "above_normal", "high"):
+            return jsonify({"ok": False, "err": "boost.level 只认 normal/above_normal/high"}), 400
+        pp = bool(data["boost"].get("power_plan"))
+        _pb.apply(lv, pp)
+        _save_config({**_load_config(), "boost": {"level": lv, "power_plan": pp}})
     if "custom_theme" in data and isinstance(data["custom_theme"], dict):
         # v2.25 自定义主题调色：键白名单 + 值格式校验（#rgb/#rrgggb、light 布尔），
         # 防 config 被塞脏数据（与 term_keys 白名单同思路）

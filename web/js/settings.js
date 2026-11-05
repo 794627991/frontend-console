@@ -106,6 +106,43 @@ function _stRenderHelpPane(pane) {
 }
 
 // ---- 外观子页：风格（v4.1 桥接维度）+ 换肤（原 theme 页整块搬入）+ 界面缩放 ----
+// a357：CPU 优先卡片（perf_boost）——三档 + 电源计划复选，POST 即时应用
+function _stBoostCard(pane) {
+  const row = pane.querySelector('#stBoostRow');
+  const chk = pane.querySelector('#stBoostPower');
+  if (!row || !chk) return;
+  const OPTS = [['normal', '关（Normal）'], ['above_normal', '标准（推荐）'], ['high', '高（激进）']];
+  let cur = 'normal';
+  const btns = {};
+  const sync = () => Object.entries(btns).forEach(([lv, b]) =>
+    b.classList.toggle('active', lv === cur));
+  OPTS.forEach(([lv, label]) => {
+    const b = document.createElement('button');
+    b.className = 'btn ghost style-chip';
+    b.textContent = label;
+    b.onclick = async () => {
+      cur = lv;
+      sync();
+      try {
+        const r = await fetch('/api/theme', { method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ boost: { level: cur, power_plan: chk.checked } }) });
+        const j = await r.json();
+        showBanner(j.ok ? 'CPU 优先已应用：' + label : ('应用失败：' + (j.err || '')), 3000, !j.ok);
+      } catch (e) { showBanner('应用失败: ' + e, 3000, true); }
+    };
+    btns[lv] = b;
+    row.appendChild(b);
+  });
+  chk.onchange = () => btns[cur] && btns[cur].click();
+  // 现值
+  fetch('/api/theme').then(r => r.json()).then(j => {
+    if (j.boost && j.boost.level) { cur = j.boost.level; sync(); }
+    if (j.boost) chk.checked = !!j.boost.power_plan;
+  }).catch(() => {});
+  sync();
+}
+
 // a346：代码跳转快捷键卡片（外观 pane 尾部）——三个录制框：点击→按下
 // 组合键→显示；保存 POST /api/theme {nav_keys} → NavJump.applyKeys 热应用
 function _stNavKeysCard(pane) {
@@ -243,6 +280,15 @@ function _stRenderAppearancePane(pane) {
       <div class="dd-label">代码跳转快捷键</div>
       <div class="dd-row" style="display:flex;gap:10px;margin-top:8px;flex-wrap:wrap;align-items:center;" id="stNavKeysRow"></div>
       <div class="dd-sub">编辑器内：转到定义 / 查找所有引用 / 工作区符号搜索（按符号名搜全库，跨文件找函数）。点击输入框后按下新组合键，保存即时生效；编辑器右键菜单同样可用这三项。</div>
+    </div>
+    <div class="dd-cur" style="margin-top:8px;">
+      <div class="dd-label">CPU 优先</div>
+      <div class="dd-row" style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;" id="stBoostRow"></div>
+      <label style="display:flex;gap:8px;align-items:center;margin-top:8px;font-size:12px;cursor:pointer;">
+        <input type="checkbox" id="stBoostPower">
+        <span>同时切换 Windows 高性能电源计划<span class="dd-sub" style="display:block;">（改系统全局设置；关闭或退出工具时还原原计划。笔记本耗电增加）</span></span>
+      </label>
+      <div class="dd-sub">工具进程 + 全部 WebView2 渲染进程提优先级——CPU 满载争抢时（并行编译/虚拟机等）界面不被挤压。标准档日常无感无风险；高档激进争抢；关闭还原 Normal。</div>
     </div></div>`;
   const grid = pane.querySelector('#stThemeGrid');
   // 风格行（v4.1 桥接层 skin.js）：逐个胶囊，点选即切（联动配套配色）
@@ -291,6 +337,7 @@ function _stRenderAppearancePane(pane) {
   const cur = document.documentElement.getAttribute('data-theme') || 'deepblue';
   // a346：代码跳转快捷键（录制框 + 保存热应用）
   _stNavKeysCard(pane);
+  _stBoostCard(pane);
   // a278 性能模式开关（极光玻璃 GPU 合成优化）
   const perfBtn = pane.querySelector('#apPerfToggle');
   if (perfBtn && typeof togglePerfMode === 'function') {

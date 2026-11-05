@@ -1359,6 +1359,14 @@ def main():
     _merged = " ".join([_prev] + [a for a in _wv_args if a not in _prev]).strip()
     os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = _merged
     _ensure_webview2()   # v2.3.7a：运行时闸——必须在 webview.start 前（创建期读环境变量）
+    # a357：CPU 优先提升（config 开着则应用；退出还原电源计划）
+    try:
+        import atexit
+        from src import perf_boost as _pb
+        _pb.boot_from_config()
+        atexit.register(_pb.restore_and_exit)
+    except Exception:
+        pass
     webview.start(debug=_wv_debug, private_mode=False,
                   storage_path=os.path.join(DATA_DIR, "webview_cache"))
 
