@@ -1137,6 +1137,29 @@ async function _edReloadFromDisk(conn) {
   } catch(e) { showBanner('重读失败: ' + e, 4000, true); }
 }
 
+// a372（用户实锤：引用/跳转落点概率性错位无高亮）：已打开 tab 的内容是
+// 打开时点的旧版本，磁盘后续被改（外部工具/构建/另一会话）——引用面板
+// 的行号来自 rg 搜磁盘新版，jump 按行号盲跳旧版 tab = 落点内容错位
+// （旧版 2174 行是新版 469 行的内容），selectLine 高亮落在不相关的行。
+// 跳转前校验 mtime：不 dirty 静默重读磁盘版再跳；dirty（有未保存修改）
+// 尊重内存编辑不重读，提示一次后照跳
+async function _edJumpFresh(conn) {
+  try {
+    if (!conn || !conn.onDisk || !conn.fileMtime || !conn.extPath) return;
+    // 不做结果缓存：打开（旧版 changed=false）→磁盘改→3s 内跳转的窗口里
+    // 缓存会跳过 stat（验证实测踩中）；跳转低频，stat 本地几 ms 足够便宜
+    const r = await fetch('/api/ed/stat?path=' + encodeURIComponent(conn.extPath));
+    const j = await r.json();
+    const changed = !!(j.ok && Math.abs(j.mtime - conn.fileMtime) >= 0.001);
+    if (!changed) return;
+    if (!conn.dirty) { await _edReloadFromDisk(conn); return; }
+    if (!conn._jfWarned) {
+      conn._jfWarned = true;
+      showBanner('⚠ ' + conn.meta.label + ' 磁盘已有新版本（内存版有未保存修改未自动重读），跳转行号可能偏移', 5000, true);
+    }
+  } catch (_) {}
+}
+
 // ---- 另存为：同样走 tab 原地改名（改名确认后即另存为新文件）----
 function edSaveAs(conn) { edRenamePrompt(conn); }
 
@@ -1157,6 +1180,15 @@ function _edStopDiskWatch(conn) {
 function _edOnSwitchEditor(conn) {
   if (!conn || !conn.meta || conn.meta.kind !== 'editor' || conn.isDiff) return;
   if (conn.fileMtime) _edStartDiskWatch(conn);
+  // a360R（用户需求1，VSCode 同款）：切到编辑器 tab 时，文件树同步定位到
+  // 该文件——已打开的根目录逐级展开并滚动到可见。
+  // 只对「在树根之下」的绝对路径生效：treeReveal 内部先判 inRoot，不在任何
+  // 根下的独立文件直接返回 false，不会去动树（用户明确要求：单独打开的
+  // 文件不需要这个动作）。.note 草稿与站内 files/ 文件 extPath 为 null，天然跳过。
+  const _xp = conn.extPath;
+  if (_xp && typeof window.treeReveal === 'function') {
+    try { window.treeReveal(_xp, { scroll: true }); } catch (_) {}
+  }
 }
 
 // ---- 改名入口（工具栏按钮 / 双击 tab 标题共用）：标题原地变输入框 ----
@@ -2218,6 +2250,9 @@ async function openFileSmart(path, mode, opts) {
       const _c = buildEditorTab(j.name, j.text, path, j.mtime || null);
       if (_c) {
         _c.usedEnc = j.used_enc || null;
+        // a372：去重分支拿到的是已打开 tab（内容可能是旧版）——跳前校验
+        // 磁盘 mtime，不 dirty 先重读（行号=磁盘新版口径，落点才对得上）
+        await _edJumpFresh(_c);
         jump(_c, opts);   // 新开即跳；去重分支（switchTab 已返回 conn）同跳
       }
       return;
