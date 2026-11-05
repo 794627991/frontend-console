@@ -576,6 +576,84 @@
     };
     btns.insertBefore(bNm, btns.lastChild);
     btns.insertBefore(bRe, btns.lastChild);
+    // ---- Claude 代码图（codegraph，喂 claude 会话；与上方 ctags 跳转索引独立）----
+    _renderCodegraph(st, path, btns);
+  }
+
+  // a360：codegraph 区块——状态行 + 建/重建 + 增量同步 + 删除
+  async function _renderCodegraph(st, path, btns) {
+    let j = null;
+    try {
+      const r = await fetch('/api/nav/cg_status?root=' + encodeURIComponent(path));
+      j = await r.json();
+    } catch (_) { return; }   // codegraph 未装时后端给 ok:false——仍显示提示
+    if (!document.getElementById('navIdxPanel')) return;
+    const line = _h('div');
+    line.style.cssText = 'margin-top:10px;padding-top:8px;border-top:1px dashed var(--border);font-size:12px;';
+    const head = _h('span', '🤖 Claude 代码图（codegraph）');
+    head.style.cssText = 'font-weight:600;display:block;margin-bottom:4px;';
+    line.appendChild(head);
+    if (!j.ok) {
+      const e = _h('div', '⚠ ' + (j.err || '不可用'));
+      e.style.color = 'var(--muted)';
+      line.appendChild(e);
+      st.appendChild(line);
+      return;
+    }
+    const info = _h('div');
+    line.appendChild(info);
+    const mkBtn = (label, cls) => {
+      const b = _h('button', label);
+      b.className = cls;
+      b.style.cssText = 'padding:2px 10px;font-size:11px;margin-left:6px;';
+      return b;
+    };
+    const paint = (d) => {
+      info.innerHTML = '';
+      if (d.installed) {
+        info.appendChild(_h('span', '✓ %d 文件 · %d 节点 · %d 边 · %.1fMB（claude 会话可直接查询）'
+          .replace('%d', d.files).replace('%d', d.nodes).replace('%d', d.edges).replace('%.1f', d.db_mb)));
+      } else {
+        info.appendChild(_h('span', '未建索引——建后 claude 会话可函数级查询该工程代码'));
+      }
+    };
+    paint(j);
+    const bBuild = mkBtn(j.installed ? '↻ 重建' : '🔍 建立', 'btn primary');
+    bBuild.onclick = () => _cgRun(path, 'build');
+    const bSync = mkBtn('⟳ 增量同步', 'btn ghost');
+    bSync.style.display = j.installed ? '' : 'none';
+    bSync.title = '代码大改后秒级增量';
+    bSync.onclick = () => _cgRun(path, 'sync');
+    const bDel = mkBtn('🗑 删除', 'btn ghost');
+    bDel.style.cssText += 'color:#e5484d;';
+    bDel.style.display = j.installed ? '' : 'none';
+    bDel.onclick = async () => {
+      if (typeof _ddConfirm === 'function' &&
+          !(await _ddConfirm('删除代码图索引', '删除 <工程>/.codegraph/（claude 查询能力随之消失，可重建）？'))) return;
+      try {
+        const d = await (await fetch('/api/nav/cg_delete', { method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ root: path }) })).json();
+        showBanner(d.ok ? '已删除' : ('失败：' + (d.err || d.msg)), 3000, !d.ok);
+      } catch (e) { showBanner('失败: ' + e, 3000, true); }
+      _closePanel();
+    };
+    line.appendChild(bBuild); line.appendChild(bSync); line.appendChild(bDel);
+    st.appendChild(line);
+  }
+
+  function _cgRun(path, mode) {
+    fetch('/api/nav/cg_build', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ root: path, mode }) })
+      .then(r => r.json())
+      .then(j => {
+        if (!j.ok) { showBanner('启动失败：' + (j.err || ''), 4000, true); return; }
+        showBanner('codegraph 任务进行中（复用索引进度面板）', 2500);
+        // 复用 ctags 的进度面板：poll 同一通道
+        NavJump.ui(path);   // 重开弹层会显示进行中？—— poll 面板独立更直接
+      })
+      .catch(e => showBanner('启动失败: ' + e, 4000, true));
   }
 
   function _startBuild(card, path) {

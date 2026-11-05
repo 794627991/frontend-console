@@ -179,6 +179,72 @@ def nav_rebind():
     return jsonify({"ok": ok, "err": "" if ok else msg, "msg": msg})
 
 
+@nav_bp.route("/api/nav/cg_status")
+def nav_cg_status():
+    """Claude 代码图（codegraph）状态。?root="""
+    from src import nav_codegraph as cg
+    root = (request.args.get("root") or "").strip()
+    if not root:
+        return jsonify({"ok": False, "err": "缺 root"}), 400
+    if not _guard(root):
+        return jsonify({"ok": False, "err": "目录不在文件树登记根内"}), 400
+    return jsonify(cg.status(root))
+
+
+@nav_bp.route("/api/nav/cg_build", methods=["POST"])
+def nav_cg_build():
+    """建/重建 Claude 代码图索引。body {root, mode: 'build'|'sync'}
+    复用 nav 任务槽（与 ctags 建库互斥——同一时间只跑一种索引）。"""
+    from src import nav_codegraph as cg
+    d = request.get_json(force=True, silent=True) or {}
+    root = str(d.get("root") or "").strip()
+    mode = str(d.get("mode") or "build")
+    if mode not in ("build", "sync"):
+        return jsonify({"ok": False, "err": "mode 只认 build/sync"}), 400
+    if not root:
+        return jsonify({"ok": False, "err": "缺 root"}), 400
+    if not _guard(root):
+        return jsonify({"ok": False, "err": "目录不在文件树登记根内"}), 400
+    with _lock:
+        if _state["running"]:
+            return jsonify({"ok": False, "err": "索引任务运行中（%s）" % _state["root"]}), 409
+        _state.update(running=True, phase="codegraph", log=[], done=False, ok=False,
+                      err="", ts=time.time(), result=None, cancel=False,
+                      percent=0, cur="", cancelled=False, log_seq=0, root=root)
+
+    def work():
+        try:
+            _state["percent"] = 10
+            fn = cg.sync if mode == "sync" else cg.build
+            ok, msg = fn(root, log=_log)
+            _state.update(percent=100, done=True, ok=ok,
+                          err="" if ok else msg[:400],
+                          phase="完成" if ok else "失败",
+                          result={"kind": "codegraph", "ok": ok, "msg": msg[:200]})
+        except Exception as e:
+            _state.update(done=True, ok=False, err=str(e)[:400], phase="失败")
+        finally:
+            _state["running"] = False
+            _state["cancel"] = False
+
+    threading.Thread(target=work, daemon=True).start()
+    return jsonify({"ok": True})
+
+
+@nav_bp.route("/api/nav/cg_delete", methods=["POST"])
+def nav_cg_delete():
+    """删除工程的 codegraph 索引。body {root}"""
+    from src import nav_codegraph as cg
+    d = request.get_json(force=True, silent=True) or {}
+    root = str(d.get("root") or "").strip()
+    if not root:
+        return jsonify({"ok": False, "err": "缺 root"}), 400
+    if not _guard(root):
+        return jsonify({"ok": False, "err": "目录不在文件树登记根内"}), 400
+    ok, msg = cg.remove(root)
+    return jsonify({"ok": ok, "err": "" if ok else msg, "msg": msg})
+
+
 @nav_bp.route("/api/nav/definition")
 def nav_definition():
     """跳转查询。?file=（发起跳转的文件，组件上下文+库反查）&symbol="""
