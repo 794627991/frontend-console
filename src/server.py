@@ -1379,9 +1379,12 @@ def api_theme():
                         "perf_mode": bool(cfg.get("perf_mode", False)),
                         "md_preview_theme": cfg.get("md_preview_theme", "auto"),
                         # a346: 代码跳转快捷键（nav.js 消费；形如 'f12'/'ctrl+t'）
+                        # a360R：加 back/fwd（导航历史后退/前进）
                         "nav_keys": cfg.get("nav_keys", {"def": "f12",
                                                          "ref": "shift+f12",
-                                                         "sym": "ctrl+t"}),
+                                                         "sym": "ctrl+t",
+                                                         "back": "ctrl+arrowleft",
+                                                         "fwd": "ctrl+arrowright"}),
                         # a286: Tab 栏模式——flat=Chrome 平铺收缩 / drawer=分组抽屉
                         "tab_mode": cfg.get("tab_mode", "flat"),
                         # a357：CPU 优先提升（perf_boost）——level: normal/above_normal/high
@@ -1459,26 +1462,38 @@ def api_theme():
             _hk_updates[_hk_field] = _v
     if _hk_updates:
         _save_config({**_load_config(), **_hk_updates})
-    # a346：代码跳转快捷键（def=转定义 ref=查引用 sym=工作区符号）——与
-    # 搜索热键同法：仅落 config（nav.js 页面内 keydown 消费+热应用）。
+    # a346：代码跳转快捷键（def=转定义 ref=查引用 sym=工作区符号
+    # a360R：back/fwd=导航历史后退/前进）——与搜索热键同法：仅落 config
+    # （nav.js 页面内 keydown 消费+热应用）。
     # R21-3：主键白名单收紧（单字母/数字/f1-f12——录制框旧正则只锚首字符
-    # 时 enter 等被落库，改键后该键无法输入）。R21-6：写入加锁防并发丢更新
+    # 时 enter 等被落库，改键后该键无法输入）。
+    # a360R：方向键也合法（VSCode 的导航历史就是 Alt+←/→ 一类），但必须带
+    # 修饰——裸方向键是编辑器/终端基础操作，落库会让整机输入瘫痪。
+    # R21-6：写入加锁防并发丢更新
     if "nav_keys" in data and isinstance(data["nav_keys"], dict):
         import re as _re2
         nk = data["nav_keys"]
+        _NK_KINDS = ("def", "ref", "sym", "back", "fwd")
         _nk_out = {}
-        for _nk_k in ("def", "ref", "sym"):
+        for _nk_k in _NK_KINDS:
             _v = str(nk.get(_nk_k) or "").strip().lower()
             if not _HK_RE.match(_v):
                 return jsonify({"ok": False,
                                 "err": "nav_keys.%s 格式非法（形如 ctrl+t）" % _nk_k}), 400
-            _main = _v.split("+")[-1]
-            if not _re2.fullmatch(r"f([1-9]|1[0-2])|[a-z0-9]", _main):
+            _segs = _v.split("+")
+            _main = _segs[-1]
+            if _re2.fullmatch(r"arrow(left|right|up|down)", _main):
+                if len(_segs) < 2:
+                    return jsonify({"ok": False,
+                                    "err": "nav_keys.%s 方向键需搭配 Ctrl/Alt/Shift"
+                                           % _nk_k}), 400
+            elif not _re2.fullmatch(r"f([1-9]|1[0-2])|[a-z0-9]", _main):
                 return jsonify({"ok": False,
-                                "err": "nav_keys.%s 主键只支持 字母/数字/F1-F12" % _nk_k}), 400
+                                "err": "nav_keys.%s 主键只支持 字母/数字/F1-F12/方向键"
+                                       % _nk_k}), 400
             _nk_out[_nk_k] = _v
-        if len(set(_nk_out.values())) != 3 or "" in _nk_out.values():
-            return jsonify({"ok": False, "err": "三个跳转快捷键不能为空且互不冲突"}), 400
+        if len(set(_nk_out.values())) != len(_NK_KINDS) or "" in _nk_out.values():
+            return jsonify({"ok": False, "err": "跳转快捷键不能为空且互不冲突"}), 400
         with _nav_keys_lock:
             _save_config({**_load_config(), "nav_keys": _nk_out})
     # a357：CPU 优先提升——白名单档位 + 即时应用（含电源计划还原语义）

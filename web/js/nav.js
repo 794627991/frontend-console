@@ -60,7 +60,7 @@
     try {
       const m = editor.getModel();
       if (!m) return null;
-      const p = monaco.editor.getPosition ? editor.getPosition() : null;
+      const p = editor.getPosition();
       return { path: modelFilePath(m), line: (p && p.lineNumber) || 1,
                col: (p && p.column) || 1 };
     } catch (_) { return null; }
@@ -102,10 +102,18 @@
     navJumpTo(NAV_HIST.stack[NAV_HIST.cur]);
   }
 
-  // 跳转类动作统一入口：先记下「从哪跳的」，再执行跳转
+  // 跳转类动作统一入口：先记下「从哪跳的」，再执行跳转。
+  // a360R（关键）：**目标和来源都要进栈**。只压来源的话，第一次跳转后栈里
+  // 只有 [A]、游标停在 0，navigateBack 直接判「已经是最早的位置」——永远
+  // 回不去。VSCode 的语义是「跳到 B 之后，历史里有 A 和 B 两项」，
+  // back 回到 A、forward 再回到 B。
   function _jumpOpen(fromEditor, path, opts) {
     navPush(_navPos(fromEditor));
     openFileSmart(path, 'auto', opts);
+    // 目标位置入栈：openFileSmart 是异步的（等 Monaco 就绪才定位），
+    // 这里先按请求参数记一条，行列足够表达「导航到哪」。
+    navPush({ path: path, line: (opts && opts.line) || 1,
+              col: (opts && opts.col) || 1 });
   }
 
   async function queryDefinition(model, position) {

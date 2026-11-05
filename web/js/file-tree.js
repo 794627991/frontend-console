@@ -232,7 +232,21 @@ window.treeInvalidate = treeInvalidate;
 
 // a209批3：reveal 到树（搜索结果点击文件头定位）——逐父段展开到目标，
 // 期间显示 loading（复用展开态）；目标不可达（截断/权限）时提示
-async function treeReveal(path) {
+async function treeReveal(path, opts) {
+  // a360R（用户需求1）：编辑器打开文件时同步定位到文件树。
+  // 前提：该文件在已打开的根目录之下（else 直接返回，不打扰用户）。
+  // 调用方传 {scroll:true} 时才滚动到可见——搜索结果点击（旧调用方）
+  // 本来就靠这个定位，一并受益；不传时保持原行为（仅高亮）。
+  const o = opts || {};
+  if (!path) return false;
+  // 不在任何根下 → 不做任何动作（单独打开的文件不该影响树）
+  // 路径分隔符统一成反斜杠再比（拖入/搜索/后端回调可能给正斜杠）
+  const _np = String(path).replace(/\//g, '\\');
+  const inRoot = (_TV.roots || []).some(function (r) {
+    const rp = String(r.path).replace(/\//g, '\\');
+    return _np === rp || _np.startsWith(rp + '\\');
+  });
+  if (!inRoot) return false;
   // a213 审计 P1：原实现 norm 正斜杠逐段拼——与树键（后端 scandir 恒反斜杠）
   // 形成双键空间：open/cache 写幽灵正斜杠键、行推导永不命中（reveal 无效+
   // 同目录双 cache 污染）。改为原路径逐 dirname 上溯，键与树完全同形
@@ -257,8 +271,39 @@ async function treeReveal(path) {
   _TV.active = path;
   _TV.rendered = [-1, -1];
   _tvPaint();
+  if (o.scroll) _tvScrollToPath(path);
+  return true;
 }
 window.treeReveal = treeReveal;
+
+// a360R：把目标行滚到可视区中部（VSCode 资源管理器 reveal 同款观感）。
+// 虚拟列表自行管理 scrollTop，这里直接写滚动位置并让 _tvPaint 重绘窗口。
+function _tvScrollToPath(path) {
+  const host = $('treeRoots');
+  if (!host) return;
+  const i = _TV.idx.get(path);
+  if (i === undefined || !_TV.tops) return;
+  // a360R：侧栏 sheet 可能没切到「文件树」（pane display:none → clientHeight=0）。
+  // 此时先算出 desirable scrollTop，等可见时再补一次——否则这次定位的滚动
+  // 白丢，用户切过去只能看到高亮在视口外。
+  const apply = function () {
+    const viewH = host.clientHeight || 0;
+    if (!viewH) return false;
+    const rowTop = _TV.tops[i];
+    const rowH = _TV.ROW_H + (_TV.rows[i] && _TV.rows[i].t === 'root' ? 14 : 0);
+    host.scrollTop = Math.max(0, rowTop - viewH / 2 + rowH / 2);
+    _tvPaint();
+    return true;
+  };
+  if (apply()) return;
+  // 不可见：轮询到可见为止（2s 兜底，避免隐藏整天的标签页里挂个定时器）
+  const t0 = Date.now();
+  const tick = function () {
+    if (apply()) return;
+    if (Date.now() - t0 < 2000) setTimeout(tick, 120);
+  };
+  setTimeout(tick, 120);
+}
 
 function _tvPaint() {
   const host = $('treeRoots');
