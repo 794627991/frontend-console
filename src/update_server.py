@@ -292,7 +292,37 @@ body{font-family:var(--font);color:var(--fg);min-height:100vh;
 .hero h2{font-size:34px;font-weight:750;font-family:var(--fontMono)}
 .hero .meta{display:flex;gap:18px;flex-wrap:wrap;margin-top:12px;font-size:13px;color:var(--muted)}
 .hero .notes{margin-top:16px;font-size:13.5px;line-height:1.75;color:var(--notes);
-  white-space:pre-wrap;max-height:180px;overflow:auto}
+  max-height:360px;overflow:auto}
+/* a352R：更新说明现在按 Markdown 渲染（原先整块 esc + pre-wrap，标题表格
+   全是裸符号）。样式按说明文档实际用到的元素定，不做通用排版。 */
+.notes>*:first-child{margin-top:0}
+.notes>*:last-child{margin-bottom:0}
+.notes h1,.notes h2,.notes h3,.notes h4{font-weight:700;line-height:1.35;
+  margin:18px 0 8px;color:var(--fg)}
+.notes h1{font-size:19px}.notes h2{font-size:17px}
+.notes h3{font-size:15px}.notes h4{font-size:14px}
+.notes p,.notes li{font-size:13.5px;line-height:1.75;color:var(--notes);margin:8px 0}
+.notes ul,.notes ol{margin:8px 0;padding-left:22px}
+.notes li{margin:4px 0}
+.notes li>p{margin:0}
+.notes strong,.notes b{color:var(--fg);font-weight:650}
+.notes code{font-family:var(--fontMono);font-size:12.5px;padding:1px 5px;
+  border-radius:4px;background:var(--codeBg,rgba(127,127,127,.16))}
+.notes pre{background:var(--codeBg,rgba(127,127,127,.12));border-radius:8px;
+  padding:12px 14px;overflow:auto;margin:10px 0}
+.notes pre code{padding:0;background:none}
+.notes blockquote{margin:10px 0;padding:2px 0 2px 14px;
+  border-left:3px solid var(--muted);color:var(--muted)}
+.notes hr{border:0;border-top:1px solid var(--line,rgba(127,127,127,.3));margin:18px 0}
+.notes a{color:var(--btnFg);text-decoration:underline}
+.notes table{border-collapse:collapse;margin:12px 0;font-size:13px;
+  display:block;overflow:auto;max-width:100%}
+.notes th,.notes td{border:1px solid var(--line,rgba(127,127,127,.35));
+  padding:6px 12px;text-align:left;vertical-align:top}
+.notes th{background:var(--codeBg,rgba(127,127,127,.12));font-weight:650;
+  color:var(--fg);white-space:nowrap}
+/* 降级态：markdown-it 没能注入时退回纯文本，保留换行（不可裸着排版） */
+.notes.plain{white-space:pre-wrap}
 .btn{display:inline-flex;align-items:center;gap:8px;cursor:pointer;
   font-size:13.5px;font-weight:600;color:var(--btnFg);padding:10px 20px;
   border-radius:var(--rad);border:var(--btnBorder);background:var(--btnBg);
@@ -679,11 +709,65 @@ def _app_icon_b64():
     return ""
 
 
+# 说明里的 HTML 一律不放行：更新说明是发布者写的，但门户对同事开放，
+# 放行原始 HTML 等于把服务端页面让给 markdown 输出（XSS 面）。禁到零。
+_MD_OPTS = ("{html:false,linkify:false,typographer:false,"
+            "breaks:true}")
+
+# 门户 Markdown 渲染的兜底脚本：markdown-it 未注入（文件缺失/读取失败）时
+# 退回纯文本——绝不能让页面白屏或把裸 markdown 当正文塞进去。
+_MD_BOOT = """<script>
+window.__md=null;
+(function(){
+  try{
+    if(typeof markdownit==='function'){
+      var m=markdownit(%s);
+      // 外链一律新窗口打开，避免把发布中心页面导航走
+      var rl=m.renderer.rules.link_open||function(t,i,o,e,s){return s.renderToken(t,i,o)};
+      m.renderer.rules.link_open=function(t,i,o,e,s){
+        t[i].attrSet('target','_blank');t[i].attrSet('rel','noopener noreferrer');
+        return rl(t,i,o,e,s);};
+      window.__md=m;
+    }
+  }catch(e){window.__md=null}
+})();
+function mdRender(txt,cls,attrs){
+  var a=attrs?' '+attrs:'';
+  var s=String(txt==null?'':txt);
+  if(window.__md){
+    try{return '<div class="'+cls+'"'+a+'>'+window.__md.render(s)+'</div>'}catch(e){}
+  }
+  // 降级：纯文本 + 保留换行（页面里 esc 定义在后面，这里自带一份）
+  return '<div class="'+cls+' plain"'+a+'>'+s.replace(/[&<>"']/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  })+'</div>';
+}
+</script>""" % _MD_OPTS
+
+
+def _md_lib_path():
+    """markdown-it 文件路径（门户 /vendor/markdown-it.min.js 路由用）。
+
+    a352R：早先想把整个 min.js 内联进 <script>，但压缩产物里含 `<!--`——
+    HTML 解析器会把它当注释起始，吞掉后续脚本。改为独立路由提供。
+    """
+    for p in (os.path.join(os.path.dirname(os.path.dirname(
+                    os.path.abspath(__file__))),
+                "vendor", "markdown-it", "dist", "markdown-it.min.js"),
+              os.path.join(_releases_dir(), "..", "..", "vendor",
+                           "markdown-it", "dist", "markdown-it.min.js")):
+        if os.path.isfile(p):
+            return p
+    return ""
+
+
 _PORTAL_HTML = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>前端控制台 · 发布中心</title>
 <link rel="icon" type="image/png" href="__ICON__">
-<style>__CSS__</style></head><body data-skin="dark">
+<style>__CSS__</style>
+<script src="/vendor/markdown-it.min.js"></script>
+<script>__MDBOOT__</script></head><body data-skin="dark">
 <div class="wrap">
   <div class="brand">
     <div class="logo"><img src="__ICON__" style="width:30px;height:30px;" alt=""></div>
@@ -917,8 +1001,8 @@ async function load(){
       +'<span class="badge">LATEST</span></div>'
       +'<div class="meta"><span>📅 '+fmtTs(top.mtime)+'</span><span>📦 '+fmtSize(top.size)+'</span>'
       +(top.sha1?'<span class="sha" title="'+esc(top.sha1)+'">sha1 '+esc(top.sha1.slice(0,12))+'…</span>':'')+'</div>'
-      +(top.notes?'<div class="notes">'+esc(top.notes)+'</div>'
-        :'<div class="notes" style="color:var(--muted)">（本版未写更新说明——发布者在项目根 RELEASE_NOTES.md 写好后重新打包，说明会随版本带上）</div>')
+      +(top.notes?mdRender(top.notes,'notes')
+        :'<div class="notes plain" style="color:var(--muted)">（本版未写更新说明——发布者在项目根 RELEASE_NOTES.md 写好后重新打包，说明会随版本带上）</div>')
       +'<div class="row"><button class="btn" data-dl="'+top.url+'" data-n="'+esc(top.file)+'">⬇ 下载整包</button>'
       +'<span data-dlst style="font-size:12px;color:var(--muted)">下载后解压即完成安装</span></div></div>';
     // 离线资源包独立卡片（用户定调「离线包和实际包分开」）：不是应用版本，
@@ -951,8 +1035,7 @@ async function load(){
           +'<div class="vname">v'+esc(it.version)
           +' <span style="font-size:11px;font-weight:400;color:var(--muted);margin-left:6px">'
           +(it.file?fmtTs(it.mtime):'历史回溯')+'</span></div>'
-          +(it.notes?'<div style="margin-top:8px;font-size:12.5px;line-height:1.8;white-space:pre-wrap;color:var(--notes,inherit)">'
-            +esc(it.notes)+'</div>'
+          +(it.notes?mdRender(it.notes,'notes','style="margin-top:8px;font-size:12.5px"')
             :'<div class="vmeta" style="margin-top:6px">（该版无记录说明）</div>')
           +'</div></div>';
       }
@@ -1123,6 +1206,7 @@ class _Handler(BaseHTTPRequestHandler):
             icon = "data:image/png;base64," + _app_icon_b64()
             if self._session_ok():
                 page = (_PORTAL_HTML.replace("__CSS__", _CSS)
+                        .replace("__MDBOOT__", _MD_BOOT)
                         .replace("__URL__", _esc(url))
                         .replace("__ICON__", icon))
                 self._text(200, page, "text/html; charset=utf-8")
@@ -1168,6 +1252,17 @@ class _Handler(BaseHTTPRequestHandler):
             p = _safe_path(root, name)
             if p and os.path.isfile(p) and p.lower().endswith(".png"):
                 self._file(p, "image/png")
+            else:
+                self._text(404, "not found")
+            return
+
+        # a352R：门户更新说明按 Markdown 渲染所需的库（vendor 里已有，
+        # 不额外引入依赖）。不做登录校验——静态 JS，无敏感信息；读不到
+        # 返回 404，页面脚本自动降级成纯文本。
+        if name == "vendor/markdown-it.min.js":
+            p = _md_lib_path()
+            if p:
+                self._file(p, "application/javascript; charset=utf-8")
             else:
                 self._text(404, "not found")
             return
