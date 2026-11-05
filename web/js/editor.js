@@ -2300,19 +2300,35 @@ async function openFileSmart(path, mode, opts) {
   // openOfficeFile(path) 当同步用——async 函数返回 Promise 恒真，导致
   // 所有文件都被拦截、编辑器路径永远不可达（用户实锤 .md 都打不开）
   if (typeof _officeKindOf === 'function' && _officeKindOf(path)) {
-    openOfficeFile(path);   // async，自己管 tab 创建，不需要 await
-    // a375R：返回 true——否则 _jumpOpen 把 undefined 当失败，Office 文件的
-    // 跳转永远不记历史（回到上一个定义时无法用 Alt+←）
+    // a375R：必须返回真值——否则 _jumpOpen 把 undefined 当失败，Office 文件的
+    // 跳转永远不记历史（回到上一个定义时无法用 Alt+←）。
+    // a380R（第2轮审计 P3-1）：透明传 openOfficeFile 的 Promise，别写死 true。
+    // 它在「文件不存在/超过 10MB 预检」时只弹 banner 并返回 false，写死 true
+    // 会让这两个失败照样被记进导航历史。openFileSmart 是 async，返回 Promise
+    // 调用方（_jumpOpen/navJumpTo）本来就按异步处理。
+    const _op = openOfficeFile(path);
+    if (_op && typeof _op.then === 'function') {
+      return _op.then(function (ok) { return !!ok; })
+                .catch(function () { return false; });
+    }
     return true;
   }
   const isText = _DROP_TEXT_EXT.has(ext) || name === 'makefile' || name === 'readme';
   // 探测大小与内容分级（失败按 0/未知处理走编辑器尝试）
-  let size = 0, isTextSrv = isText, kindSrv = '';
+  let size = 0, isTextSrv = isText, kindSrv = '', existsSrv = true;
   try {
     const r = await fetch('/api/file_info', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path})});
     const j = await r.json();
     if (j.ok) { size = j.size; isTextSrv = j.is_text; kindSrv = j.kind || ''; }
+    else if (/不存在|not found/i.test(j.err || '')) existsSrv = false;
   } catch(e) {}
+  // a380R（第2轮审计 P1-1 补充）：文件不存在时上面探测会失败（size=0、
+  // 无 kind），继续走决策只会弹一个无意义的「选择打开方式」再失败。
+  // 这里直接判失败——导航历史据此跳过该项，普通打开则提示一声。
+  if (!existsSrv) {
+    if (!(opts && opts.noFallback)) showBanner('文件不存在或已被删除：' + path, 4000, true);
+    return false;
+  }
   const MB = size / 1024 / 1024;
   // a357R（用户定调）：打开方式的选择权交给用户。
   //   text   → 直接进编辑器（少量坏字节不影响阅读）
@@ -2327,7 +2343,12 @@ async function openFileSmart(path, mode, opts) {
     else if (MB > 30) how = 'view';                        // >30M 强制阅读器（Monaco 必卡）
     else if (MB > 20) how = await _showOpenModeDialog(path, size, false);  // 20~30M 提示选
     else how = 'edit';                                     // <20M 默认编辑器
-    if (!how) return false;                                // 用户关掉了弹窗（a375R：返回失败）
+    if (!how) {
+      // a380R（第2轮审计 P3-2）：用户主动关掉「选择打开方式」≠ 文件不可达。
+      // 返回 'cancelled' 让调用方区分：导航历史遇到取消应**原地不动**
+      // （游标回退），而不是报「目标位置已不可达，已跳过」继续跳。
+      return 'cancelled';
+    }
   }
 
   if (how === 'hex') { buildHexViewerTab(path, name); return true; }
@@ -2350,16 +2371,20 @@ async function openFileSmart(path, mode, opts) {
       }
       return true;
     }
+    // a380R（第2轮审计 P1-1 实锤）：noFallback 必须**早于**降级分支。
+    // /api/ed/open 对不存在的文件返回的文案是「不支持的文件类型或文件不存在」
+    // ——含「类型」二字，会被下面的 `/类型|二进制/` 直接命中，于是：
+    //   · 弹「该文件是二进制（含 NUL 字节）」误报（实际只是文件没了）
+    //   · buildHexViewerTab 因 /api/hex/meta 失败静默不开 tab
+    //   · 返回 true → navJumpTo 判成功 → _navStep 不跳过，游标停在死条目
+    // 导航历史「跳过不可达项」这条修复等于完全没生效。
+    if (opts && opts.noFallback) return false;
     // 后端仍拒（真二进制/超限/不存在）：二进制改切 hex（阅读器看乱码没意义），其余降级阅读器
     if (j.err && /类型|二进制/.test(j.err)) {
       showBanner('该文件是二进制（含 NUL 字节），已切换 16 进制查看器', 4000, true);
       buildHexViewerTab(path, name);
       return true;
     }
-    // a375R（审计 P2-3）：导航历史回退到已删除/不可达文件时，原先会降级
-    // 开一个指向不存在文件的阅读器 tab——按了没反应还多一个空 tab。
-    // 调用方（navJumpTo）传 noFallback 时直接判失败，由它跳过该项。
-    if (opts && opts.noFallback) return false;
     showBanner('编辑器无法打开（' + (j.err || '未知错误') + '），已切换阅读器', 4000, true);
   } catch(e) {
     showBanner('打开失败: ' + e, 4000, true);

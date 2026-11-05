@@ -279,13 +279,24 @@ async function treeReveal(path, opts) {
   }
   // a375R（审计 P2-2）：落笔前再比一次序号
   if (o._seq !== undefined && o._seq !== _tvRevealSeq) return false;
-  _TV.active = _np;
+  // a380R（第2轮审计 P3-3）：_TV.idx 的键来自 os.scandir（磁盘真实大小写），
+  // 而归一路径的盘符/目录大小写可能与之不同（Monaco 的 modelFilePath 给的是
+  // 小写盘符）。直接 get 会扑空 → 高亮画不出来还弹「不在树中」的误报。
+  // 先精确命中，再退回大小写不敏感的唯一匹配。
+  let _key = _np;
+  if (!_TV.idx.has(_key)) {
+    const _low = _np.toLowerCase();
+    for (const _p of _TV.idx.keys()) {
+      if (_p.toLowerCase() === _low) { _key = _p; break; }
+    }
+  }
+  _TV.active = _key;
   _TV.rendered = [-1, -1];
   _tvPaint();
-  if (o.scroll) _tvScrollToPath(_np);
+  if (o.scroll) _tvScrollToPath(_key);
   // a375R（审计 P2-8）：目标行不在当前树视图（父目录被截断/文件被隐藏/
   // 形态不匹配）时，连高亮都画不出来——用户会觉得「点了没反应」。明说。
-  if (!_TV.idx.has(_np)) {
+  if (!_TV.idx.has(_key)) {
     showBanner('该文件不在当前文件树视图中（可能被截断、隐藏或未在已打开的根下）', 3200);
   }
   return true;

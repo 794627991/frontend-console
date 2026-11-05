@@ -97,7 +97,8 @@
                             { line: Math.max(1, pos.line || 1),
                               col: pos.col || 1, noFallback: true });
     if (r && typeof r.then === 'function') {
-      // openFileSmart 是 async：返回 true/false
+      // openFileSmart 是 async，返回 true / false / 'cancelled'
+      // （'cancelled' = 用户在打开方式弹窗里点了取消，不算不可达）
       return r.catch(function () { return false; });
     }
     return true;
@@ -115,6 +116,7 @@
       const next = NAV_HIST.cur + dir;
       if (next < 0) { showBanner('已经是最早的位置', 1800); return; }
       if (next > s.length - 1) { showBanner('已经是最新的位置', 1800); return; }
+      const prevCur = NAV_HIST.cur;
       NAV_HIST.cur = next;
       const item = s[next];
       const r = navJumpTo(item);
@@ -126,6 +128,9 @@
         // 异步通道：拿到结果后再决定是否继续跳（先返回，避免卡住按键）
         // 预算一并传下去——异步失败继续找的时候不能再从 MAX 重新数
         r.then(function (ok) {
+          // a380R（第2轮审计 P3-2）：'cancelled' = 用户在打开方式弹窗里取消，
+          // 不是不可达——游标退回原位，不报跳过、不继续找。
+          if (ok === 'cancelled') { NAV_HIST.cur = prevCur; return; }
           if (!ok) { _navStep(dir, left); }
         }).catch(function () {});
       }
@@ -158,7 +163,9 @@
     const r = openFileSmart(path, 'auto', opts);
     if (r && typeof r.then === 'function') {
       r.then(function (ok) {
-        if (!ok) return;                 // 没打开：不记历史
+        // a380R：'cancelled'（用户取消打开方式）是 truthy 但不是成功——
+        // 必须显式排除，否则取消也会被记进历史
+        if (!ok || ok === 'cancelled') return;
         commit();
       }).catch(function () {});
     } else {
