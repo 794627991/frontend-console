@@ -1477,12 +1477,23 @@ def api_theme():
         _nk_out = {}
         for _nk_k in _NK_KINDS:
             _v = str(nk.get(_nk_k) or "").strip().lower()
+            # a375R（审计 P3-2）：缺项要单独说「不能为空」，否则会落到主键
+            # 校验处报「只支持字母/数字/F1-F12」，把调用方引向错误方向
+            if not _v:
+                return jsonify({"ok": False,
+                                "err": "nav_keys.%s 不能为空" % _nk_k}), 400
             if not _HK_RE.match(_v):
                 return jsonify({"ok": False,
                                 "err": "nav_keys.%s 格式非法（形如 ctrl+t）" % _nk_k}), 400
             _segs = _v.split("+")
             _main = _segs[-1]
             if _re2.fullmatch(r"arrow(left|right|up|down)", _main):
+                # a375R（审计 P2-7）：方向键只允许配给导航历史两项——配给
+                # def/ref/sym 等于把「按词移动光标」抢成跳转（P1-1 同型）。
+                if _nk_k not in ("back", "fwd"):
+                    return jsonify({"ok": False,
+                                    "err": "nav_keys.%s 方向键只可用于后退/前进"
+                                           % _nk_k}), 400
                 if len(_segs) < 2:
                     return jsonify({"ok": False,
                                     "err": "nav_keys.%s 方向键需搭配 Ctrl/Alt/Shift"

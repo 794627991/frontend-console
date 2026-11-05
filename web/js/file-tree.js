@@ -239,22 +239,28 @@ async function treeReveal(path, opts) {
   // 本来就靠这个定位，一并受益；不传时保持原行为（仅高亮）。
   const o = opts || {};
   if (!path) return false;
-  // 不在任何根下 → 不做任何动作（单独打开的文件不该影响树）
-  // 路径分隔符统一成反斜杠再比（拖入/搜索/后端回调可能给正斜杠）
-  const _np = String(path).replace(/\//g, '\\');
+  // a375R（第1轮审计 P1-2/P2-1）：路径形态必须**先归一成树键形态**再判。
+  // 树键来自 os.scandir 的 e.path，恒为「反斜杠 + 无尾分隔符」；而真实入口
+  // 会给正斜杠（tree-fileops 的 joinPath）或混合形态（rg 输出的
+  // `D:/AI/proj/src\file.py`）。此前 inRoot 归一了、下游 chain/idx/active
+  // 没有 → 门开了但定位全失效，表现为「有时灵有时不灵」。
+  const _np = _tvNormPath(path);
+  // 盘根 / UNC 根必须有尾分隔符才能拼接比较：后端 abspath('D:\\') 保留尾
+  // 分隔符，`rp + '\\'` 会变成 'D:\\\\'，任何子文件都不匹配（P1-2 实锤）。
   const inRoot = (_TV.roots || []).some(function (r) {
-    const rp = String(r.path).replace(/\//g, '\\');
-    return _np === rp || _np.startsWith(rp + '\\');
+    const rp = _tvNormPath(r.path).replace(/\\+$/, '');
+    return _np.toLowerCase() === rp.toLowerCase() ||
+           _np.toLowerCase().startsWith(rp.toLowerCase() + '\\');
   });
   if (!inRoot) return false;
-  // a213 审计 P1：原实现 norm 正斜杠逐段拼——与树键（后端 scandir 恒反斜杠）
-  // 形成双键空间：open/cache 写幽灵正斜杠键、行推导永不命中（reveal 无效+
-  // 同目录双 cache 污染）。改为原路径逐 dirname 上溯，键与树完全同形
   const chain = [];
-  let cur = String(path);
+  let cur = _np;
   while (true) {
-    const i = Math.max(cur.lastIndexOf('/'), cur.lastIndexOf(String.fromCharCode(92)));
-    if (i <= 0) break;
+    const i = cur.lastIndexOf('\\');
+    // a375R（审计 P3-7）：i===1 时 cur.slice(0,2) 是 'D:'——不是目录，
+    // 继续切会多发一次 `/api/tree/list {path:'D:'}`（后端 abspath('D:')
+    // 取当前盘 cwd，可能返回意外目录）。盘符层到此为止。
+    if (i <= 0 || (i === 1 && /^[A-Za-z]:$/.test(cur.slice(0, 2)))) break;
     cur = cur.slice(0, i);
     chain.unshift(cur);
   }
@@ -265,16 +271,55 @@ async function treeReveal(path, opts) {
       const t0 = Date.now();
       while (!_TV.cache.has(dirPath) && Date.now() - t0 < 2000) {
         await new Promise(r => setTimeout(r, 80));
+        // a375R（审计 P2-2）：并发 reveal 时后发先至——被更新的请求取代就
+        // 丢弃本次（否则先发慢完成的会把高亮/滚动覆盖回旧的）
+        if (o._seq !== undefined && o._seq !== _tvRevealSeq) return false;
       }
     }
   }
-  _TV.active = path;
+  // a375R（审计 P2-2）：落笔前再比一次序号
+  if (o._seq !== undefined && o._seq !== _tvRevealSeq) return false;
+  _TV.active = _np;
   _TV.rendered = [-1, -1];
   _tvPaint();
-  if (o.scroll) _tvScrollToPath(path);
+  if (o.scroll) _tvScrollToPath(_np);
+  // a375R（审计 P2-8）：目标行不在当前树视图（父目录被截断/文件被隐藏/
+  // 形态不匹配）时，连高亮都画不出来——用户会觉得「点了没反应」。明说。
+  if (!_TV.idx.has(_np)) {
+    showBanner('该文件不在当前文件树视图中（可能被截断、隐藏或未在已打开的根下）', 3200);
+  }
   return true;
 }
-window.treeReveal = treeReveal;
+
+// 路径归一：正斜杠→反斜杠、去尾分隔符、折叠重复分隔符。
+// 只做形态归一，不动盘符大小写（比较处单独 toLowerCase）。
+function _tvNormPath(p) {
+  let s = String(p || '').replace(/\//g, '\\');
+  s = s.replace(/\\{2,}/g, '\\');
+  if (s.length > 1 && !/^[A-Za-z]:\\$/.test(s)) s = s.replace(/\\+$/, '');
+  return s;
+}
+// a375R：并发 reveal 序号（见 treeReveal 内的比对）。
+// 包装在 window.treeReveal 上——内部调用方（含同文件）一律走包装版。
+let _tvRevealSeq = 0;
+const _treeRevealImpl = treeReveal;
+window.treeReveal = function (path, opts) {
+  _tvRevealSeq++;
+  const _o = Object.assign({}, opts || {});
+  _o._seq = _tvRevealSeq;
+  // a375R（审计 P2-2）：返回值是 Promise，调用方（_edOnSwitchEditor）不 await
+  // ——内部 rejection 会变成 unhandled rejection。这里统一吞掉并留日志。
+  try {
+    const r = _treeRevealImpl(path, _o);
+    if (r && typeof r.catch === 'function') {
+      r.catch(function (e) { if (window.console) console.warn('treeReveal:', e); });
+    }
+    return r;
+  } catch (e) {
+    if (window.console) console.warn('treeReveal:', e);
+    return Promise.resolve(false);
+  }
+};
 
 // a360R：把目标行滚到可视区中部（VSCode 资源管理器 reveal 同款观感）。
 // 虚拟列表自行管理 scrollTop，这里直接写滚动位置并让 _tvPaint 重绘窗口。

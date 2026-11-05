@@ -66,15 +66,21 @@
     } catch (_) { return null; }
   }
 
+  // 可导航的路径：盘符路径 或 UNC 共享路径（a375R 审计 P2-5：原先只认盘符，
+  // 工程放在 \\server\share 时整个历史功能静默失效）
+  function _navPathOk(p) {
+    return !!p && (/^[A-Za-z]:[\\/]/.test(p) || /^\\\\[^\\]+\\[^\\]+/.test(p));
+  }
+
   function navPush(pos) {
-    if (!pos || !pos.path || !/^[A-Za-z]:/.test(pos.path)) return;
+    if (!pos || !_navPathOk(pos.path)) return;
     const s = NAV_HIST.stack, i = NAV_HIST.cur;
     const prev = i >= 0 ? s[i] : null;
-    // 同一位置连续记录无意义（VSCode 同样去重）
-    if (prev && prev.path === pos.path && prev.line === pos.line) {
-      prev.col = pos.col;
-      return;
-    }
+    // 同一位置连续记录无意义（VSCode 同样去重）。
+    // a375R（审计 P3-1）：只更新 col 不改 line；且**保留首次落点的列**——
+    // VSCode 恢复历史条目时用的是该条目原始的 Selection，不会因为后来又
+    // 在这一行别的位置停留过就被改写。
+    if (prev && prev.path === pos.path && prev.line === pos.line) return;
     s.splice(i + 1);              // 丢弃游标之后的历史
     s.push(pos);
     if (s.length > NAV_HIST.MAX) s.shift();
@@ -82,38 +88,74 @@
   }
 
   function navJumpTo(pos) {
-    if (!pos) return;
-    // 复用既有跳转通道：openFileSmart 会按路径去重并定位行列
-    openFileSmart(pos.path, 'auto',
-                  { line: Math.max(1, pos.line || 1), col: pos.col || 1 });
-  }
-
-  function navigateBack() {
-    if (NAV_HIST.cur <= 0) { showBanner('已经是最早的位置', 1800); return; }
-    NAV_HIST.cur--;
-    navJumpTo(NAV_HIST.stack[NAV_HIST.cur]);
-  }
-
-  function navigateForward() {
-    if (NAV_HIST.cur >= NAV_HIST.stack.length - 1) {
-      showBanner('已经是最新的位置', 1800); return;
+    if (!pos) return false;
+    // 复用既有跳转通道：openFileSmart 会按路径去重并定位行列。
+    // 返回 false 表示「目标已不可达」（文件被删/盘掉线）——openFileSmart
+    // 在失败时会降级去开阅读器 tab（见审计 P2-3），这里给 noFallback
+    // 让它直接失败返回，由调用方决定跳过。
+    const r = openFileSmart(pos.path, 'auto',
+                            { line: Math.max(1, pos.line || 1),
+                              col: pos.col || 1, noFallback: true });
+    if (r && typeof r.then === 'function') {
+      // openFileSmart 是 async：返回 true/false
+      return r.catch(function () { return false; });
     }
-    NAV_HIST.cur++;
-    navJumpTo(NAV_HIST.stack[NAV_HIST.cur]);
+    return true;
   }
+
+  function _navStep(dir) {
+    // a375R（审计 P2-3，VSCode 同款）：目标文件已删除/不可达时，**跳过该项
+    // 继续沿方向移动**，游标停在真正能到的那一项——不会出现「按了没反应，
+    // 还多开一个空 tab」。最多连跳 MAX 次防死循环。
+    const s = NAV_HIST.stack;
+    let n = 0;
+    while (s.length && n++ < NAV_HIST.MAX) {
+      const next = NAV_HIST.cur + dir;
+      if (next < 0) { showBanner('已经是最早的位置', 1800); return; }
+      if (next > s.length - 1) { showBanner('已经是最新的位置', 1800); return; }
+      NAV_HIST.cur = next;
+      const item = s[next];
+      const r = navJumpTo(item);
+      if (r === false) {
+        showBanner('目标位置已不可达，已跳过：' + (item.path || ''), 2600);
+        continue;   // 沿同方向继续
+      }
+      if (r && typeof r.then === 'function') {
+        // 异步通道：拿到结果后再决定是否继续跳（先返回，避免卡住按键）
+        r.then(function (ok) {
+          if (!ok) { _navStep(dir); }
+        });
+      }
+      return;
+    }
+  }
+
+  function navigateBack() { _navStep(-1); }
+  function navigateForward() { _navStep(1); }
 
   // 跳转类动作统一入口：先记下「从哪跳的」，再执行跳转。
   // a360R（关键）：**目标和来源都要进栈**。只压来源的话，第一次跳转后栈里
   // 只有 [A]、游标停在 0，navigateBack 直接判「已经是最早的位置」——永远
   // 回不去。VSCode 的语义是「跳到 B 之后，历史里有 A 和 B 两项」，
   // back 回到 A、forward 再回到 B。
+  // a375R（审计 P2-6）：目标必须在**真正打开成功之后**才入栈——用户在
+  // 「选择打开方式」弹窗里点取消时，原先会留下一个从未去过的幽灵历史项。
   function _jumpOpen(fromEditor, path, opts) {
-    navPush(_navPos(fromEditor));
-    openFileSmart(path, 'auto', opts);
-    // 目标位置入栈：openFileSmart 是异步的（等 Monaco 就绪才定位），
-    // 这里先按请求参数记一条，行列足够表达「导航到哪」。
-    navPush({ path: path, line: (opts && opts.line) || 1,
-              col: (opts && opts.col) || 1 });
+    const from = _navPos(fromEditor);
+    const r = openFileSmart(path, 'auto', opts);
+    if (r && typeof r.then === 'function') {
+      r.then(function (ok) {
+        if (!ok) return;                 // 没打开：不记历史
+        navPush(from);
+        navPush({ path: path, line: (opts && opts.line) || 1,
+                  col: (opts && opts.col) || 1 });
+      }).catch(function () {});
+    } else {
+      // 同步路径（理论上 openFileSmart 恒返回 Promise，兜底）
+      navPush(from);
+      navPush({ path: path, line: (opts && opts.line) || 1,
+                col: (opts && opts.col) || 1 });
+    }
   }
 
   async function queryDefinition(model, position) {
@@ -514,16 +556,22 @@
         e.preventDefault(); e.stopPropagation(); showWorkspaceSymbols(ed);
       }
       // a360R（用户需求2）：导航历史 back / forward。
-      // 不要求编辑器有焦点——VSCode 里跳回去之后焦点常常落在别处，
-      // 此时仍然要能继续按。但输入框里打字时不要抢键（下面判一下）。
+      // a375R（第1轮审计 P2-4/P1-1）：接管范围要精确——不能一律放行，也不能
+      // 一律抢。四个方向的真实归属：
+      //   · Monaco 编辑器内：接管（VSCode 同款；Alt+←/→ 在 Windows Monaco 里
+      //     没有默认绑定，不冲突）
+      //   · xterm 终端内：**放行**——bash/readline 的 Alt+←/→ 是「按词移动
+      //     光标」，抢了会破坏终端输入
+      //   · 普通 input/textarea：放行（浏览器原生光标移动）
+      //   · 其他（页面空白、树、面板）：接管，这样焦点不在编辑器时也能返回
       if (matchKey(e, NAV_KEYS.back) || matchKey(e, NAV_KEYS.fwd)) {
         const t = e.target;
         const tag = t && t.tagName ? t.tagName.toLowerCase() : '';
-        // 只在真正的文本输入控件里放行原生行为；Monaco 的隐藏 textarea
-        // (class xterm-helper-textarea / inputarea) 不算，编辑器里要能按
-        const inTextInput = (tag === 'input' || tag === 'textarea') &&
-          !(t.closest && t.closest('.monaco-editor'));
-        if (!inTextInput) {
+        const inMonaco = !!(t && t.closest && t.closest('.monaco-editor'));
+        const inXterm = !!(t && t.closest && t.closest('.xterm'));
+        const inPlainInput = !inMonaco && !inXterm &&
+          (tag === 'input' || tag === 'textarea');
+        if (!inXterm && !inPlainInput) {
           e.preventDefault(); e.stopPropagation();
           if (matchKey(e, NAV_KEYS.back)) navigateBack();
           else navigateForward();

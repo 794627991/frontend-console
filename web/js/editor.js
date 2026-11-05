@@ -2325,11 +2325,11 @@ async function openFileSmart(path, mode, opts) {
     else if (MB > 30) how = 'view';                        // >30M 强制阅读器（Monaco 必卡）
     else if (MB > 20) how = await _showOpenModeDialog(path, size, false);  // 20~30M 提示选
     else how = 'edit';                                     // <20M 默认编辑器
-    if (!how) return;                                      // 用户关掉了弹窗
+    if (!how) return false;                                // 用户关掉了弹窗（a375R：返回失败）
   }
 
-  if (how === 'hex') { buildHexViewerTab(path, name); return; }
-  if (how === 'view') { buildLogViewer(path, opts && opts.line); return; }   // R28-5：行号透传
+  if (how === 'hex') { buildHexViewerTab(path, name); return true; }
+  if (how === 'view') { buildLogViewer(path, opts && opts.line); return true; }   // R28-5：行号透传
   // edit：未知类型用户硬选编辑器——超 20M 后端会拒（大小前提由后端硬上限兜底），拒则降级
   try {
     // force=1：无后缀/未知类型按内容探测放行（去后缀的 json 等曾直接被白名单拒）
@@ -2346,17 +2346,25 @@ async function openFileSmart(path, mode, opts) {
         await _edJumpFresh(_c);
         jump(_c, opts);   // 新开即跳；去重分支（switchTab 已返回 conn）同跳
       }
-      return;
+      return true;
     }
     // 后端仍拒（真二进制/超限/不存在）：二进制改切 hex（阅读器看乱码没意义），其余降级阅读器
     if (j.err && /类型|二进制/.test(j.err)) {
       showBanner('该文件是二进制（含 NUL 字节），已切换 16 进制查看器', 4000, true);
       buildHexViewerTab(path, name);
-      return;
+      return true;
     }
+    // a375R（审计 P2-3）：导航历史回退到已删除/不可达文件时，原先会降级
+    // 开一个指向不存在文件的阅读器 tab——按了没反应还多一个空 tab。
+    // 调用方（navJumpTo）传 noFallback 时直接判失败，由它跳过该项。
+    if (opts && opts.noFallback) return false;
     showBanner('编辑器无法打开（' + (j.err || '未知错误') + '），已切换阅读器', 4000, true);
-  } catch(e) { showBanner('打开失败: ' + e, 4000, true); return; }
+  } catch(e) {
+    showBanner('打开失败: ' + e, 4000, true);
+    return false;   // a375R：失败（含 noFallback 场景）一律返回 false
+  }
   buildLogViewer(path, opts && opts.line);   // R28-5：降级阅读器同款行号透传
+  return true;
 }
 
 // v3.5.76（拖附件 4s+ 根修）：pywebview 的 on('drop') 只注册 drop 不取消

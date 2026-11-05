@@ -204,6 +204,12 @@ function _stNavKeysCard(pane) {
           showBanner('方向键需搭配 Ctrl/Alt/Shift（裸方向键会被编辑器占用）', 2600, true);
           return;
         }
+        // a375R（审计 P2-7）：方向键只给导航历史——配给转到定义/引用/符号
+        // 等于抢走「按词移动光标」，与后端校验同口径
+        if (_ARROW && k !== 'back' && k !== 'fwd') {
+          showBanner('方向键只可用于「后退 / 前进」', 2600, true);
+          return;
+        }
         parts.push(main);
         keys[k] = parts.join('+');
         stopRec();
@@ -250,7 +256,8 @@ function _stNavKeysCard(pane) {
       const j = await r.json();
       if (!j.ok) { showBanner('保存失败：' + (j.err || ''), 4000, true); return; }
       if (NJ && NJ.applyKeys) NJ.applyKeys(keys);
-      showBanner('跳转快捷键已生效：' + lbl(keys.def) + ' / ' + lbl(keys.ref) + ' / ' + lbl(keys.sym), 4000);
+      showBanner('跳转快捷键已生效：' + lbl(keys.def) + ' / ' + lbl(keys.ref) + ' / '
+                 + lbl(keys.sym) + ' / ' + lbl(keys.back) + ' / ' + lbl(keys.fwd), 4000);
       _showSave(false);
       _ORDER.forEach(k => fields[k].textContent = lbl(keys[k]));
     } catch (e) { showBanner('保存失败: ' + e, 4000, true); }
