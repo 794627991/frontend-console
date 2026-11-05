@@ -267,6 +267,15 @@ def provision_defaults(force_statusline=False, reset_statusline=False):
             notes.append("MCP 已注册：" + "，".join(n_mcp))
     except Exception as e:
         notes.append("MCP 自注册失败（不影响使用）：%s" % (e,))
+    # 2b-2. codegraph MCP 注册 + 授权（a361：工具内建「Claude 代码图」依赖
+    #     它——同事设备 npm 装了 codegraph 但 ~/.claude.json 无条目则 claude
+    #     会话查不了代码图）。同款幂等只补缺
+    try:
+        n_cg = _register_codegraph_mcp()
+        if n_cg:
+            notes.append("codegraph MCP 已注册：" + "，".join(n_cg))
+    except Exception as e:
+        notes.append("codegraph MCP 注册失败（不影响使用）：%s" % (e,))
     # 3. ~/.claude.json 首次确认位（默认授权——别的用户开箱不弹确认）：
     #    onboarding/主题/信任已见等布尔全部预置 true；新建 projects 条目也带
     #    hasTrustDialogAccepted（工作区 trust 不再问）。只补缺不覆盖。
@@ -336,6 +345,48 @@ def _register_self_mcp():
     # 可能带后缀，如 mcp__serial-console-pro__send_command 已由精确名覆盖；
     # 这里再补一条前缀通配防漏）。用户本机就是这么写的，照抄。
     want = ["mcp__%s" % MCP_SERVER_NAME, "mcp__%s__*" % MCP_SERVER_NAME]
+    miss = [w for w in want if w not in allow]
+    if miss:
+        allow.extend(miss)
+        _write_settings(cur)
+        done.append("permissions")
+    return done
+
+
+def _register_codegraph_mcp():
+    """a361：codegraph MCP 注册 + 授权（串口 MCP 同款双写，用户令——绝不让
+    用户手改配置）。前提：npm 全局 codegraph 可执行（工具的「Claude 代码图」
+    用它建索引，会话侧 serve --mcp 消费）。未装时静默跳过（弹层有安装提示）。
+    幂等只补缺不覆盖。"""
+    import shutil
+    if not shutil.which("codegraph"):
+        return []   # 未装（同事设备装后首次 provision 自动补）
+    done = []
+    cj = os.path.join(os.path.expanduser("~"), ".claude.json")
+    try:
+        with open(cj, encoding="utf-8") as f:
+            d = json.load(f)
+        if not isinstance(d, dict):
+            d = {}
+    except Exception:
+        d = {}
+    servers = d.get("mcpServers")
+    if not isinstance(servers, dict):
+        servers = {}
+    if not servers.get("codegraph"):
+        servers["codegraph"] = {"type": "stdio", "command": "codegraph",
+                                "args": ["serve", "--mcp"]}
+        d["mcpServers"] = servers
+        _atomic_json(cj, d)
+        done.append("mcpServers")
+    cur = _read_settings()
+    perms = cur.get("permissions")
+    if not isinstance(perms, dict):
+        perms = cur["permissions"] = {"allow": [], "defaultMode": "auto"}
+    allow = perms.get("allow")
+    if not isinstance(allow, list):
+        allow = perms["allow"] = []
+    want = ["mcp__codegraph", "mcp__codegraph__*"]
     miss = [w for w in want if w not in allow]
     if miss:
         allow.extend(miss)

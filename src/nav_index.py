@@ -367,9 +367,12 @@ def build(root, log=None, progress=None, should_cancel=None):
             b, ext = os.path.splitext(low)
             if ext in _UNIT_EXTS:
                 unit_by_base.setdefault(b, []).append(rel)
-        if (cmd_count + o_count) % 2000 == 0 and (cmd_count + o_count):
-            say("  已发现 .cmd %d / .o %d …" % (cmd_count, o_count))
-            prog(2 + min(28, (cmd_count + o_count) / 400), "扫描编译产物")
+        # a361：文件级进度（每 500 个产物/每 5000 个源文件报一行——死等变活）
+        _tot = cmd_count + o_count + len(unit_by_base)
+        if _tot and _tot % 5000 < 1:
+            say("  扫描中：产物 %d（.cmd %d/.o %d）· 源文件 %d …"
+                % (_tot, cmd_count, o_count, len(unit_by_base)))
+            prog(2 + min(28, _tot / 800), "扫描 %d 文件" % _tot)
     # basename 全局唯一兜底（out-of-tree）
     for orel in pending_o:
         b = os.path.splitext(os.path.basename(orel))[0].lower()
@@ -394,6 +397,23 @@ def build(root, log=None, progress=None, should_cancel=None):
            "-R", "-f", tags_tmp,
            "--exclude=.git", "--exclude=node_modules",
            root]
+    # a361（用户实锤：30% 死等无文件进度）：大库 ctags 阶段数分钟只有一句
+    # "ctags 索引"——心跳线程监控 tags.tmp 增长，每 3 秒报已写 MB，死等变
+    # 活进度；ctags 完成后心跳自停
+    import threading as _th
+    _hb_stop = _th.Event()
+    def _heartbeat():
+        _last = -1
+        while not _hb_stop.wait(3.0):
+            try:
+                sz = os.path.getsize(tags_tmp) / 1048576
+            except OSError:
+                sz = 0
+            if int(sz) != _last:
+                _last = int(sz)
+                say("  ctags 写入中 %d MB…" % _last)
+    _hb = _th.Thread(target=_heartbeat, daemon=True)
+    _hb.start()
     try:
         env = dict(os.environ)
         env["LC_ALL"] = "C"
@@ -403,6 +423,8 @@ def build(root, log=None, progress=None, should_cancel=None):
         raise RuntimeError("ctags.exe 缺失（vendor/ctags/）")
     except subprocess.TimeoutExpired:
         raise RuntimeError("ctags 超时（60 分钟）——目录过大？")
+    finally:
+        _hb_stop.set()
     if not os.path.isfile(tags_tmp):
         raise RuntimeError("ctags 未产出 tags：%s" % (r.stderr or "")[:200])
     # R15-3（实锤：取消被吞）：ctags 阻塞期不查取消——跑完立即补查，

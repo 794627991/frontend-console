@@ -120,15 +120,21 @@ def _refresh_loop(my_gen, level, power_plan):
     global _refresh_timer
     if my_gen != _gen:
         return   # 旧代际自灭：不再刷也不再起新 timer
-    _apply_priority(level)   # 静默重刷（新 webview2 进程补提）
-    # R24-2 补刀：_apply_priority 期间（秒级 PowerShell）可能已有新 apply
-    # 进来（代际已变）——起下一拍前**再查一次**，否则旧循环复活
-    if my_gen != _gen:
-        return
-    _refresh_timer = threading.Timer(60.0, _refresh_loop,
-                                     args=(my_gen, level, power_plan))
-    _refresh_timer.daemon = True
-    _refresh_timer.start()
+    # R25-1（实锤：loop 的优先级刷在锁外，与 apply 关档并发无互斥——
+    # 打桩定向复现旧档尾刷落在 Normal 之后残留）：双查+刷优先全部入锁，
+    # 与 apply 串行化
+    with _boost_lock:
+        if my_gen != _gen:
+            return
+        _apply_priority(level)   # 静默重刷（新 webview2 进程补提）
+        # R24-2 补刀：_apply_priority 期间（秒级 PowerShell）可能已有新
+        # apply 进来（代际已变）——起下一拍前**再查一次**，否则旧循环复活
+        if my_gen != _gen:
+            return
+        _refresh_timer = threading.Timer(60.0, _refresh_loop,
+                                         args=(my_gen, level, power_plan))
+        _refresh_timer.daemon = True
+        _refresh_timer.start()
 
 
 def stop():

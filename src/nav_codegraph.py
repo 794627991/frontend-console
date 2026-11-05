@@ -70,18 +70,45 @@ def status(root):
             "edges": _num(r"Edges"), "db_mb": round(db * unit, 1)}
 
 
-def build(root, log=None):
-    """init（首次）或 index 全量重建。返回 (ok, msg)。log=callable 收进度行。"""
+def build(root, log=None, progress=None):
+    """init（首次）或 index 全量重建。返回 (ok, msg)。
+    log=callable 收进度行；progress=callable(pct, label)。
+    a361：codegraph 自身无机器可读进度（TTY 进度条）——用 .codegraph/
+    下的 DB 文件增长做心跳（每 2 秒报 MB），死等变活进度。"""
     say = log or (lambda _m: None)
+    prog = progress or (lambda *_a: None)
     st = status(root)
     if not st.get("ok"):
         return False, st.get("err", "status 失败")
     action = "index" if st.get("installed") else "init"
     say("codegraph %s（首次 init 数十秒，重建同量级）…" % action)
-    rc, out = _run([action, "--force" if action == "init" else "--force"], root)
-    # init/index 默认即建索引；--force 防home判定误伤（工程根都是普通目录）
+    prog(5, "codegraph %s" % action)
+    import threading as _th
+    _stop = _th.Event()
+    db = os.path.join(root, ".codegraph")
+    def _hb():
+        _last = -1
+        while not _stop.wait(2.0):
+            total = 0
+            for r, _ds, fs in os.walk(db):
+                for f in fs:
+                    try:
+                        total += os.path.getsize(os.path.join(r, f))
+                    except OSError:
+                        pass
+            mb = int(total / 1048576)
+            if mb != _last:
+                _last = mb
+                say("  codegraph 数据 %.0f MB…" % mb)
+    _hb_t = _th.Thread(target=_hb, daemon=True)
+    _hb_t.start()
+    try:
+        rc, out = _run([action, "--force"], root)
+    finally:
+        _stop.set()
     if rc != 0:
         return False, out[-300:]
+    prog(90, "codegraph 收尾")
     st2 = status(root)
     if not st2.get("ok") or not st2.get("installed"):
         return False, "索引未生效：" + json_safe(st2)
