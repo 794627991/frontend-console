@@ -277,11 +277,6 @@ function _stRenderAppearancePane(pane) {
       <div class="dd-sub">Markdown 预览面板的配色（独立于全局主题，随时可改）。</div>
     </div>
     <div class="dd-cur" style="margin-top:8px;">
-      <div class="dd-label">代码跳转快捷键</div>
-      <div class="dd-row" style="display:flex;gap:10px;margin-top:8px;flex-wrap:wrap;align-items:center;" id="stNavKeysRow"></div>
-      <div class="dd-sub">编辑器内：转到定义 / 查找所有引用 / 工作区符号搜索（按符号名搜全库，跨文件找函数）。点击输入框后按下新组合键，保存即时生效；编辑器右键菜单同样可用这三项。</div>
-    </div>
-    <div class="dd-cur" style="margin-top:8px;">
       <div class="dd-label">CPU 优先</div>
       <div class="dd-row" style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;" id="stBoostRow"></div>
       <label style="display:flex;gap:8px;align-items:center;margin-top:8px;font-size:12px;cursor:pointer;">
@@ -335,8 +330,7 @@ function _stRenderAppearancePane(pane) {
     });
   }
   const cur = document.documentElement.getAttribute('data-theme') || 'deepblue';
-  // a346：代码跳转快捷键（录制框 + 保存热应用）
-  _stNavKeysCard(pane);
+  // a346：代码跳转快捷键已移到「终端设置」（a359R：与其它快捷键配置放一起）
   _stBoostCard(pane);
   // a278 性能模式开关（极光玻璃 GPU 合成优化）
   const perfBtn = pane.querySelector('#apPerfToggle');
@@ -529,6 +523,11 @@ async function _stRenderTermKeysPane(pane) {
         <div class="dd-sub" style="margin-top:4px;">录制与截图快捷键同款（Esc 取消）。两键请勿设成相同组合——撞车时全库搜索（页面捕获层）优先。</div>
       </div>
       <div class="dd-cur" style="margin-top:8px;">
+        <div class="dd-label">代码跳转快捷键</div>
+        <div class="dd-row" style="display:flex;gap:10px;margin-top:8px;flex-wrap:wrap;align-items:center;" id="stNavKeysRow"></div>
+        <div class="dd-sub">编辑器内：转到定义 / 查找所有引用 / 工作区符号搜索（按符号名搜全库，跨文件找函数）。点击输入框后按下新组合键，保存即时生效；编辑器右键菜单同样可用这三项。</div>
+      </div>
+      <div class="dd-cur" style="margin-top:8px;">
         <div class="dd-label">Claude 打开方式</div>
         <div class="dd-row" style="margin-top:6px;display:flex;gap:16px;flex-wrap:wrap;">
           <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;">
@@ -695,6 +694,9 @@ async function _stRenderTermKeysPane(pane) {
   const _notesRef = { get: () => notesHk, set: v => { notesHk = v; } };
   _bindSearchHk('docHkInput', _docRef, 'doc_search_hotkey');
   _bindSearchHk('notesHkInput', _notesRef, 'notes_search_hotkey');
+  // a359R（用户定调）：代码跳转快捷键属于「快捷键配置」，与截图/搜索快捷键
+  // 放在同一页（原来挂在外观 pane，位置不对）。渲染时机与其他快捷键一致。
+  _stNavKeysCard(pane);
 }
 
 // ---- 外部依赖安装（v4.1）：运行时依赖检测 + 离线资源包一键装 ----
