@@ -522,11 +522,15 @@
       if (!j.has_code) {
         st.textContent = '❌ 未发现代码文件（C/C++/py/js 等）——该目录不需要索引';
         st.style.color = 'var(--neon-red,#e5484d)';
-        return;   // 无按钮：不盲目
+        // R27-3（实锤：未建 ctags 时 codegraph 整体不可见）：两套索引独立
+        // ——ctags 不需要 ≠ codegraph 不需要（claude 代码图有自己的价值）
+        _renderCodegraph(st, path, btns);
+        return;   // ctags 无按钮：不盲目；codegraph 区块自行决定
       }
       st.textContent = '✓ 发现代码文件（浅层抽样 ' + (j.probe_files || 0) + ' 个）。'
         + '首次索引需扫描全目录——网盘挂载的大库可能数分钟，结果存工具数据目录（不写工程目录）。';
       btns.insertBefore(bAdd, btns.lastChild);
+      _renderCodegraph(st, path, btns);   // R27-3：两套独立，都要可见
       return;
     }
     const m = j.meta || {};
@@ -705,7 +709,13 @@
         if (!s.done) return;
         clearInterval(_pollTimer); _pollTimer = null;
         if (s.ok_done) {
-          txt.textContent = '✓ 完成：' + ((s.result && s.result.code_files) || 0) + ' 符号';
+          // R27-2（实锤：codegraph 任务完成恒"0 符号"）：result 按 kind 分流——
+          // ctags 用 code_files（符号数），codegraph 用 files（文件数）
+          const res = s.result || {};
+          const doneTxt = res.kind === 'codegraph'
+            ? '✓ 完成：' + (res.files || 0) + ' 文件'
+            : '✓ 完成：' + (res.code_files || 0) + ' 符号';
+          txt.textContent = doneTxt;
           showBanner('代码索引建立完成', 3000);
           bCancel.textContent = '关闭';
           bCancel.onclick = _closePanel;

@@ -213,14 +213,23 @@ def nav_cg_build():
                       percent=0, cur="", cancelled=False, log_seq=0, root=root)
 
     def work():
+        def should_cancel():
+            return bool(_state.get("cancel"))
         try:
             _state["percent"] = 10
             fn = cg.sync if mode == "sync" else cg.build
-            ok, msg = fn(root, log=_log)
+            # R27-1（实锤：取消钮假动作）：should_cancel 透传——心跳每拍查，
+            # 取消即杀 codegraph 子进程并走取消终态（旧版钮在动作假）
+            ok, msg = fn(root, log=_log, should_cancel=should_cancel)
             _state.update(percent=100, done=True, ok=ok,
                           err="" if ok else msg[:400],
                           phase="完成" if ok else "失败",
-                          result={"kind": "codegraph", "ok": ok, "msg": msg[:200]})
+                          result={"kind": "codegraph", "ok": ok, "msg": msg[:200],
+                                  "files": (cg.status(root) or {}).get("files", 0)})
+        except cg.CgCancelled:
+            _state.update(done=True, ok=False, err="已取消", phase="已取消",
+                          cancelled=True)
+            _log("用户取消 codegraph")
         except Exception as e:
             _state.update(done=True, ok=False, err=str(e)[:400], phase="失败")
         finally:

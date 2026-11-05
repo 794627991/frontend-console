@@ -80,11 +80,17 @@ def status(root):
             "edges": _num(r"Edges"), "db_mb": round(db * unit, 1)}
 
 
-def build(root, log=None, progress=None):
+class CgCancelled(Exception):
+    pass
+
+
+def build(root, log=None, progress=None, should_cancel=None):
     """init（首次）或 index 全量重建。返回 (ok, msg)。
     log=callable 收进度行；progress=callable(pct, label)。
     a361：codegraph 自身无机器可读进度（TTY 进度条）——用 .codegraph/
-    下的 DB 文件增长做心跳（每 2 秒报 MB），死等变活进度。"""
+    下的 DB 文件增长做心跳（每 2 秒报 MB），死等变活进度。
+    R27-1（实锤：取消钮假动作）：should_cancel 由 work() 传入——心跳每
+    拍检查，已取消即杀子进程（_run 的 Popen 句柄）并抛 CgCancelled"""
     say = log or (lambda _m: None)
     prog = progress or (lambda *_a: None)
     st = status(root)
@@ -93,12 +99,22 @@ def build(root, log=None, progress=None):
     action = "index" if st.get("installed") else "init"
     say("codegraph %s（首次 init 数十秒，重建同量级）…" % action)
     prog(5, "codegraph %s" % action)
+    import subprocess as _sp
     import threading as _th
     _stop = _th.Event()
+    _proc = [None]
     db = os.path.join(root, ".codegraph")
     def _hb():
         _last = -1
         while not _stop.wait(2.0):
+            if should_cancel and should_cancel():
+                _stop.set()
+                try:
+                    if _proc[0]:
+                        _proc[0].kill()
+                except Exception:
+                    pass
+                return
             total = 0
             for r, _ds, fs in os.walk(db):
                 for f in fs:
@@ -112,12 +128,35 @@ def build(root, log=None, progress=None):
                 say("  codegraph 数据 %.0f MB…" % mb)
     _hb_t = _th.Thread(target=_hb, daemon=True)
     _hb_t.start()
+    exe = _cg_exe()
+    proc = None
     try:
-        rc, out = _run([action, "--force"], root)
+        if not exe:
+            return False, "codegraph 命令不存在"
+        proc = _sp.Popen([exe, action, "--force"], cwd=root,
+                         stdout=_sp.PIPE, stderr=_sp.STDOUT,
+                         creationflags=0x08000000)
+        _proc[0] = proc
+        out = proc.communicate(timeout=3500)[0]
+        rc = proc.returncode
+    except _sp.TimeoutExpired:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        return False, "codegraph 超时"
     finally:
         _stop.set()
+        _proc[0] = None
+    # 被取消：心跳杀了进程 → 非零 rc + cancel 态
+    if should_cancel and should_cancel():
+        raise CgCancelled("用户取消 codegraph")
     if rc != 0:
-        return False, out[-300:]
+        try:
+            txt = (out or b"").decode("utf-8", "replace")
+        except Exception:
+            txt = ""
+        return False, txt[-300:]
     prog(90, "codegraph 收尾")
     st2 = status(root)
     if not st2.get("ok") or not st2.get("installed"):
@@ -127,12 +166,12 @@ def build(root, log=None, progress=None):
     return True, "codegraph 索引就绪"
 
 
-def sync(root, log=None):
+def sync(root, log=None, should_cancel=None):
     """增量同步（代码大改后；秒级）。"""
     say = log or (lambda _m: None)
     st = status(root)
     if not st.get("installed"):
-        return build(root, log)   # 未建过 → 全量
+        return build(root, log, should_cancel=should_cancel)
     say("codegraph sync（增量）…")
     rc, out = _run(["sync"], root, timeout=600)
     if rc != 0:
