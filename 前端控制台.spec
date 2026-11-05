@@ -29,6 +29,10 @@ a = Analysis(
         # src.* 传递引入的第三方库会整批从打包图消失 → 冻结环境 import flask/
         # serial 失败 → 依赖自检误报缺库卡死（用户实锤「首次启动·安装依赖」）。
         # 这里显式列全部运行时第三方。
+        # a358：pyelftools（nav_index 是函数内 import——静态分析不可达，
+        # exe 版漏打包实锤：跳转的 ELF 符号层整体降级。ctags.exe 走
+        # datas vendor ✓ 已带）
+        'elftools', 'elftools.elf', 'elftools.common',
         'flask', 'serial', 'serial.tools', 'serial.tools.list_ports',
         'websocket',                      # websocket-client（HikLink 机器人 WS；
                                           # hiklink_bot try/except 静默吞缺失，
