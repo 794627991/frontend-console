@@ -2146,6 +2146,15 @@ async function openFileSmart(path, mode, opts) {
         try {
           m.revealLineNearTop(o.line);
           m.setPosition({ lineNumber: o.line, column: o.col || 1 });
+          // a365（用户实锤：跳转后看不到落点）：selectLine=true 时整行选中
+          // 高亮——跳转/引用点击后第一眼可见（VSCode 同款）
+          if (o.selectLine) {
+            try {
+              const len = m.getModel().getLineMaxColumn(o.line);
+              m.setSelection({ startLineNumber: o.line, startColumn: 1,
+                              endLineNumber: o.line, endColumn: len });
+            } catch (_) {}
+          }
           try { m.focus(); } catch (_) {}
         } catch (_) {}
         return;

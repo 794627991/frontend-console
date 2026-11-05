@@ -14,9 +14,13 @@
     } catch (_) {}
     try {
       const line = model.getLineContent(position.lineNumber) || '';
-      const ISW = c => /[A-Za-z0-9_]/.test(c || '');
+      const ISW = c => /[A-Za-z0-9_$]/.test(c || '');
+      // a365R（用户实测 _get_pty 后括号上按 F12 无反应）：旧兜底只向左探
+      // 1 格——落在 '()' 或 '():' 上直接空词静默。向左滑到最近词字符
+      // （限 8 格防无限滑），$:JS 词合法字符
       let i = Math.max(0, position.column - 1);
-      if (!ISW(line[i])) i -= 1;          // 边界外（词尾点击）向左探一格
+      let guard = 8;
+      while (!ISW(line[i]) && i > 0 && guard-- > 0) i -= 1;
       if (!ISW(line[i])) return '';
       let s = i, e = i;
       while (s > 0 && ISW(line[s - 1])) s--;
@@ -241,12 +245,22 @@
       const b = _h('span', it.in_build === true ? '✓' : (it.in_build === false ? '✗' : '~'));
       b.style.cssText = 'font-size:11px;flex-shrink:0;color:' +
         (it.in_build === true ? 'var(--accent)' : 'var(--muted)');
+      // 用户实锤（行号截断）：路径+行号全显示优先于摘要——两行布局，
+      // 第一行完整路径:行号（可断行），第二行摘要
+      const locBox = document.createElement('div');
+      locBox.style.cssText = 'flex:1;min-width:0;display:flex;flex-direction:column;gap:1px;';
       const loc = _h('span', it.rel + ' :' + it.line);
-      loc.style.cssText = 'font-family:var(--font-mono);font-size:11.5px;flex-shrink:0;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+      loc.style.cssText = 'font-family:var(--font-mono);font-size:11.5px;word-break:break-all;white-space:normal;line-height:1.35;';
       const sn = _h('span', it.snippet || '');
-      sn.style.cssText = 'font-family:var(--font-mono);font-size:11px;color:var(--muted);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-      row.appendChild(b); row.appendChild(loc); row.appendChild(sn);
-      row.onclick = function () { _closeCands(); openFileSmart(it.path, 'auto', { line: it.line }); };
+      sn.style.cssText = 'font-family:var(--font-mono);font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+      locBox.appendChild(loc); locBox.appendChild(sn);
+      row.appendChild(b); row.appendChild(locBox);
+      row.onclick = function () {
+        _closeCands();
+        // 用户实锤（跳转无高亮看不见）：openFileSmart 只定位不选中——
+        // 定位后把目标行整行选中高亮（VSCode 跳转同款即时可见）
+        openFileSmart(it.path, 'auto', { line: it.line, col: 1, selectLine: true });
+      };
       card.appendChild(row);
     });
     ov.appendChild(card);

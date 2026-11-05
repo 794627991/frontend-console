@@ -665,7 +665,12 @@ def references(file_path, symbol, limit=200):
     cmd = [rg, "--json", "--no-messages", "--no-ignore", "-F",
            "-g", "*.c", "-g", "*.h", "-g", "*.cpp", "-g", "*.hpp",
            "-g", "*.cc", "-g", "*.py", "-g", "*.js", "-g", "*.ts",
-           "-g", "!**/node_modules/**", "-g", "!**/.git/**"]
+           "-g", "!**/node_modules/**", "-g", "!**/.git/**",
+           # 用户实锤（28 处 vs 3 处）：--no-ignore 打进了 .gitignore 排除的
+           # build/ 产物目录——Cython 生成的 .c 里同一符号几十次，真实引用
+           # 3 条被垃圾淹没。排除常见构建产物目录（与文件树搜索口径对齐）
+           "-g", "!**/build/**", "-g", "!**/dist/**", "-g", "!**/out/**",
+           "-g", "!**/.codegraph/**", "-g", "!**/offline_runtime/**"]
     # R17-8（实锤：operator 类假阳性）：-w 的词边界语义只对纯标识符符号
     # 成立（operator+ 的 + 非词字符，-w 判界异常）——纯标识符才加 -w
     if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", symbol):
