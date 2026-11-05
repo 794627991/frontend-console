@@ -1121,4 +1121,7 @@
     // v2.35（P0-3）：用户手动打开的窗格不自动收——用户正在围观，收走就是
     // 「弹了出来一会又收回去了」；只有 ✕ 手动关。切会话/关 tab 清空不变。
     if (_subPaneEl && !_sub.manual) _subPaneEl.style.display = 'none';
+    // 内存治理（10.7GB 事故）：回合终结=离屏历史块自动收起（丢体保壳，
+    // 与用户手动折叠同机制；histAll 账无损，点开回填）
+    try { if (typeof _histCollapseOffscreen === 'function') _histCollapseOffscreen(); } catch (_) {}
   }

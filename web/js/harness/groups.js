@@ -699,6 +699,32 @@
     _hgFlow.insertBefore(hint, _hgFlow.firstChild);
   }
 
+  // 10.7GB 内存事故治理（用户令：子代理/SSE 无论怎么跑内存不能爆炸）：
+  // 20 轮窗口内的 live 工具行/思考段全程展开——20 轮审查实测 5 万节点常驻
+  //（SSE 结束、窗格全收后不回落：会话流是聊天历史，没有"收起即卸载"）。
+  // 复用既有懒渲染语义（用户手动点折叠头=_histLazyDrop 丢体保壳、点开
+  // _histLazyFill 从 histAll 账回填）——把"离屏且展开"的历史行自动收起：
+  // 与用户自己收起完全同机制，数据零丢失。无 hi/raw 标记的流式行不碰
+  // （丢了无法恢复，_histLazyDrop 自身语义）
+  function _histCollapseOffscreen() {
+    try {
+      if (_HG.readonly || !_hgFlow) return 0;
+      const vr = _hgFlow.getBoundingClientRect();
+      const lim = vr.top - Math.max(600, vr.height * 2);   // 离屏 2 屏以上才收
+      let n = 0;
+      _hgFlow.querySelectorAll('.h-tool.open, .h-think-seg.open').forEach(el => {
+        const r = el.getBoundingClientRect();
+        if (r.bottom > lim) return;                        // 近屏区不收
+        if (el.dataset.userToggled === '1') return;        // 用户手动展开的尊重
+        el.classList.remove('open');
+        _histLazyDrop(el);
+        n++;
+      });
+      if (n > 30) { try { console.info('[harness] 离屏回收 ' + n + ' 块'); } catch (_) {} }
+      return n;
+    } catch (_) { return 0; }
+  }
+
   function renderUser(text, images, files, live, tsMs) {
     // v3.4.36：真新用户消息=真回合边界——撤销压缩续跑标志，压缩后紧跟的
     // 新提问不许误接回旧组。v3.4.52：只清归属本会话的标志（防误清别的会话的）
