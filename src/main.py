@@ -1340,9 +1340,21 @@ def main():
     # 与 CSS scrollbar-color（踢掉 Fluent 绘制的正解）叠加会把滚动条打成
     # 1~2px 畸形（两机制打架，用户实锤）；单独用它也没能稳定送达命令行
     # （同步时序/loader 行为漂移两轮不稳）。debug 调试端口恢复历史原状
+    # a355 全局掉帧实锤治理：用户环境实测页面 rAF 被节流到 7~13fps
+    #（135ms/帧；敲字符都卡），DevTools attach 时立刻恢复——WebView2/
+    # Chromium 对"非前台/被遮挡窗口"的渲染节流在桌面工具场景是纯伤害
+    #（工具窗口常驻但焦点在别处是正常使用形态）。禁三连 + Windows 原生
+    # 遮挡判定（CalculateNativeWinOcclusion 误判是 WebView2 已知坑）：
+    # 无论窗口前台后台，渲染/定时器一律全速
+    _wv_args = ["--disable-backgrounding-occluded-windows",
+                "--disable-renderer-backgrounding",
+                "--disable-background-timer-throttling",
+                "--disable-features=CalculateNativeWinOcclusion"]
     if _wv_debug:
-        os.environ.setdefault("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
-                              "--remote-debugging-port=9222")
+        _wv_args.append("--remote-debugging-port=9222")
+    _prev = os.environ.get("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "")
+    _merged = " ".join([_prev] + [a for a in _wv_args if a not in _prev]).strip()
+    os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = _merged
     _ensure_webview2()   # v2.3.7a：运行时闸——必须在 webview.start 前（创建期读环境变量）
     webview.start(debug=_wv_debug, private_mode=False,
                   storage_path=os.path.join(DATA_DIR, "webview_cache"))
