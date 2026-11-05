@@ -1489,7 +1489,10 @@ def api_theme():
             return jsonify({"ok": False, "err": "boost.level 只认 normal/above_normal/high"}), 400
         pp = bool(data["boost"].get("power_plan"))
         _pb.apply(lv, pp)
-        _save_config({**_load_config(), "boost": {"level": lv, "power_plan": pp}})
+        # R24-4（R21-6 同型：load→save 无锁丢更新）——并入 nav_keys 写锁
+        #（同保护 /api/theme 的字段级并发写）
+        with _nav_keys_lock:
+            _save_config({**_load_config(), "boost": {"level": lv, "power_plan": pp}})
     if "custom_theme" in data and isinstance(data["custom_theme"], dict):
         # v2.25 自定义主题调色：键白名单 + 值格式校验（#rgb/#rrgggb、light 布尔），
         # 防 config 被塞脏数据（与 term_keys 白名单同思路）

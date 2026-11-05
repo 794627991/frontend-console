@@ -56,7 +56,9 @@ def _apply_priority(level):
 def _apply_power(on):
     global _prev_scheme
     if on:
-        # 记住当前计划（只记一次）
+        # 记住当前计划（只记一次）。R24-5：还原成功后清空 _prev_scheme
+        # ——下次开启重记（否则二次开启不重记当前，退出还原覆盖用户
+        # 中途手动切换的计划）
         if _prev_scheme is None:
             ok, out = _ps("(powercfg /getactivescheme) -replace '.*GUID: ([0-9a-f-]+).*','$1'")
             g = (out or "").strip().splitlines()
@@ -66,6 +68,8 @@ def _apply_power(on):
     # 还原
     target = _prev_scheme or _SCHEME_BALANCED
     ok, _ = _ps("powercfg /setactive %s" % target)
+    if ok:
+        _prev_scheme = None   # R24-5：还原即忘——下轮开启重记真实现值
     return ok
 
 
@@ -73,36 +77,56 @@ def _log(msg):
     print("[boost] " + msg)
 
 
+# R24-2（实锤：重刷循环无代际检查）：快速开关/切档时旧循环体的 Timer
+# cancel 已无效（已触发）→ 复活/双循环互踩。代际计数：apply 自增捕获，
+# 循环体醒来发现代际不符即自灭（不再起新 timer）。
+_gen = 0
+_boost_lock = threading.Lock()
+
+
 def apply(level="above_normal", power_plan=False, quiet=False):
     """应用提升设置。level ∈ above_normal|high|normal(=全还原)"""
-    global _refresh_timer
-    stop()
-    if level in _LEVELS:
-        ok, n = _apply_priority(level)
-        if not quiet:
-            _log("优先级 %s → python+webview2×%s %s"
-                 % (level, n, "✓" if ok else "✗"))
-        if power_plan:
-            okp = _apply_power(True)
+    global _refresh_timer, _gen
+    with _boost_lock:
+        _gen += 1
+        my_gen = _gen
+        stop()
+        if level in _LEVELS:
+            ok, n = _apply_priority(level)
             if not quiet:
-                _log("电源计划 → 高性能 %s" % ("✓" if okp else "✗（本机无此计划）"))
-        # 低频重刷：webview2 子进程崩溃重启后新进程回到 Normal——60s 兜底
-        _refresh_timer = threading.Timer(60.0, _refresh_loop,
-                                         args=(level, power_plan))
-        _refresh_timer.daemon = True
-        _refresh_timer.start()
-    elif level == "normal":
-        _apply_priority("normal")
-        if _prev_scheme is not None or power_plan:
-            _apply_power(False)
-        if not quiet:
-            _log("已还原 Normal/原电源计划")
+                _log("优先级 %s → python+webview2×%s %s"
+                     % (level, n, "✓" if ok else "✗"))
+            if power_plan:
+                okp = _apply_power(True)
+                if not quiet:
+                    _log("电源计划 → 高性能 %s" % ("✓" if okp else "✗（本机无此计划）"))
+            # 低频重刷：webview2 子进程崩溃重启后新进程回到 Normal——60s 兜底
+            _refresh_timer = threading.Timer(60.0, _refresh_loop,
+                                             args=(my_gen, level, power_plan))
+            _refresh_timer.daemon = True
+            _refresh_timer.start()
+        elif level == "normal":
+            _apply_priority("normal")
+            # R24-1（高，实锤：关档勾选复选框真切电源计划）：normal 分支
+            # 只还原"工具自己切过的"（_prev_scheme 非 None）——power_plan
+            # 参数此处无意义（关档下勾选只是记状态，不生效不切）
+            if _prev_scheme is not None:
+                _apply_power(False)
+            if not quiet:
+                _log("已还原 Normal/原电源计划")
 
 
-def _refresh_loop(level, power_plan):
+def _refresh_loop(my_gen, level, power_plan):
     global _refresh_timer
+    if my_gen != _gen:
+        return   # 旧代际自灭：不再刷也不再起新 timer
     _apply_priority(level)   # 静默重刷（新 webview2 进程补提）
-    _refresh_timer = threading.Timer(60.0, _refresh_loop, args=(level, power_plan))
+    # R24-2 补刀：_apply_priority 期间（秒级 PowerShell）可能已有新 apply
+    # 进来（代际已变）——起下一拍前**再查一次**，否则旧循环复活
+    if my_gen != _gen:
+        return
+    _refresh_timer = threading.Timer(60.0, _refresh_loop,
+                                     args=(my_gen, level, power_plan))
     _refresh_timer.daemon = True
     _refresh_timer.start()
 

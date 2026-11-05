@@ -1356,7 +1356,27 @@ def main():
     if _wv_debug:
         _wv_args.append("--remote-debugging-port=9222")
     _prev = os.environ.get("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "")
-    _merged = " ".join([_prev] + [a for a in _wv_args if a not in _prev]).strip()
+    # R24-3（实锤：同名值型开关被覆盖）：整串子串判断会追加出两个
+    # --disable-features → Chromium last-wins → 外部值静默失效。按
+    # 开关键去重（外部优先），disable-features 取两边值并集
+    _have_keys = {tok.split("=", 1)[0] for tok in _prev.split() if tok.startswith("--")}
+    _adds = []
+    for a in _wv_args:
+        k = a.split("=", 1)[0]
+        if k == "--disable-features":
+            ext_val = next((tok.split("=", 1)[1] for tok in _prev.split()
+                            if tok.startswith("--disable-features=")), "")
+            vals = [v for v in (ext_val.split(",") if ext_val else []) + [a.split("=", 1)[1]]
+                    if v]
+            if ext_val:
+                _adds.append("--disable-features=" + ",".join(vals))
+                _have_keys.discard(k)   # 外部那份被并集替换：不重复保留
+                continue
+        if k in _have_keys:
+            continue                   # 外部已设同名开关——尊重不覆盖
+        _adds.append(a)
+        _have_keys.add(k)
+    _merged = " ".join([_prev] + _adds).strip()
     os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = _merged
     _ensure_webview2()   # v2.3.7a：运行时闸——必须在 webview.start 前（创建期读环境变量）
     # a357：CPU 优先提升（config 开着则应用；退出还原电源计划）
