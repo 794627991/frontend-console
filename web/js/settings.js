@@ -238,7 +238,9 @@ function _stNavKeysCard(pane) {
   // 占位标签列（3px+gap）仍占位把恢复默认推偏——整列联动显隐
   function _showSave(show) {
     save.style.display = show ? '' : 'none';
-    if (save.parentElement) save.parentElement.style.display = show ? '' : 'none';
+    // R32-1（实锤：现回时 display='' 清内联落级联默认 block，列 flex 布局
+    // 丢失错位 20px）——列显式写 flex（_actCol 的 cssText 初值同理）
+    if (save.parentElement) save.parentElement.style.display = show ? 'flex' : 'none';
   }
   async function saveNow() {
     try {
