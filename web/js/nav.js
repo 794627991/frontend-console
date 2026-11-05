@@ -143,21 +143,26 @@
   // back 回到 A、forward 再回到 B。
   // a375R（审计 P2-6）：目标必须在**真正打开成功之后**才入栈——用户在
   // 「选择打开方式」弹窗里点取消时，原先会留下一个从未去过的幽灵历史项。
+  // a378R：openFileSmart 是异步的，连续快速跳转 A→B→C 时三个 Promise 可能
+  // 乱序 resolve → 历史顺序错乱。加序号，只有最新的那次跳转才写栈。
+  let _jumpSeq = 0;
   function _jumpOpen(fromEditor, path, opts) {
     const from = _navPos(fromEditor);
+    const mine = ++_jumpSeq;
+    const commit = function () {
+      if (mine !== _jumpSeq) return;   // 已被更新的跳转取代，丢弃
+      navPush(from);
+      navPush({ path: path, line: (opts && opts.line) || 1,
+                col: (opts && opts.col) || 1 });
+    };
     const r = openFileSmart(path, 'auto', opts);
     if (r && typeof r.then === 'function') {
       r.then(function (ok) {
         if (!ok) return;                 // 没打开：不记历史
-        navPush(from);
-        navPush({ path: path, line: (opts && opts.line) || 1,
-                  col: (opts && opts.col) || 1 });
+        commit();
       }).catch(function () {});
     } else {
-      // 同步路径（理论上 openFileSmart 恒返回 Promise，兜底）
-      navPush(from);
-      navPush({ path: path, line: (opts && opts.line) || 1,
-                col: (opts && opts.col) || 1 });
+      commit();                          // 同步路径兜底
     }
   }
 
