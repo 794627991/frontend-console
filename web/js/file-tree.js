@@ -295,9 +295,14 @@ async function treeReveal(path, opts) {
 // 只做形态归一，不动盘符大小写（比较处单独 toLowerCase）。
 function _tvNormPath(p) {
   let s = String(p || '').replace(/\//g, '\\');
+  // a377R（第2轮审计实锤）：UNC 前缀 `\\server\share` 的开头两个反斜杠是
+  // 语义，不是重复分隔符——无脑 `\\{2,}` → `\` 会把 UNC 压成根相对路径，
+  // UNC 项目下文件树定位整个失效。先摘出前缀，折叠完再拼回。
+  const unc = /^\\\\/.test(s);
+  if (unc) s = s.slice(2);
   s = s.replace(/\\{2,}/g, '\\');
   if (s.length > 1 && !/^[A-Za-z]:\\$/.test(s)) s = s.replace(/\\+$/, '');
-  return s;
+  return unc ? '\\\\' + s : s;
 }
 // a375R：并发 reveal 序号（见 treeReveal 内的比对）。
 // 包装在 window.treeReveal 上——内部调用方（含同文件）一律走包装版。
