@@ -205,9 +205,9 @@
       `<div class="hg-modal hg-modal-vcslog">` +
         `<div class="hg-modal-title"><span style="vertical-align:-2.5px">${ICO16.log}</span> 提交历史 · ${esc(D.vcs || '')}${D.branch ? ' · ⎇ ' + esc(D.branch) : ''}</div>` +
         `<div class="hg-vcs-htool">` +
-          `<input name="hg_vcs_hsearch" class="hg-vcs-hsearch" data-vcs-hq="text" placeholder="${isSvn ? '🔍 关键字（svn 整串匹配，含作者/日期）' : '🔍 关键字（多词 AND，含正文）'}" spellcheck="false">` +
+          `<input name="hg_vcs_hsearch" class="hg-vcs-hsearch" data-vcs-hq="text" placeholder="${isSvn ? '关键字（svn 整串匹配，含作者/日期）' : '关键字（多词 AND，含正文）'}" spellcheck="false">` +
           (isSvn ? '' :
-            `<input name="hg_vcs_hauthor" class="hg-vcs-hauthor" data-vcs-hq="author" list="hg-vcs-authors" placeholder="👤 作者" spellcheck="false">` +
+            `<input name="hg_vcs_hauthor" class="hg-vcs-hauthor" data-vcs-hq="author" list="hg-vcs-authors" placeholder="作者" spellcheck="false">` +
             `<datalist id="hg-vcs-authors"></datalist>`) +
           `<button class="btn ghost hg-vcs-chip" data-vcs-chip="today">今天</button>` +
           `<button class="btn ghost hg-vcs-chip" data-vcs-chip="7d">近7天</button>` +
@@ -825,7 +825,7 @@
         `<span class="hg-vcs-logau">${esc(c.author || '')}</span></div>` +
         `<div class="hg-vcs-cfiles" data-vcsfiles="${esc(c.rev || '')}" style="display:none;"></div>`).join('') +
         (_HG.vcs.log.length > 20
-          ? `<div class="hg-vcs-hlfoot">已显示最近 20 / 共 ${_HG.vcs.total || _HG.vcs.log.length} 条——点上方 📜 看全部</div>` : '')
+          ? `<div class="hg-vcs-hlfoot">已显示最近 20 / 共 ${_HG.vcs.total || _HG.vcs.log.length} 条——点上方历史按钮看全部</div>` : '')
         : '');
     _vcsBind(true);
   }
@@ -992,7 +992,7 @@
         _vcsApi('/api/vcs/update', {}, '更新', (ok2, j) => {
           if (j && j.out) _HG.vcs.out = j.out;
           if (ok2 && j.conflicts && j.conflicts.length)
-            showBanner('⚠ 更新引入冲突 ' + j.conflicts.length + ' 个——请用 svn/git 命令行处理', 8000, true);
+            showBanner('更新引入冲突 ' + j.conflicts.length + ' 个——请用 svn/git 命令行处理', 8000, true);
           _vcsReload();
         });
       });

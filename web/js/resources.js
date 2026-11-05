@@ -75,7 +75,7 @@
       document.body.style.paddingTop = '36px';
     }
     bar.innerHTML =
-      '<span style="flex:1">⚠ ' + _resEsc(text) + '</span>' +
+      '<span style="flex:1">' + _resEsc(text) + '</span>' +
       '<button class="btn sm" data-res-install style="background:#fff;' +
       'color:#8a1f1f;border:none;padding:3px 12px;border-radius:4px;' +
       'cursor:pointer;font-size:12px;">安装资源包</button>' +

@@ -39,6 +39,75 @@
     return p.replace(/^\/([A-Za-z]):/, '$1:');
   }
 
+  // ============================================================
+  // a360R（用户需求2，VSCode 同款）：导航历史 back / forward
+  // VSCode 的命令是 workbench.action.navigateBack / navigateForward，默认
+  // Alt+← / Alt+→（macOS Ctrl+- / Ctrl+Shift+-）。这里按用户要求默认给
+  // Ctrl+← / Ctrl+→，键位可在设置页录制修改（与 F12 那三项放一起）。
+  //
+  // 语义照抄 VSCode：
+  //   · 栈里存「位置」{portId, path, line, col}，不是文件——同一文件的两个
+  //     不同函数是两个历史项；
+  //   · 连续跳到同一位置不重复压栈（否则来回跳一次要点好几次才能回去）；
+  //   · back/forward 时**不压栈**，只移动游标；游标之后的位置在前进时被丢弃
+  //     （标准浏览器历史语义）；
+  //   · 只在「跳转类动作」压栈（转到定义、查找引用点击、工作区符号点击），
+  //     普通切 tab 不算导航。
+  // ============================================================
+  const NAV_HIST = { stack: [], cur: -1, MAX: 200 };
+
+  function _navPos(editor) {
+    try {
+      const m = editor.getModel();
+      if (!m) return null;
+      const p = monaco.editor.getPosition ? editor.getPosition() : null;
+      return { path: modelFilePath(m), line: (p && p.lineNumber) || 1,
+               col: (p && p.column) || 1 };
+    } catch (_) { return null; }
+  }
+
+  function navPush(pos) {
+    if (!pos || !pos.path || !/^[A-Za-z]:/.test(pos.path)) return;
+    const s = NAV_HIST.stack, i = NAV_HIST.cur;
+    const prev = i >= 0 ? s[i] : null;
+    // 同一位置连续记录无意义（VSCode 同样去重）
+    if (prev && prev.path === pos.path && prev.line === pos.line) {
+      prev.col = pos.col;
+      return;
+    }
+    s.splice(i + 1);              // 丢弃游标之后的历史
+    s.push(pos);
+    if (s.length > NAV_HIST.MAX) s.shift();
+    NAV_HIST.cur = s.length - 1;
+  }
+
+  function navJumpTo(pos) {
+    if (!pos) return;
+    // 复用既有跳转通道：openFileSmart 会按路径去重并定位行列
+    openFileSmart(pos.path, 'auto',
+                  { line: Math.max(1, pos.line || 1), col: pos.col || 1 });
+  }
+
+  function navigateBack() {
+    if (NAV_HIST.cur <= 0) { showBanner('已经是最早的位置', 1800); return; }
+    NAV_HIST.cur--;
+    navJumpTo(NAV_HIST.stack[NAV_HIST.cur]);
+  }
+
+  function navigateForward() {
+    if (NAV_HIST.cur >= NAV_HIST.stack.length - 1) {
+      showBanner('已经是最新的位置', 1800); return;
+    }
+    NAV_HIST.cur++;
+    navJumpTo(NAV_HIST.stack[NAV_HIST.cur]);
+  }
+
+  // 跳转类动作统一入口：先记下「从哪跳的」，再执行跳转
+  function _jumpOpen(fromEditor, path, opts) {
+    navPush(_navPos(fromEditor));
+    openFileSmart(path, 'auto', opts);
+  }
+
   async function queryDefinition(model, position) {
     const word = monacoWordAt(model, position);
     if (!word || word.length < 2) return null;
@@ -68,14 +137,14 @@
     const cands = j.candidates;
     if (j.auto || cands.length === 1) {
       const c = cands[0];
-      openFileSmart(c.path, 'auto', { line: Math.max(1, c.line || 1) });
+      _jumpOpen(editor, c.path, { line: Math.max(1, c.line || 1) });
       return;
     }
-    _showCandidates(j);
+    _showCandidates(j, editor);
   }
 
   // 候选面板（多结果）：✓编译内 / ✗未编译 / ~头文件 徽标 + 路径分组
-  function _showCandidates(j) {
+  function _showCandidates(j, srcEditor) {
     _closeCands();
     const ov = document.createElement('div');
     ov.id = 'navCandsPanel';
@@ -109,7 +178,7 @@
       row.appendChild(b); row.appendChild(pathEl); row.appendChild(kind);
       row.onclick = function () {
         _closeCands();
-        openFileSmart(c.path, 'auto', { line: Math.max(1, c.line || 1) });
+        _jumpOpen(srcEditor, c.path, { line: Math.max(1, c.line || 1) });
       };
       card.appendChild(row);
     });
@@ -178,7 +247,7 @@
             row.appendChild(n); row.appendChild(p); row.appendChild(k);
             const go = () => {
               _closeSym();
-              openFileSmart(it.path, 'auto', { line: Math.max(1, it.line || 1) });
+              _jumpOpen(ed, it.path, { line: Math.max(1, it.line || 1) });
             };
             row.onclick = go;
             list.appendChild(row);
@@ -225,7 +294,7 @@
     card.className = 'dd-cur';
     card.style.cssText = 'width:720px;max-width:94vw;max-height:64vh;overflow:auto;padding:14px 16px;border-radius:12px;background:var(--bg-panel);border:1px solid var(--border);box-shadow:0 12px 40px rgba(0,0,0,.4);';
     const title = _h('div', '「' + word + '」的引用 ' + ((j.items && j.items.length) || 0) + ' 处（定义行已排除）'
-      + (j.truncated ? ' · ⚠ 结果超 200 条已截断' : ''));
+      + (j.truncated ? ' · 结果超 200 条已截断' : ''));
     title.style.cssText = 'font-weight:600;margin-bottom:8px;';
     card.appendChild(title);
     if (!j.ok || !j.items || !j.items.length) {
@@ -259,7 +328,7 @@
         _closeCands();
         // 用户实锤（跳转无高亮看不见）：openFileSmart 只定位不选中——
         // 定位后把目标行整行选中高亮（VSCode 跳转同款即时可见）
-        openFileSmart(it.path, 'auto', { line: it.line, col: 1, selectLine: true });
+        _jumpOpen(ed, it.path, { line: it.line, col: 1, selectLine: true });
       };
       card.appendChild(row);
     });
@@ -277,7 +346,8 @@
   }
 
   // ---- 可配置键位（a346）：默认 F12 / Shift+F12 / Ctrl+T，设置页可改 ----
-  const NAV_KEYS = { def: 'f12', ref: 'shift+f12', sym: 'ctrl+t' };
+  const NAV_KEYS = { def: 'f12', ref: 'shift+f12', sym: 'ctrl+t',
+                     back: 'ctrl+arrowleft', fwd: 'ctrl+arrowright' };
 
   function loadNavKeys() {
     fetch('/api/theme').then(r => r.json()).then(j => {
@@ -288,8 +358,12 @@
   }
 
   function keyLabel(spec) {
+    // a360R：方向键显示为箭头（Ctrl+ARROWLEFT 太丑，VSCode 也是画箭头）
+    const ARROW = { arrowleft: '←', arrowright: '→',
+                    arrowup: '↑', arrowdown: '↓' };
     return spec.split('+').map(p =>
-      ({ ctrl: 'Ctrl', shift: 'Shift', alt: 'Alt', meta: 'Meta' }[p] || p.toUpperCase())).join('+');
+      ({ ctrl: 'Ctrl', shift: 'Shift', alt: 'Alt', meta: 'Meta' }[p]
+       || ARROW[p] || p.toUpperCase())).join('+');
   }
 
   function matchKey(e, spec) {
@@ -385,7 +459,9 @@
 
   // a346：热应用（设置页保存后调用；重挂各编辑器的右键 action 文案）
   function applyKeys(cfg) {
-    ['def', 'ref', 'sym'].forEach(k => { if (cfg[k]) NAV_KEYS[k] = String(cfg[k]); });
+    ['def', 'ref', 'sym', 'back', 'fwd'].forEach(k => {
+      if (cfg[k]) NAV_KEYS[k] = String(cfg[k]);
+    });
     try {
       (monaco.editor.getEditors() || []).forEach(bindEditor);
     } catch (_) {}
@@ -428,6 +504,23 @@
       }
       if (ed && matchKey(e, NAV_KEYS.sym)) {
         e.preventDefault(); e.stopPropagation(); showWorkspaceSymbols(ed);
+      }
+      // a360R（用户需求2）：导航历史 back / forward。
+      // 不要求编辑器有焦点——VSCode 里跳回去之后焦点常常落在别处，
+      // 此时仍然要能继续按。但输入框里打字时不要抢键（下面判一下）。
+      if (matchKey(e, NAV_KEYS.back) || matchKey(e, NAV_KEYS.fwd)) {
+        const t = e.target;
+        const tag = t && t.tagName ? t.tagName.toLowerCase() : '';
+        // 只在真正的文本输入控件里放行原生行为；Monaco 的隐藏 textarea
+        // (class xterm-helper-textarea / inputarea) 不算，编辑器里要能按
+        const inTextInput = (tag === 'input' || tag === 'textarea') &&
+          !(t.closest && t.closest('.monaco-editor'));
+        if (!inTextInput) {
+          e.preventDefault(); e.stopPropagation();
+          if (matchKey(e, NAV_KEYS.back)) navigateBack();
+          else navigateForward();
+          return;
+        }
       }
     }, true);
   }
@@ -476,9 +569,10 @@
     if (el) el.remove();
   }
 
-  function _h(tag, txt) {
+  function _h(tag, txt, html) {
+    // a373（用户铁律：UI 禁 emoji）：html=true 时可插 ICO16 SVG 图标串
     const e = document.createElement(tag);
-    if (txt !== undefined) e.textContent = txt;
+    if (txt !== undefined) { if (html) e.innerHTML = txt; else e.textContent = txt; }
     return e;
   }
 
@@ -513,14 +607,14 @@
       st.textContent = '探测失败：' + ((j && j.err) || '网络错误');
       return;
     }
-    const bAdd = _h('button', '🔍 建立索引');
+    const bAdd = _h('button', ICO16.search + ' 建立索引', true);
     bAdd.className = 'btn primary';
     bAdd.onclick = () => _startBuild(card, path);
     // R15-5（实锤：弹层死角）：indexed 判定必须在 has_code 之前——代码被
     // 移走（探测不到）但库还在时，仍要给已建态（重建/删除可达）
     if (!j.indexed) {
       if (!j.has_code) {
-        st.textContent = '❌ 未发现代码文件（C/C++/py/js 等）——该目录不需要索引';
+        st.textContent = '未发现代码文件（C/C++/py/js 等）——该目录不需要索引';
         st.style.color = 'var(--neon-red,#e5484d)';
         // R27-3（实锤：未建 ctags 时 codegraph 整体不可见）：两套索引独立
         // ——ctags 不需要 ≠ codegraph 不需要（claude 代码图有自己的价值）
@@ -543,19 +637,19 @@
       + (m.o_count || 0) + ' .o' + (m.symbols ? ' · ELF 符号 ' + m.symbols : '')
       + ' · 占用 ' + fmtSize(m.size || 0) + '（存储感知可见）'));
     if (m.root_reachable === false) {
-      const warn = _h('div', '⚠ 索引对应的工程路径当前不可达（换盘/移动了？）——跳转可能失效，可重建');
+      const warn = _h('div', '索引对应的工程路径当前不可达（换盘/移动了？）——跳转可能失效，可重建');
       warn.style.color = '#e8a33d';
       st.appendChild(warn);
     }
     if (j.stale) {   // 批3：粗粒度过期提示（浅层 .cmd 命中 vs 建库记录）
-      const warn2 = _h('div', '⚠ 工程构建产物有变化（新编译/换树）——建议重建索引以刷新白名单');
+      const warn2 = _h('div', '工程构建产物有变化（新编译/换树）——建议重建索引以刷新白名单');
       warn2.style.color = '#e8a33d';
       st.appendChild(warn2);
     }
-    const bRe = _h('button', '↻ 重建');
+    const bRe = _h('button', ICO16.refresh + ' 重建', true);
     bRe.className = 'btn primary';
     bRe.onclick = () => _startBuild(card, path);
-    const bDel = _h('button', '🗑 删除索引');
+    const bDel = _h('button', ICO16.trash + ' 删除索引', true);
     bDel.className = 'btn ghost';
     bDel.style.color = '#e5484d';
     bDel.onclick = async () => {
@@ -588,11 +682,11 @@
     if (!document.getElementById('navIdxPanel')) return;
     const line = _h('div');
     line.style.cssText = 'margin-top:10px;padding-top:8px;border-top:1px dashed var(--border);font-size:12px;';
-    const head = _h('span', '🤖 Claude 代码图（codegraph）');
+    const head = _h('span', ICO16.robot + ' Claude 代码图（codegraph）', true);
     head.style.cssText = 'font-weight:600;display:block;margin-bottom:4px;';
     line.appendChild(head);
     if (!j.ok) {
-      const e = _h('div', '⚠ ' + (j.err || '不可用'));
+      const e = _h('div', (j.err || '不可用'));
       e.style.color = 'var(--muted)';
       line.appendChild(e);
       st.appendChild(line);
@@ -601,7 +695,7 @@
     const info = _h('div');
     line.appendChild(info);
     const mkBtn = (label, cls) => {
-      const b = _h('button', label);
+      const b = _h('button', label, true);   // a373：label 可含 ICO16 SVG
       b.className = cls;
       b.style.cssText = 'padding:2px 10px;font-size:11px;margin-left:6px;';
       return b;
@@ -616,13 +710,13 @@
       }
     };
     paint(j);
-    const bBuild = mkBtn(j.installed ? '↻ 重建' : '🔍 建立', 'btn primary');
+    const bBuild = mkBtn(j.installed ? (ICO16.refresh + ' 重建') : (ICO16.search + ' 建立'), 'btn primary');
     bBuild.onclick = () => _cgRun(path, 'build');
-    const bSync = mkBtn('⟳ 增量同步', 'btn ghost');
+    const bSync = mkBtn(ICO16.refresh + ' 增量同步', 'btn ghost');
     bSync.style.display = j.installed ? '' : 'none';
     bSync.title = '代码大改后秒级增量';
     bSync.onclick = () => _cgRun(path, 'sync');
-    const bDel = mkBtn('🗑 删除', 'btn ghost');
+    const bDel = mkBtn(ICO16.trash + ' 删除', 'btn ghost');
     bDel.style.cssText += 'color:#e5484d;';
     bDel.style.display = j.installed ? '' : 'none';
     bDel.onclick = async () => {
@@ -730,5 +824,7 @@
 
   // 供 file-tree.js 右键入口 + editor 检测复用 + 设置页热应用
   window.NavJump = { registerAll: registerAll, ui: ui, applyKeys: applyKeys,
-                     getKeys: () => ({ ...NAV_KEYS }), keyLabel: keyLabel };
+                     getKeys: () => ({ ...NAV_KEYS }), keyLabel: keyLabel,
+                     // a360R：导航历史（设置页/右键菜单可直接触发）
+                     goBack: navigateBack, goForward: navigateForward };
 })();

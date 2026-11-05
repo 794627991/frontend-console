@@ -42,7 +42,7 @@
           </div>
           <div data-hg-v-probe-out style="font-size:11px;color:var(--muted);margin-top:3px;min-height:14px;"></div>
         </label>
-        <label class="hg-vision-prompt-lab">多模态模型名单（逗号分隔，模型下拉的 👁 标记以此为准；名单外的模型一律走 MCP 识图通道）
+        <label class="hg-vision-prompt-lab">多模态模型名单（逗号分隔，模型下拉的识图标记以此为准；名单外的模型一律走 MCP 识图通道）
           <input name="hg_v_mm" class="hg-vision-mm" data-hg-v-mm spellcheck="false"
                  value="${esc((cfg.mm_extra || []).join(', '))}"
                  placeholder="如：glm-5.3 flash, Lanz-Medium-V（前缀匹配，填一个即可覆盖其 [1M] 变体）" name="hg_v_mm"></label>
@@ -160,9 +160,9 @@
       // v3.5.99：后端已同步激活方案快照的 harness_roles 节（来回切方案
       // 不再还原三角色配置）；同步失败显式告警。
       if (jr.sync_err) cl.push(jr.sync_err);
-      showBanner('👥 三角色配置已保存——档位/分级线随下条消息热更生效（agents 自动重生成），审核模式立即生效'
+      showBanner('三角色配置已保存——档位/分级线随下条消息热更生效（agents 自动重生成），审核模式立即生效'
         + (jr.synced ? '；方案「' + jr.synced + '」快照已同步' : '')
-        + (cl.length ? '；⚠ ' + cl.join('；') : ''), cl.length ? 9000 : 4200);
+        + (cl.length ? '；' + cl.join('；') : ''), cl.length ? 9000 : 4200);
       _hgRolesFetch();                          // 缓存刷新（气泡角色徽章同源）
     } catch(e) { showBanner('保存失败：' + e, 3000, true); }
   }
@@ -316,7 +316,7 @@
       ov.className = 'hg-modal-ov';
       const list = items.map(it => ({ ...it }));   // 工作副本，保存才落库
       ov.innerHTML = `<div class="hg-modal hg-modal-prompt"><div class="hg-modal-title"><span style="vertical-align:-2.5px">${ICO16.log}</span> 自定义提示词</div>
-        <div class="hg-modal-body hg-prompt-hint">会话启动时注入（新建/复活）。🌐 全局对所有会话生效；📁 项目只对目录名匹配的会话生效（填目录名如「串口控制台Pro」）。备注是给自己看的标签。</div>
+        <div class="hg-modal-body hg-prompt-hint">会话启动时注入（新建/复活）。「全局」对所有会话生效；「项目」只对目录名匹配的会话生效（填目录名如「串口控制台Pro」）。备注是给自己看的标签。</div>
         <div class="hg-prompt-list"></div>
         <div class="hg-modal-acts"></div></div>`;
       const _hgListEl = ov.querySelector('.hg-prompt-list');
@@ -332,8 +332,8 @@
             `<div class="hg-prompt-item-head">` +
             `<input class="hg-prompt-note" placeholder="备注（如：中文注释规范）" value="${esc(it.note || '')}" name="hg_prompt_note">` +
             `<select name="hg_prompt_scope" class="hg-prompt-scope">` +
-            `<option value="global"${it.scope !== 'project' ? ' selected' : ''}>🌐 全局</option>` +
-            `<option value="project"${it.scope === 'project' ? ' selected' : ''}>📁 项目</option>` +
+            `<option value="global"${it.scope !== 'project' ? ' selected' : ''}>全局（所有会话）</option>` +
+            `<option value="project"${it.scope === 'project' ? ' selected' : ''}>项目（按目录名匹配）</option>` +
             `</select>` +
             `<input class="hg-prompt-proj" placeholder="目录名" value="${esc(it.project || '')}"${it.scope === 'project' ? '' : ' style="display:none"'}${it.active === false ? ' title="当前项目不匹配（不会注入本会话）"' : ''} name="hg_prompt_proj">` +
             `<button class="hg-prompt-onoff" title="启用/停用">${it.enabled ? ICO.dotOn : ICO.dotOff}</button>` +

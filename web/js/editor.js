@@ -278,7 +278,7 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
   // 显式警示——否则条件反射 Ctrl+S 会原子覆盖掉磁盘上可救的半截 JSON
   if (_noteCorrupted) {
     conn.dirty = true;
-    showBanner('⚠ ' + (name || extPath || '笔记') + ' 内容已损坏（非合法笔记 JSON），以空白打开——直接保存会覆盖原文件，建议先「另存为」抢救内容', 9000, true);
+    showBanner((name || extPath || '笔记') + ' 内容已损坏（非合法笔记 JSON），以空白打开——直接保存会覆盖原文件，建议先「另存为」抢救内容', 9000, true);
     _edMarkTab(conn);
   }
   // 搜索分栏事件：回车搜索（Shift+回车跳下一个）、排除框回车、折叠按钮
@@ -1081,7 +1081,7 @@ async function _edCheckDiskChanged(conn) {
       // 文件被外部删除/不可访问：一次性提示（不弹选择——没有可重载的东西）
       if (conn.fileMtime && !conn._fileGoneWarned) {
         conn._fileGoneWarned = true;
-        showBanner('⚠ ' + conn.meta.label + ' 在磁盘上已不存在（被外部删除？），内存版保留', 5000, true);
+        showBanner(conn.meta.label + ' 在磁盘上已不存在（被外部删除？），内存版保留', 5000, true);
       }
       return;
     }
@@ -1155,7 +1155,7 @@ async function _edJumpFresh(conn) {
     if (!conn.dirty) { await _edReloadFromDisk(conn); return; }
     if (!conn._jfWarned) {
       conn._jfWarned = true;
-      showBanner('⚠ ' + conn.meta.label + ' 磁盘已有新版本（内存版有未保存修改未自动重读），跳转行号可能偏移', 5000, true);
+      showBanner(conn.meta.label + ' 磁盘已有新版本（内存版有未保存修改未自动重读），跳转行号可能偏移', 5000, true);
     }
   } catch (_) {}
 }
@@ -2344,7 +2344,7 @@ async function openDroppedFiles(paths) {
     // v3.5.79：慢拖自动现形（非 debug 也不吞证据）——html-drop→完成超 1.5s
     // 强制上屏，各跳时刻可见即定位延迟段
     const _d = Date.now() - (window.__dragT0 || Date.now());
-    if (_d > 1500) __dragProbeShow('⚠ 慢拖 ' + (_d / 1000).toFixed(1) + 's（drop→完成）');
+    if (_d > 1500) __dragProbeShow('慢拖 ' + (_d / 1000).toFixed(1) + 's（drop→完成）');
     return;
   }
   return openDroppedFile(paths[0], false);

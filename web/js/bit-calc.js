@@ -703,7 +703,7 @@ function buildBitCalcTab() {
       const r = await fetch('/api/hash_file', {method:'POST',
         headers:{'Content-Type':'application/json'}, body: JSON.stringify({path})});
       const j = await r.json();
-      if (!j.ok) { hashFileEl.textContent = '❌ ' + (j.err || '计算失败'); return; }
+      if (!j.ok) { hashFileEl.textContent = '计算失败：' + (j.err || ''); return; }
       hashFileEl.textContent = `${path} （${_hashFmtSize(j.size)}）`;
       hashRowsEl.innerHTML = HASH_NAMES.map(([k, n]) =>
         `<div style="display:flex;gap:8px;align-items:baseline;">
@@ -716,7 +716,7 @@ function buildBitCalcTab() {
           try { navigator.clipboard.writeText(el.dataset.bcHashV); showBanner('已复制 ' + el.textContent.slice(0, 16) + '…'); } catch(_){}
         };
       });
-    } catch(e) { hashFileEl.textContent = '❌ 请求失败: ' + e; }
+    } catch(e) { hashFileEl.textContent = '请求失败: ' + e; }
   }
   wrap.querySelector('[data-bc-hash-pick]').onclick = async () => {
     try {

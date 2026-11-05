@@ -276,7 +276,7 @@
       let t = String(it.text || '').replace(/\s+/g, ' ').trim();
       // v3.1：事件路径入列的条目只有 att 附件计数（POST 乐观条目有完整数组）
       const nAt = ((it.images || []).length + (it.files || []).length) || (it.att || 0);
-      if (nAt) t = (t ? t + ' ' : '') + '📎×' + nAt;
+      if (nAt) t = (t ? t + ' ' : '') + '附件×' + nAt;
       if (t.length > 60) t = t.slice(0, 59) + '…';
       return `<div class="hg-q-item" data-i="${i}" title="${esc(it.text || '')}">` +
         `<span class="hg-q-grip" data-i="${i}" title="拖动排序（按住抓手上下拖）">⠿</span>` +

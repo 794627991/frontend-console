@@ -148,14 +148,17 @@ function _stBoostCard(pane) {
 function _stNavKeysCard(pane) {
   const row = pane.querySelector('#stNavKeysRow');
   if (!row) return;
-  const DEF = { def: 'f12', ref: 'shift+f12', sym: 'ctrl+t' };
-  const NAMES = { def: '转到定义', ref: '查找引用', sym: '工作区符号' };
+  const DEF = { def: 'f12', ref: 'shift+f12', sym: 'ctrl+t',
+                back: 'ctrl+arrowleft', fwd: 'ctrl+arrowright' };
+  const NAMES = { def: '转到定义', ref: '查找引用', sym: '工作区符号',
+                  back: '后退', fwd: '前进' };
   const NJ = window.NavJump || null;
   // R21-5：NavJump 缺失（nav.js 加载失败）时也要能看能存——文案兜底
   const lbl = s => NJ && NJ.keyLabel ? NJ.keyLabel(s) : s;
   const keys = { ...DEF, ...(NJ && NJ.getKeys ? NJ.getKeys() : {}) };
   const fields = {};
-  ['def', 'ref', 'sym'].forEach(k => {
+  const _ORDER = ['def', 'ref', 'sym', 'back', 'fwd'];
+  _ORDER.forEach(k => {
     const wrap = document.createElement('div');
     wrap.style.cssText = 'display:flex;flex-direction:column;gap:4px;align-items:center;';
     const lab = document.createElement('span');
@@ -187,9 +190,18 @@ function _stNavKeysCard(pane) {
         if (e.altKey) parts.push('alt');
         const main = (e.key || '').toLowerCase();
         // R21-3（实锤：白名单过宽）：旧正则只锚首字符——enter/tab 等被录成
-        // 主键导致改键后无法输入。完整匹配：单字母/数字 或 f1-f12
-        if (!/^(f([1-9]|1[0-2])|[a-z0-9])$/.test(main)) {
-          showBanner('只支持 字母/数字/F1-F12 作主键（' + main + ' 不适用）', 2600, true);
+        // 主键导致改键后无法输入。完整匹配：单字母/数字 或 f1-f12。
+        // a360R：导航历史的两项默认是方向键（VSCode 同款 Alt+←/→），
+        // 白名单补 arrowleft/arrowright 四个方向键——但方向键**必须带修饰**
+        // （裸方向键是编辑器/终端的基础操作，录成热键会全面瘫痪）。
+        const _ARROW = /^arrow(left|right|up|down)$/.test(main);
+        const _mods = parts.length > 0;
+        if (!/^(f([1-9]|1[0-2])|[a-z0-9])$/.test(main) && !_ARROW) {
+          showBanner('只支持 字母/数字/F1-F12/方向键 作主键（' + main + ' 不适用）', 2600, true);
+          return;
+        }
+        if (_ARROW && !_mods) {
+          showBanner('方向键需搭配 Ctrl/Alt/Shift（裸方向键会被编辑器占用）', 2600, true);
           return;
         }
         parts.push(main);
@@ -212,7 +224,7 @@ function _stNavKeysCard(pane) {
   reset.className = 'btn ghost';
   reset.textContent = '↺ 恢复默认';
   reset.onclick = async () => {
-    ['def', 'ref', 'sym'].forEach(k => keys[k] = DEF[k]);
+    _ORDER.forEach(k => keys[k] = DEF[k]);
     await saveNow();
   };
   function syncSave() {
@@ -220,7 +232,7 @@ function _stNavKeysCard(pane) {
     const clash = new Set(vals).size !== 3;
     save.style.display = '';
     save.disabled = clash;
-    save.textContent = clash ? '⚠ 快捷键冲突' : '保存';
+    save.textContent = clash ? '快捷键冲突' : '保存';
   }
   async function saveNow() {
     try {
@@ -232,7 +244,7 @@ function _stNavKeysCard(pane) {
       if (NJ && NJ.applyKeys) NJ.applyKeys(keys);
       showBanner('跳转快捷键已生效：' + lbl(keys.def) + ' / ' + lbl(keys.ref) + ' / ' + lbl(keys.sym), 4000);
       save.style.display = 'none';
-      ['def', 'ref', 'sym'].forEach(k => fields[k].textContent = lbl(keys[k]));
+      _ORDER.forEach(k => fields[k].textContent = lbl(keys[k]));
     } catch (e) { showBanner('保存失败: ' + e, 4000, true); }
   }
   save.onclick = saveNow;
@@ -245,7 +257,7 @@ function _stRenderAppearancePane(pane) {
     <div class="set-style-row" id="stStyleRow"></div>
     <div class="dd-note">形态/质感维度（圆角·阴影·字体·装饰），叠加在配色之上即时生效；切风格自动带配套配色，之后仍可单独换色。</div>
     <div class="dd-label" style="margin-top:10px">配色主题</div><div class="set-theme-grid" id="stThemeGrid"></div>
-    <div class="dd-note">整窗即时换色（终端/编辑器/阅读面同步）；顶栏「🎨 换肤」按钮同样可用。</div>
+    <div class="dd-note">整窗即时换色（终端/编辑器/阅读面同步）；顶栏「换肤」按钮同样可用。</div>
     <div class="dd-cur" style="margin-top:8px;">
       <div class="dd-label">界面缩放</div>
       <div class="dd-row" style="display:flex;gap:8px;margin-top:6px;align-items:center;">
@@ -741,7 +753,7 @@ async function _stRenderResourcesPane(pane) {
               Node/Git 重装可能弹管理员提示。</span></span>
         </label>
         <div class="dd-actions" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn primary" id="rsGo" disabled><span>${ICO16.wrench}</span> 📦 离线包安装所选</button>
+          <button class="btn primary" id="rsGo" disabled><span>${ICO16.wrench}</span> 离线包安装所选</button>
           <button class="btn ghost" id="rsOnlineGo" disabled title="">⬇ 在线安装所选</button>
           <button class="btn ghost" id="rsCancel" style="display:none;">■ 取消</button>
         </div>
@@ -1414,7 +1426,7 @@ async function _stRenderApiPane(pane) {
         if (!j3 || !j3.ok) {
           showBanner('新方案「' + name + '」已保存，但未能自动切换（' + ((j3 && j3.err) || '网络错误') + '）——请到方案列表手动「应用」后再做其它修改', 8000, true);
         } else {
-          if (j3.warning) showBanner('⚠ ' + j3.warning, 9000, true);
+          if (j3.warning) showBanner(j3.warning, 9000, true);
           showBanner('新方案「' + name + '」已保存并切换——后续保存都会同步到它', 5000);
         }
         _stRenderApiPane(pane);
@@ -1433,7 +1445,7 @@ async function _stRenderApiPane(pane) {
       // 不再还原；同步失败显式告警（settings 本身已保存成功）。
       showBanner(j.synced ? ('API 配置已保存，方案「' + j.synced + '」快照已同步——来回切方案不再还原')
         : 'API 配置已保存——新开的 Claude 会话生效', j.synced ? 4500 : 4000);
-      if (j.sync_err) showBanner('⚠ ' + j.sync_err, 7000, true);
+      if (j.sync_err) showBanner(j.sync_err, 7000, true);
       setTokMasked();
       refresh();
     } catch(e) { showBanner('保存失败: ' + e, 4000, true); }
@@ -1466,7 +1478,7 @@ async function _stRenderApiPane(pane) {
               headers:{'Content-Type':'application/json'}, body: JSON.stringify({name: b.dataset.prof})});
             const j2 = await r.json();
             if (!j2.ok) { showBanner('切换失败: ' + (j2.err || ''), 4000, true); renderProfiles(); return; }
-            if (j2.warning) { showBanner('⚠ ' + j2.warning, 9000, true); }
+            if (j2.warning) { showBanner(j2.warning, 9000, true); }
             else showBanner('已切换到「' + b.dataset.prof + '」——新开的 Claude 会话生效', 4500);
             _stApiNewMode = false;   // 应用方案 = 退出新建模式
             refresh(); renderProfiles();
@@ -1596,17 +1608,17 @@ async function _stRenderUpdatePane(pane) {
     try {
       const j = await (await fetch('/api/update/check', {method: 'POST'})).json();
       if (j.unreachable) {
-        res.innerHTML = '<span style="color:var(--neon-orange);">⚠ 连不上升级服务器（发布者机器可能没开机）</span>';
+        res.innerHTML = '<span style="color:var(--neon-orange);">连不上升级服务器（发布者机器可能没开机）</span>';
       } else if (j.has_update) {
         const mb = j.size ? ' · ' + (j.size / 1048576).toFixed(1) + ' MB' : '';
-        res.innerHTML = `<div style="margin-bottom:6px;">✨ 发现新版本 <b>v${esc(j.latest)}</b>${mb}${j.date ? ' · ' + esc(j.date) : ''}</div>` +
+        res.innerHTML = `<div style="margin-bottom:6px;">发现新版本 <b>v${esc(j.latest)}</b>${mb}${j.date ? ' · ' + esc(j.date) : ''}</div>` +
           (j.notes ? `<div class="dd-sub" style="max-height:120px;overflow:auto;white-space:pre-wrap;">${esc(j.notes)}</div>` : '') +
           `<button class="btn primary" id="upApply" style="margin-top:8px;"><span>${ICO16.upload}</span> 立即升级</button>`;
         res.querySelector('#upApply').onclick = () => _stDoApply(res);
       } else if (j.configured) {
-        res.innerHTML = `✅ 已是最新版本（v${esc(j.current)}${j.latest ? '，服务器最新 v' + esc(j.latest) : ''}）`;
+        res.innerHTML = `已是最新版本（v${esc(j.current)}${j.latest ? '，服务器最新 v' + esc(j.latest) : ''}）`;
       } else {
-        res.innerHTML = '<span style="color:var(--neon-orange);">⚠ 先填写升级服务器地址</span>';
+        res.innerHTML = '<span style="color:var(--neon-orange);">先填写升级服务器地址</span>';
       }
     } catch(e) { res.textContent = '检查失败: ' + e; }
     btn.disabled = false; btn.textContent = '检查更新';
@@ -1618,9 +1630,9 @@ async function _stRenderUpdatePane(pane) {
     res.innerHTML = '<div class="dd-sub">⬇ 下载并校验中…（内网一般几秒，完成后自动重启）</div>';
     try {
       const j = await (await fetch('/api/update/apply', {method: 'POST'})).json();
-      if (!j.ok) { res.innerHTML = '<span style="color:var(--neon-red,var(--neon-orange));">✖ ' + esc(j.err || '升级准备失败') + '</span>'; return; }
+      if (!j.ok) { res.innerHTML = '<span style="color:var(--neon-red,var(--neon-orange));">' + esc(j.err || '升级准备失败') + '</span>'; return; }
       const j2 = await (await fetch('/api/update/run', {method: 'POST'})).json();
-      if (!j2.ok) res.innerHTML = '<span style="color:var(--neon-red,var(--neon-orange));">✖ ' + esc(j2.err || '启动升级失败') + '</span>';
+      if (!j2.ok) res.innerHTML = '<span style="color:var(--neon-red,var(--neon-orange));">' + esc(j2.err || '启动升级失败') + '</span>';
       // 成功：本进程即将退出，无需再渲染
     } catch(e) { res.textContent = '升级失败: ' + e; }
   }
@@ -1634,7 +1646,7 @@ async function _stRenderUpdatePane(pane) {
       tgl.textContent = j.running ? '■ 停止分发服务' : '▶ 开启分发服务';
       const ver = j.code_ver ? ` · 代码 v${esc(j.code_ver)}` : '';
       $p('upSrvInfo').innerHTML = j.running
-        ? `🟢 运行中 · 已发布 <b>${esc(j.published || '（无版本——先跑打包.bat）')}</b>${ver}<br>` +
+        ? `${ICO16.dotOn} 运行中 · 已发布 <b>${esc(j.published || '（无版本——先跑打包.bat）')}</b>${ver}<br>` +
           `同事升级地址（发给同事）：<span style="font-family:var(--font-monospace,monospace);user-select:all;">${esc(j.url)}</span>`
         : `⚪ 未运行 · 分发目录 ${esc(j.dir)}${ver}`;
     } catch(_) { $p('upSrvInfo').textContent = '状态获取失败'; }
@@ -1725,7 +1737,7 @@ function _stRenderDataPane(pane) {
         const j = await r.json();
         if (!j.ok) { msgEl.innerHTML = `<span class="dd-err">✕ ${esc(j.err)}</span>`; return; }
         const prev = (j.preview || []).map(p => `${p.name} ${p.count} 项`).join(' · ');
-        const warn = (j.warnings || []).length ? `<div class="dd-warn">⚠ ${esc(j.warnings[0])}</div>` : '';
+        const warn = (j.warnings || []).length ? `<div class="dd-warn">${esc(j.warnings[0])}</div>` : '';
         msgEl.innerHTML = `<span class="dd-ok">✓ 目录可用</span> 将迁移：${esc(prev)}${warn}`;
         btn.disabled = false;
       } catch(e) { msgEl.innerHTML = `<span class="dd-err">✕ 校验失败: ${esc(String(e))}</span>`; }
@@ -1848,7 +1860,7 @@ async function _ddRefreshUsage(pane) {
         bar.style.display = 'flex';
         bar.querySelector('#ddCleanTip').innerHTML =
           `清理「${esc((j.targets[pending] || {}).name || pending)}」：${POLICY[pending] || ''}` +
-          (DANGER[pending] ? `<br>⚠ ${DANGER[pending]}` : '');
+          (DANGER[pending] ? `<br>${DANGER[pending]}` : '');
       };
     });
     bar.querySelector('#ddCleanCancel').onclick = () => { pending = ''; bar.style.display = 'none'; };

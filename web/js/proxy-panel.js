@@ -306,8 +306,8 @@ function buildProxyTab() {
     const state = lg ? lg.state : null;
     if (state === 'logging') _setQStatus('● 登录中…', 'px-retry');
     else if (state === 'online') _setQStatus('● 在线 ' + esc(lg.user || ''), 'px-healthy');
-    else if (state === 'error') _setQStatus('⚠ 登录失败', 'px-failed');
-    else if (state === 'fetch_err') _setQStatus('⚠ 查询失败', 'px-failed');
+    else if (state === 'error') _setQStatus('登录失败', 'px-failed');
+    else if (state === 'fetch_err') _setQStatus('查询失败', 'px-failed');
     else if (!j.has_credentials) _setQStatus('● 未登录', 'px-stopped');
     _setQButtons(state || (j.has_credentials ? '' : undefined));
     if (state === 'error' || state === 'fetch_err')
@@ -632,7 +632,7 @@ function buildProxyTab() {
       rb.disabled = !canFull && rb.value !== 'off';
     });
     m.querySelector('[data-hr-warn]').innerHTML = hasHr ? ''
-      : '<div style="color:var(--neon-orange);font-size:12px;margin-bottom:8px;">⚠ 未检测到 billion-context（需 Node ≥22 + npm install -g billion-context），压缩不可用；重启工具可再试</div>';
+      : '<div style="color:var(--neon-orange);font-size:12px;margin-bottom:8px;"> 未检测到 billion-context（需 Node ≥22 + npm install -g billion-context），压缩不可用；重启工具可再试</div>';
     // CCR 勾选已退役（对抗审 a206A：headroom 特性对 bili 无效，空开关）
     const close = () => m.classList.remove('show');
     m.querySelector('[data-hr-x]').onclick = close;
@@ -670,14 +670,14 @@ function buildProxyTab() {
   qSaveBtn.onclick = async () => {
     const u = qUserEl.value.trim();
     const p = qPwdEl.value;
-    if (!u || !p) { _setQStatus('⚠ 用户名/密码不能为空', 'px-failed'); return; }
+    if (!u || !p) { _setQStatus('用户名/密码不能为空', 'px-failed'); return; }
     _setQButtons('logging');
     try {
       const r = await fetch('/api/proxy/credentials', {method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({username: u, password: p})});
       const j = await r.json();
-      _setQStatus(j.ok ? '● 登录中…' : '⚠ 保存失败', j.ok ? 'px-retry' : 'px-failed');
+      _setQStatus(j.ok ? '● 登录中…' : '保存失败', j.ok ? 'px-retry' : 'px-failed');
       _msg(j.ok ? '凭据已保存，正在登录…' : (j.msg || '保存失败'), !j.ok);
     } catch(e) { _msg('请求失败: ' + e, true); }
   };
@@ -686,7 +686,7 @@ function buildProxyTab() {
     try {
       const r = await fetch('/api/proxy/quota', {method: 'POST'});
       const j = await r.json();
-      if (!j.ok) { _setQStatus('⚠ ' + (j.msg || '刷新失败'), 'px-failed'); qRefreshBtn.disabled = false; }
+      if (!j.ok) { _setQStatus((j.msg || '刷新失败'), 'px-failed'); qRefreshBtn.disabled = false; }
       else { _setQStatus('● 刷新中…', 'px-retry'); _msg(''); }
     } catch(e) { _msg('请求失败: ' + e, true); qRefreshBtn.disabled = false; }
   };
@@ -699,7 +699,7 @@ function buildProxyTab() {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({force: true})});
       const j = await r.json();
-      if (!j.ok) _setQStatus('⚠ ' + (j.msg || '触发失败'), 'px-failed');
+      if (!j.ok) _setQStatus((j.msg || '触发失败'), 'px-failed');
       else { _setQStatus('● 重登中…', 'px-retry'); _msg('已触发强制重登，稍候看登录状态'); }
     } catch(e) { _msg('请求失败: ' + e, true); }
   };

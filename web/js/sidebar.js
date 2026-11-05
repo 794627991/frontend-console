@@ -436,7 +436,7 @@ $('connConfirm').onclick = async () => {
       j = await connectPort(port, baud, true);
     }
     if (j && j.ok) $('connModal').classList.remove('show');
-    else { errEl.textContent = '❌ ' + ((j && j.err) || '未知错误'); errEl.classList.add('show'); }
+    else { errEl.textContent = '失败：' + ((j && j.err) || '未知错误'); errEl.classList.add('show'); }
   } finally {
     btn.disabled = false; btn.textContent = oldText;
   }

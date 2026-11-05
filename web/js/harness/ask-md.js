@@ -210,7 +210,7 @@ function askRender(it) {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({sid: _HG.sid, req_id: reqId, answer})
     }).then(r => r.json()).then(j => {
-      if (!j.ok) { _restore(); renderRaw('⚠ 提交失败：' + (j.err || '')); }
+      if (!j.ok) { _restore(); renderRaw('提交失败：' + (j.err || '')); }
     }).catch(() => { _restore(); });
   }
   function askDone(it) {
@@ -483,9 +483,9 @@ function askRender(it) {
     // v3.5.253（用户实锤「拖 Y:\nfs\1.png 点了无法预览」）：chip 改走 path= 回源——拖入的是原路径
     // （网络盘/桌面/工程目录），不落上传目录，name= 只查 _UPLOAD_DIR 必 404；path= 白名单
     // 三覆盖（上传目录/CLI Temp images/任意存在图片路径 v3.5.136）拖路径正中第三条
-      h += `<span class="hg-att-mini" data-img="/api/harness/file?path=${encodeURIComponent(p)}" title="${esc(p)}">🖼 ${esc(name)}</span>`;
+      h += `<span class="hg-att-mini" data-img="/api/harness/file?path=${encodeURIComponent(p)}" title="${esc(p)}">${ICO16.camera} ${esc(name)}</span>`;
     });
-    (files || []).forEach(p => { h += `<span class="hg-att-mini">📄 ${esc(String(p).split(/[\\/]/).pop())}</span>`; });
+    (files || []).forEach(p => { h += `<span class="hg-att-mini">${ICO16.file} ${esc(String(p).split(/[\\/]/).pop())}</span>`; });
     return h;
   }
   function openLightbox(src) {
@@ -500,7 +500,7 @@ function askRender(it) {
       try { const j = await (await fetch(src)).json(); if (j && j.err) msg = j.err; } catch (_) {}
       const tip = document.createElement('div');
       tip.className = 'hg-lightbox-err';
-      tip.textContent = '⚠ ' + msg;
+      tip.textContent = msg;
       _im.replaceWith(tip);
     };
     ov.addEventListener('click', (e) => { if (e.target === ov || e.target.classList.contains('hg-lightbox-x')) ov.remove(); });

@@ -670,8 +670,8 @@
       o.err ? '<span style="vertical-align:-2.5px">' + ICO16.warn + '</span> 提问失败'
         : (o.phase === 'run' ? '<span style="vertical-align:-2.5px">' + ICO16.clock + '</span> 等待回答…'
           : (() => { const _at = String(o.result || '').trim();
-            return _at.indexOf('📝 回答：') === 0 ? esc(_at)
-              : '📝 回答：' + esc(_at); })())}</div>`;
+            return _at.indexOf('回答：') === 0 ? esc(_at)
+              : '回答：' + esc(_at); })())}</div>`;
     row.querySelector('[data-askbody]').innerHTML = h;
     return row;
   }
@@ -878,8 +878,8 @@
         // 前端只在缺失时补（双层前缀=用户截图「有两个回答」实锤）
         const _at = resultText(tr).trim();
         _an.textContent = (st === 'error' || st === 'denied')
-          ? '⚠ 提问失败'
-          : (_at.indexOf('📝 回答：') === 0 ? _at : '📝 回答：' + _at);
+          ? '提问失败'
+          : (_at.indexOf('回答：') === 0 ? _at : '回答：' + _at);
       }
       row.dataset.final = '1';
       return;

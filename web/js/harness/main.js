@@ -24,9 +24,9 @@ function buildClaudeHarnessTab(opts = {}) {
         </div>
         <div class="hg-search-wrap"><input class="hg-search" data-hg-search placeholder="搜索会话" spellcheck="false" name="hg_search"></div>
         <div class="hg-sessions" data-hg-sessions></div>
-        <button class="hg-prompt-btn" data-hg-vision title="识图配置（MCP 识图模型/端点映射/提示词）">👁 识图配置</button>
-        <button class="hg-prompt-btn" data-hg-roles-cfg title="三角色配置：开关/三槽模型（主会话/设计/审核）/端点角色映射/审核模式与分级线（保存后下条消息热更生效）。双形态：轻主力=主会话直干所有活+设计+审核两个代理；重主力=直干+审核兜底">👥 三角色</button>
-        <button class="hg-prompt-btn" data-hg-prompt title="管理自定义提示词（全局/项目，会话启动时注入）">📜 提示词</button>
+        <button class="hg-prompt-btn" data-hg-vision title="识图配置（MCP 识图模型/端点映射/提示词）">${ICO16.eye} 识图配置</button>
+        <button class="hg-prompt-btn" data-hg-roles-cfg title="三角色配置：开关/三槽模型（主会话/设计/审核）/端点角色映射/审核模式与分级线（保存后下条消息热更生效）。双形态：轻主力=主会话直干所有活+设计+审核两个代理；重主力=直干+审核兜底">${ICO16.users} 三角色</button>
+        <button class="hg-prompt-btn" data-hg-prompt title="管理自定义提示词（全局/项目，会话启动时注入）">${ICO16.book} 提示词</button>
         <button class="hg-prompt-btn" data-hg-skills-btn title="技能仓库：发现/安装/管理 Claude 技能（skills.sh），支持离线包与中文汉化">${ICO16.puzzle} 技能仓库</button>
         <button class="hg-prompt-btn" data-hg-proxy-btn title="Claude 代理：重试代理（429/5xx 自动重试）+ 用量统计。点开代理面板">
           <img src="/ico/proxy.png" alt="proxy" style="width:14px;height:14px;vertical-align:-2px;"> Proxy
@@ -79,7 +79,7 @@ function buildClaudeHarnessTab(opts = {}) {
           <div class="hg-input-card">
             <div class="hg-ask-dock" data-hg-askdock></div>
             <div class="hg-card-head">
-              <button class="hg-proj" data-hg-proj title="选择项目目录（新会话直接在该目录下打开）">📁 <span data-hg-projname>选择项目</span> ▾</button>
+              <button class="hg-proj" data-hg-proj title="选择项目目录（新会话直接在该目录下打开）">${ICO16.folder} <span data-hg-projname>选择项目</span> ▾</button>
             </div>
             <div class="hg-input-stack">
               <div class="hg-input-overlay" data-hg-overlay aria-hidden="true"></div>
@@ -643,7 +643,7 @@ function buildClaudeHarnessTab(opts = {}) {
       Promise.resolve(copyText(ut)).then(okFlag => {
         if (!okFlag) return;   // v3.1h(F5):复制失败不亮 ✓
         uc.textContent = '✓';
-        setTimeout(() => { uc.textContent = '📋'; }, 900);
+        setTimeout(() => { uc.innerHTML = ICO16.clipboard; }, 900);
       });
       return;
     }
@@ -669,7 +669,7 @@ function buildClaudeHarnessTab(opts = {}) {
       Promise.resolve(copyText(t)).then(okFlag => {
         if (!okFlag) return;   // v3.1h(F5):复制失败不亮 ✓
         cb.textContent = '✓';
-        setTimeout(() => { cb.textContent = '📋'; }, 900);
+        setTimeout(() => { cb.innerHTML = ICO16.clipboard; }, 900);
       });
       return;
     }
@@ -1938,7 +1938,7 @@ function buildClaudeHarnessTab(opts = {}) {
       || '<div class="hg-pop-empty">还没有选择过项目目录</div>';
     openPop('proj', e.currentTarget,
       `<div class="hg-pop-title">项目目录（新会话打开在此）</div>${items}` +
-      `<div class="hg-pop-item" data-dir="__browse__"><b>📂 浏览其他目录…</b></div>`);
+      `<div class="hg-pop-item" data-dir="__browse__"><b>浏览其他目录…</b></div>`);
   };
   projChipLabel();
 
@@ -2000,7 +2000,7 @@ function buildClaudeHarnessTab(opts = {}) {
       const vs = (jr.vision || {});
       showBanner((saved.enabled ? '识图配置已保存（MCP 通道，即刻生效）' : '识图已关闭')
         + (vs.synced ? '，方案「' + vs.synced + '」快照已同步' : ''), vs.sync_err ? 7000 : 3000);
-      if (vs.sync_err) showBanner('⚠ ' + vs.sync_err, 7000, true);
+      if (vs.sync_err) showBanner(vs.sync_err, 7000, true);
     } catch(e) { showBanner('保存失败：' + e, 3000, true); }
   };
   // 识图配置界面（v2.28.2）：开关 + MCP 识图模型 + 端点映射 + 提示词 +
