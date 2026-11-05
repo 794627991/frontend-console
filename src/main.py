@@ -683,6 +683,9 @@ def main():
     # 优化 WebView2 启动：禁用 file url（我们用 HTTP）省浏览器参数；关默认菜单省 UI 初始化
     webview.settings["ALLOW_FILE_URLS"] = False
     webview.settings["SHOW_DEFAULT_MENUS"] = False
+    # debug 端口照开（CDP/9222 诊断链需要），但不自动弹 DevTools 窗口
+    #（a355：要人工看再 F12/右键检查——自动弹在桌面工具形态纯打扰）
+    webview.settings["OPEN_DEVTOOLS_IN_DEBUG"] = False
 
     # 等 server 预导入完成（通常 webview 导入完时 server 也差不多好了）
     _server_ready.wait(timeout=10)
