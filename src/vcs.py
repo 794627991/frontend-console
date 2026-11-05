@@ -158,8 +158,15 @@ def _is_network_drive(path):
     try:
         import ctypes
         drive = os.path.splitdrive(os.path.abspath(path))[0]
-        if not drive or len(drive) != 2:
+        if not drive:
             return False
+        # R34-1（实锤：UNC 路径恒 False——同一 SMB 仓库映射盘符享受误报
+        # 过滤、\\server\share 形态打开全回涌）。实测本机 GetDriveTypeW 对
+        # UNC share 根返回 1（NO_ROOT_DIR，直连未认证）而映射盘符返 4——
+        # API 对 UNC 靠不住。UNC 形态天然是网络路径直接判 True；盘符走
+        # GetDriveTypeW（DRIVE_REMOTE=4）
+        if drive.startswith("\\\\"):
+            return True
         return ctypes.windll.kernel32.GetDriveTypeW(drive + "\\") == 4
     except Exception:
         return False

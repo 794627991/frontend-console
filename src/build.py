@@ -319,8 +319,12 @@ def _refresh_offline_codegraph():
     print(f"offline codegraph: {dst_v or '无'} → {src_v} 刷新 …")
     rc = subprocess.call(["robocopy", src, dst, "/MIR", "/NFL", "/NDL", "/NJH",
                           "/NJS", "/NP"], creationflags=0x08000000)
-    # robocopy 0-7 都是成功码
-    print(f"offline codegraph: 刷新完成（robocopy rc={rc}）")
+    # R34-3b：robocopy 0-7 成功码；>7（8+，真失败）不能报「刷新完成」
+    # ——失败时离线副本处于半镜像态，必须显式报错（claude 段同款判定）
+    if rc > 7:
+        print(f"offline codegraph: ✗ 刷新失败（robocopy rc={rc}，副本可能不完整）")
+    else:
+        print(f"offline codegraph: 刷新完成（robocopy rc={rc}）")
 
 
 def _refresh_offline_claude():

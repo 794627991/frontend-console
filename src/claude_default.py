@@ -374,11 +374,18 @@ def _register_codegraph_mcp():
     servers = d.get("mcpServers")
     if not isinstance(servers, dict):
         servers = {}
-    if not servers.get("codegraph"):
+    _want = {"type": "stdio", "command": _argv[0],
+             "args": _argv[1:] + ["serve", "--mcp"]}
+    _cur = servers.get("codegraph")
+    # R34-2（实锤：只补缺不自愈——旧 npm shim（command="codegraph"）或
+    # 工具升级换路径后的旧绝对路径，双场景永不更新=升级后 MCP 哑掉无
+    # 出口）：command/args 与当前探测不一致即覆盖更新
+    _stale = (not _cur) or (_cur.get("command") != _want["command"]) or (
+        list(_cur.get("args") or []) != _want["args"])
+    if _stale:
         # a386：内置 bundle 绝对路径直启（node.exe --liftoff-only
         # codegraph.js serve --mcp）——不依赖 npm shim 在 PATH
-        servers["codegraph"] = {"type": "stdio", "command": _argv[0],
-                                "args": _argv[1:] + ["serve", "--mcp"]}
+        servers["codegraph"] = _want
         d["mcpServers"] = servers
         _atomic_json(cj, d)
         done.append("mcpServers")
