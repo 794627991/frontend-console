@@ -133,6 +133,30 @@ def build(root, log=None, progress=None, should_cancel=None):
     try:
         if not exe:
             return False, "codegraph 命令不存在"
+        # a368R（用户定调：隐藏目录优先排除）：codegraph 实测会收
+        # .history/x.c 这类隐藏目录文件（files 表实锤）。CLI 无 --exclude
+        # 参数（help 实核）——官方机制是工程根 codegraph.json 的 exclude
+        # （project-config.d.ts 佐证，实测 ".history/ 等 pattern"生效：
+        # 收录从 2 文件 → 1）。建/重建前写入（只补缺不覆盖用户手写的）
+        try:
+            import json as _json2
+            cfgp = os.path.join(root, "codegraph.json")
+            cfg = {}
+            if os.path.isfile(cfgp):
+                try:
+                    cfg = _json2.load(open(cfgp, encoding="utf-8")) or {}
+                except Exception:
+                    cfg = {}
+            excl = cfg.get("exclude")
+            if not isinstance(excl, list):
+                excl = []
+            need = [p for p in (".*", ".*/*") if p not in excl]
+            if need:
+                cfg["exclude"] = excl + need
+                with open(cfgp, "w", encoding="utf-8") as f:
+                    _json2.dump(cfg, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
         proc = _sp.Popen([exe, action, "--force"], cwd=root,
                          stdout=_sp.PIPE, stderr=_sp.STDOUT,
                          creationflags=0x08000000)
