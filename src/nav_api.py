@@ -70,10 +70,13 @@ def os_dir_size_safe(p):
 
 @nav_bp.route("/api/nav/build", methods=["POST"])
 def nav_build():
-    """手动建库（唯一入口——绝不自动触发）。body {root}"""
+    """手动建库（唯一入口——绝不自动触发）。body {root, backend?}"""
     from src import nav_index
     d = request.get_json(force=True, silent=True) or {}
     root = str(d.get("root") or "").strip()
+    backend = str(d.get("backend") or "auto").strip().lower()   # a390 三档
+    if backend not in ("auto", "memory", "readtags", "sqlite"):
+        backend = "auto"
     if not root:
         return jsonify({"ok": False, "err": "缺 root"}), 400
     if not _guard(root):
@@ -100,7 +103,7 @@ def nav_build():
     def work():
         try:
             res = nav_index.build(root, log=_log, progress=on_prog,
-                                  should_cancel=should_cancel)
+                                  should_cancel=should_cancel, backend=backend)
             _state.update(done=True, ok=True, result=res, phase="完成")
         except nav_index.Cancelled:
             _state.update(done=True, ok=False, err="已取消", phase="已取消",
@@ -177,6 +180,65 @@ def nav_rebind():
         return jsonify({"ok": False, "err": "新目录不在文件树登记根内"}), 400
     ok, msg = nav_index.rebind(old_root, new_root)
     return jsonify({"ok": ok, "err": "" if ok else msg, "msg": msg})
+
+
+@nav_bp.route("/api/nav/reindex", methods=["POST"])
+def nav_reindex():
+    """a390：已建库切换查询后端（不重建 tags）。body {root, backend}"""
+    import os
+    from src import nav_index
+    d = request.get_json(force=True, silent=True) or {}
+    root = str(d.get("root") or "").strip()
+    backend = str(d.get("backend") or "").strip().lower()
+    if backend not in ("memory", "readtags", "sqlite"):
+        return jsonify({"ok": False, "err": "backend 须为 memory/readtags/sqlite"}), 400
+    if not root:
+        return jsonify({"ok": False, "err": "缺 root"}), 400
+    if not _guard(root):
+        return jsonify({"ok": False, "err": "目录不在文件树登记根内"}), 400
+    ld = nav_index.lib_dir(root)
+    if not os.path.isfile(os.path.join(ld, "meta.json")):
+        return jsonify({"ok": False, "err": "该目录没有索引库"}), 400
+    with _lock:
+        if _state["running"]:
+            return jsonify({"ok": False,
+                            "err": "已有索引任务在运行（%s）" % _state["root"]}), 409
+        _state.update(running=True, phase="切档", log=[], done=False, ok=False,
+                      err="", ts=time.time(), result=None, cancel=False,
+                      percent=0, cur="", cancelled=False, log_seq=0, root=root)
+
+    def work():
+        try:
+            meta = nav_index._read_json(os.path.join(ld, "meta.json")) or {}
+            db = os.path.join(ld, "tags.db")
+            tags_p = os.path.join(ld, "tags")
+            if backend == "sqlite":
+                _log("切换 sqlite：构建 tags.db（%d 符号，一次性）…"
+                     % (meta.get("code_files") or 0))
+                n = nav_index._build_tag_db(
+                    tags_p, db, say=_log,
+                    prog=lambda pct, lab: _state.update(
+                        percent=int(pct), cur=lab, phase=str(lab or "sqlite")))
+                _log("✓ tags.db：%d 行" % n)
+            else:
+                if os.path.isfile(db):
+                    os.remove(db)
+                    _log("已删除 tags.db（%s 模式零额外文件）" % backend)
+            meta["backend"] = backend
+            meta["backend_auto"] = False
+            nav_index._write_json(os.path.join(ld, "meta.json"), meta)
+            nav_index._invalidate_cache()
+            _state.update(done=True, ok=True, phase="完成",
+                          result={"kind": "reindex", "backend": backend})
+        except Exception as e:
+            _state.update(done=True, ok=False, err=str(e)[:400], phase="失败")
+            _log("失败：%s" % e)
+        finally:
+            _state["running"] = False
+            _state["cancel"] = False
+
+    threading.Thread(target=work, daemon=True).start()
+    return jsonify({"ok": True})
 
 
 @nav_bp.route("/api/nav/cg_status")

@@ -308,7 +308,7 @@ def _read_symbols_from_o(o_path):
     return names
 
 
-def build(root, log=None, progress=None, should_cancel=None):
+def build(root, log=None, progress=None, should_cancel=None, backend="auto"):
     """三阶段建库。log=callable(str)；progress=callable(done,total,label)
     done/total 为 0-100 的阶段推进。返回 meta dict（失败抛异常）。"""
     say = log or (lambda _m: None)
@@ -326,7 +326,7 @@ def build(root, log=None, progress=None, should_cancel=None):
     # 权威序：.cmd 命令行（自描述）> .o 同目录同名 > .o basename 全局唯一
     # （海思等 out-of-tree：.o 在 out/obj、.c 在 source——同目录映射失效，
     # basename 全局唯一兜底；basename 多处同名视为歧义放弃）
-    say("阶段 1/3：扫描编译产物（.cmd/.o）…")
+    say("阶段 1/4：扫描编译产物（.cmd/.o）…")
     prog(2, "扫描编译产物")
     compiled = {}       # rel_src_posix -> {"o": rel_o, "src": "cmd"|"omap"|"bmap"}
     o_files = []        # 相对 .o（符号表阶段用）
@@ -392,7 +392,7 @@ def build(root, log=None, progress=None, should_cancel=None):
         say("  未发现构建产物——跳转按启发式排序（基线编译后重建可精确化）")
 
     # ---- 阶段 2：ctags 全量 ----
-    say("阶段 2/3：ctags 全量索引（%s）…" % NAV_LANGS)
+    say("阶段 2/4：ctags 全量索引（%s）…" % NAV_LANGS)
     prog(30, "ctags 索引")
     tags_tmp = os.path.join(ld, "tags.tmp")
     tags = os.path.join(ld, "tags")
@@ -490,18 +490,29 @@ def build(root, log=None, progress=None, should_cancel=None):
         say("  生成文件黑名单：%d 个（Cython/lex/protobuf 等指纹）" % len(_gen))
 
     # ---- 阶段 3：ELF 符号表（pyelftools；缺库/失败降级）----
-    say("阶段 3/3：读取 .o 符号表（符号级消歧）…")
+    say("阶段 3/4：读取 .o 符号表（符号级消歧）…")
     prog(78, "符号表")
     symbols = {}
     sym_ok = False
     try:
-        import elftools  # noqa: F401
+        import elftools  # noqa. F401
         sym_ok = True
     except ImportError:
         say("  pyelftools 未安装——跳过符号级消歧（不影响跳转，白名单仍生效）")
+    # a390（用户实锤：阶段 3 没有过程显示）：白名单→.o 映射构建按文件数
+    # 报进度——大库数千条可见推进；无 .o 时显式两步文案（不再是两行秒过）
     o_rel_to_src = {}
+    _mi, _mt = 0, len(compiled)
     for srel, info in compiled.items():
         o_rel_to_src[info["o"]] = srel
+        _mi += 1
+        if _mt and _mi % 500 == 0:
+            prog(78 + 2 * _mi / max(1, _mt), "白名单映射 %d/%d" % (_mi, _mt))
+    if not o_files:
+        say("  编译产物核对：白名单 %d 项，本工程无 .o——符号级消歧不适用" % _mt)
+        say("  （跳转按 启发式排序：本文件 static > 编译白名单 > 路径深度）")
+    else:
+        say("  符号表候选 .o：%d 个（白名单 %d 项）" % (len(o_files), _mt))
     if sym_ok and o_files:
         done = 0
         used = 0
@@ -529,14 +540,49 @@ def build(root, log=None, progress=None, should_cancel=None):
     _write_json(os.path.join(ld, "symbols.json"),
                 {"version": 1, "symbols": symbols})
 
+    # ---- 阶段 4：sqlite 快查索引（a390 三档后端；auto 按符号数判档）----
+    # ctags-mem-v2 实测：600 万符号全量 dict ≈ 8GB 常驻；sqlite 0~4ms/50MB
+    _bk_user = (backend or "auto").strip().lower()
+    if _bk_user not in ("auto", "memory", "readtags", "sqlite"):
+        _bk_user = "auto"
+    _was_auto = _bk_user == "auto"
+    if _was_auto:
+        _bk_user = "sqlite" if tag_lines >= 200000 else "memory"
+    db_path = os.path.join(ld, "tags.db")
+    if _bk_user == "sqlite":
+        say("阶段 4/4：sqlite 快查索引（%d 符号，大库低内存模式）…" % tag_lines)
+        try:
+            _build_tag_db(tags, db_path, say, prog)
+        except Exception as e:
+            # 建库失败回退 readtags（tags 永远可用）
+            say("  tags.db 构建失败（%s）——回退 readtags 模式" % str(e)[:120])
+            _bk_user = "readtags"
+            try:
+                if os.path.isfile(db_path):
+                    os.remove(db_path)
+            except OSError:
+                pass
+    else:
+        if os.path.isfile(db_path):
+            try:
+                os.remove(db_path)
+            except OSError:
+                pass
+        if _bk_user == "readtags":
+            say("阶段 4/4：readtags 模式（零建库成本，查询约 0.2s/次）")
+        else:
+            say("阶段 4/4：内存全量模式（%d 符号 <%d 阈值）" % (tag_lines, 200000))
+
     meta = {"version": 1, "root": root,
             "built_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             "langs": NAV_LANGS, "code_files": tag_lines,
             "cmd_count": cmd_count, "cmd_files": cmd_files, "o_count": o_count,
             "symbols": len(symbols),
+            "backend": _bk_user, "backend_auto": _was_auto,
             "sizes": {"tags": os.path.getsize(tags) if os.path.isfile(tags) else 0,
                       "manifest": os.path.getsize(os.path.join(ld, "manifest.json")),
-                      "symbols": os.path.getsize(os.path.join(ld, "symbols.json"))}}
+                      "symbols": os.path.getsize(os.path.join(ld, "symbols.json")),
+                      **({"db": os.path.getsize(db_path)} if os.path.isfile(db_path) else {})}}
     _write_json(os.path.join(ld, "meta.json"), meta)
     prog(100, "完成")
     say("✓ 索引完成：%d 符号 / 白名单 %d 文件 / 库 %.1f MB"
@@ -554,6 +600,301 @@ _tags_files_cache = {"key": None, "set": set()}   # R28-4：references 用文件
 _symbols_cache = {"key": None, "data": None}
 _manifest_cache = {"key": None, "data": None}
 _cache_lock = threading.Lock()
+
+
+# ================= a390：三档查询后端（ctags-mem-v2 §4）=================
+# memory：全量 dict（小库 <20 万符号，现状路径）
+# readtags：readtags.exe 二分查找（零建库，~0.2s/次，~10MB）
+# sqlite：tags.db 快查（0~4ms，~50MB，建库 ~38s/600 万行）
+
+
+def _build_tag_db(tags_path, db_path, say=None, prog=None):
+    """tags → tags.db（阶段 4）。批量导入三 pragma 提速；idx_name/idx_path
+    双索引（path 索引供 scope=file——_file_sym_cache 倒排随之退役）"""
+    import sqlite3
+    say = say or (lambda _m: None)
+    tmp = db_path + ".tmp"
+    if os.path.exists(tmp):
+        os.remove(tmp)
+    con = sqlite3.connect(tmp)
+    total_lines = 0
+    try:
+        con.execute("PRAGMA journal_mode=OFF")
+        con.execute("PRAGMA synchronous=OFF")
+        con.execute("PRAGMA temp_store=MEMORY")
+        con.execute("CREATE TABLE t(name TEXT, path TEXT, line INTEGER, kind TEXT)")
+        n, rows = 0, []
+        with open(tags_path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                total_lines += 1
+                if line.startswith("!"):
+                    continue
+                parts = line.rstrip("\n").split("\t")
+                if len(parts) < 3:
+                    continue
+                name, path = parts[0], parts[1]
+                kind, lineno = "", 0
+                for seg in parts[3:]:
+                    if seg.startswith("kind:"):
+                        kind = seg[5:]
+                    elif seg.startswith("line:"):
+                        try:
+                            lineno = int(seg[5:])
+                        except ValueError:
+                            pass
+                    elif not kind and seg and ":" not in seg and seg != "file":
+                        kind = seg   # --fields=+Kn 裸值 kind
+                rows.append((name, path, lineno, kind))
+                n += 1
+                if len(rows) >= 100000:
+                    con.executemany("INSERT INTO t VALUES(?,?,?,?)", rows)
+                    rows = []
+                    if prog:
+                        prog(80 + 14 * n / max(1, total_lines),
+                             "sqlite 导入 %d 行" % n)
+                    say("  sqlite 导入 %d 行…" % n)
+        if rows:
+            con.executemany("INSERT INTO t VALUES(?,?,?,?)", rows)
+        con.commit()
+        prog(96, "sqlite 建索引")
+        say("  建索引（name/path）…")
+        con.execute("CREATE INDEX idx_name ON t(name)")
+        con.execute("CREATE INDEX idx_path ON t(path)")
+        con.commit()
+    finally:
+        con.close()
+    os.replace(tmp, db_path)
+    return n
+
+
+class _TagDB(object):
+    """sqlite 后端：只读连接 + mmap。线程锁串行（Flask 多线程共用）"""
+
+    def __init__(self, db_path):
+        import sqlite3
+        self._path = db_path
+        self._con = sqlite3.connect(
+            "file:%s?mode=ro" % db_path.replace("\\", "/"),
+            uri=True, check_same_thread=False, timeout=5)
+        try:
+            self._con.execute("PRAGMA mmap_size=268435456")
+            self._con.execute("PRAGMA cache_size=-65536")
+        except Exception:
+            pass
+        self._lock = threading.Lock()
+
+    def _q(self, sql, args=()):
+        with self._lock:
+            return self._con.execute(sql, args).fetchall()
+
+    def lookup(self, name):
+        return [(r[1], r[2], r[3]) for r in
+                self._q("SELECT name, path, line, kind FROM t WHERE name=?", (name,))]
+
+    def lookup_ci(self, name):
+        return self._q("SELECT name, path, line, kind FROM t "
+                       "WHERE lower(name)=?", (name.lower(),))
+
+    def prefix(self, q, limit):
+        return self._q("SELECT name, path, line, kind FROM t "
+                       "WHERE name>=? AND name<? LIMIT ?",
+                       (q, q + "\uffff", limit))
+
+    def substring(self, q, limit):
+        return self._q("SELECT name, path, line, kind FROM t "
+                       "WHERE name LIKE ? LIMIT ?", ("%" + q + "%", limit))
+
+    def by_path(self, path):
+        return self._q("SELECT name, line, kind FROM t WHERE path=?", (path,))
+
+    def files(self):
+        return set(r[0] for r in self._q("SELECT DISTINCT path FROM t"))
+
+    def close(self):
+        try:
+            self._con.close()
+        except Exception:
+            pass
+
+
+class _ReadtagsBackend(object):
+    """readtags 后端：-s1 强制二分；-e -n 拿 kind/line。子串/按路径无模式
+    ——退化为 -l 全量后 Python 过滤（慢，调用方 UI 提示）"""
+
+    def __init__(self, ld):
+        self._tags = os.path.join(ld, "tags")
+        self._exe = os.path.join(os.path.dirname(_CTAGS_EXE), "readtags.exe")
+        if not os.path.isfile(self._exe):
+            self._exe = None
+
+    def _run(self, args, timeout=30):
+        if not self._exe:
+            return []
+        argv = [self._exe, "-s1", "-e", "-n", "-t", self._tags] + args
+        try:
+            pr = subprocess.run(argv, capture_output=True, timeout=timeout,
+                                creationflags=0x08000000)
+            return pr.stdout.decode("utf-8", "replace").splitlines()
+        except (subprocess.TimeoutExpired, OSError):
+            return []
+
+    @staticmethod
+    def _parse(line):
+        parts = line.split("\t")
+        if len(parts) < 3:
+            return None
+        name, path = parts[0], parts[1]
+        kind, lineno = "", 0
+        for seg in parts[3:]:
+            if seg.startswith("kind:"):
+                kind = seg[5:]
+            elif seg.startswith("line:"):
+                try:
+                    lineno = int(seg[5:])
+                except ValueError:
+                    pass
+            elif not kind and seg and ":" not in seg and seg != "file":
+                kind = seg
+        return (name, path, lineno, kind)
+
+    def lookup(self, name):
+        rows = []
+        for line in self._run([name]):
+            r = self._parse(line)
+            if r and r[0] == name:
+                rows.append((r[1], r[2], r[3]))
+        return rows
+
+    def lookup_ci(self, name):
+        return [r for r in (self._parse(l) for l in self._run(["-i", name])) if r]
+
+    def prefix(self, q, limit):
+        return [r for r in (self._parse(l) for l in self._run(["-p", q])) if r][:limit]
+
+    def substring(self, q, limit):
+        ql = q.lower()
+        out = []
+        for l in self._run(["-l"], timeout=60):
+            r = self._parse(l)
+            if r and ql in r[0].lower():
+                out.append(r)
+                if len(out) >= limit:
+                    break
+        return out
+
+    def by_path(self, path):
+        want = os.path.normcase(os.path.normpath(path))
+        out = []
+        for l in self._run(["-l"], timeout=60):
+            r = self._parse(l)
+            if r and os.path.normcase(os.path.normpath(r[1])) == want:
+                out.append((r[0], r[2], r[3]))
+        return out
+
+    def files(self):
+        return set(r[1] for r in (x for x in (self._parse(l) for l in self._run(["-l"], timeout=60)) if x))
+
+    def close(self):
+        pass
+
+
+class _MemBackend(object):
+    """memory 后端：包装 _load_tags 全量 dict（小库现状路径）"""
+
+    def __init__(self, ld):
+        self._tags = _load_tags(ld)
+        self._ld = ld
+
+    def lookup(self, name):
+        return list(self._tags.get(name) or [])
+
+    def lookup_ci(self, name):
+        low = name.lower()
+        return [(k,) + v for k, v in self._tags.items() if k.lower() == low for v in v]
+
+    def prefix(self, q, limit):
+        out = []
+        for k, v in self._tags.items():
+            if k.startswith(q):
+                for e in v:
+                    out.append((k,) + e)
+                    if len(out) >= limit:
+                        return out
+        return out
+
+    def substring(self, q, limit):
+        ql = q.lower()
+        out = []
+        for k, v in self._tags.items():
+            if ql in k.lower():
+                for e in v:
+                    out.append((k,) + e)
+                    if len(out) >= limit:
+                        return out
+        return out
+
+    def by_path(self, path):
+        target = os.path.normcase(os.path.normpath(path))
+        out = []
+        for name, entries in self._tags.items():
+            for p2, ln2, k2 in entries:
+                if os.path.normcase(os.path.normpath(p2)) == target:
+                    out.append((name, ln2, k2))
+        return out
+
+    def files(self):
+        return set(p for v in self._tags.values() for (p, _l, _k) in v)
+
+    def close(self):
+        pass
+
+
+_tagdb_cache = {"key": None, "db": None}   # (ld, tags_mtime, db_mtime) → _TagDB
+
+
+def _open_tags(ld):
+    """按 meta.backend 选后端（auto：≥20 万符号 sqlite；db 缺失回退
+    readtags；readtags.exe 缺失回退 memory）。返回统一接口对象"""
+    meta = _load_json_cached(ld, "meta.json", _meta_cache_for_backend)
+    bk = (meta or {}).get("backend") or "auto"
+    if bk == "auto":
+        n = (meta or {}).get("code_files") or 0
+        bk = "sqlite" if n >= 200000 else "memory"
+    if bk == "sqlite":
+        db = _get_tagdb(ld)
+        if db:
+            return db
+        bk = "readtags"   # db 缺失/损坏回退
+    if bk == "readtags":
+        be = _ReadtagsBackend(ld)
+        if be._exe and os.path.isfile(be._tags):
+            return be
+    return _MemBackend(ld)
+
+
+def _get_tagdb(ld):
+    db_p = os.path.join(ld, "tags.db")
+    tags_p = os.path.join(ld, "tags")
+    if not os.path.isfile(db_p) or not os.path.isfile(tags_p):
+        return None
+    try:
+        key = (ld, os.path.getmtime(tags_p), os.path.getmtime(db_p))
+    except OSError:
+        return None
+    with _cache_lock:
+        if _tagdb_cache["key"] == key:
+            return _tagdb_cache["db"]
+    old = _tagdb_cache["db"]
+    db = _TagDB(db_p)
+    with _cache_lock:
+        _tagdb_cache["key"] = key
+        _tagdb_cache["db"] = db
+    if old:
+        old.close()
+    return db
+
+
+_meta_cache_for_backend = {"key": None, "data": None}
 
 
 def _invalidate_cache():
@@ -650,7 +991,7 @@ def symbols(file_path, q, limit=50, **kwargs):
     ld, lib = find_lib_for(file_path)
     if not ld:
         return {"ok": False, "err": "no-index", "items": []}
-    tags = _load_tags(ld)
+    _be = _open_tags(ld)
     mf = _load_json_cached(ld, "manifest.json", _manifest_cache)
     compiled = mf.get("compiled") or {}
     root = lib["root"]
@@ -658,25 +999,14 @@ def symbols(file_path, q, limit=50, **kwargs):
     # a383（Ctrl+Shift+O 文件内符号）：scope=file 精确到本文件，空查询给
     # 全量（按行号排——文件大纲语义），有 q 时子串过滤
     if kwargs.get("scope") == "file":
-        # R33-1（P2 实锤：110MB 库全 tags 遍历+每条目 normpath，面板每键
-        # 0.5-2.2s）：file→符号倒排缓存（与 _tags_cache 同 mtime 键——tags
-        # 重建自动失效），一次遍历换 O(本文件符号) 查询
-        global _file_sym_cache
-        with _cache_lock:
-            _fk = _tags_cache["key"]
-            if _file_sym_cache["key"] != _fk:
-                inv = {}
-                for name2, entries in tags.items():
-                    for path2, lineno2, kind2 in entries:
-                        k2 = os.path.normcase(os.path.normpath(path2))
-                        inv.setdefault(k2, []).append((name2, lineno2, kind2))
-                _file_sym_cache = {"key": _fk, "inv": inv}
-        target = os.path.normcase(os.path.normpath(file_path))
+        # a390：三档后端统一 by_path（sqlite 走 idx_path 毫秒级——
+        # _file_sym_cache 倒排副本退役（ctags-mem-v2：内存翻倍元凶）；
+        # readtags 档退化为 -l 全扫（慢，UI 已有提示）
+        target = file_path   # tags 内路径为绝对正斜杠原样
         _base = os.path.basename(file_path)
         out = []
-        for name2, lineno2, kind2 in _file_sym_cache["inv"].get(target, []):
-            # R33-2（实锤：同名多定义只显第一处）：条件定义/重构残留的
-            # 同名多处全收（不再首条即断）；kind 空的文件名自条目剔除
+        for name2, lineno2, kind2 in _be.by_path(target):
+            # R33-2：同名多定义全收；kind 空的文件名自条目剔除
             if not kind2 or name2 == _base:
                 continue
             if qlow and qlow not in name2.lower():
@@ -684,23 +1014,20 @@ def symbols(file_path, q, limit=50, **kwargs):
             out.append({"name": name2, "rel": _base,
                         "path": file_path, "line": lineno2, "kind": kind2,
                         "in_build": None, "dist": 0})
+        if not out and _be.by_path(target.replace("/", os.sep)):
+            pass   # 反斜杠形态兜底已由 by_path 内部 normcase 处理（memory 档）
         out.sort(key=lambda c: c["line"])
         return {"ok": True, "items": out[:limit], "mode": "file"}
     if not qlow:
         return {"ok": True, "items": [], "mode": "empty"}   # 空查询不给全量
-    exact, prefix, substr = [], [], []
-    for name in tags:
-        nl = name.lower()
-        if nl == qlow:
-            exact.append(name)
-        elif nl.startswith(qlow):
-            prefix.append(name)
-        elif qlow in nl:
-            substr.append(name)
+    exact = [qlow] if _be.lookup(qlow) else []
+    prefix = list(dict.fromkeys(r[0] for r in _be.prefix(qlow, limit * 2)))
+    substr = [] if (len(exact) + len(prefix) >= limit) else         list(dict.fromkeys(r[0] for r in _be.substring(qlow, limit * 2)))
+    substr = [n2 for n2 in substr if n2 not in set(exact) and n2 not in set(prefix)]
     out = []
 
     def push(name):
-        for path, lineno, kind in tags[name][:6]:   # R16-10：与 F12 候选口径拉近
+        for path, lineno, kind in _be.lookup(name)[:6]:   # R16-10：与 F12 候选口径拉近
             rel = path.replace(os.sep, "/")
             if os.path.isabs(path):
                 rel = os.path.relpath(path, root).replace(os.sep, "/")
@@ -762,32 +1089,12 @@ def references(file_path, symbol, limit=200):
     # tags 收录集（路径集——只在此域内报引用）+ 生成文件黑名单（a365R2：
     # 内容指纹判定的生成代码——ctags 对生成 .c 一样收符号，tags 域过滤
     # 不掉它们，黑名单才是真过滤源；tags_set 只兜底防域外垃圾）
-    # R28-4（实锤：references 每次 ~3s）：旧版 74 万行逐行 normcase+normpath
-    # （唯一文件仅 ~5 千，99% 重复劳动且无缓存）。两刀：①先收集原始路径去重
-    # 再归一化；②mtime 缓存（对齐 _manifest_cache）。实测 3s → 毫秒级
-    global _tags_files_cache
-    try:
-        _tp = os.path.join(ld, "tags")
-        _tk = (ld, os.path.getmtime(_tp))
-    except OSError:
-        _tk = None
-    if _tags_files_cache["key"] == _tk and _tk:
-        tags_set = _tags_files_cache["set"]
-    else:
-        _raw = set()
-        try:
-            with open(os.path.join(ld, "tags"), encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    if line.startswith("!"):
-                        continue
-                    parts = line.split("\t", 2)
-                    if len(parts) >= 2:
-                        _raw.add(parts[1])
-        except OSError:
-            pass
-        tags_set = set(os.path.normcase(os.path.normpath(
-            p if os.path.isabs(p) else os.path.join(root, p))) for p in _raw)
-        _tags_files_cache = {"key": _tk, "set": tags_set}
+    # a390：tags 收录域改后端 files()（sqlite DISTINCT 毫秒级；memory 档
+    # 即 dict 遍历；readtags -l 一次性解析——_tags_files_cache 退役）
+    _be = _open_tags(ld)
+    tags_set = set(os.path.normcase(os.path.normpath(
+        p if os.path.isabs(p) else os.path.join(root, p)))
+        for p in _be.files())
     gen_set = set()
     _genf = _read_json(os.path.join(ld, "gen_files.json"))
     # R28-3（旧库无 gen_files.json 垃圾回涌）+ a372（旧库 scan_max 是旧上限
@@ -897,15 +1204,14 @@ def definition(file_path, symbol):
     if not ld:
         return {"symbol": symbol, "auto": False, "mode": "no-index",
                 "candidates": [], "err": "该文件不在任何索引库内——请先在文件树右键建立索引"}
-    tags = _load_tags(ld)
-    cands = tags.get(symbol)
+    _be = _open_tags(ld)
+    # a390R（真机实锤：R1 成功后全接口灭）：此处不得 close——_TagDB 连接由
+    # _tagdb_cache 生命周期管理（换库时关旧），查询方关共享连接=后续全灭
+    cands = _be.lookup(symbol)
     if not cands:
-        # 大小写不敏感重试（readtags 同款体验）
-        low = symbol.lower()
-        for k, v in tags.items():
-            if k.lower() == low:
-                cands = v
-                break
+        # 大小写不敏感重试（返回 (name,path,line,kind)——取后三列）
+        for _r in _be.lookup_ci(symbol):
+            cands.append((_r[1], _r[2], _r[3]))
     mf = _load_json_cached(ld, "manifest.json", _manifest_cache)
     compiled = mf.get("compiled") or {}
     syms = _load_json_cached(ld, "symbols.json", _symbols_cache).get("symbols") or {}
