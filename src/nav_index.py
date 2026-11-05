@@ -711,11 +711,13 @@ class _TagDB(object):
                        "WHERE lower(name)=?", (name.lower(),))
 
     def prefix(self, q, limit):
-        # R35-1：大小写不敏感前缀（原全 dict 行为同款——B-tree 范围扫没了对
-        # 应形态，lower 截断比较走 idx_lower；无该索引的旧库退全表扫仍可用）
+        # R35-1：大小写不敏感前缀。S36-1（EXPLAIN 实锤：substr 截断比较
+        # sqlite 不做范围代数变换→SCAN 全表 143ms；lower 范围比较命中
+        # idx_lower→SEARCH 0ms）
+        ql = q.lower()
         return self._q("SELECT name, path, line, kind FROM t "
-                       "WHERE substr(lower(name), 1, ?) = ? LIMIT ?",
-                       (len(q), q.lower(), limit))
+                       "WHERE lower(name) >= ? AND lower(name) < ? LIMIT ?",
+                       (ql, ql + "￿", limit))
 
     def substring(self, q, limit):
         return self._q("SELECT name, path, line, kind FROM t "

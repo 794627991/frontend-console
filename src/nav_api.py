@@ -209,6 +209,9 @@ def nav_reindex():
 
     def work():
         try:
+            # R35 复验终修（S35-2 维持实锤）：任何 db 文件操作前先关本进程
+            # 的 sqlite 连接（remove/replace 在前=WinError 32/5 重试永久失败）
+            nav_index._close_tagdb()
             meta = nav_index._read_json(os.path.join(ld, "meta.json")) or {}
             db = os.path.join(ld, "tags.db")
             tags_p = os.path.join(ld, "tags")
