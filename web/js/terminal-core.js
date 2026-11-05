@@ -721,6 +721,21 @@ function termSendRaw(portId, bytes) {
   // 之前每键一次 fetch：WebView2 网络栈 + Flask 线程开销叠加，打字时输入明显迟缓。
   // 8ms < 人感知阈值且不影响交互命令（回车后的命令行完整性由设备端解析）。
   let b = connections[portId];
+  // a358R（用户实锤：telnet 上回车没反应，Ctrl+C / ls 都正常）：
+  // 部分设备的 telnetd 把 PTY 设成 raw/IGNCR，\r（0x0D）原样进缓冲区却不算
+  // 换行，命令一直挂着等回车。实测同一台板子：telnet 发 [13] 无反应、发 [10]
+  // 立即执行；串口发 [13] 正常。
+  // 在**发送唯一入口**统一转换，覆盖键盘/粘贴/命令库/右键菜单全部路径——
+  // 只改 onData 的话，粘贴多行命令依旧卡住。只替换孤立的 0x0D（后一个字节
+  // 不是 0x0A），已有 \r\n 原样保留，避免一条命令执行两次。
+  if (b && b.meta && b.meta.kind === 'telnet' && bytes && bytes.length) {
+    const out = [];
+    for (let i = 0; i < bytes.length; i++) {
+      if (bytes[i] === 13 && bytes[i + 1] !== 10) out.push(10);
+      else out.push(bytes[i]);
+    }
+    bytes = out;
+  }
   if (!b) {  // 未知连接（已关闭）：直接发，走原路径
     fetch('/api/send_raw', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: portId, bytes})});
     return;
