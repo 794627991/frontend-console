@@ -2260,7 +2260,7 @@ function _edUndoInit(conn) {
 // 到指定行列（文件树搜索跳转/树 reveal 用）。Monaco revealLineNearTop +
 // setPosition 语义与 notes-nav nnJumpLine 同源（4 处先例）；col 缺省 1
 async function openFileSmart(path, mode, opts) {
-  if (typeof path !== 'string' || !path) return;   // a239 B4-P3: null/undefined 原在 .split 抛未捕获 rejection
+  if (typeof path !== 'string' || !path) return false;   // a239 B4-P3: null/undefined 原在 .split 抛未捕获 rejection
   const jump = (conn, o) => {
     // a213 审计 P1：新开分支 buildEditorTab 同步返回时 monaco 尚未创建
     // （_edInitContent 异步）——原实现恒 no-op。轮询等待就绪（80ms 步进，
@@ -2301,7 +2301,9 @@ async function openFileSmart(path, mode, opts) {
   // 所有文件都被拦截、编辑器路径永远不可达（用户实锤 .md 都打不开）
   if (typeof _officeKindOf === 'function' && _officeKindOf(path)) {
     openOfficeFile(path);   // async，自己管 tab 创建，不需要 await
-    return;
+    // a375R：返回 true——否则 _jumpOpen 把 undefined 当失败，Office 文件的
+    // 跳转永远不记历史（回到上一个定义时无法用 Alt+←）
+    return true;
   }
   const isText = _DROP_TEXT_EXT.has(ext) || name === 'makefile' || name === 'readme';
   // 探测大小与内容分级（失败按 0/未知处理走编辑器尝试）
