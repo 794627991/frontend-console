@@ -262,67 +262,53 @@ async function treeReveal(path, opts) {
            _np.toLowerCase().startsWith(rp.toLowerCase() + '\\');
   });
   if (!inRoot) return false;
-  // a382R（第3轮审计 P2-3，实锤）：大小写兜底只修了末端的 idx 查找，而
-  // 父目录逐级展开仍用原样大小写。后端 _under_roots 是**大小写敏感**的前缀
-  // 比较，且 os.path.abspath 在 Windows 上不规范化盘符大小写——Monaco 给的
-  // 小写盘符 d:\... 会直接 400「路径不在文件树根目录内」，目标永远进不了
-  // idx，末端兜底也扫不到。
-  // 修法：逐级往下走时用**父目录 cache 里的真实条目名**重建路径，这样每一
-  // 层 expansions 的键都是磁盘真实大小写，与树键完全同形。
-  const chain = [];
-  let cur = _np;
-  while (true) {
-    const i = cur.lastIndexOf('\\');
-    // a375R（审计 P3-7）：i===1 时 cur.slice(0,2) 是 'D:'——不是目录，
-    // 继续切会多发一次 `/api/tree/list {path:'D:'}`（后端 abspath('D:')
-    // 取当前盘 cwd，可能返回意外目录）。盘符层到此为止。
-    if (i <= 0 || (i === 1 && /^[A-Za-z]:$/.test(cur.slice(0, 2)))) break;
-    cur = cur.slice(0, i);
-    chain.unshift(cur);
-  }
-  // 逐级展开：每层都用上一层的真实条目名纠正大小写。
-  // realCur 是「已确认大小写正确」的当前路径，初始取 chain[0]（根层，根
-  // 路径本身已在 _TV.roots 里，正是真实大小写）。
-  let realCur = chain.length ? chain[0] : _np;
-  for (let ci = 0; ci < chain.length; ci++) {
-    const dirPath = realCur;
-    if (!_TV.open.has(dirPath)) {
-      _tvExpand(dirPath);
+  // a382R（第3轮审计 P2-3）/ a384R（第4轮审计 P2 实锤）：父目录逐级展开必须
+  // 用**磁盘真实大小写**，否则后端 _under_roots 的大小写敏感前缀比较会 400。
+  // 但起点不能取 chain[0]——那是盘符层 `d:` 或 UNC 前缀 `\\`，`_tvExpand('d:')`
+  // 在后端经 abspath 会落到**当前进程 cwd**，拿到完全无关的目录列表。
+  // 正确起点 = _TV.roots 里**匹配到的那个根**（它本身已是真实大小写），
+  // 从根往下逐段按父目录 cache 的条目名纠正。
+  const _root = (_TV.roots || []).filter(function (r) {
+    const rp = _tvNormPath(r.path).replace(/\\+$/, '');
+    return _np.toLowerCase() === rp.toLowerCase() ||
+           _np.toLowerCase().startsWith(rp.toLowerCase() + '\\');
+  }).sort(function (a, b) {
+    // 嵌套根时取更深的那个（长匹配优先）
+    return _tvNormPath(b.path).length - _tvNormPath(a.path).length;
+  })[0];
+  const rootReal = _tvNormPath(_root.path).replace(/\\+$/, '');
+  // 从根到目标文件的逐段路径（根之后的部分）
+  const segs = _np.slice(rootReal.length).split('\\').filter(Boolean);
+  // 逐层展开：parent 从根开始，每展开一层就按 cache 里的真实名纠正下一段
+  let parent = rootReal;
+  for (let si = 0; si < segs.length; si++) {
+    if (!_TV.open.has(parent)) {
+      _tvExpand(parent);
       // 等待 cache 落地（拉取完成）——轮询 2s 兜底
       const t0 = Date.now();
-      while (!_TV.cache.has(dirPath) && Date.now() - t0 < 2000) {
+      while (!_TV.cache.has(parent) && Date.now() - t0 < 2000) {
         await new Promise(r => setTimeout(r, 80));
         // a375R（审计 P2-2）：并发 reveal 时后发先至——被更新的请求取代就
         // 丢弃本次（否则先发慢完成的会把高亮/滚动覆盖回旧的）
         if (o._seq !== undefined && o._seq !== _tvRevealSeq) return false;
       }
     }
-    if (ci + 1 >= chain.length) break;          // 最后一层没有子段要纠正
-    // 在 dirPath 的 cache 条目里按大小写不敏感找下一段，拿它的真实名
-    const want = chain[ci + 1].slice(dirPath.length + 1);
-    const c = _TV.cache.get(dirPath);
-    const ent = c && c.entries ? c.entries.filter(function (e) {
-      return e && String(e.name).toLowerCase() === want.toLowerCase();
+    const seg = segs[si];
+    const c = _TV.cache.get(parent);
+    // a384R：按大小写不敏感找真实名；**找不到就不改**（不能用猜测的段名
+    // 拼出无关路径去展开——第4轮审计 P3 提到 cwd 同名目录会被误匹配）
+    const ent = (c && c.entries && !c.err) ? c.entries.filter(function (e) {
+      return e && String(e.name).toLowerCase() === seg.toLowerCase();
     })[0] : null;
-    realCur = ent ? ent.path : chain[ci + 1];
-  }
-  // 目标文件本身也按同样规则纠正（父目录 cache 里找文件名）
-  // a382R：chain 为空表示文件直接在根目录下——此时父目录就是根，
-  // 不能用 _np 自己当父目录（realCur 会等于文件路径本身）。
-  let realTarget = _np;
-  {
-    const parent = _np.slice(0, _np.lastIndexOf('\\'));
-    const parentReal = chain.length ? realCur : parent;
-    const c = _TV.cache.get(parentReal);
-    const want = _np.slice(parentReal.length + 1);
-    if (c && c.entries) {
-      const ent = c.entries.filter(function (e) {
-        return e && String(e.name).toLowerCase() === want.toLowerCase();
-      })[0];
-      if (ent) realTarget = ent.path;
+    if (!ent) {
+      // 该段不在父目录列表里（截断/隐藏/权限）：后面无法继续，直接落笔
+      // 到「按原样拼接」的路径，由末端 idx 查找与 banner 兜底
+      parent = null;
+      break;
     }
+    parent = ent.path;                 // 真实大小写
   }
-  const _npReal = realTarget;
+  const _npReal = parent || _np;
   // a375R（审计 P2-2）：落笔前再比一次序号
   if (o._seq !== undefined && o._seq !== _tvRevealSeq) return false;
   // a380R（第2轮审计 P3-3）：_TV.idx 的键来自 os.scandir（磁盘真实大小写），
