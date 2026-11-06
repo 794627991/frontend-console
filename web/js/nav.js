@@ -774,7 +774,13 @@
     const ov = document.createElement('div');
     ov.id = 'navIdxPanel';
     ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.32);z-index:9999;display:flex;align-items:center;justify-content:center;';
-    ov.addEventListener('mousedown', function (e) { if (e.target === ov) _closePanel(); });
+    // a409（用户实锤：点一下背景进度就没了，任务还在跑却看不到过程）：
+    // 任务运行中禁背景关闭（资源安装弹窗同款①；✕/关闭仍可关——重开有恢复式显示②兜底）
+    ov.addEventListener('mousedown', function (e) {
+      if (e.target !== ov) return;
+      if (ov.dataset.running === '1') return;
+      _closePanel();
+    });
     const card = document.createElement('div');
     card.className = 'dd-cur';
     card.style.cssText = 'width:520px;max-width:92vw;padding:18px 20px;border-radius:12px;background:var(--bg-panel);border:1px solid var(--border);box-shadow:0 12px 40px rgba(0,0,0,.4);';
@@ -813,6 +819,17 @@
     btns.appendChild(closeB);
     card.appendChild(btns);
     let j = null;
+    // a409 恢复式显示（资源安装同款②）：先查任务槽（零扫描即时）——本目录
+    // 任务还在跑就直接恢复进度视图；误关/关完重开都能接上过程
+    try {
+      const pr = await fetch('/api/nav/poll');
+      const ps = await pr.json();
+      if (!document.getElementById('navIdxPanel')) return;   // 已关
+      if (ps && ps.running && ps.root === path) {
+        _renderProgress(card, path);
+        return;
+      }
+    } catch (_) {}
     try {
       const r = await fetch('/api/nav/status?root=' + encodeURIComponent(path));
       j = await r.json();
@@ -953,6 +970,16 @@
       const e = _h('div', (j.err || '不可用'));
       e.style.color = 'var(--muted)';
       line.appendChild(e);
+      // a409（用户实锤：.codegraph 残留/损坏 → status 解析失败 → 零按钮，
+      // 重建/更新菜单全没）：排除"未安装"外都给重建出口（build 的 init
+      // --force 无条件清场，能修复半成品/损坏的 .codegraph）
+      if ((j.err || '').indexOf('未安装') === -1) {
+        const bFix = _h('button', ICO16.refresh + ' 重建', true);
+        bFix.className = 'btn primary';
+        bFix.style.cssText = 'padding:2px 10px;font-size:11px;margin-left:6px;';
+        bFix.onclick = () => _cgRun(path, 'build');
+        line.appendChild(bFix);
+      }
       st.appendChild(line);
       return;
     }
@@ -1030,6 +1057,8 @@
   }
 
   function _renderProgress(card, path) {
+    const _ov = document.getElementById('navIdxPanel');
+    if (_ov) _ov.dataset.running = '1';   // a409：背景关闭禁令配套标记
     card.innerHTML = '';
     card.appendChild(_h('div', '正在建立索引'));
     card.appendChild(_h('div', path)).style.cssText =
@@ -1069,6 +1098,8 @@
         log.scrollTop = log.scrollHeight;
         if (!s.done) return;
         clearInterval(_pollTimer); _pollTimer = null;
+        const _ov2 = document.getElementById('navIdxPanel');
+        if (_ov2) delete _ov2.dataset.running;   // a409：任务终态解除背景关闭禁令
         if (s.ok_done) {
           // R27-2（实锤：codegraph 任务完成恒"0 符号"）：result 按 kind 分流——
           // ctags 用 code_files（符号数），codegraph 用 files（文件数）
