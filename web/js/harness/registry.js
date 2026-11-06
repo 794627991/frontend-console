@@ -40,7 +40,9 @@
     // （a91 用户铁律「后台还在运行无条件同步」被破）。
     // sAt 给了就一并带轮次栅栏（见 _regInterruptedStale 注释）。
     var _intr = e.status === 'interrupted';
-    var _intrStale = _intr && _regInterruptedStale(e, sAt);
+    // a414：interrupted 落定需确定性死证（deadEvi——本代进程活的静默代理
+    // 后端已不判死；老链路无字段时 !false 维持原 30min 失联闸行为）
+    var _intrStale = _intr && e.deadEvi !== false && _regInterruptedStale(e, sAt);
     var _done = (e.status === 'running') ? false
       : (_intr ? _intrStale : true);
     return {
@@ -48,6 +50,7 @@
       desc: e.desc || '',
       t0: e.t0 || 0,
       done: _done,
+      deadEvi: !!e.deadEvi,
       err: e.status === 'err',
       // v4.0.5（复审实锤）：注册表条目必须能表达「用户主动停掉」这一
       // **确定性事实**（后端 _status_from_notify 已单列 stopped）。原先只认
