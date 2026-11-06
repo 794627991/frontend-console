@@ -136,7 +136,78 @@
     document.body.appendChild(m);
     var close = function () { m.remove(); };
     m.querySelector('[data-res-close]').onclick = close;
-    m.addEventListener('click', function (e) { if (e.target === m) close(); });
+    // 用户实锤：安装中点空白（背景）弹窗消失，重开后进度/log 全丢。
+    // ①装中禁背景关闭（✕ 仍可关——但重开有恢复式显示兜底）
+    m.addEventListener('click', function (e) {
+      if (e.target !== m) return;
+      if (m.dataset.installing === '1') return;   // 装中背景不关
+      close();
+    });
+    // ②重开恢复式显示：后台任务还在跑时，从 poll 拉全量 log + 当前进度，
+    //   重建"装中"态并接续轮询（旧回调写的旧 DOM 已移除，此处新开一路）
+    _resFetch('/api/resources/poll').then(function (s) {
+      if (!document.getElementById(id) || !s || !s.running) return;
+      var logEl = m.querySelector('[data-res-log]');
+      var errEl = m.querySelector('[data-res-err]');
+      var go = m.querySelector('[data-res-go]');
+      var manual = m.querySelector('[data-res-path]');
+      if (!logEl || !go) return;
+      m.dataset.installing = '1';
+      go.disabled = manual.disabled = true;
+      logEl.style.display = '';
+      logEl.innerHTML = '';
+      (s.log || []).forEach(function (it) {
+        var d = document.createElement('div');
+        d.textContent = (typeof it === 'string') ? it : (it.msg || '');
+        logEl.appendChild(d);
+      });
+      logEl.scrollTop = logEl.scrollHeight;
+      if (errEl) { errEl.style.display = 'none'; }
+      // 进度行（装中 banner 式提示，实时更新）
+      var progEl = document.createElement('div');
+      progEl.style.cssText = 'font-size:11px;color:var(--accent);padding:4px 0;';
+      logEl.parentNode.insertBefore(progEl, logEl);
+      var paint = function (st) {
+        var tot = st.total || 0, cur = st.bytes || 0;
+        var pct = tot ? Math.min(100, Math.round(cur * 100 / tot)) : 0;
+        progEl.textContent = (st.phase || '正在安装') +
+          (tot ? ' · ' + Math.round(cur / 1048576) + ' / ' + Math.round(tot / 1048576) + ' MB (' + pct + '%)' : '') +
+          (st.cancelling ? ' · 正在取消…' : '');
+      };
+      paint(s);
+      var seenSeq = 0;
+      (s.log || []).forEach(function (it) {
+        if (it && typeof it.seq === 'number') seenSeq = Math.max(seenSeq, it.seq);
+      });
+      var t2 = setInterval(function () {
+        _resFetch('/api/resources/poll').then(function (st) {
+          if (!document.getElementById(id)) { clearInterval(t2); return; }
+          paint(st);
+          (st.log || []).forEach(function (it) {
+            var sq = (it && typeof it.seq === 'number') ? it.seq : 0;
+            if (sq <= seenSeq) return;
+            seenSeq = sq;
+            var d = document.createElement('div');
+            d.textContent = (typeof it === 'string') ? it : (it.msg || '');
+            logEl.appendChild(d);
+            logEl.scrollTop = logEl.scrollHeight;
+          });
+          if (st.done || !st.running) {
+            clearInterval(t2);
+            delete m.dataset.installing;
+            if (progEl.parentNode) progEl.remove();
+            go.disabled = manual.disabled = false;
+            if (st.ok_done) {
+              if (typeof notifyPop === 'function')
+                notifyPop(st.note ? ('资源包安装完成 · ' + st.note) : '资源包安装完成', 5000);
+            } else if (st.err) {
+              if (errEl) { errEl.style.display = ''; errEl.textContent = st.err; }
+            }
+            resRefresh().then(function (st2) { if (document.getElementById(id)) renderList(m, st2); });
+          }
+        }).catch(function () { clearInterval(t2); });
+      }, 700);
+    }).catch(function () {});
     m.querySelector('[data-res-refresh]').onclick = function () {
       renderList(m, null);
       resRefresh().then(function (st) { renderList(m, st); });
@@ -264,6 +335,9 @@
           if (!s.done) return;
           clearInterval(myTimer);
           if (_resPollTimer === myTimer) _resPollTimer = null;
+          // 装中标记清除（背景关闭禁令解除——配套恢复式显示）
+          var _panel = document.getElementById('resPanel');
+          if (_panel && _panel.dataset.installing) delete _panel.dataset.installing;
           // 取消用后端显式字段判定——早前 /取消/.test(s.err) 会把任何
           // 含「取消」二字的真实失败误报成「已取消安装」（全审 N3）
           _safe(onDone, { ok: !!s.ok_done, err: s.err || '', result: s.result,
@@ -295,6 +369,7 @@
     var errEl = root.querySelector('[data-res-err]');
     var go = root.querySelector('[data-res-go]');
     var manual = root.querySelector('[data-res-path]');
+    if (root.id) root.dataset.installing = '1';   // 装中禁背景关闭（恢复式显示配套）
     logEl.style.display = '';
     logEl.innerHTML = '';
     errEl.style.display = 'none';
