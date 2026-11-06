@@ -351,7 +351,7 @@ def build(root, log=None, progress=None, should_cancel=None, backend="auto"):
     cmd_count = cmd_files = o_count = 0
     unit_by_base = {}   # basename（无后缀）-> [rel, ...] 编译单元源文件
     pending_o = []      # 未被 .cmd/同目录覆盖的 .o
-    _last_tot = -1      # 用户实锤（刷屏）：上次报告的 _tot（去重用）
+    _last_prog = 0.0    # 用户令：1s 一拍的过程显示计时
     for abs_p, rel in _walk_files(root, should_cancel):
         low = rel.rsplit("/", 1)[-1].lower()
         if low.endswith(".cmd"):
@@ -390,15 +390,15 @@ def build(root, log=None, progress=None, should_cancel=None, backend="auto"):
             b, ext = os.path.splitext(low)
             if ext in _UNIT_EXTS:
                 unit_by_base.setdefault(b, []).append(rel)
-        # a361：文件级进度（每 5000 个报一行——死等变活）
-        # 用户实锤（刷屏）：同一 _tot 值多个迭代都命中 %5000==0 → 同一行
-        # 重复 9 次。只报一次（_last_tot 去重）
+        # 用户令：全部过程显示 1s 一更新、同一行、不刷屏——中间进度走
+        # prog()（前端 progress 文本同一行刷新），say() 只留阶段头和终态
         _tot = cmd_count + o_count + len(unit_by_base)
-        if _tot and _tot % 5000 < 1 and _tot != _last_tot:
-            _last_tot = _tot
-            say("  扫描中：产物 %d（.cmd %d/.o %d）· 源文件 %d …"
-                % (_tot, cmd_count, o_count, len(unit_by_base)))
-            prog(2 + min(28, _tot / 800), "扫描 %d 文件" % _tot)
+        _now = time.time()
+        if _tot and _now - _last_prog >= 1.0:
+            _last_prog = _now
+            prog(2 + min(28, _tot / 800),
+                 "扫描中：产物 %d（.cmd %d/.o %d）· 源文件 %d" % (
+                     _tot, cmd_count, o_count, len(unit_by_base)))
     # basename 全局唯一兜底（out-of-tree）
     for orel in pending_o:
         b = os.path.splitext(os.path.basename(orel))[0].lower()
@@ -435,14 +435,14 @@ def build(root, log=None, progress=None, should_cancel=None, backend="auto"):
     _hb_stop = _th.Event()
     def _heartbeat():
         _last = -1
-        while not _hb_stop.wait(3.0):
+        while not _hb_stop.wait(1.0):   # 用户令：1s 一拍
             try:
                 sz = os.path.getsize(tags_tmp) / 1048576
             except OSError:
                 sz = 0
             if int(sz) != _last:
                 _last = int(sz)
-                say("  ctags 写入中 %d MB…" % _last)
+                prog(30 + min(45, sz / 10), "ctags 写入 %d MB" % _last)
     _hb = _th.Thread(target=_heartbeat, daemon=True)
     _hb.start()
     try:
@@ -676,10 +676,8 @@ def _build_tag_db(tags_path, db_path, say=None, prog=None):
                 if len(rows) >= 100000:
                     con.executemany("INSERT INTO t VALUES(?,?,?,?)", rows)
                     rows = []
-                    if prog:
-                        prog(80 + 14 * n / max(1, total_lines),
-                             "sqlite 导入 %d 行" % n)
-                    say("  sqlite 导入 %d 行…" % n)
+                    prog(80 + 14 * n / max(1, total_lines),
+                         "sqlite 导入 %d 行" % n)
         if rows:
             con.executemany("INSERT INTO t VALUES(?,?,?,?)", rows)
         con.commit()

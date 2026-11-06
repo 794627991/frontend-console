@@ -258,8 +258,9 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None,
                             _p = int(d * 10 // t) * 10   # 10% 一档
                             if _p > _bili_pct[0] and _p < 100:
                                 _bili_pct[0] = _p
-                                say("  解包中 %d%%（%.0f / %.0f MB）…" % (
-                                    _p, d / 1048576, t / 1048576))
+                                prog(_bili_base + d, sub_total,
+                                     "解包中 %d%%（%.0f / %.0f MB）" % (
+                                         _p, d / 1048576, t / 1048576))
                     reader.extract_all(bili_root, kinds=["bili"],
                                        progress=_bili_prog,
                                        should_cancel=should_cancel)
@@ -311,8 +312,9 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None,
                     _p = int(d * 10 // t) * 10
                     if _p > _rest_pct[0] and _p < 100:
                         _rest_pct[0] = _p
-                        say("  解包其余资源 %d%%（%.0f / %.0f MB）…" % (
-                            _p, d / 1048576, t / 1048576))
+                        prog(base + d, sub_total,
+                             "解包其余 %d%%（%.0f / %.0f MB）" % (
+                                 _p, d / 1048576, t / 1048576))
             reader.extract_all(staging, kinds=rest,
                                progress=_rest_prog,
                                should_cancel=should_cancel)
@@ -415,8 +417,9 @@ def _install_webview2(reader, staging, cur, say, prog, res, should_cancel=None,
                 _p = int(d * 10 // t) * 10
                 if _p > _wv2_pct[0] and _p < 100:
                     _wv2_pct[0] = _p
-                    say("  解包 WebView2 %d%%（%.0f / %.0f MB）…" % (
-                        _p, d / 1048576, t / 1048576))
+                    prog(_base + d, total or t,
+                         "解包 WebView2 %d%%（%.0f / %.0f MB）" % (
+                             _p, d / 1048576, t / 1048576))
         got = reader.extract_all(root, kinds=["webview2"],
                                  progress=_wv2_prog,
                                  should_cancel=should_cancel)

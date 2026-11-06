@@ -134,9 +134,7 @@ def build(root, log=None, progress=None, should_cancel=None):
     import time as _cgt
     _t0 = _cgt.time()
     def _hb():
-        _last = -1
-        _last_say = 0.0
-        while not _stop.wait(2.0):
+        while not _stop.wait(1.0):   # 用户令：1s 一更新
             if should_cancel and should_cancel():
                 _stop.set()
                 try:
@@ -156,22 +154,12 @@ def build(root, log=None, progress=None, should_cancel=None):
                         pass
             mb = int(total / 1048576)
             elapsed = int(_cgt.time() - _t0)
-            # 用户实锤：大库 init 扫描阶段 DB 为 0 MB——只报"0 MB"死寂几分钟。
-            # 改为：DB 有数据报 MB+文件数，扫描阶段报"扫描中 Xs"（5s 一拍防刷屏）
-            now = _cgt.time()
-            if mb != _last:
-                _last = mb
-                _last_say = now
-                if mb > 0:
-                    say("  codegraph 数据 %.0f MB（%d 文件）…" % (mb, filecnt))
-                else:
-                    say("  codegraph 扫描中…（已 %ds）" % elapsed)
-            elif now - _last_say >= 5.0:
-                _last_say = now
-                if mb > 0:
-                    say("  codegraph 数据 %.0f MB（%d 文件）· 已 %ds…" % (mb, filecnt, elapsed))
-                else:
-                    say("  codegraph 扫描中…（已 %ds）" % elapsed)
+            # 用户令：中间进度走 prog（前端同一行刷新），不刷日志
+            if mb > 0:
+                prog(10 + min(80, mb / 5),
+                     "codegraph：%.0f MB（%d 文件）· 已 %ds" % (mb, filecnt, elapsed))
+            else:
+                prog(8, "codegraph 扫描中…（已 %ds）" % elapsed)
     _hb_t = _th.Thread(target=_hb, daemon=True)
     _hb_t.start()
     proc = None
