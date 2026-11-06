@@ -857,6 +857,275 @@
     return sel;
   }
 
+  // a415（内网报告档B + 用户令：手动指定目录多选 UI 要做好、支持子目录）：
+  // 收录范围行——检测到的配置展示 + 档位下拉 + 导入 JSON + 目录树多选。
+  // 返回 div；当前选择经 card._scopeSel 闭包交给 _startBuild
+  // a415（内网报告档B + 用户令：手动指定目录多选 UI 要做好、支持子目录）：
+  // 收录范围行——检测到的配置展示 + 档位下拉 + 导入 JSON + 目录树多选 +
+  // 清除已存。a415R 审计#1（P0 XSS）：配置名一律 textContent，绝不拼
+  // innerHTML；#9：下拉活性——载荷每次按下拉现值组装，导入/手选挂
+  // card._scopeCfg 供 'cfg' 档引用；#10：全量档=显式整根 scope
+  function _scopeRow(card, path, j) {
+    const box = _h('div');
+    box.style.cssText = 'margin-top:8px;padding:8px 10px;border:1px dashed var(--border);border-radius:8px;font-size:12px;';
+    const sc = j.scope || null;
+    const head = _h('div');
+    head.style.cssText = 'margin-bottom:6px;';
+    const _headTxt = (t) => { head.textContent = t; };
+    const _headCfg = (cfg, srcLabel) => {
+      head.textContent = '';
+      head.append('收录范围：');
+      const b = _h('b', cfg.name || '未命名范围');
+      head.appendChild(b);
+      head.append('（' + (cfg.tier || '') + '）——' + srcLabel +
+        ((cfg.include && cfg.include.length) ? '，' + cfg.include.length + ' 目录' : ''));
+    };
+    if (sc && sc.source === 'project') {
+      _headCfg(sc, '检测到工程配置 .fcpk-scope.json');
+    } else if (sc && sc.source === 'saved') {
+      _headCfg(sc, '上次保存的范围（换机不丢，删索引不影响）');
+    } else if (sc && String(sc.source || '').startsWith('bad:')) {
+      _headTxt('收录范围：配置解析失败（' + sc.source.slice(4) + '）——将按全量');
+      head.style.color = 'var(--neon-red,#e5484d)';
+    } else {
+      _headTxt('收录范围：未配置——小工程自动全量；大工程建议导入 JSON 或手选目录（跳过 sbuilder/output 这类产物外挂树，实测快 8 倍）');
+    }
+    box.appendChild(head);
+    const row = _h('div');
+    row.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;align-items:center;';
+    const sel = _h('select');
+    sel.className = 'lv-btn';
+    sel.style.cssText = 'padding:2px 6px;font-size:11px;';
+    sel.title = '收录范围档位';
+    const OPTS = [
+      ['follow', (sc && sc.source === 'project') ? '跟随工程配置' : (sc && sc.source === 'saved') ? '跟随已存范围' : '自动'],
+      ['whitelist', '白名单（档B·需配置）'],
+      ['full', '全量（整个目录）'],
+    ];
+    const renderSel = () => {
+      const cfg = card._scopeCfg;
+      sel.innerHTML = OPTS.concat(cfg ? [['cfg', '本次导入/手选']] : [])
+        .map(([v, n2]) => '<option value="' + v + '"' + ((sel.value || 'follow') === v ? ' selected' : '') + '>' + n2 + '</option>').join('');
+    };
+    renderSel();
+    row.appendChild(sel);
+    // 导入 JSON（a415R#9：导入只挂 cfg+切档，不锁死下拉）
+    const bImp = _h('button', '导入 JSON', false);
+    bImp.className = 'btn ghost';
+    bImp.style.cssText = 'padding:2px 10px;font-size:11px;';
+    const fi = document.createElement('input');
+    fi.type = 'file'; fi.accept = '.json,application/json'; fi.style.display = 'none';
+    bImp.onclick = () => fi.click();
+    fi.onchange = () => {
+      const f = fi.files && fi.files[0];
+      fi.value = '';
+      if (!f) return;
+      f.text().then(t => {
+        let cfg;
+        try { cfg = JSON.parse(t); }
+        catch (e) { showBanner('JSON 解析失败：' + e, 4000, true); return; }
+        if (!cfg || !Array.isArray(cfg.include) || !cfg.include.length) {
+          showBanner('配置缺 include 数组（内网报告 §五 格式）', 4000, true); return; }
+        cfg.tier = cfg.tier === 'full' ? 'full' : 'whitelist';
+        card._scopeCfg = cfg;
+        renderSel();            // a415R2 N12：先建选项再赋值（原顺序下拉仍显示「自动」）
+        sel.value = 'cfg';
+        _headCfg(cfg, '导入的 JSON，建库成功后保存复用');
+        showBanner('已载入范围配置：' + (cfg.name || '未命名') + '，点「建立索引」生效', 3500);
+      }).catch(e => showBanner('读取失败: ' + e, 4000, true));
+    };
+    row.appendChild(bImp); row.appendChild(fi);
+    // 目录树多选
+    const bPick = _h('button', '选择目录…', false);
+    bPick.className = 'btn ghost';
+    bPick.style.cssText = 'padding:2px 10px;font-size:11px;';
+    bPick.onclick = () => _scopePick(path, dirs => {
+      if (!dirs || !dirs.length) return;
+      // a415R3 BUG-2：勾「整个目录」根行时 dirs=['']——映射成 '.'（原样
+      // 发 include:[''] 会被严校验判"include 为空"建库必败）
+      card._scopeCfg = { version: 1, name: '手选 ' + dirs.length + ' 目录',
+        tier: 'full', include: dirs.map(d => d || '.'), exclude_names: ['test', 'release_tmp'] };
+      renderSel();            // a415R2 N12：同上
+      sel.value = 'cfg';
+      _headTxt('收录范围：手选 ' + dirs.length + ' 目录（全量收录所选，自动排除 test/release_tmp 缓存类目录）——' +
+        dirs.slice(0, 4).join('、') + (dirs.length > 4 ? ' 等' : ''));
+      showBanner('已选 ' + dirs.length + ' 个目录（整目录递归收录），点「建立索引」生效', 3500);
+    });
+    row.appendChild(bPick);
+    // 清除已存范围（a415R#10：有 saved 才显示）
+    if (sc && sc.source === 'saved') {
+      const bClr = _h('button', '清除已存范围', false);
+      bClr.className = 'btn ghost';
+      bClr.style.cssText = 'padding:2px 10px;font-size:11px;color:#e5484d;';
+      bClr.onclick = async () => {
+        try {
+          const r = await fetch('/api/nav/build', { method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ root: path, scope_clear: true }) });
+          const d2 = await r.json();
+          if (d2.ok) {
+            delete card._scopeCfg;
+            renderSel();
+            _headTxt('收录范围：未配置——小工程自动全量');
+            showBanner('已清除保存的范围（回到自动/全量）', 3000);
+          } else if (d2.err) showBanner('清除失败：' + d2.err, 3000, true);
+        } catch (e) { showBanner('清除失败: ' + e, 3000, true); }
+      };
+      row.appendChild(bClr);
+    }
+    box.appendChild(row);
+    // a415R#9：载荷按下拉**现值**组装（导入/手选经 cfg 档引用，可随时切走/切回）
+    card._scopeSel = () => {
+      const cfg = card._scopeCfg || null;
+      const v = sel.value || 'follow';
+      if (v === 'cfg' && cfg) return { scope: cfg };
+      if (v === 'full') return { scope: { version: 1, name: '全量', tier: 'full', include: ['.'] } };
+      if (v === 'whitelist') {
+        if (cfg) return { scope: Object.assign({}, cfg, { tier: 'whitelist' }) };
+        return { scope_tier: 'whitelist' };   // 后端发现工程/已存配置并强制档
+      }
+      // follow：后端自动发现（工程>已存>全量）。a415R2 N12：导入/手选的
+      // cfg 只经 'cfg' 档生效——切回 follow 即放弃本次导入
+      return null;   // follow 且无导入：后端自动发现（工程>已存>全量）
+    };
+    return box;
+  }
+
+  // a415：目录树多选弹层——懒加载（SMB 大目录不整树拉）、勾父=子随父
+  // 收录（继承态锁定）、最小顶集语义零歧义。
+  // a415R（审计#28）四修：顶层去重复渲染/折叠根隐藏子项/勾整根后子项
+  // 继承锁定（inh!==null 判空串）/条目超限提示
+  function _scopePick(root, cb) {
+    const ov = document.createElement('div');
+    ov.id = 'navScopePick';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:10001;display:flex;align-items:center;justify-content:center;';
+    const card = _h('div');
+    card.style.cssText = 'width:540px;max-width:94vw;padding:14px 16px;border-radius:12px;background:var(--bg-panel);border:1px solid var(--border);box-shadow:0 12px 40px rgba(0,0,0,.45);';
+    const t = _h('div', '选择收录目录');
+    t.style.cssText = 'font-weight:600;margin-bottom:4px;';
+    card.appendChild(t);
+    const hint = _h('div', '勾选目录=该目录全部代码递归收录（不依赖构建产物）。勾了父目录，子目录随父收录；要细化子目录，先取消父目录。建库时自动排除 test/release_tmp 缓存类目录。');
+    hint.style.cssText = 'font-size:11px;color:var(--muted);margin-bottom:8px;';
+    card.appendChild(hint);
+    const tree = _h('div');
+    tree.style.cssText = 'max-height:330px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:6px;font-size:12px;';
+    card.appendChild(tree);
+    const foot = _h('div');
+    foot.style.cssText = 'margin-top:10px;display:flex;gap:8px;justify-content:flex-end;align-items:center;';
+    const cnt = _h('span', '');
+    cnt.style.cssText = 'margin-right:auto;font-size:11px;color:var(--muted);';
+    foot.appendChild(cnt);
+    const bClr = _h('button', '清空');
+    bClr.className = 'btn ghost';
+    const bCancel = _h('button', '取消');
+    bCancel.className = 'btn ghost';
+    const bOk = _h('button', '确定收录');
+    bOk.className = 'btn primary';
+    foot.appendChild(bClr); foot.appendChild(bCancel); foot.appendChild(bOk);
+    card.appendChild(foot);
+    ov.appendChild(card);
+    ov.addEventListener('mousedown', e => { if (e.target === ov) ov.remove(); });
+    document.body.appendChild(ov);
+    const sel = new Set();        // 已勾目录 rel 集（''=整个根）
+    const expanded = new Set();   // 已展开目录
+    const kids = {};              // rel → {dirs:[], files:n, truncated}（懒加载缓存）
+    const ancSel = d => {
+      if (sel.has('')) return '';
+      if (sel.has(d)) return d;
+      const parts = d ? d.split('/') : [];
+      for (let i = parts.length - 1; i > 0; i--) {
+        const p = parts.slice(0, i).join('/');
+        if (sel.has(p)) return p;
+      }
+      return null;
+    };
+    const syncCnt = () => {
+      cnt.textContent = sel.size ? ('已选 ' + sel.size + ' 个目录' +
+        (sel.has('') ? '（整个目录）' : '')) : '未选';
+    };
+    const render = () => {
+      syncCnt();
+      tree.innerHTML = '';
+      const mkRow = (rel, name, sub, depth) => {
+        const r = _h('div');
+        r.style.cssText = 'display:flex;align-items:center;gap:4px;padding:1px 0 1px ' + (depth * 16) + 'px;';
+        const chk = document.createElement('input');
+        chk.type = 'checkbox';
+        const inh = ancSel(rel);
+        chk.checked = inh !== null;
+        chk.disabled = inh !== null && !sel.has(rel);   // 继承态锁定（'' 也是合法 inh）
+        chk.title = (inh !== null && !sel.has(rel))
+          ? '随 ' + (inh || '整个目录') + ' 收录' : '';
+        chk.onchange = () => {
+          if (chk.checked) {
+            // 最小顶集语义：勾父清后代；勾根清全部
+            if (rel === '') { sel.clear(); sel.add(''); }
+            else {
+              if (sel.has('')) sel.clear();
+              for (const s of [...sel]) {
+                if (s.startsWith(rel + '/')) sel.delete(s);
+              }
+              sel.add(rel);
+            }
+          } else sel.delete(rel);
+          render();
+        };
+        r.appendChild(chk);
+        const lab = _h('span', name + '');
+        lab.style.cssText = 'cursor:pointer;flex:1;';
+        if (inh !== null && !sel.has(rel)) lab.style.color = 'var(--muted)';
+        r.appendChild(lab);
+        if (sub || kids[rel]) {
+          const ex = _h('button', expanded.has(rel) ? '▾' : '▸', false);
+          ex.style.cssText = 'border:none;background:none;color:var(--muted);cursor:pointer;padding:0 4px;font-size:10px;';
+          ex.onclick = async () => {
+            if (expanded.has(rel)) { expanded.delete(rel); render(); return; }
+            if (!kids[rel]) {
+              ex.textContent = '⋯';
+              try {
+                const rj = await (await fetch('/api/nav/scope_tree?root=' +
+                  encodeURIComponent(root) + '&rel=' + encodeURIComponent(rel))).json();
+                if (!rj.ok) throw new Error(rj.err || '');
+                kids[rel] = { dirs: rj.dirs || [], files: rj.files || 0,
+                              truncated: !!rj.truncated };
+              } catch (e) { showBanner('目录读取失败: ' + e, 3000, true); ex.textContent = '▸'; return; }
+            }
+            expanded.add(rel);
+            render();
+          };
+          r.appendChild(ex);
+        }
+        tree.appendChild(r);
+        if (expanded.has(rel) && kids[rel]) {
+          for (const d of kids[rel].dirs) mkRow(d.rel, d.name, d.sub, depth + 1);
+          const _emp = _h('div', kids[rel].truncated
+            ? '（子目录过多，仅显示前 800 个）' : '（无子目录）');
+          _emp.style.cssText = 'color:var(--muted);padding-left:' + ((depth + 1) * 16) + 'px;font-size:11px;';
+          if (!kids[rel].dirs.length || kids[rel].truncated) tree.appendChild(_emp);
+        }
+      };
+      // 根行展开由 mkRow 内部递归渲染（a415R#28：去掉外层重复循环）
+      mkRow('', '（整个目录 ' + (root.split(/[\\/]/).pop() || root) + '）', true, 0);
+    };
+    (async () => {
+      try {
+        const rj = await (await fetch('/api/nav/scope_tree?root=' +
+          encodeURIComponent(root) + '&rel=')).json();
+        if (!rj.ok) throw new Error(rj.err || '');
+        kids[''] = { dirs: rj.dirs || [], files: rj.files || 0, truncated: !!rj.truncated };
+      } catch (e) { showBanner('目录读取失败: ' + e, 3000, true); }
+      expanded.add('');
+      render();
+    })();
+    bClr.onclick = () => { sel.clear(); render(); };
+    bCancel.onclick = () => ov.remove();
+    bOk.onclick = () => {
+      const dirs = [...sel].sort();
+      ov.remove();
+      cb(dirs);
+    };
+  }
+
   async function _renderState(card, path, j, st) {
     const btns = card.querySelector('div:last-child');
     if (!j || !j.ok) {
@@ -879,6 +1148,8 @@
       }
       st.textContent = '✓ 发现代码文件（浅层抽样 ' + (j.probe_files || 0) + ' 个）。'
         + '首次索引需扫描全目录——网盘挂载的大库可能数分钟，结果存工具数据目录（不写工程目录）。';
+      // a415：收录范围行（检测配置/档位/导入 JSON/目录树多选）
+      st.appendChild(_scopeRow(card, path, j));
       // a410（用户实锤：建索引时不给选项，想选 readtags/sql 都不行）：建立
       // 按钮旁挂档位下拉（自动=按库大小判；全量方案已下线不提供）
       const fbSel = _bkSel('auto', j.sqlite_ok !== false, true);
@@ -907,6 +1178,12 @@
       warn2.style.color = '#e8a33d';
       st.appendChild(warn2);
     }
+    if (m.scope && m.scope.name) {   // a415：本次建库所用范围（meta 记录）
+      st.appendChild(_h('div', '本次建库范围：' + m.scope.name +
+        '（' + (m.scope.tier || '') + '，' +
+        ((m.scope.include && m.scope.include.length) || 0) + ' 目录）——换范围用下方控件重选后重建'));
+    }
+    st.appendChild(_scopeRow(card, path, j));   // a415：换范围重选入口
     const bRe = _h('button', ICO16.refresh + ' 重建', true);
     bRe.className = 'btn primary';
     // 用户实锤：重建按钮不传 backend——想建 sqlite 却走 auto 全部重建。
@@ -1064,6 +1341,9 @@
     // 用户实锤：重建按钮不传 backend → 后端走 auto → 想建 sqlite 却走
     // 全部重建流程。改为传下拉当前值（重建尊重用户选的档位）
     const body = backend ? { root: path, backend: backend } : { root: path };
+    // a415：收录范围载荷（_scopeRow 选择/导入/手选经 card._scopeSel 闭包）
+    const _sc = (card._scopeSel && card._scopeSel()) || null;
+    if (_sc) Object.assign(body, _sc);
     fetch('/api/nav/build', { method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body) })

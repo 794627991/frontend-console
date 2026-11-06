@@ -34,6 +34,77 @@ def _guard(path):
     return _under_roots(path) and _under_roots_real(path)
 
 
+@nav_bp.route("/api/nav/scope_tree")
+def nav_scope_tree():
+    """a415：收录范围手选目录树（懒加载一层）。?root=&rel=
+    返回 {ok, dirs:[{name, rel, sub}], files}——sub=是否有子目录（展开箭头）。
+    跳过 _SKIP_DIRS/点目录（与建库 walk 同规则——所见即所收）。
+    a415R（审计#27）：盘符根边界（root=C:\\ 时 normpath 无尾_sep 导致全
+    越界）、尾斜杠归一、realpath 防根内符号链接逃逸、条目上限、rel isabs"""
+    import os
+    from src import nav_index
+    root = (request.args.get("root") or "").strip()
+    rel = (request.args.get("rel") or "").strip().replace("\\", "/").strip("/")
+    if not root:
+        return jsonify({"ok": False, "err": "缺 root"}), 400
+    if not _guard(root):
+        return jsonify({"ok": False, "err": "目录不在文件树登记根内"}), 400
+    if rel and (".." in rel.split("/") or rel.startswith("/")
+                or ntpath_isabs(rel)):
+        return jsonify({"ok": False, "err": "非法子目录"}), 400
+    base = os.path.normpath(os.path.join(root, rel.replace("/", os.sep))) \
+        if rel else os.path.normpath(root)
+    _rn = os.path.normpath(root)
+    _rn_p = _rn if _rn.endswith(("\\", "/")) else _rn + os.sep
+    if os.path.normpath(base) != _rn and \
+            not os.path.normpath(base).startswith(_rn_p):
+        return jsonify({"ok": False, "err": "越界"}), 400
+    try:
+        if os.path.realpath(base).lower() != base.lower() and \
+                not os.path.realpath(base).lower().startswith(
+                    os.path.realpath(root).rstrip("\\/") .lower() + os.sep) and \
+                os.path.realpath(base).lower() != os.path.realpath(root).lower():
+            return jsonify({"ok": False, "err": "越界（符号链接）"}), 400
+    except OSError:
+        pass
+    try:
+        with os.scandir(base) as it:
+            ents = list(it)
+    except OSError as e:
+        return jsonify({"ok": False, "err": "读取失败：%s" % e}), 400
+    dirs, files = [], 0
+    _skip_l = {s.lower() for s in nav_index._SKIP_DIRS}
+    for e in ents:
+        try:
+            if e.is_dir():
+                if e.name.lower() in _skip_l or e.name.startswith("."):
+                    continue
+                if len(dirs) >= 800:   # 巨目录封顶（浏览器渲染保护）
+                    continue
+                sub = False
+                try:
+                    with os.scandir(e.path) as it2:
+                        sub = any(x.is_dir() and x.name.lower() not in _skip_l
+                                  and not x.name.startswith(".") for x in it2)
+                except OSError:
+                    pass
+                dirs.append({"name": e.name,
+                             "rel": (rel + "/" + e.name) if rel else e.name,
+                             "sub": sub})
+            else:
+                files += 1
+        except OSError:
+            continue
+    dirs.sort(key=lambda x: x["name"].lower())
+    return jsonify({"ok": True, "rel": rel, "dirs": dirs, "files": files,
+                    "truncated": len(dirs) >= 800})
+
+
+def ntpath_isabs(p):
+    import ntpath
+    return ntpath.isabs(p)
+
+
 @nav_bp.route("/api/nav/status")
 def nav_status():
     """右键三态 + 跳转前探测。?root= 目录（浅探测秒级）。"""
@@ -89,11 +160,19 @@ def nav_build():
         return jsonify({"ok": False, "err": "目录不在文件树登记根内"}), 400
     if not os.path.isdir(root):   # FD-2 终审（P4）：D-5 只落了 isabs 半截——不存在的绝对路径仍真启动任务
         return jsonify({"ok": False, "err": "目录不存在：%s" % root[:120]}), 400
-    # a407：显式点 sql 档但环境无 sqlite3（旧版 exe 打包漏件）——早拒说人话，
+    # a407：显式点 sql 档但环境无 sqlite3（旧版 exe 打包缺件）——早拒说人话，
     # 不让任务跑到阶段 4 才"构建失败"吓人（auto 由 build 内部自动降 readtags）
     if backend == "sqlite" and not nav_index.sqlite_capable():
         return jsonify({"ok": False, "err": "本程序未内置 sqlite3 模块"
                         "（旧版打包缺件，升级新版修复；readtags 模式查询速度相近）"}), 400
+    # a415：收录范围（档B）。a415R（审计#11）：校验/互斥全过之后再处理
+    # scope 三参数（原 409 拒绝时 scope.json 已被删）。scope=dict 内联配置
+    # （UI 导入 JSON/手选目录）建库成功后落独立存储位（复用）；scope_tier=
+    # 用已发现配置强制档位；scope_clear=清已存范围（回全量）
+    # a415R2 BUG-E2：scope 传了但不是对象=显式 400（原静默当没传=整根全量）
+    if d.get("scope") is not None and not isinstance(d.get("scope"), dict):
+        return jsonify({"ok": False, "err": "scope 必须是 JSON 对象"}), 400
+    scope = d.get("scope") if isinstance(d.get("scope"), dict) else None
     with _lock:
         # R17-2（实锤：互斥只挡单向）：导入进行中（大清单秒级窗口）启动
         # build 会非确定互覆 symbols/meta——双向互斥
@@ -102,6 +181,31 @@ def nav_build():
                             "err": "已有索引任务在运行（%s）" % _state["root"]}), 409
         if _state["importing"]:
             return jsonify({"ok": False, "err": "nm 清单导入进行中，稍后再建"}), 409
+        if scope is None and d.get("scope_tier") in ("whitelist", "full"):
+            # a415R3 BUG-3：带 scope_clear 时档位解析不再读**即将删除的**
+            # 已存范围（store="" 只认工程配置）——否则清除被隐性撤销
+            _sc_d, _src_d = nav_index.load_scope(
+                root, store="" if d.get("scope_clear") else None)
+            if _sc_d:
+                _sc_d["tier"] = d["scope_tier"]
+                scope = _sc_d
+            elif d["scope_tier"] == "full":
+                scope = {"tier": "full", "include": ["."]}
+            else:
+                return jsonify({"ok": False, "err": "没有可用的收录范围配置"
+                                "（工程 .fcpk-scope.json 或已存范围均无）——"
+                                "先「导入 JSON」或「选择目录」"}), 400
+        # a415R2 N7/WB#11b：scope_clear 在档位校验之后；纯清除（无建库
+        # 意图）删完即回——不空跑一次全量建库覆盖原索引
+        if d.get("scope_clear"):
+            try:
+                _sp = nav_index.scope_store_path(root)
+                if os.path.isfile(_sp):
+                    os.remove(_sp)
+            except OSError:
+                pass
+            if scope is None:
+                return jsonify({"ok": True, "cleared": True})
         _state.update(running=True, phase="准备", log=[], done=False, ok=False,
                       err="", ts=time.time(), result=None, cancel=False,
                       percent=0, cur="", cancelled=False, log_seq=0, root=root)
@@ -119,7 +223,18 @@ def nav_build():
                                        # 持有 tags.db 连接，阶段 4 os.replace 撞
                                        # WinError 5 → 静默降级 readtags + tmp 残留
             res = nav_index.build(root, log=_log, progress=on_prog,
-                                  should_cancel=should_cancel, backend=backend)
+                                  should_cancel=should_cancel,
+                                  backend=backend, scope=scope)
+            # a415R（审计#13）：建库**成功后**才落盘范围（原先落盘——失败/
+            # 取消后范围与索引对不上）；独立存储位（删索引不连带删范围）
+            if scope is not None:
+                _ok_sc, _sc_n = nav_index._norm_scope(scope, root)
+                if _ok_sc:
+                    try:
+                        nav_index._write_json(
+                            nav_index.scope_store_path(root), _sc_n)
+                    except OSError:
+                        pass
             _state.update(done=True, ok=True, result=res, phase="完成")
         except nav_index.Cancelled:
             _state.update(done=True, ok=False, err="已取消", phase="已取消",
