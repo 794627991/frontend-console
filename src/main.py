@@ -534,7 +534,86 @@ def _ensure_webview2():
             pass
 
 
+# ---- 用户实锤（内网）：退出后主进程残留+rg.exe 占用 ----
+# 根因：①子进程（rg/ctags/codegraph）无退出杀链——主进程挂住不退时它们
+# 也不退；②主进程本身缺 os._exit 兜底——非 daemon 线程/清理挂起时进程
+# 滞留任务管理器。两层根治：Job Object 内核级绑杀 + os._exit(0) 硬退。
+_job_handle = None
+
+
+def _setup_job_object():
+    """Windows Job Object（JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE）：主进程
+    退出（含强杀/Crash）时内核自动 TERMINATE 全部子进程。零孤儿，rg.exe/
+    ctags.exe/codegraph 不再残留。启动最早调（所有后续 Popen 自动入 Job）"""
+    global _job_handle
+    try:
+        import ctypes
+        import ctypes.wintypes as _wt
+
+        class _IO_COUNTERS(ctypes.Structure):
+            _fields_ = [(n, ctypes.c_uint64) for n in (
+                "ReadOperationCount", "WriteOperationCount",
+                "OtherOperationCount", "ReadTransferCount",
+                "WriteTransferCount", "OtherTransferCount")]
+
+        class _BASIC_LIMIT(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_int64),
+                ("PerJobUserTimeLimit", ctypes.c_int64),
+                ("LimitFlags", ctypes.c_uint32),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", ctypes.c_uint32),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", ctypes.c_uint32),
+                ("SchedulingClass", ctypes.c_uint32)]
+
+        class _EXTENDED_LIMIT(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", _BASIC_LIMIT),
+                ("IoInfo", _IO_COUNTERS),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+        kernel32 = ctypes.windll.kernel32
+        hJob = kernel32.CreateJobObjectW(None, None)
+        if not hJob:
+            return
+        info = _EXTENDED_LIMIT()
+        info.BasicLimitInformation.LimitFlags = 0x2000  # KILL_ON_JOB_CLOSE
+        # JobObjectExtendedLimitInformation = 9
+        if not kernel32.SetInformationJobObject(
+                hJob, 9, ctypes.byref(info), ctypes.sizeof(info)):
+            return
+        hProcess = kernel32.GetCurrentProcess()
+        if not kernel32.AssignProcessToJobObject(hJob, hProcess):
+            return
+        _job_handle = hJob   # 全局保命：不关句柄（关了 Job 散了子进程就不杀了）
+    except Exception:
+        pass   # 非 Windows / 权限不足——不阻断启动，走 _kill_child_processes 兜底
+
+
+def _kill_child_processes():
+    """显式杀全部子进程（_do_real_cleanup 调——Job Object 是内核兜底，
+    这里是退出链的即时清，防 Job Object 设置失败/子进程逃逸）"""
+    try:
+        import subprocess
+        # taskkill /T 树杀：主进程全部子进程+孙进程
+        subprocess.run(
+            ["taskkill", "/PID", str(os.getpid()), "/T", "/F"],
+            capture_output=True, timeout=5,
+            creationflags=0x08000000)
+    except Exception:
+        pass
+
+
 def main():
+    # 用户实锤（内网）：程序退出后主进程残留+rg.exe 占用——Job Object 绑杀
+    # 全部子进程（rg/ctags/codegraph/worker 等）：主进程一退（含强杀），
+    # Windows 内核自动 TERMINATE 全部子进程，零孤儿
+    _setup_job_object()
     # --claude-worker 模式：Claude 子系统 worker（见 _run_claude_worker_mode；
     # 必须先于单实例锁——主实例派生的子进程不抢 mutex）
     if '--claude-worker' in sys.argv:
@@ -1065,6 +1144,14 @@ def main():
         close_all_ports()
         clear_endpoint()
         _clean_webview_cache()
+        # 用户实锤（内网）：退出后主进程残留+rg.exe 占用——两层根治：
+        # ① Job Object 已在启动时绑定（_setup_job_object），主进程退出时
+        #    Windows 内核自动杀全部子进程（rg/ctags/codegraph 等）
+        # ② 此处显式再杀一次在飞子进程（Job Object 是兜底，这里是即时清）
+        try:
+            _kill_child_processes()
+        except Exception:
+            pass
         # Claude worker 回收（幂等）：terminate + 关 stdin；worker 侧另有
         # 父进程探活自杀兜底（主进程被强杀也不留孤儿）
         try:
@@ -1082,8 +1169,18 @@ def main():
                 proxy_shutdown()
             except Exception:
                 pass   # proxy 模块异常不拖累主工具退出
-
-    def _dirty_quit_check(window):
+        # CPU 优先还原（a359 的 perf_boost 在 atexit 里有还原，但主进程
+        # 挂住时 atexit 不走——这里显式再触发一次）
+        try:
+            from src.perf_boost import restore_and_exit as _pb_restore
+            _pb_restore()
+        except Exception:
+            pass
+        # 用户实锤（内网）终修：清理全部完成后硬退——不走 Python 自然退出
+        # （非 daemon 线程/清理挂起/Webview2 渲染进程清理超时都会让进程
+        # 滞留任务管理器）。os._exit 跳过 atexit（上面已手动调全部清理），
+        # Job Object 句柄随进程销毁→内核自动杀余下子进程
+        os._exit(0)
         """真退出前的未保存检查（a239 第5轮A2-P2-5）：dirty tab > 0 时同步
         MessageBox 确认——此前托盘退出对全部脏 tab 静默清零。
         ⚠ 只能在**后台线程**调用：evaluate_js 内部 Invoke 封送回 UI 线程，
