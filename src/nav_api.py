@@ -83,6 +83,9 @@ def nav_build():
         return jsonify({"ok": False, "err": "缺 root"}), 400
     if not _guard(root):
         return jsonify({"ok": False, "err": "目录不在文件树登记根内"}), 400
+    if not os.path.isdir(root):   # FD-2 终审（P4）：D-5 只落了 isabs 半截——不存在的绝对路径仍真启动任务
+        return jsonify({"ok": False, "err": "目录不存在：%s" % root[:120]}), 400
+        return jsonify({"ok": False, "err": "目录不在文件树登记根内"}), 400
     with _lock:
         # R17-2（实锤：互斥只挡单向）：导入进行中（大清单秒级窗口）启动
         # build 会非确定互覆 symbols/meta——双向互斥
@@ -229,9 +232,10 @@ def nav_reindex():
 
     def work():
         try:
-            # R35 复验终修（S35-2 维持实锤）：任何 db 文件操作前先关本进程
-            # 的 sqlite 连接（remove/replace 在前=WinError 32/5 重试永久失败）
-            nav_index._close_tagdb()
+            # R35 复验终修（S35-2）+FD-1 终审（P1）：定向关目标库（非全量）——
+            # 全量关闭与 20 并发线程重建交叠触发 sqlite3 C 层竞态杀进程 3/3。
+            # 定向关+busy 让路：其他库不受干扰、目标库窗口内不再建 sqlite 连接
+            nav_index._close_tagdb(ld)
             meta = nav_index._read_json(os.path.join(ld, "meta.json")) or {}
             db = os.path.join(ld, "tags.db")
             tags_p = os.path.join(ld, "tags")
@@ -264,6 +268,7 @@ def nav_reindex():
             _state.update(done=True, ok=False, err=str(e)[:400], phase="失败")
             _log("失败：%s" % e)
         finally:
+            nav_index._unbusy_tagdb(ld)   # FD-1：解除 busy，恢复 sqlite 查询
             _state["running"] = False
             _state["cancel"] = False
 

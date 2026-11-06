@@ -960,6 +960,10 @@ _tagdb_keys = {}           # {ld: (tags_mtime, db_mtime)} 失效判定
 # _close_tagdb 全量回收——两个出口互补，泄漏上界 = MAX_ORPHANS 个连接
 _tagdb_orphans = []
 _MAX_ORPHANS = 4
+# FD-1 终审（P1）：reindex 切档期间目标库的 busy 集合——_get_tagdb 对
+# busy 的 ld 返回 None（查询走 readtags/memory 兜底），防止文件操作窗口
+# 内重建 sqlite 连接与 C 层竞态杀进程
+_db_busy = set()
 
 
 def _open_tags(ld):
@@ -983,6 +987,10 @@ def _open_tags(ld):
 
 
 def _get_tagdb(ld):
+    # FD-1 终审（P1）：busy 让路——reindex/build 文件操作窗口内不建
+    # sqlite 连接（查询走 readtags/memory 兜底，正确性无损）
+    if ld in _db_busy:
+        return None
     db_p = os.path.join(ld, "tags.db")
     tags_p = os.path.join(ld, "tags")
     if not os.path.isfile(db_p) or not os.path.isfile(tags_p):
@@ -1017,18 +1025,34 @@ def _get_tagdb(ld):
     return db
 
 
-def _close_tagdb():
-    """关闭全部常驻连接并清缓存（reindex/build/delete 等文件操作前必调）
-    ——含 orphan 列表全量回收（文件操作前在途查询应已静默，关全部安全）"""
+def _close_tagdb(ld=None):
+    """关闭常驻连接并清缓存。ld=None 关全部（build/delete 等）；ld 指定
+    只关该库（reindex 切档——FD-1 终审：全量关闭与并发查询线程的重建
+    交叠触发 sqlite3 C 层竞态杀进程，3/3 复现。定向关+busy 让路后其他
+    库不受干扰、目标库不会再锁文件）——orphan 列表一并回收"""
     with _cache_lock:
-        dbs = list(_tagdb_cache.values())
-        _tagdb_cache.clear()
-        _tagdb_keys.clear()
+        if ld is None:
+            dbs = list(_tagdb_cache.values())
+            _tagdb_cache.clear()
+            _tagdb_keys.clear()
+            _db_busy.clear()
+        else:
+            dbs = []
+            if ld in _tagdb_cache:
+                dbs.append(_tagdb_cache.pop(ld))
+                _tagdb_keys.pop(ld, None)
+            _db_busy.add(ld)   # busy 让路：文件操作窗口内该库不再建 sqlite 连接
         orphans = list(_tagdb_orphans)
         del _tagdb_orphans[:]
     for d in dbs + orphans:
         try: d.close()
         except Exception: pass
+
+
+def _unbusy_tagdb(ld):
+    """reindex/build 完成后解除 busy 标记（恢复 sqlite 查询）"""
+    with _cache_lock:
+        _db_busy.discard(ld)
 
 
 _meta_cache_for_backend = {"key": None, "data": None}
