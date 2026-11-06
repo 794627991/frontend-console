@@ -183,9 +183,12 @@ def build(root, log=None, progress=None, should_cancel=None):
                     _json2.dump(cfg, f, ensure_ascii=False, indent=2)
         except Exception:
             pass
+        # 用户实锤（h11 大库）：codegraph 自带 watchdog 在扫描大目录时误杀
+        # 主线程忙于同步 I/O → 判"无响应"60s 即杀（#850）——索引场景禁掉
+        _env = {**os.environ, "CODEGRAPH_NO_WATCHDOG": "1"}
         proc = _sp.Popen(_cg_argv() + [action, "--force"], cwd=root,
                          stdout=_sp.PIPE, stderr=_sp.STDOUT,
-                         creationflags=0x08000000)
+                         env=_env, creationflags=0x08000000)
         _proc[0] = proc
         out = proc.communicate(timeout=3500)[0]
         rc = proc.returncode
@@ -246,9 +249,10 @@ def sync(root, log=None, should_cancel=None):
     _wt = _th.Thread(target=_watch, daemon=True)
     _wt.start()
     try:
+        _env = {**os.environ, "CODEGRAPH_NO_WATCHDOG": "1"}   # 同 build：大库扫描禁误杀
         proc = _sp.Popen(_cg_argv() + ["sync"], cwd=root,
                          stdout=_sp.PIPE, stderr=_sp.STDOUT,
-                         creationflags=0x08000000)
+                         env=_env, creationflags=0x08000000)
         _proc[0] = proc
         out = proc.communicate(timeout=590)[0]
         rc = proc.returncode
