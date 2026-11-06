@@ -328,7 +328,8 @@ def start_background():
             try:
                 from src import hiklink_bot as hb
                 d = hb._load_session_file()
-                if d.get("uid") and d.get("password"):
+                if (d.get("uid") and d.get("password")) or \
+                        (d.get("app_id") and d.get("app_secret")):
                     ok, msg = hb.ensure_started()
                     import logging
                     logging.getLogger("hiklink_bot").info(
@@ -3430,6 +3431,19 @@ if not CLAUDE_OFFLOAD:
             ok, msg = _hiklink_bot.ensure_stopped()
         else:
             ok, msg = _hiklink_bot.ensure_started()
+        return jsonify({"ok": ok, "msg": msg})
+
+    @app.route("/api/hiklink/credentials", methods=["POST"])
+    def hiklink_credentials():
+        """保存/清除手填机器人凭据（App ID + App Secret）。本路由与 worker
+        侧同款——inline 排障形态（CLAUDE_INLINE=1）下没有 307 兜底，缺它就
+        只有 status/activate 可用、保存直连 404。"""
+        j = request.get_json(silent=True)
+        if not isinstance(j, dict) or "app_id" not in j or "app_secret" not in j:
+            return jsonify({"ok": False,
+                            "msg": "请求体必须含 app_id 与 app_secret"}), 400
+        ok, msg = _hiklink_bot.set_manual_credentials(
+            j.get("app_id"), j.get("app_secret"))
         return jsonify({"ok": ok, "msg": msg})
 
 

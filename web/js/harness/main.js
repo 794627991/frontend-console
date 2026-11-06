@@ -130,6 +130,12 @@ function buildClaudeHarnessTab(opts = {}) {
   tabs.insertBefore(tab, tabs.querySelector('.tab-bar-actions'));
   if (typeof _initTabDrag === 'function') _initTabDrag(tab);
   termArea.appendChild(_hgWrap);
+  // 机器人凭据输入的 dirty 监听必须在 DOM 就位后立刻挂上——它由本模板
+  // 动态注入，shell.js 模块级那轮 querySelectorAll 扑空；晚到的话首屏
+  // status 失败时用户清空 App ID 的意图会被后续回填抹掉
+  if (typeof hgRobotWire === 'function') {
+    _hgWrap.querySelectorAll('[data-hg-robot-id]').forEach(hgRobotWire);
+  }
   // 登录条 DOM 随 tab 创建——创建后立刻拉一次登录态（页面加载时的首轮
   // 渲染发生在 DOM 存在之前，会扑空停在「未登录」默认态）
   if (typeof hgLoginRefresh === 'function') setTimeout(hgLoginRefresh, 150);

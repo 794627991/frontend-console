@@ -120,6 +120,12 @@ def _update_session_file(mutate):
         except Exception:
             return False
 BOT_NAME = "前端小助手"   # 改名即新建机器人（旧机器人头像定死无法更新）
+# 手填机器人凭据模式：设置页填 app_id/app_secret 后跳过 SSO 登录+在线注册
+# 直连 WS（用户拍板：每人填自己的机器人，互不影响）。会话文件缺归属 uid 时
+# 用它当机主标识（让 ensure_started 的登录门控放行）。注意：它只是中性标识，
+# 不做「永不匹配」承诺——归属未知时 _owner_uids 干脆返回空集（调用方全拒），
+# 比依赖某个字面量撞不上更可靠。
+MANUAL_UID = "robot-owner"
 SEG = 1000          # 每段推送字符上限（HikLink 消息友好长度）
 HEARTBEAT = 10      # 秒（实测服务端 ~20s 无有效心跳即断开，30s 档活不过首拍）
 CMD_TIMEOUT = 1800  # 单条指令上限（秒）
@@ -339,6 +345,8 @@ class HikLinkBot:
         self._stop = threading.Event()
         self._thread = None
         self._lock = threading.Lock()
+        self.owner_uid = None        # 服务端认证回包给的机器人归属账号（机主）
+        self.auth_failed = False     # 最近一次认证被拒（手填凭据错/机器人被删）
         self._last_trans = collections.OrderedDict()   # a239 B2-P3: 保序去重（set 无序截断可能丢掉最近的 transId，服务端重推即重复执行指令）
 
     def _trans(self):
@@ -388,10 +396,20 @@ class HikLinkBot:
                     return
                 try:
                     self.ws_url = url
-                    self.ws = websocket.create_connection(
+                    ws = websocket.create_connection(
                         url, timeout=5,
                         sslopt={"cert_reqs": ssl.CERT_NONE},
                         header=["User-Agent: " + (UA % "")])
+                    # stop() 只关「此刻已存在」的 ws：若停止发生在
+                    # create_connection 阻塞期间，这条刚建好的连接会漏关，
+                    # 与服务端上的新 bot 同 appId 双连接（互踢/消息丢）
+                    if self._stop.is_set():
+                        try:
+                            ws.close()
+                        except Exception:
+                            pass
+                        return
+                    self.ws = ws
                     self.connected = True
                     connected = True
                     log.info("WS 已连接 %s", url)
@@ -425,6 +443,13 @@ class HikLinkBot:
                     break
             self.connected = False
             self.authenticated = False
+            # 统一在退出路径关闭并清引用：不留「已连但无人管」的僵尸连接
+            try:
+                if self.ws is not None:
+                    self.ws.close()
+            except Exception:
+                pass
+            self.ws = None
             if self._stop.is_set():
                 return
             self._stop.wait(backoff)   # 断线/被踢 → 退避后重连
@@ -462,14 +487,9 @@ class HikLinkBot:
         # v2.27.13：通告只推给当前登录账号自己的会话——换账号测试会把
         # last_session 留成上一个人（实测推给了同事 heqinglong5，本人收不到
         # 上线通知还以为通知坏了）。session 标识以 uid 起头，按前缀判归属。
-        try:
-            cur_uid = (_load_session_file().get("uid")
-                       or (_controller._creds()[0] if _controller else "")) or ""
-        except Exception:
-            cur_uid = ""
-        if cur_uid and not str(last).lower().startswith(str(cur_uid).lower()):
-            log.info("上线通告跳过：历史 session 属于别的账号（%s… ≠ 当前 %s）",
-                     str(last)[:8], cur_uid)
+        if not _is_owner_session(last, self):
+            log.info("上线通告跳过：历史 session 不属于机主（%s…，候选 %s）",
+                     str(last)[:8], sorted(_owner_uids(self)))
             return
         self._announced = True
         self.session_id = last
@@ -483,12 +503,36 @@ class HikLinkBot:
             log.info("WS 认证%s（uid=%s）", "成功" if self.authenticated else "失败",
                      msg.get("uid"))
             if self.authenticated:
+                self.auth_failed = False
+                # 手填凭据模式下会话文件没有 SSO uid——机主身份以服务端
+                # 认证回包里的机器人归属账号为准（_owner_uids 候选之一）
+                self.owner_uid = str(msg.get("uid") or "").strip() or None
+                if self.owner_uid:
+                    _uid, _app = self.owner_uid, self.robot_num
+
+                    def _persist(d):
+                        # 只写手填模式：自动注册的归属由 _start_locked 写
+                        # robot_uid=SSO 登录名，回包 uid 若与之大小写/前缀
+                        # 有差异，会让下次启动判成「别人的凭据」反复重注册
+                        if not (d.get("app_id") and d.get("app_secret")):
+                            return
+                        # 且必须仍是当前手填主体：换 app_id 的同时旧连接恰
+                        # 收到回包，会把旧机主写进新凭据文件（导致新机主被
+                        # 「仅响应机主」拒绝、旧机主能驱动本机）
+                        if d.get("app_id") != _app:
+                            return
+                        d["robot_uid"] = _uid
+
+                    threading.Thread(target=_update_session_file,
+                                     args=(_persist,), daemon=True).start()
                 threading.Thread(target=self._announce_online,
                                  daemon=True).start()
-            elif self.on_auth_failed:
-                # 凭据失效（机器人被删/secret 轮换）——不处理就永久僵死
-                threading.Thread(target=self.on_auth_failed,
-                                 daemon=True).start()
+            else:
+                self.auth_failed = True
+                if self.on_auth_failed:
+                    # 凭据失效（机器人被删/secret 轮换）——不处理就永久僵死
+                    threading.Thread(target=self.on_auth_failed,
+                                     daemon=True).start()
         elif cmd == "HEART_PONG":
             pass
         elif cmd == "KICK_OUT":
@@ -508,12 +552,7 @@ class HikLinkBot:
             # 替答确认）。session 标识以 uid 起头（_announce_online 同款判据），
             # 非本人会话一律拒绝并回执
             _sess = str(msg.get("session") or "")
-            try:
-                _cur_uid = (_load_session_file().get("uid")
-                            or (_controller._creds()[0] if _controller else "")) or ""
-            except Exception:
-                _cur_uid = ""
-            if _cur_uid and _sess and not _sess.lower().startswith(_cur_uid.lower()):
+            if not _is_owner_session(_sess, self, data.get("sender")):
                 log.warning("拒绝非机主会话消息: session=%s sender=%s",
                             _sess[:10], data.get("sender"))
                 # 复审 F4：拒绝路径不得留置 self.session_id——reply/push 全用该
@@ -522,7 +561,8 @@ class HikLinkBot:
                 _saved_sess = self.session_id
                 try:
                     self.session_id = _sess
-                    self.reply("⚠ 该机器人仅响应机主（%s）本人的指令" % _cur_uid)
+                    self.reply("⚠ 该机器人仅响应机主本人的指令（%s）"
+                               % "/".join(sorted(_owner_uids(self)))[:40])
                 except Exception:
                     pass
                 finally:
@@ -595,8 +635,13 @@ class HikLinkBot:
         self._send(frame)
 
     def status(self):
-        return {"running": bool(self._thread and self._thread.is_alive()),
+        af = getattr(self, "auth_failed", False)
+        # _stop 已置位即视为不在运行：join 超时后线程可能仍卡在 reply()
+        # 重试里，单看 is_alive() 会让 ensure_started 误报「已在运行」
+        return {"running": bool(self._thread and self._thread.is_alive()
+                                and not self._stop.is_set()),
                 "connected": self.connected, "authenticated": self.authenticated,
+                "auth_failed": af,
                 "robot_num": self.robot_num, "session_id": self.session_id}
 
 
@@ -628,6 +673,9 @@ class HikLinkBotController:
     def __init__(self, emit_log=None):
         self.bot = None
         self._lock = threading.Lock()
+        # _launch 的「停旧+建新」整段互斥（与 _lock 分开：_launch 内部还要
+        # 拿 _lock 换指针，同一把会自锁）
+        self._launch_lock = threading.RLock()
         self._queue = []
         self._busy_hl = False
         self._t0 = 0.0
@@ -717,6 +765,11 @@ class HikLinkBotController:
         if uid and password:
             return uid, password
         d = _load_session_file()
+        # 手填机器人凭据（app_id/app_secret）优先：直连 WS 不需要 SSO 密码。
+        # 机主 uid 无从推断时下发一个哨兵（非空即放行 ensure_started 的
+        # 「未登录不激活」门控，sender 鉴权见 _owner_uids()）
+        if d.get("app_id") and d.get("app_secret"):
+            return d.get("robot_uid") or MANUAL_UID, None
         if d.get("uid") and d.get("password"):
             return d["uid"], d["password"]
         if d.get("uid") and not password:
@@ -792,6 +845,14 @@ class HikLinkBotController:
     def _start_locked(self, uid, password, welcome):
         if not HAS_WS:
             return False, "机器人模块缺失（websocket-client 未安装）"
+        # 手填 app_id/app_secret 模式：凭据齐全即直连，不碰 SSO 登录/在线注册
+        d0 = _load_session_file()
+        if d0.get("app_id") and d0.get("app_secret"):
+            num, secret = d0["app_id"], d0["app_secret"]
+            log.info("使用手填机器人凭据直连（%s）", num)
+            # _manual_arg=True：若并发「清除」已删掉 app_id，_launch 锁内
+            # 重读发现后必须弃建，否则用旧凭据连上而 UI 报「未使用手填」
+            return self._launch(num, secret, welcome, _manual_arg=True)
         u, p = self._creds(uid, password)
         if not (u and p):
             return False, "需要 SSO 账号密码（首次配置写 hiklink_session.json）"
@@ -822,26 +883,59 @@ class HikLinkBotController:
                          "app_secret": secret, "robot_name": BOT_NAME}
 
                 def mutate(d):
+                    # 注册窗口期（登录要几十秒）内用户可能已手填凭据——
+                    # 手填优先，绝不覆盖其 secret（否则 app_id 手填 +
+                    # app_secret 自动注册的错配，下次启动认证必败）
+                    if d.get("app_id"):
+                        return
                     d.update(fresh)
 
                 _update_session_file(mutate)
+                if is_manual_mode():
+                    log.info("注册期间用户已手填机器人凭据，放弃本次自动注册结果")
+                    return False, "已切换到手填机器人凭据"
             except Exception as e:
                 return False, "登录/注册失败: %s" % e
-        # v2.27.8：换新 bot 前先停旧的并清孤儿——历史上任何竞态起过多余
-        # bot（同机器人互踢元凶），这里兜底全部收掉，保证进程内机器人唯一
-        with self._lock:
-            old = self.bot
-            self.bot = None
-        if old:
-            try:
-                old.stop()
-            except Exception:
-                pass
-        self.bot = HikLinkBot(num, secret)
-        self.bot.welcome_text = welcome or WELCOME_TEXT
-        self.bot.on_command = self._on_command
-        self.bot.on_auth_failed = self._on_auth_failed
-        ok, msg3 = self.bot.start()
+        return self._launch(num, secret, welcome)
+
+    def _launch(self, num, secret, welcome, _manual_arg=False):
+        """装上一个新 HikLinkBot 并连 WS（换新前先停旧的并清孤儿）。
+
+        _manual_arg=True 表示调用方是「手填凭据保存」路径——此时若文件里
+        的手填凭据已被并发清除，不能再用入参建连。
+
+        v2.27.8：历史上任何竞态起过多余 bot（同机器人互踢元凶），
+        这里兜底全部收掉，保证进程内机器人唯一。
+        互斥：调用方可能来自 start()（已持 _starting）或 set_manual_credentials
+        （不持），停旧+建新整段必须在 _launch_lock 内完成，否则两路并发
+        各起一个 bot 连同一 appId → 服务端互踢（13s 周期掉线）。"""
+        with self._launch_lock:
+            with self._lock:
+                old = self.bot
+                self.bot = None
+            if old:
+                try:
+                    old.stop()
+                except Exception:
+                    pass
+            # 锁内重读文件：lost-update 竞态下「最后写入文件的凭据」必须赢，
+            # 否则先落盘的后到执行会把对方顶掉（文件是 B、实际连 A）
+            d = _load_session_file()
+            if d.get("app_id") and d.get("app_secret"):
+                if (d["app_id"], d["app_secret"]) != (num, secret):
+                    log.info("锁内重读：以文件中的手填凭据为准（%s）", d["app_id"])
+                num, secret = d["app_id"], d["app_secret"]
+            elif _manual_arg:
+                # 本次是手填保存，但文件里的手填凭据已被并发的「清除」
+                # 删掉——不能拿入参建连（否则界面显示未使用手填、实际
+                # WS 在线，状态与事实相反）
+                log.info("锁内重读：手填凭据已被清除，放弃本次连接")
+                return False, "凭据已被清除，未建立连接"
+            self.bot = HikLinkBot(num, secret)
+            self.bot.welcome_text = welcome or WELCOME_TEXT
+            self.bot.on_command = self._on_command
+            self.bot.on_auth_failed = self._on_auth_failed
+            ok, msg3 = self.bot.start()
         if ok:
             self._emit_log("HikLink 机器人已连接（%s）" % num)
         return ok, msg3
@@ -850,6 +944,12 @@ class HikLinkBotController:
         """WS 认证被拒：凭据失效（机器人被删/secret 轮换）。自动登录 →
         ensure_robot 同名找回（被删则按名重建，带蓝头像）→ 换新凭据重连。
         10 分钟防抖，防止服务端反复拒绝时形成风暴。"""
+        if is_manual_mode():
+            # 手填凭据模式：secret 轮换只能用户自己重填，SSO 自愈会覆盖
+            # 手填值。此判断放在防抖之前——手填被拒不消耗自愈窗口，
+            # 否则用户清空手填回落 SSO 后 10 分钟内无法自愈
+            log.error("手填机器人凭据认证被拒——请到设置里检查 App ID/Secret")
+            return
         now = time.time()
         if now - getattr(self, "_last_refresh", 0) < 600:
             log.info("凭据刷新防抖中（10 分钟内已试过），跳过")
@@ -862,7 +962,7 @@ class HikLinkBotController:
             return
         try:
             his = _his()
-            token, msg = his.login_pc(u, p)
+            token, msg = his.login_pc(u, p)   # 几十秒：期间用户可能改填手填凭据
             if not token:
                 log.error("自愈登录失败: %s", msg)
                 return
@@ -874,19 +974,20 @@ class HikLinkBotController:
                      "app_secret": secret, "robot_name": BOT_NAME}
 
             def mutate(d):
+                # 与 _start_locked 同款保护：登录窗口期用户已手填凭据时
+                # 绝不覆盖（否则 app_id 手填 + app_secret 自愈 的错配）
+                if d.get("app_id"):
+                    return
                 d.update(fresh)
 
             _update_session_file(mutate)
         except Exception:
             log.exception("凭据自愈异常")
             return
-        if self.bot:
-            self.bot.stop()
-        self.bot = HikLinkBot(num, secret)
-        self.bot.welcome_text = WELCOME_TEXT
-        self.bot.on_command = self._on_command
-        self.bot.on_auth_failed = self._on_auth_failed
-        ok, msg3 = self.bot.start()
+        if is_manual_mode():
+            log.info("自愈期间用户已手填机器人凭据，放弃本次自愈结果")
+            return
+        ok, msg3 = self._launch(num, secret, None)
         self._emit_log("凭据自愈%s（%s）" % ("成功" if ok else "失败", num))
 
     def stop(self):
@@ -1096,13 +1197,106 @@ def _autostart():
     try:
         _controller = HikLinkBotController()
         u, p = _controller._creds()
-        if u and p:
+        d = _load_session_file()
+        manual = bool(d.get("app_id") and d.get("app_secret"))
+        if (u and p) or manual:
             def _go():
                 ok, msg = _controller.start()
                 log.info("HikLink 机器人自启: %s", msg if not ok else "OK")
             threading.Thread(target=_go, daemon=True).start()
     except Exception:
         log.exception("HikLink 机器人初始化失败")
+
+
+def _sso_username():
+    """真实 SSO 登录名（UI 显示用），不含机器人归属 uid 哨兵。
+    与 _creds() 的区别：手填凭据模式下 _creds() 返回的是机器人归属人，
+    不能当成本机登录账号。"""
+    d = _load_session_file()
+    if d.get("uid") and d.get("password"):
+        return d["uid"]
+    try:
+        from src.lanz_quota import load_credentials
+        cred = load_credentials(os.path.join(DATA_DIR, "lanz_credentials.json"))
+        if cred:
+            return cred["username"]
+    except Exception:
+        pass
+    return d.get("uid") or None
+
+
+def is_manual_mode():
+    """是否处于手填机器人凭据模式（App ID + App Secret 均在）。
+    该模式下机器人身份与 SSO 账号解耦：不登录也能连、登出也不掉线。"""
+    d = _load_session_file()
+    return bool(d.get("app_id") and d.get("app_secret"))
+
+
+def _owner_uids(bot=None):
+    """机主候选 uid 集合（sender 鉴权与上线通告判据）。
+
+    session id 以 SSO 登录名起头。服务端 SERVER_AUTH_REPLY 的 uid 实测即
+    登录名（如 gaoyi13），但部分部署疑为工号/手机号——故在手填模式下用
+    「回包 uid + 磁盘 robot_uid」双候选，任一命中即放行。
+
+    **手填模式绝不并入本机当前 SSO 登录名**：共用机场景下 A 手填了机器人、
+    B 随后为了代理额度登录（该路径不清 A 的手填凭据、机器人继续跑 A 的），
+    若并入 B 的登录名，B 在 HikLink 里发的消息会被当成机主指令在本机执行。
+    自动注册模式下 robot_uid === SSO 登录名，天然覆盖。
+
+    返回空集合 = 无从判断机主 → 调用方按「全拒」处理（保守）。"""
+    cands = set()
+    uid = getattr(bot, "owner_uid", None) if bot is not None else None
+    if uid:
+        cands.add(str(uid))
+    d = _load_session_file()
+    manual = bool(d.get("app_id") and d.get("app_secret"))
+    if manual:
+        # 手填：只信服务端回包与磁盘归属，不认本机 SSO 身份
+        if d.get("robot_uid"):
+            cands.add(str(d["robot_uid"]))
+        # 归属未知时返回空集合（调用方 _is_owner_session 全拒）——不放哨兵：
+        # 任何字面量都可能真撞上 session/sender，fail-closed 不能靠猜
+        return cands
+    # 自动注册：robot_uid 由 _start_locked 写成 SSO 登录名
+    for k in ("robot_uid", "uid"):
+        v = d.get(k)
+        if v:
+            cands.add(str(v))
+    su = _sso_username()
+    if su:
+        cands.add(str(su))
+    return cands
+
+
+def _is_owner_session(sess, bot=None, sender=None):
+    """session / sender 是否属于机主候选。无候选 → False（全拒）。
+
+    两路判据强度不同：
+    - session：以登录名起头，形如 `gaoyi13_xxx`，取**首段精确等于**候选
+      才认（前缀比对会让 gaoyi13 被 gaoyi 的候选放行）。
+    - sender：服务端填充的完整账号标识，要求**精确等于**候选（前缀比对
+      同样会被 gaoyi13 / "gaoyi13（高毅）" 蒙混，实测可复现）。
+    任一路命中即放行，避免回包 uid 为工号的部署把机主自己挡在门外。"""
+    cands = {c.lower() for c in _owner_uids(bot) if c}
+    if not cands:
+        return False
+    snd = str(sender or "").strip().lower()
+    if snd and snd in cands:
+        return True
+    sess_s = str(sess or "").strip().lower()
+    if not sess_s:
+        return False
+    # 会话 id 形如 `<账号>_<后缀>`，但账号本身可含 . / - : 等字符
+    # （zhang.san、li-si）——不能先切首段，否则把机主截成 zhang 判非机主。
+    # 故用「整串全等 或『候选 + 分隔符』起头」，既不退化成裸前缀（gaoyi
+    # 不会命中 gaoyi13），也不误伤含分隔符的账号
+    for c in cands:
+        if sess_s == c:
+            return True
+        if any(sess_s.startswith(c + sep) for sep in ("_", "-", ".", "/", ":")):
+            return True
+    return False
 
 
 def controller():
@@ -1115,18 +1309,37 @@ def ensure_started():
     global _controller
     if _controller is None:
         _controller = HikLinkBotController()
-    u, p = _controller._creds()
-    if not (u and p):
-        return False, "未登录（无统一凭据），机器人不激活"
+    d = _load_session_file()
+    manual = bool(d.get("app_id") and d.get("app_secret"))
+    if not manual:
+        u, p = _controller._creds()
+        if not (u and p):
+            return False, "未登录（无统一凭据），机器人不激活"
     if _controller.status().get("running"):
         return True, "机器人已在运行"
     return _controller.start()
 
 
 def ensure_stopped():
-    """登出时停用机器人（幂等）——登录与机器人绑定，登出即停。"""
-    if _controller and _controller.bot:
-        return _controller.stop()
+    """停用机器人（幂等）。stop() 只置停止位并关 ws，不 join 线程——
+    status()["running"] 是 _thread.is_alive()，紧接的 ensure_started 会
+    看到旧线程仍活而误判「已在运行」提前返回，实测导致保存新凭据后
+    进程内再无 bot（永久离线却回报成功）。这里等线程真正退出。"""
+    if _controller:
+        # 锁内只做「快照 + 停」：stop() 会立即关 ws 唤醒收帧线程，正常
+        # 毫秒级退出。join 放锁外——持 _launch_lock 等 3s 会串行卡住并发
+        # 的保存/激活请求
+        with _controller._launch_lock:
+            bot = _controller.bot
+            if not bot:
+                return True, "机器人未在运行"
+            ok, msg = bot.stop()
+        t = getattr(bot, "_thread", None)
+        if t and t.is_alive() and t is not threading.current_thread():
+            # 3s 足够：stop() 已关 ws，收帧线程立刻醒来；status() 的
+            # running 已用 _stop.is_set() 兜底，不必等满 ws 超时
+            t.join(3)
+        return ok, msg
     return True, "机器人未在运行"
 
 
@@ -1138,8 +1351,12 @@ def clear_account():
     登录 ensure_robot 按账号列同名机器人自动找回。只保留 harness_sid
     （小助理会话绑定，丢了会另起新会话）。"""
     def mutate(d):
-        for k in ("uid", "password", "robot_num", "app_secret", "robot_name"):
+        for k in ("uid", "password", "robot_num", "robot_name"):
             d.pop(k, None)
+        # 手填 app_id 模式：app_secret 是用户自己填的机器人密钥（不随 SSO
+        # 账号走），登出不清；自动注册模式下的 app_secret 才是账号私有凭据
+        if not d.get("app_id"):
+            d.pop("app_secret", None)
     ok = _update_session_file(mutate)
     # a239 B2-P2: 登出后 .bak 仍留全套凭据（密码+appSecret）无人清——
     # _update_session_file 写前 copy2 留底是为「主文件损坏回滚」，登出场景
@@ -1152,17 +1369,104 @@ def clear_account():
     return ok
 
 
+def set_manual_credentials(app_id, app_secret):
+    """保存手填机器人凭据（App ID/App Secret）并重启机器人。
+    与 SSO 账号解耦：每台机器各填自己的机器人，互不抢连接。保存即生效，
+    停掉旧 bot 用新凭据重连；清空 secret 视为清除（回落到 SSO 自动注册）。"""
+    # 类型护栏：路由只保证 JSON 是对象，值是数字/对象时 strip() 会抛
+    # AttributeError 变成 500 HTML，前端只能弹「保存请求失败」
+    if not isinstance(app_id, str) or not isinstance(app_secret, str):
+        return False, "App ID 与 App Secret 必须是字符串"
+    app_id = app_id.strip()
+    app_secret = app_secret.strip()
+    # 半填不得当清除：只填一项多半是误操作，静默删凭据会让机器人掉线
+    if bool(app_id) != bool(app_secret):
+        return False, "App ID 与 App Secret 必须同时填写"
+
+    def mutate(d):
+        if app_id and app_secret:
+            if d.get("app_id") != app_id:
+                # 换了机器人主体：旧归属人作废，否则 sender 鉴权认错机主。
+                # 同 app_id 只轮换 secret 时保留（回包重填前不至于全拒）
+                d.pop("robot_uid", None)
+                d.pop("last_session", None)   # 旧会话归属也作废
+            d["app_id"] = app_id
+            d["app_secret"] = app_secret
+            # 手填凭据覆盖自动注册结果：残留的 robot_num 配不上新 secret，
+            # 若日后清空手填会拿新 secret 去连旧 robot_num（认证必败）
+            d.pop("robot_num", None)
+            d.pop("robot_name", None)
+        else:
+            for k in ("app_id", "app_secret", "robot_uid"):
+                d.pop(k, None)   # 归属也作废：残留会让回落后仍认旧机主
+
+    # 幂等：本来就不是手填模式（文件无 app_id）时清空等于什么都没做——
+    # 不要停机器人，否则空表单误点「保存机器人」会把在线的自动注册机器人
+    # 停掉，再同步跑几十秒 SSO 重新注册，期间远程指令全断
+    if not (app_id and app_secret) and not _load_session_file().get("app_id"):
+        return True, "当前未使用手填凭据，无需清除"
+
+    if not _update_session_file(mutate):
+        return False, "凭据写入失败（数据目录不可写？）"
+    if app_id and app_secret:
+        # 替换机器人（A → B）同样要清 .bak：否则主文件损坏回退时会拿到
+        # 上一台机器人 A 的明文凭据，静默连上已废弃的机器人
+        try:
+            if os.path.exists(SESSION_PATH + ".bak"):
+                os.remove(SESSION_PATH + ".bak")
+        except OSError:
+            pass
+    # 半填校验已上移（早于写盘），此处只剩「两项皆空 = 清除」
+    if not (app_id and app_secret):
+        ensure_stopped()
+        # 清除即彻底清除：写前留底的 .bak 仍存明文 app_secret，而
+        # _load_session_file 在主文件损坏时会回退读它——不清就会让用户
+        # 已删除的凭据在主文件损坏后「复活」并自动连上 WS
+        try:
+            if os.path.exists(SESSION_PATH + ".bak"):
+                os.remove(SESSION_PATH + ".bak")
+        except OSError:
+            pass
+        # 回落自动注册链路放到后台：SSO 登录+注册要几十秒（且保存手填时
+        # robot_num 已被 pop，无缓存必走全流程），同步等会让保存按钮卡死
+        # 几十秒，且这条链失败会把「凭据已成功清除」误报成失败
+        u, p = _controller._creds() if _controller else (None, None)
+        if u and p:
+            threading.Thread(target=ensure_started, daemon=True,
+                             name="hiklink-bot-fallback").start()
+            return True, "已清除机器人凭据（正在回落到账号机器人）"
+        return True, "已清除机器人凭据（登录后自动启用账号机器人）"
+    # 直接换 bot：先停旧线程并等它退出，再按新凭据装配——不走
+    # ensure_started()，那里按 status().running 判「已在运行」会误挡重启
+    ensure_stopped()
+    if _controller is None:
+        return ensure_started()
+    ok, msg = _controller._launch(app_id, app_secret, None, _manual_arg=True)
+    return ok, msg
+
+
 def status_snapshot():
-    """统一登录 UI 的状态聚合：登录名 + 机器人运行态。"""
+    """统一登录 UI 的状态聚合：登录名 + 机器人运行态 + 手填凭据。
+    登录态与手填凭据正交：两者可以同时存在（额度/代理靠 SSO，机器人
+    靠手填），username 照实返回，manual 只作为附加标记供前端展示。"""
     username = None
     st = {}
     if _controller:
-        username, _ = _controller._creds()
+        # 登录名必须取真实 SSO 来源：_creds() 在手填模式下返回的是机器人
+        # 归属 uid（robot_uid），拿它当登录名等于凭空显示「已登录」
+        username = _sso_username()
         if _controller.bot:
             st = _controller.bot.status()
+    d = _load_session_file()
+    manual = bool(d.get("app_id") and d.get("app_secret"))
     return {"username": username, "running": bool(st.get("running")),
             "connected": bool(st.get("connected")),
-            "robot_num": st.get("robot_num")}
+            # 认证被拒（密钥错/机器人被删）：running+connected 都会是真，
+            # 单看它们会一直显示「连接中…」，用户分不清慢还是凭据错
+            "auth_failed": bool(st.get("auth_failed")),
+            "robot_num": st.get("robot_num"),
+            "manual": manual,
+            "app_id": d.get("app_id") or ""}
 
 
 _autostart()

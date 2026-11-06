@@ -3767,6 +3767,14 @@ html {
   font-size: 12px; color: var(--fg); }
 .hg-login-pop .hg-login-bot { font-size: var(--fs-sm); color: var(--muted);
   font-family: var(--font-mono); }
+/* 机器人独立凭据区（App ID/Secret）：分隔线 + 小标题，同弹窗内联不另开层 */
+.hg-login-pop .hg-robot-box { display: flex; flex-direction: column; gap: 6px;
+  padding-top: 8px; border-top: 1px solid var(--border); }
+.hg-login-pop .hg-robot-box [data-hg-robot-save] { padding: 2px 10px;
+  font-size: 11px; }
+.hg-login-pop .hg-robot-box [data-hg-robot-state] { color: var(--muted);
+  font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
 /* v2.27：登出按钮从独立整行搬进「已登录」行右侧（用户要求紧凑），文案缩为「登出」 */
 .hg-login-pop .hg-pop-logout { margin-left: auto; flex-shrink: 0; padding: 2px 10px;
   font-size: 11px; background: transparent; border: 1px solid

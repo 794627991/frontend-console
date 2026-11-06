@@ -33,6 +33,7 @@ import ctypes
 import json
 import logging
 import os
+import re
 import sys
 import threading
 import time
@@ -165,6 +166,25 @@ def build_app():
             ok, msg = hiklink_bot.ensure_started()
         return jsonify({"ok": ok, "msg": msg})
 
+    @app.route("/api/hiklink/credentials", methods=["POST"])
+    def hiklink_credentials():
+        """保存/清除手填机器人凭据（App ID + App Secret）。
+        body: {app_id, app_secret}；两者皆空 = 清除。保存即重连生效。
+        显式要求两个键都在场：本端点无 Host/Origin 收口（worker 侧没有
+        主进程那套 before_request），若把「取不到参数」也当清除，本机
+        任意网页一个 text/plain 简单请求就能清空凭据并停掉机器人。"""
+        j = request.get_json(silent=True)
+        if not isinstance(j, dict) or "app_id" not in j or "app_secret" not in j:
+            return jsonify({"ok": False, "msg": "请求体必须含 app_id 与 app_secret"}), 400
+        # 与主进程 _guard_local_origin 同款 Host 收口：worker 侧没有全站
+        # before_request，此端点又直接改写凭据+重启连接，补 DNS rebinding
+        # 防线（攻击者域名重绑定到 127.0.0.1:<worker端口> 后同源 POST）
+        if not _LOCAL_HOST_RE.match((request.host or "").strip()):
+            return jsonify({"ok": False, "msg": "forbidden host"}), 403
+        ok, msg = hiklink_bot.set_manual_credentials(
+            j.get("app_id"), j.get("app_secret"))
+        return jsonify({"ok": ok, "msg": msg})
+
     @app.route("/health")
     def health():
         return jsonify({"ok": True, "pid": os.getpid()})
@@ -241,7 +261,7 @@ def _bot_restore():
     try:
         from src import hiklink_bot as hb
         d = hb._load_session_file()
-        if d.get("uid") and d.get("password"):
+        if (d.get("uid") and d.get("password")) or (d.get("app_id") and d.get("app_secret")):
             ok, msg = hb.ensure_started()
             log.info("启动自恢复机器人: %s (%s)", "成功" if ok else "失败", msg)
     except Exception as e:
@@ -318,6 +338,10 @@ def main():
 _proc = None
 _stop = threading.Event()
 _base = ""
+# 与主进程 server.py 的 _LOCAL_HOST_RE 同款（worker 侧无全站 Host 守卫，
+# 个别改写状态的端点（如 /api/hiklink/credentials）自行校验）
+_LOCAL_HOST_RE = re.compile(
+    r"^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$", re.I)
 _MAIN_PORT = 0            # a117：主进程服务端口（CORS 白名单注入用；manage_start 传入）
 _last_port = 0            # 最近一次实际端口（respawn 期望值跟随 fallback）
 _hung = 0                 # 连续 health 探活失败计数（挂死检测）

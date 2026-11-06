@@ -130,14 +130,50 @@ async function claudeButtonAction() {
 // 登录走共用接口 /api/proxy/credentials（单一事实源 lanz_credentials.json）；
 // 凭据就位后端自动激活机器人（幂等），登出自动停用。未登录机器人不激活。
 // 胶囊点击 → 冒泡弹窗（未登录=登录表单；已登录=状态+登出确认）。
-function hgLoginRender(st) {
+// 机器人阶段文案（胶囊与弹窗共用）。auth_failed 必须优先判——连接建立
+// 成功但认证被拒时 running/connected 都是真，不特判会永远显示「连接中…」
+function hgBotPhase(st) {
+  if (!st.manual) return '';
+  if (st.auth_failed) return ' · 凭据被拒，请检查 App ID/Secret';
+  if (!st.running) return ' · 已保存未运行';
+  return st.connected ? ' · 在线' : ' · 连接中…';
+}
+let _hgLastSt = {};
+// 带超时的 JSON fetch（无超时时 worker 未就绪会永久挂住登录按钮）
+async function _hgFetchJson(url, body, ms) {
+  const ctl = new AbortController();
+  const tid = setTimeout(() => ctl.abort(), ms || 5000);
+  try {
+    const r = await fetch(url, body ? {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body), signal: ctl.signal
+    } : { signal: ctl.signal });
+    return await r.json();
+  } finally { clearTimeout(tid); }
+}
+// keepBaseline=true：乐观渲染不得写回基线，否则 running:true/connected:false
+// 这类假值会被下一次合并沿用（手填胶囊一直显示「连接中…」）
+function hgLoginRender(st, keepBaseline) {
+  if (!keepBaseline) _hgLastSt = st || {};
   document.querySelectorAll('[data-hg-login-toggle]').forEach(tg => {
     const dot = tg.querySelector('[data-hg-login-dot]');
     const txt = tg.querySelector('[data-hg-login-text]');
     if (!txt) return;
     if (st.username) {
       if (dot) { dot.className = 'hg-login-dot on'; }
-      txt.textContent = st.username + ' 已登录';
+      // 已登录也拼机器人阶段：SSO 登录 + 手填机器人是正交组合，
+      // 丢 auth_failed 会让「凭据被拒」在胶囊上完全消失
+      txt.textContent = st.username + ' 已登录'
+        + (st.manual && st.auth_failed ? ' · 机器人凭据被拒'
+          : (st.manual ? ' · 机器人独立凭据' + hgBotPhase(st) : ''));
+    } else if (st.manual) {
+      // 凭据被拒时 connected 仍为真（WS 建连成功、认证失败），绿点会与
+      // 「凭据被拒」文案自相矛盾——与 hgBotPhase 优先级保持一致
+      if (dot) {
+        dot.className = (!st.auth_failed && st.connected)
+          ? 'hg-login-dot on' : 'hg-login-dot off';
+      }
+      txt.textContent = '机器人独立凭据' + hgBotPhase(st);
     } else {
       if (dot) { dot.className = 'hg-login-dot off'; }
       txt.textContent = '未登录 · 机器人未激活';
@@ -152,23 +188,61 @@ function hgLoginRender(st) {
       const name = pop.querySelector('[data-hg-login-name]');
       if (name) name.textContent = st.username + ' 已登录';
       const bot = pop.querySelector('[data-hg-login-bot]');
-      if (bot) bot.textContent = st.running
-        ? (st.connected ? '机器人：在线' : '机器人：连接中…') : '机器人：未运行';
+      if (bot) bot.textContent = (st.manual && st.auth_failed) ? '机器人：凭据被拒'
+        : (st.running ? (st.connected ? '机器人：在线' : '机器人：连接中…')
+          : '机器人：未运行');
     } else {
       off.style.display = ''; on.style.display = 'none';
     }
+    // 机器人独立凭据（App ID/Secret）：已填则回显 App ID、secret 留空待改
+    const rid = pop.querySelector('[data-hg-robot-id]');
+    const rstate = pop.querySelector('[data-hg-robot-state]');
+    if (rid) {
+      // 输入即置 dirty；只有用户没动过才回填——否则 30s 轮询会把用户
+      // 刚清空的 App ID 填回旧值，「两项皆空=清除」永远点不到
+      hgRobotWire(rid);
+      if (st.app_id && !rid.dataset.dirty && !rid.value) rid.value = st.app_id;
+      // 服务端值与框内一致（用户改完/保存成功）才复位闸；框内为空而
+      // 服务端有值 = 用户正在清空，「两项皆空=清除」不能被打断
+      if (rid.dataset.dirty && st.app_id && rid.value === st.app_id) {
+        rid.dataset.dirty = '';
+      }
+    }
+    if (rstate) rstate.textContent = hgBotPhase(st).replace(' · ', '');
   });
 }
+// App ID 输入的 dirty 监听：必须在首次 render 之前就挂上——首屏 status
+// 拉取失败时 render 从未执行，若监听只在 render 里挂，用户清空 App ID
+// 的「清除」意图会被后续回填静默抹掉
+function hgRobotWire(rid) {
+  if (!rid || rid.dataset.wired) return;
+  rid.dataset.wired = '1';
+  rid.addEventListener('input', () => { rid.dataset.dirty = '1'; });
+}
+document.querySelectorAll('[data-hg-robot-id]').forEach(hgRobotWire);
 function hgLoginTogglePop(force) {
   document.querySelectorAll('[data-hg-login-pop]').forEach(pop => {
-    pop.style.display = (force !== undefined ? force
-      : pop.style.display === 'none') ? '' : 'none';
+    const opening = (force !== undefined ? force : pop.style.display === 'none');
+    // 每次展开重置回填闸并立即回填：dirty 粘住会让框一直空着；而只清
+    // dirty 不回填则「框空 + 点保存」等价于清除凭据，一次误点就掉线
+    if (opening) {
+      const rid = pop.querySelector('[data-hg-robot-id]');
+      // 状态未知时先补拉一次：否则框空着、用户以为没配置过，误点保存
+      // 就是「清除凭据」
+      if (!Object.keys(_hgLastSt).length) hgLoginRefresh();
+      if (rid) {
+        rid.dataset.dirty = '';
+        if (!rid.value && _hgLastSt.app_id) rid.value = _hgLastSt.app_id;
+      }
+    }
+    pop.style.display = opening ? '' : 'none';
   });
 }
 async function hgLoginRefresh() {
   try {
-    const r = await fetch('/api/hiklink/status');
-    const j = await r.json();
+    // 必须带超时：worker 半死时裸 fetch 永不 settle，30s 定时器会不断
+    // 累积 pending 请求占满连接池，连「保存机器人」也会被排队拖超时
+    const j = await _hgFetchJson('/api/hiklink/status', null, 4000);
     if (j && j.ok) hgLoginRender(j);
   } catch (_) {}
 }
@@ -187,17 +261,25 @@ document.addEventListener('click', async ev => {
     loginBtn.disabled = true; const old = loginBtn.textContent;
     loginBtn.textContent = '登录中…';
     try {
-      const r = await fetch('/api/proxy/credentials', { method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'save', username: u, password: p }) });
-      const sj = await r.json().catch(() => ({}));
+      const sj = await _hgFetchJson('/api/proxy/credentials',
+        { action: 'save', username: u, password: p }, 8000);
       // v2.2.2：写盘失败如实报错——旧版静默吞 + 乐观渲染「已登录」，
       // 凭据实际没落盘，重启就得重登（同事机实锤）
       if (!sj.ok) { showBanner(sj.msg || '登录保存失败', 4000, true); return; }
       // 凭据就位后端已自动激活；再显式触发一次（幂等），并即时回显登录态
-      await fetch('/api/hiklink/activate', { method: 'POST',
-        headers: { 'Content-Type': 'application/json' }, body: '{}' }).catch(() => {});
-      hgLoginRender({ username: u, running: true, connected: false });
+      await _hgFetchJson('/api/hiklink/activate', {}, 5000).catch(() => {});
+      // 乐观渲染只补登录态字段，合并上一次真实状态——整块替换会把
+      // manual/app_id/auth_failed 抹掉。基线为空（首屏状态拉取失败）时
+      // 先补拉一次，否则手填模式这一帧文案整体退回「已登录」。
+      // 两处 fetch 都带超时：worker 未就绪时无超时会永久挂住按钮
+      if (!Object.keys(_hgLastSt).length) {
+        try {
+          const jsStatus = await _hgFetchJson('/api/hiklink/status', null, 4000);
+          if (jsStatus && jsStatus.ok) _hgLastSt = jsStatus;
+        } catch (_) {}
+      }
+      hgLoginRender(Object.assign({}, _hgLastSt,
+        { username: u, running: true, connected: false }), true);
       pEl.value = '';
       setTimeout(hgLoginRefresh, 1500);
     } catch (_) {}
@@ -206,10 +288,38 @@ document.addEventListener('click', async ev => {
   }
   const outBtn = ev.target.closest('[data-hg-logout-btn]');
   if (outBtn) {
-    try { await fetch('/api/proxy/credentials', { method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: '{"action":"clear"}' }); } catch (_) {}
+    // 带超时：worker 半死时裸 fetch 会让登出按钮毫无反馈
+    try { await _hgFetchJson('/api/proxy/credentials',
+      { action: 'clear' }, 6000); } catch (_) {}
     hgLoginRefresh();
+  }
+  // 保存机器人独立凭据：两项都空=清除（回落自动注册），否则保存并重连
+  const rSave = ev.target.closest('[data-hg-robot-save]');
+  if (rSave) {
+    const pop = rSave.closest('[data-hg-login-pop]');
+    const id = (pop.querySelector('[data-hg-robot-id]').value || '').trim();
+    let secret = (pop.querySelector('[data-hg-robot-secret]').value || '').trim();
+    if (id && !secret) { showBanner('请填写 App Secret', 3000, true); return; }
+    if (!id && secret) { showBanner('请填写 App ID', 3000, true); return; }
+    // 两项皆空 = 清除凭据并导致机器人掉线。状态未知（首屏 status 没拉到、
+    // _hgLastSt 为空）时按「有风险」处理——undefined 不能当 false 放行
+    if (!id && !secret && _hgLastSt.manual !== false
+        && !confirm('将清除已保存的机器人凭据并断开当前机器人连接，确定吗？')) {
+      return;
+    }
+    rSave.disabled = true; const old = rSave.textContent;
+    rSave.textContent = '保存中…';
+    try {
+      // 用带超时的封装：worker 半死（端口 accept 但不响应）时裸 fetch
+      // 永不 settle，按钮会永久卡在「保存中…」
+      const j = await _hgFetchJson('/api/hiklink/credentials',
+        { app_id: id, app_secret: secret }, 15000);
+      showBanner(j.msg || (j.ok ? '已保存' : '保存失败'), 4000, !j.ok);
+      if (j.ok) pop.querySelector('[data-hg-robot-secret]').value = '';
+      setTimeout(hgLoginRefresh, 1500);
+    } catch (_) { showBanner('保存请求失败', 3000, true); }
+    rSave.disabled = false; rSave.textContent = old;
+    return;
   }
 });
 setInterval(hgLoginRefresh, 30000);   // 低频保活（登录态/机器人在线显示）
