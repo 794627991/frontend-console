@@ -877,9 +877,14 @@
     bkSel.className = 'lv-btn';
     bkSel.title = '查询后端：内存全量（小库最快·占内存）/ readtags（零建库·约0.2s/次）/ sqlite（大库·0~4ms·低内存）';
     bkSel.style.cssText = 'padding:2px 6px;font-size:11px;margin-left:6px;';
+    // a407：后端无 sqlite3 能力（旧版 exe 打包漏件）——藏 sql 档，默认值
+    // 兜底 readtags（旧后端不下发 sqlite_ok 时默认 true 不误藏）
+    const _sqlOk = j.sqlite_ok !== false;
     const _curBk = m.backend || (m.code_files >= 200000 ? 'sqlite' : 'memory');
+    const _defBk = (_curBk === 'sqlite' && !_sqlOk) ? 'readtags' : _curBk;
     bkSel.innerHTML = [['memory', '内存全量'], ['readtags', 'readtags'], ['sqlite', 'sqlite']]
-      .map(([v, n2]) => `<option value="${v}"${_curBk === v ? ' selected' : ''}>${n2}</option>`).join('');
+      .filter(o => o[0] !== 'sqlite' || _sqlOk)
+      .map(([v, n2]) => `<option value="${v}"${_defBk === v ? ' selected' : ''}>${n2}</option>`).join('');
     bkSel.onchange = async () => {
       const v = bkSel.value;
       if (typeof _ddConfirm === 'function' &&
@@ -889,7 +894,7 @@
         // C-2+S-B1：①_renderState 二次调用命中死节点（btns 捕获 div:last-child
         // 落进 st 内部行）——改直接复位下拉；②弹窗 z=200 被面板 z=9999 遮挡
         // （见 P-5b 的 CSS 补丁），此处只需复位显示态
-        bkSel.value = ((m.backend || (m.code_files >= 200000 ? 'sqlite' : 'memory')));
+        bkSel.value = _defBk;
         return;
       }
       try {
@@ -902,9 +907,9 @@
                                     // 引流消费）；任务异步失败由索引面板重开
                                     // （按 meta 渲染）兜底显示回归
         showBanner(d2.ok ? '查询模式切换中（任务槽执行）' : ('切换失败：' + (d2.err || '')), 3000, !d2.ok);
-        if (!d2.ok) bkSel.value = ((m.backend || (m.code_files >= 200000 ? 'sqlite' : 'memory')));   // R3-3：:883 出口
+        if (!d2.ok) bkSel.value = _defBk;   // R3-3：:883 出口
       } catch (e) { showBanner('切换失败: ' + e, 3000, true);
-        bkSel.value = ((m.backend || (m.code_files >= 200000 ? 'sqlite' : 'memory')));   // R3-3：:884 catch 出口
+        bkSel.value = _defBk;   // R3-3：:884 catch 出口
       }
     };
     btns.insertBefore(bkSel, btns.lastChild);

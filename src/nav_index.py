@@ -162,7 +162,9 @@ def status(root):
     probe = shallow_probe(root)
     out = {"root": root, "has_code": probe["has_code"],
            "probe_files": probe["code_files"], "indexed": bool(meta),
-           "lib_dir": ld if meta else ""}
+           "lib_dir": ld if meta else "",
+           # a407：查询后端能力下发——前端档位下拉无 sqlite3 时藏 sql 档
+           "sqlite_ok": sqlite_capable()}
     if meta:
         sizes = meta.get("sizes") or {}
         # 批3 stale 粗判：建库时记的 .cmd 计数与浅层现采对比——浅层命中
@@ -574,12 +576,29 @@ def build(root, log=None, progress=None, should_cancel=None, backend="auto"):
         _bk_user = "auto"
     _was_auto = _bk_user == "auto"
     if _was_auto:
-        _bk_user = "sqlite" if tag_lines >= 200000 else "memory"
+        # a407：无 sqlite3 能力（旧版 exe 打包漏件）大库自动 readtags——
+        # 不出现吓人的"构建失败"字样（readtags 查询速度相近，实测不慢）
+        if tag_lines >= 200000:
+            _bk_user = "sqlite" if sqlite_capable() else "readtags"
+            if _bk_user == "readtags":
+                say("  本环境未内置 sqlite3（旧版打包缺件，升级新版修复）"
+                    "——大库自动 readtags 模式（查询速度相近）")
+        else:
+            _bk_user = "memory"
     db_path = os.path.join(ld, "tags.db")
     if _bk_user == "sqlite":
         say("阶段 4/4：sqlite 快查索引（%d 符号，大库低内存模式）…" % tag_lines)
         try:
             _build_tag_db(tags, db_path, say, prog)
+        except ImportError as e:
+            say("  本环境未内置 sqlite3（旧版打包缺件，升级新版修复）"
+                "——已用 readtags 模式（查询速度相近）：%s" % str(e)[:60])
+            _bk_user = "readtags"
+            try:
+                if os.path.isfile(db_path):
+                    os.remove(db_path)
+            except OSError:
+                pass
         except Exception as e:
             # 建库失败回退 readtags（tags 永远可用）
             say("  tags.db 构建失败（%s）——回退 readtags 模式" % str(e)[:120])
@@ -633,6 +652,24 @@ _cache_lock = threading.Lock()
 # memory：全量 dict（小库 <20 万符号，现状路径）
 # readtags：readtags.exe 二分查找（零建库，~0.2s/次，~10MB）
 # sqlite：tags.db 快查（0~4ms，~50MB，建库 ~38s/600 万行）
+
+
+_sqlite_capable = None
+
+
+def sqlite_capable():
+    """运行环境是否带 sqlite3（a407 用户实锤：exe 打包漏件——excludes
+    'src' 后函数内 import sqlite3 不进模块图，_sqlite3.pyd/sqlite3.dll
+    没被收集 → No module named 'sqlite3'，阶段 4 回退。spec 已补
+    hiddenimports；此探测供 UI 档位下拉/auto 判档/端点早拒用）"""
+    global _sqlite_capable
+    if _sqlite_capable is None:
+        try:
+            import sqlite3  # noqa: F401
+            _sqlite_capable = True
+        except ImportError:
+            _sqlite_capable = False
+    return _sqlite_capable
 
 
 def _build_tag_db(tags_path, db_path, say=None, prog=None):

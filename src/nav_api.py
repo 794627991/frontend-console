@@ -85,7 +85,11 @@ def nav_build():
         return jsonify({"ok": False, "err": "目录不在文件树登记根内"}), 400
     if not os.path.isdir(root):   # FD-2 终审（P4）：D-5 只落了 isabs 半截——不存在的绝对路径仍真启动任务
         return jsonify({"ok": False, "err": "目录不存在：%s" % root[:120]}), 400
-        return jsonify({"ok": False, "err": "目录不在文件树登记根内"}), 400
+    # a407：显式点 sql 档但环境无 sqlite3（旧版 exe 打包漏件）——早拒说人话，
+    # 不让任务跑到阶段 4 才"构建失败"吓人（auto 由 build 内部自动降 readtags）
+    if backend == "sqlite" and not nav_index.sqlite_capable():
+        return jsonify({"ok": False, "err": "本程序未内置 sqlite3 模块"
+                        "（旧版打包缺件，升级新版修复；readtags 模式查询速度相近）"}), 400
     with _lock:
         # R17-2（实锤：互斥只挡单向）：导入进行中（大清单秒级窗口）启动
         # build 会非确定互覆 symbols/meta——双向互斥
@@ -213,6 +217,10 @@ def nav_reindex():
     backend = str(d.get("backend") or "").strip().lower()
     if backend not in ("memory", "readtags", "sqlite"):
         return jsonify({"ok": False, "err": "backend 须为 memory/readtags/sqlite"}), 400
+    # a407：同 build——sqlite 无能力早拒（切换任务同样不该跑到一半失败）
+    if backend == "sqlite" and not nav_index.sqlite_capable():
+        return jsonify({"ok": False, "err": "本程序未内置 sqlite3 模块"
+                        "（旧版打包缺件，升级新版修复；readtags 模式查询速度相近）"}), 400
     if not os.path.isabs(root):   # D-5（P4）：类型混淆/相对形态以 CWD 解析落登记根——垃圾任务真实启动
         return jsonify({"ok": False, "err": "root 须为绝对路径"}), 400
     if not root:
