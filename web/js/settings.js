@@ -127,6 +127,17 @@ function _stBoostCard(pane) {
         const r = await fetch('/api/theme', { method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ boost: { level: cur, power_plan: chk.checked } }) });
+        // a408（内网实锤：应用失败 SyntaxError '<!doctype'）：响应不是 JSON
+        // 时先报 HTTP 状态——旧版 exe 接口缺失（404/405）或内网安全软件/
+        // 代理拦截（200+HTML），天书 SyntaxError 换成可定位的提示
+        const ct = (r.headers.get('content-type') || '');
+        if (!ct.includes('json')) {
+          const t = await r.text();
+          throw new Error('HTTP ' + r.status + (r.ok
+            ? '，返回的是网页而非接口数据（内网代理/安全软件拦截？）'
+            : '，接口不可用（exe 版本过旧？升级后再试）')
+            + '：' + t.slice(0, 60));
+        }
         const j = await r.json();
         showBanner(j.ok ? 'CPU 优先已应用：' + label : ('应用失败：' + (j.err || '')), 3000, !j.ok);
       } catch (e) { showBanner('应用失败: ' + e, 3000, true); }
