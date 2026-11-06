@@ -123,18 +123,22 @@ function _monacoDefinePlusThemes(monaco) {
     monaco.editor.defineTheme('fcpk-plus-dark', {
       base: 'vs-dark', inherit: true,
       rules: [
-        { token: 'entity.name.function', foreground: 'DCDCAA' },          // VSCode Dark+ 函数/宏黄
-        { token: 'entity.name.function.preprocessor', foreground: 'DCDCAA' },
+        { token: 'entity.name.function', foreground: 'DCDCAA' },          // VSCode Dark+ 函数黄
+        { token: 'entity.name.function.preprocessor', foreground: 'C586C0' }, // 宏/枚举常量品红（与函数区分）
         { token: 'entity.name.type', foreground: '4EC9B0' },              // VSCode Dark+ 类型青绿
+        { token: 'constant.other', foreground: 'C586C0' },                // ALL_CAPS 宏/枚举常量品红
+        { token: 'variable.identifier', foreground: '9CDCFE' },            // VSCode Dark+ 变量浅蓝
       ],
       colors: {}
     });
     monaco.editor.defineTheme('fcpk-plus', {
       base: 'vs', inherit: true,
       rules: [
-        { token: 'entity.name.function', foreground: '795E26' },          // VSCode Light+ 函数/宏棕黄
-        { token: 'entity.name.function.preprocessor', foreground: '795E26' },
+        { token: 'entity.name.function', foreground: '795E26' },          // VSCode Light+ 函数棕黄
+        { token: 'entity.name.function.preprocessor', foreground: 'AF00DB' }, // 宏/枚举常量紫
         { token: 'entity.name.type', foreground: '267F99' },              // VSCode Light+ 类型蓝绿
+        { token: 'constant.other', foreground: 'AF00DB' },                // ALL_CAPS 宏/枚举常量紫
+        { token: 'variable.identifier', foreground: '0010A0' },            // VSCode Light+ 变量蓝
       ],
       colors: {}
     });
