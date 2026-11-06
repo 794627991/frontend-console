@@ -578,6 +578,15 @@ def _setup_job_object():
                 ("PeakJobMemoryUsed", ctypes.c_size_t)]
 
         kernel32 = ctypes.windll.kernel32
+        # a399R-4（实测实锤）：ctypes 默认 restype=c_int 在 64 位下截断
+        # 句柄（CreateJobObjectW 返回的 HANDLE 也会截）——全部显式声明
+        kernel32.CreateJobObjectW.restype = ctypes.c_void_p
+        kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p]
+        kernel32.SetInformationJobObject.restype = ctypes.c_int
+        kernel32.SetInformationJobObject.argtypes = [
+            ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32]
+        kernel32.CloseHandle.restype = ctypes.c_int
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
         hJob = kernel32.CreateJobObjectW(None, None)
         if not hJob:
             return
@@ -587,9 +596,23 @@ def _setup_job_object():
         if not kernel32.SetInformationJobObject(
                 hJob, 9, ctypes.byref(info), ctypes.sizeof(info)):
             return
-        hProcess = kernel32.GetCurrentProcess()
-        if not kernel32.AssignProcessToJobObject(hJob, hProcess):
+        # a399R-4（实测实锤）：GetCurrentProcess 返回伪句柄（-1），经 ctypes
+        # 默认 restype=c_int 在 64 位下截断 → AssignProcessToJobObject 报
+        # ERROR_INVALID_HANDLE(6)。改 OpenProcess 拿真句柄
+        PROCESS_SET_QUOTA = 0x0100
+        PROCESS_TERMINATE = 0x0001
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        kernel32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+        hProcess = kernel32.OpenProcess(
+            PROCESS_SET_QUOTA | PROCESS_TERMINATE, False, os.getpid())
+        if not hProcess:
             return
+        kernel32.AssignProcessToJobObject.restype = ctypes.c_int
+        kernel32.AssignProcessToJobObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        if not kernel32.AssignProcessToJobObject(hJob, hProcess):
+            kernel32.CloseHandle(hProcess)
+            return
+        kernel32.CloseHandle(hProcess)   # 自身句柄即关（已入 Job，关系保持）
         _job_handle = hJob   # 全局保命：不关句柄（关了 Job 散了子进程就不杀了）
     except Exception:
         pass   # 非 Windows / 权限不足——不阻断启动，走 _kill_child_processes 兜底
@@ -1144,14 +1167,6 @@ def main():
         close_all_ports()
         clear_endpoint()
         _clean_webview_cache()
-        # 用户实锤（内网）：退出后主进程残留+rg.exe 占用——两层根治：
-        # ① Job Object 已在启动时绑定（_setup_job_object），主进程退出时
-        #    Windows 内核自动杀全部子进程（rg/ctags/codegraph 等）
-        # ② 此处显式再杀一次在飞子进程（Job Object 是兜底，这里是即时清）
-        try:
-            _kill_child_processes()
-        except Exception:
-            pass
         # Claude worker 回收（幂等）：terminate + 关 stdin；worker 侧另有
         # 父进程探活自杀兜底（主进程被强杀也不留孤儿）
         try:
@@ -1176,11 +1191,35 @@ def main():
             _pb_restore()
         except Exception:
             pass
-        # 用户实锤（内网）终修：清理全部完成后硬退——不走 Python 自然退出
-        # （非 daemon 线程/清理挂起/Webview2 渲染进程清理超时都会让进程
-        # 滞留任务管理器）。os._exit 跳过 atexit（上面已手动调全部清理），
-        # Job Object 句柄随进程销毁→内核自动杀余下子进程
+        # a399R-3：os._exit 跳 atexit——补调三个注册在 atexit 里的清理
+        try:
+            from src import snip as _snip_kill
+            _snip_kill.kill_snip_windows()
+        except Exception:
+            pass
+        try:
+            from src.hex_diff import _diff_pool_shutdown
+            _diff_pool_shutdown()
+        except Exception:
+            pass
+        try:
+            from src import proxy_usage as _pu
+            if hasattr(_pu, '_recorder') and _pu._recorder:
+                _pu._recorder.flush()
+        except Exception:
+            pass
+        # 用户实锤（内网）终修：全部优雅清理完成后，最后一步杀子进程+硬退
+        # ——taskkill /T /F 树杀含自身（进程被 TerminateProcess），所以
+        # 必须放在全部清理之**后**（a399R-2：原位置在 worker/proxy/perf
+        # 之前=自杀后余下清理全被剥夺）。Job Object 是内核级兜底（主进程
+        # 任何方式退出都杀子进程），taskkill 是即时清
+        try:
+            _kill_child_processes()
+        except Exception:
+            pass
         os._exit(0)
+
+    def _dirty_quit_check(window):
         """真退出前的未保存检查（a239 第5轮A2-P2-5）：dirty tab > 0 时同步
         MessageBox 确认——此前托盘退出对全部脏 tab 静默清零。
         ⚠ 只能在**后台线程**调用：evaluate_js 内部 Invoke 封送回 UI 线程，
