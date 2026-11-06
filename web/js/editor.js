@@ -137,7 +137,10 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
           <option value="python">Python</option>
           <option value="c">C</option>
           <option value="cpp">C++</option>
-          <option value="makefile">Makefile</option>
+          <!-- S-B3（P3）：vendored Monaco 0.52 无 makefile 语言注册（getLanguages
+               91 id 实证）——选项保留即"死项"（选了=无高亮与纯文本不可区分）。
+               长期方案：vendor 补第三方 makefile Monarch 包（与 cpp/shell 补丁
+               同目录登记"升级重拷需重打"）；短期撤项自洽 -->
           <option value="javascript">JavaScript</option>
           <option value="typescript">TypeScript</option>
           <option value="json">JSON</option>
@@ -152,6 +155,7 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
           <option value="bat">Batch</option>
           <option value="powershell">PowerShell</option>
           <option value="perl">Perl</option>
+          <option value="ruby">Ruby</option>
           <option value="lua">Lua</option>
           <option value="markdown">Markdown</option>
           <option value="ini">INI</option>
@@ -436,10 +440,11 @@ function _edNormPath(p) { return String(p || '').replace(/\\/g, '/').toLowerCase
 function _edBindLangSel(conn) {
   const sel = conn.langSel;
   if (!sel || !conn.monaco) return;
-  if (sel.dataset.bound) { sel.value = conn.langOverride || ''; return; }
+  if (sel.dataset.bound) { sel.value = conn.langOverride || ''; if (sel.value && sel.selectedIndex < 0) sel.value = ''; return; }   // P-22 顺手修
   sel.dataset.bound = '1';
   sel.style.display = '';
   sel.value = conn.langOverride || '';
+  if (sel.value && sel.selectedIndex < 0) sel.value = '';   // P-22 顺手修：记忆值不在选项回退自动
   sel.onchange = () => {
     conn.langOverride = sel.value || null;
     if (conn.extPath) {
@@ -1167,6 +1172,7 @@ async function _edCheckDiskChanged(conn) {
       : '/api/ed/stat?name=' + encodeURIComponent(conn.meta.label);
     const r = await fetch(q);
     const j = await r.json();
+    if (connections[conn.portId] !== conn) return;   // R4-F2：stat 窗口内关 tab
     if (!j.ok) {
       // 文件被外部删除/不可访问：一次性提示（不弹选择——没有可重载的东西）
       if (conn.fileMtime && !conn._fileGoneWarned) {
@@ -1209,10 +1215,12 @@ async function _edReloadFromDisk(conn) {
     const r2 = await fetch(oq);
     const j2 = await r2.json();
     if (!j2.ok) { showBanner('重读失败：' + (j2.err || ''), 4000, true); return; }
+    if (connections[conn.portId] !== conn) return;   // R3-4：open 窗口内关 tab
     let content = j2.text;
     if (conn.isNote) { try { content = JSON.parse(j2.text); } catch(_) { content = { blocks: [] }; } }
     if (conn.editor) { conn.editor.render(content); }
     else if (conn.monaco) {
+      if (connections[conn.portId] !== conn) return;   // disposed 防护
       const pos = conn.monaco.getPosition();
       conn.monaco.setValue(j2.text);
       try { conn.monaco.setPosition(pos); conn.monaco.revealLineInCenter(pos.lineNumber); } catch(_) {}
@@ -1241,6 +1249,7 @@ async function _edJumpFresh(conn) {
     const r = await fetch('/api/ed/stat?path=' + encodeURIComponent(conn.extPath));
     const j = await r.json();
     const changed = !!(j.ok && Math.abs(j.mtime - conn.fileMtime) >= 0.001);
+    if (connections[conn.portId] !== conn) return;   // S-B7：跳转窗口内 tab 已关
     if (!changed) return;
     if (!conn.dirty) { await _edReloadFromDisk(conn); return; }
     if (!conn._jfWarned) {
@@ -1882,7 +1891,14 @@ function _mdPvApplyTheme(pv) {
 window._mdPvSetTheme = (t, persist) => {
   _mdPvTheme = t;
   document.querySelectorAll('.ed-md-preview').forEach(_mdPvApplyTheme);
-  document.querySelectorAll('.ed-scroll').forEach(_mdPvApplyTheme);   // a377：笔记编辑区同主题
+  // S-B2（P3）：.ed-scroll 是所有编辑器形态共有的滚动容器——全量广播把
+  // 预览配色染到代码/文本 tab（且新开 tab 不受影响=tab 间不一致）。
+  // 收敛到笔记 tab（conn.isNote 的 wrap 才有 .ed-scroll 主题消费语义）
+  document.querySelectorAll('.term-area').forEach(w => {
+    const c = connections[w.dataset.portId];
+    const isMd = c && c.meta && (c.meta.label || '').toLowerCase().endsWith('.md');   // 干跑修正 4：c.meta 判空
+    if (c && (c.isNote || isMd)) { const sc = w.querySelector('.ed-scroll'); if (sc) _mdPvApplyTheme(sc); }
+  });
   // 同步所有工具栏下拉
   document.querySelectorAll('[data-ed-mdtheme]').forEach(sel => { sel.value = t; });
   if (persist !== false) {

@@ -1473,7 +1473,7 @@ def api_theme():
     if "nav_keys" in data and isinstance(data["nav_keys"], dict):
         import re as _re2
         nk = data["nav_keys"]
-        _NK_KINDS = ("def", "ref", "sym", "back", "fwd")
+        _NK_KINDS = ("def", "ref", "sym", "fsym", "back", "fwd")   # S37-5：fsym 改键此前永不落盘
         _nk_out = {}
         for _nk_k in _NK_KINDS:
             _v = str(nk.get(_nk_k) or "").strip().lower()

@@ -804,7 +804,7 @@ _PORTAL_HTML = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
     </div>
     <div class="mn-sec"><b>快速上手 · 三个配置</b></div>
     <div class="mn-step">
-      <div class="mn-step-t">1️⃣ 接入 Claude Code —— 让 AI 在工具里跑起来</div>
+      <div class="mn-step-t"><b>1.</b> 接入 Claude Code —— 让 AI 在工具里跑起来</div>
       <svg class="mn-svg" viewBox="0 0 720 96" xmlns="http://www.w3.org/2000/svg">
         <defs><linearGradient id="g1" x1="0" y1="0" x2="1" y2="0">
           <stop offset="0" stop-color="#4f8fff"/><stop offset="1" stop-color="#8957e5"/></linearGradient></defs>
@@ -825,7 +825,7 @@ _PORTAL_HTML = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
       <b>提示：</b>工具页左下角有「Claude」状态徽章，绿色=通道就绪。之后每个会话页签就是一个独立 AI，互不干扰。</p>
     </div>
     <div class="mn-step">
-      <div class="mn-step-t">2️⃣ 配置识图 —— 让 AI 看懂你的截图</div>
+      <div class="mn-step-t"><b>2.</b> 配置识图 —— 让 AI 看懂你的截图</div>
       <svg class="mn-svg" viewBox="0 0 720 96" xmlns="http://www.w3.org/2000/svg">
         <rect x="10" y="18" width="170" height="56" rx="10" fill="none" stroke="#4f8fff" stroke-width="1.5"/>
         <rect x="30" y="30" width="44" height="32" rx="4" fill="none" stroke="#4f8fff" stroke-width="1.2"/>
@@ -847,7 +847,7 @@ _PORTAL_HTML = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
       <b>用法：</b>把截图拖进会话输入框（或粘贴），AI 直接分析图内内容。</p>
     </div>
     <div class="mn-step">
-      <div class="mn-step-t">3️⃣ 配置三角色 —— AI 分身帮你干活</div>
+      <div class="mn-step-t"><b>3.</b> 配置三角色 —— AI 分身帮你干活</div>
       <svg class="mn-svg" viewBox="0 0 720 110" xmlns="http://www.w3.org/2000/svg">
         <rect x="10" y="10" width="200" height="40" rx="8" fill="none" stroke="#4f8fff" stroke-width="1.5"/>
         <text x="110" y="35" text-anchor="middle" fill="currentColor" font-size="12">主会话（调度+干活）· 模型槽 A</text>
@@ -1003,7 +1003,7 @@ async function load(){
       +(top.sha1?'<span class="sha" title="'+esc(top.sha1)+'">sha1 '+esc(top.sha1.slice(0,12))+'…</span>':'')+'</div>'
       +(top.notes?mdRender(top.notes,'notes')
         :'<div class="notes plain" style="color:var(--muted)">（本版未写更新说明——发布者在项目根 RELEASE_NOTES.md 写好后重新打包，说明会随版本带上）</div>')
-      +'<div class="row"><button class="btn" data-dl="'+top.url+'" data-n="'+esc(top.file)+'">⬇ 下载整包</button>'
+      +'<div class="row"><button class="btn" data-dl="'+top.url+'" data-n="'+esc(top.file)+'">下载整包</button>'
       +'<span data-dlst style="font-size:12px;color:var(--muted)">下载后解压即完成安装</span></div></div>';
     // 离线资源包独立卡片（用户定调「离线包和实际包分开」）：不是应用版本，
     // 不占 hero、不进更新日志；包名不带版本号——内容与工具版本无关
@@ -1022,7 +1022,7 @@ async function load(){
           ? '<br><b style="color:#e8a33d">这是派生/留档包（副本、改名版本或备份），可能不是最新完整包</b>'
           : '')
         +'</div></div>'
-        +'<button class="btn" data-dl="'+esc(j.offline.url)+'" data-n="'+esc(j.offline.file)+'" style="flex-shrink:0">⬇ 下载'+(j.offline.format==='fcpk'?'资源包':'离线包')+'</button></div>';
+        +'<button class="btn" data-dl="'+esc(j.offline.url)+'" data-n="'+esc(j.offline.file)+'" style="flex-shrink:0">下载'+(j.offline.format==='fcpk'?'资源包':'离线包')+'</button></div>';
     }
     const rest=j.items.slice(1);
     if(rest.length){

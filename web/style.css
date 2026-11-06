@@ -2132,7 +2132,8 @@
 .dd-note { font-size: 11px; color: var(--muted); line-height: 1.6;
   border-top: 1px solid var(--border); padding-top: 10px; }
 /* 确认/进度弹窗叠在数据目录面板之上（modal 默认 z-index 相同，后挂的 DOM 靠后渲染仍被遮） */
-#ddConfirmModal, #ddProgressModal { z-index: 200; }
+#ddConfirmModal, #ddProgressModal { z-index: 10001; }   /* C-2：索引面板 9999 之上
+                                                          ——两条 ID 同提防倒挂（r1 建议保持同层） */
 /* 迁移进度面板：环形动画 */
 .dd-prog .dd-prog-body { padding: 28px 24px; display: flex; flex-direction: column;
   align-items: center; gap: 12px; text-align: center; }

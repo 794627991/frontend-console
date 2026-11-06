@@ -111,6 +111,14 @@ async function connectTelnet(host, port, quiet) {
 }
 
 function closeConnection(portId) {
+  // D-3（P3）附带防御：直调 closeConnection 绕过编辑器完整 dispose 链
+  // （hex/diff/bindiff 无专属关闭函数——四类统一转发，sidebar.js:198/:233 实证）
+  // （编辑器 _edCloseNow 的完整 dispose）=5 倍泄漏（3.1MB/次 vs 0.58MB）
+  if (/^(edit|hex|diff|bindiff):/.test(portId) &&
+      typeof closeEditorTab === 'function') {
+    closeEditorTab(portId); return;   // 产品路径四类统一走 closeEditorTab
+                                      // （sidebar.js:198/:233 实证）
+  }
   fetch('/api/disconnect', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: portId})});
   const conn = connections[portId];
   if (conn) {

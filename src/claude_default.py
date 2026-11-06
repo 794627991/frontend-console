@@ -355,9 +355,10 @@ def _register_self_mcp():
 
 def _register_codegraph_mcp():
     """a361：codegraph MCP 注册 + 授权（串口 MCP 同款双写，用户令——绝不让
-    用户手改配置）。前提：npm 全局 codegraph 可执行（工具的「Claude 代码图」
-    用它建索引，会话侧 serve --mcp 消费）。未装时静默跳过（弹层有安装提示）。
-    幂等只补缺不覆盖。"""
+    用户手改配置）。前提：内置 bundle（资源包安装）或 npm 全局任一可用
+    （R34-2 自愈：现有条目 command/args 与当前探测不一致即覆盖更新——
+    用户对该条目的自定义（env/args）会在每次 provision 被重置）。未装时
+    静默跳过（资源包安装后首次 provision 自动补）。"""
     from src import nav_codegraph as _ncg
     _argv = _ncg._cg_argv()
     if not _argv:

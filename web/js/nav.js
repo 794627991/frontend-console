@@ -377,7 +377,7 @@
         const ln = _h('span', ':' + (it.line || 1));
         ln.style.cssText = 'font-family:var(--font-mono);font-size:11px;color:var(--muted);flex-shrink:0;';
         row.appendChild(k); row.appendChild(n); row.appendChild(ln);
-        row.onclick = () => { _closeSym(); openFileSmart(it.path, 'auto', { line: Math.max(1, it.line || 1), col: 1, selectLine: true }); };
+        row.onclick = () => { _closeSym(); _jumpOpen(ed, it.path, { line: Math.max(1, it.line || 1), col: 1, selectLine: true }); };
         list.appendChild(row);
         rows.push(row);
       });
@@ -392,8 +392,12 @@
           list.appendChild(d);
           return;
         }
-        all = j.items;
-        _full = j.items;   // R33-1：全量留底供本地过滤
+        // S-B4（P3）：resolve 前用户已输入的过滤词被全量覆盖——渲染统一走
+        // 过滤通道（与 input handler 同口径）
+        _full = j.items;
+        const q = input.value.trim().toLowerCase();
+        all = q ? _full.filter(it => it.name.toLowerCase().includes(q)) : _full;
+        selIdx = 0;
         render();
       }).catch(() => {});
     // R33-1（实锤：每键打后端，110MB 库每发 0.5-2.2s）：首拉已取全量
@@ -416,7 +420,7 @@
         e.preventDefault();
         const it = all[selIdx];
         _closeSym();
-        openFileSmart(it.path, 'auto', { line: Math.max(1, it.line || 1), col: 1, selectLine: true });
+        _jumpOpen(ed, it.path, { line: Math.max(1, it.line || 1), col: 1, selectLine: true });
       }
     });
   }
@@ -628,12 +632,15 @@
         if (!j || !j.candidates || !j.candidates.length) return null;
         const c = j.candidates[0];
         const md = { value: '' };
-        md.value = '**' + word.word + '** `' + (c.kind || 'symbol') + '`' +
-          (c.in_build === true ? ' ✓编译内' : '') + (c.file_local ? ' ·本文件' : '') + '\n\n' +
-          // R33-3（实锤：snippet 内 0 缩进裸 ``` 截断代码块——CommonMark
-          // 闭合栏不得长于开栏）：四反引号围栏，源码内 ``` 无法误闭合
-          '````\n' + (c.snippet || '') + '\n````\n\n' +
-          '`' + c.rel + ' :' + c.line + '`';
+        md.value = ((_s) => {
+          let _max = 3;
+          for (const _m of _s.matchAll(/`+/g)) _max = Math.max(_max, _m[0].length);
+          const _f = '`'.repeat(_max + 1);
+          return '**' + word.word + '** `' + (c.kind || 'symbol') + '`' +
+            (c.in_build === true ? ' ✓编译内' : '') + (c.file_local ? ' ·本文件' : '') + '\n\n' +
+            _f + '\n' + _s + '\n' + _f + '\n\n' +
+            '`' + c.rel + ' :' + c.line + '`';
+        })(String(c.snippet || ''));
         return { range: new monaco.Range(position.lineNumber, word.startColumn,
                                          position.lineNumber, word.endColumn),
                  contents: [{ isTrusted: false }, md] };
@@ -874,14 +881,27 @@
       if (typeof _ddConfirm === 'function' &&
           !(await _ddConfirm('切换查询模式', v === 'sqlite'
             ? '构建 sqlite 快查索引（大库约 1 分钟，一次性；查询 0~4ms/内存 ~50MB）？'
-            : `切到 ${v} 模式（删除 tags.db 立即生效）？`))) { _renderState(card, path, j, st); return; }
+            : `切到 ${v} 模式（删除 tags.db 立即生效）？`))) {
+        // C-2+S-B1：①_renderState 二次调用命中死节点（btns 捕获 div:last-child
+        // 落进 st 内部行）——改直接复位下拉；②弹窗 z=200 被面板 z=9999 遮挡
+        // （见 P-5b 的 CSS 补丁），此处只需复位显示态
+        bkSel.value = ((m.backend || (m.code_files >= 200000 ? 'sqlite' : 'memory')));
+        return;
+      }
       try {
         const r = await fetch('/api/nav/reindex', { method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ root: path, backend: v }) });
         const d2 = await r.json();
+        if (d2.ok) m.backend = v;   // R4-F1：第 4 失步出口——前瞻同步显示态。
+                                    // 切档无 poll 轮询（/api/nav/poll 仅建索
+                                    // 引流消费）；任务异步失败由索引面板重开
+                                    // （按 meta 渲染）兜底显示回归
         showBanner(d2.ok ? '查询模式切换中（任务槽执行）' : ('切换失败：' + (d2.err || '')), 3000, !d2.ok);
-      } catch (e) { showBanner('切换失败: ' + e, 3000, true); }
+        if (!d2.ok) bkSel.value = ((m.backend || (m.code_files >= 200000 ? 'sqlite' : 'memory')));   // R3-3：:883 出口
+      } catch (e) { showBanner('切换失败: ' + e, 3000, true);
+        bkSel.value = ((m.backend || (m.code_files >= 200000 ? 'sqlite' : 'memory')));   // R3-3：:884 catch 出口
+      }
     };
     btns.insertBefore(bkSel, btns.lastChild);
     const bDel = _h('button', ICO16.trash + ' 删除索引', true);

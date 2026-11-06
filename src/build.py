@@ -285,8 +285,13 @@ def _refresh_offline_codegraph():
                      "@colbymchenry", "codegraph-win32-x64"),
     ]
     try:
-        out = subprocess.check_output(["npm", "root", "-g"], text=True,
-                                      stderr=subprocess.DEVNULL, timeout=20).strip()
+        # S37-12（P4）：list 形态 CreateProcess 不解析 .cmd 且 npm 无 npm.exe
+        # ——Windows 恒 FileNotFoundError，自定义前缀兜底从未生效
+        from shutil import which as _sh_which   # P-23 干跑修正：模块不可调用
+        _npm = _sh_which("npm") or ""
+        out = (subprocess.check_output([_npm, "root", "-g"], text=True,
+                                       stderr=subprocess.DEVNULL, timeout=20).strip()
+               if _npm else "")
         if out:
             cands.append(os.path.join(out, "@colbymchenry", "codegraph",
                                       "node_modules", "@colbymchenry",
@@ -338,8 +343,13 @@ def _refresh_offline_claude():
                      "@anthropic-ai", "claude-code"),
     ]
     try:   # npm 前缀自定义过的机器
-        out = subprocess.check_output(["npm", "root", "-g"], text=True,
-                                      stderr=subprocess.DEVNULL, timeout=20).strip()
+        # S37-12（P4）：list 形态 CreateProcess 不解析 .cmd 且 npm 无 npm.exe
+        # ——Windows 恒 FileNotFoundError，自定义前缀兜底从未生效
+        from shutil import which as _sh_which   # P-23 干跑修正：模块不可调用
+        _npm = _sh_which("npm") or ""
+        out = (subprocess.check_output([_npm, "root", "-g"], text=True,
+                                       stderr=subprocess.DEVNULL, timeout=20).strip()
+               if _npm else "")
         if out:
             cands.append(os.path.join(out, "@anthropic-ai", "claude-code"))
     except Exception:

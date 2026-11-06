@@ -64,6 +64,11 @@ MANIFEST = [
     # popup 偶然告知。补进清单（软项，判据同 proxy._detect_bili_cmd）。
     {"kind": "bili", "name": "billion-context 压缩引擎", "hard": False,
      "fix": "离线资源包内解包（约 200MB，代理面板开关控制启用）"},
+    # S37-6（P3）：a386 铺了安装器但没进面板清单——外部依赖页无此项，
+    # 错误文案"设置→外部依赖安装"成死路
+    {"kind": "codegraph", "name": "Claude 代码图引擎（codegraph）",
+     "hard": False,
+     "fix": "安装离线资源包（或设置→外部依赖安装单装）"},
 ]
 
 
@@ -302,6 +307,27 @@ _PROBES = {"webview2": probe_webview2, "dotnet": probe_dotnet,
            "node": probe_node, "git": probe_git, "claude": probe_claude,
            "onlyoffice": probe_onlyoffice,
            "pydeps": probe_pydeps, "bili": probe_bili}
+
+def _probe_codegraph():
+    from src import nav_codegraph as _ncg
+    if _ncg.available():
+        _v = ""
+        try:
+            # 版本路径抄 res_install._ver 惯例：dirname(exe)/lib/package.json
+            # （无 ".."——R2-9 实证三种 bundle 形态全 404）
+            import json as _j
+            _exe = _ncg._cg_exe() or ""
+            with open(os.path.join(os.path.dirname(_exe),
+                "lib", "package.json"), encoding="utf-8") as _f:
+                _v = _j.load(_f).get("version", "") or ""
+        except Exception:
+            _v = ""
+        return ("ok", _v, ("codegraph " + _v) if _v else "codegraph 已安装")
+    return ("missing", "", "")
+    # 契约：missing 态 detail/ver 留空——fix 指引文案由 MANIFEST.fix 渲染
+    # （settings.js:867 非 ok 态 detail||fix 即命中）
+
+_PROBES["codegraph"] = _probe_codegraph   # S37-6：三元组 (state, fix, detail)
 
 
 def _run_ver(argv, timeout=8):

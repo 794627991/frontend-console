@@ -181,7 +181,9 @@ def _svn_symlink_paths(wc):
         return set()
     try:
         import sqlite3
-        con = sqlite3.connect("file:%s?mode=ro" % db.replace("\\", "/"),
+        from urllib.parse import quote
+        _uri = quote(db.replace("\\", "/"))
+        con = sqlite3.connect("file:%s?mode=ro" % _uri,
                               uri=True, timeout=3)
         try:
             rows = con.execute(
@@ -394,7 +396,10 @@ def _svn_changes(wc, depth=None):
         sym_low = {x.lower() for x in sym}
         kept = []
         for f in files:
-            if f["st"] in ("!", "~"):        # !（missing）误报；~ 未入映射表防御
+            # S37-4（P3）：! 不查清单无条件隐藏——真实删除文件（网络盘上同样
+            # 报 !）被当误报吞掉（假阴性比假阳性危险）；~ 实际到不了（映射表
+            # 无 obstructed），分支收进符号链接清单判定
+            if f["st"] in ("!", "~") and (f["rel"] in sym or f["rel"].lower() in sym_low):
                 sym_hidden += 1
                 continue
             if f["st"] == "M" and (f["rel"] in sym or f["rel"].lower() in sym_low):

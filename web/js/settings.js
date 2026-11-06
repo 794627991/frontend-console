@@ -785,7 +785,7 @@ async function _stRenderResourcesPane(pane) {
         </label>
         <div class="dd-actions" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
           <button class="btn primary" id="rsGo" disabled><span>${ICO16.wrench}</span> 离线包安装所选</button>
-          <button class="btn ghost" id="rsOnlineGo" disabled title="">⬇ 在线安装所选</button>
+          <button class="btn ghost" id="rsOnlineGo" disabled title="">在线安装所选</button>
           <button class="btn ghost" id="rsCancel" style="display:none;">■ 取消</button>
         </div>
         <div class="dd-sub" id="rsNetInfo" style="display:none;margin-top:6px;">—</div>
@@ -1658,7 +1658,7 @@ async function _stRenderUpdatePane(pane) {
   async function _stDoApply(res) {
     const ok = await _ddConfirm('升级确认', '下载并校验通过后，工具将自动重启完成升级（黑窗一闪属正常）。\n继续？');
     if (!ok) return;
-    res.innerHTML = '<div class="dd-sub">⬇ 下载并校验中…（内网一般几秒，完成后自动重启）</div>';
+    res.innerHTML = '<div class="dd-sub">下载并校验中…（内网一般几秒，完成后自动重启）</div>';
     try {
       const j = await (await fetch('/api/update/apply', {method: 'POST'})).json();
       if (!j.ok) { res.innerHTML = '<span style="color:var(--neon-red,var(--neon-orange));">' + esc(j.err || '升级准备失败') + '</span>'; return; }
@@ -1679,7 +1679,7 @@ async function _stRenderUpdatePane(pane) {
       $p('upSrvInfo').innerHTML = j.running
         ? `<span style="color:var(--neon-green);vertical-align:-2px">${ICO16.dotOn}</span> 运行中 · 已发布 <b>${esc(j.published || '（无版本——先跑打包.bat）')}</b>${ver}<br>` +
           `同事升级地址（发给同事）：<span style="font-family:var(--font-monospace,monospace);user-select:all;">${esc(j.url)}</span>`
-        : `⚪ 未运行 · 分发目录 ${esc(j.dir)}${ver}`;
+        : `<span style="color:var(--muted);vertical-align:-2px">${ICO16.dotOff}</span> 未运行 · 分发目录 ${esc(j.dir)}${ver}`;
     } catch(_) { $p('upSrvInfo').textContent = '状态获取失败'; }
   }
   $p('upSrvToggle').onclick = async () => {

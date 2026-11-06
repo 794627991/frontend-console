@@ -77,9 +77,19 @@ def _write_json(p, obj):
     os.makedirs(os.path.dirname(p), exist_ok=True)
     # tmp 唯一化（并发写同库时固定名交错覆盖）
     tmp = "%s.%d.tmp" % (p, threading.get_ident())
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(obj, f, ensure_ascii=False)
-    os.replace(tmp, p)
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(obj, f, ensure_ascii=False)
+        for _i in range(3):                        # P-7/D-2：并发读者窗口重试
+            try:
+                os.replace(tmp, p); break
+            except OSError:
+                if _i == 2: raise
+                time.sleep(0.05)                   # time :30 已导入
+    except Exception:
+        try: os.remove(tmp)                        # 清理包全段（含 dump TypeError）
+        except OSError: pass
+        raise
 
 
 def _dir_size(root):
@@ -200,9 +210,12 @@ def list_libs():
 
 
 def delete_lib(root):
+    _close_tagdb()   # D-4（P3）：被查询过的库持有连接——不关则 tags.db 锁死
+                     # （且 meta 先删后 find_lib_for 不再命中，连接永不释放）
     ld = lib_dir(root)
     if os.path.isdir(ld):
-        shutil.rmtree(ld, ignore_errors=True)
+        import shutil as _sh
+        _sh.rmtree(ld, ignore_errors=False)   # 失败如实抛（api 层转 err）
         return True
     return False
 
@@ -233,6 +246,8 @@ def rebind(old_root, new_root):
     meta["root"] = new_root
     if os.path.abspath(new_ld) != os.path.abspath(ld):
         os.makedirs(os.path.dirname(new_ld), exist_ok=True)
+        _close_tagdb()   # r1 新发现①（P3 同族）：库被查询过则 Windows 带句柄
+                         # 改名必败——P-13 只补了 delete，rebind 同场景
         os.replace(ld, new_ld)          # 目录整体改名（meta 改名后再写新库）
         _write_json(os.path.join(new_ld, "meta.json"), meta)
     else:
@@ -447,7 +462,12 @@ def build(root, log=None, progress=None, should_cancel=None, backend="auto"):
         except OSError:
             pass
         raise Cancelled()
-    os.replace(tags_tmp, tags)
+    for _i in range(3):
+        try:
+            os.replace(tags_tmp, tags); break
+        except OSError:
+            if _i == 2: raise
+            time.sleep(0.05)
     tag_lines = 0
     with open(tags, encoding="utf-8", errors="replace") as f:
         for _ in f:
@@ -668,7 +688,16 @@ def _build_tag_db(tags_path, db_path, say=None, prog=None):
         con.commit()
     finally:
         con.close()
-    os.replace(tmp, db_path)
+    # S37-3（P3）：窗口期并发查询可能重开连接——replace 失败短重试
+    for _i in range(3):
+        try:
+            os.replace(tmp, db_path)
+            break
+        except OSError:
+            if _i == 2:
+                raise
+            time.sleep(0.05)
+            _close_tagdb()
     return n
 
 
@@ -757,16 +786,48 @@ class _ReadtagsBackend(object):
         if not os.path.isfile(self._exe):
             self._exe = None
 
-    def _run(self, args, timeout=30):
+    def _run(self, flags, names=(), timeout=30):
         if not self._exe:
             return []
-        argv = [self._exe, "-s1", "-e", "-n", "-t", self._tags] + args
+        _q = next((n for n in names if n), "")
+        if _q and not _q.isascii():
+            flags = [f for f in flags if f not in ("-p", "-l")]
+            if _q[0].isascii():
+                return self._run_raw(flags + ["-p", _q[0]], timeout)
+            return self._ascii_dump(max(timeout, 60))   # R6-2：timeout 注记与 diff 对齐
+        # R2-10：flags 与查询名分离放调用点——用户查询串一律过 `[-]` 转义位
+        # （readtags help：`[-] NAME...` 之后所有参数按 NAME 解析，`-l` 查询
+        # 实证 `["-p","-","-l"]` 恰返回 ['-l'] 无尖峰）
+        argv = [self._exe, "-s1", "-e", "-n", "-t", self._tags] + flags + (["-"] + list(names) if names else [])
         try:
             pr = subprocess.run(argv, capture_output=True, timeout=timeout,
                                 creationflags=0x08000000)
             return pr.stdout.decode("utf-8", "replace").splitlines()
         except (subprocess.TimeoutExpired, OSError):
             return []
+
+    def _run_raw(self, argv_tail, timeout):
+        argv = [self._exe, "-s1", "-e", "-n", "-t", self._tags] + argv_tail
+        try:
+            pr = subprocess.run(argv, capture_output=True, timeout=timeout,
+                                creationflags=0x08000000)
+            return pr.stdout.decode("utf-8", "replace").splitlines()
+        except (subprocess.TimeoutExpired, OSError):
+            return []
+
+    _ascii_cache = None   # (tags_mtime, lines)——C-1 桥接专用 dump 缓存
+
+    def _ascii_dump(self, timeout=60):
+        try:
+            _mt = os.path.getmtime(self._tags)
+        except OSError:
+            return []
+        if self._ascii_cache and self._ascii_cache[0] == _mt:
+            return self._ascii_cache[1]
+        lines = self._run_raw(["-l"], timeout)
+        self._ascii_cache = (_mt, lines)
+        return lines
+    # _needs_ascii_bridge 删除（R4-1 内联判定取代；保留即死代码且引旧签名）
 
     @staticmethod
     def _parse(line):
@@ -789,17 +850,25 @@ class _ReadtagsBackend(object):
 
     def lookup(self, name):
         rows = []
-        for line in self._run([name]):
+        for line in self._run([], names=(name,)):
             r = self._parse(line)
             if r and r[0] == name:
                 rows.append((r[1], r[2], r[3]))
         return rows
 
     def lookup_ci(self, name):
-        return [r for r in (self._parse(l) for l in self._run(["-i", name])) if r]
+        low = name.lower()
+        return [r for r in (self._parse(l) for l in self._run(["-i"], names=(name,)))
+                if r and r[0].lower() == low]
 
     def prefix(self, q, limit):
-        return [r for r in (self._parse(l) for l in self._run(["-p", q])) if r][:limit]
+        ql = q.lower()
+        if not q.isascii():
+            _lines = self._run(["-p"], names=(q,), timeout=60)   # 桥接（dump 或 -p 首字）
+            out = [r for r in (self._parse(l) for l in _lines)
+                   if r and r[0].lower().startswith(ql)][:limit]
+            return out
+        return [r for r in (self._parse(l) for l in self._run(["-p"], names=(q,))) if r][:limit]
 
     def substring(self, q, limit):
         ql = q.lower()
@@ -845,7 +914,7 @@ class _MemBackend(object):
     def prefix(self, q, limit):
         out = []
         for k, v in self._tags.items():
-            if k.startswith(q):
+            if k.lower().startswith(q):   # S37-1：q 已 lower，k 需同 lower（与 substring 档口径对齐）
                 for e in v:
                     out.append((k,) + e)
                     if len(out) >= limit:
@@ -879,7 +948,12 @@ class _MemBackend(object):
         pass
 
 
-_tagdb_cache = {"key": None, "db": None}   # (ld, tags_mtime, db_mtime) → _TagDB
+# D-1（P1）：单槽缓存多库交替必换 key→旧连接挂 orphan 无界泄漏（200 次交替
+# +404 句柄/+70MB，满载 60s 进程静默死亡）——改按 ld 键的多槽 dict：每库
+# 一个常驻连接（并发查询本就经 _TagDB._lock 串行，多槽安全），换库不再产
+# 生孤儿；连接上限 = 已索引库数（个位数），fd 面收敛
+_tagdb_cache = {}          # {ld: _TagDB}
+_tagdb_keys = {}           # {ld: (tags_mtime, db_mtime)} 失效判定
 
 
 def _open_tags(ld):
@@ -903,56 +977,46 @@ def _open_tags(ld):
 
 
 def _get_tagdb(ld):
-    """R35-3（并发三缺陷重写）：①缓存命中锁内直返；②竞态双建时后来者
-    弃用自建（关自己的）；③换库不立即关旧连接（在途查询可能持有——
-    close 会杀在途 execute）——挂 orphan 列表，_close_tagdb 统一回收
-    （切库低频，进程生命周期最多滞留数个连接，sqlite fd 便宜）"""
     db_p = os.path.join(ld, "tags.db")
     tags_p = os.path.join(ld, "tags")
     if not os.path.isfile(db_p) or not os.path.isfile(tags_p):
         return None
     try:
-        key = (ld, os.path.getmtime(tags_p), os.path.getmtime(db_p))
+        key = (os.path.getmtime(tags_p), os.path.getmtime(db_p))
     except OSError:
         return None
     with _cache_lock:
-        if _tagdb_cache["key"] == key and _tagdb_cache["db"]:
-            return _tagdb_cache["db"]
-    db = None
+        if _tagdb_keys.get(ld) == key and ld in _tagdb_cache:
+            return _tagdb_cache[ld]
     try:
         db = _TagDB(db_p)
     except Exception:
-        # R35-4（实锤：db 损坏不回退——注释只承诺"缺失"）：构造/探测失败
-        # 返回 None → _open_tags 回退 readtags（四接口不再 DatabaseError 500）
         return None
     with _cache_lock:
-        if _tagdb_cache["key"] == key and _tagdb_cache["db"]:
-            db.close()          # 他者先到——弃用自己的
-            return _tagdb_cache["db"]
-        if _tagdb_cache["db"]:
-            _tagdb_orphans.append(_tagdb_cache["db"])
-        _tagdb_cache["key"] = key
-        _tagdb_cache["db"] = db
+        if _tagdb_keys.get(ld) == key and ld in _tagdb_cache:
+            db.close()          # 他者先到——弃用自己的（他者连接已服务同 key）
+            return _tagdb_cache[ld]
+        _old = _tagdb_cache.get(ld)
+        _tagdb_cache[ld] = db
+        _tagdb_keys[ld] = key
+    # D-1 干跑修正：close 会等在途语句完成——锁内 close 卡全库查询 534ms
+    # （实测），锁外关闭恢复 1-2ms。_old 仅为同库旧连接（重建场景），关它
+    # 不影响新连接已入缓存的服务
+    if _old is not None:
+        try: _old.close()
+        except Exception: pass
     return db
 
 
-_tagdb_orphans = []
-
-
 def _close_tagdb():
-    """R35-2（实锤：切档删 tags.db 被自身 mmap 连接挡死 WinError 32）：
-    关闭当前+孤儿连接并清缓存——reindex 删 db / build 重建前必调"""
+    """关闭全部常驻连接并清缓存（reindex/build/delete 等文件操作前必调）"""
     with _cache_lock:
-        cur = _tagdb_cache["db"]
-        _tagdb_cache["key"] = None
-        _tagdb_cache["db"] = None
-        orphans = list(_tagdb_orphans)
-        del _tagdb_orphans[:]
-    for d in ([cur] if cur else []) + orphans:
-        try:
-            d.close()
-        except Exception:
-            pass
+        dbs = list(_tagdb_cache.values())
+        _tagdb_cache.clear()
+        _tagdb_keys.clear()
+    for d in dbs:
+        try: d.close()
+        except Exception: pass
 
 
 _meta_cache_for_backend = {"key": None, "data": None}

@@ -77,6 +77,8 @@ def nav_build():
     backend = str(d.get("backend") or "auto").strip().lower()   # a390 三档
     if backend not in ("auto", "memory", "readtags", "sqlite"):
         backend = "auto"
+    if not os.path.isabs(root):   # D-5（P4）：类型混淆/相对形态以 CWD 解析落登记根——垃圾任务真实启动
+        return jsonify({"ok": False, "err": "root 须为绝对路径"}), 400
     if not root:
         return jsonify({"ok": False, "err": "缺 root"}), 400
     if not _guard(root):
@@ -102,6 +104,9 @@ def nav_build():
 
     def work():
         try:
+            nav_index._close_tagdb()   # S37-2（P2）：与 reindex 对齐——查询过的库
+                                       # 持有 tags.db 连接，阶段 4 os.replace 撞
+                                       # WinError 5 → 静默降级 readtags + tmp 残留
             res = nav_index.build(root, log=_log, progress=on_prog,
                                   should_cancel=should_cancel, backend=backend)
             _state.update(done=True, ok=True, result=res, phase="完成")
@@ -151,6 +156,8 @@ def nav_delete():
     from src import nav_index
     d = request.get_json(force=True, silent=True) or {}
     root = str(d.get("root") or "").strip()
+    if not os.path.isabs(root):   # D-5（P4）：类型混淆/相对形态以 CWD 解析落登记根——垃圾任务真实启动
+        return jsonify({"ok": False, "err": "root 须为绝对路径"}), 400
     if not root:
         return jsonify({"ok": False, "err": "缺 root"}), 400
     with _lock:
@@ -164,7 +171,13 @@ def nav_delete():
                   for l in nav_index.list_libs())
     if not has_lib and not _guard(root):
         return jsonify({"ok": False, "err": "目录不在文件树登记根内且无对应索引库"}), 400
-    return jsonify({"ok": nav_index.delete_lib(root)})
+    # P-13 干跑补 api 层：文件被外部占用时 rmtree 抛 OSError——不捕获则
+    # 500 HTML（原为静默 ok:true 残留，两个极端都不对）
+    try:
+        return jsonify({"ok": nav_index.delete_lib(root)})
+    except OSError as e:
+        return jsonify({"ok": False, "err": "部分删除失败（%s）——文件被占用，"
+                        "关闭占用程序后重试" % str(e)[:80]})
 
 
 @nav_bp.route("/api/nav/rebind", methods=["POST"])
@@ -192,6 +205,8 @@ def nav_reindex():
     backend = str(d.get("backend") or "").strip().lower()
     if backend not in ("memory", "readtags", "sqlite"):
         return jsonify({"ok": False, "err": "backend 须为 memory/readtags/sqlite"}), 400
+    if not os.path.isabs(root):   # D-5（P4）：类型混淆/相对形态以 CWD 解析落登记根——垃圾任务真实启动
+        return jsonify({"ok": False, "err": "root 须为绝对路径"}), 400
     if not root:
         return jsonify({"ok": False, "err": "缺 root"}), 400
     if not _guard(root):
@@ -229,6 +244,13 @@ def nav_reindex():
                     _log("已删除 tags.db（%s 模式零额外文件）" % backend)
             meta["backend"] = backend
             meta["backend_auto"] = False
+            # S37-9（P4）：切档后 sizes.db 同步（sqlite 加项/其他档删项）——
+            # 面板尺寸双方向失真（虚高 95MB+/虚低 1.2GB）
+            _sz = meta.get("sizes") or {}
+            _sz.pop("db", None)
+            if backend == "sqlite" and os.path.isfile(db):
+                _sz["db"] = os.path.getsize(db)
+            meta["sizes"] = _sz
             nav_index._write_json(os.path.join(ld, "meta.json"), meta)
             nav_index._invalidate_cache()
             _state.update(done=True, ok=True, phase="完成",
