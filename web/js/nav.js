@@ -868,9 +868,13 @@
     }
     const bRe = _h('button', ICO16.refresh + ' 重建', true);
     bRe.className = 'btn primary';
-    bRe.onclick = () => _startBuild(card, path);
+    // 用户实锤：重建按钮不传 backend——想建 sqlite 却走 auto 全部重建。
+    // 改为传下拉当前值（重建尊重用户选的档位）
+    bRe.onclick = () => _startBuild(card, path, bkSel.value);
     // a390：查询后端三档切换（重建按钮左侧下拉；sqlite 走任务槽带进度）
+    // 用户实锤：白色底——加 lv-btn 类统一深色主题
     const bkSel = _h('select');
+    bkSel.className = 'lv-btn';
     bkSel.title = '查询后端：内存全量（小库最快·占内存）/ readtags（零建库·约0.2s/次）/ sqlite（大库·0~4ms·低内存）';
     bkSel.style.cssText = 'padding:2px 6px;font-size:11px;margin-left:6px;';
     const _curBk = m.backend || (m.code_files >= 200000 ? 'sqlite' : 'memory');
@@ -1005,10 +1009,13 @@
       .catch(e => showBanner('启动失败: ' + e, 4000, true));
   }
 
-  function _startBuild(card, path) {
+  function _startBuild(card, path, backend) {
+    // 用户实锤：重建按钮不传 backend → 后端走 auto → 想建 sqlite 却走
+    // 全部重建流程。改为传下拉当前值（重建尊重用户选的档位）
+    const body = backend ? { root: path, backend: backend } : { root: path };
     fetch('/api/nav/build', { method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ root: path }) })
+      body: JSON.stringify(body) })
       .then(r => r.json())
       .then(j => {
         if (!j.ok) { showBanner('启动失败：' + (j.err || ''), 4000, true); return; }

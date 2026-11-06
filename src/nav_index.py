@@ -351,6 +351,7 @@ def build(root, log=None, progress=None, should_cancel=None, backend="auto"):
     cmd_count = cmd_files = o_count = 0
     unit_by_base = {}   # basename（无后缀）-> [rel, ...] 编译单元源文件
     pending_o = []      # 未被 .cmd/同目录覆盖的 .o
+    _last_tot = -1      # 用户实锤（刷屏）：上次报告的 _tot（去重用）
     for abs_p, rel in _walk_files(root, should_cancel):
         low = rel.rsplit("/", 1)[-1].lower()
         if low.endswith(".cmd"):
@@ -389,9 +390,12 @@ def build(root, log=None, progress=None, should_cancel=None, backend="auto"):
             b, ext = os.path.splitext(low)
             if ext in _UNIT_EXTS:
                 unit_by_base.setdefault(b, []).append(rel)
-        # a361：文件级进度（每 500 个产物/每 5000 个源文件报一行——死等变活）
+        # a361：文件级进度（每 5000 个报一行——死等变活）
+        # 用户实锤（刷屏）：同一 _tot 值多个迭代都命中 %5000==0 → 同一行
+        # 重复 9 次。只报一次（_last_tot 去重）
         _tot = cmd_count + o_count + len(unit_by_base)
-        if _tot and _tot % 5000 < 1:
+        if _tot and _tot % 5000 < 1 and _tot != _last_tot:
+            _last_tot = _tot
             say("  扫描中：产物 %d（.cmd %d/.o %d）· 源文件 %d …"
                 % (_tot, cmd_count, o_count, len(unit_by_base)))
             prog(2 + min(28, _tot / 800), "扫描 %d 文件" % _tot)
