@@ -249,9 +249,19 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None,
                     # 都以 cur[0] 为基准 → 进度条全程 100% 静止。
                     # 必须在解包前取一次基准，与 rest 分支（base = cur[0]）同构。
                     _bili_base = _bili_base0
+                    # 用户实锤：解包过程日志区死寂（只有上面一句）——200MB/
+                    # 12000 文件要跑几分钟，每 10% 往日志报一次已跑到哪
+                    _bili_pct = [-1]
+                    def _bili_prog(d, t, p2):
+                        prog(_bili_base + d, sub_total, p2)
+                        if t > 0:
+                            _p = int(d * 10 // t) * 10   # 10% 一档
+                            if _p > _bili_pct[0] and _p < 100:
+                                _bili_pct[0] = _p
+                                say("  解包中 %d%%（%.0f / %.0f MB）…" % (
+                                    _p, d / 1048576, t / 1048576))
                     reader.extract_all(bili_root, kinds=["bili"],
-                                       progress=lambda d, t, p2: prog(
-                                           _bili_base + d, sub_total, p2),
+                                       progress=_bili_prog,
                                        should_cancel=should_cancel)
                     _install_bili(bili_root, say, True)
                     try:
@@ -294,9 +304,17 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None,
             # 基准的话 webview2 解完后再解 rest，进度条会往回跳（N5 实测
             # 4MB → 1MB）
             base = cur[0]
+            _rest_pct = [-1]
+            def _rest_prog(d, t, p):
+                prog(base + d, sub_total, p)
+                if t > 0:
+                    _p = int(d * 10 // t) * 10
+                    if _p > _rest_pct[0] and _p < 100:
+                        _rest_pct[0] = _p
+                        say("  解包其余资源 %d%%（%.0f / %.0f MB）…" % (
+                            _p, d / 1048576, t / 1048576))
             reader.extract_all(staging, kinds=rest,
-                               progress=lambda d, t, p: prog(
-                                   base + d, sub_total, p),
+                               progress=_rest_prog,
                                should_cancel=should_cancel)
         total = sub_total or 1
         for k in rest:
@@ -390,9 +408,17 @@ def _install_webview2(reader, staging, cur, say, prog, res, should_cancel=None,
         # webview2 之前跑（解完 cur[0]≈200MB），原先这里 `d` 从 0 起 →
         # 进度条从 ~12% 跳回 0%（对比 rest 分支的 `base = cur[0]`）。
         _base = cur[0]
+        _wv2_pct = [-1]
+        def _wv2_prog(d, t, p):
+            prog(_base + d, total or t, p)
+            if t > 0:
+                _p = int(d * 10 // t) * 10
+                if _p > _wv2_pct[0] and _p < 100:
+                    _wv2_pct[0] = _p
+                    say("  解包 WebView2 %d%%（%.0f / %.0f MB）…" % (
+                        _p, d / 1048576, t / 1048576))
         got = reader.extract_all(root, kinds=["webview2"],
-                                 progress=lambda d, t, p: prog(
-                                     _base + d, total or t, p),
+                                 progress=_wv2_prog,
                                  should_cancel=should_cancel)
         if not any(p.endswith("msedgewebview2.exe") for p in got):
             raise InstallError("包内 WebView2 运行时不完整（缺 msedgewebview2.exe）")
