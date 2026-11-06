@@ -300,6 +300,12 @@ def _walk_files(root, should_cancel=None, say=None):
         except _q.Empty:
             item = None
         if item is _DONE:
+            # a412（用户实锤：点取消反而进 ctags 阶段）：producer 在目录边界
+            # 见 cancel 即 return 发 DONE；consumer 若正阻塞在 get，拿到
+            # DONE 直接正常 return=取消被吞、walk 假完成继续后续阶段——
+            # DONE 分支必须先查 cancel（单测补：DONE 与 cancel 同时态）
+            if should_cancel and should_cancel():
+                raise Cancelled()
             if _err[0] is not None:
                 raise RuntimeError("目录扫描失败（%s）" % _err[0])
             return
@@ -409,6 +415,8 @@ def build(root, log=None, progress=None, should_cancel=None, backend="auto"):
     pending_o = []      # 未被 .cmd/同目录覆盖的 .o
     all_rels = set()    # a411：全量 rel 集合（同目录同名映射走 set 查，零网络 I/O）
     _last_prog = 0.0    # 用户令：1s 一拍的过程显示计时
+    _last_tot = -1      # a412：计数停滞可见——大目录/非代码区穿越时计数
+    _last_tot_t = time.time()   # 不动（walk 活着），标签提示"无新增"防误判卡死
     for abs_p, rel in _walk_files(root, should_cancel, say):
         all_rels.add(rel)
         low = rel.rsplit("/", 1)[-1].lower()
@@ -449,9 +457,15 @@ def build(root, log=None, progress=None, should_cancel=None, backend="auto"):
         _now = time.time()
         if _tot and _now - _last_prog >= 1.0:
             _last_prog = _now
+            if _tot != _last_tot:
+                _last_tot = _tot
+                _last_tot_t = _now
+            _stall = int(_now - _last_tot_t)
+            _hint = ("（%ds 无新增——大目录/非代码区穿越中，未卡死）" % _stall) \
+                if _stall >= 60 else ""
             prog(2 + 28.0 * _tot / (_tot + 8000),
-                 "扫描中：产物 %d（.cmd %d/.o %d）· 源文件 %d" % (
-                     _tot, cmd_count, o_count, len(unit_by_base)))
+                 "扫描中：产物 %d（.cmd %d/.o %d）· 源文件 %d%s" % (
+                     _tot, cmd_count, o_count, len(unit_by_base), _hint))
     # a411：同目录同名映射（walk 内收集全量集合，set 查零 I/O）
     for orel in o_files:
         stem = orel[:-2]
@@ -494,11 +508,27 @@ def build(root, log=None, progress=None, should_cancel=None, backend="auto"):
     # a361（用户实锤：30% 死等无文件进度）：大库 ctags 阶段数分钟只有一句
     # "ctags 索引"——心跳线程监控 tags.tmp 增长，每 3 秒报已写 MB，死等变
     # 活进度；ctags 完成后心跳自停
+    # a412（用户实锤：取消后 ctags 阶段无法取消）：subprocess.run 阻塞期
+    # 取消全程无效（R15-3 只在跑完后补查）——改 Popen，心跳 1s 查 cancel
+    # 即杀进程，网盘大库数分钟的 ctags 全程可取消
     import threading as _th
     _hb_stop = _th.Event()
+    try:
+        env = dict(os.environ)
+        env["LC_ALL"] = "C"
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                creationflags=0x08000000, env=env)
+    except FileNotFoundError:
+        raise RuntimeError("ctags.exe 缺失（vendor/ctags/）")
     def _heartbeat():
         _last = -1
         while not _hb_stop.wait(1.0):   # 用户令：1s 一拍
+            if should_cancel and should_cancel():
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                return
             try:
                 sz = os.path.getsize(tags_tmp) / 1048576
             except OSError:
@@ -509,26 +539,32 @@ def build(root, log=None, progress=None, should_cancel=None, backend="auto"):
     _hb = _th.Thread(target=_heartbeat, daemon=True)
     _hb.start()
     try:
-        env = dict(os.environ)
-        env["LC_ALL"] = "C"
-        r = subprocess.run(cmd, capture_output=True, timeout=3600,
-                           creationflags=0x08000000, env=env)
-    except FileNotFoundError:
-        raise RuntimeError("ctags.exe 缺失（vendor/ctags/）")
+        out_b, _ = proc.communicate(timeout=3600)
     except subprocess.TimeoutExpired:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        proc.communicate()
         raise RuntimeError("ctags 超时（60 分钟）——目录过大？")
     finally:
         _hb_stop.set()
-    if not os.path.isfile(tags_tmp):
-        raise RuntimeError("ctags 未产出 tags：%s" % (r.stderr or "")[:200])
-    # R15-3（实锤：取消被吞）：ctags 阻塞期不查取消——跑完立即补查，
-    # 已取消则不落盘 tags/不写 meta（半成品库会被 status 误判 indexed）
+    # R15-3（实锤：取消被吞）：已取消则不落盘 tags/不写 meta（半成品库会被
+    # status 误判 indexed）；a412 起取消在阻塞期内就杀进程，这里统一收尾
     if should_cancel and should_cancel():
         try:
             os.remove(tags_tmp)
         except OSError:
             pass
         raise Cancelled()
+    if not os.path.isfile(tags_tmp):
+        _e = ""
+        try:
+            _e = (out_b or b"").decode("utf-8", "replace")
+        except Exception:
+            pass
+        raise RuntimeError("ctags 未产出 tags（rc=%s）：%s"
+                           % (proc.returncode, _e[:200]))
     for _i in range(3):
         try:
             os.replace(tags_tmp, tags); break
