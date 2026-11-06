@@ -23,7 +23,7 @@ if not exist "dist" mkdir "dist"
 set "PY="
 set "PYFALLBACK=%LOCALAPPDATA%/Programs/Python/Python314/python.exe"
 where python.exe >nul 2>&1
-if not errorlevel 1 for /f "delims=%%i" in ('where python.exe') do if not defined PY set "PY=%%i"
+if not errorlevel 1 for /f "delims=" %%i in ('where python.exe') do if not defined PY set "PY=%%i"
 if not defined PY set "PY=%PYFALLBACK%"
 if not exist "%PY%" (
   echo [失败] 找不到 python.exe，请安装 Python 或加入 PATH
