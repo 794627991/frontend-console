@@ -75,7 +75,11 @@ def nav_build():
     d = request.get_json(force=True, silent=True) or {}
     root = str(d.get("root") or "").strip()
     backend = str(d.get("backend") or "auto").strip().lower()   # a390 三档
-    if backend not in ("auto", "memory", "readtags", "sqlite"):
+    # a410（用户令：不允许全量方案）：memory 显式拒绝给明确反馈
+    if backend == "memory":
+        return jsonify({"ok": False, "err": "全量内存模式已下线"
+                        "（600 万符号 ≈8GB 常驻实锤），请用 readtags 或 sqlite"}), 400
+    if backend not in ("auto", "readtags", "sqlite"):
         backend = "auto"
     if not os.path.isabs(root):   # D-5（P4）：类型混淆/相对形态以 CWD 解析落登记根——垃圾任务真实启动
         return jsonify({"ok": False, "err": "root 须为绝对路径"}), 400
@@ -215,8 +219,12 @@ def nav_reindex():
     d = request.get_json(force=True, silent=True) or {}
     root = str(d.get("root") or "").strip()
     backend = str(d.get("backend") or "").strip().lower()
-    if backend not in ("memory", "readtags", "sqlite"):
-        return jsonify({"ok": False, "err": "backend 须为 memory/readtags/sqlite"}), 400
+    # a410（用户令：不允许全量方案）：memory 显式拒绝
+    if backend == "memory":
+        return jsonify({"ok": False, "err": "全量内存模式已下线"
+                        "（600 万符号 ≈8GB 常驻实锤），请用 readtags 或 sqlite"}), 400
+    if backend not in ("readtags", "sqlite"):
+        return jsonify({"ok": False, "err": "backend 须为 readtags/sqlite"}), 400
     # a407：同 build——sqlite 无能力早拒（切换任务同样不该跑到一半失败）
     if backend == "sqlite" and not nav_index.sqlite_capable():
         return jsonify({"ok": False, "err": "本程序未内置 sqlite3 模块"

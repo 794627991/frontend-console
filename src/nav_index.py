@@ -572,19 +572,24 @@ def build(root, log=None, progress=None, should_cancel=None, backend="auto"):
     # ---- 阶段 4：sqlite 快查索引（a390 三档后端；auto 按符号数判档）----
     # ctags-mem-v2 实测：600 万符号全量 dict ≈ 8GB 常驻；sqlite 0~4ms/50MB
     _bk_user = (backend or "auto").strip().lower()
-    if _bk_user not in ("auto", "memory", "readtags", "sqlite"):
+    # a410（用户令：不允许全量方案）：memory 入参一律按 auto 重判
+    # （api 层已显式拒，这里防御旧调用方）；只留 readtags/sqlite 两档
+    if _bk_user == "memory":
+        _bk_user = "auto"
+    if _bk_user not in ("auto", "readtags", "sqlite"):
         _bk_user = "auto"
     _was_auto = _bk_user == "auto"
     if _was_auto:
-        # a407：无 sqlite3 能力（旧版 exe 打包漏件）大库自动 readtags——
+        # a407：无 sqlite3 能力（旧版 exe 打包缺件）大库自动 readtags——
         # 不出现吓人的"构建失败"字样（readtags 查询速度相近，实测不慢）
-        if tag_lines >= 200000:
-            _bk_user = "sqlite" if sqlite_capable() else "readtags"
-            if _bk_user == "readtags":
+        # a410：全量方案下线——小库也走 readtags（零建库成本，查询同级）
+        if sqlite_capable():
+            _bk_user = "sqlite" if tag_lines >= 200000 else "readtags"
+        else:
+            _bk_user = "readtags"
+            if tag_lines >= 200000:
                 say("  本环境未内置 sqlite3（旧版打包缺件，升级新版修复）"
                     "——大库自动 readtags 模式（查询速度相近）")
-        else:
-            _bk_user = "memory"
     db_path = os.path.join(ld, "tags.db")
     if _bk_user == "sqlite":
         say("阶段 4/4：sqlite 快查索引（%d 符号，大库低内存模式）…" % tag_lines)
@@ -616,8 +621,6 @@ def build(root, log=None, progress=None, should_cancel=None, backend="auto"):
                 pass
         if _bk_user == "readtags":
             say("阶段 4/4：readtags 模式（零建库成本，查询约 0.2s/次）")
-        else:
-            say("阶段 4/4：内存全量模式（%d 符号 <%d 阈值）" % (tag_lines, 200000))
 
     meta = {"version": 1, "root": root,
             "built_at": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -1012,7 +1015,9 @@ def _open_tags(ld):
     bk = (meta or {}).get("backend") or "auto"
     if bk == "auto":
         n = (meta or {}).get("code_files") or 0
-        bk = "sqlite" if n >= 200000 else "memory"
+        # a410：全量方案下线——auto 小库也走 readtags。旧库显式
+        # backend=memory 仍按原档查询（读兼容，不强制迁移；切档即迁）
+        bk = "sqlite" if n >= 200000 else "readtags"
     if bk == "sqlite":
         db = _get_tagdb(ld)
         if db:

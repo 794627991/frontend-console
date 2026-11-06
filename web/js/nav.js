@@ -838,6 +838,25 @@
     _renderState(card, path, j, st);
   }
 
+  // a410（用户令：建库就要能选后端+全量方案下线）：档位下拉公共构造——
+  // 只剩 readtags/sqlite 两方案；sqlite 无能力（旧 exe 缺件）藏项；
+  // withAuto 给首次建库多一个『自动』档（按库大小自动判）；旧库 meta
+  // backend=memory 显示兜底 readtags
+  function _bkSel(cur, sqlOk, withAuto) {
+    if (cur === 'memory') cur = 'readtags';
+    const sel = _h('select');
+    sel.className = 'lv-btn';
+    sel.title = '查询后端：readtags（零建库·约0.2s/次）/ sqlite（大库·0~4ms·低内存）';
+    sel.style.cssText = 'padding:2px 6px;font-size:11px;margin-left:6px;';
+    const opts = (withAuto ? [['auto', '自动']] : [])
+      .concat([['readtags', 'readtags'], ['sqlite', 'sqlite']])
+      .filter(o => o[0] !== 'sqlite' || sqlOk);
+    if (!opts.some(o => o[0] === cur)) cur = 'readtags';
+    sel.innerHTML = opts.map(([v, n2]) =>
+      `<option value="${v}"${cur === v ? ' selected' : ''}>${n2}</option>`).join('');
+    return sel;
+  }
+
   async function _renderState(card, path, j, st) {
     const btns = card.querySelector('div:last-child');
     if (!j || !j.ok) {
@@ -860,6 +879,11 @@
       }
       st.textContent = '✓ 发现代码文件（浅层抽样 ' + (j.probe_files || 0) + ' 个）。'
         + '首次索引需扫描全目录——网盘挂载的大库可能数分钟，结果存工具数据目录（不写工程目录）。';
+      // a410（用户实锤：建索引时不给选项，想选 readtags/sql 都不行）：建立
+      // 按钮旁挂档位下拉（自动=按库大小判；全量方案已下线不提供）
+      const fbSel = _bkSel('auto', j.sqlite_ok !== false, true);
+      bAdd.onclick = () => _startBuild(card, path, fbSel.value);
+      btns.insertBefore(fbSel, btns.lastChild);
       btns.insertBefore(bAdd, btns.lastChild);
       _renderCodegraph(st, path, btns);   // R27-3：两套独立，都要可见
       return;
@@ -888,20 +912,15 @@
     // 用户实锤：重建按钮不传 backend——想建 sqlite 却走 auto 全部重建。
     // 改为传下拉当前值（重建尊重用户选的档位）
     bRe.onclick = () => _startBuild(card, path, bkSel.value);
-    // a390：查询后端三档切换（重建按钮左侧下拉；sqlite 走任务槽带进度）
-    // 用户实锤：白色底——加 lv-btn 类统一深色主题
-    const bkSel = _h('select');
-    bkSel.className = 'lv-btn';
-    bkSel.title = '查询后端：内存全量（小库最快·占内存）/ readtags（零建库·约0.2s/次）/ sqlite（大库·0~4ms·低内存）';
-    bkSel.style.cssText = 'padding:2px 6px;font-size:11px;margin-left:6px;';
-    // a407：后端无 sqlite3 能力（旧版 exe 打包漏件）——藏 sql 档，默认值
-    // 兜底 readtags（旧后端不下发 sqlite_ok 时默认 true 不误藏）
+    // a390：查询后端切换（重建按钮左侧下拉；sqlite 走任务槽带进度）
+    // a407：后端无 sqlite3 能力（旧版 exe 打包缺件）——藏 sql 档
+    // a410（用户令：不允许全量方案）：档位只剩 readtags/sqlite；旧库
+    // meta.backend=memory 显示/复位兜底 readtags（切档即迁移）
     const _sqlOk = j.sqlite_ok !== false;
-    const _curBk = m.backend || (m.code_files >= 200000 ? 'sqlite' : 'memory');
-    const _defBk = (_curBk === 'sqlite' && !_sqlOk) ? 'readtags' : _curBk;
-    bkSel.innerHTML = [['memory', '内存全量'], ['readtags', 'readtags'], ['sqlite', 'sqlite']]
-      .filter(o => o[0] !== 'sqlite' || _sqlOk)
-      .map(([v, n2]) => `<option value="${v}"${_defBk === v ? ' selected' : ''}>${n2}</option>`).join('');
+    const _curBk = m.backend || (m.code_files >= 200000 ? 'sqlite' : 'readtags');
+    const _defBk = ((_curBk === 'sqlite' && !_sqlOk) || _curBk === 'memory')
+      ? 'readtags' : _curBk;
+    const bkSel = _bkSel(_curBk, _sqlOk, false);
     bkSel.onchange = async () => {
       const v = bkSel.value;
       if (typeof _ddConfirm === 'function' &&
