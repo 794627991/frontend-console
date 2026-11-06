@@ -191,8 +191,13 @@ def nav_rebind():
         return jsonify({"ok": False, "err": "缺 old_root/new_root"}), 400
     if not _guard(new_root):
         return jsonify({"ok": False, "err": "新目录不在文件树登记根内"}), 400
-    ok, msg = nav_index.rebind(old_root, new_root)
-    return jsonify({"ok": ok, "err": "" if ok else msg, "msg": msg})
+    try:
+        ok, msg = nav_index.rebind(old_root, new_root)
+        return jsonify({"ok": ok, "err": "" if ok else msg, "msg": msg})
+    except OSError as e:
+        # FA-3 终审：rebind 内部有目录改名——文件被占用时抛 OSError 不捕获
+        # 则 500 HTML+半迁移孤儿（P-13 delete 同款防御）
+        return jsonify({"ok": False, "err": "重关联失败（%s）——文件被占用" % str(e)[:80]})
 
 
 @nav_bp.route("/api/nav/reindex", methods=["POST"])

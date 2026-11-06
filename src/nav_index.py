@@ -954,6 +954,12 @@ class _MemBackend(object):
 # 生孤儿；连接上限 = 已索引库数（个位数），fd 面收敛
 _tagdb_cache = {}          # {ld: _TagDB}
 _tagdb_keys = {}           # {ld: (tags_mtime, db_mtime)} 失效判定
+# FA-1 终审修正：锁外 close 杀在途查询（干跑锁内 534ms→锁外 ProgrammingError
+# 两个极端都不对）。正解=有界延迟回收：被替换连接挂此列表（不立即关——
+# 可能有线程正在 execute），超限时关最旧（此时在途概率极低）。文件操作前
+# _close_tagdb 全量回收——两个出口互补，泄漏上界 = MAX_ORPHANS 个连接
+_tagdb_orphans = []
+_MAX_ORPHANS = 4
 
 
 def _open_tags(ld):
@@ -999,22 +1005,28 @@ def _get_tagdb(ld):
         _old = _tagdb_cache.get(ld)
         _tagdb_cache[ld] = db
         _tagdb_keys[ld] = key
-    # D-1 干跑修正：close 会等在途语句完成——锁内 close 卡全库查询 534ms
-    # （实测），锁外关闭恢复 1-2ms。_old 仅为同库旧连接（重建场景），关它
-    # 不影响新连接已入缓存的服务
-    if _old is not None:
-        try: _old.close()
-        except Exception: pass
+        if _old is not None:
+            # FA-1：不立即关——可能有线程正在 execute（锁外 close 杀在途
+            # →ProgrammingError→500）。挂有界 orphan，超限才关最旧（此时
+            # 在途概率极低）。_close_tagdb 全量回收兜底
+            _tagdb_orphans.append(_old)
+            while len(_tagdb_orphans) > _MAX_ORPHANS:
+                _victim = _tagdb_orphans.pop(0)
+                try: _victim.close()
+                except Exception: pass
     return db
 
 
 def _close_tagdb():
-    """关闭全部常驻连接并清缓存（reindex/build/delete 等文件操作前必调）"""
+    """关闭全部常驻连接并清缓存（reindex/build/delete 等文件操作前必调）
+    ——含 orphan 列表全量回收（文件操作前在途查询应已静默，关全部安全）"""
     with _cache_lock:
         dbs = list(_tagdb_cache.values())
         _tagdb_cache.clear()
         _tagdb_keys.clear()
-    for d in dbs:
+        orphans = list(_tagdb_orphans)
+        del _tagdb_orphans[:]
+    for d in dbs + orphans:
         try: d.close()
         except Exception: pass
 

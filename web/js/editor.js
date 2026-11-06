@@ -270,6 +270,7 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
                     (enc ? '&enc=' + encodeURIComponent(enc) : '');
           const r = await fetch(q);
           const j = await r.json();
+          if (connections[conn.portId] !== conn) return;   // B-F2 终审：open 窗口内关 tab——后续写点对已死 conn 无意义
           // a246 P3（a238复审）：重读失败回拨下拉——文件仍是旧编码，下拉
           // 却停在新选择上=状态失同步
           if (!j.ok) {
