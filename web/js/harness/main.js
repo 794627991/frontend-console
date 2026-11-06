@@ -42,6 +42,15 @@ function buildClaudeHarnessTab(opts = {}) {
             <input class="hg-login-inp" data-hg-login-pwd type="password" placeholder="密码" autocomplete="current-password" name="hg_login_pwd">
             <button class="hg-prompt-btn" data-hg-login-btn>登录</button>
           </div>
+          <div class="hg-robot-box">
+            <div class="hg-pop-row" style="opacity:.75;font-size:11px">机器人凭据（可替代登录自动注册，各填各的互不影响）</div>
+            <input class="hg-login-inp" data-hg-robot-id placeholder="App ID" spellcheck="false" autocomplete="off" name="hg_robot_id">
+            <input class="hg-login-inp" data-hg-robot-secret type="password" placeholder="App Secret" autocomplete="new-password" name="hg_robot_secret">
+            <div class="hg-pop-row">
+              <button class="hg-prompt-btn" data-hg-robot-save title="保存后立即用该机器人重连；清空两项再保存即恢复自动注册">保存机器人</button>
+              <span data-hg-robot-state style="font-size:11px;opacity:.8"></span>
+            </div>
+          </div>
           <div data-hg-login-on style="display:none">
             <div class="hg-pop-row"><span class="hg-login-dot on"></span><span data-hg-login-name>已登录</span><button class="hg-pop-logout" data-hg-logout-btn title="登出（停用机器人）">登出</button></div>
             <div class="hg-pop-row hg-login-bot" data-hg-login-bot></div>
@@ -1082,7 +1091,7 @@ function buildClaudeHarnessTab(opts = {}) {
         body: JSON.stringify({sid: _HG.sid, anchor})});
       const j = await r.json();
       if (!j.ok) { showBanner('回滚失败：' + (j.err || '未知'), 3600, true); return; }
-      showBanner('⏪ ' + j.msg, 3600);
+      showBanner(j.msg, 3600);
       // v4-only：回滚换代走 epoch——不再跑 V3 重渲链，携水位强制重订阅让
       // 服务端裁决 snapshot 接管（换代提示行由后端 emit 落新 feed，随快照到达）
       var _c = _HG.v4Cur;

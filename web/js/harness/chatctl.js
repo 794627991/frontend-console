@@ -331,7 +331,7 @@
           headers:{'Content-Type':'application/json'},
           body: JSON.stringify({sid: _HG.sid, turns: n})});
         const j = await r.json();
-        showBanner(j.ok ? ('⏪ ' + j.msg + '——发送消息即续上')
+        showBanner(j.ok ? (j.msg + '——发送消息即续上')
                         : ('回退失败：' + (j.err || '未知')), 4600, !j.ok);
       } catch(e) { showBanner('回退失败：' + e, 3000, true); }
     } else if (cmd === 'roles') {
