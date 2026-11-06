@@ -260,54 +260,131 @@ def rebind(old_root, new_root):
 
 # ------------------------------------------------------------------ 建库管线
 
+def _is_remote_fs(path):
+    """网盘/UNC 判定（a413）：远程 FS 是 RTT 受限（每目录一次 SMB 往返），
+    并发分片近线性提速；本地盘并发反而慢（GIL/队列开销，实测 13179 文件
+    4.3s vs 单线程 1.7s）——本地走单 worker"""
+    try:
+        import ctypes
+        p = os.path.abspath(path)
+        if p.startswith("\\\\"):
+            return True                      # UNC 直连网络共享
+        return ctypes.windll.kernel32.GetDriveTypeW(p[:3]) == 4   # DRIVE_REMOTE
+    except Exception:
+        return False
+
+
 def _walk_files(root, should_cancel=None, say=None):
     """生成 (abs_path, rel_posix)。跳过 _SKIP_DIRS。
-    a411（用户实锤：W: 网盘大库阶段 1 永卡 30%）：os.walk 的 readdir 在
-    网盘上单目录可停滞数分钟且零反馈——改生产者线程+目录级队列消费：
-    120s 无进展先报停滞目录（面板可见），300s 判网盘停滞失败退出（把
-    无限死等变成可诊断失败）。队列按目录批量、maxsize 有界，内存与
-    原生 walk 同级；网盘断连的 OSError 也经此转给消费侧"""
+    a411→a413（用户实锤：W: 网盘大库阶段 1 扫描磨到像卡死）：网盘瓶颈是
+    RTT——每目录一次 SMB 往返、单线程串行干等，几十万目录=几十分钟。
+    a413 并发分片：root/L1（L1 不足 8 时拆到 L2）切成子树任务，8 worker
+    并发 os.walk 汇入目录级有界队列，网盘上近线性提速。停滞检测
+    （120s 告警/300s 失败）与取消（消费侧循环头/DONE 分支双查）沿用"""
     import queue as _q
     import threading as _th
     say = say or (lambda _m: None)
-    _q0 = _q.Queue(maxsize=64)
+    N_WORKERS = 8 if _is_remote_fs(root) else 1   # a413：网盘并发/本地单线程
+    out_q = _q.Queue(maxsize=256)
     _DONE = object()
     _err = [None]
 
-    def _produce():
-        try:
-            for r, ds, fs in os.walk(root):
-                ds[:] = [d for d in ds if d not in _SKIP_DIRS]
-                if should_cancel and should_cancel():
-                    return
-                _q0.put((r, fs))
-        except Exception as e:      # SMB 断连等：转给消费侧统一抛
-            _err[0] = e
-        finally:
-            _q0.put(_DONE)
+    def _scandir(d):
+        with os.scandir(d) as it:
+            ds, fs = [], []
+            for e in it:
+                (ds if e.is_dir() else fs).append(e.name)
+        return ds, fs
 
-    _th.Thread(target=_produce, daemon=True).start()
+    # ---- 分片（同步秒级：只 scandir 一两层）----
+    pre_batches = []      # 分片期收获的 (dir, files) 批（消费开始时先回放）
+    seeds = []            # 子树任务（绝对路径）
+    try:
+        l1_ds, root_fs = _scandir(root)
+        l1_ds = [d for d in l1_ds if d not in _SKIP_DIRS]
+        pre_batches.append((root, root_fs))
+        if len(l1_ds) >= N_WORKERS:
+            seeds = [os.path.join(root, d) for d in l1_ds]
+        else:
+            # 一级子目录太少（并发吃不满）：拆到二级
+            for d in l1_ds:
+                p = os.path.join(root, d)
+                try:
+                    l2_ds, l2_fs = _scandir(p)
+                except OSError:
+                    seeds.append(p)   # 展不开（权限/断连）：退化为整子树任务
+                    continue
+                pre_batches.append((p, l2_fs))
+                seeds.extend(os.path.join(p, s)
+                             for s in l2_ds if s not in _SKIP_DIRS)
+    except OSError as e:
+        raise RuntimeError("目录扫描失败（%s）" % e)
+
+    work_q = _q.Queue()
+    for s in seeds:
+        work_q.put(s)
+    _active = [0]
+    _alock = _th.Lock()
+
+    def _worker():
+        # try/finally 包全程：取消 return 也不许跳过 _active 递减——否则
+        # DONE 永远不发、消费侧死等停滞超时（自审实锤）
+        try:
+            while True:
+                try:
+                    sub = work_q.get_nowait()
+                except _q.Empty:
+                    break
+                try:
+                    for r, ds, fs in os.walk(sub):
+                        ds[:] = [d for d in ds if d not in _SKIP_DIRS]
+                        if should_cancel and should_cancel():
+                            return
+                        out_q.put((r, fs))
+                except Exception as e:   # SMB 断连等：记录，其余子树继续
+                    _err[0] = e
+        finally:
+            with _alock:
+                _active[0] -= 1
+                if _active[0] == 0:
+                    out_q.put(_DONE)
+
+    _n = min(N_WORKERS, len(seeds))
+    _active[0] = _n
+    for _i in range(_n):
+        _th.Thread(target=_worker, daemon=True).start()
+    if _n == 0:
+        out_q.put(_DONE)   # 无子树：root 直下文件即全部
+
+    def _emit(r, fs):
+        for f in fs:
+            if should_cancel and should_cancel():
+                raise Cancelled()
+            yield os.path.join(r, f), os.path.relpath(
+                r + os.sep + f, root).replace(os.sep, "/")
+
+    # 分片期收获的文件批先回放（root/L1 直下文件）
+    for r, fs in pre_batches:
+        for x in _emit(r, fs):
+            yield x
     _last_t = time.time()
     _last_dir = [root]
     _warned = False
     while True:
-        # 循环头检查：producer 因取消提前退出时（DONE 先于任何目录），
-        # 消费侧也必须立即取消——否则空扫描静默继续（单测实锤）
+        # 循环头检查：取消先于一切（a412 单测实锤）
         if should_cancel and should_cancel():
             raise Cancelled()
         try:
-            item = _q0.get(timeout=5.0)
+            item = out_q.get(timeout=5.0)
         except _q.Empty:
             item = None
         if item is _DONE:
-            # a412（用户实锤：点取消反而进 ctags 阶段）：producer 在目录边界
-            # 见 cancel 即 return 发 DONE；consumer 若正阻塞在 get，拿到
-            # DONE 直接正常 return=取消被吞、walk 假完成继续后续阶段——
-            # DONE 分支必须先查 cancel（单测补：DONE 与 cancel 同时态）
+            # a412：DONE 分支必须先查 cancel（producer/worker 边界见取消
+            # 发 DONE 与消费侧 get 竞态，否则取消被吞、walk 假完成）
             if should_cancel and should_cancel():
                 raise Cancelled()
             if _err[0] is not None:
-                raise RuntimeError("目录扫描失败（%s）" % _err[0])
+                raise RuntimeError("目录扫描不完整（%s）" % _err[0])
             return
         if item is None:
             idle = time.time() - _last_t
@@ -324,10 +401,8 @@ def _walk_files(root, should_cancel=None, say=None):
         _last_t = time.time()   # 拿到新目录=有进展
         _warned = False
         _last_dir[0] = r
-        for f in fs:
-            if should_cancel and should_cancel():
-                raise Cancelled()
-            yield os.path.join(r, f), os.path.relpath(r + os.sep + f, root).replace(os.sep, "/")
+        for x in _emit(r, fs):
+            yield x
 
 
 class Cancelled(Exception):
