@@ -260,10 +260,64 @@ def rebind(old_root, new_root):
 
 # ------------------------------------------------------------------ 建库管线
 
-def _walk_files(root, should_cancel=None):
-    """生成 (abs_path, rel_posix)。跳过 _SKIP_DIRS。"""
-    for r, ds, fs in os.walk(root):
-        ds[:] = [d for d in ds if d not in _SKIP_DIRS]
+def _walk_files(root, should_cancel=None, say=None):
+    """生成 (abs_path, rel_posix)。跳过 _SKIP_DIRS。
+    a411（用户实锤：W: 网盘大库阶段 1 永卡 30%）：os.walk 的 readdir 在
+    网盘上单目录可停滞数分钟且零反馈——改生产者线程+目录级队列消费：
+    120s 无进展先报停滞目录（面板可见），300s 判网盘停滞失败退出（把
+    无限死等变成可诊断失败）。队列按目录批量、maxsize 有界，内存与
+    原生 walk 同级；网盘断连的 OSError 也经此转给消费侧"""
+    import queue as _q
+    import threading as _th
+    say = say or (lambda _m: None)
+    _q0 = _q.Queue(maxsize=64)
+    _DONE = object()
+    _err = [None]
+
+    def _produce():
+        try:
+            for r, ds, fs in os.walk(root):
+                ds[:] = [d for d in ds if d not in _SKIP_DIRS]
+                if should_cancel and should_cancel():
+                    return
+                _q0.put((r, fs))
+        except Exception as e:      # SMB 断连等：转给消费侧统一抛
+            _err[0] = e
+        finally:
+            _q0.put(_DONE)
+
+    _th.Thread(target=_produce, daemon=True).start()
+    _last_t = time.time()
+    _last_dir = [root]
+    _warned = False
+    while True:
+        # 循环头检查：producer 因取消提前退出时（DONE 先于任何目录），
+        # 消费侧也必须立即取消——否则空扫描静默继续（单测实锤）
+        if should_cancel and should_cancel():
+            raise Cancelled()
+        try:
+            item = _q0.get(timeout=5.0)
+        except _q.Empty:
+            item = None
+        if item is _DONE:
+            if _err[0] is not None:
+                raise RuntimeError("目录扫描失败（%s）" % _err[0])
+            return
+        if item is None:
+            idle = time.time() - _last_t
+            if idle >= 300:
+                raise RuntimeError(
+                    "目录扫描 %.0fs 无进展——网盘停滞/断连（最后目录：%s）。"
+                    "检查网络盘连接后重试" % (idle, _last_dir[0]))
+            if idle >= 120 and not _warned:
+                _warned = True
+                say("  扫描 %.0fs 无进展（网盘大目录/停滞中，最后目录：%s）——"
+                    "继续等待，超 300s 将判失败" % (idle, _last_dir[0]))
+            continue
+        r, fs = item
+        _last_t = time.time()   # 拿到新目录=有进展
+        _warned = False
+        _last_dir[0] = r
         for f in fs:
             if should_cancel and should_cancel():
                 raise Cancelled()
@@ -353,8 +407,10 @@ def build(root, log=None, progress=None, should_cancel=None, backend="auto"):
     cmd_count = cmd_files = o_count = 0
     unit_by_base = {}   # basename（无后缀）-> [rel, ...] 编译单元源文件
     pending_o = []      # 未被 .cmd/同目录覆盖的 .o
+    all_rels = set()    # a411：全量 rel 集合（同目录同名映射走 set 查，零网络 I/O）
     _last_prog = 0.0    # 用户令：1s 一拍的过程显示计时
-    for abs_p, rel in _walk_files(root, should_cancel):
+    for abs_p, rel in _walk_files(root, should_cancel, say):
+        all_rels.add(rel)
         low = rel.rsplit("/", 1)[-1].lower()
         if low.endswith(".cmd"):
             cmd_files += 1           # R17-4：文件名计数（stale 同口径）
@@ -378,29 +434,34 @@ def build(root, log=None, progress=None, should_cancel=None, backend="auto"):
         elif low.endswith(".o"):
             o_files.append(rel)
             o_count += 1
-            stem = rel[:-2]
-            mapped = False
-            for ext in _UNIT_EXTS:      # 同目录同名
-                crel = stem + ext
-                if os.path.isfile(os.path.join(root, crel)):
-                    compiled.setdefault(crel, {"o": rel, "src": "omap"})
-                    mapped = True
-                    break
-            if not mapped:
-                pending_o.append(rel)
+            # a411：同目录同名映射延后到 walk 结束用集合查（原逐 .o
+            # os.path.isfile——网盘上 2.3 万 .o × 每个多次 stat = 数万次
+            # SMB 往返，扫描像卡死）
         else:
             b, ext = os.path.splitext(low)
             if ext in _UNIT_EXTS:
                 unit_by_base.setdefault(b, []).append(rel)
         # 用户令：全部过程显示 1s 一更新、同一行、不刷屏——中间进度走
         # prog()（前端 progress 文本同一行刷新），say() 只留阶段头和终态
+        # a411：min(28,_tot/800) 在 2.2 万文件即顶格 30%，之后进度条假死
+        # ——改渐进逼近 30%（单调递增永不到顶，扫描活着条就动）
         _tot = cmd_count + o_count + len(unit_by_base)
         _now = time.time()
         if _tot and _now - _last_prog >= 1.0:
             _last_prog = _now
-            prog(2 + min(28, _tot / 800),
+            prog(2 + 28.0 * _tot / (_tot + 8000),
                  "扫描中：产物 %d（.cmd %d/.o %d）· 源文件 %d" % (
                      _tot, cmd_count, o_count, len(unit_by_base)))
+    # a411：同目录同名映射（walk 内收集全量集合，set 查零 I/O）
+    for orel in o_files:
+        stem = orel[:-2]
+        for ext in _UNIT_EXTS:
+            crel = stem + ext
+            if crel in all_rels:
+                compiled.setdefault(crel, {"o": orel, "src": "omap"})
+                break
+        else:
+            pending_o.append(orel)
     # basename 全局唯一兜底（out-of-tree）
     for orel in pending_o:
         b = os.path.splitext(os.path.basename(orel))[0].lower()
