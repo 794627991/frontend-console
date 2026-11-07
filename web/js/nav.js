@@ -952,7 +952,8 @@
       // 后端按收录集有无中间文件判：有→白名单，零→全量（唯一降档）。
       // a415R3 BUG-2：勾「整个目录」根行时 dirs=[''] 映射成 '.'
       card._scopeCfg = { version: 1, name: '手选 ' + dirs.length + ' 目录',
-        tier: 'auto', include: dirs.map(d => d || '.'), exclude_names: ['test', 'release_tmp'] };
+        tier: 'auto', manual: true, include: dirs.map(d => d || '.'),
+        exclude_names: ['test', 'release_tmp'] };
       renderSel();            // a415R2 N12：同上
       sel.value = 'cfg';
       _headTxt('收录范围：手选 ' + dirs.length + ' 目录（有中间文件只索引白名单，零中间文件才全量；自动排除 test/release_tmp）——' +
@@ -1012,7 +1013,7 @@
     const t = _h('div', '选择收录目录');
     t.style.cssText = 'font-weight:600;margin-bottom:4px;';
     card.appendChild(t);
-    const hint = _h('div', '勾选目录=该目录全部代码递归收录（不依赖构建产物）。勾了父目录，子目录随父收录；要细化子目录，先取消父目录。建库时自动排除 test/release_tmp 缓存类目录。');
+    const hint = _h('div', '有编译产物的目录按白名单精准收录（快且准）；零产物目录自动整目录兜底；低覆盖目录建库日志会提示。勾了父目录，子目录随父收录；要细化子目录，先取消父目录。自动排除 test/release_tmp。');
     hint.style.cssText = 'font-size:11px;color:var(--muted);margin-bottom:8px;';
     card.appendChild(hint);
     const tree = _h('div');

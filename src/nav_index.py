@@ -454,6 +454,8 @@ def _walk_files(root, subs=None, should_cancel=None, say=None,
     def _worker():
         # try/finally 包全程：取消 return 也不许跳过 _active 递减——否则
         # DONE 永远不发、消费侧死等停滞超时（自审实锤）
+        _soft_errs = [0]   # a423R BUG-3：连续软错误计数——worker 全程
+                           # 跨 sub 累加（每 sub 重置会让多子树分摊绕过闸）
         try:
             while True:
                 try:
@@ -466,10 +468,10 @@ def _walk_files(root, subs=None, should_cancel=None, say=None,
                     # 存在的共享根：scandir=winerror 5，walk=winerror 59/
                     # errno 22）→ 判 SMB 断连整库失败。扩集 {13,22,53,59}，
                     # 但加连续计数闸：真断连时每个待访目录都报错，很快超
-                    # _CONSEC_LIMIT 判真断仍抛错；悬空软链零散几个不触发
-                    _soft_errs = [0]   # 连续软错误计数（跨 sub 累加——
-                                      # 定义在 worker 顶部，循环内重置会丢统计）
-
+                    # _CONSEC_LIMIT 判真断仍抛错；悬空软链零散几个不触发。
+                    # a423R BUG-3：_soft_errs 定义已上移到 while 之前
+                    #（跨 sub 累加）——原在 per-sub 循环内每棵子树重置，
+                    # 55 个软错误分两子树（30+25）即绕过闸静默成功（审计实测）
                     def _on_err(e):
                         we = getattr(e, "winerror", None)
                         en = getattr(e, "errno", None)
@@ -781,13 +783,14 @@ def _norm_scope(cfg, root):
     if cfg.get("arch") is not None and arch not in ("auto", "arm", "arm64"):
         return False, "arch 只认 auto/arm/arm64"
     # a415R2 N18：未知键显式 bad（拼错 include→inlcude 曾静默整根收录）
-    _known = {"version", "name", "tier", "arch", "include"} | set(fields)
+    _known = {"version", "name", "tier", "arch", "include", "manual"} | set(fields)
     _unknown = [k for k in cfg if k not in _known]
     if _unknown:
         return False, "未知字段：%s" % "、".join(_unknown[:5])
     sc = {"version": 1,
           "name": str(cfg.get("name") or "")[:60] or "未命名范围",
           "tier": tier, "arch": arch,
+          "manual": bool(cfg.get("manual")),
           "include": inc, **fields}
     return True, sc
 
@@ -1170,8 +1173,11 @@ def build(root, log=None, progress=None, should_cancel=None,
             # 这些推导，按报告字面强制白名单会让 Python 工程一律报错不可
             # 建。全量收录但**显式告警**（不静默，用户可看到为什么全量）
             sc["tier"] = "full"
+            # a423R BUG-2：计数并上产物目录（.pyc 全在被剪的 __pycache__
+            # 里，散置后缀恒 0——原文案"发现 0 个"自相矛盾）
             say("  ⚠ 发现 %d 个非 C/C++ 中间文件/产物目录（.pyc 等）但暂无法"
-                "推导编译白名单（只支持 Kbuild .cmd/.o）——按全量收录" % _aux_n)
+                "推导编译白名单（只支持 Kbuild .cmd/.o）——按全量收录"
+                % (_aux_n + wstat.get("artifact_dirs", 0)))
         else:
             sc["tier"] = "full"
             say("  收录档位：全量（收录集内未发现任何中间文件——唯一降档条件）")
@@ -1221,6 +1227,27 @@ def build(root, log=None, progress=None, should_cancel=None,
                     _same_h.add((ud + "/" + fn2) if ud else fn2)
         _hdr = _expand_patterns(sc["header_roots"], all_dirs)
         _fb = _expand_patterns(sc["fallback_full"], all_dirs)
+        # a423R BUG-1（审计实锤：手选 [kernel,tools] 时 tools 零单元被静默
+        # 整目录剔除，与选择器"全部代码递归收录"承诺直接矛盾）：手选范围
+        # （manual）按收录目录逐个核覆盖——零单元目录自动整目录兜底；
+        # 低覆盖（<50%）目录显式告警提示用 JSON 配 fallback_full
+        if sc.get("manual"):
+            for d in sc["include"]:
+                if d == ".":
+                    continue
+                dl = d.lower()
+                in_u = sum(1 for u in _units
+                           if u.lower() == dl or u.lower().startswith(dl + "/"))
+                n_code = sum(
+                    1 for r in all_rels
+                    if (r.lower() == dl or r.lower().startswith(dl + "/"))
+                    and os.path.splitext(r)[1].lower() in CODE_EXTS)
+                if n_code and in_u == 0:
+                    _fb.add(dl)
+                    say("  · %s 无编译单元——整目录兜底收录（手选承诺）" % d)
+                elif n_code and in_u < n_code * 0.5:
+                    say("  ⚠ %s 白名单覆盖 %d/%d——如需全收，导入 JSON 配 "
+                        "fallback_full" % (d, in_u, n_code))
         final_files = _units | _same_h \
             | {r for r in all_rels if _under(r.lower(), _hdr)} \
             | {r for r in all_rels if _under(r.lower(), _fb)}
