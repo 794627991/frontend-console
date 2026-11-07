@@ -53,6 +53,21 @@ _SKIP_DIRS = {".git", "node_modules", ".svn", ".hg", ".history", ".cache",
               ".tmp_versions", ".buildroot-ccache", "__pycache__"}
 # a415：收录范围配置文件名（工程根，随 SVN 走团队共享——报告 §九推荐位）
 SCOPE_FILE = ".fcpk-scope.json"
+# a416（内网报告·用户令「只要有白名单一定用白名单」）：非 C/C++ 语言的
+# "中间文件"——收录集出现任意一个即视为编译过，按白名单走不许私自全量
+#   Python: .pyc/.pyo（__pycache__ 目录本身在 _ARTIFACT_DIRS 探测）
+#   JS/TS : .js.map/.d.ts.map/.tsbuildinfo   Java: .class
+#   Go    : .a/.test                          Rust : .d（dep-info）
+_AUX_ARTIFACT_EXTS = (".pyc", ".pyo", ".class", ".tsbuildinfo",
+                      ".js.map", ".d.ts.map", ".a", ".test", ".d")
+# a416：产物目录——存在即算"编译过"（探测计数在剪枝前），内容不索引
+_ARTIFACT_DIRS = {"__pycache__", ".pytest_cache", ".mypy_cache",
+                  ".ruff_cache", "node_modules"}
+# a417（内网报告）：软错误集——悬空符号链接（SMB 解析到不存在共享根：
+# winerror 59/errno 22）与拒绝访问等单点不可读跳过；真断连靠连续计数闸
+_SOFT_ERRNOS = {2, 3, 5, 13, 22, 206, 1920, 1921}
+_SOFT_WINERR = {2, 3, 5, 53, 59, 206, 1920, 1921}
+_CONSEC_LIMIT = 50          # 连续软错误上限：超过=网络真断，仍判失败
 # 浅探测优先下钻的常见代码目录名（大 SDK 里代码藏得深）
 _HINT_DIRS = {"src", "source", "kernel", "linux", "uboot", "u-boot", "drivers",
               "driver", "lib", "app", "include", "open_source", "platform",
@@ -387,6 +402,9 @@ def _walk_files(root, subs=None, should_cancel=None, say=None,
             if _excluded(os.path.relpath(base, root).replace(os.sep, "/").lower()):
                 continue
             l1_ds, b_fs = _scandir(base)
+            # a416：种子层同探测产物目录（L1 在 worker 之前被过滤）
+            stats["artifact_dirs"] = stats.get("artifact_dirs", 0) + sum(
+                1 for d in l1_ds if d.lower() in _ARTIFACT_DIRS)
             l1_ds = [d for d in l1_ds if _keep_dir(d)]
             pre_batches.append((base, b_fs))
             if len(l1_ds) >= N_WORKERS:
@@ -443,15 +461,34 @@ def _walk_files(root, subs=None, should_cancel=None, say=None,
                 except _q.Empty:
                     break
                 try:
-                    # a415R2 N5：onerror 分级——路径不存在/拒绝访问类（2/3/
-                    # 5/206/1920/1921）跳过该子树（对齐修复前 HEAD 行为），
-                    # 其余（SMB 断连等）才记错判扫描不完整
+                    # a415R2 N5 + 内网报告 a417：onerror 分级。原软错误集漏了
+                    # 悬空符号链接（rootfs 的 lib64->/usr/lib 被 SMB 解析到不
+                    # 存在的共享根：scandir=winerror 5，walk=winerror 59/
+                    # errno 22）→ 判 SMB 断连整库失败。扩集 {13,22,53,59}，
+                    # 但加连续计数闸：真断连时每个待访目录都报错，很快超
+                    # _CONSEC_LIMIT 判真断仍抛错；悬空软链零散几个不触发
+                    _soft_errs = [0]   # 连续软错误计数（跨 sub 累加——
+                                      # 定义在 worker 顶部，循环内重置会丢统计）
+
                     def _on_err(e):
                         we = getattr(e, "winerror", None)
-                        if we in (2, 3, 5, 206, 1920, 1921):
+                        en = getattr(e, "errno", None)
+                        if we in _SOFT_WINERR or en in _SOFT_ERRNOS:
+                            _soft_errs[0] += 1
+                            stats["soft_skipped"] = stats.get("soft_skipped", 0) + 1
+                            if _soft_errs[0] > _CONSEC_LIMIT:
+                                _err[0] = e   # 连续爆炸=网络真断
                             return
                         _err[0] = e
                     for r, ds, fs in os.walk(sub, onerror=_on_err):
+                        # a416（用户令·白名单优先）：产物目录存在即算"编译过"
+                        # ——探测计数**在剪枝之前**（__pycache__ 里的 .pyc
+                        # 目录一剪就永远扫不到）；探测完照常剪掉不索引
+                        _arts_hit = sum(1 for d in ds
+                                        if d.lower() in _ARTIFACT_DIRS)
+                        if _arts_hit:
+                            stats["artifact_dirs"] = \
+                                stats.get("artifact_dirs", 0) + _arts_hit
                         ds[:] = [d for d in ds if _keep_dir(d)]
                         # P0-1 环防护（SMB 自链，报告 §2.1）
                         if _loop_prune(r, sub):
@@ -975,6 +1012,7 @@ def build(root, log=None, progress=None, should_cancel=None,
     _src_roots_abs = [os.path.normpath(os.path.join(
         root, s.replace("/", os.sep))) for s in (sc["source_roots"] if sc else [])]
     wstat = {"pruned": 0}
+    _aux_n = 0            # a423：非 C/C++ 中间文件计数（白名单优先判据）
     _last_prog = 0.0    # 用户令：1s 一拍的过程显示计时
     _last_tot = -1      # a412：计数停滞可见——大目录/非代码区穿越时计数
     _last_tot_t = time.time()   # 不动（walk 活着），标签提示"无新增"防误判卡死
@@ -1027,6 +1065,8 @@ def build(root, log=None, progress=None, should_cancel=None,
             # a411：同目录同名映射延后到 walk 结束用集合查（原逐 .o
             # os.path.isfile——网盘上 2.3 万 .o × 每个多次 stat = 数万次
             # SMB 往返，扫描像卡死）
+        elif any(low.endswith(e) for e in _AUX_ARTIFACT_EXTS):
+            _aux_n += 1   # a423：非 C/C++ 中间文件（.pyc/.class/.js.map…）
         else:
             b, ext = os.path.splitext(low)
             if ext in _UNIT_EXTS | {".s"}:   # a415R（审计#7/BUG-A）：.S 汇编单元也进 basename 兜底池
@@ -1109,18 +1149,36 @@ def build(root, log=None, progress=None, should_cancel=None,
             # 海思 out/obj/libtool .libs/产物树 .o 全走这条，撞上必崩
 
     # ③ 档B 最终清单（tier=whitelist）：编译单元 + 同目录头 + header_roots
-    # 无条件全收 + fallback_full 兜底（报告 §4.1）。tier=full/无 scope 走
-    # 全量清单（final_files=None → files.txt 收录 walk 全部）。
-    # a415R（审计#6/BUG-D）：tier=auto 后置到此处——用 index walk 实际
-    # 收录的代码文件数判（原 shallow_probe 封顶 60 恒判 full）
-    if sc and sc["tier"] == "auto":
-        _n_code = sum(1 for r in all_rels
-                      if os.path.splitext(r)[1].lower() in CODE_EXTS)
-        # a415R2 N14/BUG-D2：大库但零产物（未编译检出）时 whitelist 会空
-        # 清单报错误导——有编译产物才升白名单，否则 full
-        sc["tier"] = "whitelist" if (_n_code >= 50000 and compiled) else "full"
-        say("  自动判档：%s（收录集代码文件 %d · 白名单单元 %d）"
-            % (sc["tier"], _n_code, len(compiled)))
+    # 无条件全收 + fallback_full 兜底（报告 §4.1）。
+    # a423（内网报告·用户令「只要有白名单一定用白名单，决不允许私自全建」）
+    # **白名单优先**：收录集内扫到任何中间文件（.cmd/.o/.pyc/.class/
+    # .js.map…或 __pycache__/node_modules 等产物目录）→ 必走白名单，
+    # tier 字段（含显式 full）不再能放行全量；零中间文件=唯一合法降档。
+    # 原 a415R 的"≥5 万代码文件且 compiled"阈值判档作废（H11 实锤：手选
+    # 6 目录 tier=full 私自全建，tags 撑到 841MB）
+    if sc:
+        _has_artifact = bool(compiled) or o_count > 0 or cmd_files > 0 \
+            or bool(_aux_n) or wstat.get("artifact_dirs", 0) > 0
+        if _has_artifact and (compiled or cmd_files or o_count):
+            # C/C++ 白名单可推导（.cmd/.o）→ 必走白名单，tier（含显式
+            # full）不放行——"决不允许私自全建"
+            sc["tier"] = "whitelist"
+            say("  收录档位：白名单（发现 %d 个 .cmd · %d 个 .o · %d 个其他"
+                "中间文件）" % (cmd_files, o_count, _aux_n))
+        elif _has_artifact:
+            # a423 折中：仅非 C/C++ 中间文件（.pyc 等）——白名单暂无法从
+            # 这些推导，按报告字面强制白名单会让 Python 工程一律报错不可
+            # 建。全量收录但**显式告警**（不静默，用户可看到为什么全量）
+            sc["tier"] = "full"
+            say("  ⚠ 发现 %d 个非 C/C++ 中间文件/产物目录（.pyc 等）但暂无法"
+                "推导编译白名单（只支持 Kbuild .cmd/.o）——按全量收录" % _aux_n)
+        else:
+            sc["tier"] = "full"
+            say("  收录档位：全量（收录集内未发现任何中间文件——唯一降档条件）")
+    if wstat.get("soft_skipped"):
+        say("  ⚠ 跳过 %d 个不可读目录（悬空符号链接/权限拒绝——如 rootfs 里"
+            "指向宿主机绝对路径的 usr/lib64，不影响其余子树）"
+            % wstat["soft_skipped"])
     final_files = None
     if sc and sc["tier"] == "whitelist":
         _under = lambda r, ds: any(r == d or r.startswith(d + "/")
@@ -1140,6 +1198,18 @@ def build(root, log=None, progress=None, should_cancel=None,
         # 时原大小写敏感求交全丢）
         _units = {_rel_by_l[u.lower()] for u in compiled.keys()
                   if u.lower() in _rel_by_l}
+        if not _units:
+            # a423（内网报告 3.4）：有中间文件但白名单为空=配置病（多半
+            # source_roots 没写源码根）——明确报错绝不静默降档全量（自动
+            # 降档会让 12 万文件"看起来成功"，用户无从知道配置错了）
+            _hint = ""
+            if cmd_files or o_count:
+                _hint = ("（收录集内扫到 %d 个 .cmd / %d 个 .o，但源路径解析"
+                         "不到收录集内——请检查 source_roots 是否包含源码根，"
+                         "如 kernel/kernel_sdk）" % (cmd_files, o_count))
+            raise RuntimeError(
+                "白名单为空%s。若确实要全量收录，请显式清空 include 或改用"
+                "小工程全量档" % _hint)
         if len(_units) < len(compiled):
             say("  ⚠ %d 个白名单单元在收录集外（产物树源码副本/排除区），"
                 "不进索引" % (len(compiled) - len(_units)))

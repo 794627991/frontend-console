@@ -905,7 +905,8 @@
       ['follow', (sc && sc.source === 'project') ? '跟随工程配置' : (sc && sc.source === 'saved') ? '跟随已存范围' : '自动'],
       ['whitelist', (j.scope_detect && j.scope_detect.kind === 'sbuilder')
         ? '白名单（档B·sbuilder 方案）' : '白名单（档B·需配置）'],
-      ['full', '全量（整个目录）'],
+      // a423：白名单优先——全量档仅在收录集零中间文件时实际生效
+      ['full', '全量（仅收录集零中间文件时生效）'],
     ];
     const renderSel = () => {
       const cfg = card._scopeCfg;
@@ -946,13 +947,15 @@
     bPick.style.cssText = 'padding:2px 10px;font-size:11px;';
     bPick.onclick = () => _scopePick(path, dirs => {
       if (!dirs || !dirs.length) return;
-      // a415R3 BUG-2：勾「整个目录」根行时 dirs=['']——映射成 '.'（原样
-      // 发 include:[''] 会被严校验判"include 为空"建库必败）
+      // a423（内网报告·用户令「只要有白名单一定用白名单」）：手选目录
+      // **不指定档位**（原写死 full=私自全建，H11 实锤 841MB tags）——
+      // 后端按收录集有无中间文件判：有→白名单，零→全量（唯一降档）。
+      // a415R3 BUG-2：勾「整个目录」根行时 dirs=[''] 映射成 '.'
       card._scopeCfg = { version: 1, name: '手选 ' + dirs.length + ' 目录',
-        tier: 'full', include: dirs.map(d => d || '.'), exclude_names: ['test', 'release_tmp'] };
+        tier: 'auto', include: dirs.map(d => d || '.'), exclude_names: ['test', 'release_tmp'] };
       renderSel();            // a415R2 N12：同上
       sel.value = 'cfg';
-      _headTxt('收录范围：手选 ' + dirs.length + ' 目录（全量收录所选，自动排除 test/release_tmp 缓存类目录）——' +
+      _headTxt('收录范围：手选 ' + dirs.length + ' 目录（有中间文件只索引白名单，零中间文件才全量；自动排除 test/release_tmp）——' +
         dirs.slice(0, 4).join('、') + (dirs.length > 4 ? ' 等' : ''));
       showBanner('已选 ' + dirs.length + ' 个目录（整目录递归收录），点「建立索引」生效', 3500);
     });
