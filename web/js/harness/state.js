@@ -29,6 +29,7 @@ let _hgScrollBottom;   // scrollBottom → _hgScrollBottom
 let _codeIO;
 let _hgLeftNearBottom;
 let _hgCtxInFlight;
+let _hgCtxPollPending;   // 在途期间被请求的补跑（applyModel 立即拉取不被吞）
 let _histBusy;
 let queueEl;
 let quoteEl;

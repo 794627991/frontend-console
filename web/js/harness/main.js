@@ -1724,6 +1724,7 @@ function buildClaudeHarnessTab(opts = {}) {
         // 会话总数单调增长（同 sid 被重新 attach 还会命中已删遗留值）
         if (_HG.ctxWinBy) delete _HG.ctxWinBy[sid];
         if (_HG.ctxBadMaxBy) delete _HG.ctxBadMaxBy[sid];
+        if (_HG.modelBySid) delete _HG.modelBySid[sid];
         // 二轮 P1-2：v4 权威快照垫片键随会话删清（数十~数百 KB/会话，
         // WebView2 同源 ~5MB 配额，不删则 a60R 冷启垫片静默失效）
         try { localStorage.removeItem('hg_v4snap:' + sid + ':main'); } catch(_) {}

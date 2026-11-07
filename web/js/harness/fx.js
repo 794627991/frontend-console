@@ -100,8 +100,9 @@
     // 绝不复用别的会话的值
     const authWin = (sid && _HG.ctxWinBy && _HG.ctxWinBy[sid]) || 0;
     const authBad = (sid && _HG.ctxBadMaxBy && _HG.ctxBadMaxBy[sid]) || 0;
-    const bootWin = authWin > 0 ? authWin
-      : (/1m/i.test(mname) ? 1000000 : _HG_CTX_FALLBACK);
+    // 注：分母不再有「按名字猜」的兜底——无权威窗口时宁可不画百分比，
+    // 也不拿 256K/1M 猜（settings 500K + 名字不含 1m 时 400K 会画成 100%红条），
+    // 权威值由必然到达的 5s /ctx 补上
     // 恢复判据同样按 badMax（模型真实能力），不能用显示分母——否则
     // (settings, 实报] 的合法用量切回会话时会被整段画 0，出现「先清零再涨」。
     // 无任何权威 badMax（冷启动、a423 之前的老记忆）时不用旧显示分母判坏：
@@ -133,13 +134,15 @@
     // 分母优先沿用 v.max（来自 /ctx 权威 window，不是按名字猜的）；归属未知
     // 时丢掉它会让默认 CLI 环境（mname 恒空）每次冷启动都退 256K，把 1M
     // 会话的 720K 画成 100% 红条
-    _hgDrawCtxRing(showUsed, canUse ? (v.max || authWin) : bootWin);
+    _hgDrawCtxRing(showUsed, canUse ? (v.max || authWin) : 0);
     // 画 0 同样必须落账：只重画不回写，记忆里留着旧 used → 侧栏胶囊/详情
     // 继续显示旧百分比（同屏矛盾），且 5s /ctx 的清环判据 cur 已被置 0
     // → 永不触发，矛盾冻结到下一轮真实 usage。
     // 但「仅分母未知」时不清：那只是 applyModel 刚作废旧分母，真值还在，
-    // 清掉就是在等 /ctx 的几秒内把读数销毁（侧栏跟着变空）
-    if (badIsh) _hgCtxSave(sid, 0, bootWin, effBad, mname);
+    // 清掉就是在等 /ctx 的几秒内把读数销毁（侧栏跟着变空）。
+    // 分母不写 bootWin：那是按名字猜的，写进去会变成下一轮的「权威分母」；
+    // 传 0 让下次同样走「分母未知不画」，等 /ctx
+    if (badIsh) _hgCtxSave(sid, 0, authWin, effBad, mname);
     // v2.20：记忆里的 max 可能是旧代码存的 256K 兜底值（1M 模型被压成
     // /256K、84% 虚报，用户实测）——恢复路径同样按权威窗口校正并写回。
     // 归属不符（切过模型）不写回：否则会把该会话原本正确的记忆也污染。
@@ -155,6 +158,19 @@
     }
   }
   function _hgDrawCtxRing(used, ctxMax, note) {
+    // 分母未知（applyModel 作废旧分母后等 /ctx）：不画百分比。若退回按名字
+    // 猜的 256K 顶上去，settings 500K 会话的 400K 会画成 100% 红条，且实时链
+    // 会把这个假分母当 ctxRing.max 继续用
+    if (!(ctxMax > 0)) {
+      _hgCostEl.innerHTML =
+        `<svg class="hg-ctx-ring" viewBox="0 0 24 24">` +
+        `<circle cx="12" cy="12" r="10" fill="none" stroke="var(--border)" stroke-width="3"/></svg>`;
+      _hgCostEl.classList.remove('warn');
+      _HG.ctxRing = { used: 0, max: 0 };
+      _hgDynDirty();
+      if (!_hgCostEl._hgCtxCardBound) _hgCtxCardBind();
+      return;
+    }
     const pct = Math.min(100, used / ctxMax * 100);
     // v2.6：viewBox 与 CSS 显示尺寸一致（24），r=10 + stroke 3 → 直径 23 < 24 不裁边；
     // 此前 r=9 贴 viewBox 边缘，缩放裁切导致"圆环爆掉"
@@ -174,20 +190,22 @@
     _hgCostEl.classList.toggle('warn', pct >= 80);
     _HG.ctxRing = { used: used, max: ctxMax };
     _hgDynDirty();   // v2.32 面板：上下文行跟随（localStorage 即数据总线，零新轮询）
-    // a1375：悬浮即显容量卡（用户拍板：替代点击弹出）。进出双向短延迟：
-    // 快速扫过不闪卡（入 180ms）、滑向卡片途中不误关（出 260ms——卡片贴
-    // 圆环上方，间隙极小）；innerHTML 重画只换子节点不杀父监听，绑一次即可
-    if (!_hgCostEl._hgCtxCardBound) {
-      _hgCostEl._hgCtxCardBound = true;
-      _hgCostEl.addEventListener('mouseenter', function () {
-        clearTimeout(_hgCtxHoverT);
-        _hgCtxHoverT = setTimeout(_hgCtxCardOpen, 180);
-      });
-      _hgCostEl.addEventListener('mouseleave', function () {
-        clearTimeout(_hgCtxHoverT);
-        _hgCtxHoverT = setTimeout(_hgCtxCardClose, 260);
-      });
-    }
+    _hgCtxCardBind();
+  }
+  // 悬浮弹容量卡（a1375 用户拍板）。进出双向短延迟：快速扫过不闪卡（入
+  // 180ms）、滑向卡片途中不误关（出 260ms）；innerHTML 重画只换子节点不杀
+  // 父监听，绑一次即可
+  function _hgCtxCardBind() {
+    if (_hgCostEl._hgCtxCardBound) return;
+    _hgCostEl._hgCtxCardBound = true;
+    _hgCostEl.addEventListener('mouseenter', function () {
+      clearTimeout(_hgCtxHoverT);
+      _hgCtxHoverT = setTimeout(_hgCtxCardOpen, 180);
+    });
+    _hgCostEl.addEventListener('mouseleave', function () {
+      clearTimeout(_hgCtxHoverT);
+      _hgCtxHoverT = setTimeout(_hgCtxCardClose, 260);
+    });
   }
   function renderCtxRing(o) {
     const u = o.usage || {};
@@ -249,7 +267,10 @@
                (typeof o.badMax === 'number' && o.badMax > 0 ? o.badMax : 0), '');
   }
   function _hgCtxPoll() {
-    if (!_HG.sid || _hgCtxInFlight) return;
+    if (!_HG.sid) return;
+    // 在途时不丢请求，记 pending，完成后补跑一次——applyModel 作废旧分母
+    // 后靠这次立即拉取恢复，撞上定时轮询就会白等满 5s
+    if (_hgCtxInFlight) { _hgCtxPollPending = true; return; }
     const sid = _HG.sid;
     _hgCtxInFlight = true;
     fetch('/api/harness/ctx?sid=' + encodeURIComponent(sid))
@@ -334,7 +355,10 @@
                         badMax: j.badMax,
                         modelUsage: win ? { _w: { contextWindow: win } } : null });
       }).catch(() => {})
-      .finally(() => { _hgCtxInFlight = false; });
+      .finally(() => {
+        _hgCtxInFlight = false;
+        if (_hgCtxPollPending) { _hgCtxPollPending = false; _hgCtxPoll(); }
+      });
   }
   // ---- a154：上下文容量卡（仿 ZCode，用户需求）----------------------------
   // 数据零新增：用量=ctxRing+liveToks（a153 实时链）、缓存命中率=v4feed

@@ -272,8 +272,10 @@
               delete rec.badMax;
               localStorage.setItem(k, JSON.stringify(rec));
             } catch (_) {}
-            // 立即拉一次权威窗口，别让「分母已作废」的空白态等满 5s
-            // 立即拉一次权威窗口，别让「分母已作废」的空白态等满 5s
+            // 立即拉一次权威窗口，别让「分母已作废」的空白态等满 5s。
+            // 同时清掉旧 SVG：只清内存不重画，圆环会停在上一帧的旧百分比，
+            // 与胶囊空白、容量卡「首轮回复后统计」三处不一致
+            try { if (msid === _HG.sid) _hgDrawCtxRing(0, 0); } catch (_) {}
             try { _hgCtxPoll(); } catch (_) {}
             // 会话列表放在成功之后再刷：先刷会在 set_model 落盘前读到旧
             // meta.model（GET 先于 POST 返回），把陈旧名灌回 _HG.sessions

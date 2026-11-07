@@ -1169,23 +1169,21 @@
       // 签名）——单轮真实用量物理不可能超窗。renderCtxRing 早有此守卫
       // （v2.20），ctxLive 这条路漏了：累计值直写环=恒 100% 红条。超窗即
       // 判坏数据丢弃，环保留 jsonl 真值（5s 轮询链）。
-      // 判据只用会话级权威 badMax（ctxBadMaxBy，由 /ctx 按 sid 写入）。
-      // a430：缓存缺失时**不要**回落到 ctxRing.max——那正是本注释禁止的
-      // 显示分母，切模型后它是上一个模型的窗口（1M→256K 会把 700K 判坏归零，
-      // 256K→1M 会把 300K 放行画 3%）。
-      // a431：缺失时也**不能放行绘制**——restore 期间 ctxBadMaxBy 为空（冷
-      // 启动），首帧 ctxLive 若是累计口径会直写环画满环红条并污染真值锚
-      // （= a255 假 100% 回归）。
-      // a432：兜底不能用固定 2M——实测累计口径约 1.4M（20 轮×70K），2M 拦
-      // 不住，等于放行。改为取 min(2M, 本会话已知窗口)——1M 或 500K 的会话
-      // 上，单轮真值物理不可能超过窗口，超过即累计口径
+      // 判据优先级：会话级权威 badMax（/ctx 写）→ 持久化记忆里的阈值/分母
+      // → 当前环分母。都不要用固定 2M：实测累计口径约 1.4M（20 轮×70K），
+      // 2M 拦不住等于放行（a255 假 100% 回归面）。
+      // 注意 ctxWinBy 与 ctxBadMaxBy 由同一 /ctx 响应写入，前者有值后者必有值，
+      // 拿窗口当第二源是死分支（a432 的错误修法）
       var _bmBy = _HG.ctxBadMaxBy || {};
       var _bm = (_HG.sid && _bmBy[_HG.sid]) || 0;
       if (!(_bm > 0)) {
-        var _gw = (_g('_hgCtxWinGet') || function () { return 0; })();
-        _bm = (_gw > 0 && _gw < 2097152) ? _gw : 2097152;
+        try {
+          var _rec = JSON.parse(localStorage.getItem('hg-ctx:' + _HG.sid) || 'null');
+          if (_rec) _bm = (_rec.badMax > 0 ? _rec.badMax : (_rec.max || 0));
+        } catch (e) {}
       }
-      if (live > 0 && live > _bm) {
+      if (!(_bm > 0) && _HG.ctxRing && _HG.ctxRing.max > 0) _bm = _HG.ctxRing.max;
+      if (live > 0 && (!(_bm > 0) || live > _bm)) {
         live = 0;
         t.ctxLive = 0;
       }
@@ -1198,8 +1196,7 @@
         var _tru = live > 0 ? live : _HG.ctxRing.used;
         // 真值锚同样要过同一阈值：live=0 时取的是上一帧的环值，若那帧已被
         // 累计口径污染过，这里会把坏值一直当锚传下去
-        if (!(_tru > 0) || _tru > _bm) _tru = 0;
-        if (_tru <= 0) _HG.ctxRing.used = 0;   // 锚被否时环也归零，别留脏值
+        if (!(_tru > 0) || (_bm > 0 && _tru > _bm)) _tru = 0;
         var base = _tru;
         // v4.1：估值只在 busy 叠加——原「est !== _oldLive」分支让回合结束
         // 后迟到的 tps 尾帧再叠一次残留 liveToks（下一拍归零），回合收尾
