@@ -124,17 +124,23 @@
     // 但阈值不采信旧值）。分母缺失（v.max=0 且无 authWin）时也不可用——
     // 否则按名字猜的 256K 会把 400K 画成 100% 红条，而胶囊/详情读
     // hg-ctx（max 回落 256K）会跟着一起错
-    const denomKnown = !!(v && ((v.max || 0) > 0 || authWin > 0));
+    // 分母必须有权威出处才可信：本会话 /ctx 的窗口，或「归属可信 + 记忆带
+    // 权威 badMax」（两者同一次 /ctx 写入，可互相印证）。旧版本留下的 max
+    // 是按名字猜的 256K 兜底值（1M 会话写 700K 就是 273% 满环红条），
+    // 拿它当分母比不画更糟
+    const denomAuth = !!(authWin > 0 ||
+      (ownTrusted && v && v.badMax > 0 && v.max > 0));
     // 判坏 / 归属不符 → 该清；仅仅「分母未知」不算坏，值本身可能是好的
     const badIsh = !!(v && v.used > 0 &&
       (mismatch || v.used > restoreBad));
     const canUse = !!(v && v.used > 0 && v.used <= restoreBad && !mismatch
-                      && denomKnown);
+                      && denomAuth);
     const showUsed = canUse ? v.used : 0;
-    // 分母优先沿用 v.max（来自 /ctx 权威 window，不是按名字猜的）；归属未知
-    // 时丢掉它会让默认 CLI 环境（mname 恒空）每次冷启动都退 256K，把 1M
-    // 会话的 720K 画成 100% 红条
-    _hgDrawCtxRing(showUsed, canUse ? (v.max || authWin) : 0);
+    // 分母优先用 authWin（权威窗口），其次才是记忆里带 badMax 印证的值。
+    // 值不可用（判坏/无用量）但有权威分母时传 authWin：_hgDrawCtxRing 对
+    // used<=0 只画底轨、不渲染百分比文本，容量卡据此显示「首轮回复后统计」
+    // 而不是「等待窗口」（分母其实已知）
+    _hgDrawCtxRing(showUsed, (canUse ? (authWin || v.max) : authWin) || 0);
     // 画 0 同样必须落账：只重画不回写，记忆里留着旧 used → 侧栏胶囊/详情
     // 继续显示旧百分比（同屏矛盾），且 5s /ctx 的清环判据 cur 已被置 0
     // → 永不触发，矛盾冻结到下一轮真实 usage。
@@ -153,11 +159,11 @@
     // used 必须复用上面的判据：信任已判坏的旧值会「先画 0 再满环」并
     // 把坏值重新持久化
     if (authWin > 0 && !mismatch && ((v && v.max) || 0) !== authWin) {
-      // 分母刚被校正，此处才是「可以画用量」的时机（denomKnown 挡住的分母缺失
-      // 分支在这里补上）；showUsed 已按阈值过滤，坏值不会复活。
-      // showUsed=0 说明值被判坏/不可用，此时保持空环——画「0%」会被读成
-      // 「上下文被清空」，与胶囊空白、卡「首轮回复后统计」的语义不一致
-      _hgDrawCtxRing(showUsed, showUsed > 0 ? authWin : 0);
+      // 分母刚被校正，此处才是「可以画用量」的时机（denomAuth 挡住的分母
+      // 不可信分支在这里补上）；showUsed 已按阈值过滤，坏值不会复活。
+      // 分母已知时一律传 authWin：used<=0 时 _hgDrawCtxRing 只画底轨不渲染
+      // 百分比，容量卡据此显示「首轮回复后统计」而不是「等待窗口」
+      _hgDrawCtxRing(showUsed, authWin);
       // model 只在有名字时写，否则保留记忆里的旧归属，避免把归属
       // 信息抹成空串、下次再也判不出「切过模型」
       _hgCtxSave(sid, showUsed, authWin, effBad, mname || (v && v.model) || '');
@@ -181,19 +187,25 @@
     // v2.6：viewBox 与 CSS 显示尺寸一致（24），r=10 + stroke 3 → 直径 23 < 24 不裁边；
     // 此前 r=9 贴 viewBox 边缘，缩放裁切导致"圆环爆掉"
     const VB = 24, R = 10, C = 2 * Math.PI * R;
-    const col = pct >= 95 ? 'var(--neon-red, #e06c75)'
+    // 分母已知但还没有用量（新会话 / 压缩后 / 判坏清 0）：只画底轨，不渲染
+    // 百分比文本——「0%」会被读成「上下文被清空」，而真实语义是「还没统计」
+    const noUsed = !(used > 0);
+    const col = noUsed ? 'var(--accent)'
+              : pct >= 95 ? 'var(--neon-red, #e06c75)'
               : pct >= 80 ? 'var(--neon-orange, #d29922)' : 'var(--accent)';
     _hgCostEl.innerHTML =
       `<svg class="hg-ctx-ring" viewBox="0 0 ${VB} ${VB}">` +
       `<circle cx="${VB / 2}" cy="${VB / 2}" r="${R}" fill="none" stroke="var(--border)" stroke-width="3"/>` +
-      `<circle cx="${VB / 2}" cy="${VB / 2}" r="${R}" fill="none" stroke="${col}" stroke-width="3"` +
-      ` stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - pct / 100)}"` +
-      ` stroke-linecap="round" transform="rotate(-90 ${VB / 2} ${VB / 2})"/></svg>` +
-      `<span class="hg-ctx-pct">${Math.round(pct)}%</span>`;
+      (noUsed ? '' :
+        `<circle cx="${VB / 2}" cy="${VB / 2}" r="${R}" fill="none" stroke="${col}" stroke-width="3"` +
+        ` stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - pct / 100)}"` +
+        ` stroke-linecap="round" transform="rotate(-90 ${VB / 2} ${VB / 2})"/>`) +
+      `</svg>` +
+      (noUsed ? '' : `<span class="hg-ctx-pct">${Math.round(pct)}%</span>`);
     // a1375（用户拍板）：纯文本 title 废止——悬浮直接弹容量卡（下方 hover
     // 绑定），卡片内容是 title 的超集（TPS/子代理/估值明细都在卡内）；
     // 「已压缩待首轮」类状态由卡片头部「首轮回复后统计」分支承担
-    _hgCostEl.classList.toggle('warn', pct >= 80);
+    _hgCostEl.classList.toggle('warn', !noUsed && pct >= 80);
     _HG.ctxRing = { used: used, max: ctxMax };
     _hgDynDirty();   // v2.32 面板：上下文行跟随（localStorage 即数据总线，零新轮询）
     _hgCtxCardBind();
@@ -243,13 +255,17 @@
       let rec = null;
       try { rec = JSON.parse(localStorage.getItem(_hgCtxKey(_HG.sid)) || 'null') || {}; } catch(_) { rec = {}; }
       const cur = (o.model || _HG.model || '').toLowerCase();
-      if (rec.max && cur && (rec.model || '').toLowerCase() === cur) {
+      // 记忆分母要带 badMax 印证（同一次 /ctx 写入）才算权威；旧版本存的
+      // 256K 兜底值没有 badMax，按它画就是猜测分母
+      if (rec.max > 0 && rec.badMax > 0 && cur &&
+          (rec.model || '').toLowerCase() === cur) {
         ctxMax = rec.max;
       } else {
-        ctxMax = /1m/.test(cur) ? 1000000 : _HG_CTX_FALLBACK;
+        // 不再按名字猜：宁可不画，等 5s /ctx 给权威窗口
+        return;
       }
     } else {
-      ctxMax = _HG_CTX_FALLBACK;
+      return;   // 无会话：没有权威分母，不画
     }
     // v2.20（3.png 假 100%）：used 远超窗 = 网关把全会话累计口径塞进了
     // 单轮 usage（实测 ~20 轮 × ~70K ≈ 1.4M，clamp 后恒显 100%）。单轮真实

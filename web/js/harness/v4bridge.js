@@ -1178,10 +1178,14 @@
       var _bm = (_HG.sid && _bmBy[_HG.sid]) || 0;
       if (!(_bm > 0)) {
         try {
+          // 只认 badMax：记忆里的 max 可能是旧代码按名字猜的兜底值
+          // （1M 会话存 256K → 420K 被当坏数据丢弃），有权威 badMax
+          // 才有 max，反之不成立
           var _rec = JSON.parse(localStorage.getItem('hg-ctx:' + _HG.sid) || 'null');
-          if (_rec) _bm = (_rec.badMax > 0 ? _rec.badMax : (_rec.max || 0));
+          if (_rec && _rec.badMax > 0) _bm = _rec.badMax;
         } catch (e) {}
       }
+      // 末级用当前显示分母：fx.js 只在分母权威时才会写进 ctxRing
       if (!(_bm > 0) && _HG.ctxRing && _HG.ctxRing.max > 0) _bm = _HG.ctxRing.max;
       if (live > 0 && (!(_bm > 0) || live > _bm)) {
         live = 0;

@@ -2150,7 +2150,7 @@ function buildClaudeHarnessTab(opts = {}) {
 
   // ==================== 初始 ====================
   showWelcome();
-  _hgDrawCtxRing(0, _HG_CTX_FALLBACK);   // v2.20：上下文环常态显示（0% 占位）
+  _hgDrawCtxRing(0, 0);   // 启动占位：分母未知（0=等 /ctx），放 256K 会被实时链当分母画假百分比
   (async () => {
     await refreshSessions();
     const last = _HG.sessions.find(s => s.has_history);
