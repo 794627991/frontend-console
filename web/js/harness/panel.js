@@ -116,7 +116,7 @@
     // 上下文%（hg-ctx localStorage 是数据总线——_hgDrawCtxRing 触发 renderSideStatus）
     const cxEl = c.querySelector('[data-hg-caps-ctx]');
     if (cxEl) {
-      let ctxTxt = '';
+      let ctxTxt = '', ctxWarn = false;
       if (_HG.sid) {
         try {
           const v = JSON.parse(localStorage.getItem('hg-ctx:' + _HG.sid) || 'null');
@@ -126,11 +126,14 @@
             const pct = Math.min(100,
               Math.round(v.used / (v.max || 256000) * 100));
             ctxTxt = pct + '%';
-            cxEl.classList.toggle('warn', pct >= 80);
+            ctxWarn = pct >= 80;
           }
         } catch(_) {}
       }
       cxEl.textContent = ctxTxt;
+      // warn 必须无条件重算：清环写回 used=0 后若只在 if 内 toggle，
+      // 空白文字会留着上一拍的橙/红警示配色
+      cxEl.classList.toggle('warn', ctxWarn);
     }
     // bug5③ 兜底脉冲：子代理运行中且窗格未开（用户可能没注意到分屏已收）。
     // v3.2.31R（复审5）：判定收紧为 ==='flex'（_subShow 的唯一打开态）——

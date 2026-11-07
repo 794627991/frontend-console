@@ -45,6 +45,17 @@
   }
   const _HG_CTX_FALLBACK = 256000;
   function _hgCtxKey(sid) { return 'hg-ctx:' + sid; }
+  // 记忆落账唯一出口。侧栏胶囊（panel.js）与容量卡详情直接读 hg-ctx，只重画
+  // 圆环不落账会出现「圆环 0% / 侧栏旧值」同屏矛盾，且坏值刷新即复活
+  function _hgCtxSave(sid, used, max, badMax, model) {
+    if (!sid) return;
+    const rec = {used: used, max: max};
+    // 无权威阈值时不写该键（沿用 Infinity 物理上界），但绝不把记忆里
+    // 已有的权威 badMax 降级掉——降级会让下次恢复少判一拍
+    if (badMax > 0) rec.badMax = badMax;
+    rec.model = model || '';
+    try { localStorage.setItem(_hgCtxKey(sid), JSON.stringify(rec)); } catch(_) {}
+  }
   // 本会话的后端权威窗口（未收到过 = 0，交由实报/记忆/名字兜底）
   function _hgCtxWinGet() {
     const m = _HG.ctxWinBy;
@@ -75,25 +86,27 @@
     // （已知模型最大窗 1M），超过必是「全会话累计口径」坏值，直接判 0；
     // 边界内先按记忆原样显示，精确判坏交给必到的 5s /ctx
     const authBadKnown = authBad > 0 || (v && v.badMax);
+    const effBad = authBad > 0 ? authBad : ((v && v.badMax) || 0);
     const _CTX_PHYS_MAX = 2097152;
-    const restoreBad = authBadKnown
-      ? (authBad > 0 ? authBad : v.badMax)
+    const restoreBad = authBadKnown ? effBad
       : ((v && v.used > _CTX_PHYS_MAX) ? 0 : Infinity);
-    if (v && v.used > 0 && v.used <= restoreBad && sameModel)
-      _hgDrawCtxRing(v.used, v.max || bootWin);
-    else _hgDrawCtxRing(0, bootWin);
+    // 记忆可用 = 值在阈值内 + 同一模型（切过模型时旧记忆是另一个模型的读数）
+    const canUse = !!(v && v.used > 0 && v.used <= restoreBad && sameModel);
+    const showUsed = canUse ? v.used : 0;
+    const showMax = canUse ? (v.max || bootWin) : bootWin;
+    _hgDrawCtxRing(showUsed, showMax);
+    // 画 0 同样必须落账：只重画不回写，记忆里留着旧 used → 侧栏胶囊/详情
+    // 继续显示旧百分比（同屏矛盾），且 5s /ctx 的清环判据 cur 已被置 0
+    // → 永不触发，矛盾冻结到下一轮真实 usage
+    if (v && v.used > 0 && !canUse) _hgCtxSave(sid, 0, bootWin, effBad, mname);
     // v2.20：记忆里的 max 可能是旧代码存的 256K 兜底值（1M 模型被压成
     // /256K、84% 虚报，用户实测）——恢复路径同样按权威窗口校正并写回。
     // 归属不符（切过模型）不写回：否则会把该会话原本正确的记忆也污染。
     // used 必须复用上面的判据：信任已判坏的旧值会「先画 0 再满环」并
     // 把坏值重新持久化
     if (authWin > 0 && sameModel && ((v && v.max) || 0) !== authWin) {
-      const used = (v && v.used > 0 && v.used <= restoreBad) ? v.used : 0;
-      _hgDrawCtxRing(used, authWin);
-      try {
-        localStorage.setItem(_hgCtxKey(sid), JSON.stringify(
-          {used, max: authWin, badMax: authBad || undefined, model: mname}));
-      } catch(_) {}
+      _hgDrawCtxRing(showUsed, authWin);
+      _hgCtxSave(sid, showUsed, authWin, effBad, mname);
     }
   }
   function _hgDrawCtxRing(used, ctxMax, note) {
@@ -179,9 +192,8 @@
       ? o.badMax : ctxMax;
     if (used > guardMax) return;
     _hgDrawCtxRing(used, ctxMax);
-    if (_HG.sid) { try { localStorage.setItem(_hgCtxKey(_HG.sid), JSON.stringify(
-      {used, max: ctxMax, badMax: (o.badMax > 0 ? o.badMax : guardMax),
-       model: o.model || _HG.model || ''})); } catch(_) {} }
+    _hgCtxSave(_HG.sid, used, ctxMax,
+               (o.badMax > 0 ? o.badMax : guardMax), o.model || _HG.model || '');
   }
   function _hgCtxPoll() {
     if (!_HG.sid || _hgCtxInFlight) return;
@@ -219,21 +231,22 @@
         if (!(j.used > 0)) {
           if (j.compacted) {
             _hgDrawCtxRing(0, cw, '上下文已压缩 · 首轮回复后统计');
+            // 落账：否则侧栏胶囊/详情仍按记忆显示压缩前的百分比
+            _hgCtxSave(sid, 0, cw, j.badMax, j.model || _HG.model || '');
           } else {
-            // 后端判坏归零：恢复路径在无权威 badMax 时放行过坏值，这里用
-            // 后端权威阈值主动清环。没权威判据（badMax/win 皆 0）绝不动环——
-            // 否则超窗续命的空响应会把合法读数清掉
-            const authBad = j.badMax > 0 ? j.badMax : (win > 0 ? win : 0);
-            const cur = _HG.ctxRing && _HG.ctxRing.used;
-            if (authBad > 0 && cur > authBad) {
+            // 清环阈值只认后端权威 j.badMax：win 可能是「!win 且模型名含
+            // 1m」按**全局** _HG.model 猜出来的，不当判据
+            // 环值取「当前环」与「记忆」的较大者：恢复阶段判坏会先把
+            // ctxRing.used 置 0，只比环值永远不成立 → 记忆旧值永不清理
+            let memUsed = 0;
+            try {
+              const rec = JSON.parse(localStorage.getItem(_hgCtxKey(sid)) || 'null');
+              if (rec && rec.used > 0) memUsed = rec.used;
+            } catch(_) {}
+            const cur = Math.max((_HG.ctxRing && _HG.ctxRing.used) || 0, memUsed);
+            if (j.badMax > 0 && cur > j.badMax) {
               _hgDrawCtxRing(0, cw);
-              // 必须落账：侧栏胶囊/容量卡详情直接读 hg-ctx 记忆，
-              // 只重画圆环会「圆环 0% / 侧栏 100%」同屏矛盾，且坏值
-              // 刷新即复活，_hgCtxRestore 又画满环 → 每 5s 循环一次
-              try { localStorage.setItem(_hgCtxKey(sid), JSON.stringify(
-                { used: 0, max: cw,
-                  badMax: j.badMax > 0 ? j.badMax : undefined,
-                  model: j.model || _HG.model || '' })); } catch (_) {}
+              _hgCtxSave(sid, 0, cw, j.badMax, j.model || _HG.model || '');
             }
           }
           return;
@@ -253,9 +266,8 @@
           if (j.used <= bad && j.used > (_HG.ctxRing.used || 0)) {
             _HG.ctxRing.used = j.used;
           }
-          try { localStorage.setItem(_hgCtxKey(sid), JSON.stringify(
-            { used: _HG.ctxRing.used, max: win || _HG.ctxRing.max,
-              badMax: bad, model: j.model || _HG.model || '' })); } catch (_) {}
+          _hgCtxSave(sid, _HG.ctxRing.used, win || _HG.ctxRing.max, bad,
+                     j.model || _HG.model || '');
           return;
         }
         renderCtxRing({ usage: { input_tokens: j.used },
