@@ -783,23 +783,35 @@ def _write_offline_manifest():
                       "url": "https://www.onlyoffice.com/download.aspx",
                       "note": "DS 安装器；在线安装用官方 download.aspx 直链"})
     for kind, sub in (("claude", "claude-code"), ("bili", "bili"),
-                      ("webview2", "webview2")):
+                      ("webview2", "webview2"), ("codegraph", "codegraph")):
         d = os.path.join(A, sub)
         if not os.path.isdir(d):
             continue
         n, sz = _dirstat(d)
+        # a419（用户实锤：codegraph 条目被 manifest 刷新静默丢掉）：a386 只
+        # 手工补了条目、没教本扫描器——刷新即丢。codegraph 平台 bundle 的
+        # package.json 在 lib/ 下（node.exe+lib 布局），先 lib 后根兜底
+        _v = _pkgver(d)
+        if kind == "codegraph" and not _v:
+            _v = _pkgver(os.path.join(d, "lib"))
         items.append({
             "kind": kind, "dir": sub + "/", "files": n, "size": sz,
-            "version": (_pkgver(d) if kind in ("claude", "bili") else
+            "version": (_v if kind in ("claude", "bili", "codegraph") else
                         (sorted(os.listdir(d))[0] if kind == "webview2"
                          and os.listdir(d) else "")),
             "url": ("https://www.npmjs.com/package/@anthropic-ai/claude-code"
                     if kind == "claude" else
                     "https://www.npmjs.com/package/billion-context"
                     if kind == "bili" else
+                    "https://www.npmjs.com/package/@colbymchenry/codegraph"
+                    if kind == "codegraph" else
                     "tools/fetch_webview2_fixed.py 按版本下载（微软已下架直链）"),
-            "note": "npm 包整树镜像" if kind in ("claude", "bili")
-                    else "Fixed Version 运行时，恢复脚本见 url",
+            "note": ("npm 包整树镜像" if kind in ("claude", "bili") else
+                     "发布机 npm i -g @colbymchenry/codegraph 后跑 "
+                     "src/build.py _refresh_offline_codegraph 恢复"
+                     "（平台 bundle win32-x64：node.exe+lib 自带运行时）"
+                     if kind == "codegraph" else
+                     "Fixed Version 运行时，恢复脚本见 url"),
         })
     pd = os.path.join(A, "pydeps")
     if os.path.isdir(pd):
@@ -810,6 +822,20 @@ def _write_offline_manifest():
                           "size": sz, "wheels": wheels,
                           "url": "pip download（requirements 见 wheel 名）",
                           "note": "离线 wheel 池，在线安装走 pip"})
+    # a419：丢项告警——新清单比旧清单少的 kind 且本体仍在盘上=扫描器没认出
+    # （codegraph 静默丢失实锤），必须大声报出来而不是静默写盘等提交
+    _mf_path = os.path.join(A, "MANIFEST.json")
+    try:
+        _old = json.load(open(_mf_path, encoding="utf-8"))
+        _old_kinds = {it.get("kind") for it in (_old.get("items") or [])}
+        _new_kinds = {it.get("kind") for it in items}
+        for _k in sorted(_old_kinds - _new_kinds):
+            print("manifest: ⚠ 旧清单有 %s 条目但本次扫描未产出（本体在盘？"
+                  "扫描器不认识该目录）——已保留旧条目防丢" % _k)
+            _keep = next(it for it in _old["items"] if it.get("kind") == _k)
+            items.append(_keep)
+    except Exception:
+        pass
     mf = {"updated": time.strftime("%Y-%m-%d %H:%M:%S"), "items": items,
           "note": "资源本体不入 git；本清单入库。新检出机器按各 item 的 "
                   "url/note 恢复 offline_assets/ 后才能打离线包。"}
