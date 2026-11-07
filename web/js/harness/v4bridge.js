@@ -1203,7 +1203,10 @@
         // 瞬间读数先涨后落（用户实锤「途中跳变」的收尾变体）
         if (_HG.busy && est > 0) base += est;
         try { _rr(base, _HG.ctxRing.max); } catch (e) {}
-        _HG.ctxRing.used = _tru;
+        // 分母未知时 _rr 走清环分支（ctxRing 变 {0,0}），此时**不能**把真值
+        // 留在 used 里：会形成「圆环空 / 备忘录有值」的分叉，容量卡、下一拍
+        // 真值锚都会拿这个没有分母的值去算，画出假的 100% 红条
+        _HG.ctxRing.used = (_HG.ctxRing.max > 0) ? _tru : 0;
       }
     }
     // 子 pane 的 A 区只消费结论终稿——busy/ask/queue/model 全是主窗语义，

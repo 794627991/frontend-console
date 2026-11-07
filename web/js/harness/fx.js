@@ -141,8 +141,12 @@
     // 但「仅分母未知」时不清：那只是 applyModel 刚作废旧分母，真值还在，
     // 清掉就是在等 /ctx 的几秒内把读数销毁（侧栏跟着变空）。
     // 分母不写 bootWin：那是按名字猜的，写进去会变成下一轮的「权威分母」；
-    // 传 0 让下次同样走「分母未知不画」，等 /ctx
-    if (badIsh) _hgCtxSave(sid, 0, authWin, effBad, mname);
+    // 传 0 让下次同样走「分母未知不画」，等 /ctx。
+    // 例外：归属可信（同模型）时保留记忆里的 max——窗口是会话属性，判坏只
+    // 说明 used 不可信，不该连权威分母一起丢掉，否则之后每次冷启动都要空窗
+    // 到 /ctx（a432 反对的是**跨模型**沿用旧窗口，不是同模型）
+    if (badIsh) _hgCtxSave(sid, 0,
+      authWin > 0 ? authWin : (ownTrusted ? (v.max || 0) : 0), effBad, mname);
     // v2.20：记忆里的 max 可能是旧代码存的 256K 兜底值（1M 模型被压成
     // /256K、84% 虚报，用户实测）——恢复路径同样按权威窗口校正并写回。
     // 归属不符（切过模型）不写回：否则会把该会话原本正确的记忆也污染。
@@ -150,8 +154,10 @@
     // 把坏值重新持久化
     if (authWin > 0 && !mismatch && ((v && v.max) || 0) !== authWin) {
       // 分母刚被校正，此处才是「可以画用量」的时机（denomKnown 挡住的分母缺失
-      // 分支在这里补上）；showUsed 已按阈值过滤，坏值不会复活
-      _hgDrawCtxRing(showUsed, authWin);
+      // 分支在这里补上）；showUsed 已按阈值过滤，坏值不会复活。
+      // showUsed=0 说明值被判坏/不可用，此时保持空环——画「0%」会被读成
+      // 「上下文被清空」，与胶囊空白、卡「首轮回复后统计」的语义不一致
+      _hgDrawCtxRing(showUsed, showUsed > 0 ? authWin : 0);
       // model 只在有名字时写，否则保留记忆里的旧归属，避免把归属
       // 信息抹成空串、下次再也判不出「切过模型」
       _hgCtxSave(sid, showUsed, authWin, effBad, mname || (v && v.model) || '');
@@ -376,8 +382,10 @@
     const est = (_HG.busy && t.liveToks) || 0;
     const used = Math.max(0, r.used || 0);
     const shown = used + est;              // 与环同口径：busy 时含生成中估值
-    const max = r.max || _HG_CTX_FALLBACK;
-    const pct = Math.min(100, shown / max * 100);
+    // 分母未知（max=0，等 /ctx）时不出百分比：回落 256K 会画出假 100% 红条，
+    // 正是圆环/胶囊已经修掉的那种误导，卡片必须同口径
+    const max = (r.max > 0) ? r.max : 0;
+    const pct = max > 0 ? Math.min(100, shown / max * 100) : 0;
     const barCol = pct >= 95 ? 'var(--neon-red, #e06c75)'
                  : pct >= 80 ? 'var(--neon-orange, #d29922)' : 'var(--accent)';
     const parts = _HG.ctxParts || { sys: 0, mcp: 0 };
@@ -394,9 +402,9 @@
     if (t.sub) tpsBits.push(`子代理 ${_hgCtxCardFmt(t.sub)}`);
     // a264（用户定调）：窗口选择器移除——窗口只走自动链（网关实报→
     // settings.json→[1M]→兜底），不提供用户选项
-    return `<div class="hg-ctx-head"><b>上下文容量</b><span>${(used > 0 || est > 0) ?
+    return `<div class="hg-ctx-head"><b>上下文容量</b><span>${(max > 0 && (used > 0 || est > 0)) ?
         `${_hgCtxCardFmt(shown)}/${_hgCtxCardFmt(max)}（${Math.round(pct)}%）` :
-        '首轮回复后统计'}</span></div>` +
+        (max > 0 ? '首轮回复后统计' : '等待窗口 · 分母将由后端补')}</span></div>` +
       `<div class="hg-ctx-bar"><i style="width:${pct}%;background:${barCol}"></i></div>` +
       `<div class="hg-ctx-rows">` +
         row('消息', msg, false) +
