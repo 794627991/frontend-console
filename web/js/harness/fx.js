@@ -50,10 +50,25 @@
   function _hgCtxSave(sid, used, max, badMax, model) {
     if (!sid) return;
     const rec = {used: used, max: max};
-    // 无权威阈值时不写该键（沿用 Infinity 物理上界），但绝不把记忆里
-    // 已有的权威 badMax 降级掉——降级会让下次恢复少判一拍
-    if (badMax > 0) rec.badMax = badMax;
-    rec.model = model || '';
+    // 无权威阈值时沿用记忆里已有的 badMax，绝不降级成 undefined——
+    // 降级会让下次恢复的 authBadKnown 变 false，退回「用猜测值判坏」
+    let bm = badMax;
+    if (!(bm > 0)) {
+      try {
+        const old = JSON.parse(localStorage.getItem(_hgCtxKey(sid)) || 'null');
+        if (old && old.badMax > 0) bm = old.badMax;
+      } catch(_) {}
+    }
+    if (bm > 0) rec.badMax = bm;
+    // model 同理：传空时保留旧归属，否则归属信息被抹掉、下次判不出切过模型
+    let md = model;
+    if (!md) {
+      try {
+        const old = JSON.parse(localStorage.getItem(_hgCtxKey(sid)) || 'null');
+        if (old && old.model) md = old.model;
+      } catch(_) {}
+    }
+    rec.model = md || '';
     try { localStorage.setItem(_hgCtxKey(sid), JSON.stringify(rec)); } catch(_) {}
   }
   // 本会话的后端权威窗口（未收到过 = 0，交由实报/记忆/名字兜底）
@@ -70,8 +85,12 @@
     // v2.27.16：记忆窗口带模型归属校验（renderCtxRing 同款）——旧记录无
     // model 字段或与当前模型不符 → 丢弃窗口值，按模型名重推，防 [1M] 会话
     // 残留的 1M 分母跟着小窗口模型走（Lanz-Auto 虚报 /1000.0K）。
-    const sameModel = v && mname &&
-      (v.model || '').toLowerCase() === mname.toLowerCase();
+    // a429：只有「双方都有名字且不相等」才算不符。mname 为空是常态
+    // （settings.json 没配模型映射 + 会话 meta.model 为 null，纯默认 CLI
+    // 环境即如此），此时归属**未知**，不能当不符——否则合法读数被判坏
+    // 清 0 并落账，真值被持久化销毁（旧码只画 0 不落账，反而没丢数据）
+    const mismatch = !!(v && mname && v.model &&
+      (v.model || '').toLowerCase() !== mname.toLowerCase());
     // 有本会话的后端权威窗口（含 settings）就用它，别按模型名猜——切过
     // API 后名字里的 [1m] 残留会把 500K 会话画成 1M 分母。窗口按 sid 存，
     // 绝不复用别的会话的值
@@ -90,8 +109,8 @@
     const _CTX_PHYS_MAX = 2097152;
     const restoreBad = authBadKnown ? effBad
       : ((v && v.used > _CTX_PHYS_MAX) ? 0 : Infinity);
-    // 记忆可用 = 值在阈值内 + 同一模型（切过模型时旧记忆是另一个模型的读数）
-    const canUse = !!(v && v.used > 0 && v.used <= restoreBad && sameModel);
+    // 记忆可用 = 值在阈值内 + 模型未变（归属未知按可用，见上）
+    const canUse = !!(v && v.used > 0 && v.used <= restoreBad && !mismatch);
     const showUsed = canUse ? v.used : 0;
     const showMax = canUse ? (v.max || bootWin) : bootWin;
     _hgDrawCtxRing(showUsed, showMax);
@@ -104,9 +123,11 @@
     // 归属不符（切过模型）不写回：否则会把该会话原本正确的记忆也污染。
     // used 必须复用上面的判据：信任已判坏的旧值会「先画 0 再满环」并
     // 把坏值重新持久化
-    if (authWin > 0 && sameModel && ((v && v.max) || 0) !== authWin) {
+    if (authWin > 0 && !mismatch && ((v && v.max) || 0) !== authWin) {
       _hgDrawCtxRing(showUsed, authWin);
-      _hgCtxSave(sid, showUsed, authWin, effBad, mname);
+      // model 只在有名字时写，否则保留记忆里的旧归属，避免把归属
+      // 信息抹成空串、下次再也判不出「切过模型」
+      _hgCtxSave(sid, showUsed, authWin, effBad, mname || (v && v.model) || '');
     }
   }
   function _hgDrawCtxRing(used, ctxMax, note) {
@@ -192,8 +213,13 @@
       ? o.badMax : ctxMax;
     if (used > guardMax) return;
     _hgDrawCtxRing(used, ctxMax);
+    // 只把真权威 o.badMax 落进记忆：guardMax 在缺 o.badMax 时回落到显示
+    // 分母（可能是兜底 256K 或按名字猜的 1M），写进去会被下次恢复当权威
+    // 阈值判坏，绕回 a426/a427 修掉的问题。缺失时传 0 → _hgCtxSave 沿用
+    // 记忆里的旧 badMax，没有就不写该键
     _hgCtxSave(_HG.sid, used, ctxMax,
-               (o.badMax > 0 ? o.badMax : guardMax), o.model || _HG.model || '');
+               (typeof o.badMax === 'number' && o.badMax > 0 ? o.badMax : 0),
+               o.model || _HG.model || '');
   }
   function _hgCtxPoll() {
     if (!_HG.sid || _hgCtxInFlight) return;
@@ -261,13 +287,14 @@
           if (!_HG.ctxRing) _HG.ctxRing = { used: 0, max: win || _HG_CTX_FALLBACK };
           if (win && win !== _HG.ctxRing.max) _HG.ctxRing.max = win;
           // 坏数据判据用 badMax（模型真实能力），与显示分母解耦——否则
-          // settings 500K + 合法 600K 会被写成 120% 并落进记忆
+          // settings 500K + 合法 600K 会被写成 120% 并落进记忆。
+          // 判断链路仍需要兜底值，但落账只传真权威 j.badMax（0 = 沿用记忆）
           const bad = (j.badMax > 0) ? j.badMax : (win || _HG_CTX_FALLBACK);
           if (j.used <= bad && j.used > (_HG.ctxRing.used || 0)) {
             _HG.ctxRing.used = j.used;
           }
-          _hgCtxSave(sid, _HG.ctxRing.used, win || _HG.ctxRing.max, bad,
-                     j.model || _HG.model || '');
+          _hgCtxSave(sid, _HG.ctxRing.used, win || _HG.ctxRing.max,
+                     j.badMax > 0 ? j.badMax : 0, j.model || _HG.model || '');
           return;
         }
         renderCtxRing({ usage: { input_tokens: j.used },

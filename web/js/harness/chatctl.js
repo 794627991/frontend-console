@@ -242,6 +242,14 @@
           if (!j.ok) {
             _HG.model = prev; setChip(prev);   // 回滚：芯片如实反映会话模型
             showBanner((j.err || '切换模型失败') + '（仍用 ' + (prev || '默认') + '）', 3500, true);
+          } else {
+            // 切模型成功：后端已作废 last_result，旧模型的权威窗口/坏数据
+            // 阈值必须同步作废——否则下一次 /ctx（≤5s）前切走再切回，
+            // _hgCtxRestore 会拿旧模型的分母画新会话
+            try {
+              if (_HG.ctxWinBy) delete _HG.ctxWinBy[_HG.sid];
+              if (_HG.ctxBadMaxBy) delete _HG.ctxBadMaxBy[_HG.sid];
+            } catch (_) {}
           }
         })
         .catch(() => { _HG.model = prev; setChip(prev); showBanner('切换模型失败', 3000, true); });

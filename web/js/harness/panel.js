@@ -116,16 +116,21 @@
     // 上下文%（hg-ctx localStorage 是数据总线——_hgDrawCtxRing 触发 renderSideStatus）
     const cxEl = c.querySelector('[data-hg-caps-ctx]');
     if (cxEl) {
-      let ctxTxt = '', ctxWarn = false;
+      let ctxTxt = '', ctxWarn = false, ctxEst = false;
       if (_HG.sid) {
         try {
           const v = JSON.parse(localStorage.getItem('hg-ctx:' + _HG.sid) || 'null');
           if (v && v.used > 0) {
+            // busy 期叠加生成中估值，与圆环/容量卡同口径（v4bridge 实时链
+            // 只画环不落账，只读记忆会「环 62% / 胶囊 60%」差一拍）
+            const est = (_HG.busy && _HG.tps && _HG.tps.liveToks) || 0;
+            const shown = v.used + est;
+            ctxEst = est > 0;
             // 与 _hgDrawCtxRing 同口径 clamp：badMax 放行后 used 可合法超过
             // 显示分母（settings 500K / 模型 1M），裸算会显示 120%
             const pct = Math.min(100,
-              Math.round(v.used / (v.max || 256000) * 100));
-            ctxTxt = pct + '%';
+              Math.round(shown / (v.max || 256000) * 100));
+            ctxTxt = pct + (ctxEst ? '*' : '') + '%';
             ctxWarn = pct >= 80;
           }
         } catch(_) {}
@@ -134,6 +139,7 @@
       // warn 必须无条件重算：清环写回 used=0 后若只在 if 内 toggle，
       // 空白文字会留着上一拍的橙/红警示配色
       cxEl.classList.toggle('warn', ctxWarn);
+      cxEl.title = ctxEst ? '含生成中估值，回合结束落准' : '';
     }
     // bug5③ 兜底脉冲：子代理运行中且窗格未开（用户可能没注意到分屏已收）。
     // v3.2.31R（复审5）：判定收紧为 ==='flex'（_subShow 的唯一打开态）——
@@ -623,9 +629,13 @@
         const v = JSON.parse(localStorage.getItem('hg-ctx:' + _HG.sid) || 'null');
         if (v && v.used > 0) {
           const mx = v.max || 256000;
+          // busy 期含生成中估值，与圆环/胶囊同口径
+          const est = (_HG.busy && _HG.tps && _HG.tps.liveToks) || 0;
+          const shown = v.used + est;
           // 同 clamp 口径（used 可合法越过压缩线，见 ctxBadMaxBy 注释）
-          const pct = Math.min(100, Math.round(v.used / mx * 100));
-          ctxTxt = pct + '% · ' + (v.used / 1000).toFixed(1) + 'K/' + (mx / 1000).toFixed(0) + 'K';
+          const pct = Math.min(100, Math.round(shown / mx * 100));
+          ctxTxt = pct + (est > 0 ? '*' : '') + '% · ' +
+                   (shown / 1000).toFixed(1) + 'K/' + (mx / 1000).toFixed(0) + 'K';
           warn = pct >= 80;
         }
       } catch(_) {}
