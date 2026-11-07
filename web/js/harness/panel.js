@@ -120,16 +120,21 @@
       if (_HG.sid) {
         try {
           const v = JSON.parse(localStorage.getItem('hg-ctx:' + _HG.sid) || 'null');
-          if (v && v.used > 0) {
-            // busy 期叠加生成中估值，与圆环/容量卡同口径（v4bridge 实时链
-            // 只画环不落账，只读记忆会「环 62% / 胶囊 60%」差一拍）
+          // busy 期改用 _HG.ctxRing 同源：实时链每拍写 ctxLive 真值，但只画
+          // 环不落账（localStorage 最多落后一个轮询周期），只读记忆会与
+          // 圆环/容量卡「环 18% / 胶囊 10%」不一致
+          const live = _HG.busy ? (_HG.ctxRing || null) : null;
+          const base = live ? live.used : (v && v.used);
+          const mx = live ? live.max : (v && v.max);
+          if (base > 0) {
+            // busy 期叠加生成中估值，与圆环/容量卡同口径
             const est = (_HG.busy && _HG.tps && _HG.tps.liveToks) || 0;
-            const shown = v.used + est;
+            const shown = base + est;
             ctxEst = est > 0;
             // 与 _hgDrawCtxRing 同口径 clamp：badMax 放行后 used 可合法超过
             // 显示分母（settings 500K / 模型 1M），裸算会显示 120%
             const pct = Math.min(100,
-              Math.round(shown / (v.max || 256000) * 100));
+              Math.round(shown / (mx || 256000) * 100));
             ctxTxt = pct + (ctxEst ? '*' : '') + '%';
             ctxWarn = pct >= 80;
           }
@@ -627,11 +632,15 @@
     if (_HG.sid) {
       try {
         const v = JSON.parse(localStorage.getItem('hg-ctx:' + _HG.sid) || 'null');
-        if (v && v.used > 0) {
-          const mx = v.max || 256000;
+        // 同胶囊：busy 期取 _HG.ctxRing（实时链同源），空闲取记忆
+        const live = _HG.busy ? (_HG.ctxRing || null) : null;
+        const base = live ? live.used : (v && v.used);
+        const mx0 = live ? live.max : (v && v.max);
+        if (base > 0) {
+          const mx = mx0 || 256000;
           // busy 期含生成中估值，与圆环/胶囊同口径
           const est = (_HG.busy && _HG.tps && _HG.tps.liveToks) || 0;
-          const shown = v.used + est;
+          const shown = base + est;
           // 同 clamp 口径（used 可合法越过压缩线，见 ctxBadMaxBy 注释）
           const pct = Math.min(100, Math.round(shown / mx * 100));
           ctxTxt = pct + (est > 0 ? '*' : '') + '% · ' +

@@ -1169,12 +1169,12 @@
       // 签名）——单轮真实用量物理不可能超窗。renderCtxRing 早有此守卫
       // （v2.20），ctxLive 这条路漏了：累计值直写环=恒 100% 红条。超窗即
       // 判坏数据丢弃，环保留 jsonl 真值（5s 轮询链）。
-      // 判据用 badMax（模型真实能力），不能用 ctxRing.max——settings 配
-      // 500K 而模型实为 1M 时，500K~1M 的合法 ctxLive 会被误判归零
-      var _bad = (_HG.ctxRing && _HG.ctxRing.max > 0) ? _HG.ctxRing.max : 0;
+      // 判据只用会话级权威 badMax（ctxBadMaxBy，由 /ctx 按 sid 写入）。
+      // a430：缓存缺失时**不要**回落到 ctxRing.max——那正是本注释禁止的
+      // 显示分母，切模型后它是上一个模型的窗口（1M→256K 会把 700K 判坏归零，
+      // 256K→1M 会把 300K 放行画 3%）。缺失就跳过判坏，等 ≤5s 的 /ctx 补
       var _bmBy = _HG.ctxBadMaxBy || {};
       var _bm = (_HG.sid && _bmBy[_HG.sid]) || 0;
-      if (!_bm) _bm = _bad;
       if (live > 0 && _bm > 0 && live > _bm) {
         live = 0;
         t.ctxLive = 0;

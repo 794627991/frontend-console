@@ -234,9 +234,12 @@
     const setChip = (mm) => { chip.innerHTML = esc(mm || '默认') + ' ▾'; };   // v3.4.50:纯值形态（补 v3.4.33 漏网——切模型路径的 🧠 回潮）
     _HG.model = m;
     setChip(m);
-    if (_HG.sid) {
+    // 发起时的会话 id：回调返回可能已过了数百毫秒~数秒（后端 kill+revive），
+    // 用户可能已切到别的会话，那时读 _HG.sid 会误删新会话的缓存
+    const msid = _HG.sid;
+    if (msid) {
       fetch('/api/harness/set_model', {method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({sid: _HG.sid, model: m})})
+        body: JSON.stringify({sid: msid, model: m})})
         .then(r => r.json())
         .then(j => {
           if (!j.ok) {
@@ -244,11 +247,13 @@
             showBanner((j.err || '切换模型失败') + '（仍用 ' + (prev || '默认') + '）', 3500, true);
           } else {
             // 切模型成功：后端已作废 last_result，旧模型的权威窗口/坏数据
-            // 阈值必须同步作废——否则下一次 /ctx（≤5s）前切走再切回，
-            // _hgCtxRestore 会拿旧模型的分母画新会话
+            // 阈值/环分母必须同步作废——否则下一次 /ctx（≤5s）前切走再切回，
+            // _hgCtxRestore 会拿旧模型的分母画新会话；首帧实时链也会用旧
+            // 分母画环
             try {
-              if (_HG.ctxWinBy) delete _HG.ctxWinBy[_HG.sid];
-              if (_HG.ctxBadMaxBy) delete _HG.ctxBadMaxBy[_HG.sid];
+              if (_HG.ctxWinBy) delete _HG.ctxWinBy[msid];
+              if (_HG.ctxBadMaxBy) delete _HG.ctxBadMaxBy[msid];
+              if (msid === _HG.sid) _HG.ctxRing = null;
             } catch (_) {}
           }
         })

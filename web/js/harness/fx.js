@@ -104,15 +104,22 @@
     // 两个方向都会错（误清合法值 / 放行坏值）。改为只设物理上界 2×1M
     // （已知模型最大窗 1M），超过必是「全会话累计口径」坏值，直接判 0；
     // 边界内先按记忆原样显示，精确判坏交给必到的 5s /ctx
-    const authBadKnown = authBad > 0 || (v && v.badMax);
     const effBad = authBad > 0 ? authBad : ((v && v.badMax) || 0);
+    // a430：归属未知（v.model 为空）的记忆**不能**沿用自身的 badMax/max 判
+    // 可用——那是旧模型给旧读数的自洽背书：1M 模型留下的 720K 在切到 256K
+    // 后 720K<=1048576 成立 → 画 72%，物理上已超窗（实为 281%）。归属未知
+    // 时只留物理上界，阈值等 /ctx 补
+    const ownTrusted = !!(v && v.model && mname && !mismatch);
     const _CTX_PHYS_MAX = 2097152;
-    const restoreBad = authBadKnown ? effBad
-      : ((v && v.used > _CTX_PHYS_MAX) ? 0 : Infinity);
-    // 记忆可用 = 值在阈值内 + 模型未变（归属未知按可用，见上）
+    let restoreBad;
+    if (authBad > 0) restoreBad = authBad;
+    else if (ownTrusted && v.badMax > 0) restoreBad = v.badMax;
+    else restoreBad = (v && v.used > _CTX_PHYS_MAX) ? 0 : Infinity;
+    // 记忆可用 = 值在阈值内 + 模型未变（归属未知按可用，但阈值不采信旧值）
     const canUse = !!(v && v.used > 0 && v.used <= restoreBad && !mismatch);
     const showUsed = canUse ? v.used : 0;
-    const showMax = canUse ? (v.max || bootWin) : bootWin;
+    // 归属未知时分母也不采信旧 max（可能是旧模型窗口），退权威/名字推断
+    const showMax = canUse ? (ownTrusted ? (v.max || bootWin) : bootWin) : bootWin;
     _hgDrawCtxRing(showUsed, showMax);
     // 画 0 同样必须落账：只重画不回写，记忆里留着旧 used → 侧栏胶囊/详情
     // 继续显示旧百分比（同屏矛盾），且 5s /ctx 的清环判据 cur 已被置 0
@@ -217,9 +224,12 @@
     // 分母（可能是兜底 256K 或按名字猜的 1M），写进去会被下次恢复当权威
     // 阈值判坏，绕回 a426/a427 修掉的问题。缺失时传 0 → _hgCtxSave 沿用
     // 记忆里的旧 badMax，没有就不写该键
+    // model 传空：这里的 o.model/_HG.model 是**网关实报名**（message.model），
+    // 而恢复路径的判据 mname 是 settings **配置名**，两者可能完全不同
+    // （session.py 已实锤 flash 名义 inline、实跑 glm-5.3）。拿实报名落账会让
+    // 同一模型的记忆在切回时被判 mismatch 清 0。归属只由 /ctx 的 j.model 写
     _hgCtxSave(_HG.sid, used, ctxMax,
-               (typeof o.badMax === 'number' && o.badMax > 0 ? o.badMax : 0),
-               o.model || _HG.model || '');
+               (typeof o.badMax === 'number' && o.badMax > 0 ? o.badMax : 0), '');
   }
   function _hgCtxPoll() {
     if (!_HG.sid || _hgCtxInFlight) return;
