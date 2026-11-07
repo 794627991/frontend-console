@@ -1077,13 +1077,16 @@
         };
         r.appendChild(chk);
         const lab = _h('span', name + '');
-        lab.style.cssText = 'cursor:pointer;flex:1;';
+        lab.style.cssText = 'flex:1;';
         if (inh !== null && !sel.has(rel)) lab.style.color = 'var(--muted)';
         r.appendChild(lab);
         if (sub || kids[rel]) {
           const ex = _h('button', expanded.has(rel) ? '▾' : '▸', false);
           ex.style.cssText = 'border:none;background:none;color:var(--muted);cursor:pointer;padding:0 4px;font-size:10px;';
-          ex.onclick = async () => {
+          // a422（用户实锤：点名字不能展开、只有最右小三角能点，极易点串
+          // 行）：展开逻辑抽出，目录名本身与三角同权——label 占满整行
+          // （flex:1），点行即展开；复选框点击不受影响（不冒泡到 label）
+          const _doExpand = async () => {
             if (expanded.has(rel)) { expanded.delete(rel); render(); return; }
             if (!kids[rel]) {
               ex.textContent = '⋯';
@@ -1098,6 +1101,9 @@
             expanded.add(rel);
             render();
           };
+          ex.onclick = _doExpand;
+          lab.style.cursor = 'pointer';
+          lab.onclick = _doExpand;
           r.appendChild(ex);
         }
         tree.appendChild(r);
