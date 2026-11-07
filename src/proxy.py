@@ -536,6 +536,55 @@ def bili_reprobe():
     return bool(BILI_NODE and BILI_ENTRY)
 
 
+# ---- a421：billion-context 唯一安装入口——代理面板联网下载 ----
+# 移出默认资源包/安装库后的替代链路：npm 全局装（机器需 Node ≥22 + npm，
+# 资源库有 node 安装器；内网无外联时装不上属预期，入口如实报错）。
+# 检测链 _detect_bili_cmd ② 天然认 npm 全局装，装完 bili_reprobe 即生效
+BILI_NPM_VERSION = "0.1.204"   # 锁定版（0.1.x 高频迭代，不跟 master；随 build.py 迁入）
+_bili_inst = {"running": False, "done": False, "ok": False, "err": "", "log": []}
+
+
+def _bili_install_run():
+    import shutil
+    import subprocess as _sp
+    st = _bili_inst
+    try:
+        exe = shutil.which("node")
+        npm = shutil.which("npm")
+        if not (exe and npm):
+            st["err"] = "未找到 node/npm——先装 Node.js ≥22（设置→外部依赖安装有安装器），再回来一键装"
+            st["log"].append(st["err"])
+            return
+        out = _sp.run([exe, "--version"], capture_output=True, text=True,
+                      timeout=15).stdout.strip().lstrip("v")
+        major = int(out.split(".")[0]) if out.split(".")[0].isdigit() else 0
+        if major < 22:
+            st["err"] = "node %s 过旧（需 ≥22）——资源库 node 安装器升级后重试" % out
+            st["log"].append(st["err"])
+            return
+        pkg = "billion-context@%s" % BILI_NPM_VERSION
+        st["log"].append("npm install -g %s …（需联网，约 1-3 分钟）" % pkg)
+        r = _sp.run([npm, "install", "-g", pkg], capture_output=True,
+                    text=True, encoding="utf-8", errors="replace",
+                    timeout=900)
+        tail = ((r.stdout or "") + (r.stderr or "")).strip()
+        if tail:
+            st["log"].extend(tail.splitlines()[-30:])
+        if r.returncode == 0:
+            st["ok"] = True
+            if bili_reprobe():
+                st["log"].append("✓ 安装完成且引擎可用——切「开启压缩」即可启用")
+            else:
+                st["log"].append("✓ 安装完成（引擎检测待刷新，重启工具后可用）")
+        else:
+            st["err"] = "npm 安装失败（rc=%d）——检查网络/registry 可达性" % r.returncode
+    except Exception as e:
+        st["err"] = str(e)[:300]
+    finally:
+        st["running"] = False
+        st["done"] = True
+
+
 # ---- BiliController（GUI:533-660 平移）----------------------------
 class BiliController:
     def __init__(self):
@@ -1966,6 +2015,12 @@ def _status_payload():
         # v2.2.2：同事机无 headroom 时 _detect 返回 None，exists(None) 抛
         # TypeError 炸掉整个 status（面板「状态获取失败」）——先判 None
         "bili_ready": bool(BILI_NODE and BILI_ENTRY),
+        # a421：联网安装进度（唯一入口=代理面板；running/log 驱动前端按钮态）
+        "bili_install": {"running": _bili_inst["running"],
+                         "done": _bili_inst["done"],
+                         "ok": _bili_inst["ok"],
+                         "err": _bili_inst["err"],
+                         "log": _bili_inst["log"][-12:]},
         "bili_stats": _bili_stats_cache,
         "quota_kind": qkind,
         "quota_payload": qpayload,
@@ -2015,6 +2070,20 @@ def _api_compression():
     # ccr 缺省 None=不改（apply_bili_mode 内部判），配置弹窗一次带 {mode, ccr} 同改
     ok, msg = apply_bili_mode(j.get("mode", ""), ccr=j.get("ccr"))
     return jsonify({"ok": ok, "msg": msg})
+
+
+@proxy_bp.route("/api/proxy/bili_install", methods=["POST"])
+def _api_bili_install():
+    """a421：billion-context 唯一安装入口——联网 npm 全局装（异步，进度走
+    /api/proxy/status 的 bili_install 字段）。已在跑/已装幂等处理"""
+    if BILI_NODE and BILI_ENTRY:
+        return jsonify({"ok": True, "msg": "已安装，无需重复"})
+    if _bili_inst["running"]:
+        return jsonify({"ok": True, "msg": "安装进行中"})
+    _bili_inst.update(running=True, done=False, ok=False, err="", log=[])
+    import threading as _th
+    _th.Thread(target=_bili_install_run, daemon=True).start()
+    return jsonify({"ok": True, "msg": "安装已启动（联网下载）"})
 
 
 @proxy_bp.route("/api/proxy/retry", methods=["GET", "POST"])

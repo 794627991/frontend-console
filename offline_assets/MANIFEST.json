@@ -1,5 +1,5 @@
 {
-  "updated": "2026-11-07 12:11:36",
+  "updated": "2026-11-07 12:58:15",
   "items": [
     {
       "kind": "git",
@@ -48,15 +48,6 @@
       "size": 685007344,
       "version": "2.1.318",
       "url": "https://www.npmjs.com/package/@anthropic-ai/claude-code",
-      "note": "npm 包整树镜像"
-    },
-    {
-      "kind": "bili",
-      "dir": "bili/",
-      "files": 12213,
-      "size": 211603358,
-      "version": "",
-      "url": "https://www.npmjs.com/package/billion-context",
       "note": "npm 包整树镜像"
     },
     {

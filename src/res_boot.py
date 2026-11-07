@@ -59,11 +59,9 @@ MANIFEST = [
     # a309R：OnlyOffice DS（word/excel/ppt 全功能编辑，可选）——探测 80 口
     {"kind": "onlyoffice", "name": "OnlyOffice 全功能编辑", "hard": False,
      "fix": "离线资源包内静默安装（约 10 分钟，弹 UAC 确认）"},
-    # a335R（第6轮 P2-2）：bili 在 res_install.ORDER 里却不在 MANIFEST——
-    # 200MB 的可选组件，设置页勾不到、红条也不显示，缺了只能靠一次 8 秒
-    # popup 偶然告知。补进清单（软项，判据同 proxy._detect_bili_cmd）。
-    {"kind": "bili", "name": "billion-context 压缩引擎", "hard": False,
-     "fix": "离线资源包内解包（约 200MB，代理面板开关控制启用）"},
+    # a421（用户令）：billion-context 移出安装库（内网装不上是常态）——
+    # 唯一入口=代理面板联网下载（proxy.py /api/proxy/bili_install）。
+    # bili_ok() 探测保留：旧包已装机器/系统 npm 全局两种存量继续可用
     # S37-6（P3）：a386 铺了安装器但没进面板清单——外部依赖页无此项，
     # 错误文案"设置→外部依赖安装"成死路
     {"kind": "codegraph", "name": "Claude 代码图引擎（codegraph）",

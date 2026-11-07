@@ -382,78 +382,9 @@ def _refresh_offline_claude():
 # v4.1：统一离线资源包 .fcpk（用户拍板：WebView2 移出发布包，格式统一+加密）
 # ---------------------------------------------------------------------------
 
-# ---- a201：bili 资源组装（打包机联网跑一次，产物进 offline_assets/bili/）----
-BILI_NPM_VERSION = "0.1.204"        # 锁定版（0.1.x 高频迭代，不跟 master）
-BILI_NODE_VERSION = "22.14.0"       # LTS（≥22 硬要求）
-
-def _prep_bili_dir():
-    """组装内置压缩引擎资源：Node 便携运行时 node.exe + billion-context
-    完整依赖树。npm install --prefix 产出 node_modules（含全部依赖），
-    node.exe 从官方 zip 抽取（win-x64 zip 里 node.exe 自含全部内置模块）。
-    幂等：目录已存在且关键文件齐则跳过。"""
-    import subprocess, zipfile, urllib.request
-    root = os.path.join(BASE, "offline_assets", "bili")
-    node_exe = os.path.join(root, "node.exe")
-    entry = os.path.join(root, "node_modules", "billion-context",
-                         "dist", "index.js")
-    if os.path.isfile(node_exe) and os.path.isfile(entry):
-        print("[bili] 已组装，跳过（删 %s 可重跑）" % root)
-        return
-    os.makedirs(root, exist_ok=True)
-    if not os.path.isfile(node_exe):
-        url = ("https://nodejs.org/dist/v%s/node-v%s-win-x64.zip"
-               % (BILI_NODE_VERSION, BILI_NODE_VERSION))
-        zpath = os.path.join(BASE, "dist", "node-v%s-win-x64.zip" % BILI_NODE_VERSION)
-        if not os.path.isfile(zpath):
-            print("[bili] 下载 %s …" % url)
-            # 对抗审 a206B P2：半截 zip 永久卡死重跑（存在性检查放行坏档，
-            # zipfile 每次抛 BadZipFile）——.part 下载完再原子改名
-            urllib.request.urlretrieve(url, zpath + ".part")
-            # 对抗审 a206B P3：官方 SHASUMS256.txt 原产地校验（企业 MITM 换
-            # 合法 zip 无 CRC 兜底的场景）
-            import hashlib
-            h = hashlib.sha256(open(zpath + ".part", "rb").read()).hexdigest()
-            sums = urllib.request.urlopen(
-                "https://nodejs.org/dist/v%s/SHASUMS256.txt" % BILI_NODE_VERSION,
-                timeout=30).read().decode()
-            expect = next((l.split()[0] for l in sums.splitlines()
-                           if l.strip().endswith(
-                               "node-v%s-win-x64.zip" % BILI_NODE_VERSION)), "")
-            if expect and h.lower() != expect.lower():
-                os.remove(zpath + ".part")
-                raise SystemExit("[bili] ✗ node.zip 校验失败（shasum 不符，"
-                                 "可能传输损坏或被代理替换）——已删除可重试")
-            os.replace(zpath + ".part", zpath)
-        with zipfile.ZipFile(zpath) as z:
-            member = "node-v%s-win-x64/node.exe" % BILI_NODE_VERSION
-            with z.open(member) as src, open(node_exe, "wb") as dst:
-                import shutil as _sh
-                _sh.copyfileobj(src, dst)
-        print("[bili] node.exe 就位")
-    if not os.path.isfile(entry):
-        print("[bili] npm install billion-context@%s …" % BILI_NPM_VERSION)
-        # 对抗审 a206B P3：无 npm 机器上裸 CalledProcessError 回溯→人话指引
-        try:
-            subprocess.run(["npm", "install", "--prefix", root,
-                            "billion-context@%s" % BILI_NPM_VERSION],
-                           check=True, shell=True)
-        except (subprocess.CalledProcessError, FileNotFoundError) as e:
-            raise SystemExit("[bili] ✗ npm 安装失败（%s）。打包机需先装 "
-                             "Node.js ≥22（自带 npm）再运行 --prep-bili" % e)
-        # 对抗审 a206B P2-5：npm 写入的 package.json 是 ^caret 浮动——lock
-        # 被删时重跑会静默漂到最新 0.1.x。改写为精确版本钉死
-        pj = os.path.join(root, "package.json")
-        try:
-            import json as _j
-            d = _j.load(open(pj, encoding="utf-8"))
-            deps = d.get("dependencies") or {}
-            if deps.get("billion-context") != BILI_NPM_VERSION:
-                deps["billion-context"] = BILI_NPM_VERSION
-                _j.dump(d, open(pj, "w", encoding="utf-8"), indent=2)
-                print("[bili] package.json 已钉精确版本 %s" % BILI_NPM_VERSION)
-        except Exception:
-            pass
-    print("[bili] 组装完成 → %s" % root)
+# ---- a201→a421：billion-context 移出默认打包链（用户令：内网装不上，
+# 默认包不背 200MB；唯一安装入口=代理面板联网 npm 装——见 src/proxy.py
+# 的 /api/proxy/bili_install）。原 _prep_bili_dir 组装器随之退役。 ----
 
 
 def _offline_sources(kinds=None):
@@ -497,29 +428,7 @@ def _offline_sources(kinds=None):
             if _take(kind):
                 out.append((p, "install/" + name, kind, mode, None))
     if os.path.isdir(src):
-        bl = os.path.join(src, "bili")
-        if os.path.isdir(bl) and _take("bili"):
-            # a201 内置压缩引擎：Node 便携运行时 + billion-context 依赖树
-            # （组装见 _prep_bili_dir）。整目录全收（claude-code 同款教训：
-            # 挑扩展名会丢 package.json 等命脉文件，装出空壳）。
-            # 对抗审 a206B P3：.ts/.map/.mjs 等 ~48MB 高可压文本原走 raw，
-            # deflate 后包体省 30MB+
-            for r, ds, fs in os.walk(bl):
-                ds.sort()
-                # 对抗审 a206B P2：junction 下钻防护（os.path.islink 对 Windows
-                # junction 返回 False，须查 reparse 属性）——npm workspaces/
-                # pnpm 场景会产生 junction，下钻即重复条目+超长路径炸解包
-                ds[:] = [d for d in ds
-                         if not (os.stat(os.path.join(r, d)).st_file_attributes or 0) & 0x400]
-                for f in sorted(fs):
-                    p2 = os.path.join(r, f)
-                    arc = "bili/" + os.path.relpath(p2, bl).replace("\\", "/")
-                    low = f.lower()
-                    mode = ("deflate" if low.endswith(
-                        (".exe", ".dll", ".node", ".cjs", ".js", ".json",
-                         ".ts", ".cts", ".mts", ".mjs", ".map"))
-                        else "raw")
-                    out.append((p2, arc, "bili", mode, None))
+        # a421：bili 不再入包（唯一入口=代理面板联网装）
         cg = os.path.join(src, "codegraph")
         if os.path.isdir(cg) and _take("codegraph"):
             # a386：codegraph 平台 bundle（node.exe+lib 自带运行时）整目录
@@ -663,7 +572,7 @@ def _build_offline_fcpk(kinds=None, quiet=False, tag=""):
     print("资源包: 打包 %d 个文件 / %.0f MB（加密 + 压缩，需数分钟）…"
           % (len(files), total_bytes / 1024 / 1024))
     resources = []
-    for kind in ("webview2", "dotnet", "node", "git", "claude", "bili",
+    for kind in ("webview2", "dotnet", "node", "git", "claude",
                  "onlyoffice", "pydeps"):
         n = sum(1 for x in files if x[2] == kind)
         if n:
@@ -713,7 +622,7 @@ def _build_offline_fcpk(kinds=None, quiet=False, tag=""):
 def _write_offline_manifest():
     """a326（用户需求：资源本体不入 git，清单入 git）：扫描 offline_assets/
     生成 MANIFEST.json——新检出机器按清单的 url/note 恢复资源本体。
-    单文件条目记 sha256（安装器类 <100MB）；目录类（claude-code/bili/
+    单文件条目记 sha256（安装器类 <100MB）；目录类（claude-code/
     webview2）记 version+文件数+总大小，不逐文件哈希（1.2 万文件太慢）。
     """
     import hashlib
@@ -782,7 +691,8 @@ def _write_offline_manifest():
                       "size": os.path.getsize(oo), "sha256": _sha256(oo),
                       "url": "https://www.onlyoffice.com/download.aspx",
                       "note": "DS 安装器；在线安装用官方 download.aspx 直链"})
-    for kind, sub in (("claude", "claude-code"), ("bili", "bili"),
+    # a421：bili 不再入清单（移出默认包）
+    for kind, sub in (("claude", "claude-code"),
                       ("webview2", "webview2"), ("codegraph", "codegraph")):
         d = os.path.join(A, sub)
         if not os.path.isdir(d):
@@ -796,17 +706,15 @@ def _write_offline_manifest():
             _v = _pkgver(os.path.join(d, "lib"))
         items.append({
             "kind": kind, "dir": sub + "/", "files": n, "size": sz,
-            "version": (_v if kind in ("claude", "bili", "codegraph") else
+            "version": (_v if kind in ("claude", "codegraph") else
                         (sorted(os.listdir(d))[0] if kind == "webview2"
                          and os.listdir(d) else "")),
             "url": ("https://www.npmjs.com/package/@anthropic-ai/claude-code"
                     if kind == "claude" else
-                    "https://www.npmjs.com/package/billion-context"
-                    if kind == "bili" else
                     "https://www.npmjs.com/package/@colbymchenry/codegraph"
                     if kind == "codegraph" else
                     "tools/fetch_webview2_fixed.py 按版本下载（微软已下架直链）"),
-            "note": ("npm 包整树镜像" if kind in ("claude", "bili") else
+            "note": ("npm 包整树镜像" if kind == "claude" else
                      "发布机 npm i -g @colbymchenry/codegraph 后跑 "
                      "src/build.py _refresh_offline_codegraph 恢复"
                      "（平台 bundle win32-x64：node.exe+lib 自带运行时）"
@@ -823,13 +731,15 @@ def _write_offline_manifest():
                           "url": "pip download（requirements 见 wheel 名）",
                           "note": "离线 wheel 池，在线安装走 pip"})
     # a419：丢项告警——新清单比旧清单少的 kind 且本体仍在盘上=扫描器没认出
-    # （codegraph 静默丢失实锤），必须大声报出来而不是静默写盘等提交
+    # （codegraph 静默丢失实锤），必须大声报出来而不是静默写盘等提交。
+    # a421 退役例外：有意移出的资源（bili→代理面板联网装）允许从清单消失
+    _RETIRED = {"bili"}
     _mf_path = os.path.join(A, "MANIFEST.json")
     try:
         _old = json.load(open(_mf_path, encoding="utf-8"))
         _old_kinds = {it.get("kind") for it in (_old.get("items") or [])}
         _new_kinds = {it.get("kind") for it in items}
-        for _k in sorted(_old_kinds - _new_kinds):
+        for _k in sorted(_old_kinds - _new_kinds - _RETIRED):
             print("manifest: ⚠ 旧清单有 %s 条目但本次扫描未产出（本体在盘？"
                   "扫描器不认识该目录）——已保留旧条目防丢" % _k)
             _keep = next(it for it in _old["items"] if it.get("kind") == _k)
@@ -865,15 +775,15 @@ def offline_main(argv):
     import glob
     # 四档预设（用户需求：全量 / 基础 / claude / 额外拓展）。分组语义：
     #   基础 = 工具本体运行环境；claude = Claude 生态（CLI + 运行时 + 版本
-    #   控制 + bili 内置引擎）；拓展 = OnlyOffice 全功能 Office 编辑。
+    #   控制）；拓展 = OnlyOffice 全功能 Office 编辑。
     #   要调整分组改这里即可（安装端按 kind 装包，与分组无关）。
     presets = {
         "full":   {"label": "",       "kinds": None,
                    "desc": "全量（八项全含）"},
         "base":   {"label": "基础",    "kinds": ["webview2", "dotnet", "pydeps"],
                    "desc": "基础资源包（WebView2 + .NET + Python 依赖——工具本体环境）"},
-        "claude": {"label": "claude", "kinds": ["claude", "node", "git", "bili"],
-                   "desc": "claude 包（Claude CLI + Node + Git + bili 内置引擎）"},
+        "claude": {"label": "claude", "kinds": ["claude", "node", "git"],
+                   "desc": "claude 包（Claude CLI + Node + Git）"},
         "ext":    {"label": "拓展",    "kinds": ["onlyoffice"],
                    "desc": "额外拓展包（OnlyOffice——Word/Excel/PPT 全功能编辑）"},
     }
@@ -886,9 +796,7 @@ def offline_main(argv):
                     help="四档预设：full 全量 / base 基础 / claude / ext 额外拓展")
     ap.add_argument("--kinds", default="",
                     help="自定义只打这些资源，逗号分隔：webview2,dotnet,node,git,"
-                         "bili,claude,onlyoffice,pydeps；--preset 优先")
-    ap.add_argument("--prep-bili", action="store_true",
-                    help="先组装 bili 资源（node.exe + billion-context 依赖树，需联网）")
+                         "claude,onlyoffice,pydeps；--preset 优先")
     ap.add_argument("--manifest", action="store_true",
                     help="只刷新 offline_assets/MANIFEST.json（资源清单入库用）")
     ap.add_argument("--out", default="",
@@ -898,8 +806,6 @@ def offline_main(argv):
     if getattr(args, "manifest", False):
         _write_offline_manifest()
         return 0
-    if getattr(args, "prep_bili", False):
-        _prep_bili_dir()
         return
     if args.preset and args.preset != "full":
         pr = presets[args.preset]
@@ -910,7 +816,7 @@ def offline_main(argv):
         kinds, tag, title = None, "", "全量（八项全含）"
     else:
         kinds = [k.strip() for k in args.kinds.split(",") if k.strip()]
-        valid = {"webview2", "dotnet", "node", "git", "claude", "bili",
+        valid = {"webview2", "dotnet", "node", "git", "claude",
                  "onlyoffice", "pydeps"}
         bad = [k for k in kinds if k not in valid]
         if bad:

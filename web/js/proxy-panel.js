@@ -362,6 +362,57 @@ function buildProxyTab() {
     }
   }
 
+  // a421：billion-context 唯一安装入口（用户令：移出资源包/安装库，代理
+  // 面板联网下载一键装）。引擎在=不显示；不在=入口+进度（1s 轮询驱动）
+  function _renderBiliInstall(j) {
+    let row = document.getElementById('px-bili-inst');
+    if (!j || j.bili_ready) {
+      if (row) row.remove();
+      return;
+    }
+    const inst = j.bili_install || {};
+    if (!row) {
+      row = document.createElement('div');
+      row.id = 'px-bili-inst';
+      row.style.cssText = 'margin-top:6px;padding:8px 10px;border:1px dashed var(--border);border-radius:8px;font-size:12px;';
+      const head = document.createElement('div');
+      const btn = document.createElement('button');
+      btn.className = 'btn primary';
+      btn.style.cssText = 'padding:2px 10px;font-size:11px;margin-right:8px;';
+      btn.textContent = '联网下载安装压缩引擎';
+      btn.title = 'npm install -g billion-context（机器需 Node ≥22 + 可达外网；内网无外联时装不上属预期）';
+      btn.onclick = () => {
+        btn.disabled = true;
+        fetch('/api/proxy/bili_install', { method: 'POST' })
+          .then(r => r.json())
+          .then(d2 => { if (!d2.ok) _msg('启动失败：' + (d2.msg || ''), true); })
+          .catch(e => _msg('启动失败: ' + e, true));
+      };
+      head.appendChild(btn);
+      const tip = document.createElement('span');
+      tip.style.color = 'var(--muted)';
+      tip.textContent = 'billion-context 未安装（压缩不可用；重试代理不受影响）';
+      head.appendChild(tip);
+      row.appendChild(head);
+      const log = document.createElement('div');
+      log.style.cssText = 'margin-top:4px;max-height:90px;overflow:auto;font-size:11px;font-family:var(--font-mono);white-space:pre-wrap;color:var(--muted);';
+      log.id = 'px-bili-inst-log';
+      row.appendChild(log);
+      hrStatsEl.parentElement.appendChild(row);
+    }
+    const logEl = document.getElementById('px-bili-inst-log');
+    const lines = (inst.log || []).slice();
+    if (inst.running) lines.push('… 安装进行中（联网下载）');
+    if (inst.err) lines.push('✗ ' + inst.err);
+    if (logEl) {
+      const txt = lines.join('\n');
+      if (logEl.textContent !== txt) {
+        logEl.textContent = txt;
+        logEl.scrollTop = logEl.scrollHeight;
+      }
+    }
+  }
+
   function _renderHrStats(j) {
     // bili 压缩统计条：/__bili/stats 的 sessions 维度聚合（a201 换代——
     // headroom 的 agent_usage 结构随其退役；字段缺省 .get 口径兜底）
@@ -425,9 +476,10 @@ function buildProxyTab() {
       _renderHrStats(j);
       _setHrUI(j);
       _setRetryUI(j);
+      _renderBiliInstall(j);
       if (!j.bili_ready && j.bili_mode === 'on') {
         msgEl.dataset.keep = '1';
-        _msg('未找到 billion-context（需 Node ≥22 + npm install -g billion-context），压缩不可用；重试代理不受影响', true);
+        _msg('压缩引擎未安装——下方「联网下载安装」一键装（需 Node ≥22 + 网络）；重试代理不受影响', true);
       } else if (j.bili_last_err) {
         // a203：后端切换失败会静默回退 off，原样只留一行 log——用户只看到
         // 「点了没反应」。把原因顶到面板上（切成功后后端清空该字段）。
