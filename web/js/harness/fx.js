@@ -69,16 +69,21 @@
     const bootWin = authWin > 0 ? authWin
       : (/1m/i.test(mname) ? 1000000 : _HG_CTX_FALLBACK);
     // 恢复判据同样按 badMax（模型真实能力），不能用显示分母——否则
-    // (settings, 实报] 的合法用量切回会话时会被整段画 0，出现「先清零再涨」
-    const restoreBad = authBad > 0 ? authBad : (v && v.badMax) || (v && v.max) || bootWin;
+    // (settings, 实报] 的合法用量切回会话时会被整段画 0，出现「先清零再涨」。
+    // 老记忆没有 badMax 字段时不能退回显示分母（同样会误清合法值），
+    // 取 max 与 bootWin 的较大者兜住
+    const restoreBad = authBad > 0 ? authBad
+      : ((v && v.badMax) || Math.max((v && v.max) || 0, bootWin));
     if (v && v.used > 0 && v.used <= restoreBad && sameModel)
       _hgDrawCtxRing(v.used, v.max || bootWin);
     else _hgDrawCtxRing(0, bootWin);
     // v2.20：记忆里的 max 可能是旧代码存的 256K 兜底值（1M 模型被压成
     // /256K、84% 虚报，用户实测）——恢复路径同样按权威窗口校正并写回。
-    // 归属不符（切过模型）不写回：否则会把该会话原本正确的记忆也污染
+    // 归属不符（切过模型）不写回：否则会把该会话原本正确的记忆也污染。
+    // used 必须复用上面的判据：信任已判坏的旧值会「先画 0 再满环」并
+    // 把坏值重新持久化
     if (authWin > 0 && sameModel && ((v && v.max) || 0) !== authWin) {
-      const used = (v && v.used > 0) ? v.used : 0;
+      const used = (v && v.used > 0 && v.used <= restoreBad) ? v.used : 0;
       _hgDrawCtxRing(used, authWin);
       try {
         localStorage.setItem(_hgCtxKey(sid), JSON.stringify(

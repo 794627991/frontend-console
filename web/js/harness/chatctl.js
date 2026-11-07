@@ -308,7 +308,9 @@
         ['思考', _HG.thinkLv ? (_HG_THINKS[_HG.thinkLv] || _HG.thinkLv) : '默认'],
       ];
       if (ctx && ctx.ok && ctx.window) {
-        const pct = ctx.used ? Math.round(ctx.used / ctx.window * 100) + '%' : '—';
+        // 与圆环/侧栏同口径 clamp：badMax 放行后 used 可合法超过显示分母
+        const pct = ctx.used
+          ? Math.min(100, Math.round(ctx.used / ctx.window * 100)) + '%' : '—';
         const u = ctx.used ? (ctx.used / 1000).toFixed(1) + 'K / ' + (ctx.window / 1000).toFixed(0) + 'K (' + pct + ')' : '';
         rows.push(['上下文', ctx.compacted ? (u ? u + ' · ' : '') + '压缩后待首轮回复' : (u || '首轮回复后统计')]);
       }
