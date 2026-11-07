@@ -233,6 +233,36 @@ def build_app():
     # 主页面来源 + worker 自身两个；无 Origin（同源/服务端调用）不设头
     _MAIN_ORIGIN = (os.environ.get("CLAUDE_WORKER_MAIN_ORIGIN") or "").strip()
 
+    # 允许的来源集合（before_request 与 CORS 共用，两处必须一致——只松一边
+    # 等于没修）。主机名等价变体（127.0.0.1/localhost/[::1]）放行、**端口
+    # 精确不变**：既不误杀 localhost 打开的页面，也不放开本机任意网页。
+    from urllib.parse import urlsplit as _urlsplit
+
+    def _origin_variants(origin):
+        o = (origin or "").strip().rstrip("/")
+        if not o:
+            return set()
+        try:
+            sp = _urlsplit(o)
+        except Exception:
+            return {o}
+        if not sp.hostname:
+            return {o}
+        port = (":%d" % sp.port) if sp.port else ""
+        out = {o}
+        for h in ("127.0.0.1", "localhost", "[::1]"):
+            out.add("%s://%s%s" % (sp.scheme, h, port))
+        return out
+
+    def _origin_allowed(origin):
+        o = (origin or "").strip().rstrip("/")
+        if not o:
+            return False
+        for src in (_MAIN_ORIGIN, _base):
+            if src and o in _origin_variants(src):
+                return True
+        return False
+
     @app.before_request
     def _guard_host():
         """全站 Host 收口（对齐主进程 server.py 的 _guard_local_origin）。
@@ -241,33 +271,27 @@ def build_app():
         没有防线：/api/hiklink/status 现在回传明文 App Secret，DNS rebinding
         （evil.com 重绑到 127.0.0.1:worker端口）后同源 GET 即可读出密钥。
 
-        写操作另校 Origin：**同源即放行**（与主进程 _LOCAL_ORIGIN_RE 同口径），
-        再放行主页面来源。绝不能只认 http://127.0.0.1:<主端口>——用户用
-        localhost 打开页面、或 CLAUDE_WORKER_MAIN_ORIGIN 未注入时，会把整站
-        写操作打成 403（能读不能写，且前端只看到 network error）。
+        写操作另校 Origin，**只放行精确来源**：主页面来源、worker 自身、
+        以及它们的主机名等价变体（127.0.0.1 ↔ localhost ↔ [::1]，端口不变）。
+        绝不放开「任意 loopback 端口」——那会让本机任意网页（127.0.0.1:9999）
+        跨源驱动 harness/send、改 api_config（a116 既定安全判定）。
         """
         host = (request.host or "").strip()
         if not _LOCAL_HOST_RE.match(host):
             return jsonify({"ok": False, "msg": "forbidden host"}), 403
         if request.method in ("POST", "PUT", "DELETE", "PATCH"):
             origin = (request.headers.get("Origin") or "").strip().rstrip("/")
-            if origin:
-                own = [
-                    "http://" + host, "https://" + host,
-                    (_base or "").rstrip("/"), _MAIN_ORIGIN.rstrip("/"),
-                ]
-                if origin not in own and not _LOCAL_ORIGIN_RE.match(origin):
-                    return jsonify({"ok": False, "msg": "forbidden origin"}), 403
+            if origin and not _origin_allowed(origin):
+                return jsonify({"ok": False, "msg": "forbidden origin"}), 403
         return None
 
     @app.after_request
     def _cors(resp):
+        # 与 _guard_host 共用同一套放行集合：只松 before_request 不松 CORS
+        # 等于没修——localhost 打开的页面在预检阶段就拿不到 ACAO
         origin = (request.headers.get("Origin") or "").strip()
-        allow = ""
-        if origin and (origin == _MAIN_ORIGIN or (_base and origin == _base)):
-            allow = origin
-        if allow:
-            resp.headers["Access-Control-Allow-Origin"] = allow
+        if origin and _origin_allowed(origin.rstrip("/")):
+            resp.headers["Access-Control-Allow-Origin"] = origin
             resp.headers["Vary"] = "Origin"
             resp.headers["Access-Control-Allow-Methods"] = \
                 "GET, POST, PUT, DELETE, PATCH, OPTIONS"
@@ -361,13 +385,11 @@ def main():
 _proc = None
 _stop = threading.Event()
 _base = ""
-# 与主进程 server.py 的 _LOCAL_HOST_RE 同款（worker 侧无全站 Host 守卫，
-# 个别改写状态的端点（如 /api/hiklink/credentials）自行校验）
+# 与主进程 server.py 的 _LOCAL_HOST_RE 同款：全站 Host 收口用（见 _guard_host）
+# 注：**不要**再引入「任意 loopback 端口」的 Origin 正则——那会放开本机任意
+# 网页对 worker 的跨源写面（a116 既定安全判定）。来源白名单见 _origin_allowed
 _LOCAL_HOST_RE = re.compile(
     r"^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$", re.I)
-# 与主进程同款：本机任意 loopback 来源（写操作 Origin 同源判定用）
-_LOCAL_ORIGIN_RE = re.compile(
-    r"^https?://(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$", re.I)
 _MAIN_PORT = 0            # a117：主进程服务端口（CORS 白名单注入用；manage_start 传入）
 _last_port = 0            # 最近一次实际端口（respawn 期望值跟随 fallback）
 _hung = 0                 # 连续 health 探活失败计数（挂死检测）

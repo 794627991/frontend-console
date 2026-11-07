@@ -194,6 +194,10 @@ const _HG = {
   // 不再按模型名里的 [1m] 猜（切过 API 后会残留）。
   // **按 sid 存**：窗口是会话属性，全局单值会把 A 会话的 1M 带给 B 会话
   ctxWinBy: {},
+  // v4.1：坏数据判据阈值（模型真实能力，max(settings, 网关实报)）。与显示
+  // 分母解耦——settings 配 500K 而模型实为 1M 时，500K~1M 的合法用量不能
+  // 被当成坏数据丢弃/归零。按 sid 存，切会话不串味
+  ctxBadMaxBy: {},
   skills: null,
   sessions: [],
   seq: 0,

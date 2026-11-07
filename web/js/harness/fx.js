@@ -152,11 +152,15 @@
     } else {
       ctxMax = _HG_CTX_FALLBACK;
     }
-    // v2.20（3.png 假 100%）：used > ctxMax = 网关把全会话累计口径塞进了
+    // v2.20（3.png 假 100%）：used 远超窗 = 网关把全会话累计口径塞进了
     // 单轮 usage（实测 ~20 轮 × ~70K ≈ 1.4M，clamp 后恒显 100%）。单轮真实
-    // 用量物理不可能超窗（超了 API 直接报错，不会有 success result）——
-    // 必是坏数据：丢弃本轮，环保留上一轮合法值。
-    if (used > ctxMax) return;
+    // 用量物理不可能超窗（超了 API 直接报错，不会有 success result）。
+    // 判据阈值必须用「模型真实能力」（o.badMax，缺省回落到 ctxMax）而不是
+    // 显示分母：settings 配 500K 而模型实为 1M 时，500K~1M 的合法用量
+    // 若按 500K 判会被整帧丢弃 → 环冻结在旧读数
+    const guardMax = (typeof o.badMax === 'number' && o.badMax > 0)
+      ? o.badMax : ctxMax;
+    if (used > guardMax) return;
     _hgDrawCtxRing(used, ctxMax);
     if (_HG.sid) { try { localStorage.setItem(_hgCtxKey(_HG.sid), JSON.stringify({used, max: ctxMax, model: o.model || _HG.model || ''})); } catch(_) {} }
   }
@@ -183,6 +187,10 @@
         if (j.window > 0 && sid) {
           (_HG.ctxWinBy || (_HG.ctxWinBy = {}))[sid] = j.window;
         }
+        // 坏数据阈值同样按会话存（v4bridge 的 ctxLive 判坏要用）
+        if (j.badMax > 0 && sid) {
+          (_HG.ctxBadMaxBy || (_HG.ctxBadMaxBy = {}))[sid] = j.badMax;
+        }
         // v2.21：压缩后尚未有新轮次 → jsonl 主链读数已归零，环也归零，
         // 不能继续画压缩前的旧值（用户实测 708K 残留）
         if (!(j.used > 0)) {
@@ -198,13 +206,19 @@
         if (_HG.busy) {
           if (!_HG.ctxRing) _HG.ctxRing = { used: 0, max: win || _HG_CTX_FALLBACK };
           if (win && win !== _HG.ctxRing.max) _HG.ctxRing.max = win;
-          if (j.used > (_HG.ctxRing.used || 0)) _HG.ctxRing.used = j.used;
+          // 坏数据判据用 badMax（模型真实能力），与显示分母解耦——否则
+          // settings 500K + 合法 600K 会被写成 120% 并落进记忆
+          const bad = (j.badMax > 0) ? j.badMax : (win || _HG_CTX_FALLBACK);
+          if (j.used <= bad && j.used > (_HG.ctxRing.used || 0)) {
+            _HG.ctxRing.used = j.used;
+          }
           try { localStorage.setItem(_hgCtxKey(sid), JSON.stringify(
-            { used: j.used, max: win || _HG.ctxRing.max,
+            { used: _HG.ctxRing.used, max: win || _HG.ctxRing.max,
               model: j.model || _HG.model || '' })); } catch (_) {}
           return;
         }
         renderCtxRing({ usage: { input_tokens: j.used },
+                        badMax: j.badMax,
                         modelUsage: win ? { _w: { contextWindow: win } } : null });
       }).catch(() => {})
       .finally(() => { _hgCtxInFlight = false; });

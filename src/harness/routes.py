@@ -471,8 +471,17 @@ def harness_ctx():
     # a154：容量卡分类估算——系统提示词（session.start 落账的注入长度，
     # 中文重 3 字符/token 保守取 3）+ MCP 工具 schema（我们注册的，可量）
     sys_chars = getattr(s, "sys_prompt_chars", 0) or 0
+    # badMax：坏数据判据阈值（模型真实能力，与 settings 解耦）。前端用它
+    # 判「这帧用量是否离谱」，用 window 画分母——两者混用会把
+    # (settings, 实报] 的合法用量误丢，环冻结在旧读数
+    try:
+        from .session import _ctx_reported_window
+        bad_max = max(window, _ctx_reported_window(s))
+    except Exception:
+        bad_max = window
     # a264（用户定调）：窗口选择器退役——窗口只走自动链，不回传覆盖值
     return jsonify({"ok": True, "used": used, "window": window, "sid": s.sid,
+                    "badMax": bad_max,
                     "compacted": compacted,
                     "model": s.model or available_models().get("default") or "",
                     "sysTok": max(1, round(sys_chars / 3)) if sys_chars else 0,
@@ -522,6 +531,10 @@ def harness_set_model():
         return jsonify({"ok": True, "model": s.model})
     s.model = model
     s.live_model = None   # v2.27.21：旧实报随模型切换作废，start 按新 model 注入
+    # 旧模型的 modelUsage.contextWindow 必须一起作废：否则坏数据阈值
+    # （max(settings, 实报)）与「settings 未配时的显示分母」都沿用旧模型
+    #（1M 模型切到 256K 后阈值仍按 1M，累计口径的坏数据不再被归零）
+    s.last_result = None
     if s.alive:
         s.kill_proc(quiet=True)          # 吞 exit：计划内重启不弹「进程已结束」
     if s.session_id:
