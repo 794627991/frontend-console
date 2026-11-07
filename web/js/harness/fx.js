@@ -81,7 +81,11 @@
     let v = null;
     if (sid) { try { v = JSON.parse(localStorage.getItem(_hgCtxKey(sid)) || 'null'); } catch(_) {} }
     const s = _HG.sessions.find(x => x.sid === sid);
-    const mname = (s && s.model) || (_HG.models && _HG.models.default) || '';
+    // 归属优先用 /ctx 亲自回报的会话级模型名（_HG.modelBySid）——列表里的
+    // s.model 可能陈旧（refreshSessions 与 set_model 并发、或 tab 常开期间
+    // 改了 settings），陈旧值会把同一模型判成 mismatch 清 0
+    const mname = (sid && _HG.modelBySid && _HG.modelBySid[sid]) ||
+      (s && s.model) || (_HG.models && _HG.models.default) || '';
     // v2.27.16：记忆窗口带模型归属校验（renderCtxRing 同款）——旧记录无
     // model 字段或与当前模型不符 → 丢弃窗口值，按模型名重推，防 [1M] 会话
     // 残留的 1M 分母跟着小窗口模型走（Lanz-Auto 虚报 /1000.0K）。
@@ -115,24 +119,35 @@
     if (authBad > 0) restoreBad = authBad;
     else if (ownTrusted && v.badMax > 0) restoreBad = v.badMax;
     else restoreBad = (v && v.used > _CTX_PHYS_MAX) ? 0 : Infinity;
-    // 记忆可用 = 值在阈值内 + 模型未变（归属未知按可用，但阈值不采信旧值）
-    const canUse = !!(v && v.used > 0 && v.used <= restoreBad && !mismatch);
+    // 记忆可用 = 值在阈值内 + 模型未变 + 分母有权威来源（归属未知按可用，
+    // 但阈值不采信旧值）。分母缺失（v.max=0 且无 authWin）时也不可用——
+    // 否则按名字猜的 256K 会把 400K 画成 100% 红条，而胶囊/详情读
+    // hg-ctx（max 回落 256K）会跟着一起错
+    const denomKnown = !!(v && ((v.max || 0) > 0 || authWin > 0));
+    // 判坏 / 归属不符 → 该清；仅仅「分母未知」不算坏，值本身可能是好的
+    const badIsh = !!(v && v.used > 0 &&
+      (mismatch || v.used > restoreBad));
+    const canUse = !!(v && v.used > 0 && v.used <= restoreBad && !mismatch
+                      && denomKnown);
     const showUsed = canUse ? v.used : 0;
-    // 分母仍沿用 v.max：它来自 /ctx 的权威 window（不是按名字猜的），
-    // 归属未知时丢掉它会让默认 CLI 环境（mname 恒空）每次冷启动都退
-    // 256K，把 1M 会话的 720K 画成 100% 红条
-    const showMax = canUse ? (v.max || bootWin) : bootWin;
-    _hgDrawCtxRing(showUsed, showMax);
+    // 分母优先沿用 v.max（来自 /ctx 权威 window，不是按名字猜的）；归属未知
+    // 时丢掉它会让默认 CLI 环境（mname 恒空）每次冷启动都退 256K，把 1M
+    // 会话的 720K 画成 100% 红条
+    _hgDrawCtxRing(showUsed, canUse ? (v.max || authWin) : bootWin);
     // 画 0 同样必须落账：只重画不回写，记忆里留着旧 used → 侧栏胶囊/详情
     // 继续显示旧百分比（同屏矛盾），且 5s /ctx 的清环判据 cur 已被置 0
-    // → 永不触发，矛盾冻结到下一轮真实 usage
-    if (v && v.used > 0 && !canUse) _hgCtxSave(sid, 0, bootWin, effBad, mname);
+    // → 永不触发，矛盾冻结到下一轮真实 usage。
+    // 但「仅分母未知」时不清：那只是 applyModel 刚作废旧分母，真值还在，
+    // 清掉就是在等 /ctx 的几秒内把读数销毁（侧栏跟着变空）
+    if (badIsh) _hgCtxSave(sid, 0, bootWin, effBad, mname);
     // v2.20：记忆里的 max 可能是旧代码存的 256K 兜底值（1M 模型被压成
     // /256K、84% 虚报，用户实测）——恢复路径同样按权威窗口校正并写回。
     // 归属不符（切过模型）不写回：否则会把该会话原本正确的记忆也污染。
     // used 必须复用上面的判据：信任已判坏的旧值会「先画 0 再满环」并
     // 把坏值重新持久化
     if (authWin > 0 && !mismatch && ((v && v.max) || 0) !== authWin) {
+      // 分母刚被校正，此处才是「可以画用量」的时机（denomKnown 挡住的分母缺失
+      // 分支在这里补上）；showUsed 已按阈值过滤，坏值不会复活
       _hgDrawCtxRing(showUsed, authWin);
       // model 只在有名字时写，否则保留记忆里的旧归属，避免把归属
       // 信息抹成空串、下次再也判不出「切过模型」
@@ -259,6 +274,12 @@
         // 坏数据阈值同样按会话存（v4bridge 的 ctxLive 判坏要用）
         if (j.badMax > 0 && sid) {
           (_HG.ctxBadMaxBy || (_HG.ctxBadMaxBy = {}))[sid] = j.badMax;
+        }
+        // 会话级模型名（归属真源）：恢复路径的 mismatch 判据用它，比列表
+        // s.model 新鲜——列表会被 refreshSessions 与 set_model 的时序并发
+        // 读到旧值，陈旧值会把同一模型判成 mismatch 假清 0
+        if (j.model && sid) {
+          (_HG.modelBySid || (_HG.modelBySid = {}))[sid] = j.model;
         }
         // 分母优先本会话已校准的权威窗口：空响应（如超窗续命 session_id
         // 暂缺）时 win=0，会按全局模型名猜 1M 或退 256K，把 settings 校准

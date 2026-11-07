@@ -126,7 +126,10 @@
           const live = _HG.busy ? (_HG.ctxRing || null) : null;
           const base = live ? live.used : (v && v.used);
           const mx = live ? live.max : (v && v.max);
-          if (base > 0) {
+          // 分母未知（max=0，applyModel 刚作废旧分母）时不出百分比：
+          // 回落 256K 会把 settings 500K 会话的 400K 显示成 100% 红条，
+          // 与圆环「等 /ctx」口径保持一致
+          if (base > 0 && mx > 0) {
             // busy 期叠加生成中估值，与圆环/容量卡同口径
             const est = (_HG.busy && _HG.tps && _HG.tps.liveToks) || 0;
             const shown = base + est;
@@ -134,7 +137,7 @@
             // 与 _hgDrawCtxRing 同口径 clamp：badMax 放行后 used 可合法超过
             // 显示分母（settings 500K / 模型 1M），裸算会显示 120%
             const pct = Math.min(100,
-              Math.round(shown / (mx || 256000) * 100));
+              Math.round(shown / mx * 100));
             ctxTxt = pct + (ctxEst ? '*' : '') + '%';
             ctxWarn = pct >= 80;
           }
@@ -636,8 +639,9 @@
         const live = _HG.busy ? (_HG.ctxRing || null) : null;
         const base = live ? live.used : (v && v.used);
         const mx0 = live ? live.max : (v && v.max);
-        if (base > 0) {
-          const mx = mx0 || 256000;
+        // 分母未知时不出百分比，口径同胶囊
+        if (base > 0 && mx0 > 0) {
+          const mx = mx0;
           // busy 期含生成中估值，与圆环/胶囊同口径
           const est = (_HG.busy && _HG.tps && _HG.tps.liveToks) || 0;
           const shown = base + est;

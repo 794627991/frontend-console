@@ -253,23 +253,34 @@
             try {
               if (_HG.ctxWinBy) delete _HG.ctxWinBy[msid];
               if (_HG.ctxBadMaxBy) delete _HG.ctxBadMaxBy[msid];
+              // 归属真源改用响应体回报的实际配置名（后端 sync_meta 已落盘），
+              // 用户清单里该会话的 s.model 此刻还是旧值
+              (_HG.modelBySid || (_HG.modelBySid = {}))[msid] =
+                j.model || m || '';
               if (msid === _HG.sid) _HG.ctxRing = null;
               // 记忆里的归属也要改写成新配置名——否则旧归属（可能是网关
               // 实报名）与新 mname 不等，切回时被判 mismatch 清 0。分母
-              // 归零由 /ctx 重新给，避免旧模型窗口继续当显示分母
+              // 归零由 /ctx 重新给，避免旧模型窗口继续当显示分母。
+              // JSON 放在任何 delete 之前解析：解析失败也不留「内存清空 +
+              // 旧归属」的中间态
               const k = 'hg-ctx:' + msid;
-              const rec = JSON.parse(localStorage.getItem(k) || 'null');
-              if (rec) {
-                rec.model = m;
-                rec.max = 0;
-                delete rec.badMax;
-                localStorage.setItem(k, JSON.stringify(rec));
-              }
+              let rec = null;
+              try { rec = JSON.parse(localStorage.getItem(k) || 'null'); } catch (_) { rec = null; }
+              rec = rec || {};
+              rec.model = j.model || m || rec.model || '';
+              rec.max = 0;
+              delete rec.badMax;
+              localStorage.setItem(k, JSON.stringify(rec));
             } catch (_) {}
+            // 立即拉一次权威窗口，别让「分母已作废」的空白态等满 5s
+            // 立即拉一次权威窗口，别让「分母已作废」的空白态等满 5s
+            try { _hgCtxPoll(); } catch (_) {}
+            // 会话列表放在成功之后再刷：先刷会在 set_model 落盘前读到旧
+            // meta.model（GET 先于 POST 返回），把陈旧名灌回 _HG.sessions
+            try { refreshSessions(); } catch (_) {}
           }
         })
         .catch(() => { _HG.model = prev; setChip(prev); showBanner('切换模型失败', 3000, true); });
-      refreshSessions();
     } else showBanner('模型 ' + m + ' 将用于新会话', 2200);
   }
   async function execSlash(raw) {

@@ -198,6 +198,11 @@ const _HG = {
   // 分母解耦——settings 配 500K 而模型实为 1M 时，500K~1M 的合法用量不能
   // 被当成坏数据丢弃/归零。按 sid 存，切会话不串味
   ctxBadMaxBy: {},
+  // v4.1：/ctx 亲自回报的会话模型名（配置名，routes.py 的 s.model or default）。
+  // 恢复路径的归属判据用它，不用 sessions 列表里的 s.model——列表会被
+  // refreshSessions 与 set_model 的时序并发读到旧值（sync_meta 在 POST 之后），
+  // 陈旧值会把同一模型判成 mismatch 假清 0。按 sid 存
+  modelBySid: {},
   skills: null,
   sessions: [],
   seq: 0,
