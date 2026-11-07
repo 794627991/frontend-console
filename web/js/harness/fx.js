@@ -70,10 +70,13 @@
       : (/1m/i.test(mname) ? 1000000 : _HG_CTX_FALLBACK);
     // 恢复判据同样按 badMax（模型真实能力），不能用显示分母——否则
     // (settings, 实报] 的合法用量切回会话时会被整段画 0，出现「先清零再涨」。
-    // 老记忆没有 badMax 字段时不能退回显示分母（同样会误清合法值），
-    // 取 max 与 bootWin 的较大者兜住
-    const restoreBad = authBad > 0 ? authBad
-      : ((v && v.badMax) || Math.max((v && v.max) || 0, bootWin));
+    // 无任何权威 badMax（冷启动、a423 之前的老记忆）时**不做判坏**：
+    // 拿旧显示分母或历史大分母当阈值两个方向都会错（误清合法值 / 放行坏值），
+    // 先按记忆原样显示，判坏交给必到的 5s /ctx（其在 used=0 时会主动清环）
+    const authBadKnown = authBad > 0 || (v && v.badMax);
+    const restoreBad = authBadKnown
+      ? (authBad > 0 ? authBad : v.badMax)
+      : Infinity;
     if (v && v.used > 0 && v.used <= restoreBad && sameModel)
       _hgDrawCtxRing(v.used, v.max || bootWin);
     else _hgDrawCtxRing(0, bootWin);
@@ -208,7 +211,15 @@
         // v2.21：压缩后尚未有新轮次 → jsonl 主链读数已归零，环也归零，
         // 不能继续画压缩前的旧值（用户实测 708K 残留）
         if (!(j.used > 0)) {
-          if (j.compacted) _hgDrawCtxRing(0, win || _HG_CTX_FALLBACK, '上下文已压缩 · 首轮回复后统计');
+          if (j.compacted) {
+            _hgDrawCtxRing(0, win || _HG_CTX_FALLBACK,
+                           '上下文已压缩 · 首轮回复后统计');
+          } else if (_HG.ctxRing && _HG.ctxRing.used > 0
+                     && _HG.ctxRing.used > (j.badMax || win || 0)) {
+            // 后端判坏归零：恢复路径在无权威 badMax 时放行过坏值，这里
+            // 用后端权威阈值主动清环，否则错误读数会冻结到下一回合
+            _hgDrawCtxRing(0, win || _HG_CTX_FALLBACK);
+          }
           return;
         }
         // v4.1（用户实锤「上下文途中跳变」）：busy 期间轮询让位实时链——
