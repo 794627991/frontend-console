@@ -1620,7 +1620,8 @@ def _build_tag_db(tags_path, db_path, say=None, prog=None):
         con.execute("PRAGMA journal_mode=OFF")
         con.execute("PRAGMA synchronous=OFF")
         con.execute("PRAGMA temp_store=MEMORY")
-        con.execute("CREATE TABLE t(name TEXT, path TEXT, line INTEGER, kind TEXT)")
+        con.execute("CREATE TABLE t(name TEXT, path TEXT, line INTEGER, "
+            "kind TEXT, file_scope INTEGER)")
         n, rows = 0, []
         with open(tags_path, encoding="utf-8", errors="replace") as f:
             for line in f:
@@ -1631,7 +1632,7 @@ def _build_tag_db(tags_path, db_path, say=None, prog=None):
                 if len(parts) < 3:
                     continue
                 name, path = parts[0], parts[1]
-                kind, lineno = "", 0
+                kind, lineno, file_scope = "", 0, 0
                 for seg in parts[3:]:
                     if seg.startswith("kind:"):
                         kind = seg[5:]
@@ -1640,17 +1641,19 @@ def _build_tag_db(tags_path, db_path, say=None, prog=None):
                             lineno = int(seg[5:])
                         except ValueError:
                             pass
+                    elif seg == "file:":
+                        file_scope = 1   # a425：文件内可见标记（原先丢弃）
                     elif not kind and seg and ":" not in seg and seg != "file":
                         kind = seg   # --fields=+Kn 裸值 kind
-                rows.append((name, path, lineno, kind))
+                rows.append((name, path, lineno, kind, file_scope))
                 n += 1
                 if len(rows) >= 100000:
-                    con.executemany("INSERT INTO t VALUES(?,?,?,?)", rows)
+                    con.executemany("INSERT INTO t VALUES(?,?,?,?,?)", rows)
                     rows = []
                     prog(80 + 14 * n / max(1, total_lines),
                          "sqlite 导入 %d 行" % n)
         if rows:
-            con.executemany("INSERT INTO t VALUES(?,?,?,?)", rows)
+            con.executemany("INSERT INTO t VALUES(?,?,?,?,?)", rows)
         con.commit()
         if prog:
             prog(96, "sqlite 建索引")
@@ -1705,8 +1708,9 @@ class _TagDB(object):
             return self._con.execute(sql, args).fetchall()
 
     def lookup(self, name):
-        return [(r[1], r[2], r[3]) for r in
-                self._q("SELECT name, path, line, kind FROM t WHERE name=?", (name,))]
+        return [(r[1], r[2], r[3], r[4]) for r in
+                self._q("SELECT name, path, line, kind, file_scope FROM t "
+                        "WHERE name=?", (name,))]
 
     def lookup_ci(self, name):
         return self._q("SELECT name, path, line, kind FROM t "
@@ -1808,7 +1812,7 @@ class _ReadtagsBackend(object):
         if len(parts) < 3:
             return None
         name, path = parts[0], parts[1]
-        kind, lineno = "", 0
+        kind, lineno, file_scope = "", 0, 0
         for seg in parts[3:]:
             if seg.startswith("kind:"):
                 kind = seg[5:]
@@ -1817,16 +1821,18 @@ class _ReadtagsBackend(object):
                     lineno = int(seg[5:])
                 except ValueError:
                     pass
+            elif seg == "file:":
+                file_scope = 1   # a425：文件内可见标记（原先丢弃）
             elif not kind and seg and ":" not in seg and seg != "file":
                 kind = seg
-        return (name, path, lineno, kind)
+        return (name, path, lineno, kind, file_scope)
 
     def lookup(self, name):
         rows = []
         for line in self._run([], names=(name,)):
             r = self._parse(line)
             if r and r[0] == name:
-                rows.append((r[1], r[2], r[3]))
+                rows.append((r[1], r[2], r[3], r[4]))
         return rows
 
     def lookup_ci(self, name):
@@ -2059,7 +2065,7 @@ def _load_tags(ld):
                 if len(parts) < 3:
                     continue
                 name, path = parts[0], parts[1]
-                kind, lineno = "", 0
+                kind, lineno, file_scope = "", 0, 0
                 for seg in parts[3:]:
                     if seg.startswith("kind:"):
                         kind = seg[5:]
@@ -2068,6 +2074,8 @@ def _load_tags(ld):
                             lineno = int(seg[5:])
                         except ValueError:
                             pass
+                    elif seg == "file:":
+                        file_scope = 1   # a425：文件内可见标记
                     elif not kind and seg and ":" not in seg and seg != "file":
                         # a383（存量 bug 实锤）：本库 ctags --fields=+Kn 产长名
                         # 裸值 kind（class/variable/function…，不带 kind: 前缀）
@@ -2075,7 +2083,7 @@ def _load_tags(ld):
                         # file_local 优先级从未生效。裸段里除 kind 外只有
                         # extras=f 的 'file' 标记，可安全识别
                         kind = seg
-                data.setdefault(name, []).append((path, lineno, kind))
+                data.setdefault(name, []).append((path, lineno, kind, file_scope))
     except OSError:
         data = {}
     with _cache_lock:
@@ -2171,7 +2179,7 @@ def symbols(file_path, q, limit=50, **kwargs):
     out = []
 
     def push(name):
-        for path, lineno, kind in _be.lookup(name)[:6]:   # R16-10：与 F12 候选口径拉近
+        for path, lineno, kind, _fsc in _be.lookup(name)[:6]:   # R16-10：与 F12 候选口径拉近
             rel = path.replace(os.sep, "/")
             if os.path.isabs(path):
                 rel = os.path.relpath(path, root).replace(os.sep, "/")
@@ -2361,7 +2369,7 @@ def definition(file_path, symbol):
     if not cands:
         # 大小写不敏感重试（返回 (name,path,line,kind)——取后三列）
         for _r in _be.lookup_ci(symbol):
-            cands.append((_r[1], _r[2], _r[3]))
+            cands.append((_r[1], _r[2], _r[3], _r[4] if len(_r) > 4 else 0))
     mf = _load_json_cached(ld, "manifest.json", _manifest_cache)
     compiled = mf.get("compiled") or {}
     syms = _load_json_cached(ld, "symbols.json", _symbols_cache).get("symbols") or {}
@@ -2391,13 +2399,19 @@ def definition(file_path, symbol):
                             break
             except OSError:
                 pass
-            cands.append((sabs, ln, ""))
+            cands.append((sabs, ln, "", 0))
     if not cands:
         return {"symbol": symbol, "auto": False, "mode": "not-found",
                 "candidates": []}
 
     out = []
-    for path, lineno, kind in cands:
+    for path, lineno, kind, file_scope in cands:
+        # a425 修复 A（内网报告 a419 缺陷一）：ctags file: 标记=该符号仅本
+        # 源文件可见。发起跳转的文件不是它自己时该候选根本不可见，必须剔除
+        # ——否则 11% 的 file-scope 符号（局部 static/局部宏）全当全局候选
+        # 抢真定义（实测 pr_warn 被 uboot 工具的 fprintf 局部宏抢走）
+        if file_scope and file_path and                 os.path.normcase(os.path.abspath(path)) !=                 os.path.normcase(os.path.abspath(file_path)):
+            continue
         rel = path.replace(os.sep, "/")
         if os.path.isabs(path):
             rel = os.path.relpath(path, root).replace(os.sep, "/") if \
@@ -2419,11 +2433,26 @@ def definition(file_path, symbol):
             "nm_lock": bool(nm_lock and rel == nm_lock),
         })
 
+    # a425 修复 B+C-2（内网报告 a419 缺陷二）：排序加两档——
+    # ③ 第三方源码副本降权（先于 in_build）：sbuilder/board 的 optee/atf/
+    # musl 树自带构建产物（1823 个 .o）→ in_build=True 抢走 copy_to_user
+    # 这类内核真定义；④ 头文件宏优先（in_build 之后，dist 之前）：头文件
+    # 的 in_build 恒为 None（非编译单元），不加这档任何编译过的 .c 里的
+    # 同名 #define 都压过内核头文件宏（pr_warn 被 sunxi 工具的 fprintf
+    # 局部宏抢走实锤）。in_build 必须仍在 ③④ 之前——真函数定义优先于
+    # 头文件里的声明
+    _VENDOR_TREES = ("sbuilder/board/", "/tools/atf/",
+                     "/tools/optee_os", "/tools/musl/")
+
     def rank(c):
+        _vendor = any(t in c["rel"] for t in _VENDOR_TREES)
         return (
             0 if c["nm_lock"] else 1,                       # nm 符号级锁定最优先
             0 if c["file_local"] else 1,                    # 当前文件 static
+            1 if _vendor else 0,                            # ③ 第三方副本降权
             0 if c["in_build"] is True else 1,              # 编译白名单
+            0 if ("/include/" in c["rel"] and c["kind"] == "macro") else 1,
+                                                           # ④ 头文件宏
             -c["dist"],                                      # 路径公共祖先（组件消歧）
             c["rel"],
         )
