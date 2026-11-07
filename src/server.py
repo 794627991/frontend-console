@@ -327,9 +327,9 @@ def start_background():
             time.sleep(8)   # 让端口/网络就绪，避开启动高峰
             try:
                 from src import hiklink_bot as hb
-                d = hb._load_session_file()
-                if (d.get("uid") and d.get("password")) or \
-                        (d.get("app_id") and d.get("app_secret")):
+                # 机器人只认凭证登录（SSO 自动注册已退役）：没凭证就别调
+                # ensure_started，否则每次开机刷一行「启动自恢复失败」
+                if hb.is_manual_mode():
                     ok, msg = hb.ensure_started()
                     import logging
                     logging.getLogger("hiklink_bot").info(

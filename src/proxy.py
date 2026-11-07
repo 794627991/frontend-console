@@ -2129,9 +2129,14 @@ def _api_credentials():
                                "所在目录权限，或把 exe 拷到普通目录运行）" % e})
     _invalidate_cred_cache({"username": user, "password": pwd})
     _quota.submit_credentials(user, pwd)
-    try:   # 统一登录绑定：凭据就位即激活机器人（幂等，无凭据不会被激活）
+    bot_msg = ""
+    try:   # 机器人已收敛为凭证登录单形态：账号登录不再激活机器人，
+        # 只按实际结果如实回报（此前无条件回「机器人已激活」）
         from src import hiklink_bot
-        hiklink_bot.ensure_started()
+        _ok, bot_msg = hiklink_bot.ensure_started()
+        if not _ok:
+            bot_msg = "机器人未启用（%s）" % bot_msg
     except Exception:
         pass
-    return jsonify({"ok": True, "msg": "已保存，开始登录（机器人已激活）"})
+    return jsonify({"ok": True,
+                    "msg": "已保存，开始登录" + ("；" + bot_msg if bot_msg else "")})

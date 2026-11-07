@@ -2139,30 +2139,17 @@ _CTX_WINDOW_DEFAULT = 262144
 
 
 def _session_ctx_window(s):
-    """413：窗口判定优先级链（用户报告《上下文窗口写死256K问题》根治——
-    旧版只看模型名 [1M] 后缀，其余一律写死 262144，用户 settings.json 配
-    500K 完全不被读取=263K 被按 256K 拒发）。取值顺序，第一个可用生效：
-      1. 网关实报：last_result.modelUsage[].contextWindow（模型真实能力，
-         数据已有——_session_ctx_used 同源字段，此前算了未用于判定）
-      2. 用户设置：settings.json 的 CLAUDE_CODE_MAX_CONTEXT_TOKENS /
-         CLAUDE_CODE_AUTO_COMPACT_WINDOW
-      3. 模型名 [1M] 后缀（v2.27.22 语义保留：配置名显式选择的窗口属性）
+    """窗口判定优先级链。**用户设置优先**（用户实锤：切过 API 后模型名/
+    网关实报仍带 1M，而 CLI 实际按 settings 的 500K 压缩——显示必须与
+    实际压缩线一致，否则 50% 的环已经是压缩线了）。取值顺序，第一个可用生效：
+      1. 用户设置：settings.json 的 CLAUDE_CODE_MAX_CONTEXT_TOKENS /
+         CLAUDE_CODE_AUTO_COMPACT_WINDOW —— CLI 就按它压，显示必须对齐
+      2. 网关实报：last_result.modelUsage[].contextWindow（未配置时用）
+      3. 模型名 [1M] 后缀（v2.27.22 语义保留）
       4. 兜底 262144
-    a264（用户定调）：config 按模型映射（旧优先级 0）与容量卡选择器一并
-    退役——窗口不该让用户选，只走自动链
-    注意与 v2.27.22 的张力：实报名会剥后缀，但实报的 contextWindow 是网关
-    上报的真实窗口数（非名字推断），值本身可信且高于名字推断——1M 场景
-    网关实报 ≥1048576 自然胜出，不冲突。"""
-    # 1. 网关实报（最权威）
-    try:
-        mu = (getattr(s, "last_result", None) or {}).get("modelUsage") or {}
-        for k in mu:
-            w = (mu[k] or {}).get("contextWindow") or 0
-            if w and int(w) > 0:
-                return int(w)
-    except Exception:
-        pass
-    # 2. 用户设置（settings.json env 注入块）
+    a264（用户定调）：config 按模型映射与容量卡选择器一并退役——窗口不该
+    让用户选，只走自动链。"""
+    # 1. 用户设置（CLI 的实际压缩线，最高优先级）
     try:
         import json as _json
         _sp = os.path.join(os.path.expanduser("~"), ".claude", "settings.json")
@@ -2173,6 +2160,15 @@ def _session_ctx_window(s):
             v = str(_env.get(key) or "").strip()
             if v.isdigit() and int(v) > 0:
                 return int(v)
+    except Exception:
+        pass
+    # 2. 网关实报
+    try:
+        mu = (getattr(s, "last_result", None) or {}).get("modelUsage") or {}
+        for k in mu:
+            w = (mu[k] or {}).get("contextWindow") or 0
+            if w and int(w) > 0:
+                return int(w)
     except Exception:
         pass
     # 3. 模型名 [1M] 后缀（显式选择）

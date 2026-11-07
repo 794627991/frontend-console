@@ -170,17 +170,12 @@ def build_app():
     def hiklink_credentials():
         """保存/清除手填机器人凭据（App ID + App Secret）。
         body: {app_id, app_secret}；两者皆空 = 清除。保存即重连生效。
-        显式要求两个键都在场：本端点无 Host/Origin 收口（worker 侧没有
-        主进程那套 before_request），若把「取不到参数」也当清除，本机
-        任意网页一个 text/plain 简单请求就能清空凭据并停掉机器人。"""
+        显式要求两个键都在场：把「取不到参数」当清除的话，本机任意网页
+        一个 text/plain 简单请求就能清空凭据并停掉机器人。Host/Origin
+        由全站 _guard_host 收口。"""
         j = request.get_json(silent=True)
         if not isinstance(j, dict) or "app_id" not in j or "app_secret" not in j:
             return jsonify({"ok": False, "msg": "请求体必须含 app_id 与 app_secret"}), 400
-        # 与主进程 _guard_local_origin 同款 Host 收口：worker 侧没有全站
-        # before_request，此端点又直接改写凭据+重启连接，补 DNS rebinding
-        # 防线（攻击者域名重绑定到 127.0.0.1:<worker端口> 后同源 POST）
-        if not _LOCAL_HOST_RE.match((request.host or "").strip()):
-            return jsonify({"ok": False, "msg": "forbidden host"}), 403
         ok, msg = hiklink_bot.set_manual_credentials(
             j.get("app_id"), j.get("app_secret"))
         return jsonify({"ok": ok, "msg": msg})
@@ -238,6 +233,25 @@ def build_app():
     # 主页面来源 + worker 自身两个；无 Origin（同源/服务端调用）不设头
     _MAIN_ORIGIN = (os.environ.get("CLAUDE_WORKER_MAIN_ORIGIN") or "").strip()
 
+    @app.before_request
+    def _guard_host():
+        """全站 Host 收口（对齐主进程 server.py 的 _guard_local_origin）。
+
+        此前只有 /api/hiklink/credentials 自己校验，其余端点在 worker 形态下
+        没有防线：/api/hiklink/status 现在回传明文 App Secret，DNS rebinding
+        （evil.com 重绑到 127.0.0.1:worker端口）后同源 GET 即可读出密钥。
+        写操作另加 Origin 校验：只放行主页面与 worker 自身。
+        """
+        host = (request.host or "").strip()
+        if not _LOCAL_HOST_RE.match(host):
+            return jsonify({"ok": False, "msg": "forbidden host"}), 403
+        if request.method in ("POST", "PUT", "DELETE", "PATCH"):
+            origin = (request.headers.get("Origin") or "").strip()
+            if origin and origin.rstrip("/") not in (
+                    _MAIN_ORIGIN.rstrip("/"), (_base or "").rstrip("/")):
+                return jsonify({"ok": False, "msg": "forbidden origin"}), 403
+        return None
+
     @app.after_request
     def _cors(resp):
         origin = (request.headers.get("Origin") or "").strip()
@@ -260,8 +274,9 @@ def _bot_restore():
     time.sleep(8)   # 让端口/网络就绪，避开启动高峰
     try:
         from src import hiklink_bot as hb
-        d = hb._load_session_file()
-        if (d.get("uid") and d.get("password")) or (d.get("app_id") and d.get("app_secret")):
+        # 机器人只认凭证登录（SSO 自动注册已退役）：没有 app_id/app_secret
+        # 就不要去调 ensure_started，否则每次开机刷一行「启动自恢复失败」
+        if hb.is_manual_mode():
             ok, msg = hb.ensure_started()
             log.info("启动自恢复机器人: %s (%s)", "成功" if ok else "失败", msg)
     except Exception as e:

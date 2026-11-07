@@ -189,9 +189,11 @@ const _HG_EYE = '<svg class="hg-eye" viewBox="0 0 24 24" aria-hidden="true">' +
 const _HG = {
   conn: null, sid: null, dirty: false,
   model: null, models: null,
-  ctxWin: 0,            // v4.1：后端权威窗口（/ctx 的 window，含 settings.json 的
-                        // CLAUDE_CODE_MAX_CONTEXT_TOKENS）——网关实报缺失时前端
-                        // 画环以它为准，不再按模型名里的 [1m] 猜（切过 API 后会残留）
+  // v4.1：后端权威窗口（/ctx 的 window，含 settings.json 的
+  // CLAUDE_CODE_MAX_CONTEXT_TOKENS）——网关实报缺失时前端画环以它为准，
+  // 不再按模型名里的 [1m] 猜（切过 API 后会残留）。
+  // **按 sid 存**：窗口是会话属性，全局单值会把 A 会话的 1M 带给 B 会话
+  ctxWinBy: {},
   skills: null,
   sessions: [],
   seq: 0,

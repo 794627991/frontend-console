@@ -205,11 +205,13 @@ function hgLoginRender(st, keepBaseline) {
         rid.dataset.dirty = '';
       }
     }
-    // 状态全由指示灯表达；文字只在不正常时给一句原因（在线/离线不写字）
+    // 状态全由指示灯表达；文字只在不正常时给一句原因（在线不写字）。
+    // 「未配置凭据」必须给文字——灰灯 off/idle 肉眼几乎无差别，用户分不清
+    // 是没配还是配了没跑
     const rdot = pop.querySelector('[data-hg-robot-dot]');
     if (rdot) rdot.className = hgBotLed(st);
     if (rstate) {
-      rstate.textContent = (st.manual && (st.auth_failed || !st.running))
+      rstate.textContent = (!st.manual || st.auth_failed || !st.running)
         ? hgBotPhase(st) : '';
     }
     // 密钥真回显：有已存密钥就填进框（type=password 显示为 ******），
@@ -270,6 +272,13 @@ function hgLoginTogglePop(force) {
       if (rid) {
         rid.dataset.dirty = '';
         if (!rid.value && _hgLastSt.app_id) rid.value = _hgLastSt.app_id;
+      }
+      // 密钥同款：只复位 App ID 会让「清空密钥并保存」后密钥框永久为空，
+      // 与后端实际值（留空即沿用旧密钥）不符
+      const rsec = pop.querySelector('[data-hg-robot-secret]');
+      if (rsec) {
+        rsec.dataset.dirty = '';
+        if (!rsec.value && _hgLastSt.app_secret) rsec.value = _hgLastSt.app_secret;
       }
     }
     pop.style.display = opening ? '' : 'none';
