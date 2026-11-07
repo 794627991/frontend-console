@@ -70,13 +70,15 @@
       : (/1m/i.test(mname) ? 1000000 : _HG_CTX_FALLBACK);
     // 恢复判据同样按 badMax（模型真实能力），不能用显示分母——否则
     // (settings, 实报] 的合法用量切回会话时会被整段画 0，出现「先清零再涨」。
-    // 无任何权威 badMax（冷启动、a423 之前的老记忆）时**不做判坏**：
-    // 拿旧显示分母或历史大分母当阈值两个方向都会错（误清合法值 / 放行坏值），
-    // 先按记忆原样显示，判坏交给必到的 5s /ctx（其在 used=0 时会主动清环）
+    // 无任何权威 badMax（冷启动、a423 之前的老记忆）时不用旧显示分母判坏：
+    // 两个方向都会错（误清合法值 / 放行坏值）。改为只设物理上界 2×1M
+    // （已知模型最大窗 1M），超过必是「全会话累计口径」坏值，直接判 0；
+    // 边界内先按记忆原样显示，精确判坏交给必到的 5s /ctx
     const authBadKnown = authBad > 0 || (v && v.badMax);
+    const _CTX_PHYS_MAX = 2097152;
     const restoreBad = authBadKnown
       ? (authBad > 0 ? authBad : v.badMax)
-      : Infinity;
+      : ((v && v.used > _CTX_PHYS_MAX) ? 0 : Infinity);
     if (v && v.used > 0 && v.used <= restoreBad && sameModel)
       _hgDrawCtxRing(v.used, v.max || bootWin);
     else _hgDrawCtxRing(0, bootWin);
@@ -208,17 +210,31 @@
         if (j.badMax > 0 && sid) {
           (_HG.ctxBadMaxBy || (_HG.ctxBadMaxBy = {}))[sid] = j.badMax;
         }
+        // 分母优先本会话已校准的权威窗口：空响应（如超窗续命 session_id
+        // 暂缺）时 win=0，会按全局模型名猜 1M 或退 256K，把 settings 校准
+        // 过的分母重置掉
+        const cw = _hgCtxWinGet() || win || _HG_CTX_FALLBACK;
         // v2.21：压缩后尚未有新轮次 → jsonl 主链读数已归零，环也归零，
         // 不能继续画压缩前的旧值（用户实测 708K 残留）
         if (!(j.used > 0)) {
           if (j.compacted) {
-            _hgDrawCtxRing(0, win || _HG_CTX_FALLBACK,
-                           '上下文已压缩 · 首轮回复后统计');
-          } else if (_HG.ctxRing && _HG.ctxRing.used > 0
-                     && _HG.ctxRing.used > (j.badMax || win || 0)) {
-            // 后端判坏归零：恢复路径在无权威 badMax 时放行过坏值，这里
-            // 用后端权威阈值主动清环，否则错误读数会冻结到下一回合
-            _hgDrawCtxRing(0, win || _HG_CTX_FALLBACK);
+            _hgDrawCtxRing(0, cw, '上下文已压缩 · 首轮回复后统计');
+          } else {
+            // 后端判坏归零：恢复路径在无权威 badMax 时放行过坏值，这里用
+            // 后端权威阈值主动清环。没权威判据（badMax/win 皆 0）绝不动环——
+            // 否则超窗续命的空响应会把合法读数清掉
+            const authBad = j.badMax > 0 ? j.badMax : (win > 0 ? win : 0);
+            const cur = _HG.ctxRing && _HG.ctxRing.used;
+            if (authBad > 0 && cur > authBad) {
+              _hgDrawCtxRing(0, cw);
+              // 必须落账：侧栏胶囊/容量卡详情直接读 hg-ctx 记忆，
+              // 只重画圆环会「圆环 0% / 侧栏 100%」同屏矛盾，且坏值
+              // 刷新即复活，_hgCtxRestore 又画满环 → 每 5s 循环一次
+              try { localStorage.setItem(_hgCtxKey(sid), JSON.stringify(
+                { used: 0, max: cw,
+                  badMax: j.badMax > 0 ? j.badMax : undefined,
+                  model: j.model || _HG.model || '' })); } catch (_) {}
+            }
           }
           return;
         }

@@ -2,6 +2,7 @@
 
 | 文档 | 说明 |
 |------|------|
+| [SSO认证与连接机制.md](SSO认证与连接机制.md) | SSO 两条链路（Lanz CAS / HikLink PC）源码级说明、加密细节、WS 协议、排查表 |
 | [MCP_INTEGRATION.md](MCP_INTEGRATION.md) | Claude Code MCP 集成：stdio server 桥接后端、工具清单、配置方法 |
 | [同类工具调研报告.md](同类工具调研报告.md) | 开源串口/SSH 终端与日志工具横向对比（Tabby/electerm/PuTTY 等） |
 | [性能优化审计报告.md](性能优化审计报告.md) | 前端渲染与串口读路径的对抗性性能审计记录 |
