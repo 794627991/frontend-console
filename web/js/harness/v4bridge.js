@@ -1187,7 +1187,11 @@
       }
       // 末级用当前显示分母：fx.js 只在分母权威时才会写进 ctxRing
       if (!(_bm > 0) && _HG.ctxRing && _HG.ctxRing.max > 0) _bm = _HG.ctxRing.max;
-      if (live > 0 && (!(_bm > 0) || live > _bm)) {
+      // _bm 为 0 = 还没有任何权威阈值（冷启动 + 遗留记忆）：此时只跳过绘制，
+      // 不写 t.ctxLive=0——否则会把共享的 _HG.tps 真值抹掉，/ctx 到达后
+      // 也拿不回来，白白多空窗一拍
+      var _bmKnown = _bm > 0;
+      if (_bmKnown && live > 0 && live > _bm) {
         live = 0;
         t.ctxLive = 0;
       }

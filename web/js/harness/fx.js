@@ -76,6 +76,14 @@
     const m = _HG.ctxWinBy;
     return (m && _HG.sid && m[_HG.sid]) || 0;
   }
+  // 记忆里的分母是否权威可溯源（与 _hgCtxRestore 的 denomAuth 同口径）：
+  // 本会话 /ctx 的窗口，或记忆带权威 badMax（同一次 /ctx 写入的互证）。
+  // 旧版本存的是按名字猜的 256K，没有 badMax，不能当分母用
+  function _hgCtxDenomOk(v) {
+    if (!v) return false;
+    if (_HG.sid && _HG.ctxWinBy && _HG.ctxWinBy[_HG.sid] > 0) return true;
+    return !!(v.badMax > 0 && v.max > 0);
+  }
   function _hgCtxRestore(sid) {
     _HG.ctxParts = null;   // a154：分类估算随会话走，旧会话的 sys/mcp 估值不残留
     let v = null;

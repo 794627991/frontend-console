@@ -123,9 +123,13 @@
           // busy 期改用 _HG.ctxRing 同源：实时链每拍写 ctxLive 真值，但只画
           // 环不落账（localStorage 最多落后一个轮询周期），只读记忆会与
           // 圆环/容量卡「环 18% / 胶囊 10%」不一致
+          // 非 busy 走记忆时，分母必须可溯源（同 _hgCtxRestore 的 denomAuth）：
+          // 旧版本存的按名字猜的 256K 没有 badMax，画出来就是错的百分比，
+          // 而圆环此时是空窗——两处不能一个不画一个硬画
           const live = _HG.busy ? (_HG.ctxRing || null) : null;
-          const base = live ? live.used : (v && v.used);
-          const mx = live ? live.max : (v && v.max);
+          const memOk = live || _hgCtxDenomOk(v);
+          const base = live ? live.used : (memOk ? (v && v.used) : 0);
+          const mx = live ? live.max : (memOk ? (v && v.max) : 0);
           // 分母未知（max=0，applyModel 刚作废旧分母）时不出百分比：
           // 回落 256K 会把 settings 500K 会话的 400K 显示成 100% 红条，
           // 与圆环「等 /ctx」口径保持一致
@@ -637,8 +641,10 @@
         const v = JSON.parse(localStorage.getItem('hg-ctx:' + _HG.sid) || 'null');
         // 同胶囊：busy 期取 _HG.ctxRing（实时链同源），空闲取记忆
         const live = _HG.busy ? (_HG.ctxRing || null) : null;
-        const base = live ? live.used : (v && v.used);
-        const mx0 = live ? live.max : (v && v.max);
+        // 同胶囊：非 busy 时分母也要可溯源，否则会显示圆环已经不再显示的旧百分比
+        const memOk = live || _hgCtxDenomOk(v);
+        const base = live ? live.used : (memOk ? (v && v.used) : 0);
+        const mx0 = live ? live.max : (memOk ? (v && v.max) : 0);
         // 分母未知时不出百分比，口径同胶囊
         if (base > 0 && mx0 > 0) {
           const mx = mx0;
