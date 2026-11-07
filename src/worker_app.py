@@ -240,16 +240,24 @@ def build_app():
         此前只有 /api/hiklink/credentials 自己校验，其余端点在 worker 形态下
         没有防线：/api/hiklink/status 现在回传明文 App Secret，DNS rebinding
         （evil.com 重绑到 127.0.0.1:worker端口）后同源 GET 即可读出密钥。
-        写操作另加 Origin 校验：只放行主页面与 worker 自身。
+
+        写操作另校 Origin：**同源即放行**（与主进程 _LOCAL_ORIGIN_RE 同口径），
+        再放行主页面来源。绝不能只认 http://127.0.0.1:<主端口>——用户用
+        localhost 打开页面、或 CLAUDE_WORKER_MAIN_ORIGIN 未注入时，会把整站
+        写操作打成 403（能读不能写，且前端只看到 network error）。
         """
         host = (request.host or "").strip()
         if not _LOCAL_HOST_RE.match(host):
             return jsonify({"ok": False, "msg": "forbidden host"}), 403
         if request.method in ("POST", "PUT", "DELETE", "PATCH"):
-            origin = (request.headers.get("Origin") or "").strip()
-            if origin and origin.rstrip("/") not in (
-                    _MAIN_ORIGIN.rstrip("/"), (_base or "").rstrip("/")):
-                return jsonify({"ok": False, "msg": "forbidden origin"}), 403
+            origin = (request.headers.get("Origin") or "").strip().rstrip("/")
+            if origin:
+                own = [
+                    "http://" + host, "https://" + host,
+                    (_base or "").rstrip("/"), _MAIN_ORIGIN.rstrip("/"),
+                ]
+                if origin not in own and not _LOCAL_ORIGIN_RE.match(origin):
+                    return jsonify({"ok": False, "msg": "forbidden origin"}), 403
         return None
 
     @app.after_request
@@ -357,6 +365,9 @@ _base = ""
 # 个别改写状态的端点（如 /api/hiklink/credentials）自行校验）
 _LOCAL_HOST_RE = re.compile(
     r"^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$", re.I)
+# 与主进程同款：本机任意 loopback 来源（写操作 Origin 同源判定用）
+_LOCAL_ORIGIN_RE = re.compile(
+    r"^https?://(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$", re.I)
 _MAIN_PORT = 0            # a117：主进程服务端口（CORS 白名单注入用；manage_start 传入）
 _last_port = 0            # 最近一次实际端口（respawn 期望值跟随 fallback）
 _hung = 0                 # 连续 health 探活失败计数（挂死检测）

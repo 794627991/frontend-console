@@ -312,8 +312,13 @@ document.addEventListener('click', async ev => {
       // v2.2.2：写盘失败如实报错——旧版静默吞 + 乐观渲染「已登录」，
       // 凭据实际没落盘，重启就得重登（同事机实锤）
       if (!sj.ok) { showBanner(sj.msg || '登录保存失败', 4000, true); return; }
-      // 凭据就位后端已自动激活；再显式触发一次（幂等），并即时回显登录态
-      await _hgFetchJson('/api/hiklink/activate', {}, 5000).catch(() => {});
+      // 后端会如实回报机器人是否启用（凭证模式下账号登录不激活机器人），
+      // 成功分支也要显示——否则「机器人未启用（…）」这条提示用户看不到
+      if (sj.msg) showBanner(sj.msg, 4000, false);
+      // 凭据就位后端已尝试激活；再显式触发一次（幂等），结果如实使用
+      // （无凭证时不要乐观显示 running:true）
+      const aj = await _hgFetchJson('/api/hiklink/activate', {}, 5000)
+        .catch(() => null);
       // 乐观渲染只补登录态字段，合并上一次真实状态——整块替换会把
       // manual/app_id/auth_failed 抹掉。基线为空（首屏状态拉取失败）时
       // 先补拉一次，否则手填模式这一帧文案整体退回「已登录」。
@@ -324,8 +329,11 @@ document.addEventListener('click', async ev => {
           if (jsStatus && jsStatus.ok) _hgLastSt = jsStatus;
         } catch (_) {}
       }
+      // 乐观渲染只补登录态；机器人 running 只在后端确认激活成功时才置真
+      // （无凭证时置真会让胶囊显示「连接中…」，1.5s 后才被纠偏）
+      const botOn = !!(aj && aj.ok);
       hgLoginRender(Object.assign({}, _hgLastSt,
-        { username: u, running: true, connected: false }), true);
+        { username: u, running: botOn, connected: false }), true);
       pEl.value = '';
       setTimeout(hgLoginRefresh, 1500);
     } catch (_) {}

@@ -459,14 +459,13 @@ def harness_ctx():
     if not s.session_id:
         return jsonify({"ok": True, "used": 0, "window": 0, "sid": s.sid})
     used, window, compacted = _session_ctx_used(s)
-    # v4.1：window 叠完整判定链（_session_ctx_window：网关实报→settings.json
-    # 的 CLAUDE_CODE_MAX_CONTEXT_TOKENS→模型名→兜底）。此前只取 last_result
-    # 的 modelUsage——回合途中（会话尚无 result / 新会话首轮）window=0，
-    # 前端模型名不带 [1M] 退 256K 假分母（用户 settings 配 500K 实锤：
-    # 途中显示 /256.0K (100%)，回合结束 result 校准才回 /500K）。
-    # max 叠加：有实报用实报，无实报 settings 兜底，两头都不落空。
+    # v4.1：window 走完整判定链（_session_ctx_window：settings.json 的
+    # CLAUDE_CODE_MAX_CONTEXT_TOKENS → 网关实报 → 模型名 → 兜底）。
+    # **不能与 _session_ctx_used 的实报取 max**：用户实锤 settings 配 500K
+    # 而网关仍按模型能力实报 1M，取大等于把 settings 作废，环永远画 1M
+    #（50% 时已到 CLI 的压缩线）。函数内部第 2 档已含网关实报，不会落空。
     try:
-        window = max(window, _session_ctx_window(s))
+        window = _session_ctx_window(s) or window
     except Exception:
         pass
     # a154：容量卡分类估算——系统提示词（session.start 落账的注入长度，

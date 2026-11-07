@@ -2200,11 +2200,10 @@ def _api_credentials():
     _quota.submit_credentials(user, pwd)
     bot_msg = ""
     try:   # 机器人已收敛为凭证登录单形态：账号登录不再激活机器人，
-        # 只按实际结果如实回报（此前无条件回「机器人已激活」）
+        # 只按实际结果如实回报（此前无条件回「机器人已激活」）。
+        # 失败文案直接透传，别再套一层前缀（会拼出双层括号）
         from src import hiklink_bot
         _ok, bot_msg = hiklink_bot.ensure_started()
-        if not _ok:
-            bot_msg = "机器人未启用（%s）" % bot_msg
     except Exception:
         pass
     return jsonify({"ok": True,

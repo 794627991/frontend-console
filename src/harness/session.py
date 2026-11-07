@@ -2056,6 +2056,22 @@ class HarnessSession:
 # ---- from claude_harness.py:2842 (_session_ctx_used) ----
 
 
+def _ctx_reported_window(s):
+    """网关实报的模型真实能力窗口（last_result.modelUsage[].contextWindow）。
+    仅用于「用量超窗即判坏数据」的阈值，不参与显示分母（显示走
+    _session_ctx_window，settings 优先）。取不到返回 0。"""
+    try:
+        mu = (getattr(s, "last_result", None) or {}).get("modelUsage") or {}
+        best = 0
+        for k in mu:
+            w = (mu[k] or {}).get("contextWindow") or 0
+            if w and int(w) > best:
+                best = int(w)
+        return best
+    except Exception:
+        return 0
+
+
 def _session_ctx_used(s):
     """会话已用上下文 tokens（/ctx 与 set_model 窗口预检共用）。
     取值顺序：jsonl 尾部倒扫最新非零 usage（跳过子代理行；撞压缩边界
@@ -2116,9 +2132,12 @@ def _session_ctx_used(s):
     # 可能是 CLI/网关的累计口径（jsonl 缺失会话无权威校准）。单轮真实用量
     # 物理不可能超窗（超窗 API 直接报错不会有 success）——超窗判坏数据归零
     # （前端显示「首轮回复后统计」，下轮 jsonl 校准自愈），不再把 1.3M 画在
-    # 500K 分母上
+    # 500K 分母上。
+    # 判坏阈值必须用「模型真实能力」而非 settings 压缩线：settings 调小后
+    #（如 500K 而模型 1M）落在 (settings, 实报] 的合法用量会被误判成坏数据
+    # → 前端见 used=0 直接 return，环冻结在旧读数。故取两者较大者。
     try:
-        _w = _session_ctx_window(s)
+        _w = max(_session_ctx_window(s), _ctx_reported_window(s))
         if _w and used > _w:
             used = 0
     except Exception:
