@@ -121,7 +121,10 @@
         try {
           const v = JSON.parse(localStorage.getItem('hg-ctx:' + _HG.sid) || 'null');
           if (v && v.used > 0) {
-            const pct = Math.round(v.used / (v.max || 256000) * 100);
+            // 与 _hgDrawCtxRing 同口径 clamp：badMax 放行后 used 可合法超过
+            // 显示分母（settings 500K / 模型 1M），裸算会显示 120%
+            const pct = Math.min(100,
+              Math.round(v.used / (v.max || 256000) * 100));
             ctxTxt = pct + '%';
             cxEl.classList.toggle('warn', pct >= 80);
           }
@@ -617,7 +620,8 @@
         const v = JSON.parse(localStorage.getItem('hg-ctx:' + _HG.sid) || 'null');
         if (v && v.used > 0) {
           const mx = v.max || 256000;
-          const pct = Math.round(v.used / mx * 100);
+          // 同 clamp 口径（used 可合法越过压缩线，见 ctxBadMaxBy 注释）
+          const pct = Math.min(100, Math.round(v.used / mx * 100));
           ctxTxt = pct + '% · ' + (v.used / 1000).toFixed(1) + 'K/' + (mx / 1000).toFixed(0) + 'K';
           warn = pct >= 80;
         }

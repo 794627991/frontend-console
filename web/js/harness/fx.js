@@ -65,9 +65,13 @@
     // API 后名字里的 [1m] 残留会把 500K 会话画成 1M 分母。窗口按 sid 存，
     // 绝不复用别的会话的值
     const authWin = (sid && _HG.ctxWinBy && _HG.ctxWinBy[sid]) || 0;
+    const authBad = (sid && _HG.ctxBadMaxBy && _HG.ctxBadMaxBy[sid]) || 0;
     const bootWin = authWin > 0 ? authWin
       : (/1m/i.test(mname) ? 1000000 : _HG_CTX_FALLBACK);
-    if (v && v.used > 0 && v.used <= (v.max || bootWin) && sameModel)
+    // 恢复判据同样按 badMax（模型真实能力），不能用显示分母——否则
+    // (settings, 实报] 的合法用量切回会话时会被整段画 0，出现「先清零再涨」
+    const restoreBad = authBad > 0 ? authBad : (v && v.badMax) || (v && v.max) || bootWin;
+    if (v && v.used > 0 && v.used <= restoreBad && sameModel)
       _hgDrawCtxRing(v.used, v.max || bootWin);
     else _hgDrawCtxRing(0, bootWin);
     // v2.20：记忆里的 max 可能是旧代码存的 256K 兜底值（1M 模型被压成
@@ -76,7 +80,10 @@
     if (authWin > 0 && sameModel && ((v && v.max) || 0) !== authWin) {
       const used = (v && v.used > 0) ? v.used : 0;
       _hgDrawCtxRing(used, authWin);
-      try { localStorage.setItem(_hgCtxKey(sid), JSON.stringify({used, max: authWin, model: mname})); } catch(_) {}
+      try {
+        localStorage.setItem(_hgCtxKey(sid), JSON.stringify(
+          {used, max: authWin, badMax: authBad || undefined, model: mname}));
+      } catch(_) {}
     }
   }
   function _hgDrawCtxRing(used, ctxMax, note) {
@@ -162,7 +169,9 @@
       ? o.badMax : ctxMax;
     if (used > guardMax) return;
     _hgDrawCtxRing(used, ctxMax);
-    if (_HG.sid) { try { localStorage.setItem(_hgCtxKey(_HG.sid), JSON.stringify({used, max: ctxMax, model: o.model || _HG.model || ''})); } catch(_) {} }
+    if (_HG.sid) { try { localStorage.setItem(_hgCtxKey(_HG.sid), JSON.stringify(
+      {used, max: ctxMax, badMax: (o.badMax > 0 ? o.badMax : guardMax),
+       model: o.model || _HG.model || ''})); } catch(_) {} }
   }
   function _hgCtxPoll() {
     if (!_HG.sid || _hgCtxInFlight) return;
@@ -214,7 +223,7 @@
           }
           try { localStorage.setItem(_hgCtxKey(sid), JSON.stringify(
             { used: _HG.ctxRing.used, max: win || _HG.ctxRing.max,
-              model: j.model || _HG.model || '' })); } catch (_) {}
+              badMax: bad, model: j.model || _HG.model || '' })); } catch (_) {}
           return;
         }
         renderCtxRing({ usage: { input_tokens: j.used },
