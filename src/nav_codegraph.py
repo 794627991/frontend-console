@@ -137,11 +137,26 @@ def build(root, log=None, progress=None, should_cancel=None):
         while not _stop.wait(1.0):   # 用户令：1s 一更新
             if should_cancel and should_cancel():
                 _stop.set()
+                p0 = _proc[0]
                 try:
-                    if _proc[0]:
-                        _proc[0].kill()
+                    if p0:
+                        p0.kill()
                 except Exception:
                     pass
+                # a420（用户实锤：『正在取消…』卡死）：node 阻塞在 SMB 读上
+                # 时 TerminateProcess 迟迟不落地，communicate() 干等——5s
+                # 没死就 taskkill /T /F 硬杀（含子进程树）
+                _kill_t0 = _cgt.time()
+                while p0 and _cgt.time() - _kill_t0 < 5.0:
+                    if p0.poll() is not None:
+                        return
+                    _cgt.sleep(0.2)
+                if p0 and p0.poll() is None:
+                    try:
+                        subprocess.call(["taskkill", "/PID", str(p0.pid), "/T", "/F"],
+                                        creationflags=0x08000000, timeout=15)
+                    except Exception:
+                        pass
                 return
             total = 0
             filecnt = 0
@@ -184,12 +199,38 @@ def build(root, log=None, progress=None, should_cancel=None):
             if not isinstance(excl, list):
                 excl = []
             need = [p for p in (".*", ".*/*") if p not in excl]
+            # a420（用户实锤：G10 卡 10% 不动+取消无效）：codegraph 自带
+            # 扫描器走进 sbuilder/output 的 SMB 自链环出不来（a402 关了
+            # 它的 watchdog，环树里无人收尸）。范围联动排除——把 ctags
+            # 档B 范围（工程配置/已存/sbuilder 检测）的排除项与产物外挂树
+            # 同步进 codegraph.json，从根上不进 output
+            try:
+                from src import nav_index as _ni
+                _sc, _src = _ni.load_scope(root)
+                if not _sc:
+                    _sc, _ = _ni.detect_scope(root)
+                if _sc:
+                    for p in (_sc.get("exclude_paths") or []) + \
+                            (_sc.get("artifact_roots") or []):
+                        for pat in (p, p + "/**"):
+                            if pat not in need and pat not in excl:
+                                need.append(pat)
+                    for n in _sc.get("exclude_names") or []:
+                        pat = "**/%s/**" % n
+                        if pat not in need and pat not in excl:
+                            need.append(pat)
+            except Exception:
+                pass
             if need:
                 cfg["exclude"] = excl + need
                 with open(cfgp, "w", encoding="utf-8") as f:
                     _json2.dump(cfg, f, ensure_ascii=False, indent=2)
         except Exception:
             pass
+        # a420：Popen 前再查一次取消（status 调用最长 60s 窗口内点取消
+        # 也不该白跑）
+        if should_cancel and should_cancel():
+            raise CgCancelled("用户取消 codegraph")
         # 用户实锤（h11 大库）：codegraph 自带 watchdog 在扫描大目录时误杀
         # 主线程忙于同步 I/O → 判"无响应"60s 即杀（#850）——索引场景禁掉
         _env = {**os.environ, "CODEGRAPH_NO_WATCHDOG": "1"}
@@ -243,15 +284,28 @@ def sync(root, log=None, should_cancel=None):
     _stop = _th.Event()
     _proc = [None]
     def _watch():
-        # 取消监视线程：cancel 即杀子进程
+        # 取消监视线程：cancel 即杀子进程（a420：同 build 心跳，5s 不死硬杀）
+        import time as _tw
         while not _stop.wait(1.0):
             if should_cancel and should_cancel():
                 _stop.set()
+                p0 = _proc[0]
                 try:
-                    if _proc[0]:
-                        _proc[0].kill()
+                    if p0:
+                        p0.kill()
                 except Exception:
                     pass
+                _kill_t0 = _tw.time()
+                while p0 and _tw.time() - _kill_t0 < 5.0:
+                    if p0.poll() is not None:
+                        return
+                    _tw.sleep(0.2)
+                if p0 and p0.poll() is None:
+                    try:
+                        subprocess.call(["taskkill", "/PID", str(p0.pid), "/T", "/F"],
+                                        creationflags=0x08000000, timeout=15)
+                    except Exception:
+                        pass
                 return
     _wt = _th.Thread(target=_watch, daemon=True)
     _wt.start()
