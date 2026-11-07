@@ -254,6 +254,17 @@
               if (_HG.ctxWinBy) delete _HG.ctxWinBy[msid];
               if (_HG.ctxBadMaxBy) delete _HG.ctxBadMaxBy[msid];
               if (msid === _HG.sid) _HG.ctxRing = null;
+              // 记忆里的归属也要改写成新配置名——否则旧归属（可能是网关
+              // 实报名）与新 mname 不等，切回时被判 mismatch 清 0。分母
+              // 归零由 /ctx 重新给，避免旧模型窗口继续当显示分母
+              const k = 'hg-ctx:' + msid;
+              const rec = JSON.parse(localStorage.getItem(k) || 'null');
+              if (rec) {
+                rec.model = m;
+                rec.max = 0;
+                delete rec.badMax;
+                localStorage.setItem(k, JSON.stringify(rec));
+              }
             } catch (_) {}
           }
         })

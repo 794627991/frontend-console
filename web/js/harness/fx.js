@@ -105,10 +105,10 @@
     // （已知模型最大窗 1M），超过必是「全会话累计口径」坏值，直接判 0；
     // 边界内先按记忆原样显示，精确判坏交给必到的 5s /ctx
     const effBad = authBad > 0 ? authBad : ((v && v.badMax) || 0);
-    // a430：归属未知（v.model 为空）的记忆**不能**沿用自身的 badMax/max 判
-    // 可用——那是旧模型给旧读数的自洽背书：1M 模型留下的 720K 在切到 256K
-    // 后 720K<=1048576 成立 → 画 72%，物理上已超窗（实为 281%）。归属未知
-    // 时只留物理上界，阈值等 /ctx 补
+    // 归属未知（v.model 为空）的记忆**不能**沿用自身的 badMax 判可用——
+    // 那是旧模型给旧读数的自洽背书：1M 模型留下的 720K 在切到 256K 后
+    // 720K<=1048576 成立 → 画 72%，物理上已超窗。归属未知时阈值只留物理上界，
+    // 精确判坏等 /ctx 补
     const ownTrusted = !!(v && v.model && mname && !mismatch);
     const _CTX_PHYS_MAX = 2097152;
     let restoreBad;
@@ -118,8 +118,10 @@
     // 记忆可用 = 值在阈值内 + 模型未变（归属未知按可用，但阈值不采信旧值）
     const canUse = !!(v && v.used > 0 && v.used <= restoreBad && !mismatch);
     const showUsed = canUse ? v.used : 0;
-    // 归属未知时分母也不采信旧 max（可能是旧模型窗口），退权威/名字推断
-    const showMax = canUse ? (ownTrusted ? (v.max || bootWin) : bootWin) : bootWin;
+    // 分母仍沿用 v.max：它来自 /ctx 的权威 window（不是按名字猜的），
+    // 归属未知时丢掉它会让默认 CLI 环境（mname 恒空）每次冷启动都退
+    // 256K，把 1M 会话的 720K 画成 100% 红条
+    const showMax = canUse ? (v.max || bootWin) : bootWin;
     _hgDrawCtxRing(showUsed, showMax);
     // 画 0 同样必须落账：只重画不回写，记忆里留着旧 used → 侧栏胶囊/详情
     // 继续显示旧百分比（同屏矛盾），且 5s /ctx 的清环判据 cur 已被置 0
@@ -268,7 +270,7 @@
           if (j.compacted) {
             _hgDrawCtxRing(0, cw, '上下文已压缩 · 首轮回复后统计');
             // 落账：否则侧栏胶囊/详情仍按记忆显示压缩前的百分比
-            _hgCtxSave(sid, 0, cw, j.badMax, j.model || _HG.model || '');
+            _hgCtxSave(sid, 0, cw, j.badMax, j.model || '');
           } else {
             // 清环阈值只认后端权威 j.badMax：win 可能是「!win 且模型名含
             // 1m」按**全局** _HG.model 猜出来的，不当判据
@@ -282,7 +284,7 @@
             const cur = Math.max((_HG.ctxRing && _HG.ctxRing.used) || 0, memUsed);
             if (j.badMax > 0 && cur > j.badMax) {
               _hgDrawCtxRing(0, cw);
-              _hgCtxSave(sid, 0, cw, j.badMax, j.model || _HG.model || '');
+              _hgCtxSave(sid, 0, cw, j.badMax, j.model || '');
             }
           }
           return;
@@ -304,7 +306,7 @@
             _HG.ctxRing.used = j.used;
           }
           _hgCtxSave(sid, _HG.ctxRing.used, win || _HG.ctxRing.max,
-                     j.badMax > 0 ? j.badMax : 0, j.model || _HG.model || '');
+                     j.badMax > 0 ? j.badMax : 0, j.model || '');
           return;
         }
         renderCtxRing({ usage: { input_tokens: j.used },

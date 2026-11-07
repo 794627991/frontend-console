@@ -1172,10 +1172,14 @@
       // 判据只用会话级权威 badMax（ctxBadMaxBy，由 /ctx 按 sid 写入）。
       // a430：缓存缺失时**不要**回落到 ctxRing.max——那正是本注释禁止的
       // 显示分母，切模型后它是上一个模型的窗口（1M→256K 会把 700K 判坏归零，
-      // 256K→1M 会把 300K 放行画 3%）。缺失就跳过判坏，等 ≤5s 的 /ctx 补
+      // 256K→1M 会把 300K 放行画 3%）。
+      // a431：缺失时也**不能放行绘制**——restore 期间 ctxBadMaxBy 为空（冷
+      // 启动），首帧 ctxLive 若是累计口径 1.4M 会直写环画满环红条并污染
+      // 真值锚（= a255 假 100% 回归）。用物理上界 2M 兜底，超出即判坏
       var _bmBy = _HG.ctxBadMaxBy || {};
       var _bm = (_HG.sid && _bmBy[_HG.sid]) || 0;
-      if (live > 0 && _bm > 0 && live > _bm) {
+      if (!(_bm > 0)) _bm = 2097152;   // 已知模型最大窗 1M 的 2 倍
+      if (live > 0 && live > _bm) {
         live = 0;
         t.ctxLive = 0;
       }
@@ -1186,6 +1190,9 @@
         // ctxLive=0（网关不给 assistant usage）时每拍都在污染值上叠累计 est
         // → 环随拍双计虚涨。画布显示含估、备忘只记真值
         var _tru = live > 0 ? live : _HG.ctxRing.used;
+        // 真值锚同样要过物理上界：live=0 时取的是上一帧的环值，若那帧已被
+        // 累计口径污染过，这里会把坏值一直当锚传下去
+        if (!(_tru > 0) || _tru > 2097152) _tru = 0;
         var base = _tru;
         // v4.1：估值只在 busy 叠加——原「est !== _oldLive」分支让回合结束
         // 后迟到的 tps 尾帧再叠一次残留 liveToks（下一拍归零），回合收尾
