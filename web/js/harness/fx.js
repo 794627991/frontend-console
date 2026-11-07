@@ -76,24 +76,37 @@
     const m = _HG.ctxWinBy;
     return (m && _HG.sid && m[_HG.sid]) || 0;
   }
-  // 记忆里的分母是否权威可溯源（与 _hgCtxRestore 的 denomAuth 同口径）：
-  // 本会话 /ctx 的窗口，或记忆带权威 badMax（同一次 /ctx 写入的互证）。
-  // 旧版本存的是按名字猜的 256K，没有 badMax，不能当分母用
-  function _hgCtxDenomOk(v) {
+  // 会话的模型名（归属判据的唯一真源）：优先 /ctx 亲自回报的 modelBySid，
+  // 其次 sessions 列表，最后 settings 的默认名
+  function _hgCtxMname(sid) {
+    const s = _HG.sessions && _HG.sessions.find(x => x.sid === sid);
+    return (sid && _HG.modelBySid && _HG.modelBySid[sid]) ||
+      (s && s.model) || (_HG.models && _HG.models.default) || '';
+  }
+  // 记忆的模型归属是否可信（两边都有名字且相等）。mname 为空是常态
+  // （settings 无模型映射 + 会话 meta.model 为 null），此时归属**未知**，
+  // 不能当不符——否则合法读数会被判坏清 0
+  function _hgCtxOwnTrusted(v, sid) {
     if (!v) return false;
-    if (_HG.sid && _HG.ctxWinBy && _HG.ctxWinBy[_HG.sid] > 0) return true;
-    return !!(v.badMax > 0 && v.max > 0);
+    const mname = _hgCtxMname(sid);
+    return !!(v.model && mname &&
+      (v.model || '').toLowerCase() === mname.toLowerCase());
+  }
+  // 记忆里的分母是否权威可溯源：本会话 /ctx 的窗口，或「归属可信 + 记忆带
+  // 权威 badMax」（两者同一次 /ctx 写入，可互证）。旧版本存的是按名字猜的
+  // 256K，没有 badMax，不能当分母用。panel 的胶囊/详情与 restore 共用，
+  // 保证三处口径绝不漂移
+  function _hgCtxDenomOk(v, sid) {
+    if (!v) return false;
+    const s = sid || _HG.sid;
+    if (s && _HG.ctxWinBy && _HG.ctxWinBy[s] > 0) return true;
+    return !!(_hgCtxOwnTrusted(v, s) && v.badMax > 0 && v.max > 0);
   }
   function _hgCtxRestore(sid) {
     _HG.ctxParts = null;   // a154：分类估算随会话走，旧会话的 sys/mcp 估值不残留
     let v = null;
     if (sid) { try { v = JSON.parse(localStorage.getItem(_hgCtxKey(sid)) || 'null'); } catch(_) {} }
-    const s = _HG.sessions.find(x => x.sid === sid);
-    // 归属优先用 /ctx 亲自回报的会话级模型名（_HG.modelBySid）——列表里的
-    // s.model 可能陈旧（refreshSessions 与 set_model 并发、或 tab 常开期间
-    // 改了 settings），陈旧值会把同一模型判成 mismatch 清 0
-    const mname = (sid && _HG.modelBySid && _HG.modelBySid[sid]) ||
-      (s && s.model) || (_HG.models && _HG.models.default) || '';
+    const mname = _hgCtxMname(sid);
     // v2.27.16：记忆窗口带模型归属校验（renderCtxRing 同款）——旧记录无
     // model 字段或与当前模型不符 → 丢弃窗口值，按模型名重推，防 [1M] 会话
     // 残留的 1M 分母跟着小窗口模型走（Lanz-Auto 虚报 /1000.0K）。
@@ -122,22 +135,15 @@
     // 那是旧模型给旧读数的自洽背书：1M 模型留下的 720K 在切到 256K 后
     // 720K<=1048576 成立 → 画 72%，物理上已超窗。归属未知时阈值只留物理上界，
     // 精确判坏等 /ctx 补
-    const ownTrusted = !!(v && v.model && mname && !mismatch);
+    const ownTrusted = _hgCtxOwnTrusted(v, sid);
     const _CTX_PHYS_MAX = 2097152;
     let restoreBad;
     if (authBad > 0) restoreBad = authBad;
     else if (ownTrusted && v.badMax > 0) restoreBad = v.badMax;
     else restoreBad = (v && v.used > _CTX_PHYS_MAX) ? 0 : Infinity;
-    // 记忆可用 = 值在阈值内 + 模型未变 + 分母有权威来源（归属未知按可用，
-    // 但阈值不采信旧值）。分母缺失（v.max=0 且无 authWin）时也不可用——
-    // 否则按名字猜的 256K 会把 400K 画成 100% 红条，而胶囊/详情读
-    // hg-ctx（max 回落 256K）会跟着一起错
-    // 分母必须有权威出处才可信：本会话 /ctx 的窗口，或「归属可信 + 记忆带
-    // 权威 badMax」（两者同一次 /ctx 写入，可互相印证）。旧版本留下的 max
-    // 是按名字猜的 256K 兜底值（1M 会话写 700K 就是 273% 满环红条），
-    // 拿它当分母比不画更糟
-    const denomAuth = !!(authWin > 0 ||
-      (ownTrusted && v && v.badMax > 0 && v.max > 0));
+    // 分母必须有权威出处才可信，判据与 panel 的胶囊/详情共用 _hgCtxDenomOk，
+    // 三处口径不会再漂移
+    const denomAuth = _hgCtxDenomOk(v, sid);
     // 判坏 / 归属不符 → 该清；仅仅「分母未知」不算坏，值本身可能是好的
     const badIsh = !!(v && v.used > 0 &&
       (mismatch || v.used > restoreBad));
@@ -145,10 +151,10 @@
                       && denomAuth);
     const showUsed = canUse ? v.used : 0;
     // 分母优先用 authWin（权威窗口），其次才是记忆里带 badMax 印证的值。
-    // 值不可用（判坏/无用量）但有权威分母时传 authWin：_hgDrawCtxRing 对
-    // used<=0 只画底轨、不渲染百分比文本，容量卡据此显示「首轮回复后统计」
-    // 而不是「等待窗口」（分母其实已知）
-    _hgDrawCtxRing(showUsed, (canUse ? (authWin || v.max) : authWin) || 0);
+    // 分母已知就传出去（哪怕没有用量）：_hgDrawCtxRing 对 used<=0 只画底轨、
+    // 不渲染百分比，容量卡据此显示「首轮回复后统计」而不是「等待窗口」。
+    // 之前只在 canUse 时用 v.max，ownTrusted 分支的权威分母被整条丢掉
+    _hgDrawCtxRing(showUsed, (denomAuth ? (authWin || v.max) : authWin) || 0);
     // 画 0 同样必须落账：只重画不回写，记忆里留着旧 used → 侧栏胶囊/详情
     // 继续显示旧百分比（同屏矛盾），且 5s /ctx 的清环判据 cur 已被置 0
     // → 永不触发，矛盾冻结到下一轮真实 usage。
