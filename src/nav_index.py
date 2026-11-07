@@ -185,6 +185,12 @@ def status(root):
                         "tier": (_sc or {}).get("tier", ""),
                         "include": (_sc or {}).get("include", [])[:16],
                         "artifact_roots": (_sc or {}).get("artifact_roots", [])[:8]}
+    else:
+        # a416：零配置形态识别下发（面板显示"检测到 sbuilder 方案"，
+        # 白名单档即用——不写死平台模板，只认结构特征）
+        _dsc, _dkind = detect_scope(root)
+        if _dsc:
+            out["scope_detect"] = {"kind": _dkind}
     if meta:
         sizes = meta.get("sizes") or {}
         # 批3 stale 粗判：建库时记的 .cmd 计数与浅层现采对比——浅层命中
@@ -795,6 +801,45 @@ def load_scope(root, store=None):
     return None, ""
 
 
+def detect_scope(root):
+    """a416：零配置平台形态识别（用户定调：不写死平台模板，只认**结构特征**）。
+    当前识别一种：sbuilder 方案——特征=产物外挂 sbuilder/output/build 存在。
+    范围从磁盘实际结构推导（内核根现探、uboot 用通配适配 uboot_sdk/seeboot/
+    hik_uboot），产物树只读 .cmd/.o 不索引。返回 (scope|None, kind)。"""
+    out_build = os.path.join(root, "sbuilder", "output", "build")
+    if not os.path.isdir(out_build):
+        return None, ""
+    kernel_roots = []
+    for cand in ("kernel/kernel_sdk", "kernel"):
+        p = os.path.join(root, *cand.split("/"))
+        if os.path.isdir(os.path.join(p, "arch")) or \
+                os.path.isfile(os.path.join(p, ".config")):
+            kernel_roots.append(cand)
+            break
+    hdr = []
+    for k in kernel_roots:
+        hdr += [k + "/include", k + "/include/asm-generic",
+                k + "/include/uapi/asm-generic",
+                k + "/arch/${arch}/include",
+                k + "/arch/${arch}/include/uapi"]
+    if os.path.isdir(os.path.join(root, "uboot")):
+        hdr.append("uboot/*/arch/arm/include")   # u-boot 无 arch/arm64，一律 arm
+    ex_p = ["sbuilder/output"]
+    if os.path.isdir(os.path.join(root, "sbuilder", ".buildroot-ccache")):
+        ex_p.append("sbuilder/.buildroot-ccache")
+    sc = {"version": 1,
+          "name": "sbuilder 方案（自动检测）",
+          "tier": "whitelist", "arch": "auto",
+          "include": ["."],
+          "artifact_roots": ["sbuilder/output/build"],
+          "source_roots": (list(kernel_roots) + ["."]),
+          "header_roots": hdr,
+          "fallback_full": [],
+          "exclude_names": ["test", "release_tmp"],
+          "exclude_paths": ex_p}
+    return sc, "sbuilder"
+
+
 def _expand_patterns(patterns, dirs_set):
     """scope 路径模式（支持 ${arch} 已替换后的通配，如
     uboot/*/arch/arm/include）→ 展开为命中目录集合。
@@ -868,11 +913,22 @@ def build(root, log=None, progress=None, should_cancel=None,
         if sc_src.startswith("bad:"):
             say("  ⚠ scope 配置解析失败（%s）——按全量建库" % sc_src[4:])
             sc, sc_src = None, ""
+    if sc is None:
+        # a416：零配置形态识别——sbuilder 方案（产物外挂）自动推导范围，
+        # 不写死平台模板（用户定调）：白名单档开箱即用，源码根/头文件区
+        # 从磁盘现探。检测不到=传统全量
+        _dsc, _dkind = detect_scope(root)
+        if _dsc:
+            sc = _dsc
+            sc_src = "detect"
     if sc:
-        say("收录范围：%s［来源：%s］" % (
-            _scope_summary(sc),
-            {"project": "工程配置 " + SCOPE_FILE, "saved": "已保存的范围",
-             "inline": "本次指定"}.get(sc_src, sc_src) or sc_src))
+        _src_label = {"project": "工程配置 " + SCOPE_FILE,
+                      "saved": "已保存的范围",
+                      "inline": "本次指定"}.get(sc_src)
+        if sc_src == "detect":
+            _src_label = "自动检测（%s 方案）" % _dkind
+        say("收录范围：%s［来源：%s］" % (_scope_summary(sc),
+                                        _src_label or sc_src))
         # P1-7：${arch} 占位替换（a415R 审计#26/#4：arch 钉住值优先；全列表
         # 字段替换；判不出时**按 key 各自展开**——原三组结果互相污染）
         _arch_keys = ("include", "artifact_roots", "source_roots",

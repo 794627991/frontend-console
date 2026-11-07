@@ -186,6 +186,9 @@ def nav_build():
             # 已存范围（store="" 只认工程配置）——否则清除被隐性撤销
             _sc_d, _src_d = nav_index.load_scope(
                 root, store="" if d.get("scope_clear") else None)
+            if not _sc_d:
+                # a416：无配置时白名单档走零配置形态识别（sbuilder 方案）
+                _sc_d, _dk = nav_index.detect_scope(root)
             if _sc_d:
                 _sc_d["tier"] = d["scope_tier"]
                 scope = _sc_d

@@ -887,6 +887,10 @@
     } else if (sc && String(sc.source || '').startsWith('bad:')) {
       _headTxt('收录范围：配置解析失败（' + sc.source.slice(4) + '）——将按全量');
       head.style.color = 'var(--neon-red,#e5484d)';
+    } else if (j.scope_detect && j.scope_detect.kind === 'sbuilder') {
+      // a416：零配置形态识别（用户定调：只显示检测到 sbuilder 方案，
+      // 不写死平台模板）——白名单档即用，建库自动按它走
+      _headTxt('检测到 sbuilder 方案（产物外挂 sbuilder/output/build）——白名单档开箱即用；零产物目录如未收录可加 fallback_full');
     } else {
       _headTxt('收录范围：未配置——小工程自动全量；大工程建议导入 JSON 或手选目录（跳过 sbuilder/output 这类产物外挂树，实测快 8 倍）');
     }
@@ -899,7 +903,8 @@
     sel.title = '收录范围档位';
     const OPTS = [
       ['follow', (sc && sc.source === 'project') ? '跟随工程配置' : (sc && sc.source === 'saved') ? '跟随已存范围' : '自动'],
-      ['whitelist', '白名单（档B·需配置）'],
+      ['whitelist', (j.scope_detect && j.scope_detect.kind === 'sbuilder')
+        ? '白名单（档B·sbuilder 方案）' : '白名单（档B·需配置）'],
       ['full', '全量（整个目录）'],
     ];
     const renderSel = () => {
