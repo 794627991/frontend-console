@@ -130,13 +130,19 @@ async function claudeButtonAction() {
 // 登录走共用接口 /api/proxy/credentials（单一事实源 lanz_credentials.json）；
 // 凭据就位后端自动激活机器人（幂等），登出自动停用。未登录机器人不激活。
 // 胶囊点击 → 冒泡弹窗（未登录=登录表单；已登录=状态+登出确认）。
-// 机器人阶段文案（胶囊与弹窗共用）。auth_failed 必须优先判——连接建立
-// 成功但认证被拒时 running/connected 都是真，不特判会永远显示「连接中…」
+// 机器人 LED：唯一表达在线/离线的载体（文案里不再重复「在线」）
+function hgBotLed(st) {
+  if (!st.manual) return 'hg-login-dot off';                  // 未配置凭据
+  if (st.auth_failed) return 'hg-login-dot err';             // 凭据被拒
+  if (!st.running) return 'hg-login-dot idle';               // 已配置未运行
+  return st.connected ? 'hg-login-dot on' : 'hg-login-dot wait';   // 在线/连接中
+}
+// 弹窗内的机器人状态文字（不支持指示灯语义时的一行说明）
 function hgBotPhase(st) {
-  if (!st.manual) return '';
-  if (st.auth_failed) return ' · 凭据被拒，请检查 App ID/Secret';
-  if (!st.running) return ' · 已保存未运行';
-  return st.connected ? ' · 在线' : ' · 连接中…';
+  if (!st.manual) return '未配置凭据';
+  if (st.auth_failed) return '凭据被拒，请检查 App ID/Secret';
+  if (!st.running) return '已保存，未运行';
+  return st.connected ? '在线' : '连接中…';
 }
 let _hgLastSt = {};
 // 带超时的 JSON fetch（无超时时 worker 未就绪会永久挂住登录按钮）
@@ -159,40 +165,31 @@ function hgLoginRender(st, keepBaseline) {
     const dot = tg.querySelector('[data-hg-login-dot]');
     const txt = tg.querySelector('[data-hg-login-text]');
     if (!txt) return;
+    // 指示灯只表达机器人状态；用户名用颜色表达登录状态（铁律：不靠文案
+    // 重复「在线/离线」）
+    if (dot) dot.className = hgBotLed(st);
     if (st.username) {
-      if (dot) { dot.className = 'hg-login-dot on'; }
-      // 已登录也拼机器人阶段：SSO 登录 + 手填机器人是正交组合，
-      // 丢 auth_failed 会让「凭据被拒」在胶囊上完全消失
-      txt.textContent = st.username + ' 已登录'
-        + (st.manual && st.auth_failed ? ' · 机器人凭据被拒'
-          : (st.manual ? ' · 机器人独立凭据' + hgBotPhase(st) : ''));
-    } else if (st.manual) {
-      // 凭据被拒时 connected 仍为真（WS 建连成功、认证失败），绿点会与
-      // 「凭据被拒」文案自相矛盾——与 hgBotPhase 优先级保持一致
-      if (dot) {
-        dot.className = (!st.auth_failed && st.connected)
-          ? 'hg-login-dot on' : 'hg-login-dot off';
-      }
-      txt.textContent = '机器人独立凭据' + hgBotPhase(st);
+      txt.textContent = st.username;
+      txt.className = 'hg-login-userlabel on';
     } else {
-      if (dot) { dot.className = 'hg-login-dot off'; }
-      txt.textContent = '未登录 · 机器人未激活';
+      txt.textContent = '未登录';
+      txt.className = 'hg-login-userlabel off';
     }
   });
   document.querySelectorAll('[data-hg-login-pop]').forEach(pop => {
     const off = pop.querySelector('[data-hg-login-off]');
     const on = pop.querySelector('[data-hg-login-on]');
+    const nameEl = pop.querySelector('[data-hg-login-name]');
     if (!off || !on) return;
     if (st.username) {
       off.style.display = 'none'; on.style.display = '';
-      const name = pop.querySelector('[data-hg-login-name]');
-      if (name) name.textContent = st.username + ' 已登录';
-      const bot = pop.querySelector('[data-hg-login-bot]');
-      if (bot) bot.textContent = (st.manual && st.auth_failed) ? '机器人：凭据被拒'
-        : (st.running ? (st.connected ? '机器人：在线' : '机器人：连接中…')
-          : '机器人：未运行');
+      if (nameEl) {
+        nameEl.textContent = st.username;
+        nameEl.className = 'hg-login-userlabel on';
+      }
     } else {
       off.style.display = ''; on.style.display = 'none';
+      if (nameEl) { nameEl.textContent = ''; nameEl.className = 'hg-login-userlabel'; }
     }
     // 机器人独立凭据（App ID/Secret）：已填则回显 App ID、secret 留空待改
     const rid = pop.querySelector('[data-hg-robot-id]');
@@ -208,9 +205,43 @@ function hgLoginRender(st, keepBaseline) {
         rid.dataset.dirty = '';
       }
     }
-    if (rstate) rstate.textContent = hgBotPhase(st).replace(' · ', '');
+    // 状态全由指示灯表达；文字只在不正常时给一句原因（在线/离线不写字）
+    const rdot = pop.querySelector('[data-hg-robot-dot]');
+    if (rdot) rdot.className = hgBotLed(st);
+    if (rstate) {
+      rstate.textContent = (st.manual && (st.auth_failed || !st.running))
+        ? hgBotPhase(st) : '';
+    }
+    // 密钥真回显：有已存密钥就填进框（type=password 显示为 ******），
+    // 点眼睛立刻能看到明文——不是占位符，用户能确认到底存没存
+    const rsec = pop.querySelector('[data-hg-robot-secret]');
+    if (rsec) {
+      hgSecretWire(rsec);
+      if (st.app_secret && !rsec.dataset.dirty && !rsec.value) {
+        rsec.value = st.app_secret;
+      }
+      if (rsec.dataset.dirty && st.app_secret && rsec.value === st.app_secret) {
+        rsec.dataset.dirty = '';
+      }
+    }
   });
 }
+// 密码类输入的显隐切换（SSH 同款）
+function hgEyeWire(btn) {
+  if (!btn || btn.dataset.wired) return;
+  btn.dataset.wired = '1';
+  btn.addEventListener('click', ev => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    const inp = btn.parentElement.querySelector('input');
+    if (!inp) return;
+    const show = inp.type === 'password';
+    inp.type = show ? 'text' : 'password';
+    btn.innerHTML = show ? ICO16.eyeOff : ICO16.eye;
+    btn.title = show ? '隐藏' : '显示';
+  });
+}
+document.querySelectorAll('[data-hg-eye]').forEach(hgEyeWire);
 // App ID 输入的 dirty 监听：必须在首次 render 之前就挂上——首屏 status
 // 拉取失败时 render 从未执行，若监听只在 render 里挂，用户清空 App ID
 // 的「清除」意图会被后续回填静默抹掉
@@ -220,6 +251,12 @@ function hgRobotWire(rid) {
   rid.addEventListener('input', () => { rid.dataset.dirty = '1'; });
 }
 document.querySelectorAll('[data-hg-robot-id]').forEach(hgRobotWire);
+// 密钥框的 dirty 监听（同款：用户改过就不再被轮询回填覆盖）
+function hgSecretWire(sec) {
+  if (!sec || sec.dataset.wired) return;
+  sec.dataset.wired = '1';
+  sec.addEventListener('input', () => { sec.dataset.dirty = '1'; });
+}
 function hgLoginTogglePop(force) {
   document.querySelectorAll('[data-hg-login-pop]').forEach(pop => {
     const opening = (force !== undefined ? force : pop.style.display === 'none');
@@ -293,13 +330,18 @@ document.addEventListener('click', async ev => {
       { action: 'clear' }, 6000); } catch (_) {}
     hgLoginRefresh();
   }
-  // 保存机器人独立凭据：两项都空=清除（回落自动注册），否则保存并重连
+  // 保存机器人凭据：两项都空=清除（机器人离线），否则保存并重连
   const rSave = ev.target.closest('[data-hg-robot-save]');
   if (rSave) {
     const pop = rSave.closest('[data-hg-login-pop]');
     const id = (pop.querySelector('[data-hg-robot-id]').value || '').trim();
     let secret = (pop.querySelector('[data-hg-robot-secret]').value || '').trim();
-    if (id && !secret) { showBanner('请填写 App Secret', 3000, true); return; }
+    // 密钥框留空 = 沿用已存密钥（仅 App ID 未变时；换 ID 必须重填）
+    const keepSecret = !secret && id && _hgLastSt.manual
+      && _hgLastSt.app_id === id;
+    if (id && !secret && !keepSecret) {
+      showBanner('请填写 App Secret', 3000, true); return;
+    }
     if (!id && secret) { showBanner('请填写 App ID', 3000, true); return; }
     // 两项皆空 = 清除凭据并导致机器人掉线。状态未知（首屏 status 没拉到、
     // _hgLastSt 为空）时按「有风险」处理——undefined 不能当 false 放行
@@ -315,7 +357,6 @@ document.addEventListener('click', async ev => {
       const j = await _hgFetchJson('/api/hiklink/credentials',
         { app_id: id, app_secret: secret }, 15000);
       showBanner(j.msg || (j.ok ? '已保存' : '保存失败'), 4000, !j.ok);
-      if (j.ok) pop.querySelector('[data-hg-robot-secret]').value = '';
       setTimeout(hgLoginRefresh, 1500);
     } catch (_) { showBanner('保存请求失败', 3000, true); }
     rSave.disabled = false; rSave.textContent = old;

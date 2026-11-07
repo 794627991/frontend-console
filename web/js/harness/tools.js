@@ -666,7 +666,7 @@
       }
       h += `</div>`;
     }
-    h += `<div class="h-askcard-ans" data-askans">${
+    h += `<div class="h-askcard-ans" data-askans>${
       o.err ? '<span style="vertical-align:-2.5px">' + ICO16.warn + '</span> 提问失败'
         : (o.phase === 'run' ? '<span style="vertical-align:-2.5px">' + ICO16.clock + '</span> 等待回答…'
           : (() => { const _at = String(o.result || '').trim();

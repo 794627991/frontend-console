@@ -56,16 +56,19 @@
     // 残留的 1M 分母跟着小窗口模型走（Lanz-Auto 虚报 /1000.0K）。
     const sameModel = v && mname &&
       (v.model || '').toLowerCase() === mname.toLowerCase();
-    if (v && v.used > 0 && v.used <= (v.max || _HG_CTX_FALLBACK) && sameModel)
-      _hgDrawCtxRing(v.used, v.max || _HG_CTX_FALLBACK);
-    else _hgDrawCtxRing(0, /1m/i.test(mname) ? 1000000 : _HG_CTX_FALLBACK);
+    // 有后端权威窗口（含 settings 显式配置）就用它，别按模型名猜——切过
+    // API 后名字里的 [1m] 残留会把 500K 会话画成 1M 分母
+    const bootWin = _HG.ctxWin > 0 ? _HG.ctxWin
+      : (/1m/i.test(mname) ? 1000000 : _HG_CTX_FALLBACK);
+    if (v && v.used > 0 && v.used <= (v.max || bootWin) && sameModel)
+      _hgDrawCtxRing(v.used, v.max || bootWin);
+    else _hgDrawCtxRing(0, bootWin);
     // v2.20：记忆里的 max 可能是旧代码存的 256K 兜底值（1M 模型被压成
-    // /256K、84% 虚报，用户实测）——恢复路径同样按模型名校正窗口并写回，
-    // 别只靠每轮结束的 _hgCtxPoll 纠偏。
-    if (/1m/i.test(mname) && ((v && v.max) || 0) < 1000000) {
+    // /256K、84% 虚报，用户实测）——恢复路径同样按权威窗口校正并写回。
+    if (_HG.ctxWin > 0 && ((v && v.max) || 0) !== _HG.ctxWin) {
       const used = (v && v.used > 0) ? v.used : 0;
-      _hgDrawCtxRing(used, 1000000);
-      try { localStorage.setItem(_hgCtxKey(sid), JSON.stringify({used, max: 1000000, model: mname})); } catch(_) {}
+      _hgDrawCtxRing(used, _HG.ctxWin);
+      try { localStorage.setItem(_hgCtxKey(sid), JSON.stringify({used, max: _HG.ctxWin, model: mname})); } catch(_) {}
     }
   }
   function _hgDrawCtxRing(used, ctxMax, note) {
@@ -108,28 +111,26 @@
     const used = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) +
                  (u.cache_creation_input_tokens || 0);
     if (typeof used !== 'number' || used <= 0) return;
-    let ctxMax = _HG_CTX_FALLBACK;
+    // 分母判定链（用户实锤：切过 API 后旧 result 事件里仍留着
+    // glm-5.3-flash[1m]，按名字推 1M，而 settings 实际 500K → 环在
+    // 1M/500K 之间跳）：
+    //   1. 网关实报 modelUsage[].contextWindow（最权威，取最大）
+    //   2. /ctx 的 window（后端 _session_ctx_window 已并入 settings.json 的
+    //      CLAUDE_CODE_MAX_CONTEXT_TOKENS——用户显式配置优先于名字推断）
+    //   3. 本会话上次记录（模型归属一致才沿用）
+    //   4. 模型名 [1m] → 1M，兜底 256K
+    let ctxMax = 0, realWin = 0;
     const mu = o.modelUsage || {};
     for (const k in mu) {
-      // v2.20（3.png 假 100%）：取全部 entry 的最大窗口，不再见好就收——
-      // 网关可能把子代理/识图等小窗口模型与主模型一起报上来，首个 entry
-      // 若是小窗（如 256K），真实用量被小分母放大成假满环。
-      if (mu[k] && typeof mu[k].contextWindow === 'number' && mu[k].contextWindow > ctxMax) {
-        ctxMax = mu[k].contextWindow;
-      }
+      // 网关可能把子代理/识图等小窗模型与主模型一起报上来，取最大
+      if (mu[k] && typeof mu[k].contextWindow === 'number'
+          && mu[k].contextWindow > realWin) realWin = mu[k].contextWindow;
     }
-    // v2.20（3.png 假 100%）：used > ctxMax = 网关把全会话累计口径塞进了
-    // 单轮 usage（实测 ~20 轮 × ~70K ≈ 1.4M，clamp 后恒显 100%）。单轮真实
-    // 用量物理不可能超窗（超了 API 直接报错，不会有 success result）——
-    // 必是坏数据：丢弃本轮，环保留上一轮合法值。
-    if (used > ctxMax) return;
-    // v2.20：本事件没带 modelUsage（assistant 事件就不带）→ 沿用该会话上次
-    // 记到的窗口，避免没 result 校准时就退 256K 假分母
-    // v2.27.16：记忆窗口带模型归属。切方案/切模型后旧 max 不可继承——
-    // [1M] 会话残留的 1000000 分母让 Lanz-Auto 虚报 /1000.0K（用户实锤
-    // 85.3K 显示 9%）。归属不符或旧记录无 model 字段 → 按当前模型名重推
-    // （带 [1M]/[1m] → 1M，其余 256K 兜底），下次写入带上模型名自愈。
-    if (ctxMax === _HG_CTX_FALLBACK && _HG.sid) {
+    if (realWin > 0) {
+      ctxMax = realWin;
+    } else if (_HG.ctxWin > 0) {
+      ctxMax = _HG.ctxWin;
+    } else if (_HG.sid) {
       let rec = null;
       try { rec = JSON.parse(localStorage.getItem(_hgCtxKey(_HG.sid)) || 'null') || {}; } catch(_) { rec = {}; }
       const cur = (o.model || _HG.model || '').toLowerCase();
@@ -138,7 +139,14 @@
       } else {
         ctxMax = /1m/.test(cur) ? 1000000 : _HG_CTX_FALLBACK;
       }
+    } else {
+      ctxMax = _HG_CTX_FALLBACK;
     }
+    // v2.20（3.png 假 100%）：used > ctxMax = 网关把全会话累计口径塞进了
+    // 单轮 usage（实测 ~20 轮 × ~70K ≈ 1.4M，clamp 后恒显 100%）。单轮真实
+    // 用量物理不可能超窗（超了 API 直接报错，不会有 success result）——
+    // 必是坏数据：丢弃本轮，环保留上一轮合法值。
+    if (used > ctxMax) return;
     _hgDrawCtxRing(used, ctxMax);
     if (_HG.sid) { try { localStorage.setItem(_hgCtxKey(_HG.sid), JSON.stringify({used, max: ctxMax, model: o.model || _HG.model || ''})); } catch(_) {} }
   }
@@ -159,6 +167,9 @@
         // 时按名推断，兜住没有任何 result 校准过的会话。
         let win = j.window || 0;
         if (!win && /1m/i.test(j.model || (_HG.model || ''))) win = 1000000;
+        // 供 renderCtxRing 复用：settings 显式窗口 > 模型名推断（用户实锤：
+        // 切过 API 后模型名残留 [1m]，但实际只有 500K）
+        if (j.window > 0) _HG.ctxWin = j.window;
         // v2.21：压缩后尚未有新轮次 → jsonl 主链读数已归零，环也归零，
         // 不能继续画压缩前的旧值（用户实测 708K 残留）
         if (!(j.used > 0)) {

@@ -32,28 +32,38 @@ function buildClaudeHarnessTab(opts = {}) {
           <img src="/ico/proxy.png" alt="proxy" style="width:14px;height:14px;vertical-align:-2px;"> Proxy
           <span class="hg-proxy-state" data-hg-proxy-state>检测中…</span>
         </button>
-        <button class="hg-prompt-btn hg-login-side" data-hg-login-toggle title="统一登录（代理/额度/机器人一次登录全通）。点击展开登录/登出">
+        <button class="hg-prompt-btn hg-login-side" data-hg-login-toggle title="机器人凭据与登录账号。指示灯=机器人在线状态，用户名颜色=登录状态。点击展开配置">
           <span class="hg-login-dot off" data-hg-login-dot></span>
-          <span data-hg-login-text>未登录 · 机器人未激活</span>
+          <span class="hg-login-botlabel">机器人</span>
+          <span class="hg-login-userlabel" data-hg-login-text>未登录</span>
         </button>
         <div class="hg-login-pop" data-hg-login-pop style="display:none">
           <div data-hg-login-off>
+            <div class="hg-pop-row hg-robot-hint">账号登录（用于代理与额度）</div>
             <input class="hg-login-inp" data-hg-login-user placeholder="用户名" spellcheck="false" autocomplete="username" name="hg_login_user">
-            <input class="hg-login-inp" data-hg-login-pwd type="password" placeholder="密码" autocomplete="current-password" name="hg_login_pwd">
+            <div class="hg-inp-wrap">
+              <input class="hg-login-inp" data-hg-login-pwd type="password" placeholder="密码" autocomplete="current-password" name="hg_login_pwd">
+              <button class="hg-inp-eye" type="button" data-hg-eye title="显示密码" aria-label="显示密码">${ICO16.eye}</button>
+            </div>
             <button class="hg-prompt-btn" data-hg-login-btn>登录</button>
           </div>
           <div class="hg-robot-box">
-            <div class="hg-pop-row" style="opacity:.75;font-size:11px">机器人凭据（可替代登录自动注册，各填各的互不影响）</div>
-            <input class="hg-login-inp" data-hg-robot-id placeholder="App ID" spellcheck="false" autocomplete="off" name="hg_robot_id">
-            <input class="hg-login-inp" data-hg-robot-secret type="password" placeholder="App Secret" autocomplete="new-password" name="hg_robot_secret">
-            <div class="hg-pop-row">
-              <button class="hg-prompt-btn" data-hg-robot-save title="保存后立即用该机器人重连；清空两项再保存即恢复自动注册">保存机器人</button>
-              <span data-hg-robot-state style="font-size:11px;opacity:.8"></span>
+            <div class="hg-pop-row hg-robot-head">
+              <span class="hg-robot-title">机器人凭据</span>
+              <span class="hg-login-dot off" data-hg-robot-dot></span>
+              <span class="hg-robot-state" data-hg-robot-state></span>
+            </div>
+            <div class="hg-robot-fields">
+              <input class="hg-login-inp" data-hg-robot-id placeholder="App ID" spellcheck="false" autocomplete="off" name="hg_robot_id">
+              <div class="hg-inp-wrap">
+                <input class="hg-login-inp" data-hg-robot-secret type="password" placeholder="App Secret" autocomplete="new-password" name="hg_robot_secret">
+                <button class="hg-inp-eye" type="button" data-hg-eye title="显示密钥" aria-label="显示密钥">${ICO16.eye}</button>
+              </div>
+              <button class="hg-prompt-btn hg-robot-save" data-hg-robot-save title="保存后立即用该机器人重连">保存机器人</button>
             </div>
           </div>
           <div data-hg-login-on style="display:none">
-            <div class="hg-pop-row"><span class="hg-login-dot on"></span><span data-hg-login-name>已登录</span><button class="hg-pop-logout" data-hg-logout-btn title="登出（停用机器人）">登出</button></div>
-            <div class="hg-pop-row hg-login-bot" data-hg-login-bot></div>
+            <div class="hg-pop-row"><span data-hg-login-name class="hg-login-userlabel">已登录</span><button class="hg-pop-logout" data-hg-logout-btn title="登出（不影响机器人）">登出</button></div>
           </div>
         </div>
       </div>
@@ -135,6 +145,12 @@ function buildClaudeHarnessTab(opts = {}) {
   // status 失败时用户清空 App ID 的意图会被后续回填抹掉
   if (typeof hgRobotWire === 'function') {
     _hgWrap.querySelectorAll('[data-hg-robot-id]').forEach(hgRobotWire);
+  }
+  if (typeof hgEyeWire === 'function') {
+    _hgWrap.querySelectorAll('[data-hg-eye]').forEach(hgEyeWire);
+  }
+  if (typeof hgSecretWire === 'function') {
+    _hgWrap.querySelectorAll('[data-hg-robot-secret]').forEach(hgSecretWire);
   }
   // 登录条 DOM 随 tab 创建——创建后立刻拉一次登录态（页面加载时的首轮
   // 渲染发生在 DOM 存在之前，会扑空停在「未登录」默认态）

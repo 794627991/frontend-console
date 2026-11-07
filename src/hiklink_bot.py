@@ -1192,18 +1192,18 @@ _controller = None
 
 
 def _autostart():
-    """模块导入即尝试自动连接（有凭据才启；失败静默不影响主工具）。"""
+    """模块导入即按手填凭证直连（有凭据才启；失败静默不影响主工具）。
+    SSO 自动注册已退役——不再用账号密码兜底启动。"""
     global _controller
     try:
         _controller = HikLinkBotController()
-        u, p = _controller._creds()
-        d = _load_session_file()
-        manual = bool(d.get("app_id") and d.get("app_secret"))
-        if (u and p) or manual:
-            def _go():
-                ok, msg = _controller.start()
-                log.info("HikLink 机器人自启: %s", msg if not ok else "OK")
-            threading.Thread(target=_go, daemon=True).start()
+        if not is_manual_mode():
+            return
+
+        def _go():
+            ok, msg = _controller.start()
+            log.info("HikLink 机器人自启: %s", msg if not ok else "OK")
+        threading.Thread(target=_go, daemon=True).start()
     except Exception:
         log.exception("HikLink 机器人初始化失败")
 
@@ -1304,17 +1304,14 @@ def controller():
 
 
 def ensure_started():
-    """统一登录后激活机器人（幂等）：有统一凭据才起，运行中直接返回。
-    未登录（无凭据）→ 明确不激活——机器人与登录绑定。"""
+    """激活机器人（幂等）。用户拍板：只保留「凭证登录」一个机器人（手填
+    App ID/App Secret），SSO 自动注册方案退役——没有手填凭据就明确不激活，
+    不再回落去登录注册。"""
     global _controller
     if _controller is None:
         _controller = HikLinkBotController()
-    d = _load_session_file()
-    manual = bool(d.get("app_id") and d.get("app_secret"))
-    if not manual:
-        u, p = _controller._creds()
-        if not (u and p):
-            return False, "未登录（无统一凭据），机器人不激活"
+    if not is_manual_mode():
+        return False, "未配置机器人凭据（填 App ID/App Secret 后启用）"
     if _controller.status().get("running"):
         return True, "机器人已在运行"
     return _controller.start()
@@ -1379,6 +1376,12 @@ def set_manual_credentials(app_id, app_secret):
         return False, "App ID 与 App Secret 必须是字符串"
     app_id = app_id.strip()
     app_secret = app_secret.strip()
+    # 只改 App ID 时密钥可留空 → 沿用已存密钥（UI 已用掩码表示「已保存」，
+    # 不回传明文）。换了 app_id 则必须重填：旧密钥配不上新机器人
+    if app_id and not app_secret:
+        _cur = _load_session_file()
+        if _cur.get("app_id") == app_id:
+            app_secret = _cur.get("app_secret") or ""
     # 半填不得当清除：只填一项多半是误操作，静默删凭据会让机器人掉线
     if bool(app_id) != bool(app_secret):
         return False, "App ID 与 App Secret 必须同时填写"
@@ -1427,15 +1430,9 @@ def set_manual_credentials(app_id, app_secret):
                 os.remove(SESSION_PATH + ".bak")
         except OSError:
             pass
-        # 回落自动注册链路放到后台：SSO 登录+注册要几十秒（且保存手填时
-        # robot_num 已被 pop，无缓存必走全流程），同步等会让保存按钮卡死
-        # 几十秒，且这条链失败会把「凭据已成功清除」误报成失败
-        u, p = _controller._creds() if _controller else (None, None)
-        if u and p:
-            threading.Thread(target=ensure_started, daemon=True,
-                             name="hiklink-bot-fallback").start()
-            return True, "已清除机器人凭据（正在回落到账号机器人）"
-        return True, "已清除机器人凭据（登录后自动启用账号机器人）"
+        # 机器人方案已收敛为「凭证登录」单一形态：清空凭据即离线，不再
+        # 回落到 SSO 自动注册（用户拍板退役该方案）
+        return True, "已清除机器人凭据（机器人已离线）"
     # 直接换 bot：先停旧线程并等它退出，再按新凭据装配——不走
     # ensure_started()，那里按 status().running 判「已在运行」会误挡重启
     ensure_stopped()
@@ -1466,7 +1463,11 @@ def status_snapshot():
             "auth_failed": bool(st.get("auth_failed")),
             "robot_num": st.get("robot_num"),
             "manual": manual,
-            "app_id": d.get("app_id") or ""}
+            "app_id": d.get("app_id") or "",
+            # 密钥回显给本机页面（用户实锤：只有真值才能让「显示」按钮起
+            # 作用；占位符看不出到底存没存）。本接口仅本机 loopback 可达，
+            # 且主进程有 Host/Origin 收口
+            "app_secret": d.get("app_secret") or ""}
 
 
 _autostart()

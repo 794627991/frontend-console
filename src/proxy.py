@@ -2105,19 +2105,15 @@ def _api_credentials():
             _quota_rank = []
             _quota_ts = None
         manual = False
-        try:   # 统一登录绑定：登出即停用机器人、清账号凭据。手填凭据模式
-               # （app_id）下机器人不随 SSO 走：账号字段照清（否则状态仍报
-               # 已登录、表单出不来），但不停机器人、不删 app_secret
-               # （用户拍板：登出也不掉线）
+        try:   # 登出只清 SSO 账号字段：机器人已是独立的凭证形态，与账号
+               # 解耦——登出不停它、不删 app_secret（用户拍板）
             from src import hiklink_bot
             manual = hiklink_bot.is_manual_mode()
-            if not manual:
-                hiklink_bot.ensure_stopped()
             hiklink_bot.clear_account()
         except Exception:
             pass
-        return jsonify({"ok": True, "msg": "已断开登录（手填机器人凭据不受影响，仍在线）"
-                        if manual else "已断开登录（机器人已停用）"})
+        return jsonify({"ok": True, "msg": "已断开登录（机器人不受影响）"
+                        if manual else "已断开登录"})
     user = (j.get("username") or "").strip()
     pwd = j.get("password") or ""
     if not user or not pwd:
