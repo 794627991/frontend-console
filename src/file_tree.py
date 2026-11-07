@@ -346,7 +346,7 @@ def tree_fileops():
                 return jsonify({"ok": False, "err": "参数无效"}), 400
             roots = _tree_roots()
             if fp in roots:
-                return jsonify({"ok": False, "err": "根目录请用「移除根」（不可改名）"}), 400
+                return jsonify({"ok": False, "err": "根目录不可改名（移除请点根行 ✕）"}), 400
             if not os.path.exists(fp):
                 return jsonify({"ok": False, "err": "原路径不存在"}), 404
             tp = os.path.join(os.path.dirname(fp), name)
@@ -390,7 +390,7 @@ def tree_fileops():
             # 网络路径=永久删（不经回收站），前端确认弹窗已按网络路径提示
             # 不可恢复（a231 的"一律拒绝引导资源管理器"口径作废）
             if fp in _tree_roots():
-                return jsonify({"ok": False, "err": "根目录请用「移除根」（不删磁盘文件）"}), 400
+                return jsonify({"ok": False, "err": "根目录请点根行 ✕ 移除（不删磁盘文件）"}), 400
             ok, err = _recycle_to_trash(fp)
             if not ok:
                 return jsonify({"ok": False, "err": err}), 500

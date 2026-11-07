@@ -888,9 +888,9 @@
       _headTxt('收录范围：配置解析失败（' + sc.source.slice(4) + '）——将按全量');
       head.style.color = 'var(--neon-red,#e5484d)';
     } else if (j.scope_detect && j.scope_detect.kind === 'sbuilder') {
-      // a416：零配置形态识别（用户定调：只显示检测到 sbuilder 方案，
-      // 不写死平台模板）——白名单档即用，建库自动按它走
-      _headTxt('检测到 sbuilder 方案（产物外挂 sbuilder/output/build）——白名单档开箱即用；零产物目录如未收录可加 fallback_full');
+      // a416/a418：零配置形态识别（用户定调：只显示检测到 sbuilder 方案，
+      // 不写死平台模板）——产物树只读 .cmd/.o 不索引；档位按产物规模自动判
+      _headTxt('检测到 sbuilder 方案（产物外挂 sbuilder/output/build，只读产物不索引副本）——自动档按产物规模判白名单/全量；零产物目录如未收录可加 fallback_full');
     } else {
       _headTxt('收录范围：未配置——小工程自动全量；大工程建议导入 JSON 或手选目录（跳过 sbuilder/output 这类产物外挂树，实测快 8 倍）');
     }

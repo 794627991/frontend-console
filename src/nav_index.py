@@ -803,9 +803,12 @@ def load_scope(root, store=None):
 
 def detect_scope(root):
     """a416：零配置平台形态识别（用户定调：不写死平台模板，只认**结构特征**）。
-    当前识别一种：sbuilder 方案——特征=产物外挂 sbuilder/output/build 存在。
-    范围从磁盘实际结构推导（内核根现探、uboot 用通配适配 uboot_sdk/seeboot/
-    hik_uboot），产物树只读 .cmd/.o 不索引。返回 (scope|None, kind)。"""
+    当前识别一种：sbuilder 方案——特征=产物外挂 sbuilder/output/build 存在
+    **且**内核根现探存在（a418 审计实锤：仅看 output/build 一个目录，普通树
+    碰巧同名就被套白名单 → 硬失败/静默漏索引无产物源码）。
+    范围从磁盘实际结构推导；tier 发 auto 交给既有判档（≥5 万代码文件且有
+    产物才升白名单，小树/零产物回 full——误报即便点火也不丢覆盖）。
+    返回 (scope|None, kind)。"""
     out_build = os.path.join(root, "sbuilder", "output", "build")
     if not os.path.isdir(out_build):
         return None, ""
@@ -816,6 +819,8 @@ def detect_scope(root):
                 os.path.isfile(os.path.join(p, ".config")):
             kernel_roots.append(cand)
             break
+    if not kernel_roots:
+        return None, ""   # 无内核根：不是海思 sbuilder 形态，不点火
     hdr = []
     for k in kernel_roots:
         hdr += [k + "/include", k + "/include/asm-generic",
@@ -829,7 +834,7 @@ def detect_scope(root):
         ex_p.append("sbuilder/.buildroot-ccache")
     sc = {"version": 1,
           "name": "sbuilder 方案（自动检测）",
-          "tier": "whitelist", "arch": "auto",
+          "tier": "auto", "arch": "auto",
           "include": ["."],
           "artifact_roots": ["sbuilder/output/build"],
           "source_roots": (list(kernel_roots) + ["."]),
