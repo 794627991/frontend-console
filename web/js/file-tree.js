@@ -448,18 +448,21 @@ function _tvPaint() {
 
 // ---- 目录面包屑（VSCode sticky scroll 同款）：滚动后仍知道这屏属于哪个目录 ----
 // 取视口顶部那一行，沿 rows 向前回溯它的祖先目录（行数组是 DFS 扁平结构，
-// 祖先就是「depth 更小且尚未闭合」的那些行），最后渲染成 name > name > name。
-// 全部收在 _TV 里缓存字符串，滚动时只在内容变化才碰 DOM。
+// 祖先就是「depth 更小且尚未闭合」的那些行）。
+// 显示规则对齐 VSCode：只要滚出了根目录（scrollTop > 0）且顶部行不是根行，
+// 就常驻显示完整祖先链——不做「父行还可见就隐藏」之类的启发式：显隐来回
+// 切换本身就是抽搐的来源，而且用户明确说过整目录时不显示最顶层不正常。
+// 覆盖层绝对定位，完全不参与布局，所以常显也没有副作用。
 function _tvCrumbsPaint() {
   const el = $('treeCrumbs');
   if (!el) return;
   const host = $('treeRoots');
   const rows = _TV.rows || [];
   const tops = _TV.tops || [];
-  if (!host || !rows.length || !tops.length) {
+  const hide = () => {
     if (!el.hidden) { el.hidden = true; el.innerHTML = ''; _TV.crumbsKey = ''; }
-    return;
-  }
+  };
+  if (!host || !rows.length || !tops.length) { hide(); return; }
   // 视口顶部那一行（scrollTop 落在哪行的区间里）
   let lo = 0, hi = rows.length - 1, cur = 0;
   while (lo <= hi) {
@@ -467,45 +470,22 @@ function _tvCrumbsPaint() {
     if ((tops[mid] || 0) <= host.scrollTop) { cur = mid; lo = mid + 1; }
     else hi = mid - 1;
   }
-  const top = rows[cur];
-  if (top.t === 'root') {   // 根行本身就在视口顶部：它是自己的面包屑，不必重复
-    if (!el.hidden) { el.hidden = true; el.innerHTML = ''; _TV.crumbsKey = ''; }
-    return;
-  }
-  // 视口顶部就是某个展开的目录行、且名字还有一半以上可见 → 用户在屏幕上一眼
-  // 就能看到自己在哪个目录，不必再钉一条（多半高度的行被切掉时才钉）
-  if ((top.t === 'dir') && (tops[cur] || 0) + _TV.ROW_H > host.scrollTop + 11) {
-    if (!el.hidden) { el.hidden = true; el.innerHTML = ''; _TV.crumbsKey = ''; }
-    return;
-  }
+  // 顶部就是根行（还没滚出根）：根名就在眼前，不必重复
+  if (rows[cur].t === 'root') { hide(); return; }
   // 回溯祖先：DFS 扁平序里，祖先 = 前面 depth 更小的最近一行
   const chain = [];
-  let want = top.depth, parentIdx = -1;
+  let want = rows[cur].depth;
   for (let i = cur; i >= 0 && want > 0; i--) {
     const r = rows[i];
-    if (r.t === 'root') {
-      chain.unshift({ path: r.path, name: r.name });
-      parentIdx = i;
-      break;
-    }
+    if (r.t === 'root') { chain.unshift({ path: r.path, name: r.name }); break; }
     if (r.dir && r.depth < want) {
       chain.unshift({ path: r.path, name: r.name });
-      parentIdx = i;
       want = r.depth;
     }
   }
-  // 直接父目录行还有一部分留在视口内 → 用户能直接看到自己在哪，不必再做面包屑
-  // （VSCode sticky 同款：父行滚出去才钉住）
-  if (parentIdx >= 0) {
-    const ph = _TV.ROW_H + (rows[parentIdx].t === 'root' ? 14 : 0);
-    if ((tops[parentIdx] || 0) + ph > host.scrollTop) {
-      if (!el.hidden) { el.hidden = true; el.innerHTML = ''; _TV.crumbsKey = ''; }
-      return;
-    }
-  }
-  if (!chain.length) { el.hidden = true; el.innerHTML = ''; _TV.crumbsKey = ''; return; }
+  if (!chain.length) { hide(); return; }
   const key = chain.map(c => c.path).join('\u0000');
-  if (key === _TV.crumbsKey && !el.hidden) return;
+  if (key === _TV.crumbsKey && !el.hidden) return;   // 未变：不碰 DOM
   _TV.crumbsKey = key;
   el.innerHTML = chain.map(c =>
     `<div class="tree-crumb" data-crumb-path="${esc(c.path)}" title="${esc(c.path)}">` +
