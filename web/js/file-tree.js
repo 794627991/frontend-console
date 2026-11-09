@@ -461,8 +461,17 @@ function _tvCrumbsPaint() {
   const tops = _TV.tops || [];
   const wrap = el.closest('.tree-scroll-wrap');
   const show = () => {
+    const wasHidden = el.hidden || !wrap || !wrap.classList.contains('has-crumbs');
+    // a444（审计 P2）：让位式会让视口矮 22px、maxScroll 涨 22px。浏览器不会
+    // 自动补这段差值——「End 键 / 拖滚动条到底」这类一次性跳到底的路径会
+    // 停在旧 max 上，末行下沿被裁 10px，要再滚一次才真到底。
+    // 只在「切换前就已贴底」时补，其它位置一律不动用户视野（短树里刚滚
+    // 22px 也可能距底很近，用 d<=22 判会误跳成抽搐）。
+    const atBottom = !!(wasHidden && host &&
+      host.scrollTop + host.clientHeight >= host.scrollHeight - 1);
     el.hidden = false;
     if (wrap) wrap.classList.add('has-crumbs');
+    if (atBottom) host.scrollTop = host.scrollHeight;
   };
   const hide = () => {
     if (wrap) wrap.classList.remove('has-crumbs');

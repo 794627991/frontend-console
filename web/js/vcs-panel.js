@@ -11,7 +11,10 @@
 // buildDiffViewerTab；写操作全显式确认，不含 push/还原/冲突解决（边界）。
 // 状态：VCS = {root, data, log, out, busy, sel:Set, ts}
 // ============================================================
-const VCS = { root: '', data: null, log: null, out: '', busy: false, sel: new Set(), ts: 0 };
+const VCS = { root: '', data: null, log: null, out: '', busy: false, sel: new Set(), ts: 0,
+  // a444（审计 P2）：最近提交里「已展开改动清单」的 rev 集合 + 清单缓存。
+  // 原实现只把展开态放在 DOM 上，_vcsPaint 重建 innerHTML 就全折叠了。
+  exp: new Set(), cfCache: new Map() };
 window.VCS = VCS;                 // 调试/兼容：原 VCS 的读取方
 const VP_PORTID = 'vcs:panel';    // 主区 tab 的单例 portId
 let _vpEl = null;                 // 面板根（主区 tab 内），tab 关闭时置空
@@ -31,12 +34,16 @@ const _VCS_ST_TXT = { M: '改', A: '增', D: '删', R: '移', '?': '未纳管', 
 // 与本功能无关的 harness 状态（_sub/_hgWrap）已全部解耦，Claude 页面不开也能用。
 function vcsPanelTeardown() {
   _vcsHistClose();                 // v3.5.133（designer D10）：弹窗防御性关闭
+  // a444（审计 P1）：挂 body 的确认弹窗没有宿主可跟随销毁——面板已关但
+  // 弹窗还盖在全窗上，误点「执行」会对已销毁面板发真实 git add / pull。
+  try { if (window._hgModalReg) window._hgModalReg.closeAll(); } catch (_) {}
   _vpAlive = false;
   _vpEl = null;
   if (_vcsTick) { clearInterval(_vcsTick); _vcsTick = null; }
   // root 保留：下次打开还是同一个工程
   VCS.data = null; VCS.log = null; VCS.out = ''; VCS.busy = false;
   VCS.sel = new Set();
+  VCS.exp = new Set(); VCS.cfCache = new Map();   // a444：展开态与清单缓存随面板关闭清
 }
 function buildVcsPanelTab() {
   for (const pid in connections) {
@@ -867,11 +874,22 @@ function _vcsPaint() {
       `<span class="hg-vcs-logmsg">${esc((c.msg || '').slice(0, 60))}</span>` +
       (c.ins != null ? `<span class="hg-vcs-stat"><b class="up">+${esc(c.ins || 0)}</b> <b class="del">-${esc(c.del || 0)}</b></span>` : '') +
       `<span class="hg-vcs-logau">${esc(c.author || '')}</span></div>` +
-      `<div class="hg-vcs-cfiles" data-vcsfiles="${esc(c.rev || '')}" style="display:none;"></div>`).join('') +
+      `<div class="hg-vcs-cfiles" data-vcsfiles="${esc(c.rev || '')}"${VCS.exp.has(c.rev) ? '' : ' style="display:none;"'}></div>`).join('') +
       (VCS.log.length > 20
         ? `<div class="hg-vcs-hlfoot">已显示最近 20 / 共 ${VCS.total || VCS.log.length} 条——点上方历史按钮看全部</div>` : '')
       : '');
   _vcsBind(true);
+  if (!VCS.log) return;   // a444：无提交列表（还没加载/加载失败）就没有展开态要恢复
+  // a444（审计 P2）：展开态存数据层，重绘后自动恢复（原来只在 DOM 上，
+  // _vcsPaint 重建 innerHTML 即全部折叠——30s 内切回版本 tab 必现）。
+  // 展开的提交需要重新拉文件清单（DOM 里的内容也随重绘没了）。
+  // 清掉已不在当前列表（切工程/刷新掉出前 20）的记录后再重建，避免白拉。
+  const alive = new Set((VCS.log || []).slice(0, 20).map(c => c.rev || ''));
+  [...VCS.exp].forEach(r => { if (!alive.has(r)) VCS.exp.delete(r); });
+  VCS.exp.forEach(rev => {
+    const box = _vpEl.querySelector('[data-vcsfiles="' + CSS.escape(rev) + '"]');
+    if (box) _vcsLoadCommitFiles(rev, box);   // 有缓存直接渲染，没缓存再 fetch
+  });
 }
 function _vcsRootsHtml() {
   return `<div class="hg-vcs-rootrow"><span class="hg-vcs-roott">工程</span>` +
@@ -923,6 +941,42 @@ function _vcsFileHtml(f, i) {
     (f.st === '?' ? `<button class="btn ghost icon-btn" name="hg_vcs_addone" data-rel="${esc(f.rel)}" title="svn add / git add 纳入版本控制" style="flex-shrink:0;">＋</button>` : '') +
     `</div>`;
 }
+// a444（审计 P2）：提交行的改动清单加载/渲染（点击与重绘恢复共用一份）。
+// 缓存按 rev 存，重绘后直接重放，不再重复打接口。
+function _vcsLoadCommitFiles(rev, box) {
+  box.style.display = 'block';
+  const render = (files) => {
+    box.dataset.loaded = '1';
+    box.innerHTML = files.map(f =>
+      `<div class="hg-vcs-cfrow" data-rev="${esc(rev)}" data-path="${esc(f.path)}" data-st="${esc(f.st)}" title="查看该提交中此文件的改动">${esc(f.st)} ${esc(f.path)}</div>`).join('')
+      || '<div class="hg-vcs-empty">该提交无文件级改动记录</div>';
+    box.querySelectorAll('.hg-vcs-cfrow').forEach(fr => {
+      // 轻审R4：改调公共 _vcsFileDiffClick——旧内联副本无 buildDiffViewerTab
+      // 异常防护（unhandled rejection 无提示），与弹窗版已漂移
+      fr.onclick = () => _vcsFileDiffClick(rev, fr.dataset.path, fr.dataset.st, fr);
+    });
+  };
+  const cached = VCS.cfCache.get(rev);
+  if (cached) { render(cached); return; }
+  if (box.dataset.loaded) return;      // 已渲染过且无缓存变化
+  box.innerHTML = '<div class="hg-vcs-empty">加载中…</div>';
+  fetch('/api/vcs/commit_files', { method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ root: VCS.root, rev }) })
+    .then(r => r.json())
+    .then(j => {
+      // 面板可能在请求途中被关掉
+      if (!_vpEl || !document.contains(box)) return;
+      if (!j.ok) { box.innerHTML = '<div class="hg-vcs-empty">' + esc(j.err || '获取失败') + '</div>'; return; }
+      VCS.cfCache.set(rev, j.files || []);
+      render(j.files || []);
+    })
+    .catch(e => {
+      if (!_vpEl || !document.contains(box)) return;
+      box.innerHTML = '<div class="hg-vcs-empty">获取失败：' + esc(String(e)) + '</div>';
+    });
+}
+
 function _vcsBind(paintRoots) {
   if (!_vpEl) return;
   if (paintRoots) {
@@ -945,6 +999,7 @@ function _vcsBind(paintRoots) {
         VCS.chgGen = (VCS.chgGen || 0) + 1;   // v3.5.275 F3-A：作废在途扫描链
         VCS.root = sel.value; localStorage.setItem('hg-vcs-root', sel.value);
         VCS.data = null; VCS.log = null; VCS.sel = new Set();
+        VCS.exp = new Set(); VCS.cfCache = new Map();   // a444：换工程，展开态/缓存都属于旧工程
         _vcsReload(); _vcsReloadLog();
       };
     }
@@ -986,32 +1041,17 @@ function _vcsBind(paintRoots) {
   // v3.5.131（用户批注「历史提交无法点开查看」）：提交行点击展开该提交
   // 改动文件清单；文件行点击物化父/本修订两版开 diff 对比
   _vpEl.querySelectorAll('.hg-vcs-logrow[data-vcsrev]').forEach(row => {
-    row.onclick = async () => {
+    row.onclick = () => {
       const rev = row.dataset.vcsrev;
       const box = _vpEl.querySelector('[data-vcsfiles="' + CSS.escape(rev) + '"]');
       if (!rev || !box) return;
-      if (box.style.display !== 'none') { box.style.display = 'none'; return; }   // 再点收起
-      if (!box.dataset.loaded) {
-        box.innerHTML = '<div class="hg-vcs-empty">加载中…</div>';
-        box.style.display = 'block';
-        try {
-          const j = await (await fetch('/api/vcs/commit_files', { method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ root: VCS.root, rev }) })).json();
-          if (!j.ok) { box.innerHTML = '<div class="hg-vcs-empty">' + esc(j.err || '获取失败') + '</div>'; return; }
-          box.dataset.loaded = '1';
-          box.innerHTML = (j.files || []).map(f =>
-            `<div class="hg-vcs-cfrow" data-rev="${esc(rev)}" data-path="${esc(f.path)}" data-st="${esc(f.st)}" title="查看该提交中此文件的改动">${esc(f.st)} ${esc(f.path)}</div>`).join('')
-            || '<div class="hg-vcs-empty">该提交无文件级改动记录</div>';
-          box.querySelectorAll('.hg-vcs-cfrow').forEach(fr => {
-            // 轻审R4：改调公共 _vcsFileDiffClick——旧内联副本无 buildDiffViewerTab
-            // 异常防护（unhandled rejection 无提示），与弹窗版已漂移
-            fr.onclick = () => _vcsFileDiffClick(rev, fr.dataset.path, fr.dataset.st, fr);
-          });
-        } catch (e) {
-          box.innerHTML = '<div class="hg-vcs-empty">获取失败：' + esc(String(e)) + '</div>';
-        }
-      } else box.style.display = 'block';
+      if (box.style.display !== 'none') {          // 再点收起
+        box.style.display = 'none';
+        VCS.exp.delete(rev);                       // a444：收起也要落数据态
+        return;
+      }
+      VCS.exp.add(rev);
+      _vcsLoadCommitFiles(rev, box);
     };
   });
   _vpEl.querySelectorAll('[name="hg_vcs_addone"]').forEach(b => b.onclick = (e) => {

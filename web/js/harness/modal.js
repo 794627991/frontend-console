@@ -1,4 +1,19 @@
 // harness modal.js (v3.0 自 buildClaudeHarnessTab 拆出,定义体零改动,缩进保持原样)
+  // a444（审计 P1）：挂 body 的弹窗没有宿主容器可跟随销毁。登记一张收口表，
+  // 由宿主模块（版本面板）teardown 时调 closeAll() 统一 close——close 会走
+  // 正常 resolve(null)，调用方的 .then 拿到「取消」，不会误发写请求。
+  window._hgModalReg = (function () {
+    const m = new Map();   // ov -> close(v)
+    return {
+      add(ov, close) { m.set(ov, close); },
+      del(ov) { m.delete(ov); },
+      closeAll() {
+        const items = [...m.entries()];
+        m.clear();
+        items.forEach(([ov, close]) => { try { close(null); } catch (_) {} });
+      }
+    };
+  })();
   // 挂载点：harness 已建时挂 _hgWrap（跟随 Claude tab 隐藏/销毁），未建时挂
   // body——版本面板已独立成主区 tab，它也要用这个弹窗，而 _hgWrap 只有打开
   // Claude 界面才有值
@@ -21,20 +36,42 @@
       ov.innerHTML = `<div class="hg-modal"><div class="hg-modal-title">${esc(title)}</div>${bodyHtml}<div class="hg-modal-acts"></div></div>`;
       const acts = ov.querySelector('.hg-modal-acts');
       const inp0 = ov.querySelector('input');
+      // a444（审计 P1）：弹窗落 body 时不再随任何 tab 销毁，必须显式收口。
+      // 统一 close()：摘 DOM + 登记处退册 + resolve(null)（幂等）。
+      let done = false;
+      let reg = null;
+      const close = (v) => {
+        if (done) return;
+        done = true;
+        try { ov.remove(); } catch (_) {}
+        if (reg) { try { reg.del(ov); } catch (_) {} }
+        resolve(v);
+      };
       buttons.forEach((b) => {
         const btn = document.createElement('button');
         btn.className = 'btn' + (b.primary ? ' primary' : '');
         btn.textContent = b.label;
-        btn.onclick = () => { const v = typeof b.value === 'function' ? b.value(inp0) : b.value; ov.remove(); resolve(v); };
+        btn.onclick = () => { const v = typeof b.value === 'function' ? b.value(inp0) : b.value; close(v); };
         acts.appendChild(btn);
       });
-      ov.addEventListener('click', (e) => { if (e.target === ov) { ov.remove(); resolve(null); } });
-      _hgModalHost().appendChild(ov);
+      ov.addEventListener('click', (e) => { if (e.target === ov) close(null); });
+      const host = _hgModalHost();
+      host.appendChild(ov);
+      // 挂 body 的弹窗登记到「当前可见宿主」的收口表；宿主被拆（tab 关闭）
+      // 时由 teardown 统一关掉——否则弹窗会盖在全窗上，误点主按钮还会对
+      // 已销毁的面板发真实写请求（实测 POST /api/vcs/add）
+      try {
+        if (host === document.body && window._hgModalReg
+            && typeof window._hgModalReg.add === 'function') {
+          reg = window._hgModalReg;
+          reg.add(ov, close);
+        }
+      } catch (_) {}
       const inp = inp0;
       if (inp) { inp.focus(); inp.select();
         inp.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter') { const b = buttons[buttons.length - 1]; const v = typeof b.value === 'function' ? b.value(inp) : b.value; ov.remove(); resolve(v); }
-          if (e.key === 'Escape') { ov.remove(); resolve(null); }
+          if (e.key === 'Enter') { const b = buttons[buttons.length - 1]; const v = typeof b.value === 'function' ? b.value(inp) : b.value; close(v); }
+          if (e.key === 'Escape') close(null);
         }); }
     });
   }
