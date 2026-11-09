@@ -911,7 +911,7 @@
     const OPTS = [
       ['follow', (sc && sc.source === 'project') ? '跟随工程配置' : (sc && sc.source === 'saved') ? '跟随已存范围' : '自动'],
       ['whitelist', (j.scope_detect && j.scope_detect.kind === 'sbuilder')
-        ? '白名单（档B·sbuilder 方案）' : '白名单（档B·需配置）'],
+        ? '白名单（sbuilder 方案）' : '白名单'],
       // a423：白名单优先——全量档仅在收录集零中间文件时实际生效
       ['full', '全量（仅收录集零中间文件时生效）'],
     ];

@@ -764,6 +764,9 @@ def _norm_scope(cfg, root):
                 return None   # .. 逃逸登记根
             out.append("/".join(segs))
         return out
+    _alw = _lst(cfg.get("always_include"), "always_include")
+    if _alw is None:
+        return False, "always_include 含非法路径或类型错误"
     inc = _lst(cfg.get("include"), "include")
     if inc is None:
         return False, "include 含非法路径（绝对路径/../）或类型错误"
@@ -771,7 +774,8 @@ def _norm_scope(cfg, root):
         return False, "include 为空"   # a415R2 N18：空数组显式 bad（原静默整根）
     fields = {}
     for k in ("artifact_roots", "source_roots", "header_roots",
-              "fallback_full", "exclude_names", "exclude_paths"):
+              "fallback_full", "always_include",
+              "exclude_names", "exclude_paths"):
         v = _lst(cfg.get(k), k)
         if v is None:
             return False, "%s 含非法路径（绝对路径/../）或类型错误" % k
@@ -791,7 +795,8 @@ def _norm_scope(cfg, root):
           "name": str(cfg.get("name") or "")[:60] or "未命名范围",
           "tier": tier, "arch": arch,
           "manual": bool(cfg.get("manual")),
-          "include": inc, **fields}
+          "include": inc,
+          "always_include": _alw, **fields}
     return True, sc
 
 
@@ -839,6 +844,90 @@ def load_scope(root, store=None):
             return sc, "saved"
         return None, "bad:%s" % sc
     return None, ""
+
+
+# a430（内网报告 whitelist_tier_final）：递归 include 头文件推导——
+# 取代 header_roots 全量目录近似（实测 51% 头文件永不被引用；hal_inc
+# 收录为 0）。从 .cmd 提取 -I 真实编译参数，从白名单单元 BFS 展开
+# #include 依赖链，只收真实触达的头文件
+_INC_RE = re.compile(r'^\s*#\s*include\s+[<"]([^>"]+\.h)[>"]', re.M)
+
+
+def _extract_inc_dirs(cmd_roots):
+    """从 .cmd 提取 -I 目录（真实编译参数）。返回 (dirs_set, cmd_count)。"""
+    dirs = set()
+    n = 0
+    for scan_root in cmd_roots:
+        if not os.path.isdir(scan_root):
+            continue
+        for r, ds, fs in os.walk(scan_root):
+            ds[:] = [d for d in ds if not d.startswith(".")]
+            for f in fs:
+                if not f.endswith(".cmd"):
+                    continue
+                n += 1
+                try:
+                    with open(os.path.join(r, f), encoding="utf-8",
+                              errors="replace") as fh:
+                        for line in fh:
+                            if not line.startswith("cmd_") or ":=" not in line:
+                                continue
+                            toks = line.split(":=", 1)[1].split()
+                            for i, t in enumerate(toks):
+                                d2 = None
+                                if t == "-I" and i + 1 < len(toks):
+                                    d2 = toks[i + 1]
+                                elif t.startswith("-I") and len(t) > 2:
+                                    d2 = t[2:]
+                                if d2:
+                                    norm = os.path.normpath(os.path.join(
+                                        scan_root, d2.strip("'\"")))
+                                    if os.path.isdir(norm):
+                                        dirs.add(norm)
+                            break
+                except OSError:
+                    pass
+    return dirs, n
+
+
+def _resolve_includes(units_abs, inc_dirs, max_depth=12,
+                      should_cancel=None):
+    """白名单单元 BFS 递归解析 #include，返回触达的 .h 绝对路径集合。
+    解析顺序：当前目录 > -I 目录（按提取顺序）。深度上限防 include 环。"""
+    reach = set()
+    queue = [(p, 0) for p in units_abs]
+    scanned = set()
+    while queue:
+        p, depth = queue.pop()
+        pl = p.lower()
+        if pl in scanned or depth > max_depth:
+            continue
+        scanned.add(pl)
+        if pl.endswith((".h", ".hpp")):
+            reach.add(pl)
+        if not pl.endswith((".h", ".hpp", ".c", ".cpp", ".cc", ".cxx",
+                            ".s", ".S")):
+            continue
+        try:
+            with open(p, encoding="utf-8", errors="replace") as f:
+                txt = f.read()
+        except OSError:
+            continue
+        curdir = os.path.dirname(p)
+        for m in _INC_RE.finditer(txt):
+            nm = m.group(1)
+            cand = os.path.normpath(os.path.join(curdir, nm))
+            if os.path.isfile(cand):
+                queue.append((cand, depth + 1))
+                continue
+            for sd in inc_dirs:
+                cand2 = os.path.normpath(os.path.join(sd, nm))
+                if os.path.isfile(cand2):
+                    queue.append((cand2, depth + 1))
+                    break
+        if should_cancel and should_cancel():
+            raise Cancelled()
+    return reach
 
 
 def detect_scope(root):
@@ -900,7 +989,16 @@ def detect_scope(root):
           "artifact_roots": art_roots,
           "source_roots": src_roots,
           "header_roots": hdr,
-          "fallback_full": [],
+          # a430（内网报告 whitelist_tier_final·用户定稿）：HAL 全部兜底——
+          # libs/hal_bsp 整体无条件收录（~1400 文件换 HAL 100% 可用）+
+          # hal_inc 接口头文件无条件收录（原方案收录 0）
+          "fallback_full": (["libs/hal_bsp"]
+                            if os.path.isdir(os.path.join(root, "libs",
+                                                          "hal_bsp")) else []),
+          "always_include": (["libs/hal_bsp/hal_inc"]
+                             if os.path.isdir(os.path.join(root, "libs",
+                                                           "hal_bsp", "hal_inc"))
+                             else []),
           "exclude_names": ["test", "release_tmp"],
           "exclude_paths": ex_p}
     return sc, ("sbuilder" if has_sbuilder else "in-tree")
@@ -1174,6 +1272,36 @@ def build(root, log=None, progress=None, should_cancel=None,
                 break
         else:
             pending_o.append(orel)
+    # a430：.o 上溯找源（hal_bsp 实锤：utils/misc.c ↔ source/misc.o 隔目录
+    # ——同目录 miss 且 basename 全局撞名歧义时，就近优先）。对本目录及
+    # 向上 2 级的每层：直接同名 + 该层全部一级子目录下同名（就近优于全局）
+    _dsub = {}
+    for _dd in all_dirs:
+        _par = _dd.rpartition("/")[0]
+        _dsub.setdefault(_par, []).append(_dd)
+    for orel in list(pending_o):
+        stem = os.path.splitext(orel)[0]
+        bname = os.path.basename(stem)
+        d = os.path.dirname(stem)
+        _hit = None
+        for _lvl in range(3):
+            if not d:
+                break
+            _cands = [d + "/" + bname + e
+                      for e in (".c", ".cpp", ".cc", ".cxx", ".S", ".s")]
+            for _sd in _dsub.get(d, ()):
+                _cands += [_sd + "/" + bname + e
+                           for e in (".c", ".cpp", ".cc", ".cxx", ".S", ".s")]
+            for _cand in _cands:
+                _hit = _rel_by_l.get(_cand.lower())
+                if _hit:
+                    break
+            if _hit:
+                break
+            d = d.rpartition("/")[0]
+        if _hit:
+            compiled.setdefault(_hit, {"o": orel, "src": "updir"})
+            pending_o.remove(orel)
     # basename 全局唯一兜底（out-of-tree）
     for orel in pending_o:
         b = os.path.splitext(os.path.basename(orel))[0].lower()
@@ -1251,6 +1379,37 @@ def build(root, log=None, progress=None, should_cancel=None,
         if len(_units) < len(compiled):
             say("  ⚠ %d 个白名单单元在收录集外（产物树源码副本/排除区），"
                 "不进索引" % (len(compiled) - len(_units)))
+        # a430：头文件改为递归 include 推导（取代 header_roots 全量——
+        # 实测 51% 永不被引用 + hal_inc 收录 0）。三层兜底：-I 提取 →
+        # 标准 include 路径 → 原 header_roots
+        _inc_roots = ([os.path.join(root, b.replace("/", os.sep))
+                       for b in sc["source_roots"] if "*" not in b]
+                      + [os.path.join(root, d) for d in sc["include"]
+                         if d != "."])
+        _inc_dirs, _n_cmd = _extract_inc_dirs(_inc_roots)
+        say("  编译参数：从 %d 个 .cmd 提取 %d 个 -I 目录"
+            % (_n_cmd, len(_inc_dirs)))
+        if not _inc_dirs:
+            for _a in ("arm", "arm64"):
+                for _sub in ("include", "arch/%s/include" % _a,
+                             "include/uapi", "arch/%s/include/uapi" % _a):
+                    for _kr in sc["source_roots"]:
+                        if "*" in _kr:
+                            continue
+                        _p = os.path.join(root, _kr.replace("/", os.sep),
+                                          *_sub.split("/"))
+                        if os.path.isdir(_p):
+                            _inc_dirs.add(_p)
+        _units_abs = [os.path.join(root, u.replace("/", os.sep))
+                      for u in _units]
+        _reached = _resolve_includes(_units_abs, _inc_dirs,
+                                     should_cancel=should_cancel)
+        _reached_rel = {_rel_by_l.get(os.path.relpath(p, root)
+                                      .replace(os.sep, "/").lower(), "")
+                        for p in _reached}
+        _reached_rel.discard("")
+        say("  递归 include：%d 个单元触达 %d 个头文件"
+            % (len(_units), len(_reached_rel)))
         _same_h = set()
         for u in _units:
             ud = u.rpartition("/")[0]
@@ -1259,6 +1418,15 @@ def build(root, log=None, progress=None, should_cancel=None,
                     _same_h.add((ud + "/" + fn2) if ud else fn2)
         _hdr = _expand_patterns(sc["header_roots"], all_dirs)
         _fb = _expand_patterns(sc["fallback_full"], all_dirs)
+        # a430：always_include 无条件全收（hal_inc 等——HAL 接口头文件，
+        # 实测原方案收录 0 导致 bsp_check_esensor_fd 跳不到）
+        _always = set()
+        for pat in sc.get("always_include") or ():
+            _pset = _expand_patterns([pat], all_dirs)
+            _always |= {r for r in all_rels if _under(r.lower(), _pset)}
+        if _always:
+            say("  无条件收录：%d 个文件（%s）"
+                % (len(_always), "、".join(sc.get("always_include") or ())))
         # a423R BUG-1（审计实锤：手选 [kernel,tools] 时 tools 零单元被静默
         # 整目录剔除，与选择器"全部代码递归收录"承诺直接矛盾）：手选范围
         # （manual）按收录目录逐个核覆盖——零单元目录自动整目录兜底；
@@ -1280,11 +1448,11 @@ def build(root, log=None, progress=None, should_cancel=None,
                 elif n_code and in_u < n_code * 0.5:
                     say("  ⚠ %s 白名单覆盖 %d/%d——如需全收，导入 JSON 配 "
                         "fallback_full" % (d, in_u, n_code))
-        final_files = _units | _same_h \
-            | {r for r in all_rels if _under(r.lower(), _hdr)} \
+        final_files = _units | _same_h | _reached_rel | _always \
             | {r for r in all_rels if _under(r.lower(), _fb)}
-        say("  档B清单：单元 %d · 同目录头 %d · 头文件区/兜底 %d = 共 %d 文件"
-            % (len(_units), len(_same_h), len(final_files) - len(_units | _same_h),
+        say("  白名单清单：单元 %d · 递归头 %d · 兜底 %d = 共 %d 文件"
+            % (len(_units), len(_reached_rel | _same_h | _always),
+               len(final_files) - len(_units | _reached_rel | _same_h | _always),
                len(final_files)))
         if not final_files:
             raise RuntimeError("收录清单为空——检查 include/排除配置")
