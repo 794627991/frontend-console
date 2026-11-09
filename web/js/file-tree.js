@@ -77,6 +77,7 @@ const _TV = {
   focus: '',           // a209批4 预留：键盘导航焦点行
   wMax: 0,             // 全树最宽行估算（rebuild 算一次；对抗审 a205R：原在
                        // paint 每帧全扫 rows，6301 行树滚动即每帧 O(n) 白耗）
+  crumbsKey: '',       // 面包屑当前渲染的祖先链签名（变化才碰 DOM）
   ROW_H: 22, BUF: 12,
   raf: 0,
 };
@@ -417,7 +418,7 @@ function _tvPaint() {
   // 兄弟节点，添加首个根后 sizer 重建渲染，但残留的 .tree-empty 无人清
   // ——树与"点击上方打开文件夹"共存。所有渲染路径必经此处，统一拔除。
   if (total) { const e = host.querySelector('.tree-empty'); if (e) e.remove(); }
-  if (!total) { sizer.innerHTML = ''; return; }
+  if (!total) { sizer.innerHTML = ''; _tvCrumbsPaint(); return; }
   // sizer 宽度用 rebuild 预计算值（撑横滚让深层长名完整可达——用户实锤
   // 语义：不许省略号裁名）
   sizer.style.height = (_TV.totalH || total * _TV.ROW_H) + 'px';
@@ -434,11 +435,84 @@ function _tvPaint() {
   let to = from;
   const visBottom = host.scrollTop + host.clientHeight + _TV.BUF * _TV.ROW_H;
   while (to < total && (tops[to] || 0) < visBottom) to++;
-  if (from === _TV.rendered[0] && to === _TV.rendered[1] && sizer.children.length) return;
+  if (from === _TV.rendered[0] && to === _TV.rendered[1] && sizer.children.length) {
+    _tvCrumbsPaint();
+    return;
+  }
   let html = '';
   for (let i = from; i < to; i++) html += _tvRowHtml(_TV.rows[i], i);
   sizer.innerHTML = html;
   _TV.rendered = [from, to];
+  _tvCrumbsPaint();
+}
+
+// ---- 目录面包屑（VSCode sticky scroll 同款）：滚动后仍知道这屏属于哪个目录 ----
+// 取视口顶部那一行，沿 rows 向前回溯它的祖先目录（行数组是 DFS 扁平结构，
+// 祖先就是「depth 更小且尚未闭合」的那些行），最后渲染成 name > name > name。
+// 全部收在 _TV 里缓存字符串，滚动时只在内容变化才碰 DOM。
+function _tvCrumbsPaint() {
+  const el = $('treeCrumbs');
+  if (!el) return;
+  const host = $('treeRoots');
+  const rows = _TV.rows || [];
+  const tops = _TV.tops || [];
+  if (!host || !rows.length || !tops.length) {
+    if (!el.hidden) { el.hidden = true; el.innerHTML = ''; _TV.crumbsKey = ''; }
+    return;
+  }
+  // 视口顶部那一行（scrollTop 落在哪行的区间里）
+  let lo = 0, hi = rows.length - 1, cur = 0;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if ((tops[mid] || 0) <= host.scrollTop) { cur = mid; lo = mid + 1; }
+    else hi = mid - 1;
+  }
+  const top = rows[cur];
+  if (top.t === 'root') {   // 根行本身就在视口顶部：它是自己的面包屑，不必重复
+    if (!el.hidden) { el.hidden = true; el.innerHTML = ''; _TV.crumbsKey = ''; }
+    return;
+  }
+  // 视口顶部就是某个展开的目录行、且名字还有一半以上可见 → 用户在屏幕上一眼
+  // 就能看到自己在哪个目录，不必再钉一条（多半高度的行被切掉时才钉）
+  if ((top.t === 'dir') && (tops[cur] || 0) + _TV.ROW_H > host.scrollTop + 11) {
+    if (!el.hidden) { el.hidden = true; el.innerHTML = ''; _TV.crumbsKey = ''; }
+    return;
+  }
+  // 回溯祖先：DFS 扁平序里，祖先 = 前面 depth 更小的最近一行
+  const chain = [];
+  let want = top.depth, parentIdx = -1;
+  for (let i = cur; i >= 0 && want > 0; i--) {
+    const r = rows[i];
+    if (r.t === 'root') {
+      chain.unshift({ path: r.path, name: r.name });
+      parentIdx = i;
+      break;
+    }
+    if (r.dir && r.depth < want) {
+      chain.unshift({ path: r.path, name: r.name });
+      parentIdx = i;
+      want = r.depth;
+    }
+  }
+  // 直接父目录行还有一部分留在视口内 → 用户能直接看到自己在哪，不必再做面包屑
+  // （VSCode sticky 同款：父行滚出去才钉住）
+  if (parentIdx >= 0) {
+    const ph = _TV.ROW_H + (rows[parentIdx].t === 'root' ? 14 : 0);
+    if ((tops[parentIdx] || 0) + ph > host.scrollTop) {
+      if (!el.hidden) { el.hidden = true; el.innerHTML = ''; _TV.crumbsKey = ''; }
+      return;
+    }
+  }
+  if (!chain.length) { el.hidden = true; el.innerHTML = ''; _TV.crumbsKey = ''; return; }
+  const key = chain.map(c => c.path).join('\u0000');
+  if (key === _TV.crumbsKey && !el.hidden) return;
+  _TV.crumbsKey = key;
+  el.innerHTML = chain.map(c =>
+    `<div class="tree-crumb" data-crumb-path="${esc(c.path)}" title="${esc(c.path)}">` +
+    dirIconHtml(true, 12) +
+    `<span>${esc(c.name || c.path)}</span></div>`
+  ).join('<span class="tree-crumb-sep">›</span>');
+  el.hidden = false;
 }
 
 // ---- 展开 / 折叠（数据操作 + 重建；fetch 按 path 记 seq 防乱序）----
@@ -503,6 +577,7 @@ async function refreshTree() {
     let s = host2.querySelector('.tree-sizer');
     if (s) s.remove();
     host2.innerHTML = `<div class="tree-empty">点击上方「打开文件夹」选择目录，<br>或直接把文件夹拖进窗口</div>`;
+    _tvCrumbsPaint();
     return;
   }
   // v2.59 同语义：刷新 = 收起态复位（展开集/缓存清空）
@@ -595,6 +670,18 @@ $('treePane').addEventListener('click', async e => {
 });
 
 // a209批2：contextmenu/快捷键/文件操作移驻 tree-fileops.js（命令层独立）
+
+// 面包屑点击：把该目录行滚回视口顶部（VSCode 点面包屑跳回父级的同款语义）
+$('treeCrumbs').addEventListener('click', e => {
+  const c = e.target.closest('[data-crumb-path]');
+  if (!c) return;
+  const path = c.dataset.crumbPath;
+  const i = _TV.idx.get(path);
+  const host = $('treeRoots');
+  if (i === undefined || !_TV.tops || !host) return;
+  host.scrollTop = Math.max(0, _TV.tops[i] - 2);
+  _tvPaint();
+});
 
 $('treeAddRoot').onclick = () => pickTreeDir();
 $('treeHidden').onclick = () => _treeToggleHidden();
