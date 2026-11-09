@@ -1,4 +1,11 @@
 // harness modal.js (v3.0 自 buildClaudeHarnessTab 拆出,定义体零改动,缩进保持原样)
+  // 挂载点：harness 已建时挂 _hgWrap（跟随 Claude tab 隐藏/销毁），未建时挂
+  // body——版本面板已独立成主区 tab，它也要用这个弹窗，而 _hgWrap 只有打开
+  // Claude 界面才有值
+  function _hgModalHost() {
+    try { if (typeof _hgWrap !== 'undefined' && _hgWrap) return _hgWrap; } catch (_) {}
+    return document.body;
+  }
   function hgModal(title, bodyHtml, buttons) {
     return new Promise((resolve) => {
       const ov = document.createElement('div');
@@ -14,7 +21,7 @@
         acts.appendChild(btn);
       });
       ov.addEventListener('click', (e) => { if (e.target === ov) { ov.remove(); resolve(null); } });
-      _hgWrap.appendChild(ov);
+      _hgModalHost().appendChild(ov);
       const inp = inp0;
       if (inp) { inp.focus(); inp.select();
         inp.addEventListener('keydown', (e) => {

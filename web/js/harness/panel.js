@@ -387,7 +387,6 @@
     // 目录停 1s 秒表
     if (tid === _SUB_DYN) dynEl = null;
     if (tid === _SUB_DIR) _subDirTickStop();
-    if (tid === _SUB_VCS) { try { if (typeof _vcsReset === 'function') _vcsReset(); } catch (_) {} }   // v3.5.117
     if (tb.sc && tb.sc.parentNode) tb.sc.remove();
     delete _sub.tabs[tid];
     _sub.order = _sub.order.filter(t => t !== tid);

@@ -125,6 +125,7 @@ function _fcUpdateModal(j) {
 }
 $('btnDiff').onclick = openDiffPicker;  // 文件对比（原生选两份 → DiffEditor tab）
 $('btnBitCalc').onclick = buildBitCalcTab;  // 程序员计算器（寄存器位编辑+位运算+表达式）
+$('btnVcs').onclick = buildVcsPanelTab;    // 版本控制（git/svn 工作副本，a440 独立于 Claude）
 $('btnFiles').onclick = showFilesModal;  // 文件列表弹窗（打开已有文件）
 $('btnClaude').onclick = claudeButtonAction;  // Claude 入口：按设置分派——默认界面化 harness tab（claude-harness.js），设置可切回 CLI 终端
 // v2.27：Claude 按钮 hover 显示实时 CLI 版本（用户要求）——后端真跑

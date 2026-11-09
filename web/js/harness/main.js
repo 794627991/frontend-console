@@ -1550,8 +1550,7 @@ function buildClaudeHarnessTab(opts = {}) {
       // v3.3R（全审 P3）：伪 tab（动态/目录）点击入口与 _subDynOpen/_subDirOpen
       // 同口径置 manual——分屏若是 Task 自动开的（manual=false），用户点 tab 条
       // 切过来阅读，回合终结不该把整个分屏收走
-      if (t.dataset.hgSubtab === _SUB_DIR || t.dataset.hgSubtab === _SUB_DYN
-          || t.dataset.hgSubtab === _SUB_VCS) _sub.manual = true;
+      if (t.dataset.hgSubtab === _SUB_DIR || t.dataset.hgSubtab === _SUB_DYN) _sub.manual = true;
       _subActivate(t.dataset.hgSubtab);
     }
   };

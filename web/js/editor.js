@@ -1502,6 +1502,10 @@ function _edCloseNow(conn) {
       if (h._ovSbH) { clearTimeout(h._ovSbH.hideT); h._ovSbH = null; }
     });
   }
+  // a440：版本面板（独立主区 tab，meta.kind='vcs'）的模块级状态收尾
+  if (conn.meta && conn.meta.kind === 'vcs') {
+    try { if (typeof vcsPanelTeardown === 'function') vcsPanelTeardown(); } catch(e){}
+  }
   conn.tab.remove(); conn.wrap.remove();
   delete connections[conn.portId];
   if (typeof treeDecoRefresh === 'function') treeDecoRefresh();   // a209批1：树 open/dirty 装饰联动
