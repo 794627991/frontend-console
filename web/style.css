@@ -925,12 +925,16 @@
   /* 键盘焦点环（a256 快捷键配套）：Tab 聚到树面板时内描边提示键盘导航可用 */
   #treeRoots:focus-visible { box-shadow: inset 0 0 0 1px var(--border-glow); border-radius: 8px; }
   .tree-scroll-wrap { flex: 1; min-height: 0; position: relative; }
-  /* 面包屑是覆盖层（absolute），树自身撑满整个 wrap */
+  /* 面包屑是 absolute 定位的「顶部条」，树视口让位下移——不用覆盖层。
+     a443（用户实锤：覆盖层压住首行，点不到）：覆盖层虽然零布局参与，但
+     会白吃掉视口顶部 22px，被压的那行点不到。改成让位式：crumbs 显示时
+     .tree-roots 的 top 下移到 22px，视口整体缩 22px，一行不少。 */
   .tree-roots { position: absolute; inset: 0; overflow-y: auto; overflow-x: auto; padding: 4px 8px 8px; }
+  .tree-scroll-wrap.has-crumbs .tree-roots { top: 22px; }
   /* 目录面包屑（VSCode sticky scroll 同款）：滚动后仍能看出当前这屏文件
-     属于哪个目录。**绝对定位覆盖在滚动容器顶部**，不参与 flex 布局——
-     做成流式元素时既排到了底部（column 布局里在 treeRoots 之后），显隐又
-     会改 scrollHeight → 触发滚动重算 → 抽搐。覆盖层零布局参与，无反馈环。 */
+     属于哪个目录。显隐只由 scrollTop / 顶部行类型决定，**不读 clientHeight
+     ／scrollHeight**——读它们才能形成「显隐 → 高度变 → 重算 → 显隐」的
+     抽搐反馈环。让位式的 top 变化只会触发一次 ResizeObserver 重绘，收敛。 */
   .tree-crumbs { position: absolute; top: 0; left: 0; right: 0; z-index: 3;
     display: flex; align-items: center; gap: 1px; height: 22px; padding: 0 8px;
     background: var(--bg-panel); border-bottom: 1px solid var(--border);

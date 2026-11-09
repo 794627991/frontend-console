@@ -2,8 +2,16 @@
   // 挂载点：harness 已建时挂 _hgWrap（跟随 Claude tab 隐藏/销毁），未建时挂
   // body——版本面板已独立成主区 tab，它也要用这个弹窗，而 _hgWrap 只有打开
   // Claude 界面才有值
+  // a443（审计实锤，两条）：① _hgWrap 在 Claude tab 关闭后仍是变量里的死
+  // 引用（已脱离文档），继续挂进去弹窗永远不可见；② .hg-modal-ov 是
+  // position:absolute + inset:0，包含块取最近的 positioned 祖先——挂进
+  // display:none 的 _hgWrap（Claude tab 非当前时）实测尺寸 0×0，用户点
+  // 「Pull」「纳入版本控制」毫无反应。判据必须是「在文档里且真的可见」。
   function _hgModalHost() {
-    try { if (typeof _hgWrap !== 'undefined' && _hgWrap) return _hgWrap; } catch (_) {}
+    try {
+      const w = (typeof _hgWrap !== 'undefined') ? _hgWrap : null;
+      if (w && document.contains(w) && w.offsetParent !== null) return w;
+    } catch (_) {}
     return document.body;
   }
   function hgModal(title, bodyHtml, buttons) {

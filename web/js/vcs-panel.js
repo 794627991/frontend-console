@@ -78,10 +78,15 @@ function buildVcsPanelTab() {
   return conn;
 }
 // 在场期 60s 轻轮询（git 改动/外部命令后自动跟上；不改动列表重扫）
+// a443：失活自停（旧 harness 伪 tab 同语义）——面板不在前台时白扫本地面没意义；
+// 切回由 switchTab 的 vcs 钩子经 _vcsActivate → _vcsTickStart 重新武装
 function _vcsTickStart() {
   if (_vcsTick) return;
   _vcsTick = setInterval(() => {
     if (!_vpAlive || !_vpEl) { clearInterval(_vcsTick); _vcsTick = null; return; }
+    if (typeof activePortId !== 'undefined' && activePortId !== VP_PORTID) {
+      clearInterval(_vcsTick); _vcsTick = null; return;
+    }
     if (!VCS.busy) _vcsReload(true);
   }, 60000);
 }

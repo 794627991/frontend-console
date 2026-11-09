@@ -551,6 +551,10 @@ function switchTab(portId) {
     // 编辑器 tab：启动磁盘改动检测（5s 轮询 mtime；切走时定时器自惰——不可见跳过）
     if (conn.meta.kind === 'editor' && typeof _edOnSwitchEditor === 'function')
       _edOnSwitchEditor(conn);
+    // a443：版本面板切回时按需刷新（30s 缓存），与旧 harness 伪 tab 的
+    // _subActivate → _vcsActivate 钩子同语义；缺了它切回只看得到开 tab 时的首扫
+    if (conn.meta.kind === 'vcs' && typeof _vcsActivate === 'function')
+      _vcsActivate();
   }
 }
 

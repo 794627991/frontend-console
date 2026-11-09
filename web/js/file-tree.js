@@ -459,7 +459,13 @@ function _tvCrumbsPaint() {
   const host = $('treeRoots');
   const rows = _TV.rows || [];
   const tops = _TV.tops || [];
+  const wrap = el.closest('.tree-scroll-wrap');
+  const show = () => {
+    el.hidden = false;
+    if (wrap) wrap.classList.add('has-crumbs');
+  };
   const hide = () => {
+    if (wrap) wrap.classList.remove('has-crumbs');
     if (!el.hidden) { el.hidden = true; el.innerHTML = ''; _TV.crumbsKey = ''; }
   };
   if (!host || !rows.length || !tops.length) { hide(); return; }
@@ -485,14 +491,14 @@ function _tvCrumbsPaint() {
   }
   if (!chain.length) { hide(); return; }
   const key = chain.map(c => c.path).join('\u0000');
-  if (key === _TV.crumbsKey && !el.hidden) return;   // 未变：不碰 DOM
+  if (key === _TV.crumbsKey && !el.hidden && wrap && wrap.classList.contains('has-crumbs')) return;
   _TV.crumbsKey = key;
   el.innerHTML = chain.map(c =>
     `<div class="tree-crumb" data-crumb-path="${esc(c.path)}" title="${esc(c.path)}">` +
     dirIconHtml(true, 12) +
     `<span>${esc(c.name || c.path)}</span></div>`
   ).join('<span class="tree-crumb-sep">›</span>');
-  el.hidden = false;
+  show();
 }
 
 // ---- 展开 / 折叠（数据操作 + 重建；fetch 按 path 记 seq 防乱序）----
