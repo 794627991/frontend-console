@@ -5548,3 +5548,8 @@ span.nn-hl-t { background: color-mix(in srgb, #3fb950 15%, transparent);
   0%, 100% { background: transparent; }
   45% { background: color-mix(in srgb, var(--accent) 30%, transparent); }
 }
+
+/* a429 最近打开置顶区：固定项（类型前缀行，不分组）*/
+.recent-group-head.t-pin { color: var(--accent, #4cc2ff); }
+.recent-item.pinned .pin-type { color: var(--muted); margin-right: 2px; }
+.recent-item.pinned { border-left: 2px solid var(--accent, #4cc2ff); }

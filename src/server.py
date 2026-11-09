@@ -1561,14 +1561,22 @@ def api_theme():
 # key = 去重键（ssh:host:port:user / serial:COM3 / file:路径 / claude:session_id）；同 key 只留最新一条并置顶。
 _RECENT_MAX = 20  # 列表上限，防无限膨胀
 def _recent_add(item):
-    """记录一条最近打开（去重置顶），返回更新后的列表。"""
+    """记录一条最近打开（去重置顶），返回更新后的列表。
+    a429（用户令）：固定项（pin）无条件保存——重开同 key 保持固定；
+    _RECENT_MAX 上限只裁未固定项，固定项永不淘汰。"""
     cfg = _load_config()
     recent = cfg.get("recent", [])
     key = item.get("key") or ""
+    old = next((r for r in recent if r.get("key") == key), None)
+    if old and old.get("pin"):
+        item["pin"] = True          # 固定项重开：保持固定
     recent = [r for r in recent if r.get("key") != key]
     item["ts"] = int(time.time() * 1000)
     recent.insert(0, item)
-    recent = recent[:_RECENT_MAX]
+    unpinned = [r for r in recent if not r.get("pin")]
+    if len(unpinned) > _RECENT_MAX:
+        _drop = {id(r) for r in unpinned[_RECENT_MAX:]}
+        recent = [r for r in recent if id(r) not in _drop]
     cfg["recent"] = recent
     _save_config(cfg)
     return recent
@@ -1618,6 +1626,22 @@ def api_recent():
         _save_config({**_load_config(), "recent": []})
         return jsonify({"ok": True})
     data = request.get_json(force=True) or {}
+    # a429：固定/取消固定（按 key 定位，翻转 pin 并即时落盘——无条件保存）
+    if data.get("pin_toggle"):
+        _key = str(data["pin_toggle"]).strip()
+        cfg = _load_config()
+        recent = cfg.get("recent", [])
+        tgt = next((r for r in recent if r.get("key") == _key), None)
+        if not tgt:
+            return jsonify({"ok": False, "err": "条目不存在"}), 404
+        if tgt.get("pin"):
+            tgt.pop("pin", None)
+        else:
+            tgt["pin"] = True
+            recent.remove(tgt)
+            recent.insert(0, tgt)   # 新固定的排置顶区最前
+        _save_config({**cfg, "recent": recent})
+        return jsonify({"ok": True, "recent": recent})
     # 整表替换（前端单条删除后回写剩余列表）
     if isinstance(data.get("replace"), list):
         keep = []
@@ -1625,11 +1649,19 @@ def api_recent():
             t = (it.get("type") or "").strip()
             if t not in ("ssh", "serial", "file", "claude") or not (it.get("key") or "").strip():
                 continue
-            keep.append({"type": t, "key": it["key"], "label": (it.get("label") or "").strip(),
-                         "ts": it.get("ts") or 0, "data": it.get("data") or {}})
+            _e = {"type": t, "key": it["key"], "label": (it.get("label") or "").strip(),
+                  "ts": it.get("ts") or 0, "data": it.get("data") or {}}
+            if it.get("pin"):        # a429：回写保固定标记
+                _e["pin"] = True
+            keep.append(_e)
         keep.sort(key=lambda x: -x.get("ts", 0))  # 按 ts 新→旧
-        _save_config({**_load_config(), "recent": keep[:_RECENT_MAX]})
-        return jsonify({"ok": True, "recent": keep[:_RECENT_MAX]})
+        # a429：固定项无条件保存——上限只裁未固定，固定项恒排置顶区
+        #（原 [:_RECENT_MAX] 会把旧 ts 的固定项整条裁掉，实测 ⑥ 实锤）
+        _pinned = [x for x in keep if x.get("pin")]
+        _unpinned = [x for x in keep if not x.get("pin")][:_RECENT_MAX]
+        keep = _pinned + _unpinned
+        _save_config({**_load_config(), "recent": keep})
+        return jsonify({"ok": True, "recent": keep})
     t = (data.get("type") or "").strip()
     if t not in ("ssh", "serial", "file", "claude"):
         return jsonify({"ok": False, "err": "type 须为 ssh/serial/file/claude"}), 400

@@ -480,6 +480,18 @@ function renderRecentList() {
     el.innerHTML = '<div class="recent-empty">暂无记录<br>连接/打开文件后自动记录</div>';
     return;
   }
+  el.innerHTML = '';
+  // a429（用户令）：固定项置顶区——不按 SSH/串口分类，一行 = 类型前缀 +
+  // label（例：串口 COM1 @115200 / SSH gaoyi13@ip / 文件 xxx.c）；
+  // 下方为非固定的原状分组列表
+  const pinned = _recentList.map((it, i) => ({it, i})).filter(x => x.it.pin);
+  if (pinned.length) {
+    const ph = document.createElement('div');
+    ph.className = 'recent-group-head t-pin';
+    ph.innerHTML = `◆ 置顶 <span class="g-line"></span>`;
+    el.appendChild(ph);
+    pinned.forEach(({it, i}) => el.appendChild(_recentItemEl(it, i, true)));
+  }
   // 按类型分组，组内保持原新→旧顺序（claude 分组已移除——会话恢复改走
   // claude 自带 /resume 选择界面，不再在工具侧直连）
   const groups = [
@@ -488,9 +500,9 @@ function renderRecentList() {
     { type: 'ssh',    name: 'SSH' },
     { type: 'telnet', name: 'Telnet' },
   ];
-  el.innerHTML = '';
   groups.forEach(g => {
-    const items = _recentList.map((it, i) => ({it, i})).filter(x => x.it.type === g.type);
+    const items = _recentList.map((it, i) => ({it, i}))
+      .filter(x => x.it.type === g.type && !x.it.pin);
     if (!items.length) return;
     const gh = document.createElement('div');
     gh.className = 'recent-group-head t-' + g.type;
@@ -500,9 +512,9 @@ function renderRecentList() {
   });
 }
 
-function _recentItemEl(it, i) {
+function _recentItemEl(it, i, pinned) {
   const d = document.createElement('div');
-  d.className = 'recent-item t-' + it.type;
+  d.className = 'recent-item t-' + it.type + (pinned ? ' pinned' : '');
   // claude 条目 label 动态替换：记入时固化的「Claude · 目录名」会重名且不随备注更新，
   // 按 session_id 从会话数据取当前显示名（备注 > aiTitle > 摘要，_claudeTitleMap）
   const showLabel = (it.type === 'claude' && it.data && it.data.resume &&
@@ -512,10 +524,15 @@ function _recentItemEl(it, i) {
   // file 类型按后缀出专属 SVG 图标（file-icons.js），其余用类型 emoji
   const ico = it.type === 'file' ? fileIconHtml(it.label || it.data?.name || '', 14)
                                  : (RECENT_ICON[it.type] || '·');
+  // a429：固定项显示形态=「类型前缀 label」（如 串口 COM1 @115200），
+  // 不再依赖分组头
+  const nameHtml = pinned
+    ? `<span class="pin-type">${esc(RECENT_TYPE_NAME[it.type] || it.type)}</span> ${esc(showLabel)}`
+    : esc(showLabel);
   d.innerHTML = `
     <span class="ric">${ico}</span>
     <div class="info">
-      <div class="name">${esc(showLabel)}</div>
+      <div class="name">${nameHtml}</div>
     </div>
     <div class="actions"><button data-del="${i}" title="从列表移除">✕</button></div>
   `;
@@ -523,7 +540,31 @@ function _recentItemEl(it, i) {
     if (e.target.dataset.del !== undefined) { e.stopPropagation(); removeRecentItem(i); return; }
     openRecentItem(it);
   };
+  // a429（用户令）：右键菜单——固定/取消固定（无条件保存+置顶）
+  d.oncontextmenu = (e) => {
+    e.preventDefault();
+    if (typeof buildCtxMenu !== 'function') return;
+    buildCtxMenu(e.clientX, e.clientY, [
+      { label: it.pin ? '取消固定' : '固定到置顶', action: () => toggleRecentPin(it) },
+      { sep: true },
+      { label: '从列表移除', action: () => removeRecentItem(i) },
+    ]);
+  };
   return d;
+}
+
+async function toggleRecentPin(it) {
+  if (!it || !it.key) return;
+  try {
+    const r = await fetch('/api/recent', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin_toggle: it.key }) });
+    const j = await r.json();
+    if (j.ok && Array.isArray(j.recent)) {
+      _recentList = j.recent.filter(x => x.type !== 'claude');
+      renderRecentList();
+    } else if (j.err) showBanner('固定失败：' + j.err, 2500, true);
+  } catch (e) { showBanner('固定失败: ' + e, 2500, true); }
 }
 
 async function removeRecentItem(i) {
