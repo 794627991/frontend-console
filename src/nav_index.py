@@ -842,25 +842,30 @@ def load_scope(root, store=None):
 
 
 def detect_scope(root):
-    """a416：零配置平台形态识别（用户定调：不写死平台模板，只认**结构特征**）。
-    当前识别一种：sbuilder 方案——特征=产物外挂 sbuilder/output/build 存在
-    **且**内核根现探存在（a418 审计实锤：仅看 output/build 一个目录，普通树
-    碰巧同名就被套白名单 → 硬失败/静默漏索引无产物源码）。
-    范围从磁盘实际结构推导；tier 发 auto 交给既有判档（≥5 万代码文件且有
-    产物才升白名单，小树/零产物回 full——误报即便点火也不丢覆盖）。
-    返回 (scope|None, kind)。"""
-    out_build = os.path.join(root, "sbuilder", "output", "build")
-    if not os.path.isdir(out_build):
-        return None, ""
+    """a416→a427（内网报告·用户重申设计）：原实现只认 sbuilder 布局，
+    H11/H8（产物在源码树内、无 sbuilder/output/build）直接返回 None——
+    build() 里 `if sc:` 整段白名单判档被跳过，明明扫到 3177 个 .cmd 仍
+    全量索引（H11 实锤 ctags 写 450MB）。
+    现改为：有内核根/sbuilder/常见源码目录即返回隐式 scope（tier=auto），
+    由白名单优先判档接管——有中间文件必走白名单，零中间文件才全量。
+    sbuilder 只是多填 artifact_roots/exclude_paths 的特例。
+    返回 (scope|None, kind)；kind ∈ sbuilder / in-tree。"""
+    has_sbuilder = os.path.isdir(os.path.join(root, "sbuilder", "output", "build"))
     kernel_roots = []
     for cand in ("kernel/kernel_sdk", "kernel"):
         p = os.path.join(root, *cand.split("/"))
-        if os.path.isdir(os.path.join(p, "arch")) or \
-                os.path.isfile(os.path.join(p, ".config")):
+        if os.path.isdir(os.path.join(p, "arch")) or                 os.path.isfile(os.path.join(p, ".config")):
             kernel_roots.append(cand)
             break
-    if not kernel_roots:
-        return None, ""   # 无内核根：不是海思 sbuilder 形态，不点火
+    # 判据放宽：有内核根/有 sbuilder/有常见源码目录 = 代码工程——返回
+    # 隐式 scope 让白名单判档生效，绝不静默全量（a418 的"必须有内核根"
+    # 门槛随之作废：tier=auto 下误检出不丢覆盖——零产物自动回全量）
+    _has_code_dirs = any(
+        os.path.isdir(os.path.join(root, d))
+        for d in ("kernel", "uboot", "modules", "libs", "src", "source",
+                  "app", "rootfs", "tools"))
+    if not (has_sbuilder or kernel_roots or _has_code_dirs):
+        return None, ""
     hdr = []
     for k in kernel_roots:
         hdr += [k + "/include", k + "/include/asm-generic",
@@ -868,21 +873,37 @@ def detect_scope(root):
                 k + "/arch/${arch}/include",
                 k + "/arch/${arch}/include/uapi"]
     if os.path.isdir(os.path.join(root, "uboot")):
-        hdr.append("uboot/*/arch/arm/include")   # u-boot 无 arch/arm64，一律 arm
-    ex_p = ["sbuilder/output"]
-    if os.path.isdir(os.path.join(root, "sbuilder", ".buildroot-ccache")):
-        ex_p.append("sbuilder/.buildroot-ccache")
+        hdr.append("uboot/*/arch/arm/include")   # u-boot 无 arm64，一律 arm
+    ex_p = []
+    art_roots = []
+    if has_sbuilder:
+        art_roots = ["sbuilder/output/build"]
+        ex_p = ["sbuilder/output"]
+        if os.path.isdir(os.path.join(root, "sbuilder", ".buildroot-ccache")):
+            ex_p.append("sbuilder/.buildroot-ccache")
+    src_roots = list(kernel_roots)
+    if os.path.isdir(os.path.join(root, "uboot")):
+        # uboot 下真实源码根各平台命名不同（uboot_sdk/hik_uboot/hvb_uboot/
+        # seeboot），同层还有 plat_private/release 等非源码目录——全纳入
+        # （source_roots 只是解析基准，多列不影响正确性，漏列才解析失败）
+        for d in sorted(os.listdir(os.path.join(root, "uboot"))):
+            if d.startswith("."):
+                continue
+            if os.path.isdir(os.path.join(root, "uboot", d)):
+                src_roots.append("uboot/" + d)
+    src_roots.append(".")
     sc = {"version": 1,
-          "name": "sbuilder 方案（自动检测）",
+          "name": ("sbuilder 方案（自动检测）" if has_sbuilder
+                   else "源码树内产物（自动检测）"),
           "tier": "auto", "arch": "auto",
           "include": ["."],
-          "artifact_roots": ["sbuilder/output/build"],
-          "source_roots": (list(kernel_roots) + ["."]),
+          "artifact_roots": art_roots,
+          "source_roots": src_roots,
           "header_roots": hdr,
           "fallback_full": [],
           "exclude_names": ["test", "release_tmp"],
           "exclude_paths": ex_p}
-    return sc, "sbuilder"
+    return sc, ("sbuilder" if has_sbuilder else "in-tree")
 
 
 def _expand_patterns(patterns, dirs_set):
@@ -959,17 +980,28 @@ def build(root, log=None, progress=None, should_cancel=None,
             say("  ⚠ scope 配置解析失败（%s）——按全量建库" % sc_src[4:])
             sc, sc_src = None, ""
     if sc is None:
-        # a416：零配置形态识别——sbuilder 方案（产物外挂）自动推导范围，
-        # 不写死平台模板（用户定调）：白名单档开箱即用，源码根/头文件区
-        # 从磁盘现探。检测不到=传统全量
+        # a416→a427：零配置形态识别——结构检测（sbuilder 外挂/源码树内产物）
         _dsc, _dkind = detect_scope(root)
         if _dsc:
             sc = _dsc
             sc_src = "detect"
+    if sc is None:
+        # a427（内网报告·用户重申设计·重点）：detect_scope() 放宽后极少数树
+        # 仍返回 None（根下连常见源码目录名都没有）。此时**也必须**有隐式
+        # scope，否则 `if sc:` 整段白名单判档被跳过——扫到 .cmd/.o 仍全量
+        # 索引（H11「自动」档 450MB 的根因）。铁律：只要有白名单一定用白名单
+        sc = {"version": 1, "name": "自动（隐式范围）",
+              "tier": "auto", "arch": "auto",
+              "include": ["."], "artifact_roots": [],
+              "source_roots": ["."], "header_roots": [],
+              "fallback_full": [],
+              "exclude_names": [], "exclude_paths": []}
+        sc_src = "implicit"
     if sc:
         _src_label = {"project": "工程配置 " + SCOPE_FILE,
                       "saved": "已保存的范围",
-                      "inline": "本次指定"}.get(sc_src)
+                      "inline": "本次指定",
+                      "implicit": "自动（隐式范围）"}.get(sc_src)
         if sc_src == "detect":
             _src_label = "自动检测（%s 方案）" % _dkind
         say("收录范围：%s［来源：%s］" % (_scope_summary(sc),
@@ -2497,6 +2529,17 @@ def definition(file_path, symbol):
     except Exception:
         pass
     first = out[0]
+    # a428（内网报告 问题5·建议1）：全部候选都是 struct member 且符号像
+    # 局部变量（小写短名）→ 大概率是函数内局部变量（ctags 不索引局部变量，
+    # 能力边界）——不自动跳转，明确降级提示+候选仅供参考，杜绝"跳到
+    # aic8800/ipc_shared.h 的同名成员"这种误导
+    if all((c.get("kind") or "") in ("member", "m") for c in out) \
+            and symbol[:1].islower() and len(symbol) <= 12:
+        return {"symbol": symbol, "auto": False,
+                "mode": "ambiguous-local",
+                "err": "可能为函数内局部变量（ctags 不索引局部变量）——"
+                       "以下为同名结构体成员，仅供参考",
+                "candidates": out[:5]}
     # auto 直跳：nm 锁定，或唯一 in_build 候选，或同文件 static
     others = out[1:]
     auto = bool(

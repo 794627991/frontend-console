@@ -128,7 +128,10 @@ function _monacoDefinePlusThemes(monaco) {
         { token: 'entity.name.type', foreground: '4EC9B0' },              // VSCode Dark+ 类型青绿
         { token: 'constant.other', foreground: 'C586C0' },                // ALL_CAPS 宏/枚举常量品红
         { token: 'variable.identifier', foreground: '9CDCFE' },            // VSCode Dark+ 变量浅蓝
-      ],
+        { token: 'variable.parameter', foreground: '9CDCFE' },             // a428（内网报告 建议１）：
+        { token: 'variable', foreground: '9CDCFE' },                       // 前缀兜底——tokenizer 产
+      ],                                                                      // variable/variable.parameter 也有色
+
       colors: {}
     });
     monaco.editor.defineTheme('fcpk-plus', {
@@ -139,6 +142,8 @@ function _monacoDefinePlusThemes(monaco) {
         { token: 'entity.name.type', foreground: '267F99' },              // VSCode Light+ 类型蓝绿
         { token: 'constant.other', foreground: 'AF00DB' },                // ALL_CAPS 宏/枚举常量紫
         { token: 'variable.identifier', foreground: '0010A0' },            // VSCode Light+ 变量蓝
+        { token: 'variable.parameter', foreground: '0010A0' },             // a428：前缀兜底（同深色）
+        { token: 'variable', foreground: '0010A0' },
       ],
       colors: {}
     });

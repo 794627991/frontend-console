@@ -208,6 +208,13 @@
       return;
     }
     const cands = j.candidates;
+    // a428（内网报告 问题5）：局部变量降级提示——ctags 不索引函数内局部
+    // 变量，全是同名 struct member 时不自动跳（原跳到无关头文件误导）
+    if (j.mode === 'ambiguous-local') {
+      showBanner((j.err || '可能为函数内局部变量') + '——已弹候选列表', 3500);
+      _showCandidates(j, editor);
+      return;
+    }
     if (j.auto || cands.length === 1) {
       const c = cands[0];
       _jumpOpen(editor, c.path, { line: Math.max(1, c.line || 1) });
