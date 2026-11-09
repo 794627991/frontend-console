@@ -35,23 +35,24 @@ let activePortId = null;
     serial: '串口', ssh: 'SSH', telnet: 'Telnet',
     claude: 'Claude', harness: 'Claude',
     editor: '编辑器', hex: 'Hex', diff: '对比', bindiff: 'Bin对比',
-    log: '日志', office: '文件', proxy: '代理', bitcalc: '计算器',
+    log: '日志', office: '文件', proxy: '代理', bitcalc: '计算器', vcs: '版本',
   };
   const _GROUP_ICON = {
     serial: ICO16.plug, ssh: ICO16.terminal, telnet: ICO16.terminal,
     claude: ICO16.zap, harness: ICO16.zap,
     editor: ICO16.file, hex: ICO16.hex, diff: ICO16.compare, bindiff: ICO16.compare,
     log: ICO16.log, office: ICO16.folderOpen, proxy: ICO16.gear, bitcalc: ICO16.calc,
+    vcs: ICO16.branch,
   };
   const _groupOf = c => (c.meta && c.meta.kind) || 'other';
   // 第7轮盲测P5：列表/抽屉组序对齐标签栏的 sortKey 类型序（串口→SSH→日志→
   // 编辑器类→Claude→…），原来跟 connections 插入序导致"Claude 在日志前"不一致
   const _GROUP_ORDER = { serial: 0, ssh: 1, telnet: 1, log: 2, diff: 3, editor: 3,
-    hex: 3, bindiff: 3, office: 3, bitcalc: 3, note: 3, claude: 4, harness: 5, proxy: 6 };
-  // 用户需求：单例类型（claude/计算器/代理——只会存在一个实例）在抽屉模式下
-  // 不收进抽屉，直接平铺显示——收进抽屉要点两次才能到达，没意义。
+    hex: 3, bindiff: 3, office: 3, bitcalc: 3, vcs: 3, note: 3, claude: 4, harness: 5, proxy: 6 };
+  // 用户需求：单例类型（claude/计算器/代理/版本——只会存在一个实例）在抽屉
+  // 模式下不收进抽屉，直接平铺显示——收进抽屉要点两次才能到达，没意义。
   // 用户实锤：工具里"Claude"入口开的是 harness kind（Claude 对话），必须一起收
-  const _SINGLE_KINDS = new Set(['claude', 'harness', 'bitcalc', 'proxy']);
+  const _SINGLE_KINDS = new Set(['claude', 'harness', 'bitcalc', 'proxy', 'vcs']);
   // 用户拖过的胶囊组序（位置不变量：拖过的组永远按用户序渲染，新组按默认序附后）
   const _userGroupOrder = [];
   const _groupLabel = k => _GROUP_LABEL[k] || '其他';
@@ -1043,6 +1044,7 @@ function sortKeyFn(pid) {
   // 第8轮盲测缺陷2：bitcalc/proxy 原落默认桶（SSH 前）与 ⋮ 列表组序
   // （编辑器类/代理）矛盾——补齐桶位对齐 _GROUP_ORDER
   if (pid.startsWith('bitcalc:')) return [3, pid];  // 计算器：编辑器类桶
+  if (pid.startsWith('vcs:')) return [3, pid];      // 版本控制：编辑器类桶（a441）
   if (pid.startsWith('proxy:')) return [6, pid];    // 代理面板：最后
   return [1, pid];  // SSH：字典序
 }
