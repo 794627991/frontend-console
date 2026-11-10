@@ -162,10 +162,17 @@ def _classify_nonjson(raw):
                         ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">")):
             msg = msg.replace(ent, ch)
         msg_low = msg.lower()
-        # 优先级1：账号锁定（"Account locked" / "Error limit reached"）
-        if "locked" in msg_low or "error limit" in msg_low:
-            return ("账号已被锁定（密码错误次数超限）。请等待约 8 分钟自动解锁，"
-                    "或到 sso.hikvision.com 登录页点 “Unlock account” 解锁后重试。"
+        # 优先级1：账号锁定 / 尝试次数超限
+        # a452（用户实锤）：SSO 锁定期的实际文案是 "Too many attempts,
+        # please contact itsm@..."，原关键词表只有 locked/error limit，
+        # 命中不了就一路降级成「会话失效」——误导用户以为是自己的会话
+        # 掉了，实际是账号被风控锁了、必须等或联系 ITSM。
+        if ("too many attempts" in msg_low or "locked" in msg_low
+                or "error limit" in msg_low
+                or "too many" in msg_low and "attempt" in msg_low):
+            return ("账号已被 SSO 锁定（登录尝试次数超限）。请等待锁定自动解除"
+                    "（约 8~30 分钟），或联系 itsm@hikvision.com 解锁；"
+                    "解锁前任何登录尝试都会重新计时。"
                     + (" 服务端提示: %s" % msg if msg else ""))
         # 优先级2：凭据错误（"Wrong username or password"）
         if "wrong" in msg_low or "password" in msg_low or "invalid" in msg_low:
