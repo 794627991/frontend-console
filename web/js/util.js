@@ -49,14 +49,153 @@ let activePortId = null;
   // 编辑器类→Claude→…），原来跟 connections 插入序导致"Claude 在日志前"不一致
   const _GROUP_ORDER = { serial: 0, ssh: 1, telnet: 1, log: 2, diff: 3, editor: 3,
     hex: 3, bindiff: 3, office: 3, bitcalc: 3, vcs: 3, note: 3, claude: 4, harness: 5, proxy: 6 };
-  // 用户需求：单例类型（claude/计算器/代理/版本——只会存在一个实例）在抽屉
-  // 模式下不收进抽屉，直接平铺显示——收进抽屉要点两次才能到达，没意义。
-  // 用户实锤：工具里"Claude"入口开的是 harness kind（Claude 对话），必须一起收
+  // 用户需求：同类只开一个时不收进抽屉（平铺直达，一点即达），开第二个才收。
+  // _SINGLE_KINDS = 设计上不会多开的类型（兜底：即便数量判定放宽也不收）
   const _SINGLE_KINDS = new Set(['claude', 'harness', 'bitcalc', 'proxy', 'vcs']);
+  // 按当前打开的 tab 统计各 kind 数量（判定「是否独苗」）
+  function _kindCount() {
+    const cnt = {};
+    for (const pid in connections) {
+      const c = connections[pid];
+      if (!c || !c.tab) continue;
+      const g = _groupOf(c);
+      cnt[g] = (cnt[g] || 0) + 1;
+    }
+    return cnt;
+  }
+  // 平铺（不进抽屉）：独苗 kind 或单例类型
+  const _isFlat = (kind, cnt) => _SINGLE_KINDS.has(kind) || (cnt[kind] || 0) < 2;
   // 用户拖过的胶囊组序（位置不变量：拖过的组永远按用户序渲染，新组按默认序附后）
   const _userGroupOrder = [];
   const _groupLabel = k => _GROUP_LABEL[k] || '其他';
   const _groupIcon = k => _GROUP_ICON[k] || ICO16.file;
+
+  // 用户需求：抽屉内同类 tab 排序 =「最近访问优先，其余保持打开序倒序」。
+  // 打开 1..9（未访问）→ 987654321（最新打开的在前）；访问 5 → 598764321
+  // （被访问者提到最前，其余原序不动）；再访问 8 → 859764321。即 move-to-front，
+  // 新开的 tab 也插队首（与「打开序倒序」的初态一致）。抽屉下拉与 ⋮ 溢出
+  // 列表共用本序。
+  const _mruList = [];                       // pid 序（当前显示序）
+  function _mruTouch(pid) {
+    const i = _mruList.indexOf(pid);
+    if (i === 0) return;
+    if (i > 0) _mruList.splice(i, 1);
+    _mruList.unshift(pid);                   // 新开 / 再次访问 → 提到最前
+  }
+  window._tabTouch = _mruTouch;
+  function _mruRank(pid) {
+    if (pid === activePortId) return -1;     // 活跃恒在首（touch 缺席时兜底）
+    const i = _mruList.indexOf(pid);
+    return i < 0 ? _mruList.length : i;
+  }
+  function _mruOrder(pids) {
+    return pids.slice().sort((a, b) => _mruRank(a) - _mruRank(b));
+  }
+  // 清理已关 pid + 补未被 touch 过的 tab（逐个插队首 → 打开序倒序）
+  function _mruSync() {
+    for (let i = _mruList.length - 1; i >= 0; i--) {
+      if (!connections[_mruList[i]]) _mruList.splice(i, 1);
+    }
+    for (const p in connections) {
+      const c = connections[p];
+      if (c && c.tab && _mruList.indexOf(p) < 0) _mruList.unshift(p);
+    }
+  }
+  // 通用应用风格确认弹窗（Promise<boolean>）——供「抽屉分组全关」使用；
+  // 全站多个模块各有同款实现，但 util.js 是最早加载的脚本，不能反向依赖。
+  // 画风与 _edConfirm / _hxConfirm 完全一致（modal + box + head + 取消/确定）
+  function _uiConfirm(title, msg, okLabel, danger) {
+  return new Promise(resolve => {
+    let m = document.getElementById('uiConfirmModal');
+    if (!m) {
+      m = document.createElement('div');
+      m.className = 'modal';
+      m.id = 'uiConfirmModal';
+      m.innerHTML = `
+        <div class="box" style="max-width:380px;">
+          <div class="head"><strong id="uiConfirmTitle">确认</strong>
+            <div class="head-actions"><button class="btn ghost icon-btn" id="uiConfirmX">✕</button></div>
+          </div>
+          <div style="padding:18px 20px;">
+            <div id="uiConfirmMsg" style="color:var(--muted);font-size:12px;line-height:1.6;margin-bottom:16px;word-break:break-all;"></div>
+            <div style="display:flex;gap:10px;justify-content:flex-end;">
+              <button class="btn ghost" id="uiConfirmNo">取消</button>
+              <button class="btn" id="uiConfirmYes">确定</button>
+            </div>
+          </div>
+        </div>`;
+      document.body.appendChild(m);
+    }
+    m.querySelector('#uiConfirmTitle').textContent = title || '确认';
+    m.querySelector('#uiConfirmMsg').textContent = msg || '';
+    const yes = m.querySelector('#uiConfirmYes');
+    yes.textContent = okLabel || '确定';
+    yes.className = 'btn' + (danger ? ' danger' : ' primary');
+    const finish = v => {
+      m.classList.remove('show');
+      document.removeEventListener('keydown', onKey);
+      resolve(v);
+    };
+    const onKey = e => { if (e.key === 'Escape') { e.stopPropagation(); finish(false); } };
+    yes.onclick = () => finish(true);
+    m.querySelector('#uiConfirmNo').onclick = () => finish(false);
+    m.querySelector('#uiConfirmX').onclick = () => finish(false);
+    m.onclick = e => { if (e.target === m) finish(false); };
+    document.addEventListener('keydown', onKey);
+    m.classList.add('show');
+    setTimeout(() => yes.focus(), 0);
+  });
+}
+
+  // ===== 抽屉分组全关（用户需求：点某类胶囊上的 ✕ → 关掉该组全部标签） =====
+  // 例：ssh*3 + 编辑器*99 时点编辑器胶囊的 ✕，只关这 99 个文件，其他组不动。
+  // 一次总确认后逐个走清理链；编辑器族直达 _edCloseNow 跳过逐 tab 脏确认。
+  let _closeAllBusy = false;
+  async function _drawerCloseGroup(group) {
+    if (_closeAllBusy) return;
+    const pids = Object.keys(connections).filter(p => {
+      const c = connections[p];
+      return c && c.tab && !_pinned.has(p) && _groupOf(c) === group;
+    });
+    if (!pids.length) return;
+    const dirtyN = pids.filter(p => connections[p].dirty).length;
+    const label = _groupLabel(group);
+    const ok = await _uiConfirm('关闭全部' + label + '标签页',
+      '将关闭全部已打开的 ' + pids.length + ' 个' + label + '标签页' +
+      (dirtyN ? '，其中 ' + dirtyN + ' 个有未保存修改——未保存的内容不会保存，关闭即丢失' :
+        '；未保存的内容不会保存') +
+      '。确定关闭？',
+      '全部关闭', true);
+    if (!ok) return;
+    _closeAllBusy = true;
+    try {
+      // 逐个关：分派到各模块清理链；编辑器族直达 _edCloseNow（跳过 per-tab
+      // 脏确认——总确认已给过，不能串出 N 个弹窗）
+      pids.forEach(pid => {
+        const conn = connections[pid];
+        if (!conn) return;
+        const kind = conn.meta && conn.meta.kind;
+        if (kind === 'log') {
+          if (typeof closeLogViewer === 'function') closeLogViewer(pid);
+          return;
+        }
+        if (kind === 'harness') {
+          if (typeof _harnessClose === 'function') _harnessClose(pid);
+          return;
+        }
+        const isEd = kind === 'editor' || kind === 'hex' || kind === 'diff' ||
+          kind === 'bindiff' || kind === 'office' || kind === 'vcs' ||
+          kind === 'proxy' || kind === 'bitcalc';
+        if (isEd && typeof _edCloseNow === 'function') { _edCloseNow(conn); return; }
+        if (typeof closeConnection === 'function') closeConnection(pid);
+      });
+    } finally { _closeAllBusy = false; }
+    _groupCloseList();
+    close();
+    rebuild(true);
+    showBanner('已关闭 ' + pids.length + ' 个' + label + '标签页', 1800);
+  }
+
   // 统一关闭：直接点 tab 自己的 ✕——各模块（terminal=后端断连/editor=脏确认/
   // log/harness/office...）的关闭语义由各自 handler 负责，零重复实现零误判
   const _tabClose = pid => {
@@ -227,6 +366,8 @@ let activePortId = null;
     let html = '';
     order.forEach(g => {
       html += `<div class="tab-overflow-group">${esc(_groupLabel(g))} · ${groups[g].length}</div>`;
+      // 需求：组内按最近访问排序（活跃恒在首），与抽屉下拉同序
+      groups[g].sort((a, b) => _mruRank(a.pid) - _mruRank(b.pid));
       // 第2轮盲测实锤：⋮ 列表与抽屉列表行为对齐——补 📌 固定钮（原来只显
       // 示固定图标不可点，抽屉列表可点，不一致）+ 右键菜单（原来没有）
       html += groups[g].map(({ pid, c }) => {
@@ -321,6 +462,7 @@ let activePortId = null;
     // 先清死 pid：关闭的固定 tab 残留 _pinned（串口 pid 稳定可重合——重开
     // 同名串口会被旧 pin 命中，出现"无圆点却不进抽屉组"的怪状态）
     for (const p of _pinned) if (!connections[p]) _pinned.delete(p);
+    _mruSync();   // 清掉已关 pid、补新 tab（追加末尾）
     const sig = _sig();
     if (!force && sig === _lastSig) return;
     _lastSig = sig;
@@ -344,11 +486,12 @@ let activePortId = null;
     // 二进制对比"计算中"临时 tab 不注册 connections（算完自移除），
     // 无条件隐藏会让它在抽屉模式下凭空消失（平铺模式可见，行为退化）
     const isDrawer = _tabMode === 'drawer';
+    const _cnt = _kindCount();
     tabsEl.querySelectorAll('.tab').forEach(t => {
       const pid = t.dataset.portId;
       const known = pid && connections[pid];
-      // 单例 kind（claude/计算器/代理）不隐藏——直接平铺，一点即达
-      const single = known && _SINGLE_KINDS.has(_groupOf(connections[pid]));
+      // 单例 kind / 同类独苗不隐藏——直接平铺，一点即达
+      const single = known && _isFlat(_groupOf(connections[pid]), _cnt);
       t.style.display = (isDrawer && known && !single && !_pinned.has(pid)) ? 'none' : '';
     });
     if (!isDrawer) { checkOverflow(); return; }
@@ -362,7 +505,7 @@ let activePortId = null;
       const c = connections[pid];
       if (!c || !c.tab || _pinned.has(pid)) continue;
       const g = _groupOf(c);
-      if (_SINGLE_KINDS.has(g)) continue;   // 单例不进抽屉（平铺直达）
+      if (_isFlat(g, _cnt)) continue;   // 单例 / 同类独苗不进抽屉（平铺直达）
       if (!groups[g]) { groups[g] = []; order.push(g); }
       groups[g].push(pid);
     }
@@ -393,11 +536,30 @@ let activePortId = null;
         `<span class="tab-drawer-count">${pids.length}</span>` +
         // 第4轮盲测：活跃名不用 JS slice 硬砍（"root@10.0.0."即 12 字符截断产物，
         // 无省略号）——完整交给 CSS（max-width:130px + ellipsis），title 悬浮看全名
-        (activeLbl ? `<span class="tab-drawer-active" title="${esc(activeLbl)}">${esc(activeLbl)}</span>` : '');
+        (activeLbl ? `<span class="tab-drawer-active" title="${esc(activeLbl)}">${esc(activeLbl)}</span>` : '') +
+        // 用户需求：胶囊自带 ✕ = 关掉该组全部标签（一次总确认，不再逐 tab 弹窗）
+        `<span class="tab-drawer-x" title="关闭全部「${esc(_groupLabel(g))}」标签页">✕</span>`;
       // 点击 → 分组下拉
       btn.onclick = e => {
         e.stopPropagation();
         buildGroupList(g, pids, btn);
+      };
+      const xEl = btn.querySelector('.tab-drawer-x');
+      // 阻止从 ✕ 发起胶囊拖拽：本体 draggable=true 时，从子元素按下也会起拖
+      // （dragstart 的 target 会冒到胶囊）——按下期间临时摘掉 draggable，松手恢复
+      xEl.onmousedown = e => {
+        e.stopPropagation();
+        btn.draggable = false;
+        const restore = () => {
+          btn.draggable = true;
+          document.removeEventListener('mouseup', restore);
+        };
+        document.addEventListener('mouseup', restore);
+      };
+      xEl.onclick = e => {
+        e.stopPropagation();
+        e.preventDefault();
+        _drawerCloseGroup(g);
       };
       // 拖拽已并入 tab-drag v2 容器级（吸附+指示线+胶囊换序+tab 落胶囊前后
       // +固定区挡板），此处仅预置 draggable（发起拖拽的前提）
@@ -423,14 +585,14 @@ let activePortId = null;
       if (cap) drawerBar.insertBefore(t, g !== null ? cap.nextSibling : cap);
       else tabsEl.insertBefore(t, drawerBar.nextSibling);
     }
-    // 单例 tab 保证在抽屉栏之前（视觉序：固定区 → 单例平铺 → 抽屉）。
+    // 平铺 tab（单例 + 同类独苗）保证在抽屉栏之前（视觉序：固定区 → 平铺 → 抽屉）。
     // 用户实锤：原判断 nextSibling !== drawerBar 要求单例「紧贴」抽屉栏——
     // 每次切换 tab 的 rebuild 都把拖拽过的单例按打开序强制归位（claude 拖到
     // 第三位，切个 tab 就跳回第一）。改为只判断「是否在抽屉栏之前」：
     // 在前就不动（用户拖拽序保留），仅落在栏后的（新开的）才挪到栏前
     for (const pid in connections) {
       const c = connections[pid];
-      if (!c || !c.tab || _pinned.has(pid) || !_SINGLE_KINDS.has(_groupOf(c))) continue;
+      if (!c || !c.tab || _pinned.has(pid) || !_isFlat(_groupOf(c), _cnt)) continue;
       if (c.tab.dataset.userPlaced) continue;   // 用户手动放过的（拖到胶囊前后）不动
       // 在位 = 在抽屉栏之前 或 在抽屉栏内部（用户拖进栏内的不许被 rebuild 拽出；
       // compareDocumentPosition 对祖先返回 PRECEDING|CONTAINS 而非 FOLLOWING，需先判 contains）
@@ -455,10 +617,10 @@ let activePortId = null;
     // 都会重建 drawerBar，旧抽屉按钮随即脱离 DOM——此时 getBoundingClientRect()
     // 返回全 0，列表会闪跳到屏幕左上角。脱离即关列表（与 MutationObserver 兜底一致）
     if (!anchorEl || !anchorEl.isConnected) { _groupCloseList(); return; }
-    const pids = Object.keys(connections).filter(p => {
+    const pids = _mruOrder(Object.keys(connections).filter(p => {
       const c = connections[p];
       return c && c.tab && !_pinned.has(p) && _groupOf(c) === group;
-    });
+    }));
     if (!pids.length) { _groupCloseList(); return; }
     groupList.dataset.group = group;
     groupList.innerHTML = `<div class="tab-overflow-group">${esc(_groupLabel(group))} · ${pids.length}</div>` +

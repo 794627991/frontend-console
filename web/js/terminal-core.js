@@ -507,6 +507,8 @@ function switchTab(portId) {
     window._hgTabBack = activePortId;
   }
   activePortId = portId;
+  // 抽屉/⋮ 列表按最近访问排序：每次切到该 tab 就刷新时间戳（MRU）
+  if (window._tabTouch) window._tabTouch(portId);
   // 标签
   tabs.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.portId === portId));
   // 终端区

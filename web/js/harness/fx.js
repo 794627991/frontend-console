@@ -411,17 +411,21 @@
     const r = _HG.ctxRing || {}, t = _HG.tps || {};
     const est = (_HG.busy && t.liveToks) || 0;
     const used = Math.max(0, r.used || 0);
-    const shown = used + est;              // 与环同口径：busy 时含生成中估值
+    // 用户定调（v4.1）：百分比/红条/分类占比只按 used（已进入上下文的
+    // 真实 input）算，与圆环、侧栏胶囊同口径。est（生成中估值）要等下一
+    // 轮请求才会变成 input，CLI 的压缩判定也只看真实 input——混进分母会
+    // 让忙碌期恒虚高（427.3K 显示成 481.9K=96%，跨过 90% 线而 CLI 不动）。
+    // est 只在下方旁注显示一行，供参考。
     // 分母未知（max=0，等 /ctx）时不出百分比：回落 256K 会画出假 100% 红条，
     // 正是圆环/胶囊已经修掉的那种误导，卡片必须同口径
     const max = (r.max > 0) ? r.max : 0;
-    const pct = max > 0 ? Math.min(100, shown / max * 100) : 0;
+    const pct = max > 0 ? Math.min(100, used / max * 100) : 0;
     const barCol = pct >= 95 ? 'var(--neon-red, #e06c75)'
                  : pct >= 80 ? 'var(--neon-orange, #d29922)' : 'var(--accent)';
     const parts = _HG.ctxParts || { sys: 0, mcp: 0 };
-    const msg = Math.max(0, shown - parts.sys - parts.mcp);
+    const msg = Math.max(0, used - parts.sys - parts.mcp);
     const row = (name, tok, est_) => {
-      const p = shown > 0 ? (tok / shown * 100).toFixed(1) : '0.0';
+      const p = used > 0 ? (tok / used * 100).toFixed(1) : '0.0';
       return `<div class="hg-ctx-row"><i class="hg-ctx-dot${est_ ? ' est' : ''}"></i>` +
         `<span class="hg-ctx-name">${name}</span>` +
         `<span class="hg-ctx-val">${_hgCtxCardFmt(tok)} · ${p}%${est_ ? '*' : ''}</span></div>`;
@@ -433,7 +437,7 @@
     // a264（用户定调）：窗口选择器移除——窗口只走自动链（网关实报→
     // settings.json→[1M]→兜底），不提供用户选项
     return `<div class="hg-ctx-head"><b>上下文容量</b><span>${(max > 0 && (used > 0 || est > 0)) ?
-        `${_hgCtxCardFmt(shown)}/${_hgCtxCardFmt(max)}（${Math.round(pct)}%）` :
+        `${_hgCtxCardFmt(used)}/${_hgCtxCardFmt(max)}（${Math.round(pct)}%）` :
         (max > 0 ? '首轮回复后统计' : '等待窗口 · 分母将由后端补')}</span></div>` +
       `<div class="hg-ctx-bar"><i style="width:${pct}%;background:${barCol}"></i></div>` +
       `<div class="hg-ctx-rows">` +
@@ -444,7 +448,7 @@
       `<div class="hg-ctx-line">缓存命中率 ${t.hit > 0 ? t.hit + '%' : '—'}` +
         `<span class="hg-ctx-dim">（本会话累计）</span></div>` +
       (tpsBits.length ? `<div class="hg-ctx-line">${tpsBits.join(' · ')}</div>` : '') +
-      (est > 0 ? `<div class="hg-ctx-dim">含生成中 ~${_hgCtxCardFmt(est)}（估值，回合结束落准）</div>` : '') +
+      (est > 0 ? `<div class="hg-ctx-dim">生成中 +${_hgCtxCardFmt(est)}（估值，不计入上方）</div>` : '') +
       `<div class="hg-ctx-foot">* 分类为估算：系统提示词/MCP 工具按注入内容量得，` +
       `消息 = 总量 − 前两项（CLI 内部构成不暴露）</div>`;
   }

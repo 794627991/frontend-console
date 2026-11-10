@@ -1157,13 +1157,14 @@
 
   V4Bridge.prototype._paintState = function (patch, isSnapshot) {
     var st = (this.store && this.store.snap && this.store.snap.state) || {};
-    // a152/a153：TPS/实时上下文 state → _HG.tps + 重画圆环。busy 时环值
-    // = ctxLive（assistant usage 真值基准）+ liveToks（流式字符估值）——
-    // 单条长回复期间环持续增长，不再「回合结束才跳变」；result 到达落真值
+    // a152/a153：TPS/实时上下文 state → _HG.tps + 重画圆环。环值 = ctxLive
+    // （assistant usage 真值基准），result 到达落真值。v4.1（用户定调）：
+    // 不再叠加 liveToks 生成中估值——估值要下一轮才成为 input，叠上去会
+    // 虚高（427K 显示成 96%），估值仅在容量卡下方以旁注显示。
       if (patch.tps !== undefined && !this.opt.sub) {
       _HG.tps = patch.tps;
       var t = _HG.tps || {};
-      var live = t.ctxLive || 0, est = t.liveToks || 0;
+      var live = t.ctxLive || 0;
       // a255（用户实锤 1.3M/500.0K 假 100%）：CLI result 帧的 usage 可能是
       // 全回合/全会话累计口径（v2.20 实测 ~20轮×70K≈1.4M，与本次 1.3M 同
       // 签名）——单轮真实用量物理不可能超窗。renderCtxRing 早有此守卫
@@ -1198,18 +1199,16 @@
       var _rr = _g('_hgDrawCtxRing');
       if (_rr && _HG.ctxRing) {
         // a154R（对抗审 P0）：真值锚先于 _rr 取——_hgDrawCtxRing 会把入参
-        // used 无条件写回 _HG.ctxRing，若画完再取原值已被「真值+估值」污染；
-        // ctxLive=0（网关不给 assistant usage）时每拍都在污染值上叠累计 est
-        // → 环随拍双计虚涨。画布显示含估、备忘只记真值
+        // used 无条件写回 _HG.ctxRing，故先取真值再画，备忘只记真值。
+        // ctxLive=0（网关不给 assistant usage）时回落上一帧环值
         var _tru = live > 0 ? live : _HG.ctxRing.used;
         // 真值锚同样要过同一阈值：live=0 时取的是上一帧的环值，若那帧已被
         // 累计口径污染过，这里会把坏值一直当锚传下去
         if (!(_tru > 0) || (_bm > 0 && _tru > _bm)) _tru = 0;
         var base = _tru;
-        // v4.1：估值只在 busy 叠加——原「est !== _oldLive」分支让回合结束
-        // 后迟到的 tps 尾帧再叠一次残留 liveToks（下一拍归零），回合收尾
-        // 瞬间读数先涨后落（用户实锤「途中跳变」的收尾变体）
-        if (_HG.busy && est > 0) base += est;
+        // v4.1（用户定调）：圆环只画真值 base，不叠 est——估值要下一轮才
+        // 成为 input，CLI 压缩判定也只看真实 input，叠上去会虚高（427K 显示
+        // 成 96%）。est 只在容量卡下方以旁注显示。
         try { _rr(base, _HG.ctxRing.max); } catch (e) {}
         // 分母未知时 _rr 走清环分支（ctxRing 变 {0,0}），此时**不能**把真值
         // 留在 used 里：会形成「圆环空 / 备忘录有值」的分叉，容量卡、下一拍

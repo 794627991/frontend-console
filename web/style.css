@@ -5609,6 +5609,19 @@ span.nn-hl-t { background: color-mix(in srgb, #3fb950 15%, transparent);
 }
 .tab-drawer-bar .tab.active::after { display: none; }   /* 有边框+发光，底边线多余 */
 
+/* 胶囊自带 ✕：关闭该组全部标签。平时低透明度，hover 胶囊或本钮时显红 */
+.tab-drawer-x {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0; width: 14px; height: 14px; margin-left: 1px;
+  border-radius: 3px; font-size: 10px; line-height: 1;
+  opacity: .35; transition: opacity .15s, color .15s, background .15s;
+}
+.tab-drawer:hover .tab-drawer-x { opacity: .7; }
+.tab-drawer-x:hover {
+  opacity: 1; color: var(--neon-red);
+  background: rgba(255,64,96,0.15);
+}
+
 /* R28-5：大文件（>30M 阅读器形态）跳转定位闪烁——行号透传链的视觉落点 */
 .log-viewer .lv-goto-flash {
   animation: lvGotoFlash 0.9s ease-out 3;

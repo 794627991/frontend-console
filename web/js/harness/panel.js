@@ -116,7 +116,7 @@
     // 上下文%（hg-ctx localStorage 是数据总线——_hgDrawCtxRing 触发 renderSideStatus）
     const cxEl = c.querySelector('[data-hg-caps-ctx]');
     if (cxEl) {
-      let ctxTxt = '', ctxWarn = false, ctxEst = false;
+      let ctxTxt = '', ctxWarn = false;
       if (_HG.sid) {
         try {
           const v = JSON.parse(localStorage.getItem('hg-ctx:' + _HG.sid) || 'null');
@@ -134,15 +134,11 @@
           // 回落 256K 会把 settings 500K 会话的 400K 显示成 100% 红条，
           // 与圆环「等 /ctx」口径保持一致
           if (base > 0 && mx > 0) {
-            // busy 期叠加生成中估值，与圆环/容量卡同口径
-            const est = (_HG.busy && _HG.tps && _HG.tps.liveToks) || 0;
-            const shown = base + est;
-            ctxEst = est > 0;
-            // 与 _hgDrawCtxRing 同口径 clamp：badMax 放行后 used 可合法超过
-            // 显示分母（settings 500K / 模型 1M），裸算会显示 120%
+            // v4.1（用户定调）：胶囊只按真值 base 算，不叠生成中估值——
+            // 口径与圆环/容量卡统一（估值要下一轮才成为 input）
             const pct = Math.min(100,
-              Math.round(shown / mx * 100));
-            ctxTxt = pct + (ctxEst ? '*' : '') + '%';
+              Math.round(base / mx * 100));
+            ctxTxt = pct + '%';
             ctxWarn = pct >= 80;
           }
         } catch(_) {}
@@ -151,7 +147,6 @@
       // warn 必须无条件重算：清环写回 used=0 后若只在 if 内 toggle，
       // 空白文字会留着上一拍的橙/红警示配色
       cxEl.classList.toggle('warn', ctxWarn);
-      cxEl.title = ctxEst ? '含生成中估值，回合结束落准' : '';
     }
     // bug5③ 兜底脉冲：子代理运行中且窗格未开（用户可能没注意到分屏已收）。
     // v3.2.31R（复审5）：判定收紧为 ==='flex'（_subShow 的唯一打开态）——
@@ -647,13 +642,10 @@
         // 分母未知时不出百分比，口径同胶囊
         if (base > 0 && mx0 > 0) {
           const mx = mx0;
-          // busy 期含生成中估值，与圆环/胶囊同口径
-          const est = (_HG.busy && _HG.tps && _HG.tps.liveToks) || 0;
-          const shown = base + est;
-          // 同 clamp 口径（used 可合法越过压缩线，见 ctxBadMaxBy 注释）
-          const pct = Math.min(100, Math.round(shown / mx * 100));
-          ctxTxt = pct + (est > 0 ? '*' : '') + '% · ' +
-                   (shown / 1000).toFixed(1) + 'K/' + (mx / 1000).toFixed(0) + 'K';
+          // v4.1（用户定调）：侧栏详情同胶囊——只按真值 base，不叠估值
+          const pct = Math.min(100, Math.round(base / mx * 100));
+          ctxTxt = pct + '% · ' +
+                   (base / 1000).toFixed(1) + 'K/' + (mx / 1000).toFixed(0) + 'K';
           warn = pct >= 80;
         }
       } catch(_) {}
