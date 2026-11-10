@@ -43,7 +43,7 @@ function vcsPanelTeardown() {
   // root 保留：下次打开还是同一个工程
   VCS.data = null; VCS.log = null; VCS.out = ''; VCS.busy = false;
   VCS.sel = new Set();
-  VCS.exp = new Set(); VCS.cfCache = new Map();   // a444：展开态与清单缓存随面板关闭清
+  VCS.exp = new Set(); VCS.cfCache = new Map(); VCS.cfPending = new Set();   // a444：展开态与清单缓存随面板关闭清
 }
 function buildVcsPanelTab() {
   for (const pid in connections) {
@@ -959,12 +959,18 @@ function _vcsLoadCommitFiles(rev, box) {
   const cached = VCS.cfCache.get(rev);
   if (cached) { render(cached); return; }
   if (box.dataset.loaded) return;      // 已渲染过且无缓存变化
+  // a444：在途去重——连续两次 _vcsPaint 会各拿一个新 box，旧回调因
+  // document.contains 判假被丢弃，但请求已经白发了一发。按 rev 记在途。
+  if (!VCS.cfPending) VCS.cfPending = new Set();
+  if (VCS.cfPending.has(rev)) { box.innerHTML = '<div class="hg-vcs-empty">加载中…</div>'; return; }
+  VCS.cfPending.add(rev);
   box.innerHTML = '<div class="hg-vcs-empty">加载中…</div>';
   fetch('/api/vcs/commit_files', { method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ root: VCS.root, rev }) })
     .then(r => r.json())
     .then(j => {
+      VCS.cfPending.delete(rev);
       // 面板可能在请求途中被关掉
       if (!_vpEl || !document.contains(box)) return;
       if (!j.ok) { box.innerHTML = '<div class="hg-vcs-empty">' + esc(j.err || '获取失败') + '</div>'; return; }
@@ -972,6 +978,7 @@ function _vcsLoadCommitFiles(rev, box) {
       render(j.files || []);
     })
     .catch(e => {
+      VCS.cfPending.delete(rev);
       if (!_vpEl || !document.contains(box)) return;
       box.innerHTML = '<div class="hg-vcs-empty">获取失败：' + esc(String(e)) + '</div>';
     });
@@ -999,7 +1006,7 @@ function _vcsBind(paintRoots) {
         VCS.chgGen = (VCS.chgGen || 0) + 1;   // v3.5.275 F3-A：作废在途扫描链
         VCS.root = sel.value; localStorage.setItem('hg-vcs-root', sel.value);
         VCS.data = null; VCS.log = null; VCS.sel = new Set();
-        VCS.exp = new Set(); VCS.cfCache = new Map();   // a444：换工程，展开态/缓存都属于旧工程
+        VCS.exp = new Set(); VCS.cfCache = new Map(); VCS.cfPending = new Set();   // a444：换工程，展开态/缓存在途都属于旧工程
         _vcsReload(); _vcsReloadLog();
       };
     }
