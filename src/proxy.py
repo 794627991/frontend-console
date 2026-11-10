@@ -898,6 +898,14 @@ _quota_login = None     # 登录态独立槽 {"state": online/logging/error/fetc
                          # 用户实锤合槽后前端永远显示「登录中」）
 _quota_ov = {}           # dashboard.overview 缓存（托盘菜单/tooltip 用）
 _quota_rank = []         # dashboard.modelRank 缓存（模型用量排名表）
+# a448（用户需求）：模型实时负载。与额度同源（LanzClient.get_model_loads），
+# 但负载变化快——额度 600s 一刷太慢，单独 20s TTL 按需刷新（status 轮询驱动，
+# 面板/悬浮卡不看就不拉）。_quota_loads_busy 防并发重复拉。
+_quota_loads = []
+_quota_loads_ts = 0.0
+_quota_loads_err = ""
+_quota_loads_busy = False
+_quota_loads_lock = threading.Lock()
 _quota_ts = None         # 上次 data 时间戳（前端显示"上次刷新 Ns 前"）
 _quota_lock = threading.Lock()
 _quota = None            # LanzQuotaWorker（HAS_LANZ 且凭据存在时才建）
@@ -1025,6 +1033,91 @@ def _invalidate_cred_cache(cred):
     global _cred_cache, _cred_cached
     _cred_cache = cred
     _cred_cached = True
+    # a448：凭据变了，模型负载也失效（换号后负载/权限都不同）
+    global _quota_loads, _quota_loads_ts, _quota_loads_err
+    with _quota_loads_lock:
+        _quota_loads = []
+        _quota_loads_ts = 0.0
+        _quota_loads_err = ""
+
+
+LOAD_TTL = 20.0   # 模型负载缓存时长（秒）：status 1s 轮询，20s 内复用
+
+
+def _is_lanz_api():
+    """当前真正请求的 API 是否走 lanz 网关（a448 用户定调）。
+
+    判据是「上游是谁」而非「是否直连」：本机重试代理恒启动，代理模式的
+    base_url 是 127.0.0.1:37349/v3/xxx，其上游由 _direct_url 决定——只要
+    上游主机是 lanz.hikvision.com 就算用 lanzi API，负载照样显示。
+    """
+    try:
+        if _ctl.running and _ctl.server is not None:
+            host = _ctl.server.upstream_host
+        else:
+            host = _upstream_of(_direct_url())[0]
+        return "lanz.hikvision.com" in (host or "").lower()
+    except Exception:
+        return False
+
+
+def _get_model_loads(force=False):
+    """模型实时负载（a448）。返回 (列表, 错误串)。
+
+    走 LanzClient.get_model_loads（与 API 密钥申请页同源 /v1/openai/models）。
+    有 20s 缓存。**永不阻塞调用方超过一次即时返回**：status 被前端 1s 轮询，
+    登录+请求要 1~2s，同步做会把面板轮询拖垮——这里只读缓存，缓存过期就
+    起后台线程刷新（在途标志防重入），本次先返回旧值。
+    """
+    global _quota_loads, _quota_loads_busy
+    now = time.time()
+    with _quota_loads_lock:
+        fresh = _quota_loads and now - _quota_loads_ts < LOAD_TTL
+        busy = _quota_loads_busy
+        snapshot = list(_quota_loads), _quota_loads_err
+        if fresh or busy:
+            return snapshot
+        _quota_loads_busy = True
+    if force:
+        _quota_loads_refresh_now()
+    else:
+        threading.Thread(target=_quota_loads_refresh_now, daemon=True).start()
+    return snapshot
+
+
+def _quota_loads_refresh_now():
+    """在后台线程里真正拉一次负载并落缓存（调用方已在 _quota_loads_busy 置位）。"""
+    global _quota_loads, _quota_loads_ts, _quota_loads_err, _quota_loads_busy
+    loads, err = [], ""
+    try:
+        cred = _get_credentials()
+        if not HAS_LANZ or not cred:
+            return
+        c = lanz_quota.LanzClient(cred["username"], cred["password"])
+        try:
+            c.login()
+            loads = c.get_model_loads()
+        except lanz_quota.LanzSessionExpired:
+            c.login(force=True)
+            loads = c.get_model_loads()
+    except lanz_quota.LanzAuthError as e:
+        err = "登录失败: %s" % e
+    except lanz_quota.LanzNetworkError as e:
+        err = "网络错误: %s" % e
+    except lanz_quota.LanzError as e:
+        err = "负载查询失败: %s" % e
+    except Exception as e:
+        log.warning("模型负载查询异常: %s", e)
+        err = "负载查询异常: %s" % e
+    finally:
+        with _quota_loads_lock:
+            _quota_loads_busy = False
+            if loads:
+                _quota_loads = loads
+                _quota_loads_ts = time.time()
+                _quota_loads_err = ""
+            else:
+                _quota_loads_err = err
 
 
 def _ensure_quota_worker():
@@ -2039,6 +2132,19 @@ def _status_payload():
             pass   # 额度明细格式异常不拖死整个 status
     if rank:
         data["quota_rank"] = rank
+    # a448（用户需求）：模型负载。只在「API 是 lanz」且已存凭据时给——不是
+    # lanz 网关（如智谱）时这份数据无意义，前端据此决定是否显示负载列。
+    # 不依赖 quota_login 状态：负载查询自己登录（20s 缓存兜住频率），
+    # worker 没跑过时也能出数（首次开面板即见）。
+    try:
+        if _is_lanz_api() and _get_credentials():
+            loads, lerr = _get_model_loads()
+            if loads or lerr:
+                data["model_loads"] = loads
+                data["model_loads_err"] = lerr
+                data["model_loads_ts"] = _quota_loads_ts
+    except Exception:
+        pass   # 负载异常不拖死 status（面板命脉）
     return data
 
 

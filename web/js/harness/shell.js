@@ -384,6 +384,60 @@ setInterval(hgLoginRefresh, 30000);   // 低频保活（登录态/机器人在�
 hgLoginRefresh();
 
 // ---- Proxy 状态按钮（输入卡上方，原顶部按钮迁入）：显示运行态+端口，点击开代理面板 ----
+// a448（用户需求）：悬浮显示模型负载。后端 status 只在「上游是 lanz」且已登录
+// 时下发 model_loads；有数据才出悬浮卡，不是 lanz 网关时保持原样。
+let _hgProxyLoads = null;     // 最近一次 status 的 model_loads（悬浮时直接用）
+let _hgLoadsTip = null;
+
+function _hgLoadsTipEl() {
+  if (_hgLoadsTip && document.contains(_hgLoadsTip)) return _hgLoadsTip;
+  const el = document.createElement('div');
+  el.className = 'hg-loads-tip';
+  el.style.display = 'none';
+  document.body.appendChild(el);
+  _hgLoadsTip = el;
+  return el;
+}
+function _hgLoadsPaint(anchor) {
+  const loads = _hgProxyLoads;
+  if (!loads || !loads.length) return;
+  const tip = _hgLoadsTipEl();
+  const lvTxt = { jam: '拥挤', busy: '繁忙', normal: '正常', idle: '空闲' };
+  tip.innerHTML = '<div class="hg-loads-h">模型负载' +
+    '<span class="hg-loads-note">' + esc(String(loads.length)) + ' 个模型</span></div>' +
+    loads.map(m => {
+      const pct = (m.pct == null) ? null : m.pct;
+      const cls = m.level ? ' px-load--' + m.level : '';
+      return '<div class="hg-loads-row"><span class="hg-loads-name">' + esc(m.name) + '</span>' +
+        '<span class="hg-loads-bar' + cls + '"><i style="width:' + (pct == null ? 0 : pct) + '%"></i></span>' +
+        '<span class="hg-loads-pct' + cls + '">' + (pct == null ? '--' : pct + '%') + '</span></div>';
+    }).join('');
+  tip.style.display = 'block';
+  const r = anchor.getBoundingClientRect();
+  tip.style.left = Math.round(r.left) + 'px';
+  tip.style.top = Math.round(r.bottom + 6) + 'px';
+  // 右缘防溢出
+  const tw = tip.offsetWidth;
+  if (r.left + tw > window.innerWidth - 8) {
+    tip.style.left = Math.max(8, window.innerWidth - tw - 8) + 'px';
+  }
+}
+function _hgLoadsHide() {
+  if (_hgLoadsTip) _hgLoadsTip.style.display = 'none';
+}
+document.addEventListener('mouseover', ev => {
+  const btn = ev.target.closest('[data-hg-proxy-btn]');
+  if (!btn) return;
+  // a448：悬浮即刷新一次（负载 20s 级变化，SSE 不覆盖；鼠标进入时拉最新）
+  hgProxyRefreshState();
+  _hgLoadsPaint(btn);
+});
+document.addEventListener('mouseout', ev => {
+  const btn = ev.target.closest('[data-hg-proxy-btn]');
+  if (!btn) return;
+  _hgLoadsHide();
+});
+
 function hgProxyRefreshState() {
   const fetchIt = async () => {
     try {
@@ -401,6 +455,8 @@ function hgProxyRefreshState() {
         el.textContent = txt;
         el.className = 'hg-proxy-state' + cls;
       });
+      // a448：悬浮卡的负载数据（无数据时置空，悬浮不出卡）
+      _hgProxyLoads = (j.model_loads && j.model_loads.length) ? j.model_loads : null;
     } catch (_) {}
   };
   fetchIt();

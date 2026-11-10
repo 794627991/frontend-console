@@ -402,6 +402,66 @@ class LanzClient:
         """是否管理员。"""
         return self._request("/budget/isAdmin")
 
+    def get_model_loads(self):
+        """模型实时负载（a448 用户需求：代理悬浮卡与面板显示模型负载）。
+
+        数据源与 API 密钥申请页同源：GET /v1/openai/models（不在
+        /v1/ai-resource 前缀下，故走完整 URL）。每项 routeStatus 提供
+        total_active / effective_max_concurrent，负载百分比按前端口径
+        min(100, floor(active/max*100)) 计算；缺字段返回 None。
+
+        返回 [{"name","type","ctx","tags","available","active","max","pct","level"}]
+        level: jam(>85) / busy(>70) / normal(>=40) / idle(else)
+        无权限或接口异常时抛 LanzError，由调用方降级。
+        """
+        url = "https://lanz.hikvision.com/v1/openai/models"
+        raw = self._fetch_text(url, extra_headers=self._swms_headers())
+        try:
+            d = json.loads(raw)
+        except (ValueError, json.JSONDecodeError) as e:
+            raise LanzError("模型负载响应非 JSON: %s" % e)
+        if not isinstance(d, dict):
+            raise LanzError("模型负载响应结构异常: %r" % type(d).__name__)
+        code = d.get("code")
+        if code == 3001:
+            self._logged_in = False
+            raise LanzSessionExpired("会话过期（3001）")
+        if code != 2001:
+            raise LanzError("模型负载接口返回 code=%s msg=%s"
+                            % (code, d.get("msg", "")))
+        out = []
+        for m in (d.get("data") or []):
+            if not isinstance(m, dict):
+                continue
+            rs = m.get("routeStatus") or {}
+            active = rs.get("total_active")
+            mx = rs.get("effective_max_concurrent")
+            pct = None
+            if isinstance(active, int) and isinstance(mx, int) and mx > 0:
+                pct = min(100, int(active * 100 // mx))
+            if pct is None:
+                level = None
+            elif pct > 85:
+                level = "jam"
+            elif pct > 70:
+                level = "busy"
+            elif pct >= 40:
+                level = "normal"
+            else:
+                level = "idle"
+            out.append({
+                "name": m.get("modelName") or "",
+                "type": m.get("type") or "",
+                "ctx": m.get("contextSize") or "",
+                "tags": [t for t in (m.get("modelTags") or "").split(";") if t],
+                "available": rs.get("available"),
+                "active": active if isinstance(active, int) else None,
+                "max": mx if isinstance(mx, int) else None,
+                "pct": pct,
+                "level": level,
+            })
+        return out
+
 
 # ---- 凭据读写 --------------------------------------------------------
 def load_credentials(path):

@@ -113,6 +113,7 @@ function buildProxyTab() {
           </div>
           <div data-px-quota-view></div>
           <div data-px-quota-rank></div>
+          <div id="px-loads"></div>
         </div>
 
         <div class="px-hint" data-px-chain>链路：Claude Code → billion-context(18788，/bili/ 前缀压缩代理) → 重试代理(37349，429/5xx 自动重试) → 上游网关。退出工具自动停代理并回滚 base_url；异常退出下次启动自愈。压缩引擎 github.com/ranxianglei/billion-context（MIT，按条款署名）。</div>
@@ -299,6 +300,35 @@ function buildProxyTab() {
     return `上次刷新 ${t} (${ago}s 前)`;
   }
 
+  // a448（用户需求「代理主界面也增加模型负载情况」）：模型实时负载表。
+  // 数据由后端 /api/proxy/status 的 model_loads 下发（仅上游是 lanz 时）。
+  // 口径与 lanz 平台一致：pct>85 拥挤 / >70 繁忙 / >=40 正常 / 其余空闲。
+  function _renderModelLoads(j) {
+    const host = document.getElementById('px-loads');
+    if (!host) return;
+    const loads = j.model_loads;
+    if (!loads || !loads.length) {
+      if (host.innerHTML) host.innerHTML = '';
+      return;
+    }
+    const lvTxt = { jam: '拥挤', busy: '繁忙', normal: '正常', idle: '空闲' };
+    host.innerHTML = '<div class="px-sec-title">模型负载' +
+      '<span class="px-rank-ago">' +
+      (j.model_loads_err ? esc(j.model_loads_err)
+        : (j.model_loads_ts ? '更新于 ' + new Date(j.model_loads_ts * 1000).toLocaleTimeString('zh-CN', { hour12: false }) : '')) +
+      '</span></div><div class="px-loads">' + loads.map(m => {
+      const pct = (m.pct == null) ? null : m.pct;
+      const cls = m.level ? ' px-load--' + m.level : '';
+      return '<div class="px-load-row"><span class="px-load-name">' + esc(m.name) + '</span>' +
+        '<span class="px-load-bar' + cls + '"><i style="width:' + (pct == null ? 0 : pct) + '%"></i></span>' +
+        '<span class="px-load-pct' + cls + '">' + (pct == null ? '--' : pct + '%') +
+        (m.level ? ' · ' + lvTxt[m.level] : '') + '</span>' +
+        (m.active != null && m.max != null
+          ? '<span class="px-load-num">' + m.active + '/' + m.max + '</span>' : '') +
+        '</div>';
+    }).join('') + '</div>';
+  }
+
   function _renderQuota(j) {
     // 登录态优先用后端独立槽 quota_login（data 事件不再覆盖登录态——
     // 老版单槽 bug：登录成功后状态永远停在「登录中」）
@@ -344,6 +374,9 @@ function buildProxyTab() {
       }).join('') + '</div>';
     }
     quotaViewEl.innerHTML = html;
+    // a448（用户需求）：模型实时负载（与 API 密钥申请页同源）。后端只在
+    // 上游是 lanz 且已登录时下发 model_loads；不是 lanz 网关时不显示。
+    _renderModelLoads(j);
     // 模型用量排名表（老 GUI q_model_tree 平移：模型/tokens/费用/积分/请求数）
     const rank = j.quota_rank || [];
     if (rank.length) {

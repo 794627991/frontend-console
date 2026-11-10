@@ -2279,6 +2279,46 @@
 .px-rank-h { color: var(--muted); border-bottom: 1px solid var(--border); }
 .px-rank-r:nth-child(even) { background: var(--bg-card); border-radius: 4px; }
 .px-rank-m { color: var(--fg-bright); word-break: break-all; }
+/* a448：模型实时负载（口径同 lanz 平台：>85 拥挤 / >70 繁忙 / >=40 正常） */
+.px-loads { display: flex; flex-direction: column; gap: 4px; margin-top: 4px;
+  font-family: var(--font-mono); font-size: 11px; }
+.px-load-row { display: grid; grid-template-columns: 96px 1fr 82px 62px;
+  gap: 8px; align-items: center; padding: 3px 0; }
+.px-load-name { color: var(--fg-bright); overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.px-load-bar { position: relative; height: 6px; border-radius: 3px;
+  background: color-mix(in srgb, var(--border) 70%, transparent); overflow: hidden; }
+.px-load-bar i { position: absolute; inset: 0 auto 0 0; display: block;
+  border-radius: 3px; background: #67c23a; transition: width .25s; }
+.px-load-bar.px-load--normal i { background: #409eff; }
+.px-load-bar.px-load--busy i { background: #e6a23c; }
+.px-load-bar.px-load--jam i { background: #f56c6c; }
+.px-load-pct { color: var(--muted); }
+.px-load-pct.px-load--busy { color: #e6a23c; }
+.px-load-pct.px-load--jam { color: #f56c6c; }
+.px-load-num { color: var(--muted); text-align: right; }
+/* 悬浮卡（Claude 输入卡上方 Proxy 按钮 hover） */
+.hg-loads-tip { position: fixed; z-index: 12000; min-width: 260px;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 10px 36px rgba(0,0,0,.55); padding: 9px 11px;
+  font-family: var(--font-mono); font-size: 11px; pointer-events: none; }
+.hg-loads-h { display: flex; align-items: baseline; justify-content: space-between;
+  font-weight: 600; color: var(--fg-bright); margin-bottom: 6px; font-size: 12px; }
+.hg-loads-note { font-weight: 400; color: var(--muted); font-size: 10px; }
+.hg-loads-row { display: grid; grid-template-columns: 92px 1fr 44px;
+  gap: 8px; align-items: center; padding: 3px 0; }
+.hg-loads-name { color: var(--fg); overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.hg-loads-bar { position: relative; height: 5px; border-radius: 3px;
+  background: color-mix(in srgb, var(--border) 70%, transparent); overflow: hidden; }
+.hg-loads-bar i { position: absolute; inset: 0 auto 0 0; display: block;
+  border-radius: 3px; background: #67c23a; }
+.hg-loads-bar.px-load--normal i { background: #409eff; }
+.hg-loads-bar.px-load--busy i { background: #e6a23c; }
+.hg-loads-bar.px-load--jam i { background: #f56c6c; }
+.hg-loads-pct { color: var(--muted); text-align: right; }
+.hg-loads-pct.px-load--busy { color: #e6a23c; }
+.hg-loads-pct.px-load--jam { color: #f56c6c; }
 
 /* ---- Proxy 额度区：密码眼睛 / 状态行 / 按钮启停（老 GUI 对齐）---- */
 .px-eye-wrap { position: relative; display: inline-flex; }
