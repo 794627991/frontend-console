@@ -903,9 +903,14 @@ def install_online(kinds, log=None, progress=None, should_cancel=None,
                     else:
                         ok = bool(cs._install_git_if_missing(dl_dir))
                 elif k == "claude":
-                    say("在线安装 Claude CLI：确保 Node → npm install -g …")
+                    # a459：已装则走 npm update（只拉版本差异），不再每次全量
+                    # install -g；强制重装才走 install。
+                    if force:
+                        say("强制重装 Claude CLI：确保 Node → npm install -g …")
+                    else:
+                        say("在线安装/更新 Claude CLI：确保 Node → npm update -g …")
                     cs._install_node_if_missing(dl_dir)
-                    cs._npm_install_global()
+                    cs._npm_install_global(force=force)
                     from src.res_boot import probe_claude
                     st, v, _m = probe_claude()
                     if st != "ok":

@@ -323,12 +323,17 @@ def _install_git_from(exe):
     _refresh_process_path()
 
 
-def _npm_install_global():
+def _npm_install_global(force=False):
     """npm 装 claude-code——免提权设计：
     Windows 上 npm 全局 prefix 若指向 Program Files（nodejs MSI 默认），
     install -g 要管理员写权限（UAC 弹窗）。用 npm_config_prefix 环境变量
     把全局位钉到 %APPDATA%\\npm（用户目录，npm 官方推荐的用户级配置位），
-    全程零提权。装完写 PATH + 广播，新起进程直接可见。"""
+    全程零提权。装完写 PATH + 广播，新起进程直接可见。
+
+    a459（用户实锤：已经装过还每次跑全量 install -g，几百 MB 白下载，还可能
+    把可用版本换掉）：已装且非强制时改走 `npm update -g`——只拉版本差异，
+    装不上（离线/registry 不通）就保留现有安装并如实说明，绝不因为「更新
+    失败」把用户手上能用的 CLI 弄坏。"""
     _, npm = _node_ok()
     if not npm:
         raise RuntimeError("node/npm 不可用——先装 Node")
@@ -338,15 +343,39 @@ def _npm_install_global():
     env = dict(os.environ)
     env["npm_config_prefix"] = npm_dir
     env["npm_config_cache"] = os.path.join(appdata, "npm-cache")
-    _log("npm install -g @anthropic-ai/claude-code（prefix → 用户目录，免提权）…")
-    r = subprocess.run(["cmd", "/c", npm, "install", "-g",
-                        "@anthropic-ai/claude-code"],
+    pkg = "@anthropic-ai/claude-code"
+    if not force and _claude_installed(npm_dir):
+        _log("已安装 claude-code，改为 npm update -g（只拉版本差异）…")
+        r = subprocess.run(["cmd", "/c", npm, "update", "-g", pkg],
+                           capture_output=True, text=True, timeout=900, env=env)
+        for line in ((r.stdout or "") + (r.stderr or "")).splitlines():
+            _log(line)
+        if r.returncode != 0:
+            # 更新失败不动现有安装：能用比新更重要
+            _log("npm update 失败（退出码 %d）——保留现有安装，可改用"
+                 "「强制重装」" % r.returncode)
+        _ensure_npm_path()
+        return
+    _log("npm install -g %s（prefix → 用户目录，免提权）…" % pkg)
+    r = subprocess.run(["cmd", "/c", npm, "install", "-g", pkg],
                        capture_output=True, text=True, timeout=900, env=env)
     for line in ((r.stdout or "") + (r.stderr or "")).splitlines():
         _log(line)
     if r.returncode != 0:
         raise RuntimeError(f"npm 退出码 {r.returncode}")
     _ensure_npm_path()
+
+
+def _claude_installed(npm_dir):
+    """是否已装 claude-code：看 npm 标准位有没有官方 bin 入口。
+    用 package.json 判（不是只看目录存在）——半装/空壳目录不算已装。"""
+    for p in (os.path.join(npm_dir, "node_modules", "@anthropic-ai",
+                           "claude-code", "package.json"),
+              os.path.join(npm_dir, "node_modules", "@anthropic-ai",
+                           "claude-code", "cli.js")):
+        if os.path.isfile(p):
+            return True
+    return False
 
 
 def _broadcast_path_change():
